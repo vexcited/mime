@@ -460,6 +460,7 @@ static BOOL delegate_should_close(id self, SEL sel, id window)
     return NO;
 }
 
+static void clip_start(void *arg);
 static void (*g_app_send_event)(id, SEL, id);
 
 /* appkit drops key up events while command is held; the guest needs them to release its keys. */
@@ -547,6 +548,7 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     MSG_V(g_app, "finishLaunching");
     register_classes();
     update_screen_metrics();
+    clip_start(NULL);
 }
 
 void mime_ui_run(void)
@@ -880,4 +882,134 @@ static void beep_main(void *arg)
 void mime_ui_beep(uint32_t type)
 {
     on_main(beep_main, NULL);
+}
+
+/* ------------------------------------------------------------------ clipboard */
+
+/*
+ * macos has no pasteboard change notification, so the main thread polls the
+ * change count and tells the guest when another application copied text.
+ * the guest pulls the text from a copy kept here, so vcpu threads never
+ * touch the pasteboard.
+ */
+typedef struct NSRange {
+    NSUInteger location, length;
+} NSRange;
+
+extern id NSPasteboardTypeString;
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+
+static pthread_mutex_t g_clip_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint16_t *g_clip_text;
+static size_t g_clip_chars;
+static NSInteger g_clip_seen = -1; /* main thread only */
+static dispatch_source_t g_clip_timer;
+
+static void clip_poll(void *arg)
+{
+    void *pool = objc_autoreleasePoolPush();
+    id pb = MSG_ID(CLS("NSPasteboard"), "generalPasteboard");
+    NSInteger count = ((NSInteger(*)(id, SEL))objc_msgSend)(pb, SEL_("changeCount"));
+    if (count != g_clip_seen) {
+        g_clip_seen = count;
+        id str = MSG_ID_ID(pb, "stringForType:", NSPasteboardTypeString);
+        NSUInteger n = str ? MSG_UINT(str, "length") : 0;
+        uint16_t *raw = n ? malloc(n * sizeof(uint16_t)) : NULL;
+        uint16_t *text = n ? malloc(n * 2 * sizeof(uint16_t)) : NULL;
+        size_t chars = 0;
+        if (raw && text) {
+            ((void (*)(id, SEL, uint16_t *, NSRange))objc_msgSend)(str, SEL_("getCharacters:range:"), raw,
+                                                                   (NSRange){0, n});
+            for (NSUInteger i = 0; i < n; i++) {
+                if (raw[i] == '\n' && (i == 0 || raw[i - 1] != '\r'))
+                    text[chars++] = '\r';
+                text[chars++] = raw[i];
+            }
+        } else {
+            free(text);
+            text = NULL;
+        }
+        free(raw);
+        pthread_mutex_lock(&g_clip_lock);
+        free(g_clip_text);
+        g_clip_text = text;
+        g_clip_chars = chars;
+        pthread_mutex_unlock(&g_clip_lock);
+        MimeInputEvent ev = {0};
+        ev.type = MIME_INPUT_CLIPBOARD;
+        emit(&ev);
+    }
+    objc_autoreleasePoolPop(pool);
+}
+
+static void clip_start(void *arg)
+{
+    g_clip_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler_f(g_clip_timer, clip_poll);
+    dispatch_source_set_timer(g_clip_timer, dispatch_time(DISPATCH_TIME_NOW, 0), 250 * NSEC_PER_MSEC,
+                              50 * NSEC_PER_MSEC);
+    dispatch_resume(g_clip_timer);
+}
+
+typedef struct ClipSet {
+    uint16_t *text;
+    size_t chars;
+} ClipSet;
+
+static void clip_set_main(void *arg)
+{
+    ClipSet *c = arg;
+    void *pool = objc_autoreleasePoolPush();
+    id pb = MSG_ID(CLS("NSPasteboard"), "generalPasteboard");
+    ((NSInteger(*)(id, SEL))objc_msgSend)(pb, SEL_("clearContents"));
+    if (c->chars) {
+        id str = ((id(*)(id, SEL, const uint16_t *, NSUInteger))objc_msgSend)(
+            MSG_ID(CLS("NSString"), "alloc"), SEL_("initWithCharacters:length:"), c->text, c->chars);
+        ((BOOL(*)(id, SEL, id, id))objc_msgSend)(pb, SEL_("setString:forType:"), str, NSPasteboardTypeString);
+        MSG_V(str, "release");
+    }
+    /* the guest already holds this text: do not offer it back. */
+    g_clip_seen = ((NSInteger(*)(id, SEL))objc_msgSend)(pb, SEL_("changeCount"));
+    objc_autoreleasePoolPop(pool);
+    free(c->text);
+    free(c);
+}
+
+void mime_ui_clipboard_set(const uint16_t *text, size_t chars)
+{
+    ClipSet *c = calloc(1, sizeof(*c));
+    uint16_t *copy = malloc((chars ? chars : 1) * sizeof(uint16_t));
+    uint16_t *keep = malloc((chars ? chars : 1) * sizeof(uint16_t));
+    if (!c || !copy || !keep) {
+        free(c);
+        free(copy);
+        free(keep);
+        return;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < chars; i++)
+        if (!(text[i] == '\r' && i + 1 < chars && text[i + 1] == '\n'))
+            copy[n++] = text[i];
+    memcpy(keep, text, chars * sizeof(uint16_t));
+    pthread_mutex_lock(&g_clip_lock);
+    free(g_clip_text);
+    g_clip_text = keep;
+    g_clip_chars = chars;
+    pthread_mutex_unlock(&g_clip_lock);
+    c->text = copy;
+    c->chars = n;
+    on_main(clip_set_main, c);
+}
+
+size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
+{
+    pthread_mutex_lock(&g_clip_lock);
+    size_t total = g_clip_chars;
+    if (offset < total && count) {
+        size_t n = total - offset < count ? total - offset : count;
+        memcpy(dst, g_clip_text + offset, n * sizeof(uint16_t));
+    }
+    pthread_mutex_unlock(&g_clip_lock);
+    return total;
 }

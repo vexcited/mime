@@ -25,4 +25,8 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
 void mime_ui_set_cursor(uint32_t cursor);
 void mime_ui_beep(uint32_t type);
 
+/* clipboard text in utf-16 with windows line endings. */
+void mime_ui_clipboard_set(const uint16_t *text, size_t chars);
+size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count);
+
 #endif

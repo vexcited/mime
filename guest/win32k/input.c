@@ -146,6 +146,10 @@ static void update_async_keys(const MimeInputEvent *ev)
 static void dispatch_event(const MimeInputEvent *ev)
 {
     W32THREAD *t = NULL;
+    if (ev->type == MIME_INPUT_CLIPBOARD) {
+        ClipboardHostChanged();
+        return;
+    }
     update_async_keys(ev);
     switch (ev->type) {
     case MIME_INPUT_MOUSE_MOVE:

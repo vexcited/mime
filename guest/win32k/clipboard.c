@@ -3,6 +3,10 @@
  * viewer chain and format listeners. memory formats are stored as copies
  * of their bytes so any process can read them; gdi formats keep their
  * handle.
+ *
+ * the text is shared with the host clipboard: closing the clipboard after a
+ * change sends its text to the host, and text another host application
+ * copies replaces the contents with an ownerless CF_UNICODETEXT.
  */
 #include "win32k.h"
 
@@ -30,6 +34,7 @@ static HWND g_listeners[MAX_LISTENERS];
 static DWORD g_sequence = 1;
 static BOOLEAN g_changed;    /* the clipboard changed while open */
 static BOOLEAN g_rendering;  /* the owner is answering WM_RENDERFORMAT */
+static BOOLEAN g_host_pending; /* the host clipboard changed while the clipboard was open */
 
 static BOOLEAN is_gdi_format(UINT format)
 {
@@ -117,6 +122,130 @@ static void synthesize_text(void)
     }
 }
 
+/* ------------------------------------------------------------------ host clipboard */
+
+#define HOST_CHUNK 4096
+
+static PUCHAR g_host_page; /* hypercall bounce page, used under the user lock */
+
+static BOOLEAN host_page(void)
+{
+    if (!g_host_page)
+        g_host_page = MmAllocateContiguousPages(HOST_CHUNK);
+    return g_host_page != NULL;
+}
+
+static void render_format(CLIP_FORMAT *f);
+
+/* sends the text of the clipboard to the host, an empty text when it has none. */
+static void push_to_host(void)
+{
+    if (!host_page())
+        return;
+    CLIP_FORMAT *f = find_format(CF_UNICODETEXT);
+    if (f && f->Delayed) {
+        render_format(f);
+        f = find_format(CF_UNICODETEXT);
+    }
+    WCHAR *text = NULL;
+    SIZE_T chars = 0;
+    BOOLEAN widened = FALSE;
+    if (f && f->Data && !f->Delayed) {
+        const WCHAR *src = (const WCHAR *)f->Data;
+        SIZE_T max = f->Size / sizeof(WCHAR);
+        while (chars < max && src[chars])
+            chars++;
+        text = (WCHAR *)src;
+    } else if ((f = find_format(CF_TEXT)) && f->Data && !f->Delayed) {
+        /* ansi text only: widen it as latin 1, which covers ascii. */
+        SIZE_T n = 0;
+        while (n < f->Size && f->Data[n])
+            n++;
+        text = W32Alloc((n ? n : 1) * sizeof(WCHAR));
+        if (!text)
+            return;
+        for (SIZE_T i = 0; i < n; i++)
+            text[i] = f->Data[i];
+        chars = n;
+        widened = TRUE;
+    }
+    ULONG64 total = (ULONG64)chars * sizeof(WCHAR);
+    ULONG64 offset = 0;
+    do {
+        ULONG64 n = total - offset < HOST_CHUNK ? total - offset : HOST_CHUNK;
+        if (n)
+            memcpy(g_host_page, (PUCHAR)text + offset, (SIZE_T)n);
+        if (HalMimeHypercall(MIME_HC_CLIP_SET, (ULONG64)MmGetPhysicalAddress(g_host_page).QuadPart, n, offset, total, 0,
+                             0, NULL) != MIME_HC_STATUS_OK)
+            break;
+        offset += n;
+    } while (offset < total);
+    if (widened)
+        W32Free(text);
+}
+
+/* replaces the contents with the text of the host clipboard. */
+static void pull_from_host(void)
+{
+    if (!host_page())
+        return;
+    ULONG64 pa = (ULONG64)MmGetPhysicalAddress(g_host_page).QuadPart;
+    ULONG64 total = 0;
+    if (HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total) != MIME_HC_STATUS_OK)
+        return;
+    PUCHAR text = W32Alloc((SIZE_T)total + sizeof(WCHAR));
+    if (!text)
+        return;
+    ULONG64 offset = 0;
+    while (offset < total) {
+        ULONG64 n = total - offset < HOST_CHUNK ? total - offset : HOST_CHUNK;
+        ULONG64 now = 0;
+        if (HalMimeHypercall(MIME_HC_CLIP_GET, pa, n, offset, 0, 0, 0, &now) != MIME_HC_STATUS_OK || now != total) {
+            /* the host text changed meanwhile: a new notification follows. */
+            W32Free(text);
+            return;
+        }
+        memcpy(text + offset, g_host_page, (SIZE_T)n);
+        offset += n;
+    }
+    WND *old = g_owner ? WndLookup(g_owner) : NULL;
+    if (old)
+        QueuePost(old->Thread, g_owner, WM_DESTROYCLIPBOARD, 0, 0);
+    empty_formats();
+    g_owner = NULL;
+    g_owner_thread = NULL;
+    if (total) {
+        CLIP_FORMAT *f = &g_formats[g_format_count++];
+        memset(f, 0, sizeof(*f));
+        f->Format = CF_UNICODETEXT;
+        f->Data = text;
+        f->Size = (SIZE_T)total + sizeof(WCHAR);
+        text = NULL;
+        synthesize_text();
+    }
+    W32Free(text);
+    g_sequence++;
+    /* posted rather than sent: this runs on the input thread. */
+    for (ULONG i = 0; i < MAX_LISTENERS; i++) {
+        WND *w = g_listeners[i] ? WndLookup(g_listeners[i]) : NULL;
+        if (w)
+            QueuePost(w->Thread, g_listeners[i], WM_CLIPBOARDUPDATE, 0, 0);
+        else
+            g_listeners[i] = NULL;
+    }
+    WND *v = g_viewer ? WndLookup(g_viewer) : NULL;
+    if (v)
+        QueuePost(v->Thread, g_viewer, WM_DRAWCLIPBOARD, 0, 0);
+}
+
+void ClipboardHostChanged(void)
+{
+    if (g_open_thread)
+        g_host_pending = TRUE;
+    else
+        pull_from_host();
+}
+
 /* ------------------------------------------------------------------ cleanup */
 
 void ClipboardWindowDestroyed(WND *w)
@@ -148,6 +277,10 @@ void ClipboardThreadDestroyed(W32THREAD *t)
     if (g_open_thread == t) {
         g_open_thread = NULL;
         g_open_window = NULL;
+        if (g_host_pending) {
+            g_host_pending = FALSE;
+            pull_from_host();
+        }
     }
     if (g_owner_thread == t)
         g_owner_thread = NULL;
@@ -191,9 +324,15 @@ BOOL NTAPI NtUserCloseClipboard(void)
         changed = g_changed;
         g_changed = FALSE;
         if (changed) {
+            /* contents written after the host change are newer than it. */
+            g_host_pending = FALSE;
             synthesize_text();
             g_sequence++;
+            push_to_host();
             notify_listeners();
+        } else if (g_host_pending) {
+            g_host_pending = FALSE;
+            pull_from_host();
         }
     }
     UserLeave();

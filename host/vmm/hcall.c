@@ -2,6 +2,7 @@
 
 #include "../ui/ui.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,6 +86,57 @@ static uint64_t input_recv(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *coun
     if (vm->input_tail != vm->input_head)
         __atomic_fetch_or(&vm->shared->irq_pending, MIME_IRQ_INPUT, __ATOMIC_SEQ_CST);
     pthread_mutex_unlock(&vm->lock);
+    return MIME_HC_STATUS_OK;
+}
+
+#define CLIP_MAX_BYTES (64u << 20)
+
+/* the guest sends its clipboard text in chunks; the text is complete when the last chunk lands. */
+static pthread_mutex_t g_clip_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t *g_clip_pending;
+static uint64_t g_clip_total;
+
+static uint64_t clip_set(MimeVm *vm, uint64_t pa, uint64_t len, uint64_t offset, uint64_t total)
+{
+    if (total > CLIP_MAX_BYTES || (total & 1) || offset > total || len > total - offset)
+        return MIME_HC_STATUS_INVALID;
+    const void *src = len ? mime_vm_phys(vm, pa, len) : NULL;
+    if (len && !src)
+        return MIME_HC_STATUS_INVALID;
+    pthread_mutex_lock(&g_clip_lock);
+    if (offset == 0) {
+        free(g_clip_pending);
+        g_clip_pending = malloc(total ? total : 1);
+        g_clip_total = total;
+    }
+    uint64_t status = MIME_HC_STATUS_OK;
+    if (!g_clip_pending || g_clip_total != total) {
+        status = g_clip_pending ? MIME_HC_STATUS_INVALID : MIME_HC_STATUS_NO_MEMORY;
+    } else {
+        if (len)
+            memcpy(g_clip_pending + offset, src, len);
+        if (offset + len == total) {
+            mime_ui_clipboard_set((const uint16_t *)g_clip_pending, (size_t)(total / 2));
+            free(g_clip_pending);
+            g_clip_pending = NULL;
+        }
+    }
+    pthread_mutex_unlock(&g_clip_lock);
+    return status;
+}
+
+static uint64_t clip_get(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t offset, uint64_t *total)
+{
+    *total = 0;
+    if ((capacity & 1) || (offset & 1) || capacity > CLIP_MAX_BYTES)
+        return MIME_HC_STATUS_INVALID;
+    uint16_t *dst = NULL;
+    if (capacity) {
+        dst = mime_vm_phys(vm, pa, capacity);
+        if (!dst)
+            return MIME_HC_STATUS_INVALID;
+    }
+    *total = mime_ui_clipboard_read(dst, (size_t)(offset / 2), (size_t)(capacity / 2)) * 2;
     return MIME_HC_STATUS_OK;
 }
 
@@ -180,6 +232,12 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     case MIME_HC_BEEP:
         mime_ui_beep((uint32_t)regs[1]);
+        break;
+    case MIME_HC_CLIP_SET:
+        status = clip_set(vm, regs[1], regs[2], regs[3], regs[4]);
+        break;
+    case MIME_HC_CLIP_GET:
+        status = clip_get(vm, regs[1], regs[2], regs[3], &value);
         break;
     default:
         mime_warn("unknown hypercall %#llx", (unsigned long long)nr);

@@ -702,6 +702,7 @@ void PropFreeWindow(WND *w);
 void MenuWindowDestroyed(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
+void ClipboardHostChanged(void);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
 

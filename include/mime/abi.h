@@ -187,6 +187,8 @@ enum {
     MIME_HC_WIN_PRESENT = 0x23, /* (MimeWinPresent pa) */
     MIME_HC_WIN_CURSOR = 0x24,  /* (MIME_CURSOR_*) */
     MIME_HC_BEEP = 0x25,        /* (type) */
+    MIME_HC_CLIP_SET = 0x26,    /* (pa, len, offset, total) utf-16le text in chunks, committed at the last byte */
+    MIME_HC_CLIP_GET = 0x27,    /* (pa, capacity, offset) -> total bytes of the host utf-16le text */
 };
 
 enum {
@@ -375,6 +377,7 @@ enum {
     MIME_INPUT_WINDOW_FOCUS = 9,   /* x = 1 gained, 0 lost */
     MIME_INPUT_WINDOW_CLOSE = 10,  /* close requested by the host (cmd+w, dock) */
     MIME_INPUT_MOUSE_LEAVE = 11,
+    MIME_INPUT_CLIPBOARD = 12,     /* another host application changed the clipboard */
 };
 
 enum {
