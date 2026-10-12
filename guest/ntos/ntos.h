@@ -1,0 +1,769 @@
+/*
+ * mime kernel internal interface.
+ */
+#ifndef MIME_NTOS_H
+#define MIME_NTOS_H
+
+#define MIME_KERNEL 1
+#include <mime/abi.h>
+#include <mime/ddk.h>
+#include <mime/ntapi.h>
+#include <stdbool.h>
+
+#include "../rtl/rtl.h"
+#include "arch/ktrap.h"
+
+#define KI_TAG(a, b, c, d) ((ULONG)(a) | (ULONG)(b) << 8 | (ULONG)(c) << 16 | (ULONG)(d) << 24)
+
+/* ------------------------------------------------------------------ arch */
+
+FORCEINLINE void KiMemoryBarrier(void)
+{
+    __asm__ volatile("dmb ish" ::: "memory");
+}
+
+FORCEINLINE void KiDataSyncBarrier(void)
+{
+    __asm__ volatile("dsb ish" ::: "memory");
+}
+
+FORCEINLINE void KiInstructionBarrier(void)
+{
+    __asm__ volatile("isb" ::: "memory");
+}
+
+#define KI_READ_SYSREG(name)                                                                                      \
+    ({                                                                                                            \
+        ULONG64 _v;                                                                                               \
+        __asm__ volatile("mrs %0, " #name : "=r"(_v));                                                            \
+        _v;                                                                                                       \
+    })
+#define KI_WRITE_SYSREG(name, v) __asm__ volatile("msr " #name ", %0" ::"r"((ULONG64)(v)) : "memory")
+
+FORCEINLINE ULONG64 KiDisableInterrupts(void)
+{
+    ULONG64 daif = KI_READ_SYSREG(daif);
+    __asm__ volatile("msr daifset, #3" ::: "memory");
+    return daif;
+}
+
+FORCEINLINE void KiRestoreInterrupts(ULONG64 daif)
+{
+    KI_WRITE_SYSREG(daif, daif);
+}
+
+FORCEINLINE void KiEnableInterrupts(void)
+{
+    __asm__ volatile("msr daifclr, #3" ::: "memory");
+}
+
+FORCEINLINE BOOLEAN KiInterruptsEnabled(void)
+{
+    return (KI_READ_SYSREG(daif) & (1u << 7)) == 0;
+}
+
+typedef struct _KTRAP_FRAME {
+    ULONG64 X[31];
+    ULONG64 Sp;
+    ULONG64 Pc;
+    ULONG64 Spsr;
+    ULONG64 Esr;
+    ULONG64 Far;
+    ULONG64 Flags;
+    ULONG64 Reserved;
+    NEON128 V[32];
+    ULONG Fpcr;
+    ULONG Fpsr;
+    ULONG64 Pad;
+} KTRAP_FRAME, *PKTRAP_FRAME;
+MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Sp) == KTRAP_SP, "trap sp");
+MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Flags) == KTRAP_FLAGS, "trap flags");
+MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, V) == KTRAP_V, "trap v");
+MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Fpcr) == KTRAP_FPCR, "trap fpcr");
+MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
+
+#define PSR_MODE_EL0 0x0
+#define PSR_MODE_EL1H 0x5
+#define PSR_DAIF_MASK (0xFull << 6)
+
+typedef struct _KJUMP_BUFFER {
+    ULONG64 X19_X30[12];
+    ULONG64 Sp;
+    ULONG64 D8_D15[8];
+} KJUMP_BUFFER;
+
+__attribute__((returns_twice)) int KiSetJump(KJUMP_BUFFER *buffer);
+DECLSPEC_NORETURN void KiLongJump(KJUMP_BUFFER *buffer, int value);
+void KiSwapContextInternal(ULONG64 *old_sp, ULONG64 new_sp);
+void KiThreadStartup(void);
+DECLSPEC_NORETURN void KiEnterUserMode(PKTRAP_FRAME frame);
+NTSTATUS KiCallUserMode(ULONG64 *callback_sp_slot, PKTRAP_FRAME frame);
+DECLSPEC_NORETURN void KiCallbackReturnInternal(ULONG64 callback_sp, NTSTATUS status);
+ULONG64 KiCallService(PVOID routine, ULONG64 *args, ULONG stack_args);
+
+/* ------------------------------------------------------------------ hal */
+
+extern MimeBootInfo *HalBootInfo;
+extern MimeSharedPage *HalSharedPage;
+
+ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
+                     PULONG64 value);
+void HalInitialize(MimeBootInfo *boot);
+void HalLog(const char *text, SIZE_T length);
+DECLSPEC_NORETURN void HalPanic(const char *text);
+ULONG64 HalPhysicalOf(const void *va);
+void *HalPhysmap(ULONG64 pa);
+ULONG64 HalReadCounter(void);
+void HalArmTimer(ULONG64 deadline_counter);
+/* the system files mapped by the host, see MimeRomHeader. paths are relative to C:. */
+const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars);
+const MimeRomEntry *HalRomEntry(ULONG index); /* NULL past the last entry */
+ULONG64 HalRomPhysical(const MimeRomEntry *entry);
+BOOLEAN HalIsRomPhysical(ULONG64 pa);
+ULONG HalAcknowledgeInterrupt(void); /* interrupt id, 1020 and above when none is pending */
+void HalEndOfInterrupt(ULONG intid);
+ULONG64 HalCounterToHns(ULONG64 counter_delta);
+ULONG64 HalHnsToCounter(ULONG64 hns);
+
+void KiLogPrintf(const char *fmt, ...);
+#define KdPrint(args) KiLogPrintf args
+#define MIME_TRACE(...) KiLogPrintf(__VA_ARGS__)
+
+#define ASSERT(e)                                                                                                 \
+    do {                                                                                                          \
+        if (!(e))                                                                                                 \
+            KiAssertFailed(#e, __FILE__, __LINE__);                                                               \
+    } while (0)
+DECLSPEC_NORETURN void KiAssertFailed(const char *expr, const char *file, int line);
+
+/* ------------------------------------------------------------------ ke */
+
+typedef enum _KTHREAD_STATE {
+    Initialized,
+    Ready,
+    Running,
+    Standby,
+    Terminated,
+    Waiting,
+    Transition,
+    DeferredReady,
+} KTHREAD_STATE;
+
+typedef struct _KWAIT_BLOCK {
+    LIST_ENTRY WaitListEntry;
+    struct _KTHREAD *Thread;
+    PVOID Object;
+    struct _KWAIT_BLOCK *NextWaitBlock;
+    USHORT WaitKey;
+    UCHAR WaitType;
+    UCHAR BlockState;
+    ULONG Pad;
+} KWAIT_BLOCK, *PKWAIT_BLOCK;
+
+#define THREAD_WAIT_OBJECTS 3
+#define MAXIMUM_WAIT_OBJECTS 64
+#define TIMER_WAIT_BLOCK 3
+#define LOW_PRIORITY 0
+#define LOW_REALTIME_PRIORITY 16
+#define HIGH_PRIORITY 31
+#define MAXIMUM_PRIORITY 32
+
+typedef struct _KTHREAD {
+    DISPATCHER_HEADER Header;
+    ULONG64 KernelSp;
+    PVOID InitialStack;
+    PVOID StackLimit;
+    PVOID StackAllocation;
+    SIZE_T StackAllocationSize;
+    PKTRAP_FRAME TrapFrame;
+    struct _KPROCESS *Process;
+    struct _KPROCESS *ApcStateProcess; /* attached process, or Process */
+    PTEB Teb;
+    LIST_ENTRY ThreadListEntry;
+    LIST_ENTRY ReadyListEntry;
+    volatile UCHAR State;
+    KPROCESSOR_MODE PreviousMode;
+    KPROCESSOR_MODE WaitMode;
+    BOOLEAN Alertable;
+    BOOLEAN Alerted[2];
+    volatile BOOLEAN UserApcPending;
+    volatile BOOLEAN Terminating;
+    SCHAR Priority;
+    SCHAR BasePriority;
+    UCHAR WaitReason;
+    BOOLEAN WaitIrqlRaised;
+    LONG Quantum;
+    LONG_PTR WaitStatus;
+    PKWAIT_BLOCK WaitBlockList;
+    KWAIT_BLOCK WaitBlock[THREAD_WAIT_OBJECTS + 1];
+    KTIMER Timer;
+    LIST_ENTRY MutantListHead;
+    LIST_ENTRY ApcListHead[2]; /* kernel, user */
+    volatile BOOLEAN KernelApcPending;
+    SHORT KernelApcDisable;
+    SHORT SpecialApcDisable;
+    ULONG64 CallbackSp;
+    ULONG CallbackDepth;
+    ULONG CallbackResultLength;
+    PVOID CallbackResult;
+    PVOID Win32Thread;
+    KJUMP_BUFFER *FaultRecovery;
+    ULONG64 ContextSwitches;
+    ULONG64 KernelTime;
+    ULONG64 UserTime;
+    ULONG SuspendCount;
+    KSEMAPHORE SuspendSemaphore;
+    KAPC SuspendApc;
+} KTHREAD;
+
+typedef struct _KPROCESS {
+    DISPATCHER_HEADER Header;
+    ULONG64 Ttbr0;   /* root table physical address with the asid in bits 63:48 */
+    ULONG64 *PageDirectory; /* physmap address of the root table */
+    USHORT Asid;
+    SCHAR BasePriority;
+    UCHAR Pad;
+    LIST_ENTRY ThreadListHead;
+    volatile LONG ActiveThreads;
+} KPROCESS;
+
+typedef struct _KPRCB {
+    ULONG Number;
+    ULONG Pad;
+    struct _KTHREAD *CurrentThread;
+    struct _KTHREAD *NextThread;
+    struct _KTHREAD *IdleThread;
+    LIST_ENTRY ReadyListHead[MAXIMUM_PRIORITY];
+    ULONG ReadySummary;
+    volatile BOOLEAN DispatchPending;
+    volatile BOOLEAN DpcPending;
+    BOOLEAN InDpc;
+    BOOLEAN Pad2;
+    SINGLE_LIST_ENTRY DpcHead;
+    PSINGLE_LIST_ENTRY *DpcTail;
+    ULONG64 InterruptCount;
+    ULONG64 ContextSwitches;
+    ULONG64 DpcCount;
+    ULONG64 IdleTicks;
+} KPRCB, *PKPRCB;
+
+typedef struct _KPCR {
+    struct _KPCR *Self;
+    PKPRCB CurrentPrcb;
+    volatile KIRQL Irql;
+    UCHAR Pad[7];
+    ULONG64 Reserved[5];
+    KPRCB Prcb;
+} KPCR, *PKPCR;
+
+extern KPCR KiBootPcr;
+
+FORCEINLINE PKPCR KeGetPcr(void)
+{
+    PKPCR pcr;
+    __asm__ volatile("mov %0, x18" : "=r"(pcr));
+    return pcr;
+}
+
+FORCEINLINE PKPRCB KeGetCurrentPrcb(void)
+{
+    return KeGetPcr()->CurrentPrcb;
+}
+
+FORCEINLINE PKTHREAD KiCurrentThread(void)
+{
+    return KeGetPcr()->CurrentPrcb->CurrentThread;
+}
+
+/* the dispatcher database is protected by disabling interrupts (one cpu for now). */
+FORCEINLINE ULONG64 KiAcquireDispatcherLock(void)
+{
+    return KiDisableInterrupts();
+}
+
+FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
+{
+    KiRestoreInterrupts(state);
+}
+
+void KiInitializeKernel(MimeBootInfo *boot);
+void KiInitializeScheduler(void);
+void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVOID stack_limit,
+                        PKSTART_ROUTINE routine, PVOID context);
+void KiReadyThread(PKTHREAD thread);
+void KiStartThread(PKTHREAD thread);
+void KiSwapThread(void);
+void KiDispatchPendingWork(void);
+void KiDeliverDpcs(void);
+void KiCheckPreemption(void);
+NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASON reason, KPROCESSOR_MODE mode,
+                       BOOLEAN alertable, PLARGE_INTEGER timeout, PKWAIT_BLOCK blocks);
+void KiSignalWaiters(PDISPATCHER_HEADER object, KPRIORITY increment);
+void KiUnwaitThread(PKTHREAD thread, LONG_PTR status);
+void KiInitializeTimers(void);
+void KiClockInterrupt(PKTRAP_FRAME frame);
+ULONG64 KiQueryInterruptTime(void);
+void KiProgramNextTimer(void);
+DECLSPEC_NORETURN void KiTerminateCurrentThread(NTSTATUS status);
+void KiInitializeProcess(PKPROCESS process, ULONG64 ttbr0, ULONG64 *pgd, USHORT asid);
+void KiAttachProcess(PKPROCESS process);
+void KiSwitchAddressSpace(PKPROCESS process);
+void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame);
+BOOLEAN KiInsertQueueApc(PKAPC apc, KPRIORITY increment);
+void KeInitializeApc(PKAPC apc, PKTHREAD thread, KAPC_ENVIRONMENT env, PKKERNEL_ROUTINE kernel_routine,
+                     PKRUNDOWN_ROUTINE rundown, PKNORMAL_ROUTINE normal, KPROCESSOR_MODE mode, PVOID context);
+BOOLEAN KeInsertQueueApc(PKAPC apc, PVOID arg1, PVOID arg2, KPRIORITY increment);
+void KiExitToUserMode(PKTRAP_FRAME frame);
+NTSTATUS KiUserCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length);
+NTSTATUS KiCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);
+void KiContextToTrapFrame(const CONTEXT *context, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode);
+void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *context, ULONG flags);
+BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame);
+NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, ULONG count);
+void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);
+NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize);
+NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize);
+extern PVOID KeUserCallbackDispatcher;
+extern PVOID KeUserExceptionDispatcher;
+extern PVOID KeUserApcDispatcher;
+
+/* ke/cpu.c, the id registers of the boot processor. */
+typedef struct KI_PROCESSOR_IDS {
+    ULONG64 Midr, Pfr0, Pfr1, Dfr0, Dfr1, Afr0, Afr1, Isar0, Isar1, Isar2, Mmfr0, Mmfr1, Mmfr2, Ctr;
+} KI_PROCESSOR_IDS;
+extern KI_PROCESSOR_IDS KiProcessorIds;
+void KiReadProcessorIds(void);
+void KiSetProcessorFeatures(BOOLEAN *features);
+PCSTR KiProcessorVendor(void);
+USHORT KiProcessorModel(void);
+USHORT KiProcessorRevision(void);
+
+/* user memory access with recovery from faults. */
+#define KI_TRY_USER(buf) (KiCurrentThread()->FaultRecovery = &(buf), KiSetJump(&(buf)) == 0)
+#define KI_END_TRY_USER() (KiCurrentThread()->FaultRecovery = NULL)
+NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length);
+NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length);
+BOOLEAN KiIsUserRange(const void *address, SIZE_T length);
+NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING kernel_copy, PCUNICODE_STRING user_string);
+void KiFreeCapturedString(PUNICODE_STRING s);
+
+typedef enum _KI_CLOCK {
+    KI_CLOCK_TICK_HNS = 156250, /* 15.625 ms, the windows default */
+} KI_CLOCK;
+
+/* ------------------------------------------------------------------ mm */
+
+#define MM_PFN_FREE 0x1
+#define MM_PFN_ALLOCATED 0x2
+#define MM_PFN_PAGE_TABLE 0x4
+#define MM_PFN_POOL 0x8
+#define MM_PFN_RESERVED 0x10
+
+typedef struct _MMPFN {
+    LIST_ENTRY ListEntry;
+    ULONG Flags;
+    UCHAR Order;
+    UCHAR Pad[3];
+    volatile LONG RefCount;
+    ULONG ShareCount;
+} MMPFN, *PMMPFN;
+
+/* stage 1 descriptor bits. */
+#define MM_PTE_VALID (1ull << 0)
+#define MM_PTE_TABLE (1ull << 1)
+#define MM_PTE_PAGE (1ull << 1)
+#define MM_PTE_ATTR(i) ((ULONG64)(i) << 2)
+#define MM_PTE_AP_EL0 (1ull << 6)
+#define MM_PTE_AP_RO (1ull << 7)
+#define MM_PTE_SH_INNER (3ull << 8)
+#define MM_PTE_AF (1ull << 10)
+#define MM_PTE_NG (1ull << 11)
+#define MM_PTE_PXN (1ull << 53)
+#define MM_PTE_UXN (1ull << 54)
+#define MM_PTE_SW_COW (1ull << 55)
+#define MM_PTE_SW_SHARED (1ull << 56) /* page belongs to a section, never freed by the pte */
+#define MM_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
+
+/* invalid ptes with this bit describe committed but not yet present pages. */
+#define MM_SWPTE_COMMITTED (1ull << 1)
+#define MM_SWPTE_GUARD (1ull << 2)
+#define MM_SWPTE_PROT_SHIFT 4
+#define MM_SWPTE_PROT_MASK (0x7FFull << MM_SWPTE_PROT_SHIFT)
+
+#define MM_KERNEL_RW (MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF | MM_PTE_UXN | MM_PTE_PXN)
+#define MM_KERNEL_RO (MM_KERNEL_RW | MM_PTE_AP_RO)
+#define MM_KERNEL_RX (MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF | MM_PTE_UXN | MM_PTE_AP_RO)
+
+typedef enum _MI_VAD_TYPE {
+    MiVadPrivate,
+    MiVadMapped,
+    MiVadImage,
+    MiVadShared, /* kernel provided shared memory, e.g. the desktop heap */
+} MI_VAD_TYPE;
+
+struct _SECTION;
+
+typedef struct _MMVAD {
+    LIST_ENTRY Links;
+    ULONG_PTR StartVa;
+    ULONG_PTR EndVa; /* exclusive */
+    ULONG Type;
+    ULONG InitialProtect;
+    struct _SECTION *Section;
+    ULONG64 SectionOffset;
+} MMVAD, *PMMVAD;
+
+typedef struct _MMADDRESS_SPACE {
+    LIST_ENTRY VadList;
+    PMMVAD Hint;
+    FAST_MUTEX Lock;
+    ULONG64 *Root; /* physmap pointer to the l0 table */
+    ULONG64 RootPhys;
+    USHORT Asid;
+    SIZE_T CommittedPages;
+} MMADDRESS_SPACE, *PMMADDRESS_SPACE;
+
+typedef struct _MI_IMAGE_INFO {
+    ULONG_PTR ImageBase; /* preferred */
+    ULONG SizeOfImage;
+    ULONG EntryPoint;
+    ULONG SizeOfHeaders;
+    USHORT Machine;
+    USHORT Subsystem;
+    USHORT SubsystemMajor;
+    USHORT SubsystemMinor;
+    USHORT DllCharacteristics;
+    USHORT Characteristics;
+    ULONG64 StackReserve;
+    ULONG64 StackCommit;
+    BOOLEAN Relocatable;
+} MI_IMAGE_INFO;
+
+
+typedef struct _SECTION {
+    ULONG Flags;   /* SEC_IMAGE, SEC_COMMIT, ... */
+    ULONG Protect; /* maximum protection of views */
+    ULONG64 Size;
+    ULONG PageCount;
+    ULONG Pad;
+    ULONG64 *Pages;       /* physical address of every prototype page */
+    UCHAR *PageProtect;   /* image sections: MI protection index per page */
+    PVOID SystemVa;       /* kernel mapping when mapped in system space */
+    PFILE_OBJECT File;
+    UNICODE_STRING FileName;
+    MI_IMAGE_INFO Image;
+    ULONG RelocRva;
+    ULONG RelocSize;
+} SECTION, *PSECTION;
+
+void MmInitialize(MimeBootInfo *boot);
+void MmInitializePhase1(void);
+ULONG64 MmAllocatePage(void);           /* zeroed, returns physical address, 0 on failure */
+ULONG64 MmAllocatePageNoZero(void);
+void MmFreePage(ULONG64 pa);
+ULONG64 MmAllocateContiguous(SIZE_T pages); /* zeroed run */
+void MmFreeContiguous(ULONG64 pa, SIZE_T pages);
+PMMPFN MiGetPfn(ULONG64 pa);
+SIZE_T MmGetFreePages(void);
+SIZE_T MmGetTotalPages(void);
+
+ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level);
+BOOLEAN MiMapPage(ULONG64 *root, ULONG_PTR va, ULONG64 pa, ULONG64 attrs);
+ULONG64 MiUnmapPage(ULONG64 *root, ULONG_PTR va, USHORT asid);
+ULONG64 MiReadPte(ULONG64 *root, ULONG_PTR va);
+void MiWritePte(ULONG64 *root, ULONG_PTR va, ULONG64 pte, USHORT asid);
+void MiFlushTlbPage(ULONG_PTR va, USHORT asid, BOOLEAN global);
+void MiFlushTlbAsid(USHORT asid);
+void MiFlushTlbAll(void);
+ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user);
+ULONG MiPteToProtect(ULONG64 pte);
+ULONG64 *MiKernelRoot(void);
+
+PVOID MmAllocateSystemVa(SIZE_T pages);
+void MmFreeSystemVa(PVOID va, SIZE_T pages);
+PVOID MmMapPagesInSystem(const ULONG64 *pages, SIZE_T count, ULONG64 attrs);
+PVOID MmAllocateKernelStack(SIZE_T size, PVOID *limit);
+void MmFreeKernelStack(PVOID allocation, SIZE_T size);
+
+void ExInitializePool(void);
+SIZE_T ExQueryPoolUsage(void);
+
+NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as);
+void MmDeleteAddressSpace(PMMADDRESS_SPACE as);
+PMMVAD MiFindVad(PMMADDRESS_SPACE as, ULONG_PTR va);
+NTSTATUS MiInsertVad(PMMADDRESS_SPACE as, PMMVAD vad);
+NTSTATUS MiFindFreeRange(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, BOOLEAN top_down,
+                         ULONG_PTR *out);
+BOOLEAN MiRangeIsFree(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end);
+void MiRemoveVad(PMMADDRESS_SPACE as, PMMVAD vad);
+NTSTATUS MiAllocateVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect);
+NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type);
+NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG protect, PULONG old);
+NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info);
+BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode);
+NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out);
+NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULONG flags, PSECTION *out);
+NTSTATUS MiMapViewOfSection(PSECTION section, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
+                            ULONG protect, ULONG allocation_type);
+NTSTATUS MiUnmapViewOfSection(PEPROCESS process, PVOID base);
+NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *info);
+NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base, SIZE_T *size, PVOID *entry);
+PVOID MiFindKernelExport(PVOID image_base, const char *name);
+NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read);
+
+/* ------------------------------------------------------------------ ob */
+
+typedef struct _OBJECT_TYPE_INITIALIZER {
+    ULONG PoolType;
+    ACCESS_MASK ValidAccessMask;
+    ULONG DefaultObjectSize;
+    BOOLEAN Waitable; /* the object starts with a DISPATCHER_HEADER */
+    void (*CloseProcedure)(PEPROCESS process, PVOID object, ULONG handle_count);
+    void (*DeleteProcedure)(PVOID object);
+    NTSTATUS (*ParseProcedure)(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete_name,
+                               PUNICODE_STRING remaining, PVOID context, PVOID *found);
+    PVOID (*WaitObject)(PVOID object); /* dispatcher object to wait on, if not the body itself */
+} OBJECT_TYPE_INITIALIZER;
+
+typedef struct _OBJECT_TYPE {
+    UNICODE_STRING Name;
+    WCHAR NameBuffer[32];
+    OBJECT_TYPE_INITIALIZER Init;
+    ULONG Index;
+    volatile LONG TotalObjects;
+    volatile LONG TotalHandles;
+} OBJECT_TYPE;
+
+typedef struct _OBJECT_HEADER {
+    volatile LONG_PTR PointerCount;
+    volatile LONG_PTR HandleCount;
+    POBJECT_TYPE Type;
+    struct _OBJECT_DIRECTORY *Directory;
+    UNICODE_STRING Name;
+    ULONG Flags;
+    ULONG Pad;
+    ULONG64 Reserved;
+} OBJECT_HEADER;
+MIME_STATIC_ASSERT(sizeof(OBJECT_HEADER) == 64, "OBJECT_HEADER");
+
+#define OB_FLAG_PERMANENT 0x1
+#define OB_FLAG_KERNEL 0x2
+
+#define OBJECT_TO_HEADER(o) ((OBJECT_HEADER *)((PUCHAR)(o) - sizeof(OBJECT_HEADER)))
+#define HEADER_TO_OBJECT(h) ((PVOID)((PUCHAR)(h) + sizeof(OBJECT_HEADER)))
+
+#define OB_DIRECTORY_BUCKETS 37
+
+typedef struct _OBJECT_DIRECTORY_ENTRY {
+    struct _OBJECT_DIRECTORY_ENTRY *Next;
+    PVOID Object;
+} OBJECT_DIRECTORY_ENTRY;
+
+typedef struct _OBJECT_DIRECTORY {
+    OBJECT_DIRECTORY_ENTRY *Buckets[OB_DIRECTORY_BUCKETS];
+} OBJECT_DIRECTORY, *POBJECT_DIRECTORY;
+
+typedef struct _OBJECT_SYMBOLIC_LINK {
+    UNICODE_STRING Target;
+} OBJECT_SYMBOLIC_LINK, *POBJECT_SYMBOLIC_LINK;
+
+typedef struct _HANDLE_TABLE_ENTRY {
+    PVOID Object; /* object body */
+    ACCESS_MASK GrantedAccess;
+    ULONG Attributes;
+} HANDLE_TABLE_ENTRY, *PHANDLE_TABLE_ENTRY;
+
+typedef struct _HANDLE_TABLE {
+    PHANDLE_TABLE_ENTRY Entries;
+    ULONG Capacity;
+    ULONG Count;
+    ULONG FirstFree;
+    KSPIN_LOCK Lock;
+} HANDLE_TABLE, *PHANDLE_TABLE;
+
+extern POBJECT_TYPE ObDirectoryType;
+extern POBJECT_TYPE ObSymbolicLinkType;
+extern POBJECT_TYPE ObTypeType;
+extern POBJECT_DIRECTORY ObRootDirectory;
+
+void ObInitialize(void);
+POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init);
+NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ULONG body_size,
+                        PVOID *object);
+NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, KPROCESSOR_MODE mode,
+                             PHANDLE handle);
+NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode);
+NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
+                           ACCESS_MASK *granted);
+NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
+                            KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object);
+NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                            ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
+NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_STRING name);
+NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out);
+NTSTATUS ObCreateSymbolicLink(PCWSTR link, PCWSTR target);
+NTSTATUS ObInitializeHandleTable(PHANDLE_TABLE table);
+void ObKillProcessHandles(PEPROCESS process);
+NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS target_process, PHANDLE target,
+                           ACCESS_MASK access, ULONG attributes, ULONG options);
+PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
+NTSTATUS ObCaptureObjectAttributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name);
+NTSTATUS ObStoreHandle(PHANDLE user_handle, HANDLE handle);
+NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
+POBJECT_TYPE ObGetObjectType(PVOID object);
+NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars);
+
+/* ------------------------------------------------------------------ ps */
+
+typedef struct _ETHREAD {
+    KTHREAD Tcb;
+    CLIENT_ID Cid;
+    PVOID StartAddress;
+    PVOID Win32StartAddress;
+    NTSTATUS ExitStatus;
+    BOOLEAN SystemThread;
+    BOOLEAN HasTerminated;
+    BOOLEAN Initialized;
+    BOOLEAN DeadThread;
+    LIST_ENTRY ThreadListEntry; /* in EPROCESS */
+    PVOID UserStackAllocation;
+    SIZE_T UserStackSize;
+    ULONG64 CreateTime;
+    ULONG64 ExitTime;
+    LONG_PTR SameThreadApcFlags;
+} ETHREAD;
+
+#define MIME_IMAGE_NAME_CHARS 260
+
+typedef struct _EPROCESS {
+    KPROCESS Pcb;
+    HANDLE UniqueProcessId;
+    HANDLE InheritedFromUniqueProcessId;
+    LIST_ENTRY ActiveProcessLinks;
+    LIST_ENTRY ThreadListHead;
+    volatile LONG ThreadCount;
+    HANDLE_TABLE HandleTable;
+    MMADDRESS_SPACE AddressSpace;
+    PPEB Peb;
+    PVOID SectionBaseAddress;
+    PSECTION ImageSection;
+    PVOID NtdllBase;
+    CHAR ImageFileName[16];
+    WCHAR ImagePathBuffer[MIME_IMAGE_NAME_CHARS];
+    UNICODE_STRING ImagePath;
+    NTSTATUS ExitStatus;
+    BOOLEAN Terminating;
+    BOOLEAN Exited;
+    BOOLEAN SystemProcess;
+    BOOLEAN ParametersInitialized;
+    PVOID Win32Process;
+    PVOID KernelCallbackTable;
+    ULONG64 MimeRequestId; /* host run request that created the process */
+    ULONG64 CreateTime;
+    ULONG64 ExitTime;
+    KEVENT ExitEvent;
+} EPROCESS;
+
+extern LIST_ENTRY PsActiveProcessHead;
+extern PEPROCESS PsIdleProcess;
+extern POBJECT_TYPE PsProcessTypeObject;
+extern POBJECT_TYPE PsThreadTypeObject;
+
+FORCEINLINE PEPROCESS PsCurrentProcess(void)
+{
+    return (PEPROCESS)KiCurrentThread()->Process;
+}
+
+FORCEINLINE PETHREAD PsCurrentThread(void)
+{
+    return (PETHREAD)KiCurrentThread();
+}
+
+void PsInitialize(void);
+void PsInitializeIdleThread(void);
+NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE routine, PVOID context,
+                         PETHREAD *out);
+NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
+                             SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out);
+NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING command_line,
+                             PCUNICODE_STRING current_directory, ULONG64 request_id, PEPROCESS *out);
+DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
+NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
+PEPROCESS PspLookupProcess(HANDLE pid);
+PETHREAD PspLookupThread(HANDLE tid);
+NTSTATUS PspAllocateId(PVOID object, PHANDLE id);
+void PspFreeId(HANDLE id);
+NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
+NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread);
+void PspReapDeadThreads(void);
+extern PVOID PspSystemDllBase;
+extern PSECTION PspSystemDllSection;
+NTSTATUS PspInitializeSystemDll(void);
+PVOID PspLookupSystemDllExport(const char *name);
+
+/* ------------------------------------------------------------------ io */
+
+extern POBJECT_TYPE IoDeviceObjectType;
+extern POBJECT_TYPE IoDriverObjectType;
+extern POBJECT_TYPE IoFileObjectTypeObject;
+
+void IoInitialize(void);
+NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *out);
+NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                       ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
+NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG options, PFILE_OBJECT *out);
+NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOID buffer, ULONG length,
+                               PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
+const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
+
+NTSTATUS PspBuildEnvironment(PWCHAR *block, SIZE_T *bytes);
+
+/* cm, the configuration manager. */
+extern POBJECT_TYPE CmKeyType;
+void CmInitSystem1(void);
+NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);
+NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length);
+NTSTATUS CmEnumerateValues(PCWSTR key_path,
+                           void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type, const void *data, ULONG length),
+                           PVOID ctx);
+
+/* io/fscache.c, the file data cache of the host backed volumes. */
+typedef struct _MIMEFS_CACHE MIMEFS_CACHE;
+void FsCacheInitialize(void);
+MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info);
+void FsCacheClose(MIMEFS_CACHE *cache);
+void FsCacheInvalidate(ULONG volume, ULONG64 file_id);
+BOOLEAN FsCacheRead(MIMEFS_CACHE *cache, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done);
+NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
+NTSTATUS IoQueryFileSize(PFILE_OBJECT file, ULONG64 *size);
+NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry);
+
+/* ------------------------------------------------------------------ ex */
+
+extern POBJECT_TYPE ExEventType;
+extern POBJECT_TYPE ExMutantType;
+extern POBJECT_TYPE ExSemaphoreType;
+extern POBJECT_TYPE ExTimerType;
+extern POBJECT_TYPE MmSectionType;
+extern KUSER_SHARED_DATA *SharedUserData;
+extern ULONG64 KeBootFiletime;
+
+void ExInitialize(void);
+void ExUpdateSystemTime(void);
+NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
+                       PLARGE_INTEGER timeout, KPROCESSOR_MODE mode);
+
+/* ------------------------------------------------------------------ mime session */
+
+void MiSessionInitialize(void);
+void MimeSessionInterrupt(ULONG bits);
+void MimeSessionProcessExited(PEPROCESS process);
+void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length);
+extern KEVENT MimeInputReadyEvent;
+
+/* system services */
+void KiInitializeSystemServices(void);
+
+#endif

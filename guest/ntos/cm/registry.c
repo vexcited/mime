@@ -1,0 +1,1019 @@
+/*
+ * the registry: a tree of key nodes in memory, loaded lazily from hives,
+ * exposed as Key objects below \REGISTRY in the object namespace, and the
+ * Nt*Key system services. links such as CurrentControlSet are keys with a
+ * SymbolicLinkValue, followed while parsing a path. access checks are not
+ * enforced yet: every open is granted.
+ */
+#include "cm.h"
+
+#define MAX_REPARSE 16
+#define MAX_PATH_CHARS 2048
+
+FAST_MUTEX CmpLock;
+CM_NODE *CmpRoot;
+POBJECT_TYPE CmKeyType;
+
+typedef struct CM_KEY_BODY {
+    CM_NODE *Node;
+} CM_KEY_BODY;
+
+typedef struct CM_PARSE_CONTEXT {
+    BOOLEAN Create;
+    BOOLEAN Kernel; /* boot time creation: children of volatile keys become volatile */
+    ULONG Options;
+    ULONG Disposition;
+} CM_PARSE_CONTEXT;
+
+static WCHAR upcase(WCHAR c)
+{
+    return (WCHAR)towupper(c);
+}
+
+static LONG compare_names(const WCHAR *a, ULONG alen, const WCHAR *b, ULONG blen)
+{
+    for (ULONG i = 0; i < alen && i < blen; i++) {
+        WCHAR x = upcase(a[i]), y = upcase(b[i]);
+        if (x != y)
+            return x < y ? -1 : 1;
+    }
+    return alen == blen ? 0 : alen < blen ? -1 : 1;
+}
+
+static LARGE_INTEGER now(void)
+{
+    LARGE_INTEGER t;
+    KeQuerySystemTime(&t);
+    return t;
+}
+
+static CM_NODE *new_node(CM_NODE *parent, const WCHAR *name, ULONG chars)
+{
+    CM_NODE *n = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(CM_NODE) + chars * sizeof(WCHAR), KI_TAG('C', 'm', 'N', 'd'));
+    if (!n)
+        return NULL;
+    n->Parent = parent;
+    n->NameLength = (USHORT)chars;
+    memcpy(n->Name, name, chars * sizeof(WCHAR));
+    return n;
+}
+
+/* inserts a child at its sorted position. */
+static void link_child(CM_NODE *parent, CM_NODE *child)
+{
+    CM_NODE **link = &parent->Child;
+    while (*link && compare_names((*link)->Name, (*link)->NameLength, child->Name, child->NameLength) < 0)
+        link = &(*link)->Next;
+    child->Next = *link;
+    *link = child;
+}
+
+typedef struct LOAD_CONTEXT {
+    CM_NODE *Parent;
+    CM_NODE **Tail;
+    CM_HIVE_KEY Key;
+} LOAD_CONTEXT;
+
+static NTSTATUS load_child(PVOID context, ULONG cell)
+{
+    LOAD_CONTEXT *c = context;
+    NTSTATUS status = CmpReadKey(c->Parent->Hive, cell, &c->Key);
+    if (!NT_SUCCESS(status))
+        return status;
+    CM_NODE *n = new_node(c->Parent, c->Key.Name, c->Key.NameLength);
+    if (!n)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    n->Hive = c->Parent->Hive;
+    n->Cell = cell;
+    n->LastWrite = c->Key.LastWrite;
+    if (c->Key.Flags & CM_HIVE_KEY_LINK)
+        n->Flags |= CM_NODE_LINK;
+    /* the hive keeps its subkeys sorted, keys created before stay merged in order. */
+    while (*c->Tail && compare_names((*c->Tail)->Name, (*c->Tail)->NameLength, n->Name, n->NameLength) < 0)
+        c->Tail = &(*c->Tail)->Next;
+    n->Next = *c->Tail;
+    *c->Tail = n;
+    c->Tail = &n->Next;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS CmpLoadChildren(CM_NODE *node)
+{
+    if (node->Flags & CM_NODE_CHILDREN_LOADED)
+        return STATUS_SUCCESS;
+    node->Flags |= CM_NODE_CHILDREN_LOADED;
+    if (!node->Hive)
+        return STATUS_SUCCESS;
+    LOAD_CONTEXT *c = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*c), KI_TAG('C', 'm', 'L', 'c'));
+    if (!c)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    c->Parent = node;
+    c->Tail = &node->Child;
+    NTSTATUS status = CmpReadKey(node->Hive, node->Cell, &c->Key);
+    if (NT_SUCCESS(status)) {
+        CM_HIVE_KEY key = c->Key;
+        status = CmpForEachSubKey(node->Hive, &key, load_child, c);
+    }
+    ExFreePool(c);
+    if (!NT_SUCCESS(status))
+        KiLogPrintf("registry: cannot read the subkeys of %.*ls: %08x", node->NameLength, node->Name, status);
+    return status;
+}
+
+static CM_VALUE *new_value(const WCHAR *name, ULONG chars)
+{
+    CM_VALUE *v = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(CM_VALUE) + chars * sizeof(WCHAR), KI_TAG('C', 'm', 'V', 'l'));
+    if (!v)
+        return NULL;
+    v->NameLength = (USHORT)chars;
+    memcpy(v->Name, name, chars * sizeof(WCHAR));
+    return v;
+}
+
+NTSTATUS CmpLoadValues(CM_NODE *node)
+{
+    if (node->Flags & CM_NODE_VALUES_LOADED)
+        return STATUS_SUCCESS;
+    node->Flags |= CM_NODE_VALUES_LOADED;
+    if (!node->Hive)
+        return STATUS_SUCCESS;
+    CM_HIVE_KEY *key = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*key) + 256 * sizeof(WCHAR), KI_TAG('C', 'm', 'L', 'v'));
+    if (!key)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    PWCHAR name = (PWCHAR)(key + 1);
+    NTSTATUS status = CmpReadKey(node->Hive, node->Cell, key);
+    CM_VALUE **tail = &node->Values;
+    while (*tail)
+        tail = &(*tail)->Next;
+    for (ULONG i = 0; NT_SUCCESS(status) && i < key->ValueCount; i++) {
+        USHORT chars;
+        ULONG type, length;
+        PUCHAR data;
+        status = CmpReadValue(node->Hive, key, i, name, &chars, &type, &data, &length);
+        if (!NT_SUCCESS(status))
+            break;
+        if (CmpFindValue(node, name, chars)) {
+            ExFreePool(data); /* set since boot, the new value wins. */
+            continue;
+        }
+        /* the template hives were captured with the image mounted as X:, setup leaves them on C:. */
+        PWCHAR text = (PWCHAR)data;
+        if ((type == REG_SZ || type == REG_EXPAND_SZ) && length >= 3 * sizeof(WCHAR) && (text[0] == 'X' || text[0] == 'x') &&
+            text[1] == ':' && text[2] == '\\')
+            text[0] = 'C';
+        CM_VALUE *v = new_value(name, chars);
+        if (!v) {
+            ExFreePool(data);
+            status = STATUS_INSUFFICIENT_RESOURCES;
+            break;
+        }
+        v->Type = type;
+        v->Data = data;
+        v->DataLength = length;
+        *tail = v;
+        tail = &v->Next;
+    }
+    ExFreePool(key);
+    if (!NT_SUCCESS(status))
+        KiLogPrintf("registry: cannot read the values of %.*ls: %08x", node->NameLength, node->Name, status);
+    return status;
+}
+
+CM_NODE *CmpFindChild(CM_NODE *node, const WCHAR *name, ULONG chars)
+{
+    CmpLoadChildren(node);
+    for (CM_NODE *c = node->Child; c; c = c->Next)
+        if (compare_names(c->Name, c->NameLength, name, chars) == 0)
+            return c;
+    return NULL;
+}
+
+CM_NODE *CmpCreateChild(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG flags)
+{
+    CmpLoadChildren(node);
+    CM_NODE *n = new_node(node, name, chars);
+    if (!n)
+        return NULL;
+    n->Flags = flags | CM_NODE_CHILDREN_LOADED | CM_NODE_VALUES_LOADED;
+    n->LastWrite = now();
+    link_child(node, n);
+    node->LastWrite = n->LastWrite;
+    return n;
+}
+
+CM_NODE *CmpMount(CM_NODE *node, PCWSTR name, CM_HIVE *hive)
+{
+    CM_NODE *n = CmpCreateChild(node, name, (ULONG)wcslen(name), 0);
+    if (!n)
+        return NULL;
+    CM_HIVE_KEY key;
+    if (NT_SUCCESS(CmpReadKey(hive, hive->RootCell, &key)))
+        n->LastWrite = key.LastWrite;
+    n->Hive = hive;
+    n->Cell = hive->RootCell;
+    n->Flags &= ~(CM_NODE_CHILDREN_LOADED | CM_NODE_VALUES_LOADED);
+    return n;
+}
+
+CM_VALUE *CmpFindValue(CM_NODE *node, const WCHAR *name, ULONG chars)
+{
+    for (CM_VALUE *v = node->Values; v; v = v->Next)
+        if (compare_names(v->Name, v->NameLength, name, chars) == 0)
+            return v;
+    return NULL;
+}
+
+NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, const void *data, ULONG length)
+{
+    CmpLoadValues(node);
+    PUCHAR copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('C', 'm', 'V', 'd'));
+    if (!copy)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memcpy(copy, data, length);
+    CM_VALUE *v = CmpFindValue(node, name, chars);
+    if (!v) {
+        v = new_value(name, chars);
+        if (!v) {
+            ExFreePool(copy);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        CM_VALUE **tail = &node->Values;
+        while (*tail)
+            tail = &(*tail)->Next;
+        *tail = v;
+    } else {
+        ExFreePool(v->Data);
+    }
+    v->Type = type;
+    v->Data = copy;
+    v->DataLength = length;
+    node->LastWrite = now();
+    return STATUS_SUCCESS;
+}
+
+void CmpDeleteValue(CM_NODE *node, const WCHAR *name, ULONG chars)
+{
+    CmpLoadValues(node);
+    for (CM_VALUE **link = &node->Values; *link; link = &(*link)->Next) {
+        CM_VALUE *v = *link;
+        if (compare_names(v->Name, v->NameLength, name, chars) == 0) {
+            *link = v->Next;
+            ExFreePool(v->Data);
+            ExFreePool(v);
+            node->LastWrite = now();
+            return;
+        }
+    }
+}
+
+/* the target of a link key, a \REGISTRY path, into a pool buffer. */
+static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
+{
+    static const WCHAR name[] = L"SymbolicLinkValue";
+    CmpLoadValues(node);
+    CM_VALUE *v = CmpFindValue(node, name, RTL_NUMBER_OF(name) - 1);
+    if (!v || v->Type != REG_LINK || v->DataLength < 2 * sizeof(WCHAR))
+        return FALSE;
+    *chars = v->DataLength / sizeof(WCHAR);
+    *target = (PWCHAR)v->Data;
+    while (*chars && (*target)[*chars - 1] == 0)
+        (*chars)--;
+    return TRUE;
+}
+
+/*
+ * walks path below start, following links. path is a writable buffer of
+ * MAX_PATH_CHARS characters. lock held.
+ */
+static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, CM_PARSE_CONTEXT *create,
+                     CM_NODE **out)
+{
+    CM_NODE *node = start;
+    ULONG pos = 0;
+    int reparse = 0;
+    for (;;) {
+        if (node->Flags & CM_NODE_DELETED)
+            return STATUS_KEY_DELETED;
+        while (pos < len && path[pos] == '\\')
+            pos++;
+        if (pos >= len)
+            break;
+        ULONG begin = pos;
+        while (pos < len && path[pos] != '\\')
+            pos++;
+        ULONG chars = pos - begin;
+        BOOLEAN last = true;
+        for (ULONG i = pos; i < len; i++)
+            if (path[i] != '\\')
+                last = false;
+        if (chars > 255)
+            return STATUS_OBJECT_NAME_INVALID;
+        CM_NODE *child = CmpFindChild(node, path + begin, chars);
+        if (!child) {
+            if (!create || !create->Create || (!last && !create->Kernel))
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            ULONG flags = 0;
+            if ((create->Options & REG_OPTION_VOLATILE) || (create->Kernel && (node->Flags & CM_NODE_VOLATILE)))
+                flags |= CM_NODE_VOLATILE;
+            else if ((node->Flags & CM_NODE_VOLATILE) && node != CmpRoot)
+                return STATUS_CHILD_MUST_BE_VOLATILE;
+            if (create->Options & REG_OPTION_CREATE_LINK)
+                flags |= CM_NODE_LINK;
+            child = CmpCreateChild(node, path + begin, chars, flags);
+            if (!child)
+                return STATUS_INSUFFICIENT_RESOURCES;
+            if (last)
+                create->Disposition = REG_CREATED_NEW_KEY;
+            node = child;
+            continue;
+        }
+        PWCHAR target;
+        ULONG target_chars;
+        if ((child->Flags & CM_NODE_LINK) && !(last && (attributes & OBJ_OPENLINK)) &&
+            link_target(child, &target, &target_chars)) {
+            static const WCHAR prefix[] = L"\\REGISTRY";
+            ULONG p = RTL_NUMBER_OF(prefix) - 1;
+            if (++reparse > MAX_REPARSE || target_chars < p || compare_names(target, p, prefix, p) != 0)
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            ULONG rest = len - pos;
+            if (target_chars - p + rest >= MAX_PATH_CHARS)
+                return STATUS_NAME_TOO_LONG;
+            memmove(path + target_chars - p, path + pos, rest * sizeof(WCHAR));
+            memcpy(path, target + p, (target_chars - p) * sizeof(WCHAR));
+            len = target_chars - p + rest;
+            pos = 0;
+            node = CmpRoot;
+            continue;
+        }
+        node = child;
+    }
+    if (create && create->Disposition == 0)
+        create->Disposition = REG_OPENED_EXISTING_KEY;
+    *out = node;
+    return STATUS_SUCCESS;
+}
+
+CM_NODE *CmpOpenPath(PCWSTR path, BOOLEAN create)
+{
+    static const WCHAR prefix[] = L"\\REGISTRY";
+    ULONG len = (ULONG)wcslen(path), p = RTL_NUMBER_OF(prefix) - 1;
+    if (len < p || compare_names(path, p, prefix, p) != 0 || len >= MAX_PATH_CHARS)
+        return NULL;
+    PWCHAR buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, MAX_PATH_CHARS * sizeof(WCHAR), KI_TAG('C', 'm', 'P', 't'));
+    if (!buffer)
+        return NULL;
+    memcpy(buffer, path + p, (len - p) * sizeof(WCHAR));
+    CM_PARSE_CONTEXT ctx = {create, TRUE, 0, 0};
+    CM_NODE *node = NULL;
+    if (!NT_SUCCESS(walk(CmpRoot, buffer, len - p, 0, &ctx, &node)))
+        node = NULL;
+    ExFreePool(buffer);
+    return node;
+}
+
+/* ------------------------------------------------------------------ objects */
+
+static NTSTATUS new_body(CM_NODE *node, PVOID *out)
+{
+    CM_KEY_BODY *body;
+    NTSTATUS status = ObCreateObject(CmKeyType, NULL, KernelMode, sizeof(*body), (PVOID *)&body);
+    if (NT_SUCCESS(status)) {
+        body->Node = node;
+        *out = body;
+    }
+    return status;
+}
+
+static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete,
+                          PUNICODE_STRING remaining, PVOID context, PVOID *found)
+{
+    if (type && type != CmKeyType)
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    ULONG len = remaining->Length / sizeof(WCHAR);
+    if (len >= MAX_PATH_CHARS)
+        return STATUS_NAME_TOO_LONG;
+    PWCHAR path = ExAllocatePool2(POOL_FLAG_NON_PAGED, MAX_PATH_CHARS * sizeof(WCHAR), KI_TAG('C', 'm', 'P', 't'));
+    if (!path)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memcpy(path, remaining->Buffer, len * sizeof(WCHAR));
+    CM_NODE *node;
+    ExAcquireFastMutex(&CmpLock);
+    NTSTATUS status = walk(((CM_KEY_BODY *)object)->Node, path, len, attributes, context, &node);
+    ExReleaseFastMutex(&CmpLock);
+    ExFreePool(path);
+    if (NT_SUCCESS(status))
+        status = new_body(node, found);
+    return status;
+}
+
+/* references a key handle and returns its node, refusing deleted keys. lock taken on success. */
+static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
+{
+    NTSTATUS status = ObReferenceHandle(handle, CmKeyType, KeGetPreviousMode(), (PVOID *)body, NULL);
+    if (!NT_SUCCESS(status))
+        return status;
+    ExAcquireFastMutex(&CmpLock);
+    *node = (*body)->Node;
+    if ((*node)->Flags & CM_NODE_DELETED) {
+        ExReleaseFastMutex(&CmpLock);
+        ObDereferenceObject(*body);
+        return STATUS_KEY_DELETED;
+    }
+    return STATUS_SUCCESS;
+}
+
+static void unlock_key(CM_KEY_BODY *body)
+{
+    ExReleaseFastMutex(&CmpLock);
+    ObDereferenceObject(body);
+}
+
+/* ------------------------------------------------------------------ output */
+
+/* copies a fixed header and variable data out, with the windows partial copy rules. */
+typedef struct OUT_BUFFER {
+    PUCHAR Buffer;
+    ULONG Size;
+    ULONG Used;
+} OUT_BUFFER;
+
+static BOOLEAN out_init(OUT_BUFFER *o, ULONG size)
+{
+    o->Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('C', 'm', 'O', 'u'));
+    o->Size = size;
+    o->Used = 0;
+    return o->Buffer != NULL;
+}
+
+static NTSTATUS out_finish(OUT_BUFFER *o, ULONG fixed, PVOID user, ULONG length, PULONG returned)
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    if (returned)
+        status = KiCopyToUser(returned, &o->Used, sizeof(ULONG));
+    if (NT_SUCCESS(status)) {
+        if (length < fixed)
+            status = STATUS_BUFFER_TOO_SMALL;
+        else if (length < o->Used)
+            status = NT_SUCCESS(KiCopyToUser(user, o->Buffer, length)) ? STATUS_BUFFER_OVERFLOW : STATUS_ACCESS_VIOLATION;
+        else
+            status = KiCopyToUser(user, o->Buffer, o->Used);
+    }
+    ExFreePool(o->Buffer);
+    return status;
+}
+
+#define KeyBasicInformation 0
+#define KeyNodeInformation 1
+#define KeyFullInformation 2
+#define KeyNameInformation 3
+#define KeyCachedInformation 4
+#define KeyValueBasicInformation 0
+#define KeyValueFullInformation 1
+#define KeyValuePartialInformation 2
+#define KeyValueFullInformationAlign64 3
+#define KeyValuePartialInformationAlign64 4
+
+static ULONG full_path(CM_NODE *node, PWCHAR out, ULONG capacity)
+{
+    ULONG len = 0;
+    for (CM_NODE *n = node; n; n = n->Parent)
+        len += 1 + n->NameLength;
+    if (len > capacity)
+        return len;
+    ULONG pos = len;
+    for (CM_NODE *n = node; n; n = n->Parent) {
+        pos -= n->NameLength;
+        memcpy(out + pos, n->Name, n->NameLength * sizeof(WCHAR));
+        out[--pos] = '\\';
+    }
+    return len;
+}
+
+typedef struct KEY_STATS {
+    ULONG SubKeys, MaxNameLen, Values, MaxValueNameLen, MaxValueDataLen;
+} KEY_STATS;
+
+static void key_stats(CM_NODE *node, KEY_STATS *s)
+{
+    memset(s, 0, sizeof(*s));
+    CmpLoadChildren(node);
+    CmpLoadValues(node);
+    for (CM_NODE *c = node->Child; c; c = c->Next) {
+        s->SubKeys++;
+        if (c->NameLength * sizeof(WCHAR) > s->MaxNameLen)
+            s->MaxNameLen = c->NameLength * sizeof(WCHAR);
+    }
+    for (CM_VALUE *v = node->Values; v; v = v->Next) {
+        s->Values++;
+        if (v->NameLength * sizeof(WCHAR) > s->MaxValueNameLen)
+            s->MaxValueNameLen = v->NameLength * sizeof(WCHAR);
+        if (v->DataLength > s->MaxValueDataLen)
+            s->MaxValueDataLen = v->DataLength;
+    }
+}
+
+static void put32(PUCHAR p, ULONG v)
+{
+    memcpy(p, &v, 4);
+}
+
+static NTSTATUS key_info(CM_NODE *node, ULONG klass, OUT_BUFFER *o, ULONG *fixed)
+{
+    ULONG name_bytes = node->NameLength * sizeof(WCHAR);
+    KEY_STATS s;
+    switch (klass) {
+    case KeyBasicInformation:
+        *fixed = 16;
+        if (!out_init(o, 16 + name_bytes))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        memcpy(o->Buffer, &node->LastWrite, 8);
+        put32(o->Buffer + 8, 0);
+        put32(o->Buffer + 12, name_bytes);
+        memcpy(o->Buffer + 16, node->Name, name_bytes);
+        o->Used = 16 + name_bytes;
+        return STATUS_SUCCESS;
+    case KeyNodeInformation:
+        *fixed = 24;
+        if (!out_init(o, 24 + name_bytes))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        memcpy(o->Buffer, &node->LastWrite, 8);
+        put32(o->Buffer + 8, 0);
+        put32(o->Buffer + 12, 0xFFFFFFFF); /* no class */
+        put32(o->Buffer + 16, 0);
+        put32(o->Buffer + 20, name_bytes);
+        memcpy(o->Buffer + 24, node->Name, name_bytes);
+        o->Used = 24 + name_bytes;
+        return STATUS_SUCCESS;
+    case KeyFullInformation:
+    case KeyCachedInformation:
+        key_stats(node, &s);
+        *fixed = klass == KeyFullInformation ? 44 : 40;
+        if (!out_init(o, *fixed))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        memcpy(o->Buffer, &node->LastWrite, 8);
+        put32(o->Buffer + 8, 0);
+        if (klass == KeyFullInformation) {
+            ULONG f[] = {0xFFFFFFFF, 0, s.SubKeys, s.MaxNameLen, 0, s.Values, s.MaxValueNameLen, s.MaxValueDataLen};
+            memcpy(o->Buffer + 12, f, sizeof(f));
+        } else {
+            ULONG f[] = {s.SubKeys, s.MaxNameLen, s.Values, s.MaxValueNameLen, s.MaxValueDataLen, name_bytes};
+            memcpy(o->Buffer + 12, f, sizeof(f));
+        }
+        o->Used = *fixed;
+        return STATUS_SUCCESS;
+    case KeyNameInformation: {
+        *fixed = 4;
+        ULONG chars = full_path(node, NULL, 0);
+        if (!out_init(o, 4 + chars * sizeof(WCHAR)))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        full_path(node, (PWCHAR)(o->Buffer + 4), chars);
+        put32(o->Buffer, chars * sizeof(WCHAR));
+        o->Used = 4 + chars * sizeof(WCHAR);
+        return STATUS_SUCCESS;
+    }
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+}
+
+static NTSTATUS value_info(CM_VALUE *v, ULONG klass, OUT_BUFFER *o, ULONG *fixed)
+{
+    ULONG name_bytes = v->NameLength * sizeof(WCHAR);
+    switch (klass) {
+    case KeyValueBasicInformation:
+        *fixed = 12;
+        if (!out_init(o, 12 + name_bytes))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        put32(o->Buffer, 0);
+        put32(o->Buffer + 4, v->Type);
+        put32(o->Buffer + 8, name_bytes);
+        memcpy(o->Buffer + 12, v->Name, name_bytes);
+        o->Used = 12 + name_bytes;
+        return STATUS_SUCCESS;
+    case KeyValueFullInformation:
+    case KeyValueFullInformationAlign64: {
+        *fixed = 20;
+        ULONG align = klass == KeyValueFullInformation ? 4 : 8;
+        ULONG data = (20 + name_bytes + align - 1) & ~(align - 1);
+        if (!out_init(o, data + v->DataLength))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        memset(o->Buffer, 0, data);
+        put32(o->Buffer + 4, v->Type);
+        put32(o->Buffer + 8, data);
+        put32(o->Buffer + 12, v->DataLength);
+        put32(o->Buffer + 16, name_bytes);
+        memcpy(o->Buffer + 20, v->Name, name_bytes);
+        memcpy(o->Buffer + data, v->Data, v->DataLength);
+        o->Used = data + v->DataLength;
+        return STATUS_SUCCESS;
+    }
+    case KeyValuePartialInformation:
+        *fixed = 12;
+        if (!out_init(o, 12 + v->DataLength))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        put32(o->Buffer, 0);
+        put32(o->Buffer + 4, v->Type);
+        put32(o->Buffer + 8, v->DataLength);
+        memcpy(o->Buffer + 12, v->Data, v->DataLength);
+        o->Used = 12 + v->DataLength;
+        return STATUS_SUCCESS;
+    case KeyValuePartialInformationAlign64:
+        *fixed = 8;
+        if (!out_init(o, 8 + v->DataLength))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        put32(o->Buffer, v->Type);
+        put32(o->Buffer + 4, v->DataLength);
+        memcpy(o->Buffer + 8, v->Data, v->DataLength);
+        o->Used = 8 + v->DataLength;
+        return STATUS_SUCCESS;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+}
+
+/* ------------------------------------------------------------------ system services */
+
+NTSTATUS NTAPI NtCreateKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG index,
+                           PUNICODE_STRING klass, ULONG options, PULONG disposition)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = ObCaptureObjectAttributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    CM_PARSE_CONTEXT ctx = {TRUE, FALSE, options, 0};
+    HANDLE h;
+    status = ObOpenObjectByName(&oa, CmKeyType, KeGetPreviousMode(), access, &ctx, &h);
+    KiFreeCapturedString(&name);
+    if (NT_SUCCESS(status)) {
+        status = ObStoreHandle(handle, h);
+        if (NT_SUCCESS(status) && disposition)
+            status = KiCopyToUser(disposition, &ctx.Disposition, sizeof(ULONG));
+    }
+    return status;
+}
+
+NTSTATUS NTAPI NtOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG options)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = ObCaptureObjectAttributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    CM_PARSE_CONTEXT ctx = {FALSE, FALSE, 0, 0};
+    HANDLE h;
+    status = ObOpenObjectByName(&oa, CmKeyType, KeGetPreviousMode(), access, &ctx, &h);
+    KiFreeCapturedString(&name);
+    if (NT_SUCCESS(status))
+        status = ObStoreHandle(handle, h);
+    return status;
+}
+
+NTSTATUS NTAPI NtOpenKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
+{
+    return NtOpenKeyEx(handle, access, attributes, 0);
+}
+
+NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    NTSTATUS status = lock_key(key, &body, &node);
+    if (!NT_SUCCESS(status))
+        return status;
+    OUT_BUFFER o;
+    ULONG fixed;
+    status = key_info(node, klass, &o, &fixed);
+    unlock_key(body);
+    return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
+}
+
+NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    NTSTATUS status = lock_key(key, &body, &node);
+    if (!NT_SUCCESS(status))
+        return status;
+    CmpLoadChildren(node);
+    CM_NODE *child = node->Child;
+    for (ULONG i = 0; child && i < index; i++)
+        child = child->Next;
+    OUT_BUFFER o;
+    ULONG fixed;
+    status = child ? key_info(child, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
+    unlock_key(body);
+    return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
+}
+
+NTSTATUS NTAPI NtQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PVOID info, ULONG length,
+                               PULONG returned)
+{
+    UNICODE_STRING captured;
+    NTSTATUS status = KiCaptureUnicodeString(&captured, name);
+    if (!NT_SUCCESS(status))
+        return status;
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    status = lock_key(key, &body, &node);
+    if (!NT_SUCCESS(status)) {
+        KiFreeCapturedString(&captured);
+        return status;
+    }
+    CmpLoadValues(node);
+    CM_VALUE *v = CmpFindValue(node, captured.Buffer, captured.Length / sizeof(WCHAR));
+    OUT_BUFFER o;
+    ULONG fixed;
+    status = v ? value_info(v, klass, &o, &fixed) : STATUS_OBJECT_NAME_NOT_FOUND;
+    unlock_key(body);
+    KiFreeCapturedString(&captured);
+    return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
+}
+
+NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length,
+                                   PULONG returned)
+{
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    NTSTATUS status = lock_key(key, &body, &node);
+    if (!NT_SUCCESS(status))
+        return status;
+    CmpLoadValues(node);
+    CM_VALUE *v = node->Values;
+    for (ULONG i = 0; v && i < index; i++)
+        v = v->Next;
+    OUT_BUFFER o;
+    ULONG fixed;
+    status = v ? value_info(v, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
+    unlock_key(body);
+    return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
+}
+
+NTSTATUS NTAPI NtSetValueKey(HANDLE key, PUNICODE_STRING name, ULONG title_index, ULONG type, PVOID data,
+                             ULONG size)
+{
+    if (size > (64u << 20))
+        return STATUS_INVALID_PARAMETER;
+    UNICODE_STRING captured;
+    NTSTATUS status = KiCaptureUnicodeString(&captured, name);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('C', 'm', 'S', 'v'));
+    if (!copy) {
+        KiFreeCapturedString(&captured);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    status = KiCopyFromUser(copy, data, size);
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    if (NT_SUCCESS(status))
+        status = lock_key(key, &body, &node);
+    if (NT_SUCCESS(status)) {
+        status = CmpSetValue(node, captured.Buffer, captured.Length / sizeof(WCHAR), type, copy, size);
+        unlock_key(body);
+    }
+    ExFreePool(copy);
+    KiFreeCapturedString(&captured);
+    return status;
+}
+
+NTSTATUS NTAPI NtDeleteValueKey(HANDLE key, PUNICODE_STRING name)
+{
+    UNICODE_STRING captured;
+    NTSTATUS status = KiCaptureUnicodeString(&captured, name);
+    if (!NT_SUCCESS(status))
+        return status;
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    status = lock_key(key, &body, &node);
+    if (NT_SUCCESS(status)) {
+        CmpLoadValues(node);
+        if (CmpFindValue(node, captured.Buffer, captured.Length / sizeof(WCHAR)))
+            CmpDeleteValue(node, captured.Buffer, captured.Length / sizeof(WCHAR));
+        else
+            status = STATUS_OBJECT_NAME_NOT_FOUND;
+        unlock_key(body);
+    }
+    KiFreeCapturedString(&captured);
+    return status;
+}
+
+NTSTATUS NTAPI NtDeleteKey(HANDLE key)
+{
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    NTSTATUS status = lock_key(key, &body, &node);
+    if (!NT_SUCCESS(status))
+        return status;
+    CmpLoadChildren(node);
+    if (node->Child || !node->Parent || (node->Hive && node->Cell == node->Hive->RootCell)) {
+        status = STATUS_CANNOT_DELETE;
+    } else {
+        CM_NODE **link = &node->Parent->Child;
+        while (*link != node)
+            link = &(*link)->Next;
+        *link = node->Next;
+        node->Flags |= CM_NODE_DELETED;
+        node->Parent->LastWrite = now();
+    }
+    unlock_key(body);
+    return status;
+}
+
+NTSTATUS NTAPI NtFlushKey(HANDLE key)
+{
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    NTSTATUS status = lock_key(key, &body, &node);
+    if (NT_SUCCESS(status))
+        unlock_key(body);
+    return status;
+}
+
+#define ZW_WRAP(call)                                                                                             \
+    PKTHREAD t_ = KiCurrentThread();                                                                              \
+    KPROCESSOR_MODE old_ = t_->PreviousMode;                                                                      \
+    t_->PreviousMode = KernelMode;                                                                                \
+    NTSTATUS st_ = call;                                                                                          \
+    t_->PreviousMode = old_;                                                                                      \
+    return st_
+
+NTSTATUS NTAPI ZwCreateKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG index,
+                           PUNICODE_STRING klass, ULONG options, PULONG disposition)
+{
+    ZW_WRAP(NtCreateKey(handle, access, attributes, index, klass, options, disposition));
+}
+
+NTSTATUS NTAPI ZwOpenKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
+{
+    ZW_WRAP(NtOpenKey(handle, access, attributes));
+}
+
+NTSTATUS NTAPI ZwOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG options)
+{
+    ZW_WRAP(NtOpenKeyEx(handle, access, attributes, options));
+}
+
+NTSTATUS NTAPI ZwQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    ZW_WRAP(NtQueryKey(key, klass, info, length, returned));
+}
+
+NTSTATUS NTAPI ZwEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    ZW_WRAP(NtEnumerateKey(key, index, klass, info, length, returned));
+}
+
+NTSTATUS NTAPI ZwQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PVOID info, ULONG length,
+                               PULONG returned)
+{
+    ZW_WRAP(NtQueryValueKey(key, name, klass, info, length, returned));
+}
+
+NTSTATUS NTAPI ZwEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    ZW_WRAP(NtEnumerateValueKey(key, index, klass, info, length, returned));
+}
+
+NTSTATUS NTAPI ZwSetValueKey(HANDLE key, PUNICODE_STRING name, ULONG title_index, ULONG type, PVOID data, ULONG size)
+{
+    ZW_WRAP(NtSetValueKey(key, name, title_index, type, data, size));
+}
+
+NTSTATUS NTAPI ZwDeleteKey(HANDLE key)
+{
+    ZW_WRAP(NtDeleteKey(key));
+}
+
+NTSTATUS NTAPI ZwDeleteValueKey(HANDLE key, PUNICODE_STRING name)
+{
+    ZW_WRAP(NtDeleteValueKey(key, name));
+}
+
+NTSTATUS NTAPI ZwFlushKey(HANDLE key)
+{
+    ZW_WRAP(NtFlushKey(key));
+}
+
+/* ------------------------------------------------------------------ queries for the kernel */
+
+NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    CM_VALUE *v = NULL;
+    if (node) {
+        CmpLoadValues(node);
+        v = CmpFindValue(node, name, (ULONG)wcslen(name));
+    }
+    NTSTATUS status = STATUS_OBJECT_NAME_NOT_FOUND;
+    if (v) {
+        if (type)
+            *type = v->Type;
+        status = v->DataLength <= *length ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW;
+        if (NT_SUCCESS(status))
+            memcpy(data, v->Data, v->DataLength);
+        *length = v->DataLength;
+    }
+    ExReleaseFastMutex(&CmpLock);
+    return status;
+}
+
+NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, TRUE);
+    NTSTATUS status = node ? CmpSetValue(node, name, (ULONG)wcslen(name), type, data, length) : STATUS_OBJECT_NAME_NOT_FOUND;
+    ExReleaseFastMutex(&CmpLock);
+    return status;
+}
+
+NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type,
+                                                        const void *data, ULONG length),
+                           PVOID ctx)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    if (node) {
+        CmpLoadValues(node);
+        for (CM_VALUE *v = node->Values; v; v = v->Next)
+            fn(ctx, v->Name, v->NameLength, v->Type, v->Data, v->DataLength);
+    }
+    ExReleaseFastMutex(&CmpLock);
+    return node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+}
+
+/* ------------------------------------------------------------------ boot */
+
+static void mount(CM_NODE *parent, PCWSTR name, PCWSTR file)
+{
+    CM_HIVE *hive;
+    NTSTATUS status = CmpOpenHive(file, &hive);
+    if (!NT_SUCCESS(status) || !CmpMount(parent, name, hive))
+        KiLogPrintf("registry: cannot load the hive %ls: %08x", file, status);
+}
+
+static void link_key(PCWSTR path, PCWSTR target)
+{
+    CM_NODE *node = CmpOpenPath(path, TRUE);
+    if (!node)
+        return;
+    node->Flags |= CM_NODE_LINK | CM_NODE_VOLATILE;
+    static const WCHAR name[] = L"SymbolicLinkValue";
+    CmpSetValue(node, name, RTL_NUMBER_OF(name) - 1, REG_LINK, target, (ULONG)(wcslen(target) * sizeof(WCHAR)));
+}
+
+void CmInitSystem1(void)
+{
+    ExInitializeFastMutex(&CmpLock);
+    OBJECT_TYPE_INITIALIZER init = {0};
+    init.ValidAccessMask = 0xF003F;
+    init.ParseProcedure = key_parse;
+    CmKeyType = ObCreateObjectType(L"Key", &init);
+
+    static const WCHAR registry[] = L"REGISTRY";
+    CmpRoot = new_node(NULL, registry, RTL_NUMBER_OF(registry) - 1);
+    CmpRoot->Flags = CM_NODE_CHILDREN_LOADED | CM_NODE_VALUES_LOADED | CM_NODE_VOLATILE;
+    PVOID root;
+    if (!CmpRoot || !NT_SUCCESS(new_body(CmpRoot, &root)))
+        KeBugCheckEx(0x00000067, 1, 0, 0, 0); /* CONFIG_INITIALIZATION_FAILED */
+    OBJECT_TO_HEADER(root)->Flags |= OB_FLAG_PERMANENT;
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"REGISTRY");
+    ObInsertIntoDirectory(ObRootDirectory, root, &name);
+
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *machine = CmpCreateChild(CmpRoot, L"MACHINE", 7, CM_NODE_VOLATILE);
+    CM_NODE *user = CmpCreateChild(CmpRoot, L"USER", 4, CM_NODE_VOLATILE);
+    CmpCreateChild(CmpRoot, L"A", 1, CM_NODE_VOLATILE);
+    CmpCreateChild(CmpRoot, L"WC", 2, CM_NODE_VOLATILE);
+    CmpCreateChild(machine, L"HARDWARE", 8, CM_NODE_VOLATILE);
+    CmpCreateChild(machine, L"SAM", 3, CM_NODE_VOLATILE);
+    CmpCreateChild(machine, L"SECURITY", 8, CM_NODE_VOLATILE);
+    mount(machine, L"SYSTEM", L"\\SystemRoot\\System32\\config\\SYSTEM");
+    mount(machine, L"SOFTWARE", L"\\SystemRoot\\System32\\config\\SOFTWARE");
+    mount(user, L".DEFAULT", L"\\SystemRoot\\System32\\config\\DEFAULT");
+
+    /* the current control set, chosen by Select\Current like the boot loader does. */
+    ULONG current = 1;
+    CM_NODE *select = CmpOpenPath(L"\\REGISTRY\\MACHINE\\SYSTEM\\Select", FALSE);
+    if (select) {
+        CmpLoadValues(select);
+        CM_VALUE *v = CmpFindValue(select, L"Current", 7);
+        if (v && v->Type == REG_DWORD && v->DataLength == 4)
+            memcpy(&current, v->Data, 4);
+    }
+    WCHAR target[64] = {0};
+    _snwprintf(target, RTL_NUMBER_OF(target) - 1, L"\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet%03u", current);
+    link_key(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet", target);
+    link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");
+
+    /* the logged on user's hive, loaded by the profile service on windows. */
+    WCHAR sid[96] = {0}, path[160] = {0};
+    _snwprintf(sid, RTL_NUMBER_OF(sid) - 1, L"S-1-5-21-%u-%u-%u-1001", HalBootInfo->user_sid[0], HalBootInfo->user_sid[1],
+             HalBootInfo->user_sid[2]);
+    _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:\\Users\\%hs\\NTUSER.DAT", HalBootInfo->user_name);
+    mount(user, sid, path);
+    ExReleaseFastMutex(&CmpLock);
+
+    CmpSpecialize();
+}
