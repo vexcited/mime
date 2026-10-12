@@ -1,0 +1,10 @@
+LIBRARY comctl32.dll
+EXPORTS
+    InitCommonControls @17
+    DllGetVersion @24
+    InitCommonControlsEx @83
+    _TrackMouseEvent @91
+    SetWindowSubclass @410
+    GetWindowSubclass @411
+    RemoveWindowSubclass @412
+    DefSubclassProc @413
