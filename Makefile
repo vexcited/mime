@@ -12,7 +12,8 @@ RC := llvm-rc
 STRIP := llvm-strip
 
 HOST_CFLAGS := -std=c17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
-HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -lobjc
+HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Metal -lobjc
+CXX := clang++
 
 GUEST_TARGET := --target=aarch64-pc-windows-msvc -march=armv8.2-a
 GUEST_CFLAGS := $(GUEST_TARGET) -std=c17 -O2 -g -gdwarf -ffreestanding -fms-extensions -fno-stack-protector \
@@ -53,23 +54,43 @@ GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SY
 ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES)) \
 	$(patsubst $(SYSX64)/%,$(BUILD)/guest/rom/sysx64/%,$(X64_FILES))
 
+SHADERC_CXXFLAGS := -std=c++17 -O2 -w -Ithird_party/glslang -Ithird_party/glslang/glslang -Ithird_party \
+	-DSPIRV_CROSS_C_API_MSL=1 -DSPIRV_CROSS_C_API_GLSL=1 -MMD -MP
+SHADERC_SRC := $(wildcard third_party/glslang/glslang/GenericCodeGen/*.cpp third_party/glslang/glslang/MachineIndependent/*.cpp \
+	third_party/glslang/glslang/MachineIndependent/preprocessor/*.cpp third_party/glslang/glslang/ResourceLimits/*.cpp \
+	third_party/glslang/glslang/CInterface/*.cpp third_party/glslang/SPIRV/CInterface/*.cpp) \
+	third_party/glslang/glslang/OSDependent/Unix/ossource.cpp \
+	$(patsubst %,third_party/glslang/SPIRV/%.cpp,GlslangToSpv InReadableOrder Logger SpvBuilder SpvPostProcess SpvTools disassemble doc) \
+	$(patsubst %,third_party/SPIRV-Cross/%.cpp,spirv_cfg spirv_cross spirv_cross_c spirv_cross_parsed_ir spirv_cross_util spirv_glsl \
+	spirv_msl spirv_parser)
+SHADERC_OBJ := $(SHADERC_SRC:%.cpp=$(OBJ)/%.o)
+
 .PHONY: all host guest examples tools clean sysx64
 all: host guest examples
 
 # ---------------------------------------------------------------- host
 
-HOST_SRC := $(wildcard host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c)
-HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o
+HOST_SRC := $(wildcard host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c)
+HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o $(SHADERC_OBJ)
 
 host: $(BUILD)/mime
 
 $(BUILD)/mime: $(HOST_OBJ) host/mime.entitlements
-	$(CC) -o $@ $(HOST_OBJ) $(HOST_LIBS)
+	$(CXX) -o $@ $(HOST_OBJ) $(HOST_LIBS)
 	codesign -s - -f --entitlements host/mime.entitlements $@ 2>/dev/null
+
+# the host gpu translates glsl through glslang and SPIRV-Cross, kept in third_party with their licenses.
+$(OBJ)/host/gpu/%.o: host/gpu/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(HOST_CFLAGS) -fblocks -Ithird_party -Ithird_party/glslang -c $< -o $@
 
 $(OBJ)/host/%.o: host/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(HOST_CFLAGS) -c $< -o $@
+
+$(OBJ)/third_party/%.o: third_party/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(SHADERC_CXXFLAGS) -c $< -o $@
 
 # the guest files are embedded in mime, which maps them into the guest.
 $(GEN)/rom.S: $(ROM_FILES) tools/genrom.sh
