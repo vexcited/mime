@@ -28,11 +28,26 @@ OBJ := $(BUILD)/obj
 SYSTEM32 := $(BUILD)/guest/system32
 
 GUEST_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32 mimex86
+
+# the dlls beyond the core, as name:preferred base, each built for arm64 into System32 and x64 into SysX64.
+# guest/<name>/*.c, exported with dllexport or guest/<name>/<name>.def, entry point DllMain. they import
+# from ntdll, kernel32, user32, gdi32 and win32u only, and reach each other with LoadLibrary.
+EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D0000000 iphlpapi:0x7FF6C0000000 \
+	dnsapi:0x7FF6B0000000 ole32:0x7FF6A0000000 oleaut32:0x7FF690000000 rpcrt4:0x7FF680000000 \
+	shell32:0x7FF670000000 shlwapi:0x7FF660000000 comdlg32:0x7FF650000000 comctl32:0x7FF640000000 \
+	crypt32:0x7FF630000000 schannel:0x7FF620000000 secur32:0x7FF610000000 uxtheme:0x7FF600000000 \
+	imm32:0x7FF5F0000000 usp10:0x7FF5E0000000 dwmapi:0x7FF5D0000000 winmm:0x7FF5C0000000 \
+	version:0x7FF5B0000000 userenv:0x7FF5A0000000 wtsapi32:0x7FF590000000 netapi32:0x7FF580000000 \
+	odbc32:0x7FF570000000 winspool:0x7FF560000000
+EXTRA_NAMES := $(foreach d,$(EXTRA_DLLS),$(firstword $(subst :, ,$(d))))
+# the file name of each, winspool being a driver file.
+extra_file = $(if $(filter winspool,$(1)),$(1).drv,$(1).dll)
 # the x64 builds of the system dlls, for programs run by the translator, in C:\Windows\SysX64.
 SYSX64 := $(BUILD)/guest/sysx64
 X64_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
-X64_FILES := $(patsubst %,$(SYSX64)/%.dll,$(X64_DLLS))
-GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SYSTEM32)/%.dll,$(GUEST_DLLS))
+X64_FILES := $(patsubst %,$(SYSX64)/%.dll,$(X64_DLLS)) $(foreach n,$(EXTRA_NAMES),$(SYSX64)/$(call extra_file,$(n)))
+GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SYSTEM32)/%.dll,$(GUEST_DLLS)) \
+	$(foreach n,$(EXTRA_NAMES),$(SYSTEM32)/$(call extra_file,$(n)))
 # the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
 ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES)) \
 	$(patsubst $(SYSX64)/%,$(BUILD)/guest/rom/sysx64/%,$(X64_FILES))
@@ -375,6 +390,29 @@ $(eval $(call X64_DLL,gdi32,0x7FF800000000,ntdll kernel32 win32u,/entry:DllMain)
 X64_EXTRA_OBJ_user32 := $(patsubst %.c,$(X64_OBJ)/%.o,$(wildcard guest/lib/png/*.c guest/lib/msstyles/*.c))
 X64_EXTRA_LDFLAGS_user32 := /subsystem:windows,10.0
 $(eval $(call X64_DLL,user32,0x7FF900000000,ntdll kernel32 win32u gdi32,/entry:DllMain))
+
+# ---------------------------------------------------------------- the other dlls, both processors
+
+# $(1) = name, $(2) = preferred base, $(3) = file name.
+define EXTRA_DLL
+USER_CFLAGS_$(1) := -Iguest/$(1)
+$(1)_DEF := $$(wildcard guest/$(1)/$(1).def)
+$(1)_SRC := $$(wildcard guest/$(1)/*.c)
+$(1)_OBJ := $$(patsubst %.c,$(OBJ)/user/%.o,$$($(1)_SRC)) $(OBJ)/user/guest/crt/chkstk.o
+x64_$(1)_OBJ := $$(patsubst %.c,$(X64_OBJ)/%.o,$$($(1)_SRC)) $(X64_OBJ)/guest/crt/x64/chkstk.o
+$(SYSTEM32)/$(3): $$($(1)_OBJ) $$($(1)_DEF) $(patsubst %,$(BUILD)/lib/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
+	@mkdir -p $$(dir $$@) $(BUILD)/lib
+	$(LLD_LINK) $(USER_DLL_LDFLAGS) /entry:DllMain /base:$(2) /implib:$(BUILD)/lib/$(1).lib \
+		$$(if $$($(1)_DEF),/def:$$($(1)_DEF)) /out:$$@ $$($(1)_OBJ) \
+		$(patsubst %,$(BUILD)/lib/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
+$(SYSX64)/$(3): $$(x64_$(1)_OBJ) $$($(1)_DEF) $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
+	@mkdir -p $$(dir $$@) $(BUILD)/lib/x64
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:$(2) /implib:$(BUILD)/lib/x64/$(1).lib \
+		$$(if $$($(1)_DEF),/def:$$($(1)_DEF)) /out:$$@ $$(x64_$(1)_OBJ) \
+		$(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
+endef
+
+$(foreach d,$(EXTRA_DLLS),$(eval $(call EXTRA_DLL,$(firstword $(subst :, ,$(d))),$(lastword $(subst :, ,$(d))),$(call extra_file,$(firstword $(subst :, ,$(d)))))))
 
 sysx64: $(X64_FILES)
 
