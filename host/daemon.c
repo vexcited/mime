@@ -1,0 +1,429 @@
+/*
+ * the background machine process: owns the virtual
+ * machine, the cocoa run loop and the control socket.
+ */
+#include "instance.h"
+#include "ipc.h"
+#include "mime_cli.h"
+#include "ui/ui.h"
+#include "vmm/vmm.h"
+
+#include <errno.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#define MAX_RUNS 256
+
+typedef struct PendingRun {
+    bool used;
+    uint64_t request_id;
+    int fd;
+} PendingRun;
+
+static MimeVm g_vm;
+static const MimePaths *g_paths;
+static int g_listen_fd = -1;
+static uint64_t g_start_ns;
+static uint64_t g_next_request = 1;
+static pthread_mutex_t g_runs_lock = PTHREAD_MUTEX_INITIALIZER;
+static PendingRun g_runs[MAX_RUNS];
+static int g_stop_fds[16];
+static int g_stop_count;
+
+static void cleanup_files(void)
+{
+    if (g_paths) {
+        unlink(g_paths->socket);
+        unlink(g_paths->pidfile);
+    }
+}
+
+static void finish_run(uint64_t request_id, uint32_t type, const void *payload, uint32_t size)
+{
+    pthread_mutex_lock(&g_runs_lock);
+    for (int i = 0; i < MAX_RUNS; i++) {
+        if (g_runs[i].used && g_runs[i].request_id == request_id) {
+            mime_ipc_send(g_runs[i].fd, type, payload, size);
+            if (type != MIME_IPC_OUTPUT) {
+                close(g_runs[i].fd);
+                g_runs[i].used = false;
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_runs_lock);
+}
+
+static const char *status_text(uint32_t status)
+{
+    switch (status) {
+    case 0xC0000034: return "file not found";
+    case 0xC000003A: return "path not found";
+    case 0xC000007B: return "not a valid arm64 windows program";
+    case 0xC0000135: return "a required dll was not found";
+    case 0xC0000139: return "an imported function was not found";
+    case 0xC0000017: return "out of memory";
+    case 0xC0000022: return "access denied";
+    default: return "process creation failed";
+    }
+}
+
+void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg)
+{
+    switch (msg->type) {
+    case MIME_EVT_READY:
+        mime_info("guest kernel is ready");
+        vm->guest_ready = true;
+        break;
+    case MIME_EVT_PROCESS_STARTED: {
+        const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
+        mime_info("request %llu started as process %u", (unsigned long long)p->request_id, p->process_id);
+        break;
+    }
+    case MIME_EVT_PROCESS_EXIT: {
+        const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
+        mime_info("process %u exited with code %u", p->process_id, p->status);
+        int32_t code = (int32_t)p->status;
+        finish_run(p->request_id, MIME_IPC_EXIT, &code, sizeof(code));
+        break;
+    }
+    case MIME_EVT_RUN_FAILED: {
+        const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
+        char text[160];
+        snprintf(text, sizeof(text), "%s (status 0x%08X)", status_text(p->status), p->status);
+        mime_warn("request %llu failed: %s", (unsigned long long)p->request_id, text);
+        finish_run(p->request_id, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+        break;
+    }
+    case MIME_EVT_DEBUG_OUTPUT: {
+        const MimeEvtDebugOutput *d = (const MimeEvtDebugOutput *)msg;
+        if (sizeof(*d) + d->length > msg->size)
+            break;
+        const char *text = (const char *)(d + 1);
+        mime_info("debug output [pid %u]: %.*s", d->process_id, (int)d->length, text);
+        if (d->request_id)
+            finish_run(d->request_id, MIME_IPC_OUTPUT, text, d->length);
+        break;
+    }
+    default:
+        mime_warn("unknown guest event %u", msg->type);
+        break;
+    }
+}
+
+void mime_daemon_guest_halted(MimeVm *vm, int exit_code)
+{
+    pthread_mutex_lock(&g_runs_lock);
+    for (int i = 0; i < MAX_RUNS; i++) {
+        if (g_runs[i].used) {
+            const char *text = "the machine stopped";
+            mime_ipc_send(g_runs[i].fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+            close(g_runs[i].fd);
+            g_runs[i].used = false;
+        }
+    }
+    for (int i = 0; i < g_stop_count; i++) {
+        mime_ipc_send(g_stop_fds[i], MIME_IPC_OK, NULL, 0);
+        close(g_stop_fds[i]);
+    }
+    g_stop_count = 0;
+    pthread_mutex_unlock(&g_runs_lock);
+    vm->halted = true;
+    cleanup_files();
+    mime_ui_stop();
+}
+
+/* maps a host path to the guest: drive_c becomes C:, everything else Z:. */
+static void host_to_guest_path(const char *host, char *out, size_t size)
+{
+    size_t c_len = strlen(g_paths->drive_c);
+    const char *rest;
+    char drive;
+    if (strncmp(host, g_paths->drive_c, c_len) == 0 && (host[c_len] == '/' || host[c_len] == 0)) {
+        drive = 'C';
+        rest = host + c_len;
+    } else {
+        drive = 'Z';
+        rest = host;
+    }
+    size_t n = (size_t)snprintf(out, size, "%c:", drive);
+    if (!*rest)
+        rest = "/";
+    for (const char *p = rest; *p && n + 1 < size; p++)
+        out[n++] = *p == '/' ? '\\' : *p;
+    out[n] = 0;
+}
+
+static bool is_windows_path(const char *p)
+{
+    return ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':';
+}
+
+static void append_arg(char *cmdline, size_t size, const char *arg)
+{
+    size_t n = strlen(cmdline);
+    bool quote = !*arg || strpbrk(arg, " \t\"") != NULL;
+    if (n && n + 1 < size)
+        cmdline[n++] = ' ';
+    if (quote && n + 1 < size)
+        cmdline[n++] = '"';
+    for (const char *p = arg; *p && n + 2 < size; p++) {
+        if (*p == '"')
+            cmdline[n++] = '\\';
+        cmdline[n++] = *p;
+    }
+    if (quote && n + 1 < size)
+        cmdline[n++] = '"';
+    cmdline[n] = 0;
+}
+
+static void handle_run(int fd, char *payload, uint32_t size)
+{
+    char *args[256];
+    int argc = 0;
+    char *cwd = payload;
+    char *p = payload + strlen(payload) + 1;
+    while (p < payload + size && argc < 256) {
+        args[argc++] = p;
+        p += strlen(p) + 1;
+    }
+    if (argc < 1) {
+        const char *text = "no program given";
+        mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+        close(fd);
+        return;
+    }
+
+    char image[MIME_PATH_MAX], guest_cwd[MIME_PATH_MAX];
+    if (is_windows_path(args[0])) {
+        mime_strlcpy(image, args[0], sizeof(image));
+        mime_strlcpy(guest_cwd, "C:\\Windows\\System32", sizeof(guest_cwd));
+        host_to_guest_path(cwd, guest_cwd, sizeof(guest_cwd));
+    } else {
+        char joined[MIME_PATH_MAX], resolved[PATH_MAX];
+        if (args[0][0] == '/')
+            mime_strlcpy(joined, args[0], sizeof(joined));
+        else
+            mime_path_join(joined, sizeof(joined), cwd, args[0]);
+        if (!realpath(joined, resolved)) {
+            char text[MIME_PATH_MAX + 64];
+            snprintf(text, sizeof(text), "%s: %s", args[0], strerror(errno));
+            mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+            close(fd);
+            return;
+        }
+        host_to_guest_path(resolved, image, sizeof(image));
+        host_to_guest_path(cwd, guest_cwd, sizeof(guest_cwd));
+    }
+
+    char cmdline[8192] = {0};
+    append_arg(cmdline, sizeof(cmdline), image);
+    for (int i = 1; i < argc; i++)
+        append_arg(cmdline, sizeof(cmdline), args[i]);
+
+    uint16_t w_image[MIME_PATH_MAX], w_cmdline[8192], w_cwd[MIME_PATH_MAX];
+    uint32_t n_image = (uint32_t)mime_utf8_to_utf16(w_image, MIME_ARRAY_COUNT(w_image), image);
+    uint32_t n_cmd = (uint32_t)mime_utf8_to_utf16(w_cmdline, MIME_ARRAY_COUNT(w_cmdline), cmdline);
+    uint32_t n_cwd = (uint32_t)mime_utf8_to_utf16(w_cwd, MIME_ARRAY_COUNT(w_cwd), guest_cwd);
+    uint32_t msg_size = (uint32_t)(sizeof(MimeCtrlRun) + (n_image + n_cmd + n_cwd) * 2);
+    if (msg_size > MIME_CTRL_MAX_MESSAGE) {
+        const char *text = "command line too long";
+        mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+        close(fd);
+        return;
+    }
+    uint8_t *buf = mime_xcalloc(1, msg_size);
+    MimeCtrlRun *run = (MimeCtrlRun *)buf;
+    run->header.type = MIME_CTRL_RUN;
+    run->header.size = msg_size;
+    run->image_chars = n_image;
+    run->cmdline_chars = n_cmd;
+    run->cwd_chars = n_cwd;
+    uint16_t *strings = (uint16_t *)(run + 1);
+    memcpy(strings, w_image, n_image * 2);
+    memcpy(strings + n_image, w_cmdline, n_cmd * 2);
+    memcpy(strings + n_image + n_cmd, w_cwd, n_cwd * 2);
+
+    pthread_mutex_lock(&g_runs_lock);
+    int slot = -1;
+    for (int i = 0; i < MAX_RUNS; i++) {
+        if (!g_runs[i].used) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        pthread_mutex_unlock(&g_runs_lock);
+        free(buf);
+        const char *text = "too many running programs";
+        mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+        close(fd);
+        return;
+    }
+    run->request_id = g_next_request++;
+    g_runs[slot] = (PendingRun){true, run->request_id, fd};
+    pthread_mutex_unlock(&g_runs_lock);
+
+    mime_info("run request %llu: %s (cwd %s)", (unsigned long long)run->request_id, cmdline, guest_cwd);
+    mime_vm_queue_ctrl(&g_vm, buf, msg_size);
+    free(buf);
+}
+
+static void *client_thread(void *arg)
+{
+    int fd = (int)(intptr_t)arg;
+    MimeIpcHeader h;
+    void *payload;
+    if (!mime_ipc_recv(fd, &h, &payload)) {
+        close(fd);
+        return NULL;
+    }
+    switch (h.type) {
+    case MIME_IPC_STATUS: {
+        MimeIpcStatus st = {0};
+        st.ready = g_vm.guest_ready;
+        st.pid = (uint32_t)getpid();
+        st.uptime_ms = (mime_now_ns() - g_start_ns) / 1000000;
+        pthread_mutex_lock(&g_runs_lock);
+        for (int i = 0; i < MAX_RUNS; i++)
+            st.running_programs += g_runs[i].used;
+        pthread_mutex_unlock(&g_runs_lock);
+        mime_ipc_send(fd, MIME_IPC_STATUS_REPLY, &st, sizeof(st));
+        close(fd);
+        break;
+    }
+    case MIME_IPC_RUN:
+        if (!g_vm.guest_ready) {
+            const char *text = "the machine is still booting";
+            mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+            close(fd);
+        } else {
+            handle_run(fd, payload, h.size);
+        }
+        break;
+    case MIME_IPC_STOP: {
+        mime_info("shutdown requested");
+        pthread_mutex_lock(&g_runs_lock);
+        if (g_stop_count < (int)MIME_ARRAY_COUNT(g_stop_fds))
+            g_stop_fds[g_stop_count++] = fd;
+        else
+            close(fd);
+        pthread_mutex_unlock(&g_runs_lock);
+        if (g_vm.guest_ready) {
+            MimeCtrlHeader msg = {MIME_CTRL_SHUTDOWN, sizeof(MimeCtrlHeader)};
+            mime_vm_queue_ctrl(&g_vm, &msg, sizeof(msg));
+        } else {
+            mime_daemon_guest_halted(&g_vm, 0);
+            mime_vm_request_stop(&g_vm, 0);
+        }
+        break;
+    }
+    default:
+        close(fd);
+        break;
+    }
+    free(payload);
+    return NULL;
+}
+
+static void *accept_thread(void *arg)
+{
+    pthread_setname_np("mime-ipc");
+    for (;;) {
+        int fd = accept(g_listen_fd, NULL, NULL);
+        if (fd < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+        pthread_t t;
+        pthread_create(&t, NULL, client_thread, (void *)(intptr_t)fd);
+        pthread_detach(t);
+    }
+    return NULL;
+}
+
+static void on_input(void *ctx, const MimeInputEvent *ev)
+{
+    mime_vm_queue_input(&g_vm, ev);
+}
+
+static void on_signal(int sig)
+{
+    cleanup_files();
+    _exit(128 + sig);
+}
+
+static void on_dump_signal(int sig)
+{
+    mime_vcpu_request_dump(&g_vm);
+}
+
+static bool listen_socket(const MimePaths *paths)
+{
+    unlink(paths->socket);
+    g_listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (g_listen_fd < 0)
+        return false;
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    mime_strlcpy(addr.sun_path, paths->socket, sizeof(addr.sun_path));
+    if (bind(g_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(g_listen_fd, 16) != 0) {
+        mime_error("cannot listen on %s: %s", paths->socket, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+int mime_vmm_main(const MimePaths *paths, int lock_fd)
+{
+    g_paths = paths;
+    g_start_ns = mime_now_ns();
+    mime_log_set_prefix("mime-vmm");
+    if (getenv("MIME_DEBUG"))
+        mime_log_set_level(MIME_LOG_DEBUG);
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGTERM, on_signal);
+    signal(SIGINT, on_signal);
+    signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log */
+
+    if (!mime_paths_ensure(paths) || !listen_socket(paths))
+        return 1;
+    char pid[32];
+    int n = snprintf(pid, sizeof(pid), "%d\n", (int)getpid());
+    mime_write_file(paths->pidfile, pid, (size_t)n);
+    mime_instance_publish(lock_fd, paths);
+    atexit(cleanup_files);
+
+    mime_ui_init(on_input, NULL);
+
+    uint64_t ram = MIME_VMM_DEFAULT_RAM;
+    const char *ram_env = getenv("MIME_RAM_MB");
+    if (ram_env && atoi(ram_env) >= 256)
+        ram = (uint64_t)atoi(ram_env) << 20;
+    if (!mime_vm_create(&g_vm, paths, ram))
+        return 1;
+    mime_ui_get_display(&g_vm.boot->display);
+    mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
+              g_vm.boot->display.dpi);
+
+    if (!mime_vm_load_kernel(&g_vm))
+        return 1;
+    if (!mime_vm_start(&g_vm))
+        return 1;
+
+    pthread_t t;
+    pthread_create(&t, NULL, accept_thread, NULL);
+    pthread_detach(t);
+
+    mime_ui_run();
+    return g_vm.exit_code;
+}

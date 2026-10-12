@@ -1,0 +1,86 @@
+/*
+ * prepares the C: drive before a boot. the system files themselves are
+ * never written to it: the machine maps them from the mime binary, see
+ * rom.h. this creates the user's profile, as windows does at first logon.
+ */
+#include "identity.h"
+#include "mime_cli.h"
+#include "rom.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static bool copy_tree(const char *src, const char *dst)
+{
+    DIR *dir = opendir(src);
+    if (!dir)
+        return false;
+    bool ok = mime_mkdir_p(dst, 0755);
+    struct dirent *e;
+    while (ok && (e = readdir(dir))) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+            continue;
+        char s[MIME_PATH_MAX], d[MIME_PATH_MAX];
+        mime_path_join(s, sizeof(s), src, e->d_name);
+        mime_path_join(d, sizeof(d), dst, e->d_name);
+        ok = mime_dir_exists(s) ? copy_tree(s, d) : mime_copy_file(s, d);
+    }
+    closedir(dir);
+    return ok;
+}
+
+/* new profiles start as a copy of the default one, NTUSER.DAT included. */
+static bool create_profile(const MimePaths *paths)
+{
+    MimeIdentity id;
+    mime_identity_load(paths, &id);
+    char profile[MIME_PATH_MAX], template[MIME_PATH_MAX];
+    snprintf(profile, sizeof(profile), "%s/Users/%s", paths->drive_c, id.user_name);
+    if (mime_dir_exists(profile))
+        return true;
+    snprintf(template, sizeof(template), "%s/Users/Default", paths->drive_c);
+    if (!mime_dir_exists(template)) {
+        mime_error("the default user profile is missing, run `mime setup` again");
+        return false;
+    }
+    if (!copy_tree(template, profile)) {
+        mime_error("cannot create the profile %s: %s", profile, strerror(errno));
+        return false;
+    }
+    static const char *const folders[] = {"Desktop",          "Documents",         "Downloads", "Music",
+                                          "Pictures",         "Videos",            "Favorites", "Links",
+                                          "AppData/Local/Temp", "AppData/LocalLow", "AppData/Roaming"};
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(folders); i++) {
+        char dir[MIME_PATH_MAX];
+        mime_path_join(dir, sizeof(dir), profile, folders[i]);
+        mime_mkdir_p(dir, 0755);
+    }
+    return true;
+}
+
+bool mime_prepare_drive(const MimePaths *paths)
+{
+    char dir[MIME_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s/Windows/System32", paths->drive_c);
+    if (!mime_mkdir_p(dir, 0755))
+        return false;
+    /* copies written by older versions are shadowed by the rom, remove them. */
+    const MimeRomHeader *h = mime_rom_header();
+    for (uint32_t i = 0; i < h->count; i++) {
+        char path[MIME_PATH_MAX];
+        snprintf(path, sizeof(path), "%s%s", paths->drive_c, h->entries[i].path);
+        for (char *c = path; *c; c++)
+            if (*c == '\\')
+                *c = '/';
+        unlink(path);
+    }
+    snprintf(dir, sizeof(dir), "%s/Windows/System32/config/SOFTWARE", paths->drive_c);
+    if (!mime_file_exists(dir)) {
+        mime_error("the registry hives are missing, run `mime setup` again");
+        return false;
+    }
+    return create_profile(paths);
+}
