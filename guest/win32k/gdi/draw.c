@@ -1,0 +1,865 @@
+/*
+ * drawing primitives on surfaces and the gdi drawing services.
+ */
+#include "../win32k.h"
+
+/* ------------------------------------------------------------------ raster operations */
+
+/* evaluates a ternary raster operation bitwise: bit i of the code is the result for p s d = i. */
+static ULONG rop3(UCHAR code, ULONG p, ULONG s, ULONG d)
+{
+    switch (code) {
+    case 0xCC:
+        return s;
+    case 0xF0:
+        return p;
+    case 0xAA:
+        return d;
+    case 0x00:
+        return 0;
+    case 0xFF:
+        return 0xFFFFFFFF;
+    case 0x66:
+        return s ^ d;
+    case 0x88:
+        return s & d;
+    case 0xEE:
+        return s | d;
+    case 0x5A:
+        return p ^ d;
+    case 0x55:
+        return ~d;
+    case 0x33:
+        return ~s;
+    }
+    ULONG r = 0;
+    for (int i = 0; i < 8; i++) {
+        if (!((code >> i) & 1))
+            continue;
+        r |= ((i & 4) ? p : ~p) & ((i & 2) ? s : ~s) & ((i & 1) ? d : ~d);
+    }
+    return r;
+}
+
+static ULONG rop2_apply(int rop2, ULONG pen, ULONG d)
+{
+    switch (rop2) {
+    case R2_BLACK:
+        return 0;
+    case R2_NOTMERGEPEN:
+        return ~(pen | d);
+    case R2_MASKNOTPEN:
+        return ~pen & d;
+    case R2_NOTCOPYPEN:
+        return ~pen;
+    case R2_MASKPENNOT:
+        return pen & ~d;
+    case R2_NOT:
+        return ~d;
+    case R2_XORPEN:
+        return pen ^ d;
+    case R2_NOTMASKPEN:
+        return ~(pen & d);
+    case R2_MASKPEN:
+        return pen & d;
+    case R2_NOTXORPEN:
+        return ~(pen ^ d);
+    case R2_NOP:
+        return d;
+    case R2_MERGENOTPEN:
+        return ~pen | d;
+    case R2_MERGEPENNOT:
+        return pen | ~d;
+    case R2_MERGEPEN:
+        return pen | d;
+    case R2_WHITE:
+        return 0xFFFFFFFF;
+    default:
+        return pen;
+    }
+}
+
+/* ------------------------------------------------------------------ fills */
+
+static void fill_span32(SURFACE *s, LONG y, LONG x0, LONG x1, ULONG pixel)
+{
+    PULONG row = (PULONG)(s->Bits + (LONG_PTR)y * s->Stride);
+    if (s->Flags & SURF_DEVICE)
+        pixel |= 0xFF000000u;
+    for (LONG x = x0; x < x1; x++)
+        row[x] = pixel;
+}
+
+void DrawFillRect(SURFACE *s, const REGION *clip, const RECT *rect, ULONG pixel)
+{
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], rect))
+            continue;
+        for (LONG y = r.top; y < r.bottom; y++) {
+            if (s->Bpp == 32)
+                fill_span32(s, y, r.left, r.right, pixel);
+            else
+                for (LONG x = r.left; x < r.right; x++)
+                    SurfacePutPixel(s, x, y, pixel);
+        }
+    }
+}
+
+void DrawFillRectRop(SURFACE *s, const REGION *clip, const RECT *rect, ULONG pixel, int rop2)
+{
+    if (rop2 == R2_COPYPEN) {
+        DrawFillRect(s, clip, rect, pixel);
+        return;
+    }
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], rect))
+            continue;
+        for (LONG y = r.top; y < r.bottom; y++)
+            for (LONG x = r.left; x < r.right; x++)
+                SurfacePutPixel(s, x, y, rop2_apply(rop2, pixel, SurfaceGetPixel(s, x, y)) & 0xFFFFFF);
+    }
+}
+
+static ULONG brush_pixel(DC *dc, BRUSH *b, LONG x, LONG y)
+{
+    if (b->Header.Handle == GdiStockHandle(DC_BRUSH))
+        return ColorToPixel(dc->State.BrushColor);
+    if (b->SysColor >= 0)
+        return ColorToPixel(MetricsSysColor(b->SysColor));
+    if (b->Style == BS_PATTERN && b->Pattern) {
+        SURFACE *p = b->Pattern;
+        LONG px = ((x % p->Width) + p->Width) % p->Width, py = ((y % p->Height) + p->Height) % p->Height;
+        ULONG v = SurfaceGetPixel(p, px, py);
+        if (p->Bpp == 1)
+            return ColorToPixel((v & 0xFFFFFF) ? dc->State.BkColor : dc->State.TextColor);
+        return v & 0xFFFFFF;
+    }
+    if (b->Style == BS_HATCHED) {
+        LONG hx = ((x % 8) + 8) % 8, hy = ((y % 8) + 8) % 8;
+        BOOLEAN on = FALSE;
+        switch (b->Hatch) {
+        case 0: on = hy == 4; break;           /* HS_HORIZONTAL */
+        case 1: on = hx == 4; break;           /* HS_VERTICAL */
+        case 2: on = hx == hy; break;          /* HS_FDIAGONAL */
+        case 3: on = hx == 7 - hy; break;      /* HS_BDIAGONAL */
+        case 4: on = hx == 4 || hy == 4; break; /* HS_CROSS */
+        case 5: on = hx == hy || hx == 7 - hy; break;
+        }
+        return ColorToPixel(on ? b->Color : dc->State.BkColor);
+    }
+    return ColorToPixel(b->Color);
+}
+
+void DrawBrushRect(DC *dc, const REGION *clip, const RECT *rect, BRUSH *brush, DWORD rop)
+{
+    if (!brush || brush->Style == BS_NULL)
+        return;
+    UCHAR code = (UCHAR)(rop >> 16);
+    SURFACE *s = dc->Surface;
+    BOOLEAN solid = brush->Style == BS_SOLID;
+    ULONG solid_pixel = solid ? brush_pixel(dc, brush, 0, 0) : 0;
+    if (solid && code == 0xF0) {
+        DrawFillRect(s, clip, rect, solid_pixel);
+        return;
+    }
+    BOOLEAN needs_dst = ((code >> 1) & 0x55) != (code & 0x55);
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], rect))
+            continue;
+        for (LONG y = r.top; y < r.bottom; y++) {
+            for (LONG x = r.left; x < r.right; x++) {
+                ULONG p = solid ? solid_pixel : brush_pixel(dc, brush, x - dc->Origin.x, y - dc->Origin.y);
+                ULONG d = needs_dst ? SurfaceGetPixel(s, x, y) : 0;
+                SurfacePutPixel(s, x, y, rop3(code, p, 0, d) & 0xFFFFFF);
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ blits */
+
+BOOLEAN BltSurface(SURFACE *dst, const REGION *clip, LONG dx, LONG dy, LONG width, LONG height, SURFACE *src,
+                   LONG sx, LONG sy, DWORD rop, DC *dst_dc)
+{
+    UCHAR code = (UCHAR)(rop >> 16);
+    if (width <= 0 || height <= 0)
+        return TRUE;
+    /* clip the source to its bounds by shrinking the destination rectangle. */
+    if (src) {
+        if (sx < 0) {
+            dx -= sx;
+            width += sx;
+            sx = 0;
+        }
+        if (sy < 0) {
+            dy -= sy;
+            height += sy;
+            sy = 0;
+        }
+        width = W32Min(width, src->Width - sx);
+        height = W32Min(height, src->Height - sy);
+        if (width <= 0 || height <= 0)
+            return TRUE;
+    }
+    RECT target = {dx, dy, dx + width, dy + height};
+    BOOLEAN needs_dst = ((code >> 1) & 0x55) != (code & 0x55);
+    BRUSH *brush = dst_dc ? dst_dc->State.Brush : NULL;
+    BOOLEAN needs_pat = ((code >> 4) & 0x0F) != (code & 0x0F);
+    BOOLEAN overlap = src == dst && sy < dy;
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], &target))
+            continue;
+        LONG rows = r.bottom - r.top;
+        for (LONG k = 0; k < rows; k++) {
+            /* copy bottom up when moving down within one surface. */
+            LONG y = overlap ? r.bottom - 1 - k : r.top + k;
+            LONG syy = sy + (y - dy);
+            if (code == 0xCC && src && src->Bpp == 32 && dst->Bpp == 32) {
+                PULONG d = (PULONG)(dst->Bits + (LONG_PTR)y * dst->Stride) + r.left;
+                PULONG s = (PULONG)(src->Bits + (LONG_PTR)syy * src->Stride) + sx + (r.left - dx);
+                SIZE_T n = (SIZE_T)(r.right - r.left);
+                memmove(d, s, n * 4);
+                if (dst->Flags & SURF_DEVICE)
+                    for (SIZE_T j = 0; j < n; j++)
+                        d[j] |= 0xFF000000u;
+                continue;
+            }
+            for (LONG x = r.left; x < r.right; x++) {
+                ULONG s = 0;
+                if (src) {
+                    s = SurfaceGetPixel(src, sx + (x - dx), syy);
+                    if (src->Bpp == 1 && dst->Bpp != 1 && dst_dc) {
+                        /* monochrome sources map 0 to the text color and 1 to the background color. */
+                        s = ColorToPixel((s & 0xFFFFFF) ? dst_dc->State.BkColor : dst_dc->State.TextColor);
+                    } else if (dst->Bpp == 1 && src->Bpp != 1 && dst_dc) {
+                        s = ((s & 0xFFFFFF) == ColorToPixel(dst_dc->State.BkColor)) ? 0xFFFFFF : 0;
+                    }
+                }
+                ULONG p = needs_pat && dst_dc ? brush_pixel(dst_dc, brush, x - dst_dc->Origin.x, y - dst_dc->Origin.y) : 0;
+                ULONG d = needs_dst ? SurfaceGetPixel(dst, x, y) : 0;
+                ULONG v = rop3(code, p, s, d);
+                if (dst->Bpp != 32)
+                    v &= 0xFFFFFF;
+                SurfacePutPixel(dst, x, y, v);
+            }
+        }
+    }
+    return TRUE;
+}
+
+BOOLEAN StretchSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect, SURFACE *src, const RECT *src_rect,
+                       DWORD rop, int mode)
+{
+    LONG dw = dst_rect->right - dst_rect->left, dh = dst_rect->bottom - dst_rect->top;
+    LONG sw = src_rect->right - src_rect->left, sh = src_rect->bottom - src_rect->top;
+    if (!dw || !dh || !sw || !sh)
+        return TRUE;
+    UCHAR code = (UCHAR)(rop >> 16);
+    RECT target = {W32Min(dst_rect->left, dst_rect->right), W32Min(dst_rect->top, dst_rect->bottom),
+                   W32Max(dst_rect->left, dst_rect->right), W32Max(dst_rect->top, dst_rect->bottom)};
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], &target))
+            continue;
+        for (LONG y = r.top; y < r.bottom; y++) {
+            /* nearest sample at the destination pixel center; negative extents mirror. */
+            LONG64 fy = ((LONG64)(2 * (y - dst_rect->top) + 1) * sh) / (2 * (LONG64)dh);
+            LONG syy = src_rect->top + (LONG)fy;
+            if (syy < 0 || syy >= src->Height)
+                continue;
+            for (LONG x = r.left; x < r.right; x++) {
+                LONG64 fx = ((LONG64)(2 * (x - dst_rect->left) + 1) * sw) / (2 * (LONG64)dw);
+                LONG sxx = src_rect->left + (LONG)fx;
+                if (sxx < 0 || sxx >= src->Width)
+                    continue;
+                ULONG s = SurfaceGetPixel(src, sxx, syy);
+                ULONG d = code == 0xCC ? 0 : SurfaceGetPixel(dst, x, y);
+                SurfacePutPixel(dst, x, y, rop3(code, 0, s, d));
+            }
+        }
+    }
+    return TRUE;
+}
+
+static inline UCHAR div255(ULONG v)
+{
+    return (UCHAR)((v + 1 + (v >> 8)) >> 8);
+}
+
+BOOLEAN AlphaBlendSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect, SURFACE *src, const RECT *src_rect,
+                          BLENDFUNCTION blend)
+{
+    LONG dw = dst_rect->right - dst_rect->left, dh = dst_rect->bottom - dst_rect->top;
+    LONG sw = src_rect->right - src_rect->left, sh = src_rect->bottom - src_rect->top;
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0)
+        return FALSE;
+    BOOLEAN per_pixel = (blend.AlphaFormat & AC_SRC_ALPHA) && src->Bpp == 32;
+    ULONG constant = blend.SourceConstantAlpha;
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], dst_rect))
+            continue;
+        for (LONG y = r.top; y < r.bottom; y++) {
+            LONG syy = src_rect->top + (LONG)(((LONG64)(2 * (y - dst_rect->top) + 1) * sh) / (2 * (LONG64)dh));
+            for (LONG x = r.left; x < r.right; x++) {
+                LONG sxx = src_rect->left + (LONG)(((LONG64)(2 * (x - dst_rect->left) + 1) * sw) / (2 * (LONG64)dw));
+                ULONG s = SurfaceGetPixel(src, sxx, syy);
+                ULONG sb = s & 0xFF, sg = (s >> 8) & 0xFF, sr = (s >> 16) & 0xFF, sa = per_pixel ? s >> 24 : 255;
+                if (constant != 255) {
+                    sb = div255(sb * constant);
+                    sg = div255(sg * constant);
+                    sr = div255(sr * constant);
+                    sa = div255(sa * constant);
+                } else if (!per_pixel) {
+                    sa = 255;
+                }
+                if (sa == 0 && per_pixel)
+                    continue;
+                ULONG d = SurfaceGetPixel(dst, x, y);
+                ULONG inv = 255 - sa;
+                ULONG ob = sb + div255((d & 0xFF) * inv);
+                ULONG og = sg + div255(((d >> 8) & 0xFF) * inv);
+                ULONG orr = sr + div255(((d >> 16) & 0xFF) * inv);
+                ULONG oa = sa + div255((d >> 24) * inv);
+                SurfacePutPixel(dst, x, y, (oa << 24) | (W32Min((LONG)orr, 255) << 16) | (W32Min((LONG)og, 255) << 8) |
+                                               W32Min((LONG)ob, 255));
+            }
+        }
+    }
+    return TRUE;
+}
+
+/* blends an 8 bit coverage mask in a solid color. */
+void DrawCoverage(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *coverage, LONG width, LONG height,
+                  LONG stride, ULONG pixel)
+{
+    RECT box = {x, y, x + width, y + height};
+    ULONG cr = (pixel >> 16) & 0xFF, cg = (pixel >> 8) & 0xFF, cb = pixel & 0xFF;
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], &box))
+            continue;
+        for (LONG yy = r.top; yy < r.bottom; yy++) {
+            const UCHAR *cov = coverage + (yy - y) * stride;
+            for (LONG xx = r.left; xx < r.right; xx++) {
+                ULONG a = cov[xx - x];
+                if (!a)
+                    continue;
+                if (a == 255) {
+                    SurfacePutPixel(s, xx, yy, pixel);
+                    continue;
+                }
+                ULONG d = SurfaceGetPixel(s, xx, yy);
+                ULONG inv = 255 - a;
+                ULONG nb = div255(cb * a + (d & 0xFF) * inv);
+                ULONG ng = div255(cg * a + ((d >> 8) & 0xFF) * inv);
+                ULONG nr = div255(cr * a + ((d >> 16) & 0xFF) * inv);
+                SurfacePutPixel(s, xx, yy, (d & 0xFF000000u) | (nr << 16) | (ng << 8) | nb);
+            }
+        }
+    }
+}
+
+/*
+ * anti-aliased rounded rectangle used by the frame renderer: an optional
+ * border of border_width pixels inside the rectangle and a fill. coverage
+ * comes from 4x4 supersampling of the corner arcs.
+ */
+void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG radius, ULONG fill, ULONG border,
+                     LONG border_width)
+{
+    LONG w = rect->right - rect->left, h = rect->bottom - rect->top;
+    if (w <= 0 || h <= 0)
+        return;
+    radius = W32Min(radius, W32Min(w, h) / 2);
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], rect))
+            continue;
+        for (LONG y = r.top; y < r.bottom; y++) {
+            for (LONG x = r.left; x < r.right; x++) {
+                LONG lx = x - rect->left, ly = y - rect->top;
+                /* distance to the nearest corner center, if inside a corner square. */
+                LONG cx = lx < radius ? radius : lx >= w - radius ? w - radius : -1;
+                LONG cy = ly < radius ? radius : ly >= h - radius ? h - radius : -1;
+                ULONG outer = 16, inner = 16;
+                if (cx >= 0 && cy >= 0 && radius > 0) {
+                    outer = inner = 0;
+                    LONG rin = radius - border_width;
+                    for (int sy = 0; sy < 4; sy++) {
+                        for (int sx = 0; sx < 4; sx++) {
+                            /* sample position relative to the corner center in 1/8 pixels. */
+                            LONG px = (lx * 8 + sx * 2 + 1) - cx * 8, py = (ly * 8 + sy * 2 + 1) - cy * 8;
+                            LONG64 d2 = (LONG64)px * px + (LONG64)py * py;
+                            if (d2 <= (LONG64)radius * radius * 64)
+                                outer++;
+                            if (rin > 0 && d2 <= (LONG64)rin * rin * 64)
+                                inner++;
+                        }
+                    }
+                    if (rin <= 0)
+                        inner = 0;
+                } else if (border_width > 0) {
+                    BOOLEAN on_edge = lx < border_width || ly < border_width || lx >= w - border_width ||
+                                      ly >= h - border_width;
+                    inner = on_edge ? 0 : 16;
+                }
+                if (!border_width)
+                    inner = outer;
+                if (!outer)
+                    continue;
+                ULONG d = SurfaceGetPixel(s, x, y);
+                /* inner area takes the fill, the ring between takes the border. */
+                ULONG fa = inner * 255 / 16, ba = (outer - inner) * 255 / 16;
+                ULONG out_px = d;
+                if (ba) {
+                    ULONG inv = 255 - ba;
+                    out_px = (div255(((border >> 16) & 0xFF) * ba + ((out_px >> 16) & 0xFF) * inv) << 16) |
+                             (div255(((border >> 8) & 0xFF) * ba + ((out_px >> 8) & 0xFF) * inv) << 8) |
+                             div255((border & 0xFF) * ba + (out_px & 0xFF) * inv);
+                }
+                if (fa) {
+                    ULONG inv = 255 - fa;
+                    out_px = (div255(((fill >> 16) & 0xFF) * fa + ((out_px >> 16) & 0xFF) * inv) << 16) |
+                             (div255(((fill >> 8) & 0xFF) * fa + ((out_px >> 8) & 0xFF) * inv) << 8) |
+                             div255((fill & 0xFF) * fa + (out_px & 0xFF) * inv);
+                }
+                SurfacePutPixel(s, x, y, out_px);
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ helpers for services */
+
+typedef struct DRAW_CONTEXT {
+    DC *Dc;
+    REGION Clip;
+} DRAW_CONTEXT;
+
+static BOOLEAN begin_draw(HDC hdc, DRAW_CONTEXT *ctx)
+{
+    ctx->Dc = DcLookup(hdc);
+    RgnInit(&ctx->Clip);
+    if (!ctx->Dc || !ctx->Dc->Surface)
+        return FALSE;
+    return DcGetClip(ctx->Dc, &ctx->Clip);
+}
+
+static void end_draw(DRAW_CONTEXT *ctx, const RECT *touched)
+{
+    if (ctx->Dc && ctx->Dc->Surface && touched)
+        SurfaceMarkDirty(ctx->Dc->Surface, touched);
+    RgnFree(&ctx->Clip);
+}
+
+static RECT logical_rect_to_surface(DC *dc, LONG left, LONG top, LONG right, LONG bottom)
+{
+    DcLogicalToSurface(dc, &left, &top);
+    DcLogicalToSurface(dc, &right, &bottom);
+    RECT r = {W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
+    return r;
+}
+
+static ULONG pen_pixel(DC *dc)
+{
+    PEN *p = dc->State.Pen;
+    if (p->Header.Handle == GdiStockHandle(DC_PEN))
+        return ColorToPixel(dc->State.PenColor);
+    return ColorToPixel(p->Color);
+}
+
+/* ------------------------------------------------------------------ services */
+
+BOOL NTAPI NtGdiPatBlt(HDC hdc, int x, int y, int width, int height, DWORD rop)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT r = {0, 0, 0, 0};
+    if (begin_draw(hdc, &ctx)) {
+        r = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
+        DrawBrushRect(ctx.Dc, &ctx.Clip, &r, ctx.Dc->State.Brush, rop);
+        ok = TRUE;
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &r);
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y, DWORD rop,
+                       DWORD bk_color, ULONG flags)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT r = {0, 0, 0, 0};
+    UCHAR code = (UCHAR)(rop >> 16);
+    BOOLEAN uses_src = ((code >> 2) & 0x33) != (code & 0x33);
+    DC *src = hsrc ? DcLookup(hsrc) : NULL;
+    if (begin_draw(hdst, &ctx)) {
+        if (!uses_src) {
+            r = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
+            DrawBrushRect(ctx.Dc, &ctx.Clip, &r, ctx.Dc->State.Brush, rop);
+            ok = TRUE;
+        } else if (src && src->Surface) {
+            LONG dx = x, dy = y, sx = src_x, sy = src_y;
+            DcLogicalToSurface(ctx.Dc, &dx, &dy);
+            DcLogicalToSurface(src, &sx, &sy);
+            /* restrict the source to what the source dc may read. */
+            REGION src_vis;
+            RgnInit(&src_vis);
+            RgnCopy(&src_vis, &src->VisRgn);
+            RgnOffset(&src_vis, dx - sx, dy - sy);
+            RgnCombine(&ctx.Clip, &ctx.Clip, &src_vis, RGN_AND);
+            RgnFree(&src_vis);
+            ok = BltSurface(ctx.Dc->Surface, &ctx.Clip, dx, dy, width, height, src->Surface, sx, sy, rop, ctx.Dc);
+            r = (RECT){dx, dy, dx + width, dy + height};
+        }
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &r);
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiStretchBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
+                           int src_width, int src_height, DWORD rop, DWORD bk_color)
+{
+    if (width == src_width && height == src_height)
+        return NtGdiBitBlt(hdst, x, y, width, height, hsrc, src_x, src_y, rop, bk_color, 0);
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT dirty = {0, 0, 0, 0};
+    DC *src = DcLookup(hsrc);
+    if (begin_draw(hdst, &ctx) && src && src->Surface) {
+        LONG x0 = x, y0 = y, x1 = x + width, y1 = y + height;
+        DcLogicalToSurface(ctx.Dc, &x0, &y0);
+        DcLogicalToSurface(ctx.Dc, &x1, &y1);
+        LONG sx0 = src_x, sy0 = src_y, sx1 = src_x + src_width, sy1 = src_y + src_height;
+        DcLogicalToSurface(src, &sx0, &sy0);
+        DcLogicalToSurface(src, &sx1, &sy1);
+        RECT dr = {x0, y0, x1, y1}, sr = {sx0, sy0, sx1, sy1};
+        ok = StretchSurface(ctx.Dc->Surface, &ctx.Clip, &dr, src->Surface, &sr, rop, ctx.Dc->State.StretchMode);
+        dirty = (RECT){W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
+                           int src_width, int src_height, BLENDFUNCTION blend, HANDLE transform)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT dirty = {0, 0, 0, 0};
+    DC *src = DcLookup(hsrc);
+    if (begin_draw(hdst, &ctx) && src && src->Surface) {
+        RECT dr = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
+        RECT sr = logical_rect_to_surface(src, src_x, src_y, src_x + src_width, src_y + src_height);
+        RECT sb = {0, 0, src->Surface->Width, src->Surface->Height}, tmp;
+        if (RectIntersect(&tmp, &sr, &sb) && tmp.left == sr.left && tmp.right == sr.right && tmp.top == sr.top &&
+            tmp.bottom == sr.bottom)
+            ok = AlphaBlendSurface(ctx.Dc->Surface, &ctx.Clip, &dr, src->Surface, &sr, blend);
+        dirty = dr;
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+/* bresenham line in surface coordinates, last point excluded like gdi. */
+static void draw_line(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty)
+{
+    PEN *pen = dc->State.Pen;
+    if (pen->Style == PS_NULL)
+        return;
+    ULONG px = pen_pixel(dc);
+    LONG width = pen->Width > 1 ? pen->Width : 1;
+    LONG dx = x1 > x0 ? x1 - x0 : x0 - x1, dy = y1 > y0 ? y0 - y1 : y1 - y0;
+    LONG sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx + dy;
+    LONG step = 0;
+    while (x0 != x1 || y0 != y1) {
+        BOOLEAN on = TRUE;
+        if (pen->Style == PS_DOT)
+            on = (step & 1) == 0;
+        else if (pen->Style == PS_DASH)
+            on = (step % 24) < 18;
+        if (on) {
+            RECT r = {x0 - (width - 1) / 2, y0 - (width - 1) / 2, x0 - (width - 1) / 2 + width, y0 - (width - 1) / 2 + width};
+            DrawFillRectRop(dc->Surface, clip, &r, px, dc->State.Rop2);
+            RectUnion(dirty, dirty, &r);
+        }
+        step++;
+        LONG e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    RECT dirty = {0, 0, 0, 0};
+    BOOL ok = begin_draw(hdc, &ctx) || ctx.Dc;
+    if (ctx.Dc && !RgnIsEmpty(&ctx.Clip)) {
+        LONG x0 = ctx.Dc->State.CurrentPos.x, y0 = ctx.Dc->State.CurrentPos.y, x1 = x, y1 = y;
+        DcLogicalToSurface(ctx.Dc, &x0, &y0);
+        DcLogicalToSurface(ctx.Dc, &x1, &y1);
+        draw_line(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
+    }
+    if (ctx.Dc)
+        ctx.Dc->State.CurrentPos = (POINT){x, y};
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirty)
+{
+    PEN *pen = dc->State.Pen;
+    if (pen->Style == PS_NULL)
+        return;
+    LONG w = pen->Width > 1 ? pen->Width : 1;
+    ULONG px = pen_pixel(dc);
+    RECT edges[4] = {
+        {r->left, r->top, r->right, r->top + w},
+        {r->left, r->bottom - w, r->right, r->bottom},
+        {r->left, r->top, r->left + w, r->bottom},
+        {r->right - w, r->top, r->right, r->bottom},
+    };
+    for (int i = 0; i < 4; i++)
+        DrawFillRectRop(dc->Surface, clip, &edges[i], px, dc->State.Rop2);
+    RectUnion(dirty, dirty, r);
+}
+
+BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    RECT dirty = {0, 0, 0, 0};
+    BOOL ok = FALSE;
+    if (begin_draw(hdc, &ctx)) {
+        RECT r = logical_rect_to_surface(ctx.Dc, left, top, right, bottom);
+        LONG inset = ctx.Dc->State.Pen->Style == PS_NULL ? 0 : 1;
+        /* with a null pen the rectangle shrinks by one pixel at the right and bottom. */
+        RECT inner = r;
+        if (!inset) {
+            inner.right--;
+            inner.bottom--;
+        }
+        DrawBrushRect(ctx.Dc, &ctx.Clip, &inner, ctx.Dc->State.Brush, PATCOPY);
+        frame_rect_pen(ctx.Dc, &ctx.Clip, &r, &dirty);
+        RectUnion(&dirty, &dirty, &inner);
+        ok = TRUE;
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int width, int height)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    RECT dirty = {0, 0, 0, 0};
+    BOOL ok = FALSE;
+    if (begin_draw(hdc, &ctx)) {
+        RECT r = logical_rect_to_surface(ctx.Dc, left, top, right, bottom);
+        BRUSH *b = ctx.Dc->State.Brush;
+        ULONG fill = b->Style == BS_NULL ? 0 : brush_pixel(ctx.Dc, b, 0, 0);
+        PEN *p = ctx.Dc->State.Pen;
+        LONG bw = p->Style == PS_NULL ? 0 : (p->Width > 1 ? p->Width : 1);
+        LONG radius = W32Min(width, height) / 2;
+        if (b->Style == BS_NULL) {
+            /* frame only: draw the border ring over the existing pixels. */
+            REGION ring;
+            RgnInit(&ring);
+            RgnCopy(&ring, &ctx.Clip);
+            DrawRoundRectAA(ctx.Dc->Surface, &ring, &r, radius, 0, pen_pixel(ctx.Dc), bw);
+            RgnFree(&ring);
+        } else {
+            DrawRoundRectAA(ctx.Dc->Surface, &ctx.Clip, &r, radius, fill, bw ? pen_pixel(ctx.Dc) : fill, bw);
+        }
+        dirty = r;
+        ok = TRUE;
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiEllipse(HDC hdc, int left, int top, int right, int bottom)
+{
+    int w = right - left, h = bottom - top;
+    return NtGdiRoundRect(hdc, left, top, right, bottom, w < 0 ? -w : w, h < 0 ? -h : h);
+}
+
+/* polylines only for now: function 2 is PolyPolyline, 1 PolyPolygon outlines. */
+ULONG NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_counts, ULONG count, int function)
+{
+    if (count == 0 || count > 1024)
+        return 0;
+    ULONG counts[1024];
+    if (!NT_SUCCESS(MimeCopyFromUser(counts, user_counts, count * sizeof(ULONG))))
+        return 0;
+    ULONG total = 0;
+    for (ULONG i = 0; i < count; i++) {
+        total += counts[i];
+        if (total > 65536)
+            return 0;
+    }
+    POINT *pts = W32Alloc(total * sizeof(POINT) + 1);
+    if (!pts || !NT_SUCCESS(MimeCopyFromUser(pts, user_points, total * sizeof(POINT)))) {
+        W32Free(pts);
+        return 0;
+    }
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    RECT dirty = {0, 0, 0, 0};
+    BOOL ok = FALSE;
+    if (begin_draw(hdc, &ctx)) {
+        ULONG base = 0;
+        for (ULONG i = 0; i < count; i++) {
+            ULONG n = counts[i];
+            for (ULONG k = 0; k + 1 < n; k++) {
+                LONG x0 = pts[base + k].x, y0 = pts[base + k].y, x1 = pts[base + k + 1].x, y1 = pts[base + k + 1].y;
+                DcLogicalToSurface(ctx.Dc, &x0, &y0);
+                DcLogicalToSurface(ctx.Dc, &x1, &y1);
+                draw_line(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
+            }
+            if (function == 1 && n > 2) {
+                LONG x0 = pts[base + n - 1].x, y0 = pts[base + n - 1].y, x1 = pts[base].x, y1 = pts[base].y;
+                DcLogicalToSurface(ctx.Dc, &x0, &y0);
+                DcLogicalToSurface(ctx.Dc, &x1, &y1);
+                draw_line(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
+            }
+            base += n;
+        }
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    W32Free(pts);
+    return ok;
+}
+
+COLORREF NTAPI NtGdiSetPixel(HDC hdc, int x, int y, COLORREF color)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    COLORREF result = CLR_INVALID;
+    RECT dirty = {0, 0, 0, 0};
+    if (begin_draw(hdc, &ctx)) {
+        LONG sx = x, sy = y;
+        DcLogicalToSurface(ctx.Dc, &sx, &sy);
+        if (RgnPtIn(&ctx.Clip, sx, sy)) {
+            SurfacePutPixel(ctx.Dc->Surface, sx, sy, ColorToPixel(color));
+            result = PixelToColor(SurfaceGetPixel(ctx.Dc->Surface, sx, sy));
+            dirty = (RECT){sx, sy, sx + 1, sy + 1};
+        }
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return result;
+}
+
+COLORREF NTAPI NtGdiGetPixel(HDC hdc, int x, int y)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    COLORREF result = CLR_INVALID;
+    if (dc && dc->Surface) {
+        LONG sx = x, sy = y;
+        DcLogicalToSurface(dc, &sx, &sy);
+        if (RgnPtIn(&dc->VisRgn, sx, sy) && sx < dc->Surface->Width && sy < dc->Surface->Height)
+            result = PixelToColor(SurfaceGetPixel(dc->Surface, sx, sy));
+    }
+    UserLeave();
+    return result;
+}
+
+static BOOL fill_region(HDC hdc, HRGN region, HBRUSH hbrush, int frame_w, int frame_h, BOOLEAN invert)
+{
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT dirty = {0, 0, 0, 0};
+    GDI_REGION *r = (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION);
+    BRUSH *b = hbrush ? (BRUSH *)GdiLookup(hbrush, GDI_TYPE_BRUSH) : NULL;
+    if (begin_draw(hdc, &ctx) && r && (b || invert)) {
+        REGION area;
+        RgnInit(&area);
+        RgnCopy(&area, &r->Region);
+        if (frame_w || frame_h) {
+            /* the frame is the region minus the region eroded by the frame size. */
+            REGION inner, shifted;
+            RgnInit(&inner);
+            RgnInit(&shifted);
+            RgnCopy(&inner, &r->Region);
+            LONG offs[4][2] = {{frame_w, 0}, {-frame_w, 0}, {0, frame_h}, {0, -frame_h}};
+            for (int k = 0; k < 4; k++) {
+                RgnCopy(&shifted, &r->Region);
+                RgnOffset(&shifted, offs[k][0], offs[k][1]);
+                RgnCombine(&inner, &inner, &shifted, RGN_AND);
+            }
+            RgnCombine(&area, &area, &inner, RGN_DIFF);
+            RgnFree(&inner);
+            RgnFree(&shifted);
+        }
+        LONG ox = 0, oy = 0;
+        DcLogicalToSurface(ctx.Dc, &ox, &oy);
+        RgnOffset(&area, ox, oy);
+        RgnCombine(&ctx.Clip, &ctx.Clip, &area, RGN_AND);
+        if (invert)
+            DrawFillRectRop(ctx.Dc->Surface, &ctx.Clip, &area.Extents, 0, R2_NOT);
+        else
+            DrawBrushRect(ctx.Dc, &ctx.Clip, &area.Extents, b, PATCOPY);
+        dirty = area.Extents;
+        RgnFree(&area);
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiFillRgn(HDC hdc, HRGN region, HBRUSH brush)
+{
+    return fill_region(hdc, region, brush, 0, 0, FALSE);
+}
+
+BOOL NTAPI NtGdiFrameRgn(HDC hdc, HRGN region, HBRUSH brush, int width, int height)
+{
+    return fill_region(hdc, region, brush, width, height, FALSE);
+}
+
+BOOL NTAPI NtGdiInvertRgn(HDC hdc, HRGN region)
+{
+    return fill_region(hdc, region, NULL, 0, 0, TRUE);
+}

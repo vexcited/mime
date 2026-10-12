@@ -1,0 +1,120 @@
+/*
+ * truetype font parsing and anti-aliased glyph rasterization.
+ *
+ * the font data is never copied: it must stay valid and unchanged for as long
+ * as the MimeTtfFont referencing it is used. every read is bounds checked and
+ * malformed fonts make the functions fail instead of crashing.
+ *
+ * font space is y up, measured in font units. bitmap space is y down,
+ * measured in pixels, with the glyph origin on the baseline at 0, 0.
+ */
+#ifndef MIME_LIB_TTF_H
+#define MIME_LIB_TTF_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "../alloc.h"
+
+typedef struct MimeTtfTable {
+    const uint8_t *data;
+    uint32_t size;
+} MimeTtfTable;
+
+/* parsed face. treat the fields as private. */
+typedef struct MimeTtfFont {
+    const uint8_t *data;
+    size_t size;
+    MimeTtfTable head, hhea, hmtx, maxp, loca, glyf, cmap, kern, os2, name, post;
+    MimeTtfTable cmap_sub;
+    MimeTtfTable kern_pairs;
+    uint32_t kern_count;
+    uint16_t cmap_format;
+    bool cmap_symbol;
+    bool has_outlines;
+    uint16_t num_glyphs;
+    uint16_t num_hmetrics;
+    uint16_t units_per_em;
+    int16_t loca_format;
+} MimeTtfFont;
+
+/* every field is in font units unless noted. */
+typedef struct MimeTtfMetrics {
+    int units_per_em;
+    int ascender, descender, line_gap; /* hhea, descender is negative. */
+    int typo_ascender, typo_descender, typo_line_gap; /* os/2, or hhea when absent. */
+    int win_ascent, win_descent; /* os/2, both positive. */
+    int avg_char_width;
+    int max_advance;
+    int x_height, cap_height; /* os/2 v2, else measured from x and H. */
+    int x_min, y_min, x_max, y_max; /* head bounding box. */
+    int weight; /* 100 to 900, 400 is regular. */
+    int underline_position, underline_thickness;
+    int strikeout_position, strikeout_size;
+    int32_t italic_angle; /* 16.16 degrees, negative leans right. */
+    bool italic, bold, fixed_pitch;
+    bool use_typo_metrics; /* fsSelection bit 7. */
+} MimeTtfMetrics;
+
+/* placement and synthetic styling for the rasterizer. */
+typedef struct MimeTtfRenderParams {
+    float scale_x, scale_y; /* pixels per font unit. */
+    float shift_x, shift_y; /* sub-pixel shift in bitmap space, y down. */
+    float oblique; /* horizontal shear per unit of height, 0.2 is a typical synthetic italic. */
+    float embolden; /* extra horizontal stroke width in pixels, 0 for none. */
+} MimeTtfRenderParams;
+
+/* number of faces in a font file, 1 for a plain ttf, 0 if unrecognized. */
+unsigned mime_ttf_face_count(const void *data, size_t size);
+
+/* parses face face_index of a ttf, otf or ttc file. */
+bool mime_ttf_open(MimeTtfFont *font, const void *data, size_t size, unsigned face_index);
+
+uint16_t mime_ttf_glyph_count(const MimeTtfFont *font);
+
+/* true when the face has glyf outlines the rasterizer can draw. */
+bool mime_ttf_has_outlines(const MimeTtfFont *font);
+
+/* maps a unicode code point to a glyph, 0 is the missing glyph. */
+uint16_t mime_ttf_glyph_index(const MimeTtfFont *font, uint32_t codepoint);
+
+void mime_ttf_glyph_hmetrics(const MimeTtfFont *font, uint16_t glyph, int *advance, int *left_bearing);
+
+/* kern table adjustment to add to the advance of left, in font units. */
+int mime_ttf_kerning(const MimeTtfFont *font, uint16_t left, uint16_t right);
+
+void mime_ttf_metrics(const MimeTtfFont *font, MimeTtfMetrics *metrics);
+
+/*
+ * copies name record name_id, for example 1 family, 2 subfamily, 4 full name,
+ * as utf-16 code units in host order. *length receives the full length in
+ * code units even when capacity is smaller, and the copy is nul terminated
+ * when there is room. returns false when the record is absent.
+ */
+bool mime_ttf_name(const MimeTtfFont *font, unsigned name_id, uint16_t *buffer, size_t capacity, size_t *length);
+
+/*
+ * pixel box of the rendered glyph relative to the baseline origin, y down.
+ * the bitmap passed to the render functions is x1 - x0 by y1 - y0 pixels.
+ * an empty glyph succeeds with an empty box.
+ */
+bool mime_ttf_glyph_bitmap_box(const MimeTtfFont *font, uint16_t glyph, float scale_x, float scale_y,
+                               float shift_x, float shift_y, int *x0, int *y0, int *x1, int *y1);
+
+/*
+ * renders 8 bit coverage, 0 to 255, top-down with the given stride. the
+ * top-left pixel corresponds to x0, y0 of the box. every pixel of the
+ * width by height area is overwritten, coverage outside it is dropped.
+ */
+bool mime_ttf_render_glyph(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph, float scale_x,
+                           float scale_y, float shift_x, float shift_y, uint8_t *out, int width, int height,
+                           int stride);
+
+/* same as above with synthetic oblique and emboldening. */
+bool mime_ttf_glyph_box_ex(const MimeTtfFont *font, uint16_t glyph, const MimeTtfRenderParams *params, int *x0,
+                           int *y0, int *x1, int *y1);
+bool mime_ttf_render_glyph_ex(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                              const MimeTtfRenderParams *params, uint8_t *out, int width, int height, int stride);
+
+#endif

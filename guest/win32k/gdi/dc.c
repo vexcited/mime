@@ -1,0 +1,807 @@
+/*
+ * device contexts: attributes, object selection, saved states, clipping
+ * and coordinate mapping.
+ */
+#include "../win32k.h"
+
+GDI_OBJECT *GdiStockObject(int index);
+
+DC *DcLookup(HDC hdc)
+{
+    return (DC *)GdiLookup(hdc, GDI_TYPE_DC);
+}
+
+static void select_ref(GDI_OBJECT *o)
+{
+    if (o)
+        o->SelectCount++;
+}
+
+/* drops a selection and finishes a pending delete. */
+static void select_unref(GDI_OBJECT *o)
+{
+    if (!o)
+        return;
+    if (o->SelectCount)
+        o->SelectCount--;
+    if (!o->SelectCount && (o->Flags & GDI_FLAG_DELETE_PENDING)) {
+        o->Flags &= (UCHAR)~GDI_FLAG_DELETE_PENDING;
+        GdiDeleteObject(o);
+    }
+}
+
+void DcResetState(DC *dc)
+{
+    DC_STATE *s = &dc->State;
+    s->TextColor = RGB(0, 0, 0);
+    s->BkColor = RGB(255, 255, 255);
+    s->BrushColor = RGB(255, 255, 255);
+    s->PenColor = RGB(0, 0, 0);
+    s->BkMode = OPAQUE;
+    s->TextAlign = TA_LEFT | TA_TOP | TA_NOUPDATECP;
+    s->Rop2 = R2_COPYPEN;
+    s->StretchMode = BLACKONWHITE;
+    s->GraphicsMode = GM_COMPATIBLE;
+    s->MapMode = MM_TEXT;
+    s->TextCharExtra = 0;
+    s->ViewportOrg = (POINT){0, 0};
+    s->WindowOrg = (POINT){0, 0};
+    s->CurrentPos = (POINT){0, 0};
+    RgnClear(&s->ClipRgn);
+    s->HasClip = FALSE;
+}
+
+void DcSelectDefaults(DC *dc)
+{
+    DC_STATE *s = &dc->State;
+    select_unref(&s->Brush->Header);
+    select_unref(&s->Pen->Header);
+    select_unref(&s->Font->Header);
+    s->Brush = (BRUSH *)GdiStockObject(WHITE_BRUSH);
+    s->Pen = (PEN *)GdiStockObject(BLACK_PEN);
+    s->Font = (FONT *)GdiStockObject(SYSTEM_FONT);
+    select_ref(&s->Brush->Header);
+    select_ref(&s->Pen->Header);
+    select_ref(&s->Font->Header);
+}
+
+DC *DcCreate(ULONG flags)
+{
+    DC *dc = W32Alloc(sizeof(DC));
+    if (!dc)
+        return NULL;
+    dc->Flags = flags;
+    dc->Dpi = W32SystemDpi();
+    RgnInit(&dc->VisRgn);
+    RgnInit(&dc->State.ClipRgn);
+    DcResetState(dc);
+    DcSelectDefaults(dc);
+    if (!GdiCreateHandle(&dc->Header, GDI_TYPE_DC)) {
+        RgnFree(&dc->VisRgn);
+        W32Free(dc);
+        return NULL;
+    }
+    return dc;
+}
+
+void DcSetSurface(DC *dc, SURFACE *s)
+{
+    if (dc->Surface == s)
+        return;
+    if (dc->Surface && (dc->Flags & DC_MEMORY))
+        select_unref(&dc->Surface->Header);
+    dc->Surface = s;
+    if (s && (dc->Flags & DC_MEMORY))
+        select_ref(&s->Header);
+    RECT bounds = {0, 0, s ? s->Width : 0, s ? s->Height : 0};
+    if (dc->Flags & DC_MEMORY)
+        RgnSetRect(&dc->VisRgn, &bounds);
+}
+
+static void free_saved(DC *dc)
+{
+    while (dc->Saved) {
+        DC_SAVED *sv = dc->Saved;
+        dc->Saved = sv->Next;
+        select_unref(&sv->State.Brush->Header);
+        select_unref(&sv->State.Pen->Header);
+        select_unref(&sv->State.Font->Header);
+        RgnFree(&sv->State.ClipRgn);
+        W32Free(sv);
+    }
+    dc->SaveLevel = 0;
+}
+
+void DcFree(DC *dc)
+{
+    free_saved(dc);
+    select_unref(&dc->State.Brush->Header);
+    select_unref(&dc->State.Pen->Header);
+    select_unref(&dc->State.Font->Header);
+    if ((dc->Flags & DC_MEMORY) && dc->Surface)
+        select_unref(&dc->Surface->Header);
+    if (dc->DefaultBitmap)
+        SurfaceDestroy(dc->DefaultBitmap);
+    RgnFree(&dc->VisRgn);
+    RgnFree(&dc->State.ClipRgn);
+    GdiFreeHandle(&dc->Header);
+    W32Free(dc);
+}
+
+BOOLEAN DcGetClip(DC *dc, REGION *out)
+{
+    if (!dc->Surface)
+        return FALSE;
+    if (!RgnCopy(out, &dc->VisRgn))
+        return FALSE;
+    if (dc->State.HasClip) {
+        REGION app;
+        RgnInit(&app);
+        RgnCopy(&app, &dc->State.ClipRgn);
+        RgnOffset(&app, dc->Origin.x, dc->Origin.y);
+        RgnCombine(out, out, &app, RGN_AND);
+        RgnFree(&app);
+    }
+    RECT bounds = {0, 0, dc->Surface->Width, dc->Surface->Height};
+    RgnCombineRect(out, out, &bounds, RGN_AND);
+    return !RgnIsEmpty(out);
+}
+
+void DcLogicalToDevice(DC *dc, LONG *x, LONG *y)
+{
+    *x = *x - dc->State.WindowOrg.x + dc->State.ViewportOrg.x;
+    *y = *y - dc->State.WindowOrg.y + dc->State.ViewportOrg.y;
+}
+
+void DcLogicalToSurface(DC *dc, LONG *x, LONG *y)
+{
+    DcLogicalToDevice(dc, x, y);
+    *x += dc->Origin.x;
+    *y += dc->Origin.y;
+}
+
+LONG DcScaleToDevice(DC *dc, LONG v)
+{
+    return v; /* MM_TEXT only for now */
+}
+
+FONT_INSTANCE *DcGetFont(DC *dc)
+{
+    if (dc->Realized && dc->RealizedFor == dc->State.Font)
+        return dc->Realized;
+    dc->Realized = FontRealize(&dc->State.Font->Logical, dc->Dpi);
+    dc->RealizedFor = dc->State.Font;
+    return dc->Realized;
+}
+
+/* ------------------------------------------------------------------ dc creation */
+
+HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcCreate(DC_MEMORY);
+    HDC result = NULL;
+    if (dc) {
+        DC *ref = hdc ? DcLookup(hdc) : NULL;
+        if (ref)
+            dc->Dpi = ref->Dpi;
+        /* memory dcs start with a 1x1 monochrome bitmap. */
+        dc->DefaultBitmap = SurfaceCreate(1, 1, 1, 0);
+        if (dc->DefaultBitmap) {
+            DcSetSurface(dc, dc->DefaultBitmap);
+            result = (HDC)dc->Header.Handle;
+        } else {
+            DcFree(dc);
+        }
+    }
+    UserLeave();
+    return result;
+}
+
+HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port, ULONG type, BOOL display,
+                       HANDLE pdev, PVOID driver_info, PVOID umpd)
+{
+    /* the display dc draws on the desktop, which is not visible on the host. */
+    UserEnter();
+    HDC h = PaintGetDC(WndDesktop(), NULL, DCX_WINDOW);
+    UserLeave();
+    return h;
+}
+
+int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int v = 0;
+    UINT dpi = dc ? dc->Dpi : W32SystemDpi();
+    switch (index) {
+    case DRIVERVERSION:
+        v = 0x4001;
+        break;
+    case TECHNOLOGY:
+        v = DT_RASDISPLAY;
+        break;
+    case HORZSIZE:
+        v = W32MulDiv(W32Display.Width, 254, (LONG)dpi * 10);
+        break;
+    case VERTSIZE:
+        v = W32MulDiv(W32Display.Height, 254, (LONG)dpi * 10);
+        break;
+    case HORZRES:
+    case DESKTOPHORZRES:
+        v = W32Display.Width;
+        break;
+    case VERTRES:
+    case DESKTOPVERTRES:
+        v = W32Display.Height;
+        break;
+    case BITSPIXEL:
+        v = dc && dc->Surface && (dc->Flags & DC_MEMORY) ? dc->Surface->Bpp : 32;
+        break;
+    case PLANES:
+        v = 1;
+        break;
+    case NUMBRUSHES:
+    case NUMPENS:
+    case NUMCOLORS:
+        v = -1;
+        break;
+    case ASPECTX:
+    case ASPECTY:
+        v = 36;
+        break;
+    case ASPECTXY:
+        v = 51;
+        break;
+    case LOGPIXELSX:
+    case LOGPIXELSY:
+        v = (int)dpi;
+        break;
+    case SIZEPALETTE:
+    case NUMRESERVED:
+        v = 0;
+        break;
+    case COLORRES:
+        v = 24;
+        break;
+    case VREFRESH:
+        v = (int)W32Display.RefreshHz;
+        break;
+    case BLTALIGNMENT:
+        v = 1;
+        break;
+    case SHADEBLENDCAPS:
+        v = 0x7F;
+        break;
+    case RASTERCAPS:
+        v = RC_BITBLT | RC_STRETCHBLT | RC_DI_BITMAP | RC_DIBTODEV | RC_STRETCHDIB;
+        break;
+    case TEXTCAPS:
+        v = 0x7807;
+        break;
+    case CLIPCAPS:
+        v = 1;
+        break;
+    }
+    UserLeave();
+    return v;
+}
+
+/* ------------------------------------------------------------------ attributes */
+
+BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    DWORD old = CLR_INVALID;
+    BOOL ok = dc != NULL;
+    if (dc) {
+        DC_STATE *s = &dc->State;
+        switch (index) {
+        case MIME_DCDW_TEXTCOLOR:
+            old = s->TextColor;
+            s->TextColor = value & 0xFFFFFF;
+            break;
+        case MIME_DCDW_BKCOLOR:
+            old = s->BkColor;
+            s->BkColor = value & 0xFFFFFF;
+            break;
+        case MIME_DCDW_BKMODE:
+            old = (DWORD)s->BkMode;
+            if (value == TRANSPARENT || value == OPAQUE)
+                s->BkMode = (int)value;
+            else
+                ok = FALSE, old = 0;
+            break;
+        case MIME_DCDW_TEXTALIGN:
+            old = s->TextAlign;
+            s->TextAlign = value;
+            break;
+        case MIME_DCDW_ROP2:
+            old = (DWORD)s->Rop2;
+            if (value >= R2_BLACK && value <= R2_WHITE)
+                s->Rop2 = (int)value;
+            else
+                ok = FALSE, old = 0;
+            break;
+        case MIME_DCDW_BRUSHCOLOR:
+            old = s->BrushColor;
+            s->BrushColor = value & 0xFFFFFF;
+            break;
+        case MIME_DCDW_PENCOLOR:
+            old = s->PenColor;
+            s->PenColor = value & 0xFFFFFF;
+            break;
+        case MIME_DCDW_STRETCHMODE:
+            old = (DWORD)s->StretchMode;
+            s->StretchMode = (int)value;
+            break;
+        case MIME_DCDW_GRAPHICSMODE:
+            old = (DWORD)s->GraphicsMode;
+            s->GraphicsMode = (int)value;
+            break;
+        case MIME_DCDW_MAPMODE:
+            old = (DWORD)s->MapMode;
+            s->MapMode = (int)value;
+            break;
+        case MIME_DCDW_TEXTCHAREXTRA:
+            old = (DWORD)s->TextCharExtra;
+            s->TextCharExtra = (int)value;
+            break;
+        default:
+            ok = FALSE;
+            break;
+        }
+    }
+    UserLeave();
+    if (result)
+        MimeCopyToUser(result, &old, sizeof(old));
+    return ok;
+}
+
+BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    DWORD v = 0;
+    BOOL ok = dc != NULL;
+    if (dc) {
+        DC_STATE *s = &dc->State;
+        switch (index) {
+        case MIME_DCDW_TEXTCOLOR:
+            v = s->TextColor;
+            break;
+        case MIME_DCDW_BKCOLOR:
+            v = s->BkColor;
+            break;
+        case MIME_DCDW_BKMODE:
+            v = (DWORD)s->BkMode;
+            break;
+        case MIME_DCDW_TEXTALIGN:
+            v = s->TextAlign;
+            break;
+        case MIME_DCDW_ROP2:
+            v = (DWORD)s->Rop2;
+            break;
+        case MIME_DCDW_BRUSHCOLOR:
+            v = s->BrushColor;
+            break;
+        case MIME_DCDW_PENCOLOR:
+            v = s->PenColor;
+            break;
+        case MIME_DCDW_STRETCHMODE:
+            v = (DWORD)s->StretchMode;
+            break;
+        case MIME_DCDW_GRAPHICSMODE:
+            v = (DWORD)s->GraphicsMode;
+            break;
+        case MIME_DCDW_MAPMODE:
+            v = (DWORD)s->MapMode;
+            break;
+        case MIME_DCDW_TEXTCHAREXTRA:
+            v = (DWORD)s->TextCharExtra;
+            break;
+        default:
+            ok = FALSE;
+            break;
+        }
+    }
+    UserLeave();
+    if (ok && result)
+        ok = NT_SUCCESS(MimeCopyToUser(result, &v, sizeof(v)));
+    return ok;
+}
+
+BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    POINT p = {0, 0};
+    BOOL ok = dc != NULL;
+    if (dc) {
+        switch (index) {
+        case MIME_DCPT_VIEWPORTORG:
+            p = dc->State.ViewportOrg;
+            break;
+        case MIME_DCPT_WINDOWORG:
+            p = dc->State.WindowOrg;
+            break;
+        case MIME_DCPT_CURRENTPOSITION:
+            p = dc->State.CurrentPos;
+            break;
+        case MIME_DCPT_DCORG:
+            p = dc->Origin;
+            if (dc->Window && dc->Surface && dc->Surface->Window) {
+                p.x += dc->Surface->Window->WindowRect.left;
+                p.y += dc->Surface->Window->WindowRect.top;
+            }
+            break;
+        default:
+            ok = FALSE;
+        }
+    }
+    UserLeave();
+    return ok && NT_SUCCESS(MimeCopyToUser(point, &p, sizeof(p)));
+}
+
+/* sets a dc point; the index has bit 31 set to distinguish it from offsets. */
+BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int mode)
+{
+    if (count < 0 || count > 65536)
+        return FALSE;
+    POINT local[64];
+    POINT *pts = count <= 64 ? local : W32Alloc((SIZE_T)count * sizeof(POINT));
+    if (!pts || !NT_SUCCESS(MimeCopyFromUser(pts, in, (SIZE_T)count * sizeof(POINT)))) {
+        if (pts != local)
+            W32Free(pts);
+        return FALSE;
+    }
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL ok = dc != NULL;
+    if (dc) {
+        for (int i = 0; i < count; i++) {
+            if (mode == 1) { /* logical to device */
+                DcLogicalToDevice(dc, &pts[i].x, &pts[i].y);
+            } else {
+                pts[i].x = pts[i].x - dc->State.ViewportOrg.x + dc->State.WindowOrg.x;
+                pts[i].y = pts[i].y - dc->State.ViewportOrg.y + dc->State.WindowOrg.y;
+            }
+        }
+    }
+    UserLeave();
+    ok = ok && NT_SUCCESS(MimeCopyToUser(out, pts, (SIZE_T)count * sizeof(POINT)));
+    if (pts != local)
+        W32Free(pts);
+    return ok;
+}
+
+/* private: NtGdiSetViewportOrgEx and friends share one service through the window org slot. */
+BOOL NTAPI NtGdiSetViewportOrgEx(HDC hdc, int x, int y, LPPOINT old)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    POINT prev = {0, 0};
+    if (dc) {
+        prev = dc->State.ViewportOrg;
+        dc->State.ViewportOrg = (POINT){x, y};
+    }
+    UserLeave();
+    if (dc && old)
+        MimeCopyToUser(old, &prev, sizeof(prev));
+    return dc != NULL;
+}
+
+BOOL NTAPI NtGdiSetWindowOrgEx(HDC hdc, int x, int y, LPPOINT old)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    POINT prev = {0, 0};
+    if (dc) {
+        prev = dc->State.WindowOrg;
+        dc->State.WindowOrg = (POINT){x, y};
+    }
+    UserLeave();
+    if (dc && old)
+        MimeCopyToUser(old, &prev, sizeof(prev));
+    return dc != NULL;
+}
+
+BOOL NTAPI NtGdiMoveTo(HDC hdc, int x, int y, POINT *old)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    POINT prev = {0, 0};
+    if (dc) {
+        prev = dc->State.CurrentPos;
+        dc->State.CurrentPos = (POINT){x, y};
+    }
+    UserLeave();
+    if (dc && old)
+        MimeCopyToUser(old, &prev, sizeof(prev));
+    return dc != NULL;
+}
+
+/* ------------------------------------------------------------------ selection */
+
+HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    HANDLE h = NULL;
+    if (dc) {
+        switch (type) {
+        case OBJ_BRUSH:
+            h = dc->State.Brush->Header.Handle;
+            break;
+        case OBJ_PEN:
+            h = dc->State.Pen->Header.Handle;
+            break;
+        case OBJ_FONT:
+            h = dc->State.Font->Header.Handle;
+            break;
+        case OBJ_BITMAP:
+            h = dc->Surface && dc->Surface->Header.Handle ? dc->Surface->Header.Handle : NULL;
+            break;
+        }
+    }
+    UserLeave();
+    return h;
+}
+
+HBITMAP NTAPI NtGdiSelectBitmap(HDC hdc, HBITMAP bitmap)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    SURFACE *s = SurfaceLookup(bitmap);
+    HBITMAP old = NULL;
+    if (dc && s && (dc->Flags & DC_MEMORY)) {
+        /* a bitmap can be selected into one dc at a time. */
+        if (s->Header.SelectCount && dc->Surface != s) {
+            UserLeave();
+            return NULL;
+        }
+        old = dc->Surface && dc->Surface != dc->DefaultBitmap ? (HBITMAP)dc->Surface->Header.Handle : NULL;
+        if (!old && dc->DefaultBitmap) {
+            /* windows hands back a stock 1x1 bitmap; the default one stands in for it. */
+            if (!dc->DefaultBitmap->Header.Handle)
+                GdiCreateHandle(&dc->DefaultBitmap->Header, GDI_TYPE_BITMAP);
+            dc->DefaultBitmap->Header.Flags |= GDI_FLAG_SYSTEM;
+            old = (HBITMAP)dc->DefaultBitmap->Header.Handle;
+        }
+        DcSetSurface(dc, s);
+    }
+    UserLeave();
+    return old;
+}
+
+HBRUSH NTAPI NtGdiSelectBrush(HDC hdc, HBRUSH brush)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BRUSH *b = (BRUSH *)GdiLookup(brush, GDI_TYPE_BRUSH);
+    HBRUSH old = NULL;
+    if (dc && b) {
+        old = (HBRUSH)dc->State.Brush->Header.Handle;
+        select_unref(&dc->State.Brush->Header);
+        dc->State.Brush = b;
+        select_ref(&b->Header);
+    }
+    UserLeave();
+    return old;
+}
+
+HPEN NTAPI NtGdiSelectPen(HDC hdc, HPEN pen)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    PEN *p = (PEN *)GdiLookup(pen, GDI_TYPE_PEN);
+    HPEN old = NULL;
+    if (dc && p) {
+        old = (HPEN)dc->State.Pen->Header.Handle;
+        select_unref(&dc->State.Pen->Header);
+        dc->State.Pen = p;
+        select_ref(&p->Header);
+    }
+    UserLeave();
+    return old;
+}
+
+HFONT NTAPI NtGdiSelectFont(HDC hdc, HFONT font)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    FONT *f = (FONT *)GdiLookup(font, GDI_TYPE_FONT);
+    HFONT old = NULL;
+    if (dc && f) {
+        old = (HFONT)dc->State.Font->Header.Handle;
+        select_unref(&dc->State.Font->Header);
+        dc->State.Font = f;
+        select_ref(&f->Header);
+    }
+    UserLeave();
+    return old;
+}
+
+/* ------------------------------------------------------------------ saved states */
+
+int NTAPI NtGdiSaveDC(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int level = 0;
+    if (dc) {
+        DC_SAVED *sv = W32Alloc(sizeof(DC_SAVED));
+        if (sv) {
+            sv->State = dc->State;
+            RgnInit(&sv->State.ClipRgn);
+            RgnCopy(&sv->State.ClipRgn, &dc->State.ClipRgn);
+            sv->Surface = dc->Surface;
+            select_ref(&sv->State.Brush->Header);
+            select_ref(&sv->State.Pen->Header);
+            select_ref(&sv->State.Font->Header);
+            sv->Next = dc->Saved;
+            dc->Saved = sv;
+            level = ++dc->SaveLevel;
+        }
+    }
+    UserLeave();
+    return level;
+}
+
+BOOL NTAPI NtGdiRestoreDC(HDC hdc, int saved)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL ok = FALSE;
+    if (dc) {
+        int target = saved < 0 ? dc->SaveLevel + saved + 1 : saved;
+        if (target >= 1 && target <= dc->SaveLevel) {
+            while (dc->SaveLevel >= target) {
+                DC_SAVED *sv = dc->Saved;
+                dc->Saved = sv->Next;
+                dc->SaveLevel--;
+                if (dc->SaveLevel + 1 == target) {
+                    select_unref(&dc->State.Brush->Header);
+                    select_unref(&dc->State.Pen->Header);
+                    select_unref(&dc->State.Font->Header);
+                    RgnFree(&dc->State.ClipRgn);
+                    dc->State = sv->State;
+                    if (dc->Flags & DC_MEMORY)
+                        DcSetSurface(dc, sv->Surface);
+                } else {
+                    select_unref(&sv->State.Brush->Header);
+                    select_unref(&sv->State.Pen->Header);
+                    select_unref(&sv->State.Font->Header);
+                    RgnFree(&sv->State.ClipRgn);
+                }
+                W32Free(sv);
+            }
+            ok = TRUE;
+        }
+    }
+    UserLeave();
+    return ok;
+}
+
+/* ------------------------------------------------------------------ clipping */
+
+/* the application clip region is kept in device coordinates. */
+int NTAPI NtGdiExtSelectClipRgn(HDC hdc, HRGN region, int mode)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int result = ERROR;
+    if (dc) {
+        GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : NULL;
+        if (!r && mode == RGN_COPY) {
+            RgnClear(&dc->State.ClipRgn);
+            dc->State.HasClip = FALSE;
+            result = SIMPLEREGION;
+        } else if (r) {
+            if (!dc->State.HasClip || mode == RGN_COPY) {
+                if (mode == RGN_COPY || mode == RGN_AND || mode == RGN_OR) {
+                    RgnCopy(&dc->State.ClipRgn, &r->Region);
+                } else {
+                    /* combining with "no clip" means combining with the whole surface. */
+                    RECT all = {-0x4000000, -0x4000000, 0x4000000, 0x4000000};
+                    REGION full;
+                    RgnInit(&full);
+                    RgnSetRect(&full, &all);
+                    RgnCombine(&dc->State.ClipRgn, &full, &r->Region, mode);
+                    RgnFree(&full);
+                }
+            } else {
+                RgnCombine(&dc->State.ClipRgn, &dc->State.ClipRgn, &r->Region, mode);
+            }
+            dc->State.HasClip = TRUE;
+            result = RgnComplexity(&dc->State.ClipRgn);
+        }
+    }
+    UserLeave();
+    return result;
+}
+
+int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    RECT box = {0, 0, 0, 0};
+    int result = ERROR;
+    if (dc) {
+        REGION clip;
+        RgnInit(&clip);
+        DcGetClip(dc, &clip);
+        box = clip.Extents;
+        result = RgnComplexity(&clip);
+        RgnFree(&clip);
+        /* surface to logical coordinates. */
+        RectOffset(&box, -dc->Origin.x - dc->State.ViewportOrg.x + dc->State.WindowOrg.x,
+                   -dc->Origin.y - dc->State.ViewportOrg.y + dc->State.WindowOrg.y);
+    }
+    UserLeave();
+    if (result != ERROR && !NT_SUCCESS(MimeCopyToUser(rect, &box, sizeof(box))))
+        return ERROR;
+    return result;
+}
+
+int NTAPI NtGdiGetRandomRgn(HDC hdc, HRGN region, int which)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    GDI_REGION *r = (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION);
+    int result = -1;
+    if (dc && r) {
+        if (which == 1) { /* CLIPRGN */
+            result = dc->State.HasClip ? 1 : 0;
+            if (result)
+                RgnCopy(&r->Region, &dc->State.ClipRgn);
+        } else if (which == 4) { /* SYSRGN, in screen coordinates */
+            RgnCopy(&r->Region, &dc->VisRgn);
+            if (dc->Surface && dc->Surface->Window)
+                RgnOffset(&r->Region, dc->Surface->Window->WindowRect.left, dc->Surface->Window->WindowRect.top);
+            result = 1;
+        } else {
+            result = 0;
+        }
+    }
+    UserLeave();
+    return result;
+}
+
+static int clip_rect_op(HDC hdc, int left, int top, int right, int bottom, int mode)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int result = ERROR;
+    if (dc) {
+        LONG x0 = left, y0 = top, x1 = right, y1 = bottom;
+        DcLogicalToDevice(dc, &x0, &y0);
+        DcLogicalToDevice(dc, &x1, &y1);
+        RECT r = {W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
+        if (!dc->State.HasClip) {
+            RECT all = {-0x4000000, -0x4000000, 0x4000000, 0x4000000};
+            RgnSetRect(&dc->State.ClipRgn, &all);
+            dc->State.HasClip = TRUE;
+        }
+        RgnCombineRect(&dc->State.ClipRgn, &dc->State.ClipRgn, &r, mode);
+        result = RgnComplexity(&dc->State.ClipRgn);
+    }
+    UserLeave();
+    return result;
+}
+
+int NTAPI NtGdiIntersectClipRect(HDC hdc, int left, int top, int right, int bottom)
+{
+    return clip_rect_op(hdc, left, top, right, bottom, RGN_AND);
+}
+
+int NTAPI NtGdiExcludeClipRect(HDC hdc, int left, int top, int right, int bottom)
+{
+    return clip_rect_op(hdc, left, top, right, bottom, RGN_DIFF);
+}
+
+BOOL NTAPI NtGdiFlush(void)
+{
+    return TRUE;
+}
