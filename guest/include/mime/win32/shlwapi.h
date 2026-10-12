@@ -1,0 +1,43 @@
+/*
+ * shell light weight utilities: the path helpers of shlwapi.dll.
+ */
+#ifndef MIME_WIN32_SHLWAPI_H
+#define MIME_WIN32_SHLWAPI_H
+
+#include <mime/win32/winbase.h>
+
+#ifndef LWSTDAPI
+#define LWSTDAPI DECLSPEC_IMPORT
+#endif
+
+LWSTDAPI BOOL WINAPI PathFileExistsW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathFileExistsA(LPCSTR path);
+LWSTDAPI BOOL WINAPI PathIsDirectoryW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathIsDirectoryA(LPCSTR path);
+LWSTDAPI BOOL WINAPI PathIsDirectoryEmptyW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathIsDirectoryEmptyA(LPCSTR path);
+LWSTDAPI LPWSTR WINAPI PathFindFileNameW(LPCWSTR path);
+LWSTDAPI LPSTR WINAPI PathFindFileNameA(LPCSTR path);
+LWSTDAPI LPWSTR WINAPI PathFindExtensionW(LPCWSTR path);
+LWSTDAPI LPSTR WINAPI PathFindExtensionA(LPCSTR path);
+LWSTDAPI LPWSTR WINAPI PathAddBackslashW(LPWSTR path);
+LWSTDAPI LPWSTR WINAPI PathRemoveBackslashW(LPWSTR path);
+LWSTDAPI BOOL WINAPI PathRemoveFileSpecW(LPWSTR path);
+LWSTDAPI void WINAPI PathRemoveExtensionW(LPWSTR path);
+LWSTDAPI BOOL WINAPI PathRenameExtensionW(LPWSTR path, LPCWSTR extension);
+LWSTDAPI void WINAPI PathStripPathW(LPWSTR path);
+LWSTDAPI BOOL WINAPI PathStripToRootW(LPWSTR path);
+LWSTDAPI LPWSTR WINAPI PathSkipRootW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathIsRelativeW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathIsRootW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathIsUNCW(LPCWSTR path);
+LWSTDAPI int WINAPI PathGetDriveNumberW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathAppendW(LPWSTR path, LPCWSTR more);
+LWSTDAPI LPWSTR WINAPI PathCombineW(LPWSTR out, LPCWSTR directory, LPCWSTR file);
+LWSTDAPI LPWSTR WINAPI PathGetArgsW(LPCWSTR path);
+LWSTDAPI BOOL WINAPI PathQuoteSpacesW(LPWSTR path);
+LWSTDAPI void WINAPI PathUnquoteSpacesW(LPWSTR path);
+LWSTDAPI void WINAPI PathRemoveBlanksW(LPWSTR path);
+LWSTDAPI BOOL WINAPI PathMatchSpecW(LPCWSTR path, LPCWSTR spec);
+
+#endif
