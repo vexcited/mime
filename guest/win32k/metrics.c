@@ -345,10 +345,10 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
             DWORD dwFlags;
             LPWSTR lpszDefaultScheme;
         } hc;
-        if (!NT_SUCCESS(MimeCopyFromUser(&hc.cbSize, data, sizeof(UINT))))
+        /* the size is checked before anything is written: callers pass smaller buffers and expect a failure. */
+        if (!NT_SUCCESS(MimeCopyFromUser(&hc.cbSize, data, sizeof(UINT))) || hc.cbSize != sizeof(hc))
             return FALSE;
-        hc.dwFlags = 0x00000002 | 0x00000004; /* HCF_AVAILABLE | HCF_HOTKEYACTIVE off: available only */
-        hc.dwFlags = 0x00000002;
+        hc.dwFlags = 0x00000002; /* HCF_AVAILABLE */
         hc.lpszDefaultScheme = NULL;
         return NT_SUCCESS(MimeCopyToUser(data, &hc, sizeof(hc)));
     }
@@ -357,6 +357,9 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
             UINT cbSize;
             int iMinAnimate;
         } a = {sizeof(a), 1};
+        UINT size;
+        if (!NT_SUCCESS(MimeCopyFromUser(&size, data, sizeof(size))) || size != sizeof(a))
+            return FALSE;
         return NT_SUCCESS(MimeCopyToUser(data, &a, sizeof(a)));
     }
     case SPI_GETDEFAULTINPUTLANG: {
