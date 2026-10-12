@@ -114,7 +114,7 @@ $(GEN)/mime_svc_nt.h: $(SYSCALLS_NT) $(BUILD)/tools/gensyscalls
 	$(BUILD)/tools/gensyscalls $(SYSCALLS_NT) MIME_NT_SERVICES $@ $(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def \
 		$(GEN)/ntdll_syscalls_x64.S
 
-$(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def $(GEN)/ntdll_syscalls_x64.S: $(GEN)/mime_svc_nt.h
+$(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def $(GEN)/ntdll_syscalls_x64.S: $(GEN)/mime_svc_nt.h ;
 
 # the real win32u table plus the private mime services numbered above it.
 $(GEN)/mime_svc_win32k.h: $(SYSCALLS_WIN32K) $(BUILD)/tools/gensyscalls
@@ -123,7 +123,7 @@ $(GEN)/mime_svc_win32k.h: $(SYSCALLS_WIN32K) $(BUILD)/tools/gensyscalls
 	$(BUILD)/tools/gensyscalls $(GEN)/win32u_syscalls.txt MIME_WIN32K_SERVICES $@ $(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def \
 		$(GEN)/win32u_syscalls_x64.S
 
-$(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def $(GEN)/win32u_syscalls_x64.S: $(GEN)/mime_svc_win32k.h
+$(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def $(GEN)/win32u_syscalls_x64.S: $(GEN)/mime_svc_win32k.h ;
 
 GEN_HEADERS := $(GEN)/mime_svc_nt.h $(GEN)/mime_svc_win32k.h
 
