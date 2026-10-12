@@ -257,6 +257,21 @@ WINGDIAPI int WINAPI SetPolyFillMode(HDC dc, int mode)
     return (int)set_dword(dc, MIME_DCDW_POLYFILLMODE, (DWORD)mode, 0);
 }
 
+WINGDIAPI int WINAPI GetPolyFillMode(HDC dc)
+{
+    return (int)get_dword(dc, MIME_DCDW_POLYFILLMODE, 0);
+}
+
+WINGDIAPI int WINAPI SetArcDirection(HDC dc, int direction)
+{
+    return (int)set_dword(dc, MIME_DCDW_ARCDIRECTION, (DWORD)direction, 0);
+}
+
+WINGDIAPI int WINAPI GetArcDirection(HDC dc)
+{
+    return (int)get_dword(dc, MIME_DCDW_ARCDIRECTION, 0);
+}
+
 WINGDIAPI int WINAPI SetTextCharacterExtra(HDC dc, int extra)
 {
     return (int)set_dword(dc, MIME_DCDW_TEXTCHAREXTRA, (DWORD)extra, 0x80000000u);
@@ -699,41 +714,6 @@ WINGDIAPI BOOL WINAPI GetCharABCWidthsW(HDC dc, UINT first, UINT last, LPABC abc
     return last >= first && NtGdiGetCharABCWidthsW(dc, first, last - first + 1, NULL, 0, abc);
 }
 
-WINGDIAPI int WINAPI AddFontResourceExW(LPCWSTR name, DWORD flags, PVOID reserved)
-{
-    if (!name)
-        return 0;
-    return NtGdiAddFontResourceW(name, (ULONG)wcslen(name) + 1, 1, flags, 0, NULL);
-}
-
-WINGDIAPI int WINAPI AddFontResourceW(LPCWSTR name)
-{
-    return AddFontResourceExW(name, 0, NULL);
-}
-
-WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buffer, DWORD size)
-{
-    return NtGdiGetFontData(dc, table, offset, buffer, size);
-}
-
-WINGDIAPI int WINAPI EnumFontFamiliesExW(HDC dc, LPLOGFONTW lf, FONTENUMPROCW proc, LPARAM param, DWORD flags)
-{
-    /* reports the requested face when it can be realized, enough for existence checks. */
-    if (!lf || !proc)
-        return 0;
-    HFONT font = CreateFontIndirectW(lf);
-    HGDIOBJ old = SelectObject(dc, font);
-    TEXTMETRICW tm;
-    LOGFONTW found = *lf;
-    GetTextMetricsW(dc, &tm);
-    GetTextFaceW(dc, LF_FACESIZE, found.lfFaceName);
-    SelectObject(dc, old);
-    DeleteObject(font);
-    if (lf->lfFaceName[0] && _wcsicmp(found.lfFaceName, lf->lfFaceName))
-        return 1;
-    return proc(&found, &tm, 4 /* TRUETYPE_FONTTYPE */, param);
-}
-
 WINGDIAPI DWORD WINAPI GetFontLanguageInfo(HDC dc)
 {
     return 0;
@@ -793,30 +773,26 @@ WINGDIAPI BOOL WINAPI Ellipse(HDC dc, int left, int top, int right, int bottom)
     return NtGdiEllipse(dc, left, top, right, bottom);
 }
 
-/* NtGdiPolyPolyDraw functions. */
-#define GDI_POLYPOLYGON 1
-#define GDI_POLYPOLYLINE 2
-
 WINGDIAPI BOOL WINAPI Polyline(HDC dc, const POINT *points, int count)
 {
     ULONG n = (ULONG)count;
-    return count > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, &n, 1, GDI_POLYPOLYLINE);
+    return count > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, &n, 1, MIME_POLY_POLYLINE);
 }
 
 WINGDIAPI BOOL WINAPI Polygon(HDC dc, const POINT *points, int count)
 {
     ULONG n = (ULONG)count;
-    return count > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, &n, 1, GDI_POLYPOLYGON);
+    return count > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, &n, 1, MIME_POLY_POLYGON);
 }
 
 WINGDIAPI BOOL WINAPI PolyPolygon(HDC dc, const POINT *points, const INT *counts, int polygons)
 {
-    return polygons > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, (ULONG *)counts, (ULONG)polygons, GDI_POLYPOLYGON);
+    return polygons > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, (ULONG *)counts, (ULONG)polygons, MIME_POLY_POLYGON);
 }
 
 WINGDIAPI BOOL WINAPI PolyPolyline(HDC dc, const POINT *points, const DWORD *counts, DWORD lines)
 {
-    return lines && NtGdiPolyPolyDraw(dc, (POINT *)points, (ULONG *)counts, lines, GDI_POLYPOLYLINE);
+    return lines && NtGdiPolyPolyDraw(dc, (POINT *)points, (ULONG *)counts, lines, MIME_POLY_POLYLINE);
 }
 
 WINGDIAPI COLORREF WINAPI SetPixel(HDC dc, int x, int y, COLORREF color)

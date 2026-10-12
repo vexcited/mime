@@ -55,8 +55,9 @@ void HostConfigure(WND *w, BOOLEAN activate)
         w->Flags |= WNDF_ACTIVATE_PENDING;
     if (w->Flags & WNDF_HOST_MOVING)
         return;
+    /* a layered window shows up once it has attributes or contents from UpdateLayeredWindow. */
     BOOLEAN visible = WndIsVisible(w) && !(w->Style & WS_MINIMIZE) && (w->Flags & WNDF_PRESENTED) &&
-                      !(w->ExStyle & 0x80000000u);
+                      !(w->ExStyle & 0x80000000u) && (!(w->ExStyle & WS_EX_LAYERED) || w->LayerFlags);
     MimeWinConfig *c = g_config;
     memset(c, 0, offsetof(MimeWinConfig, title));
     c->window_id = window_id(w);
@@ -99,7 +100,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
 
 void HostPresent(WND *w, const RECT *dirty)
 {
-    SURFACE *s = w->Surface;
+    SURFACE *s = LayerPrepare(w, dirty);
     if (!s || !host_buffers())
         return;
     MimeWinPresent *p = g_present;
@@ -142,7 +143,7 @@ void PaintPresent(WND *top)
     if (!WndIsVisible(top) || (top->Style & WS_MINIMIZE))
         return;
     /* a frame that still has to be drawn would show up as garbage on the first present. */
-    if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY))
+    if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && !(top->LayerFlags & MIME_LAYER_UPDATE))
         return;
     RECT dirty = s->Dirty;
     s->Dirty = (RECT){0, 0, 0, 0};

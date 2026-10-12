@@ -568,4 +568,483 @@ WINGDIAPI BOOL WINAPI GetTextExtentPointW(HDC dc, LPCWSTR text, int count, LPSIZ
 WINGDIAPI DWORD WINAPI SetLayout(HDC dc, DWORD layout);
 WINGDIAPI int WINAPI SetPolyFillMode(HDC dc, int mode);
 
+/* ------------------------------------------------------------------ font enumeration and outlines */
+
+#define RASTER_FONTTYPE 0x0001
+#define DEVICE_FONTTYPE 0x0002
+#define TRUETYPE_FONTTYPE 0x0004
+
+#define NTM_REGULAR 0x00000040L
+#define NTM_BOLD 0x00000020L
+#define NTM_ITALIC 0x00000001L
+#define NTM_NONNEGATIVE_AC 0x00010000
+#define NTM_PS_OPENTYPE 0x00020000
+#define NTM_TT_OPENTYPE 0x00040000
+#define NTM_MULTIPLEMASTER 0x00080000
+#define NTM_TYPE1 0x00100000
+#define NTM_DSIG 0x00200000
+
+#define FR_PRIVATE 0x10
+#define FR_NOT_ENUM 0x20
+
+#define HANGUL_CHARSET 129
+#define GREEK_CHARSET 161
+#define TURKISH_CHARSET 162
+#define VIETNAMESE_CHARSET 163
+#define HEBREW_CHARSET 177
+#define ARABIC_CHARSET 178
+#define BALTIC_CHARSET 186
+#define RUSSIAN_CHARSET 204
+#define THAI_CHARSET 222
+#define EASTEUROPE_CHARSET 238
+#define MAC_CHARSET 77
+#define JOHAB_CHARSET 130
+
+typedef struct tagFONTSIGNATURE {
+    DWORD fsUsb[4];
+    DWORD fsCsb[2];
+} FONTSIGNATURE, *PFONTSIGNATURE, *LPFONTSIGNATURE;
+
+typedef struct tagENUMLOGFONTEXW {
+    LOGFONTW elfLogFont;
+    WCHAR elfFullName[LF_FULLFACESIZE];
+    WCHAR elfStyle[LF_FACESIZE];
+    WCHAR elfScript[LF_FACESIZE];
+} ENUMLOGFONTEXW, *LPENUMLOGFONTEXW;
+
+typedef struct tagENUMLOGFONTEXA {
+    LOGFONTA elfLogFont;
+    BYTE elfFullName[LF_FULLFACESIZE];
+    BYTE elfStyle[LF_FACESIZE];
+    BYTE elfScript[LF_FACESIZE];
+} ENUMLOGFONTEXA, *LPENUMLOGFONTEXA;
+
+typedef struct tagNEWTEXTMETRICW {
+    LONG tmHeight;
+    LONG tmAscent;
+    LONG tmDescent;
+    LONG tmInternalLeading;
+    LONG tmExternalLeading;
+    LONG tmAveCharWidth;
+    LONG tmMaxCharWidth;
+    LONG tmWeight;
+    LONG tmOverhang;
+    LONG tmDigitizedAspectX;
+    LONG tmDigitizedAspectY;
+    WCHAR tmFirstChar;
+    WCHAR tmLastChar;
+    WCHAR tmDefaultChar;
+    WCHAR tmBreakChar;
+    BYTE tmItalic;
+    BYTE tmUnderlined;
+    BYTE tmStruckOut;
+    BYTE tmPitchAndFamily;
+    BYTE tmCharSet;
+    DWORD ntmFlags;
+    UINT ntmSizeEM;
+    UINT ntmCellHeight;
+    UINT ntmAvgWidth;
+} NEWTEXTMETRICW, *PNEWTEXTMETRICW, *LPNEWTEXTMETRICW;
+
+typedef struct tagNEWTEXTMETRICA {
+    LONG tmHeight;
+    LONG tmAscent;
+    LONG tmDescent;
+    LONG tmInternalLeading;
+    LONG tmExternalLeading;
+    LONG tmAveCharWidth;
+    LONG tmMaxCharWidth;
+    LONG tmWeight;
+    LONG tmOverhang;
+    LONG tmDigitizedAspectX;
+    LONG tmDigitizedAspectY;
+    BYTE tmFirstChar;
+    BYTE tmLastChar;
+    BYTE tmDefaultChar;
+    BYTE tmBreakChar;
+    BYTE tmItalic;
+    BYTE tmUnderlined;
+    BYTE tmStruckOut;
+    BYTE tmPitchAndFamily;
+    BYTE tmCharSet;
+    DWORD ntmFlags;
+    UINT ntmSizeEM;
+    UINT ntmCellHeight;
+    UINT ntmAvgWidth;
+} NEWTEXTMETRICA, *PNEWTEXTMETRICA, *LPNEWTEXTMETRICA;
+
+typedef struct tagNEWTEXTMETRICEXW {
+    NEWTEXTMETRICW ntmTm;
+    FONTSIGNATURE ntmFontSig;
+} NEWTEXTMETRICEXW;
+
+typedef struct tagNEWTEXTMETRICEXA {
+    NEWTEXTMETRICA ntmTm;
+    FONTSIGNATURE ntmFontSig;
+} NEWTEXTMETRICEXA;
+
+typedef int(CALLBACK *FONTENUMPROCA)(const LOGFONTA *lf, const TEXTMETRICA *tm, DWORD type, LPARAM param);
+
+typedef struct tagPANOSE {
+    BYTE bFamilyType;
+    BYTE bSerifStyle;
+    BYTE bWeight;
+    BYTE bProportion;
+    BYTE bContrast;
+    BYTE bStrokeVariation;
+    BYTE bArmStyle;
+    BYTE bLetterform;
+    BYTE bMidline;
+    BYTE bXHeight;
+} PANOSE, *LPPANOSE;
+
+typedef struct _OUTLINETEXTMETRICW {
+    UINT otmSize;
+    TEXTMETRICW otmTextMetrics;
+    BYTE otmFiller;
+    PANOSE otmPanoseNumber;
+    UINT otmfsSelection;
+    UINT otmfsType;
+    int otmsCharSlopeRise;
+    int otmsCharSlopeRun;
+    int otmItalicAngle;
+    UINT otmEMSquare;
+    int otmAscent;
+    int otmDescent;
+    UINT otmLineGap;
+    UINT otmsCapEmHeight;
+    UINT otmsXHeight;
+    RECT otmrcFontBox;
+    int otmMacAscent;
+    int otmMacDescent;
+    UINT otmMacLineGap;
+    UINT otmusMinimumPPEM;
+    POINT otmptSubscriptSize;
+    POINT otmptSubscriptOffset;
+    POINT otmptSuperscriptSize;
+    POINT otmptSuperscriptOffset;
+    UINT otmsStrikeoutSize;
+    int otmsStrikeoutPosition;
+    int otmsUnderscoreSize;
+    int otmsUnderscorePosition;
+    PSTR otmpFamilyName;
+    PSTR otmpFaceName;
+    PSTR otmpStyleName;
+    PSTR otmpFullName;
+} OUTLINETEXTMETRICW, *POUTLINETEXTMETRICW, *LPOUTLINETEXTMETRICW;
+
+typedef struct _OUTLINETEXTMETRICA {
+    UINT otmSize;
+    TEXTMETRICA otmTextMetrics;
+    BYTE otmFiller;
+    PANOSE otmPanoseNumber;
+    UINT otmfsSelection;
+    UINT otmfsType;
+    int otmsCharSlopeRise;
+    int otmsCharSlopeRun;
+    int otmItalicAngle;
+    UINT otmEMSquare;
+    int otmAscent;
+    int otmDescent;
+    UINT otmLineGap;
+    UINT otmsCapEmHeight;
+    UINT otmsXHeight;
+    RECT otmrcFontBox;
+    int otmMacAscent;
+    int otmMacDescent;
+    UINT otmMacLineGap;
+    UINT otmusMinimumPPEM;
+    POINT otmptSubscriptSize;
+    POINT otmptSubscriptOffset;
+    POINT otmptSuperscriptSize;
+    POINT otmptSuperscriptOffset;
+    UINT otmsStrikeoutSize;
+    int otmsStrikeoutPosition;
+    int otmsUnderscoreSize;
+    int otmsUnderscorePosition;
+    PSTR otmpFamilyName;
+    PSTR otmpFaceName;
+    PSTR otmpStyleName;
+    PSTR otmpFullName;
+} OUTLINETEXTMETRICA, *POUTLINETEXTMETRICA, *LPOUTLINETEXTMETRICA;
+
+typedef struct _FIXED {
+    WORD fract;
+    short value;
+} FIXED;
+
+typedef struct _MAT2 {
+    FIXED eM11;
+    FIXED eM12;
+    FIXED eM21;
+    FIXED eM22;
+} MAT2, *LPMAT2;
+
+typedef struct _GLYPHMETRICS {
+    UINT gmBlackBoxX;
+    UINT gmBlackBoxY;
+    POINT gmptGlyphOrigin;
+    short gmCellIncX;
+    short gmCellIncY;
+} GLYPHMETRICS, *LPGLYPHMETRICS;
+
+typedef struct tagPOINTFX {
+    FIXED x;
+    FIXED y;
+} POINTFX, *LPPOINTFX;
+
+typedef struct tagTTPOLYCURVE {
+    WORD wType;
+    WORD cpfx;
+    POINTFX apfx[1];
+} TTPOLYCURVE, *LPTTPOLYCURVE;
+
+typedef struct tagTTPOLYGONHEADER {
+    DWORD cb;
+    DWORD dwType;
+    POINTFX pfxStart;
+} TTPOLYGONHEADER, *LPTTPOLYGONHEADER;
+
+#define GGO_METRICS 0
+#define GGO_BITMAP 1
+#define GGO_NATIVE 2
+#define GGO_BEZIER 3
+#define GGO_GRAY2_BITMAP 4
+#define GGO_GRAY4_BITMAP 5
+#define GGO_GRAY8_BITMAP 6
+#define GGO_GLYPH_INDEX 0x0080
+#define GGO_UNHINTED 0x0100
+#define TT_POLYGON_TYPE 24
+#define TT_PRIM_LINE 1
+#define TT_PRIM_QSPLINE 2
+#define TT_PRIM_CSPLINE 3
+
+typedef struct tagWCRANGE {
+    WCHAR wcLow;
+    USHORT cGlyphs;
+} WCRANGE, *PWCRANGE, *LPWCRANGE;
+
+typedef struct tagGLYPHSET {
+    DWORD cbThis;
+    DWORD flAccel;
+    DWORD cGlyphsSupported;
+    DWORD cRanges;
+    WCRANGE ranges[1];
+} GLYPHSET, *PGLYPHSET, *LPGLYPHSET;
+
+#define GS_8BIT_INDICES 0x00000001
+#define GGI_MARK_NONEXISTING_GLYPHS 0x0001
+
+typedef struct _ABCFLOAT {
+    FLOAT abcfA;
+    FLOAT abcfB;
+    FLOAT abcfC;
+} ABCFLOAT, *PABCFLOAT, *LPABCFLOAT;
+
+typedef struct tagGCP_RESULTSW {
+    DWORD lStructSize;
+    LPWSTR lpOutString;
+    UINT *lpOrder;
+    int *lpDx;
+    int *lpCaretPos;
+    LPSTR lpClass;
+    LPWSTR lpGlyphs;
+    UINT nGlyphs;
+    int nMaxFit;
+} GCP_RESULTSW, *LPGCP_RESULTSW;
+
+#define GCP_DBCS 0x0001
+#define GCP_REORDER 0x0002
+#define GCP_USEKERNING 0x0008
+#define GCP_GLYPHSHAPE 0x0010
+#define GCP_LIGATE 0x0020
+#define GCP_DIACRITIC 0x0100
+#define GCP_KASHIDA 0x0400
+#define GCP_ERROR 0x8000
+#define GCP_JUSTIFY 0x00010000L
+#define GCP_CLASSIN 0x00080000L
+#define GCP_MAXEXTENT 0x00100000L
+#define GCP_JUSTIFYIN 0x00200000L
+#define GCP_DISPLAYZWG 0x00400000L
+#define GCP_SYMSWAPOFF 0x00800000L
+#define GCP_NUMERICOVERRIDE 0x01000000L
+#define GCP_NEUTRALOVERRIDE 0x02000000L
+#define GCP_NUMERICSLATIN 0x04000000L
+#define GCP_NUMERICSLOCAL 0x08000000L
+
+#define MM_MAX_NUMAXES 16
+typedef struct tagDESIGNVECTOR {
+    DWORD dvReserved;
+    DWORD dvNumAxes;
+    LONG dvValues[MM_MAX_NUMAXES];
+} DESIGNVECTOR, *PDESIGNVECTOR, *LPDESIGNVECTOR;
+
+/* ------------------------------------------------------------------ paths and transforms */
+
+#define PT_CLOSEFIGURE 0x01
+#define PT_LINETO 0x02
+#define PT_BEZIERTO 0x04
+#define PT_MOVETO 0x06
+
+#define ALTERNATE 1
+#define WINDING 2
+
+#define MWT_IDENTITY 1
+#define MWT_LEFTMULTIPLY 2
+#define MWT_RIGHTMULTIPLY 3
+#define MWT_SET 4
+
+#define AD_COUNTERCLOCKWISE 1
+#define AD_CLOCKWISE 2
+
+/* ------------------------------------------------------------------ printing and escapes */
+
+#define SP_NOTREPORTED 0x4000
+#define SP_ERROR (-1)
+#define SP_APPABORT (-2)
+#define SP_USERABORT (-3)
+#define SP_OUTOFDISK (-4)
+#define SP_OUTOFMEMORY (-5)
+
+#define QUERYESCSUPPORT 8
+#define PASSTHROUGH 19
+#define GETTECHNOLOGY 20
+#define POSTSCRIPT_PASSTHROUGH 4115
+#define CHECKJPEGFORMAT 4119
+#define CHECKPNGFORMAT 4120
+
+typedef struct _DOCINFOW {
+    int cbSize;
+    LPCWSTR lpszDocName;
+    LPCWSTR lpszOutput;
+    LPCWSTR lpszDatatype;
+    DWORD fwType;
+} DOCINFOW, *LPDOCINFOW;
+
+typedef struct _DOCINFOA {
+    int cbSize;
+    LPCSTR lpszDocName;
+    LPCSTR lpszOutput;
+    LPCSTR lpszDatatype;
+    DWORD fwType;
+} DOCINFOA, *LPDOCINFOA;
+
+typedef int(CALLBACK *ABORTPROC)(HDC dc, int code);
+
+/* ------------------------------------------------------------------ pixel formats */
+
+typedef struct tagPIXELFORMATDESCRIPTOR {
+    WORD nSize;
+    WORD nVersion;
+    DWORD dwFlags;
+    BYTE iPixelType;
+    BYTE cColorBits;
+    BYTE cRedBits;
+    BYTE cRedShift;
+    BYTE cGreenBits;
+    BYTE cGreenShift;
+    BYTE cBlueBits;
+    BYTE cBlueShift;
+    BYTE cAlphaBits;
+    BYTE cAlphaShift;
+    BYTE cAccumBits;
+    BYTE cAccumRedBits;
+    BYTE cAccumGreenBits;
+    BYTE cAccumBlueBits;
+    BYTE cAccumAlphaBits;
+    BYTE cDepthBits;
+    BYTE cStencilBits;
+    BYTE cAuxBuffers;
+    BYTE iLayerType;
+    BYTE bReserved;
+    DWORD dwLayerMask;
+    DWORD dwVisibleMask;
+    DWORD dwDamageMask;
+} PIXELFORMATDESCRIPTOR, *PPIXELFORMATDESCRIPTOR, *LPPIXELFORMATDESCRIPTOR;
+
+#define PFD_TYPE_RGBA 0
+#define PFD_TYPE_COLORINDEX 1
+#define PFD_MAIN_PLANE 0
+#define PFD_OVERLAY_PLANE 1
+#define PFD_UNDERLAY_PLANE (-1)
+#define PFD_DOUBLEBUFFER 0x00000001
+#define PFD_STEREO 0x00000002
+#define PFD_DRAW_TO_WINDOW 0x00000004
+#define PFD_DRAW_TO_BITMAP 0x00000008
+#define PFD_SUPPORT_GDI 0x00000010
+#define PFD_SUPPORT_OPENGL 0x00000020
+#define PFD_GENERIC_FORMAT 0x00000040
+#define PFD_NEED_PALETTE 0x00000080
+#define PFD_NEED_SYSTEM_PALETTE 0x00000100
+#define PFD_SWAP_EXCHANGE 0x00000200
+#define PFD_SWAP_COPY 0x00000400
+#define PFD_SWAP_LAYER_BUFFERS 0x00000800
+#define PFD_GENERIC_ACCELERATED 0x00001000
+#define PFD_SUPPORT_DIRECTDRAW 0x00002000
+#define PFD_DIRECT3D_ACCELERATED 0x00004000
+#define PFD_SUPPORT_COMPOSITION 0x00008000
+#define PFD_DEPTH_DONTCARE 0x20000000
+#define PFD_DOUBLEBUFFER_DONTCARE 0x40000000
+#define PFD_STEREO_DONTCARE 0x80000000
+
+/* ------------------------------------------------------------------ more gdi32 exports */
+
+WINGDIAPI int WINAPI GetPixelFormat(HDC dc);
+WINGDIAPI int WINAPI ChoosePixelFormat(HDC dc, const PIXELFORMATDESCRIPTOR *pfd);
+WINGDIAPI int WINAPI DescribePixelFormat(HDC dc, int format, UINT size, LPPIXELFORMATDESCRIPTOR pfd);
+WINGDIAPI BOOL WINAPI SetPixelFormat(HDC dc, int format, const PIXELFORMATDESCRIPTOR *pfd);
+WINGDIAPI BOOL WINAPI SwapBuffers(HDC dc);
+WINGDIAPI BOOL WINAPI BeginPath(HDC dc);
+WINGDIAPI BOOL WINAPI EndPath(HDC dc);
+WINGDIAPI BOOL WINAPI AbortPath(HDC dc);
+WINGDIAPI BOOL WINAPI CloseFigure(HDC dc);
+WINGDIAPI BOOL WINAPI FillPath(HDC dc);
+WINGDIAPI BOOL WINAPI StrokePath(HDC dc);
+WINGDIAPI BOOL WINAPI StrokeAndFillPath(HDC dc);
+WINGDIAPI BOOL WINAPI FlattenPath(HDC dc);
+WINGDIAPI BOOL WINAPI SelectClipPath(HDC dc, int mode);
+WINGDIAPI HRGN WINAPI PathToRegion(HDC dc);
+WINGDIAPI int WINAPI GetPath(HDC dc, LPPOINT points, LPBYTE types, int count);
+WINGDIAPI BOOL WINAPI PolyBezier(HDC dc, const POINT *points, DWORD count);
+WINGDIAPI BOOL WINAPI PolyBezierTo(HDC dc, const POINT *points, DWORD count);
+WINGDIAPI BOOL WINAPI PolylineTo(HDC dc, const POINT *points, DWORD count);
+WINGDIAPI BOOL WINAPI SetWorldTransform(HDC dc, const XFORM *xform);
+WINGDIAPI BOOL WINAPI GetWorldTransform(HDC dc, LPXFORM xform);
+WINGDIAPI BOOL WINAPI ModifyWorldTransform(HDC dc, const XFORM *xform, DWORD mode);
+WINGDIAPI int WINAPI StartDocW(HDC dc, const DOCINFOW *info);
+WINGDIAPI int WINAPI StartDocA(HDC dc, const DOCINFOA *info);
+WINGDIAPI int WINAPI EndDoc(HDC dc);
+WINGDIAPI int WINAPI StartPage(HDC dc);
+WINGDIAPI int WINAPI EndPage(HDC dc);
+WINGDIAPI int WINAPI AbortDoc(HDC dc);
+WINGDIAPI int WINAPI SetAbortProc(HDC dc, ABORTPROC proc);
+WINGDIAPI HDC WINAPI ResetDCW(HDC dc, const void *mode);
+WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out);
+WINGDIAPI int WINAPI Escape(HDC dc, int escape, int in_size, LPCSTR in, LPVOID out);
+WINGDIAPI LONG WINAPI GetBitmapBits(HBITMAP bitmap, LONG size, LPVOID bits);
+WINGDIAPI LONG WINAPI SetBitmapBits(HBITMAP bitmap, DWORD size, const void *bits);
+WINGDIAPI HANDLE WINAPI AddFontMemResourceEx(PVOID data, DWORD size, PVOID reserved, DWORD *count);
+WINGDIAPI BOOL WINAPI RemoveFontMemResourceEx(HANDLE handle);
+WINGDIAPI BOOL WINAPI RemoveFontResourceExW(LPCWSTR name, DWORD flags, PVOID reserved);
+WINGDIAPI BOOL WINAPI RemoveFontResourceW(LPCWSTR name);
+WINGDIAPI UINT WINAPI GetOutlineTextMetricsW(HDC dc, UINT size, LPOUTLINETEXTMETRICW otm);
+WINGDIAPI UINT WINAPI GetOutlineTextMetricsA(HDC dc, UINT size, LPOUTLINETEXTMETRICA otm);
+WINGDIAPI DWORD WINAPI GetFontUnicodeRanges(HDC dc, LPGLYPHSET set);
+WINGDIAPI DWORD WINAPI GetGlyphOutlineW(HDC dc, UINT ch, UINT format, LPGLYPHMETRICS gm, DWORD size, LPVOID buffer,
+                                        const MAT2 *mat);
+WINGDIAPI DWORD WINAPI GetGlyphOutlineA(HDC dc, UINT ch, UINT format, LPGLYPHMETRICS gm, DWORD size, LPVOID buffer,
+                                        const MAT2 *mat);
+WINGDIAPI DWORD WINAPI GetGlyphIndicesW(HDC dc, LPCWSTR text, int count, LPWORD indices, DWORD flags);
+WINGDIAPI BOOL WINAPI GetCharABCWidthsFloatW(HDC dc, UINT first, UINT last, LPABCFLOAT abc);
+WINGDIAPI BOOL WINAPI GetCharABCWidthsI(HDC dc, UINT first, UINT count, LPWORD glyphs, LPABC abc);
+WINGDIAPI BOOL WINAPI GetCharWidth32A(HDC dc, UINT first, UINT last, LPINT widths);
+WINGDIAPI BOOL WINAPI GetCharWidthI(HDC dc, UINT first, UINT count, LPWORD glyphs, LPINT widths);
+WINGDIAPI BOOL WINAPI GetTextExtentPointI(HDC dc, LPWORD glyphs, int count, LPSIZE size);
+WINGDIAPI DWORD WINAPI GetCharacterPlacementW(HDC dc, LPCWSTR text, int count, int max_extent,
+                                              LPGCP_RESULTSW results, DWORD flags);
+WINGDIAPI int WINAPI EnumFontFamiliesExA(HDC dc, LPLOGFONTA lf, FONTENUMPROCA proc, LPARAM param, DWORD flags);
+WINGDIAPI int WINAPI EnumFontFamiliesW(HDC dc, LPCWSTR family, FONTENUMPROCW proc, LPARAM param);
+WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buffer, DWORD size);
+WINGDIAPI HRGN WINAPI ExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *data);
+
 #endif

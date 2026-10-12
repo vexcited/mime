@@ -72,6 +72,13 @@ NTSTATUS W32CaptureString(PUNICODE_STRING user, PWSTR *out, SIZE_T *chars)
     return STATUS_SUCCESS;
 }
 
+void W32SetLastError(ULONG error)
+{
+    PUCHAR teb = PsGetCurrentThreadTeb();
+    if (teb)
+        MimeCopyToUser(teb + FIELD_OFFSET(TEB, LastErrorValue), &error, sizeof(error));
+}
+
 DWORD W32TickCount(void)
 {
     return (DWORD)(KeQueryInterruptTime() / 10000);
@@ -280,6 +287,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     UserEnter();
     t->Destroying = TRUE;
     WndDestroyThreadWindows(t);
+    ClipboardThreadDestroyed(t);
     TimerRemoveThread(t);
     free_message_list(&t->Posted);
     free_message_list(&t->Input);
@@ -310,7 +318,9 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
     W32PROCESS *p = PsGetProcessWin32Process(process);
     UserEnter();
     GdiReleaseProcessObjects(PsGetProcessId(process));
+    FontReleaseProcess(PsGetProcessId(process));
     if (p) {
+        MenuFreeProcess(p);
         ClassFreeProcess(p);
         RemoveEntryList(&p->Links);
         PsSetProcessWin32Process(process, NULL, p);

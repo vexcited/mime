@@ -49,6 +49,10 @@ void DcResetState(DC *dc)
     s->CurrentPos = (POINT){0, 0};
     RgnClear(&s->ClipRgn);
     s->HasClip = FALSE;
+    s->HasXform = FALSE;
+    s->World = (XFORM){1, 0, 0, 1, 0, 0};
+    s->PolyFillMode = ALTERNATE;
+    s->ArcDirection = AD_COUNTERCLOCKWISE;
 }
 
 void DcSelectDefaults(DC *dc)
@@ -124,6 +128,7 @@ void DcFree(DC *dc)
         SurfaceDestroy(dc->DefaultBitmap);
     RgnFree(&dc->VisRgn);
     RgnFree(&dc->State.ClipRgn);
+    PathFree(&dc->Path);
     GdiFreeHandle(&dc->Header);
     W32Free(dc);
 }
@@ -147,8 +152,25 @@ BOOLEAN DcGetClip(DC *dc, REGION *out)
     return !RgnIsEmpty(out);
 }
 
+static LONG round_xf(float v)
+{
+    return (LONG)(v >= 0 ? v + 0.5f : v - 0.5f);
+}
+
+/* world to page with the GM_ADVANCED transform; rotations move points but not rectangles or glyphs. */
+void DcTransformPoint(DC *dc, LONG *x, LONG *y)
+{
+    if (!dc->State.HasXform)
+        return;
+    const XFORM *m = &dc->State.World;
+    float fx = (float)*x, fy = (float)*y;
+    *x = round_xf(fx * m->eM11 + fy * m->eM21 + m->eDx);
+    *y = round_xf(fx * m->eM12 + fy * m->eM22 + m->eDy);
+}
+
 void DcLogicalToDevice(DC *dc, LONG *x, LONG *y)
 {
+    DcTransformPoint(dc, x, y);
     *x = *x - dc->State.WindowOrg.x + dc->State.ViewportOrg.x;
     *y = *y - dc->State.WindowOrg.y + dc->State.ViewportOrg.y;
 }
@@ -338,7 +360,25 @@ BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result
             break;
         case MIME_DCDW_GRAPHICSMODE:
             old = (DWORD)s->GraphicsMode;
-            s->GraphicsMode = (int)value;
+            /* leaving the advanced mode needs the identity transform. */
+            if ((value != GM_COMPATIBLE && value != GM_ADVANCED) || (value == GM_COMPATIBLE && s->HasXform))
+                ok = FALSE, old = 0;
+            else
+                s->GraphicsMode = (int)value;
+            break;
+        case MIME_DCDW_POLYFILLMODE:
+            old = (DWORD)s->PolyFillMode;
+            if (value == ALTERNATE || value == WINDING)
+                s->PolyFillMode = (int)value;
+            else
+                ok = FALSE, old = 0;
+            break;
+        case MIME_DCDW_ARCDIRECTION:
+            old = (DWORD)s->ArcDirection;
+            if (value == AD_CLOCKWISE || value == AD_COUNTERCLOCKWISE)
+                s->ArcDirection = (int)value;
+            else
+                ok = FALSE, old = 0;
             break;
         case MIME_DCDW_MAPMODE:
             old = (DWORD)s->MapMode;
@@ -400,6 +440,18 @@ BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
             break;
         case MIME_DCDW_TEXTCHAREXTRA:
             v = (DWORD)s->TextCharExtra;
+            break;
+        case MIME_DCDW_POLYFILLMODE:
+            v = (DWORD)s->PolyFillMode;
+            break;
+        case MIME_DCDW_ARCDIRECTION:
+            v = (DWORD)s->ArcDirection;
+            break;
+        case MIME_DCDW_PIXELFORMAT:
+            v = (DWORD)(dc->Window ? dc->Window->PixelFormat : dc->PixelFormat);
+            break;
+        case MIME_DCDW_PATHSTATE:
+            v = dc->PathState;
             break;
         default:
             ok = FALSE;
@@ -466,6 +518,15 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
             } else {
                 pts[i].x = pts[i].x - dc->State.ViewportOrg.x + dc->State.WindowOrg.x;
                 pts[i].y = pts[i].y - dc->State.ViewportOrg.y + dc->State.WindowOrg.y;
+                if (dc->State.HasXform) {
+                    const XFORM *m = &dc->State.World;
+                    float det = m->eM11 * m->eM22 - m->eM12 * m->eM21;
+                    float fx = (float)pts[i].x - m->eDx, fy = (float)pts[i].y - m->eDy;
+                    if (det != 0) {
+                        pts[i].x = round_xf((fx * m->eM22 - fy * m->eM21) / det);
+                        pts[i].y = round_xf((fy * m->eM11 - fx * m->eM12) / det);
+                    }
+                }
             }
         }
     }
@@ -512,6 +573,8 @@ BOOL NTAPI NtGdiMoveTo(HDC hdc, int x, int y, POINT *old)
     UserEnter();
     DC *dc = DcLookup(hdc);
     POINT prev = {0, 0};
+    if (dc && DcIsPathOpen(dc))
+        PathMoveTo(dc, x, y);
     if (dc) {
         prev = dc->State.CurrentPos;
         dc->State.CurrentPos = (POINT){x, y};
@@ -804,4 +867,100 @@ int NTAPI NtGdiExcludeClipRect(HDC hdc, int left, int top, int right, int bottom
 BOOL NTAPI NtGdiFlush(void)
 {
     return TRUE;
+}
+
+/* ------------------------------------------------------------------ world transform */
+
+static void xform_multiply(XFORM *out, const XFORM *a, const XFORM *b)
+{
+    XFORM r;
+    r.eM11 = a->eM11 * b->eM11 + a->eM12 * b->eM21;
+    r.eM12 = a->eM11 * b->eM12 + a->eM12 * b->eM22;
+    r.eM21 = a->eM21 * b->eM11 + a->eM22 * b->eM21;
+    r.eM22 = a->eM21 * b->eM12 + a->eM22 * b->eM22;
+    r.eDx = a->eDx * b->eM11 + a->eDy * b->eM21 + b->eDx;
+    r.eDy = a->eDx * b->eM12 + a->eDy * b->eM22 + b->eDy;
+    *out = r;
+}
+
+static BOOLEAN xform_identity(const XFORM *m)
+{
+    return m->eM11 == 1 && m->eM12 == 0 && m->eM21 == 0 && m->eM22 == 1 && m->eDx == 0 && m->eDy == 0;
+}
+
+BOOL NTAPI NtGdiModifyWorldTransform(HDC hdc, const XFORM *user_xform, DWORD mode)
+{
+    XFORM xf = {1, 0, 0, 1, 0, 0};
+    if (mode != MWT_IDENTITY && (!user_xform || !NT_SUCCESS(MimeCopyFromUser(&xf, user_xform, sizeof(xf))))) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL ok = dc && dc->State.GraphicsMode == GM_ADVANCED;
+    if (ok) {
+        XFORM result = dc->State.World;
+        switch (mode) {
+        case MWT_IDENTITY:
+            result = (XFORM){1, 0, 0, 1, 0, 0};
+            break;
+        case MWT_SET:
+            result = xf;
+            break;
+        case MWT_LEFTMULTIPLY:
+            xform_multiply(&result, &xf, &dc->State.World);
+            break;
+        case MWT_RIGHTMULTIPLY:
+            xform_multiply(&result, &dc->State.World, &xf);
+            break;
+        default:
+            ok = FALSE;
+            break;
+        }
+        /* a degenerate transform is refused. */
+        if (ok && result.eM11 * result.eM22 - result.eM12 * result.eM21 == 0)
+            ok = FALSE;
+        if (ok) {
+            dc->State.World = result;
+            dc->State.HasXform = !xform_identity(&result);
+        }
+    }
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtGdiGetTransform(HDC hdc, DWORD which, XFORM *user_xform)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    XFORM xf = dc ? dc->State.World : (XFORM){1, 0, 0, 1, 0, 0};
+    UserLeave();
+    if (!dc || which != MIME_XFORM_WORLD)
+        return FALSE;
+    return NT_SUCCESS(MimeCopyToUser(user_xform, &xf, sizeof(xf)));
+}
+
+/* ------------------------------------------------------------------ pixel formats */
+
+/* the format is a property of the window, set once; memory dcs keep their own. */
+BOOL NTAPI NtGdiSetPixelFormat(HDC hdc, int format)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    ULONG error = 0;
+    if (!dc) {
+        error = ERROR_INVALID_HANDLE;
+    } else if (format <= 0) {
+        error = ERROR_INVALID_PIXEL_FORMAT;
+    } else {
+        int *slot = dc->Window ? &dc->Window->PixelFormat : &dc->PixelFormat;
+        if (*slot && *slot != format)
+            error = ERROR_INVALID_PIXEL_FORMAT;
+        else
+            *slot = format;
+    }
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return !error;
 }

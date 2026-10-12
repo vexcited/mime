@@ -265,76 +265,6 @@ WINUSERAPI BOOL WINAPI IsCharLowerW(WCHAR c)
 
 /* ------------------------------------------------------------------ services with nothing to do yet */
 
-/*
- * there are no menus yet. the system menu handle is the window handle, so
- * removing or greying SC_CLOSE can disable the caption close button.
- */
-WINUSERAPI HMENU WINAPI GetSystemMenu(HWND hwnd, BOOL revert)
-{
-    if (revert) {
-        NtUserCallHwndParam(hwnd, 1, MIME_HWNDPARAM_ENABLECLOSE);
-        return NULL;
-    }
-    return IsWindow(hwnd) ? (HMENU)hwnd : NULL;
-}
-
-static BOOL is_system_menu(HMENU menu)
-{
-    return menu && IsWindow((HWND)menu);
-}
-
-WINUSERAPI BOOL WINAPI EnableMenuItem(HMENU menu, UINT id, UINT flags)
-{
-    if (!is_system_menu(menu) || id != SC_CLOSE)
-        return -1;
-    BOOL was = (BOOL)NtUserCallHwndParam((HWND)menu, !(flags & (MF_GRAYED | MF_DISABLED)), MIME_HWNDPARAM_ENABLECLOSE);
-    return was ? MF_ENABLED : MF_GRAYED;
-}
-
-WINUSERAPI BOOL WINAPI DeleteMenu(HMENU menu, UINT position, UINT flags)
-{
-    if (is_system_menu(menu) && position == SC_CLOSE && !(flags & MF_BYPOSITION)) {
-        NtUserCallHwndParam((HWND)menu, 0, MIME_HWNDPARAM_ENABLECLOSE);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-WINUSERAPI BOOL WINAPI RemoveMenu(HMENU menu, UINT position, UINT flags)
-{
-    return DeleteMenu(menu, position, flags);
-}
-
-WINUSERAPI HMENU WINAPI GetMenu(HWND hwnd)
-{
-    return NULL;
-}
-
-WINUSERAPI BOOL WINAPI SetMenu(HWND hwnd, HMENU menu)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI DrawMenuBar(HWND hwnd)
-{
-    return TRUE;
-}
-
-WINUSERAPI HMENU WINAPI CreateMenu(void)
-{
-    return NULL;
-}
-
-WINUSERAPI HMENU WINAPI CreatePopupMenu(void)
-{
-    return NULL;
-}
-
-WINUSERAPI BOOL WINAPI DestroyMenu(HMENU menu)
-{
-    return TRUE;
-}
-
 WINUSERAPI HACCEL WINAPI LoadAcceleratorsW(HINSTANCE instance, LPCWSTR name)
 {
     return NULL;
@@ -343,36 +273,6 @@ WINUSERAPI HACCEL WINAPI LoadAcceleratorsW(HINSTANCE instance, LPCWSTR name)
 WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
 {
     return 0;
-}
-
-WINUSERAPI BOOL WINAPI OpenClipboard(HWND owner)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI CloseClipboard(void)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI EmptyClipboard(void)
-{
-    return TRUE;
-}
-
-WINUSERAPI HANDLE WINAPI SetClipboardData(UINT format, HANDLE data)
-{
-    return data;
-}
-
-WINUSERAPI HANDLE WINAPI GetClipboardData(UINT format)
-{
-    return NULL;
-}
-
-WINUSERAPI BOOL WINAPI IsClipboardFormatAvailable(UINT format)
-{
-    return FALSE;
 }
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)
@@ -480,17 +380,416 @@ WINUSERAPI BOOL WINAPI SetWindowContextHelpId(HWND hwnd, DWORD id)
     return (BOOL)NtUserCallHwndParam(hwnd, id, MIME_HWNDPARAM_SETCONTEXTHELPID);
 }
 
+/* ------------------------------------------------------------------ window properties */
+
+/* string keys are global atoms; integer atoms pass through. */
+static ATOM prop_atom(LPCWSTR name, BOOL add)
+{
+    if (IS_INTRESOURCE(name))
+        return (ATOM)(ULONG_PTR)name;
+    return add ? GlobalAddAtomW(name) : GlobalFindAtomW(name);
+}
+
 WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data)
 {
-    return FALSE;
+    ATOM atom = prop_atom(name, TRUE);
+    if (!atom)
+        return FALSE;
+    BOOL ok = NtUserSetProp(hwnd, atom, data);
+    if (!ok && !IS_INTRESOURCE(name))
+        GlobalDeleteAtom(atom);
+    return ok;
 }
 
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name)
 {
-    return NULL;
+    ATOM atom = prop_atom(name, FALSE);
+    return atom ? NtUserGetProp(hwnd, atom) : NULL;
 }
 
 WINUSERAPI HANDLE WINAPI RemovePropW(HWND hwnd, LPCWSTR name)
 {
-    return NULL;
+    ATOM atom = prop_atom(name, FALSE);
+    if (!atom)
+        return NULL;
+    HANDLE data = NtUserRemoveProp(hwnd, atom);
+    if (data && !IS_INTRESOURCE(name))
+        GlobalDeleteAtom(atom);
+    return data;
+}
+
+WINUSERAPI BOOL WINAPI SetPropA(HWND hwnd, LPCSTR name, HANDLE data)
+{
+    LPWSTR w = UserAtoW(name);
+    BOOL ok = SetPropW(hwnd, w, data);
+    UserFreeConverted(w, name);
+    return ok;
+}
+
+WINUSERAPI HANDLE WINAPI GetPropA(HWND hwnd, LPCSTR name)
+{
+    LPWSTR w = UserAtoW(name);
+    HANDLE data = GetPropW(hwnd, w);
+    UserFreeConverted(w, name);
+    return data;
+}
+
+WINUSERAPI HANDLE WINAPI RemovePropA(HWND hwnd, LPCSTR name)
+{
+    LPWSTR w = UserAtoW(name);
+    HANDLE data = RemovePropW(hwnd, w);
+    UserFreeConverted(w, name);
+    return data;
+}
+
+typedef BOOL(CALLBACK *PROPENUMPROCEXW)(HWND hwnd, LPWSTR name, HANDLE data, ULONG_PTR param);
+typedef BOOL(CALLBACK *PROPENUMPROCW)(HWND hwnd, LPCWSTR name, HANDLE data);
+
+/* calls the procedure for each property, string keys with their name; returns the last result, -1 for none. */
+static int enum_props(HWND hwnd, PROPENUMPROCEXW proc_ex, PROPENUMPROCW proc, ULONG_PTR param)
+{
+    ULONG count = 0;
+    PROPLISTITEM local[32];
+    PROPLISTITEM *list = local;
+    NTSTATUS status = NtUserBuildPropList(hwnd, RTL_NUMBER_OF(local), list, &count);
+    if (status == STATUS_BUFFER_TOO_SMALL) {
+        list = UserAlloc(count * sizeof(PROPLISTITEM));
+        if (!list)
+            return -1;
+        status = NtUserBuildPropList(hwnd, count, list, &count);
+    }
+    int result = -1;
+    if (NT_SUCCESS(status)) {
+        for (ULONG i = 0; i < count; i++) {
+            WCHAR name[256];
+            LPWSTR key = (LPWSTR)(ULONG_PTR)list[i].Atom;
+            if (list[i].Atom >= 0xC000 && GlobalGetAtomNameW(list[i].Atom, name, RTL_NUMBER_OF(name)))
+                key = name;
+            result = proc_ex ? proc_ex(hwnd, key, list[i].Data, param) : proc(hwnd, key, list[i].Data);
+            if (!result)
+                break;
+        }
+    }
+    if (list != local)
+        UserFree(list);
+    return result;
+}
+
+WINUSERAPI int WINAPI EnumPropsExW(HWND hwnd, PROPENUMPROCEXW proc, LPARAM param)
+{
+    return proc ? enum_props(hwnd, proc, NULL, (ULONG_PTR)param) : -1;
+}
+
+WINUSERAPI int WINAPI EnumPropsW(HWND hwnd, PROPENUMPROCW proc)
+{
+    return proc ? enum_props(hwnd, NULL, proc, 0) : -1;
+}
+
+/* ------------------------------------------------------------------ layered windows and regions */
+
+WINUSERAPI BOOL WINAPI SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWORD flags)
+{
+    return NtUserSetLayeredWindowAttributes(hwnd, key, alpha, flags);
+}
+
+WINUSERAPI BOOL WINAPI GetLayeredWindowAttributes(HWND hwnd, COLORREF *key, BYTE *alpha, DWORD *flags)
+{
+    return NtUserGetLayeredWindowAttributes(hwnd, key, alpha, flags);
+}
+
+WINUSERAPI BOOL WINAPI UpdateLayeredWindowIndirect(HWND hwnd, const UPDATELAYEREDWINDOWINFO *info)
+{
+    if (!info || info->cbSize != sizeof(*info)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return NtUserUpdateLayeredWindow(hwnd, info->hdcDst, (POINT *)info->pptDst, (SIZE *)info->psize, info->hdcSrc,
+                                     (POINT *)info->pptSrc, info->crKey, (BLENDFUNCTION *)info->pblend, info->dwFlags,
+                                     (RECT *)info->prcDirty);
+}
+
+WINUSERAPI BOOL WINAPI UpdateLayeredWindow(HWND hwnd, HDC dst, POINT *dst_pos, SIZE *size, HDC src, POINT *src_pos,
+                                           COLORREF key, BLENDFUNCTION *blend, DWORD flags)
+{
+    /* ULW_EX_NORESIZE belongs to UpdateLayeredWindowIndirect only. */
+    if (flags & ULW_EX_NORESIZE) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return NtUserUpdateLayeredWindow(hwnd, dst, dst_pos, size, src, src_pos, key, blend, flags, NULL);
+}
+
+WINUSERAPI int WINAPI SetWindowRgn(HWND hwnd, HRGN region, BOOL redraw)
+{
+    return NtUserSetWindowRgn(hwnd, region, redraw);
+}
+
+WINUSERAPI int WINAPI GetWindowRgn(HWND hwnd, HRGN region)
+{
+    return NtUserGetWindowRgnEx(hwnd, region, 0);
+}
+
+WINUSERAPI int WINAPI GetWindowRgnBox(HWND hwnd, LPRECT rect)
+{
+    HRGN r = CreateRectRgn(0, 0, 0, 0);
+    int type = r ? GetWindowRgn(hwnd, r) : ERROR;
+    if (type != ERROR && rect)
+        GetRgnBox(r, rect);
+    if (r)
+        DeleteObject(r);
+    return type;
+}
+
+/* ------------------------------------------------------------------ touch */
+
+/* there is no touch digitizer: windows register normally and never receive WM_TOUCH. */
+WINUSERAPI BOOL WINAPI RegisterTouchWindow(HWND hwnd, ULONG flags)
+{
+    if (flags & ~(TWF_FINETOUCH | TWF_WANTPALM)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    return (BOOL)NtUserCallHwndParam(hwnd, MIME_TOUCH_REGISTERED | flags, MIME_HWNDPARAM_SETTOUCH);
+}
+
+WINUSERAPI BOOL WINAPI UnregisterTouchWindow(HWND hwnd)
+{
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    return (BOOL)NtUserCallHwndParam(hwnd, 0, MIME_HWNDPARAM_SETTOUCH);
+}
+
+WINUSERAPI BOOL WINAPI IsTouchWindow(HWND hwnd, PULONG flags)
+{
+    return NtUserIsTouchWindow(hwnd, flags);
+}
+
+/* no WM_TOUCH message is ever sent, so no touch input handle is valid. */
+WINUSERAPI BOOL WINAPI GetTouchInputInfo(HTOUCHINPUT input, UINT count, PTOUCHINPUT inputs, int size)
+{
+    SetLastError(size != (int)sizeof(TOUCHINPUT) || !inputs || !count ? ERROR_INVALID_PARAMETER : ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+WINUSERAPI BOOL WINAPI CloseTouchInputHandle(HTOUCHINPUT input)
+{
+    SetLastError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+/* ------------------------------------------------------------------ device and power notifications */
+
+/*
+ * the registrations are kept so they can be unregistered, but no device
+ * arrival or power setting event exists to deliver yet.
+ */
+typedef struct NOTIFY_REGISTRATION {
+    struct NOTIFY_REGISTRATION *Next;
+    HANDLE Recipient;
+    DWORD Flags;
+    BOOL Power;
+} NOTIFY_REGISTRATION;
+
+static NOTIFY_REGISTRATION *g_notifications;
+static RTL_CRITICAL_SECTION g_notify_lock = RTL_CRITICAL_SECTION_INIT;
+
+static PVOID register_notification(HANDLE recipient, DWORD flags, BOOL power)
+{
+    if (!recipient) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    if (!(flags & (DEVICE_NOTIFY_SERVICE_HANDLE | DEVICE_NOTIFY_CALLBACK)) && !IsWindow((HWND)recipient)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return NULL;
+    }
+    NOTIFY_REGISTRATION *r = UserAlloc(sizeof(*r));
+    if (!r) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return NULL;
+    }
+    r->Recipient = recipient;
+    r->Flags = flags;
+    r->Power = power;
+    RtlEnterCriticalSection(&g_notify_lock);
+    r->Next = g_notifications;
+    g_notifications = r;
+    RtlLeaveCriticalSection(&g_notify_lock);
+    return r;
+}
+
+static BOOL unregister_notification(PVOID handle, BOOL power)
+{
+    BOOL found = FALSE;
+    RtlEnterCriticalSection(&g_notify_lock);
+    for (NOTIFY_REGISTRATION **p = &g_notifications; *p; p = &(*p)->Next) {
+        if (*p == handle && (*p)->Power == power) {
+            NOTIFY_REGISTRATION *r = *p;
+            *p = r->Next;
+            UserFree(r);
+            found = TRUE;
+            break;
+        }
+    }
+    RtlLeaveCriticalSection(&g_notify_lock);
+    if (!found)
+        SetLastError(ERROR_INVALID_HANDLE);
+    return found;
+}
+
+WINUSERAPI HDEVNOTIFY WINAPI RegisterDeviceNotificationW(HANDLE recipient, LPVOID filter, DWORD flags)
+{
+    if (!filter && !(flags & DEVICE_NOTIFY_ALL_INTERFACE_CLASSES)) {
+        SetLastError(ERROR_INVALID_DATA);
+        return NULL;
+    }
+    return register_notification(recipient, flags, FALSE);
+}
+
+WINUSERAPI HDEVNOTIFY WINAPI RegisterDeviceNotificationA(HANDLE recipient, LPVOID filter, DWORD flags)
+{
+    return RegisterDeviceNotificationW(recipient, filter, flags);
+}
+
+WINUSERAPI BOOL WINAPI UnregisterDeviceNotification(HDEVNOTIFY handle)
+{
+    return unregister_notification(handle, FALSE);
+}
+
+WINUSERAPI HPOWERNOTIFY WINAPI RegisterPowerSettingNotification(HANDLE recipient, const GUID *setting, DWORD flags)
+{
+    if (!setting) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    return register_notification(recipient, flags, TRUE);
+}
+
+WINUSERAPI BOOL WINAPI UnregisterPowerSettingNotification(HPOWERNOTIFY handle)
+{
+    return unregister_notification(handle, TRUE);
+}
+
+/* ------------------------------------------------------------------ display devices */
+
+/* one adapter with one monitor, named like the first display of windows. */
+WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY_DEVICEW info, DWORD flags)
+{
+    if (!info || info->cb < offsetof(DISPLAY_DEVICEW, DeviceID)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (index != 0)
+        return FALSE;
+    DWORD cb = info->cb > sizeof(*info) ? sizeof(*info) : info->cb;
+    DISPLAY_DEVICEW d;
+    memset(&d, 0, sizeof(d));
+    d.cb = cb;
+    if (!device) {
+        wcscpy(d.DeviceName, L"\\\\.\\DISPLAY1");
+        wcscpy(d.DeviceString, L"Mime Display Adapter");
+        d.StateFlags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE;
+        wcscpy(d.DeviceID, L"ROOT\\MIME\\0000");
+        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000000-0000-0000-0000-000000000000}\\0000");
+    } else if (!_wcsicmp(device, L"\\\\.\\DISPLAY1")) {
+        wcscpy(d.DeviceName, L"\\\\.\\DISPLAY1\\Monitor0");
+        wcscpy(d.DeviceString, L"Generic PnP Monitor");
+        d.StateFlags = DISPLAY_DEVICE_ACTIVE | DISPLAY_DEVICE_ATTACHED;
+        if (flags & EDD_GET_DEVICE_INTERFACE_NAME)
+            wcscpy(d.DeviceID, L"\\\\?\\DISPLAY#MIME0000#1&00000000&0&UID0#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
+        else
+            wcscpy(d.DeviceID, L"MONITOR\\MIME0000\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0000");
+        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0000");
+    } else {
+        return FALSE;
+    }
+    memcpy(info, &d, cb);
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI EnumDisplayDevicesA(LPCSTR device, DWORD index, PDISPLAY_DEVICEA info, DWORD flags)
+{
+    if (!info || info->cb < offsetof(DISPLAY_DEVICEA, DeviceID)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    LPWSTR w = UserAtoW(device);
+    DISPLAY_DEVICEW dw;
+    dw.cb = sizeof(dw);
+    BOOL ok = EnumDisplayDevicesW(w, index, &dw, flags);
+    UserFreeConverted(w, device);
+    if (!ok)
+        return FALSE;
+    DISPLAY_DEVICEA da;
+    memset(&da, 0, sizeof(da));
+    da.cb = info->cb;
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceName, -1, da.DeviceName, sizeof(da.DeviceName), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceString, -1, da.DeviceString, sizeof(da.DeviceString), NULL, NULL);
+    da.StateFlags = dw.StateFlags;
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceID, -1, da.DeviceID, sizeof(da.DeviceID), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceKey, -1, da.DeviceKey, sizeof(da.DeviceKey), NULL, NULL);
+    memcpy(info, &da, info->cb > sizeof(da) ? sizeof(da) : info->cb);
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ threads and message filters */
+
+WINUSERAPI BOOL WINAPI AttachThreadInput(DWORD attach, DWORD to, BOOL do_attach)
+{
+    return NtUserAttachThreadInput(attach, to, do_attach);
+}
+
+/* user interface privilege isolation does not exist here: every message is allowed. */
+WINUSERAPI BOOL WINAPI ChangeWindowMessageFilterEx(HWND hwnd, UINT msg, DWORD action, PCHANGEFILTERSTRUCT info)
+{
+    if (action > MSGFLT_DISALLOW || (info && info->cbSize != sizeof(CHANGEFILTERSTRUCT))) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (info)
+        info->ExtStatus = action == MSGFLT_ALLOW ? MSGFLTINFO_ALREADYALLOWED_FORWND : MSGFLTINFO_NONE;
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI ChangeWindowMessageFilter(UINT msg, DWORD flag)
+{
+    if (flag != 1 /* MSGFLT_ADD */ && flag != 2 /* MSGFLT_REMOVE */) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ multibyte characters */
+
+WINUSERAPI LPSTR WINAPI CharNextExA(WORD code_page, LPCSTR s, DWORD flags)
+{
+    if (!s || !*s)
+        return (LPSTR)s;
+    if (IsDBCSLeadByteEx(code_page, (BYTE)s[0]) && s[1])
+        return (LPSTR)(s + 2);
+    return (LPSTR)(s + 1);
+}
+
+WINUSERAPI LPSTR WINAPI CharPrevExA(WORD code_page, LPCSTR start, LPCSTR s, DWORD flags)
+{
+    if (!start || !s || s <= start)
+        return (LPSTR)start;
+    /* walk forward from the start, lead bytes are ambiguous backwards. */
+    LPCSTR p = start, prev = start;
+    while (p < s && *p) {
+        prev = p;
+        p = CharNextExA(code_page, p, flags);
+    }
+    return (LPSTR)prev;
 }

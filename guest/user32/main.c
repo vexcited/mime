@@ -204,11 +204,12 @@ static PVOID g_callbacks[MIME_CB_COUNT] = {
 
 /* ------------------------------------------------------------------ initialization */
 
-static void register_system_class(PCWSTR name, WNDPROC proc, ULONG fnid)
+static void register_system_class(PCWSTR name, WNDPROC proc, ULONG fnid, UINT style)
 {
     WNDCLASSEXW wc;
     memset(&wc, 0, sizeof(wc));
     wc.cbSize = sizeof(wc);
+    wc.style = style;
     wc.lpfnWndProc = proc;
     wc.hInstance = User32Instance;
     wc.lpszClassName = name;
@@ -236,16 +237,16 @@ static void initialize_process(void)
     User32Client.DefWindowProcW = DefWindowProcW;
     NtUserInitializeClientPfnArrays(&User32Client);
 
-    register_system_class(L"Button", ButtonProc, MIME_FNID_BUTTON);
-    register_system_class(L"Static", StaticProc, MIME_FNID_STATIC);
-    register_system_class(L"Edit", EditProc, MIME_FNID_EDIT);
-    register_system_class(L"ListBox", ListBoxProc, MIME_FNID_LISTBOX);
-    register_system_class(L"ComboBox", ComboBoxProc, MIME_FNID_COMBOBOX);
-    register_system_class(L"ScrollBar", ScrollBarProc, MIME_FNID_SCROLLBAR);
-    register_system_class(L"#32770", DialogProc, MIME_FNID_DIALOG);
-    register_system_class(L"#32769", DesktopProc, MIME_FNID_DESKTOP);
-    register_system_class(L"#32768", MenuProc, MIME_FNID_MENU);
-    register_system_class(L"Message", MessageWindowProc, MIME_FNID_MESSAGE);
+    register_system_class(L"Button", ButtonProc, MIME_FNID_BUTTON, 0);
+    register_system_class(L"Static", StaticProc, MIME_FNID_STATIC, 0);
+    register_system_class(L"Edit", EditProc, MIME_FNID_EDIT, 0);
+    register_system_class(L"ListBox", ListBoxProc, MIME_FNID_LISTBOX, 0);
+    register_system_class(L"ComboBox", ComboBoxProc, MIME_FNID_COMBOBOX, 0);
+    register_system_class(L"ScrollBar", ScrollBarProc, MIME_FNID_SCROLLBAR, 0);
+    register_system_class(L"#32770", DialogProc, MIME_FNID_DIALOG, 0);
+    register_system_class(L"#32769", DesktopProc, MIME_FNID_DESKTOP, 0);
+    register_system_class(L"#32768", MenuProc, MIME_FNID_MENU, CS_DROPSHADOW | CS_SAVEBITS);
+    register_system_class(L"Message", MessageWindowProc, MIME_FNID_MESSAGE, 0);
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
@@ -257,18 +258,13 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* the desktop, message only and menu windows draw nothing themselves yet. */
+/* the desktop and message only windows draw nothing themselves. */
 LRESULT CALLBACK DesktopProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 LRESULT CALLBACK MessageWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
-{
-    return DefWindowProcW(hwnd, msg, wparam, lparam);
-}
-
-LRESULT CALLBACK MenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }

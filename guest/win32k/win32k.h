@@ -8,6 +8,7 @@
 #include <mime/ddk.h>
 #include <mime/abi.h>
 #include <mime/ntuser.h>
+#include <mime/win32/winerror.h>
 
 #include "rtl.h"
 
@@ -17,6 +18,7 @@ void *W32Alloc(SIZE_T size);  /* zeroed nonpaged pool */
 void W32Free(void *p);
 PWSTR W32StrDup(PCWSTR s, SIZE_T chars);
 #define W32Trace(...) DbgPrint(__VA_ARGS__)
+void W32SetLastError(ULONG error); /* the calling thread's TEB LastErrorValue */
 
 static inline LONG W32Min(LONG a, LONG b)
 {
@@ -225,7 +227,26 @@ typedef struct DC_STATE {
     FONT *Font;
     REGION ClipRgn; /* application clip in device coordinates relative to the dc origin */
     BOOLEAN HasClip;
+    BOOLEAN HasXform; /* World is not the identity */
+    int PolyFillMode;
+    int ArcDirection;
+    XFORM World;      /* world to page, GM_ADVANCED */
 } DC_STATE;
+
+/* a path in logical coordinates with GetPath point types. */
+typedef struct GDI_PATH {
+    ULONG Count;
+    ULONG Capacity;
+    POINT *Points;
+    BYTE *Types;
+    BOOLEAN NewFigure; /* the next point starts a figure */
+} GDI_PATH;
+
+enum {
+    PATH_NONE = 0,
+    PATH_OPEN = 1,   /* between BeginPath and EndPath, drawing calls add to the path */
+    PATH_CLOSED = 2, /* ready for FillPath, StrokePath and friends */
+};
 
 typedef struct DC_SAVED {
     struct DC_SAVED *Next;
@@ -254,6 +275,9 @@ typedef struct DC {
     struct FONT_INSTANCE *Realized;
     FONT *RealizedFor;
     RECT Bounds;
+    ULONG PathState;
+    GDI_PATH Path;
+    int PixelFormat; /* memory dcs; window dcs use the window's */
 } DC;
 
 DC *DcLookup(HDC dc);
@@ -267,6 +291,19 @@ BOOLEAN DcGetClip(DC *dc, REGION *out);
 void DcLogicalToDevice(DC *dc, LONG *x, LONG *y);
 void DcLogicalToSurface(DC *dc, LONG *x, LONG *y);
 LONG DcScaleToDevice(DC *dc, LONG v);
+void DcTransformPoint(DC *dc, LONG *x, LONG *y); /* world transform only */
+BOOLEAN DcIsPathOpen(DC *dc);
+/* path recording, logical coordinates; used by the drawing services while a path is open. */
+BOOLEAN PathMoveTo(DC *dc, LONG x, LONG y);
+BOOLEAN PathLineTo(DC *dc, LONG x, LONG y);
+BOOLEAN PathBezierTo(DC *dc, const POINT *pts, ULONG count);
+BOOLEAN PathPolygon(DC *dc, const POINT *pts, ULONG count, BOOLEAN close);
+BOOLEAN PathRectangle(DC *dc, LONG left, LONG top, LONG right, LONG bottom);
+BOOLEAN PathEllipse(DC *dc, LONG left, LONG top, LONG right, LONG bottom);
+void PathFree(GDI_PATH *p);
+/* scan converts closed polygons in surface coordinates into a region. */
+BOOLEAN RgnFromPolygons(REGION *out, const POINT *pts, const ULONG *counts, ULONG polygons, int fill_mode);
+void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty);
 struct FONT_INSTANCE *DcGetFont(DC *dc);
 
 /* ------------------------------------------------------------------ drawing primitives */
@@ -311,6 +348,7 @@ typedef struct GLYPH {
     SHORT Top;       /* bitmap offset from the baseline, negative is above */
     USHORT Width;
     USHORT Height;
+    UCHAR Ready;     /* rendered */
     UCHAR *Coverage;
 } GLYPH;
 
@@ -332,12 +370,17 @@ typedef struct FONT_INSTANCE {
     LONG UnderlineSize;
     LONG StrikeoutPos;
     ULONG RefCount;
-    GLYPH *Pages[256];  /* glyphs for code points by high byte, bmp only */
+    ULONG *CharPages[256]; /* glyph index + 1 for code points by high byte, bmp only, 0 when unknown */
+    GLYPH *Pages[256];     /* rendered glyphs by glyph index high byte */
 } FONT_INSTANCE;
 
 void FontInitialize(void);
 FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi);
 const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint);
+const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index);
+USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyphs */
+void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc);
+void FontReleaseProcess(HANDLE pid);
 void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars);
 LONG FontTextWidth(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG extra);
 void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR text, ULONG count, const INT *dx);
@@ -501,6 +544,11 @@ enum {
     CAPTION_HELP = 4,
 };
 
+typedef struct WND_PROP {
+    ATOM Atom;
+    HANDLE Data;
+} WND_PROP;
+
 typedef struct WND {
     USER_OBJECT Header;
     struct WND *Parent;
@@ -535,7 +583,20 @@ typedef struct WND {
     UCHAR CaptionPressed;
     UCHAR CaptionTracking; /* button pressed while the mouse went down on it */
     DWORD ContextHelpId;
+    HMENU SystemMenu;
+    REGION *Shape;     /* SetWindowRgn, window relative, NULL for none */
+    ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow */
+    COLORREF LayerKey;
+    BYTE LayerAlpha;
+    SURFACE *Present;  /* composed copy shown to the host when the surface needs alpha or a shape */
+    ULONG TouchFlags;
+    int PixelFormat;
+    WND_PROP *Props;
+    ULONG PropCount;
+    ULONG PropCapacity;
 } WND;
+
+#define MIME_LAYER_UPDATE 0x80000000u /* contents come from UpdateLayeredWindow, premultiplied */
 
 WND *WndLookup(HWND hwnd);
 WND *WndDesktop(void);
@@ -557,6 +618,7 @@ void WndInvalidate(WND *w, const RECT *client_rect, BOOLEAN erase, BOOLEAN child
 void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags);
 void WndValidate(WND *w, const RECT *client_rect);
 void WndUpdateHostConfig(WND *w, BOOLEAN activate);
+void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surface and the host window */
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
@@ -629,6 +691,15 @@ void HostWindowCreate(WND *w);
 void HostWindowDestroy(WND *w);
 void HostConfigure(WND *w, BOOLEAN activate);
 void HostPresent(WND *w, const RECT *dirty);
+void LayerWindowDestroyed(WND *w);
+SURFACE *LayerPrepare(WND *w, const RECT *dirty); /* surface to present, composed when needed */
+void LayerStyleChanged(WND *w);
+BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape excludes the screen point */
+void MenuFreeProcess(W32PROCESS *p);
+void PropFreeWindow(WND *w);
+void MenuWindowDestroyed(WND *w);
+void ClipboardWindowDestroyed(WND *w);
+void ClipboardThreadDestroyed(W32THREAD *t);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
 

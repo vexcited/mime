@@ -42,6 +42,11 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
     if (dx) {
         for (ULONG i = 0; i < count; i++)
             width += dx[i];
+    } else if (options & ETO_GLYPH_INDEX) {
+        for (ULONG i = 0; i < count; i++) {
+            const GLYPH *g = FontGetGlyphIndex(fi, text[i]);
+            width += (g ? g->Advance : 0) + st->TextCharExtra;
+        }
     } else {
         width = FontTextWidth(fi, text, count, st->TextCharExtra);
     }
@@ -72,8 +77,8 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
     ULONG i = 0, index = 0;
     while (i < count) {
         ULONG start = i;
-        ULONG cp = (options & ETO_GLYPH_INDEX) ? text[i++] : next_char(text, count, &i);
-        const GLYPH *g = FontGetGlyph(fi, cp);
+        const GLYPH *g = (options & ETO_GLYPH_INDEX) ? FontGetGlyphIndex(fi, text[i++])
+                                                     : FontGetGlyph(fi, next_char(text, count, &i));
         if (g && g->Width && g->Coverage)
             DrawCoverage(dc->Surface, &clip, pen + g->Left, baseline + g->Top, g->Coverage, g->Width, g->Height,
                          g->Width, pixel);
@@ -160,7 +165,7 @@ BOOL NTAPI NtGdiGetTextExtentExW(HDC hdc, LPCWSTR user_text, ULONG count, ULONG 
         if (fi) {
             LONG w = 0;
             for (ULONG i = 0; i < count; i++) {
-                const GLYPH *g = FontGetGlyph(fi, text[i]);
+                const GLYPH *g = (flags & MIME_GTEE_INDICES) ? FontGetGlyphIndex(fi, text[i]) : FontGetGlyph(fi, text[i]);
                 w += (g ? g->Advance : 0) + dc->State.TextCharExtra;
                 if (dx)
                     dx[i] = (ULONG)w;
@@ -226,7 +231,7 @@ int NTAPI NtGdiGetTextFaceW(HDC hdc, int count, LPWSTR name, BOOL alias)
     return n - 1;
 }
 
-/* flags bit 0: widths as integers rather than floats; chars may give explicit characters. */
+/* widths are integers; chars may give explicit characters, or glyph indices with MIME_GCW_INDICES. */
 BOOL NTAPI NtGdiGetCharWidthW(HDC hdc, UINT first, UINT count, PWCHAR user_chars, ULONG flags, PVOID buffer)
 {
     if (count > 65536)
@@ -240,7 +245,8 @@ BOOL NTAPI NtGdiGetCharWidthW(HDC hdc, UINT first, UINT count, PWCHAR user_chars
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
         if (fi) {
             for (UINT i = 0; i < count; i++) {
-                const GLYPH *g = FontGetGlyph(fi, chars ? chars[i] : first + i);
+                ULONG c = chars ? chars[i] : first + i;
+                const GLYPH *g = (flags & MIME_GCW_INDICES) ? FontGetGlyphIndex(fi, (USHORT)c) : FontGetGlyph(fi, c);
                 widths[i] = g ? g->Advance : 0;
             }
             ok = TRUE;
@@ -254,6 +260,7 @@ BOOL NTAPI NtGdiGetCharWidthW(HDC hdc, UINT first, UINT count, PWCHAR user_chars
     return ok;
 }
 
+/* integer ABC widths come from the rendered glyphs, MIME_GCABCW_FLOAT ones from the outline bounds. */
 BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_chars, ULONG flags, PVOID buffer)
 {
     if (count > 65536)
@@ -267,7 +274,13 @@ BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
         if (fi) {
             for (ULONG i = 0; i < count; i++) {
-                const GLYPH *g = FontGetGlyph(fi, chars ? chars[i] : first + i);
+                ULONG c = chars ? chars[i] : first + i;
+                USHORT index = (flags & MIME_GCABCW_INDICES) ? (USHORT)c : FontGlyphIndex(fi, c);
+                if (flags & MIME_GCABCW_FLOAT) {
+                    FontGlyphAbcFloat(fi, index, (ABCFLOAT *)&abc[i]);
+                    continue;
+                }
+                const GLYPH *g = FontGetGlyphIndex(fi, index);
                 if (g && g->Width) {
                     abc[i].abcA = g->Left;
                     abc[i].abcB = g->Width;
@@ -287,15 +300,4 @@ BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_
     W32Free(abc);
     W32Free(chars);
     return ok;
-}
-
-int NTAPI NtGdiAddFontResourceW(LPCWSTR files, ULONG chars, ULONG files_count, ULONG flags, DWORD tid, PVOID dv)
-{
-    /* private fonts are not supported yet; report success so installers continue. */
-    return 1;
-}
-
-ULONG NTAPI NtGdiGetFontData(HDC hdc, DWORD table, DWORD offset, PVOID buffer, ULONG size)
-{
-    return GDI_ERROR;
 }

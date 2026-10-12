@@ -110,6 +110,26 @@ WINUSERAPI int WINAPI GetClassNameW(HWND hwnd, LPWSTR buffer, int count)
     return NtUserGetClassName(hwnd, FALSE, &s);
 }
 
+/* the class name of the system class a window is built on; mime keeps no superclass link, so it is the real name. */
+WINUSERAPI UINT WINAPI RealGetWindowClassW(HWND hwnd, LPWSTR buffer, UINT count)
+{
+    if (!count || !buffer)
+        return 0;
+    UNICODE_STRING s = {0, (USHORT)(count > 32767 ? 65534 : count * 2), buffer};
+    return (UINT)NtUserGetClassName(hwnd, TRUE, &s);
+}
+
+WINUSERAPI UINT WINAPI RealGetWindowClassA(HWND hwnd, LPSTR buffer, UINT count)
+{
+    WCHAR w[256];
+    UINT n = RealGetWindowClassW(hwnd, w, 256);
+    if (!n || !count)
+        return 0;
+    int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, buffer, (int)count - 1, NULL, NULL);
+    buffer[a] = 0;
+    return (UINT)a;
+}
+
 WINUSERAPI int WINAPI GetClassNameA(HWND hwnd, LPSTR buffer, int count)
 {
     WCHAR w[256];
@@ -346,7 +366,34 @@ WINUSERAPI HWND WINAPI ChildWindowFromPoint(HWND parent, POINT pt)
 
 WINUSERAPI HWND WINAPI WindowFromPoint(POINT pt)
 {
-    return NULL;
+    return (HWND)NtUserCallTwoParam((ULONG_PTR)(LONG_PTR)pt.x, (ULONG_PTR)(LONG_PTR)pt.y,
+                                    MIME_TWOPARAM_WINDOWFROMPOINT);
+}
+
+/* the first child that contains the point and passes the CWP_ filters, the parent itself otherwise. */
+WINUSERAPI HWND WINAPI ChildWindowFromPointEx(HWND parent, POINT pt, UINT flags)
+{
+    RECT client;
+    if (!GetClientRect(parent, &client))
+        return NULL;
+    if (!PtInRect(&client, pt))
+        return NULL;
+    POINT screen = pt;
+    ClientToScreen(parent, &screen);
+    for (HWND c = GetWindow(parent, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+        RECT r;
+        if (!GetWindowRect(c, &r) || !PtInRect(&r, screen))
+            continue;
+        LONG style = GetWindowLongW(c, GWL_STYLE), ex = GetWindowLongW(c, GWL_EXSTYLE);
+        if ((flags & CWP_SKIPINVISIBLE) && !(style & WS_VISIBLE))
+            continue;
+        if ((flags & CWP_SKIPDISABLED) && (style & WS_DISABLED))
+            continue;
+        if ((flags & CWP_SKIPTRANSPARENT) && (ex & WS_EX_TRANSPARENT))
+            continue;
+        return c;
+    }
+    return parent;
 }
 
 /* ------------------------------------------------------------------ window longs */
@@ -603,11 +650,6 @@ WINUSERAPI int WINAPI ShowCursor(BOOL show)
 WINUSERAPI BOOL WINAPI TrackMouseEvent(LPTRACKMOUSEEVENT track)
 {
     return NtUserTrackMouseEvent(track);
-}
-
-WINUSERAPI HKL WINAPI GetKeyboardLayout(DWORD thread)
-{
-    return (HKL)(ULONG_PTR)0x04090409;
 }
 
 /* ------------------------------------------------------------------ dpi, metrics and monitors */

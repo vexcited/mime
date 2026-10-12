@@ -6,33 +6,10 @@
  * and the name, OS/2 and head tables; a file is loaded whole the first
  * time one of its faces is realized.
  */
-#include "../win32k.h"
-#include "ttf/ttf.h"
+#include "font_private.h"
 
-#define MAX_FACES 512
+#define MAX_FACES 1024
 #define FONT_TAG W32_TAG('W', 'f', 'n', 't')
-
-typedef struct FONT_FILE {
-    WCHAR Path[MAX_PATH];
-    PUCHAR Data;
-    SIZE_T Size;
-    BOOLEAN Failed;
-} FONT_FILE;
-
-typedef struct FONT_FACE {
-    FONT_FILE *File;
-    ULONG FaceIndex;
-    WCHAR Family[LF_FACESIZE];
-    WCHAR TypoFamily[LF_FACESIZE]; /* name id 16 when present, for weight variants */
-    WCHAR FullName[LF_FULLFACESIZE];
-    LONG Weight;
-    BOOLEAN Italic;
-    BOOLEAN Fixed;
-    BOOLEAN Symbol;
-    BOOLEAN Loaded;
-    MimeTtfFont Ttf;
-    MimeTtfMetrics Metrics;
-} FONT_FACE;
 
 static FONT_FACE *g_faces;
 static ULONG g_face_count;
@@ -49,7 +26,7 @@ static void free_cb(void *ctx, void *p)
     ExFreePool(p);
 }
 
-static const MimeAllocator g_alloc = {alloc_cb, free_cb, NULL};
+const MimeAllocator FontAllocator = {alloc_cb, free_cb, NULL};
 
 /* ------------------------------------------------------------------ file access */
 
@@ -85,11 +62,29 @@ static ULONG64 file_size(HANDLE h)
     return (ULONG64)info.EndOfFile.QuadPart;
 }
 
+/* font bytes come from an open file during registration or from memory. */
+typedef struct FONT_SOURCE {
+    HANDLE File;
+    const UCHAR *Data;
+    SIZE_T Size;
+} FONT_SOURCE;
+
+static BOOLEAN source_read(const FONT_SOURCE *src, ULONG64 offset, PVOID buffer, ULONG length)
+{
+    if (src->Data) {
+        if (offset > src->Size || length > src->Size - offset)
+            return FALSE;
+        memcpy(buffer, src->Data + offset, length);
+        return TRUE;
+    }
+    return read_at(src->File, offset, buffer, length);
+}
+
 static BOOLEAN load_file(FONT_FILE *f)
 {
     if (f->Data)
         return TRUE;
-    if (f->Failed)
+    if (f->Failed || f->Memory)
         return FALSE;
     HANDLE h = open_font_file(f->Path);
     if (h) {
@@ -157,10 +152,22 @@ static BOOLEAN name_record(const UCHAR *name, ULONG size, USHORT id, PWSTR out, 
     return TRUE;
 }
 
-static void register_face(FONT_FILE *file, HANDLE h, ULONG64 dir_offset, ULONG face_index)
+typedef struct TABLE_REF {
+    ULONG Offset;
+    ULONG Length;
+} TABLE_REF;
+
+static BOOLEAN read_table(const FONT_SOURCE *src, const TABLE_REF *t, PUCHAR buffer, ULONG size)
+{
+    if (!t->Offset || t->Length < size)
+        return FALSE;
+    return source_read(src, t->Offset, buffer, size);
+}
+
+static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_offset, ULONG face_index)
 {
     UCHAR header[12];
-    if (!read_at(h, dir_offset, header, sizeof(header)))
+    if (!source_read(src, dir_offset, header, sizeof(header)))
         return;
     ULONG version = be32(header);
     if (version != 0x00010000 && version != 0x4F54544F && version != 0x74727565)
@@ -169,81 +176,227 @@ static void register_face(FONT_FILE *file, HANDLE h, ULONG64 dir_offset, ULONG f
     if (tables > 64)
         return;
     UCHAR dir[64 * 16];
-    if (!read_at(h, dir_offset + 12, dir, tables * 16u))
+    if (!source_read(src, dir_offset + 12, dir, tables * 16u))
         return;
-    ULONG name_off = 0, name_len = 0, os2_off = 0, os2_len = 0, cmap_off = 0;
+    TABLE_REF name = {0, 0}, os2 = {0, 0}, head = {0, 0}, hhea = {0, 0}, cmap = {0, 0}, post = {0, 0};
     BOOLEAN glyf = FALSE;
     for (USHORT i = 0; i < tables; i++) {
         const UCHAR *t = dir + i * 16;
-        ULONG tag = be32(t), off = be32(t + 8), len = be32(t + 12);
-        if (tag == 0x6E616D65) { /* name */
-            name_off = off;
-            name_len = len;
-        } else if (tag == 0x4F532F32) { /* OS/2 */
-            os2_off = off;
-            os2_len = len;
-        } else if (tag == 0x676C7966) { /* glyf */
+        ULONG tag = be32(t);
+        TABLE_REF ref = {be32(t + 8), be32(t + 12)};
+        switch (tag) {
+        case 0x6E616D65: /* name */
+            name = ref;
+            break;
+        case 0x4F532F32: /* OS/2 */
+            os2 = ref;
+            break;
+        case 0x68656164: /* head */
+            head = ref;
+            break;
+        case 0x68686561: /* hhea */
+            hhea = ref;
+            break;
+        case 0x636D6170: /* cmap */
+            cmap = ref;
+            break;
+        case 0x706F7374: /* post */
+            post = ref;
+            break;
+        case 0x676C7966: /* glyf */
             glyf = TRUE;
-        } else if (tag == 0x636D6170) { /* cmap */
-            cmap_off = off;
+            break;
         }
     }
-    if (!name_off || !name_len || name_len > 512 * 1024 || !glyf || g_face_count >= MAX_FACES)
+    if (!name.Offset || !name.Length || name.Length > 512 * 1024 || !glyf || g_face_count >= MAX_FACES)
         return;
-    UCHAR *name = ExAllocatePool2(POOL_FLAG_NON_PAGED, name_len, FONT_TAG);
-    if (!name)
+    UCHAR *names = ExAllocatePool2(POOL_FLAG_NON_PAGED, name.Length, FONT_TAG);
+    if (!names)
         return;
     FONT_FACE *face = &g_faces[g_face_count];
     memset(face, 0, sizeof(*face));
-    if (read_at(h, name_off, name, name_len) && name_record(name, name_len, 1, face->Family, LF_FACESIZE)) {
-        if (!name_record(name, name_len, 16, face->TypoFamily, LF_FACESIZE))
+    if (source_read(src, name.Offset, names, name.Length) &&
+        name_record(names, name.Length, 1, face->Family, LF_FACESIZE)) {
+        if (!name_record(names, name.Length, 16, face->TypoFamily, LF_FACESIZE))
             wcscpy(face->TypoFamily, face->Family);
-        if (!name_record(name, name_len, 4, face->FullName, LF_FULLFACESIZE))
+        if (!name_record(names, name.Length, 4, face->FullName, LF_FULLFACESIZE))
             wcscpy(face->FullName, face->Family);
+        if (!name_record(names, name.Length, 2, face->Style, LF_FACESIZE))
+            wcscpy(face->Style, L"Regular");
         face->File = file;
         face->FaceIndex = face_index;
+        face->DirOffset = (ULONG)dir_offset;
         face->Weight = FW_NORMAL;
-        UCHAR os2[64];
-        if (os2_off && os2_len >= 64 && read_at(h, os2_off, os2, sizeof(os2))) {
-            face->Weight = be16(os2 + 4);
-            face->Italic = (be16(os2 + 62) & 1) != 0;
-            face->Fixed = os2[32 + 3] == 9; /* panose proportion monospaced */
+        face->UnitsPerEm = 2048;
+        UCHAR h[54];
+        if (read_table(src, &head, h, sizeof(h))) {
+            face->UnitsPerEm = be16(h + 18) ? be16(h + 18) : 2048;
+            USHORT mac_style = be16(h + 44);
+            face->Weight = (mac_style & 1) ? FW_BOLD : FW_NORMAL;
+            face->Italic = (mac_style & 2) != 0;
         }
-        (void)cmap_off;
+        LONG ascender = 0, descender = 0, gap = 0;
+        UCHAR hh[36];
+        if (read_table(src, &hhea, hh, sizeof(hh))) {
+            ascender = (SHORT)be16(hh + 4);
+            descender = (SHORT)be16(hh + 6);
+            gap = (SHORT)be16(hh + 8);
+            face->MaxAdvance = be16(hh + 10);
+        }
+        face->WinAscent = ascender;
+        face->WinDescent = -descender;
+        UCHAR o[96];
+        memset(o, 0, sizeof(o));
+        ULONG os2_size = os2.Length < sizeof(o) ? os2.Length : sizeof(o);
+        if (os2_size >= 78 && read_table(src, &os2, o, os2_size)) {
+            face->AvgWidth = (SHORT)be16(o + 2);
+            face->Weight = be16(o + 4);
+            face->Italic = (be16(o + 62) & 1) != 0;
+            face->Fixed = o[32 + 3] == 9; /* panose proportion monospaced */
+            if (o[32] == 3)
+                face->PitchFamily = FF_SCRIPT;
+            else if (o[32] == 4)
+                face->PitchFamily = FF_DECORATIVE;
+            else if (o[32] == 2 && o[33] >= 2 && o[33] <= 10)
+                face->PitchFamily = FF_ROMAN;
+            else if (o[32] == 2 && o[33] >= 11)
+                face->PitchFamily = FF_SWISS;
+            face->WinAscent = be16(o + 74);
+            face->WinDescent = be16(o + 76);
+            for (int k = 0; k < 4; k++)
+                face->Signature.fsUsb[k] = be32(o + 42 + 4 * k);
+            if (be16(o) >= 1 && os2_size >= 86) {
+                face->Signature.fsCsb[0] = be32(o + 78);
+                face->Signature.fsCsb[1] = be32(o + 82);
+            }
+        }
+        if (!face->Signature.fsCsb[0])
+            face->Signature.fsCsb[0] = 1; /* latin 1 */
+        UCHAR pp[16];
+        if (read_table(src, &post, pp, sizeof(pp)) && be32(pp + 12))
+            face->Fixed = TRUE;
+        if (!face->PitchFamily)
+            face->PitchFamily = face->Fixed ? FF_MODERN : FF_SWISS;
+        LONG leading = gap + ascender - descender - (face->WinAscent + face->WinDescent);
+        face->LineGap = leading > 0 ? leading : 0;
+        /* a symbol face has a windows symbol cmap subtable. */
+        UCHAR c[4 + 8 * 16];
+        if (cmap.Offset && cmap.Length >= 4 && source_read(src, cmap.Offset, c, 4)) {
+            USHORT n = be16(c + 2);
+            if (n > 16)
+                n = 16;
+            if (cmap.Length >= 4u + 8u * n && source_read(src, cmap.Offset + 4, c + 4, 8u * n))
+                for (USHORT k = 0; k < n; k++)
+                    if (be16(c + 4 + 8 * k) == 3 && be16(c + 6 + 8 * k) == 0)
+                        face->Symbol = TRUE;
+        }
+        if (face->Symbol)
+            face->Signature.fsCsb[0] |= 0x80000000u;
+        file->FaceCount++;
         g_face_count++;
     }
-    ExFreePool(name);
+    ExFreePool(names);
 }
 
-static void register_file(PCWSTR path)
+static void register_source(FONT_FILE *file, const FONT_SOURCE *src)
 {
+    UCHAR header[12];
+    file->FirstFace = g_face_count;
+    if (!source_read(src, 0, header, sizeof(header)))
+        return;
+    if (be32(header) == 0x74746366) { /* ttcf */
+        ULONG count = be32(header + 8);
+        if (count > 32)
+            count = 32;
+        UCHAR offsets[32 * 4];
+        if (source_read(src, 12, offsets, count * 4))
+            for (ULONG i = 0; i < count; i++)
+                register_face(file, src, be32(offsets + i * 4), i);
+    } else {
+        register_face(file, src, 0, 0);
+    }
+}
+
+/* registers the faces of a font file; returns the number of faces added. */
+ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
+{
+    if (!g_faces || wcslen(path) >= MAX_PATH)
+        return 0;
     HANDLE h = open_font_file(path);
     if (!h)
-        return;
+        return 0;
     FONT_FILE *file = W32Alloc(sizeof(FONT_FILE));
     if (!file) {
         ZwClose(h);
-        return;
+        return 0;
     }
     wcscpy(file->Path, path);
-    ULONG before = g_face_count;
-    UCHAR header[12];
-    if (read_at(h, 0, header, sizeof(header))) {
-        if (be32(header) == 0x74746366) { /* ttcf */
-            ULONG count = be32(header + 8);
-            if (count > 32)
-                count = 32;
-            UCHAR offsets[32 * 4];
-            if (read_at(h, 12, offsets, count * 4))
-                for (ULONG i = 0; i < count; i++)
-                    register_face(file, h, be32(offsets + i * 4), i);
-        } else {
-            register_face(file, h, 0, 0);
-        }
-    }
+    file->OwnerPid = owner;
+    file->Hidden = hidden;
+    FONT_SOURCE src = {h, NULL, 0};
+    register_source(file, &src);
     ZwClose(h);
-    if (g_face_count == before)
+    ULONG added = file->FaceCount;
+    if (!added)
         W32Free(file);
+    return added;
+}
+
+/* registers fonts held in memory, copied into the kernel. */
+ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **out)
+{
+    *out = NULL;
+    if (!g_faces || !size)
+        return 0;
+    FONT_FILE *file = W32Alloc(sizeof(FONT_FILE));
+    if (!file)
+        return 0;
+    file->Data = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, FONT_TAG);
+    if (!file->Data) {
+        W32Free(file);
+        return 0;
+    }
+    memcpy(file->Data, data, size);
+    file->Size = size;
+    file->Memory = TRUE;
+    file->Hidden = TRUE;
+    file->OwnerPid = owner;
+    FONT_SOURCE src = {NULL, file->Data, size};
+    register_source(file, &src);
+    if (!file->FaceCount) {
+        ExFreePool(file->Data);
+        W32Free(file);
+        return 0;
+    }
+    *out = file;
+    return file->FaceCount;
+}
+
+ULONG FontFaceCount(void)
+{
+    return g_face_count;
+}
+
+FONT_FACE *FontFaceAt(ULONG index)
+{
+    return index < g_face_count ? &g_faces[index] : NULL;
+}
+
+BOOLEAN FontFaceVisible(FONT_FACE *f)
+{
+    if (f->File->Removed)
+        return FALSE;
+    return !f->File->OwnerPid || f->File->OwnerPid == PsGetCurrentProcessId();
+}
+
+/* private fonts die with their process; realized instances keep the data alive. */
+void FontReleaseProcess(HANDLE pid)
+{
+    for (ULONG i = 0; i < g_face_count; i++) {
+        FONT_FILE *f = g_faces[i].File;
+        if (f->OwnerPid == pid)
+            f->Removed = TRUE;
+    }
 }
 
 static BOOLEAN has_suffix(PCWSTR name, ULONG chars, PCWSTR suffix)
@@ -288,7 +441,7 @@ void FontInitialize(void)
                 if (base + chars < MAX_PATH) {
                     memcpy(path + base, info->FileName, chars * sizeof(WCHAR));
                     path[base + chars] = 0;
-                    register_file(path);
+                    FontRegisterFile(path, NULL, FALSE);
                 }
             }
             if (!info->NextEntryOffset)
@@ -299,6 +452,62 @@ void FontInitialize(void)
     W32Free(buffer);
     ZwClose(dir);
     W32Trace("win32k: %u font faces registered\n", g_face_count);
+}
+
+/* ------------------------------------------------------------------ table access */
+
+BOOLEAN FontReadTable(FONT_FACE *f, ULONG tag, ULONG offset, PVOID buffer, ULONG size, ULONG *table_size)
+{
+    FONT_FILE *file = f->File;
+    HANDLE h = NULL;
+    FONT_SOURCE src = {NULL, file->Data, file->Size};
+    if (!file->Data) {
+        h = open_font_file(file->Path);
+        if (!h)
+            return FALSE;
+        src.File = h;
+        src.Size = (SIZE_T)file_size(h);
+    }
+    BOOLEAN ok = FALSE;
+    ULONG start = 0, length = 0;
+    if (tag == 0) {
+        /* the whole face: a ttc collection is returned from the face's own table directory. */
+        start = f->DirOffset;
+        length = (ULONG)(src.Size - f->DirOffset);
+        ok = src.Size > f->DirOffset;
+    } else if (tag == 0x74746366) {
+        UCHAR head[4];
+        if (source_read(&src, 0, head, 4) && be32(head) == 0x74746366) {
+            start = 0;
+            length = (ULONG)src.Size;
+            ok = TRUE;
+        }
+    } else {
+        UCHAR header[12];
+        UCHAR dir[64 * 16];
+        if (source_read(&src, f->DirOffset, header, sizeof(header))) {
+            USHORT tables = be16(header + 4);
+            if (tables <= 64 && source_read(&src, f->DirOffset + 12, dir, tables * 16u))
+                for (USHORT i = 0; i < tables; i++)
+                    if (be32(dir + i * 16) == tag) {
+                        start = be32(dir + i * 16 + 8);
+                        length = be32(dir + i * 16 + 12);
+                        ok = (ULONG64)start + length <= src.Size;
+                        break;
+                    }
+        }
+    }
+    if (ok && table_size)
+        *table_size = length;
+    if (ok && buffer && size) {
+        if (offset >= length || size > length - offset)
+            ok = FALSE;
+        else
+            ok = source_read(&src, (ULONG64)start + offset, buffer, size);
+    }
+    if (h)
+        ZwClose(h);
+    return ok;
 }
 
 /* ------------------------------------------------------------------ matching */
@@ -336,7 +545,7 @@ static PCWSTR substitute(PCWSTR name)
     return name;
 }
 
-static FONT_FACE *match_face(const LOGFONTW *lf)
+FONT_FACE *FontMatchFace(const LOGFONTW *lf)
 {
     PCWSTR wanted = lf->lfFaceName[0] ? substitute(lf->lfFaceName) : NULL;
     LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL;
@@ -352,6 +561,8 @@ static FONT_FACE *match_face(const LOGFONTW *lf)
             continue;
         for (ULONG i = 0; i < g_face_count; i++) {
             FONT_FACE *f = &g_faces[i];
+            if (!FontFaceVisible(f))
+                continue;
             if (_wcsicmp(f->Family, name) && _wcsicmp(f->TypoFamily, name) && _wcsicmp(f->FullName, name))
                 continue;
             LONG score = (f->Weight > weight ? f->Weight - weight : weight - f->Weight);
@@ -368,12 +579,13 @@ static FONT_FACE *match_face(const LOGFONTW *lf)
             }
         }
     }
-    if (!best && g_face_count)
-        best = &g_faces[0];
+    for (ULONG i = 0; !best && i < g_face_count; i++)
+        if (FontFaceVisible(&g_faces[i]))
+            best = &g_faces[i];
     return best;
 }
 
-static BOOLEAN load_face(FONT_FACE *f)
+BOOLEAN FontLoadFace(FONT_FACE *f)
 {
     if (f->Loaded)
         return TRUE;
@@ -422,8 +634,13 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
     tm->tmStruckOut = fi->StrikeOut ? 255 : 0;
     /* note the inverted meaning of TMPF_FIXED_PITCH: set for variable pitch fonts. */
     tm->tmPitchAndFamily = (face->Fixed ? 0 : TMPF_FIXED_PITCH) | TMPF_VECTOR | TMPF_TRUETYPE |
-                           (lf->lfPitchAndFamily & 0xF0 ? lf->lfPitchAndFamily & 0xF0 : FF_SWISS);
+                           face->PitchFamily;
     tm->tmCharSet = face->Symbol ? SYMBOL_CHARSET : ANSI_CHARSET;
+    if (face->Symbol) {
+        tm->tmFirstChar = 0x20;
+        tm->tmLastChar = 0xFF;
+        tm->tmDefaultChar = 0x1F;
+    }
     fi->UnderlinePos = -round_f((float)m->underline_position * fi->ScaleY);
     fi->UnderlineSize = W32Max(1, round_f((float)m->underline_thickness * fi->ScaleY));
     fi->StrikeoutPos = round_f((float)m->strikeout_position * fi->ScaleY);
@@ -431,8 +648,8 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
 
 FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
 {
-    FONT_FACE *face = match_face(lf);
-    if (!face || !load_face(face))
+    FONT_FACE *face = FontMatchFace(lf);
+    if (!face || !FontLoadFace(face))
         return NULL;
     const MimeTtfMetrics *m = &face->Metrics;
     LONG em;
@@ -496,7 +713,7 @@ static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
     UCHAR *cov = W32Alloc((SIZE_T)w * (SIZE_T)h);
     if (!cov)
         return FALSE;
-    if (!mime_ttf_render_glyph_ex(&face->Ttf, &g_alloc, index, &params, cov, (int)w, (int)h, (int)w)) {
+    if (!mime_ttf_render_glyph_ex(&face->Ttf, &FontAllocator, index, &params, cov, (int)w, (int)h, (int)w)) {
         W32Free(cov);
         g->Width = g->Height = 0;
         return TRUE;
@@ -509,29 +726,45 @@ static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
     return TRUE;
 }
 
-/* glyph for a code point in the basic multilingual plane; others use the missing glyph. */
-const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint)
+USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint)
 {
     if (codepoint > 0xFFFF)
-        codepoint = 0xFFFD;
-    GLYPH **page = &fi->Pages[codepoint >> 8];
+        return mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
+    ULONG **page = &fi->CharPages[codepoint >> 8];
+    if (!*page) {
+        *page = W32Alloc(256 * sizeof(ULONG));
+        if (!*page)
+            return mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
+    }
+    ULONG *entry = &(*page)[codepoint & 0xFF];
+    if (!*entry)
+        *entry = (ULONG)mime_ttf_glyph_index(&fi->Face->Ttf, codepoint) + 1;
+    return (USHORT)(*entry - 1);
+}
+
+const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index)
+{
+    GLYPH **page = &fi->Pages[index >> 8];
     if (!*page) {
         *page = W32Alloc(256 * sizeof(GLYPH));
         if (!*page)
             return NULL;
-        for (ULONG i = 0; i < 256; i++)
-            (*page)[i].Index = 0xFFFF; /* not rendered yet */
     }
-    GLYPH *g = &(*page)[codepoint & 0xFF];
-    if (g->Index == 0xFFFF) {
-        USHORT index = mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
+    GLYPH *g = &(*page)[index & 0xFF];
+    if (!g->Ready) {
         if (!render_glyph(fi, index, g)) {
-            g->Index = 0;
             g->Width = g->Height = 0;
             g->Advance = 0;
         }
+        g->Index = index;
+        g->Ready = 1;
     }
     return g;
+}
+
+const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint)
+{
+    return FontGetGlyphIndex(fi, FontGlyphIndex(fi, codepoint));
 }
 
 void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars)

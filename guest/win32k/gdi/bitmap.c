@@ -604,3 +604,67 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
     W32Free(captured);
     return result;
 }
+
+/* ------------------------------------------------------------------ device dependent bits */
+
+/* rows are top-down and padded to 16 bits, the layout of CreateBitmap. */
+LONG NTAPI NtGdiGetBitmapBits(HBITMAP bitmap, ULONG size, PUCHAR user_bits)
+{
+    UserEnter();
+    SURFACE *s = SurfaceLookup(bitmap);
+    LONG result = 0;
+    PUCHAR copy = NULL;
+    if (s) {
+        LONG row = ddb_stride(s->Width, s->Bpp);
+        ULONG total = (ULONG)row * (ULONG)s->Height;
+        if (!user_bits) {
+            result = (LONG)total;
+        } else {
+            ULONG n = size < total ? size : total;
+            copy = n ? W32Alloc(n) : NULL;
+            if (copy) {
+                LONG bytes = (s->Width * s->Bpp + 7) / 8;
+                for (ULONG off = 0, y = 0; off < n; y++, off += (ULONG)row) {
+                    ULONG chunk = n - off < (ULONG)row ? n - off : (ULONG)row;
+                    memcpy(copy + off, s->Bits + (LONG_PTR)y * s->Stride, chunk < (ULONG)bytes ? chunk : (ULONG)bytes);
+                }
+                result = (LONG)n;
+            }
+        }
+    }
+    UserLeave();
+    if (copy && !NT_SUCCESS(MimeCopyToUser(user_bits, copy, (SIZE_T)result)))
+        result = 0;
+    W32Free(copy);
+    return result;
+}
+
+LONG NTAPI NtGdiSetBitmapBits(HBITMAP bitmap, ULONG size, const UCHAR *user_bits)
+{
+    if (!user_bits || !size || size > 256 * 1024 * 1024)
+        return 0;
+    PUCHAR copy = W32Alloc(size);
+    if (!copy || !NT_SUCCESS(MimeCopyFromUser(copy, user_bits, size))) {
+        W32Free(copy);
+        return 0;
+    }
+    UserEnter();
+    SURFACE *s = SurfaceLookup(bitmap);
+    LONG result = 0;
+    if (s) {
+        LONG row = ddb_stride(s->Width, s->Bpp);
+        ULONG total = (ULONG)row * (ULONG)s->Height;
+        ULONG n = size < total ? size : total;
+        LONG bytes = (s->Width * s->Bpp + 7) / 8;
+        for (ULONG off = 0, y = 0; off < n; y++, off += (ULONG)row) {
+            ULONG chunk = n - off < (ULONG)row ? n - off : (ULONG)row;
+            memcpy(s->Bits + (LONG_PTR)y * s->Stride, copy + off, chunk < (ULONG)bytes ? chunk : (ULONG)bytes);
+        }
+        RECT all = {0, 0, s->Width, s->Height};
+        SurfaceMarkDirty(s, &all);
+        result = (LONG)n;
+    }
+    UserLeave();
+    W32Free(copy);
+    return result;
+}

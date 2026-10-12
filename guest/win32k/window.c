@@ -340,6 +340,8 @@ void WndValidate(WND *w, const RECT *client_rect)
 
 static BOOLEAN needs_paint(WND *w)
 {
+    if (w->LayerFlags & MIME_LAYER_UPDATE)
+        return FALSE;
     return !RgnIsEmpty(&w->Update) || (w->Flags & (WNDF_FRAME_DIRTY | WNDF_INTERNAL_PAINT));
 }
 
@@ -382,7 +384,7 @@ void WndUpdateHostConfig(WND *w, BOOLEAN activate)
 }
 
 /* top level windows render into a surface the size of their window rectangle. */
-static void ensure_surface(WND *w)
+void WndEnsureSurface(WND *w)
 {
     if (!WndIsTopLevel(w) || w->Parent == NULL || (w->ExStyle & 0x80000000u))
         return;
@@ -561,7 +563,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
 
     if (WndIsTopLevel(w)) {
         if (visible)
-            ensure_surface(w);
+            WndEnsureSurface(w);
         if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible) {
             w->Flags |= WNDF_FRAME_DIRTY;
             WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
@@ -825,7 +827,7 @@ void WndSetFocus(WND *w)
 WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
 {
     for (WND *c = parent->FirstChild; c; c = c->Next) {
-        if (!(c->Style & WS_VISIBLE) || !RectContains(&c->WindowRect, pt.x, pt.y))
+        if (!(c->Style & WS_VISIBLE) || !RectContains(&c->WindowRect, pt.x, pt.y) || !LayerHitTest(c, pt))
             continue;
         if (skip_disabled && (c->Style & WS_DISABLED))
             continue;
@@ -872,10 +874,14 @@ static void free_window(WND *w)
     }
     if (InputForeground == w)
         InputSetForeground(NULL);
+    MenuWindowDestroyed(w);
+    ClipboardWindowDestroyed(w);
+    PropFreeWindow(w);
     if (w->Flags & WNDF_HOST_WINDOW) {
         HostWindowDestroy(w);
         w->Flags &= ~WNDF_HOST_WINDOW;
     }
+    LayerWindowDestroyed(w);
     if (w->Surface) {
         PaintRetireSurface(w->Surface);
         w->Surface = NULL;
@@ -1454,6 +1460,7 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
                 WndShow(w, (ss.styleNew & WS_VISIBLE) ? SW_SHOWNA : SW_HIDE);
         } else {
             w->ExStyle = (ss.styleNew & 0x7FFFFFFFu) | (w->ExStyle & 0x80000000u);
+            LayerStyleChanged(w);
         }
         if (alive(w))
             MsgSendKernel(w, WM_STYLECHANGED, (WPARAM)index, (LPARAM)&ss, MIME_LPARAM_IN, sizeof(ss));
@@ -1984,6 +1991,10 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         w->ContextHelpId = (DWORD)param;
         r = 1;
         break;
+    case MIME_HWNDPARAM_SETTOUCH:
+        w->TouchFlags = (ULONG)param;
+        r = 1;
+        break;
     case MIME_HWNDPARAM_ENABLECLOSE: {
         ULONG old = w->Flags;
         if (param)
@@ -2001,4 +2012,17 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
 out:
     UserLeave();
     return r;
+}
+
+BOOL NTAPI NtUserIsTouchWindow(HWND hwnd, PULONG user_flags)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    ULONG flags = w ? w->TouchFlags : 0;
+    UserLeave();
+    if (user_flags) {
+        ULONG out = flags & ~MIME_TOUCH_REGISTERED;
+        MimeCopyToUser(user_flags, &out, sizeof(out));
+    }
+    return (flags & MIME_TOUCH_REGISTERED) != 0;
 }

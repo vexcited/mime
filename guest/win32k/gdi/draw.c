@@ -583,7 +583,7 @@ BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hs
 }
 
 /* bresenham line in surface coordinates, last point excluded like gdi. */
-static void draw_line(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty)
+void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty)
 {
     PEN *pen = dc->State.Pen;
     if (pen->Style == PS_NULL)
@@ -617,9 +617,23 @@ static void draw_line(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LON
     }
 }
 
+/* while a path is open, drawing calls only record figures. */
+static DC *path_dc(HDC hdc)
+{
+    DC *dc = DcLookup(hdc);
+    return dc && DcIsPathOpen(dc) ? dc : NULL;
+}
+
 BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
 {
     UserEnter();
+    DC *pdc = path_dc(hdc);
+    if (pdc) {
+        BOOL recorded = PathLineTo(pdc, x, y);
+        pdc->State.CurrentPos = (POINT){x, y};
+        UserLeave();
+        return recorded;
+    }
     DRAW_CONTEXT ctx;
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = begin_draw(hdc, &ctx) || ctx.Dc;
@@ -627,7 +641,7 @@ BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
         LONG x0 = ctx.Dc->State.CurrentPos.x, y0 = ctx.Dc->State.CurrentPos.y, x1 = x, y1 = y;
         DcLogicalToSurface(ctx.Dc, &x0, &y0);
         DcLogicalToSurface(ctx.Dc, &x1, &y1);
-        draw_line(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
+        DrawLine(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
     }
     if (ctx.Dc)
         ctx.Dc->State.CurrentPos = (POINT){x, y};
@@ -657,6 +671,12 @@ static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirt
 BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
 {
     UserEnter();
+    DC *pdc = path_dc(hdc);
+    if (pdc) {
+        BOOL recorded = PathRectangle(pdc, left, top, right, bottom);
+        UserLeave();
+        return recorded;
+    }
     DRAW_CONTEXT ctx;
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = FALSE;
@@ -684,6 +704,13 @@ BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
 BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int width, int height)
 {
     UserEnter();
+    DC *pdc = path_dc(hdc);
+    if (pdc) {
+        /* a path keeps the rounded rectangle as a plain rectangle. */
+        BOOL recorded = PathRectangle(pdc, left, top, right, bottom);
+        UserLeave();
+        return recorded;
+    }
     DRAW_CONTEXT ctx;
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = FALSE;
@@ -716,14 +743,78 @@ BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int
 
 BOOL NTAPI NtGdiEllipse(HDC hdc, int left, int top, int right, int bottom)
 {
+    UserEnter();
+    DC *pdc = path_dc(hdc);
+    if (pdc) {
+        BOOL recorded = PathEllipse(pdc, left, top, right, bottom);
+        UserLeave();
+        return recorded;
+    }
+    UserLeave();
     int w = right - left, h = bottom - top;
     return NtGdiRoundRect(hdc, left, top, right, bottom, w < 0 ? -w : w, h < 0 ? -h : h);
 }
 
-/* polylines only for now: function 2 is PolyPolyline, 1 PolyPolygon outlines. */
+/* flattens one cubic bezier from p0 into 16 line segments in surface coordinates. */
+static void draw_bezier(DC *dc, const REGION *clip, POINT p0, const POINT *c, RECT *dirty)
+{
+    LONG px = p0.x, py = p0.y;
+    for (int s = 1; s <= 16; s++) {
+        LONG64 t = s, u = 16 - s, d = 16 * 16 * 16;
+        LONG64 x = u * u * u * p0.x + 3 * u * u * t * c[0].x + 3 * u * t * t * c[1].x + t * t * t * c[2].x;
+        LONG64 y = u * u * u * p0.y + 3 * u * u * t * c[0].y + 3 * u * t * t * c[1].y + t * t * t * c[2].y;
+        LONG nx = (LONG)((x + d / 2) / d), ny = (LONG)((y + d / 2) / d);
+        DrawLine(dc, clip, px, py, nx, ny, dirty);
+        px = nx;
+        py = ny;
+    }
+}
+
+static void to_surface(DC *dc, POINT *pts, ULONG n)
+{
+    for (ULONG i = 0; i < n; i++)
+        DcLogicalToSurface(dc, &pts[i].x, &pts[i].y);
+}
+
+static void record_path(DC *dc, POINT *pts, const ULONG *counts, ULONG count, int function)
+{
+    ULONG base = 0;
+    for (ULONG i = 0; i < count; i++) {
+        ULONG n = counts[i];
+        POINT *p = pts + base;
+        switch (function) {
+        case MIME_POLY_POLYGON:
+            PathPolygon(dc, p, n, TRUE);
+            break;
+        case MIME_POLY_POLYLINE:
+            PathPolygon(dc, p, n, FALSE);
+            break;
+        case MIME_POLY_BEZIER:
+            if (n) {
+                PathPolygon(dc, p, 1, FALSE);
+                PathBezierTo(dc, p + 1, (n - 1) / 3 * 3);
+            }
+            break;
+        case MIME_POLY_LINETO:
+            for (ULONG k = 0; k < n; k++)
+                PathLineTo(dc, p[k].x, p[k].y);
+            if (n)
+                dc->State.CurrentPos = p[n - 1];
+            break;
+        case MIME_POLY_BEZIERTO:
+            PathBezierTo(dc, p, n / 3 * 3);
+            if (n >= 3)
+                dc->State.CurrentPos = p[n / 3 * 3 - 1];
+            break;
+        }
+        base += n;
+    }
+}
+
+/* polygons are filled with the brush and outlined with the pen; the other functions draw lines and curves. */
 ULONG NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_counts, ULONG count, int function)
 {
-    if (count == 0 || count > 1024)
+    if (count == 0 || count > 1024 || function < MIME_POLY_POLYGON || function > MIME_POLY_BEZIERTO)
         return 0;
     ULONG counts[1024];
     if (!NT_SUCCESS(MimeCopyFromUser(counts, user_counts, count * sizeof(ULONG))))
@@ -734,34 +825,91 @@ ULONG NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_counts, U
         if (total > 65536)
             return 0;
     }
+    if ((function == MIME_POLY_BEZIER && (counts[0] < 1 || (counts[0] - 1) % 3)) ||
+        (function == MIME_POLY_BEZIERTO && counts[0] % 3))
+        return 0;
     POINT *pts = W32Alloc(total * sizeof(POINT) + 1);
     if (!pts || !NT_SUCCESS(MimeCopyFromUser(pts, user_points, total * sizeof(POINT)))) {
         W32Free(pts);
         return 0;
     }
     UserEnter();
+    DC *pdc = path_dc(hdc);
+    if (pdc) {
+        record_path(pdc, pts, counts, count, function);
+        UserLeave();
+        W32Free(pts);
+        return 1;
+    }
     DRAW_CONTEXT ctx;
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = FALSE;
-    if (begin_draw(hdc, &ctx)) {
+    POINT cur = {0, 0};
+    BOOLEAN have_dc = begin_draw(hdc, &ctx);
+    if (ctx.Dc) {
+        cur = ctx.Dc->State.CurrentPos;
+        if (function == MIME_POLY_LINETO && total)
+            ctx.Dc->State.CurrentPos = pts[total - 1];
+        else if (function == MIME_POLY_BEZIERTO && total >= 3)
+            ctx.Dc->State.CurrentPos = pts[total / 3 * 3 - 1];
+        ok = TRUE;
+    }
+    if (have_dc) {
+        DC *dc = ctx.Dc;
+        if (function == MIME_POLY_POLYGON && dc->State.Brush->Style != BS_NULL) {
+            POINT *spts = W32Alloc(total * sizeof(POINT) + 1);
+            if (spts) {
+                memcpy(spts, pts, total * sizeof(POINT));
+                to_surface(dc, spts, total);
+                REGION area, c;
+                RgnInit(&area);
+                RgnInit(&c);
+                if (RgnFromPolygons(&area, spts, counts, count,
+                                    dc->State.PolyFillMode == WINDING ? WINDING : ALTERNATE)) {
+                    RgnCombine(&c, &ctx.Clip, &area, RGN_AND);
+                    if (!RgnIsEmpty(&c)) {
+                        DrawBrushRect(dc, &c, &c.Extents, dc->State.Brush, PATCOPY);
+                        RectUnion(&dirty, &dirty, &c.Extents);
+                    }
+                }
+                RgnFree(&area);
+                RgnFree(&c);
+                W32Free(spts);
+            }
+        }
+        DcLogicalToSurface(dc, &cur.x, &cur.y);
+        to_surface(dc, pts, total);
         ULONG base = 0;
         for (ULONG i = 0; i < count; i++) {
             ULONG n = counts[i];
-            for (ULONG k = 0; k + 1 < n; k++) {
-                LONG x0 = pts[base + k].x, y0 = pts[base + k].y, x1 = pts[base + k + 1].x, y1 = pts[base + k + 1].y;
-                DcLogicalToSurface(ctx.Dc, &x0, &y0);
-                DcLogicalToSurface(ctx.Dc, &x1, &y1);
-                draw_line(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
-            }
-            if (function == 1 && n > 2) {
-                LONG x0 = pts[base + n - 1].x, y0 = pts[base + n - 1].y, x1 = pts[base].x, y1 = pts[base].y;
-                DcLogicalToSurface(ctx.Dc, &x0, &y0);
-                DcLogicalToSurface(ctx.Dc, &x1, &y1);
-                draw_line(ctx.Dc, &ctx.Clip, x0, y0, x1, y1, &dirty);
+            POINT *p = pts + base;
+            switch (function) {
+            case MIME_POLY_POLYGON:
+            case MIME_POLY_POLYLINE:
+                for (ULONG k = 0; k + 1 < n; k++)
+                    DrawLine(dc, &ctx.Clip, p[k].x, p[k].y, p[k + 1].x, p[k + 1].y, &dirty);
+                if (function == MIME_POLY_POLYGON && n > 2)
+                    DrawLine(dc, &ctx.Clip, p[n - 1].x, p[n - 1].y, p[0].x, p[0].y, &dirty);
+                break;
+            case MIME_POLY_LINETO:
+                for (ULONG k = 0; k < n; k++) {
+                    DrawLine(dc, &ctx.Clip, cur.x, cur.y, p[k].x, p[k].y, &dirty);
+                    cur = p[k];
+                }
+                break;
+            case MIME_POLY_BEZIER:
+                for (ULONG k = 1; k + 2 < n; k += 3)
+                    draw_bezier(dc, &ctx.Clip, p[k - 1], p + k, &dirty);
+                break;
+            case MIME_POLY_BEZIERTO:
+                for (ULONG k = 0; k + 2 < n; k += 3) {
+                    draw_bezier(dc, &ctx.Clip, cur, p + k, &dirty);
+                    cur = p[k + 2];
+                }
+                break;
             }
             base += n;
         }
-        ok = TRUE;
     }
     end_draw(&ctx, &dirty);
     UserLeave();

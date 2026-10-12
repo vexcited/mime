@@ -795,3 +795,34 @@ WINUSERAPI HCURSOR WINAPI GetCursor(void)
     NtUserSetCursor(c);
     return c;
 }
+
+WINUSERAPI BOOL WINAPI GetCursorInfo(PCURSORINFO info)
+{
+    return NtUserGetCursorInfo(info);
+}
+
+/* a monochrome cursor from and and xor planes, word aligned rows like CreateBitmap. */
+WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y, int width, int height,
+                                       const void *and_plane, const void *xor_plane)
+{
+    if (width <= 0 || height <= 0 || !and_plane || !xor_plane) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    int stride = (width + 15) / 16 * 2;
+    SIZE_T plane = (SIZE_T)stride * (SIZE_T)height;
+    BYTE *bits = UserAlloc(plane * 2);
+    if (!bits)
+        return NULL;
+    memcpy(bits, and_plane, plane);
+    memcpy(bits + plane, xor_plane, plane);
+    HBITMAP mask = CreateBitmap(width, height * 2, 1, 1, bits);
+    UserFree(bits);
+    if (!mask)
+        return NULL;
+    ICONINFO info = {FALSE, (DWORD)hot_x, (DWORD)hot_y, mask, NULL};
+    HCURSOR cursor = CreateIconIndirect(&info);
+    DeleteObject(mask);
+    (void)instance;
+    return cursor;
+}

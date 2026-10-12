@@ -142,7 +142,54 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         r = NT_SUCCESS(MimeCopyToUser((PVOID)param2, &mi, mi.cbSize));
         break;
     }
+    case MIME_TWOPARAM_WINDOWFROMPOINT: {
+        POINT pt = {(LONG)param1, (LONG)param2};
+        WND *desktop = WndDesktop();
+        for (WND *c = desktop ? desktop->FirstChild : NULL; c; c = c->Next) {
+            if (!(c->Style & WS_VISIBLE) || (c->Style & WS_MINIMIZE) || (c->ExStyle & WS_EX_TRANSPARENT) ||
+                (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, pt.x, pt.y) || !LayerHitTest(c, pt))
+                continue;
+            r = (ULONG_PTR)WndHandle(WndFromPoint(c, pt));
+            break;
+        }
+        break;
+    }
     }
     UserLeave();
     return r;
+}
+
+BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
+{
+    CURSORINFO ci;
+    if (!user_info || !NT_SUCCESS(MimeCopyFromUser(&ci.cbSize, &user_info->cbSize, sizeof(DWORD))) ||
+        ci.cbSize != sizeof(CURSORINFO)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    ci.flags = t && t->CursorShowCount >= 0 ? CURSOR_SHOWING : 0;
+    ci.hCursor = t ? t->Cursor : NULL;
+    ci.ptScreenPos = InputCursorPos;
+    UserLeave();
+    if (!NT_SUCCESS(MimeCopyToUser(user_info, &ci, sizeof(ci)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* the queues stay separate: attaching only validates the threads, which is enough for focus tricks. */
+BOOL NTAPI NtUserAttachThreadInput(DWORD attach, DWORD to, BOOL do_attach)
+{
+    UserEnter();
+    W32THREAD *a = W32LookupThread((HANDLE)(ULONG_PTR)attach);
+    W32THREAD *b = W32LookupThread((HANDLE)(ULONG_PTR)to);
+    BOOL ok = a && b && a != b;
+    UserLeave();
+    if (!ok)
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    (void)do_attach;
+    return ok;
 }
