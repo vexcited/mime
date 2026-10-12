@@ -27,12 +27,17 @@ GEN := $(BUILD)/gen
 OBJ := $(BUILD)/obj
 SYSTEM32 := $(BUILD)/guest/system32
 
-GUEST_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
+GUEST_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32 mimex86
+# the x64 builds of the system dlls, for programs run by the translator, in C:\Windows\SysX64.
+SYSX64 := $(BUILD)/guest/sysx64
+X64_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
+X64_FILES := $(patsubst %,$(SYSX64)/%.dll,$(X64_DLLS))
 GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SYSTEM32)/%.dll,$(GUEST_DLLS))
 # the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
-ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES))
+ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES)) \
+	$(patsubst $(SYSX64)/%,$(BUILD)/guest/rom/sysx64/%,$(X64_FILES))
 
-.PHONY: all host guest examples tools clean
+.PHONY: all host guest examples tools clean sysx64
 all: host guest examples
 
 # ---------------------------------------------------------------- host
@@ -54,6 +59,11 @@ $(OBJ)/host/%.o: host/%.c
 $(GEN)/rom.S: $(ROM_FILES) tools/genrom.sh
 	@mkdir -p $(dir $@)
 	tools/genrom.sh $@ $(abspath $(ROM_FILES))
+
+$(BUILD)/guest/rom/sysx64/%: $(SYSX64)/% $(BUILD)/tools/pechecksum
+	@mkdir -p $(dir $@)
+	$(STRIP) --strip-debug $< -o $@
+	$(BUILD)/tools/pechecksum $@
 
 $(BUILD)/guest/rom/%: $(SYSTEM32)/% $(BUILD)/tools/pechecksum
 	@mkdir -p $(dir $@)
@@ -85,17 +95,19 @@ SYSCALLS_WIN32K := tools/syscalls/win32u_26300_arm64.txt tools/syscalls/win32u_m
 
 $(GEN)/mime_svc_nt.h: $(SYSCALLS_NT) $(BUILD)/tools/gensyscalls
 	@mkdir -p $(GEN)
-	$(BUILD)/tools/gensyscalls $(SYSCALLS_NT) MIME_NT_SERVICES $@ $(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def
+	$(BUILD)/tools/gensyscalls $(SYSCALLS_NT) MIME_NT_SERVICES $@ $(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def \
+		$(GEN)/ntdll_syscalls_x64.S
 
-$(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def: $(GEN)/mime_svc_nt.h
+$(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def $(GEN)/ntdll_syscalls_x64.S: $(GEN)/mime_svc_nt.h
 
 # the real win32u table plus the private mime services numbered above it.
 $(GEN)/mime_svc_win32k.h: $(SYSCALLS_WIN32K) $(BUILD)/tools/gensyscalls
 	@mkdir -p $(GEN)
 	cat $(SYSCALLS_WIN32K) > $(GEN)/win32u_syscalls.txt
-	$(BUILD)/tools/gensyscalls $(GEN)/win32u_syscalls.txt MIME_WIN32K_SERVICES $@ $(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def
+	$(BUILD)/tools/gensyscalls $(GEN)/win32u_syscalls.txt MIME_WIN32K_SERVICES $@ $(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def \
+		$(GEN)/win32u_syscalls_x64.S
 
-$(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def: $(GEN)/mime_svc_win32k.h
+$(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def $(GEN)/win32u_syscalls_x64.S: $(GEN)/mime_svc_win32k.h
 
 GEN_HEADERS := $(GEN)/mime_svc_nt.h $(GEN)/mime_svc_win32k.h
 
@@ -222,6 +234,21 @@ $(SYSTEM32)/ntdll.dll: $(NTDLL_OBJ) $(GEN)/ntdll.def $(GEN)/res/ntdll.dll.res
 	$(LLD_LINK) $(USER_DLL_LDFLAGS) /noentry /base:0x7FFC00000000 /def:$(GEN)/ntdll.def \
 		/implib:$(BUILD)/lib/ntdll.lib /out:$@ $(NTDLL_OBJ) $(GEN)/res/ntdll.dll.res
 
+# ---------------------------------------------------------------- mimex86.dll
+
+# the system dll of x64 processes: the x86 core and its native side, without imports.
+MIMEX86_SRC := $(wildcard guest/mimex86/*.c) $(wildcard guest/mimex86/*.S)
+MIMEX86_OBJ := $(patsubst %,$(OBJ)/user/%.o,$(basename $(MIMEX86_SRC))) $(OBJ)/user/$(GEN)/ntdll_syscalls.o $(USER_RT_OBJ)
+USER_CFLAGS_mimex86 := -Iguest/mimex86 -fno-math-errno
+
+$(OBJ)/user/guest/mimex86/entry.o: guest/mimex86/entry.S $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(GUEST_ASFLAGS) -I$(GEN) -c $< -o $@
+
+$(SYSTEM32)/mimex86.dll: $(MIMEX86_OBJ) $(GEN)/res/mimex86.dll.res
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(USER_DLL_LDFLAGS) /noentry /base:0x7FFD00000000 /export:RtlUserThreadStart=MxUserThreadStart /out:$@ $(MIMEX86_OBJ) $(GEN)/res/mimex86.dll.res
+
 # ---------------------------------------------------------------- win32u.dll
 
 WIN32U_OBJ := $(OBJ)/user/$(GEN)/win32u_syscalls.o
@@ -272,6 +299,85 @@ EXTRA_LDFLAGS_user32 := /subsystem:windows,10.0
 $(eval $(call USER_DLL,user32,0x7FF900000000,ntdll kernel32 win32u gdi32,/entry:DllMain))
 USER_CFLAGS_user32 += -Iguest/lib
 
+# ---------------------------------------------------------------- x64 system dlls
+
+# the same sources as the arm64 dlls, with x64 assembly where the processor matters.
+X64_TARGET := --target=x86_64-pc-windows-msvc -march=x86-64 -mcx16
+X64_CFLAGS := $(filter-out $(GUEST_TARGET) --target=% -march=%,$(GUEST_CFLAGS)) $(X64_TARGET)
+X64_ASFLAGS := $(X64_TARGET) -Iinclude -Iguest/include -MMD -MP
+X64_LDFLAGS := $(subst /machine:arm64,/machine:x64,$(GUEST_LDFLAGS))
+X64_DLL_LDFLAGS := $(X64_LDFLAGS) /dll /subsystem:console,10.0 /highentropyva /dynamicbase /stack:0x40000,0x1000
+X64_OBJ := $(OBJ)/x64
+
+$(X64_OBJ)/%.o: %.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_CFLAGS) $(USER_CFLAGS_$(firstword $(subst /, ,$(patsubst guest/%,%,$<)))) -c $< -o $@
+
+$(X64_OBJ)/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_ASFLAGS) -c $< -o $@
+
+$(X64_OBJ)/guest/crt/%.o: guest/crt/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_CFLAGS) -fno-builtin -c $< -o $@
+
+X64_RT_OBJ := $(RTL_SRC:%.c=$(X64_OBJ)/%.o) $(CRT_SRC:%.c=$(X64_OBJ)/%.o) $(X64_OBJ)/guest/crt/x64/chkstk.o
+
+X64_NTDLL_SRC := $(wildcard guest/ntdll/*.c) $(wildcard guest/ntdll/x64/*.c) $(wildcard guest/ntdll/x64/*.S)
+X64_NTDLL_OBJ := $(patsubst %,$(X64_OBJ)/%.o,$(basename $(X64_NTDLL_SRC))) $(X64_OBJ)/$(GEN)/ntdll_syscalls_x64.o $(X64_RT_OBJ)
+X64_NTDLL_EXPORT_CODE := $(NTDLL_EXPORT_CODE)|^__C_specific_handler$$
+
+$(GEN)/x64/ntdll.def: $(X64_NTDLL_OBJ) $(GEN)/ntdll_syscalls.def
+	@mkdir -p $(dir $@)
+	{ echo "LIBRARY ntdll.dll"; echo "EXPORTS"; cat $(GEN)/ntdll_syscalls.def; \
+	  $(call EXPORTS_FROM_OBJECTS,$(X64_NTDLL_OBJ),$(X64_NTDLL_EXPORT_CODE)); } > $@
+
+$(SYSX64)/ntdll.dll: $(X64_NTDLL_OBJ) $(GEN)/x64/ntdll.def $(GEN)/res/ntdll.dll.res
+	@mkdir -p $(dir $@) $(BUILD)/lib/x64
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) /noentry /base:0x7FFC00000000 /def:$(GEN)/x64/ntdll.def \
+		/implib:$(BUILD)/lib/x64/ntdll.lib /out:$@ $(X64_NTDLL_OBJ) $(GEN)/res/ntdll.dll.res
+$(BUILD)/lib/x64/ntdll.lib: $(SYSX64)/ntdll.dll
+
+X64_WIN32U_OBJ := $(X64_OBJ)/$(GEN)/win32u_syscalls_x64.o
+$(SYSX64)/win32u.dll: $(X64_WIN32U_OBJ) $(GEN)/win32u.def $(GEN)/res/win32u.dll.res
+	@mkdir -p $(dir $@) $(BUILD)/lib/x64
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) /subsystem:windows,10.0 /noentry /base:0x7FF700000000 /def:$(GEN)/win32u.def \
+		/implib:$(BUILD)/lib/x64/win32u.lib /out:$@ $(X64_WIN32U_OBJ) $(GEN)/res/win32u.dll.res
+$(BUILD)/lib/x64/win32u.lib: $(SYSX64)/win32u.dll
+
+# $(1) = name, $(2) = preferred base, $(3) = import libraries, $(4) = entry point flag.
+define X64_DLL
+x64_$(1)_SRC := $$(filter-out %.S,$$(wildcard guest/$(1)/*.c)) $$(wildcard guest/$(1)/x64/*.S)
+x64_$(1)_OBJ := $$(patsubst %,$(X64_OBJ)/%.o,$$(basename $$(x64_$(1)_SRC))) $(X64_OBJ)/guest/crt/x64/chkstk.o $$(X64_EXTRA_OBJ_$(1))
+$(SYSX64)/$(1).dll: $$(x64_$(1)_OBJ) $$(patsubst %,$(BUILD)/lib/x64/%.lib,$(3)) $$(X64_EXTRA_DEPS_$(1)) $(GEN)/res/$(1).dll.res
+	@mkdir -p $$(dir $$@) $(BUILD)/lib/x64
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) $(4) /base:$(2) /implib:$(BUILD)/lib/x64/$(1).lib $$(X64_EXTRA_LDFLAGS_$(1)) \
+		/out:$$@ $$(x64_$(1)_OBJ) $$(patsubst %,$(BUILD)/lib/x64/%.lib,$(3)) $(GEN)/res/$(1).dll.res
+$(BUILD)/lib/x64/$(1).lib: $(SYSX64)/$(1).dll
+endef
+
+$(eval $(call X64_DLL,kernelbase,0x7FFB00000000,ntdll,/entry:DllMain))
+
+# like the arm64 one, plus the unwinding functions windows' kernel32 forwards to ntdll.
+X64_KERNEL32_NTDLL := RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind RtlAddFunctionTable \
+	RtlDeleteFunctionTable RtlRestoreContext RtlUnwind __C_specific_handler
+$(GEN)/x64/kernel32.def: $(SYSX64)/kernelbase.dll
+	@mkdir -p $(dir $@)
+	{ echo "LIBRARY kernel32.dll"; echo "EXPORTS"; \
+	  llvm-readobj --coff-exports $< | awk '$$1 == "Name:" && $$2 != "DllMain" { print "    " $$2 "=kernelbase." $$2 }'; \
+	  for f in $(X64_KERNEL32_NTDLL); do echo "    $$f=ntdll.$$f"; done; } > $@
+X64_EXTRA_DEPS_kernel32 := $(GEN)/x64/kernel32.def
+X64_EXTRA_LDFLAGS_kernel32 := /def:$(GEN)/x64/kernel32.def
+$(eval $(call X64_DLL,kernel32,0x7FFA00000000,ntdll kernelbase,/entry:DllMain))
+
+$(eval $(call X64_DLL,gdi32,0x7FF800000000,ntdll kernel32 win32u,/entry:DllMain))
+
+X64_EXTRA_OBJ_user32 := $(patsubst %.c,$(X64_OBJ)/%.o,$(wildcard guest/lib/png/*.c guest/lib/msstyles/*.c))
+X64_EXTRA_LDFLAGS_user32 := /subsystem:windows,10.0
+$(eval $(call X64_DLL,user32,0x7FF900000000,ntdll kernel32 win32u gdi32,/entry:DllMain))
+
+sysx64: $(X64_FILES)
+
 # ---------------------------------------------------------------- examples
 
 # each examples/<name>.c becomes a windows program linked against the mime dlls, entry point `entry`.
@@ -282,11 +388,19 @@ $(BUILD)/examples/%.exe: $(OBJ)/user/examples/%.o $(EXAMPLE_LIBS)
 	@mkdir -p $(dir $@)
 	$(LLD_LINK) $(GUEST_LDFLAGS) /subsystem:windows /entry:entry /out:$@ $< $(EXAMPLE_LIBS)
 
+# the same programs built for x64, run by the translator.
+X64_EXAMPLE_LIBS := $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 user32 gdi32)
+X64_EXAMPLES := $(patsubst examples/%.c,$(BUILD)/examples/x64/%.exe,$(wildcard examples/*.c))
+
+$(BUILD)/examples/x64/%.exe: $(X64_OBJ)/examples/%.o $(X64_EXAMPLE_LIBS)
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(X64_LDFLAGS) /subsystem:windows /entry:entry /out:$@ $< $(X64_EXAMPLE_LIBS)
+
 # ---------------------------------------------------------------- guest
 
 guest: $(GUEST_FILES)
 
-examples: guest $(EXAMPLES)
+examples: guest $(EXAMPLES) $(X64_EXAMPLES)
 
 clean:
 	rm -rf $(BUILD)

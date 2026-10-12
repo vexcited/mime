@@ -38,7 +38,7 @@ void WINAPI RaiseFailFastException(PEXCEPTION_RECORD record, PCONTEXT context, D
 LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter(LPTOP_LEVEL_EXCEPTION_FILTER filter)
 {
     PVOID old = __atomic_exchange_n(&g_top_filter, RtlEncodePointer((PVOID)filter), __ATOMIC_ACQ_REL);
-    return (LPTOP_LEVEL_EXCEPTION_FILTER)RtlDecodePointer(old);
+    return old ? (LPTOP_LEVEL_EXCEPTION_FILTER)RtlDecodePointer(old) : NULL;
 }
 
 static void describe_address(PVOID address, char *out, SIZE_T size)
@@ -58,7 +58,8 @@ static void describe_address(PVOID address, char *out, SIZE_T size)
 
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
-    LPTOP_LEVEL_EXCEPTION_FILTER filter = RtlDecodePointer(g_top_filter);
+    /* no filter was ever set while the slot is still zero, not an encoded null. */
+    LPTOP_LEVEL_EXCEPTION_FILTER filter = g_top_filter ? RtlDecodePointer(g_top_filter) : NULL;
     if (filter && __atomic_add_fetch(&g_in_filter, 1, __ATOMIC_ACQ_REL) == 1) {
         LONG r = filter(info);
         __atomic_sub_fetch(&g_in_filter, 1, __ATOMIC_ACQ_REL);

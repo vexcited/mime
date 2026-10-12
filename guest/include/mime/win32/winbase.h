@@ -1103,7 +1103,6 @@ WINBASEAPI BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console);
 #define PROCESSOR_AMD_X8664 8664
 #define PROCESSOR_ARM 7
 #define IMAGE_FILE_MACHINE_UNKNOWN 0
-#define IMAGE_FILE_MACHINE_I386 0x014c
 #define IMAGE_FILE_MACHINE_ARMNT 0x01c4
 
 typedef DWORD(WINAPI *PTHREAD_START_ROUTINE)(LPVOID parameter);
@@ -1560,7 +1559,11 @@ FORCEINLINE PVOID InterlockedCompareExchangePointer(PVOID volatile *p, PVOID exc
     return comparand;
 }
 FORCEINLINE void MemoryBarrier(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
+#if defined(__x86_64__)
+FORCEINLINE void YieldProcessor(void) { __asm__ volatile("pause"); }
+#else
 FORCEINLINE void YieldProcessor(void) { __asm__ volatile("yield"); }
+#endif
 
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushEntrySList(PSLIST_HEADER head, PSLIST_ENTRY entry);
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushListSListEx(PSLIST_HEADER head, PSLIST_ENTRY first,

@@ -18,6 +18,7 @@
 #define MAIR_EL1_VALUE 0x00000000044400FFull
 #define CPACR_EL1_VALUE (3ull << 20)
 #define PSTATE_EL1H_MASKED 0x3C5ull
+#define ACTLR_EL1_ENTSO (1ull << 1)
 
 static uint64_t get_reg(MimeVcpu *vcpu, hv_reg_t reg)
 {
@@ -230,6 +231,8 @@ static void *vcpu_main(void *arg)
     set_sys(vcpu, HV_SYS_REG_TTBR0_EL1, 0);
     set_sys(vcpu, HV_SYS_REG_CPACR_EL1, CPACR_EL1_VALUE);
     set_sys(vcpu, HV_SYS_REG_SCTLR_EL1, SCTLR_EL1_VALUE);
+    /* total store ordering, so translated x86 code keeps the memory model it was written for. */
+    set_sys(vcpu, HV_SYS_REG_ACTLR_EL1, ACTLR_EL1_ENTSO);
     set_sys(vcpu, HV_SYS_REG_SP_EL1, vm->boot_stack_top);
     set_sys(vcpu, HV_SYS_REG_MPIDR_EL1, (1ull << 31) | vcpu->index);
     set_reg(vcpu, HV_REG_CPSR, PSTATE_EL1H_MASKED);

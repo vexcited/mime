@@ -98,10 +98,18 @@ static LONG call_handlers(PLIST_ENTRY list, PEXCEPTION_RECORD record, PCONTEXT c
     return result;
 }
 
+#if defined(__x86_64__)
+BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT context);
+#endif
+
 NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchException(PEXCEPTION_RECORD record, PCONTEXT context)
 {
     if (call_handlers(&g_vectored, record, context) == EXCEPTION_CONTINUE_EXECUTION)
         return TRUE;
+#if defined(__x86_64__)
+    if (RtlDispatchFrameException(record, context))
+        return TRUE;
+#endif
     if (g_unhandled_filter) {
         EXCEPTION_POINTERS info = {record, context};
         if (g_unhandled_filter(&info) == EXCEPTION_CONTINUE_EXECUTION)
@@ -127,6 +135,8 @@ void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context
     RtlRaiseException(&nested);
 }
 
+#if !defined(__x86_64__)
+/* the x64 build raises from x64/entry.S. */
 NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
 {
     CONTEXT context;
@@ -138,6 +148,7 @@ NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
     NTSTATUS status = NtRaiseException(record, &context, TRUE);
     RtlRaiseStatus(status);
 }
+#endif
 
 NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
 {
@@ -150,6 +161,8 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
         ;
 }
 
+#if !defined(__x86_64__)
+/* the x64 build unwinds in x64/unwind.c. */
 NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
 {
     DbgPrint("RtlUnwind: frame based unwinding is not supported yet\n");
@@ -190,3 +203,4 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
     }
     return NULL;
 }
+#endif

@@ -777,13 +777,11 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
     uint8_t op = i->opcode;
     int size = i->opsize;
     switch (op) {
-    case 0x05: { /* syscall */
-        uint64_t next = c->rip;
-        c->env->syscall(c);
-        c->r[X86_RCX] = next;
+    case 0x05: /* syscall: rcx and r11 change first, a service like NtContinue may then load everything */
+        c->r[X86_RCX] = c->rip;
         c->r[X86_R11] = x86_get_flags(c);
+        c->env->syscall(c);
         return;
-    }
     case 0x0B: /* ud2 */
     case 0xB9: /* ud1 */
     case 0xFF: /* ud0 */
@@ -1588,13 +1586,17 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip)
     return b;
 }
 
+void *x86_new_blocks(void)
+{
+    X86BlockCache *bc = x86_alloc(sizeof(X86BlockCache));
+    __builtin_memset(bc, 0, sizeof(*bc));
+    return bc;
+}
+
 static X86BlockCache *block_cache(X86Cpu *c)
 {
-    if (!c->blocks) {
-        X86BlockCache *bc = x86_alloc(sizeof(X86BlockCache));
-        __builtin_memset(bc, 0, sizeof(*bc));
-        c->blocks = bc;
-    }
+    if (!c->blocks)
+        c->blocks = x86_new_blocks();
     return c->blocks;
 }
 
@@ -1641,6 +1643,12 @@ static inline X86Block *lookup(X86Cpu *c, uint64_t rip)
 void x86_run(X86Cpu *c)
 {
     while (c->rip != c->exit_rip) {
+        if (c->code_epoch && *c->code_epoch != c->blocks_epoch) {
+            c->blocks_epoch = *c->code_epoch;
+            x86_flush_blocks(c);
+        }
+        if (c->trace)
+            c->trace[(*c->trace_pos)++ % X86_TRACE_SIZE] = c->rip;
         X86Block *b = lookup(c, c->rip);
         const X86Insn *i = b->insns, *end = i + b->count;
         uint64_t expected = c->rip;

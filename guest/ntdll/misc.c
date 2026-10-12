@@ -173,14 +173,20 @@ NTDLL_EXPORT ULONG DbgPrint(PCSTR format, ...)
     return r;
 }
 
+#if defined(__x86_64__)
+#define BREAKPOINT() __asm__ volatile("int3")
+#else
+#define BREAKPOINT() __asm__ volatile("brk #0xF000")
+#endif
+
 NTDLL_EXPORT void NTAPI DbgBreakPoint(void)
 {
-    __asm__ volatile("brk #0xF000");
+    BREAKPOINT();
 }
 
 NTDLL_EXPORT void NTAPI DbgUserBreakPoint(void)
 {
-    __asm__ volatile("brk #0xF000");
+    BREAKPOINT();
 }
 
 /* ------------------------------------------------------------------ versions */

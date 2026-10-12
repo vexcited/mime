@@ -4,9 +4,10 @@
  */
 #include "../ntos.h"
 
-PVOID KeUserCallbackDispatcher;
-PVOID KeUserExceptionDispatcher;
-PVOID KeUserApcDispatcher;
+static inline PPSP_SYSTEM_DLL current_system_dll(void)
+{
+    return PsCurrentProcess()->SystemDll;
+}
 
 void KeInitializeApc(PKAPC apc, PKTHREAD thread, KAPC_ENVIRONMENT env, PKKERNEL_ROUTINE kernel_routine,
                      PKRUNDOWN_ROUTINE rundown, PKNORMAL_ROUTINE normal, KPROCESSOR_MODE mode, PVOID context)
@@ -62,7 +63,7 @@ static void setup_user_apc(PKTRAP_FRAME frame, PKNORMAL_ROUTINE routine, PVOID c
         return;
     }
     frame->Sp = sp;
-    frame->Pc = (ULONG64)KeUserApcDispatcher;
+    frame->Pc = (ULONG64)current_system_dll()->KiUserApcDispatcher;
     frame->X[0] = (ULONG64)context;
     frame->X[1] = (ULONG64)arg1;
     frame->X[2] = (ULONG64)arg2;
@@ -103,7 +104,7 @@ void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
     PKNORMAL_ROUTINE normal = apc->NormalRoutine;
     PVOID ctx = apc->NormalContext, a1 = apc->SystemArgument1, a2 = apc->SystemArgument2;
     apc->KernelRoutine(apc, &normal, &ctx, &a1, &a2);
-    if (normal && KeUserApcDispatcher)
+    if (normal && current_system_dll() && current_system_dll()->KiUserApcDispatcher)
         setup_user_apc(frame, normal, ctx, a1, a2);
 }
 
@@ -176,7 +177,8 @@ NTSTATUS NTAPI NtTestAlert(void)
 /* first chance: hand the exception to ntdll!KiUserExceptionDispatcher. */
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame)
 {
-    if (!KeUserExceptionDispatcher)
+    PPSP_SYSTEM_DLL dll = current_system_dll();
+    if (!dll || !dll->KiUserExceptionDispatcher)
         return FALSE;
     CONTEXT ctx;
     KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
@@ -187,7 +189,7 @@ BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame)
         !NT_SUCCESS(KiCopyToUser((PVOID)rec_addr, record, sizeof(*record))))
         return FALSE;
     frame->Sp = sp;
-    frame->Pc = (ULONG64)KeUserExceptionDispatcher;
+    frame->Pc = (ULONG64)dll->KiUserExceptionDispatcher;
     frame->X[0] = rec_addr;
     frame->X[1] = ctx_addr;
     return TRUE;
@@ -227,7 +229,8 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
 {
     PKTHREAD thread = KiCurrentThread();
     PKTRAP_FRAME trap = thread->TrapFrame;
-    if (!trap || !KeUserCallbackDispatcher || ((PEPROCESS)thread->Process)->SystemProcess)
+    PPSP_SYSTEM_DLL dll = current_system_dll();
+    if (!trap || !dll || !dll->KiUserCallbackDispatcher || ((PEPROCESS)thread->Process)->SystemProcess)
         return STATUS_NOT_SUPPORTED;
     if (thread->CallbackDepth > 48)
         return STATUS_STACK_OVERFLOW;
@@ -238,7 +241,7 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
 
     KTRAP_FRAME frame;
     memset(&frame, 0, offsetof(KTRAP_FRAME, V));
-    frame.Pc = (ULONG64)KeUserCallbackDispatcher;
+    frame.Pc = (ULONG64)dll->KiUserCallbackDispatcher;
     frame.Sp = args - 16;
     frame.Spsr = PSR_MODE_EL0;
     frame.X[18] = trap->X[18];

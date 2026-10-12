@@ -1,6 +1,6 @@
 /*
- * kernel mode image loader for drivers, and the system dll (ntdll.dll)
- * mapped into every process.
+ * kernel mode image loader for drivers, and the system dlls (ntdll.dll,
+ * and mimex86.dll for x86 and x64 programs) mapped into every process.
  */
 #include "../ntos.h"
 
@@ -12,7 +12,6 @@ typedef struct LOADED_MODULE {
 } LOADED_MODULE;
 
 static LOADED_MODULE *g_modules;
-PSECTION PspSystemDllSection;
 
 static PVOID find_export(PVOID base, const char *name, USHORT ordinal_hint, BOOLEAN by_ordinal)
 {
@@ -223,37 +222,9 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
     return status;
 }
 
-/* creates the ntdll image section once; every process maps it at its preferred base. */
-NTSTATUS PspInitializeSystemDll(void)
+/* reads an export of an image section from its prototype pages through the physmap. */
+static PVOID section_export(PSECTION s, const char *name)
 {
-    UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\System32\\ntdll.dll");
-    PFILE_OBJECT file;
-    NTSTATUS status = IopOpenFileObject(&path, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file);
-    if (!NT_SUCCESS(status)) {
-        KiLogPrintf("cannot open ntdll.dll: %08x", status);
-        return status;
-    }
-    status = MiCreateImageSection(file, &PspSystemDllSection);
-    ObDereferenceObject(file);
-    if (!NT_SUCCESS(status)) {
-        KiLogPrintf("invalid ntdll.dll: %08x", status);
-        return status;
-    }
-    PspSystemDllBase = (PVOID)PspSystemDllSection->Image.ImageBase;
-    KeUserCallbackDispatcher = PspLookupSystemDllExport("KiUserCallbackDispatcher");
-    KeUserExceptionDispatcher = PspLookupSystemDllExport("KiUserExceptionDispatcher");
-    KeUserApcDispatcher = PspLookupSystemDllExport("KiUserApcDispatcher");
-    if (!PspLookupSystemDllExport("LdrInitializeThunk") || !KeUserCallbackDispatcher)
-        return STATUS_ENTRYPOINT_NOT_FOUND;
-    return STATUS_SUCCESS;
-}
-
-/* reads an ntdll export from the prototype pages through the physmap. */
-PVOID PspLookupSystemDllExport(const char *name)
-{
-    PSECTION s = PspSystemDllSection;
-    if (!s)
-        return NULL;
 #define AT(rva) ((PUCHAR)HalPhysmap(s->Pages[(rva) >> PAGE_SHIFT]) + ((rva) & (PAGE_SIZE - 1)))
     PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)AT(0);
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)AT((ULONG)dos->e_lfanew);
@@ -284,4 +255,59 @@ PVOID PspLookupSystemDllExport(const char *name)
     }
     return NULL;
 #undef AT
+}
+
+PSP_SYSTEM_DLL PspNativeSystemDll;
+PSP_SYSTEM_DLL PspX86SystemDll;
+
+/* creates a system dll's image section once; every process maps it at its preferred base. */
+static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
+{
+    UNICODE_STRING path;
+    RtlInitUnicodeString(&path, path_string);
+    PFILE_OBJECT file;
+    NTSTATUS status = IopOpenFileObject(&path, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file);
+    if (!NT_SUCCESS(status)) {
+        KiLogPrintf("cannot open %wZ: %08x", &path, status);
+        return status;
+    }
+    status = MiCreateImageSection(file, &dll->Section);
+    ObDereferenceObject(file);
+    if (!NT_SUCCESS(status)) {
+        KiLogPrintf("invalid %wZ: %08x", &path, status);
+        return status;
+    }
+    dll->Base = (PVOID)dll->Section->Image.ImageBase;
+    dll->LdrInitializeThunk = section_export(dll->Section, "LdrInitializeThunk");
+    dll->RtlUserThreadStart = section_export(dll->Section, "RtlUserThreadStart");
+    dll->KiUserExceptionDispatcher = section_export(dll->Section, "KiUserExceptionDispatcher");
+    dll->KiUserApcDispatcher = section_export(dll->Section, "KiUserApcDispatcher");
+    dll->KiUserCallbackDispatcher = section_export(dll->Section, "KiUserCallbackDispatcher");
+    if (!dll->LdrInitializeThunk || !dll->RtlUserThreadStart || !dll->KiUserCallbackDispatcher)
+        return STATUS_ENTRYPOINT_NOT_FOUND;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS PspInitializeSystemDll(void)
+{
+    NTSTATUS status = load_system_dll(L"\\SystemRoot\\System32\\ntdll.dll", &PspNativeSystemDll);
+    if (!NT_SUCCESS(status))
+        return status;
+    /* x86 and x64 programs run only when the translator is present. */
+    if (!NT_SUCCESS(load_system_dll(L"\\SystemRoot\\System32\\mimex86.dll", &PspX86SystemDll)))
+        memset(&PspX86SystemDll, 0, sizeof(PspX86SystemDll));
+    return STATUS_SUCCESS;
+}
+
+/* the system dll a program of this machine runs on, NULL when there is none. */
+PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine)
+{
+    switch (machine) {
+    case IMAGE_FILE_MACHINE_ARM64:
+        return &PspNativeSystemDll;
+    case IMAGE_FILE_MACHINE_AMD64:
+        return PspX86SystemDll.Section ? &PspX86SystemDll : NULL;
+    default:
+        return NULL;
+    }
 }

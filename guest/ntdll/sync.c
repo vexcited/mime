@@ -77,7 +77,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlEnterCriticalSection(PRTL_CRITICAL_SECTION cs)
         LONG expected = -1;
         if (__atomic_compare_exchange_n(&cs->LockCount, &expected, 0, FALSE, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
             goto owned;
-        __asm__ volatile("yield");
+        YieldProcessor();
     }
     if (__atomic_add_fetch(&cs->LockCount, 1, __ATOMIC_ACQUIRE) != 0)
         NtWaitForSingleObject(get_event(cs), FALSE, NULL);
@@ -135,7 +135,7 @@ NTDLL_EXPORT ULONG NTAPI RtlIsCriticalSectionLockedByThread(PRTL_CRITICAL_SECTIO
 static void srw_backoff(ULONG *spins)
 {
     if (++*spins < 16) {
-        __asm__ volatile("yield");
+        YieldProcessor();
         return;
     }
     NtYieldExecution();

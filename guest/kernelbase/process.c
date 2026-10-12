@@ -1237,11 +1237,22 @@ LPVOID WINAPI CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_
     f->StackLimit = stack;
     f->StackBase = (PUCHAR)stack + reserve;
     f->Context.ContextFlags = CONTEXT_FULL;
+#if defined(__x86_64__)
+    /* entered like a call: the return address slot below a 16 byte aligned frame. */
+    f->Context.Rsp = (((ULONG_PTR)f->StackBase - 64) & ~(ULONG_PTR)15) - 8;
+    f->Context.Rip = (ULONG64)fiber_entry;
+    f->Context.Rcx = (ULONG64)f;
+    f->Context.EFlags = 0x202;
+    f->Context.MxCsr = 0x1F80;
+    f->Context.FltSave.ControlWord = 0x27F;
+    f->Context.FltSave.MxCsr = 0x1F80;
+#else
     f->Context.Sp = ((ULONG_PTR)f->StackBase - 64) & ~(ULONG_PTR)15;
     f->Context.Pc = (ULONG64)fiber_entry;
     f->Context.X0 = (ULONG64)f;
     f->Context.X18 = (ULONG64)NtCurrentTeb();
     f->Context.Fpcr = 0;
+#endif
     f->Resumed = 1;
     return f;
 }
@@ -1286,7 +1297,9 @@ void WINAPI SwitchToFiber(LPVOID fiber)
     teb->NtTib.StackLimit = target->StackLimit;
     teb->DeallocationStack = target->DeallocationStack;
     teb->FlsData = target->FlsData;
+#if !defined(__x86_64__)
     target->Context.X18 = (ULONG64)teb;
+#endif
     NtContinue(&target->Context, FALSE);
 }
 

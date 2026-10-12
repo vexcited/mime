@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define X86_TRACE_SIZE 64
+
 enum {
     X86_RAX, X86_RCX, X86_RDX, X86_RBX, X86_RSP, X86_RBP, X86_RSI, X86_RDI,
     X86_R8, X86_R9, X86_R10, X86_R11, X86_R12, X86_R13, X86_R14, X86_R15,
@@ -109,6 +111,10 @@ struct X86Cpu {
     const X86Env *env;
     void *user;          /* the environment's per thread data */
     void *blocks;        /* the decoded block cache */
+    const volatile uint32_t *code_epoch; /* bumped by the environment when code may have changed, or NULL */
+    uint32_t blocks_epoch;
+    uint64_t *trace;     /* when set, the start of the last X86_TRACE_SIZE blocks run */
+    uint32_t *trace_pos;
     uint64_t steps;      /* executed instructions, for statistics */
 };
 
@@ -154,6 +160,9 @@ void x86_init_cpu(X86Cpu *cpu, const X86Env *env, int mode64);
 /* the complete eflags value. */
 uint32_t x86_get_flags(X86Cpu *cpu);
 void x86_set_flags(X86Cpu *cpu, uint32_t flags);
+
+/* a decoded block cache, which several cpus of one thread may share. */
+void *x86_new_blocks(void);
 
 /* drops every decoded block, after code changed. */
 void x86_flush_blocks(X86Cpu *cpu);

@@ -8,7 +8,6 @@
 
 static LIST_ENTRY g_dead_threads;
 static ETHREAD g_idle_thread;
-PVOID PspSystemDllBase;
 
 void PsInitializeIdleThread(void)
 {
@@ -149,16 +148,18 @@ static void user_thread_startup(PVOID context)
     KiEnterUserMode(frame);
 }
 
-PVOID PspLookupSystemDllExport(const char *name);
+#define MIME_NATIVE_STACK_SIZE (1024 * 1024)
 
 /* allocates the user stack and teb, then creates the kernel half of the thread. */
 NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out)
 {
-    PVOID ldr_thunk = PspLookupSystemDllExport("LdrInitializeThunk");
-    PVOID user_start = PspLookupSystemDllExport("RtlUserThreadStart");
-    if (!ldr_thunk || !user_start)
+    PPSP_SYSTEM_DLL dll = process->SystemDll;
+    if (!dll)
         return STATUS_DLL_NOT_FOUND;
+    PVOID ldr_thunk = dll->LdrInitializeThunk;
+    PVOID user_start = dll->RtlUserThreadStart;
+    BOOLEAN translated = process->Machine != IMAGE_FILE_MACHINE_ARM64;
     if (!stack_reserve)
         stack_reserve = MIME_DEFAULT_STACK_RESERVE;
     stack_reserve = (stack_reserve + 0xFFFF) & ~(SIZE_T)0xFFFF;
@@ -172,6 +173,12 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     SIZE_T teb_size = MIME_TEB_SIZE;
     if (NT_SUCCESS(status))
         status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
+    /* the translator runs on a stack of its own, the program keeps the thread stack. */
+    PVOID native_stack = NULL;
+    SIZE_T native_size = MIME_NATIVE_STACK_SIZE;
+    if (NT_SUCCESS(status) && translated)
+        status = MiAllocateVirtual(process, &native_stack, &native_size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN,
+                                   PAGE_READWRITE);
     if (!NT_SUCCESS(status)) {
         KiAttachProcess(saved);
         return status;
@@ -191,6 +198,8 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     }
     thread->UserStackAllocation = stack;
     thread->UserStackSize = stack_reserve;
+    thread->NativeStackAllocation = native_stack;
+    thread->NativeStackSize = native_stack ? native_size : 0;
     thread->Win32StartAddress = start;
     thread->Tcb.Teb = teb_va;
 
@@ -221,7 +230,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     context->Cpsr = PSR_MODE_EL0;
 
     ctx->Pc = (ULONG64)ldr_thunk;
-    ctx->Sp = ctx_va;
+    ctx->Sp = native_stack ? (ULONG64)native_stack + native_size : ctx_va;
     ctx->X0 = ctx_va;
     ctx->X1 = (ULONG64)process->NtdllBase;
     ctx->Teb = (ULONG64)teb_va;

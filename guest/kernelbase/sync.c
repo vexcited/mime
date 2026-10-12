@@ -672,7 +672,7 @@ BOOL WINAPI EnterSynchronizationBarrier(LPSYNCHRONIZATION_BARRIER barrier, DWORD
     while (__atomic_load_n(&b->Generation, __ATOMIC_ACQUIRE) == generation) {
         if (spins > 0) {
             spins--;
-            __asm__ volatile("yield");
+            YieldProcessor();
         } else {
             NtYieldExecution();
         }

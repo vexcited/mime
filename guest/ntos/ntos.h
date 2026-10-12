@@ -323,9 +323,6 @@ NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, UL
 void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);
 NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize);
 NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize);
-extern PVOID KeUserCallbackDispatcher;
-extern PVOID KeUserExceptionDispatcher;
-extern PVOID KeUserApcDispatcher;
 
 /* ke/cpu.c, the id registers of the boot processor. */
 typedef struct KI_PROCESSOR_IDS {
@@ -630,12 +627,29 @@ typedef struct _ETHREAD {
     LIST_ENTRY ThreadListEntry; /* in EPROCESS */
     PVOID UserStackAllocation;
     SIZE_T UserStackSize;
+    PVOID NativeStackAllocation; /* the translator's own stack in x86 and x64 processes */
+    SIZE_T NativeStackSize;
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     LONG_PTR SameThreadApcFlags;
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
+
+/*
+ * the dll the kernel maps into every process and enters user mode
+ * through: ntdll.dll for arm64 programs, the translator mimex86.dll for
+ * x86 and x64 ones. its exports are cached when it is loaded at boot.
+ */
+typedef struct _PSP_SYSTEM_DLL {
+    PSECTION Section;
+    PVOID Base;
+    PVOID LdrInitializeThunk;
+    PVOID RtlUserThreadStart;
+    PVOID KiUserExceptionDispatcher;
+    PVOID KiUserApcDispatcher;
+    PVOID KiUserCallbackDispatcher;
+} PSP_SYSTEM_DLL, *PPSP_SYSTEM_DLL;
 
 typedef struct _EPROCESS {
     KPROCESS Pcb;
@@ -649,7 +663,9 @@ typedef struct _EPROCESS {
     PPEB Peb;
     PVOID SectionBaseAddress;
     PSECTION ImageSection;
-    PVOID NtdllBase;
+    PVOID NtdllBase;            /* base of the system dll */
+    PPSP_SYSTEM_DLL SystemDll;
+    USHORT Machine;             /* of the program image */
     CHAR ImageFileName[16];
     WCHAR ImagePathBuffer[MIME_IMAGE_NAME_CHARS];
     UNICODE_STRING ImagePath;
@@ -698,10 +714,10 @@ void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread);
 void PspReapDeadThreads(void);
-extern PVOID PspSystemDllBase;
-extern PSECTION PspSystemDllSection;
+extern PSP_SYSTEM_DLL PspNativeSystemDll;
+extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
-PVOID PspLookupSystemDllExport(const char *name);
+PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
 
 /* ------------------------------------------------------------------ io */
 

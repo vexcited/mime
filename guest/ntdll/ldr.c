@@ -19,7 +19,14 @@ static BOOLEAN g_process_initialized;
 static BOOLEAN g_process_detaching;
 static RTL_CRITICAL_SECTION g_peb_lock = {NULL, -1, 0, NULL, NULL, 0};
 
+#if defined(__x86_64__)
+/* the x64 system dlls, for programs run by the translator. */
+static const WCHAR g_system32[] = L"C:\\Windows\\SysX64\\";
+#define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
+#else
 static const WCHAR g_system32[] = L"C:\\Windows\\System32\\";
+#define LDRP_MACHINE IMAGE_FILE_MACHINE_ARM64
+#endif
 static const WCHAR g_windows[] = L"C:\\Windows\\";
 
 /* modules with static thread local storage, indexed by their tls slot. */
@@ -246,6 +253,11 @@ static NTSTATUS map_image(HANDLE file, PVOID *base)
     NtClose(section);
     if (status == STATUS_IMAGE_NOT_AT_BASE)
         status = STATUS_SUCCESS;
+    /* a process runs the dlls of a single processor. */
+    if (NT_SUCCESS(status) && LdrpNtHeaders(*base)->FileHeader.Machine != LDRP_MACHINE) {
+        NtUnmapViewOfSection(NtCurrentProcess(), *base);
+        status = STATUS_INVALID_IMAGE_FORMAT;
+    }
     return status;
 }
 

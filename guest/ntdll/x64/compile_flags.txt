@@ -1,0 +1,10 @@
+--target=x86_64-pc-windows-msvc
+-std=c17
+-ffreestanding
+-fms-extensions
+-I../../include
+-I../../../include
+-I../../rtl
+-I..
+-Wall
+-I../../../build/gen

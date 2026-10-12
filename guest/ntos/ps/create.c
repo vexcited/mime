@@ -166,6 +166,11 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
         ObDereferenceObject(section);
         return STATUS_INVALID_IMAGE_FORMAT;
     }
+    PPSP_SYSTEM_DLL system_dll = PspSystemDllForMachine(section->Image.Machine);
+    if (!system_dll) {
+        ObDereferenceObject(section);
+        return STATUS_INVALID_IMAGE_FORMAT;
+    }
 
     PEPROCESS process;
     status = PspCreateProcessObject(PsCurrentProcess(), &process);
@@ -174,6 +179,8 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
         return status;
     }
     process->ImageSection = section;
+    process->SystemDll = system_dll;
+    process->Machine = section->Image.Machine;
     process->MimeRequestId = request_id;
     SIZE_T n = image->Length / sizeof(WCHAR);
     if (n >= MIME_IMAGE_NAME_CHARS)
@@ -196,9 +203,9 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
         process->SectionBaseAddress = base;
         PVOID ntdll = NULL;
         SIZE_T ntdll_view = 0;
-        status = MiMapViewOfSection(PspSystemDllSection, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0);
+        status = MiMapViewOfSection(system_dll->Section, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0);
         if (status == STATUS_IMAGE_NOT_AT_BASE) {
-            /* ntdll must sit at its preferred base: the kernel caches its exports. */
+            /* the system dll must sit at its preferred base: the kernel caches its exports. */
             status = STATUS_CONFLICTING_ADDRESSES;
         }
         process->NtdllBase = ntdll;

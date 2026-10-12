@@ -18,6 +18,12 @@ extern PVOID LdrpNtdllBase;
 extern RTL_CRITICAL_SECTION LdrpLoaderLock;
 extern PVOID LdrpKernel32ThreadInitThunk; /* BaseThreadInitThunk, set when kernel32 loads */
 
+#if defined(__x86_64__)
+#define YieldProcessor() __asm__ volatile("pause")
+#else
+#define YieldProcessor() __asm__ volatile("yield")
+#endif
+
 FORCEINLINE HANDLE NtCurrentThreadId(void)
 {
     return NtCurrentTeb()->ClientId.UniqueThread;

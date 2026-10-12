@@ -120,7 +120,8 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     const IMAGE_NT_HEADERS64 *nt = (const void *)((const UCHAR *)headers + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)
         return STATUS_INVALID_IMAGE_FORMAT;
-    if (nt->FileHeader.Machine != IMAGE_FILE_MACHINE_ARM64 || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    if ((nt->FileHeader.Machine != IMAGE_FILE_MACHINE_ARM64 && nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) ||
+        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
         return STATUS_INVALID_IMAGE_FORMAT;
     const IMAGE_OPTIONAL_HEADER64 *opt = &nt->OptionalHeader;
     if (opt->SizeOfImage == 0 || opt->SizeOfImage > (1u << 30) || opt->SizeOfHeaders > opt->SizeOfImage)
