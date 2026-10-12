@@ -1,7 +1,7 @@
 /*
  * oleaut32 entry point.
  */
-#include <mime/win32/winbase.h>
+#include "oleaut32_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
