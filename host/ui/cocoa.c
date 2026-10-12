@@ -49,6 +49,10 @@ enum {
 };
 
 enum {
+    NSEventTypeKeyUp = 11,
+};
+
+enum {
     NSTrackingMouseEnteredAndExited = 0x01,
     NSTrackingMouseMoved = 0x02,
     NSTrackingActiveAlways = 0x80,
@@ -456,6 +460,32 @@ static BOOL delegate_should_close(id self, SEL sel, id window)
     return NO;
 }
 
+static void (*g_app_send_event)(id, SEL, id);
+
+/* appkit drops key up events while command is held; the guest needs them to release its keys. */
+static void app_send_event(id self, SEL sel, id event)
+{
+    NSUInteger type = MSG_UINT(event, "type");
+    if (type == NSEventTypeKeyUp && (MSG_UINT(event, "modifierFlags") & NSEventModifierFlagCommand)) {
+        id window = MSG_ID(self, "keyWindow");
+        if (window && find_by_nswindow(window)) {
+            MSG_V_ID(window, "sendEvent:", event);
+            return;
+        }
+    }
+    g_app_send_event(self, sel, event);
+}
+
+static void register_app_class(void)
+{
+    Class base = objc_getClass("NSApplication");
+    Class cls = objc_allocateClassPair(base, "MimeHostApplication", 0);
+    g_app_send_event = (void (*)(id, SEL, id))class_getMethodImplementation(base, SEL_("sendEvent:"));
+    class_addMethod(cls, SEL_("sendEvent:"), (IMP)app_send_event, "v@:@");
+    objc_registerClassPair(cls);
+    g_app = MSG_ID((id)cls, "sharedApplication");
+}
+
 static void register_classes(void)
 {
     g_window_class = objc_allocateClassPair(objc_getClass("NSWindow"), "MimeHostWindow", 0);
@@ -511,7 +541,7 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_sink = sink;
     g_sink_ctx = ctx;
     g_colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    g_app = MSG_ID(CLS("NSApplication"), "sharedApplication");
+    register_app_class();
     /* accessory: no dock icon or menu bar, the guest windows are the whole ui. */
     MSG_V_INT(g_app, "setActivationPolicy:", 1);
     MSG_V(g_app, "finishLaunching");
