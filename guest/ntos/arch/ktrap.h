@@ -19,8 +19,9 @@
 
 #define KTRAP_FLAG_FP_SAVED 1
 
-/* callee saved frame pushed by KiSwapContext and KiCallUserMode. */
-#define KSWITCH_FRAME_SIZE 0xA0
+/* callee saved frame pushed by KiSwapContext and KiCallUserMode, the switch frame also keeps fpcr. */
+#define KSWITCH_FRAME_SIZE 0xB0
+#define KSWITCH_FPCR 0xA0
 #define KCALLOUT_FRAME_SIZE 0xB0
 #define KCALLOUT_PREVIOUS_SP 0xA0
 

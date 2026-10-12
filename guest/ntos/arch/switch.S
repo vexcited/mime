@@ -39,9 +39,14 @@
     .p2align 2
 KiSwapContextInternal:
     PUSH_CALLEE KSWITCH_FRAME_SIZE
+    /* a thread blocked in a system call keeps its own rounding mode. */
+    mrs     x9, fpcr
+    str     x9, [sp, #KSWITCH_FPCR]
     mov     x9, sp
     str     x9, [x0]
     mov     sp, x1
+    ldr     x9, [sp, #KSWITCH_FPCR]
+    msr     fpcr, x9
     POP_CALLEE KSWITCH_FRAME_SIZE
     ret
 
