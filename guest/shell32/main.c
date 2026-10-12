@@ -1,7 +1,7 @@
 /*
  * shell32 entry point.
  */
-#include <mime/win32/winbase.h>
+#include "shell32_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
