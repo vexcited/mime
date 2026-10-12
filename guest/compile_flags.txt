@@ -7,3 +7,5 @@
 -Irtl
 -Wall
 -I../build/gen
+-I../third_party/khronos
+-Wno-ignored-attributes

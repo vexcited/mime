@@ -49,7 +49,8 @@ SYSX64 := $(BUILD)/guest/sysx64
 X64_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
 X64_FILES := $(patsubst %,$(SYSX64)/%.dll,$(X64_DLLS)) $(foreach n,$(EXTRA_NAMES),$(SYSX64)/$(call extra_file,$(n)))
 GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SYSTEM32)/%.dll,$(GUEST_DLLS)) \
-	$(foreach n,$(EXTRA_NAMES),$(SYSTEM32)/$(call extra_file,$(n)))
+	$(foreach n,$(EXTRA_NAMES),$(SYSTEM32)/$(call extra_file,$(n))) $(SYSTEM32)/opengl32.dll
+X64_FILES += $(SYSX64)/opengl32.dll
 # the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
 ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES)) \
 	$(patsubst $(SYSX64)/%,$(BUILD)/guest/rom/sysx64/%,$(X64_FILES))
@@ -439,6 +440,47 @@ endef
 $(foreach d,$(EXTRA_DLLS),$(eval $(call EXTRA_DLL,$(firstword $(subst :, ,$(d))),$(lastword $(subst :, ,$(d))),$(call extra_file,$(firstword $(subst :, ,$(d)))))))
 
 sysx64: $(X64_FILES)
+
+# ---------------------------------------------------------------- opengl32.dll
+
+# opengl on the host gpu: a native dll without imports, so the translator can map it into x64 processes
+# too, where an x64 opengl32.dll of stubs forwards each call to it (mime/mx64.h, tools/gengl.c).
+OPENGL32_SRC := $(wildcard guest/opengl32/*.c)
+OPENGL32_CFLAGS := -Iguest/opengl32 -Ithird_party/khronos -Wno-ignored-attributes -DNTSYSCALLAPI= -DW32KAPI=
+USER_CFLAGS_opengl32 := $(OPENGL32_CFLAGS)
+OPENGL32_OBJ := $(patsubst %.c,$(OBJ)/user/%.o,$(OPENGL32_SRC)) $(OBJ)/user/gen/opengl32/procs.o \
+	$(OBJ)/user/gen/opengl32/x64_thunks.o $(OBJ)/user/$(GEN)/ntdll_syscalls.o $(OBJ)/user/$(GEN)/win32u_syscalls.o \
+	$(USER_RT_OBJ)
+
+$(GEN)/opengl32/stamp: $(OPENGL32_SRC) $(BUILD)/tools/gengl
+	@mkdir -p $(dir $@)
+	$(BUILD)/tools/gengl $(GEN)/opengl32 $(OPENGL32_SRC)
+	touch $@
+
+$(GEN)/opengl32/exports.def $(GEN)/opengl32/procs.c $(GEN)/opengl32/x64_thunks.c $(GEN)/opengl32/x64_stubs.S \
+	$(GEN)/opengl32/x64.def: $(GEN)/opengl32/stamp ;
+
+$(OBJ)/user/gen/opengl32/%.o: $(GEN)/opengl32/%.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) $(OPENGL32_CFLAGS) -c $< -o $@
+
+$(SYSTEM32)/opengl32.dll: $(OPENGL32_OBJ) $(GEN)/opengl32/exports.def $(GEN)/res/opengl32.dll.res
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(USER_DLL_LDFLAGS) /noentry /base:0x7FF550000000 /def:$(GEN)/opengl32/exports.def /out:$@ \
+		$(OPENGL32_OBJ) $(GEN)/res/opengl32.dll.res
+
+X64_OPENGL32_OBJ := $(X64_OBJ)/guest/opengl32/x64/main.o $(X64_OBJ)/guest/opengl32/x64/native.o \
+	$(X64_OBJ)/gen/opengl32/x64_stubs.o $(X64_OBJ)/guest/crt/x64/chkstk.o
+
+$(X64_OBJ)/gen/opengl32/x64_stubs.o: $(GEN)/opengl32/x64_stubs.S
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_ASFLAGS) -c $< -o $@
+
+$(SYSX64)/opengl32.dll: $(X64_OPENGL32_OBJ) $(GEN)/opengl32/x64.def $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32) \
+	$(GEN)/res/opengl32.dll.res
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:0x7FF540000000 /def:$(GEN)/opengl32/x64.def /out:$@ \
+		$(X64_OPENGL32_OBJ) $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32) $(GEN)/res/opengl32.dll.res
 
 # ---------------------------------------------------------------- examples
 

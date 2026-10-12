@@ -5,6 +5,7 @@
 #include <mime/nt.h>
 #include <mime/ntuser.h>
 #include <mime/win32/winbase.h>
+#include <mime/pixelformat.h>
 
 /* ------------------------------------------------------------------ paths */
 
@@ -217,77 +218,8 @@ WINGDIAPI int WINAPI Escape(HDC dc, int escape, int in_size, LPCSTR in, LPVOID o
 
 /* ------------------------------------------------------------------ pixel formats */
 
-/*
- * the formats of the generic gdi implementation of opengl32 on a 32 bpp
- * display. windows reports them through opengl32; mime has no opengl, so
- * the formats can be described and selected but nothing renders through
- * them. the exact list is a guess modeled on the generic implementation.
- */
-typedef struct PIXEL_FORMAT {
-    DWORD Flags;
-    BYTE ColorBits;
-    BYTE AlphaBits;
-    BYTE AccumBits;
-    BYTE DepthBits;
-    BYTE StencilBits;
-} PIXEL_FORMAT;
-
-#define GENERIC_WINDOW (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_GENERIC_FORMAT)
-#define GENERIC_BITMAP (PFD_DRAW_TO_BITMAP | PFD_SUPPORT_GDI | PFD_SUPPORT_OPENGL | PFD_GENERIC_FORMAT)
-
-static const PIXEL_FORMAT g_formats[] = {
-    {GENERIC_WINDOW | PFD_SUPPORT_GDI | PFD_DRAW_TO_BITMAP, 32, 0, 64, 32, 8},
-    {GENERIC_WINDOW | PFD_SUPPORT_GDI | PFD_DRAW_TO_BITMAP, 32, 0, 64, 16, 8},
-    {GENERIC_WINDOW | PFD_DOUBLEBUFFER | PFD_SWAP_COPY, 32, 0, 64, 32, 8},
-    {GENERIC_WINDOW | PFD_DOUBLEBUFFER | PFD_SWAP_COPY, 32, 0, 64, 16, 8},
-    {GENERIC_WINDOW | PFD_SUPPORT_GDI | PFD_DRAW_TO_BITMAP, 32, 8, 64, 32, 8},
-    {GENERIC_WINDOW | PFD_DOUBLEBUFFER | PFD_SWAP_COPY, 32, 8, 64, 32, 8},
-    {GENERIC_BITMAP, 24, 0, 64, 32, 8},
-    {GENERIC_BITMAP, 24, 0, 64, 16, 8},
-    {GENERIC_BITMAP, 16, 0, 32, 32, 8},
-    {GENERIC_BITMAP, 16, 0, 32, 16, 8},
-    {GENERIC_BITMAP, 8, 0, 16, 32, 8},
-    {GENERIC_BITMAP, 8, 0, 16, 16, 8},
-};
-
-#define FORMAT_COUNT ((int)RTL_NUMBER_OF(g_formats))
-
-static void describe(int index, PIXELFORMATDESCRIPTOR *pfd)
-{
-    const PIXEL_FORMAT *f = &g_formats[index - 1];
-    memset(pfd, 0, sizeof(*pfd));
-    pfd->nSize = sizeof(*pfd);
-    pfd->nVersion = 1;
-    pfd->dwFlags = f->Flags;
-    pfd->iPixelType = f->ColorBits == 8 ? PFD_TYPE_COLORINDEX : PFD_TYPE_RGBA;
-    pfd->cColorBits = f->ColorBits;
-    switch (f->ColorBits) {
-    case 32:
-    case 24:
-        pfd->cRedBits = pfd->cGreenBits = pfd->cBlueBits = 8;
-        pfd->cRedShift = 16;
-        pfd->cGreenShift = 8;
-        pfd->cBlueShift = 0;
-        break;
-    case 16:
-        pfd->cRedBits = pfd->cBlueBits = 5;
-        pfd->cGreenBits = 6;
-        pfd->cRedShift = 11;
-        pfd->cGreenShift = 5;
-        break;
-    default:
-        pfd->dwFlags |= PFD_NEED_PALETTE;
-        break;
-    }
-    pfd->cAlphaBits = f->AlphaBits;
-    pfd->cAlphaShift = f->AlphaBits ? 24 : 0;
-    pfd->cAccumBits = f->AccumBits;
-    pfd->cAccumRedBits = pfd->cAccumGreenBits = pfd->cAccumBlueBits = (BYTE)(f->AccumBits / 4);
-    pfd->cAccumAlphaBits = f->AlphaBits ? (BYTE)(f->AccumBits / 4) : 0;
-    pfd->cDepthBits = f->DepthBits;
-    pfd->cStencilBits = f->StencilBits;
-    pfd->iLayerType = PFD_MAIN_PLANE;
-}
+#define FORMAT_COUNT MIME_PIXEL_FORMAT_COUNT
+#define describe MimeDescribePixelFormat
 
 WINGDIAPI int WINAPI DescribePixelFormat(HDC dc, int format, UINT size, LPPIXELFORMATDESCRIPTOR pfd)
 {
@@ -318,37 +250,7 @@ WINGDIAPI int WINAPI ChoosePixelFormat(HDC dc, const PIXELFORMATDESCRIPTOR *want
         SetLastError(ERROR_INVALID_HANDLE);
         return 0;
     }
-    DWORD required = want->dwFlags & (PFD_DRAW_TO_WINDOW | PFD_DRAW_TO_BITMAP | PFD_SUPPORT_GDI | PFD_SUPPORT_OPENGL);
-    int best = 0;
-    LONG best_score = 0x7FFFFFFF;
-    for (int i = 1; i <= FORMAT_COUNT; i++) {
-        PIXELFORMATDESCRIPTOR pfd;
-        describe(i, &pfd);
-        if ((pfd.dwFlags & required) != required)
-            continue;
-        LONG score = 0;
-        if (!(want->dwFlags & PFD_DOUBLEBUFFER_DONTCARE) &&
-            !!(want->dwFlags & PFD_DOUBLEBUFFER) != !!(pfd.dwFlags & PFD_DOUBLEBUFFER))
-            score += 10000;
-        if ((want->iPixelType == PFD_TYPE_COLORINDEX) != (pfd.iPixelType == PFD_TYPE_COLORINDEX))
-            score += 5000;
-        if (want->cColorBits)
-            score += (LONG)(want->cColorBits > pfd.cColorBits ? want->cColorBits - pfd.cColorBits
-                                                             : pfd.cColorBits - want->cColorBits) * 20;
-        if (want->cAlphaBits && !pfd.cAlphaBits)
-            score += 1000;
-        if (!want->cAlphaBits && pfd.cAlphaBits)
-            score += 1;
-        if (!(want->dwFlags & PFD_DEPTH_DONTCARE) && want->cDepthBits > pfd.cDepthBits)
-            score += 500;
-        if (want->cStencilBits > pfd.cStencilBits)
-            score += 500;
-        if (score < best_score) {
-            best_score = score;
-            best = i;
-        }
-    }
-    return best;
+    return MimeChoosePixelFormat(want);
 }
 
 WINGDIAPI BOOL WINAPI SetPixelFormat(HDC dc, int format, const PIXELFORMATDESCRIPTOR *pfd)
@@ -372,7 +274,7 @@ WINGDIAPI int WINAPI GetPixelFormat(HDC dc)
     return (int)v;
 }
 
-/* nothing renders through opengl, so a double buffered window has nothing to show. */
+/* like windows, the opengl32 the process loaded presents. */
 WINGDIAPI BOOL WINAPI SwapBuffers(HDC dc)
 {
     int format = GetPixelFormat(dc);
@@ -384,5 +286,7 @@ WINGDIAPI BOOL WINAPI SwapBuffers(HDC dc)
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return TRUE;
+    HMODULE gl = GetModuleHandleW(L"opengl32.dll");
+    BOOL(WINAPI * swap)(HDC) = gl ? (BOOL(WINAPI *)(HDC))GetProcAddress(gl, "wglSwapBuffers") : NULL;
+    return swap ? swap(dc) : TRUE;
 }

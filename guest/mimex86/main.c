@@ -23,6 +23,8 @@
 #include "mime_svc_win32k.h"
 #include "x86.h"
 
+#include <mime/mx64.h>
+
 #define MX_EXPORT __declspec(dllexport)
 
 /* where translated code returns to its native caller: never mapped. */
@@ -292,6 +294,78 @@ static NTSTATUS get_context(X86Cpu *c, HANDLE thread, AMD64_CONTEXT *out)
     return STATUS_SUCCESS;
 }
 
+/* ------------------------------------------------------------ native calls */
+
+static const MX_NATIVE_TABLE *g_native[256];
+
+static PVOID image_export(PVOID base, const char *name);
+
+/* maps a native system dll; its own preferred base keeps it apart from the x64 images. */
+static NTSTATUS native_load(ULONG table, PCWSTR file_name, const char *export_name)
+{
+    if (table >= RTL_NUMBER_OF(g_native) || !file_name || !export_name)
+        return STATUS_INVALID_PARAMETER;
+    if (g_native[table])
+        return STATUS_SUCCESS;
+    WCHAR buffer[MAX_PATH];
+    static const WCHAR dir[] = L"\\SystemRoot\\System32\\";
+    SIZE_T n = wcslen(file_name);
+    if (n + RTL_NUMBER_OF(dir) > RTL_NUMBER_OF(buffer))
+        return STATUS_NAME_TOO_LONG;
+    memcpy(buffer, dir, sizeof(dir));
+    memcpy(buffer + RTL_NUMBER_OF(dir) - 1, file_name, (n + 1) * sizeof(WCHAR));
+    UNICODE_STRING path;
+    RtlInitUnicodeString(&path, buffer);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    IO_STATUS_BLOCK iosb;
+    HANDLE file, section;
+    NTSTATUS status = NtOpenFile(&file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ,
+                                 FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, NULL, NULL,
+                             PAGE_EXECUTE_READ, SEC_IMAGE, file);
+    NtClose(file);
+    if (!NT_SUCCESS(status))
+        return status;
+    PVOID base = NULL;
+    SIZE_T size = 0;
+    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, NULL, &size, ViewShare, 0,
+                                PAGE_EXECUTE_WRITECOPY);
+    NtClose(section);
+    if (!NT_SUCCESS(status))
+        return status;
+    const MX_NATIVE_TABLE *t = image_export(base, export_name);
+    if (!t)
+        return STATUS_ENTRYPOINT_NOT_FOUND;
+    g_native[table] = t;
+    return STATUS_SUCCESS;
+}
+
+static void native_call(X86Cpu *c, ULONG number, const ULONG64 *a)
+{
+    if (number >= MX_NATIVE_LOAD) {
+        c->r[X86_RAX] = (ULONG64)(LONG64)native_load((ULONG)a[0], (PCWSTR)a[1], (const char *)a[2]);
+        return;
+    }
+    const MX_NATIVE_TABLE *t = g_native[(number >> 16) & 0xFF];
+    ULONG index = number & 0xFFFF;
+    if (!t || index >= t->Count) {
+        c->r[X86_RAX] = (ULONG64)(LONG64)STATUS_INVALID_SYSTEM_SERVICE;
+        return;
+    }
+    MX_NATIVE_CALL call = {
+        .gpr = {a[0], a[1], a[2], a[3]},
+        .xmm = {c->xmm[0].q[0], c->xmm[1].q[0], c->xmm[2].q[0], c->xmm[3].q[0]},
+        .stack = (const ULONG64 *)(c->r[X86_RSP] + 0x28),
+    };
+    t->Functions[index](&call);
+    c->r[X86_RAX] = call.rax;
+    c->xmm[0].q[0] = call.xmm0;
+    c->xmm[0].q[1] = 0;
+}
+
 static void env_syscall(X86Cpu *c)
 {
     MX_THREAD *t = c->user;
@@ -301,6 +375,10 @@ static void env_syscall(X86Cpu *c)
     a[1] = c->r[X86_RDX];
     a[2] = c->r[X86_R8];
     a[3] = c->r[X86_R9];
+    if ((number & 0xFF000000u) == MX_NATIVE_SYSCALL) {
+        native_call(c, number, a);
+        return;
+    }
     for (int i = 4; i < 16; i++)
         a[i] = *(ULONG64 *)(c->r[X86_RSP] + 0x28 + 8 * (i - 4));
 

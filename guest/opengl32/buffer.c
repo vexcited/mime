@@ -1,0 +1,332 @@
+/*
+ * buffer objects. their storage is heap memory the gpu reads in place, so
+ * an update of a buffer the gpu may still be reading moves it to new
+ * memory instead of waiting; the old memory is reused once the gpu passed
+ * the last fence that read it.
+ */
+#include "opengl32.h"
+
+
+GlBuffer *gl_buffer(GlContext *ctx, GLuint name)
+{
+    void *b = gl_name_get(&ctx->shared->buffers, name);
+    return b == GL_RESERVED ? NULL : b;
+}
+
+static GLuint *binding_of(GlContext *ctx, GLenum target)
+{
+    switch (target) {
+    case GL_ARRAY_BUFFER:
+        return &ctx->array_buffer;
+    case GL_ELEMENT_ARRAY_BUFFER:
+        return &ctx->vao->element_buffer;
+    case GL_PIXEL_PACK_BUFFER:
+        return &ctx->pixel_pack;
+    case GL_PIXEL_UNPACK_BUFFER:
+        return &ctx->pixel_unpack;
+    case GL_COPY_READ_BUFFER:
+        return &ctx->copy_read;
+    case GL_COPY_WRITE_BUFFER:
+        return &ctx->copy_write;
+    case GL_UNIFORM_BUFFER:
+        return &ctx->uniform_buffer;
+    default:
+        return NULL;
+    }
+}
+
+GlBuffer *gl_bound_buffer(GlContext *ctx, GLenum target)
+{
+    GLuint *b = binding_of(ctx, target);
+    return b ? gl_buffer(ctx, *b) : NULL;
+}
+
+GLAPI void APIENTRY glGenBuffers(GLsizei n, GLuint *buffers)
+{
+    GL_CONTEXT_OR_RETURN();
+    for (GLsizei i = 0; i < n; i++)
+        buffers[i] = gl_name_new(&ctx->shared->buffers);
+}
+
+GLAPI void APIENTRY glCreateBuffers(GLsizei n, GLuint *buffers)
+{
+    glGenBuffers(n, buffers);
+}
+
+static GlBuffer *make(GlContext *ctx, GLuint name)
+{
+    GlBuffer *b = gl_buffer(ctx, name);
+    if (!b) {
+        b = gl_alloc(sizeof(GlBuffer));
+        if (!b)
+            return NULL;
+        b->name = name;
+        b->usage = GL_STATIC_DRAW;
+        b->dirty_index_range = TRUE;
+        gl_name_set(&ctx->shared->buffers, name, b);
+    }
+    return b;
+}
+
+GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
+{
+    GL_CONTEXT_OR_RETURN();
+    for (GLsizei i = 0; i < n; i++) {
+        GLuint name = buffers[i];
+        void *o = gl_name_get(&ctx->shared->buffers, name);
+        if (!o)
+            continue;
+        if (o != GL_RESERVED) {
+            GlBuffer *b = o;
+            gl_heap_free(&b->mem, b->last_use);
+            gl_free(b);
+        }
+        gl_name_set(&ctx->shared->buffers, name, NULL);
+        if (ctx->array_buffer == name)
+            ctx->array_buffer = 0;
+        if (ctx->vao->element_buffer == name)
+            ctx->vao->element_buffer = 0;
+        for (int a = 0; a < MIME_GPU_MAX_ATTRIBS; a++)
+            if (ctx->vao->attribs[a].buffer == name)
+                ctx->vao->attribs[a].buffer = 0;
+    }
+    ctx->dirty |= DIRTY_VERTEX;
+}
+
+GLAPI GLboolean APIENTRY glIsBuffer(GLuint name)
+{
+    GL_CONTEXT_OR_RETURN(GL_FALSE);
+    return gl_buffer(ctx, name) ? GL_TRUE : GL_FALSE;
+}
+
+GLAPI void APIENTRY glBindBuffer(GLenum target, GLuint name)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLuint *b = binding_of(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    if (name && !make(ctx, name)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    *b = name;
+    if (target == GL_ELEMENT_ARRAY_BUFFER)
+        ctx->dirty |= DIRTY_VERTEX;
+}
+
+GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
+{
+    glBindBuffer(target, name);
+}
+
+GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size)
+{
+    glBindBuffer(target, name);
+}
+
+/* gives the buffer new storage of size, keeping keep bytes of its contents. */
+static BOOL rename(GlBuffer *b, uint64_t size, uint64_t keep)
+{
+    GlMem mem;
+    if (!gl_heap_alloc(size ? size : 1, &mem))
+        return FALSE;
+    if (keep && b->mem.ptr)
+        memcpy(mem.ptr, b->mem.ptr, keep < size ? keep : size);
+    gl_heap_free(&b->mem, b->last_use);
+    b->mem = mem;
+    b->size = size;
+    b->last_use = 0;
+    b->dirty_index_range = TRUE;
+    return TRUE;
+}
+
+static BOOL in_use(GlBuffer *b)
+{
+    return b->last_use && !gl_fence_done(b->last_use);
+}
+
+GLAPI void APIENTRY glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b || size < 0) {
+        gl_error(ctx, b ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
+        return;
+    }
+    b->usage = usage;
+    if ((uint64_t)size != b->size || !b->mem.ptr || in_use(b)) {
+        if (!rename(b, (uint64_t)size, 0)) {
+            gl_error(ctx, GL_OUT_OF_MEMORY);
+            return;
+        }
+    }
+    if (data && size)
+        memcpy(b->mem.ptr, data, (SIZE_T)size);
+    b->dirty_index_range = TRUE;
+    ctx->dirty |= DIRTY_VERTEX;
+}
+
+GLAPI void APIENTRY glBufferStorage(GLenum target, GLsizeiptr size, const void *data, GLbitfield flags)
+{
+    glBufferData(target, size, data, GL_STATIC_DRAW);
+}
+
+GLAPI void APIENTRY glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b || offset < 0 || size < 0 || (uint64_t)(offset + size) > b->size) {
+        gl_error(ctx, b ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
+        return;
+    }
+    if (!size || !data)
+        return;
+    if (in_use(b) && !rename(b, b->size, b->size)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    memcpy(b->mem.ptr + offset, data, (SIZE_T)size);
+    b->dirty_index_range = TRUE;
+    ctx->dirty |= DIRTY_VERTEX;
+}
+
+GLAPI void APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b || offset < 0 || size < 0 || (uint64_t)(offset + size) > b->size) {
+        gl_error(ctx, b ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
+        return;
+    }
+    /* the gpu writes buffers only through readbacks: they finish before the fence. */
+    if (in_use(b))
+        gl_wait(b->last_use);
+    memcpy(data, b->mem.ptr + offset, (SIZE_T)size);
+}
+
+GLAPI void *APIENTRY glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access)
+{
+    GL_CONTEXT_OR_RETURN(NULL);
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b || b->mapped || offset < 0 || length < 0 || (uint64_t)(offset + length) > b->size) {
+        gl_error(ctx, !b || b->mapped ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return NULL;
+    }
+    if (!(access & GL_MAP_UNSYNCHRONIZED_BIT) && in_use(b)) {
+        uint64_t keep = (access & GL_MAP_INVALIDATE_BUFFER_BIT) ? 0 : b->size;
+        if (access & GL_MAP_READ_BIT) {
+            gl_wait(b->last_use);
+        } else if (!rename(b, b->size, keep)) {
+            gl_error(ctx, GL_OUT_OF_MEMORY);
+            return NULL;
+        }
+    }
+    b->mapped = TRUE;
+    b->map_access = access;
+    b->map_offset = (uint64_t)offset;
+    b->map_length = (uint64_t)length;
+    b->dirty_index_range = TRUE;
+    return b->mem.ptr + offset;
+}
+
+GLAPI void *APIENTRY glMapBuffer(GLenum target, GLenum access)
+{
+    GL_CONTEXT_OR_RETURN(NULL);
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return NULL;
+    }
+    GLbitfield bits = access == GL_READ_ONLY ? GL_MAP_READ_BIT
+                      : access == GL_WRITE_ONLY ? GL_MAP_WRITE_BIT
+                                                : GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
+    return glMapBufferRange(target, 0, (GLsizeiptr)b->size, bits);
+}
+
+GLAPI GLboolean APIENTRY glUnmapBuffer(GLenum target)
+{
+    GL_CONTEXT_OR_RETURN(GL_FALSE);
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b || !b->mapped) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return GL_FALSE;
+    }
+    b->mapped = FALSE;
+    ctx->dirty |= DIRTY_VERTEX;
+    return GL_TRUE;
+}
+
+GLAPI void APIENTRY glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsizeiptr length)
+{
+}
+
+GLAPI void APIENTRY glGetBufferParameteriv(GLenum target, GLenum pname, GLint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    switch (pname) {
+    case GL_BUFFER_SIZE:
+        *params = (GLint)b->size;
+        break;
+    case GL_BUFFER_USAGE:
+        *params = (GLint)b->usage;
+        break;
+    case GL_BUFFER_MAPPED:
+        *params = b->mapped;
+        break;
+    case GL_BUFFER_ACCESS:
+        *params = GL_READ_WRITE;
+        break;
+    case GL_BUFFER_ACCESS_FLAGS:
+        *params = (GLint)b->map_access;
+        break;
+    case GL_BUFFER_MAP_OFFSET:
+        *params = (GLint)b->map_offset;
+        break;
+    case GL_BUFFER_MAP_LENGTH:
+        *params = (GLint)b->map_length;
+        break;
+    default:
+        gl_error(ctx, GL_INVALID_ENUM);
+        break;
+    }
+}
+
+GLAPI void APIENTRY glGetBufferParameteri64v(GLenum target, GLenum pname, GLint64 *params)
+{
+    GLint v = 0;
+    glGetBufferParameteriv(target, pname, &v);
+    *params = v;
+}
+
+GLAPI void APIENTRY glGetBufferPointerv(GLenum target, GLenum pname, void **params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    *params = b && b->mapped ? b->mem.ptr + b->map_offset : NULL;
+}
+
+GLAPI void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target, GLintptr read_offset,
+                                        GLintptr write_offset, GLsizeiptr size)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *src = gl_bound_buffer(ctx, read_target), *dst = gl_bound_buffer(ctx, write_target);
+    if (!src || !dst || read_offset < 0 || write_offset < 0 || size < 0 ||
+        (uint64_t)(read_offset + size) > src->size || (uint64_t)(write_offset + size) > dst->size) {
+        gl_error(ctx, !src || !dst ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return;
+    }
+    if (in_use(dst) && !rename(dst, dst->size, dst->size)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    memmove(dst->mem.ptr + write_offset, src->mem.ptr + read_offset, (SIZE_T)size);
+    dst->dirty_index_range = TRUE;
+    ctx->dirty |= DIRTY_VERTEX;
+}
