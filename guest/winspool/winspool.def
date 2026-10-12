@@ -1,0 +1,7 @@
+LIBRARY winspool.drv
+EXPORTS
+    DeviceCapabilities=DeviceCapabilitiesA
+    DEVICECAPABILITIES=DeviceCapabilitiesA
+    EXTDEVICEMODE=ExtDeviceMode
+    DEVICEMODE=DeviceMode
+    ADVANCEDSETUPDIALOG=AdvancedSetupDialog

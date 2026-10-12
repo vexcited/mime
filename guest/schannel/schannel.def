@@ -1,0 +1,28 @@
+; schannel forwards the security support provider interface to secur32,
+; like windows forwards it to sspicli.
+LIBRARY schannel.dll
+EXPORTS
+    AcceptSecurityContext=secur32.AcceptSecurityContext
+    AcquireCredentialsHandleA=secur32.AcquireCredentialsHandleA
+    AcquireCredentialsHandleW=secur32.AcquireCredentialsHandleW
+    ApplyControlToken=secur32.ApplyControlToken
+    CompleteAuthToken=secur32.CompleteAuthToken
+    DeleteSecurityContext=secur32.DeleteSecurityContext
+    EnumerateSecurityPackagesA=secur32.EnumerateSecurityPackagesA
+    EnumerateSecurityPackagesW=secur32.EnumerateSecurityPackagesW
+    FreeContextBuffer=secur32.FreeContextBuffer
+    FreeCredentialsHandle=secur32.FreeCredentialsHandle
+    ImpersonateSecurityContext=secur32.ImpersonateSecurityContext
+    InitSecurityInterfaceA=secur32.InitSecurityInterfaceA
+    InitSecurityInterfaceW=secur32.InitSecurityInterfaceW
+    InitializeSecurityContextA=secur32.InitializeSecurityContextA
+    InitializeSecurityContextW=secur32.InitializeSecurityContextW
+    MakeSignature=secur32.MakeSignature
+    QueryContextAttributesA=secur32.QueryContextAttributesA
+    QueryContextAttributesW=secur32.QueryContextAttributesW
+    QuerySecurityPackageInfoA=secur32.QuerySecurityPackageInfoA
+    QuerySecurityPackageInfoW=secur32.QuerySecurityPackageInfoW
+    RevertSecurityContext=secur32.RevertSecurityContext
+    SealMessage=secur32.SealMessage
+    UnsealMessage=secur32.UnsealMessage
+    VerifySignature=secur32.VerifySignature
