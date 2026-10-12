@@ -147,7 +147,7 @@ WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buff
     return NtGdiGetFontData(dc, table, offset, buffer, size);
 }
 
-/* the string offsets win32k returns become pointers into the caller's buffer. */
+/* the string fields stay offsets from the start of the structure, as on windows. */
 WINGDIAPI UINT WINAPI GetOutlineTextMetricsW(HDC dc, UINT size, LPOUTLINETEXTMETRICW otm)
 {
     if (!otm)
@@ -156,22 +156,14 @@ WINGDIAPI UINT WINAPI GetOutlineTextMetricsW(HDC dc, UINT size, LPOUTLINETEXTMET
     if (!needed)
         return 0;
     if (size >= needed) {
-        UINT n = NtGdiGetOutlineTextMetricsInternalW(dc, size, otm, NULL);
-        if (!n)
-            return 0;
-        otm->otmpFamilyName = (PSTR)otm + (ULONG_PTR)otm->otmpFamilyName;
-        otm->otmpFaceName = (PSTR)otm + (ULONG_PTR)otm->otmpFaceName;
-        otm->otmpStyleName = (PSTR)otm + (ULONG_PTR)otm->otmpStyleName;
-        otm->otmpFullName = (PSTR)otm + (ULONG_PTR)otm->otmpFullName;
-        return n;
+        return NtGdiGetOutlineTextMetricsInternalW(dc, size, otm, NULL);
     }
-    /* a short buffer receives the fixed part; the string pointers are not valid then. */
+    /* a short buffer receives the fixed part; the string offsets point past it then. */
     OUTLINETEXTMETRICW *full = heap_alloc(needed);
     if (!full)
         return 0;
     UINT n = NtGdiGetOutlineTextMetricsInternalW(dc, needed, full, NULL);
     if (n) {
-        full->otmpFamilyName = full->otmpFaceName = full->otmpStyleName = full->otmpFullName = NULL;
         memcpy(otm, full, size < sizeof(*full) ? size : sizeof(*full));
         n = size;
     }
@@ -191,8 +183,10 @@ WINGDIAPI UINT WINAPI GetOutlineTextMetricsA(HDC dc, UINT size, LPOUTLINETEXTMET
         heap_free(w);
         return 0;
     }
-    LPCWSTR names[4] = {(LPCWSTR)w->otmpFamilyName, (LPCWSTR)w->otmpFaceName, (LPCWSTR)w->otmpStyleName,
-                        (LPCWSTR)w->otmpFullName};
+    LPCWSTR names[4] = {(LPCWSTR)((PUCHAR)w + (ULONG_PTR)w->otmpFamilyName),
+                        (LPCWSTR)((PUCHAR)w + (ULONG_PTR)w->otmpFaceName),
+                        (LPCWSTR)((PUCHAR)w + (ULONG_PTR)w->otmpStyleName),
+                        (LPCWSTR)((PUCHAR)w + (ULONG_PTR)w->otmpFullName)};
     int lengths[4];
     UINT needed = sizeof(OUTLINETEXTMETRICA);
     for (int i = 0; i < 4; i++) {
@@ -221,12 +215,6 @@ WINGDIAPI UINT WINAPI GetOutlineTextMetricsA(HDC dc, UINT size, LPOUTLINETEXTMET
         }
         UINT n = size < needed ? size : needed;
         memcpy(otm, a, n);
-        if (size >= needed) {
-            otm->otmpFamilyName = (PSTR)otm + (ULONG_PTR)out->otmpFamilyName;
-            otm->otmpFaceName = (PSTR)otm + (ULONG_PTR)out->otmpFaceName;
-            otm->otmpStyleName = (PSTR)otm + (ULONG_PTR)out->otmpStyleName;
-            otm->otmpFullName = (PSTR)otm + (ULONG_PTR)out->otmpFullName;
-        }
         result = n;
         heap_free(a);
     }
