@@ -380,6 +380,8 @@ const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint);
 const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index);
 USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyphs */
 void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc);
+UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
+                             LONG *height);
 void FontReleaseProcess(HANDLE pid);
 void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars);
 LONG FontTextWidth(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG extra);

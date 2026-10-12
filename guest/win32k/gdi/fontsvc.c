@@ -682,6 +682,66 @@ static void rasterize_outline(const OUTLINE *o, const GLYPH_XFORM *t, LONG left,
     W32Free(row);
 }
 
+/*
+ * renders a glyph through the 2x2 part of a world transform, which maps y down
+ * logical pixels to y down device pixels. returns pool coverage and its offset
+ * from the glyph origin, or NULL for an empty glyph.
+ */
+UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
+                             LONG *height)
+{
+    /* outlines are y up: the off diagonal terms change sign. */
+    float a11 = m->eM11, a12 = -m->eM12, a21 = -m->eM21, a22 = m->eM22;
+    float sx = fi->ScaleX, sy = fi->ScaleY, shear = fi->SimItalic ? 0.2f : 0.0f;
+    UCHAR *cov = NULL;
+    if (a12 == 0 && a11 > 0 && a22 > 0) {
+        MimeTtfRenderParams params = {sx * a11, sy * a22, 0, 0, (shear * a11 + a21) / a22,
+                                      fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
+        int x0, y0, x1, y1;
+        if (!mime_ttf_glyph_box_ex(&fi->Face->Ttf, index, &params, &x0, &y0, &x1, &y1) || x1 <= x0 || y1 <= y0)
+            return NULL;
+        cov = W32Alloc((SIZE_T)(x1 - x0) * (y1 - y0));
+        if (!cov)
+            return NULL;
+        memset(cov, 0, (SIZE_T)(x1 - x0) * (y1 - y0));
+        mime_ttf_render_glyph_ex(&fi->Face->Ttf, &FontAllocator, index, &params, cov, x1 - x0, y1 - y0, x1 - x0);
+        *left = x0;
+        *top = y0;
+        *width = x1 - x0;
+        *height = y1 - y0;
+        return cov;
+    }
+    OUTLINE o;
+    if (!outline_load(fi, index, &o))
+        return NULL;
+    GLYPH_XFORM t = {sx * a11, sx * a12, shear * sy * a11 + sy * a21, shear * sy * a12 + sy * a22};
+    float lo_x = 0, hi_x = 0, lo_y = 0, hi_y = 0;
+    for (ULONG i = 0; i < o.Count; i++) {
+        float x, y;
+        xform_apply(&t, o.X[i], o.Y[i], &x, &y);
+        if (!i || x < lo_x)
+            lo_x = x;
+        if (!i || x > hi_x)
+            hi_x = x;
+        if (!i || y < lo_y)
+            lo_y = y;
+        if (!i || y > hi_y)
+            hi_y = y;
+    }
+    LONG bx0 = floor_f(lo_x), bx1 = ceil_f(hi_x), top_up = ceil_f(hi_y), by1 = -floor_f(lo_y);
+    LONG w = bx1 - bx0, h = by1 + top_up;
+    if (o.Count && w > 0 && h > 0 && (cov = W32Alloc((SIZE_T)w * h)) != NULL) {
+        memset(cov, 0, (SIZE_T)w * h);
+        rasterize_outline(&o, &t, bx0, top_up, w, h, cov);
+        *left = bx0;
+        *top = -top_up;
+        *width = w;
+        *height = h;
+    }
+    outline_free(&o);
+    return cov;
+}
+
 static float fixed_to_float(FIXED f)
 {
     return (float)f.value + (float)f.fract / 65536.0f;
@@ -704,6 +764,17 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
     if (!fi) {
         UserLeave();
         return GDI_ERROR;
+    }
+    if (dc->State.HasXform) {
+        /* the font is realized through the world transform, y up here: the matrix applies first. */
+        const XFORM *w = &dc->State.World;
+        float w11 = w->eM11, w12 = -w->eM12, w21 = -w->eM21, w22 = w->eM22;
+        float c11 = m11 * w11 + m12 * w21, c12 = m11 * w12 + m12 * w22;
+        float c21 = m21 * w11 + m22 * w21, c22 = m21 * w12 + m22 * w22;
+        m11 = c11;
+        m12 = c12;
+        m21 = c21;
+        m22 = c22;
     }
     USHORT index = (format & GGO_GLYPH_INDEX) ? ch : FontGlyphIndex(fi, ch);
     const GLYPH *cached = FontGetGlyphIndex(fi, index);
