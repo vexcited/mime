@@ -1,0 +1,294 @@
+# mime build. requires llvm clang, lld-link and llvm-nm.
+#   make            everything below
+#   make host       the mime command, build/mime, with the guest files embedded
+#   make guest      the guest system files, build/guest/system32
+#   make examples   the example programs, build/examples
+
+BUILD := build
+CC := clang
+LLD_LINK := lld-link
+NM := llvm-nm
+RC := llvm-rc
+STRIP := llvm-strip
+
+HOST_CFLAGS := -std=c17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
+HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -lobjc
+
+GUEST_TARGET := --target=aarch64-pc-windows-msvc -march=armv8.2-a
+GUEST_CFLAGS := $(GUEST_TARGET) -std=c17 -O2 -g -gdwarf -ffreestanding -fms-extensions -fno-stack-protector \
+	-Iinclude -Iguest/include -Iguest/rtl -I$(BUILD)/gen \
+	-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -MMD -MP
+GUEST_ASFLAGS := $(GUEST_TARGET) -Iinclude -Iguest/include -MMD -MP
+# the header fields of windows' own binaries: version 10.0, reproducible timestamps, a valid checksum.
+GUEST_LDFLAGS := /nologo /debug:dwarf /machine:arm64 /nodefaultlib /opt:ref /incremental:no /filealign:0x1000 \
+	/version:10.0 /osversion:10.0 /Brepro /release
+
+GEN := $(BUILD)/gen
+OBJ := $(BUILD)/obj
+SYSTEM32 := $(BUILD)/guest/system32
+
+GUEST_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
+GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SYSTEM32)/%.dll,$(GUEST_DLLS))
+# the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
+ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES))
+
+.PHONY: all host guest examples tools clean
+all: host guest examples
+
+# ---------------------------------------------------------------- host
+
+HOST_SRC := $(wildcard host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c)
+HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o
+
+host: $(BUILD)/mime
+
+$(BUILD)/mime: $(HOST_OBJ) host/mime.entitlements
+	$(CC) -o $@ $(HOST_OBJ) $(HOST_LIBS)
+	codesign -s - -f --entitlements host/mime.entitlements $@ 2>/dev/null
+
+$(OBJ)/host/%.o: host/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(HOST_CFLAGS) -c $< -o $@
+
+# the guest files are embedded in mime, which maps them into the guest.
+$(GEN)/rom.S: $(ROM_FILES) tools/genrom.sh
+	@mkdir -p $(dir $@)
+	tools/genrom.sh $@ $(abspath $(ROM_FILES))
+
+$(BUILD)/guest/rom/%: $(SYSTEM32)/% $(BUILD)/tools/pechecksum
+	@mkdir -p $(dir $@)
+	$(STRIP) --strip-debug $< -o $@
+	$(BUILD)/tools/pechecksum $@
+
+# the version resource of each system file.
+$(GEN)/res/%.res: tools/genversion.sh
+	@mkdir -p $(dir $@)
+	tools/genversion.sh $* $(GEN)/res/$*.rc
+	$(RC) -no-preprocess -c 1252 -fo $@ $(GEN)/res/$*.rc
+
+$(OBJ)/gen/rom.o: $(GEN)/rom.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@
+
+# ---------------------------------------------------------------- tools
+
+tools: $(BUILD)/tools/gensyscalls $(BUILD)/tools/genservices $(BUILD)/tools/pechecksum
+
+$(BUILD)/tools/%: tools/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<
+
+# ---------------------------------------------------------------- generated sources
+
+SYSCALLS_NT := tools/syscalls/ntdll_26300_arm64.txt
+SYSCALLS_WIN32K := tools/syscalls/win32u_26300_arm64.txt tools/syscalls/win32u_mime.txt
+
+$(GEN)/mime_svc_nt.h: $(SYSCALLS_NT) $(BUILD)/tools/gensyscalls
+	@mkdir -p $(GEN)
+	$(BUILD)/tools/gensyscalls $(SYSCALLS_NT) MIME_NT_SERVICES $@ $(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def
+
+$(GEN)/ntdll_syscalls.S $(GEN)/ntdll_syscalls.def: $(GEN)/mime_svc_nt.h
+
+# the real win32u table plus the private mime services numbered above it.
+$(GEN)/mime_svc_win32k.h: $(SYSCALLS_WIN32K) $(BUILD)/tools/gensyscalls
+	@mkdir -p $(GEN)
+	cat $(SYSCALLS_WIN32K) > $(GEN)/win32u_syscalls.txt
+	$(BUILD)/tools/gensyscalls $(GEN)/win32u_syscalls.txt MIME_WIN32K_SERVICES $@ $(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def
+
+$(GEN)/win32u_syscalls.S $(GEN)/win32u_syscalls.def: $(GEN)/mime_svc_win32k.h
+
+GEN_HEADERS := $(GEN)/mime_svc_nt.h $(GEN)/mime_svc_win32k.h
+
+# ---------------------------------------------------------------- guest runtime
+
+RTL_SRC := $(wildcard guest/rtl/*.c)
+CRT_SRC := $(wildcard guest/crt/*.c)
+CRT_ASM := $(wildcard guest/crt/*.S)
+
+$(OBJ)/guest/crt/%.o: guest/crt/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(GUEST_CFLAGS) -fno-builtin -c $< -o $@
+
+$(OBJ)/guest/%.o: guest/%.S
+	@mkdir -p $(dir $@)
+	$(CC) $(GUEST_ASFLAGS) -c $< -o $@
+
+# ---------------------------------------------------------------- ntoskrnl.exe
+
+NTOS_SRC := $(shell find guest/ntos -name '*.c')
+NTOS_ASM := $(shell find guest/ntos -name '*.S')
+NTOS_OBJ := $(NTOS_SRC:%.c=$(OBJ)/%.o) $(NTOS_ASM:%.S=$(OBJ)/%.o) \
+	$(RTL_SRC:%.c=$(OBJ)/ntos/%.o) $(CRT_SRC:%.c=$(OBJ)/%.o) $(CRT_ASM:%.S=$(OBJ)/%.o) \
+	$(OBJ)/gen/ntos_services.o
+NTOS_CFLAGS := $(GUEST_CFLAGS) -DMIME_KERNEL=1 -Iguest/ntos
+
+# exported: public kernel routines, the crt and the object types drivers use.
+NTOS_EXPORT_CODE := ^(Nt|Zw|Ke|Ex|Io|Ob|Ps|Mm|Rtl|Hal|Dbg|vDbg|Se|Po|Kd|Fs|Cc|Wmi|Mime)[A-Z]|^(Obf|Iof|Kef|Kf|Exf)[A-Z]|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk)
+# exports private to mime's own drivers: by ordinal only, so no Mime name shows in the export table.
+NTOS_PRIVATE := ^(Mime|HalMime)
+NTOS_EXPORT_DATA := ^(Ex|Io|Ps|Mm|Se|Ob)[A-Za-z]*(Type|TypeObject)$$|^SharedUserData$$|^HalBootInfo$$
+
+$(OBJ)/guest/ntos/%.o: guest/ntos/%.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(NTOS_CFLAGS) -c $< -o $@
+
+$(OBJ)/ntos/guest/rtl/%.o: guest/rtl/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(NTOS_CFLAGS) -c $< -o $@
+
+$(GEN)/ntos_services.c: $(NTOS_SRC) $(BUILD)/tools/genservices
+	@mkdir -p $(GEN)
+	$(BUILD)/tools/genservices $@ $(NTOS_SRC)
+
+$(OBJ)/gen/ntos_services.o: $(GEN)/ntos_services.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(NTOS_CFLAGS) -Wno-unused-function -c $< -o $@
+
+$(GEN)/ntoskrnl.def: $(filter-out $(OBJ)/gen/ntos_services.o,$(NTOS_OBJ))
+	@mkdir -p $(GEN)
+	{ echo "LIBRARY ntoskrnl.exe"; echo "EXPORTS"; \
+	  $(NM) -g --defined-only $^ 2>/dev/null | \
+	  awk '$$2 == "T" && $$3 ~ /$(NTOS_EXPORT_CODE)/ { print "    " $$3 } \
+	       $$2 ~ /^[DBR]$$/ && $$3 ~ /$(NTOS_EXPORT_DATA)/ { print "    " $$3 " DATA" }' | sort -u | \
+	  awk '$$1 ~ /$(NTOS_PRIVATE)/ { print $$0 " @" ++n " NONAME"; next } { print }'; } > $@
+
+$(SYSTEM32)/ntoskrnl.exe: $(NTOS_OBJ) $(GEN)/ntoskrnl.def $(GEN)/res/ntoskrnl.exe.res
+	@mkdir -p $(dir $@) $(BUILD)/lib
+	$(LLD_LINK) $(GUEST_LDFLAGS) /subsystem:native,10.0 /driver /entry:KiSystemStartup /base:0xFFFFF80000200000 \
+		/stack:0x80000,0x2000 /def:$(GEN)/ntoskrnl.def /implib:$(BUILD)/lib/ntoskrnl.lib /map:$(BUILD)/guest/ntoskrnl.map \
+		/out:$@ $(NTOS_OBJ) $(GEN)/res/ntoskrnl.exe.res
+
+# ---------------------------------------------------------------- win32k.sys
+
+WIN32K_SRC := $(shell find guest/win32k -name '*.c') $(wildcard guest/lib/ttf/*.c guest/lib/png/*.c guest/lib/msstyles/*.c)
+WIN32K_OBJ := $(WIN32K_SRC:%.c=$(OBJ)/win32k/%.o) $(OBJ)/gen/win32k_services.o
+WIN32K_CFLAGS := $(GUEST_CFLAGS) -Iguest/win32k -Iguest/lib
+
+$(OBJ)/win32k/%.o: %.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WIN32K_CFLAGS) -c $< -o $@
+
+$(GEN)/win32k_services.c: $(shell find guest/win32k -name '*.c') $(BUILD)/tools/genservices
+	@mkdir -p $(GEN)
+	$(BUILD)/tools/genservices --win32k $@ $(shell find guest/win32k -name '*.c')
+
+$(OBJ)/gen/win32k_services.o: $(GEN)/win32k_services.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(WIN32K_CFLAGS) -c $< -o $@
+
+$(SYSTEM32)/win32k.sys: $(WIN32K_OBJ) $(BUILD)/lib/ntoskrnl.lib $(GEN)/res/win32k.sys.res
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(GUEST_LDFLAGS) /subsystem:native,10.0 /driver /entry:DriverEntry /base:0xFFFFF80040000000 \
+		/stack:0x40000,0x1000 /map:$(BUILD)/guest/win32k.map /out:$@ $(WIN32K_OBJ) $(BUILD)/lib/ntoskrnl.lib \
+		$(GEN)/res/win32k.sys.res
+
+$(BUILD)/lib/ntoskrnl.lib: $(SYSTEM32)/ntoskrnl.exe
+
+# ---------------------------------------------------------------- user mode
+
+USER_CFLAGS := $(GUEST_CFLAGS)
+USER_DLL_LDFLAGS := $(GUEST_LDFLAGS) /dll /subsystem:console,10.0 /highentropyva /dynamicbase /stack:0x40000,0x1000
+
+$(OBJ)/user/%.o: %.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) $(USER_CFLAGS_$(firstword $(subst /, ,$(patsubst guest/%,%,$<)))) -c $< -o $@
+
+$(OBJ)/user/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(GUEST_ASFLAGS) -c $< -o $@
+
+$(OBJ)/user/guest/crt/%.o: guest/crt/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -fno-builtin -c $< -o $@
+
+USER_RT_OBJ := $(RTL_SRC:%.c=$(OBJ)/user/%.o) $(CRT_SRC:%.c=$(OBJ)/user/%.o) $(CRT_ASM:%.S=$(OBJ)/user/%.o)
+
+# prints the exported code symbols of objects $(1) matching the awk regex $(2).
+EXPORTS_FROM_OBJECTS = $(NM) -g --defined-only $(1) 2>/dev/null | awk '$$2 == "T" && $$3 ~ /$(2)/ { print "    " $$3 }' | sort -u
+
+# ---------------------------------------------------------------- ntdll.dll
+
+NTDLL_SRC := $(wildcard guest/ntdll/*.c) $(wildcard guest/ntdll/*.S)
+NTDLL_OBJ := $(patsubst %,$(OBJ)/user/%.o,$(basename $(NTDLL_SRC))) $(OBJ)/user/$(GEN)/ntdll_syscalls.o $(USER_RT_OBJ)
+USER_CFLAGS_ntdll := -Iguest/ntdll
+NTDLL_EXPORT_CODE := ^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$$|^LdrInitializeThunk$$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)
+
+$(GEN)/ntdll.def: $(NTDLL_OBJ) $(GEN)/ntdll_syscalls.def
+	{ echo "LIBRARY ntdll.dll"; echo "EXPORTS"; cat $(GEN)/ntdll_syscalls.def; \
+	  $(call EXPORTS_FROM_OBJECTS,$(NTDLL_OBJ),$(NTDLL_EXPORT_CODE)); } > $@
+
+$(SYSTEM32)/ntdll.dll: $(NTDLL_OBJ) $(GEN)/ntdll.def $(GEN)/res/ntdll.dll.res
+	@mkdir -p $(dir $@) $(BUILD)/lib
+	$(LLD_LINK) $(USER_DLL_LDFLAGS) /noentry /base:0x7FFC00000000 /def:$(GEN)/ntdll.def \
+		/implib:$(BUILD)/lib/ntdll.lib /out:$@ $(NTDLL_OBJ) $(GEN)/res/ntdll.dll.res
+
+# ---------------------------------------------------------------- win32u.dll
+
+WIN32U_OBJ := $(OBJ)/user/$(GEN)/win32u_syscalls.o
+
+$(GEN)/win32u.def: $(GEN)/win32u_syscalls.def
+	{ echo "LIBRARY win32u.dll"; echo "EXPORTS"; cat $<; } > $@
+
+$(SYSTEM32)/win32u.dll: $(WIN32U_OBJ) $(GEN)/win32u.def $(GEN)/res/win32u.dll.res
+	@mkdir -p $(dir $@) $(BUILD)/lib
+	$(LLD_LINK) $(USER_DLL_LDFLAGS) /subsystem:windows,10.0 /noentry /base:0x7FF700000000 /def:$(GEN)/win32u.def \
+		/implib:$(BUILD)/lib/win32u.lib /out:$@ $(WIN32U_OBJ) $(GEN)/res/win32u.dll.res
+
+$(BUILD)/lib/win32u.lib: $(SYSTEM32)/win32u.dll
+
+# ---------------------------------------------------------------- dlls exporting with dllexport
+
+# $(1) = name, $(2) = preferred base, $(3) = import libraries, $(4) = entry point flag.
+define USER_DLL
+$(1)_SRC := $$(wildcard guest/$(1)/*.c guest/$(1)/*.S)
+$(1)_OBJ := $$(patsubst %,$(OBJ)/user/%.o,$$(basename $$($(1)_SRC))) $(OBJ)/user/guest/crt/chkstk.o $$(EXTRA_OBJ_$(1))
+USER_CFLAGS_$(1) := -Iguest/$(1) -DMIME_BUILD_$(shell echo $(1) | tr a-z A-Z)
+$(SYSTEM32)/$(1).dll: $$($(1)_OBJ) $$(patsubst %,$(BUILD)/lib/%.lib,$(3)) $$(EXTRA_DEPS_$(1)) $(GEN)/res/$(1).dll.res
+	@mkdir -p $$(dir $$@) $(BUILD)/lib
+	$(LLD_LINK) $(USER_DLL_LDFLAGS) $(4) /base:$(2) /implib:$(BUILD)/lib/$(1).lib $$(EXTRA_LDFLAGS_$(1)) \
+		/out:$$@ $$($(1)_OBJ) $$(patsubst %,$(BUILD)/lib/%.lib,$(3)) $(GEN)/res/$(1).dll.res
+$(BUILD)/lib/$(1).lib: $(SYSTEM32)/$(1).dll
+endef
+
+$(BUILD)/lib/ntdll.lib: $(SYSTEM32)/ntdll.dll
+
+$(eval $(call USER_DLL,kernelbase,0x7FFB00000000,ntdll,/entry:DllMain))
+
+# kernel32 re-exports kernelbase through forwarders, like windows does.
+$(GEN)/kernel32.def: $(SYSTEM32)/kernelbase.dll
+	{ echo "LIBRARY kernel32.dll"; echo "EXPORTS"; \
+	  llvm-readobj --coff-exports $< | awk '$$1 == "Name:" && $$2 != "DllMain" { print "    " $$2 "=kernelbase." $$2 }'; } > $@
+EXTRA_DEPS_kernel32 := $(GEN)/kernel32.def
+EXTRA_LDFLAGS_kernel32 := /def:$(GEN)/kernel32.def
+$(eval $(call USER_DLL,kernel32,0x7FFA00000000,ntdll kernelbase,/entry:DllMain))
+
+$(eval $(call USER_DLL,gdi32,0x7FF800000000,ntdll kernel32 win32u,/entry:DllMain))
+
+# user32 parses the visual style and decodes png icons itself.
+USER_CFLAGS_lib := -Iguest/lib
+GUEST_LIB_UI_OBJ := $(patsubst %.c,$(OBJ)/user/%.o,$(wildcard guest/lib/png/*.c guest/lib/msstyles/*.c))
+EXTRA_OBJ_user32 := $(GUEST_LIB_UI_OBJ)
+EXTRA_LDFLAGS_user32 := /subsystem:windows,10.0
+$(eval $(call USER_DLL,user32,0x7FF900000000,ntdll kernel32 win32u gdi32,/entry:DllMain))
+USER_CFLAGS_user32 += -Iguest/lib
+
+# ---------------------------------------------------------------- examples
+
+# each examples/<name>.c becomes a windows program linked against the mime dlls, entry point `entry`.
+EXAMPLE_LIBS := $(patsubst %,$(BUILD)/lib/%.lib,ntdll kernel32 user32 gdi32)
+EXAMPLES := $(patsubst examples/%.c,$(BUILD)/examples/%.exe,$(wildcard examples/*.c))
+
+$(BUILD)/examples/%.exe: $(OBJ)/user/examples/%.o $(EXAMPLE_LIBS)
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(GUEST_LDFLAGS) /subsystem:windows /entry:entry /out:$@ $< $(EXAMPLE_LIBS)
+
+# ---------------------------------------------------------------- guest
+
+guest: $(GUEST_FILES)
+
+examples: guest $(EXAMPLES)
+
+clean:
+	rm -rf $(BUILD)
+
+-include $(shell find $(BUILD)/obj -name '*.d' 2>/dev/null)

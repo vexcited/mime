@@ -1,0 +1,16 @@
+# build output
+/build/
+
+# editors and tools
+.idea/
+.vscode/
+.cache/
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
+# macos
+.DS_Store
