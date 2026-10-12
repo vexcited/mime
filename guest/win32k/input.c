@@ -59,8 +59,8 @@ SHORT NTAPI NtUserGetKeyState(int key)
     W32THREAD *t = W32GetThread();
     SHORT r = 0;
     if (t && key >= 0 && key < 256) {
-        UCHAR s = t->KeyState[key];
-        r = (SHORT)(((s & 0x80) ? 0x8000 : 0) | (s & 1));
+        /* the state byte sign extended, like windows: callers test bit 15 or bit 7. */
+        r = (SHORT)(signed char)(t->KeyState[key] & 0x81);
     }
     UserLeave();
     return r;
