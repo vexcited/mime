@@ -30,7 +30,8 @@ SYSTEM32 := $(BUILD)/guest/system32
 GUEST_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32 mimex86
 
 # the dlls beyond the core, as name:preferred base, each built for arm64 into System32 and x64 into SysX64.
-# guest/<name>/*.c, exported with dllexport or guest/<name>/<name>.def, entry point DllMain. they import
+# guest/<name>/*.c with guest/<name>/arm64/*.S and guest/<name>/x64/*.S for each processor, exported
+# with dllexport or guest/<name>/<name>.def, entry point DllMain. they import
 # from ntdll, kernel32, user32, gdi32 and win32u only, and reach each other with LoadLibrary.
 EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D0000000 iphlpapi:0x7FF6C0000000 \
 	dnsapi:0x7FF6B0000000 ole32:0x7FF6A0000000 oleaut32:0x7FF690000000 rpcrt4:0x7FF680000000 \
@@ -398,8 +399,10 @@ define EXTRA_DLL
 USER_CFLAGS_$(1) := -Iguest/$(1)
 $(1)_DEF := $$(wildcard guest/$(1)/$(1).def)
 $(1)_SRC := $$(wildcard guest/$(1)/*.c)
-$(1)_OBJ := $$(patsubst %.c,$(OBJ)/user/%.o,$$($(1)_SRC)) $(OBJ)/user/guest/crt/chkstk.o
-x64_$(1)_OBJ := $$(patsubst %.c,$(X64_OBJ)/%.o,$$($(1)_SRC)) $(X64_OBJ)/guest/crt/x64/chkstk.o
+$(1)_OBJ := $$(patsubst %.c,$(OBJ)/user/%.o,$$($(1)_SRC)) $$(patsubst %.S,$(OBJ)/user/%.o,$$(wildcard guest/$(1)/arm64/*.S)) \
+	$(OBJ)/user/guest/crt/chkstk.o
+x64_$(1)_OBJ := $$(patsubst %.c,$(X64_OBJ)/%.o,$$($(1)_SRC)) $$(patsubst %.S,$(X64_OBJ)/%.o,$$(wildcard guest/$(1)/x64/*.S)) \
+	$(X64_OBJ)/guest/crt/x64/chkstk.o
 $(SYSTEM32)/$(3): $$($(1)_OBJ) $$($(1)_DEF) $(patsubst %,$(BUILD)/lib/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
 	@mkdir -p $$(dir $$@) $(BUILD)/lib
 	$(LLD_LINK) $(USER_DLL_LDFLAGS) /entry:DllMain /base:$(2) /implib:$(BUILD)/lib/$(1).lib \
