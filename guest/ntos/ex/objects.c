@@ -69,6 +69,7 @@ void ExInitialize(void)
 {
     init_shared_data();
     KeInitializeEvent(&MimeInputReadyEvent, SynchronizationEvent, FALSE);
+    KeInitializeEvent(&MimeGpuEvent, NotificationEvent, FALSE);
     OBJECT_TYPE_INITIALIZER init = {0};
     init.Waitable = TRUE;
     init.ValidAccessMask = EVENT_ALL_ACCESS;

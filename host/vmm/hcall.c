@@ -1,5 +1,6 @@
 #include "vmm.h"
 
+#include "../gpu/gpu.h"
 #include "../ui/ui.h"
 
 #include <pthread.h>
@@ -238,6 +239,18 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     case MIME_HC_CLIP_GET:
         status = clip_get(vm, regs[1], regs[2], regs[3], &value);
+        break;
+    case MIME_HC_GPU_OPEN:
+        status = mime_gpu_open(vm, regs[1], regs[2], &value);
+        break;
+    case MIME_HC_GPU_BLOCK:
+        status = mime_gpu_add_block(vm, regs[1], regs[2], regs[3], regs[4]);
+        break;
+    case MIME_HC_GPU_KICK:
+        mime_gpu_kick(regs[1]);
+        break;
+    case MIME_HC_GPU_CLOSE:
+        mime_gpu_close(regs[1]);
         break;
     default:
         mime_warn("unknown hypercall %#llx", (unsigned long long)nr);

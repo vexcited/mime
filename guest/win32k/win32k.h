@@ -425,6 +425,7 @@ typedef struct W32PROCESS {
     ULONG DpiAwareness;
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
+    struct W32GPU *Gpu; /* gpu.c */
 } W32PROCESS;
 
 typedef struct QUEUED_MESSAGE {
@@ -703,6 +704,7 @@ void MenuWindowDestroyed(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
 void ClipboardHostChanged(void);
+void GpuFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
 

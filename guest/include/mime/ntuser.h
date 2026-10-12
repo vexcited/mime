@@ -425,6 +425,22 @@ W32KAPI BOOL NTAPI NtUserEndMenu(void);
 W32KAPI BOOL NTAPI NtUserMimeGetMenuItemInfo(HMENU menu, UINT item, BOOL by_position, LPMENUITEMINFOW info);
 W32KAPI ULONG_PTR NTAPI NtUserMimeCallMenu(HMENU menu, ULONG_PTR param, ULONG routine);
 
+/* ------------------------------------------------------------------ gpu */
+
+/* the host window region a window dc renders to, see mime/gpu.h. */
+typedef struct MIME_GPU_SURFACE {
+    HWND Window;
+    ULONG HostWindow; /* 0 while the window is hidden */
+    LONG X, Y;        /* client area in the host window's surface */
+    ULONG Width, Height;
+} MIME_GPU_SURFACE;
+
+W32KAPI NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size);
+W32KAPI NTSTATUS NTAPI NtGdiMimeGpuAddBlock(ULONG size, PVOID *base, PULONG index);
+W32KAPI NTSTATUS NTAPI NtGdiMimeGpuKick(void);
+W32KAPI NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms);
+W32KAPI BOOL NTAPI NtGdiMimeGpuGetSurface(HDC dc, MIME_GPU_SURFACE *surface);
+
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
 W32KAPI BOOL NTAPI NtUserCloseClipboard(void);
 W32KAPI BOOL NTAPI NtUserEmptyClipboard(void);

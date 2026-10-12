@@ -8,6 +8,7 @@
 #include "../ntos.h"
 
 KEVENT MimeInputReadyEvent;
+KEVENT MimeGpuEvent; /* set when the gpu reaches a fence a thread waits for */
 
 static KEVENT g_ctrl_event;
 static KDPC g_irq_dpc;
@@ -73,6 +74,8 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         KeSetEvent(&g_ctrl_event, 1, FALSE);
     if (bits & MIME_IRQ_INPUT)
         KeSetEvent(&MimeInputReadyEvent, 1, FALSE);
+    if (bits & MIME_IRQ_GPU)
+        KeSetEvent(&MimeGpuEvent, 1, FALSE);
 }
 
 /* interrupt level: defer the work to a dpc. */

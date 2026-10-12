@@ -4,3 +4,4 @@
 -fblocks
 -I../third_party
 -I../third_party/glslang
+-I../include

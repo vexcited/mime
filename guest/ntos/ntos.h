@@ -437,6 +437,8 @@ typedef struct _MI_IMAGE_INFO {
 } MI_IMAGE_INFO;
 
 
+#define MI_SECTION_PHYSICAL 0x00000001 /* Flags: the pages belong to the creator */
+
 typedef struct _SECTION {
     ULONG Flags;   /* SEC_IMAGE, SEC_COMMIT, ... */
     ULONG Protect; /* maximum protection of views */
@@ -792,6 +794,7 @@ void MimeSessionInterrupt(ULONG bits);
 void MimeSessionProcessExited(PEPROCESS process);
 void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length);
 extern KEVENT MimeInputReadyEvent;
+extern KEVENT MimeGpuEvent;
 
 /* system services */
 void KiInitializeSystemServices(void);

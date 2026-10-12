@@ -26,7 +26,7 @@ static void section_delete(PVOID object)
         MmFreeSystemVa(s->SystemVa, s->PageCount);
     }
     if (s->Pages) {
-        for (ULONG i = 0; i < s->PageCount; i++)
+        for (ULONG i = 0; i < s->PageCount && !(s->Flags & MI_SECTION_PHYSICAL); i++)
             if (s->Pages[i] && !HalIsRomPhysical(s->Pages[i]))
                 MmFreePage(s->Pages[i]);
         ExFreePool(s->Pages);
@@ -607,6 +607,28 @@ NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *sec
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     *kernel_base = s->SystemVa;
+    *section = s;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section)
+{
+    PSECTION s;
+    NTSTATUS status = ObCreateObject(MmSectionType, NULL, KernelMode, sizeof(SECTION), (PVOID *)&s);
+    if (!NT_SUCCESS(status))
+        return status;
+    memset(s, 0, sizeof(*s));
+    s->Flags = SEC_COMMIT | MI_SECTION_PHYSICAL;
+    s->Protect = PAGE_READWRITE;
+    s->Size = size;
+    s->PageCount = (ULONG)BYTES_TO_PAGES(size);
+    s->Pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, (s->PageCount + 1) * sizeof(ULONG64), KI_TAG('M', 'm', 'S', 'p'));
+    if (!s->Pages) {
+        ObDereferenceObject(s);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    for (ULONG i = 0; i < s->PageCount; i++)
+        s->Pages[i] = pa + ((ULONG64)i << PAGE_SHIFT);
     *section = s;
     return STATUS_SUCCESS;
 }

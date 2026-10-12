@@ -20,7 +20,7 @@
 #define MIME_GPU_ALIGN 16384u              /* host page size, required by metal for buffers over guest memory */
 #define MIME_GPU_HEADER_SIZE 16384u
 #define MIME_GPU_RING_SIZE (4u << 20)
-#define MIME_GPU_CHANNEL_SIZE (64u << 20)  /* header, ring, then heap block 0 */
+#define MIME_GPU_CHANNEL_SIZE (32u << 20)  /* heap block 0: the header, the ring, then heap */
 #define MIME_GPU_MAX_BLOCKS 64
 #define MIME_GPU_MAX_BLOCK_SIZE (64u << 20)
 #define MIME_GPU_MAX_RECORD (1u << 20)
@@ -140,10 +140,11 @@ typedef struct MimeGpuBufferCopy {
 } MimeGpuBufferCopy;
 
 /*
- * glsl sources of a program. the host compiles them and writes a
- * MimeGpuProgramInfo at result, then signals fence when the guest may read it.
- * the body holds the vertex source, the fragment source and the attribute
- * bindings as "name\0location\0" pairs, each part sized below.
+ * glsl sources of a program. the host compiles them while the ring goes on
+ * and writes a MimeGpuProgramInfo at result, its size last: the guest polls
+ * for a nonzero size. the body holds the vertex source, the fragment source
+ * and the attribute bindings as "name\0location\0" pairs, each part sized
+ * below.
  */
 typedef struct MimeGpuProgramCreate {
     MimeGpuCmd cmd;
@@ -154,7 +155,6 @@ typedef struct MimeGpuProgramCreate {
     MimeGpuMem result;
     uint32_t result_capacity;
     uint32_t pad;
-    uint64_t fence;
 } MimeGpuProgramCreate;
 
 typedef struct MimeGpuProgramInfo {

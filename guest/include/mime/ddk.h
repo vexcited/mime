@@ -907,6 +907,7 @@ NTKERNELAPI NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS kla
 NTKERNELAPI ULONG64 NTAPI HalMimeHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
                                            ULONG64 a5, ULONG64 a6, PULONG64 value);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetInputEvent(void);
+NTKERNELAPI PKEVENT NTAPI HalMimeGetGpuEvent(void);
 /* copies that treat the pointer as user memory and recover from faults, for drivers. */
 NTKERNELAPI NTSTATUS NTAPI MimeCopyFromUser(void *dst, const void *user_src, SIZE_T length);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyToUser(void *user_dst, const void *src, SIZE_T length);
@@ -917,5 +918,7 @@ NTKERNELAPI NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base
 NTKERNELAPI NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *user_base,
                                                   BOOLEAN writable);
 NTKERNELAPI void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table);
+/* a section over physical pages the caller owns and frees once the section is gone. */
+NTKERNELAPI NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section);
 
 #endif

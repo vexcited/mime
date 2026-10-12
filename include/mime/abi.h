@@ -155,6 +155,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_CTRL (1u << 0)
 #define MIME_IRQ_INPUT (1u << 1)
 #define MIME_IRQ_DISPLAY (1u << 2)
+#define MIME_IRQ_GPU (1u << 3)
 
 typedef struct MimeSharedPage {
     volatile uint32_t irq_pending;
@@ -189,6 +190,10 @@ enum {
     MIME_HC_BEEP = 0x25,        /* (type) */
     MIME_HC_CLIP_SET = 0x26,    /* (pa, len, offset, total) utf-16le text in chunks, committed at the last byte */
     MIME_HC_CLIP_GET = 0x27,    /* (pa, capacity, offset) -> total bytes of the host utf-16le text */
+    MIME_HC_GPU_OPEN = 0x28,    /* (pa, size) -> channel, see mime/gpu.h */
+    MIME_HC_GPU_BLOCK = 0x29,   /* (channel, index, pa, size) adds a heap block */
+    MIME_HC_GPU_KICK = 0x2A,    /* (channel) new commands while the host is idle */
+    MIME_HC_GPU_CLOSE = 0x2B,   /* (channel) returns once the host and the gpu no longer use its memory */
 };
 
 enum {

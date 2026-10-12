@@ -699,6 +699,7 @@ void mime_ui_window_destroy(uint32_t id_)
 }
 
 static void present_main(void *arg);
+static void metal_relayout(uint32_t window_id);
 
 static void config_main(void *arg)
 {
@@ -760,8 +761,10 @@ static void config_main(void *arg)
         w->shown = false;
     }
     free(cfg);
-    if (cropping_changed)
+    if (cropping_changed) {
         present_main((void *)(uintptr_t)w->id);
+        metal_relayout(w->id);
+    }
 }
 
 void mime_ui_window_config(const MimeWinConfig *cfg)
@@ -1012,4 +1015,143 @@ size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
     }
     pthread_mutex_unlock(&g_clip_lock);
     return total;
+}
+
+/* ---------------------------------------------------------------- metal layers */
+
+/*
+ * layers the gpu channels present to, placed over the windows' views. the
+ * guest renders rows bottom first, as gl stores them, so each layer is
+ * flipped by its transform instead of a copy.
+ */
+typedef struct CATransform3D {
+    double m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44;
+} CATransform3D;
+
+typedef struct MetalLayer {
+    id layer;
+    uint32_t window_id;
+    int32_t x, y;
+    uint32_t width, height;
+    bool sync;
+} MetalLayer;
+
+#define MAX_METAL_LAYERS 64
+
+static MetalLayer g_metal[MAX_METAL_LAYERS]; /* main thread only */
+
+static void metal_layout(MetalLayer *m)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = m->window_id ? find_window(m->window_id) : NULL;
+    pthread_mutex_unlock(&g_windows_lock);
+    id ca = CLS("CATransaction");
+    MSG_V(ca, "begin");
+    MSG_V_BOOL(ca, "setDisableActions:", YES);
+    if (!w || !w->view) {
+        MSG_V_BOOL(m->layer, "setHidden:", YES);
+        MSG_V(m->layer, "removeFromSuperlayer");
+    } else {
+        id parent = MSG_ID(w->view, "layer");
+        if (MSG_ID(m->layer, "superlayer") != parent)
+            MSG_V_ID(parent, "addSublayer:", m->layer);
+        MimeRect v = w->config.visible;
+        if (!w->configured || v.right <= v.left || v.bottom <= v.top)
+            v = (MimeRect){0, 0, 0, 0};
+        double width = m->width / g_scale, height = m->height / g_scale;
+        double x = (m->x - v.left) / g_scale, y = (m->y - v.top) / g_scale;
+        ((void (*)(id, SEL, NSRect))objc_msgSend)(m->layer, SEL_("setBounds:"), CGRectMake(0, 0, width, height));
+        ((void (*)(id, SEL, NSPoint))objc_msgSend)(m->layer, SEL_("setPosition:"),
+                                                   CGPointMake(x + width / 2, y + height / 2));
+        ((void (*)(id, SEL, NSSize))objc_msgSend)(m->layer, SEL_("setDrawableSize:"), CGSizeMake(m->width, m->height));
+        MSG_V_BOOL(m->layer, "setDisplaySyncEnabled:", m->sync);
+        MSG_V_BOOL(m->layer, "setHidden:", NO);
+    }
+    MSG_V(ca, "commit");
+}
+
+static void metal_relayout(uint32_t window_id)
+{
+    for (int i = 0; i < MAX_METAL_LAYERS; i++)
+        if (g_metal[i].layer && g_metal[i].window_id == window_id)
+            metal_layout(&g_metal[i]);
+}
+
+typedef struct MetalCreate {
+    void *device;
+    id layer;
+} MetalCreate;
+
+static void metal_create_main(void *arg)
+{
+    MetalCreate *m = arg;
+    id ca = CLS("CATransaction");
+    MSG_V(ca, "begin");
+    m->layer = MSG_ID(MSG_ID(CLS("CAMetalLayer"), "alloc"), "init");
+    MSG_V_ID(m->layer, "setDevice:", (id)m->device);
+    MSG_V_INT(m->layer, "setPixelFormat:", 80); /* MTLPixelFormatBGRA8Unorm */
+    MSG_V_BOOL(m->layer, "setFramebufferOnly:", NO);
+    MSG_V(ca, "commit");
+}
+
+/* on the main thread: a thread without a run loop never commits the layer's implicit transaction. */
+void *mime_ui_metal_layer_create(void *device)
+{
+    MetalCreate m = {device, nil};
+    if (pthread_main_np())
+        metal_create_main(&m);
+    else
+        dispatch_sync_f(dispatch_get_main_queue(), &m, metal_create_main);
+    return m.layer;
+}
+
+static void metal_place_main(void *arg)
+{
+    MetalLayer *p = arg;
+    MetalLayer *m = NULL, *free_slot = NULL;
+    for (int i = 0; i < MAX_METAL_LAYERS && !m; i++) {
+        if (g_metal[i].layer == p->layer)
+            m = &g_metal[i];
+        else if (!g_metal[i].layer && !free_slot)
+            free_slot = &g_metal[i];
+    }
+    if (!m && free_slot) {
+        m = free_slot;
+        id ca = CLS("CATransaction");
+        MSG_V(ca, "begin");
+        MSG_V_BOOL(ca, "setDisableActions:", YES);
+        MSG_V_DBL(p->layer, "setContentsScale:", g_scale);
+        MSG_V_BOOL(p->layer, "setOpaque:", YES);
+        CATransform3D flip = {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        ((void (*)(id, SEL, CATransform3D))objc_msgSend)(p->layer, SEL_("setTransform:"), flip);
+        MSG_V(ca, "commit");
+    }
+    if (m) {
+        *m = *p;
+        metal_layout(m);
+    }
+    free(p);
+}
+
+void mime_ui_metal_layer_place(void *layer, uint32_t window_id, int32_t x, int32_t y, uint32_t width,
+                               uint32_t height, bool sync)
+{
+    MetalLayer *p = mime_xmalloc(sizeof(*p));
+    *p = (MetalLayer){layer, window_id, x, y, width, height, sync};
+    on_main(metal_place_main, p);
+}
+
+static void metal_destroy_main(void *arg)
+{
+    id layer = arg;
+    for (int i = 0; i < MAX_METAL_LAYERS; i++)
+        if (g_metal[i].layer == layer)
+            memset(&g_metal[i], 0, sizeof(g_metal[i]));
+    MSG_V(layer, "removeFromSuperlayer");
+    MSG_V(layer, "release");
+}
+
+void mime_ui_metal_layer_destroy(void *layer)
+{
+    on_main(metal_destroy_main, layer);
 }

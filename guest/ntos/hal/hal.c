@@ -41,6 +41,11 @@ PKEVENT NTAPI HalMimeGetInputEvent(void)
     return &MimeInputReadyEvent;
 }
 
+PKEVENT NTAPI HalMimeGetGpuEvent(void)
+{
+    return &MimeGpuEvent;
+}
+
 void *HalPhysmap(ULONG64 pa)
 {
     return (void *)(MIME_KVA_PHYSMAP + pa);
