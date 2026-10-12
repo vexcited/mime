@@ -1,0 +1,226 @@
+/*
+ * mathematical constants and tables of mathlib.c, computed with 400 bit
+ * arithmetic and stored as pairs of doubles whose sum carries about 106
+ * bits.
+ */
+#ifndef MIME_MSVCRT_MATHTAB_H
+#define MIME_MSVCRT_MATHTAB_H
+
+/* 2^(j/64) as hi + lo. */
+static const double g_exp2_table[64][2] = {
+    {0x1.0000000000000p+0, 0x0.0p+0},
+    {0x1.02c9a3e778061p+0, -0x1.19083535b085dp-56},
+    {0x1.059b0d3158574p+0, 0x1.d73e2a475b465p-55},
+    {0x1.0874518759bc8p+0, 0x1.186be4bb284ffp-57},
+    {0x1.0b5586cf9890fp+0, 0x1.8a62e4adc610bp-54},
+    {0x1.0e3ec32d3d1a2p+0, 0x1.03a1727c57b53p-59},
+    {0x1.11301d0125b51p+0, -0x1.6c51039449b3ap-54},
+    {0x1.1429aaea92de0p+0, -0x1.32fbf9af1369ep-54},
+    {0x1.172b83c7d517bp+0, -0x1.19041b9d78a76p-55},
+    {0x1.1a35beb6fcb75p+0, 0x1.e5b4c7b4968e4p-55},
+    {0x1.1d4873168b9aap+0, 0x1.e016e00a2643cp-54},
+    {0x1.2063b88628cd6p+0, 0x1.dc775814a8495p-55},
+    {0x1.2387a6e756238p+0, 0x1.9b07eb6c70573p-54},
+    {0x1.26b4565e27cddp+0, 0x1.2bd339940e9d9p-55},
+    {0x1.29e9df51fdee1p+0, 0x1.612e8afad1255p-55},
+    {0x1.2d285a6e4030bp+0, 0x1.0024754db41d5p-54},
+    {0x1.306fe0a31b715p+0, 0x1.6f46ad23182e4p-55},
+    {0x1.33c08b26416ffp+0, 0x1.32721843659a6p-54},
+    {0x1.371a7373aa9cbp+0, -0x1.63aeabf42eae2p-54},
+    {0x1.3a7db34e59ff7p+0, -0x1.5e436d661f5e3p-56},
+    {0x1.3dea64c123422p+0, 0x1.ada0911f09ebcp-55},
+    {0x1.4160a21f72e2ap+0, -0x1.ef3691c309278p-58},
+    {0x1.44e086061892dp+0, 0x1.89b7a04ef80d0p-59},
+    {0x1.486a2b5c13cd0p+0, 0x1.3c1a3b69062f0p-56},
+    {0x1.4bfdad5362a27p+0, 0x1.d4397afec42e2p-56},
+    {0x1.4f9b2769d2ca7p+0, -0x1.4b309d25957e3p-54},
+    {0x1.5342b569d4f82p+0, -0x1.07abe1db13cadp-55},
+    {0x1.56f4736b527dap+0, 0x1.9bb2c011d93adp-54},
+    {0x1.5ab07dd485429p+0, 0x1.6324c054647adp-54},
+    {0x1.5e76f15ad2148p+0, 0x1.ba6f93080e65ep-54},
+    {0x1.6247eb03a5585p+0, -0x1.383c17e40b497p-54},
+    {0x1.6623882552225p+0, -0x1.bb60987591c34p-54},
+    {0x1.6a09e667f3bcdp+0, -0x1.bdd3413b26456p-54},
+    {0x1.6dfb23c651a2fp+0, -0x1.bbe3a683c88abp-57},
+    {0x1.71f75e8ec5f74p+0, -0x1.16e4786887a99p-55},
+    {0x1.75feb564267c9p+0, -0x1.0245957316dd3p-54},
+    {0x1.7a11473eb0187p+0, -0x1.41577ee04992fp-55},
+    {0x1.7e2f336cf4e62p+0, 0x1.05d02ba15797ep-56},
+    {0x1.82589994cce13p+0, -0x1.d4c1dd41532d8p-54},
+    {0x1.868d99b4492edp+0, -0x1.fc6f89bd4f6bap-54},
+    {0x1.8ace5422aa0dbp+0, 0x1.6e9f156864b27p-54},
+    {0x1.8f1ae99157736p+0, 0x1.5cc13a2e3976cp-55},
+    {0x1.93737b0cdc5e5p+0, -0x1.75fc781b57ebcp-57},
+    {0x1.97d829fde4e50p+0, -0x1.d185b7c1b85d1p-54},
+    {0x1.9c49182a3f090p+0, 0x1.c7c46b071f2bep-56},
+    {0x1.a0c667b5de565p+0, -0x1.359495d1cd533p-54},
+    {0x1.a5503b23e255dp+0, -0x1.d2f6edb8d41e1p-54},
+    {0x1.a9e6b5579fdbfp+0, 0x1.0fac90ef7fd31p-54},
+    {0x1.ae89f995ad3adp+0, 0x1.7a1cd345dcc81p-54},
+    {0x1.b33a2b84f15fbp+0, -0x1.2805e3084d708p-57},
+    {0x1.b7f76f2fb5e47p+0, -0x1.5584f7e54ac3bp-56},
+    {0x1.bcc1e904bc1d2p+0, 0x1.23dd07a2d9e84p-55},
+    {0x1.c199bdd85529cp+0, 0x1.11065895048ddp-55},
+    {0x1.c67f12e57d14bp+0, 0x1.2884dff483cadp-54},
+    {0x1.cb720dcef9069p+0, 0x1.503cbd1e949dbp-56},
+    {0x1.d072d4a07897cp+0, -0x1.cbc3743797a9cp-54},
+    {0x1.d5818dcfba487p+0, 0x1.2ed02d75b3707p-55},
+    {0x1.da9e603db3285p+0, 0x1.c2300696db532p-54},
+    {0x1.dfc97337b9b5fp+0, -0x1.1a5cd4f184b5cp-54},
+    {0x1.e502ee78b3ff6p+0, 0x1.39e8980a9cc8fp-55},
+    {0x1.ea4afa2a490dap+0, -0x1.e9c23179c2893p-54},
+    {0x1.efa1bee615a27p+0, 0x1.dc7f486a4b6b0p-54},
+    {0x1.f50765b6e4540p+0, 0x1.9d3e12dd8a18bp-54},
+    {0x1.fa7c1819e90d8p+0, 0x1.74853f3a5931ep-55},
+};
+
+/* log(k / 128) for k from 90 to 182 as hi + lo. */
+static const double g_log_table[93][2] = {
+    {-0x1.68ac83e9c6a14p-2, -0x1.a64eadd740178p-58},
+    {-0x1.5d5bddf595f30p-2, 0x1.6541148cbb8a2p-56},
+    {-0x1.522ae0738a3d8p-2, 0x1.8f7e9b38a6979p-57},
+    {-0x1.4718dc271c41bp-2, -0x1.8fb4c14c56eefp-60},
+    {-0x1.3c25277333184p-2, 0x1.2ad27e50a8ec6p-56},
+    {-0x1.314f1e1d35ce4p-2, 0x1.3d69909e5c3dcp-56},
+    {-0x1.269621134db92p-2, -0x1.e0efadd9db02bp-56},
+    {-0x1.1bf99635a6b95p-2, 0x1.12aeb84249223p-57},
+    {-0x1.1178e8227e47cp-2, 0x1.0e63a5f01c691p-57},
+    {-0x1.07138604d5862p-2, -0x1.cdb16ed4e9138p-56},
+    {-0x1.f991c6cb3b379p-3, -0x1.f665066f980a2p-57},
+    {-0x1.e530effe71012p-3, -0x1.2276041f43042p-59},
+    {-0x1.d1037f2655e7bp-3, -0x1.60629242471a2p-57},
+    {-0x1.bd087383bd8adp-3, -0x1.dd355f6a516d7p-60},
+    {-0x1.a93ed3c8ad9e3p-3, -0x1.bcafa9de97203p-57},
+    {-0x1.95a5adcf7017fp-3, -0x1.142c507fb7a3dp-58},
+    {-0x1.823c16551a3c2p-3, 0x1.1232ce70be781p-57},
+    {-0x1.6f0128b756abcp-3, 0x1.8de59c21e166cp-57},
+    {-0x1.5bf406b543db2p-3, 0x1.1f5b44c0df7e7p-61},
+    {-0x1.4913d8333b561p-3, 0x1.0d5604930f135p-58},
+    {-0x1.365fcb0159016p-3, -0x1.7d411a5b944adp-58},
+    {-0x1.23d712a49c202p-3, 0x1.6e38161051d69p-57},
+    {-0x1.1178e8227e47cp-3, 0x1.0e63a5f01c691p-58},
+    {-0x1.fe89139dbd566p-4, 0x1.ac9f4215f9393p-58},
+    {-0x1.da727638446a2p-4, -0x1.401fa71733019p-58},
+    {-0x1.b6ac88dad5b1cp-4, 0x1.0057eed1ca59fp-59},
+    {-0x1.9335e5d594989p-4, 0x1.478a85704ccb7p-58},
+    {-0x1.700d30aeac0e1p-4, 0x1.72566212cdd05p-61},
+    {-0x1.4d3115d207eacp-4, -0x1.769f42c7842ccp-58},
+    {-0x1.2aa04a44717a5p-4, 0x1.d15d38d2fa3f7p-58},
+    {-0x1.08598b59e3a07p-4, 0x1.dd7009902bf32p-58},
+    {-0x1.ccb73cdddb2ccp-5, 0x1.e48fb0500efd4p-59},
+    {-0x1.894aa149fb343p-5, -0x1.a8be97660a23dp-60},
+    {-0x1.466aed42de3eap-5, 0x1.cdd6f7f4a137ep-59},
+    {-0x1.0415d89e74444p-5, -0x1.c05cf1d753622p-59},
+    {-0x1.8492528c8cabfp-6, 0x1.d192d0619fa67p-60},
+    {-0x1.0205658935847p-6, -0x1.27c8e8416e71fp-60},
+    {-0x1.010157588de71p-7, -0x1.46662d417ced0p-62},
+    {0x0.0p+0, 0x0.0p+0},
+    {0x1.fe02a6b106789p-8, -0x1.e44b7e3711ebfp-67},
+    {0x1.fc0a8b0fc03e4p-7, -0x1.83092c59642a1p-62},
+    {0x1.7b91b07d5b11bp-6, -0x1.5b602ace3a510p-60},
+    {0x1.f829b0e783300p-6, 0x1.33e3f04f1ef23p-60},
+    {0x1.39e87b9febd60p-5, -0x1.5bfa937f551bbp-59},
+    {0x1.77458f632dcfcp-5, 0x1.18d3ca87b9296p-59},
+    {0x1.b42dd711971bfp-5, -0x1.eb9759c130499p-60},
+    {0x1.f0a30c01162a6p-5, 0x1.85f325c5bbacdp-59},
+    {0x1.16536eea37ae1p-4, -0x1.79da3e8c22cdap-60},
+    {0x1.341d7961bd1d1p-4, -0x1.b599f227becbbp-58},
+    {0x1.51b073f06183fp-4, 0x1.a49e39a1a8be4p-58},
+    {0x1.6f0d28ae56b4cp-4, -0x1.906d99184b992p-58},
+    {0x1.8c345d6319b21p-4, -0x1.4a697ab3424a9p-61},
+    {0x1.a926d3a4ad563p-4, 0x1.942f48aa70ea9p-58},
+    {0x1.c5e548f5bc743p-4, 0x1.5d617ef8161b1p-60},
+    {0x1.e27076e2af2e6p-4, -0x1.61578001e0162p-60},
+    {0x1.fec9131dbeabbp-4, -0x1.5746b9981b36cp-58},
+    {0x1.0d77e7cd08e59p-3, 0x1.9a5dc5e9030acp-57},
+    {0x1.1b72ad52f67a0p-3, 0x1.483023472cd74p-58},
+    {0x1.29552f81ff523p-3, 0x1.301771c407dbfp-57},
+    {0x1.371fc201e8f74p-3, 0x1.de6cb62af18a0p-58},
+    {0x1.44d2b6ccb7d1ep-3, 0x1.9f4f6543e1f88p-57},
+    {0x1.526e5e3a1b438p-3, -0x1.746ff8a470d3ap-57},
+    {0x1.5ff3070a793d4p-3, -0x1.bc60efafc6f6ep-58},
+    {0x1.6d60fe719d21dp-3, -0x1.caae268ecd179p-57},
+    {0x1.7ab890210d909p-3, 0x1.be36b2d6a0608p-59},
+    {0x1.87fa06520c911p-3, -0x1.bf7fdbfa08d9ap-57},
+    {0x1.9525a9cf456b4p-3, 0x1.d904c1d4e2e26p-57},
+    {0x1.a23bc1fe2b563p-3, 0x1.93711b07a998cp-59},
+    {0x1.af3c94e80bff3p-3, -0x1.398cff3641985p-58},
+    {0x1.bc286742d8cd6p-3, 0x1.4fce744870f55p-58},
+    {0x1.c8ff7c79a9a22p-3, -0x1.4f689f8434012p-57},
+    {0x1.d5c216b4fbb91p-3, 0x1.6e443597e4d40p-57},
+    {0x1.e27076e2af2e6p-3, -0x1.61578001e0162p-59},
+    {0x1.ef0adcbdc5936p-3, 0x1.48637950dc20dp-57},
+    {0x1.fb9186d5e3e2bp-3, -0x1.caaae64f21acbp-57},
+    {0x1.0402594b4d041p-2, -0x1.28ec217a5022dp-57},
+    {0x1.0a324e27390e3p-2, 0x1.7dcfde8061c03p-56},
+    {0x1.1058bf9ae4ad5p-2, 0x1.89fa0ab4cb31dp-58},
+    {0x1.1675cababa60ep-2, 0x1.ce63eab883717p-61},
+    {0x1.1c898c16999fbp-2, -0x1.0e5c62aff1c44p-60},
+    {0x1.22941fbcf7966p-2, -0x1.76f5eb09628afp-56},
+    {0x1.2895a13de86a3p-2, 0x1.7ad24c13f040ep-56},
+    {0x1.2e8e2bae11d31p-2, -0x1.8f4cdb95ebdf9p-56},
+    {0x1.347dd9a987d55p-2, -0x1.4dd4c580919f8p-57},
+    {0x1.3a64c556945eap-2, -0x1.c68651945f97cp-57},
+    {0x1.404308686a7e4p-2, -0x1.0bcfb6082ce6dp-56},
+    {0x1.4618bc21c5ec2p-2, 0x1.f42decdeccf1dp-56},
+    {0x1.4be5f957778a1p-2, -0x1.259b35b04813dp-57},
+    {0x1.51aad872df82dp-2, 0x1.3927ac19f55e3p-59},
+    {0x1.5767717455a6cp-2, 0x1.526adb283660cp-56},
+    {0x1.5d1bdbf5809cap-2, 0x1.4236383dc7fe1p-56},
+    {0x1.62c82f2b9c795p-2, 0x1.7b7af915300e5p-57},
+    {0x1.686c81e9b14afp-2, -0x1.ddea0f7f58e3dp-57},
+};
+
+/* atan(j / 16) for j from 0 to 16 as hi + lo. */
+static const double g_atan_table[17][2] = {
+    {0x0.0p+0, 0x0.0p+0},
+    {0x1.ff55bb72cfdeap-5, -0x1.c934d86d23f1dp-60},
+    {0x1.fd5ba9aac2f6ep-4, -0x1.cd37686760c17p-59},
+    {0x1.7b97b4bce5b02p-3, 0x1.347b0b4f881cap-58},
+    {0x1.f5b75f92c80ddp-3, 0x1.8ab6e3cf7afbdp-57},
+    {0x1.362773707ebccp-2, -0x1.963a544b672d8p-57},
+    {0x1.6f61941e4def1p-2, -0x1.c63aae6f6e918p-56},
+    {0x1.a64eec3cc23fdp-2, -0x1.24dec1b50b7ffp-56},
+    {0x1.dac670561bb4fp-2, 0x1.a2b7f222f65e2p-56},
+    {0x1.0657e94db30d0p-1, -0x1.d5b495f6349e6p-56},
+    {0x1.1e00babdefeb4p-1, -0x1.928df287a668fp-58},
+    {0x1.345f01cce37bbp-1, 0x1.1021137c71102p-55},
+    {0x1.4978fa3269ee1p-1, 0x1.2419a87f2a458p-56},
+    {0x1.5d58987169b18p-1, 0x1.0028e4bc5e7cap-57},
+    {0x1.700a7c5784634p-1, -0x1.8c34d25aadef6p-56},
+    {0x1.819d0b7158a4dp-1, -0x1.bf76229d3b917p-56},
+    {0x1.921fb54442d18p-1, 0x1.1a62633145c07p-55},
+};
+
+#define LN2_HI 0x1.62e42fefa39efp-1
+#define LN2_LO 0x1.abc9e3b39803fp-56
+#define INV_LN10_HI 0x1.bcb7b1526e50ep-2
+#define INV_LN10_LO 0x1.95355baaafad3p-57
+#define PI_HI 0x1.921fb54442d18p+1
+#define PI_LO 0x1.1a62633145c07p-53
+#define PI_2_HI 0x1.921fb54442d18p+0
+#define PI_2_LO 0x1.1a62633145c07p-54
+#define INV_LN2_HI 0x1.71547652b82fep+0
+#define INV_LN2_LO 0x1.777d0ffda0d24p-56
+#define LN2_64_HI 0x1.62e42fee00000p-7
+#define LN2_64_LO 0x1.a39ef35793c76p-39
+#define PIO2_1 0x1.921fb54400000p+0
+#define PIO2_2 0x1.0b4611a600000p-34
+#define PIO2_3 0x1.3198a2e000000p-69
+#define PIO2_4 0x1.b839a252049c1p-104
+#define TWO_OVER_PI_HI 0x1.45f306dc9c883p-1
+#define TWO_OVER_PI_LO -0x1.6b01ec5417056p-55
+
+/* the bits of 2/pi, 32 per word, the first word holding 2^-1 to 2^-32. */
+static const uint32_t g_two_over_pi[48] = {
+    0xa2f9836e, 0x4e441529, 0xfc2757d1, 0xf534ddc0, 0xdb629599, 0x3c439041,
+    0xfe5163ab, 0xdebbc561, 0xb7246e3a, 0x424dd2e0, 0x06492eea, 0x09d1921c,
+    0xfe1deb1c, 0xb129a73e, 0xe88235f5, 0x2ebb4484, 0xe99c7026, 0xb45f7e41,
+    0x3991d639, 0x835339f4, 0x9c845f8b, 0xbdf9283b, 0x1ff897ff, 0xde05980f,
+    0xef2f118b, 0x5a0a6d1f, 0x6d367ecf, 0x27cb09b7, 0x4f463f66, 0x9e5fea2d,
+    0x7527bac7, 0xebe5f17b, 0x3d0739f7, 0x8a5292ea, 0x6bfb5fb1, 0x1f8d5d08,
+    0x56033046, 0xfc7b6bab, 0xf0cfbc20, 0x9af4361d, 0xa9e39161, 0x5ee61b08,
+    0x6599855f, 0x14a06840, 0x8dffd880, 0x4d732731, 0x06061556, 0xca73a8c9,
+};
+
+#endif
