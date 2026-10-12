@@ -136,7 +136,7 @@ static int compare(const ENV_VAR *a, const ENV_VAR *b)
     return _wcsicmp(a->Name, b->Name);
 }
 
-NTSTATUS PspBuildEnvironment(PWCHAR *block, SIZE_T *bytes)
+NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
 {
     ENV *env = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ENV), KI_TAG('P', 's', 'E', 'n'));
     if (!env)
@@ -176,6 +176,9 @@ NTSTATUS PspBuildEnvironment(PWCHAR *block, SIZE_T *bytes)
     memset(path, 0, sizeof(path));
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\REGISTRY\\USER\\%ls\\Environment", sid);
     load_key(env, path, TRUE);
+    /* x64 programs run by the translator see the processor they were built for. */
+    if (machine == IMAGE_FILE_MACHINE_AMD64)
+        set_z(env, L"PROCESSOR_ARCHITECTURE", L"AMD64");
 
     /* sorted, case insensitive, like RtlSetEnvironmentVariable keeps it. */
     for (ULONG i = 1; i < env->Count; i++)

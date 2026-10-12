@@ -280,6 +280,12 @@ static HANDLE overlapped_event(LPOVERLAPPED ov)
     return ov ? (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1) : NULL;
 }
 
+/* the completion port packet of a request names its OVERLAPPED, unless the low bit of hEvent is set. */
+static PVOID overlapped_port_context(LPOVERLAPPED ov)
+{
+    return ((ULONG_PTR)ov->hEvent & 1) ? NULL : ov;
+}
+
 BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPOVERLAPPED overlapped)
 {
     if (read)
@@ -299,7 +305,8 @@ BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPO
         PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
         iosb->Status = STATUS_PENDING;
         iosb->Information = 0;
-        status = NtReadFile(file, overlapped_event(overlapped), NULL, NULL, iosb, buffer, length, &offset, NULL);
+        status = NtReadFile(file, overlapped_event(overlapped), NULL, overlapped_port_context(overlapped), iosb, buffer,
+                            length, &offset, NULL);
         if (status == STATUS_PENDING) {
             KbSetError(ERROR_IO_PENDING);
             return FALSE;
@@ -351,8 +358,8 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
         PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
         iosb->Status = STATUS_PENDING;
         iosb->Information = 0;
-        status = NtWriteFile(file, overlapped_event(overlapped), NULL, NULL, iosb, (PVOID)buffer, length, &offset,
-                             NULL);
+        status = NtWriteFile(file, overlapped_event(overlapped), NULL, overlapped_port_context(overlapped), iosb,
+                             (PVOID)buffer, length, &offset, NULL);
         if (status == STATUS_PENDING) {
             KbSetError(ERROR_IO_PENDING);
             return FALSE;
@@ -377,56 +384,49 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
     return TRUE;
 }
 
-/* completion routines run as user apcs when the thread next waits alertably. */
-static void NTAPI completion_apc(PVOID routine, PVOID overlapped, PVOID packed)
+/* the kernel queues this as a user apc when the request completes: the routine runs at an alertable wait. */
+static void NTAPI completion_apc(PVOID routine, PIO_STATUS_BLOCK iosb, ULONG reserved)
 {
-    ULONG_PTR v = (ULONG_PTR)packed;
     KbNoteApc();
-    ((LPOVERLAPPED_COMPLETION_ROUTINE)routine)((DWORD)(v >> 32), (DWORD)v, overlapped);
+    NTSTATUS status = iosb->Status;
+    DWORD error = NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
+    ((LPOVERLAPPED_COMPLETION_ROUTINE)routine)(error, (DWORD)iosb->Information, (LPOVERLAPPED)iosb);
 }
 
-static BOOL queue_completion(LPOVERLAPPED_COMPLETION_ROUTINE routine, LPOVERLAPPED ov, DWORD error, DWORD bytes)
+static BOOL io_ex(BOOL write, HANDLE file, PVOID buffer, DWORD length, LPOVERLAPPED overlapped,
+                  LPOVERLAPPED_COMPLETION_ROUTINE completion)
 {
-    NTSTATUS status = NtQueueApcThread(NtCurrentThread(), completion_apc, (PVOID)routine, ov,
-                                       (PVOID)(((ULONG_PTR)error << 32) | bytes));
-    if (!NT_SUCCESS(status))
+    if (!overlapped || !completion) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    LARGE_INTEGER offset;
+    offset.LowPart = overlapped->Offset;
+    offset.HighPart = (LONG)overlapped->OffsetHigh;
+    PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
+    iosb->Status = STATUS_PENDING;
+    iosb->Information = 0;
+    NTSTATUS status = write ? NtWriteFile(file, NULL, (PIO_APC_ROUTINE)completion_apc, (PVOID)completion, iosb, buffer,
+                                          length, &offset, NULL)
+                            : NtReadFile(file, NULL, (PIO_APC_ROUTINE)completion_apc, (PVOID)completion, iosb, buffer,
+                                         length, &offset, NULL);
+    if (NT_ERROR(status))
         return KbSetStatus(status);
+    /* pending or done: the routine runs later either way. */
+    KbSetError(ERROR_SUCCESS);
     return TRUE;
 }
 
 BOOL WINAPI ReadFileEx(HANDLE file, LPVOID buffer, DWORD length, LPOVERLAPPED overlapped,
                        LPOVERLAPPED_COMPLETION_ROUTINE completion)
 {
-    if (!overlapped || !completion) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    HANDLE event = overlapped->hEvent;
-    overlapped->hEvent = NULL;
-    DWORD read = 0;
-    BOOL ok = ReadFile(file, buffer, length, &read, overlapped);
-    overlapped->hEvent = event;
-    DWORD error = ok ? ERROR_SUCCESS : GetLastError();
-    if (!ok && error != ERROR_HANDLE_EOF)
-        return FALSE;
-    return queue_completion(completion, overlapped, error, read);
+    return io_ex(FALSE, file, buffer, length, overlapped, completion);
 }
 
 BOOL WINAPI WriteFileEx(HANDLE file, LPCVOID buffer, DWORD length, LPOVERLAPPED overlapped,
                         LPOVERLAPPED_COMPLETION_ROUTINE completion)
 {
-    if (!overlapped || !completion) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    HANDLE event = overlapped->hEvent;
-    overlapped->hEvent = NULL;
-    DWORD written = 0;
-    BOOL ok = WriteFile(file, buffer, length, &written, overlapped);
-    overlapped->hEvent = event;
-    if (!ok)
-        return FALSE;
-    return queue_completion(completion, overlapped, ERROR_SUCCESS, written);
+    return io_ex(TRUE, file, (PVOID)buffer, length, overlapped, completion);
 }
 
 BOOL WINAPI GetOverlappedResultEx(HANDLE file, LPOVERLAPPED overlapped, LPDWORD transferred, DWORD timeout,
@@ -478,11 +478,11 @@ BOOL WINAPI CancelIo(HANDLE file)
 
 BOOL WINAPI CancelIoEx(HANDLE file, LPOVERLAPPED overlapped)
 {
-    if (!CancelIo(file))
-        return FALSE;
-    /* every request completes synchronously, so nothing is ever left to cancel. */
-    KbSetError(ERROR_NOT_FOUND);
-    return FALSE;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtCancelIoFileEx(file, (PIO_STATUS_BLOCK)overlapped, &iosb);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    return TRUE;
 }
 
 BOOL WINAPI CancelSynchronousIo(HANDLE thread)

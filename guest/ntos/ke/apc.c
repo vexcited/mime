@@ -162,6 +162,50 @@ NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
     KiEnterUserMode(frame);
 }
 
+/* the user context of a thread: the caller itself, or one stopped in the kernel. */
+NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_GET_CONTEXT, &thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG flags;
+    status = KiCopyFromUser(&flags, &context->ContextFlags, sizeof(flags));
+    PKTRAP_FRAME frame = thread->Tcb.TrapFrame;
+    if (NT_SUCCESS(status) && (!frame || (thread != PsCurrentThread() && thread->Tcb.State == Running)))
+        status = STATUS_UNSUCCESSFUL;
+    if (NT_SUCCESS(status)) {
+        CONTEXT ctx;
+        KiTrapFrameToContext(frame, &ctx, flags & CONTEXT_ALL);
+        status = KiCopyToUser(context, &ctx, sizeof(ctx));
+    }
+    ObDereferenceObject(thread);
+    return status;
+}
+
+NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SET_CONTEXT, &thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    CONTEXT ctx;
+    status = KiCopyFromUser(&ctx, context, sizeof(ctx));
+    PKTRAP_FRAME frame = thread->Tcb.TrapFrame;
+    if (NT_SUCCESS(status) && (!frame || (thread != PsCurrentThread() && thread->Tcb.State == Running)))
+        status = STATUS_UNSUCCESSFUL;
+    if (NT_SUCCESS(status)) {
+        KiContextToTrapFrame(&ctx, frame, ctx.ContextFlags, UserMode);
+        if (thread == PsCurrentThread()) {
+            ObDereferenceObject(thread);
+            KiExitToUserMode(frame);
+            KiEnterUserMode(frame);
+        }
+    }
+    ObDereferenceObject(thread);
+    return status;
+}
+
 NTSTATUS NTAPI NtTestAlert(void)
 {
     PKTHREAD thread = KiCurrentThread();

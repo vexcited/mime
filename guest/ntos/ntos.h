@@ -734,7 +734,7 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
 
-NTSTATUS PspBuildEnvironment(PWCHAR *block, SIZE_T *bytes);
+NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
 
 /* cm, the configuration manager. */
 extern POBJECT_TYPE CmKeyType;
@@ -753,6 +753,20 @@ void FsCacheClose(MIMEFS_CACHE *cache);
 void FsCacheInvalidate(ULONG volume, ULONG64 file_id);
 BOOLEAN FsCacheRead(MIMEFS_CACHE *cache, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
+void IopInitializeCompletion(void);
+void IopInitializeNamedPipes(void);
+void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_STATUS_BLOCK iosb);
+BOOLEAN IopIsNamedPipe(PFILE_OBJECT file);
+NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc_routine, PVOID apc_context,
+                       PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length);
+NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context, PIO_STATUS_BLOCK iosb,
+                       ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
+NTSTATUS NpfsCancel(PFILE_OBJECT file, PEPROCESS process, BOOLEAN one, PVOID apc_context);
+NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                       ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
+void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
+NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port, PVOID key);
+void IopReleaseCompletion(PFILE_OBJECT file);
 NTSTATUS IoQueryFileSize(PFILE_OBJECT file, ULONG64 *size);
 NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry);
 

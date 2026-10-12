@@ -87,13 +87,18 @@ static NTSTATUS reference_file(HANDLE handle, PFILE_OBJECT *file)
     return ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)file, NULL);
 }
 
-static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PIO_STATUS_BLOCK iosb, PVOID buffer,
-                        ULONG length, PLARGE_INTEGER byte_offset)
+static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_routine, PVOID apc_context,
+                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, PLARGE_INTEGER byte_offset)
 {
     PFILE_OBJECT file;
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
+    if (IopIsNamedPipe(file)) {
+        status = NpfsReadWrite(file, write, event, apc_routine, apc_context, iosb, buffer, length);
+        ObDereferenceObject(file);
+        return status;
+    }
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     LARGE_INTEGER offset;
     offset.QuadPart = -1;
@@ -165,6 +170,13 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PIO_STATUS_B
         }
     }
     KeSetEvent(&file->Event, 0, FALSE);
+    /* errors detected before the request started post nothing, like windows. */
+    if (!NT_ERROR(status) || done) {
+        if (apc_routine)
+            IopQueueCompletionApc(PsCurrentThread(), apc_routine, apc_context, iosb);
+        else
+            IopPostCompletion(file, apc_context, status, done);
+    }
     ObDereferenceObject(file);
     return status;
 }
@@ -172,13 +184,13 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PIO_STATUS_B
 NTSTATUS NTAPI NtReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                           PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    return rw_file(FALSE, handle, event, iosb, buffer, length, offset);
+    return rw_file(FALSE, handle, event, (PVOID)apc, apc_context, iosb, buffer, length, offset);
 }
 
 NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                            PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    return rw_file(TRUE, handle, event, iosb, buffer, length, offset);
+    return rw_file(TRUE, handle, event, (PVOID)apc, apc_context, iosb, buffer, length, offset);
 }
 
 NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
@@ -191,13 +203,13 @@ NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
 NTSTATUS NTAPI ZwReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                           PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(FALSE, handle, event, iosb, buffer, length, offset));
+    ZW_WRAP(rw_file(FALSE, handle, event, NULL, NULL, iosb, buffer, length, offset));
 }
 
 NTSTATUS NTAPI ZwWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                            PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(TRUE, handle, event, iosb, buffer, length, offset));
+    ZW_WRAP(rw_file(TRUE, handle, event, NULL, NULL, iosb, buffer, length, offset));
 }
 
 static NTSTATUS query_file(PFILE_OBJECT file, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass, PULONG written)
@@ -282,6 +294,10 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
     if (NT_SUCCESS(status)) {
         if (klass == FilePositionInformation && length >= sizeof(FILE_POSITION_INFORMATION)) {
             file->CurrentByteOffset = ((PFILE_POSITION_INFORMATION)buf)->CurrentByteOffset;
+        } else if (klass == FileCompletionInformation) {
+            /* port and key, handled by the i/o manager itself. */
+            status = length >= 2 * sizeof(PVOID) ? IopSetCompletion(file, ((HANDLE *)buf)[0], ((PVOID *)buf)[1])
+                                                 : STATUS_INFO_LENGTH_MISMATCH;
         } else {
             IO_STACK_LOCATION params;
             memset(&params, 0, sizeof(params));
@@ -464,6 +480,15 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
     }
     io.Status = status;
     store_iosb(iosb, &io);
+    if (event) {
+        PKEVENT ev;
+        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&ev, NULL))) {
+            KeSetEvent(ev, 0, FALSE);
+            ObDereferenceObject(ev);
+        }
+    }
+    if (!NT_ERROR(status))
+        IopPostCompletion(file, apc_context, status, io.Information);
     ExFreePool(buf);
     ObDereferenceObject(file);
     return status;
@@ -473,12 +498,43 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
                                PIO_STATUS_BLOCK iosb, ULONG code, PVOID input, ULONG in_len, PVOID output,
                                ULONG out_len)
 {
-    return STATUS_INVALID_DEVICE_REQUEST;
+    PFILE_OBJECT file;
+    NTSTATUS status = reference_file(handle, &file);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (IopIsNamedPipe(file))
+        status = NpfsFsControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
+    else
+        status = STATUS_INVALID_DEVICE_REQUEST;
+    ObDereferenceObject(file);
+    return status;
 }
 
+/* only named pipes have requests that stay pending; everything else completed already. */
 NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 {
+    PFILE_OBJECT file;
+    NTSTATUS status = reference_file(handle, &file);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (IopIsNamedPipe(file))
+        NpfsCancel(file, PsCurrentProcess(), FALSE, NULL);
+    ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {0};
     store_iosb(iosb, &io);
     return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STATUS_BLOCK iosb)
+{
+    PFILE_OBJECT file;
+    NTSTATUS status = reference_file(handle, &file);
+    if (!NT_SUCCESS(status))
+        return status;
+    /* the request is named by its i/o status block, the start of its OVERLAPPED. */
+    status = IopIsNamedPipe(file) ? NpfsCancel(file, PsCurrentProcess(), request != NULL, request) : STATUS_NOT_FOUND;
+    ObDereferenceObject(file);
+    IO_STATUS_BLOCK io = {{status}, 0};
+    store_iosb(iosb, &io);
+    return status;
 }

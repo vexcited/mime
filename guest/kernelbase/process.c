@@ -895,7 +895,11 @@ BOOL WINAPI GetProcessInformation(HANDLE process, PROCESS_INFORMATION_CLASS klas
     case ProcessMachineTypeInfo:
         if (size < sizeof(KB_PROCESS_MACHINE_INFORMATION))
             break;
+#if defined(__x86_64__)
+        ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_AMD64;
+#else
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_ARM64;
+#endif
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->Res0 = 0;
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->MachineAttributes = 3; /* user and kernel enabled. */
         return TRUE;

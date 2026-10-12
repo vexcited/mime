@@ -40,7 +40,7 @@ static NTSTATUS setup_peb(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_S
 {
     PWCHAR environment;
     SIZE_T environment_bytes;
-    NTSTATUS status = PspBuildEnvironment(&environment, &environment_bytes);
+    NTSTATUS status = PspBuildEnvironment(process->Machine, &environment, &environment_bytes);
     if (!NT_SUCCESS(status))
         return status;
     SIZE_T size = 64 * 1024 + environment_bytes;

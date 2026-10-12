@@ -346,6 +346,7 @@ static void file_delete(PVOID object)
         IopSynchronousRequest(file, IRP_MJ_CLOSE, 0, NULL, 0, NULL, NULL);
     if (file->FileName.Buffer)
         ExFreePool(file->FileName.Buffer);
+    IopReleaseCompletion(file);
 }
 
 static PVOID file_wait_object(PVOID object)
@@ -526,6 +527,8 @@ void IoInitialize(void)
     init.DeleteProcedure = file_delete;
     init.WaitObject = file_wait_object;
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
+    IopInitializeCompletion();
+    IopInitializeNamedPipes();
 
     NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Ntfs", MimeFsDriverEntry, NULL);
     if (!NT_SUCCESS(status))

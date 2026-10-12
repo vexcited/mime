@@ -731,6 +731,52 @@ WINBASEAPI BOOL WINAPI ReadFileEx(HANDLE file, LPVOID buffer, DWORD length, LPOV
 WINBASEAPI BOOL WINAPI WriteFileEx(HANDLE file, LPCVOID buffer, DWORD length, LPOVERLAPPED overlapped,
                                    LPOVERLAPPED_COMPLETION_ROUTINE completion);
 WINBASEAPI BOOL WINAPI GetOverlappedResult(HANDLE file, LPOVERLAPPED overlapped, LPDWORD transferred, BOOL wait);
+
+/* pipes. */
+#define PIPE_ACCESS_INBOUND 0x00000001
+#define PIPE_ACCESS_OUTBOUND 0x00000002
+#define PIPE_ACCESS_DUPLEX 0x00000003
+#define FILE_FLAG_FIRST_PIPE_INSTANCE 0x00080000
+#define PIPE_WAIT 0x00000000
+#define PIPE_NOWAIT 0x00000001
+#define PIPE_READMODE_BYTE 0x00000000
+#define PIPE_READMODE_MESSAGE 0x00000002
+#define PIPE_TYPE_BYTE 0x00000000
+#define PIPE_TYPE_MESSAGE 0x00000004
+#define PIPE_ACCEPT_REMOTE_CLIENTS 0x00000000
+#define PIPE_REJECT_REMOTE_CLIENTS 0x00000008
+#define PIPE_CLIENT_END 0x00000000
+#define PIPE_SERVER_END 0x00000001
+#define PIPE_UNLIMITED_INSTANCES 255
+#define NMPWAIT_WAIT_FOREVER 0xFFFFFFFF
+#define NMPWAIT_NOWAIT 0x00000001
+#define NMPWAIT_USE_DEFAULT_WAIT 0x00000000
+WINBASEAPI BOOL WINAPI CreatePipe(PHANDLE read_pipe, PHANDLE write_pipe, LPSECURITY_ATTRIBUTES sa, DWORD size);
+WINBASEAPI HANDLE WINAPI CreateNamedPipeW(LPCWSTR name, DWORD open_mode, DWORD pipe_mode, DWORD max_instances,
+                                          DWORD out_size, DWORD in_size, DWORD timeout, LPSECURITY_ATTRIBUTES sa);
+WINBASEAPI HANDLE WINAPI CreateNamedPipeA(LPCSTR name, DWORD open_mode, DWORD pipe_mode, DWORD max_instances,
+                                          DWORD out_size, DWORD in_size, DWORD timeout, LPSECURITY_ATTRIBUTES sa);
+WINBASEAPI BOOL WINAPI ConnectNamedPipe(HANDLE pipe, LPOVERLAPPED overlapped);
+WINBASEAPI BOOL WINAPI DisconnectNamedPipe(HANDLE pipe);
+WINBASEAPI BOOL WINAPI PeekNamedPipe(HANDLE pipe, LPVOID buffer, DWORD size, LPDWORD read, LPDWORD available,
+                                     LPDWORD left);
+WINBASEAPI BOOL WINAPI SetNamedPipeHandleState(HANDLE pipe, LPDWORD mode, LPDWORD max_collection,
+                                               LPDWORD collect_timeout);
+WINBASEAPI BOOL WINAPI GetNamedPipeInfo(HANDLE pipe, LPDWORD flags, LPDWORD out_size, LPDWORD in_size,
+                                        LPDWORD max_instances);
+WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateW(HANDLE pipe, LPDWORD state, LPDWORD instances,
+                                                LPDWORD max_collection, LPDWORD collect_timeout, LPWSTR user,
+                                                DWORD user_size);
+WINBASEAPI BOOL WINAPI WaitNamedPipeW(LPCWSTR name, DWORD timeout);
+WINBASEAPI BOOL WINAPI WaitNamedPipeA(LPCSTR name, DWORD timeout);
+
+/* completion ports. */
+WINBASEAPI HANDLE WINAPI CreateIoCompletionPort(HANDLE file, HANDLE existing, ULONG_PTR key, DWORD concurrency);
+WINBASEAPI BOOL WINAPI GetQueuedCompletionStatus(HANDLE port, LPDWORD bytes, PULONG_PTR key, LPOVERLAPPED *overlapped,
+                                                 DWORD timeout);
+WINBASEAPI BOOL WINAPI GetQueuedCompletionStatusEx(HANDLE port, LPOVERLAPPED_ENTRY entries, ULONG count,
+                                                   PULONG removed, DWORD timeout, BOOL alertable);
+WINBASEAPI BOOL WINAPI PostQueuedCompletionStatus(HANDLE port, DWORD bytes, ULONG_PTR key, LPOVERLAPPED overlapped);
 WINBASEAPI BOOL WINAPI GetOverlappedResultEx(HANDLE file, LPOVERLAPPED overlapped, LPDWORD transferred,
                                              DWORD timeout, BOOL alertable);
 WINBASEAPI BOOL WINAPI CancelIo(HANDLE file);
