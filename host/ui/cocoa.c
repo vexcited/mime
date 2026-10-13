@@ -9,6 +9,7 @@
 #include "ui.h"
 
 #include <CoreGraphics/CoreGraphics.h>
+#include <IOSurface/IOSurface.h>
 #include <dispatch/dispatch.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
@@ -76,7 +77,7 @@ typedef struct UiWindow {
     bool shown;
 
     pthread_mutex_t lock;
-    uint8_t *pixels;
+    IOSurfaceRef surface; /* the guest pixels, read by the compositor in place */
     uint32_t width, height;
     bool dirty;
     bool update_queued;
@@ -686,8 +687,9 @@ static void destroy_main(void *arg)
         MSG_V(w->window, "release");
     }
     pthread_mutex_lock(&w->lock);
-    free(w->pixels);
-    w->pixels = NULL;
+    if (w->surface)
+        CFRelease(w->surface);
+    w->surface = NULL;
     pthread_mutex_unlock(&w->lock);
     w->window = nil;
     w->view = nil;
@@ -733,7 +735,7 @@ static void config_main(void *arg)
     MSG_V_BOOL(w->window, "setHasShadow:", (cfg->flags & MIME_WIN_SHADOW) != 0);
     if (cropping_changed) {
         pthread_mutex_lock(&w->lock);
-        w->dirty = w->pixels != NULL;
+        w->dirty = w->surface != NULL;
         pthread_mutex_unlock(&w->lock);
     }
 
@@ -774,11 +776,11 @@ void mime_ui_window_config(const MimeWinConfig *cfg)
     on_main(config_main, copy);
 }
 
-static void release_data(void *info, const void *data, size_t size)
-{
-    free((void *)data);
-}
-
+/*
+ * shows the visible part of the window surface. the compositor reads the
+ * surface itself, so a present costs no copy here; contentsChanged tells it
+ * the pixels moved on.
+ */
 static void present_main(void *arg)
 {
     uint32_t id_ = (uint32_t)(uintptr_t)arg;
@@ -787,14 +789,12 @@ static void present_main(void *arg)
     pthread_mutex_unlock(&g_windows_lock);
     if (!w || !w->view)
         return;
-
     pthread_mutex_lock(&w->lock);
     w->update_queued = false;
-    if (!w->dirty || !w->pixels) {
+    if (!w->dirty || !w->surface) {
         pthread_mutex_unlock(&w->lock);
         return;
     }
-    /* only the visible part of the surface is shown. */
     MimeRect v = w->config.visible;
     if (!w->configured || v.right <= v.left || v.bottom <= v.top)
         v = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
@@ -806,28 +806,51 @@ static void present_main(void *arg)
         pthread_mutex_unlock(&w->lock);
         return;
     }
-    uint32_t width = (uint32_t)(v.right - v.left), height = (uint32_t)(v.bottom - v.top);
-    size_t size = (size_t)width * height * 4;
-    uint8_t *copy = malloc(size);
-    for (uint32_t y = 0; y < height; y++)
-        memcpy(copy + (size_t)y * width * 4, w->pixels + (((size_t)(v.top + (int32_t)y)) * w->width + (size_t)v.left) * 4,
-               (size_t)width * 4);
     w->dirty = false;
+    IOSurfaceRef surface = (IOSurfaceRef)CFRetain(w->surface);
+    double width = w->width, height = w->height;
     pthread_mutex_unlock(&w->lock);
 
-    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, copy, size, release_data);
-    CGImageRef image = CGImageCreate(width, height, 8, 32, width * 4, g_colorspace,
-                                     kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, NULL,
-                                     false, kCGRenderingIntentDefault);
-    CGDataProviderRelease(provider);
     id layer = MSG_ID(w->view, "layer");
     id ca = CLS("CATransaction");
     MSG_V(ca, "begin");
     MSG_V_BOOL(ca, "setDisableActions:", YES);
-    MSG_V_PTR(layer, "setContents:", image);
+    NSRect crop = {{v.left / width, v.top / height}, {(v.right - v.left) / width, (v.bottom - v.top) / height}};
+    ((void (*)(id, SEL, NSRect))objc_msgSend)(layer, SEL_("setContentsRect:"), crop);
+    if (MSG_ID(layer, "contents") != (id)surface)
+        MSG_V_ID(layer, "setContents:", (id)surface);
+    else
+        MSG_V(layer, "setContentsChanged");
     MSG_V(ca, "commit");
-    CGImageRelease(image);
+    CFRelease(surface);
     MSG_V(w->window, "invalidateShadow");
+}
+
+static IOSurfaceRef create_surface(uint32_t width, uint32_t height)
+{
+    int32_t w = (int32_t)width, h = (int32_t)height, bpe = 4, format = 'BGRA';
+    CFNumberRef nw = CFNumberCreate(NULL, kCFNumberSInt32Type, &w);
+    CFNumberRef nh = CFNumberCreate(NULL, kCFNumberSInt32Type, &h);
+    CFNumberRef nb = CFNumberCreate(NULL, kCFNumberSInt32Type, &bpe);
+    CFNumberRef nf = CFNumberCreate(NULL, kCFNumberSInt32Type, &format);
+    const void *keys[] = {kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat};
+    const void *values[] = {nw, nh, nb, nf};
+    CFDictionaryRef props = CFDictionaryCreate(NULL, keys, values, 4, &kCFTypeDictionaryKeyCallBacks,
+                                               &kCFTypeDictionaryValueCallBacks);
+    IOSurfaceRef surface = IOSurfaceCreate(props);
+    CFRelease(props);
+    if (surface) {
+        CFPropertyListRef space = CGColorSpaceCopyPropertyList(g_colorspace);
+        if (space) {
+            IOSurfaceSetValue(surface, kIOSurfaceColorSpace, space);
+            CFRelease(space);
+        }
+    }
+    CFRelease(nw);
+    CFRelease(nh);
+    CFRelease(nb);
+    CFRelease(nf);
+    return surface;
 }
 
 void mime_ui_window_present(uint32_t id_, const void *pixels, uint32_t width, uint32_t height, uint32_t stride,
@@ -839,18 +862,27 @@ void mime_ui_window_present(uint32_t id_, const void *pixels, uint32_t width, ui
     if (!w)
         return;
     pthread_mutex_lock(&w->lock);
-    if (w->width != width || w->height != height || !w->pixels) {
-        free(w->pixels);
-        w->pixels = mime_xcalloc((size_t)width * height, 4);
+    if (w->width != width || w->height != height || !w->surface) {
+        if (w->surface)
+            CFRelease(w->surface);
+        w->surface = create_surface(width, height);
         w->width = width;
         w->height = height;
         dirty = (MimeRect){0, 0, (int32_t)width, (int32_t)height};
     }
+    if (!w->surface) {
+        pthread_mutex_unlock(&w->lock);
+        return;
+    }
     int32_t left = MIME_MAX(dirty.left, 0), top = MIME_MAX(dirty.top, 0);
     int32_t right = MIME_MIN(dirty.right, (int32_t)width), bottom = MIME_MIN(dirty.bottom, (int32_t)height);
+    IOSurfaceLock(w->surface, 0, NULL);
+    uint8_t *base = IOSurfaceGetBaseAddress(w->surface);
+    size_t row = IOSurfaceGetBytesPerRow(w->surface);
     for (int32_t y = top; y < bottom && left < right; y++)
-        memcpy(w->pixels + ((size_t)y * width + (size_t)left) * 4, (const uint8_t *)pixels + (size_t)y * stride + (size_t)left * 4,
+        memcpy(base + (size_t)y * row + (size_t)left * 4, (const uint8_t *)pixels + (size_t)y * stride + (size_t)left * 4,
                (size_t)(right - left) * 4);
+    IOSurfaceUnlock(w->surface, 0, NULL);
     w->dirty = true;
     bool queue = !w->update_queued;
     w->update_queued = true;
