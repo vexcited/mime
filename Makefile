@@ -12,7 +12,7 @@ RC := llvm-rc
 STRIP := llvm-strip
 
 HOST_CFLAGS := -std=c17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
-HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Metal -framework IOSurface -lobjc
+HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Metal -framework IOSurface -framework Carbon -lobjc
 CXX := clang++
 
 GUEST_TARGET := --target=aarch64-pc-windows-msvc -march=armv8.2-a

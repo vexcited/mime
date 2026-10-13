@@ -123,6 +123,21 @@ static W32THREAD *mouse_target_thread(const MimeInputEvent *ev)
     return w ? w->Thread : NULL;
 }
 
+/*
+ * the left and right keys of a modifier follow the modifier state every
+ * event carries, as the keyboard driver keeps them on windows: a modifier
+ * press the host never forwarded, such as one made while another
+ * application had the focus, still shows in GetKeyState(VK_LSHIFT).
+ */
+static void sync_async_sides(BOOLEAN on, UINT left, UINT right, UINT generic)
+{
+    if (!on)
+        InputAsyncKeys[left] = InputAsyncKeys[right] = 0;
+    else if (!(InputAsyncKeys[left] & 0x80) && !(InputAsyncKeys[right] & 0x80))
+        InputAsyncKeys[left] = 0x80;
+    InputAsyncKeys[generic] = on ? 0x80 : 0;
+}
+
 static void update_async_keys(const MimeInputEvent *ev)
 {
     static const UCHAR button_vk[] = {0, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
@@ -138,9 +153,9 @@ static void update_async_keys(const MimeInputEvent *ev)
             InputAsyncKeys[ev->vk] = ev->type == MIME_INPUT_KEY_DOWN ? 0x80 : 0;
         break;
     }
-    InputAsyncKeys[VK_SHIFT] = (ev->modifiers & MIME_MOD_SHIFT) ? 0x80 : 0;
-    InputAsyncKeys[VK_CONTROL] = (ev->modifiers & MIME_MOD_CONTROL) ? 0x80 : 0;
-    InputAsyncKeys[VK_MENU] = (ev->modifiers & MIME_MOD_ALT) ? 0x80 : 0;
+    sync_async_sides((ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
+    sync_async_sides((ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
+    sync_async_sides((ev->modifiers & MIME_MOD_ALT) != 0, VK_LMENU, VK_RMENU, VK_MENU);
 }
 
 static void dispatch_event(const MimeInputEvent *ev)
@@ -472,6 +487,18 @@ static void set_key_state(W32THREAD *t, UINT vk, BOOLEAN down)
     t->KeyState[vk] = (UCHAR)((t->KeyState[vk] & 1) | (down ? 0x80 : 0));
 }
 
+/* the thread side of sync_async_sides. */
+static void sync_sides(W32THREAD *t, BOOLEAN on, UINT left, UINT right, UINT generic)
+{
+    if (!on) {
+        set_key_state(t, left, FALSE);
+        set_key_state(t, right, FALSE);
+    } else if (!(t->KeyState[left] & 0x80) && !(t->KeyState[right] & 0x80)) {
+        set_key_state(t, left, TRUE);
+    }
+    set_key_state(t, generic, on);
+}
+
 static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max,
                              BOOLEAN remove, BOOLEAN *consumed)
 {
@@ -509,12 +536,9 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
         return FALSE;
     if (remove) {
         set_key_state(t, ev->vk, down);
-        set_key_state(t, VK_SHIFT, (ev->modifiers & MIME_MOD_SHIFT) != 0);
-        set_key_state(t, VK_CONTROL, (ev->modifiers & MIME_MOD_CONTROL) != 0);
-        set_key_state(t, VK_MENU, alt);
-        if (ev->vk == VK_LSHIFT || ev->vk == VK_RSHIFT || ev->vk == VK_LCONTROL || ev->vk == VK_RCONTROL ||
-            ev->vk == VK_LMENU || ev->vk == VK_RMENU)
-            set_key_state(t, ev->vk, down);
+        sync_sides(t, (ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
+        sync_sides(t, (ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
+        sync_sides(t, alt, VK_LMENU, VK_RMENU, VK_MENU);
         if (ev->modifiers & MIME_MOD_CAPS)
             t->KeyState[VK_CAPITAL] |= 1;
         else

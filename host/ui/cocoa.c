@@ -311,6 +311,44 @@ static const KeyMap g_keymap[] = {
     {0x7B, 0x25, 0x14B}, {0x7C, 0x27, 0x14D}, {0x7D, 0x28, 0x150}, {0x7E, 0x26, 0x148},
 };
 
+/* the text input sources api, declared here rather than through all of carbon. */
+typedef struct __TISInputSource *TISInputSourceRef;
+extern TISInputSourceRef TISCopyCurrentKeyboardLayoutInputSource(void);
+extern void *TISGetInputSourceProperty(TISInputSourceRef source, CFStringRef key);
+extern const CFStringRef kTISPropertyUnicodeKeyLayoutData;
+extern OSStatus UCKeyTranslate(const void *layout, UInt16 code, UInt16 action, UInt32 modifiers, UInt32 keyboard,
+                               OptionBits options, UInt32 *dead, UniCharCount max, UniCharCount *length, UniChar *chars);
+extern UInt8 LMGetKbdType(void);
+
+/*
+ * the letter a key types in the current macos layout, 0 for other keys.
+ * windows gives letter keys the virtual key of their letter in the active
+ * layout, so ctrl+z is the key labelled z on an azerty or qwertz keyboard.
+ */
+static uint32_t layout_letter(uint16_t mac)
+{
+    TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
+    if (!source)
+        return 0;
+    CFDataRef data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+    uint32_t letter = 0;
+    if (data) {
+        UInt32 dead = 0;
+        UniChar ch[4];
+        UniCharCount n = 0;
+        if (UCKeyTranslate(CFDataGetBytePtr(data), mac, 0 /* kUCKeyActionDown */, 0, LMGetKbdType(),
+                           1 /* kUCKeyTranslateNoDeadKeysMask */, &dead, 4, &n, ch) == 0 &&
+            n == 1) {
+            if (ch[0] >= 'a' && ch[0] <= 'z')
+                letter = ch[0] - 32;
+            else if (ch[0] >= 'A' && ch[0] <= 'Z')
+                letter = ch[0];
+        }
+    }
+    CFRelease(source);
+    return letter;
+}
+
 static const KeyMap *map_key(uint16_t mac)
 {
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_keymap); i++)
@@ -332,6 +370,11 @@ static void emit_key(id self, id event, uint32_t type)
     ev.type = type;
     ev.window_id = w->id;
     ev.vk = k->vk;
+    /* the character keys of the main block, which layouts move letters onto. */
+    bool movable = (k->vk >= 'A' && k->vk <= 'Z') || (k->vk >= 0xBA && k->vk <= 0xC0) || (k->vk >= 0xDB && k->vk <= 0xDE);
+    uint32_t letter = movable ? layout_letter(code) : 0;
+    if (letter)
+        ev.vk = letter;
     ev.scancode = k->scan;
     ev.modifiers = modifiers_of(event);
     if (type == MIME_INPUT_KEY_DOWN && MSG_BOOL(event, "isARepeat"))
