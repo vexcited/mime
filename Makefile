@@ -122,6 +122,10 @@ $(OBJ)/gen/rom.o: $(GEN)/rom.S
 
 tools: $(BUILD)/tools/gensyscalls $(BUILD)/tools/genservices $(BUILD)/tools/pechecksum
 
+$(BUILD)/tools/test_pe_icon: tools/test_pe_icon.c host/ui/pe_icon.c host/ui/pe_icon.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_pe_icon.c host/ui/pe_icon.c
+
 $(BUILD)/tools/%: tools/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<
