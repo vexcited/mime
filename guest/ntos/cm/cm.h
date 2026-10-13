@@ -1,12 +1,13 @@
 /*
  * configuration manager internals: the registry is a tree of nodes kept in
- * memory, loaded lazily from the hive files of the C: drive. changes live
- * in memory and are not written back to the hives yet.
+ * memory, loaded lazily from the hive files of the c: drive. nonvolatile
+ * changes are committed to a separate journal before becoming visible.
  */
 #ifndef MIME_CM_H
 #define MIME_CM_H
 
 #include "../ntos.h"
+#include "journal_format.h"
 
 #define REG_NONE 0
 #define REG_SZ 1
@@ -100,9 +101,19 @@ CM_NODE *CmpMount(CM_NODE *node, PCWSTR name, CM_HIVE *hive);
 CM_NODE *CmpOpenPath(PCWSTR path, BOOLEAN create);
 CM_VALUE *CmpFindValue(CM_NODE *node, const WCHAR *name, ULONG chars);
 NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, const void *data, ULONG length);
-void CmpDeleteValue(CM_NODE *node, const WCHAR *name, ULONG chars);
+NTSTATUS CmpDeleteValue(CM_NODE *node, const WCHAR *name, ULONG chars);
 NTSTATUS CmpLoadValues(CM_NODE *node);
 NTSTATUS CmpLoadChildren(CM_NODE *node);
+ULONG CmpFullPath(CM_NODE *node, PWCHAR out, ULONG capacity);
+NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload);
+
+/* ------------------------------------------------------------------ journal.c */
+
+void CmpJournalInitialize(void);
+void CmpJournalEnable(void);
+NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHAR *name, ULONG chars,
+                         const void *data, ULONG length, LARGE_INTEGER last_write);
+NTSTATUS CmpJournalFlush(CM_NODE *node);
 
 /* ------------------------------------------------------------------ boot.c */
 

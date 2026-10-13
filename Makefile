@@ -134,6 +134,14 @@ $(BUILD)/tools/test_fs: tools/test_fs.c host/vmm/fs.c host/vmm/vmm.h include/mim
 	@mkdir -p $(dir $@)
 	$(CC) $(filter-out -MMD -MP,$(HOST_CFLAGS)) -o $@ tools/test_fs.c host/util.c host/log.c
 
+$(BUILD)/tools/test_registry_journal: tools/test_registry_journal.c guest/ntos/cm/journal_format.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_registry_journal.c
+
+$(BUILD)/tools/test_registry_journal_io: tools/test_registry_journal_io.c guest/ntos/cm/journal.c guest/ntos/cm/journal_format.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_registry_journal_io.c
+
 UI_TEST_SRC := tools/uitest.c host/ui/app_identity.c host/ui/pe_icon.c host/util.c host/log.c host/paths.c host/sha1.c
 $(BUILD)/tools/uitest: $(UI_TEST_SRC) host/ui/cocoa.c host/ui/ui.h host/ui/app_identity.h include/mime/abi.h
 	@mkdir -p $(dir $@)
