@@ -531,9 +531,6 @@ typedef struct _WIN32_FIND_DATAW {
     DWORD dwReserved1;
     WCHAR cFileName[MAX_PATH];
     WCHAR cAlternateFileName[14];
-    DWORD dwFileType;
-    DWORD dwCreatorType;
-    WORD wFinderFlags;
 } WIN32_FIND_DATAW, *PWIN32_FIND_DATAW, *LPWIN32_FIND_DATAW;
 
 typedef struct _WIN32_FIND_DATAA {
@@ -547,10 +544,10 @@ typedef struct _WIN32_FIND_DATAA {
     DWORD dwReserved1;
     CHAR cFileName[MAX_PATH];
     CHAR cAlternateFileName[14];
-    DWORD dwFileType;
-    DWORD dwCreatorType;
-    WORD wFinderFlags;
 } WIN32_FIND_DATAA, *PWIN32_FIND_DATAA, *LPWIN32_FIND_DATAA;
+
+/* the sizes windows has; the old mac fields of the sdk only exist under _MAC. */
+MIME_STATIC_ASSERT(sizeof(WIN32_FIND_DATAW) == 592 && sizeof(WIN32_FIND_DATAA) == 320, "find data layout");
 
 typedef enum _FINDEX_INFO_LEVELS {
     FindExInfoStandard,

@@ -1712,9 +1712,6 @@ static void find_data_to_ansi(const WIN32_FIND_DATAW *w, LPWIN32_FIND_DATAA a)
     if (!WideCharToMultiByte(cp, 0, w->cAlternateFileName, -1, a->cAlternateFileName, sizeof(a->cAlternateFileName),
                              NULL, NULL))
         a->cAlternateFileName[0] = 0;
-    a->dwFileType = w->dwFileType;
-    a->dwCreatorType = w->dwCreatorType;
-    a->wFinderFlags = w->wFinderFlags;
 }
 
 HANDLE WINAPI FindFirstFileExA(LPCSTR name, FINDEX_INFO_LEVELS level, LPVOID data, FINDEX_SEARCH_OPS op,
