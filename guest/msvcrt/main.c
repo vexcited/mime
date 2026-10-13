@@ -164,12 +164,18 @@ void MsvcrtDosMapError(unsigned long oserr)
 
 typedef void(__cdecl *_invalid_parameter_handler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned int,
                                                   uintptr_t);
-static _invalid_parameter_handler g_invalid_handler;
+static PVOID g_invalid_handler; /* encoded, NULL until a handler is set */
+
+/* the encoding scrambles NULL too, so a handler never set is told apart before decoding. */
+static _invalid_parameter_handler invalid_handler(void)
+{
+    return g_invalid_handler ? (_invalid_parameter_handler)DecodePointer(g_invalid_handler) : NULL;
+}
 
 void __cdecl _invalid_parameter(const wchar_t *expression, const wchar_t *function, const wchar_t *file,
                                 unsigned int line, uintptr_t reserved)
 {
-    _invalid_parameter_handler handler = (_invalid_parameter_handler)DecodePointer(g_invalid_handler);
+    _invalid_parameter_handler handler = invalid_handler();
     if (handler) {
         handler(expression, function, file, line, reserved);
         return;
@@ -190,14 +196,14 @@ void __cdecl _invoke_watson(const wchar_t *expression, const wchar_t *function, 
 
 _invalid_parameter_handler __cdecl _set_invalid_parameter_handler(_invalid_parameter_handler handler)
 {
-    _invalid_parameter_handler old = (_invalid_parameter_handler)DecodePointer(g_invalid_handler);
-    g_invalid_handler = EncodePointer((PVOID)handler);
+    _invalid_parameter_handler old = invalid_handler();
+    g_invalid_handler = handler ? EncodePointer((PVOID)handler) : NULL;
     return old;
 }
 
 _invalid_parameter_handler __cdecl _get_invalid_parameter_handler(void)
 {
-    return (_invalid_parameter_handler)DecodePointer(g_invalid_handler);
+    return invalid_handler();
 }
 
 void MsvcrtInvalidParameter(void)
