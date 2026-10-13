@@ -217,10 +217,53 @@ LSTATUS WINAPI RegOpenKeyA(HKEY key, LPCSTR subkey, HKEY *result)
     return RegOpenKeyExA(key, subkey, 0, MAXIMUM_ALLOWED, result);
 }
 
+/* win32 creates missing parents; the native service creates only the final key. */
+static NTSTATUS create_key_path(PHANDLE key, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                PUNICODE_STRING klass, ULONG options, PULONG disposition)
+{
+    NTSTATUS status = NtCreateKey(key, access, attributes, 0, klass, options, disposition);
+    if (status != STATUS_OBJECT_NAME_NOT_FOUND && status != STATUS_OBJECT_PATH_NOT_FOUND)
+        return status;
+
+    UNICODE_STRING parent = *attributes->ObjectName;
+    ULONG split = parent.Length / sizeof(WCHAR);
+    while (split && parent.Buffer[split - 1] == '\\')
+        split--;
+    while (split && parent.Buffer[split - 1] != '\\')
+        split--;
+    if (!split)
+        return status;
+    parent.Length = (USHORT)((split - 1) * sizeof(WCHAR));
+    while (parent.Length && parent.Buffer[parent.Length / sizeof(WCHAR) - 1] == '\\')
+        parent.Length -= sizeof(WCHAR);
+    if (!parent.Length)
+        return status;
+
+    OBJECT_ATTRIBUTES parent_attributes = *attributes;
+    parent_attributes.ObjectName = &parent;
+    parent_attributes.Attributes &= ~OBJ_OPENLINK;
+    HANDLE parent_key;
+    status = create_key_path(&parent_key, KEY_CREATE_SUB_KEY, &parent_attributes, NULL,
+                              options & ~(ULONG)REG_OPTION_CREATE_LINK, NULL);
+    if (!NT_SUCCESS(status))
+        return status;
+
+    UNICODE_STRING leaf = *attributes->ObjectName;
+    leaf.Buffer += split;
+    leaf.Length -= (USHORT)(split * sizeof(WCHAR));
+    leaf.MaximumLength = leaf.Length;
+    OBJECT_ATTRIBUTES leaf_attributes = *attributes;
+    leaf_attributes.RootDirectory = parent_key;
+    leaf_attributes.ObjectName = &leaf;
+    status = NtCreateKey(key, access, &leaf_attributes, 0, klass, options, disposition);
+    NtClose(parent_key);
+    return status;
+}
+
 LSTATUS WINAPI RegCreateKeyExW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR klass, DWORD options, REGSAM access,
                                const SECURITY_ATTRIBUTES *sa, HKEY *result, LPDWORD disposition)
 {
-    if (!result || !subkey)
+    if (!result || !subkey || reserved)
         return ERROR_INVALID_PARAMETER;
     if (options & ~(DWORD)(REG_OPTION_VOLATILE | REG_OPTION_CREATE_LINK | REG_OPTION_BACKUP_RESTORE |
                            REG_OPTION_OPEN_LINK))
@@ -240,8 +283,8 @@ LSTATUS WINAPI RegCreateKeyExW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR 
         RtlInitUnicodeString(&class_name, klass);
     HANDLE h;
     ULONG disp = 0;
-    NTSTATUS status = NtCreateKey(&h, clean_access(access), &oa, 0, klass ? &class_name : NULL,
-                                  options & ~(DWORD)REG_OPTION_OPEN_LINK, &disp);
+    NTSTATUS status = create_key_path(&h, clean_access(access), &oa, klass ? &class_name : NULL,
+                                       options & ~(DWORD)REG_OPTION_OPEN_LINK, &disp);
     if (!NT_SUCCESS(status))
         return to_error(status);
     *result = (HKEY)h;
