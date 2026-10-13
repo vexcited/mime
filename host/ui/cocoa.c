@@ -258,9 +258,41 @@ static void view_other_up(id self, SEL sel, id event)
     emit_mouse(self, event, MIME_INPUT_MOUSE_UP, MIME_MOUSE_MIDDLE);
 }
 
-static void view_mouse_moved(id self, SEL sel, id event)
+static void view_mouse_dragged(id self, SEL sel, id event)
 {
     emit_mouse(self, event, MIME_INPUT_MOUSE_MOVE, 0);
+}
+
+/*
+ * macos hands mouseMoved: to the key window wherever the pointer is, so a
+ * move goes to the guest window under the pointer instead, like windows
+ * does: an open popup menu is never key but must see the hover.
+ */
+static void view_mouse_moved(id self, SEL sel, id event)
+{
+    /* an event without a window carries its location in screen coordinates. */
+    id window = MSG_ID(event, "window");
+    NSPoint loc = MSG_POINT(event, "locationInWindow");
+    NSPoint screen = loc;
+    if (window) {
+        NSRect frame = MSG_RECT(window, "frame");
+        screen = CGPointMake(frame.origin.x + loc.x, frame.origin.y + loc.y);
+    }
+    NSInteger number = ((NSInteger(*)(id, SEL, NSPoint, NSInteger))objc_msgSend)(
+        (id)CLS("NSWindow"), SEL_("windowNumberAtPoint:belowWindowWithWindowNumber:"), screen, 0);
+    UiWindow *under = NULL;
+    for (int i = 0; i < MAX_WINDOWS && !under; i++)
+        if (g_windows[i].used && g_windows[i].window &&
+            ((NSInteger(*)(id, SEL))objc_msgSend)(g_windows[i].window, SEL_("windowNumber")) == number)
+            under = &g_windows[i];
+    if (!under)
+        return;
+    MimeInputEvent ev = {0};
+    ev.type = MIME_INPUT_MOUSE_MOVE;
+    ev.window_id = under->id;
+    screen_point_to_guest(screen, &ev.x, &ev.y);
+    ev.modifiers = modifiers_of(event);
+    emit(&ev);
 }
 
 static void view_mouse_exited(id self, SEL sel, id event)
@@ -565,15 +597,15 @@ static void register_classes(void)
     class_addMethod(g_view_class, SEL_("acceptsFirstMouse:"), (IMP)ret_yes_arg, "c@:@");
     class_addMethod(g_view_class, SEL_("mouseDown:"), (IMP)view_mouse_down, "v@:@");
     class_addMethod(g_view_class, SEL_("mouseUp:"), (IMP)view_mouse_up, "v@:@");
-    class_addMethod(g_view_class, SEL_("mouseDragged:"), (IMP)view_mouse_moved, "v@:@");
+    class_addMethod(g_view_class, SEL_("mouseDragged:"), (IMP)view_mouse_dragged, "v@:@");
     class_addMethod(g_view_class, SEL_("mouseMoved:"), (IMP)view_mouse_moved, "v@:@");
     class_addMethod(g_view_class, SEL_("mouseExited:"), (IMP)view_mouse_exited, "v@:@");
     class_addMethod(g_view_class, SEL_("rightMouseDown:"), (IMP)view_right_down, "v@:@");
     class_addMethod(g_view_class, SEL_("rightMouseUp:"), (IMP)view_right_up, "v@:@");
-    class_addMethod(g_view_class, SEL_("rightMouseDragged:"), (IMP)view_mouse_moved, "v@:@");
+    class_addMethod(g_view_class, SEL_("rightMouseDragged:"), (IMP)view_mouse_dragged, "v@:@");
     class_addMethod(g_view_class, SEL_("otherMouseDown:"), (IMP)view_other_down, "v@:@");
     class_addMethod(g_view_class, SEL_("otherMouseUp:"), (IMP)view_other_up, "v@:@");
-    class_addMethod(g_view_class, SEL_("otherMouseDragged:"), (IMP)view_mouse_moved, "v@:@");
+    class_addMethod(g_view_class, SEL_("otherMouseDragged:"), (IMP)view_mouse_dragged, "v@:@");
     class_addMethod(g_view_class, SEL_("scrollWheel:"), (IMP)view_scroll, "v@:@");
     class_addMethod(g_view_class, SEL_("keyDown:"), (IMP)view_key_down, "v@:@");
     class_addMethod(g_view_class, SEL_("keyUp:"), (IMP)view_key_up, "v@:@");

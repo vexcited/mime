@@ -427,7 +427,7 @@ static WND *hit_test(WND *top, POINT pt, LONG *hit)
 
 static void track_mouse(W32THREAD *t, WND *w, LONG hit)
 {
-    HWND h = WndHandle(w);
+    HWND h = w ? WndHandle(w) : NULL;
     BOOLEAN nc = hit != HTCLIENT;
     WND *old = WndLookup(t->MouseWindow);
     if (old && (old != w || (old->CaptionHot && !nc))) {
@@ -579,6 +579,11 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             track_mouse(t, w, hit);
             if (ev->type != MIME_INPUT_MOUSE_UP)
                 MsgSend(w, WM_SETCURSOR, (WPARAM)WndHandle(w), MAKELPARAM(hit, msg));
+        } else if (!w->Header.Destroyed) {
+            /* under capture the mouse window is still the one under the pointer, without hit test messages. */
+            WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
+            WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, pt) : NULL;
+            track_mouse(t, under, under && RectContains(&under->ClientRect, pt.x, pt.y) ? HTCLIENT : HTNOWHERE);
         }
         BOOLEAN dead = w->Header.Destroyed;
         UserDereference(&w->Header);

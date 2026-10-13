@@ -622,6 +622,7 @@ void FramePaint(WND *w)
     if (!is_top_frame(w->Style)) {
         paint_classic_edges(w, s, &clip, window);
         RgnFree(&clip);
+        SurfaceMarkDirty(s, &window);
         return;
     }
 
@@ -668,6 +669,8 @@ void FramePaint(WND *w)
             draw_button(w, s, &clip, origin, buttons[i], dpi, active);
     }
     RgnFree(&clip);
+    /* the frame is drawn straight into the surface, so the present has to know. */
+    SurfaceMarkDirty(s, &window);
     if (top->Thread == W32GetThread() && (top->Flags & WNDF_PRESENTED))
         PaintPresent(top);
 }
