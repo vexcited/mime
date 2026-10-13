@@ -71,8 +71,10 @@ BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage)
 
 BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, HCERTCHAINENGINE *phChainEngine)
 {
+    /* the layouts before windows 7, of windows 7 without dwExclusiveFlags, and of windows 8. */
     if (!pConfig || !phChainEngine ||
         (pConfig->cbSize != FIELD_OFFSET(CERT_CHAIN_ENGINE_CONFIG, hExclusiveRoot) &&
+         pConfig->cbSize != FIELD_OFFSET(CERT_CHAIN_ENGINE_CONFIG, dwExclusiveFlags) &&
          pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG)))
         return CrFail(E_INVALIDARG);
     cr_engine *engine = CrAllocZero(sizeof(cr_engine));
@@ -93,7 +95,7 @@ BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, 
         if (pConfig->rghAdditionalStore && pConfig->rghAdditionalStore[i])
             CertAddStoreToCollection(engine->world, pConfig->rghAdditionalStore[i], 0, 0);
     HCERTSTORE roots = pConfig->hRestrictedRoot;
-    if (pConfig->cbSize == sizeof(CERT_CHAIN_ENGINE_CONFIG) && pConfig->hExclusiveRoot)
+    if (pConfig->cbSize > FIELD_OFFSET(CERT_CHAIN_ENGINE_CONFIG, hExclusiveRoot) && pConfig->hExclusiveRoot)
         roots = pConfig->hExclusiveRoot;
     if (roots) {
         engine->roots = CertDuplicateStore(roots);
