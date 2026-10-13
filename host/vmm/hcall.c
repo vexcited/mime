@@ -1,5 +1,7 @@
 #include "vmm.h"
 
+#include <sys/mman.h>
+
 #include "../gpu/gpu.h"
 #include "../ui/ui.h"
 
@@ -202,6 +204,16 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         status = mime_fs_hcall(vm, nr, regs);
         value = regs[1];
         break;
+    case MIME_HC_MEM_DISCARD: {
+        /* whole host pages only; the guest reads zeros or the old bytes until it writes them again. */
+        uint64_t start = MIME_ALIGN_UP(regs[1], (uint64_t)MIME_LAZY_PAGE);
+        uint64_t end = MIME_ALIGN_DOWN(regs[1] + regs[2], (uint64_t)MIME_LAZY_PAGE);
+        if (regs[1] < MIME_RAM_BASE || regs[1] + regs[2] > MIME_RAM_BASE + vm->ram_size || regs[1] + regs[2] < regs[1])
+            status = MIME_HC_STATUS_INVALID;
+        else if (end > start)
+            madvise(vm->ram + (start - MIME_RAM_BASE), end - start, MADV_FREE_REUSABLE);
+        break;
+    }
     case MIME_HC_WIN_CREATE:
         mime_ui_window_create((uint32_t)regs[1]);
         break;

@@ -190,6 +190,7 @@ enum {
     MIME_HC_FS_DELETE = 0x17,   /* (handle) delete on close */
     MIME_HC_FS_MAP = 0x18,      /* (handle) -> guest physical address of the whole file, read only, filled on touch */
     MIME_HC_FS_UNMAP = 0x19,    /* (pa) */
+    MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
     MIME_HC_WIN_DESTROY = 0x21, /* (window_id) */

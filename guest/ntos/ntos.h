@@ -355,6 +355,7 @@ typedef enum _KI_CLOCK {
 #define MM_PFN_PAGE_TABLE 0x4
 #define MM_PFN_POOL 0x8
 #define MM_PFN_RESERVED 0x10
+#define MM_PFN_DISCARDED 0x20 /* free block head already handed back to the host */
 
 typedef struct _MMPFN {
     LIST_ENTRY ListEntry;
@@ -473,6 +474,7 @@ ULONG64 MmAllocateContiguous(SIZE_T pages); /* zeroed run */
 void MmFreeContiguous(ULONG64 pa, SIZE_T pages);
 PMMPFN MiGetPfn(ULONG64 pa);
 SIZE_T MmGetFreePages(void);
+void MmDiscardIdle(void); /* idle loop, interrupts disabled: hands freed memory back to the host */
 SIZE_T MmGetTotalPages(void);
 
 ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level);

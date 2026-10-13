@@ -124,6 +124,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
         KiDispatchPendingWork();
         if (!KeGetCurrentPrcb()->DispatchPending && !KeGetCurrentPrcb()->DpcPending) {
             KeGetCurrentPrcb()->IdleTicks++;
+            MmDiscardIdle();
             __asm__ volatile("wfi");
         }
         KiEnableInterrupts();
