@@ -47,6 +47,26 @@ static MimeRect mime_rect(const RECT *r)
     return (MimeRect){r->left, r->top, r->right, r->bottom};
 }
 
+/*
+ * the corner radius the dwm gives a window: none when maximized, the one
+ * DWMWA_WINDOW_CORNER_PREFERENCE asks for, else the frame's. dwmapi keeps
+ * the preference as a window property holding the value plus one.
+ */
+static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
+{
+    if (w->Style & WS_MAXIMIZE)
+        return 0;
+    switch ((ULONG_PTR)PropGetData(w, AtomFind(L"MimeDwmCorner"))) {
+    case 1 + 1: /* DWMWCP_DONOTROUND */
+        return 0;
+    case 2 + 1: /* DWMWCP_ROUND */
+        return (uint32_t)W32MulDiv(8, (LONG)WndGetDpi(w), 96);
+    case 3 + 1: /* DWMWCP_ROUNDSMALL */
+        return (uint32_t)W32MulDiv(4, (LONG)WndGetDpi(w), 96);
+    }
+    return (uint32_t)m->CornerRadius;
+}
+
 void HostConfigure(WND *w, BOOLEAN activate)
 {
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
@@ -80,9 +100,13 @@ void HostConfigure(WND *w, BOOLEAN activate)
     RECT vis;
     FrameGetVisibleRect(w, &vis);
     c->visible = mime_rect(&vis);
+    c->input = c->visible;
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
-    c->corner_radius = (w->Style & WS_MAXIMIZE) ? 0 : (uint32_t)m.CornerRadius;
+    /* a sizable frame takes the mouse over its invisible resize border, like the dwm's. */
+    if ((w->Style & WS_THICKFRAME) && !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) && m.VisibleInset)
+        c->input = (MimeRect){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
+    c->corner_radius = corner_radius(w, &m);
     if (m.Border && !(w->Style & WS_MAXIMIZE))
         c->border_color = (w->Flags & WNDF_ACTIVE_FRAME) ? 0x66000000u : 0x40000000u;
     RECT drag[MIME_WIN_MAX_DRAG_RECTS];

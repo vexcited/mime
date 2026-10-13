@@ -20,6 +20,19 @@ void PropFreeWindow(WND *w)
     w->PropCapacity = 0;
 }
 
+HANDLE PropGetData(WND *w, ATOM atom)
+{
+    WND_PROP *p = atom ? find_prop(w, atom) : NULL;
+    return p ? p->Data : NULL;
+}
+
+/* the dwm attributes dwmapi stores as properties change how the host shows the window. */
+static void prop_changed(WND *w, ATOM atom)
+{
+    if (atom == AtomFind(L"MimeDwmCorner") && WndIsTopLevel(w))
+        WndUpdateHostConfig(w, FALSE);
+}
+
 BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
 {
     UserEnter();
@@ -46,6 +59,7 @@ BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
         if (p) {
             p->Data = data;
             ok = TRUE;
+            prop_changed(w, atom);
         } else {
             error = ERROR_NOT_ENOUGH_MEMORY;
         }
@@ -77,6 +91,7 @@ HANDLE NTAPI NtUserRemoveProp(HWND hwnd, ATOM atom)
         ULONG i = (ULONG)(p - w->Props);
         memmove(&w->Props[i], &w->Props[i + 1], (w->PropCount - i - 1) * sizeof(WND_PROP));
         w->PropCount--;
+        prop_changed(w, atom);
     }
     UserLeave();
     return data;

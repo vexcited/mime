@@ -212,6 +212,9 @@ WINUSERAPI UINT WINAPI RegisterWindowMessageA(LPCSTR name)
 
 WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
+    LRESULT result;
+    if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result))
+        return result;
     return NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_DEFWINDOWPROC, FALSE);
 }
 

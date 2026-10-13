@@ -74,6 +74,7 @@ typedef struct UiWindow {
     bool used;
     id window;
     id view;
+    id content; /* the rounded layer showing the visible part, inside any resize border */
     MimeWinConfig config;
     bool configured;
     bool shown;
@@ -177,13 +178,30 @@ static void emit_mouse(id self, id event, uint32_t type, uint32_t button)
     emit(&ev);
 }
 
-/* the host window covers the visible part of the guest window, in screen pixels. */
-static MimeRect visible_screen_rect(const MimeWinConfig *c)
+/* the window relative part of the guest window that is drawn. */
+static MimeRect visible_part(const MimeWinConfig *c)
 {
     MimeRect v = c->visible;
     if (v.right <= v.left || v.bottom <= v.top)
         v = (MimeRect){0, 0, c->rect.right - c->rect.left, c->rect.bottom - c->rect.top};
-    return (MimeRect){c->rect.left + v.left, c->rect.top + v.top, c->rect.left + v.right, c->rect.top + v.bottom};
+    return v;
+}
+
+/* the window relative part the host window covers: the drawn part and the resize border around it. */
+static MimeRect host_part(const MimeWinConfig *c)
+{
+    MimeRect v = visible_part(c), in = c->input;
+    if (in.right <= in.left || in.bottom <= in.top)
+        return v;
+    return (MimeRect){MIME_MIN(v.left, in.left), MIME_MIN(v.top, in.top), MIME_MAX(v.right, in.right),
+                      MIME_MAX(v.bottom, in.bottom)};
+}
+
+/* the host window in screen pixels. */
+static MimeRect host_screen_rect(const MimeWinConfig *c)
+{
+    MimeRect h = host_part(c);
+    return (MimeRect){c->rect.left + h.left, c->rect.top + h.top, c->rect.left + h.right, c->rect.top + h.bottom};
 }
 
 /* true when a window relative guest point lies in a caption drag area. */
@@ -191,9 +209,9 @@ static bool in_drag_area(UiWindow *w, id event)
 {
     NSPoint loc = MSG_POINT(event, "locationInWindow");
     NSRect frame = MSG_RECT(w->window, "frame");
-    MimeRect vis = visible_screen_rect(&w->config);
-    int32_t x = (int32_t)(loc.x * g_scale) + vis.left - w->config.rect.left;
-    int32_t y = (int32_t)((frame.size.height - loc.y) * g_scale) + vis.top - w->config.rect.top;
+    MimeRect host = host_part(&w->config);
+    int32_t x = (int32_t)(loc.x * g_scale) + host.left;
+    int32_t y = (int32_t)((frame.size.height - loc.y) * g_scale) + host.top;
     for (uint32_t i = 0; i < w->config.drag_count && i < MIME_WIN_MAX_DRAG_RECTS; i++) {
         MimeRect r = w->config.drag[i];
         if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
@@ -458,13 +476,12 @@ static void delegate_did_move(id self, SEL sel, id notification)
     if (!w)
         return;
     NSRect frame = MSG_RECT(window, "frame");
-    MimeRect vis = visible_screen_rect(&w->config);
+    MimeRect host = host_part(&w->config);
     MimeInputEvent ev = {0};
     ev.type = MIME_INPUT_WINDOW_MOVED;
     ev.window_id = w->id;
-    ev.x = (int32_t)(frame.origin.x * g_scale + 0.5) - (vis.left - w->config.rect.left);
-    ev.y = (int32_t)((g_screen_height_pts - frame.origin.y - frame.size.height) * g_scale + 0.5) -
-           (vis.top - w->config.rect.top);
+    ev.x = (int32_t)(frame.origin.x * g_scale + 0.5) - host.left;
+    ev.y = (int32_t)((g_screen_height_pts - frame.origin.y - frame.size.height) * g_scale + 0.5) - host.top;
     w->config.rect.right += ev.x - w->config.rect.left;
     w->config.rect.bottom += ev.y - w->config.rect.top;
     w->config.rect.left = ev.x;
@@ -687,11 +704,12 @@ static void create_main(void *arg)
 
     id view = ((id(*)(id, SEL, NSRect))objc_msgSend)(MSG_ID((id)g_view_class, "alloc"), SEL_("initWithFrame:"), rect);
     MSG_V_BOOL(view, "setWantsLayer:", YES);
-    id layer = MSG_ID(view, "layer");
-    MSG_V_DBL(layer, "setContentsScale:", g_scale);
-    MSG_V_ID(layer, "setContentsGravity:", kCAGravityTopLeft);
-    MSG_V_ID(layer, "setMagnificationFilter:", kCAFilterNearest);
-    MSG_V_BOOL(layer, "setMasksToBounds:", YES);
+    id content = MSG_ID(MSG_ID(CLS("CALayer"), "alloc"), "init");
+    MSG_V_DBL(content, "setContentsScale:", g_scale);
+    MSG_V_ID(content, "setContentsGravity:", kCAGravityTopLeft);
+    MSG_V_ID(content, "setMagnificationFilter:", kCAFilterNearest);
+    MSG_V_BOOL(content, "setMasksToBounds:", YES);
+    MSG_V_ID(MSG_ID(view, "layer"), "addSublayer:", content);
     MSG_V_ID(window, "setContentView:", view);
     MSG_V_ID(window, "makeFirstResponder:", view);
 
@@ -704,6 +722,7 @@ static void create_main(void *arg)
 
     w->window = window;
     w->view = view;
+    w->content = content;
 }
 
 void mime_ui_window_create(uint32_t id_)
@@ -739,6 +758,7 @@ static void destroy_main(void *arg)
         MSG_V_ID(w->window, "setDelegate:", nil);
         MSG_V_ID(w->window, "orderOut:", nil);
         MSG_V(w->window, "close");
+        MSG_V(w->content, "release");
         MSG_V(w->view, "release");
         MSG_V(w->window, "release");
     }
@@ -749,6 +769,7 @@ static void destroy_main(void *arg)
     pthread_mutex_unlock(&w->lock);
     w->window = nil;
     w->view = nil;
+    w->content = nil;
 }
 
 void mime_ui_window_destroy(uint32_t id_)
@@ -770,24 +791,42 @@ static void config_main(void *arg)
         return;
     }
     bool cropping_changed = memcmp(&w->config.visible, &cfg->visible, sizeof(cfg->visible)) != 0 ||
+                            memcmp(&w->config.input, &cfg->input, sizeof(cfg->input)) != 0 ||
                             w->config.rect.right - w->config.rect.left != cfg->rect.right - cfg->rect.left ||
                             w->config.rect.bottom - w->config.rect.top != cfg->rect.bottom - cfg->rect.top;
     w->config = *cfg;
     w->configured = true;
 
-    /* rounded corners and the 1 pixel border are drawn by the compositor, over the guest pixels. */
-    id layer = MSG_ID(w->view, "layer");
-    MSG_V_DBL(layer, "setCornerRadius:", cfg->corner_radius / g_scale);
+    /*
+     * rounded corners and the 1 pixel border are drawn by the compositor, over
+     * the guest pixels. a resize border around them stays all but transparent:
+     * macos sends clicks on fully transparent pixels to the window below.
+     */
+    MimeRect vis = visible_part(cfg), host = host_part(cfg);
+    id ca = CLS("CATransaction");
+    MSG_V(ca, "begin");
+    MSG_V_BOOL(ca, "setDisableActions:", YES);
+    id root = MSG_ID(w->view, "layer");
+    bool border = memcmp(&vis, &host, sizeof(vis)) != 0;
+    CGColorRef band = CGColorCreateSRGB(0, 0, 0, border ? 2.0 / 255.0 : 0);
+    MSG_V_PTR(root, "setBackgroundColor:", band);
+    CGColorRelease(band);
+    ((void (*)(id, SEL, NSRect))objc_msgSend)(
+        w->content, SEL_("setFrame:"),
+        CGRectMake((vis.left - host.left) / g_scale, (vis.top - host.top) / g_scale, (vis.right - vis.left) / g_scale,
+                   (vis.bottom - vis.top) / g_scale));
+    MSG_V_DBL(w->content, "setCornerRadius:", cfg->corner_radius / g_scale);
     if (cfg->border_color) {
         uint32_t c = cfg->border_color;
         CGColorRef color = CGColorCreateSRGB(((c >> 16) & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0,
                                              ((c >> 24) & 0xFF) / 255.0);
-        MSG_V_PTR(layer, "setBorderColor:", color);
+        MSG_V_PTR(w->content, "setBorderColor:", color);
         CGColorRelease(color);
-        MSG_V_DBL(layer, "setBorderWidth:", 1.0 / g_scale);
+        MSG_V_DBL(w->content, "setBorderWidth:", 1.0 / g_scale);
     } else {
-        MSG_V_DBL(layer, "setBorderWidth:", 0.0);
+        MSG_V_DBL(w->content, "setBorderWidth:", 0.0);
     }
+    MSG_V(ca, "commit");
     MSG_V_BOOL(w->window, "setHasShadow:", (cfg->flags & MIME_WIN_SHADOW) != 0);
     if (cropping_changed) {
         pthread_mutex_lock(&w->lock);
@@ -795,7 +834,7 @@ static void config_main(void *arg)
         pthread_mutex_unlock(&w->lock);
     }
 
-    NSRect frame = guest_to_frame(visible_screen_rect(cfg));
+    NSRect frame = guest_to_frame(host_screen_rect(cfg));
     g_suppress_move = true;
     ((void (*)(id, SEL, NSRect, BOOL))objc_msgSend)(w->window, SEL_("setFrame:display:"), frame, NO);
     g_suppress_move = false;
@@ -823,6 +862,8 @@ static void config_main(void *arg)
         present_main((void *)(uintptr_t)w->id);
         metal_relayout(w->id);
     }
+    /* the shadow follows the shape, which a new corner radius or border changes. */
+    MSG_V(w->window, "invalidateShadow");
 }
 
 void mime_ui_window_config(const MimeWinConfig *cfg)
@@ -867,7 +908,7 @@ static void present_main(void *arg)
     double width = w->width, height = w->height;
     pthread_mutex_unlock(&w->lock);
 
-    id layer = MSG_ID(w->view, "layer");
+    id layer = w->content;
     id ca = CLS("CATransaction");
     MSG_V(ca, "begin");
     MSG_V_BOOL(ca, "setDisableActions:", YES);
@@ -1189,7 +1230,7 @@ static void metal_layout(MetalLayer *m)
         MSG_V_BOOL(m->layer, "setHidden:", YES);
         MSG_V(m->layer, "removeFromSuperlayer");
     } else {
-        id parent = MSG_ID(w->view, "layer");
+        id parent = w->content;
         if (MSG_ID(m->layer, "superlayer") != parent)
             MSG_V_ID(parent, "addSublayer:", m->layer);
         MimeRect v = w->config.visible;

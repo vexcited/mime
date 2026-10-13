@@ -1,8 +1,8 @@
 /*
  * dwmapi: mime composes every window, like windows since 8, so composition
  * is always on. window attributes are kept as window properties and the
- * frame bounds come from the window rectangle, mime frames having no
- * invisible resize borders.
+ * frame bounds are the window rectangle without its invisible resize
+ * border.
  */
 #define MIME_BUILD_DWMAPI
 #include <mime/nt.h>
@@ -62,6 +62,38 @@ static BOOL is_top_level(HWND hwnd)
     return IsWindow(hwnd) && GetAncestor(hwnd, GA_ROOT) == hwnd;
 }
 
+/*
+ * the window rectangle without its invisible resize border, as win32k
+ * frames it: the sizing and padded borders around a caption, all but
+ * their last pixel, on every side but the top, and the whole border when
+ * maximized.
+ */
+static BOOL visible_frame(HWND hwnd, RECT *r)
+{
+    if (!GetWindowRect(hwnd, r))
+        return FALSE;
+    LONG style = GetWindowLongW(hwnd, GWL_STYLE), ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    if (style & WS_CHILD)
+        return TRUE;
+    UINT dpi = GetDpiForWindow(hwnd);
+    int border = 0;
+    if ((style & WS_CAPTION) == WS_CAPTION)
+        border = GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    else if (style & WS_THICKFRAME)
+        border = GetSystemMetricsForDpi(SM_CXFRAME, dpi);
+    else if ((style & WS_DLGFRAME) || (ex_style & WS_EX_DLGMODALFRAME))
+        border = GetSystemMetricsForDpi(SM_CXDLGFRAME, dpi);
+    if (style & WS_MAXIMIZE) {
+        InflateRect(r, -border, -border);
+        return TRUE;
+    }
+    int inset = border > 1 ? border - 1 : 0;
+    r->left += inset;
+    r->right -= inset;
+    r->bottom -= inset;
+    return TRUE;
+}
+
 DWMAPI DwmIsCompositionEnabled(BOOL *enabled)
 {
     if (!enabled)
@@ -91,7 +123,7 @@ DWMAPI DwmGetWindowAttribute(HWND hwnd, DWORD attribute, PVOID value, DWORD size
     case DWMWA_EXTENDED_FRAME_BOUNDS:
         if (size != sizeof(RECT))
             return E_INVALIDARG;
-        return GetWindowRect(hwnd, value) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+        return visible_frame(hwnd, value) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
     case DWMWA_CAPTION_BUTTON_BOUNDS: {
         if (size != sizeof(RECT))
             return E_INVALIDARG;

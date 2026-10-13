@@ -700,6 +700,7 @@ void LayerStyleChanged(WND *w);
 BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape excludes the screen point */
 void MenuFreeProcess(W32PROCESS *p);
 void PropFreeWindow(WND *w);
+HANDLE PropGetData(WND *w, ATOM atom);
 void MenuWindowDestroyed(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);

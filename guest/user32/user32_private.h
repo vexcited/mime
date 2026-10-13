@@ -57,6 +57,9 @@ static inline void UserFreeConverted(const void *converted, const void *original
         UserFree((void *)converted);
 }
 
+/* the move and size loop of DefWindowProc, movesize.c. */
+BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+
 /* message translation between ansi and unicode window procedures. */
 LRESULT UserCallProc(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi);

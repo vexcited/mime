@@ -460,6 +460,7 @@ typedef struct MimeWinConfig {
     uint32_t flags;
     MimeRect rect;    /* screen coordinates in guest pixels */
     MimeRect visible; /* window relative part that is drawn opaque/visible */
+    MimeRect input;   /* window relative part that takes the mouse, the visible part plus any resize border */
     uint32_t corner_radius;
     uint32_t border_color; /* 0xAARRGGBB 1 pixel border drawn by the host over the visible rect, 0 for none */
     uint32_t drag_count;
