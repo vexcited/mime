@@ -451,9 +451,16 @@ NTSTATUS NTAPI NtQueryVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb
 
 NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 {
+    PFILE_OBJECT file;
+    NTSTATUS status = reference_file(handle, &file);
+    if (!NT_SUCCESS(status))
+        return status;
     IO_STATUS_BLOCK io = {0};
-    store_iosb(iosb, &io);
-    return STATUS_SUCCESS;
+    status = IopSynchronousRequest(file, IRP_MJ_FLUSH_BUFFERS, 0, NULL, 0, NULL, &io);
+    ObDereferenceObject(file);
+    io.Status = status;
+    NTSTATUS stored = store_iosb(iosb, &io);
+    return NT_SUCCESS(status) ? stored : status;
 }
 
 NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,

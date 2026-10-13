@@ -813,7 +813,14 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
 
 static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
 {
-    return complete(irp, STATUS_SUCCESS, 0);
+    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (!fcb)
+        return complete(irp, STATUS_INVALID_HANDLE, 0);
+    if (fcb->Rom)
+        return complete(irp, STATUS_SUCCESS, 0);
+    ULONG64 hs = HalHypercall(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, NULL);
+    return complete(irp, host_status(hs, FALSE), 0);
 }
 
 static NTSTATUS create_volume(PDRIVER_OBJECT driver, PCWSTR name, ULONG host_volume, PCSTR label, ULONG serial)

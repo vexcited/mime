@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -38,6 +39,33 @@ static uint64_t errno_status(int err)
     case ENOTEMPTY: return MIME_HC_STATUS_NOT_EMPTY;
     default: return MIME_HC_STATUS_IO_ERROR;
     }
+}
+
+static uint64_t flush_fd(int fd)
+{
+    int result;
+    do {
+        result = fsync(fd);
+    } while (result != 0 && errno == EINTR);
+    return result == 0 ? MIME_HC_STATUS_OK : errno_status(errno);
+}
+
+static uint64_t flush_parent(const char *path)
+{
+    char parent[MIME_PATH_MAX];
+    mime_strlcpy(parent, path, sizeof(parent));
+    char *slash = strrchr(parent, '/');
+    if (!slash)
+        return MIME_HC_STATUS_INVALID;
+    if (slash == parent)
+        slash++;
+    *slash = 0;
+    int fd = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0)
+        return errno_status(errno);
+    uint64_t status = flush_fd(fd);
+    close(fd);
+    return status;
 }
 
 static uint64_t ts_to_filetime(struct timespec ts)
@@ -160,6 +188,10 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
     bool want_dir = req->flags & MIME_FS_OPEN_DIRECTORY;
     bool want_file = req->flags & MIME_FS_OPEN_NON_DIRECTORY;
     bool write = req->flags & MIME_FS_OPEN_WRITE;
+    bool private_registry = req->volume == MIME_FS_VOLUME_SYSTEM &&
+                            !strcasecmp(path + strlen(vm->paths->drive_c),
+                                        "/Windows/System32/config/mime-registry.log");
+    int private_flags = private_registry ? O_NOFOLLOW : 0;
     uint32_t action = FILE_OPENED;
     int fd;
 
@@ -180,9 +212,9 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
                 flags = O_RDWR | O_TRUNC;
                 action = req->disposition == MIME_FS_DISP_SUPERSEDE ? FILE_SUPERSEDED : FILE_OVERWRITTEN;
             }
-            fd = open(path, flags);
+            fd = open(path, flags | private_flags);
             if (fd < 0 && errno == EACCES && !write)
-                fd = open(path, O_RDONLY);
+                fd = open(path, O_RDONLY | private_flags);
         }
     } else {
         if (req->disposition == MIME_FS_DISP_OPEN || req->disposition == MIME_FS_DISP_OVERWRITE) {
@@ -199,13 +231,25 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
                 return errno_status(errno);
             fd = open(path, O_RDONLY | O_DIRECTORY);
         } else {
-            fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0644);
+            fd = open(path, O_RDWR | O_CREAT | O_EXCL | private_flags, private_registry ? 0600 : 0644);
         }
         action = FILE_CREATED;
     }
     if (fd < 0)
         return errno_status(errno);
-    fstat(fd, &st);
+    if (fstat(fd, &st) != 0 || (private_registry && S_ISREG(st.st_mode) && fchmod(fd, 0600) != 0)) {
+        uint64_t status = errno_status(errno);
+        close(fd);
+        return status;
+    }
+    if (private_registry && S_ISREG(st.st_mode)) {
+        /* retry directory sync even when an earlier open already created the journal. */
+        uint64_t status = flush_parent(path);
+        if (status != MIME_HC_STATUS_OK) {
+            close(fd);
+            return status;
+        }
+    }
 
     MimeFsHandle *fh = mime_xcalloc(1, sizeof(*fh));
     fh->fd = fd;
@@ -377,6 +421,15 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_CLOSE:
         free_handle(vm, a[1]);
         break;
+    case MIME_HC_FS_FLUSH: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        if (!fh) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        status = flush_fd(fh->fd);
+        break;
+    }
     case MIME_HC_FS_READ:
     case MIME_HC_FS_WRITE: {
         MimeFsHandle *fh = get_handle(vm, a[1]);

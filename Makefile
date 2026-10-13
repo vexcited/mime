@@ -130,6 +130,10 @@ $(BUILD)/tools/test_input_queue: tools/test_input_queue.c host/vmm/input_queue.h
 	@mkdir -p $(dir $@)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_input_queue.c
 
+$(BUILD)/tools/test_fs: tools/test_fs.c host/vmm/fs.c host/vmm/vmm.h include/mime/abi.h host/util.c host/log.c
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -MMD -MP,$(HOST_CFLAGS)) -o $@ tools/test_fs.c host/util.c host/log.c
+
 UI_TEST_SRC := tools/uitest.c host/ui/app_identity.c host/ui/pe_icon.c host/util.c host/log.c host/paths.c host/sha1.c
 $(BUILD)/tools/uitest: $(UI_TEST_SRC) host/ui/cocoa.c host/ui/ui.h host/ui/app_identity.h include/mime/abi.h
 	@mkdir -p $(dir $@)
