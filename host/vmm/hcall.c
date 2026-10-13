@@ -266,6 +266,25 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_GPU_CLOSE:
         mime_gpu_close(regs[1]);
         break;
+    case MIME_HC_NET_SOCKET:
+    case MIME_HC_NET_CLOSE:
+    case MIME_HC_NET_BIND:
+    case MIME_HC_NET_LISTEN:
+    case MIME_HC_NET_CONNECT:
+    case MIME_HC_NET_ACCEPT:
+    case MIME_HC_NET_SEND:
+    case MIME_HC_NET_RECV:
+    case MIME_HC_NET_SHUTDOWN:
+    case MIME_HC_NET_NAME:
+    case MIME_HC_NET_OPTION:
+    case MIME_HC_NET_POLL:
+    case MIME_HC_NET_EVENTS:
+    case MIME_HC_NET_RESOLVE:
+    case MIME_HC_NET_ANSWER:
+    case MIME_HC_NET_INTERFACES:
+        status = mime_net_hcall(vm, nr, regs);
+        value = regs[1];
+        break;
     default:
         mime_warn("unknown hypercall %#llx", (unsigned long long)nr);
         status = MIME_HC_STATUS_UNSUPPORTED;

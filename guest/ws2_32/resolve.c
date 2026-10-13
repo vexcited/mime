@@ -1,7 +1,7 @@
 /*
- * name resolution without a network: the host name of the machine
- * identity, localhost, numeric addresses, and the service and protocol
- * databases. names other than the local ones are never found.
+ * name resolution: the host name of the machine identity, localhost,
+ * numeric addresses, and the service and protocol databases. other names
+ * go to the resolver of the host through the socket driver.
  */
 #include "ws2_32_private.h"
 
@@ -625,8 +625,16 @@ struct hostent *WSAAPI gethostbyname(const char *name)
     if (WsParseIpv4(name, FALSE, &addr, &end) && !*end)
         return fill_hostent(name, AF_INET, &addr, 1);
     if (!WsIsLocalName(name)) {
-        SetLastError(WSAHOST_NOT_FOUND);
-        return NULL;
+        MIME_AFD_ADDRESS found[WS_HOST_ADDRESSES];
+        int n = WsResolve(name, AF_INET, found, WS_HOST_ADDRESSES);
+        if (n <= 0) {
+            SetLastError(n < 0 ? -n : WSANO_DATA);
+            return NULL;
+        }
+        IN_ADDR list[WS_HOST_ADDRESSES];
+        for (int i = 0; i < n; i++)
+            list[i] = ((SOCKADDR_IN *)&found[i])->sin_addr;
+        return fill_hostent(name, AF_INET, list, n);
     }
     char canonical[512];
     local_canonical(name, canonical, sizeof(canonical));
@@ -877,9 +885,32 @@ static int lookup(const char *node, const char *service, const ADDRINFOW *hints,
     if (flags & AI_NUMERICHOST)
         return WSAHOST_NOT_FOUND;
 
-    /* the only names known without a network are the local ones, which resolve to the loopback. */
-    if (!WsIsLocalName(node))
-        return WSAHOST_NOT_FOUND;
+    /* other names go to the host's resolver; the local ones resolve to the loopback. */
+    if (!WsIsLocalName(node)) {
+        MIME_AFD_ADDRESS found[32];
+        int n = WsResolve(node, family, found, 32);
+        if (n < 0)
+            return -n;
+        PADDRINFOW first = NULL;
+        for (int i = 0; i < n; i++) {
+            PADDRINFOW added = NULL;
+            if (found[i].Family == AF_INET && family != AF_INET6) {
+                added = append_v4(&g, ((SOCKADDR_IN *)&found[i])->sin_addr, 0);
+            } else if (found[i].Family == AF_INET6 && family != AF_INET) {
+                const SOCKADDR_IN6 *in6 = (const SOCKADDR_IN6 *)&found[i];
+                added = append_v6(&g, &in6->sin6_addr, in6->sin6_scope_id, 0);
+            } else {
+                continue;
+            }
+            if (!added)
+                return WSA_NOT_ENOUGH_MEMORY;
+            if (!first)
+                first = added;
+        }
+        if (first && (flags & (AI_CANONNAME | AI_FQDN)))
+            return set_canonname(first, node);
+        return 0;
+    }
     PADDRINFOW first = NULL;
     if (family != AF_INET && !(first = append_v6(&g, &in6_loopback, 0, 0)))
         return WSA_NOT_ENOUGH_MEMORY;

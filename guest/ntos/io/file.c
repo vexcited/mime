@@ -99,6 +99,11 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         ObDereferenceObject(file);
         return status;
     }
+    if (IopIsAfd(file)) {
+        status = AfdReadWrite(file, write, event, apc_routine, apc_context, iosb, buffer, length);
+        ObDereferenceObject(file);
+        return status;
+    }
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     LARGE_INTEGER offset;
     offset.QuadPart = -1;
@@ -459,6 +464,12 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
+    /* sockets read the caller's buffers themselves and may stay pending. */
+    if (IopIsAfd(file)) {
+        status = AfdDeviceControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
+        ObDereferenceObject(file);
+        return status;
+    }
     ULONG size = in_len > out_len ? in_len : out_len;
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('I', 'o', 'C', 't'));
     if (!buf) {
@@ -510,7 +521,7 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
     return status;
 }
 
-/* only named pipes have requests that stay pending; everything else completed already. */
+/* only named pipes and sockets have requests that stay pending; everything else completed already. */
 NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 {
     PFILE_OBJECT file;
@@ -519,6 +530,8 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         return status;
     if (IopIsNamedPipe(file))
         NpfsCancel(file, PsCurrentProcess(), FALSE, NULL);
+    else if (IopIsAfd(file))
+        AfdCancel(file, PsCurrentThread(), NULL);
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {0};
     store_iosb(iosb, &io);
@@ -532,7 +545,12 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
     if (!NT_SUCCESS(status))
         return status;
     /* the request is named by its i/o status block, the start of its OVERLAPPED. */
-    status = IopIsNamedPipe(file) ? NpfsCancel(file, PsCurrentProcess(), request != NULL, request) : STATUS_NOT_FOUND;
+    if (IopIsNamedPipe(file))
+        status = NpfsCancel(file, PsCurrentProcess(), request != NULL, request);
+    else if (IopIsAfd(file))
+        status = AfdCancel(file, NULL, request);
+    else
+        status = STATUS_NOT_FOUND;
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {{status}, 0};
     store_iosb(iosb, &io);

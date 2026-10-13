@@ -126,6 +126,10 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
 void mime_fs_close_all(MimeVm *vm);
 bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa);
 
+/* net.c */
+uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
+void mime_net_close_all(void);
+
 /* lazy.c */
 bool mime_lazy_init(MimeLazyRegion *r, uint64_t ipa, uint64_t size, int fd, const void *src, uint64_t src_size);
 bool mime_lazy_contains(const MimeLazyRegion *r, uint64_t ipa);

@@ -248,6 +248,7 @@ void mime_vm_destroy(MimeVm *vm)
             pthread_join(vm->vcpus[i].thread, NULL);
     }
     mime_fs_close_all(vm);
+    mime_net_close_all();
     mime_lazy_free(&vm->rom);
     hv_vm_destroy();
     if (vm->ram && vm->ram != MAP_FAILED)

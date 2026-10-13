@@ -1,238 +1,159 @@
 /*
- * sockets. mime has no network stack yet, so ws2_32 implements tcp and udp
- * over the loopback interface inside the process: a socket is a kernel
- * event handle, which keeps its value unique among the process handles,
- * plus the state below. connections to another process or another host
- * fail like they would on a machine whose only interface is the loopback.
+ * sockets. a socket is a file of the kernel's \Device\Afd, which binds it
+ * to a socket of the host, so the handle works with completion ports,
+ * waits and handle duplication like on windows. ws2_32 keeps a record per
+ * socket for what only the caller sees: timeouts, linger and the options
+ * the host has no notion of, and the window of a WSAAsyncSelect.
+ *
+ * blocking calls start a request with the thread's event and wait for it;
+ * overlapped calls hand the caller's OVERLAPPED to the kernel, which
+ * completes it through its event, its completion routine or the port.
  */
 #include "ws2_32_private.h"
 
-/* bytes a connection buffers before send blocks or fails with WSAEWOULDBLOCK. */
-#define WS_STREAM_LIMIT (1024 * 1024)
-#define WS_DEFAULT_BUFFER 65536
-#define WS_MAX_BACKLOG 200
-#define WS_EPHEMERAL_FIRST 49152
 #define WS_MAX_UDP_V4 65507
 #define WS_MAX_UDP_V6 65527
 #define WS_EXTRA_OPTIONS 16
-#define WS_MAX_BUFFERS 64
-
-enum { WS_OPEN, WS_LISTENING, WS_CONNECTED };
-
-enum { WS_READABLE = 1, WS_WRITABLE = 2, WS_FAILED = 4 };
-
-/* an address and port; ipv4 is kept v4 mapped so both families compare alike. */
-typedef struct {
-    IN6_ADDR addr;
-    USHORT port;
-    ULONG scope;
-} WS_ENDPOINT;
-
-typedef struct _WS_DATAGRAM {
-    struct _WS_DATAGRAM *next;
-    WS_ENDPOINT from;
-    ULONG size;
-    BYTE data[];
-} WS_DATAGRAM;
-
-/* an overlapped receive waiting for data. */
-typedef struct _WS_REQUEST {
-    struct _WS_REQUEST *next;
-    LPWSAOVERLAPPED overlapped;
-    LPWSAOVERLAPPED_COMPLETION_ROUTINE routine;
-    HANDLE thread;
-    DWORD flags;
-    struct sockaddr *from;
-    LPINT fromlen;
-    DWORD count;
-    WSABUF buffers[];
-} WS_REQUEST;
+#define WS_MAX_POLL 1024
 
 typedef struct _WS_SOCKET {
     struct _WS_SOCKET *next;
     SOCKET handle;
     LONG refs;
-    BOOL registered;
     BOOL closed;
     int family, type, protocol;
-    BOOL nonblocking;
-    int state;
-    BOOL bound;
-    WS_ENDPOINT local;
-    BOOL has_remote;
-    WS_ENDPOINT remote;
-    /* a stream connection. */
-    struct _WS_SOCKET *peer;
-    BYTE *rx;
-    SIZE_T rx_start, rx_end, rx_size;
-    BOOL rx_fin, reset, shut_rd, shut_wr, write_blocked;
-    ULONGLONG connect_time;
-    /* a datagram socket. */
-    WS_DATAGRAM *dg_head, *dg_tail;
-    SIZE_T dg_bytes;
-    BOOL udp_reset, connreset;
-    /* a listening socket and the connections waiting for accept. */
-    int backlog;
-    struct _WS_SOCKET *queue_head, *queue_tail, *queue_next;
-    int queue_count;
-    BOOL accepted;
-    /* the outcome of the last connect. */
-    BOOL connect_failed, connect_report;
-    int connect_error;
-    int so_error;
-    /* options. */
-    BOOL reuseaddr, exclusive, keepalive, broadcast, oobinline, nodelay, v6only;
+    BOOL reuseaddr, exclusive, connreset;
     LINGER linger;
-    int sndbuf, rcvbuf;
     DWORD rcvtimeo, sndtimeo;
     struct {
         int level, name, value;
     } extra[WS_EXTRA_OPTIONS];
     int extra_count;
-    /* WSAAsyncSelect and WSAEventSelect. */
+    /* what an accepted socket inherits. */
+    HANDLE select_event;
+    long select_events;
     HWND hwnd;
     UINT msg;
-    HANDLE event;
-    long select_events, enabled, recorded;
-    int errors[FD_MAX_EVENTS];
-    BOOL close_reported;
-    WS_REQUEST *requests;
 } WS_SOCKET;
 
 static CRITICAL_SECTION lock;
-static CONDITION_VARIABLE changed;
 static WS_SOCKET *sockets;
-static USHORT next_port;
+static HANDLE helper;
+
+/* WSAAsyncSelect: one thread turns the recorded events of every socket into window messages. */
+static HANDLE async_event;
+static HANDLE async_thread;
 
 void WsSocketsInitialize(void)
 {
     InitializeCriticalSection(&lock);
-    InitializeConditionVariable(&changed);
-    next_port = (USHORT)(WS_EPHEMERAL_FIRST + GetTickCount() % 16384);
 }
 
-/* ------------------------------------------------------------------ endpoints */
+/* ------------------------------------------------------------------ the driver */
 
-static const BYTE v4_prefix[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF};
-
-static BOOL ep_is_v4(const WS_ENDPOINT *ep)
+static HANDLE afd_open(void)
 {
-    return !memcmp(ep->addr.u.Byte, v4_prefix, 12);
+    UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_AFD_DEVICE);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &name, 0, NULL, NULL);
+    IO_STATUS_BLOCK io;
+    HANDLE h;
+    if (!NT_SUCCESS(NtCreateFile(&h, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &oa, &io, NULL, 0,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0)))
+        return NULL;
+    return h;
 }
 
-static BOOL ep_is_any(const WS_ENDPOINT *ep)
+/* an afd file that is no socket, for select, WSAPoll and names. */
+static HANDLE helper_handle(void)
 {
-    static const BYTE zero[16];
-    if (ep_is_v4(ep))
-        return !memcmp(&ep->addr.u.Byte[12], zero, 4);
-    return !memcmp(ep->addr.u.Byte, zero, 16);
+    EnterCriticalSection(&lock);
+    if (!helper)
+        helper = afd_open();
+    HANDLE h = helper;
+    LeaveCriticalSection(&lock);
+    return h;
 }
 
-static BOOL ep_is_loopback(const WS_ENDPOINT *ep)
+static HANDLE thread_event(void)
 {
-    return WsIsLoopbackV6(&ep->addr);
+    WS_THREAD *t = WsThread();
+    if (!t)
+        return NULL;
+    if (!t->event)
+        t->event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    return t->event;
 }
 
-static BOOL ep_is_multicast(const WS_ENDPOINT *ep)
+/* a request of a blocking caller: waits for it, cancelling it after timeout milliseconds. */
+static NTSTATUS afd_call(HANDLE h, ULONG code, void *in, ULONG in_len, void *out, ULONG out_len, DWORD timeout,
+                         ULONG_PTR *information)
 {
-    if (ep_is_v4(ep))
-        return (ep->addr.u.Byte[12] & 0xF0) == 0xE0;
-    return ep->addr.u.Byte[0] == 0xFF;
-}
-
-static BOOL ep_is_broadcast(const WS_ENDPOINT *ep)
-{
-    return ep_is_v4(ep) && ep->addr.u.Byte[12] == 0xFF && ep->addr.u.Byte[13] == 0xFF &&
-           ep->addr.u.Byte[14] == 0xFF && ep->addr.u.Byte[15] == 0xFF;
-}
-
-static BOOL ep_same_address(const WS_ENDPOINT *a, const WS_ENDPOINT *b)
-{
-    return !memcmp(&a->addr, &b->addr, sizeof(a->addr));
-}
-
-static void ep_loopback(WS_ENDPOINT *ep, BOOL v4)
-{
-    memset(&ep->addr, 0, sizeof(ep->addr));
-    if (v4) {
-        memcpy(ep->addr.u.Byte, v4_prefix, 12);
-        ep->addr.u.Byte[12] = 127;
-        ep->addr.u.Byte[15] = 1;
-    } else {
-        ep->addr.u.Byte[15] = 1;
+    HANDLE event = thread_event();
+    if (!event)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    IO_STATUS_BLOCK io;
+    io.Status = STATUS_PENDING;
+    io.Information = 0;
+    NTSTATUS status = NtDeviceIoControlFile(h, event, NULL, NULL, &io, code, in, in_len, out, out_len);
+    if (status == STATUS_PENDING) {
+        if (WaitForSingleObject(event, timeout ? timeout : INFINITE) == WAIT_TIMEOUT) {
+            IO_STATUS_BLOCK cancel;
+            NtCancelIoFileEx(h, &io, &cancel);
+            WaitForSingleObject(event, INFINITE);
+            if (io.Status == STATUS_AFD_CANCELLED)
+                io.Status = STATUS_AFD_IO_TIMEOUT;
+        }
+        status = io.Status;
     }
-    ep->scope = 0;
+    if (information)
+        *information = io.Information;
+    return status;
 }
 
-static int sockaddr_size(int family)
+typedef struct {
+    LPWSAOVERLAPPED_COMPLETION_ROUTINE routine;
+    LPWSAOVERLAPPED overlapped;
+} WS_COMPLETION;
+
+static void NTAPI completion_apc(PVOID context, PIO_STATUS_BLOCK io, ULONG reserved)
 {
-    return family == AF_INET ? (int)sizeof(SOCKADDR_IN) : (int)sizeof(SOCKADDR_IN6);
+    WS_COMPLETION *c = context;
+    c->routine((DWORD)MimeAfdError(io->Status), (DWORD)io->Information, c->overlapped, 0);
+    WsFree(c);
 }
 
-static int to_endpoint(const WS_SOCKET *sock, const SOCKADDR *addr, int len, WS_ENDPOINT *ep)
+/* an overlapped request: 0 with the bytes done at once, WSA_IO_PENDING, or the error. */
+static int afd_overlapped(HANDLE h, ULONG code, void *in, ULONG in_len, LPWSAOVERLAPPED ov,
+                          LPWSAOVERLAPPED_COMPLETION_ROUTINE routine, DWORD *transferred)
 {
-    if (!addr || len < (int)sizeof(SOCKADDR_IN))
-        return WSAEFAULT;
-    memset(ep, 0, sizeof(*ep));
-    if (addr->sa_family == AF_INET) {
-        if (sock->family != AF_INET)
-            return WSAEAFNOSUPPORT;
-        const SOCKADDR_IN *in = (const SOCKADDR_IN *)addr;
-        memcpy(ep->addr.u.Byte, v4_prefix, 12);
-        memcpy(&ep->addr.u.Byte[12], &in->sin_addr, 4);
-        ep->port = in->sin_port;
-        return 0;
+    HANDLE event = (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1);
+    /* the low bit of the event keeps the completion off the port, like windows. */
+    PVOID context = ((ULONG_PTR)ov->hEvent & 1) ? NULL : ov;
+    PIO_APC_ROUTINE apc = NULL;
+    WS_COMPLETION *c = NULL;
+    if (routine) {
+        c = WsAlloc(sizeof(*c));
+        if (!c)
+            return WSAENOBUFS;
+        c->routine = routine;
+        c->overlapped = ov;
+        apc = (PIO_APC_ROUTINE)completion_apc;
+        context = c;
     }
-    if (addr->sa_family == AF_INET6) {
-        if (sock->family != AF_INET6)
-            return WSAEAFNOSUPPORT;
-        if (len < (int)sizeof(SOCKADDR_IN6))
-            return WSAEFAULT;
-        const SOCKADDR_IN6 *in6 = (const SOCKADDR_IN6 *)addr;
-        ep->addr = in6->sin6_addr;
-        ep->port = in6->sin6_port;
-        ep->scope = in6->sin6_scope_id;
-        /* a v6 only socket cannot reach the ipv4 side. */
-        if (sock->v6only && ep_is_v4(ep))
-            return WSAEAFNOSUPPORT;
-        return 0;
-    }
-    return WSAEAFNOSUPPORT;
+    ov->Internal = (ULONG_PTR)STATUS_PENDING;
+    ov->InternalHigh = 0;
+    NTSTATUS status = NtDeviceIoControlFile(h, event, apc, context, (PIO_STATUS_BLOCK)ov, code, in, in_len, NULL, 0);
+    if (status == STATUS_PENDING)
+        return WSA_IO_PENDING;
+    if (NT_ERROR(status))
+        WsFree(c);
+    if (transferred)
+        *transferred = (DWORD)ov->InternalHigh;
+    return MimeAfdError(status);
 }
 
-static int from_endpoint(const WS_SOCKET *sock, const WS_ENDPOINT *ep, SOCKADDR *addr, int *len)
-{
-    int need = sockaddr_size(sock->family);
-    if (!addr || !len || *len < need)
-        return WSAEFAULT;
-    memset(addr, 0, need);
-    if (sock->family == AF_INET) {
-        SOCKADDR_IN *in = (SOCKADDR_IN *)addr;
-        in->sin_family = AF_INET;
-        in->sin_port = ep->port;
-        memcpy(&in->sin_addr, &ep->addr.u.Byte[12], 4);
-    } else {
-        SOCKADDR_IN6 *in6 = (SOCKADDR_IN6 *)addr;
-        in6->sin6_family = AF_INET6;
-        in6->sin6_port = ep->port;
-        in6->sin6_addr = ep->addr;
-        in6->sin6_scope_id = ep->scope;
-    }
-    *len = need;
-    return 0;
-}
-
-/* whether sock, bound, receives on ep's address. */
-static BOOL covers(const WS_SOCKET *sock, const WS_ENDPOINT *ep)
-{
-    if (!ep_is_any(&sock->local))
-        return ep_same_address(&sock->local, ep);
-    if (sock->family == AF_INET)
-        return ep_is_v4(ep);
-    return !ep_is_v4(ep) || !sock->v6only;
-}
-
-/* ------------------------------------------------------------------ the socket table */
+/* ------------------------------------------------------------------ the socket records */
 
 static WS_SOCKET *find(SOCKET s)
 {
@@ -243,15 +164,27 @@ static WS_SOCKET *find(SOCKET s)
     return NULL;
 }
 
-BOOL WsIsSocket(SOCKET s)
+static WS_SOCKET *new_record(SOCKET s, int family, int type, int protocol)
 {
-    EnterCriticalSection(&lock);
-    BOOL found = find(s) != NULL;
-    LeaveCriticalSection(&lock);
-    return found;
+    WS_SOCKET *sock = WsAllocZero(sizeof(*sock));
+    if (!sock)
+        return NULL;
+    sock->handle = s;
+    sock->family = family;
+    sock->type = type;
+    sock->protocol = protocol;
+    sock->connreset = TRUE;
+    return sock;
 }
 
-/* enters the lock and references the socket; *error is set when it fails. */
+static BOOL afd_state(SOCKET s, MIME_AFD_STATE *st)
+{
+    IO_STATUS_BLOCK io;
+    NTSTATUS status = NtDeviceIoControlFile((HANDLE)s, NULL, NULL, NULL, &io, IOCTL_AFD_STATE, NULL, 0, st, sizeof(*st));
+    return NT_SUCCESS(status);
+}
+
+/* references the record of s; a socket from another process or a duplicated handle gets one now. */
 static WS_SOCKET *acquire(SOCKET s, int *error)
 {
     *error = WsCheckStarted();
@@ -259,497 +192,129 @@ static WS_SOCKET *acquire(SOCKET s, int *error)
         return NULL;
     EnterCriticalSection(&lock);
     WS_SOCKET *sock = find(s);
-    if (!sock) {
+    if (sock && !sock->closed) {
+        sock->refs++;
         LeaveCriticalSection(&lock);
+        return sock;
+    }
+    LeaveCriticalSection(&lock);
+    MIME_AFD_STATE st;
+    if (s == INVALID_SOCKET || !s || !afd_state(s, &st)) {
         *error = WSAENOTSOCK;
         return NULL;
     }
-    sock->refs++;
-    return sock;
-}
-
-static void destroy(WS_SOCKET *sock)
-{
-    WsFree(sock->rx);
-    while (sock->dg_head) {
-        WS_DATAGRAM *d = sock->dg_head;
-        sock->dg_head = d->next;
-        WsFree(d);
+    WS_SOCKET *fresh = new_record(s, (int)st.Family, (int)st.Type, (int)st.Protocol);
+    if (!fresh) {
+        *error = WSAENOBUFS;
+        return NULL;
     }
-    WsFree(sock);
+    EnterCriticalSection(&lock);
+    sock = find(s);
+    if (sock && !sock->closed) {
+        WsFree(fresh);
+    } else {
+        sock = fresh;
+        sock->next = sockets;
+        sockets = sock;
+    }
+    sock->refs++;
+    LeaveCriticalSection(&lock);
+    return sock;
 }
 
 static void release(WS_SOCKET *sock)
 {
-    if (!--sock->refs && sock->closed)
-        destroy(sock);
+    EnterCriticalSection(&lock);
+    BOOL gone = !--sock->refs && sock->closed;
     LeaveCriticalSection(&lock);
+    if (gone)
+        WsFree(sock);
 }
 
-/* stores error and releases; the usual end of a failing call. */
 static int fail(WS_SOCKET *sock, int error)
 {
     release(sock);
     return WsFail(error);
 }
 
-static void wake(void)
+static int succeed(WS_SOCKET *sock)
 {
-    WakeAllConditionVariable(&changed);
-}
-
-static ULONGLONG deadline_after(DWORD ms)
-{
-    return ms ? GetTickCount64() + ms : 0;
-}
-
-/* waits for any socket change; WSAETIMEDOUT at the deadline, WSAEINTR when the socket was closed. */
-static int wait_change(WS_SOCKET *sock, ULONGLONG deadline)
-{
-    DWORD ms = INFINITE;
-    if (deadline) {
-        ULONGLONG now = GetTickCount64();
-        if (now >= deadline)
-            return WSAETIMEDOUT;
-        ms = (DWORD)min(deadline - now, (ULONGLONG)0xFFFFFFFE);
-    }
-    SleepConditionVariableCS(&changed, &lock, ms);
-    if (sock && sock->closed)
-        return WSAEINTR;
+    release(sock);
+    SetLastError(0);
     return 0;
 }
 
-/* ------------------------------------------------------------------ event selection */
-
-static SIZE_T rx_available(const WS_SOCKET *sock)
+BOOL WsIsSocket(SOCKET s)
 {
-    return sock->rx_end - sock->rx_start;
-}
-
-static BOOL peer_has_room(const WS_SOCKET *sock)
-{
-    return !sock->peer || rx_available(sock->peer) < WS_STREAM_LIMIT;
-}
-
-/* the network events whose condition currently holds, with their errors. */
-static long conditions(const WS_SOCKET *sock, int *errors)
-{
-    long c = 0;
-    if (sock->type == SOCK_STREAM) {
-        if (sock->state == WS_LISTENING && sock->queue_count)
-            c |= FD_ACCEPT;
-        if (sock->state == WS_CONNECTED) {
-            SIZE_T avail = rx_available(sock);
-            if (avail && !sock->shut_rd)
-                c |= FD_READ;
-            if (!sock->shut_wr && sock->peer && peer_has_room(sock))
-                c |= FD_WRITE;
-            if (sock->reset || (sock->rx_fin && !avail)) {
-                c |= FD_CLOSE;
-                errors[FD_CLOSE_BIT] = sock->reset ? WSAECONNRESET : 0;
-            }
-        }
-        if (sock->connect_report) {
-            c |= FD_CONNECT;
-            errors[FD_CONNECT_BIT] = sock->connect_error;
-        }
-    } else {
-        if (sock->dg_head || (sock->udp_reset && sock->connreset))
-            c |= FD_READ;
-        c |= FD_WRITE;
-    }
-    return c;
-}
-
-/* records the selected events that became true and tells the window or the event. */
-static void signal_events(WS_SOCKET *sock)
-{
-    static const int order[] = {FD_CONNECT_BIT, FD_ACCEPT_BIT, FD_READ_BIT, FD_WRITE_BIT, FD_CLOSE_BIT};
-    if (!sock->select_events || !sock->registered || sock->closed)
-        return;
-    int errors[FD_MAX_EVENTS] = {0};
-    long fire = conditions(sock, errors) & sock->select_events & sock->enabled;
-    if (sock->close_reported)
-        fire &= ~FD_CLOSE;
-    if (!fire)
-        return;
-    sock->enabled &= ~fire;
-    if (fire & FD_CONNECT)
-        sock->connect_report = FALSE;
-    if (fire & FD_CLOSE)
-        sock->close_reported = TRUE;
-    sock->recorded |= fire;
-    for (SIZE_T i = 0; i < RTL_NUMBER_OF(order); i++) {
-        int bit = order[i];
-        if (!(fire & (1 << bit)))
-            continue;
-        sock->errors[bit] = errors[bit];
-        if (sock->hwnd)
-            PostMessageW(sock->hwnd, sock->msg, (WPARAM)sock->handle, WSAMAKESELECTREPLY(1 << bit, errors[bit]));
-    }
-    if (sock->event)
-        SetEvent(sock->event);
-}
-
-/* the select view of a socket. */
-static int readiness(const WS_SOCKET *sock)
-{
-    int r = 0;
-    if (sock->type == SOCK_STREAM) {
-        if (sock->state == WS_LISTENING && sock->queue_count)
-            r |= WS_READABLE;
-        if (sock->state == WS_CONNECTED) {
-            if (rx_available(sock) || sock->rx_fin || sock->reset || sock->shut_rd)
-                r |= WS_READABLE;
-            if (!sock->shut_wr && peer_has_room(sock))
-                r |= WS_WRITABLE;
-        }
-        if (sock->state == WS_OPEN && sock->connect_failed)
-            r |= WS_FAILED;
-    } else {
-        if (sock->dg_head || (sock->udp_reset && sock->connreset))
-            r |= WS_READABLE;
-        r |= WS_WRITABLE;
-    }
-    return r;
-}
-
-/* ------------------------------------------------------------------ overlapped requests */
-
-typedef struct {
-    LPWSAOVERLAPPED_COMPLETION_ROUTINE routine;
-    DWORD error, bytes, flags;
-    LPWSAOVERLAPPED overlapped;
-} WS_APC;
-
-static void NTAPI completion_apc(ULONG_PTR data)
-{
-    WS_APC *apc = (WS_APC *)data;
-    apc->routine(apc->error, apc->bytes, apc->overlapped, apc->flags);
-    WsFree(apc);
-}
-
-static DWORD status_error(NTSTATUS status)
-{
-    switch (status) {
-    case STATUS_SUCCESS:
-        return 0;
-    case STATUS_BUFFER_OVERFLOW:
-        return WSAEMSGSIZE;
-    case STATUS_CANCELLED:
-        return WSA_OPERATION_ABORTED;
-    case STATUS_CONNECTION_RESET:
-        return WSAECONNRESET;
-    case STATUS_CONNECTION_ABORTED:
-        return WSAECONNABORTED;
-    }
-    return WSAEFAULT;
-}
-
-static HANDLE overlapped_event(const WS_SOCKET *sock, LPWSAOVERLAPPED ov)
-{
-    HANDLE event = (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1);
-    return event ? event : (HANDLE)sock->handle;
-}
-
-/* the end of an overlapped operation: the status, the event, the completion routine. */
-static void complete(WS_SOCKET *sock, LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine,
-                     HANDLE thread, NTSTATUS status, DWORD bytes, DWORD flags)
-{
-    ov->Internal = (ULONG_PTR)status;
-    ov->InternalHigh = bytes;
-    ov->Offset = flags;
-    SetEvent(overlapped_event(sock, ov));
-    if (routine) {
-        WS_APC *apc = WsAlloc(sizeof(*apc));
-        if (apc) {
-            apc->routine = routine;
-            apc->error = status_error(status);
-            apc->bytes = bytes;
-            apc->flags = flags;
-            apc->overlapped = ov;
-            if (!QueueUserAPC(completion_apc, thread ? thread : GetCurrentThread(), (ULONG_PTR)apc))
-                WsFree(apc);
-        }
-    }
-}
-
-static void finish_request(WS_SOCKET *sock, WS_REQUEST *r, NTSTATUS status, DWORD bytes, DWORD flags)
-{
-    complete(sock, r->overlapped, r->routine, r->thread, status, bytes, flags);
-    if (r->thread)
-        CloseHandle(r->thread);
-    WsFree(r);
-}
-
-static void cancel_requests(WS_SOCKET *sock)
-{
-    while (sock->requests) {
-        WS_REQUEST *r = sock->requests;
-        sock->requests = r->next;
-        finish_request(sock, r, STATUS_CANCELLED, 0, 0);
-    }
-}
-
-/* ------------------------------------------------------------------ receive buffers */
-
-static DWORD buffers_size(const WSABUF *buffers, DWORD count)
-{
-    ULONGLONG total = 0;
-    for (DWORD i = 0; i < count; i++)
-        total += buffers[i].len;
-    return (DWORD)min(total, (ULONGLONG)0x7FFFFFFF);
-}
-
-static DWORD scatter(const WSABUF *buffers, DWORD count, const BYTE *data, DWORD size)
-{
-    DWORD done = 0;
-    for (DWORD i = 0; i < count && done < size; i++) {
-        DWORD n = min(buffers[i].len, size - done);
-        memcpy(buffers[i].buf, data + done, n);
-        done += n;
-    }
-    return done;
-}
-
-/* the part of the buffers left after the first done bytes. */
-static DWORD remaining_buffers(const WSABUF *buffers, DWORD count, DWORD done, WSABUF *rest)
-{
-    DWORD k = 0;
-    for (DWORD i = 0; i < count; i++) {
-        if (done >= buffers[i].len) {
-            done -= buffers[i].len;
-            continue;
-        }
-        rest[k].buf = buffers[i].buf + done;
-        rest[k++].len = buffers[i].len - done;
-        done = 0;
-    }
-    return k;
-}
-
-/* every buffer with a length needs memory behind it. */
-static BOOL buffers_valid(const WSABUF *buffers, DWORD count)
-{
-    if (!buffers)
-        return !count;
-    for (DWORD i = 0; i < count; i++) {
-        if (buffers[i].len && !buffers[i].buf)
-            return FALSE;
-    }
-    return TRUE;
-}
-
-static BOOL rx_append(WS_SOCKET *sock, const WSABUF *buffers, DWORD count, DWORD size)
-{
-    if (sock->rx_start && sock->rx_start == sock->rx_end)
-        sock->rx_start = sock->rx_end = 0;
-    if (sock->rx_end + size > sock->rx_size) {
-        SIZE_T used = rx_available(sock);
-        if (sock->rx_start) {
-            memmove(sock->rx, sock->rx + sock->rx_start, used);
-            sock->rx_start = 0;
-            sock->rx_end = used;
-        }
-        if (used + size > sock->rx_size) {
-            SIZE_T grown = max(sock->rx_size * 2, used + size);
-            BYTE *rx = sock->rx ? HeapReAlloc(GetProcessHeap(), 0, sock->rx, grown) : WsAlloc(grown);
-            if (!rx)
-                return FALSE;
-            sock->rx = rx;
-            sock->rx_size = grown;
-        }
-    }
-    for (DWORD i = 0; i < count; i++) {
-        memcpy(sock->rx + sock->rx_end, buffers[i].buf, buffers[i].len);
-        sock->rx_end += buffers[i].len;
-    }
-    return TRUE;
-}
-
-/* data was consumed: a blocked sender may write again. */
-static void room_made(WS_SOCKET *sock)
-{
-    WS_SOCKET *sender = sock->peer;
-    if (sender && sender->write_blocked && peer_has_room(sender)) {
-        sender->write_blocked = FALSE;
-        sender->enabled |= FD_WRITE;
-        signal_events(sender);
-    }
-}
-
-/* reads from a connection without waiting; FALSE when the call would have to wait. */
-static BOOL stream_take(WS_SOCKET *sock, const WSABUF *buffers, DWORD count, DWORD flags, DWORD *received,
-                        int *error)
-{
-    SIZE_T avail = rx_available(sock);
-    DWORD want = buffers_size(buffers, count);
-    *error = 0;
-    if (avail) {
-        DWORD n = scatter(buffers, count, sock->rx + sock->rx_start, (DWORD)min(avail, (SIZE_T)want));
-        if (!(flags & MSG_PEEK)) {
-            sock->rx_start += n;
-            room_made(sock);
-        }
-        *received = n;
-        return TRUE;
-    }
-    *received = 0;
-    if (sock->reset) {
-        *error = WSAECONNRESET;
-        return TRUE;
-    }
-    return sock->rx_fin;
-}
-
-/* takes one datagram without waiting; FALSE when the queue is empty. */
-static BOOL dgram_take(WS_SOCKET *sock, const WSABUF *buffers, DWORD count, DWORD flags, DWORD *received,
-                       WS_ENDPOINT *from, int *error)
-{
-    WS_DATAGRAM *d = sock->dg_head;
-    *error = 0;
-    *received = 0;
-    if (!d) {
-        if (sock->udp_reset && sock->connreset) {
-            sock->udp_reset = FALSE;
-            *error = WSAECONNRESET;
-            return TRUE;
-        }
+    int error;
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock)
         return FALSE;
-    }
-    DWORD want = buffers_size(buffers, count);
-    *received = scatter(buffers, count, d->data, min(d->size, want));
-    *from = d->from;
-    if (d->size > want)
-        *error = WSAEMSGSIZE;
-    if (!(flags & MSG_PEEK)) {
-        sock->dg_head = d->next;
-        if (!sock->dg_head)
-            sock->dg_tail = NULL;
-        sock->dg_bytes -= d->size;
-        WsFree(d);
-    }
+    release(sock);
     return TRUE;
 }
 
-/* completes the waiting overlapped receives that data or the end of the connection can satisfy. */
-static void serve_requests(WS_SOCKET *sock)
+static NTSTATUS socket_call(WS_SOCKET *sock, ULONG code, void *in, ULONG in_len, void *out, ULONG out_len,
+                            ULONG_PTR *information)
 {
-    while (sock->requests) {
-        WS_REQUEST *r = sock->requests;
-        DWORD received;
-        int error;
-        WS_ENDPOINT from;
-        BOOL done;
-        if (sock->type == SOCK_STREAM)
-            done = stream_take(sock, r->buffers, r->count, r->flags, &received, &error);
-        else
-            done = dgram_take(sock, r->buffers, r->count, r->flags, &received, &from, &error);
-        if (!done)
-            return;
-        sock->requests = r->next;
-        NTSTATUS status = STATUS_SUCCESS;
-        DWORD out_flags = 0;
-        if (error == WSAECONNRESET)
-            status = STATUS_CONNECTION_RESET;
-        if (error == WSAEMSGSIZE) {
-            status = STATUS_BUFFER_OVERFLOW;
-            out_flags = MSG_PARTIAL;
-        }
-        if (sock->type == SOCK_DGRAM && !error && r->from && r->fromlen)
-            from_endpoint(sock, &from, r->from, r->fromlen);
-        finish_request(sock, r, status, received, out_flags);
-    }
+    return afd_call((HANDLE)sock->handle, code, in, in_len, out, out_len, 0, information);
 }
 
-/* something arrived on sock: overlapped receives, selected events and blocked threads hear of it. */
-static void data_arrived(WS_SOCKET *sock)
+static int host_option(WS_SOCKET *sock, ULONG option, BOOL set, ULONG value, ULONG *result)
 {
-    serve_requests(sock);
-    signal_events(sock);
-    wake();
+    MIME_AFD_OPTION o = {option, set != 0, value};
+    ULONG out = 0;
+    NTSTATUS status = socket_call(sock, IOCTL_AFD_OPTION, &o, sizeof(o), &out, sizeof(out), NULL);
+    if (result)
+        *result = out;
+    return MimeAfdError(status);
 }
 
-/* ------------------------------------------------------------------ binding */
+/* ------------------------------------------------------------------ addresses */
 
-static BOOL port_in_use(const WS_SOCKET *sock, USHORT port)
+static int sockaddr_size(int family)
 {
-    for (WS_SOCKET *other = sockets; other; other = other->next) {
-        if (other != sock && other->bound && !other->accepted && other->type == sock->type &&
-            other->local.port == port)
-            return TRUE;
-    }
-    return FALSE;
+    return family == AF_INET ? (int)sizeof(SOCKADDR_IN) : (int)sizeof(SOCKADDR_IN6);
 }
 
-/* the binding rules: two sockets of one type cannot share a port on overlapping addresses unless both allow it. */
-static int check_bind(const WS_SOCKET *sock, const WS_ENDPOINT *ep)
+/* a caller's sockaddr as the driver takes it. */
+static int to_address(const WS_SOCKET *sock, const struct sockaddr *addr, int len, MIME_AFD_ADDRESS *a)
 {
-    for (WS_SOCKET *other = sockets; other; other = other->next) {
-        if (other == sock || !other->bound || other->accepted || other->type != sock->type ||
-            other->local.port != ep->port)
-            continue;
-        WS_SOCKET probe = *sock;
-        probe.local = *ep;
-        if (!covers(other, ep) && !covers(&probe, &other->local))
-            continue;
-        if (other->exclusive || sock->exclusive)
-            return WSAEACCES;
-        if (!sock->reuseaddr)
-            return WSAEADDRINUSE;
-    }
+    if (!addr || len < (int)sizeof(SOCKADDR_IN))
+        return WSAEFAULT;
+    if (addr->sa_family != AF_INET && addr->sa_family != AF_INET6)
+        return WSAEAFNOSUPPORT;
+    if (addr->sa_family != sock->family)
+        return WSAEAFNOSUPPORT;
+    int need = sockaddr_size(addr->sa_family);
+    if (len < need)
+        return WSAEFAULT;
+    memset(a, 0, sizeof(*a));
+    memcpy(a, addr, need);
     return 0;
 }
 
-static int bind_endpoint(WS_SOCKET *sock, WS_ENDPOINT *ep)
+static int from_address(const MIME_AFD_ADDRESS *a, struct sockaddr *addr, int *len)
 {
-    if (!ep_is_any(ep) && !ep_is_loopback(ep))
-        return WSAEADDRNOTAVAIL;
-    if (!ep->port) {
-        for (int tries = 0; tries < 16384; tries++) {
-            USHORT candidate = next_port;
-            next_port = next_port == 0xFFFF ? WS_EPHEMERAL_FIRST : next_port + 1;
-            if (!port_in_use(sock, htons(candidate))) {
-                ep->port = htons(candidate);
-                break;
-            }
-        }
-        if (!ep->port)
-            return WSAENOBUFS;
-    } else {
-        int error = check_bind(sock, ep);
-        if (error)
-            return error;
-    }
-    sock->local = *ep;
-    sock->bound = TRUE;
+    int need = a->Family == AF_INET6 ? (int)sizeof(SOCKADDR_IN6) : (int)sizeof(SOCKADDR_IN);
+    if (!addr || !len || *len < need)
+        return WSAEFAULT;
+    memcpy(addr, a, need);
+    *len = need;
     return 0;
 }
 
-/* binds a socket used before bind to the loopback address that reaches dest. */
-static int auto_bind(WS_SOCKET *sock, const WS_ENDPOINT *dest)
+static BOOL address_is_any(const MIME_AFD_ADDRESS *a)
 {
-    if (sock->bound)
-        return 0;
-    WS_ENDPOINT ep = {0};
-    if (dest)
-        ep_loopback(&ep, ep_is_v4(dest));
-    else if (sock->family == AF_INET)
-        memcpy(ep.addr.u.Byte, v4_prefix, 12);
-    return bind_endpoint(sock, &ep);
+    const SOCKADDR_IN *in = (const SOCKADDR_IN *)a;
+    const SOCKADDR_IN6 *in6 = (const SOCKADDR_IN6 *)a;
+    static const BYTE zero[16] = {0};
+    if (a->Family == AF_INET)
+        return in->sin_addr.S_un.S_addr == 0;
+    return !memcmp(&in6->sin6_addr, zero, 16);
 }
 
-/* the source address of traffic sent to dest. */
-static WS_ENDPOINT source_for(const WS_SOCKET *sock, const WS_ENDPOINT *dest)
-{
-    WS_ENDPOINT ep = sock->local;
-    if (ep_is_any(&ep) || ep_is_v4(&ep) != ep_is_v4(dest))
-        ep_loopback(&ep, ep_is_v4(dest));
-    ep.port = sock->local.port;
-    return ep;
-}
-
-/* ------------------------------------------------------------------ socket creation and closing */
+/* ------------------------------------------------------------------ creation and closing */
 
 static int resolve_kind(int *af, int *type, int *protocol)
 {
@@ -769,37 +334,36 @@ static int resolve_kind(int *af, int *type, int *protocol)
         *protocol = IPPROTO_UDP;
         return 0;
     }
-    /* raw sockets need the network stack mime does not have. */
+    /* raw sockets would need privileges the host does not give. */
     return WSAESOCKTNOSUPPORT;
 }
 
-static WS_SOCKET *new_socket(int family, int type, int protocol)
+/* a new afd file with its host socket. */
+static int open_socket(int af, int type, int protocol, HANDLE *out)
 {
-    WS_SOCKET *sock = WsAllocZero(sizeof(*sock));
-    if (!sock)
-        return NULL;
-    HANDLE handle = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (!handle) {
-        WsFree(sock);
-        return NULL;
+    HANDLE h = afd_open();
+    if (!h)
+        return WSAENETDOWN;
+    MIME_AFD_CREATE c = {(ULONG)af, (ULONG)type, (ULONG)protocol};
+    NTSTATUS status = afd_call(h, IOCTL_AFD_CREATE, &c, sizeof(c), NULL, 0, 0, NULL);
+    if (!NT_SUCCESS(status)) {
+        NtClose(h);
+        return MimeAfdError(status);
     }
-    sock->handle = (SOCKET)handle;
-    sock->family = family;
-    sock->type = type;
-    sock->protocol = protocol;
-    sock->connreset = TRUE;
-    sock->v6only = TRUE;
-    sock->sndbuf = WS_DEFAULT_BUFFER;
-    sock->rcvbuf = WS_DEFAULT_BUFFER;
-    sock->enabled = FD_ALL_EVENTS;
-    return sock;
+    *out = h;
+    return 0;
 }
 
-static void register_socket(WS_SOCKET *sock)
+static WS_SOCKET *register_socket(HANDLE h, int af, int type, int protocol)
 {
-    sock->registered = TRUE;
+    WS_SOCKET *sock = new_record((SOCKET)h, af, type, protocol);
+    if (!sock)
+        return NULL;
+    EnterCriticalSection(&lock);
     sock->next = sockets;
     sockets = sock;
+    LeaveCriticalSection(&lock);
+    return sock;
 }
 
 static SOCKET create_socket(int af, int type, int protocol, DWORD flags)
@@ -807,19 +371,20 @@ static SOCKET create_socket(int af, int type, int protocol, DWORD flags)
     int error = WsCheckStarted();
     if (!error)
         error = resolve_kind(&af, &type, &protocol);
+    HANDLE h = NULL;
+    if (!error)
+        error = open_socket(af, type, protocol, &h);
     if (error) {
         SetLastError(error);
         return INVALID_SOCKET;
     }
-    WS_SOCKET *sock = new_socket(af, type, protocol);
-    if (!sock) {
+    if (!register_socket(h, af, type, protocol)) {
+        NtClose(h);
         SetLastError(WSAENOBUFS);
         return INVALID_SOCKET;
     }
-    EnterCriticalSection(&lock);
-    register_socket(sock);
-    LeaveCriticalSection(&lock);
-    return sock->handle;
+    SetLastError(0);
+    return (SOCKET)h;
 }
 
 SOCKET WSAAPI socket(int af, int type, int protocol)
@@ -853,89 +418,49 @@ SOCKET WSAAPI WSASocketA(int af, int type, int protocol, LPWSAPROTOCOL_INFOA inf
     return create_socket(af, type, protocol, flags);
 }
 
-static void unlink_socket(WS_SOCKET *sock)
+static void unlink_record(WS_SOCKET *sock)
 {
     for (WS_SOCKET **p = &sockets; *p; p = &(*p)->next) {
         if (*p == sock) {
             *p = sock->next;
-            break;
+            return;
         }
     }
-    sock->registered = FALSE;
-}
-
-/* ends the connection of sock; abortive when it drops unread data or lingers for zero seconds. */
-static void disconnect(WS_SOCKET *sock)
-{
-    WS_SOCKET *peer = sock->peer;
-    if (!peer)
-        return;
-    BOOL abortive = rx_available(sock) || (sock->linger.l_onoff && !sock->linger.l_linger);
-    peer->peer = NULL;
-    if (abortive)
-        peer->reset = TRUE;
-    else
-        peer->rx_fin = TRUE;
-    sock->peer = NULL;
-    data_arrived(peer);
-}
-
-/* frees what nobody references; called with the lock held. */
-static void close_socket(WS_SOCKET *sock)
-{
-    if (sock->registered)
-        unlink_socket(sock);
-    sock->closed = TRUE;
-    sock->select_events = 0;
-    cancel_requests(sock);
-    disconnect(sock);
-    while (sock->queue_head) {
-        WS_SOCKET *child = sock->queue_head;
-        sock->queue_head = child->queue_next;
-        /* a connection nobody accepted is reset. */
-        if (child->peer) {
-            child->peer->reset = TRUE;
-            child->peer->peer = NULL;
-            data_arrived(child->peer);
-            child->peer = NULL;
-        }
-        child->closed = TRUE;
-        CloseHandle((HANDLE)child->handle);
-        if (!child->refs)
-            destroy(child);
-    }
-    sock->queue_count = 0;
-    CloseHandle((HANDLE)sock->handle);
-    wake();
-    if (!sock->refs)
-        destroy(sock);
 }
 
 int WSAAPI closesocket(SOCKET s)
 {
-    int error = WsCheckStarted();
-    if (error)
+    int error;
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock)
         return WsFail(error);
+    /* SO_LINGER with no time resets the connection instead of closing it gracefully. */
+    if (sock->type == SOCK_STREAM && sock->linger.l_onoff && !sock->linger.l_linger)
+        host_option(sock, MIME_AFD_OPT_LINGER, TRUE, 1u << 16, NULL);
     EnterCriticalSection(&lock);
-    WS_SOCKET *sock = find(s);
-    if (!sock) {
-        LeaveCriticalSection(&lock);
-        return WsFail(WSAENOTSOCK);
-    }
-    close_socket(sock);
+    sock->closed = TRUE;
+    unlink_record(sock);
+    sock->refs--;
     LeaveCriticalSection(&lock);
-    return 0;
+    NtClose((HANDLE)s);
+    return succeed(sock);
 }
 
 void WsCloseAllSockets(void)
 {
     EnterCriticalSection(&lock);
-    while (sockets)
-        close_socket(sockets);
+    while (sockets) {
+        WS_SOCKET *sock = sockets;
+        sockets = sock->next;
+        sock->closed = TRUE;
+        NtClose((HANDLE)sock->handle);
+        if (!sock->refs)
+            WsFree(sock);
+    }
     LeaveCriticalSection(&lock);
 }
 
-/* ------------------------------------------------------------------ bind, listen, connect, accept */
+/* ------------------------------------------------------------------ binding and connecting */
 
 int WSAAPI bind(SOCKET s, const struct sockaddr *name, int namelen)
 {
@@ -943,17 +468,13 @@ int WSAAPI bind(SOCKET s, const struct sockaddr *name, int namelen)
     WS_SOCKET *sock = acquire(s, &error);
     if (!sock)
         return WsFail(error);
-    if (sock->bound)
-        return fail(sock, WSAEINVAL);
-    WS_ENDPOINT ep;
-    error = to_endpoint(sock, name, namelen, &ep);
-    if (!error)
-        error = bind_endpoint(sock, &ep);
-    if (error)
+    MIME_AFD_ADDRESS a;
+    if ((error = to_address(sock, name, namelen, &a)))
         return fail(sock, error);
-    signal_events(sock);
-    release(sock);
-    return 0;
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_BIND, &a, sizeof(a), NULL, 0, NULL));
+    if (error == WSAEADDRINUSE && sock->exclusive)
+        error = WSAEACCES;
+    return error ? fail(sock, error) : succeed(sock);
 }
 
 int WSAAPI listen(SOCKET s, int backlog)
@@ -962,125 +483,13 @@ int WSAAPI listen(SOCKET s, int backlog)
     WS_SOCKET *sock = acquire(s, &error);
     if (!sock)
         return WsFail(error);
-    if (sock->type != SOCK_STREAM)
-        return fail(sock, WSAEOPNOTSUPP);
-    if (sock->state == WS_CONNECTED)
-        return fail(sock, WSAEISCONN);
-    if (!sock->bound)
-        return fail(sock, WSAEINVAL);
-    if (backlog == SOMAXCONN)
-        backlog = WS_MAX_BACKLOG;
-    else if (backlog < 0)
-        backlog = min(max(-backlog, WS_MAX_BACKLOG), 65535);
-    else
-        backlog = min(max(backlog, 1), WS_MAX_BACKLOG);
-    sock->backlog = backlog;
-    sock->state = WS_LISTENING;
-    signal_events(sock);
-    release(sock);
-    return 0;
-}
-
-/* the listening socket a connection to ep reaches, preferring a specific address over a wildcard. */
-static WS_SOCKET *find_listener(const WS_SOCKET *client, const WS_ENDPOINT *ep)
-{
-    WS_SOCKET *wildcard = NULL;
-    for (WS_SOCKET *sock = sockets; sock; sock = sock->next) {
-        if (sock->state != WS_LISTENING || sock->type != SOCK_STREAM || sock->local.port != ep->port ||
-            !covers(sock, ep))
-            continue;
-        if (!ep_is_any(&sock->local))
-            return sock;
-        if (!wildcard)
-            wildcard = sock;
-    }
-    return wildcard;
-}
-
-static int stream_connect(WS_SOCKET *sock, const WS_ENDPOINT *ep)
-{
-    if (sock->state == WS_LISTENING)
-        return WSAEINVAL;
-    if (sock->state == WS_CONNECTED)
-        return WSAEISCONN;
-    if (ep_is_any(ep))
-        return WSAEADDRNOTAVAIL;
-    if (!ep_is_loopback(ep))
-        return WSAENETUNREACH;
-    int error = auto_bind(sock, ep);
-    if (error)
-        return error;
-    sock->connect_failed = FALSE;
-    sock->so_error = 0;
-    WS_SOCKET *listener = find_listener(sock, ep);
-    WS_SOCKET *child = NULL;
-    if (listener && listener->queue_count < listener->backlog)
-        child = new_socket(listener->family, SOCK_STREAM, IPPROTO_TCP);
-    if (!child) {
-        sock->connect_failed = TRUE;
-        sock->connect_error = WSAECONNREFUSED;
-        sock->so_error = WSAECONNREFUSED;
-        sock->connect_report = TRUE;
-        signal_events(sock);
-        wake();
-        return sock->nonblocking ? WSAEWOULDBLOCK : WSAECONNREFUSED;
-    }
-    WS_ENDPOINT source = source_for(sock, ep);
-    if (ep_is_any(&sock->local))
-        sock->local.addr = source.addr;
-    child->accepted = TRUE;
-    child->bound = TRUE;
-    child->local = *ep;
-    child->has_remote = TRUE;
-    child->remote = source;
-    child->state = WS_CONNECTED;
-    child->connect_time = GetTickCount64();
-    child->v6only = listener->v6only;
-    child->nonblocking = listener->nonblocking;
-    child->keepalive = listener->keepalive;
-    child->nodelay = listener->nodelay;
-    child->linger = listener->linger;
-    child->sndbuf = listener->sndbuf;
-    child->rcvbuf = listener->rcvbuf;
-    child->oobinline = listener->oobinline;
-    child->peer = sock;
-    sock->peer = child;
-    sock->state = WS_CONNECTED;
-    sock->has_remote = TRUE;
-    sock->remote = *ep;
-    sock->connect_time = GetTickCount64();
-    sock->connect_error = 0;
-    sock->connect_report = TRUE;
-    if (listener->queue_tail)
-        listener->queue_tail->queue_next = child;
-    else
-        listener->queue_head = child;
-    listener->queue_tail = child;
-    listener->queue_count++;
-    signal_events(listener);
-    signal_events(sock);
-    wake();
-    /* like windows, a non blocking connect reports completion through select and the events. */
-    return sock->nonblocking ? WSAEWOULDBLOCK : 0;
-}
-
-static int dgram_connect(WS_SOCKET *sock, const SOCKADDR *name, int namelen)
-{
-    if (name && namelen >= (int)sizeof(SOCKADDR) && name->sa_family == AF_UNSPEC) {
-        sock->has_remote = FALSE;
-        return 0;
-    }
-    WS_ENDPOINT ep;
-    int error = to_endpoint(sock, name, namelen, &ep);
-    if (error)
-        return error;
-    if (!ep_is_loopback(&ep) && !ep_is_any(&ep) && !ep_is_broadcast(&ep) && !ep_is_multicast(&ep))
-        return WSAENETUNREACH;
-    if ((error = auto_bind(sock, &ep)))
-        return error;
-    sock->has_remote = TRUE;
-    sock->remote = ep;
-    return 0;
+    if (backlog < 0)
+        backlog = -backlog; /* SOMAXCONN_HINT */
+    if (backlog == SOMAXCONN || backlog > 4096)
+        backlog = 4096;
+    ULONG b = (ULONG)backlog;
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_LISTEN, &b, sizeof(b), NULL, 0, NULL));
+    return error ? fail(sock, error) : succeed(sock);
 }
 
 int WSAAPI connect(SOCKET s, const struct sockaddr *name, int namelen)
@@ -1089,18 +498,32 @@ int WSAAPI connect(SOCKET s, const struct sockaddr *name, int namelen)
     WS_SOCKET *sock = acquire(s, &error);
     if (!sock)
         return WsFail(error);
-    if (sock->type == SOCK_DGRAM) {
-        error = dgram_connect(sock, name, namelen);
-    } else {
-        WS_ENDPOINT ep;
-        error = to_endpoint(sock, name, namelen, &ep);
-        if (!error)
-            error = stream_connect(sock, &ep);
-    }
-    if (error)
+    MIME_AFD_CONNECT c;
+    memset(&c, 0, sizeof(c));
+    if ((error = to_address(sock, name, namelen, &c.Address)))
         return fail(sock, error);
-    release(sock);
-    return 0;
+    if (sock->type == SOCK_STREAM && address_is_any(&c.Address))
+        return fail(sock, WSAEADDRNOTAVAIL);
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_CONNECT, &c, sizeof(c), NULL, 0, NULL));
+    return error ? fail(sock, error) : succeed(sock);
+}
+
+/* connect data and quality of service need a transport that carries them, which tcp does not. */
+int WSAAPI WSAConnect(SOCKET s, const struct sockaddr *name, int namelen, LPWSABUF caller_data, LPWSABUF callee_data,
+                      void *sqos, void *gqos)
+{
+    if (callee_data)
+        callee_data->len = 0;
+    return connect(s, name, namelen);
+}
+
+/* an accepted socket takes over the listener's selection, like windows. */
+static void inherit(WS_SOCKET *listener, SOCKET s)
+{
+    if (listener->select_event)
+        WSAEventSelect(s, listener->select_event, listener->select_events);
+    else if (listener->hwnd)
+        WSAAsyncSelect(s, listener->hwnd, listener->msg, listener->select_events);
 }
 
 SOCKET WSAAPI accept(SOCKET s, struct sockaddr *addr, int *addrlen)
@@ -1111,46 +534,32 @@ SOCKET WSAAPI accept(SOCKET s, struct sockaddr *addr, int *addrlen)
         SetLastError(error);
         return INVALID_SOCKET;
     }
-    if (sock->type != SOCK_STREAM)
-        error = WSAEOPNOTSUPP;
-    else if (sock->state != WS_LISTENING)
-        error = WSAEINVAL;
-    else if (addr && (!addrlen || *addrlen < sockaddr_size(sock->family)))
-        error = WSAEFAULT;
-    sock->enabled |= FD_ACCEPT;
-    while (!error && !sock->queue_head) {
-        if (sock->nonblocking)
-            error = WSAEWOULDBLOCK;
-        else
-            error = wait_change(sock, 0);
-        if (!error && sock->state != WS_LISTENING)
-            error = WSAEINVAL;
+    if (addr && (!addrlen || *addrlen < sockaddr_size(sock->family))) {
+        fail(sock, WSAEFAULT);
+        return INVALID_SOCKET;
     }
-    if (error) {
-        signal_events(sock);
+    HANDLE h;
+    if ((error = open_socket(sock->family, sock->type, sock->protocol, &h))) {
         fail(sock, error);
         return INVALID_SOCKET;
     }
-    WS_SOCKET *child = sock->queue_head;
-    sock->queue_head = child->queue_next;
-    if (!sock->queue_head)
-        sock->queue_tail = NULL;
-    sock->queue_count--;
-    child->queue_next = NULL;
-    /* the accepted socket takes the selection of the listening one. */
-    child->hwnd = sock->hwnd;
-    child->msg = sock->msg;
-    child->event = sock->event;
-    child->select_events = sock->select_events;
-    child->enabled = FD_ALL_EVENTS;
-    register_socket(child);
+    MIME_AFD_ADDRESS both[2];
+    memset(both, 0, sizeof(both));
+    MIME_AFD_ACCEPT a = {(ULONG64)(ULONG_PTR)h, 0, 0, 0, (ULONG64)(ULONG_PTR)both};
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_ACCEPT, &a, sizeof(a), NULL, 0, NULL));
+    if (!error && !register_socket(h, sock->family, sock->type, sock->protocol))
+        error = WSAENOBUFS;
+    if (error) {
+        NtClose(h);
+        fail(sock, error);
+        return INVALID_SOCKET;
+    }
     if (addr)
-        from_endpoint(child, &child->remote, addr, addrlen);
-    signal_events(child);
-    signal_events(sock);
-    SOCKET result = child->handle;
+        from_address(&both[1], addr, addrlen);
+    inherit(sock, (SOCKET)h);
     release(sock);
-    return result;
+    SetLastError(0);
+    return (SOCKET)h;
 }
 
 int WSAAPI shutdown(SOCKET s, int how)
@@ -1159,397 +568,164 @@ int WSAAPI shutdown(SOCKET s, int how)
     WS_SOCKET *sock = acquire(s, &error);
     if (!sock)
         return WsFail(error);
-    if (how < SD_RECEIVE || how > SD_BOTH)
-        return fail(sock, WSAEINVAL);
-    if (sock->type == SOCK_STREAM && sock->state != WS_CONNECTED)
-        return fail(sock, WSAENOTCONN);
-    if (how != SD_SEND)
-        sock->shut_rd = TRUE;
-    if (how != SD_RECEIVE && !sock->shut_wr) {
-        sock->shut_wr = TRUE;
-        if (sock->peer) {
-            sock->peer->rx_fin = TRUE;
-            data_arrived(sock->peer);
-        }
-    }
-    signal_events(sock);
-    wake();
-    release(sock);
-    return 0;
+    ULONG h = (ULONG)how;
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_SHUTDOWN, &h, sizeof(h), NULL, 0, NULL));
+    return error ? fail(sock, error) : succeed(sock);
+}
+
+static int get_name(SOCKET s, BOOL peer, struct sockaddr *name, int *namelen)
+{
+    int error;
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock)
+        return WsFail(error);
+    if (!name || !namelen)
+        return fail(sock, WSAEFAULT);
+    ULONG p = peer;
+    MIME_AFD_ADDRESS a;
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_NAME, &p, sizeof(p), &a, sizeof(a), NULL));
+    if (!error)
+        error = from_address(&a, name, namelen);
+    return error ? fail(sock, error) : succeed(sock);
 }
 
 int WSAAPI getsockname(SOCKET s, struct sockaddr *name, int *namelen)
 {
-    int error;
-    WS_SOCKET *sock = acquire(s, &error);
-    if (!sock)
-        return WsFail(error);
-    if (!name || !namelen)
-        return fail(sock, WSAEFAULT);
-    if (!sock->bound)
-        return fail(sock, WSAEINVAL);
-    if ((error = from_endpoint(sock, &sock->local, name, namelen)))
-        return fail(sock, error);
-    release(sock);
-    return 0;
+    return get_name(s, FALSE, name, namelen);
 }
 
 int WSAAPI getpeername(SOCKET s, struct sockaddr *name, int *namelen)
 {
-    int error;
-    WS_SOCKET *sock = acquire(s, &error);
-    if (!sock)
-        return WsFail(error);
-    if (!name || !namelen)
-        return fail(sock, WSAEFAULT);
-    if (!sock->has_remote || (sock->type == SOCK_STREAM && sock->state != WS_CONNECTED))
-        return fail(sock, WSAENOTCONN);
-    if ((error = from_endpoint(sock, &sock->remote, name, namelen)))
-        return fail(sock, error);
-    release(sock);
-    return 0;
+    return get_name(s, TRUE, name, namelen);
 }
 
-/* ------------------------------------------------------------------ sending */
+/* ------------------------------------------------------------------ sending and receiving */
 
-static int stream_send(WS_SOCKET *sock, const WSABUF *buffers, DWORD count, DWORD *sent, BOOL overlapped)
-{
-    if (sock->state != WS_CONNECTED)
-        return WSAENOTCONN;
-    if (sock->shut_wr)
-        return WSAESHUTDOWN;
-    ULONGLONG deadline = deadline_after(sock->sndtimeo);
-    for (;;) {
-        if (sock->reset)
-            return WSAECONNRESET;
-        if (!sock->peer) {
-            /* the other side closed: windows answers the first send with a reset. */
-            sock->reset = TRUE;
-            signal_events(sock);
-            return WSAECONNRESET;
-        }
-        if (overlapped || peer_has_room(sock))
-            break;
-        if (sock->nonblocking) {
-            sock->write_blocked = TRUE;
-            return WSAEWOULDBLOCK;
-        }
-        int error = wait_change(sock, deadline);
-        if (error)
-            return error;
-    }
-    DWORD size = buffers_size(buffers, count);
-    WS_SOCKET *peer = sock->peer;
-    if (!peer->shut_rd) {
-        if (!rx_append(peer, buffers, count, size))
-            return WSAENOBUFS;
-        data_arrived(peer);
-    }
-    *sent = size;
-    return 0;
-}
-
-/* delivers one datagram to the sockets bound on dest. */
-static void deliver(WS_SOCKET *sender, const WS_ENDPOINT *dest, const WSABUF *buffers, DWORD count, DWORD size)
-{
-    WS_ENDPOINT from = source_for(sender, dest);
-    BOOL broadcast = ep_is_broadcast(dest);
-    BOOL delivered = FALSE;
-    for (WS_SOCKET *sock = sockets; sock; sock = sock->next) {
-        if (sock->type != SOCK_DGRAM || !sock->bound || sock->local.port != dest->port)
-            continue;
-        if (broadcast ? !(ep_is_any(&sock->local) && covers(sock, dest)) : !covers(sock, dest))
-            continue;
-        if (sock->has_remote && (!ep_same_address(&sock->remote, &from) || sock->remote.port != from.port))
-            continue;
-        delivered = TRUE;
-        if (!sock->shut_rd && sock->dg_bytes + size <= (SIZE_T)max(sock->rcvbuf, WS_DEFAULT_BUFFER)) {
-            WS_DATAGRAM *d = WsAlloc(sizeof(*d) + size);
-            if (d) {
-                d->next = NULL;
-                d->from = from;
-                d->size = size;
-                DWORD done = 0;
-                for (DWORD i = 0; i < count; i++) {
-                    memcpy(d->data + done, buffers[i].buf, buffers[i].len);
-                    done += buffers[i].len;
-                }
-                if (sock->dg_tail)
-                    sock->dg_tail->next = d;
-                else
-                    sock->dg_head = d;
-                sock->dg_tail = d;
-                sock->dg_bytes += size;
-                data_arrived(sock);
-            }
-        }
-        if (!broadcast)
-            break;
-    }
-    /* nobody listens: the port unreachable answer resets the sender's next receive. */
-    if (!delivered && !broadcast) {
-        sender->udp_reset = TRUE;
-        data_arrived(sender);
-    }
-}
-
-static int dgram_send(WS_SOCKET *sock, const WSABUF *buffers, DWORD count, DWORD *sent, const SOCKADDR *to,
-                      int tolen)
-{
-    WS_ENDPOINT dest;
-    if (to) {
-        int error = to_endpoint(sock, to, tolen, &dest);
-        if (error)
-            return error;
-    } else if (sock->has_remote) {
-        dest = sock->remote;
-    } else {
-        return WSAENOTCONN;
-    }
-    if (sock->shut_wr)
-        return WSAESHUTDOWN;
-    DWORD size = buffers_size(buffers, count);
-    if (size > (DWORD)(ep_is_v4(&dest) ? WS_MAX_UDP_V4 : WS_MAX_UDP_V6))
-        return WSAEMSGSIZE;
-    if (ep_is_any(&dest) || !dest.port)
-        return WSAEADDRNOTAVAIL;
-    if (ep_is_broadcast(&dest) && !sock->broadcast)
-        return WSAEACCES;
-    if (!ep_is_loopback(&dest) && !ep_is_broadcast(&dest) && !ep_is_multicast(&dest))
-        return WSAENETUNREACH;
-    int error = auto_bind(sock, &dest);
-    if (error)
-        return error;
-    /* no socket joins a group without a network, so multicast goes nowhere. */
-    if (!ep_is_multicast(&dest))
-        deliver(sock, &dest, buffers, count, size);
-    *sent = size;
-    return 0;
-}
-
-static int do_send(SOCKET s, const WSABUF *buffers, DWORD count, LPDWORD sent, DWORD flags, const SOCKADDR *to,
-                   int tolen, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+static int transfer(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD done, LPDWORD flags,
+                    const struct sockaddr *to, int tolen, struct sockaddr *from, LPINT fromlen,
+                    LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
 {
     int error;
     WS_SOCKET *sock = acquire(s, &error);
     if (!sock)
         return WsFail(error);
-    if (!buffers_valid(buffers, count))
+    if ((!buffers && count) || (!send && !flags))
         return fail(sock, WSAEFAULT);
-    if (flags & MSG_OOB)
+    DWORD f = send ? (flags ? *flags : 0) : *flags;
+    DWORD allowed = send ? (MSG_OOB | MSG_DONTROUTE | MSG_PARTIAL) : (MSG_OOB | MSG_PEEK | MSG_WAITALL | MSG_PARTIAL);
+    if (f & ~allowed)
         return fail(sock, WSAEOPNOTSUPP);
-    DWORD n = 0;
-    if (sock->type == SOCK_STREAM)
-        error = stream_send(sock, buffers, count, &n, overlapped != NULL);
-    else
-        error = dgram_send(sock, buffers, count, &n, to, tolen);
-    if (error)
-        return fail(sock, error);
-    if (sent)
-        *sent = n;
-    if (overlapped)
-        complete(sock, overlapped, routine, NULL, STATUS_SUCCESS, n, 0);
-    release(sock);
-    return 0;
+    if ((f & MSG_OOB) && sock->type != SOCK_STREAM)
+        return fail(sock, WSAEOPNOTSUPP);
+    if ((f & MSG_WAITALL) && (sock->type != SOCK_STREAM || overlapped))
+        return fail(sock, WSAEOPNOTSUPP);
+    MIME_AFD_TRANSFER t;
+    memset(&t, 0, sizeof(t));
+    t.Buffers = (ULONG64)(ULONG_PTR)buffers;
+    t.BufferCount = count;
+    t.Flags = f & ~MSG_PARTIAL;
+    t.AfdFlags = overlapped ? MIME_AFD_OVERLAPPED : 0;
+    MIME_AFD_ADDRESS dest;
+    if (send && to && sock->type == SOCK_DGRAM) {
+        if ((error = to_address(sock, to, tolen, &dest)))
+            return fail(sock, error);
+        t.Address = (ULONG64)(ULONG_PTR)&dest;
+    }
+    if (!send && from) {
+        if (!fromlen || *fromlen < sockaddr_size(sock->family))
+            return fail(sock, WSAEFAULT);
+        t.Address = (ULONG64)(ULONG_PTR)from;
+        t.AddressLength = (ULONG64)(ULONG_PTR)fromlen;
+    }
+    ULONG code = send ? IOCTL_AFD_SEND : IOCTL_AFD_RECV;
+    if (!send)
+        *flags = 0;
+    if (overlapped) {
+        DWORD bytes = 0;
+        error = afd_overlapped((HANDLE)s, code, &t, sizeof(t), overlapped, routine, &bytes);
+        if (!error && done)
+            *done = bytes;
+        return error ? fail(sock, error) : succeed(sock);
+    }
+    ULONG_PTR bytes = 0;
+    NTSTATUS status = afd_call((HANDLE)s, code, &t, sizeof(t), NULL, 0, send ? sock->sndtimeo : sock->rcvtimeo, &bytes);
+    if (done)
+        *done = (DWORD)bytes;
+    error = MimeAfdError(status);
+    /* a socket closed under a blocking call interrupts it. */
+    if (error == WSA_OPERATION_ABORTED)
+        error = WSAEINTR;
+    return error ? fail(sock, error) : succeed(sock);
 }
 
 int WSAAPI send(SOCKET s, const char *buf, int len, int flags)
 {
     if (len < 0)
-        return WsFail(WSAEFAULT);
-    WSABUF b = {(ULONG)len, (CHAR *)buf};
-    DWORD sent = 0;
-    if (do_send(s, &b, 1, &sent, (DWORD)flags, NULL, 0, NULL, NULL))
-        return SOCKET_ERROR;
-    return (int)sent;
+        return WsFail(WSAEINVAL);
+    WSABUF b = {(ULONG)len, (char *)buf};
+    DWORD sent = 0, f = (DWORD)flags;
+    int r = transfer(s, TRUE, &b, 1, &sent, &f, NULL, 0, NULL, NULL, NULL, NULL);
+    return r ? r : (int)sent;
 }
 
 int WSAAPI sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen)
 {
     if (len < 0)
-        return WsFail(WSAEFAULT);
-    WSABUF b = {(ULONG)len, (CHAR *)buf};
-    DWORD sent = 0;
-    if (do_send(s, &b, 1, &sent, (DWORD)flags, to, tolen, NULL, NULL))
-        return SOCKET_ERROR;
-    return (int)sent;
+        return WsFail(WSAEINVAL);
+    WSABUF b = {(ULONG)len, (char *)buf};
+    DWORD sent = 0, f = (DWORD)flags;
+    int r = transfer(s, TRUE, &b, 1, &sent, &f, to, tolen, NULL, NULL, NULL, NULL);
+    return r ? r : (int)sent;
 }
 
 int WSAAPI WSASend(SOCKET s, LPWSABUF buffers, DWORD count, LPDWORD sent, DWORD flags, LPWSAOVERLAPPED overlapped,
                    LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
 {
-    return do_send(s, buffers, count, sent, flags, NULL, 0, overlapped, routine);
+    return transfer(s, TRUE, buffers, count, sent, &flags, NULL, 0, NULL, NULL, overlapped, routine);
 }
 
 int WSAAPI WSASendTo(SOCKET s, LPWSABUF buffers, DWORD count, LPDWORD sent, DWORD flags, const struct sockaddr *to,
                      int tolen, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
 {
-    return do_send(s, buffers, count, sent, flags, to, tolen, overlapped, routine);
-}
-
-/* ------------------------------------------------------------------ receiving */
-
-static int queue_request(WS_SOCKET *sock, const WSABUF *buffers, DWORD count, DWORD flags, struct sockaddr *from,
-                         LPINT fromlen, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
-{
-    WS_REQUEST *r = WsAllocZero(sizeof(*r) + count * sizeof(WSABUF));
-    if (!r)
-        return WSAENOBUFS;
-    /* the completion routine runs on the calling thread, which needs a real handle. */
-    if (routine && !NT_SUCCESS(NtDuplicateObject(NtCurrentProcess(), NtCurrentThread(), NtCurrentProcess(),
-                                                 &r->thread, 0, 0, DUPLICATE_SAME_ACCESS))) {
-        WsFree(r);
-        return WSAENOBUFS;
-    }
-    r->overlapped = overlapped;
-    r->routine = routine;
-    r->flags = flags;
-    r->from = from;
-    r->fromlen = fromlen;
-    r->count = count;
-    memcpy(r->buffers, buffers, count * sizeof(WSABUF));
-    overlapped->Internal = (ULONG_PTR)STATUS_PENDING;
-    overlapped->InternalHigh = 0;
-    ResetEvent(overlapped_event(sock, overlapped));
-    WS_REQUEST **tail = &sock->requests;
-    while (*tail)
-        tail = &(*tail)->next;
-    *tail = r;
-    return WSA_IO_PENDING;
-}
-
-static int do_recv(SOCKET s, const WSABUF *buffers, DWORD count, LPDWORD received, LPDWORD flags,
-                   struct sockaddr *from, LPINT fromlen, LPWSAOVERLAPPED overlapped,
-                   LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
-{
-    int error;
-    WS_SOCKET *sock = acquire(s, &error);
-    if (!sock)
-        return WsFail(error);
-    DWORD in_flags = flags ? *flags : 0;
-    if (!buffers_valid(buffers, count) || !flags)
-        return fail(sock, WSAEFAULT);
-    if (from && (!fromlen || *fromlen < sockaddr_size(sock->family)))
-        return fail(sock, WSAEFAULT);
-    sock->enabled |= FD_READ;
-    if (in_flags & MSG_OOB) {
-        signal_events(sock);
-        return fail(sock, WSAEINVAL);
-    }
-    if (sock->type == SOCK_STREAM) {
-        if (sock->state == WS_LISTENING || sock->state == WS_OPEN)
-            error = WSAENOTCONN;
-        else if (sock->shut_rd)
-            error = WSAESHUTDOWN;
-    } else if (!sock->bound) {
-        error = WSAEINVAL;
-    }
-    if (error) {
-        signal_events(sock);
-        return fail(sock, error);
-    }
-    ULONGLONG deadline = deadline_after(sock->rcvtimeo);
-    DWORD n = 0, out_flags = 0;
-    WS_ENDPOINT source;
-    for (;;) {
-        BOOL done;
-        if (sock->type == SOCK_STREAM) {
-            done = stream_take(sock, buffers, count, in_flags, &n, &error);
-            /* MSG_WAITALL keeps a blocking call waiting for the whole buffer or the end of the stream. */
-            if (done && !error && n && (in_flags & MSG_WAITALL) && !(in_flags & MSG_PEEK) && !overlapped &&
-                !sock->nonblocking && count <= WS_MAX_BUFFERS) {
-                DWORD want = buffers_size(buffers, count);
-                while (n < want && !sock->rx_fin && !sock->reset) {
-                    if (wait_change(sock, deadline))
-                        break;
-                    WSABUF rest[WS_MAX_BUFFERS];
-                    DWORD more = 0, k = remaining_buffers(buffers, count, n, rest);
-                    int ignored;
-                    stream_take(sock, rest, k, in_flags, &more, &ignored);
-                    n += more;
-                }
-            }
-        } else {
-            done = dgram_take(sock, buffers, count, in_flags, &n, &source, &error);
-            if (done && from && error != WSAECONNRESET)
-                from_endpoint(sock, &source, from, fromlen);
-        }
-        if (done)
-            break;
-        if (overlapped) {
-            error = queue_request(sock, buffers, count, in_flags, from, fromlen, overlapped, routine);
-            signal_events(sock);
-            return fail(sock, error);
-        }
-        if (sock->nonblocking) {
-            error = WSAEWOULDBLOCK;
-            break;
-        }
-        if ((error = wait_change(sock, deadline)))
-            break;
-        if (sock->type == SOCK_STREAM && sock->shut_rd) {
-            error = WSAESHUTDOWN;
-            break;
-        }
-    }
-    if (error == WSAEMSGSIZE)
-        out_flags = MSG_PARTIAL;
-    signal_events(sock);
-    if (error && error != WSAEMSGSIZE)
-        return fail(sock, error);
-    *flags = out_flags;
-    if (received)
-        *received = n;
-    if (overlapped)
-        complete(sock, overlapped, routine, NULL, error ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS, n, out_flags);
-    if (error)
-        return fail(sock, error);
-    release(sock);
-    return 0;
+    return transfer(s, TRUE, buffers, count, sent, &flags, to, tolen, NULL, NULL, overlapped, routine);
 }
 
 int WSAAPI recv(SOCKET s, char *buf, int len, int flags)
 {
     if (len < 0)
-        return WsFail(WSAEFAULT);
+        return WsFail(WSAEINVAL);
     WSABUF b = {(ULONG)len, buf};
-    DWORD received = 0, f = (DWORD)flags;
-    if (do_recv(s, &b, 1, &received, &f, NULL, NULL, NULL, NULL))
-        return SOCKET_ERROR;
-    return (int)received;
+    DWORD got = 0, f = (DWORD)flags;
+    int r = transfer(s, FALSE, &b, 1, &got, &f, NULL, 0, NULL, NULL, NULL, NULL);
+    return r ? r : (int)got;
 }
 
 int WSAAPI recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen)
 {
     if (len < 0)
-        return WsFail(WSAEFAULT);
+        return WsFail(WSAEINVAL);
     WSABUF b = {(ULONG)len, buf};
-    DWORD received = 0, f = (DWORD)flags;
-    if (do_recv(s, &b, 1, &received, &f, from, fromlen, NULL, NULL))
-        return SOCKET_ERROR;
-    return (int)received;
+    DWORD got = 0, f = (DWORD)flags;
+    int r = transfer(s, FALSE, &b, 1, &got, &f, NULL, 0, from, fromlen, NULL, NULL);
+    return r ? r : (int)got;
 }
 
 int WSAAPI WSARecv(SOCKET s, LPWSABUF buffers, DWORD count, LPDWORD received, LPDWORD flags,
                    LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
 {
-    return do_recv(s, buffers, count, received, flags, NULL, NULL, overlapped, routine);
+    return transfer(s, FALSE, buffers, count, received, flags, NULL, 0, NULL, NULL, overlapped, routine);
 }
 
 int WSAAPI WSARecvFrom(SOCKET s, LPWSABUF buffers, DWORD count, LPDWORD received, LPDWORD flags,
                        struct sockaddr *from, LPINT fromlen, LPWSAOVERLAPPED overlapped,
                        LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
 {
-    return do_recv(s, buffers, count, received, flags, from, fromlen, overlapped, routine);
+    return transfer(s, FALSE, buffers, count, received, flags, NULL, 0, from, fromlen, overlapped, routine);
 }
 
 BOOL WSAAPI WSAGetOverlappedResult(SOCKET s, LPWSAOVERLAPPED overlapped, LPDWORD transferred, BOOL wait,
                                    LPDWORD flags)
 {
-    if (!WsIsSocket(s)) {
-        SetLastError(WSAENOTSOCK);
-        return FALSE;
-    }
     if (!overlapped || !transferred || !flags) {
         SetLastError(WSAEFAULT);
         return FALSE;
@@ -1566,8 +742,8 @@ BOOL WSAAPI WSAGetOverlappedResult(SOCKET s, LPWSAOVERLAPPED overlapped, LPDWORD
             return FALSE;
     }
     *transferred = (DWORD)overlapped->InternalHigh;
-    *flags = overlapped->Offset;
-    DWORD error = status_error((NTSTATUS)overlapped->Internal);
+    *flags = 0;
+    int error = MimeAfdError((NTSTATUS)overlapped->Internal);
     if (error) {
         SetLastError(error);
         return FALSE;
@@ -1575,25 +751,133 @@ BOOL WSAAPI WSAGetOverlappedResult(SOCKET s, LPWSAOVERLAPPED overlapped, LPDWORD
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ select and poll */
+/* ------------------------------------------------------------------ the mswsock extensions */
 
-static ULONGLONG timeval_deadline(const struct timeval *timeout, BOOL *poll_only)
+static BOOL WSAAPI connect_ex(SOCKET s, const struct sockaddr *name, int namelen, PVOID send_buffer, DWORD send_length,
+                              LPDWORD sent, LPOVERLAPPED overlapped)
 {
-    *poll_only = FALSE;
-    if (!timeout)
-        return 0;
-    ULONGLONG ms = (ULONGLONG)(timeout->tv_sec > 0 ? timeout->tv_sec : 0) * 1000 +
-                   (ULONGLONG)(timeout->tv_usec > 0 ? (timeout->tv_usec + 999) / 1000 : 0);
-    if (!ms) {
-        *poll_only = TRUE;
-        return 0;
+    int error;
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock) {
+        SetLastError(error);
+        return FALSE;
     }
-    return GetTickCount64() + ms;
+    MIME_AFD_CONNECT c;
+    memset(&c, 0, sizeof(c));
+    if (!overlapped)
+        error = WSAEINVAL;
+    else if (sock->type != SOCK_STREAM)
+        error = WSAEOPNOTSUPP;
+    else
+        error = to_address(sock, name, namelen, &c.Address);
+    if (!error && address_is_any(&c.Address))
+        error = WSAEADDRNOTAVAIL;
+    if (!error) {
+        c.AfdFlags = MIME_AFD_OVERLAPPED;
+        c.Length = send_buffer ? send_length : 0;
+        c.Buffer = (ULONG64)(ULONG_PTR)send_buffer;
+        DWORD bytes = 0;
+        error = afd_overlapped((HANDLE)s, IOCTL_AFD_CONNECT, &c, sizeof(c), (LPWSAOVERLAPPED)overlapped, NULL, &bytes);
+        if (!error && sent)
+            *sent = bytes;
+    }
+    release(sock);
+    SetLastError(error);
+    return !error;
 }
 
-static int set_count(const fd_set *set)
+static BOOL WSAAPI accept_ex(SOCKET listener, SOCKET accepted, PVOID buffer, DWORD receive_length,
+                             DWORD local_length, DWORD remote_length, LPDWORD received, LPOVERLAPPED overlapped)
 {
-    return set ? (int)set->fd_count : 0;
+    int error;
+    WS_SOCKET *sock = acquire(listener, &error);
+    if (!sock) {
+        SetLastError(error);
+        return FALSE;
+    }
+    DWORD need = (DWORD)sockaddr_size(sock->family) + 16;
+    if (!overlapped || !buffer)
+        error = WSAEFAULT;
+    else if (local_length < need || remote_length < need)
+        error = WSAEINVAL;
+    if (!error) {
+        /* the two address areas hold the local and remote sockaddr, read by GetAcceptExSockaddrs. */
+        MIME_AFD_ACCEPT a = {(ULONG64)accepted, MIME_AFD_OVERLAPPED, receive_length, (ULONG64)(ULONG_PTR)buffer,
+                             (ULONG64)(ULONG_PTR)((PUCHAR)buffer + receive_length)};
+        DWORD bytes = 0;
+        error = afd_overlapped((HANDLE)listener, IOCTL_AFD_ACCEPT, &a, sizeof(a), (LPWSAOVERLAPPED)overlapped, NULL,
+                               &bytes);
+        if (!error && received)
+            *received = bytes;
+    }
+    release(sock);
+    SetLastError(error);
+    return !error;
+}
+
+static void WSAAPI get_accept_ex_sockaddrs(PVOID buffer, DWORD receive_length, DWORD local_length,
+                                           DWORD remote_length, struct sockaddr **local, LPINT local_size,
+                                           struct sockaddr **remote, LPINT remote_size)
+{
+    MIME_AFD_ADDRESS *both = (MIME_AFD_ADDRESS *)((PUCHAR)buffer + receive_length);
+    if (local) {
+        *local = (struct sockaddr *)&both[0];
+        if (local_size)
+            *local_size = both[0].Family == AF_INET6 ? (int)sizeof(SOCKADDR_IN6) : (int)sizeof(SOCKADDR_IN);
+    }
+    if (remote) {
+        *remote = (struct sockaddr *)&both[1];
+        if (remote_size)
+            *remote_size = both[1].Family == AF_INET6 ? (int)sizeof(SOCKADDR_IN6) : (int)sizeof(SOCKADDR_IN);
+    }
+}
+
+/* the connection ends gracefully; the socket cannot be reused, which TF_REUSE_SOCKET would ask for. */
+static BOOL WSAAPI disconnect_ex(SOCKET s, LPOVERLAPPED overlapped, DWORD flags, DWORD reserved)
+{
+    if (shutdown(s, SD_SEND))
+        return FALSE;
+    if (overlapped) {
+        ULONG64 zero = 0;
+        int error = afd_overlapped((HANDLE)s, IOCTL_AFD_COMPLETE, &zero, sizeof(zero), (LPWSAOVERLAPPED)overlapped,
+                                   NULL, NULL);
+        if (error && error != WSA_IO_PENDING) {
+            SetLastError(error);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static const GUID guid_accept_ex = {0xB5367DF1, 0xCBAC, 0x11CF, {0x95, 0xCA, 0x00, 0x80, 0x5F, 0x48, 0xA1, 0x92}};
+static const GUID guid_connect_ex = {0x25A207B9, 0xDDF3, 0x4660, {0x8E, 0xE9, 0x76, 0xE5, 0x8C, 0x74, 0x06, 0x3E}};
+static const GUID guid_get_accept_ex_sockaddrs = {0xB5367DF2, 0xCBAC, 0x11CF,
+                                                  {0x95, 0xCA, 0x00, 0x80, 0x5F, 0x48, 0xA1, 0x92}};
+static const GUID guid_disconnect_ex = {0x7FDA2E11, 0x8630, 0x436F, {0xA0, 0x31, 0xF5, 0x36, 0xA6, 0xEE, 0xC1, 0x57}};
+
+static PVOID extension(const GUID *id)
+{
+    if (!memcmp(id, &guid_accept_ex, sizeof(GUID)))
+        return (PVOID)accept_ex;
+    if (!memcmp(id, &guid_connect_ex, sizeof(GUID)))
+        return (PVOID)connect_ex;
+    if (!memcmp(id, &guid_get_accept_ex_sockaddrs, sizeof(GUID)))
+        return (PVOID)get_accept_ex_sockaddrs;
+    if (!memcmp(id, &guid_disconnect_ex, sizeof(GUID)))
+        return (PVOID)disconnect_ex;
+    /* WSARecvMsg and the others are absent; callers fall back to the plain functions. */
+    return NULL;
+}
+
+/* ------------------------------------------------------------------ select and poll */
+
+static int run_poll(MIME_AFD_POLL *p, ULONG count)
+{
+    HANDLE h = helper_handle();
+    if (!h)
+        return WSAENETDOWN;
+    ULONG size = sizeof(*p) + count * sizeof(MIME_AFD_POLL_ENTRY);
+    return MimeAfdError(afd_call(h, IOCTL_AFD_POLL, p, size, p, size, 0, NULL));
 }
 
 int WSAAPI select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timeval *timeout)
@@ -1601,70 +885,58 @@ int WSAAPI select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds
     int error = WsCheckStarted();
     if (error)
         return WsFail(error);
-    if (!set_count(readfds) && !set_count(writefds) && !set_count(exceptfds))
-        return WsFail(WSAEINVAL);
-    BOOL poll_only;
-    ULONGLONG deadline = timeval_deadline(timeout, &poll_only);
     fd_set *sets[3] = {readfds, writefds, exceptfds};
-    static const int wanted[3] = {WS_READABLE, WS_WRITABLE, WS_FAILED};
-    EnterCriticalSection(&lock);
-    for (;;) {
-        int total = 0;
-        u_int kept[3] = {0, 0, 0};
-        for (int k = 0; k < 3; k++) {
-            for (u_int i = 0; sets[k] && i < sets[k]->fd_count; i++) {
-                WS_SOCKET *sock = find(sets[k]->fd_array[i]);
-                if (!sock) {
-                    LeaveCriticalSection(&lock);
-                    return WsFail(WSAENOTSOCK);
-                }
-                if (readiness(sock) & wanted[k])
-                    kept[k]++;
-            }
-            total += kept[k];
-        }
-        if (total || poll_only) {
-            for (int k = 0; k < 3; k++) {
-                if (!sets[k])
-                    continue;
-                u_int out = 0;
-                for (u_int i = 0; i < sets[k]->fd_count; i++) {
-                    WS_SOCKET *sock = find(sets[k]->fd_array[i]);
-                    if (readiness(sock) & wanted[k])
-                        sets[k]->fd_array[out++] = sets[k]->fd_array[i];
-                }
-                sets[k]->fd_count = out;
-            }
-            LeaveCriticalSection(&lock);
-            return total;
-        }
-        if ((error = wait_change(NULL, deadline))) {
-            for (int k = 0; k < 3; k++) {
-                if (sets[k])
-                    sets[k]->fd_count = 0;
-            }
-            LeaveCriticalSection(&lock);
-            return 0;
+    static const ULONG wanted[3] = {MIME_AFD_POLL_READ, MIME_AFD_POLL_WRITE, MIME_AFD_POLL_EXCEPT};
+    ULONG count = 0;
+    for (int k = 0; k < 3; k++)
+        count += sets[k] ? sets[k]->fd_count : 0;
+    if (!count)
+        return WsFail(WSAEINVAL);
+    if (count > WS_MAX_POLL)
+        return WsFail(WSAENOBUFS);
+    MIME_AFD_POLL *p = WsAllocZero(sizeof(*p) + count * sizeof(MIME_AFD_POLL_ENTRY));
+    if (!p)
+        return WsFail(WSAENOBUFS);
+    p->Timeout = -1;
+    if (timeout)
+        p->Timeout = (LONGLONG)(timeout->tv_sec > 0 ? timeout->tv_sec : 0) * 1000 +
+                     (timeout->tv_usec > 0 ? (timeout->tv_usec + 999) / 1000 : 0);
+    p->Count = count;
+    ULONG n = 0;
+    for (int k = 0; k < 3; k++) {
+        for (u_int i = 0; sets[k] && i < sets[k]->fd_count; i++) {
+            p->Entries[n].Socket = (ULONG64)sets[k]->fd_array[i];
+            p->Entries[n].Events = wanted[k];
+            n++;
         }
     }
-}
-
-static SHORT poll_events(const WS_SOCKET *sock, SHORT events)
-{
-    int r = readiness(sock);
-    SHORT revents = 0;
-    if ((r & WS_READABLE) && (events & POLLRDNORM))
-        revents |= POLLRDNORM;
-    if ((r & WS_WRITABLE) && (events & POLLWRNORM))
-        revents |= POLLWRNORM;
-    if (sock->type == SOCK_STREAM && sock->state == WS_CONNECTED && (sock->rx_fin || sock->reset) &&
-        !rx_available(sock))
-        revents |= POLLHUP;
-    if (sock->reset || (sock->state == WS_OPEN && sock->connect_failed))
-        revents |= POLLERR;
-    if (sock->state == WS_OPEN && sock->connect_failed)
-        revents |= POLLHUP;
-    return revents;
+    error = run_poll(p, count);
+    if (!error) {
+        for (ULONG i = 0; i < count; i++) {
+            if (p->Entries[i].Results & MIME_AFD_POLL_INVALID)
+                error = WSAENOTSOCK;
+        }
+    }
+    if (error) {
+        WsFree(p);
+        return WsFail(error);
+    }
+    int total = 0;
+    n = 0;
+    for (int k = 0; k < 3; k++) {
+        if (!sets[k])
+            continue;
+        u_int out = 0, in = sets[k]->fd_count;
+        for (u_int i = 0; i < in; i++, n++) {
+            if (p->Entries[n].Results & wanted[k])
+                sets[k]->fd_array[out++] = sets[k]->fd_array[i];
+        }
+        sets[k]->fd_count = out;
+        total += (int)out;
+    }
+    WsFree(p);
+    SetLastError(0);
+    return total;
 }
 
 int WSAAPI WSAPoll(LPWSAPOLLFD fds, ULONG count, INT timeout)
@@ -1674,31 +946,70 @@ int WSAAPI WSAPoll(LPWSAPOLLFD fds, ULONG count, INT timeout)
         return WsFail(error);
     if (!fds)
         return WsFail(WSAEFAULT);
+    if (count > WS_MAX_POLL)
+        return WsFail(WSAENOBUFS);
     for (ULONG i = 0; i < count; i++) {
         if (fds[i].events & ~(POLLRDNORM | POLLRDBAND | POLLPRI | POLLWRNORM | POLLWRBAND))
             return WsFail(WSAEINVAL);
     }
-    ULONGLONG deadline = timeout > 0 ? GetTickCount64() + (ULONGLONG)timeout : 0;
-    EnterCriticalSection(&lock);
-    for (;;) {
-        int total = 0;
-        for (ULONG i = 0; i < count; i++) {
-            fds[i].revents = 0;
-            if (fds[i].fd == INVALID_SOCKET)
-                continue;
-            WS_SOCKET *sock = find(fds[i].fd);
-            fds[i].revents = sock ? poll_events(sock, fds[i].events) : POLLNVAL;
-            if (fds[i].revents)
-                total++;
-        }
-        if (total || !timeout || wait_change(NULL, deadline)) {
-            LeaveCriticalSection(&lock);
-            return total;
-        }
+    MIME_AFD_POLL *p = WsAllocZero(sizeof(*p) + (count ? count : 1) * sizeof(MIME_AFD_POLL_ENTRY));
+    if (!p)
+        return WsFail(WSAENOBUFS);
+    p->Timeout = timeout < 0 ? -1 : timeout;
+    ULONG n = 0;
+    for (ULONG i = 0; i < count; i++) {
+        fds[i].revents = 0;
+        if (fds[i].fd == INVALID_SOCKET)
+            continue;
+        ULONG events = MIME_AFD_POLL_HUP | MIME_AFD_POLL_ERROR;
+        if (fds[i].events & (POLLRDNORM | POLLRDBAND))
+            events |= MIME_AFD_POLL_READ;
+        if (fds[i].events & POLLWRNORM)
+            events |= MIME_AFD_POLL_WRITE;
+        p->Entries[n].Socket = (ULONG64)fds[i].fd;
+        p->Entries[n].Events = events;
+        n++;
     }
+    p->Count = n;
+    if (n && (error = run_poll(p, n))) {
+        WsFree(p);
+        return WsFail(error);
+    }
+    if (!n && timeout)
+        Sleep(timeout < 0 ? INFINITE : (DWORD)timeout);
+    int total = 0;
+    n = 0;
+    for (ULONG i = 0; i < count; i++) {
+        if (fds[i].fd == INVALID_SOCKET)
+            continue;
+        ULONG r = p->Entries[n++].Results;
+        SHORT revents = 0;
+        if (r & MIME_AFD_POLL_INVALID)
+            revents = POLLNVAL;
+        if ((r & MIME_AFD_POLL_READ) && (fds[i].events & POLLRDNORM))
+            revents |= POLLRDNORM;
+        if ((r & MIME_AFD_POLL_WRITE) && (fds[i].events & POLLWRNORM))
+            revents |= POLLWRNORM;
+        if (r & MIME_AFD_POLL_HUP)
+            revents |= POLLHUP;
+        if (r & MIME_AFD_POLL_ERROR)
+            revents |= POLLERR;
+        fds[i].revents = revents;
+        if (revents)
+            total++;
+    }
+    WsFree(p);
+    SetLastError(0);
+    return total;
 }
 
 /* ------------------------------------------------------------------ WSAEventSelect and WSAAsyncSelect */
+
+static int event_select(WS_SOCKET *sock, HANDLE event, long events)
+{
+    MIME_AFD_EVENT_SELECT sel = {(ULONG64)(ULONG_PTR)event, (ULONG)events, 0};
+    return MimeAfdError(socket_call(sock, IOCTL_AFD_EVENT_SELECT, &sel, sizeof(sel), NULL, 0, NULL));
+}
 
 int WSAAPI WSAEventSelect(SOCKET s, WSAEVENT event, long events)
 {
@@ -1708,16 +1019,65 @@ int WSAAPI WSAEventSelect(SOCKET s, WSAEVENT event, long events)
         return WsFail(error);
     if (events && !event)
         return fail(sock, WSAEINVAL);
+    if ((error = event_select(sock, events ? event : NULL, events)))
+        return fail(sock, error);
+    EnterCriticalSection(&lock);
     sock->hwnd = NULL;
     sock->msg = 0;
-    sock->event = events ? event : NULL;
+    sock->select_event = events ? event : NULL;
     sock->select_events = events;
-    sock->enabled = FD_ALL_EVENTS;
-    if (events)
-        sock->nonblocking = TRUE;
-    signal_events(sock);
-    release(sock);
+    LeaveCriticalSection(&lock);
+    return succeed(sock);
+}
+
+static DWORD WINAPI async_main(LPVOID parameter)
+{
+    static const int order[] = {FD_CONNECT_BIT, FD_ACCEPT_BIT, FD_READ_BIT, FD_OOB_BIT, FD_WRITE_BIT, FD_CLOSE_BIT};
+    for (;;) {
+        WaitForSingleObject(async_event, INFINITE);
+        /* the windows to tell, gathered under the lock and told outside it. */
+        for (;;) {
+            SOCKET s = INVALID_SOCKET;
+            HWND hwnd = NULL;
+            UINT msg = 0;
+            MIME_AFD_EVENTS ev = {0};
+            EnterCriticalSection(&lock);
+            for (WS_SOCKET *sock = sockets; sock; sock = sock->next) {
+                if (sock->closed || !sock->hwnd)
+                    continue;
+                IO_STATUS_BLOCK io;
+                ULONG64 none = 0;
+                if (!NT_SUCCESS(NtDeviceIoControlFile((HANDLE)sock->handle, NULL, NULL, NULL, &io,
+                                                      IOCTL_AFD_ENUM_EVENTS, &none, sizeof(none), &ev, sizeof(ev))) ||
+                    !ev.Events)
+                    continue;
+                s = sock->handle;
+                hwnd = sock->hwnd;
+                msg = sock->msg;
+                break;
+            }
+            LeaveCriticalSection(&lock);
+            if (s == INVALID_SOCKET)
+                break;
+            for (SIZE_T i = 0; i < RTL_NUMBER_OF(order); i++) {
+                if (ev.Events & (1u << order[i]))
+                    PostMessageW(hwnd, msg, (WPARAM)s, WSAMAKESELECTREPLY(1 << order[i], ev.Errors[order[i]]));
+            }
+        }
+    }
     return 0;
+}
+
+static BOOL start_async(void)
+{
+    EnterCriticalSection(&lock);
+    if (!async_event)
+        async_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (async_event && !async_thread)
+        async_thread = CreateThread(NULL, 0, async_main, NULL, 0, NULL);
+    BOOL ok = async_event && async_thread;
+    LeaveCriticalSection(&lock);
+    return ok;
 }
 
 int WSAAPI WSAAsyncSelect(SOCKET s, HWND hwnd, u_int msg, long events)
@@ -1728,15 +1088,19 @@ int WSAAPI WSAAsyncSelect(SOCKET s, HWND hwnd, u_int msg, long events)
         return WsFail(error);
     if (events && !IsWindow(hwnd))
         return fail(sock, WSAEINVAL);
-    sock->event = NULL;
+    if (events && !start_async())
+        return fail(sock, WSAENOBUFS);
+    EnterCriticalSection(&lock);
+    sock->select_event = NULL;
     sock->hwnd = events ? hwnd : NULL;
     sock->msg = msg;
     sock->select_events = events;
-    sock->enabled = FD_ALL_EVENTS;
-    sock->nonblocking = TRUE;
-    signal_events(sock);
-    release(sock);
-    return 0;
+    LeaveCriticalSection(&lock);
+    if ((error = event_select(sock, events ? async_event : NULL, events)))
+        return fail(sock, error);
+    /* a socket under WSAAsyncSelect stays non blocking even when nothing is selected. */
+    host_option(sock, MIME_AFD_OPTION_NONBLOCKING, TRUE, 1, NULL);
+    return succeed(sock);
 }
 
 int WSAAPI WSAEnumNetworkEvents(SOCKET s, WSAEVENT event, LPWSANETWORKEVENTS events)
@@ -1747,13 +1111,162 @@ int WSAAPI WSAEnumNetworkEvents(SOCKET s, WSAEVENT event, LPWSANETWORKEVENTS eve
         return WsFail(error);
     if (!events)
         return fail(sock, WSAEFAULT);
-    events->lNetworkEvents = sock->recorded;
+    ULONG64 e = (ULONG64)(ULONG_PTR)event;
+    MIME_AFD_EVENTS ev;
+    error = MimeAfdError(socket_call(sock, IOCTL_AFD_ENUM_EVENTS, &e, sizeof(e), &ev, sizeof(ev), NULL));
+    if (error)
+        return fail(sock, error);
+    events->lNetworkEvents = (long)ev.Events;
     for (int i = 0; i < FD_MAX_EVENTS; i++)
-        events->iErrorCode[i] = (sock->recorded & (1 << i)) ? sock->errors[i] : 0;
-    sock->recorded = 0;
-    if (event)
-        ResetEvent(event);
-    release(sock);
+        events->iErrorCode[i] = ev.Errors[i];
+    return succeed(sock);
+}
+
+/* ------------------------------------------------------------------ interfaces and names */
+
+/* the addresses of the host, one entry per address; returns the count or a negative winsock error. */
+int WsInterfaces(MIME_AFD_INTERFACE *list, int max)
+{
+    HANDLE h = helper_handle();
+    if (!h)
+        return -WSAENETDOWN;
+    ULONG_PTR bytes = 0;
+    NTSTATUS status = afd_call(h, IOCTL_AFD_INTERFACES, NULL, 0, list, (ULONG)max * sizeof(*list), 0, &bytes);
+    if (!NT_SUCCESS(status))
+        return -MimeAfdError(status);
+    return (int)(bytes / sizeof(*list));
+}
+
+int WsResolve(const char *name, int family, MIME_AFD_ADDRESS *out, int max)
+{
+    HANDLE h = helper_handle();
+    if (!h)
+        return -WSANO_RECOVERY;
+    MIME_AFD_RESOLVE q;
+    memset(&q, 0, sizeof(q));
+    SIZE_T n = strlen(name);
+    if (!n || n >= sizeof(q.Name))
+        return -WSAHOST_NOT_FOUND;
+    q.Family = (ULONG)family;
+    q.Length = (ULONG)n;
+    memcpy(q.Name, name, n);
+    ULONG_PTR bytes = 0;
+    NTSTATUS status = afd_call(h, IOCTL_AFD_RESOLVE, &q, sizeof(q), out, (ULONG)max * sizeof(*out), 0, &bytes);
+    if (!NT_SUCCESS(status))
+        return -MimeAfdError(status);
+    return (int)(bytes / sizeof(*out));
+}
+
+static void prefix_mask(int family, int bits, BYTE *mask)
+{
+    int len = family == AF_INET ? 4 : 16;
+    memset(mask, 0, len);
+    for (int i = 0; i < len && bits > 0; i++, bits -= 8)
+        mask[i] = bits >= 8 ? 0xFF : (BYTE)(0xFF << (8 - bits));
+}
+
+/* SIO_GET_INTERFACE_LIST: the ipv4 interfaces of the host. */
+static int interface_list(LPVOID out, DWORD out_size, LPDWORD returned)
+{
+    MIME_AFD_INTERFACE list[64];
+    int n = WsInterfaces(list, 64);
+    if (n < 0)
+        return -n;
+    DWORD count = 0;
+    for (int i = 0; i < n; i++)
+        count += list[i].Address.Family == AF_INET && (list[i].Flags & MIME_AFD_IF_UP);
+    *returned = count * sizeof(INTERFACE_INFO);
+    if (out_size < *returned || !out)
+        return WSAEFAULT;
+    INTERFACE_INFO *info = out;
+    for (int i = 0; i < n; i++) {
+        const MIME_AFD_INTERFACE *e = &list[i];
+        if (e->Address.Family != AF_INET || !(e->Flags & MIME_AFD_IF_UP))
+            continue;
+        memset(info, 0, sizeof(*info));
+        info->iiFlags = IFF_UP;
+        if (e->Flags & MIME_AFD_IF_LOOPBACK)
+            info->iiFlags |= IFF_LOOPBACK;
+        if (e->Flags & MIME_AFD_IF_BROADCAST)
+            info->iiFlags |= IFF_BROADCAST;
+        if (e->Flags & MIME_AFD_IF_MULTICAST)
+            info->iiFlags |= IFF_MULTICAST;
+        if (e->Flags & MIME_AFD_IF_POINTTOPOINT)
+            info->iiFlags |= IFF_POINTTOPOINT;
+        memcpy(&info->iiAddress.AddressIn, &e->Address, sizeof(SOCKADDR_IN));
+        info->iiNetmask.AddressIn.sin_family = AF_INET;
+        prefix_mask(AF_INET, e->Prefix, (BYTE *)&info->iiNetmask.AddressIn.sin_addr);
+        info->iiBroadcastAddress.AddressIn.sin_family = AF_INET;
+        info->iiBroadcastAddress.AddressIn.sin_addr.S_un.S_addr =
+            info->iiAddress.AddressIn.sin_addr.S_un.S_addr | ~info->iiNetmask.AddressIn.sin_addr.S_un.S_addr;
+        info++;
+    }
+    return 0;
+}
+
+/* SIO_ADDRESS_LIST_QUERY: the addresses of the socket's family outside the loopback. */
+static int address_list(const WS_SOCKET *sock, LPVOID out, DWORD out_size, LPDWORD returned)
+{
+    MIME_AFD_INTERFACE list[64];
+    int n = WsInterfaces(list, 64);
+    if (n < 0)
+        return -n;
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        if (list[i].Address.Family == sock->family && (list[i].Flags & MIME_AFD_IF_UP) &&
+            !(list[i].Flags & MIME_AFD_IF_LOOPBACK))
+            count++;
+    }
+    int size = sockaddr_size(sock->family);
+    DWORD need = (DWORD)(offsetof(SOCKET_ADDRESS_LIST, Address) + count * (sizeof(SOCKET_ADDRESS) + size));
+    *returned = need;
+    if (!out || out_size < need)
+        return WSAEFAULT;
+    SOCKET_ADDRESS_LIST *l = out;
+    PUCHAR data = (PUCHAR)&l->Address[count];
+    l->iAddressCount = count;
+    int k = 0;
+    for (int i = 0; i < n; i++) {
+        if (list[i].Address.Family != sock->family || !(list[i].Flags & MIME_AFD_IF_UP) ||
+            (list[i].Flags & MIME_AFD_IF_LOOPBACK))
+            continue;
+        memcpy(data, &list[i].Address, size);
+        l->Address[k].lpSockaddr = (LPSOCKADDR)data;
+        l->Address[k].iSockaddrLength = size;
+        data += size;
+        k++;
+    }
+    return 0;
+}
+
+/* SIO_ROUTING_INTERFACE_QUERY: the local address the host would send from, found by a connected datagram socket. */
+static int routing_query(const WS_SOCKET *sock, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
+                         LPDWORD returned)
+{
+    MIME_AFD_ADDRESS dest;
+    int error = to_address(sock, in, (int)in_size, &dest);
+    if (error)
+        return error;
+    HANDLE h;
+    if ((error = open_socket(sock->family, SOCK_DGRAM, IPPROTO_UDP, &h)))
+        return error;
+    MIME_AFD_CONNECT c;
+    memset(&c, 0, sizeof(c));
+    c.Address = dest;
+    error = MimeAfdError(afd_call(h, IOCTL_AFD_CONNECT, &c, sizeof(c), NULL, 0, 0, NULL));
+    MIME_AFD_ADDRESS local;
+    ULONG peer = 0;
+    if (!error)
+        error = MimeAfdError(afd_call(h, IOCTL_AFD_NAME, &peer, sizeof(peer), &local, sizeof(local), 0, NULL));
+    NtClose(h);
+    if (error)
+        return error;
+    ((SOCKADDR_IN *)&local)->sin_port = 0;
+    int len = (int)out_size;
+    *returned = (DWORD)sockaddr_size(sock->family);
+    if ((error = from_address(&local, out, &len)))
+        return error;
+    *returned = (DWORD)len;
     return 0;
 }
 
@@ -1767,75 +1280,25 @@ int WSAAPI ioctlsocket(SOCKET s, long cmd, u_long *argp)
         return WsFail(error);
     if (!argp)
         return fail(sock, WSAEFAULT);
+    ULONG v = 0;
     switch ((u_long)cmd) {
     case FIONBIO:
-        /* a socket under WSAAsyncSelect or WSAEventSelect stays non blocking. */
-        if (!*argp && sock->select_events)
-            return fail(sock, WSAEINVAL);
-        sock->nonblocking = *argp != 0;
+        error = host_option(sock, MIME_AFD_OPTION_NONBLOCKING, TRUE, *argp != 0, NULL);
         break;
     case FIONREAD:
-        if (sock->type == SOCK_STREAM)
-            *argp = sock->state == WS_CONNECTED ? (u_long)min(rx_available(sock), (SIZE_T)0xFFFFFFFF) : 0;
-        else
-            *argp = (u_long)sock->dg_bytes;
+        error = host_option(sock, MIME_AFD_OPT_NREAD, FALSE, 0, &v);
+        if (error == WSAENOTCONN || error == WSAEINVAL)
+            error = 0, v = 0;
+        *argp = v;
         break;
     case SIOCATMARK:
         *argp = TRUE;
         break;
     default:
-        return fail(sock, WSAEINVAL);
+        error = WSAEINVAL;
+        break;
     }
-    release(sock);
-    return 0;
-}
-
-/* SIO_GET_INTERFACE_LIST: the loopback interface of the socket's family. */
-static int interface_list(const WS_SOCKET *sock, LPVOID out, DWORD out_size, LPDWORD returned)
-{
-    if (out_size < sizeof(INTERFACE_INFO)) {
-        *returned = sizeof(INTERFACE_INFO);
-        return WSAEFAULT;
-    }
-    INTERFACE_INFO *info = out;
-    memset(info, 0, sizeof(*info));
-    info->iiFlags = IFF_UP | IFF_LOOPBACK | IFF_MULTICAST;
-    if (sock->family == AF_INET) {
-        info->iiAddress.AddressIn.sin_family = AF_INET;
-        info->iiAddress.AddressIn.sin_addr.S_un.S_addr = htonl(INADDR_LOOPBACK);
-        info->iiBroadcastAddress.AddressIn.sin_family = AF_INET;
-        info->iiBroadcastAddress.AddressIn.sin_addr.S_un.S_addr = INADDR_BROADCAST;
-        info->iiNetmask.AddressIn.sin_family = AF_INET;
-        info->iiNetmask.AddressIn.sin_addr.S_un.S_addr = htonl(0xFF000000);
-    } else {
-        info->iiAddress.AddressIn6.sin6_family = AF_INET6;
-        info->iiAddress.AddressIn6.sin6_addr.u.Byte[15] = 1;
-        info->iiNetmask.AddressIn6.sin6_family = AF_INET6;
-        memset(info->iiNetmask.AddressIn6.sin6_addr.u.Byte, 0xFF, 16);
-    }
-    *returned = sizeof(INTERFACE_INFO);
-    return 0;
-}
-
-static int routing_query(const WS_SOCKET *sock, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
-                         LPDWORD returned)
-{
-    WS_ENDPOINT dest;
-    int error = to_endpoint(sock, in, (int)in_size, &dest);
-    if (error)
-        return error;
-    if (!ep_is_loopback(&dest))
-        return WSAENETUNREACH;
-    WS_ENDPOINT source = dest;
-    ep_loopback(&source, ep_is_v4(&dest));
-    source.port = 0;
-    int len = (int)out_size;
-    if ((error = from_endpoint(sock, &source, out, &len))) {
-        *returned = (DWORD)sockaddr_size(sock->family);
-        return error;
-    }
-    *returned = (DWORD)len;
-    return 0;
+    return error ? fail(sock, error) : succeed(sock);
 }
 
 int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size, LPDWORD returned,
@@ -1845,17 +1308,16 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
     WS_SOCKET *sock = acquire(s, &error);
     if (!sock)
         return WsFail(error);
-    if (!returned)
+    if (!returned && !overlapped)
         return fail(sock, WSAEFAULT);
     DWORD size = 0;
+    ULONG v = 0;
     switch (code) {
     case FIONBIO:
         if (!in || in_size < sizeof(u_long))
             error = WSAEFAULT;
-        else if (!*(u_long *)in && sock->select_events)
-            error = WSAEINVAL;
         else
-            sock->nonblocking = *(u_long *)in != 0;
+            error = host_option(sock, MIME_AFD_OPTION_NONBLOCKING, TRUE, *(u_long *)in != 0, NULL);
         break;
     case FIONREAD:
     case SIOCATMARK:
@@ -1863,12 +1325,14 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
             error = WSAEFAULT;
             break;
         }
-        if (code == SIOCATMARK)
-            *(u_long *)out = TRUE;
-        else if (sock->type == SOCK_STREAM)
-            *(u_long *)out = sock->state == WS_CONNECTED ? (u_long)min(rx_available(sock), (SIZE_T)0xFFFFFFFF) : 0;
-        else
-            *(u_long *)out = (u_long)sock->dg_bytes;
+        if (code == FIONREAD) {
+            error = host_option(sock, MIME_AFD_OPT_NREAD, FALSE, 0, &v);
+            if (error == WSAENOTCONN || error == WSAEINVAL)
+                error = 0, v = 0;
+        } else {
+            v = TRUE;
+        }
+        *(u_long *)out = v;
         size = sizeof(u_long);
         break;
     case SIO_UDP_CONNRESET:
@@ -1879,12 +1343,19 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
         else
             sock->connreset = *(BOOL *)in != 0;
         break;
-    case SIO_KEEPALIVE_VALS:
-        if (!in || in_size < sizeof(struct tcp_keepalive))
+    case SIO_KEEPALIVE_VALS: {
+        if (!in || in_size < sizeof(struct tcp_keepalive)) {
             error = WSAEFAULT;
-        else
-            sock->keepalive = ((struct tcp_keepalive *)in)->onoff != 0;
+            break;
+        }
+        const struct tcp_keepalive *k = in;
+        error = host_option(sock, MIME_AFD_OPT_KEEPALIVE, TRUE, k->onoff != 0, NULL);
+        if (!error && k->onoff) {
+            host_option(sock, MIME_AFD_OPT_KEEPIDLE, TRUE, max(k->keepalivetime / 1000, 1u), NULL);
+            host_option(sock, MIME_AFD_OPT_KEEPINTVL, TRUE, max(k->keepaliveinterval / 1000, 1u), NULL);
+        }
         break;
+    }
     case SIO_UDP_NETRESET:
     case SIO_LOOPBACK_FAST_PATH:
         if (!in || in_size < sizeof(BOOL))
@@ -1902,34 +1373,50 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
         size = sizeof(SOCKET);
         break;
     case SIO_GET_INTERFACE_LIST:
-        error = out ? interface_list(sock, out, out_size, &size) : WSAEFAULT;
+        error = interface_list(out, out_size, &size);
         break;
     case SIO_ADDRESS_LIST_QUERY:
-        /* the list holds the non loopback addresses, of which there are none. */
-        size = offsetof(SOCKET_ADDRESS_LIST, Address);
-        if (!out || out_size < size)
-            error = WSAEFAULT;
-        else
-            ((SOCKET_ADDRESS_LIST *)out)->iAddressCount = 0;
+        error = address_list(sock, out, out_size, &size);
+        break;
+    case SIO_ADDRESS_LIST_CHANGE:
+    case SIO_ROUTING_INTERFACE_CHANGE:
+        /* the addresses never change under a guest; an overlapped watch simply never completes. */
+        if (overlapped) {
+            overlapped->Internal = (ULONG_PTR)STATUS_PENDING;
+            release(sock);
+            return WsFail(WSA_IO_PENDING);
+        }
+        error = WSAEWOULDBLOCK;
         break;
     case SIO_ROUTING_INTERFACE_QUERY:
         error = in && out ? routing_query(sock, in, in_size, out, out_size, &size) : WSAEFAULT;
         break;
-    case SIO_GET_EXTENSION_FUNCTION_POINTER:
-        /* the mswsock extensions are not provided; callers fall back to the plain functions. */
-        error = WSAEINVAL;
+    case SIO_GET_EXTENSION_FUNCTION_POINTER: {
+        PVOID fn = in && in_size >= sizeof(GUID) ? extension(in) : NULL;
+        if (!in || in_size < sizeof(GUID) || !out || out_size < sizeof(PVOID))
+            error = WSAEFAULT;
+        else if (!fn)
+            error = WSAEINVAL;
+        else
+            *(PVOID *)out = fn;
+        size = sizeof(PVOID);
         break;
+    }
     default:
         error = WSAEOPNOTSUPP;
         break;
     }
-    *returned = size;
+    if (returned)
+        *returned = size;
     if (error)
         return fail(sock, error);
-    if (overlapped)
-        complete(sock, overlapped, routine, NULL, STATUS_SUCCESS, size, 0);
-    release(sock);
-    return 0;
+    if (overlapped) {
+        ULONG64 info = size;
+        error = afd_overlapped((HANDLE)s, IOCTL_AFD_COMPLETE, &info, sizeof(info), overlapped, routine, NULL);
+        if (error)
+            return fail(sock, error);
+    }
+    return succeed(sock);
 }
 
 /* ------------------------------------------------------------------ protocol information */
@@ -2058,7 +1545,7 @@ static int *extra_option(WS_SOCKET *sock, int level, int name, BOOL create)
     return &sock->extra[sock->extra_count++].value;
 }
 
-/* the value of options that are accepted and remembered without effect on the loopback. */
+/* the value of options that are accepted and remembered without reaching the host. */
 static BOOL inert_option(int level, int name, int *initial)
 {
     switch (level) {
@@ -2082,17 +1569,8 @@ static BOOL inert_option(int level, int name, int *initial)
         return FALSE;
     case IPPROTO_TCP:
         switch (name) {
-        case TCP_KEEPALIVE:
-            *initial = 7200;
-            return TRUE;
-        case TCP_KEEPINTVL:
-            *initial = 1;
-            return TRUE;
-        case TCP_KEEPCNT:
-            *initial = 10;
-            return TRUE;
         case TCP_MAXSEG:
-            *initial = 65495;
+            *initial = 1460;
             return TRUE;
         case TCP_EXPEDITED_1122:
         case TCP_TIMESTAMPS:
@@ -2109,9 +1587,6 @@ static BOOL inert_option(int level, int name, int *initial)
     case IPPROTO_IP:
     case IPPROTO_IPV6:
         switch (name) {
-        case IP_TTL:
-            *initial = 128;
-            return TRUE;
         case IP_MULTICAST_TTL:
         case IP_MULTICAST_LOOP:
             *initial = 1;
@@ -2148,6 +1623,56 @@ static BOOL membership_option(int level, int name)
     return level == IPPROTO_IPV6 && (name == IPV6_ADD_MEMBERSHIP || name == IPV6_DROP_MEMBERSHIP);
 }
 
+/* the host option behind a windows one, 0 when the host has none. */
+static ULONG host_option_id(const WS_SOCKET *sock, int level, int name, int *error)
+{
+    *error = 0;
+    if (level == SOL_SOCKET) {
+        switch (name) {
+        case SO_KEEPALIVE:
+        case SO_OOBINLINE:
+            if (sock->type != SOCK_STREAM)
+                *error = WSAENOPROTOOPT;
+            return name == SO_KEEPALIVE ? MIME_AFD_OPT_KEEPALIVE : MIME_AFD_OPT_OOBINLINE;
+        case SO_BROADCAST:
+            if (sock->type != SOCK_DGRAM)
+                *error = WSAENOPROTOOPT;
+            return MIME_AFD_OPT_BROADCAST;
+        case SO_SNDBUF:
+            return MIME_AFD_OPT_SNDBUF;
+        case SO_RCVBUF:
+            return MIME_AFD_OPT_RCVBUF;
+        }
+        return 0;
+    }
+    if (level == IPPROTO_TCP) {
+        if (sock->type != SOCK_STREAM && (name == TCP_NODELAY || name == TCP_KEEPALIVE || name == TCP_KEEPINTVL ||
+                                          name == TCP_KEEPCNT)) {
+            *error = WSAENOPROTOOPT;
+            return 0;
+        }
+        switch (name) {
+        case TCP_NODELAY:
+            return MIME_AFD_OPT_NODELAY;
+        case TCP_KEEPALIVE:
+            return MIME_AFD_OPT_KEEPIDLE;
+        case TCP_KEEPINTVL:
+            return MIME_AFD_OPT_KEEPINTVL;
+        case TCP_KEEPCNT:
+            return MIME_AFD_OPT_KEEPCNT;
+        }
+        return 0;
+    }
+    if ((level == IPPROTO_IP || level == IPPROTO_IPV6) && name == IP_TTL)
+        return MIME_AFD_OPT_TTL;
+    if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY) {
+        if (sock->family != AF_INET6)
+            *error = WSAEINVAL;
+        return MIME_AFD_OPT_V6ONLY;
+    }
+    return 0;
+}
+
 int WSAAPI setsockopt(SOCKET s, int level, int name, const char *value, int length)
 {
     int error;
@@ -2159,15 +1684,12 @@ int WSAAPI setsockopt(SOCKET s, int level, int name, const char *value, int leng
         level != IPPROTO_UDP)
         return fail(sock, WSAEINVAL);
     if (membership_option(level, name)) {
-        /* joining a group is accepted; with no network nothing is ever sent to it. */
+        /* joining a group is accepted; the host does not carry multicast for the guest. */
         if (sock->type != SOCK_DGRAM)
             error = WSAEINVAL;
         else if (!value || length < (int)(level == IPPROTO_IP ? sizeof(IP_MREQ) : sizeof(IPV6_MREQ)))
             error = WSAEFAULT;
-        if (error)
-            return fail(sock, error);
-        release(sock);
-        return 0;
+        return error ? fail(sock, error) : succeed(sock);
     }
     if (level == SOL_SOCKET && name == SO_LINGER) {
         if (!value || length < (int)sizeof(LINGER))
@@ -2175,49 +1697,42 @@ int WSAAPI setsockopt(SOCKET s, int level, int name, const char *value, int leng
         if (sock->type != SOCK_STREAM)
             return fail(sock, WSAENOPROTOOPT);
         memcpy(&sock->linger, value, sizeof(LINGER));
-        release(sock);
-        return 0;
+        return succeed(sock);
     }
+    /* the context updates of AcceptEx and ConnectEx take no value. */
+    if (level == SOL_SOCKET && name == SO_UPDATE_CONNECT_CONTEXT)
+        return succeed(sock);
+    if (level == SOL_SOCKET && name == SO_UPDATE_ACCEPT_CONTEXT)
+        return value && length >= (int)sizeof(SOCKET) ? succeed(sock) : fail(sock, WSAEFAULT);
     if ((error = read_int(value, length, &v)))
         return fail(sock, error);
+    ULONG option = host_option_id(sock, level, name, &error);
+    if (error)
+        return fail(sock, error);
+    if (option) {
+        error = host_option(sock, option, TRUE, (ULONG)v, NULL);
+        /* windows takes buffer sizes the host refuses, such as 0. */
+        if (option == MIME_AFD_OPT_SNDBUF || option == MIME_AFD_OPT_RCVBUF)
+            error = 0;
+        return error ? fail(sock, error) : succeed(sock);
+    }
     switch (level == SOL_SOCKET ? name : -1) {
     case SO_REUSEADDR:
         if (sock->exclusive && v)
             return fail(sock, WSAEINVAL);
+        if ((error = host_option(sock, MIME_AFD_OPT_REUSEADDR, TRUE, v != 0, NULL)))
+            return fail(sock, error);
         sock->reuseaddr = v != 0;
         break;
     case SO_EXCLUSIVEADDRUSE:
-        if (sock->bound)
-            return fail(sock, WSAEINVAL);
         if (sock->reuseaddr && v)
             return fail(sock, WSAEINVAL);
         sock->exclusive = v != 0;
-        break;
-    case SO_KEEPALIVE:
-        if (sock->type != SOCK_STREAM)
-            return fail(sock, WSAENOPROTOOPT);
-        sock->keepalive = v != 0;
-        break;
-    case SO_BROADCAST:
-        if (sock->type != SOCK_DGRAM)
-            return fail(sock, WSAENOPROTOOPT);
-        sock->broadcast = v != 0;
-        break;
-    case SO_OOBINLINE:
-        if (sock->type != SOCK_STREAM)
-            return fail(sock, WSAENOPROTOOPT);
-        sock->oobinline = v != 0;
         break;
     case SO_DONTLINGER:
         if (sock->type != SOCK_STREAM)
             return fail(sock, WSAENOPROTOOPT);
         sock->linger.l_onoff = v == 0;
-        break;
-    case SO_SNDBUF:
-        sock->sndbuf = v;
-        break;
-    case SO_RCVBUF:
-        sock->rcvbuf = v;
         break;
     case SO_SNDTIMEO:
         sock->sndtimeo = (DWORD)v;
@@ -2226,10 +1741,6 @@ int WSAAPI setsockopt(SOCKET s, int level, int name, const char *value, int leng
         sock->rcvtimeo = (DWORD)v;
         break;
     case SO_ERROR:
-        sock->so_error = v;
-        break;
-    case SO_UPDATE_ACCEPT_CONTEXT:
-    case SO_UPDATE_CONNECT_CONTEXT:
         break;
     case SO_TYPE:
     case SO_ACCEPTCONN:
@@ -2239,31 +1750,15 @@ int WSAAPI setsockopt(SOCKET s, int level, int name, const char *value, int leng
     case SO_CONNECT_TIME:
         return fail(sock, WSAENOPROTOOPT);
     default:
-        if (level == IPPROTO_TCP && name == TCP_NODELAY) {
-            if (sock->type != SOCK_STREAM)
-                return fail(sock, WSAENOPROTOOPT);
-            sock->nodelay = v != 0;
-        } else if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY) {
-            if (sock->family != AF_INET6)
-                return fail(sock, WSAEINVAL);
-            if (sock->bound)
-                return fail(sock, WSAEINVAL);
-            sock->v6only = v != 0;
-        } else if (inert_option(level, name, &initial)) {
-            if ((level == IPPROTO_TCP) != (sock->type == SOCK_STREAM) && level != SOL_SOCKET &&
-                level != IPPROTO_IP && level != IPPROTO_IPV6)
-                return fail(sock, WSAENOPROTOOPT);
-            int *slot = extra_option(sock, level, name, TRUE);
-            if (!slot)
-                return fail(sock, WSAENOBUFS);
-            *slot = v;
-        } else {
+        if (!inert_option(level, name, &initial))
             return fail(sock, WSAENOPROTOOPT);
-        }
+        int *slot = extra_option(sock, level, name, TRUE);
+        if (!slot)
+            return fail(sock, WSAENOBUFS);
+        *slot = v;
         break;
     }
-    release(sock);
-    return 0;
+    return succeed(sock);
 }
 
 static int write_int(char *value, int *length, int v)
@@ -2284,7 +1779,19 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
     if (!value || !length)
         return fail(sock, WSAEFAULT);
     int v = 0, initial;
-    if (level == SOL_SOCKET) {
+    ULONG option = host_option_id(sock, level, name, &error);
+    if (error)
+        return fail(sock, error);
+    if (option) {
+        ULONG got = 0;
+        if ((error = host_option(sock, option, FALSE, 0, &got)))
+            return fail(sock, error);
+        v = (int)got;
+        if (option == MIME_AFD_OPT_KEEPALIVE || option == MIME_AFD_OPT_NODELAY || option == MIME_AFD_OPT_BROADCAST ||
+            option == MIME_AFD_OPT_OOBINLINE || option == MIME_AFD_OPT_V6ONLY)
+            v = v != 0;
+    } else if (level == SOL_SOCKET) {
+        MIME_AFD_STATE st;
         switch (name) {
         case SO_LINGER:
             if (sock->type != SOCK_STREAM)
@@ -2293,8 +1800,7 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
                 return fail(sock, WSAEFAULT);
             memcpy(value, &sock->linger, sizeof(LINGER));
             *length = sizeof(LINGER);
-            release(sock);
-            return 0;
+            return succeed(sock);
         case SO_PROTOCOL_INFOW:
         case SO_PROTOCOL_INFOA: {
             WSAPROTOCOL_INFOW info;
@@ -2309,17 +1815,19 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
             else
                 protocol_info_a(&info, (WSAPROTOCOL_INFOA *)value);
             *length = need;
-            release(sock);
-            return 0;
+            return succeed(sock);
         }
         case SO_TYPE:
             v = sock->type;
             break;
-        case SO_ERROR:
-            v = sock->so_error;
+        case SO_ERROR: {
+            ULONG got = 0;
+            host_option(sock, MIME_AFD_OPT_ERROR, FALSE, 0, &got);
+            v = (int)got;
             break;
+        }
         case SO_ACCEPTCONN:
-            v = sock->state == WS_LISTENING;
+            v = afd_state(s, &st) && st.State == MIME_AFD_STATE_LISTENING;
             break;
         case SO_REUSEADDR:
             v = sock->reuseaddr;
@@ -2327,23 +1835,8 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
         case SO_EXCLUSIVEADDRUSE:
             v = sock->exclusive;
             break;
-        case SO_KEEPALIVE:
-            v = sock->keepalive;
-            break;
-        case SO_BROADCAST:
-            v = sock->broadcast;
-            break;
-        case SO_OOBINLINE:
-            v = sock->oobinline;
-            break;
         case SO_DONTLINGER:
             v = !sock->linger.l_onoff;
-            break;
-        case SO_SNDBUF:
-            v = sock->sndbuf;
-            break;
-        case SO_RCVBUF:
-            v = sock->rcvbuf;
             break;
         case SO_SNDTIMEO:
             v = (int)sock->sndtimeo;
@@ -2357,7 +1850,13 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
             v = sock->family == AF_INET ? WS_MAX_UDP_V4 : WS_MAX_UDP_V6;
             break;
         case SO_CONNECT_TIME:
-            v = sock->state == WS_CONNECTED ? (int)((GetTickCount64() - sock->connect_time) / 1000) : -1;
+            /* the connect time is interrupt time, which the tick count follows. */
+            if (afd_state(s, &st) && st.ConnectTime) {
+                ULONGLONG now = GetTickCount64() * 10000;
+                v = now > st.ConnectTime ? (int)((now - st.ConnectTime) / 10000000) : 0;
+            } else {
+                v = -1;
+            }
             break;
         default:
             if (!inert_option(level, name, &initial))
@@ -2366,14 +1865,6 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
             v = slot ? *slot : initial;
             break;
         }
-    } else if (level == IPPROTO_TCP && name == TCP_NODELAY) {
-        if (sock->type != SOCK_STREAM)
-            return fail(sock, WSAENOPROTOOPT);
-        v = sock->nodelay;
-    } else if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY) {
-        if (sock->family != AF_INET6)
-            return fail(sock, WSAEINVAL);
-        v = sock->v6only;
     } else if (inert_option(level, name, &initial)) {
         int *slot = extra_option(sock, level, name, FALSE);
         v = slot ? *slot : initial;
@@ -2385,17 +1876,5 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
     }
     if ((error = write_int(value, length, v)))
         return fail(sock, error);
-    release(sock);
-    return 0;
-}
-
-/* ------------------------------------------------------------------ WSAConnect */
-
-/* connect data and quality of service need a transport that carries them, which tcp does not. */
-int WSAAPI WSAConnect(SOCKET s, const struct sockaddr *name, int namelen, LPWSABUF caller_data, LPWSABUF callee_data,
-                      void *sqos, void *gqos)
-{
-    if (callee_data)
-        callee_data->len = 0;
-    return connect(s, name, namelen);
+    return succeed(sock);
 }

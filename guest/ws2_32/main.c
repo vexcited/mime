@@ -12,7 +12,10 @@ static void free_thread(void)
 {
     if (thread_slot == TLS_OUT_OF_INDEXES)
         return;
-    WsFree(TlsGetValue(thread_slot));
+    WS_THREAD *t = TlsGetValue(thread_slot);
+    if (t && t->event)
+        CloseHandle(t->event);
+    WsFree(t);
     TlsSetValue(thread_slot, NULL);
 }
 

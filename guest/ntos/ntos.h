@@ -778,6 +778,14 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
 NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                        ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
 NTSTATUS NpfsCancel(PFILE_OBJECT file, PEPROCESS process, BOOLEAN one, PVOID apc_context);
+void IopInitializeAfd(void);
+void AfdInterrupt(void);
+BOOLEAN IopIsAfd(PFILE_OBJECT file);
+NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                          ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
+NTSTATUS AfdReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                      PVOID buffer, ULONG length);
+NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                        ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
 void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information);

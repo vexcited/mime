@@ -163,6 +163,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_INPUT (1u << 1)
 #define MIME_IRQ_DISPLAY (1u << 2)
 #define MIME_IRQ_GPU (1u << 3)
+#define MIME_IRQ_NET (1u << 4)
 
 typedef struct MimeSharedPage {
     volatile uint32_t irq_pending;
@@ -204,6 +205,24 @@ enum {
     MIME_HC_GPU_BLOCK = 0x29,   /* (channel, index, pa, size) adds a heap block */
     MIME_HC_GPU_KICK = 0x2A,    /* (channel) new commands while the host is idle */
     MIME_HC_GPU_CLOSE = 0x2B,   /* (channel) returns once the host and the gpu no longer use its memory */
+
+    /* host sockets, failing with MIME_HC_STATUS_NET_ERROR and a winsock error as the value. */
+    MIME_HC_NET_SOCKET = 0x30,     /* (family, type, protocol) -> socket */
+    MIME_HC_NET_CLOSE = 0x31,      /* (socket) */
+    MIME_HC_NET_BIND = 0x32,       /* (socket, MimeNetAddr pa) */
+    MIME_HC_NET_LISTEN = 0x33,     /* (socket, backlog) */
+    MIME_HC_NET_CONNECT = 0x34,    /* (socket, MimeNetAddr pa) WSAEWOULDBLOCK while it goes on */
+    MIME_HC_NET_ACCEPT = 0x35,     /* (socket, MimeNetAddr pa) -> socket of the connection */
+    MIME_HC_NET_SEND = 0x36,       /* (socket, pa, len, MSG_*, MimeNetAddr pa or 0) -> bytes */
+    MIME_HC_NET_RECV = 0x37,       /* (socket, pa, len, MSG_*, MimeNetAddr pa or 0) -> bytes */
+    MIME_HC_NET_SHUTDOWN = 0x38,   /* (socket, SD_*) */
+    MIME_HC_NET_NAME = 0x39,       /* (socket, peer, MimeNetAddr pa) */
+    MIME_HC_NET_OPTION = 0x3A,     /* (socket, MIME_NET_OPT_*, set, value) -> value */
+    MIME_HC_NET_POLL = 0x3B,       /* (MimeNetPoll pa, count, arm) -> ready count, then watches the asked events */
+    MIME_HC_NET_EVENTS = 0x3C,     /* (pa, max) -> count of uint32 sockets whose watch fired, or resolve ids */
+    MIME_HC_NET_RESOLVE = 0x3D,    /* (pa, len, family) utf-8 host name -> id, MIME_NET_RESOLVED | id fires */
+    MIME_HC_NET_ANSWER = 0x3E,     /* (id, MimeNetAddr pa, max) -> count, frees the answer */
+    MIME_HC_NET_INTERFACES = 0x3F, /* (MimeNetInterface pa, max) -> count, one per address */
 };
 
 enum {
@@ -218,7 +237,73 @@ enum {
     MIME_HC_STATUS_NO_MEMORY = 8,
     MIME_HC_STATUS_NOT_EMPTY = 9,
     MIME_HC_STATUS_UNSUPPORTED = 10,
+    MIME_HC_STATUS_NET_ERROR = 11,
 };
+
+/*
+ * networking. the host keeps non blocking sockets; the guest arms a watch
+ * on what would block and the host raises MIME_IRQ_NET once it fired.
+ */
+typedef struct MimeNetAddr {
+    uint16_t family; /* a windows sockaddr_in or sockaddr_in6, AF_INET 2 or AF_INET6 23 */
+    uint8_t data[26];
+} MimeNetAddr;
+
+enum {
+    MIME_NET_READ = 1u << 0,    /* data, a datagram or a connection to accept */
+    MIME_NET_WRITE = 1u << 1,   /* room to send, or a connect that finished */
+    MIME_NET_HUP = 1u << 2,     /* the stream ended and nothing is left to read */
+    MIME_NET_ERROR = 1u << 3,   /* the pending socket error, taken into error */
+    MIME_NET_INVALID = 1u << 4, /* no such socket */
+};
+
+typedef struct MimeNetPoll {
+    uint32_t socket;
+    uint16_t events; /* MIME_NET_READ and MIME_NET_WRITE to count and watch, revents has every state */
+    uint16_t revents;
+    int32_t error;
+} MimeNetPoll;
+
+enum {
+    MIME_NET_OPT_REUSEADDR = 1,
+    MIME_NET_OPT_KEEPALIVE = 2,
+    MIME_NET_OPT_NODELAY = 3,
+    MIME_NET_OPT_SNDBUF = 4,
+    MIME_NET_OPT_RCVBUF = 5,
+    MIME_NET_OPT_BROADCAST = 6,
+    MIME_NET_OPT_V6ONLY = 7,
+    MIME_NET_OPT_LINGER = 8, /* on in bit 16, seconds below */
+    MIME_NET_OPT_ERROR = 9,  /* read and clears the pending error */
+    MIME_NET_OPT_OOBINLINE = 10,
+    MIME_NET_OPT_TTL = 11,
+    MIME_NET_OPT_NREAD = 12, /* bytes waiting, the size of the next datagram */
+    MIME_NET_OPT_KEEPIDLE = 13,
+    MIME_NET_OPT_KEEPINTVL = 14,
+    MIME_NET_OPT_KEEPCNT = 15,
+    MIME_NET_OPT_ATMARK = 16,
+};
+
+#define MIME_NET_RESOLVED 0x80000000u
+
+enum {
+    MIME_NET_IF_UP = 1u << 0,
+    MIME_NET_IF_LOOPBACK = 1u << 1,
+    MIME_NET_IF_BROADCAST = 1u << 2,
+    MIME_NET_IF_MULTICAST = 1u << 3,
+    MIME_NET_IF_POINTTOPOINT = 1u << 4,
+};
+
+typedef struct MimeNetInterface {
+    char name[16];
+    uint32_t index;
+    uint32_t flags;
+    uint32_t mtu;
+    uint8_t prefix; /* bits of the network part of addr */
+    uint8_t mac_length;
+    uint8_t mac[8];
+    uint8_t pad[2];
+    MimeNetAddr addr;
+} MimeNetInterface;
 
 /*
  * control channel. the host queues messages and raises MIME_IRQ_CTRL, the

@@ -8,6 +8,7 @@
 #include <mime/win32/ws2tcpip.h>
 #include <mime/win32/winnls.h>
 #include <mime/win32/winuser.h>
+#include <mime/afd.h>
 
 #define STATUS_CANCELLED ((NTSTATUS)0xC0000120L)
 #define STATUS_CONNECTION_RESET ((NTSTATUS)0xC000020DL)
@@ -59,6 +60,7 @@ typedef struct _WS_THREAD {
     struct protoent proto;
     char *proto_aliases[WS_ALIASES + 1];
     char proto_names[WS_ALIASES + 1][32];
+    HANDLE event; /* waited on by the blocking calls */
 } WS_THREAD;
 
 WS_THREAD *WsThread(void);
@@ -106,6 +108,11 @@ const char *WsServiceByPort(USHORT port, const char *proto);
 
 /* TRUE when s names an open socket. */
 BOOL WsIsSocket(SOCKET s);
+
+/* the addresses of a host name from the host's resolver; the count or a negative winsock error. */
+int WsResolve(const char *name, int family, MIME_AFD_ADDRESS *out, int max);
+/* the addresses of the host's interfaces, one entry per address; the count or a negative winsock error. */
+int WsInterfaces(MIME_AFD_INTERFACE *list, int max);
 
 /* fills a WSAPROTOCOL_INFOW for the given family and type, FALSE when there is no such provider. */
 BOOL WsProtocolInfo(int family, int type, WSAPROTOCOL_INFOW *info);

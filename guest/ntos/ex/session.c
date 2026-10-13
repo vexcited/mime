@@ -76,6 +76,8 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         KeSetEvent(&MimeInputReadyEvent, 1, FALSE);
     if (bits & MIME_IRQ_GPU)
         KeSetEvent(&MimeGpuEvent, 1, FALSE);
+    if (bits & MIME_IRQ_NET)
+        AfdInterrupt();
 }
 
 /* interrupt level: defer the work to a dpc. */
