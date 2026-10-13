@@ -6,7 +6,8 @@
  *
  * the text is shared with the host clipboard: closing the clipboard after a
  * change sends its text to the host, and text another host application
- * copies replaces the contents with an ownerless CF_UNICODETEXT.
+ * copies replaces the contents with an ownerless CF_UNICODETEXT, read from
+ * the host only when a program asks for it.
  */
 #include "win32k.h"
 
@@ -15,6 +16,7 @@ typedef struct CLIP_FORMAT {
     BOOLEAN Gdi;
     BOOLEAN Delayed;  /* rendered on demand by the owner with WM_RENDERFORMAT */
     BOOLEAN Synthesized;
+    BOOLEAN Host;     /* the host's text, fetched on demand */
     HANDLE Handle;    /* gdi formats */
     PUCHAR Data;
     SIZE_T Size;
@@ -35,6 +37,7 @@ static DWORD g_sequence = 1;
 static BOOLEAN g_changed;    /* the clipboard changed while open */
 static BOOLEAN g_rendering;  /* the owner is answering WM_RENDERFORMAT */
 static BOOLEAN g_host_pending; /* the host clipboard changed while the clipboard was open */
+static BOOLEAN g_host_has_text;
 
 static BOOLEAN is_gdi_format(UINT format)
 {
@@ -143,6 +146,8 @@ static void push_to_host(void)
     if (!host_page())
         return;
     CLIP_FORMAT *f = find_format(CF_UNICODETEXT);
+    if (f && f->Host)
+        return; /* the host's own text, unchanged */
     if (f && f->Delayed) {
         render_format(f);
         f = find_format(CF_UNICODETEXT);
@@ -184,14 +189,15 @@ static void push_to_host(void)
         W32Free(text);
 }
 
-/* replaces the contents with the text of the host clipboard. */
-static void pull_from_host(void)
+/* reads the host text into a host format; leaves it without data when the host has none. */
+static void fetch_host_text(CLIP_FORMAT *f)
 {
+    f->Delayed = FALSE;
     if (!host_page())
         return;
     ULONG64 pa = (ULONG64)MmGetPhysicalAddress(g_host_page).QuadPart;
     ULONG64 total = 0;
-    if (HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total) != MIME_HC_STATUS_OK)
+    if (HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total) != MIME_HC_STATUS_OK || !total)
         return;
     PUCHAR text = W32Alloc((SIZE_T)total + sizeof(WCHAR));
     if (!text)
@@ -208,22 +214,27 @@ static void pull_from_host(void)
         memcpy(text + offset, g_host_page, (SIZE_T)n);
         offset += n;
     }
+    f->Data = text;
+    f->Size = (SIZE_T)total + sizeof(WCHAR);
+}
+
+/* another host application copied text: the contents become that text, not read yet. */
+static void pull_from_host(void)
+{
     WND *old = g_owner ? WndLookup(g_owner) : NULL;
     if (old)
         QueuePost(old->Thread, g_owner, WM_DESTROYCLIPBOARD, 0, 0);
     empty_formats();
     g_owner = NULL;
     g_owner_thread = NULL;
-    if (total) {
+    if (g_host_has_text) {
         CLIP_FORMAT *f = &g_formats[g_format_count++];
         memset(f, 0, sizeof(*f));
         f->Format = CF_UNICODETEXT;
-        f->Data = text;
-        f->Size = (SIZE_T)total + sizeof(WCHAR);
-        text = NULL;
+        f->Delayed = TRUE;
+        f->Host = TRUE;
         synthesize_text();
     }
-    W32Free(text);
     g_sequence++;
     /* posted rather than sent: this runs on the input thread. */
     for (ULONG i = 0; i < MAX_LISTENERS; i++) {
@@ -238,8 +249,9 @@ static void pull_from_host(void)
         QueuePost(v->Thread, g_viewer, WM_DRAWCLIPBOARD, 0, 0);
 }
 
-void ClipboardHostChanged(void)
+void ClipboardHostChanged(BOOLEAN has_text)
 {
+    g_host_has_text = has_text;
     if (g_open_thread)
         g_host_pending = TRUE;
     else
@@ -401,6 +413,7 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
         if (f) {
             free_format(f);
             f->Synthesized = FALSE;
+            f->Host = FALSE;
             f->Gdi = is_gdi_format(format) && !d.Data;
             f->Delayed = !d.Data && !handle;
             f->Handle = f->Gdi ? handle : NULL;
@@ -431,6 +444,10 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
 /* asks the owner to render a delayed format; returns with the lock held. */
 static void render_format(CLIP_FORMAT *f)
 {
+    if (f->Host) {
+        fetch_host_text(f);
+        return;
+    }
     WND *owner = g_owner ? WndLookup(g_owner) : NULL;
     if (!owner)
         return;

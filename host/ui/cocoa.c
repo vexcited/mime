@@ -63,6 +63,8 @@ enum {
 extern id kCAGravityTopLeft;
 extern id kCAFilterNearest;
 extern id NSWindowDidMoveNotification;
+extern id NSApplicationDidBecomeActiveNotification;
+extern id NSApplicationDidResignActiveNotification;
 extern void NSBeep(void);
 
 #define MAX_WINDOWS 256
@@ -505,6 +507,8 @@ static BOOL delegate_should_close(id self, SEL sel, id window)
 }
 
 static void clip_start(void *arg);
+static void app_became_active(id self, SEL sel, id notification);
+static void app_resigned_active(id self, SEL sel, id notification);
 static void (*g_app_send_event)(id, SEL, id);
 
 /* appkit drops key up events while command is held; the guest needs them to release its keys. */
@@ -564,8 +568,17 @@ static void register_classes(void)
     class_addMethod(g_delegate_class, SEL_("windowDidBecomeKey:"), (IMP)delegate_became_key, "v@:@");
     class_addMethod(g_delegate_class, SEL_("windowDidResignKey:"), (IMP)delegate_resigned_key, "v@:@");
     class_addMethod(g_delegate_class, SEL_("windowShouldClose:"), (IMP)delegate_should_close, "c@:@");
+    class_addMethod(g_delegate_class, SEL_("appDidBecomeActive:"), (IMP)app_became_active, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("appDidResignActive:"), (IMP)app_resigned_active, "v@:@");
     objc_registerClassPair(g_delegate_class);
     g_delegate = MSG_ID(MSG_ID((id)g_delegate_class, "alloc"), "init");
+    id center = MSG_ID(CLS("NSNotificationCenter"), "defaultCenter");
+    ((void (*)(id, SEL, id, SEL, id, id))objc_msgSend)(center, SEL_("addObserver:selector:name:object:"), g_delegate,
+                                                       SEL_("appDidBecomeActive:"),
+                                                       NSApplicationDidBecomeActiveNotification, nil);
+    ((void (*)(id, SEL, id, SEL, id, id))objc_msgSend)(center, SEL_("addObserver:selector:name:object:"), g_delegate,
+                                                       SEL_("appDidResignActive:"),
+                                                       NSApplicationDidResignActiveNotification, nil);
 }
 
 static void update_screen_metrics(void)
@@ -965,10 +978,12 @@ void mime_ui_beep(uint32_t type)
 /* ------------------------------------------------------------------ clipboard */
 
 /*
- * macos has no pasteboard change notification, so the main thread polls the
- * change count and tells the guest when another application copied text.
- * the guest pulls the text from a copy kept here, so vcpu threads never
- * touch the pasteboard.
+ * macos has no pasteboard change notification. other applications copy
+ * while mime is in the background, so the change count is checked when
+ * mime becomes active, and polled slowly only while it stays active for
+ * the copies that happen meanwhile, such as universal clipboard. a change
+ * only tells the guest whether there is text: the text itself is read when
+ * a guest program asks for it, so vcpu threads never touch the pasteboard.
  */
 typedef struct NSRange {
     NSUInteger location, length;
@@ -981,53 +996,90 @@ extern void objc_autoreleasePoolPop(void *pool);
 static pthread_mutex_t g_clip_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint16_t *g_clip_text;
 static size_t g_clip_chars;
-static NSInteger g_clip_seen = -1; /* main thread only */
+static bool g_clip_stale;           /* the pasteboard changed since g_clip_text was read */
+static NSInteger g_clip_seen = -1;  /* main thread only */
 static dispatch_source_t g_clip_timer;
+static bool g_clip_polling;
 
-static void clip_poll(void *arg)
+static void clip_check(void *arg)
 {
     void *pool = objc_autoreleasePoolPush();
     id pb = MSG_ID(CLS("NSPasteboard"), "generalPasteboard");
     NSInteger count = ((NSInteger(*)(id, SEL))objc_msgSend)(pb, SEL_("changeCount"));
     if (count != g_clip_seen) {
         g_clip_seen = count;
-        id str = MSG_ID_ID(pb, "stringForType:", NSPasteboardTypeString);
-        NSUInteger n = str ? MSG_UINT(str, "length") : 0;
-        uint16_t *raw = n ? malloc(n * sizeof(uint16_t)) : NULL;
-        uint16_t *text = n ? malloc(n * 2 * sizeof(uint16_t)) : NULL;
-        size_t chars = 0;
-        if (raw && text) {
-            ((void (*)(id, SEL, uint16_t *, NSRange))objc_msgSend)(str, SEL_("getCharacters:range:"), raw,
-                                                                   (NSRange){0, n});
-            for (NSUInteger i = 0; i < n; i++) {
-                if (raw[i] == '\n' && (i == 0 || raw[i - 1] != '\r'))
-                    text[chars++] = '\r';
-                text[chars++] = raw[i];
-            }
-        } else {
-            free(text);
-            text = NULL;
-        }
-        free(raw);
+        id types = ((id(*)(id, SEL, id))objc_msgSend)(CLS("NSArray"), SEL_("arrayWithObject:"), NSPasteboardTypeString);
+        bool text = MSG_ID_ID(pb, "availableTypeFromArray:", types) != nil;
         pthread_mutex_lock(&g_clip_lock);
         free(g_clip_text);
-        g_clip_text = text;
-        g_clip_chars = chars;
+        g_clip_text = NULL;
+        g_clip_chars = 0;
+        g_clip_stale = text;
         pthread_mutex_unlock(&g_clip_lock);
         MimeInputEvent ev = {0};
         ev.type = MIME_INPUT_CLIPBOARD;
+        ev.x = text;
         emit(&ev);
     }
+    objc_autoreleasePoolPop(pool);
+}
+
+/* the pasteboard text with windows line ends, read on the main thread. */
+static void clip_read_main(void *arg)
+{
+    void *pool = objc_autoreleasePoolPush();
+    id pb = MSG_ID(CLS("NSPasteboard"), "generalPasteboard");
+    id str = MSG_ID_ID(pb, "stringForType:", NSPasteboardTypeString);
+    NSUInteger n = str ? MSG_UINT(str, "length") : 0;
+    uint16_t *raw = n ? malloc(n * sizeof(uint16_t)) : NULL;
+    uint16_t *text = n ? malloc(n * 2 * sizeof(uint16_t)) : NULL;
+    size_t chars = 0;
+    if (raw && text) {
+        ((void (*)(id, SEL, uint16_t *, NSRange))objc_msgSend)(str, SEL_("getCharacters:range:"), raw, (NSRange){0, n});
+        for (NSUInteger i = 0; i < n; i++) {
+            if (raw[i] == '\n' && (i == 0 || raw[i - 1] != '\r'))
+                text[chars++] = '\r';
+            text[chars++] = raw[i];
+        }
+    } else {
+        free(text);
+        text = NULL;
+    }
+    free(raw);
+    pthread_mutex_lock(&g_clip_lock);
+    free(g_clip_text);
+    g_clip_text = text;
+    g_clip_chars = chars;
+    g_clip_stale = false;
+    pthread_mutex_unlock(&g_clip_lock);
     objc_autoreleasePoolPop(pool);
 }
 
 static void clip_start(void *arg)
 {
     g_clip_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_event_handler_f(g_clip_timer, clip_poll);
-    dispatch_source_set_timer(g_clip_timer, dispatch_time(DISPATCH_TIME_NOW, 0), 250 * NSEC_PER_MSEC,
-                              50 * NSEC_PER_MSEC);
-    dispatch_resume(g_clip_timer);
+    dispatch_source_set_event_handler_f(g_clip_timer, clip_check);
+    dispatch_source_set_timer(g_clip_timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC,
+                              250 * NSEC_PER_MSEC);
+    /* once the run loop starts, when the machine exists. */
+    dispatch_async_f(dispatch_get_main_queue(), NULL, clip_check);
+}
+
+static void app_became_active(id self, SEL sel, id notification)
+{
+    clip_check(NULL);
+    if (g_clip_timer && !g_clip_polling) {
+        dispatch_resume(g_clip_timer);
+        g_clip_polling = true;
+    }
+}
+
+static void app_resigned_active(id self, SEL sel, id notification)
+{
+    if (g_clip_timer && g_clip_polling) {
+        dispatch_suspend(g_clip_timer);
+        g_clip_polling = false;
+    }
 }
 
 typedef struct ClipSet {
@@ -1049,6 +1101,9 @@ static void clip_set_main(void *arg)
     }
     /* the guest already holds this text: do not offer it back. */
     g_clip_seen = ((NSInteger(*)(id, SEL))objc_msgSend)(pb, SEL_("changeCount"));
+    pthread_mutex_lock(&g_clip_lock);
+    g_clip_stale = false;
+    pthread_mutex_unlock(&g_clip_lock);
     objc_autoreleasePoolPop(pool);
     free(c->text);
     free(c);
@@ -1074,6 +1129,7 @@ void mime_ui_clipboard_set(const uint16_t *text, size_t chars)
     free(g_clip_text);
     g_clip_text = keep;
     g_clip_chars = chars;
+    g_clip_stale = false;
     pthread_mutex_unlock(&g_clip_lock);
     c->text = copy;
     c->chars = n;
@@ -1082,6 +1138,12 @@ void mime_ui_clipboard_set(const uint16_t *text, size_t chars)
 
 size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
 {
+    pthread_mutex_lock(&g_clip_lock);
+    bool stale = g_clip_stale;
+    pthread_mutex_unlock(&g_clip_lock);
+    /* the main thread never waits for a vcpu, so this cannot deadlock. */
+    if (stale)
+        dispatch_sync_f(dispatch_get_main_queue(), NULL, clip_read_main);
     pthread_mutex_lock(&g_clip_lock);
     size_t total = g_clip_chars;
     if (offset < total && count) {

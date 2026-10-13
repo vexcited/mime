@@ -703,7 +703,7 @@ void PropFreeWindow(WND *w);
 void MenuWindowDestroyed(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
-void ClipboardHostChanged(void);
+void ClipboardHostChanged(BOOLEAN has_text); /* has_text: the host clipboard holds text */
 void GpuFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
