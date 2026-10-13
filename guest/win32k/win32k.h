@@ -503,7 +503,7 @@ W32THREAD *W32LookupThread(HANDLE tid);
 void QueueWake(W32THREAD *t, ULONG bits);
 BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement);
-void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev);
+void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state);
 DWORD W32TickCount(void);
 
 /* ------------------------------------------------------------------ classes and windows */

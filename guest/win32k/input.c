@@ -158,6 +158,26 @@ static void update_async_keys(const MimeInputEvent *ev)
     sync_async_sides((ev->modifiers & MIME_MOD_ALT) != 0, VK_LMENU, VK_RMENU, VK_MENU);
 }
 
+static WPARAM mouse_key_state(const MimeInputEvent *ev)
+{
+    WPARAM s = 0;
+    if (InputAsyncKeys[VK_LBUTTON] & 0x80)
+        s |= MK_LBUTTON;
+    if (InputAsyncKeys[VK_RBUTTON] & 0x80)
+        s |= MK_RBUTTON;
+    if (InputAsyncKeys[VK_MBUTTON] & 0x80)
+        s |= MK_MBUTTON;
+    if (InputAsyncKeys[VK_XBUTTON1] & 0x80)
+        s |= MK_XBUTTON1;
+    if (InputAsyncKeys[VK_XBUTTON2] & 0x80)
+        s |= MK_XBUTTON2;
+    if (ev->modifiers & MIME_MOD_SHIFT)
+        s |= MK_SHIFT;
+    if (ev->modifiers & MIME_MOD_CONTROL)
+        s |= MK_CONTROL;
+    return s;
+}
+
 static UINT button_message(UINT button, BOOLEAN down, BOOLEAN nc);
 
 /* low level hooks see input before it reaches any queue; a nonzero answer drops it. */
@@ -246,6 +266,7 @@ static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR
         break;
     }
     update_async_keys(ev);
+    WPARAM mouse_state = mouse_key_state(ev);
     switch (ev->type) {
     case MIME_INPUT_MOUSE_MOVE:
     case MIME_INPUT_MOUSE_DOWN:
@@ -272,11 +293,12 @@ static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR
         QUEUED_MESSAGE *last = CONTAINING_RECORD(t->Input.Blink, QUEUED_MESSAGE, Links);
         if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev->window_id) {
             last->Input = *ev;
+            last->Msg.wParam = mouse_state;
             QueueWake(t, QS_MOUSEMOVE);
             return;
         }
     }
-    QueuePostInput(t, ev);
+    QueuePostInput(t, ev, mouse_state);
 }
 
 /* the vk an event carries: the left and right modifier keys, never the generic ones. */
@@ -327,6 +349,12 @@ static BOOLEAN injected_event(const INPUT *in, MimeInputEvent *ev)
     }
     if (in->type != INPUT_MOUSE)
         return FALSE;
+    if (InputAsyncKeys[VK_SHIFT] & 0x80)
+        ev->modifiers |= MIME_MOD_SHIFT;
+    if (InputAsyncKeys[VK_CONTROL] & 0x80)
+        ev->modifiers |= MIME_MOD_CONTROL;
+    if (InputAsyncKeys[VK_MENU] & 0x80)
+        ev->modifiers |= MIME_MOD_ALT;
     const MOUSEINPUT *mi = &in->mi;
     POINT pt = InputCursorPos;
     if (mi->dwFlags & MOUSEEVENTF_MOVE) {
@@ -436,27 +464,6 @@ void InputInitialize(void)
 
 /* ------------------------------------------------------------------ translation in the receiving thread */
 
-static WPARAM mouse_key_state(W32THREAD *t)
-{
-    WPARAM s = 0;
-    if (InputAsyncKeys[VK_LBUTTON] & 0x80)
-        s |= MK_LBUTTON;
-    if (InputAsyncKeys[VK_RBUTTON] & 0x80)
-        s |= MK_RBUTTON;
-    if (InputAsyncKeys[VK_MBUTTON] & 0x80)
-        s |= MK_MBUTTON;
-    if (InputAsyncKeys[VK_XBUTTON1] & 0x80)
-        s |= MK_XBUTTON1;
-    if (InputAsyncKeys[VK_XBUTTON2] & 0x80)
-        s |= MK_XBUTTON2;
-    if (InputAsyncKeys[VK_SHIFT] & 0x80)
-        s |= MK_SHIFT;
-    if (InputAsyncKeys[VK_CONTROL] & 0x80)
-        s |= MK_CONTROL;
-    (void)t;
-    return s;
-}
-
 static UINT button_message(UINT button, BOOLEAN down, BOOLEAN nc)
 {
     UINT base;
@@ -537,6 +544,43 @@ static BOOLEAN emit(MSG *out, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
     return MsgFilterMatches(hwnd, msg, filter, min, max);
 }
 
+static void set_key_state(W32THREAD *t, UINT vk, BOOLEAN down)
+{
+    if (vk >= 256)
+        return;
+    if (down && !(t->KeyState[vk] & 0x80))
+        t->KeyState[vk] ^= 1;
+    t->KeyState[vk] = (UCHAR)((t->KeyState[vk] & 1) | (down ? 0x80 : 0));
+}
+
+/* the thread side of sync_async_sides. */
+static void sync_sides(W32THREAD *t, BOOLEAN on, UINT left, UINT right, UINT generic)
+{
+    if (!on) {
+        set_key_state(t, left, FALSE);
+        set_key_state(t, right, FALSE);
+    } else if (!(t->KeyState[left] & 0x80) && !(t->KeyState[right] & 0x80)) {
+        set_key_state(t, left, TRUE);
+    }
+    set_key_state(t, generic, on);
+}
+
+static void sync_mouse_state(W32THREAD *t, const MimeInputEvent *ev, WPARAM state)
+{
+    static const struct {
+        UINT Key;
+        WPARAM Mask;
+    } buttons[] = {{VK_LBUTTON, MK_LBUTTON}, {VK_RBUTTON, MK_RBUTTON}, {VK_MBUTTON, MK_MBUTTON},
+                   {VK_XBUTTON1, MK_XBUTTON1}, {VK_XBUTTON2, MK_XBUTTON2}};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
+        UINT key = buttons[i].Key;
+        t->KeyState[key] = (UCHAR)((t->KeyState[key] & 1) | ((state & buttons[i].Mask) ? 0x80 : 0));
+    }
+    sync_sides(t, (ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
+    sync_sides(t, (ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
+    sync_sides(t, (ev->modifiers & MIME_MOD_ALT) != 0, VK_LMENU, VK_RMENU, VK_MENU);
+}
+
 static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max,
                                BOOLEAN remove, BOOLEAN *consumed)
 {
@@ -583,9 +627,12 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         WND *focus = WndLookup(t->Focus);
         if (focus && !capture && !RectContains(&w->WindowRect, pt.x, pt.y))
             w = focus;
-        wparam = MAKEWPARAM((WORD)mouse_key_state(t), (SHORT)ev->wheel);
+        wparam = MAKEWPARAM((WORD)qm->Msg.wParam, (SHORT)ev->wheel);
         lparam = MAKELPARAM(pt.x, pt.y);
-        return emit(out, WndHandle(w), msg, wparam, lparam, ev, filter, min, max);
+        BOOLEAN matches = emit(out, WndHandle(w), msg, wparam, lparam, ev, filter, min, max);
+        if (matches && remove)
+            sync_mouse_state(t, ev, qm->Msg.wParam);
+        return matches;
     }
 
     if (hit == HTERROR) {
@@ -625,7 +672,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         if (ev->button >= MIME_MOUSE_X1 && msg != WM_NCMOUSEMOVE)
             wparam = MAKEWPARAM(hit, ev->button == MIME_MOUSE_X1 ? XBUTTON1 : XBUTTON2);
     } else {
-        wparam = mouse_key_state(t);
+        wparam = qm->Msg.wParam;
         if (ev->button >= MIME_MOUSE_X1 && msg != WM_MOUSEMOVE)
             wparam = MAKEWPARAM(wparam, ev->button == MIME_MOUSE_X1 ? XBUTTON1 : XBUTTON2);
         lparam = MAKELPARAM(pt.x - w->ClientRect.left, pt.y - w->ClientRect.top);
@@ -637,6 +684,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         return FALSE;
 
     if (remove) {
+        sync_mouse_state(t, ev, qm->Msg.wParam);
         UserReference(&w->Header);
         if (ev->type == MIME_INPUT_MOUSE_DOWN) {
             g_last_click.Hwnd = dbl ? NULL : WndHandle(w);
@@ -672,32 +720,8 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             *consumed = TRUE;
             return FALSE;
         }
-        static const UCHAR button_vk[] = {0, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
-        if (ev->type != MIME_INPUT_MOUSE_MOVE && ev->button < RTL_NUMBER_OF(button_vk) && button_vk[ev->button])
-            t->KeyState[button_vk[ev->button]] = ev->type == MIME_INPUT_MOUSE_DOWN ? 0x80 : 0;
     }
     return emit(out, WndHandle(w), msg, wparam, lparam, ev, filter, min, max);
-}
-
-static void set_key_state(W32THREAD *t, UINT vk, BOOLEAN down)
-{
-    if (vk >= 256)
-        return;
-    if (down && !(t->KeyState[vk] & 0x80))
-        t->KeyState[vk] ^= 1;
-    t->KeyState[vk] = (UCHAR)((t->KeyState[vk] & 1) | (down ? 0x80 : 0));
-}
-
-/* the thread side of sync_async_sides. */
-static void sync_sides(W32THREAD *t, BOOLEAN on, UINT left, UINT right, UINT generic)
-{
-    if (!on) {
-        set_key_state(t, left, FALSE);
-        set_key_state(t, right, FALSE);
-    } else if (!(t->KeyState[left] & 0x80) && !(t->KeyState[right] & 0x80)) {
-        set_key_state(t, left, TRUE);
-    }
-    set_key_state(t, generic, on);
 }
 
 static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max,

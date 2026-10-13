@@ -51,7 +51,7 @@ BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOW
     return TRUE;
 }
 
-void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev)
+void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state)
 {
     if (!t || t->Destroying)
         return;
@@ -60,6 +60,8 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev)
         return;
     qm->Kind = QM_INPUT;
     qm->Input = *ev;
+    /* raw input keeps mouse flags in the otherwise unused message payload. */
+    qm->Msg.wParam = mouse_state;
     InsertTailList(&t->Input, &qm->Links);
     ULONG bits = ev->type == MIME_INPUT_MOUSE_MOVE ? QS_MOUSEMOVE
                  : ev->type <= MIME_INPUT_MOUSE_WHEEL ? QS_MOUSEBUTTON
