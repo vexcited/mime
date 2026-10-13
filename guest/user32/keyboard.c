@@ -314,3 +314,70 @@ WINUSERAPI HKL WINAPI LoadKeyboardLayoutW(LPCWSTR name, UINT flags)
 {
     return US_LAYOUT;
 }
+
+/*
+ * injected input. a key press that produces a character also produces the
+ * character, as the keyboard driver path does for host keys: the kernel
+ * delivers characters as their own input, see NtUserTranslateMessage.
+ */
+WINUSERAPI UINT WINAPI SendInput(UINT count, LPINPUT inputs, int size)
+{
+    if (size != sizeof(INPUT) || (count && !inputs)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    BYTE state[256];
+    GetKeyboardState(state);
+    UINT sent = 0;
+    for (UINT i = 0; i < count; i++) {
+        INPUT in = inputs[i];
+        WCHAR ch = 0;
+        if (in.type == INPUT_KEYBOARD && !(in.ki.dwFlags & KEYEVENTF_UNICODE)) {
+            if (!in.ki.wVk && (in.ki.dwFlags & KEYEVENTF_SCANCODE))
+                in.ki.wVk = (WORD)scan_to_vk(in.ki.wScan | ((in.ki.dwFlags & KEYEVENTF_EXTENDEDKEY) ? EXT : 0), TRUE);
+            if (!in.ki.wScan) {
+                UINT scan = vk_to_scan(in.ki.wVk);
+                in.ki.wScan = (WORD)(scan & 0xFF);
+                if (scan & EXT)
+                    in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+            }
+            BOOL down = !(in.ki.dwFlags & KEYEVENTF_KEYUP);
+            BYTE generic = (BYTE)generic_vk(in.ki.wVk);
+            state[in.ki.wVk & 0xFF] = down ? 0x80 : 0;
+            state[generic] = down ? 0x80 : 0;
+            if (down && !(state[VK_CONTROL] & 0x80) && !(state[VK_MENU] & 0x80))
+                ch = key_char(in.ki.wVk, state);
+        }
+        if (NtUserSendInput(1, &in, sizeof(in)) != 1)
+            break;
+        if (ch) {
+            INPUT c = {INPUT_KEYBOARD};
+            c.ki.wScan = ch;
+            c.ki.dwFlags = KEYEVENTF_UNICODE;
+            NtUserSendInput(1, &c, sizeof(c));
+        }
+        sent++;
+    }
+    return sent;
+}
+
+WINUSERAPI void WINAPI keybd_event(BYTE vk, BYTE scan, DWORD flags, ULONG_PTR extra)
+{
+    INPUT in = {INPUT_KEYBOARD};
+    in.ki.wVk = vk;
+    in.ki.wScan = scan;
+    in.ki.dwFlags = flags;
+    in.ki.dwExtraInfo = extra;
+    SendInput(1, &in, sizeof(in));
+}
+
+WINUSERAPI void WINAPI mouse_event(DWORD flags, DWORD dx, DWORD dy, DWORD data, ULONG_PTR extra)
+{
+    INPUT in = {INPUT_MOUSE};
+    in.mi.dx = (LONG)dx;
+    in.mi.dy = (LONG)dy;
+    in.mi.mouseData = data;
+    in.mi.dwFlags = flags;
+    in.mi.dwExtraInfo = extra;
+    SendInput(1, &in, sizeof(in));
+}

@@ -387,6 +387,7 @@ W32KAPI HWND NTAPI NtUserSetActiveWindow(HWND hwnd);
 W32KAPI HWND NTAPI NtUserGetForegroundWindow(void);
 W32KAPI HWND NTAPI NtUserSetCapture(HWND hwnd);
 W32KAPI SHORT NTAPI NtUserGetKeyState(int key);
+W32KAPI UINT NTAPI NtUserSendInput(UINT count, const INPUT *inputs, int size);
 W32KAPI SHORT NTAPI NtUserGetAsyncKeyState(int key);
 W32KAPI BOOL NTAPI NtUserGetCursorPos(LPPOINT point);
 W32KAPI UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance);

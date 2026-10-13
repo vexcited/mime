@@ -199,6 +199,121 @@ static void dispatch_event(const MimeInputEvent *ev)
     QueuePostInput(t, ev);
 }
 
+/* the vk an event carries: the left and right modifier keys, never the generic ones. */
+static UINT specific_vk(const KEYBDINPUT *ki)
+{
+    BOOLEAN ext = (ki->dwFlags & KEYEVENTF_EXTENDEDKEY) != 0;
+    switch (ki->wVk) {
+    case VK_SHIFT: return ki->wScan == 0x36 ? VK_RSHIFT : VK_LSHIFT;
+    case VK_CONTROL: return ext ? VK_RCONTROL : VK_LCONTROL;
+    case VK_MENU: return ext ? VK_RMENU : VK_LMENU;
+    }
+    return ki->wVk;
+}
+
+static BOOLEAN key_down_after(UINT key, UINT vk, BOOLEAN down)
+{
+    return key == vk ? down : (InputAsyncKeys[key] & 0x80) != 0;
+}
+
+/* turns one injected input into the event the host would have sent. */
+static BOOLEAN injected_event(const INPUT *in, MimeInputEvent *ev)
+{
+    memset(ev, 0, sizeof(*ev));
+    if (in->type == INPUT_KEYBOARD) {
+        const KEYBDINPUT *ki = &in->ki;
+        if (ki->dwFlags & KEYEVENTF_UNICODE) {
+            if (ki->dwFlags & KEYEVENTF_KEYUP)
+                return FALSE;
+            ev->type = MIME_INPUT_CHAR;
+            ev->ch = ki->wScan;
+        } else {
+            UINT vk = specific_vk(ki);
+            BOOLEAN down = !(ki->dwFlags & KEYEVENTF_KEYUP);
+            ev->type = down ? MIME_INPUT_KEY_DOWN : MIME_INPUT_KEY_UP;
+            ev->vk = vk;
+            ev->scancode = (ki->wScan & 0xFF) | ((ki->dwFlags & KEYEVENTF_EXTENDEDKEY) ? 0x100 : 0);
+            if (down && (InputAsyncKeys[vk & 0xFF] & 0x80))
+                ev->flags = 2;
+            if (key_down_after(VK_LSHIFT, vk, down) || key_down_after(VK_RSHIFT, vk, down))
+                ev->modifiers |= MIME_MOD_SHIFT;
+            if (key_down_after(VK_LCONTROL, vk, down) || key_down_after(VK_RCONTROL, vk, down))
+                ev->modifiers |= MIME_MOD_CONTROL;
+            if (key_down_after(VK_LMENU, vk, down) || key_down_after(VK_RMENU, vk, down))
+                ev->modifiers |= MIME_MOD_ALT;
+        }
+        ev->window_id = InputForeground ? (uint32_t)(ULONG_PTR)WndHandle(InputForeground) : 0;
+        return TRUE;
+    }
+    if (in->type != INPUT_MOUSE)
+        return FALSE;
+    const MOUSEINPUT *mi = &in->mi;
+    POINT pt = InputCursorPos;
+    if (mi->dwFlags & MOUSEEVENTF_MOVE) {
+        if (mi->dwFlags & MOUSEEVENTF_ABSOLUTE) {
+            pt.x = (LONG)(((LONG64)mi->dx * W32Display.Width + 32767) / 65536);
+            pt.y = (LONG)(((LONG64)mi->dy * W32Display.Height + 32767) / 65536);
+        } else {
+            pt.x += mi->dx;
+            pt.y += mi->dy;
+        }
+    }
+    static const struct {
+        DWORD Flag;
+        UINT Type, Button;
+    } buttons[] = {
+        {MOUSEEVENTF_LEFTDOWN, MIME_INPUT_MOUSE_DOWN, MIME_MOUSE_LEFT},
+        {MOUSEEVENTF_LEFTUP, MIME_INPUT_MOUSE_UP, MIME_MOUSE_LEFT},
+        {MOUSEEVENTF_RIGHTDOWN, MIME_INPUT_MOUSE_DOWN, MIME_MOUSE_RIGHT},
+        {MOUSEEVENTF_RIGHTUP, MIME_INPUT_MOUSE_UP, MIME_MOUSE_RIGHT},
+        {MOUSEEVENTF_MIDDLEDOWN, MIME_INPUT_MOUSE_DOWN, MIME_MOUSE_MIDDLE},
+        {MOUSEEVENTF_MIDDLEUP, MIME_INPUT_MOUSE_UP, MIME_MOUSE_MIDDLE},
+    };
+    ev->type = MIME_INPUT_MOUSE_MOVE;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
+        if (mi->dwFlags & buttons[i].Flag) {
+            ev->type = buttons[i].Type;
+            ev->button = buttons[i].Button;
+            break;
+        }
+    }
+    if (mi->dwFlags & (MOUSEEVENTF_WHEEL | MOUSEEVENTF_HWHEEL)) {
+        ev->type = MIME_INPUT_MOUSE_WHEEL;
+        ev->wheel = (LONG)mi->mouseData;
+        ev->flags = (mi->dwFlags & MOUSEEVENTF_HWHEEL) ? 1 : 0;
+    }
+    ev->x = pt.x;
+    ev->y = pt.y;
+    WND *top = WndChildFromPoint(WndDesktop(), pt, FALSE);
+    ev->window_id = top ? (uint32_t)(ULONG_PTR)WndHandle(top) : 0;
+    return TRUE;
+}
+
+/* the inputs are queued in order, like the hardware events of the same desktop. */
+UINT NTAPI NtUserSendInput(UINT count, const INPUT *user_inputs, int size)
+{
+    if (size != sizeof(INPUT)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    UINT done = 0;
+    for (; done < count; done++) {
+        INPUT in;
+        if (!NT_SUCCESS(MimeCopyFromUser(&in, &user_inputs[done], sizeof(in)))) {
+            W32SetLastError(ERROR_NOACCESS);
+            break;
+        }
+        MimeInputEvent ev;
+        UserEnter();
+        if (injected_event(&in, &ev)) {
+            ev.time_ms = (uint64_t)(KeQueryInterruptTime() / 10000);
+            dispatch_event(&ev);
+        }
+        UserLeave();
+    }
+    return done;
+}
+
 static void NTAPI input_thread(PVOID context)
 {
     PKEVENT ready = HalMimeGetInputEvent();
