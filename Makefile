@@ -126,6 +126,10 @@ $(BUILD)/tools/test_pe_icon: tools/test_pe_icon.c host/ui/pe_icon.c host/ui/pe_i
 	@mkdir -p $(dir $@)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_pe_icon.c host/ui/pe_icon.c
 
+$(BUILD)/tools/test_input_queue: tools/test_input_queue.c host/vmm/input_queue.h include/mime/abi.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_input_queue.c
+
 $(BUILD)/tools/%: tools/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<

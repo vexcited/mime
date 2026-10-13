@@ -1,4 +1,5 @@
 #include "vmm.h"
+#include "input_queue.h"
 
 #include "../identity.h"
 #include "../rom.h"
@@ -280,13 +281,8 @@ void mime_vm_queue_ctrl(MimeVm *vm, const void *msg, uint32_t size)
 void mime_vm_queue_input(MimeVm *vm, const MimeInputEvent *ev)
 {
     pthread_mutex_lock(&vm->lock);
-    uint32_t next = (vm->input_head + 1) % MIME_VMM_INPUT_QUEUE;
-    if (next == vm->input_tail) {
-        /* queue full: drop the oldest event, like a hardware fifo would. */
-        vm->input_tail = (vm->input_tail + 1) % MIME_VMM_INPUT_QUEUE;
-    }
-    vm->input[vm->input_head] = *ev;
-    vm->input_head = next;
+    bool queued = mime_input_queue_push(vm->input, MIME_VMM_INPUT_QUEUE, &vm->input_head, &vm->input_tail, ev);
     pthread_mutex_unlock(&vm->lock);
-    mime_vm_raise_irq(vm, MIME_IRQ_INPUT);
+    if (queued)
+        mime_vm_raise_irq(vm, MIME_IRQ_INPUT);
 }
