@@ -3,7 +3,7 @@
  */
 #include "../ntos.h"
 
-#define MM_MAX_ORDER 14
+#define MM_MAX_ORDER 16 /* 256 MiB runs, for window surfaces of large displays */
 
 static PMMPFN g_pfn;
 static ULONG64 g_ram_base;

@@ -237,6 +237,9 @@ void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
             if (c->Style & WS_VISIBLE)
                 RgnCombineRect(out, out, &c->WindowRect, RGN_DIFF);
     RgnOffset(out, -top->WindowRect.left, -top->WindowRect.top);
+    /* the surface may lag behind the window when it could not grow; never draw past it. */
+    RECT surface = {0, 0, top->Surface ? top->Surface->Width : 0, top->Surface ? top->Surface->Height : 0};
+    RgnCombineRect(out, out, &surface, RGN_AND);
 }
 
 /* ------------------------------------------------------------------ invalidation */
