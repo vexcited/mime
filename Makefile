@@ -12,7 +12,7 @@ RC := llvm-rc
 STRIP := llvm-strip
 
 HOST_CFLAGS := -std=c17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
-HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Metal -framework IOSurface -framework Carbon -lobjc
+HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework Metal -framework IOSurface -framework Carbon -lobjc
 CXX := clang++
 
 GUEST_TARGET := --target=aarch64-pc-windows-msvc -march=armv8.2-a
@@ -129,6 +129,18 @@ $(BUILD)/tools/test_pe_icon: tools/test_pe_icon.c host/ui/pe_icon.c host/ui/pe_i
 $(BUILD)/tools/test_input_queue: tools/test_input_queue.c host/vmm/input_queue.h include/mime/abi.h
 	@mkdir -p $(dir $@)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_input_queue.c
+
+UI_TEST_SRC := tools/uitest.c host/ui/app_identity.c host/ui/pe_icon.c host/util.c host/log.c host/paths.c host/sha1.c
+$(BUILD)/tools/uitest: $(UI_TEST_SRC) host/ui/cocoa.c host/ui/ui.h host/ui/app_identity.h include/mime/abi.h
+	@mkdir -p $(dir $@)
+	$(CC) $(HOST_CFLAGS) -o $@ $(UI_TEST_SRC) $(HOST_LIBS)
+
+APP_IDENTITY_TEST_SRC := tools/test_app_identity.c host/ui/app_identity.c host/ui/pe_icon.c \
+	host/util.c host/paths.c host/log.c host/sha1.c
+$(BUILD)/tools/test_app_identity: $(APP_IDENTITY_TEST_SRC) host/ui/app_identity.h host/ui/pe_icon.h host/mime_host.h
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -MMD -MP,$(HOST_CFLAGS)) -o $@ $(APP_IDENTITY_TEST_SRC) \
+		-framework AppKit -framework CoreFoundation -framework CoreGraphics -framework ImageIO -lobjc
 
 $(BUILD)/tools/%: tools/%.c
 	@mkdir -p $(dir $@)

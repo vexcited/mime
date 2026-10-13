@@ -7,6 +7,7 @@
  * on arm64 variadic arguments travel on the stack, unlike real arguments.
  */
 #include "ui.h"
+#include "app_identity.h"
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <IOSurface/IOSurface.h>
@@ -57,6 +58,8 @@ enum {
 enum {
     NSTrackingMouseEnteredAndExited = 0x01,
     NSTrackingMouseMoved = 0x02,
+    NSTrackingCursorUpdate = 0x04,
+    NSTrackingActiveInActiveApp = 0x40,
     NSTrackingActiveAlways = 0x80,
     NSTrackingInVisibleRect = 0x200,
 };
@@ -79,6 +82,14 @@ typedef struct UiWindow {
     MimeWinConfig config;
     bool configured;
     bool shown;
+    bool suppress_state;
+    bool fullscreen_transition;
+    bool fullscreen;
+    bool fullscreen_synced;
+    bool fullscreen_config_pending;
+    MimeWinConfig fullscreen_config;
+    MimeWinConfig pending_config;
+    bool config_queued;
 
     pthread_mutex_t lock;
     IOSurfaceRef surface; /* the guest pixels, read by the compositor in place */
@@ -94,11 +105,31 @@ static MimeUiInputSink g_sink;
 static void *g_sink_ctx;
 static id g_app;
 static Class g_window_class, g_view_class, g_delegate_class;
+static void (*g_toggle_fullscreen)(id, SEL, id);
 static id g_delegate;
 static double g_scale = 2.0;
 static double g_screen_height_pts;
 static CGColorSpaceRef g_colorspace;
 static bool g_suppress_move;
+static uint32_t g_cursor;
+static bool g_cursor_hidden;
+static bool g_pointer_in_guest;
+static bool g_fullscreen_presentation;
+static void cursor_main(void *arg);
+
+static void restore_host_cursor(void)
+{
+    if (g_cursor_hidden) {
+        MSG_V(CLS("NSCursor"), "unhide");
+        g_cursor_hidden = false;
+    }
+}
+
+static void view_cursor_update(id self, SEL sel, id event)
+{
+    g_pointer_in_guest = true;
+    cursor_main((void *)(uintptr_t)g_cursor);
+}
 
 static UiWindow *find_window(uint32_t id)
 {
@@ -114,6 +145,19 @@ static UiWindow *find_by_nswindow(id window)
         if (g_windows[i].used && g_windows[i].window == window)
             return &g_windows[i];
     return NULL;
+}
+
+static void update_presentation(void)
+{
+    UiWindow *w = find_by_nswindow(MSG_ID(g_app, "keyWindow"));
+    if (w && (w->fullscreen || w->fullscreen_transition))
+        return;
+    bool fullscreen = w && (w->config.flags & MIME_WIN_FULLSCREEN) &&
+                      (w->config.flags & MIME_WIN_VISIBLE) && !(w->config.flags & MIME_WIN_MINIMIZED);
+    if (fullscreen != g_fullscreen_presentation) {
+        MSG_V_INT(g_app, "setPresentationOptions:", fullscreen ? (1u << 0) | (1u << 2) : 0);
+        g_fullscreen_presentation = fullscreen;
+    }
 }
 
 static uint64_t now_ms(void)
@@ -163,6 +207,7 @@ static void emit(MimeInputEvent *ev)
 
 static void emit_mouse(id self, id event, uint32_t type, uint32_t button)
 {
+    g_pointer_in_guest = true;
     id window = MSG_ID(self, "window");
     UiWindow *w = find_by_nswindow(window);
     if (!w)
@@ -224,7 +269,8 @@ static bool in_drag_area(UiWindow *w, id event)
 static void view_mouse_down(id self, SEL sel, id event)
 {
     UiWindow *w = find_by_nswindow(MSG_ID(self, "window"));
-    if (w && in_drag_area(w, event) && ((NSInteger(*)(id, SEL))objc_msgSend)(event, SEL_("clickCount")) == 1) {
+    if (w && !(w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)) &&
+        in_drag_area(w, event) && ((NSInteger(*)(id, SEL))objc_msgSend)(event, SEL_("clickCount")) == 1) {
         /* tell the guest about the click so it activates, then let macos move the window. */
         emit_mouse(self, event, MIME_INPUT_MOUSE_DOWN, MIME_MOUSE_LEFT);
         emit_mouse(self, event, MIME_INPUT_MOUSE_UP, MIME_MOUSE_LEFT);
@@ -288,6 +334,7 @@ static void view_mouse_moved(id self, SEL sel, id event)
             under = &g_windows[i];
     if (!under)
         return;
+    g_pointer_in_guest = true;
     MimeInputEvent ev = {0};
     ev.type = MIME_INPUT_MOUSE_MOVE;
     ev.window_id = under->id;
@@ -298,6 +345,8 @@ static void view_mouse_moved(id self, SEL sel, id event)
 
 static void view_mouse_exited(id self, SEL sel, id event)
 {
+    g_pointer_in_guest = false;
+    restore_host_cursor();
     UiWindow *w = find_by_nswindow(MSG_ID(self, "window"));
     if (!w)
         return;
@@ -507,7 +556,7 @@ static void delegate_did_move(id self, SEL sel, id notification)
         return;
     id window = MSG_ID(notification, "object");
     UiWindow *w = find_by_nswindow(window);
-    if (!w)
+    if (!w || w->fullscreen_transition || w->fullscreen)
         return;
     NSRect frame = MSG_RECT(window, "frame");
     MimeRect host = host_part(&w->config);
@@ -538,11 +587,13 @@ static void delegate_focus(id self, SEL sel, id notification, bool gained)
 static void delegate_became_key(id self, SEL sel, id notification)
 {
     delegate_focus(self, sel, notification, true);
+    update_presentation();
 }
 
 static void delegate_resigned_key(id self, SEL sel, id notification)
 {
     delegate_focus(self, sel, notification, false);
+    update_presentation();
 }
 
 static BOOL delegate_should_close(id self, SEL sel, id window)
@@ -557,6 +608,122 @@ static BOOL delegate_should_close(id self, SEL sel, id window)
     return NO;
 }
 
+static void request_window_state(UiWindow *w, int command)
+{
+    if (!w || w->suppress_state)
+        return;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_STATE, .window_id = w->id, .x = command};
+    emit(&ev);
+}
+
+static void window_zoom(id self, SEL sel, id sender)
+{
+    UiWindow *w = find_by_nswindow(self);
+    if (w && (w->config.flags & MIME_WIN_MAXIMIZABLE) && !w->fullscreen)
+        request_window_state(w, (w->config.flags & MIME_WIN_MAXIMIZED) ? 9 : 3);
+}
+
+static void window_minimize(id self, SEL sel, id sender)
+{
+    UiWindow *w = find_by_nswindow(self);
+    if (w && (w->config.flags & MIME_WIN_MINIMIZABLE))
+        request_window_state(w, 6);
+}
+
+static void window_toggle_fullscreen(id self, SEL sel, id sender)
+{
+    UiWindow *w = find_by_nswindow(self);
+    if (!w || w->fullscreen_transition || (!(w->config.flags & MIME_WIN_RESIZABLE) && !w->fullscreen))
+        return;
+    MSG_V_INT(self, "setStyleMask:", MSG_UINT(self, "styleMask") | (1u << 3));
+    g_toggle_fullscreen(self, sel, sender);
+}
+
+static void delegate_miniaturized(id self, SEL sel, id notification)
+{
+    restore_host_cursor();
+    UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
+    if (w && !(w->config.flags & MIME_WIN_MINIMIZED))
+        request_window_state(w, 6);
+}
+
+static void delegate_deminiaturized(id self, SEL sel, id notification)
+{
+    UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
+    if (w && (w->config.flags & MIME_WIN_MINIMIZED))
+        request_window_state(w, 9);
+}
+
+static void emit_fullscreen(UiWindow *w, bool entering)
+{
+    NSRect frame = MSG_RECT(w->window, "frame");
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FULLSCREEN, .window_id = w->id, .flags = entering};
+    screen_point_to_guest(CGPointMake(frame.origin.x, frame.origin.y + frame.size.height), &ev.x, &ev.y);
+    ev.width = (int32_t)(frame.size.width * g_scale + 0.5);
+    ev.height = (int32_t)(frame.size.height * g_scale + 0.5);
+    emit(&ev);
+}
+
+static void delegate_fullscreen_will_change(id self, SEL sel, id notification)
+{
+    UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
+    if (w)
+        w->fullscreen_transition = true;
+}
+
+static void exit_fullscreen_main(void *arg)
+{
+    UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
+    if (w && w->fullscreen && !w->fullscreen_transition && w->fullscreen_config_pending)
+        MSG_V_ID(w->window, "toggleFullScreen:", nil);
+}
+
+static void delegate_fullscreen_entered(id self, SEL sel, id notification)
+{
+    UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
+    if (!w)
+        return;
+    w->fullscreen_transition = false;
+    w->fullscreen = true;
+    if (w->fullscreen_config_pending) {
+        dispatch_async_f(dispatch_get_main_queue(), (void *)(uintptr_t)w->id, exit_fullscreen_main);
+        return;
+    }
+    emit_fullscreen(w, true);
+}
+
+static void delegate_fullscreen_exited(id self, SEL sel, id notification)
+{
+    UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
+    if (!w)
+        return;
+    w->fullscreen_transition = false;
+    w->fullscreen = false;
+    w->fullscreen_synced = false;
+    emit_fullscreen(w, false);
+    if (w->fullscreen_config_pending) {
+        w->fullscreen_config_pending = false;
+        MimeWinConfig config = w->fullscreen_config;
+        mime_ui_window_config(&config);
+    }
+}
+
+static void delegate_fullscreen_failed(id self, SEL sel, id window)
+{
+    UiWindow *w = find_by_nswindow(window);
+    if (!w)
+        return;
+    w->fullscreen_transition = false;
+    if (!w->fullscreen) {
+        MSG_V_INT(window, "setStyleMask:", (w->config.flags & MIME_WIN_MINIMIZABLE) ? 1u << 2 : 0);
+        if (w->fullscreen_config_pending) {
+            w->fullscreen_config_pending = false;
+            MimeWinConfig config = w->fullscreen_config;
+            mime_ui_window_config(&config);
+        }
+    }
+}
+
 static void clip_start(void *arg);
 static void app_became_active(id self, SEL sel, id notification);
 static void app_resigned_active(id self, SEL sel, id notification);
@@ -566,6 +733,31 @@ static void (*g_app_send_event)(id, SEL, id);
 static void app_send_event(id self, SEL sel, id event)
 {
     NSUInteger type = MSG_UINT(event, "type");
+    static uint16_t shortcut_key = UINT16_MAX;
+    if (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp) {
+        uint16_t key = ((uint16_t (*)(id, SEL))objc_msgSend)(event, SEL_("keyCode"));
+        if (type == NSEventTypeKeyUp && key == shortcut_key) {
+            shortcut_key = UINT16_MAX;
+            return;
+        }
+        NSUInteger flags = MSG_UINT(event, "modifierFlags");
+        UiWindow *w = find_by_nswindow(MSG_ID(self, "keyWindow"));
+        if (w && type == NSEventTypeKeyDown && (flags & NSEventModifierFlagCommand)) {
+            if (key == 3 && (flags & NSEventModifierFlagControl) &&
+                ((w->config.flags & MIME_WIN_RESIZABLE) || w->fullscreen)) {
+                if (!w->fullscreen_transition)
+                    MSG_V_ID(w->window, "toggleFullScreen:", nil);
+                shortcut_key = key;
+                return;
+            }
+            if (key == 46 && (w->config.flags & MIME_WIN_MINIMIZABLE) &&
+                !(flags & (NSEventModifierFlagControl | NSEventModifierFlagOption))) {
+                request_window_state(w, 6);
+                shortcut_key = key;
+                return;
+            }
+        }
+    }
     if (type == NSEventTypeKeyUp && (MSG_UINT(event, "modifierFlags") & NSEventModifierFlagCommand)) {
         id window = MSG_ID(self, "keyWindow");
         if (window && find_by_nswindow(window)) {
@@ -589,8 +781,13 @@ static void register_app_class(void)
 static void register_classes(void)
 {
     g_window_class = objc_allocateClassPair(objc_getClass("NSWindow"), "MimeHostWindow", 0);
+    g_toggle_fullscreen = (void (*)(id, SEL, id))class_getMethodImplementation(objc_getClass("NSWindow"),
+                                                                           SEL_("toggleFullScreen:"));
     class_addMethod(g_window_class, SEL_("canBecomeKeyWindow"), (IMP)ret_yes, "c@:");
     class_addMethod(g_window_class, SEL_("canBecomeMainWindow"), (IMP)ret_yes, "c@:");
+    class_addMethod(g_window_class, SEL_("zoom:"), (IMP)window_zoom, "v@:@");
+    class_addMethod(g_window_class, SEL_("performMiniaturize:"), (IMP)window_minimize, "v@:@");
+    class_addMethod(g_window_class, SEL_("toggleFullScreen:"), (IMP)window_toggle_fullscreen, "v@:@");
     objc_registerClassPair(g_window_class);
 
     g_view_class = objc_allocateClassPair(objc_getClass("NSView"), "MimeHostView", 0);
@@ -602,6 +799,8 @@ static void register_classes(void)
     class_addMethod(g_view_class, SEL_("mouseDragged:"), (IMP)view_mouse_dragged, "v@:@");
     class_addMethod(g_view_class, SEL_("mouseMoved:"), (IMP)view_mouse_moved, "v@:@");
     class_addMethod(g_view_class, SEL_("mouseExited:"), (IMP)view_mouse_exited, "v@:@");
+    class_addMethod(g_view_class, SEL_("mouseEntered:"), (IMP)view_cursor_update, "v@:@");
+    class_addMethod(g_view_class, SEL_("cursorUpdate:"), (IMP)view_cursor_update, "v@:@");
     class_addMethod(g_view_class, SEL_("rightMouseDown:"), (IMP)view_right_down, "v@:@");
     class_addMethod(g_view_class, SEL_("rightMouseUp:"), (IMP)view_right_up, "v@:@");
     class_addMethod(g_view_class, SEL_("rightMouseDragged:"), (IMP)view_mouse_dragged, "v@:@");
@@ -619,6 +818,14 @@ static void register_classes(void)
     class_addMethod(g_delegate_class, SEL_("windowDidBecomeKey:"), (IMP)delegate_became_key, "v@:@");
     class_addMethod(g_delegate_class, SEL_("windowDidResignKey:"), (IMP)delegate_resigned_key, "v@:@");
     class_addMethod(g_delegate_class, SEL_("windowShouldClose:"), (IMP)delegate_should_close, "c@:@");
+    class_addMethod(g_delegate_class, SEL_("windowDidMiniaturize:"), (IMP)delegate_miniaturized, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowDidDeminiaturize:"), (IMP)delegate_deminiaturized, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowWillEnterFullScreen:"), (IMP)delegate_fullscreen_will_change, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowWillExitFullScreen:"), (IMP)delegate_fullscreen_will_change, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowDidEnterFullScreen:"), (IMP)delegate_fullscreen_entered, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowDidExitFullScreen:"), (IMP)delegate_fullscreen_exited, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowDidFailToEnterFullScreen:"), (IMP)delegate_fullscreen_failed, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("windowDidFailToExitFullScreen:"), (IMP)delegate_fullscreen_failed, "v@:@");
     class_addMethod(g_delegate_class, SEL_("appDidBecomeActive:"), (IMP)app_became_active, "v@:@");
     class_addMethod(g_delegate_class, SEL_("appDidResignActive:"), (IMP)app_resigned_active, "v@:@");
     objc_registerClassPair(g_delegate_class);
@@ -630,6 +837,28 @@ static void register_classes(void)
     ((void (*)(id, SEL, id, SEL, id, id))objc_msgSend)(center, SEL_("addObserver:selector:name:object:"), g_delegate,
                                                        SEL_("appDidResignActive:"),
                                                        NSApplicationDidResignActiveNotification, nil);
+}
+
+static void app_action(void *ctx, uint32_t process_id, uint32_t action)
+{
+    for (unsigned i = 0; i < MAX_WINDOWS; i++) {
+        UiWindow *w = &g_windows[i];
+        if (!w->used || w->config.process_id != process_id ||
+            (w->config.flags & (MIME_WIN_APPWINDOW | MIME_WIN_VISIBLE)) !=
+                (MIME_WIN_APPWINDOW | MIME_WIN_VISIBLE))
+            continue;
+        if (action == MIME_APP_CLOSE) {
+            MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_CLOSE, .window_id = w->id};
+            emit(&ev);
+        } else if (action == MIME_APP_ACTIVATE) {
+            if (w->config.flags & MIME_WIN_MINIMIZED) {
+                request_window_state(w, 9);
+            } else {
+                MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
+                MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
+            }
+        }
+    }
 }
 
 static void update_screen_metrics(void)
@@ -651,11 +880,12 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_sink_ctx = ctx;
     g_colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     register_app_class();
-    /* accessory: no dock icon or menu bar, the guest windows are the whole ui. */
+    /* per-program companion processes provide the dock entries. */
     MSG_V_INT(g_app, "setActivationPolicy:", 1);
     MSG_V(g_app, "finishLaunching");
     register_classes();
     update_screen_metrics();
+    mime_app_init(NULL, app_action, NULL);
     clip_start(NULL);
 }
 
@@ -708,6 +938,8 @@ static void on_main(void (*fn)(void *), void *arg)
 
 static void stop_main(void *arg)
 {
+    restore_host_cursor();
+    mime_app_shutdown();
     id app = MSG_ID(CLS("NSApplication"), "sharedApplication");
     MSG_V_ID(app, "terminate:", nil);
 }
@@ -747,12 +979,16 @@ static void create_main(void *arg)
     MSG_V_ID(window, "setContentView:", view);
     MSG_V_ID(window, "makeFirstResponder:", view);
 
-    id area = ((id(*)(id, SEL, NSRect, NSUInteger, id, id))objc_msgSend)(
-        MSG_ID(CLS("NSTrackingArea"), "alloc"), SEL_("initWithRect:options:owner:userInfo:"), rect,
-        NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect | NSTrackingMouseEnteredAndExited, view,
-        nil);
-    MSG_V_ID(view, "addTrackingArea:", area);
-    MSG_V(area, "release");
+    const NSUInteger tracking[] = {
+        NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect | NSTrackingMouseEnteredAndExited,
+        NSTrackingCursorUpdate | NSTrackingActiveInActiveApp | NSTrackingInVisibleRect,
+    };
+    for (unsigned i = 0; i < MIME_ARRAY_COUNT(tracking); i++) {
+        id area = ((id (*)(id, SEL, NSRect, NSUInteger, id, id))objc_msgSend)(
+            MSG_ID(CLS("NSTrackingArea"), "alloc"), SEL_("initWithRect:options:owner:userInfo:"), rect, tracking[i], view, nil);
+        MSG_V_ID(view, "addTrackingArea:", area);
+        MSG_V(area, "release");
+    }
 
     w->window = window;
     w->view = view;
@@ -786,8 +1022,10 @@ static void destroy_main(void *arg)
         pthread_mutex_unlock(&g_windows_lock);
         return;
     }
-    w->used = false;
     pthread_mutex_unlock(&g_windows_lock);
+    restore_host_cursor();
+    mime_app_window_remove(id_);
+    g_pointer_in_guest = false;
     if (w->window) {
         MSG_V_ID(w->window, "setDelegate:", nil);
         MSG_V_ID(w->window, "orderOut:", nil);
@@ -796,19 +1034,79 @@ static void destroy_main(void *arg)
         MSG_V(w->view, "release");
         MSG_V(w->window, "release");
     }
+    pthread_mutex_lock(&g_windows_lock);
     pthread_mutex_lock(&w->lock);
     if (w->surface)
         CFRelease(w->surface);
     w->surface = NULL;
     pthread_mutex_unlock(&w->lock);
+    pthread_mutex_destroy(&w->lock);
     w->window = nil;
     w->view = nil;
     w->content = nil;
+    w->used = false;
+    pthread_mutex_unlock(&g_windows_lock);
+    update_presentation();
 }
 
 void mime_ui_window_destroy(uint32_t id_)
 {
     on_main(destroy_main, (void *)(uintptr_t)id_);
+}
+
+static void process_exit_main(void *arg)
+{
+    mime_app_process_exit((uint32_t)(uintptr_t)arg);
+}
+
+void mime_ui_process_exit(uint32_t process_id)
+{
+    on_main(process_exit_main, (void *)(uintptr_t)process_id);
+}
+
+typedef struct WindowIcon {
+    uint32_t window_id, width, height;
+    uint8_t pixels[];
+} WindowIcon;
+
+static void icon_main(void *arg)
+{
+    WindowIcon *icon = arg;
+    UiWindow *w = find_window(icon->window_id);
+    if (w) {
+        mime_app_window_icon(icon->window_id, icon->width && icon->height ? icon->pixels : NULL,
+                              icon->width, icon->height, icon->width * 4);
+        if (icon->width && icon->height) {
+            CFDataRef data = CFDataCreate(NULL, icon->pixels, (CFIndex)((size_t)icon->width * icon->height * 4));
+            CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+            CFRelease(data);
+            CGImageRef cgimage = CGImageCreate(icon->width, icon->height, 8, 32, icon->width * 4,
+                g_colorspace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, NULL,
+                false, kCGRenderingIntentDefault);
+            if (cgimage) {
+                id image = ((id (*)(id, SEL, CGImageRef, NSSize))objc_msgSend)(MSG_ID(CLS("NSImage"), "alloc"),
+                    SEL_("initWithCGImage:size:"), cgimage, CGSizeMake(icon->width, icon->height));
+                MSG_V_ID(w->window, "setMiniwindowImage:", image);
+                MSG_V(image, "release");
+                CGImageRelease(cgimage);
+            }
+            CGDataProviderRelease(provider);
+        } else {
+            MSG_V_ID(w->window, "setMiniwindowImage:", nil);
+        }
+    }
+    free(icon);
+}
+
+void mime_ui_window_icon(uint32_t id_, const void *pixels, uint32_t width, uint32_t height, uint32_t stride)
+{
+    if (width > 1024 || height > 1024 || stride < width * 4 || (!pixels && width && height))
+        return;
+    WindowIcon *icon = mime_xmalloc(sizeof(*icon) + (size_t)width * height * 4);
+    *icon = (WindowIcon){.window_id = id_, .width = width, .height = height};
+    for (uint32_t y = 0; y < height; y++)
+        memcpy(icon->pixels + (size_t)y * width * 4, (const uint8_t *)pixels + (size_t)y * stride, (size_t)width * 4);
+    on_main(icon_main, icon);
 }
 
 static void present_main(void *arg);
@@ -821,6 +1119,50 @@ static void config_main(void *arg)
     UiWindow *w = find_window(cfg->window_id);
     pthread_mutex_unlock(&g_windows_lock);
     if (!w || !w->window) {
+        free(cfg);
+        return;
+    }
+    char path[2048];
+    mime_utf16_to_utf8(path, sizeof(path), cfg->image_path, MIME_MIN(cfg->image_chars, 512u));
+    mime_app_window_set(w->id, cfg->process_id, path,
+                        (cfg->flags & (MIME_WIN_APPWINDOW | MIME_WIN_VISIBLE)) ==
+                            (MIME_WIN_APPWINDOW | MIME_WIN_VISIBLE));
+    char title[1024];
+    mime_utf16_to_utf8(title, sizeof(title), cfg->title, MIME_MIN(cfg->title_chars, 256u));
+    id str = ((id (*)(id, SEL, const char *))objc_msgSend)(CLS("NSString"), SEL_("stringWithUTF8String:"), title);
+    MSG_V_ID(w->window, "setTitle:", str);
+    MSG_V_ID(w->window, "setMiniwindowTitle:", str);
+    uint32_t state = MIME_WIN_VISIBLE | MIME_WIN_MINIMIZED | MIME_WIN_MAXIMIZED;
+    if (w->fullscreen_transition && !w->fullscreen && !(cfg->flags & MIME_WIN_FULLSCREEN) &&
+        (w->fullscreen_config_pending || ((cfg->flags ^ w->config.flags) & state))) {
+        w->fullscreen_config = *cfg;
+        w->fullscreen_config_pending = true;
+        free(cfg);
+        return;
+    }
+    if (w->fullscreen && w->fullscreen_synced && !(cfg->flags & MIME_WIN_FULLSCREEN)) {
+        w->fullscreen_config = *cfg;
+        w->fullscreen_config_pending = true;
+        if (!w->fullscreen_transition)
+            MSG_V_ID(w->window, "toggleFullScreen:", nil);
+        free(cfg);
+        return;
+    }
+    if (w->fullscreen && (cfg->flags & MIME_WIN_FULLSCREEN))
+        w->fullscreen_synced = true;
+    if (cfg->flags & MIME_WIN_MINIMIZED) {
+        w->config = *cfg;
+        w->configured = true;
+        w->suppress_state = true;
+        if (!(MSG_UINT(w->window, "styleMask") & (1u << 2)))
+            MSG_V_INT(w->window, "setStyleMask:", MSG_UINT(w->window, "styleMask") | (1u << 2));
+        if ((cfg->flags & MIME_WIN_VISIBLE) && !MSG_BOOL(w->window, "isMiniaturized"))
+            MSG_V_ID(w->window, "miniaturize:", nil);
+        if (!(cfg->flags & MIME_WIN_VISIBLE))
+            MSG_V_ID(w->window, "orderOut:", nil);
+        w->suppress_state = false;
+        w->shown = (cfg->flags & MIME_WIN_VISIBLE) != 0;
+        update_presentation();
         free(cfg);
         return;
     }
@@ -860,7 +1202,6 @@ static void config_main(void *arg)
     } else {
         MSG_V_DBL(w->content, "setBorderWidth:", 0.0);
     }
-    MSG_V(ca, "commit");
     MSG_V_BOOL(w->window, "setHasShadow:", (cfg->flags & MIME_WIN_SHADOW) != 0);
     if (cropping_changed) {
         pthread_mutex_lock(&w->lock);
@@ -870,20 +1211,28 @@ static void config_main(void *arg)
 
     NSRect frame = guest_to_frame(host_screen_rect(cfg));
     g_suppress_move = true;
-    ((void (*)(id, SEL, NSRect, BOOL))objc_msgSend)(w->window, SEL_("setFrame:display:"), frame, NO);
+    if (!w->fullscreen_transition && !w->fullscreen) {
+        NSUInteger style = (cfg->flags & MIME_WIN_MINIMIZABLE) ? 1u << 2 : 0;
+        if (MSG_UINT(w->window, "styleMask") != style)
+            MSG_V_INT(w->window, "setStyleMask:", style);
+        MSG_V_INT(w->window, "setCollectionBehavior:", (cfg->flags & MIME_WIN_RESIZABLE) ? 1u << 7 : 1u << 8);
+        if (!CGRectEqualToRect(MSG_RECT(w->window, "frame"), frame))
+            ((void (*)(id, SEL, NSRect, BOOL))objc_msgSend)(w->window, SEL_("setFrame:display:"), frame, NO);
+    }
     g_suppress_move = false;
-    MSG_V_INT(w->window, "setLevel:", (cfg->flags & MIME_WIN_TOPMOST) ? 3 : 0);
-
-    char title[512];
-    mime_utf16_to_utf8(title, sizeof(title), cfg->title, MIME_MIN(cfg->title_chars, 256u));
-    id str = ((id(*)(id, SEL, const char *))objc_msgSend)(CLS("NSString"), SEL_("stringWithUTF8String:"), title);
-    MSG_V_ID(w->window, "setTitle:", str);
+    if (!w->fullscreen_transition && !w->fullscreen)
+        MSG_V_INT(w->window, "setLevel:", (cfg->flags & MIME_WIN_TOPMOST) ? 3 : 0);
 
     if (cfg->flags & MIME_WIN_VISIBLE) {
+        if (MSG_BOOL(w->window, "isMiniaturized")) {
+            w->suppress_state = true;
+            MSG_V_ID(w->window, "deminiaturize:", nil);
+            w->suppress_state = false;
+        }
         if (cfg->flags & MIME_WIN_ACTIVATE) {
             MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
             MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
-        } else if (!w->shown) {
+        } else if (!w->shown || !MSG_BOOL(w->window, "isVisible")) {
             MSG_V(w->window, "orderFrontRegardless");
         }
         w->shown = true;
@@ -896,15 +1245,50 @@ static void config_main(void *arg)
         present_main((void *)(uintptr_t)w->id);
         metal_relayout(w->id);
     }
+    MSG_V(ca, "commit");
+    update_presentation();
     /* the shadow follows the shape, which a new corner radius or border changes. */
-    MSG_V(w->window, "invalidateShadow");
+    if (cropping_changed)
+        MSG_V(w->window, "invalidateShadow");
+}
+
+static void config_latest_main(void *arg)
+{
+    uint32_t id_ = (uint32_t)(uintptr_t)arg;
+    MimeWinConfig *copy = NULL;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(id_);
+    if (w) {
+        pthread_mutex_lock(&w->lock);
+        if (w->config_queued) {
+            copy = mime_xmalloc(sizeof(*copy));
+            *copy = w->pending_config;
+            w->config_queued = false;
+        }
+        pthread_mutex_unlock(&w->lock);
+    }
+    pthread_mutex_unlock(&g_windows_lock);
+    if (copy)
+        config_main(copy);
 }
 
 void mime_ui_window_config(const MimeWinConfig *cfg)
 {
-    MimeWinConfig *copy = mime_xmalloc(sizeof(*copy));
-    *copy = *cfg;
-    on_main(config_main, copy);
+    bool queue = false;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(cfg->window_id);
+    if (w) {
+        pthread_mutex_lock(&w->lock);
+        uint32_t activate = w->config_queued ? w->pending_config.flags & MIME_WIN_ACTIVATE : 0;
+        w->pending_config = *cfg;
+        w->pending_config.flags |= activate;
+        queue = !w->config_queued;
+        w->config_queued = true;
+        pthread_mutex_unlock(&w->lock);
+    }
+    pthread_mutex_unlock(&g_windows_lock);
+    if (queue)
+        on_main(config_latest_main, (void *)(uintptr_t)cfg->window_id);
 }
 
 /*
@@ -940,6 +1324,8 @@ static void present_main(void *arg)
     w->dirty = false;
     IOSurfaceRef surface = (IOSurfaceRef)CFRetain(w->surface);
     double width = w->width, height = w->height;
+    bool shadow_dirty = w->shadow_dirty;
+    w->shadow_dirty = false;
     pthread_mutex_unlock(&w->lock);
 
     id layer = w->content;
@@ -954,7 +1340,9 @@ static void present_main(void *arg)
         MSG_V(layer, "setContentsChanged");
     MSG_V(ca, "commit");
     CFRelease(surface);
-    MSG_V(w->window, "invalidateShadow");
+    if (shadow_dirty) {
+        MSG_V(w->window, "invalidateShadow");
+    }
 }
 
 static IOSurfaceRef create_surface(uint32_t width, uint32_t height)
@@ -989,16 +1377,19 @@ void mime_ui_window_present(uint32_t id_, const void *pixels, uint32_t width, ui
 {
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id_);
-    pthread_mutex_unlock(&g_windows_lock);
-    if (!w)
+    if (!w) {
+        pthread_mutex_unlock(&g_windows_lock);
         return;
+    }
     pthread_mutex_lock(&w->lock);
+    pthread_mutex_unlock(&g_windows_lock);
     if (w->width != width || w->height != height || !w->surface) {
         if (w->surface)
             CFRelease(w->surface);
         w->surface = create_surface(width, height);
         w->width = width;
         w->height = height;
+        w->shadow_dirty = true;
         dirty = (MimeRect){0, 0, (int32_t)width, (int32_t)height};
     }
     if (!w->surface) {
@@ -1022,6 +1413,55 @@ void mime_ui_window_present(uint32_t id_, const void *pixels, uint32_t width, ui
         on_main(present_main, (void *)(uintptr_t)id_);
 }
 
+static id wait_cursor(void)
+{
+    static id cursor;
+    if (cursor)
+        return cursor;
+    CGContextRef ctx = CGBitmapContextCreate(NULL, 64, 64, 8, 0, g_colorspace, kCGImageAlphaPremultipliedLast);
+    if (!ctx)
+        return MSG_ID(CLS("NSCursor"), "arrowCursor");
+    CGContextScaleCTM(ctx, 2, 2);
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGPathMoveToPoint(path, NULL, 9, 4);
+    CGPathAddLineToPoint(path, NULL, 23, 4);
+    CGPathAddLineToPoint(path, NULL, 23, 8);
+    CGPathAddLineToPoint(path, NULL, 17, 16);
+    CGPathAddLineToPoint(path, NULL, 23, 24);
+    CGPathAddLineToPoint(path, NULL, 23, 28);
+    CGPathAddLineToPoint(path, NULL, 9, 28);
+    CGPathAddLineToPoint(path, NULL, 9, 24);
+    CGPathAddLineToPoint(path, NULL, 15, 16);
+    CGPathAddLineToPoint(path, NULL, 9, 8);
+    CGPathCloseSubpath(path);
+    CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
+    CGContextSetRGBStrokeColor(ctx, 1, 1, 1, 1);
+    CGContextSetLineWidth(ctx, 4);
+    CGContextAddPath(ctx, path);
+    CGContextDrawPath(ctx, kCGPathFillStroke);
+    CGContextSetRGBStrokeColor(ctx, 0, 0, 0, 1);
+    CGContextSetLineWidth(ctx, 2);
+    CGContextAddPath(ctx, path);
+    CGContextStrokePath(ctx);
+    CGPathRelease(path);
+    CGContextSetRGBFillColor(ctx, 0, 0, 0, 1);
+    CGContextFillRect(ctx, CGRectMake(12, 24, 8, 2));
+    CGContextMoveToPoint(ctx, 12, 8);
+    CGContextAddLineToPoint(ctx, 20, 8);
+    CGContextAddLineToPoint(ctx, 16, 13);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+    CGImageRef cgimage = CGBitmapContextCreateImage(ctx);
+    id image = ((id (*)(id, SEL, CGImageRef, NSSize))objc_msgSend)(MSG_ID(CLS("NSImage"), "alloc"),
+        SEL_("initWithCGImage:size:"), cgimage, CGSizeMake(32, 32));
+    cursor = ((id (*)(id, SEL, id, NSPoint))objc_msgSend)(MSG_ID(CLS("NSCursor"), "alloc"),
+        SEL_("initWithImage:hotSpot:"), image, CGPointMake(16, 16));
+    MSG_V(image, "release");
+    CGImageRelease(cgimage);
+    CGContextRelease(ctx);
+    return cursor;
+}
+
 static void cursor_main(void *arg)
 {
     static const char *const names[] = {
@@ -1032,7 +1472,28 @@ static void cursor_main(void *arg)
     uint32_t c = (uint32_t)(uintptr_t)arg;
     if (c >= MIME_ARRAY_COUNT(names))
         c = 0;
-    MSG_V(MSG_ID(CLS("NSCursor"), names[c]), "set");
+    g_cursor = c;
+    if (!g_pointer_in_guest)
+        return;
+    if (c == MIME_CURSOR_HIDDEN) {
+        if (!g_cursor_hidden) {
+            MSG_V(CLS("NSCursor"), "hide");
+            g_cursor_hidden = true;
+        }
+        return;
+    }
+    restore_host_cursor();
+    id cursor;
+    if (c == MIME_CURSOR_SIZE_NWSE || c == MIME_CURSOR_SIZE_NESW) {
+        NSUInteger corner = c == MIME_CURSOR_SIZE_NWSE ? 3 : 9;
+        cursor = ((id (*)(id, SEL, NSUInteger, NSUInteger))objc_msgSend)(CLS("NSCursor"),
+            SEL_("frameResizeCursorFromPosition:inDirections:"), corner, 3);
+    } else if (c == MIME_CURSOR_WAIT) {
+        cursor = wait_cursor();
+    } else {
+        cursor = MSG_ID(CLS("NSCursor"), names[c]);
+    }
+    MSG_V(cursor, "set");
 }
 
 void mime_ui_set_cursor(uint32_t cursor)
@@ -1151,6 +1612,8 @@ static void app_became_active(id self, SEL sel, id notification)
 
 static void app_resigned_active(id self, SEL sel, id notification)
 {
+    restore_host_cursor();
+    g_pointer_in_guest = false;
     if (g_clip_timer && g_clip_polling) {
         dispatch_suspend(g_clip_timer);
         g_clip_polling = false;

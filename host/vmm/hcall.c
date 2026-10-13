@@ -242,6 +242,21 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         mime_ui_window_present(p->window_id, pixels, p->width, p->height, p->stride, p->dirty);
         break;
     }
+    case MIME_HC_WIN_ICON: {
+        const MimeWinIcon *icon = mime_vm_phys(vm, regs[1], sizeof(MimeWinIcon));
+        if (!icon || icon->width > 1024 || icon->height > 1024 || icon->stride < icon->width * 4 ||
+            icon->stride > 4096) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        const void *pixels = mime_vm_phys(vm, icon->pixels_phys, (uint64_t)icon->stride * icon->height);
+        if (icon->width && icon->height && !pixels) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        mime_ui_window_icon(icon->window_id, pixels, icon->width, icon->height, icon->stride);
+        break;
+    }
     case MIME_HC_WIN_CURSOR:
         mime_ui_set_cursor((uint32_t)regs[1]);
         break;

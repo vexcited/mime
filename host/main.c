@@ -1,5 +1,6 @@
 #include "instance.h"
 #include "mime_cli.h"
+#include "ui/app_identity.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -18,6 +19,9 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
+    int proxy_result = mime_app_proxy_main(argc, argv);
+    if (proxy_result >= 0)
+        return proxy_result;
     int lock_fd;
     if (mime_instance_accept_launch(&lock_fd)) {
         MimePaths paths;

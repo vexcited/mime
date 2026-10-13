@@ -127,6 +127,7 @@ void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg)
     case MIME_EVT_PROCESS_EXIT: {
         const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
         mime_info("process %u exited with code %u", p->process_id, p->status);
+        mime_ui_process_exit(p->process_id);
         int32_t code = (int32_t)p->status;
         notify_run(p->request_id, MIME_IPC_EXIT, &code, sizeof(code));
         break;
