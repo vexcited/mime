@@ -85,6 +85,9 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS KNONVOLATILE_CONTEXT_POINTERS, *PK
 #define STATUS_INVALID_DISPOSITION ((NTSTATUS)0xC0000026L)
 #define STATUS_NONCONTINUABLE_EXCEPTION ((NTSTATUS)0xC0000025L)
 #define STATUS_UNWIND_CONSOLIDATE ((NTSTATUS)0x80000029L)
+#ifndef STATUS_LONGJUMP
+#define STATUS_LONGJUMP ((NTSTATUS)0x80000026L)
+#endif
 #define STATUS_INVALID_UNWIND_TARGET ((NTSTATUS)0xC0000029L)
 #define EXCEPTION_NESTED_CALL 0x10
 #define EXCEPTION_STACK_INVALID 0x8
@@ -327,6 +330,13 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
         }
     }
     *establisher_frame = have_frame ? frame_base : c->Rsp;
+    /*
+     * saves made with mov and the frame register are found from the frame
+     * base, the stack pointer once the prolog ran: the body may have moved
+     * rsp since, and the codes restore the frame register before reaching
+     * the one that set it.
+     */
+    ULONG64 frame = *establisher_frame;
 
     if (offset >= info->SizeOfProlog && in_epilog(pc, base, function, info)) {
         run_epilog(c, info);
@@ -356,20 +366,20 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
                 c->Rsp += 8ull * opinfo + 8;
                 break;
             case UWOP_SET_FPREG:
-                c->Rsp = *gpr(c, info->FrameRegister) - 16ull * info->FrameOffset;
+                c->Rsp = frame;
                 break;
             case UWOP_SAVE_NONVOL:
-                *gpr(c, opinfo) = *(ULONG64 *)(c->Rsp + 8ull * code[1].FrameOffset);
+                *gpr(c, opinfo) = *(ULONG64 *)(frame + 8ull * code[1].FrameOffset);
                 break;
             case UWOP_SAVE_NONVOL_FAR:
-                *gpr(c, opinfo) = *(ULONG64 *)(c->Rsp + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16)));
+                *gpr(c, opinfo) = *(ULONG64 *)(frame + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16)));
                 break;
             case UWOP_SAVE_XMM128:
-                memcpy(xmm(c, opinfo), (void *)(c->Rsp + 16ull * code[1].FrameOffset), 16);
+                memcpy(xmm(c, opinfo), (void *)(frame + 16ull * code[1].FrameOffset), 16);
                 break;
             case UWOP_SAVE_XMM128_FAR:
                 memcpy(xmm(c, opinfo),
-                       (void *)(c->Rsp + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16))), 16);
+                       (void *)(frame + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16))), 16);
                 break;
             case UWOP_PUSH_MACHFRAME:
                 if (opinfo)
@@ -497,8 +507,43 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
 
 /* ------------------------------------------------------------ unwinding */
 
+PVOID RtlpCallConsolidate(PCONTEXT context, PVOID(NTAPI *callback)(PEXCEPTION_RECORD), PEXCEPTION_RECORD record);
+
+/* the jmp_buf of the x64 c runtime, which longjmp unwinds to with STATUS_LONGJUMP. */
+typedef struct _JUMP_BUFFER {
+    ULONG64 Frame, Rbx, Rsp, Rbp, Rsi, Rdi, R12, R13, R14, R15, Rip;
+    ULONG MxCsr;
+    USHORT FpCsr, Spare;
+    M128A Xmm6, Xmm7, Xmm8, Xmm9, Xmm10, Xmm11, Xmm12, Xmm13, Xmm14, Xmm15;
+} JUMP_BUFFER;
+
+/*
+ * resumes a context an unwind reached. a consolidation first runs its
+ * callback, the catch block of a c++ exception, which returns where to
+ * continue; a longjmp takes the registers its jmp_buf saved.
+ */
 NTDLL_EXPORT void NTAPI RtlRestoreContext(PCONTEXT context, PEXCEPTION_RECORD record)
 {
+    if (record && record->ExceptionCode == STATUS_LONGJUMP && record->NumberParameters >= 1) {
+        const JUMP_BUFFER *jmp = (const JUMP_BUFFER *)record->ExceptionInformation[0];
+        context->Rbx = jmp->Rbx;
+        context->Rsp = jmp->Rsp;
+        context->Rbp = jmp->Rbp;
+        context->Rsi = jmp->Rsi;
+        context->Rdi = jmp->Rdi;
+        context->R12 = jmp->R12;
+        context->R13 = jmp->R13;
+        context->R14 = jmp->R14;
+        context->R15 = jmp->R15;
+        context->Rip = jmp->Rip;
+        memcpy(xmm(context, 6), &jmp->Xmm6, 10 * sizeof(M128A));
+        context->MxCsr = jmp->MxCsr;
+        context->FltSave.MxCsr = jmp->MxCsr;
+        context->FltSave.ControlWord = jmp->FpCsr;
+    } else if (record && record->ExceptionCode == STATUS_UNWIND_CONSOLIDATE && record->NumberParameters >= 1) {
+        PVOID(NTAPI * callback)(PEXCEPTION_RECORD) = (PVOID(NTAPI *)(PEXCEPTION_RECORD))record->ExceptionInformation[0];
+        context->Rip = (ULONG64)RtlpCallConsolidate(context, callback, record);
+    }
     NtContinue(context, FALSE);
 }
 
@@ -554,8 +599,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             break;
     }
     c.Rax = (ULONG64)value;
-    if (record->ExceptionCode != STATUS_UNWIND_CONSOLIDATE)
-        c.Rip = (ULONG64)target_ip;
+    c.Rip = (ULONG64)target_ip;
     RtlRestoreContext(&c, record);
 }
 

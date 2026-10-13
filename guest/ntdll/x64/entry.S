@@ -9,8 +9,27 @@
  */
     .text
 
+/*
+ * mimex86 leaves 0x28 bytes, the CONTEXT, the EXCEPTION_RECORD in 0xa0
+ * bytes and a machine frame above the stack pointer. the unwind codes say
+ * so, as on windows: an unwind through the dispatcher restores the
+ * nonvolatile registers from the context and goes on at the faulting rip
+ * and rsp.
+ */
     .globl  KiUserExceptionDispatcher
     .p2align 4
+    .seh_proc KiUserExceptionDispatcher
+    .seh_pushframe
+    .seh_stackalloc 0x598
+    .seh_savereg %rbx, 0x28+0x90
+    .seh_savereg %rbp, 0x28+0xa0
+    .seh_savereg %rsi, 0x28+0xa8
+    .seh_savereg %rdi, 0x28+0xb0
+    .seh_savereg %r12, 0x28+0xd8
+    .seh_savereg %r13, 0x28+0xe0
+    .seh_savereg %r14, 0x28+0xe8
+    .seh_savereg %r15, 0x28+0xf0
+    .seh_endprologue
 KiUserExceptionDispatcher:
     movq    %rcx, %rbx
     movq    %rdx, %rsi
@@ -21,6 +40,7 @@ KiUserExceptionDispatcher:
     xorl    %r8d, %r8d
     call    NtRaiseException
     jmp     .
+    .seh_endproc
 
     .globl  KiUserApcDispatcher
     .p2align 4
@@ -116,3 +136,85 @@ RtlRaiseException:
     movl    %eax, %ecx
     call    RtlRaiseStatus
     int3
+
+/*
+ * PVOID RtlpCallConsolidate(PCONTEXT context, PVOID (*callback)(PEXCEPTION_RECORD), PEXCEPTION_RECORD record)
+ *
+ * runs the callback of STATUS_UNWIND_CONSOLIDATE, the catch block of a c++
+ * exception, with the nonvolatile registers of the target frame. a machine
+ * frame holding the target's rip and rsp makes an unwind from inside the
+ * callback continue straight at the target frame, as on windows.
+ */
+    .globl  RtlpCallConsolidate
+    .p2align 4
+    .seh_proc RtlpCallConsolidate
+RtlpCallConsolidate:
+    subq    $0x28, %rsp
+    movq    0xf8(%rcx), %rax        /* context->Rip */
+    movq    %rax, (%rsp)
+    movq    0x98(%rcx), %rax        /* context->Rsp */
+    movq    %rax, 0x18(%rsp)
+    .seh_pushframe
+    subq    $0x100, %rsp            /* the shadow space, seven registers, xmm6 to xmm15 */
+    .seh_stackalloc 0x100
+    .seh_endprologue
+    movq    %rbx, 0x20(%rsp)
+    movq    %rsi, 0x28(%rsp)
+    movq    %rdi, 0x30(%rsp)
+    movq    %r12, 0x38(%rsp)
+    movq    %r13, 0x40(%rsp)
+    movq    %r14, 0x48(%rsp)
+    movq    %r15, 0x50(%rsp)
+    movdqa  %xmm6, 0x60(%rsp)
+    movdqa  %xmm7, 0x70(%rsp)
+    movdqa  %xmm8, 0x80(%rsp)
+    movdqa  %xmm9, 0x90(%rsp)
+    movdqa  %xmm10, 0xa0(%rsp)
+    movdqa  %xmm11, 0xb0(%rsp)
+    movdqa  %xmm12, 0xc0(%rsp)
+    movdqa  %xmm13, 0xd0(%rsp)
+    movdqa  %xmm14, 0xe0(%rsp)
+    movdqa  %xmm15, 0xf0(%rsp)
+    movq    0x90(%rcx), %rbx
+    movq    0xa0(%rcx), %rax
+    movq    %rbp, 0x58(%rsp)
+    movq    %rax, %rbp
+    movq    0xa8(%rcx), %rsi
+    movq    0xb0(%rcx), %rdi
+    movq    0xd8(%rcx), %r12
+    movq    0xe0(%rcx), %r13
+    movq    0xe8(%rcx), %r14
+    movq    0xf0(%rcx), %r15
+    movdqu  0x200(%rcx), %xmm6
+    movdqu  0x210(%rcx), %xmm7
+    movdqu  0x220(%rcx), %xmm8
+    movdqu  0x230(%rcx), %xmm9
+    movdqu  0x240(%rcx), %xmm10
+    movdqu  0x250(%rcx), %xmm11
+    movdqu  0x260(%rcx), %xmm12
+    movdqu  0x270(%rcx), %xmm13
+    movdqu  0x280(%rcx), %xmm14
+    movdqu  0x290(%rcx), %xmm15
+    movq    %r8, %rcx
+    call    *%rdx
+    movq    0x20(%rsp), %rbx
+    movq    0x28(%rsp), %rsi
+    movq    0x30(%rsp), %rdi
+    movq    0x38(%rsp), %r12
+    movq    0x40(%rsp), %r13
+    movq    0x48(%rsp), %r14
+    movq    0x50(%rsp), %r15
+    movq    0x58(%rsp), %rbp
+    movdqa  0x60(%rsp), %xmm6
+    movdqa  0x70(%rsp), %xmm7
+    movdqa  0x80(%rsp), %xmm8
+    movdqa  0x90(%rsp), %xmm9
+    movdqa  0xa0(%rsp), %xmm10
+    movdqa  0xb0(%rsp), %xmm11
+    movdqa  0xc0(%rsp), %xmm12
+    movdqa  0xd0(%rsp), %xmm13
+    movdqa  0xe0(%rsp), %xmm14
+    movdqa  0xf0(%rsp), %xmm15
+    addq    $0x128, %rsp
+    ret
+    .seh_endproc

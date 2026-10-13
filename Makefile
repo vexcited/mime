@@ -341,7 +341,8 @@ USER_CFLAGS_user32 += -Iguest/lib
 
 # the same sources as the arm64 dlls, with x64 assembly where the processor matters.
 X64_TARGET := --target=x86_64-pc-windows-msvc -march=x86-64 -mcx16
-X64_CFLAGS := $(filter-out $(GUEST_TARGET) --target=% -march=%,$(GUEST_CFLAGS)) $(X64_TARGET)
+# -ffreestanding drops the x64 unwind tables, which exception unwinding walks through every dll.
+X64_CFLAGS := $(filter-out $(GUEST_TARGET) --target=% -march=%,$(GUEST_CFLAGS)) $(X64_TARGET) -fasynchronous-unwind-tables
 X64_ASFLAGS := $(X64_TARGET) -Iinclude -Iguest/include -MMD -MP
 X64_LDFLAGS := $(subst /machine:arm64,/machine:x64,$(GUEST_LDFLAGS))
 X64_DLL_LDFLAGS := $(X64_LDFLAGS) /dll /subsystem:console,10.0 /highentropyva /dynamicbase /stack:0x40000,0x1000
