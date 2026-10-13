@@ -50,6 +50,7 @@ enum {
 };
 
 enum {
+    NSEventTypeKeyDown = 10,
     NSEventTypeKeyUp = 11,
 };
 
@@ -429,7 +430,8 @@ static void emit_key(id self, id event, uint32_t type)
         ev.vk = letter;
     ev.scancode = k->scan;
     ev.modifiers = modifiers_of(event);
-    if (type == MIME_INPUT_KEY_DOWN && MSG_BOOL(event, "isARepeat"))
+    /* isARepeat raises on the flagsChanged events of modifier keys, which never repeat. */
+    if (type == MIME_INPUT_KEY_DOWN && MSG_UINT(event, "type") == NSEventTypeKeyDown && MSG_BOOL(event, "isARepeat"))
         ev.flags = 2;
     emit(&ev);
 }
