@@ -128,6 +128,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     MimeWinConfig *c = g_config;
     memset(c, 0, offsetof(MimeWinConfig, title));
     c->window_id = window_id(w);
+    c->state_request = w->HostStateRequest;
     if (visible)
         c->flags |= MIME_WIN_VISIBLE;
     if (w->ExStyle & WS_EX_TOPMOST)

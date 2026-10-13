@@ -491,6 +491,14 @@ scan_posted:
             QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
             e = e->Flink;
             BOOLEAN consumed = FALSE;
+            if (qm->Input.type == MIME_INPUT_WINDOW_STATE) {
+                /* state commands may enter a nested message loop. */
+                RemoveEntryList(&qm->Links);
+                InputTranslate(t, qm, out, hwnd, min, max, remove, &consumed);
+                W32Free(qm);
+                rescan = TRUE;
+                break;
+            }
             BOOLEAN got = InputTranslate(t, qm, out, hwnd, min, max, remove, &consumed);
             if (consumed || (got && remove)) {
                 RemoveEntryList(&qm->Links);

@@ -600,6 +600,7 @@ typedef struct WND {
     HICON IconSmall;
     UINT Dpi;
     HICON HostIcon;
+    ULONG HostStateRequest;
     SURFACE *Surface; /* top level windows */
     UCHAR CaptionHot;
     UCHAR CaptionPressed;

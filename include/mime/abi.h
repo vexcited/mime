@@ -466,6 +466,7 @@ enum {
 typedef struct MimeWinConfig {
     uint32_t window_id;
     uint32_t flags;
+    uint32_t state_request; /* last completed native window-state request. */
     MimeRect rect;    /* screen coordinates in guest pixels */
     MimeRect visible; /* window relative part that is drawn opaque/visible */
     MimeRect input;   /* window relative part that takes the mouse, the visible part plus any resize border */
@@ -556,7 +557,7 @@ typedef struct MimeInputEvent {
     uint32_t ch;       /* utf-32 code point for MIME_INPUT_CHAR */
     int32_t wheel;     /* WHEEL_DELTA units, positive away from the user */
     uint32_t flags;    /* 1 = horizontal wheel, 2 = key repeat */
-    uint32_t pad;
+    uint32_t state_request; /* native window-state request id. */
     uint64_t time_ms;
     int32_t width, height; /* fullscreen frame dimensions in guest pixels. */
 } MimeInputEvent;

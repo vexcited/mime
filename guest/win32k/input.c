@@ -795,11 +795,15 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         default:
             return FALSE;
         }
-        *consumed = FALSE;
-        if (!emit(out, WndHandle(w), WM_SYSCOMMAND, command, 0, ev, filter, min, max))
-            return FALSE;
-        *consumed = TRUE;
-        return TRUE;
+        UserReference(&w->Header);
+        MsgSend(w, WM_SYSCOMMAND, command, 0);
+        if (!w->Header.Destroyed) {
+            if ((LONG)(ev->state_request - w->HostStateRequest) > 0)
+                w->HostStateRequest = ev->state_request;
+            WndUpdateHostConfig(w, InputForeground == w && !(w->Style & WS_MINIMIZE));
+        }
+        UserDereference(&w->Header);
+        break;
     }
     case MIME_INPUT_WINDOW_FULLSCREEN: {
         RECT rect = {ev->x, ev->y, ev->x + ev->width, ev->y + ev->height};

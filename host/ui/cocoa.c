@@ -83,6 +83,9 @@ typedef struct UiWindow {
     bool configured;
     bool shown;
     bool suppress_state;
+    bool state_pending;
+    uint32_t state_request;
+    int state_command;
     bool fullscreen_transition;
     bool fullscreen;
     bool fullscreen_synced;
@@ -575,7 +578,7 @@ static void delegate_did_move(id self, SEL sel, id notification)
 static void delegate_focus(id self, SEL sel, id notification, bool gained)
 {
     UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
-    if (!w)
+    if (!w || (gained && (w->config.flags & MIME_WIN_MINIMIZED)))
         return;
     MimeInputEvent ev = {0};
     ev.type = MIME_INPUT_WINDOW_FOCUS;
@@ -610,9 +613,14 @@ static BOOL delegate_should_close(id self, SEL sel, id window)
 
 static void request_window_state(UiWindow *w, int command)
 {
-    if (!w || w->suppress_state)
+    if (!w || w->suppress_state || (w->state_pending && w->state_command == command))
         return;
-    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_STATE, .window_id = w->id, .x = command};
+    if (++w->state_request == 0)
+        ++w->state_request;
+    w->state_pending = true;
+    w->state_command = command;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_STATE, .window_id = w->id, .x = command,
+                        .state_request = w->state_request};
     emit(&ev);
 }
 
@@ -650,7 +658,7 @@ static void delegate_miniaturized(id self, SEL sel, id notification)
 static void delegate_deminiaturized(id self, SEL sel, id notification)
 {
     UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
-    if (w && (w->config.flags & MIME_WIN_MINIMIZED))
+    if (w && ((w->config.flags & MIME_WIN_MINIMIZED) || (w->state_pending && w->state_command == 6)))
         request_window_state(w, 9);
 }
 
@@ -851,7 +859,8 @@ static void app_action(void *ctx, uint32_t process_id, uint32_t action)
             MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_CLOSE, .window_id = w->id};
             emit(&ev);
         } else if (action == MIME_APP_ACTIVATE) {
-            if (w->config.flags & MIME_WIN_MINIMIZED) {
+            if ((w->config.flags & MIME_WIN_MINIMIZED) || MSG_BOOL(w->window, "isMiniaturized") ||
+                (w->state_pending && w->state_command == 6)) {
                 request_window_state(w, 9);
             } else {
                 MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
@@ -1072,29 +1081,9 @@ typedef struct WindowIcon {
 static void icon_main(void *arg)
 {
     WindowIcon *icon = arg;
-    UiWindow *w = find_window(icon->window_id);
-    if (w) {
+    if (find_window(icon->window_id))
         mime_app_window_icon(icon->window_id, icon->width && icon->height ? icon->pixels : NULL,
                               icon->width, icon->height, icon->width * 4);
-        if (icon->width && icon->height) {
-            CFDataRef data = CFDataCreate(NULL, icon->pixels, (CFIndex)((size_t)icon->width * icon->height * 4));
-            CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
-            CFRelease(data);
-            CGImageRef cgimage = CGImageCreate(icon->width, icon->height, 8, 32, icon->width * 4,
-                g_colorspace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, NULL,
-                false, kCGRenderingIntentDefault);
-            if (cgimage) {
-                id image = ((id (*)(id, SEL, CGImageRef, NSSize))objc_msgSend)(MSG_ID(CLS("NSImage"), "alloc"),
-                    SEL_("initWithCGImage:size:"), cgimage, CGSizeMake(icon->width, icon->height));
-                MSG_V_ID(w->window, "setMiniwindowImage:", image);
-                MSG_V(image, "release");
-                CGImageRelease(cgimage);
-            }
-            CGDataProviderRelease(provider);
-        } else {
-            MSG_V_ID(w->window, "setMiniwindowImage:", nil);
-        }
-    }
     free(icon);
 }
 
@@ -1121,6 +1110,13 @@ static void config_main(void *arg)
     if (!w || !w->window) {
         free(cfg);
         return;
+    }
+    if (w->state_pending) {
+        if (cfg->state_request != w->state_request) {
+            free(cfg);
+            return;
+        }
+        w->state_pending = false;
     }
     char path[2048];
     mime_utf16_to_utf8(path, sizeof(path), cfg->image_path, MIME_MIN(cfg->image_chars, 512u));
