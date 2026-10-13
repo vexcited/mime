@@ -19,13 +19,13 @@ build/mime run build/examples/messagebox.exe
 build/mime down
 ```
 
-| Command                  | What it does                                     |
-|--------------------------|--------------------------------------------------|
-| `mime setup <iso>`       | Import fonts, themes and icons from an ISO.      |
-| `mime up`                | Start the machine in the background.             |
-| `mime run <program.exe>` | Run a program, from a host path or a `C:\` path. |
-| `mime status`            | Show whether the machine is running.             |
-| `mime down`              | Stop the machine.                                |
+| Command                  | What it does                                                                                                |
+|--------------------------|-------------------------------------------------------------------------------------------------------------|
+| `mime setup <iso>`       | Import fonts, themes and icons from an ISO.                                                                 |
+| `mime up`                | Start the machine in the background.                                                                        |
+| `mime run <program.exe>` | Run a program, from a host path or a `C:\` path, the terminal acting as its console like a Windows shell's. |
+| `mime status`            | Show whether the machine is running.                                                                        |
+| `mime down`              | Stop the machine.                                                                                           |
 
 ## Progress
 

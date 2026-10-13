@@ -529,6 +529,7 @@ void IoInitialize(void)
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
     IopInitializeCompletion();
     IopInitializeNamedPipes();
+    IopInitializeConsole();
     IopInitializeAfd();
 
     NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Ntfs", MimeFsDriverEntry, NULL);

@@ -1004,6 +1004,14 @@ typedef struct _CHAR_INFO {
     WORD Attributes;
 } CHAR_INFO, *PCHAR_INFO;
 
+#define KEY_EVENT 0x0001
+#define RIGHT_ALT_PRESSED 0x0001
+#define LEFT_ALT_PRESSED 0x0002
+#define RIGHT_CTRL_PRESSED 0x0004
+#define LEFT_CTRL_PRESSED 0x0008
+#define SHIFT_PRESSED 0x0010
+#define ENHANCED_KEY 0x0100
+
 typedef struct _KEY_EVENT_RECORD {
     BOOL bKeyDown;
     WORD wRepeatCount;

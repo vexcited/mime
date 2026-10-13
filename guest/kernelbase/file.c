@@ -291,8 +291,15 @@ BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPO
     if (read)
         *read = 0;
     if (KbIsPseudoHandle(file)) {
-        if (file == KB_CONSOLE_INPUT || file == KB_NULL_DEVICE)
+        if (file == KB_NULL_DEVICE)
             return TRUE;
+        if (file == KB_CONSOLE_INPUT) {
+            DWORD got = 0;
+            BOOL ok = KbConsoleRead(file, buffer, length, &got);
+            if (read)
+                *read = got;
+            return ok;
+        }
         KbSetError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
@@ -645,8 +652,9 @@ BOOL WINAPI FlushFileBuffers(HANDLE file)
 
 DWORD WINAPI GetFileType(HANDLE file)
 {
+    /* a standard handle redirected to a pipe or a file on the host is a pipe to the program. */
     if (KbIsPseudoHandle(file))
-        return FILE_TYPE_CHAR;
+        return KbConsoleIsRedirected(file) ? FILE_TYPE_PIPE : FILE_TYPE_CHAR;
     if (file == INVALID_HANDLE_VALUE || !file) {
         KbSetError(ERROR_INVALID_HANDLE);
         return FILE_TYPE_UNKNOWN;

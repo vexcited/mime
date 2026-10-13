@@ -312,13 +312,32 @@ typedef struct MimeNetInterface {
 enum {
     MIME_CTRL_RUN = 1,
     MIME_CTRL_SHUTDOWN = 2,
+    MIME_CTRL_CONSOLE_INPUT = 3, /* MimeCtrlConsole: bytes typed or piped in, none for end of file */
+    MIME_CTRL_CONSOLE_EVENT = 4, /* MimeCtrlConsole: value is CTRL_C_EVENT, CTRL_BREAK_EVENT or CTRL_CLOSE_EVENT */
+    MIME_CTRL_CONSOLE_SIZE = 5,  /* MimeCtrlConsole: value is columns | rows << 16 */
 
     MIME_EVT_READY = 100,
-    MIME_EVT_PROCESS_STARTED = 101,
+    MIME_EVT_PROCESS_STARTED = 101, /* MimeEvtProcess: status is the image subsystem */
     MIME_EVT_PROCESS_EXIT = 102,
     MIME_EVT_RUN_FAILED = 103,
     MIME_EVT_DEBUG_OUTPUT = 104,
+    MIME_EVT_CONSOLE_OUTPUT = 105, /* MimeCtrlConsole: value is 1 for stdout, 2 for stderr */
+    MIME_EVT_CONSOLE_MODE = 106,   /* MimeCtrlConsole: value is the console input mode */
+    MIME_EVT_CONSOLE_READ = 107,   /* MimeCtrlConsole: value is input bytes the console took, to send more */
 };
+
+enum {
+    MIME_RUN_TTY_INPUT = 1u << 0,  /* the terminal is the input, not a pipe or file */
+    MIME_RUN_TTY_OUTPUT = 1u << 1, /* and the standard output */
+    MIME_RUN_TTY_ERROR = 1u << 2,  /* and the standard error */
+};
+
+/* subsystems MIME_EVT_PROCESS_STARTED reports, as in the image header. */
+#define MIME_SUBSYSTEM_GUI 2
+#define MIME_SUBSYSTEM_CUI 3
+
+/* the guest console takes at most this much unread input. */
+#define MIME_CONSOLE_INPUT_WINDOW 65536
 
 typedef struct MimeCtrlHeader {
     uint32_t type;
@@ -331,7 +350,9 @@ typedef struct MimeCtrlRun {
     uint32_t image_chars;  /* dos path of the image, e.g. Z:\Users\me\a.exe */
     uint32_t cmdline_chars;
     uint32_t cwd_chars;
-    uint32_t flags;
+    uint32_t flags;        /* MIME_RUN_... */
+    uint32_t console_size; /* columns | rows << 16 of the terminal, 0 when unknown */
+    uint32_t pad;
     /* uint16_t image[image_chars], cmdline[cmdline_chars], cwd[cwd_chars] */
 } MimeCtrlRun;
 
@@ -349,6 +370,14 @@ typedef struct MimeEvtDebugOutput {
     uint32_t length; /* utf-8 bytes */
     /* char text[length] */
 } MimeEvtDebugOutput;
+
+typedef struct MimeCtrlConsole {
+    MimeCtrlHeader header;
+    uint64_t request_id;
+    uint32_t value;
+    uint32_t length;
+    /* uint8_t data[length] */
+} MimeCtrlConsole;
 
 #define MIME_CTRL_MAX_MESSAGE 8192
 

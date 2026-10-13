@@ -16,6 +16,7 @@ static volatile LONG g_irq_bits;
 static UCHAR g_recv_buffer[MIME_CTRL_MAX_MESSAGE] __attribute__((aligned(16)));
 static UCHAR g_send_buffer[MIME_CTRL_MAX_MESSAGE] __attribute__((aligned(16)));
 static BOOLEAN g_ready;
+static FAST_MUTEX g_console_lock;
 
 /* the buffers live in the kernel image, which is physically contiguous. */
 static void send_message(const void *message, ULONG size)
@@ -58,6 +59,30 @@ void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length)
         text += n;
         length -= n;
     }
+}
+
+/* console output and notices for the terminal of a run, split to fit the channel. */
+void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data, ULONG length)
+{
+    static UCHAR buffer[MIME_CTRL_MAX_MESSAGE];
+    ExAcquireFastMutex(&g_console_lock);
+    MimeCtrlConsole *evt = (MimeCtrlConsole *)buffer;
+    const UCHAR *p = data;
+    do {
+        ULONG n = length;
+        if (n > sizeof(buffer) - sizeof(*evt))
+            n = sizeof(buffer) - sizeof(*evt);
+        evt->header.type = type;
+        evt->header.size = (uint32_t)(sizeof(*evt) + n);
+        evt->request_id = request;
+        evt->value = value;
+        evt->length = n;
+        memcpy(evt + 1, p, n);
+        send_message(evt, evt->header.size);
+        p += n;
+        length -= n;
+    } while (length);
+    ExReleaseFastMutex(&g_console_lock);
 }
 
 void MimeSessionProcessExited(PEPROCESS process)
@@ -103,14 +128,23 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
     UNICODE_STRING cwd = {(USHORT)(run->cwd_chars * sizeof(WCHAR)), (USHORT)(run->cwd_chars * sizeof(WCHAR)),
                           (PWSTR)(text + run->image_chars + run->cmdline_chars)};
     KiLogPrintf("run request %llu: %wZ", run->request_id, &image);
+    /* the terminal of the run is a console, which a console program is attached to from the start. */
+    MIME_CONSOLE *console = ConsoleCreate(run->request_id, run->flags, run->console_size);
+    if (!console) {
+        send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)STATUS_INSUFFICIENT_RESOURCES, 0);
+        return;
+    }
     PEPROCESS process;
-    NTSTATUS status = PsCreateUserProcess(&image, &cmdline, run->cwd_chars ? &cwd : NULL, run->request_id, &process);
+    NTSTATUS status =
+        PsCreateUserProcess(&image, &cmdline, run->cwd_chars ? &cwd : NULL, run->request_id, console, &process);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("cannot start %wZ: %08x", &image, status);
+        ConsoleDereference(console);
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)status, 0);
         return;
     }
-    send_process_event(MIME_EVT_PROCESS_STARTED, run->request_id, 0, (ULONG)(ULONG_PTR)process->UniqueProcessId);
+    send_process_event(MIME_EVT_PROCESS_STARTED, run->request_id, process->ImageSection->Image.Subsystem,
+                       (ULONG)(ULONG_PTR)process->UniqueProcessId);
     ObDereferenceObject(process);
 }
 
@@ -132,6 +166,7 @@ static void shutdown_machine(void)
 void MiSessionInitialize(void)
 {
     KeInitializeEvent(&g_ctrl_event, SynchronizationEvent, FALSE);
+    ExInitializeFastMutex(&g_console_lock);
     KeInitializeDpc(&g_irq_dpc, irq_dpc, NULL);
     g_ready = TRUE;
 
@@ -157,6 +192,20 @@ void MiSessionInitialize(void)
                 if (length >= sizeof(MimeCtrlRun))
                     handle_run((MimeCtrlRun *)message, (ULONG)length);
                 break;
+            case MIME_CTRL_CONSOLE_INPUT:
+            case MIME_CTRL_CONSOLE_EVENT:
+            case MIME_CTRL_CONSOLE_SIZE: {
+                MimeCtrlConsole *c = (MimeCtrlConsole *)message;
+                if (length < sizeof(*c) || sizeof(*c) + c->length > length)
+                    break;
+                if (header->type == MIME_CTRL_CONSOLE_INPUT)
+                    ConsoleHostInput(c->request_id, (const UCHAR *)(c + 1), c->length);
+                else if (header->type == MIME_CTRL_CONSOLE_EVENT)
+                    ConsoleHostEvent(c->request_id, c->value);
+                else
+                    ConsoleHostSize(c->request_id, c->value);
+                break;
+            }
             case MIME_CTRL_SHUTDOWN:
                 shutdown_machine();
             default:

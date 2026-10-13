@@ -21,10 +21,17 @@
 
 #define MAX_RUNS 256
 
+/*
+ * a `mime run` connection. its client thread owns the descriptor and reads
+ * the terminal's input and signals from it until the client hangs up;
+ * guest events write to it until the run is finished.
+ */
 typedef struct PendingRun {
     bool used;
+    bool finished; /* the exit or an error was sent */
     uint64_t request_id;
     int fd;
+    uint32_t in_flight; /* console input sent and not read by the guest yet */
 } PendingRun;
 
 static MimeVm g_vm;
@@ -34,6 +41,7 @@ static uint64_t g_start_ns;
 static uint64_t g_next_request = 1;
 static pthread_mutex_t g_runs_lock = PTHREAD_MUTEX_INITIALIZER;
 static PendingRun g_runs[MAX_RUNS];
+static pthread_cond_t g_credit = PTHREAD_COND_INITIALIZER; /* in_flight went down */
 static int g_stop_fds[16];
 static int g_stop_count;
 
@@ -45,17 +53,24 @@ static void cleanup_files(void)
     }
 }
 
-static void finish_run(uint64_t request_id, uint32_t type, const void *payload, uint32_t size)
+static PendingRun *find_run(uint64_t request_id)
+{
+    for (int i = 0; i < MAX_RUNS; i++)
+        if (g_runs[i].used && g_runs[i].request_id == request_id)
+            return &g_runs[i];
+    return NULL;
+}
+
+/* sends to the client of a run; an exit or an error finishes it. */
+static void notify_run(uint64_t request_id, uint32_t type, const void *payload, uint32_t size)
 {
     pthread_mutex_lock(&g_runs_lock);
-    for (int i = 0; i < MAX_RUNS; i++) {
-        if (g_runs[i].used && g_runs[i].request_id == request_id) {
-            mime_ipc_send(g_runs[i].fd, type, payload, size);
-            if (type != MIME_IPC_OUTPUT) {
-                close(g_runs[i].fd);
-                g_runs[i].used = false;
-            }
-            break;
+    PendingRun *r = find_run(request_id);
+    if (r && !r->finished) {
+        mime_ipc_send(r->fd, type, payload, size);
+        if (type == MIME_IPC_EXIT || type == MIME_IPC_ERROR) {
+            r->finished = true;
+            pthread_cond_broadcast(&g_credit);
         }
     }
     pthread_mutex_unlock(&g_runs_lock);
@@ -85,13 +100,35 @@ void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg)
     case MIME_EVT_PROCESS_STARTED: {
         const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
         mime_info("request %llu started as process %u", (unsigned long long)p->request_id, p->process_id);
+        uint32_t subsystem = p->status;
+        notify_run(p->request_id, MIME_IPC_STARTED, &subsystem, sizeof(subsystem));
+        break;
+    }
+    case MIME_EVT_CONSOLE_OUTPUT:
+    case MIME_EVT_CONSOLE_MODE:
+    case MIME_EVT_CONSOLE_READ: {
+        const MimeCtrlConsole *c = (const MimeCtrlConsole *)msg;
+        if (msg->size < sizeof(*c) || sizeof(*c) + c->length > msg->size)
+            break;
+        if (msg->type == MIME_EVT_CONSOLE_OUTPUT) {
+            notify_run(c->request_id, c->value == 2 ? MIME_IPC_STDERR : MIME_IPC_OUTPUT, c + 1, c->length);
+        } else if (msg->type == MIME_EVT_CONSOLE_MODE) {
+            notify_run(c->request_id, MIME_IPC_CONSOLE_MODE, &c->value, sizeof(c->value));
+        } else {
+            pthread_mutex_lock(&g_runs_lock);
+            PendingRun *r = find_run(c->request_id);
+            if (r)
+                r->in_flight -= MIME_MIN(r->in_flight, c->value);
+            pthread_cond_broadcast(&g_credit);
+            pthread_mutex_unlock(&g_runs_lock);
+        }
         break;
     }
     case MIME_EVT_PROCESS_EXIT: {
         const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
         mime_info("process %u exited with code %u", p->process_id, p->status);
         int32_t code = (int32_t)p->status;
-        finish_run(p->request_id, MIME_IPC_EXIT, &code, sizeof(code));
+        notify_run(p->request_id, MIME_IPC_EXIT, &code, sizeof(code));
         break;
     }
     case MIME_EVT_RUN_FAILED: {
@@ -99,7 +136,7 @@ void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg)
         char text[160];
         snprintf(text, sizeof(text), "%s (status 0x%08X)", status_text(p->status), p->status);
         mime_warn("request %llu failed: %s", (unsigned long long)p->request_id, text);
-        finish_run(p->request_id, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+        notify_run(p->request_id, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
         break;
     }
     case MIME_EVT_DEBUG_OUTPUT: {
@@ -109,7 +146,7 @@ void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg)
         const char *text = (const char *)(d + 1);
         mime_info("debug output [pid %u]: %.*s", d->process_id, (int)d->length, text);
         if (d->request_id)
-            finish_run(d->request_id, MIME_IPC_OUTPUT, text, d->length);
+            notify_run(d->request_id, MIME_IPC_DEBUG, text, d->length);
         break;
     }
     default:
@@ -122,13 +159,15 @@ void mime_daemon_guest_halted(MimeVm *vm, int exit_code)
 {
     pthread_mutex_lock(&g_runs_lock);
     for (int i = 0; i < MAX_RUNS; i++) {
-        if (g_runs[i].used) {
+        if (g_runs[i].used && !g_runs[i].finished) {
             const char *text = "the machine stopped";
             mime_ipc_send(g_runs[i].fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
-            close(g_runs[i].fd);
-            g_runs[i].used = false;
+            g_runs[i].finished = true;
+            /* wakes the client thread, which closes the connection. */
+            shutdown(g_runs[i].fd, SHUT_RDWR);
         }
     }
+    pthread_cond_broadcast(&g_credit);
     for (int i = 0; i < g_stop_count; i++) {
         mime_ipc_send(g_stop_fds[i], MIME_IPC_OK, NULL, 0);
         close(g_stop_fds[i]);
@@ -184,10 +223,19 @@ static void append_arg(char *cmdline, size_t size, const char *arg)
     cmdline[n] = 0;
 }
 
-static void handle_run(int fd, char *payload, uint32_t size)
+/* starts a run; returns its request id, or 0 after answering with an error and closing. */
+static uint64_t handle_run(int fd, char *payload, uint32_t size)
 {
     char *args[256];
     int argc = 0;
+    if (size < sizeof(MimeIpcRun) + 1) {
+        close(fd);
+        return 0;
+    }
+    MimeIpcRun header;
+    memcpy(&header, payload, sizeof(header));
+    payload += sizeof(header);
+    size -= sizeof(header);
     char *cwd = payload;
     char *p = payload + strlen(payload) + 1;
     while (p < payload + size && argc < 256) {
@@ -198,7 +246,7 @@ static void handle_run(int fd, char *payload, uint32_t size)
         const char *text = "no program given";
         mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
         close(fd);
-        return;
+        return 0;
     }
 
     char image[MIME_PATH_MAX], guest_cwd[MIME_PATH_MAX];
@@ -217,7 +265,7 @@ static void handle_run(int fd, char *payload, uint32_t size)
             snprintf(text, sizeof(text), "%s: %s", args[0], strerror(errno));
             mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
             close(fd);
-            return;
+            return 0;
         }
         host_to_guest_path(resolved, image, sizeof(image));
         host_to_guest_path(cwd, guest_cwd, sizeof(guest_cwd));
@@ -237,7 +285,7 @@ static void handle_run(int fd, char *payload, uint32_t size)
         const char *text = "command line too long";
         mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
         close(fd);
-        return;
+        return 0;
     }
     uint8_t *buf = mime_xcalloc(1, msg_size);
     MimeCtrlRun *run = (MimeCtrlRun *)buf;
@@ -246,6 +294,8 @@ static void handle_run(int fd, char *payload, uint32_t size)
     run->image_chars = n_image;
     run->cmdline_chars = n_cmd;
     run->cwd_chars = n_cwd;
+    run->flags = header.flags & (MIME_RUN_TTY_INPUT | MIME_RUN_TTY_OUTPUT | MIME_RUN_TTY_ERROR);
+    run->console_size = header.console_size;
     uint16_t *strings = (uint16_t *)(run + 1);
     memcpy(strings, w_image, n_image * 2);
     memcpy(strings + n_image, w_cmdline, n_cmd * 2);
@@ -265,16 +315,79 @@ static void handle_run(int fd, char *payload, uint32_t size)
         const char *text = "too many running programs";
         mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
         close(fd);
-        return;
+        return 0;
     }
     run->request_id = g_next_request++;
-    g_runs[slot] = (PendingRun){true, run->request_id, fd};
+    g_runs[slot] = (PendingRun){.used = true, .request_id = run->request_id, .fd = fd};
     pthread_mutex_unlock(&g_runs_lock);
 
     mime_info("run request %llu: %s (cwd %s)", (unsigned long long)run->request_id, cmdline, guest_cwd);
+    uint64_t id = run->request_id;
     mime_vm_queue_ctrl(&g_vm, buf, msg_size);
     free(buf);
+    return id;
 }
+
+static void queue_console(uint32_t type, uint64_t request, uint32_t value, const void *data, uint32_t length)
+{
+    uint8_t buf[sizeof(MimeCtrlConsole) + 4096];
+    MimeCtrlConsole *c = (MimeCtrlConsole *)buf;
+    c->header.type = type;
+    c->header.size = (uint32_t)(sizeof(*c) + length);
+    c->request_id = request;
+    c->value = value;
+    c->length = length;
+    if (length)
+        memcpy(c + 1, data, length);
+    mime_vm_queue_ctrl(&g_vm, buf, c->header.size);
+}
+
+/*
+ * relays the terminal of a run to its console until the client hangs up:
+ * input as the guest takes it, ctrl events and size changes. the hangup
+ * closes the console, which the guest's programs see as CTRL_CLOSE_EVENT.
+ */
+static void serve_run(int fd, uint64_t request)
+{
+    MimeIpcHeader h;
+    void *payload;
+    while (mime_ipc_recv(fd, &h, &payload)) {
+        const uint8_t *data = payload;
+        if (h.type == MIME_IPC_INPUT) {
+            uint32_t off = 0;
+            do {
+                uint32_t n = MIME_MIN(h.size - off, 4096u);
+                pthread_mutex_lock(&g_runs_lock);
+                PendingRun *r = find_run(request);
+                while (r && !r->finished && r->in_flight + n > MIME_CONSOLE_INPUT_WINDOW)
+                    pthread_cond_wait(&g_credit, &g_runs_lock);
+                bool live = r && !r->finished;
+                if (live)
+                    r->in_flight += n;
+                pthread_mutex_unlock(&g_runs_lock);
+                if (!live)
+                    break;
+                queue_console(MIME_CTRL_CONSOLE_INPUT, request, 0, data + off, n);
+                off += n;
+            } while (off < h.size);
+        } else if ((h.type == MIME_IPC_SIGNAL || h.type == MIME_IPC_RESIZE) && h.size >= sizeof(uint32_t)) {
+            uint32_t value;
+            memcpy(&value, data, sizeof(value));
+            queue_console(h.type == MIME_IPC_SIGNAL ? MIME_CTRL_CONSOLE_EVENT : MIME_CTRL_CONSOLE_SIZE, request, value,
+                          NULL, 0);
+        }
+        free(payload);
+    }
+    queue_console(MIME_CTRL_CONSOLE_EVENT, request, 2 /* CTRL_CLOSE_EVENT */, NULL, 0);
+    pthread_mutex_lock(&g_runs_lock);
+    PendingRun *r = find_run(request);
+    if (r)
+        r->used = false;
+    pthread_cond_broadcast(&g_credit);
+    pthread_mutex_unlock(&g_runs_lock);
+    close(fd);
+}
+
 
 static void *client_thread(void *arg)
 {
@@ -305,7 +418,11 @@ static void *client_thread(void *arg)
             mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
             close(fd);
         } else {
-            handle_run(fd, payload, h.size);
+            uint64_t request = handle_run(fd, payload, h.size);
+            free(payload);
+            payload = NULL;
+            if (request)
+                serve_run(fd, request);
         }
         break;
     case MIME_IPC_STOP: {

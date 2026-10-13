@@ -690,6 +690,10 @@ typedef struct _EPROCESS {
     PVOID Win32Process;
     PVOID KernelCallbackTable;
     ULONG64 MimeRequestId; /* host run request that created the process */
+    struct _MIME_CONSOLE *Console; /* the console the process is attached to, io/console.c */
+    PVOID ConsoleCtrlRoutine;      /* kernelbase's, started on a new thread for each ctrl event */
+    ULONG ConsoleGroup;            /* process group of GenerateConsoleCtrlEvent */
+    PKEVENT ConsoleInputEvent;     /* kernelbase's, set while console input waits */
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
@@ -716,8 +720,10 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
                          PETHREAD *out);
 NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out);
+typedef struct _MIME_CONSOLE MIME_CONSOLE;
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING command_line,
-                             PCUNICODE_STRING current_directory, ULONG64 request_id, PEPROCESS *out);
+                             PCUNICODE_STRING current_directory, ULONG64 request_id, MIME_CONSOLE *console,
+                             PEPROCESS *out);
 DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
 PEPROCESS PspLookupProcess(HANDLE pid);
@@ -815,6 +821,18 @@ void MiSessionInitialize(void);
 void MimeSessionInterrupt(ULONG bits);
 void MimeSessionProcessExited(PEPROCESS process);
 void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length);
+void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data, ULONG length);
+
+/* the console driver, io/console.c. */
+void IopInitializeConsole(void);
+MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size);
+void ConsoleDereference(MIME_CONSOLE *console);
+NTSTATUS ConsoleAttach(PEPROCESS process, MIME_CONSOLE *console);
+void ConsoleDetach(PEPROCESS process);
+void ConsoleProcessExit(PEPROCESS process);
+void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length);
+void ConsoleHostEvent(ULONG64 request, ULONG event);
+void ConsoleHostSize(ULONG64 request, ULONG size);
 extern KEVENT MimeInputReadyEvent;
 extern KEVENT MimeGpuEvent;
 

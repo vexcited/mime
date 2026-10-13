@@ -93,10 +93,13 @@ FORCEINLINE BOOL KbIsConsoleInput(HANDLE h)
 
 BOOL KbConsoleWrite(HANDLE console, LPCWSTR text, DWORD chars);
 BOOL KbConsoleWriteBytes(HANDLE console, const void *bytes, DWORD length);
+BOOL KbConsoleRead(HANDLE console, LPVOID buffer, DWORD length, LPDWORD read);
+HANDLE KbConsoleWaitHandle(HANDLE console);
+BOOL KbConsoleIsRedirected(HANDLE console);
 void KbInitializeConsole(void);
 HANDLE KbStdHandleOrPseudo(DWORD which);
 
-/* text output through NtDisplayString, chunked for its limits. */
+/* debug output through NtDisplayString, chunked for its limits. */
 void KbDisplayText(LPCWSTR text, SIZE_T chars);
 
 /* process wide state set up by DllMain. */

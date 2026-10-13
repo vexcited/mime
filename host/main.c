@@ -10,7 +10,8 @@ static void usage(void)
     printf("usage:\n");
     printf("  mime setup [windows.iso] [--image N]   import assets from a windows iso\n");
     printf("  mime up                                start the machine\n");
-    printf("  mime run <program.exe> [args...]       run a program, host or C:\\ paths\n");
+    printf("  mime run [--wait] <program.exe> [args] run a program, host or C:\\ paths; --wait waits for\n");
+    printf("                                         a gui program instead of returning like cmd.exe\n");
     printf("  mime down                              stop the machine\n");
     printf("  mime status                            show machine state\n");
 }

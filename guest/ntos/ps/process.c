@@ -233,6 +233,7 @@ void PspProcessExit(PEPROCESS process)
     MmDeleteAddressSpace(&process->AddressSpace);
     process->Exited = TRUE;
     KeQuerySystemTime((PLARGE_INTEGER)&process->ExitTime);
+    ConsoleProcessExit(process);
     MimeSessionProcessExited(process);
     ULONG64 s = KiAcquireDispatcherLock();
     process->Pcb.Header.SignalState = 1;

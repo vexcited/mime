@@ -5,13 +5,18 @@
 #include "ipc.h"
 #include "mime_cli.h"
 
+#include <mime/abi.h>
+
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -195,10 +200,91 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
     return 0;
 }
 
+/* ------------------------------------------------------------------ run */
+
+/*
+ * `mime run` is the console of the program, as a windows terminal is: its
+ * output and input, ctrl+c and ctrl+break as ctrl events, and its going
+ * away as the console closing. a gui program has no console, so like
+ * cmd.exe the command returns as soon as it started, unless --wait.
+ */
+
+#define ENABLE_PROCESSED_INPUT 0x1
+#define ENABLE_LINE_INPUT 0x2
+#define ENABLE_ECHO_INPUT 0x4
+
+static int g_signal_pipe[2] = {-1, -1};
+static struct termios g_saved_termios;
+static bool g_termios_saved;
+
+static void on_run_signal(int sig)
+{
+    int saved = errno;
+    unsigned char b = (unsigned char)sig;
+    if (write(g_signal_pipe[1], &b, 1) < 0) {
+    }
+    errno = saved;
+}
+
+static void restore_terminal(void)
+{
+    if (g_termios_saved)
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
+}
+
+/* the terminal does the line editing, echo and ctrl+c a windows console's input mode asks for. */
+static void apply_console_mode(uint32_t mode)
+{
+    if (!g_termios_saved)
+        return;
+    struct termios t = g_saved_termios;
+    if (mode & ENABLE_LINE_INPUT) {
+        t.c_lflag |= ICANON;
+        t.c_lflag = (mode & ENABLE_ECHO_INPUT) ? t.c_lflag | ECHO : t.c_lflag & ~(tcflag_t)ECHO;
+    } else {
+        /* raw keys: enter arrives as \r, as a windows console reports it. */
+        t.c_lflag &= ~(tcflag_t)(ICANON | ECHO);
+        t.c_iflag &= ~(tcflag_t)(ICRNL | IXON);
+        t.c_cc[VMIN] = 1;
+        t.c_cc[VTIME] = 0;
+    }
+    t.c_lflag = (mode & ENABLE_PROCESSED_INPUT) ? t.c_lflag | ISIG : t.c_lflag & ~(tcflag_t)ISIG;
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
+}
+
+static uint32_t terminal_size(void)
+{
+    struct winsize ws;
+    for (int fd = STDOUT_FILENO; fd >= STDIN_FILENO; fd--)
+        if (ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col && ws.ws_row)
+            return (uint32_t)ws.ws_col | (uint32_t)ws.ws_row << 16;
+    return 0;
+}
+
+static void write_all(int fd, const void *data, size_t size)
+{
+    const char *p = data;
+    while (size) {
+        ssize_t n = write(fd, p, size);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return;
+        p += n;
+        size -= (size_t)n;
+    }
+}
+
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
 {
+    bool wait_gui = false;
+    while (argc > 0 && strcmp(argv[0], "--wait") == 0) {
+        wait_gui = true;
+        argc--;
+        argv++;
+    }
     if (argc < 1) {
-        mime_error("usage: mime run <program.exe> [args...]");
+        mime_error("usage: mime run [--wait] <program.exe> [args...]");
         return 2;
     }
     MimeIpcStatus status;
@@ -211,12 +297,23 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     if (!getcwd(cwd, sizeof(cwd)))
         mime_strlcpy(cwd, "/", sizeof(cwd));
 
-    size_t total = strlen(cwd) + 1;
+    MimeIpcRun header = {0};
+    if (isatty(STDIN_FILENO))
+        header.flags |= MIME_RUN_TTY_INPUT;
+    if (isatty(STDOUT_FILENO))
+        header.flags |= MIME_RUN_TTY_OUTPUT;
+    if (isatty(STDERR_FILENO))
+        header.flags |= MIME_RUN_TTY_ERROR;
+    header.console_size = terminal_size();
+
+    size_t total = sizeof(header) + strlen(cwd) + 1;
     for (int i = 0; i < argc; i++)
         total += strlen(argv[i]) + 1;
     char *payload = mime_xmalloc(total);
     size_t off = 0;
-    memcpy(payload, cwd, strlen(cwd) + 1);
+    memcpy(payload, &header, sizeof(header));
+    off += sizeof(header);
+    memcpy(payload + off, cwd, strlen(cwd) + 1);
     off += strlen(cwd) + 1;
     for (int i = 0; i < argc; i++) {
         memcpy(payload + off, argv[i], strlen(argv[i]) + 1);
@@ -231,15 +328,113 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     }
     free(payload);
 
+    if (pipe(g_signal_pipe) != 0) {
+        mime_error("cannot create a pipe: %s", strerror(errno));
+        close(fd);
+        return 1;
+    }
+    fcntl(g_signal_pipe[0], F_SETFD, FD_CLOEXEC);
+    fcntl(g_signal_pipe[1], F_SETFD, FD_CLOEXEC);
+    fcntl(g_signal_pipe[0], F_SETFL, O_NONBLOCK);
+    fcntl(g_signal_pipe[1], F_SETFL, O_NONBLOCK);
+    struct sigaction sa = {0};
+    sa.sa_handler = on_run_signal;
+    sigemptyset(&sa.sa_mask);
+    int signals[] = {SIGINT, SIGQUIT, SIGHUP, SIGTERM, SIGWINCH};
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(signals); i++)
+        sigaction(signals[i], &sa, NULL);
+    signal(SIGPIPE, SIG_IGN);
+
     int exit_code = 1;
-    MimeIpcHeader h;
-    void *msg;
-    bool done = false;
-    while (!done && mime_ipc_recv(fd, &h, &msg)) {
+    bool done = false, console = false, input_open = false;
+    while (!done) {
+        struct pollfd fds[3] = {{fd, POLLIN, 0}, {g_signal_pipe[0], POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
+        int n = poll(fds, input_open ? 3 : 2, -1);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (fds[1].revents & POLLIN) {
+            unsigned char sig;
+            while (read(g_signal_pipe[0], &sig, 1) == 1) {
+                uint32_t value;
+                if (sig == SIGINT || sig == SIGQUIT) {
+                    if (!console) {
+                        /* a gui program is no part of the console: the wait ends, it keeps running. */
+                        done = true;
+                        exit_code = 128 + sig;
+                        break;
+                    }
+                    value = sig == SIGINT ? 0 : 1; /* CTRL_C_EVENT, CTRL_BREAK_EVENT */
+                    mime_ipc_send(fd, MIME_IPC_SIGNAL, &value, sizeof(value));
+                } else if (sig == SIGWINCH) {
+                    value = terminal_size();
+                    if (value)
+                        mime_ipc_send(fd, MIME_IPC_RESIZE, &value, sizeof(value));
+                } else {
+                    /* the terminal goes away: hanging up closes the console. */
+                    restore_terminal();
+                    close(fd);
+                    return 128 + sig;
+                }
+            }
+            if (done)
+                break;
+        }
+        if (input_open && (fds[2].revents & (POLLIN | POLLHUP | POLLERR))) {
+            char buf[4096];
+            ssize_t got = read(STDIN_FILENO, buf, sizeof(buf));
+            if (got < 0 && errno == EINTR)
+                continue;
+            mime_ipc_send(fd, MIME_IPC_INPUT, buf, got > 0 ? (uint32_t)got : 0);
+            /* a terminal reads again after an end of file, a pipe or file does not. */
+            if (got <= 0 && !(header.flags & MIME_RUN_TTY_INPUT))
+                input_open = false;
+            if (got < 0)
+                input_open = false;
+        }
+        if (!(fds[0].revents & (POLLIN | POLLHUP | POLLERR)))
+            continue;
+        MimeIpcHeader h;
+        void *msg;
+        if (!mime_ipc_recv(fd, &h, &msg)) {
+            mime_error("lost connection to the machine");
+            break;
+        }
         switch (h.type) {
         case MIME_IPC_OUTPUT:
-            fwrite(msg, 1, h.size, stdout);
-            fflush(stdout);
+            write_all(STDOUT_FILENO, msg, h.size);
+            break;
+        case MIME_IPC_STDERR:
+        case MIME_IPC_DEBUG:
+            write_all(STDERR_FILENO, msg, h.size);
+            break;
+        case MIME_IPC_STARTED: {
+            uint32_t subsystem = 0;
+            if (h.size >= sizeof(subsystem))
+                memcpy(&subsystem, msg, sizeof(subsystem));
+            console = subsystem == MIME_SUBSYSTEM_CUI;
+            if (!console && !wait_gui) {
+                exit_code = 0;
+                done = true;
+                break;
+            }
+            if (console) {
+                input_open = true;
+                if (header.flags & MIME_RUN_TTY_INPUT) {
+                    g_termios_saved = tcgetattr(STDIN_FILENO, &g_saved_termios) == 0;
+                    atexit(restore_terminal);
+                }
+            }
+            break;
+        }
+        case MIME_IPC_CONSOLE_MODE:
+            if (h.size >= sizeof(uint32_t)) {
+                uint32_t mode;
+                memcpy(&mode, msg, sizeof(mode));
+                apply_console_mode(mode);
+            }
             break;
         case MIME_IPC_ERROR:
             mime_error("%s", (char *)msg);
@@ -255,8 +450,7 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
         }
         free(msg);
     }
-    if (!done)
-        mime_error("lost connection to the machine");
+    restore_terminal();
     close(fd);
     return exit_code;
 }

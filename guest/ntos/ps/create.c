@@ -146,7 +146,7 @@ static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
 }
 
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
-                             PEPROCESS *out)
+                             MIME_CONSOLE *console, PEPROCESS *out)
 {
     UNICODE_STRING nt_path;
     NTSTATUS status = dos_to_nt(image, &nt_path);
@@ -182,6 +182,9 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     process->SystemDll = system_dll;
     process->Machine = section->Image.Machine;
     process->MimeRequestId = request_id;
+    /* a gui program has no console, a console program shares the one it is given. */
+    if (console && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
+        ConsoleAttach(process, console);
     SIZE_T n = image->Length / sizeof(WCHAR);
     if (n >= MIME_IMAGE_NAME_CHARS)
         n = MIME_IMAGE_NAME_CHARS - 1;

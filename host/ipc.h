@@ -8,16 +8,28 @@
 #include "mime_host.h"
 
 enum {
-    MIME_IPC_RUN = 1,    /* cwd\0 then argc strings\0 */
+    MIME_IPC_RUN = 1, /* MimeIpcRun, cwd\0 then argc strings\0 */
     MIME_IPC_STOP = 2,
     MIME_IPC_STATUS = 3,
+    MIME_IPC_INPUT = 4,  /* bytes for the console of the run, none at end of file */
+    MIME_IPC_SIGNAL = 5, /* uint32 ctrl event: CTRL_C_EVENT, CTRL_BREAK_EVENT */
+    MIME_IPC_RESIZE = 6, /* uint32 columns | rows << 16 */
 
     MIME_IPC_OK = 100,
     MIME_IPC_ERROR = 101,  /* utf-8 message */
-    MIME_IPC_OUTPUT = 102, /* utf-8 text printed by the program */
+    MIME_IPC_OUTPUT = 102, /* bytes the program wrote to its standard output */
     MIME_IPC_EXIT = 103,   /* int32 exit code */
     MIME_IPC_STATUS_REPLY = 104,
+    MIME_IPC_STDERR = 105,       /* bytes the program wrote to its standard error */
+    MIME_IPC_STARTED = 106,      /* uint32 subsystem of the program */
+    MIME_IPC_CONSOLE_MODE = 107, /* uint32 console input mode the terminal follows */
+    MIME_IPC_DEBUG = 108,        /* debug output of the program, utf-8 */
 };
+
+typedef struct MimeIpcRun {
+    uint32_t flags;        /* MIME_RUN_TTY_... */
+    uint32_t console_size; /* columns | rows << 16 */
+} MimeIpcRun;
 
 typedef struct MimeIpcHeader {
     uint32_t type;
