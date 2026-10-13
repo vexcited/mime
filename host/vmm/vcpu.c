@@ -56,6 +56,8 @@ static void dump_exits(MimeVcpu *vcpu)
     for (int i = 0; i < 64; i++)
         if (vcpu->exits_hvc[i])
             mime_error("  exits hypercall %#x: %llu", i, (unsigned long long)vcpu->exits_hvc[i]);
+    mime_error("  lazy memory: rom %llu KiB, %u windows %llu KiB", (unsigned long long)vcpu->vm->rom.filled_bytes >> 10,
+               vcpu->vm->window_count, (unsigned long long)vcpu->vm->window_bytes >> 10);
 }
 
 static void dump_state(MimeVcpu *vcpu, const char *why)
@@ -189,9 +191,13 @@ static bool handle_exception(MimeVcpu *vcpu)
         set_reg(vcpu, HV_REG_PC, get_reg(vcpu, HV_REG_PC) + 4);
         return true;
     case EC_DABT_LOWER:
+        if (mime_fs_lazy_fault(vcpu->vm, exit->exception.physical_address))
+            return true;
         dump_state(vcpu, "guest accessed unmapped physical memory");
         return false;
     case EC_IABT_LOWER:
+        if (mime_fs_lazy_fault(vcpu->vm, exit->exception.physical_address))
+            return true;
         dump_state(vcpu, "guest executed unmapped physical memory");
         return false;
     default: {

@@ -7,10 +7,12 @@
  * pages are private copies. relocated views get private copies of every
  * page with the base relocations applied.
  *
- * images of the system files in the rom are built once and cached. their
- * prototype pages are the rom pages themselves whenever the file page is
- * byte for byte the loaded page, which the 4K file alignment of mime's
- * images makes the common case.
+ * prototype pages are built on first touch from the file's read only
+ * pages, the rom for the system files and the host window for the others
+ * (IoGetFileWindow). a page is the file's own page whenever the file page
+ * is byte for byte the loaded page, which the 4K file alignment of mime's
+ * images makes the common case. pagefile backed pages start as demand
+ * zero. images of the system files are built once and cached.
  */
 #include "../ntos.h"
 
@@ -26,19 +28,22 @@ static void section_delete(PVOID object)
         MmFreeSystemVa(s->SystemVa, s->PageCount);
     }
     if (s->Pages) {
+        /* rom and window pages are not ram and have no pfn. */
         for (ULONG i = 0; i < s->PageCount && !(s->Flags & MI_SECTION_PHYSICAL); i++)
-            if (s->Pages[i] && !HalIsRomPhysical(s->Pages[i]))
+            if (s->Pages[i] && MiGetPfn(s->Pages[i]))
                 MmFreePage(s->Pages[i]);
         ExFreePool(s->Pages);
     }
     if (s->PageProtect)
         ExFreePool(s->PageProtect);
+    IoReleaseFileWindow(s->SourceRef);
     if (s->File)
         ObDereferenceObject(s->File);
     if (s->FileName.Buffer)
         ExFreePool(s->FileName.Buffer);
 }
 
+/* a section whose pages are all absent until built by MiSectionPage. */
 static NTSTATUS alloc_section(ULONG64 size, PSECTION *out)
 {
     PSECTION s;
@@ -53,15 +58,84 @@ static NTSTATUS alloc_section(ULONG64 size, PSECTION *out)
         ObDereferenceObject(s);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    for (ULONG i = 0; i < s->PageCount; i++) {
-        s->Pages[i] = MmAllocatePage();
-        if (!s->Pages[i]) {
-            ObDereferenceObject(s);
-            return STATUS_INSUFFICIENT_RESOURCES;
-        }
-    }
     *out = s;
     return STATUS_SUCCESS;
+}
+
+static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT_HEADERS64 *nt, ULONG page, PUCHAR out);
+
+/* builds prototype page `index`, returning a new ram page or a page of the source. */
+static ULONG64 build_page(PSECTION s, ULONG index)
+{
+    ULONG64 off = (ULONG64)index << PAGE_SHIFT;
+    ULONG64 source_pages = ROUND_TO_PAGES(s->SourceSize); /* the rom and windows pad files with zeros */
+    if (!s->SourcePa || ((s->Flags & SEC_IMAGE) == 0 && off >= s->SourceSize))
+        return MmAllocatePage();
+    const UCHAR *src = HalPhysmap(s->SourcePa);
+    if (!(s->Flags & SEC_IMAGE) && (s->Flags & MI_SECTION_SHARE_SOURCE) && off + PAGE_SIZE <= source_pages)
+        return s->SourcePa + off;
+    ULONG64 pa = MmAllocatePageNoZero();
+    if (!pa)
+        return 0;
+    PUCHAR page = HalPhysmap(pa);
+    if (s->Flags & SEC_IMAGE) {
+        const IMAGE_NT_HEADERS64 *nt = (const void *)(src + ((const IMAGE_DOS_HEADER *)src)->e_lfanew);
+        load_image_page(src, s->SourceSize, nt, index, page);
+        if (off + PAGE_SIZE <= source_pages && memcmp(page, src + off, PAGE_SIZE) == 0) {
+            MmFreePage(pa);
+            return s->SourcePa + off;
+        }
+    } else {
+        ULONG64 n = s->SourceSize - off < PAGE_SIZE ? s->SourceSize - off : PAGE_SIZE;
+        memcpy(page, src + off, n);
+        memset(page + n, 0, PAGE_SIZE - n);
+    }
+    return pa;
+}
+
+/* the prototype page `index` of a section, built on first use. 0 when out of memory. */
+ULONG64 MiSectionPage(PSECTION s, ULONG index)
+{
+    ULONG64 pa = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
+    if (pa)
+        return pa;
+    pa = build_page(s, index);
+    if (!pa)
+        return 0;
+    ULONG64 expected = 0;
+    if (!__atomic_compare_exchange_n(&s->Pages[index], &expected, pa, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (MiGetPfn(pa))
+            MmFreePage(pa);
+        pa = expected;
+    }
+    return pa;
+}
+
+/* the pte of a view page left for the first touch, see MmAccessFault. */
+ULONG64 MiSectionSwPte(ULONG protect)
+{
+    return MM_SWPTE_COMMITTED | MM_SWPTE_SECTION | ((ULONG64)(protect & 0x7FF) << MM_SWPTE_PROT_SHIFT);
+}
+
+/*
+ * the attributes of a view page. the rom and the windows are read only to
+ * the guest, so writable views of their pages copy on write.
+ */
+ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared)
+{
+    ULONG64 attrs = MiProtectToPte(protect, TRUE) | (shared ? MM_PTE_SW_SHARED : 0);
+    if (!MiGetPfn(pa) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        attrs |= MM_PTE_AP_RO | MM_PTE_SW_COW;
+    return attrs;
+}
+
+/* builds every page, for mappings that cannot fault such as system space views. */
+static BOOLEAN commit_all(PSECTION s)
+{
+    for (ULONG i = 0; i < s->PageCount; i++)
+        if (!MiSectionPage(s, i))
+            return FALSE;
+    return TRUE;
 }
 
 /* copies bytes into the section's page array at a byte offset. */
@@ -72,7 +146,7 @@ static void scatter(PSECTION s, ULONG64 offset, const void *data, SIZE_T length)
         ULONG page = (ULONG)(offset >> PAGE_SHIFT);
         ULONG in = (ULONG)(offset & (PAGE_SIZE - 1));
         SIZE_T n = PAGE_SIZE - in < length ? PAGE_SIZE - in : length;
-        if (page >= s->PageCount)
+        if (page >= s->PageCount || !MiSectionPage(s, page))
             return;
         memcpy((PUCHAR)HalPhysmap(s->Pages[page]) + in, src, n);
         src += n;
@@ -229,63 +303,35 @@ static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT
 }
 
 static PSECTION g_rom_images[64];
+static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out);
 
-static NTSTATUS create_rom_image(PFILE_OBJECT file, const MimeRomEntry *rom, PSECTION *out)
+/* an image section built lazily from file data the guest can read in place. takes over `ref`. */
+static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size, PVOID ref, PSECTION *out)
 {
-    ULONG index = (ULONG)(rom - HalRomEntry(0));
-    BOOLEAN cacheable = index < RTL_NUMBER_OF(g_rom_images);
-    if (cacheable) {
-        PSECTION cached = __atomic_load_n(&g_rom_images[index], __ATOMIC_ACQUIRE);
-        if (cached) {
-            ObReferenceObject(cached);
-            *out = cached;
-            return STATUS_SUCCESS;
-        }
-    }
-
-    ULONG64 rom_pa = HalRomPhysical(rom);
-    const UCHAR *data = HalPhysmap(rom_pa);
+    const UCHAR *data = HalPhysmap(pa);
     MI_IMAGE_INFO info;
-    NTSTATUS status = MiParseImageHeaders(data, rom->size, &info);
-    if (!NT_SUCCESS(status))
-        return status;
+    NTSTATUS status = MiParseImageHeaders(data, size, &info);
     const IMAGE_NT_HEADERS64 *nt = (const void *)(data + ((const IMAGE_DOS_HEADER *)data)->e_lfanew);
     const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
-    for (USHORT i = 0; i < nt->FileHeader.NumberOfSections; i++)
-        if ((ULONG64)sec[i].PointerToRawData + sec[i].SizeOfRawData > rom->size)
-            return STATUS_INVALID_IMAGE_FORMAT;
-
-    PSECTION s;
-    status = ObCreateObject(MmSectionType, NULL, KernelMode, sizeof(SECTION), (PVOID *)&s);
-    if (!NT_SUCCESS(status))
+    for (USHORT i = 0; NT_SUCCESS(status) && i < nt->FileHeader.NumberOfSections; i++)
+        if ((ULONG64)sec[i].PointerToRawData + sec[i].SizeOfRawData > size)
+            status = STATUS_INVALID_IMAGE_FORMAT;
+    PSECTION s = NULL;
+    if (NT_SUCCESS(status))
+        status = alloc_section(info.SizeOfImage, &s);
+    if (!NT_SUCCESS(status)) {
+        IoReleaseFileWindow(ref);
         return status;
-    memset(s, 0, sizeof(*s));
+    }
     s->Flags = SEC_IMAGE;
     s->Protect = PAGE_EXECUTE_WRITECOPY;
     s->Image = info;
-    s->Size = info.SizeOfImage;
-    s->PageCount = (ULONG)BYTES_TO_PAGES(info.SizeOfImage);
     s->RelocRva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
     s->RelocSize = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-    s->Pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, (s->PageCount + 1) * sizeof(ULONG64), KI_TAG('M', 'm', 'S', 'p'));
-    PUCHAR scratch = ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, KI_TAG('M', 'm', 'R', 'i'));
-    status = s->Pages && scratch ? image_protections(s, nt) : STATUS_INSUFFICIENT_RESOURCES;
-
-    ULONG64 rom_bytes = (rom->size + PAGE_SIZE - 1) & ~(ULONG64)(PAGE_SIZE - 1); /* the rom pads files with zeros */
-    for (ULONG i = 0; i < s->PageCount && NT_SUCCESS(status); i++) {
-        ULONG64 off = (ULONG64)i << PAGE_SHIFT;
-        load_image_page(data, rom->size, nt, i, scratch);
-        if (off + PAGE_SIZE <= rom_bytes && memcmp(scratch, data + off, PAGE_SIZE) == 0) {
-            s->Pages[i] = rom_pa + off;
-            continue;
-        }
-        s->Pages[i] = MmAllocatePageNoZero();
-        if (!s->Pages[i])
-            status = STATUS_INSUFFICIENT_RESOURCES;
-        else
-            memcpy(HalPhysmap(s->Pages[i]), scratch, PAGE_SIZE);
-    }
-    ExFreePool(scratch);
+    s->SourcePa = pa;
+    s->SourceSize = size;
+    s->SourceRef = ref;
+    status = image_protections(s, nt);
     if (NT_SUCCESS(status))
         status = set_file_name(s, file);
     if (!NT_SUCCESS(status)) {
@@ -294,22 +340,43 @@ static NTSTATUS create_rom_image(PFILE_OBJECT file, const MimeRomEntry *rom, PSE
     }
     ObReferenceObject(file);
     s->File = file;
-    if (cacheable) {
-        PSECTION expected = NULL;
-        ObReferenceObject(s);
-        if (!__atomic_compare_exchange_n(&g_rom_images[index], &expected, s, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
-            ObDereferenceObject(s);
-    }
     *out = s;
     return STATUS_SUCCESS;
 }
 
+static PSECTION g_rom_images[64];
+
 NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
 {
+    ULONG64 pa, size;
+    PVOID ref;
     const MimeRomEntry *rom = IoGetRomFile(file);
-    if (rom)
-        return create_rom_image(file, rom, out);
+    ULONG index = rom ? (ULONG)(rom - HalRomEntry(0)) : RTL_NUMBER_OF(g_rom_images);
+    if (index < RTL_NUMBER_OF(g_rom_images)) {
+        PSECTION cached = __atomic_load_n(&g_rom_images[index], __ATOMIC_ACQUIRE);
+        if (cached) {
+            ObReferenceObject(cached);
+            *out = cached;
+            return STATUS_SUCCESS;
+        }
+    }
+    if (IoGetFileWindow(file, &pa, &size, &ref)) {
+        NTSTATUS status = create_source_image(file, pa, size, ref, out);
+        if (NT_SUCCESS(status) && index < RTL_NUMBER_OF(g_rom_images)) {
+            PSECTION expected = NULL;
+            ObReferenceObject(*out);
+            if (!__atomic_compare_exchange_n(&g_rom_images[index], &expected, *out, FALSE, __ATOMIC_ACQ_REL,
+                                             __ATOMIC_ACQUIRE))
+                ObDereferenceObject(*out);
+        }
+        return status;
+    }
+    return create_copied_image(file, out);
+}
 
+/* files no window covers, such as files opened for writing: the image is read into memory. */
+static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
+{
     PUCHAR headers = ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, KI_TAG('M', 'm', 'H', 'd'));
     if (!headers)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -397,7 +464,16 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
     s->Flags = flags ? flags : SEC_COMMIT;
     s->Protect = protect;
     if (file) {
-        status = copy_file_into(s, file, 0, 0, size);
+        ULONG64 pa, file_size;
+        if (IoGetFileWindow(file, &pa, &file_size, &s->SourceRef)) {
+            s->SourcePa = pa;
+            s->SourceSize = file_size;
+            /* views of a read only section share the file's pages; writable ones get a copy. */
+            if (!(protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+                s->Flags |= MI_SECTION_SHARE_SOURCE;
+        } else {
+            status = copy_file_into(s, file, 0, 0, size);
+        }
         if (NT_SUCCESS(status))
             status = set_file_name(s, file);
         if (!NT_SUCCESS(status)) {
@@ -512,43 +588,37 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
 
     if (image && relocated) {
         for (SIZE_T i = 0; i < pages; i++) {
-            private_pages[i] = MmAllocatePageNoZero();
+            ULONG64 src = MiSectionPage(s, (ULONG)i);
+            private_pages[i] = src ? MmAllocatePageNoZero() : 0;
             if (!private_pages[i]) {
                 status = STATUS_INSUFFICIENT_RESOURCES;
                 break;
             }
-            memcpy(HalPhysmap(private_pages[i]), HalPhysmap(s->Pages[i]), PAGE_SIZE);
+            memcpy(HalPhysmap(private_pages[i]), HalPhysmap(src), PAGE_SIZE);
         }
         if (NT_SUCCESS(status) && s->RelocSize)
             apply_relocations(s, private_pages, va);
     }
 
+    /*
+     * pages the section already holds are mapped now; the others, and the
+     * writable image pages that need a private copy, on first touch.
+     */
     for (SIZE_T i = 0; i < pages && NT_SUCCESS(status); i++) {
         ULONG_PTR pva = va + (i << PAGE_SHIFT);
-        ULONG64 pa;
-        ULONG prot;
-        ULONG64 extra = 0;
-        if (image) {
-            prot = s->PageProtect[i];
-            if (relocated) {
-                pa = private_pages[i];
-            } else if (prot & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) {
-                pa = MmAllocatePageNoZero();
-                if (!pa) {
-                    status = STATUS_INSUFFICIENT_RESOURCES;
-                    break;
-                }
-                memcpy(HalPhysmap(pa), HalPhysmap(s->Pages[i]), PAGE_SIZE);
-            } else {
-                pa = s->Pages[i];
-                extra = MM_PTE_SW_SHARED;
-            }
-        } else {
-            prot = protect;
-            pa = s->Pages[first_page + i];
-            extra = MM_PTE_SW_SHARED;
+        ULONG prot = image ? s->PageProtect[i] : protect;
+        BOOLEAN writable = (prot & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0;
+        ULONG64 pa = relocated ? private_pages[i] : __atomic_load_n(&s->Pages[first_page + i], __ATOMIC_ACQUIRE);
+        if (!pa || (image && !relocated && writable)) {
+            ULONG64 *pte = MiWalk(as->Root, pva, TRUE, 3);
+            if (!pte)
+                status = STATUS_INSUFFICIENT_RESOURCES;
+            else
+                *pte = MiSectionSwPte(prot);
+            continue;
         }
-        if (!MiMapPage(as->Root, pva, pa, MiProtectToPte(prot, TRUE) | extra))
+        ULONG64 attrs = MiSectionPteAttrs(prot, pa, !relocated);
+        if (!MiMapPage(as->Root, pva, pa, attrs))
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
     if (private_pages)
@@ -601,7 +671,8 @@ NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *sec
     NTSTATUS status = MiCreateDataSection(NULL, size, PAGE_READWRITE, SEC_COMMIT, &s);
     if (!NT_SUCCESS(status))
         return status;
-    s->SystemVa = MmMapPagesInSystem(s->Pages, s->PageCount, MM_KERNEL_RW);
+    if (commit_all(s))
+        s->SystemVa = MmMapPagesInSystem(s->Pages, s->PageCount, MM_KERNEL_RW);
     if (!s->SystemVa) {
         ObDereferenceObject(s);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -644,7 +715,7 @@ NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *u
 NTSTATUS NTAPI MmMapViewInSystemSpace(PVOID section, PVOID *base, PSIZE_T size)
 {
     PSECTION s = section;
-    if (!s->SystemVa)
+    if (!s->SystemVa && commit_all(s))
         s->SystemVa = MmMapPagesInSystem(s->Pages, s->PageCount, MM_KERNEL_RW);
     if (!s->SystemVa)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -845,7 +916,7 @@ NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T len
     SIZE_T size;
     memset(&out, 0, sizeof(out));
     if (klass == 0) {
-        out.basic.AllocationAttributes = s->Flags;
+        out.basic.AllocationAttributes = s->Flags & ~(MI_SECTION_PHYSICAL | MI_SECTION_SHARE_SOURCE);
         out.basic.MaximumSize.QuadPart = (LONGLONG)s->Size;
         size = sizeof(out.basic);
     } else if (klass == 1 && (s->Flags & SEC_IMAGE)) {

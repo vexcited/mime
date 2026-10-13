@@ -181,6 +181,10 @@ void NTAPI MmFreeContiguousMemory(PVOID va)
 LARGE_INTEGER NTAPI MmGetPhysicalAddress(PVOID va)
 {
     LARGE_INTEGER r;
+    if ((ULONG_PTR)va >= MIME_KVA_SYSTEM && (ULONG_PTR)va < MIME_KVA_SYSTEM + MIME_KVA_SYSTEM_SIZE) {
+        r.QuadPart = (LONGLONG)((MiReadPte(MiKernelRoot(), (ULONG_PTR)va) & MM_PTE_ADDR_MASK) + ((ULONG_PTR)va & 0xFFF));
+        return r;
+    }
     r.QuadPart = (LONGLONG)HalPhysicalOf(va);
     return r;
 }

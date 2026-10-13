@@ -197,6 +197,8 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_READDIR:
     case MIME_HC_FS_SET_SIZE:
     case MIME_HC_FS_DELETE:
+    case MIME_HC_FS_MAP:
+    case MIME_HC_FS_UNMAP:
         status = mime_fs_hcall(vm, nr, regs);
         value = regs[1];
         break;

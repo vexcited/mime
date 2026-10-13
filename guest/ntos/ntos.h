@@ -384,6 +384,7 @@ typedef struct _MMPFN {
 /* invalid ptes with this bit describe committed but not yet present pages. */
 #define MM_SWPTE_COMMITTED (1ull << 1)
 #define MM_SWPTE_GUARD (1ull << 2)
+#define MM_SWPTE_SECTION (1ull << 3) /* committed view page, built from the section on first touch */
 #define MM_SWPTE_PROT_SHIFT 4
 #define MM_SWPTE_PROT_MASK (0x7FFull << MM_SWPTE_PROT_SHIFT)
 
@@ -438,6 +439,7 @@ typedef struct _MI_IMAGE_INFO {
 
 
 #define MI_SECTION_PHYSICAL 0x00000001 /* Flags: the pages belong to the creator */
+#define MI_SECTION_SHARE_SOURCE 0x00000002 /* Flags: read only data section, pages are the file's own */
 
 typedef struct _SECTION {
     ULONG Flags;   /* SEC_IMAGE, SEC_COMMIT, ... */
@@ -453,7 +455,14 @@ typedef struct _SECTION {
     MI_IMAGE_INFO Image;
     ULONG RelocRva;
     ULONG RelocSize;
+    ULONG64 SourcePa;   /* read only file data the pages are built from: rom or host window */
+    ULONG64 SourceSize; /* file bytes at SourcePa */
+    PVOID SourceRef;    /* the window reference, see IoGetFileWindow */
 } SECTION, *PSECTION;
+
+ULONG64 MiSectionPage(PSECTION s, ULONG index);
+ULONG64 MiSectionSwPte(ULONG protect);
+ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared);
 
 void MmInitialize(MimeBootInfo *boot);
 void MmInitializePhase1(void);
@@ -735,6 +744,8 @@ NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG opti
 NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOID buffer, ULONG length,
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
+BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
+void IoReleaseFileWindow(PVOID ref);
 
 NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
 
@@ -754,6 +765,7 @@ MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info);
 void FsCacheClose(MIMEFS_CACHE *cache);
 void FsCacheInvalidate(ULONG volume, ULONG64 file_id);
 BOOLEAN FsCacheRead(MIMEFS_CACHE *cache, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done);
+BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *cache, ULONG64 host_handle, PULONG64 pa, PULONG64 size);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 void IopInitializeCompletion(void);
 void IopInitializeNamedPipes(void);

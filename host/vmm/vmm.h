@@ -46,7 +46,24 @@ typedef struct MimeFsHandle {
     uint32_t dir_count;
 } MimeFsHandle;
 
+/* guest physical memory filled on first touch, see lazy.c. */
+#define MIME_LAZY_PAGE 0x4000u   /* the host page size */
+#define MIME_LAZY_CHUNK 0x4000u /* filled per fault */
+
+typedef struct MimeLazyRegion {
+    uint64_t ipa;
+    uint64_t size;
+    uint8_t *host;      /* anonymous memory behind the region */
+    int fd;             /* source file, owned, or -1 */
+    const uint8_t *src; /* source memory when there is no file */
+    uint64_t src_size;
+    uint64_t *filled; /* one bit per chunk */
+    uint64_t filled_bytes;
+    uint64_t last_use;
+} MimeLazyRegion;
+
 #define MIME_VMM_MAX_FS_HANDLES 4096
+#define MIME_VMM_MAX_WINDOWS 1024
 #define MIME_VMM_INPUT_QUEUE 1024
 
 struct MimeVm {
@@ -74,6 +91,11 @@ struct MimeVm {
 
     pthread_mutex_t fs_lock;
     MimeFsHandle *fs_handles[MIME_VMM_MAX_FS_HANDLES];
+    MimeLazyRegion rom;
+    MimeLazyRegion windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa */
+    uint32_t window_count;
+    uint64_t window_bytes; /* filled bytes of every window */
+    uint64_t window_clock;
 
     char host_root_label[8];
 };
@@ -102,6 +124,14 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
 void mime_fs_close_all(MimeVm *vm);
+bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa);
+
+/* lazy.c */
+bool mime_lazy_init(MimeLazyRegion *r, uint64_t ipa, uint64_t size, int fd, const void *src, uint64_t src_size);
+bool mime_lazy_contains(const MimeLazyRegion *r, uint64_t ipa);
+bool mime_lazy_fill(MimeLazyRegion *r, uint64_t ipa);
+void mime_lazy_drop(MimeLazyRegion *r);
+void mime_lazy_free(MimeLazyRegion *r);
 
 /* daemon.c, events emitted by the guest. */
 void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg);

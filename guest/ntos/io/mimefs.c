@@ -138,6 +138,33 @@ const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
     return ((MIMEFS_FCB *)file->FsContext)->Rom;
 }
 
+/*
+ * the read only pages holding a file's data, for sections: the rom, or the
+ * file's host window. *ref is released with IoReleaseFileWindow.
+ */
+BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
+{
+    *ref = NULL;
+    if (!file->DeviceObject || file->DeviceObject->DriverObject != g_driver || !file->FsContext)
+        return FALSE;
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (fcb->Rom) {
+        *pa = HalRomPhysical(fcb->Rom);
+        *size = fcb->Rom->size;
+        return TRUE;
+    }
+    if (!fcb->Cache || !FsCacheGetWindow(fcb->Cache, fcb->HostHandle, pa, size))
+        return FALSE;
+    *ref = fcb->Cache;
+    return TRUE;
+}
+
+void IoReleaseFileWindow(PVOID ref)
+{
+    if (ref)
+        FsCacheClose(ref);
+}
+
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
 {
     if (fcb->Rom) {

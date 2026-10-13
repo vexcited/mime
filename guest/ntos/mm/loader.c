@@ -225,7 +225,7 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
 /* reads an export of an image section from its prototype pages through the physmap. */
 static PVOID section_export(PSECTION s, const char *name)
 {
-#define AT(rva) ((PUCHAR)HalPhysmap(s->Pages[(rva) >> PAGE_SHIFT]) + ((rva) & (PAGE_SIZE - 1)))
+#define AT(rva) ((PUCHAR)HalPhysmap(MiSectionPage(s, (rva) >> PAGE_SHIFT)) + ((rva) & (PAGE_SIZE - 1)))
     PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)AT(0);
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)AT((ULONG)dos->e_lfanew);
     IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];

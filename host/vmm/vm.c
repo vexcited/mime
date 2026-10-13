@@ -174,19 +174,11 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     }
 
     /*
-     * the system files, read only. the framework refuses pages backed by the
-     * executable file itself, so they are copied once into anonymous memory.
+     * the system files, read only, copied from the executable's own pages
+     * chunk by chunk as the guest touches them (lazy.c).
      */
-    void *rom = mmap(NULL, mime_rom_size(), PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
-    if (rom == MAP_FAILED) {
+    if (!mime_lazy_init(&vm->rom, MIME_ROM_BASE, mime_rom_size(), -1, mime_rom, mime_rom_size())) {
         mime_error("cannot reserve memory for the system files");
-        return false;
-    }
-    memcpy(rom, mime_rom, mime_rom_size());
-    mprotect(rom, mime_rom_size(), PROT_READ);
-    r = hv_vm_map(rom, MIME_ROM_BASE, mime_rom_size(), HV_MEMORY_READ | HV_MEMORY_EXEC);
-    if (r != HV_SUCCESS) {
-        mime_error("cannot map the system files into the guest (0x%x)", r);
         return false;
     }
 
@@ -256,6 +248,7 @@ void mime_vm_destroy(MimeVm *vm)
             pthread_join(vm->vcpus[i].thread, NULL);
     }
     mime_fs_close_all(vm);
+    mime_lazy_free(&vm->rom);
     hv_vm_destroy();
     if (vm->ram && vm->ram != MAP_FAILED)
         munmap(vm->ram, vm->ram_size);

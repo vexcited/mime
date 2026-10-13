@@ -23,6 +23,13 @@
 #define MIME_GIC_BASE 0x08000000ull /* the gic registers, below ram */
 #define MIME_ROM_BASE 0x10000000ull /* the system files, read only, below ram */
 #define MIME_RAM_BASE 0x40000000ull
+/*
+ * host files placed read only by MIME_HC_FS_MAP, above ram. the host fills
+ * them as the guest touches them, so only data read costs memory.
+ */
+#define MIME_WINDOW_BASE 0x800000000ull
+#define MIME_WINDOW_SIZE 0x800000000ull
+#define MIME_WINDOW_ALIGN 0x10000ull
 #define MIME_PAGE_SIZE 4096ull
 
 /*
@@ -181,6 +188,8 @@ enum {
     MIME_HC_FS_READDIR = 0x15,  /* (handle, index, MimeFsDirEntry pa) -> 1 or 0 at end */
     MIME_HC_FS_SET_SIZE = 0x16, /* (handle, size) */
     MIME_HC_FS_DELETE = 0x17,   /* (handle) delete on close */
+    MIME_HC_FS_MAP = 0x18,      /* (handle) -> guest physical address of the whole file, read only, filled on touch */
+    MIME_HC_FS_UNMAP = 0x19,    /* (pa) */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
     MIME_HC_WIN_DESTROY = 0x21, /* (window_id) */

@@ -80,6 +80,17 @@ static void map_physmap(TableAlloc *ta, uint64_t root, uint64_t ram_base, uint64
     }
 }
 
+/* the file window range, read only in 1 GiB blocks. */
+static void map_windows(TableAlloc *ta, uint64_t root)
+{
+    uint64_t attrs = PTE_ATTR(0) | PTE_SH_INNER | PTE_AF | PTE_UXN | PTE_PXN | PTE_AP_RO;
+    for (uint64_t pa = MIME_WINDOW_BASE; pa < MIME_WINDOW_BASE + MIME_WINDOW_SIZE; pa += 1ull << 30) {
+        uint64_t va = MIME_KVA_PHYSMAP + pa;
+        uint64_t *l1 = walk(ta, root, va, 1);
+        l1[(va >> 30) & 0x1FF] = pa | attrs | PTE_VALID;
+    }
+}
+
 /* device-nGnRnE, mair index 1, for the gic registers. */
 static void map_device(TableAlloc *ta, uint64_t root, uint64_t pa, uint64_t size)
 {
@@ -203,6 +214,7 @@ bool mime_vm_load_kernel(MimeVm *vm)
     map_device(&ta, root, boot->gic_dist_phys, boot->gic_dist_size);
     map_device(&ta, root, boot->gic_redist_phys, boot->gic_redist_size);
     map_rom(&ta, root, boot->rom_phys, boot->rom_size);
+    map_windows(&ta, root);
 
     uint64_t ro = PTE_ATTR(0) | PTE_SH_INNER | PTE_AF | PTE_UXN | PTE_PXN | PTE_AP_RO;
     for (uint64_t off = 0; off < MIME_ALIGN_UP((uint64_t)headers_size, MIME_PAGE_SIZE); off += MIME_PAGE_SIZE)

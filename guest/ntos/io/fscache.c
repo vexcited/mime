@@ -1,26 +1,31 @@
 /*
- * file data cache of the host backed volumes, so reading a file again
- * costs no exit to the host. files are cached in 64K blocks loaded on
- * demand. an entry is checked against the file size and write time on
- * every open, and dropped as soon as the guest opens the file for writing.
+ * file windows of the host backed volumes. a file opened for reading is
+ * placed whole and read only in the guest window range by the host
+ * (MIME_HC_FS_MAP) when a section maps it or a large read needs it: reads
+ * copy from it, and sections use its pages in place. the host fills the
+ * window as it is touched, so the guest keeps no copy of its own. small
+ * reads of files without a window go to the host, so scanning a few
+ * bytes of many files does not fill windows.
+ *
+ * an entry is checked against the file size and write time on every open,
+ * and dropped as soon as the guest opens the file for writing. a dropped
+ * entry keeps its window until its last reference goes.
  */
 #include "../ntos.h"
 
-#define CACHE_BLOCK (64 * 1024)
-#define CACHE_BLOCK_PAGES (CACHE_BLOCK / PAGE_SIZE)
-#define CACHE_BUDGET (256ull << 20)
 #define CACHE_BUCKETS 256
+#define CACHE_IDLE_MAX 256 /* unreferenced entries kept for reopening */
+#define CACHE_SMALL_READ 0x10000 /* smaller reads of an unmapped file go to the host directly */
 
 struct _MIMEFS_CACHE {
     struct _MIMEFS_CACHE *Next; /* hash chain */
     LIST_ENTRY Lru;             /* most recently opened first */
     ULONG Volume;
-    LONG References;
+    LONG References; /* opens and sections */
     ULONG64 FileId;
     ULONG64 Size;
     ULONG64 WriteTime;
-    ULONG BlockCount;
-    ULONG64 *Blocks; /* physical address of each loaded block, 0 when absent */
+    ULONG64 Window; /* guest physical address, 0 until mapped */
 };
 
 #define DETACHED (~0ull)
@@ -28,7 +33,7 @@ struct _MIMEFS_CACHE {
 static FAST_MUTEX g_lock;
 static MIMEFS_CACHE *g_buckets[CACHE_BUCKETS];
 static LIST_ENTRY g_lru;
-static ULONG64 g_cached_bytes;
+static ULONG g_entries;
 
 void FsCacheInitialize(void)
 {
@@ -41,29 +46,6 @@ static ULONG bucket(ULONG volume, ULONG64 file_id)
     return (ULONG)((file_id * 0x9E3779B97F4A7C15ull) >> 56 ^ volume) % CACHE_BUCKETS;
 }
 
-static void drop_blocks(MIMEFS_CACHE *c)
-{
-    for (ULONG i = 0; i < c->BlockCount; i++) {
-        if (c->Blocks[i]) {
-            MmFreeContiguous(c->Blocks[i], CACHE_BLOCK_PAGES);
-            c->Blocks[i] = 0;
-            g_cached_bytes -= CACHE_BLOCK;
-        }
-    }
-}
-
-/* frees blocks of the least recently opened files until a new block fits. */
-static void make_room(MIMEFS_CACHE *keep)
-{
-    PLIST_ENTRY e = g_lru.Blink;
-    while (g_cached_bytes + CACHE_BLOCK > CACHE_BUDGET && e != &g_lru) {
-        MIMEFS_CACHE *c = CONTAINING_RECORD(e, MIMEFS_CACHE, Lru);
-        e = e->Blink;
-        if (c != keep)
-            drop_blocks(c);
-    }
-}
-
 static MIMEFS_CACHE *find(ULONG volume, ULONG64 file_id)
 {
     for (MIMEFS_CACHE *c = g_buckets[bucket(volume, file_id)]; c; c = c->Next)
@@ -72,24 +54,45 @@ static MIMEFS_CACHE *find(ULONG volume, ULONG64 file_id)
     return NULL;
 }
 
-static void release(MIMEFS_CACHE *c)
-{
-    RemoveEntryList(&c->Lru);
-    ExFreePool(c->Blocks);
-    ExFreePool(c);
-}
-
-/* forgets a hashed entry; open readers keep it until their close, reading from the host. */
-static void detach(MIMEFS_CACHE *c)
+static void unhash(MIMEFS_CACHE *c)
 {
     MIMEFS_CACHE **link = &g_buckets[bucket(c->Volume, c->FileId)];
     while (*link != c)
         link = &(*link)->Next;
     *link = c->Next;
-    drop_blocks(c);
     c->FileId = DETACHED;
+}
+
+static void release(MIMEFS_CACHE *c)
+{
+    if (c->Window)
+        HalHypercall(MIME_HC_FS_UNMAP, c->Window, 0, 0, 0, 0, 0, NULL);
+    RemoveEntryList(&c->Lru);
+    g_entries--;
+    ExFreePool(c);
+}
+
+/* forgets a hashed entry; its references keep the window until they go. */
+static void detach(MIMEFS_CACHE *c)
+{
+    unhash(c);
     if (c->References == 0)
         release(c);
+}
+
+/* drops unreferenced entries, oldest first, while there are more than `keep`. */
+static void trim(ULONG keep)
+{
+    PLIST_ENTRY e = g_lru.Blink;
+    while (g_entries > keep && e != &g_lru) {
+        MIMEFS_CACHE *c = CONTAINING_RECORD(e, MIMEFS_CACHE, Lru);
+        e = e->Blink;
+        if (c->References == 0) {
+            if (c->FileId != DETACHED)
+                unhash(c);
+            release(c);
+        }
+    }
 }
 
 MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
@@ -104,14 +107,8 @@ MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
         c = NULL;
     }
     if (!c) {
-        ULONG64 blocks = (info->size + CACHE_BLOCK - 1) / CACHE_BLOCK;
         c = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*c), KI_TAG('M', 'f', 'C', 'f'));
-        ULONG64 *array = blocks <= 0x100000 ? ExAllocatePool2(POOL_FLAG_NON_PAGED, blocks * sizeof(ULONG64),
-                                                              KI_TAG('M', 'f', 'C', 'b'))
-                                            : NULL;
-        if (!c || !array) {
-            ExFreePool(c);
-            ExFreePool(array);
+        if (!c) {
             ExReleaseFastMutex(&g_lock);
             return NULL;
         }
@@ -119,16 +116,16 @@ MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
         c->FileId = info->file_id;
         c->Size = info->size;
         c->WriteTime = info->write_time;
-        c->BlockCount = (ULONG)blocks;
-        c->Blocks = array;
         ULONG b = bucket(volume, info->file_id);
         c->Next = g_buckets[b];
         g_buckets[b] = c;
+        g_entries++;
     } else {
         RemoveEntryList(&c->Lru);
     }
     InsertHeadList(&g_lru, &c->Lru);
     c->References++;
+    trim(CACHE_IDLE_MAX);
     ExReleaseFastMutex(&g_lock);
     return c;
 }
@@ -150,52 +147,62 @@ void FsCacheInvalidate(ULONG volume, ULONG64 file_id)
     ExReleaseFastMutex(&g_lock);
 }
 
+/* maps the window of an entry on first use. called with the lock held. */
+static BOOLEAN map_window(MIMEFS_CACHE *c, ULONG64 host_handle)
+{
+    if (c->Window)
+        return TRUE;
+    if (c->FileId == DETACHED)
+        return FALSE;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        ULONG64 pa = 0;
+        ULONG64 hs = HalHypercall(MIME_HC_FS_MAP, host_handle, 0, 0, 0, 0, 0, &pa);
+        if (hs == MIME_HC_STATUS_OK) {
+            c->Window = pa;
+            return TRUE;
+        }
+        if (hs != MIME_HC_STATUS_NO_MEMORY)
+            return FALSE;
+        trim(0); /* the window range is full, give back the idle ones */
+    }
+    return FALSE;
+}
+
 /*
- * reads through the cache. returns FALSE when the data must come from the
- * host instead: the entry was invalidated or no memory is left.
+ * reads through the window. returns FALSE when the data must come from the
+ * host instead: the entry was invalidated or the file cannot be mapped.
  */
 BOOLEAN FsCacheRead(MIMEFS_CACHE *c, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done)
 {
     *done = 0;
-    ExAcquireFastMutex(&g_lock);
-    if (c->FileId == DETACHED) {
-        ExReleaseFastMutex(&g_lock);
+    if (length < CACHE_SMALL_READ && !__atomic_load_n(&c->Window, __ATOMIC_ACQUIRE))
         return FALSE;
-    }
-    if (offset >= c->Size) {
-        ExReleaseFastMutex(&g_lock);
+    ExAcquireFastMutex(&g_lock);
+    BOOLEAN ok = map_window(c, host_handle);
+    ULONG64 window = c->Window;
+    ExReleaseFastMutex(&g_lock);
+    if (!ok)
+        return FALSE;
+    if (offset >= c->Size)
         return TRUE;
-    }
     if (length > c->Size - offset)
         length = (ULONG)(c->Size - offset);
-    while (*done < length) {
-        ULONG64 pos = offset + *done;
-        ULONG index = (ULONG)(pos / CACHE_BLOCK);
-        ULONG in = (ULONG)(pos % CACHE_BLOCK);
-        if (!c->Blocks[index]) {
-            make_room(c);
-            ULONG64 pa = MmAllocateContiguous(CACHE_BLOCK_PAGES);
-            if (!pa) {
-                ExReleaseFastMutex(&g_lock);
-                return *done == 0 ? FALSE : TRUE;
-            }
-            ULONG64 want = c->Size - (ULONG64)index * CACHE_BLOCK;
-            if (want > CACHE_BLOCK)
-                want = CACHE_BLOCK;
-            ULONG64 got = 0;
-            ULONG64 hs = HalHypercall(MIME_HC_FS_READ, host_handle, (ULONG64)index * CACHE_BLOCK, pa, want, 0, 0, &got);
-            if (hs != MIME_HC_STATUS_OK || got != want) {
-                MmFreeContiguous(pa, CACHE_BLOCK_PAGES);
-                ExReleaseFastMutex(&g_lock);
-                return *done == 0 ? FALSE : TRUE;
-            }
-            c->Blocks[index] = pa;
-            g_cached_bytes += CACHE_BLOCK;
-        }
-        ULONG n = CACHE_BLOCK - in < length - *done ? CACHE_BLOCK - in : length - *done;
-        memcpy(out + *done, (PUCHAR)HalPhysmap(c->Blocks[index]) + in, n);
-        *done += n;
+    /* the caller's open reference keeps the window mapped while it copies. */
+    memcpy(out, (PUCHAR)HalPhysmap(window) + offset, length);
+    *done = length;
+    return TRUE;
+}
+
+/* the window of an entry for a section, with a reference released by FsCacheClose. */
+BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *c, ULONG64 host_handle, PULONG64 pa, PULONG64 size)
+{
+    ExAcquireFastMutex(&g_lock);
+    BOOLEAN ok = map_window(c, host_handle);
+    if (ok) {
+        c->References++;
+        *pa = c->Window;
+        *size = c->Size;
     }
     ExReleaseFastMutex(&g_lock);
-    return TRUE;
+    return ok;
 }

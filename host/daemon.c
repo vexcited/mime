@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -394,6 +395,12 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     signal(SIGTERM, on_signal);
     signal(SIGINT, on_signal);
     signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log */
+    /* every guest file handle and file window holds a descriptor. */
+    struct rlimit files;
+    if (getrlimit(RLIMIT_NOFILE, &files) == 0) {
+        files.rlim_cur = MIME_MIN(files.rlim_max, (rlim_t)OPEN_MAX);
+        setrlimit(RLIMIT_NOFILE, &files);
+    }
 
     if (!mime_paths_ensure(paths) || !listen_socket(paths))
         return 1;

@@ -230,7 +230,7 @@ static NTSTATUS commit_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end
                 attrs |= MM_PTE_AP_RO | MM_PTE_SW_COW;
             MiWritePte(as->Root, va, (*pte & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE, as->Asid);
         } else {
-            *pte = sw_pte(protect);
+            *pte = sw_pte(protect) | (*pte & MM_SWPTE_SECTION);
         }
     }
     return STATUS_SUCCESS;
@@ -376,7 +376,7 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
                 attrs = (attrs | MM_PTE_AP_RO | MM_PTE_SW_COW);
             MiWritePte(as->Root, va, (v & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE, as->Asid);
         } else {
-            *pte = sw_pte(protect);
+            *pte = sw_pte(protect) | (v & MM_SWPTE_SECTION);
         }
     }
     ExReleaseFastMutex(&as->Lock);
@@ -433,7 +433,30 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     return STATUS_SUCCESS;
 }
 
-/* resolves demand zero and copy on write faults. returns FALSE for real access violations. */
+/* maps the first touched page of a section view: the prototype page, or a private copy of a writable image page. */
+static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG protect)
+{
+    PSECTION s = vad->Section;
+    ULONG64 index = (vad->SectionOffset + (page - vad->StartVa)) >> PAGE_SHIFT;
+    ULONG64 pa = index < s->PageCount ? MiSectionPage(s, (ULONG)index) : 0;
+    if (!pa)
+        return FALSE;
+    BOOLEAN shared = TRUE;
+    if ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
+        ULONG64 copy = MmAllocatePageNoZero();
+        if (!copy)
+            return FALSE;
+        memcpy(HalPhysmap(copy), HalPhysmap(pa), PAGE_SIZE);
+        pa = copy;
+        shared = FALSE;
+    }
+    *pte = pa | MiSectionPteAttrs(protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
+    KiDataSyncBarrier();
+    KiInstructionBarrier();
+    return TRUE;
+}
+
+/* resolves demand zero, section and copy on write faults. returns FALSE for real access violations. */
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {
     if (va > MM_HIGHEST_USER_ADDRESS)
@@ -449,7 +472,11 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     ULONG64 *pte = vad ? MiWalk(as->Root, page, FALSE, 3) : NULL;
     if (pte) {
         ULONG64 v = *pte;
-        if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_COMMITTED)) {
+        ULONG sw_protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+        if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_SECTION) && vad->Section && (sw_protect & 0xFF) != PAGE_NOACCESS &&
+            !(sw_protect & PAGE_GUARD)) {
+            handled = section_fault(as, vad, page, pte, sw_protect);
+        } else if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_COMMITTED)) {
             ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
             if ((protect & 0xFF) != PAGE_NOACCESS && !(protect & PAGE_GUARD)) {
                 ULONG64 pa = MmAllocatePage();
@@ -464,7 +491,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                     handled = TRUE;
                 }
             } else if (protect & PAGE_GUARD) {
-                *pte = sw_pte(protect & ~PAGE_GUARD);
+                *pte = sw_pte(protect & ~PAGE_GUARD) | (v & MM_SWPTE_SECTION);
                 handled = FALSE;
             }
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_COW)) {
