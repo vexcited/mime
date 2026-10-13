@@ -158,12 +158,92 @@ static void update_async_keys(const MimeInputEvent *ev)
     sync_async_sides((ev->modifiers & MIME_MOD_ALT) != 0, VK_LMENU, VK_RMENU, VK_MENU);
 }
 
-static void dispatch_event(const MimeInputEvent *ev)
+static UINT button_message(UINT button, BOOLEAN down, BOOLEAN nc);
+
+/* low level hooks see input before it reaches any queue; a nonzero answer drops it. */
+static BOOLEAN low_level_key(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
+{
+    if (!HookActive(WH_KEYBOARD_LL, NULL))
+        return FALSE;
+    KBDLLHOOKSTRUCT k = {0};
+    BOOLEAN up = ev->type == MIME_INPUT_KEY_UP;
+    BOOLEAN alt = (ev->modifiers & MIME_MOD_ALT) != 0;
+    if (ev->type == MIME_INPUT_CHAR) {
+        /* a character of its own, like KEYEVENTF_UNICODE input. */
+        k.vkCode = VK_PACKET;
+        k.scanCode = ev->ch <= 0xFFFF ? ev->ch : '?';
+    } else {
+        k.vkCode = ev->vk;
+        k.scanCode = ev->scancode & 0xFF;
+        if (ev->scancode & 0x100)
+            k.flags |= LLKHF_EXTENDED;
+    }
+    if (alt)
+        k.flags |= LLKHF_ALTDOWN;
+    if (up)
+        k.flags |= LLKHF_UP;
+    if (injected)
+        k.flags |= LLKHF_INJECTED;
+    k.time = W32TickCount();
+    k.dwExtraInfo = extra;
+    BOOLEAN sys = (alt && !(ev->modifiers & MIME_MOD_CONTROL)) || ev->vk == VK_F10;
+    WPARAM msg = sys ? (up ? WM_SYSKEYUP : WM_SYSKEYDOWN) : (up ? WM_KEYUP : WM_KEYDOWN);
+    return HookCall(WH_KEYBOARD_LL, NULL, HC_ACTION, msg, (LPARAM)&k, sizeof(k), NULL) != 0;
+}
+
+static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
+{
+    if (!HookActive(WH_MOUSE_LL, NULL))
+        return FALSE;
+    MSLLHOOKSTRUCT m = {0};
+    m.pt = (POINT){ev->x, ev->y};
+    UINT msg = WM_MOUSEMOVE;
+    if (ev->type == MIME_INPUT_MOUSE_DOWN || ev->type == MIME_INPUT_MOUSE_UP) {
+        msg = button_message(ev->button, ev->type == MIME_INPUT_MOUSE_DOWN, FALSE);
+        if (ev->button == MIME_MOUSE_X1 || ev->button == MIME_MOUSE_X2)
+            m.mouseData = (DWORD)(ev->button == MIME_MOUSE_X1 ? XBUTTON1 : XBUTTON2) << 16;
+    } else if (ev->type == MIME_INPUT_MOUSE_WHEEL) {
+        msg = (ev->flags & 1) ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL;
+        m.mouseData = (DWORD)(USHORT)(SHORT)ev->wheel << 16;
+    }
+    if (injected)
+        m.flags |= LLMHF_INJECTED;
+    m.time = W32TickCount();
+    m.dwExtraInfo = extra;
+    return HookCall(WH_MOUSE_LL, NULL, HC_ACTION, msg, (LPARAM)&m, sizeof(m), NULL) != 0;
+}
+
+/* the characters the host sends right after a key press share its fate. */
+static BOOLEAN g_chars_follow_key;
+static BOOLEAN g_key_dropped;
+
+static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
 {
     W32THREAD *t = NULL;
     if (ev->type == MIME_INPUT_CLIPBOARD) {
         ClipboardHostChanged(ev->x != 0);
         return;
+    }
+    switch (ev->type) {
+    case MIME_INPUT_KEY_DOWN:
+    case MIME_INPUT_KEY_UP:
+        g_key_dropped = low_level_key(ev, injected, extra);
+        g_chars_follow_key = ev->type == MIME_INPUT_KEY_DOWN;
+        if (g_key_dropped)
+            return;
+        break;
+    case MIME_INPUT_CHAR:
+        if (g_chars_follow_key ? g_key_dropped : low_level_key(ev, injected, extra))
+            return;
+        break;
+    case MIME_INPUT_MOUSE_MOVE:
+    case MIME_INPUT_MOUSE_DOWN:
+    case MIME_INPUT_MOUSE_UP:
+    case MIME_INPUT_MOUSE_WHEEL:
+        g_chars_follow_key = FALSE;
+        if (low_level_mouse(ev, injected, extra))
+            return;
+        break;
     }
     update_async_keys(ev);
     switch (ev->type) {
@@ -307,7 +387,8 @@ UINT NTAPI NtUserSendInput(UINT count, const INPUT *user_inputs, int size)
         UserEnter();
         if (injected_event(&in, &ev)) {
             ev.time_ms = (uint64_t)(KeQueryInterruptTime() / 10000);
-            dispatch_event(&ev);
+            ULONG_PTR extra = in.type == INPUT_KEYBOARD ? in.ki.dwExtraInfo : in.mi.dwExtraInfo;
+            dispatch_event(&ev, TRUE, extra);
         }
         UserLeave();
     }
@@ -329,7 +410,7 @@ static void NTAPI input_thread(PVOID context)
                 count = INPUT_BATCH;
             UserEnter();
             for (ULONG64 i = 0; i < count; i++)
-                dispatch_event(&g_events[i]);
+                dispatch_event(&g_events[i], FALSE, 0);
             UserLeave();
         }
     }

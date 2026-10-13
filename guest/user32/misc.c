@@ -277,22 +277,23 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)
 {
-    return (HHOOK)(ULONG_PTR)0x1234;
+    return NtUserSetWindowsHookEx(instance, NULL, thread, id, proc, FALSE);
 }
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExA(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)
 {
-    return (HHOOK)(ULONG_PTR)0x1234;
+    return NtUserSetWindowsHookEx(instance, NULL, thread, id, proc, TRUE);
 }
 
 WINUSERAPI BOOL WINAPI UnhookWindowsHookEx(HHOOK hook)
 {
-    return TRUE;
+    return NtUserUnhookWindowsHookEx(hook);
 }
 
+/* the kernel knows which hook of the chain the thread is running. */
 WINUSERAPI LRESULT WINAPI CallNextHookEx(HHOOK hook, int code, WPARAM wparam, LPARAM lparam)
 {
-    return 0;
+    return NtUserCallNextHookEx(code, wparam, lparam, FALSE);
 }
 
 WINUSERAPI BOOL WINAPI FlashWindow(HWND hwnd, BOOL invert)

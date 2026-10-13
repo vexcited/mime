@@ -289,11 +289,18 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     WndDestroyThreadWindows(t);
     ClipboardThreadDestroyed(t);
     TimerRemoveThread(t);
+    HookRemoveThread(t);
     free_message_list(&t->Posted);
     free_message_list(&t->Input);
     /* release senders waiting on this thread. */
     while (!IsListEmpty(&t->Sent)) {
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
+        if (sm->Notify) {
+            if (sm->LparamKind != MIME_LPARAM_VALUE)
+                W32Free((PVOID)sm->Lparam);
+            W32Free(sm);
+            continue;
+        }
         sm->Completed = TRUE;
         sm->Result = 0;
         KeSetEvent(&sm->Done, 0, FALSE);

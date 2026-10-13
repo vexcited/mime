@@ -130,11 +130,17 @@ void MsgProcessSent(W32THREAD *t)
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
         SENT_MESSAGE *prev = t->Receiving;
         t->Receiving = sm;
-        WND *w = WndLookup(sm->Hwnd);
         LRESULT r = 0;
-        if (w && w->Thread == t)
-            r = MsgCallWindowProc(w, w->Proc, w->Ansi, sm->Msg, sm->Wparam, sm->Lparam, sm->LparamKind,
-                                  sm->LparamSize);
+        if (sm->Hook) {
+            HOOK *h = HookLookup(sm->Hook);
+            if (h && h->Owner == t)
+                r = HookInvoke(h, (int)sm->Msg, sm->Wparam, sm->Lparam, sm->LparamSize);
+        } else {
+            WND *w = WndLookup(sm->Hwnd);
+            if (w && w->Thread == t)
+                r = MsgCallWindowProc(w, w->Proc, w->Ansi, sm->Msg, sm->Wparam, sm->Lparam, sm->LparamKind,
+                                      sm->LparamSize);
+        }
         t->Receiving = prev;
         complete_sent(sm, r);
     }
@@ -393,6 +399,42 @@ static void set_message_state(W32THREAD *t, const MSG *m)
     t->MessagePos = m->pt;
 }
 
+/* WH_KEYBOARD and WH_MOUSE see input messages as they leave the queue, a nonzero answer discards them. */
+static BOOLEAN input_hook_discards(W32THREAD *t, const MSG *m, BOOLEAN remove)
+{
+    int code = remove ? HC_ACTION : HC_NOREMOVE;
+    switch (m->message) {
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+        return HookActive(WH_KEYBOARD, t) && HookCall(WH_KEYBOARD, t, code, m->wParam, m->lParam, 0, NULL);
+    }
+    BOOLEAN nc = m->message >= WM_NCMOUSEMOVE && m->message <= WM_NCXBUTTONDBLCLK;
+    if ((!nc && (m->message < WM_MOUSEFIRST || m->message > WM_MOUSELAST)) || !HookActive(WH_MOUSE, t))
+        return FALSE;
+    MOUSEHOOKSTRUCTEX mh = {0};
+    mh.pt = m->pt;
+    mh.hwnd = m->hwnd;
+    mh.wHitTestCode = nc ? LOWORD(m->wParam) : HTCLIENT;
+    mh.dwExtraInfo = t->ExtraInfo;
+    if (m->message == WM_MOUSEWHEEL || m->message == WM_MOUSEHWHEEL ||
+        (m->message >= WM_XBUTTONDOWN && m->message <= WM_XBUTTONDBLCLK) ||
+        (m->message >= WM_NCXBUTTONDOWN && m->message <= WM_NCXBUTTONDBLCLK))
+        mh.mouseData = (DWORD)(m->wParam & 0xFFFF0000);
+    return HookCall(WH_MOUSE, t, code, m->message, (LPARAM)&mh, sizeof(mh), NULL) != 0;
+}
+
+static void free_input(W32THREAD *t, QUEUED_MESSAGE *qm)
+{
+    for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink)
+        if (e == &qm->Links) {
+            RemoveEntryList(e);
+            W32Free(qm);
+            return;
+        }
+}
+
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait)
 {
     BOOLEAN remove = (flags & PM_REMOVE) != 0;
@@ -414,6 +456,7 @@ BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flag
             return TRUE;
         }
 
+        BOOLEAN rescan = FALSE;
         for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input;) {
             QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
             e = e->Flink;
@@ -422,12 +465,21 @@ BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flag
             if (consumed || (got && remove)) {
                 RemoveEntryList(&qm->Links);
                 W32Free(qm);
+                qm = NULL;
             }
             if (got) {
                 set_message_state(t, out);
-                return TRUE;
+                if (!input_hook_discards(t, out, remove))
+                    return TRUE;
+                /* a discarded message leaves the queue whatever the flags; the hook ran unlocked, so look again. */
+                if (qm)
+                    free_input(t, qm);
+                rescan = TRUE;
+                break;
             }
         }
+        if (rescan)
+            continue;
 
         if (t->QuitPosted && range_matches(WM_QUIT, min, max)) {
             out->hwnd = NULL;
@@ -494,14 +546,21 @@ static BOOL copy_msg_out(MSG *user, const MSG *m)
     return NT_SUCCESS(MimeCopyToUser(user, m, sizeof(*m)));
 }
 
+/* WH_GETMESSAGE sees every retrieved message and may change it. */
+static void get_message_hook(W32THREAD *t, MSG *m, UINT flags)
+{
+    if (HookActive(WH_GETMESSAGE, t))
+        HookCall(WH_GETMESSAGE, t, HC_ACTION, flags & (PM_REMOVE | PM_NOYIELD), (LPARAM)m, sizeof(*m), NULL);
+}
+
 BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
-    if (t)
-        MsgPeek(t, &m, hwnd, min, max, PM_REMOVE, TRUE);
+    if (t && MsgPeek(t, &m, hwnd, min, max, PM_REMOVE, TRUE))
+        get_message_hook(t, &m, PM_REMOVE);
     UserLeave();
     if (!copy_msg_out(user_msg, &m))
         return -1;
@@ -515,6 +574,8 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
     MSG m;
     memset(&m, 0, sizeof(m));
     BOOLEAN got = t && MsgPeek(t, &m, hwnd, min, max, flags, FALSE);
+    if (got)
+        get_message_hook(t, &m, flags);
     UserLeave();
     if (got && !copy_msg_out(user_msg, &m))
         return FALSE;

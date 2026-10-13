@@ -1334,11 +1334,65 @@ typedef struct {
 #define WH_CALLWNDPROCRET 12
 #define WH_KEYBOARD_LL 13
 #define WH_MOUSE_LL 14
+#define WH_JOURNALPLAYBACK 1
+#define WH_HARDWARE 8
+#define WH_MIN (-1)
+#define WH_MAX 14
 #define HC_ACTION 0
+#define HC_GETNEXT 1
+#define HC_SKIP 2
+#define HC_NOREMOVE 3
+#define HC_NOREM HC_NOREMOVE
+#define HC_SYSMODALON 4
+#define HC_SYSMODALOFF 5
+#define LLKHF_EXTENDED 0x01
+#define LLKHF_LOWER_IL_INJECTED 0x02
+#define LLKHF_INJECTED 0x10
+#define LLKHF_ALTDOWN 0x20
+#define LLKHF_UP 0x80
+#define LLMHF_INJECTED 0x01
+#define LLMHF_LOWER_IL_INJECTED 0x02
+
+typedef struct tagKBDLLHOOKSTRUCT {
+    DWORD vkCode;
+    DWORD scanCode;
+    DWORD flags;
+    DWORD time;
+    ULONG_PTR dwExtraInfo;
+} KBDLLHOOKSTRUCT, *LPKBDLLHOOKSTRUCT, *PKBDLLHOOKSTRUCT;
+
+typedef struct tagMSLLHOOKSTRUCT {
+    POINT pt;
+    DWORD mouseData;
+    DWORD flags;
+    DWORD time;
+    ULONG_PTR dwExtraInfo;
+} MSLLHOOKSTRUCT, *LPMSLLHOOKSTRUCT, *PMSLLHOOKSTRUCT;
+
+typedef struct tagMOUSEHOOKSTRUCT {
+    POINT pt;
+    HWND hwnd;
+    UINT wHitTestCode;
+    ULONG_PTR dwExtraInfo;
+} MOUSEHOOKSTRUCT, *LPMOUSEHOOKSTRUCT, *PMOUSEHOOKSTRUCT;
+
+/* the MOUSEHOOKSTRUCT fields, spelled out instead of an anonymous member. */
+typedef struct tagMOUSEHOOKSTRUCTEX {
+    POINT pt;
+    HWND hwnd;
+    UINT wHitTestCode;
+    ULONG_PTR dwExtraInfo;
+    DWORD mouseData;
+} MOUSEHOOKSTRUCTEX, *LPMOUSEHOOKSTRUCTEX, *PMOUSEHOOKSTRUCTEX;
 #define MSGF_DIALOGBOX 0
 #define MSGF_MESSAGEBOX 1
 
 /* ------------------------------------------------------------------ user32 exports */
+
+WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread);
+WINUSERAPI HHOOK WINAPI SetWindowsHookExA(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread);
+WINUSERAPI BOOL WINAPI UnhookWindowsHookEx(HHOOK hook);
+WINUSERAPI LRESULT WINAPI CallNextHookEx(HHOOK hook, int code, WPARAM wparam, LPARAM lparam);
 
 WINUSERAPI ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *wc);
 WINUSERAPI ATOM WINAPI RegisterClassExA(const WNDCLASSEXA *wc);

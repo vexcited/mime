@@ -455,6 +455,7 @@ typedef struct SENT_MESSAGE {
     BOOLEAN Notify;       /* SendNotifyMessage: nobody waits, the receiver frees it */
     BOOLEAN SenderGone;
     BOOLEAN Ansi;
+    HHOOK Hook;           /* a hook call instead of a message, Msg holds the hook code */
     KEVENT Done;
 } SENT_MESSAGE;
 
@@ -483,6 +484,7 @@ typedef struct W32THREAD {
     HWND MouseWindow;    /* window under the mouse for leave tracking */
     TRACKMOUSEEVENT Track;
     ULONG CallbackDepth;
+    struct HOOK *CurrentHook; /* the hook procedure running, for CallNextHookEx */
     BOOLEAN Destroying;
     HCURSOR Cursor;
     LONG CursorShowCount;
@@ -668,6 +670,26 @@ void TimerRemoveWindow(WND *w);
 void TimerRemoveThread(W32THREAD *t);
 BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN remove, MSG *out);
 LONG64 TimerNextDue(W32THREAD *t);
+
+/* ------------------------------------------------------------------ hooks */
+
+typedef struct HOOK {
+    USER_OBJECT Header;
+    LIST_ENTRY Links;
+    int Id;
+    HOOKPROC Proc;
+    BOOLEAN Ansi;
+    W32THREAD *Owner;      /* the installing thread, where low level hooks run */
+    W32THREAD *Target;     /* the hooked thread, NULL for every thread */
+    W32PROCESS *Process;
+} HOOK;
+
+BOOLEAN HookActive(int id, W32THREAD *t);
+/* calls the first hook of the chain the thread sees; data is the lparam structure, size 0 for a value. */
+LRESULT HookCall(int id, W32THREAD *t, int code, WPARAM wparam, LPARAM lparam, ULONG size, BOOLEAN *called);
+LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size); /* in the current thread */
+HOOK *HookLookup(HHOOK handle);
+void HookRemoveThread(W32THREAD *t);
 
 /* ------------------------------------------------------------------ input */
 

@@ -44,6 +44,7 @@ enum {
     MIME_CB_WINDOWPROC = 0,  /* MIME_WINDOWPROC_ARGS -> LRESULT, output may carry updated lparam data */
     MIME_CB_TIMERPROC = 1,   /* MIME_TIMERPROC_ARGS */
     MIME_CB_LOADSYSTEM = 2,  /* reserved */
+    MIME_CB_HOOKPROC = 3,    /* MIME_HOOKPROC_ARGS -> LRESULT, output carries the updated lparam data */
     MIME_CB_COUNT = 8,
 };
 
@@ -88,6 +89,18 @@ typedef struct MIME_TIMERPROC_ARGS {
     UINT_PTR Id;
     DWORD Time;
 } MIME_TIMERPROC_ARGS;
+
+/* a hook procedure call. with DataSize the lparam points to Data, a copy of the hook structure. */
+typedef struct MIME_HOOKPROC_ARGS {
+    HOOKPROC Proc;
+    int Id;
+    int Code;
+    WPARAM Wparam;
+    LPARAM Lparam;
+    ULONG Ansi;
+    ULONG DataSize;
+    UCHAR Data[];
+} MIME_HOOKPROC_ARGS;
 
 /* ------------------------------------------------------------------ client registration */
 
@@ -388,6 +401,10 @@ W32KAPI HWND NTAPI NtUserGetForegroundWindow(void);
 W32KAPI HWND NTAPI NtUserSetCapture(HWND hwnd);
 W32KAPI SHORT NTAPI NtUserGetKeyState(int key);
 W32KAPI UINT NTAPI NtUserSendInput(UINT count, const INPUT *inputs, int size);
+W32KAPI HHOOK NTAPI NtUserSetWindowsHookEx(HINSTANCE module, PUNICODE_STRING module_name, DWORD thread, int id,
+                                           HOOKPROC proc, BOOL ansi);
+W32KAPI BOOL NTAPI NtUserUnhookWindowsHookEx(HHOOK hook);
+W32KAPI LRESULT NTAPI NtUserCallNextHookEx(int code, WPARAM wparam, LPARAM lparam, BOOL ansi);
 W32KAPI SHORT NTAPI NtUserGetAsyncKeyState(int key);
 W32KAPI BOOL NTAPI NtUserGetCursorPos(LPPOINT point);
 W32KAPI UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance);

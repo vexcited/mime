@@ -191,6 +191,22 @@ static NTSTATUS CALLBACK callback_timer_proc(MIME_TIMERPROC_ARGS *args, ULONG le
     return NtCallbackReturn(&res, sizeof(res), STATUS_SUCCESS);
 }
 
+static NTSTATUS CALLBACK callback_hook_proc(MIME_HOOKPROC_ARGS *args, ULONG length)
+{
+    ULONG size = args->DataSize;
+    LRESULT result = args->Proc(args->Code, args->Wparam, size ? (LPARAM)args->Data : args->Lparam);
+    if (size) {
+        /* the result header goes right before the data, like for window procedures. */
+        MIME_CALLBACK_RESULT *res = (MIME_CALLBACK_RESULT *)((PUCHAR)args->Data - sizeof(MIME_CALLBACK_RESULT));
+        res->Result = result;
+        res->DataSize = size;
+        res->Pad = 0;
+        return NtCallbackReturn(res, sizeof(*res) + size, STATUS_SUCCESS);
+    }
+    MIME_CALLBACK_RESULT res = {result, 0, 0};
+    return NtCallbackReturn(&res, sizeof(res), STATUS_SUCCESS);
+}
+
 static NTSTATUS CALLBACK callback_unused(PVOID args, ULONG length)
 {
     MIME_CALLBACK_RESULT res = {0, 0, 0};
@@ -198,7 +214,7 @@ static NTSTATUS CALLBACK callback_unused(PVOID args, ULONG length)
 }
 
 static PVOID g_callbacks[MIME_CB_COUNT] = {
-    (PVOID)callback_window_proc, (PVOID)callback_timer_proc, (PVOID)callback_unused, (PVOID)callback_unused,
+    (PVOID)callback_window_proc, (PVOID)callback_timer_proc, (PVOID)callback_unused, (PVOID)callback_hook_proc,
     (PVOID)callback_unused,      (PVOID)callback_unused,     (PVOID)callback_unused, (PVOID)callback_unused,
 };
 
