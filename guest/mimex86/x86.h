@@ -75,6 +75,8 @@ typedef struct X86Env {
     uint64_t (*timestamp)(X86Cpu *cpu);
     /* the code at [address, address + size) changed: drops translations. */
     void (*code_changed)(X86Cpu *cpu, uint64_t address, uint64_t size);
+    /* a block was decoded from the code at address. */
+    void (*code_seen)(X86Cpu *cpu, uint64_t address);
 } X86Env;
 
 struct X86Cpu {
@@ -167,6 +169,16 @@ void *x86_new_blocks(void);
 /* drops every decoded block, after code changed. */
 void x86_flush_blocks(X86Cpu *cpu);
 void x86_free_blocks(X86Cpu *cpu);
+
+/*
+ * native functions run in place of x64 code. a block starting at a
+ * registered address calls the function instead, which performs the whole
+ * x64 function including its return and returns nonzero, or returns zero
+ * without changing the cpu to let the x64 code run.
+ */
+typedef int (*X86Native)(X86Cpu *cpu);
+void x86_set_native(uint64_t rip, X86Native fn);
+void x86_clear_native(uint64_t start, uint64_t end);
 
 /* the block cache allocator, provided by the environment. */
 void *x86_alloc(size_t size);

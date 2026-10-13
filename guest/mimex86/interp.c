@@ -1052,7 +1052,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
 
 /* ------------------------------------------------------------ one byte map */
 
-static void exec(X86Cpu *c, const X86Insn *i)
+static inline __attribute__((always_inline)) void exec(X86Cpu *c, const X86Insn *i)
 {
     c->insn_rip = c->rip;
     c->rip += i->len;
@@ -1501,6 +1501,10 @@ static void exec(X86Cpu *c, const X86Insn *i)
 typedef struct X86Block {
     struct X86Block *next;
     uint64_t rip;
+    X86Native native;
+    struct X86Block *fallback; /* the x64 code of a native block, for when the native function declines */
+    struct X86Block *succ[2];  /* the blocks that last followed this one, skipping the hash lookup */
+    uint64_t succ_rip[2];
     uint32_t count;
     X86Insn insns[];
 } X86Block;
@@ -1557,8 +1561,73 @@ static int ends_block(const X86Insn *i)
     return 0;
 }
 
-static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip)
+/* the native functions, looked up when a block is translated. entries are only added or cleared. */
+#define NATIVE_MAX 2048
+static struct {
+    uint64_t rip;
+    X86Native fn;
+} g_natives[NATIVE_MAX];
+static uint32_t g_native_count;
+static uint64_t g_native_low = ~0ull, g_native_high;
+
+void x86_set_native(uint64_t rip, X86Native fn)
 {
+    uint32_t n = __atomic_load_n(&g_native_count, __ATOMIC_ACQUIRE);
+    for (uint32_t i = 0; i < n; i++) {
+        if (g_natives[i].rip == rip || !g_natives[i].fn) {
+            g_natives[i].fn = NULL;
+            g_natives[i].rip = rip;
+            __atomic_store_n(&g_natives[i].fn, fn, __ATOMIC_RELEASE);
+            goto bounds;
+        }
+    }
+    if (n == NATIVE_MAX)
+        return;
+    g_natives[n].rip = rip;
+    g_natives[n].fn = fn;
+    __atomic_store_n(&g_native_count, n + 1, __ATOMIC_RELEASE);
+bounds:
+    if (rip < g_native_low)
+        g_native_low = rip;
+    if (rip > g_native_high)
+        g_native_high = rip;
+}
+
+void x86_clear_native(uint64_t start, uint64_t end)
+{
+    uint32_t n = __atomic_load_n(&g_native_count, __ATOMIC_ACQUIRE);
+    for (uint32_t i = 0; i < n; i++)
+        if (g_natives[i].rip >= start && g_natives[i].rip < end)
+            __atomic_store_n(&g_natives[i].fn, NULL, __ATOMIC_RELEASE);
+}
+
+static X86Native native_at(uint64_t rip)
+{
+    if (rip < g_native_low || rip > g_native_high)
+        return NULL;
+    uint32_t n = __atomic_load_n(&g_native_count, __ATOMIC_ACQUIRE);
+    for (uint32_t i = 0; i < n; i++)
+        if (g_natives[i].rip == rip)
+            return __atomic_load_n(&g_natives[i].fn, __ATOMIC_ACQUIRE);
+    return NULL;
+}
+
+static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow_native)
+{
+    X86Native native = allow_native ? native_at(rip) : NULL;
+    if (native) {
+        X86Block *b = cache_alloc(bc, sizeof(X86Block));
+        b->rip = rip;
+        b->native = native;
+        b->fallback = NULL;
+        b->succ[0] = b->succ[1] = NULL;
+        b->succ_rip[0] = b->succ_rip[1] = 0;
+        b->count = 0;
+        uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
+        b->next = bc->buckets[h];
+        bc->buckets[h] = b;
+        return b;
+    }
     X86Insn buf[BLOCK_MAX];
     uint32_t n = 0;
     uint64_t pc = rip;
@@ -1576,10 +1645,18 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip)
         if (ends_block(&buf[n++]))
             break;
     }
+    if (c->env && c->env->code_seen)
+        c->env->code_seen(c, rip);
     X86Block *b = cache_alloc(bc, sizeof(X86Block) + n * sizeof(X86Insn));
     b->rip = rip;
+    b->native = NULL;
+    b->fallback = NULL;
+    b->succ[0] = b->succ[1] = NULL;
+    b->succ_rip[0] = b->succ_rip[1] = 0;
     b->count = n;
     __builtin_memcpy(b->insns, buf, n * sizeof(X86Insn));
+    if (!allow_native)
+        return b;
     uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
     b->next = bc->buckets[h];
     bc->buckets[h] = b;
@@ -1637,19 +1714,58 @@ static inline X86Block *lookup(X86Cpu *c, uint64_t rip)
         if (b->rip == rip)
             return b;
     }
-    return translate(c, bc, rip);
+    return translate(c, bc, rip, 1);
+}
+
+/* the block at rip, from the successors of the previous block when it went there before. */
+static inline X86Block *next_block(X86Cpu *c, X86Block *prev, uint64_t rip)
+{
+    if (prev) {
+        if (prev->succ_rip[0] == rip && prev->succ[0])
+            return prev->succ[0];
+        if (prev->succ_rip[1] == rip && prev->succ[1]) {
+            /* most recent first. */
+            X86Block *b = prev->succ[1];
+            prev->succ[1] = prev->succ[0];
+            prev->succ_rip[1] = prev->succ_rip[0];
+            prev->succ[0] = b;
+            prev->succ_rip[0] = rip;
+            return b;
+        }
+    }
+    X86Block *b = lookup(c, rip);
+    if (prev) {
+        prev->succ[1] = prev->succ[0];
+        prev->succ_rip[1] = prev->succ_rip[0];
+        prev->succ[0] = b;
+        prev->succ_rip[0] = rip;
+    }
+    return b;
 }
 
 void x86_run(X86Cpu *c)
 {
+    X86Block *prev = NULL;
     while (c->rip != c->exit_rip) {
         if (c->code_epoch && *c->code_epoch != c->blocks_epoch) {
             c->blocks_epoch = *c->code_epoch;
             x86_flush_blocks(c);
+            prev = NULL;
         }
         if (c->trace)
             c->trace[(*c->trace_pos)++ % X86_TRACE_SIZE] = c->rip;
-        X86Block *b = lookup(c, c->rip);
+        X86Block *b = next_block(c, prev, c->rip);
+        if (b->native) {
+            c->insn_rip = c->rip;
+            if (b->native(c)) {
+                c->steps++;
+                prev = b;
+                continue;
+            }
+            if (!b->fallback)
+                b->fallback = translate(c, block_cache(c), c->rip, 0);
+            b = b->fallback;
+        }
         const X86Insn *i = b->insns, *end = i + b->count;
         uint64_t expected = c->rip;
         for (; i < end; i++) {
@@ -1659,6 +1775,7 @@ void x86_run(X86Cpu *c)
             exec(c, i);
         }
         c->steps += (uint64_t)(i - b->insns);
+        prev = b;
     }
 }
 

@@ -21,6 +21,7 @@
 
 #include "mime_svc_nt.h"
 #include "mime_svc_win32k.h"
+#include "native.h"
 #include "x86.h"
 
 #include <mime/mx64.h>
@@ -227,6 +228,16 @@ static DECLSPEC_NORETURN void raise_from_cpu(MX_FRAME *f, EXCEPTION_RECORD *reco
     raise_in_x64(f, record, &ctx);
 }
 
+/* an exception raised by an export running natively; the x64 context is the export's entry. */
+DECLSPEC_NORETURN void NTAPI MxRaiseStatus(NTSTATUS status)
+{
+    EXCEPTION_RECORD record;
+    memset(&record, 0, sizeof(record));
+    record.ExceptionCode = status;
+    record.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
+    raise_from_cpu(current_thread()->frame, &record);
+}
+
 /* a fault detected by the core, cpu->rip is the faulting instruction. */
 static void env_fault(X86Cpu *c, uint32_t code, uint64_t info0, uint64_t info1)
 {
@@ -255,9 +266,88 @@ static uint64_t env_timestamp(X86Cpu *c)
     return frequency ? count * (3200000000ull / frequency) : count;
 }
 
+/*
+ * the memory regions decoded blocks came from. freeing, unmapping or
+ * reprotecting memory only drops the blocks when it touches one of them,
+ * so a program releasing heap memory keeps its translations.
+ */
+#define CODE_REGIONS 256
+static struct {
+    ULONG64 Start, End;
+} g_code[CODE_REGIONS];
+static volatile LONG g_code_count;
+static volatile LONG g_code_lock;
+static volatile BOOLEAN g_code_overflow; /* too many regions: every change drops the blocks */
+
+static void code_lock(void)
+{
+    while (__atomic_exchange_n(&g_code_lock, 1, __ATOMIC_ACQUIRE))
+        __asm__ volatile("yield");
+}
+
+static void code_unlock(void)
+{
+    __atomic_store_n(&g_code_lock, 0, __ATOMIC_RELEASE);
+}
+
 static void env_code_changed(X86Cpu *c, uint64_t address, uint64_t size)
 {
+    code_lock();
+    g_code_count = 0;
+    g_code_overflow = FALSE;
     __atomic_add_fetch(&g_code_epoch, 1, __ATOMIC_SEQ_CST);
+    code_unlock();
+}
+
+static void env_code_seen(X86Cpu *c, uint64_t address)
+{
+    LONG n = __atomic_load_n(&g_code_count, __ATOMIC_ACQUIRE);
+    for (LONG i = 0; i < n; i++)
+        if (address >= g_code[i].Start && address < g_code[i].End)
+            return;
+    MEMORY_BASIC_INFORMATION info;
+    if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)address, MemoryBasicInformation, &info,
+                                         sizeof(info), NULL))) {
+        g_code_overflow = TRUE;
+        return;
+    }
+    code_lock();
+    if (g_code_count < CODE_REGIONS) {
+        g_code[g_code_count].Start = (ULONG64)info.BaseAddress;
+        g_code[g_code_count].End = (ULONG64)info.BaseAddress + info.RegionSize;
+        __atomic_store_n(&g_code_count, g_code_count + 1, __ATOMIC_RELEASE);
+    } else {
+        g_code_overflow = TRUE;
+    }
+    code_unlock();
+}
+
+/* drops the blocks when [start, end) holds decoded code. */
+static void code_range_changed(X86Cpu *c, ULONG64 start, ULONG64 end)
+{
+    BOOLEAN hit = g_code_overflow;
+    LONG n = __atomic_load_n(&g_code_count, __ATOMIC_ACQUIRE);
+    for (LONG i = 0; i < n && !hit; i++)
+        hit = start < g_code[i].End && g_code[i].Start < end;
+    if (hit)
+        env_code_changed(c, start, end - start);
+}
+
+/* the whole allocation a free or an unmap at base releases. */
+static void allocation_range(ULONG64 base, ULONG64 *start, ULONG64 *end)
+{
+    MEMORY_BASIC_INFORMATION info;
+    *start = *end = base;
+    if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)base, MemoryBasicInformation, &info, sizeof(info),
+                                         NULL)))
+        return;
+    ULONG64 allocation = (ULONG64)info.AllocationBase;
+    *start = allocation ? allocation : (ULONG64)info.BaseAddress;
+    *end = (ULONG64)info.BaseAddress + info.RegionSize;
+    while (NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)*end, MemoryBasicInformation, &info,
+                                           sizeof(info), NULL)) &&
+           (ULONG64)info.AllocationBase == allocation && allocation && info.RegionSize)
+        *end = (ULONG64)info.BaseAddress + info.RegionSize;
 }
 
 /* ------------------------------------------------------------ system calls */
@@ -439,24 +529,53 @@ static void env_syscall(X86Cpu *c)
         break;
     }
 
+    if ((number == MIME_SVC_NtUnmapViewOfSection || number == MIME_SVC_NtUnmapViewOfSectionEx) &&
+        (HANDLE)a[0] == NtCurrentProcess())
+        MxImageUnmapping((PVOID)a[1]);
+    /* the range a free, unmap or protection change touches, taken before the call changes it. */
+    ULONG64 range_start = 0, range_end = 0;
+    if ((HANDLE)a[0] == NtCurrentProcess()) {
+        if (number == MIME_SVC_NtFreeVirtualMemory && a[1] && a[2]) {
+            ULONG64 base = *(ULONG64 *)a[1], size = *(ULONG64 *)a[2];
+            if (size)
+                range_start = base & ~0xFFFull, range_end = (base + size + 0xFFF) & ~0xFFFull;
+            else
+                allocation_range(base, &range_start, &range_end);
+        } else if (number == MIME_SVC_NtUnmapViewOfSection || number == MIME_SVC_NtUnmapViewOfSectionEx) {
+            allocation_range(a[1], &range_start, &range_end);
+        } else if ((number == MIME_SVC_NtProtectVirtualMemory) && a[1] && a[2]) {
+            ULONG64 base = *(ULONG64 *)a[1], size = *(ULONG64 *)a[2];
+            range_start = base & ~0xFFFull, range_end = (base + size + 0xFFF) & ~0xFFFull;
+        } else if (number == MIME_SVC_NtFlushInstructionCache) {
+            range_start = a[1], range_end = a[1] + (a[2] ? a[2] : 1);
+        }
+    }
     MX_FRAME *frame = t->frame;
     ULONG64 result = call_service(number, a);
     /* a callback run during the call may have entered nested emulations. */
     t->frame = frame;
     c->r[X86_RAX] = result;
 
+    if (number == MIME_SVC_NtMapViewOfSection && NT_SUCCESS((NTSTATUS)result) && (HANDLE)a[1] == NtCurrentProcess())
+        MxImageMapped(*(PVOID *)a[2]);
+    BOOLEAN other = (HANDLE)a[0] != NtCurrentProcess();
     switch (number) {
     case MIME_SVC_NtFlushInstructionCache:
     case MIME_SVC_NtFreeVirtualMemory:
     case MIME_SVC_NtUnmapViewOfSection:
     case MIME_SVC_NtUnmapViewOfSectionEx:
-        env_code_changed(c, 0, 0);
+        if (other)
+            break;
+        if (range_end > range_start)
+            code_range_changed(c, range_start, range_end);
+        else
+            env_code_changed(c, 0, 0);
         break;
     case MIME_SVC_NtProtectVirtualMemory:
-        if (NT_SUCCESS((NTSTATUS)result)) {
+        if (NT_SUCCESS((NTSTATUS)result) && !other) {
             ULONG old = a[4] ? *(PULONG)a[4] : 0;
             if (((ULONG)a[3] | old) & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
-                env_code_changed(c, 0, 0);
+                code_range_changed(c, range_start, range_end);
         }
         break;
     default:
@@ -539,6 +658,7 @@ static void map_x64_ntdll(void)
     g_x64.user_thread_start = (ULONG64)image_export(base, "RtlUserThreadStart");
     g_x64.exception_dispatcher = (ULONG64)image_export(base, "KiUserExceptionDispatcher");
     g_x64.callback_dispatcher = (ULONG64)image_export(base, "KiUserCallbackDispatcher");
+    MxInstallNatives(base, TRUE);
     if (!g_x64.ldr_initialize_thunk || !g_x64.user_thread_start || !g_x64.exception_dispatcher ||
         !g_x64.callback_dispatcher)
         mx_fatal(STATUS_ENTRYPOINT_NOT_FOUND, "the x64 ntdll.dll lacks an entry point");
@@ -550,6 +670,7 @@ static void process_init(void)
     g_env.fault = env_fault;
     g_env.timestamp = env_timestamp;
     g_env.code_changed = env_code_changed;
+    g_env.code_seen = env_code_seen;
     map_x64_ntdll();
 }
 
