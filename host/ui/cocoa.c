@@ -12,6 +12,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <IOSurface/IOSurface.h>
 #include <dispatch/dispatch.h>
+#include <math.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <pthread.h>
@@ -56,6 +57,12 @@ enum {
 };
 
 enum {
+    NSEventPhaseBegan = 1 << 0,
+    NSEventPhaseEnded = 1 << 3,
+    NSEventPhaseCancelled = 1 << 4,
+};
+
+enum {
     NSTrackingMouseEnteredAndExited = 0x01,
     NSTrackingMouseMoved = 0x02,
     NSTrackingCursorUpdate = 0x04,
@@ -93,6 +100,10 @@ typedef struct UiWindow {
     MimeWinConfig fullscreen_config;
     MimeWinConfig pending_config;
     bool config_queued;
+    double scroll_x, scroll_y;
+    double pinch_remainder;
+    uint32_t scroll_modifiers;
+    bool scroll_precise;
 
     pthread_mutex_t lock;
     IOSurfaceRef surface; /* the guest pixels, read by the compositor in place */
@@ -359,31 +370,97 @@ static void view_mouse_exited(id self, SEL sel, id event)
     emit(&ev);
 }
 
+static int32_t wheel_units(double *remainder, double delta, int32_t quantum)
+{
+    double total = *remainder + delta;
+    if (!isfinite(total) || total > INT32_MAX || total < INT32_MIN)
+        return 0;
+    int32_t units = (int32_t)(total / quantum) * quantum;
+    *remainder = total - units;
+    return units;
+}
+
+static void emit_wheel(MimeInputEvent *event, int32_t delta)
+{
+    while (delta) {
+        /* windows carries the wheel delta in a signed 16 bit word. */
+        event->wheel = delta > 32767 ? 32767 : delta < -32767 ? -32767 : delta;
+        emit(event);
+        delta -= event->wheel;
+    }
+}
+
+static MimeInputEvent wheel_event(UiWindow *w, id event)
+{
+    NSPoint loc = MSG_POINT(event, "locationInWindow");
+    NSRect frame = MSG_RECT(w->window, "frame");
+    MimeInputEvent ev = {.type = MIME_INPUT_MOUSE_WHEEL, .window_id = w->id,
+                         .modifiers = modifiers_of(event)};
+    screen_point_to_guest(CGPointMake(frame.origin.x + loc.x, frame.origin.y + loc.y), &ev.x, &ev.y);
+    return ev;
+}
+
 static void view_scroll(id self, SEL sel, id event)
 {
     id window = MSG_ID(self, "window");
     UiWindow *w = find_by_nswindow(window);
     if (!w)
         return;
-    double dy = MSG_DBL(event, "scrollingDeltaY");
-    double dx = MSG_DBL(event, "scrollingDeltaX");
     BOOL precise = MSG_BOOL(event, "hasPreciseScrollingDeltas");
+    NSUInteger phase = MSG_UINT(event, "phase");
+    NSUInteger momentum = MSG_UINT(event, "momentumPhase");
+    MimeInputEvent ev = wheel_event(w, event);
+    if ((phase & (NSEventPhaseBegan | NSEventPhaseCancelled)) ||
+        (momentum & NSEventPhaseCancelled) || w->scroll_modifiers != ev.modifiers ||
+        w->scroll_precise != (bool)precise)
+        w->scroll_x = w->scroll_y = 0;
+    w->scroll_modifiers = ev.modifiers;
+    w->scroll_precise = precise;
+    if ((phase | momentum) & NSEventPhaseCancelled)
+        return;
     double factor = precise ? 120.0 / 40.0 : 120.0;
-    NSPoint loc = MSG_POINT(event, "locationInWindow");
-    NSRect frame = MSG_RECT(window, "frame");
-    MimeInputEvent ev = {0};
-    ev.type = MIME_INPUT_MOUSE_WHEEL;
-    ev.window_id = w->id;
-    screen_point_to_guest(CGPointMake(frame.origin.x + loc.x, frame.origin.y + loc.y), &ev.x, &ev.y);
-    ev.modifiers = modifiers_of(event);
-    if (dy != 0) {
-        ev.wheel = (int32_t)(dy * factor);
+    emit_wheel(&ev, wheel_units(&w->scroll_y, MSG_DBL(event, "scrollingDeltaY") * factor, 1));
+    ev.flags = 1;
+    emit_wheel(&ev, wheel_units(&w->scroll_x, -MSG_DBL(event, "scrollingDeltaX") * factor, 1));
+}
+
+static void view_magnify(id self, SEL sel, id event)
+{
+    UiWindow *w = find_by_nswindow(MSG_ID(self, "window"));
+    if (!w)
+        return;
+    NSUInteger phase = MSG_UINT(event, "phase");
+    if (phase & (NSEventPhaseBegan | NSEventPhaseCancelled))
+        w->pinch_remainder = 0;
+    if (phase & NSEventPhaseCancelled)
+        return;
+    double change = MSG_DBL(event, "magnification");
+    if (!isfinite(change) || change <= -1)
+        return;
+    /* one wheel notch per 20 percent scale change keeps legacy zoom handlers usable. */
+    int32_t delta = wheel_units(&w->pinch_remainder, log1p(change) * (120.0 / log(1.2)), 120);
+    if (phase & NSEventPhaseEnded)
+        w->pinch_remainder = 0;
+    if (!delta)
+        return;
+    MimeInputEvent ev = wheel_event(w, event);
+    MimeInputEvent key = {.type = MIME_INPUT_KEY_DOWN, .window_id = w->id,
+                          .vk = 0xa2, .scancode = 0x1d, .modifiers = ev.modifiers | MIME_MOD_CONTROL};
+    bool synthesize = !(ev.modifiers & MIME_MOD_CONTROL);
+    if (synthesize)
+        emit(&key);
+    uint32_t modifiers = ev.modifiers;
+    ev.modifiers |= MIME_MOD_CONTROL;
+    /* separate notches also work with applications that inspect only the sign. */
+    while (delta) {
+        ev.wheel = delta > 0 ? 120 : -120;
         emit(&ev);
+        delta -= ev.wheel;
     }
-    if (dx != 0) {
-        ev.wheel = (int32_t)(-dx * factor);
-        ev.flags = 1;
-        emit(&ev);
+    if (synthesize) {
+        key.type = MIME_INPUT_KEY_UP;
+        key.modifiers = modifiers;
+        emit(&key);
     }
 }
 
@@ -816,6 +893,7 @@ static void register_classes(void)
     class_addMethod(g_view_class, SEL_("otherMouseUp:"), (IMP)view_other_up, "v@:@");
     class_addMethod(g_view_class, SEL_("otherMouseDragged:"), (IMP)view_mouse_dragged, "v@:@");
     class_addMethod(g_view_class, SEL_("scrollWheel:"), (IMP)view_scroll, "v@:@");
+    class_addMethod(g_view_class, SEL_("magnifyWithEvent:"), (IMP)view_magnify, "v@:@");
     class_addMethod(g_view_class, SEL_("keyDown:"), (IMP)view_key_down, "v@:@");
     class_addMethod(g_view_class, SEL_("keyUp:"), (IMP)view_key_up, "v@:@");
     class_addMethod(g_view_class, SEL_("flagsChanged:"), (IMP)view_flags_changed, "v@:@");

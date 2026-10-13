@@ -147,6 +147,12 @@ $(BUILD)/tools/uitest: $(UI_TEST_SRC) host/ui/cocoa.c host/ui/ui.h host/ui/app_i
 	@mkdir -p $(dir $@)
 	$(CC) $(HOST_CFLAGS) -o $@ $(UI_TEST_SRC) $(HOST_LIBS)
 
+$(BUILD)/tools/test_trackpad: tools/test_trackpad.c $(filter-out tools/uitest.c,$(UI_TEST_SRC)) \
+	host/ui/cocoa.c host/ui/ui.h host/ui/app_identity.h host/ui/pe_icon.h host/mime_host.h include/mime/abi.h
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -MMD -MP,$(HOST_CFLAGS)) -o $@ tools/test_trackpad.c \
+		$(filter-out tools/uitest.c,$(UI_TEST_SRC)) $(HOST_LIBS)
+
 APP_IDENTITY_TEST_SRC := tools/test_app_identity.c host/ui/app_identity.c host/ui/pe_icon.c \
 	host/util.c host/paths.c host/log.c host/sha1.c
 $(BUILD)/tools/test_app_identity: $(APP_IDENTITY_TEST_SRC) host/ui/app_identity.h host/ui/pe_icon.h host/mime_host.h
