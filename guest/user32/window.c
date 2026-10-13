@@ -196,7 +196,7 @@ WINUSERAPI BOOL WINAPI ShowWindow(HWND hwnd, int cmd)
 
 WINUSERAPI BOOL WINAPI ShowWindowAsync(HWND hwnd, int cmd)
 {
-    return NtUserShowWindow(hwnd, cmd);
+    return NtUserShowWindowAsync(hwnd, cmd);
 }
 
 WINUSERAPI BOOL WINAPI UpdateWindow(HWND hwnd)
@@ -237,10 +237,7 @@ WINUSERAPI BOOL WINAPI GetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *wp)
 
 WINUSERAPI BOOL WINAPI SetWindowPlacement(HWND hwnd, const WINDOWPLACEMENT *wp)
 {
-    const RECT *r = &wp->rcNormalPosition;
-    NtUserSetWindowPos(hwnd, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
-    return NtUserShowWindow(hwnd, (int)wp->showCmd), TRUE;
+    return NtUserSetWindowPlacement(hwnd, wp);
 }
 
 /* ------------------------------------------------------------------ queries */

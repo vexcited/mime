@@ -34,6 +34,23 @@ BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     return TRUE;
 }
 
+BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement)
+{
+    if (!t || t->Destroying)
+        return FALSE;
+    QUEUED_MESSAGE *qm = W32Alloc(sizeof(*qm));
+    if (!qm)
+        return FALSE;
+    qm->Kind = placement ? QM_WINDOW_PLACEMENT : QM_WINDOW_SHOW;
+    qm->Msg.hwnd = hwnd;
+    qm->Msg.wParam = command;
+    if (placement)
+        qm->Placement = *placement;
+    InsertTailList(&t->Posted, &qm->Links);
+    QueueWake(t, QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
+    return TRUE;
+}
+
 void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev)
 {
     if (!t || t->Destroying)
@@ -442,8 +459,21 @@ BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flag
         MsgProcessSent(t);
         t->WakeBits = 0;
 
+scan_posted:
         for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink) {
             QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
+            if (qm->Kind == QM_WINDOW_SHOW || qm->Kind == QM_WINDOW_PLACEMENT) {
+                RemoveEntryList(e);
+                WND *w = WndLookup(qm->Msg.hwnd);
+                if (w && w->Thread == t) {
+                    if (qm->Kind == QM_WINDOW_SHOW)
+                        WndShow(w, (int)qm->Msg.wParam);
+                    else
+                        WndSetPlacement(w, &qm->Placement);
+                }
+                W32Free(qm);
+                goto scan_posted;
+            }
             if (!hwnd_matches(qm->Msg.hwnd, hwnd) || !range_matches(qm->Msg.message, min, max))
                 continue;
             *out = qm->Msg;
@@ -902,13 +932,13 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
                 MsgSend(w, WM_CLOSE, 0, 0);
             break;
         case SC_MINIMIZE:
-            WndShow(WndTopLevel(w), SW_MINIMIZE);
+            WndShow(w, SW_MINIMIZE);
             break;
         case SC_MAXIMIZE:
-            WndShow(WndTopLevel(w), SW_MAXIMIZE);
+            WndShow(w, SW_MAXIMIZE);
             break;
         case SC_RESTORE:
-            WndShow(WndTopLevel(w), SW_RESTORE);
+            WndShow(w, SW_RESTORE);
             break;
         }
         return 0;
@@ -919,15 +949,23 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
 
     case WM_SETCURSOR: {
         LONG hit = (SHORT)LOWORD(lparam);
+        if (HIWORD(lparam) && hit >= HTLEFT && hit <= HTBOTTOMRIGHT) {
+            HostSetCursor(MenuCommandEnabled(w, SC_SIZE) ? system_cursor_for_hit(hit) : MIME_CURSOR_ARROW);
+            return TRUE;
+        }
         if ((w->Style & WS_CHILD) && w->Parent && WndIsChildOf(w, WndDesktop()) && w->Parent->Thread == w->Thread) {
             if (MsgSend(w->Parent, WM_SETCURSOR, wparam, lparam))
                 return TRUE;
+        }
+        if (!HIWORD(lparam)) {
+            HostSetCursor(MIME_CURSOR_ARROW);
+            return FALSE;
         }
         if (hit == HTCLIENT) {
             HCURSOR c = w->Class ? w->Class->Cursor : NULL;
             if (c)
                 CursorSet(c);
-            return TRUE;
+            return FALSE;
         }
         if (hit == HTERROR) {
             UINT mouse_msg = HIWORD(lparam);
@@ -985,6 +1023,20 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         return (LRESULT)MetricsSysColorBrush(bk);
     }
 
+    case WM_WINDOWPOSCHANGING: {
+        WINDOWPOS pos;
+        if (!read_lparam(&pos, lparam, sizeof(pos), user) || (pos.flags & SWP_NOSIZE) ||
+            (w->Style & WS_MINIMIZE) || (w->Flags & WNDF_FULLSCREEN) ||
+            !(w->Style & WS_THICKFRAME))
+            return 0;
+        MINMAXINFO limits;
+        WndGetMinMaxInfo(w, &limits);
+        pos.cx = W32Max(limits.ptMinTrackSize.x, W32Min(limits.ptMaxTrackSize.x, pos.cx));
+        pos.cy = W32Max(limits.ptMinTrackSize.y, W32Min(limits.ptMaxTrackSize.y, pos.cy));
+        write_lparam(lparam, &pos, sizeof(pos), user);
+        return 0;
+    }
+
     case WM_WINDOWPOSCHANGED: {
         WINDOWPOS pos;
         if (!read_lparam(&pos, lparam, sizeof(pos), user))
@@ -995,9 +1047,9 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
                 RectOffset(&c, -w->Parent->ClientRect.left, -w->Parent->ClientRect.top);
             MsgSend(w, WM_MOVE, 0, MAKELPARAM(c.left, c.top));
         }
-        if (!(pos.flags & SWP_NOSIZE) || (pos.flags & SWP_FRAMECHANGED)) {
+        if (!(pos.flags & SWP_NOSIZE) || (pos.flags & (SWP_FRAMECHANGED | SWP_STATECHANGED))) {
             WPARAM kind = (w->Style & WS_MINIMIZE) ? SIZE_MINIMIZED : (w->Style & WS_MAXIMIZE) ? SIZE_MAXIMIZED : SIZE_RESTORED;
-            MsgSend(w, WM_SIZE, kind,
+            MsgSend(w, WM_SIZE, kind, kind == SIZE_MINIMIZED ? 0 :
                     MAKELPARAM(w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top));
         }
         return 0;
@@ -1058,6 +1110,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
             if (w->Thread)
                 QueueWake(w->Thread, QS_PAINT);
         }
+        WndUpdateHostConfig(w, FALSE);
         return (LRESULT)old;
     }
 

@@ -225,6 +225,17 @@ W32PROCESS *W32GetProcess(void)
         return NULL;
     p->Process = process;
     p->Pid = PsGetCurrentProcessId();
+    PPEB peb = PsGetProcessPeb(process);
+    PRTL_USER_PROCESS_PARAMETERS params = NULL;
+    UNICODE_STRING image;
+    if (peb && NT_SUCCESS(MimeCopyFromUser(&params, &peb->ProcessParameters, sizeof(params))) && params &&
+        NT_SUCCESS(MimeCopyFromUser(&image, &params->ImagePathName, sizeof(image)))) {
+        ULONG chars = image.Length / sizeof(WCHAR);
+        if (chars >= RTL_NUMBER_OF(p->ImagePath))
+            chars = RTL_NUMBER_OF(p->ImagePath) - 1;
+        if (NT_SUCCESS(MimeCopyFromUser(p->ImagePath, image.Buffer, chars * sizeof(WCHAR))))
+            p->ImageChars = chars;
+    }
     InitializeListHead(&p->Classes);
     /* every process is treated as system dpi aware until dpi virtualization exists. */
     p->DpiAwareness = 1;

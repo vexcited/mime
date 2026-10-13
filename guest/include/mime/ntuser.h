@@ -357,6 +357,7 @@ W32KAPI HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING class_na
                                         HINSTANCE instance, LPVOID param, DWORD flags);
 W32KAPI BOOL NTAPI NtUserDestroyWindow(HWND hwnd);
 W32KAPI BOOL NTAPI NtUserShowWindow(HWND hwnd, int cmd);
+W32KAPI BOOL NTAPI NtUserShowWindowAsync(HWND hwnd, int cmd);
 W32KAPI BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags);
 W32KAPI BOOL NTAPI NtUserEnableWindow(HWND hwnd, BOOL enable);
 W32KAPI HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent);
@@ -370,6 +371,7 @@ W32KAPI HWND NTAPI NtUserFindWindowEx(HWND parent, HWND after, PUNICODE_STRING c
 W32KAPI NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent, BOOL children, ULONG thread, ULONG max,
                                            HWND *list, ULONG *count);
 W32KAPI BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *placement);
+W32KAPI BOOL NTAPI NtUserSetWindowPlacement(HWND hwnd, const WINDOWPLACEMENT *placement);
 
 W32KAPI LRESULT NTAPI NtUserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR result_info,
                                         DWORD type, BOOL ansi);

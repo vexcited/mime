@@ -8,6 +8,7 @@
 typedef struct MENU_ITEM {
     UINT Type;
     UINT State;
+    BOOLEAN StateExplicit;
     UINT Id;
     HMENU SubMenu;
     HBITMAP Checked;
@@ -43,6 +44,19 @@ static LIST_ENTRY g_menus = {&g_menus, &g_menus};
 static MENU *menu_lookup(HMENU h)
 {
     return (MENU *)UserLookup(h, USER_TYPE_MENU);
+}
+
+BOOLEAN MenuCommandEnabled(WND *w, UINT command)
+{
+    if (command == SC_SIZE && (!(w->Style & WS_THICKFRAME) || (w->Style & (WS_MAXIMIZE | WS_MINIMIZE))))
+        return FALSE;
+    MENU *menu = menu_lookup(w->SystemMenu);
+    if (!menu)
+        return TRUE;
+    for (ULONG i = 0; i < menu->Count; i++)
+        if (menu->Items[i].Id == command)
+            return !(menu->Items[i].State & (MFS_DISABLED | MFS_GRAYED));
+    return FALSE;
 }
 
 static MENU *menu_create(BOOLEAN popup)
@@ -206,6 +220,7 @@ static BOOLEAN apply_info(MENU *m, MENU_ITEM *it, const MENUITEMINFOW *mii, PWST
         it->Bitmap = mii->hbmpItem;
     if (mii->fMask & MIIM_STATE) {
         it->State = mii->fState & ITEM_STATE_MASK;
+        it->StateExplicit = TRUE;
         /* one default item per menu. */
         if (it->State & MFS_DEFAULT)
             for (ULONG i = 0; i < m->Count; i++)
@@ -295,6 +310,40 @@ static void append_item(MENU *m, UINT id, PCWSTR text, UINT type, UINT state)
     }
 }
 
+void MenuRefreshWindowState(WND *w)
+{
+    MENU *m = menu_lookup(w->SystemMenu);
+    if (!m)
+        return;
+    for (ULONG i = 0; i < m->Count; i++) {
+        MENU_ITEM *it = &m->Items[i];
+        if (it->StateExplicit)
+            continue;
+        BOOLEAN grey = FALSE;
+        switch (it->Id) {
+        case SC_MINIMIZE:
+            grey = !(w->Style & WS_MINIMIZEBOX) || (w->Style & WS_MINIMIZE);
+            break;
+        case SC_MAXIMIZE:
+            grey = !(w->Style & WS_MAXIMIZEBOX) || (w->Style & WS_MAXIMIZE);
+            break;
+        case SC_RESTORE:
+            grey = !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE));
+            break;
+        case SC_SIZE:
+            grey = !(w->Style & WS_THICKFRAME) || (w->Style & (WS_MAXIMIZE | WS_MINIMIZE));
+            break;
+        case SC_MOVE:
+            grey = (w->Style & WS_MAXIMIZE) != 0;
+            break;
+        case SC_CLOSE:
+            grey = (w->Flags & WNDF_NOCLOSE) != 0;
+            break;
+        }
+        it->State = (it->State & ~MFS_GRAYED) | (grey ? MFS_GRAYED : 0);
+    }
+}
+
 static MENU *system_menu(WND *w, BOOLEAN create)
 {
     MENU *m = w->SystemMenu ? menu_lookup(w->SystemMenu) : NULL;
@@ -306,33 +355,10 @@ static MENU *system_menu(WND *w, BOOLEAN create)
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_sysmenu); i++)
         append_item(m, g_sysmenu[i].Id, g_sysmenu[i].Text, g_sysmenu[i].Text ? MFT_STRING : MFT_SEPARATOR,
                     g_sysmenu[i].Id == SC_CLOSE ? MFS_DEFAULT : 0);
-    /* items the window style does not allow start greyed, like the states windows sets on WM_INITMENU. */
-    for (ULONG i = 0; i < m->Count; i++) {
-        MENU_ITEM *it = &m->Items[i];
-        BOOLEAN grey = FALSE;
-        switch (it->Id) {
-        case SC_MINIMIZE:
-            grey = !(w->Style & WS_MINIMIZEBOX);
-            break;
-        case SC_MAXIMIZE:
-            grey = !(w->Style & WS_MAXIMIZEBOX) || (w->Style & WS_MAXIMIZE);
-            break;
-        case SC_RESTORE:
-            grey = !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE));
-            break;
-        case SC_SIZE:
-            grey = !(w->Style & WS_THICKFRAME) || (w->Style & WS_MAXIMIZE);
-            break;
-        case SC_CLOSE:
-            grey = (w->Flags & WNDF_NOCLOSE) != 0;
-            break;
-        }
-        if (grey)
-            it->State |= MFS_GRAYED;
-    }
     m->SystemOf = w;
     m->OwnerPid = w->Thread ? w->Thread->Process->Pid : m->OwnerPid;
     w->SystemMenu = (HMENU)m->Header.Handle;
+    MenuRefreshWindowState(w);
     return m;
 }
 
@@ -661,6 +687,7 @@ UINT NTAPI NtUserEnableMenuItem(HMENU menu, UINT id, UINT flags)
     if (it) {
         old = it->State & (MF_GRAYED | MF_DISABLED);
         it->State = (it->State & ~(MF_GRAYED | MF_DISABLED)) | (flags & (MF_GRAYED | MF_DISABLED));
+        it->StateExplicit = TRUE;
         if (owner->SystemOf)
             sync_close_button(owner);
     }

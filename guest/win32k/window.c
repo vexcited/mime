@@ -403,8 +403,14 @@ void WndEnsureSurface(WND *w)
     if (!s)
         return;
     s->Window = w;
-    if (w->Surface)
+    if (w->Surface) {
+        LONG copy_width = W32Min(width, w->Surface->Width);
+        LONG copy_height = W32Min(height, w->Surface->Height);
+        for (LONG y = 0; y < copy_height; y++)
+            memcpy(s->Bits + (SIZE_T)y * s->Stride, w->Surface->Bits + (SIZE_T)y * w->Surface->Stride,
+                   (SIZE_T)copy_width * 4);
         PaintRetireSurface(w->Surface);
+    }
     w->Surface = s;
     s->Dirty = (RECT){0, 0, width, height};
     if (!(w->Flags & WNDF_HOST_WINDOW)) {
@@ -425,7 +431,7 @@ static LRESULT send_kernel(WND *w, UINT msg, WPARAM wparam, PVOID data, ULONG ki
     return MsgSendKernel(w, msg, wparam, (LPARAM)data, kind, size);
 }
 
-static void get_minmax(WND *w, MINMAXINFO *mmi)
+void WndGetMinMaxInfo(WND *w, MINMAXINFO *mmi)
 {
     UINT dpi = WndGetDpi(w);
     memset(mmi, 0, sizeof(*mmi));
@@ -433,12 +439,18 @@ static void get_minmax(WND *w, MINMAXINFO *mmi)
     FrameGetMetrics(w->Style, w->ExStyle, dpi, &m);
     LONG work_w = W32Display.Work.right - W32Display.Work.left;
     LONG work_h = W32Display.Work.bottom - W32Display.Work.top;
+    if (!WndIsTopLevel(w) && w->Parent) {
+        work_w = w->Parent->ClientRect.right - w->Parent->ClientRect.left;
+        work_h = w->Parent->ClientRect.bottom - w->Parent->ClientRect.top;
+    }
     mmi->ptMaxSize = (POINT){work_w + 2 * m.Border, work_h + m.Border + m.Border};
     mmi->ptMaxPosition = (POINT){-m.Border, -m.Border};
     mmi->ptMinTrackSize = (POINT){MetricsGet(SM_CXMINTRACK, dpi), MetricsGet(SM_CYMINTRACK, dpi)};
     mmi->ptMaxTrackSize = (POINT){MetricsGet(SM_CXMAXTRACK, dpi), MetricsGet(SM_CYMAXTRACK, dpi)};
     if (w->Style & (WS_THICKFRAME | WS_CAPTION))
         send_kernel(w, WM_GETMINMAXINFO, 0, mmi, MIME_LPARAM_INOUT, sizeof(*mmi));
+    mmi->ptMaxTrackSize.x = W32Max(mmi->ptMaxTrackSize.x, mmi->ptMinTrackSize.x);
+    mmi->ptMaxTrackSize.y = W32Max(mmi->ptMaxTrackSize.y, mmi->ptMinTrackSize.y);
 }
 
 /* computes the client rectangle for a window rectangle given in parent coordinates. */
@@ -532,6 +544,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         calc_client(w, &new_window, &old_window, &client, TRUE);
         if (!alive(w))
             goto done;
+        if (w->Style & WS_MINIMIZE)
+            client = (RECT){new_window.left, new_window.top, new_window.left, new_window.top};
         RECT win_screen = new_window, client_screen = client;
         parent_to_screen(w->Parent, &win_screen);
         parent_to_screen(w->Parent, &client_screen);
@@ -565,9 +579,9 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     BOOLEAN visible = WndIsVisible(w);
 
     if (WndIsTopLevel(w)) {
-        if (visible)
+        if (visible && !(w->Style & WS_MINIMIZE))
             WndEnsureSurface(w);
-        if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible) {
+        if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible && !(w->Style & WS_MINIMIZE)) {
             w->Flags |= WNDF_FRAME_DIRTY;
             WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
         }
@@ -602,7 +616,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         else
             InputSetForeground(NULL);
     }
-    if (!visible && w->Thread) {
+    if ((!visible || (w->Style & WS_MINIMIZE)) && w->Thread) {
         W32THREAD *t = w->Thread;
         WND *focus = WndLookup(t->Focus);
         if (focus && (focus == w || WndIsChildOf(focus, w)))
@@ -627,114 +641,168 @@ done:
 static void maximized_rect(WND *w, RECT *r)
 {
     MINMAXINFO mmi;
-    get_minmax(w, &mmi);
-    r->left = W32Display.Work.left + mmi.ptMaxPosition.x;
-    r->top = W32Display.Work.top + mmi.ptMaxPosition.y;
+    WndGetMinMaxInfo(w, &mmi);
+    r->left = (WndIsTopLevel(w) ? W32Display.Work.left : 0) + mmi.ptMaxPosition.x;
+    r->top = (WndIsTopLevel(w) ? W32Display.Work.top : 0) + mmi.ptMaxPosition.y;
     r->right = r->left + mmi.ptMaxSize.x;
     r->bottom = r->top + mmi.ptMaxSize.y;
 }
 
+static void deactivate_minimized(WND *w)
+{
+    if (InputForeground != w)
+        return;
+    WND *next = w->Owner;
+    if (next && (!WndIsVisible(next) || (next->Style & (WS_MINIMIZE | WS_DISABLED))))
+        next = NULL;
+    for (WND *c = g_desktop->FirstChild; !next && c; c = c->Next)
+        if (c != w && (c->Style & WS_VISIBLE) && !(c->Style & (WS_MINIMIZE | WS_DISABLED)) &&
+            c->Thread == w->Thread && !(c->ExStyle & WS_EX_NOACTIVATE))
+            next = c;
+    if (next) {
+        WndActivate(next, FALSE);
+        return;
+    }
+    InputSetForeground(NULL);
+    if (w->Thread)
+        w->Thread->Active = NULL;
+    MsgSend(w, WM_NCACTIVATE, FALSE, 0);
+    if (alive(w))
+        MsgSend(w, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, TRUE), 0);
+}
+
 void WndShow(WND *w, int cmd)
 {
-    if (!w || w == g_desktop)
+    if (!w || w == g_desktop || (UINT)cmd > SW_FORCEMINIMIZE)
         return;
+    if (cmd == SW_SHOWDEFAULT)
+        cmd = SW_SHOWNORMAL;
+    UserReference(&w->Header);
+    if ((w->Flags & WNDF_FULLSCREEN) && cmd != SW_SHOW && cmd != SW_SHOWNA) {
+        WndFullscreen(w, FALSE, NULL);
+        if (!alive(w))
+            goto done;
+    }
     BOOLEAN was_visible = (w->Style & WS_VISIBLE) != 0;
-    UINT swp = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
-    BOOLEAN show = TRUE;
+    BOOLEAN show = cmd != SW_HIDE;
+    BOOLEAN noactivate = cmd == SW_HIDE || cmd == SW_SHOWNOACTIVATE || cmd == SW_SHOWNA ||
+                         cmd == SW_SHOWMINNOACTIVE || cmd == SW_MINIMIZE || cmd == SW_FORCEMINIMIZE;
+    DWORD old_state = w->Style & (WS_MINIMIZE | WS_MAXIMIZE);
+    DWORD new_state = old_state;
     switch (cmd) {
-    case SW_HIDE:
-        if (!was_visible)
-            return;
-        show = FALSE;
-        swp |= SWP_HIDEWINDOW | SWP_NOACTIVATE;
-        break;
-    case SW_SHOWNOACTIVATE:
-    case SW_SHOWNA:
-    case SW_SHOWMINNOACTIVE:
-        swp |= SWP_SHOWWINDOW | SWP_NOACTIVATE;
-        break;
-    case SW_MAXIMIZE:
-        if (!(w->Style & WS_MAXIMIZE)) {
-            RECT r;
-            if (!(w->Style & WS_MINIMIZE)) {
-                w->NormalRect = w->WindowRect;
-                screen_to_parent(w, &w->NormalRect);
-            }
-            maximized_rect(w, &r);
-            w->Style = (w->Style & ~WS_MINIMIZE) | WS_MAXIMIZE;
-            w->Flags |= WNDF_MAXIMIZED;
-            if (!was_visible)
-                MsgSend(w, WM_SHOWWINDOW, TRUE, 0);
-            WndSetPos(w, (WND *)HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top,
-                      SWP_SHOWWINDOW | SWP_FRAMECHANGED | SWP_STATECHANGED);
-            return;
-        }
-        swp |= SWP_SHOWWINDOW;
-        break;
     case SW_MINIMIZE:
     case SW_SHOWMINIMIZED:
+    case SW_SHOWMINNOACTIVE:
     case SW_FORCEMINIMIZE:
-        /* no taskbar: minimizing hides the host window but keeps the window visible to the app. */
-        if (!(w->Style & WS_MINIMIZE)) {
-            if (!(w->Style & WS_MAXIMIZE)) {
-                w->NormalRect = w->WindowRect;
-                screen_to_parent(w, &w->NormalRect);
-            }
-            w->Style |= WS_MINIMIZE;
-            if (!was_visible) {
-                MsgSend(w, WM_SHOWWINDOW, TRUE, 0);
-                w->Style |= WS_VISIBLE;
-            }
-            WndUpdateHostConfig(w, FALSE);
-            MsgSend(w, WM_SIZE, SIZE_MINIMIZED, 0);
-            if (InputForeground == w)
-                InputSetForeground(NULL);
-        }
-        return;
-    case SW_RESTORE:
+        new_state = WS_MINIMIZE;
+        break;
+    case SW_MAXIMIZE:
+        new_state = WS_MAXIMIZE;
+        break;
     case SW_SHOWNORMAL:
-    case SW_SHOWDEFAULT:
-        if (w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) {
-            BOOLEAN was_max = (w->Style & WS_MAXIMIZE) && !(w->Style & WS_MINIMIZE);
-            BOOLEAN keep_max = (w->Style & WS_MINIMIZE) && (w->Flags & WNDF_MAXIMIZED) && cmd == SW_RESTORE;
-            w->Style &= ~WS_MINIMIZE;
-            if (keep_max) {
-                WndUpdateHostConfig(w, TRUE);
-                WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
-                MsgSend(w, WM_SIZE, SIZE_MAXIMIZED,
-                        MAKELPARAM(w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top));
-                WndActivate(w, FALSE);
-                return;
-            }
-            w->Style &= ~WS_MAXIMIZE;
-            w->Flags &= ~WNDF_MAXIMIZED;
-            RECT r = w->NormalRect;
-            (void)was_max;
-            WndSetPos(w, (WND *)HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top,
-                      SWP_SHOWWINDOW | SWP_FRAMECHANGED | SWP_STATECHANGED);
-            return;
+        new_state = 0;
+        break;
+    case SW_RESTORE:
+    case SW_SHOWNOACTIVATE:
+        new_state = (old_state & WS_MINIMIZE) && (w->Flags & WNDF_RESTORETOMAX) ? WS_MAXIMIZE : 0;
+        break;
+    }
+    BOOLEAN state_changed = old_state != new_state;
+    if (state_changed && (old_state & WS_MINIMIZE)) {
+        LRESULT restore = MsgSend(w, WM_QUERYOPEN, 0, 0);
+        if (!restore || !alive(w)) {
+            if (alive(w))
+                WndUpdateHostConfig(w, FALSE);
+            goto done;
         }
-        swp |= SWP_SHOWWINDOW;
-        break;
-    default:
-        swp |= SWP_SHOWWINDOW;
-        break;
     }
-    if (show == was_visible && !(swp & SWP_SHOWWINDOW && !was_visible)) {
-        if (show && !(swp & SWP_NOACTIVATE) && WndIsTopLevel(w))
-            WndActivate(w, FALSE);
+    RECT rect = w->WindowRect;
+    screen_to_parent(w, &rect);
+    UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
+    if (noactivate)
+        flags |= SWP_NOACTIVATE;
+    if (state_changed) {
+        if (!old_state)
+            w->NormalRect = rect;
+        if (new_state == WS_MINIMIZE) {
+            WndEnsureSurface(w);
+            if (old_state & WS_MAXIMIZE)
+                w->Flags |= WNDF_RESTORETOMAX;
+            else
+                w->Flags &= ~WNDF_RESTORETOMAX;
+            LONG x = WndIsTopLevel(w) ? -32000 : 0;
+            LONG y = WndIsTopLevel(w) ? -32000 : 0;
+            rect = (RECT){x, y, x + MetricsGet(SM_CXMINIMIZED, WndGetDpi(w)),
+                         y + MetricsGet(SM_CYMINIMIZED, WndGetDpi(w))};
+            flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
+        } else if (new_state == WS_MAXIMIZE) {
+            maximized_rect(w, &rect);
+            if (!alive(w))
+                goto done;
+            w->Flags |= WNDF_RESTORETOMAX;
+            flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
+        } else {
+            rect = w->NormalRect;
+            w->Flags &= ~WNDF_RESTORETOMAX;
+            flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
+        }
+        w->Style = (w->Style & ~(WS_MINIMIZE | WS_MAXIMIZE)) | new_state;
+        MenuRefreshWindowState(w);
+        flags |= SWP_FRAMECHANGED | SWP_STATECHANGED;
+    }
+    if (show != was_visible) {
+        MsgSend(w, WM_SHOWWINDOW, show, 0);
+        if (!alive(w))
+            goto done;
+        flags |= show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+    }
+    if (state_changed || show != was_visible) {
+        if (show && !noactivate && WndIsTopLevel(w))
+            flags &= ~SWP_NOZORDER;
+        WndSetPos(w, (WND *)HWND_TOP, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, flags);
+        if (!alive(w))
+            goto done;
+    }
+    if (show && new_state == WS_MINIMIZE && noactivate)
+        deactivate_minimized(w);
+    else if (show && !noactivate && WndIsTopLevel(w))
+        WndActivate(w, FALSE);
+done:
+    UserDereference(&w->Header);
+}
+
+void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect)
+{
+    if (!WndIsTopLevel(w) || enter == ((w->Flags & WNDF_FULLSCREEN) != 0))
         return;
+    UserReference(&w->Header);
+    RECT target;
+    if (enter) {
+        if (w->Style & WS_MINIMIZE)
+            WndShow(w, SW_RESTORE);
+        if (!alive(w) || (w->Style & WS_MINIMIZE))
+            goto done;
+        w->FullscreenRect = w->WindowRect;
+        w->FullscreenNormalRect = (w->Style & WS_MAXIMIZE) ? w->NormalRect : w->WindowRect;
+        w->FullscreenStyle = w->Style;
+        w->FullscreenExStyle = w->ExStyle;
+        w->FullscreenRestoreFlags = w->Flags & WNDF_RESTORETOMAX;
+        w->Flags |= WNDF_FULLSCREEN;
+        w->Style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZE);
+        w->ExStyle &= ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME | WS_EX_STATICEDGE);
+        target = *rect;
+    } else {
+        w->Flags = (w->Flags & ~(WNDF_FULLSCREEN | WNDF_RESTORETOMAX)) | w->FullscreenRestoreFlags;
+        w->Style = (w->FullscreenStyle & ~WS_VISIBLE) | (w->Style & WS_VISIBLE);
+        w->ExStyle = w->FullscreenExStyle;
+        w->NormalRect = w->FullscreenNormalRect;
+        target = w->FullscreenRect;
     }
-    MsgSend(w, WM_SHOWWINDOW, show, 0);
-    if (!alive(w))
-        return;
-    if (show && WndIsTopLevel(w))
-        swp &= ~SWP_NOZORDER;
-    WndSetPos(w, (WND *)HWND_TOP, 0, 0, 0, 0, swp);
-    if (show && !(w->Flags & WNDF_SENT_CREATE)) {
-        /* the first show of a window created hidden still owes its size notification. */
-        w->Flags |= WNDF_SENT_CREATE;
-    }
+    MenuRefreshWindowState(w);
+    WndSetPos(w, NULL, target.left, target.top, target.right - target.left, target.bottom - target.top,
+              SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+done:
+    UserDereference(&w->Header);
 }
 
 void WndCenterOnOwner(WND *w)
@@ -1126,7 +1194,9 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         ex_style |= WS_EX_WINDOWEDGE;
     if (ex_style & WS_EX_DLGMODALFRAME)
         ex_style |= WS_EX_WINDOWEDGE;
-    w->Style = style & ~WS_VISIBLE;
+    w->Style = style & ~(WS_VISIBLE | WS_MINIMIZE | WS_MAXIMIZE);
+    w->MinPosition = (POINT){-1, -1};
+    w->MaxPosition = (POINT){-1, -1};
     w->ExStyle = ex_style;
     w->Id = (UINT_PTR)menu;
     if (name)
@@ -1166,7 +1236,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
 
     if ((style & WS_THICKFRAME) || !(style & (WS_POPUP | WS_CHILD))) {
         MINMAXINFO mmi;
-        get_minmax(w, &mmi);
+        WndGetMinMaxInfo(w, &mmi);
         if (!alive(w))
             goto fail;
         if (cx > mmi.ptMaxTrackSize.x)
@@ -1222,8 +1292,9 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     if (!alive(w))
         goto fail;
 
-    if (style & WS_MAXIMIZE) {
-        w->Style &= ~WS_MAXIMIZE;
+    if (style & WS_MINIMIZE) {
+        WndShow(w, SW_SHOWMINIMIZED);
+    } else if (style & WS_MAXIMIZE) {
         WndShow(w, SW_MAXIMIZE);
     } else if (style & WS_VISIBLE) {
         if (style & WS_CHILD)
@@ -1272,6 +1343,10 @@ BOOL NTAPI NtUserDestroyWindow(HWND hwnd)
 
 BOOL NTAPI NtUserShowWindow(HWND hwnd, int cmd)
 {
+    if ((UINT)cmd > SW_FORCEMINIMIZE) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
     UserEnter();
     WND *w = WndLookup(hwnd);
     BOOL was = FALSE;
@@ -1281,6 +1356,26 @@ BOOL NTAPI NtUserShowWindow(HWND hwnd, int cmd)
     }
     UserLeave();
     return was;
+}
+
+BOOL NTAPI NtUserShowWindowAsync(HWND hwnd, int cmd)
+{
+    if ((UINT)cmd > SW_FORCEMINIMIZE) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL queued = FALSE;
+    if (can_touch(w)) {
+        queued = QueueWindowOperation(w->Thread, hwnd, (UINT)cmd, NULL);
+        if (!queued)
+            W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    } else {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return queued;
 }
 
 BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags)
@@ -1638,28 +1733,105 @@ NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, 
     return status;
 }
 
+static void placement_offset(WND *w, RECT *rect, BOOLEAN to_screen)
+{
+    if (WndIsTopLevel(w) && !(w->ExStyle & WS_EX_TOOLWINDOW))
+        RectOffset(rect, to_screen ? W32Display.Work.left : -W32Display.Work.left,
+                   to_screen ? W32Display.Work.top : -W32Display.Work.top);
+}
+
 BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *user_wp)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
     BOOL ok = FALSE;
     if (can_touch(w)) {
-        WINDOWPLACEMENT wp;
-        memset(&wp, 0, sizeof(wp));
+        WINDOWPLACEMENT wp = {0};
         wp.length = sizeof(wp);
-        wp.showCmd = (w->Style & WS_MINIMIZE)   ? SW_SHOWMINIMIZED
-                     : (w->Style & WS_MAXIMIZE) ? SW_SHOWMAXIMIZED
-                     : (w->Style & WS_VISIBLE)  ? SW_SHOWNORMAL
-                                                : SW_HIDE;
-        if (w->Style & (WS_MINIMIZE | WS_MAXIMIZE)) {
+        wp.showCmd = (w->Style & WS_MINIMIZE) ? SW_SHOWMINIMIZED
+                     : (w->Style & WS_MAXIMIZE) ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+        if ((w->Style & WS_MAXIMIZE) || (w->Flags & WNDF_RESTORETOMAX))
+            wp.flags |= WPF_RESTORETOMAXIMIZED;
+        if (w->Style & (WS_MINIMIZE | WS_MAXIMIZE))
             wp.rcNormalPosition = w->NormalRect;
-        } else {
+        else if (w->Flags & WNDF_FULLSCREEN)
+            wp.rcNormalPosition = w->FullscreenNormalRect;
+        else {
             wp.rcNormalPosition = w->WindowRect;
             screen_to_parent(w, &wp.rcNormalPosition);
         }
-        wp.ptMinPosition = (POINT){-1, -1};
-        wp.ptMaxPosition = (POINT){-1, -1};
+        placement_offset(w, &wp.rcNormalPosition, FALSE);
+        wp.ptMinPosition = w->MinPosition;
+        wp.ptMaxPosition = w->MaxPosition;
         ok = NT_SUCCESS(MimeCopyToUser(user_wp, &wp, sizeof(wp)));
+        if (!ok)
+            W32SetLastError(ERROR_NOACCESS);
+    } else {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return ok;
+}
+
+BOOL WndSetPlacement(WND *w, const WINDOWPLACEMENT *placement)
+{
+    WINDOWPLACEMENT wp = *placement;
+    UserReference(&w->Header);
+    if (w->Flags & WNDF_FULLSCREEN) {
+        WndFullscreen(w, FALSE, NULL);
+        if (!alive(w)) {
+            UserDereference(&w->Header);
+            return FALSE;
+        }
+    }
+    placement_offset(w, &wp.rcNormalPosition, TRUE);
+    w->NormalRect = wp.rcNormalPosition;
+    w->MaxPosition = wp.ptMaxPosition;
+    if (wp.flags & WPF_SETMINPOSITION)
+        w->MinPosition = wp.ptMinPosition;
+    if (!(w->Style & (WS_MINIMIZE | WS_MAXIMIZE))) {
+        RECT r = wp.rcNormalPosition;
+        WndSetPos(w, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                  SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    BOOL ok = alive(w);
+    if (ok) {
+        WndShow(w, (int)wp.showCmd);
+        if (alive(w) && (w->Style & WS_MINIMIZE)) {
+            if (wp.flags & WPF_RESTORETOMAXIMIZED)
+                w->Flags |= WNDF_RESTORETOMAX;
+            else
+                w->Flags &= ~WNDF_RESTORETOMAX;
+        }
+    }
+    UserDereference(&w->Header);
+    return ok;
+}
+
+BOOL NTAPI NtUserSetWindowPlacement(HWND hwnd, const WINDOWPLACEMENT *user_wp)
+{
+    WINDOWPLACEMENT wp;
+    if (!NT_SUCCESS(MimeCopyFromUser(&wp, user_wp, sizeof(wp)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    if (wp.length != sizeof(wp) || wp.showCmd > SW_FORCEMINIMIZE) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = FALSE;
+    if (can_touch(w)) {
+        if ((wp.flags & WPF_ASYNCWINDOWPLACEMENT) && w->Thread != W32GetThread()) {
+            ok = QueueWindowOperation(w->Thread, hwnd, wp.showCmd, &wp);
+            if (!ok)
+                W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        } else {
+            ok = WndSetPlacement(w, &wp);
+        }
+    } else {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
     }
     UserLeave();
     return ok;

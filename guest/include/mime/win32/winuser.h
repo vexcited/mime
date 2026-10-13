@@ -678,6 +678,10 @@ typedef struct tagWINDOWPLACEMENT {
     RECT rcNormalPosition;
 } WINDOWPLACEMENT, *PWINDOWPLACEMENT, *LPWINDOWPLACEMENT;
 
+#define WPF_SETMINPOSITION 0x0001
+#define WPF_RESTORETOMAXIMIZED 0x0002
+#define WPF_ASYNCWINDOWPLACEMENT 0x0004
+
 typedef struct tagWINDOWINFO {
     DWORD cbSize;
     RECT rcWindow;
@@ -1408,6 +1412,9 @@ WINUSERAPI HWND WINAPI CreateWindowExA(DWORD ex_style, LPCSTR class_name, LPCSTR
                                        LPVOID param);
 WINUSERAPI BOOL WINAPI DestroyWindow(HWND hwnd);
 WINUSERAPI BOOL WINAPI ShowWindow(HWND hwnd, int cmd);
+WINUSERAPI BOOL WINAPI ShowWindowAsync(HWND hwnd, int cmd);
+WINUSERAPI BOOL WINAPI GetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *placement);
+WINUSERAPI BOOL WINAPI SetWindowPlacement(HWND hwnd, const WINDOWPLACEMENT *placement);
 WINUSERAPI BOOL WINAPI UpdateWindow(HWND hwnd);
 WINUSERAPI BOOL WINAPI SetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags);
 WINUSERAPI BOOL WINAPI MoveWindow(HWND hwnd, int x, int y, int width, int height, BOOL repaint);

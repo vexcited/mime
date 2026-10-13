@@ -205,6 +205,7 @@ enum {
     MIME_HC_GPU_BLOCK = 0x29,   /* (channel, index, pa, size) adds a heap block */
     MIME_HC_GPU_KICK = 0x2A,    /* (channel) new commands while the host is idle */
     MIME_HC_GPU_CLOSE = 0x2B,   /* (channel) returns once the host and the gpu no longer use its memory */
+    MIME_HC_WIN_ICON = 0x2C,    /* window icon pixels described by MimeWinIcon. */
 
     /* host sockets, failing with MIME_HC_STATUS_NET_ERROR and a winsock error as the value. */
     MIME_HC_NET_SOCKET = 0x30,     /* (family, type, protocol) -> socket */
@@ -453,6 +454,13 @@ enum {
     MIME_WIN_ACTIVATE = 1u << 2, /* bring to front and take focus */
     MIME_WIN_SHADOW = 1u << 3,
     MIME_WIN_TOOL = 1u << 4,     /* no activation, used for menus and tooltips */
+    MIME_WIN_MINIMIZED = 1u << 5,
+    MIME_WIN_MAXIMIZED = 1u << 6,
+    MIME_WIN_RESIZABLE = 1u << 7,
+    MIME_WIN_APPWINDOW = 1u << 8,
+    MIME_WIN_FULLSCREEN = 1u << 9,
+    MIME_WIN_MINIMIZABLE = 1u << 10,
+    MIME_WIN_MAXIMIZABLE = 1u << 11,
 };
 
 typedef struct MimeWinConfig {
@@ -466,6 +474,9 @@ typedef struct MimeWinConfig {
     uint32_t drag_count;
     MimeRect drag[MIME_WIN_MAX_DRAG_RECTS]; /* window relative caption areas */
     uint32_t owner_id; /* keeps owned windows above their owner, 0 if none */
+    uint32_t process_id;
+    uint32_t image_chars;
+    uint16_t image_path[512];
     uint32_t title_chars;
     uint16_t title[256];
 } MimeWinConfig;
@@ -478,6 +489,12 @@ typedef struct MimeWinPresent {
     uint64_t surface_phys; /* bgra8 premultiplied, physically contiguous */
     MimeRect dirty;
 } MimeWinPresent;
+
+typedef struct MimeWinIcon {
+    uint32_t window_id;
+    uint32_t width, height, stride;
+    uint64_t pixels_phys;
+} MimeWinIcon;
 
 enum {
     MIME_CURSOR_ARROW = 0,
@@ -508,6 +525,8 @@ enum {
     MIME_INPUT_WINDOW_CLOSE = 10,  /* close requested by the host (cmd+w, dock) */
     MIME_INPUT_MOUSE_LEAVE = 11,
     MIME_INPUT_CLIPBOARD = 12,     /* another host application changed the clipboard */
+    MIME_INPUT_WINDOW_STATE = 13,  /* x is a windows show command. */
+    MIME_INPUT_WINDOW_FULLSCREEN = 14, /* flags is 1 on entry, 0 on exit. */
 };
 
 enum {
@@ -539,6 +558,7 @@ typedef struct MimeInputEvent {
     uint32_t flags;    /* 1 = horizontal wheel, 2 = key repeat */
     uint32_t pad;
     uint64_t time_ms;
+    int32_t width, height; /* fullscreen frame dimensions in guest pixels. */
 } MimeInputEvent;
 
 #endif

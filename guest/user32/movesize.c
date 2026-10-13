@@ -19,6 +19,9 @@ typedef struct MOVESIZE {
     POINT Origin;
     POINT Offset; /* keyboard steps */
     BOOL Tracked; /* the pointer moved during the loop */
+    BOOL Maximized;
+    BOOL RestoredMaximized;
+    WINDOWPLACEMENT Placement;
     MINMAXINFO Limits;
 } MOVESIZE;
 
@@ -77,6 +80,29 @@ static void set_cursor(const MOVESIZE *ms)
 static void track(MOVESIZE *ms, POINT pt)
 {
     LONG dx = pt.x - ms->Origin.x + ms->Offset.x, dy = pt.y - ms->Origin.y + ms->Offset.y;
+    if (ms->Maximized) {
+        LONG threshold = GetSystemMetrics(SM_CXDRAG);
+        if (dx > -threshold && dx < threshold && dy > -threshold && dy < threshold)
+            return;
+        LONG max_width = ms->Start.right - ms->Start.left;
+        LONG pointer_x = ms->Origin.x - ms->Start.left;
+        LONG pointer_y = ms->Origin.y - ms->Start.top;
+        ShowWindow(ms->Window, SW_RESTORE);
+        if (!IsWindow(ms->Window) || IsZoomed(ms->Window))
+            return;
+        RECT restored;
+        GetWindowRect(ms->Window, &restored);
+        LONG width = restored.right - restored.left;
+        LONG height = restored.bottom - restored.top;
+        LONG offset_x = max_width > 0 ? (LONG)((LONGLONG)pointer_x * width / max_width) : width / 2;
+        LONG offset_y = clamp(pointer_y, 0, GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYFRAME));
+        ms->Start = (RECT){pt.x - offset_x, pt.y - offset_y, pt.x - offset_x + width, pt.y - offset_y + height};
+        ms->Origin = pt;
+        ms->Offset = (POINT){0, 0};
+        ms->Maximized = FALSE;
+        ms->RestoredMaximized = TRUE;
+        dx = dy = 0;
+    }
     RECT r = ms->Start;
     if (!ms->Size) {
         OffsetRect(&r, dx, dy);
@@ -107,8 +133,7 @@ static void track(MOVESIZE *ms, POINT pt)
     if (!ms->Size)
         flags |= SWP_NOSIZE;
     SetWindowPos(ms->Window, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, flags);
-    /* show each step before the next: the mouse keeps moving while the program paints. */
-    UpdateWindow(ms->Window);
+    RedrawWindow(ms->Window, NULL, NULL, RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
 /* an arrow key: picks the edge to size first, then steps. returns FALSE for other keys. */
@@ -153,13 +178,22 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
 {
     LONG style = GetWindowLongW(hwnd, GWL_STYLE);
     BOOL size = (command & 0xFFF0) == SC_SIZE;
-    if ((style & (WS_MAXIMIZE | WS_MINIMIZE)) || (size && !(style & WS_THICKFRAME)) || !IsWindowVisible(hwnd))
+    if ((style & WS_MINIMIZE) || (size && (!(style & WS_THICKFRAME) || (style & WS_MAXIMIZE))) ||
+        !IsWindowVisible(hwnd))
         return;
+    if (size && (style & WS_SYSMENU)) {
+        HMENU menu = GetSystemMenu(hwnd, FALSE);
+        if (menu && (GetMenuState(menu, SC_SIZE, MF_BYCOMMAND) & (MF_DISABLED | MF_GRAYED)))
+            return;
+    }
     MOVESIZE ms;
     memset(&ms, 0, sizeof(ms));
     ms.Window = hwnd;
     ms.Parent = (style & WS_CHILD) ? GetParent(hwnd) : NULL;
     ms.Size = size;
+    ms.Maximized = (style & WS_MAXIMIZE) != 0;
+    ms.Placement.length = sizeof(ms.Placement);
+    GetWindowPlacement(hwnd, &ms.Placement);
     ms.Edge = size && (command & 0xF) <= WMSZ_BOTTOMRIGHT ? (UINT)(command & 0xF) : 0;
     GetWindowRect(hwnd, &ms.Start);
     /* the press that started the loop, or where the pointer is for a posted command. */
@@ -190,17 +224,21 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
         if (GetCapture() != hwnd)
             break;
         MSG msg;
-        if (!GetMessageW(&msg, NULL, 0, 0)) {
+        BOOL received = GetMessageW(&msg, NULL, 0, 0);
+        if (received <= 0) {
             /* WM_QUIT ends the loop and stays in the queue for the caller. */
-            PostQuitMessage((int)msg.wParam);
+            if (!received)
+                PostQuitMessage((int)msg.wParam);
             break;
         }
         BOOL done = FALSE;
         switch (msg.message) {
         case WM_MOUSEMOVE: {
             /* only the latest position matters. */
-            while (PeekMessageW(&msg, NULL, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE))
-                ;
+            MSG next;
+            while (PeekMessageW(&next, NULL, WM_MOUSEFIRST, WM_MOUSELAST, PM_NOREMOVE) &&
+                   next.message == WM_MOUSEMOVE && PeekMessageW(&next, NULL, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE))
+                msg = next;
             if (ms.Size && !ms.Edge)
                 break;
             ms.Tracked = TRUE;
@@ -241,16 +279,26 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
         if (done)
             break;
     }
-    if (cancel) {
-        RECT r = ms.Start;
-        if (ms.Parent)
-            MapWindowPoints(NULL, ms.Parent, (POINT *)&r, 2);
-        SetWindowPos(hwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    if (cancel && IsWindow(hwnd)) {
+        if (ms.RestoredMaximized) {
+            SetWindowPlacement(hwnd, &ms.Placement);
+        } else {
+            RECT r = ms.Start;
+            if (ms.Parent)
+                MapWindowPoints(NULL, ms.Parent, (POINT *)&r, 2);
+            SetWindowPos(hwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
     }
     if (GetCapture() == hwnd)
         ReleaseCapture();
-    if (IsWindow(hwnd))
+    if (IsWindow(hwnd)) {
         SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+        POINT pt;
+        GetCursorPos(&pt);
+        LPARAM position = MAKELPARAM(pt.x, pt.y);
+        LRESULT hit = SendMessageW(hwnd, WM_NCHITTEST, 0, position);
+        SendMessageW(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(hit, WM_MOUSEMOVE));
+    }
 }
 
 /*
@@ -274,7 +322,7 @@ BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT 
          * the others, such as a client area answering HTCAPTION, move here.
          */
         MSG up;
-        if (wparam == HTCAPTION && !(style & WS_MAXIMIZE) &&
+        if (wparam == HTCAPTION &&
             !PeekMessageW(&up, hwnd, WM_NCLBUTTONUP, WM_NCLBUTTONUP, PM_NOREMOVE) &&
             !PeekMessageW(&up, hwnd, WM_LBUTTONUP, WM_LBUTTONUP, PM_NOREMOVE)) {
             SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE + HTCAPTION, lparam);

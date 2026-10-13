@@ -779,6 +779,33 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
     if (!w || w->Thread != t)
         return FALSE;
     switch (ev->type) {
+    case MIME_INPUT_WINDOW_STATE: {
+        UINT command;
+        switch (ev->x) {
+        case SW_MINIMIZE:
+        case SW_SHOWMINIMIZED:
+            command = SC_MINIMIZE;
+            break;
+        case SW_MAXIMIZE:
+            command = SC_MAXIMIZE;
+            break;
+        case SW_RESTORE:
+            command = SC_RESTORE;
+            break;
+        default:
+            return FALSE;
+        }
+        *consumed = FALSE;
+        if (!emit(out, WndHandle(w), WM_SYSCOMMAND, command, 0, ev, filter, min, max))
+            return FALSE;
+        *consumed = TRUE;
+        return TRUE;
+    }
+    case MIME_INPUT_WINDOW_FULLSCREEN: {
+        RECT rect = {ev->x, ev->y, ev->x + ev->width, ev->y + ev->height};
+        WndFullscreen(w, (ev->flags & 1) != 0, &rect);
+        break;
+    }
     case MIME_INPUT_WINDOW_MOVED:
         w->Flags |= WNDF_HOST_MOVING;
         WndSetPos(w, NULL, ev->x, ev->y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);

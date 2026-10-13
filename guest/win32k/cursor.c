@@ -21,6 +21,12 @@ static CURICON *lookup(HICON icon)
     return (CURICON *)UserLookup(icon, USER_TYPE_CURSOR);
 }
 
+SURFACE *CursorIconImage(HICON icon)
+{
+    CURICON *cursor = lookup(icon);
+    return cursor && cursor->IsIcon && cursor->Ready ? cursor->Image : NULL;
+}
+
 void CursorInitialize(void)
 {
 }

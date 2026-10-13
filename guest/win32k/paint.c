@@ -9,6 +9,9 @@
 /* hypercall buffers: physically contiguous pages, serialized by the user lock. */
 static MimeWinConfig *g_config;
 static MimeWinPresent *g_present;
+static MimeWinIcon *g_icon;
+static PUCHAR g_icon_pixels;
+static SIZE_T g_icon_capacity;
 
 static BOOLEAN host_buffers(void)
 {
@@ -18,6 +21,7 @@ static BOOLEAN host_buffers(void)
             return FALSE;
         g_config = (MimeWinConfig *)page;
         g_present = (MimeWinPresent *)(page + 4096);
+        g_icon = (MimeWinIcon *)(page + 4096 + sizeof(*g_present));
     }
     return TRUE;
 }
@@ -67,6 +71,49 @@ static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
     return (uint32_t)m->CornerRadius;
 }
 
+static void host_icon(WND *w)
+{
+    HICON handles[] = {w->Icon, w->IconSmall, w->Class ? w->Class->Icon : NULL,
+                       w->Class ? w->Class->IconSmall : NULL};
+    SURFACE *surface = NULL;
+    HICON icon = NULL;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(handles); i++) {
+        surface = CursorIconImage(handles[i]);
+        if (surface) {
+            icon = handles[i];
+            break;
+        }
+    }
+    if (icon == w->HostIcon)
+        return;
+    MimeWinIcon *data = g_icon;
+    memset(data, 0, sizeof(*data));
+    data->window_id = window_id(w);
+    if (surface) {
+        SIZE_T size = (SIZE_T)surface->Width * surface->Height * 4;
+        if (size > g_icon_capacity) {
+            PHYSICAL_ADDRESS highest;
+            highest.QuadPart = -1;
+            PUCHAR pixels = MmAllocateContiguousMemory(size, highest);
+            if (!pixels)
+                return;
+            if (g_icon_pixels)
+                MmFreeContiguousMemory(g_icon_pixels);
+            g_icon_pixels = pixels;
+            g_icon_capacity = size;
+        }
+        data->width = (ULONG)surface->Width;
+        data->height = (ULONG)surface->Height;
+        data->stride = data->width * 4;
+        for (LONG y = 0; y < surface->Height; y++)
+            memcpy(g_icon_pixels + (SIZE_T)y * data->stride, surface->Bits + (SIZE_T)y * surface->Stride,
+                   data->stride);
+        data->pixels_phys = (ULONG64)MmGetPhysicalAddress(g_icon_pixels).QuadPart;
+    }
+    if (hypercall(MIME_HC_WIN_ICON, (ULONG64)MmGetPhysicalAddress(data).QuadPart) == MIME_HC_STATUS_OK)
+        w->HostIcon = icon;
+}
+
 void HostConfigure(WND *w, BOOLEAN activate)
 {
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
@@ -76,7 +123,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     if (w->Flags & WNDF_HOST_MOVING)
         return;
     /* a layered window shows up once it has attributes or contents from UpdateLayeredWindow. */
-    BOOLEAN visible = WndIsVisible(w) && !(w->Style & WS_MINIMIZE) && (w->Flags & WNDF_PRESENTED) &&
+    BOOLEAN visible = WndIsVisible(w) && ((w->Flags & WNDF_PRESENTED) || (w->Style & WS_MINIMIZE)) &&
                       !(w->ExStyle & 0x80000000u) && (!(w->ExStyle & WS_EX_LAYERED) || w->LayerFlags);
     MimeWinConfig *c = g_config;
     memset(c, 0, offsetof(MimeWinConfig, title));
@@ -85,6 +132,24 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->flags |= MIME_WIN_VISIBLE;
     if (w->ExStyle & WS_EX_TOPMOST)
         c->flags |= MIME_WIN_TOPMOST;
+    if (w->Style & WS_MINIMIZE)
+        c->flags |= MIME_WIN_MINIMIZED;
+    if (w->Style & WS_MAXIMIZE)
+        c->flags |= MIME_WIN_MAXIMIZED;
+    if (w->Style & WS_THICKFRAME)
+        c->flags |= MIME_WIN_RESIZABLE;
+    if (w->Style & WS_MINIMIZEBOX)
+        c->flags |= MIME_WIN_MINIMIZABLE;
+    if (w->Style & WS_MAXIMIZEBOX)
+        c->flags |= MIME_WIN_MAXIMIZABLE;
+    if ((w->ExStyle & WS_EX_APPWINDOW) || (!w->Owner && !(w->ExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))))
+        c->flags |= MIME_WIN_APPWINDOW;
+    BOOLEAN fullscreen = (w->Flags & WNDF_FULLSCREEN) ||
+                         (!(w->Style & (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZE)) &&
+                          w->WindowRect.left <= 0 && w->WindowRect.top <= 0 &&
+                          w->WindowRect.right >= W32Display.Width && w->WindowRect.bottom >= W32Display.Height);
+    if (fullscreen)
+        c->flags |= MIME_WIN_FULLSCREEN;
     if (visible && (w->Flags & WNDF_ACTIVATE_PENDING)) {
         c->flags |= MIME_WIN_ACTIVATE;
         w->Flags &= ~WNDF_ACTIVATE_PENDING;
@@ -109,17 +174,33 @@ void HostConfigure(WND *w, BOOLEAN activate)
     c->corner_radius = corner_radius(w, &m);
     if (m.Border && !(w->Style & WS_MAXIMIZE))
         c->border_color = (w->Flags & WNDF_ACTIVE_FRAME) ? 0x66000000u : 0x40000000u;
+    if (fullscreen) {
+        c->corner_radius = 0;
+        c->border_color = 0;
+        c->flags &= ~MIME_WIN_SHADOW;
+    }
     RECT drag[MIME_WIN_MAX_DRAG_RECTS];
     c->drag_count = FrameGetDragRects(w, drag, MIME_WIN_MAX_DRAG_RECTS);
     for (ULONG i = 0; i < c->drag_count; i++)
         c->drag[i] = mime_rect(&drag[i]);
     c->owner_id = w->Owner ? window_id(w->Owner) : 0;
+    if (w->Thread && w->Thread->Process) {
+        W32PROCESS *process = w->Thread->Process;
+        c->process_id = (ULONG)(ULONG_PTR)process->Pid;
+        c->image_chars = process->ImageChars;
+        memcpy(c->image_path, process->ImagePath, process->ImageChars * sizeof(WCHAR));
+        c->image_path[process->ImageChars] = 0;
+    }
     ULONG n = w->TextLength < 255 ? w->TextLength : 255;
     if (n)
         memcpy(c->title, w->Text, n * sizeof(WCHAR));
     c->title[n] = 0;
     c->title_chars = n;
     hypercall(MIME_HC_WIN_CONFIG, (ULONG64)MmGetPhysicalAddress(c).QuadPart);
+    if ((c->flags & (MIME_WIN_VISIBLE | MIME_WIN_APPWINDOW)) == (MIME_WIN_VISIBLE | MIME_WIN_APPWINDOW))
+        host_icon(w);
+    else
+        w->HostIcon = NULL;
 }
 
 void HostPresent(WND *w, const RECT *dirty)

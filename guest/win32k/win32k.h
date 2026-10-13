@@ -426,6 +426,8 @@ typedef struct W32PROCESS {
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
     struct W32GPU *Gpu; /* gpu.c */
+    ULONG ImageChars;
+    WCHAR ImagePath[512];
 } W32PROCESS;
 
 typedef struct QUEUED_MESSAGE {
@@ -433,12 +435,17 @@ typedef struct QUEUED_MESSAGE {
     MSG Msg;
     ULONG_PTR ExtraInfo;
     ULONG Kind; /* QM_* */
-    MimeInputEvent Input;
+    union {
+        MimeInputEvent Input;
+        WINDOWPLACEMENT Placement;
+    };
 } QUEUED_MESSAGE;
 
 enum {
     QM_POSTED = 0,
     QM_INPUT = 1, /* raw host event processed by the receiving thread */
+    QM_WINDOW_SHOW = 2,
+    QM_WINDOW_PLACEMENT = 3,
 };
 
 typedef struct SENT_MESSAGE {
@@ -495,6 +502,7 @@ W32PROCESS *W32GetProcess(void);
 W32THREAD *W32LookupThread(HANDLE tid);
 void QueueWake(W32THREAD *t, ULONG bits);
 BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement);
 void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev);
 DWORD W32TickCount(void);
 
@@ -530,7 +538,7 @@ typedef struct WND_CLASS {
 #define WNDF_ACTIVE_FRAME 0x0020   /* caption drawn active */
 #define WNDF_DIALOG 0x0040
 #define WNDF_HOST_WINDOW 0x0080    /* has a host window */
-#define WNDF_MAXIMIZED 0x0100
+#define WNDF_RESTORETOMAX 0x0100
 #define WNDF_PAINT_PENDING 0x0200  /* WM_PAINT will be generated */
 #define WNDF_MOUSE_TRACKED 0x0400
 #define WNDF_ERASE_PENDING 0x0800  /* BeginPaint must send WM_ERASEBKGND */
@@ -539,6 +547,7 @@ typedef struct WND_CLASS {
 #define WNDF_PRESENTED 0x4000      /* the host has received contents, the window may be shown */
 #define WNDF_ACTIVATE_PENDING 0x8000
 #define WNDF_NOCLOSE 0x10000       /* SC_CLOSE removed from the system menu */
+#define WNDF_FULLSCREEN 0x20000
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -570,6 +579,13 @@ typedef struct WND {
     RECT WindowRect;  /* screen coordinates */
     RECT ClientRect;  /* screen coordinates */
     RECT NormalRect;
+    POINT MinPosition;
+    POINT MaxPosition;
+    RECT FullscreenRect;
+    RECT FullscreenNormalRect;
+    DWORD FullscreenStyle;
+    DWORD FullscreenExStyle;
+    ULONG FullscreenRestoreFlags;
     WNDPROC Proc;
     BOOLEAN Ansi;
     HINSTANCE Instance;
@@ -583,6 +599,7 @@ typedef struct WND {
     HICON Icon;
     HICON IconSmall;
     UINT Dpi;
+    HICON HostIcon;
     SURFACE *Surface; /* top level windows */
     UCHAR CaptionHot;
     UCHAR CaptionPressed;
@@ -619,6 +636,9 @@ WND *WndFromPoint(WND *top, POINT pt);
 WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled);
 void WndSetPos(WND *w, WND *after, LONG x, LONG y, LONG cx, LONG cy, UINT flags);
 void WndShow(WND *w, int cmd);
+void WndGetMinMaxInfo(WND *w, MINMAXINFO *info);
+void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect);
+BOOL WndSetPlacement(WND *w, const WINDOWPLACEMENT *placement);
 void WndInvalidate(WND *w, const RECT *client_rect, BOOLEAN erase, BOOLEAN children);
 void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags);
 void WndValidate(WND *w, const RECT *client_rect);
@@ -724,6 +744,8 @@ void MenuFreeProcess(W32PROCESS *p);
 void PropFreeWindow(WND *w);
 HANDLE PropGetData(WND *w, ATOM atom);
 void MenuWindowDestroyed(WND *w);
+BOOLEAN MenuCommandEnabled(WND *w, UINT command);
+void MenuRefreshWindowState(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
 void ClipboardHostChanged(BOOLEAN has_text); /* has_text: the host clipboard holds text */
@@ -751,6 +773,7 @@ void MetricsInitialize(void);
 void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);
+SURFACE *CursorIconImage(HICON icon);
 
 /* callbacks into user32 for the system classes. */
 WNDPROC W32ClientProc(W32PROCESS *p, ULONG fnid);
