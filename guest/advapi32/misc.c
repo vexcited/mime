@@ -7,6 +7,7 @@
  * access, so programs take their documented fallback.
  */
 #include "advapi32_private.h"
+#include <mime/stub.h>
 
 /* ---------------------------------------------------------------- event log */
 
@@ -253,4 +254,136 @@ ADVAPI BOOL WINAPI GetCurrentHwProfileA(HW_PROFILE_INFOA *info)
         return FALSE;
     }
     return TRUE;
+}
+
+/* ---------------------------------------------------------------- services */
+
+typedef struct _SERVICE_STATUS {
+    DWORD dwServiceType;
+    DWORD dwCurrentState;
+    DWORD dwControlsAccepted;
+    DWORD dwWin32ExitCode;
+    DWORD dwServiceSpecificExitCode;
+    DWORD dwCheckPoint;
+    DWORD dwWaitHint;
+} SERVICE_STATUS, *LPSERVICE_STATUS;
+
+/* like OpenServiceW, these can never receive a valid service handle. */
+ADVAPI BOOL WINAPI QueryServiceStatus(SC_HANDLE service, LPSERVICE_STATUS status)
+{
+    AdvSetError(status ? ERROR_INVALID_HANDLE : ERROR_INVALID_ADDRESS);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI StartServiceW(SC_HANDLE service, DWORD count, LPCWSTR *arguments)
+{
+    AdvSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI StartServiceA(SC_HANDLE service, DWORD count, LPCSTR *arguments)
+{
+    AdvSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+/* ---------------------------------------------------------------- secondary logon */
+
+/* the secondary logon service, which starts programs as another user, does not exist. */
+ADVAPI BOOL WINAPI CreateProcessWithLogonW(LPCWSTR user, LPCWSTR domain, LPCWSTR password, DWORD flags,
+                                           LPCWSTR application, LPWSTR command_line, DWORD creation_flags,
+                                           LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
+                                           LPPROCESS_INFORMATION information)
+{
+    MIME_STUB("advapi32");
+    AdvSetError(1058); /* ERROR_SERVICE_DISABLED */
+    return FALSE;
+}
+
+/* ---------------------------------------------------------------- windows 3.1 registry values */
+
+/* the default value of a subkey, always a string, as the 16-bit registry stored it. */
+ADVAPI LSTATUS WINAPI RegSetValueW(HKEY key, LPCWSTR subkey, DWORD type, LPCWSTR data, DWORD size)
+{
+    if (type != REG_SZ || !data)
+        return ERROR_INVALID_PARAMETER;
+    HKEY target = key;
+    if (subkey && *subkey) {
+        LSTATUS error = RegCreateKeyExW(key, subkey, 0, NULL, 0, KEY_SET_VALUE, NULL, &target, NULL);
+        if (error)
+            return error;
+    }
+    LSTATUS error = RegSetValueExW(target, NULL, 0, REG_SZ, (const BYTE *)data,
+                                   (DWORD)(wcslen(data) + 1) * sizeof(WCHAR));
+    if (target != key)
+        RegCloseKey(target);
+    return error;
+}
+
+ADVAPI LSTATUS WINAPI RegSetValueA(HKEY key, LPCSTR subkey, DWORD type, LPCSTR data, DWORD size)
+{
+    if (type != REG_SZ || !data)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR s = AdvAnsiToWide(subkey), d = AdvAnsiToWide(data);
+    LSTATUS error = (!subkey || s) && d ? RegSetValueW(key, s, type, d, 0) : ERROR_NOT_ENOUGH_MEMORY;
+    AdvFree(s);
+    AdvFree(d);
+    return error;
+}
+
+ADVAPI LSTATUS WINAPI RegQueryValueW(HKEY key, LPCWSTR subkey, LPWSTR data, PLONG size)
+{
+    if (data && !size)
+        return ERROR_INVALID_PARAMETER;
+    HKEY target = key;
+    if (subkey && *subkey) {
+        LSTATUS error = RegOpenKeyExW(key, subkey, 0, KEY_QUERY_VALUE, &target);
+        if (error)
+            return error;
+    }
+    DWORD type, bytes = size ? (DWORD)*size : 0;
+    LSTATUS error = RegQueryValueExW(target, NULL, NULL, &type, (BYTE *)data, size ? &bytes : NULL);
+    if (error == ERROR_FILE_NOT_FOUND) {
+        /* a key without a default value reads as an empty string. */
+        bytes = sizeof(WCHAR);
+        error = data && size && *size < (LONG)bytes ? ERROR_MORE_DATA : ERROR_SUCCESS;
+        if (!error && data)
+            data[0] = 0;
+    } else if (!error && type != REG_SZ && type != REG_EXPAND_SZ) {
+        error = ERROR_INVALID_DATA;
+    }
+    if (size && (!error || error == ERROR_MORE_DATA))
+        *size = (LONG)bytes;
+    if (target != key)
+        RegCloseKey(target);
+    return error;
+}
+
+ADVAPI LSTATUS WINAPI RegQueryValueA(HKEY key, LPCSTR subkey, LPSTR data, PLONG size)
+{
+    if (data && !size)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR s = AdvAnsiToWide(subkey);
+    if (subkey && !s)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    LONG wide_size = 0;
+    LSTATUS error = RegQueryValueW(key, s, NULL, &wide_size);
+    PWSTR w = !error ? AdvAlloc(wide_size + sizeof(WCHAR)) : NULL;
+    if (!error && !w)
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    if (!error)
+        error = RegQueryValueW(key, s, w, &wide_size);
+    if (!error) {
+        w[wide_size / sizeof(WCHAR)] = 0;
+        int need = WideCharToMultiByte(CP_ACP, 0, w, -1, NULL, 0, NULL, NULL);
+        if (data && *size < need)
+            error = ERROR_MORE_DATA;
+        else if (data)
+            WideCharToMultiByte(CP_ACP, 0, w, -1, data, *size, NULL, NULL);
+        if (size)
+            *size = need;
+    }
+    AdvFree(w);
+    AdvFree(s);
+    return error;
 }

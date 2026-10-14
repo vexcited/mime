@@ -249,3 +249,224 @@ ADVAPI BOOL WINAPI CryptDestroyKey(HCRYPTKEY handle)
     AdvFree(k);
     return TRUE;
 }
+
+/* ---------------------------------------------------------------- hashes */
+
+typedef ULONG_PTR HCRYPTHASH;
+
+#define NTE_BAD_HASH ((DWORD)0x80090002L)
+#define NTE_BAD_ALGID ((DWORD)0x80090008L)
+#define NTE_BAD_HASH_STATE ((DWORD)0x8009000CL)
+
+#define CALG_MD5 0x8003
+#define CALG_SHA1 0x8004
+#define CALG_SHA_256 0x800c
+#define CALG_SHA_384 0x800d
+#define CALG_SHA_512 0x800e
+
+#define HP_ALGID 1
+#define HP_HASHVAL 2
+#define HP_HASHSIZE 4
+
+#define HASH_MAGIC 0x48534148 /* "HASH" */
+
+/*
+ * the data is kept until the value is asked for, then hashed in one pass by
+ * crypt32, which implements the algorithms. this costs memory for long
+ * inputs but keeps one implementation of each algorithm.
+ */
+typedef struct HASH {
+    DWORD Magic;
+    PROVIDER *Provider;
+    DWORD Algorithm;
+    DWORD Size;
+    BYTE *Data;
+    DWORD Length;
+    DWORD Capacity;
+    BOOL Finished;
+    BYTE Value[64];
+} HASH;
+
+typedef BOOL (WINAPI *HASH_FUNCTION)(HCRYPTPROV, DWORD, DWORD, const BYTE *, DWORD, BYTE *, DWORD *);
+
+static DWORD hash_size(DWORD algorithm)
+{
+    switch (algorithm) {
+    case CALG_MD5:
+        return 16;
+    case CALG_SHA1:
+        return 20;
+    case CALG_SHA_256:
+        return 32;
+    case CALG_SHA_384:
+        return 48;
+    case CALG_SHA_512:
+        return 64;
+    }
+    return 0;
+}
+
+static HASH *hash_object(HCRYPTHASH handle)
+{
+    HASH *h = (HASH *)handle;
+    if (!h || h->Magic != HASH_MAGIC) {
+        AdvSetError(NTE_BAD_HASH);
+        return NULL;
+    }
+    return h;
+}
+
+ADVAPI BOOL WINAPI CryptCreateHash(HCRYPTPROV handle, DWORD algorithm, HCRYPTKEY key, DWORD flags, HCRYPTHASH *result)
+{
+    PROVIDER *p = provider(handle);
+    if (!p)
+        return FALSE;
+    if (!result) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    /* keyed hashes need a cipher implementation, which the provider lacks. */
+    DWORD size = hash_size(algorithm);
+    if (!size || key) {
+        AdvSetError(key ? NTE_BAD_KEY : NTE_BAD_ALGID);
+        return FALSE;
+    }
+    HASH *h = AdvAlloc(sizeof(*h));
+    if (!h) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memset(h, 0, sizeof(*h));
+    h->Magic = HASH_MAGIC;
+    h->Provider = p;
+    h->Algorithm = algorithm;
+    h->Size = size;
+    InterlockedIncrement(&p->References);
+    *result = (HCRYPTHASH)h;
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI CryptHashData(HCRYPTHASH handle, const BYTE *data, DWORD length, DWORD flags)
+{
+    HASH *h = hash_object(handle);
+    if (!h)
+        return FALSE;
+    if (h->Finished) {
+        AdvSetError(NTE_BAD_HASH_STATE);
+        return FALSE;
+    }
+    if (!data && length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (length > h->Capacity - h->Length) {
+        if (length > 0x7FFFFFFF - h->Length) {
+            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        DWORD capacity = h->Capacity ? h->Capacity : 256;
+        while (capacity - h->Length < length)
+            capacity = capacity <= 0x3FFFFFFF ? capacity * 2 : 0x7FFFFFFF;
+        BYTE *grown = AdvAlloc(capacity);
+        if (!grown) {
+            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        if (h->Length)
+            memcpy(grown, h->Data, h->Length);
+        AdvFree(h->Data);
+        h->Data = grown;
+        h->Capacity = capacity;
+    }
+    if (length)
+        memcpy(h->Data + h->Length, data, length);
+    h->Length += length;
+    return TRUE;
+}
+
+static BOOL finish_hash(HASH *h)
+{
+    if (h->Finished)
+        return TRUE;
+    HMODULE crypt32 = LoadLibraryW(L"crypt32.dll");
+    HASH_FUNCTION hash = crypt32 ? (HASH_FUNCTION)(void *)GetProcAddress(crypt32, "CryptHashCertificate") : NULL;
+    DWORD size = sizeof(h->Value);
+    BOOL ok = hash && hash(0, h->Algorithm, 0, h->Data, h->Length, h->Value, &size) && size == h->Size;
+    if (crypt32)
+        FreeLibrary(crypt32);
+    if (!ok) {
+        AdvSetError(NTE_BAD_ALGID);
+        return FALSE;
+    }
+    if (h->Data)
+        SecureZeroMemory(h->Data, h->Length);
+    AdvFree(h->Data);
+    h->Data = NULL;
+    h->Length = h->Capacity = 0;
+    h->Finished = TRUE;
+    return TRUE;
+}
+
+static BOOL return_param(const void *value, DWORD size, BYTE *data, DWORD *length)
+{
+    if (!data) {
+        *length = size;
+        return TRUE;
+    }
+    if (*length < size) {
+        *length = size;
+        AdvSetError(ERROR_MORE_DATA);
+        return FALSE;
+    }
+    memcpy(data, value, size);
+    *length = size;
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI CryptGetHashParam(HCRYPTHASH handle, DWORD param, BYTE *data, DWORD *length, DWORD flags)
+{
+    HASH *h = hash_object(handle);
+    if (!h)
+        return FALSE;
+    if (!length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    switch (param) {
+    case HP_ALGID:
+        return return_param(&h->Algorithm, sizeof(DWORD), data, length);
+    case HP_HASHSIZE:
+        return return_param(&h->Size, sizeof(DWORD), data, length);
+    case HP_HASHVAL:
+        /* a size query leaves the hash open for more data. */
+        if (!data)
+            return return_param(h->Value, h->Size, NULL, length);
+        return finish_hash(h) && return_param(h->Value, h->Size, data, length);
+    default:
+        AdvSetError(NTE_BAD_TYPE);
+        return FALSE;
+    }
+}
+
+ADVAPI BOOL WINAPI CryptDestroyHash(HCRYPTHASH handle)
+{
+    HASH *h = hash_object(handle);
+    if (!h)
+        return FALSE;
+    h->Magic = 0;
+    if (h->Data)
+        SecureZeroMemory(h->Data, h->Length);
+    AdvFree(h->Data);
+    CryptReleaseContext((HCRYPTPROV)h->Provider, 0);
+    SecureZeroMemory(h, sizeof(*h));
+    AdvFree(h);
+    return TRUE;
+}

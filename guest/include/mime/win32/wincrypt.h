@@ -1207,4 +1207,49 @@ WINCRYPT32API BOOL WINAPI CryptHashToBeSigned(HCRYPTPROV_LEGACY hCryptProv, DWOR
                                               const BYTE *pbEncoded, DWORD cbEncoded, BYTE *pbComputedHash,
                                               DWORD *pcbComputedHash);
 
+/* signed-message metadata. */
+#define CERT_QUERY_OBJECT_FILE 1
+#define CERT_QUERY_OBJECT_BLOB 2
+#define CERT_QUERY_CONTENT_PKCS7_SIGNED 8
+#define CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED 10
+#define CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED (1u << CERT_QUERY_CONTENT_PKCS7_SIGNED)
+#define CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED (1u << CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED)
+#define CERT_QUERY_FORMAT_BINARY 1
+#define CERT_QUERY_FORMAT_FLAG_BINARY (1u << CERT_QUERY_FORMAT_BINARY)
+#define CMSG_SIGNED 2
+#define CMSG_TYPE_PARAM 1
+#define CMSG_CONTENT_PARAM 2
+#define CMSG_BARE_CONTENT_PARAM 3
+#define CMSG_INNER_CONTENT_TYPE_PARAM 4
+#define CMSG_SIGNER_COUNT_PARAM 5
+#define CMSG_SIGNER_INFO_PARAM 6
+#define CMSG_SIGNER_CERT_INFO_PARAM 7
+#define CMSG_SIGNER_HASH_ALGORITHM_PARAM 8
+#define CMSG_SIGNER_AUTH_ATTR_PARAM 9
+#define CMSG_SIGNER_UNAUTH_ATTR_PARAM 10
+#define CMSG_CERT_COUNT_PARAM 11
+#define CMSG_CERT_PARAM 12
+#define CMSG_CRL_COUNT_PARAM 13
+#define CMSG_CRL_PARAM 14
+#define CMSG_ENCODED_SIGNER 28
+#define CMSG_ENCODED_MESSAGE 29
+#define CMSG_VERSION_PARAM 30
+
+typedef struct _CMSG_SIGNER_INFO {
+    DWORD dwVersion;
+    CERT_NAME_BLOB Issuer;
+    CRYPT_INTEGER_BLOB SerialNumber;
+    CRYPT_ALGORITHM_IDENTIFIER HashAlgorithm;
+    CRYPT_ALGORITHM_IDENTIFIER HashEncryptionAlgorithm;
+    CRYPT_DATA_BLOB EncryptedHash;
+    CRYPT_ATTRIBUTES AuthAttrs;
+    CRYPT_ATTRIBUTES UnauthAttrs;
+} CMSG_SIGNER_INFO, *PCMSG_SIGNER_INFO;
+
+WINCRYPT32API BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD content_flags,
+    DWORD format_flags, DWORD flags, DWORD *encoding, DWORD *content_type, DWORD *format_type,
+    HCERTSTORE *store, HCRYPTMSG *message, const void **context);
+WINCRYPT32API BOOL WINAPI CryptMsgGetParam(HCRYPTMSG message, DWORD type, DWORD index, void *data, DWORD *size);
+WINCRYPT32API BOOL WINAPI CryptMsgClose(HCRYPTMSG message);
+
 #endif

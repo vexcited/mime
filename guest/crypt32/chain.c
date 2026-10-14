@@ -158,12 +158,12 @@ static BOOL authority_key_id(PCCERT_CONTEXT cert, BYTE *id, DWORD *size)
     return ok;
 }
 
-/* 0 when the issuer signed the subject, an error otherwise; unsupported algorithms count as signed. */
+/* unsupported signature algorithms must fail chain verification. */
 static DWORD check_signature(PCCERT_CONTEXT subject, PCCERT_CONTEXT issuer)
 {
     DWORD error = CrVerifySignedBlob(subject->pbCertEncoded, subject->cbCertEncoded,
                                      &issuer->pCertInfo->SubjectPublicKeyInfo);
-    return error == (DWORD)NTE_BAD_ALGID ? 0 : error;
+    return error;
 }
 
 static BOOL in_chain(PCCERT_CONTEXT *certs, DWORD count, PCCERT_CONTEXT cert)

@@ -149,6 +149,11 @@ typedef struct _ACCESS_ALLOWED_ACE {
 #define ACL_REVISION_DS 4
 #define ACCESS_ALLOWED_ACE_TYPE 0x0
 #define ACCESS_DENIED_ACE_TYPE 0x1
+#define SYSTEM_AUDIT_ACE_TYPE 0x2
+#define SYSTEM_MANDATORY_LABEL_ACE_TYPE 0x11
+#define NO_PROPAGATE_INHERIT_ACE 0x04
+#define SUCCESSFUL_ACCESS_ACE_FLAG 0x40
+#define FAILED_ACCESS_ACE_FLAG 0x80
 #define OBJECT_INHERIT_ACE 0x01
 #define CONTAINER_INHERIT_ACE 0x02
 #define INHERIT_ONLY_ACE 0x08
@@ -210,7 +215,12 @@ typedef struct _SECURITY_DESCRIPTOR_RELATIVE {
 #define SE_DACL_DEFAULTED 0x0008
 #define SE_SACL_PRESENT 0x0010
 #define SE_SACL_DEFAULTED 0x0020
+#define SE_DACL_AUTO_INHERIT_REQ 0x0100
+#define SE_SACL_AUTO_INHERIT_REQ 0x0200
 #define SE_DACL_AUTO_INHERITED 0x0400
+#define SE_SACL_AUTO_INHERITED 0x0800
+#define SE_DACL_PROTECTED 0x1000
+#define SE_SACL_PROTECTED 0x2000
 #define SE_SELF_RELATIVE 0x8000
 
 #define OWNER_SECURITY_INFORMATION 0x00000001
@@ -342,6 +352,8 @@ BOOL AdvSidValid(const SID *sid);
 BOOL AdvSidEqual(const SID *a, const SID *b);
 /* builds a sid in storage, which holds SECURITY_MAX_SID_SIZE bytes. */
 PSID AdvMakeSid(void *storage, BYTE authority, int count, ...);
+/* parses an sddl sid string, an alias or the S-1- form, into storage of SECURITY_MAX_SID_SIZE bytes. */
+BOOL AdvParseSidString(PCWSTR string, void *storage);
 
 /* token.c: the user and groups of a token, the process token for NULL; free with AdvFree. */
 TOKEN_USER *AdvQueryTokenUser(HANDLE token);

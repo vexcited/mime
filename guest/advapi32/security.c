@@ -919,3 +919,519 @@ ADVAPI DWORD WINAPI GetNamedSecurityInfoA(LPCSTR name, SE_OBJECT_TYPE type, SECU
     AdvFree(wide);
     return error;
 }
+
+/* ---------------------------------------------------------------- explicit access lists */
+
+typedef enum _ACCESS_MODE {
+    NOT_USED_ACCESS,
+    GRANT_ACCESS,
+    SET_ACCESS,
+    DENY_ACCESS,
+    REVOKE_ACCESS,
+    SET_AUDIT_SUCCESS,
+    SET_AUDIT_FAILURE,
+} ACCESS_MODE;
+
+typedef struct _EXPLICIT_ACCESS_W {
+    DWORD grfAccessPermissions;
+    ACCESS_MODE grfAccessMode;
+    DWORD grfInheritance;
+    TRUSTEE_W Trustee;
+} EXPLICIT_ACCESS_W, *PEXPLICIT_ACCESS_W;
+
+#define VALID_INHERIT_FLAGS 0x1F
+
+/* the sid a trustee names, copied into storage of SECURITY_MAX_SID_SIZE bytes. */
+static DWORD trustee_sid(const TRUSTEE_W *trustee, BYTE *storage)
+{
+    const SID *sid = NULL;
+    PCWSTR name = NULL;
+    switch (trustee->TrusteeForm) {
+    case TRUSTEE_IS_SID:
+        sid = (const SID *)trustee->ptstrName;
+        break;
+    case TRUSTEE_IS_OBJECTS_AND_SID:
+        sid = trustee->ptstrName ? ((OBJECTS_AND_SID *)trustee->ptstrName)->pSid : NULL;
+        break;
+    case TRUSTEE_IS_NAME:
+        name = trustee->ptstrName;
+        break;
+    case TRUSTEE_IS_OBJECTS_AND_NAME:
+        name = trustee->ptstrName ? ((OBJECTS_AND_NAME *)trustee->ptstrName)->ptstrName : NULL;
+        break;
+    default:
+        return ERROR_INVALID_PARAMETER;
+    }
+    if (name) {
+        if (!_wcsicmp(name, L"CURRENT_USER"))
+            return AdvCurrentUserSid(storage) ? ERROR_SUCCESS : ERROR_NONE_MAPPED;
+        WCHAR domain[256];
+        DWORD size = SECURITY_MAX_SID_SIZE, domain_size = RTL_NUMBER_OF(domain);
+        SID_NAME_USE use;
+        return LookupAccountNameW(NULL, name, storage, &size, domain, &domain_size, &use) ? ERROR_SUCCESS
+                                                                                          : ERROR_NONE_MAPPED;
+    }
+    if (!AdvSidValid(sid))
+        return ERROR_INVALID_SID;
+    memcpy(storage, sid, AdvSidLength(sid));
+    return ERROR_SUCCESS;
+}
+
+static DWORD ace_size(const SID *sid)
+{
+    return sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + AdvSidLength(sid);
+}
+
+/* whether a set or revoke entry for this sid drops an existing ace. */
+static BOOL ace_replaced(const ACE_HEADER *ace, const EXPLICIT_ACCESS_W *entries, const BYTE (*sids)[SECURITY_MAX_SID_SIZE],
+                         ULONG count)
+{
+    if (ace->AceType != ACCESS_ALLOWED_ACE_TYPE && ace->AceType != ACCESS_DENIED_ACE_TYPE)
+        return FALSE;
+    const SID *sid = (const SID *)&((const ACCESS_ALLOWED_ACE *)ace)->SidStart;
+    for (ULONG i = 0; i < count; i++) {
+        ACCESS_MODE mode = entries[i].grfAccessMode;
+        if (!AdvSidEqual(sid, (const SID *)sids[i]))
+            continue;
+        if (mode == REVOKE_ACCESS)
+            return TRUE;
+        /* set access replaces what the trustee was allowed, not what it was denied. */
+        if (mode == SET_ACCESS && ace->AceType == ACCESS_ALLOWED_ACE_TYPE && !(ace->AceFlags & INHERITED_ACE))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PACL old, PACL *result)
+{
+    if (!result || (count && !entries))
+        return ERROR_INVALID_PARAMETER;
+    *result = NULL;
+    if (old && !acl_valid(old))
+        return ERROR_INVALID_ACL;
+    BYTE (*sids)[SECURITY_MAX_SID_SIZE] = count ? AdvAlloc(count * SECURITY_MAX_SID_SIZE) : NULL;
+    if (count && !sids)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD size = sizeof(ACL), error = ERROR_SUCCESS;
+    for (ULONG i = 0; i < count && !error; i++) {
+        ACCESS_MODE mode = entries[i].grfAccessMode;
+        if (mode > SET_AUDIT_FAILURE || (entries[i].grfInheritance & ~VALID_INHERIT_FLAGS))
+            error = ERROR_INVALID_PARAMETER;
+        else if (mode == SET_AUDIT_SUCCESS || mode == SET_AUDIT_FAILURE)
+            error = ERROR_PRIVILEGE_NOT_HELD; /* audit entries belong in a sacl. */
+        else
+            error = trustee_sid(&entries[i].Trustee, sids[i]);
+        if (!error && (mode == GRANT_ACCESS || mode == SET_ACCESS || mode == DENY_ACCESS))
+            size += ace_size((SID *)sids[i]);
+    }
+    for (DWORD i = 0; !error && old && i < old->AceCount; i++) {
+        ACE_HEADER *ace = ace_at(old, i);
+        if (!ace_replaced(ace, entries, (const BYTE (*)[SECURITY_MAX_SID_SIZE])sids, count))
+            size += ace->AceSize;
+    }
+    ACL *acl = NULL;
+    if (!error && size > 0xFFFC)
+        error = ERROR_INVALID_ACL;
+    if (!error && !(acl = LocalAlloc(LMEM_FIXED, size)))
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    if (!error) {
+        InitializeAcl(acl, size, ACL_REVISION);
+        /* canonical order: new denies, kept explicit aces, new grants, then inherited ones. */
+        for (ULONG i = 0; i < count; i++)
+            if (entries[i].grfAccessMode == DENY_ACCESS)
+                add_ace(acl, ACL_REVISION, entries[i].grfInheritance, entries[i].grfAccessPermissions,
+                        (SID *)sids[i], ACCESS_DENIED_ACE_TYPE);
+        for (int inherited = 0; inherited < 2; inherited++) {
+            for (DWORD i = 0; old && i < old->AceCount; i++) {
+                ACE_HEADER *ace = ace_at(old, i);
+                if (!!(ace->AceFlags & INHERITED_ACE) != inherited ||
+                    ace_replaced(ace, entries, (const BYTE (*)[SECURITY_MAX_SID_SIZE])sids, count))
+                    continue;
+                memcpy(acl_end(acl), ace, ace->AceSize);
+                acl->AceCount++;
+            }
+            if (inherited)
+                break;
+            for (ULONG i = 0; i < count; i++)
+                if (entries[i].grfAccessMode == GRANT_ACCESS || entries[i].grfAccessMode == SET_ACCESS)
+                    add_ace(acl, ACL_REVISION, entries[i].grfInheritance, entries[i].grfAccessPermissions,
+                            (SID *)sids[i], ACCESS_ALLOWED_ACE_TYPE);
+        }
+        *result = acl;
+    }
+    AdvFree(sids);
+    return error;
+}
+
+/* ---------------------------------------------------------------- sddl descriptors */
+
+static const struct {
+    WCHAR Code[3];
+    ACCESS_MASK Mask;
+} g_sddl_rights[] = {
+    {L"GA", GENERIC_ALL}, {L"GR", GENERIC_READ}, {L"GW", GENERIC_WRITE}, {L"GX", GENERIC_EXECUTE},
+    {L"RC", READ_CONTROL}, {L"SD", DELETE}, {L"WD", WRITE_DAC}, {L"WO", WRITE_OWNER},
+    {L"RP", 0x10}, {L"WP", 0x20}, {L"CC", 0x1}, {L"DC", 0x2}, {L"LC", 0x4}, {L"SW", 0x8}, {L"LO", 0x80},
+    {L"DT", 0x40}, {L"CR", 0x100},
+    {L"FA", FILE_ALL_ACCESS}, {L"FR", 0x120089}, {L"FW", 0x120116}, {L"FX", 0x1200A0},
+    {L"KA", 0xF003F}, {L"KR", 0x20019}, {L"KW", 0x20006}, {L"KX", 0x20019},
+    {L"NR", 0x1}, {L"NW", 0x2}, {L"NX", 0x4},
+};
+
+static const struct {
+    WCHAR Code[3];
+    BYTE Flag;
+} g_sddl_ace_flags[] = {
+    {L"CI", CONTAINER_INHERIT_ACE}, {L"OI", OBJECT_INHERIT_ACE}, {L"NP", NO_PROPAGATE_INHERIT_ACE},
+    {L"IO", INHERIT_ONLY_ACE},      {L"ID", INHERITED_ACE},      {L"SA", SUCCESSFUL_ACCESS_ACE_FLAG},
+    {L"FA", FAILED_ACCESS_ACE_FLAG},
+};
+
+/* whether the text starts the next O:, G:, D: or S: part of a descriptor string. */
+static BOOL sddl_part_start(PCWSTR p)
+{
+    WCHAR c = towupper(p[0]);
+    return (c == L'O' || c == L'G' || c == L'D' || c == L'S') && p[1] == L':';
+}
+
+/* reads one sid, ending an ace at its parenthesis or an owner or group at the next part. */
+static BOOL sddl_sid(PCWSTR *p, BOOL in_ace, BYTE *storage)
+{
+    WCHAR text[192];
+    ULONG n = 0;
+    while ((*p)[n] && (in_ace ? (*p)[n] != L')' : !sddl_part_start(*p + n))) {
+        if (n + 1 >= RTL_NUMBER_OF(text))
+            return FALSE;
+        text[n] = (*p)[n];
+        n++;
+    }
+    text[n] = 0;
+    *p += n;
+    return n && AdvParseSidString(text, storage);
+}
+
+static BOOL sddl_two_letter(PCWSTR p, PCWSTR code)
+{
+    return p[0] == code[0] && p[1] == code[1];
+}
+
+/* parses the acl flags and aces of one D: or S: section into an acl of at most 64 KiB. */
+static BOOL sddl_acl(PCWSTR *pp, BOOL sacl, ACL *acl, WORD *control)
+{
+    PCWSTR p = *pp;
+    InitializeAcl(acl, 0xFFFC, ACL_REVISION);
+    for (;;) {
+        if (sddl_two_letter(p, L"AI")) {
+            *control |= sacl ? SE_SACL_AUTO_INHERITED : SE_DACL_AUTO_INHERITED;
+            p += 2;
+        } else if (sddl_two_letter(p, L"AR")) {
+            *control |= sacl ? SE_SACL_AUTO_INHERIT_REQ : SE_DACL_AUTO_INHERIT_REQ;
+            p += 2;
+        } else if (p[0] == L'P') {
+            *control |= sacl ? SE_SACL_PROTECTED : SE_DACL_PROTECTED;
+            p++;
+        } else {
+            break;
+        }
+    }
+    while (*p == L'(') {
+        p++;
+        BYTE type;
+        if (p[0] == L'A' && p[1] == L';')
+            type = ACCESS_ALLOWED_ACE_TYPE, p += 1;
+        else if (p[0] == L'D' && p[1] == L';')
+            type = ACCESS_DENIED_ACE_TYPE, p += 1;
+        else if (sddl_two_letter(p, L"AU"))
+            type = SYSTEM_AUDIT_ACE_TYPE, p += 2;
+        else if (sddl_two_letter(p, L"ML"))
+            type = SYSTEM_MANDATORY_LABEL_ACE_TYPE, p += 2;
+        else
+            return FALSE;
+        if (*p++ != L';')
+            return FALSE;
+        BYTE flags = 0;
+        while (*p && *p != L';') {
+            ULONG i = 0;
+            while (i < RTL_NUMBER_OF(g_sddl_ace_flags) && !sddl_two_letter(p, g_sddl_ace_flags[i].Code))
+                i++;
+            if (i == RTL_NUMBER_OF(g_sddl_ace_flags))
+                return FALSE;
+            flags |= g_sddl_ace_flags[i].Flag;
+            p += 2;
+        }
+        if (*p++ != L';')
+            return FALSE;
+        ACCESS_MASK mask = 0;
+        if (p[0] == L'0' && (p[1] == L'x' || p[1] == L'X')) {
+            p += 2;
+            for (;; p++) {
+                WCHAR c = *p | 0x20;
+                if (*p >= L'0' && *p <= L'9')
+                    mask = mask * 16 + (*p - L'0');
+                else if (c >= L'a' && c <= L'f')
+                    mask = mask * 16 + (c - L'a' + 10);
+                else
+                    break;
+            }
+        } else {
+            while (*p && *p != L';') {
+                ULONG i = 0;
+                while (i < RTL_NUMBER_OF(g_sddl_rights) && !sddl_two_letter(p, g_sddl_rights[i].Code))
+                    i++;
+                if (i == RTL_NUMBER_OF(g_sddl_rights))
+                    return FALSE;
+                mask |= g_sddl_rights[i].Mask;
+                p += 2;
+            }
+        }
+        /* object guids are only meaningful for directory objects, which are not supported. */
+        if (p[0] != L';' || p[1] != L';' || p[2] != L';')
+            return FALSE;
+        p += 3;
+        BYTE sid[SECURITY_MAX_SID_SIZE];
+        if (!sddl_sid(&p, TRUE, sid) || *p++ != L')')
+            return FALSE;
+        if ((type == SYSTEM_AUDIT_ACE_TYPE || type == SYSTEM_MANDATORY_LABEL_ACE_TYPE) != sacl)
+            return FALSE;
+        if (!add_ace(acl, ACL_REVISION, flags, mask, sid, type))
+            return FALSE;
+    }
+    acl->AclSize = (WORD)(acl_end(acl) - (BYTE *)acl);
+    *pp = p;
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCWSTR string, DWORD revision,
+                                                                       PSECURITY_DESCRIPTOR *result, PULONG size)
+{
+    if (!string || !result) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (revision != SECURITY_DESCRIPTOR_REVISION) {
+        AdvSetError(ERROR_UNKNOWN_REVISION);
+        return FALSE;
+    }
+    BYTE owner[SECURITY_MAX_SID_SIZE], group[SECURITY_MAX_SID_SIZE];
+    ACL *dacl = AdvAlloc(0x10000), *sacl = AdvAlloc(0x10000);
+    BOOL has_owner = FALSE, has_group = FALSE, has_dacl = FALSE, has_sacl = FALSE, ok = dacl && sacl;
+    WORD control = 0;
+    PCWSTR p = string;
+    while (ok && *p) {
+        while (*p == L' ' || *p == L'\t' || *p == L'\r' || *p == L'\n')
+            p++;
+        if (!*p)
+            break;
+        WCHAR part = towupper(*p);
+        if (p[1] != L':') {
+            ok = FALSE;
+            break;
+        }
+        p += 2;
+        if (part == L'O' && !has_owner)
+            ok = has_owner = sddl_sid(&p, FALSE, owner);
+        else if (part == L'G' && !has_group)
+            ok = has_group = sddl_sid(&p, FALSE, group);
+        else if (part == L'D' && !has_dacl)
+            ok = has_dacl = sddl_acl(&p, FALSE, dacl, &control);
+        else if (part == L'S' && !has_sacl)
+            ok = has_sacl = sddl_acl(&p, TRUE, sacl, &control);
+        else
+            ok = FALSE;
+    }
+    BYTE *out = NULL;
+    DWORD need = 0;
+    if (ok) {
+        const SID *o = has_owner ? (SID *)owner : NULL, *g = has_group ? (SID *)group : NULL;
+        need = sizeof(SECURITY_DESCRIPTOR_RELATIVE) + (o ? LONG_ALIGN(AdvSidLength(o)) : 0) +
+               (g ? LONG_ALIGN(AdvSidLength(g)) : 0) + (has_sacl ? LONG_ALIGN(sacl->AclSize) : 0) +
+               (has_dacl ? LONG_ALIGN(dacl->AclSize) : 0);
+        out = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, need);
+        if (out) {
+            SECURITY_DESCRIPTOR_RELATIVE *r = (SECURITY_DESCRIPTOR_RELATIVE *)out;
+            DWORD at = sizeof(*r);
+            r->Revision = SECURITY_DESCRIPTOR_REVISION;
+            r->Control = control | SE_SELF_RELATIVE | (has_dacl ? SE_DACL_PRESENT : 0) |
+                         (has_sacl ? SE_SACL_PRESENT : 0);
+            if (o) {
+                r->Owner = at;
+                memcpy(out + at, o, AdvSidLength(o));
+                at += LONG_ALIGN(AdvSidLength(o));
+            }
+            if (g) {
+                r->Group = at;
+                memcpy(out + at, g, AdvSidLength(g));
+                at += LONG_ALIGN(AdvSidLength(g));
+            }
+            if (has_sacl) {
+                r->Sacl = at;
+                memcpy(out + at, sacl, sacl->AclSize);
+                at += LONG_ALIGN(sacl->AclSize);
+            }
+            if (has_dacl) {
+                r->Dacl = at;
+                memcpy(out + at, dacl, dacl->AclSize);
+            }
+        }
+    }
+    AdvFree(dacl);
+    AdvFree(sacl);
+    if (!ok) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!out) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    *result = out;
+    if (size)
+        *size = need;
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorA(LPCSTR string, DWORD revision,
+                                                                       PSECURITY_DESCRIPTOR *result, PULONG size)
+{
+    if (!string) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide = AdvAnsiToWide(string);
+    BOOL ok = wide && ConvertStringSecurityDescriptorToSecurityDescriptorW(wide, revision, result, size);
+    AdvFree(wide);
+    return ok;
+}
+
+/* ---------------------------------------------------------------- setting object security */
+
+/*
+ * the kernel keeps no descriptors on files or keys, so a valid change is
+ * accepted without being stored: queries keep answering the synthesized
+ * descriptor, which already grants the user what installers ask for.
+ */
+static DWORD check_new_security(SECURITY_INFORMATION info, const SID *owner, const SID *group, const ACL *dacl,
+                                const ACL *sacl)
+{
+    if (info & (SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION))
+        return ERROR_PRIVILEGE_NOT_HELD;
+    if ((info & OWNER_SECURITY_INFORMATION) && owner && !AdvSidValid(owner))
+        return ERROR_INVALID_OWNER;
+    if ((info & GROUP_SECURITY_INFORMATION) && group && !AdvSidValid(group))
+        return 1308; /* ERROR_INVALID_PRIMARY_GROUP */
+    if ((info & DACL_SECURITY_INFORMATION) && dacl && !acl_valid(dacl))
+        return ERROR_INVALID_ACL;
+    return ERROR_SUCCESS;
+}
+
+static DWORD check_descriptor(SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    SD_PARTS p;
+    if (!sd || !sd_parts(sd, &p))
+        return ERROR_INVALID_SECURITY_DESCR;
+    return check_new_security(info, p.Owner, p.Group, p.Dacl, p.Sacl);
+}
+
+ADVAPI BOOL WINAPI SetFileSecurityW(LPCWSTR name, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    if (!name) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES)
+        return FALSE;
+    DWORD error = check_descriptor(info, sd);
+    if (error)
+        AdvSetError(error);
+    return !error;
+}
+
+ADVAPI BOOL WINAPI SetFileSecurityA(LPCSTR name, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    if (!name) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide = AdvAnsiToWide(name);
+    BOOL ok = wide && SetFileSecurityW(wide, info, sd);
+    AdvFree(wide);
+    return ok;
+}
+
+ADVAPI DWORD WINAPI SetNamedSecurityInfoW(LPWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                          PSID group, PACL dacl, PACL sacl)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    BYTE *current = NULL;
+    DWORD error;
+    /* the existing descriptor query also proves the object exists. */
+    switch (type) {
+    case SE_FILE_OBJECT:
+        error = file_security(name, OWNER_SECURITY_INFORMATION, &current);
+        break;
+    case SE_REGISTRY_KEY:
+    case SE_REGISTRY_WOW64_32KEY:
+    case SE_REGISTRY_WOW64_64KEY:
+        error = key_security(name, OWNER_SECURITY_INFORMATION, &current);
+        break;
+    case SE_SERVICE:
+        return ERROR_SERVICE_DOES_NOT_EXIST;
+    default:
+        return ERROR_INVALID_PARAMETER;
+    }
+    LocalFree(current);
+    if (error)
+        return error;
+    return check_new_security(info, owner, group, dacl, sacl);
+}
+
+ADVAPI DWORD WINAPI SetNamedSecurityInfoA(LPSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                          PSID group, PACL dacl, PACL sacl)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD error = SetNamedSecurityInfoW(wide, type, info, owner, group, dacl, sacl);
+    AdvFree(wide);
+    return error;
+}
+
+static DWORD check_key(HKEY key)
+{
+    DWORD subkeys;
+    return RegQueryInfoKeyW(key, NULL, NULL, NULL, &subkeys, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+}
+
+ADVAPI LSTATUS WINAPI RegSetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    DWORD error = check_key(key);
+    return error ? error : check_descriptor(info, sd);
+}
+
+ADVAPI LSTATUS WINAPI RegGetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd, LPDWORD size)
+{
+    if (!size)
+        return ERROR_INVALID_PARAMETER;
+    DWORD error = check_key(key);
+    if (error)
+        return error;
+    if (info & SACL_SECURITY_INFORMATION)
+        return ERROR_PRIVILEGE_NOT_HELD;
+    BYTE *copy = NULL;
+    error = query_object(key, info, &copy);
+    if (error == ERROR_CALL_NOT_IMPLEMENTED)
+        error = synthesize(&copy, info, KEY_ALL_ACCESS, KEY_READ, CONTAINER_INHERIT_ACE | INHERITED_ACE, FALSE);
+    if (error)
+        return error;
+    DWORD need = (DWORD)LocalSize(copy);
+    if (!sd || *size < need)
+        error = ERROR_INSUFFICIENT_BUFFER;
+    else
+        memcpy(sd, copy, need);
+    *size = need;
+    LocalFree(copy);
+    return error;
+}

@@ -276,6 +276,11 @@ static BOOL parse_sid(PCWSTR s, BYTE *storage)
     return *s == 0;
 }
 
+BOOL AdvParseSidString(PCWSTR string, void *storage)
+{
+    return parse_sid(string, storage);
+}
+
 ADVAPI BOOL WINAPI ConvertStringSidToSidW(LPCWSTR string, PSID *result)
 {
     if (!string || !result) {

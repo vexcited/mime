@@ -414,9 +414,9 @@ typedef struct _SECURITY_FUNCTION_TABLE_A {
     QUERY_CREDENTIALS_ATTRIBUTES_EX_FN_A QueryCredentialsAttributesExA;
 } SecurityFunctionTableA, *PSecurityFunctionTableA;
 
-MIME_STATIC_ASSERT(sizeof(SecPkgInfoW) == 32, "SecPkgInfoW size");
-MIME_FIELD_AT(SecurityFunctionTableW, QuerySecurityContextToken, 192);
-MIME_FIELD_AT(SecurityFunctionTableW, SetContextAttributesW, 216);
+MIME_STATIC_ASSERT(sizeof(SecPkgInfoW) == (sizeof(void *) == 4 ? 20 : 32), "SecPkgInfoW size");
+MIME_FIELD_AT(SecurityFunctionTableW, QuerySecurityContextToken, 24 * sizeof(void *));
+MIME_FIELD_AT(SecurityFunctionTableW, SetContextAttributesW, 27 * sizeof(void *));
 MIME_FIELD_AT(SEC_WINNT_AUTH_IDENTITY_EX2, Flags, 36);
 
 typedef struct _SECURITY_PACKAGE_OPTIONS {
