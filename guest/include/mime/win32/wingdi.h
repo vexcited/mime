@@ -1087,4 +1087,154 @@ WINGDIAPI int WINAPI EnumFontFamiliesW(HDC dc, LPCWSTR family, FONTENUMPROCW pro
 WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buffer, DWORD size);
 WINGDIAPI HRGN WINAPI ExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *data);
 
+/* ------------------------------------------------------------------ palettes */
+
+typedef struct tagPALETTEENTRY {
+    BYTE peRed;
+    BYTE peGreen;
+    BYTE peBlue;
+    BYTE peFlags;
+} PALETTEENTRY, *PPALETTEENTRY, *LPPALETTEENTRY;
+
+typedef struct tagLOGPALETTE {
+    WORD palVersion;
+    WORD palNumEntries;
+    PALETTEENTRY palPalEntry[1];
+} LOGPALETTE, *PLOGPALETTE, *LPLOGPALETTE;
+
+#define PC_RESERVED 0x01
+#define PC_EXPLICIT 0x02
+#define PC_NOCOLLAPSE 0x04
+#define PALETTERGB(r, g, b) (0x02000000 | RGB(r, g, b))
+#define PALETTEINDEX(i) ((COLORREF)(0x01000000 | (DWORD)(WORD)(i)))
+
+WINGDIAPI HPALETTE WINAPI CreatePalette(const LOGPALETTE *palette);
+WINGDIAPI HPALETTE WINAPI SelectPalette(HDC dc, HPALETTE palette, BOOL background);
+WINGDIAPI UINT WINAPI RealizePalette(HDC dc);
+WINGDIAPI UINT WINAPI GetPaletteEntries(HPALETTE palette, UINT start, UINT count, LPPALETTEENTRY entries);
+WINGDIAPI UINT WINAPI SetPaletteEntries(HPALETTE palette, UINT start, UINT count, const PALETTEENTRY *entries);
+WINGDIAPI UINT WINAPI GetNearestPaletteIndex(HPALETTE palette, COLORREF color);
+WINGDIAPI UINT WINAPI GetSystemPaletteEntries(HDC dc, UINT start, UINT count, LPPALETTEENTRY entries);
+WINGDIAPI UINT WINAPI SetDIBColorTable(HDC dc, UINT start, UINT count, const RGBQUAD *colors);
+WINGDIAPI COLORREF WINAPI GetNearestColor(HDC dc, COLORREF color);
+
+/* ------------------------------------------------------------------ metafiles */
+
+typedef struct tagMETARECORD {
+    DWORD rdSize;
+    WORD rdFunction;
+    WORD rdParm[1];
+} METARECORD, *PMETARECORD, *LPMETARECORD;
+
+typedef struct tagHANDLETABLE {
+    HGDIOBJ objectHandle[1];
+} HANDLETABLE, *PHANDLETABLE, *LPHANDLETABLE;
+
+typedef int(CALLBACK *MFENUMPROC)(HDC dc, HANDLETABLE *table, METARECORD *record, int objects, LPARAM param);
+
+WINGDIAPI HDC WINAPI CreateMetaFileW(LPCWSTR file);
+WINGDIAPI HMETAFILE WINAPI CloseMetaFile(HDC dc);
+WINGDIAPI BOOL WINAPI DeleteMetaFile(HMETAFILE metafile);
+WINGDIAPI BOOL WINAPI PlayMetaFile(HDC dc, HMETAFILE metafile);
+WINGDIAPI BOOL WINAPI PlayMetaFileRecord(HDC dc, LPHANDLETABLE table, LPMETARECORD record, UINT handles);
+WINGDIAPI BOOL WINAPI EnumMetaFile(HDC dc, HMETAFILE metafile, MFENUMPROC proc, LPARAM param);
+WINGDIAPI HMETAFILE WINAPI CopyMetaFileW(HMETAFILE metafile, LPCWSTR file);
+
+/* ------------------------------------------------------------------ gradients and blending */
+
+typedef USHORT COLOR16;
+
+typedef struct _TRIVERTEX {
+    LONG x;
+    LONG y;
+    COLOR16 Red;
+    COLOR16 Green;
+    COLOR16 Blue;
+    COLOR16 Alpha;
+} TRIVERTEX, *PTRIVERTEX, *LPTRIVERTEX;
+
+typedef struct _GRADIENT_RECT {
+    ULONG UpperLeft;
+    ULONG LowerRight;
+} GRADIENT_RECT, *PGRADIENT_RECT, *LPGRADIENT_RECT;
+
+typedef struct _GRADIENT_TRIANGLE {
+    ULONG Vertex1;
+    ULONG Vertex2;
+    ULONG Vertex3;
+} GRADIENT_TRIANGLE, *PGRADIENT_TRIANGLE, *LPGRADIENT_TRIANGLE;
+
+#define GRADIENT_FILL_RECT_H 0x00000000
+#define GRADIENT_FILL_RECT_V 0x00000001
+#define GRADIENT_FILL_TRIANGLE 0x00000002
+#define GRADIENT_FILL_OP_FLAG 0x000000FF
+
+WINGDIAPI BOOL WINAPI GdiTransparentBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
+                                        int src_width, int src_height, UINT transparent);
+WINGDIAPI BOOL WINAPI GdiGradientFill(HDC dc, PTRIVERTEX vertices, ULONG vertex_count, PVOID mesh, ULONG mesh_count,
+                                      ULONG mode);
+
+/* msimg32 exports. */
+#ifdef MIME_BUILD_MSIMG32
+#define MSIMG32API __declspec(dllexport)
+#else
+#define MSIMG32API DECLSPEC_IMPORT
+#endif
+
+MSIMG32API BOOL WINAPI AlphaBlend(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
+                                  int src_width, int src_height, BLENDFUNCTION blend);
+MSIMG32API BOOL WINAPI TransparentBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
+                                      int src_width, int src_height, UINT transparent);
+MSIMG32API BOOL WINAPI GradientFill(HDC dc, PTRIVERTEX vertices, ULONG vertex_count, PVOID mesh, ULONG mesh_count,
+                                    ULONG mode);
+
+/* ------------------------------------------------------------------ mapping, clipping and miscellany */
+
+typedef struct tagCOLORADJUSTMENT {
+    WORD caSize;
+    WORD caFlags;
+    WORD caIlluminantIndex;
+    WORD caRedGamma;
+    WORD caGreenGamma;
+    WORD caBlueGamma;
+    WORD caReferenceBlack;
+    WORD caReferenceWhite;
+    SHORT caContrast;
+    SHORT caBrightness;
+    SHORT caColorfulness;
+    SHORT caRedGreenTint;
+} COLORADJUSTMENT, *PCOLORADJUSTMENT, *LPCOLORADJUSTMENT;
+
+#define DCB_RESET 0x0001
+#define DCB_ACCUMULATE 0x0002
+#define DCB_DIRTY DCB_ACCUMULATE
+#define DCB_SET (DCB_RESET | DCB_ACCUMULATE)
+#define DCB_ENABLE 0x0004
+#define DCB_DISABLE 0x0008
+
+#define FLOODFILLBORDER 0
+#define FLOODFILLSURFACE 1
+
+#define ASPECT_FILTERING 0x0001
+
+WINGDIAPI BOOL WINAPI GetWindowExtEx(HDC dc, LPSIZE size);
+WINGDIAPI BOOL WINAPI GetViewportExtEx(HDC dc, LPSIZE size);
+WINGDIAPI BOOL WINAPI ScaleViewportExtEx(HDC dc, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old);
+WINGDIAPI BOOL WINAPI ScaleWindowExtEx(HDC dc, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old);
+WINGDIAPI HRGN WINAPI CreateEllipticRgn(int left, int top, int right, int bottom);
+WINGDIAPI BOOL WINAPI RectVisible(HDC dc, const RECT *rect);
+WINGDIAPI BOOL WINAPI PtVisible(HDC dc, int x, int y);
+WINGDIAPI int WINAPI OffsetClipRgn(HDC dc, int x, int y);
+WINGDIAPI HBRUSH WINAPI CreatePatternBrush(HBITMAP bitmap);
+WINGDIAPI HBRUSH WINAPI CreateDIBPatternBrushPt(const void *packed, UINT usage);
+WINGDIAPI BOOL WINAPI GetBitmapDimensionEx(HBITMAP bitmap, LPSIZE size);
+WINGDIAPI BOOL WINAPI SetBitmapDimensionEx(HBITMAP bitmap, int width, int height, LPSIZE old);
+WINGDIAPI BOOL WINAPI SetTextJustification(HDC dc, int extra, int breaks);
+WINGDIAPI DWORD WINAPI SetMapperFlags(HDC dc, DWORD flags);
+WINGDIAPI BOOL WINAPI SetColorAdjustment(HDC dc, const COLORADJUSTMENT *adjustment);
+WINGDIAPI UINT WINAPI GetBoundsRect(HDC dc, LPRECT rect, UINT flags);
+WINGDIAPI BOOL WINAPI ArcTo(HDC dc, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2);
+WINGDIAPI BOOL WINAPI PolyDraw(HDC dc, const POINT *points, const BYTE *types, int count);
+WINGDIAPI BOOL WINAPI ExtFloodFill(HDC dc, int x, int y, COLORREF color, UINT type);
+
 #endif

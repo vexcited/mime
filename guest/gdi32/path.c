@@ -6,6 +6,7 @@
 #include <mime/ntuser.h>
 #include <mime/win32/winbase.h>
 #include <mime/pixelformat.h>
+#include <mime/stub.h>
 
 /* ------------------------------------------------------------------ paths */
 
@@ -100,6 +101,61 @@ WINGDIAPI BOOL WINAPI PolylineTo(HDC dc, const POINT *points, DWORD count)
 }
 
 /* ------------------------------------------------------------------ world transform */
+
+/* validates every type first, like windows, then replays the figures through the current position. */
+WINGDIAPI BOOL WINAPI PolyDraw(HDC dc, const POINT *points, const BYTE *types, int count)
+{
+    if (count < 0 || (count && (!points || !types))) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (int i = 0; i < count; i++) {
+        BYTE type = types[i] & ~PT_CLOSEFIGURE;
+        if (type == PT_BEZIERTO) {
+            if (i + 2 >= count || (types[i + 1] & ~PT_CLOSEFIGURE) != PT_BEZIERTO ||
+                (types[i + 2] & ~PT_CLOSEFIGURE) != PT_BEZIERTO)
+                return FALSE;
+            i += 2;
+        } else if (type != PT_MOVETO && type != PT_LINETO) {
+            return FALSE;
+        }
+    }
+    DWORD state = 0;
+    NtGdiGetDCDword(dc, MIME_DCDW_PATHSTATE, &state);
+    POINT start;
+    if (!NtGdiGetDCPoint(dc, MIME_DCPT_CURRENTPOSITION, &start))
+        return FALSE;
+    for (int i = 0; i < count; i++) {
+        BYTE type = types[i] & ~PT_CLOSEFIGURE;
+        BOOL ok;
+        if (type == PT_MOVETO) {
+            start = points[i];
+            ok = NtGdiMoveTo(dc, points[i].x, points[i].y, NULL);
+        } else if (type == PT_LINETO) {
+            ok = NtGdiLineTo(dc, points[i].x, points[i].y);
+        } else {
+            ok = PolyBezierTo(dc, &points[i], 3);
+            i += 2;
+        }
+        if (!ok)
+            return FALSE;
+        if (type != PT_MOVETO && (types[i] & PT_CLOSEFIGURE)) {
+            if (state == 1)
+                NtGdiCloseFigure(dc);
+            else
+                NtGdiLineTo(dc, start.x, start.y);
+        }
+    }
+    return TRUE;
+}
+
+/* win32k draws no elliptic arcs yet. */
+WINGDIAPI BOOL WINAPI ArcTo(HDC dc, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2)
+{
+    MIME_STUB("gdi32");
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
 
 WINGDIAPI BOOL WINAPI SetWorldTransform(HDC dc, const XFORM *xform)
 {

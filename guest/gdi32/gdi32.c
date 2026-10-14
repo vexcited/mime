@@ -2,9 +2,9 @@
  * gdi32: the gdi client. objects live in win32k; these wrappers marshal
  * arguments to the NtGdi services.
  */
-#include <mime/nt.h>
-#include <mime/ntuser.h>
+#include "gdi32_private.h"
 #include <mime/win32/winnls.h>
+#include <mime/stub.h>
 
 static UCHAR handle_type(HGDIOBJ h)
 {
@@ -15,6 +15,8 @@ static UCHAR handle_type(HGDIOBJ h)
 
 WINGDIAPI HGDIOBJ WINAPI GetStockObject(int index)
 {
+    if (index == DEFAULT_PALETTE)
+        return PalDefault();
     return NtGdiGetStockObject(index);
 }
 
@@ -58,18 +60,22 @@ WINGDIAPI HGDIOBJ WINAPI SelectObject(HDC dc, HGDIOBJ h)
 
 WINGDIAPI BOOL WINAPI DeleteObject(HGDIOBJ h)
 {
+    if (handle_type(h) == 0x08)
+        return PalDelete(h);
     return h ? NtGdiDeleteObjectApp(h) : FALSE;
 }
 
 WINGDIAPI int WINAPI GetObjectW(HANDLE h, int size, LPVOID buffer)
 {
+    if (handle_type(h) == 0x08)
+        return PalGetObject(h, size, buffer);
     return NtGdiExtGetObjectW(h, size, buffer);
 }
 
 WINGDIAPI int WINAPI GetObjectA(HANDLE h, int size, LPVOID buffer)
 {
     if (GetObjectType(h) != OBJ_FONT)
-        return NtGdiExtGetObjectW(h, size, buffer);
+        return GetObjectW(h, size, buffer);
     LOGFONTW lfw;
     if (!NtGdiExtGetObjectW(h, sizeof(lfw), &lfw))
         return 0;
@@ -85,6 +91,10 @@ WINGDIAPI int WINAPI GetObjectA(HANDLE h, int size, LPVOID buffer)
 
 WINGDIAPI HGDIOBJ WINAPI GetCurrentObject(HDC dc, UINT type)
 {
+    if (type == OBJ_PAL) {
+        DWORD v;
+        return NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v) ? PalCurrent(dc) : NULL;
+    }
     return NtGdiGetDCObject(dc, (int)type);
 }
 
@@ -112,6 +122,7 @@ WINGDIAPI HDC WINAPI CreateICW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, c
 
 WINGDIAPI BOOL WINAPI DeleteDC(HDC dc)
 {
+    PalForgetDC(dc);
     return NtGdiDeleteObjectApp(dc);
 }
 
@@ -375,6 +386,82 @@ WINGDIAPI BOOL WINAPI SetWindowExtEx(HDC dc, int x, int y, LPSIZE old)
     return TRUE;
 }
 
+static BOOL dc_valid(HDC dc)
+{
+    DWORD v;
+    if (NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v))
+        return TRUE;
+    SetLastError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+/* win32k maps MM_TEXT only, so both extents stay one to one. */
+static BOOL unit_extent(HDC dc, LPSIZE size)
+{
+    if (!dc_valid(dc))
+        return FALSE;
+    if (size)
+        *size = (SIZE){1, 1};
+    return TRUE;
+}
+
+WINGDIAPI BOOL WINAPI GetWindowExtEx(HDC dc, LPSIZE size)
+{
+    return unit_extent(dc, size);
+}
+
+WINGDIAPI BOOL WINAPI GetViewportExtEx(HDC dc, LPSIZE size)
+{
+    return unit_extent(dc, size);
+}
+
+WINGDIAPI BOOL WINAPI ScaleViewportExtEx(HDC dc, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old)
+{
+    if (!x_num || !x_denom || !y_num || !y_denom) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return unit_extent(dc, old);
+}
+
+WINGDIAPI BOOL WINAPI ScaleWindowExtEx(HDC dc, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old)
+{
+    if (!x_num || !x_denom || !y_num || !y_denom) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return unit_extent(dc, old);
+}
+
+/* text justification, font mapper flags, color adjustment and bounds accumulation have no effect yet. */
+WINGDIAPI BOOL WINAPI SetTextJustification(HDC dc, int extra, int breaks)
+{
+    return dc_valid(dc);
+}
+
+WINGDIAPI DWORD WINAPI SetMapperFlags(HDC dc, DWORD flags)
+{
+    return dc_valid(dc) ? 0 : GDI_ERROR;
+}
+
+WINGDIAPI BOOL WINAPI SetColorAdjustment(HDC dc, const COLORADJUSTMENT *adjustment)
+{
+    if (!adjustment) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return dc_valid(dc);
+}
+
+WINGDIAPI UINT WINAPI GetBoundsRect(HDC dc, LPRECT rect, UINT flags)
+{
+    if (!dc_valid(dc))
+        return 0;
+    if (rect)
+        *rect = (RECT){0, 0, 0, 0};
+    return DCB_RESET;
+}
+
 /* ------------------------------------------------------------------ bitmaps */
 
 WINGDIAPI HBITMAP WINAPI CreateCompatibleBitmap(HDC dc, int width, int height)
@@ -455,6 +542,72 @@ WINGDIAPI HBITMAP WINAPI CreateDIBitmap(HDC dc, const BITMAPINFOHEADER *header, 
     return bm;
 }
 
+/* the dimensions an application attaches to a bitmap, in 0.1 mm units. */
+#define DIMENSION_MAX 64
+
+static RTL_SRWLOCK g_dimension_lock;
+static struct {
+    HBITMAP Bitmap;
+    SIZE Size;
+} g_dimensions[DIMENSION_MAX];
+
+static BOOL bitmap_valid(HBITMAP bitmap)
+{
+    BITMAP bm;
+    if (handle_type(bitmap) == 0x05 && NtGdiExtGetObjectW(bitmap, sizeof(bm), &bm))
+        return TRUE;
+    SetLastError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+WINGDIAPI BOOL WINAPI GetBitmapDimensionEx(HBITMAP bitmap, LPSIZE size)
+{
+    if (!bitmap_valid(bitmap))
+        return FALSE;
+    SIZE result = {0, 0};
+    RtlAcquireSRWLockShared(&g_dimension_lock);
+    for (UINT i = 0; i < DIMENSION_MAX; i++)
+        if (g_dimensions[i].Bitmap == bitmap)
+            result = g_dimensions[i].Size;
+    RtlReleaseSRWLockShared(&g_dimension_lock);
+    if (size)
+        *size = result;
+    return TRUE;
+}
+
+WINGDIAPI BOOL WINAPI SetBitmapDimensionEx(HBITMAP bitmap, int width, int height, LPSIZE old)
+{
+    if (!bitmap_valid(bitmap))
+        return FALSE;
+    SIZE previous = {0, 0};
+    int slot = -1;
+    RtlAcquireSRWLockExclusive(&g_dimension_lock);
+    for (UINT i = 0; i < DIMENSION_MAX; i++) {
+        if (g_dimensions[i].Bitmap == bitmap) {
+            previous = g_dimensions[i].Size;
+            slot = (int)i;
+        }
+    }
+    if (slot < 0) {
+        for (UINT i = 0; i < DIMENSION_MAX && slot < 0; i++)
+            if (!g_dimensions[i].Bitmap)
+                slot = (int)i;
+        /* when full, reuse the oldest slot. */
+        if (slot < 0)
+            slot = 0;
+    }
+    if (width || height) {
+        g_dimensions[slot].Bitmap = bitmap;
+        g_dimensions[slot].Size = (SIZE){width, height};
+    } else if (g_dimensions[slot].Bitmap == bitmap) {
+        g_dimensions[slot].Bitmap = NULL;
+    }
+    RtlReleaseSRWLockExclusive(&g_dimension_lock);
+    if (old)
+        *old = previous;
+    return TRUE;
+}
+
 WINGDIAPI BOOL WINAPI BitBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y, DWORD rop)
 {
     return NtGdiBitBlt(dst, x, y, width, height, src, src_x, src_y, rop, 0, 0);
@@ -477,13 +630,6 @@ WINGDIAPI BOOL WINAPI GdiAlphaBlend(HDC dst, int x, int y, int width, int height
     return NtGdiAlphaBlend(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, blend, NULL);
 }
 
-WINGDIAPI BOOL WINAPI GdiTransparentBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
-                                        int src_width, int src_height, UINT transparent)
-{
-    /* no color keying yet: a plain copy. */
-    return StretchBlt(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, SRCCOPY);
-}
-
 /* ------------------------------------------------------------------ brushes and pens */
 
 WINGDIAPI HBRUSH WINAPI CreateSolidBrush(COLORREF color)
@@ -500,6 +646,105 @@ WINGDIAPI HBRUSH WINAPI CreateBrushIndirect(const LOGBRUSH *lb)
 
 WINGDIAPI HBRUSH WINAPI CreateHatchBrush(int hatch, COLORREF color)
 {
+    return NtGdiCreateSolidBrush(color, NULL);
+}
+
+#define PATTERN_SAMPLE 8
+
+static DWORD dib_table_size(const BITMAPINFOHEADER *h, UINT usage)
+{
+    DWORD colors = h->biClrUsed;
+    if (!colors && h->biBitCount <= 8)
+        colors = 1u << h->biBitCount;
+    DWORD size = colors * (usage == DIB_PAL_COLORS ? sizeof(WORD) : sizeof(RGBQUAD));
+    if (h->biCompression == BI_BITFIELDS && h->biSize == sizeof(BITMAPINFOHEADER))
+        size += 3 * sizeof(DWORD);
+    return size;
+}
+
+/*
+ * win32k has no pattern brushes yet: a pattern becomes a solid brush of its
+ * average color, sampled from an 8 by 8 reduction of the bitmap or dib.
+ */
+static BOOL average_pattern(HBITMAP bitmap, const BITMAPINFO *info, UINT usage, COLORREF *color)
+{
+    BITMAPINFO bi;
+    memset(&bi, 0, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = PATTERN_SAMPLE;
+    bi.bmiHeader.biHeight = -PATTERN_SAMPLE;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    DWORD *pixels = NULL;
+    HDC mem = CreateCompatibleDC(NULL);
+    HBITMAP canvas = mem ? CreateDIBSection(mem, &bi, DIB_RGB_COLORS, (void **)&pixels, NULL, 0) : NULL;
+    BOOL ok = FALSE;
+    if (canvas && pixels) {
+        HGDIOBJ old = SelectObject(mem, canvas);
+        SetStretchBltMode(mem, STRETCH_DELETESCANS);
+        if (bitmap) {
+            BITMAP bm;
+            HDC src = CreateCompatibleDC(NULL);
+            if (src && GetObjectW(bitmap, sizeof(bm), &bm)) {
+                HGDIOBJ old_src = SelectObject(src, bitmap);
+                ok = old_src && StretchBlt(mem, 0, 0, PATTERN_SAMPLE, PATTERN_SAMPLE, src, 0, 0, bm.bmWidth,
+                                           bm.bmHeight, SRCCOPY);
+                if (old_src)
+                    SelectObject(src, old_src);
+            }
+            if (src)
+                DeleteDC(src);
+        } else {
+            const BITMAPINFOHEADER *h = &info->bmiHeader;
+            const BYTE *bits = (const BYTE *)info + h->biSize + dib_table_size(h, usage);
+            ok = StretchDIBits(mem, 0, 0, PATTERN_SAMPLE, PATTERN_SAMPLE, 0, 0, h->biWidth,
+                               h->biHeight < 0 ? -h->biHeight : h->biHeight, bits, info, usage, SRCCOPY) != 0;
+        }
+        if (ok) {
+            GdiFlush();
+            DWORD r = 0, g = 0, b = 0;
+            for (int i = 0; i < PATTERN_SAMPLE * PATTERN_SAMPLE; i++) {
+                r += (pixels[i] >> 16) & 0xFF;
+                g += (pixels[i] >> 8) & 0xFF;
+                b += pixels[i] & 0xFF;
+            }
+            *color = RGB(r / (PATTERN_SAMPLE * PATTERN_SAMPLE), g / (PATTERN_SAMPLE * PATTERN_SAMPLE),
+                         b / (PATTERN_SAMPLE * PATTERN_SAMPLE));
+        }
+        SelectObject(mem, old);
+    }
+    if (canvas)
+        DeleteObject(canvas);
+    if (mem)
+        DeleteDC(mem);
+    return ok;
+}
+
+WINGDIAPI HBRUSH WINAPI CreatePatternBrush(HBITMAP bitmap)
+{
+    BITMAP bm;
+    if (handle_type(bitmap) != 0x05 || !NtGdiExtGetObjectW(bitmap, sizeof(bm), &bm)) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return NULL;
+    }
+    COLORREF color;
+    if (!average_pattern(bitmap, NULL, DIB_RGB_COLORS, &color))
+        color = RGB(128, 128, 128);
+    return NtGdiCreateSolidBrush(color, NULL);
+}
+
+WINGDIAPI HBRUSH WINAPI CreateDIBPatternBrushPt(const void *packed, UINT usage)
+{
+    const BITMAPINFO *info = packed;
+    if (!info || info->bmiHeader.biSize < sizeof(BITMAPINFOHEADER) || info->bmiHeader.biWidth <= 0 ||
+        !info->bmiHeader.biHeight || usage > DIB_PAL_COLORS) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    COLORREF color;
+    if (!average_pattern(NULL, info, usage, &color))
+        color = RGB(128, 128, 128);
     return NtGdiCreateSolidBrush(color, NULL);
 }
 
@@ -810,6 +1055,14 @@ WINGDIAPI COLORREF WINAPI GetPixel(HDC dc, int x, int y)
     return NtGdiGetPixel(dc, x, y);
 }
 
+/* win32k offers no flood fill. */
+WINGDIAPI BOOL WINAPI ExtFloodFill(HDC dc, int x, int y, COLORREF color, UINT type)
+{
+    MIME_STUB("gdi32");
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ regions and clipping */
 
 WINGDIAPI HRGN WINAPI CreateRectRgn(int left, int top, int right, int bottom)
@@ -929,6 +1182,75 @@ WINGDIAPI int WINAPI IntersectClipRect(HDC dc, int left, int top, int right, int
 WINGDIAPI int WINAPI ExcludeClipRect(HDC dc, int left, int top, int right, int bottom)
 {
     return NtGdiExcludeClipRect(dc, left, top, right, bottom);
+}
+
+/* the application clip region in device coordinates, or NULL when the dc has none. */
+static HRGN clip_region(HDC dc)
+{
+    HRGN region = NtGdiCreateRectRgn(0, 0, 0, 0);
+    if (region && NtGdiGetRandomRgn(dc, region, CLIPRGN) == 1)
+        return region;
+    if (region)
+        NtGdiDeleteObjectApp(region);
+    return NULL;
+}
+
+WINGDIAPI int WINAPI OffsetClipRgn(HDC dc, int x, int y)
+{
+    if (!dc_valid(dc))
+        return ERROR;
+    HRGN region = clip_region(dc);
+    if (!region)
+        return SIMPLEREGION;
+    /* the offset is logical, the region device: scale it through the mapping. */
+    POINT p[2] = {{0, 0}, {x, y}};
+    NtGdiTransformPoints(dc, p, p, 2, 1);
+    NtGdiOffsetRgn(region, p[1].x - p[0].x, p[1].y - p[0].y);
+    int result = NtGdiExtSelectClipRgn(dc, region, RGN_COPY);
+    NtGdiDeleteObjectApp(region);
+    return result;
+}
+
+/* tests against the clip box, then against the clip region when there is one. */
+WINGDIAPI BOOL WINAPI RectVisible(HDC dc, const RECT *rect)
+{
+    RECT box;
+    int kind = rect ? NtGdiGetAppClipBox(dc, &box) : ERROR;
+    if (kind == ERROR || kind == NULLREGION)
+        return FALSE;
+    RECT r = {rect->left < rect->right ? rect->left : rect->right, rect->top < rect->bottom ? rect->top : rect->bottom,
+              rect->left < rect->right ? rect->right : rect->left, rect->top < rect->bottom ? rect->bottom : rect->top};
+    if (r.left >= box.right || r.right <= box.left || r.top >= box.bottom || r.bottom <= box.top ||
+        r.left == r.right || r.top == r.bottom)
+        return FALSE;
+    HRGN region = kind == COMPLEXREGION ? clip_region(dc) : NULL;
+    if (!region)
+        return TRUE;
+    POINT p[2] = {{r.left, r.top}, {r.right, r.bottom}};
+    NtGdiTransformPoints(dc, p, p, 2, 1);
+    RECT d = {p[0].x < p[1].x ? p[0].x : p[1].x, p[0].y < p[1].y ? p[0].y : p[1].y,
+              p[0].x < p[1].x ? p[1].x : p[0].x, p[0].y < p[1].y ? p[1].y : p[0].y};
+    BOOL visible = NtGdiRectInRegion(region, &d);
+    NtGdiDeleteObjectApp(region);
+    return visible;
+}
+
+WINGDIAPI BOOL WINAPI PtVisible(HDC dc, int x, int y)
+{
+    RECT box;
+    int kind = NtGdiGetAppClipBox(dc, &box);
+    if (kind == ERROR)
+        return -1;
+    if (kind == NULLREGION || x < box.left || x >= box.right || y < box.top || y >= box.bottom)
+        return FALSE;
+    HRGN region = kind == COMPLEXREGION ? clip_region(dc) : NULL;
+    if (!region)
+        return TRUE;
+    POINT p = {x, y};
+    NtGdiTransformPoints(dc, &p, &p, 1, 1);
+    BOOL visible = NtGdiPtInRegion(region, p.x, p.y);
+    NtGdiDeleteObjectApp(region);
+    return visible;
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
