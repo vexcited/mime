@@ -648,6 +648,27 @@ static void maximized_rect(WND *w, RECT *r)
     r->bottom = r->top + mmi.ptMaxSize.y;
 }
 
+/* the desktop takes the new display size, maximized windows the new work area, and every top level window hears of it. */
+void WndDisplayChanged(void)
+{
+    if (!g_desktop)
+        return;
+    g_desktop->WindowRect = (RECT){0, 0, W32Display.Width, W32Display.Height};
+    g_desktop->ClientRect = g_desktop->WindowRect;
+    for (WND *c = g_desktop->FirstChild; c; c = c->Next) {
+        if (c->Flags & WNDF_DESTROYING)
+            continue;
+        if ((c->Style & WS_MAXIMIZE) && !(c->Flags & WNDF_FULLSCREEN)) {
+            RECT r;
+            maximized_rect(c, &r);
+            WndSetPos(c, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        if (c->Thread)
+            QueuePost(c->Thread, WndHandle(c), WM_DISPLAYCHANGE, 32,
+                      MAKELPARAM((WORD)W32Display.Width, (WORD)W32Display.Height));
+    }
+}
+
 static void deactivate_minimized(WND *w)
 {
     if (InputForeground != w)
@@ -788,11 +809,25 @@ void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect)
         w->FullscreenExStyle = w->ExStyle;
         w->FullscreenRestoreFlags = w->Flags & WNDF_RESTORETOMAX;
         w->Flags |= WNDF_FULLSCREEN;
-        w->Style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZE);
-        w->ExStyle &= ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME | WS_EX_STATICEDGE);
+        /*
+         * a program that made its own fullscreen keeps its styles and its
+         * rectangle: godot, for one, leaves fullscreen once its window stops
+         * matching the screen.
+         */
+        if ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & WS_THICKFRAME)) {
+            w->Flags |= WNDF_APP_FULLSCREEN;
+            if (w->WindowRect.left <= 0 && w->WindowRect.top <= 0 && w->WindowRect.right >= W32Display.Width &&
+                w->WindowRect.bottom >= W32Display.Height) {
+                MenuRefreshWindowState(w);
+                goto done;
+            }
+        } else {
+            w->Style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZE);
+            w->ExStyle &= ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME | WS_EX_STATICEDGE);
+        }
         target = *rect;
     } else {
-        w->Flags = (w->Flags & ~(WNDF_FULLSCREEN | WNDF_RESTORETOMAX)) | w->FullscreenRestoreFlags;
+        w->Flags = (w->Flags & ~(WNDF_FULLSCREEN | WNDF_APP_FULLSCREEN | WNDF_RESTORETOMAX)) | w->FullscreenRestoreFlags;
         w->Style = (w->FullscreenStyle & ~WS_VISIBLE) | (w->Style & WS_VISIBLE);
         w->ExStyle = w->FullscreenExStyle;
         w->NormalRect = w->FullscreenNormalRect;
@@ -1554,6 +1589,10 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
         if (is_style) {
             DWORD visible = w->Style & WS_VISIBLE;
             w->Style = (ss.styleNew & ~WS_VISIBLE) | visible;
+            /* a program leaving its own fullscreen gives its frame back: the host leaves the space. */
+            if ((w->Flags & WNDF_APP_FULLSCREEN) &&
+                ((w->Style & WS_CAPTION) == WS_CAPTION || (w->Style & WS_THICKFRAME)))
+                w->Flags &= ~(WNDF_FULLSCREEN | WNDF_APP_FULLSCREEN);
             if ((ss.styleNew & WS_VISIBLE) != visible)
                 WndShow(w, (ss.styleNew & WS_VISIBLE) ? SW_SHOWNA : SW_HIDE);
         } else {

@@ -453,6 +453,9 @@ BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
         case MIME_DCDW_PATHSTATE:
             v = dc->PathState;
             break;
+        case MIME_DCDW_WINDOW:
+            v = (DWORD)(ULONG_PTR)WndHandle(dc->Window);
+            break;
         default:
             ok = FALSE;
             break;

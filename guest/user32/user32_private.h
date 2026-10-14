@@ -22,6 +22,18 @@
 #ifndef ERROR_CANNOT_FIND_WND_CLASS
 #define ERROR_CANNOT_FIND_WND_CLASS 1407L
 #endif
+#ifndef ERROR_INVALID_DWP_HANDLE
+#define ERROR_INVALID_DWP_HANDLE 1405L
+#endif
+#ifndef ERROR_NO_SCROLLBARS
+#define ERROR_NO_SCROLLBARS 1447L
+#endif
+#ifndef ERROR_INVALID_SCROLLBAR_RANGE
+#define ERROR_INVALID_SCROLLBAR_RANGE 1448L
+#endif
+#ifndef ERROR_INVALID_COMBOBOX_MESSAGE
+#define ERROR_INVALID_COMBOBOX_MESSAGE 1422L
+#endif
 
 static inline int UserMulDiv(int a, int b, int c)
 {
@@ -116,6 +128,10 @@ void UserDrawFocusRect(HDC dc, const RECT *r);
 HFONT UserGetMessageFont(UINT dpi);
 HFONT UserGetMessageBoxFont(UINT dpi);
 UINT UserWindowDpi(HWND hwnd);
+
+/* scroll bar state kept in window properties, scroll.c. */
+BOOL UserScrollBarMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+void UserFreeScrollData(HWND hwnd);
 
 /* dialogs. */
 HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGPROC proc, LPARAM param, BOOL ansi,

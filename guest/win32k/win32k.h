@@ -426,6 +426,7 @@ typedef struct W32PROCESS {
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
     struct W32GPU *Gpu; /* gpu.c */
+    struct W32AUDIO *Audio; /* audio.c */
     ULONG ImageChars;
     WCHAR ImagePath[512];
 } W32PROCESS;
@@ -548,6 +549,7 @@ typedef struct WND_CLASS {
 #define WNDF_ACTIVATE_PENDING 0x8000
 #define WNDF_NOCLOSE 0x10000       /* SC_CLOSE removed from the system menu */
 #define WNDF_FULLSCREEN 0x20000
+#define WNDF_APP_FULLSCREEN 0x40000 /* the program made it cover the screen before the host made it fullscreen */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -636,6 +638,7 @@ void WndDestroyThreadWindows(W32THREAD *t);
 WND *WndFromPoint(WND *top, POINT pt);
 WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled);
 void WndSetPos(WND *w, WND *after, LONG x, LONG y, LONG cx, LONG cy, UINT flags);
+void WndDisplayChanged(void);
 void WndShow(WND *w, int cmd);
 void WndGetMinMaxInfo(WND *w, MINMAXINFO *info);
 void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect);
@@ -751,6 +754,7 @@ void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
 void ClipboardHostChanged(BOOLEAN has_text); /* has_text: the host clipboard holds text */
 void GpuFreeProcess(W32PROCESS *p);
+void AudioFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
 
@@ -771,6 +775,7 @@ COLORREF MetricsSysColor(int index);
 HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
+void MetricsDisplayChanged(void);
 void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);

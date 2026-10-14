@@ -459,7 +459,7 @@ static int box_layout_and_run(MSGBOX *mb)
     DeleteObject(font);
     if (result == -1)
         return 0;
-    if ((style & MB_TYPEMASK) == MB_OK && result)
+    if ((style & MB_TYPEMASK) == MB_OK && result == IDCANCEL)
         return IDOK;
     return (int)result;
 }

@@ -227,6 +227,76 @@ WINUSERAPI int WINAPI ToUnicodeEx(UINT vk, UINT scan, const BYTE *state, LPWSTR 
     return 1;
 }
 
+/* key names of the US layout, as in the KBDUS name tables. */
+typedef struct KEY_NAME {
+    BYTE Scan;
+    const WCHAR *Name;
+} KEY_NAME;
+
+static const KEY_NAME g_key_names[] = {
+    {0x01, L"Esc"},       {0x0E, L"Backspace"},   {0x0F, L"Tab"},         {0x1C, L"Enter"},
+    {0x1D, L"Ctrl"},      {0x2A, L"Shift"},       {0x36, L"Right Shift"}, {0x37, L"Num *"},
+    {0x38, L"Alt"},       {0x39, L"Space"},       {0x3A, L"Caps Lock"},   {0x3B, L"F1"},
+    {0x3C, L"F2"},        {0x3D, L"F3"},          {0x3E, L"F4"},          {0x3F, L"F5"},
+    {0x40, L"F6"},        {0x41, L"F7"},          {0x42, L"F8"},          {0x43, L"F9"},
+    {0x44, L"F10"},       {0x45, L"Pause"},       {0x46, L"Scroll Lock"}, {0x47, L"Num 7"},
+    {0x48, L"Num 8"},     {0x49, L"Num 9"},       {0x4A, L"Num -"},       {0x4B, L"Num 4"},
+    {0x4C, L"Num 5"},     {0x4D, L"Num 6"},       {0x4E, L"Num +"},       {0x4F, L"Num 1"},
+    {0x50, L"Num 2"},     {0x51, L"Num 3"},       {0x52, L"Num 0"},       {0x53, L"Num Del"},
+    {0x54, L"Sys Req"},   {0x57, L"F11"},         {0x58, L"F12"},         {0x7C, L"F13"},
+    {0x7D, L"F14"},       {0x7E, L"F15"},         {0x7F, L"F16"},
+};
+
+static const KEY_NAME g_key_names_ext[] = {
+    {0x1C, L"Num Enter"}, {0x1D, L"Right Ctrl"}, {0x35, L"Num /"},    {0x37, L"Prnt Scrn"},
+    {0x38, L"Right Alt"}, {0x45, L"Num Lock"},   {0x46, L"Break"},    {0x47, L"Home"},
+    {0x48, L"Up"},        {0x49, L"Page Up"},    {0x4B, L"Left"},     {0x4D, L"Right"},
+    {0x4F, L"End"},       {0x50, L"Down"},       {0x51, L"Page Down"}, {0x52, L"Insert"},
+    {0x53, L"Delete"},    {0x56, L"Help"},       {0x5B, L"Left Windows"}, {0x5C, L"Right Windows"},
+    {0x5D, L"Application"},
+};
+
+/* lparam holds the scan code in bits 16 to 23, the extended flag in bit 24 and "do not care" in bit 25. */
+WINUSERAPI int WINAPI GetKeyNameTextW(LONG lparam, LPWSTR buffer, int size)
+{
+    if (!buffer || size <= 0)
+        return 0;
+    UINT scan = ((ULONG)lparam >> 16) & 0xFF;
+    BOOL ext = (lparam & 0x01000000) != 0;
+    BOOL any_side = (lparam & 0x02000000) != 0;
+    if (any_side) {
+        if (scan == 0x36)
+            scan = 0x2A;
+        if (ext && (scan == 0x1D || scan == 0x38))
+            ext = FALSE;
+    }
+    const WCHAR *name = NULL;
+    WCHAR single[2] = {0, 0};
+    const KEY_NAME *table = ext ? g_key_names_ext : g_key_names;
+    ULONG count = ext ? RTL_NUMBER_OF(g_key_names_ext) : RTL_NUMBER_OF(g_key_names);
+    for (ULONG i = 0; i < count && !name; i++)
+        if (table[i].Scan == scan)
+            name = table[i].Name;
+    if (!name && !ext) {
+        UINT ch = MapVirtualKeyExW(scan_to_vk(scan, FALSE), MAPVK_VK_TO_CHAR, US_LAYOUT);
+        if (ch) {
+            single[0] = (WCHAR)(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+            name = single;
+        }
+    }
+    if (!name) {
+        buffer[0] = 0;
+        return 0;
+    }
+    int n = 0;
+    while (name[n] && n < size - 1) {
+        buffer[n] = name[n];
+        n++;
+    }
+    buffer[n] = 0;
+    return n;
+}
+
 WINUSERAPI int WINAPI ToUnicode(UINT vk, UINT scan, const BYTE *state, LPWSTR buffer, int count, UINT flags)
 {
     return ToUnicodeEx(vk, scan, state, buffer, count, flags, US_LAYOUT);

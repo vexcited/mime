@@ -75,6 +75,7 @@ extern id kCAGravityTopLeft;
 extern id kCAFilterNearest;
 extern id NSWindowDidMoveNotification;
 extern id NSApplicationDidBecomeActiveNotification;
+extern id NSApplicationDidChangeScreenParametersNotification;
 extern id NSApplicationDidResignActiveNotification;
 extern void NSBeep(void);
 
@@ -97,6 +98,7 @@ typedef struct UiWindow {
     bool fullscreen;
     bool fullscreen_synced;
     bool fullscreen_config_pending;
+    bool space_declined; /* the user left the space while the guest window still covers the screen */
     MimeWinConfig fullscreen_config;
     MimeWinConfig pending_config;
     bool config_queued;
@@ -111,6 +113,10 @@ typedef struct UiWindow {
     bool dirty;
     bool update_queued;
     bool shadow_dirty;
+    id chrome;        /* a child window below, drawing the shadow and the outer outline */
+    id chrome_shadow; /* its layer casting the shadow */
+    id chrome_outline;
+    uint32_t anim_gen; /* bumped by every show or hide animation */
 } UiWindow;
 
 static UiWindow g_windows[MAX_WINDOWS];
@@ -123,6 +129,9 @@ static void (*g_toggle_fullscreen)(id, SEL, id);
 static id g_delegate;
 static double g_scale = 2.0;
 static double g_screen_height_pts;
+static MimeDisplayInfo g_display; /* as last reported */
+static double g_screen_band; /* the menu bar or camera housing at the top of the main screen */
+static NSRect g_work_points;  /* the work area in points from the top left of the guest screen */
 static CGColorSpaceRef g_colorspace;
 static bool g_suppress_move;
 static uint32_t g_cursor;
@@ -262,6 +271,201 @@ static MimeRect host_screen_rect(const MimeWinConfig *c)
 {
     MimeRect h = host_part(c);
     return (MimeRect){c->rect.left + h.left, c->rect.top + h.top, c->rect.left + h.right, c->rect.top + h.bottom};
+}
+
+/* ---------------------------------------------------------------- windows 11 chrome */
+
+#define CHROME_MARGIN 64.0
+
+static id nsstring(const char *s)
+{
+    return ((id (*)(id, SEL, const char *))objc_msgSend)((id)CLS("NSString"), SEL_("stringWithUTF8String:"), s);
+}
+
+static id number(double v)
+{
+    return ((id (*)(id, SEL, double))objc_msgSend)((id)CLS("NSNumber"), SEL_("numberWithDouble:"), v);
+}
+
+static void animate(id layer, const char *key, double from, double to, double duration, bool hold)
+{
+    id a = MSG_ID_ID(CLS("CABasicAnimation"), "animationWithKeyPath:", nsstring(key));
+    MSG_V_ID(a, "setFromValue:", number(from));
+    MSG_V_ID(a, "setToValue:", number(to));
+    MSG_V_DBL(a, "setDuration:", duration);
+    MSG_V_ID(a, "setTimingFunction:",
+             MSG_ID_ID(CLS("CAMediaTimingFunction"), "functionWithName:", nsstring(hold ? "easeIn" : "easeOut")));
+    if (hold) {
+        MSG_V_ID(a, "setFillMode:", nsstring("forwards"));
+        MSG_V_BOOL(a, "setRemovedOnCompletion:", NO);
+    }
+    ((void (*)(id, SEL, id, id))objc_msgSend)(layer, SEL_("addAnimation:forKey:"), a, nsstring(key));
+}
+
+/* framed windows open and close with the dwm's zoom and fade. */
+static bool animated(const UiWindow *w)
+{
+    uint32_t f = w->config.flags;
+    return (f & MIME_WIN_SHADOW) && !(f & (MIME_WIN_TOOL | MIME_WIN_FULLSCREEN)) && w->config.border_color &&
+           !w->fullscreen && !w->fullscreen_transition;
+}
+
+static void animate_window(UiWindow *w, bool show)
+{
+    id layers[] = {w->content, w->chrome_shadow, w->chrome_outline};
+    w->anim_gen++;
+    for (unsigned i = 0; i < MIME_ARRAY_COUNT(layers); i++) {
+        if (!layers[i])
+            continue;
+        MSG_V(layers[i], "removeAllAnimations");
+        if (show) {
+            animate(layers[i], "opacity", 0, 1, 0.2, false);
+            animate(layers[i], "transform.scale", 0.94, 1, 0.2, false);
+        } else {
+            animate(layers[i], "opacity", 1, 0, 0.13, true);
+            animate(layers[i], "transform.scale", 1, 0.94, 0.13, true);
+        }
+    }
+}
+
+static void stop_animations(UiWindow *w)
+{
+    id layers[] = {w->content, w->chrome_shadow, w->chrome_outline};
+    w->anim_gen++;
+    for (unsigned i = 0; i < MIME_ARRAY_COUNT(layers); i++)
+        if (layers[i])
+            MSG_V(layers[i], "removeAllAnimations");
+}
+
+static void chrome_detach(UiWindow *w)
+{
+    if (!w->chrome)
+        return;
+    if (MSG_ID(w->chrome, "parentWindow"))
+        MSG_V_ID(w->window, "removeChildWindow:", w->chrome);
+    MSG_V_ID(w->chrome, "orderOut:", nil);
+}
+
+static void chrome_create(UiWindow *w)
+{
+    NSRect rect = CGRectMake(0, 0, 100, 100);
+    id window = ((id (*)(id, SEL, NSRect, NSUInteger, NSUInteger, BOOL))objc_msgSend)(
+        MSG_ID(CLS("NSWindow"), "alloc"), SEL_("initWithContentRect:styleMask:backing:defer:"), rect, 0, 2, YES);
+    MSG_V_BOOL(window, "setReleasedWhenClosed:", NO);
+    MSG_V_BOOL(window, "setOpaque:", NO);
+    MSG_V_ID(window, "setBackgroundColor:", MSG_ID(CLS("NSColor"), "clearColor"));
+    MSG_V_BOOL(window, "setHasShadow:", NO);
+    MSG_V_BOOL(window, "setIgnoresMouseEvents:", YES);
+    MSG_V_INT(window, "setAnimationBehavior:", 2);
+    id root = MSG_ID(MSG_ID(CLS("CALayer"), "alloc"), "init");
+    id view = ((id (*)(id, SEL, NSRect))objc_msgSend)(MSG_ID(CLS("NSView"), "alloc"), SEL_("initWithFrame:"), rect);
+    MSG_V_ID(view, "setLayer:", root);
+    MSG_V_BOOL(view, "setWantsLayer:", YES);
+    w->chrome_shadow = MSG_ID(MSG_ID(CLS("CALayer"), "alloc"), "init");
+    w->chrome_outline = MSG_ID(MSG_ID(CLS("CALayer"), "alloc"), "init");
+    MSG_V_DBL(w->chrome_outline, "setContentsScale:", g_scale);
+    MSG_V_ID(root, "addSublayer:", w->chrome_shadow);
+    MSG_V_ID(root, "addSublayer:", w->chrome_outline);
+    MSG_V(root, "release");
+    MSG_V_ID(window, "setContentView:", view);
+    MSG_V(view, "release");
+    w->chrome = window;
+}
+
+/*
+ * the shadow and the dark outline the dwm draws around a window: macos
+ * draws neither, its own shadow and rim look nothing like them.
+ */
+static void chrome_update(UiWindow *w)
+{
+    const MimeWinConfig *c = &w->config;
+    bool on = w->shown && (c->flags & MIME_WIN_SHADOW) && !(c->flags & (MIME_WIN_FULLSCREEN | MIME_WIN_MINIMIZED)) &&
+              !w->fullscreen && !w->fullscreen_transition && MSG_BOOL(w->window, "isVisible");
+    if (!on) {
+        chrome_detach(w);
+        return;
+    }
+    if (!w->chrome)
+        chrome_create(w);
+    MimeRect vis = visible_part(c), host = host_part(c);
+    NSRect frame = MSG_RECT(w->window, "frame");
+    double x = (vis.left - host.left) / g_scale, top = (vis.top - host.top) / g_scale;
+    double width = (vis.right - vis.left) / g_scale, height = (vis.bottom - vis.top) / g_scale;
+    NSRect inner = CGRectMake(CHROME_MARGIN + x, CHROME_MARGIN + frame.size.height - top - height, width, height);
+    double radius = c->corner_radius / g_scale, px = 1.0 / g_scale;
+    bool active = (c->flags & MIME_WIN_ACTIVE) != 0, tool = (c->flags & MIME_WIN_TOOL) != 0;
+
+    id ca = CLS("CATransaction");
+    MSG_V(ca, "begin");
+    MSG_V_BOOL(ca, "setDisableActions:", YES);
+    ((void (*)(id, SEL, NSRect))objc_msgSend)(w->chrome_shadow, SEL_("setFrame:"), inner);
+    CGPathRef path = CGPathCreateWithRoundedRect(CGRectMake(0, 0, width, height), radius, radius, NULL);
+    MSG_V_PTR(w->chrome_shadow, "setShadowPath:", path);
+    CGPathRelease(path);
+    CGColorRef black = CGColorCreateSRGB(0, 0, 0, 1);
+    MSG_V_PTR(w->chrome_shadow, "setShadowColor:", black);
+    CGColorRelease(black);
+    float opacity = tool ? 0.28f : active ? 0.42f : 0.24f;
+    double blur = tool ? 8 : active ? 18 : 11, drop = tool ? 3 : active ? 7 : 4;
+    ((void (*)(id, SEL, float))objc_msgSend)(w->chrome_shadow, SEL_("setShadowOpacity:"), opacity);
+    MSG_V_DBL(w->chrome_shadow, "setShadowRadius:", blur);
+    ((void (*)(id, SEL, NSSize))objc_msgSend)(w->chrome_shadow, SEL_("setShadowOffset:"), CGSizeMake(0, -drop));
+    ((void (*)(id, SEL, NSRect))objc_msgSend)(w->chrome_outline, SEL_("setFrame:"), CGRectInset(inner, -px, -px));
+    MSG_V_DBL(w->chrome_outline, "setCornerRadius:", radius ? radius + px : 0);
+    MSG_V_DBL(w->chrome_outline, "setBorderWidth:", c->border_color ? px : 0);
+    CGColorRef line = CGColorCreateSRGB(0, 0, 0, active ? 0.88 : 0.6);
+    MSG_V_PTR(w->chrome_outline, "setBorderColor:", line);
+    CGColorRelease(line);
+    MSG_V(ca, "commit");
+
+    NSRect outer = CGRectInset(frame, -CHROME_MARGIN, -CHROME_MARGIN);
+    if (!CGRectEqualToRect(MSG_RECT(w->chrome, "frame"), outer))
+        ((void (*)(id, SEL, NSRect, BOOL))objc_msgSend)(w->chrome, SEL_("setFrame:display:"), outer, NO);
+    MSG_V_INT(w->chrome, "setLevel:", MSG_UINT(w->window, "level"));
+    if (MSG_ID(w->chrome, "parentWindow") != w->window)
+        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(w->window, SEL_("addChildWindow:ordered:"), w->chrome, -1);
+}
+
+typedef struct Retired {
+    id window, view, content, chrome;
+} Retired;
+
+static void retire_main(void *arg)
+{
+    Retired *r = arg;
+    if (r->chrome) {
+        MSG_V_ID(r->chrome, "orderOut:", nil);
+        MSG_V(r->chrome, "release");
+    }
+    MSG_V_ID(r->window, "orderOut:", nil);
+    MSG_V(r->window, "close");
+    MSG_V(r->content, "release");
+    MSG_V(r->view, "release");
+    MSG_V(r->window, "release");
+    free(r);
+}
+
+typedef struct HideLater {
+    uint32_t id, gen;
+} HideLater;
+
+static void hide_main(void *arg)
+{
+    HideLater *h = arg;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(h->id);
+    pthread_mutex_unlock(&g_windows_lock);
+    if (w && w->window && !w->shown && w->anim_gen == h->gen) {
+        MSG_V_ID(w->window, "orderOut:", nil);
+        stop_animations(w);
+        chrome_detach(w);
+    }
+    free(h);
+}
+
+static void after(double seconds, void *ctx, void (*fn)(void *))
+{
+    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * 1e9)), dispatch_get_main_queue(), ctx, fn);
 }
 
 /* true when a window relative guest point lies in a caption drag area. */
@@ -752,8 +956,10 @@ static void emit_fullscreen(UiWindow *w, bool entering)
 static void delegate_fullscreen_will_change(id self, SEL sel, id notification)
 {
     UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
-    if (w)
+    if (w) {
         w->fullscreen_transition = true;
+        chrome_detach(w);
+    }
 }
 
 static void exit_fullscreen_main(void *arg)
@@ -770,6 +976,9 @@ static void delegate_fullscreen_entered(id self, SEL sel, id notification)
         return;
     w->fullscreen_transition = false;
     w->fullscreen = true;
+    /* a program already covering the screen is not configured again. */
+    if (w->config.flags & MIME_WIN_FULLSCREEN)
+        w->fullscreen_synced = true;
     if (w->fullscreen_config_pending) {
         dispatch_async_f(dispatch_get_main_queue(), (void *)(uintptr_t)w->id, exit_fullscreen_main);
         return;
@@ -785,6 +994,9 @@ static void delegate_fullscreen_exited(id self, SEL sel, id notification)
     w->fullscreen_transition = false;
     w->fullscreen = false;
     w->fullscreen_synced = false;
+    chrome_update(w);
+    if (!w->fullscreen_config_pending && (w->config.flags & MIME_WIN_FULLSCREEN))
+        w->space_declined = true;
     emit_fullscreen(w, false);
     if (w->fullscreen_config_pending) {
         w->fullscreen_config_pending = false;
@@ -800,6 +1012,7 @@ static void delegate_fullscreen_failed(id self, SEL sel, id window)
         return;
     w->fullscreen_transition = false;
     if (!w->fullscreen) {
+        w->space_declined = true;
         MSG_V_INT(window, "setStyleMask:", (w->config.flags & MIME_WIN_MINIMIZABLE) ? 1u << 2 : 0);
         if (w->fullscreen_config_pending) {
             w->fullscreen_config_pending = false;
@@ -863,6 +1076,8 @@ static void register_app_class(void)
     g_app = MSG_ID((id)cls, "sharedApplication");
 }
 
+static void screens_changed(id self, SEL cmd, id note);
+
 static void register_classes(void)
 {
     g_window_class = objc_allocateClassPair(objc_getClass("NSWindow"), "MimeHostWindow", 0);
@@ -914,6 +1129,7 @@ static void register_classes(void)
     class_addMethod(g_delegate_class, SEL_("windowDidFailToExitFullScreen:"), (IMP)delegate_fullscreen_failed, "v@:@");
     class_addMethod(g_delegate_class, SEL_("appDidBecomeActive:"), (IMP)app_became_active, "v@:@");
     class_addMethod(g_delegate_class, SEL_("appDidResignActive:"), (IMP)app_resigned_active, "v@:@");
+    class_addMethod(g_delegate_class, SEL_("screensDidChange:"), (IMP)screens_changed, "v@:@");
     objc_registerClassPair(g_delegate_class);
     g_delegate = MSG_ID(MSG_ID((id)g_delegate_class, "alloc"), "init");
     id center = MSG_ID(CLS("NSNotificationCenter"), "defaultCenter");
@@ -923,6 +1139,9 @@ static void register_classes(void)
     ((void (*)(id, SEL, id, SEL, id, id))objc_msgSend)(center, SEL_("addObserver:selector:name:object:"), g_delegate,
                                                        SEL_("appDidResignActive:"),
                                                        NSApplicationDidResignActiveNotification, nil);
+    ((void (*)(id, SEL, id, SEL, id, id))objc_msgSend)(center, SEL_("addObserver:selector:name:object:"), g_delegate,
+                                                       SEL_("screensDidChange:"),
+                                                       NSApplicationDidChangeScreenParametersNotification, nil);
 }
 
 static void app_action(void *ctx, uint32_t process_id, uint32_t action)
@@ -958,7 +1177,22 @@ static void update_screen_metrics(void)
     g_scale = MSG_DBL(primary, "backingScaleFactor");
     if (g_scale < 1)
         g_scale = 1;
-    g_screen_height_pts = frame.size.height;
+    /*
+     * the guest screen starts below the menu bar or camera housing, where
+     * macos windows and spaces start. our spaces and fullscreen presentation
+     * and dock, which must not move the guest screen or its work area: they
+     * are measured once for each screen size.
+     */
+    static double band_w, band_h;
+    if (frame.size.width != band_w || frame.size.height != band_h) {
+        band_w = frame.size.width;
+        band_h = frame.size.height;
+        NSRect visible = MSG_RECT(primary, "visibleFrame");
+        double band = frame.origin.y + frame.size.height - (visible.origin.y + visible.size.height);
+        g_screen_band = band > 0 ? band : 0;
+        g_work_points = CGRectMake(visible.origin.x - frame.origin.x, 0, visible.size.width, visible.size.height);
+    }
+    g_screen_height_pts = frame.size.height - g_screen_band;
 }
 
 void mime_ui_init(MimeUiInputSink sink, void *ctx)
@@ -996,18 +1230,19 @@ void mime_ui_get_display(MimeDisplayInfo *info)
     }
     id primary = ((id(*)(id, SEL, NSUInteger))objc_msgSend)(screens, SEL_("objectAtIndex:"), 0);
     NSRect frame = MSG_RECT(primary, "frame");
-    NSRect visible = MSG_RECT(primary, "visibleFrame");
     update_screen_metrics();
     info->width = (uint32_t)(frame.size.width * g_scale);
-    info->height = (uint32_t)(frame.size.height * g_scale);
-    info->work_x = (uint32_t)((visible.origin.x - frame.origin.x) * g_scale);
-    info->work_y = (uint32_t)((frame.size.height - (visible.origin.y + visible.size.height)) * g_scale);
-    info->work_width = (uint32_t)(visible.size.width * g_scale);
-    info->work_height = (uint32_t)(visible.size.height * g_scale);
+    info->height = (uint32_t)(g_screen_height_pts * g_scale);
+    info->work_x = (uint32_t)(g_work_points.origin.x * g_scale);
+    info->work_y = 0;
+    info->work_width = (uint32_t)(g_work_points.size.width * g_scale);
+    info->work_height = (uint32_t)(g_work_points.size.height * g_scale);
     info->dpi = (uint32_t)(96.0 * g_scale + 0.5);
     NSInteger fps = ((NSInteger(*)(id, SEL))objc_msgSend)(primary, SEL_("maximumFramesPerSecond"));
     info->refresh_hz = fps > 0 ? (uint32_t)fps : 60;
+    g_display = *info;
 }
+
 
 typedef struct MainCall {
     void (*fn)(void *);
@@ -1051,7 +1286,8 @@ static void create_main(void *arg)
     MSG_V_BOOL(window, "setReleasedWhenClosed:", NO);
     MSG_V_BOOL(window, "setOpaque:", NO);
     MSG_V_ID(window, "setBackgroundColor:", MSG_ID(CLS("NSColor"), "clearColor"));
-    MSG_V_BOOL(window, "setHasShadow:", YES);
+    MSG_V_BOOL(window, "setHasShadow:", NO);
+    MSG_V_INT(window, "setAnimationBehavior:", 2);
     MSG_V_BOOL(window, "setAcceptsMouseMovedEvents:", YES);
     MSG_V_ID(window, "setDelegate:", g_delegate);
 
@@ -1115,11 +1351,15 @@ static void destroy_main(void *arg)
     g_pointer_in_guest = false;
     if (w->window) {
         MSG_V_ID(w->window, "setDelegate:", nil);
-        MSG_V_ID(w->window, "orderOut:", nil);
-        MSG_V(w->window, "close");
-        MSG_V(w->content, "release");
-        MSG_V(w->view, "release");
-        MSG_V(w->window, "release");
+        Retired *r = mime_xmalloc(sizeof(*r));
+        *r = (Retired){w->window, w->view, w->content, w->chrome};
+        if (w->shown && animated(w) && MSG_BOOL(w->window, "isVisible")) {
+            MSG_V_BOOL(w->window, "setIgnoresMouseEvents:", YES);
+            animate_window(w, false);
+            after(0.13, r, retire_main);
+        } else {
+            retire_main(r);
+        }
     }
     pthread_mutex_lock(&g_windows_lock);
     pthread_mutex_lock(&w->lock);
@@ -1131,6 +1371,7 @@ static void destroy_main(void *arg)
     w->window = nil;
     w->view = nil;
     w->content = nil;
+    w->chrome = w->chrome_shadow = w->chrome_outline = nil;
     w->used = false;
     pthread_mutex_unlock(&g_windows_lock);
     update_presentation();
@@ -1236,6 +1477,7 @@ static void config_main(void *arg)
             MSG_V_ID(w->window, "orderOut:", nil);
         w->suppress_state = false;
         w->shown = (cfg->flags & MIME_WIN_VISIBLE) != 0;
+        chrome_update(w);
         update_presentation();
         free(cfg);
         return;
@@ -1276,7 +1518,6 @@ static void config_main(void *arg)
     } else {
         MSG_V_DBL(w->content, "setBorderWidth:", 0.0);
     }
-    MSG_V_BOOL(w->window, "setHasShadow:", (cfg->flags & MIME_WIN_SHADOW) != 0);
     if (cropping_changed) {
         pthread_mutex_lock(&w->lock);
         w->dirty = w->surface != NULL;
@@ -1297,23 +1538,39 @@ static void config_main(void *arg)
     if (!w->fullscreen_transition && !w->fullscreen)
         MSG_V_INT(w->window, "setLevel:", (cfg->flags & MIME_WIN_TOPMOST) ? 3 : 0);
 
+    bool opening = false;
     if (cfg->flags & MIME_WIN_VISIBLE) {
         if (MSG_BOOL(w->window, "isMiniaturized")) {
             w->suppress_state = true;
             MSG_V_ID(w->window, "deminiaturize:", nil);
             w->suppress_state = false;
         }
+        opening = !w->shown || !MSG_BOOL(w->window, "isVisible");
         if (cfg->flags & MIME_WIN_ACTIVATE) {
             MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
             MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
-        } else if (!w->shown || !MSG_BOOL(w->window, "isVisible")) {
+        } else if (opening) {
             MSG_V(w->window, "orderFrontRegardless");
         }
         w->shown = true;
     } else if (w->shown) {
-        MSG_V_ID(w->window, "orderOut:", nil);
         w->shown = false;
+        if (animated(w) && MSG_BOOL(w->window, "isVisible")) {
+            animate_window(w, false);
+            HideLater *h = mime_xmalloc(sizeof(*h));
+            *h = (HideLater){w->id, w->anim_gen};
+            after(0.13, h, hide_main);
+        } else {
+            MSG_V_ID(w->window, "orderOut:", nil);
+            chrome_detach(w);
+        }
     }
+    if (w->shown)
+        chrome_update(w);
+    if (opening && animated(w))
+        animate_window(w, true);
+    else if (w->shown && opening)
+        stop_animations(w);
     free(cfg);
     if (cropping_changed) {
         present_main((void *)(uintptr_t)w->id);
@@ -1324,6 +1581,17 @@ static void config_main(void *arg)
     /* the shadow follows the shape, which a new corner radius or border changes. */
     if (cropping_changed)
         MSG_V(w->window, "invalidateShadow");
+    /* a program covering the screen without a frame gets its own space, like a macos game. */
+    uint32_t shown = w->config.flags & (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE | MIME_WIN_MINIMIZED);
+    if (!(shown & MIME_WIN_FULLSCREEN))
+        w->space_declined = false;
+    else if (shown == (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE) && !w->fullscreen && !w->fullscreen_transition &&
+             !w->space_declined) {
+        MSG_V_INT(w->window, "setCollectionBehavior:", 1u << 7);
+        MSG_V_INT(w->window, "setStyleMask:", MSG_UINT(w->window, "styleMask") | (1u << 3));
+        w->fullscreen_transition = true;
+        g_toggle_fullscreen(w->window, SEL_("toggleFullScreen:"), nil);
+    }
 }
 
 static void config_latest_main(void *arg)
@@ -1903,4 +2171,51 @@ static void metal_destroy_main(void *arg)
 void mime_ui_metal_layer_destroy(void *layer)
 {
     on_main(metal_destroy_main, layer);
+}
+
+/*
+ * a display was added, removed or changed mode. host windows keep their
+ * guest rectangles, placed again with the new mapping, and the guest learns
+ * the new display size.
+ */
+static void screens_changed(id self, SEL cmd, id note)
+{
+    MimeDisplayInfo old = g_display, info;
+    double old_scale = g_scale;
+    mime_ui_get_display(&info);
+    if (!memcmp(&old, &info, sizeof(info)))
+        return;
+    mime_info("display changed to %ux%u, scale %.2f", info.width, info.height, g_scale);
+    id ca = CLS("CATransaction");
+    MSG_V(ca, "begin");
+    MSG_V_BOOL(ca, "setDisableActions:", YES);
+    for (unsigned i = 0; i < MAX_WINDOWS; i++) {
+        UiWindow *w = &g_windows[i];
+        if (!w->used || !w->window)
+            continue;
+        if (g_scale != old_scale) {
+            MSG_V_DBL(w->content, "setContentsScale:", g_scale);
+            pthread_mutex_lock(&w->lock);
+            w->dirty = w->surface != NULL;
+            pthread_mutex_unlock(&w->lock);
+        }
+        if (w->configured && !w->fullscreen && !w->fullscreen_transition) {
+            g_suppress_move = true;
+            ((void (*)(id, SEL, NSRect, BOOL))objc_msgSend)(w->window, SEL_("setFrame:display:"),
+                                                            guest_to_frame(host_screen_rect(&w->config)), NO);
+            g_suppress_move = false;
+        }
+    }
+    for (int i = 0; i < MAX_METAL_LAYERS; i++) {
+        if (!g_metal[i].layer)
+            continue;
+        if (g_scale != old_scale)
+            MSG_V_DBL(g_metal[i].layer, "setContentsScale:", g_scale);
+        metal_relayout(g_metal[i].window_id);
+    }
+    MSG_V(ca, "commit");
+    MimeInputEvent ev = {.type = MIME_INPUT_DISPLAY, .width = (int32_t)info.width, .height = (int32_t)info.height,
+                         .time_ms = now_ms()};
+    if (g_sink)
+        g_sink(g_sink_ctx, &ev);
 }

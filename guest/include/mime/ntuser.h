@@ -252,6 +252,7 @@ enum {
     MIME_DCDW_TEXTCHAREXTRA,
     MIME_DCDW_PIXELFORMAT,  /* read only, set with NtGdiSetPixelFormat */
     MIME_DCDW_PATHSTATE,    /* read only: 0 no path, 1 open, 2 closed */
+    MIME_DCDW_WINDOW,
 };
 
 /* NtGdiGetCharWidthW and NtGdiGetCharABCWidthsW flags. */
@@ -460,6 +461,14 @@ W32KAPI NTSTATUS NTAPI NtGdiMimeGpuAddBlock(ULONG size, PVOID *base, PULONG inde
 W32KAPI NTSTATUS NTAPI NtGdiMimeGpuKick(void);
 W32KAPI NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms);
 W32KAPI BOOL NTAPI NtGdiMimeGpuGetSurface(HDC dc, MIME_GPU_SURFACE *surface);
+
+/* audio output streams of the process, mime/audio.h. */
+#define MIME_AUDIO_OPEN 0  /* plays the format written in the header */
+#define MIME_AUDIO_START 1
+#define MIME_AUDIO_STOP 2
+#define MIME_AUDIO_CLOSE 3 /* the slot and its memory go back to the process for a later stream */
+W32KAPI NTSTATUS NTAPI NtGdiMimeAudioCreate(PVOID *base, PULONG index);
+W32KAPI NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op);
 
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
 W32KAPI BOOL NTAPI NtUserCloseClipboard(void);

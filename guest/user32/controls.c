@@ -151,25 +151,126 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+/* the placeholder combo box has no list; the button is the arrow column at the right. */
+static BOOL combo_info(HWND hwnd, COMBOBOXINFO *info)
+{
+    if (!info || info->cbSize != sizeof(COMBOBOXINFO))
+        return FALSE;
+    RECT r;
+    GetClientRect(hwnd, &r);
+    int button = GetSystemMetricsForDpi(SM_CXVSCROLL, UserWindowDpi(hwnd));
+    LONG type = GetWindowLongW(hwnd, GWL_STYLE) & 3;
+    info->rcButton = (RECT){r.right - button, r.top, r.right, r.bottom};
+    info->rcItem = (RECT){r.left + 3, r.top + 3, r.right - button - 1, r.bottom - 3};
+    info->stateButton = 0;
+    if (type == CBS_SIMPLE) {
+        info->rcButton = (RECT){0, 0, 0, 0};
+        info->rcItem.right = r.right - 3;
+        info->stateButton = STATE_SYSTEM_INVISIBLE;
+    }
+    info->hwndCombo = hwnd;
+    info->hwndItem = FindWindowExW(hwnd, NULL, L"Edit", NULL);
+    if (!info->hwndItem)
+        info->hwndItem = hwnd;
+    info->hwndList = NULL;
+    return TRUE;
+}
+
 LRESULT CALLBACK ComboBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
+    if (msg == CB_GETCOMBOBOXINFO)
+        return combo_info(hwnd, (COMBOBOXINFO *)lparam);
     if (msg >= CB_GETEDITSEL && msg <= CB_MSGMAX)
         return CB_ERR;
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+WINUSERAPI BOOL WINAPI GetComboBoxInfo(HWND hwnd, PCOMBOBOXINFO info)
+{
+    if (!info || info->cbSize != sizeof(COMBOBOXINFO)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (!SendMessageW(hwnd, CB_GETCOMBOBOXINFO, 0, (LPARAM)info)) {
+        SetLastError(ERROR_INVALID_COMBOBOX_MESSAGE);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* the arrows, the track and a thumb sized by the page. */
+static void scrollbar_paint(HWND hwnd, HDC dc)
+{
+    RECT r;
+    GetClientRect(hwnd, &r);
+    BOOL vert = (GetWindowLongW(hwnd, GWL_STYLE) & SBS_VERT) != 0;
+    int len = vert ? r.bottom - r.top : r.right - r.left;
+    int thick = vert ? r.right - r.left : r.bottom - r.top;
+    int arrow = thick * 2 <= len ? thick : len / 2;
+    BOOL enabled = IsWindowEnabled(hwnd);
+    RECT a = r, b = r, track = r;
+    if (vert) {
+        a.bottom = a.top + arrow;
+        b.top = b.bottom - arrow;
+        track.top = a.bottom;
+        track.bottom = b.top;
+    } else {
+        a.right = a.left + arrow;
+        b.left = b.right - arrow;
+        track.left = a.right;
+        track.right = b.left;
+    }
+    UINT state = enabled ? 0 : DFCS_INACTIVE;
+    DrawFrameControl(dc, &a, DFC_SCROLL, (vert ? DFCS_SCROLLUP : DFCS_SCROLLLEFT) | state);
+    DrawFrameControl(dc, &b, DFC_SCROLL, (vert ? DFCS_SCROLLDOWN : DFCS_SCROLLRIGHT) | state);
+    FillRect(dc, &track, GetSysColorBrush(COLOR_SCROLLBAR));
+
+    SCROLLINFO si = {sizeof(si), SIF_ALL};
+    GetScrollInfo(hwnd, SB_CTL, &si);
+    int span = si.nMax - si.nMin + 1;
+    int room = vert ? track.bottom - track.top : track.right - track.left;
+    if (!enabled || span <= 0 || room <= 0 || (si.nPage && (int)si.nPage >= span))
+        return;
+    int size = si.nPage ? UserMulDiv(room, (int)si.nPage, span) : thick;
+    if (size < thick / 2)
+        size = thick / 2;
+    if (size > room)
+        size = room;
+    int steps = span - (si.nPage ? (int)si.nPage : 1);
+    int offset = steps > 0 ? UserMulDiv(room - size, si.nPos - si.nMin, steps) : 0;
+    RECT thumb = track;
+    if (vert) {
+        thumb.top += offset;
+        thumb.bottom = thumb.top + size;
+    } else {
+        thumb.left += offset;
+        thumb.right = thumb.left + size;
+    }
+    DrawEdge(dc, &thumb, EDGE_RAISED, BF_RECT | BF_MIDDLE);
+}
+
 LRESULT CALLBACK ScrollBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
+    LRESULT result;
+    if (UserScrollBarMessage(hwnd, msg, wparam, lparam, &result))
+        return result;
     if (msg == WM_PAINT) {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(hwnd, &ps);
-        RECT r;
-        GetClientRect(hwnd, &r);
-        FillRect(dc, &r, GetSysColorBrush(COLOR_SCROLLBAR));
+        if (dc)
+            scrollbar_paint(hwnd, dc);
         EndPaint(hwnd, &ps);
         return 0;
     }
     if (msg == WM_ERASEBKGND)
         return 1;
+    if (msg == WM_ENABLE) {
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+    }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }

@@ -81,7 +81,7 @@ static const char *status_text(uint32_t status)
     switch (status) {
     case 0xC0000034: return "file not found";
     case 0xC000003A: return "path not found";
-    case 0xC000007B: return "not a valid arm64 windows program";
+    case 0xC000007B: return "invalid or unsupported windows executable";
     case 0xC0000135: return "a required dll was not found";
     case 0xC0000139: return "an imported function was not found";
     case 0xC0000017: return "out of memory";
@@ -472,6 +472,13 @@ static void *accept_thread(void *arg)
 
 static void on_input(void *ctx, const MimeInputEvent *ev)
 {
+    /* the guest reads the new display from its boot information. */
+    if (ev->type == MIME_INPUT_DISPLAY) {
+        if (!g_vm.boot)
+            return;
+        mime_ui_get_display(&g_vm.boot->display);
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+    }
     mime_vm_queue_input(&g_vm, ev);
 }
 

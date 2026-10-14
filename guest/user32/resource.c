@@ -690,6 +690,16 @@ WINUSERAPI HANDLE WINAPI LoadImageA(HINSTANCE instance, LPCSTR name, UINT type, 
     return h;
 }
 
+/* the system OBM_ bitmaps of a NULL instance are not available. */
+WINUSERAPI HBITMAP WINAPI LoadBitmapW(HINSTANCE instance, LPCWSTR name)
+{
+    if (!instance) {
+        SetLastError(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return NULL;
+    }
+    return LoadImageW(instance, name, IMAGE_BITMAP, 0, 0, 0);
+}
+
 WINUSERAPI HICON WINAPI LoadIconW(HINSTANCE instance, LPCWSTR name)
 {
     return LoadImageW(instance, name, IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE);
@@ -825,4 +835,29 @@ WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y,
     DeleteObject(mask);
     (void)instance;
     return cursor;
+}
+
+WINUSERAPI HICON WINAPI CreateIconFromResource(PBYTE data, DWORD size, BOOL icon, DWORD version)
+{
+    if (!data || version != 0x30000) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    POINT hotspot = {0, 0};
+    if (!icon) {
+        if (size < 4)
+            return NULL;
+        hotspot.x = ((WORD *)data)[0];
+        hotspot.y = ((WORD *)data)[1];
+        data += 4;
+        size -= 4;
+    }
+    ICON_IMAGE image;
+    if (!decode_icon_image(data, size, &image)) {
+        SetLastError(ERROR_INVALID_DATA);
+        return NULL;
+    }
+    HICON result = create_icon_object(&image, icon, hotspot, 0);
+    UserFree(image.Pixels);
+    return result;
 }

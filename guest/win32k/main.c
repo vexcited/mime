@@ -339,6 +339,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
     FontReleaseProcess(PsGetProcessId(process));
     if (p) {
         GpuFreeProcess(p);
+        AudioFreeProcess(p);
         MenuFreeProcess(p);
         ClassFreeProcess(p);
         RemoveEntryList(&p->Links);

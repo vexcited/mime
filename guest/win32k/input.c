@@ -244,6 +244,10 @@ static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR
         ClipboardHostChanged(ev->x != 0);
         return;
     }
+    if (ev->type == MIME_INPUT_DISPLAY) {
+        MetricsDisplayChanged();
+        return;
+    }
     switch (ev->type) {
     case MIME_INPUT_KEY_DOWN:
     case MIME_INPUT_KEY_UP:

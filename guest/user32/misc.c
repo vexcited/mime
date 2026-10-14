@@ -263,16 +263,249 @@ WINUSERAPI BOOL WINAPI IsCharLowerW(WCHAR c)
     return RtlUpcaseUnicodeChar(c) != c;
 }
 
-/* ------------------------------------------------------------------ services with nothing to do yet */
+/* ------------------------------------------------------------------ accelerators */
+
+/*
+ * an accelerator table is a process heap block on a list, the handle is
+ * its address and is only used after it is found on the list. tables
+ * loaded from resources are shared per resource like on windows.
+ */
+typedef struct ACCEL_TABLE {
+    struct ACCEL_TABLE *Next;
+    const void *Resource; /* the RT_ACCELERATOR data of a loaded table, NULL otherwise. */
+    int Count;
+    ACCEL Entries[];
+} ACCEL_TABLE;
+
+/* RT_ACCELERATOR resource entry. */
+typedef struct ACCEL_RESOURCE {
+    WORD Flags;
+    WORD Key;
+    WORD Cmd;
+    WORD Pad;
+} ACCEL_RESOURCE;
+
+#define ACCEL_LAST 0x80
+
+static ACCEL_TABLE *g_accels;
+static RTL_CRITICAL_SECTION g_accel_lock = RTL_CRITICAL_SECTION_INIT;
+
+static ACCEL_TABLE *new_accel_table(int count, const void *resource)
+{
+    ACCEL_TABLE *t = UserAlloc(sizeof(*t) + (SIZE_T)count * sizeof(ACCEL));
+    if (!t) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return NULL;
+    }
+    t->Count = count;
+    t->Resource = resource;
+    return t;
+}
+
+static void publish_accel_table(ACCEL_TABLE *t)
+{
+    RtlEnterCriticalSection(&g_accel_lock);
+    t->Next = g_accels;
+    g_accels = t;
+    RtlLeaveCriticalSection(&g_accel_lock);
+}
+
+/* copies up to max entries of a listed table, returns the table size or -1 for a bad handle. */
+static int read_accel_table(HACCEL accel, ACCEL *out, int max)
+{
+    int count = -1;
+    RtlEnterCriticalSection(&g_accel_lock);
+    for (ACCEL_TABLE *t = g_accels; t; t = t->Next)
+        if ((HACCEL)t == accel) {
+            count = t->Count;
+            if (out && max > 0)
+                memcpy(out, t->Entries, (SIZE_T)(max < count ? max : count) * sizeof(ACCEL));
+            break;
+        }
+    RtlLeaveCriticalSection(&g_accel_lock);
+    if (count < 0)
+        SetLastError(ERROR_INVALID_ACCEL_HANDLE);
+    return count;
+}
 
 WINUSERAPI HACCEL WINAPI LoadAcceleratorsW(HINSTANCE instance, LPCWSTR name)
 {
-    return NULL;
+    HRSRC res = FindResourceW(instance, name, MAKEINTRESOURCEW(9));
+    const ACCEL_RESOURCE *data = res ? LockResource(LoadResource(instance, res)) : NULL;
+    if (!data)
+        return NULL;
+    RtlEnterCriticalSection(&g_accel_lock);
+    for (ACCEL_TABLE *t = g_accels; t; t = t->Next)
+        if (t->Resource == data) {
+            RtlLeaveCriticalSection(&g_accel_lock);
+            return (HACCEL)t;
+        }
+    RtlLeaveCriticalSection(&g_accel_lock);
+    int max = (int)(SizeofResource(instance, res) / sizeof(ACCEL_RESOURCE)), count = 0;
+    while (count < max && !(data[count++].Flags & ACCEL_LAST))
+        ;
+    if (!count) {
+        SetLastError(ERROR_RESOURCE_DATA_NOT_FOUND);
+        return NULL;
+    }
+    ACCEL_TABLE *t = new_accel_table(count, data);
+    if (!t)
+        return NULL;
+    for (int i = 0; i < count; i++)
+        t->Entries[i] = (ACCEL){(BYTE)(data[i].Flags & 0x7F), data[i].Key, data[i].Cmd};
+    publish_accel_table(t);
+    return (HACCEL)t;
+}
+
+WINUSERAPI HACCEL WINAPI CreateAcceleratorTableW(LPACCEL entries, int count)
+{
+    if (!entries || count <= 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    ACCEL_TABLE *t = new_accel_table(count, NULL);
+    if (!t)
+        return NULL;
+    for (int i = 0; i < count; i++) {
+        t->Entries[i] = entries[i];
+        t->Entries[i].fVirt &= 0x7F;
+    }
+    publish_accel_table(t);
+    return (HACCEL)t;
+}
+
+WINUSERAPI int WINAPI CopyAcceleratorTableW(HACCEL accel, LPACCEL entries, int count)
+{
+    int size = read_accel_table(accel, entries, entries ? count : 0);
+    if (size < 0)
+        return 0;
+    if (!entries)
+        return size;
+    return count < size ? (count > 0 ? count : 0) : size;
+}
+
+WINUSERAPI BOOL WINAPI DestroyAcceleratorTable(HACCEL accel)
+{
+    ACCEL_TABLE *found = NULL;
+    RtlEnterCriticalSection(&g_accel_lock);
+    for (ACCEL_TABLE **p = &g_accels; *p; p = &(*p)->Next)
+        if ((HACCEL)*p == accel) {
+            found = *p;
+            *p = found->Next;
+            break;
+        }
+    RtlLeaveCriticalSection(&g_accel_lock);
+    if (!found) {
+        SetLastError(ERROR_INVALID_ACCEL_HANDLE);
+        return FALSE;
+    }
+    UserFree(found);
+    return TRUE;
+}
+
+/* whether an entry matches a key or character message with the current modifier state. */
+static BOOL accel_matches(const ACCEL *a, const MSG *msg)
+{
+    if (a->key != (WORD)msg->wParam)
+        return FALSE;
+    BOOL key = msg->message == WM_KEYDOWN || msg->message == WM_SYSKEYDOWN;
+    if (a->fVirt & FVIRTKEY) {
+        if (!key)
+            return FALSE;
+        BYTE mods = 0;
+        if (GetKeyState(VK_SHIFT) & 0x8000)
+            mods |= FSHIFT;
+        if (GetKeyState(VK_CONTROL) & 0x8000)
+            mods |= FCONTROL;
+        if (GetKeyState(VK_MENU) & 0x8000)
+            mods |= FALT;
+        return mods == (a->fVirt & (FSHIFT | FCONTROL | FALT));
+    }
+    if (key)
+        return FALSE;
+    if (msg->message == WM_CHAR)
+        return !(a->fVirt & FALT);
+    return (a->fVirt & FALT) && (msg->lParam & 0x20000000);
 }
 
 WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
 {
-    return 0;
+    if (!msg) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (msg->message != WM_KEYDOWN && msg->message != WM_SYSKEYDOWN && msg->message != WM_CHAR &&
+        msg->message != WM_SYSCHAR)
+        return 0;
+    int count = read_accel_table(accel, NULL, 0);
+    if (count <= 0)
+        return 0;
+    ACCEL stack[32], *entries = count <= 32 ? stack : UserAlloc((SIZE_T)count * sizeof(ACCEL));
+    if (!entries)
+        return 0;
+    count = read_accel_table(accel, entries, count);
+    const ACCEL *hit = NULL;
+    for (int i = 0; i < count && !hit; i++)
+        if (accel_matches(&entries[i], msg))
+            hit = &entries[i];
+    WORD cmd = hit ? hit->cmd : 0;
+    if (entries != stack)
+        UserFree(entries);
+    if (!hit)
+        return 0;
+    /* a disabled item of the window menu swallows the key without a command. */
+    HMENU menu = GetMenu(hwnd);
+    UINT state = menu ? GetMenuState(menu, cmd, MF_BYCOMMAND) : (UINT)-1;
+    if (state != (UINT)-1 && (state & (MF_GRAYED | MF_DISABLED)))
+        return 1;
+    if (cmd >= 0xF000)
+        SendMessageW(hwnd, WM_SYSCOMMAND, cmd, 0);
+    else
+        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(cmd, 1), 0);
+    return 1;
+}
+
+/* ------------------------------------------------------------------ dde parameters */
+
+/* the packed lparam carries the low and high words. */
+WINUSERAPI BOOL WINAPI UnpackDDElParam(UINT msg, LPARAM lparam, UINT_PTR *lo, UINT_PTR *hi)
+{
+    (void)msg;
+    if (lo)
+        *lo = LOWORD(lparam);
+    if (hi)
+        *hi = HIWORD(lparam);
+    return TRUE;
+}
+
+WINUSERAPI LPARAM WINAPI ReuseDDElParam(LPARAM lparam, UINT msg_in, UINT msg_out, UINT_PTR lo, UINT_PTR hi)
+{
+    (void)lparam;
+    (void)msg_in;
+    (void)msg_out;
+    return (LPARAM)(DWORD)MAKELONG(lo, hi);
+}
+
+/* ------------------------------------------------------------------ services with nothing to do yet */
+
+/* there is no help engine, like windows without WinHlp32. */
+WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR data)
+{
+    (void)hwnd;
+    (void)file;
+    (void)command;
+    (void)data;
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+/* no accessibility clients listen for events. */
+WINUSERAPI void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object, LONG child)
+{
+    (void)event;
+    (void)hwnd;
+    (void)object;
+    (void)child;
 }
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)

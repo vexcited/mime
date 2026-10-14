@@ -2,6 +2,7 @@
  * window, class, coordinate and dpi services.
  */
 #include "user32_private.h"
+#include <mime/stub.h>
 
 static void init_ustring(UNICODE_STRING *s, LPCWSTR text)
 {
@@ -156,6 +157,17 @@ WINUSERAPI ULONG_PTR WINAPI GetClassLongPtrA(HWND hwnd, int index)
     return GetClassLongPtrW(hwnd, index);
 }
 
+/* win32k has no class setter yet. */
+WINUSERAPI DWORD WINAPI SetClassLongW(HWND hwnd, int index, LONG value)
+{
+    MIME_STUB("user32");
+    (void)hwnd;
+    (void)index;
+    (void)value;
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ creation and destruction */
 
 WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y,
@@ -213,6 +225,119 @@ WINUSERAPI BOOL WINAPI MoveWindow(HWND hwnd, int x, int y, int width, int height
 {
     return NtUserSetWindowPos(hwnd, NULL, x, y, width, height,
                               SWP_NOZORDER | SWP_NOACTIVATE | (repaint ? 0 : SWP_NOREDRAW));
+}
+
+/* ------------------------------------------------------------------ deferred positions */
+
+/* the positions are collected, then applied in order by EndDeferWindowPos. */
+typedef struct DEFER_POS {
+    DWORD Magic;
+    UINT Count;
+    UINT Capacity;
+    WINDOWPOS *Items;
+} DEFER_POS;
+
+#define DEFER_MAGIC 0x50574444u /* DDWP. */
+
+static DEFER_POS *defer_pos(HDWP dwp)
+{
+    DEFER_POS *d = (DEFER_POS *)dwp;
+    if (!d || d->Magic != DEFER_MAGIC) {
+        SetLastError(ERROR_INVALID_DWP_HANDLE);
+        return NULL;
+    }
+    return d;
+}
+
+WINUSERAPI HDWP WINAPI BeginDeferWindowPos(int count)
+{
+    if (count < 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    DEFER_POS *d = UserAlloc(sizeof(*d));
+    if (!d)
+        return NULL;
+    d->Magic = DEFER_MAGIC;
+    d->Capacity = count ? (UINT)count : 8;
+    d->Items = UserAlloc(d->Capacity * sizeof(WINDOWPOS));
+    if (!d->Items) {
+        UserFree(d);
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return NULL;
+    }
+    return (HDWP)d;
+}
+
+static void free_defer(DEFER_POS *d)
+{
+    d->Magic = 0;
+    UserFree(d->Items);
+    UserFree(d);
+}
+
+WINUSERAPI HDWP WINAPI DeferWindowPos(HDWP dwp, HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags)
+{
+    DEFER_POS *d = defer_pos(dwp);
+    if (!d)
+        return NULL;
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        free_defer(d);
+        return NULL;
+    }
+    /* a second call for the same window updates the pending position. */
+    for (UINT i = 0; i < d->Count; i++) {
+        WINDOWPOS *p = &d->Items[i];
+        if (p->hwnd != hwnd)
+            continue;
+        if (!(flags & SWP_NOZORDER)) {
+            p->hwndInsertAfter = after;
+            p->flags &= ~SWP_NOZORDER;
+        }
+        if (!(flags & SWP_NOMOVE)) {
+            p->x = x;
+            p->y = y;
+            p->flags &= ~SWP_NOMOVE;
+        }
+        if (!(flags & SWP_NOSIZE)) {
+            p->cx = cx;
+            p->cy = cy;
+            p->flags &= ~SWP_NOSIZE;
+        }
+        p->flags = (p->flags & (SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE)) |
+                   (flags & ~(SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE));
+        return dwp;
+    }
+    if (d->Count == d->Capacity) {
+        WINDOWPOS *items = UserAlloc(d->Capacity * 2 * sizeof(WINDOWPOS));
+        if (!items) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            free_defer(d);
+            return NULL;
+        }
+        memcpy(items, d->Items, d->Count * sizeof(WINDOWPOS));
+        UserFree(d->Items);
+        d->Items = items;
+        d->Capacity *= 2;
+    }
+    d->Items[d->Count++] = (WINDOWPOS){hwnd, after, x, y, cx, cy, flags};
+    return dwp;
+}
+
+WINUSERAPI BOOL WINAPI EndDeferWindowPos(HDWP dwp)
+{
+    DEFER_POS *d = defer_pos(dwp);
+    if (!d)
+        return FALSE;
+    BOOL ok = TRUE;
+    for (UINT i = 0; i < d->Count; i++) {
+        WINDOWPOS *p = &d->Items[i];
+        if (!SetWindowPos(p->hwnd, p->hwndInsertAfter, p->x, p->y, p->cx, p->cy, p->flags))
+            ok = FALSE;
+    }
+    free_defer(d);
+    return ok;
 }
 
 WINUSERAPI BOOL WINAPI BringWindowToTop(HWND hwnd)
@@ -391,6 +516,82 @@ WINUSERAPI HWND WINAPI ChildWindowFromPointEx(HWND parent, POINT pt, UINT flags)
         return c;
     }
     return parent;
+}
+
+/* like ChildWindowFromPointEx skipping invisible and transparent children, group boxes only win when nothing else does. */
+WINUSERAPI HWND WINAPI RealChildWindowFromPoint(HWND parent, POINT pt)
+{
+    RECT client;
+    if (!GetClientRect(parent, &client) || !PtInRect(&client, pt))
+        return NULL;
+    POINT screen = pt;
+    ClientToScreen(parent, &screen);
+    HWND group = NULL;
+    for (HWND c = GetWindow(parent, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+        RECT r;
+        LONG style = GetWindowLongW(c, GWL_STYLE);
+        if (!(style & WS_VISIBLE) || (GetWindowLongW(c, GWL_EXSTYLE) & WS_EX_TRANSPARENT))
+            continue;
+        if (!GetWindowRect(c, &r) || !PtInRect(&r, screen))
+            continue;
+        WCHAR cls[16];
+        if ((style & BS_TYPEMASK) == BS_GROUPBOX && GetClassNameW(c, cls, 16) && !lstrcmpiW(cls, L"Button")) {
+            if (!group)
+                group = c;
+            continue;
+        }
+        return c;
+    }
+    return group ? group : parent;
+}
+
+/* ------------------------------------------------------------------ owned popups */
+
+/* win32k keeps no last active popup, the active window stands for it when hwnd owns it. */
+WINUSERAPI HWND WINAPI GetLastActivePopup(HWND hwnd)
+{
+    if (!IsWindow(hwnd))
+        return NULL;
+    HWND active = GetActiveWindow();
+    if (!active)
+        active = GetForegroundWindow();
+    for (HWND w = active; w && w != hwnd; w = GetWindow(w, GW_OWNER))
+        if (GetWindow(w, GW_OWNER) == hwnd)
+            return IsWindowVisible(active) && IsWindowEnabled(active) ? active : hwnd;
+    return hwnd;
+}
+
+typedef struct OWNED_POPUPS {
+    HWND Owner;
+    BOOL Show;
+} OWNED_POPUPS;
+
+static const WCHAR g_hidden_popup[] = L"MimeHiddenPopup";
+
+static BOOL CALLBACK show_owned_popup(HWND hwnd, LPARAM param)
+{
+    const OWNED_POPUPS *op = (const OWNED_POPUPS *)param;
+    if (GetWindow(hwnd, GW_OWNER) != op->Owner || !(GetWindowLongW(hwnd, GWL_STYLE) & WS_POPUP))
+        return TRUE;
+    if (!op->Show && IsWindowVisible(hwnd)) {
+        SetPropW(hwnd, g_hidden_popup, (HANDLE)1);
+        ShowWindow(hwnd, SW_HIDE);
+    } else if (op->Show && RemovePropW(hwnd, g_hidden_popup)) {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+    return TRUE;
+}
+
+/* hides the visible popups of the owner, and shows again only those it hid. */
+WINUSERAPI BOOL WINAPI ShowOwnedPopups(HWND owner, BOOL show)
+{
+    if (!IsWindow(owner)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    OWNED_POPUPS op = {owner, show};
+    EnumWindows(show_owned_popup, (LPARAM)&op);
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ window longs */

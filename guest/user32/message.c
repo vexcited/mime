@@ -218,6 +218,40 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
     return NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_DEFWINDOWPROC, FALSE);
 }
 
+/*
+ * multiple document interface: there is no MDIClient class, so a frame
+ * only keeps its client window sized and focused, and children get the
+ * plain window procedure.
+ */
+WINUSERAPI LRESULT WINAPI DefFrameProcW(HWND hwnd, HWND client, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    if (client && IsWindow(client)) {
+        switch (msg) {
+        case WM_SIZE:
+            if (wparam != SIZE_MINIMIZED)
+                MoveWindow(client, 0, 0, LOWORD(lparam), HIWORD(lparam), TRUE);
+            return 0;
+        case WM_SETFOCUS:
+            SetFocus(client);
+            return 0;
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+WINUSERAPI LRESULT WINAPI DefMDIChildProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+/* without MDI children there is no window menu key to translate. */
+WINUSERAPI BOOL WINAPI TranslateMDISysAccel(HWND client, LPMSG msg)
+{
+    (void)client;
+    (void)msg;
+    return FALSE;
+}
+
 WINUSERAPI LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg) {

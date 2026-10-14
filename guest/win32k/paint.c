@@ -145,8 +145,9 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->flags |= MIME_WIN_MAXIMIZABLE;
     if ((w->ExStyle & WS_EX_APPWINDOW) || (!w->Owner && !(w->ExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))))
         c->flags |= MIME_WIN_APPWINDOW;
+    /* a thin border, which godot keeps on its fullscreen window, is no title bar. */
     BOOLEAN fullscreen = (w->Flags & WNDF_FULLSCREEN) ||
-                         (!(w->Style & (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZE)) &&
+                         ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & (WS_THICKFRAME | WS_MINIMIZE)) &&
                           w->WindowRect.left <= 0 && w->WindowRect.top <= 0 &&
                           w->WindowRect.right >= W32Display.Width && w->WindowRect.bottom >= W32Display.Height);
     if (fullscreen)
@@ -173,8 +174,10 @@ void HostConfigure(WND *w, BOOLEAN activate)
     if ((w->Style & WS_THICKFRAME) && !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) && m.VisibleInset)
         c->input = (MimeRect){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
     c->corner_radius = corner_radius(w, &m);
+    if (w->Flags & WNDF_ACTIVE_FRAME)
+        c->flags |= MIME_WIN_ACTIVE;
     if (m.Border && !(w->Style & WS_MAXIMIZE))
-        c->border_color = (w->Flags & WNDF_ACTIVE_FRAME) ? 0x66000000u : 0x40000000u;
+        c->border_color = (w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u;
     if (fullscreen) {
         c->corner_radius = 0;
         c->border_color = 0;

@@ -134,7 +134,7 @@ static UX_SLOT *find_slot(HTHEME handle)
 {
     ULONG_PTR value = (ULONG_PTR)handle;
     ULONG i = (ULONG)(value & 0xFFFF);
-    if (value >> 32 || !g_handles.Slots || i >= g_handles.Count)
+    if ((ULONG64)value >> 32 || !g_handles.Slots || i >= g_handles.Count)
         return NULL;
     UX_SLOT *slot = &g_handles.Slots[i];
     if (!slot->Theme || slot->Closed || slot->Generation != (WORD)(value >> 16))

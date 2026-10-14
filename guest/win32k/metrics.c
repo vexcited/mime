@@ -48,9 +48,10 @@ static const COLORREF g_default_colors[NUM_SYSCOLORS] = {
 static COLORREF g_colors[NUM_SYSCOLORS];
 static BRUSH *g_brushes[NUM_SYSCOLORS];
 
-void MetricsInitialize(void)
+/* the display the host reports in the boot information; the dpi is read once, like the windows system dpi. */
+static void read_display(void)
 {
-    const MimeBootInfo *boot = HalMimeGetBootInfo();
+    const volatile MimeBootInfo *boot = HalMimeGetBootInfo();
     W32Display.Width = boot->display.width ? (LONG)boot->display.width : 1920;
     W32Display.Height = boot->display.height ? (LONG)boot->display.height : 1080;
     W32Display.Work = (RECT){(LONG)boot->display.work_x, (LONG)boot->display.work_y,
@@ -58,13 +59,29 @@ void MetricsInitialize(void)
                              (LONG)(boot->display.work_y + boot->display.work_height)};
     if (RectEmpty(&W32Display.Work))
         W32Display.Work = (RECT){0, 0, W32Display.Width, W32Display.Height};
-    W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;
     W32Display.RefreshHz = boot->display.refresh_hz ? boot->display.refresh_hz : 60;
+}
+
+void MetricsInitialize(void)
+{
+    const MimeBootInfo *boot = HalMimeGetBootInfo();
+    read_display();
+    W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;
     for (int i = 0; i < NUM_SYSCOLORS; i++) {
         g_colors[i] = g_default_colors[i];
         g_brushes[i] = GdiCreateSystemBrush(g_colors[i], i);
     }
     W32SystemFont = W32MessageFontForDpi(W32Display.Dpi);
+}
+
+/* the host display changed size or work area. */
+void MetricsDisplayChanged(void)
+{
+    LONG width = W32Display.Width, height = W32Display.Height;
+    RECT work = W32Display.Work;
+    read_display();
+    if (width != W32Display.Width || height != W32Display.Height || memcmp(&work, &W32Display.Work, sizeof(work)))
+        WndDisplayChanged();
 }
 
 UINT W32SystemDpi(void)

@@ -170,6 +170,9 @@ static NTSTATUS CALLBACK callback_window_proc(MIME_WINDOWPROC_ARGS *args, ULONG 
     }
     }
     LRESULT result = UserCallProc(args->Proc, args->Ansi, args->Hwnd, args->Msg, args->Wparam, lparam);
+    /* scroll bar state lives in properties, released with the window. */
+    if (args->Msg == WM_NCDESTROY)
+        UserFreeScrollData(args->Hwnd);
 
     if (args->LparamKind == MIME_LPARAM_INOUT && args->DataSize) {
         /* the result header goes right before the data, which stays in place. */

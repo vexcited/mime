@@ -1487,6 +1487,8 @@ WINUSERAPI int WINAPI GetSystemMetricsForDpi(int index, UINT dpi);
 WINUSERAPI BOOL WINAPI SystemParametersInfoW(UINT action, UINT param, PVOID data, UINT ini);
 WINUSERAPI BOOL WINAPI SystemParametersInfoForDpi(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 WINUSERAPI DWORD WINAPI GetSysColor(int index);
+WINUSERAPI UINT WINAPI GetCaretBlinkTime(void);
+WINUSERAPI UINT WINAPI GetDoubleClickTime(void);
 WINUSERAPI HBRUSH WINAPI GetSysColorBrush(int index);
 WINUSERAPI UINT WINAPI GetDpiForWindow(HWND hwnd);
 WINUSERAPI UINT WINAPI GetDpiForSystem(void);
@@ -2293,5 +2295,245 @@ WINUSERAPI DWORD WINAPI GetWindowThreadProcessId(HWND hwnd, LPDWORD pid);
 
 WINUSERAPI DWORD WINAPI GetMessagePos(void);
 WINUSERAPI LONG WINAPI GetMessageTime(void);
+
+/* ------------------------------------------------------------------ scroll bars */
+
+#define SB_HORZ 0
+#define SB_VERT 1
+#define SB_CTL 2
+#define SB_BOTH 3
+
+#define SB_LINEUP 0
+#define SB_LINELEFT 0
+#define SB_LINEDOWN 1
+#define SB_LINERIGHT 1
+#define SB_PAGEUP 2
+#define SB_PAGELEFT 2
+#define SB_PAGEDOWN 3
+#define SB_PAGERIGHT 3
+#define SB_THUMBPOSITION 4
+#define SB_THUMBTRACK 5
+#define SB_TOP 6
+#define SB_LEFT 6
+#define SB_BOTTOM 7
+#define SB_RIGHT 7
+#define SB_ENDSCROLL 8
+
+#define SBS_HORZ 0x0000
+#define SBS_VERT 0x0001
+#define SBS_SIZEBOX 0x0008
+#define SBS_SIZEGRIP 0x0010
+
+#define SBM_SETPOS 0x00E0
+#define SBM_GETPOS 0x00E1
+#define SBM_SETRANGE 0x00E2
+#define SBM_GETRANGE 0x00E3
+#define SBM_ENABLE_ARROWS 0x00E4
+#define SBM_SETRANGEREDRAW 0x00E6
+#define SBM_SETSCROLLINFO 0x00E9
+#define SBM_GETSCROLLINFO 0x00EA
+#define SBM_GETSCROLLBARINFO 0x00EB
+
+#define SIF_RANGE 0x0001
+#define SIF_PAGE 0x0002
+#define SIF_POS 0x0004
+#define SIF_DISABLENOSCROLL 0x0008
+#define SIF_TRACKPOS 0x0010
+#define SIF_ALL (SIF_RANGE | SIF_PAGE | SIF_POS | SIF_TRACKPOS)
+
+#define ESB_ENABLE_BOTH 0x0000
+#define ESB_DISABLE_BOTH 0x0003
+#define ESB_DISABLE_LEFT 0x0001
+#define ESB_DISABLE_RIGHT 0x0002
+#define ESB_DISABLE_UP 0x0001
+#define ESB_DISABLE_DOWN 0x0002
+#define ESB_DISABLE_LTUP ESB_DISABLE_LEFT
+#define ESB_DISABLE_RTDN ESB_DISABLE_RIGHT
+
+#define SW_SCROLLCHILDREN 0x0001
+#define SW_INVALIDATE 0x0002
+#define SW_ERASE 0x0004
+#define SW_SMOOTHSCROLL 0x0010
+
+typedef struct tagSCROLLINFO {
+    UINT cbSize;
+    UINT fMask;
+    int nMin;
+    int nMax;
+    UINT nPage;
+    int nPos;
+    int nTrackPos;
+} SCROLLINFO, *LPSCROLLINFO;
+typedef const SCROLLINFO *LPCSCROLLINFO;
+
+WINUSERAPI int WINAPI SetScrollInfo(HWND hwnd, int bar, LPCSCROLLINFO info, BOOL redraw);
+WINUSERAPI BOOL WINAPI GetScrollInfo(HWND hwnd, int bar, LPSCROLLINFO info);
+WINUSERAPI int WINAPI SetScrollPos(HWND hwnd, int bar, int pos, BOOL redraw);
+WINUSERAPI int WINAPI GetScrollPos(HWND hwnd, int bar);
+WINUSERAPI BOOL WINAPI SetScrollRange(HWND hwnd, int bar, int min, int max, BOOL redraw);
+WINUSERAPI BOOL WINAPI GetScrollRange(HWND hwnd, int bar, LPINT min, LPINT max);
+WINUSERAPI BOOL WINAPI ShowScrollBar(HWND hwnd, int bar, BOOL show);
+WINUSERAPI BOOL WINAPI EnableScrollBar(HWND hwnd, UINT bar, UINT arrows);
+WINUSERAPI BOOL WINAPI ScrollWindow(HWND hwnd, int dx, int dy, const RECT *rect, const RECT *clip);
+WINUSERAPI int WINAPI ScrollWindowEx(HWND hwnd, int dx, int dy, const RECT *rect, const RECT *clip, HRGN update,
+                                     LPRECT update_rect, UINT flags);
+
+/* ------------------------------------------------------------------ deferred window positions */
+
+typedef HANDLE HDWP;
+
+WINUSERAPI HDWP WINAPI BeginDeferWindowPos(int count);
+WINUSERAPI HDWP WINAPI DeferWindowPos(HDWP dwp, HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags);
+WINUSERAPI BOOL WINAPI EndDeferWindowPos(HDWP dwp);
+
+/* ------------------------------------------------------------------ accelerators */
+
+#define FVIRTKEY 0x01
+#define FNOINVERT 0x02
+#define FSHIFT 0x04
+#define FCONTROL 0x08
+#define FALT 0x10
+
+typedef struct tagACCEL {
+    BYTE fVirt;
+    WORD key;
+    WORD cmd;
+} ACCEL, *LPACCEL;
+
+WINUSERAPI HACCEL WINAPI LoadAcceleratorsW(HINSTANCE instance, LPCWSTR name);
+WINUSERAPI HACCEL WINAPI CreateAcceleratorTableW(LPACCEL entries, int count);
+WINUSERAPI int WINAPI CopyAcceleratorTableW(HACCEL accel, LPACCEL entries, int count);
+WINUSERAPI BOOL WINAPI DestroyAcceleratorTable(HACCEL accel);
+WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg);
+
+/* ------------------------------------------------------------------ menu and combo box information */
+
+#ifndef MF_END
+#define MF_END 0x00000080L
+#endif
+
+#ifndef OBJID_WINDOW
+#define OBJID_WINDOW ((LONG)0x00000000)
+#define OBJID_SYSMENU ((LONG)0xFFFFFFFF)
+#define OBJID_MENU ((LONG)0xFFFFFFFD)
+#define OBJID_CLIENT ((LONG)0xFFFFFFFC)
+#endif
+
+#ifndef STATE_SYSTEM_PRESSED
+#define STATE_SYSTEM_PRESSED 0x00000008
+#define STATE_SYSTEM_INVISIBLE 0x00008000
+#endif
+
+typedef struct tagMENUBARINFO {
+    DWORD cbSize;
+    RECT rcBar;
+    HMENU hMenu;
+    HWND hwndMenu;
+    BOOL fBarFocused : 1;
+    BOOL fFocused : 1;
+    BOOL fUnused : 30;
+} MENUBARINFO, *PMENUBARINFO, *LPMENUBARINFO;
+
+typedef struct tagCOMBOBOXINFO {
+    DWORD cbSize;
+    RECT rcItem;
+    RECT rcButton;
+    DWORD stateButton;
+    HWND hwndCombo;
+    HWND hwndItem;
+    HWND hwndList;
+} COMBOBOXINFO, *PCOMBOBOXINFO, *LPCOMBOBOXINFO;
+
+WINUSERAPI HMENU WINAPI LoadMenuW(HINSTANCE instance, LPCWSTR name);
+WINUSERAPI LONG WINAPI GetMenuCheckMarkDimensions(void);
+WINUSERAPI BOOL WINAPI SetMenuItemBitmaps(HMENU menu, UINT item, UINT flags, HBITMAP unchecked, HBITMAP checked);
+WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBARINFO info);
+WINUSERAPI BOOL WINAPI GetComboBoxInfo(HWND hwnd, PCOMBOBOXINFO info);
+
+/* ------------------------------------------------------------------ frame controls and state drawing */
+
+#define DFC_CAPTION 1
+#define DFC_MENU 2
+#define DFC_SCROLL 3
+#define DFC_BUTTON 4
+#define DFC_POPUPMENU 5
+
+#define DFCS_CAPTIONCLOSE 0x0000
+#define DFCS_CAPTIONMIN 0x0001
+#define DFCS_CAPTIONMAX 0x0002
+#define DFCS_CAPTIONRESTORE 0x0003
+#define DFCS_CAPTIONHELP 0x0004
+#define DFCS_MENUARROW 0x0000
+#define DFCS_MENUCHECK 0x0001
+#define DFCS_MENUBULLET 0x0002
+#define DFCS_MENUARROWRIGHT 0x0004
+#define DFCS_SCROLLUP 0x0000
+#define DFCS_SCROLLDOWN 0x0001
+#define DFCS_SCROLLLEFT 0x0002
+#define DFCS_SCROLLRIGHT 0x0003
+#define DFCS_SCROLLCOMBOBOX 0x0005
+#define DFCS_SCROLLSIZEGRIP 0x0008
+#define DFCS_SCROLLSIZEGRIPRIGHT 0x0010
+#define DFCS_BUTTONCHECK 0x0000
+#define DFCS_BUTTONRADIOIMAGE 0x0001
+#define DFCS_BUTTONRADIOMASK 0x0002
+#define DFCS_BUTTONRADIO 0x0004
+#define DFCS_BUTTON3STATE 0x0008
+#define DFCS_BUTTONPUSH 0x0010
+#define DFCS_INACTIVE 0x0100
+#define DFCS_PUSHED 0x0200
+#define DFCS_CHECKED 0x0400
+#define DFCS_TRANSPARENT 0x0800
+#define DFCS_HOT 0x1000
+#define DFCS_ADJUSTRECT 0x2000
+#define DFCS_FLAT 0x4000
+#define DFCS_MONO 0x8000
+
+#define DST_COMPLEX 0x0000
+#define DST_TEXT 0x0001
+#define DST_PREFIXTEXT 0x0002
+#define DST_ICON 0x0003
+#define DST_BITMAP 0x0004
+#define DSS_NORMAL 0x0000
+#define DSS_UNION 0x0010
+#define DSS_DISABLED 0x0020
+#define DSS_MONO 0x0080
+#define DSS_HIDEPREFIX 0x0200
+#define DSS_PREFIXONLY 0x0400
+#define DSS_RIGHT 0x8000
+
+typedef BOOL(CALLBACK *DRAWSTATEPROC)(HDC dc, LPARAM ldata, WPARAM wdata, int cx, int cy);
+typedef BOOL(CALLBACK *GRAYSTRINGPROC)(HDC dc, LPARAM data, int count);
+
+WINUSERAPI BOOL WINAPI DrawFrameControl(HDC dc, LPRECT rect, UINT type, UINT state);
+WINUSERAPI BOOL WINAPI DrawStateW(HDC dc, HBRUSH brush, DRAWSTATEPROC proc, LPARAM ldata, WPARAM wdata, int x, int y,
+                                  int cx, int cy, UINT flags);
+WINUSERAPI BOOL WINAPI GrayStringW(HDC dc, HBRUSH brush, GRAYSTRINGPROC proc, LPARAM data, int count, int x, int y,
+                                   int cx, int cy);
+
+/* ------------------------------------------------------------------ more window, mdi and help services */
+
+#define CB_GETCOMBOBOXINFO 0x0164
+#ifndef CBS_SIMPLE
+#define CBS_SIMPLE 0x0001L
+#define CBS_DROPDOWN 0x0002L
+#define CBS_DROPDOWNLIST 0x0003L
+#endif
+
+WINUSERAPI HWND WINAPI FindWindowExW(HWND parent, HWND after, LPCWSTR class_name, LPCWSTR title);
+WINUSERAPI HWND WINAPI GetLastActivePopup(HWND hwnd);
+WINUSERAPI BOOL WINAPI ShowOwnedPopups(HWND owner, BOOL show);
+WINUSERAPI HWND WINAPI RealChildWindowFromPoint(HWND parent, POINT pt);
+WINUSERAPI DWORD WINAPI SetClassLongW(HWND hwnd, int index, LONG value);
+WINUSERAPI DWORD WINAPI GetClassLongW(HWND hwnd, int index);
+WINUSERAPI void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object, LONG child);
+WINUSERAPI LRESULT WINAPI DefFrameProcW(HWND hwnd, HWND client, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI LRESULT WINAPI DefMDIChildProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI BOOL WINAPI TranslateMDISysAccel(HWND client, LPMSG msg);
+WINUSERAPI BOOL WINAPI UnpackDDElParam(UINT msg, LPARAM lparam, UINT_PTR *lo, UINT_PTR *hi);
+WINUSERAPI LPARAM WINAPI ReuseDDElParam(LPARAM lparam, UINT msg_in, UINT msg_out, UINT_PTR lo, UINT_PTR hi);
+WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR data);
+WINUSERAPI int WINAPI GetKeyNameTextW(LONG lparam, LPWSTR buffer, int size);
+WINUSERAPI HBITMAP WINAPI LoadBitmapW(HINSTANCE instance, LPCWSTR name);
 
 #endif
