@@ -124,10 +124,13 @@ void MiRemoveVad(PMMADDRESS_SPACE as, PMMVAD vad)
 
 NTSTATUS MiFindFreeRange(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, BOOLEAN top_down, ULONG_PTR *out)
 {
+    ULONG_PTR maximum = as->AllocationLimit ? as->AllocationLimit : MM_HIGHEST_USER_ADDRESS + 1;
+    if (size > maximum - MM_LOWEST_USER_ADDRESS)
+        return STATUS_NO_MEMORY;
     if (!alignment)
         alignment = MM_ALLOCATION_GRANULARITY;
     if (top_down) {
-        ULONG_PTR limit = MM_TOP_DOWN_START;
+        ULONG_PTR limit = maximum < MM_TOP_DOWN_START ? maximum : MM_TOP_DOWN_START;
         for (PLIST_ENTRY e = as->VadList.Blink;; e = e->Blink) {
             ULONG_PTR low = MM_LOWEST_USER_ADDRESS;
             if (e != &as->VadList) {
@@ -157,7 +160,7 @@ NTSTATUS MiFindFreeRange(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, 
         if (v->EndVa > candidate)
             candidate = (v->EndVa + alignment - 1) & ~(alignment - 1);
     }
-    if (candidate + size > MM_HIGHEST_USER_ADDRESS + 1)
+    if (candidate > maximum - size)
         return STATUS_NO_MEMORY;
     *out = candidate;
     return STATUS_SUCCESS;
@@ -249,7 +252,7 @@ NTSTATUS MiAllocateVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG t
     ExAcquireFastMutex(&as->Lock);
     NTSTATUS status = STATUS_SUCCESS;
     ULONG_PTR start = (ULONG_PTR)*base;
-    if (type & MEM_RESERVE) {
+    if ((type & MEM_RESERVE) || !start) {
         SIZE_T bytes = ROUND_TO_PAGES(*size + (start & (PAGE_SIZE - 1)));
         if (start) {
             start &= ~(MM_ALLOCATION_GRANULARITY - 1);
@@ -456,6 +459,57 @@ static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, UL
     return TRUE;
 }
 
+static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v)
+{
+    ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+    ULONG64 pa = MmAllocatePage();
+    if (!pa)
+        return FALSE;
+    ULONG64 attrs = MiProtectToPte(protect, TRUE) & ~MM_PTE_SW_COW;
+    if (protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
+        attrs &= ~MM_PTE_AP_RO;
+    *pte = pa | attrs | MM_PTE_VALID | MM_PTE_PAGE;
+    as->CommittedPages++;
+    return TRUE;
+}
+
+/*
+ * a demand zero fault maps the other committed pages of its window too:
+ * the 16 KiB host page holding them is backed as a whole anyway, so this
+ * saves faults without using more host memory. touching that goes on
+ * where the last window ended gets a 64 KiB window, ahead of the program.
+ */
+#define FAULT_WINDOW (16 * 1024)
+#define FAULT_WINDOW_SEQUENTIAL (64 * 1024)
+
+static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG64 v)
+{
+    if (!map_zero_page(as, pte, v))
+        return FALSE;
+    ULONG_PTR size = page >= as->LastFaultEnd && page < as->LastFaultEnd + FAULT_WINDOW ? FAULT_WINDOW_SEQUENTIAL
+                                                                                          : FAULT_WINDOW;
+    ULONG_PTR start = page & ~(size - 1), end = start + size;
+    if (start < vad->StartVa)
+        start = vad->StartVa;
+    if (end > vad->EndVa)
+        end = vad->EndVa;
+    /* one translation table holds the whole window, so its ptes sit side by side. */
+    ULONG64 *first = pte - ((page - start) >> PAGE_SHIFT);
+    for (ULONG_PTR va = start; va < end; va += PAGE_SIZE) {
+        ULONG64 *p = first + ((va - start) >> PAGE_SHIFT), w = *p;
+        ULONG protect = (ULONG)((w & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+        if (va == page || (w & MM_PTE_VALID) || !(w & MM_SWPTE_COMMITTED) || (w & MM_SWPTE_SECTION) ||
+            (protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))
+            continue;
+        if (!map_zero_page(as, p, w))
+            break;
+    }
+    as->LastFaultEnd = end;
+    KiDataSyncBarrier();
+    KiInstructionBarrier();
+    return TRUE;
+}
+
 /* resolves demand zero, section and copy on write faults. returns FALSE for real access violations. */
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {
@@ -479,17 +533,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
         } else if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_COMMITTED)) {
             ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
             if ((protect & 0xFF) != PAGE_NOACCESS && !(protect & PAGE_GUARD)) {
-                ULONG64 pa = MmAllocatePage();
-                if (pa) {
-                    ULONG64 attrs = MiProtectToPte(protect, TRUE) & ~MM_PTE_SW_COW;
-                    if (protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
-                        attrs &= ~MM_PTE_AP_RO;
-                    *pte = pa | attrs | MM_PTE_VALID | MM_PTE_PAGE;
-                    KiDataSyncBarrier();
-                    KiInstructionBarrier();
-                    as->CommittedPages++;
-                    handled = TRUE;
-                }
+                handled = demand_zero(as, vad, page, pte, v);
             } else if (protect & PAGE_GUARD) {
                 *pte = sw_pte(protect & ~PAGE_GUARD) | (v & MM_SWPTE_SECTION);
                 handled = FALSE;
@@ -502,8 +546,9 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                 MiWritePte(as->Root, page, pa | attrs, as->Asid);
                 handled = TRUE;
             }
-        } else if ((v & MM_PTE_VALID) && !write && !execute) {
-            /* spurious fault after a concurrent fix up. */
+        } else if ((v & MM_PTE_VALID) && (mode == KernelMode || (v & MM_PTE_AP_EL0)) &&
+                   (!write || !(v & MM_PTE_AP_RO)) && (!execute || !(v & MM_PTE_UXN))) {
+            /* another thread, possibly on another processor, fixed the page up first. */
             handled = TRUE;
         }
     }
@@ -732,8 +777,32 @@ NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size)
     return STATUS_SUCCESS;
 }
 
+/*
+ * every processor running this process in user mode takes an interrupt,
+ * and its entry into the kernel publishes its stores; the caller waits
+ * for each to leave user mode.
+ */
 NTSTATUS NTAPI NtFlushProcessWriteBuffers(void)
 {
+    PKPROCESS process = KiCurrentThread()->Process;
+    ULONG64 targets = 0;
+    KiDataSyncBarrier();
+    for (ULONG i = 0; i < KeNumberProcessors; i++) {
+        PKPRCB p = KiProcessorBlock[i];
+        PKPCR pcr = CONTAINING_RECORD(p, KPCR, Prcb);
+        if (p != KeGetCurrentPrcb() && pcr->UserMode && p->CurrentThread->Process == process) {
+            targets |= 1ull << i;
+            HalSendIpi(i);
+        }
+    }
+    while (targets) {
+        ULONG i = (ULONG)__builtin_ctzll(targets);
+        PKPCR pcr = CONTAINING_RECORD(KiProcessorBlock[i], KPCR, Prcb);
+        if (!__atomic_load_n(&pcr->UserMode, __ATOMIC_ACQUIRE) || KiProcessorBlock[i]->CurrentThread->Process != process)
+            targets &= targets - 1;
+        else
+            __asm__ volatile("yield");
+    }
     KiDataSyncBarrier();
     return STATUS_SUCCESS;
 }

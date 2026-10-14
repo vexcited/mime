@@ -2,6 +2,7 @@
  * threads: creation, user mode entry, termination and reaping.
  */
 #include "../ntos.h"
+#include <mime/mx64.h>
 
 #define KERNEL_STACK_SIZE (64 * 1024)
 #define MIME_DEFAULT_STACK_RESERVE (1024 * 1024)
@@ -9,10 +10,8 @@
 static LIST_ENTRY g_dead_threads;
 static ETHREAD g_idle_thread;
 
-void PsInitializeIdleThread(void)
+static void initialize_idle(PETHREAD idle, PVOID stack_top, PVOID stack_limit, PKPRCB prcb)
 {
-    InitializeListHead(&g_dead_threads);
-    PETHREAD idle = &g_idle_thread;
     memset(idle, 0, sizeof(*idle));
     PKTHREAD t = &idle->Tcb;
     t->Header.Type = ThreadObject;
@@ -23,15 +22,42 @@ void PsInitializeIdleThread(void)
     KeInitializeTimer(&t->Timer);
     t->Process = &PsInitialSystemProcess->Pcb;
     t->ApcStateProcess = t->Process;
-    t->InitialStack = (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys + HalBootInfo->boot_stack_size);
-    t->StackLimit = (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys);
+    t->InitialStack = stack_top;
+    t->StackLimit = stack_limit;
     t->State = Running;
     t->Priority = 0;
     t->BasePriority = 0;
+    t->IdleThread = TRUE;
+    t->Processor = (UCHAR)prcb->Number;
     idle->SystemThread = TRUE;
-    PKPRCB prcb = KeGetCurrentPrcb();
     prcb->CurrentThread = t;
     prcb->IdleThread = t;
+}
+
+void PsInitializeIdleThread(void)
+{
+    InitializeListHead(&g_dead_threads);
+    initialize_idle(&g_idle_thread,
+                    (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys + HalBootInfo->boot_stack_size),
+                    (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys), KeGetCurrentPrcb());
+}
+
+/* the idle thread of a secondary processor; returns the top of its stack, where the processor starts. */
+PVOID PsCreateIdleThread(PKPRCB prcb)
+{
+    PETHREAD idle = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ETHREAD), KI_TAG('I', 'd', 'l', 'e'));
+    PVOID limit;
+    PVOID alloc = idle ? MmAllocateKernelStack(KERNEL_STACK_SIZE, &limit) : NULL;
+    if (!alloc) {
+        if (idle)
+            ExFreePool(idle);
+        return NULL;
+    }
+    PVOID top = (PUCHAR)limit + KERNEL_STACK_SIZE;
+    initialize_idle(idle, top, limit, prcb);
+    idle->Tcb.StackAllocation = alloc;
+    idle->Tcb.StackAllocationSize = KERNEL_STACK_SIZE;
+    return top;
 }
 
 void PspThreadDelete(PVOID object)
@@ -129,20 +155,24 @@ typedef struct USER_START {
     ULONG64 Teb;
 } USER_START;
 
+static void initialize_user_frame(PKTHREAD thread, const USER_START *start)
+{
+    PKTRAP_FRAME frame = thread->TrapFrame;
+    memset(frame, 0, sizeof(*frame));
+    frame->Pc = start->Pc;
+    frame->Sp = start->Sp;
+    frame->X[0] = start->X0;
+    frame->X[1] = start->X1;
+    frame->X[18] = start->Teb;
+    frame->Spsr = PSR_MODE_EL0;
+    frame->Flags = KTRAP_FLAG_FP_SAVED; /* start with zeroed fp state */
+}
+
 static void user_thread_startup(PVOID context)
 {
     PKTHREAD thread = KiCurrentThread();
-    USER_START start = *(USER_START *)context;
     ExFreePool(context);
     PKTRAP_FRAME frame = thread->TrapFrame;
-    memset(frame, 0, sizeof(*frame));
-    frame->Pc = start.Pc;
-    frame->Sp = start.Sp;
-    frame->X[0] = start.X0;
-    frame->X[1] = start.X1;
-    frame->X[18] = start.Teb;
-    frame->Spsr = PSR_MODE_EL0;
-    frame->Flags = KTRAP_FLAG_FP_SAVED; /* start with zeroed fp state */
     thread->PreviousMode = UserMode;
     KiExitToUserMode(frame);
     KiEnterUserMode(frame);
@@ -169,7 +199,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
 
     PVOID stack = NULL, teb_va = NULL;
     SIZE_T size = stack_reserve;
-    NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
+    NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | MEM_COMMIT | (process->Machine == IMAGE_FILE_MACHINE_I386 ? 0 : MEM_TOP_DOWN), PAGE_READWRITE);
     SIZE_T teb_size = MIME_TEB_SIZE;
     if (NT_SUCCESS(status))
         status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
@@ -234,6 +264,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     ctx->X0 = ctx_va;
     ctx->X1 = (ULONG64)process->NtdllBase;
     ctx->Teb = (ULONG64)teb_va;
+    initialize_user_frame(&thread->Tcb, ctx);
     KiAttachProcess(saved);
 
     if (!suspended)
@@ -253,6 +284,8 @@ void KiAttachProcess(PKPROCESS process)
     if (process->Ttbr0)
         KiSwitchAddressSpace(process);
     KiReleaseDispatcherLock(s);
+    if (process == t->Process)
+        PspCheckForSuspendApc(t);
 }
 
 void NTAPI KeStackAttachProcess(PRKPROCESS process, PVOID state)
@@ -334,6 +367,10 @@ NTSTATUS NTAPI NtTerminateThread(HANDLE handle, NTSTATUS exit_status)
     thread->ExitStatus = exit_status;
     if (thread->Tcb.State == Waiting)
         KiUnwaitThread(&thread->Tcb, STATUS_KERNEL_APC);
+    else if (thread->Tcb.State == Initialized)
+        KiReadyThread(&thread->Tcb);
+    else
+        KiInterruptThread(&thread->Tcb);
     KiReleaseDispatcherLock(s);
     ObDereferenceObject(thread);
     return STATUS_SUCCESS;
@@ -368,18 +405,136 @@ NTSTATUS NTAPI NtResumeThread(HANDLE handle, PULONG previous)
     NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SUSPEND_RESUME, &thread);
     if (!NT_SUCCESS(status))
         return status;
+    if (previous) {
+        ULONG zero = 0;
+        status = KiCopyToUser(previous, &zero, sizeof(zero));
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(thread);
+            return status;
+        }
+    }
     ULONG64 s = KiAcquireDispatcherLock();
     ULONG old = thread->Tcb.SuspendCount;
     if (old) {
         thread->Tcb.SuspendCount--;
+        if (old == 1)
+            KeSetEvent(&thread->Tcb.SuspendEvent, 0, FALSE);
         if (old == 1 && thread->Tcb.State == Initialized)
             KiReadyThread(&thread->Tcb);
+        else if (old == 1 && thread->Tcb.Suspended)
+            KeReleaseSemaphore(&thread->Tcb.SuspendSemaphore, 0, 1, FALSE);
     }
     KiReleaseDispatcherLock(s);
     if (previous)
-        KiCopyToUser(previous, &old, sizeof(old));
+        status = KiCopyToUser(previous, &old, sizeof(old));
     ObDereferenceObject(thread);
-    return STATUS_SUCCESS;
+    return status;
+}
+
+static void NTAPI suspend_kernel_routine(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, PVOID *a1, PVOID *a2)
+{
+}
+
+static void NTAPI suspend_normal_routine(PVOID context, PVOID arg1, PVOID arg2)
+{
+    PKTHREAD thread = KiCurrentThread();
+    ULONG64 state = KiAcquireDispatcherLock();
+    if (thread->SuspendApcActive || thread->ApcStateProcess != thread->Process) {
+        KiReleaseDispatcherLock(state);
+        return;
+    }
+    thread->SuspendApcActive = TRUE;
+    KiReleaseDispatcherLock(state);
+    if (thread->UserSuspendGate) {
+        MX_SUSPEND_GATE gate;
+        NTSTATUS status = KiCopyFromUser(&gate, thread->UserSuspendGate, sizeof(gate));
+        ULONG pending = NT_SUCCESS(status) && gate.Critical ? 1 : 0;
+        if (NT_SUCCESS(status))
+            status = KiCopyToUser((PVOID)&((MX_SUSPEND_GATE *)thread->UserSuspendGate)->Pending, &pending, sizeof(pending));
+        if (!NT_SUCCESS(status) || pending) {
+            thread->SuspendApcActive = FALSE;
+            if (!NT_SUCCESS(status))
+                PspExitThread(STATUS_ACCESS_VIOLATION);
+            return;
+        }
+    }
+    for (;;) {
+        state = KiAcquireDispatcherLock();
+        if (!thread->SuspendCount || thread->Terminating) {
+            thread->Suspended = FALSE;
+            thread->SuspendApcActive = FALSE;
+            KiReleaseDispatcherLock(state);
+            return;
+        }
+        thread->Suspended = TRUE;
+        KeSetEvent(&thread->SuspendEvent, 0, FALSE);
+        KiReleaseDispatcherLock(state);
+        KeWaitForSingleObject(&thread->SuspendSemaphore, Suspended, UserMode, FALSE, NULL);
+    }
+}
+
+void PspCheckForSuspendApc(PKTHREAD thread)
+{
+    ULONG64 state = KiAcquireDispatcherLock();
+    if (thread->SuspendCount && !thread->Terminating && thread->State != Initialized &&
+        thread->ApcStateProcess == thread->Process &&
+        !thread->SuspendApcActive && !thread->SuspendApc.Inserted) {
+        KeInitializeApc(&thread->SuspendApc, thread, OriginalApcEnvironment, suspend_kernel_routine, NULL,
+                        suspend_normal_routine, KernelMode, NULL);
+        KeInsertQueueApc(&thread->SuspendApc, NULL, NULL, 0);
+    }
+    KiReleaseDispatcherLock(state);
+}
+
+NTSTATUS PspWaitForSuspension(PETHREAD thread)
+{
+    for (;;) {
+        ULONG64 state = KiAcquireDispatcherLock();
+        BOOLEAN terminated = thread->Tcb.Terminating;
+        BOOLEAN ready = !thread->Tcb.SuspendCount || thread->Tcb.Suspended || thread->Tcb.State == Initialized ||
+                        thread == PsCurrentThread();
+        KiReleaseDispatcherLock(state);
+        if (terminated) return STATUS_THREAD_IS_TERMINATING;
+        if (ready) return STATUS_SUCCESS;
+        PVOID objects[2] = {thread, &thread->Tcb.SuspendEvent};
+        NTSTATUS status = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, NULL, NULL);
+        if (status != STATUS_WAIT_0 && status != STATUS_WAIT_0 + 1)
+            return status;
+    }
+}
+
+NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SUSPEND_RESUME, &thread);
+    if (!NT_SUCCESS(status)) return status;
+    if (previous) {
+        ULONG zero = 0;
+        status = KiCopyToUser(previous, &zero, sizeof(zero));
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(thread);
+            return status;
+        }
+    }
+    ULONG64 state = KiAcquireDispatcherLock();
+    ULONG old = thread->Tcb.SuspendCount;
+    if (thread->SystemThread)
+        status = STATUS_ACCESS_DENIED;
+    else if (thread->Tcb.Terminating)
+        status = STATUS_THREAD_IS_TERMINATING;
+    else if (old == 127)
+        status = (NTSTATUS)0xC000004AL;
+    else {
+        thread->Tcb.SuspendCount++;
+        if (!old)
+            KeClearEvent(&thread->Tcb.SuspendEvent);
+        PspCheckForSuspendApc(&thread->Tcb);
+    }
+    KiReleaseDispatcherLock(state);
+    if (NT_SUCCESS(status) && previous)
+        status = KiCopyToUser(previous, &old, sizeof(old));
+    ObDereferenceObject(thread);
+    return status;
 }
 
 NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length,
@@ -450,7 +605,25 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
     NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SET_INFORMATION, &thread);
     if (!NT_SUCCESS(status))
         return status;
-    if (klass == ThreadPriority && length >= sizeof(LONG)) {
+    if ((ULONG)klass == MX_THREAD_SUSPEND_GATE) {
+        PVOID gate = NULL;
+        MX_SUSPEND_GATE values;
+        if (thread != PsCurrentThread())
+            status = STATUS_ACCESS_DENIED;
+        else if (length != sizeof(gate))
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        else {
+            status = KiCopyFromUser(&gate, info, sizeof(gate));
+            if (NT_SUCCESS(status) && gate) {
+                status = KiCopyFromUser(&values, gate, sizeof(values));
+                ULONG pending = 0;
+                if (NT_SUCCESS(status))
+                    status = KiCopyToUser((PVOID)&((MX_SUSPEND_GATE *)gate)->Pending, &pending, sizeof(pending));
+            }
+            if (NT_SUCCESS(status))
+                thread->Tcb.UserSuspendGate = gate;
+        }
+    } else if (klass == ThreadPriority && length >= sizeof(LONG)) {
         LONG prio;
         if (NT_SUCCESS(KiCopyFromUser(&prio, info, sizeof(prio))) && prio > 0 && prio < 32)
             thread->Tcb.Priority = thread->Tcb.BasePriority = (SCHAR)prio;
@@ -460,14 +633,13 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
             thread->Tcb.Priority = thread->Tcb.BasePriority = (SCHAR)(8 + inc);
     }
     ObDereferenceObject(thread);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 NTSTATUS NTAPI NtYieldExecution(void)
 {
     LARGE_INTEGER zero = {0};
-    KeDelayExecutionThread(UserMode, FALSE, &zero);
-    return STATUS_SUCCESS;
+    return KeDelayExecutionThread(UserMode, FALSE, &zero);
 }
 
 NTSTATUS NTAPI NtDelayExecution(BOOLEAN alertable, PLARGE_INTEGER interval)
@@ -475,7 +647,8 @@ NTSTATUS NTAPI NtDelayExecution(BOOLEAN alertable, PLARGE_INTEGER interval)
     LARGE_INTEGER t;
     if (!NT_SUCCESS(KiCopyFromUser(&t, interval, sizeof(t))))
         return STATUS_ACCESS_VIOLATION;
-    return KeDelayExecutionThread(UserMode, alertable, &t);
+    NTSTATUS status = KeDelayExecutionThread(UserMode, alertable, &t);
+    return status == STATUS_NO_YIELD_PERFORMED ? STATUS_SUCCESS : status;
 }
 
 NTSTATUS NTAPI NtAlertThread(HANDLE handle)
@@ -493,6 +666,35 @@ NTSTATUS NTAPI NtAlertThread(HANDLE handle)
     return STATUS_SUCCESS;
 }
 
+
+/*
+ * the thread parking of windows 8 and later, which ntdll builds address
+ * waits, srw locks and condition variables on. an alert sent before the
+ * wait is kept, so waking never races with going to sleep.
+ */
+NTSTATUS NTAPI NtAlertThreadByThreadId(HANDLE id)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsLookupThreadByThreadId(id, &thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (thread->Tcb.Process == KiCurrentThread()->Process)
+        KeSetEvent(&thread->Tcb.AlertByIdEvent, 0, FALSE);
+    else
+        status = STATUS_ACCESS_DENIED;
+    ObDereferenceObject(thread);
+    return status;
+}
+
+NTSTATUS NTAPI NtWaitForAlertByThreadId(PVOID hint, PLARGE_INTEGER timeout)
+{
+    LARGE_INTEGER t;
+    if (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t))))
+        return STATUS_ACCESS_VIOLATION;
+    NTSTATUS status =
+        KeWaitForSingleObject(&KiCurrentThread()->AlertByIdEvent, UserRequest, UserMode, FALSE, timeout ? &t : NULL);
+    return status == STATUS_WAIT_0 ? STATUS_ALERTED : status;
+}
 
 static void NTAPI user_apc_kernel_routine(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, PVOID *a1, PVOID *a2)
 {

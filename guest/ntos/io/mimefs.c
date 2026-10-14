@@ -793,17 +793,31 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         ULONG need = stack->Parameters.QueryVolume.FsInformationClass == FileFsSizeInformation ? 24 : 32;
         if (length < need)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+        MimeFsVolumeInfo *volume = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*volume), KI_TAG('F', 's', 'V', 'l'));
+        if (!volume)
+            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume,
+                                                   HalPhysicalOf(volume), 0, 0, 0, 0, NULL), FALSE);
+        if (NT_SUCCESS(status) && (!volume->bytes_per_unit || volume->bytes_per_unit % 512 ||
+            volume->total_units > INT64_MAX || volume->available_units > INT64_MAX || volume->free_units > INT64_MAX))
+            status = STATUS_UNSUCCESSFUL;
+        if (!NT_SUCCESS(status)) {
+            ExFreePool(volume);
+            return complete(irp, status, 0);
+        }
         PLARGE_INTEGER v = (PLARGE_INTEGER)out;
-        v[0].QuadPart = 64ll * 1024 * 1024 * 1024 / 4096; /* total units */
-        v[1].QuadPart = 32ll * 1024 * 1024 * 1024 / 4096; /* available units */
+        v[0].QuadPart = (LONGLONG)volume->total_units;
         if (need == 32) {
-            v[2].QuadPart = v[1].QuadPart;
-            ((PULONG)(out + 24))[0] = 8;
+            v[1].QuadPart = (LONGLONG)volume->available_units;
+            v[2].QuadPart = (LONGLONG)volume->free_units;
+            ((PULONG)(out + 24))[0] = volume->bytes_per_unit / 512;
             ((PULONG)(out + 24))[1] = 512;
         } else {
-            ((PULONG)(out + 16))[0] = 8;
+            v[1].QuadPart = (LONGLONG)volume->free_units;
+            ((PULONG)(out + 16))[0] = volume->bytes_per_unit / 512;
             ((PULONG)(out + 16))[1] = 512;
         }
+        ExFreePool(volume);
         return complete(irp, STATUS_SUCCESS, need);
     }
     default:

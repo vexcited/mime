@@ -431,6 +431,14 @@ NTSTATUS NTAPI IoDeleteSymbolicLink(PUNICODE_STRING link)
     return STATUS_SUCCESS;
 }
 
+void ObMakeTemporaryObject(PVOID object)
+{
+    /* drops the reference that kept a permanent object named, it leaves with its last reference. */
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    if (__atomic_fetch_and(&h->Flags, ~OB_FLAG_PERMANENT, __ATOMIC_ACQ_REL) & OB_FLAG_PERMANENT)
+        ObDereferenceObject(object);
+}
+
 NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars)
 {
     /* builds the full path by walking up the directories. */

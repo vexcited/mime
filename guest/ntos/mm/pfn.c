@@ -87,21 +87,31 @@ static void mark_allocated(ULONG64 index, ULONG64 count)
  * hands the free blocks of 64 KiB and more back to the host, which drops
  * their memory until the guest writes them again. called with interrupts
  * disabled, so no page changes hands meanwhile; blocks already handed back
- * are skipped.
+ * are skipped. a pass hands back a bounded amount, so the kernel lock is
+ * never held long; the rest waits for the next pass.
  */
+#define DISCARD_PASS_BYTES (64ull << 20)
+
 static void discard_free(void)
 {
-    g_freed_since_discard = 0;
+    ULONG64 budget = DISCARD_PASS_BYTES;
     for (ULONG order = DISCARD_MIN_ORDER; order <= MM_MAX_ORDER; order++) {
         for (PLIST_ENTRY e = g_free[order].Flink; e != &g_free[order]; e = e->Flink) {
             PMMPFN p = CONTAINING_RECORD(e, MMPFN, ListEntry);
             if (p->Flags & MM_PFN_DISCARDED)
                 continue;
+            ULONG64 bytes = (1ull << order) << PAGE_SHIFT;
+            if (bytes > budget) {
+                /* the rest goes on the next idle pass, not at every free until then. */
+                g_freed_since_discard = DISCARD_IDLE;
+                return;
+            }
+            budget -= bytes;
             p->Flags |= MM_PFN_DISCARDED;
-            HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa((ULONG64)(p - g_pfn)), (1ull << order) << PAGE_SHIFT, 0, 0, 0,
-                         0, NULL);
+            HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa((ULONG64)(p - g_pfn)), bytes, 0, 0, 0, 0, NULL);
         }
     }
+    g_freed_since_discard = 0;
 }
 
 static void note_freed(SIZE_T pages)

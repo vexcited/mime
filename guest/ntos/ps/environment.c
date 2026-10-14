@@ -180,6 +180,11 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     if (machine == IMAGE_FILE_MACHINE_AMD64)
         set_z(env, L"PROCESSOR_ARCHITECTURE", L"AMD64");
 
+    if (machine == IMAGE_FILE_MACHINE_I386) {
+        set_z(env, L"PROCESSOR_ARCHITECTURE", L"x86");
+        set_z(env, L"PROCESSOR_ARCHITEW6432", L"ARM64");
+    }
+
     /* sorted, case insensitive, like RtlSetEnvironmentVariable keeps it. */
     for (ULONG i = 1; i < env->Count; i++)
         for (ULONG j = i; j > 0 && compare(&env->Vars[j - 1], &env->Vars[j]) > 0; j--) {

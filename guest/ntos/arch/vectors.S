@@ -26,6 +26,100 @@ KiSystemStartup:
 1:  wfi
     b       1b
 
+/* KiSecondaryStartup(PKPCR pcr), started by the host with the stack set and interrupts masked. */
+    .globl  KiSecondaryStartup
+    .p2align 2
+KiSecondaryStartup:
+    adrp    x9, KiVectorTable
+    add     x9, x9, :lo12:KiVectorTable
+    msr     vbar_el1, x9
+    mov     x18, x0
+    msr     tpidr_el1, x18
+    isb
+    mov     x29, xzr
+    mov     x30, xzr
+    bl      KiInitializeProcessor
+1:  wfi
+    b       1b
+
+/*
+ * the kernel lock, a ticket lock: the low half serves, the high half hands
+ * out tickets. a waiter spins on loads for a few microseconds, then sleeps
+ * in the host on the lock word: a spinning vcpu would otherwise take the
+ * host core the owner's vcpu needs. a releaser that sees sleepers wakes
+ * them. x0 to x2 and x9 to x12 change.
+ */
+#define LOCK_OWNER 4
+#define LOCK_SLEEPERS 8
+#define LOCK_SPINS 2048
+#define HC_LOCK_WAIT 0x0A
+#define HC_LOCK_WAKE 0x0B
+
+    .globl  KiAcquireKernelLock
+    .p2align 2
+KiAcquireKernelLock:
+    adrp    x9, KiKernelLock
+    add     x9, x9, :lo12:KiKernelLock
+    mov     w10, #0x10000
+    ldadda  w10, w11, [x9]
+    lsr     w12, w11, #16
+    and     w11, w11, #0xFFFF
+    cmp     w11, w12
+    b.eq    4f
+1:  mov     w10, #LOCK_SPINS
+2:  yield
+    ldarh   w11, [x9]
+    cmp     w11, w12
+    b.eq    4f
+    subs    w10, w10, #1
+    b.ne    2b
+    adrp    x1, KiKernelLockPhys
+    ldr     x1, [x1, :lo12:KiKernelLockPhys]
+    cbz     x1, 1b
+    mov     w10, #1
+    add     x11, x9, #LOCK_SLEEPERS
+    stadd   w10, [x11]
+    dmb     ish
+    ldarh   w11, [x9]
+    cmp     w11, w12
+    b.eq    5f
+    mov     x0, #HC_LOCK_WAIT
+    mov     w2, w12
+    hvc     #0
+5:  mov     w10, #-1
+    add     x11, x9, #LOCK_SLEEPERS
+    stadd   w10, [x11]
+    ldarh   w11, [x9]
+    cmp     w11, w12
+    b.ne    1b
+4:  ldr     w10, [x18, #KPCR_NUMBER]
+    str     w10, [x9, #LOCK_OWNER]
+    ret
+
+    .globl  KiReleaseKernelLock
+    .p2align 2
+KiReleaseKernelLock:
+    adrp    x9, KiKernelLock
+    add     x9, x9, :lo12:KiKernelLock
+    ldr     w10, [x9, #LOCK_OWNER]
+    ldr     w11, [x18, #KPCR_NUMBER]
+    cmp     w10, w11
+    b.eq    1f
+    brk     #0x10c
+1:  mov     w10, #-1
+    str     w10, [x9, #LOCK_OWNER]
+    ldrh    w10, [x9]
+    add     w10, w10, #1
+    stlrh   w10, [x9]
+    dmb     ish
+    ldr     w10, [x9, #LOCK_SLEEPERS]
+    cbz     w10, 2f
+    mov     x0, #HC_LOCK_WAKE
+    adrp    x1, KiKernelLockPhys
+    ldr     x1, [x1, :lo12:KiKernelLockPhys]
+    hvc     #0
+2:  ret
+
 .macro VENTRY target
     .p2align 7
     b       \target
@@ -83,6 +177,10 @@ KiVectorTable:
     str     xzr, [sp, #KTRAP_FLAGS]
 .if \from_user
     mrs     x18, tpidr_el1
+    /* the stores of user mode are visible before the kernel sees the processor leave it. */
+    dmb     ish
+    strb    wzr, [x18, #KPCR_USER_MODE]
+    bl      KiAcquireKernelLock
 .endif
     mov     x29, xzr
 .endm
@@ -213,7 +311,15 @@ KiExceptionExit:
     cbnz    x12, 2f
     ldr     x13, [sp, #KTRAP_SP]
     msr     sp_el0, x13
-2:  ldp     x0, x1, [sp, #0x00]
+    /* back to user mode: the next processor waiting may enter the kernel. */
+    bl      KiReleaseKernelLock
+    mov     w9, #1
+    strb    w9, [x18, #KPCR_USER_MODE]
+    ldr     x18, [sp, #0x90]
+    b       3f
+    /* a thread preempted here may resume on another processor: keep the running one's pcr. */
+2:  mrs     x18, tpidr_el1
+3:  ldp     x0, x1, [sp, #0x00]
     ldp     x2, x3, [sp, #0x10]
     ldp     x4, x5, [sp, #0x20]
     ldp     x6, x7, [sp, #0x30]
@@ -222,7 +328,7 @@ KiExceptionExit:
     ldp     x12, x13, [sp, #0x60]
     ldp     x14, x15, [sp, #0x70]
     ldp     x16, x17, [sp, #0x80]
-    ldp     x18, x19, [sp, #0x90]
+    ldr     x19, [sp, #0x98]
     ldp     x20, x21, [sp, #0xA0]
     ldp     x22, x23, [sp, #0xB0]
     ldp     x24, x25, [sp, #0xC0]

@@ -145,8 +145,8 @@ static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
     return STATUS_SUCCESS;
 }
 
-NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
-                             MIME_CONSOLE *console, PEPROCESS *out)
+static NTSTATUS create_process(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
+                               MIME_CONSOLE *console, BOOLEAN suspended, PEPROCESS *out, PETHREAD *initial_thread)
 {
     UNICODE_STRING nt_path;
     NTSTATUS status = dos_to_nt(image, &nt_path);
@@ -181,6 +181,8 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     process->ImageSection = section;
     process->SystemDll = system_dll;
     process->Machine = section->Image.Machine;
+    if (process->Machine == IMAGE_FILE_MACHINE_I386)
+        process->AddressSpace.AllocationLimit = 0x7FFF0000;
     process->MimeRequestId = request_id;
     /* a gui program has no console, a console program shares the one it is given. */
     if (console && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
@@ -220,7 +222,7 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     PETHREAD thread = NULL;
     if (NT_SUCCESS(status)) {
         PVOID entry = (PUCHAR)process->SectionBaseAddress + section->Image.EntryPoint;
-        status = PspCreateUserThread(process, entry, process->Peb, FALSE, section->Image.StackReserve,
+        status = PspCreateUserThread(process, entry, process->Peb, suspended, section->Image.StackReserve,
                                      section->Image.StackCommit, &thread);
     }
     if (!NT_SUCCESS(status)) {
@@ -230,7 +232,73 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     }
     PspNotifyProcess(process, TRUE);
     KiLogPrintf("created process %u (%wZ)", (ULONG)(ULONG_PTR)process->UniqueProcessId, image);
-    ObDereferenceObject(thread);
+    if (initial_thread)
+        *initial_thread = thread;
+    else
+        ObDereferenceObject(thread);
     *out = process;
     return STATUS_SUCCESS;
+}
+
+NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
+                             MIME_CONSOLE *console, PEPROCESS *out)
+{
+    UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
+    return create_process(image, cmdline, cwd ? cwd : &default_cwd, request_id, console, FALSE, out, NULL);
+}
+
+NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle, ACCESS_MASK process_access,
+    ACCESS_MASK thread_access, POBJECT_ATTRIBUTES process_attributes, POBJECT_ATTRIBUTES thread_attributes,
+    ULONG process_flags, ULONG thread_flags, PRTL_USER_PROCESS_PARAMETERS parameters, PVOID create_info,
+    PVOID attributes)
+{
+    if (!process_handle || !thread_handle || !parameters)
+        return STATUS_INVALID_PARAMETER;
+    if (process_attributes || thread_attributes || process_flags || (thread_flags & ~1u) || create_info || attributes)
+        return STATUS_NOT_SUPPORTED;
+    UNICODE_STRING image = {0}, command = {0}, cwd = {0};
+    NTSTATUS status = KiCaptureUnicodeString(&image, &parameters->ImagePathName);
+    if (NT_SUCCESS(status))
+        status = KiCaptureUnicodeString(&command, &parameters->CommandLine);
+    if (NT_SUCCESS(status))
+        status = KiCaptureUnicodeString(&cwd, &parameters->CurrentDirectory.DosPath);
+    PEPROCESS process = NULL;
+    PETHREAD thread = NULL;
+    if (NT_SUCCESS(status))
+        status = create_process(&image, &command, &cwd, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
+    KiFreeCapturedString(&image);
+    KiFreeCapturedString(&command);
+    KiFreeCapturedString(&cwd);
+    if (!NT_SUCCESS(status))
+        return status;
+    HANDLE ph = NULL, th = NULL;
+    ObReferenceObject(process);
+    status = ObCreateHandle(PsCurrentProcess(), process, process_access, 0, &ph);
+    if (!NT_SUCCESS(status))
+        ObDereferenceObject(process);
+    if (NT_SUCCESS(status)) {
+        ObReferenceObject(thread);
+        status = ObCreateHandle(PsCurrentProcess(), thread, thread_access, 0, &th);
+        if (!NT_SUCCESS(status))
+            ObDereferenceObject(thread);
+    }
+    if (NT_SUCCESS(status))
+        status = KiCopyToUser(process_handle, &ph, sizeof(ph));
+    if (NT_SUCCESS(status))
+        status = KiCopyToUser(thread_handle, &th, sizeof(th));
+    if (NT_SUCCESS(status)) {
+        if (!(thread_flags & 1)) {
+            thread->Tcb.SuspendCount = 0;
+            KiStartThread(&thread->Tcb);
+        }
+    } else {
+        if (th)
+            ObCloseHandle(th, KernelMode);
+        if (ph)
+            ObCloseHandle(ph, KernelMode);
+        PspTerminateProcess(process, status);
+    }
+    ObDereferenceObject(thread);
+    ObDereferenceObject(process);
+    return status;
 }

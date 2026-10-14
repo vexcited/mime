@@ -460,6 +460,61 @@ NTSTATUS NTAPI NtOpenSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJ
     return status;
 }
 
+NTSTATUS NTAPI NtCreateSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                          PUNICODE_STRING target)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name, captured;
+    NTSTATUS status = capture_attributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = KiCaptureUnicodeString(&captured, target);
+    if (!NT_SUCCESS(status)) {
+        KiFreeCapturedString(&name);
+        return status;
+    }
+    POBJECT_SYMBOLIC_LINK link;
+    status = ObCreateObject(ObSymbolicLinkType, &oa, KeGetPreviousMode(), sizeof(OBJECT_SYMBOLIC_LINK), (PVOID *)&link);
+    if (NT_SUCCESS(status)) {
+        /* the link owns its target, ObCreateObject left the body uninitialized. */
+        link->Target.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, captured.Length + sizeof(WCHAR), KI_TAG('O', 'b', 'S', 'l'));
+        if (!link->Target.Buffer) {
+            link->Target.Length = link->Target.MaximumLength = 0;
+            ObDereferenceObject(link);
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        } else {
+            if (captured.Length)
+                memcpy(link->Target.Buffer, captured.Buffer, captured.Length);
+            link->Target.Buffer[captured.Length / sizeof(WCHAR)] = 0;
+            link->Target.Length = captured.Length;
+            link->Target.MaximumLength = (USHORT)(captured.Length + sizeof(WCHAR));
+            HANDLE h;
+            status = ObInsertObjectNamed(link, &oa, access, KeGetPreviousMode(), &h);
+            if (NT_SUCCESS(status))
+                status = ObStoreHandle(handle, h);
+        }
+    }
+    KiFreeCapturedString(&captured);
+    KiFreeCapturedString(&name);
+    return status;
+}
+
+NTSTATUS NTAPI NtMakeTemporaryObject(HANDLE handle)
+{
+    PVOID object;
+    ACCESS_MASK granted;
+    NTSTATUS status = ObReferenceHandle(handle, NULL, KeGetPreviousMode(), &object, &granted);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (KeGetPreviousMode() == UserMode && !(granted & DELETE)) {
+        ObDereferenceObject(object);
+        return STATUS_ACCESS_DENIED;
+    }
+    ObMakeTemporaryObject(object);
+    ObDereferenceObject(object);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, PULONG returned)
 {
     POBJECT_SYMBOLIC_LINK link;

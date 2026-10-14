@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <time.h>
 
 /* physical layout used by the loader at the start of guest ram. */
@@ -145,13 +146,31 @@ static bool create_gic(MimeVm *vm)
     return true;
 }
 
+/* one vcpu per host processor; the framework and the gic may allow fewer. */
+static uint32_t host_cpu_count(void)
+{
+    int n = 1;
+    size_t len = sizeof(n);
+    if (sysctlbyname("hw.logicalcpu", &n, &len, NULL, 0) != 0 || n < 1)
+        n = 1;
+    uint32_t max = MIME_VMM_MAX_VCPUS;
+    if (hv_vm_get_max_vcpu_count(&max) == HV_SUCCESS && (uint32_t)n > max)
+        n = (int)max;
+    size_t region, frame;
+    if (hv_gic_get_redistributor_region_size(&region) == HV_SUCCESS &&
+        hv_gic_get_redistributor_size(&frame) == HV_SUCCESS && frame && (size_t)n > region / frame)
+        n = (int)(region / frame);
+    return (uint32_t)MIME_MIN(n, MIME_VMM_MAX_VCPUS);
+}
+
 bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
 {
     memset(vm, 0, sizeof(*vm));
     vm->paths = paths;
     vm->ram_size = ram_size;
-    vm->vcpu_count = 1;
+    vm->vcpu_count = host_cpu_count();
     pthread_mutex_init(&vm->lock, NULL);
+    pthread_cond_init(&vm->vcpu_cond, NULL);
     pthread_mutex_init(&vm->fs_lock, NULL);
 
     hv_vm_config_t config = hv_vm_config_create();
@@ -237,6 +256,7 @@ void mime_vm_request_stop(MimeVm *vm, int exit_code)
     pthread_mutex_lock(&vm->lock);
     vm->stopping = true;
     vm->exit_code = exit_code;
+    pthread_cond_broadcast(&vm->vcpu_cond);
     pthread_mutex_unlock(&vm->lock);
     for (uint32_t i = 0; i < vm->vcpu_count; i++)
         mime_vcpu_kick(&vm->vcpus[i]);

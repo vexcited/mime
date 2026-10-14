@@ -111,6 +111,7 @@ void NTAPI KeInitializeMutex(PRKMUTEX mutex, ULONG level)
 LONG NTAPI KeReleaseMutant(PRKMUTANT mutant, KPRIORITY increment, BOOLEAN abandoned, BOOLEAN wait)
 {
     ULONG64 s = KiAcquireDispatcherLock();
+    PKTHREAD owner = mutant->OwnerThread;
     LONG old = mutant->Header.SignalState;
     if (!abandoned && mutant->OwnerThread != KiCurrentThread()) {
         KiReleaseDispatcherLock(s);
@@ -123,12 +124,17 @@ LONG NTAPI KeReleaseMutant(PRKMUTANT mutant, KPRIORITY increment, BOOLEAN abando
         mutant->Header.SignalState++;
     }
     if (mutant->Header.SignalState == 1) {
-        if (mutant->OwnerThread)
+        if (owner) {
             RemoveEntryList(&mutant->MutantListEntry);
+            owner->KernelApcDisable += mutant->ApcDisable;
+        }
         mutant->OwnerThread = NULL;
         KiSignalWaiters(&mutant->Header, increment);
     }
     KiReleaseDispatcherLock(s);
+    if (owner == KiCurrentThread() && !owner->KernelApcDisable && !owner->SpecialApcDisable &&
+        owner->KernelApcPending && KeGetPcr()->Irql == PASSIVE_LEVEL)
+        KiDeliverApcs(KernelMode, NULL);
     return old;
 }
 
@@ -162,6 +168,7 @@ static void acquire_object(PDISPATCHER_HEADER h, PKTHREAD thread)
         h->SignalState--;
         if (h->SignalState == 0) {
             m->OwnerThread = thread;
+            thread->KernelApcDisable -= m->ApcDisable;
             InsertHeadList(&thread->MutantListHead, &m->MutantListEntry);
         }
         break;
@@ -255,7 +262,8 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
     for (;;) {
         ULONG64 s = KiAcquireDispatcherLock();
 
-        if (thread->KernelApcPending && !thread->KernelApcDisable && KeGetPcr()->Irql == PASSIVE_LEVEL) {
+        if (thread->KernelApcPending && !thread->KernelApcDisable && !thread->SpecialApcDisable &&
+            KeGetPcr()->Irql == PASSIVE_LEVEL) {
             KiReleaseDispatcherLock(s);
             KiDeliverApcs(KernelMode, NULL);
             continue;
@@ -384,15 +392,13 @@ NTSTATUS NTAPI KeDelayExecutionThread(KPROCESSOR_MODE mode, BOOLEAN alertable, P
             KiReleaseDispatcherLock(s);
             return apc ? STATUS_USER_APC : STATUS_ALERTED;
         }
-        PKPRCB prcb = KeGetCurrentPrcb();
-        if (prcb->ReadySummary) {
-            thread->State = Ready;
-            InsertTailList(&prcb->ReadyListHead[thread->Priority], &thread->ReadyListEntry);
-            prcb->ReadySummary |= 1u << thread->Priority;
+        BOOLEAN yielded = KiReadySummary != 0;
+        if (yielded) {
+            KiInsertReadyThread(thread);
             KiSwapThread();
         }
         KiReleaseDispatcherLock(s);
-        return STATUS_SUCCESS;
+        return yielded ? STATUS_SUCCESS : STATUS_NO_YIELD_PERFORMED;
     }
     NTSTATUS status = KiWaitObjects(0, NULL, WaitAny, DelayExecution, mode, alertable, interval, NULL);
     return status == STATUS_TIMEOUT ? STATUS_SUCCESS : status;

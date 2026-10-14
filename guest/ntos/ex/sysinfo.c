@@ -297,9 +297,125 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
     return status;
 }
 
+/* ------------------------------------------------------------------ processes */
+
+static PCWSTR process_leaf(PEPROCESS p, ULONG *chars)
+{
+    if (!p->ImagePath.Length) {
+        *chars = 0;
+        return NULL;
+    }
+    PCWSTR path = p->ImagePath.Buffer;
+    ULONG n = p->ImagePath.Length / sizeof(WCHAR), start = n;
+    while (start && path[start - 1] != '\\')
+        start--;
+    *chars = n - start;
+    return path + start;
+}
+
+static ULONG process_record_size(PEPROCESS p, ULONG threads)
+{
+    ULONG chars;
+    process_leaf(p, &chars);
+    ULONG size = sizeof(SYSTEM_PROCESS_INFORMATION) + threads * sizeof(SYSTEM_THREAD_INFORMATION) +
+                 (chars ? (chars + 1) * sizeof(WCHAR) : 0);
+    return (size + 7) & ~7u;
+}
+
+static ULONG process_thread_count(PEPROCESS p)
+{
+    ULONG n = 0;
+    for (PLIST_ENTRY e = p->ThreadListHead.Flink; e != &p->ThreadListHead; e = e->Flink)
+        if (!CONTAINING_RECORD(e, ETHREAD, ThreadListEntry)->HasTerminated)
+            n++;
+    return n;
+}
+
+/*
+ * fills the records into a kernel buffer under the dispatcher lock, which
+ * guards the process and thread lists. returns the size needed, which may
+ * exceed capacity, in which case nothing past capacity is written.
+ */
+static ULONG fill_processes(PUCHAR buffer, ULONG capacity, PUCHAR user_base)
+{
+    ULONG used = 0;
+    SYSTEM_PROCESS_INFORMATION *last = NULL;
+    ULONG64 lock = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (p->Exited)
+            continue;
+        ULONG threads = process_thread_count(p);
+        ULONG size = process_record_size(p, threads);
+        if (used + size <= capacity) {
+            SYSTEM_PROCESS_INFORMATION *info = (SYSTEM_PROCESS_INFORMATION *)(buffer + used);
+            memset(info, 0, size);
+            info->NumberOfThreads = threads;
+            info->NumberOfThreadsHighWatermark = threads;
+            info->CreateTime.QuadPart = (LONGLONG)p->CreateTime;
+            info->BasePriority = 8;
+            info->UniqueProcessId = p->UniqueProcessId;
+            info->InheritedFromUniqueProcessId = p->InheritedFromUniqueProcessId;
+            info->HandleCount = p->HandleTable.Count;
+            info->SessionId = p->SystemProcess ? 0 : 1;
+            info->UniqueProcessKey = (ULONG_PTR)p->UniqueProcessId;
+            SYSTEM_THREAD_INFORMATION *t = (SYSTEM_THREAD_INFORMATION *)(info + 1);
+            for (PLIST_ENTRY te = p->ThreadListHead.Flink; te != &p->ThreadListHead; te = te->Flink) {
+                ETHREAD *thread = CONTAINING_RECORD(te, ETHREAD, ThreadListEntry);
+                if (thread->HasTerminated)
+                    continue;
+                t->CreateTime.QuadPart = (LONGLONG)thread->CreateTime;
+                t->StartAddress = thread->Win32StartAddress ? thread->Win32StartAddress : thread->StartAddress;
+                t->ClientId = thread->Cid;
+                t->Priority = 8;
+                t->BasePriority = 8;
+                t->ThreadState = 5; /* waiting, as most threads are. */
+                t++;
+            }
+            ULONG chars;
+            PCWSTR leaf = process_leaf(p, &chars);
+            if (chars) {
+                memcpy(t, leaf, chars * sizeof(WCHAR));
+                info->ImageName.Length = (USHORT)(chars * sizeof(WCHAR));
+                info->ImageName.MaximumLength = (USHORT)((chars + 1) * sizeof(WCHAR));
+                info->ImageName.Buffer = (PWSTR)(user_base + ((PUCHAR)t - buffer));
+            }
+            if (last)
+                last->NextEntryOffset = (ULONG)((PUCHAR)info - (PUCHAR)last);
+            last = info;
+        }
+        used += size;
+    }
+    KiReleaseDispatcherLock(lock);
+    return used;
+}
+
+static NTSTATUS query_processes(PVOID info, ULONG length, PULONG returned)
+{
+    /* larger buffers than any process list needs are only filled up to this bound. */
+    ULONG capacity = length < 0x100000 ? length : 0x100000;
+    PUCHAR buffer = capacity ? ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity, KI_TAG('P', 's', 'I', 'n')) : NULL;
+    if (capacity && !buffer)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG need = fill_processes(buffer, capacity, info);
+    NTSTATUS status;
+    if (need <= capacity) {
+        status = copy_info(info, buffer, need, length, returned);
+    } else {
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
+        status = STATUS_INFO_LENGTH_MISMATCH;
+    }
+    if (buffer)
+        ExFreePool(buffer);
+    return status;
+}
+
 NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
     switch (klass) {
+    case SystemProcessInformation:
+        return query_processes(info, length, returned);
     case SystemBasicInformation:
     case SystemEmulationBasicInformation: {
         SYSTEM_BASIC_INFORMATION b = {0};
@@ -415,7 +531,7 @@ NTSTATUS NTAPI NtQueryInstallUILanguage(LANGID *lang)
 
 ULONG NTAPI NtGetCurrentProcessorNumber(void)
 {
-    return 0;
+    return KeGetCurrentPrcb()->Number;
 }
 
 NTSTATUS NTAPI NtDisplayString(PUNICODE_STRING s)

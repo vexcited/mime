@@ -180,6 +180,9 @@ enum {
     MIME_HC_CTRL_SEND = 0x06,   /* (pa, len) */
     MIME_HC_INPUT_RECV = 0x07,  /* (pa, max_events) -> count */
     MIME_HC_TIME = 0x08,        /* () -> filetime */
+    MIME_HC_CPU_START = 0x09,   /* (cpu, pc, x0, sp) starts a secondary processor at el1 with interrupts masked */
+    MIME_HC_LOCK_WAIT = 0x0A,   /* (pa, ticket) sleeps while the ticket lock word at pa does not serve ticket */
+    MIME_HC_LOCK_WAKE = 0x0B,   /* (pa) wakes the processors sleeping on the lock word at pa */
 
     MIME_HC_FS_OPEN = 0x10,     /* (MimeFsOpen pa) -> handle */
     MIME_HC_FS_CLOSE = 0x11,    /* (handle) */
@@ -192,6 +195,7 @@ enum {
     MIME_HC_FS_MAP = 0x18,      /* (handle) -> guest physical address of the whole file, read only, filled on touch */
     MIME_HC_FS_UNMAP = 0x19,    /* (pa) */
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
+    MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
@@ -225,6 +229,11 @@ enum {
     MIME_HC_NET_RESOLVE = 0x3D,    /* (pa, len, family) utf-8 host name -> id, MIME_NET_RESOLVED | id fires */
     MIME_HC_NET_ANSWER = 0x3E,     /* (id, MimeNetAddr pa, max) -> count, frees the answer */
     MIME_HC_NET_INTERFACES = 0x3F, /* (MimeNetInterface pa, max) -> count, one per address */
+
+    /* audio output streams, see mime/audio.h. */
+    MIME_HC_AUDIO_OPEN = 0x40,  /* (pa, size) -> stream, plays the format of the header at pa */
+    MIME_HC_AUDIO_START = 0x41, /* (stream, running) */
+    MIME_HC_AUDIO_CLOSE = 0x42, /* (stream) returns once the host no longer reads its memory */
 };
 
 enum {
@@ -431,6 +440,14 @@ typedef struct MimeFsInfo {
     uint32_t links;
 } MimeFsInfo;
 
+typedef struct MimeFsVolumeInfo {
+    uint64_t total_units;
+    uint64_t available_units;
+    uint64_t free_units;
+    uint32_t bytes_per_unit;
+    uint32_t reserved;
+} MimeFsVolumeInfo;
+
 typedef struct MimeFsDirEntry {
     MimeFsInfo info;
     uint32_t name_chars;
@@ -462,6 +479,7 @@ enum {
     MIME_WIN_FULLSCREEN = 1u << 9,
     MIME_WIN_MINIMIZABLE = 1u << 10,
     MIME_WIN_MAXIMIZABLE = 1u << 11,
+    MIME_WIN_ACTIVE = 1u << 12, /* the frame is drawn active */
 };
 
 typedef struct MimeWinConfig {
@@ -529,6 +547,7 @@ enum {
     MIME_INPUT_CLIPBOARD = 12,     /* another host application changed the clipboard */
     MIME_INPUT_WINDOW_STATE = 13,  /* x is a windows show command. */
     MIME_INPUT_WINDOW_FULLSCREEN = 14, /* flags is 1 on entry, 0 on exit. */
+    MIME_INPUT_DISPLAY = 15,       /* the boot information display changed: width and height. */
 };
 
 enum {

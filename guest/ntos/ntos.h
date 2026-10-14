@@ -81,6 +81,11 @@ MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Flags) == KTRAP_FLAGS, "trap flags");
 MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, V) == KTRAP_V, "trap v");
 MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Fpcr) == KTRAP_FPCR, "trap fpcr");
 MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
+#define KI_ASSERT_KERNEL_LOCK()                                                                                   \
+    do {                                                                                                          \
+        if (KiKernelLock[1] != KeGetCurrentPrcb()->Number)                                                        \
+            KeBugCheckEx(0xDEAD10C, KiKernelLock[1], KeGetCurrentPrcb()->Number, __LINE__, 0);                    \
+    } while (0)
 
 #define PSR_MODE_EL0 0x0
 #define PSR_MODE_EL1H 0x5
@@ -122,6 +127,9 @@ ULONG64 HalRomPhysical(const MimeRomEntry *entry);
 BOOLEAN HalIsRomPhysical(ULONG64 pa);
 ULONG HalAcknowledgeInterrupt(void); /* interrupt id, 1020 and above when none is pending */
 void HalEndOfInterrupt(ULONG intid);
+void HalInitializeProcessor(void);
+void HalSendIpi(ULONG processor);
+#define HAL_IPI_INTID 1 /* the sgi asking a processor to reschedule */
 ULONG64 HalCounterToHns(ULONG64 counter_delta);
 ULONG64 HalHnsToCounter(ULONG64 hns);
 
@@ -192,6 +200,8 @@ typedef struct _KTHREAD {
     SCHAR BasePriority;
     UCHAR WaitReason;
     BOOLEAN WaitIrqlRaised;
+    UCHAR Processor; /* the processor it runs or last ran on */
+    BOOLEAN IdleThread;
     LONG Quantum;
     LONG_PTR WaitStatus;
     PKWAIT_BLOCK WaitBlockList;
@@ -212,8 +222,13 @@ typedef struct _KTHREAD {
     ULONG64 KernelTime;
     ULONG64 UserTime;
     ULONG SuspendCount;
+    BOOLEAN SuspendApcActive;
+    BOOLEAN Suspended;
+    PVOID UserSuspendGate;
+    KEVENT SuspendEvent;
     KSEMAPHORE SuspendSemaphore;
     KAPC SuspendApc;
+    KEVENT AlertByIdEvent; /* NtAlertThreadByThreadId, sticky until the next NtWaitForAlertByThreadId */
 } KTHREAD;
 
 typedef struct _KPROCESS {
@@ -227,14 +242,15 @@ typedef struct _KPROCESS {
     volatile LONG ActiveThreads;
 } KPROCESS;
 
+#define MAXIMUM_PROCESSORS 64
+
 typedef struct _KPRCB {
     ULONG Number;
     ULONG Pad;
     struct _KTHREAD *CurrentThread;
     struct _KTHREAD *NextThread;
     struct _KTHREAD *IdleThread;
-    LIST_ENTRY ReadyListHead[MAXIMUM_PRIORITY];
-    ULONG ReadySummary;
+    ULONG64 TickTime; /* interrupt time of the last clock tick charged on this processor */
     volatile BOOLEAN DispatchPending;
     volatile BOOLEAN DpcPending;
     BOOLEAN InDpc;
@@ -245,18 +261,34 @@ typedef struct _KPRCB {
     ULONG64 ContextSwitches;
     ULONG64 DpcCount;
     ULONG64 IdleTicks;
+    ULONG64 IpiSent, IpiReceived;
+    ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not */
 } KPRCB, *PKPRCB;
 
 typedef struct _KPCR {
     struct _KPCR *Self;
     PKPRCB CurrentPrcb;
     volatile KIRQL Irql;
-    UCHAR Pad[7];
-    ULONG64 Reserved[5];
+    volatile UCHAR UserMode; /* set while the processor runs user mode, see vectors.S */
+    UCHAR Pad[6];
+    ULONG64 SavedDaif; /* interrupt mask before irql rose above DISPATCH_LEVEL */
+    volatile UCHAR *Redistributor;
     KPRCB Prcb;
 } KPCR, *PKPCR;
 
+MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.Number) == KPCR_NUMBER, "pcr number");
+MIME_STATIC_ASSERT(offsetof(KPCR, UserMode) == KPCR_USER_MODE, "pcr user mode");
+
 extern KPCR KiBootPcr;
+extern PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
+extern ULONG KeNumberProcessors;
+
+/*
+ * the ready threads of every processor. a thread runs on any processor;
+ * the kernel lock makes the queues and every other kernel structure safe.
+ */
+extern LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
+extern ULONG KiReadySummary;
 
 FORCEINLINE PKPCR KeGetPcr(void)
 {
@@ -275,7 +307,19 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
     return KeGetPcr()->CurrentPrcb->CurrentThread;
 }
 
-/* the dispatcher database is protected by disabling interrupts (one cpu for now). */
+/*
+ * the kernel lock: a processor holds it whenever it runs kernel code with
+ * interrupts enabled. entering the kernel from user mode takes it and
+ * returning to user mode releases it (vectors.S); the idle loop drops it
+ * only around wfi. user mode runs on every processor at once, while kernel
+ * code keeps the single processor rules: masking interrupts excludes every
+ * other kernel path.
+ */
+extern volatile ULONG KiKernelLock[4]; /* ticket lock, owning processor, sleepers in the host */
+extern ULONG64 KiKernelLockPhys;
+void KiAcquireKernelLock(void);
+void KiReleaseKernelLock(void);
+
 FORCEINLINE ULONG64 KiAcquireDispatcherLock(void)
 {
     return KiDisableInterrupts();
@@ -287,10 +331,16 @@ FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
 }
 
 void KiInitializeKernel(MimeBootInfo *boot);
+void KiInitializeProcessor(PKPCR pcr);
+void KiStartProcessors(void);
+void KiSecondaryStartup(void);
+void KiRequestDispatch(ULONG processor);
 void KiInitializeScheduler(void);
 void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVOID stack_limit,
                         PKSTART_ROUTINE routine, PVOID context);
 void KiReadyThread(PKTHREAD thread);
+void KiInsertReadyThread(PKTHREAD thread);
+void KiInterruptThread(PKTHREAD thread);
 void KiStartThread(PKTHREAD thread);
 void KiSwapThread(void);
 void KiDispatchPendingWork(void);
@@ -309,6 +359,8 @@ void KiInitializeProcess(PKPROCESS process, ULONG64 ttbr0, ULONG64 *pgd, USHORT 
 void KiAttachProcess(PKPROCESS process);
 void KiSwitchAddressSpace(PKPROCESS process);
 void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame);
+void PspCheckForSuspendApc(PKTHREAD thread);
+NTSTATUS PspWaitForSuspension(PETHREAD thread);
 BOOLEAN KiInsertQueueApc(PKAPC apc, KPRIORITY increment);
 void KeInitializeApc(PKAPC apc, PKTHREAD thread, KAPC_ENVIRONMENT env, PKKERNEL_ROUTINE kernel_routine,
                      PKRUNDOWN_ROUTINE rundown, PKNORMAL_ROUTINE normal, KPROCESSOR_MODE mode, PVOID context);
@@ -420,6 +472,8 @@ typedef struct _MMADDRESS_SPACE {
     ULONG64 RootPhys;
     USHORT Asid;
     SIZE_T CommittedPages;
+    ULONG_PTR AllocationLimit;
+    ULONG_PTR LastFaultEnd; /* end of the last demand zero window, to spot sequential touching */
 } MMADDRESS_SPACE, *PMMADDRESS_SPACE;
 
 typedef struct _MI_IMAGE_INFO {
@@ -622,6 +676,7 @@ PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
 NTSTATUS ObCaptureObjectAttributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name);
 NTSTATUS ObStoreHandle(PHANDLE user_handle, HANDLE handle);
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
+void ObMakeTemporaryObject(PVOID object);
 POBJECT_TYPE ObGetObjectType(PVOID object);
 NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars);
 
@@ -716,6 +771,7 @@ FORCEINLINE PETHREAD PsCurrentThread(void)
 
 void PsInitialize(void);
 void PsInitializeIdleThread(void);
+PVOID PsCreateIdleThread(PKPRCB prcb);
 NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE routine, PVOID context,
                          PETHREAD *out);
 NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,

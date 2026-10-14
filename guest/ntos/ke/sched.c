@@ -5,14 +5,22 @@
 
 #define KI_DEFAULT_QUANTUM_HNS 300000 /* 30 ms, desktop style quanta */
 
+LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
+ULONG KiReadySummary;
+PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
+ULONG KeNumberProcessors = 1;
+volatile ULONG KiKernelLock[4] = {0, ~0u, 0, 0};
+ULONG64 KiKernelLockPhys;
+
 void KiInitializeScheduler(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();
     for (int i = 0; i < MAXIMUM_PRIORITY; i++)
-        InitializeListHead(&prcb->ReadyListHead[i]);
-    prcb->ReadySummary = 0;
+        InitializeListHead(&KiReadyListHead[i]);
+    KiReadySummary = 0;
     prcb->DpcHead.Next = NULL;
     prcb->DpcTail = NULL;
+    KiProcessorBlock[0] = prcb;
 }
 
 void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVOID stack_limit,
@@ -31,6 +39,8 @@ void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVO
     InitializeListHead(&thread->ApcListHead[UserMode]);
     KeInitializeTimer(&thread->Timer);
     KeInitializeSemaphore(&thread->SuspendSemaphore, 0, 2);
+    KeInitializeEvent(&thread->SuspendEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&thread->AlertByIdEvent, SynchronizationEvent, FALSE);
     thread->Priority = 8;
     thread->BasePriority = 8;
     thread->Quantum = KI_DEFAULT_QUANTUM_HNS;
@@ -62,20 +72,71 @@ void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
 }
 
 /* dispatcher lock held. */
+void KiInsertReadyThread(PKTHREAD thread)
+{
+    int prio = thread->Priority;
+    thread->State = Ready;
+    InsertTailList(&KiReadyListHead[prio], &thread->ReadyListEntry);
+    KiReadySummary |= 1u << prio;
+    if (SharedUserData)
+        SharedUserData->MimeReadyThreads = KiReadySummary;
+}
+
+/* asks a processor to pick its next thread, waking or interrupting it when it is another one. */
+void KiRequestDispatch(ULONG number)
+{
+    PKPRCB prcb = KiProcessorBlock[number];
+    prcb->DispatchPending = TRUE;
+    if (prcb != KeGetCurrentPrcb()) {
+        prcb->IpiSent++;
+        HalSendIpi(number);
+    }
+}
+
+/* makes a thread running on another processor enter the kernel, where it sees new apcs or termination. */
+void KiInterruptThread(PKTHREAD thread)
+{
+    if (thread->State == Running && thread->Processor != KeGetCurrentPrcb()->Number)
+        HalSendIpi(thread->Processor);
+}
+
+/*
+ * the processor that should run a thread just made ready: an idle one,
+ * this one or the one it last ran on first, else the one running the
+ * lowest priority below the thread's. none leaves it queued.
+ */
+static PKPRCB pick_processor(PKTHREAD thread)
+{
+    PKPRCB self = KeGetCurrentPrcb(), idle = NULL, low = NULL;
+    int low_prio = thread->Priority;
+    for (ULONG i = 0; i < KeNumberProcessors; i++) {
+        PKPRCB p = KiProcessorBlock[i];
+        if (!p || p->DispatchPending)
+            continue;
+        PKTHREAD cur = p->CurrentThread;
+        if (cur == p->IdleThread) {
+            if (!idle || p == self || (i == thread->Processor && idle != self))
+                idle = p;
+        } else if (cur->Priority < low_prio || (cur->Priority == low_prio && low && p == self)) {
+            low = p;
+            low_prio = cur->Priority;
+        }
+    }
+    return idle ? idle : low;
+}
+
+/* dispatcher lock held. */
 void KiReadyThread(PKTHREAD thread)
 {
-    PKPRCB prcb = KeGetCurrentPrcb();
-    if (thread == prcb->IdleThread) {
+    KI_ASSERT_KERNEL_LOCK();
+    if (thread->IdleThread) {
         thread->State = Ready;
         return;
     }
-    int prio = thread->Priority;
-    thread->State = Ready;
-    InsertTailList(&prcb->ReadyListHead[prio], &thread->ReadyListEntry);
-    prcb->ReadySummary |= 1u << prio;
-    PKTHREAD cur = prcb->CurrentThread;
-    if (cur == prcb->IdleThread || prio > cur->Priority)
-        prcb->DispatchPending = TRUE;
+    KiInsertReadyThread(thread);
+    PKPRCB target = pick_processor(thread);
+    if (target)
+        KiRequestDispatch(target->Number);
 }
 
 void KiStartThread(PKTHREAD thread)
@@ -87,12 +148,16 @@ void KiStartThread(PKTHREAD thread)
 
 static PKTHREAD select_next(PKPRCB prcb)
 {
-    if (!prcb->ReadySummary)
+    if (!KiReadySummary)
         return prcb->IdleThread;
-    int prio = 31 - __builtin_clz(prcb->ReadySummary);
-    PLIST_ENTRY e = RemoveHeadList(&prcb->ReadyListHead[prio]);
-    if (IsListEmpty(&prcb->ReadyListHead[prio]))
-        prcb->ReadySummary &= ~(1u << prio);
+    int prio = 31 - __builtin_clz(KiReadySummary);
+    PLIST_ENTRY e = RemoveHeadList(&KiReadyListHead[prio]);
+    if (IsListEmpty(&KiReadyListHead[prio])) {
+        KiReadySummary &= ~(1u << prio);
+        /* user mode skips yields that would find no other thread to run. */
+        if (SharedUserData)
+            SharedUserData->MimeReadyThreads = KiReadySummary;
+    }
     return CONTAINING_RECORD(e, KTHREAD, ReadyListEntry);
 }
 
@@ -108,6 +173,7 @@ void KiSwitchAddressSpace(PKPROCESS process)
  */
 void KiSwapThread(void)
 {
+    KI_ASSERT_KERNEL_LOCK();
     PKPRCB prcb = KeGetCurrentPrcb();
     PKTHREAD old = prcb->CurrentThread;
     PKTHREAD next = select_next(prcb);
@@ -117,24 +183,33 @@ void KiSwapThread(void)
         return;
     }
     next->State = Running;
+    next->Processor = (UCHAR)prcb->Number;
     next->Quantum = KI_DEFAULT_QUANTUM_HNS;
     prcb->CurrentThread = next;
     prcb->ContextSwitches++;
     next->ContextSwitches++;
+    /* a busy processor ticks for its quanta, an idle one sleeps until its next timer. */
+    if ((old == prcb->IdleThread) != (next == prcb->IdleThread)) {
+        if (old == prcb->IdleThread)
+            prcb->TickTime = KiQueryInterruptTime();
+        KiProgramNextTimer();
+    }
     if (next->ApcStateProcess != old->ApcStateProcess && next->ApcStateProcess->Ttbr0)
         KiSwitchAddressSpace(next->ApcStateProcess);
     KiSwapContextInternal(&old->KernelSp, next->KernelSp);
 }
 
-/* moves a still running thread back to the ready queue and dispatches. */
+/* moves a still running thread back to the ready queue and dispatches, unless it keeps the processor. */
 static void preempt_current(PKPRCB prcb)
 {
     PKTHREAD cur = prcb->CurrentThread;
     if (cur->State == Running && cur != prcb->IdleThread) {
-        int prio = cur->Priority;
-        cur->State = Ready;
-        InsertTailList(&prcb->ReadyListHead[prio], &cur->ReadyListEntry);
-        prcb->ReadySummary |= 1u << prio;
+        int top = KiReadySummary ? 31 - __builtin_clz(KiReadySummary) : -1;
+        if (top < cur->Priority || (top == cur->Priority && cur->Quantum > 0)) {
+            prcb->DispatchPending = FALSE;
+            return;
+        }
+        KiInsertReadyThread(cur);
     }
     KiSwapThread();
 }
@@ -199,15 +274,17 @@ BOOLEAN NTAPI KeInsertQueueDpc(PRKDPC dpc, PVOID arg1, PVOID arg2)
 
 BOOLEAN NTAPI KeRemoveQueueDpc(PRKDPC dpc)
 {
-    PKPRCB prcb = KeGetCurrentPrcb();
     ULONG64 s = KiAcquireDispatcherLock();
     BOOLEAN removed = FALSE;
-    for (PSINGLE_LIST_ENTRY *link = &prcb->DpcHead.Next; *link; link = &(*link)->Next) {
-        if (*link == &dpc->DpcListEntry) {
-            *link = dpc->DpcListEntry.Next;
-            dpc->Inserted = 0;
-            removed = TRUE;
-            break;
+    for (ULONG i = 0; i < KeNumberProcessors && dpc->Inserted && !removed; i++) {
+        PKPRCB prcb = KiProcessorBlock[i];
+        for (PSINGLE_LIST_ENTRY *link = &prcb->DpcHead.Next; *link; link = &(*link)->Next) {
+            if (*link == &dpc->DpcListEntry) {
+                *link = dpc->DpcListEntry.Next;
+                dpc->Inserted = 0;
+                removed = TRUE;
+                break;
+            }
         }
     }
     KiReleaseDispatcherLock(s);

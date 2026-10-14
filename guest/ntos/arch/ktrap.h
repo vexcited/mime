@@ -27,4 +27,8 @@
 
 #define ESR_EC_SVC64 0x15
 
+/* KPCR.Prcb.Number. */
+#define KPCR_NUMBER 0x28
+#define KPCR_USER_MODE 0x11
+
 #endif

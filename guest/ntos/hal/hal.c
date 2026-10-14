@@ -132,6 +132,7 @@ void HalArmTimer(ULONG64 deadline)
 #define ICC_CTLR_EL1 s3_0_c12_c12_4
 #define ICC_SRE_EL1 s3_0_c12_c12_5
 #define ICC_IGRPEN1_EL1 s3_0_c12_c12_7
+#define ICC_SGI1R_EL1 s3_0_c12_c11_5
 #define KI_READ_ICC(name) KI_READ_SYSREG(name)
 #define KI_WRITE_ICC(name, v) KI_WRITE_SYSREG(name, v)
 
@@ -152,7 +153,6 @@ void HalArmTimer(ULONG64 deadline)
 #define GICR_IPRIORITYR (GICR_SGI + 0x0400)
 
 static volatile UCHAR *g_gicd;
-static volatile UCHAR *g_gicr;
 
 static ULONG rd32(volatile UCHAR *base, ULONG off)
 {
@@ -164,7 +164,7 @@ static void wr32(volatile UCHAR *base, ULONG off, ULONG v)
     *(volatile ULONG *)(base + off) = v;
 }
 
-/* finds the redistributor of the boot cpu by its affinity. */
+/* finds the redistributor of the running processor by its affinity. */
 static volatile UCHAR *find_redistributor(void)
 {
     ULONG64 mpidr = KI_READ_SYSREG(mpidr_el1);
@@ -180,11 +180,13 @@ static volatile UCHAR *find_redistributor(void)
     return base;
 }
 
-static void enable_ppi(ULONG intid)
+/* a private interrupt, sgi or ppi, of the running processor. */
+static void enable_private(ULONG intid)
 {
-    wr32(g_gicr, GICR_IGROUPR0, rd32(g_gicr, GICR_IGROUPR0) | (1u << intid));
-    g_gicr[GICR_IPRIORITYR + intid] = 0x80;
-    wr32(g_gicr, GICR_ISENABLER0, 1u << intid);
+    volatile UCHAR *gicr = KeGetPcr()->Redistributor;
+    wr32(gicr, GICR_IGROUPR0, rd32(gicr, GICR_IGROUPR0) | (1u << intid));
+    gicr[GICR_IPRIORITYR + intid] = 0x80;
+    wr32(gicr, GICR_ISENABLER0, 1u << intid);
 }
 
 /* edge triggered, group 1, routed to the boot cpu. */
@@ -199,18 +201,13 @@ static void enable_spi(ULONG intid)
     wr32(g_gicd, GICD_ISENABLER + word * 4, bit);
 }
 
-static void initialize_gic(void)
+/* the redistributor and cpu interface of the running processor. */
+void HalInitializeProcessor(void)
 {
-    g_gicd = HalPhysmap(HalBootInfo->gic_dist_phys);
-    g_gicr = find_redistributor();
-
-    /* affinity routing and group 1, then wait for the write to settle. */
-    wr32(g_gicd, GICD_CTLR, (1u << 4) | (1u << 1));
-    while (rd32(g_gicd, GICD_CTLR) & GICD_CTLR_RWP)
-        ;
-    /* wake the redistributor. */
-    wr32(g_gicr, GICR_WAKER, rd32(g_gicr, GICR_WAKER) & ~(1u << 1));
-    while (rd32(g_gicr, GICR_WAKER) & (1u << 2))
+    volatile UCHAR *gicr = find_redistributor();
+    KeGetPcr()->Redistributor = gicr;
+    wr32(gicr, GICR_WAKER, rd32(gicr, GICR_WAKER) & ~(1u << 1));
+    while (rd32(gicr, GICR_WAKER) & (1u << 2))
         ;
 
     KI_WRITE_ICC(ICC_SRE_EL1, KI_READ_ICC(ICC_SRE_EL1) | 1);
@@ -221,7 +218,32 @@ static void initialize_gic(void)
     KI_WRITE_ICC(ICC_IGRPEN1_EL1, 1);
     KiInstructionBarrier();
 
-    enable_ppi(HalBootInfo->timer_intid);
+    /* user mode reads its processor number like on windows, and the virtual counter for QueryPerformanceCounter. */
+    KI_WRITE_SYSREG(tpidrro_el0, KeGetCurrentPrcb()->Number);
+    KI_WRITE_SYSREG(cntkctl_el1, (1u << 1) | (1u << 0));
+    KI_WRITE_SYSREG(cntv_ctl_el0, 2);
+    enable_private(HalBootInfo->timer_intid);
+    enable_private(HAL_IPI_INTID);
+}
+
+/* the host sets each processor's affinity to its number, sixteen per cluster. */
+void HalSendIpi(ULONG processor)
+{
+    ULONG64 value = ((ULONG64)HAL_IPI_INTID << 24) | ((ULONG64)(processor / 16) << 16) | (1u << (processor % 16));
+    KiDataSyncBarrier();
+    KI_WRITE_ICC(ICC_SGI1R_EL1, value);
+    KiInstructionBarrier();
+}
+
+static void initialize_gic(void)
+{
+    g_gicd = HalPhysmap(HalBootInfo->gic_dist_phys);
+
+    /* affinity routing and group 1, then wait for the write to settle. */
+    wr32(g_gicd, GICD_CTLR, (1u << 4) | (1u << 1));
+    while (rd32(g_gicd, GICD_CTLR) & GICD_CTLR_RWP)
+        ;
+    HalInitializeProcessor();
     enable_spi(HalBootInfo->irq_intid);
 }
 
@@ -279,8 +301,5 @@ void HalInitialize(MimeBootInfo *boot)
     HalSharedPage = (MimeSharedPage *)HalPhysmap(boot->shared_phys);
     g_rom = (const MimeRomHeader *)HalPhysmap(boot->rom_phys);
     g_freq = boot->timer_frequency ? boot->timer_frequency : KI_READ_SYSREG(cntfrq_el0);
-    /* let user mode read the virtual counter for QueryPerformanceCounter. */
-    KI_WRITE_SYSREG(cntkctl_el1, (1u << 1) | (1u << 0));
-    KI_WRITE_SYSREG(cntv_ctl_el0, 2);
     initialize_gic();
 }

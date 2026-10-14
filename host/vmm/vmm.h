@@ -9,7 +9,7 @@
 
 #include <pthread.h>
 
-#define MIME_VMM_MAX_VCPUS 1
+#define MIME_VMM_MAX_VCPUS 64
 #define MIME_VMM_DEFAULT_RAM (4ull << 30)
 
 typedef struct MimeVm MimeVm;
@@ -21,6 +21,9 @@ typedef struct MimeVcpu {
     void *exit_info; /* hv_vcpu_exit_t */
     pthread_t thread;
     uint64_t vtimer_offset;
+    /* where a secondary starts, set by MIME_HC_CPU_START. */
+    bool started;
+    uint64_t start_pc, start_x0, start_sp;
     /* exit statistics, printed with the SIGUSR1 state dump. */
     uint64_t exits_total;
     uint64_t exits_vtimer;
@@ -77,6 +80,9 @@ struct MimeVm {
     uint32_t irq_intid;
     uint32_t vcpu_count;
     MimeVcpu vcpus[MIME_VMM_MAX_VCPUS];
+    /* the framework fixes the topology once a vcpu runs: every one is created before the first runs. */
+    pthread_cond_t vcpu_cond;
+    uint32_t vcpus_created;
 
     pthread_mutex_t lock;
     volatile bool stopping;
@@ -117,6 +123,7 @@ bool mime_vm_load_kernel(MimeVm *vm);
 bool mime_vcpu_start(MimeVcpu *vcpu);
 void mime_vcpu_kick(MimeVcpu *vcpu);
 void mime_vcpu_request_dump(MimeVm *vm);
+bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t x0, uint64_t sp);
 
 /* hcall.c */
 void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);

@@ -305,6 +305,7 @@ PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine)
     switch (machine) {
     case IMAGE_FILE_MACHINE_ARM64:
         return &PspNativeSystemDll;
+    case IMAGE_FILE_MACHINE_I386:
     case IMAGE_FILE_MACHINE_AMD64:
         return PspX86SystemDll.Section ? &PspX86SystemDll : NULL;
     default:

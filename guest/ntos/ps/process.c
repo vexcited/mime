@@ -257,6 +257,10 @@ NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status)
         }
         if (t->Tcb.State == Waiting)
             KiUnwaitThread(&t->Tcb, STATUS_KERNEL_APC);
+        else if (t->Tcb.State == Initialized)
+            KiReadyThread(&t->Tcb);
+        else
+            KiInterruptThread(&t->Tcb);
     }
     KiReleaseDispatcherLock(s);
     return STATUS_SUCCESS;

@@ -2,9 +2,11 @@
 
 #include <sys/mman.h>
 
+#include "../audio/audio.h"
 #include "../gpu/gpu.h"
 #include "../ui/ui.h"
 
+#include <os/os_sync_wait_on_address.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -191,6 +193,29 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_TIME:
         value = filetime_now();
         break;
+    case MIME_HC_LOCK_WAIT: {
+        /* a guest processor waits for the kernel lock without taking a host core from the owner. */
+        uint32_t *word = mime_vm_phys(vm, regs[1], 4);
+        if (!word) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        uint32_t v = __atomic_load_n(word, __ATOMIC_ACQUIRE);
+        if ((uint16_t)v != (uint16_t)regs[2])
+            os_sync_wait_on_address_with_timeout(word, v, 4, OS_SYNC_WAIT_ON_ADDRESS_NONE, OS_CLOCK_MACH_ABSOLUTE_TIME,
+                                                 1000000);
+        break;
+    }
+    case MIME_HC_LOCK_WAKE: {
+        uint32_t *word = mime_vm_phys(vm, regs[1], 4);
+        if (word)
+            os_sync_wake_by_address_all(word, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE);
+        break;
+    }
+    case MIME_HC_CPU_START:
+        if (!mime_vcpu_start_secondary(vm, (uint32_t)regs[1], regs[2], regs[3], regs[4]))
+            status = MIME_HC_STATUS_INVALID;
+        break;
     case MIME_HC_FS_OPEN:
     case MIME_HC_FS_CLOSE:
     case MIME_HC_FS_READ:
@@ -201,6 +226,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_DELETE:
     case MIME_HC_FS_MAP:
     case MIME_HC_FS_UNMAP:
+    case MIME_HC_FS_VOLUME_QUERY:
     case MIME_HC_FS_FLUSH:
         status = mime_fs_hcall(vm, nr, regs);
         value = regs[1];
@@ -281,6 +307,15 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     case MIME_HC_GPU_CLOSE:
         mime_gpu_close(regs[1]);
+        break;
+    case MIME_HC_AUDIO_OPEN:
+        status = mime_audio_open(vm, regs[1], regs[2], &value);
+        break;
+    case MIME_HC_AUDIO_START:
+        status = mime_audio_start(regs[1], regs[2]);
+        break;
+    case MIME_HC_AUDIO_CLOSE:
+        mime_audio_close(regs[1]);
         break;
     case MIME_HC_NET_SOCKET:
     case MIME_HC_NET_CLOSE:

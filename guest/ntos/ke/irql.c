@@ -6,8 +6,6 @@
  */
 #include "../ntos.h"
 
-static ULONG64 g_saved_daif;
-
 KIRQL NTAPI KeGetCurrentIrql(void)
 {
     return KeGetPcr()->Irql;
@@ -20,7 +18,7 @@ KIRQL NTAPI KfRaiseIrql(KIRQL irql)
     if (irql < old)
         KeBugCheckEx(0x00000009, old, irql, 0, 0); /* IRQL_NOT_GREATER_OR_EQUAL */
     if (irql > DISPATCH_LEVEL && old <= DISPATCH_LEVEL)
-        g_saved_daif = KiDisableInterrupts();
+        pcr->SavedDaif = KiDisableInterrupts();
     pcr->Irql = irql;
     return old;
 }
@@ -38,13 +36,13 @@ void NTAPI KeLowerIrql(KIRQL irql)
         KeBugCheckEx(0x0000000A, old, irql, 0, 0); /* IRQL_NOT_LESS_OR_EQUAL */
     pcr->Irql = irql;
     if (old > DISPATCH_LEVEL && irql <= DISPATCH_LEVEL)
-        KiRestoreInterrupts(g_saved_daif);
+        KiRestoreInterrupts(pcr->SavedDaif);
     if (irql < DISPATCH_LEVEL && (pcr->CurrentPrcb->DpcPending || pcr->CurrentPrcb->DispatchPending) &&
         KiInterruptsEnabled())
         KiDispatchPendingWork();
 }
 
-/* spin locks: a single processor only needs the irql change for now. */
+/* spin locks: the kernel lock already excludes other processors, the irql change keeps this one. */
 KIRQL NTAPI KeAcquireSpinLockRaiseToDpc(PKSPIN_LOCK lock)
 {
     KIRQL old = KfRaiseIrql(DISPATCH_LEVEL);

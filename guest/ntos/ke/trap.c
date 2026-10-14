@@ -5,6 +5,10 @@
 
 void KiInterruptHandler(PKTRAP_FRAME frame)
 {
+    if ((frame->Spsr & 0xF) == PSR_MODE_EL0) {
+        KiCurrentThread()->TrapFrame = frame;
+        KiCurrentThread()->PreviousMode = UserMode;
+    }
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
     KIRQL old = pcr->Irql;
@@ -19,6 +23,8 @@ void KiInterruptHandler(PKTRAP_FRAME frame)
             ULONG64 ctl = KI_READ_SYSREG(cntv_ctl_el0);
             if ((ctl & 5) == 5 && !(ctl & 2))
                 KiClockInterrupt(frame);
+        } else if (intid == HAL_IPI_INTID) {
+            prcb->IpiReceived++;
         } else if (intid == HalBootInfo->irq_intid) {
             ULONG pending = __atomic_exchange_n(&HalSharedPage->irq_pending, 0, __ATOMIC_ACQ_REL);
             if (pending)
@@ -183,7 +189,7 @@ void KiExitToUserMode(PKTRAP_FRAME frame)
     PKTHREAD thread = KiCurrentThread();
     for (;;) {
         KiDisableInterrupts();
-        if (thread->KernelApcPending && !thread->KernelApcDisable) {
+        if (thread->KernelApcPending && !thread->KernelApcDisable && !thread->SpecialApcDisable) {
             KiEnableInterrupts();
             KiDeliverApcs(KernelMode, frame);
             continue;

@@ -1,6 +1,7 @@
 #include "vmm.h"
 
 #include <Hypervisor/Hypervisor.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -216,6 +217,8 @@ static void *vcpu_main(void *arg)
     hv_vcpu_t handle;
     hv_vcpu_exit_t *exit;
     pthread_setname_np("mime-vcpu");
+    /* the guest's timers wake this thread: the highest quality of service keeps macos from coalescing them late. */
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 
     if (hv_vcpu_create(&handle, &exit, NULL) != HV_SUCCESS) {
         mime_error("hv_vcpu_create failed");
@@ -239,11 +242,26 @@ static void *vcpu_main(void *arg)
     set_sys(vcpu, HV_SYS_REG_SCTLR_EL1, SCTLR_EL1_VALUE);
     /* total store ordering, so translated x86 code keeps the memory model it was written for. */
     set_sys(vcpu, HV_SYS_REG_ACTLR_EL1, ACTLR_EL1_ENTSO);
-    set_sys(vcpu, HV_SYS_REG_SP_EL1, vm->boot_stack_top);
-    set_sys(vcpu, HV_SYS_REG_MPIDR_EL1, (1ull << 31) | vcpu->index);
+    /* sixteen processors per cluster, so an sgi's target list reaches each by its number. */
+    set_sys(vcpu, HV_SYS_REG_MPIDR_EL1, (1ull << 31) | ((uint64_t)(vcpu->index / 16) << 8) | (vcpu->index % 16));
     set_reg(vcpu, HV_REG_CPSR, PSTATE_EL1H_MASKED);
-    set_reg(vcpu, HV_REG_PC, vm->kernel_entry);
-    set_reg(vcpu, HV_REG_X0, MIME_KVA_PHYSMAP + MIME_RAM_BASE + 0x1000);
+
+    /* the boot processor waits for every vcpu to exist, a secondary for the guest to start it. */
+    pthread_mutex_lock(&vm->lock);
+    vm->vcpus_created++;
+    pthread_cond_broadcast(&vm->vcpu_cond);
+    while (!vm->stopping && (vcpu->index == 0 ? vm->vcpus_created < vm->vcpu_count : !vcpu->started))
+        pthread_cond_wait(&vm->vcpu_cond, &vm->lock);
+    pthread_mutex_unlock(&vm->lock);
+    if (vcpu->index == 0) {
+        set_sys(vcpu, HV_SYS_REG_SP_EL1, vm->boot_stack_top);
+        set_reg(vcpu, HV_REG_PC, vm->kernel_entry);
+        set_reg(vcpu, HV_REG_X0, MIME_KVA_PHYSMAP + MIME_RAM_BASE + 0x1000);
+    } else {
+        set_sys(vcpu, HV_SYS_REG_SP_EL1, vcpu->start_sp);
+        set_reg(vcpu, HV_REG_PC, vcpu->start_pc);
+        set_reg(vcpu, HV_REG_X0, vcpu->start_x0);
+    }
 
     while (!vm->stopping) {
         hv_return_t r = hv_vcpu_run(handle);
@@ -278,6 +296,24 @@ static void *vcpu_main(void *arg)
     }
     hv_vcpu_destroy(handle);
     return NULL;
+}
+
+bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t x0, uint64_t sp)
+{
+    if (index == 0 || index >= vm->vcpu_count)
+        return false;
+    MimeVcpu *vcpu = &vm->vcpus[index];
+    pthread_mutex_lock(&vm->lock);
+    bool ok = !vcpu->started;
+    if (ok) {
+        vcpu->start_pc = pc;
+        vcpu->start_x0 = x0;
+        vcpu->start_sp = sp;
+        vcpu->started = true;
+        pthread_cond_broadcast(&vm->vcpu_cond);
+    }
+    pthread_mutex_unlock(&vm->lock);
+    return ok;
 }
 
 bool mime_vcpu_start(MimeVcpu *vcpu)

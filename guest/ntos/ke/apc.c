@@ -3,6 +3,7 @@
  * dispatch and win32k user mode callbacks.
  */
 #include "../ntos.h"
+#include <mime/mx64.h>
 
 static inline PPSP_SYSTEM_DLL current_system_dll(void)
 {
@@ -40,8 +41,10 @@ BOOLEAN KeInsertQueueApc(PKAPC apc, PVOID arg1, PVOID arg2, KPRIORITY increment)
         else
             InsertTailList(&thread->ApcListHead[KernelMode], &apc->ApcListEntry);
         thread->KernelApcPending = TRUE;
-        if (thread->State == Waiting && !thread->KernelApcDisable)
+        if (thread->State == Waiting && !thread->KernelApcDisable && !thread->SpecialApcDisable)
             KiUnwaitThread(thread, STATUS_KERNEL_APC);
+        else
+            KiInterruptThread(thread);
     } else {
         InsertTailList(&thread->ApcListHead[UserMode], &apc->ApcListEntry);
         if (thread->State == Waiting && thread->WaitMode == UserMode && thread->Alertable) {
@@ -76,6 +79,10 @@ void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
     PKTHREAD thread = KiCurrentThread();
     for (;;) {
         ULONG64 s = KiAcquireDispatcherLock();
+        if (thread->KernelApcDisable || thread->SpecialApcDisable) {
+            KiReleaseDispatcherLock(s);
+            return;
+        }
         if (IsListEmpty(&thread->ApcListHead[KernelMode])) {
             thread->KernelApcPending = FALSE;
             KiReleaseDispatcherLock(s);
@@ -171,12 +178,17 @@ NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
         return status;
     ULONG flags;
     status = KiCopyFromUser(&flags, &context->ContextFlags, sizeof(flags));
+    if (NT_SUCCESS(status))
+        status = PspWaitForSuspension(thread);
+    ULONG64 state = KiAcquireDispatcherLock();
     PKTRAP_FRAME frame = thread->Tcb.TrapFrame;
     if (NT_SUCCESS(status) && (!frame || (thread != PsCurrentThread() && thread->Tcb.State == Running)))
         status = STATUS_UNSUCCESSFUL;
-    if (NT_SUCCESS(status)) {
-        CONTEXT ctx;
+    CONTEXT ctx;
+    if (NT_SUCCESS(status))
         KiTrapFrameToContext(frame, &ctx, flags & CONTEXT_ALL);
+    KiReleaseDispatcherLock(state);
+    if (NT_SUCCESS(status)) {
         status = KiCopyToUser(context, &ctx, sizeof(ctx));
     }
     ObDereferenceObject(thread);
@@ -191,11 +203,17 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
         return status;
     CONTEXT ctx;
     status = KiCopyFromUser(&ctx, context, sizeof(ctx));
+    if (NT_SUCCESS(status))
+        status = PspWaitForSuspension(thread);
+    ULONG64 state = KiAcquireDispatcherLock();
     PKTRAP_FRAME frame = thread->Tcb.TrapFrame;
     if (NT_SUCCESS(status) && (!frame || (thread != PsCurrentThread() && thread->Tcb.State == Running)))
         status = STATUS_UNSUCCESSFUL;
     if (NT_SUCCESS(status)) {
         KiContextToTrapFrame(&ctx, frame, ctx.ContextFlags, UserMode);
+    }
+    KiReleaseDispatcherLock(state);
+    if (NT_SUCCESS(status)) {
         if (thread == PsCurrentThread()) {
             ObDereferenceObject(thread);
             KiExitToUserMode(frame);
@@ -209,6 +227,13 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
 NTSTATUS NTAPI NtTestAlert(void)
 {
     PKTHREAD thread = KiCurrentThread();
+    if (!thread->SuspendCount && thread->UserSuspendGate) {
+        ULONG pending = 0;
+        NTSTATUS status = KiCopyToUser((PVOID)&((MX_SUSPEND_GATE *)thread->UserSuspendGate)->Pending, &pending, sizeof(pending));
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    PspCheckForSuspendApc(thread);
     if (!IsListEmpty(&thread->ApcListHead[UserMode]))
         thread->UserApcPending = TRUE;
     if (thread->Alerted[UserMode]) {

@@ -4,6 +4,7 @@
 #include "../ntos.h"
 
 KPCR KiBootPcr;
+static KPCR g_secondary_pcrs[MAXIMUM_PROCESSORS - 1];
 
 void KiLogPrintf(const char *fmt, ...)
 {
@@ -59,6 +60,14 @@ void NTAPI KeBugCheckEx(ULONG code, ULONG_PTR p1, ULONG_PTR p2, ULONG_PTR p3, UL
 {
     char buf[256];
     KiDisableInterrupts();
+    ULONG64 fp = (ULONG64)__builtin_frame_address(0);
+    KiLogPrintf("bug check on processor %u, thread %p", KeGetCurrentPrcb()->Number, KiCurrentThread());
+    for (int depth = 0; depth < 16 && fp && !(fp & 7) && MmIsAddressValid((PVOID)fp) &&
+                        MmIsAddressValid((PVOID)(fp + 8));
+         depth++) {
+        KiLogPrintf("  frame %d: %p", depth, (PVOID)((ULONG64 *)fp)[1]);
+        fp = ((ULONG64 *)fp)[0];
+    }
     mime_format(buf, sizeof(buf), "*** STOP: 0x%08X (0x%llX, 0x%llX, 0x%llX, 0x%llX)", code, (ULONG64)p1,
                 (ULONG64)p2, (ULONG64)p3, (ULONG64)p4);
     HalPanic(buf);
@@ -80,6 +89,68 @@ void KiAssertFailed(const char *expr, const char *file, int line)
 static void KiPhase1Initialization(PVOID context);
 
 /*
+ * every processor ends here, holding the kernel lock. it lets go only
+ * while sleeping in wfi with interrupts masked, so an interrupt is always
+ * taken with the lock held and a wakeup posted meanwhile ends the wfi.
+ */
+static DECLSPEC_NORETURN void idle_loop(void)
+{
+    PKPRCB prcb = KeGetCurrentPrcb();
+    for (;;) {
+        KiDisableInterrupts();
+        KiDispatchPendingWork();
+        if (!prcb->DispatchPending && !prcb->DpcPending) {
+            prcb->IdleTicks++;
+            if (prcb->Number == 0)
+                MmDiscardIdle();
+            KiReleaseKernelLock();
+            __asm__ volatile("wfi");
+            KiAcquireKernelLock();
+        }
+        KiEnableInterrupts();
+        PspReapDeadThreads();
+    }
+}
+
+/* the secondary processors, each started on its idle thread's stack by the host. */
+void KiStartProcessors(void)
+{
+    ULONG count = HalBootInfo->cpu_count;
+    if (count > MAXIMUM_PROCESSORS)
+        count = MAXIMUM_PROCESSORS;
+    for (ULONG i = 1; i < count; i++) {
+        PKPCR pcr = &g_secondary_pcrs[i - 1];
+        memset(pcr, 0, sizeof(*pcr));
+        pcr->Self = pcr;
+        pcr->CurrentPrcb = &pcr->Prcb;
+        pcr->Irql = PASSIVE_LEVEL;
+        pcr->Prcb.Number = i;
+        PVOID stack = PsCreateIdleThread(&pcr->Prcb);
+        if (!stack)
+            break;
+        KiProcessorBlock[i] = &pcr->Prcb;
+        if (HalHypercall(MIME_HC_CPU_START, i, (ULONG64)KiSecondaryStartup, (ULONG64)pcr, (ULONG64)stack, 0, 0,
+                         NULL) != MIME_HC_STATUS_OK) {
+            KiProcessorBlock[i] = NULL;
+            break;
+        }
+        KeNumberProcessors = i + 1;
+    }
+    KiLogPrintf("%u processors", KeNumberProcessors);
+}
+
+/* a secondary processor, on its idle thread with interrupts masked. */
+void KiInitializeProcessor(PKPCR pcr)
+{
+    KiAcquireKernelLock();
+    KI_WRITE_SYSREG(ttbr0_el1, PsInitialSystemProcess->Pcb.Ttbr0);
+    KiInstructionBarrier();
+    HalInitializeProcessor();
+    KiProgramNextTimer();
+    idle_loop();
+}
+
+/*
  * entered from KiSystemStartup on the boot stack with interrupts masked.
  * the boot context ends up as the idle thread of processor 0.
  */
@@ -90,8 +161,10 @@ void KiInitializeKernel(MimeBootInfo *boot)
     pcr->CurrentPrcb = &pcr->Prcb;
     /* interrupts stay masked in daif until the idle loop, so init code may freely raise and lower. */
     pcr->Irql = PASSIVE_LEVEL;
+    KiAcquireKernelLock();
 
     HalInitialize(boot);
+    KiKernelLockPhys = HalPhysicalOf((const void *)KiKernelLock);
     if (boot->magic != MIME_BOOT_MAGIC || boot->version != MIME_ABI_VERSION)
         HalPanic("boot information mismatch between the vmm and the kernel");
     KiLogPrintf("Mime NT kernel %u.%u build %u (arm64), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
@@ -115,21 +188,10 @@ void KiInitializeKernel(MimeBootInfo *boot)
         KeBugCheckEx(0x00000032, status, 0, 0, 0); /* PHASE1_INITIALIZATION_FAILED */
     KiStartThread(&phase1->Tcb);
     ObDereferenceObject(phase1);
+    KiStartProcessors();
 
     KiEnableInterrupts();
-
-    /* idle loop. */
-    for (;;) {
-        KiDisableInterrupts();
-        KiDispatchPendingWork();
-        if (!KeGetCurrentPrcb()->DispatchPending && !KeGetCurrentPrcb()->DpcPending) {
-            KeGetCurrentPrcb()->IdleTicks++;
-            MmDiscardIdle();
-            __asm__ volatile("wfi");
-        }
-        KiEnableInterrupts();
-        PspReapDeadThreads();
-    }
+    idle_loop();
 }
 
 static void KiPhase1Initialization(PVOID context)

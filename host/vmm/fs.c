@@ -12,6 +12,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/mount.h>
 #include <unistd.h>
 
 #define FILE_SUPERSEDED 0
@@ -448,6 +449,26 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = errno_status(errno);
         else
             regs[1] = (uint64_t)n;
+        break;
+    }
+    case MIME_HC_FS_VOLUME_QUERY: {
+        MimeFsVolumeInfo *info = mime_vm_phys(vm, a[2], sizeof(*info));
+        const char *root = a[1] == MIME_FS_VOLUME_SYSTEM ? vm->paths->drive_c :
+                           a[1] == MIME_FS_VOLUME_HOST ? "/" : NULL;
+        if (!info || !root) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        struct statfs volume;
+        if (statfs(root, &volume) != 0) {
+            status = errno_status(errno);
+            break;
+        }
+        memset(info, 0, sizeof(*info));
+        info->total_units = volume.f_blocks;
+        info->available_units = volume.f_bavail;
+        info->free_units = volume.f_bfree;
+        info->bytes_per_unit = volume.f_bsize;
         break;
     }
     case MIME_HC_FS_QUERY: {

@@ -62,6 +62,15 @@ static NTSTATUS alloc_section(ULONG64 size, PSECTION *out)
     return STATUS_SUCCESS;
 }
 
+static IMAGE_DATA_DIRECTORY image_directory(const IMAGE_NT_HEADERS64 *nt, ULONG index)
+{
+    if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+        const IMAGE_OPTIONAL_HEADER32 *opt = (const void *)&nt->OptionalHeader;
+        return index < opt->NumberOfRvaAndSizes ? opt->DataDirectory[index] : (IMAGE_DATA_DIRECTORY){0};
+    }
+    return index < nt->OptionalHeader.NumberOfRvaAndSizes ? nt->OptionalHeader.DataDirectory[index] : (IMAGE_DATA_DIRECTORY){0};
+}
+
 static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT_HEADERS64 *nt, ULONG page, PUCHAR out);
 
 /* builds prototype page `index`, returning a new ram page or a page of the source. */
@@ -189,15 +198,44 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     const IMAGE_DOS_HEADER *dos = headers;
     if (length < sizeof(*dos) || dos->e_magic != IMAGE_DOS_SIGNATURE)
         return STATUS_INVALID_IMAGE_NOT_MZ;
-    if (dos->e_lfanew < 0 || (SIZE_T)dos->e_lfanew + sizeof(IMAGE_NT_HEADERS64) > length)
+    SIZE_T nt_offset = offsetof(IMAGE_NT_HEADERS64, OptionalHeader);
+    if (dos->e_lfanew < 0 || (SIZE_T)dos->e_lfanew > length || length - dos->e_lfanew < nt_offset)
         return STATUS_INVALID_IMAGE_FORMAT;
     const IMAGE_NT_HEADERS64 *nt = (const void *)((const UCHAR *)headers + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)
         return STATUS_INVALID_IMAGE_FORMAT;
-    if ((nt->FileHeader.Machine != IMAGE_FILE_MACHINE_ARM64 && nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) ||
-        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    BOOLEAN pe32 = nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386;
+    SIZE_T optional_size = pe32 ? sizeof(IMAGE_OPTIONAL_HEADER32) : sizeof(IMAGE_OPTIONAL_HEADER64);
+    if (nt->FileHeader.SizeOfOptionalHeader < optional_size ||
+        length - dos->e_lfanew - nt_offset < nt->FileHeader.SizeOfOptionalHeader)
         return STATUS_INVALID_IMAGE_FORMAT;
+    IMAGE_OPTIONAL_HEADER64 normalized;
     const IMAGE_OPTIONAL_HEADER64 *opt = &nt->OptionalHeader;
+    if (pe32) {
+        const IMAGE_OPTIONAL_HEADER32 *o = (const void *)opt;
+        if (o->Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+            return STATUS_INVALID_IMAGE_FORMAT;
+        memset(&normalized, 0, sizeof(normalized));
+        normalized.ImageBase = o->ImageBase;
+        normalized.SizeOfImage = o->SizeOfImage;
+        normalized.AddressOfEntryPoint = o->AddressOfEntryPoint;
+        normalized.SizeOfHeaders = o->SizeOfHeaders;
+        normalized.Subsystem = o->Subsystem;
+        normalized.MajorSubsystemVersion = o->MajorSubsystemVersion;
+        normalized.MinorSubsystemVersion = o->MinorSubsystemVersion;
+        normalized.DllCharacteristics = o->DllCharacteristics;
+        normalized.SizeOfStackReserve = o->SizeOfStackReserve;
+        normalized.SizeOfStackCommit = o->SizeOfStackCommit;
+        normalized.NumberOfRvaAndSizes = o->NumberOfRvaAndSizes;
+        memcpy(normalized.DataDirectory, o->DataDirectory, sizeof(normalized.DataDirectory));
+        opt = &normalized;
+    } else if ((nt->FileHeader.Machine != IMAGE_FILE_MACHINE_ARM64 && nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) ||
+               opt->Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        return STATUS_INVALID_IMAGE_FORMAT;
+    }
+    if (opt->NumberOfRvaAndSizes > IMAGE_NUMBEROF_DIRECTORY_ENTRIES ||
+        (pe32 && opt->ImageBase + opt->SizeOfImage > 0x80000000ull))
+        return STATUS_INVALID_IMAGE_FORMAT;
     if (opt->SizeOfImage == 0 || opt->SizeOfImage > (1u << 30) || opt->SizeOfHeaders > opt->SizeOfImage)
         return STATUS_INVALID_IMAGE_FORMAT;
     SIZE_T sections_end = (SIZE_T)dos->e_lfanew + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
@@ -217,9 +255,8 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     info->Characteristics = nt->FileHeader.Characteristics;
     info->StackReserve = opt->SizeOfStackReserve;
     info->StackCommit = opt->SizeOfStackCommit;
-    info->Relocatable = !(nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED) &&
-                        opt->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC &&
-                        opt->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size != 0;
+    /* images with no absolute references need no relocation records. */
+    info->Relocatable = !(nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED);
     return STATUS_SUCCESS;
 }
 
@@ -311,6 +348,10 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
     const UCHAR *data = HalPhysmap(pa);
     MI_IMAGE_INFO info;
     NTSTATUS status = MiParseImageHeaders(data, size, &info);
+    if (!NT_SUCCESS(status)) {
+        IoReleaseFileWindow(ref);
+        return status;
+    }
     const IMAGE_NT_HEADERS64 *nt = (const void *)(data + ((const IMAGE_DOS_HEADER *)data)->e_lfanew);
     const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
     for (USHORT i = 0; NT_SUCCESS(status) && i < nt->FileHeader.NumberOfSections; i++)
@@ -326,8 +367,8 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
     s->Flags = SEC_IMAGE;
     s->Protect = PAGE_EXECUTE_WRITECOPY;
     s->Image = info;
-    s->RelocRva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
-    s->RelocSize = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+    s->RelocRva = image_directory(nt, IMAGE_DIRECTORY_ENTRY_BASERELOC).VirtualAddress;
+    s->RelocSize = image_directory(nt, IMAGE_DIRECTORY_ENTRY_BASERELOC).Size;
     s->SourcePa = pa;
     s->SourceSize = size;
     s->SourceRef = ref;
@@ -399,8 +440,8 @@ static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
     s->Flags = SEC_IMAGE;
     s->Protect = PAGE_EXECUTE_WRITECOPY;
     s->Image = info;
-    s->RelocRva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
-    s->RelocSize = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+    s->RelocRva = image_directory(nt, IMAGE_DIRECTORY_ENTRY_BASERELOC).VirtualAddress;
+    s->RelocSize = image_directory(nt, IMAGE_DIRECTORY_ENTRY_BASERELOC).Size;
     s->PageProtect = ExAllocatePool2(POOL_FLAG_NON_PAGED, s->PageCount, KI_TAG('M', 'm', 'P', 'p'));
     if (!s->PageProtect) {
         ExFreePool(headers);
@@ -503,20 +544,22 @@ static void apply_relocations(PSECTION s, ULONG64 *pages, ULONG_PTR base)
             ULONG64 erva = s->RelocRva + off + i;
             USHORT entry;
             memcpy(&entry, (PUCHAR)HalPhysmap(pages[erva >> PAGE_SHIFT]) + (erva & (PAGE_SIZE - 1)), 2);
-            if ((entry >> 12) != IMAGE_REL_BASED_DIR64)
+            ULONG type = entry >> 12;
+            int width = type == IMAGE_REL_BASED_DIR64 ? 8 : type == IMAGE_REL_BASED_HIGHLOW ? 4 : 0;
+            if (!width)
                 continue;
             ULONG64 target = block.VirtualAddress + (entry & 0xFFF);
-            if (target + 8 > s->Size)
+            if (target + width > s->Size)
                 continue;
-            /* the 8 bytes may straddle two pages. */
+            /* a relocation may straddle two pages. */
             UCHAR bytes[8];
-            for (int b = 0; b < 8; b++)
+            for (int b = 0; b < width; b++)
                 bytes[b] = *((PUCHAR)HalPhysmap(pages[(target + b) >> PAGE_SHIFT]) + ((target + b) & (PAGE_SIZE - 1)));
-            ULONG64 v;
-            memcpy(&v, bytes, 8);
+            ULONG64 v = 0;
+            memcpy(&v, bytes, width);
             v += (ULONG64)delta;
-            memcpy(bytes, &v, 8);
-            for (int b = 0; b < 8; b++)
+            memcpy(bytes, &v, width);
+            for (int b = 0; b < width; b++)
                 *((PUCHAR)HalPhysmap(pages[(target + b) >> PAGE_SHIFT]) + ((target + b) & (PAGE_SIZE - 1))) = bytes[b];
         }
         off += block.SizeOfBlock;

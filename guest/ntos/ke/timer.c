@@ -1,15 +1,18 @@
 /*
  * timers and the clock interrupt.
  *
- * the virtual timer is one-shot: it is programmed for the earlier of the
- * next periodic tick (15.625 ms, keeping KUSER_SHARED_DATA fresh) and the
- * first expiring timer, so short sleeps are precise without a fast tick.
+ * each processor's virtual timer is one-shot. a busy processor programs
+ * it for its next quantum tick; the timer processor, the last one that
+ * queued the earliest timer, also programs the first expiring timer and
+ * the periodic tick (15.625 ms) keeping KUSER_SHARED_DATA fresh. short
+ * sleeps are precise without a fast tick, and idle processors sleep.
  */
 #include "../ntos.h"
 
 static LIST_ENTRY g_timer_list; /* sorted by due interrupt time */
 static ULONG64 g_next_tick;
 static ULONG64 g_boot_counter;
+static ULONG g_timer_cpu;
 ULONG64 KeBootFiletime;
 
 ULONG64 KiQueryInterruptTime(void)
@@ -48,12 +51,30 @@ LARGE_INTEGER NTAPI KeQueryPerformanceCounter(PLARGE_INTEGER frequency)
 
 void KiProgramNextTimer(void)
 {
-    ULONG64 deadline = g_next_tick;
-    if (!IsListEmpty(&g_timer_list)) {
-        PKTIMER first = CONTAINING_RECORD(g_timer_list.Flink, KTIMER, TimerListEntry);
-        if (first->DueTime.QuadPart < deadline)
-            deadline = first->DueTime.QuadPart;
+    PKPRCB prcb = KeGetCurrentPrcb();
+    ULONG64 deadline = ~0ull;
+    if (prcb->CurrentThread != prcb->IdleThread)
+        deadline = prcb->TickTime + KI_CLOCK_TICK_HNS;
+    if (prcb->Number == g_timer_cpu) {
+        if (g_next_tick < deadline)
+            deadline = g_next_tick;
+        if (!IsListEmpty(&g_timer_list)) {
+            PKTIMER first = CONTAINING_RECORD(g_timer_list.Flink, KTIMER, TimerListEntry);
+            if ((ULONG64)first->DueTime.QuadPart < deadline)
+                deadline = first->DueTime.QuadPart;
+        }
     }
+    if (deadline == ~0ull) {
+        KI_WRITE_SYSREG(cntv_ctl_el0, 2);
+        return;
+    }
+    /*
+     * macos wakes an idle processor late by about an eighth of its wait:
+     * aiming at 7/8 of a long wait, the early interrupt arms the rest.
+     */
+    ULONG64 now = KiQueryInterruptTime();
+    if (deadline > now + 2000)
+        deadline = now + (deadline - now) / 8 * 7;
     HalArmTimer(g_boot_counter + HalHnsToCounter(deadline));
 }
 
@@ -75,8 +96,11 @@ void KiInsertTimer(PKTIMER timer, ULONG64 due)
     timer->TimerListEntry.Blink = e->Blink;
     e->Blink->Flink = &timer->TimerListEntry;
     e->Blink = &timer->TimerListEntry;
-    if (g_timer_list.Flink == &timer->TimerListEntry)
+    if (g_timer_list.Flink == &timer->TimerListEntry) {
+        /* this processor takes the earliest timer; the previous owner wakes once more and lets go. */
+        g_timer_cpu = KeGetCurrentPrcb()->Number;
         KiProgramNextTimer();
+    }
 }
 
 void NTAPI KeInitializeTimerEx(PKTIMER timer, TIMER_TYPE type)
@@ -150,6 +174,30 @@ static void update_shared_time(ULONG64 now)
     SharedUserData->TickCountLowDeprecated = (ULONG)ticks;
 }
 
+/*
+ * an idle processor asked to dispatch does so within microseconds, unless
+ * the kernel lock is held long, as while a process is created. one still
+ * waiting after eight ticks gets its ipi again and is logged.
+ */
+static void check_stalled_dispatch(ULONG64 now)
+{
+    for (ULONG i = 0; i < KeNumberProcessors; i++) {
+        PKPRCB p = KiProcessorBlock[i];
+        BOOLEAN pending = p->DispatchPending && p->CurrentThread == p->IdleThread && KiReadySummary;
+        if (!pending) {
+            p->PendingSince = 0;
+        } else if (!p->PendingSince) {
+            p->PendingSince = now;
+        } else if (now - p->PendingSince > 8 * KI_CLOCK_TICK_HNS && p != KeGetCurrentPrcb()) {
+            KiLogPrintf("processor %u still idle %llu ms after a dispatch request (ipi sent %llu, received %llu)", i,
+                        (now - p->PendingSince) / 10000, p->IpiSent, p->IpiReceived);
+            p->PendingSince = now;
+            p->IpiSent++;
+            HalSendIpi(i);
+        }
+    }
+}
+
 /* interrupts masked, dispatcher database owned. */
 void KiClockInterrupt(PKTRAP_FRAME frame)
 {
@@ -157,30 +205,32 @@ void KiClockInterrupt(PKTRAP_FRAME frame)
     PKPRCB prcb = KeGetCurrentPrcb();
 
     if (now >= g_next_tick) {
-        ULONG64 elapsed = now - (g_next_tick - KI_CLOCK_TICK_HNS);
         while (g_next_tick <= now)
             g_next_tick += KI_CLOCK_TICK_HNS;
         update_shared_time(now);
-        PKTHREAD cur = prcb->CurrentThread;
-        if (cur != prcb->IdleThread) {
-            if (frame && (frame->Spsr & 0xF) == PSR_MODE_EL0)
-                cur->UserTime += elapsed;
-            else
-                cur->KernelTime += elapsed;
-            cur->Quantum -= (LONG)elapsed;
-            if (cur->Quantum <= 0) {
-                cur->Quantum = 0;
-                int prio = cur->Priority;
-                /* only threads of the same or higher priority get the processor. */
-                if (prcb->ReadySummary >> prio)
-                    prcb->DispatchPending = TRUE;
-            }
+        check_stalled_dispatch(now);
+    }
+
+    PKTHREAD cur = prcb->CurrentThread;
+    if (cur != prcb->IdleThread && now >= prcb->TickTime + KI_CLOCK_TICK_HNS) {
+        ULONG64 elapsed = now - prcb->TickTime;
+        prcb->TickTime = now;
+        if (frame && (frame->Spsr & 0xF) == PSR_MODE_EL0)
+            cur->UserTime += elapsed;
+        else
+            cur->KernelTime += elapsed;
+        cur->Quantum -= (LONG)elapsed;
+        if (cur->Quantum <= 0) {
+            cur->Quantum = 0;
+            /* only threads of the same or higher priority get the processor. */
+            if (KiReadySummary >> cur->Priority)
+                prcb->DispatchPending = TRUE;
         }
     }
 
     while (!IsListEmpty(&g_timer_list)) {
         PKTIMER t = CONTAINING_RECORD(g_timer_list.Flink, KTIMER, TimerListEntry);
-        if (t->DueTime.QuadPart > now)
+        if ((ULONG64)t->DueTime.QuadPart > now)
             break;
         RemoveEntryList(&t->TimerListEntry);
         t->TimerListEntry.Flink = NULL;
