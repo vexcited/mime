@@ -1,30 +1,27 @@
 /*
- * mimex86.dll: the system dll of x64 processes.
- *
- * the kernel maps it instead of ntdll.dll into a process whose program is
- * not arm64, and enters user mode through its exports. it maps the x64
- * ntdll.dll, then runs every thread through the x86 core:
- *
- *   LdrInitializeThunk         starts a thread in x64 ntdll's LdrInitializeThunk
- *   KiUserExceptionDispatcher  turns a fault of translated code into an x64 exception
- *   KiUserCallbackDispatcher   runs a win32k callback through x64 ntdll
- *   KiUserApcDispatcher        runs an x64 apc routine
- *
- * system calls of the x64 code reach the kernel with the same numbers;
- * the few whose arguments depend on the processor are handled here.
- * native code runs on a stack of its own the kernel gives each thread,
- * the x64 code keeps the thread stack.
+ * mimex86.dll runs x64 and x86 user mode on the native arm64 kernel.
+ * it maps the matching ntdll, interprets guest instructions, and delivers
+ * exceptions, callbacks and apcs through that runtime. x86 system calls
+ * convert pointer widths and structure layouts before entering the kernel.
+ * each thread keeps separate native and interpreted stacks.
  */
 #define MIME_NTDLL
 #define NTSYSCALLAPI
 #include <mime/ntrtl.h>
+#include <mime/wow32.h>
 
 #include "mime_svc_nt.h"
 #include "mime_svc_win32k.h"
 #include "native.h"
 #include "x86.h"
+#include "wow32_callback.h"
 
 #include <mime/mx64.h>
+
+PVOID MxCreatePeb32(void);
+PVOID MxCreateTeb32(PVOID peb);
+NTSTATUS Mx32SystemCall(ULONG number, const ULONG *arguments);
+ULONG64 MxCallService(ULONG number, const ULONG64 *arguments);
 
 #define MX_EXPORT __declspec(dllexport)
 
@@ -46,11 +43,16 @@ typedef struct MX_FRAME {
     X86Cpu cpu;
     MX_JUMP restart; /* where an exception redirected to x64 code resumes emulation */
     struct MX_FRAME *outer;
+    PVOID CallbackResult;
+    ULONG CallbackLength;
+    NTSTATUS CallbackStatus;
 } MX_FRAME;
 
 typedef struct MX_THREAD {
+    MX_SUSPEND_GATE suspend;
     MX_FRAME *frame; /* innermost emulation of the thread */
     void *blocks;    /* decoded block cache, shared by the thread's emulations */
+    PVOID teb32;
     uint64_t trace[X86_TRACE_SIZE]; /* the last blocks run, for crash reports */
     uint32_t trace_pos;
     uint64_t fault_trace[16];       /* the blocks before the last fault */
@@ -58,11 +60,13 @@ typedef struct MX_THREAD {
 
 static struct {
     PVOID ntdll;
+    PVOID peb32;
+    BOOLEAN is32;
     ULONG64 ldr_initialize_thunk;
     ULONG64 user_thread_start;
     ULONG64 exception_dispatcher;
     ULONG64 callback_dispatcher;
-} g_x64;
+} g_guest;
 
 static volatile uint32_t g_code_epoch = 1;
 
@@ -73,6 +77,43 @@ static X86Env g_env;
 static MX_THREAD *current_thread(void)
 {
     return NtCurrentTeb()->WOW32Reserved;
+}
+
+static void suspend_gate(MX_THREAD *t, ULONG critical)
+{
+    __atomic_store_n(&t->suspend.Critical, critical, __ATOMIC_RELEASE);
+}
+
+void MxSetSuspendCritical(X86Cpu *c, ULONG critical)
+{
+    suspend_gate(c->user, critical);
+}
+
+static void env_suspend(X86Cpu *c)
+{
+    MX_THREAD *t = c->user;
+    suspend_gate(t, 0);
+    NtTestAlert();
+    suspend_gate(t, 1);
+}
+
+static ULONG64 call_service(X86Cpu *c, ULONG number, ULONG64 *arguments)
+{
+    MX_THREAD *t = c->user;
+    suspend_gate(t, 0);
+    ULONG64 result = MxCallService(number, arguments);
+    suspend_gate(t, 1);
+    return result;
+}
+
+PVOID MxCurrentPeb32(void)
+{
+    return g_guest.peb32;
+}
+
+PVOID MxCurrentTeb32(void)
+{
+    return current_thread()->teb32;
 }
 
 static void mx_print(const char *format, ...)
@@ -90,6 +131,17 @@ static void mx_print(const char *format, ...)
         wide[i] = (WCHAR)(UCHAR)buf[i];
     UNICODE_STRING s = {(USHORT)(n * sizeof(WCHAR)), (USHORT)(n * sizeof(WCHAR)), wide};
     NtDisplayString(&s);
+}
+
+void Mx32Unsupported(ULONG number)
+{
+    static ULONG reported[256];
+    if (number < 8192) {
+        ULONG bit = 1u << (number & 31);
+        if (__atomic_fetch_or(&reported[number / 32], bit, __ATOMIC_RELAXED) & bit)
+            return;
+    }
+    mx_print("mimex86: unsupported x86 service %04x", number);
 }
 
 static DECLSPEC_NORETURN void mx_fatal(NTSTATUS status, const char *what)
@@ -153,17 +205,60 @@ static void context_to_cpu(const AMD64_CONTEXT *ctx, X86Cpu *c)
     }
 }
 
+static void cpu_to_context32(X86Cpu *c, I386_CONTEXT *ctx)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->ContextFlags = CONTEXT_I386_CONTROL | CONTEXT_I386_INTEGER | CONTEXT_I386_SEGMENTS |
+                        CONTEXT_I386_EXTENDED_REGISTERS;
+    ctx->Eax = c->r[X86_RAX];
+    ctx->Ebx = c->r[X86_RBX];
+    ctx->Ecx = c->r[X86_RCX];
+    ctx->Edx = c->r[X86_RDX];
+    ctx->Esi = c->r[X86_RSI];
+    ctx->Edi = c->r[X86_RDI];
+    ctx->Ebp = c->r[X86_RBP];
+    ctx->Esp = c->r[X86_RSP];
+    ctx->Eip = c->rip;
+    ctx->EFlags = x86_get_flags(c);
+    ctx->SegCs = 0x23;
+    ctx->SegDs = ctx->SegEs = ctx->SegSs = 0x2B;
+    ctx->SegFs = 0x53;
+    x86_fxsave(c, ctx->ExtendedRegisters);
+}
+
+static void context32_to_cpu(const I386_CONTEXT *ctx, X86Cpu *c)
+{
+    if ((ctx->ContextFlags & CONTEXT_I386_INTEGER) == CONTEXT_I386_INTEGER) {
+        c->r[X86_RAX] = ctx->Eax;
+        c->r[X86_RBX] = ctx->Ebx;
+        c->r[X86_RCX] = ctx->Ecx;
+        c->r[X86_RDX] = ctx->Edx;
+        c->r[X86_RSI] = ctx->Esi;
+        c->r[X86_RDI] = ctx->Edi;
+    }
+    if ((ctx->ContextFlags & CONTEXT_I386_CONTROL) == CONTEXT_I386_CONTROL) {
+        c->r[X86_RSP] = ctx->Esp;
+        c->r[X86_RBP] = ctx->Ebp;
+        c->rip = ctx->Eip;
+        x86_set_flags(c, ctx->EFlags);
+    }
+    if ((ctx->ContextFlags & CONTEXT_I386_EXTENDED_REGISTERS) == CONTEXT_I386_EXTENDED_REGISTERS)
+        x86_fxrstor(c, ctx->ExtendedRegisters);
+}
+
 /* ------------------------------------------------------------ emulation */
 
 static void init_frame(MX_FRAME *f, MX_THREAD *t)
 {
-    x86_init_cpu(&f->cpu, &g_env, 1);
+    x86_init_cpu(&f->cpu, &g_env, !g_guest.is32);
+    f->cpu.fs_base = (ULONG_PTR)t->teb32;
     f->cpu.gs_base = (ULONG64)NtCurrentTeb();
     f->cpu.blocks = t->blocks;
     f->cpu.code_epoch = &g_code_epoch;
     f->cpu.blocks_epoch = g_code_epoch;
-    f->cpu.exit_rip = MX_EXIT_ADDRESS;
+    f->cpu.exit_rip = g_guest.is32 ? 0xFFFF0000u : MX_EXIT_ADDRESS;
     f->cpu.user = t;
+    f->cpu.suspend_pending = &t->suspend.Pending;
     f->cpu.trace = t->trace;
     f->cpu.trace_pos = &t->trace_pos;
     f->outer = t->frame;
@@ -172,10 +267,13 @@ static void init_frame(MX_FRAME *f, MX_THREAD *t)
 /* runs the frame until its code returns to MX_EXIT_ADDRESS. */
 static void emulate(MX_THREAD *t, MX_FRAME *f)
 {
+    ULONG critical = t->suspend.Critical;
     t->frame = f;
+    __atomic_store_n(&t->suspend.Critical, 1, __ATOMIC_RELEASE);
     mx_setjmp(&f->restart);
     x86_run(&f->cpu);
     t->frame = f->outer;
+    suspend_gate(t, critical);
 }
 
 /* a stack pointer for code nested in an emulation that is in a system call. */
@@ -201,6 +299,15 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
                  record->ExceptionAddress, (PVOID)context->Rsp);
         if (record->ExceptionCode == STATUS_ACCESS_VIOLATION)
             mx_print("  address %p", (PVOID)record->ExceptionInformation[1]);
+        { /* DEBUGJIT */
+            MX_THREAD *dt = c->user;
+            MEMORY_BASIC_INFORMATION mbi = {0};
+            NtQueryVirtualMemory(NtCurrentProcess(), record->ExceptionAddress, MemoryBasicInformation, &mbi, sizeof(mbi), NULL);
+            mx_print("DEBUGJIT base %p limit %p stackbase %p rip %p", mbi.AllocationBase, tib->StackLimit, tib->StackBase,
+                     (PVOID)context->Rip);
+            mx_print("DEBUGJIT rax %p rbx %p rcx %p rdx %p rsi %p rdi %p rbp %p", (PVOID)context->Rax, (PVOID)context->Rbx,
+                     (PVOID)context->Rcx, (PVOID)context->Rdx, (PVOID)context->Rsi, (PVOID)context->Rdi, (PVOID)context->Rbp);
+        }
         mx_fatal(record->ExceptionCode, "cannot deliver the exception");
     }
     /*
@@ -208,6 +315,17 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
      * stack pointer, 0x28 bytes, the context, the record, then a machine
      * frame with the faulting rip and rsp, so unwinding goes on there.
      */
+    { /* DEBUGJIT */
+        static LONG debug_count;
+        if (__atomic_add_fetch(&debug_count, 1, __ATOMIC_RELAXED) < 30) {
+            MX_THREAD *dt = c->user;
+            mx_print("DEBUGJIT raise %08x at %p p0 %p p1 %p rsp %p tid %p", (ULONG)record->ExceptionCode,
+                     record->ExceptionAddress, (PVOID)record->ExceptionInformation[0],
+                     (PVOID)record->ExceptionInformation[1], (PVOID)context->Rsp, NtCurrentTeb()->ClientId.UniqueThread);
+            for (ULONG i = 8; i < 16; i++)
+                mx_print("DEBUGJIT   %p", (PVOID)dt->trace[(dt->trace_pos - 16 + i) % X86_TRACE_SIZE]);
+        }
+    }
     ULONG64 machine = ((context->Rsp - 0x80) & ~15ull) - 0x30;
     ULONG64 rec = machine - 0xA0;
     ULONG64 ctx = rec - 0x4D0;
@@ -223,13 +341,43 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
     c->r[X86_RSP] = ctx - 0x28;
     c->r[X86_RCX] = rec;
     c->r[X86_RDX] = ctx;
-    c->rip = g_x64.exception_dispatcher;
+    c->rip = g_guest.exception_dispatcher;
+    mx_longjmp(&f->restart, 1);
+}
+
+static DECLSPEC_NORETURN void raise_in_x86(MX_FRAME *f, const MIME_EXCEPTION32 *record,
+                                          const I386_CONTEXT *context)
+{
+    X86Cpu *c = &f->cpu;
+    PNT_TIB tib = &NtCurrentTeb()->NtTib;
+    if (context->Esp <= (ULONG_PTR)tib->StackLimit + 0x1000 || context->Esp > (ULONG_PTR)tib->StackBase)
+        mx_fatal(record->Code, "cannot deliver x86 exception on an invalid stack");
+    ULONG sp = (context->Esp - sizeof(*context) - sizeof(*record) - 32) & ~15u;
+    ULONG *arguments = (PULONG)(ULONG_PTR)sp;
+    MIME_EXCEPTION32 *out = (void *)(arguments + 4);
+    I386_CONTEXT *ctx = (void *)(out + 1);
+    memcpy(out, record, sizeof(*out));
+    memcpy(ctx, context, sizeof(*ctx));
+    arguments[0] = (ULONG)c->exit_rip;
+    arguments[1] = (ULONG)(ULONG_PTR)out;
+    arguments[2] = (ULONG)(ULONG_PTR)ctx;
+    c->r[X86_RSP] = sp;
+    c->rip = g_guest.exception_dispatcher;
     mx_longjmp(&f->restart, 1);
 }
 
 static DECLSPEC_NORETURN void raise_from_cpu(MX_FRAME *f, EXCEPTION_RECORD *record)
 {
     MX_THREAD *t = f->cpu.user;
+    if (!f->cpu.mode64) {
+        I386_CONTEXT ctx;
+        cpu_to_context32(&f->cpu, &ctx);
+        MIME_EXCEPTION32 out = {.Code = record->ExceptionCode, .Flags = record->ExceptionFlags,
+                                .Address = ctx.Eip, .Count = record->NumberParameters};
+        for (ULONG i = 0; i < out.Count && i < EXCEPTION_MAXIMUM_PARAMETERS; i++)
+            out.Information[i] = (ULONG)record->ExceptionInformation[i];
+        raise_in_x86(f, &out, &ctx);
+    }
     for (ULONG i = 0; i < 16; i++)
         t->fault_trace[i] = t->trace[(t->trace_pos - 16 + i) % X86_TRACE_SIZE];
     AMD64_CONTEXT ctx;
@@ -291,8 +439,11 @@ static volatile BOOLEAN g_code_overflow; /* too many regions: every change drops
 
 static void code_lock(void)
 {
-    while (__atomic_exchange_n(&g_code_lock, 1, __ATOMIC_ACQUIRE))
-        __asm__ volatile("yield");
+    while (__atomic_exchange_n(&g_code_lock, 1, __ATOMIC_ACQUIRE)) {
+        /* let a lower priority owner finish on a single virtual cpu. */
+        LARGE_INTEGER delay = {.QuadPart = -10000};
+        NtDelayExecution(FALSE, &delay);
+    }
 }
 
 static void code_unlock(void)
@@ -365,7 +516,7 @@ static void allocation_range(ULONG64 base, ULONG64 *start, ULONG64 *end)
 typedef ULONG64 (*SVC16)(ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64,
                          ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64);
 
-static ULONG64 call_service(ULONG number, const ULONG64 *a)
+ULONG64 MxCallService(ULONG number, const ULONG64 *a)
 {
     ULONG table = number >> 12, index = number & 0xFFF;
     UCHAR *stub;
@@ -379,15 +530,49 @@ static ULONG64 call_service(ULONG number, const ULONG64 *a)
                                  a[13], a[14], a[15]);
 }
 
+static NTSTATUS other_cpu(HANDLE handle, BOOLEAN setting, X86Cpu **out)
+{
+    ARM64_NT_CONTEXT native = {0};
+    native.ContextFlags = CONTEXT_ARM64_CONTROL;
+    NTSTATUS status;
+    if (setting) {
+        native.ContextFlags = 0;
+        status = NtSetContextThread(handle, &native);
+    } else {
+        status = NtGetContextThread(handle, &native);
+    }
+    if (!NT_SUCCESS(status))
+        return status;
+    THREAD_BASIC_INFORMATION info;
+    status = NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), NULL);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (info.ClientId.UniqueProcess != NtCurrentTeb()->ClientId.UniqueProcess || !info.TebBaseAddress)
+        return STATUS_NOT_SUPPORTED;
+    MX_THREAD *target = info.TebBaseAddress->WOW32Reserved;
+    if (!target || !target->frame)
+        return STATUS_NOT_SUPPORTED;
+    if (target->suspend.Critical)
+        return STATUS_UNSUCCESSFUL;
+    *out = &target->frame->cpu;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS get_context(X86Cpu *c, HANDLE thread, AMD64_CONTEXT *out)
 {
-    if (thread != NtCurrentThread())
-        return STATUS_NOT_SUPPORTED;
+    BOOLEAN current = thread == NtCurrentThread();
+    if (!current) {
+        NTSTATUS status = other_cpu(thread, FALSE, &c);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     AMD64_CONTEXT ctx;
     cpu_to_context(c, &ctx);
     /* the caller resumes after the system call. */
-    ctx.Rip = c->r[X86_RCX];
-    ctx.Rax = 0;
+    if (current) {
+        ctx.Rip = c->r[X86_RCX];
+        ctx.Rax = 0;
+    }
     ULONG flags = out->ContextFlags;
     memcpy(out, &ctx, sizeof(ctx));
     out->ContextFlags = flags;
@@ -460,7 +645,9 @@ static void native_call(X86Cpu *c, ULONG number, const ULONG64 *a)
         .xmm = {c->xmm[0].q[0], c->xmm[1].q[0], c->xmm[2].q[0], c->xmm[3].q[0]},
         .stack = (const ULONG64 *)(c->r[X86_RSP] + 0x28),
     };
+    suspend_gate(c->user, 0);
     t->Functions[index](&call);
+    suspend_gate(c->user, 1);
     c->r[X86_RAX] = call.rax;
     c->xmm[0].q[0] = call.xmm0;
     c->xmm[0].q[1] = 0;
@@ -470,6 +657,78 @@ static void env_syscall(X86Cpu *c)
 {
     MX_THREAD *t = c->user;
     ULONG number = (ULONG)c->r[X86_RAX];
+    if (!c->mode64) {
+        const ULONG *a = (const ULONG *)(ULONG_PTR)(ULONG)c->r[X86_RDX] + 1;
+        if (number == MIME_SVC_NtGetContextThread || number == MIME_SVC_NtSetContextThread) {
+            HANDLE handle = (HANDLE)(LONG_PTR)(LONG)a[0];
+            I386_CONTEXT *context = (void *)(ULONG_PTR)a[1];
+            X86Cpu *target = c;
+            BOOLEAN setting = number == MIME_SVC_NtSetContextThread;
+            NTSTATUS status = handle == NtCurrentThread() ? STATUS_SUCCESS : other_cpu(handle, setting, &target);
+            if (NT_SUCCESS(status)) {
+                if (setting) {
+                    context32_to_cpu(context, target);
+                } else {
+                    ULONG flags = context->ContextFlags;
+                    cpu_to_context32(target, context);
+                    context->ContextFlags = flags;
+                    if (handle == NtCurrentThread())
+                        context->Eax = 0;
+                }
+            }
+            if (!(NT_SUCCESS(status) && setting && target == c))
+                c->r[X86_RAX] = (ULONG)status;
+            return;
+        }
+        if (number == MIME_SVC_NtContinue) {
+            context32_to_cpu((const I386_CONTEXT *)(ULONG_PTR)a[0], c);
+            if (a[1])
+                NtTestAlert();
+            return;
+        }
+        if (number == MIME_SVC_NtRaiseException) {
+            MIME_EXCEPTION32 record;
+            I386_CONTEXT ctx;
+            memcpy(&record, (PVOID)(ULONG_PTR)a[0], sizeof(record));
+            memcpy(&ctx, (PVOID)(ULONG_PTR)a[1], sizeof(ctx));
+            if (a[2])
+                raise_in_x86(t->frame, &record, &ctx);
+            mx_print("mimex86: unhandled x86 exception %08x at %08x", (ULONG)record.Code, record.Address);
+            /* words of the x86 stack that look like return addresses into images, for the report. */
+            for (ULONG p = ctx.Esp & ~3u, n = 0; n < 96; p += 4, n++) {
+                MEMORY_BASIC_INFORMATION info;
+                if (NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)(ULONG_PTR)p, MemoryBasicInformation, &info,
+                                         sizeof(info), NULL) || info.State != MEM_COMMIT)
+                    break;
+                ULONG v = *(const ULONG *)(ULONG_PTR)p;
+                if (v > 0x10000 && !NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)(ULONG_PTR)v,
+                                                         MemoryBasicInformation, &info, sizeof(info), NULL) &&
+                    info.Type == MEM_IMAGE && (info.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)))
+                    mx_print("  [esp+%x] %08x", p - ctx.Esp, v);
+            }
+            mx_fatal(record.Code, "unhandled x86 exception");
+        }
+        if (number == MIME_SVC_NtCallbackReturn) {
+            t->frame->CallbackResult = (PVOID)(ULONG_PTR)a[0];
+            t->frame->CallbackLength = a[1];
+            t->frame->CallbackStatus = (NTSTATUS)a[2];
+            c->rip = c->exit_rip;
+            return;
+        }
+        PULONG last_error = (PULONG)((PUCHAR)t->teb32 + 0x34);
+        NtCurrentTeb()->LastErrorValue = *last_error;
+        suspend_gate(t, 0);
+        NTSTATUS status = Mx32SystemCall(number, a);
+        suspend_gate(t, 1);
+        *last_error = NtCurrentTeb()->LastErrorValue;
+        c->r[X86_RAX] = (ULONG)status;
+        if (status == STATUS_NOT_IMPLEMENTED)
+            Mx32Unsupported(number);
+        if (number == MIME_SVC_NtFreeVirtualMemory || number == MIME_SVC_NtUnmapViewOfSection ||
+            number == MIME_SVC_NtProtectVirtualMemory || number == MIME_SVC_NtFlushInstructionCache)
+            env_code_changed(c, 0, 0);
+        return;
+    }
     ULONG64 a[16];
     a[0] = c->r[X86_R10];
     a[1] = c->r[X86_RDX];
@@ -521,8 +780,24 @@ static void env_syscall(X86Cpu *c)
     case MIME_SVC_NtCallbackReturn:
         /* the callback's emulation ends here: the kernel resumes the system call that started it. */
         t->frame = t->frame->outer;
-        c->r[X86_RAX] = call_service(number, a);
+        c->r[X86_RAX] = call_service(c, number, a);
         return;
+    case MIME_SVC_NtQueryPerformanceCounter: {
+        /* the counter user mode reads directly, so the call never enters the kernel. */
+        ULONG64 v;
+        __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
+        *(ULONG64 *)a[0] = v;
+        if (a[1])
+            *(ULONG64 *)a[1] = USER_SHARED_DATA->QpcFrequency;
+        c->r[X86_RAX] = 0;
+        return;
+    }
+    case MIME_SVC_NtGetCurrentProcessorNumber: {
+        ULONG64 v;
+        __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(v));
+        c->r[X86_RAX] = v;
+        return;
+    }
     case MIME_SVC_NtGetContextThread:
         c->r[X86_RAX] = (ULONG64)(LONG64)get_context(c, (HANDLE)a[0], (AMD64_CONTEXT *)a[1]);
         return;
@@ -533,7 +808,13 @@ static void env_syscall(X86Cpu *c)
             context_to_cpu(&ctx, c);
             return;
         }
-        c->r[X86_RAX] = (ULONG64)(LONG64)STATUS_NOT_SUPPORTED;
+        {
+            X86Cpu *target;
+            NTSTATUS status = other_cpu((HANDLE)a[0], TRUE, &target);
+            if (NT_SUCCESS(status))
+                context_to_cpu((AMD64_CONTEXT *)a[1], target);
+            c->r[X86_RAX] = (ULONG64)(LONG64)status;
+        }
         return;
     default:
         break;
@@ -561,7 +842,7 @@ static void env_syscall(X86Cpu *c)
         }
     }
     MX_FRAME *frame = t->frame;
-    ULONG64 result = call_service(number, a);
+    ULONG64 result = call_service(c, number, a);
     /* a callback run during the call may have entered nested emulations. */
     t->frame = frame;
     c->r[X86_RAX] = result;
@@ -598,7 +879,9 @@ static void env_syscall(X86Cpu *c)
 static PVOID image_export(PVOID base, const char *name)
 {
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
-    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC ?
+        ((PIMAGE_NT_HEADERS32)nt)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT] :
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
         return NULL;
     PIMAGE_EXPORT_DIRECTORY exp = (PIMAGE_EXPORT_DIRECTORY)((PUCHAR)base + dir.VirtualAddress);
@@ -640,7 +923,8 @@ static void relocate(PVOID base)
 
 static void map_x64_ntdll(void)
 {
-    UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\SysX64\\ntdll.dll");
+    UNICODE_STRING path;
+    RtlInitUnicodeString(&path, g_guest.is32 ? L"\\SystemRoot\\SysWOW64\\ntdll.dll" : L"\\SystemRoot\\SysX64\\ntdll.dll");
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
     IO_STATUS_BLOCK iosb;
@@ -659,18 +943,19 @@ static void map_x64_ntdll(void)
     status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, NULL, &size, ViewShare, 0,
                                 PAGE_EXECUTE_WRITECOPY);
     NtClose(section);
-    if (status == STATUS_IMAGE_NOT_AT_BASE)
+    if (status == STATUS_IMAGE_NOT_AT_BASE && !g_guest.is32)
         relocate(base);
     else if (!NT_SUCCESS(status))
         mx_fatal(status, "cannot map the x64 ntdll.dll");
-    g_x64.ntdll = base;
-    g_x64.ldr_initialize_thunk = (ULONG64)image_export(base, "LdrInitializeThunk");
-    g_x64.user_thread_start = (ULONG64)image_export(base, "RtlUserThreadStart");
-    g_x64.exception_dispatcher = (ULONG64)image_export(base, "KiUserExceptionDispatcher");
-    g_x64.callback_dispatcher = (ULONG64)image_export(base, "KiUserCallbackDispatcher");
-    MxInstallNatives(base, TRUE);
-    if (!g_x64.ldr_initialize_thunk || !g_x64.user_thread_start || !g_x64.exception_dispatcher ||
-        !g_x64.callback_dispatcher)
+    g_guest.ntdll = base;
+    g_guest.ldr_initialize_thunk = (ULONG64)image_export(base, "LdrInitializeThunk");
+    g_guest.user_thread_start = (ULONG64)image_export(base, "RtlUserThreadStart");
+    g_guest.exception_dispatcher = (ULONG64)image_export(base, "KiUserExceptionDispatcher");
+    g_guest.callback_dispatcher = (ULONG64)image_export(base, "KiUserCallbackDispatcher");
+    if (!g_guest.is32)
+        MxInstallNatives(base, TRUE);
+    if (!g_guest.ldr_initialize_thunk || !g_guest.user_thread_start || !g_guest.exception_dispatcher ||
+        (!g_guest.is32 && !g_guest.callback_dispatcher))
         mx_fatal(STATUS_ENTRYPOINT_NOT_FOUND, "the x64 ntdll.dll lacks an entry point");
 }
 
@@ -681,6 +966,15 @@ static void process_init(void)
     g_env.timestamp = env_timestamp;
     g_env.code_changed = env_code_changed;
     g_env.code_seen = env_code_seen;
+    g_env.suspend = env_suspend;
+    PIMAGE_DOS_HEADER dos = NtCurrentPeb()->ImageBaseAddress;
+    PIMAGE_NT_HEADERS32 nt = (void *)((PUCHAR)dos + dos->e_lfanew);
+    g_guest.is32 = nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386;
+    if (g_guest.is32) {
+        g_guest.peb32 = MxCreatePeb32();
+        if (!g_guest.peb32)
+            mx_fatal(STATUS_NO_MEMORY, "cannot allocate the x86 process environment");
+    }
     map_x64_ntdll();
 }
 
@@ -701,17 +995,53 @@ MX_EXPORT DECLSPEC_NORETURN void LdrInitializeThunk(ARM64_NT_CONTEXT *context, P
     MX_THREAD thread;
     memset(&thread, 0, sizeof(thread));
     thread.blocks = x86_new_blocks();
+    if (g_guest.is32) {
+        thread.teb32 = MxCreateTeb32(g_guest.peb32);
+        if (!thread.teb32)
+            mx_fatal(STATUS_NO_MEMORY, "cannot allocate the x86 thread environment");
+    }
     NtCurrentTeb()->WOW32Reserved = &thread;
+    thread.suspend.Critical = 1;
+    MX_SUSPEND_GATE *gate = &thread.suspend;
+    NTSTATUS gate_status = NtSetInformationThread(NtCurrentThread(), (THREADINFOCLASS)MX_THREAD_SUSPEND_GATE,
+                                                  &gate, sizeof(gate));
+    if (!NT_SUCCESS(gate_status))
+        mx_fatal(gate_status, "cannot register the translated suspension gate");
 
     MX_FRAME frame;
     init_frame(&frame, &thread);
+
+    if (g_guest.is32) {
+        ULONG top = (ULONG)(ULONG_PTR)context & ~15u;
+        I386_CONTEXT *ctx = (void *)(ULONG_PTR)((top - sizeof(*ctx)) & ~15u);
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->ContextFlags = CONTEXT_I386_FULL;
+        ctx->Eip = (ULONG)g_guest.user_thread_start;
+        ULONG *stack = (void *)ctx;
+        *--stack = context->X1 == (ULONG_PTR)NtCurrentPeb() ? (ULONG)(ULONG_PTR)g_guest.peb32 : (ULONG)context->X1;
+        *--stack = (ULONG)context->X0;
+        *--stack = 0xFFFF0000u;
+        ctx->Esp = (ULONG)(ULONG_PTR)stack;
+        ctx->EFlags = 0x202;
+        ctx->SegCs = 0x23;
+        ctx->SegSs = ctx->SegDs = ctx->SegEs = 0x2B;
+        ctx->SegFs = 0x53;
+        stack -= 16;
+        *--stack = (ULONG)(ULONG_PTR)g_guest.ntdll;
+        *--stack = (ULONG)(ULONG_PTR)ctx;
+        *--stack = 0xFFFF0000u;
+        frame.cpu.r[X86_RSP] = (ULONG)(ULONG_PTR)stack;
+        frame.cpu.rip = g_guest.ldr_initialize_thunk;
+        emulate(&thread, &frame);
+        mx_fatal(STATUS_UNSUCCESSFUL, "the x86 loader returned");
+    }
 
     ULONG64 top = (ULONG64)context & ~15ull;
     ULONG64 ctx_va = (top - sizeof(AMD64_CONTEXT)) & ~15ull;
     AMD64_CONTEXT *ctx = (AMD64_CONTEXT *)ctx_va;
     memset(ctx, 0, sizeof(*ctx));
     ctx->ContextFlags = CONTEXT_AMD64_FULL;
-    ctx->Rip = g_x64.user_thread_start;
+    ctx->Rip = g_guest.user_thread_start;
     ctx->Rcx = context->X0;
     ctx->Rdx = context->X1;
     ctx->Rsp = ctx_va - 8;
@@ -728,8 +1058,8 @@ MX_EXPORT DECLSPEC_NORETURN void LdrInitializeThunk(ARM64_NT_CONTEXT *context, P
     c->r[X86_RSP] = (ctx_va - 0x80) & ~15ull;
     push64(c, MX_EXIT_ADDRESS);
     c->r[X86_RCX] = ctx_va;
-    c->r[X86_RDX] = (ULONG64)g_x64.ntdll;
-    c->rip = g_x64.ldr_initialize_thunk;
+    c->r[X86_RDX] = (ULONG64)g_guest.ntdll;
+    c->rip = g_guest.ldr_initialize_thunk;
     emulate(&thread, &frame);
     mx_fatal(STATUS_UNSUCCESSFUL, "the x64 LdrInitializeThunk returned");
 }
@@ -754,6 +1084,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserExceptionDispatcher(EXCEPTION_RECORD *rec
     memcpy(&x64, record, sizeof(x64));
     x64.ExceptionRecord = NULL;
     /* the faulting instruction runs again if the program resumes. */
+    x86_jit_fault(&f->cpu, context->Pc);
     f->cpu.rip = f->cpu.insn_rip;
     if (x64.ExceptionCode == STATUS_ACCESS_VIOLATION && x64.NumberParameters >= 2 && x64.ExceptionInformation[0] == 8)
         x64.ExceptionInformation[0] = 0; /* the translator executes nothing from the faulting page */
@@ -768,11 +1099,30 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserCallbackDispatcher(ULONG api, PVOID argum
     init_frame(&frame, t);
     X86Cpu *c = &frame.cpu;
     c->r[X86_RSP] = nested_stack(t->frame);
+    if (g_guest.is32) {
+        MX_CALLBACK32 callback;
+        if (!Mx32MarshalCallback(c, api, arguments, length, &callback))
+            NtCallbackReturn(NULL, 0, STATUS_NOT_SUPPORTED);
+        ULONG *stack = (void *)(ULONG_PTR)c->r[X86_RSP];
+        *--stack = callback.Length;
+        *--stack = (ULONG)(ULONG_PTR)callback.Guest;
+        *--stack = api;
+        *--stack = 0xFFFF0000u;
+        c->r[X86_RSP] = (ULONG_PTR)stack;
+        c->rip = g_guest.callback_dispatcher;
+        frame.CallbackResult = NULL;
+        frame.CallbackLength = 0;
+        frame.CallbackStatus = STATUS_UNSUCCESSFUL;
+        emulate(t, &frame);
+        PVOID result = Mx32CallbackResult(&callback, frame.CallbackResult, &frame.CallbackLength);
+        NtCallbackReturn(result, result ? frame.CallbackLength : 0, frame.CallbackStatus);
+        mx_fatal(STATUS_UNSUCCESSFUL, "x86 callback returned");
+    }
     push64(c, MX_EXIT_ADDRESS);
     c->r[X86_RCX] = api;
     c->r[X86_RDX] = (ULONG64)arguments;
     c->r[X86_R8] = length;
-    c->rip = g_x64.callback_dispatcher;
+    c->rip = g_guest.callback_dispatcher;
     emulate(t, &frame);
     /* the x64 dispatcher returns through NtCallbackReturn and never comes back. */
     NtCallbackReturn(NULL, 0, STATUS_UNSUCCESSFUL);
@@ -788,10 +1138,19 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserApcDispatcher(PVOID context, PVOID argume
     init_frame(&frame, t);
     X86Cpu *c = &frame.cpu;
     c->r[X86_RSP] = nested_stack(t->frame);
-    push64(c, MX_EXIT_ADDRESS);
-    c->r[X86_RCX] = (ULONG64)context;
-    c->r[X86_RDX] = (ULONG64)argument1;
-    c->r[X86_R8] = (ULONG64)argument2;
+    if (g_guest.is32) {
+        c->r[X86_RSP] -= 16;
+        ULONG *args = (PULONG)(ULONG_PTR)c->r[X86_RSP];
+        args[0] = (ULONG)c->exit_rip;
+        args[1] = (ULONG)(ULONG_PTR)context;
+        args[2] = (ULONG)(ULONG_PTR)argument1;
+        args[3] = (ULONG)(ULONG_PTR)argument2;
+    } else {
+        push64(c, MX_EXIT_ADDRESS);
+        c->r[X86_RCX] = (ULONG64)context;
+        c->r[X86_RDX] = (ULONG64)argument1;
+        c->r[X86_R8] = (ULONG64)argument2;
+    }
     c->rip = (ULONG64)routine;
     emulate(t, &frame);
     NtContinue((PCONTEXT)interrupted, TRUE);

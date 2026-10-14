@@ -14,6 +14,12 @@
 #define MX_NATIVE_LOAD 0x7EFF0000u
 #define MX_NATIVE_OPENGL32 1
 
+#define MX_THREAD_SUSPEND_GATE 0x4d580001u
+typedef struct MX_SUSPEND_GATE {
+    volatile unsigned int Critical;
+    volatile unsigned int Pending;
+} MX_SUSPEND_GATE;
+
 typedef struct MX_NATIVE_CALL {
     unsigned long long gpr[4];         /* rcx, rdx, r8, r9 */
     unsigned long long xmm[4];         /* low quadwords of xmm0 to xmm3 */

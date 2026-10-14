@@ -77,6 +77,7 @@ typedef struct X86Env {
     void (*code_changed)(X86Cpu *cpu, uint64_t address, uint64_t size);
     /* a block was decoded from the code at address. */
     void (*code_seen)(X86Cpu *cpu, uint64_t address);
+    void (*suspend)(X86Cpu *cpu);
 } X86Env;
 
 struct X86Cpu {
@@ -111,6 +112,7 @@ struct X86Cpu {
     /* start of the instruction being executed, for faults. */
     uint64_t insn_rip;
     const X86Env *env;
+    volatile unsigned int *suspend_pending;
     void *user;          /* the environment's per thread data */
     void *blocks;        /* the decoded block cache */
     const volatile uint32_t *code_epoch; /* bumped by the environment when code may have changed, or NULL */
@@ -118,6 +120,7 @@ struct X86Cpu {
     uint64_t *trace;     /* when set, the start of the last X86_TRACE_SIZE blocks run */
     uint32_t *trace_pos;
     uint64_t steps;      /* executed instructions, for statistics */
+    const void *jit_block; /* the translated block running, for faults in its code */
 };
 
 /* decoded instruction. */
@@ -183,6 +186,25 @@ void x86_clear_native(uint64_t start, uint64_t end);
 /* the block cache allocator, provided by the environment. */
 void *x86_alloc(size_t size);
 void x86_free(void *p, size_t size);
+
+/*
+ * executable memory for translated code, provided by the environment. code
+ * is written between x86_code_write_begin and x86_code_write_end, which makes
+ * the bytes written at p visible to instruction fetch.
+ */
+void *x86_alloc_code(size_t size);
+void x86_free_code(void *p, size_t size);
+void x86_code_write_begin(void);
+void x86_code_write_end(void *p, size_t size);
+
+/* executions of a block before it is translated to arm64 code; ~0u never translates. */
+extern uint32_t x86_jit_threshold;
+
+/*
+ * a native fault at pc while the cpu ran: when pc is in translated code,
+ * insn_rip becomes the x86 instruction it belongs to.
+ */
+void x86_jit_fault(X86Cpu *cpu, uint64_t pc);
 
 /* fxsave layout, used by fxsave, fxrstor and thread contexts. */
 void x86_fxsave(X86Cpu *cpu, uint8_t *area);

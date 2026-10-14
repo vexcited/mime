@@ -3,6 +3,7 @@
  * block cache and the run loop. sse lives in sse.c and the x87 in x87.c.
  */
 #include "internal.h"
+#include "jit.h"
 
 /* ------------------------------------------------------------ registers */
 
@@ -1505,6 +1506,9 @@ typedef struct X86Block {
     struct X86Block *fallback; /* the x64 code of a native block, for when the native function declines */
     struct X86Block *succ[2];  /* the blocks that last followed this one, skipping the hash lookup */
     uint64_t succ_rip[2];
+    uint32_t *jit;          /* the translated code, see jit.c */
+    uint16_t *jit_offsets;  /* code offset of each instruction and of the end */
+    uint32_t runs;          /* executions while not translated, ~0u once translation failed */
     uint32_t count;
     X86Insn insns[];
 } X86Block;
@@ -1515,6 +1519,9 @@ typedef struct X86BlockCache {
     size_t arena_used;
     size_t arena_size;
     struct X86BlockArena *arenas;
+    uint8_t *code;              /* the code arena being filled */
+    size_t code_used;
+    struct X86BlockArena *code_arenas;
 } X86BlockCache;
 
 typedef struct X86BlockArena {
@@ -1541,7 +1548,7 @@ static void *cache_alloc(X86BlockCache *bc, size_t size)
     return p;
 }
 
-static int ends_block(const X86Insn *i)
+int x86_ends_block(const X86Insn *i)
 {
     if (i->map == 0) {
         uint8_t op = i->opcode;
@@ -1622,6 +1629,9 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
         b->fallback = NULL;
         b->succ[0] = b->succ[1] = NULL;
         b->succ_rip[0] = b->succ_rip[1] = 0;
+        b->jit = NULL;
+        b->jit_offsets = NULL;
+        b->runs = ~0u;
         b->count = 0;
         uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
         b->next = bc->buckets[h];
@@ -1642,7 +1652,7 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
             break;
         }
         pc += buf[n].len;
-        if (ends_block(&buf[n++]))
+        if (x86_ends_block(&buf[n++]))
             break;
     }
     if (c->env && c->env->code_seen)
@@ -1653,6 +1663,9 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
     b->fallback = NULL;
     b->succ[0] = b->succ[1] = NULL;
     b->succ_rip[0] = b->succ_rip[1] = 0;
+    b->jit = NULL;
+    b->jit_offsets = NULL;
+    b->runs = 0;
     b->count = n;
     __builtin_memcpy(b->insns, buf, n * sizeof(X86Insn));
     if (!allow_native)
@@ -1677,6 +1690,16 @@ static X86BlockCache *block_cache(X86Cpu *c)
     return c->blocks;
 }
 
+static void free_code(X86BlockCache *bc)
+{
+    X86BlockArena *a = bc->code_arenas;
+    while (a) {
+        X86BlockArena *next = a->next;
+        x86_free_code(a, a->size);
+        a = next;
+    }
+}
+
 void x86_free_blocks(X86Cpu *c)
 {
     X86BlockCache *bc = c->blocks;
@@ -1688,6 +1711,7 @@ void x86_free_blocks(X86Cpu *c)
         x86_free(a, a->size);
         a = next;
     }
+    free_code(bc);
     x86_free(bc, sizeof(*bc));
     c->blocks = NULL;
 }
@@ -1703,6 +1727,7 @@ void x86_flush_blocks(X86Cpu *c)
         x86_free(a, a->size);
         a = next;
     }
+    free_code(bc);
     __builtin_memset(bc, 0, sizeof(*bc));
 }
 
@@ -1743,10 +1768,66 @@ static inline X86Block *next_block(X86Cpu *c, X86Block *prev, uint64_t rip)
     return b;
 }
 
+void x86_exec_insn(X86Cpu *c, const X86Insn *i)
+{
+    exec(c, i);
+}
+
+uint32_t x86_jit_threshold = 16;
+
+#define CODE_ARENA_SIZE (4u << 20)
+#define JIT_MAX_WORDS 8192u
+
+/* translates a block to arm64 code; a block that does not translate keeps being interpreted. */
+static void jit_block(X86Cpu *c, X86Block *b)
+{
+    X86BlockCache *bc = block_cache(c);
+    b->runs = ~0u;
+    if (!c->mode64 || !b->count || b->count > 64)
+        return;
+    if (!bc->code || bc->code_used + JIT_MAX_WORDS * 4 > CODE_ARENA_SIZE) {
+        X86BlockArena *a = x86_alloc_code(CODE_ARENA_SIZE);
+        if (!a)
+            return;
+        x86_code_write_begin();
+        a->next = bc->code_arenas;
+        a->size = CODE_ARENA_SIZE;
+        x86_code_write_end(a, sizeof(*a));
+        bc->code_arenas = a;
+        bc->code = (uint8_t *)a;
+        bc->code_used = 64;
+    }
+    uint16_t *offsets = cache_alloc(bc, (b->count + 1) * sizeof(uint16_t));
+    uint32_t *code = (uint32_t *)(bc->code + bc->code_used);
+    x86_code_write_begin();
+    uint32_t words = x86_jit_translate(c, b->rip, b->insns, b->count, code, JIT_MAX_WORDS, offsets);
+    x86_code_write_end(code, words * 4);
+    if (!words)
+        return;
+    bc->code_used += (words * 4 + 63) & ~(size_t)63;
+    b->jit_offsets = offsets;
+    b->jit = code;
+}
+
+void x86_jit_fault(X86Cpu *c, uint64_t pc)
+{
+    const X86Block *b = c->jit_block;
+    if (!b || pc < (uint64_t)(uintptr_t)b->jit)
+        return;
+    uint64_t offset = (pc - (uint64_t)(uintptr_t)b->jit) / 4;
+    if (offset < b->jit_offsets[b->count])
+        c->insn_rip = x86_jit_fault_rip(b->rip, b->insns, b->count, b->jit_offsets, (uint32_t)offset);
+}
+
 void x86_run(X86Cpu *c)
 {
     X86Block *prev = NULL;
+    c->jit_block = NULL; /* after a fault in translated code restarted the run */
     while (c->rip != c->exit_rip) {
+        if (c->suspend_pending && *c->suspend_pending && c->env->suspend) {
+            c->env->suspend(c);
+            prev = NULL;
+        }
         if (c->code_epoch && *c->code_epoch != c->blocks_epoch) {
             c->blocks_epoch = *c->code_epoch;
             x86_flush_blocks(c);
@@ -1766,7 +1847,17 @@ void x86_run(X86Cpu *c)
                 b->fallback = translate(c, block_cache(c), c->rip, 0);
             b = b->fallback;
         }
-        const X86Insn *i = b->insns, *end = i + b->count;
+        const X86Insn *i = b->insns, *end = i + b->count, *start;
+        if (!b->jit && b->runs < ~0u && ++b->runs > x86_jit_threshold)
+            jit_block(c, b);
+        if (b->jit) {
+            c->jit_block = b;
+            uint32_t ran = ((uint32_t (*)(X86Cpu *))(void *)b->jit)(c);
+            c->jit_block = NULL;
+            c->steps += ran;
+            i += ran;
+        }
+        start = i;
         uint64_t expected = c->rip;
         for (; i < end; i++) {
             if (c->rip != expected)
@@ -1774,7 +1865,7 @@ void x86_run(X86Cpu *c)
             expected += i->len;
             exec(c, i);
         }
-        c->steps += (uint64_t)(i - b->insns);
+        c->steps += (uint64_t)(i - start);
         prev = b;
     }
 }

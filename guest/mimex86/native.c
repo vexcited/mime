@@ -13,6 +13,7 @@
 #include "x86.h"
 
 typedef ULONG64 (*NATIVE6)(ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64);
+void MxSetSuspendCritical(X86Cpu *c, ULONG critical);
 
 /* the x64 calling convention: rcx, rdx, r8, r9, then the stack above the return address and its home space. */
 static ULONG64 arg(X86Cpu *c, int i)
@@ -35,7 +36,10 @@ static int call6(X86Cpu *c, void *fn, int args)
     ULONG64 a[6] = {0};
     for (int i = 0; i < args; i++)
         a[i] = arg(c, i);
-    return finish(c, ((NATIVE6)fn)(a[0], a[1], a[2], a[3], a[4], a[5]));
+    MxSetSuspendCritical(c, 0);
+    ULONG64 result = ((NATIVE6)fn)(a[0], a[1], a[2], a[3], a[4], a[5]);
+    MxSetSuspendCritical(c, 1);
+    return finish(c, result);
 }
 
 #define NATIVE(name, args)                                                                                             \

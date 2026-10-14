@@ -63,6 +63,42 @@ s128 __modti3(s128 n, s128 d)
     return n < 0 ? -(s128)r : (s128)r;
 }
 
+void *x86_alloc_code(size_t size)
+{
+    PVOID base = NULL;
+    SIZE_T bytes = size;
+    if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &bytes, MEM_COMMIT | MEM_RESERVE,
+                                            PAGE_EXECUTE_READWRITE)))
+        return NULL;
+    return base;
+}
+
+void x86_free_code(void *p, size_t size)
+{
+    PVOID base = p;
+    SIZE_T bytes = 0;
+    NtFreeVirtualMemory(NtCurrentProcess(), &base, &bytes, MEM_RELEASE);
+}
+
+void x86_code_write_begin(void)
+{
+}
+
+/* cleans the written lines to the point of unification, then drops them from the instruction caches. */
+void x86_code_write_end(void *p, size_t size)
+{
+    uint64_t ctr;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    uintptr_t dline = 4u << ((ctr >> 16) & 15), iline = 4u << (ctr & 15);
+    uintptr_t start = (uintptr_t)p, end = start + size;
+    for (uintptr_t a = start & ~(dline - 1); a < end; a += dline)
+        __asm__ volatile("dc cvau, %0" ::"r"(a) : "memory");
+    __asm__ volatile("dsb ish" ::: "memory");
+    for (uintptr_t a = start & ~(iline - 1); a < end; a += iline)
+        __asm__ volatile("ic ivau, %0" ::"r"(a) : "memory");
+    __asm__ volatile("dsb ish\n\tisb" ::: "memory");
+}
+
 /* the runtime's strings are rare here: whole pages are fine. */
 PVOID MimeRtlAllocate(SIZE_T size)
 {
