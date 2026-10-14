@@ -12,7 +12,7 @@
 #else
 #define WINSOCK_API_LINKAGE DECLSPEC_IMPORT
 #endif
-#define WSAAPI
+#define WSAAPI WINAPI
 
 typedef unsigned char u_char;
 typedef unsigned short u_short;
@@ -305,14 +305,22 @@ typedef struct protoent {
 typedef struct WSAData {
     WORD wVersion;
     WORD wHighVersion;
+#if defined(__i386__)
+    char szDescription[WSADESCRIPTION_LEN + 1];
+    char szSystemStatus[WSASYS_STATUS_LEN + 1];
+    unsigned short iMaxSockets;
+    unsigned short iMaxUdpDg;
+    char *lpVendorInfo;
+#else
     unsigned short iMaxSockets;
     unsigned short iMaxUdpDg;
     char *lpVendorInfo;
     char szDescription[WSADESCRIPTION_LEN + 1];
     char szSystemStatus[WSASYS_STATUS_LEN + 1];
+#endif
 } WSADATA, *LPWSADATA;
-MIME_FIELD_AT(WSADATA, szDescription, 16);
-MIME_STATIC_ASSERT(sizeof(WSADATA) == 408, "WSADATA");
+MIME_FIELD_AT(WSADATA, szDescription, sizeof(void *) == 4 ? 4 : 16);
+MIME_STATIC_ASSERT(sizeof(WSADATA) == (sizeof(void *) == 4 ? 400 : 408), "WSADATA");
 
 /* ------------------------------------------------------------------ options */
 

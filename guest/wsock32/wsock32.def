@@ -1,0 +1,25 @@
+LIBRARY wsock32.dll
+EXPORTS
+    accept=ws2_32.accept
+    bind=ws2_32.bind
+    closesocket=ws2_32.closesocket
+    connect=ws2_32.connect
+    getsockname=ws2_32.getsockname
+    htonl=ws2_32.htonl
+    htons=ws2_32.htons
+    inet_addr=ws2_32.inet_addr
+    ioctlsocket=ws2_32.ioctlsocket
+    listen=ws2_32.listen
+    ntohl=ws2_32.ntohl
+    ntohs=ws2_32.ntohs
+    recv=ws2_32.recv
+    recvfrom=ws2_32.recvfrom
+    select=ws2_32.select
+    send=ws2_32.send
+    sendto=ws2_32.sendto
+    setsockopt=ws2_32.setsockopt
+    socket=ws2_32.socket
+    WSAStartup=ws2_32.WSAStartup
+    WSACleanup=ws2_32.WSACleanup
+    WSAGetLastError=ws2_32.WSAGetLastError
+    __WSAFDIsSet=ws2_32.__WSAFDIsSet

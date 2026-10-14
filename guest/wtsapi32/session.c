@@ -11,6 +11,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
 #include <mime/win32/winuser.h>
+#include "wts_private.h"
 
 #define WTSAPI DECLSPEC_EXPORT
 
@@ -216,7 +217,7 @@ static void session_user(SESSION *s)
 /* fills the description of a session; returns a win32 error. */
 static DWORD describe(HANDLE server, DWORD id, SESSION *s)
 {
-    if (server != WTS_CURRENT_SERVER_HANDLE)
+    if (!MimeWtsServerValid(server))
         return ERROR_INVALID_HANDLE;
     if (id == WTS_CURRENT_SESSION)
         id = current_session();
@@ -435,7 +436,7 @@ WTSAPI BOOL WINAPI WTSEnumerateSessionsW(HANDLE server, DWORD reserved, DWORD ve
         set_error(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (server != WTS_CURRENT_SERVER_HANDLE) {
+    if (!MimeWtsServerValid(server)) {
         set_error(ERROR_INVALID_HANDLE);
         return FALSE;
     }
@@ -499,6 +500,10 @@ WTSAPI BOOL WINAPI WTSRegisterSessionNotification(HWND window, DWORD flags)
 
 WTSAPI BOOL WINAPI WTSRegisterSessionNotificationEx(HANDLE server, HWND window, DWORD flags)
 {
+    if (!MimeWtsServerValid(server)) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
     return check_window(window, flags);
 }
 
@@ -509,5 +514,9 @@ WTSAPI BOOL WINAPI WTSUnRegisterSessionNotification(HWND window)
 
 WTSAPI BOOL WINAPI WTSUnRegisterSessionNotificationEx(HANDLE server, HWND window)
 {
+    if (!MimeWtsServerValid(server)) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
     return check_window(window, 0);
 }

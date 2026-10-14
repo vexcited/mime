@@ -19,7 +19,7 @@ typedef struct addrinfo {
     struct sockaddr *ai_addr;
     struct addrinfo *ai_next;
 } ADDRINFOA, *PADDRINFOA;
-MIME_STATIC_ASSERT(sizeof(ADDRINFOA) == 48, "ADDRINFOA");
+MIME_STATIC_ASSERT(sizeof(ADDRINFOA) == (sizeof(void *) == 4 ? 32 : 48), "ADDRINFOA");
 
 typedef struct addrinfoW {
     int ai_flags;

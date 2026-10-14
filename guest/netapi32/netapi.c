@@ -165,3 +165,35 @@ NETAPI NET_API_STATUS WINAPI NetShareEnum(LMSTR server, DWORD level, LPBYTE *buf
     *total = 0;
     return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
 }
+
+NETAPI NET_API_STATUS WINAPI NetShareAdd(LMSTR server, DWORD level, LPBYTE buffer, LPDWORD parameter)
+{
+    if (parameter)
+        *parameter = 0;
+    if (level != 2 && level != 502 && level != 503)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicy(LPCWSTR server, LPVOID qualifier, int type,
+                                                       LPVOID input, LPVOID *output)
+{
+    if (!output)
+        return ERROR_INVALID_PARAMETER;
+    *output = NULL;
+    if (qualifier || type < 1 || type > 3 || !input)
+        return ERROR_INVALID_PARAMETER;
+    return local_server(server) ? ERROR_NOT_SUPPORTED : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicyFree(LPVOID *output)
+{
+    if (!output)
+        return ERROR_INVALID_PARAMETER;
+    if (*output && LocalFree(*output))
+        return ERROR_INVALID_PARAMETER;
+    *output = NULL;
+    return NERR_Success;
+}
