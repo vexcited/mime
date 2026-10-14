@@ -1340,3 +1340,73 @@ float __cdecl _scalbf(float x, long n)
 {
     return narrow(_scalb(x, n), "_scalbf", x, n);
 }
+
+/* newer crt exports share the existing range reduction and error handling. */
+DECLSPEC_EXPORT double __cdecl trunc(double x) { return trunc_(x); }
+DECLSPEC_EXPORT float __cdecl truncf(float x) { return (float)trunc_(x); }
+DECLSPEC_EXPORT double __cdecl log2(double x)
+{
+    if (!(x > 0) || is_inf(x)) return log(x);
+    DD value = log_kernel(x);
+    DD result = dd_mul_d(value, 1.44269504088896340736);
+    result.lo += value.hi * 2.0355273740931033e-17;
+    return result.hi + result.lo;
+}
+DECLSPEC_EXPORT int __cdecl ilogb(double x)
+{
+    if (!x || is_nan(x)) { *_errno() = EDOM; return (-2147483647 - 1); }
+    if (is_inf(x)) { *_errno() = EDOM; return 2147483647; }
+    int exponent;
+    frexp(x, &exponent);
+    return exponent - 1;
+}
+DECLSPEC_EXPORT int __cdecl ilogbf(float x) { return ilogb(x); }
+static double log1p_small(double x)
+{
+    double sum = 1 + x;
+    if (sum == 1) return x;
+    return log(sum) * (x / (sum - 1));
+}
+DECLSPEC_EXPORT double __cdecl asinh(double x)
+{
+    double a = fabs_(x), value;
+    if (is_nan(x) || is_inf(x) || a < 0x1p-28) return x;
+    if (a > 0x1p28) value = log(a) + (LN2_HI + LN2_LO);
+    else value = log1p_small(a + a * a / (1 + sqrt_(1 + a * a)));
+    return x < 0 ? -value : value;
+}
+DECLSPEC_EXPORT double __cdecl acosh(double x)
+{
+    if (is_nan(x) || x == INF) return x;
+    if (x < 1) return MsvcrtMathError(_DOMAIN, "acosh", x, 0, NAN_IND);
+    if (x > 0x1p28) return log(x) + (LN2_HI + LN2_LO);
+    double d = x - 1;
+    return log1p_small(d + sqrt_(d * (x + 1)));
+}
+DECLSPEC_EXPORT double __cdecl atanh(double x)
+{
+    double a = fabs_(x);
+    if (is_nan(x) || a < 0x1p-28) return x;
+    if (a > 1) return MsvcrtMathError(_DOMAIN, "atanh", x, 0, NAN_IND);
+    if (a == 1) return MsvcrtMathError(_SING, "atanh", x, 0, x < 0 ? -INF : INF);
+    double value = 0.5 * log1p_small(2 * a / (1 - a));
+    return x < 0 ? -value : value;
+}
+DECLSPEC_EXPORT double __cdecl cbrt(double x)
+{
+    if (!x || is_nan(x) || is_inf(x)) return x;
+    int exponent;
+    double m = frexp(fabs_(x), &exponent);
+    int remainder = exponent % 3;
+    if (remainder < 0) remainder += 3;
+    m = scale(m, remainder);
+    double root = 1;
+    for (int i = 0; i < 8; i++) root = (2 * root + m / (root * root)) / 3;
+    root = scale(root, (exponent - remainder) / 3);
+    return x < 0 ? -root : root;
+}
+DECLSPEC_EXPORT float __cdecl log2f(float x) { return (float)log2(x); }
+DECLSPEC_EXPORT float __cdecl asinhf(float x) { return (float)asinh(x); }
+DECLSPEC_EXPORT float __cdecl acoshf(float x) { return (float)acosh(x); }
+DECLSPEC_EXPORT float __cdecl atanhf(float x) { return (float)atanh(x); }
+DECLSPEC_EXPORT float __cdecl cbrtf(float x) { return (float)cbrt(x); }

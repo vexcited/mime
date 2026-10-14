@@ -544,3 +544,8 @@ unsigned long long __cdecl _byteswap_uint64(unsigned long long v)
 {
     return __builtin_bswap64(v);
 }
+
+DECLSPEC_EXPORT unsigned long long __cdecl strtoull(const char *text, char **end, int base)
+{
+    return _strtoui64(text, end, base);
+}

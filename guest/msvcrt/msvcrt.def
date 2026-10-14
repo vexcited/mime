@@ -877,3 +877,7 @@ EXPORTS
     wprintf_s
     wscanf
     wscanf_s
+
+    _invalid_parameter_noinfo
+    _lock_file
+    _unlock_file
