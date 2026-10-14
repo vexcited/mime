@@ -34,6 +34,10 @@ OLE_THREAD *OleThreadState(BOOL create)
 
 static void leave_apartment(OLE_THREAD *t)
 {
+    IMessageFilter *filter = t->MessageFilter;
+    t->MessageFilter = NULL;
+    if (filter)
+        filter->lpVtbl->Release(filter);
     if (!t->Sta)
         InterlockedDecrement(&g_mta_threads);
     else
@@ -226,7 +230,7 @@ WINOLEAPI HRESULT WINAPI CoGetMalloc(DWORD context, IMalloc **malloc)
 
 /* ------------------------------------------------------------------ guid strings */
 
-static void format_guid(REFGUID guid, WCHAR *out)
+void OleFormatGuid(REFGUID guid, WCHAR *out)
 {
     static const WCHAR hex[] = L"0123456789ABCDEF";
     BYTE bytes[16];
@@ -263,7 +267,7 @@ static int hex_digit(WCHAR c)
 }
 
 /* parses exactly "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}". */
-static BOOL parse_guid(LPCOLESTR s, GUID *guid)
+BOOL OleParseGuid(LPCOLESTR s, GUID *guid)
 {
     BYTE bytes[16];
     if (s[0] != L'{')
@@ -293,7 +297,7 @@ WINOLEAPI int WINAPI StringFromGUID2(REFGUID guid, LPOLESTR buffer, int size)
 {
     if (!guid || !buffer || size < 39)
         return 0;
-    format_guid(guid, buffer);
+    OleFormatGuid(guid, buffer);
     return 39;
 }
 
@@ -304,7 +308,7 @@ WINOLEAPI HRESULT WINAPI StringFromCLSID(REFCLSID clsid, LPOLESTR *string)
     *string = CoTaskMemAlloc(39 * sizeof(WCHAR));
     if (!*string)
         return E_OUTOFMEMORY;
-    format_guid(clsid, *string);
+    OleFormatGuid(clsid, *string);
     return S_OK;
 }
 
@@ -344,7 +348,7 @@ WINOLEAPI HRESULT WINAPI CLSIDFromProgID(LPCOLESTR progid, LPCLSID clsid)
     if (wcslen(progid) > MAX_PATH - 8)
         return CO_E_CLASSSTRING;
     _snwprintf(subkey, MAX_PATH, L"%ls\\CLSID", progid);
-    if (!read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)) || !parse_guid(value, clsid)) {
+    if (!read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)) || !OleParseGuid(value, clsid)) {
         memset(clsid, 0, sizeof(*clsid));
         return CO_E_CLASSSTRING;
     }
@@ -358,7 +362,7 @@ WINOLEAPI HRESULT WINAPI ProgIDFromCLSID(REFCLSID clsid, LPOLESTR *progid)
     *progid = NULL;
     WCHAR subkey[64], value[MAX_PATH];
     wcscpy(subkey, L"CLSID\\");
-    format_guid(clsid, subkey + 6);
+    OleFormatGuid(clsid, subkey + 6);
     wcscat(subkey, L"\\ProgID");
     if (!read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)))
         return REGDB_E_CLASSNOTREG;
@@ -379,7 +383,7 @@ WINOLEAPI HRESULT WINAPI CLSIDFromString(LPCOLESTR string, LPCLSID clsid)
         return S_OK;
     }
     if (string[0] == L'{') {
-        if (parse_guid(string, clsid))
+        if (OleParseGuid(string, clsid))
             return S_OK;
         memset(clsid, 0, sizeof(*clsid));
         return CO_E_CLASSSTRING;
@@ -395,7 +399,7 @@ WINOLEAPI HRESULT WINAPI IIDFromString(LPCOLESTR string, LPIID iid)
         memset(iid, 0, sizeof(*iid));
         return S_OK;
     }
-    if (!parse_guid(string, iid)) {
+    if (!OleParseGuid(string, iid)) {
         memset(iid, 0, sizeof(*iid));
         return E_INVALIDARG;
     }
@@ -450,7 +454,7 @@ static HRESULT get_inproc_class_object(REFCLSID clsid, REFIID riid, void **objec
 {
     WCHAR subkey[64], path[MAX_PATH];
     wcscpy(subkey, L"CLSID\\");
-    format_guid(clsid, subkey + 6);
+    OleFormatGuid(clsid, subkey + 6);
     wcscat(subkey, L"\\InprocServer32");
     if (!read_class_string(subkey, NULL, path, RTL_NUMBER_OF(path)) || !path[0])
         return REGDB_E_CLASSNOTREG;
@@ -469,6 +473,156 @@ static HRESULT get_inproc_class_object(REFCLSID clsid, REFIID riid, void **objec
     return hr;
 }
 
+/* ------------------------------------------------------------------ registered class objects */
+
+typedef struct _CLASS_ENTRY {
+    struct _CLASS_ENTRY *Next;
+    CLSID Clsid;
+    IUnknown *Object;
+    DWORD Context;
+    DWORD Flags;
+    DWORD Cookie;
+    /* a single use local server class already handed out. */
+    BOOL Used;
+} CLASS_ENTRY;
+
+static SRWLOCK g_class_lock = SRWLOCK_INIT;
+static CLASS_ENTRY *g_classes;
+static DWORD g_next_cookie;
+
+WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object, DWORD context, DWORD flags,
+                                               DWORD *cookie)
+{
+    if (!cookie)
+        return E_INVALIDARG;
+    *cookie = 0;
+    if (!clsid || !object)
+        return E_INVALIDARG;
+    HRESULT hr = OleCheckApartment();
+    if (FAILED(hr))
+        return hr;
+    /* a multiple use local server class also serves the process itself. */
+    if ((flags & REGCLS_MULTIPLEUSE) && (context & CLSCTX_LOCAL_SERVER))
+        context |= CLSCTX_INPROC_SERVER;
+    CLASS_ENTRY *entry = OleAllocZero(sizeof(*entry));
+    if (!entry)
+        return E_OUTOFMEMORY;
+    AcquireSRWLockExclusive(&g_class_lock);
+    for (CLASS_ENTRY *e = g_classes; e; e = e->Next) {
+        if (IsEqualCLSID(&e->Clsid, clsid) && (e->Context & context)) {
+            ReleaseSRWLockExclusive(&g_class_lock);
+            OleFree(entry);
+            return CO_E_OBJISREG;
+        }
+    }
+    entry->Clsid = *clsid;
+    entry->Object = object;
+    entry->Context = context;
+    entry->Flags = flags;
+    if (!++g_next_cookie)
+        ++g_next_cookie;
+    entry->Cookie = g_next_cookie;
+    object->lpVtbl->AddRef(object);
+    entry->Next = g_classes;
+    g_classes = entry;
+    *cookie = entry->Cookie;
+    ReleaseSRWLockExclusive(&g_class_lock);
+    return S_OK;
+}
+
+WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie)
+{
+    HRESULT hr = OleCheckApartment();
+    if (FAILED(hr))
+        return hr;
+    AcquireSRWLockExclusive(&g_class_lock);
+    CLASS_ENTRY **link = &g_classes, *entry;
+    while ((entry = *link) && entry->Cookie != cookie)
+        link = &entry->Next;
+    if (entry)
+        *link = entry->Next;
+    ReleaseSRWLockExclusive(&g_class_lock);
+    if (!entry)
+        return E_INVALIDARG;
+    entry->Object->lpVtbl->Release(entry->Object);
+    OleFree(entry);
+    return S_OK;
+}
+
+/* the referenced object registered for the class in one of the contexts, or NULL. */
+static IUnknown *find_registered_class(REFCLSID clsid, DWORD context)
+{
+    IUnknown *object = NULL;
+    AcquireSRWLockExclusive(&g_class_lock);
+    for (CLASS_ENTRY *e = g_classes; e; e = e->Next) {
+        DWORD match = e->Context & context;
+        if (!match || e->Used || !IsEqualCLSID(&e->Clsid, clsid))
+            continue;
+        if (!(e->Flags & (REGCLS_MULTIPLEUSE | REGCLS_MULTI_SEPARATE)) && match == CLSCTX_LOCAL_SERVER)
+            e->Used = TRUE;
+        object = e->Object;
+        object->lpVtbl->AddRef(object);
+        break;
+    }
+    ReleaseSRWLockExclusive(&g_class_lock);
+    return object;
+}
+
+/* ------------------------------------------------------------------ class emulation */
+
+LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key)
+{
+    WCHAR path[MAX_PATH];
+    wcscpy(path, L"CLSID\\");
+    OleFormatGuid(clsid, path + 6);
+    if (subkey) {
+        if (wcslen(subkey) > MAX_PATH - 46)
+            return ERROR_INVALID_PARAMETER;
+        wcscat(path, L"\\");
+        wcscat(path, subkey);
+    }
+    return RegOpenKeyExW(HKEY_CLASSES_ROOT, path, 0, access, key);
+}
+
+/* the class named by HKCR\CLSID\{clsid}\TreatAs. */
+static BOOL get_treat_as(REFCLSID clsid, CLSID *treat)
+{
+    WCHAR subkey[64], value[64];
+    wcscpy(subkey, L"CLSID\\");
+    OleFormatGuid(clsid, subkey + 6);
+    wcscat(subkey, L"\\TreatAs");
+    return read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)) && OleParseGuid(value, treat) &&
+           !IsEqualCLSID(treat, &CLSID_NULL);
+}
+
+WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid)
+{
+    if (!old_clsid || !new_clsid)
+        return E_INVALIDARG;
+    HKEY key;
+    if (OleOpenClassKey(old_clsid, NULL, KEY_READ | KEY_WRITE, &key))
+        return REGDB_E_CLASSNOTREG;
+    HRESULT hr = S_OK;
+    if (IsEqualCLSID(old_clsid, new_clsid) || IsEqualCLSID(new_clsid, &CLSID_NULL)) {
+        LSTATUS status = RegDeleteKeyExW(key, L"TreatAs", 0, 0);
+        if (status && status != ERROR_FILE_NOT_FOUND)
+            hr = REGDB_E_WRITEREGDB;
+    } else {
+        WCHAR value[39];
+        OleFormatGuid(new_clsid, value);
+        HKEY treat;
+        if (RegCreateKeyExW(key, L"TreatAs", 0, NULL, 0, KEY_WRITE, NULL, &treat, NULL))
+            hr = REGDB_E_WRITEREGDB;
+        else {
+            if (RegSetValueExW(treat, NULL, 0, REG_SZ, (const BYTE *)value, sizeof(value)))
+                hr = REGDB_E_WRITEREGDB;
+            RegCloseKey(treat);
+        }
+    }
+    RegCloseKey(key);
+    return hr;
+}
+
 WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *server, REFIID riid, void **object)
 {
     if (!object)
@@ -479,6 +633,15 @@ WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *s
     HRESULT hr = OleCheckApartment();
     if (FAILED(hr))
         return hr;
+    CLSID treat;
+    if (get_treat_as(clsid, &treat))
+        clsid = &treat;
+    IUnknown *registered = find_registered_class(clsid, context & (CLSCTX_INPROC | CLSCTX_LOCAL_SERVER));
+    if (registered) {
+        hr = registered->lpVtbl->QueryInterface(registered, riid, object);
+        registered->lpVtbl->Release(registered);
+        return hr;
+    }
     if (!(context & CLSCTX_INPROC))
         return REGDB_E_CLASSNOTREG;
     return get_inproc_class_object(clsid, riid, object);

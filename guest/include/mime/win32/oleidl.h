@@ -5,13 +5,25 @@
 #ifndef MIME_WIN32_OLEIDL_H
 #define MIME_WIN32_OLEIDL_H
 
-#include <mime/win32/objbase.h>
+#include <mime/win32/objidl.h>
 #include <mime/win32/winuser.h>
 
 /* ------------------------------------------------------------------ errors */
 
 #ifndef OLE_E_ADVISENOTSUPPORTED
 #define OLE_E_ADVISENOTSUPPORTED ((HRESULT)0x80040003L)
+#endif
+#ifndef OLE_E_ENUM_NOMORE
+#define OLE_E_ENUM_NOMORE ((HRESULT)0x80040002L)
+#endif
+#ifndef OLE_E_NOCONNECTION
+#define OLE_E_NOCONNECTION ((HRESULT)0x80040004L)
+#endif
+#ifndef OLE_E_STATIC
+#define OLE_E_STATIC ((HRESULT)0x8004000BL)
+#endif
+#ifndef OLEOBJ_E_NOVERBS
+#define OLEOBJ_E_NOVERBS ((HRESULT)0x80040180L)
 #endif
 #ifndef OLE_E_NOTRUNNING
 #define OLE_E_NOTRUNNING ((HRESULT)0x80040005L)
@@ -181,6 +193,175 @@ struct IDataObject {
     const IDataObjectVtbl *lpVtbl;
 };
 
+/* ------------------------------------------------------------------ advise sinks and holders */
+
+#define ADVF_NODATA 1
+#define ADVF_PRIMEFIRST 2
+#define ADVF_ONLYONCE 4
+#define ADVF_DATAONSTOP 64
+#define ADVFCACHE_NOHANDLER 8
+#define ADVFCACHE_FORCEBUILTIN 16
+#define ADVFCACHE_ONSAVE 32
+
+typedef struct IAdviseSinkVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IAdviseSink *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IAdviseSink *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IAdviseSink *This);
+    void(STDMETHODCALLTYPE *OnDataChange)(IAdviseSink *This, FORMATETC *format, STGMEDIUM *medium);
+    void(STDMETHODCALLTYPE *OnViewChange)(IAdviseSink *This, DWORD aspect, LONG index);
+    void(STDMETHODCALLTYPE *OnRename)(IAdviseSink *This, IMoniker *moniker);
+    void(STDMETHODCALLTYPE *OnSave)(IAdviseSink *This);
+    void(STDMETHODCALLTYPE *OnClose)(IAdviseSink *This);
+} IAdviseSinkVtbl;
+struct IAdviseSink {
+    const IAdviseSinkVtbl *lpVtbl;
+};
+
+typedef struct tagSTATDATA {
+    FORMATETC formatetc;
+    DWORD advf;
+    IAdviseSink *pAdvSink;
+    DWORD dwConnection;
+} STATDATA, *LPSTATDATA;
+
+typedef struct IEnumSTATDATAVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IEnumSTATDATA *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IEnumSTATDATA *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IEnumSTATDATA *This);
+    HRESULT(STDMETHODCALLTYPE *Next)(IEnumSTATDATA *This, ULONG count, STATDATA *items, ULONG *fetched);
+    HRESULT(STDMETHODCALLTYPE *Skip)(IEnumSTATDATA *This, ULONG count);
+    HRESULT(STDMETHODCALLTYPE *Reset)(IEnumSTATDATA *This);
+    HRESULT(STDMETHODCALLTYPE *Clone)(IEnumSTATDATA *This, IEnumSTATDATA **clone);
+} IEnumSTATDATAVtbl;
+struct IEnumSTATDATA {
+    const IEnumSTATDATAVtbl *lpVtbl;
+};
+
+typedef struct IDataAdviseHolder IDataAdviseHolder, *LPDATAADVISEHOLDER;
+typedef struct IDataAdviseHolderVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IDataAdviseHolder *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IDataAdviseHolder *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IDataAdviseHolder *This);
+    HRESULT(STDMETHODCALLTYPE *Advise)(IDataAdviseHolder *This, IDataObject *data, FORMATETC *format, DWORD advf,
+                                       IAdviseSink *sink, DWORD *connection);
+    HRESULT(STDMETHODCALLTYPE *Unadvise)(IDataAdviseHolder *This, DWORD connection);
+    HRESULT(STDMETHODCALLTYPE *EnumAdvise)(IDataAdviseHolder *This, IEnumSTATDATA **enumerator);
+    HRESULT(STDMETHODCALLTYPE *SendOnDataChange)(IDataAdviseHolder *This, IDataObject *data, DWORD reserved,
+                                                 DWORD advf);
+} IDataAdviseHolderVtbl;
+struct IDataAdviseHolder {
+    const IDataAdviseHolderVtbl *lpVtbl;
+};
+
+typedef struct IOleAdviseHolder IOleAdviseHolder, *LPOLEADVISEHOLDER;
+typedef struct IOleAdviseHolderVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IOleAdviseHolder *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IOleAdviseHolder *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IOleAdviseHolder *This);
+    HRESULT(STDMETHODCALLTYPE *Advise)(IOleAdviseHolder *This, IAdviseSink *sink, DWORD *connection);
+    HRESULT(STDMETHODCALLTYPE *Unadvise)(IOleAdviseHolder *This, DWORD connection);
+    HRESULT(STDMETHODCALLTYPE *EnumAdvise)(IOleAdviseHolder *This, IEnumSTATDATA **enumerator);
+    HRESULT(STDMETHODCALLTYPE *SendOnRename)(IOleAdviseHolder *This, IMoniker *moniker);
+    HRESULT(STDMETHODCALLTYPE *SendOnSave)(IOleAdviseHolder *This);
+    HRESULT(STDMETHODCALLTYPE *SendOnClose)(IOleAdviseHolder *This);
+} IOleAdviseHolderVtbl;
+struct IOleAdviseHolder {
+    const IOleAdviseHolderVtbl *lpVtbl;
+};
+
+/* ------------------------------------------------------------------ embedded objects */
+
+typedef struct IOleObject IOleObject, *LPOLEOBJECT;
+typedef struct IOleClientSite IOleClientSite, *LPOLECLIENTSITE;
+typedef struct IOleInPlaceActiveObject IOleInPlaceActiveObject, *LPOLEINPLACEACTIVEOBJECT;
+
+#define USERCLASSTYPE_FULL 1
+#define USERCLASSTYPE_SHORT 2
+#define USERCLASSTYPE_APPNAME 3
+
+#define OLERENDER_NONE 0
+#define OLERENDER_DRAW 1
+#define OLERENDER_FORMAT 2
+#define OLERENDER_ASIS 3
+
+typedef struct IRunnableObject IRunnableObject, *LPRUNNABLEOBJECT;
+typedef struct IRunnableObjectVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IRunnableObject *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IRunnableObject *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IRunnableObject *This);
+    HRESULT(STDMETHODCALLTYPE *GetRunningClass)(IRunnableObject *This, CLSID *clsid);
+    HRESULT(STDMETHODCALLTYPE *Run)(IRunnableObject *This, IBindCtx *context);
+    BOOL(STDMETHODCALLTYPE *IsRunning)(IRunnableObject *This);
+    HRESULT(STDMETHODCALLTYPE *LockRunning)(IRunnableObject *This, BOOL lock, BOOL last_unlock_closes);
+    HRESULT(STDMETHODCALLTYPE *SetContainedObject)(IRunnableObject *This, BOOL contained);
+} IRunnableObjectVtbl;
+struct IRunnableObject {
+    const IRunnableObjectVtbl *lpVtbl;
+};
+
+typedef struct tagOLEVERB {
+    LONG lVerb;
+    LPOLESTR lpszVerbName;
+    DWORD fuFlags;
+    DWORD grfAttribs;
+} OLEVERB, *LPOLEVERB;
+
+typedef struct IEnumOLEVERB IEnumOLEVERB, *LPENUMOLEVERB;
+typedef struct IEnumOLEVERBVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IEnumOLEVERB *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IEnumOLEVERB *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IEnumOLEVERB *This);
+    HRESULT(STDMETHODCALLTYPE *Next)(IEnumOLEVERB *This, ULONG count, OLEVERB *items, ULONG *fetched);
+    HRESULT(STDMETHODCALLTYPE *Skip)(IEnumOLEVERB *This, ULONG count);
+    HRESULT(STDMETHODCALLTYPE *Reset)(IEnumOLEVERB *This);
+    HRESULT(STDMETHODCALLTYPE *Clone)(IEnumOLEVERB *This, IEnumOLEVERB **clone);
+} IEnumOLEVERBVtbl;
+struct IEnumOLEVERB {
+    const IEnumOLEVERBVtbl *lpVtbl;
+};
+
+/* ------------------------------------------------------------------ in place activation frames */
+
+typedef HGLOBAL HOLEMENU;
+typedef RECT BORDERWIDTHS, *LPBORDERWIDTHS;
+typedef const RECT *LPCBORDERWIDTHS;
+
+typedef struct tagOleMenuGroupWidths {
+    LONG width[6];
+} OLEMENUGROUPWIDTHS, *LPOLEMENUGROUPWIDTHS;
+
+typedef struct tagOIFI {
+    UINT cb;
+    BOOL fMDIApp;
+    HWND hwndFrame;
+    HACCEL haccel;
+    UINT cAccelEntries;
+} OLEINPLACEFRAMEINFO, *LPOLEINPLACEFRAMEINFO;
+
+typedef struct IOleInPlaceFrame IOleInPlaceFrame, *LPOLEINPLACEFRAME;
+typedef struct IOleInPlaceFrameVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IOleInPlaceFrame *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IOleInPlaceFrame *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IOleInPlaceFrame *This);
+    HRESULT(STDMETHODCALLTYPE *GetWindow)(IOleInPlaceFrame *This, HWND *hwnd);
+    HRESULT(STDMETHODCALLTYPE *ContextSensitiveHelp)(IOleInPlaceFrame *This, BOOL enter);
+    HRESULT(STDMETHODCALLTYPE *GetBorder)(IOleInPlaceFrame *This, RECT *border);
+    HRESULT(STDMETHODCALLTYPE *RequestBorderSpace)(IOleInPlaceFrame *This, LPCBORDERWIDTHS widths);
+    HRESULT(STDMETHODCALLTYPE *SetBorderSpace)(IOleInPlaceFrame *This, LPCBORDERWIDTHS widths);
+    HRESULT(STDMETHODCALLTYPE *SetActiveObject)(IOleInPlaceFrame *This, IOleInPlaceActiveObject *object,
+                                                LPCOLESTR name);
+    HRESULT(STDMETHODCALLTYPE *InsertMenus)(IOleInPlaceFrame *This, HMENU shared, OLEMENUGROUPWIDTHS *widths);
+    HRESULT(STDMETHODCALLTYPE *SetMenu)(IOleInPlaceFrame *This, HMENU shared, HOLEMENU descriptor,
+                                        HWND active_object);
+    HRESULT(STDMETHODCALLTYPE *RemoveMenus)(IOleInPlaceFrame *This, HMENU shared);
+    HRESULT(STDMETHODCALLTYPE *SetStatusText)(IOleInPlaceFrame *This, LPCOLESTR text);
+    HRESULT(STDMETHODCALLTYPE *EnableModeless)(IOleInPlaceFrame *This, BOOL enable);
+    HRESULT(STDMETHODCALLTYPE *TranslateAccelerator)(IOleInPlaceFrame *This, MSG *msg, WORD id);
+} IOleInPlaceFrameVtbl;
+struct IOleInPlaceFrame {
+    const IOleInPlaceFrameVtbl *lpVtbl;
+};
+
 /* ------------------------------------------------------------------ drag and drop */
 
 #define DROPEFFECT_NONE 0
@@ -225,6 +406,14 @@ MIME_DEFINE_GUID(IID_IDataObject, 0x0000010E, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 
 MIME_DEFINE_GUID(IID_IEnumFORMATETC, 0x00000103, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 MIME_DEFINE_GUID(IID_IDropSource, 0x00000121, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 MIME_DEFINE_GUID(IID_IDropTarget, 0x00000122, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IEnumOLEVERB, 0x00000104, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IEnumSTATDATA, 0x00000105, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IAdviseSink, 0x0000010F, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IDataAdviseHolder, 0x00000110, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IOleAdviseHolder, 0x00000111, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IOleObject, 0x00000112, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IOleInPlaceFrame, 0x00000116, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IRunnableObject, 0x00000126, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 
 /* ------------------------------------------------------------------ ole32 ole functions */
 

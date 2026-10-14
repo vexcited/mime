@@ -114,8 +114,8 @@ typedef struct tagSAFEARRAY {
     PVOID pvData;
     SAFEARRAYBOUND rgsabound[1];
 } SAFEARRAY, *LPSAFEARRAY;
-MIME_FIELD_AT(SAFEARRAY, pvData, 16);
-MIME_FIELD_AT(SAFEARRAY, rgsabound, 24);
+MIME_FIELD_AT(SAFEARRAY, pvData, sizeof(void *) == 4 ? 12 : 16);
+MIME_FIELD_AT(SAFEARRAY, rgsabound, sizeof(void *) == 4 ? 16 : 24);
 
 #define FADF_AUTO 0x0001
 #define FADF_STATIC 0x0002
@@ -175,7 +175,7 @@ struct tagVARIANT {
         DECIMAL decVal;
     };
 };
-MIME_STATIC_ASSERT(sizeof(VARIANT) == 24, "VARIANT size");
+MIME_STATIC_ASSERT(sizeof(VARIANT) == (sizeof(void *) == 4 ? 16 : 24), "VARIANT size");
 
 #define V_VT(v) ((v)->vt)
 #define V_BSTR(v) ((v)->bstrVal)
@@ -223,5 +223,18 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayPutElement(SAFEARRAY *array, LONG *indices,
 WINOLEAUTAPI HRESULT WINAPI SafeArrayGetElement(SAFEARRAY *array, LONG *indices, void *value);
 WINOLEAUTAPI HRESULT WINAPI SafeArrayCopy(SAFEARRAY *array, SAFEARRAY **out);
 WINOLEAUTAPI HRESULT WINAPI SafeArrayCopyData(SAFEARRAY *source, SAFEARRAY *target);
+WINOLEAUTAPI HRESULT WINAPI SafeArrayRedim(SAFEARRAY *array, SAFEARRAYBOUND *bound);
+
+#define VAR_TIMEVALUEONLY 0x00000001
+#define VAR_DATEVALUEONLY 0x00000002
+WINOLEAUTAPI INT WINAPI SystemTimeToVariantTime(LPSYSTEMTIME time, double *date);
+WINOLEAUTAPI INT WINAPI VariantTimeToSystemTime(DATE date, LPSYSTEMTIME time);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR string, LCID lcid, ULONG flags, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromStr(LPCOLESTR string, LCID lcid, ULONG flags, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromStr(LPCOLESTR string, LCID lcid, ULONG flags, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromStr(LPCOLESTR string, LCID lcid, ULONG flags, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromCy(CY value, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromDec(const DECIMAL *value, LCID lcid, ULONG flags, BSTR *out);
 
 #endif

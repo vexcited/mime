@@ -10,7 +10,7 @@
 #define RPCRTAPI DECLSPEC_IMPORT
 #endif
 
-#define RPC_ENTRY
+#define RPC_ENTRY WINAPI
 
 typedef LONG RPC_STATUS;
 typedef GUID UUID;

@@ -1,0 +1,86 @@
+/*
+ * windows runtime basics of combase.dll: strings, activation and IInspectable.
+ */
+#ifndef MIME_WIN32_ROAPI_H
+#define MIME_WIN32_ROAPI_H
+
+#include <mime/win32/objbase.h>
+
+#ifndef ROAPI
+#define ROAPI DECLSPEC_IMPORT
+#endif
+
+/* ------------------------------------------------------------------ strings */
+
+typedef struct HSTRING__ *HSTRING;
+
+/* the caller provided header of a string reference, opaque like on windows. */
+typedef struct HSTRING_HEADER {
+    union {
+        PVOID Reserved1;
+        char Reserved2[sizeof(void *) == 8 ? 24 : 20];
+    } Reserved;
+} HSTRING_HEADER;
+
+ROAPI HRESULT WINAPI WindowsCreateString(LPCWSTR source, UINT32 length, HSTRING *string);
+ROAPI HRESULT WINAPI WindowsCreateStringReference(LPCWSTR source, UINT32 length, HSTRING_HEADER *header,
+                                                  HSTRING *string);
+ROAPI HRESULT WINAPI WindowsDeleteString(HSTRING string);
+ROAPI HRESULT WINAPI WindowsDuplicateString(HSTRING string, HSTRING *copy);
+ROAPI LPCWSTR WINAPI WindowsGetStringRawBuffer(HSTRING string, UINT32 *length);
+ROAPI UINT32 WINAPI WindowsGetStringLen(HSTRING string);
+ROAPI BOOL WINAPI WindowsIsStringEmpty(HSTRING string);
+ROAPI HRESULT WINAPI WindowsCompareStringOrdinal(HSTRING a, HSTRING b, INT32 *result);
+
+/* ------------------------------------------------------------------ IInspectable */
+
+typedef enum TrustLevel {
+    BaseTrust = 0,
+    PartialTrust = 1,
+    FullTrust = 2,
+} TrustLevel;
+
+typedef struct IInspectable IInspectable;
+typedef struct IInspectableVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IInspectable *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IInspectable *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IInspectable *This);
+    HRESULT(STDMETHODCALLTYPE *GetIids)(IInspectable *This, ULONG *count, IID **iids);
+    HRESULT(STDMETHODCALLTYPE *GetRuntimeClassName)(IInspectable *This, HSTRING *name);
+    HRESULT(STDMETHODCALLTYPE *GetTrustLevel)(IInspectable *This, TrustLevel *level);
+} IInspectableVtbl;
+struct IInspectable {
+    const IInspectableVtbl *lpVtbl;
+};
+
+typedef struct IActivationFactory IActivationFactory;
+typedef struct IActivationFactoryVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IActivationFactory *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IActivationFactory *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IActivationFactory *This);
+    HRESULT(STDMETHODCALLTYPE *GetIids)(IActivationFactory *This, ULONG *count, IID **iids);
+    HRESULT(STDMETHODCALLTYPE *GetRuntimeClassName)(IActivationFactory *This, HSTRING *name);
+    HRESULT(STDMETHODCALLTYPE *GetTrustLevel)(IActivationFactory *This, TrustLevel *level);
+    HRESULT(STDMETHODCALLTYPE *ActivateInstance)(IActivationFactory *This, IInspectable **instance);
+} IActivationFactoryVtbl;
+struct IActivationFactory {
+    const IActivationFactoryVtbl *lpVtbl;
+};
+
+MIME_DEFINE_GUID(IID_IInspectable, 0xAF86E2E0, 0xB12D, 0x4C6A, 0x9C, 0x5A, 0xD7, 0xAA, 0x65, 0x10, 0x1E, 0x90);
+MIME_DEFINE_GUID(IID_IActivationFactory, 0x00000035, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IAgileObject, 0x94EA2B94, 0xE9CC, 0x49E0, 0xC0, 0xFF, 0xEE, 0x64, 0xCA, 0x8F, 0x5B, 0x90);
+
+/* ------------------------------------------------------------------ activation */
+
+typedef enum RO_INIT_TYPE {
+    RO_INIT_SINGLETHREADED = 0,
+    RO_INIT_MULTITHREADED = 1,
+} RO_INIT_TYPE;
+
+ROAPI HRESULT WINAPI RoInitialize(RO_INIT_TYPE type);
+ROAPI void WINAPI RoUninitialize(void);
+ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory);
+ROAPI HRESULT WINAPI RoActivateInstance(HSTRING class_id, IInspectable **instance);
+
+#endif

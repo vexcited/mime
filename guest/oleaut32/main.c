@@ -5,5 +5,7 @@
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
+    if (reason == DLL_PROCESS_ATTACH) AutErrorAttach();
+    else if (reason == DLL_THREAD_DETACH || reason == DLL_PROCESS_DETACH) AutErrorDetach();
     return TRUE;
 }

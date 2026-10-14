@@ -12,8 +12,8 @@
 #define WINOLEAPI DECLSPEC_IMPORT
 #endif
 
-#define STDMETHODCALLTYPE
-#define STDAPICALLTYPE
+#define STDMETHODCALLTYPE WINAPI
+#define STDAPICALLTYPE WINAPI
 #define DECLSPEC_SELECTANY __declspec(selectany)
 
 /* defines a guid once per module; the linker merges the copies. */
@@ -65,6 +65,18 @@ FORCEINLINE BOOL IsEqualGUID(REFGUID a, REFGUID b)
 #ifndef CO_E_NOT_SUPPORTED
 #define CO_E_NOT_SUPPORTED ((HRESULT)0x80004021L)
 #endif
+#ifndef CO_E_OBJNOTREG
+#define CO_E_OBJNOTREG ((HRESULT)0x800401FBL)
+#endif
+#ifndef CO_E_OBJISREG
+#define CO_E_OBJISREG ((HRESULT)0x800401FCL)
+#endif
+#ifndef REGDB_E_WRITEREGDB
+#define REGDB_E_WRITEREGDB ((HRESULT)0x80040151L)
+#endif
+#ifndef RPC_E_TOO_LATE
+#define RPC_E_TOO_LATE ((HRESULT)0x80010119L)
+#endif
 
 /* ------------------------------------------------------------------ class contexts and apartments */
 
@@ -101,6 +113,12 @@ typedef enum _APTTYPEQUALIFIER {
 } APTTYPEQUALIFIER;
 
 #define MEMCTX_TASK 1
+
+#define REGCLS_SINGLEUSE 0
+#define REGCLS_MULTIPLEUSE 1
+#define REGCLS_MULTI_SEPARATE 2
+#define REGCLS_SUSPENDED 4
+#define REGCLS_SURROGATE 8
 
 /* ------------------------------------------------------------------ IUnknown */
 
@@ -168,6 +186,8 @@ MIME_DEFINE_GUID(IID_IMalloc, 0x00000002, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00
 
 /* ------------------------------------------------------------------ ole32 com functions */
 
+typedef struct IMessageFilter IMessageFilter, *LPMESSAGEFILTER;
+
 typedef HRESULT(STDAPICALLTYPE *LPFNGETCLASSOBJECT)(REFCLSID clsid, REFIID riid, void **object);
 typedef HRESULT(STDAPICALLTYPE *LPFNCANUNLOADNOW)(void);
 
@@ -195,5 +215,11 @@ WINOLEAPI HRESULT WINAPI CLSIDFromString(LPCOLESTR string, LPCLSID clsid);
 WINOLEAPI HRESULT WINAPI IIDFromString(LPCOLESTR string, LPIID iid);
 WINOLEAPI HRESULT WINAPI CLSIDFromProgID(LPCOLESTR progid, LPCLSID clsid);
 WINOLEAPI HRESULT WINAPI ProgIDFromCLSID(REFCLSID clsid, LPOLESTR *progid);
+WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object, DWORD context, DWORD flags,
+                                               DWORD *cookie);
+WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie);
+WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid);
+WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessageFilter **previous);
+WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved);
 
 #endif

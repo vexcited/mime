@@ -5,7 +5,8 @@
 #define MIME_OLE32_PRIVATE_H
 
 #define WINOLEAPI DECLSPEC_EXPORT
-#include <mime/win32/oleidl.h>
+#include <mime/win32/ole2.h>
+#include <mime/win32/propidl.h>
 #include <rtl.h>
 
 /* user32 exports that winuser.h does not declare yet. */
@@ -29,6 +30,8 @@ typedef struct _OLE_THREAD {
     LONG OleInits;
     /* the value of CoGetCurrentProcess, unique per thread. */
     DWORD ProcessId;
+    /* the filter of CoRegisterMessageFilter, referenced. */
+    IMessageFilter *MessageFilter;
 } OLE_THREAD;
 
 OLE_THREAD *OleThreadState(BOOL create);
@@ -53,6 +56,12 @@ FORCEINLINE void OleFree(void *p)
     if (p)
         HeapFree(GetProcessHeap(), 0, p);
 }
+
+/* com.c: braced upper case guids, 39 characters with the terminator. */
+void OleFormatGuid(REFGUID guid, WCHAR *out);
+BOOL OleParseGuid(LPCOLESTR string, GUID *guid);
+/* opens HKCR\CLSID\{clsid} or one of its subkeys. */
+LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key);
 
 /* clipboard.c */
 void OleClipboardUninitialize(void);

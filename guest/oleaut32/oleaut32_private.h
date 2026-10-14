@@ -40,4 +40,7 @@ FORCEINLINE void AutAddRef(void *object)
         ((IUnknown *)object)->lpVtbl->AddRef((IUnknown *)object);
 }
 
+void AutErrorAttach(void);
+void AutErrorDetach(void);
+
 #endif

@@ -1,0 +1,46 @@
+/*
+ * the ole user interface dialogs of oledlg.dll.
+ */
+#ifndef MIME_WIN32_OLEDLG_H
+#define MIME_WIN32_OLEDLG_H
+
+#include <mime/win32/objbase.h>
+
+#ifndef OLEDLGAPI
+#define OLEDLGAPI DECLSPEC_IMPORT
+#endif
+
+#define OLEUI_FALSE 0
+#define OLEUI_SUCCESS 1
+#define OLEUI_OK 1
+#define OLEUI_CANCEL 2
+#define OLEUI_ERR_STANDARDMIN 100
+#define OLEUI_ERR_OLEMEMALLOC 100
+#define OLEUI_ERR_STRUCTURENULL 101
+#define OLEUI_ERR_STRUCTUREINVALID 102
+
+#define OLEUI_BZERR_HTASKINVALID (OLEUI_ERR_STANDARDMAX + 0)
+#define OLEUI_BZ_SWITCHTOSELECTED (OLEUI_ERR_STANDARDMAX + 1)
+#define OLEUI_BZ_RETRYSELECTED (OLEUI_ERR_STANDARDMAX + 2)
+#define OLEUI_BZ_CALLUNBLOCKED (OLEUI_ERR_STANDARDMAX + 3)
+#define OLEUI_ERR_STANDARDMAX 116
+
+typedef UINT(CALLBACK *LPFNOLEUIHOOK)(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+
+typedef struct tagOLEUIBUSYW {
+    DWORD cbStruct;
+    DWORD dwFlags;
+    HWND hWndOwner;
+    LPCWSTR lpszCaption;
+    LPFNOLEUIHOOK lpfnHook;
+    LPARAM lCustData;
+    HINSTANCE hInstance;
+    LPCWSTR lpszTemplate;
+    HRSRC hResource;
+    HTASK hTask;
+    HWND *lphWndDialog;
+} OLEUIBUSYW, *POLEUIBUSYW, *LPOLEUIBUSYW;
+
+OLEDLGAPI UINT WINAPI OleUIBusyW(LPOLEUIBUSYW busy);
+
+#endif

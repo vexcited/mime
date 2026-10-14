@@ -456,3 +456,37 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayCopy(SAFEARRAY *array, SAFEARRAY **out)
     *out = copy;
     return S_OK;
 }
+
+/*
+ * changes the bounds of the last dimension, whose bounds are stored first.
+ * that dimension varies slowest, so elements are added or dropped at the end.
+ */
+WINOLEAUTAPI HRESULT WINAPI SafeArrayRedim(SAFEARRAY *array, SAFEARRAYBOUND *bound)
+{
+    if (!array || !bound)
+        return E_INVALIDARG;
+    if (array->cLocks)
+        return DISP_E_ARRAYISLOCKED;
+    if (array->fFeatures & FADF_FIXEDSIZE)
+        return E_INVALIDARG;
+    ULONG64 slice = 1;
+    for (USHORT i = 1; i < array->cDims; i++)
+        slice *= array->rgsabound[i].cElements;
+    ULONG64 old_count = slice * array->rgsabound[0].cElements, new_count = slice * bound->cElements;
+    if (new_count * array->cbElements > 0x7FFFFFFFull)
+        return E_OUTOFMEMORY;
+    if (new_count != old_count) {
+        if (array->fFeatures & FADF_NOT_OWNED)
+            return E_INVALIDARG;
+        for (ULONG64 i = new_count; i < old_count && array->pvData; i++)
+            free_element(array, (BYTE *)array->pvData + i * array->cbElements);
+        SIZE_T bytes = (SIZE_T)(new_count * array->cbElements);
+        void *data = array->pvData ? HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, array->pvData, bytes ? bytes : 1)
+                                   : AutAllocZero(bytes ? bytes : 1);
+        if (!data)
+            return E_OUTOFMEMORY;
+        array->pvData = data;
+    }
+    array->rgsabound[0] = *bound;
+    return S_OK;
+}
