@@ -537,10 +537,10 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 
     mime_ui_init(on_input, NULL);
 
-    uint64_t ram = MIME_VMM_DEFAULT_RAM;
+    uint64_t ram = mime_vm_default_ram();
     const char *ram_env = getenv("MIME_RAM_MB");
     if (ram_env && atoi(ram_env) >= 256)
-        ram = (uint64_t)atoi(ram_env) << 20;
+        ram = MIME_MIN((uint64_t)atoi(ram_env) << 20, MIME_VMM_MAX_RAM);
     if (!mime_vm_create(&g_vm, paths, ram))
         return 1;
     mime_ui_get_display(&g_vm.boot->display);

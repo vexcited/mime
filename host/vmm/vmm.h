@@ -10,7 +10,8 @@
 #include <pthread.h>
 
 #define MIME_VMM_MAX_VCPUS 64
-#define MIME_VMM_DEFAULT_RAM (4ull << 30)
+#define MIME_VMM_FALLBACK_RAM (4ull << 30)
+#define MIME_VMM_MAX_RAM (MIME_WINDOW_BASE - MIME_RAM_BASE)
 
 typedef struct MimeVm MimeVm;
 
@@ -107,6 +108,7 @@ struct MimeVm {
 };
 
 /* vm.c */
+uint64_t mime_vm_default_ram(void);
 bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size);
 bool mime_vm_start(MimeVm *vm);
 void mime_vm_request_stop(MimeVm *vm, int exit_code);

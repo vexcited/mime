@@ -179,6 +179,20 @@ static uint32_t host_cpu_count(void)
     return (uint32_t)MIME_MIN(n, MIME_VMM_MAX_VCPUS);
 }
 
+/*
+ * the guest sees as much memory as the mac has, like windows on the same
+ * machine, since programs size their caches from it. it costs nothing until
+ * touched, and free guest memory goes back to the host (MIME_HC_MEM_DISCARD).
+ */
+uint64_t mime_vm_default_ram(void)
+{
+    uint64_t mem = 0;
+    size_t len = sizeof(mem);
+    if (sysctlbyname("hw.memsize", &mem, &len, NULL, 0) != 0 || !mem)
+        return MIME_VMM_FALLBACK_RAM;
+    return MIME_ALIGN_DOWN(MIME_MIN(mem, MIME_VMM_MAX_RAM), 2ull << 20);
+}
+
 bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
 {
     memset(vm, 0, sizeof(*vm));
