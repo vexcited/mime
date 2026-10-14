@@ -33,6 +33,22 @@ void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len)
     return vm->ram + off;
 }
 
+/*
+ * gives free guest ram back to macOS. madvise alone does nothing to pages
+ * the guest touched through stage 2, so the range leaves stage 2, gets
+ * fresh anonymous memory and comes back: the old pages are freed and the
+ * guest reads zeros. the guest no longer uses these pages, and no host
+ * thread holds them (gpu and audio close before the guest frees).
+ */
+void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len)
+{
+    uint8_t *host = vm->ram + (pa - MIME_RAM_BASE);
+    if (hv_vm_unmap(pa, len) != HV_SUCCESS ||
+        mmap(host, len, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0) == MAP_FAILED ||
+        hv_vm_map(host, pa, len, HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC) != HV_SUCCESS)
+        mime_error("cannot discard guest memory at 0x%llx", (unsigned long long)pa);
+}
+
 static uint64_t unix_to_filetime(struct timespec ts)
 {
     return ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)ts.tv_nsec / 100;

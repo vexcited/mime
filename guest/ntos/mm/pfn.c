@@ -88,11 +88,12 @@ static void mark_allocated(ULONG64 index, ULONG64 count)
  * their memory until the guest writes them again. called with interrupts
  * disabled, so no page changes hands meanwhile; blocks already handed back
  * are skipped. a pass hands back a bounded amount, so the kernel lock is
- * never held long; the rest waits for the next pass.
+ * never held long; the rest waits for the next pass. a block larger than
+ * a pass goes alone, when the machine idles.
  */
 #define DISCARD_PASS_BYTES (64ull << 20)
 
-static void discard_free(void)
+static void discard_free(BOOLEAN idle)
 {
     ULONG64 budget = DISCARD_PASS_BYTES;
     for (ULONG order = DISCARD_MIN_ORDER; order <= MM_MAX_ORDER; order++) {
@@ -101,12 +102,12 @@ static void discard_free(void)
             if (p->Flags & MM_PFN_DISCARDED)
                 continue;
             ULONG64 bytes = (1ull << order) << PAGE_SHIFT;
-            if (bytes > budget) {
+            if (bytes > budget && !(idle && budget == DISCARD_PASS_BYTES)) {
                 /* the rest goes on the next idle pass, not at every free until then. */
                 g_freed_since_discard = DISCARD_IDLE;
                 return;
             }
-            budget -= bytes;
+            budget -= (bytes < budget ? bytes : budget);
             p->Flags |= MM_PFN_DISCARDED;
             HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa((ULONG64)(p - g_pfn)), bytes, 0, 0, 0, 0, NULL);
         }
@@ -118,13 +119,13 @@ static void note_freed(SIZE_T pages)
 {
     g_freed_since_discard += pages;
     if (g_freed_since_discard >= DISCARD_BATCH)
-        discard_free();
+        discard_free(FALSE);
 }
 
 void MmDiscardIdle(void)
 {
     if (g_freed_since_discard >= DISCARD_IDLE)
-        discard_free();
+        discard_free(TRUE);
 }
 
 ULONG64 MmAllocatePageNoZero(void)
