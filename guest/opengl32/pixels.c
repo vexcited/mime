@@ -17,6 +17,7 @@ enum {
     MTL_RG16F = 65,
     MTL_RGBA8 = 70,
     MTL_RGBA8_SRGB = 71,
+    MTL_RGBA8UI = 73,
     MTL_BGRA8 = 80,
     MTL_BGRA8_SRGB = 81,
     MTL_RGB10A2 = 90,
@@ -107,6 +108,8 @@ static int components(GLenum format)
     case GL_ALPHA:
     case GL_LUMINANCE:
     case GL_RED_INTEGER:
+    case GL_GREEN_INTEGER:
+    case GL_BLUE_INTEGER:
     case GL_DEPTH_COMPONENT:
     case GL_STENCIL_INDEX:
         return 1;
@@ -118,13 +121,107 @@ static int components(GLenum format)
     case GL_RGB:
     case GL_BGR:
     case GL_RGB_INTEGER:
+    case GL_BGR_INTEGER:
         return 3;
     case GL_RGBA:
     case GL_BGRA:
     case GL_RGBA_INTEGER:
+    case GL_BGRA_INTEGER:
         return 4;
     default:
         return 0;
+    }
+}
+
+static BOOL integer_format(GLenum format)
+{
+    return format == GL_RED_INTEGER || format == GL_GREEN_INTEGER || format == GL_BLUE_INTEGER ||
+           format == GL_RG_INTEGER || format == GL_RGB_INTEGER || format == GL_BGR_INTEGER ||
+           format == GL_RGBA_INTEGER || format == GL_BGRA_INTEGER;
+}
+
+GLenum gl_pixel_transfer_error(uint32_t mtl, GLenum format, GLenum type)
+{
+    BOOL integer = mtl == MTL_RGBA8UI || mtl == MTL_R32UI;
+    if (integer != integer_format(format))
+        return GL_INVALID_OPERATION;
+    if (integer && type != GL_BYTE && type != GL_UNSIGNED_BYTE && type != GL_SHORT &&
+        type != GL_UNSIGNED_SHORT && type != GL_INT && type != GL_UNSIGNED_INT)
+        return GL_INVALID_OPERATION;
+    return GL_NO_ERROR;
+}
+
+static int64_t integer_component(const uint8_t *source, GLenum type, int component)
+{
+    switch (type) {
+    case GL_BYTE: return ((const int8_t *)source)[component];
+    case GL_UNSIGNED_BYTE: return source[component];
+    case GL_SHORT: return ((const int16_t *)source)[component];
+    case GL_UNSIGNED_SHORT: return ((const uint16_t *)source)[component];
+    case GL_INT: return ((const int32_t *)source)[component];
+    default: return ((const uint32_t *)source)[component];
+    }
+}
+
+static void store_integer(uint8_t *destination, GLenum type, int component, int64_t value)
+{
+    int64_t minimum, maximum;
+    switch (type) {
+    case GL_BYTE: minimum = -128; maximum = 127; break;
+    case GL_UNSIGNED_BYTE: minimum = 0; maximum = 255; break;
+    case GL_SHORT: minimum = -32768; maximum = 32767; break;
+    case GL_UNSIGNED_SHORT: minimum = 0; maximum = 65535; break;
+    case GL_INT: minimum = -2147483647 - 1; maximum = 2147483647; break;
+    default: minimum = 0; maximum = 0xffffffffll; break;
+    }
+    value = value < minimum ? minimum : value > maximum ? maximum : value;
+    switch (type) {
+    case GL_BYTE: ((int8_t *)destination)[component] = (int8_t)value; break;
+    case GL_UNSIGNED_BYTE: destination[component] = (uint8_t)value; break;
+    case GL_SHORT: ((int16_t *)destination)[component] = (int16_t)value; break;
+    case GL_UNSIGNED_SHORT: ((uint16_t *)destination)[component] = (uint16_t)value; break;
+    case GL_INT: ((int32_t *)destination)[component] = (int32_t)value; break;
+    default: ((uint32_t *)destination)[component] = (uint32_t)value; break;
+    }
+}
+
+static int integer_channel(GLenum format, int component)
+{
+    if (format == GL_GREEN_INTEGER) return 1;
+    if (format == GL_BLUE_INTEGER) return 2;
+    if ((format == GL_BGR_INTEGER || format == GL_BGRA_INTEGER) && component < 3)
+        return 2 - component;
+    return component;
+}
+
+/* integer transfers preserve all 32 bits without passing through normalized floats. */
+static void unpack_integer(uint32_t mtl, uint8_t *dst, GLenum format, GLenum type, const uint8_t *src, uint32_t width)
+{
+    uint32_t source_bytes = gl_client_pixel_bytes(format, type);
+    for (uint32_t x = 0; x < width; x++, src += source_bytes, dst += 4) {
+        int64_t value[4] = {0, 0, 0, 1};
+        for (int i = 0; i < components(format); i++)
+            value[integer_channel(format, i)] = integer_component(src, type, i);
+        if (mtl == MTL_R32UI)
+            store_integer(dst, GL_UNSIGNED_INT, 0, value[0]);
+        else
+            for (int i = 0; i < 4; i++)
+                store_integer(dst, GL_UNSIGNED_BYTE, i, value[i]);
+    }
+}
+
+static void pack_integer(uint32_t mtl, const uint8_t *src, GLenum format, GLenum type, uint8_t *dst, uint32_t width)
+{
+    uint32_t destination_bytes = gl_client_pixel_bytes(format, type);
+    for (uint32_t x = 0; x < width; x++, src += 4, dst += destination_bytes) {
+        int64_t value[4] = {0, 0, 0, 1};
+        if (mtl == MTL_R32UI)
+            value[0] = *(const uint32_t *)src;
+        else
+            for (int i = 0; i < 4; i++)
+                value[i] = src[i];
+        for (int i = 0; i < components(format); i++)
+            store_integer(dst, type, i, value[integer_channel(format, i)]);
     }
 }
 
@@ -533,6 +630,10 @@ static void encode_client(GLenum format, GLenum type, const float c[4], uint8_t 
 
 void gl_unpack_row(uint32_t dst_format, uint8_t *dst, GLenum format, GLenum type, const uint8_t *src, uint32_t width)
 {
+    if (dst_format == MTL_RGBA8UI || dst_format == MTL_R32UI) {
+        unpack_integer(dst_format, dst, format, type, src, width);
+        return;
+    }
     if (type == GL_UNSIGNED_BYTE || type == GL_UNSIGNED_INT_8_8_8_8_REV) {
         BOOL rgba = format == GL_RGBA && (dst_format == MTL_RGBA8 || dst_format == MTL_RGBA8_SRGB);
         BOOL bgra = format == GL_BGRA && (dst_format == MTL_BGRA8 || dst_format == MTL_BGRA8_SRGB);
@@ -588,6 +689,10 @@ void gl_unpack_row(uint32_t dst_format, uint8_t *dst, GLenum format, GLenum type
 
 void gl_pack_row(uint32_t src_format, const uint8_t *src, GLenum format, GLenum type, uint8_t *dst, uint32_t width)
 {
+    if (src_format == MTL_RGBA8UI || src_format == MTL_R32UI) {
+        pack_integer(src_format, src, format, type, dst, width);
+        return;
+    }
     if (type == GL_UNSIGNED_BYTE) {
         if ((format == GL_RGBA && src_format == MTL_RGBA8) || (format == GL_BGRA && src_format == MTL_BGRA8)) {
             memcpy(dst, src, (SIZE_T)width * 4);

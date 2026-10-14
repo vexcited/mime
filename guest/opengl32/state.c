@@ -915,7 +915,7 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_MAX_UNIFORM_BUFFER_BINDINGS:
     case GL_MAX_VERTEX_UNIFORM_BLOCKS:
     case GL_MAX_FRAGMENT_UNIFORM_BLOCKS:
-        v[0] = 12;
+        v[0] = MIME_GPU_MAX_UNIFORM_BLOCKS;
         return 1;
     case GL_MAX_CLIP_DISTANCES:
         v[0] = 8;
@@ -946,7 +946,7 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         v[0] = 8;
         return 1;
     case GL_TIMESTAMP:
-        v[0] = 0;
+        v[0] = (GLdouble)gl_timestamp();
         return 1;
     default: {
         GLboolean b;
@@ -1030,6 +1030,20 @@ GLAPI void APIENTRY glGetBooleanv(GLenum pname, GLboolean *data)
 
 GLAPI void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data)
 {
+    GL_CONTEXT_OR_RETURN();
+    if (target == GL_UNIFORM_BUFFER_BINDING || target == GL_UNIFORM_BUFFER_START || target == GL_UNIFORM_BUFFER_SIZE) {
+        if (index >= MIME_GPU_MAX_UNIFORM_BLOCKS) {
+            gl_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        GlBufferBinding *binding = &ctx->uniform_bindings[index];
+        GlBuffer *buffer = gl_buffer(ctx, binding->name);
+        if (data)
+            *data = target == GL_UNIFORM_BUFFER_BINDING ? (GLint)binding->name :
+                    target == GL_UNIFORM_BUFFER_START ? (GLint)binding->offset :
+                    (GLint)(binding->whole && buffer ? buffer->size : binding->size);
+        return;
+    }
     glGetIntegerv(target, data);
 }
 

@@ -86,6 +86,11 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
             ctx->array_buffer = 0;
         if (ctx->vao->element_buffer == name)
             ctx->vao->element_buffer = 0;
+        if (ctx->uniform_buffer == name)
+            ctx->uniform_buffer = 0;
+        for (int i = 0; i < MIME_GPU_MAX_UNIFORM_BLOCKS; i++)
+            if (ctx->uniform_bindings[i].name == name)
+                memset(&ctx->uniform_bindings[i], 0, sizeof(ctx->uniform_bindings[i]));
         for (int a = 0; a < MIME_GPU_MAX_ATTRIBS; a++)
             if (ctx->vao->attribs[a].buffer == name)
                 ctx->vao->attribs[a].buffer = 0;
@@ -118,12 +123,34 @@ GLAPI void APIENTRY glBindBuffer(GLenum target, GLuint name)
 
 GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
 {
-    glBindBuffer(target, name);
+    GL_CONTEXT_OR_RETURN();
+    if (target != GL_UNIFORM_BUFFER || index >= MIME_GPU_MAX_UNIFORM_BLOCKS) {
+        gl_error(ctx, target != GL_UNIFORM_BUFFER ? GL_INVALID_ENUM : GL_INVALID_VALUE);
+        return;
+    }
+    if (name && !make(ctx, name)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    ctx->uniform_buffer = name;
+    ctx->uniform_bindings[index] = (GlBufferBinding){.name = name, .whole = TRUE};
 }
 
 GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size)
 {
-    glBindBuffer(target, name);
+    GL_CONTEXT_OR_RETURN();
+    if (target != GL_UNIFORM_BUFFER || index >= MIME_GPU_MAX_UNIFORM_BLOCKS ||
+        (name && (offset < 0 || size <= 0 || (offset & 255)))) {
+        gl_error(ctx, target != GL_UNIFORM_BUFFER ? GL_INVALID_ENUM : GL_INVALID_VALUE);
+        return;
+    }
+    if (name && !make(ctx, name)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    ctx->uniform_buffer = name;
+    ctx->uniform_bindings[index] = (GlBufferBinding){name, name ? (uint64_t)offset : 0,
+                                                   name ? (uint64_t)size : 0, FALSE};
 }
 
 /* gives the buffer new storage of size, keeping keep bytes of its contents. */

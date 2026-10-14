@@ -93,6 +93,7 @@ void gl_publish(void);
 uint64_t gl_fence(void);
 uint64_t gl_batch_fence(void); /* the fence that will cover the commands written now */
 BOOL gl_fence_done(uint64_t fence);
+void gl_want(uint64_t fence);
 void gl_wait(uint64_t fence);
 BOOL gl_stream_alloc(uint64_t size, uint32_t align, GlMem *mem);
 BOOL gl_heap_alloc(uint64_t size, GlMem *mem);
@@ -134,6 +135,7 @@ typedef struct GlTexture {
     uint32_t levels;      /* allocated on the host */
     uint32_t samples;
     uint32_t swizzle;
+    GLenum component_swizzle[4];
     BOOL bgra;            /* stored as bgra */
     BOOL compressed;
     uint16_t defined_levels;
@@ -185,6 +187,18 @@ typedef struct GlUniform {
     GLint *units;    /* samplers: the texture unit of each element */
 } GlUniform;
 
+typedef struct GlUniformBlock {
+    char *name;
+    uint32_t bytes, stages;
+    GLuint binding;
+} GlUniformBlock;
+
+typedef struct GlBufferBinding {
+    GLuint name;
+    uint64_t offset, size;
+    BOOL whole;
+} GlBufferBinding;
+
 typedef struct GlAttrib {
     char *name;
     GLenum type;
@@ -205,6 +219,8 @@ typedef struct GlProgram {
     char *log;
     GlUniform *uniforms;
     uint32_t uniform_count;
+    GlUniformBlock *blocks;
+    uint32_t block_count;
     GlAttrib *attribs;
     uint32_t attrib_count;
     uint32_t attrib_mask;  /* locations the vertex stage reads */
@@ -308,6 +324,7 @@ typedef struct GlContext {
 
     /* bindings. */
     GLuint array_buffer, pixel_pack, pixel_unpack, copy_read, copy_write, uniform_buffer;
+    GlBufferBinding uniform_bindings[MIME_GPU_MAX_UNIFORM_BLOCKS];
     GlVertexArray default_vao;
     GlVertexArray *vao;
     GlNames vaos;
@@ -315,6 +332,8 @@ typedef struct GlContext {
     GlProgram *current_program;
     GLuint draw_fbo, read_fbo;
     GlNames fbos;
+    GlNames queries;
+    GLuint elapsed_query;
     GLuint renderbuffer;
     GLuint active_texture;
     GLuint units[32][8]; /* see texture.c: unit slots by target */
@@ -350,6 +369,8 @@ typedef struct GlContext {
     GLint pack_alignment, unpack_alignment, unpack_row_length, unpack_skip_rows, unpack_skip_pixels,
         unpack_image_height, unpack_skip_images, pack_row_length, pack_skip_rows, pack_skip_pixels;
     GLfloat generic[MIME_GPU_MAX_ATTRIBS][4];
+    GLuint generic_integer[MIME_GPU_MAX_ATTRIBS][4];
+    GLenum generic_type[MIME_GPU_MAX_ATTRIBS];
     GLenum hints[8];
     GLint swap_interval;
 
@@ -391,6 +412,8 @@ static inline GlContext *gl_current(void)
 
 void gl_error(GlContext *ctx, GLenum error);
 void gl_context_init(GlContext *ctx);
+void gl_queries_destroy(GlContext *ctx);
+GLuint64 gl_timestamp(void);
 
 /* framebuffers and passes, fbo.c. */
 void gl_resolve_target(GlContext *ctx, BOOL draw, GlTarget *t, const void **owner, uint32_t *serial);
@@ -416,6 +439,7 @@ uint32_t gl_format_bytes(uint32_t mtl_format);
 uint32_t gl_dummy_texture(GlContext *ctx);
 GlRenderbuffer *gl_renderbuffer(GlContext *ctx, GLuint name);
 uint32_t gl_client_pixel_bytes(GLenum format, GLenum type);
+GLenum gl_pixel_transfer_error(uint32_t mtl_format, GLenum format, GLenum type);
 void gl_unpack_row(uint32_t dst_format, uint8_t *dst, GLenum format, GLenum type, const uint8_t *src, uint32_t width);
 void gl_pack_row(uint32_t src_format, const uint8_t *src, GLenum format, GLenum type, uint8_t *dst, uint32_t width);
 BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type,

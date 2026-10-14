@@ -117,6 +117,7 @@ GLAPI void APIENTRY glRenderbufferStorageMultisample(GLenum target, GLsizei samp
         r->id = gl_new_id(ID_TEXTURE);
     }
     MimeGpuTextureCreate *c = gl_emit(MIME_GPU_TEXTURE_CREATE, sizeof(MimeGpuTextureCreate));
+    c->swizzle = 0x05040302;
     c->id = r->id;
     c->type = s > 1 ? 4 : 2;
     c->format = mtl;

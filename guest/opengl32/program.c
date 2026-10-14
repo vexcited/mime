@@ -188,6 +188,11 @@ static void free_reflection(GlProgram *p)
     }
     for (uint32_t i = 0; i < p->attrib_count; i++)
         gl_free(p->attribs[i].name);
+    for (uint32_t i = 0; i < p->block_count; i++)
+        gl_free(p->blocks[i].name);
+    gl_free(p->blocks);
+    p->blocks = NULL;
+    p->block_count = 0;
     gl_free(p->uniforms);
     gl_free(p->attribs);
     gl_free(p->ublock);
@@ -308,6 +313,7 @@ GLAPI void APIENTRY glBindFragDataLocation(GLuint program, GLuint color, const G
 
 GLAPI void APIENTRY glLinkProgram(GLuint name)
 {
+    static uint32_t link_serial;
     GL_CONTEXT_OR_RETURN();
     GlProgram *p = gl_program(ctx, name);
     if (!p) {
@@ -325,7 +331,9 @@ GLAPI void APIENTRY glLinkProgram(GLuint name)
     gl_program_ready(p);
     free_reflection(p);
     p->linked = p->link_status = FALSE;
-    p->serial++;
+    gl_device_lock();
+    p->serial = ++link_serial;
+    gl_device_unlock();
     if (!vs || !fs) {
         p->log = gl_strdup(vs ? "no fragment shader\n" : "no vertex shader\n");
         p->linked = TRUE;
@@ -407,6 +415,14 @@ static void take_reflection(GlProgram *p)
             x->units = gl_alloc((SIZE_T)x->size * sizeof(GLint));
     }
     p->ublock_size = info->uniform_bytes;
+    const MimeGpuUniformBlockInfo *blocks = (const MimeGpuUniformBlockInfo *)(base + info->block_offset);
+    p->blocks = gl_alloc((info->block_count + 1) * sizeof(GlUniformBlock));
+    for (uint32_t i = 0; i < info->block_count; i++) {
+        GlUniformBlock *block = &p->blocks[p->block_count++];
+        block->name = gl_strdup((const char *)base + blocks[i].name_offset);
+        block->bytes = blocks[i].bytes;
+        block->stages = blocks[i].stages;
+    }
     p->ublock = gl_alloc(p->ublock_size + 16);
     p->ublock_dirty = TRUE;
 }
@@ -504,6 +520,17 @@ GLAPI void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params)
         break;
     }
     case GL_ACTIVE_UNIFORM_BLOCKS:
+        *params = (GLint)p->block_count;
+        break;
+    case GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH: {
+        GLint longest = 0;
+        for (uint32_t i = 0; i < p->block_count; i++) {
+            GLint length = (GLint)strlen(p->blocks[i].name) + 1;
+            if (length > longest) longest = length;
+        }
+        *params = longest;
+        break;
+    }
     case GL_PROGRAM_BINARY_LENGTH:
         *params = 0;
         break;
@@ -659,11 +686,68 @@ GLAPI GLint APIENTRY glGetUniformLocation(GLuint name, const GLchar *uniform)
 
 GLAPI GLuint APIENTRY glGetUniformBlockIndex(GLuint program, const GLchar *name)
 {
+    GL_CONTEXT_OR_RETURN(GL_INVALID_INDEX);
+    GlProgram *p = gl_program(ctx, program);
+    if (!p || !gl_program_ready(p)) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return GL_INVALID_INDEX;
+    }
+    for (uint32_t i = 0; name && i < p->block_count; i++)
+        if (!strcmp(name, p->blocks[i].name))
+            return i;
     return GL_INVALID_INDEX;
 }
 
 GLAPI void APIENTRY glUniformBlockBinding(GLuint program, GLuint index, GLuint binding)
 {
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, program);
+    if (!p || !gl_program_ready(p)) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (index >= p->block_count || binding >= MIME_GPU_MAX_UNIFORM_BLOCKS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    p->blocks[index].binding = binding;
+}
+
+GLAPI void APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint index, GLenum pname, GLint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, program);
+    if (!p || !gl_program_ready(p) || index >= p->block_count) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (!params) return;
+    GlUniformBlock *block = &p->blocks[index];
+    switch (pname) {
+    case GL_UNIFORM_BLOCK_BINDING: *params = (GLint)block->binding; break;
+    case GL_UNIFORM_BLOCK_DATA_SIZE: *params = (GLint)block->bytes; break;
+    case GL_UNIFORM_BLOCK_NAME_LENGTH: *params = (GLint)strlen(block->name) + 1; break;
+    case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER: *params = (block->stages & 1) != 0; break;
+    case GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER: *params = (block->stages & 2) != 0; break;
+    default: gl_error(ctx, GL_INVALID_ENUM); break;
+    }
+}
+
+GLAPI void APIENTRY glGetActiveUniformBlockName(GLuint program, GLuint index, GLsizei size, GLsizei *length, GLchar *name)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, program);
+    if (size < 0 || !p || !gl_program_ready(p) || index >= p->block_count) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    SIZE_T count = size > 0 ? strlen(p->blocks[index].name) : 0;
+    if (size > 0 && count >= (SIZE_T)size) count = (SIZE_T)size - 1;
+    if (size > 0 && name) {
+        memcpy(name, p->blocks[index].name, count);
+        name[count] = 0;
+    }
+    if (length) *length = (GLsizei)count;
 }
 
 /* ---------------------------------------------------------------- uniforms */

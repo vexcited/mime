@@ -123,6 +123,32 @@ static GlTexture *bound(GlContext *ctx, GLenum target)
 #define SWIZZLE(r, g, b, a) ((uint32_t)(r) | (uint32_t)(g) << 8 | (uint32_t)(b) << 16 | (uint32_t)(a) << 24)
 enum { SW_ZERO, SW_ONE, SW_R, SW_G, SW_B, SW_A };
 
+static int swizzle_component(GLenum value)
+{
+    switch (value) {
+    case GL_ZERO: return SW_ZERO;
+    case GL_ONE: return SW_ONE;
+    case GL_RED: return SW_R;
+    case GL_GREEN: return SW_G;
+    case GL_BLUE: return SW_B;
+    case GL_ALPHA: return SW_A;
+    default: return -1;
+    }
+}
+
+static uint32_t sampling_swizzle(const GlTexture *t)
+{
+    uint32_t base = t->swizzle ? t->swizzle : SWIZZLE(SW_R, SW_G, SW_B, SW_A);
+    uint32_t result = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        unsigned component = (unsigned)swizzle_component(t->component_swizzle[i]);
+        if (component >= SW_R)
+            component = (base >> ((component - SW_R) * 8)) & 255;
+        result |= component << (i * 8);
+    }
+    return result;
+}
+
 uint32_t gl_mtl_format(GLenum internal, GLenum format, GLenum type, uint32_t *swizzle, BOOL *compressed)
 {
     *swizzle = 0;
@@ -208,6 +234,8 @@ uint32_t gl_mtl_format(GLenum internal, GLenum format, GLenum type, uint32_t *sw
         return 10;
     case GL_R32UI:
         return 53;
+    case GL_RGBA8UI:
+        return 73;
     case GL_DEPTH_COMPONENT:
     case GL_DEPTH_COMPONENT16:
     case GL_DEPTH_COMPONENT24:
@@ -284,6 +312,10 @@ static GlTexture *make(GlContext *ctx, GLuint name, GLenum target)
     t->sampler.compare_func = GL_LEQUAL;
     t->sampler.max_anisotropy = 1;
     t->max_level = 1000;
+    t->component_swizzle[0] = GL_RED;
+    t->component_swizzle[1] = GL_GREEN;
+    t->component_swizzle[2] = GL_BLUE;
+    t->component_swizzle[3] = GL_ALPHA;
     gl_name_set(&ctx->shared->textures, name, t);
     return t;
 }
@@ -377,7 +409,7 @@ static void create_host(GlTexture *t, uint32_t levels)
     c->levels = levels;
     c->samples = t->samples ? t->samples : 1;
     c->usage = MIME_GPU_USAGE_SAMPLED | (t->compressed ? 0 : MIME_GPU_USAGE_TARGET);
-    c->swizzle = t->swizzle;
+    c->swizzle = sampling_swizzle(t);
     if (old) {
         /* the levels it had move to the new texture. */
         uint32_t slices = t->mtl_type == MTL_TEX_CUBE ? 6 : t->mtl_type == MTL_TEX_2D_ARRAY ? t->depth : 1;
@@ -413,6 +445,10 @@ static BOOL define(GlContext *ctx, GlTexture *t, GLint level, GLenum internal, G
     uint32_t swizzle;
     BOOL compressed;
     uint32_t mtl = gl_mtl_format(internal, format, type, &swizzle, &compressed);
+    if (format && gl_pixel_transfer_error(mtl, format, type)) {
+        gl_error(ctx, gl_pixel_transfer_error(mtl, format, type));
+        return FALSE;
+    }
     if (!mtl) {
         gl_log("unsupported internal format %#x", internal);
         mtl = 70;
@@ -476,6 +512,11 @@ static void outside_pass(GlContext *ctx)
 static void upload(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, int32_t x, int32_t y, int32_t z,
                    uint32_t w, uint32_t h, uint32_t d, GLenum format, GLenum type, const void *pixels)
 {
+    GLenum error = gl_pixel_transfer_error(t->mtl_format, format, type);
+    if (error) {
+        gl_error(ctx, error);
+        return;
+    }
     const uint8_t *src = unpack_source(ctx, pixels);
     if (!src || !w || !h || !d || !t->id)
         return;
@@ -870,13 +911,33 @@ static void tex_parameter(GlContext *ctx, GlTexture *t, GLenum pname, const GLfl
         memcpy(s->border, v, sizeof(s->border));
         break;
     case GL_GENERATE_MIPMAP:
+    case GL_DEPTH_TEXTURE_MODE:
+    case GL_TEXTURE_PRIORITY:
+        break;
     case GL_TEXTURE_SWIZZLE_R:
     case GL_TEXTURE_SWIZZLE_G:
     case GL_TEXTURE_SWIZZLE_B:
     case GL_TEXTURE_SWIZZLE_A:
-    case GL_DEPTH_TEXTURE_MODE:
-    case GL_TEXTURE_PRIORITY:
+    case GL_TEXTURE_SWIZZLE_RGBA: {
+        unsigned first = pname == GL_TEXTURE_SWIZZLE_RGBA ? 0 : pname - GL_TEXTURE_SWIZZLE_R;
+        unsigned count = pname == GL_TEXTURE_SWIZZLE_RGBA ? 4 : 1;
+        for (unsigned i = 0; i < count; i++) {
+            if (swizzle_component((GLenum)v[i]) < 0) {
+                gl_error(ctx, GL_INVALID_ENUM);
+                return;
+            }
+        }
+        for (unsigned i = 0; i < count; i++)
+            t->component_swizzle[first + i] = (GLenum)v[i];
+        if (t->id) {
+            gl_device_lock();
+            MimeGpuTextureSwizzle *c = gl_emit(MIME_GPU_TEXTURE_SWIZZLE, sizeof(MimeGpuTextureSwizzle));
+            c->id = t->id;
+            c->swizzle = sampling_swizzle(t);
+            gl_device_unlock();
+        }
         break;
+    }
     default:
         gl_error(ctx, GL_INVALID_ENUM);
         return;
@@ -888,6 +949,10 @@ static void tex_parameter(GlContext *ctx, GlTexture *t, GLenum pname, const GLfl
 GLAPI void APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat param)
 {
     GL_CONTEXT_OR_RETURN();
+    if (pname == GL_TEXTURE_SWIZZLE_RGBA || pname == GL_TEXTURE_BORDER_COLOR) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     GlTexture *t = bound(ctx, target);
     GLfloat v[4] = {param};
     if (t)
@@ -906,7 +971,7 @@ GLAPI void APIENTRY glTexParameterfv(GLenum target, GLenum pname, const GLfloat 
     GL_CONTEXT_OR_RETURN();
     GlTexture *t = bound(ctx, target);
     GLfloat v[4] = {params[0]};
-    if (pname == GL_TEXTURE_BORDER_COLOR)
+    if (pname == GL_TEXTURE_BORDER_COLOR || pname == GL_TEXTURE_SWIZZLE_RGBA)
         memcpy(v, params, sizeof(v));
     if (t)
         tex_parameter(ctx, t, pname, v);
@@ -918,6 +983,9 @@ GLAPI void APIENTRY glTexParameteriv(GLenum target, GLenum pname, const GLint *p
     if (pname == GL_TEXTURE_BORDER_COLOR)
         for (int i = 0; i < 4; i++)
             v[i] = (GLfloat)params[i] / 2147483647.0f;
+    if (pname == GL_TEXTURE_SWIZZLE_RGBA)
+        for (int i = 0; i < 4; i++)
+            v[i] = (GLfloat)params[i];
     glTexParameterfv(target, pname, v);
 }
 
@@ -930,6 +998,16 @@ GLAPI void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *para
         return;
     }
     switch (pname) {
+    case GL_TEXTURE_SWIZZLE_R:
+    case GL_TEXTURE_SWIZZLE_G:
+    case GL_TEXTURE_SWIZZLE_B:
+    case GL_TEXTURE_SWIZZLE_A:
+        *params = (GLint)t->component_swizzle[pname - GL_TEXTURE_SWIZZLE_R];
+        break;
+    case GL_TEXTURE_SWIZZLE_RGBA:
+        for (int i = 0; i < 4; i++)
+            params[i] = (GLint)t->component_swizzle[i];
+        break;
     case GL_TEXTURE_MIN_FILTER:
         *params = (GLint)t->sampler.min_filter;
         break;
@@ -968,9 +1046,11 @@ GLAPI void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *para
 
 GLAPI void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *params)
 {
-    GLint v = 0;
-    glGetTexParameteriv(target, pname, &v);
-    *params = (GLfloat)v;
+    GLint v[4] = {0};
+    glGetTexParameteriv(target, pname, v);
+    int count = pname == GL_TEXTURE_SWIZZLE_RGBA ? 4 : 1;
+    for (int i = 0; i < count; i++)
+        params[i] = (GLfloat)v[i];
 }
 
 GLAPI void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params)
@@ -1142,6 +1222,7 @@ uint32_t gl_dummy_texture(GlContext *ctx)
     c->format = 70;
     c->width = c->height = c->depth = c->levels = c->samples = 1;
     c->usage = MIME_GPU_USAGE_SAMPLED;
+    c->swizzle = SWIZZLE(SW_R, SW_G, SW_B, SW_A);
     MimeGpuTextureCopy *u = gl_emit(MIME_GPU_TEXTURE_UPLOAD, sizeof(MimeGpuTextureCopy));
     u->id = id;
     u->width = u->height = u->depth = 1;
@@ -1160,6 +1241,11 @@ BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h,
     uint32_t mtl, sw, sh;
     if (!gl_read_source(ctx, &src, &mtl, &sw, &sh))
         return FALSE;
+    GLenum error = gl_pixel_transfer_error(mtl, format, type);
+    if (error) {
+        gl_error(ctx, error);
+        return FALSE;
+    }
     /* the part inside the source; the rest of the destination is left alone. */
     GLint x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
     GLint x1 = x + w > (GLint)sw ? (GLint)sw : x + w, y1 = y + h > (GLint)sh ? (GLint)sh : y + h;

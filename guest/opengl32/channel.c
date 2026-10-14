@@ -184,10 +184,22 @@ BOOL gl_fence_done(uint64_t fence)
     return !GlDev.open || __atomic_load_n(&GlDev.hdr->done_fence, __ATOMIC_ACQUIRE) >= fence || GlDev.hdr->lost;
 }
 
+/* asks the host to commit a fence it holds back while a pass goes on. */
+void gl_want(uint64_t fence)
+{
+    if (!GlDev.open)
+        return;
+    uint64_t want = __atomic_load_n(&GlDev.hdr->want_fence, __ATOMIC_ACQUIRE);
+    while (want < fence &&
+           !__atomic_compare_exchange_n(&GlDev.hdr->want_fence, &want, fence, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        ;
+}
+
 void gl_wait(uint64_t fence)
 {
     if (gl_fence_done(fence))
         return;
+    gl_want(fence);
     gl_device_lock();
     gl_publish();
     gl_device_unlock();

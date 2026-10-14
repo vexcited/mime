@@ -30,12 +30,14 @@
 #define MIME_GPU_MAX_TEXTURES 32
 #define MIME_GPU_VERTEX_BUFFER_BASE 14     /* metal buffer index of vertex buffer slot 0, uniforms use index 0 */
 #define MIME_GPU_UNIFORM_BUFFER 0
+#define MIME_GPU_MAX_UNIFORM_BLOCKS 12
 
 typedef struct MimeGpuHeader {
     /* written by the guest. */
     volatile uint64_t put;          /* bytes written to the ring since creation */
     volatile uint64_t wait_fence;   /* a thread sleeps until this fence, 0 when none */
-    uint64_t guest_pad[6];
+    volatile uint64_t want_fence;   /* highest fence a thread waits for, so the host commits it early */
+    uint64_t guest_pad[5];
     /* written by the host. */
     volatile uint64_t get;          /* bytes executed */
     volatile uint64_t done_fence;   /* last fence the gpu completed */
@@ -83,6 +85,8 @@ enum {
     MIME_GPU_SET_TEXTURE,         /* MimeGpuSetTexture */
     MIME_GPU_DRAW,                /* MimeGpuDraw */
     MIME_GPU_DRAW_INDEXED,        /* MimeGpuDrawIndexed */
+    MIME_GPU_SET_UNIFORM_BUFFER,
+    MIME_GPU_TEXTURE_SWIZZLE,
     MIME_GPU_OP_COUNT
 };
 
@@ -117,8 +121,14 @@ typedef struct MimeGpuTextureCreate {
     uint32_t levels;
     uint32_t samples;
     uint32_t usage;
-    uint32_t swizzle; /* 4 MTLTextureSwizzle bytes, red first, 0 for identity */
+    uint32_t swizzle; /* four metal swizzle bytes, red first. */
 } MimeGpuTextureCreate;
+
+typedef struct MimeGpuTextureSwizzle {
+    MimeGpuCmd cmd;
+    uint32_t id;
+    uint32_t swizzle;
+} MimeGpuTextureSwizzle;
 
 /* a region of a texture and its rows in the heap. */
 typedef struct MimeGpuTextureCopy {
@@ -165,7 +175,15 @@ typedef struct MimeGpuProgramInfo {
     uint32_t uniform_count, uniform_offset; /* MimeGpuUniformInfo array */
     uint32_t uniform_bytes;                 /* size of the uniform block */
     uint32_t pad;
+    uint32_t block_count, block_offset;
 } MimeGpuProgramInfo;
+
+typedef struct MimeGpuUniformBlockInfo {
+    uint32_t name_offset;
+    uint32_t bytes;
+    uint32_t stages;
+    uint32_t pad;
+} MimeGpuUniformBlockInfo;
 
 typedef struct MimeGpuAttribInfo {
     uint32_t name_offset; /* from the info, nul terminated */
@@ -208,6 +226,7 @@ typedef struct MimeGpuColorTarget {
 
 typedef struct MimeGpuPipelineDesc {
     uint32_t program;
+    uint32_t program_serial;
     uint16_t depth_format, stencil_format;
     uint32_t samples;
     uint32_t topology; /* MTLPrimitiveTopologyClass */
@@ -349,6 +368,12 @@ typedef struct MimeGpuSetUniforms {
     uint32_t bytes; /* followed by the data */
     uint32_t pad;
 } MimeGpuSetUniforms;
+
+typedef struct MimeGpuSetUniformBuffer {
+    MimeGpuCmd cmd;
+    uint32_t slot, stages;
+    MimeGpuMem mem;
+} MimeGpuSetUniformBuffer;
 
 typedef struct MimeGpuSetTexture {
     MimeGpuCmd cmd;

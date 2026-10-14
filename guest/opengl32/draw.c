@@ -89,6 +89,15 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, BOOL normalize
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
+    if (integer && size == GL_BGRA) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (integer && type != GL_BYTE && type != GL_UNSIGNED_BYTE && type != GL_SHORT &&
+        type != GL_UNSIGNED_SHORT && type != GL_INT && type != GL_UNSIGNED_INT) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     GlVertexAttrib *a = &ctx->vao->attribs[index];
     a->size = size;
     a->type = type;
@@ -136,8 +145,10 @@ GLAPI void APIENTRY glDisableVertexAttribArray(GLuint index)
 GLAPI void APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor)
 {
     GL_CONTEXT_OR_RETURN();
-    if (index >= MIME_GPU_MAX_ATTRIBS)
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
         return;
+    }
     ctx->vao->attribs[index].divisor = divisor;
     ctx->dirty |= DIRTY_VERTEX | DIRTY_PIPELINE;
 }
@@ -145,8 +156,11 @@ GLAPI void APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor)
 static void generic(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
     GL_CONTEXT_OR_RETURN();
-    if (index >= MIME_GPU_MAX_ATTRIBS)
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
         return;
+    }
+    ctx->generic_type[index] = GL_FLOAT;
     ctx->generic[index][0] = x;
     ctx->generic[index][1] = y;
     ctx->generic[index][2] = z;
@@ -199,6 +213,50 @@ GLAPI void APIENTRY glVertexAttrib4Nub(GLuint i, GLubyte x, GLubyte y, GLubyte z
     generic(i, x / 255.0f, y / 255.0f, z / 255.0f, w / 255.0f);
 }
 
+static void generic_integer(GLuint index, GLenum type, GLuint x, GLuint y, GLuint z, GLuint w)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    ctx->generic_type[index] = type;
+    ctx->generic_integer[index][0] = x;
+    ctx->generic_integer[index][1] = y;
+    ctx->generic_integer[index][2] = z;
+    ctx->generic_integer[index][3] = w;
+    ctx->dirty |= DIRTY_VERTEX;
+}
+
+static double generic_component(const GlContext *ctx, GLuint index, unsigned int component)
+{
+    if (ctx->generic_type[index] == GL_INT)
+        return (GLint)ctx->generic_integer[index][component];
+    if (ctx->generic_type[index] == GL_UNSIGNED_INT)
+        return ctx->generic_integer[index][component];
+    return ctx->generic[index][component];
+}
+
+GLAPI void APIENTRY glVertexAttribI4i(GLuint i, GLint x, GLint y, GLint z, GLint w)
+{
+    generic_integer(i, GL_INT, (GLuint)x, (GLuint)y, (GLuint)z, (GLuint)w);
+}
+
+GLAPI void APIENTRY glVertexAttribI4ui(GLuint i, GLuint x, GLuint y, GLuint z, GLuint w)
+{
+    generic_integer(i, GL_UNSIGNED_INT, x, y, z, w);
+}
+
+GLAPI void APIENTRY glVertexAttribI4iv(GLuint i, const GLint *v)
+{
+    glVertexAttribI4i(i, v[0], v[1], v[2], v[3]);
+}
+
+GLAPI void APIENTRY glVertexAttribI4uiv(GLuint i, const GLuint *v)
+{
+    glVertexAttribI4ui(i, v[0], v[1], v[2], v[3]);
+}
+
 GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *params)
 {
     GL_CONTEXT_OR_RETURN();
@@ -234,7 +292,7 @@ GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *param
         break;
     case GL_CURRENT_VERTEX_ATTRIB:
         for (int i = 0; i < 4; i++)
-            params[i] = (GLint)ctx->generic[index][i];
+            params[i] = (GLint)generic_component(ctx, index, i);
         break;
     default:
         gl_error(ctx, GL_INVALID_ENUM);
@@ -246,12 +304,47 @@ GLAPI void APIENTRY glGetVertexAttribfv(GLuint index, GLenum pname, GLfloat *par
 {
     GL_CONTEXT_OR_RETURN();
     if (pname == GL_CURRENT_VERTEX_ATTRIB && index < MIME_GPU_MAX_ATTRIBS) {
-        memcpy(params, ctx->generic[index], sizeof(ctx->generic[index]));
+        for (unsigned int i = 0; i < 4; ++i)
+            params[i] = (GLfloat)generic_component(ctx, index, i);
         return;
     }
     GLint v = 0;
     glGetVertexAttribiv(index, pname, &v);
     *params = (GLfloat)v;
+}
+
+GLAPI void APIENTRY glGetVertexAttribIiv(GLuint index, GLenum pname, GLint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (pname == GL_CURRENT_VERTEX_ATTRIB) {
+        for (unsigned int i = 0; i < 4; ++i)
+            params[i] = ctx->generic_type[index] == GL_UNSIGNED_INT ?
+                (GLint)ctx->generic_integer[index][i] : (GLint)generic_component(ctx, index, i);
+    } else {
+        glGetVertexAttribiv(index, pname, params);
+    }
+}
+
+GLAPI void APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (pname == GL_CURRENT_VERTEX_ATTRIB) {
+        for (unsigned int i = 0; i < 4; ++i)
+            params[i] = ctx->generic_type[index] == GL_INT ?
+                (GLuint)(GLint)ctx->generic_integer[index][i] : (GLuint)generic_component(ctx, index, i);
+    } else {
+        GLint value = 0;
+        glGetVertexAttribiv(index, pname, &value);
+        *params = (GLuint)value;
+    }
 }
 
 GLAPI void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void **pointer)
@@ -497,10 +590,32 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const DrawRange *r, Sou
             GlMem mem;
             if (!gl_stream_alloc(16, 16, &mem))
                 return FALSE;
-            memcpy(mem.ptr, ctx->generic[l], 16);
+            GLenum type = GL_FLOAT;
+            for (uint32_t i = 0; i < p->attrib_count; ++i) {
+                const GlAttrib *attrib = &p->attribs[i];
+                if (l < (uint32_t)attrib->location || l >= (uint32_t)attrib->location + attrib->slots)
+                    continue;
+                if (attrib->type == GL_INT || (attrib->type >= GL_INT_VEC2 && attrib->type <= GL_INT_VEC4))
+                    type = GL_INT;
+                else if (attrib->type == GL_UNSIGNED_INT ||
+                         (attrib->type >= GL_UNSIGNED_INT_VEC2 && attrib->type <= GL_UNSIGNED_INT_VEC4))
+                    type = GL_UNSIGNED_INT;
+                break;
+            }
+            for (unsigned int i = 0; i < 4; ++i) {
+                double value = generic_component(ctx, l, i);
+                if (type == GL_INT)
+                    ((GLint *)mem.ptr)[i] = ctx->generic_type[l] == GL_UNSIGNED_INT ?
+                        (GLint)ctx->generic_integer[l][i] : (GLint)value;
+                else if (type == GL_UNSIGNED_INT)
+                    ((GLuint *)mem.ptr)[i] = ctx->generic_type[l] == GL_INT ?
+                        (GLuint)(GLint)ctx->generic_integer[l][i] : (GLuint)value;
+                else
+                    ((GLfloat *)mem.ptr)[i] = (GLfloat)value;
+            }
             s->constant = TRUE;
             s->mem = gl_mem(&mem);
-            s->format = 31;
+            s->format = type == GL_INT ? 35 : type == GL_UNSIGNED_INT ? 39 : 31;
             continue;
         }
         s->format = vertex_format(a);
@@ -555,6 +670,7 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const Source *src)
     MimeGpuPipelineDesc d;
     memset(&d, 0, sizeof(d));
     d.program = p->id;
+    d.program_serial = p->serial;
     const GlTarget *t = &ctx->target;
     uint8_t mask = (uint8_t)((ctx->color_mask[0] ? 8 : 0) | (ctx->color_mask[1] ? 4 : 0) | (ctx->color_mask[2] ? 2 : 0) |
                              (ctx->color_mask[3] ? 1 : 0));
@@ -696,6 +812,16 @@ static void emit_textures(GlContext *ctx, GlProgram *p)
 /* sends the state the host does not have yet, before a draw. */
 static BOOL prepare(GlContext *ctx, GlProgram *p, const Source *src)
 {
+    for (uint32_t i = 0; i < p->block_count; i++) {
+        GlUniformBlock *block = &p->blocks[i];
+        GlBufferBinding *binding = &ctx->uniform_bindings[block->binding];
+        GlBuffer *buffer = gl_buffer(ctx, binding->name);
+        if (!buffer || buffer->mapped || !buffer->mem.ptr || binding->offset > buffer->size ||
+            block->bytes > buffer->size - binding->offset || (!binding->whole && block->bytes > binding->size)) {
+            gl_error(ctx, GL_INVALID_OPERATION);
+            return FALSE;
+        }
+    }
     uint32_t dirty = ctx->dirty;
     emit_pipeline(ctx, p, src);
     if ((dirty & DIRTY_DEPTH) || !ctx->depth_id)
@@ -740,6 +866,17 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const Source *src)
     }
     if (dirty & (DIRTY_TEXTURES | DIRTY_PIPELINE))
         emit_textures(ctx, p);
+    for (uint32_t i = 0; i < p->block_count; i++) {
+        GlUniformBlock *block = &p->blocks[i];
+        GlBufferBinding *binding = &ctx->uniform_bindings[block->binding];
+        GlBuffer *buffer = gl_buffer(ctx, binding->name);
+        MimeGpuSetUniformBuffer *command = gl_emit(MIME_GPU_SET_UNIFORM_BUFFER, sizeof(MimeGpuSetUniformBuffer));
+        command->slot = i;
+        command->stages = block->stages;
+        command->mem = gl_mem(&buffer->mem);
+        command->mem.offset += binding->offset;
+        buffer->last_use = gl_batch_fence();
+    }
     for (int l = 0; l < MIME_GPU_MAX_ATTRIBS; l++) {
         if (!src[l].used)
             continue;
@@ -886,7 +1023,10 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
         gl_device_unlock();
         return;
     }
-    prepare(ctx, p, src);
+    if (!prepare(ctx, p, src)) {
+        gl_device_unlock();
+        return;
+    }
     uint32_t start = copy ? 0 : r.first;
     if (needs_conversion(mode)) {
         GlMem idx;
@@ -999,7 +1139,10 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
         gl_device_unlock();
         return;
     }
-    prepare(ctx, p, src);
+    if (!prepare(ctx, p, src)) {
+        gl_device_unlock();
+        return;
+    }
 
     MimeGpuMem mem;
     uint32_t n = (uint32_t)count, itype, prim = mtl_primitive(mode);
