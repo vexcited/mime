@@ -34,6 +34,8 @@ NTSYSCALLAPI NTSTATUS NTAPI NtRemoveIoCompletion(HANDLE handle, PVOID *key, PVOI
 NTSYSCALLAPI NTSTATUS NTAPI NtRemoveIoCompletionEx(HANDLE handle, PVOID entries, ULONG count, PULONG removed, PLARGE_INTEGER timeout, BOOLEAN alertable);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetContextThread(HANDLE thread, PCONTEXT context);
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access,
+                                                        POBJECT_ATTRIBUTES attributes, PUNICODE_STRING target);
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, EVENT_TYPE type, BOOLEAN state);
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb, PLARGE_INTEGER allocation, ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, PVOID ea, ULONG ea_length);
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG index, PUNICODE_STRING klass, ULONG options, PULONG disposition);
@@ -66,6 +68,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtOpenProcessToken(HANDLE process, ACCESS_MASK acces
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenProcessTokenEx(HANDLE process, ACCESS_MASK access, ULONG attributes, PHANDLE token);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenSemaphore(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
+NTSYSCALLAPI NTSTATUS NTAPI NtMakeTemporaryObject(HANDLE handle);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenThreadToken(HANDLE thread, ACCESS_MASK access, BOOLEAN self, PHANDLE token);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenThreadTokenEx(HANDLE thread, ACCESS_MASK access, BOOLEAN self, ULONG attributes, PHANDLE token);
@@ -104,6 +107,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtReleaseMutant(HANDLE handle, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtResetEvent(HANDLE handle, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtResumeThread(HANDLE handle, PULONG previous);
+NTSYSCALLAPI NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetEvent(HANDLE handle, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetInformationObject(HANDLE handle, ULONG klass, PVOID info, ULONG length);
@@ -125,5 +129,29 @@ NTSYSCALLAPI NTSTATUS NTAPI NtWaitForSingleObject(HANDLE handle, BOOLEAN alertab
 NTSYSCALLAPI NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key);
 NTSYSCALLAPI NTSTATUS NTAPI NtWriteVirtualMemory(HANDLE process_handle, PVOID base, PVOID buffer, SIZE_T size, PSIZE_T written);
 NTSYSCALLAPI NTSTATUS NTAPI NtYieldExecution(void);
+NTSYSCALLAPI NTSTATUS NTAPI NtAlertThreadByThreadId(HANDLE thread_id);
+NTSYSCALLAPI NTSTATUS NTAPI NtWaitForAlertByThreadId(PVOID hint, PLARGE_INTEGER timeout);
 
+NTSYSCALLAPI NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length,
+                                           PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length,
+                                                PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetValueKey(HANDLE key, PUNICODE_STRING name, ULONG title_index, ULONG type,
+                                          PVOID data, ULONG size);
+NTSYSCALLAPI NTSTATUS NTAPI NtDeleteKey(HANDLE key);
+NTSYSCALLAPI NTSTATUS NTAPI NtDeleteValueKey(HANDLE key, PUNICODE_STRING name);
+NTSYSCALLAPI NTSTATUS NTAPI NtFlushKey(HANDLE key);
+NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeKey(HANDLE key, HANDLE event, PVOID apc_routine, PVOID apc_context,
+                                              PIO_STATUS_BLOCK iosb, ULONG filter, BOOLEAN subtree, PVOID buffer,
+                                              ULONG length, BOOLEAN async);
+NTSYSCALLAPI NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom);
+NTSYSCALLAPI NTSTATUS NTAPI NtFindAtom(PWSTR name, ULONG length, PUSHORT atom);
+NTSYSCALLAPI NTSTATUS NTAPI NtDeleteAtom(USHORT atom);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULONG length,
+                                                   PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process, PHANDLE thread, ACCESS_MASK process_access,
+    ACCESS_MASK thread_access, POBJECT_ATTRIBUTES process_attributes, POBJECT_ATTRIBUTES thread_attributes,
+    ULONG process_flags, ULONG thread_flags, PRTL_USER_PROCESS_PARAMETERS parameters, PVOID create_info,
+    PVOID attributes);
 #endif

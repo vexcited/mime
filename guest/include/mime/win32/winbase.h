@@ -903,6 +903,14 @@ WINBASEAPI BOOL WINAPI GetDiskFreeSpaceW(LPCWSTR root, LPDWORD sectors_per_clust
 WINBASEAPI BOOL WINAPI GetDiskFreeSpaceA(LPCSTR root, LPDWORD sectors_per_cluster, LPDWORD bytes_per_sector,
                                          LPDWORD free_clusters, LPDWORD total_clusters);
 WINBASEAPI DWORD WINAPI QueryDosDeviceW(LPCWSTR device, LPWSTR target, DWORD size);
+WINBASEAPI DWORD WINAPI QueryDosDeviceA(LPCSTR device, LPSTR target, DWORD size);
+#define DDD_RAW_TARGET_PATH 0x00000001
+#define DDD_REMOVE_DEFINITION 0x00000002
+#define DDD_EXACT_MATCH_ON_REMOVE 0x00000004
+#define DDD_NO_BROADCAST_SYSTEM 0x00000008
+#define DDD_LUID_BROADCAST_DRIVE 0x00000010
+WINBASEAPI BOOL WINAPI DefineDosDeviceW(DWORD flags, LPCWSTR device, LPCWSTR target);
+WINBASEAPI BOOL WINAPI DefineDosDeviceA(DWORD flags, LPCSTR device, LPCSTR target);
 WINBASEAPI BOOL WINAPI Wow64DisableWow64FsRedirection(PVOID *old);
 WINBASEAPI BOOL WINAPI Wow64RevertWow64FsRedirection(PVOID old);
 WINBASEAPI BOOLEAN WINAPI Wow64EnableWow64FsRedirection(BOOLEAN enable);
@@ -1614,7 +1622,11 @@ FORCEINLINE void MemoryBarrier(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); 
 #if defined(__x86_64__)
 FORCEINLINE void YieldProcessor(void) { __asm__ volatile("pause"); }
 #else
+#if defined(__i386__) || defined(__x86_64__)
+FORCEINLINE void YieldProcessor(void) { __asm__ volatile("pause"); }
+#else
 FORCEINLINE void YieldProcessor(void) { __asm__ volatile("yield"); }
+#endif
 #endif
 
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushEntrySList(PSLIST_HEADER head, PSLIST_ENTRY entry);
@@ -2270,5 +2282,13 @@ WINBASEAPI LSTATUS WINAPI RegDeleteKeyValueW(HKEY key, LPCWSTR subkey, LPCWSTR v
 WINBASEAPI LSTATUS WINAPI RegDeleteKeyValueA(HKEY key, LPCSTR subkey, LPCSTR value);
 
 #include <mime/win32/winnls.h>
+
+WINBASEAPI DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fallback, LPWSTR out,
+                                                 DWORD size, LPCWSTR filename);
+WINBASEAPI UINT WINAPI GetPrivateProfileIntW(LPCWSTR section, LPCWSTR key, INT fallback, LPCWSTR filename);
+WINBASEAPI BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value, LPCWSTR filename);
+WINBASEAPI DWORD WINAPI GetProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fallback, LPWSTR out, DWORD size);
+WINBASEAPI UINT WINAPI GetProfileIntW(LPCWSTR section, LPCWSTR key, INT fallback);
+WINBASEAPI BOOL WINAPI WriteProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value);
 
 #endif

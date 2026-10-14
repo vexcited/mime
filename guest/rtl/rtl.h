@@ -63,6 +63,7 @@ WCHAR NTAPI RtlDowncaseUnicodeChar(WCHAR c);
 NTSTATUS NTAPI RtlUpcaseUnicodeString(PUNICODE_STRING dst, PCUNICODE_STRING src, BOOLEAN allocate);
 NTSTATUS NTAPI RtlUnicodeStringToAnsiString(PANSI_STRING dst, PCUNICODE_STRING src, BOOLEAN allocate);
 NTSTATUS NTAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING dst, PCANSI_STRING src, BOOLEAN allocate);
+BOOLEAN NTAPI RtlCreateUnicodeString(PUNICODE_STRING s, PCWSTR source);
 void NTAPI RtlFreeUnicodeString(PUNICODE_STRING s);
 void NTAPI RtlFreeAnsiString(PANSI_STRING s);
 NTSTATUS NTAPI RtlIntegerToUnicodeString(ULONG value, ULONG base, PUNICODE_STRING s);

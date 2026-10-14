@@ -13,14 +13,26 @@
 #define MIME_STATIC_ASSERT(e, m) _Static_assert(e, m)
 #define MIME_FIELD_AT(type, field, off) MIME_STATIC_ASSERT(offsetof(type, field) == (off), #type "." #field)
 
+#if defined(__i386__)
+#define NTAPI __stdcall
+#define WINAPI __stdcall
+#define CALLBACK __stdcall
+#define APIENTRY __stdcall
+#define FASTCALL __fastcall
+#else
 #define NTAPI
 #define WINAPI
 #define CALLBACK
 #define APIENTRY
-#define CDECL
 #define FASTCALL
+#endif
+#define CDECL __cdecl
 #define DECLSPEC_IMPORT __declspec(dllimport)
+#if defined(__i386__)
+#define DECLSPEC_EXPORT
+#else
 #define DECLSPEC_EXPORT __declspec(dllexport)
+#endif
 #define DECLSPEC_NORETURN __declspec(noreturn)
 #define DECLSPEC_ALIGN(x) __declspec(align(x))
 #define FORCEINLINE static inline __attribute__((always_inline))
@@ -54,8 +66,8 @@ typedef long LONG, *PLONG, *LPLONG;
 typedef unsigned long ULONG, *PULONG, DWORD, *PDWORD, *LPDWORD;
 typedef long long LONGLONG, *PLONGLONG, LONG64, INT64;
 typedef unsigned long long ULONGLONG, *PULONGLONG, ULONG64, *PULONG64, DWORD64, *PDWORD64, UINT64, DWORDLONG;
-typedef int64_t LONG_PTR, *PLONG_PTR, INT_PTR, SSIZE_T, *PSSIZE_T, LPARAM, LRESULT;
-typedef uint64_t ULONG_PTR, *PULONG_PTR, UINT_PTR, SIZE_T, *PSIZE_T, DWORD_PTR, WPARAM, KAFFINITY;
+typedef intptr_t LONG_PTR, *PLONG_PTR, INT_PTR, SSIZE_T, *PSSIZE_T, LPARAM, LRESULT;
+typedef uintptr_t ULONG_PTR, *PULONG_PTR, UINT_PTR, SIZE_T, *PSIZE_T, DWORD_PTR, WPARAM, KAFFINITY;
 typedef float FLOAT;
 typedef double DOUBLE;
 typedef LONG NTSTATUS, *PNTSTATUS;
@@ -105,6 +117,7 @@ typedef struct _GUID {
 #define STATUS_KERNEL_APC ((NTSTATUS)0x00000100L)
 #define STATUS_ALERTED ((NTSTATUS)0x00000101L)
 #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
+#define STATUS_NO_YIELD_PERFORMED ((NTSTATUS)0x40000024L)
 #define STATUS_PENDING ((NTSTATUS)0x00000103L)
 #define STATUS_REPARSE ((NTSTATUS)0x00000104L)
 #define STATUS_MORE_ENTRIES ((NTSTATUS)0x00000105L)
@@ -338,7 +351,9 @@ typedef struct _OBJECT_ATTRIBUTES {
 FORCEINLINE struct _TEB *NtCurrentTeb(void)
 {
     struct _TEB *teb;
-#if defined(__x86_64__)
+#if defined(__i386__)
+    __asm__("movl %%fs:0x18, %0" : "=r"(teb));
+#elif defined(__x86_64__)
     /* x64 code finds its teb through gs. */
     __asm__("movq %%gs:0x30, %0" : "=r"(teb));
 #else
@@ -720,6 +735,7 @@ typedef enum _MODE {
 #define IMAGE_FILE_MACHINE_ARM64 0xAA64
 #define IMAGE_FILE_MACHINE_AMD64 0x8664
 #define IMAGE_FILE_MACHINE_I386 0x014C
+#define IMAGE_NT_OPTIONAL_HDR32_MAGIC 0x10B
 #define IMAGE_NT_OPTIONAL_HDR64_MAGIC 0x20B
 #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
 #define IMAGE_SIZEOF_SHORT_NAME 8
@@ -757,6 +773,7 @@ typedef enum _MODE {
 #define IMAGE_SCN_MEM_WRITE 0x80000000
 
 #define IMAGE_REL_BASED_ABSOLUTE 0
+#define IMAGE_REL_BASED_HIGHLOW 3
 #define IMAGE_REL_BASED_DIR64 10
 
 #define IMAGE_ORDINAL_FLAG64 0x8000000000000000ull
@@ -786,6 +803,46 @@ typedef struct _IMAGE_DATA_DIRECTORY {
     ULONG VirtualAddress;
     ULONG Size;
 } IMAGE_DATA_DIRECTORY, *PIMAGE_DATA_DIRECTORY;
+
+typedef struct _IMAGE_OPTIONAL_HEADER32 {
+    USHORT Magic;
+    UCHAR MajorLinkerVersion;
+    UCHAR MinorLinkerVersion;
+    ULONG SizeOfCode;
+    ULONG SizeOfInitializedData;
+    ULONG SizeOfUninitializedData;
+    ULONG AddressOfEntryPoint;
+    ULONG BaseOfCode;
+    ULONG BaseOfData;
+    ULONG ImageBase;
+    ULONG SectionAlignment;
+    ULONG FileAlignment;
+    USHORT MajorOperatingSystemVersion;
+    USHORT MinorOperatingSystemVersion;
+    USHORT MajorImageVersion;
+    USHORT MinorImageVersion;
+    USHORT MajorSubsystemVersion;
+    USHORT MinorSubsystemVersion;
+    ULONG Win32VersionValue;
+    ULONG SizeOfImage;
+    ULONG SizeOfHeaders;
+    ULONG CheckSum;
+    USHORT Subsystem;
+    USHORT DllCharacteristics;
+    ULONG SizeOfStackReserve;
+    ULONG SizeOfStackCommit;
+    ULONG SizeOfHeapReserve;
+    ULONG SizeOfHeapCommit;
+    ULONG LoaderFlags;
+    ULONG NumberOfRvaAndSizes;
+    IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
+} IMAGE_OPTIONAL_HEADER32, *PIMAGE_OPTIONAL_HEADER32;
+
+typedef struct _IMAGE_NT_HEADERS32 {
+    ULONG Signature;
+    IMAGE_FILE_HEADER FileHeader;
+    IMAGE_OPTIONAL_HEADER32 OptionalHeader;
+} IMAGE_NT_HEADERS32, *PIMAGE_NT_HEADERS32;
 
 typedef struct _IMAGE_OPTIONAL_HEADER64 {
     USHORT Magic;
@@ -824,7 +881,12 @@ typedef struct _IMAGE_NT_HEADERS64 {
     ULONG Signature;
     IMAGE_FILE_HEADER FileHeader;
     IMAGE_OPTIONAL_HEADER64 OptionalHeader;
-} IMAGE_NT_HEADERS64, *PIMAGE_NT_HEADERS64, IMAGE_NT_HEADERS, *PIMAGE_NT_HEADERS;
+} IMAGE_NT_HEADERS64, *PIMAGE_NT_HEADERS64;
+#if defined(__i386__)
+typedef IMAGE_NT_HEADERS32 IMAGE_NT_HEADERS, *PIMAGE_NT_HEADERS;
+#else
+typedef IMAGE_NT_HEADERS64 IMAGE_NT_HEADERS, *PIMAGE_NT_HEADERS;
+#endif
 
 typedef struct _IMAGE_SECTION_HEADER {
     UCHAR Name[IMAGE_SIZEOF_SHORT_NAME];
@@ -876,6 +938,15 @@ typedef struct _IMAGE_IMPORT_BY_NAME {
     CHAR Name[1];
 } IMAGE_IMPORT_BY_NAME, *PIMAGE_IMPORT_BY_NAME;
 
+typedef struct _IMAGE_THUNK_DATA32 {
+    union {
+        ULONG ForwarderString;
+        ULONG Function;
+        ULONG Ordinal;
+        ULONG AddressOfData;
+    } u1;
+} IMAGE_THUNK_DATA32, *PIMAGE_THUNK_DATA32;
+
 typedef struct _IMAGE_THUNK_DATA64 {
     union {
         ULONGLONG ForwarderString;
@@ -903,6 +974,15 @@ typedef struct _IMAGE_BASE_RELOCATION {
 
 typedef void(NTAPI *PIMAGE_TLS_CALLBACK)(PVOID DllHandle, ULONG Reason, PVOID Reserved);
 
+typedef struct _IMAGE_TLS_DIRECTORY32 {
+    ULONG StartAddressOfRawData;
+    ULONG EndAddressOfRawData;
+    ULONG AddressOfIndex;
+    ULONG AddressOfCallBacks;
+    ULONG SizeOfZeroFill;
+    ULONG Characteristics;
+} IMAGE_TLS_DIRECTORY32, *PIMAGE_TLS_DIRECTORY32;
+
 typedef struct _IMAGE_TLS_DIRECTORY64 {
     ULONGLONG StartAddressOfRawData;
     ULONGLONG EndAddressOfRawData;
@@ -911,6 +991,16 @@ typedef struct _IMAGE_TLS_DIRECTORY64 {
     ULONG SizeOfZeroFill;
     ULONG Characteristics;
 } IMAGE_TLS_DIRECTORY64, *PIMAGE_TLS_DIRECTORY64;
+
+#if defined(__i386__)
+typedef IMAGE_THUNK_DATA32 IMAGE_THUNK_DATA;
+typedef IMAGE_TLS_DIRECTORY32 IMAGE_TLS_DIRECTORY;
+#define IMAGE_SNAP_BY_ORDINAL(o) (((o) & 0x80000000u) != 0)
+#else
+typedef IMAGE_THUNK_DATA64 IMAGE_THUNK_DATA;
+typedef IMAGE_TLS_DIRECTORY64 IMAGE_TLS_DIRECTORY;
+#define IMAGE_SNAP_BY_ORDINAL(o) IMAGE_SNAP_BY_ORDINAL64(o)
+#endif
 
 typedef struct _IMAGE_RESOURCE_DIRECTORY {
     ULONG Characteristics;
@@ -1067,7 +1157,37 @@ MIME_FIELD_AT(AMD64_CONTEXT, VectorRegister, 0x300);
 MIME_STATIC_ASSERT(sizeof(AMD64_CONTEXT) == 0x4D0, "AMD64_CONTEXT size");
 
 /* the context of the code being compiled. */
-#if defined(__x86_64__)
+typedef struct _I386_CONTEXT {
+    ULONG ContextFlags;
+    ULONG Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
+    struct {
+        ULONG ControlWord, StatusWord, TagWord, ErrorOffset, ErrorSelector, DataOffset, DataSelector;
+        UCHAR RegisterArea[80];
+        ULONG Cr0NpxState;
+    } FloatSave;
+    ULONG SegGs, SegFs, SegEs, SegDs;
+    ULONG Edi, Esi, Ebx, Edx, Ecx, Eax;
+    ULONG Ebp, Eip, SegCs, EFlags, Esp, SegSs;
+    UCHAR ExtendedRegisters[512];
+} I386_CONTEXT;
+MIME_FIELD_AT(I386_CONTEXT, Eip, 0xB8);
+MIME_STATIC_ASSERT(sizeof(I386_CONTEXT) == 716, "I386_CONTEXT size");
+#define CONTEXT_I386 0x00010000
+#define CONTEXT_I386_CONTROL (CONTEXT_I386 | 1)
+#define CONTEXT_I386_INTEGER (CONTEXT_I386 | 2)
+#define CONTEXT_I386_SEGMENTS (CONTEXT_I386 | 4)
+#define CONTEXT_I386_FLOATING_POINT (CONTEXT_I386 | 8)
+#define CONTEXT_I386_EXTENDED_REGISTERS (CONTEXT_I386 | 0x20)
+#define CONTEXT_I386_FULL (CONTEXT_I386 | 7)
+
+#if defined(__i386__)
+typedef I386_CONTEXT CONTEXT, *PCONTEXT;
+#define CONTEXT_CONTROL CONTEXT_I386_CONTROL
+#define CONTEXT_INTEGER CONTEXT_I386_INTEGER
+#define CONTEXT_FLOATING_POINT CONTEXT_I386_FLOATING_POINT
+#define CONTEXT_FULL CONTEXT_I386_FULL
+#define CONTEXT_ALL (CONTEXT_I386 | 0x3F)
+#elif defined(__x86_64__)
 typedef AMD64_CONTEXT CONTEXT, *PCONTEXT;
 #define CONTEXT_CONTROL CONTEXT_AMD64_CONTROL
 #define CONTEXT_INTEGER CONTEXT_AMD64_INTEGER
@@ -1168,12 +1288,21 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS {
     ULONG ProcessGroupId;
     ULONG LoaderThreads;
 } RTL_USER_PROCESS_PARAMETERS, *PRTL_USER_PROCESS_PARAMETERS;
+#if defined(__i386__)
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CurrentDirectory, 0x24);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, ImagePathName, 0x38);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CommandLine, 0x40);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, Environment, 0x48);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, WindowTitle, 0x70);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, EnvironmentSize, 0x290);
+#else
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CurrentDirectory, 0x38);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, ImagePathName, 0x60);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CommandLine, 0x70);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, Environment, 0x80);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, WindowTitle, 0xB0);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, EnvironmentSize, 0x3F0);
+#endif
 
 typedef struct _PEB_LDR_DATA {
     ULONG Length;
@@ -1186,8 +1315,13 @@ typedef struct _PEB_LDR_DATA {
     BOOLEAN ShutdownInProgress;
     HANDLE ShutdownThreadId;
 } PEB_LDR_DATA, *PPEB_LDR_DATA;
+#if defined(__i386__)
+MIME_FIELD_AT(PEB_LDR_DATA, InLoadOrderModuleList, 0xc);
+MIME_FIELD_AT(PEB_LDR_DATA, InInitializationOrderModuleList, 0x1c);
+#else
 MIME_FIELD_AT(PEB_LDR_DATA, InLoadOrderModuleList, 0x10);
 MIME_FIELD_AT(PEB_LDR_DATA, InInitializationOrderModuleList, 0x30);
+#endif
 
 typedef struct _RTL_BALANCED_NODE {
     struct _RTL_BALANCED_NODE *Children[2];
@@ -1230,18 +1364,28 @@ typedef struct _LDR_DATA_TABLE_ENTRY {
     ULONG DependentLoadFlags;
     UCHAR SigningLevel;
 } LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+#if defined(__i386__)
+MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, DllBase, 0x18);
+MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, FullDllName, 0x24);
+MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, BaseDllName, 0x2c);
+MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, HashLinks, 0x3c);
+MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, OriginalBase, 0x80);
+#else
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, DllBase, 0x30);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, FullDllName, 0x48);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, BaseDllName, 0x58);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, HashLinks, 0x70);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, OriginalBase, 0xF8);
+#endif
 
 typedef struct _PEB {
     BOOLEAN InheritedAddressSpace;
     BOOLEAN ReadImageFileExecOptions;
     BOOLEAN BeingDebugged;
     UCHAR BitField;
+#if !defined(__i386__)
     UCHAR Padding0[4];
+#endif
     HANDLE Mutant;
     PVOID ImageBaseAddress;
     PPEB_LDR_DATA Ldr;
@@ -1252,13 +1396,17 @@ typedef struct _PEB {
     PVOID AtlThunkSListPtr;
     PVOID IFEOKey;
     ULONG CrossProcessFlags;
+#if !defined(__i386__)
     UCHAR Padding1[4];
+#endif
     PVOID KernelCallbackTable;
     ULONG SystemReserved;
     ULONG AtlThunkSListPtr32;
     PVOID ApiSetMap;
     ULONG TlsExpansionCounter;
+#if !defined(__i386__)
     UCHAR Padding2[4];
+#endif
     PVOID TlsBitmap;
     ULONG TlsBitmapBits[2];
     PVOID ReadOnlySharedMemoryBase;
@@ -1280,7 +1428,9 @@ typedef struct _PEB {
     PVOID GdiSharedHandleTable;
     PVOID ProcessStarterHelper;
     ULONG GdiDCAttributeList;
+#if !defined(__i386__)
     UCHAR Padding3[4];
+#endif
     PVOID LoaderLock;
     ULONG OSMajorVersion;
     ULONG OSMinorVersion;
@@ -1290,14 +1440,22 @@ typedef struct _PEB {
     ULONG ImageSubsystem;
     ULONG ImageSubsystemMajorVersion;
     ULONG ImageSubsystemMinorVersion;
+#if !defined(__i386__)
     UCHAR Padding4[4];
+#endif
     ULONG_PTR ActiveProcessAffinityMask;
+#if defined(__i386__)
+    ULONG GdiHandleBuffer[34];
+#else
     ULONG GdiHandleBuffer[60];
+#endif
     PVOID PostProcessInitRoutine;
     PVOID TlsExpansionBitmap;
     ULONG TlsExpansionBitmapBits[32];
     ULONG SessionId;
+#if !defined(__i386__)
     UCHAR Padding5[4];
+#endif
     ULARGE_INTEGER AppCompatFlags;
     ULARGE_INTEGER AppCompatFlagsUser;
     PVOID pShimData;
@@ -1322,12 +1480,29 @@ typedef struct _PEB {
     PVOID EcCodeBitMap;
     PVOID pImageHeaderHash;
     ULONG TracingFlags;
+#if !defined(__i386__)
     UCHAR Padding6[4];
+#endif
     ULONGLONG CsrServerReadOnlySharedMemoryBase;
     ULONG_PTR TppWorkerpListLock;
     LIST_ENTRY TppWorkerpList;
     PVOID WaitOnAddressHashTable[128];
 } PEB, *PPEB;
+#if defined(__i386__)
+MIME_FIELD_AT(PEB, ImageBaseAddress, 0x8);
+MIME_FIELD_AT(PEB, Ldr, 0xc);
+MIME_FIELD_AT(PEB, ProcessParameters, 0x10);
+MIME_FIELD_AT(PEB, ProcessHeap, 0x18);
+MIME_FIELD_AT(PEB, KernelCallbackTable, 0x2c);
+MIME_FIELD_AT(PEB, ApiSetMap, 0x38);
+MIME_FIELD_AT(PEB, NumberOfProcessors, 0x64);
+MIME_FIELD_AT(PEB, ProcessHeaps, 0x90);
+MIME_FIELD_AT(PEB, LoaderLock, 0xa0);
+MIME_FIELD_AT(PEB, OSMajorVersion, 0xa4);
+MIME_FIELD_AT(PEB, ImageSubsystem, 0xb4);
+MIME_FIELD_AT(PEB, GdiHandleBuffer, 0xc4);
+MIME_FIELD_AT(PEB, SessionId, 0x1d4);
+#else
 MIME_FIELD_AT(PEB, ImageBaseAddress, 0x10);
 MIME_FIELD_AT(PEB, Ldr, 0x18);
 MIME_FIELD_AT(PEB, ProcessParameters, 0x20);
@@ -1341,6 +1516,7 @@ MIME_FIELD_AT(PEB, OSMajorVersion, 0x118);
 MIME_FIELD_AT(PEB, ImageSubsystem, 0x128);
 MIME_FIELD_AT(PEB, GdiHandleBuffer, 0x140);
 MIME_FIELD_AT(PEB, SessionId, 0x2C0);
+#endif
 
 typedef struct _GDI_TEB_BATCH {
     ULONG Offset;
@@ -1348,6 +1524,74 @@ typedef struct _GDI_TEB_BATCH {
     ULONG Buffer[310];
 } GDI_TEB_BATCH;
 
+#if defined(__i386__)
+typedef struct _TEB {
+    NT_TIB NtTib;
+    PVOID EnvironmentPointer;
+    CLIENT_ID ClientId;
+    PVOID ActiveRpcHandle;
+    PVOID ThreadLocalStoragePointer;
+    PPEB ProcessEnvironmentBlock;
+    ULONG LastErrorValue;
+    ULONG CountOfOwnedCriticalSections;
+    PVOID CsrClientThread;
+    PVOID Win32ThreadInfo;
+    ULONG User32Reserved[26];
+    ULONG UserReserved[5];
+    PVOID WOW32Reserved;
+    LCID CurrentLocale;
+    UCHAR Reserved0[0x1A4 - 0xC8];
+    NTSTATUS ExceptionCode;
+    UCHAR Reserved1[0x1D4 - 0x1A8];
+    GDI_TEB_BATCH GdiTebBatch;
+    CLIENT_ID RealClientId;
+    HANDLE GdiCachedProcessHandle;
+    ULONG GdiClientPID;
+    ULONG GdiClientTID;
+    PVOID GdiThreadLocalInfo;
+    ULONG_PTR Win32ClientInfo[62];
+    PVOID glDispatchTable[233];
+    ULONG_PTR glReserved1[29];
+    PVOID glReserved2;
+    PVOID glSectionInfo;
+    PVOID glSection;
+    PVOID glTable;
+    PVOID glCurrentRC;
+    PVOID glContext;
+    NTSTATUS LastStatusValue;
+    UNICODE_STRING StaticUnicodeString;
+    WCHAR StaticUnicodeBuffer[261];
+    UCHAR Padding0[2];
+    PVOID DeallocationStack;
+    PVOID TlsSlots[64];
+    LIST_ENTRY TlsLinks;
+    UCHAR Reserved2[0xF28 - 0xF18];
+    ULONG HardErrorMode;
+    UCHAR Reserved3[0xF70 - 0xF2C];
+    ULONG GdiBatchCount;
+    ULONG CurrentIdealProcessor;
+    ULONG GuaranteedStackBytes;
+    UCHAR Reserved4[0xF94 - 0xF7C];
+    PVOID *TlsExpansionSlots;
+    UCHAR Reserved5[0xFB4 - 0xF98];
+    PVOID FlsData;
+    UCHAR Reserved6[0xFCA - 0xFB8];
+    USHORT SameTebFlags;
+    UCHAR Reserved7[0xFE8 - 0xFCC];
+    ULONGLONG ReservedForCrt;
+} TEB, *PTEB;
+MIME_FIELD_AT(TEB, ClientId, 0x20);
+MIME_FIELD_AT(TEB, ThreadLocalStoragePointer, 0x2C);
+MIME_FIELD_AT(TEB, ProcessEnvironmentBlock, 0x30);
+MIME_FIELD_AT(TEB, LastErrorValue, 0x34);
+MIME_FIELD_AT(TEB, CurrentLocale, 0xC4);
+MIME_FIELD_AT(TEB, GdiTebBatch, 0x1D4);
+MIME_FIELD_AT(TEB, Win32ClientInfo, 0x6CC);
+MIME_FIELD_AT(TEB, LastStatusValue, 0xBF4);
+MIME_FIELD_AT(TEB, TlsSlots, 0xE10);
+MIME_FIELD_AT(TEB, FlsData, 0xFB4);
+MIME_FIELD_AT(TEB, SameTebFlags, 0xFCA);
+#else
 typedef struct _TEB {
     NT_TIB NtTib;
     PVOID EnvironmentPointer;
@@ -1486,6 +1730,8 @@ MIME_FIELD_AT(TEB, SameTebFlags, 0x17EE);
 MIME_FIELD_AT(TEB, ReservedForCrt, 0x1820);
 MIME_FIELD_AT(TEB, Rcu, 0x1870);
 
+#endif
+
 #define MIME_TEB_SIZE 0x2000
 
 typedef struct _KSYSTEM_TIME {
@@ -1576,7 +1822,7 @@ typedef struct _KUSER_SHARED_DATA {
     USHORT UserModeGlobalLogger[16];
     ULONG ImageFileExecutionOptions;
     ULONG LangGenerationCount;
-    ULONGLONG Reserved4;
+    volatile ULONGLONG MimeReadyThreads; /* Reserved4 on windows: nonzero while threads wait for a processor */
     volatile ULONGLONG InterruptTimeBias;
     volatile ULONGLONG QpcBias;
     ULONG ActiveProcessorCount;
@@ -1669,6 +1915,58 @@ typedef struct _SYSTEM_BASIC_INFORMATION {
     ULONG_PTR ActiveProcessorsAffinityMask;
     CCHAR NumberOfProcessors;
 } SYSTEM_BASIC_INFORMATION, *PSYSTEM_BASIC_INFORMATION;
+
+/* SystemProcessInformation: one record per process, followed by its threads and its image name. */
+typedef struct _SYSTEM_THREAD_INFORMATION {
+    LARGE_INTEGER KernelTime;
+    LARGE_INTEGER UserTime;
+    LARGE_INTEGER CreateTime;
+    ULONG WaitTime;
+    PVOID StartAddress;
+    CLIENT_ID ClientId;
+    LONG Priority;
+    LONG BasePriority;
+    ULONG ContextSwitches;
+    ULONG ThreadState;
+    ULONG WaitReason;
+} SYSTEM_THREAD_INFORMATION, *PSYSTEM_THREAD_INFORMATION;
+
+typedef struct _SYSTEM_PROCESS_INFORMATION {
+    ULONG NextEntryOffset;
+    ULONG NumberOfThreads;
+    LARGE_INTEGER WorkingSetPrivateSize;
+    ULONG HardFaultCount;
+    ULONG NumberOfThreadsHighWatermark;
+    ULONGLONG CycleTime;
+    LARGE_INTEGER CreateTime;
+    LARGE_INTEGER UserTime;
+    LARGE_INTEGER KernelTime;
+    UNICODE_STRING ImageName;
+    LONG BasePriority;
+    HANDLE UniqueProcessId;
+    HANDLE InheritedFromUniqueProcessId;
+    ULONG HandleCount;
+    ULONG SessionId;
+    ULONG_PTR UniqueProcessKey;
+    SIZE_T PeakVirtualSize;
+    SIZE_T VirtualSize;
+    ULONG PageFaultCount;
+    SIZE_T PeakWorkingSetSize;
+    SIZE_T WorkingSetSize;
+    SIZE_T QuotaPeakPagedPoolUsage;
+    SIZE_T QuotaPagedPoolUsage;
+    SIZE_T QuotaPeakNonPagedPoolUsage;
+    SIZE_T QuotaNonPagedPoolUsage;
+    SIZE_T PagefileUsage;
+    SIZE_T PeakPagefileUsage;
+    SIZE_T PrivatePageCount;
+    LARGE_INTEGER ReadOperationCount;
+    LARGE_INTEGER WriteOperationCount;
+    LARGE_INTEGER OtherOperationCount;
+    LARGE_INTEGER ReadTransferCount;
+    LARGE_INTEGER WriteTransferCount;
+    LARGE_INTEGER OtherTransferCount;
+} SYSTEM_PROCESS_INFORMATION, *PSYSTEM_PROCESS_INFORMATION;
 
 typedef struct _SYSTEM_PROCESSOR_INFORMATION {
     USHORT ProcessorArchitecture;

@@ -3,20 +3,7 @@
  */
 #include "kernelbase_private.h"
 
-NTSYSCALLAPI NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length,
-                                           PULONG returned);
-NTSYSCALLAPI NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length,
-                                                PULONG returned);
-NTSYSCALLAPI NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PULONG returned);
-NTSYSCALLAPI NTSTATUS NTAPI NtSetValueKey(HANDLE key, PUNICODE_STRING name, ULONG title_index, ULONG type,
-                                          PVOID data, ULONG size);
-NTSYSCALLAPI NTSTATUS NTAPI NtDeleteKey(HANDLE key);
 NTSYSAPI NTSTATUS NTAPI RtlOpenCurrentUser(ACCESS_MASK access, PHANDLE key);
-NTSYSCALLAPI NTSTATUS NTAPI NtDeleteValueKey(HANDLE key, PUNICODE_STRING name);
-NTSYSCALLAPI NTSTATUS NTAPI NtFlushKey(HANDLE key);
-NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeKey(HANDLE key, HANDLE event, PVOID apc_routine, PVOID apc_context,
-                                              PIO_STATUS_BLOCK iosb, ULONG filter, BOOLEAN subtree, PVOID buffer,
-                                              ULONG length, BOOLEAN async);
 
 #define KEY_BASIC_INFORMATION_CLASS 0
 #define KEY_NODE_INFORMATION_CLASS 1
@@ -93,7 +80,7 @@ static LONG to_error(NTSTATUS status)
 static BOOL is_predefined(HKEY key)
 {
     ULONG_PTR v = (ULONG_PTR)key;
-    return (v & 0xFFFFFFFF80000000ull) == 0xFFFFFFFF80000000ull && (ULONG)v - PREDEFINED_FIRST < PREDEFINED_COUNT;
+    return (ULONG_PTR)(LONG_PTR)(LONG)v == v && (ULONG)v - PREDEFINED_FIRST < PREDEFINED_COUNT;
 }
 
 static LONG open_path(PCWSTR path, ACCESS_MASK access, HANDLE *out)
@@ -758,7 +745,7 @@ static LONG copy_name(LPCWSTR name, ULONG bytes, LPWSTR out, LPDWORD out_size)
     return ERROR_SUCCESS;
 }
 
-static LONG query_buffer(NTSTATUS (*call)(HANDLE, ULONG, ULONG, PVOID, ULONG, PULONG), HANDLE key, ULONG index,
+static LONG query_buffer(NTSTATUS (NTAPI *call)(HANDLE, ULONG, ULONG, PVOID, ULONG, PULONG), HANDLE key, ULONG index,
                          ULONG klass, PVOID *out)
 {
     ULONG length = 512;
@@ -925,7 +912,7 @@ LSTATUS WINAPI RegEnumValueA(HKEY key, DWORD index, LPSTR name, LPDWORD name_siz
     return error;
 }
 
-static NTSTATUS query_key_call(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length, PULONG returned)
+static NTSTATUS NTAPI query_key_call(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length, PULONG returned)
 {
     return NtQueryKey(key, klass, info, length, returned);
 }

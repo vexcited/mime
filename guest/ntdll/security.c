@@ -88,7 +88,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlFormatCurrentUserKeyPath(PUNICODE_STRING path)
     if (!NT_SUCCESS(status))
         return status;
     UNICODE_STRING sid;
-    status = RtlConvertSidToUnicodeString(&sid, (PVOID)buffer[0], TRUE);
+    status = RtlConvertSidToUnicodeString(&sid, *(PVOID *)buffer, TRUE);
     if (!NT_SUCCESS(status))
         return status;
     static const WCHAR prefix[] = L"\\REGISTRY\\USER\\";

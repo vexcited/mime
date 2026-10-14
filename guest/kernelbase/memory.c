@@ -365,7 +365,7 @@ DWORD WINAPI GetProcessHeaps(DWORD count, PHANDLE heaps)
 #define DATA_MAGIC 0x5441444Bu     /* "KDAT". */
 #define FLAG_DISCARDABLE 0x0001
 
-typedef struct MOVEABLE {
+typedef struct DECLSPEC_ALIGN(16) MOVEABLE {
     ULONG Magic;
     USHORT Flags;
     UCHAR LockCount;
@@ -374,7 +374,7 @@ typedef struct MOVEABLE {
 } MOVEABLE;
 MIME_STATIC_ASSERT(sizeof(MOVEABLE) == 16, "MOVEABLE");
 
-typedef struct DATA_HEADER {
+typedef struct DECLSPEC_ALIGN(16) DATA_HEADER {
     ULONG Magic;
     ULONG Pad;
     MOVEABLE *Owner;

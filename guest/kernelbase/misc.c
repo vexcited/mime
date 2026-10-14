@@ -3,11 +3,6 @@
  */
 #include "kernelbase_private.h"
 
-NTSYSCALLAPI NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom);
-NTSYSCALLAPI NTSTATUS NTAPI NtFindAtom(PWSTR name, ULONG length, PUSHORT atom);
-NTSYSCALLAPI NTSTATUS NTAPI NtDeleteAtom(USHORT atom);
-NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULONG length,
-                                                   PULONG returned);
 
 #define MAXINTATOM 0xC000
 #define MAX_ATOM_NAME 255
@@ -257,7 +252,7 @@ static PWSTR atom_name_to_wide(LPCSTR name, BOOL *owned)
     return w;
 }
 
-static UINT atom_name_to_ansi(UINT (*get)(ATOM, LPWSTR, int), ATOM atom, LPSTR buffer, int size)
+static UINT atom_name_to_ansi(UINT (WINAPI *get)(ATOM, LPWSTR, int), ATOM atom, LPSTR buffer, int size)
 {
     WCHAR w[MAX_ATOM_NAME + 1];
     UINT n = get(atom, w, RTL_NUMBER_OF(w));

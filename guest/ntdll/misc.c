@@ -37,6 +37,7 @@ static const STATUS_MAP g_status_map[] = {
     {(NTSTATUS)0xC0000010, 1},     /* STATUS_INVALID_DEVICE_REQUEST */
     {(NTSTATUS)0xC0000011, 38},    /* STATUS_END_OF_FILE -> ERROR_HANDLE_EOF */
     {(NTSTATUS)0xC0000017, 8},     /* STATUS_NO_MEMORY -> ERROR_NOT_ENOUGH_MEMORY */
+    {(NTSTATUS)0xC0000018, 487},   /* conflicting addresses map to invalid address. */
     {(NTSTATUS)0xC000001C, 1},     /* STATUS_INVALID_SYSTEM_SERVICE */
     {(NTSTATUS)0xC0000022, 5},     /* STATUS_ACCESS_DENIED */
     {(NTSTATUS)0xC0000023, 122},   /* STATUS_BUFFER_TOO_SMALL -> ERROR_INSUFFICIENT_BUFFER */
@@ -198,7 +199,7 @@ NTDLL_EXPORT ULONG DbgPrint(PCSTR format, ...)
     return r;
 }
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 #define BREAKPOINT() __asm__ volatile("int3")
 #else
 #define BREAKPOINT() __asm__ volatile("brk #0xF000")
@@ -263,9 +264,16 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlIsProcessorFeaturePresent(ULONG feature)
 
 /* ------------------------------------------------------------------ time */
 
+/* the kernel lets user mode read the virtual counter, the performance counter of every processor. */
 NTDLL_EXPORT BOOLEAN NTAPI RtlQueryPerformanceCounter(PLARGE_INTEGER counter)
 {
+#ifdef __aarch64__
+    ULONG64 v;
+    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
+    counter->QuadPart = (LONGLONG)v;
+#else
     NtQueryPerformanceCounter(counter, NULL);
+#endif
     return TRUE;
 }
 
@@ -372,15 +380,17 @@ static ULONG process_cookie(void)
 static PVOID encode(PVOID p, ULONG cookie)
 {
     ULONG_PTR v = (ULONG_PTR)p ^ cookie;
-    ULONG shift = cookie & 0x3F;
-    return (PVOID)((v >> shift) | (v << ((64 - shift) & 63)));
+    ULONG bits = sizeof(ULONG_PTR) * 8;
+    ULONG shift = cookie & (bits - 1);
+    return (PVOID)((v >> shift) | (v << ((bits - shift) & (bits - 1))));
 }
 
 static PVOID decode(PVOID p, ULONG cookie)
 {
     ULONG_PTR v = (ULONG_PTR)p;
-    ULONG shift = cookie & 0x3F;
-    v = (v << shift) | (v >> ((64 - shift) & 63));
+    ULONG bits = sizeof(ULONG_PTR) * 8;
+    ULONG shift = cookie & (bits - 1);
+    v = (v << shift) | (v >> ((bits - shift) & (bits - 1)));
     return (PVOID)(v ^ cookie);
 }
 

@@ -310,6 +310,22 @@ NTSTATUS NTAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING dst, PCANSI_STRING s
     return STATUS_SUCCESS;
 }
 
+BOOLEAN NTAPI RtlCreateUnicodeString(PUNICODE_STRING s, PCWSTR source)
+{
+    SIZE_T bytes = (wcslen(source) + 1) * sizeof(WCHAR);
+    s->Buffer = NULL;
+    s->Length = s->MaximumLength = 0;
+    if (bytes > 0xFFFE)
+        return FALSE;
+    s->Buffer = MimeRtlAllocate(bytes);
+    if (!s->Buffer)
+        return FALSE;
+    memcpy(s->Buffer, source, bytes);
+    s->Length = (USHORT)(bytes - sizeof(WCHAR));
+    s->MaximumLength = (USHORT)bytes;
+    return TRUE;
+}
+
 void NTAPI RtlFreeUnicodeString(PUNICODE_STRING s)
 {
     if (s->Buffer)

@@ -38,7 +38,7 @@ typedef struct HEAP_FREE {
     LIST_ENTRY Links;
 } HEAP_FREE;
 
-typedef struct HEAP_SEGMENT {
+typedef struct DECLSPEC_ALIGN(16) HEAP_SEGMENT {
     LIST_ENTRY Links;
     SIZE_T Size;
     ULONG Separate; /* its own virtual allocation, released with the heap */
@@ -358,7 +358,7 @@ NTDLL_EXPORT PVOID NTAPI RtlAllocateHeap(PVOID handle, ULONG flags, SIZE_T size)
     PHEAP heap = handle;
     if (!heap || heap->Signature != HEAP_SIGNATURE)
         return NULL;
-    if (size > (SIZE_T)1 << 46) {
+    if (size > (sizeof(SIZE_T) == 4 ? 0x7FFFFFFFull : 1ull << 46)) {
         heap_failure(flags | heap->Flags, STATUS_NO_MEMORY);
         return NULL;
     }

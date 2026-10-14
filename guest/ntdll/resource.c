@@ -20,7 +20,7 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
 {
     PUCHAR base = image_base(handle, image);
     *base_out = base;
-    PIMAGE_NT_HEADERS64 nt = LdrpNtHeaders(base);
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!nt)
         return NULL;
     /* resource only images such as mui files are often pe32, whose data directories sit 16 bytes earlier. */
@@ -190,7 +190,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrAccessResource(PVOID handle, const IMAGE_RESOURCE
 {
     BOOLEAN image;
     PUCHAR base = image_base(handle, &image);
-    PIMAGE_NT_HEADERS64 nt = LdrpNtHeaders(base);
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!nt)
         return STATUS_INVALID_IMAGE_FORMAT;
     ULONG rva = entry->OffsetToData;

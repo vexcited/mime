@@ -790,14 +790,8 @@ BOOL WINAPI GetDiskFreeSpaceExW(LPCWSTR root, PULARGE_INTEGER available, PULARGE
     IO_STATUS_BLOCK iosb;
     status = NtQueryVolumeInformationFile(h, &iosb, &info, sizeof(info), (FS_INFORMATION_CLASS)FileFsFullSizeInformation);
     NtClose(h);
-    if (!NT_SUCCESS(status)) {
-        /* report a large disk when the file system cannot tell. */
-        info.TotalAllocationUnits.QuadPart = 64ll * 1024 * 1024 * 1024 / 4096;
-        info.CallerAvailableAllocationUnits.QuadPart = info.ActualAvailableAllocationUnits.QuadPart =
-            32ll * 1024 * 1024 * 1024 / 4096;
-        info.SectorsPerAllocationUnit = 8;
-        info.BytesPerSector = 512;
-    }
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
     ULONGLONG unit = (ULONGLONG)info.SectorsPerAllocationUnit * info.BytesPerSector;
     if (available)
         available->QuadPart = (ULONGLONG)info.CallerAvailableAllocationUnits.QuadPart * unit;
@@ -906,6 +900,142 @@ DWORD WINAPI QueryDosDeviceW(LPCWSTR device, LPWSTR target, DWORD size)
     target[n] = 0;
     target[n + 1] = 0;
     return n + 2;
+}
+
+DWORD WINAPI QueryDosDeviceA(LPCSTR device, LPSTR target, DWORD size)
+{
+    PWSTR w = KbAnsiToWide(device);
+    if (device && !w)
+        return 0;
+    if (!target || !size) {
+        KbFree(w);
+        KbSetError(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    PWSTR buf = KbAlloc(size * sizeof(WCHAR));
+    if (!buf) {
+        KbFree(w);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return 0;
+    }
+    DWORD n = QueryDosDeviceW(w, buf, size);
+    DWORD r = 0;
+    if (n) {
+        r = WideCharToMultiByte(CP_ACP, 0, buf, (int)n, target, (int)size, NULL, NULL);
+        if (!r)
+            KbSetError(ERROR_INSUFFICIENT_BUFFER);
+    }
+    KbFree(buf);
+    KbFree(w);
+    return r;
+}
+
+static BOOL dos_device_name(LPCWSTR device, PWSTR path, DWORD chars)
+{
+    if (!device || !*device || wcschr(device, '\\') || wcslen(device) + 5 > chars)
+        return FALSE;
+    KbFormat(path, chars, L"\\??\\%s", device);
+    /* a trailing backslash after a drive letter names the same device. */
+    size_t len = wcslen(path);
+    if (len > 4 && path[len - 1] == '\\')
+        path[len - 1] = 0;
+    return TRUE;
+}
+
+static BOOL dos_device_target(DWORD flags, LPCWSTR target, PUNICODE_STRING nt)
+{
+    if (flags & DDD_RAW_TARGET_PATH)
+        return RtlCreateUnicodeString(nt, target);
+    return RtlDosPathNameToNtPathName_U(target, nt, NULL, NULL);
+}
+
+static BOOL remove_dos_device(DWORD flags, LPCWSTR path, LPCWSTR target)
+{
+    UNICODE_STRING us;
+    RtlInitUnicodeString(&us, path);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    HANDLE h;
+    NTSTATUS status = NtOpenSymbolicLinkObject(&h, SYMBOLIC_LINK_QUERY | DELETE, &oa);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return FALSE;
+    }
+    if (target && *target && (flags & DDD_EXACT_MATCH_ON_REMOVE)) {
+        WCHAR buf[MAX_PATH];
+        UNICODE_STRING current = {0, sizeof(buf) - sizeof(WCHAR), buf}, wanted;
+        ULONG returned;
+        status = NtQuerySymbolicLinkObject(h, &current, &returned);
+        if (NT_SUCCESS(status) && !dos_device_target(flags, target, &wanted))
+            status = STATUS_OBJECT_PATH_INVALID;
+        else if (NT_SUCCESS(status)) {
+            if (!RtlEqualUnicodeString(&current, &wanted, TRUE))
+                status = STATUS_OBJECT_NAME_NOT_FOUND;
+            RtlFreeUnicodeString(&wanted);
+        }
+        if (!NT_SUCCESS(status)) {
+            NtClose(h);
+            KbSetStatus(status);
+            return FALSE;
+        }
+    }
+    status = NtMakeTemporaryObject(h);
+    NtClose(h);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL WINAPI DefineDosDeviceW(DWORD flags, LPCWSTR device, LPCWSTR target)
+{
+    WCHAR path[MAX_PATH];
+    if (!dos_device_name(device, path, RTL_NUMBER_OF(path))) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags & DDD_REMOVE_DEFINITION)
+        return remove_dos_device(flags, path, target);
+    if (!target || !*target) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UNICODE_STRING nt;
+    if (!dos_device_target(flags, target, &nt)) {
+        KbSetError(ERROR_PATH_NOT_FOUND);
+        return FALSE;
+    }
+    /* windows stacks definitions, here a new definition replaces the current one. */
+    UNICODE_STRING us;
+    RtlInitUnicodeString(&us, path);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    HANDLE h;
+    if (NT_SUCCESS(NtOpenSymbolicLinkObject(&h, DELETE, &oa))) {
+        NtMakeTemporaryObject(h);
+        NtClose(h);
+    }
+    oa.Attributes |= OBJ_PERMANENT;
+    NTSTATUS status = NtCreateSymbolicLinkObject(&h, SYMBOLIC_LINK_ALL_ACCESS, &oa, &nt);
+    RtlFreeUnicodeString(&nt);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return FALSE;
+    }
+    NtClose(h);
+    return TRUE;
+}
+
+BOOL WINAPI DefineDosDeviceA(DWORD flags, LPCSTR device, LPCSTR target)
+{
+    PWSTR wd = KbAnsiToWide(device), wt = KbAnsiToWide(target);
+    BOOL r = FALSE;
+    if ((!device || wd) && (!target || wt))
+        r = DefineDosDeviceW(flags, wd, wt);
+    KbFree(wd);
+    KbFree(wt);
+    return r;
 }
 
 BOOL WINAPI Wow64DisableWow64FsRedirection(PVOID *old)

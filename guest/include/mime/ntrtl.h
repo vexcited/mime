@@ -58,7 +58,7 @@ typedef struct _RTL_CRITICAL_SECTION {
     HANDLE LockSemaphore;
     ULONG_PTR SpinCount;
 } RTL_CRITICAL_SECTION, *PRTL_CRITICAL_SECTION;
-MIME_STATIC_ASSERT(sizeof(RTL_CRITICAL_SECTION) == 40, "RTL_CRITICAL_SECTION");
+MIME_STATIC_ASSERT(sizeof(RTL_CRITICAL_SECTION) == (sizeof(void *) == 4 ? 24 : 40), "RTL_CRITICAL_SECTION");
 
 /* a free critical section, usable as a static initializer. */
 #define RTL_CRITICAL_SECTION_INIT {NULL, -1, 0, NULL, NULL, 0}
@@ -81,6 +81,15 @@ typedef struct _SLIST_ENTRY {
     struct _SLIST_ENTRY *Next;
 } SLIST_ENTRY, *PSLIST_ENTRY;
 
+#if defined(__i386__)
+typedef union DECLSPEC_ALIGN(8) _SLIST_HEADER {
+    ULONGLONG Whole;
+    struct {
+        PSLIST_ENTRY Next;
+        ULONG DepthSequence;
+    } S;
+} SLIST_HEADER, *PSLIST_HEADER;
+#else
 /* 16 byte header: next pointer and a depth and sequence word, updated with casp. */
 typedef union DECLSPEC_ALIGN(16) _SLIST_HEADER {
     struct {
@@ -93,6 +102,8 @@ typedef union DECLSPEC_ALIGN(16) _SLIST_HEADER {
     } S;
     unsigned __int128 Whole;
 } SLIST_HEADER, *PSLIST_HEADER;
+
+#endif
 
 typedef struct _RTL_OSVERSIONINFOEXW {
     ULONG dwOSVersionInfoSize;

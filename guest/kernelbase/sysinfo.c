@@ -13,7 +13,7 @@ static void basic_information(SYSTEM_BASIC_INFORMATION *basic)
         basic->PageSize = 0x1000;
         basic->AllocationGranularity = 0x10000;
         basic->MinimumUserModeAddress = 0x10000;
-        basic->MaximumUserModeAddress = 0x7FFFFFFEFFFF;
+        basic->MaximumUserModeAddress = (ULONG_PTR)(sizeof(void *) == 4 ? 0x7FFEFFFFull : 0x7FFFFFFEFFFFull);
         basic->NumberOfProcessors = 1;
         basic->ActiveProcessorsAffinityMask = 1;
         basic->NumberOfPhysicalPages = USER_SHARED_DATA->NumberOfPhysicalPages;
@@ -34,9 +34,13 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     SYSTEM_PROCESSOR_INFORMATION cpu = {PROCESSOR_ARCHITECTURE_ARM64, 8, 0, 1, 0};
     basic_information(&basic);
     NtQuerySystemInformation(SystemProcessorInformation, &cpu, sizeof(cpu), NULL);
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
     /* the processor the translator presents, family 6 model 0x9e stepping 10 as its cpuid says. */
+#if defined(__i386__)
+    cpu.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;
+#else
     cpu.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
+#endif
     cpu.ProcessorLevel = 6;
     cpu.ProcessorRevision = 0x9E0A;
 #endif
@@ -49,6 +53,8 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     info->dwNumberOfProcessors = (DWORD)(UCHAR)basic.NumberOfProcessors;
 #if defined(__x86_64__)
     info->dwProcessorType = PROCESSOR_AMD_X8664;
+#elif defined(__i386__)
+    info->dwProcessorType = PROCESSOR_INTEL_PENTIUM;
 #else
     info->dwProcessorType = 0;
 #endif
@@ -60,6 +66,8 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
 void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 {
     GetSystemInfo(info);
+    info->wProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
+    info->dwProcessorType = 0;
 }
 
 /* ------------------------------------------------------------------ versions */

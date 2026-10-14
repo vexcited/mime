@@ -135,7 +135,7 @@ void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context
     RtlRaiseException(&nested);
 }
 
-#if !defined(__x86_64__)
+#if defined(__aarch64__)
 /* the x64 build raises from x64/entry.S. */
 NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
 {

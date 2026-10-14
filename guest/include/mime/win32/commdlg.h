@@ -7,6 +7,10 @@
 #include <mime/win32/objbase.h>
 #include <mime/win32/winuser.h>
 
+#if defined(__i386__)
+#pragma pack(push, 1)
+#endif
+
 #ifndef CDAPI
 #define CDAPI DECLSPEC_IMPORT
 #endif
@@ -76,7 +80,7 @@ typedef struct tagOFNW {
     DWORD FlagsEx;
 } OPENFILENAMEW, *LPOPENFILENAMEW;
 #define OPENFILENAME_SIZE_VERSION_400W offsetof(OPENFILENAMEW, pvReserved)
-MIME_STATIC_ASSERT(sizeof(OPENFILENAMEW) == 152, "OPENFILENAMEW size");
+MIME_STATIC_ASSERT(sizeof(OPENFILENAMEW) == (sizeof(void *) == 4 ? 88 : 152), "OPENFILENAMEW size");
 
 typedef struct tagOFNA {
     DWORD lStructSize;
@@ -118,7 +122,7 @@ typedef struct tagCHOOSECOLORW {
     LPCCHOOKPROC lpfnHook;
     LPCWSTR lpTemplateName;
 } CHOOSECOLORW, *LPCHOOSECOLORW;
-MIME_STATIC_ASSERT(sizeof(CHOOSECOLORW) == 72, "CHOOSECOLORW size");
+MIME_STATIC_ASSERT(sizeof(CHOOSECOLORW) == (sizeof(void *) == 4 ? 36 : 72), "CHOOSECOLORW size");
 
 typedef struct tagCHOOSEFONTW {
     DWORD lStructSize;
@@ -134,10 +138,11 @@ typedef struct tagCHOOSEFONTW {
     HINSTANCE hInstance;
     LPWSTR lpszStyle;
     WORD nFontType;
+    WORD Alignment;
     INT nSizeMin;
     INT nSizeMax;
 } CHOOSEFONTW, *LPCHOOSEFONTW;
-MIME_STATIC_ASSERT(sizeof(CHOOSEFONTW) == 104, "CHOOSEFONTW size");
+MIME_STATIC_ASSERT(sizeof(CHOOSEFONTW) == (sizeof(void *) == 4 ? 60 : 104), "CHOOSEFONTW size");
 
 /* ------------------------------------------------------------------ print dialogs */
 
@@ -169,7 +174,7 @@ typedef struct tagPRINTDLGW {
     HGLOBAL hPrintTemplate;
     HGLOBAL hSetupTemplate;
 } PRINTDLGW, *LPPRINTDLGW;
-MIME_STATIC_ASSERT(sizeof(PRINTDLGW) == 120, "PRINTDLGW size");
+MIME_STATIC_ASSERT(sizeof(PRINTDLGW) == (sizeof(void *) == 4 ? 66 : 120), "PRINTDLGW size");
 
 typedef struct tagPRINTPAGERANGE {
     DWORD nFromPage;
@@ -199,7 +204,7 @@ typedef struct tagPDEXW {
     DWORD nStartPage;
     DWORD dwResultAction;
 } PRINTDLGEXW, *LPPRINTDLGEXW;
-MIME_STATIC_ASSERT(sizeof(PRINTDLGEXW) == 136, "PRINTDLGEXW size");
+MIME_STATIC_ASSERT(sizeof(PRINTDLGEXW) == (sizeof(void *) == 4 ? 84 : 136), "PRINTDLGEXW size");
 
 typedef struct tagPSDW {
     DWORD lStructSize;
@@ -217,7 +222,7 @@ typedef struct tagPSDW {
     LPCWSTR lpPageSetupTemplateName;
     HGLOBAL hPageSetupTemplate;
 } PAGESETUPDLGW, *LPPAGESETUPDLGW;
-MIME_STATIC_ASSERT(sizeof(PAGESETUPDLGW) == 128, "PAGESETUPDLGW size");
+MIME_STATIC_ASSERT(sizeof(PAGESETUPDLGW) == (sizeof(void *) == 4 ? 84 : 128), "PAGESETUPDLGW size");
 
 /* ------------------------------------------------------------------ comdlg32 functions */
 
@@ -232,5 +237,9 @@ CDAPI BOOL WINAPI ChooseFontW(LPCHOOSEFONTW cf);
 CDAPI BOOL WINAPI PrintDlgW(LPPRINTDLGW pd);
 CDAPI HRESULT WINAPI PrintDlgExW(LPPRINTDLGEXW pd);
 CDAPI BOOL WINAPI PageSetupDlgW(LPPAGESETUPDLGW psd);
+
+#if defined(__i386__)
+#pragma pack(pop)
+#endif
 
 #endif

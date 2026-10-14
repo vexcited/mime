@@ -7,6 +7,20 @@
 #define LDRP_DONT_CALL_FOR_THREADS 0x00040000
 #define LDRP_LOAD_IN_PROGRESS 0x00001000
 #define LDRP_STATIC_LINK 0x00000002
+#define LDRP_COR_ILONLY 0x01000000
+
+typedef struct LDR_COR_HEADER {
+    ULONG Size;
+    USHORT MajorVersion, MinorVersion;
+    IMAGE_DATA_DIRECTORY Metadata;
+    ULONG Flags, EntryPoint;
+    IMAGE_DATA_DIRECTORY Resources, StrongName, CodeManager, VTableFixups, ExportJumps, NativeHeader;
+} LDR_COR_HEADER;
+
+#define COR_ILONLY 1u
+#define COR_32BITREQUIRED 2u
+#define COR_NATIVE_ENTRYPOINT 16u
+#define COR_DIRECTORY 14
 
 extern IMAGE_DOS_HEADER __ImageBase;
 
@@ -19,7 +33,10 @@ static BOOLEAN g_process_initialized;
 static BOOLEAN g_process_detaching;
 static RTL_CRITICAL_SECTION g_peb_lock = {NULL, -1, 0, NULL, NULL, 0};
 
-#if defined(__x86_64__)
+#if defined(__i386__)
+static const WCHAR g_system32[] = L"C:\\Windows\\SysWOW64\\";
+#define LDRP_MACHINE IMAGE_FILE_MACHINE_I386
+#elif defined(__x86_64__)
 /* the x64 system dlls, for programs run by the translator. */
 static const WCHAR g_system32[] = L"C:\\Windows\\SysX64\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
@@ -32,10 +49,17 @@ static const WCHAR g_windows[] = L"C:\\Windows\\";
 /* modules with static thread local storage, indexed by their tls slot. */
 typedef struct TLS_MODULE {
     PLDR_DATA_TABLE_ENTRY Entry;
-    IMAGE_TLS_DIRECTORY64 *Directory;
+    IMAGE_TLS_DIRECTORY *Directory;
 } TLS_MODULE;
 static TLS_MODULE g_tls_modules[64];
 static ULONG g_tls_count;
+
+/* a thread's tls slots, listed so a dll loaded later reaches every thread. */
+typedef struct TLS_VECTOR {
+    LIST_ENTRY Link;
+    PVOID Slots[RTL_NUMBER_OF(g_tls_modules)];
+} TLS_VECTOR;
+static LIST_ENTRY g_tls_vectors = {&g_tls_vectors, &g_tls_vectors};
 
 typedef struct LOAD_CONTEXT {
     BOOLEAN Static; /* part of the initial process image */
@@ -46,26 +70,55 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
 
 /* ------------------------------------------------------------------ image helpers */
 
-PIMAGE_NT_HEADERS64 LdrpNtHeaders(PVOID base)
+PIMAGE_NT_HEADERS LdrpNtHeaders(PVOID base)
 {
     IMAGE_DOS_HEADER *dos = base;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE)
         return NULL;
-    PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)base + dos->e_lfanew);
+    PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)((PUCHAR)base + dos->e_lfanew);
     return nt->Signature == IMAGE_NT_SIGNATURE ? nt : NULL;
 }
 
 PVOID LdrpImageDirectory(PVOID base, USHORT index, PULONG size)
 {
-    PIMAGE_NT_HEADERS64 nt = LdrpNtHeaders(base);
-    if (!nt || index >= nt->OptionalHeader.NumberOfRvaAndSizes)
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
+    if (!nt || index >= IMAGE_NUMBEROF_DIRECTORY_ENTRIES)
         return NULL;
-    IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[index];
-    if (!dir->VirtualAddress || !dir->Size)
+    IMAGE_OPTIONAL_HEADER32 *opt32 = (void *)&nt->OptionalHeader;
+    IMAGE_OPTIONAL_HEADER64 *opt64 = (void *)&nt->OptionalHeader;
+    BOOLEAN pe32 = opt32->Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC;
+    ULONG count = pe32 ? opt32->NumberOfRvaAndSizes : opt64->NumberOfRvaAndSizes;
+    if (index >= count)
+        return NULL;
+    IMAGE_DATA_DIRECTORY *dir = pe32 ? &opt32->DataDirectory[index] : &opt64->DataDirectory[index];
+    if (!dir->VirtualAddress || !dir->Size || dir->VirtualAddress >= opt32->SizeOfImage ||
+        dir->Size > opt32->SizeOfImage - dir->VirtualAddress)
         return NULL;
     if (size)
         *size = dir->Size;
     return (PUCHAR)base + dir->VirtualAddress;
+}
+
+static BOOLEAN is_il_only(PVOID base)
+{
+    ULONG size = 0;
+    const LDR_COR_HEADER *cor = LdrpImageDirectory(base, COR_DIRECTORY, &size);
+    if (!cor || size < sizeof(*cor) || cor->Size < sizeof(*cor) || cor->Size > size ||
+        (cor->Flags & (COR_ILONLY | COR_NATIVE_ENTRYPOINT)) != COR_ILONLY)
+        return FALSE;
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
+    ULONG image_size = nt->OptionalHeader.SizeOfImage;
+    return cor->Metadata.VirtualAddress && cor->Metadata.Size >= 16 && cor->Metadata.VirtualAddress < image_size &&
+        cor->Metadata.Size <= image_size - cor->Metadata.VirtualAddress;
+}
+
+static BOOLEAN is_portable_il(PVOID base)
+{
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
+    if (nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 || !is_il_only(base))
+        return FALSE;
+    const LDR_COR_HEADER *cor = LdrpImageDirectory(base, COR_DIRECTORY, NULL);
+    return !(cor->Flags & COR_32BITREQUIRED) && !cor->NativeHeader.VirtualAddress && !cor->NativeHeader.Size;
 }
 
 static PVOID heap_alloc(SIZE_T size)
@@ -93,7 +146,7 @@ static PWSTR heap_wcsdup(PCWSTR s, SIZE_T chars)
 static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
 {
     PLDR_DATA_TABLE_ENTRY e = heap_alloc(sizeof(*e));
-    PIMAGE_NT_HEADERS64 nt = LdrpNtHeaders(base);
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!e || !nt)
         return NULL;
     SIZE_T chars = wcslen(full_path);
@@ -115,11 +168,17 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
     e->BaseDllName.Length = (USHORT)((copy + chars - file) * sizeof(WCHAR));
     e->BaseDllName.MaximumLength = (USHORT)(e->BaseDllName.Length + sizeof(WCHAR));
     e->TimeDateStamp = nt->FileHeader.TimeDateStamp;
-    e->OriginalBase = nt->OptionalHeader.ImageBase;
+    e->OriginalBase = nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC ?
+        ((IMAGE_OPTIONAL_HEADER32 *)&nt->OptionalHeader)->ImageBase :
+        ((IMAGE_OPTIONAL_HEADER64 *)&nt->OptionalHeader)->ImageBase;
     e->ObsoleteLoadCount = 1;
     e->ReferenceCount = 1;
     if (nt->FileHeader.Characteristics & IMAGE_FILE_DLL)
         e->Flags |= LDRP_IMAGE_DLL;
+    if (is_il_only(base)) {
+        e->Flags |= LDRP_COR_ILONLY;
+        e->EntryPoint = NULL;
+    }
     InitializeListHead(&e->HashLinks);
     InitializeListHead(&e->InInitializationOrderLinks);
     InsertTailList(&g_ldr.InLoadOrderModuleList, &e->InLoadOrderLinks);
@@ -195,6 +254,7 @@ typedef struct API_SET_RULE {
 
 static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-crt-", L"ucrtbase.dll"},
+    {L"api-ms-win-core-winrt-", L"ole32.dll"},
     {L"api-ms-win-core-synch-", L"kernelbase.dll"},
     {L"api-ms-win-core-", L"kernelbase.dll"},
     {L"api-ms-win-eventing-", L"kernelbase.dll"},
@@ -253,8 +313,8 @@ static NTSTATUS map_image(HANDLE file, PVOID *base)
     NtClose(section);
     if (status == STATUS_IMAGE_NOT_AT_BASE)
         status = STATUS_SUCCESS;
-    /* a process runs the dlls of a single processor. */
-    if (NT_SUCCESS(status) && LdrpNtHeaders(*base)->FileHeader.Machine != LDRP_MACHINE) {
+    /* portable il is consumed by the managed runtime, without executing its native bootstrap. */
+    if (NT_SUCCESS(status) && LdrpNtHeaders(*base)->FileHeader.Machine != LDRP_MACHINE && !is_portable_il(*base)) {
         NtUnmapViewOfSection(NtCurrentProcess(), *base);
         status = STATUS_INVALID_IMAGE_FORMAT;
     }
@@ -314,6 +374,17 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
         ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, NULL);
         if (!n || n >= out_chars * sizeof(WCHAR))
             return STATUS_OBJECT_PATH_SYNTAX_BAD;
+#if defined(__i386__) || defined(__x86_64__)
+        /* System32 holds arm64 dlls: paths into it, such as com servers, mean this processor's copies. */
+        static const WCHAR arm64_system32[] = L"C:\\Windows\\System32\\";
+        SIZE_T prefix = RTL_NUMBER_OF(arm64_system32) - 1;
+        WCHAR redirected[MAX_PATH];
+        if (!_wcsnicmp(out, arm64_system32, prefix) && out_chars <= RTL_NUMBER_OF(redirected) &&
+            try_directory(g_system32, wcslen(g_system32), out + prefix, redirected, out_chars)) {
+            wcscpy(out, redirected);
+            return STATUS_SUCCESS;
+        }
+#endif
         return file_exists(out) ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
     }
     if (search_path && search_list(search_path, name, out, out_chars))
@@ -443,12 +514,12 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
         DbgPrint("ntdll: %wZ needs %s, which cannot be loaded (%08x)\n", &module->BaseDllName, dll_name, status);
         return status;
     }
-    IMAGE_THUNK_DATA64 *lookup = (IMAGE_THUNK_DATA64 *)(base + (desc->OriginalFirstThunk ? desc->OriginalFirstThunk
+    IMAGE_THUNK_DATA *lookup = (IMAGE_THUNK_DATA *)(base + (desc->OriginalFirstThunk ? desc->OriginalFirstThunk
                                                                                           : desc->FirstThunk));
-    IMAGE_THUNK_DATA64 *iat = (IMAGE_THUNK_DATA64 *)(base + desc->FirstThunk);
+    IMAGE_THUNK_DATA *iat = (IMAGE_THUNK_DATA *)(base + desc->FirstThunk);
     for (; lookup->u1.AddressOfData; lookup++, iat++) {
         PVOID address;
-        if (IMAGE_SNAP_BY_ORDINAL64(lookup->u1.Ordinal)) {
+        if (IMAGE_SNAP_BY_ORDINAL(lookup->u1.Ordinal)) {
             ULONG ordinal = (ULONG)IMAGE_ORDINAL64(lookup->u1.Ordinal);
             status = resolve_export(dep, NULL, 0, ordinal, &address, ctx, 0);
             if (!NT_SUCCESS(status)) {
@@ -463,13 +534,15 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
                 return status;
             }
         }
-        iat->u1.Function = (ULONG64)address;
+        iat->u1.Function = (ULONG_PTR)address;
     }
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
 {
+    if (module->Flags & LDRP_COR_ILONLY)
+        return STATUS_SUCCESS;
     ULONG size;
     IMAGE_IMPORT_DESCRIPTOR *desc = LdrpImageDirectory(module->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
     if (!desc)
@@ -498,8 +571,10 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
 
 static void register_tls(PLDR_DATA_TABLE_ENTRY e)
 {
+    if (e->Flags & LDRP_COR_ILONLY)
+        return;
     ULONG size;
-    IMAGE_TLS_DIRECTORY64 *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
+    IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
     if (!tls || g_tls_count >= RTL_NUMBER_OF(g_tls_modules))
         return;
     ULONG index = g_tls_count++;
@@ -510,55 +585,68 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         *(PULONG)tls->AddressOfIndex = index;
 }
 
+/* fills the empty slots of a thread with fresh copies of the static tls blocks. */
+static NTSTATUS fill_tls(TLS_VECTOR *v)
+{
+    for (ULONG i = 0; i < g_tls_count; i++) {
+        if (v->Slots[i])
+            continue;
+        IMAGE_TLS_DIRECTORY *tls = g_tls_modules[i].Directory;
+        SIZE_T raw = (SIZE_T)(tls->EndAddressOfRawData - tls->StartAddressOfRawData);
+        PUCHAR block = heap_alloc(raw + tls->SizeOfZeroFill + 16);
+        if (!block)
+            return STATUS_NO_MEMORY;
+        memcpy(block, (PVOID)tls->StartAddressOfRawData, raw);
+        v->Slots[i] = block;
+    }
+    return STATUS_SUCCESS;
+}
+
 /* gives the current thread its copy of every static tls block. */
 static NTSTATUS allocate_thread_tls(void)
 {
     if (!g_tls_count)
         return STATUS_SUCCESS;
     PTEB teb = NtCurrentTeb();
-    PVOID *vector = heap_alloc(RTL_NUMBER_OF(g_tls_modules) * sizeof(PVOID));
-    if (!vector)
+    if (teb->ThreadLocalStoragePointer)
+        return fill_tls(CONTAINING_RECORD(teb->ThreadLocalStoragePointer, TLS_VECTOR, Slots));
+    TLS_VECTOR *v = heap_alloc(sizeof(*v));
+    if (!v)
         return STATUS_NO_MEMORY;
-    for (ULONG i = 0; i < g_tls_count; i++) {
-        IMAGE_TLS_DIRECTORY64 *tls = g_tls_modules[i].Directory;
-        SIZE_T raw = (SIZE_T)(tls->EndAddressOfRawData - tls->StartAddressOfRawData);
-        PUCHAR block = heap_alloc(raw + tls->SizeOfZeroFill + 16);
-        if (!block)
-            return STATUS_NO_MEMORY;
-        memcpy(block, (PVOID)tls->StartAddressOfRawData, raw);
-        vector[i] = block;
-    }
-    PVOID *old = teb->ThreadLocalStoragePointer;
-    if (old) {
-        /* a dll with tls loaded later: keep the blocks this thread already had. */
-        for (ULONG i = 0; i < g_tls_count; i++) {
-            if (old[i]) {
-                heap_free(vector[i]);
-                vector[i] = old[i];
-            }
-        }
-        heap_free(old);
-    }
-    teb->ThreadLocalStoragePointer = vector;
-    return STATUS_SUCCESS;
+    InsertTailList(&g_tls_vectors, &v->Link);
+    teb->ThreadLocalStoragePointer = v->Slots;
+    return fill_tls(v);
+}
+
+/* a dll with tls loaded after threads started: as on windows, each running thread gets its blocks. */
+static NTSTATUS allocate_process_tls(void)
+{
+    NTSTATUS status = allocate_thread_tls();
+    for (PLIST_ENTRY l = g_tls_vectors.Flink; NT_SUCCESS(status) && l != &g_tls_vectors; l = l->Flink)
+        status = fill_tls(CONTAINING_RECORD(l, TLS_VECTOR, Link));
+    return status;
 }
 
 static void free_thread_tls(void)
 {
     PTEB teb = NtCurrentTeb();
-    PVOID *vector = teb->ThreadLocalStoragePointer;
-    if (!vector)
+    PVOID *slots = teb->ThreadLocalStoragePointer;
+    if (!slots)
         return;
     teb->ThreadLocalStoragePointer = NULL;
+    TLS_VECTOR *v = CONTAINING_RECORD(slots, TLS_VECTOR, Slots);
+    RemoveEntryList(&v->Link);
     for (ULONG i = 0; i < g_tls_count; i++)
-        heap_free(vector[i]);
-    heap_free(vector);
+        heap_free(v->Slots[i]);
+    heap_free(v);
 }
 
 static void call_tls_callbacks(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
 {
+    if (e->Flags & LDRP_COR_ILONLY)
+        return;
     ULONG size;
-    IMAGE_TLS_DIRECTORY64 *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
+    IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
     if (!tls || !tls->AddressOfCallBacks)
         return;
     for (PIMAGE_TLS_CALLBACK *cb = (PIMAGE_TLS_CALLBACK *)tls->AddressOfCallBacks; *cb; cb++)
@@ -814,7 +902,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     PLDR_DATA_TABLE_ENTRY e;
     NTSTATUS status = load_dll(dll, &ctx, &e);
     if (NT_SUCCESS(status)) {
-        allocate_thread_tls();
+        allocate_process_tls();
         status = run_initializers(NULL);
         if (NT_SUCCESS(status))
             *base = e->DllBase;

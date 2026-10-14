@@ -4,7 +4,6 @@
 #include "kernelbase_private.h"
 
 #define THREAD_CREATE_FLAGS_CREATE_SUSPENDED 0x00000001
-#define STATUS_NO_YIELD_PERFORMED ((NTSTATUS)0x40000024L)
 #define DEFAULT_STACK_RESERVE (1024 * 1024)
 
 /* ------------------------------------------------------------------ identity */
@@ -206,11 +205,15 @@ HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_STAR
     return CreateRemoteThreadEx(NtCurrentProcess(), sa, stack, start, parameter, flags, NULL, id);
 }
 
-/* the kernel cannot suspend running threads yet. */
 DWORD WINAPI SuspendThread(HANDLE thread)
 {
-    KbSetError(ERROR_NOT_SUPPORTED);
-    return (DWORD)-1;
+    ULONG previous = 0;
+    NTSTATUS status = NtSuspendThread(thread, &previous);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return (DWORD)-1;
+    }
+    return previous;
 }
 
 DWORD WINAPI ResumeThread(HANDLE thread)
@@ -235,6 +238,9 @@ DWORD WINAPI SleepEx(DWORD milliseconds, BOOL alertable)
         interval.QuadPart = -(LONGLONG)milliseconds * 10000;
     if (alertable && KbRunPendingApcs())
         return WAIT_IO_COMPLETION;
+    /* the kernel shows whether any thread waits for a processor: a yield to nobody stays in user mode. */
+    if (!milliseconds && !alertable && !USER_SHARED_DATA->MimeReadyThreads)
+        return 0;
     NTSTATUS status;
     do {
         status = NtDelayExecution((BOOLEAN)alertable, &interval);
@@ -249,6 +255,8 @@ void WINAPI Sleep(DWORD milliseconds)
 
 BOOL WINAPI SwitchToThread(void)
 {
+    if (!USER_SHARED_DATA->MimeReadyThreads)
+        return FALSE;
     return NtYieldExecution() != STATUS_NO_YIELD_PERFORMED;
 }
 
@@ -449,15 +457,22 @@ BOOL WINAPI SetThreadGroupAffinity(HANDLE thread, const GROUP_AFFINITY *affinity
     return TRUE;
 }
 
+/* the kernel keeps the processor number in TPIDRRO_EL0, as windows on arm64 does. */
 DWORD WINAPI GetCurrentProcessorNumber(void)
 {
+#ifdef __aarch64__
+    ULONG64 v;
+    __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(v));
+    return (DWORD)v;
+#else
     return NtGetCurrentProcessorNumber();
+#endif
 }
 
 void WINAPI GetCurrentProcessorNumberEx(PPROCESSOR_NUMBER number)
 {
     number->Group = 0;
-    number->Number = (BYTE)NtGetCurrentProcessorNumber();
+    number->Number = (BYTE)GetCurrentProcessorNumber();
     number->Reserved = 0;
 }
 
@@ -552,7 +567,6 @@ void WINAPI GetStartupInfoA(LPSTARTUPINFOA info)
 
 /* ------------------------------------------------------------------ process creation */
 
-/* the kernel has no NtCreateUserProcess yet. */
 BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
                            LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
                            LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info)
@@ -562,8 +576,65 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         return FALSE;
     }
     memset(info, 0, sizeof(*info));
-    KbSetError(ERROR_NOT_SUPPORTED);
-    return FALSE;
+    if (process_sa || thread_sa || inherit || environment || (flags & ~CREATE_SUSPENDED)) {
+        KbSetError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    WCHAR executable[MAX_PATH], full[MAX_PATH], cwd[MAX_PATH];
+    if (application) {
+        if (wcslen(application) >= MAX_PATH) {
+            KbSetError(ERROR_FILENAME_EXCED_RANGE);
+            return FALSE;
+        }
+        wcscpy(executable, application);
+    } else {
+        PCWSTR source = command_line;
+        while (*source == L' ' || *source == L'\t')
+            source++;
+        BOOL quoted = *source == L'"';
+        if (quoted)
+            source++;
+        SIZE_T n = 0;
+        while (*source && (quoted ? *source != L'"' : *source != L' ' && *source != L'\t')) {
+            if (n + 1 == MAX_PATH) {
+                KbSetError(ERROR_FILENAME_EXCED_RANGE);
+                return FALSE;
+            }
+            executable[n++] = *source++;
+        }
+        executable[n] = 0;
+    }
+    DWORD n = SearchPathW(NULL, executable, L".exe", MAX_PATH, full, NULL);
+    if (!n || n >= MAX_PATH) {
+        KbSetError(ERROR_FILE_NOT_FOUND);
+        return FALSE;
+    }
+    n = directory ? GetFullPathNameW(directory, MAX_PATH, cwd, NULL) : GetCurrentDirectoryW(MAX_PATH, cwd);
+    if (!n || n >= MAX_PATH) {
+        if (n >= MAX_PATH)
+            KbSetError(ERROR_FILENAME_EXCED_RANGE);
+        return FALSE;
+    }
+    WCHAR default_command[MAX_PATH + 3];
+    if (!command_line) {
+        default_command[0] = L'"';
+        wcscpy(default_command + 1, full);
+        wcscat(default_command, L"\"");
+        command_line = default_command;
+    }
+    RTL_USER_PROCESS_PARAMETERS pp = {0};
+    pp.MaximumLength = pp.Length = sizeof(pp);
+    pp.Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
+    RtlInitUnicodeString(&pp.ImagePathName, full);
+    RtlInitUnicodeString(&pp.CommandLine, command_line);
+    RtlInitUnicodeString(&pp.CurrentDirectory.DosPath, cwd);
+    NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
+                                           NULL, NULL, 0, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, NULL, NULL);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    info->dwProcessId = GetProcessId(info->hProcess);
+    info->dwThreadId = GetThreadId(info->hThread);
+    return TRUE;
 }
 
 BOOL WINAPI CreateProcessA(LPCSTR application, LPSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
@@ -895,7 +966,9 @@ BOOL WINAPI GetProcessInformation(HANDLE process, PROCESS_INFORMATION_CLASS klas
     case ProcessMachineTypeInfo:
         if (size < sizeof(KB_PROCESS_MACHINE_INFORMATION))
             break;
-#if defined(__x86_64__)
+#if defined(__i386__)
+        ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_I386;
+#elif defined(__x86_64__)
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_AMD64;
 #else
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_ARM64;
@@ -1241,7 +1314,12 @@ LPVOID WINAPI CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_
     f->StackLimit = stack;
     f->StackBase = (PUCHAR)stack + reserve;
     f->Context.ContextFlags = CONTEXT_FULL;
-#if defined(__x86_64__)
+#if defined(__i386__)
+    f->Context.Esp = ((ULONG_PTR)f->StackBase - 64) & ~(ULONG_PTR)15;
+    f->Context.Eip = (ULONG_PTR)fiber_entry;
+    ((PULONG)(ULONG_PTR)f->Context.Esp)[1] = (ULONG_PTR)f;
+    f->Context.EFlags = 0x202;
+#elif defined(__x86_64__)
     /* entered like a call: the return address slot below a 16 byte aligned frame. */
     f->Context.Rsp = (((ULONG_PTR)f->StackBase - 64) & ~(ULONG_PTR)15) - 8;
     f->Context.Rip = (ULONG64)fiber_entry;
@@ -1301,7 +1379,7 @@ void WINAPI SwitchToFiber(LPVOID fiber)
     teb->NtTib.StackLimit = target->StackLimit;
     teb->DeallocationStack = target->DeallocationStack;
     teb->FlsData = target->FlsData;
-#if !defined(__x86_64__)
+#if defined(__aarch64__)
     target->Context.X18 = (ULONG64)teb;
 #endif
     NtContinue(&target->Context, FALSE);

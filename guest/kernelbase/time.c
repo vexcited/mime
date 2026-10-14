@@ -24,7 +24,8 @@ ULONGLONG WINAPI GetTickCount64(void)
 {
     volatile KUSER_SHARED_DATA *k = USER_SHARED_DATA;
     ULONGLONG ticks = read_system_time(&k->TickCount);
-    return (ULONGLONG)(((unsigned __int128)ticks * k->TickCountMultiplier) >> 24);
+    return (ticks >> 24) * k->TickCountMultiplier +
+           (((ticks & 0xFFFFFF) * k->TickCountMultiplier) >> 24);
 }
 
 DWORD WINAPI GetTickCount(void)

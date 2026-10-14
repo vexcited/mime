@@ -79,7 +79,10 @@ typedef struct _DISPATCHER_CONTEXT {
     ULONG Fill0;
 } DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
 
-typedef struct _KNONVOLATILE_CONTEXT_POINTERS KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
+typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
+    M128A *FloatingContext[16];
+    ULONG64 *IntegerContext[16];
+} KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
 
 #define STATUS_UNWIND ((NTSTATUS)0xC0000027L)
 #define STATUS_INVALID_DISPOSITION ((NTSTATUS)0xC0000026L)
@@ -102,6 +105,8 @@ typedef struct DYNAMIC_TABLE {
     ULONG64 Base;
     ULONG64 Begin;
     ULONG64 End;
+    PRUNTIME_FUNCTION (NTAPI *Callback)(ULONG64, PVOID);
+    PVOID Context;
 } DYNAMIC_TABLE;
 
 static LIST_ENTRY g_dynamic = {&g_dynamic, &g_dynamic};
@@ -138,6 +143,13 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
     for (PLIST_ENTRY l = g_dynamic.Flink; l != &g_dynamic; l = l->Flink) {
         DYNAMIC_TABLE *t = CONTAINING_RECORD(l, DYNAMIC_TABLE, Links);
         if (pc >= t->Begin && pc < t->End) {
+            if (t->Callback) {
+                PRUNTIME_FUNCTION (NTAPI *callback)(ULONG64, PVOID) = t->Callback;
+                PVOID context = t->Context;
+                *image_base = t->Base;
+                RtlReleaseSRWLockShared(&g_dynamic_lock);
+                return callback(pc, context);
+            }
             found = search_table(t->Table, t->Count, (ULONG)(pc - t->Base));
             if (found) {
                 *image_base = t->Base;
@@ -159,7 +171,36 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlAddFunctionTable(PRUNTIME_FUNCTION table, ULONG co
     t->Base = base;
     t->Begin = base + (count ? table[0].BeginAddress : 0);
     t->End = base + (count ? table[count - 1].EndAddress : 0);
+    t->Callback = NULL;
+    t->Context = NULL;
     RtlAcquireSRWLockExclusive(&g_dynamic_lock);
+    InsertTailList(&g_dynamic, &t->Links);
+    RtlReleaseSRWLockExclusive(&g_dynamic_lock);
+    return TRUE;
+}
+
+NTDLL_EXPORT BOOLEAN NTAPI RtlInstallFunctionTableCallback(ULONG64 identifier, ULONG64 base, ULONG length,
+    PRUNTIME_FUNCTION (NTAPI *callback)(ULONG64, PVOID), PVOID context, PCWSTR external_dll)
+{
+    if ((identifier & 3) != 3 || !callback || !length || base + length < base)
+        return FALSE;
+    DYNAMIC_TABLE *t = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, sizeof(*t));
+    if (!t)
+        return FALSE;
+    t->Table = (PRUNTIME_FUNCTION)identifier;
+    t->Count = 0;
+    t->Base = t->Begin = base;
+    t->End = base + length;
+    t->Callback = callback;
+    t->Context = context;
+    RtlAcquireSRWLockExclusive(&g_dynamic_lock);
+    for (PLIST_ENTRY l = g_dynamic.Flink; l != &g_dynamic; l = l->Flink) {
+        if (CONTAINING_RECORD(l, DYNAMIC_TABLE, Links)->Table == t->Table) {
+            RtlReleaseSRWLockExclusive(&g_dynamic_lock);
+            RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, t);
+            return FALSE;
+        }
+    }
     InsertTailList(&g_dynamic, &t->Links);
     RtlReleaseSRWLockExclusive(&g_dynamic_lock);
     return TRUE;
@@ -259,7 +300,7 @@ static BOOLEAN in_epilog(ULONG64 pc, ULONG64 base, PRUNTIME_FUNCTION f, const UN
     return FALSE;
 }
 
-static void run_epilog(PCONTEXT c, const UNWIND_INFO *info)
+static void run_epilog(PCONTEXT c, const UNWIND_INFO *info, PKNONVOLATILE_CONTEXT_POINTERS pointers)
 {
     const UCHAR *p = (const UCHAR *)c->Rip;
     if ((p[0] & 0xF8) == 0x48) {
@@ -295,6 +336,8 @@ static void run_epilog(PCONTEXT c, const UNWIND_INFO *info)
             break;
         }
         *gpr(c, reg) = *(ULONG64 *)c->Rsp;
+        if (pointers)
+            pointers->IntegerContext[reg] = (ULONG64 *)c->Rsp;
         c->Rsp += 8;
     }
     /* ret or jump: the return address is on the stack either way. */
@@ -339,7 +382,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
     ULONG64 frame = *establisher_frame;
 
     if (offset >= info->SizeOfProlog && in_epilog(pc, base, function, info)) {
-        run_epilog(c, info);
+        run_epilog(c, info, pointers);
         *handler_data = NULL;
         return NULL;
     }
@@ -354,6 +397,8 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
             switch (op) {
             case UWOP_PUSH_NONVOL:
                 *gpr(c, opinfo) = *(ULONG64 *)c->Rsp;
+                if (pointers)
+                    pointers->IntegerContext[opinfo] = (ULONG64 *)c->Rsp;
                 c->Rsp += 8;
                 break;
             case UWOP_ALLOC_LARGE:
@@ -370,16 +415,24 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
                 break;
             case UWOP_SAVE_NONVOL:
                 *gpr(c, opinfo) = *(ULONG64 *)(frame + 8ull * code[1].FrameOffset);
+                if (pointers)
+                    pointers->IntegerContext[opinfo] = (ULONG64 *)(frame + 8ull * code[1].FrameOffset);
                 break;
             case UWOP_SAVE_NONVOL_FAR:
                 *gpr(c, opinfo) = *(ULONG64 *)(frame + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16)));
+                if (pointers)
+                    pointers->IntegerContext[opinfo] = (ULONG64 *)(frame + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16)));
                 break;
             case UWOP_SAVE_XMM128:
                 memcpy(xmm(c, opinfo), (void *)(frame + 16ull * code[1].FrameOffset), 16);
+                if (pointers)
+                    pointers->FloatingContext[opinfo] = (M128A *)(frame + 16ull * code[1].FrameOffset);
                 break;
             case UWOP_SAVE_XMM128_FAR:
                 memcpy(xmm(c, opinfo),
                        (void *)(frame + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16))), 16);
+                if (pointers)
+                    pointers->FloatingContext[opinfo] = (M128A *)(frame + ((ULONG64)code[1].FrameOffset | ((ULONG64)code[2].FrameOffset << 16)));
                 break;
             case UWOP_PUSH_MACHFRAME:
                 if (opinfo)

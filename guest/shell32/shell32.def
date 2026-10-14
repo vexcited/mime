@@ -1,0 +1,5 @@
+LIBRARY shell32.dll
+EXPORTS
+    ILFree @155
+    IsUserAnAdmin @680
+    SHCreateDirectory @165

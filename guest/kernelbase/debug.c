@@ -31,6 +31,22 @@ void WINAPI RaiseFailFastException(PEXCEPTION_RECORD record, PCONTEXT context, D
 {
     NTSTATUS code = record ? record->ExceptionCode : STATUS_FAIL_FAST_EXCEPTION;
     DbgPrint("kernelbase: fail fast exception %08x\n", code);
+    if (record) {
+        DbgPrint("kernelbase: exception address %p\n", record->ExceptionAddress);
+        if (code == STATUS_ACCESS_VIOLATION && record->NumberParameters >= 2)
+            DbgPrint("kernelbase: access %llu at %p\n", (ULONGLONG)record->ExceptionInformation[0],
+                (PVOID)record->ExceptionInformation[1]);
+    }
+#if defined(__x86_64__)
+    if (context) {
+        DbgPrint("kernelbase: rip %p rsp %p rax %p rcx %p rdx %p\n", (PVOID)context->Rip,
+            (PVOID)context->Rsp, (PVOID)context->Rax, (PVOID)context->Rcx, (PVOID)context->Rdx);
+        DbgPrint("kernelbase: rbx %p rbp %p rsi %p rdi %p\n", (PVOID)context->Rbx,
+            (PVOID)context->Rbp, (PVOID)context->Rsi, (PVOID)context->Rdi);
+        DbgPrint("kernelbase: r12 %p r13 %p r14 %p r15 %p\n", (PVOID)context->R12,
+            (PVOID)context->R13, (PVOID)context->R14, (PVOID)context->R15);
+    }
+#endif
     for (;;)
         NtTerminateProcess(NtCurrentProcess(), code);
 }

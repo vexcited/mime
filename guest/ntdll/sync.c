@@ -122,26 +122,165 @@ NTDLL_EXPORT ULONG NTAPI RtlIsCriticalSectionLockedByThread(PRTL_CRITICAL_SECTIO
     return cs->OwningThread == NtCurrentThreadId() && cs->RecursionCount;
 }
 
+/* ------------------------------------------------------------------ wait on address */
+
+/*
+ * waiting threads park in a table keyed by address, as on windows: a waker
+ * unlinks them and alerts each by thread id, so only a wake that finds a
+ * waiter enters the kernel. an alert sent before its thread sleeps is kept
+ * by the kernel, and the extra wake it may cause later is allowed.
+ */
+typedef struct ADDRESS_WAITER {
+    struct ADDRESS_WAITER *Next;
+    const volatile void *Address;
+    HANDLE Thread;
+    volatile LONG Queued;
+} ADDRESS_WAITER;
+
+#define WAIT_BUCKETS 128
+
+static struct {
+    volatile LONG Lock;
+    ADDRESS_WAITER *Head;
+} __attribute__((aligned(64))) g_wait_buckets[WAIT_BUCKETS];
+
+static ULONG bucket_of(const volatile void *address)
+{
+    return (ULONG)(((ULONG_PTR)address * 0x9E3779B97F4A7C15ull) >> 57) % WAIT_BUCKETS;
+}
+
+/* held for a few instructions; a preempted owner gets the processor back by yielding. */
+static void bucket_lock(volatile LONG *lock)
+{
+    ULONG spins = 0;
+    while (__atomic_exchange_n(lock, 1, __ATOMIC_SEQ_CST)) {
+        while (__atomic_load_n(lock, __ATOMIC_RELAXED)) {
+            if (++spins < 128 || !USER_SHARED_DATA->MimeReadyThreads)
+                YieldProcessor();
+            else
+                NtYieldExecution();
+        }
+    }
+}
+
+static void bucket_unlock(volatile LONG *lock)
+{
+    __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
+}
+
+static BOOLEAN same_value(const volatile void *address, const void *compare, SIZE_T size)
+{
+    switch (size) {
+    case 1:
+        return *(const volatile UCHAR *)address == *(const UCHAR *)compare;
+    case 2:
+        return *(const volatile USHORT *)address == *(const USHORT *)compare;
+    case 4:
+        return *(const volatile ULONG *)address == *(const ULONG *)compare;
+    default:
+        return *(const volatile ULONG64 *)address == *(const ULONG64 *)compare;
+    }
+}
+
+NTDLL_EXPORT NTSTATUS NTAPI RtlWaitOnAddress(const void *address, const void *compare, SIZE_T size,
+                                             const LARGE_INTEGER *timeout)
+{
+    if (size != 1 && size != 2 && size != 4 && size != 8)
+        return STATUS_INVALID_PARAMETER;
+    ADDRESS_WAITER w = {NULL, address, NtCurrentThreadId(), 1};
+    ULONG b = bucket_of(address);
+    bucket_lock(&g_wait_buckets[b].Lock);
+    /* queued before the value is compared: a waker stores the value, then looks for waiters. */
+    w.Next = g_wait_buckets[b].Head;
+    g_wait_buckets[b].Head = &w;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (!same_value(address, compare, size)) {
+        g_wait_buckets[b].Head = w.Next;
+        bucket_unlock(&g_wait_buckets[b].Lock);
+        return STATUS_SUCCESS;
+    }
+    bucket_unlock(&g_wait_buckets[b].Lock);
+
+    NTSTATUS status = STATUS_TIMEOUT;
+    if (!timeout || timeout->QuadPart)
+        status = NtWaitForAlertByThreadId((PVOID)address, (PLARGE_INTEGER)timeout);
+    if (__atomic_load_n(&w.Queued, __ATOMIC_ACQUIRE)) {
+        bucket_lock(&g_wait_buckets[b].Lock);
+        for (ADDRESS_WAITER **p = &g_wait_buckets[b].Head; *p; p = &(*p)->Next) {
+            if (*p == &w) {
+                *p = w.Next;
+                break;
+            }
+        }
+        bucket_unlock(&g_wait_buckets[b].Lock);
+    }
+    return status == STATUS_TIMEOUT ? STATUS_TIMEOUT : STATUS_SUCCESS;
+}
+
+static void wake_address(const void *address, BOOLEAN all)
+{
+    ULONG b = bucket_of(address);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (!__atomic_load_n(&g_wait_buckets[b].Head, __ATOMIC_RELAXED))
+        return;
+    HANDLE threads[64];
+    ULONG count;
+    do {
+        count = 0;
+        bucket_lock(&g_wait_buckets[b].Lock);
+        ADDRESS_WAITER **p = &g_wait_buckets[b].Head;
+        while (*p && count < RTL_NUMBER_OF(threads)) {
+            ADDRESS_WAITER *w = *p;
+            if (w->Address != address) {
+                p = &w->Next;
+                continue;
+            }
+            *p = w->Next;
+            threads[count++] = w->Thread;
+            /* the waiter's stack may go as soon as it sees this. */
+            __atomic_store_n(&w->Queued, 0, __ATOMIC_RELEASE);
+            if (!all)
+                break;
+        }
+        bucket_unlock(&g_wait_buckets[b].Lock);
+        for (ULONG i = 0; i < count; i++)
+            NtAlertThreadByThreadId(threads[i]);
+    } while (all && count == RTL_NUMBER_OF(threads));
+}
+
+NTDLL_EXPORT void NTAPI RtlWakeAddressSingle(const void *address)
+{
+    wake_address(address, FALSE);
+}
+
+NTDLL_EXPORT void NTAPI RtlWakeAddressAll(const void *address)
+{
+    wake_address(address, TRUE);
+}
+
 /* ------------------------------------------------------------------ srw locks */
 
 /*
- * the word holds an exclusive bit and a reader count. contention backs off
- * by yielding the processor; the scheduler has a single cpu for now, so a
- * yield always lets the owner make progress.
+ * the word holds an exclusive bit, a waiters bit and a reader count.
+ * contention spins briefly, then sets the waiters bit and sleeps on the
+ * word; releasing a lock with waiters wakes them all to compete again.
  */
 #define SRW_EXCLUSIVE ((ULONG_PTR)1)
-#define SRW_READER ((ULONG_PTR)2)
+#define SRW_WAITING ((ULONG_PTR)2)
+#define SRW_READER ((ULONG_PTR)4)
+#define SRW_SPINS 64
 
-static void srw_backoff(ULONG *spins)
+/* sleeps until the word changes, if the bits in busy still hold the lock against the caller. */
+static void srw_sleep(PRTL_SRWLOCK lock, ULONG_PTR busy)
 {
-    if (++*spins < 16) {
-        YieldProcessor();
+    ULONG_PTR v = __atomic_load_n((ULONG_PTR *)&lock->Ptr, __ATOMIC_RELAXED);
+    if (!(v & busy))
         return;
-    }
-    NtYieldExecution();
-    if (*spins > 64) {
-        LARGE_INTEGER t = {.QuadPart = -10000}; /* 1 ms */
-        NtDelayExecution(FALSE, &t);
+    if ((v & SRW_WAITING) ||
+        __atomic_compare_exchange_n((ULONG_PTR *)&lock->Ptr, &v, v | SRW_WAITING, FALSE, __ATOMIC_RELAXED,
+                                    __ATOMIC_RELAXED)) {
+        v |= SRW_WAITING;
+        RtlWaitOnAddress(&lock->Ptr, &v, sizeof(v), NULL);
     }
 }
 
@@ -152,21 +291,31 @@ NTDLL_EXPORT void NTAPI RtlInitializeSRWLock(PRTL_SRWLOCK lock)
 
 NTDLL_EXPORT BOOLEAN NTAPI RtlTryAcquireSRWLockExclusive(PRTL_SRWLOCK lock)
 {
-    ULONG_PTR expected = 0;
-    return __atomic_compare_exchange_n((ULONG_PTR *)&lock->Ptr, &expected, SRW_EXCLUSIVE, FALSE, __ATOMIC_ACQUIRE,
-                                       __ATOMIC_RELAXED);
+    ULONG_PTR v = __atomic_load_n((ULONG_PTR *)&lock->Ptr, __ATOMIC_RELAXED);
+    while (!(v & ~SRW_WAITING)) {
+        if (__atomic_compare_exchange_n((ULONG_PTR *)&lock->Ptr, &v, v | SRW_EXCLUSIVE, TRUE, __ATOMIC_ACQUIRE,
+                                        __ATOMIC_RELAXED))
+            return TRUE;
+    }
+    return FALSE;
 }
 
 NTDLL_EXPORT void NTAPI RtlAcquireSRWLockExclusive(PRTL_SRWLOCK lock)
 {
-    ULONG spins = 0;
-    while (!RtlTryAcquireSRWLockExclusive(lock))
-        srw_backoff(&spins);
+    for (ULONG spins = 0;; spins++) {
+        if (RtlTryAcquireSRWLockExclusive(lock))
+            return;
+        if (spins < SRW_SPINS)
+            YieldProcessor();
+        else
+            srw_sleep(lock, ~SRW_WAITING);
+    }
 }
 
 NTDLL_EXPORT void NTAPI RtlReleaseSRWLockExclusive(PRTL_SRWLOCK lock)
 {
-    __atomic_store_n((ULONG_PTR *)&lock->Ptr, 0, __ATOMIC_RELEASE);
+    if (__atomic_exchange_n((ULONG_PTR *)&lock->Ptr, 0, __ATOMIC_RELEASE) & SRW_WAITING)
+        RtlWakeAddressAll(&lock->Ptr);
 }
 
 NTDLL_EXPORT BOOLEAN NTAPI RtlTryAcquireSRWLockShared(PRTL_SRWLOCK lock)
@@ -182,14 +331,23 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlTryAcquireSRWLockShared(PRTL_SRWLOCK lock)
 
 NTDLL_EXPORT void NTAPI RtlAcquireSRWLockShared(PRTL_SRWLOCK lock)
 {
-    ULONG spins = 0;
-    while (!RtlTryAcquireSRWLockShared(lock))
-        srw_backoff(&spins);
+    for (ULONG spins = 0;; spins++) {
+        if (RtlTryAcquireSRWLockShared(lock))
+            return;
+        if (spins < SRW_SPINS)
+            YieldProcessor();
+        else
+            srw_sleep(lock, SRW_EXCLUSIVE);
+    }
 }
 
 NTDLL_EXPORT void NTAPI RtlReleaseSRWLockShared(PRTL_SRWLOCK lock)
 {
-    __atomic_sub_fetch((ULONG_PTR *)&lock->Ptr, SRW_READER, __ATOMIC_RELEASE);
+    ULONG_PTR v = __atomic_sub_fetch((ULONG_PTR *)&lock->Ptr, SRW_READER, __ATOMIC_RELEASE);
+    /* the last reader out hands the lock to the sleepers. */
+    if (v == SRW_WAITING &&
+        __atomic_compare_exchange_n((ULONG_PTR *)&lock->Ptr, &v, 0, FALSE, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+        RtlWakeAddressAll(&lock->Ptr);
 }
 
 /* ------------------------------------------------------------------ condition variables */
@@ -203,32 +361,19 @@ NTDLL_EXPORT void NTAPI RtlInitializeConditionVariable(PRTL_CONDITION_VARIABLE c
 NTDLL_EXPORT void NTAPI RtlWakeConditionVariable(PRTL_CONDITION_VARIABLE cv)
 {
     __atomic_add_fetch((ULONG_PTR *)&cv->Ptr, 1, __ATOMIC_RELEASE);
+    RtlWakeAddressSingle(&cv->Ptr);
 }
 
 NTDLL_EXPORT void NTAPI RtlWakeAllConditionVariable(PRTL_CONDITION_VARIABLE cv)
 {
     __atomic_add_fetch((ULONG_PTR *)&cv->Ptr, 1, __ATOMIC_RELEASE);
+    RtlWakeAddressAll(&cv->Ptr);
 }
 
+/* condition variables may wake spuriously, so one wait is enough. */
 static NTSTATUS wait_generation(PRTL_CONDITION_VARIABLE cv, ULONG_PTR seen, const LARGE_INTEGER *timeout)
 {
-    LARGE_INTEGER start;
-    NtQueryPerformanceCounter(&start, NULL);
-    ULONG spins = 0;
-    while (__atomic_load_n((ULONG_PTR *)&cv->Ptr, __ATOMIC_ACQUIRE) == seen) {
-        if (timeout) {
-            if (timeout->QuadPart == 0)
-                return STATUS_TIMEOUT;
-            LARGE_INTEGER now, freq;
-            NtQueryPerformanceCounter(&now, &freq);
-            LONGLONG elapsed = (now.QuadPart - start.QuadPart) * 10000000 / freq.QuadPart;
-            LONGLONG limit = timeout->QuadPart < 0 ? -timeout->QuadPart : 0;
-            if (elapsed >= limit)
-                return STATUS_TIMEOUT;
-        }
-        srw_backoff(&spins);
-    }
-    return STATUS_SUCCESS;
+    return RtlWaitOnAddress(&cv->Ptr, &seen, sizeof(seen), timeout);
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlSleepConditionVariableCS(PRTL_CONDITION_VARIABLE cv, PRTL_CRITICAL_SECTION cs,
@@ -292,18 +437,21 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlRunOnceBeginInitialize(PRTL_RUN_ONCE once, ULONG 
                 return STATUS_PENDING;
             continue;
         }
-        srw_backoff(&spins);
+        if (++spins < SRW_SPINS)
+            YieldProcessor();
+        else
+            RtlWaitOnAddress(&once->Ptr, &v, sizeof(v), NULL);
     }
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlRunOnceComplete(PRTL_RUN_ONCE once, ULONG flags, PVOID context)
 {
-    if (flags & 4) { /* RTL_RUN_ONCE_INIT_FAILED */
+    if (flags & 4) /* RTL_RUN_ONCE_INIT_FAILED */
         __atomic_store_n((ULONG_PTR *)&once->Ptr, 0, __ATOMIC_RELEASE);
-        return STATUS_SUCCESS;
-    }
-    __atomic_store_n((ULONG_PTR *)&once->Ptr, ((ULONG_PTR)context & ~(ULONG_PTR)3) | RUN_ONCE_DONE,
-                     __ATOMIC_RELEASE);
+    else
+        __atomic_store_n((ULONG_PTR *)&once->Ptr, ((ULONG_PTR)context & ~(ULONG_PTR)3) | RUN_ONCE_DONE,
+                         __ATOMIC_RELEASE);
+    RtlWakeAddressAll(&once->Ptr);
     return STATUS_SUCCESS;
 }
 
@@ -322,34 +470,6 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlRunOnceExecuteOnce(PRTL_RUN_ONCE once, PRTL_RUN_O
     if (context)
         *context = ctx;
     return STATUS_SUCCESS;
-}
-
-/* ------------------------------------------------------------------ wait on address */
-
-NTDLL_EXPORT NTSTATUS NTAPI RtlWaitOnAddress(const void *address, const void *compare, SIZE_T size,
-                                             const LARGE_INTEGER *timeout)
-{
-    LARGE_INTEGER start, now, freq;
-    NtQueryPerformanceCounter(&start, &freq);
-    ULONG spins = 0;
-    while (!memcmp(address, compare, size)) {
-        if (timeout) {
-            NtQueryPerformanceCounter(&now, NULL);
-            LONGLONG elapsed = (now.QuadPart - start.QuadPart) * 10000000 / freq.QuadPart;
-            if (timeout->QuadPart == 0 || (timeout->QuadPart < 0 && elapsed >= -timeout->QuadPart))
-                return STATUS_TIMEOUT;
-        }
-        srw_backoff(&spins);
-    }
-    return STATUS_SUCCESS;
-}
-
-NTDLL_EXPORT void NTAPI RtlWakeAddressSingle(const void *address)
-{
-}
-
-NTDLL_EXPORT void NTAPI RtlWakeAddressAll(const void *address)
-{
 }
 
 /* ------------------------------------------------------------------ slists */

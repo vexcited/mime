@@ -250,6 +250,75 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
     return run_association(info, type, verb, path, parameters);
 }
 
+/* the program that opens a file: the file itself for programs, else the command of its type's open verb. */
+SHSTDAPI HINSTANCE WINAPI FindExecutableW(LPCWSTR file, LPCWSTR directory, LPWSTR result)
+{
+    if (!result)
+        return (HINSTANCE)SE_ERR_FNF;
+    result[0] = 0;
+    if (!file || !file[0] || wcslen(file) >= MAX_PATH)
+        return (HINSTANCE)SE_ERR_FNF;
+    WCHAR path[MAX_PATH];
+    DWORD attributes = INVALID_FILE_ATTRIBUTES;
+    BOOL relative = file[0] != L'\\' && file[1] != L':';
+    if (directory && directory[0] && relative && wcslen(directory) + wcslen(file) + 2 < MAX_PATH) {
+        _snwprintf(path, MAX_PATH, L"%ls\\%ls", directory, file);
+        path[MAX_PATH - 1] = 0;
+        attributes = GetFileAttributesW(path);
+    }
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        DWORD n = SearchPathW(NULL, file, NULL, MAX_PATH, path, NULL);
+        attributes = n && n < MAX_PATH ? GetFileAttributesW(path) : INVALID_FILE_ATTRIBUTES;
+    }
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return (HINSTANCE)SE_ERR_FNF;
+    if (has_extension(path, L".exe") || has_extension(path, L".com") || has_extension(path, L".bat") ||
+        has_extension(path, L".cmd")) {
+        wcscpy(result, path);
+        return (HINSTANCE)33;
+    }
+    WCHAR type[MAX_PATH], command[1024];
+    LPCWSTR dot = wcsrchr(path, L'.');
+    if (!dot || wcschr(dot, L'\\') || !read_default(dot, type, RTL_NUMBER_OF(type)) ||
+        !verb_command(type, L"open", command, RTL_NUMBER_OF(command)))
+        return (HINSTANCE)SE_ERR_NOASSOC;
+    /* the program is the quoted first word, or everything before the first space. */
+    LPCWSTR start = command, end;
+    if (*start == L'"') {
+        start++;
+        end = wcschr(start, L'"');
+        if (!end)
+            end = start + wcslen(start);
+    } else {
+        end = wcschr(start, L' ');
+        if (!end)
+            end = start + wcslen(start);
+    }
+    if (end == start || end - start >= MAX_PATH)
+        return (HINSTANCE)SE_ERR_NOASSOC;
+    memcpy(result, start, (SIZE_T)(end - start) * sizeof(WCHAR));
+    result[end - start] = 0;
+    return (HINSTANCE)33;
+}
+
+SHSTDAPI HINSTANCE WINAPI FindExecutableA(LPCSTR file, LPCSTR directory, LPSTR result)
+{
+    if (!result)
+        return (HINSTANCE)SE_ERR_FNF;
+    result[0] = 0;
+    LPWSTR f = ShWiden(file), d = ShWiden(directory);
+    WCHAR wide[MAX_PATH];
+    HINSTANCE r = (HINSTANCE)SE_ERR_OOM;
+    if ((!file || f) && (!directory || d)) {
+        r = FindExecutableW(f, d, wide);
+        if ((INT_PTR)r > 32)
+            WideCharToMultiByte(CP_ACP, 0, wide, -1, result, MAX_PATH, NULL, NULL);
+    }
+    ShFree(f);
+    ShFree(d);
+    return r;
+}
+
 SHSTDAPI HINSTANCE WINAPI ShellExecuteW(HWND hwnd, LPCWSTR verb, LPCWSTR file, LPCWSTR parameters,
                                         LPCWSTR directory, INT show)
 {

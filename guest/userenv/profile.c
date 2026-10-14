@@ -132,6 +132,37 @@ USERENV BOOL WINAPI GetUserProfileDirectoryW(HANDLE token, LPWSTR buffer, LPDWOR
     return user_profile(token, path) && return_path(path, *size ? buffer : NULL, size);
 }
 
+USERENV BOOL WINAPI GetProfileType(DWORD *flags)
+{
+    if (!flags) {
+        set_error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    HANDLE token;
+    NTSTATUS status = NtOpenThreadToken(NtCurrentThread(), TOKEN_QUERY, TRUE, &token);
+    if (status == STATUS_NO_TOKEN)
+        status = NtOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY, &token);
+    if (!NT_SUCCESS(status)) {
+        set_error(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    WCHAR path[MAX_PATH], sid[200];
+    BOOL loaded = user_profile(token, path) && token_sid_string(token, sid, RTL_NUMBER_OF(sid));
+    NtClose(token);
+    if (!loaded)
+        return FALSE;
+    HKEY hive;
+    LONG error = RegOpenKeyExW(HKEY_USERS, sid, 0, KEY_READ, &hive);
+    if (error) {
+        set_error(error);
+        return FALSE;
+    }
+    RegCloseKey(hive);
+    /* mime loads a persistent local profile for its current user. */
+    *flags = 0;
+    return TRUE;
+}
+
 USERENV BOOL WINAPI GetUserProfileDirectoryA(HANDLE token, LPSTR buffer, LPDWORD size)
 {
     WCHAR path[MAX_PATH];
