@@ -5,6 +5,8 @@ Unlike Wine, which translates the Windows API into host calls, Mime boots its ow
 > [!NOTE]
 > Mime is at an early stage.
 
+Mime runs ARM64, x64, and experimental [32-bit x86 programs](docs/x86.md). API coverage differs between architectures.
+
 ## Getting started
 
 You need macOS 15 or later on Apple silicon, the Homebrew LLVM toolchain and a Windows 11 `arm64` ISO.

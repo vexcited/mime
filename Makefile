@@ -12,7 +12,7 @@ RC := llvm-rc
 STRIP := llvm-strip
 
 HOST_CFLAGS := -std=c17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
-HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework Metal -framework IOSurface -framework Carbon -lobjc
+HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework Metal -framework IOSurface -framework Carbon -framework AudioToolbox -framework CoreAudio -lobjc
 CXX := clang++
 
 GUEST_TARGET := --target=aarch64-pc-windows-msvc -march=armv8.2-a
@@ -40,7 +40,11 @@ EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D000000
 	crypt32:0x7FF630000000 schannel:0x7FF620000000 secur32:0x7FF610000000 uxtheme:0x7FF600000000 \
 	imm32:0x7FF5F0000000 usp10:0x7FF5E0000000 dwmapi:0x7FF5D0000000 winmm:0x7FF5C0000000 \
 	version:0x7FF5B0000000 userenv:0x7FF5A0000000 wtsapi32:0x7FF590000000 netapi32:0x7FF580000000 \
-	odbc32:0x7FF570000000 winspool:0x7FF560000000
+	odbc32:0x7FF570000000 winspool:0x7FF560000000 msi:0x7FF550000000 \
+	bcrypt:0x7FF530000000 avrt:0x7FF520000000 dinput8:0x7FF510000000 dwrite:0x7FF500000000 \
+	dxgi:0x7FF4F0000000 wsock32:0x7FF4E0000000 ucrtbase:0x7FF4D0000000 mpr:0x7FF4C0000000 wintrust:0x7FF4B0000000 mmdevapi:0x7FF4A0000000 \
+	gdiplus:0x7FF490000000 wininet:0x7FF480000000 urlmon:0x7FF470000000 msimg32:0x7FF460000000 \
+	oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000
 EXTRA_NAMES := $(foreach d,$(EXTRA_DLLS),$(firstword $(subst :, ,$(d))))
 # the file name of each, winspool being a driver file.
 extra_file = $(if $(filter winspool,$(1)),$(1).drv,$(1).dll)
@@ -71,7 +75,7 @@ all: host guest examples
 
 # ---------------------------------------------------------------- host
 
-HOST_SRC := $(wildcard host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c)
+HOST_SRC := $(wildcard host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c)
 HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o $(SHADERC_OBJ)
 
 host: $(BUILD)/mime
@@ -437,7 +441,7 @@ $(eval $(call X64_DLL,kernelbase,0x7FFB00000000,ntdll,/entry:DllMain))
 
 # like the arm64 one, plus the unwinding functions windows' kernel32 forwards to ntdll.
 X64_KERNEL32_NTDLL := RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind RtlAddFunctionTable \
-	RtlDeleteFunctionTable RtlRestoreContext RtlUnwind __C_specific_handler
+	RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind __C_specific_handler
 $(GEN)/x64/kernel32.def: $(SYSX64)/kernelbase.dll
 	@mkdir -p $(dir $@)
 	{ echo "LIBRARY kernel32.dll"; echo "EXPORTS"; \
@@ -456,14 +460,23 @@ $(eval $(call X64_DLL,user32,0x7FF900000000,ntdll kernel32 win32u gdi32,/entry:D
 # ---------------------------------------------------------------- the other dlls, both processors
 
 # $(1) = name, $(2) = preferred base, $(3) = file name.
+EXTRA_OBJ_wintrust := $(BUILD)/lib/crypt32.lib
+X64_EXTRA_OBJ_wintrust := $(BUILD)/lib/x64/crypt32.lib
+
+EXTRA_OBJ_msi := $(OBJ)/user/guest/lib/compound/compound.o
+
+EXTRA_OBJ_gdiplus := $(patsubst %.c,$(OBJ)/user/%.o,$(wildcard guest/lib/png/*.c))
+X64_EXTRA_OBJ_gdiplus := $(patsubst %.c,$(X64_OBJ)/%.o,$(wildcard guest/lib/png/*.c))
+X64_EXTRA_OBJ_msi := $(X64_OBJ)/guest/lib/compound/compound.o
+
 define EXTRA_DLL
 USER_CFLAGS_$(1) := -Iguest/$(1)
 $(1)_DEF := $$(wildcard guest/$(1)/$(1).def)
 $(1)_SRC := $$(wildcard guest/$(1)/*.c)
 $(1)_OBJ := $$(patsubst %.c,$(OBJ)/user/%.o,$$($(1)_SRC)) $$(patsubst %.S,$(OBJ)/user/%.o,$$(wildcard guest/$(1)/arm64/*.S)) \
-	$(OBJ)/user/guest/crt/chkstk.o
+	$(OBJ)/user/guest/crt/chkstk.o $$(EXTRA_OBJ_$(1))
 x64_$(1)_OBJ := $$(patsubst %.c,$(X64_OBJ)/%.o,$$($(1)_SRC)) $$(patsubst %.S,$(X64_OBJ)/%.o,$$(wildcard guest/$(1)/x64/*.S)) \
-	$(X64_OBJ)/guest/crt/x64/chkstk.o
+	$(X64_OBJ)/guest/crt/x64/chkstk.o $$(X64_EXTRA_OBJ_$(1))
 $(SYSTEM32)/$(3): $$($(1)_OBJ) $$($(1)_DEF) $(patsubst %,$(BUILD)/lib/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
 	@mkdir -p $$(dir $$@) $(BUILD)/lib
 	$(LLD_LINK) $(USER_DLL_LDFLAGS) /entry:DllMain /base:$(2) /implib:$(BUILD)/lib/$(1).lib \
@@ -474,6 +487,8 @@ $(SYSX64)/$(3): $$(x64_$(1)_OBJ) $$($(1)_DEF) $(patsubst %,$(BUILD)/lib/x64/%.li
 	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:$(2) /implib:$(BUILD)/lib/x64/$(1).lib \
 		$$(if $$($(1)_DEF),/def:$$($(1)_DEF)) /out:$$@ $$(x64_$(1)_OBJ) \
 		$(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 user32 gdi32 win32u) $(GEN)/res/$(3).res
+$(BUILD)/lib/$(1).lib: $(SYSTEM32)/$(3)
+$(BUILD)/lib/x64/$(1).lib: $(SYSX64)/$(3)
 endef
 
 $(foreach d,$(EXTRA_DLLS),$(eval $(call EXTRA_DLL,$(firstword $(subst :, ,$(d))),$(lastword $(subst :, ,$(d))),$(call extra_file,$(firstword $(subst :, ,$(d)))))))
@@ -549,3 +564,36 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(shell find $(BUILD)/obj -name '*.d' 2>/dev/null)
+
+include tools/x86.mk
+
+X86_ROM_FILES = $(patsubst %,$(BUILD)/guest/rom/syswow64/%.dll,ntdll kernelbase kernel32 win32u gdi32 user32 shlwapi shell32 $(X86_MORE_DLLS)) \
+	$(BUILD)/guest/rom/syswow64/winspool.drv
+$(GEN)/rom.S: $(X86_ROM_FILES)
+ROM_FILES += $(X86_ROM_FILES)
+
+$(BUILD)/guest/rom/syswow64/%: $(BUILD)/guest/syswow64/% $(BUILD)/tools/pechecksum
+	@mkdir -p $(dir $@)
+	$(STRIP) --strip-debug $< -o $@
+	$(BUILD)/tools/pechecksum $@
+
+.PHONY: test-compound
+test-compound: $(BUILD)/tools/test_compound
+	$<
+
+$(BUILD)/tools/test_compound: tools/test_compound.c guest/lib/compound/compound.c guest/lib/compound/compound.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_compound.c guest/lib/compound/compound.c -o $@
+
+.PHONY: test-msi-build
+test-msi-build: $(foreach arch,arm64 x64 x86,$(foreach name,msi msidatabase msiaction,$(BUILD)/tests/$(arch)/$(name).exe))
+
+$(BUILD)/tests/arm64/msi.exe $(BUILD)/tests/arm64/msidatabase.exe $(BUILD)/tests/arm64/msiaction.exe: $(BUILD)/tests/arm64/%.exe: $(OBJ)/user/tools/runtime32/%.o $(BUILD)/lib/msi.lib $(BUILD)/lib/kernel32.lib $(BUILD)/lib/ntdll.lib
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(GUEST_LDFLAGS) /subsystem:console /entry:entry /out:$@ $^
+
+$(BUILD)/tests/x64/msi.exe $(BUILD)/tests/x64/msidatabase.exe $(BUILD)/tests/x64/msiaction.exe: $(BUILD)/tests/x64/%.exe: $(X64_OBJ)/tools/runtime32/%.o $(BUILD)/lib/x64/msi.lib $(BUILD)/lib/x64/kernel32.lib $(BUILD)/lib/x64/ntdll.lib
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(X64_LDFLAGS) /subsystem:console /entry:entry /out:$@ $^
+
+include tools/compat-tests.mk
