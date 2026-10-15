@@ -202,6 +202,8 @@ typedef struct D3dFormat {
 #define D3D_FORMAT_BGRX 0x20
 
 const D3dFormat *D3dGetFormat(DXGI_FORMAT format);
+BOOL D3dPackClear(VkFormat format, const UINT *uints, const FLOAT *floats, BYTE out[16], UINT *size);
+BOOL D3dClearValueOfBits(VkFormat format, const BYTE *element, VkClearColorValue *value);
 void D3dFormatsUseD32(void);
 
 /* ------------------------------------------------------------------ memory */

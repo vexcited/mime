@@ -528,35 +528,67 @@ void D3dCtxClearDepthStencilView(D3dContext *c, ID3D11DepthStencilView *iface, U
     clear_attachment(c, view, &value, aspects, NULL, 0);
 }
 
-void D3dCtxClearView(D3dContext *c, ID3D11View *iface, const FLOAT color[4], const D3D11_RECT *rects, UINT count)
-{
-    D3dView *view = D3dViewFrom(iface, D3D_VIEW_RTV);
-    if (!view || !color) {
-        D3dLog("d3d11: ClearView only clears render targets");
-        return;
-    }
-    VkClearValue value;
-    value.color = clear_color(view, color);
-    clear_attachment(c, view, &value, VK_IMAGE_ASPECT_COLOR_BIT, count ? rects : NULL, count);
-}
-
-static void clear_uav(D3dContext *c, D3dView *view, const VkClearColorValue *value, UINT fill)
+/* a range of a buffer filled with an element repeated: a copy of it from the ring, past 4 bytes. */
+static void fill_pattern(D3dContext *c, VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
+                         const BYTE *element, UINT element_size)
 {
     D3dDevice *device = c->child.device;
+    if (element_size == 4) {
+        UINT word;
+        memcpy(&word, element, 4);
+        device->vk.vkCmdFillBuffer(cmd, buffer, offset, size & ~3ull, word);
+        return;
+    }
+    VkDeviceSize chunk = D3D_MIN(size, 65536 / element_size * element_size);
+    D3dRingSlice slice;
+    if (!chunk || !D3dContextRingAlloc(c, chunk, 16, &slice))
+        return;
+    for (VkDeviceSize at = 0; at < chunk; at += element_size)
+        memcpy(slice.mapped + at, element, element_size);
+    VkBufferCopy regions[64];
+    UINT n = 0;
+    for (VkDeviceSize at = 0; at < size; at += chunk) {
+        regions[n++] = (VkBufferCopy){slice.offset, offset + at, D3D_MIN(chunk, size - at)};
+        if (n == RTL_NUMBER_OF(regions) || at + chunk >= size) {
+            device->vk.vkCmdCopyBuffer(cmd, slice.buffer, buffer, n, regions);
+            n = 0;
+        }
+    }
+}
+
+/*
+ * clears of unordered access views. uints go to each channel as their low
+ * bits, whatever the format; floats are converted, on float and normalized
+ * formats only. raw and structured buffers take the first uint. a texture
+ * whose view has another format than the image clears to the value that
+ * writes the view's bits in the image's format.
+ */
+static void clear_uav(D3dContext *c, D3dView *view, const UINT *uints, const FLOAT *floats)
+{
+    D3dDevice *device = c->child.device;
+    D3dResource *r = view->resource;
+    BOOL raw = view->desc.uav.ViewDimension == D3D11_UAV_DIMENSION_BUFFER &&
+               ((view->desc.uav.Buffer.Flags & D3D11_BUFFER_UAV_FLAG_RAW) || (r->misc & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED));
+    BYTE element[16];
+    UINT size = 4;
+    if (raw) {
+        if (!uints)
+            return;
+        memcpy(element, uints, 4);
+    } else if (!D3dPackClear(view->format, uints, floats, element, &size)) {
+        return;
+    }
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
     if (!cmd)
         return;
-    D3dResource *r = view->resource;
     if (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
-        if (view->format != VK_FORMAT_R32_UINT && view->format != VK_FORMAT_R32_SINT &&
-            view->format != VK_FORMAT_R32_SFLOAT) {
-            D3dLog("d3d11: clearing typed buffer views of format %u is not implemented", view->format);
-            return;
-        }
         D3dViewRefresh(view);
-        device->vk.vkCmdFillBuffer(cmd, r->buf.buffer, r->buf.offset + view->buffer_offset, view->buffer_size, fill);
+        fill_pattern(c, cmd, r->buf.buffer, r->buf.offset + view->buffer_offset, view->buffer_size, element, size);
     } else {
-        device->vk.vkCmdClearColorImage(cmd, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, value, 1, &view->range);
+        VkClearColorValue value;
+        if (!D3dClearValueOfBits(D3dGetFormat(r->tex.format)->vk, element, &value))
+            return;
+        device->vk.vkCmdClearColorImage(cmd, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &view->range);
     }
     c->pending_barrier = TRUE;
     D3dContextUse(c, r);
@@ -565,38 +597,103 @@ static void clear_uav(D3dContext *c, D3dView *view, const VkClearColorValue *val
 void D3dCtxClearUnorderedAccessViewUint(D3dContext *c, ID3D11UnorderedAccessView *iface, const UINT values[4])
 {
     D3dView *view = D3dViewFrom(iface, D3D_VIEW_UAV);
-    if (!view || !values)
-        return;
-    VkClearColorValue value;
-    const D3dFormat *f = D3dGetFormat(view->desc.uav.Format);
-    if (view->resource->dimension != D3D11_RESOURCE_DIMENSION_BUFFER && !(f->flags & D3D_FORMAT_INT)) {
-        /* bit patterns of other formats: as unsigned normalized values of the same bits, an approximation. */
-        for (UINT i = 0; i < 4; i++)
-            value.float32[i] = (float)values[i];
-    } else {
-        memcpy(value.uint32, values, sizeof(value.uint32));
-    }
-    clear_uav(c, view, &value, values[0]);
+    if (view && values)
+        clear_uav(c, view, values, NULL);
 }
 
 void D3dCtxClearUnorderedAccessViewFloat(D3dContext *c, ID3D11UnorderedAccessView *iface, const FLOAT values[4])
 {
     D3dView *view = D3dViewFrom(iface, D3D_VIEW_UAV);
-    if (!view || !values)
-        return;
-    VkClearColorValue value;
-    const D3dFormat *f = D3dGetFormat(view->desc.uav.Format);
-    if (f->flags & D3D_FORMAT_INT)
-        for (UINT i = 0; i < 4; i++)
-            value.uint32[i] = (UINT)values[i];
-    else
-        memcpy(value.float32, values, sizeof(value.float32));
-    UINT fill;
-    memcpy(&fill, &values[0], 4);
-    if (view->format == VK_FORMAT_R32_UINT || view->format == VK_FORMAT_R32_SINT)
-        fill = (UINT)values[0];
-    clear_uav(c, view, &value, fill);
+    if (view && values)
+        clear_uav(c, view, NULL, values);
 }
+
+/*
+ * ClearView of unordered access views: the color converted to the view's
+ * format, integer formats taking it as integers. rectangles are element
+ * ranges of buffers; on textures each row of one is a copy of a row of
+ * the element repeated, which writes the view's bits whatever the image's
+ * format.
+ */
+static void clear_uav_view(D3dContext *c, D3dView *view, const FLOAT color[4], const D3D11_RECT *rects, UINT count)
+{
+    D3dDevice *device = c->child.device;
+    D3dResource *r = view->resource;
+    const D3dFormat *f = D3dGetFormat(view->desc.uav.Format);
+    UINT uints[4];
+    for (UINT i = 0; i < 4; i++)
+        uints[i] = f->flags & D3D_FORMAT_INT ? (UINT)(INT)color[i] : 0;
+    if (!count) {
+        clear_uav(c, view, f->flags & D3D_FORMAT_INT ? uints : NULL, f->flags & D3D_FORMAT_INT ? NULL : color);
+        return;
+    }
+    BYTE element[16];
+    UINT size;
+    if (!D3dPackClear(view->format, f->flags & D3D_FORMAT_INT ? uints : NULL, f->flags & D3D_FORMAT_INT ? NULL : color,
+                      element, &size))
+        return;
+    VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
+    if (!cmd)
+        return;
+    if (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
+        D3dViewRefresh(view);
+        UINT elements = view->buffer_size / size;
+        for (UINT i = 0; i < count; i++) {
+            UINT left = (UINT)D3D_MAX(rects[i].left, 0), right = D3D_MIN((UINT)D3D_MAX(rects[i].right, 0), elements);
+            if (left < right)
+                fill_pattern(c, cmd, r->buf.buffer, r->buf.offset + view->buffer_offset + (VkDeviceSize)left * size,
+                             (VkDeviceSize)(right - left) * size, element, size);
+        }
+    } else {
+        VkExtent3D extent = D3dMipExtent(r, view->range.baseMipLevel);
+        for (UINT i = 0; i < count; i++) {
+            UINT left = (UINT)D3D_MAX(rects[i].left, 0), top = (UINT)D3D_MAX(rects[i].top, 0);
+            UINT right = D3D_MIN((UINT)D3D_MAX(rects[i].right, 0), extent.width);
+            UINT bottom = D3D_MIN((UINT)D3D_MAX(rects[i].bottom, 0), extent.height);
+            if (left >= right || top >= bottom)
+                continue;
+            D3dRingSlice row;
+            if (!D3dContextRingAlloc(c, (VkDeviceSize)(right - left) * size, 16, &row))
+                return;
+            for (UINT x = 0; x < right - left; x++)
+                memcpy(row.mapped + x * size, element, size);
+            VkBufferImageCopy regions[64];
+            UINT n = 0;
+            for (UINT y = top; y < bottom; y++) {
+                VkBufferImageCopy *copy = &regions[n++];
+                *copy = (VkBufferImageCopy){row.offset, 0, 0};
+                copy->imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, view->range.baseMipLevel,
+                                                                    view->range.baseArrayLayer, view->range.layerCount};
+                copy->imageOffset = (VkOffset3D){(INT)left, (INT)y, 0};
+                copy->imageExtent = (VkExtent3D){right - left, 1, 1};
+                if (n == RTL_NUMBER_OF(regions) || y + 1 == bottom) {
+                    device->vk.vkCmdCopyBufferToImage(cmd, row.buffer, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, n,
+                                                      regions);
+                    n = 0;
+                }
+            }
+        }
+    }
+    c->pending_barrier = TRUE;
+    D3dContextUse(c, r);
+}
+
+/* ClearView of render targets and unordered access views, whole or in rectangles. */
+void D3dCtxClearView(D3dContext *c, ID3D11View *iface, const FLOAT color[4], const D3D11_RECT *rects, UINT count)
+{
+    if (!color)
+        return;
+    D3dView *view = D3dViewFrom(iface, D3D_VIEW_RTV);
+    if (view) {
+        VkClearValue value;
+        value.color = clear_color(view, color);
+        clear_attachment(c, view, &value, VK_IMAGE_ASPECT_COLOR_BIT, count ? rects : NULL, count);
+        return;
+    }
+    if ((view = D3dViewFrom(iface, D3D_VIEW_UAV)))
+        clear_uav_view(c, view, color, count ? rects : NULL, count);
+}
+
 
 /* ------------------------------------------------------------------ mips and resolves */
 

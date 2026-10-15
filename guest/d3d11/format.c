@@ -235,3 +235,224 @@ UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
     }
     return s;
 }
+
+/* ------------------------------------------------------------------ clear values */
+
+typedef enum ChannelKind { CH_UNORM, CH_SNORM, CH_UINT, CH_SINT, CH_FLOAT, CH_UFLOAT } ChannelKind;
+
+/* the channels of a color format from its lowest bit, in r, g, b, a order: their widths and kind. */
+static BOOL channels(VkFormat f, BYTE bits[4], UINT *count, ChannelKind *kind)
+{
+    static const struct {
+        VkFormat vk;
+        BYTE count, bits[4];
+        ChannelKind kind;
+    } TABLE[] = {
+        {VK_FORMAT_R32G32B32A32_SFLOAT, 4, {32, 32, 32, 32}, CH_FLOAT},
+        {VK_FORMAT_R32G32B32A32_UINT, 4, {32, 32, 32, 32}, CH_UINT},
+        {VK_FORMAT_R32G32B32A32_SINT, 4, {32, 32, 32, 32}, CH_SINT},
+        {VK_FORMAT_R32G32B32_SFLOAT, 3, {32, 32, 32}, CH_FLOAT},
+        {VK_FORMAT_R32G32B32_UINT, 3, {32, 32, 32}, CH_UINT},
+        {VK_FORMAT_R32G32B32_SINT, 3, {32, 32, 32}, CH_SINT},
+        {VK_FORMAT_R16G16B16A16_SFLOAT, 4, {16, 16, 16, 16}, CH_FLOAT},
+        {VK_FORMAT_R16G16B16A16_UNORM, 4, {16, 16, 16, 16}, CH_UNORM},
+        {VK_FORMAT_R16G16B16A16_UINT, 4, {16, 16, 16, 16}, CH_UINT},
+        {VK_FORMAT_R16G16B16A16_SNORM, 4, {16, 16, 16, 16}, CH_SNORM},
+        {VK_FORMAT_R16G16B16A16_SINT, 4, {16, 16, 16, 16}, CH_SINT},
+        {VK_FORMAT_R32G32_SFLOAT, 2, {32, 32}, CH_FLOAT},
+        {VK_FORMAT_R32G32_UINT, 2, {32, 32}, CH_UINT},
+        {VK_FORMAT_R32G32_SINT, 2, {32, 32}, CH_SINT},
+        {VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4, {10, 10, 10, 2}, CH_UNORM},
+        {VK_FORMAT_A2B10G10R10_UINT_PACK32, 4, {10, 10, 10, 2}, CH_UINT},
+        {VK_FORMAT_B10G11R11_UFLOAT_PACK32, 3, {11, 11, 10}, CH_UFLOAT},
+        {VK_FORMAT_R8G8B8A8_UNORM, 4, {8, 8, 8, 8}, CH_UNORM},
+        {VK_FORMAT_R8G8B8A8_UINT, 4, {8, 8, 8, 8}, CH_UINT},
+        {VK_FORMAT_R8G8B8A8_SNORM, 4, {8, 8, 8, 8}, CH_SNORM},
+        {VK_FORMAT_R8G8B8A8_SINT, 4, {8, 8, 8, 8}, CH_SINT},
+        {VK_FORMAT_R16G16_SFLOAT, 2, {16, 16}, CH_FLOAT},
+        {VK_FORMAT_R16G16_UNORM, 2, {16, 16}, CH_UNORM},
+        {VK_FORMAT_R16G16_UINT, 2, {16, 16}, CH_UINT},
+        {VK_FORMAT_R16G16_SNORM, 2, {16, 16}, CH_SNORM},
+        {VK_FORMAT_R16G16_SINT, 2, {16, 16}, CH_SINT},
+        {VK_FORMAT_R32_SFLOAT, 1, {32}, CH_FLOAT},
+        {VK_FORMAT_R32_UINT, 1, {32}, CH_UINT},
+        {VK_FORMAT_R32_SINT, 1, {32}, CH_SINT},
+        {VK_FORMAT_R8G8_UNORM, 2, {8, 8}, CH_UNORM},
+        {VK_FORMAT_R8G8_UINT, 2, {8, 8}, CH_UINT},
+        {VK_FORMAT_R8G8_SNORM, 2, {8, 8}, CH_SNORM},
+        {VK_FORMAT_R8G8_SINT, 2, {8, 8}, CH_SINT},
+        {VK_FORMAT_R16_SFLOAT, 1, {16}, CH_FLOAT},
+        {VK_FORMAT_R16_UNORM, 1, {16}, CH_UNORM},
+        {VK_FORMAT_R16_UINT, 1, {16}, CH_UINT},
+        {VK_FORMAT_R16_SNORM, 1, {16}, CH_SNORM},
+        {VK_FORMAT_R16_SINT, 1, {16}, CH_SINT},
+        {VK_FORMAT_R8_UNORM, 1, {8}, CH_UNORM},
+        {VK_FORMAT_R8_UINT, 1, {8}, CH_UINT},
+        {VK_FORMAT_R8_SNORM, 1, {8}, CH_SNORM},
+        {VK_FORMAT_R8_SINT, 1, {8}, CH_SINT},
+    };
+    for (UINT i = 0; i < RTL_NUMBER_OF(TABLE); i++)
+        if (TABLE[i].vk == f) {
+            *count = TABLE[i].count;
+            memcpy(bits, TABLE[i].bits, 4);
+            *kind = TABLE[i].kind;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+static UINT float_bits(FLOAT f)
+{
+    UINT u;
+    memcpy(&u, &f, 4);
+    return u;
+}
+
+static FLOAT bits_float(UINT u)
+{
+    FLOAT f;
+    memcpy(&f, &u, 4);
+    return f;
+}
+
+/* a float as a small float of the exponent and mantissa widths, rounded to nearest even; signed adds a sign bit. */
+static UINT to_small_float(FLOAT f, UINT exponent_bits, UINT mantissa_bits, BOOL is_signed)
+{
+    UINT u = float_bits(f), sign = u >> 31, bias = (1u << (exponent_bits - 1)) - 1;
+    UINT e = (u >> 23) & 0xFF, m = u & 0x7FFFFF, max_e = (1u << exponent_bits) - 1;
+    UINT out;
+    if (!is_signed && sign)
+        return e == 0xFF && m ? max_e << mantissa_bits | 1 : 0;
+    if (e == 0xFF)
+        out = max_e << mantissa_bits | (m ? 1u << (mantissa_bits - 1) : 0);
+    else if ((int)e - 127 + (int)bias >= (int)max_e)
+        out = max_e << mantissa_bits;
+    else {
+        int ne = (int)e - 127 + (int)bias;
+        UINT full = m | 0x800000, shift = 23 - mantissa_bits;
+        if (ne <= 0) {
+            /* denormal: one more bit shifted out for each step below the smallest exponent. */
+            shift += (UINT)(1 - ne);
+            ne = 0;
+            if (shift > 24) {
+                out = 0;
+                goto done;
+            }
+        } else {
+            full &= 0x7FFFFF;
+        }
+        UINT kept = full >> shift, rest = full & ((1u << shift) - 1), half = 1u << (shift - 1);
+        if (rest > half || (rest == half && (kept & 1)))
+            kept++;
+        out = ((UINT)ne << mantissa_bits) + kept;
+        if (out >= max_e << mantissa_bits)
+            out = max_e << mantissa_bits;
+    }
+done:
+    return is_signed ? out | sign << (exponent_bits + mantissa_bits) : out;
+}
+
+static FLOAT from_small_float(UINT v, UINT exponent_bits, UINT mantissa_bits, BOOL is_signed)
+{
+    UINT sign = is_signed ? (v >> (exponent_bits + mantissa_bits)) & 1 : 0;
+    UINT e = (v >> mantissa_bits) & ((1u << exponent_bits) - 1), m = v & ((1u << mantissa_bits) - 1);
+    UINT bias = (1u << (exponent_bits - 1)) - 1, out;
+    if (e == (1u << exponent_bits) - 1)
+        out = 0xFFu << 23 | m << (23 - mantissa_bits);
+    else if (e)
+        out = (e - bias + 127) << 23 | m << (23 - mantissa_bits);
+    else if (!m)
+        out = 0;
+    else {
+        /* denormal: normalized for a float. */
+        int ne = 1 - (int)bias;
+        while (!(m & (1u << mantissa_bits))) {
+            m <<= 1;
+            ne--;
+        }
+        out = (UINT)(ne + 127) << 23 | (m & ((1u << mantissa_bits) - 1)) << (23 - mantissa_bits);
+    }
+    return bits_float(out | sign << 31);
+}
+
+static UINT round_half(FLOAT f) { return (UINT)(f + 0.5f); }
+
+/*
+ * one element of a color format holding a clear: the low bits of each
+ * value for clears of uints, as ClearUnorderedAccessViewUint writes them
+ * whatever the format, or the floats converted to the format for clears
+ * of floats. FALSE for formats without channels to clear, and for clears
+ * of floats on integer formats, which direct3d drops.
+ */
+BOOL D3dPackClear(VkFormat format, const UINT *uints, const FLOAT *floats, BYTE out[16], UINT *size)
+{
+    BYTE bits[4];
+    UINT count;
+    ChannelKind kind;
+    if (!channels(format, bits, &count, &kind) || (floats && (kind == CH_UINT || kind == CH_SINT)))
+        return FALSE;
+    memset(out, 0, 16);
+    UINT at = 0;
+    for (UINT i = 0; i < count; i++) {
+        UINT n = bits[i], mask = n == 32 ? ~0u : (1u << n) - 1, v;
+        if (uints)
+            v = uints[i] & mask;
+        else if (kind == CH_UNORM)
+            v = round_half(D3D_MAX(0.0f, D3D_MIN(floats[i], 1.0f)) * (FLOAT)mask);
+        else if (kind == CH_SNORM) {
+            FLOAT f = D3D_MAX(-1.0f, D3D_MIN(floats[i], 1.0f)) * (FLOAT)(mask >> 1);
+            v = (UINT)(INT)(f < 0 ? f - 0.5f : f + 0.5f) & mask;
+        } else if (kind == CH_UFLOAT)
+            v = to_small_float(floats[i], 5, n - 5, FALSE);
+        else if (n == 16)
+            v = to_small_float(floats[i], 5, 10, TRUE);
+        else
+            v = float_bits(floats[i]);
+        /* channels are packed from the lowest bit, the bytes little endian. */
+        for (UINT b = 0; b < n; b++, at++)
+            if (v >> b & 1)
+                out[at / 8] |= (BYTE)(1u << (at % 8));
+    }
+    *size = (at + 7) / 8;
+    return TRUE;
+}
+
+/* the clear value of an image of the format that writes an element's bits exactly. */
+BOOL D3dClearValueOfBits(VkFormat format, const BYTE *element, VkClearColorValue *value)
+{
+    BYTE bits[4];
+    UINT count;
+    ChannelKind kind;
+    if (!channels(format, bits, &count, &kind))
+        return FALSE;
+    memset(value, 0, sizeof(*value));
+    UINT at = 0;
+    for (UINT i = 0; i < count; i++) {
+        UINT n = bits[i], mask = n == 32 ? ~0u : (1u << n) - 1, v = 0;
+        for (UINT b = 0; b < n; b++, at++)
+            v |= (UINT)(element[at / 8] >> (at % 8) & 1) << b;
+        UINT sign = n == 32 ? 0 : v >> (n - 1) & 1;
+        INT s = sign ? (INT)(v | ~mask) : (INT)v;
+        switch (kind) {
+        case CH_UINT:
+            value->uint32[i] = v;
+            break;
+        case CH_SINT:
+            value->int32[i] = s;
+            break;
+        case CH_UNORM:
+            value->float32[i] = (FLOAT)v / (FLOAT)mask;
+            break;
+        case CH_SNORM:
+            value->float32[i] = D3D_MAX((FLOAT)s / (FLOAT)(mask >> 1), -1.0f);
+            break;
+        case CH_UFLOAT:
+            value->float32[i] = from_small_float(v, 5, n - 5, FALSE);
+            break;
+        case CH_FLOAT:
+            value->float32[i] = n == 16 ? from_small_float(v, 5, 10, TRUE) : bits_float(v);
+            break;
+        }
+    }
+    return TRUE;
+}
