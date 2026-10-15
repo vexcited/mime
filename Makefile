@@ -137,7 +137,7 @@ $(OBJ)/host/gen/vulkan/%.o: $(VK_GEN)/%.c $(VK_GEN)/stamp
 	$(CC) $(HOST_CFLAGS) $(VK_CFLAGS) -Ihost/linux -Wno-unused-variable -Wno-unused-function -c $< -o $@
 
 $(OBJ)/host/linux/vulkan.o $(OBJ)/host/linux/vkwsi.o: $(VK_GEN)/stamp
-$(OBJ)/host/linux/vulkan.o $(OBJ)/host/linux/vkwsi.o: HOST_CFLAGS += $(VK_CFLAGS)
+$(OBJ)/host/linux/vulkan.o $(OBJ)/host/linux/vkwsi.o: HOST_CFLAGS += $(VK_CFLAGS) -Wno-missing-field-initializers
 
 host: $(BUILD)/mime
 
@@ -677,7 +677,7 @@ endif
 
 # ---------------------------------------------------------------- vulkan-1.dll
 
-# the vulkan api over the wire to the host's driver, x64 for now.
+# the vulkan api over the wire to the host's driver; the x86 build for wow64 is in tools/x86.mk.
 VULKAN_SRC := $(wildcard guest/vulkan-1/*.c)
 VULKAN_GEN_SRC := mvk_structs mvk_guest_commands mvk_guest_out mvk_guest_procs
 VULKAN_CFLAGS := -Iguest/vulkan-1 $(VK_CFLAGS) -DMVK_GUEST=1 -Wno-unused-variable -Wno-unused-function \
