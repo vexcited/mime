@@ -44,6 +44,71 @@ static void make_machine_uuid(char *out, size_t size)
              r[2] & 0xFFFF, r[3]);
 }
 
+#if defined(__linux__)
+/* a line of a sysfs file, empty when it cannot be read. */
+static void read_line(const char *path, char *out, size_t size)
+{
+    out[0] = 0;
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return;
+    if (fgets(out, (int)size, f)) {
+        size_t n = strlen(out);
+        while (n && (out[n - 1] == '\n' || out[n - 1] == ' '))
+            out[--n] = 0;
+    }
+    fclose(f);
+}
+
+/* the brand string of cpuid, which programs in the guest read themselves anyway. */
+static void cpu_brand(char *out, size_t size)
+{
+    uint32_t regs[12];
+    for (uint32_t i = 0; i < 3; i++)
+        __asm__ volatile("cpuid"
+                         : "=a"(regs[i * 4]), "=b"(regs[i * 4 + 1]), "=c"(regs[i * 4 + 2]), "=d"(regs[i * 4 + 3])
+                         : "a"(0x80000002 + i), "c"(0));
+    char brand[49];
+    memcpy(brand, regs, 48);
+    brand[48] = 0;
+    const char *p = brand;
+    while (*p == ' ')
+        p++;
+    mime_strlcpy(out, p, size);
+}
+
+/*
+ * on a pc the guest is the machine it runs on: the processor and the
+ * firmware tables are the host's, as a windows installed on it would
+ * report them, so nothing tells a virtual machine apart.
+ */
+const MimeHardwareProfile *mime_hardware_profile(void)
+{
+    static char cpu[64], manufacturer[32], product[32], family[24], bios_vendor[24], bios_version[32], bios_date[16];
+    static MimeHardwareProfile profile;
+    if (profile.cpu_name)
+        return &profile;
+    cpu_brand(cpu, sizeof(cpu));
+    read_line("/sys/class/dmi/id/sys_vendor", manufacturer, sizeof(manufacturer));
+    read_line("/sys/class/dmi/id/product_name", product, sizeof(product));
+    read_line("/sys/class/dmi/id/product_family", family, sizeof(family));
+    read_line("/sys/class/dmi/id/bios_vendor", bios_vendor, sizeof(bios_vendor));
+    read_line("/sys/class/dmi/id/bios_version", bios_version, sizeof(bios_version));
+    read_line("/sys/class/dmi/id/bios_date", bios_date, sizeof(bios_date));
+    char mhz[32];
+    read_line("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", mhz, sizeof(mhz));
+    profile.cpu_name = cpu;
+    profile.cpu_mhz = (uint32_t)(strtoull(mhz, NULL, 10) / 1000);
+    profile.cpu_midr = 0;
+    profile.manufacturer = manufacturer[0] ? manufacturer : "System manufacturer";
+    profile.product = product[0] ? product : "System Product Name";
+    profile.family = family[0] ? family : "To be filled by O.E.M.";
+    profile.bios_vendor = bios_vendor[0] ? bios_vendor : "American Megatrends Inc.";
+    profile.bios_version = bios_version[0] ? bios_version : "1.0";
+    profile.bios_date = bios_date[0] ? bios_date : "01/01/2024";
+    return &profile;
+}
+#else
 /*
  * the reference machine: a microsoft surface laptop 7, the windows 11 arm64
  * flagship, with the snapdragon x elite that machine carries. a program in
@@ -66,6 +131,8 @@ const MimeHardwareProfile *mime_hardware_profile(void)
     };
     return &profile;
 }
+
+#endif
 
 /* the host login name, restricted to what windows allows in an account name. */
 static void make_user_name(char *out, size_t size)

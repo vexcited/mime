@@ -74,7 +74,9 @@ int mime_ipc_connect(const char *socket_path)
         close(fd);
         return -1;
     }
+#ifdef SO_NOSIGPIPE
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
     return fd;
 }

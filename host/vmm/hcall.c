@@ -6,7 +6,6 @@
 #include "../gpu/gpu.h"
 #include "../ui/ui.h"
 
-#include <os/os_sync_wait_on_address.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,14 +201,13 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         }
         uint32_t v = __atomic_load_n(word, __ATOMIC_ACQUIRE);
         if ((uint16_t)v != (uint16_t)regs[2])
-            os_sync_wait_on_address_with_timeout(word, v, 4, OS_SYNC_WAIT_ON_ADDRESS_NONE, OS_CLOCK_MACH_ABSOLUTE_TIME,
-                                                 1000000);
+            mime_host_wait_word(word, v, 1000000);
         break;
     }
     case MIME_HC_LOCK_WAKE: {
         uint32_t *word = mime_vm_phys(vm, regs[1], 4);
         if (word)
-            os_sync_wake_by_address_all(word, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE);
+            mime_host_wake_word(word);
         break;
     }
     case MIME_HC_CPU_START:
@@ -233,8 +231,8 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     case MIME_HC_MEM_DISCARD: {
         /* whole host pages only; the guest reads zeros until it writes them again. */
-        uint64_t start = MIME_ALIGN_UP(regs[1], (uint64_t)MIME_LAZY_PAGE);
-        uint64_t end = MIME_ALIGN_DOWN(regs[1] + regs[2], (uint64_t)MIME_LAZY_PAGE);
+        uint64_t start = MIME_ALIGN_UP(regs[1], (uint64_t)MIME_HOST_PAGE);
+        uint64_t end = MIME_ALIGN_DOWN(regs[1] + regs[2], (uint64_t)MIME_HOST_PAGE);
         if (regs[1] < MIME_RAM_BASE || regs[1] + regs[2] > MIME_RAM_BASE + vm->ram_size || regs[1] + regs[2] < regs[1])
             status = MIME_HC_STATUS_INVALID;
         else if (end > start)

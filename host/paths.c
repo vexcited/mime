@@ -1,7 +1,9 @@
 #include "mime_host.h"
 
 #include <errno.h>
+#if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,9 +82,15 @@ bool mime_paths_init(MimePaths *paths)
     snprintf(paths->setup_stamp, sizeof(paths->setup_stamp), "%s/setup.ini", paths->data);
 
     char exe[MIME_PATH_MAX];
-    uint32_t exe_size = sizeof(exe);
     char resolved[MIME_PATH_MAX];
-    if (_NSGetExecutablePath(exe, &exe_size) == 0 && realpath(exe, resolved)) {
+#if defined(__APPLE__)
+    uint32_t exe_size = sizeof(exe);
+    bool found = _NSGetExecutablePath(exe, &exe_size) == 0;
+#else
+    mime_strlcpy(exe, "/proc/self/exe", sizeof(exe));
+    bool found = true;
+#endif
+    if (found && realpath(exe, resolved)) {
         char *slash = strrchr(resolved, '/');
         if (slash)
             *slash = 0;

@@ -1,7 +1,7 @@
 /*
  * the guest network: sockets of the host, kept non blocking. the guest
  * kernel asks what is ready with MIME_HC_NET_POLL and arms a watch on what
- * would block; a kqueue thread queues the sockets whose watch fired and
+ * would block; a kqueue or epoll thread queues the sockets whose watch fired and
  * raises MIME_IRQ_NET. host names resolve on their own threads, so a slow
  * dns server never stalls the vcpu.
  */
@@ -12,14 +12,20 @@
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#if defined(__APPLE__)
 #include <net/if_dl.h>
+#include <sys/event.h>
+#else
+#include <linux/if_packet.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#endif
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -60,7 +66,11 @@ typedef struct NetResolve {
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static MimeVm *g_vm;
-static int g_kq = -1;
+static int g_kq = -1; /* the kqueue, or the epoll instance on linux */
+#if !defined(__APPLE__)
+static int g_stop_fd = -1;
+#define STOP_WATCH UINT64_MAX
+#endif
 static pthread_t g_thread;
 static NetSocket g_sockets[NET_SLOTS];
 static uint32_t g_next_slot;
@@ -161,7 +171,9 @@ static bool to_host(const MimeNetAddr *a, struct sockaddr_storage *ss, socklen_t
     memset(ss, 0, sizeof(*ss));
     if (a->family == WIN_AF_INET) {
         struct sockaddr_in *in = (struct sockaddr_in *)ss;
+#if defined(__APPLE__)
         in->sin_len = sizeof(*in);
+#endif
         in->sin_family = AF_INET;
         memcpy(&in->sin_port, a->data, 2);
         memcpy(&in->sin_addr, a->data + 2, 4);
@@ -170,7 +182,9 @@ static bool to_host(const MimeNetAddr *a, struct sockaddr_storage *ss, socklen_t
     }
     if (a->family == WIN_AF_INET6) {
         struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)ss;
+#if defined(__APPLE__)
         in6->sin6_len = sizeof(*in6);
+#endif
         in6->sin6_family = AF_INET6;
         memcpy(&in6->sin6_port, a->data, 2);
         memcpy(&in6->sin6_flowinfo, a->data + 2, 4);
@@ -234,9 +248,17 @@ static void push_ring(uint32_t id)
 static void *watch_thread(void *arg)
 {
     (void)arg;
+#if defined(__APPLE__)
     struct kevent events[64];
+#else
+    struct epoll_event events[64];
+#endif
     for (;;) {
+#if defined(__APPLE__)
         int n = kevent(g_kq, NULL, 0, events, 64, NULL);
+#else
+        int n = epoll_wait(g_kq, events, 64, -1);
+#endif
         if (n < 0) {
             if (errno == EINTR)
                 continue;
@@ -245,11 +267,19 @@ static void *watch_thread(void *arg)
         bool raise = false;
         pthread_mutex_lock(&g_lock);
         for (int i = 0; i < n; i++) {
+#if defined(__APPLE__)
             if (events[i].filter == EVFILT_USER) {
                 pthread_mutex_unlock(&g_lock);
                 return NULL;
             }
             NetSocket *s = lookup((uint64_t)(uintptr_t)events[i].udata);
+#else
+            if (events[i].data.u64 == STOP_WATCH) {
+                pthread_mutex_unlock(&g_lock);
+                return NULL;
+            }
+            NetSocket *s = lookup(events[i].data.u64);
+#endif
             if (s && !s->queued) {
                 s->queued = true;
                 push_ring(socket_id(s));
@@ -271,12 +301,21 @@ static bool start(MimeVm *vm)
     for (uint32_t i = 0; i < NET_SLOTS; i++)
         g_sockets[i].fd = -1;
     g_vm = vm;
+#if defined(__APPLE__)
     g_kq = kqueue();
     if (g_kq < 0)
         return false;
     struct kevent ev;
     EV_SET(&ev, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);
     kevent(g_kq, &ev, 1, NULL, 0, NULL);
+#else
+    g_kq = epoll_create1(EPOLL_CLOEXEC);
+    g_stop_fd = eventfd(0, EFD_CLOEXEC);
+    if (g_kq < 0 || g_stop_fd < 0)
+        return false;
+    struct epoll_event ev = {.events = EPOLLIN, .data.u64 = STOP_WATCH};
+    epoll_ctl(g_kq, EPOLL_CTL_ADD, g_stop_fd, &ev);
+#endif
     if (pthread_create(&g_thread, NULL, watch_thread, NULL)) {
         close(g_kq);
         g_kq = -1;
@@ -290,7 +329,9 @@ static void prepare_fd(int fd, bool stream)
     int on = 1;
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     fcntl(fd, F_SETFD, FD_CLOEXEC);
+#ifdef SO_NOSIGPIPE
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+#endif
     /* windows rebinds a port whose old connections linger in time wait. */
     if (stream)
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
@@ -468,7 +509,11 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
         r = sockopt_int(fd, SOL_SOCKET, SO_OOBINLINE, set, (int)v, value);
         break;
     case MIME_NET_OPT_KEEPIDLE:
+#if defined(__APPLE__)
         r = sockopt_int(fd, IPPROTO_TCP, TCP_KEEPALIVE, set, (int)v, value);
+#else
+        r = sockopt_int(fd, IPPROTO_TCP, TCP_KEEPIDLE, set, (int)v, value);
+#endif
         break;
     case MIME_NET_OPT_KEEPINTVL:
         r = sockopt_int(fd, IPPROTO_TCP, TCP_KEEPINTVL, set, (int)v, value);
@@ -505,12 +550,17 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
     }
     case MIME_NET_OPT_NREAD: {
         int n = 0;
+#if defined(__APPLE__)
         if (!s->stream) {
             socklen_t nl = sizeof(n);
             r = getsockopt(fd, SOL_SOCKET, SO_NREAD, &n, &nl);
         } else {
             r = ioctl(fd, FIONREAD, &n);
         }
+#else
+        /* linux answers the size of the next datagram for a datagram socket. */
+        r = ioctl(fd, FIONREAD, &n);
+#endif
         *value = (uint64_t)(uint32_t)n;
         break;
     }
@@ -587,8 +637,10 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
     if (count)
         poll(fds, (nfds_t)count, 0);
     uint64_t ready = 0;
+#if defined(__APPLE__)
     struct kevent changes[2 * NET_MAX_POLL];
     int nchanges = 0;
+#endif
     for (uint64_t i = 0; i < count; i++) {
         MimeNetPoll *e = &entries[i];
         int32_t error = 0;
@@ -601,14 +653,28 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
         if (!arm || !socks[i])
             continue;
         /* armed even when ready: a watch that fires at once costs a wakeup, a missed one a stall. */
+#if defined(__APPLE__)
         void *udata = (void *)(uintptr_t)e->socket;
         if (e->events & MIME_NET_READ)
             EV_SET(&changes[nchanges++], fds[i].fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, udata);
         if (e->events & MIME_NET_WRITE)
             EV_SET(&changes[nchanges++], fds[i].fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, udata);
+#else
+        /* one watch per descriptor: both directions at once, until it fires. */
+        struct epoll_event ev = {.events = EPOLLONESHOT | EPOLLRDHUP, .data.u64 = e->socket};
+        if (e->events & MIME_NET_READ)
+            ev.events |= EPOLLIN;
+        if (e->events & MIME_NET_WRITE)
+            ev.events |= EPOLLOUT;
+        if ((e->events & (MIME_NET_READ | MIME_NET_WRITE)) &&
+            epoll_ctl(g_kq, EPOLL_CTL_MOD, fds[i].fd, &ev) != 0 && errno == ENOENT)
+            epoll_ctl(g_kq, EPOLL_CTL_ADD, fds[i].fd, &ev);
+#endif
     }
+#if defined(__APPLE__)
     if (nchanges)
         kevent(g_kq, changes, nchanges, NULL, 0, NULL);
+#endif
     *value = ready;
     return MIME_HC_STATUS_OK;
 }
@@ -802,6 +868,7 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
             from_host(ifa->ifa_addr, &e->addr);
             /* the link entry of the same interface has the mtu and the hardware address. */
             for (struct ifaddrs *link = list; link; link = link->ifa_next) {
+#if defined(__APPLE__)
                 if (!link->ifa_addr || link->ifa_addr->sa_family != AF_LINK || strcmp(link->ifa_name, ifa->ifa_name))
                     continue;
                 const struct sockaddr_dl *dl = (const struct sockaddr_dl *)link->ifa_addr;
@@ -811,6 +878,24 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
                 }
                 if (link->ifa_data)
                     e->mtu = ((const struct if_data *)link->ifa_data)->ifi_mtu;
+#else
+                if (!link->ifa_addr || link->ifa_addr->sa_family != AF_PACKET || strcmp(link->ifa_name, ifa->ifa_name))
+                    continue;
+                const struct sockaddr_ll *ll = (const struct sockaddr_ll *)link->ifa_addr;
+                if (ll->sll_halen && ll->sll_halen <= sizeof(e->mac)) {
+                    e->mac_length = ll->sll_halen;
+                    memcpy(e->mac, ll->sll_addr, ll->sll_halen);
+                }
+                struct ifreq req;
+                memset(&req, 0, sizeof(req));
+                mime_strlcpy(req.ifr_name, ifa->ifa_name, sizeof(req.ifr_name));
+                int probe = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+                if (probe >= 0) {
+                    if (ioctl(probe, SIOCGIFMTU, &req) == 0)
+                        e->mtu = (uint32_t)req.ifr_mtu;
+                    close(probe);
+                }
+#endif
                 break;
             }
         }
@@ -958,11 +1043,21 @@ void mime_net_close_all(void)
         if (g_sockets[i].fd >= 0)
             close_socket(&g_sockets[i]);
     }
+#if defined(__APPLE__)
     struct kevent ev;
     EV_SET(&ev, 0, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
     kevent(g_kq, &ev, 1, NULL, 0, NULL);
+#else
+    uint64_t one = 1;
+    if (write(g_stop_fd, &one, sizeof(one)) < 0)
+        mime_warn("cannot stop the network watch");
+#endif
     pthread_mutex_unlock(&g_lock);
     pthread_join(g_thread, NULL);
     close(g_kq);
     g_kq = -1;
+#if !defined(__APPLE__)
+    close(g_stop_fd);
+    g_stop_fd = -1;
+#endif
 }

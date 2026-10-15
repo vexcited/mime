@@ -453,7 +453,7 @@ static void *client_thread(void *arg)
 
 static void *accept_thread(void *arg)
 {
-    pthread_setname_np("mime-ipc");
+    mime_set_thread_name("mime-ipc");
     for (;;) {
         int fd = accept(g_listen_fd, NULL, NULL);
         if (fd < 0) {
@@ -461,8 +461,10 @@ static void *accept_thread(void *arg)
                 continue;
             break;
         }
+#ifdef SO_NOSIGPIPE
         int one = 1;
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
         pthread_t t;
         pthread_create(&t, NULL, client_thread, (void *)(intptr_t)fd);
         pthread_detach(t);
@@ -523,7 +525,11 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     /* every guest file handle and file window holds a descriptor. */
     struct rlimit files;
     if (getrlimit(RLIMIT_NOFILE, &files) == 0) {
+#ifdef OPEN_MAX
         files.rlim_cur = MIME_MIN(files.rlim_max, (rlim_t)OPEN_MAX);
+#else
+        files.rlim_cur = files.rlim_max;
+#endif
         setrlimit(RLIMIT_NOFILE, &files);
     }
 

@@ -4,6 +4,7 @@
 #ifndef MIME_HOST_H
 #define MIME_HOST_H
 
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,6 +19,13 @@
 #define MIME_ALIGN_DOWN(v, a) ((v) & ~((__typeof__(v))(a) - 1))
 
 #define MIME_PATH_MAX 1024
+
+/* names the calling thread, as ps and debuggers show it. */
+#if defined(__APPLE__)
+#define mime_set_thread_name(name) pthread_setname_np(name)
+#else
+#define mime_set_thread_name(name) pthread_setname_np(pthread_self(), name)
+#endif
 
 /* log.c */
 typedef enum MimeLogLevel {

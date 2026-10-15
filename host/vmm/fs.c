@@ -12,7 +12,20 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#if defined(__APPLE__)
 #include <sys/mount.h>
+#define ST_BIRTH(st) ((st)->st_birthtimespec)
+#define ST_ATIME(st) ((st)->st_atimespec)
+#define ST_MTIME(st) ((st)->st_mtimespec)
+#define ST_CTIME(st) ((st)->st_ctimespec)
+#else
+#include <sys/vfs.h>
+/* linux keeps the birth time out of stat; the change time is the closest a plain stat has. */
+#define ST_BIRTH(st) ((st)->st_ctim.tv_sec < (st)->st_mtim.tv_sec ? (st)->st_ctim : (st)->st_mtim)
+#define ST_ATIME(st) ((st)->st_atim)
+#define ST_MTIME(st) ((st)->st_mtim)
+#define ST_CTIME(st) ((st)->st_ctim)
+#endif
 #include <unistd.h>
 
 #define FILE_SUPERSEDED 0
@@ -80,10 +93,10 @@ static void fill_info(const struct stat *st, const char *name, MimeFsInfo *info)
     bool dir = S_ISDIR(st->st_mode);
     info->size = dir ? 0 : (uint64_t)st->st_size;
     info->allocation_size = dir ? 0 : (uint64_t)st->st_blocks * 512;
-    info->creation_time = ts_to_filetime(st->st_birthtimespec);
-    info->access_time = ts_to_filetime(st->st_atimespec);
-    info->write_time = ts_to_filetime(st->st_mtimespec);
-    info->change_time = ts_to_filetime(st->st_ctimespec);
+    info->creation_time = ts_to_filetime(ST_BIRTH(st));
+    info->access_time = ts_to_filetime(ST_ATIME(st));
+    info->write_time = ts_to_filetime(ST_MTIME(st));
+    info->change_time = ts_to_filetime(ST_CTIME(st));
     info->file_id = (uint64_t)st->st_ino;
     info->links = (uint32_t)st->st_nlink;
     uint32_t attrs = dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE;
@@ -316,96 +329,6 @@ static void load_dir(MimeFsHandle *fh)
     fh->dir_count = count;
 }
 
-#define WINDOW_BUDGET (64ull << 20) /* filled window bytes kept before older windows are emptied */
-
-/* places a file read only at the first free window address, first fit. nothing is read yet. */
-static uint64_t window_map(MimeVm *vm, MimeFsHandle *fh, uint64_t *ipa_out)
-{
-    struct stat st;
-    if (fh->is_dir || fstat(fh->fd, &st) != 0 || st.st_size <= 0)
-        return MIME_HC_STATUS_INVALID;
-    if (vm->window_count == MIME_VMM_MAX_WINDOWS)
-        return MIME_HC_STATUS_NO_MEMORY;
-    uint64_t size = MIME_ALIGN_UP((uint64_t)st.st_size, (uint64_t)MIME_WINDOW_ALIGN);
-    uint64_t ipa = MIME_WINDOW_BASE;
-    uint32_t at = 0;
-    for (; at < vm->window_count; at++) {
-        if (ipa + size <= vm->windows[at].ipa)
-            break;
-        ipa = vm->windows[at].ipa + MIME_ALIGN_UP(vm->windows[at].size, (uint64_t)MIME_WINDOW_ALIGN);
-    }
-    if (ipa + size > MIME_WINDOW_BASE + MIME_WINDOW_SIZE)
-        return MIME_HC_STATUS_NO_MEMORY;
-    int fd = dup(fh->fd);
-    if (fd < 0)
-        return errno_status(errno);
-    MimeLazyRegion r;
-    if (!mime_lazy_init(&r, ipa, size, fd, NULL, (uint64_t)st.st_size)) {
-        close(fd);
-        return MIME_HC_STATUS_NO_MEMORY;
-    }
-    memmove(&vm->windows[at + 1], &vm->windows[at], (vm->window_count - at) * sizeof(MimeLazyRegion));
-    vm->windows[at] = r;
-    vm->window_count++;
-    *ipa_out = ipa;
-    return MIME_HC_STATUS_OK;
-}
-
-static MimeLazyRegion *window_find(MimeVm *vm, uint64_t ipa)
-{
-    for (uint32_t i = 0; i < vm->window_count; i++)
-        if (mime_lazy_contains(&vm->windows[i], ipa))
-            return &vm->windows[i];
-    return NULL;
-}
-
-static void window_unmap(MimeVm *vm, MimeLazyRegion *w)
-{
-    vm->window_bytes -= w->filled_bytes;
-    mime_lazy_free(w);
-    uint32_t at = (uint32_t)(w - vm->windows);
-    memmove(w, w + 1, (vm->window_count - at - 1) * sizeof(MimeLazyRegion));
-    vm->window_count--;
-}
-
-/* empties the least recently filled windows until a chunk fits the budget. */
-static void window_trim(MimeVm *vm, MimeLazyRegion *keep)
-{
-    while (vm->window_bytes + MIME_LAZY_CHUNK > WINDOW_BUDGET) {
-        MimeLazyRegion *oldest = NULL;
-        for (uint32_t i = 0; i < vm->window_count; i++) {
-            MimeLazyRegion *w = &vm->windows[i];
-            if (w != keep && w->filled_bytes && (!oldest || w->last_use < oldest->last_use))
-                oldest = w;
-        }
-        if (!oldest)
-            return;
-        vm->window_bytes -= oldest->filled_bytes;
-        mime_lazy_drop(oldest);
-    }
-}
-
-/* a stage 2 fault in the rom or a window: fills the touched chunk. */
-bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa)
-{
-    pthread_mutex_lock(&vm->fs_lock);
-    bool handled;
-    MimeLazyRegion *w;
-    if (mime_lazy_contains(&vm->rom, ipa)) {
-        handled = mime_lazy_fill(&vm->rom, ipa);
-    } else if ((w = window_find(vm, ipa))) {
-        window_trim(vm, w);
-        uint64_t before = w->filled_bytes;
-        handled = mime_lazy_fill(w, ipa);
-        vm->window_bytes += w->filled_bytes - before;
-        w->last_use = ++vm->window_clock;
-    } else {
-        handled = false;
-    }
-    pthread_mutex_unlock(&vm->fs_lock);
-    return handled;
-}
-
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t status = MIME_HC_STATUS_OK;
@@ -524,17 +447,12 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
-        status = fh ? window_map(vm, fh, &regs[1]) : MIME_HC_STATUS_INVALID;
+        status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, &regs[1]) : MIME_HC_STATUS_INVALID;
         break;
     }
-    case MIME_HC_FS_UNMAP: {
-        MimeLazyRegion *w = window_find(vm, a[1]);
-        if (w && w->ipa == a[1])
-            window_unmap(vm, w);
-        else
-            status = MIME_HC_STATUS_INVALID;
+    case MIME_HC_FS_UNMAP:
+        status = mime_window_unmap(vm, a[1]);
         break;
-    }
     default:
         status = MIME_HC_STATUS_UNSUPPORTED;
         break;
@@ -552,7 +470,6 @@ void mime_fs_close_all(MimeVm *vm)
             free_handle(vm, i + 1);
         }
     }
-    while (vm->window_count)
-        window_unmap(vm, &vm->windows[0]);
+    mime_window_unmap_all(vm);
     pthread_mutex_unlock(&vm->fs_lock);
 }
