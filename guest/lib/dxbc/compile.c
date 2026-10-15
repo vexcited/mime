@@ -79,6 +79,8 @@ typedef struct Compiler {
     const uint32_t *code;
     uint32_t code_count;
     const char *error;
+    /* the compact table: the position plus one of each entry the code reads. */
+    uint16_t table_map[DXBC_TABLE_DWORDS];
 
     /* types. */
     uint32_t t_void, t_bool, t_f32, t_u32, t_i32;
@@ -254,10 +256,15 @@ static uint32_t bool_to_mask(Compiler *c, uint32_t value, uint32_t n)
 
 /* ------------------------------------------------------------------ the table and the heap */
 
-/* the table entry, a heap index. */
+/* the table entry, a heap index, at its place in the shader's compact table. */
 static uint32_t table_entry(Compiler *c, uint32_t entry)
 {
-    uint32_t indices[3] = {uconst(c, 0), uconst(c, entry / 4), uconst(c, entry % 4)};
+    if (!c->table_map[entry]) {
+        c->info->table_entries[c->info->table_count] = (uint16_t)entry;
+        c->table_map[entry] = (uint16_t)++c->info->table_count;
+    }
+    uint32_t at = c->table_map[entry] - 1u;
+    uint32_t indices[3] = {uconst(c, 0), uconst(c, at / 4), uconst(c, at % 4)};
     uint32_t ptr = spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassUniform, c->t_u32), c->table, indices, 3);
     return spv_load(&c->b, c->t_u32, ptr);
 }

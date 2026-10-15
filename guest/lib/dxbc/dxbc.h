@@ -6,8 +6,9 @@
  * the spir-v follows mime's binding model. descriptor set 0 is the heap,
  * one array per kind of descriptor, which every view and sampler has an
  * index in. set 1 holds a table of heap indices per stage, a uniform
- * buffer of DXBC_TABLE_DWORDS dwords at binding = stage, which the device
- * fills with the indices of what is bound to each slot.
+ * buffer at binding = stage, which the device fills with the indices of
+ * what is bound to each slot. a shader's table is compact: it holds only
+ * the entries the shader reads, in the order of table_entries.
  */
 #ifndef MIME_LIB_DXBC_H
 #define MIME_LIB_DXBC_H
@@ -33,7 +34,7 @@ enum {
 #define DXBC_SET_HEAP 0
 #define DXBC_SET_TABLE 1
 
-/* where each kind of slot starts in a stage's table, in dwords. */
+/* the full layout of a stage's table: where each kind of slot starts, in dwords. */
 #define DXBC_TABLE_CB 0
 #define DXBC_TABLE_SAMPLER 14
 #define DXBC_TABLE_SRV 30
@@ -107,6 +108,9 @@ typedef struct DxbcShaderInfo {
     uint64_t uav_counter_mask;
     uint8_t srv_kind[128];
     uint8_t uav_kind[64];
+    /* the compact table: each dword stands for this entry of the full layout. */
+    uint16_t table_entries[DXBC_TABLE_DWORDS];
+    uint32_t table_count;
 
     /* the vertex shader's inputs and the pixel shader's targets, by register. */
     uint32_t input_mask;

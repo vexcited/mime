@@ -184,6 +184,8 @@ const D3dRingSlice *D3dContextListDiscard(D3dContext *c, D3dResource *r)
         return NULL;
     D3dContextUse(c, r);
     c->ia_dirty = TRUE;
+    for (UINT i = 0; i < D3D_STAGES; i++)
+        c->stages[i].table_valid = FALSE;
     for (UINT i = 0; i < c->list_range_count; i++)
         if (c->list_ranges[i].resource == r) {
             c->list_ranges[i].slice = slice;
@@ -1175,82 +1177,115 @@ static void emit_buffers(D3dContext *c, VkCommandBuffer cmd)
 
 /* ------------------------------------------------------------------ binding tables */
 
-/* the table of a stage: the heap indices of what its shader reads. */
+/* the heap index of an entry of the full table layout, and the resource behind it. */
+static UINT table_value(D3dContext *c, D3dStage stage, UINT entry, D3dResource **resource)
+{
+    D3dStageState *s = &c->stages[stage];
+    const DxbcShaderInfo *info = &s->shader->info;
+    *resource = NULL;
+    if (entry < DXBC_TABLE_SAMPLER) {
+        UINT i = entry - DXBC_TABLE_CB;
+        D3dResource *r = s->cb[i];
+        if (!r)
+            return 0;
+        *resource = r;
+        const D3dRingSlice *slice = D3dContextListRange(c, r);
+        UINT first = s->cb_first[i] * 16;
+        if (!slice)
+            return D3dBufferCbv(r, first, s->cb_count[i] * 16);
+        return first < r->buf.size ? D3dCbvIndex(c->child.device, slice->buffer, slice->offset + first,
+                                                 D3D_MIN(s->cb_count[i] * 16, r->buf.size - first))
+                                   : 0;
+    }
+    if (entry < DXBC_TABLE_SRV) {
+        D3dSamplerState *sampler = s->sampler[entry - DXBC_TABLE_SAMPLER];
+        return sampler ? sampler->heap_index : 0;
+    }
+    if (entry < DXBC_TABLE_UAV) {
+        UINT i = entry - DXBC_TABLE_SRV;
+        D3dView *v = s->srv[i];
+        if (!v)
+            return 0;
+        D3dViewRefresh(v);
+        *resource = v->resource;
+        /* a view of the wrong kind for the shader's declaration reads as null. */
+        UINT kind = info->srv_kind[i] == DXBC_SLOT_BUFFER ? D3D_HEAP_UNIFORM_TEXEL : D3D_HEAP_SAMPLED_IMAGE;
+        return v->heap_kind == kind ? v->heap_index : 0;
+    }
+    D3dView *const *uavs = stage == D3D_CS ? s->uav : c->om_uav;
+    if (stage != D3D_CS && stage != D3D_PS)
+        return 0;
+    BOOL counter = entry >= DXBC_TABLE_UAV_COUNTER;
+    UINT i = counter ? entry - DXBC_TABLE_UAV_COUNTER : entry - DXBC_TABLE_UAV;
+    D3dView *v = uavs[i];
+    if (!v)
+        return 0;
+    D3dViewRefresh(v);
+    *resource = v->resource;
+    if (counter)
+        return v->counter_index;
+    UINT kind = info->uav_kind[i] == DXBC_SLOT_BUFFER ? D3D_HEAP_STORAGE_TEXEL : D3D_HEAP_STORAGE_IMAGE;
+    return v->heap_kind == kind ? v->heap_index : 0;
+}
+
+/* the table of a stage, the heap indices of what its shader reads, and the resources behind them. */
 static void build_table(D3dContext *c, D3dStage stage, D3dBindingTable *t)
 {
     D3dStageState *s = &c->stages[stage];
     const DxbcShaderInfo *info = &s->shader->info;
-    for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; i++) {
-        if (!(info->cb_mask & (1u << i)))
-            continue;
-        D3dResource *r = s->cb[i];
-        const D3dRingSlice *slice = r ? D3dContextListRange(c, r) : NULL;
-        UINT first = s->cb_first[i] * 16;
-        if (slice)
-            t->entries[DXBC_TABLE_CB + i] =
-                first < r->buf.size ? D3dCbvIndex(c->child.device, slice->buffer, slice->offset + first,
-                                                  D3D_MIN(s->cb_count[i] * 16, r->buf.size - first))
-                                    : 0;
-        else
-            t->entries[DXBC_TABLE_CB + i] = r ? D3dBufferCbv(r, first, s->cb_count[i] * 16) : 0;
+    for (UINT k = 0; k < info->table_count; k++) {
+        D3dResource *r;
+        t->entries[k] = table_value(c, stage, info->table_entries[k], &r);
+        s->table_resources[k] = r;
+        if (r && r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER)
+            s->table_versions[k] = r->buf.version;
         D3dContextUse(c, r);
     }
-    for (UINT i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; i++)
-        if (info->sampler_mask & (1u << i))
-            t->entries[DXBC_TABLE_SAMPLER + i] = s->sampler[i] ? s->sampler[i]->heap_index : 0;
-    for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; i++) {
-        if (!(info->srv_mask[i / 32] & (1u << (i % 32))))
-            continue;
-        D3dView *v = s->srv[i];
-        if (v) {
-            D3dViewRefresh(v);
-            D3dContextUse(c, v->resource);
-        }
-        /* a view of the wrong kind for the shader's declaration reads as null. */
-        UINT kind = info->srv_kind[i] == DXBC_SLOT_BUFFER ? D3D_HEAP_UNIFORM_TEXEL : D3D_HEAP_SAMPLED_IMAGE;
-        t->entries[DXBC_TABLE_SRV + i] = v && v->heap_kind == kind ? v->heap_index : 0;
+}
+
+/* whether a buffer the table read was renamed since. */
+static BOOL table_stale(const D3dStageState *s)
+{
+    for (UINT k = 0; k < s->shader->info.table_count; k++) {
+        const D3dResource *r = s->table_resources[k];
+        if (r && r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER && r->buf.version != s->table_versions[k])
+            return TRUE;
     }
-    D3dView *const *uavs = stage == D3D_CS ? s->uav : c->om_uav;
-    if (stage == D3D_CS || stage == D3D_PS)
-        for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++) {
-            if (!(info->uav_mask & (1ull << i)))
-                continue;
-            D3dView *v = uavs[i];
-            if (v) {
-                D3dViewRefresh(v);
-                D3dContextUse(c, v->resource);
-            }
-            UINT kind = info->uav_kind[i] == DXBC_SLOT_BUFFER ? D3D_HEAP_STORAGE_TEXEL : D3D_HEAP_STORAGE_IMAGE;
-            t->entries[DXBC_TABLE_UAV + i] = v && v->heap_kind == kind ? v->heap_index : 0;
-            if (i < DXBC_TABLE_DWORDS - DXBC_TABLE_UAV_COUNTER)
-                t->entries[DXBC_TABLE_UAV_COUNTER + i] = v ? v->counter_index : 0;
-        }
+    return FALSE;
 }
 
 /*
- * uploads the tables of the stages that changed and binds them. a table is
- * uploaded again when its contents differ: renamed buffers change it
- * without any binding call.
+ * uploads the tables of the stages whose bindings changed and binds them.
+ * the others only mark their resources used once per submission or list.
  */
 static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
 {
     D3dDevice *device = c->child.device;
     BOOL changed = FALSE;
     UINT first = compute ? D3D_CS : D3D_VS, last = compute ? D3D_CS : D3D_PS;
+    UINT64 epoch = c->type == D3D11_DEVICE_CONTEXT_IMMEDIATE ? device->next_serial : c->list_id;
     for (UINT stage = first; stage <= last; stage++) {
         D3dStageState *s = &c->stages[stage];
         if (!s->shader)
             continue;
-        D3dBindingTable table;
-        memcpy(&table, &s->table, sizeof(table));
-        build_table(c, stage, &table);
-        if (s->table_valid && !memcmp(&table, &s->table, sizeof(table)))
+        if (s->table_valid && !table_stale(s)) {
+            if (s->table_epoch != epoch) {
+                for (UINT k = 0; k < s->shader->info.table_count; k++)
+                    D3dContextUse(c, s->table_resources[k]);
+                s->table_epoch = epoch;
+            }
             continue;
+        }
+        UINT count = s->shader->info.table_count;
+        D3dBindingTable table;
+        build_table(c, stage, &table);
+        s->table_epoch = epoch;
+        /* the set's descriptors cover a whole table: room for one, the rest given back. */
         D3dRingSlice slice;
         if (!D3dContextRingAlloc(c, sizeof(table), device->properties.limits.minUniformBufferOffsetAlignment, &slice))
             return FALSE;
-        memcpy(slice.mapped, &table, sizeof(table));
-        memcpy(&s->table, &table, sizeof(table));
+        memcpy(slice.mapped, table.entries, count * sizeof(UINT));
+        D3dRingTrim(device, &slice, sizeof(table), D3D_ALIGN(count * sizeof(UINT), 16));
         s->table_valid = TRUE;
         if (slice.chunk != c->table_chunk) {
             /* a new chunk: its set, and the other stages' tables uploaded again into it. */

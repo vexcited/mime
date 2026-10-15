@@ -496,6 +496,8 @@ static void on_dump_signal(int sig)
     mime_vm_raise_irq(&g_vm, MIME_IRQ_DUMP);
 }
 
+static void on_profile_signal(int sig) { mime_vcpu_toggle_profile(); }
+
 static bool listen_socket(const MimePaths *paths)
 {
     unlink(paths->socket);
@@ -523,6 +525,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     signal(SIGTERM, on_signal);
     signal(SIGINT, on_signal);
     signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log */
+    signal(SIGPROF, on_profile_signal); /* kill -PROF starts and stops the profiler */
     /* every guest file handle and file window holds a descriptor. */
     struct rlimit files;
     if (getrlimit(RLIMIT_NOFILE, &files) == 0) {

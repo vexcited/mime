@@ -450,7 +450,7 @@ typedef struct D3dShader {
     DxbcShaderInfo info;
 } D3dShader;
 
-/* the per stage table of heap indices the shaders read, as dxbc.h lays it out. */
+/* the per stage table of heap indices the shader reads, compact as dxbc.h lays it out. */
 typedef struct D3dBindingTable {
     UINT entries[DXBC_TABLE_DWORDS];
 } D3dBindingTable;
@@ -600,6 +600,7 @@ BOOL D3dRingAlloc(D3dDevice *device, VkDeviceSize size, VkDeviceSize align, D3dR
 /* chunks owned by command lists: made like the ring's, returned to it when the list is done. */
 D3dRingChunk *D3dRingChunkNew(D3dDevice *device, VkDeviceSize size);
 BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
+void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize reserved, VkDeviceSize used);
 void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial);
 void D3dRingRetire(D3dDevice *device, UINT64 serial);
 VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk);
@@ -613,8 +614,16 @@ VkImageUsageFlags D3dImageUsage(UINT bind, UINT misc, D3D11_USAGE usage);
 
 typedef struct D3dStageState {
     D3dShader *shader;
-    /* the table uploaded last, its offset in the current table chunk. */
+    /* the table uploaded last holds what is bound. */
     BOOL table_valid;
+    /*
+     * the resource behind each entry of the table, and for buffers the
+     * version it was read at: a renamed buffer makes the table stale.
+     */
+    D3dResource *table_resources[DXBC_TABLE_DWORDS];
+    UINT table_versions[DXBC_TABLE_DWORDS];
+    /* the submission or command list the table's resources were last marked used for. */
+    UINT64 table_epoch;
     D3dResource *cb[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];
     UINT cb_first[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];
     UINT cb_count[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];

@@ -183,6 +183,8 @@ bool mime_vm_load_kernel(MimeVm *vm);
 bool mime_vcpu_start(MimeVcpu *vcpu);
 void mime_vcpu_kick(MimeVcpu *vcpu);
 void mime_vcpu_request_dump(MimeVm *vm);
+/* starts or stops sampling where the vcpus run; async signal safe. */
+void mime_vcpu_toggle_profile(void);
 bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t x0, uint64_t sp);
 
 /* hcall.c */

@@ -55,6 +55,12 @@ macOS 15 or later for the framework's virtual interrupt controller.
   object it waits for, where its user code called the kernel and the return
   address on its stack, which `llvm-symbolizer` turns into the call that
   blocks.
+- On Linux, `kill -PROF $(pgrep -f '^mime-vmm')` starts sampling where the
+  virtual CPUs run, about 4000 times a second each, and a second one stops
+  and logs the 400 hottest addresses with their counts. A user mode address
+  shows as the module it falls in and its offset, found from the image
+  headers in guest memory; add the module's image base to symbolize it.
+  Idle processors show as the kernel's halt.
 - Guest binaries carry DWARF debug info and are linked at fixed addresses, so
   a guest address symbolizes directly:
   `llvm-symbolizer --obj=build/guest/system32/ntoskrnl.exe 0xfffff80000212345`.

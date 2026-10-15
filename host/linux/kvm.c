@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <linux/futex.h>
 #include <linux/kvm.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,8 @@ enum {
 static int g_vcpu_mmap_size;
 static struct kvm_cpuid2 *g_cpuid;
 static volatile bool g_dump_requested;
+static volatile bool g_profiling;
+static void profile_sample(MimeVcpu *vcpu);
 
 void mime_host_volume_label(char *out, size_t size)
 {
@@ -609,6 +612,8 @@ static void *vcpu_main(void *arg)
             if (errno == EINTR || errno == EAGAIN) {
                 vcpu->exits_intr++;
                 __atomic_store_n(&vcpu->run->immediate_exit, 0, __ATOMIC_SEQ_CST);
+                if (g_profiling)
+                    profile_sample(vcpu);
                 if (g_dump_requested) {
                     dump_state(vcpu, "state dump requested");
                     if (vcpu->index + 1 == vm->vcpu_count)
@@ -690,8 +695,15 @@ bool mime_vcpu_start(MimeVcpu *vcpu)
     return r == 0;
 }
 
+static void *profile_thread(void *arg);
+static sem_t g_profile_sem;
+
 bool mime_vm_start(MimeVm *vm)
 {
+    pthread_t profiler;
+    sem_init(&g_profile_sem, 0, 0);
+    if (pthread_create(&profiler, NULL, profile_thread, vm) == 0)
+        pthread_detach(profiler);
     for (uint32_t i = 0; i < vm->vcpu_count; i++) {
         vm->vcpus[i].vm = vm;
         vm->vcpus[i].index = i;
@@ -776,4 +788,147 @@ static void dump_state(MimeVcpu *vcpu, const char *why)
             shown++;
         }
     }
+}
+
+/* ------------------------------------------------------------------ profiling */
+
+/*
+ * kill -PROF starts sampling where the vcpus run, a second one stops and
+ * logs the hottest addresses with their module.
+ */
+#define PROFILE_SLOTS 65536
+#define PROFILE_VCPUS 64
+
+typedef struct ProfileSample {
+    uint64_t rip, cr3;
+    uint32_t count;
+} ProfileSample;
+
+static ProfileSample *g_samples[PROFILE_VCPUS];
+
+void mime_vcpu_toggle_profile(void) { sem_post(&g_profile_sem); }
+
+static void profile_sample(MimeVcpu *vcpu)
+{
+    struct kvm_regs regs;
+    struct kvm_sregs sregs;
+    ProfileSample *table = vcpu->index < PROFILE_VCPUS ? g_samples[vcpu->index] : NULL;
+    if (!table || ioctl(vcpu->fd, KVM_GET_REGS, &regs) != 0 || ioctl(vcpu->fd, KVM_GET_SREGS, &sregs) != 0)
+        return;
+    /* kernel addresses are the same in every process. */
+    uint64_t cr3 = regs.rip >> 63 ? 0 : sregs.cr3 & ~0xFFFull;
+    uint64_t h = (regs.rip * 0x9E3779B97F4A7C15ull) ^ cr3;
+    for (uint32_t i = (uint32_t)(h >> 40) & (PROFILE_SLOTS - 1), n = 0; n < PROFILE_SLOTS / 2;
+         i = (i + 1) & (PROFILE_SLOTS - 1), n++) {
+        ProfileSample *e = &table[i];
+        if (!e->count) {
+            *e = (ProfileSample){regs.rip, cr3, 1};
+            return;
+        }
+        if (e->rip == regs.rip && e->cr3 == cr3) {
+            e->count++;
+            return;
+        }
+    }
+}
+
+static bool guest_read(MimeVm *vm, uint64_t cr3, uint64_t va, void *out, size_t size)
+{
+    while (size) {
+        uint64_t pa;
+        size_t n = MIME_MIN(size, 4096 - (va & 4095));
+        if (!guest_translate(vm, cr3, va, &pa))
+            return false;
+        void *p = mime_vm_phys(vm, pa, n);
+        if (!p)
+            return false;
+        memcpy(out, p, n);
+        out = (uint8_t *)out + n, va += n, size -= n;
+    }
+    return true;
+}
+
+/* the image holding a user address: its export name and base. */
+static bool find_module(MimeVm *vm, uint64_t cr3, uint64_t rip, char *name, size_t size, uint64_t *base)
+{
+    for (uint64_t b = rip & ~0xFFFFull, n = 0; n < 4096; b -= 0x10000, n++) {
+        uint16_t mz;
+        uint32_t lfanew, pe, image_size, exports, name_rva;
+        if (!guest_read(vm, cr3, b, &mz, 2) || mz != 0x5A4D)
+            continue;
+        if (!guest_read(vm, cr3, b + 0x3C, &lfanew, 4) || !guest_read(vm, cr3, b + lfanew, &pe, 4) ||
+            pe != 0x4550)
+            continue;
+        if (!guest_read(vm, cr3, b + lfanew + 24 + 56, &image_size, 4) || rip >= b + image_size)
+            return false;
+        snprintf(name, size, "?");
+        if (guest_read(vm, cr3, b + lfanew + 24 + 112, &exports, 4) && exports &&
+            guest_read(vm, cr3, b + exports + 12, &name_rva, 4)) {
+            guest_read(vm, cr3, b + name_rva, name, size - 1);
+            name[size - 1] = 0;
+        }
+        *base = b;
+        return true;
+    }
+    return false;
+}
+
+static int compare_samples(const void *a, const void *b)
+{
+    uint32_t x = ((const ProfileSample *)a)->count, y = ((const ProfileSample *)b)->count;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
+static void profile_report(MimeVm *vm)
+{
+    size_t count = 0;
+    uint64_t total = 0;
+    ProfileSample *all = calloc((size_t)PROFILE_VCPUS * PROFILE_SLOTS, sizeof(*all));
+    if (!all)
+        return;
+    for (uint32_t v = 0; v < PROFILE_VCPUS; v++)
+        for (uint32_t i = 0; g_samples[v] && i < PROFILE_SLOTS; i++)
+            if (g_samples[v][i].count) {
+                all[count++] = g_samples[v][i];
+                total += g_samples[v][i].count;
+            }
+    qsort(all, count, sizeof(*all), compare_samples);
+    mime_error("profile: %llu samples", (unsigned long long)total);
+    for (size_t i = 0; i < count && i < 400; i++) {
+        char name[64];
+        uint64_t base;
+        if (all[i].cr3 && find_module(vm, all[i].cr3, all[i].rip, name, sizeof(name), &base))
+            mime_error("profile %6u %5.2f%% %s+%#llx", all[i].count, 100.0 * all[i].count / (double)total, name,
+                       (unsigned long long)(all[i].rip - base));
+        else
+            mime_error("profile %6u %5.2f%% %#llx", all[i].count, 100.0 * all[i].count / (double)total,
+                       (unsigned long long)all[i].rip);
+    }
+    free(all);
+}
+
+static void *profile_thread(void *arg)
+{
+    MimeVm *vm = arg;
+    mime_set_thread_name("mime-profile");
+    for (;;) {
+        while (sem_wait(&g_profile_sem) != 0) {}
+        for (uint32_t v = 0; v < vm->vcpu_count && v < PROFILE_VCPUS; v++)
+            g_samples[v] = calloc(PROFILE_SLOTS, sizeof(ProfileSample));
+        mime_error("profile: sampling");
+        g_profiling = true;
+        while (sem_trywait(&g_profile_sem) != 0) {
+            usleep(250);
+            for (uint32_t v = 0; v < vm->vcpu_count; v++)
+                mime_vcpu_kick(&vm->vcpus[v]);
+        }
+        g_profiling = false;
+        usleep(10000);
+        profile_report(vm);
+        for (uint32_t v = 0; v < PROFILE_VCPUS; v++) {
+            free(g_samples[v]);
+            g_samples[v] = NULL;
+        }
+    }
+    return NULL;
 }

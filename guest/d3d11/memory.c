@@ -350,6 +350,15 @@ BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize alig
     return TRUE;
 }
 
+/* gives back the end of the last slice cut from its chunk. */
+void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize reserved, VkDeviceSize used)
+{
+    AcquireSRWLockExclusive(&device->ring_lock);
+    if (slice->chunk->head == slice->chunk_offset + reserved)
+        slice->chunk->head = slice->chunk_offset + used;
+    ReleaseSRWLockExclusive(&device->ring_lock);
+}
+
 /* a command list's chunk back in the ring, reused once the list's last execution is done. */
 void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial)
 {

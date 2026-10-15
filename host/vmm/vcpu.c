@@ -138,6 +138,8 @@ static void dump_backtrace(MimeVcpu *vcpu)
 
 static volatile bool g_dump_requested;
 
+void mime_vcpu_toggle_profile(void) {}
+
 /* async-signal context: only sets a flag and forces the vcpus out of the guest. */
 void mime_vcpu_request_dump(MimeVm *vm)
 {

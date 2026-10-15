@@ -14,10 +14,13 @@ typedef struct D3dSpare {
     UINT64 serial;
 } D3dSpare;
 
-/* the renamed ranges of dynamic buffers, waiting for the gpu to be done with them. */
+/*
+ * the renamed ranges of dynamic buffers, waiting for the gpu to be done with
+ * them: a ring in the order they were given up, so in serial order.
+ */
 typedef struct D3dSpares {
     D3dSpare *list;
-    UINT count, capacity;
+    UINT head, count, capacity;
 } D3dSpares;
 
 static D3dResource *impl(ID3D11Resource *iface)
@@ -91,41 +94,34 @@ BOOL D3dBufferRename(D3dDevice *device, D3dResource *r)
             return FALSE;
         r->buf.spares = spares;
     }
-    UINT64 completed = device->completed;
-    int found = -1;
-    for (UINT pass = 0; pass < 2 && found < 0; pass++) {
-        for (UINT i = 0; i < spares->count; i++)
-            if (spares->list[i].serial <= completed) {
-                found = (int)i;
-                break;
-            }
-        /* asking the gpu where it is costs a round trip: only before growing. */
-        if (found < 0 && !pass && spares->count)
-            completed = D3dCompleted(device);
-        else
-            break;
-    }
+    /* asking the gpu where it is costs a round trip: only before growing. */
+    BOOL reuse = spares->count && (spares->list[spares->head].serial <= device->completed ||
+                                   spares->list[spares->head].serial <= D3dCompleted(device));
     D3dAllocation next;
-    if (found >= 0) {
-        next = spares->list[found].alloc;
-        spares->list[found] = spares->list[--spares->count];
+    if (reuse) {
+        next = spares->list[spares->head].alloc;
+        spares->head = (spares->head + 1) % spares->capacity;
+        spares->count--;
     } else if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_UPLOAD, r->buf.size, 256, &next))) {
         return FALSE;
     }
     if (spares->count == spares->capacity) {
         UINT capacity = spares->capacity ? spares->capacity * 2 : 4;
-        D3dSpare *list = spares->list ? HeapReAlloc(GetProcessHeap(), 0, spares->list, capacity * sizeof(*list))
-                                      : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
+        D3dSpare *list = HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
         if (!list) {
             D3dFree(device, &next);
             return FALSE;
         }
+        for (UINT i = 0; i < spares->count; i++)
+            list[i] = spares->list[(spares->head + i) % spares->capacity];
+        HeapFree(GetProcessHeap(), 0, spares->list);
         spares->list = list;
+        spares->head = 0;
         spares->capacity = capacity;
     }
-    spares->list[spares->count].alloc = r->buf.alloc;
-    spares->list[spares->count].serial = D3D_MAX(r->last_use, device->next_serial);
-    spares->count++;
+    D3dSpare *tail = &spares->list[(spares->head + spares->count++) % spares->capacity];
+    tail->alloc = r->buf.alloc;
+    tail->serial = D3D_MAX(r->last_use, device->next_serial);
     r->buf.alloc = next;
     r->buf.buffer = next.buffer;
     r->buf.offset = next.offset;
@@ -139,8 +135,10 @@ static void free_spares(D3dResource *r)
     D3dSpares *spares = spares_of(r);
     if (!spares)
         return;
-    for (UINT i = 0; i < spares->count; i++)
-        D3dDeferFree(r->child.device, spares->list[i].serial, &spares->list[i].alloc);
+    for (UINT i = 0; i < spares->count; i++) {
+        D3dSpare *spare = &spares->list[(spares->head + i) % spares->capacity];
+        D3dDeferFree(r->child.device, spare->serial, &spare->alloc);
+    }
     HeapFree(GetProcessHeap(), 0, spares->list);
     HeapFree(GetProcessHeap(), 0, spares);
     r->buf.spares = NULL;
