@@ -3,14 +3,6 @@
  */
 #include "kernelbase_private.h"
 
-NTSYSCALLAPI NTSTATUS NTAPI NtCreateJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
-NTSYSCALLAPI NTSTATUS NTAPI NtOpenJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
-NTSYSCALLAPI NTSTATUS NTAPI NtAssignProcessToJobObject(HANDLE job, HANDLE process);
-NTSYSCALLAPI NTSTATUS NTAPI NtTerminateJobObject(HANDLE job, NTSTATUS status);
-NTSYSCALLAPI NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job, ULONG klass, PVOID info, ULONG length);
-NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job, ULONG klass, PVOID info, ULONG length,
-                                                        PULONG returned);
-
 #define JOB_OBJECT_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x3F)
 
 DECLSPEC_EXPORT HANDLE WINAPI CreateJobObjectW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name)
