@@ -84,7 +84,7 @@ static void cpu_brand(char *out, size_t size)
  */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
-    static char cpu[64], manufacturer[32], product[32], family[24], bios_vendor[24], bios_version[32], bios_date[16];
+    static char cpu[64], manufacturer[64], product[64], family[64], bios_vendor[64], bios_version[64], bios_date[16];
     static MimeHardwareProfile profile;
     if (profile.cpu_name)
         return &profile;

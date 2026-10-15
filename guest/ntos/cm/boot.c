@@ -188,7 +188,7 @@ static void hardware(void)
 static void firmware(void)
 {
     static const PCWSTR bios = L"\\REGISTRY\\MACHINE\\HARDWARE\\DESCRIPTION\\System\\BIOS";
-    WCHAR manufacturer[32], product[32], family[24], vendor[24], version[32], date[16], serial[20];
+    WCHAR manufacturer[64], product[64], family[64], vendor[64], version[64], date[16], serial[24];
     widen(manufacturer, RTL_NUMBER_OF(manufacturer), HalBootInfo->system_manufacturer);
     widen(product, RTL_NUMBER_OF(product), HalBootInfo->system_product);
     widen(family, RTL_NUMBER_OF(family), HalBootInfo->system_family);

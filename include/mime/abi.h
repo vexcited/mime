@@ -138,13 +138,13 @@ typedef struct MimeBootInfo {
     char cpu_name[64];          /* brand string of the reference processor */
     uint32_t cpu_mhz;           /* its nominal peak frequency, 0 when unknown */
     uint64_t cpu_midr;          /* its MIDR_EL1, 0 to report the hardware one */
-    char system_manufacturer[32];
-    char system_product[32];
-    char system_family[24];
-    char bios_vendor[24];
-    char bios_version[32];
+    char system_manufacturer[64];
+    char system_product[64];
+    char system_family[64];
+    char bios_vendor[64];
+    char bios_version[64];
     char bios_date[16];         /* mm/dd/yyyy, as firmware reports it */
-    char system_serial[20];     /* of this installation, drawn once */
+    char system_serial[24];     /* of this installation, drawn once */
     uint8_t system_uuid[16];    /* of this installation, drawn once */
     uint32_t pad1;
     char host_volume_label[32]; /* name of the host root volume, the Z: label */
