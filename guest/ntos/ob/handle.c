@@ -4,6 +4,9 @@
 #include "../ntos.h"
 
 #define KERNEL_HANDLE_BIT 0xFFFFFFFF80000000ull
+#define OBJ_PROTECT_CLOSE 0x00000001 /* the handle attribute SetHandleInformation's HANDLE_FLAG_PROTECT_FROM_CLOSE sets */
+#define STATUS_HANDLE_NOT_CLOSABLE ((NTSTATUS)0xC0000235L)
+#define ObjectHandleFlagInformation 4
 #define HANDLE_TO_INDEX(h) ((((ULONG_PTR)(h)) & 0x7FFFFFFF) / 4 - 1)
 #define INDEX_TO_HANDLE(i) ((HANDLE)(ULONG_PTR)(((i) + 1) * 4))
 
@@ -76,6 +79,51 @@ NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULO
     if (process == PsInitialSystemProcess && (attributes & OBJ_KERNEL_HANDLE))
         value = (HANDLE)((ULONG_PTR)value | KERNEL_HANDLE_BIT);
     *handle = value;
+    return STATUS_SUCCESS;
+}
+
+/* the inheritable handles of a parent, at the same values in its new child's empty table, as windows does. */
+NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child)
+{
+    PHANDLE_TABLE from = &parent->HandleTable, to = &child->HandleTable;
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&from->Lock);
+    ULONG end = 0;
+    for (ULONG i = 0; i < from->Capacity; i++)
+        if (from->Entries[i].Object && (from->Entries[i].Attributes & OBJ_INHERIT))
+            end = i + 1;
+    KeReleaseSpinLock(&from->Lock, irql);
+    if (!end)
+        return STATUS_SUCCESS;
+    ULONG capacity = to->Capacity;
+    while (capacity < end)
+        capacity *= 2;
+    PHANDLE_TABLE_ENTRY entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity * sizeof(HANDLE_TABLE_ENTRY),
+                                                  KI_TAG('O', 'b', 'H', 't'));
+    if (!entries)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(entries, 0, capacity * sizeof(HANDLE_TABLE_ENTRY));
+    ULONG count = 0;
+    irql = KeAcquireSpinLockRaiseToDpc(&from->Lock);
+    for (ULONG i = 0; i < from->Capacity && i < capacity; i++) {
+        HANDLE_TABLE_ENTRY *e = &from->Entries[i];
+        if (!e->Object || !(e->Attributes & OBJ_INHERIT))
+            continue;
+        OBJECT_HEADER *h = OBJECT_TO_HEADER(e->Object);
+        ObReferenceObject(e->Object);
+        __atomic_add_fetch(&h->HandleCount, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&h->Type->TotalHandles, 1, __ATOMIC_RELAXED);
+        entries[i] = *e;
+        count++;
+    }
+    KeReleaseSpinLock(&from->Lock, irql);
+    irql = KeAcquireSpinLockRaiseToDpc(&to->Lock);
+    PHANDLE_TABLE_ENTRY old = to->Entries;
+    to->Entries = entries;
+    to->Capacity = capacity;
+    to->Count = count;
+    to->FirstFree = 0;
+    KeReleaseSpinLock(&to->Lock, irql);
+    ExFreePool(old);
     return STATUS_SUCCESS;
 }
 
@@ -242,7 +290,56 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
         return STATUS_SUCCESS;
     PEPROCESS owner;
     PHANDLE_TABLE table = table_for(handle, mode, &owner);
-    return close_in_table(owner, table, HANDLE_TO_INDEX(handle));
+    ULONG_PTR index = HANDLE_TO_INDEX(handle);
+    /* a protected handle stays open, though the process's end closes it. */
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    BOOLEAN protected = index < table->Capacity && table->Entries[index].Object &&
+                        (table->Entries[index].Attributes & OBJ_PROTECT_CLOSE);
+    KeReleaseSpinLock(&table->Lock, irql);
+    if (protected)
+        return STATUS_HANDLE_NOT_CLOSABLE;
+    return close_in_table(owner, table, index);
+}
+
+typedef struct OBJECT_HANDLE_FLAGS {
+    BOOLEAN Inherit;
+    BOOLEAN ProtectFromClose;
+} OBJECT_HANDLE_FLAGS;
+
+/* the flags of a handle of the caller, read and optionally replaced under the table's lock. */
+static NTSTATUS handle_flags(HANDLE handle, OBJECT_HANDLE_FLAGS *flags, BOOLEAN set, ACCESS_MASK *granted)
+{
+    PEPROCESS owner;
+    PHANDLE_TABLE table = table_for(handle, KeGetPreviousMode(), &owner);
+    ULONG_PTR index = HANDLE_TO_INDEX(handle);
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    if (index >= table->Capacity || !table->Entries[index].Object) {
+        KeReleaseSpinLock(&table->Lock, irql);
+        return STATUS_INVALID_HANDLE;
+    }
+    HANDLE_TABLE_ENTRY *e = &table->Entries[index];
+    if (set) {
+        e->Attributes = (flags->Inherit ? OBJ_INHERIT : 0) | (flags->ProtectFromClose ? OBJ_PROTECT_CLOSE : 0);
+    } else {
+        flags->Inherit = (e->Attributes & OBJ_INHERIT) != 0;
+        flags->ProtectFromClose = (e->Attributes & OBJ_PROTECT_CLOSE) != 0;
+    }
+    if (granted)
+        *granted = e->GrantedAccess;
+    KeReleaseSpinLock(&table->Lock, irql);
+    return STATUS_SUCCESS;
+}
+
+/* only the handle flags are kept; the other classes change nothing here. */
+NTSTATUS NTAPI NtSetInformationObject(HANDLE handle, ULONG klass, PVOID info, ULONG length)
+{
+    if (klass != ObjectHandleFlagInformation)
+        return STATUS_SUCCESS;
+    OBJECT_HANDLE_FLAGS flags;
+    if (length < sizeof(flags))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    NTSTATUS status = KiCopyFromUser(&flags, info, sizeof(flags));
+    return NT_SUCCESS(status) ? handle_flags(handle, &flags, TRUE, NULL) : status;
 }
 
 NTSTATUS NTAPI NtClose(HANDLE handle)
@@ -566,6 +663,27 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             if (NT_SUCCESS(status) && name.Length)
                 status = KiCopyToUser(oni.Name.Buffer, name.Buffer, name.Length + sizeof(WCHAR));
         }
+    } else if (klass == ObjectHandleFlagInformation || klass == ObjectBasicInformation) {
+        OBJECT_HANDLE_FLAGS flags;
+        ACCESS_MASK granted = 0;
+        status = handle_flags(handle, &flags, FALSE, &granted);
+        struct {
+            ULONG Attributes;
+            ACCESS_MASK GrantedAccess;
+            ULONG HandleCount, PointerCount, PagedPoolCharge, NonPagedPoolCharge, Reserved[3];
+            ULONG NameInfoSize, TypeInfoSize, SecurityDescriptorSize;
+            LARGE_INTEGER CreationTime;
+        } basic = {0};
+        basic.Attributes = (flags.Inherit ? OBJ_INHERIT : 0) | (flags.ProtectFromClose ? OBJ_PROTECT_CLOSE : 0);
+        basic.GrantedAccess = granted;
+        basic.HandleCount = (ULONG)OBJECT_TO_HEADER(object)->HandleCount;
+        basic.PointerCount = (ULONG)OBJECT_TO_HEADER(object)->PointerCount;
+        const void *out = klass == ObjectBasicInformation ? (const void *)&basic : (const void *)&flags;
+        ULONG need = klass == ObjectBasicInformation ? sizeof(basic) : sizeof(flags);
+        if (NT_SUCCESS(status) && returned)
+            KiCopyToUser(returned, &need, sizeof(need));
+        if (NT_SUCCESS(status))
+            status = length < need ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, out, need);
     } else {
         status = STATUS_INVALID_INFO_CLASS;
     }

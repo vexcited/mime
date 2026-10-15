@@ -233,7 +233,8 @@ static void free_request(NP_REQUEST *r)
     ExFreePool(r);
 }
 
-/* reports the result to the caller: status block, event and completion port. */
+/* reports the result to the caller: status block, event and completion port, which an error that
+   ended the request before it went pending skips, like windows. */
 static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
     r->Status = status;
@@ -246,7 +247,7 @@ static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information
     if (r->Event)
         KeSetEvent(r->Event, IO_NO_INCREMENT, FALSE);
     IopSignalFile(r->File);
-    if (!NT_ERROR(status)) {
+    if (!r->Immediate || !NT_ERROR(status)) {
         if (r->ApcRoutine)
             IopQueueCompletionApc(r->Thread, r->ApcRoutine, r->ApcContext, r->Iosb);
         else

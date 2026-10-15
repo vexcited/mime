@@ -339,10 +339,6 @@ WINBASEAPI BOOL WINAPI Thread32Next(HANDLE snapshot, LPTHREADENTRY32 entry)
 
 /* ------------------------------------------------------------------ registered waits */
 
-#define WT_EXECUTEONLYONCE 0x00000008
-
-typedef void(CALLBACK *WAITORTIMERCALLBACK)(PVOID context, BOOLEAN timed_out);
-
 /* one waiting thread per registration: the object, and an event that ends the wait. */
 typedef struct REGISTERED_WAIT {
     HANDLE Object;

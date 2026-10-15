@@ -194,6 +194,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_DISPLAY (1u << 2)
 #define MIME_IRQ_GPU (1u << 3)
 #define MIME_IRQ_NET (1u << 4)
+#define MIME_IRQ_DUMP (1u << 5) /* log the guest's threads, on the host's SIGUSR1 */
 
 typedef struct MimeSharedPage {
     volatile uint32_t irq_pending;

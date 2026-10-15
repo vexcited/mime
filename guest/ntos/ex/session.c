@@ -12,6 +12,7 @@ KEVENT MimeGpuEvent; /* set when the gpu reaches a fence a thread waits for */
 
 static KEVENT g_ctrl_event;
 static KDPC g_irq_dpc;
+static volatile LONG g_dump_pending;
 static volatile LONG g_irq_bits;
 static UCHAR g_recv_buffer[MIME_CTRL_MAX_MESSAGE] __attribute__((aligned(16)));
 static UCHAR g_send_buffer[MIME_CTRL_MAX_MESSAGE] __attribute__((aligned(16)));
@@ -103,6 +104,11 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         KeSetEvent(&MimeGpuEvent, 1, FALSE);
     if (bits & MIME_IRQ_NET)
         AfdInterrupt();
+    /* the dump reads user stacks, which the session thread does at passive level. */
+    if (bits & MIME_IRQ_DUMP) {
+        __atomic_store_n(&g_dump_pending, 1, __ATOMIC_RELEASE);
+        KeSetEvent(&g_ctrl_event, 1, FALSE);
+    }
 }
 
 /* interrupt level: defer the work to a dpc. */
@@ -213,6 +219,8 @@ void MiSessionInitialize(void)
                 break;
             }
         }
+        if (__atomic_exchange_n(&g_dump_pending, 0, __ATOMIC_ACQ_REL))
+            PsDumpThreads();
         KeWaitForSingleObject(&g_ctrl_event, Executive, KernelMode, FALSE, NULL);
     }
 }

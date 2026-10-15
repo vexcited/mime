@@ -281,12 +281,14 @@ BOOL WINAPI GetHandleInformation(HANDLE handle, LPDWORD flags)
         *flags = 0;
         return TRUE;
     }
-    UCHAR info[64];
-    ULONG returned;
-    NTSTATUS status = NtQueryObject(handle, ObjectBasicInformation, info, sizeof(info), &returned);
-    if (!NT_SUCCESS(status) && status != STATUS_INFO_LENGTH_MISMATCH)
+    struct {
+        BOOLEAN Inherit;
+        BOOLEAN ProtectFromClose;
+    } info;
+    NTSTATUS status = NtQueryObject(handle, 4 /* ObjectHandleFlagInformation */, &info, sizeof(info), NULL);
+    if (!NT_SUCCESS(status))
         return KbSetStatus(status);
-    *flags = 0;
+    *flags = (info.Inherit ? HANDLE_FLAG_INHERIT : 0) | (info.ProtectFromClose ? HANDLE_FLAG_PROTECT_FROM_CLOSE : 0);
     return TRUE;
 }
 
@@ -294,10 +296,15 @@ BOOL WINAPI SetHandleInformation(HANDLE handle, DWORD mask, DWORD flags)
 {
     if (KbIsPseudoHandle(handle))
         return TRUE;
+    /* only the bits of the mask change. */
+    DWORD current;
+    if (!GetHandleInformation(handle, &current))
+        return FALSE;
+    current = (current & ~mask) | (flags & mask);
     struct {
         BOOLEAN Inherit;
         BOOLEAN ProtectFromClose;
-    } info = {(flags & mask & HANDLE_FLAG_INHERIT) != 0, (flags & mask & HANDLE_FLAG_PROTECT_FROM_CLOSE) != 0};
+    } info = {(current & HANDLE_FLAG_INHERIT) != 0, (current & HANDLE_FLAG_PROTECT_FROM_CLOSE) != 0};
     NTSTATUS status = NtSetInformationObject(handle, 4 /* ObjectHandleFlagInformation. */, &info, sizeof(info));
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);

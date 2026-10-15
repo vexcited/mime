@@ -567,6 +567,41 @@ void WINAPI GetStartupInfoA(LPSTARTUPINFOA info)
 
 /* ------------------------------------------------------------------ process creation */
 
+/* an ansi environment block as a unicode one, both ending with an empty string. */
+static PWSTR wide_environment(const char *ansi, SIZE_T *bytes)
+{
+    SIZE_T n = 0;
+    while (ansi[n] || ansi[n + 1])
+        n++;
+    n += 2;
+    int chars = MultiByteToWideChar(CP_ACP, 0, ansi, (int)n, NULL, 0);
+    PWSTR wide = chars > 0 ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : NULL;
+    if (wide)
+        MultiByteToWideChar(CP_ACP, 0, ansi, (int)n, wide, chars);
+    *bytes = (SIZE_T)chars * sizeof(WCHAR);
+    return wide;
+}
+
+static SIZE_T environment_bytes(PCWSTR env)
+{
+    SIZE_T n = 0;
+    while (env[n] || env[n + 1])
+        n++;
+    return (n + 2) * sizeof(WCHAR);
+}
+
+#define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1)
+#define PROCESS_CREATE_FLAGS_BREAKAWAY 0x00000001
+#define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
+
+/*
+ * the program, then its parameters as kernelbase hands them to the kernel:
+ * environment, standard handles, window and console choices, title,
+ * desktop and the c library's runtime data. there is no console window to
+ * make, so a new console is the creator's; DETACHED_PROCESS gives none.
+ * priority classes and the attribute list of an extended startup
+ * information are accepted and not applied.
+ */
 BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
                            LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
                            LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info)
@@ -576,8 +611,12 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         return FALSE;
     }
     memset(info, 0, sizeof(*info));
-    if (process_sa || thread_sa || inherit || environment || (flags & ~(CREATE_SUSPENDED | CREATE_BREAKAWAY_FROM_JOB))) {
+    if (flags & (DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS)) {
         KbSetError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    if ((flags & DETACHED_PROCESS) && (flags & CREATE_NEW_CONSOLE)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
     WCHAR executable[MAX_PATH], full[MAX_PATH], cwd[MAX_PATH];
@@ -622,17 +661,69 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         wcscat(default_command, L"\"");
         command_line = default_command;
     }
+    PWSTR converted = NULL;
+    SIZE_T env_bytes = 0;
+    if (environment && !(flags & CREATE_UNICODE_ENVIRONMENT)) {
+        converted = wide_environment(environment, &env_bytes);
+        if (!converted) {
+            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        environment = converted;
+    } else if (environment) {
+        env_bytes = environment_bytes(environment);
+    }
+
     RTL_USER_PROCESS_PARAMETERS pp = {0};
     pp.MaximumLength = pp.Length = sizeof(pp);
     pp.Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     RtlInitUnicodeString(&pp.ImagePathName, full);
     RtlInitUnicodeString(&pp.CommandLine, command_line);
     RtlInitUnicodeString(&pp.CurrentDirectory.DosPath, cwd);
+    pp.Environment = environment;
+    pp.EnvironmentSize = env_bytes;
+    pp.WindowFlags = startup->dwFlags;
+    pp.ShowWindowFlags = startup->wShowWindow;
+    pp.StartingX = startup->dwX;
+    pp.StartingY = startup->dwY;
+    pp.CountX = startup->dwXSize;
+    pp.CountY = startup->dwYSize;
+    pp.CountCharsX = startup->dwXCountChars;
+    pp.CountCharsY = startup->dwYCountChars;
+    pp.FillAttribute = startup->dwFillAttribute;
+    if (startup->dwFlags & STARTF_USESTDHANDLES) {
+        pp.StandardInput = startup->hStdInput;
+        pp.StandardOutput = startup->hStdOutput;
+        pp.StandardError = startup->hStdError;
+    }
+    if (startup->lpTitle)
+        RtlInitUnicodeString(&pp.WindowTitle, startup->lpTitle);
+    if (startup->lpDesktop)
+        RtlInitUnicodeString(&pp.DesktopInfo, startup->lpDesktop);
+    if (startup->cbReserved2 && startup->lpReserved2) {
+        pp.RuntimeData.Buffer = (PWSTR)startup->lpReserved2;
+        pp.RuntimeData.Length = pp.RuntimeData.MaximumLength = startup->cbReserved2;
+    }
+    if (flags & DETACHED_PROCESS)
+        pp.ConsoleHandle = CONSOLE_DETACHED;
+    /* a new process group starts with ctrl+c ignored, as on windows. */
+    if (flags & CREATE_NEW_PROCESS_GROUP)
+        pp.ConsoleFlags = 1;
+    else
+        pp.ConsoleFlags = KbParams()->ConsoleFlags;
+
+    ULONG process_flags = ((flags & CREATE_BREAKAWAY_FROM_JOB) ? PROCESS_CREATE_FLAGS_BREAKAWAY : 0) |
+                          (inherit ? PROCESS_CREATE_FLAGS_INHERIT_HANDLES : 0);
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
-                                           NULL, NULL, (flags & CREATE_BREAKAWAY_FROM_JOB) ? 1 : 0,
-                                           (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, NULL, NULL);
+                                           NULL, NULL, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, NULL,
+                                           NULL);
+    KbFree(converted);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
+    if (process_sa && process_sa->bInheritHandle)
+        SetHandleInformation(info->hProcess, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    if (thread_sa && thread_sa->bInheritHandle)
+        SetHandleInformation(info->hThread, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
     info->dwProcessId = GetProcessId(info->hProcess);
     info->dwThreadId = GetThreadId(info->hThread);
     return TRUE;

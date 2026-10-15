@@ -493,6 +493,7 @@ static void on_signal(int sig)
 static void on_dump_signal(int sig)
 {
     mime_vcpu_request_dump(&g_vm);
+    mime_vm_raise_irq(&g_vm, MIME_IRQ_DUMP);
 }
 
 static bool listen_socket(const MimePaths *paths)

@@ -607,6 +607,7 @@ NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHAN
 NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, KPROCESSOR_MODE mode,
                              PHANDLE handle);
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child);
 NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode);
 NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
                            ACCESS_MASK *granted);
@@ -737,6 +738,7 @@ NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
 void PspInitializeJobs(void);
 void PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags);
 void PspJobProcessExit(PEPROCESS process);
+void PsDumpThreads(void);
 extern POBJECT_TYPE IoCompletionObjectType;
 PEPROCESS PspLookupProcess(HANDLE pid);
 PETHREAD PspLookupThread(HANDLE tid);

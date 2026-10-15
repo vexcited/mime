@@ -47,7 +47,12 @@ macOS 15 or later for the framework's virtual interrupt controller.
 - Read `~/.local/state/mime/vmm.log`: the kernel and `DbgPrint` write there.
 - `pkill -USR1 mime-vmm` dumps the registers, a backtrace and the count of
   each kind of exit to the host into the log. It locates a hang, and exits
-  are what to watch when working on speed: an idle machine makes none.
+  are what to watch when working on speed: an idle machine makes none. On
+  Linux the process is named `mime`: `kill -USR1 $(pgrep -f '^mime-vmm')`.
+  The guest then also logs every thread of every process: its state, the
+  object it waits for, where its user code called the kernel and the return
+  address on its stack, which `llvm-symbolizer` turns into the call that
+  blocks.
 - Guest binaries carry DWARF debug info and are linked at fixed addresses, so
   a guest address symbolizes directly:
   `llvm-symbolizer --obj=build/guest/system32/ntoskrnl.exe 0xfffff80000212345`.

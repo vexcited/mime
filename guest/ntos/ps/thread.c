@@ -735,3 +735,48 @@ NTSTATUS NTAPI PsSetCreateThreadNotifyRoutine(PCREATE_THREAD_NOTIFY_ROUTINE rout
 {
     return STATUS_SUCCESS;
 }
+
+/*
+ * every thread of every process in the log, for a machine that hangs: its
+ * state, what it waits for, where its user code called the kernel and the
+ * return address on top of the user stack there. passive level: it
+ * attaches to each process to read its stack.
+ */
+void PsDumpThreads(void)
+{
+    static const char *const states[] = {"initialized", "ready", "running", "standby", "terminated", "waiting"};
+    enum { MAX = 512 };
+    static PETHREAD threads[MAX];
+    ULONG n = 0;
+    ULONG64 s = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY p = PsActiveProcessHead.Flink; p != &PsActiveProcessHead; p = p->Flink) {
+        PEPROCESS process = CONTAINING_RECORD(p, EPROCESS, ActiveProcessLinks);
+        for (PLIST_ENTRY t = process->ThreadListHead.Flink; t != &process->ThreadListHead && n < MAX; t = t->Flink) {
+            threads[n] = CONTAINING_RECORD(t, ETHREAD, ThreadListEntry);
+            ObReferenceObject(threads[n++]);
+        }
+    }
+    KiReleaseDispatcherLock(s);
+    for (ULONG i = 0; i < n; i++) {
+        PKTHREAD k = &threads[i]->Tcb;
+        PEPROCESS process = CONTAINING_RECORD(k->Process, EPROCESS, Pcb);
+        const char *state = k->State < RTL_NUMBER_OF(states) ? states[k->State] : "?";
+        PVOID object = k->State == Waiting && k->WaitBlockList ? k->WaitBlockList->Object : NULL;
+        PKTRAP_FRAME frame = k->TrapFrame;
+        ULONG64 pc = 0, sp = 0, top = 0;
+        if (frame && KI_TRAP_FROM_USER(frame) && !process->SystemProcess) {
+            pc = KI_TRAP_PC(frame);
+            sp = KI_TRAP_SP(frame);
+            PKPROCESS saved;
+            KeStackAttachProcess(&process->Pcb, &saved);
+            if (!NT_SUCCESS(KiCopyFromUser(&top, (PVOID)sp, sizeof(top))))
+                top = 0;
+            KeUnstackDetachProcess(&saved);
+        }
+        KiLogPrintf("%s %u thread %u %s reason %u object %p type %d pc %p sp %p return %p", process->ImageFileName,
+                    (ULONG)(ULONG_PTR)process->UniqueProcessId, (ULONG)(ULONG_PTR)threads[i]->Cid.UniqueThread, state,
+                    k->WaitReason, object, object ? ((DISPATCHER_HEADER *)object)->Type : -1, (PVOID)pc, (PVOID)sp,
+                    (PVOID)top);
+        ObDereferenceObject(threads[i]);
+    }
+}

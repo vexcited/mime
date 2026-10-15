@@ -1,7 +1,28 @@
 /*
- * user process creation for programs started by the host.
+ * user process creation, for programs the host starts and for
+ * NtCreateUserProcess. the creator's process parameters, captured, become
+ * the new process's: its environment, standard handles, window and
+ * console choices and the runtime data the c library passes its file
+ * descriptors in.
  */
 #include "../ntos.h"
+
+#define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1) /* DETACHED_PROCESS, as kernelbase marks it */
+#define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
+#define MAX_ENVIRONMENT (32u << 20)
+
+/* what a new process is given, in kernel memory. */
+typedef struct PSP_PARAMS {
+    UNICODE_STRING Image, CommandLine, CurrentDirectory, WindowTitle, DesktopInfo;
+    PUCHAR RuntimeData; /* bytes, not text */
+    USHORT RuntimeDataLength;
+    PWCHAR Environment; /* NULL for the default one */
+    SIZE_T EnvironmentBytes;
+    HANDLE StandardInput, StandardOutput, StandardError;
+    ULONG WindowFlags, ShowWindowFlags, ConsoleFlags;
+    ULONG StartingX, StartingY, CountX, CountY, CountCharsX, CountCharsY, FillAttribute;
+    BOOLEAN Detached;
+} PSP_PARAMS;
 
 NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out);
 void PspNotifyProcess(PEPROCESS process, BOOLEAN create);
@@ -36,14 +57,24 @@ static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src
 }
 
 /* builds the PEB, process parameters and environment in the new process. */
-static NTSTATUS setup_peb(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd)
+static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
 {
+    PCUNICODE_STRING image = &p->Image, cmdline = &p->CommandLine, cwd = &p->CurrentDirectory;
     PWCHAR environment;
     SIZE_T environment_bytes;
-    NTSTATUS status = PspBuildEnvironment(process->Machine, &environment, &environment_bytes);
+    NTSTATUS status = STATUS_SUCCESS;
+    if (p->Environment) {
+        environment_bytes = p->EnvironmentBytes;
+        environment = ExAllocatePool2(POOL_FLAG_NON_PAGED, environment_bytes, KI_TAG('P', 's', 'E', 'n'));
+        if (!environment)
+            return STATUS_NO_MEMORY;
+        memcpy(environment, p->Environment, environment_bytes);
+    } else {
+        status = PspBuildEnvironment(process->Machine, &environment, &environment_bytes);
+    }
     if (!NT_SUCCESS(status))
         return status;
-    SIZE_T size = 64 * 1024 + environment_bytes;
+    SIZE_T size = 64 * 1024 + environment_bytes + p->RuntimeDataLength + p->WindowTitle.Length + p->DesktopInfo.Length;
     PVOID base = NULL;
     status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
     if (!NT_SUCCESS(status)) {
@@ -83,13 +114,38 @@ static NTSTATUS setup_peb(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_S
     peb->OemCodePage = 437;
 
     pp->Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
-    pp->ShowWindowFlags = 1; /* SW_SHOWNORMAL */
-    pp->WindowFlags = 0;
+    pp->ShowWindowFlags = p->ShowWindowFlags;
+    pp->WindowFlags = p->WindowFlags;
+    pp->ConsoleFlags = p->ConsoleFlags;
+    pp->ConsoleHandle = p->Detached ? CONSOLE_DETACHED : NULL;
+    pp->StandardInput = p->StandardInput;
+    pp->StandardOutput = p->StandardOutput;
+    pp->StandardError = p->StandardError;
+    pp->StartingX = p->StartingX;
+    pp->StartingY = p->StartingY;
+    pp->CountX = p->CountX;
+    pp->CountY = p->CountY;
+    pp->CountCharsX = p->CountCharsX;
+    pp->CountCharsY = p->CountCharsY;
+    pp->FillAttribute = p->FillAttribute;
+    PCUNICODE_STRING title = p->WindowTitle.Length ? &p->WindowTitle : image;
     BOOLEAN ok = arena_string(&a, &pp->ImagePathName, image->Buffer, image->Length / sizeof(WCHAR)) &&
                  arena_string(&a, &pp->CommandLine, cmdline->Buffer, cmdline->Length / sizeof(WCHAR)) &&
-                 arena_string(&a, &pp->WindowTitle, image->Buffer, image->Length / sizeof(WCHAR)) &&
-                 arena_string(&a, &pp->DesktopInfo, L"WinSta0\\Default", 15) && arena_string(&a, &pp->ShellInfo, L"", 0) &&
-                 arena_string(&a, &pp->RuntimeData, L"", 0);
+                 arena_string(&a, &pp->WindowTitle, title->Buffer, title->Length / sizeof(WCHAR)) &&
+                 (p->DesktopInfo.Length
+                      ? arena_string(&a, &pp->DesktopInfo, p->DesktopInfo.Buffer, p->DesktopInfo.Length / sizeof(WCHAR))
+                      : arena_string(&a, &pp->DesktopInfo, L"WinSta0\\Default", 15)) &&
+                 arena_string(&a, &pp->ShellInfo, L"", 0);
+    /* the runtime data is bytes: the c library's inherited file descriptors. */
+    PUCHAR runtime = ok ? arena_alloc(&a, p->RuntimeDataLength + sizeof(WCHAR)) : NULL;
+    if (runtime) {
+        memcpy(runtime, p->RuntimeData, p->RuntimeDataLength);
+        memset(runtime + p->RuntimeDataLength, 0, sizeof(WCHAR));
+        pp->RuntimeData.Buffer = (PWSTR)runtime;
+        pp->RuntimeData.Length = p->RuntimeDataLength;
+        pp->RuntimeData.MaximumLength = (USHORT)(p->RuntimeDataLength + sizeof(WCHAR));
+    }
+    ok = ok && runtime;
     /* the current directory always ends with a backslash, like windows keeps it. */
     WCHAR dir[MIME_IMAGE_NAME_CHARS + 2];
     SIZE_T dlen = cwd->Length / sizeof(WCHAR);
@@ -145,9 +201,10 @@ static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS create_process(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
-                               MIME_CONSOLE *console, BOOLEAN suspended, PEPROCESS *out, PETHREAD *initial_thread)
+static NTSTATUS create_process(const PSP_PARAMS *p, ULONG64 request_id, MIME_CONSOLE *console, BOOLEAN suspended,
+                               PEPROCESS *out, PETHREAD *initial_thread)
 {
+    PCUNICODE_STRING image = &p->Image;
     UNICODE_STRING nt_path;
     NTSTATUS status = dos_to_nt(image, &nt_path);
     if (!NT_SUCCESS(status))
@@ -185,7 +242,7 @@ static NTSTATUS create_process(PCUNICODE_STRING image, PCUNICODE_STRING cmdline,
         process->AddressSpace.AllocationLimit = 0x7FFF0000;
     process->MimeRequestId = request_id;
     /* a gui program has no console, a console program shares the one it is given. */
-    if (console && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
+    if (console && !p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
         ConsoleAttach(process, console);
     SIZE_T n = image->Length / sizeof(WCHAR);
     if (n >= MIME_IMAGE_NAME_CHARS)
@@ -216,7 +273,7 @@ static NTSTATUS create_process(PCUNICODE_STRING image, PCUNICODE_STRING cmdline,
         process->NtdllBase = ntdll;
     }
     if (NT_SUCCESS(status))
-        status = setup_peb(process, image, cmdline, cwd);
+        status = setup_peb(process, p);
     KiAttachProcess(saved);
 
     PETHREAD thread = NULL;
@@ -244,7 +301,78 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
                              MIME_CONSOLE *console, PEPROCESS *out)
 {
     UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
-    return create_process(image, cmdline, cwd ? cwd : &default_cwd, request_id, console, FALSE, out, NULL);
+    PSP_PARAMS p = {.Image = *image, .CommandLine = *cmdline, .CurrentDirectory = cwd ? *cwd : default_cwd,
+                    .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
+    return create_process(&p, request_id, console, FALSE, out, NULL);
+}
+
+static void free_params(PSP_PARAMS *p)
+{
+    KiFreeCapturedString(&p->Image);
+    KiFreeCapturedString(&p->CommandLine);
+    KiFreeCapturedString(&p->CurrentDirectory);
+    KiFreeCapturedString(&p->WindowTitle);
+    KiFreeCapturedString(&p->DesktopInfo);
+    if (p->RuntimeData)
+        ExFreePool(p->RuntimeData);
+    if (p->Environment)
+        ExFreePool(p->Environment);
+}
+
+/* the creator's parameters, read once from its memory. */
+static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
+{
+    RTL_USER_PROCESS_PARAMETERS pp;
+    NTSTATUS status = KiCopyFromUser(&pp, user, sizeof(pp));
+    if (!NT_SUCCESS(status))
+        return status;
+    status = KiCaptureUnicodeString(&p->Image, &user->ImagePathName);
+    if (NT_SUCCESS(status))
+        status = KiCaptureUnicodeString(&p->CommandLine, &user->CommandLine);
+    if (NT_SUCCESS(status))
+        status = KiCaptureUnicodeString(&p->CurrentDirectory, &user->CurrentDirectory.DosPath);
+    if (NT_SUCCESS(status) && pp.WindowTitle.Length)
+        status = KiCaptureUnicodeString(&p->WindowTitle, &user->WindowTitle);
+    if (NT_SUCCESS(status) && pp.DesktopInfo.Length)
+        status = KiCaptureUnicodeString(&p->DesktopInfo, &user->DesktopInfo);
+    if (NT_SUCCESS(status) && pp.RuntimeData.Length && pp.RuntimeData.Buffer) {
+        p->RuntimeData = ExAllocatePool2(POOL_FLAG_NON_PAGED, pp.RuntimeData.Length, KI_TAG('P', 's', 'R', 'd'));
+        status = p->RuntimeData ? KiCopyFromUser(p->RuntimeData, pp.RuntimeData.Buffer, pp.RuntimeData.Length)
+                                : STATUS_NO_MEMORY;
+        p->RuntimeDataLength = pp.RuntimeData.Length;
+    }
+    /* an environment ends with an empty string; its size, when given, bounds the copy. */
+    if (NT_SUCCESS(status) && pp.Environment) {
+        SIZE_T bytes = pp.EnvironmentSize;
+        if (!bytes || bytes > MAX_ENVIRONMENT) {
+            WCHAR pair[2] = {1, 1};
+            for (bytes = 0; NT_SUCCESS(status) && bytes + sizeof(pair) <= MAX_ENVIRONMENT; bytes += sizeof(WCHAR)) {
+                status = KiCopyFromUser(pair, (PUCHAR)pp.Environment + bytes, sizeof(pair));
+                if (!pair[0] && !pair[1])
+                    break;
+            }
+            bytes += sizeof(pair);
+        }
+        p->Environment = NT_SUCCESS(status) ? ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, KI_TAG('P', 's', 'E', 'n')) : NULL;
+        if (NT_SUCCESS(status))
+            status = p->Environment ? KiCopyFromUser(p->Environment, pp.Environment, bytes) : STATUS_NO_MEMORY;
+        p->EnvironmentBytes = bytes;
+    }
+    p->StandardInput = pp.StandardInput;
+    p->StandardOutput = pp.StandardOutput;
+    p->StandardError = pp.StandardError;
+    p->WindowFlags = pp.WindowFlags;
+    p->ShowWindowFlags = pp.ShowWindowFlags;
+    p->ConsoleFlags = pp.ConsoleFlags;
+    p->StartingX = pp.StartingX;
+    p->StartingY = pp.StartingY;
+    p->CountX = pp.CountX;
+    p->CountY = pp.CountY;
+    p->CountCharsX = pp.CountCharsX;
+    p->CountCharsY = pp.CountCharsY;
+    p->FillAttribute = pp.FillAttribute;
+    p->Detached = pp.ConsoleHandle == CONSOLE_DETACHED;
+    return status;
 }
 
 NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle, ACCESS_MASK process_access,
@@ -254,22 +382,26 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
 {
     if (!process_handle || !thread_handle || !parameters)
         return STATUS_INVALID_PARAMETER;
-    if (process_attributes || thread_attributes || (process_flags & ~PROCESS_CREATE_FLAGS_BREAKAWAY) ||
+    if (process_attributes || thread_attributes ||
+        (process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
         (thread_flags & ~1u) || create_info || attributes)
         return STATUS_NOT_SUPPORTED;
-    UNICODE_STRING image = {0}, command = {0}, cwd = {0};
-    NTSTATUS status = KiCaptureUnicodeString(&image, &parameters->ImagePathName);
-    if (NT_SUCCESS(status))
-        status = KiCaptureUnicodeString(&command, &parameters->CommandLine);
-    if (NT_SUCCESS(status))
-        status = KiCaptureUnicodeString(&cwd, &parameters->CurrentDirectory.DosPath);
+    PSP_PARAMS params;
+    memset(&params, 0, sizeof(params));
+    NTSTATUS status = capture_params(parameters, &params);
     PEPROCESS process = NULL;
     PETHREAD thread = NULL;
     if (NT_SUCCESS(status))
-        status = create_process(&image, &command, &cwd, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
-    KiFreeCapturedString(&image);
-    KiFreeCapturedString(&command);
-    KiFreeCapturedString(&cwd);
+        status = create_process(&params, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
+    free_params(&params);
+    if (NT_SUCCESS(status) && (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) {
+        status = ObInheritHandles(PsCurrentProcess(), process);
+        if (!NT_SUCCESS(status)) {
+            PspTerminateProcess(process, status);
+            ObDereferenceObject(thread);
+            ObDereferenceObject(process);
+        }
+    }
     if (!NT_SUCCESS(status))
         return status;
     HANDLE ph = NULL, th = NULL;

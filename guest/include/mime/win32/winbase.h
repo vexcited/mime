@@ -774,6 +774,13 @@ typedef struct _IO_COUNTERS {
 #define WT_EXECUTEDEFAULT 0x00000000
 #define WT_EXECUTEINIOTHREAD 0x00000001
 #define WT_EXECUTELONGFUNCTION 0x00000010
+#define WT_EXECUTEINWAITTHREAD 0x00000004
+#define WT_EXECUTEONLYONCE 0x00000008
+
+typedef void(CALLBACK *WAITORTIMERCALLBACK)(PVOID context, BOOLEAN timed_out);
+WINBASEAPI BOOL WINAPI RegisterWaitForSingleObject(PHANDLE result, HANDLE object, WAITORTIMERCALLBACK callback,
+                                                   PVOID context, ULONG timeout, ULONG flags);
+WINBASEAPI BOOL WINAPI UnregisterWaitEx(HANDLE handle, HANDLE completion);
 
 WINBASEAPI HANDLE WINAPI ReOpenFile(HANDLE original, DWORD access, DWORD share, DWORD flags);
 WINBASEAPI BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags);

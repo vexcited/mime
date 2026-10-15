@@ -612,11 +612,6 @@ NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data
     return STATUS_OBJECT_NAME_NOT_FOUND;
 }
 
-NTSTATUS NTAPI NtSetInformationObject(HANDLE handle, ULONG klass, PVOID info, ULONG length)
-{
-    return STATUS_SUCCESS;
-}
-
 NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data)
 {
     return STATUS_NOT_SUPPORTED;
