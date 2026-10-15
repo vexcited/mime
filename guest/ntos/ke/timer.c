@@ -20,6 +20,53 @@ ULONG64 KiQueryInterruptTime(void)
     return HalCounterToHns(HalReadCounter() - g_boot_counter);
 }
 
+/*
+ * the performance counter is the hal's counter from boot. a tsc counts in
+ * gigahertz where windows programs expect the 10 MHz of windows' counter,
+ * and some multiply it by a billion: it is slowed down by a power of two
+ * to between 10 and 20 MHz. user mode reads it itself, from the bias and
+ * shift in KUSER_SHARED_DATA.
+ */
+static UCHAR qpc_shift(void)
+{
+    ULONG64 f = HalBootInfo->timer_frequency;
+    UCHAR shift = 0;
+    if (f > 100000000)
+        while ((f >> shift) > 20000000)
+            shift++;
+    return shift;
+}
+
+ULONG64 KiQpcFrequency(void)
+{
+    return HalBootInfo->timer_frequency >> qpc_shift();
+}
+
+static ULONG64 qpc_of(ULONG64 counter)
+{
+    return (counter - g_boot_counter) >> qpc_shift();
+}
+
+/* 100ns per count in 64.64 fixed point: 10^7 * 2^64 / frequency, by long division, or 0 below 10 MHz. */
+static ULONG64 qpc_increment(void)
+{
+    static ULONG64 cached;
+    ULONG64 f = KiQpcFrequency();
+    if (cached || f <= 10000000)
+        return cached;
+    ULONG64 remainder = 10000000, quotient = 0;
+    for (int bit = 63; bit >= 0; bit--) {
+        /* remainder < f, so doubling it never overflows while f stays below 2^63. */
+        remainder <<= 1;
+        if (remainder >= f) {
+            remainder -= f;
+            quotient |= 1ull << bit;
+        }
+    }
+    cached = quotient;
+    return cached;
+}
+
 ULONGLONG NTAPI KeQueryInterruptTime(void)
 {
     return KiQueryInterruptTime();
@@ -44,8 +91,8 @@ LARGE_INTEGER NTAPI KeQueryPerformanceCounter(PLARGE_INTEGER frequency)
 {
     LARGE_INTEGER r;
     if (frequency)
-        frequency->QuadPart = (LONGLONG)HalBootInfo->timer_frequency;
-    r.QuadPart = (LONGLONG)HalReadCounter();
+        frequency->QuadPart = (LONGLONG)KiQpcFrequency();
+    r.QuadPart = (LONGLONG)qpc_of(HalReadCounter());
     return r;
 }
 
@@ -155,12 +202,27 @@ BOOLEAN NTAPI KeReadStateTimer(PKTIMER timer)
     return timer->Header.SignalState != 0;
 }
 
-static void update_shared_time(ULONG64 now)
+/*
+ * the times at this tick, and what user mode needs to add the time since:
+ * the performance counter then and 100ns per count in 64.64 fixed point,
+ * under TimeUpdateLock, odd while it changes.
+ */
+static void update_shared_time(ULONG64 counter)
 {
     if (!SharedUserData)
         return;
+    ULONG64 now = HalCounterToHns(counter - g_boot_counter);
     ULONG64 system = KeBootFiletime + now;
     ULONG64 ticks = now / KI_CLOCK_TICK_HNS;
+    ULONG64 frequency = KiQpcFrequency();
+    ULONG64 increment = qpc_increment();
+    __atomic_add_fetch(&SharedUserData->TimeUpdateLock, 1, __ATOMIC_RELEASE);
+    SharedUserData->QpcBias = -g_boot_counter;
+    SharedUserData->QpcShift = qpc_shift();
+    SharedUserData->QpcFrequency = (LONGLONG)frequency;
+    SharedUserData->BaselineSystemTimeQpc = SharedUserData->BaselineInterruptTimeQpc = qpc_of(counter);
+    SharedUserData->QpcSystemTimeIncrement = SharedUserData->QpcInterruptTimeIncrement = increment;
+    SharedUserData->QpcSystemTimeIncrementShift = SharedUserData->QpcInterruptTimeIncrementShift = 0;
     /* writers update High2 first and High1 last so readers detect torn reads. */
     SharedUserData->InterruptTime.High2Time = (LONG)(now >> 32);
     SharedUserData->InterruptTime.LowPart = (ULONG)now;
@@ -172,6 +234,7 @@ static void update_shared_time(ULONG64 now)
     SharedUserData->TickCount.LowPart = (ULONG)ticks;
     SharedUserData->TickCount.High1Time = (LONG)(ticks >> 32);
     SharedUserData->TickCountLowDeprecated = (ULONG)ticks;
+    __atomic_add_fetch(&SharedUserData->TimeUpdateLock, 1, __ATOMIC_RELEASE);
 }
 
 /*
@@ -201,13 +264,14 @@ static void check_stalled_dispatch(ULONG64 now)
 /* interrupts masked, dispatcher database owned. */
 void KiClockInterrupt(PKTRAP_FRAME frame)
 {
-    ULONG64 now = KiQueryInterruptTime();
+    ULONG64 counter = HalReadCounter();
+    ULONG64 now = HalCounterToHns(counter - g_boot_counter);
     PKPRCB prcb = KeGetCurrentPrcb();
 
     if (now >= g_next_tick) {
         while (g_next_tick <= now)
             g_next_tick += KI_CLOCK_TICK_HNS;
-        update_shared_time(now);
+        update_shared_time(counter);
         check_stalled_dispatch(now);
     }
 
@@ -253,8 +317,8 @@ void KiInitializeTimers(void)
     InitializeListHead(&g_timer_list);
     g_boot_counter = HalBootInfo->boot_counter;
     KeBootFiletime = HalBootInfo->boot_filetime;
-    ULONG64 now = KiQueryInterruptTime();
-    g_next_tick = now + KI_CLOCK_TICK_HNS;
-    update_shared_time(now);
+    ULONG64 counter = HalReadCounter();
+    g_next_tick = HalCounterToHns(counter - g_boot_counter) + KI_CLOCK_TICK_HNS;
+    update_shared_time(counter);
     KiProgramNextTimer();
 }

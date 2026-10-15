@@ -16,6 +16,8 @@ typedef struct KI_SERVICE_TABLE {
 static KSERVICE_DESCRIPTOR g_nt_services[MIME_NT_SERVICES_COUNT];
 static KI_SERVICE_TABLE g_tables[2] = {{g_nt_services, MIME_NT_SERVICES_COUNT}, {NULL, 0}};
 static UCHAR g_reported[2][4096 / 8];
+/* calls of each service, for the thread dump; racy counts are good enough for that. */
+static ULONG64 g_calls[2][4096];
 
 typedef struct _WIN32_CALLOUTS {
     NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
@@ -101,6 +103,8 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG table = number >> 12;
     ULONG index = number & 0xFFF;
     ULONG64 result;
+    if (table < 2)
+        g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : NULL;
     if (table == 1 && !thread->Win32Thread && g_win32.ThreadCallout) {
         NTSTATUS status = convert_to_gui_thread();
@@ -246,4 +250,22 @@ void NTAPI ProbeForRead(PVOID address, SIZE_T length, ULONG alignment)
 void NTAPI ProbeForWrite(PVOID address, SIZE_T length, ULONG alignment)
 {
     ProbeForRead(address, length, alignment);
+}
+
+/* the services called most since the last dump, then the counts start over. */
+void KiDumpServiceCalls(void)
+{
+    for (int round = 0; round < 12; round++) {
+        ULONG64 best = 0;
+        ULONG bt = 0, bi = 0;
+        for (ULONG t = 0; t < 2; t++)
+            for (ULONG i = 0; i < 4096; i++)
+                if (g_calls[t][i] > best)
+                    best = g_calls[t][i], bt = t, bi = i;
+        if (!best)
+            break;
+        KiLogPrintf("calls %s: %llu", service_name(bt, bi), best);
+        g_calls[bt][bi] = 0;
+    }
+    memset(g_calls, 0, sizeof(g_calls));
 }

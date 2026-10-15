@@ -264,16 +264,10 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlIsProcessorFeaturePresent(ULONG feature)
 
 /* ------------------------------------------------------------------ time */
 
-/* the kernel lets user mode read the virtual counter, the performance counter of every processor. */
+/* the kernel lets user mode read the processor's counter, the performance counter of every processor. */
 NTDLL_EXPORT BOOLEAN NTAPI RtlQueryPerformanceCounter(PLARGE_INTEGER counter)
 {
-#ifdef __aarch64__
-    ULONG64 v;
-    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
-    counter->QuadPart = (LONGLONG)v;
-#else
-    NtQueryPerformanceCounter(counter, NULL);
-#endif
+    counter->QuadPart = (LONGLONG)MimeReadQpc();
     return TRUE;
 }
 
@@ -285,9 +279,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlQueryPerformanceFrequency(PLARGE_INTEGER frequency
 
 NTDLL_EXPORT LONGLONG NTAPI RtlGetSystemTimePrecise(void)
 {
-    LARGE_INTEGER t;
-    NtQuerySystemTime(&t);
-    return t.QuadPart;
+    return (LONGLONG)MimePreciseTime(TRUE);
 }
 
 #define TICKS_PER_SECOND 10000000ll

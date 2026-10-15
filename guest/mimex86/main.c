@@ -784,9 +784,7 @@ static void env_syscall(X86Cpu *c)
         return;
     case MIME_SVC_NtQueryPerformanceCounter: {
         /* the counter user mode reads directly, so the call never enters the kernel. */
-        ULONG64 v;
-        __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
-        *(ULONG64 *)a[0] = v;
+        *(ULONG64 *)a[0] = MimeReadQpc();
         if (a[1])
             *(ULONG64 *)a[1] = USER_SHARED_DATA->QpcFrequency;
         c->r[X86_RAX] = 0;

@@ -1840,13 +1840,71 @@ typedef struct _KUSER_SHARED_DATA {
         USHORT QpcData;
         struct {
             volatile UCHAR QpcBypassEnabled;
-            UCHAR QpcReserved;
+            UCHAR QpcShift;
         };
     };
     LARGE_INTEGER TimeZoneBiasEffectiveStart;
     LARGE_INTEGER TimeZoneBiasEffectiveEnd;
 } KUSER_SHARED_DATA, *PKUSER_SHARED_DATA;
 #define USER_SHARED_DATA ((volatile KUSER_SHARED_DATA *const)0x7FFE0000)
+
+/*
+ * the performance counter, which user mode reads itself: the processor's
+ * counter with the bias and shift the kernel publishes (ke/timer.c).
+ */
+NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PLARGE_INTEGER frequency);
+
+FORCEINLINE ULONG64 MimeReadQpc(void)
+{
+    ULONG64 v;
+#if defined(__aarch64__)
+    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
+#else
+    /* x86 code translated on an arm64 machine has a tsc of its own: the translator answers the call. */
+    if (USER_SHARED_DATA->NativeProcessorArchitecture != 9 /* PROCESSOR_ARCHITECTURE_AMD64 */) {
+        LARGE_INTEGER counter;
+        NtQueryPerformanceCounter(&counter, NULL);
+        return (ULONG64)counter.QuadPart;
+    }
+    ULONG lo, hi;
+    __asm__ volatile("lfence; rdtsc" : "=a"(lo), "=d"(hi));
+    v = (ULONG64)hi << 32 | lo;
+#endif
+    return (v + USER_SHARED_DATA->QpcBias) >> USER_SHARED_DATA->QpcShift;
+}
+
+/* the high half of a 64 by 64 bit product. */
+FORCEINLINE ULONG64 MimeMulHigh(ULONG64 a, ULONG64 b)
+{
+    ULONG64 al = (ULONG)a, ah = a >> 32, bl = (ULONG)b, bh = b >> 32;
+    ULONG64 low = al * bl, mid1 = ah * bl, mid2 = al * bh;
+    ULONG64 carry = ((low >> 32) + (ULONG)mid1 + (ULONG)mid2) >> 32;
+    return ah * bh + (mid1 >> 32) + (mid2 >> 32) + carry;
+}
+
+/*
+ * system or interrupt time to the counter's precision: the time of the last
+ * clock tick and the counts since, as windows' ntdll computes it, read
+ * again while the kernel's TimeUpdateLock says the tick is changing.
+ */
+FORCEINLINE ULONG64 MimePreciseTime(BOOLEAN system)
+{
+    volatile KUSER_SHARED_DATA *k = USER_SHARED_DATA;
+    for (;;) {
+        ULONG64 sequence = __atomic_load_n(&k->TimeUpdateLock, __ATOMIC_ACQUIRE);
+        if (sequence & 1)
+            continue;
+        volatile KSYSTEM_TIME *t = system ? &k->SystemTime : &k->InterruptTime;
+        ULONG64 base = (ULONG64)(ULONG)t->High1Time << 32 | t->LowPart;
+        ULONG64 baseline = system ? k->BaselineSystemTimeQpc : k->BaselineInterruptTimeQpc;
+        ULONG64 increment = system ? k->QpcSystemTimeIncrement : k->QpcInterruptTimeIncrement;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&k->TimeUpdateLock, __ATOMIC_RELAXED) != sequence)
+            continue;
+        ULONG64 qpc = MimeReadQpc();
+        return base + (qpc > baseline ? MimeMulHigh(qpc - baseline, increment) : 0);
+    }
+}
 MIME_FIELD_AT(KUSER_SHARED_DATA, InterruptTime, 0x8);
 MIME_FIELD_AT(KUSER_SHARED_DATA, SystemTime, 0x14);
 MIME_FIELD_AT(KUSER_SHARED_DATA, NtSystemRoot, 0x30);

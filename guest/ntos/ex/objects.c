@@ -47,7 +47,7 @@ static void init_shared_data(void)
     k->ActiveConsoleId = 1;
     k->NumberOfPhysicalPages = (ULONG)MmGetTotalPages();
     k->FullNumberOfPhysicalPages = MmGetTotalPages();
-    k->QpcFrequency = (LONGLONG)HalBootInfo->timer_frequency;
+    k->QpcFrequency = (LONGLONG)KiQpcFrequency();
     k->QpcBypassEnabled = 1;
     k->ActiveProcessorCount = HalBootInfo->cpu_count;
     k->ActiveGroupCount = 1;

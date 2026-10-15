@@ -219,8 +219,10 @@ void MiSessionInitialize(void)
                 break;
             }
         }
-        if (__atomic_exchange_n(&g_dump_pending, 0, __ATOMIC_ACQ_REL))
+        if (__atomic_exchange_n(&g_dump_pending, 0, __ATOMIC_ACQ_REL)) {
             PsDumpThreads();
+            KiDumpServiceCalls();
+        }
         KeWaitForSingleObject(&g_ctrl_event, Executive, KernelMode, FALSE, NULL);
     }
 }

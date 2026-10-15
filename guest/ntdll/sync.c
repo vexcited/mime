@@ -8,8 +8,12 @@
 
 /*
  * LockCount is -1 when free and counts the owner plus waiters otherwise.
- * contended threads sleep on an auto-reset event created on first need.
+ * contended threads spin a while, then sleep on an auto-reset event created
+ * on first need. a section without a spin count spins as long as windows'
+ * heap and c library locks do: most holds are shorter than a trip to the
+ * kernel and back.
  */
+#define DEFAULT_SPIN 4000
 static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
 {
     HANDLE ev = __atomic_load_n(&cs->LockSemaphore, __ATOMIC_ACQUIRE);
@@ -73,9 +77,13 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlEnterCriticalSection(PRTL_CRITICAL_SECTION cs)
         cs->RecursionCount++;
         return STATUS_SUCCESS;
     }
-    for (ULONG spin = (ULONG)cs->SpinCount; spin; spin--) {
+    ULONG spin = (ULONG)cs->SpinCount;
+    if (!spin && NtCurrentPeb()->NumberOfProcessors > 1)
+        spin = DEFAULT_SPIN;
+    for (; spin; spin--) {
         LONG expected = -1;
-        if (__atomic_compare_exchange_n(&cs->LockCount, &expected, 0, FALSE, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+        if (__atomic_load_n(&cs->LockCount, __ATOMIC_RELAXED) == -1 &&
+            __atomic_compare_exchange_n(&cs->LockCount, &expected, 0, FALSE, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
             goto owned;
         YieldProcessor();
     }

@@ -68,12 +68,7 @@ BOOL WINAPI QueryUnbiasedInterruptTime(PULONGLONG time)
 
 static ULONGLONG precise_interrupt_time(void)
 {
-    LARGE_INTEGER counter, frequency;
-    NtQueryPerformanceCounter(&counter, &frequency);
-    if (!frequency.QuadPart)
-        return read_system_time(&USER_SHARED_DATA->InterruptTime);
-    ULONGLONG c = (ULONGLONG)counter.QuadPart, f = (ULONGLONG)frequency.QuadPart;
-    return c / f * 10000000 + c % f * 10000000 / f;
+    return MimePreciseTime(FALSE);
 }
 
 void WINAPI QueryInterruptTimePrecise(PULONGLONG time)
