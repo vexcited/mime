@@ -28,13 +28,15 @@ static HRESULT STDMETHODCALLTYPE shader_query(void *iface, REFIID riid, void **o
     if (!out)
         return E_POINTER;
     D3dShader *shader = impl(iface);
-    if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &IID_ID3D11DeviceChild) &&
-        !IsEqualGUID(riid, STAGE_IIDS[shader->stage])) {
+    BOOL match = IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild) ||
+                 IsEqualGUID(riid, STAGE_IIDS[shader->stage]);
+    void *d3d10 = match ? NULL : D3d10ShaderInterface(shader, riid);
+    if (!match && !d3d10) {
         *out = NULL;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&shader->child.refs);
-    *out = iface;
+    *out = d3d10 ? d3d10 : iface;
     return S_OK;
 }
 

@@ -433,6 +433,8 @@ static HRESULT STDMETHODCALLTYPE device_query(ID3D11Device5 *iface, REFIID riid,
         *out = &device->presenter;
     else if (IsEqualGUID(riid, &IID_ID3D11Multithread))
         *out = &device->multithread;
+    else
+        *out = D3d10DeviceInterface(device, riid);
     if (!*out) {
         if (!IsEqualGUID(riid, &IID_ID3D11Debug))
             D3dLog("d3d11: no device interface {%08x-%04x-%04x}", riid->Data1, riid->Data2, riid->Data3);

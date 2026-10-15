@@ -182,29 +182,7 @@ typedef struct D3dVk {
 
 /* ------------------------------------------------------------------ formats */
 
-/* what a dxgi format is to vulkan and to direct3d. */
-typedef struct D3dFormat {
-    VkFormat vk;
-    /* the vulkan format of typeless depth formats seen as color, and of their depth views. */
-    VkFormat depth;
-    VkImageAspectFlags aspect;
-    /* bytes per block and the block's size in texels: 1 for uncompressed formats, 4 for bc. */
-    BYTE block_bytes;
-    BYTE block;
-    BYTE flags;
-} D3dFormat;
-
-#define D3D_FORMAT_TYPELESS 0x01
-#define D3D_FORMAT_SRGB 0x02
-#define D3D_FORMAT_DEPTH 0x04
-#define D3D_FORMAT_STENCIL 0x08
-#define D3D_FORMAT_INT 0x10
-#define D3D_FORMAT_BGRX 0x20
-
-const D3dFormat *D3dGetFormat(DXGI_FORMAT format);
-BOOL D3dPackClear(VkFormat format, const UINT *uints, const FLOAT *floats, BYTE out[16], UINT *size);
-BOOL D3dClearValueOfBits(VkFormat format, const BYTE *element, VkClearColorValue *value);
-void D3dFormatsUseD32(void);
+#include "format.h"
 
 /* ------------------------------------------------------------------ memory */
 
@@ -246,6 +224,11 @@ typedef struct D3dDevice D3dDevice;
 typedef struct D3dContext D3dContext;
 typedef struct D3dResource D3dResource;
 typedef struct D3dView D3dView;
+
+/* the direct3d 10 interface an object also answers to, see d3d10_objects.c. */
+typedef struct D3d10Iface {
+    const void *lpVtbl;
+} D3d10Iface;
 
 /* the state shared by everything the device makes. */
 typedef struct D3dChild {
@@ -342,6 +325,7 @@ struct D3dResource {
         ID3D11Texture3D1 texture3d;
     } u;
     BOOL swapchain;
+    D3d10Iface d3d10;
 };
 
 D3dResource *D3dResourceFrom(ID3D11Resource *iface);
@@ -394,6 +378,7 @@ struct D3dView {
     D3dAllocation counter;
     VkBufferView counter_view;
     UINT counter_index;
+    D3d10Iface d3d10;
 };
 
 D3dView *D3dViewFrom(void *iface, D3dViewKind kind);
@@ -406,6 +391,7 @@ typedef struct D3dBlendState {
     D3dChild child;
     struct D3dBlendState *next;
     D3D11_BLEND_DESC1 desc;
+    D3d10Iface d3d10;
 } D3dBlendState;
 
 typedef struct D3dRasterizerState {
@@ -413,6 +399,7 @@ typedef struct D3dRasterizerState {
     D3dChild child;
     struct D3dRasterizerState *next;
     D3D11_RASTERIZER_DESC2 desc;
+    D3d10Iface d3d10;
 } D3dRasterizerState;
 
 typedef struct D3dDepthStencilState {
@@ -420,6 +407,7 @@ typedef struct D3dDepthStencilState {
     D3dChild child;
     struct D3dDepthStencilState *next;
     D3D11_DEPTH_STENCIL_DESC desc;
+    D3d10Iface d3d10;
 } D3dDepthStencilState;
 
 typedef struct D3dSamplerState {
@@ -429,6 +417,7 @@ typedef struct D3dSamplerState {
     D3D11_SAMPLER_DESC desc;
     VkSampler sampler;
     UINT heap_index;
+    D3d10Iface d3d10;
 } D3dSamplerState;
 
 typedef struct D3dInputLayout {
@@ -440,6 +429,7 @@ typedef struct D3dInputLayout {
     UINT slot_mask;
     BYTE instanced[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
     UINT step_rate[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+    D3d10Iface d3d10;
 } D3dInputLayout;
 
 /* ------------------------------------------------------------------ shaders */
@@ -473,6 +463,7 @@ typedef struct D3dShader {
     UINT so_count;
     UINT so_strides[D3D11_SO_BUFFER_SLOT_COUNT];
     VkShaderEXT so_variants[8];
+    D3d10Iface d3d10;
 } D3dShader;
 
 VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive);
@@ -532,6 +523,7 @@ typedef struct D3dQuery {
     /* the segments it was begun over, its result their sum. */
     D3dQuerySlot *slots;
     UINT slot_count, slot_capacity;
+    D3d10Iface d3d10;
 } D3dQuery;
 
 /* ------------------------------------------------------------------ device */
@@ -567,6 +559,8 @@ struct D3dDevice {
     IDXGIDevice4 dxgi;
     IMimeDXGIPresenter presenter;
     ID3D11Multithread multithread;
+    /* ID3D10Device1, for devices d3d10.dll and d3d10_1.dll make. */
+    D3d10Iface d3d10;
     LONG refs;
     /* the adapter the device was made on, which GetAdapter hands out. */
     IDXGIAdapter *adapter;
@@ -874,6 +868,24 @@ void D3dQueriesClose(D3dContext *context, VkCommandBuffer cmd);
 void D3dQueriesCopy(D3dContext *context, VkCommandBuffer cmd);
 void D3dQueriesRelease(D3dContext *context);
 void D3dQueryPoolsDestroy(D3dDevice *device);
+
+/*
+ * d3d10_device.c and d3d10_objects.c: the direct3d 10 interface of an object
+ * for an iid, or NULL. d3d10.dll and d3d10_1.dll make devices with these
+ * flags, which give them ID3D10Device1.
+ */
+#define D3D_CREATE_DEVICE_D3D10 0x40000000
+#define D3D_CREATE_DEVICE_D3D10_1 0x80000000
+void *D3d10DeviceInterface(D3dDevice *device, REFIID riid);
+void *D3d10ResourceInterface(D3dResource *resource, REFIID riid);
+void *D3d10ViewInterface(D3dView *view, REFIID riid);
+void *D3d10BlendInterface(D3dBlendState *state, REFIID riid);
+void *D3d10RasterizerInterface(D3dRasterizerState *state, REFIID riid);
+void *D3d10DepthStencilInterface(D3dDepthStencilState *state, REFIID riid);
+void *D3d10SamplerInterface(D3dSamplerState *state, REFIID riid);
+void *D3d10InputLayoutInterface(D3dInputLayout *layout, REFIID riid);
+void *D3d10ShaderInterface(D3dShader *shader, REFIID riid);
+void *D3d10AsyncInterface(D3dQuery *query, REFIID riid);
 
 /* swapchain.c. */
 HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,

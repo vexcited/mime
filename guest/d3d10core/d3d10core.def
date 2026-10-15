@@ -1,0 +1,43 @@
+; the ordinals of windows' d3d10core.dll.
+LIBRARY d3d10core.dll
+EXPORTS
+    D3DKMTCloseAdapter @1
+    D3DKMTDestroyAllocation @2
+    D3DKMTDestroyContext @3
+    D3DKMTDestroyDevice @4
+    D3DKMTDestroySynchronizationObject @5
+    D3DKMTPresent @6
+    D3DKMTQueryAdapterInfo @7
+    D3DKMTSetDisplayPrivateDriverFormat @8
+    D3DKMTSignalSynchronizationObject @9
+    D3DKMTUnlock @10
+    D3DKMTWaitForSynchronizationObject @11
+    OpenAdapter10 @12
+    OpenAdapter10_2 @13
+    D3D10CoreCreateDevice @14
+    D3D10CoreGetSupportedVersions @15
+    D3D10CoreGetVersion @16
+    D3D10CoreRegisterLayers @17
+    D3DKMTCreateAllocation @18
+    D3DKMTCreateContext @19
+    D3DKMTCreateDevice @20
+    D3DKMTCreateSynchronizationObject @21
+    D3DKMTEscape @22
+    D3DKMTGetContextSchedulingPriority @23
+    D3DKMTGetDeviceState @24
+    D3DKMTGetDisplayModeList @25
+    D3DKMTGetMultisampleMethodList @26
+    D3DKMTGetRuntimeData @27
+    D3DKMTGetSharedPrimaryHandle @28
+    D3DKMTLock @29
+    D3DKMTOpenAdapterFromHdc @30
+    D3DKMTOpenResource @31
+    D3DKMTQueryAllocationResidency @32
+    D3DKMTQueryResourceInfo @33
+    D3DKMTRender @34
+    D3DKMTSetAllocationPriority @35
+    D3DKMTSetContextSchedulingPriority @36
+    D3DKMTSetDisplayMode @37
+    D3DKMTSetGammaRamp @38
+    D3DKMTSetVidPnSourceOwner @39
+    D3DKMTWaitForVerticalBlankEvent @40

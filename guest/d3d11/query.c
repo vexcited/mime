@@ -469,11 +469,13 @@ static HRESULT STDMETHODCALLTYPE query_query(void *iface, REFIID riid, void **ou
     if (!out)
         return E_POINTER;
     D3dQuery *q = query_impl(iface);
+    void *d3d10 = NULL;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild) ||
         IsEqualGUID(riid, &IID_ID3D11Asynchronous) || IsEqualGUID(riid, &IID_ID3D11Query) ||
-        IsEqualGUID(riid, &IID_ID3D11Query1) || (is_predicate(q->desc.Query) && IsEqualGUID(riid, &IID_ID3D11Predicate))) {
+        IsEqualGUID(riid, &IID_ID3D11Query1) || (is_predicate(q->desc.Query) && IsEqualGUID(riid, &IID_ID3D11Predicate)) ||
+        (d3d10 = D3d10AsyncInterface(q, riid))) {
         InterlockedIncrement(&q->child.refs);
-        *out = iface;
+        *out = d3d10 ? d3d10 : iface;
         return S_OK;
     }
     *out = NULL;

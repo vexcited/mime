@@ -42,20 +42,23 @@ static HRESULT STDMETHODCALLTYPE object_set_private_data_interface(void *iface, 
 
 static ULONG STDMETHODCALLTYPE object_add_ref(void *iface) { return InterlockedIncrement(&object(iface)->child.refs); }
 
-/* answers its interfaces, listed newest last, IUnknown and ID3D11DeviceChild included. */
-static HRESULT query(void *iface, const GUID *const *iids, UINT count, REFIID riid, void **out)
+/*
+ * answers its interfaces, listed newest last, IUnknown and ID3D11DeviceChild
+ * included, or the direct3d 10 interface the iid asked for.
+ */
+static HRESULT query(void *iface, const GUID *const *iids, UINT count, void *d3d10, REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;
     BOOL match = IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild);
     for (UINT i = 0; i < count && !match; i++)
         match = IsEqualGUID(riid, iids[i]);
-    if (!match) {
+    if (!match && !d3d10) {
         *out = NULL;
         return E_NOINTERFACE;
     }
     object_add_ref(iface);
-    *out = iface;
+    *out = match ? iface : d3d10;
     return S_OK;
 }
 
@@ -99,7 +102,8 @@ static const GUID *const BLEND_IIDS[] = {&IID_ID3D11BlendState, &IID_ID3D11Blend
 
 static HRESULT STDMETHODCALLTYPE blend_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, BLEND_IIDS, 2, riid, out);
+    return query(iface, BLEND_IIDS, 2, D3d10BlendInterface(CONTAINING_RECORD(iface, D3dBlendState, iface), riid), riid,
+                 out);
 }
 
 static ULONG STDMETHODCALLTYPE blend_release(void *iface)
@@ -199,7 +203,8 @@ static const GUID *const RS_IIDS[] = {&IID_ID3D11RasterizerState, &IID_ID3D11Ras
 
 static HRESULT STDMETHODCALLTYPE rs_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, RS_IIDS, 3, riid, out);
+    return query(iface, RS_IIDS, 3, D3d10RasterizerInterface(CONTAINING_RECORD(iface, D3dRasterizerState, iface), riid),
+                 riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE rs_release(void *iface)
@@ -272,7 +277,8 @@ static const GUID *const DS_IIDS[] = {&IID_ID3D11DepthStencilState};
 
 static HRESULT STDMETHODCALLTYPE ds_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, DS_IIDS, 1, riid, out);
+    return query(iface, DS_IIDS, 1,
+                 D3d10DepthStencilInterface(CONTAINING_RECORD(iface, D3dDepthStencilState, iface), riid), riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE ds_release(void *iface)
@@ -348,7 +354,8 @@ static const GUID *const SAMPLER_IIDS[] = {&IID_ID3D11SamplerState};
 
 static HRESULT STDMETHODCALLTYPE sampler_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, SAMPLER_IIDS, 1, riid, out);
+    return query(iface, SAMPLER_IIDS, 1, D3d10SamplerInterface(CONTAINING_RECORD(iface, D3dSamplerState, iface), riid),
+                 riid, out);
 }
 
 static void sampler_destroy(D3dObject *o)
@@ -486,7 +493,8 @@ static const GUID *const LAYOUT_IIDS[] = {&IID_ID3D11InputLayout};
 
 static HRESULT STDMETHODCALLTYPE layout_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, LAYOUT_IIDS, 1, riid, out);
+    return query(iface, LAYOUT_IIDS, 1, D3d10InputLayoutInterface(CONTAINING_RECORD(iface, D3dInputLayout, iface), riid),
+                 riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE layout_release(void *iface)
@@ -591,7 +599,7 @@ static const GUID *const LINKAGE_IIDS[] = {&IID_ID3D11ClassLinkage};
 
 static HRESULT STDMETHODCALLTYPE linkage_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, LINKAGE_IIDS, 1, riid, out);
+    return query(iface, LINKAGE_IIDS, 1, NULL, riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE linkage_release(void *iface) { return layout_release(iface); }
@@ -638,7 +646,7 @@ static const GUID *const STATE_IIDS[] = {&IID_ID3DDeviceContextState};
 
 static HRESULT STDMETHODCALLTYPE state_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, STATE_IIDS, 1, riid, out);
+    return query(iface, STATE_IIDS, 1, NULL, riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE state_release(void *iface) { return layout_release(iface); }

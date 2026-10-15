@@ -1,0 +1,1834 @@
+/*
+ * command allocators and lists. an allocator is a vulkan command pool, a
+ * list records into a command buffer of its allocator's, which mime's
+ * vulkan-1 writes to guest memory and sends at Close. rendering begins at
+ * the first draw after the targets change and ends before anything that
+ * may not run inside it. root arguments are push constants, pushed for the
+ * bind point that draws or dispatches; the heaps are descriptor buffers.
+ */
+#include "d3d12_private.h"
+
+/* ------------------------------------------------------------------ allocators */
+
+static D12CommandAllocator *allocator_impl(ID3D12CommandAllocator *iface)
+{
+    return CONTAINING_RECORD(iface, D12CommandAllocator, iface);
+}
+
+D12CommandAllocator *D12AllocatorFrom(ID3D12CommandAllocator *iface) { return iface ? allocator_impl(iface) : NULL; }
+
+static HRESULT STDMETHODCALLTYPE allocator_query(ID3D12CommandAllocator *iface, REFIID riid, void **out)
+{
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D12Object) ||
+        IsEqualGUID(riid, &IID_ID3D12DeviceChild) || IsEqualGUID(riid, &IID_ID3D12Pageable) ||
+        IsEqualGUID(riid, &IID_ID3D12CommandAllocator)) {
+        iface->lpVtbl->AddRef(iface);
+        *out = iface;
+        return S_OK;
+    }
+    *out = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE allocator_add_ref(ID3D12CommandAllocator *iface)
+{
+    return InterlockedIncrement(&allocator_impl(iface)->child.refs);
+}
+
+static ULONG STDMETHODCALLTYPE allocator_release(ID3D12CommandAllocator *iface)
+{
+    D12CommandAllocator *allocator = allocator_impl(iface);
+    ULONG refs = InterlockedDecrement(&allocator->child.refs);
+    if (!refs) {
+        D12Device *device = allocator->child.device;
+        device->vk.vkDestroyCommandPool(device->vk.device, allocator->pool, NULL);
+        HeapFree(GetProcessHeap(), 0, allocator->buffers);
+        D12ChildRelease(&allocator->child);
+        HeapFree(GetProcessHeap(), 0, allocator);
+    }
+    return refs;
+}
+
+static HRESULT STDMETHODCALLTYPE allocator_get_private_data(ID3D12CommandAllocator *iface, REFGUID guid, UINT *size,
+                                                            void *data)
+{
+    return MimePrivateGet(&allocator_impl(iface)->child.data, guid, size, data);
+}
+
+static HRESULT STDMETHODCALLTYPE allocator_set_private_data(ID3D12CommandAllocator *iface, REFGUID guid, UINT size,
+                                                            const void *data)
+{
+    return MimePrivateSet(&allocator_impl(iface)->child.data, guid, size, data);
+}
+
+static HRESULT STDMETHODCALLTYPE allocator_set_private_data_interface(ID3D12CommandAllocator *iface, REFGUID guid,
+                                                                      const IUnknown *data)
+{
+    return MimePrivateSetInterface(&allocator_impl(iface)->child.data, guid, data);
+}
+
+static HRESULT STDMETHODCALLTYPE allocator_set_name(ID3D12CommandAllocator *iface, LPCWSTR name) { return S_OK; }
+
+static HRESULT STDMETHODCALLTYPE allocator_get_device(ID3D12CommandAllocator *iface, REFIID riid, void **device)
+{
+    return D12ChildGetDevice(&allocator_impl(iface)->child, riid, device);
+}
+
+/* the program has waited for the gpu to be done with every list the allocator recorded. */
+static HRESULT STDMETHODCALLTYPE allocator_reset(ID3D12CommandAllocator *iface)
+{
+    D12CommandAllocator *allocator = allocator_impl(iface);
+    D12Device *device = allocator->child.device;
+    if (allocator->recording)
+        return E_FAIL;
+    device->vk.vkResetCommandPool(device->vk.device, allocator->pool, 0);
+    allocator->used = 0;
+    return S_OK;
+}
+
+static const struct ID3D12CommandAllocatorVtbl g_allocator_vtbl = {
+    allocator_query,
+    allocator_add_ref,
+    allocator_release,
+    allocator_get_private_data,
+    allocator_set_private_data,
+    allocator_set_private_data_interface,
+    allocator_set_name,
+    allocator_get_device,
+    allocator_reset,
+};
+
+HRESULT D12CreateCommandAllocator(D12Device *device, D3D12_COMMAND_LIST_TYPE type, D12CommandAllocator **out)
+{
+    if (type != D3D12_COMMAND_LIST_TYPE_DIRECT && type != D3D12_COMMAND_LIST_TYPE_BUNDLE &&
+        type != D3D12_COMMAND_LIST_TYPE_COMPUTE && type != D3D12_COMMAND_LIST_TYPE_COPY)
+        return E_INVALIDARG;
+    D12CommandAllocator *allocator = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*allocator));
+    if (!allocator)
+        return E_OUTOFMEMORY;
+    allocator->iface.lpVtbl = &g_allocator_vtbl;
+    allocator->type = type;
+    VkCommandPoolCreateInfo info = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    info.queueFamilyIndex = device->family;
+    if (device->vk.vkCreateCommandPool(device->vk.device, &info, NULL, &allocator->pool) != VK_SUCCESS) {
+        HeapFree(GetProcessHeap(), 0, allocator);
+        return E_OUTOFMEMORY;
+    }
+    allocator->child.refs = 1;
+    D12ChildInit(&allocator->child, device);
+    *out = allocator;
+    return S_OK;
+}
+
+/* a command buffer of the allocator not yet recorded since its reset. */
+static VkCommandBuffer allocator_take(D12CommandAllocator *allocator)
+{
+    D12Device *device = allocator->child.device;
+    if (allocator->used == allocator->count) {
+        if (allocator->count == allocator->capacity) {
+            UINT capacity = allocator->capacity ? allocator->capacity * 2 : 4;
+            VkCommandBuffer *list = allocator->buffers
+                                        ? HeapReAlloc(GetProcessHeap(), 0, allocator->buffers, capacity * sizeof(*list))
+                                        : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
+            if (!list)
+                return VK_NULL_HANDLE;
+            allocator->buffers = list;
+            allocator->capacity = capacity;
+        }
+        VkCommandBufferAllocateInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        info.commandPool = allocator->pool;
+        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        info.commandBufferCount = 1;
+        if (device->vk.vkAllocateCommandBuffers(device->vk.device, &info, &allocator->buffers[allocator->count]) !=
+            VK_SUCCESS)
+            return VK_NULL_HANDLE;
+        allocator->count++;
+    }
+    return allocator->buffers[allocator->used++];
+}
+
+/* ------------------------------------------------------------------ the list */
+
+static D12CommandList *impl(ID3D12GraphicsCommandList10 *iface) { return CONTAINING_RECORD(iface, D12CommandList, iface); }
+
+D12CommandList *D12CommandListFrom(ID3D12CommandList *iface)
+{
+    return iface ? CONTAINING_RECORD(iface, D12CommandList, iface) : NULL;
+}
+
+/* the command buffer a closed list submits, or NULL. */
+VkCommandBuffer D12CommandListBuffer(ID3D12CommandList *iface)
+{
+    D12CommandList *list = D12CommandListFrom(iface);
+    return list->open || FAILED(list->error) ? VK_NULL_HANDLE : list->cmd;
+}
+
+static D12Vk *vk_of(D12CommandList *list) { return &list->child.device->vk; }
+
+static void end_stream_output(D12CommandList *list);
+
+static void end_rendering(D12CommandList *list)
+{
+    if (!list->rendering)
+        return;
+    if (list->so_active)
+        end_stream_output(list);
+    vk_of(list)->vkCmdEndRendering(list->cmd);
+    list->rendering = FALSE;
+}
+
+/* a full barrier, outside rendering: what came before is written and visible to what comes after. */
+static void barrier(D12CommandList *list)
+{
+    end_rendering(list);
+    D12Barrier(list->child.device, list->cmd);
+}
+
+static void reset_state(D12CommandList *list)
+{
+    list->pipeline = NULL;
+    memset(&list->graphics, 0, sizeof(list->graphics));
+    memset(&list->compute, 0, sizeof(list->compute));
+    list->pushed_compute = -1;
+    list->heaps[0] = list->heaps[1] = NULL;
+    list->heaps_dirty = TRUE;
+    list->topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    memset(list->vb, 0, sizeof(list->vb));
+    list->vb_dirty = ~0u;
+    memset(&list->ib, 0, sizeof(list->ib));
+    list->ib_dirty = FALSE;
+    list->strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+    list->viewport_count = list->scissor_count = 0;
+    list->viewports_dirty = TRUE;
+    for (UINT i = 0; i < 4; i++)
+        list->blend_factor[i] = 0;
+    list->stencil_ref[0] = list->stencil_ref[1] = 0;
+    list->depth_bounds[0] = 0;
+    list->depth_bounds[1] = 1;
+    list->depth_bias_set = FALSE;
+    list->rtv_count = 0;
+    list->has_dsv = FALSE;
+    list->rendering = FALSE;
+    list->targets_dirty = TRUE;
+    list->state_dirty = TRUE;
+    list->bound_graphics = NULL;
+    list->bound_cs = VK_NULL_HANDLE;
+    memset(list->so, 0, sizeof(list->so));
+    list->so_active = FALSE;
+    list->predicated = FALSE;
+}
+
+static void set_pipeline(D12CommandList *list, D12PipelineState *state)
+{
+    list->pipeline = state;
+    if (!state)
+        return;
+    if (!state->compute) {
+        list->state_dirty = TRUE;
+        list->vertex_input_dirty = TRUE;
+    }
+}
+
+/* ------------------------------------------------------------------ root arguments and heaps */
+
+static D12RootState *root_state(D12CommandList *list, BOOL compute) { return compute ? &list->compute : &list->graphics; }
+
+static void set_root_signature(D12CommandList *list, BOOL compute, ID3D12RootSignature *iface)
+{
+    D12RootState *s = root_state(list, compute);
+    D12RootSignature *root = D12RootSignatureFrom(iface);
+    if (s->root == root)
+        return;
+    s->root = root;
+    memset(s->push, 0, sizeof(s->push));
+    s->push_dirty = TRUE;
+    s->sets_dirty = TRUE;
+    if (list->pushed_compute == compute)
+        list->pushed_compute = -1;
+}
+
+static void set_root_words(D12CommandList *list, BOOL compute, UINT index, UINT offset, UINT count, const void *data)
+{
+    D12RootState *s = root_state(list, compute);
+    if (!s->root || index >= s->root->param_count)
+        return;
+    UINT at = s->root->params[index].push_offset / 4 + offset;
+    if (at + count > 64)
+        return;
+    memcpy(&s->push[at], data, count * 4);
+    s->push_dirty = TRUE;
+}
+
+static void set_root_table(D12CommandList *list, BOOL compute, UINT index, D3D12_GPU_DESCRIPTOR_HANDLE base)
+{
+    UINT word = (UINT)((base.ptr & (((UINT64)1 << D12_HANDLE_SHIFT) - 1)) >> D12_INCREMENT_SHIFT);
+    set_root_words(list, compute, index, 0, 1, &word);
+}
+
+static void set_root_address(D12CommandList *list, BOOL compute, UINT index, D3D12_GPU_VIRTUAL_ADDRESS address)
+{
+    set_root_words(list, compute, index, 0, 2, &address);
+}
+
+/* binds the heaps' descriptor buffers and points the sets at them for a bind point, as its root signature lays them. */
+static void bind_sets(D12CommandList *list, BOOL compute)
+{
+    D12Device *device = list->child.device;
+    D12Vk *vk = &device->vk;
+    D12RootState *s = root_state(list, compute);
+    if (list->heaps_dirty) {
+        D12DescriptorHeap *resources = list->heaps[0] ? list->heaps[0] : device->dummy_heaps[0];
+        D12DescriptorHeap *samplers = list->heaps[1] ? list->heaps[1] : device->dummy_heaps[1];
+        VkDescriptorBufferBindingInfoEXT infos[2] = {{VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT},
+                                                     {VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT}};
+        infos[0].address = resources->address;
+        infos[0].usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        infos[1].address = samplers->address;
+        infos[1].usage = VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        vk->vkCmdBindDescriptorBuffersEXT(list->cmd, 2, infos);
+        list->heaps_dirty = FALSE;
+        list->graphics.sets_dirty = list->compute.sets_dirty = TRUE;
+    }
+    if (!s->sets_dirty || !s->root)
+        return;
+    VkPipelineBindPoint point = compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    UINT32 indices[2] = {0, 1};
+    VkDeviceSize offsets[2] = {device->record_offset, 0};
+    vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 0, 2, indices, offsets);
+    if (s->root->static_layout)
+        vk->vkCmdBindDescriptorBufferEmbeddedSamplersEXT(list->cmd, point, s->root->layout, 2);
+    UINT32 record_index = 0;
+    VkDeviceSize record_offset = 0;
+    vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 3, 1, &record_index, &record_offset);
+    s->sets_dirty = FALSE;
+}
+
+/* push constants hold one bind point's root arguments at a time: the one about to run. */
+static void push_root(D12CommandList *list, BOOL compute)
+{
+    D12RootState *s = root_state(list, compute);
+    if (!s->root || !s->root->push_size || (list->pushed_compute == compute && !s->push_dirty))
+        return;
+    vk_of(list)->vkCmdPushConstants(list->cmd, s->root->layout, VK_SHADER_STAGE_ALL, 0, s->root->push_size, s->push);
+    list->pushed_compute = compute;
+    s->push_dirty = FALSE;
+}
+
+/* ------------------------------------------------------------------ fixed function state */
+
+static VkPrimitiveTopology topology(D3D_PRIMITIVE_TOPOLOGY t)
+{
+    switch (t) {
+    case D3D_PRIMITIVE_TOPOLOGY_POINTLIST:
+        return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case D3D_PRIMITIVE_TOPOLOGY_LINELIST:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case D3D_PRIMITIVE_TOPOLOGY_LINESTRIP:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+    case D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case D3D_PRIMITIVE_TOPOLOGY_TRIANGLEFAN:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    case D3D_PRIMITIVE_TOPOLOGY_LINELIST_ADJ:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY;
+    case D3D_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY;
+    case D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY;
+    case D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY;
+    default:
+        if (t >= D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST && t <= D3D_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST)
+            return VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    }
+}
+
+static VkExtent2D render_area(D12CommandList *list, UINT *layers)
+{
+    VkExtent2D area = {~0u, ~0u};
+    UINT l = ~0u;
+    for (UINT i = 0; i < list->rtv_count; i++)
+        if (list->rtv[i].view) {
+            area.width = D12_MIN(area.width, list->rtv[i].extent.width);
+            area.height = D12_MIN(area.height, list->rtv[i].extent.height);
+            l = D12_MIN(l, list->rtv[i].range.layerCount);
+        }
+    if (list->has_dsv) {
+        area.width = D12_MIN(area.width, list->dsv.extent.width);
+        area.height = D12_MIN(area.height, list->dsv.extent.height);
+        l = D12_MIN(l, list->dsv.range.layerCount);
+    }
+    if (area.width == ~0u) {
+        area.width = list->viewport_count ? (UINT)D12_MAX(list->viewports[0].x + list->viewports[0].width, 1.0f) : 1;
+        area.height = list->viewport_count ? (UINT)D12_MAX(list->viewports[0].y, 1.0f) : 1;
+        l = 1;
+    }
+    *layers = l;
+    return area;
+}
+
+static void emit_viewports(D12CommandList *list)
+{
+    D12Vk *vk = vk_of(list);
+    UINT count = D12_MAX(list->viewport_count, 1u);
+    VkViewport viewports[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    VkRect2D scissors[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    for (UINT i = 0; i < count; i++) {
+        viewports[i] = i < list->viewport_count ? list->viewports[i] : (VkViewport){0, 1, 1, -1, 0, 1};
+        /* direct3d 12 has no scissor enable: rectangles not set clip everything. */
+        scissors[i] = i < list->scissor_count ? list->scissors[i] : (VkRect2D){{0, 0}, {0, 0}};
+    }
+    vk->vkCmdSetViewportWithCount(list->cmd, count, viewports);
+    vk->vkCmdSetScissorWithCount(list->cmd, count, scissors);
+}
+
+/* what the graphics state leaves dynamic: depth bias, depth and stencil tests as the targets allow them. */
+static void emit_state(D12CommandList *list)
+{
+    D12Device *device = list->child.device;
+    D12Vk *vk = &device->vk;
+    D12PipelineState *p = list->pipeline;
+    VkCommandBuffer cmd = list->cmd;
+    const D3D12_RASTERIZER_DESC2 *rs = &p->rasterizer;
+    FLOAT bias = list->depth_bias_set ? list->depth_bias[0] : rs->DepthBias;
+    FLOAT clamp = list->depth_bias_set ? list->depth_bias[1] : rs->DepthBiasClamp;
+    FLOAT slope = list->depth_bias_set ? list->depth_bias[2] : rs->SlopeScaledDepthBias;
+    vk->vkCmdSetDepthBiasEnable(cmd, bias != 0 || slope != 0);
+    vk->vkCmdSetDepthBias(cmd, bias, clamp, slope);
+    const D3D12_DEPTH_STENCIL_DESC2 *ds = &p->depth_stencil;
+    BOOL has_depth = list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) && p->depth_format;
+    BOOL has_stencil = list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) && p->stencil_format;
+    vk->vkCmdSetDepthTestEnable(cmd, ds->DepthEnable && has_depth);
+    vk->vkCmdSetDepthWriteEnable(cmd, ds->DepthEnable && ds->DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL &&
+                                          has_depth && !list->dsv.read_only_depth);
+    vk->vkCmdSetStencilTestEnable(cmd, ds->StencilEnable && has_stencil);
+    vk->vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_BIT,
+                                 list->dsv.read_only_stencil ? 0 : ds->FrontFace.StencilWriteMask);
+    vk->vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_BACK_BIT,
+                                 list->dsv.read_only_stencil ? 0 : ds->BackFace.StencilWriteMask);
+    vk->vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_BIT, list->stencil_ref[0] & 0xFF);
+    vk->vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_BACK_BIT, list->stencil_ref[1] & 0xFF);
+    vk->vkCmdSetBlendConstants(cmd, list->blend_factor);
+    if (p->depth_bounds)
+        vk->vkCmdSetDepthBounds(cmd, list->depth_bounds[0], list->depth_bounds[1]);
+}
+
+static void emit_topology(D12CommandList *list)
+{
+    D12Vk *vk = vk_of(list);
+    VkPrimitiveTopology t = topology(list->topology);
+    vk->vkCmdSetPrimitiveTopology(list->cmd, t);
+    BOOL strip = t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
+                 t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
+                 t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY;
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE cut = list->strip_cut ? list->strip_cut : list->pipeline->strip_cut;
+    vk->vkCmdSetPrimitiveRestartEnable(list->cmd, strip && cut != D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED);
+    if (list->child.device->has_patch_points && t == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST)
+        vk->vkCmdSetPatchControlPointsEXT(list->cmd, list->topology - D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + 1);
+}
+
+static void emit_buffers(D12CommandList *list)
+{
+    D12Device *device = list->child.device;
+    D12Vk *vk = &device->vk;
+    for (UINT i = 0; list->vb_dirty && i < D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++) {
+        if (!(list->vb_dirty & (1u << i)))
+            continue;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0, size = 0;
+        UINT64 available;
+        if (list->vb[i].BufferLocation &&
+            D12AddressLookup(device, list->vb[i].BufferLocation, &buffer, &offset, &available))
+            size = D12_MIN((UINT64)list->vb[i].SizeInBytes, available);
+        if (!size)
+            buffer = VK_NULL_HANDLE, offset = 0, size = VK_WHOLE_SIZE;
+        VkDeviceSize stride = list->vb[i].StrideInBytes;
+        vk->vkCmdBindVertexBuffers2(list->cmd, i, 1, &buffer, &offset, buffer ? &size : NULL, &stride);
+    }
+    list->vb_dirty = 0;
+    if (list->ib_dirty && list->ib.BufferLocation) {
+        VkBuffer buffer;
+        VkDeviceSize offset;
+        if (D12AddressLookup(device, list->ib.BufferLocation, &buffer, &offset, NULL))
+            vk->vkCmdBindIndexBuffer(list->cmd, buffer, offset,
+                                     list->ib.Format == DXGI_FORMAT_R16_UINT ? VK_INDEX_TYPE_UINT16
+                                                                             : VK_INDEX_TYPE_UINT32);
+    }
+    list->ib_dirty = FALSE;
+}
+
+/* ------------------------------------------------------------------ rendering */
+
+/* begins rendering to the targets bound, as many and of the formats the graphics state renders to. */
+static void begin_rendering(D12CommandList *list)
+{
+    D12Device *device = list->child.device;
+    D12PipelineState *p = list->pipeline;
+    VkRenderingAttachmentInfo colors[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT];
+    VkRenderingAttachmentInfo depth = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    VkRenderingAttachmentInfo stencil = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    UINT layers;
+    VkExtent2D area = render_area(list, &layers);
+    for (UINT i = 0; i < p->rt_count; i++) {
+        colors[i] = (VkRenderingAttachmentInfo){VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        const D12TargetView *v = i < list->rtv_count ? &list->rtv[i] : NULL;
+        if (!v || !v->view)
+            continue;
+        colors[i].imageView = v->view->view;
+        colors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        colors[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        colors[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
+    VkRenderingInfo info = {VK_STRUCTURE_TYPE_RENDERING_INFO};
+    info.renderArea.extent = area;
+    info.layerCount = layers;
+    info.colorAttachmentCount = p->rt_count;
+    info.pColorAttachments = colors;
+    if (list->has_dsv) {
+        depth.imageView = list->dsv.view->view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        stencil = depth;
+    }
+    if (p->depth_format && list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT))
+        info.pDepthAttachment = &depth;
+    if (p->stencil_format && list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT))
+        info.pStencilAttachment = &stencil;
+    device->vk.vkCmdBeginRendering(list->cmd, &info);
+    list->rendering = TRUE;
+    list->targets_dirty = FALSE;
+    list->render_rt_count = p->rt_count;
+    list->render_depth_format = p->depth_format;
+    list->render_stencil_format = p->stencil_format;
+    list->viewports_dirty = TRUE;
+}
+
+/* ------------------------------------------------------------------ stream output */
+
+static void begin_stream_output(D12CommandList *list)
+{
+    D12Device *device = list->child.device;
+    VkBuffer buffers[4], counters[4];
+    VkDeviceSize offsets[4], sizes[4], counter_offsets[4];
+    for (UINT i = 0; i < 4; i++) {
+        const D3D12_STREAM_OUTPUT_BUFFER_VIEW *v = &list->so[i];
+        UINT64 available = 0;
+        if (!v->BufferLocation || !D12AddressLookup(device, v->BufferLocation, &buffers[i], &offsets[i], &available)) {
+            buffers[i] = device->null_buffer.heap->buffer;
+            offsets[i] = device->null_buffer.offset;
+            available = 4;
+        }
+        sizes[i] = D12_MIN(v->SizeInBytes ? v->SizeInBytes : 4, available);
+        if (!v->BufferFilledSizeLocation ||
+            !D12AddressLookup(device, v->BufferFilledSizeLocation, &counters[i], &counter_offsets[i], NULL))
+            counters[i] = VK_NULL_HANDLE, counter_offsets[i] = 0;
+    }
+    device->vk.vkCmdBindTransformFeedbackBuffersEXT(list->cmd, 0, 4, buffers, offsets, sizes);
+    device->vk.vkCmdBeginTransformFeedbackEXT(list->cmd, 0, 4, counters, counter_offsets);
+    list->so_active = TRUE;
+}
+
+static void end_stream_output(D12CommandList *list)
+{
+    D12Device *device = list->child.device;
+    VkBuffer counters[4];
+    VkDeviceSize counter_offsets[4];
+    for (UINT i = 0; i < 4; i++) {
+        const D3D12_STREAM_OUTPUT_BUFFER_VIEW *v = &list->so[i];
+        if (!v->BufferFilledSizeLocation ||
+            !D12AddressLookup(device, v->BufferFilledSizeLocation, &counters[i], &counter_offsets[i], NULL))
+            counters[i] = VK_NULL_HANDLE, counter_offsets[i] = 0;
+    }
+    device->vk.vkCmdEndTransformFeedbackEXT(list->cmd, 0, 4, counters, counter_offsets);
+    list->so_active = FALSE;
+}
+
+/* ------------------------------------------------------------------ draws and dispatches */
+
+static BOOL prepare_draw(D12CommandList *list)
+{
+    D12Device *device = list->child.device;
+    D12Vk *vk = &device->vk;
+    D12PipelineState *p = list->pipeline;
+    if (!list->open || !p || p->compute || !list->graphics.root)
+        return FALSE;
+    BOOL so = p->stream_output && device->has_transform_feedback;
+    /* a state of other attachments than the rendering begun needs a rendering of its own. */
+    BOOL layout = list->rendering && (list->render_rt_count != p->rt_count || list->render_depth_format != p->depth_format ||
+                                      list->render_stencil_format != p->stencil_format);
+    if (list->rendering && (list->targets_dirty || layout || (list->so_active && !so)))
+        end_rendering(list);
+    if (!list->rendering)
+        begin_rendering(list);
+    if (list->bound_graphics != p) {
+        vk->vkCmdBindPipeline(list->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+        list->bound_graphics = p;
+        list->state_dirty = TRUE;
+    }
+    if (list->state_dirty) {
+        emit_state(list);
+        emit_topology(list);
+        list->topology_dirty = FALSE;
+    } else if (list->topology_dirty) {
+        emit_topology(list);
+        list->topology_dirty = FALSE;
+    }
+    if (list->state_dirty || list->viewports_dirty) {
+        emit_viewports(list);
+        list->viewports_dirty = FALSE;
+    }
+    list->state_dirty = FALSE;
+    bind_sets(list, FALSE);
+    push_root(list, FALSE);
+    emit_buffers(list);
+    if (so && !list->so_active)
+        begin_stream_output(list);
+    return TRUE;
+}
+
+static BOOL prepare_dispatch(D12CommandList *list)
+{
+    D12PipelineState *p = list->pipeline;
+    if (!list->open || !p || !p->compute || !list->compute.root)
+        return FALSE;
+    end_rendering(list);
+    if (list->bound_cs != p->pipeline) {
+        vk_of(list)->vkCmdBindPipeline(list->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p->pipeline);
+        list->bound_cs = p->pipeline;
+    }
+    bind_sets(list, TRUE);
+    push_root(list, TRUE);
+    return TRUE;
+}
+
+static void STDMETHODCALLTYPE list_draw_instanced(ID3D12GraphicsCommandList10 *iface, UINT vertices, UINT instances,
+                                                  UINT start_vertex, UINT start_instance)
+{
+    D12CommandList *list = impl(iface);
+    if (!vertices || !instances || !prepare_draw(list))
+        return;
+    vk_of(list)->vkCmdDraw(list->cmd, vertices, instances, start_vertex, start_instance);
+}
+
+static void STDMETHODCALLTYPE list_draw_indexed_instanced(ID3D12GraphicsCommandList10 *iface, UINT indices,
+                                                          UINT instances, UINT start_index, INT base_vertex,
+                                                          UINT start_instance)
+{
+    D12CommandList *list = impl(iface);
+    if (!indices || !instances || !list->ib.BufferLocation || !prepare_draw(list))
+        return;
+    vk_of(list)->vkCmdDrawIndexed(list->cmd, indices, instances, start_index, base_vertex, start_instance);
+}
+
+static void STDMETHODCALLTYPE list_dispatch(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z)
+{
+    D12CommandList *list = impl(iface);
+    if (!x || !y || !z || !prepare_dispatch(list))
+        return;
+    vk_of(list)->vkCmdDispatch(list->cmd, x, y, z);
+}
+
+/* ------------------------------------------------------------------ IUnknown and ID3D12Object */
+
+static HRESULT STDMETHODCALLTYPE list_query(ID3D12GraphicsCommandList10 *iface, REFIID riid, void **out)
+{
+    static const GUID *const ids[] = {
+        &IID_IUnknown,
+        &IID_ID3D12Object,
+        &IID_ID3D12DeviceChild,
+        &IID_ID3D12CommandList,
+        &IID_ID3D12GraphicsCommandList,
+        &IID_ID3D12GraphicsCommandList1,
+        &IID_ID3D12GraphicsCommandList2,
+        &IID_ID3D12GraphicsCommandList3,
+        &IID_ID3D12GraphicsCommandList4,
+        &IID_ID3D12GraphicsCommandList5,
+        &IID_ID3D12GraphicsCommandList6,
+        &IID_ID3D12GraphicsCommandList7,
+        &IID_ID3D12GraphicsCommandList8,
+        &IID_ID3D12GraphicsCommandList9,
+        &IID_ID3D12GraphicsCommandList10,
+    };
+    for (UINT i = 0; i < RTL_NUMBER_OF(ids); i++)
+        if (IsEqualGUID(riid, ids[i])) {
+            iface->lpVtbl->AddRef(iface);
+            *out = iface;
+            return S_OK;
+        }
+    *out = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE list_add_ref(ID3D12GraphicsCommandList10 *iface)
+{
+    return InterlockedIncrement(&impl(iface)->child.refs);
+}
+
+static ULONG STDMETHODCALLTYPE list_release(ID3D12GraphicsCommandList10 *iface)
+{
+    D12CommandList *list = impl(iface);
+    ULONG refs = InterlockedDecrement(&list->child.refs);
+    if (!refs) {
+        if (list->open && list->allocator)
+            list->allocator->recording = NULL;
+        if (list->allocator)
+            list->allocator->iface.lpVtbl->Release(&list->allocator->iface);
+        D12ChildRelease(&list->child);
+        HeapFree(GetProcessHeap(), 0, list);
+    }
+    return refs;
+}
+
+static HRESULT STDMETHODCALLTYPE list_get_private_data(ID3D12GraphicsCommandList10 *iface, REFGUID guid, UINT *size,
+                                                       void *data)
+{
+    return MimePrivateGet(&impl(iface)->child.data, guid, size, data);
+}
+
+static HRESULT STDMETHODCALLTYPE list_set_private_data(ID3D12GraphicsCommandList10 *iface, REFGUID guid, UINT size,
+                                                       const void *data)
+{
+    return MimePrivateSet(&impl(iface)->child.data, guid, size, data);
+}
+
+static HRESULT STDMETHODCALLTYPE list_set_private_data_interface(ID3D12GraphicsCommandList10 *iface, REFGUID guid,
+                                                                 const IUnknown *data)
+{
+    return MimePrivateSetInterface(&impl(iface)->child.data, guid, data);
+}
+
+static HRESULT STDMETHODCALLTYPE list_set_name(ID3D12GraphicsCommandList10 *iface, LPCWSTR name) { return S_OK; }
+
+static HRESULT STDMETHODCALLTYPE list_get_device(ID3D12GraphicsCommandList10 *iface, REFIID riid, void **device)
+{
+    return D12ChildGetDevice(&impl(iface)->child, riid, device);
+}
+
+static D3D12_COMMAND_LIST_TYPE STDMETHODCALLTYPE list_get_type(ID3D12GraphicsCommandList10 *iface)
+{
+    return impl(iface)->type;
+}
+
+/* ------------------------------------------------------------------ recording */
+
+static HRESULT STDMETHODCALLTYPE list_close(ID3D12GraphicsCommandList10 *iface)
+{
+    D12CommandList *list = impl(iface);
+    if (!list->open)
+        return E_FAIL;
+    end_rendering(list);
+    if (list->predicated) {
+        vk_of(list)->vkCmdEndConditionalRenderingEXT(list->cmd);
+        list->predicated = FALSE;
+    }
+    if (vk_of(list)->vkEndCommandBuffer(list->cmd) != VK_SUCCESS && SUCCEEDED(list->error))
+        list->error = E_OUTOFMEMORY;
+    list->open = FALSE;
+    if (list->allocator)
+        list->allocator->recording = NULL;
+    return list->error;
+}
+
+static HRESULT begin(D12CommandList *list, D12CommandAllocator *allocator, D12PipelineState *initial)
+{
+    if (list->open || !allocator || allocator->type != list->type)
+        return E_INVALIDARG;
+    if (allocator->recording)
+        return E_INVALIDARG;
+    VkCommandBuffer cmd = allocator_take(allocator);
+    if (!cmd)
+        return E_OUTOFMEMORY;
+    VkCommandBufferBeginInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vk_of(list)->vkBeginCommandBuffer(cmd, &info) != VK_SUCCESS)
+        return E_OUTOFMEMORY;
+    if (list->allocator != allocator) {
+        allocator->iface.lpVtbl->AddRef(&allocator->iface);
+        if (list->allocator)
+            list->allocator->iface.lpVtbl->Release(&list->allocator->iface);
+        list->allocator = allocator;
+    }
+    allocator->recording = list;
+    list->cmd = cmd;
+    list->open = TRUE;
+    list->error = S_OK;
+    list->render_samples = 0;
+    reset_state(list);
+    set_pipeline(list, initial);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE list_reset(ID3D12GraphicsCommandList10 *iface, ID3D12CommandAllocator *allocator,
+                                            ID3D12PipelineState *initial)
+{
+    return begin(impl(iface), D12AllocatorFrom(allocator), D12PipelineFrom(initial));
+}
+
+static void STDMETHODCALLTYPE list_clear_state(ID3D12GraphicsCommandList10 *iface, ID3D12PipelineState *state)
+{
+    D12CommandList *list = impl(iface);
+    end_rendering(list);
+    reset_state(list);
+    set_pipeline(list, D12PipelineFrom(state));
+}
+
+/* ------------------------------------------------------------------ copies */
+
+static void STDMETHODCALLTYPE list_copy_buffer_region(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
+                                                      UINT64 dst_offset, ID3D12Resource *src, UINT64 src_offset,
+                                                      UINT64 bytes)
+{
+    D12CommandList *list = impl(iface);
+    D12Resource *d = D12ResourceFrom(dst), *s = D12ResourceFrom(src);
+    if (!list->open || !d || !s || !d->buffer || !s->buffer || !bytes)
+        return;
+    end_rendering(list);
+    VkBufferCopy region = {s->offset + src_offset, d->offset + dst_offset, bytes};
+    vk_of(list)->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
+}
+
+/* the image subresource a subresource index names, its plane's aspect alone. */
+static VkImageSubresourceLayers subresource_layers(const D12Resource *r, UINT index)
+{
+    UINT mip, layer, plane;
+    D12SubresourceDecompose(r, index, &mip, &layer, &plane);
+    return (VkImageSubresourceLayers){D12PlaneAspect(r, plane), mip, layer, 1};
+}
+
+/* a footprint's region of a buffer and a box of a texture, as vulkan copies them. */
+static VkBufferImageCopy footprint_region(const D12Resource *buffer, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT *fp,
+                                          const D12Resource *image, UINT sub, VkOffset3D at, const D3D12_BOX *box,
+                                          BOOL box_in_buffer)
+{
+    const D3dFormat *f = D3dGetFormat(fp->Footprint.Format);
+    UINT block = f->vk != VK_FORMAT_UNDEFINED ? f->block : 1;
+    UINT block_bytes = f->vk != VK_FORMAT_UNDEFINED ? f->block_bytes : 4;
+    VkBufferImageCopy region = {0};
+    region.bufferOffset = buffer->offset + fp->Offset;
+    region.bufferRowLength = fp->Footprint.RowPitch / block_bytes * block;
+    region.bufferImageHeight = fp->Footprint.Height;
+    region.imageSubresource = subresource_layers(image, sub);
+    region.imageOffset = at;
+    VkExtent3D extent = {fp->Footprint.Width, fp->Footprint.Height, fp->Footprint.Depth};
+    if (box) {
+        extent = (VkExtent3D){box->right - box->left, box->bottom - box->top, box->back - box->front};
+        if (box_in_buffer)
+            region.bufferOffset += (UINT64)box->front * fp->Footprint.RowPitch * (fp->Footprint.Height / block) +
+                                   (UINT64)(box->top / block) * fp->Footprint.RowPitch +
+                                   (UINT64)(box->left / block) * block_bytes;
+        else
+            region.imageOffset = (VkOffset3D){(INT)box->left, (INT)box->top, (INT)box->front};
+    }
+    /* copies of block compressed mips smaller than a block take the mip's own size. */
+    VkExtent3D mip = D12MipExtent(image, region.imageSubresource.mipLevel);
+    extent.width = D12_MIN(extent.width, mip.width - (UINT)region.imageOffset.x);
+    extent.height = D12_MIN(extent.height, mip.height - (UINT)region.imageOffset.y);
+    extent.depth = D12_MIN(extent.depth, mip.depth - (UINT)region.imageOffset.z);
+    region.imageExtent = extent;
+    return region;
+}
+
+static void STDMETHODCALLTYPE list_copy_texture_region(ID3D12GraphicsCommandList10 *iface,
+                                                       const D3D12_TEXTURE_COPY_LOCATION *dst, UINT x, UINT y, UINT z,
+                                                       const D3D12_TEXTURE_COPY_LOCATION *src, const D3D12_BOX *box)
+{
+    D12CommandList *list = impl(iface);
+    D12Resource *d = D12ResourceFrom(dst->pResource), *s = D12ResourceFrom(src->pResource);
+    if (!list->open || !d || !s)
+        return;
+    end_rendering(list);
+    D12Vk *vk = vk_of(list);
+    VkOffset3D at = {(INT)x, (INT)y, (INT)z};
+    if (dst->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX &&
+        src->Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT) {
+        if (!d->image || !s->buffer)
+            return;
+        VkBufferImageCopy region = footprint_region(s, &src->PlacedFootprint, d, dst->SubresourceIndex, at, box, TRUE);
+        if (region.imageExtent.width && region.imageExtent.height && region.imageExtent.depth)
+            vk->vkCmdCopyBufferToImage(list->cmd, s->buffer, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    } else if (dst->Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT &&
+               src->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX) {
+        if (!s->image || !d->buffer)
+            return;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = dst->PlacedFootprint;
+        VkBufferImageCopy region = footprint_region(d, &fp, s, src->SubresourceIndex, (VkOffset3D){0}, box, FALSE);
+        /* the destination point moves the buffer offset, in blocks. */
+        const D3dFormat *f = D3dGetFormat(fp.Footprint.Format);
+        UINT block = f->vk != VK_FORMAT_UNDEFINED ? f->block : 1, block_bytes = f->vk != VK_FORMAT_UNDEFINED ? f->block_bytes : 4;
+        region.bufferOffset += (UINT64)z * fp.Footprint.RowPitch * (fp.Footprint.Height / block) +
+                               (UINT64)(y / block) * fp.Footprint.RowPitch + (UINT64)(x / block) * block_bytes;
+        if (region.imageExtent.width && region.imageExtent.height && region.imageExtent.depth)
+            vk->vkCmdCopyImageToBuffer(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->buffer, 1, &region);
+    } else if (dst->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX &&
+               src->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX) {
+        if (!s->image || !d->image)
+            return;
+        VkImageCopy region = {0};
+        region.srcSubresource = subresource_layers(s, src->SubresourceIndex);
+        region.dstSubresource = subresource_layers(d, dst->SubresourceIndex);
+        region.dstOffset = at;
+        VkExtent3D e = D12MipExtent(s, region.srcSubresource.mipLevel);
+        if (box) {
+            region.srcOffset = (VkOffset3D){(INT)box->left, (INT)box->top, (INT)box->front};
+            e = (VkExtent3D){box->right - box->left, box->bottom - box->top, box->back - box->front};
+        }
+        VkExtent3D de = D12MipExtent(d, region.dstSubresource.mipLevel);
+        /* block compressed to uncompressed copies count the destination in blocks. */
+        if (s->fmt->block > d->fmt->block)
+            de = (VkExtent3D){de.width * s->fmt->block, de.height * s->fmt->block, de.depth};
+        e.width = D12_MIN(e.width, de.width - x);
+        e.height = D12_MIN(e.height, de.height - y);
+        e.depth = D12_MIN(e.depth, de.depth - z);
+        region.extent = e;
+        if (e.width && e.height && e.depth)
+            vk->vkCmdCopyImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                               &region);
+    }
+}
+
+static void STDMETHODCALLTYPE list_copy_resource(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
+                                                 ID3D12Resource *src)
+{
+    D12CommandList *list = impl(iface);
+    D12Resource *d = D12ResourceFrom(dst), *s = D12ResourceFrom(src);
+    if (!list->open || !d || !s)
+        return;
+    end_rendering(list);
+    D12Vk *vk = vk_of(list);
+    if (d->buffer && s->buffer) {
+        VkBufferCopy region = {s->offset, d->offset, D12_MIN(s->desc.Width, d->desc.Width)};
+        vk->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
+        return;
+    }
+    if (!d->image || !s->image)
+        return;
+    UINT count = D12_MIN(D12SubresourceCount(s), D12SubresourceCount(d));
+    for (UINT i = 0; i < count; i++) {
+        VkImageCopy region = {0};
+        region.srcSubresource = subresource_layers(s, i);
+        region.dstSubresource = subresource_layers(d, i);
+        region.extent = D12MipExtent(s, region.srcSubresource.mipLevel);
+        vk->vkCmdCopyImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                           &region);
+    }
+}
+
+static void STDMETHODCALLTYPE list_copy_tiles(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *tiled,
+                                              const D3D12_TILED_RESOURCE_COORDINATE *start,
+                                              const D3D12_TILE_REGION_SIZE *size, ID3D12Resource *buffer,
+                                              UINT64 buffer_offset, D3D12_TILE_COPY_FLAGS flags)
+{
+}
+
+static void resolve(D12CommandList *list, D12Resource *d, UINT dst_sub, UINT dst_x, UINT dst_y, D12Resource *s,
+                    UINT src_sub, const D3D12_RECT *rect)
+{
+    if (!list->open || !d || !s || !d->image || !s->image)
+        return;
+    end_rendering(list);
+    VkImageResolve region = {0};
+    region.srcSubresource = subresource_layers(s, src_sub);
+    region.dstSubresource = subresource_layers(d, dst_sub);
+    region.extent = D12MipExtent(s, region.srcSubresource.mipLevel);
+    region.dstOffset = (VkOffset3D){(INT)dst_x, (INT)dst_y, 0};
+    if (rect) {
+        region.srcOffset = (VkOffset3D){rect->left, rect->top, 0};
+        region.extent = (VkExtent3D){(UINT)(rect->right - rect->left), (UINT)(rect->bottom - rect->top), 1};
+    }
+    vk_of(list)->vkCmdResolveImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                                   &region);
+}
+
+static void STDMETHODCALLTYPE list_resolve_subresource(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
+                                                       UINT dst_sub, ID3D12Resource *src, UINT src_sub,
+                                                       DXGI_FORMAT format)
+{
+    resolve(impl(iface), D12ResourceFrom(dst), dst_sub, 0, 0, D12ResourceFrom(src), src_sub, NULL);
+}
+
+static void STDMETHODCALLTYPE list_resolve_subresource_region(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
+                                                              UINT dst_sub, UINT dst_x, UINT dst_y,
+                                                              ID3D12Resource *src, UINT src_sub, D3D12_RECT *rect,
+                                                              DXGI_FORMAT format, D3D12_RESOLVE_MODE mode)
+{
+    resolve(impl(iface), D12ResourceFrom(dst), dst_sub, dst_x, dst_y, D12ResourceFrom(src), src_sub, rect);
+}
+
+/* ------------------------------------------------------------------ input assembler, rasterizer, output merger */
+
+static void STDMETHODCALLTYPE list_ia_set_primitive_topology(ID3D12GraphicsCommandList10 *iface,
+                                                             D3D_PRIMITIVE_TOPOLOGY t)
+{
+    D12CommandList *list = impl(iface);
+    if (list->topology != t) {
+        list->topology = t;
+        list->topology_dirty = TRUE;
+    }
+}
+
+static void STDMETHODCALLTYPE list_rs_set_viewports(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                    const D3D12_VIEWPORT *viewports)
+{
+    D12CommandList *list = impl(iface);
+    count = D12_MIN(count, (UINT)D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
+    for (UINT i = 0; i < count; i++) {
+        D3D12_VIEWPORT v = viewports[i];
+        if (v.Width <= 0)
+            v.Width = 1;
+        /* direct3d's y points down: a viewport of negative height flips vulkan's. */
+        list->viewports[i] = (VkViewport){v.TopLeftX, v.TopLeftY + v.Height, v.Width, -v.Height, v.MinDepth, v.MaxDepth};
+        if (v.Height == 0)
+            list->viewports[i].height = -1, list->viewports[i].y = v.TopLeftY + 1;
+    }
+    list->viewport_count = count;
+    list->viewports_dirty = TRUE;
+}
+
+static void STDMETHODCALLTYPE list_rs_set_scissor_rects(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                        const D3D12_RECT *rects)
+{
+    D12CommandList *list = impl(iface);
+    count = D12_MIN(count, (UINT)D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
+    for (UINT i = 0; i < count; i++) {
+        LONG left = D12_MAX(rects[i].left, 0), top = D12_MAX(rects[i].top, 0);
+        list->scissors[i] = (VkRect2D){{left, top},
+                                       {(UINT)D12_MAX(rects[i].right - left, 0), (UINT)D12_MAX(rects[i].bottom - top, 0)}};
+    }
+    list->scissor_count = count;
+    list->viewports_dirty = TRUE;
+}
+
+static void STDMETHODCALLTYPE list_om_set_blend_factor(ID3D12GraphicsCommandList10 *iface, const FLOAT factor[4])
+{
+    D12CommandList *list = impl(iface);
+    for (UINT i = 0; i < 4; i++)
+        list->blend_factor[i] = factor ? factor[i] : 1.0f;
+    if (list->open)
+        vk_of(list)->vkCmdSetBlendConstants(list->cmd, list->blend_factor);
+}
+
+static void STDMETHODCALLTYPE list_om_set_stencil_ref(ID3D12GraphicsCommandList10 *iface, UINT ref)
+{
+    D12CommandList *list = impl(iface);
+    list->stencil_ref[0] = list->stencil_ref[1] = ref;
+    if (list->open)
+        vk_of(list)->vkCmdSetStencilReference(list->cmd, VK_STENCIL_FACE_FRONT_AND_BACK, ref & 0xFF);
+}
+
+static void STDMETHODCALLTYPE list_om_set_front_and_back_stencil_ref(ID3D12GraphicsCommandList10 *iface, UINT front,
+                                                                     UINT back)
+{
+    D12CommandList *list = impl(iface);
+    list->stencil_ref[0] = front;
+    list->stencil_ref[1] = back;
+    if (list->open) {
+        vk_of(list)->vkCmdSetStencilReference(list->cmd, VK_STENCIL_FACE_FRONT_BIT, front & 0xFF);
+        vk_of(list)->vkCmdSetStencilReference(list->cmd, VK_STENCIL_FACE_BACK_BIT, back & 0xFF);
+    }
+}
+
+static void STDMETHODCALLTYPE list_om_set_depth_bounds(ID3D12GraphicsCommandList10 *iface, FLOAT min, FLOAT max)
+{
+    D12CommandList *list = impl(iface);
+    list->depth_bounds[0] = min;
+    list->depth_bounds[1] = max;
+    if (list->open && list->child.device->has_depth_bounds)
+        vk_of(list)->vkCmdSetDepthBounds(list->cmd, min, max);
+}
+
+static void STDMETHODCALLTYPE list_rs_set_depth_bias(ID3D12GraphicsCommandList10 *iface, FLOAT bias, FLOAT clamp,
+                                                     FLOAT slope)
+{
+    D12CommandList *list = impl(iface);
+    list->depth_bias[0] = bias;
+    list->depth_bias[1] = clamp;
+    list->depth_bias[2] = slope;
+    list->depth_bias_set = TRUE;
+    list->state_dirty = TRUE;
+}
+
+static void STDMETHODCALLTYPE list_ia_set_strip_cut(ID3D12GraphicsCommandList10 *iface,
+                                                    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE value)
+{
+    D12CommandList *list = impl(iface);
+    list->strip_cut = value;
+    list->topology_dirty = TRUE;
+}
+
+static void STDMETHODCALLTYPE list_set_pipeline_state(ID3D12GraphicsCommandList10 *iface, ID3D12PipelineState *state)
+{
+    D12CommandList *list = impl(iface);
+    D12PipelineState *p = D12PipelineFrom(state);
+    if (p != list->pipeline)
+        set_pipeline(list, p);
+}
+
+static void STDMETHODCALLTYPE list_ia_set_index_buffer(ID3D12GraphicsCommandList10 *iface,
+                                                       const D3D12_INDEX_BUFFER_VIEW *view)
+{
+    D12CommandList *list = impl(iface);
+    if (view)
+        list->ib = *view;
+    else
+        memset(&list->ib, 0, sizeof(list->ib));
+    list->ib_dirty = TRUE;
+}
+
+static void STDMETHODCALLTYPE list_ia_set_vertex_buffers(ID3D12GraphicsCommandList10 *iface, UINT start, UINT count,
+                                                         const D3D12_VERTEX_BUFFER_VIEW *views)
+{
+    D12CommandList *list = impl(iface);
+    for (UINT i = 0; i < count && start + i < D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++) {
+        D3D12_VERTEX_BUFFER_VIEW v = views ? views[i] : (D3D12_VERTEX_BUFFER_VIEW){0};
+        D3D12_VERTEX_BUFFER_VIEW *slot = &list->vb[start + i];
+        if (v.StrideInBytes != slot->StrideInBytes)
+            list->vertex_input_dirty = TRUE;
+        *slot = v;
+        list->vb_dirty |= 1u << (start + i);
+    }
+}
+
+static void STDMETHODCALLTYPE list_so_set_targets(ID3D12GraphicsCommandList10 *iface, UINT start, UINT count,
+                                                  const D3D12_STREAM_OUTPUT_BUFFER_VIEW *views)
+{
+    D12CommandList *list = impl(iface);
+    if (list->so_active) {
+        end_stream_output(list);
+    }
+    for (UINT i = 0; i < count && start + i < D3D12_SO_BUFFER_SLOT_COUNT; i++)
+        list->so[start + i] = views ? views[i] : (D3D12_STREAM_OUTPUT_BUFFER_VIEW){0};
+}
+
+static void STDMETHODCALLTYPE list_om_set_render_targets(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                         const D3D12_CPU_DESCRIPTOR_HANDLE *targets, BOOL single_range,
+                                                         const D3D12_CPU_DESCRIPTOR_HANDLE *depth)
+{
+    D12CommandList *list = impl(iface);
+    D12Device *device = list->child.device;
+    count = D12_MIN(count, (UINT)D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT);
+    for (UINT i = 0; i < count; i++) {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = single_range ? (D3D12_CPU_DESCRIPTOR_HANDLE){targets[0].ptr + i * D12_INCREMENT}
+                                                     : targets[i];
+        const D12TargetView *t = D12TargetFrom(device, h);
+        list->rtv[i] = t ? *t : (D12TargetView){0};
+    }
+    list->rtv_count = count;
+    const D12TargetView *d = depth ? D12TargetFrom(device, *depth) : NULL;
+    list->has_dsv = d && d->view;
+    list->dsv = list->has_dsv ? *d : (D12TargetView){0};
+    list->targets_dirty = TRUE;
+    list->state_dirty = TRUE;
+}
+
+/* ------------------------------------------------------------------ clears */
+
+static BOOL is_sint(VkFormat f)
+{
+    switch (f) {
+    case VK_FORMAT_R8_SINT:
+    case VK_FORMAT_R8G8_SINT:
+    case VK_FORMAT_R8G8B8A8_SINT:
+    case VK_FORMAT_R16_SINT:
+    case VK_FORMAT_R16G16_SINT:
+    case VK_FORMAT_R16G16B16A16_SINT:
+    case VK_FORMAT_R32_SINT:
+    case VK_FORMAT_R32G32_SINT:
+    case VK_FORMAT_R32G32B32_SINT:
+    case VK_FORMAT_R32G32B32A32_SINT:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static BOOL is_uint(VkFormat f)
+{
+    switch (f) {
+    case VK_FORMAT_R8_UINT:
+    case VK_FORMAT_R8G8_UINT:
+    case VK_FORMAT_R8G8B8A8_UINT:
+    case VK_FORMAT_R16_UINT:
+    case VK_FORMAT_R16G16_UINT:
+    case VK_FORMAT_R16G16B16A16_UINT:
+    case VK_FORMAT_R32_UINT:
+    case VK_FORMAT_R32G32_UINT:
+    case VK_FORMAT_R32G32B32_UINT:
+    case VK_FORMAT_R32G32B32A32_UINT:
+    case VK_FORMAT_A2B10G10R10_UINT_PACK32:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+/* clears rectangles of an attachment inside a rendering of its own. */
+static void clear_attachment_rects(D12CommandList *list, const D12TargetView *t, const VkClearAttachment *clear,
+                                   UINT rect_count, const D3D12_RECT *rects)
+{
+    D12Vk *vk = vk_of(list);
+    end_rendering(list);
+    VkRenderingAttachmentInfo att = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    att.imageView = t->view->view;
+    att.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo info = {VK_STRUCTURE_TYPE_RENDERING_INFO};
+    info.renderArea.extent = t->extent;
+    info.layerCount = t->range.layerCount;
+    if (clear->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) {
+        info.colorAttachmentCount = 1;
+        info.pColorAttachments = &att;
+    } else {
+        if (t->range.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT)
+            info.pDepthAttachment = &att;
+        if (t->range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT)
+            info.pStencilAttachment = &att;
+    }
+    vk->vkCmdBeginRendering(list->cmd, &info);
+    for (UINT i = 0; i < rect_count; i++) {
+        LONG left = D12_MAX(rects[i].left, 0), top = D12_MAX(rects[i].top, 0);
+        LONG right = D12_MIN(rects[i].right, (LONG)t->extent.width), bottom = D12_MIN(rects[i].bottom, (LONG)t->extent.height);
+        if (right <= left || bottom <= top)
+            continue;
+        VkClearRect r = {{{left, top}, {(UINT)(right - left), (UINT)(bottom - top)}}, 0, t->range.layerCount};
+        vk->vkCmdClearAttachments(list->cmd, 1, clear, 1, &r);
+    }
+    vk->vkCmdEndRendering(list->cmd);
+}
+
+static void STDMETHODCALLTYPE list_clear_render_target_view(ID3D12GraphicsCommandList10 *iface,
+                                                            D3D12_CPU_DESCRIPTOR_HANDLE view, const FLOAT color[4],
+                                                            UINT rect_count, const D3D12_RECT *rects)
+{
+    D12CommandList *list = impl(iface);
+    const D12TargetView *t = D12TargetFrom(list->child.device, view);
+    if (!list->open || !t || !t->view)
+        return;
+    VkClearColorValue value;
+    for (UINT i = 0; i < 4; i++) {
+        if (is_uint(t->format))
+            value.uint32[i] = (UINT)color[i];
+        else if (is_sint(t->format))
+            value.int32[i] = (INT)color[i];
+        else
+            value.float32[i] = color[i];
+    }
+    if (rect_count && rects) {
+        VkClearAttachment clear = {VK_IMAGE_ASPECT_COLOR_BIT, 0, {.color = value}};
+        clear_attachment_rects(list, t, &clear, rect_count, rects);
+        return;
+    }
+    end_rendering(list);
+    VkImageSubresourceRange range = t->range;
+    if (t->resource->desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D) {
+        range.baseArrayLayer = 0;
+        range.layerCount = 1;
+    }
+    vk_of(list)->vkCmdClearColorImage(list->cmd, t->resource->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+}
+
+static void STDMETHODCALLTYPE list_clear_depth_stencil_view(ID3D12GraphicsCommandList10 *iface,
+                                                            D3D12_CPU_DESCRIPTOR_HANDLE view, D3D12_CLEAR_FLAGS flags,
+                                                            FLOAT depth, UINT8 stencil, UINT rect_count,
+                                                            const D3D12_RECT *rects)
+{
+    D12CommandList *list = impl(iface);
+    const D12TargetView *t = D12TargetFrom(list->child.device, view);
+    if (!list->open || !t || !t->view)
+        return;
+    VkImageAspectFlags aspects = 0;
+    if (flags & D3D12_CLEAR_FLAG_DEPTH)
+        aspects |= VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (flags & D3D12_CLEAR_FLAG_STENCIL)
+        aspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    aspects &= t->range.aspectMask;
+    if (!aspects)
+        return;
+    VkClearDepthStencilValue value = {depth, stencil};
+    if (rect_count && rects) {
+        VkClearAttachment clear = {aspects, 0, {.depthStencil = value}};
+        clear_attachment_rects(list, t, &clear, rect_count, rects);
+        return;
+    }
+    end_rendering(list);
+    VkImageSubresourceRange range = t->range;
+    range.aspectMask = aspects;
+    vk_of(list)->vkCmdClearDepthStencilImage(list->cmd, t->resource->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+}
+
+/* fills a buffer range with a pattern of up to 16 bytes, words at once when it is one. */
+static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
+                         const BYTE *pattern, UINT pattern_size)
+{
+    D12Vk *vk = vk_of(list);
+    UINT word;
+    if (pattern_size <= 4 && 4 % pattern_size == 0) {
+        BYTE w[4];
+        for (UINT i = 0; i < 4; i++)
+            w[i] = pattern[i % pattern_size];
+        memcpy(&word, w, 4);
+        vk->vkCmdFillBuffer(list->cmd, buffer, offset, size & ~3ull, word);
+        return;
+    }
+    BYTE chunk[4096];
+    UINT chunk_size = sizeof(chunk) / pattern_size * pattern_size;
+    for (UINT i = 0; i < chunk_size; i += pattern_size)
+        memcpy(chunk + i, pattern, pattern_size);
+    for (VkDeviceSize done = 0; done < size;) {
+        VkDeviceSize n = D12_MIN((VkDeviceSize)chunk_size, size - done) & ~3ull;
+        if (!n)
+            break;
+        vk->vkCmdUpdateBuffer(list->cmd, buffer, offset + done, n, chunk);
+        done += n;
+    }
+}
+
+static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, const UINT *uints, const FLOAT *floats,
+                      UINT rect_count, const D3D12_RECT *rects)
+{
+    const D12DescriptorInfo *info = D12DescriptorInfoFrom(list->child.device, cpu);
+    if (!list->open || !info || !info->resource)
+        return;
+    end_rendering(list);
+    D12Resource *r = info->resource;
+    if (r->buffer) {
+        BYTE pattern[16];
+        UINT size = 4;
+        if (info->format == VK_FORMAT_R32_UINT || info->format == VK_FORMAT_UNDEFINED) {
+            UINT v = uints ? uints[0] : (UINT)floats[0];
+            memcpy(pattern, &v, 4);
+        } else if (!D3dPackClear(info->format, uints, floats, pattern, &size)) {
+            return;
+        }
+        fill_pattern(list, r->buffer, r->offset + info->offset, info->size, pattern, size);
+        return;
+    }
+    VkClearColorValue value;
+    for (UINT i = 0; i < 4; i++) {
+        if (uints)
+            value.uint32[i] = uints[i];
+        else if (is_uint(info->format))
+            value.uint32[i] = (UINT)floats[i];
+        else if (is_sint(info->format))
+            value.int32[i] = (INT)floats[i];
+        else
+            value.float32[i] = floats[i];
+    }
+    /* uint clears of other formats write the values' bits, as their formats take them. */
+    if (uints && !is_uint(info->format) && !is_sint(info->format)) {
+        BYTE packed[16];
+        UINT size;
+        if (D3dPackClear(info->format, uints, NULL, packed, &size))
+            D3dClearValueOfBits(info->format, packed, &value);
+    }
+    VkImageSubresourceRange range = info->range;
+    if (rect_count && rects) {
+        /* rectangles of storage images: a clear of each through a rendering would need targets; the whole view is cleared. */
+    }
+    vk_of(list)->vkCmdClearColorImage(list->cmd, r->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+}
+
+static void STDMETHODCALLTYPE list_clear_uav_uint(ID3D12GraphicsCommandList10 *iface, D3D12_GPU_DESCRIPTOR_HANDLE gpu,
+                                                  D3D12_CPU_DESCRIPTOR_HANDLE cpu, ID3D12Resource *resource,
+                                                  const UINT values[4], UINT rect_count, const D3D12_RECT *rects)
+{
+    clear_uav(impl(iface), cpu, values, NULL, rect_count, rects);
+}
+
+static void STDMETHODCALLTYPE list_clear_uav_float(ID3D12GraphicsCommandList10 *iface, D3D12_GPU_DESCRIPTOR_HANDLE gpu,
+                                                   D3D12_CPU_DESCRIPTOR_HANDLE cpu, ID3D12Resource *resource,
+                                                   const FLOAT values[4], UINT rect_count, const D3D12_RECT *rects)
+{
+    clear_uav(impl(iface), cpu, NULL, values, rect_count, rects);
+}
+
+/* the contents may go: nothing has to be done to lose them. */
+static void STDMETHODCALLTYPE list_discard_resource(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *resource,
+                                                    const D3D12_DISCARD_REGION *region)
+{
+}
+
+/* ------------------------------------------------------------------ barriers */
+
+/* every image is in the general layout: transitions, aliasing and uav barriers only order memory, all of them at once. */
+static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                    const D3D12_RESOURCE_BARRIER *barriers)
+{
+    D12CommandList *list = impl(iface);
+    if (!list->open || !count)
+        return;
+    BOOL any = FALSE;
+    for (UINT i = 0; i < count && !any; i++)
+        any = !(barriers[i].Flags & D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY);
+    if (any)
+        barrier(list);
+}
+
+static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, UINT32 count, const void *groups)
+{
+    D12CommandList *list = impl(iface);
+    if (list->open && count)
+        barrier(list);
+}
+
+/* ------------------------------------------------------------------ root signatures and arguments */
+
+static void STDMETHODCALLTYPE list_execute_bundle(ID3D12GraphicsCommandList10 *iface, ID3D12GraphicsCommandList *bundle)
+{
+    D12Log("d3d12: bundles are not supported yet");
+}
+
+static void STDMETHODCALLTYPE list_set_descriptor_heaps(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                        ID3D12DescriptorHeap *const *heaps)
+{
+    D12CommandList *list = impl(iface);
+    for (UINT i = 0; i < count; i++) {
+        D12DescriptorHeap *heap = D12DescriptorHeapFrom(heaps[i]);
+        if (!heap || !(heap->desc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE))
+            continue;
+        UINT which = heap->desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+        if (list->heaps[which] != heap) {
+            list->heaps[which] = heap;
+            list->heaps_dirty = TRUE;
+        }
+    }
+}
+
+static void STDMETHODCALLTYPE list_set_compute_root_signature(ID3D12GraphicsCommandList10 *iface,
+                                                              ID3D12RootSignature *root)
+{
+    set_root_signature(impl(iface), TRUE, root);
+}
+
+static void STDMETHODCALLTYPE list_set_graphics_root_signature(ID3D12GraphicsCommandList10 *iface,
+                                                               ID3D12RootSignature *root)
+{
+    set_root_signature(impl(iface), FALSE, root);
+}
+
+static void STDMETHODCALLTYPE list_set_compute_root_descriptor_table(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                     D3D12_GPU_DESCRIPTOR_HANDLE base)
+{
+    set_root_table(impl(iface), TRUE, index, base);
+}
+
+static void STDMETHODCALLTYPE list_set_graphics_root_descriptor_table(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                      D3D12_GPU_DESCRIPTOR_HANDLE base)
+{
+    set_root_table(impl(iface), FALSE, index, base);
+}
+
+static void STDMETHODCALLTYPE list_set_compute_root_32bit_constant(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                   UINT data, UINT offset)
+{
+    set_root_words(impl(iface), TRUE, index, offset, 1, &data);
+}
+
+static void STDMETHODCALLTYPE list_set_graphics_root_32bit_constant(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                    UINT data, UINT offset)
+{
+    set_root_words(impl(iface), FALSE, index, offset, 1, &data);
+}
+
+static void STDMETHODCALLTYPE list_set_compute_root_32bit_constants(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                    UINT count, const void *data, UINT offset)
+{
+    set_root_words(impl(iface), TRUE, index, offset, count, data);
+}
+
+static void STDMETHODCALLTYPE list_set_graphics_root_32bit_constants(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                     UINT count, const void *data, UINT offset)
+{
+    set_root_words(impl(iface), FALSE, index, offset, count, data);
+}
+
+static void STDMETHODCALLTYPE list_set_compute_root_view(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                         D3D12_GPU_VIRTUAL_ADDRESS address)
+{
+    set_root_address(impl(iface), TRUE, index, address);
+}
+
+static void STDMETHODCALLTYPE list_set_graphics_root_view(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                          D3D12_GPU_VIRTUAL_ADDRESS address)
+{
+    set_root_address(impl(iface), FALSE, index, address);
+}
+
+/* ------------------------------------------------------------------ queries and predication */
+
+void D12BeginQuery(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type, UINT index);
+void D12EndQuery(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type, UINT index);
+void D12ResolveQueries(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type, UINT start, UINT count,
+                       D12Resource *dst, UINT64 offset);
+
+static void STDMETHODCALLTYPE list_begin_query(ID3D12GraphicsCommandList10 *iface, ID3D12QueryHeap *heap,
+                                               D3D12_QUERY_TYPE type, UINT index)
+{
+    D12CommandList *list = impl(iface);
+    if (list->open && heap)
+        D12BeginQuery(list, D12QueryHeapFrom(heap), type, index);
+}
+
+static void STDMETHODCALLTYPE list_end_query(ID3D12GraphicsCommandList10 *iface, ID3D12QueryHeap *heap,
+                                             D3D12_QUERY_TYPE type, UINT index)
+{
+    D12CommandList *list = impl(iface);
+    if (list->open && heap)
+        D12EndQuery(list, D12QueryHeapFrom(heap), type, index);
+}
+
+static void STDMETHODCALLTYPE list_resolve_query_data(ID3D12GraphicsCommandList10 *iface, ID3D12QueryHeap *heap,
+                                                      D3D12_QUERY_TYPE type, UINT start, UINT count,
+                                                      ID3D12Resource *dst, UINT64 offset)
+{
+    D12CommandList *list = impl(iface);
+    if (!list->open || !heap || !dst || !count)
+        return;
+    end_rendering(list);
+    D12ResolveQueries(list, D12QueryHeapFrom(heap), type, start, count, D12ResourceFrom(dst), offset);
+}
+
+/* predication with vulkan's conditional rendering, which reads the predicate's low 32 bits. */
+static void STDMETHODCALLTYPE list_set_predication(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *buffer,
+                                                   UINT64 offset, D3D12_PREDICATION_OP op)
+{
+    D12CommandList *list = impl(iface);
+    D12Device *device = list->child.device;
+    if (!list->open || !device->has_conditional)
+        return;
+    end_rendering(list);
+    if (list->predicated) {
+        device->vk.vkCmdEndConditionalRenderingEXT(list->cmd);
+        list->predicated = FALSE;
+    }
+    D12Resource *r = D12ResourceFrom(buffer);
+    if (!r || !r->buffer)
+        return;
+    VkConditionalRenderingBeginInfoEXT info = {VK_STRUCTURE_TYPE_CONDITIONAL_RENDERING_BEGIN_INFO_EXT};
+    info.buffer = r->buffer;
+    info.offset = r->offset + offset;
+    info.flags = op == D3D12_PREDICATION_OP_NOT_EQUAL_ZERO ? VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT : 0;
+    device->vk.vkCmdBeginConditionalRenderingEXT(list->cmd, &info);
+    list->predicated = TRUE;
+}
+
+static void STDMETHODCALLTYPE list_set_marker(ID3D12GraphicsCommandList10 *iface, UINT metadata, const void *data,
+                                              UINT size)
+{
+}
+
+static void STDMETHODCALLTYPE list_end_event(ID3D12GraphicsCommandList10 *iface) {}
+
+/* ------------------------------------------------------------------ indirect */
+
+static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 *iface,
+                                                    ID3D12CommandSignature *signature_iface, UINT max_count,
+                                                    ID3D12Resource *arguments, UINT64 arguments_offset,
+                                                    ID3D12Resource *count, UINT64 count_offset)
+{
+    D12CommandList *list = impl(iface);
+    D12CommandSignature *signature = D12CommandSignatureFrom(signature_iface);
+    D12Resource *args = D12ResourceFrom(arguments), *counts = D12ResourceFrom(count);
+    if (!list->open || !signature || !args || !args->buffer || !max_count)
+        return;
+    D12Vk *vk = vk_of(list);
+    const D3D12_INDIRECT_ARGUMENT_DESC *last = &signature->args[signature->arg_count - 1];
+    if (signature->arg_count != 1) {
+        D12Log("d3d12: command signatures changing state per command are not supported yet");
+        return;
+    }
+    VkDeviceSize offset = args->offset + arguments_offset;
+    switch (last->Type) {
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW:
+        if (!prepare_draw(list))
+            return;
+        if (counts)
+            vk->vkCmdDrawIndirectCount(list->cmd, args->buffer, offset, counts->buffer, counts->offset + count_offset,
+                                       max_count, signature->stride);
+        else
+            vk->vkCmdDrawIndirect(list->cmd, args->buffer, offset, max_count, signature->stride);
+        break;
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED:
+        if (!list->ib.BufferLocation || !prepare_draw(list))
+            return;
+        if (counts)
+            vk->vkCmdDrawIndexedIndirectCount(list->cmd, args->buffer, offset, counts->buffer,
+                                              counts->offset + count_offset, max_count, signature->stride);
+        else
+            vk->vkCmdDrawIndexedIndirect(list->cmd, args->buffer, offset, max_count, signature->stride);
+        break;
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
+        if (!prepare_dispatch(list))
+            return;
+        /* guessed: a count buffer's count is not read; every command up to the maximum runs. */
+        for (UINT i = 0; i < max_count; i++)
+            vk->vkCmdDispatchIndirect(list->cmd, args->buffer, offset + (VkDeviceSize)i * signature->stride);
+        break;
+    default:
+        D12Log("d3d12: indirect argument type %u is not supported", last->Type);
+        break;
+    }
+}
+
+/* ------------------------------------------------------------------ the rest of the newer lists */
+
+static void atomic_copy(D12CommandList *list, ID3D12Resource *dst, UINT64 dst_offset, ID3D12Resource *src,
+                        UINT64 src_offset, UINT64 size)
+{
+    D12Resource *d = D12ResourceFrom(dst), *s = D12ResourceFrom(src);
+    if (!list->open || !d || !s || !d->buffer || !s->buffer)
+        return;
+    end_rendering(list);
+    VkBufferCopy region = {s->offset + src_offset, d->offset + dst_offset, size};
+    vk_of(list)->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
+}
+
+static void STDMETHODCALLTYPE list_atomic_copy_uint(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
+                                                    UINT64 dst_offset, ID3D12Resource *src, UINT64 src_offset,
+                                                    UINT dependencies, ID3D12Resource *const *resources,
+                                                    const void *ranges)
+{
+    atomic_copy(impl(iface), dst, dst_offset, src, src_offset, 4);
+}
+
+static void STDMETHODCALLTYPE list_atomic_copy_uint64(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
+                                                      UINT64 dst_offset, ID3D12Resource *src, UINT64 src_offset,
+                                                      UINT dependencies, ID3D12Resource *const *resources,
+                                                      const void *ranges)
+{
+    atomic_copy(impl(iface), dst, dst_offset, src, src_offset, 8);
+}
+
+static void STDMETHODCALLTYPE list_set_sample_positions(ID3D12GraphicsCommandList10 *iface, UINT samples, UINT pixels,
+                                                        const void *positions)
+{
+}
+
+static void STDMETHODCALLTYPE list_set_view_instance_mask(ID3D12GraphicsCommandList10 *iface, UINT mask) {}
+
+/* each parameter a destination address and a value. */
+static void STDMETHODCALLTYPE list_write_buffer_immediate(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                          const void *parameters, const void *modes)
+{
+    D12CommandList *list = impl(iface);
+    if (!list->open)
+        return;
+    end_rendering(list);
+    const BYTE *p = parameters;
+    for (UINT i = 0; i < count; i++, p += 16) {
+        D3D12_GPU_VIRTUAL_ADDRESS address;
+        UINT value;
+        memcpy(&address, p, 8);
+        memcpy(&value, p + 8, 4);
+        VkBuffer buffer;
+        VkDeviceSize offset;
+        if (D12AddressLookup(list->child.device, address, &buffer, &offset, NULL))
+            vk_of(list)->vkCmdUpdateBuffer(list->cmd, buffer, offset, 4, &value);
+    }
+}
+
+static void STDMETHODCALLTYPE list_set_protected_session(ID3D12GraphicsCommandList10 *iface, void *session) {}
+
+/* render passes: targets set, cleared as asked, resolved at the end. */
+static void STDMETHODCALLTYPE list_begin_render_pass(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                     const D3D12_RENDER_PASS_RENDER_TARGET_DESC *targets,
+                                                     const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC *depth,
+                                                     D3D12_RENDER_PASS_FLAGS flags)
+{
+    D12CommandList *list = impl(iface);
+    D3D12_CPU_DESCRIPTOR_HANDLE handles[8];
+    count = D12_MIN(count, 8u);
+    for (UINT i = 0; i < count; i++)
+        handles[i] = targets[i].cpuDescriptor;
+    list_om_set_render_targets(iface, count, handles, FALSE, depth ? &depth->cpuDescriptor : NULL);
+    for (UINT i = 0; i < count; i++)
+        if (targets[i].BeginningAccess.Type == D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR)
+            list_clear_render_target_view(iface, handles[i], targets[i].BeginningAccess.Clear.ClearValue.Color, 0, NULL);
+    if (depth) {
+        D3D12_CLEAR_FLAGS clear = 0;
+        if (depth->DepthBeginningAccess.Type == D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR)
+            clear |= D3D12_CLEAR_FLAG_DEPTH;
+        if (depth->StencilBeginningAccess.Type == D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR)
+            clear |= D3D12_CLEAR_FLAG_STENCIL;
+        if (clear)
+            list_clear_depth_stencil_view(iface, depth->cpuDescriptor, clear,
+                                          depth->DepthBeginningAccess.Clear.ClearValue.DepthStencil.Depth,
+                                          depth->StencilBeginningAccess.Clear.ClearValue.DepthStencil.Stencil, 0, NULL);
+    }
+    memcpy(list->pass_targets, targets, count * sizeof(*targets));
+    list->pass_count = count;
+}
+
+static void STDMETHODCALLTYPE list_end_render_pass(ID3D12GraphicsCommandList10 *iface)
+{
+    D12CommandList *list = impl(iface);
+    end_rendering(list);
+    for (UINT i = 0; i < list->pass_count; i++) {
+        const D3D12_RENDER_PASS_ENDING_ACCESS *e = &list->pass_targets[i].EndingAccess;
+        if (e->Type != D3D12_RENDER_PASS_ENDING_ACCESS_TYPE_RESOLVE)
+            continue;
+        for (UINT k = 0; k < e->Resolve.SubresourceCount; k++) {
+            const D3D12_RENDER_PASS_ENDING_ACCESS_RESOLVE_SUBRESOURCE_PARAMETERS *p = &e->Resolve.pSubresourceParameters[k];
+            resolve(list, D12ResourceFrom(e->Resolve.pDstResource), p->DstSubresource, p->DstX, p->DstY,
+                    D12ResourceFrom(e->Resolve.pSrcResource), p->SrcSubresource, &p->SrcRect);
+        }
+    }
+    list->pass_count = 0;
+}
+
+static void STDMETHODCALLTYPE list_meta_command(ID3D12GraphicsCommandList10 *iface, void *command, const void *data,
+                                                SIZE_T size)
+{
+}
+
+static void STDMETHODCALLTYPE list_build_acceleration_structure(ID3D12GraphicsCommandList10 *iface, const void *desc,
+                                                                UINT count, const void *postbuild)
+{
+}
+
+static void STDMETHODCALLTYPE list_emit_postbuild_info(ID3D12GraphicsCommandList10 *iface, const void *desc, UINT count,
+                                                       const D3D12_GPU_VIRTUAL_ADDRESS *src)
+{
+}
+
+static void STDMETHODCALLTYPE list_copy_acceleration_structure(ID3D12GraphicsCommandList10 *iface,
+                                                               D3D12_GPU_VIRTUAL_ADDRESS dst,
+                                                               D3D12_GPU_VIRTUAL_ADDRESS src, UINT mode)
+{
+}
+
+static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList10 *iface, void *state) {}
+
+static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const void *desc) {}
+
+static void STDMETHODCALLTYPE list_rs_set_shading_rate(ID3D12GraphicsCommandList10 *iface, UINT rate,
+                                                       const UINT *combiners)
+{
+}
+
+static void STDMETHODCALLTYPE list_rs_set_shading_rate_image(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *image)
+{
+}
+
+static void STDMETHODCALLTYPE list_dispatch_mesh(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z) {}
+
+static void STDMETHODCALLTYPE list_set_program(ID3D12GraphicsCommandList10 *iface, const void *desc) {}
+
+static const struct ID3D12GraphicsCommandList10Vtbl g_list_vtbl = {
+    list_query,
+    list_add_ref,
+    list_release,
+    list_get_private_data,
+    list_set_private_data,
+    list_set_private_data_interface,
+    list_set_name,
+    list_get_device,
+    list_get_type,
+    list_close,
+    list_reset,
+    list_clear_state,
+    list_draw_instanced,
+    list_draw_indexed_instanced,
+    list_dispatch,
+    list_copy_buffer_region,
+    list_copy_texture_region,
+    list_copy_resource,
+    list_copy_tiles,
+    list_resolve_subresource,
+    list_ia_set_primitive_topology,
+    list_rs_set_viewports,
+    list_rs_set_scissor_rects,
+    list_om_set_blend_factor,
+    list_om_set_stencil_ref,
+    list_set_pipeline_state,
+    list_resource_barrier,
+    list_execute_bundle,
+    list_set_descriptor_heaps,
+    list_set_compute_root_signature,
+    list_set_graphics_root_signature,
+    list_set_compute_root_descriptor_table,
+    list_set_graphics_root_descriptor_table,
+    list_set_compute_root_32bit_constant,
+    list_set_graphics_root_32bit_constant,
+    list_set_compute_root_32bit_constants,
+    list_set_graphics_root_32bit_constants,
+    list_set_compute_root_view,
+    list_set_graphics_root_view,
+    list_set_compute_root_view,
+    list_set_graphics_root_view,
+    list_set_compute_root_view,
+    list_set_graphics_root_view,
+    list_ia_set_index_buffer,
+    list_ia_set_vertex_buffers,
+    list_so_set_targets,
+    list_om_set_render_targets,
+    list_clear_depth_stencil_view,
+    list_clear_render_target_view,
+    list_clear_uav_uint,
+    list_clear_uav_float,
+    list_discard_resource,
+    list_begin_query,
+    list_end_query,
+    list_resolve_query_data,
+    list_set_predication,
+    list_set_marker,
+    list_set_marker,
+    list_end_event,
+    list_execute_indirect,
+    list_atomic_copy_uint,
+    list_atomic_copy_uint64,
+    list_om_set_depth_bounds,
+    list_set_sample_positions,
+    list_resolve_subresource_region,
+    list_set_view_instance_mask,
+    list_write_buffer_immediate,
+    list_set_protected_session,
+    list_begin_render_pass,
+    list_end_render_pass,
+    list_meta_command,
+    list_meta_command,
+    list_build_acceleration_structure,
+    list_emit_postbuild_info,
+    list_copy_acceleration_structure,
+    list_set_pipeline_state1,
+    list_dispatch_rays,
+    list_rs_set_shading_rate,
+    list_rs_set_shading_rate_image,
+    list_dispatch_mesh,
+    list_barrier,
+    list_om_set_front_and_back_stencil_ref,
+    list_rs_set_depth_bias,
+    list_ia_set_strip_cut,
+    list_set_program,
+    list_set_program,
+};
+
+HRESULT D12CreateCommandList(D12Device *device, D3D12_COMMAND_LIST_TYPE type, D12CommandAllocator *allocator,
+                             D12PipelineState *initial, D12CommandList **out)
+{
+    if (type != D3D12_COMMAND_LIST_TYPE_DIRECT && type != D3D12_COMMAND_LIST_TYPE_BUNDLE &&
+        type != D3D12_COMMAND_LIST_TYPE_COMPUTE && type != D3D12_COMMAND_LIST_TYPE_COPY)
+        return E_INVALIDARG;
+    D12CommandList *list = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*list));
+    if (!list)
+        return E_OUTOFMEMORY;
+    list->iface.lpVtbl = &g_list_vtbl;
+    list->child.refs = 1;
+    list->child.device = device;
+    list->type = type;
+    if (allocator) {
+        HRESULT hr = begin(list, allocator, initial);
+        if (FAILED(hr)) {
+            if (list->allocator)
+                list->allocator->iface.lpVtbl->Release(&list->allocator->iface);
+            HeapFree(GetProcessHeap(), 0, list);
+            return hr;
+        }
+    }
+    D12ChildInit(&list->child, device);
+    *out = list;
+    return S_OK;
+}

@@ -34,12 +34,13 @@ static HRESULT STDMETHODCALLTYPE view_query(void *iface, REFIID riid, void **out
     BOOL match = IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild);
     for (UINT i = 0; i < 3 && !match; i++)
         match = IsEqualGUID(riid, IIDS[view->kind][i]);
-    if (!match) {
+    void *d3d10 = match ? NULL : D3d10ViewInterface(view, riid);
+    if (!match && !d3d10) {
         *out = NULL;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&view->child.refs);
-    *out = iface;
+    *out = d3d10 ? d3d10 : iface;
     return S_OK;
 }
 

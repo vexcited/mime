@@ -178,6 +178,8 @@ static HRESULT resource_query_common(D3dResource *r, REFIID riid, void **out)
              (IsEqualGUID(riid, &IID_IDXGISurface) || IsEqualGUID(riid, &IID_IDXGISurface1) ||
               IsEqualGUID(riid, &IID_IDXGISurface2)))
         *out = &r->surface;
+    else
+        *out = D3d10ResourceInterface(r, riid);
     if (!*out)
         return E_NOINTERFACE;
     D3dResourceAddRef(r);
