@@ -1,0 +1,410 @@
+/*
+ * the tokens of shader model 4 and 5 bytecode: opcodes, operand types,
+ * and the fields of the opcode, operand and declaration tokens.
+ */
+#ifndef MIME_LIB_DXBC_TOKENS_H
+#define MIME_LIB_DXBC_TOKENS_H
+
+enum DxbcOpcode {
+    OP_ADD = 0,
+    OP_AND = 1,
+    OP_BREAK = 2,
+    OP_BREAKC = 3,
+    OP_CALL = 4,
+    OP_CALLC = 5,
+    OP_CASE = 6,
+    OP_CONTINUE = 7,
+    OP_CONTINUEC = 8,
+    OP_CUT = 9,
+    OP_DEFAULT = 10,
+    OP_DERIV_RTX = 11,
+    OP_DERIV_RTY = 12,
+    OP_DISCARD = 13,
+    OP_DIV = 14,
+    OP_DP2 = 15,
+    OP_DP3 = 16,
+    OP_DP4 = 17,
+    OP_ELSE = 18,
+    OP_EMIT = 19,
+    OP_EMITTHENCUT = 20,
+    OP_ENDIF = 21,
+    OP_ENDLOOP = 22,
+    OP_ENDSWITCH = 23,
+    OP_EQ = 24,
+    OP_EXP = 25,
+    OP_FRC = 26,
+    OP_FTOI = 27,
+    OP_FTOU = 28,
+    OP_GE = 29,
+    OP_IADD = 30,
+    OP_IF = 31,
+    OP_IEQ = 32,
+    OP_IGE = 33,
+    OP_ILT = 34,
+    OP_IMAD = 35,
+    OP_IMAX = 36,
+    OP_IMIN = 37,
+    OP_IMUL = 38,
+    OP_INE = 39,
+    OP_INEG = 40,
+    OP_ISHL = 41,
+    OP_ISHR = 42,
+    OP_ITOF = 43,
+    OP_LABEL = 44,
+    OP_LD = 45,
+    OP_LD_MS = 46,
+    OP_LOG = 47,
+    OP_LOOP = 48,
+    OP_LT = 49,
+    OP_MAD = 50,
+    OP_MIN = 51,
+    OP_MAX = 52,
+    OP_CUSTOMDATA = 53,
+    OP_MOV = 54,
+    OP_MOVC = 55,
+    OP_MUL = 56,
+    OP_NE = 57,
+    OP_NOP = 58,
+    OP_NOT = 59,
+    OP_OR = 60,
+    OP_RESINFO = 61,
+    OP_RET = 62,
+    OP_RETC = 63,
+    OP_ROUND_NE = 64,
+    OP_ROUND_NI = 65,
+    OP_ROUND_PI = 66,
+    OP_ROUND_Z = 67,
+    OP_RSQ = 68,
+    OP_SAMPLE = 69,
+    OP_SAMPLE_C = 70,
+    OP_SAMPLE_C_LZ = 71,
+    OP_SAMPLE_L = 72,
+    OP_SAMPLE_D = 73,
+    OP_SAMPLE_B = 74,
+    OP_SQRT = 75,
+    OP_SWITCH = 76,
+    OP_SINCOS = 77,
+    OP_UDIV = 78,
+    OP_ULT = 79,
+    OP_UGE = 80,
+    OP_UMUL = 81,
+    OP_UMAD = 82,
+    OP_UMAX = 83,
+    OP_UMIN = 84,
+    OP_USHR = 85,
+    OP_UTOF = 86,
+    OP_XOR = 87,
+    OP_DCL_RESOURCE = 88,
+    OP_DCL_CONSTANT_BUFFER = 89,
+    OP_DCL_SAMPLER = 90,
+    OP_DCL_INDEX_RANGE = 91,
+    OP_DCL_GS_OUTPUT_TOPOLOGY = 92,
+    OP_DCL_GS_INPUT_PRIMITIVE = 93,
+    OP_DCL_MAX_OUTPUT_VERTEX_COUNT = 94,
+    OP_DCL_INPUT = 95,
+    OP_DCL_INPUT_SGV = 96,
+    OP_DCL_INPUT_SIV = 97,
+    OP_DCL_INPUT_PS = 98,
+    OP_DCL_INPUT_PS_SGV = 99,
+    OP_DCL_INPUT_PS_SIV = 100,
+    OP_DCL_OUTPUT = 101,
+    OP_DCL_OUTPUT_SGV = 102,
+    OP_DCL_OUTPUT_SIV = 103,
+    OP_DCL_TEMPS = 104,
+    OP_DCL_INDEXABLE_TEMP = 105,
+    OP_DCL_GLOBAL_FLAGS = 106,
+    OP_LOD = 108,
+    OP_GATHER4 = 109,
+    OP_SAMPLE_POS = 110,
+    OP_SAMPLE_INFO = 111,
+    OP_HS_DECLS = 113,
+    OP_HS_CONTROL_POINT_PHASE = 114,
+    OP_HS_FORK_PHASE = 115,
+    OP_HS_JOIN_PHASE = 116,
+    OP_EMIT_STREAM = 117,
+    OP_CUT_STREAM = 118,
+    OP_EMITTHENCUT_STREAM = 119,
+    OP_INTERFACE_CALL = 120,
+    OP_BUFINFO = 121,
+    OP_DERIV_RTX_COARSE = 122,
+    OP_DERIV_RTX_FINE = 123,
+    OP_DERIV_RTY_COARSE = 124,
+    OP_DERIV_RTY_FINE = 125,
+    OP_GATHER4_C = 126,
+    OP_GATHER4_PO = 127,
+    OP_GATHER4_PO_C = 128,
+    OP_RCP = 129,
+    OP_F32TOF16 = 130,
+    OP_F16TOF32 = 131,
+    OP_UADDC = 132,
+    OP_USUBB = 133,
+    OP_COUNTBITS = 134,
+    OP_FIRSTBIT_HI = 135,
+    OP_FIRSTBIT_LO = 136,
+    OP_FIRSTBIT_SHI = 137,
+    OP_UBFE = 138,
+    OP_IBFE = 139,
+    OP_BFI = 140,
+    OP_BFREV = 141,
+    OP_SWAPC = 142,
+    OP_DCL_STREAM = 143,
+    OP_DCL_FUNCTION_BODY = 144,
+    OP_DCL_FUNCTION_TABLE = 145,
+    OP_DCL_INTERFACE = 146,
+    OP_DCL_INPUT_CONTROL_POINT_COUNT = 147,
+    OP_DCL_OUTPUT_CONTROL_POINT_COUNT = 148,
+    OP_DCL_TESS_DOMAIN = 149,
+    OP_DCL_TESS_PARTITIONING = 150,
+    OP_DCL_TESS_OUTPUT_PRIMITIVE = 151,
+    OP_DCL_HS_MAX_TESSFACTOR = 152,
+    OP_DCL_HS_FORK_PHASE_INSTANCE_COUNT = 153,
+    OP_DCL_HS_JOIN_PHASE_INSTANCE_COUNT = 154,
+    OP_DCL_THREAD_GROUP = 155,
+    OP_DCL_UAV_TYPED = 156,
+    OP_DCL_UAV_RAW = 157,
+    OP_DCL_UAV_STRUCTURED = 158,
+    OP_DCL_TGSM_RAW = 159,
+    OP_DCL_TGSM_STRUCTURED = 160,
+    OP_DCL_RESOURCE_RAW = 161,
+    OP_DCL_RESOURCE_STRUCTURED = 162,
+    OP_LD_UAV_TYPED = 163,
+    OP_STORE_UAV_TYPED = 164,
+    OP_LD_RAW = 165,
+    OP_STORE_RAW = 166,
+    OP_LD_STRUCTURED = 167,
+    OP_STORE_STRUCTURED = 168,
+    OP_ATOMIC_AND = 169,
+    OP_ATOMIC_OR = 170,
+    OP_ATOMIC_XOR = 171,
+    OP_ATOMIC_CMP_STORE = 172,
+    OP_ATOMIC_IADD = 173,
+    OP_ATOMIC_IMAX = 174,
+    OP_ATOMIC_IMIN = 175,
+    OP_ATOMIC_UMAX = 176,
+    OP_ATOMIC_UMIN = 177,
+    OP_IMM_ATOMIC_ALLOC = 178,
+    OP_IMM_ATOMIC_CONSUME = 179,
+    OP_IMM_ATOMIC_IADD = 180,
+    OP_IMM_ATOMIC_AND = 181,
+    OP_IMM_ATOMIC_OR = 182,
+    OP_IMM_ATOMIC_XOR = 183,
+    OP_IMM_ATOMIC_EXCH = 184,
+    OP_IMM_ATOMIC_CMP_EXCH = 185,
+    OP_IMM_ATOMIC_IMAX = 186,
+    OP_IMM_ATOMIC_IMIN = 187,
+    OP_IMM_ATOMIC_UMAX = 188,
+    OP_IMM_ATOMIC_UMIN = 189,
+    OP_SYNC = 190,
+    OP_DADD = 191,
+    OP_DMAX = 192,
+    OP_DMIN = 193,
+    OP_DMUL = 194,
+    OP_DEQ = 195,
+    OP_DGE = 196,
+    OP_DLT = 197,
+    OP_DNE = 198,
+    OP_DMOV = 199,
+    OP_DMOVC = 200,
+    OP_DTOF = 201,
+    OP_FTOD = 202,
+    OP_EVAL_SNAPPED = 203,
+    OP_EVAL_SAMPLE_INDEX = 204,
+    OP_EVAL_CENTROID = 205,
+    OP_DCL_GS_INSTANCE_COUNT = 206,
+    OP_ABORT = 207,
+    OP_DEBUG_BREAK = 208,
+    OP_DDIV = 210,
+    OP_DFMA = 211,
+    OP_DRCP = 212,
+    OP_MSAD = 213,
+    OP_DTOI = 214,
+    OP_DTOU = 215,
+    OP_ITOD = 216,
+    OP_UTOD = 217,
+    OP_GATHER4_FEEDBACK = 219,
+    OP_GATHER4_C_FEEDBACK = 220,
+    OP_GATHER4_PO_FEEDBACK = 221,
+    OP_GATHER4_PO_C_FEEDBACK = 222,
+    OP_LD_FEEDBACK = 223,
+    OP_LD_MS_FEEDBACK = 224,
+    OP_LD_UAV_TYPED_FEEDBACK = 225,
+    OP_LD_RAW_FEEDBACK = 226,
+    OP_LD_STRUCTURED_FEEDBACK = 227,
+    OP_SAMPLE_L_FEEDBACK = 228,
+    OP_SAMPLE_C_LZ_FEEDBACK = 229,
+    OP_SAMPLE_CLAMP_FEEDBACK = 230,
+    OP_SAMPLE_B_CLAMP_FEEDBACK = 231,
+    OP_SAMPLE_D_CLAMP_FEEDBACK = 232,
+    OP_SAMPLE_C_CLAMP_FEEDBACK = 233,
+    OP_CHECK_ACCESS_FULLY_MAPPED = 234,
+};
+
+enum DxbcOperandType {
+    OPERAND_TEMP = 0,
+    OPERAND_INPUT = 1,
+    OPERAND_OUTPUT = 2,
+    OPERAND_INDEXABLE_TEMP = 3,
+    OPERAND_IMMEDIATE32 = 4,
+    OPERAND_IMMEDIATE64 = 5,
+    OPERAND_SAMPLER = 6,
+    OPERAND_RESOURCE = 7,
+    OPERAND_CONSTANT_BUFFER = 8,
+    OPERAND_IMMEDIATE_CONSTANT_BUFFER = 9,
+    OPERAND_LABEL = 10,
+    OPERAND_INPUT_PRIMITIVEID = 11,
+    OPERAND_OUTPUT_DEPTH = 12,
+    OPERAND_NULL = 13,
+    OPERAND_RASTERIZER = 14,
+    OPERAND_OUTPUT_COVERAGE_MASK = 15,
+    OPERAND_STREAM = 16,
+    OPERAND_FUNCTION_BODY = 17,
+    OPERAND_FUNCTION_TABLE = 18,
+    OPERAND_INTERFACE = 19,
+    OPERAND_FUNCTION_INPUT = 20,
+    OPERAND_FUNCTION_OUTPUT = 21,
+    OPERAND_OUTPUT_CONTROL_POINT_ID = 22,
+    OPERAND_INPUT_FORK_INSTANCE_ID = 23,
+    OPERAND_INPUT_JOIN_INSTANCE_ID = 24,
+    OPERAND_INPUT_CONTROL_POINT = 25,
+    OPERAND_OUTPUT_CONTROL_POINT = 26,
+    OPERAND_INPUT_PATCH_CONSTANT = 27,
+    OPERAND_INPUT_DOMAIN_POINT = 28,
+    OPERAND_THIS_POINTER = 29,
+    OPERAND_UNORDERED_ACCESS_VIEW = 30,
+    OPERAND_THREAD_GROUP_SHARED_MEMORY = 31,
+    OPERAND_INPUT_THREAD_ID = 32,
+    OPERAND_INPUT_THREAD_GROUP_ID = 33,
+    OPERAND_INPUT_THREAD_ID_IN_GROUP = 34,
+    OPERAND_INPUT_COVERAGE_MASK = 35,
+    OPERAND_INPUT_THREAD_ID_IN_GROUP_FLATTENED = 36,
+    OPERAND_INPUT_GS_INSTANCE_ID = 37,
+    OPERAND_OUTPUT_DEPTH_GREATER_EQUAL = 38,
+    OPERAND_OUTPUT_DEPTH_LESS_EQUAL = 39,
+    OPERAND_CYCLE_COUNTER = 40,
+    OPERAND_OUTPUT_STENCIL_REF = 41,
+    OPERAND_INNER_COVERAGE = 42,
+};
+
+/* resource dimensions of declarations and of the extended opcode token. */
+enum DxbcResourceDimension {
+    RES_UNKNOWN = 0,
+    RES_BUFFER = 1,
+    RES_TEXTURE1D = 2,
+    RES_TEXTURE2D = 3,
+    RES_TEXTURE2DMS = 4,
+    RES_TEXTURE3D = 5,
+    RES_TEXTURECUBE = 6,
+    RES_TEXTURE1DARRAY = 7,
+    RES_TEXTURE2DARRAY = 8,
+    RES_TEXTURE2DMSARRAY = 9,
+    RES_TEXTURECUBEARRAY = 10,
+    RES_RAW_BUFFER = 11,
+    RES_STRUCTURED_BUFFER = 12,
+};
+
+/* the per component return types of resource declarations. */
+enum DxbcReturnType {
+    RET_UNORM = 1,
+    RET_SNORM = 2,
+    RET_SINT = 3,
+    RET_UINT = 4,
+    RET_FLOAT = 5,
+    RET_MIXED = 6,
+    RET_DOUBLE = 7,
+};
+
+/* system values of declarations; signature elements number them alike. */
+enum DxbcSystemValue {
+    SV_UNDEFINED = 0,
+    SV_POSITION = 1,
+    SV_CLIP_DISTANCE = 2,
+    SV_CULL_DISTANCE = 3,
+    SV_RENDER_TARGET_ARRAY_INDEX = 4,
+    SV_VIEWPORT_ARRAY_INDEX = 5,
+    SV_VERTEX_ID = 6,
+    SV_PRIMITIVE_ID = 7,
+    SV_INSTANCE_ID = 8,
+    SV_IS_FRONT_FACE = 9,
+    SV_SAMPLE_INDEX = 10,
+    SV_FINAL_QUAD_EDGE_TESSFACTOR = 11,
+    SV_FINAL_QUAD_INSIDE_TESSFACTOR = 12,
+    SV_FINAL_TRI_EDGE_TESSFACTOR = 13,
+    SV_FINAL_TRI_INSIDE_TESSFACTOR = 14,
+    SV_FINAL_LINE_DETAIL_TESSFACTOR = 15,
+    SV_FINAL_LINE_DENSITY_TESSFACTOR = 16,
+    SV_TARGET = 64,
+    SV_DEPTH = 65,
+    SV_COVERAGE = 66,
+    SV_DEPTH_GREATER_EQUAL = 67,
+    SV_DEPTH_LESS_EQUAL = 68,
+    SV_STENCIL_REF = 69,
+    SV_INNER_COVERAGE = 70,
+};
+
+/* the pixel shader interpolation modes of dcl_input_ps. */
+enum DxbcInterpolation {
+    INTERP_UNDEFINED = 0,
+    INTERP_CONSTANT = 1,
+    INTERP_LINEAR = 2,
+    INTERP_LINEAR_CENTROID = 3,
+    INTERP_LINEAR_NOPERSPECTIVE = 4,
+    INTERP_LINEAR_NOPERSPECTIVE_CENTROID = 5,
+    INTERP_LINEAR_SAMPLE = 6,
+    INTERP_LINEAR_NOPERSPECTIVE_SAMPLE = 7,
+};
+
+/* opcode token fields. */
+#define TOK_OPCODE(t) ((t)&0x7FF)
+#define TOK_LENGTH(t) (((t) >> 24) & 0x7F)
+#define TOK_EXTENDED(t) ((t) >> 31)
+#define TOK_SATURATE(t) (((t) >> 13) & 1)
+#define TOK_TEST_NONZERO(t) (((t) >> 18) & 1)
+#define TOK_PRECISE(t) (((t) >> 19) & 0xF)
+#define TOK_RESINFO_RETURN(t) (((t) >> 11) & 3)
+#define TOK_SYNC_FLAGS(t) (((t) >> 11) & 0xF)
+#define TOK_RESOURCE_DIMENSION(t) (((t) >> 11) & 0x1F)
+#define TOK_RESOURCE_SAMPLES(t) (((t) >> 16) & 0x7F)
+#define TOK_INTERPOLATION(t) (((t) >> 11) & 0xF)
+#define TOK_UAV_COUNTER(t) (((t) >> 23) & 1)
+#define TOK_UAV_COHERENT(t) (((t) >> 16) & 1)
+#define TOK_CB_DYNAMIC(t) (((t) >> 11) & 1)
+#define TOK_SAMPLER_MODE(t) (((t) >> 11) & 0xF)
+#define TOK_CUSTOMDATA_CLASS(t) ((t) >> 11)
+
+/* the sync flags of sync. */
+#define SYNC_THREADS_IN_GROUP 0x1
+#define SYNC_GROUP_SHARED_MEMORY 0x2
+#define SYNC_UAV_GROUP 0x4
+#define SYNC_UAV_GLOBAL 0x8
+
+/* extended opcode tokens. */
+#define EXT_SAMPLE_CONTROLS 1
+#define EXT_RESOURCE_DIM 2
+#define EXT_RESOURCE_RETURN_TYPE 3
+
+/* operand token fields. */
+#define OPD_COMPONENTS(t) ((t)&3)
+#define OPD_SELECTION(t) (((t) >> 2) & 3)
+#define OPD_MASK(t) (((t) >> 4) & 0xF)
+#define OPD_SWIZZLE(t) (((t) >> 4) & 0xFF)
+#define OPD_SELECT1(t) (((t) >> 4) & 3)
+#define OPD_TYPE(t) (((t) >> 12) & 0xFF)
+#define OPD_INDEX_DIMENSION(t) (((t) >> 20) & 3)
+#define OPD_INDEX_REPRESENTATION(t, i) (((t) >> (22 + 3 * (i))) & 7)
+#define OPD_EXTENDED(t) ((t) >> 31)
+
+#define SELECT_MASK 0
+#define SELECT_SWIZZLE 1
+#define SELECT_SELECT1 2
+
+#define INDEX_IMMEDIATE32 0
+#define INDEX_IMMEDIATE64 1
+#define INDEX_RELATIVE 2
+#define INDEX_IMMEDIATE32_RELATIVE 3
+#define INDEX_IMMEDIATE64_RELATIVE 4
+
+/* modifiers of the extended operand token. */
+#define MOD_NEG 1
+#define MOD_ABS 2
+
+#endif

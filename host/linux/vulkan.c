@@ -433,6 +433,27 @@ static void device_extensions(MvkCall *call)
  * memory can be its own ram; then the queues the guest named, as (family,
  * index, id) triples.
  */
+/*
+ * buffers may be bound to guest memory the host imported, which vulkan
+ * allows only to buffers made for that kind of handle: every buffer is
+ * made so. the driver's function, the same for every connection.
+ */
+static PFN_vkCreateBuffer g_create_buffer;
+
+static VKAPI_ATTR VkResult VKAPI_CALL create_importable_buffer(VkDevice device, const VkBufferCreateInfo *info,
+                                                               const VkAllocationCallbacks *allocator,
+                                                               VkBuffer *buffer)
+{
+    for (const VkBaseInStructure *s = info->pNext; s; s = s->pNext)
+        if (s->sType == VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO)
+            return g_create_buffer(device, info, allocator, buffer);
+    VkExternalMemoryBufferCreateInfo external = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO, info->pNext,
+                                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+    VkBufferCreateInfo copy = *info;
+    copy.pNext = &external;
+    return g_create_buffer(device, &copy, allocator, buffer);
+}
+
 static void create_device(MvkCall *call)
 {
     MvkConnection *c = call->conn;
@@ -472,6 +493,10 @@ static void create_device(MvkCall *call)
             c->physical_device = physical;
             PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
             mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, c->device);
+            if (c->host_import && c->fn.vkCreateBuffer) {
+                g_create_buffer = c->fn.vkCreateBuffer;
+                c->fn.vkCreateBuffer = create_importable_buffer;
+            }
             bind(c, id, (uint64_t)(uintptr_t)c->device);
             VkPhysicalDeviceExternalMemoryHostPropertiesEXT host = {
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};

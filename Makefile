@@ -67,7 +67,7 @@ EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D000000
 	bcrypt:0x7FF530000000 avrt:0x7FF520000000 dinput8:0x7FF510000000 dwrite:0x7FF500000000 \
 	dxgi:0x7FF4F0000000 wsock32:0x7FF4E0000000 ucrtbase:0x7FF4D0000000 mpr:0x7FF4C0000000 wintrust:0x7FF4B0000000 mmdevapi:0x7FF4A0000000 \
 	gdiplus:0x7FF490000000 wininet:0x7FF480000000 urlmon:0x7FF470000000 msimg32:0x7FF460000000 \
-	oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000 d3d11:0x7FF420000000
+	oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000 d3d11:0x7FF420000000 msvcp_win:0x7FF410000000
 EXTRA_NAMES := $(foreach d,$(EXTRA_DLLS),$(firstword $(subst :, ,$(d))))
 # the file name of each, winspool being a driver file.
 extra_file = $(if $(filter winspool,$(1)),$(1).drv,$(1).dll)

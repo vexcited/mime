@@ -370,6 +370,14 @@ static void destroy_device(D3dDevice *device)
         D3dCollectGarbage(device);
         D3dMemoryDestroy(device);
         D3dHeapDestroy(device);
+        vk->vkDestroySampler(vk->device, device->null_sampler, NULL);
+        vk->vkDestroyDescriptorPool(vk->device, device->heap_pool, NULL);
+        vk->vkDestroyDescriptorPool(vk->device, device->table_pool, NULL);
+        vk->vkDestroyPipelineLayout(vk->device, device->pipeline_layout, NULL);
+        vk->vkDestroyDescriptorSetLayout(vk->device, device->heap_layout, NULL);
+        vk->vkDestroyDescriptorSetLayout(vk->device, device->table_layout, NULL);
+        vk->vkDestroyCommandPool(vk->device, device->init_pool, NULL);
+        vk->vkDestroySemaphore(vk->device, device->timeline, NULL);
         vk->vkDestroyDevice(vk->device, NULL);
     }
     if (device->adapter)

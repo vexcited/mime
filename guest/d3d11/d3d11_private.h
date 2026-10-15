@@ -51,6 +51,9 @@
     X(vkQueueSubmit2)                                                                                                  \
     X(vkCreateCommandPool)                                                                                             \
     X(vkDestroyCommandPool)                                                                                            \
+    X(vkDestroyDescriptorSetLayout)                                                                                    \
+    X(vkDestroyPipelineLayout)                                                                                         \
+    X(vkDestroyDescriptorPool)                                                                                         \
     X(vkAllocateCommandBuffers)                                                                                        \
     X(vkResetCommandBuffer)                                                                                            \
     X(vkBeginCommandBuffer)                                                                                            \

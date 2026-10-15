@@ -1,0 +1,14 @@
+LIBRARY msvcp_win.dll
+EXPORTS
+    _Mtx_init_in_situ
+    _Mtx_destroy_in_situ
+    _Mtx_lock
+    _Mtx_unlock
+    ?_Throw_Cpp_error@std@@YAXH@Z=throw_cpp_error
+    ?_Xlength_error@std@@YAXPEBD@Z=xlength_error
+    __std_parallel_algorithms_hw_threads
+    __std_create_threadpool_work
+    __std_submit_threadpool_work
+    __std_bulk_submit_threadpool_work
+    __std_close_threadpool_work
+    __std_wait_for_threadpool_work_callbacks
