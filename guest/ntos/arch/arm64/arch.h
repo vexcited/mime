@@ -132,6 +132,7 @@ typedef struct _KJUMP_BUFFER {
 #define MM_PTE_UXN (1ull << 54)
 #define MM_PTE_SW_COW (1ull << 55)
 #define MM_PTE_SW_SHARED (1ull << 56) /* page belongs to a section, never freed by the pte */
+#define MM_PTE_SW_GUARD (1ull << 57)  /* a guard page, kept from user mode until first touched */
 #define MM_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
 
 /* invalid ptes with this bit describe committed but not yet present pages. */
@@ -146,6 +147,9 @@ typedef struct _KJUMP_BUFFER {
 #define MI_PTE_IS_RO(p) (((p) & MM_PTE_AP_RO) != 0)
 #define MI_PTE_IS_USER(p) (((p) & MM_PTE_AP_EL0) != 0)
 #define MI_PTE_USER_EXEC(p) (((p) & MM_PTE_UXN) == 0)
+/* a present user page that user mode cannot reach: no access, or a guard page until its first touch. */
+#define MI_PTE_IS_GUARD(p) (((p) & MM_PTE_SW_GUARD) != 0)
+#define MI_PTE_CLEAR_GUARD(p) (((p) & ~MM_PTE_SW_GUARD) | MM_PTE_AP_EL0)
 /* an entry above the last level that points to a table rather than mapping a block. */
 #define MI_PTE_IS_TABLE(e, level) ((level) < 3 && ((e) & MM_PTE_TABLE))
 /* ttbr0 holds user space only. */

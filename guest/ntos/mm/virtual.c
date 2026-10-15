@@ -548,6 +548,10 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                 MiWritePte(as->Root, page, pa | attrs, as->Asid);
                 handled = TRUE;
             }
+        } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && MI_PTE_IS_GUARD(v)) {
+            /* a guard page: the first touch faults and takes the guard away, like windows. */
+            MiWritePte(as->Root, page, MI_PTE_CLEAR_GUARD(v), as->Asid);
+            handled = FALSE;
         } else if ((v & MM_PTE_VALID) && (mode == KernelMode || MI_PTE_IS_USER(v)) &&
                    (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v))) {
             /* another thread, possibly on another processor, fixed the page up first. */

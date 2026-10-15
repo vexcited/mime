@@ -154,6 +154,12 @@ ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
         pte |= MM_PTE_SW_COW;
     if (protect & PAGE_NOCACHE)
         pte = (pte & ~MM_PTE_ATTR(7)) | MM_PTE_ATTR(2);
+    /* the page and its data stay, out of reach of user mode. */
+    if (user && ((protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))) {
+        pte &= ~MM_PTE_AP_EL0;
+        if (protect & PAGE_GUARD)
+            pte |= MM_PTE_SW_GUARD;
+    }
     return pte;
 }
 
@@ -166,12 +172,18 @@ ULONG MiPteToProtect(ULONG64 pte)
     }
     BOOLEAN user = (pte & MM_PTE_AP_EL0) != 0;
     BOOLEAN ro = (pte & MM_PTE_AP_RO) != 0;
-    BOOLEAN exec = user ? !(pte & MM_PTE_UXN) : !(pte & MM_PTE_PXN);
+    /* a user page out of reach of user mode keeps its user execute permission. */
+    BOOLEAN exec = (user || (pte & MM_PTE_NG)) ? !(pte & MM_PTE_UXN) : !(pte & MM_PTE_PXN);
+    ULONG protect;
     if (pte & MM_PTE_SW_COW)
-        return exec ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
-    if (exec)
-        return ro ? PAGE_EXECUTE_READ : PAGE_EXECUTE_READWRITE;
-    return ro ? PAGE_READONLY : PAGE_READWRITE;
+        protect = exec ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
+    else if (exec)
+        protect = ro ? PAGE_EXECUTE_READ : PAGE_EXECUTE_READWRITE;
+    else
+        protect = ro ? PAGE_READONLY : PAGE_READWRITE;
+    if (!user && (pte & MM_PTE_NG))
+        return (pte & MM_PTE_SW_GUARD) ? protect | PAGE_GUARD : PAGE_NOACCESS;
+    return protect;
 }
 
 BOOLEAN NTAPI MmIsAddressValid(PVOID va)

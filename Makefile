@@ -22,7 +22,8 @@ HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -fram
 else
 GUEST_ARCH ?= x64
 HOST_CFLAGS := -std=gnu17 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
-HOST_LIBS := -lpthread -lm
+HOST_LIBS := -lpthread -lm $(shell pkg-config --libs sdl3)
+HOST_CFLAGS += $(shell pkg-config --cflags sdl3)
 endif
 CXX := clang++
 

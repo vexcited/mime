@@ -473,6 +473,10 @@ static void *vcpu_main(void *arg)
         return NULL;
     }
     vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+    /* kvm holds processors other than the first for an init and startup ipi pair; the guest starts them by hypercall. */
+    struct kvm_mp_state runnable = {KVM_MP_STATE_RUNNABLE};
+    if (ioctl(vcpu->fd, KVM_SET_MP_STATE, &runnable) != 0)
+        mime_warn("vcpu %u stays halted: %s", vcpu->index, strerror(errno));
     if (vcpu->index == 0) {
         int khz = ioctl(vcpu->fd, KVM_GET_TSC_KHZ, 0);
         vm->tsc_hz = khz > 0 ? (uint64_t)khz * 1000 : 0;

@@ -177,6 +177,7 @@ extern ULONG64 KiXsaveMask;
 #define MM_PTE_GLOBAL (1ull << 8)
 #define MM_PTE_SW_COW (1ull << 9)
 #define MM_PTE_SW_SHARED (1ull << 10) /* page belongs to a section, never freed by the pte */
+#define MM_PTE_SW_GUARD (1ull << 52)  /* a guard page, kept from user mode until first touched */
 #define MM_PTE_NX (1ull << 63)
 #define MM_PTE_ADDR_MASK 0x000FFFFFFFFFF000ull
 /* no leaf marker on x64: present without the large bit at the last level. */
@@ -198,6 +199,9 @@ extern ULONG64 KiXsaveMask;
 #define MI_PTE_IS_RO(p) (((p) & MM_PTE_RW) == 0)
 #define MI_PTE_IS_USER(p) (((p) & MM_PTE_USER) != 0)
 #define MI_PTE_USER_EXEC(p) (((p) & MM_PTE_NX) == 0)
+/* a present user page that user mode cannot reach: no access, or a guard page until its first touch. */
+#define MI_PTE_IS_GUARD(p) (((p) & MM_PTE_SW_GUARD) != 0)
+#define MI_PTE_CLEAR_GUARD(p) (((p) & ~MM_PTE_SW_GUARD) | MM_PTE_USER)
 /* an entry above the last level that points to a table rather than mapping a large page. */
 #define MI_PTE_IS_TABLE(e, level) ((level) < 3 && !((e) & MM_PTE_LARGE))
 /* the first root entries a process owns; the upper half is the kernel's, shared by every process. */

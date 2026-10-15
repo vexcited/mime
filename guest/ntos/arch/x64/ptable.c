@@ -198,6 +198,12 @@ ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
         pte |= MM_PTE_SW_COW;
     if (protect & PAGE_NOCACHE)
         pte |= MM_PTE_PCD | MM_PTE_PWT;
+    /* the page and its data stay, out of reach of user mode. */
+    if (user && (base == PAGE_NOACCESS || (protect & PAGE_GUARD))) {
+        pte &= ~MM_PTE_USER;
+        if (protect & PAGE_GUARD)
+            pte |= MM_PTE_SW_GUARD;
+    }
     return pte;
 }
 
@@ -210,11 +216,16 @@ ULONG MiPteToProtect(ULONG64 pte)
     }
     BOOLEAN ro = !(pte & MM_PTE_RW);
     BOOLEAN exec = !(pte & MM_PTE_NX);
+    ULONG protect;
     if (pte & MM_PTE_SW_COW)
-        return exec ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
-    if (exec)
-        return ro ? PAGE_EXECUTE_READ : PAGE_EXECUTE_READWRITE;
-    return ro ? PAGE_READONLY : PAGE_READWRITE;
+        protect = exec ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
+    else if (exec)
+        protect = ro ? PAGE_EXECUTE_READ : PAGE_EXECUTE_READWRITE;
+    else
+        protect = ro ? PAGE_READONLY : PAGE_READWRITE;
+    if (!(pte & MM_PTE_USER))
+        return (pte & MM_PTE_SW_GUARD) ? protect | PAGE_GUARD : PAGE_NOACCESS;
+    return protect;
 }
 
 BOOLEAN NTAPI MmIsAddressValid(PVOID va)
