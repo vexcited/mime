@@ -184,6 +184,12 @@ $(BUILD)/tools/test_fs: tools/test_fs.c host/vmm/fs.c host/vmm/vmm.h include/mim
 	@mkdir -p $(dir $@)
 	$(CC) $(filter-out -MMD -MP,$(HOST_CFLAGS)) -o $@ tools/test_fs.c host/util.c host/log.c
 
+WIM_TEST_SRC := tools/test_wim.c host/setup/wim.c host/setup/lzx.c host/setup/lzms.c host/setup/xpress.c \
+	host/util.c host/log.c host/sha1.c
+$(BUILD)/tools/test_wim: $(WIM_TEST_SRC) host/setup/wim.h
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -MMD -MP,$(HOST_CFLAGS)) -o $@ $(WIM_TEST_SRC)
+
 $(BUILD)/tools/test_registry_journal: tools/test_registry_journal.c guest/ntos/cm/journal_format.h
 	@mkdir -p $(dir $@)
 	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ tools/test_registry_journal.c

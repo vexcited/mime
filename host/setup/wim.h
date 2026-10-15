@@ -1,5 +1,5 @@
 /*
- * windows imaging format reader.
+ * windows imaging format reader, for both wim and esd files.
  */
 #ifndef MIME_WIM_H
 #define MIME_WIM_H
@@ -46,6 +46,11 @@ bool mime_wim_select_image(MimeWim *wim, uint32_t index);
 MimeWimDentry *mime_wim_root(MimeWim *wim);
 MimeWimDentry *mime_wim_lookup(MimeWim *wim, const char *path);
 uint64_t mime_wim_blob_size(MimeWim *wim, const uint8_t hash[20]);
+/*
+ * sorting extractions by this key reads the wim front to back, which
+ * matters for solid resources where one chunk holds many files.
+ */
+uint64_t mime_wim_blob_order(MimeWim *wim, const uint8_t hash[20]);
 
 typedef bool (*MimeWimSink)(void *ctx, const void *data, size_t size);
 

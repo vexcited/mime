@@ -100,7 +100,19 @@ static uint64_t measure(MimeWim *wim, const MimeWimDentry *d)
     return total;
 }
 
-static bool extract_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_path, ExtractStats *stats)
+typedef struct PendingFile {
+    const MimeWimDentry *dentry;
+    char *host_path;
+    uint64_t order;
+} PendingFile;
+
+typedef struct PendingList {
+    PendingFile *items;
+    size_t count, capacity;
+} PendingList;
+
+/* creates the directories right away and queues the files. */
+static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_path, PendingList *list)
 {
     if (d->attributes & MIME_FILE_ATTRIBUTE_REPARSE_POINT)
         return true;
@@ -112,7 +124,7 @@ static bool extract_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_
         for (const MimeWimDentry *c = d->first_child; c; c = c->next_sibling) {
             char child[MIME_PATH_MAX];
             mime_path_join(child, sizeof(child), host_path, c->name);
-            if (!extract_tree(wim, c, child, stats))
+            if (!collect_tree(wim, c, child, list))
                 return false;
         }
         return true;
@@ -124,14 +136,45 @@ static bool extract_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_
         *slash = 0;
         mime_mkdir_p(parent, 0755);
     }
-    if (!mime_wim_extract_file(wim, d, host_path)) {
-        mime_error("failed to extract %s", host_path);
-        return false;
+    if (list->count == list->capacity) {
+        list->capacity = list->capacity ? list->capacity * 2 : 256;
+        list->items = mime_xrealloc(list->items, list->capacity * sizeof(PendingFile));
     }
-    stats->files++;
-    stats->bytes += mime_wim_blob_size(wim, d->hash);
-    report_progress(stats, false);
+    PendingFile *f = &list->items[list->count++];
+    f->dentry = d;
+    f->host_path = mime_xstrdup(host_path);
+    f->order = mime_wim_blob_order(wim, d->hash);
     return true;
+}
+
+static int compare_pending(const void *a, const void *b)
+{
+    const PendingFile *x = a, *y = b;
+    return x->order < y->order ? -1 : x->order > y->order;
+}
+
+/* extracts in wim order so a compressed chunk is read once for all its files. */
+static bool extract_pending(MimeWim *wim, PendingList *list, ExtractStats *stats)
+{
+    qsort(list->items, list->count, sizeof(PendingFile), compare_pending);
+    for (size_t i = 0; i < list->count; i++) {
+        const PendingFile *f = &list->items[i];
+        if (!mime_wim_extract_file(wim, f->dentry, f->host_path)) {
+            mime_error("failed to extract %s", f->host_path);
+            return false;
+        }
+        stats->files++;
+        stats->bytes += mime_wim_blob_size(wim, f->dentry->hash);
+        report_progress(stats, false);
+    }
+    return true;
+}
+
+static void free_pending(PendingList *list)
+{
+    for (size_t i = 0; i < list->count; i++)
+        free(list->items[i].host_path);
+    free(list->items);
 }
 
 static void trim(char *s)
@@ -230,11 +273,9 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
     if (!udf)
         return 1;
     UdfReaderCtx ctx = {.udf = udf};
-    if (!mime_udf_lookup(udf, "sources/install.wim", &ctx.file)) {
-        if (mime_udf_lookup(udf, "sources/install.esd", &ctx.file))
-            mime_error("this iso ships install.esd, which is not supported yet; use an iso with install.wim");
-        else
-            mime_error("sources/install.wim not found in %s", iso);
+    if (!mime_udf_lookup(udf, "sources/install.wim", &ctx.file) &&
+        !mime_udf_lookup(udf, "sources/install.esd", &ctx.file)) {
+        mime_error("neither sources/install.wim nor sources/install.esd found in %s", iso);
         mime_udf_close(udf);
         return 1;
     }
@@ -269,6 +310,7 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
     }
 
     ExtractStats stats = {0};
+    PendingList pending = {0};
     const MimeWimDentry *sources[MIME_ARRAY_COUNT(g_rules)];
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_rules); i++) {
         sources[i] = mime_wim_lookup(wim, g_rules[i].source);
@@ -284,11 +326,17 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
             continue;
         char dst[MIME_PATH_MAX];
         mime_path_join(dst, sizeof(dst), paths->drive_c, g_rules[i].destination);
-        if (!extract_tree(wim, sources[i], dst, &stats)) {
-            if (isatty(STDOUT_FILENO))
-                printf("\n");
+        if (!collect_tree(wim, sources[i], dst, &pending)) {
+            free_pending(&pending);
             goto fail;
         }
+    }
+    bool extracted = extract_pending(wim, &pending, &stats);
+    free_pending(&pending);
+    if (!extracted) {
+        if (isatty(STDOUT_FILENO))
+            printf("\n");
+        goto fail;
     }
     report_progress(&stats, true);
     if (isatty(STDOUT_FILENO))
