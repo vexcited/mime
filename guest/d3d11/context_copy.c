@@ -35,9 +35,24 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
     if (!r || type < D3D11_MAP_READ || type > D3D11_MAP_WRITE_NO_OVERWRITE)
         return E_INVALIDARG;
     HRESULT hr = S_OK;
+    /* deferred contexts write dynamic resources only, without waiting. */
+    if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED &&
+        ((type != D3D11_MAP_WRITE_DISCARD && type != D3D11_MAP_WRITE_NO_OVERWRITE) || r->usage != D3D11_USAGE_DYNAMIC))
+        return E_INVALIDARG;
     if (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
         if (!r->buf.mapped || sub || (r->usage != D3D11_USAGE_DYNAMIC && r->usage != D3D11_USAGE_STAGING))
             return E_INVALIDARG;
+        if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED) {
+            const D3dRingSlice *slice =
+                type == D3D11_MAP_WRITE_DISCARD ? D3dContextListDiscard(c, r) : D3dContextListRange(c, r);
+            if (!slice)
+                return type == D3D11_MAP_WRITE_DISCARD ? E_OUTOFMEMORY : E_INVALIDARG;
+            if (mapped) {
+                mapped->pData = slice->mapped;
+                mapped->RowPitch = mapped->DepthPitch = r->buf.size;
+            }
+            return S_OK;
+        }
         if (type == D3D11_MAP_WRITE_DISCARD) {
             /* a range the gpu does not use, so the program never waits. */
             if (r->last_use > device->completed && !D3dBufferRename(device, r))
@@ -55,6 +70,24 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
     }
     if (!r->tex.staging.mapped || sub >= D3dSubresourceCount(r))
         return E_INVALIDARG;
+    if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED) {
+        if (c->list_map_count == ARRAYSIZE(c->list_maps))
+            return E_OUTOFMEMORY;
+        UINT mip, layer;
+        D3dSubresourceDecompose(r, sub, &mip, &layer);
+        VkDeviceSize size = (VkDeviceSize)r->tex.sub_slice_pitch[sub] * D3dMipExtent(r, mip).depth;
+        D3dRingSlice *slice = &c->list_maps[c->list_map_count].slice;
+        if (!D3dContextRingAlloc(c, size, D3D_MAX(r->tex.fmt->block_bytes, 16), slice))
+            return E_OUTOFMEMORY;
+        c->list_maps[c->list_map_count].resource = r;
+        c->list_maps[c->list_map_count++].sub = sub;
+        if (mapped) {
+            mapped->pData = slice->mapped;
+            mapped->RowPitch = r->tex.sub_row_pitch[sub];
+            mapped->DepthPitch = r->tex.sub_slice_pitch[sub];
+        }
+        return S_OK;
+    }
     if (FAILED(hr = wait_idle(c, r, flags)))
         return hr;
     if (r->usage == D3D11_USAGE_DYNAMIC)
@@ -71,17 +104,31 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
 void D3dCtxUnmap(D3dContext *c, ID3D11Resource *resource, UINT sub)
 {
     D3dResource *r = D3dResourceFrom(resource);
-    if (!r || r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER || r->usage != D3D11_USAGE_DYNAMIC || !r->tex.dirty)
+    if (!r || r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER || r->usage != D3D11_USAGE_DYNAMIC)
         return;
     D3dDevice *device = c->child.device;
+    VkBuffer source = r->tex.staging.buffer;
+    VkDeviceSize base = r->tex.staging.offset;
+    if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED) {
+        UINT i = 0;
+        while (i < c->list_map_count && (c->list_maps[i].resource != r || c->list_maps[i].sub != sub))
+            i++;
+        if (i == c->list_map_count)
+            return;
+        source = c->list_maps[i].slice.buffer;
+        /* the regions add the subresource's offset in the staging layout back. */
+        base = c->list_maps[i].slice.offset - r->tex.sub_offset[sub];
+        c->list_maps[i] = c->list_maps[--c->list_map_count];
+    } else if (!r->tex.dirty) {
+        return;
+    }
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
     if (!cmd)
         return;
     VkBufferImageCopy regions[2];
     UINT count;
-    D3dImageCopyRegions(r, sub, r->tex.staging.offset, regions, &count);
-    device->vk.vkCmdCopyBufferToImage(cmd, r->tex.staging.buffer, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, count,
-                                      regions);
+    D3dImageCopyRegions(r, sub, base, regions, &count);
+    device->vk.vkCmdCopyBufferToImage(cmd, source, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, count, regions);
     c->pending_barrier = TRUE;
     r->tex.dirty = FALSE;
     D3dContextUse(c, r);
@@ -134,7 +181,7 @@ static void update_buffer(D3dContext *c, D3dResource *r, UINT offset, UINT size,
         device->vk.vkCmdUpdateBuffer(cmd, r->buf.buffer, r->buf.offset + offset, size, data);
     } else {
         D3dRingSlice slice;
-        if (!D3dRingAlloc(device, size, 16, &slice))
+        if (!D3dContextRingAlloc(c, size, 16, &slice))
             return;
         memcpy(slice.mapped, data, size);
         VkBufferCopy copy = {slice.offset, r->buf.offset + offset, size};
@@ -173,7 +220,7 @@ static void update_texture(D3dContext *c, D3dResource *r, UINT sub, const D3D11_
         return;
     }
     D3dRingSlice slice;
-    if (!D3dRingAlloc(device, (VkDeviceSize)row * rows * depth, D3D_MAX(f->block_bytes, 16), &slice))
+    if (!D3dContextRingAlloc(c, (VkDeviceSize)row * rows * depth, D3D_MAX(f->block_bytes, 16), &slice))
         return;
     for (UINT z = 0; z < depth; z++)
         for (UINT y = 0; y < rows; y++)
@@ -311,7 +358,7 @@ static void copy_buffer(D3dContext *c, D3dResource *dst, UINT x, D3dResource *sr
     if (src->buf.buffer == dst->buf.buffer && from < to + size && to < from + size) {
         /* overlapping ranges go through the ring. */
         D3dRingSlice slice;
-        if (!D3dRingAlloc(device, size, 16, &slice))
+        if (!D3dContextRingAlloc(c, size, 16, &slice))
             return;
         VkBufferCopy first = {from, slice.offset, size}, second = {slice.offset, to, size};
         device->vk.vkCmdCopyBuffer(cmd, src->buf.buffer, slice.buffer, 1, &first);

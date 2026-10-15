@@ -308,6 +308,9 @@ static void destroy(D3dDevice *device, D3dGarbage *g)
     case D3D_GARBAGE_HEAP:
         heap_release(device, g->heap_kind, (UINT)g->handle, 0);
         break;
+    case D3D_GARBAGE_COMMAND_POOL:
+        vk->vkDestroyCommandPool(vk->device, (VkCommandPool)g->handle, NULL);
+        break;
     }
 }
 

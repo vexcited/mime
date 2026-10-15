@@ -323,6 +323,9 @@ void D3dQueryBegin(D3dContext *context, D3dQuery *query) { query->begun = TRUE; 
 void D3dQueryEnd(D3dContext *context, D3dQuery *query)
 {
     D3dDevice *device = context->child.device;
+    /* the queries of deferred contexts are not measured. */
+    if (context->type == D3D11_DEVICE_CONTEXT_DEFERRED)
+        return;
     if (query->desc.Query == D3D11_QUERY_TIMESTAMP) {
         VkCommandBuffer cmd = D3dContextCommands(context, TRUE);
         device->vk.vkCmdResetQueryPool(cmd, query->pool, 0, 1);

@@ -328,6 +328,38 @@ BOOL D3dRingAlloc(D3dDevice *device, VkDeviceSize size, VkDeviceSize align, D3dR
     return TRUE;
 }
 
+D3dRingChunk *D3dRingChunkNew(D3dDevice *device, VkDeviceSize size)
+{
+    AcquireSRWLockExclusive(&device->ring_lock);
+    D3dRingChunk *chunk = ring_chunk(device, size);
+    ReleaseSRWLockExclusive(&device->ring_lock);
+    return chunk;
+}
+
+BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out)
+{
+    VkDeviceSize offset = D3D_ALIGN(chunk->head, align);
+    if (offset + size > chunk->alloc.size)
+        return FALSE;
+    chunk->head = offset + size;
+    out->chunk = chunk;
+    out->buffer = chunk->alloc.buffer;
+    out->offset = chunk->alloc.offset + offset;
+    out->chunk_offset = offset;
+    out->mapped = chunk->alloc.mapped + offset;
+    return TRUE;
+}
+
+/* a command list's chunk back in the ring, reused once the list's last execution is done. */
+void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial)
+{
+    AcquireSRWLockExclusive(&device->ring_lock);
+    chunk->serial = serial;
+    chunk->next = device->ring_chunks;
+    device->ring_chunks = chunk;
+    ReleaseSRWLockExclusive(&device->ring_lock);
+}
+
 /* the descriptor set of a chunk's binding tables: one uniform buffer per stage, offsets dynamic. */
 VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk)
 {

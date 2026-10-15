@@ -287,6 +287,8 @@ struct D3dResource {
     UINT eviction_priority;
     /* the submission after which the gpu no longer reads or writes it. */
     UINT64 last_use;
+    /* the command list being recorded that last noted its use, so each notes it once. */
+    UINT64 list_mark;
     /* buffers: their bytes in a buffer block or, renamed, in the ring. */
     struct {
         UINT size, stride;
@@ -478,6 +480,7 @@ typedef enum D3dGarbageType {
     D3D_GARBAGE_QUERY_POOL,
     D3D_GARBAGE_MEMORY,
     D3D_GARBAGE_HEAP,
+    D3D_GARBAGE_COMMAND_POOL,
 } D3dGarbageType;
 
 typedef struct D3dGarbage {
@@ -594,9 +597,12 @@ HRESULT D3dAllocBuffer(D3dDevice *device, D3dMemoryKind kind, VkDeviceSize size,
 HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out);
 void D3dFree(D3dDevice *device, D3dAllocation *alloc);
 BOOL D3dRingAlloc(D3dDevice *device, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
+/* chunks owned by command lists: made like the ring's, returned to it when the list is done. */
+D3dRingChunk *D3dRingChunkNew(D3dDevice *device, VkDeviceSize size);
+BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
+void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial);
 void D3dRingRetire(D3dDevice *device, UINT64 serial);
 VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk);
-UINT D3dRingCbv(D3dDevice *device, const D3dRingSlice *slice, UINT size);
 void D3dMemoryDestroy(D3dDevice *device);
 
 /* the flags a format supports, for CheckFormatSupport. */
@@ -680,6 +686,34 @@ struct D3dContext {
     UINT om_uav_start;
     BOOL targets_dirty, rs_dirty, om_dirty, viewports_dirty;
 
+    /*
+     * deferred contexts: the pool of the command buffer being recorded,
+     * and the ring chunks and resources the command list will own.
+     */
+    VkCommandPool list_pool;
+    D3dCommandBuffer list_cmd;
+    D3dRingChunk **list_chunks;
+    UINT list_chunk_count, list_chunk_capacity;
+    D3dResource **list_resources;
+    UINT list_resource_count, list_resource_capacity;
+    UINT64 list_id;
+    /* dynamic buffers a deferred context discarded: the list's own bytes stand for them. */
+    struct D3dListRange {
+        D3dResource *resource;
+        D3dRingSlice slice;
+    } *list_ranges;
+    UINT list_range_count, list_range_capacity;
+    /* the shaders, views and samplers the commands recorded so far use. */
+    IUnknown **list_held;
+    UINT list_held_count, list_held_capacity;
+    /* dynamic textures a deferred context mapped, written to list memory until unmapped. */
+    struct {
+        D3dResource *resource;
+        UINT sub;
+        D3dRingSlice slice;
+    } list_maps[8];
+    UINT list_map_count;
+
     /* stream output and predication. */
     D3dResource *so[D3D11_SO_BUFFER_SLOT_COUNT];
     UINT so_offset[D3D11_SO_BUFFER_SLOT_COUNT];
@@ -697,6 +731,12 @@ VkCommandBuffer D3dContextCommands(D3dContext *context, BOOL transfer);
 void D3dContextFlush(D3dContext *context);
 UINT64 D3dContextSubmit(D3dContext *context, const VkSemaphoreSubmitInfo *wait, const VkSemaphoreSubmitInfo *signal);
 void D3dContextUse(D3dContext *context, D3dResource *resource);
+BOOL D3dContextRingAlloc(D3dContext *context, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
+const D3dRingSlice *D3dContextListRange(const D3dContext *context, const D3dResource *resource);
+const D3dRingSlice *D3dContextListDiscard(D3dContext *context, D3dResource *resource);
+/* the vulkan range of a buffer as the commands being recorded see it. */
+void D3dContextBufferRange(const D3dContext *context, const D3dResource *resource, VkBuffer *buffer,
+                           VkDeviceSize *offset);
 void D3dBarrier(VkCommandBuffer cmd, D3dDevice *device);
 
 /* states.c, shader.c, query.c: creation. */

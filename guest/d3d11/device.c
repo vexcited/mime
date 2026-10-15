@@ -849,8 +849,13 @@ static HRESULT STDMETHODCALLTYPE device_create_deferred_context(ID3D11Device5 *i
         *context = NULL;
     if (flags)
         return E_INVALIDARG;
-    D3dLog("d3d11: deferred contexts are not implemented");
-    return DXGI_ERROR_UNSUPPORTED;
+    if (!context)
+        return S_FALSE;
+    D3dContext *c;
+    HRESULT hr = D3dCreateContext(impl(iface), D3D11_DEVICE_CONTEXT_DEFERRED, &c);
+    if (SUCCEEDED(hr))
+        *context = (ID3D11DeviceContext *)&c->iface;
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_open_shared_resource(ID3D11Device5 *iface, HANDLE handle, REFIID riid,
