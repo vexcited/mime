@@ -74,8 +74,8 @@ static void initialize_idt(void)
 {
     for (ULONG v = 0; v < 256; v++) {
         ULONG dpl = 0;
-        /* int3, into, __fastfail, assertions and debug services may be raised by user code. */
-        if (v == 3 || v == 4 || v == 0x29 || v == 0x2C || v == 0x2D)
+        /* int3, into, __fastfail, assertions, debug services and int 2e system calls come from user code. */
+        if (v == 3 || v == 4 || v == 0x29 || v == 0x2C || v == 0x2D || v == 0x2E)
             dpl = 3;
         set_gate(v, KiIsrBase + v * 16, dpl, v == 8 || v == 2 || v == 18 ? 1 : 0);
     }

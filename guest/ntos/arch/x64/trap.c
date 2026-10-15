@@ -258,6 +258,12 @@ static void interrupt(PKTRAP_FRAME frame)
 
 void KiTrapDispatch(PKTRAP_FRAME frame)
 {
+    /* int 2e, the system call of ntdll's stubs when SharedUserData says syscall is unavailable. */
+    if (frame->Vector == 0x2E && KI_TRAP_FROM_USER(frame)) {
+        frame->Vector = KTRAP_VECTOR_SYSCALL;
+        KiSystemService(frame);
+        return;
+    }
     if (frame->Vector >= 32 && frame->Vector != 0x29 && frame->Vector != 0x2C && frame->Vector != 0x2D)
         interrupt(frame);
     else if (KI_TRAP_FROM_USER(frame))
