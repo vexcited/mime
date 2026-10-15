@@ -105,6 +105,32 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[0] = (ULONG_PTR)&info;
         return (ULONG)MxCallService(number, v);
     }
+    /* the vulkan connection: its memory lies below 4 gib in a 32-bit process, so pointers narrow. */
+    case MIME_SVC_NtGdiMimeVkOpen: {
+        PVOID base = NULL;
+        v[0] = (ULONG_PTR)&base;
+        ULONG status = (ULONG)MxCallService(number, v);
+        if (NT_SUCCESS(status) && a[0])
+            *(PULONG)ptr32(a[0]) = (ULONG)(ULONG_PTR)base;
+        return status;
+    }
+    case MIME_SVC_NtGdiMimeVkAlloc: {
+        PVOID base = NULL;
+        v[0] = a[0];
+        v[1] = (ULONG_PTR)&base;
+        v[2] = a[2];
+        ULONG status = (ULONG)MxCallService(number, v);
+        if (NT_SUCCESS(status) && a[1])
+            *(PULONG)ptr32(a[1]) = (ULONG)(ULONG_PTR)base;
+        return status;
+    }
+    case MIME_SVC_NtGdiMimeVkFree:
+        v[0] = a[0];
+        return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtGdiMimeVkWait:
+        v[0] = a[0] | (ULONG64)a[1] << 32;
+        v[1] = a[2];
+        return (ULONG)MxCallService(number, v);
     case MIME_SVC_NtUserRegisterClassExWOW: {
         const ULONG *p = ptr32(a[0]);
         if (!p || p[0] != 48)

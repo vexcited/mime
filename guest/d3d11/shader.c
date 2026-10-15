@@ -249,11 +249,13 @@ VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive)
     g_d3d_allocator.free(NULL, gs);
     if (!variant)
         return shader->shader;
-    /* two threads made the same variant: the first one made is kept. */
-    VkShaderEXT first = InterlockedCompareExchangePointer((void **)&shader->so_variants[primitive], variant, NULL);
-    if (first) {
-        D3dDefer(shader->child.device, 0, D3D_GARBAGE_SHADER, (UINT64)variant);
-        return first;
+    /* two threads made the same variant: the first one made is kept. handles are 64 bits wide everywhere. */
+    LONG64 value, old;
+    memcpy(&value, &variant, sizeof(value));
+    old = InterlockedCompareExchange64((LONG64 *)&shader->so_variants[primitive], value, 0);
+    if (old) {
+        D3dDefer(shader->child.device, 0, D3D_GARBAGE_SHADER, (UINT64)value);
+        memcpy(&variant, &old, sizeof(variant));
     }
     return variant;
 }

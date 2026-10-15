@@ -470,6 +470,13 @@ W32KAPI BOOL NTAPI NtGdiMimeGpuGetSurface(HDC dc, MIME_GPU_SURFACE *surface);
 W32KAPI NTSTATUS NTAPI NtGdiMimeAudioCreate(PVOID *base, PULONG index);
 W32KAPI NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op);
 
+/* the vulkan connection of the process and its blocks of shared memory, mime/mvk_wire.h. */
+W32KAPI NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base);
+W32KAPI NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa);
+W32KAPI NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base);
+W32KAPI NTSTATUS NTAPI NtGdiMimeVkKick(void);
+W32KAPI NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms);
+
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
 W32KAPI BOOL NTAPI NtUserCloseClipboard(void);
 W32KAPI BOOL NTAPI NtUserEmptyClipboard(void);
