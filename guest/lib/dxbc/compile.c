@@ -82,8 +82,14 @@ typedef struct Compiler {
     /* the compact table: the position plus one of each entry the code reads. */
     uint16_t table_map[DXBC_TABLE_DWORDS];
 
-    /* types. */
+    /* types; those of doubles made at their first use, with their capability. */
     uint32_t t_void, t_bool, t_f32, t_u32, t_i32;
+    uint32_t t_f64, t_dvec2;
+    /* dcl_hs_maxtessfactor, the bits of a float; 0 without one. */
+    uint32_t max_tess_factor;
+    /* the clamp of the level of detail of the sample being compiled, for the clamped forms. */
+    const DxbcOperand *min_lod;
+    uint32_t sample_positions;
     uint32_t t_vec[K_KINDS][5];
     uint32_t t_bvec[5];
 
@@ -193,6 +199,8 @@ static uint32_t vec_type(Compiler *c, Kind k, uint32_t n) { return c->t_vec[k][n
 static uint32_t uconst(Compiler *c, uint32_t v) { return spv_const(&c->b, c->t_u32, v); }
 
 static uint32_t iconst(Compiler *c, int32_t v) { return spv_const(&c->b, c->t_i32, (uint32_t)v); }
+
+static uint32_t fconst_bits(Compiler *c, uint32_t bits) { return spv_const(&c->b, c->t_f32, bits); }
 
 static uint32_t fconst(Compiler *c, float v)
 {
@@ -1049,7 +1057,13 @@ static void store_patch_constants(Compiler *c)
                     continue;
                 uint32_t level = tess_level(c, inner, SpvStorageClassOutput);
                 uint32_t k = uconst(c, (uint32_t)at);
-                spv_store(&c->b, spv_access(&c->b, optr, level, &k, 1), extract(c, c->t_f32, value, i));
+                uint32_t factor = extract(c, c->t_f32, value, i);
+                /* the tessellator takes factors up to the hull shader's maximum. */
+                if (c->max_tess_factor) {
+                    uint32_t args[2] = {factor, fconst_bits(c, c->max_tess_factor)};
+                    factor = spv_glsl(&c->b, c->t_f32, GLSLstd450NMin, args, 2);
+                }
+                spv_store(&c->b, spv_access(&c->b, optr, level, &k, 1), factor);
             }
         }
         if (d->mask) {
@@ -1646,6 +1660,9 @@ static int prepass(Compiler *c)
             c->tess_domain = (ins.token >> 11) & 3;
             c->info->tess_domain = c->tess_domain;
             break;
+        case OP_DCL_HS_MAX_TESSFACTOR:
+            c->max_tess_factor = ins.extra_count ? x[0] : 0;
+            break;
         case OP_DCL_TESS_PARTITIONING:
             c->tess_partitioning = (ins.token >> 11) & 7;
             c->info->tess_partitioning = c->tess_partitioning;
@@ -1858,6 +1875,129 @@ static void firstbit(Compiler *c, const DxbcInstruction *ins, uint32_t instructi
         r = spv_op3(&c->b, SpvOpSelect, u, none, r, flipped);
     }
     store(c, ins, &ins->operands[0], r, K_UINT);
+}
+
+/* ------------------------------------------------------------------ doubles */
+
+/*
+ * a register holds two doubles, x and z their low halves, y and w their
+ * high ones. double operations work on both lanes of the swizzled sources
+ * and write the lanes the destination mask names, xy the first and zw the
+ * second.
+ */
+static uint32_t dvec2_type(Compiler *c)
+{
+    if (!c->t_dvec2) {
+        spv_capability(&c->b, SpvCapabilityFloat64);
+        c->t_f64 = spv_type_float(&c->b, 64);
+        c->t_dvec2 = spv_type_vector(&c->b, c->t_f64, 2);
+    }
+    return c->t_dvec2;
+}
+
+static uint32_t dconst(Compiler *c, double value)
+{
+    union {
+        double d;
+        uint64_t u;
+    } bits = {value};
+    dvec2_type(c);
+    uint32_t d = spv_const64(&c->b, c->t_f64, bits.u);
+    uint32_t parts[2] = {d, d};
+    return spv_const_composite(&c->b, c->t_dvec2, parts, 2);
+}
+
+/* the two doubles of a source, its modifiers applied to them. */
+static uint32_t load_doubles(Compiler *c, const DxbcOperand *op)
+{
+    DxbcOperand plain = *op;
+    plain.modifier = 0;
+    uint32_t t = dvec2_type(c);
+    uint32_t v = spv_op1(&c->b, SpvOpBitcast, t, load(c, &plain, 0xF, K_UINT));
+    if (op->modifier & MOD_ABS)
+        v = spv_glsl(&c->b, t, GLSLstd450FAbs, &v, 1);
+    if (op->modifier & MOD_NEG)
+        v = spv_op1(&c->b, SpvOpFNegate, t, v);
+    return v;
+}
+
+/* the lanes of two doubles the destination mask names, saturated if asked. */
+static void store_doubles(Compiler *c, const DxbcInstruction *ins, const DxbcOperand *dst, uint32_t value)
+{
+    if (ins->saturate) {
+        uint32_t args[3] = {value, dconst(c, 0.0), dconst(c, 1.0)};
+        value = spv_glsl(&c->b, c->t_dvec2, GLSLstd450NClamp, args, 3);
+    }
+    uint32_t bits = spv_op1(&c->b, SpvOpBitcast, c->t_vec[K_UINT][4], value);
+    uint8_t mask = dst_mask(dst);
+    uint32_t n = popcount(mask), picks[4], count = 0;
+    for (uint32_t i = 0; i < 4; i++)
+        if (mask & (1 << i))
+            picks[count++] = i;
+    if (n == 1)
+        bits = extract(c, c->t_u32, bits, picks[0]);
+    else if (n < 4) {
+        uint32_t w[6] = {bits, bits, picks[0], picks[1], picks[2], picks[3]};
+        bits = spv_op(&c->b, SpvOpVectorShuffle, vec_type(c, K_UINT, n), w, 2 + n);
+    }
+    store(c, NULL, dst, bits, K_UINT);
+}
+
+/* 32 bit results of the double lanes, to the destination's components in order. */
+static void store_lanes(Compiler *c, const DxbcOperand *dst, uint32_t value, Kind k)
+{
+    uint32_t n = popcount(dst_mask(dst));
+    if (n == 1)
+        value = extract(c, vec_type(c, k, 1), value, 0);
+    store(c, NULL, dst, value, k);
+}
+
+static void double_binary(Compiler *c, const DxbcInstruction *ins, uint32_t op)
+{
+    uint32_t a = load_doubles(c, &ins->operands[1]), b = load_doubles(c, &ins->operands[2]);
+    uint32_t r = spv_op2(&c->b, op, c->t_dvec2, a, b);
+    decorate_precise(c, ins, r);
+    store_doubles(c, ins, &ins->operands[0], r);
+}
+
+static void double_glsl(Compiler *c, const DxbcInstruction *ins, uint32_t instruction, uint32_t args)
+{
+    uint32_t v[3];
+    for (uint32_t i = 0; i < args; i++)
+        v[i] = load_doubles(c, &ins->operands[1 + i]);
+    uint32_t r = spv_glsl(&c->b, c->t_dvec2, instruction, v, args);
+    decorate_precise(c, ins, r);
+    store_doubles(c, ins, &ins->operands[0], r);
+}
+
+static void double_compare(Compiler *c, const DxbcInstruction *ins, uint32_t op)
+{
+    uint32_t a = load_doubles(c, &ins->operands[1]), b = load_doubles(c, &ins->operands[2]);
+    uint32_t r = bool_to_mask(c, spv_op2(&c->b, op, c->t_bvec[2], a, b), 2);
+    store_lanes(c, &ins->operands[0], r, K_UINT);
+}
+
+/* doubles to 32 bit values, to the destination's components in order. */
+static void double_to(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind out)
+{
+    uint32_t a = load_doubles(c, &ins->operands[1]);
+    uint32_t r = spv_op1(&c->b, op, vec_type(c, out, 2), a);
+    store_lanes(c, &ins->operands[0], r, out);
+}
+
+/* 32 bit values to doubles: the source's first two components, lane by lane. */
+static void double_from(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind in)
+{
+    uint32_t a = load(c, &ins->operands[1], 3, in);
+    uint32_t r = spv_op1(&c->b, op, dvec2_type(c), a);
+    store_doubles(c, ins, &ins->operands[0], r);
+}
+
+static void double_movc(Compiler *c, const DxbcInstruction *ins)
+{
+    uint32_t cond = nonzero(c, load(c, &ins->operands[1], 3, K_UINT), 2);
+    uint32_t a = load_doubles(c, &ins->operands[2]), b = load_doubles(c, &ins->operands[3]);
+    store_doubles(c, ins, &ins->operands[0], spv_op3(&c->b, SpvOpSelect, c->t_dvec2, cond, a, b));
 }
 
 /* the two results of a wide multiply, carry or borrow: high or carry first, as dxbc orders them. */
@@ -2101,6 +2241,11 @@ static void sample(Compiler *c, const DxbcInstruction *ins)
         operands |= SpvImageOperandsConstOffsetMask;
         w[count++] = offset;
     }
+    if (c->min_lod && (implicit || ins->opcode == OP_SAMPLE_D)) {
+        spv_capability(&c->b, SpvCapabilityMinLod);
+        operands |= SpvImageOperandsMinLodMask;
+        w[count++] = load_scalar(c, c->min_lod, c->min_lod->swizzle[0], K_FLOAT);
+    }
     w[mask_at] = operands;
     if (!operands) {
         for (uint32_t i = mask_at; i + 1 < count; i++)
@@ -2305,8 +2450,8 @@ static void sampleinfo(Compiler *c, const DxbcInstruction *ins)
     const DxbcOperand *resource = &ins->operands[1];
     uint32_t count;
     if (resource->type == OPERAND_RASTERIZER) {
-        /* the render target's sample count is not known to the shader: one, as without multisampling. */
-        count = uconst(c, 1);
+        /* the render targets' sample count, which the device puts in the table. */
+        count = table_entry(c, DXBC_TABLE_SAMPLE_COUNT);
     } else {
         Resource *r;
         int slot = resource_slot(c, resource, &r);
@@ -2925,6 +3070,139 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
 
 /* ------------------------------------------------------------------ instructions */
 
+/*
+ * float to integer conversions as direct3d defines them where vulkan does
+ * not: values past the range saturate, nan becomes 0.
+ */
+static void float_to_int(Compiler *c, const DxbcInstruction *ins, int is_signed)
+{
+    uint8_t mask = dst_mask(&ins->operands[0]);
+    uint32_t n = popcount(mask);
+    Kind k = is_signed ? K_INT : K_UINT;
+    uint32_t t = vec_type(c, k, n), b = c->t_bvec[n];
+    uint32_t x = load(c, &ins->operands[1], mask, K_FLOAT);
+    /* the largest floats below 2^31 and 2^32. */
+    uint32_t args[3] = {x, splat_const(c, K_FLOAT, n, is_signed ? 0xCF000000 : 0),
+                        splat_const(c, K_FLOAT, n, is_signed ? 0x4EFFFFFF : 0x4F7FFFFF)};
+    uint32_t clamped = spv_glsl(&c->b, vec_type(c, K_FLOAT, n), GLSLstd450NClamp, args, 3);
+    uint32_t r = spv_op1(&c->b, is_signed ? SpvOpConvertFToS : SpvOpConvertFToU, t, clamped);
+    uint32_t big = spv_op2(&c->b, SpvOpFOrdGreaterThanEqual, b, x,
+                           splat_const(c, K_FLOAT, n, is_signed ? 0x4F000000 : 0x4F800000));
+    r = spv_op3(&c->b, SpvOpSelect, t, big, splat_const(c, k, n, is_signed ? 0x7FFFFFFF : 0xFFFFFFFF), r);
+    if (is_signed)
+        r = spv_op3(&c->b, SpvOpSelect, t, spv_op1(&c->b, SpvOpIsNan, b, x), splat_const(c, K_INT, n, 0), r);
+    store(c, ins, &ins->operands[0], r, k);
+}
+
+/* masked sums of absolute differences: the bytes of each component where the reference byte is not zero. */
+static void msad(Compiler *c, const DxbcInstruction *ins)
+{
+    uint8_t mask = dst_mask(&ins->operands[0]);
+    uint32_t n = popcount(mask), u = vec_type(c, K_UINT, n), i = vec_type(c, K_INT, n);
+    uint32_t ref = load(c, &ins->operands[1], mask, K_UINT), src = load(c, &ins->operands[2], mask, K_UINT);
+    uint32_t sum = load(c, &ins->operands[3], mask, K_UINT);
+    for (uint32_t b = 0; b < 4; b++) {
+        uint32_t at = uconst(c, 8 * b), eight = uconst(c, 8);
+        uint32_t rb = spv_op3(&c->b, SpvOpBitFieldUExtract, u, ref, at, eight);
+        uint32_t sb = spv_op3(&c->b, SpvOpBitFieldUExtract, u, src, at, eight);
+        uint32_t d = spv_op2(&c->b, SpvOpISub, i, bitcast(c, rb, K_UINT, K_INT, n), bitcast(c, sb, K_UINT, K_INT, n));
+        d = bitcast(c, spv_glsl(&c->b, i, GLSLstd450SAbs, &d, 1), K_INT, K_UINT, n);
+        d = spv_op3(&c->b, SpvOpSelect, u, nonzero(c, rb, n), d, splat_const(c, K_UINT, n, 0));
+        sum = spv_op2(&c->b, SpvOpIAdd, u, sum, d);
+    }
+    store(c, ins, &ins->operands[0], sum, K_UINT);
+}
+
+/*
+ * direct3d's standard sample positions, in sixteenths of a pixel from its
+ * center, for 1, 2, 4, 8 and 16 samples: those of count n start at n - 1.
+ * vulkan's standard sample locations are the same.
+ */
+static const int8_t SAMPLE_POSITIONS[31][2] = {
+    {0, 0},   {4, 4},   {-4, -4}, {-2, -6}, {6, -2}, {-6, 2}, {2, 6},  {1, -3},  {-1, 3},  {5, 1},   {-3, -5},
+    {-5, 5},  {-7, -1}, {3, 7},   {7, -7},  {1, 1},  {-1, -3}, {-3, 2}, {4, -1},  {-5, -2}, {2, 5},   {5, 3},
+    {3, -5},  {-2, 6},  {0, -7},  {-4, -6}, {-6, 4}, {-8, 0},  {7, -4}, {6, 7},   {-7, -8}};
+
+/* the sample count of a resource operand, or of the render targets for the rasterizer. */
+static uint32_t sample_count(Compiler *c, const DxbcOperand *resource)
+{
+    if (resource->type == OPERAND_RASTERIZER)
+        return table_entry(c, DXBC_TABLE_SAMPLE_COUNT);
+    Resource *r;
+    int slot = resource_slot(c, resource, &r);
+    if (slot < 0 || (r->dim != RES_TEXTURE2DMS && r->dim != RES_TEXTURE2DMSARRAY))
+        return uconst(c, 1);
+    spv_capability(&c->b, SpvCapabilityImageQuery);
+    uint32_t image_type;
+    uint32_t image = load_srv(c, (uint32_t)slot, 0, &image_type);
+    return spv_op1(&c->b, SpvOpImageQuerySamples, c->t_u32, image);
+}
+
+/* where a sample is in its pixel; the center for a sample index past the count, or counts without a pattern. */
+static void samplepos(Compiler *c, const DxbcInstruction *ins)
+{
+    const DxbcOperand *resource = &ins->operands[1];
+    uint32_t count = sample_count(c, resource);
+    uint32_t sample = load_scalar(c, &ins->operands[2], ins->operands[2].swizzle[0], K_UINT);
+    if (!c->sample_positions) {
+        uint32_t v2 = c->t_vec[K_FLOAT][2], parts[31];
+        for (uint32_t i = 0; i < 31; i++) {
+            uint32_t xy[2] = {fconst(c, SAMPLE_POSITIONS[i][0] / 16.0f), fconst(c, SAMPLE_POSITIONS[i][1] / 16.0f)};
+            parts[i] = spv_const_composite(&c->b, v2, xy, 2);
+        }
+        uint32_t array = spv_type_array(&c->b, v2, 31);
+        c->sample_positions =
+            global(c, SpvStorageClassPrivate, array, spv_const_composite_array(&c->b, array, parts, 31));
+    }
+    uint32_t one = uconst(c, 1);
+    uint32_t pow2 = spv_op2(&c->b, SpvOpIEqual, c->t_bool,
+                            spv_op2(&c->b, SpvOpBitwiseAnd, c->t_u32, count, spv_op2(&c->b, SpvOpISub, c->t_u32, count, one)),
+                            uconst(c, 0));
+    uint32_t valid = spv_op2(&c->b, SpvOpLogicalAnd, c->t_bool, pow2,
+                             spv_op2(&c->b, SpvOpLogicalAnd, c->t_bool,
+                                     spv_op2(&c->b, SpvOpULessThan, c->t_bool, sample, count),
+                                     spv_op2(&c->b, SpvOpULessThanEqual, c->t_bool, count, uconst(c, 16))));
+    uint32_t index = spv_op3(&c->b, SpvOpSelect, c->t_u32, valid,
+                             spv_op2(&c->b, SpvOpIAdd, c->t_u32, spv_op2(&c->b, SpvOpISub, c->t_u32, count, one), sample),
+                             uconst(c, 0));
+    uint32_t ptr = spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassPrivate, c->t_vec[K_FLOAT][2]),
+                              c->sample_positions, &index, 1);
+    uint32_t xy = spv_load(&c->b, c->t_vec[K_FLOAT][2], ptr);
+    uint32_t zero = fconst(c, 0.0f);
+    uint32_t parts[4] = {extract(c, c->t_f32, xy, 0), extract(c, c->t_f32, xy, 1), zero, zero};
+    store_texel(c, ins, resource, spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_FLOAT][4], parts, 4), K_FLOAT);
+}
+
+/*
+ * the forms of tiled resources that also write a residency status: every
+ * resource is fully mapped here, so the plain form, and a status
+ * check_access_fully_mapped says is. the clamped forms clamp the level of
+ * detail of the sample.
+ */
+static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at);
+
+static int feedback(Compiler *c, const DxbcInstruction *ins, uint32_t at)
+{
+    static const uint8_t PLAIN[] = {OP_GATHER4,    OP_GATHER4_C,  OP_GATHER4_PO,      OP_GATHER4_PO_C, OP_LD,
+                                    OP_LD_MS,      OP_LD_UAV_TYPED, OP_LD_RAW,        OP_LD_STRUCTURED, OP_SAMPLE_L,
+                                    OP_SAMPLE_C_LZ, OP_SAMPLE,     OP_SAMPLE_B,       OP_SAMPLE_D,     OP_SAMPLE_C};
+    DxbcInstruction plain = *ins;
+    plain.opcode = PLAIN[ins->opcode - OP_GATHER4_FEEDBACK];
+    if (plain.operand_count < 3)
+        return fail(c, "malformed bytecode");
+    for (uint32_t i = 1; i + 1 < plain.operand_count; i++)
+        plain.operands[i] = plain.operands[i + 1];
+    plain.operand_count--;
+    int clamped = ins->opcode >= OP_SAMPLE_CLAMP_FEEDBACK;
+    if (clamped)
+        c->min_lod = &ins->operands[--plain.operand_count + 1];
+    int result = instruction(c, &plain, at);
+    c->min_lod = NULL;
+    const DxbcOperand *status = &ins->operands[1];
+    store(c, NULL, status, splat_const(c, K_UINT, popcount(dst_mask(status)), 0), K_UINT);
+    return result;
+}
+
 static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
 {
     switch (ins->opcode) {
@@ -2946,8 +3224,96 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     case OP_MAX:
         glsl2(c, ins, GLSLstd450NMax, K_FLOAT);
         break;
-    case OP_MOV:
-    case OP_DMOV: {
+    case OP_DMOV:
+        store_doubles(c, ins, &ins->operands[0], load_doubles(c, &ins->operands[1]));
+        break;
+    case OP_MSAD:
+        msad(c, ins);
+        break;
+    case OP_SAMPLE_POS:
+        samplepos(c, ins);
+        break;
+    case OP_GATHER4_FEEDBACK:
+    case OP_GATHER4_C_FEEDBACK:
+    case OP_GATHER4_PO_FEEDBACK:
+    case OP_GATHER4_PO_C_FEEDBACK:
+    case OP_LD_FEEDBACK:
+    case OP_LD_MS_FEEDBACK:
+    case OP_LD_UAV_TYPED_FEEDBACK:
+    case OP_LD_RAW_FEEDBACK:
+    case OP_LD_STRUCTURED_FEEDBACK:
+    case OP_SAMPLE_L_FEEDBACK:
+    case OP_SAMPLE_C_LZ_FEEDBACK:
+    case OP_SAMPLE_CLAMP_FEEDBACK:
+    case OP_SAMPLE_B_CLAMP_FEEDBACK:
+    case OP_SAMPLE_D_CLAMP_FEEDBACK:
+    case OP_SAMPLE_C_CLAMP_FEEDBACK:
+        return feedback(c, ins, at);
+    case OP_CHECK_ACCESS_FULLY_MAPPED:
+        store(c, NULL, &ins->operands[0], splat_const(c, K_UINT, popcount(dst_mask(&ins->operands[0])), ~0u), K_UINT);
+        break;
+    case OP_ABORT:
+    case OP_DEBUG_BREAK:
+        break;
+    case OP_INTERFACE_CALL:
+        return fail(c, "class linkage is not implemented");
+    case OP_DADD:
+        double_binary(c, ins, SpvOpFAdd);
+        break;
+    case OP_DMUL:
+        double_binary(c, ins, SpvOpFMul);
+        break;
+    case OP_DDIV:
+        double_binary(c, ins, SpvOpFDiv);
+        break;
+    case OP_DMIN:
+        double_glsl(c, ins, GLSLstd450NMin, 2);
+        break;
+    case OP_DMAX:
+        double_glsl(c, ins, GLSLstd450NMax, 2);
+        break;
+    case OP_DFMA:
+        double_glsl(c, ins, GLSLstd450Fma, 3);
+        break;
+    case OP_DRCP: {
+        uint32_t r = spv_op2(&c->b, SpvOpFDiv, dvec2_type(c), dconst(c, 1.0), load_doubles(c, &ins->operands[1]));
+        store_doubles(c, ins, &ins->operands[0], r);
+        break;
+    }
+    case OP_DEQ:
+        double_compare(c, ins, SpvOpFOrdEqual);
+        break;
+    case OP_DNE:
+        double_compare(c, ins, SpvOpFUnordNotEqual);
+        break;
+    case OP_DLT:
+        double_compare(c, ins, SpvOpFOrdLessThan);
+        break;
+    case OP_DGE:
+        double_compare(c, ins, SpvOpFOrdGreaterThanEqual);
+        break;
+    case OP_DMOVC:
+        double_movc(c, ins);
+        break;
+    case OP_DTOF:
+        double_to(c, ins, SpvOpFConvert, K_FLOAT);
+        break;
+    case OP_DTOI:
+        double_to(c, ins, SpvOpConvertFToS, K_INT);
+        break;
+    case OP_DTOU:
+        double_to(c, ins, SpvOpConvertFToU, K_UINT);
+        break;
+    case OP_FTOD:
+        double_from(c, ins, SpvOpFConvert, K_FLOAT);
+        break;
+    case OP_ITOD:
+        double_from(c, ins, SpvOpConvertSToF, K_INT);
+        break;
+    case OP_UTOD:
+        double_from(c, ins, SpvOpConvertUToF, K_UINT);
+        break;
+    case OP_MOV: {
         uint8_t mask = dst_mask(&ins->operands[0]);
         /* moves keep bits as they are, but saturating or modifying them is done on floats. */
         Kind k = ins->saturate || ins->operands[1].modifier ? K_FLOAT : K_UINT;
@@ -3033,10 +3399,8 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         sin_cos(c, ins);
         break;
     case OP_FTOI:
-        alu1(c, ins, SpvOpConvertFToS, K_FLOAT, K_INT);
-        break;
     case OP_FTOU:
-        alu1(c, ins, SpvOpConvertFToU, K_FLOAT, K_UINT);
+        float_to_int(c, ins, ins->opcode == OP_FTOI);
         break;
     case OP_ITOF:
         alu1(c, ins, SpvOpConvertSToF, K_INT, K_FLOAT);

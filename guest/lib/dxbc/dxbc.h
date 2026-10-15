@@ -41,7 +41,9 @@ enum {
 #define DXBC_TABLE_UAV 158
 /* the counters of append and consume views, storage texel buffers. */
 #define DXBC_TABLE_UAV_COUNTER 222
-#define DXBC_TABLE_DWORDS 288
+/* not a heap index: the sample count of the render targets, for the rasterizer operand. */
+#define DXBC_TABLE_SAMPLE_COUNT 288
+#define DXBC_TABLE_DWORDS 292
 
 typedef enum DxbcProgram {
     DXBC_PIXEL = 0,

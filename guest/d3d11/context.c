@@ -1245,6 +1245,8 @@ static UINT table_value(D3dContext *c, D3dStage stage, UINT entry, D3dResource *
     D3dStageState *s = &c->stages[stage];
     const DxbcShaderInfo *info = &s->shader->info;
     *resource = NULL;
+    if (entry == DXBC_TABLE_SAMPLE_COUNT)
+        return c->render_samples ? c->render_samples : 1;
     if (entry < DXBC_TABLE_SAMPLER) {
         UINT i = entry - DXBC_TABLE_CB;
         D3dResource *r = s->cb[i];
@@ -1455,6 +1457,9 @@ static void begin_rendering(D3dContext *c, VkCommandBuffer cmd)
     c->targets_dirty = FALSE;
     if (c->render_samples != samples || c->render_color_count != c->rtv_count)
         c->om_dirty = TRUE;
+    /* pixel shaders may read the sample count from their table. */
+    if (c->render_samples != samples)
+        c->stages[D3D_PS].table_valid = FALSE;
     c->render_samples = samples;
     c->render_color_count = c->rtv_count;
     c->viewports_dirty = TRUE;
