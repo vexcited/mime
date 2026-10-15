@@ -36,9 +36,12 @@ static RTL_CRITICAL_SECTION g_peb_lock = {NULL, -1, 0, NULL, NULL, 0};
 #if defined(__i386__)
 static const WCHAR g_system32[] = L"C:\\Windows\\SysWOW64\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_I386
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) && !defined(MIME_X64_NATIVE)
 /* the x64 system dlls, for programs run by the translator. */
 static const WCHAR g_system32[] = L"C:\\Windows\\SysX64\\";
+#define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
+#elif defined(__x86_64__)
+static const WCHAR g_system32[] = L"C:\\Windows\\System32\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
 #else
 static const WCHAR g_system32[] = L"C:\\Windows\\System32\\";
@@ -374,7 +377,7 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
         ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, NULL);
         if (!n || n >= out_chars * sizeof(WCHAR))
             return STATUS_OBJECT_PATH_SYNTAX_BAD;
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || (defined(__x86_64__) && !defined(MIME_X64_NATIVE))
         /* System32 holds arm64 dlls: paths into it, such as com servers, mean this processor's copies. */
         static const WCHAR arm64_system32[] = L"C:\\Windows\\System32\\";
         SIZE_T prefix = RTL_NUMBER_OF(arm64_system32) - 1;

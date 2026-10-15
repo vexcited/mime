@@ -202,9 +202,9 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
     smb_begin(&b, 4, 0x0004);
     smb_byte(&b, smb_string(&b, "Onboard - CPU"));
     smb_byte(&b, 0x03); /* a central processor */
-    smb_byte(&b, 0xC4); /* arm 64 bit */
-    smb_byte(&b, smb_string(&b, "Qualcomm Technologies Inc"));
-    smb_qword(&b, KiProcessorIds.Midr);
+    smb_byte(&b, KiProcessorSmbiosType());
+    smb_byte(&b, smb_string(&b, KiProcessorSmbiosManufacturer()));
+    smb_qword(&b, KiProcessorSmbiosId());
     smb_byte(&b, smb_string(&b, HalBootInfo->cpu_name));
     smb_byte(&b, 0x80); /* 8 V */
     smb_word(&b, 0);    /* external clock unknown */
@@ -434,8 +434,8 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     case SystemProcessorInformation:
     case SystemEmulationProcessorInformation: {
         SYSTEM_PROCESSOR_INFORMATION p = {0};
-        p.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
-        p.ProcessorLevel = 8; /* the armv8 family, as in the processor identifier */
+        p.ProcessorArchitecture = MIME_NATIVE_ARCHITECTURE;
+        p.ProcessorLevel = KiProcessorLevel();
         p.ProcessorRevision = KiProcessorRevision();
         p.MaximumProcessors = (USHORT)HalBootInfo->cpu_count;
         p.ProcessorFeatureBits = 0;

@@ -56,24 +56,6 @@ BOOLEAN KeInsertQueueApc(PKAPC apc, PVOID arg1, PVOID arg2, KPRIORITY increment)
     return TRUE;
 }
 
-static void setup_user_apc(PKTRAP_FRAME frame, PKNORMAL_ROUTINE routine, PVOID context, PVOID arg1, PVOID arg2)
-{
-    CONTEXT ctx;
-    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
-    ULONG64 sp = (frame->Sp - sizeof(CONTEXT)) & ~15ull;
-    if (!NT_SUCCESS(KiCopyToUser((PVOID)sp, &ctx, sizeof(ctx)))) {
-        PspTerminateProcess(PsCurrentProcess(), STATUS_ACCESS_VIOLATION);
-        return;
-    }
-    frame->Sp = sp;
-    frame->Pc = (ULONG64)current_system_dll()->KiUserApcDispatcher;
-    frame->X[0] = (ULONG64)context;
-    frame->X[1] = (ULONG64)arg1;
-    frame->X[2] = (ULONG64)arg2;
-    frame->X[3] = (ULONG64)routine;
-    frame->X[4] = sp;
-}
-
 void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
 {
     PKTHREAD thread = KiCurrentThread();
@@ -111,49 +93,12 @@ void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
     PKNORMAL_ROUTINE normal = apc->NormalRoutine;
     PVOID ctx = apc->NormalContext, a1 = apc->SystemArgument1, a2 = apc->SystemArgument2;
     apc->KernelRoutine(apc, &normal, &ctx, &a1, &a2);
-    if (normal && current_system_dll() && current_system_dll()->KiUserApcDispatcher)
-        setup_user_apc(frame, normal, ctx, a1, a2);
+    if (normal && current_system_dll() && current_system_dll()->KiUserApcDispatcher &&
+        !KiSetupUserApc(frame, current_system_dll()->KiUserApcDispatcher, normal, ctx, a1, a2))
+        PspTerminateProcess(PsCurrentProcess(), STATUS_ACCESS_VIOLATION);
 }
 
 /* ------------------------------------------------------------ contexts */
-
-void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
-{
-    memset(ctx, 0, sizeof(*ctx));
-    ctx->ContextFlags = flags;
-    for (int i = 0; i < 31; i++)
-        ctx->X[i] = frame->X[i];
-    ctx->Sp = frame->Sp;
-    ctx->Pc = frame->Pc;
-    ctx->Cpsr = (ULONG)frame->Spsr;
-    if ((flags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT && (frame->Flags & KTRAP_FLAG_FP_SAVED)) {
-        memcpy(ctx->V, frame->V, sizeof(ctx->V));
-        ctx->Fpcr = frame->Fpcr;
-        ctx->Fpsr = frame->Fpsr;
-    }
-}
-
-void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode)
-{
-    if ((flags & CONTEXT_INTEGER) == CONTEXT_INTEGER) {
-        for (int i = 0; i < 29; i++)
-            frame->X[i] = ctx->X[i];
-    }
-    if ((flags & CONTEXT_CONTROL) == CONTEXT_CONTROL) {
-        frame->X[29] = ctx->Fp;
-        frame->X[30] = ctx->Lr;
-        frame->Sp = ctx->Sp;
-        frame->Pc = ctx->Pc;
-        /* user mode may only change the condition flags. */
-        frame->Spsr = (mode == UserMode) ? ((ctx->Cpsr & 0xF0000000u) | PSR_MODE_EL0) : ctx->Cpsr;
-    }
-    if ((flags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT) {
-        memcpy(frame->V, ctx->V, sizeof(frame->V));
-        frame->Fpcr = ctx->Fpcr;
-        frame->Fpsr = ctx->Fpsr;
-        frame->Flags |= KTRAP_FLAG_FP_SAVED;
-    }
-}
 
 NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
 {
@@ -249,19 +194,7 @@ BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame)
     PPSP_SYSTEM_DLL dll = current_system_dll();
     if (!dll || !dll->KiUserExceptionDispatcher)
         return FALSE;
-    CONTEXT ctx;
-    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
-    ULONG64 sp = (frame->Sp - sizeof(CONTEXT) - sizeof(EXCEPTION_RECORD) - 64) & ~15ull;
-    ULONG64 ctx_addr = sp;
-    ULONG64 rec_addr = sp + ((sizeof(CONTEXT) + 15) & ~15ull);
-    if (!NT_SUCCESS(KiCopyToUser((PVOID)ctx_addr, &ctx, sizeof(ctx))) ||
-        !NT_SUCCESS(KiCopyToUser((PVOID)rec_addr, record, sizeof(*record))))
-        return FALSE;
-    frame->Sp = sp;
-    frame->Pc = (ULONG64)dll->KiUserExceptionDispatcher;
-    frame->X[0] = rec_addr;
-    frame->X[1] = ctx_addr;
-    return TRUE;
+    return KiSetupUserException(frame, dll->KiUserExceptionDispatcher, record);
 }
 
 NTSTATUS NTAPI NtRaiseException(PEXCEPTION_RECORD record, PCONTEXT context, BOOLEAN first_chance)
@@ -284,7 +217,7 @@ NTSTATUS NTAPI NtRaiseException(PEXCEPTION_RECORD record, PCONTEXT context, BOOL
     if (rec.ExceptionCode == STATUS_ACCESS_VIOLATION && rec.NumberParameters >= 2)
         KiLogPrintf("  %s of address %p", rec.ExceptionInformation[0] == 1 ? "write" : rec.ExceptionInformation[0] == 8 ? "execute" : "read",
                     (PVOID)rec.ExceptionInformation[1]);
-    KiLogPrintf("  pc %p lr %p sp %p fp %p", (PVOID)ctx.Pc, (PVOID)ctx.Lr, (PVOID)ctx.Sp, (PVOID)ctx.Fp);
+    KiDumpTrapFrame("raised from", frame);
     PspTerminateProcess(process, rec.ExceptionCode);
     KiExitToUserMode(frame);
     return STATUS_SUCCESS;
@@ -304,19 +237,9 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
     if (thread->CallbackDepth > 48)
         return STATUS_STACK_OVERFLOW;
 
-    ULONG64 args = (trap->Sp - input_length - 32) & ~15ull;
-    if (input_length && !NT_SUCCESS(KiCopyToUser((PVOID)args, input, input_length)))
-        return STATUS_ACCESS_VIOLATION;
-
     KTRAP_FRAME frame;
-    memset(&frame, 0, offsetof(KTRAP_FRAME, V));
-    frame.Pc = (ULONG64)dll->KiUserCallbackDispatcher;
-    frame.Sp = args - 16;
-    frame.Spsr = PSR_MODE_EL0;
-    frame.X[18] = trap->X[18];
-    frame.X[0] = api;
-    frame.X[1] = args;
-    frame.X[2] = input_length;
+    if (!KiSetupUserCallback(&frame, trap, dll->KiUserCallbackDispatcher, api, input, input_length))
+        return STATUS_ACCESS_VIOLATION;
 
     PKTRAP_FRAME saved_trap = thread->TrapFrame;
     KPROCESSOR_MODE saved_mode = thread->PreviousMode;

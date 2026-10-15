@@ -208,7 +208,7 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
     }
     process->Pcb.Asid = process->AddressSpace.Asid;
     process->Pcb.PageDirectory = process->AddressSpace.Root;
-    process->Pcb.Ttbr0 = process->AddressSpace.RootPhys | ((ULONG64)process->AddressSpace.Asid << 48);
+    process->Pcb.DirectoryTableBase = MiDirectoryTableBase(&process->AddressSpace);
     process->InheritedFromUniqueProcessId = parent ? parent->UniqueProcessId : 0;
     KeQuerySystemTime((PLARGE_INTEGER)&process->CreateTime);
     ULONG64 s = KiAcquireDispatcherLock();
@@ -228,8 +228,7 @@ void PspProcessExit(PEPROCESS process)
     ObKillProcessHandles(process);
     /* leave the address space before tearing it down. */
     KiCurrentThread()->ApcStateProcess = &PsInitialSystemProcess->Pcb;
-    KI_WRITE_SYSREG(ttbr0_el1, g_system_root);
-    KiInstructionBarrier();
+    KiSwitchAddressSpace(&PsInitialSystemProcess->Pcb);
     MmDeleteAddressSpace(&process->AddressSpace);
     process->Exited = TRUE;
     KeQuerySystemTime((PLARGE_INTEGER)&process->ExitTime);
@@ -425,14 +424,13 @@ void PsInitialize(void)
     system->UniqueProcessId = (HANDLE)4;
     g_cid_table[1] = system;
     memcpy(system->ImageFileName, "System", 7);
-    g_system_root = MmAllocatePage();
-    system->Pcb.Ttbr0 = g_system_root;
+    g_system_root = MiCreateSystemRoot();
+    system->Pcb.DirectoryTableBase = g_system_root;
     KeInitializeEvent(&system->ExitEvent, NotificationEvent, FALSE);
     InsertTailList(&PsActiveProcessHead, &system->ActiveProcessLinks);
     PsInitialSystemProcess = system;
     PsIdleProcess = system;
-    KI_WRITE_SYSREG(ttbr0_el1, g_system_root);
-    KiInstructionBarrier();
+    KiSwitchAddressSpace(&system->Pcb);
 
     PsInitializeIdleThread();
 }

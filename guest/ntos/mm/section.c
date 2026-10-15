@@ -134,7 +134,7 @@ ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared)
 {
     ULONG64 attrs = MiProtectToPte(protect, TRUE) | (shared ? MM_PTE_SW_SHARED : 0);
     if (!MiGetPfn(pa) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
-        attrs |= MM_PTE_AP_RO | MM_PTE_SW_COW;
+        attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
     return attrs;
 }
 

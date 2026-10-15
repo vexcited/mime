@@ -10,6 +10,11 @@ void Win32kInitializeServices(PKSERVICE_DESCRIPTOR table);
 extern ULONG Win32kServiceCount;
 
 static KSERVICE_DESCRIPTOR g_services[2048];
+
+/* x64 code using floating point refers to it, as with msvc. */
+#if defined(__x86_64__)
+int _fltused = 0x9875;
+#endif
 static LIST_ENTRY g_processes = {&g_processes, &g_processes};
 static LIST_ENTRY g_threads = {&g_threads, &g_threads};
 

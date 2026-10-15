@@ -97,7 +97,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     thread->PreviousMode = UserMode;
     KiEnableInterrupts();
 
-    ULONG number = (ULONG)frame->Esr & 0xFFFF;
+    ULONG number = KI_SERVICE_NUMBER(frame);
     ULONG table = number >> 12;
     ULONG index = number & 0xFFF;
     ULONG64 result;
@@ -116,16 +116,18 @@ void KiSystemService(PKTRAP_FRAME frame)
         result = table == 1 ? 0 : (ULONG64)(LONG64)STATUS_NOT_IMPLEMENTED;
     } else {
         ULONG64 args[16];
-        memcpy(args, frame->X, 8 * sizeof(ULONG64));
+        for (int i = 0; i < KI_SERVICE_REGISTER_ARGS; i++)
+            args[i] = KI_SERVICE_REGISTER_ARG(frame, i);
         ULONG stack = t->Table[index].StackArgs;
-        if (stack > 8)
-            stack = 8;
-        if (stack && !NT_SUCCESS(KiCopyFromUser(&args[8], (PVOID)frame->Sp, stack * sizeof(ULONG64))))
+        if (stack > 16 - KI_SERVICE_REGISTER_ARGS)
+            stack = 16 - KI_SERVICE_REGISTER_ARGS;
+        if (stack && !NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS], (PVOID)KI_SERVICE_STACK_ARGS(frame),
+                                                stack * sizeof(ULONG64))))
             result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
         else
             result = KiCallService(t->Table[index].Routine, args, stack);
     }
-    frame->X[0] = result;
+    KI_SERVICE_RESULT(frame) = result;
     KiExitToUserMode(frame);
 }
 

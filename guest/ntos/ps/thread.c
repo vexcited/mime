@@ -146,32 +146,10 @@ NTSTATUS NTAPI PsTerminateSystemThread(NTSTATUS status)
     PspExitThread(status);
 }
 
-/* builds the user trap frame of a new user thread and enters user mode. */
-typedef struct USER_START {
-    ULONG64 Pc;
-    ULONG64 Sp;
-    ULONG64 X0;
-    ULONG64 X1;
-    ULONG64 Teb;
-} USER_START;
-
-static void initialize_user_frame(PKTHREAD thread, const USER_START *start)
-{
-    PKTRAP_FRAME frame = thread->TrapFrame;
-    memset(frame, 0, sizeof(*frame));
-    frame->Pc = start->Pc;
-    frame->Sp = start->Sp;
-    frame->X[0] = start->X0;
-    frame->X[1] = start->X1;
-    frame->X[18] = start->Teb;
-    frame->Spsr = PSR_MODE_EL0;
-    frame->Flags = KTRAP_FLAG_FP_SAVED; /* start with zeroed fp state */
-}
-
+/* enters user mode through the trap frame PspCreateUserThread built. */
 static void user_thread_startup(PVOID context)
 {
     PKTHREAD thread = KiCurrentThread();
-    ExFreePool(context);
     PKTRAP_FRAME frame = thread->TrapFrame;
     thread->PreviousMode = UserMode;
     KiExitToUserMode(frame);
@@ -189,7 +167,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
         return STATUS_DLL_NOT_FOUND;
     PVOID ldr_thunk = dll->LdrInitializeThunk;
     PVOID user_start = dll->RtlUserThreadStart;
-    BOOLEAN translated = process->Machine != IMAGE_FILE_MACHINE_ARM64;
+    BOOLEAN translated = process->Machine != MIME_NATIVE_MACHINE;
     if (!stack_reserve)
         stack_reserve = MIME_DEFAULT_STACK_RESERVE;
     stack_reserve = (stack_reserve + 0xFFFF) & ~(SIZE_T)0xFFFF;
@@ -215,14 +193,8 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     }
 
     PETHREAD thread;
-    USER_START *ctx = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(USER_START), KI_TAG('P', 's', 'U', 's'));
-    if (!ctx) {
-        KiAttachProcess(saved);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-    status = PspCreateThread(process, FALSE, user_thread_startup, ctx, &thread);
+    status = PspCreateThread(process, FALSE, user_thread_startup, NULL, &thread);
     if (!NT_SUCCESS(status)) {
-        ExFreePool(ctx);
         KiAttachProcess(saved);
         return status;
     }
@@ -249,22 +221,11 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
 
     /* initial context consumed by LdrInitializeThunk, then NtContinue'd into RtlUserThreadStart. */
     ULONG64 ctx_va = (stack_base - sizeof(CONTEXT)) & ~15ull;
-    PCONTEXT context = (PCONTEXT)ctx_va;
-    memset(context, 0, sizeof(*context));
-    context->ContextFlags = CONTEXT_FULL;
-    context->Pc = (ULONG64)user_start;
-    context->Sp = ctx_va;
-    context->X0 = (ULONG64)start;
-    context->X1 = (ULONG64)parameter;
-    context->X18 = (ULONG64)teb_va;
-    context->Cpsr = PSR_MODE_EL0;
-
-    ctx->Pc = (ULONG64)ldr_thunk;
-    ctx->Sp = native_stack ? (ULONG64)native_stack + native_size : ctx_va;
-    ctx->X0 = ctx_va;
-    ctx->X1 = (ULONG64)process->NtdllBase;
-    ctx->Teb = (ULONG64)teb_va;
-    initialize_user_frame(&thread->Tcb, ctx);
+    KiInitializeUserContext((PCONTEXT)ctx_va, (ULONG64)user_start, ctx_va, (ULONG64)start, (ULONG64)parameter,
+                            (ULONG64)teb_va);
+    ULONG64 sp = native_stack ? (ULONG64)native_stack + native_size : ctx_va;
+    KiInitializeUserFrame(thread->Tcb.TrapFrame, (ULONG64)ldr_thunk, sp, ctx_va, (ULONG64)process->NtdllBase,
+                          (ULONG64)teb_va);
     KiAttachProcess(saved);
 
     if (!suspended)
@@ -281,7 +242,7 @@ void KiAttachProcess(PKPROCESS process)
     PKTHREAD t = KiCurrentThread();
     ULONG64 s = KiAcquireDispatcherLock();
     t->ApcStateProcess = process;
-    if (process->Ttbr0)
+    if (process->DirectoryTableBase)
         KiSwitchAddressSpace(process);
     KiReleaseDispatcherLock(s);
     if (process == t->Process)

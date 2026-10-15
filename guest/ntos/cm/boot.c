@@ -165,20 +165,7 @@ static void hardware(void)
     WCHAR identifier[96] = {0}, vendor[48], name[64];
     widen(vendor, RTL_NUMBER_OF(vendor), KiProcessorVendor());
     widen(name, RTL_NUMBER_OF(name), HalBootInfo->cpu_name);
-    _snwprintf(identifier, RTL_NUMBER_OF(identifier) - 1, L"ARMv8 (64-bit) Family 8 Model %X Revision %u",
-               KiProcessorModel(), (ULONG)(KiProcessorIds.Midr & 0xF));
-    static const struct {
-        USHORT Encoding;
-        SIZE_T Offset;
-    } registers[] = {
-        {0x4000, offsetof(KI_PROCESSOR_IDS, Midr)},  {0x4020, offsetof(KI_PROCESSOR_IDS, Pfr0)},
-        {0x4021, offsetof(KI_PROCESSOR_IDS, Pfr1)},  {0x4028, offsetof(KI_PROCESSOR_IDS, Dfr0)},
-        {0x4029, offsetof(KI_PROCESSOR_IDS, Dfr1)},  {0x402C, offsetof(KI_PROCESSOR_IDS, Afr0)},
-        {0x402D, offsetof(KI_PROCESSOR_IDS, Afr1)},  {0x4030, offsetof(KI_PROCESSOR_IDS, Isar0)},
-        {0x4031, offsetof(KI_PROCESSOR_IDS, Isar1)}, {0x4032, offsetof(KI_PROCESSOR_IDS, Isar2)},
-        {0x4038, offsetof(KI_PROCESSOR_IDS, Mmfr0)}, {0x4039, offsetof(KI_PROCESSOR_IDS, Mmfr1)},
-        {0x403A, offsetof(KI_PROCESSOR_IDS, Mmfr2)}, {0x5801, offsetof(KI_PROCESSOR_IDS, Ctr)},
-    };
+    KiFormatProcessorIdentifier(identifier, RTL_NUMBER_OF(identifier) - 1);
     for (ULONG cpu = 0; cpu < HalBootInfo->cpu_count; cpu++) {
         WCHAR path[128] = {0};
         _snwprintf(path, RTL_NUMBER_OF(path) - 1,
@@ -190,11 +177,7 @@ static void hardware(void)
         set_sz(path, L"ProcessorNameString", REG_SZ, name);
         if (HalBootInfo->cpu_mhz)
             set_dword(path, L"~MHz", HalBootInfo->cpu_mhz);
-        for (ULONG i = 0; i < RTL_NUMBER_OF(registers); i++) {
-            WCHAR value[16] = {0};
-            _snwprintf(value, RTL_NUMBER_OF(value) - 1, L"CP %04X", registers[i].Encoding);
-            set_qword(path, value, *(const ULONG64 *)((const UCHAR *)&KiProcessorIds + registers[i].Offset));
-        }
+        KiSetProcessorRegistryValues(path, set);
     }
 }
 
@@ -248,13 +231,15 @@ static void machine_guid(void)
 /* the processor variables the session manager writes at boot. */
 static void processor_environment(void)
 {
-    WCHAR text[160] = {0}, vendor[48];
+    WCHAR text[160] = {0}, identifier[96] = {0}, vendor[48];
     widen(vendor, RTL_NUMBER_OF(vendor), KiProcessorVendor());
-    set_sz(ENVIRONMENT, L"PROCESSOR_ARCHITECTURE", REG_SZ, L"ARM64");
-    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"ARMv8 (64-bit) Family 8 Model %X Revision %u, %ls", KiProcessorModel(),
-               (ULONG)(KiProcessorIds.Midr & 0xF), vendor);
+    set_sz(ENVIRONMENT, L"PROCESSOR_ARCHITECTURE", REG_SZ, MIME_NATIVE_ARCHITECTURE_NAME);
+    KiFormatProcessorIdentifier(identifier, RTL_NUMBER_OF(identifier) - 1);
+    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"%ls, %ls", identifier, vendor);
     set_sz(ENVIRONMENT, L"PROCESSOR_IDENTIFIER", REG_SZ, text);
-    set_sz(ENVIRONMENT, L"PROCESSOR_LEVEL", REG_SZ, L"8");
+    memset(text, 0, sizeof(text));
+    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"%u", KiProcessorLevel());
+    set_sz(ENVIRONMENT, L"PROCESSOR_LEVEL", REG_SZ, text);
     memset(text, 0, sizeof(text));
     _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"%04x", KiProcessorRevision());
     set_sz(ENVIRONMENT, L"PROCESSOR_REVISION", REG_SZ, text);

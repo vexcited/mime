@@ -182,7 +182,7 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
 
     if (machine == IMAGE_FILE_MACHINE_I386) {
         set_z(env, L"PROCESSOR_ARCHITECTURE", L"x86");
-        set_z(env, L"PROCESSOR_ARCHITEW6432", L"ARM64");
+        set_z(env, L"PROCESSOR_ARCHITEW6432", MIME_NATIVE_ARCHITECTURE_NAME);
     }
 
     /* sorted, case insensitive, like RtlSetEnvironmentVariable keeps it. */

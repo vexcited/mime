@@ -159,7 +159,7 @@ static void shutdown_machine(void)
     }
     HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, NULL);
     for (;;)
-        __asm__ volatile("wfi");
+        KiPause();
 }
 
 /* runs on the phase 1 system thread and never returns. */

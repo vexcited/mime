@@ -34,7 +34,7 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     SYSTEM_PROCESSOR_INFORMATION cpu = {PROCESSOR_ARCHITECTURE_ARM64, 8, 0, 1, 0};
     basic_information(&basic);
     NtQuerySystemInformation(SystemProcessorInformation, &cpu, sizeof(cpu), NULL);
-#if defined(__x86_64__) || defined(__i386__)
+#if (defined(__x86_64__) && !defined(MIME_X64_NATIVE)) || defined(__i386__)
     /* the processor the translator presents, family 6 model 0x9e stepping 10 as its cpuid says. */
 #if defined(__i386__)
     cpu.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;

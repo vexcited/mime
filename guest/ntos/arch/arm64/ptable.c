@@ -1,7 +1,7 @@
 /*
  * translation tables: walking, mapping and tlb maintenance.
  */
-#include "../ntos.h"
+#include "../../ntos.h"
 
 static ULONG64 *g_kernel_root;
 
@@ -183,4 +183,19 @@ BOOLEAN NTAPI MmIsAddressValid(PVOID va)
                                                : (ULONG64 *)HalPhysmap(KI_READ_SYSREG(ttbr0_el1) & MM_PTE_ADDR_MASK);
     ULONG64 *pte = MiWalk(root, v, FALSE, 3);
     return pte && (*pte & MM_PTE_VALID);
+}
+
+/* ttbr0 of the system process: user space is empty, the kernel lives in ttbr1. */
+ULONG64 MiCreateSystemRoot(void)
+{
+    return MmAllocatePage();
+}
+
+void MiInitializeProcessRoot(ULONG64 *root)
+{
+}
+
+ULONG64 MiDirectoryTableBase(PMMADDRESS_SPACE as)
+{
+    return as->RootPhys | ((ULONG64)as->Asid << 48);
 }

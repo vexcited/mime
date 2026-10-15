@@ -90,8 +90,8 @@ static void KiPhase1Initialization(PVOID context);
 
 /*
  * every processor ends here, holding the kernel lock. it lets go only
- * while sleeping in wfi with interrupts masked, so an interrupt is always
- * taken with the lock held and a wakeup posted meanwhile ends the wfi.
+ * while sleeping in KiIdleWait, so an interrupt is always taken with the
+ * lock held and a wakeup posted meanwhile ends the sleep.
  */
 static DECLSPEC_NORETURN void idle_loop(void)
 {
@@ -103,9 +103,7 @@ static DECLSPEC_NORETURN void idle_loop(void)
             prcb->IdleTicks++;
             if (prcb->Number == 0)
                 MmDiscardIdle();
-            KiReleaseKernelLock();
-            __asm__ volatile("wfi");
-            KiAcquireKernelLock();
+            KiIdleWait();
         }
         KiEnableInterrupts();
         PspReapDeadThreads();
@@ -143,8 +141,8 @@ void KiStartProcessors(void)
 void KiInitializeProcessor(PKPCR pcr)
 {
     KiAcquireKernelLock();
-    KI_WRITE_SYSREG(ttbr0_el1, PsInitialSystemProcess->Pcb.Ttbr0);
-    KiInstructionBarrier();
+    KiInitializeProcessorArch();
+    KiSwitchAddressSpace(&PsInitialSystemProcess->Pcb);
     HalInitializeProcessor();
     KiProgramNextTimer();
     idle_loop();
@@ -159,6 +157,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     PKPCR pcr = &KiBootPcr;
     pcr->Self = pcr;
     pcr->CurrentPrcb = &pcr->Prcb;
+    KiInitializeProcessorArch();
     /* interrupts stay masked in daif until the idle loop, so init code may freely raise and lower. */
     pcr->Irql = PASSIVE_LEVEL;
     KiAcquireKernelLock();
@@ -167,8 +166,8 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiKernelLockPhys = HalPhysicalOf((const void *)KiKernelLock);
     if (boot->magic != MIME_BOOT_MAGIC || boot->version != MIME_ABI_VERSION)
         HalPanic("boot information mismatch between the vmm and the kernel");
-    KiLogPrintf("Mime NT kernel %u.%u build %u (arm64), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
-                MIME_NT_MINOR_VERSION, MIME_NT_BUILD_NUMBER, boot->ram_size >> 20);
+    KiLogPrintf("Mime NT kernel %u.%u build %u (%s), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
+                MIME_NT_MINOR_VERSION, MIME_NT_BUILD_NUMBER, MIME_ARCH_NAME, boot->ram_size >> 20);
 
     extern BOOLEAN KiTraceUserExceptions;
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != NULL;

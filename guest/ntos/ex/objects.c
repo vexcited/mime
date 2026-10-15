@@ -27,8 +27,8 @@ static void init_shared_data(void)
     MiSetKuserPage(pa);
     KUSER_SHARED_DATA *k = SharedUserData;
     k->TickCountMultiplier = 0x0FA00000; /* 15.625 ms in 24.8 fixed point, as on windows */
-    k->ImageNumberLow = IMAGE_FILE_MACHINE_ARM64;
-    k->ImageNumberHigh = IMAGE_FILE_MACHINE_ARM64;
+    k->ImageNumberLow = MIME_NATIVE_MACHINE;
+    k->ImageNumberHigh = MIME_NATIVE_MACHINE;
     static const WCHAR root[] = L"C:\\Windows";
     memcpy(k->NtSystemRoot, root, sizeof(root));
     k->MaxStackTraceDepth = 0;
@@ -38,7 +38,7 @@ static void init_shared_data(void)
     k->NtBuildNumber = MIME_NT_BUILD_NUMBER;
     k->NtProductType = NtProductWinNt;
     k->ProductTypeIsValid = TRUE;
-    k->NativeProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
+    k->NativeProcessorArchitecture = MIME_NATIVE_ARCHITECTURE;
     k->NtMajorVersion = MIME_NT_MAJOR_VERSION;
     k->NtMinorVersion = MIME_NT_MINOR_VERSION;
     KiReadProcessorIds();

@@ -48,13 +48,7 @@ void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVO
     thread->PreviousMode = KernelMode;
 
     /* the user trap frame (if any) sits at the top, the switch frame below it. */
-    ULONG64 *frame = (ULONG64 *)((PUCHAR)stack_top - KTRAP_FRAME_SIZE - KSWITCH_FRAME_SIZE);
-    memset(frame, 0, KSWITCH_FRAME_SIZE);
-    frame[0] = (ULONG64)routine;      /* x19 */
-    frame[1] = (ULONG64)context;      /* x20 */
-    frame[11] = (ULONG64)KiThreadStartup; /* x30 */
-    thread->KernelSp = (ULONG64)frame;
-    thread->TrapFrame = (PKTRAP_FRAME)((PUCHAR)stack_top - KTRAP_FRAME_SIZE);
+    KiInitializeSwitchFrame(thread, routine, context);
 
     ULONG64 s = KiAcquireDispatcherLock();
     InsertTailList(&process->ThreadListHead, &thread->ThreadListEntry);
@@ -161,12 +155,6 @@ static PKTHREAD select_next(PKPRCB prcb)
     return CONTAINING_RECORD(e, KTHREAD, ReadyListEntry);
 }
 
-void KiSwitchAddressSpace(PKPROCESS process)
-{
-    KI_WRITE_SYSREG(ttbr0_el1, process->Ttbr0);
-    KiInstructionBarrier();
-}
-
 /*
  * switches to the best ready thread. the caller holds the dispatcher lock
  * and has already moved the current thread out of the running state.
@@ -194,9 +182,9 @@ void KiSwapThread(void)
             prcb->TickTime = KiQueryInterruptTime();
         KiProgramNextTimer();
     }
-    if (next->ApcStateProcess != old->ApcStateProcess && next->ApcStateProcess->Ttbr0)
+    if (next->ApcStateProcess != old->ApcStateProcess && next->ApcStateProcess->DirectoryTableBase)
         KiSwitchAddressSpace(next->ApcStateProcess);
-    KiSwapContextInternal(&old->KernelSp, next->KernelSp);
+    KiSwapContext(old, next);
 }
 
 /* moves a still running thread back to the ready queue and dispatches, unless it keeps the processor. */

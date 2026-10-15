@@ -55,6 +55,7 @@ NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as)
     if (!as->RootPhys)
         return STATUS_INSUFFICIENT_RESOURCES;
     as->Root = HalPhysmap(as->RootPhys);
+    MiInitializeProcessRoot(as->Root);
     PMMVAD vad = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MMVAD), KI_TAG('M', 'm', 'V', 'd'));
     if (!vad)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -191,9 +192,10 @@ static void release_pages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 
 static void free_tables(ULONG64 *table, int level)
 {
-    for (int i = 0; i < 512; i++) {
+    /* the kernel half of an x64 root belongs to every process. */
+    for (int i = 0; i < (level ? 512 : MI_USER_ROOT_ENTRIES); i++) {
         ULONG64 e = table[i];
-        if (!(e & MM_PTE_VALID) || !(e & MM_PTE_TABLE) || level == 3)
+        if (!(e & MM_PTE_VALID) || !MI_PTE_IS_TABLE(e, level))
             continue;
         ULONG64 *child = HalPhysmap(e & MM_PTE_ADDR_MASK);
         if (level < 2)
@@ -230,7 +232,7 @@ static NTSTATUS commit_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end
         if (*pte & MM_PTE_VALID) {
             ULONG64 attrs = MiProtectToPte(protect, TRUE) | (*pte & MM_PTE_SW_SHARED);
             if ((*pte & MM_PTE_SW_SHARED) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
-                attrs |= MM_PTE_AP_RO | MM_PTE_SW_COW;
+                attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
             MiWritePte(as->Root, va, (*pte & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE, as->Asid);
         } else {
             *pte = sw_pte(protect) | (*pte & MM_SWPTE_SECTION);
@@ -376,7 +378,7 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
             ULONG64 attrs = MiProtectToPte(protect, TRUE) | (v & MM_PTE_SW_SHARED);
             /* writable private copies keep their data; shared pages become copy on write. */
             if ((v & MM_PTE_SW_SHARED) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
-                attrs = (attrs | MM_PTE_AP_RO | MM_PTE_SW_COW);
+                attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
             MiWritePte(as->Root, va, (v & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE, as->Asid);
         } else {
             *pte = sw_pte(protect) | (v & MM_SWPTE_SECTION);
@@ -467,7 +469,7 @@ static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v)
         return FALSE;
     ULONG64 attrs = MiProtectToPte(protect, TRUE) & ~MM_PTE_SW_COW;
     if (protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
-        attrs &= ~MM_PTE_AP_RO;
+        attrs = MI_PTE_SET_RW(attrs);
     *pte = pa | attrs | MM_PTE_VALID | MM_PTE_PAGE;
     as->CommittedPages++;
     return TRUE;
@@ -542,12 +544,12 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
             ULONG64 pa = MmAllocatePageNoZero();
             if (pa) {
                 memcpy(HalPhysmap(pa), HalPhysmap(v & MM_PTE_ADDR_MASK), PAGE_SIZE);
-                ULONG64 attrs = (v & ~(MM_PTE_ADDR_MASK | MM_PTE_SW_COW | MM_PTE_SW_SHARED | MM_PTE_AP_RO));
+                ULONG64 attrs = MI_PTE_SET_RW(v & ~(MM_PTE_ADDR_MASK | MM_PTE_SW_COW | MM_PTE_SW_SHARED));
                 MiWritePte(as->Root, page, pa | attrs, as->Asid);
                 handled = TRUE;
             }
-        } else if ((v & MM_PTE_VALID) && (mode == KernelMode || (v & MM_PTE_AP_EL0)) &&
-                   (!write || !(v & MM_PTE_AP_RO)) && (!execute || !(v & MM_PTE_UXN))) {
+        } else if ((v & MM_PTE_VALID) && (mode == KernelMode || MI_PTE_IS_USER(v)) &&
+                   (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v))) {
             /* another thread, possibly on another processor, fixed the page up first. */
             handled = TRUE;
         }
@@ -773,7 +775,7 @@ NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS
 
 NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size)
 {
-    __asm__ volatile("dsb ish; ic ialluis; dsb ish; isb" ::: "memory");
+    KiFlushInstructionCache();
     return STATUS_SUCCESS;
 }
 
@@ -801,7 +803,7 @@ NTSTATUS NTAPI NtFlushProcessWriteBuffers(void)
         if (!__atomic_load_n(&pcr->UserMode, __ATOMIC_ACQUIRE) || KiProcessorBlock[i]->CurrentThread->Process != process)
             targets &= targets - 1;
         else
-            __asm__ volatile("yield");
+            KiPause();
     }
     KiDataSyncBarrier();
     return STATUS_SUCCESS;

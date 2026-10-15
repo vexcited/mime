@@ -11,95 +11,17 @@
 #include <stdbool.h>
 
 #include "../rtl/rtl.h"
-#include "arch/ktrap.h"
 
 #define KI_TAG(a, b, c, d) ((ULONG)(a) | (ULONG)(b) << 8 | (ULONG)(c) << 16 | (ULONG)(d) << 24)
 
-/* ------------------------------------------------------------------ arch */
-
-FORCEINLINE void KiMemoryBarrier(void)
-{
-    __asm__ volatile("dmb ish" ::: "memory");
-}
-
-FORCEINLINE void KiDataSyncBarrier(void)
-{
-    __asm__ volatile("dsb ish" ::: "memory");
-}
-
-FORCEINLINE void KiInstructionBarrier(void)
-{
-    __asm__ volatile("isb" ::: "memory");
-}
-
-#define KI_READ_SYSREG(name)                                                                                      \
-    ({                                                                                                            \
-        ULONG64 _v;                                                                                               \
-        __asm__ volatile("mrs %0, " #name : "=r"(_v));                                                            \
-        _v;                                                                                                       \
-    })
-#define KI_WRITE_SYSREG(name, v) __asm__ volatile("msr " #name ", %0" ::"r"((ULONG64)(v)) : "memory")
-
-FORCEINLINE ULONG64 KiDisableInterrupts(void)
-{
-    ULONG64 daif = KI_READ_SYSREG(daif);
-    __asm__ volatile("msr daifset, #3" ::: "memory");
-    return daif;
-}
-
-FORCEINLINE void KiRestoreInterrupts(ULONG64 daif)
-{
-    KI_WRITE_SYSREG(daif, daif);
-}
-
-FORCEINLINE void KiEnableInterrupts(void)
-{
-    __asm__ volatile("msr daifclr, #3" ::: "memory");
-}
-
-FORCEINLINE BOOLEAN KiInterruptsEnabled(void)
-{
-    return (KI_READ_SYSREG(daif) & (1u << 7)) == 0;
-}
-
-typedef struct _KTRAP_FRAME {
-    ULONG64 X[31];
-    ULONG64 Sp;
-    ULONG64 Pc;
-    ULONG64 Spsr;
-    ULONG64 Esr;
-    ULONG64 Far;
-    ULONG64 Flags;
-    ULONG64 Reserved;
-    NEON128 V[32];
-    ULONG Fpcr;
-    ULONG Fpsr;
-    ULONG64 Pad;
-} KTRAP_FRAME, *PKTRAP_FRAME;
-MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Sp) == KTRAP_SP, "trap sp");
-MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Flags) == KTRAP_FLAGS, "trap flags");
-MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, V) == KTRAP_V, "trap v");
-MIME_STATIC_ASSERT(offsetof(KTRAP_FRAME, Fpcr) == KTRAP_FPCR, "trap fpcr");
-MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
-#define KI_ASSERT_KERNEL_LOCK()                                                                                   \
-    do {                                                                                                          \
-        if (KiKernelLock[1] != KeGetCurrentPrcb()->Number)                                                        \
-            KeBugCheckEx(0xDEAD10C, KiKernelLock[1], KeGetCurrentPrcb()->Number, __LINE__, 0);                    \
-    } while (0)
-
-#define PSR_MODE_EL0 0x0
-#define PSR_MODE_EL1H 0x5
-#define PSR_DAIF_MASK (0xFull << 6)
-
-typedef struct _KJUMP_BUFFER {
-    ULONG64 X19_X30[12];
-    ULONG64 Sp;
-    ULONG64 D8_D15[8];
-} KJUMP_BUFFER;
+#if defined(__x86_64__)
+#include "arch/x64/arch.h"
+#else
+#include "arch/arm64/arch.h"
+#endif
 
 __attribute__((returns_twice)) int KiSetJump(KJUMP_BUFFER *buffer);
 DECLSPEC_NORETURN void KiLongJump(KJUMP_BUFFER *buffer, int value);
-void KiSwapContextInternal(ULONG64 *old_sp, ULONG64 new_sp);
 void KiThreadStartup(void);
 DECLSPEC_NORETURN void KiEnterUserMode(PKTRAP_FRAME frame);
 NTSTATUS KiCallUserMode(ULONG64 *callback_sp_slot, PKTRAP_FRAME frame);
@@ -127,8 +49,10 @@ ULONG64 HalRomPhysical(const MimeRomEntry *entry);
 BOOLEAN HalIsRomPhysical(ULONG64 pa);
 ULONG HalAcknowledgeInterrupt(void); /* interrupt id, 1020 and above when none is pending */
 void HalEndOfInterrupt(ULONG intid);
+void HalInitializeArch(void);
 void HalInitializeProcessor(void);
 void HalSendIpi(ULONG processor);
+void HalDisarmTimer(void);
 #define HAL_IPI_INTID 1 /* the sgi asking a processor to reschedule */
 ULONG64 HalCounterToHns(ULONG64 counter_delta);
 ULONG64 HalHnsToCounter(ULONG64 hns);
@@ -229,11 +153,12 @@ typedef struct _KTHREAD {
     KSEMAPHORE SuspendSemaphore;
     KAPC SuspendApc;
     KEVENT AlertByIdEvent; /* NtAlertThreadByThreadId, sticky until the next NtWaitForAlertByThreadId */
+    PVOID XSaveArea; /* x64: the extended state saved when switched out, NULL for system threads */
 } KTHREAD;
 
 typedef struct _KPROCESS {
     DISPATCHER_HEADER Header;
-    ULONG64 Ttbr0;   /* root table physical address with the asid in bits 63:48 */
+    ULONG64 DirectoryTableBase; /* the root table physical address, with the asid in bits 63:48 on arm64 */
     ULONG64 *PageDirectory; /* physmap address of the root table */
     USHORT Asid;
     SCHAR BasePriority;
@@ -265,16 +190,46 @@ typedef struct _KPRCB {
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not */
 } KPRCB, *PKPRCB;
 
+#if defined(__x86_64__)
+/* the processor's descriptor tables and the system call stack switch, then the fields of the kernel. */
+typedef struct _KPCR {
+    ULONG64 *GdtBase;
+    PUCHAR TssBase;
+    ULONG64 UserRsp; /* scratch of the system call entry */
+    struct _KPCR *Self;
+    PKPRCB CurrentPrcb;
+    ULONG64 KernelRsp; /* top of the trap frame of the thread in user mode */
+    PVOID IdtBase;
+    ULONG64 Pad0[3];
+    volatile KIRQL Irql;
+    volatile UCHAR UserMode; /* set while the processor runs user mode, see entry.S */
+    volatile UCHAR IdleSleeping; /* halted without the kernel lock, see KiIdleWait */
+    volatile UCHAR FlushPending; /* KPCR_FLUSH_* the processor owes before using translations again */
+    ULONG ApicId;
+    ULONG64 SavedInterruptState; /* interrupt flag before irql rose above DISPATCH_LEVEL */
+    ULONG64 Gdt[12];
+    UCHAR Tss[0x68];
+    UCHAR Pad1[0x180 - 0x60 - 12 * 8 - 0x68];
+    KPRCB Prcb;
+} KPCR, *PKPCR;
+MIME_STATIC_ASSERT(offsetof(KPCR, Self) == KPCR_SELF, "pcr self");
+MIME_STATIC_ASSERT(offsetof(KPCR, KernelRsp) == KPCR_KERNEL_RSP, "pcr kernel rsp");
+MIME_STATIC_ASSERT(offsetof(KPCR, Irql) == KPCR_IRQL, "pcr irql");
+MIME_STATIC_ASSERT(offsetof(KPCR, FlushPending) == KPCR_FLUSH_PENDING, "pcr flush");
+MIME_STATIC_ASSERT(offsetof(KPCR, Prcb) == KPCR_PRCB, "pcr prcb");
+MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.CurrentThread) == KPCR_CURRENT_THREAD, "pcr thread");
+#else
 typedef struct _KPCR {
     struct _KPCR *Self;
     PKPRCB CurrentPrcb;
     volatile KIRQL Irql;
     volatile UCHAR UserMode; /* set while the processor runs user mode, see vectors.S */
     UCHAR Pad[6];
-    ULONG64 SavedDaif; /* interrupt mask before irql rose above DISPATCH_LEVEL */
+    ULONG64 SavedInterruptState; /* interrupt mask before irql rose above DISPATCH_LEVEL */
     volatile UCHAR *Redistributor;
     KPRCB Prcb;
 } KPCR, *PKPCR;
+#endif
 
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.Number) == KPCR_NUMBER, "pcr number");
 MIME_STATIC_ASSERT(offsetof(KPCR, UserMode) == KPCR_USER_MODE, "pcr user mode");
@@ -289,13 +244,6 @@ extern ULONG KeNumberProcessors;
  */
 extern LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
 extern ULONG KiReadySummary;
-
-FORCEINLINE PKPCR KeGetPcr(void)
-{
-    PKPCR pcr;
-    __asm__ volatile("mov %0, x18" : "=r"(pcr));
-    return pcr;
-}
 
 FORCEINLINE PKPRCB KeGetCurrentPrcb(void)
 {
@@ -316,6 +264,11 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
  * other kernel path.
  */
 extern volatile ULONG KiKernelLock[4]; /* ticket lock, owning processor, sleepers in the host */
+#define KI_ASSERT_KERNEL_LOCK()                                                                                   \
+    do {                                                                                                          \
+        if (KiKernelLock[1] != KeGetCurrentPrcb()->Number)                                                        \
+            KeBugCheckEx(0xDEAD10C, KiKernelLock[1], KeGetCurrentPrcb()->Number, __LINE__, 0);                    \
+    } while (0)
 extern ULONG64 KiKernelLockPhys;
 void KiAcquireKernelLock(void);
 void KiReleaseKernelLock(void);
@@ -357,7 +310,22 @@ void KiProgramNextTimer(void);
 DECLSPEC_NORETURN void KiTerminateCurrentThread(NTSTATUS status);
 void KiInitializeProcess(PKPROCESS process, ULONG64 ttbr0, ULONG64 *pgd, USHORT asid);
 void KiAttachProcess(PKPROCESS process);
+
+/* arch/<processor>/context.c: the processor specific half of threads, contexts and user mode entry. */
 void KiSwitchAddressSpace(PKPROCESS process);
+void KiSwapContext(PKTHREAD old, PKTHREAD next);
+void KiIdleWait(void); /* interrupts masked and the kernel lock held, both again on return */
+void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID context);
+void KiInitializeUserFrame(PKTRAP_FRAME frame, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb);
+void KiInitializeUserContext(PCONTEXT context, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb);
+BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE routine, PVOID context, PVOID arg1,
+                       PVOID arg2);
+BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record);
+BOOLEAN KiSetupUserCallback(PKTRAP_FRAME frame, const KTRAP_FRAME *trap, PVOID dispatcher, ULONG api,
+                            const void *input, ULONG input_length);
+void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame);
+void KiFlushInstructionCache(void);
+void KiInitializeProcessorArch(void);
 void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame);
 void PspCheckForSuspendApc(PKTHREAD thread);
 NTSTATUS PspWaitForSuspension(PETHREAD thread);
@@ -376,16 +344,19 @@ void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);
 NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize);
 NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize);
 
-/* ke/cpu.c, the id registers of the boot processor. */
-typedef struct KI_PROCESSOR_IDS {
-    ULONG64 Midr, Pfr0, Pfr1, Dfr0, Dfr1, Afr0, Afr1, Isar0, Isar1, Isar2, Mmfr0, Mmfr1, Mmfr2, Ctr;
-} KI_PROCESSOR_IDS;
-extern KI_PROCESSOR_IDS KiProcessorIds;
+/* arch/<processor>/cpu.c, the identification of the boot processor. */
 void KiReadProcessorIds(void);
 void KiSetProcessorFeatures(BOOLEAN *features);
 PCSTR KiProcessorVendor(void);
 USHORT KiProcessorModel(void);
+USHORT KiProcessorLevel(void);
 USHORT KiProcessorRevision(void);
+void KiFormatProcessorIdentifier(PWCHAR text, ULONG chars); /* "ARMv8 (64-bit) Family 8 Model..." */
+typedef void (*KI_SET_REGISTRY_VALUE)(PCWSTR key, PCWSTR name, ULONG type, const void *data, ULONG length);
+void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set); /* the processor's own CentralProcessor values */
+UCHAR KiProcessorSmbiosType(void);
+PCSTR KiProcessorSmbiosManufacturer(void);
+ULONG64 KiProcessorSmbiosId(void);
 
 /* user memory access with recovery from faults. */
 #define KI_TRY_USER(buf) (KiCurrentThread()->FaultRecovery = &(buf), KiSetJump(&(buf)) == 0)
@@ -417,33 +388,6 @@ typedef struct _MMPFN {
     volatile LONG RefCount;
     ULONG ShareCount;
 } MMPFN, *PMMPFN;
-
-/* stage 1 descriptor bits. */
-#define MM_PTE_VALID (1ull << 0)
-#define MM_PTE_TABLE (1ull << 1)
-#define MM_PTE_PAGE (1ull << 1)
-#define MM_PTE_ATTR(i) ((ULONG64)(i) << 2)
-#define MM_PTE_AP_EL0 (1ull << 6)
-#define MM_PTE_AP_RO (1ull << 7)
-#define MM_PTE_SH_INNER (3ull << 8)
-#define MM_PTE_AF (1ull << 10)
-#define MM_PTE_NG (1ull << 11)
-#define MM_PTE_PXN (1ull << 53)
-#define MM_PTE_UXN (1ull << 54)
-#define MM_PTE_SW_COW (1ull << 55)
-#define MM_PTE_SW_SHARED (1ull << 56) /* page belongs to a section, never freed by the pte */
-#define MM_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
-
-/* invalid ptes with this bit describe committed but not yet present pages. */
-#define MM_SWPTE_COMMITTED (1ull << 1)
-#define MM_SWPTE_GUARD (1ull << 2)
-#define MM_SWPTE_SECTION (1ull << 3) /* committed view page, built from the section on first touch */
-#define MM_SWPTE_PROT_SHIFT 4
-#define MM_SWPTE_PROT_MASK (0x7FFull << MM_SWPTE_PROT_SHIFT)
-
-#define MM_KERNEL_RW (MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF | MM_PTE_UXN | MM_PTE_PXN)
-#define MM_KERNEL_RO (MM_KERNEL_RW | MM_PTE_AP_RO)
-#define MM_KERNEL_RX (MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF | MM_PTE_UXN | MM_PTE_AP_RO)
 
 typedef enum _MI_VAD_TYPE {
     MiVadPrivate,
@@ -542,6 +486,9 @@ void MiFlushTlbAll(void);
 ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user);
 ULONG MiPteToProtect(ULONG64 pte);
 ULONG64 *MiKernelRoot(void);
+ULONG64 MiCreateSystemRoot(void);
+void MiInitializeProcessRoot(ULONG64 *root);
+ULONG64 MiDirectoryTableBase(PMMADDRESS_SPACE as);
 
 PVOID MmAllocateSystemVa(SIZE_T pages);
 void MmFreeSystemVa(PVOID va, SIZE_T pages);

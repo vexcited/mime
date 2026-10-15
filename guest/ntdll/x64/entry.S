@@ -1,9 +1,10 @@
 /*
- * user mode entry points of the x64 ntdll, reached from mimex86.dll the way
- * the x64 kernel would reach them.
+ * user mode entry points of the x64 ntdll, reached from the x64 kernel, or
+ * from mimex86.dll the way the x64 kernel would reach them.
  *
  * KiUserExceptionDispatcher  rcx = &EXCEPTION_RECORD, rdx = &CONTEXT
- * KiUserApcDispatcher        unused: mimex86.dll calls apc routines itself
+ * KiUserApcDispatcher        rsp = &CONTEXT, the routine and its arguments in the home slots,
+ *                            unused by mimex86.dll, which calls apc routines itself
  * KiUserCallbackDispatcher   ecx = api index, rdx = arguments, r8d = argument length
  * LdrInitializeThunk         rcx = &CONTEXT of the new thread, rdx = ntdll base
  */
@@ -42,11 +43,29 @@ KiUserExceptionDispatcher:
     jmp     .
     .seh_endproc
 
+/*
+ * the kernel leaves the interrupted CONTEXT at the stack pointer, P1Home
+ * to P4Home holding the context, both arguments and the routine, then a
+ * machine frame, so an unwind through here goes on at the interrupted code.
+ */
     .globl  KiUserApcDispatcher
     .p2align 4
+    .seh_proc KiUserApcDispatcher
+    .seh_pushframe
+    .seh_stackalloc 0x4d0
+    .seh_endprologue
 KiUserApcDispatcher:
+    movq    0x00(%rsp), %rcx
+    movq    0x08(%rsp), %rdx
+    movq    0x10(%rsp), %r8
+    movq    0x18(%rsp), %rax
+    movq    %rsp, %r9
+    call    *%rax
+    movq    %rsp, %rcx
+    movl    $1, %edx
+    call    NtContinue
     int3
-    jmp     .
+    .seh_endproc
 
     .globl  KiUserCallbackDispatcher
     .p2align 4

@@ -197,7 +197,7 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
                 MiMapPage(MiKernelRoot(), va, pte & MM_PTE_ADDR_MASK, attrs);
             }
         }
-        __asm__ volatile("dsb ish; ic ialluis; dsb ish; isb" ::: "memory");
+        KiFlushInstructionCache();
         LOADED_MODULE *m = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*m), KI_TAG('M', 'm', 'L', 'm'));
         if (m) {
             m->Base = base;
@@ -302,9 +302,9 @@ NTSTATUS PspInitializeSystemDll(void)
 /* the system dll a program of this machine runs on, NULL when there is none. */
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine)
 {
-    switch (machine) {
-    case IMAGE_FILE_MACHINE_ARM64:
+    if (machine == MIME_NATIVE_MACHINE)
         return &PspNativeSystemDll;
+    switch (machine) {
     case IMAGE_FILE_MACHINE_I386:
     case IMAGE_FILE_MACHINE_AMD64:
         return PspX86SystemDll.Section ? &PspX86SystemDll : NULL;

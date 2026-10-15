@@ -5,10 +5,14 @@
  * compiled for aarch64-pc-windows-msvc (llp64). it only uses fixed width
  * types so both sides agree on every layout.
  *
- * the guest is a hardware virtual machine. its kernel (ntoskrnl.exe, built
- * from guest/ntos) runs at el1 and talks to the host with `hvc #0`:
+ * the guest is a hardware virtual machine of the host's processor. its
+ * kernel (ntoskrnl.exe, built from guest/ntos) talks to the host with
+ * hypercalls. on arm64 it runs at el1 and uses `hvc #0`:
  *   x0 = MIME_HC_* number, x1..x6 = arguments
  *   x0 = MIME_HC_STATUS_* on return, x1 = result value
+ * on x64 it runs in ring 0 and writes MIME_HC_PORT with `outb %al`:
+ *   rax = MIME_HC_* number, rdi rsi rdx r10 r8 r9 = arguments
+ *   rax = MIME_HC_STATUS_* on return, rdx = result value
  * buffers are passed as guest physical addresses and must be physically
  * contiguous.
  */
@@ -20,6 +24,20 @@
 #define MIME_ABI_VERSION 3
 
 /* guest physical layout. */
+#if defined(__x86_64__)
+/*
+ * x64 keeps the first 4 GiB for the system files and the apic page kvm
+ * places at 0xfee00000, so ram never has to split around it.
+ */
+#define MIME_ROM_BASE 0x10000000ull /* the system files, read only, below ram */
+#define MIME_RAM_BASE 0x100000000ull
+/*
+ * host files placed read only by MIME_HC_FS_MAP, above ram, mapped from
+ * the host page cache.
+ */
+#define MIME_WINDOW_BASE 0x10000000000ull
+#define MIME_WINDOW_SIZE 0x10000000000ull
+#else
 #define MIME_GIC_BASE 0x08000000ull /* the gic registers, below ram */
 #define MIME_ROM_BASE 0x10000000ull /* the system files, read only, below ram */
 #define MIME_RAM_BASE 0x40000000ull
@@ -29,8 +47,13 @@
  */
 #define MIME_WINDOW_BASE 0x800000000ull
 #define MIME_WINDOW_SIZE 0x800000000ull
+#endif
 #define MIME_WINDOW_ALIGN 0x10000ull
 #define MIME_PAGE_SIZE 4096ull
+
+/* x64: the i/o port of hypercalls and the apic vector of the host's interrupt. */
+#define MIME_HC_PORT 0x5E
+#define MIME_X64_IRQ_VECTOR 0x81
 
 /*
  * guest kernel virtual layout, 48 bit addresses with a 4K granule.
@@ -91,9 +114,9 @@ typedef struct MimeBootInfo {
     uint64_t gic_dist_size;
     uint64_t gic_redist_phys;
     uint64_t gic_redist_size;
-    uint32_t irq_intid; /* edge triggered spi raised by the host, see MimeSharedPage */
+    uint32_t irq_intid; /* edge triggered spi raised by the host, see MimeSharedPage, the vector on x64 */
     uint32_t timer_intid; /* ppi of the el1 virtual timer */
-    uint64_t boot_counter;  /* CNTVCT_EL0 matching boot_filetime */
+    uint64_t boot_counter;  /* CNTVCT_EL0 matching boot_filetime, the tsc on x64 */
     uint64_t boot_filetime; /* 100ns units since 1601-01-01 utc */
     int32_t timezone_bias;  /* minutes, utc = local + bias */
     uint32_t cpu_count;

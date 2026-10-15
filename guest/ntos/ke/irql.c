@@ -18,7 +18,7 @@ KIRQL NTAPI KfRaiseIrql(KIRQL irql)
     if (irql < old)
         KeBugCheckEx(0x00000009, old, irql, 0, 0); /* IRQL_NOT_GREATER_OR_EQUAL */
     if (irql > DISPATCH_LEVEL && old <= DISPATCH_LEVEL)
-        pcr->SavedDaif = KiDisableInterrupts();
+        pcr->SavedInterruptState = KiDisableInterrupts();
     pcr->Irql = irql;
     return old;
 }
@@ -36,7 +36,7 @@ void NTAPI KeLowerIrql(KIRQL irql)
         KeBugCheckEx(0x0000000A, old, irql, 0, 0); /* IRQL_NOT_LESS_OR_EQUAL */
     pcr->Irql = irql;
     if (old > DISPATCH_LEVEL && irql <= DISPATCH_LEVEL)
-        KiRestoreInterrupts(pcr->SavedDaif);
+        KiRestoreInterrupts(pcr->SavedInterruptState);
     if (irql < DISPATCH_LEVEL && (pcr->CurrentPrcb->DpcPending || pcr->CurrentPrcb->DispatchPending) &&
         KiInterruptsEnabled())
         KiDispatchPendingWork();

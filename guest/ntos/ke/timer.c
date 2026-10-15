@@ -65,7 +65,7 @@ void KiProgramNextTimer(void)
         }
     }
     if (deadline == ~0ull) {
-        KI_WRITE_SYSREG(cntv_ctl_el0, 2);
+        HalDisarmTimer();
         return;
     }
     /*
@@ -215,7 +215,7 @@ void KiClockInterrupt(PKTRAP_FRAME frame)
     if (cur != prcb->IdleThread && now >= prcb->TickTime + KI_CLOCK_TICK_HNS) {
         ULONG64 elapsed = now - prcb->TickTime;
         prcb->TickTime = now;
-        if (frame && (frame->Spsr & 0xF) == PSR_MODE_EL0)
+        if (frame && KI_TRAP_FROM_USER(frame))
             cur->UserTime += elapsed;
         else
             cur->KernelTime += elapsed;

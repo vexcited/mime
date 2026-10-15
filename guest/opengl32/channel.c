@@ -207,7 +207,11 @@ void gl_wait(uint64_t fence)
     for (int i = 0; i < 4000; i++) {
         if (gl_fence_done(fence))
             return;
+#if defined(__x86_64__)
+        __asm__ volatile("pause");
+#else
         __asm__ volatile("yield");
+#endif
     }
     while (!gl_fence_done(fence)) {
         NTSTATUS s = NtGdiMimeGpuWait(fence, 1000);

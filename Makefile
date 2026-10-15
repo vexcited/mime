@@ -3,6 +3,9 @@
 #   make host       the mime command, build/mime, with the guest files embedded
 #   make guest      the guest system files, build/guest/system32
 #   make examples   the example programs, build/examples
+#
+# the guest runs the host's processor: arm64 on macos, x64 on linux, where the
+# x64 system dlls of build/guest/sysx64 become C:\Windows\System32.
 
 BUILD := build
 CC := clang
@@ -10,18 +13,32 @@ LLD_LINK := lld-link
 NM := llvm-nm
 RC := llvm-rc
 STRIP := llvm-strip
+UNAME_S := $(shell uname -s)
 
+ifeq ($(UNAME_S),Darwin)
+GUEST_ARCH ?= arm64
 HOST_CFLAGS := -std=c17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
 HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework Metal -framework IOSurface -framework Carbon -framework AudioToolbox -framework CoreAudio -lobjc
+else
+GUEST_ARCH ?= x64
+HOST_CFLAGS := -std=gnu17 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
+HOST_LIBS := -lpthread -lm
+endif
 CXX := clang++
 
+ifeq ($(GUEST_ARCH),x64)
+GUEST_TARGET := --target=x86_64-pc-windows-msvc -march=x86-64 -mcx16
+GUEST_MACHINE := x64
+else
 GUEST_TARGET := --target=aarch64-pc-windows-msvc -march=armv8.2-a
+GUEST_MACHINE := arm64
+endif
 GUEST_CFLAGS := $(GUEST_TARGET) -std=c17 -O2 -g -gdwarf -ffreestanding -fms-extensions -fno-stack-protector \
 	-Iinclude -Iguest/include -Iguest/rtl -I$(BUILD)/gen \
 	-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -MMD -MP
 GUEST_ASFLAGS := $(GUEST_TARGET) -Iinclude -Iguest/include -MMD -MP
 # the header fields of windows' own binaries: version 10.0, reproducible timestamps, a valid checksum.
-GUEST_LDFLAGS := /nologo /debug:dwarf /machine:arm64 /nodefaultlib /opt:ref /incremental:no /filealign:0x1000 \
+GUEST_LDFLAGS := /nologo /debug:dwarf /machine:$(GUEST_MACHINE) /nodefaultlib /opt:ref /incremental:no /filealign:0x1000 \
 	/version:10.0 /osversion:10.0 /Brepro /release
 
 GEN := $(BUILD)/gen
@@ -52,12 +69,19 @@ extra_file = $(if $(filter winspool,$(1)),$(1).drv,$(1).dll)
 SYSX64 := $(BUILD)/guest/sysx64
 X64_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
 X64_FILES := $(patsubst %,$(SYSX64)/%.dll,$(X64_DLLS)) $(foreach n,$(EXTRA_NAMES),$(SYSX64)/$(call extra_file,$(n)))
+X64_FILES += $(SYSX64)/opengl32.dll
+ifeq ($(GUEST_ARCH),x64)
+# the kernel files built for x64, the dlls being the x64 set.
+GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(X64_FILES)
+# the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
+ROM_FILES := $(BUILD)/guest/rom/ntoskrnl.exe $(BUILD)/guest/rom/win32k.sys \
+	$(patsubst $(SYSX64)/%,$(BUILD)/guest/rom/%,$(X64_FILES))
+else
 GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(patsubst %,$(SYSTEM32)/%.dll,$(GUEST_DLLS)) \
 	$(foreach n,$(EXTRA_NAMES),$(SYSTEM32)/$(call extra_file,$(n))) $(SYSTEM32)/opengl32.dll
-X64_FILES += $(SYSX64)/opengl32.dll
-# the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
 ROM_FILES := $(patsubst $(SYSTEM32)/%,$(BUILD)/guest/rom/%,$(GUEST_FILES)) \
 	$(patsubst $(SYSX64)/%,$(BUILD)/guest/rom/sysx64/%,$(X64_FILES))
+endif
 
 SHADERC_CXXFLAGS := -std=c++17 -O2 -w -Ithird_party/glslang -Ithird_party/glslang/glslang -Ithird_party \
 	-DSPIRV_CROSS_C_API_MSL=1 -DSPIRV_CROSS_C_API_GLSL=1 -MMD -MP
@@ -75,14 +99,23 @@ all: host guest examples
 
 # ---------------------------------------------------------------- host
 
+ifeq ($(UNAME_S),Darwin)
 HOST_SRC := $(wildcard host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c)
 HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o $(SHADERC_OBJ)
+else
+# kvm, and the linux ui, gpu and audio, in place of the macos frameworks.
+HOST_SRC := $(wildcard host/*.c host/setup/*.c host/linux/*.c) \
+	$(filter-out host/vmm/vm.c host/vmm/vcpu.c host/vmm/lazy.c host/vmm/loader.c host/vmm/window.c,$(wildcard host/vmm/*.c))
+HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o
+endif
 
 host: $(BUILD)/mime
 
 $(BUILD)/mime: $(HOST_OBJ) host/mime.entitlements
 	$(CXX) -o $@ $(HOST_OBJ) $(HOST_LIBS)
+ifeq ($(UNAME_S),Darwin)
 	codesign -s - -f --entitlements host/mime.entitlements $@ 2>/dev/null
+endif
 
 # the host gpu translates glsl through glslang and SPIRV-Cross, kept in third_party with their licenses.
 $(OBJ)/host/gpu/%.o: host/gpu/%.c
@@ -100,7 +133,7 @@ $(OBJ)/third_party/%.o: third_party/%.cpp
 # the guest files are embedded in mime, which maps them into the guest.
 $(GEN)/rom.S: $(ROM_FILES) tools/genrom.sh
 	@mkdir -p $(dir $@)
-	tools/genrom.sh $@ $(abspath $(ROM_FILES))
+	tools/genrom.sh $@ $(UNAME_S) $(abspath $(ROM_FILES))
 
 $(BUILD)/guest/rom/sysx64/%: $(SYSX64)/% $(BUILD)/tools/pechecksum
 	@mkdir -p $(dir $@)
@@ -111,6 +144,18 @@ $(BUILD)/guest/rom/%: $(SYSTEM32)/% $(BUILD)/tools/pechecksum
 	@mkdir -p $(dir $@)
 	$(STRIP) --strip-debug $< -o $@
 	$(BUILD)/tools/pechecksum $@
+
+ifeq ($(GUEST_ARCH),x64)
+$(BUILD)/guest/rom/%.dll: $(SYSX64)/%.dll $(BUILD)/tools/pechecksum
+	@mkdir -p $(dir $@)
+	$(STRIP) --strip-debug $< -o $@
+	$(BUILD)/tools/pechecksum $@
+
+$(BUILD)/guest/rom/%.drv: $(SYSX64)/%.drv $(BUILD)/tools/pechecksum
+	@mkdir -p $(dir $@)
+	$(STRIP) --strip-debug $< -o $@
+	$(BUILD)/tools/pechecksum $@
+endif
 
 # the version resource of each system file.
 $(GEN)/res/%.res: tools/genversion.sh
@@ -166,7 +211,7 @@ $(BUILD)/tools/test_app_identity: $(APP_IDENTITY_TEST_SRC) host/ui/app_identity.
 
 $(BUILD)/tools/%: tools/%.c
 	@mkdir -p $(dir $@)
-	$(CC) -std=c17 -O2 -Wall -Wextra -o $@ $<
+	$(CC) -std=gnu17 -O2 -Wall -Wextra -o $@ $<
 
 # ---------------------------------------------------------------- generated sources
 
@@ -195,7 +240,11 @@ GEN_HEADERS := $(GEN)/mime_svc_nt.h $(GEN)/mime_svc_win32k.h
 
 RTL_SRC := $(wildcard guest/rtl/*.c)
 CRT_SRC := $(wildcard guest/crt/*.c)
+ifeq ($(GUEST_ARCH),x64)
+CRT_ASM := $(wildcard guest/crt/x64/*.S)
+else
 CRT_ASM := $(wildcard guest/crt/*.S)
+endif
 
 $(OBJ)/guest/crt/%.o: guest/crt/%.c
 	@mkdir -p $(dir $@)
@@ -207,8 +256,8 @@ $(OBJ)/guest/%.o: guest/%.S
 
 # ---------------------------------------------------------------- ntoskrnl.exe
 
-NTOS_SRC := $(shell find guest/ntos -name '*.c')
-NTOS_ASM := $(shell find guest/ntos -name '*.S')
+NTOS_SRC := $(shell find guest/ntos -name '*.c' -not -path 'guest/ntos/arch/*') $(wildcard guest/ntos/arch/$(GUEST_ARCH)/*.c)
+NTOS_ASM := $(wildcard guest/ntos/arch/$(GUEST_ARCH)/*.S)
 NTOS_OBJ := $(NTOS_SRC:%.c=$(OBJ)/%.o) $(NTOS_ASM:%.S=$(OBJ)/%.o) \
 	$(RTL_SRC:%.c=$(OBJ)/ntos/%.o) $(CRT_SRC:%.c=$(OBJ)/%.o) $(CRT_ASM:%.S=$(OBJ)/%.o) \
 	$(OBJ)/gen/ntos_services.o
@@ -385,6 +434,10 @@ USER_CFLAGS_user32 += -Iguest/lib
 X64_TARGET := --target=x86_64-pc-windows-msvc -march=x86-64 -mcx16
 # -ffreestanding drops the x64 unwind tables, which exception unwinding walks through every dll.
 X64_CFLAGS := $(filter-out $(GUEST_TARGET) --target=% -march=%,$(GUEST_CFLAGS)) $(X64_TARGET) -fasynchronous-unwind-tables
+# on an x64 machine these are the system's own dlls, run natively, not by the translator.
+ifeq ($(GUEST_ARCH),x64)
+X64_CFLAGS += -DMIME_X64_NATIVE=1
+endif
 X64_ASFLAGS := $(X64_TARGET) -Iinclude -Iguest/include -MMD -MP
 X64_LDFLAGS := $(subst /machine:arm64,/machine:x64,$(GUEST_LDFLAGS))
 X64_DLL_LDFLAGS := $(X64_LDFLAGS) /dll /subsystem:console,10.0 /highentropyva /dynamicbase /stack:0x40000,0x1000
@@ -530,11 +583,30 @@ $(X64_OBJ)/gen/opengl32/x64_stubs.o: $(GEN)/opengl32/x64_stubs.S
 	@mkdir -p $(dir $@)
 	$(CC) $(X64_ASFLAGS) -c $< -o $@
 
+ifeq ($(GUEST_ARCH),x64)
+# an x64 machine runs the whole implementation natively, like the arm64 one.
+X64_OPENGL32_OBJ := $(patsubst %.c,$(X64_OBJ)/%.o,$(OPENGL32_SRC)) $(X64_OBJ)/gen/opengl32/procs.o \
+	$(X64_OBJ)/$(GEN)/ntdll_syscalls_x64.o $(X64_OBJ)/$(GEN)/win32u_syscalls_x64.o $(X64_RT_OBJ)
+
+$(X64_OBJ)/gen/opengl32/%.o: $(GEN)/opengl32/%.c $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_CFLAGS) $(OPENGL32_CFLAGS) -c $< -o $@
+
+# without the table of thunks the translator calls.
+$(GEN)/opengl32/native.def: $(GEN)/opengl32/exports.def
+	grep -v MimeX64Thunks $< > $@
+
+$(SYSX64)/opengl32.dll: $(X64_OPENGL32_OBJ) $(GEN)/opengl32/native.def $(GEN)/res/opengl32.dll.res
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) /noentry /base:0x7FF550000000 /def:$(GEN)/opengl32/native.def /out:$@ \
+		$(X64_OPENGL32_OBJ) $(GEN)/res/opengl32.dll.res
+else
 $(SYSX64)/opengl32.dll: $(X64_OPENGL32_OBJ) $(GEN)/opengl32/x64.def $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32) \
 	$(GEN)/res/opengl32.dll.res
 	@mkdir -p $(dir $@)
 	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:0x7FF540000000 /def:$(GEN)/opengl32/x64.def /out:$@ \
 		$(X64_OPENGL32_OBJ) $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32) $(GEN)/res/opengl32.dll.res
+endif
 
 # ---------------------------------------------------------------- examples
 
@@ -558,7 +630,11 @@ $(BUILD)/examples/x64/%.exe: $(X64_OBJ)/examples/%.o $(X64_EXAMPLE_LIBS)
 
 guest: $(GUEST_FILES)
 
+ifeq ($(GUEST_ARCH),x64)
+examples: guest $(X64_EXAMPLES)
+else
 examples: guest $(EXAMPLES) $(X64_EXAMPLES)
+endif
 
 clean:
 	rm -rf $(BUILD)
@@ -567,10 +643,13 @@ clean:
 
 include tools/x86.mk
 
+# 32-bit programs run through the translator on arm64 only for now.
+ifeq ($(GUEST_ARCH),arm64)
 X86_ROM_FILES = $(patsubst %,$(BUILD)/guest/rom/syswow64/%.dll,ntdll kernelbase kernel32 win32u gdi32 user32 shlwapi shell32 $(X86_MORE_DLLS)) \
 	$(BUILD)/guest/rom/syswow64/winspool.drv
 $(GEN)/rom.S: $(X86_ROM_FILES)
 ROM_FILES += $(X86_ROM_FILES)
+endif
 
 $(BUILD)/guest/rom/syswow64/%: $(BUILD)/guest/syswow64/% $(BUILD)/tools/pechecksum
 	@mkdir -p $(dir $@)

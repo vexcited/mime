@@ -2,7 +2,8 @@
  * processor identification from the arm64 id registers, the source of the
  * processor features, SYSTEM_INFO and the CentralProcessor registry key.
  */
-#include "../ntos.h"
+#include "../../ntos.h"
+#include "../../cm/cm.h"
 
 KI_PROCESSOR_IDS KiProcessorIds;
 
@@ -65,6 +66,12 @@ PCSTR KiProcessorVendor(void)
     }
 }
 
+/* the armv8 family, as in the processor identifier. */
+USHORT KiProcessorLevel(void)
+{
+    return 8;
+}
+
 USHORT KiProcessorModel(void)
 {
     return (USHORT)((KiProcessorIds.Midr >> 4) & 0xFFF);
@@ -73,4 +80,48 @@ USHORT KiProcessorModel(void)
 USHORT KiProcessorRevision(void)
 {
     return (USHORT)(((KiProcessorIds.Midr >> 20) & 0xF) << 8 | (KiProcessorIds.Midr & 0xF));
+}
+
+void KiFormatProcessorIdentifier(PWCHAR text, ULONG chars)
+{
+    _snwprintf(text, chars, L"ARMv8 (64-bit) Family 8 Model %X Revision %u", KiProcessorModel(),
+               (ULONG)(KiProcessorIds.Midr & 0xF));
+}
+
+/* the id registers windows copies into the CentralProcessor keys, named by their encoding. */
+void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
+{
+    static const struct {
+        USHORT Encoding;
+        SIZE_T Offset;
+    } registers[] = {
+        {0x4000, offsetof(KI_PROCESSOR_IDS, Midr)},  {0x4020, offsetof(KI_PROCESSOR_IDS, Pfr0)},
+        {0x4021, offsetof(KI_PROCESSOR_IDS, Pfr1)},  {0x4028, offsetof(KI_PROCESSOR_IDS, Dfr0)},
+        {0x4029, offsetof(KI_PROCESSOR_IDS, Dfr1)},  {0x402C, offsetof(KI_PROCESSOR_IDS, Afr0)},
+        {0x402D, offsetof(KI_PROCESSOR_IDS, Afr1)},  {0x4030, offsetof(KI_PROCESSOR_IDS, Isar0)},
+        {0x4031, offsetof(KI_PROCESSOR_IDS, Isar1)}, {0x4032, offsetof(KI_PROCESSOR_IDS, Isar2)},
+        {0x4038, offsetof(KI_PROCESSOR_IDS, Mmfr0)}, {0x4039, offsetof(KI_PROCESSOR_IDS, Mmfr1)},
+        {0x403A, offsetof(KI_PROCESSOR_IDS, Mmfr2)}, {0x5801, offsetof(KI_PROCESSOR_IDS, Ctr)},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(registers); i++) {
+        WCHAR value[16] = {0};
+        _snwprintf(value, RTL_NUMBER_OF(value) - 1, L"CP %04X", registers[i].Encoding);
+        ULONG64 v = *(const ULONG64 *)((const UCHAR *)&KiProcessorIds + registers[i].Offset);
+        set(key, value, REG_QWORD, &v, sizeof(v));
+    }
+}
+
+UCHAR KiProcessorSmbiosType(void)
+{
+    return 0xC4; /* arm 64 bit */
+}
+
+PCSTR KiProcessorSmbiosManufacturer(void)
+{
+    return "Qualcomm Technologies Inc";
+}
+
+ULONG64 KiProcessorSmbiosId(void)
+{
+    return KiProcessorIds.Midr;
 }
