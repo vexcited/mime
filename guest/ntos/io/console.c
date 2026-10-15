@@ -210,6 +210,30 @@ void ConsoleProcessExit(PEPROCESS p)
         ObDereferenceObject(event);
 }
 
+/* queues input with the lock held; host_bytes is what to acknowledge to the host once it is read. */
+static BOOLEAN queue_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length, ULONG host_bytes, BOOLEAN crlf)
+{
+    ULONG size = length;
+    for (ULONG i = 0; crlf && i < length; i++)
+        size += data[i] == '\n' && (i == 0 || data[i - 1] != '\r');
+    CON_CHUNK *k = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*k) + size, KI_TAG('C', 'o', 'n', 'i'));
+    if (!k)
+        return FALSE;
+    ULONG n = 0;
+    for (ULONG i = 0; i < length; i++) {
+        if (crlf && data[i] == '\n' && (i == 0 || data[i - 1] != '\r'))
+            k->Data[n++] = '\r';
+        k->Data[n++] = data[i];
+    }
+    k->Length = n;
+    k->Offset = 0;
+    k->HostBytes = host_bytes;
+    InsertTailList(&c->Input, &k->Links);
+    c->InputBytes += n;
+    KeSetEvent(&c->InputReady, 0, FALSE);
+    return TRUE;
+}
+
 /* typed or piped input. a terminal ends lines with \n, a windows console with \r\n. */
 void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length)
 {
@@ -220,29 +244,12 @@ void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length)
         return;
     }
     BOOLEAN crlf = (c->Flags & MIME_CONDRV_TTY_INPUT) && (c->InputMode & ENABLE_LINE_INPUT);
-    ULONG size = length;
-    for (ULONG i = 0; crlf && i < length; i++)
-        size += data[i] == '\n' && (i == 0 || data[i - 1] != '\r');
-    CON_CHUNK *k = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*k) + size, KI_TAG('C', 'o', 'n', 'i'));
-    if (k) {
-        ULONG n = 0;
-        for (ULONG i = 0; i < length; i++) {
-            if (crlf && data[i] == '\n' && (i == 0 || data[i - 1] != '\r'))
-                k->Data[n++] = '\r';
-            k->Data[n++] = data[i];
-        }
-        k->Length = n;
-        k->Offset = 0;
-        k->HostBytes = length;
-        InsertTailList(&c->Input, &k->Links);
-        c->InputBytes += n;
-        KeSetEvent(&c->InputReady, 0, FALSE);
-    }
+    BOOLEAN queued = queue_input(c, data, length, length, crlf);
     PKEVENT events[MAX_TARGETS];
-    ULONG count = k ? collect_events(c, events, MAX_TARGETS) : 0;
+    ULONG count = queued ? collect_events(c, events, MAX_TARGETS) : 0;
     ExReleaseFastMutex(&g_lock);
     signal_events(events, count, TRUE);
-    if (!k)
+    if (!queued)
         send(c, MIME_EVT_CONSOLE_READ, length, NULL, 0);
     release(c);
 }
@@ -551,6 +558,21 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     case IOCTL_CONDRV_READ:
         status = read_input(c, buf, out_len, &information);
         break;
+    case IOCTL_CONDRV_WRITE_INPUT: {
+        if (!in_len)
+            break;
+        ExAcquireFastMutex(&g_lock);
+        BOOLEAN queued = queue_input(c, buf, in_len, 0, FALSE);
+        PKEVENT events[MAX_TARGETS];
+        ULONG count = queued ? collect_events(c, events, MAX_TARGETS) : 0;
+        ExReleaseFastMutex(&g_lock);
+        signal_events(events, count, TRUE);
+        if (queued)
+            information = in_len;
+        else
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        break;
+    }
     case IOCTL_CONDRV_PEEK: {
         BOOLEAN eof;
         ULONG acked;

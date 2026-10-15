@@ -276,22 +276,24 @@ static void ascii_key(UCHAR c, WORD *vk, WORD *scan, BOOL *shift)
 }
 
 /* the escape sequences terminals send for the keys without a character. */
+static const struct {
+    const char *seq;
+    WORD vk, scan;
+} g_escape_keys[] = {
+    {"[A", VK_UP, 0x48},       {"[B", VK_DOWN, 0x50},   {"[C", VK_RIGHT, 0x4D},  {"[D", VK_LEFT, 0x4B},
+    {"[H", VK_HOME, 0x47},     {"[F", VK_END, 0x4F},    {"OA", VK_UP, 0x48},     {"OB", VK_DOWN, 0x50},
+    {"OC", VK_RIGHT, 0x4D},    {"OD", VK_LEFT, 0x4B},   {"OH", VK_HOME, 0x47},   {"OF", VK_END, 0x4F},
+    {"OP", VK_F1, 0x3B},       {"OQ", VK_F2, 0x3C},     {"OR", VK_F3, 0x3D},     {"OS", VK_F4, 0x3E},
+    {"[1~", VK_HOME, 0x47},    {"[2~", VK_INSERT, 0x52}, {"[3~", VK_DELETE, 0x53}, {"[4~", VK_END, 0x4F},
+    {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},  {"[7~", VK_HOME, 0x47},  {"[8~", VK_END, 0x4F},
+    {"[15~", VK_F5, 0x3F},     {"[17~", VK_F6, 0x40},   {"[18~", VK_F7, 0x41},   {"[19~", VK_F8, 0x42},
+    {"[20~", VK_F9, 0x43},     {"[21~", VK_F10, 0x44},  {"[23~", VK_F11, 0x57},  {"[24~", VK_F12, 0x58},
+    {"[Z", VK_TAB, 0x0F},
+};
+
+/* decodes the escape sequence at p into a key. */
 static BOOL escape_key(const UCHAR *p, ULONG length, ULONG *used, WORD *vk, WORD *scan, DWORD *state)
 {
-    static const struct {
-        const char *seq;
-        WORD vk, scan;
-    } keys[] = {
-        {"[A", VK_UP, 0x48},       {"[B", VK_DOWN, 0x50},   {"[C", VK_RIGHT, 0x4D},  {"[D", VK_LEFT, 0x4B},
-        {"[H", VK_HOME, 0x47},     {"[F", VK_END, 0x4F},    {"OA", VK_UP, 0x48},     {"OB", VK_DOWN, 0x50},
-        {"OC", VK_RIGHT, 0x4D},    {"OD", VK_LEFT, 0x4B},   {"OH", VK_HOME, 0x47},   {"OF", VK_END, 0x4F},
-        {"OP", VK_F1, 0x3B},       {"OQ", VK_F2, 0x3C},     {"OR", VK_F3, 0x3D},     {"OS", VK_F4, 0x3E},
-        {"[1~", VK_HOME, 0x47},    {"[2~", VK_INSERT, 0x52}, {"[3~", VK_DELETE, 0x53}, {"[4~", VK_END, 0x4F},
-        {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},  {"[7~", VK_HOME, 0x47},  {"[8~", VK_END, 0x4F},
-        {"[15~", VK_F5, 0x3F},     {"[17~", VK_F6, 0x40},   {"[18~", VK_F7, 0x41},   {"[19~", VK_F8, 0x42},
-        {"[20~", VK_F9, 0x43},     {"[21~", VK_F10, 0x44},  {"[23~", VK_F11, 0x57},  {"[24~", VK_F12, 0x58},
-        {"[Z", VK_TAB, 0x0F},
-    };
     /* modified keys carry ;<modifier> before the final byte: ESC [ 1 ; 5 C is ctrl+right. */
     UCHAR seq[16];
     ULONG n = 0, modifier = 0;
@@ -313,12 +315,12 @@ static BOOL escape_key(const UCHAR *p, ULONG length, ULONG *used, WORD *vk, WORD
         seq[1] = seq[2];
         seq[2] = 0;
     }
-    for (ULONG k = 0; k < RTL_NUMBER_OF(keys); k++) {
-        if (strcmp((const char *)seq, keys[k].seq))
+    for (ULONG k = 0; k < RTL_NUMBER_OF(g_escape_keys); k++) {
+        if (strcmp((const char *)seq, g_escape_keys[k].seq))
             continue;
-        *vk = keys[k].vk;
-        *scan = keys[k].scan;
-        *state = keys[k].vk == VK_TAB ? SHIFT_PRESSED : ENHANCED_KEY;
+        *vk = g_escape_keys[k].vk;
+        *scan = g_escape_keys[k].scan;
+        *state = g_escape_keys[k].vk == VK_TAB ? SHIFT_PRESSED : ENHANCED_KEY;
         if (modifier > 1) {
             ULONG m = modifier - 1;
             if (m & 1)
@@ -921,10 +923,45 @@ BOOL WINAPI ReadConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count,
     return TRUE;
 }
 
+/* what a terminal sends for a key without a character, 0 bytes for a key it has no sequence for. */
+static ULONG encode_escape(const KEY_EVENT_RECORD *k, UCHAR *out)
+{
+    DWORD state = k->dwControlKeyState;
+    BOOL shift = (state & SHIFT_PRESSED) != 0;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_escape_keys); i++) {
+        const char *seq = g_escape_keys[i].seq;
+        if (g_escape_keys[i].vk != k->wVirtualKeyCode || (k->wVirtualKeyCode == VK_TAB && !shift))
+            continue;
+        ULONG modifier = 1 + (shift && k->wVirtualKeyCode != VK_TAB ? 1 : 0) +
+                         (state & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED) ? 2 : 0) +
+                         (state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED) ? 4 : 0);
+        ULONG n = 0, length = strlen(seq);
+        out[n++] = 0x1B;
+        if (modifier == 1) {
+            memcpy(out + n, seq, length);
+            return n + length;
+        }
+        /* ESC [ 1 ; m X for a letter, ESC [ n ; m ~ for a number. */
+        out[n++] = '[';
+        if (seq[length - 1] == '~') {
+            memcpy(out + n, seq + 1, length - 2);
+            n += length - 2;
+        } else {
+            out[n++] = '1';
+        }
+        out[n++] = ';';
+        out[n++] = (UCHAR)('0' + modifier);
+        out[n++] = (UCHAR)seq[length - 1];
+        return n;
+    }
+    return 0;
+}
+
 /*
- * written records join this process's queue, ahead of what the terminal
- * sends next: readers of this process see them, other processes attached
- * to the console do not.
+ * written records join the console's input as what a terminal would send
+ * for them, so a read waiting in any attached process returns, as libuv
+ * expects when it writes an enter to end its ReadConsoleW. only key
+ * presses with a character or an escape sequence make it there.
  */
 BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
 {
@@ -932,14 +969,51 @@ BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD
         *written = 0;
     if (!check_input(console))
         return FALSE;
-    DWORD n = MAX_RECORDS - g_record_count;
-    if (n > count)
-        n = count;
-    memcpy(g_records + g_record_count, buffer, n * sizeof(*buffer));
-    g_record_count += n;
+    UCHAR bytes[1024];
+    ULONG length = 0;
+    WCHAR high = 0;
+    for (DWORD i = 0; i < count; i++) {
+        const KEY_EVENT_RECORD *k = &buffer[i].Event.KeyEvent;
+        if (buffer[i].EventType != KEY_EVENT || !k->bKeyDown)
+            continue;
+        UCHAR one[16];
+        ULONG n = 0;
+        WCHAR c = k->uChar.UnicodeChar;
+        DWORD state = k->dwControlKeyState;
+        if (c >= 0xD800 && c < 0xDC00) {
+            high = c;
+            continue;
+        }
+        if (c) {
+            WCHAR pair[2] = {high ? high : c, c};
+            BOOL alt = (state & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) &&
+                       !(state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED));
+            if (alt)
+                one[n++] = 0x1B;
+            int w = WideCharToMultiByte(CP_UTF8, 0, pair, high ? 2 : 1, (LPSTR)one + n, sizeof(one) - n, NULL, NULL);
+            n += w > 0 ? (ULONG)w : 0;
+        } else {
+            n = encode_escape(k, one);
+        }
+        high = 0;
+        for (WORD r = k->wRepeatCount ? k->wRepeatCount : 1; r && n; r--) {
+            if (length + n > sizeof(bytes)) {
+                NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, bytes, length, NULL, 0, NULL);
+                if (!NT_SUCCESS(status))
+                    return KbSetStatus(status);
+                length = 0;
+            }
+            memcpy(bytes + length, one, n);
+            length += n;
+        }
+    }
+    if (length) {
+        NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, bytes, length, NULL, 0, NULL);
+        if (!NT_SUCCESS(status))
+            return KbSetStatus(status);
+    }
     if (written)
-        *written = n;
-    sync_input_event();
+        *written = count;
     return TRUE;
 }
 

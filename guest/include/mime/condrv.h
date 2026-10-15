@@ -25,6 +25,7 @@
 #define IOCTL_CONDRV_PROCESSES MIME_CONDRV_IOCTL(0x809)    /* out ULONG process ids */
 #define IOCTL_CONDRV_FLUSH_INPUT MIME_CONDRV_IOCTL(0x80A)
 #define IOCTL_CONDRV_SYNC_EVENT MIME_CONDRV_IOCTL(0x80B) /* sets the input event when input waits, else resets it */
+#define IOCTL_CONDRV_WRITE_INPUT MIME_CONDRV_IOCTL(0x80C) /* in bytes queued as if typed, for every attached process */
 
 #define MIME_CONDRV_STDOUT 1
 #define MIME_CONDRV_STDERR 2
