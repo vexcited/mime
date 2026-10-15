@@ -299,15 +299,6 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
                  record->ExceptionAddress, (PVOID)context->Rsp);
         if (record->ExceptionCode == STATUS_ACCESS_VIOLATION)
             mx_print("  address %p", (PVOID)record->ExceptionInformation[1]);
-        { /* DEBUGJIT */
-            MX_THREAD *dt = c->user;
-            MEMORY_BASIC_INFORMATION mbi = {0};
-            NtQueryVirtualMemory(NtCurrentProcess(), record->ExceptionAddress, MemoryBasicInformation, &mbi, sizeof(mbi), NULL);
-            mx_print("DEBUGJIT base %p limit %p stackbase %p rip %p", mbi.AllocationBase, tib->StackLimit, tib->StackBase,
-                     (PVOID)context->Rip);
-            mx_print("DEBUGJIT rax %p rbx %p rcx %p rdx %p rsi %p rdi %p rbp %p", (PVOID)context->Rax, (PVOID)context->Rbx,
-                     (PVOID)context->Rcx, (PVOID)context->Rdx, (PVOID)context->Rsi, (PVOID)context->Rdi, (PVOID)context->Rbp);
-        }
         mx_fatal(record->ExceptionCode, "cannot deliver the exception");
     }
     /*
@@ -315,17 +306,6 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
      * stack pointer, 0x30 bytes, the context, the record, then a machine
      * frame with the faulting rip and rsp, so unwinding goes on there.
      */
-    { /* DEBUGJIT */
-        static LONG debug_count;
-        if (__atomic_add_fetch(&debug_count, 1, __ATOMIC_RELAXED) < 30) {
-            MX_THREAD *dt = c->user;
-            mx_print("DEBUGJIT raise %08x at %p p0 %p p1 %p rsp %p tid %p", (ULONG)record->ExceptionCode,
-                     record->ExceptionAddress, (PVOID)record->ExceptionInformation[0],
-                     (PVOID)record->ExceptionInformation[1], (PVOID)context->Rsp, NtCurrentTeb()->ClientId.UniqueThread);
-            for (ULONG i = 8; i < 16; i++)
-                mx_print("DEBUGJIT   %p", (PVOID)dt->trace[(dt->trace_pos - 16 + i) % X86_TRACE_SIZE]);
-        }
-    }
     ULONG64 machine = ((context->Rsp - 0x80) & ~15ull) - 0x30;
     ULONG64 rec = machine - 0xA0;
     ULONG64 ctx = rec - 0x4D0;
