@@ -770,6 +770,11 @@ struct D3dContext {
     D3dView *om_uav[D3D11_1_UAV_SLOT_COUNT];
     UINT om_uav_start;
     BOOL targets_dirty, rs_dirty, om_dirty, viewports_dirty;
+    /* every resource bound for output, gathered when inputs are checked against them. */
+    D3dResource *outputs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT + 1 + 2 * D3D11_1_UAV_SLOT_COUNT +
+                         D3D11_SO_BUFFER_SLOT_COUNT];
+    UINT output_count;
+    BOOL outputs_dirty;
 
     /*
      * deferred contexts: the pool of the command buffer being recorded,

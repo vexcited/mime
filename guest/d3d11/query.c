@@ -231,7 +231,7 @@ void D3dQueriesCopy(D3dContext *c, VkCommandBuffer cmd)
         while (i + count < c->query_copy_count && c->query_copies[i + count].pool == slot->pool &&
                c->query_copies[i + count].index == slot->index + count)
             count++;
-        UINT stride = (UINT)(slot->pool->results.size / POOL_SLOTS);
+        UINT stride = RESULT_STRIDE[slot->pool->kind];
         vk->vkCmdCopyQueryPoolResults(cmd, slot->pool->pool, slot->index, count, slot->pool->results.buffer,
                                       slot->pool->results.offset + (VkDeviceSize)slot->index * stride, stride,
                                       VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
@@ -348,7 +348,7 @@ static void sum_slots(const D3dQuery *q, UINT64 *out, UINT counters)
     for (UINT i = 0; i < q->slot_count; i++) {
         const D3dQueryPool *pool = q->slots[i].pool;
         const UINT64 *values =
-            (const UINT64 *)(pool->results.mapped + (SIZE_T)q->slots[i].index * (pool->results.size / POOL_SLOTS));
+            (const UINT64 *)(pool->results.mapped + (SIZE_T)q->slots[i].index * RESULT_STRIDE[pool->kind]);
         for (UINT k = 0; k < counters; k++)
             out[k] += values[k];
     }

@@ -219,8 +219,13 @@ HRESULT D3dAllocBuffer(D3dDevice *device, D3dMemoryKind kind, VkDeviceSize size,
     UINT type = device->buffer_types[kind];
     if (type == ~0u)
         return E_OUTOFMEMORY;
-    /* texel views, uniform buffers and copies of whole texels all line up at 256 bytes. */
-    return allocate(device, kind, FALSE, type, size, D3D_MAX(align, 256), out);
+    /*
+     * texel views, uniform buffers and copies of whole texels all line up at
+     * 256 bytes. sizes round up to the alignment, so that small buffers
+     * leave no gaps that the free ranges would have to keep.
+     */
+    align = D3D_MAX(align, 256);
+    return allocate(device, kind, FALSE, type, D3D_ALIGN(size, align), align, out);
 }
 
 HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out)

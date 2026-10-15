@@ -392,22 +392,37 @@ static void unbind_inputs(D3dContext *c, D3dResource *r)
     }
 }
 
+/* the resources bound for output, gathered again after output bindings change. */
+static void gather_outputs(D3dContext *c)
+{
+    UINT n = 0;
+    for (UINT i = 0; i < c->rtv_count; i++)
+        if (c->rtv[i])
+            c->outputs[n++] = c->rtv[i]->resource;
+    if (c->dsv)
+        c->outputs[n++] = c->dsv->resource;
+    for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++) {
+        if (c->om_uav[i])
+            c->outputs[n++] = c->om_uav[i]->resource;
+        if (c->stages[D3D_CS].uav[i])
+            c->outputs[n++] = c->stages[D3D_CS].uav[i]->resource;
+    }
+    for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
+        if (c->so[i])
+            c->outputs[n++] = c->so[i];
+    c->output_count = n;
+    c->outputs_dirty = FALSE;
+}
+
 /* whether the resource is bound for output, so a shader input of it is refused. */
 static BOOL bound_as_output(D3dContext *c, D3dResource *r)
 {
     if (!r)
         return FALSE;
-    for (UINT i = 0; i < c->rtv_count; i++)
-        if (c->rtv[i] && c->rtv[i]->resource == r)
-            return TRUE;
-    if (c->dsv && c->dsv->resource == r)
-        return TRUE;
-    for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++)
-        if ((c->om_uav[i] && c->om_uav[i]->resource == r) ||
-            (c->stages[D3D_CS].uav[i] && c->stages[D3D_CS].uav[i]->resource == r))
-            return TRUE;
-    for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
-        if (c->so[i] == r)
+    if (c->outputs_dirty)
+        gather_outputs(c);
+    for (UINT i = 0; i < c->output_count; i++)
+        if (c->outputs[i] == r)
             return TRUE;
     return FALSE;
 }
@@ -787,6 +802,7 @@ static void set_render_targets(D3dContext *c, UINT count, ID3D11RenderTargetView
         unbind_inputs(c, d->resource);
     ref_view(c, &c->dsv, d);
     c->targets_dirty = TRUE;
+    c->outputs_dirty = TRUE;
 }
 
 static void set_om_uavs(D3dContext *c, UINT start, UINT count, ID3D11UnorderedAccessView *const *views,
@@ -801,6 +817,7 @@ static void set_om_uavs(D3dContext *c, UINT start, UINT count, ID3D11UnorderedAc
     c->om_uav_start = start;
     c->stages[D3D_PS].table_valid = FALSE;
     c->targets_dirty = TRUE;
+    c->outputs_dirty = TRUE;
 }
 
 static void STDMETHODCALLTYPE om_set_render_targets(ID3D11DeviceContext4 *iface, UINT count,
@@ -901,6 +918,7 @@ static void STDMETHODCALLTYPE cs_set_unordered_access_views(ID3D11DeviceContext4
         ref_view(c, &c->stages[D3D_CS].uav[slot + i], v);
     }
     c->stages[D3D_CS].table_valid = FALSE;
+    c->outputs_dirty = TRUE;
 }
 
 static void STDMETHODCALLTYPE cs_get_unordered_access_views(ID3D11DeviceContext4 *iface, UINT slot, UINT count,
@@ -933,6 +951,7 @@ static void STDMETHODCALLTYPE so_set_targets(ID3D11DeviceContext4 *iface, UINT c
             r = NULL;
         unbind_inputs(c, r);
         ref_resource(&c->so[i], r);
+        c->outputs_dirty = TRUE;
         c->so_offset[i] = i < count && offsets ? offsets[i] : 0;
         if (r && c->so_offset[i] != ~0u) {
             VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
@@ -2052,6 +2071,7 @@ static void clear_state(D3dContext *c)
     for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
         ref_resource(&c->so[i], NULL);
     set_predication(&c->iface, NULL, FALSE);
+    c->outputs_dirty = TRUE;
     c->targets_dirty = c->shaders_dirty = c->ia_dirty = c->vertex_input_dirty = TRUE;
     c->rs_dirty = c->om_dirty = c->viewports_dirty = TRUE;
 }
