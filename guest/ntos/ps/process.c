@@ -223,6 +223,7 @@ void PspProcessExit(PEPROCESS process)
 {
     KiLogPrintf("process %u (%s) exited with status %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
                 process->ImageFileName, process->ExitStatus);
+    PspJobProcessExit(process);
     PsWin32ProcessCallout(process, FALSE);
     PspNotifyProcess(process, FALSE);
     ObKillProcessHandles(process);
@@ -410,6 +411,7 @@ void PsInitialize(void)
     init.DeleteProcedure = PspThreadDelete;
     init.WaitObject = thread_wait_object;
     PsThreadTypeObject = ObCreateObjectType(L"Thread", &init);
+    PspInitializeJobs();
 
     /* the system process owns kernel handles and system threads. */
     PEPROCESS system;

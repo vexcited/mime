@@ -760,6 +760,30 @@ WINBASEAPI BOOL WINAPI PeekNamedPipe(HANDLE pipe, LPVOID buffer, DWORD size, LPD
                                      LPDWORD left);
 WINBASEAPI BOOL WINAPI SetNamedPipeHandleState(HANDLE pipe, LPDWORD mode, LPDWORD max_collection,
                                                LPDWORD collect_timeout);
+typedef struct _IO_COUNTERS {
+    ULONGLONG ReadOperationCount;
+    ULONGLONG WriteOperationCount;
+    ULONGLONG OtherOperationCount;
+    ULONGLONG ReadTransferCount;
+    ULONGLONG WriteTransferCount;
+    ULONGLONG OtherTransferCount;
+} IO_COUNTERS, *PIO_COUNTERS;
+
+#define FILE_SKIP_COMPLETION_PORT_ON_SUCCESS 0x1
+#define FILE_SKIP_SET_EVENT_ON_HANDLE 0x2
+#define WT_EXECUTEDEFAULT 0x00000000
+#define WT_EXECUTEINIOTHREAD 0x00000001
+#define WT_EXECUTELONGFUNCTION 0x00000010
+
+WINBASEAPI HANDLE WINAPI ReOpenFile(HANDLE original, DWORD access, DWORD share, DWORD flags);
+WINBASEAPI BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags);
+WINBASEAPI BOOL WINAPI GetProcessIoCounters(HANDLE process, PIO_COUNTERS counters);
+WINBASEAPI BOOL WINAPI GetNamedPipeClientProcessId(HANDLE pipe, PULONG id);
+WINBASEAPI BOOL WINAPI GetNamedPipeServerProcessId(HANDLE pipe, PULONG id);
+WINBASEAPI BOOL WINAPI GetNamedPipeClientSessionId(HANDLE pipe, PULONG id);
+WINBASEAPI BOOL WINAPI GetNamedPipeServerSessionId(HANDLE pipe, PULONG id);
+WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateA(HANDLE pipe, LPDWORD state, LPDWORD instances, LPDWORD max_collection,
+                                                LPDWORD collect_timeout, LPSTR user, DWORD user_size);
 WINBASEAPI BOOL WINAPI GetNamedPipeInfo(HANDLE pipe, LPDWORD flags, LPDWORD out_size, LPDWORD in_size,
                                         LPDWORD max_instances);
 WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateW(HANDLE pipe, LPDWORD state, LPDWORD instances,
@@ -1071,6 +1095,8 @@ WINBASEAPI BOOL WINAPI ReadConsoleW(HANDLE console, LPVOID buffer, DWORD count, 
 WINBASEAPI BOOL WINAPI ReadConsoleA(HANDLE console, LPVOID buffer, DWORD count, LPDWORD read,
                                     PCONSOLE_READCONSOLE_CONTROL control);
 WINBASEAPI BOOL WINAPI ReadConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
+WINBASEAPI BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written);
+WINBASEAPI BOOL WINAPI WriteConsoleInputA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written);
 WINBASEAPI BOOL WINAPI ReadConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
 WINBASEAPI BOOL WINAPI PeekConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
 WINBASEAPI BOOL WINAPI PeekConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
@@ -1109,6 +1135,7 @@ WINBASEAPI BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console);
 /* ------------------------------------------------------------------ processes and threads */
 
 #define CREATE_SUSPENDED 0x00000004
+#define CREATE_BREAKAWAY_FROM_JOB 0x01000000
 #define DEBUG_PROCESS 0x00000001
 #define DEBUG_ONLY_THIS_PROCESS 0x00000002
 #define DETACHED_PROCESS 0x00000008
@@ -1167,6 +1194,7 @@ WINBASEAPI BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console);
 
 typedef DWORD(WINAPI *PTHREAD_START_ROUTINE)(LPVOID parameter);
 typedef PTHREAD_START_ROUTINE LPTHREAD_START_ROUTINE;
+WINBASEAPI BOOL WINAPI QueueUserWorkItem(LPTHREAD_START_ROUTINE function, PVOID context, ULONG flags);
 typedef void(NTAPI *PAPCFUNC)(ULONG_PTR parameter);
 typedef void(WINAPI *PFLS_CALLBACK_FUNCTION)(PVOID data);
 typedef void(WINAPI *LPFIBER_START_ROUTINE)(LPVOID parameter);

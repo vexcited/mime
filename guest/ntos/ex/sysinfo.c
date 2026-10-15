@@ -431,6 +431,34 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         b.NumberOfProcessors = (CCHAR)HalBootInfo->cpu_count;
         return copy_info(info, &b, sizeof(b), length, returned);
     }
+    case SystemProcessorPerformanceInformation: {
+        /* per processor, kernel time including idle time, as windows reports it. */
+        typedef struct {
+            LARGE_INTEGER IdleTime, KernelTime, UserTime, DpcTime, InterruptTime;
+            ULONG InterruptCount;
+        } PERFORMANCE;
+        PERFORMANCE p[MAXIMUM_PROCESSORS];
+        ULONG count = HalBootInfo->cpu_count, size = count * sizeof(PERFORMANCE);
+        ULONG64 now = KiQueryInterruptTime();
+        memset(p, 0, sizeof(p));
+        for (ULONG i = 0; i < count; i++) {
+            PKPRCB prcb = KiProcessorBlock[i];
+            if (!prcb)
+                continue;
+            ULONG64 busy = prcb->KernelTime + prcb->UserTime;
+            ULONG64 idle = now > busy ? now - busy : 0;
+            p[i].IdleTime.QuadPart = (LONGLONG)idle;
+            p[i].KernelTime.QuadPart = (LONGLONG)(prcb->KernelTime + idle);
+            p[i].UserTime.QuadPart = (LONGLONG)prcb->UserTime;
+            p[i].InterruptCount = (ULONG)prcb->InterruptCount;
+        }
+        if (length < sizeof(PERFORMANCE))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        /* a shorter buffer gets the processors that fit, as on windows. */
+        if (length < size)
+            size = length / sizeof(PERFORMANCE) * sizeof(PERFORMANCE);
+        return copy_info(info, p, size, length, returned);
+    }
     case SystemProcessorInformation:
     case SystemEmulationProcessorInformation: {
         SYSTEM_PROCESSOR_INFORMATION p = {0};
@@ -587,16 +615,6 @@ NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data
 NTSTATUS NTAPI NtSetInformationObject(HANDLE handle, ULONG klass, PVOID info, ULONG length)
 {
     return STATUS_SUCCESS;
-}
-
-NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job, ULONG klass, PVOID info, ULONG length, PULONG returned)
-{
-    return STATUS_INVALID_HANDLE;
-}
-
-NTSTATUS NTAPI NtIsProcessInJob(HANDLE process, HANDLE job)
-{
-    return (NTSTATUS)0x00000124L; /* STATUS_PROCESS_NOT_IN_JOB */
 }
 
 NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data)

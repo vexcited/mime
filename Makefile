@@ -58,7 +58,7 @@ EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D000000
 	crypt32:0x7FF630000000 schannel:0x7FF620000000 secur32:0x7FF610000000 uxtheme:0x7FF600000000 \
 	imm32:0x7FF5F0000000 usp10:0x7FF5E0000000 dwmapi:0x7FF5D0000000 winmm:0x7FF5C0000000 \
 	version:0x7FF5B0000000 userenv:0x7FF5A0000000 wtsapi32:0x7FF590000000 netapi32:0x7FF580000000 \
-	odbc32:0x7FF570000000 winspool:0x7FF560000000 msi:0x7FF550000000 \
+	odbc32:0x7FF570000000 winspool:0x7FF560000000 msi:0x7FF550000000 dbghelp:0x7FF540000000 \
 	bcrypt:0x7FF530000000 avrt:0x7FF520000000 dinput8:0x7FF510000000 dwrite:0x7FF500000000 \
 	dxgi:0x7FF4F0000000 wsock32:0x7FF4E0000000 ucrtbase:0x7FF4D0000000 mpr:0x7FF4C0000000 wintrust:0x7FF4B0000000 mmdevapi:0x7FF4A0000000 \
 	gdiplus:0x7FF490000000 wininet:0x7FF480000000 urlmon:0x7FF470000000 msimg32:0x7FF460000000 \
@@ -522,7 +522,8 @@ $(eval $(call X64_DLL,kernelbase,0x7FFB00000000,ntdll,/entry:DllMain))
 
 # like the arm64 one, plus the unwinding functions windows' kernel32 forwards to ntdll.
 X64_KERNEL32_NTDLL := RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind RtlAddFunctionTable \
-	RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind __C_specific_handler
+	RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind __C_specific_handler \
+	RtlCaptureStackBackTrace
 $(GEN)/x64/kernel32.def: $(SYSX64)/kernelbase.dll
 	@mkdir -p $(dir $@)
 	{ echo "LIBRARY kernel32.dll"; echo "EXPORTS"; \

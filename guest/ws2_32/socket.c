@@ -392,9 +392,31 @@ SOCKET WSAAPI socket(int af, int type, int protocol)
     return create_socket(af, type, protocol, WSA_FLAG_OVERLAPPED);
 }
 
+static void protocol_info_a(const WSAPROTOCOL_INFOW *w, WSAPROTOCOL_INFOA *a);
+
+/* a socket WSADuplicateSocket made for this process: its handle, already here. */
+static SOCKET adopt_socket(const WSAPROTOCOL_INFOW *info)
+{
+    int error = WsCheckStarted();
+    if (error) {
+        SetLastError(error);
+        return INVALID_SOCKET;
+    }
+    HANDLE h = (HANDLE)(ULONG_PTR)info->dwProviderReserved;
+    if (!register_socket(h, info->iAddressFamily, info->iSocketType, info->iProtocol)) {
+        SetLastError(WSAENOBUFS);
+        return INVALID_SOCKET;
+    }
+    SetLastError(0);
+    return (SOCKET)h;
+}
+
 SOCKET WSAAPI WSASocketW(int af, int type, int protocol, LPWSAPROTOCOL_INFOW info, GROUP g, DWORD flags)
 {
     if (info) {
+        if (af == FROM_PROTOCOL_INFO && type == FROM_PROTOCOL_INFO && protocol == FROM_PROTOCOL_INFO &&
+            info->dwProviderReserved)
+            return adopt_socket(info);
         if (af == FROM_PROTOCOL_INFO)
             af = info->iAddressFamily;
         if (type == FROM_PROTOCOL_INFO)
@@ -403,6 +425,44 @@ SOCKET WSAAPI WSASocketW(int af, int type, int protocol, LPWSAPROTOCOL_INFOW inf
             protocol = info->iProtocol;
     }
     return create_socket(af, type, protocol, flags);
+}
+
+/*
+ * the socket's handle duplicated into the target process, carried in the
+ * protocol information the way windows' provider carries it; WSASocket
+ * there takes it back.
+ */
+int WSAAPI WSADuplicateSocketW(SOCKET s, DWORD process_id, LPWSAPROTOCOL_INFOW info)
+{
+    int error;
+    if (!info)
+        return WsFail(WSAEFAULT);
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock)
+        return WsFail(error);
+    HANDLE process = OpenProcess(PROCESS_DUP_HANDLE, FALSE, process_id);
+    HANDLE copy = NULL;
+    if (!process || !DuplicateHandle(GetCurrentProcess(), (HANDLE)s, process, &copy, 0, FALSE, DUPLICATE_SAME_ACCESS))
+        error = WSAEINVAL;
+    else if (!WsProtocolInfo(sock->family, sock->type, info))
+        error = WSAEINVAL;
+    if (process)
+        CloseHandle(process);
+    if (!error)
+        info->dwProviderReserved = (DWORD)(ULONG_PTR)copy;
+    release(sock);
+    return error ? WsFail(error) : 0;
+}
+
+int WSAAPI WSADuplicateSocketA(SOCKET s, DWORD process_id, LPWSAPROTOCOL_INFOA info)
+{
+    WSAPROTOCOL_INFOW wide;
+    if (!info)
+        return WsFail(WSAEFAULT);
+    if (WSADuplicateSocketW(s, process_id, &wide))
+        return SOCKET_ERROR;
+    protocol_info_a(&wide, info);
+    return 0;
 }
 
 SOCKET WSAAPI WSASocketA(int af, int type, int protocol, LPWSAPROTOCOL_INFOA info, GROUP g, DWORD flags)

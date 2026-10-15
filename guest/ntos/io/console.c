@@ -8,6 +8,11 @@
  *
  * when the terminal goes away the processes get CTRL_CLOSE_EVENT and five
  * seconds to exit before they are terminated.
+ *
+ * a standard stream `mime run` was given a pipe or a file for is no
+ * console: \Device\ConDrvStream\Input, Output and Error are its ends,
+ * files of a named pipe device as a redirected handle is on windows, read
+ * and written in bytes and asked the questions of a pipe.
  */
 #include "../ntos.h"
 #include <mime/condrv.h>
@@ -51,6 +56,15 @@ struct _MIME_CONSOLE {
 static FAST_MUTEX g_lock;
 static LIST_ENTRY g_consoles;
 static PDEVICE_OBJECT g_device;
+static PDEVICE_OBJECT g_stream_device;
+
+#define STREAM_INPUT 1
+#define STREAM_OUTPUT 2
+#define STREAM_ERROR 3
+
+#define FSCTL_PIPE_PEEK 0x0011400C
+#define FILE_PIPE_CONNECTED_STATE 3
+#define FILE_DEVICE_NAMED_PIPE 0x11
 
 static void release(MIME_CONSOLE *c)
 {
@@ -614,14 +628,204 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, status, information);
 }
 
+/* ------------------------------------------------------------ the redirected streams */
+
+static ULONG stream_of(PIRP irp)
+{
+    return (ULONG)(ULONG_PTR)IoGetCurrentIrpStackLocation(irp)->FileObject->FsContext2;
+}
+
+static NTSTATUS NTAPI con_create(PDEVICE_OBJECT device, PIRP irp)
+{
+    if (device != g_stream_device)
+        return complete(irp, STATUS_SUCCESS, 0);
+    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    static const struct {
+        PCWSTR Name;
+        ULONG Stream;
+    } names[] = {{L"\\Input", STREAM_INPUT}, {L"\\Output", STREAM_OUTPUT}, {L"\\Error", STREAM_ERROR}};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++) {
+        UNICODE_STRING n;
+        RtlInitUnicodeString(&n, names[i].Name);
+        if (RtlEqualUnicodeString(&file->FileName, &n, TRUE)) {
+            file->FsContext2 = (PVOID)(ULONG_PTR)names[i].Stream;
+            return complete(irp, STATUS_SUCCESS, 0);
+        }
+    }
+    return complete(irp, STATUS_OBJECT_NAME_NOT_FOUND, 0);
+}
+
+/* waits for input without taking it, as a zero byte read of a pipe does. */
+static NTSTATUS wait_input(MIME_CONSOLE *c)
+{
+    for (;;) {
+        ExAcquireFastMutex(&g_lock);
+        BOOLEAN ready = !IsListEmpty(&c->Input) || (c->Flags & MIME_CONDRV_CLOSED);
+        if (!ready)
+            KeClearEvent(&c->InputReady);
+        ExReleaseFastMutex(&g_lock);
+        if (ready)
+            return STATUS_SUCCESS;
+        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, NULL);
+        if (status != STATUS_SUCCESS)
+            return status;
+    }
+}
+
+static NTSTATUS NTAPI con_read_write(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    ULONG stream = stream_of(irp), length = stack->Parameters.Read.Length;
+    BOOLEAN write = stack->MajorFunction == IRP_MJ_WRITE;
+    if (device != g_stream_device || (write ? stream == STREAM_INPUT : stream != STREAM_INPUT))
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    MIME_CONSOLE *c = process_console(PsCurrentProcess());
+    if (!c)
+        return complete(irp, STATUS_PIPE_BROKEN, 0);
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG_PTR information = 0;
+    if (write) {
+        if (c->Flags & MIME_CONDRV_CLOSED) {
+            status = STATUS_PIPE_BROKEN;
+        } else if (length) {
+            send(c, MIME_EVT_CONSOLE_OUTPUT, stream == STREAM_ERROR ? MIME_CONDRV_STDERR : MIME_CONDRV_STDOUT,
+                 irp->UserBuffer, length);
+            information = length;
+        }
+    } else if (!length) {
+        status = wait_input(c);
+    } else {
+        status = read_input(c, irp->UserBuffer, length, &information);
+        /* the end of the input is the other end of the pipe closing. */
+        if (NT_SUCCESS(status) && !information)
+            status = STATUS_PIPE_BROKEN;
+    }
+    release(c);
+    return complete(irp, status, information);
+}
+
+typedef struct STREAM_PIPE_LOCAL {
+    ULONG NamedPipeType;
+    ULONG NamedPipeConfiguration;
+    ULONG MaximumInstances;
+    ULONG CurrentInstances;
+    ULONG InboundQuota;
+    ULONG ReadDataAvailable;
+    ULONG OutboundQuota;
+    ULONG WriteQuotaAvailable;
+    ULONG NamedPipeState;
+    ULONG NamedPipeEnd;
+} STREAM_PIPE_LOCAL;
+
+static ULONG input_available(void)
+{
+    MIME_CONSOLE *c = process_console(PsCurrentProcess());
+    if (!c)
+        return 0;
+    ExAcquireFastMutex(&g_lock);
+    ULONG n = c->InputBytes;
+    ExReleaseFastMutex(&g_lock);
+    release(c);
+    return n;
+}
+
+/* a byte mode pipe in blocking mode, the client end, always connected. */
+static NTSTATUS NTAPI con_query(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    ULONG length = stack->Parameters.QueryFile.Length;
+    PVOID buf = irp->AssociatedIrp.SystemBuffer;
+    if (device != g_stream_device)
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    BOOLEAN input = stream_of(irp) == STREAM_INPUT;
+    switch (stack->Parameters.QueryFile.FileInformationClass) {
+    case FilePipeInformation:
+        if (length < 2 * sizeof(ULONG))
+            return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+        memset(buf, 0, 2 * sizeof(ULONG));
+        return complete(irp, STATUS_SUCCESS, 2 * sizeof(ULONG));
+    case FilePipeLocalInformation: {
+        if (length < sizeof(STREAM_PIPE_LOCAL))
+            return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+        STREAM_PIPE_LOCAL p = {0, input ? 0 : 1, 1, 1, 4096, input ? input_available() : 0, 4096, 4096,
+                               FILE_PIPE_CONNECTED_STATE, 0};
+        memcpy(buf, &p, sizeof(p));
+        return complete(irp, STATUS_SUCCESS, sizeof(p));
+    }
+    case FileStandardInformation: {
+        if (length < sizeof(FILE_STANDARD_INFORMATION))
+            return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+        FILE_STANDARD_INFORMATION s = {0};
+        s.AllocationSize.QuadPart = 4096;
+        s.EndOfFile.QuadPart = input ? input_available() : 0;
+        s.NumberOfLinks = 1;
+        memcpy(buf, &s, sizeof(s));
+        return complete(irp, STATUS_SUCCESS, sizeof(s));
+    }
+    default:
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    }
+}
+
+/* the modes of a pipe end: byte reads, blocking or not, both accepted as they change nothing here. */
+static NTSTATUS NTAPI con_set(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    if (device != g_stream_device || stack->Parameters.SetFile.FileInformationClass != FilePipeInformation)
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    return complete(irp, STATUS_SUCCESS, 0);
+}
+
+static NTSTATUS NTAPI con_fs_control(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
+    ULONG out_len = stack->Parameters.DeviceIoControl.OutputBufferLength;
+    PUCHAR buf = irp->AssociatedIrp.SystemBuffer;
+    if (device != g_stream_device || code != FSCTL_PIPE_PEEK)
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    /* the header: state, bytes available, messages and message length; then as much data as fits. */
+    if (out_len < 4 * sizeof(ULONG))
+        return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+    ULONG *head = (ULONG *)buf;
+    memset(head, 0, 4 * sizeof(ULONG));
+    head[0] = FILE_PIPE_CONNECTED_STATE;
+    ULONG copied = 0;
+    MIME_CONSOLE *c = stream_of(irp) == STREAM_INPUT ? process_console(PsCurrentProcess()) : NULL;
+    if (c) {
+        BOOLEAN eof;
+        ULONG acked;
+        ExAcquireFastMutex(&g_lock);
+        head[1] = c->InputBytes;
+        copied = take_input(c, buf + 4 * sizeof(ULONG), out_len - 4 * sizeof(ULONG), TRUE, &eof, &acked);
+        /* the end of the input is next when its empty chunk heads the queue, whatever room the peek has. */
+        BOOLEAN at_end = !IsListEmpty(&c->Input) && !CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links)->Length;
+        BOOLEAN broken = at_end || (!c->InputBytes && (c->Flags & MIME_CONDRV_CLOSED));
+        ExReleaseFastMutex(&g_lock);
+        release(c);
+        if (broken)
+            return complete(irp, STATUS_PIPE_BROKEN, 0);
+    }
+    return complete(irp, copied < head[1] ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS, 4 * sizeof(ULONG) + copied);
+}
+
 static NTSTATUS NTAPI ConDrvEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
-    driver->MajorFunction[IRP_MJ_CREATE] = con_success;
+    driver->MajorFunction[IRP_MJ_CREATE] = con_create;
     driver->MajorFunction[IRP_MJ_CLEANUP] = con_success;
     driver->MajorFunction[IRP_MJ_CLOSE] = con_success;
     driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = con_control;
+    driver->MajorFunction[IRP_MJ_READ] = con_read_write;
+    driver->MajorFunction[IRP_MJ_WRITE] = con_read_write;
+    driver->MajorFunction[IRP_MJ_QUERY_INFORMATION] = con_query;
+    driver->MajorFunction[IRP_MJ_SET_INFORMATION] = con_set;
+    driver->MajorFunction[IRP_MJ_FILE_SYSTEM_CONTROL] = con_fs_control;
     UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_CONDRV_DEVICE);
-    return IoCreateDevice(driver, 0, &name, 0x50 /* FILE_DEVICE_CONSOLE */, 0, FALSE, &g_device);
+    NTSTATUS status = IoCreateDevice(driver, 0, &name, 0x50 /* FILE_DEVICE_CONSOLE */, 0, FALSE, &g_device);
+    UNICODE_STRING stream = RTL_CONSTANT_STRING(MIME_CONDRV_STREAM_DEVICE);
+    if (NT_SUCCESS(status))
+        status = IoCreateDevice(driver, 0, &stream, FILE_DEVICE_NAMED_PIPE, 0, FALSE, &g_stream_device);
+    return status;
 }
 
 void IopInitializeConsole(void)

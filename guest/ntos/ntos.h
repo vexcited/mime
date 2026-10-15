@@ -186,6 +186,7 @@ typedef struct _KPRCB {
     ULONG64 ContextSwitches;
     ULONG64 DpcCount;
     ULONG64 IdleTicks;
+    ULONG64 KernelTime, UserTime; /* charged with the threads' at each clock tick, in 100ns */
     ULONG64 IpiSent, IpiReceived;
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not */
 } KPRCB, *PKPRCB;
@@ -700,6 +701,8 @@ typedef struct _EPROCESS {
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
+    struct EJOB *Job; /* ps/job.c */
+    LIST_ENTRY JobLinks;
 } EPROCESS;
 
 extern LIST_ENTRY PsActiveProcessHead;
@@ -730,6 +733,11 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING c
                              PEPROCESS *out);
 DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
+#define PROCESS_CREATE_FLAGS_BREAKAWAY 0x00000001
+void PspInitializeJobs(void);
+void PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags);
+void PspJobProcessExit(PEPROCESS process);
+extern POBJECT_TYPE IoCompletionObjectType;
 PEPROCESS PspLookupProcess(HANDLE pid);
 PETHREAD PspLookupThread(HANDLE tid);
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id);
@@ -798,7 +806,8 @@ NTSTATUS AfdReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc,
 NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                        ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
-void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
+void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information, BOOLEAN synchronous);
+void IopSignalFile(PFILE_OBJECT file);
 NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port, PVOID key);
 void IopReleaseCompletion(PFILE_OBJECT file);
 NTSTATUS IoQueryFileSize(PFILE_OBJECT file, ULONG64 *size);

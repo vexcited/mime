@@ -894,6 +894,8 @@ WINSOCK_API_LINKAGE struct protoent *WSAAPI getprotobynumber(int number);
 WINSOCK_API_LINKAGE SOCKET WSAAPI socket(int af, int type, int protocol);
 WINSOCK_API_LINKAGE SOCKET WSAAPI WSASocketA(int af, int type, int protocol, LPWSAPROTOCOL_INFOA info, GROUP g,
                                              DWORD flags);
+WINSOCK_API_LINKAGE int WSAAPI WSADuplicateSocketW(SOCKET s, DWORD process_id, LPWSAPROTOCOL_INFOW info);
+WINSOCK_API_LINKAGE int WSAAPI WSADuplicateSocketA(SOCKET s, DWORD process_id, LPWSAPROTOCOL_INFOA info);
 WINSOCK_API_LINKAGE SOCKET WSAAPI WSASocketW(int af, int type, int protocol, LPWSAPROTOCOL_INFOW info, GROUP g,
                                              DWORD flags);
 WINSOCK_API_LINKAGE int WSAAPI closesocket(SOCKET s);

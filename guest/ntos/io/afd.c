@@ -247,12 +247,12 @@ static void finish_request(AFD_REQUEST *r)
         attach_copy(r->Process, r->Iosb, &io, sizeof(io), TRUE);
     if (r->Event)
         KeSetEvent(r->Event, IO_NO_INCREMENT, FALSE);
-    KeSetEvent(&r->File->Event, IO_NO_INCREMENT, FALSE);
+    IopSignalFile(r->File);
     if (r->Pending || !NT_ERROR(r->Status)) {
         if (r->ApcRoutine)
             IopQueueCompletionApc(r->Thread, r->ApcRoutine, r->ApcContext, r->Iosb);
         else
-            IopPostCompletion(r->File, r->ApcContext, r->Status, r->Information);
+            IopPostCompletion(r->File, r->ApcContext, r->Status, r->Information, !r->Pending);
     }
 }
 

@@ -254,7 +254,8 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
 {
     if (!process_handle || !thread_handle || !parameters)
         return STATUS_INVALID_PARAMETER;
-    if (process_attributes || thread_attributes || process_flags || (thread_flags & ~1u) || create_info || attributes)
+    if (process_attributes || thread_attributes || (process_flags & ~PROCESS_CREATE_FLAGS_BREAKAWAY) ||
+        (thread_flags & ~1u) || create_info || attributes)
         return STATUS_NOT_SUPPORTED;
     UNICODE_STRING image = {0}, command = {0}, cwd = {0};
     NTSTATUS status = KiCaptureUnicodeString(&image, &parameters->ImagePathName);
@@ -287,6 +288,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if (NT_SUCCESS(status))
         status = KiCopyToUser(thread_handle, &th, sizeof(th));
     if (NT_SUCCESS(status)) {
+        PspInheritJob(process, PsCurrentProcess(), process_flags);
         if (!(thread_flags & 1)) {
             thread->Tcb.SuspendCount = 0;
             KiStartThread(&thread->Tcb);

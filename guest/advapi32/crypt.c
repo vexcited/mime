@@ -10,6 +10,8 @@
 
 typedef ULONG_PTR HCRYPTKEY;
 
+ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
+
 #define NTE_BAD_UID ((DWORD)0x80090001L)
 #define NTE_BAD_KEY ((DWORD)0x80090003L)
 #define NTE_BAD_DATA ((DWORD)0x80090005L)
@@ -55,6 +57,9 @@ typedef struct PROVIDER {
     LONG References;
     DWORD Type;
     DWORD Flags;
+    ULONG Name;      /* index in g_providers */
+    ULONG Algorithm; /* the next PP_ENUMALGS entry */
+    CHAR Container[MAX_PATH];
 } PROVIDER;
 
 typedef struct KEY {
@@ -93,6 +98,17 @@ static PROVIDER *provider(HCRYPTPROV handle)
     return p;
 }
 
+/* the provider windows picks for a type when none is named. */
+static ULONG default_provider(DWORD type)
+{
+    if (type == PROV_RSA_FULL)
+        return 2; /* the strong provider */
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_providers); i++)
+        if (g_providers[i].Type == type)
+            return i;
+    return 0;
+}
+
 static BOOL type_known(DWORD type)
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_providers); i++)
@@ -118,6 +134,7 @@ ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, L
         AdvSetError(NTE_PROV_TYPE_NOT_DEF);
         return FALSE;
     }
+    ULONG index = default_provider(type);
     if (name && *name) {
         ULONG i = 0;
         while (i < RTL_NUMBER_OF(g_providers) && _wcsicmp(name, g_providers[i].Name))
@@ -130,6 +147,7 @@ ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, L
             AdvSetError(NTE_PROV_TYPE_NO_MATCH);
             return FALSE;
         }
+        index = i;
     }
     if ((flags & CRYPT_VERIFYCONTEXT) == CRYPT_VERIFYCONTEXT && container && *container) {
         AdvSetError(NTE_BAD_FLAGS);
@@ -142,10 +160,20 @@ ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, L
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
+    memset(p, 0, sizeof(*p));
     p->Magic = PROV_MAGIC;
     p->References = 1;
     p->Type = type;
     p->Flags = flags;
+    p->Name = index;
+    /* without a name the container is the user's, as on windows. */
+    if (container && *container) {
+        WideCharToMultiByte(CP_ACP, 0, container, -1, p->Container, sizeof(p->Container), NULL, NULL);
+    } else if ((flags & CRYPT_VERIFYCONTEXT) != CRYPT_VERIFYCONTEXT) {
+        DWORD size = sizeof(p->Container);
+        if (!GetUserNameA(p->Container, &size))
+            p->Container[0] = 0;
+    }
     *result = (HCRYPTPROV)p;
     return TRUE;
 }
@@ -469,4 +497,305 @@ ADVAPI BOOL WINAPI CryptDestroyHash(HCRYPTHASH handle)
     SecureZeroMemory(h, sizeof(*h));
     AdvFree(h);
     return TRUE;
+}
+
+/* ---------------------------------------------------------------- provider parameters and keys */
+
+#define NTE_NO_KEY ((DWORD)0x8009000DL)
+#define NTE_BAD_KEY_STATE ((DWORD)0x8009000BL)
+
+#define PP_ENUMALGS 1
+#define PP_ENUMCONTAINERS 2
+#define PP_IMPTYPE 3
+#define PP_NAME 4
+#define PP_VERSION 5
+#define PP_CONTAINER 6
+#define PP_PROVTYPE 16
+#define PP_ENUMALGS_EX 22
+#define PP_KEYSET_TYPE 27
+#define PP_UNIQUE_CONTAINER 36
+#define PP_KEYSPEC 39
+#define CRYPT_FIRST 1
+#define CRYPT_IMPL_SOFTWARE 2
+#define AT_KEYEXCHANGE 1
+#define AT_SIGNATURE 2
+#define CALG_RSA_SIGN 0x2400
+#define CALG_RSA_KEYX 0xa400
+#define RSA1_MAGIC 0x31415352 /* "RSA1" */
+
+typedef struct PROV_ENUMALGS {
+    DWORD aiAlgid;
+    DWORD dwBitLen;
+    DWORD dwNameLen;
+    CHAR szName[20];
+} PROV_ENUMALGS;
+
+typedef struct PROV_ENUMALGS_EX {
+    DWORD aiAlgid;
+    DWORD dwDefaultLen;
+    DWORD dwMinLen;
+    DWORD dwMaxLen;
+    DWORD dwProtocols;
+    DWORD dwNameLen;
+    CHAR szName[20];
+    DWORD dwLongNameLen;
+    CHAR szLongName[40];
+} PROV_ENUMALGS_EX;
+
+/* the algorithms the provider implements: hashes, since it has no cipher. */
+static const struct {
+    DWORD Id;
+    DWORD Bits;
+    const char *Name;
+    const char *LongName;
+} g_algorithms[] = {
+    {CALG_SHA_256, 256, "SHA-256", "Secure Hash Algorithm SHA-256"},
+    {CALG_SHA_384, 384, "SHA-384", "Secure Hash Algorithm SHA-384"},
+    {CALG_SHA_512, 512, "SHA-512", "Secure Hash Algorithm SHA-512"},
+    {CALG_SHA1, 160, "SHA-1", "Secure Hash Algorithm (SHA-1)"},
+    {CALG_MD5, 128, "MD5", "Message Digest 5 (MD5)"},
+};
+
+ADVAPI BOOL WINAPI CryptGetProvParam(HCRYPTPROV handle, DWORD param, BYTE *data, DWORD *length, DWORD flags)
+{
+    PROVIDER *p = provider(handle);
+    if (!p)
+        return FALSE;
+    if (!length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD value;
+    switch (param) {
+    case PP_NAME: {
+        CHAR name[128];
+        int n = WideCharToMultiByte(CP_ACP, 0, g_providers[p->Name].Name, -1, name, sizeof(name), NULL, NULL);
+        return return_param(name, (DWORD)n, data, length);
+    }
+    case PP_CONTAINER:
+    case PP_UNIQUE_CONTAINER:
+        return return_param(p->Container, (DWORD)strlen(p->Container) + 1, data, length);
+    case PP_IMPTYPE:
+        value = CRYPT_IMPL_SOFTWARE;
+        return return_param(&value, sizeof(value), data, length);
+    case PP_VERSION:
+        value = 0x200;
+        return return_param(&value, sizeof(value), data, length);
+    case PP_PROVTYPE:
+        value = p->Type;
+        return return_param(&value, sizeof(value), data, length);
+    case PP_KEYSPEC:
+        value = AT_KEYEXCHANGE | AT_SIGNATURE;
+        return return_param(&value, sizeof(value), data, length);
+    case PP_KEYSET_TYPE:
+        value = p->Flags & CRYPT_MACHINE_KEYSET;
+        return return_param(&value, sizeof(value), data, length);
+    case PP_ENUMCONTAINERS:
+        /* key containers are never stored. */
+        AdvSetError(ERROR_NO_MORE_ITEMS);
+        return FALSE;
+    case PP_ENUMALGS:
+    case PP_ENUMALGS_EX: {
+        if (flags & CRYPT_FIRST)
+            p->Algorithm = 0;
+        if (p->Algorithm >= RTL_NUMBER_OF(g_algorithms)) {
+            AdvSetError(ERROR_NO_MORE_ITEMS);
+            return FALSE;
+        }
+        ULONG i = p->Algorithm;
+        BOOL ok;
+        if (param == PP_ENUMALGS) {
+            PROV_ENUMALGS a = {g_algorithms[i].Id, g_algorithms[i].Bits, (DWORD)strlen(g_algorithms[i].Name) + 1};
+            strcpy(a.szName, g_algorithms[i].Name);
+            ok = return_param(&a, sizeof(a), data, length);
+        } else {
+            PROV_ENUMALGS_EX a = {0};
+            a.aiAlgid = g_algorithms[i].Id;
+            a.dwDefaultLen = a.dwMinLen = a.dwMaxLen = g_algorithms[i].Bits;
+            a.dwNameLen = (DWORD)strlen(g_algorithms[i].Name) + 1;
+            strcpy(a.szName, g_algorithms[i].Name);
+            a.dwLongNameLen = (DWORD)strlen(g_algorithms[i].LongName) + 1;
+            strcpy(a.szLongName, g_algorithms[i].LongName);
+            ok = return_param(&a, sizeof(a), data, length);
+        }
+        if (ok && data)
+            p->Algorithm++;
+        return ok;
+    }
+    default:
+        AdvSetError(NTE_BAD_TYPE);
+        return FALSE;
+    }
+}
+
+ADVAPI BOOL WINAPI CryptEnumProvidersW(DWORD index, DWORD *reserved, DWORD flags, DWORD *type, LPWSTR name,
+                                       DWORD *size)
+{
+    if (reserved || !size) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    if (index >= RTL_NUMBER_OF(g_providers)) {
+        AdvSetError(ERROR_NO_MORE_ITEMS);
+        return FALSE;
+    }
+    if (type)
+        *type = g_providers[index].Type;
+    DWORD bytes = (DWORD)(wcslen(g_providers[index].Name) + 1) * sizeof(WCHAR);
+    return return_param(g_providers[index].Name, bytes, (BYTE *)name, size);
+}
+
+ADVAPI BOOL WINAPI CryptEnumProvidersA(DWORD index, DWORD *reserved, DWORD flags, DWORD *type, LPSTR name, DWORD *size)
+{
+    if (reserved || !size) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (index >= RTL_NUMBER_OF(g_providers)) {
+        AdvSetError(ERROR_NO_MORE_ITEMS);
+        return FALSE;
+    }
+    CHAR ansi[128];
+    int n = WideCharToMultiByte(CP_ACP, 0, g_providers[index].Name, -1, ansi, sizeof(ansi), NULL, NULL);
+    if (type)
+        *type = g_providers[index].Type;
+    return return_param(ansi, (DWORD)n, (BYTE *)name, size);
+}
+
+/* containers are never stored, so they hold no key. */
+ADVAPI BOOL WINAPI CryptGetUserKey(HCRYPTPROV handle, DWORD spec, HCRYPTKEY *key)
+{
+    if (!provider(handle))
+        return FALSE;
+    if (!key) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *key = 0;
+    AdvSetError(NTE_NO_KEY);
+    return FALSE;
+}
+
+static KEY *key_object(HCRYPTKEY handle)
+{
+    KEY *k = (KEY *)handle;
+    if (!k || k->Magic != KEY_MAGIC) {
+        AdvSetError(NTE_BAD_KEY);
+        return NULL;
+    }
+    return k;
+}
+
+/*
+ * a key goes out as the blob it came in, or as its public part: an rsa
+ * private blob starts with the public key's header and modulus.
+ */
+ADVAPI BOOL WINAPI CryptExportKey(HCRYPTKEY handle, HCRYPTKEY wrap, DWORD type, DWORD flags, BYTE *data, DWORD *length)
+{
+    KEY *k = key_object(handle);
+    if (!k)
+        return FALSE;
+    if (!length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (wrap) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    const BLOBHEADER *h = (const BLOBHEADER *)k->Blob;
+    if (type == h->bType)
+        return return_param(k->Blob, k->Size, data, length);
+    if (type == PUBLICKEYBLOB && h->bType == PRIVATEKEYBLOB &&
+        (h->aiKeyAlg == CALG_RSA_KEYX || h->aiKeyAlg == CALG_RSA_SIGN) && k->Size >= sizeof(*h) + 12) {
+        DWORD bits = *(const DWORD *)(k->Blob + sizeof(*h) + 4);
+        DWORD size = sizeof(*h) + 12 + bits / 8;
+        if (size > k->Size) {
+            AdvSetError(NTE_BAD_DATA);
+            return FALSE;
+        }
+        BYTE *blob = AdvAlloc(size);
+        if (!blob) {
+            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        memcpy(blob, k->Blob, size);
+        ((BLOBHEADER *)blob)->bType = PUBLICKEYBLOB;
+        *(DWORD *)(blob + sizeof(*h)) = RSA1_MAGIC;
+        BOOL ok = return_param(blob, size, data, length);
+        AdvFree(blob);
+        return ok;
+    }
+    AdvSetError(NTE_BAD_TYPE);
+    return FALSE;
+}
+
+/* the provider has no cipher: keys import and export but do not encrypt. */
+ADVAPI BOOL WINAPI CryptDecrypt(HCRYPTKEY handle, HCRYPTHASH hash, BOOL final, DWORD flags, BYTE *data, DWORD *length)
+{
+    if (!key_object(handle))
+        return FALSE;
+    AdvSetError(NTE_BAD_ALGID);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI CryptEncrypt(HCRYPTKEY handle, HCRYPTHASH hash, BOOL final, DWORD flags, BYTE *data, DWORD *length,
+                                DWORD size)
+{
+    if (!key_object(handle))
+        return FALSE;
+    AdvSetError(NTE_BAD_ALGID);
+    return FALSE;
+}
+
+/* only the value can be set: a signature over a hash computed elsewhere. */
+ADVAPI BOOL WINAPI CryptSetHashParam(HCRYPTHASH handle, DWORD param, const BYTE *data, DWORD flags)
+{
+    HASH *h = hash_object(handle);
+    if (!h)
+        return FALSE;
+    if (!data) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    if (param != HP_HASHVAL) {
+        AdvSetError(NTE_BAD_TYPE);
+        return FALSE;
+    }
+    memcpy(h->Value, data, h->Size);
+    if (h->Data)
+        SecureZeroMemory(h->Data, h->Length);
+    AdvFree(h->Data);
+    h->Data = NULL;
+    h->Length = h->Capacity = 0;
+    h->Finished = TRUE;
+    return TRUE;
+}
+
+/* signing takes the container's key, and containers hold none. */
+ADVAPI BOOL WINAPI CryptSignHashW(HCRYPTHASH handle, DWORD spec, LPCWSTR description, DWORD flags, BYTE *signature,
+                                  DWORD *length)
+{
+    if (!hash_object(handle))
+        return FALSE;
+    if (!length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    AdvSetError(NTE_NO_KEY);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI CryptSignHashA(HCRYPTHASH handle, DWORD spec, LPCSTR description, DWORD flags, BYTE *signature,
+                                  DWORD *length)
+{
+    return CryptSignHashW(handle, spec, NULL, flags, signature, length);
 }

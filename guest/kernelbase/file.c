@@ -1789,3 +1789,25 @@ BOOL WINAPI FindCloseChangeNotification(HANDLE handle)
 {
     return CloseHandle(handle);
 }
+
+/* a new handle to the file of another, through its path. */
+HANDLE WINAPI ReOpenFile(HANDLE original, DWORD access, DWORD share, DWORD flags)
+{
+    WCHAR path[MAX_PATH + 8];
+    DWORD n = GetFinalPathNameByHandleW(original, path, RTL_NUMBER_OF(path), 0);
+    if (!n || n >= RTL_NUMBER_OF(path)) {
+        if (n)
+            KbSetError(ERROR_FILENAME_EXCED_RANGE);
+        return INVALID_HANDLE_VALUE;
+    }
+    return CreateFileW(path, access, share, NULL, OPEN_EXISTING, flags, NULL);
+}
+
+/* the kernel posts every completion, so skipping the port on success is refused and callers keep packets. */
+BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags)
+{
+    FILE_IO_COMPLETION_NOTIFICATION_INFORMATION info = {flags};
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtSetInformationFile(file, &iosb, &info, sizeof(info), FileIoCompletionNotificationInformation);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}

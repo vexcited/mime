@@ -267,6 +267,46 @@ WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateW(HANDLE pipe, LPDWORD state, LPDW
     return TRUE;
 }
 
+#define FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE 0x00110030
+
+static BOOL pipe_attribute(HANDLE pipe, const char *name, PULONG value)
+{
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtFsControlFile(pipe, NULL, NULL, NULL, &iosb, FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE, (PVOID)name,
+                                      (ULONG)strlen(name) + 1, value, sizeof(*value));
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+WINBASEAPI BOOL WINAPI GetNamedPipeClientProcessId(HANDLE pipe, PULONG id)
+{
+    return pipe_attribute(pipe, "ClientProcessId", id);
+}
+
+WINBASEAPI BOOL WINAPI GetNamedPipeServerProcessId(HANDLE pipe, PULONG id)
+{
+    return pipe_attribute(pipe, "ServerProcessId", id);
+}
+
+WINBASEAPI BOOL WINAPI GetNamedPipeClientSessionId(HANDLE pipe, PULONG id)
+{
+    return pipe_attribute(pipe, "ClientSessionId", id);
+}
+
+WINBASEAPI BOOL WINAPI GetNamedPipeServerSessionId(HANDLE pipe, PULONG id)
+{
+    return pipe_attribute(pipe, "ServerSessionId", id);
+}
+
+WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateA(HANDLE pipe, LPDWORD state, LPDWORD instances, LPDWORD max_collection,
+                                                LPDWORD collect_timeout, LPSTR user, DWORD user_size)
+{
+    if (!GetNamedPipeHandleStateW(pipe, state, instances, max_collection, collect_timeout, NULL, 0))
+        return FALSE;
+    if (user && user_size)
+        user[0] = 0;
+    return TRUE;
+}
+
 WINBASEAPI BOOL WINAPI WaitNamedPipeW(LPCWSTR name, DWORD timeout)
 {
     static const WCHAR prefix[] = L"\\\\.\\pipe\\";

@@ -224,6 +224,48 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDeleteFunctionTable(PRUNTIME_FUNCTION table)
     return found != NULL;
 }
 
+/*
+ * a growable table covers a range from the start, and its caller appends
+ * sorted entries in place, then publishes the new count.
+ */
+NTDLL_EXPORT NTSTATUS NTAPI RtlAddGrowableFunctionTable(PVOID *handle, PRUNTIME_FUNCTION table, ULONG count,
+                                                        ULONG maximum, ULONG_PTR begin, ULONG_PTR end)
+{
+    if (!handle || count > maximum || end < begin)
+        return STATUS_INVALID_PARAMETER;
+    DYNAMIC_TABLE *t = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, sizeof(*t));
+    if (!t)
+        return STATUS_NO_MEMORY;
+    t->Table = table;
+    t->Count = count;
+    t->Base = t->Begin = begin;
+    t->End = end;
+    t->Callback = NULL;
+    t->Context = NULL;
+    RtlAcquireSRWLockExclusive(&g_dynamic_lock);
+    InsertTailList(&g_dynamic, &t->Links);
+    RtlReleaseSRWLockExclusive(&g_dynamic_lock);
+    *handle = t;
+    return STATUS_SUCCESS;
+}
+
+NTDLL_EXPORT void NTAPI RtlGrowFunctionTable(PVOID handle, ULONG count)
+{
+    DYNAMIC_TABLE *t = handle;
+    RtlAcquireSRWLockExclusive(&g_dynamic_lock);
+    t->Count = count;
+    RtlReleaseSRWLockExclusive(&g_dynamic_lock);
+}
+
+NTDLL_EXPORT void NTAPI RtlDeleteGrowableFunctionTable(PVOID handle)
+{
+    DYNAMIC_TABLE *t = handle;
+    RtlAcquireSRWLockExclusive(&g_dynamic_lock);
+    RemoveEntryList(&t->Links);
+    RtlReleaseSRWLockExclusive(&g_dynamic_lock);
+    RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, t);
+}
+
 /* ------------------------------------------------------------ virtual unwind */
 
 static ULONG64 *gpr(PCONTEXT c, ULONG reg)

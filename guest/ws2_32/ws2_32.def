@@ -41,6 +41,8 @@ EXPORTS
     getservbyname @55
     getservbyport @56
     gethostname @57
+    WSADuplicateSocketA @58
+    WSADuplicateSocketW @59
     WSAEnumNetworkEvents @64
     WSAEnumProtocolsA @65
     WSAEnumProtocolsW @66

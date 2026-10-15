@@ -360,6 +360,11 @@ typedef struct _MIB_IPFORWARD_TABLE2 {
 typedef void(NETIOAPI_API_ *PIPFORWARD_CHANGE_CALLBACK)(PVOID context, PMIB_IPFORWARD_ROW2 row,
                                                         MIB_NOTIFICATION_TYPE type);
 
+/* the interface rows are never passed: the only notification is the initial one, without a row. */
+typedef struct _MIB_IPINTERFACE_ROW MIB_IPINTERFACE_ROW, *PMIB_IPINTERFACE_ROW;
+typedef void(NETIOAPI_API_ *PIPINTERFACE_CHANGE_CALLBACK)(PVOID context, PMIB_IPINTERFACE_ROW row,
+                                                          MIB_NOTIFICATION_TYPE type);
+
 /* ------------------------------------------------------------------ functions */
 
 IPHLPAPI_DLL_LINKAGE ULONG WINAPI GetAdaptersAddresses(ULONG family, ULONG flags, PVOID reserved,
@@ -370,7 +375,13 @@ IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ GetIpForwardTable2(ADDRESS_FAMILY famil
 IPHLPAPI_DLL_LINKAGE void NETIOAPI_API_ FreeMibTable(PVOID memory);
 IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ NotifyRouteChange2(ADDRESS_FAMILY family, PIPFORWARD_CHANGE_CALLBACK callback,
                                                             PVOID context, BOOLEAN initial, HANDLE *handle);
+IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ NotifyIpInterfaceChange(ADDRESS_FAMILY family,
+                                                                 PIPINTERFACE_CHANGE_CALLBACK callback, PVOID context,
+                                                                 BOOLEAN initial, HANDLE *handle);
 IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ CancelMibChangeNotify2(HANDLE handle);
+IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ GetBestRoute2(NET_LUID *luid, NET_IFINDEX index, const SOCKADDR_INET *source,
+                                                       const SOCKADDR_INET *destination, ULONG options,
+                                                       PMIB_IPFORWARD_ROW2 best, SOCKADDR_INET *best_source);
 IPHLPAPI_DLL_LINKAGE NET_IFINDEX NETIOAPI_API_ if_nametoindex(PCSTR name);
 IPHLPAPI_DLL_LINKAGE PCHAR NETIOAPI_API_ if_indextoname(NET_IFINDEX index, PCHAR name);
 IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ ConvertInterfaceIndexToLuid(NET_IFINDEX index, PNET_LUID luid);

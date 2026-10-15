@@ -48,11 +48,6 @@ DECLSPEC_EXPORT PVOID WINAPI VirtualAllocExNuma(HANDLE process, PVOID address, S
     return VirtualAllocEx(process, address, size, type, protection);
 }
 
-DECLSPEC_EXPORT BOOL WINAPI QueryInformationJobObject(HANDLE job, int info_class, void *info, DWORD size, DWORD *returned)
-{
-    SetLastError(job ? ERROR_INVALID_HANDLE : ERROR_ACCESS_DENIED);
-    return FALSE;
-}
 
 DECLSPEC_EXPORT HANDLE WINAPI CreateMemoryResourceNotification(int kind)
 {

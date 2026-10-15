@@ -273,9 +273,12 @@ void NETIOAPI_API_ FreeMibTable(PVOID memory)
 
 /* ------------------------------------------------------------------ change notifications */
 
+/* route and interface callbacks differ only in the row they would pass, never passed here. */
+typedef void(NETIOAPI_API_ *CHANGE_CALLBACK)(PVOID context, PVOID row, MIB_NOTIFICATION_TYPE type);
+
 typedef struct _NOTIFICATION {
     struct _NOTIFICATION *next;
-    PIPFORWARD_CHANGE_CALLBACK callback;
+    CHANGE_CALLBACK callback;
     PVOID context;
     HANDLE thread;
     DWORD thread_id;
@@ -291,8 +294,7 @@ static DWORD WINAPI initial_notification(LPVOID parameter)
     return 0;
 }
 
-DWORD NETIOAPI_API_ NotifyRouteChange2(ADDRESS_FAMILY family, PIPFORWARD_CHANGE_CALLBACK callback, PVOID context,
-                                       BOOLEAN initial, HANDLE *handle)
+static DWORD notify(ADDRESS_FAMILY family, CHANGE_CALLBACK callback, PVOID context, BOOLEAN initial, HANDLE *handle)
 {
     if (!callback || !handle || (family != AF_UNSPEC && family != AF_INET && family != AF_INET6))
         return ERROR_INVALID_PARAMETER;
@@ -311,6 +313,18 @@ DWORD NETIOAPI_API_ NotifyRouteChange2(ADDRESS_FAMILY family, PIPFORWARD_CHANGE_
     ReleaseSRWLockExclusive(&notifications_lock);
     *handle = (HANDLE)n;
     return NO_ERROR;
+}
+
+DWORD NETIOAPI_API_ NotifyRouteChange2(ADDRESS_FAMILY family, PIPFORWARD_CHANGE_CALLBACK callback, PVOID context,
+                                       BOOLEAN initial, HANDLE *handle)
+{
+    return notify(family, (CHANGE_CALLBACK)callback, context, initial, handle);
+}
+
+DWORD NETIOAPI_API_ NotifyIpInterfaceChange(ADDRESS_FAMILY family, PIPINTERFACE_CHANGE_CALLBACK callback,
+                                            PVOID context, BOOLEAN initial, HANDLE *handle)
+{
+    return notify(family, (CHANGE_CALLBACK)callback, context, initial, handle);
 }
 
 DWORD NETIOAPI_API_ CancelMibChangeNotify2(HANDLE handle)

@@ -174,13 +174,13 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
             ObDereferenceObject(ev);
         }
     }
-    KeSetEvent(&file->Event, 0, FALSE);
+    IopSignalFile(file);
     /* errors detected before the request started post nothing, like windows. */
     if (!NT_ERROR(status) || done) {
         if (apc_routine)
             IopQueueCompletionApc(PsCurrentThread(), apc_routine, apc_context, iosb);
         else
-            IopPostCompletion(file, apc_context, status, done);
+            IopPostCompletion(file, apc_context, status, done, TRUE);
     }
     ObDereferenceObject(file);
     return status;
@@ -243,9 +243,38 @@ static NTSTATUS query_file(PFILE_OBJECT file, PVOID info, ULONG length, FILE_INF
     return status;
 }
 
+/* the access the handle grants, its generic rights mapped to a file's: the i/o manager's to answer, not a driver's. */
+static NTSTATUS query_access(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length)
+{
+    PFILE_OBJECT file;
+    ACCESS_MASK granted = 0;
+    NTSTATUS status = ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, &granted);
+    if (!NT_SUCCESS(status))
+        return status;
+    ObDereferenceObject(file);
+    if (granted & (GENERIC_ALL | MAXIMUM_ALLOWED))
+        granted |= FILE_ALL_ACCESS;
+    if (granted & GENERIC_READ)
+        granted |= FILE_GENERIC_READ;
+    if (granted & GENERIC_WRITE)
+        granted |= FILE_GENERIC_WRITE;
+    if (granted & GENERIC_EXECUTE)
+        granted |= FILE_GENERIC_EXECUTE;
+    granted &= ~(GENERIC_ALL | GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | MAXIMUM_ALLOWED);
+    if (length < sizeof(granted))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    status = KeGetPreviousMode() == UserMode ? KiCopyToUser(info, &granted, sizeof(granted))
+                                             : (memcpy(info, &granted, sizeof(granted)), STATUS_SUCCESS);
+    IO_STATUS_BLOCK io = {.Status = status, .Information = sizeof(granted)};
+    store_iosb(iosb, &io);
+    return status;
+}
+
 NTSTATUS NTAPI NtQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length,
                                       FILE_INFORMATION_CLASS klass)
 {
+    if (klass == FileAccessInformation)
+        return query_access(handle, iosb, info, length);
     PFILE_OBJECT file;
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
@@ -299,6 +328,15 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
     if (NT_SUCCESS(status)) {
         if (klass == FilePositionInformation && length >= sizeof(FILE_POSITION_INFORMATION)) {
             file->CurrentByteOffset = ((PFILE_POSITION_INFORMATION)buf)->CurrentByteOffset;
+        } else if (klass == FileIoCompletionNotificationInformation) {
+            /* the modes only add up, as on windows. */
+            ULONG flags = length >= sizeof(ULONG) ? *(PULONG)buf : 0;
+            if (length < sizeof(ULONG))
+                status = STATUS_INFO_LENGTH_MISMATCH;
+            else if (flags & ~7u)
+                status = STATUS_INVALID_PARAMETER;
+            else
+                file->Flags |= (flags & 1 ? FO_SKIP_COMPLETION_PORT : 0) | (flags & 2 ? FO_SKIP_SET_EVENT : 0);
         } else if (klass == FileCompletionInformation) {
             /* port and key, handled by the i/o manager itself. */
             status = length >= 2 * sizeof(PVOID) ? IopSetCompletion(file, ((HANDLE *)buf)[0], ((PVOID *)buf)[1])
@@ -440,6 +478,15 @@ NTSTATUS NTAPI NtQueryVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb
     params.Parameters.QueryVolume.FsInformationClass = klass;
     IO_STATUS_BLOCK io;
     status = IopSynchronousRequest(file, IRP_MJ_QUERY_VOLUME_INFORMATION, 0, buf, length, &params, &io);
+    /* the device's type and characteristics, for drivers that leave the question to the i/o manager. */
+    if (status == STATUS_INVALID_DEVICE_REQUEST && klass == FileFsDeviceInformation && file->DeviceObject) {
+        FILE_FS_DEVICE_INFORMATION d = {file->DeviceObject->DeviceType, file->DeviceObject->Characteristics};
+        status = length < sizeof(d) ? STATUS_INFO_LENGTH_MISMATCH : STATUS_SUCCESS;
+        if (NT_SUCCESS(status)) {
+            memcpy(buf, &d, sizeof(d));
+            io.Information = sizeof(d);
+        }
+    }
     if (NT_SUCCESS(status) || status == STATUS_BUFFER_OVERFLOW)
         KiCopyToUser(info, buf, (ULONG)io.Information);
     io.Status = status;
@@ -463,26 +510,16 @@ NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
     return NT_SUCCESS(status) ? stored : status;
 }
 
-NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
-                                     PIO_STATUS_BLOCK iosb, ULONG code, PVOID input, ULONG in_len, PVOID output,
-                                     ULONG out_len)
+/* a device or file system control with buffered input and output, completed before it returns. */
+static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, PVOID apc_context,
+                                 PIO_STATUS_BLOCK iosb, ULONG code, PVOID input, ULONG in_len, PVOID output,
+                                 ULONG out_len)
 {
-    PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
-    if (!NT_SUCCESS(status))
-        return status;
-    /* sockets read the caller's buffers themselves and may stay pending. */
-    if (IopIsAfd(file)) {
-        status = AfdDeviceControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
-        ObDereferenceObject(file);
-        return status;
-    }
+    NTSTATUS status = STATUS_SUCCESS;
     ULONG size = in_len > out_len ? in_len : out_len;
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('I', 'o', 'C', 't'));
-    if (!buf) {
-        ObDereferenceObject(file);
+    if (!buf)
         return STATUS_INSUFFICIENT_RESOURCES;
-    }
     if (in_len)
         status = KiCopyFromUser(buf, input, in_len);
     IO_STATUS_BLOCK io = {0};
@@ -492,8 +529,9 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
         params.Parameters.DeviceIoControl.IoControlCode = code;
         params.Parameters.DeviceIoControl.InputBufferLength = in_len;
         params.Parameters.DeviceIoControl.OutputBufferLength = out_len;
-        status = IopSynchronousRequest(file, IRP_MJ_DEVICE_CONTROL, 0, buf, size, &params, &io);
-        if (NT_SUCCESS(status) && out_len && io.Information)
+        status = IopSynchronousRequest(file, major, 0, buf, size, &params, &io);
+        /* an overflow is a partial answer, copied like a whole one. */
+        if ((NT_SUCCESS(status) || status == STATUS_BUFFER_OVERFLOW) && out_len && io.Information)
             KiCopyToUser(output, buf, (ULONG)(io.Information < out_len ? io.Information : out_len));
     }
     io.Status = status;
@@ -506,8 +544,25 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
         }
     }
     if (!NT_ERROR(status))
-        IopPostCompletion(file, apc_context, status, io.Information);
+        IopPostCompletion(file, apc_context, status, io.Information, TRUE);
     ExFreePool(buf);
+    return status;
+}
+
+NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
+                                     PIO_STATUS_BLOCK iosb, ULONG code, PVOID input, ULONG in_len, PVOID output,
+                                     ULONG out_len)
+{
+    PFILE_OBJECT file;
+    NTSTATUS status = reference_file(handle, &file);
+    if (!NT_SUCCESS(status))
+        return status;
+    /* sockets read the caller's buffers themselves and may stay pending. */
+    if (IopIsAfd(file))
+        status = AfdDeviceControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
+    else
+        status = buffered_control(file, IRP_MJ_DEVICE_CONTROL, event, apc_context, iosb, code, input, in_len, output,
+                                  out_len);
     ObDereferenceObject(file);
     return status;
 }
@@ -523,7 +578,8 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
     if (IopIsNamedPipe(file))
         status = NpfsFsControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
     else
-        status = STATUS_INVALID_DEVICE_REQUEST;
+        status = buffered_control(file, IRP_MJ_FILE_SYSTEM_CONTROL, event, apc_context, iosb, code, input, in_len,
+                                  output, out_len);
     ObDereferenceObject(file);
     return status;
 }

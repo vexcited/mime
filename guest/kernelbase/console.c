@@ -438,15 +438,40 @@ static DWORD WINAPI ctrl_routine(LPVOID parameter)
 
 /* ------------------------------------------------------------------ standard handles */
 
+/*
+ * a stream the terminal has is a console pseudo handle; a stream `mime run`
+ * was given a pipe or a file for is a handle to its end of the console's
+ * stream device, which programs see as a pipe, as on windows.
+ */
+static HANDLE standard_handle(HANDLE pseudo, ULONG tty, PCWSTR stream, ACCESS_MASK access)
+{
+    if (g_tty & tty)
+        return pseudo;
+    WCHAR path[64];
+    UNICODE_STRING name;
+    wcscpy(path, MIME_CONDRV_STREAM_DEVICE L"\\");
+    wcscat(path, stream);
+    RtlInitUnicodeString(&name, path);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &name, OBJ_INHERIT, NULL, NULL);
+    IO_STATUS_BLOCK io;
+    HANDLE h;
+    if (!NT_SUCCESS(NtCreateFile(&h, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, &oa, &io,
+                                 NULL, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT,
+                                 NULL, 0)))
+        return pseudo;
+    return h;
+}
+
 static void set_console_handles(BOOL only_missing)
 {
     PRTL_USER_PROCESS_PARAMETERS pp = KbParams();
     if (!only_missing || !pp->StandardInput)
-        pp->StandardInput = KB_CONSOLE_INPUT;
+        pp->StandardInput = standard_handle(KB_CONSOLE_INPUT, MIME_CONDRV_TTY_INPUT, L"Input", GENERIC_READ);
     if (!only_missing || !pp->StandardOutput)
-        pp->StandardOutput = KB_CONSOLE_OUTPUT;
+        pp->StandardOutput = standard_handle(KB_CONSOLE_OUTPUT, MIME_CONDRV_TTY_OUTPUT, L"Output", GENERIC_WRITE);
     if (!only_missing || !pp->StandardError)
-        pp->StandardError = KB_CONSOLE_ERROR;
+        pp->StandardError = standard_handle(KB_CONSOLE_ERROR, MIME_CONDRV_TTY_ERROR, L"Error", GENERIC_WRITE);
 }
 
 void KbInitializeConsole(void)
@@ -894,6 +919,46 @@ BOOL WINAPI ReadConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count,
     if (read)
         *read = n;
     return TRUE;
+}
+
+/*
+ * written records join this process's queue, ahead of what the terminal
+ * sends next: readers of this process see them, other processes attached
+ * to the console do not.
+ */
+BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
+{
+    if (written)
+        *written = 0;
+    if (!check_input(console))
+        return FALSE;
+    DWORD n = MAX_RECORDS - g_record_count;
+    if (n > count)
+        n = count;
+    memcpy(g_records + g_record_count, buffer, n * sizeof(*buffer));
+    g_record_count += n;
+    if (written)
+        *written = n;
+    sync_input_event();
+    return TRUE;
+}
+
+BOOL WINAPI WriteConsoleInputA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
+{
+    INPUT_RECORD wide[MAX_RECORDS];
+    if (count > MAX_RECORDS)
+        count = MAX_RECORDS;
+    memcpy(wide, buffer, count * sizeof(*buffer));
+    for (DWORD i = 0; i < count; i++) {
+        if (wide[i].EventType != KEY_EVENT)
+            continue;
+        CHAR a = buffer[i].Event.KeyEvent.uChar.AsciiChar;
+        WCHAR w = 0;
+        if (a && MultiByteToWideChar(g_input_cp == CP_UTF8 ? CP_ACP : g_input_cp, 0, &a, 1, &w, 1) != 1)
+            w = L'?';
+        wide[i].Event.KeyEvent.uChar.UnicodeChar = w;
+    }
+    return WriteConsoleInputW(console, wide, count, written);
 }
 
 BOOL WINAPI PeekConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read)

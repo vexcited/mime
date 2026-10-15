@@ -215,10 +215,13 @@ void KiClockInterrupt(PKTRAP_FRAME frame)
     if (cur != prcb->IdleThread && now >= prcb->TickTime + KI_CLOCK_TICK_HNS) {
         ULONG64 elapsed = now - prcb->TickTime;
         prcb->TickTime = now;
-        if (frame && KI_TRAP_FROM_USER(frame))
+        if (frame && KI_TRAP_FROM_USER(frame)) {
             cur->UserTime += elapsed;
-        else
+            prcb->UserTime += elapsed;
+        } else {
             cur->KernelTime += elapsed;
+            prcb->KernelTime += elapsed;
+        }
         cur->Quantum -= (LONG)elapsed;
         if (cur->Quantum <= 0) {
             cur->Quantum = 0;

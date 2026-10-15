@@ -9,6 +9,7 @@
 #include <mime/nt.h>
 
 #define MIME_CONDRV_DEVICE L"\\Device\\ConDrv"
+#define MIME_CONDRV_STREAM_DEVICE L"\\Device\\ConDrvStream" /* \Input, \Output, \Error: redirected streams as pipe ends */
 
 #define MIME_CONDRV_IOCTL(n) (((ULONG)0x50 << 16) | ((ULONG)(n) << 2)) /* FILE_DEVICE_CONSOLE, METHOD_BUFFERED */
 

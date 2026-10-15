@@ -123,6 +123,8 @@ typedef struct _GUID {
 #define STATUS_MORE_ENTRIES ((NTSTATUS)0x00000105L)
 #define STATUS_NOT_ALL_ASSIGNED ((NTSTATUS)0x00000106L)
 #define STATUS_SOME_NOT_MAPPED ((NTSTATUS)0x00000107L)
+#define STATUS_PROCESS_NOT_IN_JOB ((NTSTATUS)0x00000123L)
+#define STATUS_PROCESS_IN_JOB ((NTSTATUS)0x00000124L)
 #define STATUS_IMAGE_NOT_AT_BASE ((NTSTATUS)0x40000003L)
 #define STATUS_OBJECT_NAME_EXISTS ((NTSTATUS)0x40000000L)
 #define STATUS_BUFFER_OVERFLOW ((NTSTATUS)0x80000005L)
@@ -463,9 +465,14 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileAttributeTagInformation = 35,
     FileIdBothDirectoryInformation = 37,
     FileIdFullDirectoryInformation = 38,
+    FileIoCompletionNotificationInformation = 41,
     FileDispositionInformationEx = 64,
     FileMaximumInformation
 } FILE_INFORMATION_CLASS;
+
+typedef struct _FILE_IO_COMPLETION_NOTIFICATION_INFORMATION {
+    ULONG Flags;
+} FILE_IO_COMPLETION_NOTIFICATION_INFORMATION;
 
 typedef struct _FILE_BASIC_INFORMATION {
     LARGE_INTEGER CreationTime;
@@ -678,6 +685,7 @@ typedef struct _MEMORY_BASIC_INFORMATION {
 #define PROCESS_VM_WRITE 0x0020
 #define PROCESS_DUP_HANDLE 0x0040
 #define PROCESS_CREATE_PROCESS 0x0080
+#define PROCESS_SET_QUOTA 0x0100
 #define PROCESS_SET_INFORMATION 0x0200
 #define PROCESS_QUERY_INFORMATION 0x0400
 #define PROCESS_QUERY_LIMITED_INFORMATION 0x1000
@@ -1866,6 +1874,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemPerformanceInformation = 2,
     SystemTimeOfDayInformation = 3,
     SystemProcessInformation = 5,
+    SystemProcessorPerformanceInformation = 8,
     SystemModuleInformation = 11,
     SystemKernelDebuggerInformation = 35,
     SystemRangeStartInformation = 50,

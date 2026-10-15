@@ -70,12 +70,31 @@ static NTSTATUS queue_packet(IO_COMPLETION *port, PVOID key, PVOID apc_context, 
     return STATUS_SUCCESS;
 }
 
-/* called when a request of a user completes: posts its packet when the file is bound to a port. */
-void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information)
+NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information)
+{
+    return queue_packet(port, key, apc_context, status, information);
+}
+
+/*
+ * called when a request of a user completes: posts its packet when the file
+ * is bound to a port, unless it succeeded before going pending on a file
+ * that asked to skip the port then (FILE_SKIP_COMPLETION_PORT_ON_SUCCESS).
+ */
+void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information, BOOLEAN synchronous)
 {
     IO_COMPLETION_CONTEXT *ctx = file->CompletionContext;
+    if (synchronous && NT_SUCCESS(status) && (file->Flags & FO_SKIP_COMPLETION_PORT) &&
+        !(file->Flags & FO_SYNCHRONOUS_IO))
+        return;
     if (ctx && apc_context)
         queue_packet(ctx->Port, ctx->Key, apc_context, status, information);
+}
+
+/* the file's own event, which FILE_SKIP_SET_EVENT_ON_HANDLE leaves alone. */
+void IopSignalFile(PFILE_OBJECT file)
+{
+    if (!(file->Flags & FO_SKIP_SET_EVENT))
+        KeSetEvent(&file->Event, IO_NO_INCREMENT, FALSE);
 }
 
 /* binds a file object to a port, once, like windows. */

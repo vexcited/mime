@@ -34,6 +34,8 @@
 #define FSCTL_PIPE_LISTEN 0x00110008
 #define FSCTL_PIPE_PEEK 0x0011400C
 #define FSCTL_PIPE_WAIT 0x00110018
+#define FSCTL_PIPE_GET_PIPE_ATTRIBUTE 0x00110028
+#define FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE 0x00110030
 
 #define FILE_PIPE_BYTE_STREAM_TYPE 0
 #define FILE_PIPE_MESSAGE_TYPE 1
@@ -91,6 +93,7 @@ typedef struct NP_INSTANCE {
     LIST_ENTRY Listeners;
     ULONG ReadMode[2];       /* by end: server, client */
     ULONG CompletionMode[2];
+    ULONG ProcessId[2];      /* of the process that opened each end */
 } NP_INSTANCE;
 
 /* a pending request of a caller. */
@@ -106,6 +109,7 @@ typedef struct NP_REQUEST {
     PVOID Buffer;
     ULONG Length;
     BOOLEAN Waiter; /* a synchronous caller sleeps on Done and frees the request */
+    BOOLEAN Immediate; /* completed before its call returned */
     KEVENT Done;
     NTSTATUS Status;
     ULONG_PTR Information;
@@ -241,12 +245,12 @@ static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information
         copy_to_process(r->Process, r->Iosb, &io, sizeof(io));
     if (r->Event)
         KeSetEvent(r->Event, IO_NO_INCREMENT, FALSE);
-    KeSetEvent(&r->File->Event, IO_NO_INCREMENT, FALSE);
+    IopSignalFile(r->File);
     if (!NT_ERROR(status)) {
         if (r->ApcRoutine)
             IopQueueCompletionApc(r->Thread, r->ApcRoutine, r->ApcContext, r->Iosb);
         else
-            IopPostCompletion(r->File, r->ApcContext, status, information);
+            IopPostCompletion(r->File, r->ApcContext, status, information, r->Immediate);
     }
 }
 
@@ -263,6 +267,7 @@ static void complete_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR informati
 /* ends an immediate request: the caller's status comes back from the system call too. */
 static NTSTATUS immediate(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
+    r->Immediate = TRUE;
     finish_request(r, status, information);
     free_request(r);
     return status;
@@ -449,6 +454,7 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c)
     in->ReadMode[0] = c->ReadMode;
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[0] = c->CompletionMode;
+    in->ProcessId[0] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
     InsertTailList(&p->InstanceList, &in->Links);
     p->Instances++;
     file->FsContext = in;
@@ -475,6 +481,7 @@ static NTSTATUS open_client(PFILE_OBJECT file)
     in->Client = file;
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[1] = FILE_PIPE_QUEUE_OPERATION;
+    in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
     file->FsContext = in;
     file->FsContext2 = END_CLIENT;
     while (!IsListEmpty(&in->Listeners))
@@ -980,6 +987,27 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         status = peek(r, in, file, output, out_len);
         unlock();
         return status;
+    case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:
+    case FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE: {
+        /* the processes and sessions of the two ends, asked by name. */
+        char name[32] = {0};
+        ULONG value = 0;
+        status = in_len && in_len < sizeof(name) ? KiCopyFromUser(name, input, in_len) : STATUS_INVALID_PARAMETER;
+        if (NT_SUCCESS(status)) {
+            if (!strcmp(name, "ClientProcessId"))
+                value = in->ProcessId[1];
+            else if (!strcmp(name, "ServerProcessId"))
+                value = in->ProcessId[0];
+            else if (!strcmp(name, "ClientSessionId") || !strcmp(name, "ServerSessionId"))
+                value = 1;
+            else
+                status = STATUS_INVALID_PARAMETER;
+        }
+        if (NT_SUCCESS(status))
+            status = out_len < sizeof(value) ? STATUS_BUFFER_TOO_SMALL : KiCopyToUser(output, &value, sizeof(value));
+        unlock();
+        return immediate(r, status, NT_SUCCESS(status) ? sizeof(value) : 0);
+    }
     default:
         unlock();
         return immediate(r, STATUS_INVALID_DEVICE_REQUEST, 0);

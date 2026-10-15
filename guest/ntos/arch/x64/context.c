@@ -401,6 +401,12 @@ void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame)
     KiLogPrintf("  rsi %016llx rdi %016llx rbp %016llx r8  %016llx", frame->Rsi, frame->Rdi, frame->Rbp, frame->R8);
     KiLogPrintf("  r9  %016llx r10 %016llx r11 %016llx r12 %016llx", frame->R9, frame->R10, frame->R11, frame->R12);
     KiLogPrintf("  r13 %016llx r14 %016llx r15 %016llx", frame->R13, frame->R14, frame->R15);
+    /* the top of the stack, where a call through a bad pointer left its return address. */
+    ULONG64 sp = frame->Rsp;
+    if (sp && !(sp & 7) && MmIsAddressValid((PVOID)sp) && MmIsAddressValid((PVOID)(sp + 24))) {
+        ULONG64 *top = (ULONG64 *)sp;
+        KiLogPrintf("  stack %016llx %016llx %016llx %016llx", top[0], top[1], top[2], top[3]);
+    }
     /* the frame pointer chain, when the code keeps one. */
     ULONG64 fp = frame->Rbp;
     for (int depth = 0; depth < 16 && fp && (fp & 7) == 0; depth++) {

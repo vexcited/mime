@@ -576,7 +576,7 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         return FALSE;
     }
     memset(info, 0, sizeof(*info));
-    if (process_sa || thread_sa || inherit || environment || (flags & ~CREATE_SUSPENDED)) {
+    if (process_sa || thread_sa || inherit || environment || (flags & ~(CREATE_SUSPENDED | CREATE_BREAKAWAY_FROM_JOB))) {
         KbSetError(ERROR_NOT_SUPPORTED);
         return FALSE;
     }
@@ -629,7 +629,8 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
     RtlInitUnicodeString(&pp.CommandLine, command_line);
     RtlInitUnicodeString(&pp.CurrentDirectory.DosPath, cwd);
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
-                                           NULL, NULL, 0, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, NULL, NULL);
+                                           NULL, NULL, (flags & CREATE_BREAKAWAY_FROM_JOB) ? 1 : 0,
+                                           (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, NULL, NULL);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     info->dwProcessId = GetProcessId(info->hProcess);
@@ -925,15 +926,6 @@ BOOL WINAPI GetProcessShutdownParameters(LPDWORD level, LPDWORD flags)
     return TRUE;
 }
 
-BOOL WINAPI IsProcessInJob(HANDLE process, HANDLE job, PBOOL result)
-{
-    if (!result) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    *result = FALSE;
-    return TRUE;
-}
 
 BOOL WINAPI IsProcessCritical(HANDLE process, PBOOL critical)
 {
@@ -1388,4 +1380,50 @@ void WINAPI SwitchToFiber(LPVOID fiber)
 BOOL WINAPI IsThreadAFiber(void)
 {
     return (NtCurrentTeb()->SameTebFlags & HAS_FIBER_DATA) != 0;
+}
+
+/* the counters of the kernel when it keeps them, else zeros: no i/o is counted per process yet. */
+BOOL WINAPI GetProcessIoCounters(HANDLE process, PIO_COUNTERS counters)
+{
+    if (!counters) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessIoCounters, counters, sizeof(*counters), NULL);
+    if (status == STATUS_INVALID_INFO_CLASS || status == STATUS_NOT_IMPLEMENTED) {
+        memset(counters, 0, sizeof(*counters));
+        return TRUE;
+    }
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+typedef struct WORK_ITEM {
+    LPTHREAD_START_ROUTINE Function;
+    PVOID Context;
+} WORK_ITEM;
+
+static DWORD WINAPI run_work_item(LPVOID arg)
+{
+    WORK_ITEM item = *(WORK_ITEM *)arg;
+    KbFree(arg);
+    return item.Function(item.Context);
+}
+
+/* each item runs on a thread of its own, which every WT_EXECUTE flag allows. */
+BOOL WINAPI QueueUserWorkItem(LPTHREAD_START_ROUTINE function, PVOID context, ULONG flags)
+{
+    WORK_ITEM *item = KbAlloc(sizeof(*item));
+    if (!item) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    item->Function = function;
+    item->Context = context;
+    HANDLE thread = CreateThread(NULL, 0, run_work_item, item, 0, NULL);
+    if (!thread) {
+        KbFree(item);
+        return FALSE;
+    }
+    CloseHandle(thread);
+    return TRUE;
 }

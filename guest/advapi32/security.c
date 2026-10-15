@@ -1435,3 +1435,108 @@ ADVAPI LSTATUS WINAPI RegGetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSE
     LocalFree(copy);
     return error;
 }
+
+/* ---------------------------------------------------------------- security of handles */
+
+ADVAPI DWORD WINAPI GetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID *owner,
+                                    PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *sd)
+{
+    if (!handle || (!sd && (owner || group || dacl || sacl)))
+        return ERROR_INVALID_PARAMETER;
+    if (info & SACL_SECURITY_INFORMATION)
+        return ERROR_PRIVILEGE_NOT_HELD;
+    BYTE *copy = NULL;
+    DWORD error = query_object(handle, info, &copy);
+    /* objects the kernel keeps no descriptor for get what windows gives a new one of the user. */
+    if (error == ERROR_CALL_NOT_IMPLEMENTED) {
+        switch (type) {
+        case SE_FILE_OBJECT:
+            error = synthesize(&copy, info, FILE_ALL_ACCESS, 0, 0, TRUE);
+            break;
+        case SE_REGISTRY_KEY:
+        case SE_REGISTRY_WOW64_32KEY:
+        case SE_REGISTRY_WOW64_64KEY:
+            error = synthesize(&copy, info, KEY_ALL_ACCESS, KEY_READ, 0, TRUE);
+            break;
+        default:
+            error = synthesize(&copy, info, GENERIC_ALL, 0, 0, TRUE);
+            break;
+        }
+    }
+    if (error)
+        return error;
+    SD_PARTS p;
+    sd_parts(copy, &p);
+    if (owner)
+        *owner = info & OWNER_SECURITY_INFORMATION ? p.Owner : NULL;
+    if (group)
+        *group = info & GROUP_SECURITY_INFORMATION ? p.Group : NULL;
+    if (dacl)
+        *dacl = info & DACL_SECURITY_INFORMATION ? p.Dacl : NULL;
+    if (sacl)
+        *sacl = NULL;
+    if (sd)
+        *sd = copy;
+    else
+        LocalFree(copy);
+    return ERROR_SUCCESS;
+}
+
+ADVAPI DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                    PSID group, PACL dacl, PACL sacl)
+{
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
+    return check_new_security(info, owner, group, dacl, sacl);
+}
+
+typedef struct _EXPLICIT_ACCESS_A {
+    DWORD grfAccessPermissions;
+    ACCESS_MODE grfAccessMode;
+    DWORD grfInheritance;
+    TRUSTEE_W Trustee; /* the same layout, with ansi names */
+} EXPLICIT_ACCESS_A, *PEXPLICIT_ACCESS_A;
+
+/* the ansi entries with their trustee names made wide, then the wide function. */
+ADVAPI DWORD WINAPI SetEntriesInAclA(ULONG count, PEXPLICIT_ACCESS_A entries, PACL old, PACL *result)
+{
+    if (!result || (count && !entries))
+        return ERROR_INVALID_PARAMETER;
+    EXPLICIT_ACCESS_W *wide = count ? AdvAlloc(count * sizeof(*wide)) : NULL;
+    OBJECTS_AND_NAME *objects = count ? AdvAlloc(count * sizeof(*objects)) : NULL;
+    PWSTR *names = count ? AdvAlloc(count * sizeof(*names)) : NULL;
+    if (count && (!wide || !objects || !names)) {
+        AdvFree(wide);
+        AdvFree(objects);
+        AdvFree(names);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    DWORD error = ERROR_SUCCESS;
+    for (ULONG i = 0; i < count; i++) {
+        memcpy(&wide[i], &entries[i], sizeof(wide[i]));
+        names[i] = NULL;
+        TRUSTEE_W *t = &wide[i].Trustee;
+        if (t->TrusteeForm == TRUSTEE_IS_NAME && t->ptstrName) {
+            names[i] = AdvAnsiToWide((LPCSTR)t->ptstrName);
+            t->ptstrName = names[i];
+        } else if (t->TrusteeForm == TRUSTEE_IS_OBJECTS_AND_NAME && t->ptstrName) {
+            objects[i] = *(OBJECTS_AND_NAME *)t->ptstrName;
+            names[i] = AdvAnsiToWide((LPCSTR)objects[i].ptstrName);
+            objects[i].ptstrName = names[i];
+            objects[i].ObjectTypeName = objects[i].InheritedObjectTypeName = NULL;
+            t->ptstrName = (LPWSTR)&objects[i];
+        } else {
+            continue;
+        }
+        if (!names[i])
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (!error)
+        error = SetEntriesInAclW(count, wide, old, result);
+    for (ULONG i = 0; i < count; i++)
+        AdvFree(names[i]);
+    AdvFree(wide);
+    AdvFree(objects);
+    AdvFree(names);
+    return error;
+}
