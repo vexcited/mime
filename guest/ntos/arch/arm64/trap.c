@@ -14,6 +14,7 @@ void KiInterruptHandler(PKTRAP_FRAME frame)
     KIRQL old = pcr->Irql;
     pcr->Irql = CLOCK_LEVEL;
     prcb->InterruptCount++;
+    ULONG64 start = HalReadCounter();
 
     for (;;) {
         ULONG intid = HalAcknowledgeInterrupt();
@@ -32,6 +33,7 @@ void KiInterruptHandler(PKTRAP_FRAME frame)
         }
         HalEndOfInterrupt(intid);
     }
+    KiChargeServiceTime(prcb, start, FALSE);
 
     pcr->Irql = old;
     if (old < DISPATCH_LEVEL) {

@@ -283,6 +283,7 @@ BOOLEAN NTAPI KeRemoveQueueDpc(PRKDPC dpc)
 void KiDeliverDpcs(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();
+    ULONG64 start = HalReadCounter();
     while (prcb->DpcHead.Next) {
         PSINGLE_LIST_ENTRY e = prcb->DpcHead.Next;
         prcb->DpcHead.Next = e->Next;
@@ -294,6 +295,7 @@ void KiDeliverDpcs(void)
         routine(dpc, ctx, a1, a2);
     }
     prcb->DpcPending = FALSE;
+    KiChargeServiceTime(prcb, start, TRUE);
 }
 
 ULONG NTAPI KeGetCurrentProcessorNumber(void)

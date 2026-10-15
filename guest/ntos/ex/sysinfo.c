@@ -432,7 +432,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return copy_info(info, &b, sizeof(b), length, returned);
     }
     case SystemProcessorPerformanceInformation: {
-        /* per processor, kernel time including idle time, as windows reports it. */
+        /* per processor, kernel time including idle, interrupt and dpc time, as windows reports it. */
         typedef struct {
             LARGE_INTEGER IdleTime, KernelTime, UserTime, DpcTime, InterruptTime;
             ULONG InterruptCount;
@@ -450,6 +450,8 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
             p[i].IdleTime.QuadPart = (LONGLONG)idle;
             p[i].KernelTime.QuadPart = (LONGLONG)(prcb->KernelTime + idle);
             p[i].UserTime.QuadPart = (LONGLONG)prcb->UserTime;
+            p[i].DpcTime.QuadPart = (LONGLONG)prcb->DpcTime;
+            p[i].InterruptTime.QuadPart = (LONGLONG)prcb->InterruptTime;
             p[i].InterruptCount = (ULONG)prcb->InterruptCount;
         }
         if (length < sizeof(PERFORMANCE))

@@ -225,6 +225,7 @@ static void interrupt(PKTRAP_FRAME frame)
     KIRQL old = pcr->Irql;
     pcr->Irql = CLOCK_LEVEL;
     prcb->InterruptCount++;
+    ULONG64 start = HalReadCounter();
 
     switch (frame->Vector) {
     case KI_VECTOR_CLOCK:
@@ -242,6 +243,7 @@ static void interrupt(PKTRAP_FRAME frame)
     }
     if (frame->Vector != KI_VECTOR_SPURIOUS)
         HalEndOfInterrupt((ULONG)frame->Vector);
+    KiChargeServiceTime(prcb, start, FALSE);
 
     pcr->Irql = old;
     if (old < DISPATCH_LEVEL) {

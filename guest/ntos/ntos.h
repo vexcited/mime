@@ -187,6 +187,7 @@ typedef struct _KPRCB {
     ULONG64 DpcCount;
     ULONG64 IdleTicks;
     ULONG64 KernelTime, UserTime; /* charged with the threads' at each clock tick, in 100ns */
+    ULONG64 InterruptTime, DpcTime; /* spent in interrupt handlers and dpcs, part of KernelTime */
     ULONG64 IpiSent, IpiReceived;
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not */
 } KPRCB, *PKPRCB;
@@ -299,6 +300,7 @@ void KiStartThread(PKTHREAD thread);
 void KiSwapThread(void);
 void KiDispatchPendingWork(void);
 void KiDeliverDpcs(void);
+void KiChargeServiceTime(PKPRCB prcb, ULONG64 start_counter, BOOLEAN dpc);
 void KiCheckPreemption(void);
 NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASON reason, KPROCESSOR_MODE mode,
                        BOOLEAN alertable, PLARGE_INTEGER timeout, PKWAIT_BLOCK blocks);

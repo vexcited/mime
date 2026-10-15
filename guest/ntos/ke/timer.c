@@ -261,6 +261,23 @@ static void check_stalled_dispatch(ULONG64 now)
     }
 }
 
+/*
+ * time spent in an interrupt handler or in dpcs is the processor's kernel
+ * time and its interrupt or dpc time, as windows reports them, and not the
+ * interrupted thread's: its next clock tick skips it.
+ */
+void KiChargeServiceTime(PKPRCB prcb, ULONG64 start_counter, BOOLEAN dpc)
+{
+    ULONG64 elapsed = HalCounterToHns(HalReadCounter() - start_counter);
+    if (dpc)
+        prcb->DpcTime += elapsed;
+    else
+        prcb->InterruptTime += elapsed;
+    prcb->KernelTime += elapsed;
+    if (prcb->CurrentThread != prcb->IdleThread)
+        prcb->TickTime += elapsed;
+}
+
 /* interrupts masked, dispatcher database owned. */
 void KiClockInterrupt(PKTRAP_FRAME frame)
 {
