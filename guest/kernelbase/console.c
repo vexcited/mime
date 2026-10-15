@@ -37,10 +37,6 @@ static BOOL g_ignore_ctrl_c;
 static UCHAR g_read_carry[4];
 static ULONG g_read_carry_length;
 
-/* key events decoded from input but not read yet. */
-static INPUT_RECORD g_records[MAX_RECORDS];
-static ULONG g_record_count;
-
 /* ------------------------------------------------------------------ the driver */
 
 static NTSTATUS condrv(ULONG code, const void *in, ULONG in_len, void *out, ULONG out_len, ULONG_PTR *done)
@@ -197,211 +193,10 @@ static BOOL read_bytes(PUCHAR buffer, DWORD length, LPDWORD read)
     return NT_SUCCESS(status) || KbSetStatus(status);
 }
 
-/* the driver's input event follows its queue; decoded events waiting here keep it set. */
+/* the driver's input event follows its input buffer. */
 static void sync_input_event(void)
 {
-    if (g_record_count && g_input_event)
-        NtSetEvent(g_input_event, NULL);
-    else
-        condrv(IOCTL_CONDRV_SYNC_EVENT, NULL, 0, NULL, 0, NULL);
-}
-
-static void key_record(INPUT_RECORD *r, BOOL down, WORD vk, WORD scan, WCHAR ch, DWORD state)
-{
-    memset(r, 0, sizeof(*r));
-    r->EventType = KEY_EVENT;
-    r->Event.KeyEvent.bKeyDown = down;
-    r->Event.KeyEvent.wRepeatCount = 1;
-    r->Event.KeyEvent.wVirtualKeyCode = vk;
-    r->Event.KeyEvent.wVirtualScanCode = scan;
-    r->Event.KeyEvent.uChar.UnicodeChar = ch;
-    r->Event.KeyEvent.dwControlKeyState = state;
-}
-
-/* a key press and release, as the console reports a typed key. */
-static ULONG key_pair(INPUT_RECORD *out, ULONG room, WORD vk, WORD scan, WCHAR ch, DWORD state)
-{
-    if (room < 2)
-        return 0;
-    key_record(&out[0], TRUE, vk, scan, ch, state);
-    key_record(&out[1], FALSE, vk, scan, ch, state);
-    return 2;
-}
-
-/* the us layout key of a printable ascii character: virtual key, scan code, shift. */
-static void ascii_key(UCHAR c, WORD *vk, WORD *scan, BOOL *shift)
-{
-    static const char row1[] = "1234567890", shifted1[] = "!@#$%^&*()";
-    static const struct {
-        char plain, shifted;
-        WORD vk, scan;
-    } oem[] = {
-        {';', ':', 0xBA, 0x27}, {'=', '+', 0xBB, 0x0D}, {',', '<', 0xBC, 0x33}, {'-', '_', 0xBD, 0x0C},
-        {'.', '>', 0xBE, 0x34}, {'/', '?', 0xBF, 0x35}, {'`', '~', 0xC0, 0x29}, {'[', '{', 0xDB, 0x1A},
-        {'\\', '|', 0xDC, 0x2B}, {']', '}', 0xDD, 0x1B}, {'\'', '"', 0xDE, 0x28},
-    };
-    static const UCHAR letter_scan[26] = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32,
-                                          0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
-    *vk = 0;
-    *scan = 0;
-    *shift = FALSE;
-    if (c >= 'a' && c <= 'z') {
-        *vk = (WORD)(c - 'a' + 'A');
-        *scan = letter_scan[c - 'a'];
-    } else if (c >= 'A' && c <= 'Z') {
-        *vk = c;
-        *scan = letter_scan[c - 'A'];
-        *shift = TRUE;
-    } else if (c == ' ') {
-        *vk = VK_SPACE;
-        *scan = 0x39;
-    } else {
-        for (int i = 0; i < 10; i++) {
-            if (c == row1[i] || c == shifted1[i]) {
-                *vk = (WORD)row1[i];
-                *scan = (WORD)(i + 2);
-                *shift = c == shifted1[i];
-                return;
-            }
-        }
-        for (ULONG i = 0; i < RTL_NUMBER_OF(oem); i++) {
-            if (c == (UCHAR)oem[i].plain || c == (UCHAR)oem[i].shifted) {
-                *vk = oem[i].vk;
-                *scan = oem[i].scan;
-                *shift = c == (UCHAR)oem[i].shifted;
-                return;
-            }
-        }
-    }
-}
-
-/* the escape sequences terminals send for the keys without a character. */
-static const struct {
-    const char *seq;
-    WORD vk, scan;
-} g_escape_keys[] = {
-    {"[A", VK_UP, 0x48},       {"[B", VK_DOWN, 0x50},   {"[C", VK_RIGHT, 0x4D},  {"[D", VK_LEFT, 0x4B},
-    {"[H", VK_HOME, 0x47},     {"[F", VK_END, 0x4F},    {"OA", VK_UP, 0x48},     {"OB", VK_DOWN, 0x50},
-    {"OC", VK_RIGHT, 0x4D},    {"OD", VK_LEFT, 0x4B},   {"OH", VK_HOME, 0x47},   {"OF", VK_END, 0x4F},
-    {"OP", VK_F1, 0x3B},       {"OQ", VK_F2, 0x3C},     {"OR", VK_F3, 0x3D},     {"OS", VK_F4, 0x3E},
-    {"[1~", VK_HOME, 0x47},    {"[2~", VK_INSERT, 0x52}, {"[3~", VK_DELETE, 0x53}, {"[4~", VK_END, 0x4F},
-    {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},  {"[7~", VK_HOME, 0x47},  {"[8~", VK_END, 0x4F},
-    {"[15~", VK_F5, 0x3F},     {"[17~", VK_F6, 0x40},   {"[18~", VK_F7, 0x41},   {"[19~", VK_F8, 0x42},
-    {"[20~", VK_F9, 0x43},     {"[21~", VK_F10, 0x44},  {"[23~", VK_F11, 0x57},  {"[24~", VK_F12, 0x58},
-    {"[Z", VK_TAB, 0x0F},
-};
-
-/* decodes the escape sequence at p into a key. */
-static BOOL escape_key(const UCHAR *p, ULONG length, ULONG *used, WORD *vk, WORD *scan, DWORD *state)
-{
-    /* modified keys carry ;<modifier> before the final byte: ESC [ 1 ; 5 C is ctrl+right. */
-    UCHAR seq[16];
-    ULONG n = 0, modifier = 0;
-    ULONG i = 1;
-    while (i < length && n < sizeof(seq) - 1) {
-        UCHAR c = p[i++];
-        if (c == ';') {
-            while (i < length && p[i] >= '0' && p[i] <= '9')
-                modifier = modifier * 10 + (p[i++] - '0');
-            continue;
-        }
-        seq[n++] = c;
-        if (n > 1 && (c == '~' || (c >= 'A' && c <= 'Z')))
-            break;
-    }
-    seq[n] = 0;
-    /* ESC [ 1 ; m X keeps the 1 only for the modifier. */
-    if (modifier && n == 3 && seq[0] == '[' && seq[1] == '1' && seq[2] != '~') {
-        seq[1] = seq[2];
-        seq[2] = 0;
-    }
-    for (ULONG k = 0; k < RTL_NUMBER_OF(g_escape_keys); k++) {
-        if (strcmp((const char *)seq, g_escape_keys[k].seq))
-            continue;
-        *vk = g_escape_keys[k].vk;
-        *scan = g_escape_keys[k].scan;
-        *state = g_escape_keys[k].vk == VK_TAB ? SHIFT_PRESSED : ENHANCED_KEY;
-        if (modifier > 1) {
-            ULONG m = modifier - 1;
-            if (m & 1)
-                *state |= SHIFT_PRESSED;
-            if (m & 2)
-                *state |= LEFT_ALT_PRESSED;
-            if (m & 4)
-                *state |= LEFT_CTRL_PRESSED;
-        }
-        *used = i;
-        return TRUE;
-    }
-    return FALSE;
-}
-
-/* turns terminal input into key events; returns the bytes used, leaving an incomplete character. */
-static ULONG decode_keys(const UCHAR *p, ULONG length, INPUT_RECORD *out, ULONG room, ULONG *count)
-{
-    ULONG i = 0;
-    *count = 0;
-    while (i < length) {
-        UCHAR c = p[i];
-        ULONG used = 1, made = 0;
-        WORD vk, scan;
-        DWORD state = 0;
-        if (c == 0x1B) {
-            if (i + 1 < length && (p[i + 1] == '[' || p[i + 1] == 'O') &&
-                escape_key(p + i, length - i, &used, &vk, &scan, &state)) {
-                made = key_pair(out + *count, room - *count, vk, scan, 0, state);
-            } else if (i + 1 < length && p[i + 1] >= 0x20 && p[i + 1] < 0x7F) {
-                /* option+key on a terminal is escape then the key: alt+key. */
-                BOOL shift;
-                ascii_key(p[i + 1], &vk, &scan, &shift);
-                made = key_pair(out + *count, room - *count, vk, scan, p[i + 1],
-                                LEFT_ALT_PRESSED | (shift ? SHIFT_PRESSED : 0));
-                used = 2;
-            } else {
-                made = key_pair(out + *count, room - *count, VK_ESCAPE, 0x01, 0x1B, 0);
-            }
-        } else if (c == '\r' || c == '\n') {
-            made = key_pair(out + *count, room - *count, VK_RETURN, 0x1C, '\r', 0);
-            if (c == '\r' && i + 1 < length && p[i + 1] == '\n')
-                used = 2;
-        } else if (c == 0x7F || c == 0x08) {
-            made = key_pair(out + *count, room - *count, VK_BACK, 0x0E, 0x08, 0);
-        } else if (c == '\t') {
-            made = key_pair(out + *count, room - *count, VK_TAB, 0x0F, '\t', 0);
-        } else if (c == 0) {
-            made = key_pair(out + *count, room - *count, VK_SPACE, 0x39, 0, LEFT_CTRL_PRESSED);
-        } else if (c < 0x20) {
-            /* ctrl+letter. */
-            BOOL shift;
-            ascii_key((UCHAR)(c + 'a' - 1), &vk, &scan, &shift);
-            made = key_pair(out + *count, room - *count, vk, scan, c, LEFT_CTRL_PRESSED);
-        } else if (c < 0x80) {
-            BOOL shift;
-            ascii_key(c, &vk, &scan, &shift);
-            made = key_pair(out + *count, room - *count, vk, scan, c, shift ? SHIFT_PRESSED : 0);
-        } else {
-            /* a utf-8 character: one event per utf-16 unit. */
-            ULONG need = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
-            if (i + need > length)
-                break;
-            WCHAR w[2];
-            int units = MultiByteToWideChar(CP_UTF8, 0, (LPCCH)p + i, (int)need, w, 2);
-            if (units <= 0) {
-                units = 1;
-                w[0] = 0xFFFD;
-            }
-            if (room - *count < (ULONG)units * 2)
-                break;
-            for (int u = 0; u < units; u++)
-                made += key_pair(out + *count + made, room - *count - made, VK_PACKET, 0, w[u], 0);
-            used = need;
-        }
-        if (!made)
-            break;
-        *count += made;
-        i += used;
-    }
-    return i;
+    condrv(IOCTL_CONDRV_SYNC_EVENT, NULL, 0, NULL, 0, NULL);
 }
 
 static BOOL check_input(HANDLE console)
@@ -601,7 +396,6 @@ BOOL WINAPI FreeConsole(void)
 {
     condrv(IOCTL_CONDRV_FREE, NULL, 0, NULL, 0, NULL);
     g_attached = FALSE;
-    g_record_count = 0;
     return TRUE;
 }
 
@@ -828,72 +622,29 @@ BOOL KbConsoleRead(HANDLE console, LPVOID buffer, DWORD length, LPDWORD read)
     return ReadConsoleA(console, buffer, length, read, NULL);
 }
 
-/* bytes read from the driver that do not make a whole key yet. */
-static UCHAR g_key_carry[16];
-static ULONG g_key_carry_length;
+/* ------------------------------------------------------------------ input records */
 
-/* decodes input into g_records, waiting for a key when asked to. */
-static BOOL read_records(void)
+/*
+ * the console keeps the input records, as conhost's input buffer does:
+ * the keys typed, decoded from what the terminal sends, and the events
+ * programs write. flags are CONSOLE_READ_NOREMOVE and CONSOLE_READ_NOWAIT.
+ */
+static BOOL read_input_records(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read, USHORT flags)
 {
-    while (!g_record_count) {
-        UCHAR bytes[MAX_RECORDS / 2 + sizeof(g_key_carry)];
-        memcpy(bytes, g_key_carry, g_key_carry_length);
-        DWORD got;
-        if (!read_bytes(bytes + g_key_carry_length, MAX_RECORDS / 2, &got))
-            return FALSE;
-        if (!got)
-            return TRUE; /* end of file: no more events */
-        ULONG length = g_key_carry_length + got, count;
-        ULONG used = decode_keys(bytes, length, g_records, MAX_RECORDS, &count);
-        g_key_carry_length = length - used < sizeof(g_key_carry) ? length - used : 0;
-        memcpy(g_key_carry, bytes + used, g_key_carry_length);
-        g_record_count = count;
-    }
-    return TRUE;
-}
-
-/* the events waiting, decoded from queued input without taking it. */
-static ULONG peek_records(INPUT_RECORD *out, ULONG room)
-{
-    if (g_record_count) {
-        ULONG n = g_record_count < room ? g_record_count : room;
-        memcpy(out, g_records, n * sizeof(*out));
-        return g_record_count;
-    }
-    UCHAR bytes[MAX_RECORDS / 2 + sizeof(g_key_carry)];
-    memcpy(bytes, g_key_carry, g_key_carry_length);
-    ULONG_PTR got = 0;
-    condrv(IOCTL_CONDRV_PEEK, NULL, 0, bytes + g_key_carry_length, MAX_RECORDS / 2, &got);
-    INPUT_RECORD all[MAX_RECORDS];
-    ULONG count;
-    decode_keys(bytes, g_key_carry_length + (ULONG)got, all, MAX_RECORDS, &count);
-    memcpy(out, all, (count < room ? count : room) * sizeof(*out));
-    return count;
-}
-
-static void take_records(PINPUT_RECORD buffer, DWORD count, LPDWORD read)
-{
-    DWORD n = g_record_count < count ? g_record_count : count;
-    memcpy(buffer, g_records, n * sizeof(*buffer));
-    memmove(g_records, g_records + n, (g_record_count - n) * sizeof(*buffer));
-    g_record_count -= n;
-    if (read)
-        *read = n;
-    sync_input_event();
-}
-
-/* key events made from what the terminal sends: characters, and escape sequences for the other keys. */
-BOOL WINAPI ReadConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read)
-{
-    if (read)
-        *read = 0;
+    *read = 0;
     if (!check_input(console))
         return FALSE;
-    if (!count)
-        return TRUE;
-    if (!read_records())
-        return FALSE;
-    take_records(buffer, count, read);
+    UCHAR out[sizeof(ULONG) + MAX_RECORDS * sizeof(INPUT_RECORD)];
+    ULONG room = count < MAX_RECORDS ? count : MAX_RECORDS;
+    ULONG in = flags & (MIME_CONDRV_READ_PEEK | MIME_CONDRV_READ_NOWAIT);
+    ULONG_PTR done;
+    NTSTATUS status =
+        condrv(IOCTL_CONDRV_READ_INPUT, &in, sizeof(in), out, sizeof(ULONG) + room * sizeof(INPUT_RECORD), &done);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    ULONG n = done > sizeof(ULONG) ? (ULONG)(done - sizeof(ULONG)) / sizeof(INPUT_RECORD) : 0;
+    memcpy(buffer, out + sizeof(ULONG), n * sizeof(INPUT_RECORD));
+    *read = n;
     return TRUE;
 }
 
@@ -912,175 +663,178 @@ static void records_to_ansi(PINPUT_RECORD records, DWORD count)
     }
 }
 
+BOOL WINAPI ReadConsoleInputExW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read, USHORT flags)
+{
+    return read_input_records(console, buffer, count, read, flags);
+}
+
+BOOL WINAPI ReadConsoleInputExA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read, USHORT flags)
+{
+    if (!read_input_records(console, buffer, count, read, flags))
+        return FALSE;
+    records_to_ansi(buffer, *read);
+    return TRUE;
+}
+
+BOOL WINAPI ReadConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read)
+{
+    return ReadConsoleInputExW(console, buffer, count, read, 0);
+}
+
 BOOL WINAPI ReadConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read)
 {
-    DWORD n = 0;
-    if (!ReadConsoleInputW(console, buffer, count, &n))
-        return FALSE;
-    records_to_ansi(buffer, n);
-    if (read)
-        *read = n;
-    return TRUE;
-}
-
-/* what a terminal sends for a key without a character, 0 bytes for a key it has no sequence for. */
-static ULONG encode_escape(const KEY_EVENT_RECORD *k, UCHAR *out)
-{
-    DWORD state = k->dwControlKeyState;
-    BOOL shift = (state & SHIFT_PRESSED) != 0;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_escape_keys); i++) {
-        const char *seq = g_escape_keys[i].seq;
-        if (g_escape_keys[i].vk != k->wVirtualKeyCode || (k->wVirtualKeyCode == VK_TAB && !shift))
-            continue;
-        ULONG modifier = 1 + (shift && k->wVirtualKeyCode != VK_TAB ? 1 : 0) +
-                         (state & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED) ? 2 : 0) +
-                         (state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED) ? 4 : 0);
-        ULONG n = 0, length = strlen(seq);
-        out[n++] = 0x1B;
-        if (modifier == 1) {
-            memcpy(out + n, seq, length);
-            return n + length;
-        }
-        /* ESC [ 1 ; m X for a letter, ESC [ n ; m ~ for a number. */
-        out[n++] = '[';
-        if (seq[length - 1] == '~') {
-            memcpy(out + n, seq + 1, length - 2);
-            n += length - 2;
-        } else {
-            out[n++] = '1';
-        }
-        out[n++] = ';';
-        out[n++] = (UCHAR)('0' + modifier);
-        out[n++] = (UCHAR)seq[length - 1];
-        return n;
-    }
-    return 0;
-}
-
-/*
- * written records join the console's input as what a terminal would send
- * for them, so a read waiting in any attached process returns, as libuv
- * expects when it writes an enter to end its ReadConsoleW. only key
- * presses with a character or an escape sequence make it there.
- */
-BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
-{
-    if (written)
-        *written = 0;
-    if (!check_input(console))
-        return FALSE;
-    UCHAR bytes[1024];
-    ULONG length = 0;
-    WCHAR high = 0;
-    for (DWORD i = 0; i < count; i++) {
-        const KEY_EVENT_RECORD *k = &buffer[i].Event.KeyEvent;
-        if (buffer[i].EventType != KEY_EVENT || !k->bKeyDown)
-            continue;
-        UCHAR one[16];
-        ULONG n = 0;
-        WCHAR c = k->uChar.UnicodeChar;
-        DWORD state = k->dwControlKeyState;
-        if (c >= 0xD800 && c < 0xDC00) {
-            high = c;
-            continue;
-        }
-        if (c) {
-            WCHAR pair[2] = {high ? high : c, c};
-            BOOL alt = (state & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) &&
-                       !(state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED));
-            if (alt)
-                one[n++] = 0x1B;
-            int w = WideCharToMultiByte(CP_UTF8, 0, pair, high ? 2 : 1, (LPSTR)one + n, sizeof(one) - n, NULL, NULL);
-            n += w > 0 ? (ULONG)w : 0;
-        } else {
-            n = encode_escape(k, one);
-        }
-        high = 0;
-        for (WORD r = k->wRepeatCount ? k->wRepeatCount : 1; r && n; r--) {
-            if (length + n > sizeof(bytes)) {
-                NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, bytes, length, NULL, 0, NULL);
-                if (!NT_SUCCESS(status))
-                    return KbSetStatus(status);
-                length = 0;
-            }
-            memcpy(bytes + length, one, n);
-            length += n;
-        }
-    }
-    if (length) {
-        NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, bytes, length, NULL, 0, NULL);
-        if (!NT_SUCCESS(status))
-            return KbSetStatus(status);
-    }
-    if (written)
-        *written = count;
-    return TRUE;
-}
-
-BOOL WINAPI WriteConsoleInputA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
-{
-    INPUT_RECORD wide[MAX_RECORDS];
-    if (count > MAX_RECORDS)
-        count = MAX_RECORDS;
-    memcpy(wide, buffer, count * sizeof(*buffer));
-    for (DWORD i = 0; i < count; i++) {
-        if (wide[i].EventType != KEY_EVENT)
-            continue;
-        CHAR a = buffer[i].Event.KeyEvent.uChar.AsciiChar;
-        WCHAR w = 0;
-        if (a && MultiByteToWideChar(g_input_cp == CP_UTF8 ? CP_ACP : g_input_cp, 0, &a, 1, &w, 1) != 1)
-            w = L'?';
-        wide[i].Event.KeyEvent.uChar.UnicodeChar = w;
-    }
-    return WriteConsoleInputW(console, wide, count, written);
+    return ReadConsoleInputExA(console, buffer, count, read, 0);
 }
 
 BOOL WINAPI PeekConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read)
 {
-    if (read)
-        *read = 0;
-    if (!check_input(console))
-        return FALSE;
-    INPUT_RECORD all[MAX_RECORDS];
-    ULONG n = peek_records(all, MAX_RECORDS);
-    if (n > count)
-        n = count;
-    if (n > MAX_RECORDS)
-        n = MAX_RECORDS;
-    memcpy(buffer, all, n * sizeof(*buffer));
-    if (read)
-        *read = n;
-    return TRUE;
+    return ReadConsoleInputExW(console, buffer, count, read, CONSOLE_READ_NOREMOVE | CONSOLE_READ_NOWAIT);
 }
 
 BOOL WINAPI PeekConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read)
 {
-    DWORD n = 0;
-    if (!PeekConsoleInputW(console, buffer, count, &n))
-        return FALSE;
-    records_to_ansi(buffer, n);
-    if (read)
-        *read = n;
-    return TRUE;
+    return ReadConsoleInputExA(console, buffer, count, read, CONSOLE_READ_NOREMOVE | CONSOLE_READ_NOWAIT);
 }
 
 BOOL WINAPI GetNumberOfConsoleInputEvents(HANDLE console, LPDWORD count)
 {
     if (!check_input(console))
         return FALSE;
-    INPUT_RECORD all[MAX_RECORDS];
-    ULONG n = peek_records(all, MAX_RECORDS);
-    if (count)
-        *count = n;
+    ULONG in = MIME_CONDRV_READ_PEEK | MIME_CONDRV_READ_NOWAIT, total = 0;
+    NTSTATUS status = condrv(IOCTL_CONDRV_READ_INPUT, &in, sizeof(in), &total, sizeof(total), NULL);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *count = total;
     return TRUE;
+}
+
+/*
+ * the console's write: appended, or ahead of the events waiting. the
+ * events it took land in *written even when it fails, as on windows.
+ */
+static BOOL write_input(HANDLE console, const INPUT_RECORD *records, DWORD count, LPDWORD written, BOOL append)
+{
+    *written = 0;
+    if (!check_input(console))
+        return FALSE;
+    if (count > (0xFFFFFFFFu - sizeof(MIME_CONDRV_WRITE_INPUT)) / sizeof(INPUT_RECORD)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ULONG size = sizeof(MIME_CONDRV_WRITE_INPUT) + count * sizeof(INPUT_RECORD);
+    MIME_CONDRV_WRITE_INPUT *in = KbAlloc(size);
+    if (!in) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    in->Flags = append ? MIME_CONDRV_WRITE_APPEND : 0;
+    in->Reserved = 0;
+    memcpy(in + 1, records, count * sizeof(INPUT_RECORD));
+    ULONG taken = 0;
+    NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, in, size, &taken, sizeof(taken), NULL);
+    KbFree(in);
+    *written = taken;
+    return NT_SUCCESS(status) || KbSetStatus(status);
+}
+
+static BOOL known_event(WORD type)
+{
+    return type == KEY_EVENT || type == MOUSE_EVENT || type == WINDOW_BUFFER_SIZE_EVENT || type == MENU_EVENT ||
+           type == FOCUS_EVENT;
+}
+
+/*
+ * ansi events carry a byte of the input code page. as the console does,
+ * each key event becomes one per utf-16 unit of its character, a lead byte
+ * takes the next event's byte as its trail, a lead byte left at the end
+ * waits in the console for the next write, and a byte that converts to
+ * nothing drops its event.
+ */
+static BOOL write_input_ansi(HANDLE console, const INPUT_RECORD *records, DWORD count, LPDWORD written, BOOL append)
+{
+    *written = 0;
+    if (!check_input(console))
+        return FALSE;
+    for (DWORD i = 0; i < count; i++) {
+        if (!known_event(records[i].EventType)) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+    }
+    if (count > 0xFFFFFFFFu / 2 / sizeof(INPUT_RECORD) - 2) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PINPUT_RECORD wide = KbAlloc((count + 1) * 2 * sizeof(INPUT_RECORD));
+    if (!wide) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    UINT cp = g_input_cp;
+    INPUT_RECORD carry;
+    ULONG_PTR had = 0;
+    condrv(IOCTL_CONDRV_ANSI_CARRY, NULL, 0, &carry, sizeof(carry), &had);
+    DWORD n = 0, i = 0, total = count + (had ? 1 : 0);
+    BOOL keep = FALSE;
+    while (i < total) {
+        const INPUT_RECORD *r = had ? (i ? &records[i - 1] : &carry) : &records[i];
+        i++;
+        if (r->EventType != KEY_EVENT) {
+            wide[n++] = *r;
+            continue;
+        }
+        CHAR bytes[2] = {r->Event.KeyEvent.uChar.AsciiChar, 0};
+        int length = 1;
+        if (IsDBCSLeadByteEx(cp, (BYTE)bytes[0])) {
+            if (i == total) {
+                carry = *r;
+                keep = TRUE;
+                break;
+            }
+            const INPUT_RECORD *trail = had ? &records[i - 1] : &records[i];
+            i++;
+            bytes[1] = trail->Event.KeyEvent.uChar.AsciiChar;
+            length = 2;
+        }
+        WCHAR units[2];
+        int made = MultiByteToWideChar(cp, 0, bytes, length, units, 2);
+        for (int u = 0; u < made; u++) {
+            wide[n] = *r;
+            wide[n++].Event.KeyEvent.uChar.UnicodeChar = units[u];
+        }
+    }
+    if (keep)
+        condrv(IOCTL_CONDRV_ANSI_CARRY, &carry, sizeof(carry), NULL, 0, NULL);
+    BOOL ok = write_input(console, wide, n, written, append);
+    KbFree(wide);
+    return ok;
+}
+
+BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
+{
+    return write_input(console, buffer, count, written, TRUE);
+}
+
+BOOL WINAPI WriteConsoleInputA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
+{
+    return write_input_ansi(console, buffer, count, written, TRUE);
+}
+
+/* what ntvdm wrote: the events go ahead of the ones waiting. */
+BOOL WINAPI WriteConsoleInputVDMW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
+{
+    return write_input(console, buffer, count, written, FALSE);
+}
+
+BOOL WINAPI WriteConsoleInputVDMA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
+{
+    return write_input_ansi(console, buffer, count, written, FALSE);
 }
 
 BOOL WINAPI FlushConsoleInputBuffer(HANDLE console)
 {
     if (!check_input(console))
         return FALSE;
-    g_record_count = 0;
-    g_key_carry_length = 0;
     g_read_carry_length = 0;
     condrv(IOCTL_CONDRV_FLUSH_INPUT, NULL, 0, NULL, 0, NULL);
     return TRUE;

@@ -25,7 +25,13 @@
 #define IOCTL_CONDRV_PROCESSES MIME_CONDRV_IOCTL(0x809)    /* out ULONG process ids */
 #define IOCTL_CONDRV_FLUSH_INPUT MIME_CONDRV_IOCTL(0x80A)
 #define IOCTL_CONDRV_SYNC_EVENT MIME_CONDRV_IOCTL(0x80B) /* sets the input event when input waits, else resets it */
-#define IOCTL_CONDRV_WRITE_INPUT MIME_CONDRV_IOCTL(0x80C) /* in bytes queued as if typed, for every attached process */
+#define IOCTL_CONDRV_WRITE_INPUT MIME_CONDRV_IOCTL(0x80C) /* in MIME_CONDRV_WRITE_INPUT then records, out ULONG written */
+#define IOCTL_CONDRV_READ_INPUT MIME_CONDRV_IOCTL(0x80D)  /* in ULONG MIME_CONDRV_READ_..., out ULONG total then records */
+#define IOCTL_CONDRV_ANSI_CARRY MIME_CONDRV_IOCTL(0x80E)  /* in the record to keep or none, out the one kept or none */
+
+#define MIME_CONDRV_WRITE_APPEND 0x1 /* else the records go ahead of the waiting ones */
+#define MIME_CONDRV_READ_PEEK 0x1
+#define MIME_CONDRV_READ_NOWAIT 0x2
 
 #define MIME_CONDRV_STDOUT 1
 #define MIME_CONDRV_STDERR 2
@@ -41,6 +47,35 @@ typedef struct MIME_CONDRV_REGISTER {
     ULONG64 InputEvent;  /* event handle the console keeps set while input waits */
 } MIME_CONDRV_REGISTER;
 
+/* an input record, laid out as INPUT_RECORD. */
+typedef struct MIME_CONDRV_RECORD {
+    USHORT EventType;
+    USHORT Reserved;
+    union {
+        struct {
+            ULONG KeyDown;
+            USHORT RepeatCount;
+            USHORT VirtualKey;
+            USHORT ScanCode;
+            WCHAR Char;
+            ULONG ControlKeyState;
+        } Key;
+        struct {
+            SHORT X;
+            SHORT Y;
+            ULONG ButtonState;
+            ULONG ControlKeyState;
+            ULONG EventFlags;
+        } Mouse;
+        ULONG Value; /* the buffer size of a window buffer size event, the command of a menu event, the focus */
+    };
+} MIME_CONDRV_RECORD;
+
+typedef struct MIME_CONDRV_WRITE_INPUT {
+    ULONG Flags; /* MIME_CONDRV_WRITE_... */
+    ULONG Reserved;
+} MIME_CONDRV_WRITE_INPUT;
+
 typedef struct MIME_CONDRV_STATE {
     ULONG Flags;
     ULONG InputMode;
@@ -49,6 +84,7 @@ typedef struct MIME_CONDRV_STATE {
     USHORT Rows;
     ULONG InputBytes; /* waiting to be read */
     ULONG ProcessGroup;
+    ULONG InputEvents; /* records waiting to be read */
 } MIME_CONDRV_STATE;
 
 #endif

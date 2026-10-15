@@ -1063,13 +1063,52 @@ typedef struct _KEY_EVENT_RECORD {
     DWORD dwControlKeyState;
 } KEY_EVENT_RECORD;
 
+#define MOUSE_EVENT 0x0002
+#define WINDOW_BUFFER_SIZE_EVENT 0x0004
+#define MENU_EVENT 0x0008
+#define FOCUS_EVENT 0x0010
+
+#define FROM_LEFT_1ST_BUTTON_PRESSED 0x0001
+#define RIGHTMOST_BUTTON_PRESSED 0x0002
+#define FROM_LEFT_2ND_BUTTON_PRESSED 0x0004
+#define MOUSE_MOVED 0x0001
+#define DOUBLE_CLICK 0x0002
+#define MOUSE_WHEELED 0x0004
+#define MOUSE_HWHEELED 0x0008
+
+typedef struct _MOUSE_EVENT_RECORD {
+    COORD dwMousePosition;
+    DWORD dwButtonState;
+    DWORD dwControlKeyState;
+    DWORD dwEventFlags;
+} MOUSE_EVENT_RECORD;
+
+typedef struct _WINDOW_BUFFER_SIZE_RECORD {
+    COORD dwSize;
+} WINDOW_BUFFER_SIZE_RECORD;
+
+typedef struct _MENU_EVENT_RECORD {
+    UINT dwCommandId;
+} MENU_EVENT_RECORD;
+
+typedef struct _FOCUS_EVENT_RECORD {
+    BOOL bSetFocus;
+} FOCUS_EVENT_RECORD;
+
 typedef struct _INPUT_RECORD {
     WORD EventType;
     union {
         KEY_EVENT_RECORD KeyEvent;
+        MOUSE_EVENT_RECORD MouseEvent;
+        WINDOW_BUFFER_SIZE_RECORD WindowBufferSizeEvent;
+        MENU_EVENT_RECORD MenuEvent;
+        FOCUS_EVENT_RECORD FocusEvent;
         BYTE Raw[16];
     } Event;
 } INPUT_RECORD, *PINPUT_RECORD;
+
+#define CONSOLE_READ_NOREMOVE 0x0001
+#define CONSOLE_READ_NOWAIT 0x0002
 
 typedef struct _CONSOLE_READCONSOLE_CONTROL {
     ULONG nLength;
@@ -1104,6 +1143,10 @@ WINBASEAPI BOOL WINAPI ReadConsoleA(HANDLE console, LPVOID buffer, DWORD count, 
 WINBASEAPI BOOL WINAPI ReadConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
 WINBASEAPI BOOL WINAPI WriteConsoleInputW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written);
 WINBASEAPI BOOL WINAPI WriteConsoleInputA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written);
+WINBASEAPI BOOL WINAPI WriteConsoleInputVDMW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written);
+WINBASEAPI BOOL WINAPI WriteConsoleInputVDMA(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written);
+WINBASEAPI BOOL WINAPI ReadConsoleInputExW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read, USHORT flags);
+WINBASEAPI BOOL WINAPI ReadConsoleInputExA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read, USHORT flags);
 WINBASEAPI BOOL WINAPI ReadConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
 WINBASEAPI BOOL WINAPI PeekConsoleInputW(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);
 WINBASEAPI BOOL WINAPI PeekConsoleInputA(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read);

@@ -15,7 +15,7 @@
  * and written in bytes and asked the questions of a pipe.
  */
 #include "../ntos.h"
-#include <mime/condrv.h>
+#include "coninput.h"
 
 #define CTRL_C_EVENT 0
 #define CTRL_BREAK_EVENT 1
@@ -28,15 +28,23 @@
 
 #define DEFAULT_INPUT_MODE 0x1F7 /* processed, line, echo, insert, quick edit, extended flags, auto position */
 #define DEFAULT_OUTPUT_MODE 0x3  /* processed, wrap at end of line */
-#define ENABLE_LINE_INPUT 0x2
 
-/* input as the host sent it; an empty chunk is an end of file. */
+/*
+ * input waiting to be read: the bytes of a redirected input, or records,
+ * which is what a terminal's input is decoded into and what programs
+ * write. a chunk of no bytes is an end of file.
+ */
 typedef struct CON_CHUNK {
     LIST_ENTRY Links;
-    ULONG Length;
-    ULONG Offset;
+    BOOLEAN Records;
+    ULONG Length;    /* bytes or records */
+    ULONG First;     /* the first not read */
+    ULONG Offset;    /* bytes of the first record's character already read */
     ULONG HostBytes; /* acknowledged to the host once read */
-    UCHAR Data[];
+    union {
+        UCHAR Data[1];
+        MIME_CONDRV_RECORD Record[1];
+    };
 } CON_CHUNK;
 
 struct _MIME_CONSOLE {
@@ -49,8 +57,17 @@ struct _MIME_CONSOLE {
     USHORT Columns;
     USHORT Rows;
     LIST_ENTRY Input;
-    ULONG InputBytes;
+    ULONG InputBytes;  /* in byte chunks */
+    ULONG InputEvents; /* records not read */
     KEVENT InputReady; /* set while input, an end of file or the closing waits */
+    UCHAR Carry[16];   /* terminal input that does not make a whole key yet */
+    ULONG CarryLength;
+    ULONG PendingAck; /* host bytes that made no record yet */
+    BOOLEAN HasAnsiCarry;
+    MIME_CONDRV_RECORD AnsiCarry; /* the lead byte WriteConsoleInputA got without its trail byte */
+    BOOLEAN CursorApplication;    /* the program asked for application cursor keys */
+    BOOLEAN OutputPaused;         /* by the pause key */
+    KEVENT OutputResumed;
 };
 
 static FAST_MUTEX g_lock;
@@ -166,6 +183,7 @@ MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size)
     c->Rows = size >> 16 ? (USHORT)(size >> 16) : 25;
     InitializeListHead(&c->Input);
     KeInitializeEvent(&c->InputReady, NotificationEvent, FALSE);
+    KeInitializeEvent(&c->OutputResumed, NotificationEvent, TRUE);
     ExAcquireFastMutex(&g_lock);
     InsertTailList(&g_consoles, &c->Links);
     ExReleaseFastMutex(&g_lock);
@@ -210,31 +228,189 @@ void ConsoleProcessExit(PEPROCESS p)
         ObDereferenceObject(event);
 }
 
-/* queues input with the lock held; host_bytes is what to acknowledge to the host once it is read. */
-static BOOLEAN queue_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length, ULONG host_bytes, BOOLEAN crlf)
+/* ------------------------------------------------------------ the input buffer */
+
+static CON_CHUNK *new_chunk(BOOLEAN records, ULONG length)
 {
-    ULONG size = length;
-    for (ULONG i = 0; crlf && i < length; i++)
-        size += data[i] == '\n' && (i == 0 || data[i - 1] != '\r');
-    CON_CHUNK *k = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*k) + size, KI_TAG('C', 'o', 'n', 'i'));
-    if (!k)
-        return FALSE;
-    ULONG n = 0;
-    for (ULONG i = 0; i < length; i++) {
-        if (crlf && data[i] == '\n' && (i == 0 || data[i - 1] != '\r'))
-            k->Data[n++] = '\r';
-        k->Data[n++] = data[i];
-    }
-    k->Length = n;
-    k->Offset = 0;
-    k->HostBytes = host_bytes;
-    InsertTailList(&c->Input, &k->Links);
-    c->InputBytes += n;
+    SIZE_T size = FIELD_OFFSET(CON_CHUNK, Data) + (records ? length * sizeof(MIME_CONDRV_RECORD) : length);
+    CON_CHUNK *k = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('C', 'o', 'n', 'i'));
+    if (k)
+        k->Records = records;
+    return k;
+}
+
+static void queue_chunk(MIME_CONSOLE *c, CON_CHUNK *k, BOOLEAN head)
+{
+    if (head)
+        InsertHeadList(&c->Input, &k->Links);
+    else
+        InsertTailList(&c->Input, &k->Links);
+    if (k->Records)
+        c->InputEvents += k->Length - k->First;
+    else
+        c->InputBytes += k->Length - k->First;
     KeSetEvent(&c->InputReady, 0, FALSE);
+}
+
+static void free_chunk(MIME_CONSOLE *c, CON_CHUNK *k, ULONG *acked)
+{
+    RemoveEntryList(&k->Links);
+    if (k->Records)
+        c->InputEvents -= k->Length - k->First;
+    else
+        c->InputBytes -= k->Length - k->First;
+    *acked += k->HostBytes;
+    ExFreePool(k);
+}
+
+/* the last record waiting, which an event written alone may merge into. */
+static MIME_CONDRV_RECORD *last_record(MIME_CONSOLE *c)
+{
+    if (IsListEmpty(&c->Input))
+        return NULL;
+    CON_CHUNK *k = CONTAINING_RECORD(c->Input.Blink, CON_CHUNK, Links);
+    return k->Records && k->First < k->Length ? &k->Record[k->Length - 1] : NULL;
+}
+
+static void set_output_paused(MIME_CONSOLE *c, BOOLEAN paused)
+{
+    c->OutputPaused = paused;
+    if (paused)
+        KeClearEvent(&c->OutputResumed);
+    else
+        KeSetEvent(&c->OutputResumed, 0, FALSE);
+}
+
+/*
+ * the pause key in line input pauses the output and any other key press
+ * resumes it, as on windows; both are taken out. returns the records left.
+ */
+static ULONG take_pause_keys(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count)
+{
+    ULONG kept = 0;
+    for (ULONG i = 0; i < count; i++) {
+        if (r[i].EventType == CON_KEY_EVENT && r[i].Key.KeyDown) {
+            if (c->OutputPaused && !ConIsSystemKey(r[i].Key.VirtualKey)) {
+                set_output_paused(c, FALSE);
+                continue;
+            }
+            if ((c->InputMode & CON_LINE_INPUT) && r[i].Key.VirtualKey == CON_VK_PAUSE) {
+                set_output_paused(c, TRUE);
+                continue;
+            }
+        }
+        r[kept++] = r[i];
+    }
+    return kept;
+}
+
+/*
+ * writes records the way the console takes written and typed events: in
+ * vt input the keys become their sequences, and an event written alone
+ * merges into the last one when it repeats it. the head ones go ahead of
+ * what waits. returns the events taken, called with the lock held.
+ */
+static NTSTATUS write_records(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count, BOOLEAN head, ULONG *written)
+{
+    *written = 0;
+    count = take_pause_keys(c, r, count);
+    if (!count)
+        return STATUS_SUCCESS;
+    BOOLEAN vt = (c->InputMode & CON_VIRTUAL_TERMINAL_INPUT) != 0;
+    if (count == 1 && !head && !vt) {
+        MIME_CONDRV_RECORD *last = last_record(c);
+        if (last && ConMergeRecord(last, r)) {
+            *written = 1;
+            return STATUS_SUCCESS;
+        }
+    }
+    ULONG room = vt ? count * CON_MAX_SEQUENCE : count;
+    CON_CHUNK *k = new_chunk(TRUE, room);
+    if (!k)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    for (ULONG i = 0; i < count; i++) {
+        ULONG made;
+        if (vt && ConTranslateKey(&r[i], c->CursorApplication, &k->Record[k->Length], &made)) {
+            k->Length += made;
+        } else if (vt && count == 1 && !head && last_record(c) && ConMergeRecord(last_record(c), &r[i])) {
+            ExFreePool(k);
+            *written = 1;
+            return STATUS_SUCCESS;
+        } else {
+            k->Record[k->Length++] = r[i];
+        }
+    }
+    *written = count;
+    if (!k->Length) {
+        ExFreePool(k);
+        return STATUS_SUCCESS;
+    }
+    /* a single event that waited before a prepend may merge into the new ones, as it is written again after them. */
+    MIME_CONDRV_RECORD *alone = NULL;
+    if (head && !IsListEmpty(&c->Input) && c->Input.Flink == c->Input.Blink) {
+        CON_CHUNK *old = CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
+        if (old->Records && old->Length - old->First == 1 && !old->Offset)
+            alone = &old->Record[old->First];
+    }
+    if (alone && ConMergeRecord(&k->Record[k->Length - 1], alone)) {
+        ULONG acked = 0;
+        CON_CHUNK *old = CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
+        k->HostBytes = old->HostBytes;
+        free_chunk(c, old, &acked);
+    }
+    queue_chunk(c, k, head);
+    return STATUS_SUCCESS;
+}
+
+/* typed input decoded into keys, or the bytes of a redirected input, with the lock held. */
+static BOOLEAN host_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length)
+{
+    if (!(c->Flags & MIME_CONDRV_TTY_INPUT) || (!length && !c->CarryLength)) {
+        CON_CHUNK *k = new_chunk(FALSE, length);
+        if (!k)
+            return FALSE;
+        memcpy(k->Data, data, length);
+        k->Length = length;
+        k->HostBytes = length + c->PendingAck;
+        c->PendingAck = 0;
+        queue_chunk(c, k, FALSE);
+        return TRUE;
+    }
+    ULONG total = c->CarryLength + length;
+    PUCHAR bytes = ExAllocatePool2(POOL_FLAG_NON_PAGED, total, KI_TAG('C', 'o', 'n', 'i'));
+    CON_CHUNK *k = bytes ? new_chunk(TRUE, 2 * total) : NULL;
+    if (!k) {
+        if (bytes)
+            ExFreePool(bytes);
+        return FALSE;
+    }
+    memcpy(bytes, c->Carry, c->CarryLength);
+    memcpy(bytes + c->CarryLength, data, length);
+    /* the end of the input decodes what was left. */
+    BOOLEAN more = length != 0;
+    ULONG used = ConDecodeInput(bytes, total, (c->InputMode & CON_VIRTUAL_TERMINAL_INPUT) != 0, more, k->Record,
+                                2 * total, &k->Length);
+    c->CarryLength = total - used <= sizeof(c->Carry) ? total - used : 0;
+    memcpy(c->Carry, bytes + total - c->CarryLength, c->CarryLength);
+    ExFreePool(bytes);
+    k->Length = take_pause_keys(c, k->Record, k->Length);
+    c->PendingAck += length;
+    if (k->Length) {
+        k->HostBytes = c->PendingAck;
+        c->PendingAck = 0;
+        queue_chunk(c, k, FALSE);
+    } else {
+        ExFreePool(k);
+    }
+    if (!more) {
+        CON_CHUNK *end = new_chunk(FALSE, 0);
+        if (end)
+            queue_chunk(c, end, FALSE);
+    }
     return TRUE;
 }
 
-/* typed or piped input. a terminal ends lines with \n, a windows console with \r\n. */
+/* typed or piped input, an end of file when empty. */
 void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length)
 {
     ExAcquireFastMutex(&g_lock);
@@ -243,14 +419,22 @@ void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length)
         ExReleaseFastMutex(&g_lock);
         return;
     }
-    BOOLEAN crlf = (c->Flags & MIME_CONDRV_TTY_INPUT) && (c->InputMode & ENABLE_LINE_INPUT);
-    BOOLEAN queued = queue_input(c, data, length, length, crlf);
+    BOOLEAN queued = host_input(c, data, length);
+    ULONG unacked = 0;
+    if (!queued) {
+        unacked = c->PendingAck + length;
+        c->PendingAck = 0;
+    } else if (c->PendingAck && IsListEmpty(&c->Input)) {
+        /* nothing waits that would acknowledge it later. */
+        unacked = c->PendingAck;
+        c->PendingAck = 0;
+    }
     PKEVENT events[MAX_TARGETS];
-    ULONG count = queued ? collect_events(c, events, MAX_TARGETS) : 0;
+    ULONG count = input_waiting(c) ? collect_events(c, events, MAX_TARGETS) : 0;
     ExReleaseFastMutex(&g_lock);
     signal_events(events, count, TRUE);
-    if (!queued)
-        send(c, MIME_EVT_CONSOLE_READ, length, NULL, 0);
+    if (unacked)
+        send(c, MIME_EVT_CONSOLE_READ, unacked, NULL, 0);
     release(c);
 }
 
@@ -367,7 +551,40 @@ static NTSTATUS NTAPI con_success(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
-/* copies queued input, consuming it unless peeking. stops before an end of file once data was copied. */
+/*
+ * the utf-8 a record reads as from ReadConsole and ReadFile: the character
+ * of a key press, an enter as \r\n in line input, nothing for the other
+ * events. *used is the records it takes, two for a surrogate pair.
+ */
+static ULONG record_text(MIME_CONSOLE *c, CON_CHUNK *k, ULONG index, UCHAR out[8], ULONG *used)
+{
+    MIME_CONDRV_RECORD *r = &k->Record[index];
+    *used = 1;
+    if (r->EventType != CON_KEY_EVENT || !r->Key.KeyDown || !r->Key.Char)
+        return 0;
+    WCHAR w[2] = {r->Key.Char, 0};
+    ULONG units = 1;
+    if (w[0] >= 0xD800 && w[0] < 0xDC00 && index + 1 < k->Length) {
+        MIME_CONDRV_RECORD *low = &k->Record[index + 1];
+        if (low->EventType == CON_KEY_EVENT && low->Key.KeyDown && low->Key.Char >= 0xDC00 &&
+            low->Key.Char < 0xE000) {
+            w[1] = low->Key.Char;
+            units = 2;
+            *used = 2;
+        }
+    }
+    ULONG n = 0;
+    if (!NT_SUCCESS(RtlUnicodeToUTF8N((PCHAR)out, 8, &n, w, units * sizeof(WCHAR))))
+        n = 0;
+    if (w[0] == '\r' && (c->InputMode & CON_LINE_INPUT))
+        out[n++] = '\n';
+    return n;
+}
+
+/*
+ * copies input as bytes, consuming it unless peeking, and the events that
+ * read as nothing with it. stops before an end of file once data was copied.
+ */
 static ULONG take_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, BOOLEAN peek, BOOLEAN *eof, ULONG *acked)
 {
     ULONG done = 0;
@@ -377,33 +594,131 @@ static ULONG take_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, BOOLEAN peek,
     while (e != &c->Input && done < length) {
         CON_CHUNK *k = CONTAINING_RECORD(e, CON_CHUNK, Links);
         e = e->Flink;
-        if (k->Length == 0) {
+        if (!k->Records && k->Length == 0) {
             if (done)
                 break;
             *eof = TRUE;
-            if (!peek) {
-                RemoveEntryList(&k->Links);
-                *acked += k->HostBytes;
-                ExFreePool(k);
-            }
+            if (!peek)
+                free_chunk(c, k, acked);
             break;
         }
-        ULONG n = k->Length - k->Offset;
-        if (n > length - done)
-            n = length - done;
-        memcpy(out + done, k->Data + k->Offset, n);
+        ULONG first = k->First, offset = k->Offset;
+        if (!k->Records) {
+            ULONG n = k->Length - first;
+            if (n > length - done)
+                n = length - done;
+            memcpy(out + done, k->Data + first, n);
+            done += n;
+            first += n;
+            if (!peek)
+                c->InputBytes -= n;
+        }
+        USHORT repeat_left = 0;
+        while (k->Records && first < k->Length && done < length) {
+            MIME_CONDRV_RECORD *r = &k->Record[first];
+            UCHAR text[8];
+            ULONG used;
+            ULONG n = record_text(c, k, first, text, &used);
+            USHORT repeat = repeat_left ? repeat_left : r->Key.RepeatCount ? r->Key.RepeatCount : 1;
+            if (n) {
+                ULONG part = n - offset < length - done ? n - offset : length - done;
+                memcpy(out + done, text + offset, part);
+                done += part;
+                offset += part;
+                if (offset < n)
+                    break;
+                offset = 0;
+                if (repeat > 1 && used == 1) {
+                    repeat_left = repeat - 1;
+                    if (!peek)
+                        r->Key.RepeatCount = repeat_left;
+                    continue;
+                }
+            }
+            repeat_left = 0;
+            first += used;
+            if (!peek)
+                c->InputEvents -= used;
+        }
+        if (peek)
+            continue;
+        k->First = first;
+        k->Offset = offset;
+        if (first == k->Length)
+            free_chunk(c, k, acked);
+    }
+    return done;
+}
+
+/* turns the bytes waiting into records for a reader of records, as a console reads its keyboard. */
+static void bytes_to_records(MIME_CONSOLE *c)
+{
+    for (PLIST_ENTRY e = c->Input.Flink; e != &c->Input; e = e->Flink) {
+        CON_CHUNK *k = CONTAINING_RECORD(e, CON_CHUNK, Links);
+        ULONG length = k->Length - k->First;
+        if (k->Records || !length)
+            continue;
+        CON_CHUNK *r = new_chunk(TRUE, 2 * length);
+        if (!r)
+            return;
+        ConDecodeInput(k->Data + k->First, length, (c->InputMode & CON_VIRTUAL_TERMINAL_INPUT) != 0, FALSE,
+                       r->Record, 2 * length, &r->Length);
+        r->HostBytes = k->HostBytes;
+        InsertHeadList(&k->Links, &r->Links);
+        c->InputEvents += r->Length;
+        c->InputBytes -= length;
+        RemoveEntryList(&k->Links);
+        ExFreePool(k);
+        e = &r->Links;
+    }
+}
+
+/* copies records, consuming them unless peeking. an end of file heading the input ends the read. */
+static ULONG take_records(MIME_CONSOLE *c, MIME_CONDRV_RECORD *out, ULONG room, BOOLEAN peek, BOOLEAN *eof,
+                          ULONG *acked)
+{
+    ULONG done = 0;
+    *eof = FALSE;
+    *acked = 0;
+    bytes_to_records(c);
+    PLIST_ENTRY e = c->Input.Flink;
+    while (e != &c->Input && done < room) {
+        CON_CHUNK *k = CONTAINING_RECORD(e, CON_CHUNK, Links);
+        e = e->Flink;
+        if (!k->Records) {
+            if (done || k->Length)
+                break;
+            *eof = TRUE;
+            if (!peek)
+                free_chunk(c, k, acked);
+            break;
+        }
+        ULONG n = k->Length - k->First < room - done ? k->Length - k->First : room - done;
+        memcpy(out + done, k->Record + k->First, n * sizeof(*out));
         done += n;
         if (peek)
             continue;
-        k->Offset += n;
-        c->InputBytes -= n;
-        if (k->Offset == k->Length) {
-            RemoveEntryList(&k->Links);
-            *acked += k->HostBytes;
-            ExFreePool(k);
-        }
+        k->First += n;
+        k->Offset = 0;
+        c->InputEvents -= n;
+        if (k->First == k->Length)
+            free_chunk(c, k, acked);
     }
     return done;
+}
+
+/* after a read: the readiness and the input events follow what is left, and the host learns what was read. */
+static void after_read(MIME_CONSOLE *c, ULONG acked, BOOLEAN clear)
+{
+    BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0;
+    if (clear && !closed && IsListEmpty(&c->Input))
+        KeClearEvent(&c->InputReady);
+    PKEVENT events[MAX_TARGETS];
+    ULONG count = input_waiting(c) ? 0 : collect_events(c, events, MAX_TARGETS);
+    ExReleaseFastMutex(&g_lock);
+    signal_events(events, count, FALSE);
+    if (acked)
+        send(c, MIME_EVT_CONSOLE_READ, acked, NULL, 0);
 }
 
 static NTSTATUS read_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, ULONG_PTR *information)
@@ -414,15 +729,7 @@ static NTSTATUS read_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, ULONG_PTR 
         ULONG acked;
         ULONG n = take_input(c, out, length, FALSE, &eof, &acked);
         BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0;
-        if (!n && !eof && !closed)
-            KeClearEvent(&c->InputReady);
-        PKEVENT events[MAX_TARGETS];
-        BOOLEAN waiting = input_waiting(c);
-        ULONG count = waiting ? 0 : collect_events(c, events, MAX_TARGETS);
-        ExReleaseFastMutex(&g_lock);
-        signal_events(events, count, FALSE);
-        if (acked)
-            send(c, MIME_EVT_CONSOLE_READ, acked, NULL, 0);
+        after_read(c, acked, !n && !eof);
         if (n || eof || closed || !length) {
             *information = n;
             return STATUS_SUCCESS;
@@ -431,6 +738,78 @@ static NTSTATUS read_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, ULONG_PTR 
         if (status != STATUS_SUCCESS)
             return status;
     }
+}
+
+/* ReadConsoleInput: the total waiting, then the records. */
+static NTSTATUS read_records(MIME_CONSOLE *c, ULONG flags, PUCHAR buf, ULONG out_len, ULONG_PTR *information)
+{
+    if (out_len < sizeof(ULONG))
+        return STATUS_BUFFER_TOO_SMALL;
+    ULONG room = (out_len - sizeof(ULONG)) / sizeof(MIME_CONDRV_RECORD);
+    MIME_CONDRV_RECORD *records = (MIME_CONDRV_RECORD *)(buf + sizeof(ULONG));
+    BOOLEAN peek = (flags & MIME_CONDRV_READ_PEEK) != 0;
+    for (;;) {
+        ExAcquireFastMutex(&g_lock);
+        BOOLEAN eof;
+        ULONG acked;
+        ULONG n = take_records(c, records, room, peek, &eof, &acked);
+        *(PULONG)buf = c->InputEvents;
+        BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0;
+        after_read(c, acked, !n && !eof);
+        if (n || eof || closed || !room || (flags & MIME_CONDRV_READ_NOWAIT)) {
+            *information = sizeof(ULONG) + n * sizeof(MIME_CONDRV_RECORD);
+            return STATUS_SUCCESS;
+        }
+        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, NULL);
+        if (status != STATUS_SUCCESS)
+            return status;
+    }
+}
+
+/* events as WriteConsoleInput keeps them: known types only, the flags a console stores as booleans. */
+static BOOLEAN normalize_records(MIME_CONDRV_RECORD *r, ULONG count)
+{
+    for (ULONG i = 0; i < count; i++) {
+        r[i].Reserved = 0;
+        switch (r[i].EventType) {
+        case CON_KEY_EVENT:
+            r[i].Key.KeyDown = r[i].Key.KeyDown != 0;
+            break;
+        case CON_MOUSE_EVENT:
+            break;
+        case CON_FOCUS_EVENT:
+            r[i].Value = r[i].Value != 0;
+            /* fall through */
+        case CON_WINDOW_BUFFER_SIZE_EVENT:
+        case CON_MENU_EVENT: {
+            ULONG value = r[i].Value;
+            memset(&r[i].Key, 0, sizeof(r[i].Key));
+            r[i].Value = value;
+            break;
+        }
+        default:
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+/* the cursor key mode a program sets with DECCKM decides what vt input sends for the arrows. */
+static void watch_output(MIME_CONSOLE *c, const UCHAR *p, ULONG length)
+{
+    for (ULONG i = 0; i + 4 < length; i++) {
+        if (p[i] == 0x1B && p[i + 1] == '[' && p[i + 2] == '?' && p[i + 3] == '1' &&
+            (p[i + 4] == 'h' || p[i + 4] == 'l'))
+            c->CursorApplication = p[i + 4] == 'h';
+    }
+}
+
+/* output waits while the pause key holds it. */
+static NTSTATUS wait_output(MIME_CONSOLE *c)
+{
+    if (!c->OutputPaused)
+        return STATUS_SUCCESS;
+    return KeWaitForSingleObject(&c->OutputResumed, UserRequest, UserMode, FALSE, NULL);
 }
 
 static ULONG list_processes(MIME_CONSOLE *c, PULONG out, ULONG max)
@@ -531,6 +910,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                 st->Columns = c->Columns;
                 st->Rows = c->Rows;
                 st->InputBytes = c->InputBytes;
+                st->InputEvents = c->InputEvents;
                 st->ProcessGroup = self->ConsoleGroup;
                 ExReleaseFastMutex(&g_lock);
             }
@@ -549,8 +929,11 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             status = STATUS_INVALID_PARAMETER;
         } else if (c->Flags & MIME_CONDRV_CLOSED) {
             status = STATUS_PIPE_BROKEN;
-        } else {
+        } else if ((status = wait_output(c)) == STATUS_SUCCESS) {
             ULONG stream = *(PULONG)buf == MIME_CONDRV_STDERR ? MIME_CONDRV_STDERR : MIME_CONDRV_STDOUT;
+            ExAcquireFastMutex(&g_lock);
+            watch_output(c, buf + sizeof(ULONG), in_len - sizeof(ULONG));
+            ExReleaseFastMutex(&g_lock);
             send(c, MIME_EVT_CONSOLE_OUTPUT, stream, buf + sizeof(ULONG), in_len - sizeof(ULONG));
             information = in_len - sizeof(ULONG);
         }
@@ -558,27 +941,56 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     case IOCTL_CONDRV_READ:
         status = read_input(c, buf, out_len, &information);
         break;
-    case IOCTL_CONDRV_WRITE_INPUT: {
-        if (!in_len)
-            break;
-        ExAcquireFastMutex(&g_lock);
-        BOOLEAN queued = queue_input(c, buf, in_len, 0, FALSE);
-        PKEVENT events[MAX_TARGETS];
-        ULONG count = queued ? collect_events(c, events, MAX_TARGETS) : 0;
-        ExReleaseFastMutex(&g_lock);
-        signal_events(events, count, TRUE);
-        if (queued)
-            information = in_len;
-        else
-            status = STATUS_INSUFFICIENT_RESOURCES;
-        break;
-    }
     case IOCTL_CONDRV_PEEK: {
         BOOLEAN eof;
         ULONG acked;
         ExAcquireFastMutex(&g_lock);
         information = take_input(c, buf, out_len, TRUE, &eof, &acked);
         ExReleaseFastMutex(&g_lock);
+        break;
+    }
+    case IOCTL_CONDRV_READ_INPUT:
+        if (in_len < sizeof(ULONG))
+            status = STATUS_INVALID_PARAMETER;
+        else
+            status = read_records(c, *(PULONG)buf, buf, out_len, &information);
+        break;
+    case IOCTL_CONDRV_WRITE_INPUT: {
+        ULONG count = in_len >= sizeof(MIME_CONDRV_WRITE_INPUT)
+                          ? (in_len - sizeof(MIME_CONDRV_WRITE_INPUT)) / sizeof(MIME_CONDRV_RECORD)
+                          : 0;
+        MIME_CONDRV_RECORD *records = (MIME_CONDRV_RECORD *)(buf + sizeof(MIME_CONDRV_WRITE_INPUT));
+        if (in_len < sizeof(MIME_CONDRV_WRITE_INPUT) || out_len < sizeof(ULONG) ||
+            !normalize_records(records, count)) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        BOOLEAN append = (((MIME_CONDRV_WRITE_INPUT *)buf)->Flags & MIME_CONDRV_WRITE_APPEND) != 0;
+        ULONG written = 0;
+        ExAcquireFastMutex(&g_lock);
+        BOOLEAN was_waiting = input_waiting(c);
+        status = write_records(c, records, count, !append, &written);
+        PKEVENT events[MAX_TARGETS];
+        ULONG n = !was_waiting && input_waiting(c) ? collect_events(c, events, MAX_TARGETS) : 0;
+        ExReleaseFastMutex(&g_lock);
+        signal_events(events, n, TRUE);
+        *(PULONG)buf = written;
+        information = sizeof(ULONG);
+        break;
+    }
+    case IOCTL_CONDRV_ANSI_CARRY: {
+        MIME_CONDRV_RECORD kept;
+        ExAcquireFastMutex(&g_lock);
+        BOOLEAN had = c->HasAnsiCarry;
+        kept = c->AnsiCarry;
+        c->HasAnsiCarry = in_len >= sizeof(MIME_CONDRV_RECORD);
+        if (c->HasAnsiCarry)
+            c->AnsiCarry = *(MIME_CONDRV_RECORD *)buf;
+        ExReleaseFastMutex(&g_lock);
+        if (had && out_len >= sizeof(kept)) {
+            *(MIME_CONDRV_RECORD *)buf = kept;
+            information = sizeof(kept);
+        }
         break;
     }
     case IOCTL_CONDRV_SET_MODE:
@@ -628,12 +1040,12 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     case IOCTL_CONDRV_FLUSH_INPUT: {
         ULONG acked = 0;
         ExAcquireFastMutex(&g_lock);
-        while (!IsListEmpty(&c->Input)) {
-            CON_CHUNK *k = CONTAINING_RECORD(RemoveHeadList(&c->Input), CON_CHUNK, Links);
-            acked += k->HostBytes;
-            ExFreePool(k);
-        }
-        c->InputBytes = 0;
+        while (!IsListEmpty(&c->Input))
+            free_chunk(c, CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links), &acked);
+        acked += c->PendingAck;
+        c->PendingAck = 0;
+        c->CarryLength = 0;
+        c->HasAnsiCarry = FALSE;
         PKEVENT events[MAX_TARGETS];
         ULONG count = input_waiting(c) ? 0 : collect_events(c, events, MAX_TARGETS);
         ExReleaseFastMutex(&g_lock);
@@ -709,7 +1121,7 @@ static NTSTATUS NTAPI con_read_write(PDEVICE_OBJECT device, PIRP irp)
     if (write) {
         if (c->Flags & MIME_CONDRV_CLOSED) {
             status = STATUS_PIPE_BROKEN;
-        } else if (length) {
+        } else if (length && (status = wait_output(c)) == STATUS_SUCCESS) {
             send(c, MIME_EVT_CONSOLE_OUTPUT, stream == STREAM_ERROR ? MIME_CONDRV_STDERR : MIME_CONDRV_STDOUT,
                  irp->UserBuffer, length);
             information = length;
@@ -821,7 +1233,8 @@ static NTSTATUS NTAPI con_fs_control(PDEVICE_OBJECT device, PIRP irp)
         head[1] = c->InputBytes;
         copied = take_input(c, buf + 4 * sizeof(ULONG), out_len - 4 * sizeof(ULONG), TRUE, &eof, &acked);
         /* the end of the input is next when its empty chunk heads the queue, whatever room the peek has. */
-        BOOLEAN at_end = !IsListEmpty(&c->Input) && !CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links)->Length;
+        CON_CHUNK *head = IsListEmpty(&c->Input) ? NULL : CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
+        BOOLEAN at_end = head && !head->Records && !head->Length;
         BOOLEAN broken = at_end || (!c->InputBytes && (c->Flags & MIME_CONDRV_CLOSED));
         ExReleaseFastMutex(&g_lock);
         release(c);
