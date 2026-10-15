@@ -160,6 +160,8 @@ typedef struct MimeBootInfo {
 
     char system_root[64]; /* "C:\\Windows" */
     char cmdline[256];
+    /* the host's swap: the guest has no paging file and reports ram plus this as its commit limit. */
+    uint64_t swap_size;
 } MimeBootInfo;
 
 /*

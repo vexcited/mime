@@ -103,6 +103,21 @@ static bool transparent_huge_pages(MimeVm *vm)
     return strstr(mode, "[always]") || (vm->huge_pages && strstr(mode, "[madvise]"));
 }
 
+/* the swap space of the host, which pages out guest memory in place of a windows paging file. */
+static uint64_t host_swap_size(void)
+{
+    FILE *f = fopen("/proc/meminfo", "r");
+    if (!f)
+        return 0;
+    char line[128];
+    unsigned long long kb = 0;
+    while (fgets(line, sizeof(line), f))
+        if (sscanf(line, "SwapTotal: %llu kB", &kb) == 1)
+            break;
+    fclose(f);
+    return (uint64_t)kb * 1024;
+}
+
 static bool set_slot(MimeVm *vm, uint32_t slot, uint64_t ipa, uint64_t size, void *host, bool readonly)
 {
     struct kvm_userspace_memory_region region = {
@@ -300,6 +315,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     mime_vm_init_boot(vm);
     vm->boot->irq_intid = MIME_X64_IRQ_VECTOR;
     vm->boot->memory_block_shift = transparent_huge_pages(vm) ? 21 : 12;
+    vm->boot->swap_size = host_swap_size();
     return true;
 }
 

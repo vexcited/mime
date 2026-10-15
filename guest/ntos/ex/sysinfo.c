@@ -458,7 +458,12 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     }
     case SystemPerformanceInformation: {
         UCHAR perf[0x158] = {0};
-        *(PULONG)(perf + 0x4C) = (ULONG)MmGetFreePages(); /* AvailablePages */
+        /* no paging file: the host swaps guest memory, so the limit is ram plus the host's swap. */
+        ULONG64 total = MmGetTotalPages(), free = MmGetFreePages();
+        *(PULONG)(perf + 0x4C) = (ULONG)free;                                            /* AvailablePages */
+        *(PULONG)(perf + 0x50) = (ULONG)(total - free);                                  /* CommittedPages */
+        *(PULONG)(perf + 0x54) = (ULONG)(total + (HalBootInfo->swap_size >> PAGE_SHIFT)); /* CommitLimit */
+        *(PULONG)(perf + 0x58) = (ULONG)(total - free);                                  /* PeakCommitment */
         return copy_info(info, perf, sizeof(perf), length, returned);
     }
     case SystemKernelDebuggerInformation: {

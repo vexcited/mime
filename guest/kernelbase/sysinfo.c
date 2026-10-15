@@ -272,16 +272,23 @@ BOOL WINAPI GlobalMemoryStatusEx(LPMEMORYSTATUSEX status)
     basic_information(&basic);
     UCHAR perf[0x158];
     ULONGLONG total = (ULONGLONG)basic.NumberOfPhysicalPages * basic.PageSize;
-    ULONGLONG available = total / 2;
-    if (NT_SUCCESS(NtQuerySystemInformation(SystemPerformanceInformation, perf, sizeof(perf), NULL)))
+    ULONGLONG available = total / 2, limit = total * 2, committed = total - available;
+    if (NT_SUCCESS(NtQuerySystemInformation(SystemPerformanceInformation, perf, sizeof(perf), NULL))) {
         available = (ULONGLONG)*(PULONG)(perf + SYSTEM_PERFORMANCE_AVAILABLE_PAGES) * basic.PageSize;
+        committed = (ULONGLONG)*(PULONG)(perf + 0x50) * basic.PageSize;
+        if (*(PULONG)(perf + 0x54))
+            limit = (ULONGLONG)*(PULONG)(perf + 0x54) * basic.PageSize;
+    }
     if (available > total)
         available = total;
+    if (committed > limit)
+        committed = limit;
     status->dwMemoryLoad = total ? (DWORD)((total - available) * 100 / total) : 0;
     status->ullTotalPhys = total;
     status->ullAvailPhys = available;
-    status->ullTotalPageFile = total * 2;
-    status->ullAvailPageFile = available + total;
+    /* the commit limit and what is left of it, as windows reports them. */
+    status->ullTotalPageFile = limit;
+    status->ullAvailPageFile = limit - committed;
     status->ullTotalVirtual = basic.MaximumUserModeAddress - basic.MinimumUserModeAddress + 1;
     status->ullAvailVirtual = status->ullTotalVirtual - (total - available);
     status->ullAvailExtendedVirtual = 0;
