@@ -52,7 +52,9 @@ static const char *const g_skeleton[] = {
     "Windows/Temp",
     "Program Files",
     "Program Files (x86)",
-    "Program Files (Arm)",
+#if defined(__aarch64__)
+    "Program Files (Arm)", /* arm64 windows only */
+#endif
     "ProgramData",
     "Users/Public",
     "Windows/System32/config",

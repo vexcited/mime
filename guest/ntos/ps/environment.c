@@ -153,18 +153,21 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     /* the variables userenv sets before reading the registry. */
     set_z(env, L"ALLUSERSPROFILE", L"C:\\ProgramData");
     set_z(env, L"CommonProgramFiles", L"C:\\Program Files\\Common Files");
-    set_z(env, L"CommonProgramFiles(Arm)", L"C:\\Program Files (Arm)\\Common Files");
     set_z(env, L"CommonProgramFiles(x86)", L"C:\\Program Files (x86)\\Common Files");
     set_z(env, L"CommonProgramW6432", L"C:\\Program Files\\Common Files");
     set_z(env, L"COMPUTERNAME", computer);
     set_z(env, L"ProgramData", L"C:\\ProgramData");
     set_z(env, L"ProgramFiles", L"C:\\Program Files");
-    set_z(env, L"ProgramFiles(Arm)", L"C:\\Program Files (Arm)");
     set_z(env, L"ProgramFiles(x86)", L"C:\\Program Files (x86)");
     set_z(env, L"ProgramW6432", L"C:\\Program Files");
     set_z(env, L"PUBLIC", L"C:\\Users\\Public");
     set_z(env, L"SystemDrive", L"C:");
     set_z(env, L"SystemRoot", L"C:\\Windows");
+    /* only arm64 windows has a folder for arm64 programs apart from x64 ones. */
+    if (MIME_NATIVE_ARCHITECTURE == PROCESSOR_ARCHITECTURE_ARM64) {
+        set_z(env, L"CommonProgramFiles(Arm)", L"C:\\Program Files (Arm)\\Common Files");
+        set_z(env, L"ProgramFiles(Arm)", L"C:\\Program Files (Arm)");
+    }
 
     load_key(env, L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", FALSE);
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\REGISTRY\\USER\\%ls\\Volatile Environment", sid);
@@ -180,9 +183,12 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     if (machine == IMAGE_FILE_MACHINE_AMD64)
         set_z(env, L"PROCESSOR_ARCHITECTURE", L"AMD64");
 
+    /* 32-bit programs get the 32-bit program folders, as wow64 gives them. */
     if (machine == IMAGE_FILE_MACHINE_I386) {
         set_z(env, L"PROCESSOR_ARCHITECTURE", L"x86");
         set_z(env, L"PROCESSOR_ARCHITEW6432", MIME_NATIVE_ARCHITECTURE_NAME);
+        set_z(env, L"ProgramFiles", L"C:\\Program Files (x86)");
+        set_z(env, L"CommonProgramFiles", L"C:\\Program Files (x86)\\Common Files");
     }
 
     /* sorted, case insensitive, like RtlSetEnvironmentVariable keeps it. */
