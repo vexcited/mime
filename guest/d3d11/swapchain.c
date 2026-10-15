@@ -20,6 +20,10 @@ typedef struct D3dSwapChain {
     DXGI_SWAP_CHAIN_DESC1 desc;
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen;
     BOOL fullscreen_state;
+    /* the window as it was before fullscreen made it cover the output. */
+    BOOL windowed_saved;
+    RECT windowed_rect;
+    LONG windowed_style, windowed_ex_style;
     D3dResource *back;
     /* the single sampled copy a multisampled back buffer resolves to before the blit. */
     D3dResource *resolved;
@@ -325,6 +329,8 @@ static HRESULT STDMETHODCALLTYPE sc_query(IDXGISwapChain4 *iface, REFIID riid, v
 
 static ULONG STDMETHODCALLTYPE sc_add_ref(IDXGISwapChain4 *iface) { return InterlockedIncrement(&impl(iface)->refs); }
 
+static void leave_fullscreen(D3dSwapChain *sc);
+
 static ULONG STDMETHODCALLTYPE sc_release(IDXGISwapChain4 *iface)
 {
     D3dSwapChain *sc = impl(iface);
@@ -332,6 +338,8 @@ static ULONG STDMETHODCALLTYPE sc_release(IDXGISwapChain4 *iface)
     if (refs)
         return refs;
     D3dDevice *device = sc->device;
+    if (sc->fullscreen_state)
+        leave_fullscreen(sc);
     destroy_swapchain(sc);
     D3dVk *vk = &device->vk;
     for (UINT i = 0; i < SEMAPHORES; i++)
@@ -403,9 +411,65 @@ static HRESULT STDMETHODCALLTYPE sc_get_buffer(IDXGISwapChain4 *iface, UINT inde
     return sc->back->iface->lpVtbl->QueryInterface(sc->back->iface, riid, surface);
 }
 
+/*
+ * fullscreen as dxgi.dll makes it, the display mode left as it is: the
+ * window loses its frame and edges and covers the output, on top of the
+ * others; leaving gives it back its styles, place and size.
+ */
+static BOOL fullscreen_style(LONG style, LONG ex_style)
+{
+    return !(style & 0x80CF0000) && (ex_style & 0x789) == WS_EX_TOPMOST;
+}
+
+static void enter_fullscreen(D3dSwapChain *sc, IDXGIOutput *output)
+{
+    LONG style = GetWindowLongW(sc->window, GWL_STYLE), ex_style = GetWindowLongW(sc->window, GWL_EXSTYLE);
+    if (!fullscreen_style(style, ex_style)) {
+        GetWindowRect(sc->window, &sc->windowed_rect);
+        sc->windowed_style = style;
+        sc->windowed_ex_style = ex_style;
+        sc->windowed_saved = TRUE;
+        SetWindowLongW(sc->window, GWL_STYLE, style & 0x7F30FFFF);
+        SetWindowLongW(sc->window, GWL_EXSTYLE, ex_style & 0xFFFFF87E);
+    }
+    DXGI_OUTPUT_DESC desc;
+    if (FAILED(output->lpVtbl->GetDesc(output, &desc)))
+        return;
+    RECT r = desc.DesktopCoordinates;
+    SetWindowPos(sc->window, HWND_TOPMOST, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    SetWindowPos(sc->window, NULL, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+}
+
+static void leave_fullscreen(D3dSwapChain *sc)
+{
+    if (!sc->windowed_saved)
+        return;
+    SetWindowLongW(sc->window, GWL_STYLE, sc->windowed_style);
+    SetWindowLongW(sc->window, GWL_EXSTYLE, sc->windowed_ex_style);
+    RECT r = sc->windowed_rect;
+    SetWindowPos(sc->window, HWND_NOTOPMOST, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    sc->windowed_saved = FALSE;
+}
+
 static HRESULT STDMETHODCALLTYPE sc_set_fullscreen_state(IDXGISwapChain4 *iface, BOOL fullscreen, IDXGIOutput *target)
 {
-    impl(iface)->fullscreen_state = !!fullscreen;
+    D3dSwapChain *sc = impl(iface);
+    if (!fullscreen && target)
+        return DXGI_ERROR_INVALID_CALL;
+    if (fullscreen) {
+        IDXGIOutput *output = target;
+        if (output)
+            output->lpVtbl->AddRef(output);
+        else if (FAILED(iface->lpVtbl->GetContainingOutput(iface, &output)))
+            return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+        enter_fullscreen(sc, output);
+        output->lpVtbl->Release(output);
+    } else if (sc->fullscreen_state) {
+        leave_fullscreen(sc);
+    }
+    sc->fullscreen_state = !!fullscreen;
     return S_OK;
 }
 
@@ -779,6 +843,10 @@ HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window
         sc->latency = CreateSemaphoreW(NULL, sc->max_latency, 16, NULL);
     factory->lpVtbl->AddRef(factory);
     device->iface.lpVtbl->AddRef(&device->iface);
+    if (sc->fullscreen_state) {
+        sc->fullscreen_state = FALSE;
+        sc_set_fullscreen_state(&sc->iface, TRUE, NULL);
+    }
     *out = (IDXGISwapChain1 *)&sc->iface;
     return S_OK;
 }
