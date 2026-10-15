@@ -50,11 +50,6 @@ typedef struct _SID_AND_ATTRIBUTES {
 
 /* ---------------------------------------------------------------- tokens */
 
-typedef struct _LUID {
-    DWORD LowPart;
-    LONG HighPart;
-} LUID, *PLUID;
-
 typedef struct _LUID_AND_ATTRIBUTES {
     LUID Luid;
     DWORD Attributes;

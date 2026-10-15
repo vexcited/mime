@@ -38,6 +38,10 @@ typedef void *HPCON;
 typedef HANDLE *LPHANDLE;
 typedef unsigned int UINT32;
 typedef signed int INT32;
+typedef unsigned char UINT8;
+typedef signed char INT8;
+typedef unsigned short UINT16;
+typedef signed short INT16;
 
 #define INVALID_HANDLE_VALUE ((HANDLE)(LONG_PTR)-1)
 #define INVALID_FILE_SIZE ((DWORD)0xFFFFFFFF)

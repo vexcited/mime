@@ -91,6 +91,12 @@ typedef union _LARGE_INTEGER {
     LONGLONG QuadPart;
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
+/* a locally unique identifier: logon sessions, privileges, adapters. */
+typedef struct _LUID {
+    ULONG LowPart;
+    LONG HighPart;
+} LUID, *PLUID;
+
 typedef union _ULARGE_INTEGER {
     struct {
         ULONG LowPart;
@@ -1882,7 +1888,14 @@ typedef struct _KUSER_SHARED_DATA {
  * the performance counter, which user mode reads itself: the processor's
  * counter with the bias and shift the kernel publishes (ke/timer.c).
  */
-NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PLARGE_INTEGER frequency);
+#ifndef NTSYSCALLAPI
+#ifdef MIME_KERNEL
+#define NTSYSCALLAPI
+#else
+#define NTSYSCALLAPI DECLSPEC_IMPORT
+#endif
+#endif
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PLARGE_INTEGER frequency);
 
 FORCEINLINE ULONG64 MimeReadQpc(void)
 {

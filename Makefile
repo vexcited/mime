@@ -67,7 +67,7 @@ EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D000000
 	bcrypt:0x7FF530000000 avrt:0x7FF520000000 dinput8:0x7FF510000000 dwrite:0x7FF500000000 \
 	dxgi:0x7FF4F0000000 wsock32:0x7FF4E0000000 ucrtbase:0x7FF4D0000000 mpr:0x7FF4C0000000 wintrust:0x7FF4B0000000 mmdevapi:0x7FF4A0000000 \
 	gdiplus:0x7FF490000000 wininet:0x7FF480000000 urlmon:0x7FF470000000 msimg32:0x7FF460000000 \
-	oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000
+	oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000 d3d11:0x7FF420000000
 EXTRA_NAMES := $(foreach d,$(EXTRA_DLLS),$(firstword $(subst :, ,$(d))))
 # the file name of each, winspool being a driver file.
 extra_file = $(if $(filter winspool,$(1)),$(1).drv,$(1).dll)
@@ -599,7 +599,19 @@ $(BUILD)/lib/$(1).lib: $(SYSTEM32)/$(3)
 $(BUILD)/lib/x64/$(1).lib: $(SYSX64)/$(3)
 endef
 
+# dxgi and direct3d reach vulkan-1.dll with LoadLibrary, and share the private data of their objects.
+DX_LIB_SRC := guest/lib/privdata/privdata.c
+DXBC_SRC := $(wildcard guest/lib/dxbc/*.c)
+EXTRA_OBJ_dxgi := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC))
+X64_EXTRA_OBJ_dxgi := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC))
+EXTRA_OBJ_d3d11 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC) $(DXBC_SRC))
+X64_EXTRA_OBJ_d3d11 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC) $(DXBC_SRC))
+
 $(foreach d,$(EXTRA_DLLS),$(eval $(call EXTRA_DLL,$(firstword $(subst :, ,$(d))),$(lastword $(subst :, ,$(d))),$(call extra_file,$(firstword $(subst :, ,$(d)))))))
+
+USER_CFLAGS_dxgi += -Ithird_party/khronos
+USER_CFLAGS_d3d11 += -Ithird_party/khronos
+USER_CFLAGS_lib += -Ithird_party/SPIRV-Cross
 
 sysx64: $(X64_FILES)
 

@@ -374,7 +374,8 @@ WOW64API void NTAPI Wow64ApcRoutine(PVOID packed, PVOID argument2, PVOID argumen
 static NTSTATUS queue_apc32(const ULONG *a)
 {
     ULONG64 packed = (ULONG64)a[1] << 32 | a[2];
-    return NtQueueApcThread((HANDLE)(LONG_PTR)(LONG)a[0], (PPS_APC_ROUTINE)Wow64ApcRoutine, (PVOID)packed,
+    /* the routine also takes the context, which user apc delivery passes as a fourth argument. */
+    return NtQueueApcThread((HANDLE)(LONG_PTR)(LONG)a[0], (PPS_APC_ROUTINE)(void *)Wow64ApcRoutine, (PVOID)packed,
                             (PVOID)(ULONG_PTR)a[3], (PVOID)(ULONG_PTR)a[4]);
 }
 
