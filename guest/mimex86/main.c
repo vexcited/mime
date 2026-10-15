@@ -1099,8 +1099,10 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserCallbackDispatcher(ULONG api, PVOID argum
     c->r[X86_RSP] = nested_stack(t->frame);
     if (g_guest.is32) {
         MX_CALLBACK32 callback;
-        if (!Mx32MarshalCallback(c, api, arguments, length, &callback))
+        ULONG sp = (ULONG)c->r[X86_RSP];
+        if (!Mx32MarshalCallback(&sp, api, arguments, length, &callback))
             NtCallbackReturn(NULL, 0, STATUS_NOT_SUPPORTED);
+        c->r[X86_RSP] = sp;
         ULONG *stack = (void *)(ULONG_PTR)c->r[X86_RSP];
         *--stack = callback.Length;
         *--stack = (ULONG)(ULONG_PTR)callback.Guest;

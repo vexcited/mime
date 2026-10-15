@@ -312,7 +312,11 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(out.basic);
         break;
     case ProcessDebugPort:
+        size = sizeof(ULONG_PTR);
+        break;
     case ProcessWow64Information:
+        /* the 32-bit peb of a wow64 process, 0 for any other. */
+        out.ptr = (ULONG_PTR)process->Wow64Peb;
         size = sizeof(ULONG_PTR);
         break;
     case ProcessDebugFlags:

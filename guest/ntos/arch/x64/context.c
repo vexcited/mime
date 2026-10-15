@@ -32,11 +32,21 @@ void KiSwitchAddressSpace(PKPROCESS process)
         KiWriteCr3(process->DirectoryTableBase);
 }
 
+/* fs of a wow64 thread in 32-bit code is its 32-bit teb, through the segment and its loaded base. */
+static void set_teb32(ULONG_PTR teb32)
+{
+    ULONG64 *entry = &KeGetPcr()->GdtBase[KGDT64_R3_CMTEB / 8];
+    *entry = (*entry & ~(0xFFFFFFull << 16 | 0xFFull << 56)) | (teb32 & 0xFFFFFF) << 16 | ((teb32 >> 24) & 0xFF) << 56;
+    KiWriteMsr(MSR_FS_BASE, teb32);
+}
+
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
     /* the teb of the thread is gs in user mode, swapped in at each return there. */
     if (next->Teb)
         KiWriteMsr(MSR_KERNEL_GS_BASE, (ULONG64)next->Teb);
+    if (next->Teb32)
+        set_teb32((ULONG_PTR)next->Teb32);
     KiSwapContextInternal(&old->KernelSp, next->KernelSp, old->XSaveArea, next->XSaveArea);
 }
 
@@ -208,6 +218,12 @@ void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID con
     thread->TrapFrame = (PKTRAP_FRAME)trap;
 }
 
+/* the user stack pointer; 32-bit code leaves the upper half of rsp undefined. */
+static ULONG64 user_stack(const KTRAP_FRAME *frame)
+{
+    return frame->Cs == (KGDT64_R3_CMCODE | RPL_USER) ? (ULONG)frame->Rsp : frame->Rsp;
+}
+
 static void user_segments(PKTRAP_FRAME frame)
 {
     frame->Cs = KGDT64_R3_CODE | RPL_USER;
@@ -303,9 +319,11 @@ void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, K
         frame->Rip = ctx->Rip;
         frame->Rsp = ctx->Rsp;
         if (mode == UserMode) {
-            /* user mode may only change the arithmetic and trace flags, and stays in 64-bit user mode. */
+            /* user mode may only change the arithmetic and trace flags, and stays in user mode, 64 or 32-bit. */
             frame->Rflags = (ctx->EFlags & EFLAGS_USER_MASK) | EFLAGS_IF | 0x2;
             user_segments(frame);
+            if (ctx->SegCs == (KGDT64_R3_CMCODE | RPL_USER))
+                frame->Cs = KGDT64_R3_CMCODE | RPL_USER;
         } else {
             frame->Rflags = ctx->EFlags;
             frame->Cs = ctx->SegCs;
@@ -333,7 +351,7 @@ BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE ro
     ctx.P2Home = (ULONG64)arg1;
     ctx.P3Home = (ULONG64)arg2;
     ctx.P4Home = (ULONG64)routine;
-    ULONG64 machine = ((frame->Rsp - 0x80) & ~15ull) - 0x30;
+    ULONG64 machine = ((user_stack(frame) - 0x80) & ~15ull) - 0x30;
     ULONG64 sp = machine - sizeof(CONTEXT);
     ULONG64 mframe[5] = {frame->Rip, frame->Cs, frame->Rflags, frame->Rsp, frame->Ss};
     if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, mframe, sizeof(mframe))) ||
@@ -341,6 +359,7 @@ BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE ro
         return FALSE;
     frame->Rsp = sp;
     frame->Rip = (ULONG64)dispatcher;
+    user_segments(frame);
     return TRUE;
 }
 
@@ -353,7 +372,7 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
 {
     CONTEXT ctx;
     KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
-    ULONG64 machine = ((frame->Rsp - 0x80) & ~15ull) - 0x30;
+    ULONG64 machine = ((user_stack(frame) - 0x80) & ~15ull) - 0x30;
     ULONG64 rec = machine - 0xA0;
     ULONG64 ctx_addr = rec - sizeof(CONTEXT);
     MIME_STATIC_ASSERT(sizeof(EXCEPTION_RECORD) <= 0xA0 && sizeof(CONTEXT) == 0x4D0, "dispatcher layout");
@@ -366,6 +385,7 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
     frame->Rcx = rec;
     frame->Rdx = ctx_addr;
     frame->Rip = (ULONG64)dispatcher;
+    user_segments(frame);
     return TRUE;
 }
 

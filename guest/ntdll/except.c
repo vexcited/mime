@@ -121,6 +121,9 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchException(PEXCEPTION_RECORD record, PCONTE
 void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context)
 {
     NTSTATUS status;
+    /* wow64 sees the exceptions of 32-bit code first, see ldr.c. */
+    if (LdrpWow64PrepareForException)
+        LdrpWow64PrepareForException(record, context);
     if (RtlDispatchException(record, context)) {
         call_handlers(&g_continue, record, context);
         status = NtContinue(context, FALSE);

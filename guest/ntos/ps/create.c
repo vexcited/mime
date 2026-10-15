@@ -6,6 +6,7 @@
  * descriptors in.
  */
 #include "../ntos.h"
+#include <mime/wow32.h>
 
 #define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1) /* DETACHED_PROCESS, as kernelbase marks it */
 #define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
@@ -57,6 +58,41 @@ static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src
 }
 
 /* builds the PEB, process parameters and environment in the new process. */
+/*
+ * the 32-bit peb of a wow64 process, below 2 GiB: what the kernel knows of
+ * the process, as the 64-bit peb has it. wow64.dll adds the 32-bit process
+ * parameters.
+ */
+static NTSTATUS setup_wow64_peb(PEPROCESS process)
+{
+    PVOID base = NULL;
+    SIZE_T size = PAGE_SIZE;
+    NTSTATUS status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (!NT_SUCCESS(status))
+        return status;
+    PPEB native = process->Peb;
+    MIME_PEB32 *peb = base;
+    peb->ImageBaseAddress = (ULONG)(ULONG_PTR)native->ImageBaseAddress;
+    peb->NumberOfProcessors = native->NumberOfProcessors;
+    peb->OSMajorVersion = native->OSMajorVersion;
+    peb->OSMinorVersion = native->OSMinorVersion;
+    peb->OSBuildNumber = native->OSBuildNumber;
+    peb->OSPlatformId = native->OSPlatformId;
+    peb->ImageSubsystem = native->ImageSubsystem;
+    peb->ImageSubsystemMajorVersion = native->ImageSubsystemMajorVersion;
+    peb->ImageSubsystemMinorVersion = native->ImageSubsystemMinorVersion;
+    peb->ActiveProcessAffinityMask = (ULONG)native->ActiveProcessAffinityMask;
+    peb->CriticalSectionTimeout = native->CriticalSectionTimeout;
+    peb->HeapSegmentReserve = (ULONG)native->HeapSegmentReserve;
+    peb->HeapSegmentCommit = (ULONG)native->HeapSegmentCommit;
+    peb->HeapDeCommitTotalFreeThreshold = (ULONG)native->HeapDeCommitTotalFreeThreshold;
+    peb->HeapDeCommitFreeBlockThreshold = (ULONG)native->HeapDeCommitFreeBlockThreshold;
+    peb->MaximumNumberOfHeaps = native->MaximumNumberOfHeaps;
+    peb->SessionId = native->SessionId;
+    process->Wow64Peb = peb;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
 {
     PCUNICODE_STRING image = &p->Image, cmdline = &p->CommandLine, cwd = &p->CurrentDirectory;
@@ -274,6 +310,8 @@ static NTSTATUS create_process(const PSP_PARAMS *p, ULONG64 request_id, MIME_CON
     }
     if (NT_SUCCESS(status))
         status = setup_peb(process, p);
+    if (NT_SUCCESS(status) && PspIsWow64Process(process))
+        status = setup_wow64_peb(process);
     KiAttachProcess(saved);
 
     PETHREAD thread = NULL;

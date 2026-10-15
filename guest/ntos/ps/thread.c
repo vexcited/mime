@@ -3,6 +3,7 @@
  */
 #include "../ntos.h"
 #include <mime/mx64.h>
+#include <mime/wow32.h>
 
 #define KERNEL_STACK_SIZE (64 * 1024)
 #define MIME_DEFAULT_STACK_RESERVE (1024 * 1024)
@@ -158,6 +159,46 @@ static void user_thread_startup(PVOID context)
 
 #define MIME_NATIVE_STACK_SIZE (1024 * 1024)
 
+/*
+ * the 32-bit half of a wow64 thread, as windows lays it out: the 32-bit teb
+ * 0x2000 bytes after the 64-bit one, each pointing at the other, the 64-bit
+ * teb's exception list holding the 32-bit teb, its stack the 64-bit stack
+ * and the 32-bit teb's the program's, and the cpu area at the top of the
+ * 64-bit stack.
+ */
+static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID stack, SIZE_T stack_size,
+                            ULONG_PTR native_top, ULONG_PTR *native_base)
+{
+    PUCHAR teb32 = (PUCHAR)teb + MIME_TEB_SIZE;
+    PULONG t = (PULONG)teb32;
+    ULONG_PTR cpu = (native_top - sizeof(WOW64_CPURESERVED)) & ~(ULONG_PTR)63;
+    PWOW64_CPURESERVED area = (PWOW64_CPURESERVED)cpu;
+    memset(area, 0, sizeof(*area));
+    area->Machine = IMAGE_FILE_MACHINE_I386;
+    teb->TlsSlots[WOW64_TLS_CPURESERVED] = area;
+    teb->WowTebOffset = MIME_TEB_SIZE;
+    teb->NtTib.ExceptionList = (PVOID)teb32;
+    *native_base = cpu;
+
+    t[MIME_TEB32_EXCEPTION_LIST / 4] = 0xFFFFFFFFu;
+    t[MIME_TEB32_STACK_BASE / 4] = (ULONG)((ULONG_PTR)stack + stack_size);
+    t[MIME_TEB32_STACK_LIMIT / 4] = (ULONG)(ULONG_PTR)stack;
+    t[MIME_TEB32_SELF / 4] = (ULONG)(ULONG_PTR)teb32;
+    t[MIME_TEB32_CLIENT_ID / 4] = (ULONG)(ULONG_PTR)thread->Cid.UniqueProcess;
+    t[MIME_TEB32_CLIENT_ID / 4 + 1] = (ULONG)(ULONG_PTR)thread->Cid.UniqueThread;
+    t[MIME_TEB32_REAL_CLIENT_ID / 4] = (ULONG)(ULONG_PTR)thread->Cid.UniqueProcess;
+    t[MIME_TEB32_REAL_CLIENT_ID / 4 + 1] = (ULONG)(ULONG_PTR)thread->Cid.UniqueThread;
+    t[MIME_TEB32_PEB / 4] = (ULONG)(ULONG_PTR)process->Wow64Peb;
+    t[MIME_TEB32_LOCALE / 4] = 0x0409;
+    t[MIME_TEB32_DEALLOCATION_STACK / 4] = (ULONG)(ULONG_PTR)stack;
+    t[MIME_TEB32_WOW_TEB_OFFSET / 4] = (ULONG)-MIME_TEB_SIZE;
+    MIME_STRING32 *string = (MIME_STRING32 *)(teb32 + MIME_TEB32_STATIC_STRING);
+    string->MaximumLength = 522;
+    string->Buffer = (ULONG)(ULONG_PTR)teb32 + MIME_TEB32_STATIC_BUFFER;
+    t[MIME_TEB32_TLS_LINKS / 4] = t[MIME_TEB32_TLS_LINKS / 4 + 1] = (ULONG)(ULONG_PTR)teb32 + MIME_TEB32_TLS_LINKS;
+    thread->Tcb.Teb32 = teb32;
+}
+
 /* allocates the user stack and teb, then creates the kernel half of the thread. */
 NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out)
@@ -167,6 +208,8 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
         return STATUS_DLL_NOT_FOUND;
     PVOID ldr_thunk = dll->LdrInitializeThunk;
     PVOID user_start = dll->RtlUserThreadStart;
+    BOOLEAN wow64 = PspIsWow64Process(process);
+    /* a wow64 thread runs 64-bit code on a stack of its own too, like the translator. */
     BOOLEAN translated = process->Machine != MIME_NATIVE_MACHINE;
     if (!stack_reserve)
         stack_reserve = MIME_DEFAULT_STACK_RESERVE;
@@ -178,9 +221,11 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     PVOID stack = NULL, teb_va = NULL;
     SIZE_T size = stack_reserve;
     NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | MEM_COMMIT | (process->Machine == IMAGE_FILE_MACHINE_I386 ? 0 : MEM_TOP_DOWN), PAGE_READWRITE);
-    SIZE_T teb_size = MIME_TEB_SIZE;
+    /* the 32-bit teb that follows a wow64 thread's must be reachable from 32-bit code. */
+    SIZE_T teb_size = MIME_TEB_SIZE + (wow64 ? MIME_TEB32_SIZE : 0);
     if (NT_SUCCESS(status))
-        status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
+        status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT | (wow64 ? 0 : MEM_TOP_DOWN),
+                                   PAGE_READWRITE);
     /* the translator runs on a stack of its own, the program keeps the thread stack. */
     PVOID native_stack = NULL;
     SIZE_T native_size = MIME_NATIVE_STACK_SIZE;
@@ -221,9 +266,20 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
 
     /* initial context consumed by LdrInitializeThunk, then NtContinue'd into RtlUserThreadStart. */
     ULONG64 ctx_va = (stack_base - sizeof(CONTEXT)) & ~15ull;
+    ULONG64 sp = native_stack ? (ULONG64)native_stack + native_size : ctx_va;
+    if (wow64) {
+        /* the 64-bit teb describes the 64-bit stack, which holds the cpu area and the 64-bit start context. */
+        ULONG_PTR native_base;
+        setup_wow64_teb(process, thread, teb, stack, stack_reserve, (ULONG_PTR)native_stack + native_size,
+                        &native_base);
+        teb->NtTib.StackBase = (PVOID)native_base;
+        teb->NtTib.StackLimit = native_stack;
+        teb->DeallocationStack = native_stack;
+        ctx_va = (native_base - sizeof(CONTEXT)) & ~15ull;
+        sp = ctx_va;
+    }
     KiInitializeUserContext((PCONTEXT)ctx_va, (ULONG64)user_start, ctx_va, (ULONG64)start, (ULONG64)parameter,
                             (ULONG64)teb_va);
-    ULONG64 sp = native_stack ? (ULONG64)native_stack + native_size : ctx_va;
     KiInitializeUserFrame(thread->Tcb.TrapFrame, (ULONG64)ldr_thunk, sp, ctx_va, (ULONG64)process->NtdllBase,
                           (ULONG64)teb_va);
     KiAttachProcess(saved);

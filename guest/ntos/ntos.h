@@ -111,6 +111,7 @@ typedef struct _KTHREAD {
     struct _KPROCESS *Process;
     struct _KPROCESS *ApcStateProcess; /* attached process, or Process */
     PTEB Teb;
+    PVOID Teb32; /* the 32-bit teb of a wow64 thread, its fs base */
     LIST_ENTRY ThreadListEntry;
     LIST_ENTRY ReadyListEntry;
     volatile UCHAR State;
@@ -687,6 +688,7 @@ typedef struct _EPROCESS {
     PVOID NtdllBase;            /* base of the system dll */
     PPSP_SYSTEM_DLL SystemDll;
     USHORT Machine;             /* of the program image */
+    PVOID Wow64Peb;             /* the 32-bit peb of a wow64 process */
     CHAR ImageFileName[16];
     WCHAR ImagePathBuffer[MIME_IMAGE_NAME_CHARS];
     UNICODE_STRING ImagePath;
@@ -713,6 +715,12 @@ extern LIST_ENTRY PsActiveProcessHead;
 extern PEPROCESS PsIdleProcess;
 extern POBJECT_TYPE PsProcessTypeObject;
 extern POBJECT_TYPE PsThreadTypeObject;
+
+/* a 32-bit program on x64 runs natively on the 64-bit ntdll and wow64.dll, as on windows; arm64 translates it. */
+FORCEINLINE BOOLEAN PspIsWow64Process(PEPROCESS process)
+{
+    return MIME_NATIVE_MACHINE == IMAGE_FILE_MACHINE_AMD64 && process->Machine == IMAGE_FILE_MACHINE_I386;
+}
 
 FORCEINLINE PEPROCESS PsCurrentProcess(void)
 {

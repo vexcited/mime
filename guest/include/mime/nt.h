@@ -209,6 +209,7 @@ typedef struct _GUID {
 #define STATUS_STACK_BUFFER_OVERRUN ((NTSTATUS)0xC0000409L)
 #define STATUS_ASSERTION_FAILURE ((NTSTATUS)0xC0000420L)
 #define STATUS_INVALID_ADDRESS ((NTSTATUS)0xC0000141L)
+#define STATUS_NO_CALLBACK_ACTIVE ((NTSTATUS)0xC0000258L)
 #define STATUS_RESOURCE_DATA_NOT_FOUND ((NTSTATUS)0xC0000089L)
 #define STATUS_RESOURCE_TYPE_NOT_FOUND ((NTSTATUS)0xC000008AL)
 #define STATUS_RESOURCE_NAME_NOT_FOUND ((NTSTATUS)0xC000008BL)
@@ -1190,6 +1191,23 @@ typedef struct _I386_CONTEXT {
 } I386_CONTEXT;
 MIME_FIELD_AT(I386_CONTEXT, Eip, 0xB8);
 MIME_STATIC_ASSERT(sizeof(I386_CONTEXT) == 716, "I386_CONTEXT size");
+
+/*
+ * wow64, 32-bit programs on x64: the 64-bit teb's tls slot 1 points at
+ * the cpu area, the 32-bit context while the thread runs 64-bit code, at
+ * the top of its 64-bit stack. a set reset flag makes the next entry into
+ * 32-bit code restore everything, not only what a system call keeps.
+ */
+#define WOW64_TLS_CPURESERVED 1
+#define WOW64_TLS_WOW64INFO 10
+#define WOW64_CPURESERVED_FLAG_RESET_STATE 0x1
+
+typedef struct _WOW64_CPURESERVED {
+    USHORT Flags;
+    USHORT Machine;
+    I386_CONTEXT Context;
+} WOW64_CPURESERVED, *PWOW64_CPURESERVED;
+MIME_STATIC_ASSERT(offsetof(WOW64_CPURESERVED, Context) == 4, "wow64 cpu area layout");
 #define CONTEXT_I386 0x00010000
 #define CONTEXT_I386_CONTROL (CONTEXT_I386 | 1)
 #define CONTEXT_I386_INTEGER (CONTEXT_I386 | 2)
@@ -1745,12 +1763,14 @@ MIME_FIELD_AT(TEB, GdiBatchCount, 0x1740);
 MIME_FIELD_AT(TEB, TlsExpansionSlots, 0x1780);
 MIME_FIELD_AT(TEB, FlsData, 0x17C8);
 MIME_FIELD_AT(TEB, SameTebFlags, 0x17EE);
+MIME_FIELD_AT(TEB, WowTebOffset, 0x180C);
 MIME_FIELD_AT(TEB, ReservedForCrt, 0x1820);
 MIME_FIELD_AT(TEB, Rcu, 0x1870);
 
 #endif
 
 #define MIME_TEB_SIZE 0x2000
+#define MIME_TEB32_SIZE 0x1000 /* after the 64-bit teb of a wow64 thread */
 
 typedef struct _KSYSTEM_TIME {
     ULONG LowPart;

@@ -33,5 +33,6 @@ void LdrpInitializeProcessHeap(void);
 PVOID LdrpImageDirectory(PVOID base, USHORT index, PULONG size);
 PIMAGE_NT_HEADERS LdrpNtHeaders(PVOID base);
 void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context);
+extern void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
 
 #endif

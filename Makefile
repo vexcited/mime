@@ -77,6 +77,9 @@ X64_DLLS := ntdll kernelbase kernel32 win32u gdi32 user32
 X64_FILES := $(patsubst %,$(SYSX64)/%.dll,$(X64_DLLS)) $(foreach n,$(EXTRA_NAMES),$(SYSX64)/$(call extra_file,$(n)))
 X64_FILES += $(SYSX64)/opengl32.dll
 ifeq ($(GUEST_ARCH),x64)
+X64_FILES += $(patsubst %,$(SYSX64)/%.dll,wow64 wow64win wow64cpu)
+endif
+ifeq ($(GUEST_ARCH),x64)
 # the kernel files built for x64, the dlls being the x64 set.
 GUEST_FILES := $(SYSTEM32)/ntoskrnl.exe $(SYSTEM32)/win32k.sys $(X64_FILES)
 # the copies embedded in mime, without the debug information that stays in build/guest for symbolizing.
@@ -542,6 +545,22 @@ $(eval $(call X64_DLL,kernel32,0x7FFA00000000,ntdll kernelbase,/entry:DllMain))
 
 $(eval $(call X64_DLL,gdi32,0x7FF800000000,ntdll kernel32 win32u,/entry:DllMain))
 
+# wow64, 32-bit programs on x64: wow64.dll and wow64win.dll share the conversions of the translator, and
+# wow64cpu.dll sits below 4 GiB, where 32-bit code can jump back to it.
+ifeq ($(GUEST_ARCH),x64)
+USER_CFLAGS_wow64 := -Iguest/mimex86
+USER_CFLAGS_wow64win := -Iguest/mimex86
+X64_EXTRA_OBJ_wow64 := $(X64_OBJ)/guest/mimex86/wow32.o
+X64_EXTRA_OBJ_wow64win := $(X64_OBJ)/guest/mimex86/wow32_win32k.o $(X64_OBJ)/guest/mimex86/wow32_callback.o
+$(X64_OBJ)/guest/mimex86/wow32_win32k.o: $(GEN)/x86/win32k_calls.h
+$(X64_OBJ)/guest/wow64win/x64/svc.o: guest/wow64win/x64/svc.S $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_ASFLAGS) -I$(GEN) -c $< -o $@
+$(eval $(call X64_DLL,wow64,0x7FF420000000,ntdll,/entry:DllMain))
+$(eval $(call X64_DLL,wow64win,0x7FF410000000,ntdll wow64,/entry:DllMain))
+$(eval $(call X64_DLL,wow64cpu,0x78000000,ntdll wow64,/entry:DllMain))
+endif
+
 X64_EXTRA_OBJ_user32 := $(patsubst %.c,$(X64_OBJ)/%.o,$(wildcard guest/lib/png/*.c guest/lib/msstyles/*.c))
 X64_EXTRA_LDFLAGS_user32 := /subsystem:windows,10.0
 $(eval $(call X64_DLL,user32,0x7FF900000000,ntdll kernel32 win32u gdi32,/entry:DllMain))
@@ -713,13 +732,11 @@ clean:
 
 include tools/x86.mk
 
-# 32-bit programs run through the translator on arm64 only for now.
-ifeq ($(GUEST_ARCH),arm64)
+# 32-bit programs run through the translator on arm64 and natively through wow64 on x64.
 X86_ROM_FILES = $(patsubst %,$(BUILD)/guest/rom/syswow64/%.dll,ntdll kernelbase kernel32 win32u gdi32 user32 shlwapi shell32 $(X86_MORE_DLLS)) \
 	$(BUILD)/guest/rom/syswow64/winspool.drv
 $(GEN)/rom.S: $(X86_ROM_FILES)
 ROM_FILES += $(X86_ROM_FILES)
-endif
 
 $(BUILD)/guest/rom/syswow64/%: $(BUILD)/guest/syswow64/% $(BUILD)/tools/pechecksum
 	@mkdir -p $(dir $@)

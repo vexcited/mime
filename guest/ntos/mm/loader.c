@@ -293,8 +293,9 @@ NTSTATUS PspInitializeSystemDll(void)
     NTSTATUS status = load_system_dll(L"\\SystemRoot\\System32\\ntdll.dll", &PspNativeSystemDll);
     if (!NT_SUCCESS(status))
         return status;
-    /* x86 and x64 programs run only when the translator is present. */
-    if (!NT_SUCCESS(load_system_dll(L"\\SystemRoot\\System32\\mimex86.dll", &PspX86SystemDll)))
+    /* x86 and x64 programs run on arm64 only when the translator is present; x64 runs x86 through wow64. */
+    if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 &&
+        !NT_SUCCESS(load_system_dll(L"\\SystemRoot\\System32\\mimex86.dll", &PspX86SystemDll)))
         memset(&PspX86SystemDll, 0, sizeof(PspX86SystemDll));
     return STATUS_SUCCESS;
 }
@@ -303,6 +304,9 @@ NTSTATUS PspInitializeSystemDll(void)
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine)
 {
     if (machine == MIME_NATIVE_MACHINE)
+        return &PspNativeSystemDll;
+    /* wow64: the 64-bit ntdll loads wow64.dll, which runs the 32-bit program. */
+    if (MIME_NATIVE_MACHINE == IMAGE_FILE_MACHINE_AMD64 && machine == IMAGE_FILE_MACHINE_I386)
         return &PspNativeSystemDll;
     switch (machine) {
     case IMAGE_FILE_MACHINE_I386:

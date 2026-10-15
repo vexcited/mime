@@ -30,6 +30,14 @@ PVOID LdrpKernel32ThreadInitThunk;
 
 static PEB_LDR_DATA g_ldr;
 static BOOLEAN g_process_initialized;
+
+/*
+ * a 32-bit program on x64 runs on this ntdll and wow64.dll, as on windows:
+ * the 64-bit side loads wow64.dll and nothing of the program, and every
+ * thread then runs Wow64LdrpInitialize, which never returns.
+ */
+static void(NTAPI *g_wow64_initialize)(PCONTEXT context);
+void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
 static BOOLEAN g_process_detaching;
 static RTL_CRITICAL_SECTION g_peb_lock = {NULL, -1, 0, NULL, NULL, 0};
 
@@ -795,6 +803,33 @@ static void fatal(PCSTR what, NTSTATUS status)
     NtTerminateProcess(NtCurrentProcess(), status);
 }
 
+#if defined(__x86_64__) && defined(MIME_X64_NATIVE)
+static void load_wow64(LOAD_CONTEXT *ctx)
+{
+    WCHAR path[MAX_PATH];
+    wcscpy(path, g_system32);
+    wcscat(path, L"wow64.dll");
+    PLDR_DATA_TABLE_ENTRY wow64;
+    NTSTATUS status = load_dll(path, ctx, &wow64);
+    if (!NT_SUCCESS(status))
+        fatal("cannot load wow64.dll for a 32-bit program", status);
+    static const struct {
+        const char *name;
+        PVOID *target;
+    } entries[] = {
+        {"Wow64LdrpInitialize", (PVOID *)&g_wow64_initialize},
+        {"Wow64PrepareForException", (PVOID *)&LdrpWow64PrepareForException},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(entries); i++) {
+        ANSI_STRING name;
+        RtlInitAnsiString(&name, entries[i].name);
+        status = LdrGetProcedureAddress(wow64->DllBase, &name, 0, entries[i].target);
+        if (!NT_SUCCESS(status))
+            fatal("wow64.dll lacks an entry point", status);
+    }
+}
+#endif
+
 static void initialize_process(PCONTEXT context)
 {
     PPEB peb = NtCurrentPeb();
@@ -828,6 +863,21 @@ static void initialize_process(PCONTEXT context)
 
     LOAD_CONTEXT ctx = {TRUE, NULL};
     NTSTATUS status;
+#if defined(__x86_64__) && defined(MIME_X64_NATIVE)
+    ULONG_PTR peb32 = 0;
+    if (NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), ProcessWow64Information, &peb32, sizeof(peb32),
+                                             NULL)) &&
+        peb32) {
+        load_wow64(&ctx);
+        status = allocate_thread_tls();
+        if (NT_SUCCESS(status))
+            status = run_initializers(context);
+        if (!NT_SUCCESS(status))
+            fatal("wow64 initialization failed", status);
+        RtlLeaveCriticalSection(&LdrpLoaderLock);
+        return;
+    }
+#endif
     /* every win32 process gets kernel32, imported or not. */
     if (peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI || peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
         PLDR_DATA_TABLE_ENTRY k32;
@@ -876,7 +926,11 @@ void NTAPI LdrpInitialize(PCONTEXT context)
     if (!g_process_initialized) {
         initialize_process(context);
         g_process_initialized = TRUE;
+        if (g_wow64_initialize)
+            g_wow64_initialize(context);
     } else {
+        if (g_wow64_initialize)
+            g_wow64_initialize(context);
         initialize_thread();
     }
 }

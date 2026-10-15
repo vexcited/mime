@@ -30,7 +30,7 @@ static void windowpos64(WINDOWPOS *out, const WINDOWPOS32 *in)
                       in->X, in->Y, in->Cx, in->Cy, in->Flags};
 }
 
-BOOLEAN Mx32MarshalCallback(X86Cpu *cpu, ULONG api, PVOID arguments, ULONG length, MX_CALLBACK32 *callback)
+BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG length, MX_CALLBACK32 *callback)
 {
     memset(callback, 0, sizeof(*callback));
     callback->Api = api;
@@ -41,8 +41,8 @@ BOOLEAN Mx32MarshalCallback(X86Cpu *cpu, ULONG api, PVOID arguments, ULONG lengt
     if (in->DataSize > length - sizeof(*in))
         return FALSE;
     SIZE_T size = sizeof(WINDOWPROC32) + in->DataSize + 32;
-    cpu->r[X86_RSP] = (cpu->r[X86_RSP] - size) & ~15ull;
-    WINDOWPROC32 *out = (void *)(ULONG_PTR)cpu->r[X86_RSP];
+    *stack = (ULONG)((*stack - size) & ~15u);
+    WINDOWPROC32 *out = (void *)(ULONG_PTR)*stack;
     *out = (WINDOWPROC32){(ULONG)(ULONG_PTR)in->Proc, (ULONG)(ULONG_PTR)in->Hwnd,
                          in->Msg, in->LparamKind, (ULONG)in->Wparam, (ULONG)in->Lparam, in->Ansi, in->DataSize};
     memcpy(out->Data, in->Data, in->DataSize);

@@ -83,18 +83,18 @@ static MIME_STRING32 copy_string32(PUCHAR *cursor, const UNICODE_STRING *source)
     return (MIME_STRING32){source->Length, (USHORT)(source->Length + sizeof(WCHAR)), (ULONG)(ULONG_PTR)text};
 }
 
-PVOID MxCreatePeb32(void)
+/* fills a 32-bit peb from the native one, its process parameters and environment in memory below 2 GiB. */
+BOOLEAN MxFillPeb32(PVOID memory)
 {
     PPEB native = NtCurrentPeb();
     PRTL_USER_PROCESS_PARAMETERS pp = native->ProcessParameters;
     SIZE_T strings = pp->ImagePathName.Length + pp->CommandLine.Length + pp->CurrentDirectory.DosPath.Length +
                      pp->WindowTitle.Length + pp->DesktopInfo.Length + pp->ShellInfo.Length + pp->RuntimeData.Length + 32;
-    SIZE_T size = 0x1000 + sizeof(MIME_PARAMETERS32) + strings + pp->EnvironmentSize;
-    PUCHAR memory = allocate32(size);
-    if (!memory)
-        return NULL;
-    MIME_PEB32 *peb = (void *)memory;
-    MIME_PARAMETERS32 *out = (void *)(memory + 0x1000);
+    SIZE_T size = sizeof(MIME_PARAMETERS32) + strings + pp->EnvironmentSize;
+    MIME_PARAMETERS32 *out = allocate32(size);
+    if (!out)
+        return FALSE;
+    MIME_PEB32 *peb = memory;
     PUCHAR cursor = (void *)(out + 1);
     peb->ImageBaseAddress = (ULONG)(ULONG_PTR)native->ImageBaseAddress;
     peb->ProcessParameters = (ULONG)(ULONG_PTR)out;
@@ -131,7 +131,13 @@ PVOID MxCreatePeb32(void)
     out->Environment = (ULONG)(ULONG_PTR)cursor;
     out->EnvironmentSize = (ULONG)pp->EnvironmentSize;
     memcpy(cursor, pp->Environment, pp->EnvironmentSize);
-    return peb;
+    return TRUE;
+}
+
+PVOID MxCreatePeb32(void)
+{
+    PVOID peb = allocate32(0x1000);
+    return peb && MxFillPeb32(peb) ? peb : NULL;
 }
 
 PVOID MxCreateTeb32(PVOID peb)

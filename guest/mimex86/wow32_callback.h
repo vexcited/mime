@@ -2,7 +2,6 @@
 #define MIME_WOW32_CALLBACK_H
 
 #include <mime/ntuser.h>
-#include "x86.h"
 
 typedef struct MX_CALLBACK32 {
     ULONG Api;
@@ -11,7 +10,8 @@ typedef struct MX_CALLBACK32 {
     ULONG Length;
 } MX_CALLBACK32;
 
-BOOLEAN Mx32MarshalCallback(X86Cpu *cpu, ULONG api, PVOID arguments, ULONG length, MX_CALLBACK32 *callback);
+/* copies the arguments below *stack, the 32-bit stack pointer, which moves past them. */
+BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG length, MX_CALLBACK32 *callback);
 PVOID Mx32CallbackResult(const MX_CALLBACK32 *callback, PVOID result, ULONG *length);
 
 #endif
