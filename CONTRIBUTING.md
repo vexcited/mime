@@ -12,6 +12,8 @@ export PATH="$(brew --prefix llvm)/bin:$PATH"
 make -j8
 ```
 
+On Linux the build needs LLVM itself besides clang and lld: `llvm-nm`, `llvm-rc` and `llvm-strip` come from it, `llvm` on Arch Linux.
+
 | Target          | Output                                                                                 |
 |-----------------|----------------------------------------------------------------------------------------|
 | `make host`     | `build/mime`, the command line program with the system files embedded, ad hoc signed.  |

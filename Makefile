@@ -13,6 +13,11 @@ LLD_LINK := lld-link
 NM := llvm-nm
 RC := llvm-rc
 STRIP := llvm-strip
+
+ifeq ($(filter clean,$(MAKECMDGOALS)),)
+$(foreach tool,$(CC) $(LLD_LINK) $(NM) $(RC) $(STRIP),$(if $(shell command -v $(tool)),,\
+    $(error $(tool) not found: install llvm, clang and lld, see README.md)))
+endif
 UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Darwin)

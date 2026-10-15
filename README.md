@@ -21,9 +21,11 @@ build/mime run build/examples/messagebox.exe
 build/mime down
 ```
 
-On Linux you need an x86_64 machine with KVM, clang and lld, SDL3, `wayland-client`, a Vulkan loader for [Vulkan](docs/vulkan.md) programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan. See [the Linux host](docs/host.md#linux).
+On Linux you need an x86_64 machine with KVM, LLVM with clang and lld, SDL3, `wayland-client`, a Vulkan loader for [Vulkan](docs/vulkan.md) programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan. See [the Linux host](docs/host.md#linux).
 
 ```sh
+sudo pacman -S llvm clang lld sdl3 wayland vulkan-icd-loader # on arch linux
+
 make
 build/mime setup ~/Downloads/Windows11_x64.iso
 build/mime run build/examples/x64/messagebox.exe
