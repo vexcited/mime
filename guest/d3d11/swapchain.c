@@ -21,6 +21,8 @@ typedef struct D3dSwapChain {
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen;
     BOOL fullscreen_state;
     D3dResource *back;
+    /* the single sampled copy a multisampled back buffer resolves to before the blit. */
+    D3dResource *resolved;
     MimePrivateData data;
 
     VkSurfaceKHR surface;
@@ -233,14 +235,35 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     dep.imageMemoryBarrierCount = 1;
     dep.pImageMemoryBarriers = &barrier;
     vk->vkCmdPipelineBarrier2(cmd, &dep);
+    VkImage source = sc->back->tex.image;
+    if (sc->back->tex.samples > 1) {
+        if (!sc->resolved) {
+            D3D11_TEXTURE2D_DESC1 desc = {0};
+            desc.Width = sc->back->tex.width;
+            desc.Height = sc->back->tex.height;
+            desc.MipLevels = desc.ArraySize = 1;
+            desc.Format = sc->back->tex.format;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+            if (FAILED(D3dCreateTexture(device, D3D11_RESOURCE_DIMENSION_TEXTURE2D, &desc, NULL, &sc->resolved)))
+                return E_OUTOFMEMORY;
+        }
+        VkImageResolve resolve = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                  {0, 0, 0}, {sc->back->tex.width, sc->back->tex.height, 1}};
+        vk->vkCmdResolveImage(cmd, source, VK_IMAGE_LAYOUT_GENERAL, sc->resolved->tex.image, VK_IMAGE_LAYOUT_GENERAL,
+                              1, &resolve);
+        D3dBarrier(cmd, device);
+        source = sc->resolved->tex.image;
+        D3dContextUse(c, sc->resolved);
+    }
     VkImageBlit blit = {0};
     blit.srcSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.srcOffsets[1] = (VkOffset3D){sc->back->tex.width, sc->back->tex.height, 1};
     blit.dstSubresource = blit.srcSubresource;
     blit.dstOffsets[1] = (VkOffset3D){sc->extent.width, sc->extent.height, 1};
-    if (sc->back->tex.samples == 1)
-        vk->vkCmdBlitImage(cmd, sc->back->tex.image, VK_IMAGE_LAYOUT_GENERAL, sc->images[index],
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    vk->vkCmdBlitImage(cmd, source, VK_IMAGE_LAYOUT_GENERAL, sc->images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1, &blit, VK_FILTER_LINEAR);
     barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
     barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
     barrier.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
@@ -318,6 +341,8 @@ static ULONG STDMETHODCALLTYPE sc_release(IDXGISwapChain4 *iface)
         vk->vkDestroySurfaceKHR(vk->instance, sc->surface, NULL);
     if (sc->back)
         D3dResourceRelease(sc->back);
+    if (sc->resolved)
+        D3dResourceRelease(sc->resolved);
     if (sc->latency)
         CloseHandle(sc->latency);
     MimePrivateClear(&sc->data);
@@ -452,6 +477,10 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
     }
     if (old)
         D3dResourceRelease(old);
+    if (sc->resolved) {
+        D3dResourceRelease(sc->resolved);
+        sc->resolved = NULL;
+    }
     /* the surface format follows the back buffer's. */
     if (sc->swapchain && choose_format(sc) != sc->format)
         create_swapchain(sc, sc->mode);
