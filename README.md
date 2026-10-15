@@ -1,15 +1,15 @@
-Mime runs Windows programs on macOS by reimplementing Windows itself, from the kernel up.
+Mime runs Windows programs on macOS and Linux by reimplementing Windows itself, from the kernel up.
 
 Unlike Wine, which translates the Windows API into host calls, Mime boots its own NT kernel inside a lightweight virtual machine. Its `ntdll.dll`, `kernel32.dll`, `user32.dll` and the rest are written from scratch, and they make system calls into that kernel with the same numbers as Windows 11. No Microsoft code runs: only data is imported from your ISO, such as fonts, themes, icons and the registry of a fresh install. The long term goal is deep compatibility, up to kernel drivers.
 
 > [!NOTE]
 > Mime is at an early stage.
 
-Mime runs ARM64, x64, and experimental [32-bit x86 programs](docs/x86.md). API coverage differs between architectures.
+Mime runs ARM64, x64, and experimental [32-bit x86 programs](docs/x86.md) on macOS, and x64 programs on Linux. API coverage differs between architectures.
 
 ## Getting started
 
-You need macOS 15 or later on Apple silicon, the Homebrew LLVM toolchain and a Windows 11 `arm64` ISO.
+On macOS you need macOS 15 or later on Apple silicon, the Homebrew LLVM toolchain and a Windows 11 `arm64` ISO.
 
 ```sh
 brew install llvm lld
@@ -18,6 +18,15 @@ export PATH="$(brew --prefix llvm)/bin:$PATH"
 make
 build/mime setup ~/Downloads/Windows11_arm64.iso
 build/mime run build/examples/messagebox.exe
+build/mime down
+```
+
+On Linux you need an x86_64 machine with KVM, clang and lld, SDL3, `wayland-client`, a Vulkan loader for [Vulkan](docs/vulkan.md) programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan. See [the Linux host](docs/host.md#linux).
+
+```sh
+make
+build/mime setup ~/Downloads/Windows11_x64.iso
+build/mime run build/examples/x64/messagebox.exe
 build/mime down
 ```
 
@@ -47,6 +56,7 @@ How much of Windows 11 build 26300 Mime implements, counted in exported function
 ## Roadmap
 
 - [x] Boot an NT kernel in a Hypervisor.framework virtual machine.
+- [x] Linux on x86_64, under KVM, with Vulkan on the host's GPU.
 - [x] Load and run Windows programs with the system DLLs.
 - [x] Windows, messages, painting and the Windows 11 visual style.
 - [x] `MessageBox` with the native Windows 11 look.
@@ -54,7 +64,8 @@ How much of Windows 11 build 26300 Mime implements, counted in exported function
 - [ ] Common controls, menus, edit boxes and the clipboard.
 - [ ] Running real applications from the ISO.
 - [ ] Kernel drivers.
-- [ ] Linux on arm64 and x86_64.
+- [ ] Direct3D over Vulkan.
+- [ ] Linux on arm64.
 
 ## Learn more
 
