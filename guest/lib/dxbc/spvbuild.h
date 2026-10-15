@@ -46,8 +46,11 @@ typedef struct SpvBuilder {
     SpvCached *cache;
     uint32_t cache_count, cache_capacity;
     uint32_t glsl;
-    /* the function being written: whether the current block has its terminator. */
+    /* logical unless the module reads memory through device addresses. */
+    uint32_t addressing;
+    /* the function being written: whether the current block has its terminator, and its label. */
     int block_open;
+    uint32_t block;
     int failed;
 } SpvBuilder;
 

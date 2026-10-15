@@ -25,6 +25,8 @@ typedef enum Kind { K_FLOAT, K_UINT, K_INT, K_KINDS } Kind;
 
 typedef struct Resource {
     int declared;
+    /* shader model 5.1: the registers and the space the range covers. */
+    uint32_t lower, space;
     uint32_t dim;
     Kind kind;
     uint32_t stride;
@@ -118,13 +120,22 @@ typedef struct Compiler {
     uint32_t cb_heap;
     uint32_t sampler_heap;
     struct {
-        uint32_t image_type;
+        uint32_t image_type, binding;
         uint32_t var;
     } image_vars[64];
     uint32_t image_var_count;
     Resource srv[128];
     Resource uav[64];
     uint32_t sampler_mode[16];
+    /* shader model 5.1: the first register and the space of each constant buffer and sampler range. */
+    uint32_t cb_lower[32], cb_space[32];
+    uint32_t sampler_lower[16], sampler_space[16];
+    int sm51;
+    /* direct3d 12: the push constants, the static samplers and the records of the heap. */
+    uint32_t push;
+    uint32_t static_samplers;
+    uint32_t records;
+    uint32_t root_vec4_pointer, root_word_pointer;
 
     /* built-in variables, made when first used: inputs and outputs apart. */
     uint32_t builtins[2][64];
@@ -290,14 +301,17 @@ static uint32_t table_entry(Compiler *c, uint32_t entry)
 static uint32_t image_heap(Compiler *c, uint32_t image_type, uint32_t binding)
 {
     for (uint32_t i = 0; i < c->image_var_count; i++)
-        if (c->image_vars[i].image_type == image_type)
+        if (c->image_vars[i].image_type == image_type && c->image_vars[i].binding == binding)
             return c->image_vars[i].var;
     uint32_t array = spv_type_runtime_array(&c->b, image_type);
     uint32_t var = global(c, SpvStorageClassUniformConstant, array, 0);
-    decorate1(c, var, SpvDecorationDescriptorSet, DXBC_SET_HEAP);
-    decorate1(c, var, SpvDecorationBinding, binding);
+    /* direct3d 12's descriptors are all of one mutable binding. */
+    int root = c->options && c->options->root_signature;
+    decorate1(c, var, SpvDecorationDescriptorSet, root ? DXBC_ROOT_SET_RESOURCES : DXBC_SET_HEAP);
+    decorate1(c, var, SpvDecorationBinding, root ? 0 : binding);
     if (c->image_var_count < 64) {
         c->image_vars[c->image_var_count].image_type = image_type;
+        c->image_vars[c->image_var_count].binding = binding;
         c->image_vars[c->image_var_count].var = var;
         c->image_var_count++;
     }
@@ -390,48 +404,267 @@ static uint32_t uav_image_type(Compiler *c, uint32_t slot, uint32_t *binding)
     return spv_type_image(&c->b, sampled_kind_type(c, k), spv_dim, 0, arrayed, ms, 2, format);
 }
 
-/* a pointer to the heap's descriptor of a slot, through the table. */
-static uint32_t descriptor_pointer(Compiler *c, uint32_t image_type, uint32_t binding, uint32_t entry)
+static uint32_t index_value(Compiler *c, const DxbcIndex *index);
+
+/* ------------------------------------------------------------------ the root signature */
+
+/* the binding of the root signature that covers a register of a space. */
+static const DxbcRootBinding *root_binding(Compiler *c, uint32_t type, uint32_t space, uint32_t reg)
+{
+    const DxbcCompileOptions *o = c->options;
+    for (uint32_t i = 0; i < o->root_count; i++) {
+        const DxbcRootBinding *b = &o->root[i];
+        if (b->type == type && b->space == space && reg >= b->base && (b->count == ~0u || reg - b->base < b->count))
+            return b;
+    }
+    fail(c, "register outside the root signature");
+    return NULL;
+}
+
+/* a dword of the push constants, the offset a uint value in bytes. */
+static uint32_t push_word(Compiler *c, uint32_t byte_offset)
+{
+    if (!c->push) {
+        uint32_t array = spv_type_array_unique(&c->b, c->t_u32, 64);
+        decorate1(c, array, SpvDecorationArrayStride, 4);
+        uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
+        uint32_t offset = 0;
+        spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
+        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        c->push = global(c, SpvStorageClassPushConstant, block, 0);
+    }
+    /* reads past the 64 dwords are clamped, as vulkan leaves them undefined. */
+    uint32_t args[2] = {spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, byte_offset, uconst(c, 2)), uconst(c, 63)};
+    uint32_t indices[2] = {uconst(c, 0), spv_glsl(&c->b, c->t_u32, GLSLstd450UMin, args, 2)};
+    uint32_t ptr = spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassPushConstant, c->t_u32), c->push, indices, 2);
+    return spv_load(&c->b, c->t_u32, ptr);
+}
+
+/* the register an operand names: its range's first register in shader model 5.0, the second index in 5.1. */
+static uint32_t operand_register(Compiler *c, const DxbcOperand *op, uint32_t lower)
+{
+    if (!c->sm51)
+        return uconst(c, lower);
+    return index_value(c, &op->index[1]);
+}
+
+/*
+ * the heap index of a descriptor: the stage's table entry in direct3d 11,
+ * the table's first index plus the register's place in it in direct3d 12.
+ */
+static uint32_t heap_index(Compiler *c, uint32_t type, uint32_t entry, uint32_t space, uint32_t lower,
+                           const DxbcOperand *op)
+{
+    if (!c->options || !c->options->root_signature)
+        return table_entry(c, entry);
+    const DxbcRootBinding *b = root_binding(c, type, space, lower);
+    if (!b)
+        return uconst(c, 0);
+    uint32_t reg = operand_register(c, op, lower);
+    uint32_t from_base = spv_op2(&c->b, SpvOpISub, c->t_u32, reg, uconst(c, b->base));
+    uint32_t start = b->source == DXBC_SOURCE_TABLE ? push_word(c, uconst(c, b->push_offset)) : uconst(c, 0);
+    return spv_op2(&c->b, SpvOpIAdd, c->t_u32, spv_op2(&c->b, SpvOpIAdd, c->t_u32, start, uconst(c, b->offset)),
+                   from_base);
+}
+
+/* the render targets' sample count: in the table for direct3d 11, known when compiled for direct3d 12. */
+static uint32_t rasterizer_samples(Compiler *c)
+{
+    if (c->options && c->options->root_signature)
+        return uconst(c, c->options->sample_count ? c->options->sample_count : 1);
+    return table_entry(c, DXBC_TABLE_SAMPLE_COUNT);
+}
+
+/* marks a value as differing between invocations, for an index of the heap of a binding. */
+static uint32_t nonuniform(Compiler *c, uint32_t id, uint32_t binding)
+{
+    static const uint32_t capabilities[] = {
+        [DXBC_HEAP_SAMPLED_IMAGE] = SpvCapabilitySampledImageArrayNonUniformIndexing,
+        [DXBC_HEAP_STORAGE_IMAGE] = SpvCapabilityStorageImageArrayNonUniformIndexing,
+        [DXBC_HEAP_UNIFORM_TEXEL] = SpvCapabilityUniformTexelBufferArrayNonUniformIndexing,
+        [DXBC_HEAP_STORAGE_TEXEL] = SpvCapabilityStorageTexelBufferArrayNonUniformIndexing,
+        [DXBC_HEAP_SAMPLER] = SpvCapabilitySampledImageArrayNonUniformIndexing,
+        [DXBC_HEAP_UNIFORM_BUFFER] = SpvCapabilityUniformBufferArrayNonUniformIndexing,
+    };
+    spv_capability(&c->b, SpvCapabilityShaderNonUniform);
+    spv_capability(&c->b, capabilities[binding]);
+    spv_decorate(&c->b, id, SpvDecorationNonUniform, NULL, 0);
+    return id;
+}
+
+/* a pointer to the heap's descriptor at an index. */
+static uint32_t descriptor_pointer(Compiler *c, uint32_t image_type, uint32_t binding, uint32_t index)
 {
     uint32_t heap = image_heap(c, image_type, binding);
-    uint32_t index = table_entry(c, entry);
     uint32_t ptr_type = spv_type_pointer(&c->b, SpvStorageClassUniformConstant, image_type);
     return spv_access(&c->b, ptr_type, heap, &index, 1);
 }
 
-static uint32_t load_srv(Compiler *c, uint32_t slot, int depth, uint32_t *type)
+/* the heap's descriptor for a resource operand, marked when its index is not uniform. */
+static uint32_t operand_descriptor(Compiler *c, const DxbcOperand *op, uint32_t type, uint32_t binding,
+                                   uint32_t index)
 {
-    uint32_t binding;
+    if (op->nonuniform)
+        nonuniform(c, index, binding);
+    uint32_t ptr = descriptor_pointer(c, type, binding, index);
+    return op->nonuniform ? nonuniform(c, ptr, binding) : ptr;
+}
+
+static uint32_t load_srv(Compiler *c, const DxbcOperand *op, int depth, uint32_t *type)
+{
+    uint32_t binding, slot = op->index[0].immediate & 127;
     *type = srv_image_type(c, slot, depth, &binding);
-    return spv_load(&c->b, *type, descriptor_pointer(c, *type, binding, DXBC_TABLE_SRV + slot));
+    const Resource *r = &c->srv[slot];
+    uint32_t index = heap_index(c, DXBC_BIND_SRV, DXBC_TABLE_SRV + slot, r->space, r->lower, op);
+    uint32_t image = spv_load(&c->b, *type, operand_descriptor(c, op, *type, binding, index));
+    return op->nonuniform ? nonuniform(c, image, binding) : image;
 }
 
-static uint32_t uav_pointer(Compiler *c, uint32_t slot, uint32_t *type)
+static uint32_t uav_pointer(Compiler *c, const DxbcOperand *op, uint32_t *type)
 {
-    uint32_t binding;
+    uint32_t binding, slot = op->index[0].immediate & 63;
     *type = uav_image_type(c, slot, &binding);
-    return descriptor_pointer(c, *type, binding, DXBC_TABLE_UAV + slot);
+    const Resource *r = &c->uav[slot];
+    uint32_t index = heap_index(c, DXBC_BIND_UAV, DXBC_TABLE_UAV + slot, r->space, r->lower, op);
+    return operand_descriptor(c, op, *type, binding, index);
 }
 
-static uint32_t load_sampler(Compiler *c, uint32_t slot)
+/* a sampler of the heap, or of the root signature's static samplers. */
+static uint32_t load_sampler(Compiler *c, const DxbcOperand *op)
 {
-    uint32_t type = spv_type_sampler(&c->b);
-    if (!c->sampler_heap) {
-        c->sampler_heap = global(c, SpvStorageClassUniformConstant, spv_type_runtime_array(&c->b, type), 0);
-        decorate1(c, c->sampler_heap, SpvDecorationDescriptorSet, DXBC_SET_HEAP);
-        decorate1(c, c->sampler_heap, SpvDecorationBinding, DXBC_HEAP_SAMPLER);
+    uint32_t type = spv_type_sampler(&c->b), slot = op->index[0].immediate & 15;
+    uint32_t ptr_type = spv_type_pointer(&c->b, SpvStorageClassUniformConstant, type);
+    if (c->options && c->options->root_signature) {
+        const DxbcRootBinding *b = root_binding(c, DXBC_BIND_SAMPLER, c->sampler_space[slot], c->sampler_lower[slot]);
+        if (b && b->source == DXBC_SOURCE_STATIC_SAMPLER) {
+            if (!c->static_samplers) {
+                c->static_samplers =
+                    global(c, SpvStorageClassUniformConstant, spv_type_runtime_array(&c->b, type), 0);
+                decorate1(c, c->static_samplers, SpvDecorationDescriptorSet, DXBC_ROOT_SET_STATIC_SAMPLERS);
+                decorate1(c, c->static_samplers, SpvDecorationBinding, 0);
+            }
+            uint32_t from_base = spv_op2(&c->b, SpvOpISub, c->t_u32,
+                                         operand_register(c, op, c->sampler_lower[slot]), uconst(c, b->base));
+            uint32_t index = spv_op2(&c->b, SpvOpIAdd, c->t_u32, uconst(c, b->offset), from_base);
+            return spv_load(&c->b, type, spv_access(&c->b, ptr_type, c->static_samplers, &index, 1));
+        }
     }
-    uint32_t index = table_entry(c, DXBC_TABLE_SAMPLER + slot);
-    uint32_t ptr = spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassUniformConstant, type), c->sampler_heap,
-                              &index, 1);
-    return spv_load(&c->b, type, ptr);
+    if (!c->sampler_heap) {
+        int root = c->options && c->options->root_signature;
+        c->sampler_heap = global(c, SpvStorageClassUniformConstant, spv_type_runtime_array(&c->b, type), 0);
+        decorate1(c, c->sampler_heap, SpvDecorationDescriptorSet, root ? DXBC_ROOT_SET_SAMPLERS : DXBC_SET_HEAP);
+        decorate1(c, c->sampler_heap, SpvDecorationBinding, root ? 0 : DXBC_HEAP_SAMPLER);
+    }
+    uint32_t index = heap_index(c, DXBC_BIND_SAMPLER, DXBC_TABLE_SAMPLER + slot, c->sampler_space[slot],
+                                c->sampler_lower[slot], op);
+    if (!op->nonuniform)
+        return spv_load(&c->b, type, spv_access(&c->b, ptr_type, c->sampler_heap, &index, 1));
+    nonuniform(c, index, DXBC_HEAP_SAMPLER);
+    uint32_t ptr = nonuniform(c, spv_access(&c->b, ptr_type, c->sampler_heap, &index, 1), DXBC_HEAP_SAMPLER);
+    return nonuniform(c, spv_load(&c->b, type, ptr), DXBC_HEAP_SAMPLER);
 }
 
-/* a pointer to vec4 i of constant buffer slot, i a uint value. */
-static uint32_t cb_pointer(Compiler *c, uint32_t slot, uint32_t index)
+/* a device address, a uvec2, as a pointer of the type into physical storage. */
+static uint32_t address_pointer(Compiler *c, uint32_t address, uint32_t pointer_type)
 {
+    spv_capability(&c->b, SpvCapabilityPhysicalStorageBufferAddresses);
+    c->b.addressing = SpvAddressingModelPhysicalStorageBuffer64;
+    return spv_op1(&c->b, SpvOpBitcast, pointer_type, address);
+}
+
+/* the device address of a root descriptor, in the push constants. */
+static uint32_t root_address(Compiler *c, const DxbcRootBinding *b)
+{
+    uint32_t parts[2] = {push_word(c, uconst(c, b->push_offset)), push_word(c, uconst(c, b->push_offset + 4))};
+    return spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_UINT][2], parts, 2);
+}
+
+/* half of the record of a heap descriptor: address, size and stride, then the counter's address. */
+static uint32_t heap_record(Compiler *c, uint32_t index, uint32_t half)
+{
+    uint32_t v4 = c->t_vec[K_UINT][4];
+    if (!c->records) {
+        uint32_t array = spv_type_runtime_array(&c->b, v4);
+        decorate1(c, array, SpvDecorationArrayStride, 16);
+        uint32_t block = spv_type_struct(&c->b, &array, 1);
+        uint32_t offset = 0;
+        spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
+        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, NULL, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        c->records = global(c, SpvStorageClassStorageBuffer, block, 0);
+        decorate1(c, c->records, SpvDecorationDescriptorSet, DXBC_ROOT_SET_RECORDS);
+        decorate1(c, c->records, SpvDecorationBinding, 0);
+    }
+    uint32_t at = spv_op2(&c->b, SpvOpIAdd, c->t_u32, spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, index, uconst(c, 1)),
+                          uconst(c, half));
+    uint32_t indices[2] = {uconst(c, 0), at};
+    return spv_load(&c->b, v4,
+                    spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassStorageBuffer, v4), c->records, indices, 2));
+}
+
+/* two components of a uvec4 as a uvec2. */
+static uint32_t uvec2_of(Compiler *c, uint32_t v, uint32_t first)
+{
+    uint32_t w[4] = {v, v, first, first + 1};
+    return spv_op(&c->b, SpvOpVectorShuffle, c->t_vec[K_UINT][2], w, 4);
+}
+
+/* the type of a pointer to an array of what a root descriptor holds, vec4 for constants, words for the rest. */
+static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t stride)
+{
+    uint32_t *cached = stride == 16 ? &c->root_vec4_pointer : &c->root_word_pointer;
+    if (*cached)
+        return *cached;
+    uint32_t array = spv_type_runtime_array_unique(&c->b, element);
+    decorate1(c, array, SpvDecorationArrayStride, stride);
+    uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
+    uint32_t offset = 0;
+    spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
+    spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+    return *cached = spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, block);
+}
+
+/* a loaded vec4 of a constant buffer, the element a uint value: from the heap, a device address or push constants. */
+static uint32_t cb_load(Compiler *c, uint32_t slot, uint32_t element, const DxbcOperand *op)
+{
+    uint32_t v4 = c->t_vec[K_FLOAT][4];
+    uint32_t space = slot < 32 ? c->cb_space[slot] : 0, lower = slot < 32 ? c->cb_lower[slot] : slot;
+    if (c->options && c->options->root_signature) {
+        const DxbcRootBinding *b = root_binding(c, DXBC_BIND_CBV, space, lower);
+        if (!b)
+            return splat_const(c, K_FLOAT, 4, 0);
+        if (b->source == DXBC_SOURCE_CONSTANTS) {
+            uint32_t base = spv_op2(&c->b, SpvOpIAdd, c->t_u32, uconst(c, b->push_offset),
+                                    spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, element, uconst(c, 4)));
+            uint32_t parts[4];
+            for (uint32_t i = 0; i < 4; i++)
+                parts[i] = push_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, uconst(c, 4 * i)));
+            return spv_op1(&c->b, SpvOpBitcast, v4, spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_UINT][4], parts, 4));
+        }
+        /* a table's views are read through their records, out of bounds reads giving zero. */
+        uint32_t address, in = 0;
+        if (b->source == DXBC_SOURCE_ADDRESS) {
+            address = root_address(c, b);
+        } else {
+            uint32_t record = heap_record(c, heap_index(c, DXBC_BIND_CBV, 0, space, lower, op), 0);
+            address = uvec2_of(c, record, 0);
+            uint32_t size = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, extract(c, c->t_u32, record, 2), uconst(c, 4));
+            in = spv_op2(&c->b, SpvOpULessThan, c->t_bool, element, size);
+            element = spv_op3(&c->b, SpvOpSelect, c->t_u32, in, element, uconst(c, 0));
+        }
+        uint32_t ptr = address_pointer(c, address, root_array_pointer(c, v4, 16));
+        uint32_t indices[2] = {uconst(c, 0), element};
+        uint32_t elem =
+            spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, v4), ptr, indices, 2);
+        uint32_t w[3] = {elem, SpvMemoryAccessAlignedMask, 16};
+        uint32_t v = spv_op(&c->b, SpvOpLoad, v4, w, 3);
+        if (!in)
+            return v;
+        uint32_t cond = spv_op(&c->b, SpvOpCompositeConstruct, c->t_bvec[4], (uint32_t[]){in, in, in, in}, 4);
+        return spv_op3(&c->b, SpvOpSelect, v4, cond, v, splat_const(c, K_FLOAT, 4, 0));
+    }
     if (!c->cb_heap) {
-        uint32_t array = spv_type_array_unique(&c->b, c->t_vec[K_FLOAT][4], 4096);
+        uint32_t array = spv_type_array_unique(&c->b, v4, 4096);
         decorate1(c, array, SpvDecorationArrayStride, 16);
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
         uint32_t offset = 0;
@@ -441,10 +674,66 @@ static uint32_t cb_pointer(Compiler *c, uint32_t slot, uint32_t index)
         decorate1(c, c->cb_heap, SpvDecorationDescriptorSet, DXBC_SET_HEAP);
         decorate1(c, c->cb_heap, SpvDecorationBinding, DXBC_HEAP_UNIFORM_BUFFER);
     }
-    uint32_t heap_index = table_entry(c, DXBC_TABLE_CB + slot);
-    uint32_t indices[3] = {heap_index, uconst(c, 0), index};
-    return spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassUniform, c->t_vec[K_FLOAT][4]), c->cb_heap,
-                      indices, 3);
+    uint32_t index = heap_index(c, DXBC_BIND_CBV, DXBC_TABLE_CB + (slot & 15), space, lower, op);
+    if (op->nonuniform)
+        nonuniform(c, index, DXBC_HEAP_UNIFORM_BUFFER);
+    uint32_t indices[3] = {index, uconst(c, 0), element};
+    uint32_t ptr = spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassUniform, v4), c->cb_heap, indices, 3);
+    if (op->nonuniform)
+        nonuniform(c, ptr, DXBC_HEAP_UNIFORM_BUFFER);
+    return spv_load(&c->b, v4, ptr);
+}
+
+/*
+ * a raw or structured view of direct3d 12, read and written through its
+ * device address: a root descriptor's, unchecked, or a table's, whose
+ * record gives the size in bytes and the counter's address.
+ */
+typedef struct RootBuffer {
+    uint32_t address;
+    uint32_t size;
+    uint32_t counter;
+} RootBuffer;
+
+static int root_buffer(Compiler *c, const DxbcOperand *resource, RootBuffer *out)
+{
+    if (!c->options || !c->options->root_signature)
+        return 0;
+    int uav = resource->type == OPERAND_UNORDERED_ACCESS_VIEW;
+    if (!uav && resource->type != OPERAND_RESOURCE)
+        return 0;
+    const Resource *r = uav ? &c->uav[resource->index[0].immediate & 63] : &c->srv[resource->index[0].immediate & 127];
+    if (!r->raw && !r->structured)
+        return 0;
+    uint32_t type = uav ? DXBC_BIND_UAV : DXBC_BIND_SRV;
+    const DxbcRootBinding *b = root_binding(c, type, r->space, r->lower);
+    if (!b)
+        return 0;
+    if (b->source == DXBC_SOURCE_ADDRESS) {
+        *out = (RootBuffer){root_address(c, b), 0, 0};
+        return 1;
+    }
+    uint32_t index = heap_index(c, type, 0, r->space, r->lower, resource);
+    uint32_t record = heap_record(c, index, 0);
+    out->address = uvec2_of(c, record, 0);
+    out->size = extract(c, c->t_u32, record, 2);
+    out->counter = uav ? uvec2_of(c, heap_record(c, index, 1), 0) : 0;
+    return 1;
+}
+
+/* whether a word is inside a view with a record. */
+static uint32_t word_in_bounds(Compiler *c, const RootBuffer *rb, uint32_t word)
+{
+    uint32_t words = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, rb->size, uconst(c, 2));
+    return spv_op2(&c->b, SpvOpULessThan, c->t_bool, word, words);
+}
+
+/* a pointer to a word of a buffer at a device address. */
+static uint32_t root_word_pointer(Compiler *c, uint32_t address, uint32_t word)
+{
+    uint32_t ptr = address_pointer(c, address, root_array_pointer(c, c->t_u32, 4));
+    uint32_t indices[2] = {uconst(c, 0), word};
+    return spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, c->t_u32), ptr, indices, 2);
 }
 
 /* ------------------------------------------------------------------ operands */
@@ -634,11 +923,11 @@ static uint32_t load_vec4(Compiler *c, const DxbcOperand *op, Kind *stored)
     }
     case OPERAND_CONSTANT_BUFFER: {
         uint32_t slot = op->index[0].immediate;
-        if (slot >= 14) {
+        if (slot >= (c->sm51 ? 32u : 14u)) {
             fail(c, "constant buffer slot out of range");
             return splat_const(c, K_FLOAT, 4, 0);
         }
-        return spv_load(&c->b, vec4, cb_pointer(c, slot, index_value(c, &op->index[1])));
+        return cb_load(c, slot, index_value(c, &op->index[c->sm51 ? 2 : 1]), op);
     }
     case OPERAND_IMMEDIATE_CONSTANT_BUFFER: {
         *stored = K_UINT;
@@ -998,6 +1287,25 @@ static void load_vertex_inputs(Compiler *c, uint32_t vertices)
                 }
         }
     }
+}
+
+/*
+ * the system value a declaration names. instructions name each edge and
+ * inside factor apart, 11 to 22, where signatures and SV_ name kinds of
+ * factors, 11 to 16.
+ */
+static uint32_t token_sv(uint32_t name)
+{
+    if (name < 11 || name > 22)
+        return name;
+    if (name <= 14)
+        return SV_FINAL_QUAD_EDGE_TESSFACTOR;
+    if (name <= 16)
+        return SV_FINAL_QUAD_INSIDE_TESSFACTOR;
+    if (name <= 19)
+        return SV_FINAL_TRI_EDGE_TESSFACTOR;
+    return name == 20 ? SV_FINAL_TRI_INSIDE_TESSFACTOR
+                      : name == 21 ? SV_FINAL_LINE_DETAIL_TESSFACTOR : SV_FINAL_LINE_DENSITY_TESSFACTOR;
 }
 
 /* the tessellation factor a patch constant system value is, as the index of the outer or inner level. */
@@ -1419,16 +1727,31 @@ static int prepass(Compiler *c)
         case OP_DCL_GLOBAL_FLAGS:
             c->global_flags = ins.token >> 11;
             break;
-        case OP_DCL_CONSTANT_BUFFER:
-            if (op->index[0].immediate < 14)
-                c->info->cb_mask |= 1u << op->index[0].immediate;
-            break;
-        case OP_DCL_SAMPLER:
-            if (op->index[0].immediate < 16) {
-                c->info->sampler_mask |= 1u << op->index[0].immediate;
-                c->sampler_mode[op->index[0].immediate] = TOK_SAMPLER_MODE(ins.token);
+        case OP_DCL_CONSTANT_BUFFER: {
+            /* shader model 5.1 names a range of registers and its space: cb id[lower:upper][size], space. */
+            uint32_t id = op->index[0].immediate;
+            if (c->sm51) {
+                if (id >= 32 || ins.extra_count < 2)
+                    return fail(c, "bad constant buffer declaration");
+                c->cb_lower[id] = op->index[1].immediate;
+                c->cb_space[id] = x[1];
+            } else if (id < 32) {
+                c->cb_lower[id] = id;
             }
+            if (id < 14)
+                c->info->cb_mask |= 1u << id;
             break;
+        }
+        case OP_DCL_SAMPLER: {
+            uint32_t id = op->index[0].immediate;
+            if (id >= 16)
+                return fail(c, "sampler slot out of range");
+            c->info->sampler_mask |= 1u << id;
+            c->sampler_mode[id] = TOK_SAMPLER_MODE(ins.token);
+            c->sampler_lower[id] = c->sm51 ? op->index[1].immediate : id;
+            c->sampler_space[id] = c->sm51 && ins.extra_count ? x[0] : 0;
+            break;
+        }
         case OP_DCL_RESOURCE:
         case OP_DCL_RESOURCE_RAW:
         case OP_DCL_RESOURCE_STRUCTURED: {
@@ -1444,6 +1767,8 @@ static int prepass(Compiler *c)
             s->structured = ins.opcode == OP_DCL_RESOURCE_STRUCTURED;
             s->stride = s->structured && ins.extra_count ? x[0] : 0;
             s->kind = ins.opcode == OP_DCL_RESOURCE && ins.extra_count ? return_kind(x[0]) : K_UINT;
+            s->lower = c->sm51 ? op->index[1].immediate : slot;
+            s->space = c->sm51 && ins.extra_count ? x[ins.extra_count - 1] : 0;
             c->info->srv_mask[slot / 32] |= 1u << (slot % 32);
             c->info->srv_kind[slot] = s->dim == RES_BUFFER || s->raw || s->structured ? DXBC_SLOT_BUFFER : DXBC_SLOT_IMAGE;
             break;
@@ -1463,6 +1788,8 @@ static int prepass(Compiler *c)
             u->structured = ins.opcode == OP_DCL_UAV_STRUCTURED;
             u->stride = u->structured && ins.extra_count ? x[0] : 0;
             u->kind = ins.opcode == OP_DCL_UAV_TYPED && ins.extra_count ? return_kind(x[0]) : K_UINT;
+            u->lower = c->sm51 ? op->index[1].immediate : slot;
+            u->space = c->sm51 && ins.extra_count ? x[ins.extra_count - 1] : 0;
             u->counter = TOK_UAV_COUNTER(ins.token);
             c->info->uav_mask |= 1ull << slot;
             if (u->counter)
@@ -1495,7 +1822,7 @@ static int prepass(Compiler *c)
             uint32_t sv = SV_UNDEFINED;
             if (ins.opcode == OP_DCL_INPUT_SGV || ins.opcode == OP_DCL_INPUT_SIV || ins.opcode == OP_DCL_INPUT_PS_SGV ||
                 ins.opcode == OP_DCL_INPUT_PS_SIV)
-                sv = ins.extra_count ? x[0] : SV_UNDEFINED;
+                sv = ins.extra_count ? token_sv(x[0]) : SV_UNDEFINED;
             if (sv != SV_UNDEFINED && sv != SV_CLIP_DISTANCE && sv != SV_CULL_DISTANCE) {
                 d->sv = sv;
                 d->sv_mask |= op->mask;
@@ -1528,7 +1855,7 @@ static int prepass(Compiler *c)
                 InputDecl *p = &c->patch_decl[reg];
                 p->declared = 1;
                 if (ins.opcode != OP_DCL_OUTPUT && ins.extra_count) {
-                    p->sv = x[0];
+                    p->sv = token_sv(x[0]);
                     p->sv_mask |= op->mask;
                 } else {
                     p->mask |= op->mask;
@@ -1541,7 +1868,7 @@ static int prepass(Compiler *c)
             d->declared = 1;
             d->mask |= op->mask;
             if (ins.opcode != OP_DCL_OUTPUT && ins.extra_count)
-                d->sv = x[0];
+                d->sv = token_sv(x[0]);
             if (reg + 1 > c->output_count)
                 c->output_count = reg + 1;
             c->info->output_mask |= 1u << (reg & 31);
@@ -1720,16 +2047,18 @@ static void make_registers(Compiler *c)
     for (uint32_t i = 0; i < 256; i++)
         if (c->tgsm_size[i])
             c->tgsm[i] = global(c, SpvStorageClassWorkgroup, spv_type_array(&c->b, c->t_u32, c->tgsm_size[i]), 0);
-    /* the stage's table. */
-    uint32_t array = spv_type_array_unique(&c->b, c->t_vec[K_UINT][4], DXBC_TABLE_DWORDS / 4);
-    decorate1(c, array, SpvDecorationArrayStride, 16);
-    uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
-    uint32_t offset = 0;
-    spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-    spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
-    c->table = global(c, SpvStorageClassUniform, block, 0);
-    decorate1(c, c->table, SpvDecorationDescriptorSet, DXBC_SET_TABLE);
-    decorate1(c, c->table, SpvDecorationBinding, c->binding);
+    /* the stage's table, which direct3d 12 replaces with its root signature. */
+    if (!c->options || !c->options->root_signature) {
+        uint32_t array = spv_type_array_unique(&c->b, c->t_vec[K_UINT][4], DXBC_TABLE_DWORDS / 4);
+        decorate1(c, array, SpvDecorationArrayStride, 16);
+        uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
+        uint32_t offset = 0;
+        spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
+        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        c->table = global(c, SpvStorageClassUniform, block, 0);
+        decorate1(c, c->table, SpvDecorationDescriptorSet, DXBC_SET_TABLE);
+        decorate1(c, c->table, SpvDecorationBinding, c->binding);
+    }
 }
 
 /* ------------------------------------------------------------------ arithmetic */
@@ -2206,9 +2535,9 @@ static void sample(Compiler *c, const DxbcInstruction *ins)
         return;
     int depth = ins->opcode == OP_SAMPLE_C || ins->opcode == OP_SAMPLE_C_LZ;
     uint32_t image_type;
-    uint32_t image = load_srv(c, (uint32_t)slot, depth, &image_type);
+    uint32_t image = load_srv(c, resource, depth, &image_type);
     uint32_t si = spv_op2(&c->b, SpvOpSampledImage, spv_type_sampled_image(&c->b, image_type), image,
-                          load_sampler(c, sampler->index[0].immediate & 15));
+                          load_sampler(c, sampler));
     uint32_t n = coord_count(r->dim);
     uint32_t coord = load_first(c, address, n, K_FLOAT);
     uint32_t w[12], count = 0, operands = 0;
@@ -2275,9 +2604,9 @@ static void gather(Compiler *c, const DxbcInstruction *ins)
     if (slot < 0)
         return;
     uint32_t image_type;
-    uint32_t image = load_srv(c, (uint32_t)slot, cmp, &image_type);
+    uint32_t image = load_srv(c, resource, cmp, &image_type);
     uint32_t si = spv_op2(&c->b, SpvOpSampledImage, spv_type_sampled_image(&c->b, image_type), image,
-                          load_sampler(c, sampler->index[0].immediate & 15));
+                          load_sampler(c, sampler));
     uint32_t w[8], count = 0;
     w[count++] = si;
     w[count++] = load_first(c, address, coord_count(r->dim), K_FLOAT);
@@ -2310,7 +2639,7 @@ static void fetch(Compiler *c, const DxbcInstruction *ins)
     if (slot < 0)
         return;
     uint32_t image_type;
-    uint32_t image = load_srv(c, (uint32_t)slot, 0, &image_type);
+    uint32_t image = load_srv(c, resource, 0, &image_type);
     uint32_t w[8], count = 0;
     w[count++] = image;
     if (r->dim == RES_BUFFER) {
@@ -2349,10 +2678,10 @@ static void resinfo(Compiler *c, const DxbcInstruction *ins)
     uint32_t image_type, image;
     int storage = resource->type == OPERAND_UNORDERED_ACCESS_VIEW;
     if (storage) {
-        uint32_t ptr = uav_pointer(c, (uint32_t)slot, &image_type);
+        uint32_t ptr = uav_pointer(c, resource, &image_type);
         image = spv_load(&c->b, image_type, ptr);
     } else {
-        image = load_srv(c, (uint32_t)slot, 0, &image_type);
+        image = load_srv(c, resource, 0, &image_type);
     }
     uint32_t dims;
     switch (r->dim) {
@@ -2409,20 +2738,26 @@ static void bufinfo(Compiler *c, const DxbcInstruction *ins)
     int slot = resource_slot(c, resource, &r);
     if (slot < 0)
         return;
-    spv_capability(&c->b, SpvCapabilityImageQuery);
-    uint32_t image_type, image;
-    if (resource->type == OPERAND_UNORDERED_ACCESS_VIEW) {
-        uint32_t ptr = uav_pointer(c, (uint32_t)slot, &image_type);
-        image = spv_load(&c->b, image_type, ptr);
+    uint32_t size;
+    RootBuffer rb;
+    if (root_buffer(c, resource, &rb)) {
+        /* a record has the size in bytes; root descriptors have none. */
+        size = rb.size ? rb.size : uconst(c, 0);
     } else {
-        image = load_srv(c, (uint32_t)slot, 0, &image_type);
+        spv_capability(&c->b, SpvCapabilityImageQuery);
+        uint32_t image_type, image;
+        if (resource->type == OPERAND_UNORDERED_ACCESS_VIEW) {
+            uint32_t ptr = uav_pointer(c, resource, &image_type);
+            image = spv_load(&c->b, image_type, ptr);
+        } else {
+            image = load_srv(c, resource, 0, &image_type);
+        }
+        size = spv_op1(&c->b, SpvOpImageQuerySize, c->t_u32, image);
+        if (r->raw || r->structured)
+            size = spv_op2(&c->b, SpvOpIMul, c->t_u32, size, uconst(c, 4));
     }
-    uint32_t size = spv_op1(&c->b, SpvOpImageQuerySize, c->t_u32, image);
-    if (r->raw)
-        size = spv_op2(&c->b, SpvOpIMul, c->t_u32, size, uconst(c, 4));
-    else if (r->structured && r->stride)
-        size = spv_op2(&c->b, SpvOpUDiv, c->t_u32, spv_op2(&c->b, SpvOpIMul, c->t_u32, size, uconst(c, 4)),
-                       uconst(c, r->stride));
+    if (r->structured && r->stride)
+        size = spv_op2(&c->b, SpvOpUDiv, c->t_u32, size, uconst(c, r->stride));
     store(c, ins, &ins->operands[0], splat(c, K_UINT, popcount(dst_mask(&ins->operands[0])), size), K_UINT);
 }
 
@@ -2435,9 +2770,9 @@ static void lod(Compiler *c, const DxbcInstruction *ins)
         return;
     spv_capability(&c->b, SpvCapabilityImageQuery);
     uint32_t image_type;
-    uint32_t image = load_srv(c, (uint32_t)slot, 0, &image_type);
+    uint32_t image = load_srv(c, resource, 0, &image_type);
     uint32_t si = spv_op2(&c->b, SpvOpSampledImage, spv_type_sampled_image(&c->b, image_type), image,
-                          load_sampler(c, sampler->index[0].immediate & 15));
+                          load_sampler(c, sampler));
     uint32_t coord = load_first(c, &ins->operands[1], spatial_count(r->dim), K_FLOAT);
     uint32_t v2 = spv_op2(&c->b, SpvOpImageQueryLod, c->t_vec[K_FLOAT][2], si, coord);
     uint32_t zero = fconst(c, 0.0f);
@@ -2451,7 +2786,7 @@ static void sampleinfo(Compiler *c, const DxbcInstruction *ins)
     uint32_t count;
     if (resource->type == OPERAND_RASTERIZER) {
         /* the render targets' sample count, which the device puts in the table. */
-        count = table_entry(c, DXBC_TABLE_SAMPLE_COUNT);
+        count = rasterizer_samples(c);
     } else {
         Resource *r;
         int slot = resource_slot(c, resource, &r);
@@ -2459,7 +2794,7 @@ static void sampleinfo(Compiler *c, const DxbcInstruction *ins)
             return;
         spv_capability(&c->b, SpvCapabilityImageQuery);
         uint32_t image_type;
-        uint32_t image = load_srv(c, (uint32_t)slot, 0, &image_type);
+        uint32_t image = load_srv(c, resource, 0, &image_type);
         count = spv_op1(&c->b, SpvOpImageQuerySamples, c->t_u32, image);
     }
     int as_uint = TOK_RESINFO_RETURN(ins->token) == 2;
@@ -2493,14 +2828,24 @@ static uint32_t read_word(Compiler *c, const DxbcOperand *resource, uint32_t wor
                                   &word, 1);
         return spv_load(&c->b, c->t_u32, ptr);
     }
-    uint32_t slot = resource->index[0].immediate;
+    RootBuffer rb;
+    if (root_buffer(c, resource, &rb)) {
+        uint32_t in = 0;
+        if (rb.size) {
+            in = word_in_bounds(c, &rb, word);
+            word = spv_op3(&c->b, SpvOpSelect, c->t_u32, in, word, uconst(c, 0));
+        }
+        uint32_t w[3] = {root_word_pointer(c, rb.address, word), SpvMemoryAccessAlignedMask, 4};
+        uint32_t v = spv_op(&c->b, SpvOpLoad, c->t_u32, w, 3);
+        return in ? spv_op3(&c->b, SpvOpSelect, c->t_u32, in, v, uconst(c, 0)) : v;
+    }
     uint32_t image_type, image;
     if (resource->type == OPERAND_UNORDERED_ACCESS_VIEW) {
-        uint32_t ptr = uav_pointer(c, slot, &image_type);
+        uint32_t ptr = uav_pointer(c, resource, &image_type);
         image = spv_load(&c->b, image_type, ptr);
         return extract(c, c->t_u32, spv_op2(&c->b, SpvOpImageRead, c->t_vec[K_UINT][4], image, word), 0);
     }
-    image = load_srv(c, slot, 0, &image_type);
+    image = load_srv(c, resource, 0, &image_type);
     return extract(c, c->t_u32, spv_op2(&c->b, SpvOpImageFetch, c->t_vec[K_UINT][4], image, word), 0);
 }
 
@@ -2513,8 +2858,21 @@ static void write_word(Compiler *c, const DxbcOperand *resource, uint32_t word, 
         spv_store(&c->b, ptr, value);
         return;
     }
+    RootBuffer rb;
+    if (root_buffer(c, resource, &rb)) {
+        uint32_t merge = 0;
+        if (rb.size)
+            begin_conditional(c, word_in_bounds(c, &rb, word), &merge);
+        uint32_t w[4] = {root_word_pointer(c, rb.address, word), value, SpvMemoryAccessAlignedMask, 4};
+        spv_op_void(&c->b, SpvOpStore, w, 4);
+        if (merge) {
+            spv_branch(&c->b, merge);
+            spv_label(&c->b, merge);
+        }
+        return;
+    }
     uint32_t image_type;
-    uint32_t ptr = uav_pointer(c, resource->index[0].immediate, &image_type);
+    uint32_t ptr = uav_pointer(c, resource, &image_type);
     uint32_t image = spv_load(&c->b, image_type, ptr);
     uint32_t parts[4] = {value, value, value, value};
     uint32_t v = spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_UINT][4], parts, 4);
@@ -2570,7 +2928,7 @@ static void load_typed(Compiler *c, const DxbcInstruction *ins)
     if (slot < 0)
         return;
     uint32_t image_type;
-    uint32_t ptr = uav_pointer(c, (uint32_t)slot, &image_type);
+    uint32_t ptr = uav_pointer(c, resource, &image_type);
     uint32_t image = spv_load(&c->b, image_type, ptr);
     uint32_t coord = load_first(c, &ins->operands[1], coord_count(r->dim), K_UINT);
     uint32_t v = spv_op2(&c->b, SpvOpImageRead, vec_type(c, r->kind, 4), image, coord);
@@ -2585,7 +2943,7 @@ static void store_typed(Compiler *c, const DxbcInstruction *ins)
     if (slot < 0)
         return;
     uint32_t image_type;
-    uint32_t ptr = uav_pointer(c, (uint32_t)slot, &image_type);
+    uint32_t ptr = uav_pointer(c, resource, &image_type);
     uint32_t image = spv_load(&c->b, image_type, ptr);
     uint32_t coord = load_first(c, &ins->operands[1], coord_count(r->dim), K_UINT);
     uint32_t value = load(c, &ins->operands[2], 0xF, r->kind);
@@ -2593,11 +2951,12 @@ static void store_typed(Compiler *c, const DxbcInstruction *ins)
     spv_op_void(&c->b, SpvOpImageWrite, w, 3);
 }
 
-/* a pointer to the word an atomic works on, in a view or in shared memory. */
+/* a pointer to the word an atomic works on, in a view or in shared memory, and whether it is in bounds. */
 static uint32_t atomic_pointer(Compiler *c, const DxbcOperand *resource, const DxbcOperand *address, Kind *k,
-                               uint32_t *scope)
+                               uint32_t *scope, uint32_t *in)
 {
     *k = K_UINT;
+    *in = 0;
     if (resource->type == OPERAND_THREAD_GROUP_SHARED_MEMORY) {
         uint32_t reg = resource->index[0].immediate & 255;
         uint32_t word;
@@ -2616,8 +2975,20 @@ static uint32_t atomic_pointer(Compiler *c, const DxbcOperand *resource, const D
     if (slot < 0)
         return 0;
     r->atomics = 1;
+    RootBuffer rb;
+    if (root_buffer(c, resource, &rb)) {
+        DxbcOperand offset = *address;
+        offset.swizzle[0] = address->swizzle[1];
+        *scope = SpvScopeDevice;
+        uint32_t word = r->structured ? word_index(c, address, &offset, r->stride) : word_index(c, address, NULL, 0);
+        if (rb.size) {
+            *in = word_in_bounds(c, &rb, word);
+            word = spv_op3(&c->b, SpvOpSelect, c->t_u32, *in, word, uconst(c, 0));
+        }
+        return root_word_pointer(c, rb.address, word);
+    }
     uint32_t image_type;
-    uint32_t image_ptr = uav_pointer(c, (uint32_t)slot, &image_type);
+    uint32_t image_ptr = uav_pointer(c, resource, &image_type);
     uint32_t coord;
     if (r->raw) {
         coord = word_index(c, address, NULL, 0);
@@ -2674,11 +3045,15 @@ static void atomic(Compiler *c, const DxbcInstruction *ins)
     const DxbcOperand *resource = &ins->operands[immediate ? 1 : 0];
     const DxbcOperand *address = &ins->operands[immediate ? 2 : 1];
     Kind k;
-    uint32_t scope;
-    uint32_t ptr = atomic_pointer(c, resource, address, &k, &scope);
+    uint32_t scope, in;
+    uint32_t ptr = atomic_pointer(c, resource, address, &k, &scope, &in);
     if (!ptr)
         return;
     uint32_t type = scalar_type(c, k);
+    /* out of bounds atomics of direct3d 12's views do nothing and return zero. */
+    uint32_t before = c->b.block, merge = 0;
+    if (in)
+        begin_conditional(c, in, &merge);
     uint32_t op = atomic_opcode(ins->opcode);
     uint32_t result;
     if (op == SpvOpAtomicCompareExchange) {
@@ -2691,6 +3066,13 @@ static void atomic(Compiler *c, const DxbcInstruction *ins)
         uint32_t w[4] = {ptr, uconst(c, scope), uconst(c, 0), load_scalar(c, value, value->swizzle[0], k)};
         result = spv_op(&c->b, op, type, w, 4);
     }
+    if (merge) {
+        uint32_t then = c->b.block;
+        spv_branch(&c->b, merge);
+        spv_label(&c->b, merge);
+        uint32_t w[4] = {result, then, uconst(c, 0), before};
+        result = spv_op(&c->b, SpvOpPhi, type, w, 4);
+    }
     if (immediate)
         store(c, ins, &ins->operands[0], splat(c, k, popcount(dst_mask(&ins->operands[0])), result), k);
 }
@@ -2698,13 +3080,25 @@ static void atomic(Compiler *c, const DxbcInstruction *ins)
 /* imm_atomic_alloc and consume: the view's hidden counter. */
 static void counter(Compiler *c, const DxbcInstruction *ins)
 {
-    uint32_t slot = ins->operands[1].index[0].immediate & 63;
-    uint32_t image_type = spv_type_image(&c->b, c->t_u32, SpvDimBuffer, 0, 0, 0, 2, SpvImageFormatR32ui);
-    spv_capability(&c->b, SpvCapabilityImageBuffer);
-    uint32_t image_ptr = descriptor_pointer(c, image_type, DXBC_HEAP_STORAGE_TEXEL, DXBC_TABLE_UAV_COUNTER + slot);
-    uint32_t w[3] = {image_ptr, uconst(c, 0), uconst(c, 0)};
-    uint32_t ptr =
-        spv_op(&c->b, SpvOpImageTexelPointer, spv_type_pointer(&c->b, SpvStorageClassImage, c->t_u32), w, 3);
+    const DxbcOperand *view = &ins->operands[1];
+    uint32_t slot = view->index[0].immediate & 63;
+    uint32_t ptr;
+    RootBuffer rb;
+    if (root_buffer(c, view, &rb)) {
+        /* direct3d 12's record of the view has its counter's address. */
+        if (!rb.counter) {
+            fail(c, "counter of a root descriptor");
+            return;
+        }
+        ptr = root_word_pointer(c, rb.counter, uconst(c, 0));
+    } else {
+        uint32_t image_type = spv_type_image(&c->b, c->t_u32, SpvDimBuffer, 0, 0, 0, 2, SpvImageFormatR32ui);
+        spv_capability(&c->b, SpvCapabilityImageBuffer);
+        uint32_t image_ptr =
+            descriptor_pointer(c, image_type, DXBC_HEAP_STORAGE_TEXEL, table_entry(c, DXBC_TABLE_UAV_COUNTER + slot));
+        uint32_t w[3] = {image_ptr, uconst(c, 0), uconst(c, 0)};
+        ptr = spv_op(&c->b, SpvOpImageTexelPointer, spv_type_pointer(&c->b, SpvStorageClassImage, c->t_u32), w, 3);
+    }
     uint32_t a[3] = {ptr, uconst(c, SpvScopeDevice), uconst(c, 0)};
     uint32_t result;
     if (ins->opcode == OP_IMM_ATOMIC_ALLOC) {
@@ -3127,14 +3521,14 @@ static const int8_t SAMPLE_POSITIONS[31][2] = {
 static uint32_t sample_count(Compiler *c, const DxbcOperand *resource)
 {
     if (resource->type == OPERAND_RASTERIZER)
-        return table_entry(c, DXBC_TABLE_SAMPLE_COUNT);
+        return rasterizer_samples(c);
     Resource *r;
     int slot = resource_slot(c, resource, &r);
     if (slot < 0 || (r->dim != RES_TEXTURE2DMS && r->dim != RES_TEXTURE2DMSARRAY))
         return uconst(c, 1);
     spv_capability(&c->b, SpvCapabilityImageQuery);
     uint32_t image_type;
-    uint32_t image = load_srv(c, (uint32_t)slot, 0, &image_type);
+    uint32_t image = load_srv(c, resource, 0, &image_type);
     return spv_op1(&c->b, SpvOpImageQuerySamples, c->t_u32, image);
 }
 
@@ -3884,6 +4278,7 @@ int dxbc_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
     c->options = options;
     c->program = info->program;
     c->binding = table_binding(info->program);
+    c->sm51 = info->major > 5 || (info->major == 5 && info->minor >= 1);
     /* with no stream rasterized the device discards what is; the first stream keeps the interface whole. */
     if (options && options->so_count && options->rasterized_stream < 4)
         c->raster_stream = options->rasterized_stream;

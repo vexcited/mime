@@ -23,6 +23,10 @@ struct DxbcOperand {
     uint32_t index_count;
     DxbcIndex index[3];
     uint32_t modifier;
+    /* shader model 5.1: the index may differ between invocations. */
+    int nonuniform;
+    /* the minimum precision of the extended operand token, for disassembly. */
+    uint32_t min_precision;
     uint32_t immediate[4];
     uint64_t immediate64[2];
 };

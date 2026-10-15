@@ -82,12 +82,57 @@ typedef struct DxbcStreamOutput {
     uint8_t output_slot;
 } DxbcStreamOutput;
 
+/*
+ * direct3d 12: where the registers of a space come from, as a root
+ * signature says. constants and root descriptors are in push constants,
+ * at push_offset: the values themselves, or a buffer's device address;
+ * a table is the heap index of its first descriptor there, offset the
+ * place of register base in the table. a static sampler is element
+ * offset of the static samplers' set.
+ */
+enum { DXBC_BIND_CBV, DXBC_BIND_SRV, DXBC_BIND_UAV, DXBC_BIND_SAMPLER };
+enum { DXBC_SOURCE_CONSTANTS, DXBC_SOURCE_ADDRESS, DXBC_SOURCE_TABLE, DXBC_SOURCE_STATIC_SAMPLER };
+
+typedef struct DxbcRootBinding {
+    uint8_t type;
+    uint8_t source;
+    uint32_t space, base, count;
+    uint32_t push_offset;
+    uint32_t offset;
+} DxbcRootBinding;
+
+/*
+ * the sets of direct3d 12, each binding 0: the mutable descriptors of the
+ * resource heap, the sampler heap, the static samplers and the records of
+ * the resource heap. a record describes a descriptor's buffer for the
+ * views shaders read through device addresses: constant buffers, raw and
+ * structured views.
+ */
+#define DXBC_ROOT_SET_RESOURCES 0
+#define DXBC_ROOT_SET_SAMPLERS 1
+#define DXBC_ROOT_SET_STATIC_SAMPLERS 2
+#define DXBC_ROOT_SET_RECORDS 3
+
+typedef struct DxbcRecord {
+    uint64_t address;
+    uint32_t size;
+    uint32_t stride;
+    uint64_t counter;
+    uint64_t reserved;
+} DxbcRecord;
+
 typedef struct DxbcCompileOptions {
     const DxbcStreamOutput *so;
     uint32_t so_count;
     const uint32_t *so_strides;
     uint32_t so_stride_count;
     uint32_t rasterized_stream;
+    /* direct3d 12 binds through the root signature instead of the stage's table. */
+    int root_signature;
+    const DxbcRootBinding *root;
+    uint32_t root_count;
+    /* the render targets' sample count, which direct3d 12 shaders know from their pipeline state. */
+    uint32_t sample_count;
 } DxbcCompileOptions;
 
 /* what a slot of a stage holds, as the shader declares it. */

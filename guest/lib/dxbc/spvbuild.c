@@ -417,6 +417,7 @@ void spv_label(SpvBuilder *b, uint32_t label)
         spv_branch(b, label);
     spv_op_void(b, SpvOpLabel, &label, 1);
     b->block_open = 1;
+    b->block = label;
 }
 
 void spv_branch(SpvBuilder *b, uint32_t target)
@@ -473,7 +474,7 @@ uint32_t *spv_finish(SpvBuilder *b, size_t *words)
     for (int i = 0; i < SECTION_COUNT; i++) {
         if (i == SECTION_ENTRY_POINTS) {
             out[at++] = 3 << 16 | SpvOpMemoryModel;
-            out[at++] = SpvAddressingModelLogical;
+            out[at++] = b->addressing;
             out[at++] = SpvMemoryModelGLSL450;
         }
         __builtin_memcpy(out + at, b->sections[i].words, b->sections[i].count * 4);

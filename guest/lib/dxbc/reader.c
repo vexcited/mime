@@ -81,8 +81,11 @@ static int read_operand(DxbcInstruction *ins, const uint32_t **p, const uint32_t
         if (*p >= end)
             return -1;
         uint32_t ext = *(*p)++;
-        if ((ext & 0x3F) == 1)
+        if ((ext & 0x3F) == 1) {
             op->modifier = (ext >> 6) & 0xFF;
+            op->nonuniform = (ext >> 17) & 1;
+            op->min_precision = (ext >> 14) & 7;
+        }
         extended = ext >> 31;
     }
     op->index_count = OPD_INDEX_DIMENSION(token);
