@@ -307,7 +307,9 @@ static void end_rendering(D3dContext *c)
 {
     if (!c->rendering)
         return;
+    D3dQueriesClose(c, c->cmd->buffer);
     c->child.device->vk.vkCmdEndRendering(c->cmd->buffer);
+    D3dQueriesCopy(c, c->cmd->buffer);
     c->rendering = FALSE;
     c->pending_barrier = TRUE;
 }
@@ -333,6 +335,8 @@ UINT64 D3dContextSubmit(D3dContext *c, const VkSemaphoreSubmitInfo *wait, const 
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     if (c->cmd) {
         end_rendering(c);
+        D3dQueriesClose(c, c->cmd->buffer);
+        D3dQueriesCopy(c, c->cmd->buffer);
         D3dBarrier(c->cmd->buffer, device);
         c->pending_barrier = FALSE;
         device->vk.vkEndCommandBuffer(c->cmd->buffer);
@@ -1125,7 +1129,8 @@ static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
 /* the vertex bindings: the layout's slots with the strides bound, and the attributes. */
 static void emit_vertex_input(D3dContext *c, VkCommandBuffer cmd)
 {
-    D3dVk *vk = &c->child.device->vk;
+    D3dDevice *device = c->child.device;
+    D3dVk *vk = &device->vk;
     VkVertexInputBindingDescription2EXT bindings[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
     UINT count = 0;
     D3dInputLayout *layout = c->layout;
@@ -1139,7 +1144,9 @@ static void emit_vertex_input(D3dContext *c, VkCommandBuffer cmd)
             b->binding = i;
             b->stride = c->vb_stride[i];
             b->inputRate = layout->instanced[i] ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
-            b->divisor = 1;
+            /* a step rate of 0 gives every instance the first element. */
+            UINT step = layout->instanced[i] ? layout->step_rate[i] : 1;
+            b->divisor = (step > 1 && device->has_divisor) || (!step && device->has_zero_divisor) ? step : 1;
         }
     vk->vkCmdSetVertexInputEXT(cmd, count, bindings, layout ? layout->count : 0, layout ? layout->attributes : NULL);
 }
@@ -1385,6 +1392,9 @@ static void begin_rendering(D3dContext *c, VkCommandBuffer cmd)
     }
     if (!samples)
         samples = c->rasterizer && c->rasterizer->desc.ForcedSampleCount ? c->rasterizer->desc.ForcedSampleCount : 1;
+    /* segments begun for dispatches end outside the render pass instance. */
+    D3dQueriesClose(c, cmd);
+    D3dQueriesCopy(c, cmd);
     device->vk.vkCmdBeginRendering(cmd, &info);
     c->rendering = TRUE;
     c->targets_dirty = FALSE;
@@ -1421,6 +1431,8 @@ static BOOL prepare_draw(D3dContext *c)
         }
         begin_rendering(c, cmd);
     }
+    if (c->query_count)
+        D3dQueriesOpen(c, cmd, TRUE);
     if (!emit_tables(c, cmd, FALSE))
         return FALSE;
     if (c->shaders_dirty || c->compute_bound) {
@@ -1559,6 +1571,8 @@ static BOOL prepare_dispatch(D3dContext *c)
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
     if (!cmd || !emit_tables(c, cmd, TRUE))
         return FALSE;
+    if (c->query_count)
+        D3dQueriesOpen(c, cmd, FALSE);
     VkShaderStageFlagBits stage = VK_SHADER_STAGE_COMPUTE_BIT;
     device->vk.vkCmdBindShadersEXT(cmd, 1, &stage, &c->stages[D3D_CS].shader->shader);
     return TRUE;
@@ -2400,6 +2414,7 @@ void D3dContextDestroy(D3dContext *c)
 {
     D3dDevice *device = c->child.device;
     clear_state(c);
+    D3dQueriesRelease(c);
     /* a recording never finished: nothing of it reached the gpu. */
     for (UINT i = 0; i < c->list_chunk_count; i++)
         D3dRingChunkRelease(device, c->list_chunks[i], 0);

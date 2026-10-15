@@ -206,6 +206,7 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     WANT(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, device->has_custom_border = TRUE)
     WANT(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, device->has_transform_feedback = TRUE)
     WANT(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME, device->has_conditional = TRUE)
+    WANT(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, device->has_divisor = TRUE)
     WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, (void)0)
     WANT(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, (void)0)
 #undef WANT
@@ -226,15 +227,18 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     VkPhysicalDeviceConditionalRenderingFeaturesEXT conditional = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT,
         device->has_transform_feedback ? (void *)&feedback : feedback.pNext};
+    VkPhysicalDeviceVertexAttributeDivisorFeaturesKHR divisor = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_KHR,
+        device->has_conditional ? (void *)&conditional : conditional.pNext};
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-                                            device->has_conditional ? (void *)&conditional : conditional.pNext};
+                                            device->has_divisor ? (void *)&divisor : divisor.pNext};
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
     VkPhysicalDeviceVulkan11Features f11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
     VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f11};
     vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
 
     if (!object.shaderObject || !robust.nullDescriptor || !f13.dynamicRendering || !f13.synchronization2 ||
-        !f12.timelineSemaphore || !f12.runtimeDescriptorArray || !f12.descriptorBindingPartiallyBound ||
+        !f12.timelineSemaphore || !f12.hostQueryReset || !f12.runtimeDescriptorArray || !f12.descriptorBindingPartiallyBound ||
         !f12.descriptorBindingSampledImageUpdateAfterBind || !f12.descriptorBindingUniformBufferUpdateAfterBind) {
         D3dLog("d3d11: the gpu lacks features direct3d 11 needs");
         return DXGI_ERROR_UNSUPPORTED;
@@ -260,6 +264,8 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     feedback.geometryStreams = feedback.geometryStreams && feedback.transformFeedback;
     conditional.inheritedConditionalRendering = FALSE;
     device->has_logic_op = f->logicOp;
+    device->has_statistics = f->pipelineStatisticsQuery;
+    device->has_precise_occlusion = f->occlusionQueryPrecise;
     device->has_depth_bounds = f->depthBounds;
     device->has_geometry = f->geometryShader;
     device->has_tessellation = f->tessellationShader;
@@ -269,6 +275,9 @@ static HRESULT create_vulkan_device(D3dDevice *device)
         device->has_transform_feedback = FALSE;
     if (!conditional.conditionalRendering)
         device->has_conditional = FALSE;
+    if (!divisor.vertexAttributeInstanceRateDivisor)
+        device->has_divisor = FALSE;
+    device->has_zero_divisor = device->has_divisor && divisor.vertexAttributeInstanceRateZeroDivisor;
     if (!border.customBorderColors)
         device->has_custom_border = FALSE;
     /* features left enabled must have their dynamic state set by every draw: these are not used. */
@@ -368,6 +377,7 @@ static void destroy_device(D3dDevice *device)
         if (device->immediate)
             D3dContextDestroy(device->immediate);
         D3dCollectGarbage(device);
+        D3dQueryPoolsDestroy(device);
         D3dMemoryDestroy(device);
         D3dHeapDestroy(device);
         vk->vkDestroySampler(vk->device, device->null_sampler, NULL);

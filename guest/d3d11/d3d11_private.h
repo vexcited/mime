@@ -89,6 +89,7 @@
     X(vkCreateQueryPool)                                                                                               \
     X(vkDestroyQueryPool)                                                                                              \
     X(vkGetQueryPoolResults)                                                                                           \
+    X(vkResetQueryPool)                                                                                                \
     X(vkCreateSwapchainKHR)                                                                                            \
     X(vkDestroySwapchainKHR)                                                                                           \
     X(vkGetSwapchainImagesKHR)                                                                                         \
@@ -457,15 +458,51 @@ typedef struct D3dBindingTable {
 
 /* ------------------------------------------------------------------ queries */
 
+/* what a query counts with: the kinds of vulkan queries behind direct3d's. */
+typedef enum D3dQueryKind {
+    D3D_QUERY_NONE,
+    D3D_QUERY_OCCLUSION,
+    D3D_QUERY_STATISTICS,
+    D3D_QUERY_TIMESTAMP,
+    D3D_QUERY_KINDS
+} D3dQueryKind;
+
+/* vulkan queries of one kind, the readback memory their results are copied to, and how many queries hold each. */
+typedef struct D3dQueryPool {
+    struct D3dQueryPool *next;
+    VkQueryPool pool;
+    D3dAllocation results;
+    UINT used;
+    LONG refs[256];
+} D3dQueryPool;
+
+typedef struct D3dQuerySlot {
+    D3dQueryPool *pool;
+    UINT index;
+} D3dQuerySlot;
+
+/* slots given up, in the order they were, waiting for the gpu to be done with them. */
+typedef struct D3dRetiredSlots {
+    struct D3dRetiredSlot {
+        D3dQuerySlot slot;
+        UINT64 serial;
+    } *list;
+    UINT head, count, capacity;
+} D3dRetiredSlots;
+
 typedef struct D3dQuery {
     ID3D11Query1 iface;
     D3dChild child;
     D3D11_QUERY_DESC1 desc;
-    VkQueryPool pool;
+    D3dQueryKind kind;
+    /* the submission that carries its end. */
     UINT64 serial;
-    BOOL begun;
-    /* the results, copied by the gpu to readback memory. */
-    D3dAllocation results;
+    BOOL begun, ended;
+    /* calls of GetData without a flush that found it not ready, since the end. */
+    BYTE polls;
+    /* the segments it was begun over, its result their sum. */
+    D3dQuerySlot *slots;
+    UINT slot_count, slot_capacity;
 } D3dQuery;
 
 /* ------------------------------------------------------------------ device */
@@ -517,6 +554,7 @@ struct D3dDevice {
     VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceMemoryProperties memory;
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
+    BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
 
     /* the queue is the device's, submissions from contexts and swap chains alike. */
@@ -552,6 +590,11 @@ struct D3dDevice {
     BOOL init_recording;
 
     D3dContext *immediate;
+
+    /* query slots. */
+    SRWLOCK query_lock;
+    D3dQueryPool *query_pools[D3D_QUERY_KINDS];
+    D3dRetiredSlots query_retired[D3D_QUERY_KINDS];
 
     /* deferred destruction. */
     SRWLOCK garbage_lock;
@@ -723,6 +766,20 @@ struct D3dContext {
     } list_maps[8];
     UINT list_map_count;
 
+    /*
+     * the queries begun and not ended. they count in segments: a vulkan
+     * query of each kind at a time, as vulkan has no more, nor any across
+     * render pass instances or command buffers. a segment ends when the
+     * queries begun change, and counts for all of them. then the slots
+     * whose results are still to copy.
+     */
+    D3dQuery **queries;
+    UINT query_count, query_capacity;
+    D3dQuerySlot segments[D3D_QUERY_KINDS];
+    BOOL segment_open[D3D_QUERY_KINDS];
+    D3dQuerySlot *query_copies;
+    UINT query_copy_count, query_copy_capacity;
+
     /* stream output and predication. */
     D3dResource *so[D3D11_SO_BUFFER_SLOT_COUNT];
     UINT so_offset[D3D11_SO_BUFFER_SLOT_COUNT];
@@ -772,6 +829,11 @@ D3dQuery *D3dQueryFrom(ID3D11Asynchronous *iface);
 HRESULT D3dQueryGetData(D3dContext *context, D3dQuery *query, void *data, UINT size, UINT flags);
 void D3dQueryBegin(D3dContext *context, D3dQuery *query);
 void D3dQueryEnd(D3dContext *context, D3dQuery *query);
+void D3dQueriesOpen(D3dContext *context, VkCommandBuffer cmd, BOOL drawing);
+void D3dQueriesClose(D3dContext *context, VkCommandBuffer cmd);
+void D3dQueriesCopy(D3dContext *context, VkCommandBuffer cmd);
+void D3dQueriesRelease(D3dContext *context);
+void D3dQueryPoolsDestroy(D3dDevice *device);
 
 /* swapchain.c. */
 HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,
