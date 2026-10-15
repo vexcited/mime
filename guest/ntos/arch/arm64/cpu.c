@@ -125,3 +125,13 @@ ULONG64 KiProcessorSmbiosId(void)
 {
     return KiProcessorIds.Midr;
 }
+
+/* arm64 programs see no hypervisor. */
+BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
+{
+    return FALSE;
+}
+
+void KiIdentifyToHypervisor(void)
+{
+}

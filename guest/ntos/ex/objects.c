@@ -42,6 +42,7 @@ static void init_shared_data(void)
     k->NtMajorVersion = MIME_NT_MAJOR_VERSION;
     k->NtMinorVersion = MIME_NT_MINOR_VERSION;
     KiReadProcessorIds();
+    KiIdentifyToHypervisor();
     KiSetProcessorFeatures(k->ProcessorFeatures);
     k->SuiteMask = 0x100;            /* VER_SUITE_SINGLEUSERTS */
     k->ActiveConsoleId = 1;

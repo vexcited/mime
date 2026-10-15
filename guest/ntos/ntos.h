@@ -352,6 +352,8 @@ NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize);
 
 /* arch/<processor>/cpu.c, the identification of the boot processor. */
 void KiReadProcessorIds(void);
+BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count);
+void KiIdentifyToHypervisor(void);
 void KiSetProcessorFeatures(BOOLEAN *features);
 PCSTR KiProcessorVendor(void);
 USHORT KiProcessorModel(void);

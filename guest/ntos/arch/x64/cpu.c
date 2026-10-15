@@ -27,6 +27,32 @@ void KiReadProcessorIds(void)
         KiCpuid(0x80000001, 0, g_ext1);
 }
 
+/* the hypervisor's leaves from 0x40000000 when cpuid reports microsoft's, FALSE without it. */
+BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
+{
+    ULONG regs[4];
+    if (!(g_leaf1[2] >> 31 & 1))
+        return FALSE;
+    KiCpuid(0x40000000, 0, regs);
+    if (memcmp(&regs[1], "Micr", 4) || memcmp(&regs[2], "osof", 4) || memcmp(&regs[3], "t Hv", 4))
+        return FALSE;
+    for (ULONG i = 0; i < count; i++)
+        KiCpuid(0x40000000 + i, 0, leaves[i]);
+    return TRUE;
+}
+
+/*
+ * on microsoft's hypervisor windows says which system it is through the
+ * guest os id register, which enables its hypercalls: microsoft, windows
+ * nt, version 10.0 and the build.
+ */
+void KiIdentifyToHypervisor(void)
+{
+    ULONG leaves[1][4];
+    if (KiQueryHypervisorLeaves(leaves, 1))
+        KiWriteMsr(0x40000000, 0x0001040A00000000ull | MIME_NT_BUILD_NUMBER);
+}
+
 static BOOLEAN bit(const ULONG *regs, int reg, int n)
 {
     return (regs[reg] >> n) & 1;

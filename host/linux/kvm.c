@@ -153,10 +153,68 @@ bool mime_kvm_set_slot(MimeVm *vm, uint32_t slot, uint64_t ipa, uint64_t size, v
     return set_slot(vm, slot, ipa, size, host, readonly);
 }
 
+/* the 12 characters of a hypervisor vendor in ebx, ecx and edx. */
+static void cpuid_vendor(struct kvm_cpuid_entry2 *e, const char *vendor)
+{
+    memcpy(&e->ebx, vendor, 4);
+    memcpy(&e->ecx, vendor + 4, 4);
+    memcpy(&e->edx, vendor + 8, 4);
+}
+
 /*
- * the processor the guest sees: the host's, as kvm supports it, without
- * the hypervisor bit and the kvm leaves, with the x2apic and the tsc
- * deadline timer the kernel uses.
+ * the hypervisor a windows 11 pc with hyper-v, virtual machine platform or
+ * memory integrity runs on: microsoft's, with windows in its root
+ * partition. kvm emulates its interface, so the cost of the exits a
+ * hypervisor brings, and its handling of vmcall, are those of such a pc.
+ * the leaves are kvm's, under microsoft's vendor and version, with the
+ * root partition's privileges (create partitions, cpu management) and the
+ * hardware features only a root partition reads. kvm's own leaves go.
+ */
+static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint32_t room)
+{
+    struct kvm_cpuid2 *hv = calloc(1, sizeof(*hv) + 64 * sizeof(struct kvm_cpuid_entry2));
+    hv->nent = 64;
+    if (ioctl(vm->kvm_fd, KVM_CHECK_EXTENSION, KVM_CAP_SYS_HYPERV_CPUID) <= 0 ||
+        ioctl(vm->kvm_fd, KVM_GET_SUPPORTED_HV_CPUID, hv) != 0) {
+        free(hv);
+        return 0;
+    }
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < hv->nent && n < room; i++) {
+        struct kvm_cpuid_entry2 *e = &hv->entries[i];
+        if (e->function > 0x4000000B)
+            continue;
+        switch (e->function) {
+        case 0x40000000:
+            e->eax = 0x4000000B;
+            cpuid_vendor(e, "Microsoft Hv");
+            break;
+        case 0x40000002: /* build, version 10.0, update */
+            e->eax = 26300;
+            e->ebx = 0x000A0000;
+            e->ecx = 0;
+            e->edx = 9457;
+            break;
+        case 0x40000003:
+            e->ebx |= 0x000039FF;
+            break;
+        }
+        out[n++] = *e;
+    }
+    free(hv);
+    if (n && n < room) {
+        /* apic overlay assist, msr bitmaps, architectural counters, second level translation. */
+        struct kvm_cpuid_entry2 features = {.function = 0x40000006, .eax = 0x0000000F};
+        out[n++] = features;
+    }
+    return n;
+}
+
+/*
+ * the processor the guest sees: the host's, as kvm supports it, with the
+ * x2apic and the tsc deadline timer the kernel uses, and microsoft's
+ * hypervisor in place of kvm's when kvm can play it. without it, no
+ * hypervisor at all.
  */
 static bool load_cpuid(MimeVm *vm)
 {
@@ -179,13 +237,18 @@ static bool load_cpuid(MimeVm *vm)
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
         if (e->function >= 0x40000000 && e->function < 0x40010000)
             continue;
-        if (e->function == 1) {
-            e->ecx &= ~(1u << 31);                  /* no hypervisor */
-            e->ecx |= (1u << 21) | (1u << 24);      /* x2apic, tsc deadline */
-        }
+        if (e->function == 1)
+            e->ecx |= (1u << 21) | (1u << 24); /* x2apic, tsc deadline */
         g_cpuid->entries[out++] = *e;
     }
-    g_cpuid->nent = out;
+    uint32_t hv = add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out);
+    for (uint32_t i = 0; i < out; i++) {
+        struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
+        if (e->function == 1)
+            e->ecx = hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31);
+    }
+    g_cpuid->nent = out + hv;
+    mime_info("processor: %s hypervisor", hv ? "microsoft's" : "no");
     return true;
 }
 
