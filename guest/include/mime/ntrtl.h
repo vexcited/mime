@@ -208,6 +208,7 @@ NTSYSAPI ULONG DbgPrint(PCSTR format, ...);
 NTSYSAPI void NTAPI DbgBreakPoint(void);
 NTSYSAPI void NTAPI DbgUserBreakPoint(void);
 NTSYSAPI NTSTATUS NTAPI RtlGetVersion(RTL_OSVERSIONINFOEXW *info);
+NTSYSAPI NTSTATUS NTAPI RtlQuerySystemTime(PLARGE_INTEGER time);
 NTSYSAPI ULONGLONG NTAPI VerSetConditionMask(ULONGLONG mask, ULONG type, UCHAR condition);
 NTSYSAPI void NTAPI RtlGetNtVersionNumbers(PULONG major, PULONG minor, PULONG build);
 NTSYSAPI BOOLEAN NTAPI RtlGetNtProductType(ULONG *type);

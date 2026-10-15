@@ -103,10 +103,15 @@ this machine's installation at every boot, and loads `win32k.sys` as a
 driver, like Windows.
 
 **System calls use the real Windows numbers.** `tools/syscalls` holds the
-service tables of Windows 11 build 26300 arm64. `tools/gensyscalls.c` turns
-them into the stubs of `ntdll.dll` and `win32u.dll`, and `tools/genservices.c`
-registers every `Nt*` function the kernel defines. A service Mime does not
-implement yet returns `STATUS_NOT_IMPLEMENTED`.
+service tables of Windows 11 build 26300 arm64. Windows numbers its services
+the same on every architecture: the x64 `ntdll.dll` and `win32u.dll` of build
+26300 carry exactly these numbers, so the same tables serve the x64 build.
+`tools/gensyscalls.c` turns them into the stubs of `ntdll.dll` and
+`win32u.dll`, with the bytes of Windows' own stubs on x64, and
+`tools/genservices.c` registers every `Nt*` function the kernel defines. A
+service Mime does not implement yet returns `STATUS_NOT_IMPLEMENTED`. As on
+x64 Windows, the x64 `NtQuerySystemTime` reads the shared page instead of
+entering the kernel.
 
 **The user mode DLLs** (`guest/ntdll`, `guest/kernelbase`, `guest/user32`,
 `guest/gdi32`) reimplement the Windows API on top of those system calls, with
