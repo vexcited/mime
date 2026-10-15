@@ -831,6 +831,110 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetSemaphoreCounterValue(VkDevice device, VkSem
     return r;
 }
 
+/*
+ * the bytes of a descriptor: what the union points to goes across, ids for
+ * the sampler and view, and the host gives the bytes its driver made.
+ */
+VKAPI_ATTR void VKAPI_CALL vkGetDescriptorEXT(VkDevice device, const VkDescriptorGetInfoEXT *info, size_t size,
+                                              void *out)
+{
+    MvkEncoder *e = mvk_call_begin(MVK_OP_GET_DESCRIPTOR);
+    mvk_put_u32(e, (uint32_t)info->type);
+    const VkDescriptorImageInfo *image = NULL;
+    const VkDescriptorAddressInfoEXT *address = NULL;
+    switch (info->type) {
+    case VK_DESCRIPTOR_TYPE_SAMPLER:
+        mvk_put_u64(e, info->data.pSampler ? (uint64_t)*info->data.pSampler : 0);
+        break;
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+        image = info->data.pCombinedImageSampler;
+        break;
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+        image = info->data.pSampledImage;
+        break;
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+        image = info->data.pStorageImage;
+        break;
+    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+        image = info->data.pInputAttachmentImage;
+        break;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+        address = info->data.pUniformTexelBuffer;
+        break;
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+        address = info->data.pStorageTexelBuffer;
+        break;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+        address = info->data.pUniformBuffer;
+        break;
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+        address = info->data.pStorageBuffer;
+        break;
+    case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+    case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV:
+        mvk_put_u64(e, info->data.accelerationStructure);
+        break;
+    default:
+        break;
+    }
+    if (info->type <= VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT && info->type != VK_DESCRIPTOR_TYPE_SAMPLER) {
+        if (image || address) {
+            mvk_put_u32(e, 1);
+            if (image) {
+                mvk_put_u64(e, (uint64_t)image->sampler);
+                mvk_put_u64(e, (uint64_t)image->imageView);
+                mvk_put_u32(e, (uint32_t)image->imageLayout);
+            } else {
+                mvk_put_u64(e, address->address);
+                mvk_put_u64(e, address->range);
+                mvk_put_u32(e, (uint32_t)address->format);
+            }
+        } else {
+            mvk_put_u32(e, 0);
+        }
+    }
+    mvk_put_u64(e, (uint64_t)size);
+    MvkDecoder *d = mvk_call_wait(e);
+    if (d)
+        mvk_get_bytes(d, out, size);
+    else
+        memset(out, 0, size);
+    mvk_call_done(d);
+}
+
+/* capture and replay of descriptors needs ids that last across runs, which the protocol does not keep. */
+VKAPI_ATTR VkResult VKAPI_CALL vkGetBufferOpaqueCaptureDescriptorDataEXT(VkDevice device,
+                                                                         const VkBufferCaptureDescriptorDataInfoEXT *info,
+                                                                         void *data)
+{
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkGetImageOpaqueCaptureDescriptorDataEXT(VkDevice device,
+                                                                        const VkImageCaptureDescriptorDataInfoEXT *info,
+                                                                        void *data)
+{
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkGetImageViewOpaqueCaptureDescriptorDataEXT(
+    VkDevice device, const VkImageViewCaptureDescriptorDataInfoEXT *info, void *data)
+{
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkGetSamplerOpaqueCaptureDescriptorDataEXT(
+    VkDevice device, const VkSamplerCaptureDescriptorDataInfoEXT *info, void *data)
+{
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT(
+    VkDevice device, const VkAccelerationStructureCaptureDescriptorDataInfoEXT *info, void *data)
+{
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkSignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo *info)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_SIGNAL_SEMAPHORE);

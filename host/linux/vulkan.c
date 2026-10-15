@@ -518,6 +518,25 @@ static void create_device(MvkCall *call)
     mvk_reply_end(call);
 }
 
+/*
+ * the device goes with the swapchains the presenter made on it, whose
+ * functions were the device's, and a later device may take its place.
+ */
+static void destroy_device(MvkCall *call)
+{
+    MvkConnection *c = call->conn;
+    uint64_t id = mvk_get_u64(&call->in);
+    if (call->in.error || !c->device || lookup(c, id) != (uint64_t)(uintptr_t)c->device)
+        return;
+    mvk_wsi_close(c);
+    c->fn.vkDeviceWaitIdle(c->device);
+    c->fn.vkDestroyDevice(c->device, NULL);
+    bind(c, id, 0);
+    c->device = VK_NULL_HANDLE;
+    c->physical_device = VK_NULL_HANDLE;
+    c->queue_count = 0;
+}
+
 /* ------------------------------------------------------------------ memory */
 
 /*
@@ -830,6 +849,51 @@ static void semaphore_value(MvkCall *call)
     mvk_reply_end(call);
 }
 
+/* a descriptor's bytes, from what the guest's union pointed to. */
+static void get_descriptor(MvkCall *call)
+{
+    MvkDecoder *d = &call->in;
+    VkDescriptorGetInfoEXT info = {VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
+    info.type = (VkDescriptorType)mvk_get_u32(d);
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDescriptorImageInfo image = {0};
+    VkDescriptorAddressInfoEXT address = {VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT};
+    if (info.type == VK_DESCRIPTOR_TYPE_SAMPLER) {
+        sampler = (VkSampler)mvk_get_handle(d, 0);
+        info.data.pSampler = &sampler;
+    } else if (info.type == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR ||
+               info.type == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV) {
+        info.data.accelerationStructure = mvk_get_u64(d);
+    } else if (info.type <= VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT && mvk_get_u32(d)) {
+        switch (info.type) {
+        case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+        case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+            image.sampler = (VkSampler)mvk_get_handle(d, 0);
+            image.imageView = (VkImageView)mvk_get_handle(d, 0);
+            image.imageLayout = (VkImageLayout)mvk_get_u32(d);
+            info.data.pSampledImage = &image;
+            break;
+        default:
+            address.address = mvk_get_u64(d);
+            address.range = mvk_get_u64(d);
+            address.format = (VkFormat)mvk_get_u32(d);
+            info.data.pUniformBuffer = &address;
+            break;
+        }
+    }
+    uint64_t size = mvk_get_u64(d);
+    uint8_t bytes[256] = {0};
+    if (size > sizeof(bytes))
+        size = sizeof(bytes);
+    if (!d->error && call->conn->device && call->fn->vkGetDescriptorEXT)
+        call->fn->vkGetDescriptorEXT(call->conn->device, &info, (size_t)size, bytes);
+    MvkEncoder *e = mvk_reply_begin(call);
+    mvk_put_bytes(e, bytes, (size_t)size);
+    mvk_reply_end(call);
+}
+
 static void signal_semaphore(MvkCall *call)
 {
     VkSemaphoreSignalInfo info;
@@ -925,6 +989,7 @@ static void run_hand(MvkCall *call)
     case MVK_OP_PHYSICAL_DEVICES: physical_devices(call); break;
     case MVK_OP_DEVICE_EXTENSIONS: device_extensions(call); break;
     case MVK_OP_CREATE_DEVICE: create_device(call); break;
+    case MVK_OP_DESTROY_DEVICE: destroy_device(call); break;
     case MVK_OP_ALLOCATE_MEMORY: allocate_memory(call); break;
     case MVK_OP_FREE_MEMORY: free_memory(call); break;
     case MVK_OP_ALLOCATE_COMMAND_BUFFERS: allocate_command_buffers(call); break;
@@ -962,6 +1027,7 @@ static void run_hand(MvkCall *call)
     case MVK_OP_DESTROY_SWAPCHAIN: mvk_wsi_destroy_swapchain(call); break;
     case MVK_OP_ACQUIRE_IMAGE: mvk_wsi_acquire(call); break;
     case MVK_OP_PRESENT: mvk_wsi_present(call); break;
+    case MVK_OP_GET_DESCRIPTOR: get_descriptor(call); break;
     default:
         mime_warn("vulkan: unknown call %#x", call->header.op);
         break;
@@ -1008,9 +1074,12 @@ static void *connection_main(void *arg)
     mime_set_thread_name("mime-vulkan");
     MvkHeader *h = c->header;
     uint64_t get = h->get;
-    while (!c->closing) {
+    for (;;) {
         uint64_t put = __atomic_load_n(&h->put, __ATOMIC_ACQUIRE);
         if (put == get) {
+            /* a closing connection runs what the guest sent before going: its last destructions. */
+            if (c->closing)
+                break;
             /* a short spin catches the next call of a busy guest without a kick. */
             uint64_t until = mime_now_ns() + 50000;
             while (put == get && mime_now_ns() < until) {
