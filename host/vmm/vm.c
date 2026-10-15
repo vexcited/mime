@@ -59,6 +59,11 @@ void mime_host_wake_word(uint32_t *word)
     os_sync_wake_by_address_all(word, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE);
 }
 
+/* the framework backs guest ram in host pages already. */
+void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice)
+{
+}
+
 static uint64_t align_up(uint64_t v, uint64_t a)
 {
     return (v + a - 1) / a * a;
@@ -178,6 +183,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
 
     mime_vm_init_boot(vm);
     MimeBootInfo *boot = vm->boot;
+    boot->memory_block_shift = 14;
 
     uint64_t freq;
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));

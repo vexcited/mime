@@ -12,8 +12,7 @@ static LIST_ENTRY g_free[MM_MAX_ORDER + 1];
 static SIZE_T g_free_pages;
 static SIZE_T g_total_pages;
 static SIZE_T g_freed_since_discard;
-
-#define DISCARD_MIN_ORDER 4         /* 64 KiB blocks, four host pages */
+static ULONG g_discard_min_order = 4; /* 64 KiB blocks, or the host's memory block */
 #define DISCARD_BATCH (16ull << 8) /* pages freed between discard passes, 16 MiB */
 #define DISCARD_IDLE (1ull << 8)   /* pages freed before the machine idles, 1 MiB */
 
@@ -30,7 +29,23 @@ static ULONG64 index_to_pa(ULONG64 index)
     return g_ram_base + (index << PAGE_SHIFT);
 }
 
-static void free_block(ULONG64 index, ULONG order)
+/*
+ * a block the host was handed back holds zeros and costs no host memory:
+ * it stays so while its buddies merge only with blocks like it, and its
+ * parts are still zero after a split. such blocks wait at the tail of the
+ * free lists, so allocations reuse memory the host already backs.
+ */
+static void insert_free(PMMPFN p, ULONG order, BOOLEAN discarded)
+{
+    p->Flags = MM_PFN_FREE | (discarded ? MM_PFN_DISCARDED : 0);
+    p->Order = (UCHAR)order;
+    if (discarded)
+        InsertTailList(&g_free[order], &p->ListEntry);
+    else
+        InsertHeadList(&g_free[order], &p->ListEntry);
+}
+
+static void free_block(ULONG64 index, ULONG order, BOOLEAN discarded)
 {
     while (order < MM_MAX_ORDER) {
         ULONG64 buddy = index ^ (1ull << order);
@@ -39,18 +54,17 @@ static void free_block(ULONG64 index, ULONG order)
         PMMPFN b = &g_pfn[buddy];
         if (!(b->Flags & MM_PFN_FREE) || b->Order != order)
             break;
+        discarded = discarded && (b->Flags & MM_PFN_DISCARDED);
         RemoveEntryList(&b->ListEntry);
         b->Flags = 0;
         index &= ~(1ull << order);
         order++;
     }
-    PMMPFN p = &g_pfn[index];
-    p->Flags = MM_PFN_FREE;
-    p->Order = (UCHAR)order;
-    InsertHeadList(&g_free[order], &p->ListEntry);
+    insert_free(&g_pfn[index], order, discarded);
 }
 
-static BOOLEAN alloc_block(ULONG order, ULONG64 *out_index)
+/* returns whether the block is known to hold zeros. */
+static BOOLEAN alloc_block(ULONG order, ULONG64 *out_index, BOOLEAN *zeroed)
 {
     ULONG o = order;
     while (o <= MM_MAX_ORDER && IsListEmpty(&g_free[o]))
@@ -59,16 +73,14 @@ static BOOLEAN alloc_block(ULONG order, ULONG64 *out_index)
         return FALSE;
     PMMPFN p = CONTAINING_RECORD(RemoveHeadList(&g_free[o]), MMPFN, ListEntry);
     ULONG64 index = (ULONG64)(p - g_pfn);
+    BOOLEAN discarded = (p->Flags & MM_PFN_DISCARDED) != 0;
     p->Flags = 0;
     while (o > order) {
         o--;
-        ULONG64 upper = index + (1ull << o);
-        PMMPFN u = &g_pfn[upper];
-        u->Flags = MM_PFN_FREE;
-        u->Order = (UCHAR)o;
-        InsertHeadList(&g_free[o], &u->ListEntry);
+        insert_free(&g_pfn[index + (1ull << o)], o, discarded);
     }
     *out_index = index;
+    *zeroed = discarded;
     return TRUE;
 }
 
@@ -96,8 +108,9 @@ static void mark_allocated(ULONG64 index, ULONG64 count)
 static void discard_free(BOOLEAN idle)
 {
     ULONG64 budget = DISCARD_PASS_BYTES;
-    for (ULONG order = DISCARD_MIN_ORDER; order <= MM_MAX_ORDER; order++) {
-        for (PLIST_ENTRY e = g_free[order].Flink; e != &g_free[order]; e = e->Flink) {
+    for (ULONG order = g_discard_min_order; order <= MM_MAX_ORDER; order++) {
+        for (PLIST_ENTRY e = g_free[order].Flink, next; e != &g_free[order]; e = next) {
+            next = e->Flink;
             PMMPFN p = CONTAINING_RECORD(e, MMPFN, ListEntry);
             if (p->Flags & MM_PFN_DISCARDED)
                 continue;
@@ -108,7 +121,8 @@ static void discard_free(BOOLEAN idle)
                 return;
             }
             budget -= (bytes < budget ? bytes : budget);
-            p->Flags |= MM_PFN_DISCARDED;
+            RemoveEntryList(&p->ListEntry);
+            insert_free(p, order, TRUE);
             HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa((ULONG64)(p - g_pfn)), bytes, 0, 0, 0, 0, NULL);
         }
     }
@@ -128,11 +142,11 @@ void MmDiscardIdle(void)
         discard_free(TRUE);
 }
 
-ULONG64 MmAllocatePageNoZero(void)
+static ULONG64 allocate_page(BOOLEAN *zeroed)
 {
     ULONG64 state = KiDisableInterrupts();
     ULONG64 index;
-    BOOLEAN ok = alloc_block(0, &index);
+    BOOLEAN ok = alloc_block(0, &index, zeroed);
     if (ok) {
         mark_allocated(index, 1);
         g_free_pages--;
@@ -141,10 +155,17 @@ ULONG64 MmAllocatePageNoZero(void)
     return ok ? index_to_pa(index) : 0;
 }
 
+ULONG64 MmAllocatePageNoZero(void)
+{
+    BOOLEAN zeroed;
+    return allocate_page(&zeroed);
+}
+
 ULONG64 MmAllocatePage(void)
 {
-    ULONG64 pa = MmAllocatePageNoZero();
-    if (pa)
+    BOOLEAN zeroed;
+    ULONG64 pa = allocate_page(&zeroed);
+    if (pa && !zeroed)
         memset(HalPhysmap(pa), 0, PAGE_SIZE);
     return pa;
 }
@@ -157,7 +178,7 @@ void MmFreePage(ULONG64 pa)
         return;
     }
     ULONG64 state = KiDisableInterrupts();
-    free_block((ULONG64)(p - g_pfn), 0);
+    free_block((ULONG64)(p - g_pfn), 0, FALSE);
     g_free_pages++;
     note_freed(1);
     KiRestoreInterrupts(state);
@@ -174,11 +195,12 @@ ULONG64 MmAllocateContiguous(SIZE_T pages)
         return 0;
     ULONG64 state = KiDisableInterrupts();
     ULONG64 index;
-    BOOLEAN ok = alloc_block(order, &index);
+    BOOLEAN zeroed;
+    BOOLEAN ok = alloc_block(order, &index, &zeroed);
     if (ok) {
         /* give back the tail that exceeds the request. */
         for (ULONG64 i = pages; i < (1ull << order); i++)
-            free_block(index + i, 0);
+            free_block(index + i, 0, zeroed);
         mark_allocated(index, pages);
         g_free_pages -= pages;
     }
@@ -186,7 +208,8 @@ ULONG64 MmAllocateContiguous(SIZE_T pages)
     if (!ok)
         return 0;
     ULONG64 pa = index_to_pa(index);
-    memset(HalPhysmap(pa), 0, pages << PAGE_SHIFT);
+    if (!zeroed)
+        memset(HalPhysmap(pa), 0, pages << PAGE_SHIFT);
     return pa;
 }
 
@@ -256,21 +279,22 @@ void MmInitialize(MimeBootInfo *boot)
     ULONG64 db_phys = boot->first_free_phys;
     ULONG64 db_bytes = ROUND_TO_PAGES(g_ram_pages * sizeof(MMPFN));
     g_pfn = (PMMPFN)HalPhysmap(db_phys);
+    /* entries are written sparsely, one per free block, which huge pages would each commit whole. */
+    HalHypercall(MIME_HC_MEM_ADVISE, db_phys, db_bytes, MIME_MEM_SPARSE, 0, 0, 0, NULL);
+    if (boot->memory_block_shift > PAGE_SHIFT + 4 && boot->memory_block_shift - PAGE_SHIFT <= MM_MAX_ORDER)
+        g_discard_min_order = boot->memory_block_shift - PAGE_SHIFT;
     ULONG64 start = (db_phys + db_bytes - g_ram_base) >> PAGE_SHIFT;
     for (ULONG64 i = 0; i < start; i++)
         g_pfn[i].Flags = MM_PFN_RESERVED;
+    /* the host has never been given this memory: it is all zeros. */
     for (ULONG64 i = start; i < g_ram_pages;) {
         ULONG order = MM_MAX_ORDER;
         while (order && ((i & ((1ull << order) - 1)) || i + (1ull << order) > g_ram_pages))
             order--;
-        free_block(i, order);
+        free_block(i, order, TRUE);
         g_free_pages += 1ull << order;
         i += 1ull << order;
     }
-    /* the host has never been given this memory. */
-    for (ULONG order = 0; order <= MM_MAX_ORDER; order++)
-        for (PLIST_ENTRY e = g_free[order].Flink; e != &g_free[order]; e = e->Flink)
-            CONTAINING_RECORD(e, MMPFN, ListEntry)->Flags |= MM_PFN_DISCARDED;
     g_total_pages = g_ram_pages;
     KiLogPrintf("mm: %llu MiB free, pfn database %llu KiB", (ULONG64)(g_free_pages >> 8), db_bytes >> 10);
 

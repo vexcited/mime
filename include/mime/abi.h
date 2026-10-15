@@ -150,7 +150,12 @@ typedef struct MimeBootInfo {
     char host_volume_label[32]; /* name of the host root volume, the Z: label */
 
     uint32_t reserved_count;
-    uint32_t pad0;
+    /*
+     * the host backs ram in blocks of 1 << memory_block_shift bytes, 2 MiB
+     * huge pages on linux: handing back less of a block splits it, so the
+     * guest discards whole blocks.
+     */
+    uint32_t memory_block_shift;
     MimeMemRange reserved[MIME_BOOT_MAX_RANGES];
 
     char system_root[64]; /* "C:\\Windows" */
@@ -220,6 +225,7 @@ enum {
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
     MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
+    MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
     MIME_HC_WIN_DESTROY = 0x21, /* (window_id) */
@@ -257,6 +263,10 @@ enum {
     MIME_HC_AUDIO_OPEN = 0x40,  /* (pa, size) -> stream, plays the format of the header at pa */
     MIME_HC_AUDIO_START = 0x41, /* (stream, running) */
     MIME_HC_AUDIO_CLOSE = 0x42, /* (stream) returns once the host no longer reads its memory */
+};
+
+enum {
+    MIME_MEM_SPARSE = 1, /* touched here and there, such as the pfn database: back it in small pages */
 };
 
 enum {

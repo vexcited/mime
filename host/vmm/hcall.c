@@ -239,6 +239,12 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             mime_vm_discard(vm, start, end - start);
         break;
     }
+    case MIME_HC_MEM_ADVISE:
+        if (regs[1] < MIME_RAM_BASE || regs[1] + regs[2] > MIME_RAM_BASE + vm->ram_size || regs[1] + regs[2] < regs[1])
+            status = MIME_HC_STATUS_INVALID;
+        else
+            mime_vm_advise(vm, regs[1], regs[2], (uint32_t)regs[3]);
+        break;
     case MIME_HC_WIN_CREATE:
         mime_ui_window_create((uint32_t)regs[1]);
         break;

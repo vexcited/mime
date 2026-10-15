@@ -171,6 +171,7 @@ void mime_vm_request_stop(MimeVm *vm, int exit_code);
 void mime_vm_destroy(MimeVm *vm);
 void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len);
 void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len);
+void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice);
 void mime_vm_raise_irq(MimeVm *vm, uint32_t bits);
 void mime_vm_queue_ctrl(MimeVm *vm, const void *msg, uint32_t size);
 void mime_vm_queue_input(MimeVm *vm, const MimeInputEvent *ev);

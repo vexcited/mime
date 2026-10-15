@@ -90,6 +90,19 @@ static uint32_t host_cpu_count(void)
     return (uint32_t)MIME_MIN((uint64_t)n, MIME_VMM_MAX_VCPUS);
 }
 
+/* whether the kernel backs this ram in huge pages: always, or on request when it was asked. */
+static bool transparent_huge_pages(MimeVm *vm)
+{
+    char mode[128] = {0};
+    FILE *f = fopen("/sys/kernel/mm/transparent_hugepage/enabled", "r");
+    if (f) {
+        if (!fgets(mode, sizeof(mode), f))
+            mode[0] = 0;
+        fclose(f);
+    }
+    return strstr(mode, "[always]") || (vm->huge_pages && strstr(mode, "[madvise]"));
+}
+
 static bool set_slot(MimeVm *vm, uint32_t slot, uint64_t ipa, uint64_t size, void *host, bool readonly)
 {
     struct kvm_userspace_memory_region region = {
@@ -286,6 +299,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
 
     mime_vm_init_boot(vm);
     vm->boot->irq_intid = MIME_X64_IRQ_VECTOR;
+    vm->boot->memory_block_shift = transparent_huge_pages(vm) ? 21 : 12;
     return true;
 }
 
@@ -299,6 +313,15 @@ void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len)
 {
     if (madvise(vm->ram + (pa - MIME_RAM_BASE), len, MADV_DONTNEED) != 0)
         mime_error("cannot discard guest memory at 0x%llx", (unsigned long long)pa);
+}
+
+/* sparse metadata stays in small pages: one touch would otherwise commit a whole huge page. */
+void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice)
+{
+    uint64_t start = MIME_ALIGN_DOWN(pa, (uint64_t)MIME_HOST_PAGE);
+    uint64_t end = MIME_ALIGN_UP(pa + len, (uint64_t)MIME_HOST_PAGE);
+    if (advice == MIME_MEM_SPARSE)
+        madvise(vm->ram + (start - MIME_RAM_BASE), end - start, MADV_NOHUGEPAGE);
 }
 
 void mime_vm_raise_irq(MimeVm *vm, uint32_t bits)
