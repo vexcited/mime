@@ -118,8 +118,8 @@ typedef struct Compiler {
     Resource uav[64];
     uint32_t sampler_mode[16];
 
-    /* built-in variables, made when first used. */
-    uint32_t builtins[64];
+    /* built-in variables, made when first used: inputs and outputs apart. */
+    uint32_t builtins[2][64];
 
     /* functions. */
     uint32_t body;
@@ -134,7 +134,37 @@ typedef struct Compiler {
 
     uint32_t global_flags;
     uint32_t thread_group[3];
+
+    /* geometry shaders: vertices per input primitive, the output topology and vertex count, instances, streams. */
+    uint32_t gs_primitive;
+    uint32_t gs_vertices;
+    uint32_t gs_topology;
+    uint32_t gs_max_vertices;
+    uint32_t gs_instances;
+    uint32_t gs_streams;
+
+    /*
+     * hull and domain shaders: the phase being read, the control point
+     * counts, the tessellator's description, and the phases of a hull
+     * shader with where their code is.
+     */
+    int phase;
+    uint32_t cp_in, cp_out;
+    uint32_t tess_domain, tess_partitioning, tess_primitive;
+    int has_cp_phase;
+    uint32_t cp_start, cp_end;
+    struct {
+        uint32_t start, end, instances, fn;
+    } phases[32];
+    uint32_t phase_count;
+    InputDecl patch_decl[MAX_REGS];
+    uint32_t patch_count;
+    uint32_t patch_regs;
+    uint32_t cp_outputs[MAX_REGS];
+    uint32_t phase_instance;
 } Compiler;
+
+enum { PHASE_NONE, PHASE_DECLS, PHASE_CONTROL_POINT, PHASE_FORK, PHASE_JOIN };
 
 static int fail(Compiler *c, const char *error)
 {
@@ -429,12 +459,57 @@ static uint32_t register_pointer(Compiler *c, const DxbcOperand *op)
         return spv_access(&c->b, ptr, c->indexable[reg], &i, 1);
     }
     case OPERAND_INPUT: {
+        if (!c->inputs) {
+            fail(c, "input read without declared inputs");
+            return 0;
+        }
+        if (op->index_count == 2) {
+            uint32_t i[2] = {index_value(c, &op->index[0]), index_value(c, &op->index[1])};
+            return spv_access(&c->b, ptr, c->inputs, i, 2);
+        }
         uint32_t i = index_value(c, &op->index[0]);
         return spv_access(&c->b, ptr, c->inputs, &i, 1);
     }
     case OPERAND_OUTPUT: {
         uint32_t i = index_value(c, &op->index[0]);
+        /* the fork and join phases of hull shaders write patch constants. */
+        if (c->phase == PHASE_FORK || c->phase == PHASE_JOIN) {
+            if (!c->patch_regs) {
+                fail(c, "patch constant written without its declaration");
+                return 0;
+            }
+            return spv_access(&c->b, ptr, c->patch_regs, &i, 1);
+        }
+        if (!c->outputs) {
+            fail(c, "output written without declared outputs");
+            return 0;
+        }
         return spv_access(&c->b, ptr, c->outputs, &i, 1);
+    }
+    case OPERAND_INPUT_CONTROL_POINT: {
+        if (!c->inputs) {
+            fail(c, "control point read without declared inputs");
+            return 0;
+        }
+        uint32_t i[2] = {index_value(c, &op->index[0]), index_value(c, &op->index[1])};
+        return spv_access(&c->b, ptr, c->inputs, i, 2);
+    }
+    case OPERAND_INPUT_PATCH_CONSTANT: {
+        if (!c->patch_regs) {
+            fail(c, "patch constant read without its declaration");
+            return 0;
+        }
+        uint32_t i = index_value(c, &op->index[0]);
+        return spv_access(&c->b, ptr, c->patch_regs, &i, 1);
+    }
+    case OPERAND_OUTPUT_CONTROL_POINT: {
+        uint32_t reg = op->index[1].immediate;
+        if (reg >= MAX_REGS || !c->cp_outputs[reg]) {
+            fail(c, "output control point read without its declaration");
+            return 0;
+        }
+        uint32_t i = index_value(c, &op->index[0]);
+        return spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassOutput, vec4), c->cp_outputs[reg], &i, 1);
     }
     default:
         fail(c, "operand type not held in a register");
@@ -464,6 +539,29 @@ static uint32_t system_operand(Compiler *c, const DxbcOperand *op, Kind *kind)
         uint32_t s = spv_load(&c->b, c->t_u32,
                               builtin(c, SpvBuiltInLocalInvocationIndex, SpvStorageClassInput, c->t_u32));
         return splat(c, K_UINT, 4, s);
+    }
+    case OPERAND_OUTPUT_CONTROL_POINT_ID: {
+        uint32_t s = spv_load(&c->b, c->t_i32, builtin(c, SpvBuiltInInvocationId, SpvStorageClassInput, c->t_i32));
+        return splat(c, K_UINT, 4, spv_op1(&c->b, SpvOpBitcast, c->t_u32, s));
+    }
+    case OPERAND_INPUT_FORK_INSTANCE_ID:
+    case OPERAND_INPUT_JOIN_INSTANCE_ID:
+        if (!c->phase_instance) {
+            fail(c, "phase instance outside a hull shader");
+            return splat_const(c, K_UINT, 4, 0);
+        }
+        return splat(c, K_UINT, 4, spv_load(&c->b, c->t_u32, c->phase_instance));
+    case OPERAND_INPUT_DOMAIN_POINT: {
+        *kind = K_FLOAT;
+        uint32_t v3 = c->t_vec[K_FLOAT][3];
+        uint32_t v = spv_load(&c->b, v3, builtin(c, SpvBuiltInTessCoord, SpvStorageClassInput, v3));
+        uint32_t parts[4] = {extract(c, c->t_f32, v, 0), extract(c, c->t_f32, v, 1), extract(c, c->t_f32, v, 2),
+                             fconst(c, 0.0f)};
+        return spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_FLOAT][4], parts, 4);
+    }
+    case OPERAND_INPUT_GS_INSTANCE_ID: {
+        uint32_t s = spv_load(&c->b, c->t_i32, builtin(c, SpvBuiltInInvocationId, SpvStorageClassInput, c->t_i32));
+        return splat(c, K_UINT, 4, spv_op1(&c->b, SpvOpBitcast, c->t_u32, s));
     }
     case OPERAND_INPUT_PRIMITIVEID: {
         uint32_t s = spv_load(&c->b, c->t_i32, builtin(c, SpvBuiltInPrimitiveId, SpvStorageClassInput, c->t_i32));
@@ -495,7 +593,10 @@ static uint32_t load_vec4(Compiler *c, const DxbcOperand *op, Kind *stored)
     case OPERAND_TEMP:
     case OPERAND_INDEXABLE_TEMP:
     case OPERAND_INPUT:
-    case OPERAND_OUTPUT: {
+    case OPERAND_OUTPUT:
+    case OPERAND_INPUT_CONTROL_POINT:
+    case OPERAND_INPUT_PATCH_CONSTANT:
+    case OPERAND_OUTPUT_CONTROL_POINT: {
         uint32_t ptr = register_pointer(c, op);
         return ptr ? spv_load(&c->b, vec4, ptr) : splat_const(c, K_FLOAT, 4, 0);
     }
@@ -599,6 +700,7 @@ static uint32_t load_first(Compiler *c, const DxbcOperand *op, uint32_t n, Kind 
 }
 
 static void store_output_special(Compiler *c, const DxbcOperand *op, uint32_t value, Kind k);
+static uint32_t begin_conditional(Compiler *c, uint32_t cond, uint32_t *merge);
 
 /*
  * writes n components of the kind to the destination's mask, saturated if
@@ -659,8 +761,9 @@ static void decorate_precise(Compiler *c, const DxbcInstruction *ins, uint32_t i
 
 static uint32_t builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t type)
 {
-    if (which < 64 && c->builtins[which])
-        return c->builtins[which];
+    int output = storage == SpvStorageClassOutput;
+    if (which < 64 && c->builtins[output][which])
+        return c->builtins[output][which];
     uint32_t var = global(c, storage, type, 0);
     decorate1(c, var, SpvDecorationBuiltIn, which);
     if (storage == SpvStorageClassInput && c->program == DXBC_PIXEL && type != c->t_bool &&
@@ -668,7 +771,7 @@ static uint32_t builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t 
          which == SpvBuiltInViewportIndex))
         spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0);
     if (which < 64)
-        c->builtins[which] = var;
+        c->builtins[output][which] = var;
     return var;
 }
 
@@ -826,6 +929,217 @@ static void load_inputs(Compiler *c)
     }
 }
 
+/*
+ * the inputs of geometry, hull and domain shaders: an array per register,
+ * a vec4 per vertex of the primitive or control point of the patch.
+ */
+static void load_vertex_inputs(Compiler *c, uint32_t vertices)
+{
+    uint32_t v4 = c->t_vec[K_FLOAT][4];
+    uint32_t vptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, v4);
+    uint32_t fptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, c->t_f32);
+    uint32_t array = spv_type_array(&c->b, v4, vertices);
+    uint32_t in_ptr = spv_type_pointer(&c->b, SpvStorageClassInput, v4);
+    for (uint32_t reg = 0; reg < c->input_count; reg++) {
+        InputDecl *d = &c->input_decl[reg];
+        if (!d->declared)
+            continue;
+        uint32_t var;
+        uint8_t mask = d->mask | d->sv_mask;
+        if (d->sv == SV_POSITION) {
+            var = builtin(c, SpvBuiltInPosition, SpvStorageClassInput, array);
+        } else if (d->sv == SV_UNDEFINED) {
+            var = global(c, SpvStorageClassInput, array, 0);
+            decorate1(c, var, SpvDecorationLocation, reg);
+        } else {
+            fail(c, "per vertex input system value not implemented");
+            return;
+        }
+        d->var = var;
+        for (uint32_t v = 0; v < vertices; v++) {
+            uint32_t vertex = uconst(c, v), index = uconst(c, reg);
+            uint32_t value = spv_load(&c->b, v4, spv_access(&c->b, in_ptr, var, &vertex, 1));
+            uint32_t at[2] = {vertex, index};
+            uint32_t base = spv_access(&c->b, vptr, c->inputs, at, 2);
+            if (mask == 0xF) {
+                spv_store(&c->b, base, value);
+                continue;
+            }
+            for (uint32_t i = 0; i < 4; i++)
+                if (mask & (1 << i)) {
+                    uint32_t ci = uconst(c, i);
+                    spv_store(&c->b, spv_access(&c->b, fptr, base, &ci, 1), extract(c, c->t_f32, value, i));
+                }
+        }
+    }
+}
+
+/* the tessellation factor a patch constant system value is, as the index of the outer or inner level. */
+static int tess_factor(Compiler *c, uint32_t sv, uint32_t reg, uint8_t mask, int *inner)
+{
+    const DxbcSignatureElement *e = signature_element(&c->info->patch_constants, reg, mask);
+    uint32_t index = e ? e->semantic_index : 0;
+    *inner = sv == SV_FINAL_QUAD_INSIDE_TESSFACTOR || sv == SV_FINAL_TRI_INSIDE_TESSFACTOR;
+    switch (sv) {
+    case SV_FINAL_QUAD_EDGE_TESSFACTOR:
+    case SV_FINAL_TRI_EDGE_TESSFACTOR:
+    case SV_FINAL_QUAD_INSIDE_TESSFACTOR:
+        return (int)index;
+    case SV_FINAL_TRI_INSIDE_TESSFACTOR:
+        return 0;
+    /* isolines: vulkan counts the lines in the first level, their segments in the second. */
+    case SV_FINAL_LINE_DETAIL_TESSFACTOR:
+        return 1;
+    case SV_FINAL_LINE_DENSITY_TESSFACTOR:
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+static uint32_t tess_level(Compiler *c, int inner, uint32_t storage)
+{
+    uint32_t array = spv_type_array(&c->b, c->t_f32, inner ? 2 : 4);
+    uint32_t which = inner ? SpvBuiltInTessLevelInner : SpvBuiltInTessLevelOuter;
+    int fresh = !c->builtins[storage == SpvStorageClassOutput][which];
+    uint32_t var = builtin(c, which, storage, array);
+    if (fresh)
+        spv_decorate(&c->b, var, SpvDecorationPatch, NULL, 0);
+    return var;
+}
+
+/* the patch constants of a hull shader: tessellation factors and patch outputs. */
+static void store_patch_constants(Compiler *c)
+{
+    uint32_t v4 = c->t_vec[K_FLOAT][4];
+    uint32_t vptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, v4);
+    uint32_t optr = spv_type_pointer(&c->b, SpvStorageClassOutput, c->t_f32);
+    for (uint32_t reg = 0; reg < c->patch_count; reg++) {
+        InputDecl *d = &c->patch_decl[reg];
+        if (!d->declared)
+            continue;
+        uint32_t index = uconst(c, reg);
+        uint32_t value = spv_load(&c->b, v4, spv_access(&c->b, vptr, c->patch_regs, &index, 1));
+        if (d->sv_mask) {
+            /* each component of the register is a factor of its own, as the signature numbers them. */
+            for (uint32_t i = 0; i < 4; i++) {
+                if (!(d->sv_mask & (1 << i)))
+                    continue;
+                int inner;
+                int at = tess_factor(c, d->sv, reg, (uint8_t)(1 << i), &inner);
+                if (at < 0)
+                    continue;
+                uint32_t level = tess_level(c, inner, SpvStorageClassOutput);
+                uint32_t k = uconst(c, (uint32_t)at);
+                spv_store(&c->b, spv_access(&c->b, optr, level, &k, 1), extract(c, c->t_f32, value, i));
+            }
+        }
+        if (d->mask) {
+            if (!d->var) {
+                d->var = global(c, SpvStorageClassOutput, v4, 0);
+                decorate1(c, d->var, SpvDecorationLocation, reg);
+                spv_decorate(&c->b, d->var, SpvDecorationPatch, NULL, 0);
+            }
+            spv_store(&c->b, d->var, value);
+        }
+    }
+}
+
+/* the patch constants a domain shader reads: patch inputs and the tessellation factors. */
+static void load_patch_constants(Compiler *c)
+{
+    uint32_t v4 = c->t_vec[K_FLOAT][4];
+    uint32_t vptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, v4);
+    uint32_t fptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, c->t_f32);
+    uint32_t iptr = spv_type_pointer(&c->b, SpvStorageClassInput, c->t_f32);
+    for (uint32_t reg = 0; reg < c->patch_count; reg++) {
+        InputDecl *d = &c->patch_decl[reg];
+        if (!d->declared)
+            continue;
+        uint32_t index = uconst(c, reg);
+        uint32_t base = spv_access(&c->b, vptr, c->patch_regs, &index, 1);
+        if (d->mask) {
+            uint32_t var = global(c, SpvStorageClassInput, v4, 0);
+            decorate1(c, var, SpvDecorationLocation, reg);
+            spv_decorate(&c->b, var, SpvDecorationPatch, NULL, 0);
+            spv_store(&c->b, base, spv_load(&c->b, v4, var));
+        }
+        for (uint32_t i = 0; i < 4; i++) {
+            if (!(d->sv_mask & (1 << i)))
+                continue;
+            int inner;
+            int at = tess_factor(c, d->sv, reg, (uint8_t)(1 << i), &inner);
+            if (at < 0)
+                continue;
+            uint32_t level = tess_level(c, inner, SpvStorageClassInput);
+            uint32_t k = uconst(c, (uint32_t)at), ci = uconst(c, i);
+            uint32_t v = spv_load(&c->b, c->t_f32, spv_access(&c->b, iptr, level, &k, 1));
+            spv_store(&c->b, spv_access(&c->b, fptr, base, &ci, 1), v);
+        }
+    }
+}
+
+/*
+ * the hull shader: each invocation runs the control point phase for its
+ * control point, or copies its input through without one; after a
+ * barrier the first runs the fork and join phases, each instance in turn,
+ * and writes the patch constants.
+ */
+static void hull_main(Compiler *c, uint32_t cp_fn)
+{
+    SpvBuilder *b = &c->b;
+    uint32_t v4 = c->t_vec[K_FLOAT][4];
+    uint32_t vptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, v4);
+    uint32_t optr = spv_type_pointer(&c->b, SpvStorageClassOutput, v4);
+    uint32_t id = spv_load(b, c->t_i32, builtin(c, SpvBuiltInInvocationId, SpvStorageClassInput, c->t_i32));
+    uint32_t invocation = spv_op1(b, SpvOpBitcast, c->t_u32, id);
+    if (c->has_cp_phase)
+        spv_op(b, SpvOpFunctionCall, c->t_void, &cp_fn, 1);
+    for (uint32_t reg = 0; reg < MAX_REGS; reg++) {
+        if (!c->cp_outputs[reg])
+            continue;
+        uint32_t value;
+        uint32_t index = uconst(c, reg);
+        if (c->has_cp_phase) {
+            value = spv_load(b, v4, spv_access(b, vptr, c->outputs, &index, 1));
+        } else {
+            uint32_t at[2] = {invocation, index};
+            value = c->inputs && reg < c->input_count ? spv_load(b, v4, spv_access(b, vptr, c->inputs, at, 2))
+                                                      : splat_const(c, K_FLOAT, 4, 0);
+        }
+        spv_store(b, spv_access(b, optr, c->cp_outputs[reg], &invocation, 1), value);
+    }
+    uint32_t barrier[3] = {uconst(c, SpvScopeWorkgroup), uconst(c, SpvScopeInvocation), uconst(c, 0)};
+    spv_op_void(b, SpvOpControlBarrier, barrier, 3);
+    uint32_t merge;
+    begin_conditional(c, spv_op2(b, SpvOpIEqual, c->t_bool, invocation, uconst(c, 0)), &merge);
+    int saved = c->phase;
+    for (uint32_t i = 0; i < c->phase_count; i++)
+        for (uint32_t instance = 0; instance < c->phases[i].instances; instance++) {
+            spv_store(b, c->phase_instance, uconst(c, instance));
+            spv_op(b, SpvOpFunctionCall, c->t_void, &c->phases[i].fn, 1);
+        }
+    c->phase = PHASE_FORK;
+    store_patch_constants(c);
+    c->phase = saved;
+    spv_branch(b, merge);
+    spv_label(b, merge);
+}
+
+/* the output control points of a hull shader: an array per register, a vec4 per control point. */
+static void make_control_point_outputs(Compiler *c)
+{
+    uint32_t array = spv_type_array(&c->b, c->t_vec[K_FLOAT][4], c->cp_out ? c->cp_out : 1);
+    for (uint32_t reg = 0; reg < MAX_REGS; reg++) {
+        int declared = c->has_cp_phase ? c->output_decl[reg].declared
+                                       : signature_element(&c->info->outputs, reg, 0xF) != NULL;
+        if (!declared)
+            continue;
+        c->cp_outputs[reg] = global(c, SpvStorageClassOutput, array, 0);
+        decorate1(c, c->cp_outputs[reg], SpvDecorationLocation, reg);
+    }
+}
+
 /* the clip or cull distance array of the outputs, its size from the signature. */
 static uint32_t distance_count(Compiler *c, uint32_t sv)
 {
@@ -964,7 +1278,9 @@ static int prepass(Compiler *c)
         case OP_DCL_TEMPS:
             if (!ins.extra_count || x[0] > MAX_TEMPS)
                 return fail(c, "too many temporaries");
-            c->temp_count = x[0];
+            /* each hull shader phase declares its own: they share the largest set. */
+            if (x[0] > c->temp_count)
+                c->temp_count = x[0];
             break;
         case OP_DCL_INDEXABLE_TEMP:
             if (ins.extra_count < 3 || x[0] >= 256)
@@ -1031,14 +1347,21 @@ static int prepass(Compiler *c)
         case OP_DCL_INPUT_PS:
         case OP_DCL_INPUT_PS_SGV:
         case OP_DCL_INPUT_PS_SIV: {
-            if (op->type != OPERAND_INPUT) {
+            if (op->type != OPERAND_INPUT && op->type != OPERAND_INPUT_CONTROL_POINT &&
+                op->type != OPERAND_INPUT_PATCH_CONSTANT) {
                 /* system value operands, read where they are used. */
                 break;
             }
             uint32_t reg = op->index[op->index_count ? op->index_count - 1 : 0].immediate;
             if (reg >= MAX_REGS)
                 return fail(c, "input register out of range");
-            InputDecl *d = &c->input_decl[reg];
+            int patch = op->type == OPERAND_INPUT_PATCH_CONSTANT;
+            /* the hull shader reads its patch constants from its own registers. */
+            if (patch && c->program == DXBC_HULL)
+                break;
+            InputDecl *d = patch ? &c->patch_decl[reg] : &c->input_decl[reg];
+            if (patch && reg + 1 > c->patch_count)
+                c->patch_count = reg + 1;
             d->declared = 1;
             uint32_t sv = SV_UNDEFINED;
             if (ins.opcode == OP_DCL_INPUT_SGV || ins.opcode == OP_DCL_INPUT_SIV || ins.opcode == OP_DCL_INPUT_PS_SGV ||
@@ -1054,9 +1377,10 @@ static int prepass(Compiler *c)
                 d->interpolation = TOK_INTERPOLATION(ins.token);
             if (ins.opcode == OP_DCL_INPUT_PS_SGV)
                 d->interpolation = INTERP_CONSTANT;
-            if (reg + 1 > c->input_count)
+            if (!patch && reg + 1 > c->input_count)
                 c->input_count = reg + 1;
-            c->info->input_mask |= 1u << (reg & 31);
+            if (!patch)
+                c->info->input_mask |= 1u << (reg & 31);
             break;
         }
         case OP_DCL_OUTPUT:
@@ -1071,6 +1395,19 @@ static int prepass(Compiler *c)
             uint32_t reg = op->index[0].immediate;
             if (reg >= MAX_REGS)
                 return fail(c, "output register out of range");
+            if (c->phase == PHASE_FORK || c->phase == PHASE_JOIN) {
+                InputDecl *p = &c->patch_decl[reg];
+                p->declared = 1;
+                if (ins.opcode != OP_DCL_OUTPUT && ins.extra_count) {
+                    p->sv = x[0];
+                    p->sv_mask |= op->mask;
+                } else {
+                    p->mask |= op->mask;
+                }
+                if (reg + 1 > c->patch_count)
+                    c->patch_count = reg + 1;
+                break;
+            }
             OutputDecl *d = &c->output_decl[reg];
             d->declared = 1;
             d->mask |= op->mask;
@@ -1123,12 +1460,85 @@ static int prepass(Compiler *c)
             c->label_fn[c->label_count] = spv_id(&c->b);
             c->label_count++;
             break;
-        case OP_DCL_GS_INPUT_PRIMITIVE:
+        case OP_DCL_GS_INPUT_PRIMITIVE: {
+            /* point, line, triangle, line with adjacency, triangle with adjacency. */
+            static const uint32_t VERTICES[8] = {0, 1, 2, 3, 0, 0, 4, 6};
+            c->gs_primitive = (ins.token >> 11) & 0x3F;
+            c->gs_vertices = c->gs_primitive < 8 ? VERTICES[c->gs_primitive] : 0;
+            if (!c->gs_vertices)
+                return fail(c, "geometry shader input primitive not implemented");
+            c->info->gs_input_primitive = c->gs_primitive;
+            break;
+        }
         case OP_DCL_GS_OUTPUT_TOPOLOGY:
+            c->gs_topology = (ins.token >> 11) & 0x7F;
+            c->info->gs_output_topology = c->gs_topology;
+            break;
         case OP_DCL_MAX_OUTPUT_VERTEX_COUNT:
+            c->gs_max_vertices = ins.extra_count ? x[0] : 1;
+            c->info->gs_max_vertices = c->gs_max_vertices;
+            break;
+        case OP_DCL_GS_INSTANCE_COUNT:
+            c->gs_instances = ins.extra_count ? x[0] : 1;
+            c->info->gs_instances = c->gs_instances;
+            break;
+        case OP_DCL_STREAM:
+            c->gs_streams |= 1u << (op->index[0].immediate & 3);
+            break;
         case OP_HS_DECLS:
+            c->phase = PHASE_DECLS;
+            break;
+        case OP_HS_CONTROL_POINT_PHASE:
+        case OP_HS_FORK_PHASE:
+        case OP_HS_JOIN_PHASE: {
+            uint32_t here = (uint32_t)(ins.words - c->code);
+            /* the phase before ends here. */
+            if (c->phase == PHASE_CONTROL_POINT)
+                c->cp_end = here;
+            else if ((c->phase == PHASE_FORK || c->phase == PHASE_JOIN) && c->phase_count)
+                c->phases[c->phase_count - 1].end = here;
+            if (ins.opcode == OP_HS_CONTROL_POINT_PHASE) {
+                c->phase = PHASE_CONTROL_POINT;
+                c->has_cp_phase = 1;
+                c->cp_start = here + ins.length;
+                c->cp_end = c->code_count;
+            } else {
+                if (c->phase_count >= 32)
+                    return fail(c, "too many hull shader phases");
+                c->phase = ins.opcode == OP_HS_FORK_PHASE ? PHASE_FORK : PHASE_JOIN;
+                c->phases[c->phase_count].start = here + ins.length;
+                c->phases[c->phase_count].end = c->code_count;
+                c->phases[c->phase_count].instances = 1;
+                c->phases[c->phase_count].fn = spv_id(&c->b);
+                c->phase_count++;
+            }
+            break;
+        }
+        case OP_DCL_HS_FORK_PHASE_INSTANCE_COUNT:
+        case OP_DCL_HS_JOIN_PHASE_INSTANCE_COUNT:
+            if (c->phase_count && ins.extra_count)
+                c->phases[c->phase_count - 1].instances = x[0];
+            break;
+        case OP_DCL_INPUT_CONTROL_POINT_COUNT:
+            c->cp_in = (ins.token >> 11) & 0x3F;
+            c->info->input_control_points = c->cp_in;
+            break;
+        case OP_DCL_OUTPUT_CONTROL_POINT_COUNT:
+            c->cp_out = (ins.token >> 11) & 0x3F;
+            c->info->output_control_points = c->cp_out;
+            break;
         case OP_DCL_TESS_DOMAIN:
-            return fail(c, "geometry and tessellation shaders are not implemented");
+            c->tess_domain = (ins.token >> 11) & 3;
+            c->info->tess_domain = c->tess_domain;
+            break;
+        case OP_DCL_TESS_PARTITIONING:
+            c->tess_partitioning = (ins.token >> 11) & 7;
+            c->info->tess_partitioning = c->tess_partitioning;
+            break;
+        case OP_DCL_TESS_OUTPUT_PRIMITIVE:
+            c->tess_primitive = (ins.token >> 11) & 7;
+            c->info->tess_output_primitive = c->tess_primitive;
+            break;
         case OP_DCL_INTERFACE:
         case OP_DCL_FUNCTION_BODY:
         case OP_DCL_FUNCTION_TABLE:
@@ -1137,7 +1547,20 @@ static int prepass(Compiler *c)
             break;
         }
     }
-    return res < 0 ? fail(c, "malformed bytecode") : 0;
+    if (res < 0)
+        return fail(c, "malformed bytecode");
+    /* a hull shader without a control point phase passes its inputs through: the registers its outputs name. */
+    if (c->program == DXBC_HULL && !c->has_cp_phase)
+        for (uint32_t i = 0; i < c->info->outputs.count; i++) {
+            uint32_t reg = c->info->outputs.elements[i].reg;
+            if (reg >= MAX_REGS)
+                continue;
+            c->input_decl[reg].declared = 1;
+            c->input_decl[reg].mask |= c->info->outputs.elements[i].mask;
+            if (reg + 1 > c->input_count)
+                c->input_count = reg + 1;
+        }
+    return 0;
 }
 
 /* the globals of the registers the declarations named. */
@@ -1149,8 +1572,17 @@ static void make_registers(Compiler *c)
     for (uint32_t i = 0; i < 256; i++)
         if (c->indexable_size[i])
             c->indexable[i] = global(c, SpvStorageClassPrivate, spv_type_array(&c->b, v4, c->indexable_size[i]), 0);
-    if (c->input_count)
-        c->inputs = global(c, SpvStorageClassPrivate, spv_type_array(&c->b, v4, c->input_count), 0);
+    if (c->input_count) {
+        uint32_t regs = spv_type_array(&c->b, v4, c->input_count);
+        uint32_t vertices = c->program == DXBC_GEOMETRY ? c->gs_vertices
+                            : c->program == DXBC_HULL || c->program == DXBC_DOMAIN ? (c->cp_in ? c->cp_in : 1)
+                                                                                     : 0;
+        c->inputs = global(c, SpvStorageClassPrivate, vertices ? spv_type_array(&c->b, regs, vertices) : regs, 0);
+    }
+    if (c->patch_count)
+        c->patch_regs = global(c, SpvStorageClassPrivate, spv_type_array(&c->b, v4, c->patch_count), 0);
+    if (c->program == DXBC_HULL)
+        c->phase_instance = global(c, SpvStorageClassPrivate, c->t_u32, 0);
     if (c->output_count)
         c->outputs = global(c, SpvStorageClassPrivate, spv_type_array(&c->b, v4, c->output_count), 0);
     for (uint32_t i = 0; i < 256; i++)
@@ -2682,6 +3114,35 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     case OP_EVAL_SNAPPED:
         eval(c, ins);
         break;
+    case OP_EMIT:
+    case OP_EMITTHENCUT:
+    case OP_EMIT_STREAM:
+    case OP_EMITTHENCUT_STREAM:
+    case OP_CUT:
+    case OP_CUT_STREAM: {
+        int stream = ins->opcode == OP_EMIT_STREAM || ins->opcode == OP_EMITTHENCUT_STREAM ||
+                     ins->opcode == OP_CUT_STREAM;
+        uint32_t index = stream ? ins->operands[0].index[0].immediate : 0;
+        int emit = ins->opcode != OP_CUT && ins->opcode != OP_CUT_STREAM;
+        int cut = ins->opcode != OP_EMIT && ins->opcode != OP_EMIT_STREAM;
+        if (index)
+            spv_capability(&c->b, SpvCapabilityGeometryStreams);
+        uint32_t s = uconst(c, index);
+        if (emit) {
+            store_outputs(c);
+            if (index)
+                spv_op_void(&c->b, SpvOpEmitStreamVertex, &s, 1);
+            else
+                spv_op_void(&c->b, SpvOpEmitVertex, NULL, 0);
+        }
+        if (cut) {
+            if (index)
+                spv_op_void(&c->b, SpvOpEndStreamPrimitive, &s, 1);
+            else
+                spv_op_void(&c->b, SpvOpEndPrimitive, NULL, 0);
+        }
+        break;
+    }
     case OP_NOP:
     case OP_CUSTOMDATA:
         break;
@@ -2768,15 +3229,36 @@ static int build(Compiler *c)
         return -1;
     make_registers(c);
 
-    /* the body, then the subroutines. */
+    /* the body, or a hull shader's phases, then the subroutines. */
     uint32_t void_fn = spv_type_function(b, c->t_void, NULL, 0);
     c->body = spv_id(b);
-    spv_function_begin(b, c->body, c->t_void, void_fn);
-    spv_label(b, spv_id(b));
-    uint32_t end = c->label_count ? c->label_at[0] : c->code_count;
-    if (compile_range(c, 0, end))
-        return -1;
-    spv_function_end(b);
+    if (c->program == DXBC_HULL) {
+        make_control_point_outputs(c);
+        if (c->has_cp_phase) {
+            c->phase = PHASE_CONTROL_POINT;
+            spv_function_begin(b, c->body, c->t_void, void_fn);
+            spv_label(b, spv_id(b));
+            if (compile_range(c, c->cp_start, c->cp_end))
+                return -1;
+            spv_function_end(b);
+        }
+        for (uint32_t i = 0; i < c->phase_count; i++) {
+            c->phase = PHASE_FORK;
+            spv_function_begin(b, c->phases[i].fn, c->t_void, void_fn);
+            spv_label(b, spv_id(b));
+            if (compile_range(c, c->phases[i].start, c->phases[i].end))
+                return -1;
+            spv_function_end(b);
+        }
+        c->phase = PHASE_NONE;
+    } else {
+        spv_function_begin(b, c->body, c->t_void, void_fn);
+        spv_label(b, spv_id(b));
+        uint32_t end = c->label_count ? c->label_at[0] : c->code_count;
+        if (compile_range(c, 0, end))
+            return -1;
+        spv_function_end(b);
+    }
     for (uint32_t i = 0; i < c->label_count; i++) {
         spv_function_begin(b, c->label_fn[i], c->t_void, void_fn);
         spv_label(b, spv_id(b));
@@ -2790,10 +3272,24 @@ static int build(Compiler *c)
     uint32_t main = spv_id(b);
     spv_function_begin(b, main, c->t_void, void_fn);
     spv_label(b, spv_id(b));
-    if (c->inputs)
-        load_inputs(c);
-    spv_op(b, SpvOpFunctionCall, c->t_void, &c->body, 1);
-    store_outputs(c);
+    if (c->inputs) {
+        if (c->program == DXBC_GEOMETRY)
+            load_vertex_inputs(c, c->gs_vertices);
+        else if (c->program == DXBC_HULL || c->program == DXBC_DOMAIN)
+            load_vertex_inputs(c, c->cp_in ? c->cp_in : 1);
+        else
+            load_inputs(c);
+    }
+    if (c->program == DXBC_DOMAIN && c->patch_regs)
+        load_patch_constants(c);
+    if (c->program == DXBC_HULL) {
+        hull_main(c, c->body);
+    } else {
+        spv_op(b, SpvOpFunctionCall, c->t_void, &c->body, 1);
+        /* geometry shaders write their outputs at each emit. */
+        if (c->program != DXBC_GEOMETRY)
+            store_outputs(c);
+    }
     spv_function_end(b);
     if (c->error)
         return -1;
@@ -2824,6 +3320,42 @@ static int build(Compiler *c)
         if (c->global_flags & 4) {
             uint32_t e[2] = {main, SpvExecutionModeEarlyFragmentTests};
             spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, e, 2);
+        }
+    } else if (c->program == DXBC_GEOMETRY) {
+        spv_capability(b, SpvCapabilityGeometry);
+        static const uint32_t INPUTS[8] = {0, SpvExecutionModeInputPoints, SpvExecutionModeInputLines,
+                                           SpvExecutionModeTriangles, 0, 0, SpvExecutionModeInputLinesAdjacency,
+                                           SpvExecutionModeInputTrianglesAdjacency};
+        uint32_t output = c->gs_topology == 1 ? SpvExecutionModeOutputPoints
+                          : c->gs_topology == 3 ? SpvExecutionModeOutputLineStrip
+                                                : SpvExecutionModeOutputTriangleStrip;
+        uint32_t modes[4][3] = {{main, INPUTS[c->gs_primitive & 7]},
+                                {main, output},
+                                {main, SpvExecutionModeOutputVertices, c->gs_max_vertices ? c->gs_max_vertices : 1},
+                                {main, SpvExecutionModeInvocations, c->gs_instances ? c->gs_instances : 1}};
+        for (int i = 0; i < 4; i++)
+            spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, modes[i], i < 2 ? 2 : 3);
+    } else if (c->program == DXBC_HULL || c->program == DXBC_DOMAIN) {
+        spv_capability(b, SpvCapabilityTessellation);
+        /* the domain, then for hull shaders the partitioning and the primitives' winding or points. */
+        static const uint32_t DOMAINS[4] = {SpvExecutionModeTriangles, SpvExecutionModeIsolines,
+                                            SpvExecutionModeTriangles, SpvExecutionModeQuads};
+        uint32_t domain[2] = {main, DOMAINS[c->tess_domain & 3]};
+        spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, domain, 2);
+        if (c->program == DXBC_HULL) {
+            uint32_t vertices[3] = {main, SpvExecutionModeOutputVertices, c->cp_out ? c->cp_out : 1};
+            spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, vertices, 3);
+            static const uint32_t SPACING[5] = {SpvExecutionModeSpacingEqual, SpvExecutionModeSpacingEqual,
+                                                SpvExecutionModeSpacingEqual, SpvExecutionModeSpacingFractionalOdd,
+                                                SpvExecutionModeSpacingFractionalEven};
+            uint32_t spacing[2] = {main, SPACING[c->tess_partitioning < 5 ? c->tess_partitioning : 0]};
+            spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, spacing, 2);
+            uint32_t order = c->tess_primitive == 1   ? SpvExecutionModePointMode
+                             : c->tess_primitive == 4 ? SpvExecutionModeVertexOrderCcw
+                                                      : SpvExecutionModeVertexOrderCw;
+            uint32_t primitive[2] = {main, order};
+            if (c->tess_primitive != 2)
+                spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, primitive, 2);
         }
     } else if (c->program == DXBC_COMPUTE) {
         uint32_t w[5] = {main, SpvExecutionModeLocalSize, c->thread_group[0] ? c->thread_group[0] : 1,
