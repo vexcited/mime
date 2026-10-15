@@ -312,7 +312,7 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
     }
     /*
      * the layout KiUserExceptionDispatcher's unwind codes describe: from its
-     * stack pointer, 0x28 bytes, the context, the record, then a machine
+     * stack pointer, 0x30 bytes, the context, the record, then a machine
      * frame with the faulting rip and rsp, so unwinding goes on there.
      */
     { /* DEBUGJIT */
@@ -338,7 +338,7 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
     frame[4] = context->SegSs;
     memcpy((void *)rec, record, sizeof(*record));
     memcpy((void *)ctx, context, sizeof(*context));
-    c->r[X86_RSP] = ctx - 0x28;
+    c->r[X86_RSP] = ctx - 0x30;
     c->r[X86_RCX] = rec;
     c->r[X86_RDX] = ctx;
     c->rip = g_guest.exception_dispatcher;

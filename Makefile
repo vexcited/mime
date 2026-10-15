@@ -107,8 +107,29 @@ else
 # kvm, and the linux ui, gpu and audio, in place of the macos frameworks.
 HOST_SRC := $(wildcard host/*.c host/setup/*.c host/linux/*.c) \
 	$(filter-out host/vmm/vm.c host/vmm/vcpu.c host/vmm/lazy.c host/vmm/loader.c host/vmm/window.c,$(wildcard host/vmm/*.c))
-HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o
+HOST_OBJ := $(HOST_SRC:%.c=$(OBJ)/%.o) $(OBJ)/gen/rom.o $(OBJ)/host/gen/vulkan/mvk_structs.o \
+	$(OBJ)/host/gen/vulkan/mvk_host_commands.o
 endif
+
+# ---------------------------------------------------------------- the vulkan wire
+
+VK_GEN := $(GEN)/vulkan
+VK_CFLAGS := -Ithird_party/khronos -I$(VK_GEN)
+
+$(VK_GEN)/stamp: tools/genvk.py third_party/khronos/registry/vk.xml
+	@mkdir -p $(VK_GEN)
+	python3 tools/genvk.py third_party/khronos/registry/vk.xml $(VK_GEN)
+	touch $@
+
+$(VK_GEN)/mvk_protocol.h $(VK_GEN)/mvk_structs.c $(VK_GEN)/mvk_host_commands.c $(VK_GEN)/mvk_guest_commands.c \
+	$(VK_GEN)/mvk_guest_out.c $(VK_GEN)/mvk_guest_procs.c $(VK_GEN)/mvk_dispatch.h $(VK_GEN)/mvk_exports.def: $(VK_GEN)/stamp ;
+
+$(OBJ)/host/gen/vulkan/%.o: $(VK_GEN)/%.c $(VK_GEN)/stamp
+	@mkdir -p $(dir $@)
+	$(CC) $(HOST_CFLAGS) $(VK_CFLAGS) -Ihost/linux -Wno-unused-variable -Wno-unused-function -c $< -o $@
+
+$(OBJ)/host/linux/vulkan.o: $(VK_GEN)/stamp
+$(OBJ)/host/linux/vulkan.o: HOST_CFLAGS += $(VK_CFLAGS)
 
 host: $(BUILD)/mime
 
@@ -310,7 +331,7 @@ $(SYSTEM32)/ntoskrnl.exe: $(NTOS_OBJ) $(GEN)/ntoskrnl.def $(GEN)/res/ntoskrnl.ex
 
 WIN32K_SRC := $(shell find guest/win32k -name '*.c') $(wildcard guest/lib/ttf/*.c guest/lib/png/*.c guest/lib/msstyles/*.c)
 WIN32K_OBJ := $(WIN32K_SRC:%.c=$(OBJ)/win32k/%.o) $(OBJ)/gen/win32k_services.o
-WIN32K_CFLAGS := $(GUEST_CFLAGS) -Iguest/win32k -Iguest/lib
+WIN32K_CFLAGS := $(GUEST_CFLAGS) -Iguest/win32k -Iguest/lib -Ithird_party/khronos
 
 $(OBJ)/win32k/%.o: %.c $(GEN_HEADERS)
 	@mkdir -p $(dir $@)
@@ -613,6 +634,40 @@ $(SYSX64)/opengl32.dll: $(X64_OPENGL32_OBJ) $(GEN)/opengl32/x64.def $(patsubst %
 	@mkdir -p $(dir $@)
 	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:0x7FF540000000 /def:$(GEN)/opengl32/x64.def /out:$@ \
 		$(X64_OPENGL32_OBJ) $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32) $(GEN)/res/opengl32.dll.res
+endif
+
+# ---------------------------------------------------------------- vulkan-1.dll
+
+# the vulkan api over the wire to the host's driver, x64 for now.
+VULKAN_SRC := $(wildcard guest/vulkan-1/*.c)
+VULKAN_GEN_SRC := mvk_structs mvk_guest_commands mvk_guest_out mvk_guest_procs
+VULKAN_CFLAGS := -Iguest/vulkan-1 $(VK_CFLAGS) -DMVK_GUEST=1 -Wno-unused-variable -Wno-unused-function \
+	-Wno-unused-but-set-variable
+X64_VULKAN_OBJ := $(patsubst %.c,$(X64_OBJ)/%.o,$(VULKAN_SRC)) $(patsubst %,$(X64_OBJ)/gen/vulkan/%.o,$(VULKAN_GEN_SRC)) \
+	$(X64_OBJ)/guest/crt/x64/chkstk.o
+
+$(X64_OBJ)/guest/vulkan-1/%.o: guest/vulkan-1/%.c $(VK_GEN)/stamp $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_CFLAGS) $(VULKAN_CFLAGS) -c $< -o $@
+
+$(X64_OBJ)/gen/vulkan/%.o: $(VK_GEN)/%.c $(VK_GEN)/stamp
+	@mkdir -p $(dir $@)
+	$(CC) $(X64_CFLAGS) $(VULKAN_CFLAGS) -c $< -o $@
+
+$(SYSX64)/vulkan-1.dll: $(X64_VULKAN_OBJ) $(VK_GEN)/stamp $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 win32u) \
+	$(GEN)/res/vulkan-1.dll.res
+	@mkdir -p $(dir $@)
+	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:0x7FF420000000 /def:$(VK_GEN)/mvk_exports.def \
+		/implib:$(BUILD)/lib/x64/vulkan-1.lib /out:$@ $(X64_VULKAN_OBJ) \
+		$(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 win32u) $(GEN)/res/vulkan-1.dll.res
+$(BUILD)/lib/x64/vulkan-1.lib: $(SYSX64)/vulkan-1.dll
+
+ifeq ($(GUEST_ARCH),x64)
+X64_FILES += $(SYSX64)/vulkan-1.dll
+GUEST_FILES += $(SYSX64)/vulkan-1.dll
+ROM_FILES += $(BUILD)/guest/rom/vulkan-1.dll
+$(GEN)/rom.S: $(BUILD)/guest/rom/vulkan-1.dll
+guest: $(SYSX64)/vulkan-1.dll
 endif
 
 # ---------------------------------------------------------------- examples

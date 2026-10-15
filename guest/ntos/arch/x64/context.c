@@ -362,7 +362,7 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
         !NT_SUCCESS(KiCopyToUser((PVOID)rec, record, sizeof(*record))) ||
         !NT_SUCCESS(KiCopyToUser((PVOID)ctx_addr, &ctx, sizeof(ctx))))
         return FALSE;
-    frame->Rsp = ctx_addr - 0x28;
+    frame->Rsp = ctx_addr - 0x30;
     frame->Rcx = rec;
     frame->Rdx = ctx_addr;
     frame->Rip = (ULONG64)dispatcher;

@@ -426,6 +426,7 @@ typedef struct W32PROCESS {
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
     struct W32GPU *Gpu; /* gpu.c */
+    struct W32VK *Vk;   /* vulkan.c */
     struct W32AUDIO *Audio; /* audio.c */
     ULONG ImageChars;
     WCHAR ImagePath[512];
@@ -754,6 +755,7 @@ void ClipboardWindowDestroyed(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
 void ClipboardHostChanged(BOOLEAN has_text); /* has_text: the host clipboard holds text */
 void GpuFreeProcess(W32PROCESS *p);
+void VkFreeProcess(W32PROCESS *p);
 void AudioFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);

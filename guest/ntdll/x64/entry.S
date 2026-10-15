@@ -11,7 +11,7 @@
     .text
 
 /*
- * mimex86 leaves 0x28 bytes, the CONTEXT, the EXCEPTION_RECORD in 0xa0
+ * mimex86 leaves 0x30 bytes, the CONTEXT, the EXCEPTION_RECORD in 0xa0
  * bytes and a machine frame above the stack pointer. the unwind codes say
  * so, as on windows: an unwind through the dispatcher restores the
  * nonvolatile registers from the context and goes on at the faulting rip
@@ -21,15 +21,15 @@
     .p2align 4
     .seh_proc KiUserExceptionDispatcher
     .seh_pushframe
-    .seh_stackalloc 0x598
-    .seh_savereg %rbx, 0x28+0x90
-    .seh_savereg %rbp, 0x28+0xa0
-    .seh_savereg %rsi, 0x28+0xa8
-    .seh_savereg %rdi, 0x28+0xb0
-    .seh_savereg %r12, 0x28+0xd8
-    .seh_savereg %r13, 0x28+0xe0
-    .seh_savereg %r14, 0x28+0xe8
-    .seh_savereg %r15, 0x28+0xf0
+    .seh_stackalloc 0x5a0
+    .seh_savereg %rbx, 0x30+0x90
+    .seh_savereg %rbp, 0x30+0xa0
+    .seh_savereg %rsi, 0x30+0xa8
+    .seh_savereg %rdi, 0x30+0xb0
+    .seh_savereg %r12, 0x30+0xd8
+    .seh_savereg %r13, 0x30+0xe0
+    .seh_savereg %r14, 0x30+0xe8
+    .seh_savereg %r15, 0x30+0xf0
     .seh_endprologue
 KiUserExceptionDispatcher:
     movq    %rcx, %rbx
