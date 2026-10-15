@@ -17,43 +17,9 @@
 #include <time.h>
 
 #define MAX_CONNECTIONS 64
-#define ARENA_SIZE (64u << 20)
 #define MAX_PHYSICAL_DEVICES 16
 #define MAX_IDS (64u << 20)
 
-struct MvkConnection {
-    MimeVm *vm;
-    uint32_t index;
-    MvkHeader *header;
-    uint8_t *ring;
-    uint8_t *reply;
-    pthread_t thread;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    bool kicked;
-    volatile bool closing;
-
-    uint64_t *handles; /* by guest id */
-    size_t handle_count;
-    struct {
-        uint64_t handle, id;
-    } *reverse;        /* host handle to guest id, open addressing */
-    size_t reverse_size, reverse_used;
-
-    void *library;
-    PFN_vkGetInstanceProcAddr gipa;
-    VkInstance instance;
-    VkDevice device;
-    VkPhysicalDevice physical_device;
-    MvkDispatch fn;
-    bool host_import; /* the device imports guest memory */
-    VkDeviceSize import_alignment;
-
-    uint8_t *call;   /* a private copy of the call being run */
-    uint8_t *arena;
-    uint8_t *stream; /* a private copy of a command buffer's stream */
-    size_t stream_size;
-};
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static MvkConnection *g_connections[MAX_CONNECTIONS];
@@ -125,6 +91,16 @@ static void bind(MvkConnection *c, uint64_t id, uint64_t handle)
 static uint64_t lookup(MvkConnection *c, uint64_t id)
 {
     return id < c->handle_count ? c->handles[id] : 0;
+}
+
+uint64_t mvk_lookup(MvkConnection *c, uint64_t id)
+{
+    return lookup(c, id);
+}
+
+void mvk_bind(MvkConnection *c, uint64_t id, uint64_t handle)
+{
+    bind(c, id, handle);
 }
 
 uint64_t mvk_get_handle(MvkDecoder *d, int dispatchable)
@@ -298,11 +274,20 @@ static void instance_extensions(MvkCall *call)
         version(&api);
     mvk_put_u32(e, (uint32_t)VK_SUCCESS);
     mvk_put_u32(e, api);
-    uint32_t n = 0;
+    /* the guest's window system stands on the host's surfaces. */
+    static const VkExtensionProperties wsi[] = {
+        {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
+        {"VK_KHR_win32_surface", 6},
+        {VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME, VK_KHR_GET_SURFACE_CAPABILITIES_2_SPEC_VERSION},
+    };
+    uint32_t wsi_count = host_has(list, count, VK_KHR_SURFACE_EXTENSION_NAME) ? 3 : 0;
+    uint32_t n = wsi_count;
     for (uint32_t i = 0; i < count; i++)
         if (protocol_has(list[i].extensionName))
             n++;
     mvk_put_u32(e, n);
+    for (uint32_t i = 0; i < wsi_count; i++)
+        mvk_put_bytes(e, &wsi[i], sizeof(wsi[i]));
     for (uint32_t i = 0; i < count; i++)
         if (protocol_has(list[i].extensionName))
             mvk_put_bytes(e, &list[i], sizeof(list[i]));
@@ -327,11 +312,16 @@ static void create_instance(MvkCall *call)
         enumerate(NULL, &count, NULL);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
         enumerate(NULL, &count, list);
-        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 4));
+        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 8));
         uint32_t n = 0;
         for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
-            if (host_has(list, count, info.ppEnabledExtensionNames[i]))
+            if (host_has(list, count, info.ppEnabledExtensionNames[i]) &&
+                strcmp(info.ppEnabledExtensionNames[i], VK_KHR_SURFACE_EXTENSION_NAME))
                 names[n++] = info.ppEnabledExtensionNames[i];
+        /* the host surfaces the presenter makes on the guest's behalf. */
+        for (const char *const *x = mvk_wsi_instance_extensions; *x; x++)
+            if (host_has(list, count, *x))
+                names[n++] = *x;
         free(list);
         info.enabledLayerCount = 0;
         info.ppEnabledLayerNames = NULL;
@@ -428,11 +418,11 @@ static void device_extensions(MvkCall *call)
     mvk_put_u32(e, (uint32_t)VK_SUCCESS);
     uint32_t n = 0;
     for (uint32_t i = 0; i < count; i++)
-        if (protocol_has(list[i].extensionName))
+        if (protocol_has(list[i].extensionName) || mvk_wsi_device_extension(list[i].extensionName))
             n++;
     mvk_put_u32(e, n);
     for (uint32_t i = 0; i < count; i++)
-        if (protocol_has(list[i].extensionName))
+        if (protocol_has(list[i].extensionName) || mvk_wsi_device_extension(list[i].extensionName))
             mvk_put_bytes(e, &list[i], sizeof(list[i]));
     free(list);
     mvk_reply_end(call);
@@ -467,6 +457,12 @@ static void create_device(MvkCall *call)
         c->host_import = host_has(list, count, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
         if (c->host_import)
             names[n++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+        /* the presenter's swapchains, whether the guest presents or not. */
+        bool swapchain = false;
+        for (uint32_t i = 0; i < n; i++)
+            swapchain |= !strcmp(names[i], VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        if (!swapchain && host_has(list, count, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+            names[n++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
         free(list);
         info.enabledLayerCount = 0;
         info.enabledExtensionCount = n;
@@ -488,6 +484,8 @@ static void create_device(MvkCall *call)
                 VkQueue q = VK_NULL_HANDLE;
                 c->fn.vkGetDeviceQueue(c->device, family, index, &q);
                 bind(c, qid, (uint64_t)(uintptr_t)q);
+                if (q && c->queue_count < sizeof(c->queues) / sizeof(c->queues[0]))
+                    c->queues[c->queue_count++] = (__typeof__(c->queues[0])){q, family};
             }
         }
     }
@@ -935,6 +933,10 @@ static void run_hand(MvkCall *call)
     case MVK_OP_FREE_DESCRIPTOR_SETS: free_descriptor_sets(call); break;
     case MVK_OP_RESET_DESCRIPTOR_POOL: reset_descriptor_pool(call); break;
     case MVK_OP_QUERY_POOL_RESULTS: query_pool_results(call); break;
+    case MVK_OP_CREATE_SWAPCHAIN: mvk_wsi_create_swapchain(call); break;
+    case MVK_OP_DESTROY_SWAPCHAIN: mvk_wsi_destroy_swapchain(call); break;
+    case MVK_OP_ACQUIRE_IMAGE: mvk_wsi_acquire(call); break;
+    case MVK_OP_PRESENT: mvk_wsi_present(call); break;
     default:
         mime_warn("vulkan: unknown call %#x", call->header.op);
         break;
@@ -1121,6 +1123,7 @@ void mime_vk_close(uint64_t index)
     pthread_cond_signal(&c->cond);
     pthread_mutex_unlock(&c->lock);
     pthread_join(c->thread, NULL);
+    mvk_wsi_close(c);
     if (c->device) {
         c->fn.vkDeviceWaitIdle(c->device);
         c->fn.vkDestroyDevice(c->device, NULL);

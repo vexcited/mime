@@ -8,12 +8,60 @@
 
 #include "../vmm/vmm.h"
 
+#include <pthread.h>
+#include <stdbool.h>
+
 #include <mime/mvk_wire.h>
 
 #include "mvk_protocol.h"
 #include "mvk_dispatch.h"
 
+#define ARENA_SIZE (64u << 20)
+
 typedef struct MvkConnection MvkConnection;
+
+struct MvkConnection {
+    MimeVm *vm;
+    uint32_t index;
+    MvkHeader *header;
+    uint8_t *ring;
+    uint8_t *reply;
+    pthread_t thread;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    bool kicked;
+    volatile bool closing;
+
+    uint64_t *handles; /* by guest id */
+    size_t handle_count;
+    struct {
+        uint64_t handle, id;
+    } *reverse;        /* host handle to guest id, open addressing */
+    size_t reverse_size, reverse_used;
+
+    void *library;
+    PFN_vkGetInstanceProcAddr gipa;
+    VkInstance instance;
+    VkDevice device;
+    VkPhysicalDevice physical_device;
+    MvkDispatch fn;
+    bool host_import; /* the device imports guest memory */
+    uint32_t queue_count;
+    struct {
+        VkQueue queue;
+        uint32_t family;
+    } queues[64];
+    struct MvkWsi *wsi; /* vkwsi.c */
+    VkDeviceSize import_alignment;
+
+    uint8_t *call;   /* a private copy of the call being run */
+    uint8_t *arena;
+    uint8_t *stream; /* a private copy of a command buffer's stream */
+    size_t stream_size;
+};
+
+uint64_t mvk_lookup(MvkConnection *c, uint64_t id);
+void mvk_bind(MvkConnection *c, uint64_t id, uint64_t handle);
 
 typedef struct MvkCall {
     MvkDecoder in;
@@ -47,5 +95,14 @@ void mvk_reply_chain_struct(MvkEncoder *e, const VkBaseOutStructure *s);
 /* the guest side encoders also build on the host; these never run there. */
 void mvk_put_chain(MvkEncoder *e, const void *next);
 uint64_t mvk_dispatch_id(const void *object);
+
+/* vkwsi.c: surfaces and swapchains. */
+extern const char *const mvk_wsi_instance_extensions[];
+bool mvk_wsi_device_extension(const char *name);
+void mvk_wsi_create_swapchain(MvkCall *call);
+void mvk_wsi_destroy_swapchain(MvkCall *call);
+void mvk_wsi_acquire(MvkCall *call);
+void mvk_wsi_present(MvkCall *call);
+void mvk_wsi_close(MvkConnection *c);
 
 #endif

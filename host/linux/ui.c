@@ -8,10 +8,11 @@
  * thread here: vcpu threads copy what they present into a window's staging
  * buffer and post the rest as calls the main loop runs.
  */
-#include "../ui/ui.h"
+#include "display.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
+#include <wayland-client.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,12 @@ typedef struct UiWindow {
     bool popup;          /* created as a popup of its owner */
     uint32_t owner;      /* owner the popup belongs to */
     bool fullscreen;
+    bool vk;       /* a vulkan presenter shows the client area */
+    bool vk_whole; /* and the frame too, the renderer gone: the window has no subsurface */
+    struct wl_surface *vk_surface;
+    struct wl_subsurface *vk_subsurface;
+    struct wl_proxy *vk_viewport;
+    MimeRect vk_place; /* where the subsurface is, in sdl window coordinates */
     bool state_pending;
     uint32_t state_request;
     int state_command;
@@ -40,6 +47,7 @@ typedef struct UiWindow {
     pthread_mutex_t lock;
     uint8_t *pixels; /* the latest guest surface, copied by the presenting vcpu */
     uint32_t width, height;
+    uint32_t pixel_width, pixel_height; /* the host window */
     MimeRect dirty;
     bool has_dirty;
     bool present_queued;
@@ -368,8 +376,27 @@ static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, vo
     return SDL_HITTEST_NORMAL;
 }
 
+static void update_pixel_size(UiWindow *w)
+{
+    int width = 0, height = 0;
+    if (w->window)
+        SDL_GetWindowSizeInPixels(w->window, &width, &height);
+    pthread_mutex_lock(&w->lock);
+    w->pixel_width = (uint32_t)MIME_MAX(width, 0);
+    w->pixel_height = (uint32_t)MIME_MAX(height, 0);
+    pthread_mutex_unlock(&w->lock);
+}
+
+static void destroy_subsurface(UiWindow *w);
+
 static void destroy_host_window(UiWindow *w)
 {
+    if (w->vk) {
+        mime_vk_window_lost(w->id);
+        destroy_subsurface(w);
+        w->vk = false;
+        w->vk_whole = false;
+    }
     if (w->texture)
         SDL_DestroyTexture(w->texture);
     if (w->renderer)
@@ -425,6 +452,7 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
         return false;
     }
     SDL_SetRenderVSync(w->renderer, 0);
+    update_pixel_size(w);
     SDL_SetWindowHitTest(w->window, hit_test, (void *)(uintptr_t)w->id);
     SDL_StartTextInput(w->window);
     if (owner && owner->window && !popup)
@@ -435,11 +463,11 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
 /* draws the latest surface: the visible part at its place in the host window, the resize border clear. */
 static void draw(UiWindow *w)
 {
-    if (!w->renderer)
+    if (!w->renderer && !w->vk_whole)
         return;
     pthread_mutex_lock(&w->lock);
     w->present_queued = false;
-    if (!w->pixels) {
+    if (!w->pixels || w->vk_whole) {
         pthread_mutex_unlock(&w->lock);
         return;
     }
@@ -521,7 +549,9 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
                                                   host_part(cfg).right - host_part(cfg).left ||
                         host_part(&w->config).bottom - host_part(&w->config).top !=
                             host_part(cfg).bottom - host_part(cfg).top;
+    pthread_mutex_lock(&w->lock);
     w->config = *cfg;
+    pthread_mutex_unlock(&w->lock);
     w->configured = true;
     if (!w->window && !(cfg->flags & MIME_WIN_VISIBLE))
         return;
@@ -750,6 +780,339 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
     pthread_mutex_unlock(&w->lock);
     if (queue)
         on_main(present_main, (void *)(uintptr_t)id);
+}
+
+/* ------------------------------------------------------------------ vulkan presentation */
+
+/*
+ * wp_viewporter, which scales the presenter's buffers to the client area:
+ * two requests, described here from the protocol.
+ */
+static const struct wl_interface viewport_interface;
+static const struct wl_interface *viewporter_types[] = {&viewport_interface, &wl_surface_interface};
+static const struct wl_interface *no_types[] = {NULL, NULL, NULL, NULL};
+static const struct wl_message viewporter_requests[] = {
+    {"destroy", "", no_types},
+    {"get_viewport", "no", viewporter_types},
+};
+static const struct wl_interface viewporter_interface = {"wp_viewporter", 1, 2, viewporter_requests, 0, NULL};
+static const struct wl_message viewport_requests[] = {
+    {"destroy", "", no_types},
+    {"set_source", "ffff", no_types},
+    {"set_destination", "ii", no_types},
+};
+static const struct wl_interface viewport_interface = {"wp_viewport", 1, 3, viewport_requests, 0, NULL};
+
+/* the globals the subsurfaces need, bound on a queue of their own so sdl's dispatch never sees them. */
+static struct wl_display *g_wl;
+static struct wl_event_queue *g_wl_queue;
+static struct wl_compositor *g_compositor;
+static struct wl_subcompositor *g_subcompositor;
+static struct wl_proxy *g_viewporter;
+static bool g_wl_tried;
+
+static void registry_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
+                            uint32_t version)
+{
+    if (!strcmp(interface, wl_compositor_interface.name))
+        g_compositor = wl_registry_bind(registry, name, &wl_compositor_interface, MIME_MIN(version, 4u));
+    else if (!strcmp(interface, wl_subcompositor_interface.name))
+        g_subcompositor = wl_registry_bind(registry, name, &wl_subcompositor_interface, 1);
+    else if (!strcmp(interface, viewporter_interface.name))
+        g_viewporter = wl_registry_bind(registry, name, &viewporter_interface, 1);
+}
+
+static void registry_remove(void *data, struct wl_registry *registry, uint32_t name)
+{
+}
+
+static const struct wl_registry_listener g_registry_listener = {registry_global, registry_remove};
+
+static bool wayland_globals(struct wl_display *display)
+{
+    if (g_wl_tried)
+        return g_wl == display && g_compositor && g_subcompositor;
+    g_wl_tried = true;
+    g_wl = display;
+    g_wl_queue = wl_display_create_queue(display);
+    struct wl_display *wrapper = wl_proxy_create_wrapper(display);
+    wl_proxy_set_queue((struct wl_proxy *)wrapper, g_wl_queue);
+    struct wl_registry *registry = wl_display_get_registry(wrapper);
+    wl_proxy_wrapper_destroy(wrapper);
+    wl_registry_add_listener(registry, &g_registry_listener, NULL);
+    wl_display_roundtrip_queue(display, g_wl_queue);
+    if (!g_compositor || !g_subcompositor)
+        mime_warn("the compositor has no subsurfaces: vulkan windows take the whole window");
+    return g_compositor && g_subcompositor;
+}
+
+/* the client area in sdl window coordinates. */
+static MimeRect client_in_window(UiWindow *w, MimeRect client)
+{
+    MimeRect host = host_part(&w->config);
+    return (MimeRect){(int32_t)lround((client.left - host.left) / g_scale),
+                      (int32_t)lround((client.top - host.top) / g_scale),
+                      (int32_t)lround((client.right - host.left) / g_scale),
+                      (int32_t)lround((client.bottom - host.top) / g_scale)};
+}
+
+static void destroy_subsurface(UiWindow *w)
+{
+    if (w->vk_viewport)
+        wl_proxy_marshal_flags(w->vk_viewport, 0, NULL, wl_proxy_get_version(w->vk_viewport),
+                               WL_MARSHAL_FLAG_DESTROY);
+    if (w->vk_subsurface)
+        wl_subsurface_destroy(w->vk_subsurface);
+    if (w->vk_surface)
+        wl_surface_destroy(w->vk_surface);
+    w->vk_viewport = NULL;
+    w->vk_subsurface = NULL;
+    w->vk_surface = NULL;
+}
+
+/* places the subsurface over the client area; the position lands with the window's next frame. */
+static void place_subsurface(UiWindow *w, MimeRect client)
+{
+    MimeRect r = client_in_window(w, client);
+    if (!w->vk_subsurface || !memcmp(&r, &w->vk_place, sizeof(r)))
+        return;
+    w->vk_place = r;
+    wl_subsurface_set_position(w->vk_subsurface, r.left, r.top);
+    if (w->vk_viewport && r.right > r.left && r.bottom > r.top)
+        wl_proxy_marshal_flags(w->vk_viewport, 2, NULL, wl_proxy_get_version(w->vk_viewport), 0, r.right - r.left,
+                               r.bottom - r.top);
+    if (w->renderer && w->pixels && w->shown) {
+        pthread_mutex_lock(&w->lock);
+        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+        w->has_dirty = true;
+        pthread_mutex_unlock(&w->lock);
+        draw(w);
+    } else if (w->window) {
+        struct wl_surface *parent = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
+                                                           SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+        if (parent)
+            wl_surface_commit(parent);
+    }
+}
+
+static bool make_subsurface(UiWindow *w, struct wl_surface *parent, MimeRect client)
+{
+    w->vk_surface = wl_compositor_create_surface(g_compositor);
+    w->vk_subsurface = w->vk_surface ? wl_subcompositor_get_subsurface(g_subcompositor, w->vk_surface, parent) : NULL;
+    if (!w->vk_subsurface) {
+        destroy_subsurface(w);
+        return false;
+    }
+    wl_subsurface_set_desync(w->vk_subsurface);
+    /* the mouse goes through, to the window sdl knows. */
+    struct wl_region *empty = wl_compositor_create_region(g_compositor);
+    wl_surface_set_input_region(w->vk_surface, empty);
+    wl_region_destroy(empty);
+    if (g_viewporter)
+        w->vk_viewport = wl_proxy_marshal_flags(g_viewporter, 1, &viewport_interface,
+                                                wl_proxy_get_version(g_viewporter), 0, NULL, w->vk_surface);
+    wl_surface_commit(w->vk_surface);
+    w->vk_place = (MimeRect){0};
+    place_subsurface(w, client);
+    return true;
+}
+
+typedef struct VkAttach {
+    uint32_t id;
+    MimeRect client;
+    MimeUiNative *native;
+    bool ok, done;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} VkAttach;
+
+static void attach_main(void *arg)
+{
+    VkAttach *a = arg;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(a->id);
+    if (w && w->window) {
+        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+        const char *driver = SDL_GetCurrentVideoDriver();
+        *a->native = (MimeUiNative){0};
+        if (driver && !strcmp(driver, "wayland")) {
+            struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+            struct wl_surface *parent = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+            if (display && parent && wayland_globals(display) && (w->vk_surface || make_subsurface(w, parent, a->client))) {
+                a->native->display = display;
+                a->native->surface = w->vk_surface;
+                a->native->subsurface = true;
+                a->ok = true;
+            }
+        } else if (driver && !strcmp(driver, "x11")) {
+            a->native->x11 = true;
+            a->native->display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+            a->native->window = (uint64_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+            a->ok = a->native->display && a->native->window;
+            /* the window takes one swapchain: the renderer's goes, and the presenter draws the frame. */
+            if (a->ok) {
+                if (w->texture)
+                    SDL_DestroyTexture(w->texture);
+                if (w->renderer)
+                    SDL_DestroyRenderer(w->renderer);
+                w->texture = NULL;
+                w->renderer = NULL;
+                w->texture_width = w->texture_height = 0;
+                pthread_mutex_lock(&w->lock);
+                w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+                w->has_dirty = w->pixels != NULL;
+                pthread_mutex_unlock(&w->lock);
+            }
+        }
+        if (a->ok) {
+            w->vk = true;
+            w->vk_whole = !a->native->subsurface;
+            update_pixel_size(w);
+        }
+    }
+    pthread_mutex_unlock(&g_windows_lock);
+    pthread_mutex_lock(&a->lock);
+    a->done = true;
+    pthread_cond_signal(&a->cond);
+    pthread_mutex_unlock(&a->lock);
+}
+
+bool mime_ui_vk_attach(uint32_t id, MimeRect client, MimeUiNative *native)
+{
+    if (!g_video)
+        return false;
+    VkAttach *a = calloc(1, sizeof(*a));
+    if (!a)
+        return false;
+    *a = (VkAttach){.id = id, .client = client, .native = native};
+    pthread_mutex_init(&a->lock, NULL);
+    pthread_cond_init(&a->cond, NULL);
+    on_main(attach_main, a);
+    /* a main loop that stopped leaves the call queued: the request then fails and leaks. */
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 5;
+    pthread_mutex_lock(&a->lock);
+    while (!a->done && pthread_cond_timedwait(&a->cond, &a->lock, &ts) == 0)
+        ;
+    bool done = a->done, ok = a->ok;
+    pthread_mutex_unlock(&a->lock);
+    if (done) {
+        pthread_mutex_destroy(&a->lock);
+        pthread_cond_destroy(&a->cond);
+        free(a);
+    }
+    return done && ok;
+}
+
+static void detach_main(void *arg)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
+    if (w && w->vk) {
+        w->vk = false;
+        w->vk_whole = false;
+        destroy_subsurface(w);
+        if (w->window && !w->renderer) {
+            w->renderer = SDL_CreateRenderer(w->window, NULL);
+            if (w->renderer)
+                SDL_SetRenderVSync(w->renderer, 0);
+            else
+                mime_warn("cannot create a renderer: %s", SDL_GetError());
+        }
+        pthread_mutex_lock(&w->lock);
+        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+        w->has_dirty = w->pixels != NULL;
+        pthread_mutex_unlock(&w->lock);
+    }
+    pthread_mutex_unlock(&g_windows_lock);
+    if (w && w->shown)
+        draw(w);
+}
+
+void mime_ui_vk_detach(uint32_t id)
+{
+    on_main(detach_main, (void *)(uintptr_t)id);
+}
+
+typedef struct VkPlace {
+    uint32_t id;
+    MimeRect client;
+} VkPlace;
+
+static void place_main(void *arg)
+{
+    VkPlace *p = arg;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(p->id);
+    if (w && w->vk)
+        place_subsurface(w, p->client);
+    pthread_mutex_unlock(&g_windows_lock);
+    free(p);
+}
+
+bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(id);
+    if (!w || !w->vk) {
+        pthread_mutex_unlock(&g_windows_lock);
+        return false;
+    }
+    pthread_mutex_lock(&w->lock);
+    pthread_mutex_unlock(&g_windows_lock);
+    frame->host = host_part(&w->config);
+    frame->visible = visible_part(&w->config);
+    frame->surface_width = w->pixels ? w->width : 0;
+    frame->surface_height = w->pixels ? w->height : 0;
+    frame->shown = w->shown && !(w->config.flags & MIME_WIN_MINIMIZED);
+    frame->subsurface = !w->vk_whole;
+    bool moved = false;
+    if (frame->subsurface) {
+        /* the client area at the window's density. */
+        MimeRect r = client_in_window(w, client);
+        int32_t logical = MIME_MAX(host_part(&w->config).right - host_part(&w->config).left, 1);
+        double density = w->pixel_width ? w->pixel_width * g_scale / logical : 1.0;
+        frame->pixel_width = (uint32_t)MIME_MAX(lround((r.right - r.left) * density), 0);
+        frame->pixel_height = (uint32_t)MIME_MAX(lround((r.bottom - r.top) * density), 0);
+        moved = memcmp(&r, &w->vk_place, sizeof(r)) != 0;
+    } else {
+        frame->pixel_width = w->pixel_width;
+        frame->pixel_height = w->pixel_height;
+    }
+    pthread_mutex_unlock(&w->lock);
+    if (moved) {
+        VkPlace *p = malloc(sizeof(*p));
+        if (p) {
+            *p = (VkPlace){id, client};
+            on_main(place_main, p);
+        }
+    }
+    return true;
+}
+
+bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height, MimeRect *dirty)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(id);
+    if (!w) {
+        pthread_mutex_unlock(&g_windows_lock);
+        return false;
+    }
+    pthread_mutex_lock(&w->lock);
+    pthread_mutex_unlock(&g_windows_lock);
+    bool copied = false;
+    if (w->vk_whole && w->pixels && w->has_dirty && w->width == width && w->height == height) {
+        MimeRect d = w->dirty;
+        for (int32_t y = d.top; y < d.bottom; y++)
+            memcpy(dst + ((size_t)y * width + (size_t)d.left) * 4, w->pixels + ((size_t)y * width + (size_t)d.left) * 4,
+                   (size_t)(d.right - d.left) * 4);
+        *dirty = d;
+        w->has_dirty = false;
+        copied = true;
+    }
+    pthread_mutex_unlock(&w->lock);
+    return copied;
 }
 
 /* ------------------------------------------------------------------ cursor */
@@ -1017,6 +1380,8 @@ static void handle_event(const SDL_Event *e)
     case SDL_EVENT_WINDOW_EXPOSED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
         UiWindow *w = find_by_sdl(e->window.windowID);
+        if (w)
+            update_pixel_size(w);
         if (w && w->shown)
             draw(w);
         break;

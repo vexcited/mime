@@ -22,8 +22,8 @@ HOST_LIBS := -framework Hypervisor -framework AppKit -framework QuartzCore -fram
 else
 GUEST_ARCH ?= x64
 HOST_CFLAGS := -std=gnu17 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Wno-unused-parameter -Iinclude -MMD -MP
-HOST_LIBS := -lpthread -lm $(shell pkg-config --libs sdl3)
-HOST_CFLAGS += $(shell pkg-config --cflags sdl3)
+HOST_LIBS := -lpthread -lm $(shell pkg-config --libs sdl3 wayland-client)
+HOST_CFLAGS += $(shell pkg-config --cflags sdl3 wayland-client)
 endif
 CXX := clang++
 
@@ -128,8 +128,8 @@ $(OBJ)/host/gen/vulkan/%.o: $(VK_GEN)/%.c $(VK_GEN)/stamp
 	@mkdir -p $(dir $@)
 	$(CC) $(HOST_CFLAGS) $(VK_CFLAGS) -Ihost/linux -Wno-unused-variable -Wno-unused-function -c $< -o $@
 
-$(OBJ)/host/linux/vulkan.o: $(VK_GEN)/stamp
-$(OBJ)/host/linux/vulkan.o: HOST_CFLAGS += $(VK_CFLAGS)
+$(OBJ)/host/linux/vulkan.o $(OBJ)/host/linux/vkwsi.o: $(VK_GEN)/stamp
+$(OBJ)/host/linux/vulkan.o $(OBJ)/host/linux/vkwsi.o: HOST_CFLAGS += $(VK_CFLAGS)
 
 host: $(BUILD)/mime
 
@@ -654,12 +654,12 @@ $(X64_OBJ)/gen/vulkan/%.o: $(VK_GEN)/%.c $(VK_GEN)/stamp
 	@mkdir -p $(dir $@)
 	$(CC) $(X64_CFLAGS) $(VULKAN_CFLAGS) -c $< -o $@
 
-$(SYSX64)/vulkan-1.dll: $(X64_VULKAN_OBJ) $(VK_GEN)/stamp $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 win32u) \
+$(SYSX64)/vulkan-1.dll: $(X64_VULKAN_OBJ) $(VK_GEN)/stamp $(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 win32u user32) \
 	$(GEN)/res/vulkan-1.dll.res
 	@mkdir -p $(dir $@)
 	$(LLD_LINK) $(X64_DLL_LDFLAGS) /entry:DllMain /base:0x7FF420000000 /def:$(VK_GEN)/mvk_exports.def \
 		/implib:$(BUILD)/lib/x64/vulkan-1.lib /out:$@ $(X64_VULKAN_OBJ) \
-		$(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 win32u) $(GEN)/res/vulkan-1.dll.res
+		$(patsubst %,$(BUILD)/lib/x64/%.lib,ntdll kernel32 win32u user32) $(GEN)/res/vulkan-1.dll.res
 $(BUILD)/lib/x64/vulkan-1.lib: $(SYSX64)/vulkan-1.dll
 
 ifeq ($(GUEST_ARCH),x64)
