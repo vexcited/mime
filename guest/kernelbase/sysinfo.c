@@ -135,20 +135,6 @@ BOOL WINAPI GetVersionExA(LPOSVERSIONINFOA info)
     return TRUE;
 }
 
-ULONGLONG WINAPI VerSetConditionMask(ULONGLONG mask, DWORD type, BYTE condition)
-{
-    condition &= 7;
-    if (!condition)
-        return mask;
-    for (int bit = 0; bit < 8; bit++) {
-        if (type & (1u << bit)) {
-            mask &= ~(7ull << (bit * 3));
-            mask |= (ULONGLONG)condition << (bit * 3);
-        }
-    }
-    return mask;
-}
-
 static BYTE condition_of(ULONGLONG mask, DWORD type)
 {
     for (int bit = 0; bit < 8; bit++)

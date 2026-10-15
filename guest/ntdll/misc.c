@@ -217,6 +217,21 @@ NTDLL_EXPORT void NTAPI DbgUserBreakPoint(void)
 
 /* ------------------------------------------------------------------ versions */
 
+/*
+ * three condition bits per VER_ type, at the position of the type's
+ * highest bit, ORed into the mask. bit 63 marks a mask built this way,
+ * which RtlVerifyVersionInfo reads per type. no type gives 0.
+ */
+NTDLL_EXPORT ULONGLONG NTAPI VerSetConditionMask(ULONGLONG mask, ULONG type, UCHAR condition)
+{
+    if (!type)
+        return 0;
+    ULONG index = 0;
+    while (type >>= 1)
+        index++;
+    return mask | ((ULONGLONG)(condition & 7) << (3 * index)) | (1ull << 63);
+}
+
 NTDLL_EXPORT NTSTATUS NTAPI RtlGetVersion(RTL_OSVERSIONINFOEXW *info)
 {
     PPEB peb = NtCurrentPeb();

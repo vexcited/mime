@@ -385,7 +385,7 @@ EXPORTS_FROM_OBJECTS = $(NM) -g --defined-only $(1) 2>/dev/null | awk '$$2 == "T
 NTDLL_SRC := $(wildcard guest/ntdll/*.c) $(wildcard guest/ntdll/*.S)
 NTDLL_OBJ := $(patsubst %,$(OBJ)/user/%.o,$(basename $(NTDLL_SRC))) $(OBJ)/user/$(GEN)/ntdll_syscalls.o $(USER_RT_OBJ)
 USER_CFLAGS_ntdll := -Iguest/ntdll
-NTDLL_EXPORT_CODE := ^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$$|^LdrInitializeThunk$$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)
+NTDLL_EXPORT_CODE := ^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$$|^LdrInitializeThunk$$|^VerSetConditionMask$$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)
 
 $(GEN)/ntdll.def: $(NTDLL_OBJ) $(GEN)/ntdll_syscalls.def
 	{ echo "LIBRARY ntdll.dll"; echo "EXPORTS"; cat $(GEN)/ntdll_syscalls.def; \
@@ -443,10 +443,12 @@ $(BUILD)/lib/ntdll.lib: $(SYSTEM32)/ntdll.dll
 
 $(eval $(call USER_DLL,kernelbase,0x7FFB00000000,ntdll,/entry:DllMain))
 
-# kernel32 re-exports kernelbase through forwarders, like windows does.
+# kernel32 re-exports kernelbase through forwarders, like windows does, and a few ntdll functions.
+KERNEL32_NTDLL := RtlPcToFileHeader VerSetConditionMask
 $(GEN)/kernel32.def: $(SYSTEM32)/kernelbase.dll
 	{ echo "LIBRARY kernel32.dll"; echo "EXPORTS"; \
-	  llvm-readobj --coff-exports $< | awk '$$1 == "Name:" && $$2 != "DllMain" { print "    " $$2 "=kernelbase." $$2 }'; } > $@
+	  llvm-readobj --coff-exports $< | awk '$$1 == "Name:" && $$2 != "DllMain" { print "    " $$2 "=kernelbase." $$2 }'; \
+	  for f in $(KERNEL32_NTDLL); do echo "    $$f=ntdll.$$f"; done; } > $@
 EXTRA_DEPS_kernel32 := $(GEN)/kernel32.def
 EXTRA_LDFLAGS_kernel32 := /def:$(GEN)/kernel32.def
 $(eval $(call USER_DLL,kernel32,0x7FFA00000000,ntdll kernelbase,/entry:DllMain))
@@ -528,7 +530,7 @@ $(eval $(call X64_DLL,kernelbase,0x7FFB00000000,ntdll,/entry:DllMain))
 # like the arm64 one, plus the unwinding functions windows' kernel32 forwards to ntdll.
 X64_KERNEL32_NTDLL := RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind RtlAddFunctionTable \
 	RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind __C_specific_handler \
-	RtlCaptureStackBackTrace
+	RtlCaptureStackBackTrace $(KERNEL32_NTDLL)
 $(GEN)/x64/kernel32.def: $(SYSX64)/kernelbase.dll
 	@mkdir -p $(dir $@)
 	{ echo "LIBRARY kernel32.dll"; echo "EXPORTS"; \

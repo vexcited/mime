@@ -672,6 +672,31 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
             if (returned)
                 KiCopyToUser(returned, &n, sizeof(n));
         }
+    } else if (klass == MemoryImageInformation) {
+        /* the image view holding the address; zeros for any other memory, as windows answers. */
+        MEMORY_IMAGE_INFORMATION mi = {0};
+        PMMADDRESS_SPACE as = &process->AddressSpace;
+        if (length < sizeof(mi)) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        } else {
+            ExAcquireFastMutex(&as->Lock);
+            PMMVAD vad = (ULONG_PTR)base <= MM_HIGHEST_USER_ADDRESS ? MiFindVad(as, (ULONG_PTR)base) : NULL;
+            if (!vad) {
+                status = STATUS_INVALID_ADDRESS;
+            } else if (vad->Type == MiVadImage && vad->Section) {
+                mi.ImageBase = (PVOID)vad->StartVa;
+                mi.SizeOfImage = (SIZE_T)vad->Section->Size;
+                if (vad->SectionOffset + (vad->EndVa - vad->StartVa) < vad->Section->Size)
+                    mi.ImageFlags |= MEMORY_IMAGE_PARTIAL_MAP;
+            }
+            ExReleaseFastMutex(&as->Lock);
+            if (NT_SUCCESS(status)) {
+                status = KiCopyToUser(info, &mi, sizeof(mi));
+                SIZE_T n = sizeof(mi);
+                if (returned)
+                    KiCopyToUser(returned, &n, sizeof(n));
+            }
+        }
     } else if (klass == MemoryMappedFilenameInformation) {
         PMMADDRESS_SPACE as = &process->AddressSpace;
         ExAcquireFastMutex(&as->Lock);

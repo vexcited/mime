@@ -60,7 +60,11 @@ static void read_line(const char *path, char *out, size_t size)
     fclose(f);
 }
 
-/* the brand string of cpuid, which programs in the guest read themselves anyway. */
+/*
+ * the brand string of cpuid, which programs in the guest read themselves
+ * anyway. windows skips its leading spaces and keeps the trailing ones,
+ * which linux trims.
+ */
 static void cpu_brand(char *out, size_t size)
 {
     uint32_t regs[12];

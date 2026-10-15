@@ -677,6 +677,16 @@ typedef struct _MEMORY_BASIC_INFORMATION {
     DWORD Type;
 } MEMORY_BASIC_INFORMATION, *PMEMORY_BASIC_INFORMATION;
 
+#define MEMORY_IMAGE_PARTIAL_MAP 0x1      /* the view does not cover the whole image */
+#define MEMORY_IMAGE_NOT_EXECUTABLE 0x2   /* mapped as data, SEC_IMAGE_NO_EXECUTE */
+
+typedef struct _MEMORY_IMAGE_INFORMATION {
+    PVOID ImageBase;
+    SIZE_T SizeOfImage;
+    ULONG ImageFlags; /* MEMORY_IMAGE_..., the signing level in bits 2 to 5 */
+    ULONG Reserved;
+} MEMORY_IMAGE_INFORMATION, *PMEMORY_IMAGE_INFORMATION;
+
 /* process, thread and synchronisation rights. */
 #define PROCESS_TERMINATE 0x0001
 #define PROCESS_CREATE_THREAD 0x0002

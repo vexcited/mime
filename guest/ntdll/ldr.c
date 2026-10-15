@@ -243,6 +243,36 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrFindEntryForAddress(PVOID address, PLDR_DATA_TABL
     return STATUS_NO_MORE_ENTRIES;
 }
 
+/* the image view holding an address, as the memory manager knows it; NULL for a partial or data view. */
+static PVOID image_base_from_memory(PVOID pc)
+{
+    MEMORY_IMAGE_INFORMATION mi;
+    if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), pc, MemoryImageInformation, &mi, sizeof(mi), NULL)))
+        return NULL;
+    if (!mi.ImageBase || (mi.ImageFlags & (MEMORY_IMAGE_PARTIAL_MAP | MEMORY_IMAGE_NOT_EXECUTABLE)) ||
+        (ULONG_PTR)pc < (ULONG_PTR)mi.ImageBase)
+        return NULL;
+    return mi.ImageBase;
+}
+
+/*
+ * the base of the image an address lies in, or NULL, also stored in *base,
+ * which may not be NULL. the loaded modules answer, not the code tables
+ * added at run time; until the process is initialized the memory manager
+ * does, as windows asks it before its loader is ready.
+ */
+NTDLL_EXPORT PVOID NTAPI RtlPcToFileHeader(PVOID pc, PVOID *base)
+{
+    PLDR_DATA_TABLE_ENTRY entry;
+    PVOID found = NULL;
+    if (!g_process_initialized)
+        found = image_base_from_memory(pc);
+    else if (NT_SUCCESS(LdrFindEntryForAddress(pc, &entry)))
+        found = entry->DllBase;
+    *base = found;
+    return found;
+}
+
 /* ------------------------------------------------------------------ api sets */
 
 /*
