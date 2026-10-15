@@ -44,6 +44,11 @@ static void shader_destroy(D3dShader *shader)
 {
     D3dDevice *device = shader->child.device;
     D3dDefer(device, device->next_serial, D3D_GARBAGE_SHADER, (UINT64)shader->shader);
+    for (UINT i = 0; i < RTL_NUMBER_OF(shader->so_variants); i++)
+        if (shader->so_variants[i] && shader->so_variants[i] != shader->shader)
+            D3dDefer(device, device->next_serial, D3D_GARBAGE_SHADER, (UINT64)shader->so_variants[i]);
+    HeapFree(GetProcessHeap(), 0, shader->so_source);
+    HeapFree(GetProcessHeap(), 0, shader->so_entries);
     dxbc_free(&shader->info, &g_d3d_allocator);
     D3dChildRelease(&shader->child);
     HeapFree(GetProcessHeap(), 0, shader);
@@ -113,6 +118,179 @@ static VkShaderStageFlags next_stages(D3dDevice *device, D3dStage stage)
     }
 }
 
+/* the shader program a container holds, from its code's version token. */
+static int program_of(const void *bytecode, SIZE_T length)
+{
+    uint32_t size;
+    const uint32_t *code = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('S', 'H', 'E', 'X'), &size);
+    if (!code)
+        code = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('S', 'H', 'D', 'R'), &size);
+    return code && size >= 8 ? (int)(code[0] >> 16) : -1;
+}
+
+static BOOL has_trailing_digit(const char *name)
+{
+    SIZE_T n = strlen(name);
+    return n && name[n - 1] >= '0' && name[n - 1] <= '9';
+}
+
+/*
+ * the declaration as d3d11.dll checks it at feature level 11_0 and later:
+ * entries in stream order, at most 128 a stream, each buffer of one stream,
+ * gaps without semantic index or start component, components that fit in
+ * four, names without a trailing digit, no entry twice, strides for every
+ * buffer written, and each entry an output of its stream's signature with
+ * the components it takes. without strides, each buffer's is the size of
+ * its entries.
+ */
+static BOOL check_stream_output(const void *bytecode, SIZE_T length, const D3D11_SO_DECLARATION_ENTRY *so,
+                                UINT count, const UINT *strides, UINT stride_count, UINT out_strides[4])
+{
+    if ((count && !so) || (stride_count && !strides) || (!stride_count && strides) || stride_count > 4)
+        return FALSE;
+    DxbcSignature sig;
+    if (dxbc_parse_io(bytecode, length, 1, &sig, &g_d3d_allocator))
+        return FALSE;
+    BOOL ok = TRUE;
+    UINT slot_stream[4] = {~0u, ~0u, ~0u, ~0u}, per_stream[4] = {0}, sizes[4] = {0}, used = 0;
+    for (UINT i = 0; i < count && ok; i++) {
+        const D3D11_SO_DECLARATION_ENTRY *e = &so[i];
+        if (e->Stream >= 4 || (i && e->Stream < so[i - 1].Stream) || e->OutputSlot >= 4 || ++per_stream[e->Stream] > 128 ||
+            (slot_stream[e->OutputSlot] != ~0u && slot_stream[e->OutputSlot] != e->Stream) || !e->ComponentCount) {
+            ok = FALSE;
+            break;
+        }
+        slot_stream[e->OutputSlot] = e->Stream;
+        used |= 1u << e->OutputSlot;
+        sizes[e->OutputSlot] += e->ComponentCount * 4;
+        if (!e->SemanticName) {
+            ok = !e->SemanticIndex && !e->StartComponent;
+            continue;
+        }
+        BYTE mask = (BYTE)(((1u << e->ComponentCount) - 1) << e->StartComponent);
+        if (e->StartComponent >= 4 || e->StartComponent + e->ComponentCount > 4 || has_trailing_digit(e->SemanticName)) {
+            ok = FALSE;
+            break;
+        }
+        for (UINT k = 0; k < i && ok; k++)
+            if (so[k].SemanticName && so[k].Stream == e->Stream && so[k].SemanticIndex == e->SemanticIndex &&
+                !_stricmp(so[k].SemanticName, e->SemanticName) &&
+                (((1u << so[k].ComponentCount) - 1) << so[k].StartComponent & mask))
+                ok = FALSE;
+        /* the entry's components, relative to the element's first. */
+        const DxbcSignatureElement *found = NULL;
+        for (UINT k = 0; k < sig.count && !found; k++)
+            if (sig.elements[k].stream == e->Stream && sig.elements[k].semantic_index == e->SemanticIndex &&
+                !_stricmp(sig.elements[k].name, e->SemanticName))
+                found = &sig.elements[k];
+        if (!found || !found->mask || (((UINT)mask << __builtin_ctz(found->mask)) & ~found->mask))
+            ok = FALSE;
+    }
+    if (ok && stride_count && (used >> stride_count))
+        ok = FALSE;
+    for (UINT i = 0; i < 4; i++)
+        out_strides[i] = i < stride_count ? strides[i] : stride_count ? 0 : sizes[i];
+    g_d3d_allocator.free(NULL, sig.elements);
+    return ok;
+}
+
+static VkShaderEXT make_shader(D3dDevice *device, D3dStage stage, const DxbcShaderInfo *info)
+{
+    VkDescriptorSetLayout sets[2] = {device->heap_layout, device->table_layout};
+    VkShaderCreateInfoEXT create = {VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT};
+    create.stage = VK_STAGES[stage];
+    create.nextStage = next_stages(device, stage);
+    create.codeType = VK_SHADER_CODE_TYPE_SPIRV_EXT;
+    create.codeSize = info->spirv_words * 4;
+    create.pCode = info->spirv;
+    create.pName = "main";
+    create.setLayoutCount = 2;
+    create.pSetLayouts = sets;
+    VkShaderEXT shader = VK_NULL_HANDLE;
+    if (device->vk.vkCreateShadersEXT(device->vk.device, 1, &create, NULL, &shader) != VK_SUCCESS) {
+        D3dLog("d3d11: vkCreateShadersEXT failed for a stage %u shader", stage);
+        return VK_NULL_HANDLE;
+    }
+    return shader;
+}
+
+static DxbcCompileOptions so_options(const D3dShader *shader)
+{
+    DxbcCompileOptions options = {0};
+    options.so = shader->so_entries;
+    options.so_count = shader->so_count;
+    options.so_strides = shader->so_strides;
+    options.so_stride_count = 4;
+    options.rasterized_stream = shader->rasterized_stream;
+    return options;
+}
+
+/*
+ * the shader of a stream output geometry shader for input primitives of the
+ * kind of dcl_inputprimitive: itself, or for one made from a vertex or
+ * domain shader the pass through variant, compiled when first drawn with.
+ */
+VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive)
+{
+    if (!shader->so_source || primitive >= RTL_NUMBER_OF(shader->so_variants))
+        return shader->shader;
+    if (shader->so_variants[primitive])
+        return shader->so_variants[primitive];
+    SIZE_T length;
+    void *gs = dxbc_passthrough_gs(shader->so_source, shader->so_source_length, primitive, &g_d3d_allocator, &length);
+    if (!gs)
+        return shader->shader;
+    DxbcCompileOptions options = so_options(shader);
+    DxbcShaderInfo info;
+    VkShaderEXT variant = VK_NULL_HANDLE;
+    if (!dxbc_compile(gs, length, &options, &info, &g_d3d_allocator))
+        variant = make_shader(shader->child.device, D3D_GS, &info);
+    dxbc_free(&info, &g_d3d_allocator);
+    g_d3d_allocator.free(NULL, gs);
+    if (!variant)
+        return shader->shader;
+    /* two threads made the same variant: the first one made is kept. */
+    VkShaderEXT first = InterlockedCompareExchangePointer((void **)&shader->so_variants[primitive], variant, NULL);
+    if (first) {
+        D3dDefer(shader->child.device, 0, D3D_GARBAGE_SHADER, (UINT64)variant);
+        return first;
+    }
+    return variant;
+}
+
+/* a copy of the declaration whose names outlive the program's. */
+static BOOL keep_declaration(D3dShader *shader, const D3D11_SO_DECLARATION_ENTRY *so, UINT count)
+{
+    SIZE_T names = 0;
+    for (UINT i = 0; i < count; i++)
+        names += so[i].SemanticName ? strlen(so[i].SemanticName) + 1 : 0;
+    shader->so_entries = HeapAlloc(GetProcessHeap(), 0, count * sizeof(DxbcStreamOutput) + names + 1);
+    if (!shader->so_entries)
+        return FALSE;
+    char *text = (char *)(shader->so_entries + count);
+    for (UINT i = 0; i < count; i++) {
+        const char *name = NULL;
+        if (so[i].SemanticName) {
+            SIZE_T n = strlen(so[i].SemanticName) + 1;
+            memcpy(text, so[i].SemanticName, n);
+            name = text;
+            text += n;
+        }
+        shader->so_entries[i] = (DxbcStreamOutput){so[i].Stream,         name,   so[i].SemanticIndex,
+                                                   so[i].StartComponent, so[i].ComponentCount, so[i].OutputSlot};
+    }
+    shader->so_count = count;
+    return TRUE;
+}
+
+static void free_shader(D3dShader *shader)
+{
+    dxbc_free(&shader->info, &g_d3d_allocator);
+    HeapFree(GetProcessHeap(), 0, shader->so_source);
+    HeapFree(GetProcessHeap(), 0, shader->so_entries);
+    HeapFree(GetProcessHeap(), 0, shader);
+}
+
 HRESULT D3dCreateShader(D3dDevice *device, D3dStage stage, const void *bytecode, SIZE_T length,
                         const D3D11_SO_DECLARATION_ENTRY *so, UINT so_count, const UINT *strides,
                         UINT stride_count, UINT rasterized_stream, D3dShader **out)
@@ -121,53 +299,63 @@ HRESULT D3dCreateShader(D3dDevice *device, D3dStage stage, const void *bytecode,
         return E_INVALIDARG;
     if ((stage == D3D_HS || stage == D3D_DS) && !device->has_tessellation)
         return E_INVALIDARG;
+    int program = program_of(bytecode, length);
+    BOOL with_so = stage == D3D_GS && (so_count || so || strides);
+    if (with_so) {
+        if (program != DXBC_GEOMETRY && (!so_count || (program != DXBC_VERTEX && program != DXBC_DOMAIN)))
+            return E_INVALIDARG;
+        if (rasterized_stream != D3D11_SO_NO_RASTERIZED_STREAM && rasterized_stream >= 4)
+            return E_INVALIDARG;
+    } else if (program != (int)PROGRAMS[stage]) {
+        return E_INVALIDARG;
+    }
     D3dShader *shader = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*shader));
     if (!shader)
         return E_OUTOFMEMORY;
-    DxbcStreamOutput outputs[64];
     DxbcCompileOptions options = {0};
-    if (so_count) {
-        for (UINT i = 0; i < so_count; i++)
-            outputs[i] = (DxbcStreamOutput){so[i].Stream,         so[i].SemanticName,   so[i].SemanticIndex,
-                                            so[i].StartComponent, so[i].ComponentCount, so[i].OutputSlot};
-        options.so = outputs;
-        options.so_count = so_count;
-        options.so_strides = strides;
-        options.so_stride_count = stride_count;
-        options.rasterized_stream = rasterized_stream;
+    if (with_so) {
+        if (!check_stream_output(bytecode, length, so, so_count, strides, stride_count, shader->so_strides) ||
+            !keep_declaration(shader, so, so_count)) {
+            free_shader(shader);
+            return E_INVALIDARG;
+        }
+        shader->so = so_count != 0;
+        shader->rasterized_stream = rasterized_stream;
+        options = so_options(shader);
     }
-    if (dxbc_compile(bytecode, length, &options, &shader->info, &g_d3d_allocator)) {
+    const void *code = bytecode;
+    SIZE_T code_length = length;
+    void *passthrough = NULL;
+    if (with_so && program != DXBC_GEOMETRY) {
+        /* triangles first, which most draws are; other primitives when drawn. */
+        shader->so_source = HeapAlloc(GetProcessHeap(), 0, length);
+        if (!shader->so_source) {
+            free_shader(shader);
+            return E_OUTOFMEMORY;
+        }
+        memcpy(shader->so_source, bytecode, length);
+        shader->so_source_length = length;
+        passthrough = dxbc_passthrough_gs(bytecode, length, 3, &g_d3d_allocator, &code_length);
+        code = passthrough;
+    }
+    if (!code || dxbc_compile(code, code_length, &options, &shader->info, &g_d3d_allocator)) {
         D3dLog("d3d11: shader compilation failed: %s", shader->info.error);
-        dxbc_free(&shader->info, &g_d3d_allocator);
-        HeapFree(GetProcessHeap(), 0, shader);
+        g_d3d_allocator.free(NULL, passthrough);
+        free_shader(shader);
         return E_INVALIDARG;
     }
-    if (shader->info.program != PROGRAMS[stage]) {
-        dxbc_free(&shader->info, &g_d3d_allocator);
-        HeapFree(GetProcessHeap(), 0, shader);
-        return E_INVALIDARG;
-    }
+    g_d3d_allocator.free(NULL, passthrough);
     if (!out) {
-        dxbc_free(&shader->info, &g_d3d_allocator);
-        HeapFree(GetProcessHeap(), 0, shader);
+        free_shader(shader);
         return S_FALSE;
     }
-    VkDescriptorSetLayout sets[2] = {device->heap_layout, device->table_layout};
-    VkShaderCreateInfoEXT info = {VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT};
-    info.stage = VK_STAGES[stage];
-    info.nextStage = next_stages(device, stage);
-    info.codeType = VK_SHADER_CODE_TYPE_SPIRV_EXT;
-    info.codeSize = shader->info.spirv_words * 4;
-    info.pCode = shader->info.spirv;
-    info.pName = "main";
-    info.setLayoutCount = 2;
-    info.pSetLayouts = sets;
-    if (device->vk.vkCreateShadersEXT(device->vk.device, 1, &info, NULL, &shader->shader) != VK_SUCCESS) {
-        D3dLog("d3d11: vkCreateShadersEXT failed for a stage %u shader", stage);
-        dxbc_free(&shader->info, &g_d3d_allocator);
-        HeapFree(GetProcessHeap(), 0, shader);
+    shader->shader = make_shader(device, stage, &shader->info);
+    if (!shader->shader) {
+        free_shader(shader);
         return E_INVALIDARG;
     }
+    if (shader->so_source)
+        shader->so_variants[3] = shader->shader;
     /* the spir-v went to the driver; the rest of the description stays. */
     g_d3d_allocator.free(NULL, shader->info.spirv);
     shader->info.spirv = NULL;

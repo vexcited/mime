@@ -161,7 +161,13 @@
     X(vkCmdEndQuery)                                                                                                   \
     X(vkCmdResetQueryPool)                                                                                             \
     X(vkCmdWriteTimestamp2)                                                                                            \
-    X(vkCmdCopyQueryPoolResults)
+    X(vkCmdCopyQueryPoolResults)                                                                                       \
+    X(vkCmdBeginQueryIndexedEXT)                                                                                       \
+    X(vkCmdEndQueryIndexedEXT)                                                                                         \
+    X(vkCmdBindTransformFeedbackBuffersEXT)                                                                            \
+    X(vkCmdBeginTransformFeedbackEXT)                                                                                  \
+    X(vkCmdEndTransformFeedbackEXT)                                                                                    \
+    X(vkCmdDrawIndirectByteCountEXT)
 
 typedef struct D3dVk {
     VkInstance instance;
@@ -301,6 +307,8 @@ struct D3dResource {
         UINT version;
         /* the ranges a dynamic buffer left behind, for reuse. */
         void *spares;
+        /* stream output targets: where in the buffer the count of bytes written is, after the data. */
+        VkDeviceSize so_counter;
     } buf;
     /* textures. */
     struct {
@@ -449,7 +457,23 @@ typedef struct D3dShader {
     D3dStage stage;
     VkShaderEXT shader;
     DxbcShaderInfo info;
+    /*
+     * geometry shaders with stream output: the stream rasterized. one made
+     * from a vertex or domain shader passes vertices through, compiled for
+     * each kind of input primitive when first drawn with: its source and
+     * declaration, and the variants by dcl_inputprimitive.
+     */
+    BOOL so;
+    UINT rasterized_stream;
+    void *so_source;
+    SIZE_T so_source_length;
+    DxbcStreamOutput *so_entries;
+    UINT so_count;
+    UINT so_strides[D3D11_SO_BUFFER_SLOT_COUNT];
+    VkShaderEXT so_variants[8];
 } D3dShader;
+
+VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive);
 
 /* the per stage table of heap indices the shader reads, compact as dxbc.h lays it out. */
 typedef struct D3dBindingTable {
@@ -464,12 +488,14 @@ typedef enum D3dQueryKind {
     D3D_QUERY_OCCLUSION,
     D3D_QUERY_STATISTICS,
     D3D_QUERY_TIMESTAMP,
-    D3D_QUERY_KINDS
+    D3D_QUERY_STREAM0,
+    D3D_QUERY_KINDS = D3D_QUERY_STREAM0 + D3D11_SO_STREAM_COUNT
 } D3dQueryKind;
 
 /* vulkan queries of one kind, the readback memory their results are copied to, and how many queries hold each. */
 typedef struct D3dQueryPool {
     struct D3dQueryPool *next;
+    D3dQueryKind kind;
     VkQueryPool pool;
     D3dAllocation results;
     UINT used;
@@ -494,7 +520,8 @@ typedef struct D3dQuery {
     ID3D11Query1 iface;
     D3dChild child;
     D3D11_QUERY_DESC1 desc;
-    D3dQueryKind kind;
+    /* the kinds it counts with, all streams for stream output over every stream. */
+    UINT kinds;
     /* the submission that carries its end. */
     UINT64 serial;
     BOOL begun, ended;
@@ -554,7 +581,7 @@ struct D3dDevice {
     VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceMemoryProperties memory;
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
-    BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion;
+    BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
 
     /* the queue is the device's, submissions from contexts and swap chains alike. */
@@ -590,6 +617,9 @@ struct D3dDevice {
     BOOL init_recording;
 
     D3dContext *immediate;
+
+    /* what streams out to slots without a buffer, which keeps nothing. */
+    D3dAllocation so_dummy;
 
     /* query slots. */
     SRWLOCK query_lock;
@@ -701,6 +731,9 @@ struct D3dContext {
     BOOL tables_bound[2];
     BOOL heap_bound[2];
     BOOL compute_bound;
+    /* the geometry shader bound, a variant for stream output from a vertex shader; transform feedback begun. */
+    VkShaderEXT bound_gs;
+    BOOL xfb_active;
     UINT render_samples;
     UINT render_color_count;
 

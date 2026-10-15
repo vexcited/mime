@@ -303,11 +303,15 @@ fresh:
         c->stages[i].table_valid = FALSE;
 }
 
+static void end_stream_output(D3dContext *c, VkCommandBuffer cmd);
+
 static void end_rendering(D3dContext *c)
 {
     if (!c->rendering)
         return;
     D3dQueriesClose(c, c->cmd->buffer);
+    if (c->xfb_active)
+        end_stream_output(c, c->cmd->buffer);
     c->child.device->vk.vkCmdEndRendering(c->cmd->buffer);
     D3dQueriesCopy(c, c->cmd->buffer);
     c->rendering = FALSE;
@@ -369,11 +373,30 @@ static void unbind_inputs(D3dContext *c, D3dResource *r)
                 ref_view(c, &c->stages[s].srv[i], NULL);
                 c->stages[s].table_valid = FALSE;
             }
+    if (r->dimension != D3D11_RESOURCE_DIMENSION_BUFFER)
+        return;
+    for (UINT s = 0; s < D3D_STAGES; s++)
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; i++)
+            if (c->stages[s].cb[i] == r) {
+                ref_resource(&c->stages[s].cb[i], NULL);
+                c->stages[s].table_valid = FALSE;
+            }
+    for (UINT i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++)
+        if (c->vb[i] == r) {
+            ref_resource(&c->vb[i], NULL);
+            c->ia_dirty = TRUE;
+        }
+    if (c->ib == r) {
+        ref_resource(&c->ib, NULL);
+        c->ia_dirty = TRUE;
+    }
 }
 
 /* whether the resource is bound for output, so a shader input of it is refused. */
 static BOOL bound_as_output(D3dContext *c, D3dResource *r)
 {
+    if (!r)
+        return FALSE;
     for (UINT i = 0; i < c->rtv_count; i++)
         if (c->rtv[i] && c->rtv[i]->resource == r)
             return TRUE;
@@ -382,6 +405,9 @@ static BOOL bound_as_output(D3dContext *c, D3dResource *r)
     for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++)
         if ((c->om_uav[i] && c->om_uav[i]->resource == r) ||
             (c->stages[D3D_CS].uav[i] && c->stages[D3D_CS].uav[i]->resource == r))
+            return TRUE;
+    for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
+        if (c->so[i] == r)
             return TRUE;
     return FALSE;
 }
@@ -397,7 +423,7 @@ static void set_constant_buffers(D3dContext *c, D3dStage stage, UINT slot, UINT 
     D3dStageState *s = &c->stages[stage];
     for (UINT i = 0; i < count; i++) {
         D3dResource *r = buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL;
-        ref_resource(&s->cb[slot + i], r);
+        ref_resource(&s->cb[slot + i], bound_as_output(c, r) ? NULL : r);
         s->cb_first[slot + i] = first ? first[i] : 0;
         s->cb_count[slot + i] = num ? num[i] : D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT;
     }
@@ -436,10 +462,13 @@ static void set_shader(D3dContext *c, D3dStage stage, void *iface)
     D3dShader *shader = D3dShaderFrom(iface, stage);
     if (c->stages[stage].shader == shader)
         return;
+    /* transform feedback ends with the stream output it began for. */
+    if (stage == D3D_GS && c->xfb_active)
+        end_rendering(c);
     ref_D3dShader(c, &c->stages[stage].shader, shader);
     c->stages[stage].table_valid = FALSE;
     c->shaders_dirty = TRUE;
-    if (stage == D3D_HS)
+    if (stage == D3D_HS || stage == D3D_GS)
         c->rs_dirty = TRUE;
 }
 
@@ -579,6 +608,8 @@ static void STDMETHODCALLTYPE ia_set_vertex_buffers(ID3D11DeviceContext4 *iface,
     for (UINT i = 0; i < count; i++) {
         UINT k = slot + i;
         D3dResource *r = buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL;
+        if (bound_as_output(c, r))
+            r = NULL;
         UINT stride = strides ? strides[i] : 0;
         if (c->vb_stride[k] != stride)
             c->vertex_input_dirty = TRUE;
@@ -594,7 +625,8 @@ static void STDMETHODCALLTYPE ia_set_index_buffer(ID3D11DeviceContext4 *iface, I
                                                   DXGI_FORMAT format, UINT offset)
 {
     D3dContext *c = impl(iface);
-    ref_resource(&c->ib, D3dResourceFrom((ID3D11Resource *)buffer));
+    D3dResource *r = D3dResourceFrom((ID3D11Resource *)buffer);
+    ref_resource(&c->ib, bound_as_output(c, r) ? NULL : r);
     c->ib_format = format;
     c->ib_offset = offset;
     c->ib_version = ~0u;
@@ -883,13 +915,33 @@ static void STDMETHODCALLTYPE cs_get_unordered_access_views(ID3D11DeviceContext4
     }
 }
 
+/*
+ * new targets end the transform feedback of the old ones. an offset other
+ * than -1 sets where writing starts, the buffer's count of bytes written;
+ * -1 goes on after what was written.
+ */
 static void STDMETHODCALLTYPE so_set_targets(ID3D11DeviceContext4 *iface, UINT count, ID3D11Buffer *const *buffers,
                                              const UINT *offsets)
 {
     D3dContext *c = impl(iface);
+    D3dDevice *device = c->child.device;
+    if (c->xfb_active)
+        end_rendering(c);
     for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++) {
-        ref_resource(&c->so[i], i < count && buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL);
+        D3dResource *r = i < count && buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL;
+        if (r && !r->buf.so_counter)
+            r = NULL;
+        unbind_inputs(c, r);
+        ref_resource(&c->so[i], r);
         c->so_offset[i] = i < count && offsets ? offsets[i] : 0;
+        if (r && c->so_offset[i] != ~0u) {
+            VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
+            if (!cmd)
+                continue;
+            device->vk.vkCmdUpdateBuffer(cmd, r->buf.buffer, r->buf.offset + r->buf.so_counter, 4, &c->so_offset[i]);
+            D3dContextUse(c, r);
+            c->pending_barrier = TRUE;
+        }
     }
 }
 
@@ -1029,7 +1081,10 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
     const D3D11_RASTERIZER_DESC2 *rs = c->rasterizer ? &c->rasterizer->desc : &DEFAULT_RS;
     static const VkCullModeFlags CULL[] = {VK_CULL_MODE_NONE, VK_CULL_MODE_NONE, VK_CULL_MODE_FRONT_BIT,
                                            VK_CULL_MODE_BACK_BIT};
-    vk->vkCmdSetRasterizerDiscardEnable(cmd, FALSE);
+    /* stream output may rasterize another stream than the first, or none. */
+    D3dShader *gs = c->stages[D3D_GS].shader;
+    UINT stream = gs && gs->so ? gs->rasterized_stream : 0;
+    vk->vkCmdSetRasterizerDiscardEnable(cmd, stream == D3D11_SO_NO_RASTERIZED_STREAM);
     vk->vkCmdSetCullMode(cmd, CULL[rs->CullMode]);
     vk->vkCmdSetFrontFace(cmd, rs->FrontCounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE);
     vk->vkCmdSetPolygonModeEXT(cmd, rs->FillMode == D3D11_FILL_WIREFRAME ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL);
@@ -1057,7 +1112,7 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
         vk->vkCmdSetTessellationDomainOriginEXT(cmd, VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT);
     }
     if (device->has_transform_feedback)
-        vk->vkCmdSetRasterizationStreamEXT(cmd, 0);
+        vk->vkCmdSetRasterizationStreamEXT(cmd, stream < 4 ? stream : 0);
 }
 
 static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
@@ -1405,6 +1460,83 @@ static void begin_rendering(D3dContext *c, VkCommandBuffer cmd)
     c->viewports_dirty = TRUE;
 }
 
+/* ------------------------------------------------------------------ stream output */
+
+/* whether draws stream out: a geometry shader with a declaration, and buffers to write. */
+static BOOL streams_out(D3dContext *c)
+{
+    D3dShader *gs = c->stages[D3D_GS].shader;
+    if (!gs || !gs->so || !c->child.device->has_transform_feedback)
+        return FALSE;
+    for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
+        if (c->so[i])
+            return TRUE;
+    return FALSE;
+}
+
+/* the targets, and the buffers holding their counts of bytes written, or the dummy for empty slots. */
+static void stream_output_buffers(D3dContext *c, VkBuffer *buffers, VkDeviceSize *offsets, VkDeviceSize *sizes,
+                                  VkBuffer *counters, VkDeviceSize *counter_offsets)
+{
+    D3dDevice *device = c->child.device;
+    for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++) {
+        D3dResource *r = c->so[i];
+        buffers[i] = r ? r->buf.buffer : device->so_dummy.buffer;
+        offsets[i] = r ? r->buf.offset : device->so_dummy.offset;
+        sizes[i] = r ? r->buf.size : 4;
+        counters[i] = r ? r->buf.buffer : VK_NULL_HANDLE;
+        counter_offsets[i] = r ? r->buf.offset + r->buf.so_counter : 0;
+    }
+}
+
+/* transform feedback within a render pass instance, from where each buffer's count says. */
+static void begin_stream_output(D3dContext *c, VkCommandBuffer cmd)
+{
+    D3dVk *vk = &c->child.device->vk;
+    VkBuffer buffers[4], counters[4];
+    VkDeviceSize offsets[4], sizes[4], counter_offsets[4];
+    stream_output_buffers(c, buffers, offsets, sizes, counters, counter_offsets);
+    vk->vkCmdBindTransformFeedbackBuffersEXT(cmd, 0, 4, buffers, offsets, sizes);
+    vk->vkCmdBeginTransformFeedbackEXT(cmd, 0, 4, counters, counter_offsets);
+    for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
+        D3dContextUse(c, c->so[i]);
+    c->xfb_active = TRUE;
+}
+
+static void end_stream_output(D3dContext *c, VkCommandBuffer cmd)
+{
+    VkBuffer buffers[4], counters[4];
+    VkDeviceSize offsets[4], sizes[4], counter_offsets[4];
+    stream_output_buffers(c, buffers, offsets, sizes, counters, counter_offsets);
+    c->child.device->vk.vkCmdEndTransformFeedbackEXT(cmd, 0, 4, counters, counter_offsets);
+    c->xfb_active = FALSE;
+}
+
+/* the kind of primitive a geometry shader takes in, as dcl_inputprimitive numbers them. */
+static UINT input_primitive(D3dContext *c)
+{
+    switch (c->topology) {
+    case D3D_PRIMITIVE_TOPOLOGY_POINTLIST:
+        return 1;
+    case D3D_PRIMITIVE_TOPOLOGY_LINELIST:
+    case D3D_PRIMITIVE_TOPOLOGY_LINESTRIP:
+        return 2;
+    case D3D_PRIMITIVE_TOPOLOGY_LINELIST_ADJ:
+    case D3D_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ:
+        return 6;
+    case D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ:
+    case D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ:
+        return 7;
+    default:
+        break;
+    }
+    /* patches: what the tessellator makes. */
+    D3dShader *hs = c->stages[D3D_HS].shader;
+    if (c->topology >= D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST && hs)
+        return hs->info.tess_output_primitive <= 2 ? hs->info.tess_output_primitive : 3;
+    return 3;
+}
+
 static BOOL writes_views(D3dContext *c)
 {
     D3dShader *ps = c->stages[D3D_PS].shader;
@@ -1422,7 +1554,8 @@ static BOOL prepare_draw(D3dContext *c)
     if (!c->cmd)
         return FALSE;
     VkCommandBuffer cmd = c->cmd->buffer;
-    if (c->targets_dirty && c->rendering)
+    BOOL so = streams_out(c);
+    if ((c->targets_dirty || (c->xfb_active && !so)) && c->rendering)
         end_rendering(c);
     if (!c->rendering) {
         if (c->pending_barrier) {
@@ -1435,13 +1568,17 @@ static BOOL prepare_draw(D3dContext *c)
         D3dQueriesOpen(c, cmd, TRUE);
     if (!emit_tables(c, cmd, FALSE))
         return FALSE;
+    D3dShader *gs = c->stages[D3D_GS].shader;
+    VkShaderEXT gs_shader = gs ? D3dShaderVariant(gs, input_primitive(c)) : VK_NULL_HANDLE;
+    if (gs_shader != c->bound_gs)
+        c->shaders_dirty = TRUE;
     if (c->shaders_dirty || c->compute_bound) {
         VkShaderStageFlagBits stages[5] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
                                            VK_SHADER_STAGE_GEOMETRY_BIT, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
                                            VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT};
         VkShaderEXT shaders[5] = {c->stages[D3D_VS].shader->shader,
                                   c->stages[D3D_PS].shader ? c->stages[D3D_PS].shader->shader : VK_NULL_HANDLE,
-                                  c->stages[D3D_GS].shader ? c->stages[D3D_GS].shader->shader : VK_NULL_HANDLE,
+                                  gs_shader,
                                   c->stages[D3D_HS].shader ? c->stages[D3D_HS].shader->shader : VK_NULL_HANDLE,
                                   c->stages[D3D_DS].shader ? c->stages[D3D_DS].shader->shader : VK_NULL_HANDLE};
         UINT count = 2 + (device->has_geometry ? 1 : 0);
@@ -1453,6 +1590,7 @@ static BOOL prepare_draw(D3dContext *c)
             count += 2;
         }
         vk->vkCmdBindShadersEXT(cmd, count, stages, shaders);
+        c->bound_gs = gs_shader;
         c->shaders_dirty = FALSE;
         c->compute_bound = FALSE;
     }
@@ -1474,6 +1612,8 @@ static BOOL prepare_draw(D3dContext *c)
         c->vertex_input_dirty = FALSE;
     }
     c->state_dirty = FALSE;
+    if (so && !c->xfb_active)
+        begin_stream_output(c, cmd);
     emit_buffers(c, cmd);
     for (UINT i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++)
         D3dContextUse(c, c->vb[i]);
@@ -1526,9 +1666,17 @@ static void STDMETHODCALLTYPE draw_indexed_instanced(ID3D11DeviceContext4 *iface
     finish_draw(c);
 }
 
+/* draws as many vertices as stream output wrote to the buffer of the first vertex slot, past its offset. */
 static void STDMETHODCALLTYPE draw_auto(ID3D11DeviceContext4 *iface)
 {
-    D3dLog("d3d11: DrawAuto is not implemented");
+    D3dContext *c = impl(iface);
+    D3dResource *r = c->vb[0];
+    if (!r || !r->buf.so_counter || !c->vb_stride[0] || !c->child.device->has_transform_feedback || !prepare_draw(c))
+        return;
+    c->child.device->vk.vkCmdDrawIndirectByteCountEXT(c->cmd->buffer, 1, 0, r->buf.buffer,
+                                                      r->buf.offset + r->buf.so_counter, c->vb_offset[0],
+                                                      c->vb_stride[0]);
+    finish_draw(c);
 }
 
 static void STDMETHODCALLTYPE draw_indexed_instanced_indirect(ID3D11DeviceContext4 *iface, ID3D11Buffer *buffer,

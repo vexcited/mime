@@ -577,6 +577,10 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
         kind = desc->CPUAccessFlags & D3D11_CPU_ACCESS_READ ? D3D_MEMORY_READBACK : D3D_MEMORY_UPLOAD;
     /* a uav counter or raw views may read the whole buffer as 4 byte texels. */
     UINT size = (UINT)D3D_ALIGN(desc->ByteWidth, 16);
+    if (desc->BindFlags & D3D11_BIND_STREAM_OUTPUT) {
+        r->buf.so_counter = size;
+        size += 16;
+    }
     HRESULT hr = D3dAllocBuffer(device, kind, size, 256, &r->buf.alloc);
     if (FAILED(hr)) {
         destroy(r);
@@ -599,6 +603,12 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
         D3dInitDone(device);
     } else {
         memset(r->buf.mapped, 0, size);
+    }
+    if (r->buf.so_counter && data && data->pSysMem) {
+        /* nothing streamed out yet. */
+        VkCommandBuffer cmd = D3dInitCommands(device);
+        device->vk.vkCmdFillBuffer(cmd, r->buf.buffer, r->buf.offset + r->buf.so_counter, 4, 0);
+        D3dInitDone(device);
     }
     *out = r;
     return S_OK;

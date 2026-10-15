@@ -12,7 +12,8 @@
 #define VTBL_FN(f) ((void *)(f))
 #define POOL_SLOTS RTL_NUMBER_OF(((D3dQueryPool *)0)->refs)
 
-static const UINT RESULT_STRIDE[D3D_QUERY_KINDS] = {0, 8, 11 * 8, 8};
+static const UINT RESULT_STRIDE[D3D_QUERY_KINDS] = {0, 8, 11 * 8, 8, 16, 16, 16, 16};
+#define STREAM_KINDS (((1u << D3D11_SO_STREAM_COUNT) - 1) << D3D_QUERY_STREAM0)
 
 static D3dQuery *query_impl(void *iface) { return CONTAINING_RECORD(iface, D3dQuery, iface); }
 
@@ -28,12 +29,16 @@ static D3dQueryPool *new_pool(D3dDevice *device, D3dQueryKind kind)
         return NULL;
     VkQueryPoolCreateInfo info = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
     info.queryCount = POOL_SLOTS;
+    pool->kind = kind;
     if (kind == D3D_QUERY_OCCLUSION) {
         info.queryType = VK_QUERY_TYPE_OCCLUSION;
     } else if (kind == D3D_QUERY_STATISTICS) {
         /* the eleven counters in bit order are direct3d's in the order of its structure. */
         info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
         info.pipelineStatistics = (1u << 11) - 1;
+    } else if (kind >= D3D_QUERY_STREAM0) {
+        /* primitives written, then primitives that would have been: direct3d's order too. */
+        info.queryType = VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT;
     } else {
         info.queryType = VK_QUERY_TYPE_TIMESTAMP;
     }
@@ -79,10 +84,10 @@ static BOOL alloc_slot(D3dDevice *device, D3dQueryKind kind, D3dQuerySlot *out)
 static void retire_slots(D3dDevice *device, D3dQuery *q)
 {
     AcquireSRWLockExclusive(&device->query_lock);
-    D3dRetiredSlots *retired = &device->query_retired[q->kind];
     for (UINT i = 0; i < q->slot_count; i++) {
         if (InterlockedDecrement(&q->slots[i].pool->refs[q->slots[i].index]))
             continue;
+        D3dRetiredSlots *retired = &device->query_retired[q->slots[i].pool->kind];
         if (retired->count == retired->capacity) {
             UINT capacity = retired->capacity ? retired->capacity * 2 : 64;
             struct D3dRetiredSlot *list = HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
@@ -160,16 +165,19 @@ static void open_segment(D3dContext *c, VkCommandBuffer cmd, D3dQueryKind kind)
     D3dQuerySlot slot;
     BOOL wanted = FALSE;
     for (UINT i = 0; i < c->query_count && !wanted; i++)
-        wanted = c->queries[i]->kind == kind;
+        wanted = (c->queries[i]->kinds >> kind) & 1;
     if (!wanted || !alloc_slot(device, kind, &slot))
         return;
     for (UINT i = 0; i < c->query_count; i++)
-        if (c->queries[i]->kind == kind)
+        if ((c->queries[i]->kinds >> kind) & 1)
             push_slot(c->queries[i], &slot);
     VkQueryControlFlags flags = kind == D3D_QUERY_OCCLUSION && device->has_precise_occlusion
                                     ? VK_QUERY_CONTROL_PRECISE_BIT
                                     : 0;
-    device->vk.vkCmdBeginQuery(cmd, slot.pool->pool, slot.index, flags);
+    if (kind >= D3D_QUERY_STREAM0)
+        device->vk.vkCmdBeginQueryIndexedEXT(cmd, slot.pool->pool, slot.index, flags, kind - D3D_QUERY_STREAM0);
+    else
+        device->vk.vkCmdBeginQuery(cmd, slot.pool->pool, slot.index, flags);
     c->segments[kind] = slot;
     c->segment_open[kind] = TRUE;
 }
@@ -179,7 +187,10 @@ static void close_segment(D3dContext *c, VkCommandBuffer cmd, D3dQueryKind kind)
     if (!c->segment_open[kind])
         return;
     D3dQuerySlot *slot = &c->segments[kind];
-    c->child.device->vk.vkCmdEndQuery(cmd, slot->pool->pool, slot->index);
+    if (kind >= D3D_QUERY_STREAM0)
+        c->child.device->vk.vkCmdEndQueryIndexedEXT(cmd, slot->pool->pool, slot->index, kind - D3D_QUERY_STREAM0);
+    else
+        c->child.device->vk.vkCmdEndQuery(cmd, slot->pool->pool, slot->index);
     copy_later(c, slot);
     c->segment_open[kind] = FALSE;
 }
@@ -190,17 +201,24 @@ static void close_segment(D3dContext *c, VkCommandBuffer cmd, D3dQueryKind kind)
  */
 void D3dQueriesOpen(D3dContext *c, VkCommandBuffer cmd, BOOL drawing)
 {
-    if (drawing && !c->segment_open[D3D_QUERY_OCCLUSION])
-        open_segment(c, cmd, D3D_QUERY_OCCLUSION);
-    if (!c->segment_open[D3D_QUERY_STATISTICS])
-        open_segment(c, cmd, D3D_QUERY_STATISTICS);
+    for (UINT kind = D3D_QUERY_OCCLUSION; kind < D3D_QUERY_KINDS; kind++)
+        if (kind != D3D_QUERY_TIMESTAMP && (drawing || kind == D3D_QUERY_STATISTICS) && !c->segment_open[kind])
+            open_segment(c, cmd, kind);
 }
 
 /* ends the open segments, before the render pass instance or the command buffer ends. */
 void D3dQueriesClose(D3dContext *c, VkCommandBuffer cmd)
 {
-    close_segment(c, cmd, D3D_QUERY_OCCLUSION);
-    close_segment(c, cmd, D3D_QUERY_STATISTICS);
+    for (UINT kind = D3D_QUERY_OCCLUSION; kind < D3D_QUERY_KINDS; kind++)
+        close_segment(c, cmd, kind);
+}
+
+/* what was counted until now is not a query begun or ended now: the next draw begins new segments. */
+static void close_kinds(D3dContext *c, UINT kinds)
+{
+    for (UINT kind = D3D_QUERY_OCCLUSION; kind < D3D_QUERY_KINDS; kind++)
+        if (((kinds >> kind) & 1) && c->segment_open[kind])
+            close_segment(c, c->cmd->buffer, kind);
 }
 
 /* copies the results of the ended segments to their readback memory; outside render pass instances. */
@@ -247,7 +265,7 @@ void D3dQueryBegin(D3dContext *c, D3dQuery *q)
     if (q->begun)
         D3dQueryEnd(c, q);
     q->begun = TRUE;
-    if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED || q->kind == D3D_QUERY_NONE)
+    if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED || !q->kinds)
         return;
     retire_slots(c->child.device, q);
     if (c->query_count == c->query_capacity) {
@@ -259,9 +277,7 @@ void D3dQueryBegin(D3dContext *c, D3dQuery *q)
         c->queries = list;
         c->query_capacity = capacity;
     }
-    /* what was counted until now is not the new query's: the next draw begins a segment for it too. */
-    if (c->segment_open[q->kind])
-        close_segment(c, c->cmd->buffer, q->kind);
+    close_kinds(c, q->kinds);
     q->iface.lpVtbl->AddRef(&q->iface);
     c->queries[c->query_count++] = q;
 }
@@ -277,7 +293,7 @@ void D3dQueryEnd(D3dContext *c, D3dQuery *q)
     /* the queries of deferred contexts are not measured. */
     if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED)
         return;
-    if (q->kind == D3D_QUERY_TIMESTAMP) {
+    if (q->kinds == 1u << D3D_QUERY_TIMESTAMP) {
         D3dQuerySlot slot;
         VkCommandBuffer cmd = D3dContextCommands(c, FALSE);
         retire_slots(device, q);
@@ -285,11 +301,10 @@ void D3dQueryEnd(D3dContext *c, D3dQuery *q)
             device->vk.vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, slot.pool->pool, slot.index);
             copy_later(c, &slot);
         }
-    } else if (q->kind != D3D_QUERY_NONE) {
+    } else if (q->kinds) {
         if (was_begun) {
             /* the segment counted for this query ends with it; the others go on in a new one. */
-            if (c->segment_open[q->kind])
-                close_segment(c, c->cmd->buffer, q->kind);
+            close_kinds(c, q->kinds);
             for (UINT i = 0; i < c->query_count; i++)
                 if (c->queries[i] == q) {
                     c->queries[i] = c->queries[--c->query_count];
@@ -387,14 +402,14 @@ HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT 
         *(BOOL *)data = TRUE;
         break;
     case D3D11_QUERY_OCCLUSION:
-        if (q->kind == D3D_QUERY_OCCLUSION)
+        if (q->kinds)
             sum_slots(q, data, 1);
         else
             *(UINT64 *)data = 1;
         break;
     case D3D11_QUERY_OCCLUSION_PREDICATE: {
         UINT64 samples = 1;
-        if (q->kind == D3D_QUERY_OCCLUSION)
+        if (q->kinds)
             sum_slots(q, &samples, 1);
         *(BOOL *)data = samples != 0;
         break;
@@ -410,11 +425,29 @@ HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT 
     }
     case D3D11_QUERY_PIPELINE_STATISTICS: {
         D3D11_QUERY_DATA_PIPELINE_STATISTICS *d = data;
-        if (q->kind == D3D_QUERY_STATISTICS)
+        if (q->kinds)
             sum_slots(q, (UINT64 *)d, 11);
         /* below feature level 11_0 there are no hull, domain and compute shaders to count. */
         if (device->feature_level < D3D_FEATURE_LEVEL_11_0)
             d->HSInvocations = d->DSInvocations = d->CSInvocations = 0;
+        break;
+    }
+    case D3D11_QUERY_SO_STATISTICS:
+    case D3D11_QUERY_SO_STATISTICS_STREAM0:
+    case D3D11_QUERY_SO_STATISTICS_STREAM1:
+    case D3D11_QUERY_SO_STATISTICS_STREAM2:
+    case D3D11_QUERY_SO_STATISTICS_STREAM3:
+        sum_slots(q, data, 2);
+        break;
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM0:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM1:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM2:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM3: {
+        /* a stream overflowed when it needed more room than it wrote; summed over streams, the same. */
+        UINT64 counts[2];
+        sum_slots(q, counts, 2);
+        *(BOOL *)data = counts[1] > counts[0];
         break;
     }
     default:
@@ -503,18 +536,32 @@ static const ID3D11Query1Vtbl query_vtbl = {
 };
 
 /* what vulkan counts a query with; none for those only waited on, or what the gpu cannot count. */
-static D3dQueryKind query_kind(D3dDevice *device, D3D11_QUERY query)
+/* the kinds of vulkan queries a query counts with; none for those only waited on, or what the gpu cannot count. */
+static UINT query_kinds(D3dDevice *device, D3D11_QUERY query)
 {
     switch (query) {
     case D3D11_QUERY_OCCLUSION:
     case D3D11_QUERY_OCCLUSION_PREDICATE:
-        return D3D_QUERY_OCCLUSION;
+        return 1u << D3D_QUERY_OCCLUSION;
     case D3D11_QUERY_PIPELINE_STATISTICS:
-        return device->has_statistics ? D3D_QUERY_STATISTICS : D3D_QUERY_NONE;
+        return device->has_statistics ? 1u << D3D_QUERY_STATISTICS : 0;
     case D3D11_QUERY_TIMESTAMP:
-        return D3D_QUERY_TIMESTAMP;
+        return 1u << D3D_QUERY_TIMESTAMP;
+    case D3D11_QUERY_SO_STATISTICS:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE:
+        return device->has_so_queries ? STREAM_KINDS : 0;
+    case D3D11_QUERY_SO_STATISTICS_STREAM0:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM0:
+    case D3D11_QUERY_SO_STATISTICS_STREAM1:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM1:
+    case D3D11_QUERY_SO_STATISTICS_STREAM2:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM2:
+    case D3D11_QUERY_SO_STATISTICS_STREAM3:
+    case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM3:
+        return device->has_so_queries ? 1u << (D3D_QUERY_STREAM0 + (query - D3D11_QUERY_SO_STATISTICS_STREAM0) / 2)
+                                      : 0;
     default:
-        return D3D_QUERY_NONE;
+        return 0;
     }
 }
 
@@ -529,7 +576,7 @@ HRESULT D3dCreateQuery(D3dDevice *device, const D3D11_QUERY_DESC1 *desc, D3dQuer
         return E_OUTOFMEMORY;
     q->iface.lpVtbl = &query_vtbl;
     q->desc = *desc;
-    q->kind = query_kind(device, desc->Query);
+    q->kinds = query_kinds(device, desc->Query);
     D3dChildInit(&q->child, device);
     *out = q;
     return S_OK;

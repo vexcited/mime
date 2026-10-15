@@ -155,4 +155,12 @@ int dxbc_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
                  const MimeAllocator *alloc);
 void dxbc_free(DxbcShaderInfo *info, const MimeAllocator *alloc);
 
+/*
+ * the geometry shader of stream output made from a vertex or domain
+ * shader, for input primitives of the kind of dcl_inputprimitive: a
+ * container that passes each vertex through, or NULL.
+ */
+void *dxbc_passthrough_gs(const void *bytecode, size_t length, uint32_t primitive, const MimeAllocator *alloc,
+                          size_t *out_length);
+
 #endif

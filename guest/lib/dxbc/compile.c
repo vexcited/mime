@@ -144,6 +144,15 @@ typedef struct Compiler {
     uint32_t gs_max_vertices;
     uint32_t gs_instances;
     uint32_t gs_streams;
+    /* stream output: an output variable for each captured declaration entry, and the stream rasterized. */
+    struct Capture {
+        uint32_t var, reg, stream;
+        uint8_t first, count;
+        Kind kind;
+    } *captures;
+    uint32_t capture_count;
+    int captures_declared;
+    uint32_t raster_stream;
 
     /*
      * hull and domain shaders: the phase being read, the control point
@@ -773,6 +782,8 @@ static uint32_t builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t 
         return c->builtins[output][which];
     uint32_t var = global(c, storage, type, 0);
     decorate1(c, var, SpvDecorationBuiltIn, which);
+    if (output && c->program == DXBC_GEOMETRY && c->raster_stream)
+        decorate1(c, var, SpvDecorationStream, c->raster_stream);
     if (storage == SpvStorageClassInput && c->program == DXBC_PIXEL && type != c->t_bool &&
         (which == SpvBuiltInPrimitiveId || which == SpvBuiltInSampleId || which == SpvBuiltInLayer ||
          which == SpvBuiltInViewportIndex))
@@ -1225,6 +1236,8 @@ static void store_outputs(Compiler *c)
                 }
                 d->var = global(c, SpvStorageClassOutput, vec_type(c, kind, 4), 0);
                 decorate1(c, d->var, SpvDecorationLocation, reg);
+                if (c->program == DXBC_GEOMETRY && c->raster_stream)
+                    decorate1(c, d->var, SpvDecorationStream, c->raster_stream);
                 d->kind = kind;
             }
             spv_store(&c->b, d->var, bitcast(c, value, K_FLOAT, d->kind, 4));
@@ -1242,6 +1255,101 @@ static void store_outputs(Compiler *c)
         uint32_t zero = iconst(c, 0);
         uint32_t ptr = spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassOutput, c->t_i32), var, &zero, 1);
         spv_store(&c->b, ptr, spv_op1(&c->b, SpvOpBitcast, c->t_i32, spv_load(&c->b, c->t_u32, c->coverage_output)));
+    }
+}
+
+static int same_name(const char *a, const char *b)
+{
+    for (;; a++, b++) {
+        char x = *a >= 'a' && *a <= 'z' ? *a - 32 : *a, y = *b >= 'a' && *b <= 'z' ? *b - 32 : *b;
+        if (x != y)
+            return 0;
+        if (!x)
+            return 1;
+    }
+}
+
+/*
+ * the output variables stream output captures: one per declaration entry,
+ * past the registers, with its buffer, the buffer's stride and its offset
+ * there. entries without a name are gaps in their buffer.
+ */
+static void declare_captures(Compiler *c)
+{
+    const DxbcCompileOptions *o = c->options;
+    c->captures_declared = 1;
+    if (!o || !o->so_count)
+        return;
+    c->captures = mime_alloc(c->alloc, o->so_count * sizeof(*c->captures));
+    if (!c->captures)
+        return;
+    uint32_t location = c->output_count;
+    for (uint32_t i = 0; i < c->info->outputs.count; i++)
+        if (c->info->outputs.elements[i].reg + 1 > location && c->info->outputs.elements[i].reg < 32)
+            location = c->info->outputs.elements[i].reg + 1;
+    uint32_t offsets[4] = {0}, strides[4] = {0};
+    for (uint32_t i = 0; i < o->so_count; i++)
+        if (o->so[i].output_slot < 4)
+            strides[o->so[i].output_slot] += o->so[i].component_count * 4;
+    for (uint32_t i = 0; i < o->so_stride_count && i < 4; i++)
+        strides[i] = o->so_strides[i];
+    spv_capability(&c->b, SpvCapabilityTransformFeedback);
+    for (uint32_t i = 0; i < o->so_count; i++) {
+        const DxbcStreamOutput *so = &o->so[i];
+        uint32_t slot = so->output_slot & 3, offset = offsets[slot];
+        offsets[slot] += so->component_count * 4;
+        if (!so->semantic_name || !so->component_count)
+            continue;
+        const DxbcSignatureElement *e = NULL;
+        for (uint32_t k = 0; k < c->info->outputs.count && !e; k++) {
+            const DxbcSignatureElement *x = &c->info->outputs.elements[k];
+            if (x->stream == so->stream && x->semantic_index == so->semantic_index && same_name(x->name, so->semantic_name))
+                e = x;
+        }
+        if (!e || !e->mask)
+            continue;
+        struct Capture *cap = &c->captures[c->capture_count++];
+        cap->reg = e->reg;
+        cap->stream = so->stream;
+        cap->first = (uint8_t)(__builtin_ctz(e->mask) + so->start_component);
+        cap->count = so->component_count;
+        if (cap->first + cap->count > 4)
+            cap->count = (uint8_t)(cap->first < 4 ? 4 - cap->first : 0);
+        cap->kind = component_kind(e->component_type);
+        uint32_t type = cap->count == 1 ? vec_type(c, cap->kind, 1) : vec_type(c, cap->kind, cap->count);
+        cap->var = global(c, SpvStorageClassOutput, type, 0);
+        decorate1(c, cap->var, SpvDecorationLocation, location++);
+        decorate1(c, cap->var, SpvDecorationXfbBuffer, slot);
+        decorate1(c, cap->var, SpvDecorationXfbStride, strides[slot]);
+        decorate1(c, cap->var, SpvDecorationOffset, offset);
+        if (so->stream) {
+            spv_capability(&c->b, SpvCapabilityGeometryStreams);
+            decorate1(c, cap->var, SpvDecorationStream, so->stream);
+        }
+    }
+}
+
+/* the captured components of the outputs, before an emit to the stream. */
+static void store_captures(Compiler *c, uint32_t stream)
+{
+    if (!c->captures_declared)
+        declare_captures(c);
+    uint32_t v4 = c->t_vec[K_FLOAT][4];
+    uint32_t vptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, v4);
+    for (uint32_t i = 0; i < c->capture_count; i++) {
+        struct Capture *cap = &c->captures[i];
+        if (cap->stream != stream || !cap->count || cap->reg >= c->output_count)
+            continue;
+        uint32_t index = uconst(c, cap->reg);
+        uint32_t reg = bitcast(c, spv_load(&c->b, v4, spv_access(&c->b, vptr, c->outputs, &index, 1)), K_FLOAT,
+                               cap->kind, 4);
+        uint32_t parts[4];
+        for (uint32_t k = 0; k < cap->count; k++)
+            parts[k] = extract(c, vec_type(c, cap->kind, 1), reg, cap->first + k);
+        uint32_t value = cap->count == 1 ? parts[0]
+                                         : spv_op(&c->b, SpvOpCompositeConstruct, vec_type(c, cap->kind, cap->count),
+                                                  parts, cap->count);
+        spv_store(&c->b, cap->var, value);
     }
 }
 
@@ -3136,7 +3244,9 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
             spv_capability(&c->b, SpvCapabilityGeometryStreams);
         uint32_t s = uconst(c, index);
         if (emit) {
-            store_outputs(c);
+            if (index == c->raster_stream)
+                store_outputs(c);
+            store_captures(c, index);
             if (index)
                 spv_op_void(&c->b, SpvOpEmitStreamVertex, &s, 1);
             else
@@ -3342,6 +3452,10 @@ static int build(Compiler *c)
                                 {main, SpvExecutionModeInvocations, c->gs_instances ? c->gs_instances : 1}};
         for (int i = 0; i < 4; i++)
             spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, modes[i], i < 2 ? 2 : 3);
+        if (c->capture_count) {
+            uint32_t x[2] = {main, SpvExecutionModeXfb};
+            spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, x, 2);
+        }
     } else if (c->program == DXBC_HULL || c->program == DXBC_DOMAIN) {
         spv_capability(b, SpvCapabilityTessellation);
         /* the domain, then for hull shaders the partitioning and the primitives' winding or points. */
@@ -3406,6 +3520,9 @@ int dxbc_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
     c->options = options;
     c->program = info->program;
     c->binding = table_binding(info->program);
+    /* with no stream rasterized the device discards what is; the first stream keeps the interface whole. */
+    if (options && options->so_count && options->rasterized_stream < 4)
+        c->raster_stream = options->rasterized_stream;
     c->code = code + 2;
     c->code_count = code[1] - 2;
     spv_init(&c->b, alloc);
@@ -3426,6 +3543,7 @@ int dxbc_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
         mime_free(alloc, c->flow[i].values);
     }
     spv_free(&c->b);
+    mime_free(alloc, c->captures);
     mime_free(alloc, c);
     return result;
 }

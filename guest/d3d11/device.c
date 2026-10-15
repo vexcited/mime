@@ -273,6 +273,13 @@ static HRESULT create_vulkan_device(D3dDevice *device)
         device->has_depth_clip = FALSE;
     if (!feedback.transformFeedback)
         device->has_transform_feedback = FALSE;
+    if (device->has_transform_feedback) {
+        VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &xfb};
+        vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
+        device->has_so_queries = xfb.transformFeedbackQueries;
+    }
     if (!conditional.conditionalRendering)
         device->has_conditional = FALSE;
     if (!divisor.vertexAttributeInstanceRateDivisor)
@@ -365,6 +372,9 @@ static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
 
     if (FAILED(hr = D3dMemoryInit(device)) || FAILED(hr = D3dHeapInit(device)))
         return hr;
+    if (device->has_transform_feedback &&
+        FAILED(hr = D3dAllocBuffer(device, D3D_MEMORY_DEVICE, 16, 16, &device->so_dummy)))
+        return hr;
     return D3dCreateContext(device, D3D11_DEVICE_CONTEXT_IMMEDIATE, &device->immediate);
 }
 
@@ -378,6 +388,8 @@ static void destroy_device(D3dDevice *device)
             D3dContextDestroy(device->immediate);
         D3dCollectGarbage(device);
         D3dQueryPoolsDestroy(device);
+        if (device->so_dummy.buffer)
+            D3dFree(device, &device->so_dummy);
         D3dMemoryDestroy(device);
         D3dHeapDestroy(device);
         vk->vkDestroySampler(vk->device, device->null_sampler, NULL);
