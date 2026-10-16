@@ -139,6 +139,8 @@ void mvk_wsi_create_swapchain(MvkCall *call);
 void mvk_wsi_destroy_swapchain(MvkCall *call);
 void mvk_wsi_acquire(MvkCall *call);
 void mvk_wsi_present(MvkCall *call);
+bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client);
 void mvk_wsi_close(MvkConnection *c);
 /* every present sent so far submitted. */
 void mvk_wsi_drain(MvkConnection *c);

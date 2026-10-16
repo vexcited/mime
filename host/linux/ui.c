@@ -1454,3 +1454,13 @@ int mime_app_proxy_main(int argc, char **argv)
 {
     return -1;
 }
+
+/* in vkwsi.c, whose vulkan headers this file does not take. */
+bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client);
+
+bool mime_ui_window_readback(MimeWinReadback *r, void *pixels)
+{
+    return mvk_wsi_readback(r->window_id, pixels, r->capacity_width, r->capacity_height, r->stride, &r->width,
+                            &r->height, &r->client);
+}

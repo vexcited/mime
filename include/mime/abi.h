@@ -243,6 +243,7 @@ enum {
     MIME_HC_GPU_KICK = 0x2A,    /* (channel) new commands while the host is idle */
     MIME_HC_GPU_CLOSE = 0x2B,   /* (channel) returns once the host and the gpu no longer use its memory */
     MIME_HC_WIN_ICON = 0x2C,    /* window icon pixels described by MimeWinIcon. */
+    MIME_HC_WIN_READBACK = 0x43, /* (MimeWinReadback pa) the last image presented to a window through vulkan */
     MIME_HC_VK_OPEN = 0x2D,     /* (pa, size) -> connection, see mime/mvk_wire.h */
     MIME_HC_VK_KICK = 0x2E,     /* (connection) new calls while the host is idle */
     MIME_HC_VK_CLOSE = 0x2F,    /* (connection) returns once the host and the gpu no longer use its memory */
@@ -548,6 +549,21 @@ typedef struct MimeWinPresent {
     uint64_t surface_phys; /* bgra8 premultiplied, physically contiguous */
     MimeRect dirty;
 } MimeWinPresent;
+
+/*
+ * a window's last vulkan present, read back as bgra rows into pixels_phys
+ * when it fits capacity; the host fills width, height and the client
+ * rectangle it showed in, relative to the window. MIME_HC_STATUS_NOT_FOUND
+ * when the window presents nothing.
+ */
+typedef struct MimeWinReadback {
+    uint32_t window_id;
+    uint32_t capacity_width, capacity_height;
+    uint32_t stride;
+    uint64_t pixels_phys;
+    uint32_t width, height;
+    MimeRect client;
+} MimeWinReadback;
 
 typedef struct MimeWinIcon {
     uint32_t window_id;

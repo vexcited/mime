@@ -418,19 +418,58 @@ static HRESULT STDMETHODCALLTYPE sc_present(IDirect3DSwapChain9Ex *iface, const 
     return hr;
 }
 
+/*
+ * a copy of the screen the swap chain's adapter shows, as d3d9.dll makes
+ * it for windows: a system memory A8R8G8B8 surface of the device, at
+ * least the screen's size, gets the monitor's pixels through gdi from
+ * the screen, which win32k composes from the windows and their presents.
+ */
 static HRESULT STDMETHODCALLTYPE sc_get_front_buffer_data(IDirect3DSwapChain9Ex *iface, IDirect3DSurface9 *dest)
 {
     D9SwapChain *sc = impl(iface);
-    D9Surface *d = D9SurfaceFrom(dest), *back = sc->back_buffers[0];
-    if (!d || d->base.pool != D3DPOOL_SYSTEMMEM || d->width < back->width || d->height < back->height)
+    D9Surface *d = D9SurfaceFrom(dest);
+    if (!d || d->base.device != sc->device || d->base.d3d_format != D3DFMT_A8R8G8B8 ||
+        (d->base.pool != D3DPOOL_SYSTEMMEM && d->base.pool != D3DPOOL_SCRATCH))
+        return D3DERR_INVALIDCALL;
+    RECT monitor = {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    IDXGIAdapter1 *adapter;
+    IDXGIOutput *output;
+    if (SUCCEEDED(D9GetOutput(sc->device->creation.AdapterOrdinal, &adapter, &output))) {
+        DXGI_OUTPUT_DESC desc;
+        if (SUCCEEDED(output->lpVtbl->GetDesc(output, &desc)))
+            monitor = desc.DesktopCoordinates;
+        output->lpVtbl->Release(output);
+        adapter->lpVtbl->Release(adapter);
+    }
+    LONG width = monitor.right - monitor.left, height = monitor.bottom - monitor.top;
+    if (width <= 0 || height <= 0 || d->width < (UINT)width || d->height < (UINT)height)
         return D3DERR_INVALIDCALL;
     D9Lock(sc->device);
-    /* the last frame presented is what the back buffer held; its pixels in the destination's 32-bit format. */
-    HRESULT hr = D9SurfaceDownload(back);
-    if (SUCCEEDED(hr))
-        for (UINT y = 0; y < back->height; y++)
-            memcpy(d->memory->bytes + (SIZE_T)y * d->memory->pitch, back->memory->bytes + (SIZE_T)y * back->memory->pitch,
-                   (SIZE_T)back->width * D9_MIN(back->base.format->bytes, d->base.format->bytes));
+    HRESULT hr = D3DERR_INVALIDCALL;
+    HDC screen = GetDC(NULL);
+    HDC memory = screen ? CreateCompatibleDC(screen) : NULL;
+    BITMAPINFO bi = {{sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB}};
+    void *bits = NULL;
+    HBITMAP dib = memory ? CreateDIBSection(memory, &bi, DIB_RGB_COLORS, &bits, NULL, 0) : NULL;
+    D3DLOCKED_RECT locked;
+    if (dib && SUCCEEDED(D9SurfaceLock(d, &locked, NULL, 0))) {
+        HGDIOBJ old = SelectObject(memory, dib);
+        if (BitBlt(memory, 0, 0, width, height, screen, monitor.left, monitor.top, SRCCOPY)) {
+            GdiFlush();
+            for (LONG y = 0; y < height; y++)
+                memcpy((BYTE *)locked.pBits + (SIZE_T)y * locked.Pitch, (const BYTE *)bits + (SIZE_T)y * width * 4,
+                       (SIZE_T)width * 4);
+            hr = D3D_OK;
+        }
+        SelectObject(memory, old);
+        D9SurfaceUnlock(d);
+    }
+    if (dib)
+        DeleteObject(dib);
+    if (memory)
+        DeleteDC(memory);
+    if (screen)
+        ReleaseDC(NULL, screen);
     D9Unlock(sc->device);
     return hr;
 }

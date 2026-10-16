@@ -116,6 +116,19 @@ struct Presenter {
     VkDeviceMemory staging_memory;
     uint8_t *staging_map;
 
+    /* the last image the guest presented, kept for captures of the screen, and where it shows. */
+    VkImage last;
+    VkDeviceMemory last_memory;
+    VkExtent2D last_extent;
+    VkFormat last_format;
+    bool last_valid;
+    MimeRect last_client;
+    VkQueue last_queue;
+    VkBuffer readback;
+    VkDeviceMemory readback_memory;
+    uint8_t *readback_map;
+    VkDeviceSize readback_size;
+
     /* semaphores a present may still wait for when the window went: freed once the device is idle. */
     VkSemaphore grave[MAX_GRAVE];
     uint32_t grave_count;
@@ -433,6 +446,14 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
         c->fn.vkDestroyBuffer(c->device, p->staging, NULL);
     if (p->staging_memory)
         c->fn.vkFreeMemory(c->device, p->staging_memory, NULL);
+    if (p->last)
+        c->fn.vkDestroyImage(c->device, p->last, NULL);
+    if (p->last_memory)
+        c->fn.vkFreeMemory(c->device, p->last_memory, NULL);
+    if (p->readback)
+        c->fn.vkDestroyBuffer(c->device, p->readback, NULL);
+    if (p->readback_memory)
+        c->fn.vkFreeMemory(c->device, p->readback_memory, NULL);
     bool attached = p->attached;
     pthread_mutex_unlock(&p->lock);
     pthread_mutex_destroy(&p->lock);
@@ -732,6 +753,54 @@ static bool make_gdi(MvkConnection *c, Presenter *p, uint32_t width, uint32_t he
     return true;
 }
 
+/* the image the last present is kept in, the guest's size; false without one. */
+static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkFormat format)
+{
+    if (p->last && p->last_extent.width == extent.width && p->last_extent.height == extent.height &&
+        p->last_format == format)
+        return true;
+    wait_frames(c, p);
+    if (p->last)
+        c->fn.vkDestroyImage(c->device, p->last, NULL);
+    if (p->last_memory)
+        c->fn.vkFreeMemory(c->device, p->last_memory, NULL);
+    p->last = VK_NULL_HANDLE;
+    p->last_memory = VK_NULL_HANDLE;
+    p->last_valid = false;
+    VkImageCreateInfo ii = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent = {extent.width, extent.height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (c->fn.vkCreateImage(c->device, &ii, NULL, &p->last) != VK_SUCCESS) {
+        p->last = VK_NULL_HANDLE;
+        return false;
+    }
+    VkMemoryRequirements req;
+    c->fn.vkGetImageMemoryRequirements(c->device, p->last, &req);
+    int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
+    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, NULL, &p->last_memory) != VK_SUCCESS ||
+        c->fn.vkBindImageMemory(c->device, p->last, p->last_memory, 0) != VK_SUCCESS) {
+        c->fn.vkDestroyImage(c->device, p->last, NULL);
+        if (p->last_memory)
+            c->fn.vkFreeMemory(c->device, p->last_memory, NULL);
+        p->last = VK_NULL_HANDLE;
+        p->last_memory = VK_NULL_HANDLE;
+        return false;
+    }
+    p->last_extent = extent;
+    p->last_format = format;
+    return true;
+}
+
 /* ------------------------------------------------------------------ recording */
 
 static void barrier(MvkConnection *c, VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
@@ -854,6 +923,19 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     Box area = frame->subsurface ? (Box){0, 0, p->extent.width, p->extent.height} : to_pixels(frame, client);
     blit(c, cmd, src, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, dst, area,
          p->extent.width, p->extent.height);
+    /* and kept, for captures of the screen. */
+    if (p->last) {
+        barrier(c, cmd, p->last, p->last_valid ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        blit(c, cmd, src, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, p->last,
+             (Box){0, 0, p->last_extent.width, p->last_extent.height}, p->last_extent.width, p->last_extent.height);
+        barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+        p->last_valid = true;
+        p->last_client = client;
+    }
     barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
     barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -978,6 +1060,8 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
                 upload = true;
             }
         }
+        make_last(c, p, s->extent, srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM);
+        p->last_queue = queue;
         record(c, p, f, target, s, index, frame, client, upload);
 
         Waits all = *waits;
@@ -1288,4 +1372,102 @@ void mvk_wsi_close(MvkConnection *c)
     pthread_cond_destroy(&w->cond);
     free(w);
     c->wsi = NULL;
+}
+
+/* ------------------------------------------------------------------ readback */
+
+/*
+ * the last image presented to a window, copied as bgra rows into pixels
+ * when it fits, with its size and the client rectangle it showed in,
+ * relative to the window. false when the window presents nothing.
+ */
+bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client)
+{
+    pthread_mutex_lock(&g_presenters_lock);
+    Presenter *p = NULL;
+    for (int i = 0; i < MAX_PRESENTERS; i++)
+        if (g_presenters[i] && g_presenters[i]->window == window) {
+            p = g_presenters[i];
+            p->refs++;
+            break;
+        }
+    pthread_mutex_unlock(&g_presenters_lock);
+    if (!p)
+        return false;
+    MvkConnection *c = p->conn;
+    bool ok = false;
+    pthread_mutex_lock(&p->lock);
+    if (!p->last_valid || !p->pool || !p->last_queue)
+        goto out;
+    *width = p->last_extent.width;
+    *height = p->last_extent.height;
+    *client = p->last_client;
+    if (!pixels || p->last_extent.width > capacity_width || p->last_extent.height > capacity_height) {
+        ok = true;
+        goto out;
+    }
+    VkDeviceSize size = (VkDeviceSize)p->last_extent.width * p->last_extent.height * 4;
+    if (p->readback_size < size) {
+        if (p->readback)
+            c->fn.vkDestroyBuffer(c->device, p->readback, NULL);
+        if (p->readback_memory)
+            c->fn.vkFreeMemory(c->device, p->readback_memory, NULL);
+        p->readback = VK_NULL_HANDLE;
+        p->readback_memory = VK_NULL_HANDLE;
+        p->readback_size = 0;
+        VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                 VK_SHARING_MODE_EXCLUSIVE};
+        if (c->fn.vkCreateBuffer(c->device, &bi, NULL, &p->readback) != VK_SUCCESS)
+            goto out;
+        VkMemoryRequirements req;
+        c->fn.vkGetBufferMemoryRequirements(c->device, p->readback, &req);
+        int32_t type = memory_type(c, req.memoryTypeBits,
+                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
+        if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, NULL, &p->readback_memory) != VK_SUCCESS ||
+            c->fn.vkBindBufferMemory(c->device, p->readback, p->readback_memory, 0) != VK_SUCCESS ||
+            c->fn.vkMapMemory(c->device, p->readback_memory, 0, VK_WHOLE_SIZE, 0, (void **)&p->readback_map) !=
+                VK_SUCCESS)
+            goto out;
+        p->readback_size = size;
+    }
+    VkCommandBuffer cmd;
+    VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL, p->pool,
+                                      VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
+    if (c->fn.vkAllocateCommandBuffers(c->device, &ai, &cmd) != VK_SUCCESS)
+        goto out;
+    VkFence fence;
+    VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (c->fn.vkCreateFence(c->device, &fi, NULL, &fence) != VK_SUCCESS) {
+        c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
+        goto out;
+    }
+    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
+                                      VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    c->fn.vkBeginCommandBuffer(cmd, &begin);
+    /* the present that wrote the image went first on this queue. */
+    barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy copy = {
+        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageExtent = {p->last_extent.width, p->last_extent.height, 1},
+    };
+    c->fn.vkCmdCopyImageToBuffer(cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, p->readback, 1, &copy);
+    c->fn.vkEndCommandBuffer(cmd);
+    VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, 0, NULL, NULL, 1, &cmd, 0, NULL};
+    if (submit_locked(c, p->last_queue, &submit, fence) == VK_SUCCESS &&
+        c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS) {
+        for (uint32_t y = 0; y < p->last_extent.height; y++)
+            memcpy((uint8_t *)pixels + (size_t)y * stride, p->readback_map + (size_t)y * p->last_extent.width * 4,
+                   (size_t)p->last_extent.width * 4);
+        ok = true;
+    }
+    c->fn.vkDestroyFence(c->device, fence, NULL);
+    c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
+out:
+    pthread_mutex_unlock(&p->lock);
+    presenter_put(c, p);
+    return ok;
 }

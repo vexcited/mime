@@ -296,6 +296,18 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
     dc->Dpi = WndGetDpi(w);
     WND *top = w ? WndTopLevel(w) : NULL;
     SURFACE *s = top && top != WndDesktop() ? top->Surface : NULL;
+    if (!top || top == WndDesktop()) {
+        /* the screen and the desktop: the screen's surface, all of it, composed when read. */
+        SURFACE *screen = ScreenSurface();
+        if (screen) {
+            DcSetSurface(dc, screen);
+            screen->Header.SelectCount++;
+            dc->Origin = (POINT){0, 0};
+            RECT all = {0, 0, screen->Width, screen->Height};
+            RgnSetRect(&dc->VisRgn, &all);
+            return (HDC)dc->Header.Handle;
+        }
+    }
     if (!s) {
         /* hidden windows and the desktop: a dc that measures but draws nowhere. */
         dc->DefaultBitmap = SurfaceCreate(1, 1, 32, 0);

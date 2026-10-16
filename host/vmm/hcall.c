@@ -273,6 +273,23 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         mime_ui_window_present(p->window_id, pixels, p->width, p->height, p->stride, p->dirty);
         break;
     }
+    case MIME_HC_WIN_READBACK: {
+        MimeWinReadback *r = mime_vm_phys(vm, regs[1], sizeof(MimeWinReadback));
+        if (!r || r->capacity_width > 16384 || r->capacity_height > 16384 ||
+            (r->pixels_phys && r->stride < r->capacity_width * 4)) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        void *pixels = r->pixels_phys ? mime_vm_phys(vm, r->pixels_phys, (uint64_t)r->stride * r->capacity_height)
+                                      : NULL;
+        if (r->pixels_phys && !pixels) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        if (!mime_ui_window_readback(r, pixels))
+            status = MIME_HC_STATUS_NOT_FOUND;
+        break;
+    }
     case MIME_HC_WIN_ICON: {
         const MimeWinIcon *icon = mime_vm_phys(vm, regs[1], sizeof(MimeWinIcon));
         if (!icon || icon->width > 1024 || icon->height > 1024 || icon->stride < icon->width * 4 ||

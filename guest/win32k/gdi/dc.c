@@ -223,7 +223,7 @@ HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
 HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port, ULONG type, BOOL display,
                        HANDLE pdev, PVOID driver_info, PVOID umpd)
 {
-    /* the display dc draws on the desktop, which is not visible on the host. */
+    /* the display dc reads the screen as composed from the windows; what it draws is not shown. */
     UserEnter();
     HDC h = PaintGetDC(WndDesktop(), NULL, DCX_WINDOW);
     UserLeave();

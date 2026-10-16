@@ -774,6 +774,11 @@ extern W32_DISPLAY W32Display;
 UINT W32SystemDpi(void);
 int MetricsGet(int index, UINT dpi);
 COLORREF MetricsSysColor(int index);
+
+/* screen.c: the surface screen and desktop dcs draw on, composed from the windows before reads. */
+SURFACE *ScreenSurface(void);
+BOOLEAN ScreenIsSurface(const SURFACE *s);
+void ScreenCompose(const RECT *area);
 HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);

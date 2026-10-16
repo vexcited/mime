@@ -2219,3 +2219,6 @@ static void screens_changed(id self, SEL cmd, id note)
     if (g_sink)
         g_sink(g_sink_ctx, &ev);
 }
+
+/* vulkan presents on macos go to metal layers, which keep no image to read back yet. */
+bool mime_ui_window_readback(MimeWinReadback *r, void *pixels) { return false; }

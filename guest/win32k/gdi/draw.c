@@ -512,6 +512,8 @@ BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, 
             LONG dx = x, dy = y, sx = src_x, sy = src_y;
             DcLogicalToSurface(ctx.Dc, &dx, &dy);
             DcLogicalToSurface(src, &sx, &sy);
+            if (ScreenIsSurface(src->Surface))
+                ScreenCompose(&(RECT){sx, sy, sx + width, sy + height});
             /* restrict the source to what the source dc may read. */
             REGION src_vis;
             RgnInit(&src_vis);
@@ -548,6 +550,8 @@ BOOL NTAPI NtGdiStretchBlt(HDC hdst, int x, int y, int width, int height, HDC hs
         DcLogicalToSurface(src, &sx0, &sy0);
         DcLogicalToSurface(src, &sx1, &sy1);
         RECT dr = {x0, y0, x1, y1}, sr = {sx0, sy0, sx1, sy1};
+        if (ScreenIsSurface(src->Surface))
+            ScreenCompose(&(RECT){W32Min(sx0, sx1), W32Min(sy0, sy1), W32Max(sx0, sx1), W32Max(sy0, sy1)});
         ok = StretchSurface(ctx.Dc->Surface, &ctx.Clip, &dr, src->Surface, &sr, rop, ctx.Dc->State.StretchMode);
         dirty = (RECT){W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
     } else if (ctx.Dc) {
@@ -569,6 +573,8 @@ BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hs
     if (begin_draw(hdst, &ctx) && src && src->Surface) {
         RECT dr = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
         RECT sr = logical_rect_to_surface(src, src_x, src_y, src_x + src_width, src_y + src_height);
+        if (ScreenIsSurface(src->Surface))
+            ScreenCompose(&sr);
         RECT sb = {0, 0, src->Surface->Width, src->Surface->Height}, tmp;
         if (RectIntersect(&tmp, &sr, &sb) && tmp.left == sr.left && tmp.right == sr.right && tmp.top == sr.top &&
             tmp.bottom == sr.bottom)
@@ -945,8 +951,11 @@ COLORREF NTAPI NtGdiGetPixel(HDC hdc, int x, int y)
     if (dc && dc->Surface) {
         LONG sx = x, sy = y;
         DcLogicalToSurface(dc, &sx, &sy);
-        if (RgnPtIn(&dc->VisRgn, sx, sy) && sx < dc->Surface->Width && sy < dc->Surface->Height)
+        if (RgnPtIn(&dc->VisRgn, sx, sy) && sx < dc->Surface->Width && sy < dc->Surface->Height) {
+            if (ScreenIsSurface(dc->Surface))
+                ScreenCompose(&(RECT){sx, sy, sx + 1, sy + 1});
             result = PixelToColor(SurfaceGetPixel(dc->Surface, sx, sy));
+        }
     }
     UserLeave();
     return result;
