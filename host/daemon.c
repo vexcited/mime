@@ -9,6 +9,7 @@
 #include "vmm/vmm.h"
 
 #include <errno.h>
+#include <execinfo.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdio.h>
@@ -514,6 +515,17 @@ static bool listen_socket(const MimePaths *paths)
     return true;
 }
 
+/* a crash of the machine process logs where it happened, for llvm-symbolizer, then dies as it would have. */
+static void on_fatal_signal(int sig)
+{
+    static const char head[] = "mime-vmm: fatal signal, backtrace:\n";
+    write(STDERR_FILENO, head, sizeof(head) - 1);
+    void *frames[64];
+    backtrace_symbols_fd(frames, backtrace(frames, 64), STDERR_FILENO);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 int mime_vmm_main(const MimePaths *paths, int lock_fd)
 {
     g_paths = paths;
@@ -526,6 +538,14 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     signal(SIGINT, on_signal);
     signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log */
     signal(SIGPROF, on_profile_signal); /* kill -PROF starts and stops the profiler */
+    {
+        /* loaded now, as the handler cannot load libgcc. */
+        void *frame;
+        backtrace(&frame, 1);
+    }
+    static constexpr int fatal[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
+    for (size_t i = 0; i < sizeof(fatal) / sizeof(fatal[0]); i++)
+        signal(fatal[i], on_fatal_signal);
     /* every guest file handle and file window holds a descriptor. */
     struct rlimit files;
     if (getrlimit(RLIMIT_NOFILE, &files) == 0) {

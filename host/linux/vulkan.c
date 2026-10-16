@@ -265,9 +265,13 @@ void mvk_bind(MvkConnection *c, uint64_t id, uint64_t handle)
     bind(c, id, handle);
 }
 
+/* an id that names nothing, as an object whose creation failed, is not passed to the driver as null. */
 uint64_t mvk_get_handle(MvkDecoder *d, int dispatchable)
 {
-    return lookup(d->owner, mvk_get_u64(d));
+    uint64_t id = mvk_get_u64(d), handle = lookup(d->owner, id);
+    if (id && !handle)
+        d->error = 1;
+    return handle;
 }
 
 void mvk_bind_id(MvkCall *c, uint64_t id, uint64_t handle)
@@ -1912,6 +1916,12 @@ static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *st
             mvk_generated_commands[h.op](&call);
         else
             mime_warn("vulkan: unknown recorded command %#x", h.op);
+        /* what follows a command that did not decode may need it, a dispatch its pipeline: the driver
+           would crash, so the command buffer keeps what came before only. */
+        if (call.in.error) {
+            mime_warn("vulkan: the rest of a command buffer is dropped");
+            break;
+        }
         at += h.size;
     }
 }
