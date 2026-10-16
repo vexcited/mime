@@ -73,6 +73,94 @@ static uint64_t reverse_get(MvkConnection *c, uint64_t handle)
     return 0;
 }
 
+/* ------------------------------------------------------------------ objects left alive */
+
+static void live_put(MvkConnection *c, uint64_t handle, uint32_t kind)
+{
+    size_t mask = c->live_size - 1, i = mix(handle) & mask;
+    while (c->live[i].handle && c->live[i].handle != handle)
+        i = (i + 1) & mask;
+    if (!c->live[i].handle)
+        c->live_used++;
+    c->live[i].handle = handle;
+    c->live[i].kind = kind;
+}
+
+void mvk_track(MvkConnection *c, uint64_t handle, int kind)
+{
+    if (!handle || kind <= MVK_KIND_NONE)
+        return;
+    pthread_mutex_lock(&c->live_lock);
+    if ((c->live_used + 1) * 2 > c->live_size) {
+        size_t old = c->live_size;
+        __typeof__(c->live) prev = c->live, next = calloc(old ? old * 2 : 1024, sizeof(*c->live));
+        if (!next) {
+            pthread_mutex_unlock(&c->live_lock);
+            return;
+        }
+        c->live = next;
+        c->live_size = old ? old * 2 : 1024;
+        c->live_used = 0;
+        for (size_t i = 0; i < old; i++)
+            if (prev[i].handle)
+                live_put(c, prev[i].handle, prev[i].kind);
+        free(prev);
+    }
+    live_put(c, handle, (uint32_t)kind);
+    pthread_mutex_unlock(&c->live_lock);
+}
+
+void mvk_forget(MvkConnection *c, uint64_t handle)
+{
+    if (!handle)
+        return;
+    pthread_mutex_lock(&c->live_lock);
+    if (c->live_size) {
+        size_t mask = c->live_size - 1, i = mix(handle) & mask;
+        while (c->live[i].handle && c->live[i].handle != handle)
+            i = (i + 1) & mask;
+        if (c->live[i].handle) {
+            /* the entries after it move back over the hole. */
+            c->live[i].handle = 0;
+            c->live_used--;
+            for (size_t j = (i + 1) & mask; c->live[j].handle; j = (j + 1) & mask) {
+                uint64_t h = c->live[j].handle;
+                uint32_t k = c->live[j].kind;
+                c->live[j].handle = 0;
+                c->live_used--;
+                live_put(c, h, k);
+            }
+        }
+    }
+    pthread_mutex_unlock(&c->live_lock);
+}
+
+static int by_kind(const void *a, const void *b)
+{
+    const __typeof__(*((MvkConnection *)0)->live) *x = a, *y = b;
+    return (int)x->kind - (int)y->kind;
+}
+
+/*
+ * what the program left alive on the device, destroyed before it as
+ * windows' drivers do for a process that goes: the device is idle.
+ */
+static void destroy_leftovers(MvkConnection *c)
+{
+    pthread_mutex_lock(&c->live_lock);
+    size_t n = 0;
+    for (size_t i = 0; i < c->live_size; i++)
+        if (c->live[i].handle)
+            c->live[n++] = c->live[i];
+    qsort(c->live, n, sizeof(*c->live), by_kind);
+    for (size_t i = 0; i < n && c->device; i++)
+        mvk_destroy_kind(&c->fn, c->device, (int)c->live[i].kind, c->live[i].handle);
+    free(c->live);
+    c->live = NULL;
+    c->live_size = c->live_used = 0;
+    pthread_mutex_unlock(&c->live_lock);
+}
+
 /* the pool a command buffer came from, which its recordings must not share with another thread's. */
 static void pool_of_put(MvkConnection *c, VkCommandBuffer buffer, VkCommandPool pool)
 {
@@ -635,6 +723,7 @@ static void destroy_device(MvkCall *call)
     mvk_wsi_close(c);
     stop_watcher(c);
     c->fn.vkDeviceWaitIdle(c->device);
+    destroy_leftovers(c);
     c->fn.vkDestroyDevice(c->device, NULL);
     bind(c, id, 0);
     c->device = VK_NULL_HANDLE;
@@ -675,8 +764,10 @@ static void allocate_memory(MvkCall *call)
         } else {
             result = c->fn.vkAllocateMemory(c->device, &info, NULL, &memory);
         }
-        if (result == VK_SUCCESS)
+        if (result == VK_SUCCESS) {
             bind(c, id, (uint64_t)memory);
+            mvk_track(c, (uint64_t)memory, MVK_KIND_VkDeviceMemory);
+        }
     }
     mvk_put_u32(e, (uint32_t)result);
     mvk_reply_end(call);
@@ -687,8 +778,10 @@ static void free_memory(MvkCall *call)
     MvkConnection *c = call->conn;
     uint64_t id = mvk_get_u64(&call->in);
     VkDeviceMemory memory = (VkDeviceMemory)lookup(c, id);
-    if (memory && c->device)
+    if (memory && c->device) {
         c->fn.vkFreeMemory(c->device, memory, NULL);
+        mvk_forget(c, (uint64_t)memory);
+    }
     bind(c, id, 0);
 }
 
@@ -976,8 +1069,10 @@ static void destroy_command_pool(MvkCall *call)
     MvkDecoder *d = &call->in;
     uint64_t id = mvk_get_u64(d);
     VkCommandPool pool = (VkCommandPool)lookup(call->conn, id);
-    if (call->conn->device && pool)
+    if (call->conn->device && pool) {
         call->fn->vkDestroyCommandPool(call->conn->device, pool, NULL);
+        mvk_forget(call->conn, (uint64_t)pool);
+    }
     bind(call->conn, id, 0);
 }
 
@@ -1090,8 +1185,13 @@ static void create_object(MvkCall *call, int op)
         if (!d->error && c->device)
             result = c->fn.vkCreateDescriptorPool(c->device, &info, NULL, (VkDescriptorPool *)&handle);
     }
-    if (result == VK_SUCCESS)
+    if (result == VK_SUCCESS) {
         bind(c, id, handle);
+        mvk_track(c, handle, op == MVK_OP_CREATE_FENCE       ? MVK_KIND_VkFence
+                             : op == MVK_OP_CREATE_SEMAPHORE ? MVK_KIND_VkSemaphore
+                             : op == MVK_OP_CREATE_EVENT     ? MVK_KIND_VkEvent
+                                                             : MVK_KIND_VkDescriptorPool);
+    }
     mvk_check(call, result, "creating a synchronization object");
 }
 
@@ -1111,6 +1211,7 @@ static void destroy_object(MvkCall *call, int op)
             c->fn.vkDestroyEvent(c->device, (VkEvent)handle, NULL);
         else if (op == MVK_OP_DESTROY_DESCRIPTOR_POOL)
             c->fn.vkDestroyDescriptorPool(c->device, (VkDescriptorPool)handle, NULL);
+        mvk_forget(c, handle);
     }
     bind(c, id, 0);
 }
@@ -1385,8 +1486,10 @@ static void pool_push(MvkJob *job)
 static void finish_job(MvkConnection *c, MvkJob *job)
 {
     /* bound before it leaves the list, so a recording thread finds one or the other. */
-    for (uint32_t i = 0; i < job->count; i++)
+    for (uint32_t i = 0; i < job->count; i++) {
         bind(c, job->ids[i], (uint64_t)job->pipelines[i]);
+        mvk_track(c, (uint64_t)job->pipelines[i], MVK_KIND_VkPipeline);
+    }
     pthread_mutex_lock(&c->job_lock);
     if (job->prev)
         job->prev->next = job->next;
@@ -1917,6 +2020,7 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     pthread_mutex_init(&c->queue_lock, NULL);
     pthread_mutex_init(&c->record_lock, NULL);
     pthread_cond_init(&c->record_done, NULL);
+    pthread_mutex_init(&c->live_lock, NULL);
     if (!c->call || !c->arena || !c->handle_chunks) {
         free(c->call);
         free(c->arena);
@@ -1978,8 +2082,10 @@ void mime_vk_close(uint64_t index)
         stop_watcher(c);
     if (c->device) {
         c->fn.vkDeviceWaitIdle(c->device);
+        destroy_leftovers(c);
         c->fn.vkDestroyDevice(c->device, NULL);
     }
+    free(c->live);
     if (c->instance)
         c->fn.vkDestroyInstance(c->instance, NULL);
     if (c->library)

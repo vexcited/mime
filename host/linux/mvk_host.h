@@ -92,10 +92,21 @@ struct MvkConnection {
 
     uint8_t *call;   /* a private copy of the call being run */
     uint8_t *arena;
+
+    /* the device objects the program made and has not destroyed, by handle, open addressing. */
+    pthread_mutex_t live_lock;
+    struct {
+        uint64_t handle;
+        uint32_t kind;
+    } *live;
+    size_t live_size, live_used;
 };
 
 uint64_t mvk_lookup(MvkConnection *c, uint64_t id);
 void mvk_bind(MvkConnection *c, uint64_t id, uint64_t handle);
+/* objects made and destroyed for the program, the ones left destroyed with the device. */
+void mvk_track(MvkConnection *c, uint64_t handle, int kind);
+void mvk_forget(MvkConnection *c, uint64_t handle);
 
 typedef struct MvkCall {
     MvkDecoder in;

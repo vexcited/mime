@@ -1180,8 +1180,13 @@ static void stop_presenting(MvkConnection *c)
     pthread_mutex_unlock(&w->lock);
     pthread_join(w->thread, NULL);
     w->running = false;
-    if (w->ready)
+    if (w->ready) {
+        /* submissions still in flight signal it. */
+        pthread_mutex_lock(&c->queue_lock);
+        c->fn.vkDeviceWaitIdle(c->device);
+        pthread_mutex_unlock(&c->queue_lock);
         c->fn.vkDestroySemaphore(c->device, w->ready, NULL);
+    }
     w->ready = VK_NULL_HANDLE;
 }
 
