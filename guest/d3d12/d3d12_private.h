@@ -15,6 +15,7 @@
 #include <mime/dxgi_mime.h>
 #include "../lib/privdata/privdata.h"
 #include "../lib/dxbc/dxbc.h"
+#include "../lib/dxil/dxil.h"
 
 #define VK_USE_PLATFORM_WIN32_KHR 1
 #include <vulkan/vulkan_core.h>
@@ -691,6 +692,8 @@ struct D12Device {
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_divisor, has_zero_divisor;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation, has_statistics, has_so_queries;
     BOOL has_conservative, has_line_rasterization, has_patch_points, has_unused_attachments;
+    /* shader model 6: 16-bit arithmetic, and the wave operations of every stage. */
+    BOOL has_native16, has_waves;
     VkPipelineCache pipeline_cache;
     UINT family;
     UINT queue_count;

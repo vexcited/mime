@@ -277,6 +277,7 @@ static HRESULT create_vulkan_device(D12Device *device)
         device->has_unused_attachments = FALSE;
     f->alphaToOne = FALSE;
     f->wideLines = FALSE;
+    device->has_native16 = f12.shaderFloat16 && f->shaderInt16;
 
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT};
@@ -287,6 +288,15 @@ static HRESULT create_vulkan_device(D12Device *device)
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
     device->db = dbp;
     device->db.pNext = NULL;
+    VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    VkPhysicalDeviceProperties2 sub_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sub};
+    vk->vkGetPhysicalDeviceProperties2(vk->physical, &sub_props);
+    VkSubgroupFeatureFlags wave_ops = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
+                                      VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
+                                      VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT;
+    device->has_waves = (sub.supportedOperations & wave_ops) == wave_ops &&
+                        (sub.supportedStages & (VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT)) ==
+                            (VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT);
     device->has_so_queries = device->has_transform_feedback && xfb.transformFeedbackQueries;
 
     UINT families = 0;
@@ -526,7 +536,7 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     /* copy queue timestamps, casting typed formats, WriteBufferImmediate on every list type. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS3, 20, TRUE, TRUE, 0xF, 0, FALSE);
     FEATURE(D3D12_FEATURE_EXISTING_HEAPS, 4, FALSE);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS4, 12, FALSE, 0, FALSE);
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS4, 12, FALSE, 0, device->has_native16);
     FEATURE(D3D12_FEATURE_CROSS_NODE, 8, 0, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS5, 12, FALSE, 0, 0);
     FEATURE(D3D12_FEATURE_DISPLAYABLE, 8, FALSE, 0);
@@ -663,8 +673,9 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         CHECK(D3D12_FEATURE_DATA_SHADER_MODEL)
         if (d->HighestShaderModel < D3D_SHADER_MODEL_5_1 || d->HighestShaderModel > D3D_SHADER_MODEL_6_9)
             return E_INVALIDARG;
-        /* dxil is not compiled yet: shader model 5.1 is the highest. */
-        d->HighestShaderModel = D3D_SHADER_MODEL_5_1;
+        /* dxil of shader model 6.6 compiles, without the mesh, ray tracing and feedback features others report. */
+        if (d->HighestShaderModel > D3D_SHADER_MODEL_6_6)
+            d->HighestShaderModel = D3D_SHADER_MODEL_6_6;
         return S_OK;
     }
     case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -674,7 +685,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         device->vk.vkGetPhysicalDeviceProperties2(device->vk.physical, &props);
         VkPhysicalDeviceFeatures2 f2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         device->vk.vkGetPhysicalDeviceFeatures2(device->vk.physical, &f2);
-        d->WaveOps = FALSE;
+        d->WaveOps = device->has_waves;
         d->WaveLaneCountMin = sub.subgroupSize;
         d->WaveLaneCountMax = sub.subgroupSize;
         /* guessed: vulkan does not tell how many lanes run at once. */

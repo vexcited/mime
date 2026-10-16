@@ -99,19 +99,16 @@ static const struct ID3D12PipelineStateVtbl g_pipeline_vtbl = {
 static const DxbcProgram PROGRAMS[D12_STAGES] = {DXBC_VERTEX, DXBC_HULL,  DXBC_DOMAIN,
                                                  DXBC_GEOMETRY, DXBC_PIXEL, DXBC_COMPUTE};
 
+/* the kind of program a container holds, from its dxbc code or its dxil part's header. */
 static int program_of(const void *bytecode, SIZE_T length)
 {
     uint32_t size;
     const uint32_t *code = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('S', 'H', 'E', 'X'), &size);
     if (!code)
         code = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('S', 'H', 'D', 'R'), &size);
+    if (!code)
+        code = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('D', 'X', 'I', 'L'), &size);
     return code && size >= 8 ? (int)(code[0] >> 16) : -1;
-}
-
-static BOOL is_dxil(const void *bytecode, SIZE_T length)
-{
-    uint32_t size;
-    return dxbc_find_chunk(bytecode, length, DXBC_FOURCC('D', 'X', 'I', 'L'), &size) != NULL;
 }
 
 /* compiles a stage against the root signature into a shader module. */
@@ -122,10 +119,6 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     SIZE_T length = code->BytecodeLength;
     if (dxbc_check(bytecode, length))
         return E_INVALIDARG;
-    if (is_dxil(bytecode, length)) {
-        D12Log("d3d12: dxil shaders are not compiled yet");
-        return E_INVALIDARG;
-    }
     if (program_of(bytecode, length) != (int)PROGRAMS[stage])
         return E_INVALIDARG;
     UINT count;
@@ -136,7 +129,8 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     options->root = bindings;
     options->root_count = count;
     DxbcShaderInfo info;
-    int failed = dxbc_compile(bytecode, length, options, &info, &g_d12_allocator);
+    int failed = dxil_is(bytecode, length) ? dxil_compile(bytecode, length, options, &info, &g_d12_allocator)
+                                           : dxbc_compile(bytecode, length, options, &info, &g_d12_allocator);
     HeapFree(GetProcessHeap(), 0, bindings);
     if (failed) {
         D12Log("d3d12: shader compilation failed: %s", info.error);

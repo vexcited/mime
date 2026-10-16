@@ -606,13 +606,14 @@ endef
 # dxgi and direct3d reach vulkan-1.dll with LoadLibrary, and share the private data of their objects.
 DX_LIB_SRC := guest/lib/privdata/privdata.c
 DXBC_SRC := $(wildcard guest/lib/dxbc/*.c)
+DXIL_SRC := $(wildcard guest/lib/dxil/*.c)
 EXTRA_OBJ_dxgi := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC))
 X64_EXTRA_OBJ_dxgi := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC))
 EXTRA_OBJ_d3d11 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC) $(DXBC_SRC))
 X64_EXTRA_OBJ_d3d11 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC) $(DXBC_SRC))
-# d3d12 compiles shaders as d3d11 does and shares its table of formats.
-EXTRA_OBJ_d3d12 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC) $(DXBC_SRC) guest/d3d11/format.c)
-X64_EXTRA_OBJ_d3d12 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC) $(DXBC_SRC) guest/d3d11/format.c)
+# d3d12 compiles dxbc as d3d11 does, dxil too, and shares its table of formats.
+EXTRA_OBJ_d3d12 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC) $(DXBC_SRC) $(DXIL_SRC) guest/d3d11/format.c)
+X64_EXTRA_OBJ_d3d12 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC) $(DXBC_SRC) $(DXIL_SRC) guest/d3d11/format.c)
 # d3dcompiler_47 reads containers and instructions with the dxbc library, without its compiler.
 DXBC_READER_SRC := guest/lib/dxbc/container.c guest/lib/dxbc/reader.c
 EXTRA_OBJ_d3dcompiler_47 := $(patsubst %.c,$(OBJ)/user/%.o,$(DXBC_READER_SRC))
