@@ -371,6 +371,101 @@ WINGDIAPI DWORD WINAPI GetCharacterPlacementW(HDC dc, LPCWSTR text, int count, i
     return (DWORD)MAKELONG(size.cx, size.cy);
 }
 
+/* the ansi form: the text through the ansi code page, the placement of the wide one, the string back. */
+WINGDIAPI DWORD WINAPI GetCharacterPlacementA(HDC dc, LPCSTR text, int count, int max_extent,
+                                              LPGCP_RESULTSA results, DWORD flags)
+{
+    if (count < 0 || (count && !text))
+        return 0;
+    int wide_count = count ? MultiByteToWideChar(CP_ACP, 0, text, count, NULL, 0) : 0;
+    WCHAR *wide = heap_alloc((SIZE_T)(wide_count + 1) * sizeof(WCHAR));
+    if (!wide)
+        return 0;
+    if (wide_count)
+        MultiByteToWideChar(CP_ACP, 0, text, count, wide, wide_count);
+    GCP_RESULTSW w;
+    WCHAR *out = NULL;
+    if (results) {
+        w.lStructSize = sizeof(w);
+        w.lpOrder = results->lpOrder;
+        w.lpDx = results->lpDx;
+        w.lpCaretPos = results->lpCaretPos;
+        w.lpClass = results->lpClass;
+        w.lpGlyphs = results->lpGlyphs;
+        w.nGlyphs = results->nGlyphs;
+        w.nMaxFit = results->nMaxFit;
+        w.lpOutString = out = results->lpOutString ? heap_alloc((SIZE_T)(w.nGlyphs + 1) * sizeof(WCHAR)) : NULL;
+    }
+    DWORD r = GetCharacterPlacementW(dc, wide, wide_count, max_extent, results ? &w : NULL, flags);
+    if (results) {
+        if (out && r)
+            WideCharToMultiByte(CP_ACP, 0, out, (int)w.nGlyphs, results->lpOutString, (int)results->nGlyphs, NULL,
+                                NULL);
+        results->nGlyphs = w.nGlyphs;
+        results->nMaxFit = w.nMaxFit;
+    }
+    heap_free(out);
+    heap_free(wide);
+    return r;
+}
+
+/* the charsets, their ansi code pages and their bits of a font signature's code page ranges. */
+static const struct {
+    UINT charset, codepage, bit;
+} CHARSETS[] = {
+    {ANSI_CHARSET, 1252, 0},     {EASTEUROPE_CHARSET, 1250, 1}, {RUSSIAN_CHARSET, 1251, 2},
+    {GREEK_CHARSET, 1253, 3},    {TURKISH_CHARSET, 1254, 4},    {HEBREW_CHARSET, 1255, 5},
+    {ARABIC_CHARSET, 1256, 6},   {BALTIC_CHARSET, 1257, 7},     {VIETNAMESE_CHARSET, 1258, 8},
+    {THAI_CHARSET, 874, 16},     {SHIFTJIS_CHARSET, 932, 17},   {GB2312_CHARSET, 936, 18},
+    {HANGEUL_CHARSET, 949, 19},  {CHINESEBIG5_CHARSET, 950, 20}, {JOHAB_CHARSET, 1361, 21},
+    {SYMBOL_CHARSET, CP_SYMBOL, 31},
+};
+
+/* a charset, a code page, a font signature or a locale: the charset, code page and signature bit that go with it. */
+WINGDIAPI BOOL WINAPI TranslateCharsetInfo(DWORD *source, LPCHARSETINFO info, DWORD flags)
+{
+    if (!info)
+        return FALSE;
+    UINT value = (UINT)(ULONG_PTR)source;
+    int found = -1;
+    for (int i = 0; i < (int)ARRAYSIZE(CHARSETS) && found < 0; i++) {
+        switch (flags) {
+        case TCI_SRCCHARSET:
+            if (CHARSETS[i].charset == value)
+                found = i;
+            break;
+        case TCI_SRCCODEPAGE:
+            if (CHARSETS[i].codepage == value)
+                found = i;
+            break;
+        case TCI_SRCFONTSIG:
+            if (source && (source[0] & (1u << CHARSETS[i].bit)))
+                found = i;
+            break;
+        case TCI_SRCLOCALE: {
+            WCHAR cp[8];
+            if (GetLocaleInfoW(value, LOCALE_IDEFAULTANSICODEPAGE, cp, ARRAYSIZE(cp))) {
+                UINT n = 0;
+                for (WCHAR *c = cp; *c >= L'0' && *c <= L'9'; c++)
+                    n = n * 10 + (*c - L'0');
+                if (CHARSETS[i].codepage == n)
+                    found = i;
+            }
+            break;
+        }
+        default:
+            return FALSE;
+        }
+    }
+    if (found < 0)
+        return FALSE;
+    memset(info, 0, sizeof(*info));
+    info->ciCharset = CHARSETS[found].charset;
+    info->ciACP = CHARSETS[found].codepage;
+    info->fs.fsCsb[0] = 1u << CHARSETS[found].bit;
+    return TRUE;
+}
+
 /* ------------------------------------------------------------------ fonts added at run time */
 
 /* win32k opens the file by its nt path. */

@@ -58,6 +58,9 @@ typedef enum {
     ExceptionCollidedUnwind,
 } EXCEPTION_DISPOSITION;
 
+/* whether the processor has the pentium fdiv flaw, which the _adj_ helpers work around: never. */
+int MsvcrtAdjustFdiv = 0;
+
 #define TOP_LEVEL3 (-1)
 #define TOP_LEVEL4 (-2)
 #define JUMP_COOKIE 0x56433230 /* 'VC20' */

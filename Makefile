@@ -73,6 +73,8 @@ EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D000000
 EXTRA_DLLS += d3d12:0x7FF3E0000000
 # direct3d 9, over d3d11.dll's devices.
 EXTRA_DLLS += d3d9:0x7FF3D0000000
+# device enumeration, empty: there are no devices yet.
+EXTRA_DLLS += setupapi:0x7FF3C0000000
 EXTRA_DLLS += d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000 d3d10:0x7FF390000000 d3d10_1:0x7FF380000000
 EXTRA_NAMES := $(foreach d,$(EXTRA_DLLS),$(firstword $(subst :, ,$(d))))
 # the file name of each, winspool being a driver file.

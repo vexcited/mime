@@ -81,6 +81,9 @@ void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 #define COMPAT_MINOR 2
 #define COMPAT_BUILD 9200
 
+/* the handle count of 16-bit windows: there is no limit to raise. */
+UINT WINAPI SetHandleCount(UINT count) { return count; }
+
 DWORD WINAPI GetVersion(void)
 {
     return ((DWORD)COMPAT_BUILD << 16) | ((DWORD)COMPAT_MINOR << 8) | COMPAT_MAJOR;

@@ -588,6 +588,7 @@ WINGDIAPI int WINAPI SetPolyFillMode(HDC dc, int mode);
 #define FR_NOT_ENUM 0x20
 
 #define HANGUL_CHARSET 129
+#define HANGEUL_CHARSET 129
 #define GREEK_CHARSET 161
 #define TURKISH_CHARSET 162
 #define VIETNAMESE_CHARSET 163
@@ -604,6 +605,17 @@ typedef struct tagFONTSIGNATURE {
     DWORD fsUsb[4];
     DWORD fsCsb[2];
 } FONTSIGNATURE, *PFONTSIGNATURE, *LPFONTSIGNATURE;
+
+typedef struct tagCHARSETINFO {
+    UINT ciCharset;
+    UINT ciACP;
+    FONTSIGNATURE fs;
+} CHARSETINFO, *PCHARSETINFO, *LPCHARSETINFO;
+
+#define TCI_SRCCHARSET 1
+#define TCI_SRCCODEPAGE 2
+#define TCI_SRCFONTSIG 3
+#define TCI_SRCLOCALE 0x1000
 
 typedef struct tagENUMLOGFONTEXW {
     LOGFONTW elfLogFont;
@@ -853,6 +865,18 @@ typedef struct tagGCP_RESULTSW {
     int nMaxFit;
 } GCP_RESULTSW, *LPGCP_RESULTSW;
 
+typedef struct tagGCP_RESULTSA {
+    DWORD lStructSize;
+    LPSTR lpOutString;
+    UINT *lpOrder;
+    int *lpDx;
+    int *lpCaretPos;
+    LPSTR lpClass;
+    LPWSTR lpGlyphs;
+    UINT nGlyphs;
+    int nMaxFit;
+} GCP_RESULTSA, *LPGCP_RESULTSA;
+
 #define GCP_DBCS 0x0001
 #define GCP_REORDER 0x0002
 #define GCP_USEKERNING 0x0008
@@ -1082,6 +1106,9 @@ WINGDIAPI BOOL WINAPI GetCharWidthI(HDC dc, UINT first, UINT count, LPWORD glyph
 WINGDIAPI BOOL WINAPI GetTextExtentPointI(HDC dc, LPWORD glyphs, int count, LPSIZE size);
 WINGDIAPI DWORD WINAPI GetCharacterPlacementW(HDC dc, LPCWSTR text, int count, int max_extent,
                                               LPGCP_RESULTSW results, DWORD flags);
+WINGDIAPI DWORD WINAPI GetCharacterPlacementA(HDC dc, LPCSTR text, int count, int max_extent,
+                                              LPGCP_RESULTSA results, DWORD flags);
+WINGDIAPI BOOL WINAPI TranslateCharsetInfo(DWORD *source, LPCHARSETINFO info, DWORD flags);
 WINGDIAPI int WINAPI EnumFontFamiliesExA(HDC dc, LPLOGFONTA lf, FONTENUMPROCA proc, LPARAM param, DWORD flags);
 WINGDIAPI int WINAPI EnumFontFamiliesW(HDC dc, LPCWSTR family, FONTENUMPROCW proc, LPARAM param);
 WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buffer, DWORD size);

@@ -962,3 +962,6 @@ EXPORTS
     __stdio_common_vswprintf_s
     _dupenv_s
     _wdupenv_s
+    __pioinfo=MsvcrtIoinfo DATA
+    __badioinfo=MsvcrtBadIoinfo DATA
+    __C_specific_handler=ntdll.__C_specific_handler

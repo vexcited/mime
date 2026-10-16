@@ -123,3 +123,52 @@ ADVAPI ULONG WINAPI EventSetInformation(ULONGLONG handle, ULONG kind, const void
     AdvFree(traits);
     return provider ? ERROR_SUCCESS : ERROR_INVALID_PARAMETER;
 }
+
+/* ------------------------------------------------------------------ classic providers */
+
+/*
+ * the trace providers of before EventRegister: registered, never enabled,
+ * as no session enables them, so what they log goes nowhere.
+ */
+static LONG next_trace_handle;
+
+ADVAPI ULONG WINAPI RegisterTraceGuidsW(PVOID callback, PVOID context, const GUID *control, ULONG count,
+                                        PVOID registrations, LPCWSTR mof_path, LPCWSTR mof_resource,
+                                        ULONGLONG *handle)
+{
+    if (!callback || !control || !handle)
+        return ERROR_INVALID_PARAMETER;
+    *handle = (ULONGLONG)InterlockedIncrement(&next_trace_handle);
+    return ERROR_SUCCESS;
+}
+
+ADVAPI ULONG WINAPI RegisterTraceGuidsA(PVOID callback, PVOID context, const GUID *control, ULONG count,
+                                        PVOID registrations, LPCSTR mof_path, LPCSTR mof_resource, ULONGLONG *handle)
+{
+    return RegisterTraceGuidsW(callback, context, control, count, registrations, NULL, NULL, handle);
+}
+
+ADVAPI ULONG WINAPI UnregisterTraceGuids(ULONGLONG handle) { return ERROR_SUCCESS; }
+
+/* the logger of an enable request, which never comes. */
+ADVAPI ULONGLONG WINAPI GetTraceLoggerHandle(PVOID buffer)
+{
+    SetLastError(ERROR_INVALID_HANDLE);
+    return (ULONGLONG)-1;
+}
+
+ADVAPI UCHAR WINAPI GetTraceEnableLevel(ULONGLONG logger) { return 0; }
+
+ADVAPI ULONG WINAPI GetTraceEnableFlags(ULONGLONG logger) { return 0; }
+
+ADVAPI ULONG WINAPI TraceEvent(ULONGLONG logger, PVOID header) { return ERROR_SUCCESS; }
+
+ADVAPI ULONG __cdecl TraceMessage(ULONGLONG logger, ULONG flags, const GUID *message, USHORT number, ...)
+{
+    return ERROR_SUCCESS;
+}
+
+ADVAPI ULONG WINAPI TraceMessageVa(ULONGLONG logger, ULONG flags, const GUID *message, USHORT number, va_list args)
+{
+    return ERROR_SUCCESS;
+}
