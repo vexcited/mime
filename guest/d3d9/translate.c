@@ -308,6 +308,8 @@ typedef struct Tx {
     UINT temp_max;
     /* internal temps: the address register, predicates, the outputs' copies, scratch. */
     UINT r_addr, r_pred;
+    /* the rows texm3x2 and texm3x3 instructions compute, and the next one's place. */
+    UINT r_matrix, matrix_row;
     UINT r_out[16];
     /* vertex shaders: the inputs of integer attributes, turned to floats. */
     UINT r_in[16];
@@ -362,6 +364,9 @@ static UINT first_component(UINT mask)
     return 0;
 }
 
+static D9Opnd texcoord_input(Tx *t, UINT n, UINT swizzle);
+static UINT treg(UINT n);
+
 /* the index register of a relative source: a0's or aL's component, as an integer temp. */
 static int relative_reg(Tx *t, const D9Param *p, UINT *component)
 {
@@ -414,6 +419,11 @@ static D9Opnd source_reg(Tx *t, const D9Param *p, UINT swizzle, UINT offset)
             return D9TempSrc(t->r_in[num], swizzle);
         return D9Src(OPERAND_INPUT, num, swizzle);
     case RT_TEXTURE:
+        if (t->info->pixel && t->info->major < 2) {
+            if (t->info->minor >= 4)
+                return texcoord_input(t, num, swizzle);
+            return D9TempSrc(treg(num), swizzle);
+        }
         if (t->info->pixel && t->key->point_sprite)
             return D9Src(OPERAND_INPUT, D9_SLOT_POINT_COORD, swizzle);
         if (t->info->pixel) {
@@ -429,6 +439,13 @@ static D9Opnd source_reg(Tx *t, const D9Param *p, UINT swizzle, UINT offset)
     case RT_CONST4: {
         UINT base = type == RT_CONST2 ? 2048 : type == RT_CONST3 ? 4096 : type == RT_CONST4 ? 6144 : 0;
         int rel = relative_reg(t, p, &component);
+        if (t->info->pixel && t->info->major < 2) {
+            /* model 1's constants are within [-1, 1]. */
+            UINT r = temp(t);
+            D9Op2(&t->code, OP_MAX, D9Temp(r, 0xF), D9Cb(0, base + num, swizzle, rel, component), D9ImmF(-1.0f));
+            D9Op2(&t->code, OP_MIN, D9Temp(r, 0xF), D9TempSrc(r, SWZ_XYZW), D9ImmF(1.0f));
+            return D9TempSrc(r, SWZ_XYZW);
+        }
         return D9Cb(0, base + num, swizzle, rel, component);
     }
     case RT_CONSTINT:
@@ -713,6 +730,220 @@ static void sample(Tx *t, const D9Inst *inst, UINT scratch, const D9Param *coord
     t->sampler_dims[unit] = shadow ? 2 | 0x80 : type;
 }
 
+/* ------------------------------------------------------------------ pixel shaders of model 1 */
+
+/* a stage's texture coordinates, as interpolated, or the point's. */
+static D9Opnd texcoord_input(Tx *t, UINT n, UINT swizzle)
+{
+    if (t->key->point_sprite)
+        return D9Src(OPERAND_INPUT, D9_SLOT_POINT_COORD, swizzle);
+    if (n >= 8 || !(t->key->ps_inputs & (1u << n)))
+        return D9Imm4(0, 0, 0, 0);
+    return D9Src(OPERAND_INPUT, n, swizzle);
+}
+
+/* a sample of a stage's texture at coordinates, projected when asked, into scratch. */
+static void sample_stage(Tx *t, UINT unit, D9Opnd coords, BOOL project, UINT scratch)
+{
+    const D9ShaderKey *key = t->key;
+    UINT kind = key->sampler_types >> (unit * 2) & 3;
+    UINT type = kind ? 2 + kind : 2;
+    BOOL shadow = (key->shadow & (1u << unit)) && type == 2;
+    UINT c = temp(t);
+    D9Op1(&t->code, OP_MOV, D9Temp(c, 0xF), coords);
+    if (project)
+        D9Op2(&t->code, OP_DIV, D9Temp(c, 0xF), D9TempSrc(c, SWZ_XYZW), D9TempSrc(c, REPL(3)));
+    D9Opnd smp = D9SamplerOpnd(unit);
+    if (shadow) {
+        D9Opnd ops[5] = {D9Temp(scratch, 1), D9TempSrc(c, SWZ_XYZW), D9Src(OPERAND_RESOURCE, unit, REPL(0)), smp,
+                         D9TempScalar(c, 2)};
+        D9Emit(&t->code, OP_SAMPLE_C, ops, 5);
+        D9Op1(&t->code, OP_MOV, D9Temp(scratch, 0xF), D9TempSrc(scratch, REPL(0)));
+    } else {
+        D9Opnd ops[4] = {D9Temp(scratch, 0xF), D9TempSrc(c, SWZ_XYZW), D9ResourceOpnd(unit), smp};
+        D9Emit(&t->code, OP_SAMPLE, ops, 4);
+    }
+    t->samplers_used |= 1u << unit;
+    t->sampler_dims[unit] = shadow ? 2 | 0x80 : type;
+}
+
+/* the texture register t# of models 1.0 to 1.3, a temp of its own. */
+static UINT treg(UINT n) { return 32 + n; }
+
+/* the bump matrix and luminance of a stage, in cb2 from 4 and 12. */
+static D9Opnd bump(UINT stage, UINT swizzle) { return D9Cb(2, 4 + stage, swizzle, -1, 0); }
+
+/*
+ * the instructions of models 1.0 to 1.4 that read textures. t# of 1.0 to
+ * 1.3 holds the stage's sample or coordinates once an instruction wrote
+ * it; 1.4's texld samples the stage of its destination at coordinates of
+ * t# or r#, divided by z or w with _dz and _dw.
+ */
+static BOOL ps1_texture(Tx *t, const D9Inst *inst)
+{
+    const D9ShaderInfo *info = t->info;
+    D9Code *c = &t->code;
+    UINT op = inst->opcode;
+    UINT m = D9RegNum(inst->dst.token);
+    BOOL v14 = info->minor >= 4;
+    UINT scratch = temp(t);
+    switch (op) {
+    case D9_OP_TEX:
+        if (v14) {
+            /* texld r#, t# or r#: the coordinates, divided by z or w with _dz and _dw. */
+            const D9Param *p = &inst->src[0];
+            UINT modifier = (p->token >> 24) & 0xF;
+            D9Opnd coords = D9RegType(p->token) == RT_TEXTURE ? texcoord_input(t, D9RegNum(p->token), SWZ_XYZW)
+                                                               : D9TempSrc(D9RegNum(p->token), SWZ_XYZW);
+            if (modifier == SM_DZ || modifier == SM_DW) {
+                UINT d = temp(t);
+                D9Op1(c, OP_MOV, D9Temp(d, 0xF), coords);
+                D9Op2(c, OP_DIV, D9Temp(d, 0xF), D9TempSrc(d, SWZ_XYZW), D9TempSrc(d, REPL(modifier == SM_DZ ? 2 : 3)));
+                coords = D9TempSrc(d, SWZ_XYZW);
+            }
+            sample_stage(t, m, coords, FALSE, scratch);
+            write_dest(t, inst, scratch, dst_mask(inst->dst.token));
+        } else {
+            sample_stage(t, m, texcoord_input(t, m, SWZ_XYZW), t->key->projected >> m & 1, treg(m));
+        }
+        return TRUE;
+    case D9_OP_TEXCOORD:
+        if (v14) {
+            const D9Param *p = &inst->src[0];
+            UINT modifier = (p->token >> 24) & 0xF;
+            D9Op1(c, OP_MOV, D9Temp(scratch, 0xF), texcoord_input(t, D9RegNum(p->token), SWZ_XYZW));
+            if (modifier == SM_DZ || modifier == SM_DW)
+                D9Op2(c, OP_DIV, D9Temp(scratch, 0xF), D9TempSrc(scratch, SWZ_XYZW),
+                      D9TempSrc(scratch, REPL(modifier == SM_DZ ? 2 : 3)));
+            D9Op1(c, OP_MOV, D9Temp(scratch, 8), D9ImmF(1.0f));
+            write_dest(t, inst, scratch, dst_mask(inst->dst.token));
+        } else {
+            /* the coordinates clamped to [0, 1], w 1. */
+            D9Op1(c, OP_MOV | 1u << 13, D9Temp(treg(m), 7), texcoord_input(t, m, SWZ_XYZW));
+            D9Op1(c, OP_MOV, D9Temp(treg(m), 8), D9ImmF(1.0f));
+        }
+        return TRUE;
+    case D9_OP_TEXKILL: {
+        /* of the coordinates' x, y and z in 1.0 to 1.3, of the register in 1.4. */
+        D9Opnd v = v14 && D9RegType(inst->dst.token) == RT_TEMP ? D9TempSrc(m, SWZ_XYZW) : texcoord_input(t, m, SWZ_XYZW);
+        D9Op2(c, OP_LT, D9Temp(scratch, 7), v, D9ImmF(0.0f));
+        D9Op2(c, OP_OR, D9Temp(scratch, 1), D9TempSrc(scratch, REPL(0)), D9TempSrc(scratch, REPL(1)));
+        D9Op2(c, OP_OR, D9Temp(scratch, 1), D9TempSrc(scratch, REPL(0)), D9TempSrc(scratch, REPL(2)));
+        D9Opnd cond = D9TempScalar(scratch, 0);
+        D9Emit(c, OP_DISCARD | 1u << 18, &cond, 1);
+        return TRUE;
+    }
+    case D9_OP_TEXBEM:
+    case D9_OP_TEXBEML: {
+        /* the stage's coordinates moved by its bump matrix times the source's red and green. */
+        UINT n = D9RegNum(inst->src[0].token), d = temp(t);
+        D9Op1(c, OP_MOV, D9Temp(d, 0xF), texcoord_input(t, m, SWZ_XYZW));
+        D9Op3(c, OP_MAD, D9Temp(d, 3), D9TempSrc(treg(n), REPL(0)), bump(m, SWZ(0, 1, 0, 1)), D9TempSrc(d, SWZ_XYZW));
+        D9Op3(c, OP_MAD, D9Temp(d, 3), D9TempSrc(treg(n), REPL(1)), bump(m, SWZ(2, 3, 2, 3)), D9TempSrc(d, SWZ_XYZW));
+        sample_stage(t, m, D9TempSrc(d, SWZ_XYZW), FALSE, treg(m));
+        if (op == D9_OP_TEXBEML) {
+            D9Op3(c, OP_MAD | 1u << 13, D9Temp(d, 1), D9TempSrc(treg(n), REPL(2)), D9Cb(2, 12 + m, REPL(0), -1, 0),
+                  D9Cb(2, 12 + m, REPL(1), -1, 0));
+            D9Op2(c, OP_MUL, D9Temp(treg(m), 7), D9TempSrc(treg(m), SWZ_XYZW), D9TempSrc(d, REPL(0)));
+        }
+        return TRUE;
+    }
+    case D9_OP_TEXREG2AR:
+    case D9_OP_TEXREG2GB:
+    case D9_OP_TEXREG2RGB: {
+        UINT n = D9RegNum(inst->src[0].token);
+        UINT swizzle = op == D9_OP_TEXREG2AR ? SWZ(3, 0, 0, 0) : op == D9_OP_TEXREG2GB ? SWZ(1, 2, 2, 2) : SWZ(0, 1, 2, 2);
+        sample_stage(t, m, D9TempSrc(treg(n), swizzle), FALSE, treg(m));
+        return TRUE;
+    }
+    case D9_OP_TEXM3x2PAD:
+    case D9_OP_TEXM3x3PAD: {
+        /* a row: the dot product of the stage's coordinates and the source, kept for the next. */
+        UINT n = D9RegNum(inst->src[0].token);
+        UINT row = t->matrix_row++;
+        D9Op2(c, OP_DP3, D9Temp(t->r_matrix, 1u << row), texcoord_input(t, m, SWZ_XYZW), D9TempSrc(treg(n), SWZ_XYZW));
+        return TRUE;
+    }
+    case D9_OP_TEXM3x2TEX:
+    case D9_OP_TEXM3x2DEPTH:
+    case D9_OP_TEXM3x3TEX:
+    case D9_OP_TEXM3x3:
+    case D9_OP_TEXM3x3SPEC:
+    case D9_OP_TEXM3x3VSPEC: {
+        UINT n = D9RegNum(inst->src[0].token);
+        UINT row = t->matrix_row;
+        D9Op2(c, OP_DP3, D9Temp(t->r_matrix, 1u << row), texcoord_input(t, m, SWZ_XYZW), D9TempSrc(treg(n), SWZ_XYZW));
+        t->matrix_row = 0;
+        D9Opnd v = D9TempSrc(t->r_matrix, SWZ_XYZW);
+        if (op == D9_OP_TEXM3x2TEX) {
+            D9Op1(c, OP_MOV, D9Temp(t->r_matrix, 0xC), D9ImmF(0.0f));
+            sample_stage(t, m, v, FALSE, treg(m));
+        } else if (op == D9_OP_TEXM3x2DEPTH) {
+            /* the depth: z over w, the two rows, 1 where w is 0. */
+            D9Op2(c, OP_DIV, D9Temp(t->r_out[4], 1), D9TempSrc(t->r_matrix, REPL(0)), D9TempSrc(t->r_matrix, REPL(1)));
+            D9Op2(c, OP_EQ, D9Temp(scratch, 1), D9TempSrc(t->r_matrix, REPL(1)), D9ImmF(0.0f));
+            D9Op3(c, OP_MOVC, D9Temp(t->r_out[4], 1), D9TempSrc(scratch, REPL(0)), D9ImmF(1.0f),
+                  D9TempSrc(t->r_out[4], REPL(0)));
+        } else if (op == D9_OP_TEXM3x3) {
+            D9Op1(c, OP_MOV, D9Temp(treg(m), 7), v);
+            D9Op1(c, OP_MOV, D9Temp(treg(m), 8), D9ImmF(1.0f));
+        } else if (op == D9_OP_TEXM3x3TEX) {
+            sample_stage(t, m, v, FALSE, treg(m));
+        } else {
+            /* the eye's reflection about the normal the rows made: 2 N (N.E) / (N.N) - E. */
+            UINT e = temp(t);
+            if (op == D9_OP_TEXM3x3SPEC) {
+                D9Op1(c, OP_MOV, D9Temp(e, 0xF), source(t, &inst->src[1]));
+            } else {
+                D9Op1(c, OP_MOV, D9Temp(e, 1), texcoord_input(t, m - 2, REPL(3)));
+                D9Op1(c, OP_MOV, D9Temp(e, 2), texcoord_input(t, m - 1, REPL(3)));
+                D9Op1(c, OP_MOV, D9Temp(e, 4), texcoord_input(t, m, REPL(3)));
+            }
+            D9Op2(c, OP_DP3, D9Temp(scratch, 1), v, D9TempSrc(e, SWZ_XYZW));
+            D9Op2(c, OP_DP3, D9Temp(scratch, 2), v, v);
+            D9Op2(c, OP_DIV, D9Temp(scratch, 1), D9TempSrc(scratch, REPL(0)), D9TempSrc(scratch, REPL(1)));
+            D9Op2(c, OP_ADD, D9Temp(scratch, 1), D9TempSrc(scratch, REPL(0)), D9TempSrc(scratch, REPL(0)));
+            D9Op3(c, OP_MAD, D9Temp(e, 7), v, D9TempSrc(scratch, REPL(0)), D9Neg(D9TempSrc(e, SWZ_XYZW)));
+            sample_stage(t, m, D9TempSrc(e, SWZ_XYZW), FALSE, treg(m));
+        }
+        return TRUE;
+    }
+    case D9_OP_TEXDP3:
+    case D9_OP_TEXDP3TEX: {
+        UINT n = D9RegNum(inst->src[0].token);
+        D9Op2(c, OP_DP3, D9Temp(scratch, 0xF), texcoord_input(t, m, SWZ_XYZW), D9TempSrc(treg(n), SWZ_XYZW));
+        if (op == D9_OP_TEXDP3) {
+            D9Op1(c, OP_MOV, D9Temp(treg(m), 0xF), D9TempSrc(scratch, REPL(0)));
+        } else {
+            D9Op1(c, OP_MOV, D9Temp(scratch, 0xE), D9ImmF(0.0f));
+            sample_stage(t, m, D9TempSrc(scratch, SWZ_XYZW), FALSE, treg(m));
+        }
+        return TRUE;
+    }
+    case D9_OP_TEXDEPTH:
+        /* 1.4's r5: red over green, 1 where green is 0. */
+        D9Op2(c, OP_DIV, D9Temp(t->r_out[4], 1), D9TempSrc(5, REPL(0)), D9TempSrc(5, REPL(1)));
+        D9Op2(c, OP_EQ, D9Temp(scratch, 1), D9TempSrc(5, REPL(1)), D9ImmF(0.0f));
+        D9Op3(c, OP_MOVC, D9Temp(t->r_out[4], 1), D9TempSrc(scratch, REPL(0)), D9ImmF(1.0f),
+              D9TempSrc(t->r_out[4], REPL(0)));
+        return TRUE;
+    case D9_OP_BEM: {
+        /* dst.rg = src0.rg + the destination stage's bump matrix times src1.rg. */
+        D9Opnd a = source(t, &inst->src[0]), b = source(t, &inst->src[1]);
+        D9Opnd bx = b, by = b;
+        bx.words[0] = (bx.words[0] & ~(0xFFu << 4)) | REPL(0) << 4;
+        by.words[0] = (by.words[0] & ~(0xFFu << 4)) | REPL(1) << 4;
+        D9Op1(c, OP_MOV, D9Temp(scratch, 0xF), a);
+        D9Op3(c, OP_MAD, D9Temp(scratch, 3), bx, bump(m, SWZ(0, 1, 0, 1)), D9TempSrc(scratch, SWZ_XYZW));
+        D9Op3(c, OP_MAD, D9Temp(scratch, 3), by, bump(m, SWZ(2, 3, 2, 3)), D9TempSrc(scratch, SWZ_XYZW));
+        write_dest(t, inst, scratch, 3);
+        return TRUE;
+    }
+    default:
+        return FALSE;
+    }
+}
+
 static void D9TranslateEpilogue(Tx *t);
 
 static void translate(Tx *t, const D9Inst *inst)
@@ -722,6 +953,12 @@ static void translate(Tx *t, const D9Inst *inst)
     UINT mask = inst->has_dst ? dst_mask(inst->dst.token) : 0xF;
     UINT save_next = t->next_temp;
     UINT scratch = 0;
+    if (info->pixel && info->major < 2) {
+        BOOL handled = ps1_texture(t, inst);
+        t->next_temp = save_next;
+        if (handled)
+            return;
+    }
     switch (op) {
     case D9_OP_NOP:
     case D9_OP_DCL:
@@ -968,10 +1205,6 @@ static void translate(Tx *t, const D9Inst *inst)
     case D9_OP_TEX:
     case D9_OP_TEXLDL:
     case D9_OP_TEXLDD: {
-        if (info->pixel && info->major < 2) {
-            fail(t, "pixel shaders of model 1");
-            break;
-        }
         scratch = temp(t);
         UINT sampler = D9RegNum(inst->src[1].token);
         sample(t, inst, scratch, &inst->src[0], sampler, src_swizzle(inst->src[1].token));
@@ -979,10 +1212,6 @@ static void translate(Tx *t, const D9Inst *inst)
         break;
     }
     case D9_OP_TEXKILL: {
-        if (info->major < 2) {
-            fail(t, "pixel shaders of model 1");
-            break;
-        }
         scratch = temp(t);
         UINT reg = D9RegNum(inst->dst.token);
         D9Param p = {(inst->dst.token & ~(0xFFu << 16)) | (SWZ_XYZW << 16)};
@@ -1319,7 +1548,7 @@ static void declare(Tx *t, D9Code *d)
     UINT floats = info->relative ? (info->pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) : D9_MAX(info->float_count, 1);
     dcl(d, OP_DCL_CONSTANT_BUFFER | (info->relative ? 1u << 11 : 0), cb_decl(0, floats), NULL, 0);
     dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(1, 20), NULL, 0);
-    dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(2, 16), NULL, 0);
+    dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(2, 24), NULL, 0);
     for (UINT s = 0; s < 20; s++) {
         if (!(t->samplers_used & (1u << s)))
             continue;
@@ -1479,13 +1708,12 @@ HRESULT D9TranslateShader(const D9ShaderInfo *info, const D9ShaderKey *key, void
     t.next_temp = t.temp_max = 48;
     t.r_addr = temp(&t);
     t.r_pred = temp(&t);
+    t.r_matrix = temp(&t);
     for (UINT i = 0; i < 16; i++)
         t.r_out[i] = temp(&t);
     t.in_main = TRUE;
     plan_registers(&t);
     D9Code *c = &t.code;
-    if (info->pixel && info->major < 2)
-        fail(&t, "pixel shaders of model 1");
     /* the outputs start as zeros with w 1; integer attributes are read as floats. */
     if (!info->pixel) {
         for (UINT i = 0; i < 13; i++)
@@ -1670,6 +1898,19 @@ HRESULT D9ParseShader(const DWORD *function, BOOL pixel, D9ShaderInfo *info)
             if (pixel && info->major < 3 && type == RT_INPUT && num < 2)
                 info->in_declared |= 1u << num;
         }
+    }
+    /* model 1 pixel shaders read every color and coordinate their stages ask for, and may write depth. */
+    if (pixel && info->major < 2) {
+        info->in_declared |= 0xFF03;
+        if (info->code)
+            for (UINT at = 1; at < words;) {
+                D9Decode(info, info->code + at, words - at, &inst);
+                at += inst.words;
+                if (inst.opcode == D9_OP_TEXDEPTH || inst.opcode == D9_OP_TEXM3x2DEPTH)
+                    info->writes_depth = TRUE;
+                if (inst.opcode == D9_OP_END)
+                    break;
+            }
     }
     if (info->float_count > (pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS))
         info->float_count = pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS;

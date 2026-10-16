@@ -607,6 +607,8 @@ typedef struct D9ShaderKey {
     BYTE point_sprite;
     /* vertex shaders: inputs whose attributes are integers turned to floats, 2 bits each, 1 unsigned, 2 signed. */
     UINT int_inputs;
+    /* pixel shaders of models 1.0 to 1.3: the stages whose coordinates are projected. */
+    BYTE projected;
 } D9ShaderKey;
 
 typedef struct D9Variant {

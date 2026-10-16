@@ -272,7 +272,7 @@ static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
     if (FAILED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)d->cbs[pixel][2], 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
         return;
     float(*v)[4] = m.pData;
-    memset(v, 0, 16 * 16);
+    memset(v, 0, 24 * 16);
     const DWORD *rs = d->render_states;
     if (!pixel) {
         /* half a pixel right and down: direct3d 9's pixel center i is direct3d 10's i + 0.5. */
@@ -297,6 +297,16 @@ static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
         v[2][1] = end;
         v[2][2] = fbits(rs[D3DRS_FOGDENSITY]);
         v[2][3] = end != start ? 1.0f / (end - start) : 0.0f;
+        /* the stages' bump matrices and luminance, for pixel shaders of model 1. */
+        for (UINT i = 0; i < D9_MAX_STAGES; i++) {
+            const DWORD *ts = d->stage_states[i];
+            v[4 + i][0] = fbits(ts[D3DTSS_BUMPENVMAT00]);
+            v[4 + i][1] = fbits(ts[D3DTSS_BUMPENVMAT01]);
+            v[4 + i][2] = fbits(ts[D3DTSS_BUMPENVMAT10]);
+            v[4 + i][3] = fbits(ts[D3DTSS_BUMPENVMAT11]);
+            v[12 + i][0] = fbits(ts[D3DTSS_BUMPENVLSCALE]);
+            v[12 + i][1] = fbits(ts[D3DTSS_BUMPENVLOFFSET]);
+        }
     }
     ctx->lpVtbl->Unmap(ctx, (ID3D11Resource *)d->cbs[pixel][2], 0);
 }
@@ -426,6 +436,10 @@ static void ps_key(D9Device *d, D9Shader *shader, D3DPRIMITIVETYPE type, const D
     if (rs[D3DRS_ALPHATESTENABLE])
         key->alpha_func = (BYTE)rs[D3DRS_ALPHAFUNC];
     key->flat = rs[D3DRS_SHADEMODE] == D3DSHADE_FLAT;
+    if (info->major < 2 && info->minor < 4)
+        for (UINT i = 0; i < D9_MAX_STAGES; i++)
+            if (d->stage_states[i][D3DTSS_TEXTURETRANSFORMFLAGS] & D3DTTFF_PROJECTED)
+                key->projected |= 1u << i;
     key->point_sprite = type == D3DPT_POINTLIST && rs[D3DRS_POINTSPRITEENABLE];
 }
 
@@ -679,7 +693,7 @@ HRESULT D9InitDraws(D9Device *d)
     for (UINT p = 0; p < 2; p++) {
         d->cbs[p][0] = make_cb(d, (p ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) * 16);
         d->cbs[p][1] = make_cb(d, 20 * 16);
-        d->cbs[p][2] = make_cb(d, 16 * 16);
+        d->cbs[p][2] = make_cb(d, 24 * 16);
         for (UINT i = 0; i < 3; i++)
             if (!d->cbs[p][i])
                 return E_OUTOFMEMORY;
