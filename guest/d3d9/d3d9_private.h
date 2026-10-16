@@ -190,17 +190,30 @@ HRESULT D9CreateBuffer(D9Device *device, BOOL index, UINT size, DWORD usage, DWO
 
 /* ------------------------------------------------------------------ the swap chain */
 
+/* a window presented to: a dxgi swap chain on it, its buffer the size of the window's client area. */
+typedef struct D9Output {
+    HWND window;
+    IDXGISwapChain *dxgi;
+    ID3D11Texture2D *buffer;
+    UINT width, height;
+    /* what the window shows, kept once a present covered only part of it. */
+    ID3D11Texture2D *front;
+} D9Output;
+
 struct D9SwapChain {
     IDirect3DSwapChain9Ex iface;
     LONG refs;
     D9Device *device;
     D3DPRESENT_PARAMETERS params;
     HWND window;
-    IDXGISwapChain *dxgi;
-    ID3D11Texture2D *dxgi_buffer;
+    D9Output output;
+    /* windows presents named instead of the swap chain's. */
+    D9Output *others;
+    UINT other_count;
+    /* a multisampled back buffer resolved, for presents that scale it. */
+    ID3D11Texture2D *resolved;
     /* the device's own, which lives as long as it does. */
     BOOL implicit;
-    BOOL warned_rects;
     /* what is rendered to, copied to dxgi's buffer when presented. */
     D9Surface *back_buffers[D3DPRESENT_BACK_BUFFERS_MAX_EX];
     UINT back_buffer_count;
@@ -211,7 +224,8 @@ struct D9SwapChain {
 HRESULT D9CreateSwapChain(D9Device *device, D3DPRESENT_PARAMETERS *params, D9SwapChain **out);
 HRESULT D9ResetSwapChain(D9SwapChain *swapchain, D3DPRESENT_PARAMETERS *params);
 void D9DestroySwapChain(D9SwapChain *swapchain);
-HRESULT D9Present(D9SwapChain *swapchain, const RECT *source, const RECT *dest, HWND window, DWORD flags);
+HRESULT D9Present(D9SwapChain *swapchain, const RECT *source, const RECT *dest, HWND window, const RGNDATA *dirty,
+                  DWORD flags);
 BOOL D9SwapChainInUse(const D9SwapChain *swapchain);
 HRESULT D9RasterStatus(D9SwapChain *swapchain, D3DRASTER_STATUS *status);
 /* takes an additional swap chain out of its device's list. */

@@ -566,7 +566,7 @@ static HRESULT STDMETHODCALLTYPE device_present(IDirect3DDevice9Ex *iface, const
 {
     D9Device *d = impl(iface);
     D9Lock(d);
-    HRESULT hr = D9Present(d->swapchains[0], source, dest, window, 0);
+    HRESULT hr = D9Present(d->swapchains[0], source, dest, window, dirty, 0);
     D9Unlock(d);
     return hr;
 }
@@ -1996,7 +1996,7 @@ static HRESULT STDMETHODCALLTYPE device_present_ex(IDirect3DDevice9Ex *iface, co
 {
     D9Device *d = impl(iface);
     D9Lock(d);
-    HRESULT hr = D9Present(d->swapchains[0], source, dest, window, flags);
+    HRESULT hr = D9Present(d->swapchains[0], source, dest, window, dirty, flags);
     D9Unlock(d);
     return hr;
 }
@@ -2023,7 +2023,7 @@ static HRESULT STDMETHODCALLTYPE device_wait_for_vblank(IDirect3DDevice9Ex *ifac
     if (swapchain >= d->swapchain_count)
         return D3DERR_INVALIDCALL;
     IDXGIOutput *output = NULL;
-    IDXGISwapChain *sc = d->swapchains[swapchain]->dxgi;
+    IDXGISwapChain *sc = d->swapchains[swapchain]->output.dxgi;
     if (SUCCEEDED(sc->lpVtbl->GetContainingOutput(sc, &output)) && output) {
         output->lpVtbl->WaitForVBlank(output);
         output->lpVtbl->Release(output);
