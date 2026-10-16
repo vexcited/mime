@@ -61,6 +61,18 @@ struct MvkConnection {
     volatile uint32_t jobs_finished;
     uint32_t jobs_seen;
 
+    /* timeline values the guest waits for, see vulkan.c. */
+    pthread_t watcher;
+    bool watching;
+    volatile bool watch_stop;
+    pthread_mutex_t watch_lock;
+    pthread_cond_t watch_round;
+    struct MvkWatch *watches;
+    uint32_t watch_count, watch_capacity;
+    VkSemaphore wake;
+    uint64_t wake_value;
+    uint64_t rounds;
+
     uint8_t *call;   /* a private copy of the call being run */
     uint8_t *arena;
     uint8_t *stream; /* a private copy of a command buffer's stream */

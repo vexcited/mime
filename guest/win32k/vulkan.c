@@ -152,10 +152,33 @@ NTSTATUS NTAPI NtGdiMimeVkKick(void)
     return STATUS_SUCCESS;
 }
 
+/* sleeps until the host's count of watched semaphores reached differs from what the thread saw. */
+static NTSTATUS wait_events(MvkHeader *h, ULONG64 seen, ULONG timeout_ms)
+{
+    PKEVENT event = HalMimeGetGpuEvent();
+    ULONGLONG deadline = KeQueryInterruptTime() + (ULONGLONG)timeout_ms * 10000;
+    for (;;) {
+        if (__atomic_load_n(&h->events, __ATOMIC_ACQUIRE) != seen)
+            return STATUS_SUCCESS;
+        if (h->lost)
+            return STATUS_DEVICE_REMOVED;
+        KeClearEvent(event);
+        if (__atomic_load_n(&h->events, __ATOMIC_SEQ_CST) != seen)
+            return STATUS_SUCCESS;
+        if (timeout_ms != 0xFFFFFFFF && KeQueryInterruptTime() >= deadline)
+            return STATUS_TIMEOUT;
+        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms */
+        NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, TRUE, &t);
+        if (s == STATUS_USER_APC || s == STATUS_ALERTED)
+            return s;
+    }
+}
+
 /*
  * sleeps until the host ran the call of serial. the host raises its
  * interrupt when done passes wait_serial; the short timeout covers a wake
- * up lost to another thread clearing the shared event.
+ * up lost to another thread clearing the shared event. a serial with
+ * MVK_WAIT_EVENTS waits for the count of watched semaphores instead.
  */
 NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms)
 {
@@ -163,6 +186,8 @@ NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms)
     if (!v)
         return STATUS_INVALID_DEVICE_STATE;
     MvkHeader *h = v->Header;
+    if (serial & MVK_WAIT_EVENTS)
+        return wait_events(h, serial & ~MVK_WAIT_EVENTS, timeout_ms);
     PKEVENT event = HalMimeGetGpuEvent();
     ULONGLONG deadline = KeQueryInterruptTime() + (ULONGLONG)timeout_ms * 10000;
     for (;;) {

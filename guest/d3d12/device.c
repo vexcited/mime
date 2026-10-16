@@ -583,8 +583,10 @@ static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
         return E_FAIL;
     if (device->has_rt_pipeline && FAILED(D12RaysInit(device)))
         device->has_rt_pipeline = FALSE;
-    device->waiter_wake = CreateEventW(NULL, FALSE, FALSE, NULL);
-    return device->waiter_wake ? S_OK : E_FAIL;
+    VkSemaphoreTypeCreateInfo timeline = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL,
+                                          VK_SEMAPHORE_TYPE_TIMELINE, 0};
+    VkSemaphoreCreateInfo wake = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timeline};
+    return vk->vkCreateSemaphore(vk->device, &wake, NULL, &device->waiter_wake) == VK_SUCCESS ? S_OK : E_FAIL;
 }
 
 void D12FenceWaiterStop(D12Device *device);
@@ -602,10 +604,9 @@ static void destroy_device(D12Device *device)
         vk->vkDestroyPipelineCache(vk->device, device->pipeline_cache, NULL);
         vk->vkDestroyCommandPool(vk->device, device->init_pool, NULL);
         vk->vkDestroySemaphore(vk->device, device->init_timeline, NULL);
+        vk->vkDestroySemaphore(vk->device, device->waiter_wake, NULL);
         vk->vkDestroyDevice(vk->device, NULL);
     }
-    if (device->waiter_wake)
-        CloseHandle(device->waiter_wake);
     if (device->adapter)
         device->adapter->lpVtbl->Release(device->adapter);
     HeapFree(GetProcessHeap(), 0, device->address_heaps);

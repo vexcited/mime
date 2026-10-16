@@ -84,6 +84,8 @@ MvkDecoder *mvk_call_wait(MvkEncoder *e);
 void mvk_call_done(MvkDecoder *d);
 uint64_t mvk_last_serial(void);
 void mvk_wait_serial(uint64_t serial);
+uint64_t mvk_events(void);
+void mvk_wait_events(uint64_t seen, ULONG timeout_ms);
 void *mvk_block_alloc(SIZE_T size, ULONG64 *pa);
 void mvk_block_free(void *base);
 void mvk_block_free_after(void *base, uint64_t serial);

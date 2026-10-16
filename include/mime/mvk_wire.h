@@ -52,8 +52,12 @@ typedef struct MvkHeader {
     volatile uint64_t done;        /* serial of the last call run */
     volatile uint32_t host_idle;   /* the host sleeps until kicked */
     volatile uint32_t lost;        /* the host stopped running this connection after an error */
-    uint64_t host_pad[5];
+    volatile uint64_t events;      /* counts the watched semaphores that reached their values */
+    uint64_t host_pad[4];
 } MvkHeader;
+
+/* NtGdiMimeVkWait of a serial with this bit: until events differs from the rest of it. */
+#define MVK_WAIT_EVENTS (1ull << 63)
 
 /*
  * a call: this header, then its arguments. serial counts calls; a call
@@ -120,6 +124,7 @@ enum {
     MVK_OP_ACQUIRE_IMAGE,
     MVK_OP_PRESENT,
     MVK_OP_GET_DESCRIPTOR,
+    MVK_OP_WATCH_SEMAPHORES,        /* timeline values whose reaching counts in events */
     MVK_OP_HAND_END,
 };
 

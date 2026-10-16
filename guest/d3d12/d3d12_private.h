@@ -840,11 +840,12 @@ struct D12Device {
     D12SamplerEntry *samplers;
     UINT sampler_count, sampler_capacity;
 
-    /* fences waited on by the cpu, polled by the waiter thread. */
+    /* fences waited on with events, by the waiter thread; a timeline it also waits on wakes it. */
     SRWLOCK fence_lock;
     D12Fence *waiting_fences;
     HANDLE waiter;
-    HANDLE waiter_wake;
+    VkSemaphore waiter_wake;
+    volatile LONG64 waiter_wakes;
     volatile LONG waiter_stop;
 
     SRWLOCK garbage_lock;

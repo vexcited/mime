@@ -90,6 +90,8 @@ static void bind(MvkConnection *c, uint64_t id, uint64_t handle)
 }
 
 static uint64_t await_id(MvkConnection *c, uint64_t id);
+static void unwatch(MvkConnection *c, VkSemaphore semaphore);
+static void stop_watcher(MvkConnection *c);
 
 /* an id not bound yet may be a pipeline being created aside: its creation is waited for. */
 static uint64_t lookup(MvkConnection *c, uint64_t id)
@@ -546,6 +548,7 @@ static void destroy_device(MvkCall *call)
     if (call->in.error || !c->device || lookup(c, id) != (uint64_t)(uintptr_t)c->device)
         return;
     mvk_wsi_close(c);
+    stop_watcher(c);
     c->fn.vkDeviceWaitIdle(c->device);
     c->fn.vkDestroyDevice(c->device, NULL);
     bind(c, id, 0);
@@ -803,8 +806,10 @@ static void destroy_object(MvkCall *call, int op)
     if (handle && c->device) {
         if (op == MVK_OP_DESTROY_FENCE)
             c->fn.vkDestroyFence(c->device, (VkFence)handle, NULL);
-        else if (op == MVK_OP_DESTROY_SEMAPHORE)
+        else if (op == MVK_OP_DESTROY_SEMAPHORE) {
+            unwatch(c, (VkSemaphore)handle);
             c->fn.vkDestroySemaphore(c->device, (VkSemaphore)handle, NULL);
+        }
         else if (op == MVK_OP_DESTROY_EVENT)
             c->fn.vkDestroyEvent(c->device, (VkEvent)handle, NULL);
         else if (op == MVK_OP_DESTROY_DESCRIPTOR_POOL)
@@ -1229,6 +1234,159 @@ static bool waits_for_jobs(MvkConnection *c, uint32_t op)
     }
 }
 
+/* ------------------------------------------------------------------ watched semaphores */
+
+/*
+ * a guest thread waiting for timeline values would hold every call of its
+ * process if the connection's thread waited for them. the guest asks
+ * instead with timeouts of zero, and when that fails names the values it
+ * waits for; a watcher thread waits for any of them, and for a wake
+ * semaphore the connection signals when it adds one, then counts those
+ * reached in the header's events and raises the interrupt, and the guest,
+ * which slept until events changed, asks again.
+ */
+typedef struct MvkWatch {
+    VkSemaphore semaphore;
+    uint64_t value;
+} MvkWatch;
+
+static void wake_watcher(MvkConnection *c)
+{
+    VkSemaphoreSignalInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, NULL, c->wake, ++c->wake_value};
+    c->fn.vkSignalSemaphore(c->device, &signal);
+}
+
+static void *watcher_main(void *arg)
+{
+    MvkConnection *c = arg;
+    mime_set_thread_name("mime-vk-watch");
+    VkSemaphore *semaphores = NULL;
+    uint64_t *values = NULL;
+    uint32_t capacity = 0;
+    for (;;) {
+        pthread_mutex_lock(&c->watch_lock);
+        if (c->watch_stop) {
+            pthread_mutex_unlock(&c->watch_lock);
+            break;
+        }
+        if (c->watch_count + 1 > capacity) {
+            capacity = (c->watch_count + 1) * 2;
+            semaphores = realloc(semaphores, capacity * sizeof(*semaphores));
+            values = realloc(values, capacity * sizeof(*values));
+        }
+        uint32_t n = 0;
+        for (uint32_t i = 0; i < c->watch_count; i++, n++) {
+            semaphores[n] = c->watches[i].semaphore;
+            values[n] = c->watches[i].value;
+        }
+        semaphores[n] = c->wake;
+        values[n++] = c->wake_value + 1;
+        pthread_mutex_unlock(&c->watch_lock);
+
+        VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, NULL, VK_SEMAPHORE_WAIT_ANY_BIT, n,
+                                    semaphores, values};
+        c->fn.vkWaitSemaphores(c->device, &wait, 1000000000ull);
+
+        pthread_mutex_lock(&c->watch_lock);
+        bool reached = false;
+        for (uint32_t i = 0; i < c->watch_count;) {
+            uint64_t value = 0;
+            if (c->fn.vkGetSemaphoreCounterValue(c->device, c->watches[i].semaphore, &value) != VK_SUCCESS ||
+                value >= c->watches[i].value) {
+                c->watches[i] = c->watches[--c->watch_count];
+                reached = true;
+            } else {
+                i++;
+            }
+        }
+        c->rounds++;
+        pthread_cond_broadcast(&c->watch_round);
+        pthread_mutex_unlock(&c->watch_lock);
+        if (reached) {
+            __atomic_add_fetch(&c->header->events, 1, __ATOMIC_RELEASE);
+            mime_vm_raise_irq(c->vm, MIME_IRQ_GPU);
+        }
+    }
+    free(semaphores);
+    free(values);
+    return NULL;
+}
+
+static void watch_semaphores(MvkCall *call)
+{
+    MvkConnection *c = call->conn;
+    MvkDecoder *d = &call->in;
+    uint32_t n = mvk_get_u32(d);
+    if (d->error || !c->device || !c->fn.vkWaitSemaphores)
+        return;
+    if (!c->watching) {
+        VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+        VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+        if (c->fn.vkCreateSemaphore(c->device, &info, NULL, &c->wake) != VK_SUCCESS)
+            return;
+        c->wake_value = 0;
+        c->watch_stop = false;
+        c->watching = true;
+        pthread_create(&c->watcher, NULL, watcher_main, c);
+    }
+    pthread_mutex_lock(&c->watch_lock);
+    for (uint32_t i = 0; i < n && !d->error; i++) {
+        VkSemaphore semaphore = (VkSemaphore)mvk_get_handle(d, 0);
+        uint64_t value = mvk_get_u64(d);
+        bool known = !semaphore;
+        for (uint32_t k = 0; k < c->watch_count && !known; k++)
+            known = c->watches[k].semaphore == semaphore && c->watches[k].value == value;
+        if (known)
+            continue;
+        if (c->watch_count == c->watch_capacity) {
+            c->watch_capacity = c->watch_capacity ? c->watch_capacity * 2 : 16;
+            c->watches = realloc(c->watches, c->watch_capacity * sizeof(*c->watches));
+        }
+        c->watches[c->watch_count++] = (MvkWatch){semaphore, value};
+    }
+    pthread_mutex_unlock(&c->watch_lock);
+    wake_watcher(c);
+}
+
+/* a semaphore going away leaves the watches, and the watcher's wait, before it is destroyed. */
+static void unwatch(MvkConnection *c, VkSemaphore semaphore)
+{
+    if (!c->watching)
+        return;
+    pthread_mutex_lock(&c->watch_lock);
+    bool watched = false;
+    for (uint32_t i = 0; i < c->watch_count;) {
+        if (c->watches[i].semaphore == semaphore) {
+            c->watches[i] = c->watches[--c->watch_count];
+            watched = true;
+        } else {
+            i++;
+        }
+    }
+    uint64_t round = c->rounds;
+    if (watched) {
+        wake_watcher(c);
+        while (c->rounds <= round)
+            pthread_cond_wait(&c->watch_round, &c->watch_lock);
+    }
+    pthread_mutex_unlock(&c->watch_lock);
+}
+
+static void stop_watcher(MvkConnection *c)
+{
+    if (!c->watching)
+        return;
+    pthread_mutex_lock(&c->watch_lock);
+    c->watch_stop = true;
+    pthread_mutex_unlock(&c->watch_lock);
+    wake_watcher(c);
+    pthread_join(c->watcher, NULL);
+    c->fn.vkDestroySemaphore(c->device, c->wake, NULL);
+    c->wake = VK_NULL_HANDLE;
+    c->watch_count = 0;
+    c->watching = false;
+}
+
 /* ------------------------------------------------------------------ running calls */
 
 static void run_hand(MvkCall *call)
@@ -1279,6 +1437,7 @@ static void run_hand(MvkCall *call)
     case MVK_OP_ACQUIRE_IMAGE: mvk_wsi_acquire(call); break;
     case MVK_OP_PRESENT: mvk_wsi_present(call); break;
     case MVK_OP_GET_DESCRIPTOR: get_descriptor(call); break;
+    case MVK_OP_WATCH_SEMAPHORES: watch_semaphores(call); break;
     default:
         mime_warn("vulkan: unknown call %#x", call->header.op);
         break;
@@ -1429,6 +1588,8 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     pthread_cond_init(&c->cond, NULL);
     pthread_mutex_init(&c->job_lock, NULL);
     pthread_cond_init(&c->job_done, NULL);
+    pthread_mutex_init(&c->watch_lock, NULL);
+    pthread_cond_init(&c->watch_round, NULL);
     if (!c->call || !c->arena) {
         free(c->call);
         free(c->arena);
@@ -1484,6 +1645,8 @@ void mime_vk_close(uint64_t index)
     pthread_join(c->thread, NULL);
     drain_jobs(c);
     mvk_wsi_close(c);
+    if (c->device)
+        stop_watcher(c);
     if (c->device) {
         c->fn.vkDeviceWaitIdle(c->device);
         c->fn.vkDestroyDevice(c->device, NULL);
@@ -1492,6 +1655,7 @@ void mime_vk_close(uint64_t index)
         c->fn.vkDestroyInstance(c->instance, NULL);
     if (c->library)
         dlclose(c->library);
+    free(c->watches);
     free(c->handles);
     free(c->reverse);
     free(c->call);

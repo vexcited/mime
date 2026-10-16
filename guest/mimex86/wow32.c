@@ -770,6 +770,11 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtQuerySystemTime(pointer32(a[0]));
     case MIME_SVC_NtDelayExecution:
         return NtDelayExecution(a[0], pointer32(a[1]));
+    /* the waits of locks: an address only names the wait, and a thread id is a number, zero extended. */
+    case MIME_SVC_NtWaitForAlertByThreadId:
+        return NtWaitForAlertByThreadId(pointer32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtAlertThreadByThreadId:
+        return NtAlertThreadByThreadId((HANDLE)(ULONG_PTR)a[0]);
     default:
         return STATUS_NOT_IMPLEMENTED;
     }

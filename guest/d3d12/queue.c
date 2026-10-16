@@ -1,9 +1,8 @@
 /*
  * command queues and fences. a queue submits to one of the device's vulkan
- * queues, a fence is a timeline semaphore. the host runs vulkan's waits on
- * the thread that runs every call of the process, so a wait on the cpu may
- * only block on what a submission already signals, and briefly: fences
- * waited for with events are polled by a thread of the device.
+ * queues, a fence is a timeline semaphore. waits on the cpu are vulkan's,
+ * which the host's watcher serves without holding the process's other
+ * calls, even for values no submission signals yet.
  */
 #include "d3d12_private.h"
 
@@ -23,56 +22,52 @@ UINT64 D12FenceValue(D12Fence *fence)
     return fence->completed;
 }
 
-/* waits on the host until the fence reaches a value or a timeout in nanoseconds passes. */
-static BOOL fence_wait_host(D12Fence *fence, UINT64 value, UINT64 timeout)
+/* blocks until fences reach values, all of them or any. */
+static void fences_block(D12Device *device, UINT count, ID3D12Fence *const *fences, const UINT64 *values, BOOL any)
 {
-    D12Device *device = fence->child.device;
+    VkSemaphore semaphores[64];
+    count = D12_MIN(count, (UINT)RTL_NUMBER_OF(semaphores));
+    for (UINT i = 0; i < count; i++)
+        semaphores[i] = D12FenceFrom(fences[i])->semaphore;
     VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
-    wait.semaphoreCount = 1;
-    wait.pSemaphores = &fence->semaphore;
-    wait.pValues = &value;
-    if (device->vk.vkWaitSemaphores(device->vk.device, &wait, timeout) == VK_SUCCESS) {
-        if (value > fence->completed)
-            fence->completed = value;
-        return TRUE;
-    }
-    return FALSE;
+    wait.flags = any ? VK_SEMAPHORE_WAIT_ANY_BIT : 0;
+    wait.semaphoreCount = count;
+    wait.pSemaphores = semaphores;
+    wait.pValues = values;
+    device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX);
 }
 
-/* blocks until the fence reaches a value: on the host once its signal is submitted, polling until then. */
 static void fence_block(D12Fence *fence, UINT64 value)
 {
-    while (D12FenceValue(fence) < value) {
-        if (fence->queued >= value)
-            fence_wait_host(fence, value, 2000000);
-        else
-            Sleep(1);
-    }
+    ID3D12Fence *iface = (ID3D12Fence *)&fence->iface;
+    fences_block(fence->child.device, 1, &iface, &value, FALSE);
 }
 
-/* the waiter thread: sets the events of satisfied waits, polling while any wait is left. */
+/*
+ * the waiter thread: sets the events of satisfied waits, then waits for
+ * any waiting fence's next value, or for its wake semaphore, which a new
+ * wait signals.
+ */
 static DWORD WINAPI waiter_main(void *param)
 {
     D12Device *device = param;
+    VkSemaphore *semaphores = NULL;
+    UINT64 *values = NULL;
+    UINT capacity = 0;
     while (!device->waiter_stop) {
-        BOOL pending = FALSE, submitted = FALSE;
-        D12Fence *submitted_fence = NULL;
-        UINT64 submitted_value = 0;
+        UINT64 wakes = __atomic_load_n((const volatile UINT64 *)&device->waiter_wakes, __ATOMIC_ACQUIRE);
+        UINT n = 0;
         AcquireSRWLockExclusive(&device->fence_lock);
         for (D12Fence **link = &device->waiting_fences; *link;) {
             D12Fence *fence = *link;
-            UINT64 value = D12FenceValue(fence);
+            UINT64 value = D12FenceValue(fence), next = UINT64_MAX;
             AcquireSRWLockExclusive(&fence->lock);
             for (UINT i = 0; i < fence->wait_count;) {
                 if (fence->waits[i].value <= value) {
                     SetEvent(fence->waits[i].event);
                     fence->waits[i] = fence->waits[--fence->wait_count];
                 } else {
-                    if (!submitted && fence->queued >= fence->waits[i].value) {
-                        submitted = TRUE;
-                        submitted_fence = fence;
-                        submitted_value = fence->waits[i].value;
-                    }
+                    next = D12_MIN(next, fence->waits[i].value);
                     i++;
                 }
             }
@@ -82,30 +77,58 @@ static DWORD WINAPI waiter_main(void *param)
                 *link = fence->next_waiting;
                 fence->next_waiting = NULL;
                 fence->iface.lpVtbl->Release(&fence->iface);
-            } else {
-                pending = TRUE;
-                link = &fence->next_waiting;
+                continue;
             }
+            if (n + 2 > capacity) {
+                UINT grown = capacity ? capacity * 2 : 16;
+                VkSemaphore *s = HeapAlloc(GetProcessHeap(), 0, grown * sizeof(*s));
+                UINT64 *v = HeapAlloc(GetProcessHeap(), 0, grown * sizeof(*v));
+                if (s && v) {
+                    if (n) {
+                        memcpy(s, semaphores, n * sizeof(*s));
+                        memcpy(v, values, n * sizeof(*v));
+                    }
+                    HeapFree(GetProcessHeap(), 0, semaphores);
+                    HeapFree(GetProcessHeap(), 0, values);
+                    semaphores = s, values = v, capacity = grown;
+                } else {
+                    HeapFree(GetProcessHeap(), 0, s);
+                    HeapFree(GetProcessHeap(), 0, v);
+                }
+            }
+            if (n + 1 < capacity) {
+                semaphores[n] = fence->semaphore;
+                values[n++] = next;
+            }
+            link = &fence->next_waiting;
         }
-        if (submitted)
-            submitted_fence->iface.lpVtbl->AddRef(&submitted_fence->iface);
         ReleaseSRWLockExclusive(&device->fence_lock);
-        if (submitted) {
-            fence_wait_host(submitted_fence, submitted_value, 1000000);
-            submitted_fence->iface.lpVtbl->Release(&submitted_fence->iface);
-        } else if (pending) {
-            WaitForSingleObject(device->waiter_wake, 1);
-        } else {
-            WaitForSingleObject(device->waiter_wake, INFINITE);
+        VkSemaphore wake = device->waiter_wake;
+        UINT64 woken = wakes + 1;
+        VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait.flags = VK_SEMAPHORE_WAIT_ANY_BIT;
+        wait.semaphoreCount = n + 1;
+        wait.pSemaphores = n ? semaphores : &wake;
+        wait.pValues = n ? values : &woken;
+        if (n) {
+            semaphores[n] = wake;
+            values[n] = woken;
         }
+        device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX);
     }
+    HeapFree(GetProcessHeap(), 0, semaphores);
+    HeapFree(GetProcessHeap(), 0, values);
     return 0;
 }
 
 void D12FenceWake(D12Device *device)
 {
-    if (device->waiter)
-        SetEvent(device->waiter_wake);
+    if (!device->waiter)
+        return;
+    VkSemaphoreSignalInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+    signal.semaphore = device->waiter_wake;
+    signal.value = (UINT64)InterlockedIncrement64(&device->waiter_wakes);
+    device->vk.vkSignalSemaphore(device->vk.device, &signal);
 }
 
 void D12FenceWaiterStop(D12Device *device)
@@ -113,7 +136,7 @@ void D12FenceWaiterStop(D12Device *device)
     if (!device->waiter)
         return;
     device->waiter_stop = TRUE;
-    SetEvent(device->waiter_wake);
+    D12FenceWake(device);
     WaitForSingleObject(device->waiter, INFINITE);
     CloseHandle(device->waiter);
     device->waiter = NULL;
@@ -303,15 +326,8 @@ HRESULT D12SetEventOnFences(D12Device *device, ID3D12Fence *const *fences, const
         return S_OK;
     }
     if (!event) {
-        for (;;) {
-            done = 0;
-            for (UINT i = 0; i < count; i++)
-                if (D12FenceValue(D12FenceFrom(fences[i])) >= values[i])
-                    done++;
-            if (done == count || (any && done))
-                return S_OK;
-            Sleep(1);
-        }
+        fences_block(device, count, fences, values, any);
+        return S_OK;
     }
     /* guessed: with an event, the fences' own waits stand in, the last one setting it for all of them. */
     if (any || count == 1)

@@ -770,16 +770,46 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyFence(VkDevice device, VkFence fence, const 
     destroy_object(MVK_OP_DESTROY_FENCE, (uint64_t)fence);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t count, const VkFence *fences, VkBool32 all,
-                                               uint64_t timeout)
+/* milliseconds left of a timeout in nanoseconds begun at start, INFINITE for the longest. */
+static ULONG remaining_ms(uint64_t timeout, ULONGLONG start)
+{
+    if (timeout == UINT64_MAX)
+        return INFINITE;
+    ULONGLONG total = timeout / 1000000 + 1, spent = GetTickCount64() - start;
+    return spent >= total ? 0 : (ULONG)(total - spent);
+}
+
+/*
+ * the host's waits would hold every call of the process, so the guest
+ * asks with timeouts of zero: for fences again after short sleeps, for
+ * semaphores after the host's watcher says one reached what it waits for.
+ */
+static VkResult wait_fences_now(uint32_t count, const VkFence *fences, VkBool32 all)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_WAIT_FENCES);
     mvk_put_u32(e, count);
     for (uint32_t i = 0; i < count; i++)
         mvk_put_u64(e, (uint64_t)fences[i]);
     mvk_put_u32(e, all);
-    mvk_put_u64(e, timeout);
+    mvk_put_u64(e, 0);
     return result_call(e);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t count, const VkFence *fences, VkBool32 all,
+                                               uint64_t timeout)
+{
+    ULONGLONG start = GetTickCount64();
+    for (UINT round = 0;; round++) {
+        VkResult r = wait_fences_now(count, fences, all);
+        if (r != VK_TIMEOUT || !timeout || !remaining_ms(timeout, start))
+            return r;
+        if (round < 64)
+            YieldProcessor();
+        else if (round < 128)
+            SwitchToThread();
+        else
+            Sleep(1);
+    }
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice device, VkFence fence)
@@ -814,10 +844,26 @@ VKAPI_ATTR void VKAPI_CALL vkDestroySemaphore(VkDevice device, VkSemaphore semap
 
 VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo *info, uint64_t timeout)
 {
-    MvkEncoder *e = mvk_call_begin(MVK_OP_WAIT_SEMAPHORES);
-    mvk_put_VkSemaphoreWaitInfo(e, info);
-    mvk_put_u64(e, timeout);
-    return result_call(e);
+    ULONGLONG start = GetTickCount64();
+    for (;;) {
+        uint64_t seen = mvk_events();
+        MvkEncoder *e = mvk_call_begin(MVK_OP_WAIT_SEMAPHORES);
+        mvk_put_VkSemaphoreWaitInfo(e, info);
+        mvk_put_u64(e, 0);
+        VkResult r = result_call(e);
+        ULONG left = timeout ? remaining_ms(timeout, start) : 0;
+        if (r != VK_TIMEOUT || !left)
+            return r;
+        e = mvk_call_begin(MVK_OP_WATCH_SEMAPHORES);
+        mvk_put_u32(e, info->semaphoreCount);
+        for (uint32_t i = 0; i < info->semaphoreCount; i++) {
+            mvk_put_u64(e, (uint64_t)info->pSemaphores[i]);
+            mvk_put_u64(e, info->pValues[i]);
+        }
+        mvk_call_end(e);
+        /* asked again at least every 100 ms, should a wake up be lost. */
+        mvk_wait_events(seen, left < 100 ? left : 100);
+    }
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t *value)
