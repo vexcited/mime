@@ -881,3 +881,69 @@ EXPORTS
     _invalid_parameter_noinfo
     _lock_file
     _unlock_file
+    ??0__non_rtti_object@@QEAA@AEBV0@@Z
+    ??0__non_rtti_object@@QEAA@PEBD@Z
+    ??0bad_cast@@AEAA@PEBQEBD@Z
+    ??0bad_cast@@QEAA@AEBQEBD@Z
+    ??0bad_cast@@QEAA@AEBV0@@Z
+    ??0bad_cast@@QEAA@PEBD@Z
+    ??0bad_typeid@@QEAA@AEBV0@@Z
+    ??0bad_typeid@@QEAA@PEBD@Z
+    ??0exception@@QEAA@AEBQEBD@Z
+    ??0exception@@QEAA@AEBQEBDH@Z
+    ??0exception@@QEAA@AEBV0@@Z
+    ??0exception@@QEAA@XZ
+    ??1__non_rtti_object@@UEAA@XZ
+    ??1bad_cast@@UEAA@XZ
+    ??1bad_typeid@@UEAA@XZ
+    ??1exception@@UEAA@XZ
+    ??1type_info@@UEAA@XZ
+    ??2@YAPEAX_K@Z
+    ??2@YAPEAX_KHPEBDH@Z
+    ??3@YAXPEAX@Z
+    ??4__non_rtti_object@@QEAAAEAV0@AEBV0@@Z
+    ??4bad_cast@@QEAAAEAV0@AEBV0@@Z
+    ??4bad_typeid@@QEAAAEAV0@AEBV0@@Z
+    ??4exception@@QEAAAEAV0@AEBV0@@Z
+    ??8type_info@@QEBAHAEBV0@@Z
+    ??9type_info@@QEBAHAEBV0@@Z
+    ??_7__non_rtti_object@@6B@ DATA
+    ??_7bad_cast@@6B@ DATA
+    ??_7bad_typeid@@6B@ DATA
+    ??_7exception@@6B@ DATA
+    ??_Fbad_cast@@QEAAXXZ
+    ??_Fbad_typeid@@QEAAXXZ
+    ??_U@YAPEAX_K@Z
+    ??_U@YAPEAX_KHPEBDH@Z
+    ??_V@YAXPEAX@Z
+    ?_Doraise@bad_cast@@MEBAXXZ
+    ?_Doraise@bad_typeid@@MEBAXXZ
+    __uncaught_exception
+    ?_inconsistency@@YAXXZ
+    ?_is_exception_typeof@@YAHAEBVtype_info@@PEAU_EXCEPTION_POINTERS@@@Z
+    ?_query_new_handler@@YAP6AH_K@ZXZ
+    ?_query_new_mode@@YAHXZ
+    ?_set_new_handler@@YAP6AH_K@ZP6AH0@Z@Z
+    ?_set_new_mode@@YAHH@Z
+    ?_set_se_translator@@YAP6AXIPEAU_EXCEPTION_POINTERS@@@ZP6AXI0@Z@Z
+    ?before@type_info@@QEBAHAEBV1@@Z
+    ?name@type_info@@QEBAPEBDPEAU__type_info_node@@@Z
+    ?name@type_info@@QEBAPEBDXZ
+    ?raw_name@type_info@@QEBAPEBDXZ
+    ?set_new_handler@@YAP6AXXZP6AXXZ@Z
+    ?set_terminate@@YAP6AXXZP6AXXZ@Z
+    ?set_unexpected@@YAP6AXXZP6AXXZ@Z
+    ?terminate@@YAXXZ
+    ?unexpected@@YAXXZ
+    ?what@exception@@UEBAPEBDXZ
+    _CxxThrowException
+    __CxxFrameHandler
+    __CxxFrameHandler2
+    __CxxFrameHandler3
+    __RTCastToVoid
+    __RTDynamicCast
+    __RTtypeid
+    _get_terminate
+    _get_unexpected
+    __unDName
+    __unDNameEx

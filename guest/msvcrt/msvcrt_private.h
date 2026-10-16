@@ -276,9 +276,13 @@ typedef struct {
     int beginthread;
     /* signal action for sigfpe and the floating point state. */
     int fpecode;
+    /* c++ exception handling, MSVCRT_EH_THREAD of cxx.h. */
+    void *eh[6];
 } MSVCRT_THREAD_DATA;
 
 MSVCRT_THREAD_DATA *MsvcrtThreadData(void);
+void *MsvcrtEhThread(void);
+int MsvcrtSetNewMode(int mode);
 void MsvcrtFreeThreadData(void);
 
 /* ------------------------------------------------------------------ locks */
@@ -479,7 +483,7 @@ wchar_t *__cdecl _itow(int value, wchar_t *buf, int radix);
 long __cdecl atol(const char *s);
 char *__cdecl getenv(const char *name);
 wchar_t *__cdecl _wgetenv(const wchar_t *name);
-int __cdecl _set_new_mode(int mode);
+
 size_t __cdecl _msize(void *p);
 int __cdecl _snprintf(char *buf, size_t size, const char *fmt, ...);
 int __cdecl _snwprintf(wchar_t *buf, size_t size, const wchar_t *fmt, ...);

@@ -117,3 +117,38 @@ _MsvcrtJumpWithFrame:
     movl    4(%esp), %eax
     movl    8(%esp), %ebp
     jmpl    *%eax
+
+/*
+ * __CxxFrameHandler(record, registration, context, dispatcher), eax the
+ * FuncInfo the function's handler thunk loads: handed on as a fifth
+ * argument.
+ */
+    .globl  ___CxxFrameHandler
+    .globl  ___CxxFrameHandler2
+    .globl  ___CxxFrameHandler3
+___CxxFrameHandler:
+___CxxFrameHandler2:
+___CxxFrameHandler3:
+    pushl   %eax
+    pushl   20(%esp)
+    pushl   20(%esp)
+    pushl   20(%esp)
+    pushl   20(%esp)
+    calll   _MsvcrtCxxFrameHandler32
+    addl    $20, %esp
+    retl
+
+/*
+ * MsvcrtContinueCatch(continuation, node, registration): the function goes
+ * on after its catch block with its frame and saved stack pointer, the
+ * registration list back to the one given; never returns.
+ */
+    .globl  _MsvcrtContinueCatch
+_MsvcrtContinueCatch:
+    movl    4(%esp), %eax
+    movl    12(%esp), %edx
+    movl    %edx, %fs:0
+    movl    8(%esp), %edx
+    leal    0xC(%edx), %ebp
+    movl    -4(%edx), %esp
+    jmpl    *%eax

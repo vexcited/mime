@@ -272,7 +272,7 @@ static int wsetargv(int wildcard)
 int __cdecl __getmainargs(int *argc, char ***argv, char ***envp, int wildcard, _startupinfo *info)
 {
     if (info)
-        _set_new_mode(info->newmode);
+        MsvcrtSetNewMode(info->newmode);
     if (setargv(wildcard) < 0)
         ExitProcess((UINT)-1);
     *argc = __argc;
@@ -284,7 +284,7 @@ int __cdecl __getmainargs(int *argc, char ***argv, char ***envp, int wildcard, _
 int __cdecl __wgetmainargs(int *argc, wchar_t ***argv, wchar_t ***envp, int wildcard, _startupinfo *info)
 {
     if (info)
-        _set_new_mode(info->newmode);
+        MsvcrtSetNewMode(info->newmode);
     if (wsetargv(wildcard) < 0)
         ExitProcess((UINT)-1);
     MsvcrtWenvInit();

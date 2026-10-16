@@ -380,6 +380,13 @@ $(OBJ)/user/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(GUEST_ASFLAGS) -c $< -o $@
 
+# the c++ of the c runtime's own c++ abi: microsoft's, with exceptions and type information.
+GUEST_CXXFLAGS = -x c++ $(filter-out -std=%,$(1)) -std=c++17 -fno-threadsafe-statics -fexceptions -fcxx-exceptions
+
+$(OBJ)/user/%.o: %.cpp $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(call GUEST_CXXFLAGS,$(USER_CFLAGS)) $(USER_CFLAGS_$(firstword $(subst /, ,$(patsubst guest/%,%,$<)))) -c $< -o $@
+
 $(OBJ)/user/guest/crt/%.o: guest/crt/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -fno-builtin -c $< -o $@
@@ -491,6 +498,10 @@ $(X64_OBJ)/%.o: %.c $(GEN_HEADERS)
 	@mkdir -p $(dir $@)
 	$(CC) $(X64_CFLAGS) $(USER_CFLAGS_$(firstword $(subst /, ,$(patsubst guest/%,%,$<)))) -c $< -o $@
 
+$(X64_OBJ)/%.o: %.cpp $(GEN_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(call GUEST_CXXFLAGS,$(X64_CFLAGS)) $(USER_CFLAGS_$(firstword $(subst /, ,$(patsubst guest/%,%,$<)))) -c $< -o $@
+
 $(X64_OBJ)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(X64_ASFLAGS) -c $< -o $@
@@ -578,6 +589,9 @@ EXTRA_OBJ_wintrust := $(BUILD)/lib/crypt32.lib
 X64_EXTRA_OBJ_wintrust := $(BUILD)/lib/x64/crypt32.lib
 
 EXTRA_OBJ_msi := $(OBJ)/user/guest/lib/compound/compound.o
+
+EXTRA_OBJ_msvcrt := $(patsubst %.cpp,$(OBJ)/user/%.o,$(wildcard guest/msvcrt/*.cpp))
+X64_EXTRA_OBJ_msvcrt := $(patsubst %.cpp,$(X64_OBJ)/%.o,$(wildcard guest/msvcrt/*.cpp))
 
 EXTRA_OBJ_gdiplus := $(patsubst %.c,$(OBJ)/user/%.o,$(wildcard guest/lib/png/*.c))
 X64_EXTRA_OBJ_gdiplus := $(patsubst %.c,$(X64_OBJ)/%.o,$(wildcard guest/lib/png/*.c))

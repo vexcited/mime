@@ -42,6 +42,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 
 /* ------------------------------------------------------------------ per thread data */
 
+void *MsvcrtEhThread(void) { return MsvcrtThreadData()->eh; }
+
 MSVCRT_THREAD_DATA *MsvcrtThreadData(void)
 {
     if (g_tls == TLS_OUT_OF_INDEXES)
@@ -233,26 +235,27 @@ static _PNH g_new_handler;
 
 int MsvcrtNewMode;
 
-int __cdecl _set_new_mode(int mode)
+/* the c++ exports _set_new_mode and its kin, in cxx.cpp, call these. */
+int MsvcrtSetNewMode(int mode)
 {
     int old = g_new_mode;
     g_new_mode = mode;
     return old;
 }
 
-int __cdecl _query_new_mode(void)
+int MsvcrtQueryNewMode(void)
 {
     return g_new_mode;
 }
 
-_PNH __cdecl _set_new_handler(_PNH handler)
+_PNH MsvcrtSetNewHandler(_PNH handler)
 {
     _PNH old = g_new_handler;
     g_new_handler = handler;
     return old;
 }
 
-_PNH __cdecl _query_new_handler(void)
+_PNH MsvcrtQueryNewHandler(void)
 {
     return g_new_handler;
 }
