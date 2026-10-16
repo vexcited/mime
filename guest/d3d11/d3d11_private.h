@@ -14,6 +14,7 @@
 #include <mime/win32/winuser.h>
 #include <mime/win32/d3d11.h>
 #include <mime/dxgi_mime.h>
+#include <mime/d3d11_mime.h>
 #include "../lib/privdata/privdata.h"
 #include "../lib/dxbc/dxbc.h"
 
@@ -558,6 +559,7 @@ struct D3dDevice {
     ID3D11Device5 iface;
     IDXGIDevice4 dxgi;
     IMimeDXGIPresenter presenter;
+    IMimeD3D11Device mime;
     ID3D11Multithread multithread;
     /* ID3D10Device1, for devices d3d10.dll and d3d10_1.dll make. */
     D3d10Iface d3d10;
@@ -852,7 +854,11 @@ HRESULT D3dCreateShader(D3dDevice *device, D3dStage stage, const void *bytecode,
                         UINT stride_count, UINT rasterized_stream, D3dShader **out);
 HRESULT D3dCreateQuery(D3dDevice *device, const D3D11_QUERY_DESC1 *desc, D3dQuery **out);
 HRESULT D3dCreateView(D3dDevice *device, D3dViewKind kind, ID3D11Resource *resource, const void *desc,
-                      D3dView **out);
+                      UINT swizzle, D3dView **out);
+void D3dCtxClearDepthStencilRects(D3dContext *c, ID3D11DepthStencilView *iface, UINT flags, FLOAT depth,
+                                  UINT8 stencil, const D3D11_RECT *rects, UINT count);
+void D3dCtxBlit(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, const RECT *dst_rect, ID3D11Resource *src,
+                UINT src_sub, const RECT *src_rect, BOOL linear);
 D3dBlendState *D3dBlendFrom(ID3D11BlendState *iface);
 D3dRasterizerState *D3dRasterizerFrom(ID3D11RasterizerState *iface);
 D3dDepthStencilState *D3dDepthStencilFrom(ID3D11DepthStencilState *iface);

@@ -431,6 +431,8 @@ static HRESULT STDMETHODCALLTYPE device_query(ID3D11Device5 *iface, REFIID riid,
         *out = &device->dxgi;
     else if (IsEqualGUID(riid, &IID_IMimeDXGIPresenter))
         *out = &device->presenter;
+    else if (IsEqualGUID(riid, &IID_IMimeD3D11Device))
+        *out = &device->mime;
     else if (IsEqualGUID(riid, &IID_ID3D11Multithread))
         *out = &device->multithread;
     else
@@ -532,7 +534,7 @@ static HRESULT create_view(ID3D11Device5 *iface, D3dViewKind kind, ID3D11Resourc
     if (!resource)
         return E_INVALIDARG;
     D3dView *view;
-    HRESULT hr = D3dCreateView(impl(iface), kind, resource, desc, out ? &view : NULL);
+    HRESULT hr = D3dCreateView(impl(iface), kind, resource, desc, 0, out ? &view : NULL);
     if (SUCCEEDED(hr) && out)
         *out = &view->iface;
     return out || FAILED(hr) ? hr : S_FALSE;
@@ -545,30 +547,35 @@ static HRESULT STDMETHODCALLTYPE device_create_shader_resource_view1(ID3D11Devic
     return create_view(iface, D3D_VIEW_SRV, resource, desc, (void **)view);
 }
 
+/* a view description as its second version has it. */
+static void srv_desc1(const D3D11_SHADER_RESOURCE_VIEW_DESC *desc, D3D11_SHADER_RESOURCE_VIEW_DESC1 *desc1)
+{
+    memset(desc1, 0, sizeof(*desc1));
+    desc1->Format = desc->Format;
+    desc1->ViewDimension = desc->ViewDimension;
+    switch (desc->ViewDimension) {
+    case D3D11_SRV_DIMENSION_TEXTURE2D:
+        desc1->Texture2D.MostDetailedMip = desc->Texture2D.MostDetailedMip;
+        desc1->Texture2D.MipLevels = desc->Texture2D.MipLevels;
+        break;
+    case D3D11_SRV_DIMENSION_TEXTURE2DARRAY:
+        memcpy(&desc1->Texture2DArray, &desc->Texture2DArray, sizeof(desc->Texture2DArray));
+        break;
+    default:
+        memcpy(&desc1->Buffer, &desc->Buffer, sizeof(desc->BufferEx));
+        break;
+    }
+}
+
 static HRESULT STDMETHODCALLTYPE device_create_shader_resource_view(ID3D11Device5 *iface, ID3D11Resource *resource,
                                                                     const D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
                                                                     ID3D11ShaderResourceView **view)
 {
-    D3D11_SHADER_RESOURCE_VIEW_DESC1 desc1, *p = NULL;
-    if (desc) {
-        memset(&desc1, 0, sizeof(desc1));
-        desc1.Format = desc->Format;
-        desc1.ViewDimension = desc->ViewDimension;
-        switch (desc->ViewDimension) {
-        case D3D11_SRV_DIMENSION_TEXTURE2D:
-            desc1.Texture2D.MostDetailedMip = desc->Texture2D.MostDetailedMip;
-            desc1.Texture2D.MipLevels = desc->Texture2D.MipLevels;
-            break;
-        case D3D11_SRV_DIMENSION_TEXTURE2DARRAY:
-            memcpy(&desc1.Texture2DArray, &desc->Texture2DArray, sizeof(desc->Texture2DArray));
-            break;
-        default:
-            memcpy(&desc1.Buffer, &desc->Buffer, sizeof(desc->BufferEx));
-            break;
-        }
-        p = &desc1;
-    }
-    return device_create_shader_resource_view1(iface, resource, p, (ID3D11ShaderResourceView1 **)view);
+    D3D11_SHADER_RESOURCE_VIEW_DESC1 desc1;
+    if (desc)
+        srv_desc1(desc, &desc1);
+    return device_create_shader_resource_view1(iface, resource, desc ? &desc1 : NULL,
+                                               (ID3D11ShaderResourceView1 **)view);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_unordered_access_view1(ID3D11Device5 *iface, ID3D11Resource *resource,
@@ -1518,6 +1525,57 @@ static const IMimeDXGIPresenterVtbl presenter_vtbl = {
     presenter_create_swap_chain,
 };
 
+/* ------------------------------------------------------------------ IMimeD3D11Device */
+
+static D3dDevice *mime_impl(IMimeD3D11Device *iface) { return CONTAINING_RECORD(iface, D3dDevice, mime); }
+
+static HRESULT STDMETHODCALLTYPE mime_query(IMimeD3D11Device *iface, REFIID riid, void **out)
+{
+    return device_query(&mime_impl(iface)->iface, riid, out);
+}
+
+static ULONG STDMETHODCALLTYPE mime_add_ref(IMimeD3D11Device *iface) { return device_add_ref(&mime_impl(iface)->iface); }
+
+static ULONG STDMETHODCALLTYPE mime_release(IMimeD3D11Device *iface) { return device_release(&mime_impl(iface)->iface); }
+
+static HRESULT STDMETHODCALLTYPE mime_create_swizzled_view(IMimeD3D11Device *iface, ID3D11Resource *resource,
+                                                           const D3D11_SHADER_RESOURCE_VIEW_DESC *desc, UINT swizzle,
+                                                           ID3D11ShaderResourceView **out)
+{
+    D3D11_SHADER_RESOURCE_VIEW_DESC1 desc1;
+    if (!resource || !desc || !out)
+        return E_INVALIDARG;
+    srv_desc1(desc, &desc1);
+    D3dView *view;
+    HRESULT hr = D3dCreateView(mime_impl(iface), D3D_VIEW_SRV, resource, &desc1, swizzle, &view);
+    if (SUCCEEDED(hr))
+        *out = (ID3D11ShaderResourceView *)&view->iface;
+    return hr;
+}
+
+static void STDMETHODCALLTYPE mime_blit(IMimeD3D11Device *iface, ID3D11Resource *dst, UINT dst_sub,
+                                        const RECT *dst_rect, ID3D11Resource *src, UINT src_sub, const RECT *src_rect,
+                                        BOOL linear)
+{
+    D3dCtxBlit(mime_impl(iface)->immediate, dst, dst_sub, dst_rect, src, src_sub, src_rect, linear);
+}
+
+static void STDMETHODCALLTYPE mime_clear_depth_stencil(IMimeD3D11Device *iface, ID3D11DepthStencilView *view,
+                                                       UINT flags, FLOAT depth, UINT8 stencil,
+                                                       const D3D11_RECT *rects, UINT count)
+{
+    D3dCtxClearDepthStencilRects(mime_impl(iface)->immediate, view, flags, depth, stencil, rects, count);
+}
+
+static const IMimeD3D11DeviceVtbl mime_vtbl = {
+    mime_query,
+    mime_add_ref,
+    mime_release,
+    mime_create_swizzled_view,
+    mime_blit,
+    mime_clear_depth_stencil,
+};
+
 /* ------------------------------------------------------------------ ID3D11Multithread */
 
 static D3dDevice *mt_impl(ID3D11Multithread *iface) { return CONTAINING_RECORD(iface, D3dDevice, multithread); }
@@ -1579,6 +1637,7 @@ HRESULT D3dCreateDevice(IDXGIAdapter *adapter, UINT flags, const D3D_FEATURE_LEV
     device->iface.lpVtbl = &device_vtbl;
     device->dxgi.lpVtbl = &dxgi_vtbl;
     device->presenter.lpVtbl = &presenter_vtbl;
+    device->mime.lpVtbl = &mime_vtbl;
     device->multithread.lpVtbl = &mt_vtbl;
     device->refs = 1;
     device->feature_level = level;

@@ -1,0 +1,120 @@
+/*
+ * direct3d 9's formats as dxgi's. luminance and the formats without some
+ * components read through swizzles, missing color components being 1;
+ * depth formats are typeless so shaders may read them, as INTZ, DF24 and
+ * DF16 ask, and the 8-bit color formats typeless for their srgb views.
+ */
+#include "d3d9_private.h"
+
+#define SW(r, g, b, a) MIME_SWIZZLE(MIME_SWIZZLE_##r, MIME_SWIZZLE_##g, MIME_SWIZZLE_##b, MIME_SWIZZLE_##a)
+#define C(d3d, res, view, srgb, swizzle, bytes, flags)                                                                 \
+    {D3DFMT_##d3d, DXGI_FORMAT_##res, DXGI_FORMAT_##view, DXGI_FORMAT_##srgb, DXGI_FORMAT_UNKNOWN, swizzle, bytes, 1, \
+     bytes, flags}
+#define BC(d3d, res, view, srgb, bytes)                                                                                \
+    {(D3DFORMAT)(d3d), DXGI_FORMAT_##res, DXGI_FORMAT_##view, DXGI_FORMAT_##srgb, DXGI_FORMAT_UNKNOWN, 0, bytes, 4,   \
+     bytes, 0}
+#define DS(d3d, res, view, depth, swizzle, bytes, flags)                                                               \
+    {(D3DFORMAT)(d3d), DXGI_FORMAT_##res, DXGI_FORMAT_##view, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_##depth, swizzle,       \
+     bytes, 1, bytes, flags}
+
+#define R D9_FORMAT_RENDER
+#define S D9_FORMAT_SRGB
+#define F D9_FORMAT_FLOAT
+#define D D9_FORMAT_DEPTH
+#define ST D9_FORMAT_STENCIL
+#define L D9_FORMAT_LOCKABLE
+
+static const D9Format FORMATS[] = {
+    C(A8R8G8B8, B8G8R8A8_TYPELESS, B8G8R8A8_UNORM, B8G8R8A8_UNORM_SRGB, 0, 4, R | S),
+    C(X8R8G8B8, B8G8R8A8_TYPELESS, B8G8R8A8_UNORM, B8G8R8A8_UNORM_SRGB, SW(R, G, B, ONE), 4, R | S),
+    C(A8B8G8R8, R8G8B8A8_TYPELESS, R8G8B8A8_UNORM, R8G8B8A8_UNORM_SRGB, 0, 4, R | S),
+    C(X8B8G8R8, R8G8B8A8_TYPELESS, R8G8B8A8_UNORM, R8G8B8A8_UNORM_SRGB, SW(R, G, B, ONE), 4, R | S),
+    C(R5G6B5, B5G6R5_UNORM, B5G6R5_UNORM, UNKNOWN, 0, 2, R),
+    C(X1R5G5B5, B5G5R5A1_UNORM, B5G5R5A1_UNORM, UNKNOWN, SW(R, G, B, ONE), 2, R),
+    C(A1R5G5B5, B5G5R5A1_UNORM, B5G5R5A1_UNORM, UNKNOWN, 0, 2, R),
+    C(A4R4G4B4, B4G4R4A4_UNORM, B4G4R4A4_UNORM, UNKNOWN, 0, 2, R),
+    C(X4R4G4B4, B4G4R4A4_UNORM, B4G4R4A4_UNORM, UNKNOWN, SW(R, G, B, ONE), 2, R),
+    C(A8, A8_UNORM, A8_UNORM, UNKNOWN, 0, 1, R),
+    C(A2B10G10R10, R10G10B10A2_UNORM, R10G10B10A2_UNORM, UNKNOWN, 0, 4, R),
+    /* blue and red trade places: reads see it right, renderings swap the two. */
+    C(A2R10G10B10, R10G10B10A2_UNORM, R10G10B10A2_UNORM, UNKNOWN, SW(B, G, R, A), 4, R),
+    C(G16R16, R16G16_UNORM, R16G16_UNORM, UNKNOWN, SW(R, G, ONE, ONE), 4, R),
+    C(A16B16G16R16, R16G16B16A16_UNORM, R16G16B16A16_UNORM, UNKNOWN, 0, 8, R),
+    C(L8, R8_UNORM, R8_UNORM, UNKNOWN, SW(R, R, R, ONE), 1, R),
+    C(A8L8, R8G8_UNORM, R8G8_UNORM, UNKNOWN, SW(R, R, R, G), 2, R),
+    {D3DFMT_A4L4, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN,
+     SW(R, R, R, G), 1, 1, 2, D9_FORMAT_A4L4},
+    C(L16, R16_UNORM, R16_UNORM, UNKNOWN, SW(R, R, R, ONE), 2, R),
+    C(V8U8, R8G8_SNORM, R8G8_SNORM, UNKNOWN, SW(R, G, ONE, ONE), 2, 0),
+    C(Q8W8V8U8, R8G8B8A8_SNORM, R8G8B8A8_SNORM, UNKNOWN, 0, 4, 0),
+    C(V16U16, R16G16_SNORM, R16G16_SNORM, UNKNOWN, SW(R, G, ONE, ONE), 4, 0),
+    C(Q16W16V16U16, R16G16B16A16_SNORM, R16G16B16A16_SNORM, UNKNOWN, 0, 8, 0),
+    C(R16F, R16_FLOAT, R16_FLOAT, UNKNOWN, SW(R, ONE, ONE, ONE), 2, R | F),
+    C(G16R16F, R16G16_FLOAT, R16G16_FLOAT, UNKNOWN, SW(R, G, ONE, ONE), 4, R | F),
+    C(A16B16G16R16F, R16G16B16A16_FLOAT, R16G16B16A16_FLOAT, UNKNOWN, 0, 8, R | F),
+    C(R32F, R32_FLOAT, R32_FLOAT, UNKNOWN, SW(R, ONE, ONE, ONE), 4, R | F),
+    C(G32R32F, R32G32_FLOAT, R32G32_FLOAT, UNKNOWN, SW(R, G, ONE, ONE), 8, R | F),
+    C(A32B32G32R32F, R32G32B32A32_FLOAT, R32G32B32A32_FLOAT, UNKNOWN, 0, 16, R | F),
+    BC(D3DFMT_DXT1, BC1_TYPELESS, BC1_UNORM, BC1_UNORM_SRGB, 8),
+    BC(D3DFMT_DXT2, BC2_TYPELESS, BC2_UNORM, BC2_UNORM_SRGB, 16),
+    BC(D3DFMT_DXT3, BC2_TYPELESS, BC2_UNORM, BC2_UNORM_SRGB, 16),
+    BC(D3DFMT_DXT4, BC3_TYPELESS, BC3_UNORM, BC3_UNORM_SRGB, 16),
+    BC(D3DFMT_DXT5, BC3_TYPELESS, BC3_UNORM, BC3_UNORM_SRGB, 16),
+    BC(MAKEFOURCC('A', 'T', 'I', '1'), BC4_UNORM, BC4_UNORM, UNKNOWN, 8),
+    BC(MAKEFOURCC('A', 'T', 'I', '2'), BC5_UNORM, BC5_UNORM, UNKNOWN, 16),
+    DS(D3DFMT_D16_LOCKABLE, R16_TYPELESS, R16_UNORM, D16_UNORM, 0, 2, D | L),
+    DS(D3DFMT_D16, R16_TYPELESS, R16_UNORM, D16_UNORM, 0, 2, D),
+    DS(D3DFMT_D15S1, R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, 0, 4, D | ST),
+    DS(D3DFMT_D24S8, R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, 0, 4, D | ST),
+    DS(D3DFMT_D24X8, R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, 0, 4, D),
+    DS(D3DFMT_D24X4S4, R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, 0, 4, D | ST),
+    DS(D3DFMT_D32, R32_TYPELESS, R32_FLOAT, D32_FLOAT, 0, 4, D),
+    DS(D3DFMT_D32F_LOCKABLE, R32_TYPELESS, R32_FLOAT, D32_FLOAT, 0, 4, D | L),
+    DS(D3DFMT_D32_LOCKABLE, R32_TYPELESS, R32_FLOAT, D32_FLOAT, 0, 4, D | L),
+    DS(D3DFMT_D24FS8, R32G8X24_TYPELESS, R32_FLOAT_X8X24_TYPELESS, D32_FLOAT_S8X24_UINT, 0, 8, D | ST),
+    /* depth formats of the vendors' shadow and depth reading tricks, read as their depth in every component. */
+    DS(MAKEFOURCC('I', 'N', 'T', 'Z'), R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, SW(R, R, R, R), 4,
+       D | ST),
+    DS(MAKEFOURCC('D', 'F', '2', '4'), R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, SW(R, R, R, R), 4,
+       D),
+    DS(MAKEFOURCC('D', 'F', '1', '6'), R16_TYPELESS, R16_UNORM, D16_UNORM, SW(R, R, R, R), 2, D),
+    {(D3DFORMAT)MAKEFOURCC('N', 'U', 'L', 'L'), DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN,
+     DXGI_FORMAT_UNKNOWN, 0, 4, 1, 4, R | D9_FORMAT_NULL},
+};
+
+static const D9Format UNKNOWN_FORMAT = {D3DFMT_UNKNOWN};
+
+const D9Format *D9GetFormat(D3DFORMAT format)
+{
+    for (UINT i = 0; i < RTL_NUMBER_OF(FORMATS); i++)
+        if (FORMATS[i].d3d == format)
+            return &FORMATS[i];
+    return &UNKNOWN_FORMAT;
+}
+
+/* the bytes of a row of blocks as programs lock them, rows a multiple of 4 bytes. */
+UINT D9FormatPitch(const D9Format *f, UINT width)
+{
+    UINT blocks = (width + f->block - 1) / f->block;
+    return D9_ALIGN(blocks * f->bytes, 4);
+}
+
+UINT D9FormatRows(const D9Format *f, UINT height) { return (height + f->block - 1) / f->block; }
+
+void D9ConvertUpload(const D9Format *f, const BYTE *in, UINT in_pitch, BYTE *out, UINT out_pitch, UINT width,
+                     UINT rows)
+{
+    UINT bytes = (width + f->block - 1) / f->block * f->bytes;
+    for (UINT y = 0; y < rows; y++) {
+        const BYTE *s = in + (SIZE_T)y * in_pitch;
+        BYTE *d = out + (SIZE_T)y * out_pitch;
+        if (f->flags & D9_FORMAT_A4L4) {
+            for (UINT x = 0; x < width; x++) {
+                d[2 * x] = (BYTE)((s[x] & 0xF) * 17);
+                d[2 * x + 1] = (BYTE)((s[x] >> 4) * 17);
+            }
+        } else {
+            memcpy(d, s, bytes);
+        }
+    }
+}

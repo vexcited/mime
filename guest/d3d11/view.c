@@ -384,7 +384,7 @@ static BOOL buffer_range(D3dView *view, DXGI_FORMAT format, UINT first, UINT cou
     return TRUE;
 }
 
-static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *d)
+static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *d, UINT swizzle)
 {
     D3dResource *r = view->resource;
     if (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
@@ -401,9 +401,12 @@ static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RES
     }
     VkFormat format;
     VkImageAspectFlags aspect;
-    VkComponentMapping swizzle;
-    if (!view_format(r, d->Format, FALSE, &format, &aspect, &swizzle))
+    VkComponentMapping mapping;
+    if (!view_format(r, d->Format, FALSE, &format, &aspect, &mapping))
         return E_INVALIDARG;
+    /* d3d9.dll's swizzles take the place of the format's own. */
+    if (swizzle)
+        mapping = (VkComponentMapping){swizzle & 0xF, (swizzle >> 4) & 0xF, (swizzle >> 8) & 0xF, (swizzle >> 12) & 0xF};
     UINT mip = 0, mips = 1, layer = 0, layers = 1;
     VkImageViewType type;
     switch (d->ViewDimension) {
@@ -452,7 +455,7 @@ static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RES
     if (mip + mips > r->tex.mips || layer + layers > r->tex.layers || !mips || !layers)
         return E_INVALIDARG;
     view->range = (VkImageSubresourceRange){aspect, mip, mips, layer, layers};
-    if (image_view(device, view, type, format, swizzle, VK_IMAGE_USAGE_SAMPLED_BIT) != VK_SUCCESS)
+    if (image_view(device, view, type, format, mapping, VK_IMAGE_USAGE_SAMPLED_BIT) != VK_SUCCESS)
         return E_INVALIDARG;
     view->heap_kind = D3D_HEAP_SAMPLED_IMAGE;
     if (!(view->heap_index = D3dHeapAlloc(device, view->heap_kind)))
@@ -668,7 +671,7 @@ static HRESULT init_uav(D3dDevice *device, D3dView *view, const D3D11_UNORDERED_
 }
 
 HRESULT D3dCreateView(D3dDevice *device, D3dViewKind kind, ID3D11Resource *resource, const void *desc,
-                      D3dView **out)
+                      UINT swizzle, D3dView **out)
 {
     D3dResource *r = D3dResourceFrom(resource);
     if (!r || r->usage == D3D11_USAGE_STAGING)
@@ -709,7 +712,7 @@ HRESULT D3dCreateView(D3dDevice *device, D3dViewKind kind, ID3D11Resource *resou
     switch (kind) {
     case D3D_VIEW_SRV:
         view->desc.srv = d.srv;
-        hr = init_srv(device, view, &d.srv);
+        hr = init_srv(device, view, &d.srv, swizzle);
         break;
     case D3D_VIEW_RTV:
         view->desc.rtv = d.rtv;

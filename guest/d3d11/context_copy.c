@@ -512,6 +512,13 @@ void D3dCtxClearRenderTargetView(D3dContext *c, ID3D11RenderTargetView *iface, c
 void D3dCtxClearDepthStencilView(D3dContext *c, ID3D11DepthStencilView *iface, UINT flags, FLOAT depth,
                                  UINT8 stencil)
 {
+    D3dCtxClearDepthStencilRects(c, iface, flags, depth, stencil, NULL, 0);
+}
+
+/* d3d9.dll's clears of depth buffers, which its viewport and rectangles bound. */
+void D3dCtxClearDepthStencilRects(D3dContext *c, ID3D11DepthStencilView *iface, UINT flags, FLOAT depth,
+                                  UINT8 stencil, const D3D11_RECT *rects, UINT count)
+{
     D3dView *view = D3dViewFrom(iface, D3D_VIEW_DSV);
     if (!view)
         return;
@@ -525,7 +532,7 @@ void D3dCtxClearDepthStencilView(D3dContext *c, ID3D11DepthStencilView *iface, U
     VkClearValue value;
     value.depthStencil.depth = D3D_MAX(0.0f, D3D_MIN(depth, 1.0f));
     value.depthStencil.stencil = stencil;
-    clear_attachment(c, view, &value, aspects, NULL, 0);
+    clear_attachment(c, view, &value, aspects, rects, count);
 }
 
 /* a range of a buffer filled with an element repeated: a copy of it from the ring, past 4 bytes. */
@@ -747,6 +754,58 @@ void D3dCtxResolveSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, 
                                               VK_IMAGE_LAYOUT_GENERAL, 1, &resolve);
     else
         copy_texture(c, d, dst_sub, 0, 0, 0, s, src_sub, NULL);
+    c->pending_barrier = TRUE;
+    D3dContextUse(c, s);
+    D3dContextUse(c, d);
+}
+
+/*
+ * d3d9.dll's StretchRect and presents: a rectangle of a subresource to a
+ * rectangle of another, scaled and converted by a blit, multisampled
+ * sources of the same size resolved.
+ */
+void D3dCtxBlit(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, const RECT *dst_rect, ID3D11Resource *src,
+                UINT src_sub, const RECT *src_rect, BOOL linear)
+{
+    D3dResource *d = D3dResourceFrom(dst), *s = D3dResourceFrom(src);
+    if (!d || !s || !d->tex.image || !s->tex.image || dst_sub >= D3dSubresourceCount(d) ||
+        src_sub >= D3dSubresourceCount(s))
+        return;
+    UINT dm, dl, sm, sl;
+    D3dSubresourceDecompose(d, dst_sub, &dm, &dl);
+    D3dSubresourceDecompose(s, src_sub, &sm, &sl);
+    VkExtent3D se = D3dMipExtent(s, sm), de = D3dMipExtent(d, dm);
+    RECT sr = src_rect ? *src_rect : (RECT){0, 0, (LONG)se.width, (LONG)se.height};
+    RECT dr = dst_rect ? *dst_rect : (RECT){0, 0, (LONG)de.width, (LONG)de.height};
+    if (sr.right <= sr.left || sr.bottom <= sr.top || dr.right <= dr.left || dr.bottom <= dr.top)
+        return;
+    VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
+    if (!cmd)
+        return;
+    D3dVk *vk = &c->child.device->vk;
+    VkImageAspectFlags aspect = s->tex.aspect & d->tex.aspect;
+    if (!aspect)
+        aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    VkImageSubresourceLayers sl_ = {aspect, sm, sl, 1}, dl_ = {aspect, dm, dl, 1};
+    BOOL same = sr.right - sr.left == dr.right - dr.left && sr.bottom - sr.top == dr.bottom - dr.top;
+    if (s->tex.samples > 1 && same && aspect == VK_IMAGE_ASPECT_COLOR_BIT) {
+        VkImageResolve resolve = {sl_, {sr.left, sr.top, 0}, dl_, {dr.left, dr.top, 0},
+                                  {(UINT)(sr.right - sr.left), (UINT)(sr.bottom - sr.top), 1}};
+        vk->vkCmdResolveImage(cmd, s->tex.image, VK_IMAGE_LAYOUT_GENERAL, d->tex.image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                              &resolve);
+    } else if (same && s->tex.fmt->vk == d->tex.fmt->vk && s->tex.samples == d->tex.samples) {
+        VkImageCopy copy = {sl_, {sr.left, sr.top, 0}, dl_, {dr.left, dr.top, 0},
+                            {(UINT)(sr.right - sr.left), (UINT)(sr.bottom - sr.top), 1}};
+        vk->vkCmdCopyImage(cmd, s->tex.image, VK_IMAGE_LAYOUT_GENERAL, d->tex.image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                           &copy);
+    } else if (s->tex.samples <= 1 && d->tex.samples <= 1) {
+        VkImageBlit blit = {sl_, {{sr.left, sr.top, 0}, {sr.right, sr.bottom, 1}}, dl_,
+                            {{dr.left, dr.top, 0}, {dr.right, dr.bottom, 1}}};
+        vk->vkCmdBlitImage(cmd, s->tex.image, VK_IMAGE_LAYOUT_GENERAL, d->tex.image, VK_IMAGE_LAYOUT_GENERAL, 1, &blit,
+                           linear && aspect == VK_IMAGE_ASPECT_COLOR_BIT ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+    } else {
+        D3dLog("d3d11: no blit between multisampled images of other sizes");
+    }
     c->pending_barrier = TRUE;
     D3dContextUse(c, s);
     D3dContextUse(c, d);

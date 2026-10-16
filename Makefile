@@ -71,6 +71,8 @@ EXTRA_DLLS := msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D000000
 	d3dcompiler_47:0x7FF400000000
 # direct3d 10 and 10.1, over d3d11.dll's devices.
 EXTRA_DLLS += d3d12:0x7FF3E0000000
+# direct3d 9, over d3d11.dll's devices.
+EXTRA_DLLS += d3d9:0x7FF3D0000000
 EXTRA_DLLS += d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000 d3d10:0x7FF390000000 d3d10_1:0x7FF380000000
 EXTRA_NAMES := $(foreach d,$(EXTRA_DLLS),$(firstword $(subst :, ,$(d))))
 # the file name of each, winspool being a driver file.
@@ -618,6 +620,9 @@ X64_EXTRA_OBJ_d3d12 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC) $(DXBC_SRC) $
 DXBC_READER_SRC := guest/lib/dxbc/container.c guest/lib/dxbc/reader.c
 EXTRA_OBJ_d3dcompiler_47 := $(patsubst %.c,$(OBJ)/user/%.o,$(DXBC_READER_SRC))
 X64_EXTRA_OBJ_d3dcompiler_47 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DXBC_READER_SRC))
+
+EXTRA_OBJ_d3d9 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC))
+X64_EXTRA_OBJ_d3d9 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC))
 
 # d3d10 reads containers; d3d10_1 makes devices as d3d10 does.
 EXTRA_OBJ_d3d10 := $(OBJ)/user/guest/lib/dxbc/container.o

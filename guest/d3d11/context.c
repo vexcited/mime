@@ -1035,7 +1035,9 @@ static VkStencilOp stencil_op(D3D11_STENCIL_OP op)
 
 static VkPrimitiveTopology topology(D3D11_PRIMITIVE_TOPOLOGY t)
 {
-    switch (t) {
+    if ((UINT)t == MIME_TOPOLOGY_TRIANGLEFAN)
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    switch ((UINT)t & ~MIME_TOPOLOGY_D3D9) {
     case D3D_PRIMITIVE_TOPOLOGY_POINTLIST:
         return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     case D3D_PRIMITIVE_TOPOLOGY_LINELIST:
@@ -1120,11 +1122,12 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
     vk->vkCmdSetLineWidth(cmd, 1.0f);
     VkPrimitiveTopology t = topology(c->topology);
     vk->vkCmdSetPrimitiveTopology(cmd, t);
-    /* strips cut at the all ones index, as direct3d 10 and later always do. */
-    vk->vkCmdSetPrimitiveRestartEnable(cmd, t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
-                                                t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
-                                                t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
-                                                t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY);
+    /* strips cut at the all ones index, as direct3d 10 and later always do, but not direct3d 9's. */
+    vk->vkCmdSetPrimitiveRestartEnable(cmd, !(c->topology & MIME_TOPOLOGY_D3D9) &&
+                                                (t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
+                                                 t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
+                                                 t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
+                                                 t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY));
     if (device->has_tessellation) {
         UINT points = t == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST ? c->topology - D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + 1 : 1;
         vk->vkCmdSetPatchControlPointsEXT(cmd, points);
