@@ -568,6 +568,13 @@ uint32_t dxil_load_pointer(Compiler *c, uint32_t id, uint32_t *type)
     return spv_load(&c->b, p.type, p.id);
 }
 
+void dxil_store_pointer(Compiler *c, uint32_t id, uint32_t value)
+{
+    Pointer p;
+    if (!pointer_of(c, id, &p))
+        spv_store(&c->b, p.id, value);
+}
+
 static void set_pointer(Compiler *c, uint32_t id, const Pointer *p)
 {
     Value *s = dxil_slot(c, id);
@@ -847,7 +854,7 @@ static void insert_value(Compiler *c, const DxInst *ins)
 static void load(Compiler *c, const DxInst *ins)
 {
     Pointer p;
-    if (pointer_of(c, ins->ops[0], &p))
+    if (dxil_resource_global(c, ins) || pointer_of(c, ins->ops[0], &p))
         return;
     uint32_t type = dxil_type(c, ins->type);
     uint32_t v = spv_load(&c->b, p.type, p.id);
@@ -869,7 +876,7 @@ static void store(Compiler *c, const DxInst *ins)
 static void gep(Compiler *c, const DxInst *ins)
 {
     Pointer base, out;
-    if (pointer_of(c, ins->ops[0], &base) || access(c, &base, ins->ops + 1, ins->count - 1, &out))
+    if (dxil_resource_global(c, ins) || pointer_of(c, ins->ops[0], &base) || access(c, &base, ins->ops + 1, ins->count - 1, &out))
         return;
     set_pointer(c, ins->value, &out);
 }
@@ -1253,7 +1260,9 @@ static void terminator(Compiler *c, uint32_t b)
             spv_return(&c->b);
         break;
     default:
-        spv_op_void(&c->b, SpvOpUnreachable, NULL, 0);
+        /* ignoring a hit or ending the search already ended the block. */
+        if (c->b.block_open)
+            spv_op_void(&c->b, SpvOpUnreachable, NULL, 0);
         c->b.block_open = 0;
         break;
     }
@@ -1324,6 +1333,8 @@ static int compile_function(Compiler *c, const DxFunction *f, uint32_t id)
     c->values = dxil_alloc(c, (f->value_count + 1) * sizeof(Value));
     c->cfg = dxil_alloc(c, sizeof(Cfg));
     if (!c->values || !c->cfg)
+        return -1;
+    if (dxil_is_ray_stage(c->kind) && dxil_ray_arguments(c, f))
         return -1;
     if (cfg_build(c->cfg, &c->m, f, &c->arena))
         return dxil_fail(c, c->cfg->error[0] ? c->cfg->error : "control flow");
@@ -1400,6 +1411,35 @@ static int compile_function(Compiler *c, const DxFunction *f, uint32_t id)
 
 /* ------------------------------------------------------------------ the entry point */
 
+/*
+ * the name a library exports a function by: dxc mangles names as msvc
+ * does, "\01?name@@" and the signature, and direct3d exports the name.
+ */
+static size_t demangled(const char *name, const char **start)
+{
+    if (name[0] == 1)
+        name++;
+    if (name[0] != '?') {
+        *start = name;
+        return __builtin_strlen(name);
+    }
+    name++;
+    size_t n = 0;
+    while (name[n] && name[n] != '@')
+        n++;
+    *start = name;
+    return n;
+}
+
+int dxil_export_matches(const char *function, const char *export_name)
+{
+    if (!function)
+        return 0;
+    const char *start;
+    size_t n = demangled(function, &start);
+    return __builtin_strlen(export_name) == n && !__builtin_memcmp(start, export_name, n);
+}
+
 static const DxFunction *function_of(Compiler *c, const DxMetadata *md)
 {
     if (!md || md->kind != DM_VALUE)
@@ -1469,6 +1509,11 @@ static int read_properties(Compiler *c, const DxMetadata *list)
                 for (uint32_t k = 0; k < 3; k++)
                     c->thread_group[k] = (uint32_t)dx_md_int(&c->m, dx_md_op(&c->m, v, 0), k, 1);
             break;
+        case 8:
+            /* a library's function: its shader kind. */
+            if (c->kind == KIND_LIBRARY)
+                c->kind = (uint32_t)dx_md_int(&c->m, list, i + 1, KIND_LIBRARY);
+            break;
         default: break;
         }
     }
@@ -1489,17 +1534,41 @@ static int build(Compiler *c)
     if (!entries || !entries->count || entries->nodes[0] >= c->m.metadata_count)
         return dxil_fail(c, "no entry point");
     const DxMetadata *entry = &c->m.metadata[entries->nodes[0]];
+    const DxMetadata *resources = NULL;
+    if (c->kind == KIND_LIBRARY) {
+        /* a library's export, its resources those of the whole library. */
+        entry = NULL;
+        for (uint32_t i = 0; i < entries->count && !entry; i++) {
+            const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : NULL;
+            const DxFunction *fn = function_of(c, dx_md_op(&c->m, md, 0));
+            if (fn && c->options->export_name && dxil_export_matches(fn->name, c->options->export_name))
+                entry = md;
+        }
+        if (!entry)
+            return dxil_fail(c, "no such export in the library");
+        const DxNamedMetadata *named = dx_named(&c->m, "dx.resources");
+        if (named && named->count && named->nodes[0] < c->m.metadata_count)
+            resources = &c->m.metadata[named->nodes[0]];
+    } else {
+        resources = dx_md_op(&c->m, entry, 3);
+    }
     const DxFunction *main_fn = function_of(c, dx_md_op(&c->m, entry, 0));
     if (!main_fn)
         return dxil_fail(c, "no entry function");
     if (read_properties(c, dx_md_op(&c->m, entry, 4)))
         return -1;
+    if (c->kind == KIND_LIBRARY || (c->kind > KIND_COMPUTE && c->kind < KIND_MESH && !dxil_is_ray_stage(c->kind)))
+        return dxil_fail(c, "a library function of a kind not supported");
+    if (dxil_is_ray_stage(c->kind)) {
+        spv_capability(b, SpvCapabilityRayTracingKHR);
+        spv_extension(b, "SPV_KHR_ray_tracing");
+    }
     c->native16 = (c->flags >> 23) & 1;
     if (c->native16) {
         type_f16(c);
         type_u16(c);
     }
-    if (dxil_read_signatures(c, dx_md_op(&c->m, entry, 2)) || dxil_read_resources(c, dx_md_op(&c->m, entry, 3)))
+    if (dxil_read_signatures(c, dx_md_op(&c->m, entry, 2)) || dxil_read_resources(c, resources))
         return -1;
     if (c->kind == KIND_MESH || c->kind == KIND_AMPLIFICATION) {
         spv_capability(b, SpvCapabilityMeshShadingEXT);
@@ -1546,12 +1615,68 @@ static int build(Compiler *c)
                                       [KIND_HULL] = SpvExecutionModelTessellationControl,
                                       [KIND_DOMAIN] = SpvExecutionModelTessellationEvaluation,
                                       [KIND_COMPUTE] = SpvExecutionModelGLCompute,
+                                      [KIND_RAYGEN] = SpvExecutionModelRayGenerationKHR,
+                                      [KIND_INTERSECTION] = SpvExecutionModelIntersectionKHR,
+                                      [KIND_ANYHIT] = SpvExecutionModelAnyHitKHR,
+                                      [KIND_CLOSESTHIT] = SpvExecutionModelClosestHitKHR,
+                                      [KIND_MISS] = SpvExecutionModelMissKHR,
+                                      [KIND_CALLABLE] = SpvExecutionModelCallableKHR,
                                       [KIND_MESH] = SpvExecutionModelMeshEXT,
                                       [KIND_AMPLIFICATION] = SpvExecutionModelTaskEXT};
     uint32_t model[2] = {MODELS[c->kind], main};
     spv_emit_string(b, SECTION_ENTRY_POINTS, SpvOpEntryPoint, model, 2, "main", c->interface, c->interface_count);
     dxil_execution_modes(c, main);
     return b->failed ? dxil_fail(c, "out of memory") : c->error ? -1 : 0;
+}
+
+int dxil_library_exports(const void *bytecode, size_t length, DxilExport *out, uint32_t max,
+                         const MimeAllocator *alloc)
+{
+    uint32_t size;
+    const uint8_t *part = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('D', 'X', 'I', 'L'), &size);
+    if (!part || size < 24 || (*(const uint32_t *)part >> 16) != KIND_LIBRARY)
+        return -1;
+    uint32_t offset = *(const uint32_t *)(part + 16), bc_size = *(const uint32_t *)(part + 20);
+    if (offset > size - 8 || bc_size > size - 8 - offset)
+        return -1;
+    Compiler *c = mime_alloc(alloc, sizeof(*c));
+    if (!c)
+        return -1;
+    __builtin_memset(c, 0, sizeof(*c));
+    int count = -1;
+    if (!dx_module_read(&c->m, part + 8 + offset, bc_size, alloc)) {
+        count = 0;
+        const DxNamedMetadata *entries = dx_named(&c->m, "dx.entryPoints");
+        for (uint32_t i = 0; entries && i < entries->count; i++) {
+            const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : NULL;
+            const DxFunction *fn = function_of(c, dx_md_op(&c->m, md, 0));
+            if (!fn || !fn->name)
+                continue;
+            if ((uint32_t)count < max) {
+                DxilExport *e = &out[count];
+                __builtin_memset(e, 0, sizeof(*e));
+                const char *start;
+                size_t n = demangled(fn->name, &start);
+                if (n >= sizeof(e->name))
+                    n = sizeof(e->name) - 1;
+                __builtin_memcpy(e->name, start, n);
+                const DxMetadata *props = dx_md_op(&c->m, md, 4);
+                for (uint32_t k = 0; props && k + 1 < props->count; k += 2) {
+                    uint64_t tag = dx_md_int(&c->m, props, k, ~0ull), value = dx_md_int(&c->m, props, k + 1, 0);
+                    if (tag == 8)
+                        e->kind = (uint32_t)value;
+                    else if (tag == 6)
+                        e->payload_size = (uint32_t)value;
+                    else if (tag == 7)
+                        e->attribute_size = (uint32_t)value;
+                }
+            }
+            count++;
+        }
+    }
+    dx_module_free(&c->m);
+    mime_free(alloc, c);
+    return count;
 }
 
 int dxil_is(const void *bytecode, size_t length)
@@ -1591,7 +1716,8 @@ int dxil_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
     info->program = (DxbcProgram)kind;
     info->major = (version >> 4) & 0xF;
     info->minor = version & 0xF;
-    if (kind > KIND_COMPUTE && kind != KIND_MESH && kind != KIND_AMPLIFICATION) {
+    if (kind > KIND_COMPUTE && kind != KIND_MESH && kind != KIND_AMPLIFICATION &&
+        !(kind == KIND_LIBRARY && options && options->export_name)) {
         set_error(info, "a shader kind not supported");
         return -1;
     }
@@ -1630,6 +1756,7 @@ int dxil_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
         set_error(info, c->error ? c->error : "out of memory");
         result = -1;
     }
+    info->program = (DxbcProgram)c->kind;
     info->thread_group[0] = c->thread_group[0];
     info->thread_group[1] = c->thread_group[1];
     info->thread_group[2] = c->thread_group[2];

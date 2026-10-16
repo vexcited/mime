@@ -73,6 +73,8 @@ static VkBufferUsageFlags buffer_usage(D12Device *device)
     if (device->has_rt)
         usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
                  VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    if (device->has_rt_pipeline)
+        usage |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
     return usage;
 }
 

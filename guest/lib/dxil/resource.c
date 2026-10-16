@@ -51,6 +51,16 @@ int dxil_read_resources(Compiler *c, const DxMetadata *list)
                 continue;
             ResourceInfo *r = &c->ranges[cls][dx_md_int(&c->m, md, 0, i)];
             r->cls = (uint8_t)cls;
+            /* shader model 6.6 libraries cast their globals of handles to the resource's type. */
+            const DxMetadata *g = dx_md_op(&c->m, md, 1);
+            uint32_t gid = g && g->kind == DM_VALUE ? g->value : DX_NONE;
+            const DxValue *gv = gid != DX_NONE ? dx_value(&c->m, NULL, gid) : NULL;
+            if (gv && gv->kind == DV_EXPR && gv->sub == DX_EXPR_CAST && gv->count) {
+                gid = gv->ops[0];
+                gv = dx_value(&c->m, NULL, gid);
+            }
+            if (gv && gv->kind == DV_GLOBAL)
+                r->global = gid + 1;
             r->space = (uint32_t)dx_md_int(&c->m, md, 3, 0);
             r->lower = (uint32_t)dx_md_int(&c->m, md, 4, 0);
             r->size = (uint32_t)dx_md_int(&c->m, md, 5, 1);
@@ -153,6 +163,75 @@ static int create_from_binding(Compiler *c, const DxInst *ins)
     return 0;
 }
 
+/* the register of an element of an array of resources: the first's plus the flat index of a gep's operands. */
+static uint32_t element_register(Compiler *c, uint32_t reg, const uint32_t *ops, uint32_t count)
+{
+    const DxValue *base = dx_value(&c->m, c->f, ops[0]);
+    const DxType *t = base ? &c->m.types[c->m.types[base->type].element] : NULL;
+    for (uint32_t i = 2; t && t->kind == DT_ARRAY && i < count; i++) {
+        uint32_t below = 1;
+        for (const DxType *e = &c->m.types[t->element]; e->kind == DT_ARRAY; e = &c->m.types[e->element])
+            below *= e->count;
+        uint32_t k = spv_op2(&c->b, SpvOpIMul, c->t_u32, dxil_value(c, ops[i]), dxil_uconst(c, below));
+        reg = spv_op2(&c->b, SpvOpIAdd, c->t_u32, reg, k);
+        t = &c->m.types[t->element];
+    }
+    return reg;
+}
+
+/* the handle a pointer to a resource's global, or to an element of its array, stands for; 0 when it is none. */
+static int resource_pointer(Compiler *c, uint32_t id, Handle *out)
+{
+    const DxValue *v = dx_value(&c->m, c->f, id);
+    if (!v)
+        return 0;
+    if (v->kind == DV_GLOBAL) {
+        for (uint32_t cls = 0; cls < 4; cls++)
+            for (uint32_t i = 0; i < c->range_count[cls]; i++)
+                if (c->ranges[cls][i].global == id + 1) {
+                    __builtin_memset(out, 0, sizeof(*out));
+                    out->r = c->ranges[cls][i];
+                    out->index = DX_NONE;
+                    out->spv_register = dxil_uconst(c, out->r.lower);
+                    return 1;
+                }
+        return 0;
+    }
+    if (v->kind == DV_EXPR && v->sub == DX_EXPR_GEP && v->count >= 2) {
+        if (!resource_pointer(c, v->ops[0], out))
+            return 0;
+        out->spv_register = element_register(c, out->spv_register, v->ops, v->count);
+        return 1;
+    }
+    Value *s = dxil_slot(c, id);
+    if (v->kind == DV_INSTRUCTION && s && s->kind == VAL_HANDLE && s->handle < c->handle_count) {
+        *out = c->handles[s->handle];
+        return 1;
+    }
+    return 0;
+}
+
+int dxil_resource_global(Compiler *c, const DxInst *ins)
+{
+    Handle h;
+    if (!c->options->export_name || !resource_pointer(c, ins->ops[0], &h))
+        return 0;
+    if (ins->op == DI_GEP)
+        h.spv_register = element_register(c, h.spv_register, ins->ops, ins->count);
+    set_handle(c, ins->value, &h);
+    return 1;
+}
+
+static int create_for_lib(Compiler *c, const DxInst *ins)
+{
+    Value *s = dxil_slot(c, ins->ops[2]);
+    if (!s || s->kind != VAL_HANDLE || s->handle >= c->handle_count)
+        return dxil_fail(c, "a library handle of something not a resource");
+    Handle h = c->handles[s->handle];
+    set_handle(c, ins->value, &h);
+    return 0;
+}
+
 static int create_from_heap(Compiler *c, const DxInst *ins)
 {
     Handle h = {{0}, ins->ops[2], 1, (uint8_t)(dxil_constant(c, ins->ops[4], 0) & 1), 0};
@@ -249,9 +328,57 @@ static uint32_t push_word(Compiler *c, uint32_t byte_offset)
     return spv_load(&c->b, c->t_u32, ptr);
 }
 
+/* a dword of the shader record, which holds the arguments of local root signatures. */
+static uint32_t record_word(Compiler *c, uint32_t byte_offset)
+{
+    if (!c->record) {
+        /* direct3d's records are 4096 bytes at most. */
+        uint32_t array = spv_type_array_unique(&c->b, c->t_u32, 1024);
+        dxil_decorate(c, array, SpvDecorationArrayStride, 4);
+        uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
+        uint32_t offset = 0;
+        spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
+        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, NULL, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        c->record = dxil_global(c, SpvStorageClassShaderRecordBufferKHR, block, 0);
+    }
+    uint32_t w[3] = {c->record, dxil_uconst(c, 0),
+                     spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, byte_offset, dxil_uconst(c, 2))};
+    uint32_t ptr =
+        spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassShaderRecordBufferKHR, c->t_u32), w, 3);
+    return spv_load(&c->b, c->t_u32, ptr);
+}
+
+/* a dword of a root argument: in the push constants, or the shader record for local root signatures. */
+static uint32_t root_word(Compiler *c, const DxbcRootBinding *b, uint32_t byte_offset)
+{
+    return b->record ? record_word(c, byte_offset) : push_word(c, byte_offset);
+}
+
+/* the heap index of a table's first descriptor: a push constant, or a descriptor handle in the shader record. */
+static uint32_t table_start(Compiler *c, const DxbcRootBinding *b)
+{
+    if (!b->record)
+        return push_word(c, dxil_uconst(c, b->push_offset));
+    uint32_t bits = c->options->handle_bits, shift = c->options->increment_shift;
+    uint32_t lo = record_word(c, dxil_uconst(c, b->push_offset));
+    if (bits < 32)
+        lo = spv_op2(&c->b, SpvOpBitwiseAnd, c->t_u32, lo, dxil_uconst(c, (1u << bits) - 1));
+    uint32_t index = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, lo, dxil_uconst(c, shift));
+    if (bits > 32 && shift) {
+        uint32_t hi = record_word(c, dxil_uconst(c, b->push_offset + 4));
+        hi = spv_op2(&c->b, SpvOpBitwiseAnd, c->t_u32, hi, dxil_uconst(c, (1u << (bits - 32)) - 1));
+        hi = spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, hi, dxil_uconst(c, 32 - shift));
+        index = spv_op2(&c->b, SpvOpBitwiseOr, c->t_u32, index, hi);
+    }
+    return index;
+}
+
 /* the register a handle names, as a u32. */
 static uint32_t handle_register(Compiler *c, const Handle *h)
 {
+    if (h->spv_register)
+        return h->spv_register;
     const DxValue *v = dx_value(&c->m, c->f, h->index);
     if (!v || v->kind == DV_UNDEF)
         return dxil_uconst(c, h->r.lower);
@@ -284,7 +411,7 @@ static uint32_t heap_index(Compiler *c, const Handle *h, const DxbcRootBinding *
         return dxil_uconst(c, 0);
     uint32_t reg = handle_register(c, h);
     uint32_t from_base = spv_op2(&c->b, SpvOpISub, c->t_u32, reg, dxil_uconst(c, b->base));
-    uint32_t start = b->source == DXBC_SOURCE_TABLE ? push_word(c, dxil_uconst(c, b->push_offset)) : dxil_uconst(c, 0);
+    uint32_t start = b->source == DXBC_SOURCE_TABLE ? table_start(c, b) : dxil_uconst(c, 0);
     uint32_t base = spv_op2(&c->b, SpvOpIAdd, c->t_u32, start, dxil_uconst(c, b->offset));
     return nonuniform(c, h, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, from_base));
 }
@@ -480,7 +607,8 @@ static uint32_t address_pointer(Compiler *c, uint32_t address, uint32_t pointer_
 
 static uint32_t root_address(Compiler *c, const DxbcRootBinding *b)
 {
-    uint32_t parts[2] = {push_word(c, dxil_uconst(c, b->push_offset)), push_word(c, dxil_uconst(c, b->push_offset + 4))};
+    uint32_t parts[2] = {root_word(c, b, dxil_uconst(c, b->push_offset)),
+                         root_word(c, b, dxil_uconst(c, b->push_offset + 4))};
     return dxil_vector(c, c->t_u32, parts, 2);
 }
 
@@ -533,9 +661,10 @@ typedef struct Memory {
     uint32_t address;
     uint32_t size;
     uint32_t counter;
-    /* root constants: the push constants' offset, in bytes. */
+    /* root constants: the push constants' offset, in bytes, or the shader record's. */
     int constants;
     uint32_t push_offset;
+    uint8_t record;
 } Memory;
 
 static int memory_of(Compiler *c, const Handle *h, Memory *out)
@@ -547,6 +676,7 @@ static int memory_of(Compiler *c, const Handle *h, Memory *out)
     if (b && b->source == DXBC_SOURCE_CONSTANTS) {
         out->constants = 1;
         out->push_offset = b->push_offset;
+        out->record = b->record;
         return 0;
     }
     if (b && b->source == DXBC_SOURCE_ADDRESS) {
@@ -591,9 +721,11 @@ static uint32_t word_in_bounds(Compiler *c, const Memory *m, uint32_t word)
 /* reads a word; out of bounds reads of views with a record give zero. */
 static uint32_t read_word(Compiler *c, const Memory *m, uint32_t word)
 {
-    if (m->constants)
-        return push_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, dxil_uconst(c, m->push_offset),
-                                    spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, word, dxil_uconst(c, 2))));
+    if (m->constants) {
+        uint32_t at = spv_op2(&c->b, SpvOpIAdd, c->t_u32, dxil_uconst(c, m->push_offset),
+                              spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, word, dxil_uconst(c, 2)));
+        return m->record ? record_word(c, at) : push_word(c, at);
+    }
     uint32_t in = 0;
     if (m->size) {
         in = word_in_bounds(c, m, word);
@@ -1159,7 +1291,8 @@ static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
                                 spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, row, dxil_uconst(c, 4)));
         for (uint32_t i = 0; i < 4; i++)
             if (needed & (1u << i))
-                words[i] = push_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, dxil_uconst(c, 4 * i)));
+                words[i] = m.record ? record_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, dxil_uconst(c, 4 * i)))
+                                    : push_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, dxil_uconst(c, 4 * i)));
     } else if (needed) {
         uint32_t v4 = c->t_uvec[4], in = 0;
         if (m.size) {
@@ -1459,6 +1592,7 @@ int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op)
 {
     switch (op) {
     case 57: return create_handle(c, ins) ? -1 : 1;
+    case 160: return create_for_lib(c, ins) ? -1 : 1;
     case 216: return annotate(c, ins) ? -1 : 1;
     case 217: return create_from_binding(c, ins) ? -1 : 1;
     case 218: return create_from_heap(c, ins) ? -1 : 1;

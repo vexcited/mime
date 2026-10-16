@@ -96,6 +96,8 @@ enum { DXBC_SOURCE_CONSTANTS, DXBC_SOURCE_ADDRESS, DXBC_SOURCE_TABLE, DXBC_SOURC
 typedef struct DxbcRootBinding {
     uint8_t type;
     uint8_t source;
+    /* a local root signature's: push_offset is in the shader record, tables are descriptor handles. */
+    uint8_t record;
     uint32_t space, base, count;
     uint32_t push_offset;
     uint32_t offset;
@@ -142,6 +144,13 @@ typedef struct DxbcCompileOptions {
      */
     const DxbcSignature *linked_inputs;
     const DxbcSignature *per_primitive;
+    /*
+     * libraries: the function to compile, by its export name, and how a
+     * gpu descriptor handle in a shader record gives its heap index: the
+     * index times the increment in its low handle_bits bits.
+     */
+    const char *export_name;
+    uint32_t handle_bits, increment_shift;
 } DxbcCompileOptions;
 
 /* what a slot of a stage holds, as the shader declares it. */

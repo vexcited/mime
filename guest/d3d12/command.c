@@ -327,6 +327,8 @@ static void reset_state(D12CommandList *list)
     list->state_dirty = TRUE;
     list->bound_graphics = NULL;
     list->bound_cs = VK_NULL_HANDLE;
+    list->rt_state = NULL;
+    list->bound_rt = VK_NULL_HANDLE;
     memset(list->so, 0, sizeof(list->so));
     list->so_active = FALSE;
     list->predicated = FALSE;
@@ -384,6 +386,8 @@ static void set_root_address(D12CommandList *list, BOOL compute, UINT index, D3D
     set_root_words(list, compute, index, 0, 2, &address);
 }
 
+static void set_offsets(D12CommandList *list, VkPipelineBindPoint point, D12RootSignature *root);
+
 /* binds the heaps' descriptor buffers and points the sets at them for a bind point, as its root signature lays them. */
 static void bind_sets(D12CommandList *list, BOOL compute)
 {
@@ -406,21 +410,28 @@ static void bind_sets(D12CommandList *list, BOOL compute)
     }
     if (!s->sets_dirty || !s->root)
         return;
-    VkPipelineBindPoint point = compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    set_offsets(list, compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, s->root);
+    s->sets_dirty = FALSE;
+}
+
+/* points a bind point's sets at the heaps' descriptor buffers, as a root signature lays them. */
+static void set_offsets(D12CommandList *list, VkPipelineBindPoint point, D12RootSignature *root)
+{
+    D12Device *device = list->child.device;
+    D12Vk *vk = &device->vk;
     UINT32 indices[2] = {0, 1};
     VkDeviceSize offsets[2] = {device->record_offset, 0};
-    vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 0, 2, indices, offsets);
-    if (s->root->static_layout)
-        vk->vkCmdBindDescriptorBufferEmbeddedSamplersEXT(list->cmd, point, s->root->layout, 2);
+    vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, root->layout, 0, 2, indices, offsets);
+    if (root->static_layout)
+        vk->vkCmdBindDescriptorBufferEmbeddedSamplersEXT(list->cmd, point, root->layout, 2);
     UINT32 record_index = 0;
     VkDeviceSize record_offset = 0;
-    vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 3, 1, &record_index, &record_offset);
+    vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, root->layout, 3, 1, &record_index, &record_offset);
     if (device->atomic_layout) {
         D12DescriptorHeap *resources = list->heaps[0] ? list->heaps[0] : device->dummy_heaps[0];
         VkDeviceSize atomic_offset = resources->atomic_offset;
-        vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 4, 1, &record_index, &atomic_offset);
+        vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, root->layout, 4, 1, &record_index, &atomic_offset);
     }
-    s->sets_dirty = FALSE;
 }
 
 /* push constants hold one bind point's root arguments at a time: the one about to run. */
@@ -1907,9 +1918,42 @@ static void STDMETHODCALLTYPE list_copy_acceleration_structure(ID3D12GraphicsCom
     D12CopyAccelerationStructure(list->child.device, list->cmd, dst, src, mode);
 }
 
-static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList10 *iface, ID3D12StateObject *state) {}
+static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList10 *iface, ID3D12StateObject *state)
+{
+    D12CommandList *list = impl(iface);
+    if (list->open)
+        list->rt_state = D12StateObjectFrom(state);
+}
 
-static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc) {}
+/* direct3d's shader tables are vulkan's: the ray generation record is a region of one record. */
+static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc)
+{
+    D12CommandList *list = impl(iface);
+    VkPipeline pipeline = list->rt_state ? D12StateObjectPipeline(list->rt_state) : VK_NULL_HANDLE;
+    if (!list->open || !desc || !pipeline || !list->compute.root || !desc->Width || !desc->Height || !desc->Depth)
+        return;
+    D12Vk *vk = vk_of(list);
+    end_rendering(list);
+    if (list->bound_rt != pipeline) {
+        vk->vkCmdBindPipeline(list->cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
+        list->bound_rt = pipeline;
+    }
+    bind_sets(list, TRUE);
+    set_offsets(list, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, list->compute.root);
+    push_root(list, TRUE);
+    vk->vkCmdSetRayTracingPipelineStackSizeKHR(list->cmd, (UINT32)D12StateObjectStackSize(list->rt_state));
+    VkStridedDeviceAddressRegionKHR raygen = {desc->RayGenerationShaderRecord.StartAddress,
+                                              desc->RayGenerationShaderRecord.SizeInBytes,
+                                              desc->RayGenerationShaderRecord.SizeInBytes};
+    VkStridedDeviceAddressRegionKHR miss = {desc->MissShaderTable.StartAddress, desc->MissShaderTable.StrideInBytes,
+                                            desc->MissShaderTable.SizeInBytes};
+    VkStridedDeviceAddressRegionKHR hit = {desc->HitGroupTable.StartAddress, desc->HitGroupTable.StrideInBytes,
+                                           desc->HitGroupTable.SizeInBytes};
+    VkStridedDeviceAddressRegionKHR callable = {desc->CallableShaderTable.StartAddress,
+                                                desc->CallableShaderTable.StrideInBytes,
+                                                desc->CallableShaderTable.SizeInBytes};
+    vk->vkCmdTraceRaysKHR(list->cmd, &raygen, &miss, &hit, &callable, desc->Width, desc->Height, desc->Depth);
+}
 
 static void STDMETHODCALLTYPE list_rs_set_shading_rate(ID3D12GraphicsCommandList10 *iface, UINT rate,
                                                        const UINT *combiners)
@@ -1958,6 +2002,8 @@ enum {
     CALL_INDEX_BUFFER,
     CALL_VERTEX_BUFFERS,
     CALL_EXECUTE_INDIRECT,
+    CALL_STATE_OBJECT,
+    CALL_DISPATCH_RAYS,
 };
 
 typedef struct BundleCall {
@@ -2025,6 +2071,20 @@ static void STDMETHODCALLTYPE bundle_dispatch_mesh(ID3D12GraphicsCommandList10 *
     BundleCall *c = record(impl(iface), CALL_DISPATCH_MESH, 0);
     if (c)
         c->a[0] = x, c->a[1] = y, c->a[2] = z;
+}
+
+static void STDMETHODCALLTYPE bundle_set_pipeline_state1(ID3D12GraphicsCommandList10 *iface, ID3D12StateObject *state)
+{
+    BundleCall *c = record(impl(iface), CALL_STATE_OBJECT, 0);
+    if (c)
+        c->a[0] = (ULONG_PTR)state;
+}
+
+static void STDMETHODCALLTYPE bundle_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc)
+{
+    BundleCall *c = desc ? record(impl(iface), CALL_DISPATCH_RAYS, sizeof(*desc)) : NULL;
+    if (c)
+        memcpy(c + 1, desc, sizeof(*desc));
 }
 
 static void STDMETHODCALLTYPE bundle_ia_set_primitive_topology(ID3D12GraphicsCommandList10 *iface,
@@ -2344,6 +2404,8 @@ static void STDMETHODCALLTYPE list_execute_bundle(ID3D12GraphicsCommandList10 *i
                                (ID3D12Resource *)(ULONG_PTR)c->a[2], c->a[3], (ID3D12Resource *)(ULONG_PTR)c->a[4],
                                c->a[5]);
             break;
+        case CALL_STATE_OBJECT: v->SetPipelineState1(iface, (ID3D12StateObject *)(ULONG_PTR)c->a[0]); break;
+        case CALL_DISPATCH_RAYS: v->DispatchRays(iface, (const D3D12_DISPATCH_RAYS_DESC *)extra); break;
         default: break;
         }
     }
@@ -2515,8 +2577,8 @@ static const struct ID3D12GraphicsCommandList10Vtbl g_bundle_vtbl = {
     list_build_acceleration_structure,
     list_emit_postbuild_info,
     list_copy_acceleration_structure,
-    list_set_pipeline_state1,
-    list_dispatch_rays,
+    bundle_set_pipeline_state1,
+    bundle_dispatch_rays,
     list_rs_set_shading_rate,
     list_rs_set_shading_rate_image,
     bundle_dispatch_mesh,

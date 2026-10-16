@@ -1,5 +1,6 @@
 /*
- * ray queries of shader model 6.5, to SPV_KHR_ray_query. a handle dxil
+ * ray tracing: the stages of ray tracing pipelines, to SPV_KHR_ray_tracing,
+ * and ray queries of shader model 6.5, to SPV_KHR_ray_query. a handle dxil
  * gives a query is an index in an array of them, so handles may go through
  * phis, selects and arrays as dxil lets them.
  */
@@ -178,9 +179,202 @@ static int state(Compiler *c, const DxInst *ins, const StateOp *s)
     return 0;
 }
 
+/* ------------------------------------------------------------------ ray tracing stages */
+
+int dxil_is_ray_stage(uint32_t kind) { return kind >= KIND_RAYGEN && kind <= KIND_CALLABLE; }
+
+static uint32_t pointee_type(Compiler *c, uint32_t dx_pointer_type, uint32_t *dx_element)
+{
+    const DxType *t = &c->m.types[dx_pointer_type];
+    if (t->kind != DT_POINTER) {
+        dxil_fail(c, "a payload that is not a pointer");
+        return c->t_u32;
+    }
+    if (dx_element)
+        *dx_element = t->element;
+    return dxil_type(c, t->element);
+}
+
+/* the payload of a hit or miss shader, a callable shader's data, and the attributes of a hit. */
+int dxil_ray_arguments(Compiler *c, const DxFunction *f)
+{
+    const DxType *ft = &c->m.types[f->type];
+    for (uint32_t k = 0; k < ft->count && k < 2; k++) {
+        uint32_t storage;
+        if (k == 1)
+            storage = SpvStorageClassHitAttributeKHR;
+        else if (c->kind == KIND_CALLABLE)
+            storage = SpvStorageClassIncomingCallableDataKHR;
+        else
+            storage = SpvStorageClassIncomingRayPayloadKHR;
+        uint32_t type = pointee_type(c, ft->members[k], NULL);
+        uint32_t *var = k == 1 ? &c->hit_attributes : &c->incoming;
+        if (!*var)
+            *var = dxil_global(c, storage, type, 0);
+        dxil_set_pointer(c, c->m.value_count + k, *var, type, storage);
+    }
+    return c->error ? -1 : 0;
+}
+
+/* the variable a trace or call passes, one by type, each at a location of its own. */
+static uint32_t outgoing(Compiler *c, uint32_t type, uint32_t storage)
+{
+    uint32_t location = 0;
+    for (uint32_t i = 0; i < c->payload_count; i++) {
+        if (c->payloads[i].type == type && c->payloads[i].storage == storage)
+            return c->payloads[i].var;
+        location += c->payloads[i].storage == storage;
+    }
+    if (c->payload_count == sizeof(c->payloads) / sizeof(c->payloads[0])) {
+        dxil_fail(c, "too many kinds of payloads");
+        return 0;
+    }
+    uint32_t var = dxil_global(c, storage, type, 0);
+    dxil_decorate(c, var, SpvDecorationLocation, location);
+    c->payloads[c->payload_count].type = type;
+    c->payloads[c->payload_count].var = var;
+    c->payloads[c->payload_count++].storage = storage;
+    return var;
+}
+
+/* a call passing what a pointer points to, written back after. */
+static int pass_through(Compiler *c, uint32_t pointer, uint32_t storage, uint32_t op, const uint32_t *w, uint32_t n)
+{
+    uint32_t type;
+    uint32_t value = dxil_load_pointer(c, pointer, &type);
+    if (!value)
+        return -1;
+    uint32_t var = outgoing(c, type, storage);
+    if (!var)
+        return -1;
+    spv_store(&c->b, var, value);
+    uint32_t words[12];
+    __builtin_memcpy(words, w, n * sizeof(uint32_t));
+    words[n] = var;
+    spv_op_void(&c->b, op, words, n + 1);
+    dxil_store_pointer(c, pointer, spv_load(&c->b, type, var));
+    return 0;
+}
+
+static int trace_ray(Compiler *c, const DxInst *ins)
+{
+    if (ins->count < 17)
+        return dxil_fail(c, "a short TraceRay");
+    uint32_t as = dxil_acceleration_structure(c, ins->ops[2]);
+    if (!as)
+        return -1;
+    uint32_t w[10] = {as,
+                      dxil_value(c, ins->ops[3]),
+                      dxil_value(c, ins->ops[4]),
+                      dxil_value(c, ins->ops[5]),
+                      dxil_value(c, ins->ops[6]),
+                      dxil_value(c, ins->ops[7]),
+                      vec3_of(c, ins, 8),
+                      dxil_value(c, ins->ops[11]),
+                      vec3_of(c, ins, 12),
+                      dxil_value(c, ins->ops[15])};
+    return pass_through(c, ins->ops[16], SpvStorageClassRayPayloadKHR, SpvOpTraceRayKHR, w, 10);
+}
+
+static int report_hit(Compiler *c, const DxInst *ins)
+{
+    uint32_t type;
+    uint32_t value = dxil_load_pointer(c, ins->ops[4], &type);
+    if (!value)
+        return -1;
+    if (!c->hit_attributes)
+        c->hit_attributes = dxil_global(c, SpvStorageClassHitAttributeKHR, type, 0);
+    spv_store(&c->b, c->hit_attributes, value);
+    dxil_set_plain(c, ins->value, spv_op2(&c->b, SpvOpReportIntersectionKHR, c->t_bool, dxil_value(c, ins->ops[2]),
+                                          dxil_value(c, ins->ops[3])));
+    return 0;
+}
+
+/* a system value of the ray tracing stages: its built-in, its type and how dxil indexes it. */
+typedef struct RaySystemValue {
+    uint16_t dx;
+    uint16_t builtin;
+    /* 0 a u32, 1 a float, 2 a column of a uvec3, 3 of a vec3, 4 an element of a 4x3 matrix by row and column. */
+    uint8_t shape;
+} RaySystemValue;
+
+static const RaySystemValue RAY_SYSTEM_VALUES[] = {
+    {141, SpvBuiltInInstanceCustomIndexKHR, 0},
+    {142, SpvBuiltInInstanceId, 0},
+    {143, SpvBuiltInHitKindKHR, 0},
+    {144, SpvBuiltInIncomingRayFlagsKHR, 0},
+    {145, SpvBuiltInLaunchIdKHR, 2},
+    {146, SpvBuiltInLaunchSizeKHR, 2},
+    {147, SpvBuiltInWorldRayOriginKHR, 3},
+    {148, SpvBuiltInWorldRayDirectionKHR, 3},
+    {149, SpvBuiltInObjectRayOriginKHR, 3},
+    {150, SpvBuiltInObjectRayDirectionKHR, 3},
+    {151, SpvBuiltInObjectToWorldKHR, 4},
+    {152, SpvBuiltInWorldToObjectKHR, 4},
+    {153, SpvBuiltInRayTminKHR, 1},
+    {154, SpvBuiltInRayTmaxKHR, 1},
+    {161, SpvBuiltInPrimitiveId, 0},
+    {213, SpvBuiltInRayGeometryIndexKHR, 0},
+};
+
+static int system_value(Compiler *c, const DxInst *ins, const RaySystemValue *sv)
+{
+    static const uint32_t SHAPES = 5;
+    uint32_t types[SHAPES];
+    types[0] = c->t_u32;
+    types[1] = c->t_f32;
+    types[2] = c->t_uvec[3];
+    types[3] = c->t_vec[3];
+    types[4] = spv_type_matrix(&c->b, c->t_vec[3], 4);
+    uint32_t type = types[sv->shape];
+    uint32_t v = spv_load(&c->b, type, dxil_builtin(c, sv->builtin, SpvStorageClassInput, type));
+    if (sv->shape == 2 || sv->shape == 3) {
+        uint32_t scalar = sv->shape == 2 ? c->t_u32 : c->t_f32;
+        uint64_t col = dxil_constant(c, ins->ops[2], ~0ull);
+        v = col < 3 ? dxil_extract(c, scalar, v, (uint32_t)col)
+                    : spv_op2(&c->b, SpvOpVectorExtractDynamic, scalar, v, dxil_value(c, ins->ops[2]));
+    } else if (sv->shape == 4) {
+        uint64_t row = dxil_constant(c, ins->ops[2], ~0ull), col = dxil_constant(c, ins->ops[3], ~0ull);
+        if (row >= 3 || col >= 4)
+            return dxil_fail(c, "a ray matrix read at an index that is not constant");
+        uint32_t e[3] = {v, (uint32_t)col, (uint32_t)row};
+        v = spv_op(&c->b, SpvOpCompositeExtract, c->t_f32, e, 3);
+    }
+    dxil_set_plain(c, ins->value, v);
+    return 0;
+}
+
+static int ray_stage_op(Compiler *c, const DxInst *ins, uint32_t op)
+{
+    switch (op) {
+    case 155:
+        spv_op_void(&c->b, SpvOpIgnoreIntersectionKHR, NULL, 0);
+        c->b.block_open = 0;
+        return 1;
+    case 156:
+        spv_op_void(&c->b, SpvOpTerminateRayKHR, NULL, 0);
+        c->b.block_open = 0;
+        return 1;
+    case 157: return trace_ray(c, ins) ? -1 : 1;
+    case 158: return report_hit(c, ins) ? -1 : 1;
+    case 159: {
+        uint32_t index = dxil_value(c, ins->ops[2]);
+        return pass_through(c, ins->ops[3], SpvStorageClassCallableDataKHR, SpvOpExecuteCallableKHR, &index, 1) ? -1 : 1;
+    }
+    }
+    for (uint32_t i = 0; i < sizeof(RAY_SYSTEM_VALUES) / sizeof(RAY_SYSTEM_VALUES[0]); i++)
+        if (RAY_SYSTEM_VALUES[i].dx == op)
+            return system_value(c, ins, &RAY_SYSTEM_VALUES[i]) ? -1 : 1;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ dx.op */
+
 int dxil_ray_op(Compiler *c, const DxInst *ins, uint32_t op)
 {
-    if (op < OP_ALLOCATE || op > 215 || op == 213)
+    if ((op >= 141 && op <= 161) || op == 213)
+        return ray_stage_op(c, ins, op);
+    if (op < OP_ALLOCATE || op > 215)
         return 0;
     if (!c->ray_queries)
         return dxil_fail(c, "a ray query without an allocation"), -1;

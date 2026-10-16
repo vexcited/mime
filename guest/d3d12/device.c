@@ -212,6 +212,15 @@ static HRESULT create_vulkan_device(D12Device *device)
         extensions[n++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
         extensions[n++] = VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME;
         device->has_rt = TRUE;
+        /* pipelines, and their libraries keeping their groups' handles for AddToStateObject. */
+        if (has_extension(available, count, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
+            has_extension(available, count, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) &&
+            has_extension(available, count, VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME)) {
+            extensions[n++] = VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME;
+            extensions[n++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;
+            extensions[n++] = VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME;
+            device->has_rt_pipeline = TRUE;
+        }
     }
 #undef WANT
     HeapFree(GetProcessHeap(), 0, available);
@@ -253,8 +262,13 @@ static HRESULT create_vulkan_device(D12Device *device)
                                             device->has_divisor ? (void *)&divisor : divisor.pNext};
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
     VkPhysicalDeviceVulkan11Features f11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
+    VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT group_handles = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT, &f11};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR, &group_handles};
     VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR rt_maintenance = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR, &f11};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR,
+        device->has_rt_pipeline ? (void *)&rt_pipeline : (void *)&f11};
     VkPhysicalDeviceRayQueryFeaturesKHR ray_query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
                                                      &rt_maintenance};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR as = {
@@ -331,6 +345,11 @@ static HRESULT create_vulkan_device(D12Device *device)
     rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
     if (!as.accelerationStructure || !ray_query.rayQuery || !rt_maintenance.rayTracingMaintenance1)
         device->has_rt = FALSE;
+    rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplay = FALSE;
+    rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplayMixed = FALSE;
+    if (!device->has_rt || !rt_pipeline.rayTracingPipeline || !rt_pipeline.rayTraversalPrimitiveCulling ||
+        !group_handles.pipelineLibraryGroupHandles)
+        device->has_rt_pipeline = FALSE;
 
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT};
@@ -339,8 +358,11 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
         device->has_mesh ? (void *)&mesh_props : mesh_props.pNext};
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_props = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR, &dbp};
     VkPhysicalDeviceAccelerationStructurePropertiesKHR as_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR, &dbp};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR,
+        device->has_rt_pipeline ? (void *)&rt_props : (void *)&dbp};
     VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT, device->has_rt ? (void *)&as_props : (void *)&dbp};
     VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
@@ -350,7 +372,14 @@ static HRESULT create_vulkan_device(D12Device *device)
     device->db.pNext = NULL;
     /* direct3d aligns scratch memory to 256 bytes. */
     if (as_props.minAccelerationStructureScratchOffsetAlignment > D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT)
-        device->has_rt = FALSE;
+        device->has_rt = device->has_rt_pipeline = FALSE;
+    /* shader identifiers are group handles and shader tables vulkan's: their sizes and alignments must agree. */
+    if (rt_props.shaderGroupHandleSize != D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES ||
+        rt_props.shaderGroupHandleAlignment > D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT ||
+        rt_props.shaderGroupBaseAlignment > D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT ||
+        rt_props.maxShaderGroupStride < 4096 ||
+        rt_props.maxRayRecursionDepth < D3D12_RAYTRACING_MAX_DECLARABLE_TRACE_RECURSION_DEPTH)
+        device->has_rt_pipeline = FALSE;
     /* direct3d's index buffer views, read as dxgi formats, and every stage of the lists' draws and dispatches. */
     device->dgc_stages = dgc_props.supportedIndirectCommandsShaderStages;
     if (!(dgc_props.supportedIndirectCommandsInputModes & VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT) ||
@@ -611,7 +640,8 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_EXISTING_HEAPS, 4, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS4, 12, FALSE, 0, device->has_native16);
     FEATURE(D3D12_FEATURE_CROSS_NODE, 8, 0, FALSE);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS5, 12, FALSE, 0, 0);
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS5, 12, FALSE, 0,
+            device->has_rt_pipeline ? D3D12_RAYTRACING_TIER_1_1 : D3D12_RAYTRACING_TIER_NOT_SUPPORTED);
     FEATURE(D3D12_FEATURE_DISPLAYABLE, 8, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, FALSE, FALSE, 0, 0, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 0);
@@ -1568,13 +1598,20 @@ static HRESULT STDMETHODCALLTYPE device_create_meta_command(ID3D12Device14 *ifac
     return E_INVALIDARG;
 }
 
-/* raytracing pipelines are not supported, as OPTIONS5 reports. */
 static HRESULT STDMETHODCALLTYPE device_create_state_object(ID3D12Device14 *iface, const D3D12_STATE_OBJECT_DESC *desc,
                                                             REFIID riid, void **out)
 {
-    if (out)
-        *out = NULL;
-    return E_NOTIMPL;
+    if (!out)
+        return E_POINTER;
+    *out = NULL;
+    D12StateObject *so;
+    HRESULT hr = D12CreateStateObject(impl(iface), desc, NULL, &so);
+    if (FAILED(hr))
+        return hr;
+    ID3D12StateObject *object = (ID3D12StateObject *)so;
+    hr = object->lpVtbl->QueryInterface(object, riid, out);
+    object->lpVtbl->Release(object);
+    return hr;
 }
 
 static void STDMETHODCALLTYPE device_get_raytracing_prebuild_info(
@@ -1603,9 +1640,19 @@ static HRESULT STDMETHODCALLTYPE device_add_to_state_object(ID3D12Device14 *ifac
                                                             const D3D12_STATE_OBJECT_DESC *addition,
                                                             ID3D12StateObject *state, REFIID riid, void **out)
 {
-    if (out)
-        *out = NULL;
-    return E_NOTIMPL;
+    if (!out)
+        return E_POINTER;
+    *out = NULL;
+    D12StateObject *parent = D12StateObjectFrom(state), *so;
+    if (!parent)
+        return E_INVALIDARG;
+    HRESULT hr = D12CreateStateObject(impl(iface), addition, parent, &so);
+    if (FAILED(hr))
+        return hr;
+    ID3D12StateObject *object = (ID3D12StateObject *)so;
+    hr = object->lpVtbl->QueryInterface(object, riid, out);
+    object->lpVtbl->Release(object);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_shader_cache_session(ID3D12Device14 *iface, const void *desc,

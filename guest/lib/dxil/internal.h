@@ -21,6 +21,12 @@ enum {
     KIND_DOMAIN,
     KIND_COMPUTE,
     KIND_LIBRARY,
+    KIND_RAYGEN,
+    KIND_INTERSECTION,
+    KIND_ANYHIT,
+    KIND_CLOSESTHIT,
+    KIND_MISS,
+    KIND_CALLABLE,
     KIND_MESH = 13,
     KIND_AMPLIFICATION = 14,
 };
@@ -152,6 +158,8 @@ typedef struct ResourceInfo {
     uint32_t stride;
     uint32_t samples;
     uint8_t counter, coherent, rov, comparison;
+    /* libraries: the global standing for the range, 0 for none. */
+    uint32_t global;
 } ResourceInfo;
 
 typedef struct Handle {
@@ -159,6 +167,8 @@ typedef struct Handle {
     /* the dxil value of the register, absolute in its space, or of the heap index. */
     uint32_t index;
     uint8_t heap, nonuniform, annotated;
+    /* libraries: the register as a spir-v value, instead of index. */
+    uint32_t spv_register;
 } Handle;
 
 enum { VAL_NONE, VAL_PLAIN, VAL_PARTS, VAL_HANDLE, VAL_POINTER };
@@ -263,6 +273,12 @@ typedef struct Compiler {
     /* the resolved operands of phis, by fixup. */
     uint32_t *phi_values;
     uint32_t current;
+    /* ray tracing stages: the variables of payloads and hit attributes, the shader record. */
+    uint32_t hit_attributes, incoming, record;
+    struct {
+        uint32_t type, var, storage;
+    } payloads[8];
+    uint32_t payload_count;
     /* ray queries: an array of them, a handle its index, and the flags each allocation gives. */
     uint32_t ray_queries, ray_query_count, ray_query_flags;
     uint32_t *ray_query_constant_flags;
@@ -304,6 +320,7 @@ void dxil_end_if(Compiler *c, uint32_t merge);
 void dxil_set_pointer(Compiler *c, uint32_t id, uint32_t ptr, uint32_t type, uint32_t storage);
 /* the value a pointer operand points to, and its type. */
 uint32_t dxil_load_pointer(Compiler *c, uint32_t id, uint32_t *type);
+void dxil_store_pointer(Compiler *c, uint32_t id, uint32_t value);
 
 /* io.c: signatures and the stages' own operations. */
 int dxil_read_signatures(Compiler *c, const DxMetadata *list);
@@ -315,14 +332,19 @@ void dxil_emit_tasks(Compiler *c);
 
 /* resource.c: handles and the operations of resources. */
 int dxil_read_resources(Compiler *c, const DxMetadata *list);
+/* libraries: a load or element of a resource's global, which gives a handle; 1 when it is one. */
+int dxil_resource_global(Compiler *c, const DxInst *ins);
 int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op);
 
 /* ops.c: arithmetic, waves and the rest of dx.op. */
 int dxil_math_op(Compiler *c, const DxInst *ins, uint32_t op);
 
-/* raytracing.c: ray queries. */
+/* raytracing.c: ray queries and the ray tracing stages. */
 void dxil_prepare_ray_queries(Compiler *c, const DxFunction *f);
 int dxil_ray_op(Compiler *c, const DxInst *ins, uint32_t op);
+int dxil_is_ray_stage(uint32_t kind);
+/* an entry function's payload and attributes, the variables of the stage. */
+int dxil_ray_arguments(Compiler *c, const DxFunction *f);
 /* the acceleration structure a handle reaches. */
 uint32_t dxil_acceleration_structure(Compiler *c, uint32_t handle);
 

@@ -188,16 +188,21 @@
     X(vkCmdEndTransformFeedbackEXT)                                                                                    \
     X(vkCmdBeginConditionalRenderingEXT)                                                                               \
     X(vkCmdEndConditionalRenderingEXT)                                                                                 \
-    X(vkGetAccelerationStructureBuildSizesKHR)                                                                      \
-    X(vkCreateAccelerationStructureKHR)                                                                             \
-    X(vkDestroyAccelerationStructureKHR)                                                                            \
-    X(vkGetAccelerationStructureDeviceAddressKHR)                                                                   \
-    X(vkGetDeviceAccelerationStructureCompatibilityKHR)                                                             \
-    X(vkCmdBuildAccelerationStructuresKHR)                                                                          \
-    X(vkCmdCopyAccelerationStructureKHR)                                                                            \
-    X(vkCmdCopyAccelerationStructureToMemoryKHR)                                                                    \
-    X(vkCmdCopyMemoryToAccelerationStructureKHR)                                                                    \
-    X(vkCmdWriteAccelerationStructuresPropertiesKHR)
+    X(vkGetAccelerationStructureBuildSizesKHR)                                                                         \
+    X(vkCreateAccelerationStructureKHR)                                                                                \
+    X(vkDestroyAccelerationStructureKHR)                                                                               \
+    X(vkGetAccelerationStructureDeviceAddressKHR)                                                                      \
+    X(vkGetDeviceAccelerationStructureCompatibilityKHR)                                                                \
+    X(vkCmdBuildAccelerationStructuresKHR)                                                                             \
+    X(vkCmdCopyAccelerationStructureKHR)                                                                               \
+    X(vkCmdCopyAccelerationStructureToMemoryKHR)                                                                       \
+    X(vkCmdCopyMemoryToAccelerationStructureKHR)                                                                       \
+    X(vkCmdWriteAccelerationStructuresPropertiesKHR)                                                                   \
+    X(vkCreateRayTracingPipelinesKHR)                                                                                  \
+    X(vkGetRayTracingShaderGroupHandlesKHR)                                                                            \
+    X(vkGetRayTracingShaderGroupStackSizeKHR)                                                                          \
+    X(vkCmdTraceRaysKHR)                                                                                               \
+    X(vkCmdSetRayTracingPipelineStackSizeKHR)
 
 typedef struct D12Vk {
     VkInstance instance;
@@ -452,6 +457,8 @@ typedef struct D12RootSignature {
     UINT *binding_stages;
     UINT binding_count;
     UINT push_size;
+    /* local root signatures: the bytes of their arguments in a shader record. */
+    UINT record_size;
     UINT static_count;
     VkDescriptorSetLayout static_layout;
     VkPipelineLayout layout;
@@ -645,6 +652,9 @@ typedef struct D12RootState {
 
 typedef struct D12CommandList {
     ID3D12GraphicsCommandList10 iface;
+    /* the ray tracing pipeline set, and the one bound. */
+    struct D12StateObject *rt_state;
+    VkPipeline bound_rt;
     D12Child child;
     D3D12_COMMAND_LIST_TYPE type;
     D12CommandAllocator *allocator;
@@ -763,8 +773,8 @@ struct D12Device {
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;
     VkShaderStageFlags dgc_stages;
-    /* acceleration structures and ray queries. */
-    BOOL has_rt;
+    /* acceleration structures and ray queries, and ray tracing pipelines. */
+    BOOL has_rt, has_rt_pipeline;
     /* acceleration structures by gpu virtual address. */
     SRWLOCK as_lock;
     D12AccelerationStructure *as_list;
@@ -832,6 +842,15 @@ struct D12Device {
     VkSemaphore init_timeline;
     UINT64 init_serial;
 };
+
+/* stateobject.c: ray tracing pipelines and collections. */
+typedef struct D12StateObject D12StateObject;
+HRESULT D12CreateStateObject(D12Device *device, const D3D12_STATE_OBJECT_DESC *desc, D12StateObject *parent,
+                             D12StateObject **out);
+D12StateObject *D12StateObjectFrom(ID3D12StateObject *iface);
+/* the pipeline of an executable state object, VK_NULL_HANDLE for a collection, and its stack size. */
+VkPipeline D12StateObjectPipeline(D12StateObject *so);
+UINT64 D12StateObjectStackSize(D12StateObject *so);
 
 /* raytracing.c: acceleration structures, by the gpu virtual address direct3d gives them. */
 VkAccelerationStructureKHR D12AccelerationStructureAt(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va);

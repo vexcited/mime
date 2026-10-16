@@ -1480,6 +1480,12 @@ typedef enum D3D12_RAYTRACING_TIER {
     D3D12_RAYTRACING_TIER_1_1 = 11,
 } D3D12_RAYTRACING_TIER;
 
+typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS5 {
+    BOOL SRVOnlyTiledResourceTier3;
+    UINT RenderPassesTier;
+    D3D12_RAYTRACING_TIER RaytracingTier;
+} D3D12_FEATURE_DATA_D3D12_OPTIONS5;
+
 typedef enum D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE {
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL = 0,
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL = 1,
@@ -2257,6 +2263,27 @@ typedef struct ID3D12Debug3 ID3D12Debug3;
     ID3D12Fence_METHODS(T)                                                                                             \
     D3D12_FENCE_FLAGS(STDMETHODCALLTYPE *GetCreationFlags)(T * This);
 
+#define ID3D12StateObject_METHODS(T) ID3D12Pageable_METHODS(T)
+
+typedef struct D3D12_PROGRAM_IDENTIFIER {
+    UINT64 OpaqueData[4];
+} D3D12_PROGRAM_IDENTIFIER;
+
+typedef struct ID3D12StateObjectProperties ID3D12StateObjectProperties;
+typedef struct ID3D12StateObjectProperties1 ID3D12StateObjectProperties1;
+
+#define ID3D12StateObjectProperties_METHODS(T)                                                                         \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    void *(STDMETHODCALLTYPE *GetShaderIdentifier)(T * This, LPCWSTR export_name);                                   \
+    UINT64(STDMETHODCALLTYPE *GetShaderStackSize)(T * This, LPCWSTR export_name);                                    \
+    UINT64(STDMETHODCALLTYPE *GetPipelineStackSize)(T * This);                                                        \
+    void(STDMETHODCALLTYPE *SetPipelineStackSize)(T * This, UINT64 size);
+
+#define ID3D12StateObjectProperties1_METHODS(T)                                                                        \
+    ID3D12StateObjectProperties_METHODS(T)                                                                             \
+    D3D12_PROGRAM_IDENTIFIER *(STDMETHODCALLTYPE *GetProgramIdentifier)(T * This, D3D12_PROGRAM_IDENTIFIER * ret,    \
+                                                                       LPCWSTR program_name);
+
 #define ID3D12PipelineState_METHODS(T)                                                                                 \
     ID3D12Pageable_METHODS(T)                                                                                          \
     HRESULT(STDMETHODCALLTYPE *GetCachedBlob)(T * This, ID3DBlob * *blob);
@@ -2767,6 +2794,9 @@ MIME_COM_INTERFACE(ID3D12CommandAllocator)
 MIME_COM_INTERFACE(ID3D12Fence)
 MIME_COM_INTERFACE(ID3D12Fence1)
 MIME_COM_INTERFACE(ID3D12PipelineState)
+MIME_COM_INTERFACE(ID3D12StateObject)
+MIME_COM_INTERFACE(ID3D12StateObjectProperties)
+MIME_COM_INTERFACE(ID3D12StateObjectProperties1)
 MIME_COM_INTERFACE(ID3D12DescriptorHeap)
 MIME_COM_INTERFACE(ID3D12CommandList)
 MIME_COM_INTERFACE(ID3D12GraphicsCommandList)
@@ -2825,6 +2855,11 @@ MIME_DEFINE_GUID(IID_ID3D12CommandAllocator, 0x6102DEE4, 0xAF59, 0x4B09, 0xB9, 0
                  0x24);
 MIME_DEFINE_GUID(IID_ID3D12Fence, 0x0A753DCF, 0xC4D8, 0x4B91, 0xAD, 0xF6, 0xBE, 0x5A, 0x60, 0xD9, 0x5A, 0x76);
 MIME_DEFINE_GUID(IID_ID3D12Fence1, 0x433685FE, 0xE22B, 0x4CA0, 0xA8, 0xDB, 0xB5, 0xB4, 0xF4, 0xDD, 0x0E, 0x4A);
+MIME_DEFINE_GUID(IID_ID3D12StateObject, 0x47016943, 0xFCA8, 0x4594, 0x93, 0xEA, 0xAF, 0x25, 0x8B, 0x55, 0x34, 0x6D);
+MIME_DEFINE_GUID(IID_ID3D12StateObjectProperties, 0xDE5FA827, 0x9BF9, 0x4F26, 0x89, 0xFF, 0xD7, 0xF5, 0x6F, 0xDE, 0x38,
+                 0x60);
+MIME_DEFINE_GUID(IID_ID3D12StateObjectProperties1, 0x460CAAC7, 0x1D24, 0x446A, 0xA1, 0x84, 0xCA, 0x67, 0xDB, 0x49, 0x41,
+                 0x38);
 MIME_DEFINE_GUID(IID_ID3D12PipelineState, 0x765A30F3, 0xF624, 0x4C6F, 0xA8, 0x28, 0xAC, 0xE9, 0x48, 0x62, 0x24, 0x45);
 MIME_DEFINE_GUID(IID_ID3D12DescriptorHeap, 0x8EFB471D, 0x616C, 0x4F49, 0x90, 0xF7, 0x12, 0x7B, 0xB7, 0x63, 0xFA, 0x51);
 MIME_DEFINE_GUID(IID_ID3D12QueryHeap, 0x0D9658AE, 0xED45, 0x469E, 0xA6, 0x1D, 0x97, 0x0E, 0xC5, 0x83, 0xCA, 0xB4);

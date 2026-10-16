@@ -704,12 +704,19 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
     root->flags = d.flags;
     root->param_count = d.param_count;
 
-    /* each parameter's place in the push constants: a table's heap index, the constants, a buffer's address. */
+    /*
+     * each parameter's place in the push constants: a table's heap index, the constants, a buffer's address.
+     * a local root signature's are in the shader record instead, tables and addresses 8 bytes aligned to 8.
+     */
+    BOOL local = (d.flags & D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE) != 0;
     UINT push = 0;
     for (UINT i = 0; i < d.param_count; i++) {
         const D3D12_ROOT_PARAMETER1 *p = &d.params[i];
         D12RootParam *rp = &root->params[i];
         UINT stages = visibility_stages(p->ShaderVisibility);
+        UINT first = root->binding_count;
+        if (local && p->ParameterType != D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+            push = (UINT)D12_ALIGN(push, 8);
         rp->type = p->ParameterType;
         rp->push_offset = push;
         switch (p->ParameterType) {
@@ -731,8 +738,8 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
                 if (r->NumDescriptors != ~0u)
                     offset += r->NumDescriptors;
             }
-            rp->constants = 1;
-            push += 4;
+            rp->constants = local ? 2 : 1;
+            push += local ? 8 : 4;
             break;
         }
         case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS: {
@@ -764,9 +771,12 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
             break;
         }
         }
+        for (UINT j = first; j < root->binding_count; j++)
+            root->bindings[j].record = (uint8_t)local;
     }
-    root->push_size = push;
-    if (push > D12_PUSH_SIZE) {
+    root->push_size = local ? 0 : push;
+    root->record_size = local ? push : 0;
+    if (push > D12_PUSH_SIZE && !local) {
         D12Log("d3d12: a root signature takes %u bytes of push constants, more than the gpu has", push);
         hr = E_INVALIDARG;
     }
