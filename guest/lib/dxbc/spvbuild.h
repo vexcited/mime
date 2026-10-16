@@ -84,6 +84,9 @@ uint32_t spv_type_image(SpvBuilder *b, uint32_t sampled_type, uint32_t dim, uint
                         uint32_t ms, uint32_t sampled, uint32_t format);
 uint32_t spv_type_sampled_image(SpvBuilder *b, uint32_t image);
 uint32_t spv_type_sampler(SpvBuilder *b);
+uint32_t spv_type_matrix(SpvBuilder *b, uint32_t column, uint32_t count);
+/* a type without operands: acceleration structures, ray queries. */
+uint32_t spv_type_opaque(SpvBuilder *b, uint32_t op);
 uint32_t spv_const(SpvBuilder *b, uint32_t type, uint32_t bits);
 uint32_t spv_const64(SpvBuilder *b, uint32_t type, uint64_t bits);
 uint32_t spv_const_bool(SpvBuilder *b, int value);

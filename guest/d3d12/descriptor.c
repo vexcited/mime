@@ -857,6 +857,12 @@ void D12CreateSrv(D12Device *device, D12Resource *resource, const D3D12_SHADER_R
                   D3D12_CPU_DESCRIPTOR_HANDLE dest)
 {
     DxbcRecord record = null_record(device);
+    /* shaders read the address of an acceleration structure from its record. */
+    if (desc && desc->ViewDimension == D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE) {
+        record.address = desc->RaytracingAccelerationStructure.Location;
+        write_view(device, dest, device->null_descriptors[D12_DESC_UNIFORM_TEXEL], &record, NULL);
+        return;
+    }
     if (!resource) {
         BOOL buffer = desc && desc->ViewDimension == D3D12_SRV_DIMENSION_BUFFER;
         write_view(device, dest, device->null_descriptors[buffer ? D12_DESC_UNIFORM_TEXEL : D12_DESC_SAMPLED_IMAGE],

@@ -95,6 +95,37 @@ BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignme
     return TRUE;
 }
 
+BOOL D12QueryAlloc(D12CommandAllocator *allocator, VkQueryType type, UINT count, VkQueryPool *pool, UINT *first)
+{
+    D12Vk *vk = &allocator->child.device->vk;
+    for (D12QueryBlock *q = allocator->queries; q; q = q->next)
+        if (q->type == type && q->used + count <= 256) {
+            *pool = q->pool;
+            *first = q->used;
+            q->used += count;
+            return TRUE;
+        }
+    if (count > 256)
+        return FALSE;
+    D12QueryBlock *q = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*q));
+    if (!q)
+        return FALSE;
+    VkQueryPoolCreateInfo info = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    info.queryType = type;
+    info.queryCount = 256;
+    if (vk->vkCreateQueryPool(vk->device, &info, NULL, &q->pool) != VK_SUCCESS) {
+        HeapFree(GetProcessHeap(), 0, q);
+        return FALSE;
+    }
+    q->type = type;
+    q->used = count;
+    q->next = allocator->queries;
+    allocator->queries = q;
+    *pool = q->pool;
+    *first = 0;
+    return TRUE;
+}
+
 static void scratch_free(D12CommandAllocator *allocator)
 {
     D12Vk *vk = &allocator->child.device->vk;
@@ -104,6 +135,12 @@ static void scratch_free(D12CommandAllocator *allocator)
         vk->vkDestroyBuffer(vk->device, b->buffer, NULL);
         vk->vkFreeMemory(vk->device, b->memory, NULL);
         HeapFree(GetProcessHeap(), 0, b);
+    }
+    while (allocator->queries) {
+        D12QueryBlock *q = allocator->queries;
+        allocator->queries = q->next;
+        vk->vkDestroyQueryPool(vk->device, q->pool, NULL);
+        HeapFree(GetProcessHeap(), 0, q);
     }
 }
 
@@ -158,6 +195,8 @@ static HRESULT STDMETHODCALLTYPE allocator_reset(ID3D12CommandAllocator *iface)
     allocator->used = 0;
     for (D12Scratch *b = allocator->scratch; b; b = b->next)
         b->used = 0;
+    for (D12QueryBlock *q = allocator->queries; q; q = q->next)
+        q->used = 0;
     return S_OK;
 }
 
@@ -1828,25 +1867,49 @@ static void STDMETHODCALLTYPE list_meta_command(ID3D12GraphicsCommandList10 *ifa
 {
 }
 
-static void STDMETHODCALLTYPE list_build_acceleration_structure(ID3D12GraphicsCommandList10 *iface, const void *desc,
-                                                                UINT count, const void *postbuild)
+static void STDMETHODCALLTYPE list_build_acceleration_structure(
+    ID3D12GraphicsCommandList10 *iface, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC *desc, UINT count,
+    const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC *postbuild)
 {
+    D12CommandList *list = impl(iface);
+    D12Device *device = list->child.device;
+    if (!list->open || !desc || !device->has_rt)
+        return;
+    end_rendering(list);
+    D12BuildAccelerationStructure(device, list->cmd, desc);
+    if (!count || !postbuild)
+        return;
+    /* the information is of the finished build. */
+    barrier(list);
+    for (UINT i = 0; i < count; i++)
+        D12EmitPostbuildInfo(list->allocator, list->cmd, &postbuild[i], 1, &desc->DestAccelerationStructureData);
 }
 
-static void STDMETHODCALLTYPE list_emit_postbuild_info(ID3D12GraphicsCommandList10 *iface, const void *desc, UINT count,
-                                                       const D3D12_GPU_VIRTUAL_ADDRESS *src)
+static void STDMETHODCALLTYPE list_emit_postbuild_info(
+    ID3D12GraphicsCommandList10 *iface, const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC *desc,
+    UINT count, const D3D12_GPU_VIRTUAL_ADDRESS *src)
 {
+    D12CommandList *list = impl(iface);
+    if (!list->open || !desc || !src || !list->child.device->has_rt)
+        return;
+    end_rendering(list);
+    D12EmitPostbuildInfo(list->allocator, list->cmd, desc, count, src);
 }
 
 static void STDMETHODCALLTYPE list_copy_acceleration_structure(ID3D12GraphicsCommandList10 *iface,
                                                                D3D12_GPU_VIRTUAL_ADDRESS dst,
                                                                D3D12_GPU_VIRTUAL_ADDRESS src, UINT mode)
 {
+    D12CommandList *list = impl(iface);
+    if (!list->open || !list->child.device->has_rt)
+        return;
+    end_rendering(list);
+    D12CopyAccelerationStructure(list->child.device, list->cmd, dst, src, mode);
 }
 
-static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList10 *iface, void *state) {}
+static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList10 *iface, ID3D12StateObject *state) {}
 
-static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const void *desc) {}
+static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc) {}
 
 static void STDMETHODCALLTYPE list_rs_set_shading_rate(ID3D12GraphicsCommandList10 *iface, UINT rate,
                                                        const UINT *combiners)

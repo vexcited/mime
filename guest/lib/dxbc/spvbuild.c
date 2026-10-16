@@ -303,6 +303,13 @@ uint32_t spv_type_sampled_image(SpvBuilder *b, uint32_t image)
 }
 
 uint32_t spv_type_sampler(SpvBuilder *b) { return cached(b, SpvOpTypeSampler, 0, NULL, 0); }
+uint32_t spv_type_matrix(SpvBuilder *b, uint32_t column, uint32_t count)
+{
+    uint32_t w[2] = {column, count};
+    return cached(b, SpvOpTypeMatrix, 0, w, 2);
+}
+
+uint32_t spv_type_opaque(SpvBuilder *b, uint32_t op) { return cached(b, op, 0, NULL, 0); }
 
 uint32_t spv_const(SpvBuilder *b, uint32_t type, uint32_t bits)
 {

@@ -562,6 +562,18 @@ static int memory_of(Compiler *c, const Handle *h, Memory *out)
     return 0;
 }
 
+uint32_t dxil_acceleration_structure(Compiler *c, uint32_t handle)
+{
+    Handle *h = handle_of(c, handle);
+    Memory m;
+    if (!h || h->r.kind != RK_ACCELERATION_STRUCTURE || memory_of(c, h, &m) || m.constants) {
+        dxil_fail(c, "an acceleration structure that is not one");
+        return 0;
+    }
+    return spv_op1(&c->b, SpvOpConvertUToAccelerationStructureKHR,
+                   spv_type_opaque(&c->b, SpvOpTypeAccelerationStructureKHR), m.address);
+}
+
 static uint32_t word_pointer(Compiler *c, uint32_t address, uint32_t word)
 {
     uint32_t ptr = address_pointer(c, address, root_array_pointer(c, c->t_u32, 4));

@@ -201,6 +201,18 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
     if (has_maintenance5)
         WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, device->has_dgc = TRUE)
+    /* acceleration structures and ray queries need all of these. */
+    BOOL rt_extensions = has_extension(available, count, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) &&
+                         has_extension(available, count, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+                         has_extension(available, count, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+                         has_extension(available, count, VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
+    if (rt_extensions) {
+        extensions[n++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
+        extensions[n++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
+        extensions[n++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
+        extensions[n++] = VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME;
+        device->has_rt = TRUE;
+    }
 #undef WANT
     HeapFree(GetProcessHeap(), 0, available);
 
@@ -241,7 +253,14 @@ static HRESULT create_vulkan_device(D12Device *device)
                                             device->has_divisor ? (void *)&divisor : divisor.pNext};
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
     VkPhysicalDeviceVulkan11Features f11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
-    VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f11};
+    VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR rt_maintenance = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR, &f11};
+    VkPhysicalDeviceRayQueryFeaturesKHR ray_query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
+                                                     &rt_maintenance};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR as = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &ray_query};
+    VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                                          device->has_rt ? (void *)&as : (void *)&f11};
     vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
 
     if (!robust.nullDescriptor || !db.descriptorBuffer || !mutable_type.mutableDescriptorType ||
@@ -306,6 +325,12 @@ static HRESULT create_vulkan_device(D12Device *device)
         !(wide.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT))
         device->has_atomic64 = FALSE;
     device->has_shared_atomic64 = f12.shaderSharedInt64Atomics && f->shaderInt64;
+    /* builds on the gpu only, without capture and replay. */
+    as.accelerationStructureCaptureReplay = as.accelerationStructureHostCommands = FALSE;
+    as.accelerationStructureIndirectBuild = FALSE;
+    rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
+    if (!as.accelerationStructure || !ray_query.rayQuery || !rt_maintenance.rayTracingMaintenance1)
+        device->has_rt = FALSE;
 
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT};
@@ -314,13 +339,18 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
         device->has_mesh ? (void *)&mesh_props : mesh_props.pNext};
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR as_props = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR, &dbp};
     VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT, &dbp};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT, device->has_rt ? (void *)&as_props : (void *)&dbp};
     VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-                                         device->has_transform_feedback ? (void *)&xfb : (void *)&dbp};
+                                         device->has_transform_feedback ? (void *)&xfb : xfb.pNext};
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
     device->db = dbp;
     device->db.pNext = NULL;
+    /* direct3d aligns scratch memory to 256 bytes. */
+    if (as_props.minAccelerationStructureScratchOffsetAlignment > D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT)
+        device->has_rt = FALSE;
     /* direct3d's index buffer views, read as dxgi formats, and every stage of the lists' draws and dispatches. */
     device->dgc_stages = dgc_props.supportedIndirectCommandsShaderStages;
     if (!(dgc_props.supportedIndirectCommandsInputModes & VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT) ||
@@ -440,6 +470,7 @@ static void destroy_device(D12Device *device)
     D12FenceWaiterStop(device);
     if (vk->device) {
         vk->vkDeviceWaitIdle(vk->device);
+        D12AccelerationStructuresDestroy(device);
         D12DescriptorsDestroy(device);
         D12MemoryDestroy(device);
         vk->vkDestroyPipelineCache(vk->device, device->pipeline_cache, NULL);
@@ -1537,25 +1568,27 @@ static HRESULT STDMETHODCALLTYPE device_create_meta_command(ID3D12Device14 *ifac
     return E_INVALIDARG;
 }
 
-/* raytracing is not supported, as OPTIONS5 reports. */
-static HRESULT STDMETHODCALLTYPE device_create_state_object(ID3D12Device14 *iface, const void *desc, REFIID riid,
-                                                            void **out)
+/* raytracing pipelines are not supported, as OPTIONS5 reports. */
+static HRESULT STDMETHODCALLTYPE device_create_state_object(ID3D12Device14 *iface, const D3D12_STATE_OBJECT_DESC *desc,
+                                                            REFIID riid, void **out)
 {
     if (out)
         *out = NULL;
     return E_NOTIMPL;
 }
 
-static void STDMETHODCALLTYPE device_get_raytracing_prebuild_info(ID3D12Device14 *iface, const void *desc, void *info)
+static void STDMETHODCALLTYPE device_get_raytracing_prebuild_info(
+    ID3D12Device14 *iface, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS *desc,
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO *info)
 {
-    if (info)
-        memset(info, 0, 24);
+    if (desc && info)
+        D12PrebuildInfo(impl(iface), desc, info);
 }
 
 static UINT STDMETHODCALLTYPE device_check_driver_matching_identifier(ID3D12Device14 *iface, UINT type,
                                                                       const void *identifier)
 {
-    return 2;
+    return identifier ? D12CheckDriverMatchingIdentifier(impl(iface), type, identifier) : 2;
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_background_processing_mode(ID3D12Device14 *iface, UINT mode, UINT action,
@@ -1566,8 +1599,9 @@ static HRESULT STDMETHODCALLTYPE device_set_background_processing_mode(ID3D12Dev
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE device_add_to_state_object(ID3D12Device14 *iface, const void *addition, void *state,
-                                                            REFIID riid, void **out)
+static HRESULT STDMETHODCALLTYPE device_add_to_state_object(ID3D12Device14 *iface,
+                                                            const D3D12_STATE_OBJECT_DESC *addition,
+                                                            ID3D12StateObject *state, REFIID riid, void **out)
 {
     if (out)
         *out = NULL;

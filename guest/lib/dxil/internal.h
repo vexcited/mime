@@ -263,6 +263,12 @@ typedef struct Compiler {
     /* the resolved operands of phis, by fixup. */
     uint32_t *phi_values;
     uint32_t current;
+    /* ray queries: an array of them, a handle its index, and the flags each allocation gives. */
+    uint32_t ray_queries, ray_query_count, ray_query_flags;
+    uint32_t *ray_query_constant_flags;
+    /* by query, the instruction allocating it. */
+    uint32_t *ray_query_insts;
+
     /* hull shaders: the invocation's control point, as dxil's outputs need it. */
     uint32_t invocation;
     int in_patch_function;
@@ -313,5 +319,11 @@ int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op);
 
 /* ops.c: arithmetic, waves and the rest of dx.op. */
 int dxil_math_op(Compiler *c, const DxInst *ins, uint32_t op);
+
+/* raytracing.c: ray queries. */
+void dxil_prepare_ray_queries(Compiler *c, const DxFunction *f);
+int dxil_ray_op(Compiler *c, const DxInst *ins, uint32_t op);
+/* the acceleration structure a handle reaches. */
+uint32_t dxil_acceleration_structure(Compiler *c, uint32_t handle);
 
 #endif

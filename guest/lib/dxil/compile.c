@@ -965,6 +965,8 @@ static void call(Compiler *c, const DxInst *ins)
     if (!r)
         r = dxil_math_op(c, ins, (uint32_t)op);
     if (!r)
+        r = dxil_ray_op(c, ins, (uint32_t)op);
+    if (!r)
         dxil_fail(c, "a dx.op not implemented");
 }
 
@@ -1505,6 +1507,7 @@ static int build(Compiler *c)
         if (c->kind == KIND_AMPLIFICATION && dxil_prepare_task(c, main_fn))
             return -1;
     }
+    dxil_prepare_ray_queries(c, main_fn);
 
     uint32_t main = spv_id(b);
     if (c->kind == KIND_HULL) {

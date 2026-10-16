@@ -70,6 +70,9 @@ static VkBufferUsageFlags buffer_usage(D12Device *device)
         usage |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT | VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT;
     if (device->has_conditional)
         usage |= VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
+    if (device->has_rt)
+        usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+                 VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
     return usage;
 }
 
@@ -149,6 +152,7 @@ static void heap_destroy(D12Heap *heap)
 {
     D12Device *device = heap->child.device;
     if (heap->buffer) {
+        D12AccelerationStructuresForget(device, heap->va, heap->desc.SizeInBytes);
         D12AddressRemove(device, heap);
         device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, NULL);
     }
@@ -814,6 +818,8 @@ static void resource_destroy(D12Resource *resource)
     }
     if (resource->image && !resource->swapchain)
         vk->vkDestroyImage(vk->device, resource->image, NULL);
+    if (resource->buffer)
+        D12AccelerationStructuresForget(device, resource->va, resource->desc.Width);
     if (resource->committed)
         D12Free(device, &resource->alloc);
     if (resource->heap && !resource->committed)
@@ -1151,6 +1157,11 @@ HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props,
     }
     if (heap)
         heap->iface.lpVtbl->AddRef(&heap->iface);
+    /* direct3d makes the memory of acceleration structures resources of their own, in their own state. */
+    if (resource->buffer && device->has_rt &&
+        (state == D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE ||
+         (desc->Flags & D3D12_RESOURCE_FLAG_RAYTRACING_ACCELERATION_STRUCTURE)))
+        D12AccelerationRegionAdd(device, resource->va, desc->Width);
     D12ChildInit(&resource->child, device);
     *out = resource;
     return S_OK;

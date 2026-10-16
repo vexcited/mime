@@ -187,7 +187,17 @@
     X(vkCmdBeginTransformFeedbackEXT)                                                                                  \
     X(vkCmdEndTransformFeedbackEXT)                                                                                    \
     X(vkCmdBeginConditionalRenderingEXT)                                                                               \
-    X(vkCmdEndConditionalRenderingEXT)
+    X(vkCmdEndConditionalRenderingEXT)                                                                                 \
+    X(vkGetAccelerationStructureBuildSizesKHR)                                                                      \
+    X(vkCreateAccelerationStructureKHR)                                                                             \
+    X(vkDestroyAccelerationStructureKHR)                                                                            \
+    X(vkGetAccelerationStructureDeviceAddressKHR)                                                                   \
+    X(vkGetDeviceAccelerationStructureCompatibilityKHR)                                                             \
+    X(vkCmdBuildAccelerationStructuresKHR)                                                                          \
+    X(vkCmdCopyAccelerationStructureKHR)                                                                            \
+    X(vkCmdCopyAccelerationStructureToMemoryKHR)                                                                    \
+    X(vkCmdCopyMemoryToAccelerationStructureKHR)                                                                    \
+    X(vkCmdWriteAccelerationStructuresPropertiesKHR)
 
 typedef struct D12Vk {
     VkInstance instance;
@@ -594,7 +604,19 @@ typedef struct D12CommandAllocator {
     struct D12CommandList *recording;
     /* memory of generated commands, reused at each reset. */
     struct D12Scratch *scratch;
+    /* queries the lists' commands take, as acceleration structures' sizes, reused at each reset. */
+    struct D12QueryBlock *queries;
 } D12CommandAllocator;
+
+typedef struct D12QueryBlock {
+    struct D12QueryBlock *next;
+    VkQueryPool pool;
+    VkQueryType type;
+    UINT used;
+} D12QueryBlock;
+
+/* count queries of a type for a list's allocator, to reset before use. */
+BOOL D12QueryAlloc(D12CommandAllocator *allocator, VkQueryType type, UINT count, VkQueryPool *pool, UINT *first);
 
 /* a block of device memory that commands of an allocator take from in order. */
 typedef struct D12Scratch {
@@ -711,6 +733,12 @@ typedef struct D12SamplerEntry {
     BYTE descriptor[64];
 } D12SamplerEntry;
 
+/* an acceleration structure object over the memory at a gpu virtual address. */
+typedef struct D12AccelerationStructure {
+    D3D12_GPU_VIRTUAL_ADDRESS va;
+    VkAccelerationStructureKHR handle;
+} D12AccelerationStructure;
+
 struct D12Device {
     ID3D12Device14 iface;
     LONG refs;
@@ -735,6 +763,15 @@ struct D12Device {
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;
     VkShaderStageFlags dgc_stages;
+    /* acceleration structures and ray queries. */
+    BOOL has_rt;
+    /* acceleration structures by gpu virtual address. */
+    SRWLOCK as_lock;
+    D12AccelerationStructure *as_list;
+    UINT as_count, as_capacity;
+    /* the buffers made for acceleration structures, sorted by address, which bound the objects over them. */
+    D3D12_GPU_VIRTUAL_ADDRESS_RANGE *as_regions;
+    UINT as_region_count, as_region_capacity;
     VkPipelineCache pipeline_cache;
     UINT family;
     UINT queue_count;
@@ -795,6 +832,24 @@ struct D12Device {
     VkSemaphore init_timeline;
     UINT64 init_serial;
 };
+
+/* raytracing.c: acceleration structures, by the gpu virtual address direct3d gives them. */
+VkAccelerationStructureKHR D12AccelerationStructureAt(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va);
+void D12AccelerationRegionAdd(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, UINT64 size);
+/* the memory of a resource or heap goes: so do the acceleration structures in it. */
+void D12AccelerationStructuresForget(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, UINT64 size);
+void D12AccelerationStructuresDestroy(D12Device *device);
+void D12PrebuildInfo(D12Device *device, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS *inputs,
+                     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO *info);
+UINT D12CheckDriverMatchingIdentifier(D12Device *device, UINT type, const void *identifier);
+/* commands, recorded outside rendering. */
+void D12BuildAccelerationStructure(D12Device *device, VkCommandBuffer cmd,
+                                   const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC *desc);
+void D12EmitPostbuildInfo(D12CommandAllocator *allocator, VkCommandBuffer cmd,
+                          const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC *desc, UINT count,
+                          const D3D12_GPU_VIRTUAL_ADDRESS *sources);
+void D12CopyAccelerationStructure(D12Device *device, VkCommandBuffer cmd, D3D12_GPU_VIRTUAL_ADDRESS dst,
+                                  D3D12_GPU_VIRTUAL_ADDRESS src, UINT mode);
 
 D12Device *D12DeviceFrom(ID3D12Device *iface);
 HRESULT D12CreateDevice(IDXGIAdapter *adapter, D3D_FEATURE_LEVEL level, D12Device **out);
