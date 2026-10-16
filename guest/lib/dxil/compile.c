@@ -1298,6 +1298,24 @@ static int compile_function(Compiler *c, const DxFunction *f, uint32_t id)
         return -1;
     if (find_demotions(c))
         return -1;
+    c->part_masks = dxil_alloc(c, (f->value_count + 1) * sizeof(uint32_t));
+    if (!c->part_masks)
+        return -1;
+    for (uint32_t i = 0; i < f->inst_count; i++) {
+        const DxInst *ins = &f->insts[i];
+        if (ins->op == DI_BR || ins->op == DI_SWITCH)
+            continue;
+        uint32_t used = ins->op == DI_EXTRACTVAL ? 1 : ins->op == DI_INSERTVAL ? 2 : ins->count;
+        if (ins->op == DI_EXTRACTVAL && ins->count >= 2 && ins->ops[0] >= c->m.value_count) {
+            uint32_t k = ins->ops[0] - c->m.value_count;
+            if (k < f->value_count)
+                c->part_masks[k] |= ins->ops[1] < 32 ? 1u << ins->ops[1] : ~0u;
+            continue;
+        }
+        for (uint32_t j = 0; j < used; j++)
+            if (ins->ops[j] >= c->m.value_count && ins->ops[j] - c->m.value_count < f->value_count)
+                c->part_masks[ins->ops[j] - c->m.value_count] = ~0u;
+    }
 
     spv_function_begin(&c->b, id, c->t_void, spv_type_function(&c->b, c->t_void, NULL, 0));
     for (uint32_t i = 0; i < cfg->order_count; i++)

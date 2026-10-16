@@ -573,18 +573,8 @@ static void write_word(Compiler *c, const Memory *m, uint32_t word, uint32_t val
 /* the components of the structure a call returns that some extractvalue reads. */
 static uint32_t used_parts(Compiler *c, const DxInst *ins)
 {
-    uint32_t mask = 0;
-    const DxFunction *f = c->f;
-    for (uint32_t i = 0; i < f->inst_count; i++) {
-        const DxInst *x = &f->insts[i];
-        if (x->op == DI_EXTRACTVAL && x->count >= 2 && x->ops[0] == ins->value && x->ops[1] < 32)
-            mask |= 1u << x->ops[1];
-        else if (x->op != DI_EXTRACTVAL)
-            for (uint32_t k = 0; k < x->count; k++)
-                if (x->ops[k] == ins->value && x->op != DI_BR && x->op != DI_SWITCH)
-                    return ~0u;
-    }
-    return mask;
+    uint32_t i = ins->value - c->m.value_count;
+    return c->part_masks && i < c->f->value_count ? c->part_masks[i] : ~0u;
 }
 
 /* the type of member i of the structure a call returns. */
@@ -1066,36 +1056,57 @@ static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
         return 0;
     }
     uint32_t row = dxil_value(c, ins->ops[3]);
-    uint32_t base = spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, row, dxil_uconst(c, 4));
     const DxType *t = &c->m.types[ins->type];
     uint32_t count = t->kind == DT_STRUCT ? t->count : 1;
     if (count > 8)
         return dxil_fail(c, "a constant buffer row of too many members");
-    uint32_t mask = used_parts(c, ins), parts[8];
-    /* a constant buffer's row, read whole for the common case of four words. */
-    uint32_t words[4] = {0, 0, 0, 0};
-    if (!m.constants && !m.size && count == 4 && type_bytes(c, t->members[0]) == 4) {
-        uint32_t v4 = c->t_uvec[4];
+    uint32_t bytes = type_bytes(c, t->kind == DT_STRUCT ? t->members[0] : ins->type);
+    uint32_t mask = used_parts(c, ins), parts[8], words[4] = {0, 0, 0, 0}, needed = 0;
+    for (uint32_t i = 0; i < count; i++)
+        if (mask & (1u << i))
+            needed |= bytes == 8 ? 3u << (2 * i) : 1u << (i * bytes / 4);
+    /* the row's words: from the push constants, or one load of 16 bytes, rows past a view's size reading zero. */
+    if (m.constants) {
+        uint32_t base = spv_op2(&c->b, SpvOpIAdd, c->t_u32, dxil_uconst(c, m.push_offset),
+                                spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, row, dxil_uconst(c, 4)));
+        for (uint32_t i = 0; i < 4; i++)
+            if (needed & (1u << i))
+                words[i] = push_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, dxil_uconst(c, 4 * i)));
+    } else if (needed) {
+        uint32_t v4 = c->t_uvec[4], in = 0;
+        if (m.size) {
+            in = spv_op2(&c->b, SpvOpULessThan, c->t_bool, row,
+                         spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, m.size, dxil_uconst(c, 4)));
+            row = spv_op3(&c->b, SpvOpSelect, c->t_u32, in, row, dxil_uconst(c, 0));
+        }
         uint32_t ptr = address_pointer(c, m.address, root_array_pointer(c, v4, 16));
         uint32_t w[3] = {ptr, dxil_uconst(c, 0), row};
-        uint32_t elem = spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, v4), w, 3);
+        uint32_t elem =
+            spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, v4), w, 3);
         uint32_t l[3] = {elem, SpvMemoryAccessAlignedMask, 16};
         uint32_t v = spv_op(&c->b, SpvOpLoad, v4, l, 3);
+        if (in)
+            v = spv_op3(&c->b, SpvOpSelect, v4, in, v, spv_const_null(&c->b, v4));
         for (uint32_t i = 0; i < 4; i++)
-            words[i] = dxil_extract(c, c->t_u32, v, i);
+            if (needed & (1u << i))
+                words[i] = dxil_extract(c, c->t_u32, v, i);
     }
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t dx, type = member_type(c, ins, i, &dx);
+        uint32_t type = member_type(c, ins, i, NULL);
         if (!(mask & (1u << i))) {
             parts[i] = spv_const_null(&c->b, type);
-            continue;
+        } else if (bytes == 8) {
+            uint32_t pair[2] = {words[2 * i], words[2 * i + 1]};
+            parts[i] = spv_op1(&c->b, SpvOpBitcast, type, dxil_vector(c, c->t_u32, pair, 2));
+        } else if (bytes == 2) {
+            uint32_t half = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, words[i / 2], dxil_uconst(c, 16 * (i & 1)));
+            uint32_t u16 = spv_op1(&c->b, SpvOpUConvert, c->t_u16, half);
+            parts[i] = type == c->t_u16 ? u16 : spv_op1(&c->b, SpvOpBitcast, type, u16);
+        } else {
+            parts[i] = type == c->t_u32 ? words[i] : type == c->t_bool
+                       ? spv_op2(&c->b, SpvOpINotEqual, c->t_bool, words[i], dxil_uconst(c, 0))
+                       : spv_op1(&c->b, SpvOpBitcast, type, words[i]);
         }
-        if (words[i] && i < 4) {
-            parts[i] = type == c->t_u32 ? words[i] : spv_op1(&c->b, SpvOpBitcast, type, words[i]);
-            continue;
-        }
-        uint32_t address = spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, dxil_uconst(c, i * type_bytes(c, dx)));
-        parts[i] = read_value(c, &m, address, dx);
     }
     dxil_set_parts(c, ins->value, parts, count);
     return 0;

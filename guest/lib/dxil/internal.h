@@ -214,6 +214,8 @@ typedef struct Compiler {
     uint32_t handle_count, handle_capacity;
     /* the ids of the cfg's added values. */
     uint32_t *synth;
+    /* by function value: the parts of a structure extractvalue reads, all ones when used whole. */
+    uint32_t *part_masks;
 
     /* the entry point's description. */
     Signature inputs, outputs, patch;
