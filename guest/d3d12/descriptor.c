@@ -360,6 +360,25 @@ HRESULT D12DescriptorsInit(D12Device *device)
     if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->record_layout) != VK_SUCCESS)
         return E_FAIL;
 
+    /* the views of 64-bit texels that typed views' 64-bit atomics go through, beside the heap's descriptors. */
+    if (device->has_atomic64) {
+        static const VkDescriptorType atomic_types[] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                                        VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER};
+        VkMutableDescriptorTypeListEXT atomic_list = {RTL_NUMBER_OF(atomic_types), atomic_types};
+        mutable_info.pMutableDescriptorTypeLists = &atomic_list;
+        binding_flags.pNext = &mutable_info;
+        partial = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_MUTABLE_EXT;
+        binding.descriptorCount = count;
+        VkDeviceSize atomic_size = 0;
+        if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->atomic_layout) != VK_SUCCESS)
+            return E_FAIL;
+        vk->vkGetDescriptorSetLayoutSizeEXT(vk->device, device->atomic_layout, &atomic_size);
+        device->atomic_stride = (UINT)(atomic_size / count);
+        if (!device->atomic_stride || device->atomic_stride > 64)
+            return DXGI_ERROR_UNSUPPORTED;
+    }
+
     info.pNext = NULL;
     info.bindingCount = 0;
     if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->empty_layout) != VK_SUCCESS)
@@ -423,6 +442,8 @@ void D12DescriptorsDestroy(D12Device *device)
     vk->vkDestroyDescriptorSetLayout(vk->device, device->resource_layout, NULL);
     vk->vkDestroyDescriptorSetLayout(vk->device, device->sampler_layout, NULL);
     vk->vkDestroyDescriptorSetLayout(vk->device, device->record_layout, NULL);
+    if (device->atomic_layout)
+        vk->vkDestroyDescriptorSetLayout(vk->device, device->atomic_layout, NULL);
     vk->vkDestroyDescriptorSetLayout(vk->device, device->empty_layout, NULL);
     if (device->heaps) {
         D12DescriptorHeap ***pages = (D12DescriptorHeap ***)device->heaps;
@@ -617,6 +638,10 @@ static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *
         heap->stride = device->mutable_stride;
         records = D12_ALIGN(device->record_offset + (UINT64)n * heap->stride, 64);
         size = records + (UINT64)n * sizeof(DxbcRecord);
+        if (device->atomic_stride) {
+            heap->atomic_offset = D12_ALIGN(size, D12_MAX(device->db.descriptorBufferOffsetAlignment, 64));
+            size = heap->atomic_offset + (UINT64)n * device->atomic_stride;
+        }
         break;
     case D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER:
         heap->stride = device->sampler_size;
@@ -637,6 +662,8 @@ static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *
     if (SUCCEEDED(hr) && desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) {
         heap->descriptors = heap->base + device->record_offset;
         heap->records = (DxbcRecord *)(heap->base + records);
+        if (heap->atomic_offset)
+            heap->atomics = heap->base + heap->atomic_offset;
         if (!visible && !(heap->infos = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)n * sizeof(*heap->infos))))
             hr = E_OUTOFMEMORY;
         if (SUCCEEDED(hr) && visible)
@@ -647,6 +674,9 @@ static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *
             memcpy(heap->descriptors + (SIZE_T)i * heap->stride, device->null_descriptors[D12_DESC_SAMPLED_IMAGE],
                    heap->stride);
             heap->records[i] = (DxbcRecord){device->null_address, 0, 0, device->null_address, 0};
+            if (heap->atomics)
+                memcpy(heap->atomics + (SIZE_T)i * device->atomic_stride,
+                       device->null_descriptors[D12_DESC_STORAGE_IMAGE], device->atomic_stride);
         }
     } else if (SUCCEEDED(hr)) {
         heap->descriptors = heap->base;
@@ -671,9 +701,9 @@ HRESULT D12CreateDescriptorHeap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_D
 
 /* ------------------------------------------------------------------ writing descriptors */
 
-/* writes a cbv, srv or uav: its vulkan descriptor, its record and what cpu heaps keep of it. */
-static void write_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, const BYTE *descriptor,
-                       const DxbcRecord *record, const D12DescriptorInfo *info)
+/* writes a cbv, srv or uav: its vulkan descriptor, its record, its view of 64-bit texels and what cpu heaps keep of it. */
+static void write_atomic_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, const BYTE *descriptor,
+                              const DxbcRecord *record, const D12DescriptorInfo *info, const BYTE *atomic)
 {
     UINT index;
     D12DescriptorHeap *heap = D12HandleHeap(device, dest.ptr, &index);
@@ -681,12 +711,21 @@ static void write_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, cons
         return;
     memcpy(heap->descriptors + (SIZE_T)index * heap->stride, descriptor, heap->stride);
     heap->records[index] = *record;
+    if (heap->atomics)
+        memcpy(heap->atomics + (SIZE_T)index * device->atomic_stride,
+               atomic ? atomic : device->null_descriptors[D12_DESC_STORAGE_IMAGE], device->atomic_stride);
     if (heap->infos) {
         if (info)
             heap->infos[index] = *info;
         else
             memset(&heap->infos[index], 0, sizeof(heap->infos[index]));
     }
+}
+
+static void write_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, const BYTE *descriptor,
+                       const DxbcRecord *record, const D12DescriptorInfo *info)
+{
+    write_atomic_view(device, dest, descriptor, record, info, NULL);
 }
 
 static DxbcRecord null_record(D12Device *device)
@@ -958,14 +997,21 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
         const BYTE *descriptor = device->null_descriptors[D12_DESC_STORAGE_TEXEL];
         BYTE copy[64];
         VkFormat format = VK_FORMAT_R32_UINT;
+        BYTE atomic[64];
+        BOOL wide = FALSE;
         if (!raw && !d.Buffer.StructureByteStride) {
             format = D3dGetFormat(d.Format)->vk;
             texel_descriptor(device, TRUE, record.address, record.size, format, copy);
             descriptor = copy;
+            if (device->atomic_stride && (format == VK_FORMAT_R32G32_UINT || format == VK_FORMAT_R32G32_SINT)) {
+                texel_descriptor(device, TRUE, record.address, record.size,
+                                 format == VK_FORMAT_R32G32_UINT ? VK_FORMAT_R64_UINT : VK_FORMAT_R64_SINT, atomic);
+                wide = TRUE;
+            }
         }
         D12DescriptorInfo info = {resource, NULL, format, {0}, record.address - resource->va, record.size,
                                   D12_DESC_STORAGE_TEXEL};
-        write_view(device, dest, descriptor, &record, &info);
+        write_atomic_view(device, dest, descriptor, &record, &info, wide ? atomic : NULL);
         return;
     }
     UINT mip = 0, layer = 0, layers = 1, plane = 0;
@@ -1014,8 +1060,17 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
     D12ImageView *view = D12ResourceView(resource, &info, VK_IMAGE_USAGE_STORAGE_BIT);
     if (!view)
         return;
+    /* two words a texel: a view of 64-bit texels too, for 64-bit atomics. */
+    const BYTE *atomic = NULL;
+    if (device->atomic_stride && (info.format == VK_FORMAT_R32G32_UINT || info.format == VK_FORMAT_R32G32_SINT)) {
+        VkImageViewCreateInfo wide = info;
+        wide.format = info.format == VK_FORMAT_R32G32_UINT ? VK_FORMAT_R64_UINT : VK_FORMAT_R64_SINT;
+        D12ImageView *view64 = D12ResourceView(resource, &wide, VK_IMAGE_USAGE_STORAGE_BIT);
+        if (view64)
+            atomic = view_descriptor(device, view64, TRUE);
+    }
     D12DescriptorInfo di = {resource, view, info.format, info.subresourceRange, 0, 0, D12_DESC_STORAGE_IMAGE};
-    write_view(device, dest, view_descriptor(device, view, TRUE), &record, &di);
+    write_atomic_view(device, dest, view_descriptor(device, view, TRUE), &record, &di, atomic);
 }
 
 /* ------------------------------------------------------------------ render targets and depth stencils */
@@ -1252,6 +1307,9 @@ void D12CopyDescriptors(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, D3D
     if (type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
         return;
     memmove(&d->records[di], &s->records[si], count * sizeof(DxbcRecord));
+    if (d->atomics && s->atomics)
+        memmove(d->atomics + (SIZE_T)di * device->atomic_stride, s->atomics + (SIZE_T)si * device->atomic_stride,
+                (SIZE_T)count * device->atomic_stride);
     if (d->infos) {
         if (s->infos)
             memmove(&d->infos[di], &s->infos[si], count * sizeof(*d->infos));

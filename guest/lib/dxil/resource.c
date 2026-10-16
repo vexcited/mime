@@ -377,6 +377,42 @@ static uint32_t image_heap(Compiler *c, uint32_t type)
     return var;
 }
 
+/* the image type of a typed view's 64-bit texels, for 64-bit atomics. */
+static uint32_t wide_image_type(Compiler *c, const Handle *h, uint32_t scalar, int is_signed)
+{
+    uint32_t dim, arrayed, ms;
+    image_shape(h->r.kind, &dim, &arrayed, &ms);
+    spv_capability(&c->b, SpvCapabilityInt64ImageEXT);
+    spv_capability(&c->b, SpvCapabilityInt64Atomics);
+    spv_extension(&c->b, "SPV_EXT_shader_image_int64");
+    if (dim == SpvDimBuffer)
+        spv_capability(&c->b, SpvCapabilityImageBuffer);
+    if (dim == SpvDim1D)
+        spv_capability(&c->b, SpvCapabilityImage1D);
+    return spv_type_image(&c->b, scalar, dim, 0, arrayed, ms, 2, is_signed ? SpvImageFormatR64i : SpvImageFormatR64ui);
+}
+
+/* a pointer to a handle's view of 64-bit texels, in the set of them. */
+static uint32_t wide_image_pointer(Compiler *c, const Handle *h, uint32_t type)
+{
+    uint32_t var = 0;
+    for (uint32_t i = 0; i < c->wide_image_count; i++)
+        if (c->wide_images[i].type == type)
+            var = c->wide_images[i].var;
+    if (!var) {
+        var = dxil_global(c, SpvStorageClassUniformConstant, spv_type_runtime_array(&c->b, type), 0);
+        dxil_decorate(c, var, SpvDecorationDescriptorSet, DXBC_ROOT_SET_ATOMICS);
+        dxil_decorate(c, var, SpvDecorationBinding, 0);
+        if (c->wide_image_count < 8) {
+            c->wide_images[c->wide_image_count].type = type;
+            c->wide_images[c->wide_image_count++].var = var;
+        }
+    }
+    uint32_t w[2] = {var, heap_index(c, h, binding_of(c, h))};
+    return nonuniform(c, h, spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassUniformConstant, type),
+                                   w, 2));
+}
+
 /* a pointer to the image descriptor of a handle. */
 static uint32_t image_pointer(Compiler *c, const Handle *h, uint32_t type)
 {
@@ -587,14 +623,54 @@ static uint32_t member_type(Compiler *c, const DxInst *ins, uint32_t i, uint32_t
     return dxil_type(c, m);
 }
 
-/* a ResRet of a vec4 of a type: its components as the structure's types, and a status of zero. */
+/* the 64-bit value of two 32-bit words. */
+static uint32_t wide_of(Compiler *c, uint32_t lo, uint32_t hi, uint32_t type)
+{
+    uint32_t pair[2] = {lo, hi};
+    return spv_op1(&c->b, SpvOpBitcast, type, dxil_vector(c, c->t_u32, pair, 2));
+}
+
+/*
+ * a ResRet of a vec4 of a type: its components as the structure's types,
+ * and a status of zero. 64-bit texels are two words of the view, as
+ * direct3d's R32G32 formats hold them.
+ */
 static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t scalar)
 {
     uint32_t parts[5];
-    for (uint32_t i = 0; i < 4; i++)
-        parts[i] = dxil_convert(c, dxil_extract(c, scalar, vec4, i), scalar, member_type(c, ins, i, NULL));
+    uint32_t first = member_type(c, ins, 0, NULL);
+    if (first == c->t_u64 || first == c->t_f64) {
+        uint32_t u = scalar == c->t_u32 ? vec4 : spv_op1(&c->b, SpvOpBitcast, c->t_uvec[4], vec4);
+        parts[0] = wide_of(c, dxil_extract(c, c->t_u32, u, 0), dxil_extract(c, c->t_u32, u, 1), first);
+        parts[1] = wide_of(c, dxil_extract(c, c->t_u32, u, 2), dxil_extract(c, c->t_u32, u, 3), first);
+        parts[2] = parts[3] = spv_const_null(&c->b, first);
+    } else {
+        for (uint32_t i = 0; i < 4; i++)
+            parts[i] = dxil_convert(c, dxil_extract(c, scalar, vec4, i), scalar, member_type(c, ins, i, NULL));
+    }
     parts[4] = dxil_uconst(c, 0);
     dxil_set_parts(c, ins->value, parts, 5);
+}
+
+static uint32_t gather_operands(Compiler *c, const DxInst *ins, uint32_t first, uint32_t n, uint32_t scalar);
+
+/* the vec4 of a type a store writes of four values from first; 64-bit values as two words each. */
+static uint32_t store_values(Compiler *c, const DxInst *ins, uint32_t first, uint32_t scalar)
+{
+    const DxValue *v = dx_value(&c->m, c->f, ins->ops[first]);
+    uint32_t t = v ? dxil_type(c, v->type) : scalar;
+    if (t != c->t_u64 && t != c->t_f64)
+        return gather_operands(c, ins, first, 4, scalar);
+    uint32_t words[4];
+    for (uint32_t i = 0; i < 2; i++) {
+        uint32_t id = ins->ops[first + i];
+        uint32_t pair = dxil_is_undef(c, id) ? spv_const_null(&c->b, c->t_uvec[2])
+                                             : spv_op1(&c->b, SpvOpBitcast, c->t_uvec[2], dxil_value(c, id));
+        words[2 * i] = dxil_extract(c, c->t_u32, pair, 0);
+        words[2 * i + 1] = dxil_extract(c, c->t_u32, pair, 1);
+    }
+    uint32_t u = dxil_vector(c, c->t_u32, words, 4);
+    return scalar == c->t_u32 ? u : spv_op1(&c->b, SpvOpBitcast, spv_type_vector(&c->b, scalar, 4), u);
 }
 
 /* ------------------------------------------------------------------ textures */
@@ -884,7 +960,7 @@ static int texture_store(Compiler *c, const DxInst *ins, int with_sample)
     uint32_t type = image_type(c, h, 0, 0), scalar = sampled_type(c, h->r.comp);
     uint32_t image = load_image(c, h, type);
     uint32_t n = coord_count(h->r.kind);
-    uint32_t w[6] = {image, gather_operands(c, ins, 3, n > 3 ? 3 : n, c->t_u32), gather_operands(c, ins, 6, 4, scalar)};
+    uint32_t w[6] = {image, gather_operands(c, ins, 3, n > 3 ? 3 : n, c->t_u32), store_values(c, ins, 6, scalar)};
     uint32_t count = 3;
     if (with_sample) {
         w[count++] = SpvImageOperandsSampleMask;
@@ -1020,7 +1096,7 @@ static int buffer_store(Compiler *c, const DxInst *ins)
     if (typed_buffer(h)) {
         uint32_t type = image_type(c, h, 0, 0), scalar = sampled_type(c, h->r.comp);
         uint32_t image = load_image(c, h, type);
-        uint32_t w[3] = {image, dxil_value(c, ins->ops[3]), gather_operands(c, ins, 5, 4, scalar)};
+        uint32_t w[3] = {image, dxil_value(c, ins->ops[3]), store_values(c, ins, 5, scalar)};
         spv_op_void(&c->b, SpvOpImageWrite, w, 3);
         return 0;
     }
@@ -1219,9 +1295,20 @@ static uint32_t atomic_pointer(Compiler *c, const Handle *h, const DxInst *ins, 
         }
         return word_pointer(c, m.address, word);
     }
-    uint32_t image = image_type(c, h, 0, 1);
-    uint32_t ptr = image_pointer(c, h, image);
-    uint32_t scalar = sampled_type(c, h->r.comp);
+    uint32_t image, ptr, scalar;
+    if (*type == c->t_u64) {
+        /* 64-bit texels: the heap's views of them, beside its own. */
+        int is_signed = h->r.comp == COMP_I64;
+        scalar = spv_type_int(&c->b, 64, (uint32_t)is_signed);
+        image = wide_image_type(c, h, scalar, is_signed);
+        ptr = wide_image_pointer(c, h, image);
+    } else {
+        image = image_type(c, h, 0, 1);
+        ptr = image_pointer(c, h, image);
+        scalar = sampled_type(c, h->r.comp);
+    }
+    if (!ptr)
+        return 0;
     *type = scalar;
     uint32_t n = coord_count(h->r.kind);
     uint32_t w[3] = {ptr, gather_operands(c, ins, first, n > 3 ? 3 : n, c->t_u32), dxil_uconst(c, 0)};

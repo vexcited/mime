@@ -196,6 +196,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME, device->has_patch_points = TRUE)
     WANT(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, device->has_unused_attachments = TRUE)
     WANT(VK_EXT_MESH_SHADER_EXTENSION_NAME, device->has_mesh = TRUE)
+    WANT(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, device->has_atomic64 = TRUE)
     BOOL has_maintenance5 = FALSE;
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
     if (has_maintenance5)
@@ -206,8 +207,10 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
     VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT, &maintenance5};
+    VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT atomic64 = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT, device->has_dgc ? (void *)&dgc : NULL};
     VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
-                                                  device->has_dgc ? (void *)&dgc : NULL};
+                                                  device->has_atomic64 ? (void *)&atomic64 : atomic64.pNext};
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT,
         device->has_mesh ? (void *)&mesh : mesh.pNext};
@@ -295,6 +298,14 @@ static HRESULT create_vulkan_device(D12Device *device)
         device->has_mesh = FALSE;
     if (!dgc.deviceGeneratedCommands || !maintenance5.maintenance5)
         device->has_dgc = FALSE;
+    /* 64-bit atomics of typed views need them of images, of buffers and 64-bit integers; sparse ones are not used. */
+    atomic64.sparseImageInt64Atomics = FALSE;
+    VkFormatProperties wide;
+    vk->vkGetPhysicalDeviceFormatProperties(vk->physical, VK_FORMAT_R64_UINT, &wide);
+    if (!atomic64.shaderImageInt64Atomics || !f12.shaderBufferInt64Atomics || !f->shaderInt64 ||
+        !(wide.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT))
+        device->has_atomic64 = FALSE;
+    device->has_shared_atomic64 = f12.shaderSharedInt64Atomics && f->shaderInt64;
 
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT};
@@ -574,9 +585,9 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, FALSE, FALSE, 0, 0, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS8, 4, TRUE);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, 0);
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, FALSE, FALSE, device->has_atomic64, device->has_shared_atomic64, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS10, 8, 0);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS11, 4, 0);
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS11, 4, device->has_atomic64);
     /* enhanced barriers are not there yet; relaxed format casting is what typeless images do. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS12, 12, 0, FALSE, TRUE);
     /* a negative viewport height flips y and min depth above max depth flips z, as in vulkan. */

@@ -388,6 +388,9 @@ typedef struct D12DescriptorHeap {
     BYTE *descriptors;
     DxbcRecord *records;
     UINT stride;
+    /* with 64-bit atomics: each slot's view of 64-bit texels, at atomic_offset in the buffer. */
+    BYTE *atomics;
+    UINT64 atomic_offset;
     D12DescriptorInfo *infos;
     D12TargetView *targets;
 } D12DescriptorHeap;
@@ -727,6 +730,8 @@ struct D12Device {
     BOOL has_conservative, has_line_rasterization, has_patch_points, has_unused_attachments;
     /* shader model 6: 16-bit arithmetic, the wave operations of every stage, mesh and amplification shaders. */
     BOOL has_native16, has_waves, has_mesh;
+    /* 64-bit atomics of typed views and of shared memory. */
+    BOOL has_atomic64, has_shared_atomic64;
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;
     VkShaderStageFlags dgc_stages;
@@ -757,6 +762,9 @@ struct D12Device {
     VkDescriptorSetLayout resource_layout, sampler_layout, record_layout, empty_layout;
     UINT mutable_stride;
     UINT record_offset;
+    /* 64-bit atomics of typed views: the set of their 64-bit views and the bytes of one, 0 without. */
+    VkDescriptorSetLayout atomic_layout;
+    UINT atomic_stride;
     UINT sampler_size;
     BYTE null_descriptors[D12_DESC_RECORD][64];
     SRWLOCK texel_lock;

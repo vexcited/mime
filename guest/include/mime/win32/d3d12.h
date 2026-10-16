@@ -1825,6 +1825,15 @@ typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS1 {
     BOOL Int64ShaderOps;
 } D3D12_FEATURE_DATA_D3D12_OPTIONS1;
 
+typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS9 {
+    BOOL MeshShaderPipelineStatsSupported;
+    BOOL MeshShaderSupportsFullRangeRenderTargetArrayIndex;
+    BOOL AtomicInt64OnTypedResourceSupported;
+    BOOL AtomicInt64OnGroupSharedSupported;
+    BOOL DerivativesInMeshAndAmplificationShadersSupported;
+    UINT WaveMMATier;
+} D3D12_FEATURE_DATA_D3D12_OPTIONS9;
+
 typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS7 {
     D3D12_MESH_SHADER_TIER MeshShaderTier;
     UINT SamplerFeedbackTier;

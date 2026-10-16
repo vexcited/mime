@@ -376,6 +376,11 @@ static void bind_sets(D12CommandList *list, BOOL compute)
     UINT32 record_index = 0;
     VkDeviceSize record_offset = 0;
     vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 3, 1, &record_index, &record_offset);
+    if (device->atomic_layout) {
+        D12DescriptorHeap *resources = list->heaps[0] ? list->heaps[0] : device->dummy_heaps[0];
+        VkDeviceSize atomic_offset = resources->atomic_offset;
+        vk->vkCmdSetDescriptorBufferOffsetsEXT(list->cmd, point, s->root->layout, 4, 1, &record_index, &atomic_offset);
+    }
     s->sets_dirty = FALSE;
 }
 

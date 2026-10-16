@@ -112,6 +112,8 @@ typedef struct DxbcRootBinding {
 #define DXBC_ROOT_SET_SAMPLERS 1
 #define DXBC_ROOT_SET_STATIC_SAMPLERS 2
 #define DXBC_ROOT_SET_RECORDS 3
+/* 64-bit atomics of typed views: their views of 64-bit texels, beside the heap's own, by the same index. */
+#define DXBC_ROOT_SET_ATOMICS 4
 
 typedef struct DxbcRecord {
     uint64_t address;

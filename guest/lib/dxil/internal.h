@@ -252,6 +252,8 @@ typedef struct Compiler {
     uint32_t sample_positions;
     ImageVar images[64];
     uint32_t image_count;
+    ImageVar wide_images[8];
+    uint32_t wide_image_count;
 
     /* the function being written. */
     uint32_t *labels;

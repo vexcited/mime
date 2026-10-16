@@ -801,13 +801,13 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
             hr = E_OUTOFMEMORY;
     }
     if (SUCCEEDED(hr)) {
-        VkDescriptorSetLayout sets[4] = {device->resource_layout, device->sampler_layout,
+        VkDescriptorSetLayout sets[5] = {device->resource_layout, device->sampler_layout,
                                          root->static_layout ? root->static_layout : device->empty_layout,
-                                         device->record_layout};
+                                         device->record_layout, device->atomic_layout};
         /* the shaders' block of root arguments spans the 64 dwords a root signature may take. */
         VkPushConstantRange range = {VK_SHADER_STAGE_ALL, 0, D12_PUSH_SIZE};
         VkPipelineLayoutCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        info.setLayoutCount = 4;
+        info.setLayoutCount = device->atomic_layout ? 5 : 4;
         info.pSetLayouts = sets;
         info.pushConstantRangeCount = 1;
         info.pPushConstantRanges = &range;
