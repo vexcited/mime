@@ -293,6 +293,8 @@ struct D3dResource {
         UINT version;
         /* the ranges a dynamic buffer left behind, for reuse. */
         void *spares;
+        /* the uniform buffer descriptor of the whole current range, made when first bound. */
+        UINT cbv;
         /* stream output targets: where in the buffer the count of bytes written is, after the data. */
         VkDeviceSize so_counter;
     } buf;
@@ -587,6 +589,8 @@ struct D3dDevice {
     VkSemaphore timeline;
     UINT64 next_serial;
     volatile UINT64 completed;
+    /* ranges dynamic buffers took new since the last submission. */
+    UINT renames;
 
     /* memory. */
     SRWLOCK memory_lock;

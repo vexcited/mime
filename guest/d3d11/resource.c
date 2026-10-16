@@ -12,6 +12,8 @@
 typedef struct D3dSpare {
     D3dAllocation alloc;
     UINT64 serial;
+    /* the descriptor of the whole range, kept with it. */
+    UINT cbv;
 } D3dSpare;
 
 /*
@@ -54,12 +56,19 @@ void D3dResourceAddRef(D3dResource *r) { InterlockedIncrement(&r->child.refs); }
 
 static void free_spares(D3dResource *r);
 
+static void free_cbv(D3dDevice *device, UINT64 serial, UINT cbv)
+{
+    if (cbv)
+        D3dDefer(device, serial, D3D_GARBAGE_HEAP, (UINT64)D3D_HEAP_UNIFORM_BUFFER << 32 | cbv);
+}
+
 static void destroy(D3dResource *r)
 {
     D3dDevice *device = r->child.device;
     UINT64 serial = D3D_MAX(r->last_use, device->next_serial);
     if (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
         D3dDeferFree(device, serial, &r->buf.alloc);
+        free_cbv(device, serial, r->buf.cbv);
         free_spares(r);
     } else {
         D3dDefer(device, serial, D3D_GARBAGE_IMAGE, (UINT64)r->tex.image);
@@ -98,18 +107,23 @@ BOOL D3dBufferRename(D3dDevice *device, D3dResource *r)
     BOOL reuse = spares->count && (spares->list[spares->head].serial <= device->completed ||
                                    spares->list[spares->head].serial <= D3dCompleted(device));
     D3dAllocation next;
+    UINT cbv = 0;
     if (reuse) {
         next = spares->list[spares->head].alloc;
+        cbv = spares->list[spares->head].cbv;
         spares->head = (spares->head + 1) % spares->capacity;
         spares->count--;
     } else if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_UPLOAD, r->buf.size, 256, &next))) {
         return FALSE;
+    } else {
+        device->renames++;
     }
     if (spares->count == spares->capacity) {
         UINT capacity = spares->capacity ? spares->capacity * 2 : 4;
         D3dSpare *list = HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
         if (!list) {
             D3dFree(device, &next);
+            free_cbv(device, 0, cbv);
             return FALSE;
         }
         for (UINT i = 0; i < spares->count; i++)
@@ -122,6 +136,8 @@ BOOL D3dBufferRename(D3dDevice *device, D3dResource *r)
     D3dSpare *tail = &spares->list[(spares->head + spares->count++) % spares->capacity];
     tail->alloc = r->buf.alloc;
     tail->serial = D3D_MAX(r->last_use, device->next_serial);
+    tail->cbv = r->buf.cbv;
+    r->buf.cbv = cbv;
     r->buf.alloc = next;
     r->buf.buffer = next.buffer;
     r->buf.offset = next.offset;
@@ -138,6 +154,7 @@ static void free_spares(D3dResource *r)
     for (UINT i = 0; i < spares->count; i++) {
         D3dSpare *spare = &spares->list[(spares->head + i) % spares->capacity];
         D3dDeferFree(r->child.device, spare->serial, &spare->alloc);
+        free_cbv(r->child.device, spare->serial, spare->cbv);
     }
     HeapFree(GetProcessHeap(), 0, spares->list);
     HeapFree(GetProcessHeap(), 0, spares);
@@ -150,7 +167,23 @@ UINT D3dBufferCbv(D3dResource *r, UINT offset, UINT size)
     if (offset >= r->buf.size)
         return 0;
     size = D3D_MIN(size, r->buf.size - offset);
-    return D3dCbvIndex(r->child.device, r->buf.buffer, r->buf.offset + offset, size);
+    UINT whole = D3D_MIN(r->buf.size, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
+    if (offset || D3D_MIN(size, whole) != whole)
+        return D3dCbvIndex(r->child.device, r->buf.buffer, r->buf.offset + offset, size);
+    /* the whole range, the usual binding, has its own descriptor that renames carry along. */
+    if (r->buf.cbv)
+        return r->buf.cbv;
+    D3dDevice *device = r->child.device;
+    UINT index = D3dHeapAlloc(device, D3D_HEAP_UNIFORM_BUFFER);
+    if (!index)
+        return 0;
+    D3dHeapWriteBuffer(device, index, r->buf.buffer, r->buf.offset, whole);
+    UINT old = (UINT)InterlockedCompareExchange((LONG volatile *)&r->buf.cbv, (LONG)index, 0);
+    if (old) {
+        D3dHeapFree(device, D3D_HEAP_UNIFORM_BUFFER, index);
+        return old;
+    }
+    return index;
 }
 
 /* ------------------------------------------------------------------ the common methods */

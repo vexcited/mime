@@ -103,6 +103,7 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     if (device->vk.vkQueueSubmit2(device->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS)
         D3dLog("d3d11: vkQueueSubmit2 failed");
     device->next_serial = serial + 1;
+    device->renames = 0;
     ReleaseSRWLockExclusive(&device->queue_lock);
     if (init)
         D3dInitDone(device);

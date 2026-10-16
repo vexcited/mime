@@ -25,6 +25,16 @@ static HRESULT wait_idle(D3dContext *c, D3dResource *r, UINT flags)
 
 /* ------------------------------------------------------------------ map */
 
+/*
+ * renamed ranges come back once the gpu ran past them: when many were
+ * taken new, what was recorded is submitted so later renames find some.
+ */
+static void renaming(D3dContext *c)
+{
+    if (c->child.device->renames >= 256)
+        D3dContextFlush(c);
+}
+
 HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP type, UINT flags,
                   D3D11_MAPPED_SUBRESOURCE *mapped)
 {
@@ -55,6 +65,7 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
         }
         if (type == D3D11_MAP_WRITE_DISCARD) {
             /* a range the gpu does not use, so the program never waits. */
+            renaming(c);
             if (r->last_use > device->completed && !D3dBufferRename(device, r))
                 hr = wait_idle(c, r, flags);
         } else if (type != D3D11_MAP_WRITE_NO_OVERWRITE) {
@@ -162,6 +173,7 @@ static void update_buffer(D3dContext *c, D3dResource *r, UINT offset, UINT size,
     if (r->buf.mapped) {
         /* mapped memory the gpu may be reading: a new range, the old bytes carried over. */
         if (r->last_use > device->completed) {
+            renaming(c);
             BYTE *old = r->buf.mapped;
             if (D3dBufferRename(device, r)) {
                 if (offset || size < r->buf.size)
