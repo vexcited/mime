@@ -55,14 +55,16 @@ BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignme
     if (!b)
         return FALSE;
     b->size = D12_MAX(size + alignment, (UINT64)1 << 20);
-    /* generated commands' preprocessing, and indirect arguments shaders write through the address. */
+    /* generated commands' preprocessing, indirect arguments shaders write through the address, clears copy from it. */
     VkBufferUsageFlags2CreateInfoKHR usage = {VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR};
     usage.usage = VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT_KHR |
-                  VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT_KHR | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT_KHR;
+                  VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT_KHR | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT_KHR |
+                  VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT_KHR | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR;
     VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, device->has_dgc ? &usage : NULL};
     info.usage = device->has_dgc ? 0
                                  : VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                       VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     info.size = b->size;
     VkMemoryRequirements req;
     int type = -1;
@@ -1472,6 +1474,86 @@ static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize off
     }
 }
 
+/* the buffer and offset of an address of the allocator's scratch memory. */
+static BOOL scratch_buffer(D12CommandAllocator *allocator, VkDeviceAddress address, VkBuffer *buffer,
+                           VkDeviceSize *offset)
+{
+    for (D12Scratch *b = allocator->scratch; b; b = b->next)
+        if (address >= b->address && address < b->address + b->size) {
+            *buffer = b->buffer;
+            *offset = address - b->address;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+static void transfer_barrier(D12CommandList *list)
+{
+    VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+}
+
+/*
+ * rectangles of a storage image, which may not be a target: rows of the
+ * packed value in scratch memory, filled once, copied over each rectangle
+ * in bands of as many rows.
+ */
+static void clear_uav_rects(D12CommandList *list, const D12DescriptorInfo *info, const UINT *uints,
+                            const FLOAT *floats, UINT rect_count, const D3D12_RECT *rects)
+{
+    D12Resource *r = info->resource;
+    BYTE pattern[16];
+    UINT size, ints[4];
+    if (!uints && (is_uint(info->format) || is_sint(info->format))) {
+        for (UINT i = 0; i < 4; i++)
+            ints[i] = is_uint(info->format) ? (UINT)floats[i] : (UINT)(INT)floats[i];
+        uints = ints, floats = NULL;
+    }
+    if (!D3dPackClear(info->format, uints, uints ? NULL : floats, pattern, &size))
+        return;
+    UINT mip = info->range.baseMipLevel;
+    BOOL volume = r->desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+    LONG width = (LONG)D12_MAX(r->desc.Width >> mip, 1ull), height = (LONG)D12_MAX(r->desc.Height >> mip, 1u);
+    UINT depth = volume ? D12_MAX((UINT)r->desc.DepthOrArraySize >> mip, 1u) : 1;
+    UINT widest = 0;
+    for (UINT i = 0; i < rect_count; i++)
+        widest = D12_MAX(widest, (UINT)D12_MAX(D12_MIN(rects[i].right, width) - D12_MAX(rects[i].left, 0), 0));
+    if (!widest)
+        return;
+    UINT rows = D12_MAX(65536 / (widest * size), 1u);
+    VkDeviceAddress address;
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    UINT64 bytes = ((UINT64)widest * rows * size + 3) & ~3ull;
+    if (!D12ScratchAlloc(list->allocator, bytes, 16, ~0u, &address) ||
+        !scratch_buffer(list->allocator, address, &buffer, &offset))
+        return;
+    fill_pattern(list, buffer, offset, bytes, pattern, size);
+    transfer_barrier(list);
+    for (UINT i = 0; i < rect_count; i++) {
+        LONG left = D12_MAX(rects[i].left, 0), top = D12_MAX(rects[i].top, 0);
+        LONG right = D12_MIN(rects[i].right, width), bottom = D12_MIN(rects[i].bottom, height);
+        if (right <= left || bottom <= top)
+            continue;
+        for (LONG y = top; y < bottom; y += (LONG)rows)
+            for (UINT z = 0; z < depth; z++) {
+                VkBufferImageCopy region = {offset, (UINT)(right - left), 0};
+                region.imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, mip,
+                                                                     info->range.baseArrayLayer,
+                                                                     volume ? 1 : info->range.layerCount};
+                region.imageOffset = (VkOffset3D){left, y, (INT)z};
+                region.imageExtent = (VkExtent3D){(UINT)(right - left), (UINT)D12_MIN((LONG)rows, bottom - y), 1};
+                vk_of(list)->vkCmdCopyBufferToImage(list->cmd, buffer, r->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+            }
+    }
+}
+
 static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, const UINT *uints, const FLOAT *floats,
                       UINT rect_count, const D3D12_RECT *rects)
 {
@@ -1512,7 +1594,8 @@ static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, con
     }
     VkImageSubresourceRange range = info->range;
     if (rect_count && rects) {
-        /* rectangles of storage images: a clear of each through a rendering would need targets; the whole view is cleared. */
+        clear_uav_rects(list, info, uints, floats, rect_count, rects);
+        return;
     }
     vk_of(list)->vkCmdClearColorImage(list->cmd, r->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
