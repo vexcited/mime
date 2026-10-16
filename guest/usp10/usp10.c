@@ -4,32 +4,16 @@
  * font. without contextual shaping, complex scripts render their nominal
  * glyphs.
  *
- * glyph ids come from gdi32's GetGlyphIndicesW and GetCharABCWidthsI when
- * gdi32 exports them. until it does, glyphs are the characters themselves,
- * reported with fNoGlyphIndex, which is also how mime's ExtTextOutW reads
- * ETO_GLYPH_INDEX text today.
+ * glyph ids come from gdi32's GetGlyphIndicesW and GetCharABCWidthsI. when
+ * they are missing, glyphs are the characters themselves, reported with
+ * fNoGlyphIndex.
  */
-#define MIME_BUILD_USP10
-#include <mime/nt.h>
-#include <mime/ntrtl.h>
-#include <mime/win32/winbase.h>
-#include <mime/win32/usp10.h>
+#include "usp10_private.h"
 
 #ifndef ARABIC_CHARSET
 #define HEBREW_CHARSET 177
 #define ARABIC_CHARSET 178
 #endif
-
-/* the scripts of this implementation, indexes of g_props. */
-enum {
-    USP_UNDEFINED = SCRIPT_UNDEFINED,
-    USP_LATIN = 1,
-    USP_ARABIC = 2,
-    USP_HEBREW = 3,
-    USP_COMPLEX = 4,
-    USP_DIGIT = 5,
-    USP_SCRIPT_COUNT,
-};
 
 static const SCRIPT_PROPERTIES g_props[USP_SCRIPT_COUNT] = {
     {.langid = 0, .bCharSet = DEFAULT_CHARSET},
@@ -207,28 +191,19 @@ USPAPI ScriptItemize(const WCHAR *chars, int count, int max_items, const SCRIPT_
 
 #define CACHE_MAGIC 0x50535555 /* "UUSP" */
 
-typedef struct USP_CACHE {
-    DWORD Magic;
-    BOOL Real; /* glyph ids from gdi32, else characters. */
-    TEXTMETRICW Metrics;
-    WORD *Glyphs[256]; /* character to glyph id plus one, by page of 256. */
-    ABC *Widths[256];  /* by glyph id. */
-    BYTE *Known[256];
-} USP_CACHE;
-
-static void *usp_alloc(SIZE_T size)
+void *UspAlloc(SIZE_T size)
 {
     return RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, HEAP_ZERO_MEMORY, size);
 }
 
-static void usp_free(void *p)
+void UspFree(void *p)
 {
     if (p)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, p);
 }
 
 /* the cache of *cache, created from dc. E_PENDING when neither exists, like windows. */
-static HRESULT get_cache(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
+HRESULT UspGetCache(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
 {
     if (!cache)
         return E_INVALIDARG;
@@ -242,13 +217,13 @@ static HRESULT get_cache(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
     if (!dc)
         return E_PENDING;
     RtlRunOnceExecuteOnce(&g_gdi.Once, init_gdi, NULL, NULL);
-    c = usp_alloc(sizeof(*c));
+    c = UspAlloc(sizeof(*c));
     if (!c)
         return E_OUTOFMEMORY;
     c->Magic = CACHE_MAGIC;
     c->Real = g_gdi.GetGlyphIndices != NULL;
     if (!GetTextMetricsW(dc, &c->Metrics)) {
-        usp_free(c);
+        UspFree(c);
         return E_INVALIDARG;
     }
     *cache = c;
@@ -263,12 +238,14 @@ USPAPI ScriptFreeCache(SCRIPT_CACHE *cache)
     USP_CACHE *c = *cache;
     if (c && c->Magic == CACHE_MAGIC) {
         for (int i = 0; i < 256; i++) {
-            usp_free(c->Glyphs[i]);
-            usp_free(c->Widths[i]);
-            usp_free(c->Known[i]);
+            UspFree(c->Glyphs[i]);
+            UspFree(c->Widths[i]);
+            UspFree(c->Known[i]);
         }
+        UspFree(c->Gsub.Data);
+        UspFree(c->Gpos.Data);
         c->Magic = 0;
-        usp_free(c);
+        UspFree(c);
     }
     *cache = NULL;
     return S_OK;
@@ -293,7 +270,7 @@ static WORD lookup_glyph(USP_CACHE *c, HDC dc, WCHAR ch, BOOL *missing)
         g = 0;
     }
     if (!page)
-        page = c->Glyphs[ch >> 8] = usp_alloc(256 * sizeof(WORD));
+        page = c->Glyphs[ch >> 8] = UspAlloc(256 * sizeof(WORD));
     if (page && !*missing)
         page[ch & 0xFF] = (WORD)(g + 1);
     return g;
@@ -325,11 +302,11 @@ static BOOL lookup_abc(USP_CACHE *c, HDC dc, WORD glyph, BOOL no_index, ABC *abc
     if (!ok)
         return FALSE;
     if (!c->Known[glyph >> 8]) {
-        c->Known[glyph >> 8] = usp_alloc(256);
-        c->Widths[glyph >> 8] = usp_alloc(256 * sizeof(ABC));
+        c->Known[glyph >> 8] = UspAlloc(256);
+        c->Widths[glyph >> 8] = UspAlloc(256 * sizeof(ABC));
         if (!c->Known[glyph >> 8] || !c->Widths[glyph >> 8]) {
-            usp_free(c->Known[glyph >> 8]);
-            usp_free(c->Widths[glyph >> 8]);
+            UspFree(c->Known[glyph >> 8]);
+            UspFree(c->Widths[glyph >> 8]);
             c->Known[glyph >> 8] = NULL;
             c->Widths[glyph >> 8] = NULL;
             return TRUE;
@@ -348,7 +325,7 @@ USPAPI ScriptShape(HDC dc, SCRIPT_CACHE *cache, const WCHAR *chars, int count, i
     if (!chars || count <= 0 || !glyphs || !clusters || !attrs || !glyph_count || !analysis)
         return E_INVALIDARG;
     USP_CACHE *c;
-    HRESULT hr = get_cache(dc, cache, &c);
+    HRESULT hr = UspGetCache(dc, cache, &c);
     if (FAILED(hr))
         return hr;
     int needed = 0;
@@ -406,7 +383,7 @@ USPAPI ScriptPlace(HDC dc, SCRIPT_CACHE *cache, const WORD *glyphs, int count, c
     if (!glyphs || count <= 0 || !attrs || !advances || !analysis)
         return E_INVALIDARG;
     USP_CACHE *c;
-    HRESULT hr = get_cache(dc, cache, &c);
+    HRESULT hr = UspGetCache(dc, cache, &c);
     if (FAILED(hr))
         return hr;
     int total = 0, first_a = 0, last_c = 0;
@@ -475,7 +452,7 @@ USPAPI ScriptGetFontProperties(HDC dc, SCRIPT_CACHE *cache, SCRIPT_FONTPROPERTIE
     if (properties->cBytes != sizeof(SCRIPT_FONTPROPERTIES))
         return E_INVALIDARG;
     USP_CACHE *c;
-    HRESULT hr = get_cache(dc, cache, &c);
+    HRESULT hr = UspGetCache(dc, cache, &c);
     if (FAILED(hr))
         return hr;
     BOOL missing;
@@ -495,7 +472,7 @@ USPAPI ScriptGetCMap(HDC dc, SCRIPT_CACHE *cache, const WCHAR *chars, int count,
     if (!chars || count < 0 || !glyphs)
         return E_INVALIDARG;
     USP_CACHE *c;
-    HRESULT hr = get_cache(dc, cache, &c);
+    HRESULT hr = UspGetCache(dc, cache, &c);
     if (FAILED(hr))
         return hr;
     hr = S_OK;
@@ -516,7 +493,7 @@ USPAPI ScriptGetGlyphABCWidth(HDC dc, SCRIPT_CACHE *cache, WORD glyph, ABC *abc)
     if (!abc)
         return E_INVALIDARG;
     USP_CACHE *c;
-    HRESULT hr = get_cache(dc, cache, &c);
+    HRESULT hr = UspGetCache(dc, cache, &c);
     if (FAILED(hr))
         return hr;
     return lookup_abc(c, dc, glyph, !c->Real, abc) ? S_OK : E_PENDING;
@@ -527,7 +504,7 @@ USPAPI ScriptCacheGetHeight(HDC dc, SCRIPT_CACHE *cache, LONG *height)
     if (!height)
         return E_INVALIDARG;
     USP_CACHE *c;
-    HRESULT hr = get_cache(dc, cache, &c);
+    HRESULT hr = UspGetCache(dc, cache, &c);
     if (FAILED(hr))
         return hr;
     *height = c->Metrics.tmHeight;
@@ -649,7 +626,7 @@ USPAPI ScriptLayout(int runs, const BYTE *levels, int *visual_to_logical, int *l
 {
     if (!levels || runs <= 0 || (!visual_to_logical && !logical_to_visual))
         return E_INVALIDARG;
-    int stack[64], *order = runs <= 64 ? stack : usp_alloc((SIZE_T)runs * sizeof(int));
+    int stack[64], *order = runs <= 64 ? stack : UspAlloc((SIZE_T)runs * sizeof(int));
     if (!order)
         return E_OUTOFMEMORY;
     int high = 0, low_odd = 255;
@@ -685,7 +662,7 @@ USPAPI ScriptLayout(int runs, const BYTE *levels, int *visual_to_logical, int *l
             logical_to_visual[order[i]] = i;
     }
     if (order != stack)
-        usp_free(order);
+        UspFree(order);
     return S_OK;
 }
 
@@ -745,3 +722,295 @@ USPAPI ScriptApplyDigitSubstitution(const SCRIPT_DIGITSUBSTITUTE *sds, SCRIPT_CO
     }
     return S_OK;
 }
+
+/* ------------------------------------------------------------------ justification */
+
+/*
+ * where a word takes its kashida, by the class of the glyph that offers it:
+ * the lowest wins, classes 8 and up never.
+ */
+static const BYTE g_kashida_rank[16] = {8, 8, 8, 8, 8, 8, 8, 6, 0, 3, 2, 5, 7, 4, 1, 1};
+
+enum { JUSTIFY_NONE, JUSTIFY_KASHIDA, JUSTIFY_CHARACTER, JUSTIFY_BLANK };
+
+/*
+ * widening goes to one kashida point per word when the font has them and
+ * the space allows min_kashida each; otherwise to blanks, up to three
+ * average widths each, then a pixel at a time to blanks and characters
+ * from the end. narrowing takes a pixel at a time from every glyph that
+ * justifies, from the end.
+ */
+USPAPI ScriptJustify(const SCRIPT_VISATTR *attrs, const int *advances, int glyphs, int dx, int min_kashida,
+                     int *justify)
+{
+    if (!justify || glyphs <= 0 || !advances || !attrs)
+        return E_INVALIDARG;
+    memcpy(justify, advances, (SIZE_T)glyphs * sizeof(int));
+    if (!dx || glyphs == 1)
+        return S_OK;
+    if (dx < 0) {
+        while (dx < 0) {
+            int before = dx;
+            for (int i = glyphs - 1; i >= 0 && dx < 0; i--) {
+                if (attrs[i].uJustification) {
+                    justify[i]--;
+                    dx++;
+                }
+            }
+            if (dx == before)
+                return S_FALSE;
+        }
+        return S_OK;
+    }
+
+    BYTE *kind = UspAlloc((SIZE_T)glyphs);
+    if (!kind)
+        return E_OUTOFMEMORY;
+    int kashidas = 0, characters = 0, blanks = 0, point = -1, rank = 8;
+    for (int i = 0; i < glyphs; i++) {
+        UINT j = attrs[i].uJustification;
+        BOOL last = i == glyphs - 1;
+        if (j == SCRIPT_JUSTIFY_CHARACTER || j == SCRIPT_JUSTIFY_BLANK || j == SCRIPT_JUSTIFY_ARABIC_BLANK) {
+            if (last)
+                continue;
+            /* a word ends: its kashida point stays. */
+            if (point >= 0 && point != i) {
+                kind[point] = JUSTIFY_KASHIDA;
+                kashidas++;
+            }
+            point = -1;
+            rank = 8;
+            if (j == SCRIPT_JUSTIFY_CHARACTER) {
+                kind[i] = JUSTIFY_CHARACTER;
+                characters++;
+            } else {
+                kind[i] = JUSTIFY_BLANK;
+                blanks++;
+            }
+            continue;
+        }
+        if (j < SCRIPT_JUSTIFY_ARABIC_NORMAL || g_kashida_rank[j] >= rank)
+            continue;
+        rank = g_kashida_rank[j];
+        if (j == SCRIPT_JUSTIFY_ARABIC_KASHIDA || j == SCRIPT_JUSTIFY_ARABIC_SEEN || j == SCRIPT_JUSTIFY_ARABIC_SEEN_M) {
+            /* at the glyph, before the marks over the one ahead of it. */
+            int k = i - 1;
+            while (k >= 0 && attrs[k].fDiacritic)
+                k--;
+            point = k + 1;
+        } else if (last) {
+            continue;
+        } else if (j == SCRIPT_JUSTIFY_ARABIC_BARA && attrs[i + 1].uJustification == SCRIPT_JUSTIFY_ARABIC_BA) {
+            point = i + 2;
+        } else {
+            if (j == SCRIPT_JUSTIFY_ARABIC_BARA)
+                rank = 5;
+            point = i + 1;
+        }
+    }
+    if (point >= 0 && point < glyphs && kind[point] != JUSTIFY_KASHIDA) {
+        kind[point] = JUSTIFY_KASHIDA;
+        kashidas++;
+    }
+
+    HRESULT hr = S_OK;
+    if (kashidas && min_kashida > 0 && dx >= min_kashida) {
+        int share = dx / kashidas, extra = dx % kashidas;
+        if (share < min_kashida) {
+            int points = dx / min_kashida;
+            share = dx / points;
+            extra = dx % points;
+        }
+        for (int i = 0; i < glyphs; i++) {
+            if (kind[i] != JUSTIFY_KASHIDA || dx < min_kashida)
+                continue;
+            justify[i] += share;
+            dx -= share;
+            if (extra > 0) {
+                justify[i]++;
+                dx--;
+                extra--;
+            }
+        }
+    } else if (!blanks && !characters && kashidas && dx < min_kashida) {
+        /* too little for a kashida and nothing else justifies: every glyph widens. */
+        int share = dx / glyphs, extra = dx % glyphs;
+        for (int i = glyphs - 1; i >= 0; i--) {
+            justify[i] += share;
+            if (extra > 0) {
+                justify[i]++;
+                extra--;
+            }
+        }
+    } else if (!blanks && !characters && !kashidas) {
+        hr = S_FALSE;
+    } else {
+        int sum = 0, counted = 0;
+        for (int i = 0; i < glyphs; i++) {
+            if (kind[i] && !attrs[i].fDiacritic && !attrs[i].fZeroWidth) {
+                sum += advances[i];
+                counted++;
+            }
+        }
+        int average = counted ? sum / counted : 5;
+        if (!blanks) {
+            int share = characters ? dx / characters : 0, extra = characters ? dx % characters : 0;
+            for (int i = glyphs - 1; i >= 0; i--) {
+                if (kind[i] != JUSTIFY_CHARACTER)
+                    continue;
+                justify[i] += share;
+                if (extra > 0) {
+                    justify[i]++;
+                    extra--;
+                }
+            }
+        } else {
+            int share = 3 * average, extra = 0;
+            if (dx < blanks * 3 * average) {
+                share = dx / blanks;
+                extra = dx % blanks;
+            }
+            for (int i = glyphs - 1; i >= 0 && dx > 0; i--) {
+                if (kind[i] != JUSTIFY_BLANK)
+                    continue;
+                justify[i] += share;
+                dx -= share;
+                if (extra > 0) {
+                    justify[i]++;
+                    dx--;
+                    extra--;
+                }
+            }
+            if (characters && dx > 0) {
+                int cap = (average + 2) / 4;
+                if (dx < cap * characters)
+                    extra = dx % characters;
+                for (int i = glyphs - 1; i >= 0 && dx > 0 && extra > 0; i--) {
+                    if (kind[i] == JUSTIFY_CHARACTER) {
+                        justify[i]++;
+                        dx--;
+                        extra--;
+                    }
+                }
+            }
+            while (dx > 0) {
+                for (int i = glyphs - 1; i >= 0 && dx > 0; i--) {
+                    if (kind[i] == JUSTIFY_CHARACTER || kind[i] == JUSTIFY_BLANK) {
+                        justify[i]++;
+                        dx--;
+                    }
+                }
+            }
+        }
+    }
+    UspFree(kind);
+    return hr;
+}
+
+/* the cluster starting at character first: where the next starts and its glyphs [*g0, *g1). */
+static void cluster_glyphs(const WORD *clusters, int chars, int glyphs, BOOL rtl, int first, int *next, int *g0,
+                           int *g1)
+{
+    int n = first + 1;
+    while (n < chars && clusters[n] == clusters[first])
+        n++;
+    *next = n;
+    if (!rtl) {
+        *g0 = clusters[first];
+        *g1 = n < chars ? clusters[n] : glyphs;
+    } else {
+        *g0 = n < chars ? clusters[n] + 1 : 0;
+        *g1 = clusters[first] + 1;
+    }
+    if (*g1 > glyphs)
+        *g1 = glyphs;
+    if (*g0 > *g1)
+        *g0 = *g1;
+}
+
+/* each cluster's width shared between its characters, the first ones taking what does not divide. */
+USPAPI ScriptGetLogicalWidths(const SCRIPT_ANALYSIS *analysis, int chars, int glyphs, const int *glyph_widths,
+                              const WORD *clusters, const SCRIPT_VISATTR *attrs, int *dx)
+{
+    if (!analysis || !glyph_widths || !clusters || !dx || chars <= 0 || glyphs <= 0)
+        return E_INVALIDARG;
+    BOOL rtl = analysis->fRTL && !analysis->fLogicalOrder;
+    for (int c = 0; c < chars;) {
+        int next, g0, g1;
+        cluster_glyphs(clusters, chars, glyphs, rtl, c, &next, &g0, &g1);
+        int width = 0;
+        for (int g = g0; g < g1; g++)
+            width += glyph_widths[g];
+        int n = next - c;
+        for (int k = 0; k < n; k++)
+            dx[c + k] = width / n + (k < width % n ? 1 : 0);
+        c = next;
+    }
+    return S_OK;
+}
+
+/* each cluster takes the widths of its characters, the difference going to its last glyph in logical order. */
+USPAPI ScriptApplyLogicalWidth(const int *dx, int chars, int glyphs, const WORD *clusters, const SCRIPT_VISATTR *attrs,
+                               const int *advances, const SCRIPT_ANALYSIS *analysis, ABC *abc, int *justify)
+{
+    if (!dx || !clusters || !attrs || !advances || !analysis || !justify || chars <= 0 || glyphs <= 0)
+        return E_INVALIDARG;
+    BOOL rtl = analysis->fRTL && !analysis->fLogicalOrder;
+    memcpy(justify, advances, (SIZE_T)glyphs * sizeof(int));
+    for (int c = 0; c < chars;) {
+        int next, g0, g1;
+        cluster_glyphs(clusters, chars, glyphs, rtl, c, &next, &g0, &g1);
+        if (g0 < g1) {
+            int want = 0, have = 0;
+            for (int k = c; k < next; k++)
+                want += dx[k];
+            for (int g = g0; g < g1; g++)
+                have += advances[g];
+            justify[rtl ? g0 : g1 - 1] += want - have;
+        }
+        c = next;
+    }
+    if (abc) {
+        int total = 0;
+        for (int g = 0; g < glyphs; g++)
+            total += justify[g];
+        abc->abcB = (UINT)(total - abc->abcA - abc->abcC);
+    }
+    return S_OK;
+}
+
+/* the opentype script tag of an item's script, bytes in font order. */
+OPENTYPE_TAG UspScriptTag(int script)
+{
+    switch (script) {
+    case USP_LATIN:
+    case USP_DIGIT: return 'l' | 'a' << 8 | 't' << 16 | (ULONG)'n' << 24;
+    case USP_ARABIC: return 'a' | 'r' << 8 | 'a' << 16 | (ULONG)'b' << 24;
+    case USP_HEBREW: return 'h' | 'e' << 8 | 'b' << 16 | (ULONG)'r' << 24;
+    default: return SCRIPT_TAG_UNKNOWN;
+    }
+}
+
+/* ------------------------------------------------------------------ uniscribe's own allocator */
+
+USPAPI UspAllocCache(int size, void **out)
+{
+    if (!out)
+        return E_INVALIDARG;
+    *out = size > 0 ? UspAlloc((SIZE_T)size) : NULL;
+    return *out ? S_OK : E_OUTOFMEMORY;
+}
+
+USPAPI UspAllocTemp(int size, void **out)
+{
+    return UspAllocCache(size, out);
+}
+
+USPAPI UspFreeMem(void *p)
+{
+    UspFree(p);
+    return S_OK;
+}
+
+/* the language pack is always present. */
+USPAPI_(void) LpkPresent(void) {}

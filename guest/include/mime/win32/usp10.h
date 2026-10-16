@@ -154,6 +154,62 @@ typedef struct {
 /* ScriptGetCMap flags. */
 #define SGCM_RTL 0x00000001
 
+typedef void *SCRIPT_STRING_ANALYSIS;
+
+typedef struct tag_SCRIPT_TABDEF {
+    int cTabStops;
+    int iScale;
+    int *pTabStops;
+    int iTabOrigin;
+} SCRIPT_TABDEF;
+
+/* ScriptStringAnalyse flags. */
+#define SSA_PASSWORD 0x00000001
+#define SSA_TAB 0x00000002
+#define SSA_CLIP 0x00000004
+#define SSA_FIT 0x00000008
+#define SSA_DZWG 0x00000010
+#define SSA_FALLBACK 0x00000020
+#define SSA_BREAK 0x00000040
+#define SSA_GLYPHS 0x00000080
+#define SSA_RTL 0x00000100
+#define SSA_GCP 0x00000200
+#define SSA_HOTKEY 0x00000400
+#define SSA_METAFILE 0x00000800
+#define SSA_LINK 0x00001000
+#define SSA_HIDEHOTKEY 0x00002000
+#define SSA_HOTKEYONLY 0x00002400
+#define SSA_FULLMEASURE 0x04000000
+#define SSA_LPKANSIFALLBACK 0x08000000
+#define SSA_PIDX 0x10000000
+#define SSA_LAYOUTRTL 0x20000000
+#define SSA_DONTGLYPH 0x40000000
+#define SSA_NOKASHIDA 0x80000000
+
+typedef ULONG OPENTYPE_TAG;
+
+#define SCRIPT_TAG_UNKNOWN 0x00000000
+
+typedef struct opentype_feature_record {
+    OPENTYPE_TAG tagFeature;
+    LONG lParameter;
+} OPENTYPE_FEATURE_RECORD;
+
+typedef struct textrange_properties {
+    OPENTYPE_FEATURE_RECORD *potfRecords;
+    int cotfRecords;
+} TEXTRANGE_PROPERTIES;
+
+typedef struct script_charprop {
+    WORD fCanGlyphAlone : 1;
+    WORD reserved : 15;
+} SCRIPT_CHARPROP;
+
+typedef struct script_glyphprop {
+    SCRIPT_VISATTR sva;
+    WORD reserved;
+} SCRIPT_GLYPHPROP;
+
 USPAPI ScriptItemize(const WCHAR *chars, int count, int max_items, const SCRIPT_CONTROL *control,
                      const SCRIPT_STATE *state, SCRIPT_ITEM *items, int *item_count);
 USPAPI ScriptShape(HDC dc, SCRIPT_CACHE *cache, const WCHAR *chars, int count, int max_glyphs,
@@ -179,5 +235,55 @@ USPAPI ScriptLayout(int runs, const BYTE *levels, int *visual_to_logical, int *l
 USPAPI ScriptRecordDigitSubstitution(LCID locale, SCRIPT_DIGITSUBSTITUTE *sds);
 USPAPI ScriptApplyDigitSubstitution(const SCRIPT_DIGITSUBSTITUTE *sds, SCRIPT_CONTROL *control,
                                     SCRIPT_STATE *state);
+USPAPI ScriptJustify(const SCRIPT_VISATTR *attrs, const int *advances, int glyphs, int dx, int min_kashida,
+                     int *justify);
+USPAPI ScriptGetLogicalWidths(const SCRIPT_ANALYSIS *analysis, int chars, int glyphs, const int *glyph_widths,
+                              const WORD *clusters, const SCRIPT_VISATTR *attrs, int *dx);
+USPAPI ScriptApplyLogicalWidth(const int *dx, int chars, int glyphs, const WORD *clusters, const SCRIPT_VISATTR *attrs,
+                               const int *advances, const SCRIPT_ANALYSIS *analysis, ABC *abc, int *justify);
+
+USPAPI ScriptStringAnalyse(HDC dc, const void *string, int length, int max_glyphs, int charset, DWORD flags,
+                           int width, SCRIPT_CONTROL *control, SCRIPT_STATE *state, const int *dx,
+                           SCRIPT_TABDEF *tabs, const BYTE *in_class, SCRIPT_STRING_ANALYSIS *ssa);
+USPAPI ScriptStringFree(SCRIPT_STRING_ANALYSIS *ssa);
+USPAPI_(const SIZE *) ScriptString_pSize(SCRIPT_STRING_ANALYSIS ssa);
+USPAPI_(const int *) ScriptString_pcOutChars(SCRIPT_STRING_ANALYSIS ssa);
+USPAPI_(const SCRIPT_LOGATTR *) ScriptString_pLogAttr(SCRIPT_STRING_ANALYSIS ssa);
+USPAPI ScriptStringGetOrder(SCRIPT_STRING_ANALYSIS ssa, UINT *order);
+USPAPI ScriptStringCPtoX(SCRIPT_STRING_ANALYSIS ssa, int cp, BOOL trailing, int *x);
+USPAPI ScriptStringXtoCP(SCRIPT_STRING_ANALYSIS ssa, int x, int *cp, int *trailing);
+USPAPI ScriptStringGetLogicalWidths(SCRIPT_STRING_ANALYSIS ssa, int *dx);
+USPAPI ScriptStringValidate(SCRIPT_STRING_ANALYSIS ssa);
+USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, const RECT *rect, int min_sel,
+                       int max_sel, BOOL disabled);
+
+USPAPI ScriptItemizeOpenType(const WCHAR *chars, int count, int max_items, const SCRIPT_CONTROL *control,
+                             const SCRIPT_STATE *state, SCRIPT_ITEM *items, OPENTYPE_TAG *script_tags,
+                             int *item_count);
+USPAPI ScriptShapeOpenType(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                           OPENTYPE_TAG language, int *range_chars, TEXTRANGE_PROPERTIES **range_properties,
+                           int ranges, const WCHAR *chars, int count, int max_glyphs, WORD *clusters,
+                           SCRIPT_CHARPROP *char_props, WORD *glyphs, SCRIPT_GLYPHPROP *glyph_props,
+                           int *glyph_count);
+USPAPI ScriptPlaceOpenType(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                           OPENTYPE_TAG language, int *range_chars, TEXTRANGE_PROPERTIES **range_properties,
+                           int ranges, const WCHAR *chars, WORD *clusters, SCRIPT_CHARPROP *char_props, int count,
+                           const WORD *glyphs, const SCRIPT_GLYPHPROP *glyph_props, int glyph_count,
+                           int *advances, GOFFSET *offsets, ABC *abc);
+USPAPI ScriptGetFontScriptTags(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, int max_tags,
+                               OPENTYPE_TAG *tags, int *count);
+USPAPI ScriptGetFontLanguageTags(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                                 int max_tags, OPENTYPE_TAG *tags, int *count);
+USPAPI ScriptGetFontFeatureTags(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                                OPENTYPE_TAG language, int max_tags, OPENTYPE_TAG *tags, int *count);
+USPAPI ScriptGetFontAlternateGlyphs(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                                    OPENTYPE_TAG language, OPENTYPE_TAG feature, WORD glyph, int max_alternates,
+                                    WORD *alternates, int *count);
+USPAPI ScriptSubstituteSingleGlyph(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                                   OPENTYPE_TAG language, OPENTYPE_TAG feature, LONG parameter, WORD glyph,
+                                   WORD *out_glyph);
+USPAPI ScriptPositionSingleGlyph(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
+                                 OPENTYPE_TAG language, OPENTYPE_TAG feature, LONG parameter, WORD glyph,
+                                 int advance, GOFFSET offset, int *out_advance, GOFFSET *out_offset);
 
 #endif

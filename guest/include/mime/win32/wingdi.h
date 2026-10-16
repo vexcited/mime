@@ -521,6 +521,7 @@ WINGDIAPI int WINAPI GetTextFaceW(HDC dc, int count, LPWSTR name);
 WINGDIAPI BOOL WINAPI GetCharWidth32W(HDC dc, UINT first, UINT last, LPINT widths);
 WINGDIAPI BOOL WINAPI GetCharABCWidthsW(HDC dc, UINT first, UINT last, LPABC abc);
 WINGDIAPI BOOL WINAPI MoveToEx(HDC dc, int x, int y, LPPOINT old);
+WINGDIAPI BOOL WINAPI GetCurrentPositionEx(HDC dc, LPPOINT point);
 WINGDIAPI BOOL WINAPI LineTo(HDC dc, int x, int y);
 WINGDIAPI BOOL WINAPI Rectangle(HDC dc, int left, int top, int right, int bottom);
 WINGDIAPI BOOL WINAPI RoundRect(HDC dc, int left, int top, int right, int bottom, int width, int height);

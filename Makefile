@@ -471,6 +471,8 @@ EXTRA_DEPS_kernel32 := $(GEN)/kernel32.def
 EXTRA_LDFLAGS_kernel32 := /def:$(GEN)/kernel32.def
 $(eval $(call USER_DLL,kernel32,0x7FFA00000000,ntdll kernelbase,/entry:DllMain))
 
+EXTRA_DEPS_gdi32 := guest/gdi32/gdi32.def
+EXTRA_LDFLAGS_gdi32 := /def:guest/gdi32/gdi32.def
 $(eval $(call USER_DLL,gdi32,0x7FF800000000,ntdll kernel32 win32u,/entry:DllMain))
 
 # user32 parses the visual style and decodes png icons itself.
@@ -562,6 +564,8 @@ X64_EXTRA_DEPS_kernel32 := $(GEN)/x64/kernel32.def
 X64_EXTRA_LDFLAGS_kernel32 := /def:$(GEN)/x64/kernel32.def
 $(eval $(call X64_DLL,kernel32,0x7FFA00000000,ntdll kernelbase,/entry:DllMain))
 
+X64_EXTRA_DEPS_gdi32 := guest/gdi32/gdi32.def
+X64_EXTRA_LDFLAGS_gdi32 := /def:guest/gdi32/gdi32.def
 $(eval $(call X64_DLL,gdi32,0x7FF800000000,ntdll kernel32 win32u,/entry:DllMain))
 
 # wow64, 32-bit programs on x64: wow64.dll and wow64win.dll share the conversions of the translator, and
