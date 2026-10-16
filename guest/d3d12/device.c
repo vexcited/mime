@@ -198,6 +198,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_MESH_SHADER_EXTENSION_NAME, device->has_mesh = TRUE)
     WANT(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, device->has_atomic64 = TRUE)
     WANT(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, device->has_barycentrics = TRUE)
+    WANT(VK_KHR_MAINTENANCE_8_EXTENSION_NAME, device->has_maintenance8 = TRUE)
     BOOL has_maintenance5 = FALSE;
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
     if (has_maintenance5)
@@ -277,8 +278,11 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentric = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR,
         device->has_rt ? (void *)&as : (void *)&f11};
+    VkPhysicalDeviceMaintenance8FeaturesKHR maintenance8 = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR,
+        device->has_barycentrics ? (void *)&barycentric : barycentric.pNext};
     VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                          device->has_barycentrics ? (void *)&barycentric : barycentric.pNext};
+                                          device->has_maintenance8 ? (void *)&maintenance8 : maintenance8.pNext};
     vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
 
     if (!robust.nullDescriptor || !db.descriptorBuffer || !mutable_type.mutableDescriptorType ||
@@ -345,6 +349,9 @@ static HRESULT create_vulkan_device(D12Device *device)
     device->has_shared_atomic64 = f12.shaderSharedInt64Atomics && f->shaderInt64;
     if (!barycentric.fragmentShaderBarycentric)
         device->has_barycentrics = FALSE;
+    /* copies between depth or stencil and color images. */
+    if (!maintenance8.maintenance8)
+        device->has_maintenance8 = FALSE;
     /* builds on the gpu only, without capture and replay. */
     as.accelerationStructureCaptureReplay = as.accelerationStructureHostCommands = FALSE;
     as.accelerationStructureIndirectBuild = FALSE;

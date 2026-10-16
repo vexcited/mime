@@ -1016,6 +1016,73 @@ static VkBufferImageCopy footprint_region(const D12Resource *buffer, const D3D12
     return region;
 }
 
+/* the buffer and offset of an address of the allocator's scratch memory. */
+static BOOL scratch_buffer(D12CommandAllocator *allocator, VkDeviceAddress address, VkBuffer *buffer,
+                           VkDeviceSize *offset)
+{
+    for (D12Scratch *b = allocator->scratch; b; b = b->next)
+        if (address >= b->address && address < b->address + b->size) {
+            *buffer = b->buffer;
+            *offset = address - b->address;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+static void transfer_barrier(D12CommandList *list)
+{
+    VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+}
+
+/* bytes a texel of one aspect of an image takes in a buffer. */
+static UINT aspect_bytes(const D12Resource *r, VkImageAspectFlags aspect)
+{
+    if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT)
+        return 1;
+    if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT)
+        return r->fmt->block_bytes == 2 ? 2 : 4;
+    return r->fmt->block_bytes;
+}
+
+/*
+ * a copy between images; direct3d also copies between a depth or stencil
+ * plane and a color texture of its size, which vulkan does with
+ * VK_KHR_maintenance8, and otherwise through the allocator's memory.
+ */
+static void copy_image(D12CommandList *list, D12Resource *s, D12Resource *d, const VkImageCopy *region)
+{
+    D12Vk *vk = vk_of(list);
+    BOOL src_color = region->srcSubresource.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT;
+    BOOL dst_color = region->dstSubresource.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT;
+    if (src_color == dst_color || list->child.device->has_maintenance8) {
+        vk->vkCmdCopyImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, region);
+        return;
+    }
+    UINT bytes = aspect_bytes(s, region->srcSubresource.aspectMask);
+    if (bytes != aspect_bytes(d, region->dstSubresource.aspectMask))
+        return;
+    VkDeviceAddress address;
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    UINT64 size = (UINT64)region->extent.width * region->extent.height * region->extent.depth * bytes;
+    if (!D12ScratchAlloc(list->allocator, size, 16, ~0u, &address) ||
+        !scratch_buffer(list->allocator, address, &buffer, &offset))
+        return;
+    VkBufferImageCopy through = {offset, 0, 0, region->srcSubresource, region->srcOffset, region->extent};
+    vk->vkCmdCopyImageToBuffer(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &through);
+    transfer_barrier(list);
+    through.imageSubresource = region->dstSubresource;
+    through.imageOffset = region->dstOffset;
+    vk->vkCmdCopyBufferToImage(list->cmd, buffer, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &through);
+}
+
 static void STDMETHODCALLTYPE list_copy_texture_region(ID3D12GraphicsCommandList10 *iface,
                                                        const D3D12_TEXTURE_COPY_LOCATION *dst, UINT x, UINT y, UINT z,
                                                        const D3D12_TEXTURE_COPY_LOCATION *src, const D3D12_BOX *box)
@@ -1069,8 +1136,7 @@ static void STDMETHODCALLTYPE list_copy_texture_region(ID3D12GraphicsCommandList
         e.depth = D12_MIN(e.depth, de.depth - z);
         region.extent = e;
         if (e.width && e.height && e.depth)
-            vk->vkCmdCopyImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
-                               &region);
+            copy_image(list, s, d, &region);
     }
 }
 
@@ -1096,8 +1162,7 @@ static void STDMETHODCALLTYPE list_copy_resource(ID3D12GraphicsCommandList10 *if
         region.srcSubresource = subresource_layers(s, i);
         region.dstSubresource = subresource_layers(d, i);
         region.extent = D12MipExtent(s, region.srcSubresource.mipLevel);
-        vk->vkCmdCopyImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
-                           &region);
+        copy_image(list, s, d, &region);
     }
 }
 
@@ -1472,31 +1537,6 @@ static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize off
         vk->vkCmdUpdateBuffer(list->cmd, buffer, offset + done, n, chunk);
         done += n;
     }
-}
-
-/* the buffer and offset of an address of the allocator's scratch memory. */
-static BOOL scratch_buffer(D12CommandAllocator *allocator, VkDeviceAddress address, VkBuffer *buffer,
-                           VkDeviceSize *offset)
-{
-    for (D12Scratch *b = allocator->scratch; b; b = b->next)
-        if (address >= b->address && address < b->address + b->size) {
-            *buffer = b->buffer;
-            *offset = address - b->address;
-            return TRUE;
-        }
-    return FALSE;
-}
-
-static void transfer_barrier(D12CommandList *list)
-{
-    VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
-    b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.memoryBarrierCount = 1;
-    dep.pMemoryBarriers = &b;
-    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
 }
 
 /*
