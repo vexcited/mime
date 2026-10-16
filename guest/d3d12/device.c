@@ -197,6 +197,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, device->has_unused_attachments = TRUE)
     WANT(VK_EXT_MESH_SHADER_EXTENSION_NAME, device->has_mesh = TRUE)
     WANT(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, device->has_atomic64 = TRUE)
+    WANT(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, device->has_barycentrics = TRUE)
     BOOL has_maintenance5 = FALSE;
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
     if (has_maintenance5)
@@ -273,8 +274,11 @@ static HRESULT create_vulkan_device(D12Device *device)
                                                      &rt_maintenance};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR as = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &ray_query};
+    VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentric = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR,
+        device->has_rt ? (void *)&as : (void *)&f11};
     VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                          device->has_rt ? (void *)&as : (void *)&f11};
+                                          device->has_barycentrics ? (void *)&barycentric : barycentric.pNext};
     vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
 
     if (!robust.nullDescriptor || !db.descriptorBuffer || !mutable_type.mutableDescriptorType ||
@@ -339,6 +343,8 @@ static HRESULT create_vulkan_device(D12Device *device)
         !(wide.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT))
         device->has_atomic64 = FALSE;
     device->has_shared_atomic64 = f12.shaderSharedInt64Atomics && f->shaderInt64;
+    if (!barycentric.fragmentShaderBarycentric)
+        device->has_barycentrics = FALSE;
     /* builds on the gpu only, without capture and replay. */
     as.accelerationStructureCaptureReplay = as.accelerationStructureHostCommands = FALSE;
     as.accelerationStructureIndirectBuild = FALSE;
@@ -640,8 +646,8 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     UINT n = 0;
 #define FEATURE(f, s, ...) list[n++] = (FeatureWords){f, s, {__VA_ARGS__}}
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS2, 8, device->has_depth_bounds, 0);
-    /* copy queue timestamps, casting typed formats, WriteBufferImmediate on every list type. */
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS3, 20, TRUE, TRUE, 0xF, 0, FALSE);
+    /* copy queue timestamps, casting typed formats, WriteBufferImmediate on every list type, barycentrics. */
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS3, 20, TRUE, TRUE, 0xF, 0, device->has_barycentrics);
     FEATURE(D3D12_FEATURE_EXISTING_HEAPS, 4, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS4, 12, FALSE, 0, device->has_native16);
     FEATURE(D3D12_FEATURE_CROSS_NODE, 8, 0, FALSE);

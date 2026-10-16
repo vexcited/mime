@@ -1577,6 +1577,8 @@ static int build(Compiler *c)
             return -1;
     }
     dxil_prepare_ray_queries(c, main_fn);
+    if (c->kind == KIND_PIXEL && dxil_prepare_vertex_inputs(c, main_fn))
+        return -1;
 
     uint32_t main = spv_id(b);
     if (c->kind == KIND_HULL) {

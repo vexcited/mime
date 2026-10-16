@@ -262,6 +262,18 @@ static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *
         *type = c->t_bool;
         *which = SpvBuiltInCullPrimitiveEXT;
         return 1;
+    case SEM_BARYCENTRICS: {
+        if (!(pixel && in))
+            return 0;
+        spv_capability(&c->b, SpvCapabilityFragmentBarycentricKHR);
+        spv_extension(&c->b, "SPV_KHR_fragment_shader_barycentric");
+        int linear = e->interp == INTERP_NOPERSPECTIVE || e->interp == INTERP_NOPERSPECTIVE_CENTROID ||
+                     e->interp == INTERP_NOPERSPECTIVE_SAMPLE;
+        *type = c->t_vec[3];
+        *shape = 1;
+        *which = linear ? SpvBuiltInBaryCoordNoPerspKHR : SpvBuiltInBaryCoordKHR;
+        return 1;
+    }
     case SEM_VIEW_ID:
         if (!in)
             return 0;
@@ -312,6 +324,8 @@ static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_
     }
     uint32_t row_type = e->cols == 1 ? *scalar : spv_type_vector(&c->b, *scalar, e->cols);
     uint32_t type = e->rows > 1 ? spv_type_array(&c->b, row_type, e->rows) : row_type;
+    if (e->per_vertex)
+        n = 3;
     *var = dxil_global(c, storage, n ? spv_type_array(&c->b, type, n) : type, 0);
     dxil_decorate(c, *var, SpvDecorationLocation, location);
     if (component)
@@ -325,6 +339,10 @@ static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_
             spv_decorate(&c->b, *var, SpvDecorationPerPrimitiveEXT, NULL, 0);
             if (*scalar != c->t_f32)
                 spv_decorate(&c->b, *var, SpvDecorationFlat, NULL, 0);
+        } else if (e->per_vertex) {
+            spv_capability(&c->b, SpvCapabilityFragmentBarycentricKHR);
+            spv_extension(&c->b, "SPV_KHR_fragment_shader_barycentric");
+            spv_decorate(&c->b, *var, SpvDecorationPerVertexKHR, NULL, 0);
         } else {
             interpolation(c, *var, e, *scalar != c->t_f32);
         }
@@ -349,6 +367,8 @@ static int make_variable(Compiler *c, int sig, SigElement *e)
         e->var_type = n ? spv_type_array(&c->b, type, n) : type;
         e->var = n || sig == SIG_PATCH ? dxil_global(c, storage, e->var_type, 0)
                                        : dxil_builtin(c, which, storage, e->var_type);
+        if (which == SpvBuiltInBaryCoordKHR || which == SpvBuiltInBaryCoordNoPerspKHR)
+            interpolation(c, e->var, e, 0);
         if (n || sig == SIG_PATCH) {
             dxil_decorate(c, e->var, SpvDecorationBuiltIn, which);
             if (sig == SIG_PATCH)
@@ -396,7 +416,7 @@ static uint32_t component_pointer(Compiler *c, int sig, SigElement *e, uint32_t 
 {
     uint32_t storage = storage_of(c, sig);
     uint32_t w[4] = {0, 0, 0, 0}, n = 0;
-    if (arrayed(c, sig))
+    if (arrayed(c, sig) || e->per_vertex)
         w[n++] = vertex ? vertex : dxil_uconst(c, 0);
     if (builtin) {
         switch (e->shape) {
@@ -665,6 +685,34 @@ int dxil_prepare_task(Compiler *c, const DxFunction *f)
     return c->error ? -1 : 0;
 }
 
+/* GetAttributeAtVertex's vertex, an i8. */
+static uint32_t vertex_index(Compiler *c, uint32_t id)
+{
+    uint64_t k = dxil_constant(c, id, ~0ull);
+    if (k != ~0ull)
+        return dxil_uconst(c, (uint32_t)k & 0xFF);
+    const DxValue *v = dx_value(&c->m, c->f, id);
+    return dxil_convert(c, dxil_value(c, id), dxil_type(c, v->type), c->t_u32);
+}
+
+/* the inputs GetAttributeAtVertex reads, made arrays of the triangle's vertices. */
+int dxil_prepare_vertex_inputs(Compiler *c, const DxFunction *f)
+{
+    for (uint32_t i = 0; i < f->inst_count; i++) {
+        const DxInst *ins = &f->insts[i];
+        if (ins->op != DI_CALL || ins->count < 6)
+            continue;
+        const DxValue *op = dx_value(&c->m, f, ins->ops[1]);
+        if (!op || op->kind != DV_INT || op->bits != 137)
+            continue;
+        SigElement *e = element(c, &c->inputs, (uint32_t)dxil_constant(c, ins->ops[2], 0));
+        if (!e)
+            return -1;
+        e->per_vertex = 1;
+    }
+    return 0;
+}
+
 void dxil_emit_tasks(Compiler *c)
 {
     uint32_t w[4], n = 3;
@@ -681,6 +729,8 @@ int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op)
     switch (op) {
     case 4: /* loadInput */
         return load_element(c, ins, SIG_IN, ins->count > 5 && !dxil_is_undef(c, ins->ops[5]) ? dxil_value(c, ins->ops[5]) : 0) ? -1 : 1;
+    case 137: /* attributeAtVertex */
+        return load_element(c, ins, SIG_IN, vertex_index(c, ins->ops[5])) ? -1 : 1;
     case 5: /* storeOutput */
         return store_element(c, ins, SIG_OUT, 5, c->kind == KIND_HULL ? invocation_id(c) : 0) ? -1 : 1;
     case 103: /* loadOutputControlPoint */

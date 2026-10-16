@@ -2118,6 +2118,21 @@ typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS1 {
     BOOL Int64ShaderOps;
 } D3D12_FEATURE_DATA_D3D12_OPTIONS1;
 
+typedef enum D3D12_VIEW_INSTANCING_TIER {
+    D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED = 0,
+    D3D12_VIEW_INSTANCING_TIER_1 = 1,
+    D3D12_VIEW_INSTANCING_TIER_2 = 2,
+    D3D12_VIEW_INSTANCING_TIER_3 = 3,
+} D3D12_VIEW_INSTANCING_TIER;
+
+typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS3 {
+    BOOL CopyQueueTimestampQueriesSupported;
+    BOOL CastingFullyTypedFormatSupported;
+    UINT WriteBufferImmediateSupportFlags;
+    D3D12_VIEW_INSTANCING_TIER ViewInstancingTier;
+    BOOL BarycentricsSupported;
+} D3D12_FEATURE_DATA_D3D12_OPTIONS3;
+
 typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS9 {
     BOOL MeshShaderPipelineStatsSupported;
     BOOL MeshShaderSupportsFullRangeRenderTargetArrayIndex;

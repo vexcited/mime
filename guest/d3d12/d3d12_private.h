@@ -771,6 +771,7 @@ struct D12Device {
     BOOL has_native16, has_waves, has_mesh;
     /* 64-bit atomics of typed views and of shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
+    BOOL has_barycentrics;
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;
     VkShaderStageFlags dgc_stages;

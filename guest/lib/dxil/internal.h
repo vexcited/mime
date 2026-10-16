@@ -141,6 +141,8 @@ typedef struct SigElement {
     uint32_t loc_var, loc_scalar;
     /* a mesh shader's output no pixel shader reads. */
     uint8_t dropped;
+    /* a pixel shader's input GetAttributeAtVertex reads, an array of the triangle's vertices. */
+    uint8_t per_vertex;
     /* clip and cull distances: the first index in their built-in array. */
     uint32_t distance_base;
 } SigElement;
@@ -328,6 +330,7 @@ int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op);
 void dxil_execution_modes(Compiler *c, uint32_t main);
 /* task shaders: the payload and counts their returns emit, found before the code is written. */
 int dxil_prepare_task(Compiler *c, const DxFunction *f);
+int dxil_prepare_vertex_inputs(Compiler *c, const DxFunction *f);
 void dxil_emit_tasks(Compiler *c);
 
 /* resource.c: handles and the operations of resources. */
