@@ -883,8 +883,8 @@ static bool records_waited_for(uint32_t op)
 /* whether a stream executes secondary command buffers, which must be recorded before. */
 static bool executes_others(const uint8_t *stream, size_t size)
 {
-    for (size_t at = 0; at + sizeof(MvkCallHeader) <= size;) {
-        MvkCallHeader h;
+    for (size_t at = 0; at + sizeof(MvkStreamCommand) <= size;) {
+        MvkStreamCommand h;
         memcpy(&h, stream + at, sizeof(h));
         if (h.size < sizeof(h) || (h.size & 7) || h.size > size - at)
             return false;
@@ -1794,12 +1794,14 @@ static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *st
 {
     MvkConnection *c = outer->conn;
     size_t at = 0;
-    while (at + sizeof(MvkCallHeader) <= size) {
-        MvkCallHeader h;
+    while (at + sizeof(MvkStreamCommand) <= size) {
+        MvkStreamCommand h;
         memcpy(&h, stream + at, sizeof(h));
         if (h.size < sizeof(h) || (h.size & 7) || h.size > size - at)
             break;
-        MvkCall call = {.conn = c, .fn = &c->fn, .command_buffer = buffer, .header = h};
+        MvkCall call = {.conn = c, .fn = &c->fn, .command_buffer = buffer};
+        call.header.op = h.op;
+        call.header.size = h.size;
         call.header.reply = MVK_NO_REPLY;
         call.in = (MvkDecoder){stream + at + sizeof(h), stream + at + sizeof(h), stream + at + h.size, 0, c,
                                outer->in.arena + outer->in.arena_used, 0, outer->in.arena_size - outer->in.arena_used};

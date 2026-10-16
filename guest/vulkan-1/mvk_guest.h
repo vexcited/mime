@@ -68,8 +68,10 @@ struct VkCommandBuffer_T {
     VkCommandBufferInheritanceInfo inheritance;
     int has_inheritance;
     int recording;
-    /* the record being encoded. */
+    /* the stream, and the record being encoded: in the stream's last chunk, or in scratch memory. */
+    struct Stream *stream;
     MvkEncoder enc;
+    int in_place;
     uint8_t *scratch;
     size_t scratch_size;
 };

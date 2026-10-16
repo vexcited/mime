@@ -136,6 +136,12 @@ typedef struct MvkStreamChunk {
     uint32_t pad;
 } MvkStreamChunk;
 
+/* a command of a stream: its op, and its size, this header included, a multiple of 8. */
+typedef struct MvkStreamCommand {
+    uint32_t op;
+    uint32_t size;
+} MvkStreamCommand;
+
 /* ------------------------------------------------------------------ items */
 
 typedef struct MvkEncoder {

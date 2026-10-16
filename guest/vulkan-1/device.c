@@ -387,11 +387,9 @@ typedef struct Stream {
     uint64_t read_serial; /* the call the host reads the stream in, 0 while still recording */
 } Stream;
 
-static Map g_streams;
-
 static Stream *stream_of(VkCommandBuffer buffer)
 {
-    return map_get(&g_streams, buffer->obj.id);
+    return buffer->stream;
 }
 
 /* hands the chunks back, for reuse once the host read them. */
@@ -470,23 +468,53 @@ static int cmd_grow(MvkEncoder *e, size_t n)
     return 1;
 }
 
+/* a record that outgrows the room left in the chunk goes on in scratch memory. */
+static int cmd_spill(MvkEncoder *e, size_t n)
+{
+    VkCommandBuffer buffer = e->owner;
+    if (!buffer->in_place)
+        return cmd_grow(e, n);
+    size_t used = (size_t)(e->p - e->start);
+    MvkEncoder scratch = {buffer->scratch, buffer->scratch, buffer->scratch, 0, buffer, cmd_grow};
+    if (!buffer->scratch || buffer->scratch_size < used + n + 64) {
+        scratch.p = scratch.start;
+        if (!cmd_grow(&scratch, used + n))
+            return 0;
+    }
+    memcpy(buffer->scratch, e->start, used);
+    e->start = buffer->scratch;
+    e->p = buffer->scratch + used;
+    e->end = buffer->scratch + buffer->scratch_size;
+    e->grow = cmd_grow;
+    buffer->in_place = 0;
+    return 1;
+}
+
+/* a command is encoded in the stream's last chunk when it has room, without a copy. */
 MvkEncoder *mvk_cmd_begin(VkCommandBuffer buffer, uint32_t op)
 {
-    if (!buffer || !buffer->recording)
+    if (!buffer || !buffer->recording || !buffer->stream)
         return NULL;
-    if (!buffer->scratch) {
-        buffer->enc = (MvkEncoder){0};
-        buffer->enc.owner = buffer;
-        if (!cmd_grow(&buffer->enc, 4096))
-            return NULL;
+    Chunk *c = buffer->stream->last;
+    size_t room = c ? MVK_STREAM_CHUNK - sizeof(MvkStreamChunk) - c->memory->used : 0;
+    if (room >= 256) {
+        uint8_t *at = (uint8_t *)(c->memory + 1) + c->memory->used;
+        buffer->enc = (MvkEncoder){at, at, at + room, 0, buffer, cmd_spill};
+        buffer->in_place = 1;
+    } else {
+        if (!buffer->scratch) {
+            buffer->enc = (MvkEncoder){0};
+            buffer->enc.owner = buffer;
+            if (!cmd_grow(&buffer->enc, 4096))
+                return NULL;
+        }
+        buffer->enc = (MvkEncoder){buffer->scratch, buffer->scratch, buffer->scratch + buffer->scratch_size, 0,
+                                   buffer, cmd_grow};
+        buffer->in_place = 0;
     }
-    buffer->enc = (MvkEncoder){buffer->scratch, buffer->scratch, buffer->scratch + buffer->scratch_size, 0, buffer,
-                               cmd_grow};
-    MvkCallHeader *h = mvk_reserve(&buffer->enc, sizeof(MvkCallHeader), 8);
-    h->op = op;
-    h->serial = 0;
-    h->reply = MVK_NO_REPLY;
-    h->reply_size = 0;
+    MvkStreamCommand *h = mvk_reserve(&buffer->enc, sizeof(MvkStreamCommand), 8);
+    if (h)
+        h->op = op;
     return &buffer->enc;
 }
 
@@ -497,9 +525,14 @@ void mvk_cmd_end(VkCommandBuffer buffer, MvkEncoder *e)
         mvk_log("vulkan: a recorded command does not fit");
         return;
     }
-    MvkCallHeader *h = (MvkCallHeader *)e->start;
+    MvkStreamCommand *h = (MvkStreamCommand *)e->start;
     h->size = (uint32_t)(e->p - e->start);
-    stream_append(buffer, e->start, h->size);
+    if (buffer->in_place) {
+        buffer->stream->last->memory->used += h->size;
+        buffer->bytes += h->size;
+    } else {
+        stream_append(buffer, e->start, h->size);
+    }
 }
 
 /* ------------------------------------------------------------------ command pools and buffers */
@@ -527,7 +560,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateCommandPool(VkDevice device, const VkComm
 
 static void forget_buffer(VkCommandBuffer buffer)
 {
-    Stream *s = map_take(&g_streams, buffer->obj.id);
+    Stream *s = buffer->stream;
     if (s) {
         stream_release(s);
         zfree(s);
@@ -590,7 +623,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateCommandBuffers(VkDevice device, const V
         b->obj.id = mvk_new_id();
         b->device = device;
         b->pool = (uint64_t)info->commandPool;
-        map_put(&g_streams, b->obj.id, s);
+        b->stream = s;
         out[i] = b;
     }
     MvkEncoder *e = mvk_call_begin(MVK_OP_ALLOCATE_COMMAND_BUFFERS);
