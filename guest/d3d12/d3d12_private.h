@@ -129,6 +129,10 @@
     X(vkCmdDrawIndexedIndirectCount)                                                                                   \
     X(vkCmdDispatch)                                                                                                   \
     X(vkCmdDrawMeshTasksEXT)                                                                                           \
+    X(vkCreateIndirectCommandsLayoutEXT)                                                                               \
+    X(vkDestroyIndirectCommandsLayoutEXT)                                                                              \
+    X(vkGetGeneratedCommandsMemoryRequirementsEXT)                                                                     \
+    X(vkCmdExecuteGeneratedCommandsEXT)                                                                                \
     X(vkCmdDrawMeshTasksIndirectEXT)                                                                                   \
     X(vkCmdDrawMeshTasksIndirectCountEXT)                                                                              \
     X(vkCmdDispatchIndirect)                                                                                           \
@@ -516,6 +520,9 @@ typedef struct D12CommandSignature {
     UINT arg_count;
     D3D12_INDIRECT_ARGUMENT_DESC *args;
     D12RootSignature *root;
+    /* generated commands: their layout and the stages it is for, when the signature needs them. */
+    VkIndirectCommandsLayoutEXT layout;
+    VkShaderStageFlags stages;
 } D12CommandSignature;
 
 HRESULT D12CreateCommandSignature(D12Device *device, const D3D12_COMMAND_SIGNATURE_DESC *desc,
@@ -582,7 +589,23 @@ typedef struct D12CommandAllocator {
     UINT used, count, capacity;
     /* the list recording with it, which a reset may not overlap. */
     struct D12CommandList *recording;
+    /* memory of generated commands, reused at each reset. */
+    struct D12Scratch *scratch;
 } D12CommandAllocator;
+
+/* a block of device memory that commands of an allocator take from in order. */
+typedef struct D12Scratch {
+    struct D12Scratch *next;
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    VkDeviceAddress address;
+    UINT64 size, used;
+    UINT type;
+} D12Scratch;
+
+/* device memory for generated commands of a list's allocator, NULL when there is none. */
+BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignment, UINT type_bits,
+                     VkDeviceAddress *address);
 
 HRESULT D12CreateCommandAllocator(D12Device *device, D3D12_COMMAND_LIST_TYPE type, D12CommandAllocator **out);
 D12CommandAllocator *D12AllocatorFrom(ID3D12CommandAllocator *iface);
@@ -699,6 +722,9 @@ struct D12Device {
     BOOL has_conservative, has_line_rasterization, has_patch_points, has_unused_attachments;
     /* shader model 6: 16-bit arithmetic, the wave operations of every stage, mesh and amplification shaders. */
     BOOL has_native16, has_waves, has_mesh;
+    /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
+    BOOL has_dgc;
+    VkShaderStageFlags dgc_stages;
     VkPipelineCache pipeline_cache;
     UINT family;
     UINT queue_count;

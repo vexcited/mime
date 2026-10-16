@@ -35,12 +35,85 @@ static ULONG STDMETHODCALLTYPE allocator_add_ref(ID3D12CommandAllocator *iface)
     return InterlockedIncrement(&allocator_impl(iface)->child.refs);
 }
 
+/* ------------------------------------------------------------------ scratch memory */
+
+BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignment, UINT type_bits,
+                     VkDeviceAddress *address)
+{
+    D12Device *device = allocator->child.device;
+    D12Vk *vk = &device->vk;
+    alignment = alignment ? alignment : 1;
+    for (D12Scratch *b = allocator->scratch; b; b = b->next) {
+        UINT64 at = (b->used + alignment - 1) / alignment * alignment;
+        if ((type_bits & (1u << b->type)) && at + size <= b->size && !((b->address + at) % alignment)) {
+            b->used = at + size;
+            *address = b->address + at;
+            return TRUE;
+        }
+    }
+    D12Scratch *b = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*b));
+    if (!b)
+        return FALSE;
+    b->size = D12_MAX(size + alignment, (UINT64)1 << 20);
+    VkBufferUsageFlags2CreateInfoKHR usage = {VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR};
+    usage.usage = VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT_KHR;
+    VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &usage};
+    info.size = b->size;
+    VkMemoryRequirements req;
+    int type = -1;
+    if (vk->vkCreateBuffer(vk->device, &info, NULL, &b->buffer) == VK_SUCCESS) {
+        vk->vkGetBufferMemoryRequirements(vk->device, b->buffer, &req);
+        for (UINT i = 0; i < device->memory.memoryTypeCount; i++) {
+            BOOL local = (device->memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+            if ((req.memoryTypeBits & type_bits & (1u << i)) && (type < 0 || local))
+                type = (int)i;
+            if (type == (int)i && local)
+                break;
+        }
+    }
+    VkMemoryAllocateFlagsInfo flags = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+    flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
+    alloc.allocationSize = type >= 0 ? req.size : 0;
+    alloc.memoryTypeIndex = (UINT)type;
+    if (type < 0 || vk->vkAllocateMemory(vk->device, &alloc, NULL, &b->memory) != VK_SUCCESS) {
+        if (b->buffer)
+            vk->vkDestroyBuffer(vk->device, b->buffer, NULL);
+        HeapFree(GetProcessHeap(), 0, b);
+        return FALSE;
+    }
+    vk->vkBindBufferMemory(vk->device, b->buffer, b->memory, 0);
+    VkBufferDeviceAddressInfo where = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    where.buffer = b->buffer;
+    b->address = vk->vkGetBufferDeviceAddress(vk->device, &where);
+    b->type = (UINT)type;
+    b->next = allocator->scratch;
+    allocator->scratch = b;
+    UINT64 at = (alignment - b->address % alignment) % alignment;
+    b->used = at + size;
+    *address = b->address + at;
+    return TRUE;
+}
+
+static void scratch_free(D12CommandAllocator *allocator)
+{
+    D12Vk *vk = &allocator->child.device->vk;
+    while (allocator->scratch) {
+        D12Scratch *b = allocator->scratch;
+        allocator->scratch = b->next;
+        vk->vkDestroyBuffer(vk->device, b->buffer, NULL);
+        vk->vkFreeMemory(vk->device, b->memory, NULL);
+        HeapFree(GetProcessHeap(), 0, b);
+    }
+}
+
 static ULONG STDMETHODCALLTYPE allocator_release(ID3D12CommandAllocator *iface)
 {
     D12CommandAllocator *allocator = allocator_impl(iface);
     ULONG refs = InterlockedDecrement(&allocator->child.refs);
     if (!refs) {
         D12Device *device = allocator->child.device;
+        scratch_free(allocator);
         device->vk.vkDestroyCommandPool(device->vk.device, allocator->pool, NULL);
         HeapFree(GetProcessHeap(), 0, allocator->buffers);
         D12ChildRelease(&allocator->child);
@@ -83,6 +156,8 @@ static HRESULT STDMETHODCALLTYPE allocator_reset(ID3D12CommandAllocator *iface)
         return E_FAIL;
     device->vk.vkResetCommandPool(device->vk.device, allocator->pool, 0);
     allocator->used = 0;
+    for (D12Scratch *b = allocator->scratch; b; b = b->next)
+        b->used = 0;
     return S_OK;
 }
 
@@ -1528,6 +1603,57 @@ static void STDMETHODCALLTYPE list_end_event(ID3D12GraphicsCommandList10 *iface)
 
 /* ------------------------------------------------------------------ indirect */
 
+/*
+ * commands the gpu generates from the argument buffer, each changing root
+ * arguments, vertex or index buffers before its draw or dispatch. root
+ * arguments are push constants, and direct3d's addresses are vulkan's, so
+ * the arguments are read as they are. the state they change is undefined
+ * after, so it is set again at the next draw or dispatch.
+ */
+static void generated_commands(D12CommandList *list, D12CommandSignature *signature, D12Resource *args,
+                               UINT64 arguments_offset, UINT max_count, D12Resource *counts, UINT64 count_offset)
+{
+    D12Device *device = list->child.device;
+    D12Vk *vk = &device->vk;
+    BOOL compute = signature->stages == VK_SHADER_STAGE_COMPUTE_BIT;
+    if (compute ? !prepare_dispatch(list) : !prepare_draw(list))
+        return;
+    D12PipelineState *p = list->pipeline;
+    VkGeneratedCommandsPipelineInfoEXT pipeline = {VK_STRUCTURE_TYPE_GENERATED_COMMANDS_PIPELINE_INFO_EXT};
+    pipeline.pipeline = p->pipeline;
+    VkGeneratedCommandsMemoryRequirementsInfoEXT req_info = {
+        VK_STRUCTURE_TYPE_GENERATED_COMMANDS_MEMORY_REQUIREMENTS_INFO_EXT, &pipeline};
+    req_info.indirectCommandsLayout = signature->layout;
+    req_info.maxSequenceCount = max_count;
+    VkMemoryRequirements2 req = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
+    vk->vkGetGeneratedCommandsMemoryRequirementsEXT(vk->device, &req_info, &req);
+    VkDeviceAddress preprocess = 0;
+    if (req.memoryRequirements.size &&
+        !D12ScratchAlloc(list->allocator, req.memoryRequirements.size, req.memoryRequirements.alignment,
+                         req.memoryRequirements.memoryTypeBits, &preprocess)) {
+        D12Log("d3d12: no memory for generated commands");
+        return;
+    }
+    VkGeneratedCommandsInfoEXT info = {VK_STRUCTURE_TYPE_GENERATED_COMMANDS_INFO_EXT, &pipeline};
+    info.shaderStages = signature->stages;
+    info.indirectCommandsLayout = signature->layout;
+    info.indirectAddress = args->va + arguments_offset;
+    info.indirectAddressSize = (VkDeviceSize)signature->stride * max_count;
+    info.preprocessAddress = preprocess;
+    info.preprocessSize = req.memoryRequirements.size;
+    info.maxSequenceCount = max_count;
+    if (counts)
+        info.sequenceCountAddress = counts->va + count_offset;
+    vk->vkCmdExecuteGeneratedCommandsEXT(list->cmd, VK_FALSE, &info);
+    D12RootState *s = compute ? &list->compute : &list->graphics;
+    s->push_dirty = TRUE;
+    list->pushed_compute = -1;
+    if (!compute) {
+        list->vb_dirty = ~0u;
+        list->ib_dirty = TRUE;
+    }
+}
+
 static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 *iface,
                                                     ID3D12CommandSignature *signature_iface, UINT max_count,
                                                     ID3D12Resource *arguments, UINT64 arguments_offset,
@@ -1540,8 +1666,12 @@ static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 
         return;
     D12Vk *vk = vk_of(list);
     const D3D12_INDIRECT_ARGUMENT_DESC *last = &signature->args[signature->arg_count - 1];
+    if (signature->layout && (signature->arg_count > 1 || (counts && last->Type == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH))) {
+        generated_commands(list, signature, args, arguments_offset, max_count, counts, count_offset);
+        return;
+    }
     if (signature->arg_count != 1) {
-        D12Log("d3d12: command signatures changing state per command are not supported yet");
+        D12Log("d3d12: command signatures changing state per command are not supported without generated commands");
         return;
     }
     VkDeviceSize offset = args->offset + arguments_offset;

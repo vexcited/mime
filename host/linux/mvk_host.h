@@ -83,6 +83,8 @@ void mvk_bind_id(MvkCall *c, uint64_t id, uint64_t handle);
 uint64_t mvk_host_id(MvkEncoder *e, uint64_t handle);
 void mvk_check(MvkCall *c, VkResult result, const char *what);
 void mvk_unsupported(MvkCall *c, const char *what);
+/* a call whose arguments did not decode: not run, an error for the guest. */
+void mvk_malformed(MvkCall *c, const char *what);
 MvkEncoder *mvk_reply_begin(MvkCall *c);
 void mvk_reply_end(MvkCall *c);
 

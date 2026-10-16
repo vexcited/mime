@@ -261,6 +261,9 @@ static ULONG STDMETHODCALLTYPE signature_release(ID3D12CommandSignature *iface)
     D12CommandSignature *signature = signature_impl(iface);
     ULONG refs = InterlockedDecrement(&signature->child.refs);
     if (!refs) {
+        D12Device *device = signature->child.device;
+        if (signature->layout)
+            device->vk.vkDestroyIndirectCommandsLayoutEXT(device->vk.device, signature->layout, NULL);
         if (signature->root)
             signature->root->iface.lpVtbl->Release(&signature->root->iface);
         HeapFree(GetProcessHeap(), 0, signature->args);
@@ -306,6 +309,109 @@ static const struct ID3D12CommandSignatureVtbl g_signature_vtbl = {
     signature_get_device,
 };
 
+/* the bytes an argument takes in the argument buffer. */
+static UINT argument_size(const D3D12_INDIRECT_ARGUMENT_DESC *a)
+{
+    switch (a->Type) {
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW: return sizeof(D3D12_DRAW_ARGUMENTS);
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED: return sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH: return sizeof(D3D12_DISPATCH_ARGUMENTS);
+    case D3D12_INDIRECT_ARGUMENT_TYPE_VERTEX_BUFFER_VIEW: return sizeof(D3D12_VERTEX_BUFFER_VIEW);
+    case D3D12_INDIRECT_ARGUMENT_TYPE_INDEX_BUFFER_VIEW: return sizeof(D3D12_INDEX_BUFFER_VIEW);
+    case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT: return a->Constant.Num32BitValuesToSet * 4;
+    case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW:
+    case D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW:
+    case D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW: return sizeof(D3D12_GPU_VIRTUAL_ADDRESS);
+    default: return 0;
+    }
+}
+
+/*
+ * the layout of generated commands doing what a signature does: root
+ * arguments are push constants at their parameter's place, vertex and
+ * index buffer views have vulkan's layout, index formats read as dxgi's,
+ * and the draw or dispatch comes last. NULL when the device has no
+ * generated commands or the signature has an argument they cannot take.
+ */
+static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12_COMMAND_SIGNATURE_DESC *desc,
+                                                 D12RootSignature *root, VkShaderStageFlags *stages)
+{
+    D3D12_INDIRECT_ARGUMENT_TYPE last = desc->pArgumentDescs[desc->NumArgumentDescs - 1].Type;
+    if (!device->has_dgc || desc->NumArgumentDescs > 16 || last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS)
+        return VK_NULL_HANDLE;
+    VkIndirectCommandsLayoutTokenEXT tokens[16];
+    VkIndirectCommandsPushConstantTokenEXT pushes[16];
+    VkIndirectCommandsVertexBufferTokenEXT vertex[16];
+    VkIndirectCommandsIndexBufferTokenEXT index = {VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT};
+    UINT offset = 0;
+    for (UINT i = 0; i < desc->NumArgumentDescs; i++) {
+        const D3D12_INDIRECT_ARGUMENT_DESC *a = &desc->pArgumentDescs[i];
+        VkIndirectCommandsLayoutTokenEXT *t = &tokens[i];
+        memset(t, 0, sizeof(*t));
+        t->sType = VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_TOKEN_EXT;
+        t->offset = offset;
+        UINT param = ~0u, words = 0, dest = 0;
+        switch (a->Type) {
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_EXT; break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_INDEXED_EXT; break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DISPATCH_EXT; break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_MESH_TASKS_EXT; break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_VERTEX_BUFFER_VIEW:
+            t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_VERTEX_BUFFER_EXT;
+            vertex[i].vertexBindingUnit = a->VertexBuffer.Slot;
+            t->data.pVertexBuffer = &vertex[i];
+            break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_INDEX_BUFFER_VIEW:
+            t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_INDEX_BUFFER_EXT;
+            t->data.pIndexBuffer = &index;
+            break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT:
+            param = a->Constant.RootParameterIndex;
+            dest = a->Constant.DestOffsetIn32BitValues;
+            words = a->Constant.Num32BitValuesToSet;
+            break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW:
+        case D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW:
+        case D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW:
+            param = a->ConstantBufferView.RootParameterIndex;
+            words = 2;
+            break;
+        default: return VK_NULL_HANDLE;
+        }
+        if (param != ~0u) {
+            if (!root || param >= root->param_count || !words)
+                return VK_NULL_HANDLE;
+            t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_PUSH_CONSTANT_EXT;
+            pushes[i].updateRange = (VkPushConstantRange){VK_SHADER_STAGE_ALL, root->params[param].push_offset + dest * 4,
+                                                           words * 4};
+            if (pushes[i].updateRange.offset + pushes[i].updateRange.size > root->push_size)
+                return VK_NULL_HANDLE;
+            t->data.pPushConstant = &pushes[i];
+        }
+        offset += argument_size(a);
+    }
+    VkShaderStageFlags wanted = last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH ? VK_SHADER_STAGE_COMPUTE_BIT
+                                : last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH
+                                    ? VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT
+                                    : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                                          (device->has_tessellation ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                                                                          VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT
+                                                                    : 0) |
+                                          (device->has_geometry ? VK_SHADER_STAGE_GEOMETRY_BIT : 0);
+    *stages = wanted & device->dgc_stages;
+    VkIndirectCommandsLayoutCreateInfoEXT info = {VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_CREATE_INFO_EXT};
+    info.shaderStages = *stages;
+    info.indirectStride = D12_MAX(desc->ByteStride, offset);
+    info.pipelineLayout = root ? root->layout : VK_NULL_HANDLE;
+    info.tokenCount = desc->NumArgumentDescs;
+    info.pTokens = tokens;
+    VkIndirectCommandsLayoutEXT layout = VK_NULL_HANDLE;
+    if (device->vk.vkCreateIndirectCommandsLayoutEXT(device->vk.device, &info, NULL, &layout) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return layout;
+}
+
 HRESULT D12CreateCommandSignature(D12Device *device, const D3D12_COMMAND_SIGNATURE_DESC *desc,
                                   D12RootSignature *root, D12CommandSignature **out)
 {
@@ -343,6 +449,8 @@ HRESULT D12CreateCommandSignature(D12Device *device, const D3D12_COMMAND_SIGNATU
     signature->root = root;
     if (root)
         root->iface.lpVtbl->AddRef(&root->iface);
+    /* a dispatch alone goes straight to vulkan but for its count, which generated commands read. */
+    signature->layout = command_layout(device, desc, root, &signature->stages);
     signature->child.refs = 1;
     D12ChildInit(&signature->child, device);
     *out = signature;

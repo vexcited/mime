@@ -134,6 +134,16 @@ void mvk_unsupported(MvkCall *c, const char *what)
     }
 }
 
+void mvk_malformed(MvkCall *c, const char *what)
+{
+    mime_warn("vulkan: malformed %s", what);
+    if (c->header.reply != MVK_NO_REPLY) {
+        MvkEncoder *e = mvk_reply_begin(c);
+        mvk_put_u32(e, (uint32_t)VK_ERROR_INITIALIZATION_FAILED);
+        mvk_reply_end(c);
+    }
+}
+
 /* ------------------------------------------------------------------ replies and chains */
 
 /* the reply space starts with a status word the guest checks: 1 when the reply did not fit. */

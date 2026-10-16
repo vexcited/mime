@@ -172,7 +172,7 @@ static HRESULT create_vulkan_device(D12Device *device)
         VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
         VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME,
     };
-    const char *extensions[24];
+    const char *extensions[32];
     UINT n = 0;
     for (UINT i = 0; i < RTL_NUMBER_OF(required); i++) {
         if (!has_extension(available, count, required[i])) {
@@ -196,12 +196,21 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME, device->has_patch_points = TRUE)
     WANT(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, device->has_unused_attachments = TRUE)
     WANT(VK_EXT_MESH_SHADER_EXTENSION_NAME, device->has_mesh = TRUE)
+    BOOL has_maintenance5 = FALSE;
+    WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
+    if (has_maintenance5)
+        WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, device->has_dgc = TRUE)
 #undef WANT
     HeapFree(GetProcessHeap(), 0, available);
 
-    VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
+    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
+    VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT, &maintenance5};
+    VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
+                                                  device->has_dgc ? (void *)&dgc : NULL};
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, device->has_mesh ? (void *)&mesh : NULL};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT,
+        device->has_mesh ? (void *)&mesh : mesh.pNext};
     VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unused = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
         device->has_patch_points ? (void *)&eds2 : eds2.pNext};
@@ -284,10 +293,16 @@ static HRESULT create_vulkan_device(D12Device *device)
     mesh.multiviewMeshShader = mesh.primitiveFragmentShadingRateMeshShader = FALSE;
     if (!mesh.meshShader || !mesh.taskShader)
         device->has_mesh = FALSE;
+    if (!dgc.deviceGeneratedCommands || !maintenance5.maintenance5)
+        device->has_dgc = FALSE;
 
-    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
+    VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT};
+    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT,
+                                                          device->has_dgc ? (void *)&dgc_props : NULL};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT, device->has_mesh ? (void *)&mesh_props : NULL};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
+        device->has_mesh ? (void *)&mesh_props : mesh_props.pNext};
     VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT, &dbp};
     VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
@@ -295,6 +310,11 @@ static HRESULT create_vulkan_device(D12Device *device)
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
     device->db = dbp;
     device->db.pNext = NULL;
+    /* direct3d's index buffer views, read as dxgi formats, and every stage of the lists' draws and dispatches. */
+    device->dgc_stages = dgc_props.supportedIndirectCommandsShaderStages;
+    if (!(dgc_props.supportedIndirectCommandsInputModes & VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT) ||
+        !(device->dgc_stages & VK_SHADER_STAGE_COMPUTE_BIT) || !(device->dgc_stages & VK_SHADER_STAGE_VERTEX_BIT))
+        device->has_dgc = FALSE;
     if (mesh_props.maxMeshOutputVertices < 256 || mesh_props.maxMeshOutputPrimitives < 256 ||
         mesh_props.maxMeshWorkGroupInvocations < 128 || mesh_props.maxTaskWorkGroupInvocations < 128 ||
         mesh_props.maxTaskPayloadSize < 16384)
