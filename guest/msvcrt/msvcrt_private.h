@@ -277,7 +277,7 @@ typedef struct {
     /* signal action for sigfpe and the floating point state. */
     int fpecode;
     /* c++ exception handling, MSVCRT_EH_THREAD of cxx.h. */
-    void *eh[6];
+    void *eh[48];
 } MSVCRT_THREAD_DATA;
 
 MSVCRT_THREAD_DATA *MsvcrtThreadData(void);

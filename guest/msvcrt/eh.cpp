@@ -153,6 +153,9 @@ struct EH_HANDLER {
     int catch_object;
     ULONG_PTR code;
     int frame;
+    /* __CxxFrameHandler4: where the function goes on, which catch funclets return the index of. */
+    int continuations;
+    ULONG_PTR continuation[2];
 };
 
 struct EH_TRY {
@@ -161,9 +164,14 @@ struct EH_TRY {
     EH_HANDLER *handlers;
 };
 
+/* a state's action: a funclet, or, from __CxxFrameHandler4, a destructor of the object at or through an offset. */
+enum { ACTION_FUNCLET, ACTION_OBJECT, ACTION_POINTER };
+
 struct EH_UNWIND {
     int to_state;
     ULONG_PTR action;
+    int kind;
+    ULONG object;
 };
 
 struct EH_IP {
@@ -179,8 +187,10 @@ struct EH_FUNCTION {
     EH_TRY *try_blocks;
     int ips;
     EH_IP *ip_map;
-    int unwind_help;
     ULONG flags;
+    /* a catch funclet's own description, of __CxxFrameHandler4: where its frame keeps its function's. */
+    bool is_catch;
+    ULONG catch_frame;
 };
 
 /* a function's decoded description, kept for its next exception: they are read only and few. */
@@ -319,7 +329,6 @@ static EH_FUNCTION *decode3(const FUNC_INFO3 *info, ULONG_PTR base)
         f->ip_map[i].ip = (ULONG_PTR)AT(base, ips[2 * i]);
         f->ip_map[i].state = ips[2 * i + 1];
     }
-    f->unwind_help = info->unwind_help;
 #endif
     f->flags = (info->magic & 0x1FFFFFFF) >= CXX_MAGIC3 ? info->flags : 0;
     return remember(f);
@@ -484,7 +493,13 @@ static int unwind_to(const EH_FUNCTION *f, ULONG_PTR frame, int current, int tar
     while (current > target && current < f->max_state) {
         const EH_UNWIND *u = &f->unwind[current];
         current = u->to_state;
-        if (u->action)
+        if (!u->action)
+            continue;
+        if (u->kind == ACTION_OBJECT)
+            ((destructor_t)u->action)((void *)(frame + u->object));
+        else if (u->kind == ACTION_POINTER)
+            ((destructor_t)u->action)(*(void **)(frame + u->object));
+        else
             call_action(u->action, frame);
     }
     return current;
@@ -541,6 +556,43 @@ typedef ULONG_PTR (*funclet_t)(ULONG_PTR, ULONG_PTR);
 
 static void call_action(ULONG_PTR action, ULONG_PTR frame) { ((funclet_t)action)(0, frame); }
 
+/*
+ * the state of a function while a catch block of it runs, kept per
+ * thread: the frame's own instruction pointer is still the throw's, in
+ * the try block the catch has unwound.
+ */
+static bool kept_state(ULONG_PTR frame, int *state)
+{
+    MSVCRT_EH_THREAD *t = MsvcrtEhThread();
+    for (int i = t->kept_count - 1; i >= 0; i--)
+        if (t->kept[i][0] == frame) {
+            *state = (int)(LONG_PTR)t->kept[i][1];
+            return true;
+        }
+    return false;
+}
+
+static void forget_state(ULONG_PTR frame)
+{
+    MSVCRT_EH_THREAD *t = MsvcrtEhThread();
+    for (int i = t->kept_count - 1; i >= 0; i--)
+        if (t->kept[i][0] == frame) {
+            t->kept[i][0] = t->kept[--t->kept_count][0];
+            t->kept[i][1] = t->kept[t->kept_count][1];
+        }
+}
+
+static void keep_state(ULONG_PTR frame, int state)
+{
+    MSVCRT_EH_THREAD *t = MsvcrtEhThread();
+    forget_state(frame);
+    if (t->kept_count < 16) {
+        t->kept[t->kept_count][0] = frame;
+        t->kept[t->kept_count][1] = (ULONG_PTR)(LONG_PTR)state;
+        t->kept_count++;
+    }
+}
+
 /* where a frame's function is: a catch funclet's frame keeps the frame of the function it belongs to. */
 struct EH_WHERE {
     ULONG_PTR frame;
@@ -553,6 +605,18 @@ static void locate(const EH_FUNCTION *f, ULONG_PTR establisher, const DISPATCHER
     w->frame = establisher;
     w->catch_try = nullptr;
     w->state = state_from_ip(f, dc->ControlPc);
+    if (f->is_catch) {
+        /* __CxxFrameHandler4 describes the funclet itself: the innermost catch its state is in. */
+        w->frame = *(const ULONG_PTR *)(establisher + f->catch_frame);
+        for (int i = 0; i < f->tries; i++) {
+            const EH_TRY *t = &f->try_blocks[i];
+            if (w->state > t->high && w->state <= t->catch_high && (!w->catch_try || t->low > w->catch_try->low))
+                w->catch_try = t;
+        }
+        if (w->catch_try)
+            return;
+        w->frame = establisher;
+    }
     for (int i = f->tries - 1; i >= 0; i--) {
         const EH_TRY *t = &f->try_blocks[i];
         if (w->state <= t->high || w->state > t->catch_high)
@@ -566,18 +630,9 @@ static void locate(const EH_FUNCTION *f, ULONG_PTR establisher, const DISPATCHER
             return;
         }
     }
-    /* the function itself: its state is the one kept while a catch block of it runs, if any. */
-    if (f->unwind_help) {
-        int kept = *(const int *)(establisher + f->unwind_help);
-        if (kept != -2)
-            w->state = kept;
-    }
-}
-
-static void set_unwind_help(const EH_FUNCTION *f, ULONG_PTR frame, int state)
-{
-    if (f->unwind_help)
-        *(int *)(frame + f->unwind_help) = state;
+    int kept;
+    if (kept_state(establisher, &kept))
+        w->state = kept;
 }
 
 /* the parameters of the consolidation record a catch unwinds with. */
@@ -591,27 +646,18 @@ enum {
     CATCH_CONTEXT,
     /* the try block is in a catch funclet: the funclet goes on, the function keeps its state. */
     CATCH_IN_FUNCLET,
+    CATCH_HANDLER,
     CATCH_PARAMS
 };
 
 /* a catch block in progress whose frame an unwind leaves, as a new exception goes past it. */
 struct CATCH_GUARD {
     MSVCRT_CATCH *c;
-    const EH_FUNCTION *f;
-    ULONG_PTR frame;
-    bool in_funclet;
     bool done;
-    void end()
-    {
-        done = true;
-        pop_catch(c);
-        if (!in_funclet)
-            set_unwind_help(f, frame, -2);
-    }
     ~CATCH_GUARD()
     {
         if (!done)
-            end();
+            pop_catch(c);
     }
 };
 
@@ -623,15 +669,20 @@ static void *__stdcall call_catch(EXCEPTION_RECORD *consolidate)
 {
     ULONG_PTR *p = consolidate->ExceptionInformation;
     const EXCEPTION_RECORD *record = (const EXCEPTION_RECORD *)p[CATCH_RECORD];
-    const EH_FUNCTION *f = (const EH_FUNCTION *)p[CATCH_FUNCTION];
+    const EH_HANDLER *h = (const EH_HANDLER *)p[CATCH_HANDLER];
     ULONG_PTR frame = p[CATCH_FRAME];
     CXX_THROW t;
     bool cxx = cxx_throw(record, &t);
     MSVCRT_CATCH c;
     push_catch(&c, record, cxx ? &t : nullptr, (CONTEXT *)p[CATCH_CONTEXT]);
-    CATCH_GUARD guard = {&c, f, frame, p[CATCH_IN_FUNCLET] != 0, false};
+    CATCH_GUARD guard = {&c, false};
     ULONG_PTR continuation = ((funclet_t)p[CATCH_CODE])(0, frame);
-    guard.end();
+    guard.done = true;
+    pop_catch(&c);
+    if (!p[CATCH_IN_FUNCLET])
+        forget_state(frame);
+    if (continuation < (ULONG_PTR)h->continuations)
+        continuation = h->continuation[continuation];
     return (void *)continuation;
 }
 
@@ -656,6 +707,7 @@ static __declspec(noreturn) void catch_it(EXCEPTION_RECORD *record, ULONG_PTR es
     p[CATCH_RECORD] = (ULONG_PTR)record;
     p[CATCH_FUNCTION] = (ULONG_PTR)f;
     p[CATCH_CONTEXT] = (ULONG_PTR)context;
+    p[CATCH_HANDLER] = (ULONG_PTR)h;
     /* a try block within the catch funclet running goes on in that funclet, else in its function. */
     bool in_funclet = w->catch_try && t->low > w->catch_try->high && t->high <= w->catch_try->catch_high;
     p[CATCH_IN_FUNCLET] = in_funclet;
@@ -670,15 +722,20 @@ static EXCEPTION_DISPOSITION frame_handler(EXCEPTION_RECORD *record, ULONG_PTR e
     EH_WHERE w;
     locate(f, establisher, dc, &w);
     if (record->ExceptionFlags & UNWIND_FLAGS) {
-        int target = -1;
-        if ((record->ExceptionFlags & EXCEPTION_TARGET_UNWIND) && (ULONG)record->ExceptionCode == STATUS_UNWIND_CONSOLIDATE &&
-            record->ExceptionInformation[CATCH_CALLBACK] == (ULONG_PTR)call_catch)
-            target = (int)(LONG_PTR)record->ExceptionInformation[CATCH_STATE];
-        else if (w.catch_try)
-            target = w.catch_try->low - 1;
-        unwind_to(f, w.frame, w.state, target);
-        if (!w.catch_try)
-            set_unwind_help(f, w.frame, target);
+        bool target = (record->ExceptionFlags & EXCEPTION_TARGET_UNWIND) &&
+                      (ULONG)record->ExceptionCode == STATUS_UNWIND_CONSOLIDATE &&
+                      record->ExceptionInformation[CATCH_CALLBACK] == (ULONG_PTR)call_catch;
+        if (target) {
+            int state = (int)(LONG_PTR)record->ExceptionInformation[CATCH_STATE];
+            unwind_to(f, w.frame, w.state, state);
+            if (!record->ExceptionInformation[CATCH_IN_FUNCLET])
+                keep_state(w.frame, state);
+        } else if (w.catch_try) {
+            unwind_to(f, w.frame, w.state, w.catch_try->low - 1);
+        } else {
+            unwind_to(f, w.frame, w.state, -1);
+            forget_state(w.frame);
+        }
         return ExceptionContinueSearch;
     }
     CXX_THROW thrown;
@@ -715,6 +772,201 @@ extern "C" EXCEPTION_DISPOSITION __cdecl __CxxFrameHandler3(EXCEPTION_RECORD *re
 {
     const FUNC_INFO3 *info = static_cast<const FUNC_INFO3 *>(AT(dc->ImageBase, *(const ULONG *)dc->HandlerData));
     return frame_handler(record, establisher, context, dc, decode3(info, dc->ImageBase));
+}
+
+/* ------------------------------------------------------------------ __CxxFrameHandler4 */
+
+/* the compressed integers: the low bits say the length, 1 to 4 bytes, or 5 with the value in the last four. */
+struct FH4_READER {
+    const BYTE *p;
+    ULONG unsigned_value()
+    {
+        const BYTE *b = p;
+        ULONG v;
+        if (!(b[0] & 1)) {
+            v = b[0] >> 1;
+            p += 1;
+        } else if (!(b[0] & 2)) {
+            v = (b[0] | b[1] << 8) >> 2;
+            p += 2;
+        } else if (!(b[0] & 4)) {
+            v = (b[0] | b[1] << 8 | b[2] << 16) >> 3;
+            p += 3;
+        } else if (!(b[0] & 8)) {
+            v = (b[0] | b[1] << 8 | b[2] << 16 | (ULONG)b[3] << 24) >> 4;
+            p += 4;
+        } else {
+            v = b[1] | b[2] << 8 | b[3] << 16 | (ULONG)b[4] << 24;
+            p += 5;
+        }
+        return v;
+    }
+    int int32()
+    {
+        int v;
+        memcpy(&v, p, 4);
+        p += 4;
+        return v;
+    }
+    BYTE byte() { return *p++; }
+};
+
+#define FH4_CATCH 0x01
+#define FH4_SEPARATED 0x02
+#define FH4_BBT 0x04
+#define FH4_UNWIND_MAP 0x08
+#define FH4_TRY_MAP 0x10
+#define FH4_EHS 0x20
+#define FH4_NOEXCEPT 0x40
+
+/* the first instruction of the function a frame is in, its chained unwind information followed back. */
+static ULONG_PTR function_start(const DISPATCHER_CONTEXT *dc)
+{
+    const ULONG *entry = static_cast<const ULONG *>(dc->FunctionEntry);
+#if defined(__x86_64__)
+    for (;;) {
+        const BYTE *unwind = (const BYTE *)(dc->ImageBase + entry[2]);
+        if (!((unwind[0] >> 3) & 4))
+            break;
+        entry = (const ULONG *)(unwind + 4 + ((unwind[2] + 1) & ~1) * 2);
+    }
+#endif
+    return dc->ImageBase + entry[0];
+}
+
+static void decode_ip_map4(EH_IP *out, int *count, ULONG_PTR base, int rva, ULONG_PTR start)
+{
+    FH4_READER r = {(const BYTE *)AT(base, rva)};
+    ULONG n = r.unsigned_value();
+    ULONG_PTR ip = start;
+    for (ULONG i = 0; i < n; i++) {
+        ip += r.unsigned_value();
+        out[*count].ip = ip;
+        out[*count].state = (int)r.unsigned_value() - 1;
+        (*count)++;
+    }
+}
+
+static ULONG ip_map4_count(ULONG_PTR base, int rva)
+{
+    FH4_READER r = {(const BYTE *)AT(base, rva)};
+    return r.unsigned_value();
+}
+
+static EH_FUNCTION *decode4(const BYTE *info, const DISPATCHER_CONTEXT *dc)
+{
+    EH_FUNCTION *f = cached(info);
+    if (f)
+        return f;
+    ULONG_PTR base = dc->ImageBase;
+    f = static_cast<EH_FUNCTION *>(allocate(sizeof(*f)));
+    f->key = info;
+    FH4_READER r = {info};
+    BYTE header = r.byte();
+    if (header & FH4_BBT)
+        r.unsigned_value();
+    int unwind_map = header & FH4_UNWIND_MAP ? r.int32() : 0;
+    int try_map = header & FH4_TRY_MAP ? r.int32() : 0;
+    int ip_map = r.int32();
+    if (header & FH4_CATCH) {
+        f->is_catch = true;
+        f->catch_frame = r.unsigned_value();
+    }
+    f->flags = (header & FH4_EHS ? FUNC_EHS : 0) | (header & FH4_NOEXCEPT ? FUNC_NOEXCEPT : 0);
+    ULONG_PTR start = function_start(dc);
+
+    /* the unwind map: entries in state order, each linked back to the one it unwinds to, or to the count for none. */
+    if (unwind_map) {
+        FH4_READER u = {(const BYTE *)AT(base, unwind_map)};
+        const BYTE *map_start = u.p;
+        f->max_state = u.unsigned_value();
+        f->unwind = static_cast<EH_UNWIND *>(allocate(f->max_state * sizeof(EH_UNWIND)));
+        const BYTE **offsets = static_cast<const BYTE **>(allocate(f->max_state * sizeof(*offsets)));
+        for (int i = 0; i < f->max_state; i++) {
+            offsets[i] = u.p;
+            ULONG v = u.unsigned_value();
+            ULONG type = v & 3, next = v >> 2;
+            EH_UNWIND *e = &f->unwind[i];
+            e->to_state = -1;
+            if (next && offsets[i] - next != map_start)
+                for (int j = 0; j < i; j++)
+                    if (offsets[j] == offsets[i] - next)
+                        e->to_state = j;
+            if (type == 1 || type == 2) {
+                e->action = (ULONG_PTR)AT(base, u.int32());
+                e->object = u.unsigned_value();
+                e->kind = type == 1 ? ACTION_OBJECT : ACTION_POINTER;
+            } else if (type == 3) {
+                e->action = (ULONG_PTR)AT(base, u.int32());
+                e->kind = ACTION_FUNCLET;
+            }
+        }
+        free(offsets);
+    }
+
+    if (try_map) {
+        FH4_READER t = {(const BYTE *)AT(base, try_map)};
+        f->tries = t.unsigned_value();
+        f->try_blocks = static_cast<EH_TRY *>(allocate(f->tries * sizeof(EH_TRY)));
+        for (int i = 0; i < f->tries; i++) {
+            EH_TRY *out = &f->try_blocks[i];
+            out->low = t.unsigned_value();
+            out->high = t.unsigned_value();
+            out->catch_high = t.unsigned_value();
+            FH4_READER h = {(const BYTE *)AT(base, t.int32())};
+            out->count = h.unsigned_value();
+            out->handlers = static_cast<EH_HANDLER *>(allocate(out->count * sizeof(EH_HANDLER)));
+            for (int j = 0; j < out->count; j++) {
+                EH_HANDLER *x = &out->handlers[j];
+                BYTE flags = h.byte();
+                if (flags & 1)
+                    x->adjectives = h.unsigned_value();
+                if (flags & 2)
+                    x->type = static_cast<const type_info *>(AT(base, h.int32()));
+                if (flags & 4)
+                    x->catch_object = h.unsigned_value();
+                x->code = (ULONG_PTR)AT(base, h.int32());
+                x->continuations = (flags >> 4) & 3;
+                for (int k = 0; k < x->continuations; k++)
+                    x->continuation[k] = flags & 8 ? (ULONG_PTR)AT(base, h.int32()) : start + h.unsigned_value();
+            }
+        }
+    }
+
+    /* the instruction pointer map: offsets from the function's start, or one map per separated part of it. */
+    if (header & FH4_SEPARATED) {
+        FH4_READER sep = {(const BYTE *)AT(base, ip_map)};
+        ULONG parts = sep.unsigned_value();
+        FH4_READER count = sep;
+        ULONG total = 0;
+        for (ULONG i = 0; i < parts; i++) {
+            count.int32();
+            total += ip_map4_count(base, count.int32());
+        }
+        f->ip_map = static_cast<EH_IP *>(allocate(total * sizeof(EH_IP)));
+        for (ULONG i = 0; i < parts; i++) {
+            int part_start = sep.int32();
+            decode_ip_map4(f->ip_map, &f->ips, base, sep.int32(), (ULONG_PTR)AT(base, part_start));
+        }
+        /* the parts may be anywhere: their entries in address order. */
+        for (int i = 1; i < f->ips; i++)
+            for (int j = i; j > 0 && f->ip_map[j - 1].ip > f->ip_map[j].ip; j--) {
+                EH_IP swap = f->ip_map[j];
+                f->ip_map[j] = f->ip_map[j - 1];
+                f->ip_map[j - 1] = swap;
+            }
+    } else {
+        f->ip_map = static_cast<EH_IP *>(allocate(ip_map4_count(base, ip_map) * sizeof(EH_IP)));
+        decode_ip_map4(f->ip_map, &f->ips, base, ip_map, start);
+    }
+    return remember(f);
+}
+
+extern "C" EXCEPTION_DISPOSITION __cdecl __CxxFrameHandler4(EXCEPTION_RECORD *record, ULONG_PTR establisher,
+                                                            CONTEXT *context, DISPATCHER_CONTEXT *dc)
+{
+    const BYTE *info = static_cast<const BYTE *>(AT(dc->ImageBase, *(const ULONG *)dc->HandlerData));
+    return frame_handler(record, establisher, context, dc, decode4(info, dc));
 }
 
 extern "C" EXCEPTION_DISPOSITION __cdecl __CxxFrameHandler2(EXCEPTION_RECORD *record, ULONG_PTR establisher,
@@ -762,6 +1014,9 @@ struct CATCH_REGISTRATION {
     void *handler;
     MSVCRT_CATCH *c;
     bool done;
+    /* the frame's saved stack pointer before the catch block put its own there. */
+    EH_NODE *node;
+    ULONG saved_esp;
 };
 
 static EXCEPTION_DISPOSITION __cdecl catch_guard(EXCEPTION_RECORD *record, CATCH_REGISTRATION *frame,
@@ -769,6 +1024,7 @@ static EXCEPTION_DISPOSITION __cdecl catch_guard(EXCEPTION_RECORD *record, CATCH
 {
     if ((record->ExceptionFlags & UNWIND_FLAGS) && !frame->done) {
         frame->done = true;
+        ((ULONG *)frame->node)[-1] = frame->saved_esp;
         pop_catch(frame->c);
     }
     return ExceptionContinueSearch;
@@ -799,15 +1055,14 @@ static __declspec(noreturn) void catch_it(EXCEPTION_RECORD *record, EH_NODE *nod
     node->state = t->low - 1;
     MSVCRT_CATCH entry;
     push_catch(&entry, record, thrown, context);
-    CATCH_REGISTRATION guard = {read_fs0(), (void *)catch_guard, &entry, false};
+    /* catch blocks keep their own stack pointer where the function's is: the continuation needs the one before. */
+    CATCH_REGISTRATION guard = {read_fs0(), (void *)catch_guard, &entry, false, node, ((ULONG *)node)[-1]};
     entry.frame = node;
     entry.try_block = t;
     entry.registration = &guard;
     write_fs0(&guard);
-    /* catch blocks keep their own stack pointer where the function's is: the continuation needs the one before. */
-    ULONG saved_esp = ((ULONG *)node)[-1];
     ULONG_PTR continuation = MsvcrtCallWithFrame(h->code, node_ebp(node));
-    ((ULONG *)node)[-1] = saved_esp;
+    ((ULONG *)node)[-1] = guard.saved_esp;
     write_fs0(guard.next);
     guard.done = true;
     pop_catch(&entry);

@@ -179,6 +179,9 @@ struct MSVCRT_EH_THREAD {
     int throws;
     /* the object of the exception a catch is unwinding to, which the catches it leaves must not destroy. */
     void *caught_object;
+    /* 64-bit windows: the state of each function whose catch block runs, its frame first. */
+    ULONG_PTR kept[16][2];
+    int kept_count;
 };
 
 extern "C" MSVCRT_EH_THREAD *MsvcrtEhThread(void);
