@@ -1095,6 +1095,20 @@ static void emit_viewports(D3dContext *c, VkCommandBuffer cmd, VkExtent2D area)
     vk->vkCmdSetScissorWithCount(cmd, count, scissors);
 }
 
+/*
+ * whether a dynamic state differs from what the command buffer has, noting
+ * it if so; everything differs in a new command buffer.
+ */
+#define DYN_CHANGED(field, value) (c->state_dirty || c->dyn.field != (value) ? (c->dyn.field = (value), TRUE) : FALSE)
+
+static BOOL dyn_changed_bytes(D3dContext *c, void *field, const void *value, SIZE_T size)
+{
+    if (!c->state_dirty && !memcmp(field, value, size))
+        return FALSE;
+    memcpy(field, value, size);
+    return TRUE;
+}
+
 static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
 {
     D3dDevice *device = c->child.device;
@@ -1105,36 +1119,50 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
     /* stream output may rasterize another stream than the first, or none. */
     D3dShader *gs = c->stages[D3D_GS].shader;
     UINT stream = gs && gs->so ? gs->rasterized_stream : 0;
-    vk->vkCmdSetRasterizerDiscardEnable(cmd, stream == D3D11_SO_NO_RASTERIZED_STREAM);
-    vk->vkCmdSetCullMode(cmd, CULL[rs->CullMode]);
-    vk->vkCmdSetFrontFace(cmd, rs->FrontCounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE);
-    vk->vkCmdSetPolygonModeEXT(cmd, rs->FillMode == D3D11_FILL_WIREFRAME ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL);
-    BOOL bias = rs->DepthBias || rs->SlopeScaledDepthBias;
-    vk->vkCmdSetDepthBiasEnable(cmd, bias);
-    vk->vkCmdSetDepthBias(cmd, (float)rs->DepthBias, rs->DepthBiasClamp, rs->SlopeScaledDepthBias);
+    if (DYN_CHANGED(discard, (UINT)(stream == D3D11_SO_NO_RASTERIZED_STREAM)))
+        vk->vkCmdSetRasterizerDiscardEnable(cmd, c->dyn.discard);
+    if (DYN_CHANGED(cull, (UINT)CULL[rs->CullMode]))
+        vk->vkCmdSetCullMode(cmd, c->dyn.cull);
+    if (DYN_CHANGED(front, (UINT)(rs->FrontCounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE)))
+        vk->vkCmdSetFrontFace(cmd, (VkFrontFace)c->dyn.front);
+    if (DYN_CHANGED(polygon, (UINT)(rs->FillMode == D3D11_FILL_WIREFRAME ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL)))
+        vk->vkCmdSetPolygonModeEXT(cmd, (VkPolygonMode)c->dyn.polygon);
+    if (DYN_CHANGED(bias_enable, (UINT)(rs->DepthBias || rs->SlopeScaledDepthBias)))
+        vk->vkCmdSetDepthBiasEnable(cmd, c->dyn.bias_enable);
+    float bias[3] = {(float)rs->DepthBias, rs->DepthBiasClamp, rs->SlopeScaledDepthBias};
+    if (dyn_changed_bytes(c, c->dyn.bias, bias, sizeof(bias)))
+        vk->vkCmdSetDepthBias(cmd, bias[0], bias[1], bias[2]);
     /* direct3d clamps depth to the viewport always; turning clipping off leaves only the clamp. */
     if (device->has_depth_clip) {
-        vk->vkCmdSetDepthClampEnableEXT(cmd, TRUE);
-        vk->vkCmdSetDepthClipEnableEXT(cmd, rs->DepthClipEnable);
-    } else {
-        vk->vkCmdSetDepthClampEnableEXT(cmd, !rs->DepthClipEnable);
+        if (DYN_CHANGED(clamp, TRUE))
+            vk->vkCmdSetDepthClampEnableEXT(cmd, TRUE);
+        if (DYN_CHANGED(clip, (UINT)rs->DepthClipEnable))
+            vk->vkCmdSetDepthClipEnableEXT(cmd, c->dyn.clip);
+    } else if (DYN_CHANGED(clamp, (UINT)!rs->DepthClipEnable)) {
+        vk->vkCmdSetDepthClampEnableEXT(cmd, c->dyn.clamp);
     }
-    vk->vkCmdSetLineWidth(cmd, 1.0f);
+    if (c->state_dirty) {
+        vk->vkCmdSetLineWidth(cmd, 1.0f);
+        if (device->has_tessellation)
+            vk->vkCmdSetTessellationDomainOriginEXT(cmd, VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT);
+    }
     VkPrimitiveTopology t = topology(c->topology);
-    vk->vkCmdSetPrimitiveTopology(cmd, t);
+    if (DYN_CHANGED(topology, (UINT)t))
+        vk->vkCmdSetPrimitiveTopology(cmd, t);
     /* strips cut at the all ones index, as direct3d 10 and later always do, but not direct3d 9's. */
-    vk->vkCmdSetPrimitiveRestartEnable(cmd, !(c->topology & MIME_TOPOLOGY_D3D9) &&
-                                                (t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
-                                                 t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
-                                                 t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
-                                                 t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY));
+    UINT restart = !(c->topology & MIME_TOPOLOGY_D3D9) &&
+                   (t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
+                    t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
+                    t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY);
+    if (DYN_CHANGED(restart, restart))
+        vk->vkCmdSetPrimitiveRestartEnable(cmd, restart);
     if (device->has_tessellation) {
         UINT points = t == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST ? c->topology - D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + 1 : 1;
-        vk->vkCmdSetPatchControlPointsEXT(cmd, points);
-        vk->vkCmdSetTessellationDomainOriginEXT(cmd, VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT);
+        if (DYN_CHANGED(points, points))
+            vk->vkCmdSetPatchControlPointsEXT(cmd, points);
     }
-    if (device->has_transform_feedback)
-        vk->vkCmdSetRasterizationStreamEXT(cmd, stream < 4 ? stream : 0);
+    if (device->has_transform_feedback && DYN_CHANGED(stream, stream < 4 ? stream : 0))
+        vk->vkCmdSetRasterizationStreamEXT(cmd, c->dyn.stream);
 }
 
 static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
@@ -1144,22 +1172,32 @@ static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
     const D3D11_DEPTH_STENCIL_DESC *ds = c->depth_stencil ? &c->depth_stencil->desc : &DEFAULT_DS;
     BOOL has_depth = c->dsv && (c->dsv->range.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT);
     BOOL has_stencil = c->dsv && (c->dsv->range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT);
-    vk->vkCmdSetDepthTestEnable(cmd, ds->DepthEnable && has_depth);
-    vk->vkCmdSetDepthWriteEnable(cmd, ds->DepthWriteMask == D3D11_DEPTH_WRITE_MASK_ALL && has_depth &&
-                                          !(c->dsv->desc.dsv.Flags & D3D11_DSV_READ_ONLY_DEPTH));
-    vk->vkCmdSetDepthCompareOp(cmd, (VkCompareOp)(ds->DepthFunc - 1));
-    vk->vkCmdSetDepthBoundsTestEnable(cmd, FALSE);
-    vk->vkCmdSetStencilTestEnable(cmd, ds->StencilEnable && has_stencil);
-    vk->vkCmdSetStencilOp(cmd, VK_STENCIL_FACE_FRONT_BIT, stencil_op(ds->FrontFace.StencilFailOp),
-                          stencil_op(ds->FrontFace.StencilPassOp), stencil_op(ds->FrontFace.StencilDepthFailOp),
-                          (VkCompareOp)(ds->FrontFace.StencilFunc - 1));
-    vk->vkCmdSetStencilOp(cmd, VK_STENCIL_FACE_BACK_BIT, stencil_op(ds->BackFace.StencilFailOp),
-                          stencil_op(ds->BackFace.StencilPassOp), stencil_op(ds->BackFace.StencilDepthFailOp),
-                          (VkCompareOp)(ds->BackFace.StencilFunc - 1));
-    vk->vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, ds->StencilReadMask);
+    if (DYN_CHANGED(depth_test, (UINT)(ds->DepthEnable && has_depth)))
+        vk->vkCmdSetDepthTestEnable(cmd, c->dyn.depth_test);
+    if (DYN_CHANGED(depth_write, (UINT)(ds->DepthWriteMask == D3D11_DEPTH_WRITE_MASK_ALL && has_depth &&
+                                        !(c->dsv->desc.dsv.Flags & D3D11_DSV_READ_ONLY_DEPTH))))
+        vk->vkCmdSetDepthWriteEnable(cmd, c->dyn.depth_write);
+    if (DYN_CHANGED(depth_op, (UINT)(ds->DepthFunc - 1)))
+        vk->vkCmdSetDepthCompareOp(cmd, (VkCompareOp)c->dyn.depth_op);
+    if (c->state_dirty)
+        vk->vkCmdSetDepthBoundsTestEnable(cmd, FALSE);
+    if (DYN_CHANGED(stencil_test, (UINT)(ds->StencilEnable && has_stencil)))
+        vk->vkCmdSetStencilTestEnable(cmd, c->dyn.stencil_test);
+    const D3D11_DEPTH_STENCILOP_DESC *faces[2] = {&ds->FrontFace, &ds->BackFace};
+    for (UINT i = 0; i < 2; i++) {
+        UINT ops[4] = {stencil_op(faces[i]->StencilFailOp), stencil_op(faces[i]->StencilPassOp),
+                       stencil_op(faces[i]->StencilDepthFailOp), faces[i]->StencilFunc - 1};
+        if (dyn_changed_bytes(c, c->dyn.stencil_ops[i], ops, sizeof(ops)))
+            vk->vkCmdSetStencilOp(cmd, i ? VK_STENCIL_FACE_BACK_BIT : VK_STENCIL_FACE_FRONT_BIT, (VkStencilOp)ops[0],
+                                  (VkStencilOp)ops[1], (VkStencilOp)ops[2], (VkCompareOp)ops[3]);
+    }
+    if (DYN_CHANGED(compare_mask, (UINT)ds->StencilReadMask))
+        vk->vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, c->dyn.compare_mask);
     BOOL stencil_writes = !(c->dsv && (c->dsv->desc.dsv.Flags & D3D11_DSV_READ_ONLY_STENCIL));
-    vk->vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, stencil_writes ? ds->StencilWriteMask : 0);
-    vk->vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, c->stencil_ref & 0xFF);
+    if (DYN_CHANGED(write_mask, (UINT)(stencil_writes ? ds->StencilWriteMask : 0)))
+        vk->vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, c->dyn.write_mask);
+    if (DYN_CHANGED(reference, c->stencil_ref & 0xFF))
+        vk->vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, c->dyn.reference);
 
     const D3D11_BLEND_DESC1 *blend = c->blend ? &c->blend->desc : NULL;
     VkBool32 enables[8];
@@ -1188,19 +1226,29 @@ static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
             op = LOGIC[t->LogicOp & 15];
         }
     }
-    vk->vkCmdSetColorBlendEnableEXT(cmd, 0, 8, enables);
-    vk->vkCmdSetColorBlendEquationEXT(cmd, 0, 8, equations);
-    vk->vkCmdSetColorWriteMaskEXT(cmd, 0, 8, masks);
+    if (dyn_changed_bytes(c, c->dyn.blend_enables, enables, sizeof(enables)))
+        vk->vkCmdSetColorBlendEnableEXT(cmd, 0, 8, enables);
+    if (dyn_changed_bytes(c, c->dyn.equations, equations, sizeof(equations)))
+        vk->vkCmdSetColorBlendEquationEXT(cmd, 0, 8, equations);
+    if (dyn_changed_bytes(c, c->dyn.color_masks, masks, sizeof(masks)))
+        vk->vkCmdSetColorWriteMaskEXT(cmd, 0, 8, masks);
     if (device->has_logic_op) {
-        vk->vkCmdSetLogicOpEnableEXT(cmd, logic);
-        vk->vkCmdSetLogicOpEXT(cmd, op);
+        if (DYN_CHANGED(logic, (UINT)logic))
+            vk->vkCmdSetLogicOpEnableEXT(cmd, logic);
+        if (DYN_CHANGED(logic_op, (UINT)op))
+            vk->vkCmdSetLogicOpEXT(cmd, op);
     }
-    vk->vkCmdSetBlendConstants(cmd, c->blend_factor);
-    vk->vkCmdSetAlphaToCoverageEnableEXT(cmd, blend && blend->AlphaToCoverageEnable);
+    if (dyn_changed_bytes(c, c->dyn.blend_constants, c->blend_factor, sizeof(c->dyn.blend_constants)))
+        vk->vkCmdSetBlendConstants(cmd, c->blend_factor);
+    if (DYN_CHANGED(alpha_to_coverage, (UINT)(blend && blend->AlphaToCoverageEnable)))
+        vk->vkCmdSetAlphaToCoverageEnableEXT(cmd, c->dyn.alpha_to_coverage);
     VkSampleMask mask = c->sample_mask;
     UINT samples = c->render_samples ? c->render_samples : 1;
-    vk->vkCmdSetRasterizationSamplesEXT(cmd, (VkSampleCountFlagBits)samples);
-    vk->vkCmdSetSampleMaskEXT(cmd, (VkSampleCountFlagBits)samples, &mask);
+    BOOL samples_changed = DYN_CHANGED(samples, samples);
+    if (samples_changed)
+        vk->vkCmdSetRasterizationSamplesEXT(cmd, (VkSampleCountFlagBits)samples);
+    if (DYN_CHANGED(sample_mask, (UINT)mask) || samples_changed)
+        vk->vkCmdSetSampleMaskEXT(cmd, (VkSampleCountFlagBits)samples, &mask);
 }
 
 /* the vertex bindings: the layout's slots with the strides bound, and the attributes. */

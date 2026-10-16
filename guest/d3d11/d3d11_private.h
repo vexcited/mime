@@ -727,6 +727,17 @@ struct D3dContext {
     /* rendering ended to draw something writing views: the next draws reload the targets. */
     BOOL pending_barrier;
     BOOL state_dirty;
+    /* the dynamic state set in the command buffer, so draws set only what changed. */
+    struct {
+        UINT discard, cull, front, polygon, bias_enable, clamp, clip, topology, restart, points, stream;
+        float bias[3];
+        UINT depth_test, depth_write, depth_op, stencil_test, stencil_ops[2][4], compare_mask, write_mask, reference;
+        VkBool32 blend_enables[8];
+        VkColorBlendEquationEXT equations[8];
+        VkColorComponentFlags color_masks[8];
+        UINT logic, logic_op, alpha_to_coverage, samples, sample_mask;
+        float blend_constants[4];
+    } dyn;
     D3dRingChunk *table_chunk;
     VkDescriptorSet table_set;
     UINT table_offsets[D3D_STAGES];
