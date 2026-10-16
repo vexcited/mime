@@ -533,6 +533,13 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
         stream.pNext = (void *)raster.pNext;
         raster.pNext = &stream;
     }
+    VkPipelineRasterizationConservativeStateCreateInfoEXT conservative = {
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT};
+    if (rs->ConservativeRaster && device->conservative_tier) {
+        conservative.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
+        conservative.pNext = raster.pNext;
+        raster.pNext = &conservative;
+    }
     raster.rasterizerDiscardEnable = state->stream_output && rasterized == D3D12_SO_NO_RASTERIZED_STREAM;
     raster.polygonMode = rs->FillMode == D3D12_FILL_MODE_WIREFRAME ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
     raster.cullMode = CULL[rs->CullMode & 3];

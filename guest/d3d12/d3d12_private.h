@@ -782,6 +782,7 @@ struct D12Device {
     BOOL has_barycentrics, has_maintenance8, has_compute_derivatives;
     /* variable rate shading: direct3d's tier, the tile size of rate images, 4 pixel wide rates, rates with viewports. */
     UINT vrs_tier, vrs_tile;
+    UINT conservative_tier;
     BOOL vrs_more_rates, vrs_viewports;
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;

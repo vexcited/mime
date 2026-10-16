@@ -780,6 +780,10 @@ int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op)
         dxil_set_plain(c, ins->value, spv_load(&c->b, c->t_u32, ptr));
         return 1;
     }
+    case 92: /* innerCoverage */
+        spv_capability(&c->b, SpvCapabilityFragmentFullyCoveredEXT);
+        spv_extension(&c->b, "SPV_EXT_fragment_fully_covered");
+        return builtin_scalar(c, ins, SpvBuiltInFullyCoveredEXT, c->t_bool) ? -1 : 1;
     case 138: /* viewID */
         spv_capability(&c->b, SpvCapabilityMultiView);
         return builtin_scalar(c, ins, SpvBuiltInViewIndex, t_i32(c)) ? -1 : 1;

@@ -379,10 +379,14 @@ static HRESULT create_vulkan_device(D12Device *device)
     if (!device->has_rt_pipeline)
         rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
 
+    VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservative = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
     VkPhysicalDeviceFragmentShadingRatePropertiesKHR vrs_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR,
+        device->has_conservative ? (void *)&conservative : NULL};
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT, has_vrs ? (void *)&vrs_props : NULL};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT,
+        has_vrs ? (void *)&vrs_props : vrs_props.pNext};
     VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT,
                                                           device->has_dgc ? (void *)&dgc_props : dgc_props.pNext};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
@@ -447,6 +451,20 @@ static HRESULT create_vulkan_device(D12Device *device)
         device->vrs_tile = 0;
     } else {
         mesh.primitiveFragmentShadingRateMeshShader = device->has_mesh && mesh_rates;
+    }
+
+    /*
+     * conservative rasterization: tier 1 overestimates by half a pixel at
+     * most, tier 2 by 1/256 and keeps degenerate triangles, tier 3 also
+     * tells the pixel shader whether its pixel is fully covered.
+     */
+    if (device->has_conservative && conservative.primitiveOverestimationSize <= 0.5f) {
+        device->conservative_tier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_1;
+        if (conservative.primitiveOverestimationSize <= 1.0f / 256.0f && conservative.degenerateTrianglesRasterized) {
+            device->conservative_tier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_2;
+            if (conservative.fullyCoveredFragmentShaderInputVariable)
+                device->conservative_tier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_3;
+        }
     }
 
     VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
@@ -767,7 +785,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         d->TiledResourcesTier = D3D12_TILED_RESOURCES_TIER_NOT_SUPPORTED;
         d->ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3;
         d->TypedUAVLoadAdditionalFormats = f.shaderStorageImageReadWithoutFormat;
-        d->ConservativeRasterizationTier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_NOT_SUPPORTED;
+        d->ConservativeRasterizationTier = device->conservative_tier;
         d->MaxGPUVirtualAddressBitsPerResource = 40;
         d->CrossNodeSharingTier = D3D12_CROSS_NODE_SHARING_TIER_NOT_SUPPORTED;
         d->VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation = TRUE;
