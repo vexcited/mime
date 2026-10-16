@@ -46,6 +46,8 @@ struct MvkConnection {
     VkPhysicalDevice physical_device;
     MvkDispatch fn;
     bool host_import; /* the device imports guest memory */
+    bool timelines;   /* the device has timeline semaphores, whether the guest asked for them or not */
+    pthread_mutex_t queue_lock; /* the queues, which the presenting thread submits to as well */
     uint32_t queue_count;
     struct {
         VkQueue queue;
@@ -125,5 +127,7 @@ void mvk_wsi_destroy_swapchain(MvkCall *call);
 void mvk_wsi_acquire(MvkCall *call);
 void mvk_wsi_present(MvkCall *call);
 void mvk_wsi_close(MvkConnection *c);
+/* every present sent so far submitted. */
+void mvk_wsi_drain(MvkConnection *c);
 
 #endif

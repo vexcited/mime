@@ -9,6 +9,14 @@
  * acquire and present come without replies. a binary semaphore per image
  * orders them on the gpu: the blit of a present signals it, and the next
  * acquire of the image waits for it before it signals the guest.
+ *
+ * the host's acquire waits for the display, which would hold every later
+ * call of the process, the next frame's included: a presenting thread per
+ * connection does the acquire, the blit and the present. the connection's
+ * thread only takes the guest's semaphores, in a submission that signals a
+ * timeline value the blit waits for, and queues the present; an acquire of
+ * an image whose present the presenting thread has not submitted yet waits
+ * for it.
  */
 #include "mvk_host.h"
 #include "display.h"
@@ -59,6 +67,7 @@ typedef struct Swapchain {
     VkDeviceMemory memory[MAX_IMAGES];
     VkSemaphore released[MAX_IMAGES]; /* signaled by the last present of the image */
     bool pending[MAX_IMAGES];
+    uint32_t queued[MAX_IMAGES]; /* presents of the image the presenting thread did not submit yet */
 } Swapchain;
 
 typedef struct Frame {
@@ -112,8 +121,27 @@ struct Presenter {
     uint32_t grave_count;
 };
 
+/* a present handed to the presenting thread. */
+typedef struct PresentJob {
+    struct PresentJob *next;
+    Swapchain *s;
+    uint32_t index, window;
+    MimeRect client;
+    VkQueue queue;
+    uint32_t family;
+    uint64_t ready; /* the value of the ready timeline the guest's semaphores signal, 0 for none */
+} PresentJob;
+
 typedef struct MvkWsi {
     Swapchain *swapchains;
+    /* the presenting thread and its presents, under lock. */
+    pthread_t thread;
+    bool running, busy, stop;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    PresentJob *first, *last;
+    VkSemaphore ready;
+    uint64_t ready_value;
     PFN_vkDestroySurfaceKHR DestroySurface;
     PFN_vkGetPhysicalDeviceSurfaceSupportKHR SurfaceSupport;
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR SurfaceCapabilities;
@@ -138,6 +166,8 @@ static MvkWsi *wsi_of(MvkConnection *c)
     MvkWsi *w = calloc(1, sizeof(*w));
     if (!w)
         return NULL;
+    pthread_mutex_init(&w->lock, NULL);
+    pthread_cond_init(&w->cond, NULL);
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
 #define INSTANCE(field, name) w->field = (__typeof__(w->field))c->gipa(c->instance, name)
 #define DEVICE(field, name) w->field = (__typeof__(w->field))(c->device ? gdpa(c->device, name) : NULL)
@@ -451,7 +481,9 @@ static void presenter_put(MvkConnection *c, Presenter *p)
                 g_presenters[i] = NULL;
     pthread_mutex_unlock(&g_presenters_lock);
     if (last) {
+        pthread_mutex_lock(&c->queue_lock);
         c->fn.vkDeviceWaitIdle(c->device);
+        pthread_mutex_unlock(&c->queue_lock);
         destroy_presenter(c, p);
     }
 }
@@ -466,8 +498,14 @@ void mime_vk_window_lost(uint32_t id)
         pthread_mutex_lock(&p->lock);
         p->generation++;
         p->attached = false;
-        if (p->surface)
-            drop_surface(p->conn, p, false);
+        /* the presenting thread's last present may still use the host swapchain: the queues go idle first. */
+        if (p->surface) {
+            MvkConnection *c = p->conn;
+            pthread_mutex_lock(&c->queue_lock);
+            c->fn.vkDeviceWaitIdle(c->device);
+            pthread_mutex_unlock(&c->queue_lock);
+            drop_surface(c, p, true);
+        }
         pthread_mutex_unlock(&p->lock);
     }
     pthread_mutex_unlock(&g_presenters_lock);
@@ -583,7 +621,9 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     VkResult r = w->CreateSwapchain(c->device, &info, NULL, &swapchain);
     /* the old one goes either way, once nothing of it is in flight. */
     if (p->swapchain) {
+        pthread_mutex_lock(&c->queue_lock);
         c->fn.vkQueueWaitIdle(queue);
+        pthread_mutex_unlock(&c->queue_lock);
         drop_swapchain(c, p, true);
     }
     if (r != VK_SUCCESS) {
@@ -823,17 +863,30 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
 
 /* ------------------------------------------------------------------ present */
 
+/* semaphores a submission waits for, the values of timelines among them. */
 typedef struct Waits {
     uint32_t count;
     VkSemaphore semaphores[32];
     VkPipelineStageFlags stages[32];
+    uint64_t values[32];
 } Waits;
+
+static VkResult submit_locked(MvkConnection *c, VkQueue queue, const VkSubmitInfo *submit, VkFence fence)
+{
+    pthread_mutex_lock(&c->queue_lock);
+    VkResult r = c->fn.vkQueueSubmit(queue, 1, submit, fence);
+    pthread_mutex_unlock(&c->queue_lock);
+    return r;
+}
 
 /* a present that shows nothing: the guest's waits, and the image released. */
 static void release_only(MvkConnection *c, VkQueue queue, const Waits *waits, Swapchain *s, uint32_t index)
 {
+    uint64_t none = 0;
+    VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, NULL, waits->count,
+                                            waits->values, 1, &none};
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                           NULL,
+                           c->timelines ? &values : NULL,
                            waits->count,
                            waits->semaphores,
                            waits->stages,
@@ -841,7 +894,7 @@ static void release_only(MvkConnection *c, VkQueue queue, const Waits *waits, Sw
                            NULL,
                            1,
                            &s->released[index]};
-    if (c->fn.vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS)
+    if (submit_locked(c, queue, &submit, VK_NULL_HANDLE) == VK_SUCCESS)
         s->pending[index] = true;
 }
 
@@ -929,26 +982,145 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
 
         Waits all = *waits;
         all.semaphores[all.count] = f->acquired;
+        all.values[all.count] = 0;
         all.stages[all.count++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
         VkSemaphore signals[2] = {p->done[target], s->released[index]};
-        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, all.count, all.semaphores, all.stages, 1, &f->cmd,
-                               2, signals};
+        uint64_t signal_values[2] = {0, 0};
+        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, NULL, all.count,
+                                                all.values, 2, signal_values};
+        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, c->timelines ? &values : NULL, all.count, all.semaphores,
+                               all.stages, 1, &f->cmd, 2, signals};
         c->fn.vkResetFences(c->device, 1, &f->fence);
+        pthread_mutex_lock(&c->queue_lock);
         if (c->fn.vkQueueSubmit(queue, 1, &submit, f->fence) != VK_SUCCESS) {
             /* the fence stays unsignaled: a submit that only signals it keeps the next wait from hanging. */
             VkSubmitInfo none = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
             c->fn.vkQueueSubmit(queue, 1, &none, f->fence);
+            pthread_mutex_unlock(&c->queue_lock);
             return false;
         }
         s->pending[index] = true;
         VkPresentInfoKHR info = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, NULL, 1, &p->done[target], 1, &p->swapchain,
                                  &target, NULL};
         r = w->QueuePresent(queue, &info);
+        pthread_mutex_unlock(&c->queue_lock);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
             p->stale = true;
         return true;
     }
     return false;
+}
+
+/* a present of one swapchain: on its window when it shows, otherwise only the image released. */
+static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const Waits *waits, Swapchain *s,
+                        uint32_t index, uint32_t window, MimeRect client)
+{
+    MvkWsi *w = c->wsi;
+    if (s->presenter && s->presenter->window != window) {
+        presenter_put(c, s->presenter);
+        s->presenter = NULL;
+    }
+    if (!s->presenter && window && can_present(w))
+        s->presenter = presenter_get(c, window);
+    Presenter *p = s->presenter;
+    bool shown = false;
+    if (p) {
+        presenter_attach(c, p, client);
+        MimeUiFrame frame;
+        if (mime_ui_vk_frame(window, client, &frame)) {
+            if (!frame.subsurface)
+                refresh_shadow(p, &frame);
+            pthread_mutex_lock(&p->lock);
+            shown = show(c, p, queue, family, waits, s, index, &frame, client);
+            pthread_mutex_unlock(&p->lock);
+        }
+    }
+    if (!shown)
+        release_only(c, queue, waits, s, index);
+}
+
+static void *presenting_main(void *arg)
+{
+    MvkConnection *c = arg;
+    MvkWsi *w = c->wsi;
+    mime_set_thread_name("mime-vk-present");
+    pthread_mutex_lock(&w->lock);
+    for (;;) {
+        while (!w->first && !w->stop)
+            pthread_cond_wait(&w->cond, &w->lock);
+        if (!w->first)
+            break;
+        PresentJob *job = w->first;
+        w->first = job->next;
+        if (!w->first)
+            w->last = NULL;
+        w->busy = true;
+        pthread_mutex_unlock(&w->lock);
+        Waits waits = {0};
+        if (job->ready) {
+            waits.semaphores[0] = w->ready;
+            waits.stages[0] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            waits.values[0] = job->ready;
+            waits.count = 1;
+        }
+        present_one(c, job->queue, job->family, &waits, job->s, job->index, job->window, job->client);
+        pthread_mutex_lock(&w->lock);
+        job->s->queued[job->index]--;
+        w->busy = false;
+        pthread_cond_broadcast(&w->cond);
+        free(job);
+    }
+    pthread_mutex_unlock(&w->lock);
+    return NULL;
+}
+
+void mvk_wsi_drain(MvkConnection *c)
+{
+    MvkWsi *w = c->wsi;
+    if (!w || !w->running)
+        return;
+    pthread_mutex_lock(&w->lock);
+    while (w->first || w->busy)
+        pthread_cond_wait(&w->cond, &w->lock);
+    pthread_mutex_unlock(&w->lock);
+}
+
+static void stop_presenting(MvkConnection *c)
+{
+    MvkWsi *w = c->wsi;
+    if (!w || !w->running)
+        return;
+    pthread_mutex_lock(&w->lock);
+    w->stop = true;
+    pthread_cond_broadcast(&w->cond);
+    pthread_mutex_unlock(&w->lock);
+    pthread_join(w->thread, NULL);
+    w->running = false;
+    if (w->ready)
+        c->fn.vkDestroySemaphore(c->device, w->ready, NULL);
+    w->ready = VK_NULL_HANDLE;
+}
+
+/* the presenting thread and its ready timeline, made at the first present. */
+static bool start_presenting(MvkConnection *c, MvkWsi *w)
+{
+    if (w->running)
+        return true;
+    if (!c->timelines)
+        return false;
+    VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+    VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+    if (c->fn.vkCreateSemaphore(c->device, &info, NULL, &w->ready) != VK_SUCCESS)
+        return false;
+    w->ready_value = 0;
+    w->stop = false;
+    if (pthread_create(&w->thread, NULL, presenting_main, c)) {
+        c->fn.vkDestroySemaphore(c->device, w->ready, NULL);
+        w->ready = VK_NULL_HANDLE;
+        return false;
+    }
+    w->running = true;
+    return true;
 }
 
 /* (queue id, wait count, semaphore ids, count, then (swapchain id, index, window, client rect) each) */
@@ -971,11 +1143,27 @@ void mvk_wsi_present(MvkCall *call)
     if (d->error || !queue || !queue_family(c, queue, &family))
         return;
     MvkWsi *w = wsi_of(c);
-    /* several swapchains wait once, then go one after the other. */
-    if (count > 1 && waits.count) {
-        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, waits.count, waits.semaphores, waits.stages};
-        c->fn.vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
-        c->fn.vkQueueWaitIdle(queue);
+    bool aside = w && start_presenting(c, w);
+    /*
+     * the guest's semaphores are taken here, in ring order, before the
+     * guest may signal them again: once for several swapchains, then one
+     * after the other, or for the presenting thread in a submission that
+     * signals the next ready value.
+     */
+    uint64_t ready = 0;
+    if (waits.count && (aside || count > 1)) {
+        uint64_t value = aside ? ++w->ready_value : 0;
+        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, NULL, waits.count,
+                                                waits.values, 1, &value};
+        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, aside ? &values : NULL, waits.count, waits.semaphores,
+                               waits.stages, 0, NULL, aside ? 1 : 0, aside ? &w->ready : NULL};
+        submit_locked(c, queue, &submit, VK_NULL_HANDLE);
+        if (!aside) {
+            pthread_mutex_lock(&c->queue_lock);
+            c->fn.vkQueueWaitIdle(queue);
+            pthread_mutex_unlock(&c->queue_lock);
+        }
+        ready = value;
         waits.count = 0;
     }
     for (uint32_t i = 0; i < count; i++) {
@@ -994,28 +1182,25 @@ void mvk_wsi_present(MvkCall *call)
             mime_warn("vulkan: image %u of a swapchain presented twice", index);
             continue;
         }
-        if (s->presenter && s->presenter->window != window) {
-            presenter_put(c, s->presenter);
-            s->presenter = NULL;
+        if (!aside) {
+            present_one(c, queue, family, &waits, s, index, window, client);
+            waits.count = 0;
+            continue;
         }
-        if (!s->presenter && window && can_present(w))
-            s->presenter = presenter_get(c, window);
-        Presenter *p = s->presenter;
-        bool shown = false;
-        if (p) {
-            presenter_attach(c, p, client);
-            MimeUiFrame frame;
-            if (mime_ui_vk_frame(window, client, &frame)) {
-                if (!frame.subsurface)
-                    refresh_shadow(p, &frame);
-                pthread_mutex_lock(&p->lock);
-                shown = show(c, p, queue, family, &waits, s, index, &frame, client);
-                pthread_mutex_unlock(&p->lock);
-            }
-        }
-        if (!shown)
-            release_only(c, queue, &waits, s, index);
-        waits.count = 0;
+        PresentJob *job = calloc(1, sizeof(*job));
+        if (!job)
+            break;
+        *job = (PresentJob){NULL, s, index, window, client, queue, family, ready};
+        s->pending[index] = true;
+        pthread_mutex_lock(&w->lock);
+        s->queued[index]++;
+        if (w->last)
+            w->last->next = job;
+        else
+            w->first = job;
+        w->last = job;
+        pthread_cond_broadcast(&w->cond);
+        pthread_mutex_unlock(&w->lock);
     }
 }
 
@@ -1030,6 +1215,14 @@ void mvk_wsi_acquire(MvkCall *call)
     VkFence fence = (VkFence)mvk_get_handle(d, 0);
     if (d->error || !s || index >= s->count || !c->queue_count)
         return;
+    /* the present that releases the image must be submitted before its semaphore is waited for. */
+    MvkWsi *w = c->wsi;
+    if (w && w->running) {
+        pthread_mutex_lock(&w->lock);
+        while (s->queued[index])
+            pthread_cond_wait(&w->cond, &w->lock);
+        pthread_mutex_unlock(&w->lock);
+    }
     VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     bool wait = s->pending[index];
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1043,13 +1236,16 @@ void mvk_wsi_acquire(MvkCall *call)
                            &semaphore};
     if (!wait && !semaphore && !fence)
         return;
-    if (c->fn.vkQueueSubmit(c->queues[0].queue, 1, &submit, fence) == VK_SUCCESS)
+    if (submit_locked(c, c->queues[0].queue, &submit, fence) == VK_SUCCESS)
         s->pending[index] = false;
 }
 
 static void free_swapchain(MvkConnection *c, Swapchain *s)
 {
+    mvk_wsi_drain(c);
+    pthread_mutex_lock(&c->queue_lock);
     c->fn.vkDeviceWaitIdle(c->device);
+    pthread_mutex_unlock(&c->queue_lock);
     if (s->presenter)
         presenter_put(c, s->presenter);
     destroy_swapchain_images(c, s);
@@ -1082,11 +1278,14 @@ void mvk_wsi_close(MvkConnection *c)
     MvkWsi *w = c->wsi;
     if (!w)
         return;
+    stop_presenting(c);
     while (w->swapchains) {
         Swapchain *s = w->swapchains;
         w->swapchains = s->next;
         free_swapchain(c, s);
     }
+    pthread_mutex_destroy(&w->lock);
+    pthread_cond_destroy(&w->cond);
     free(w);
     c->wsi = NULL;
 }

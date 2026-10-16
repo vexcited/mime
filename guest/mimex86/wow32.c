@@ -770,6 +770,13 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtQuerySystemTime(pointer32(a[0]));
     case MIME_SVC_NtDelayExecution:
         return NtDelayExecution(a[0], pointer32(a[1]));
+    /* atoms: a name of 16-bit characters and its length in bytes, the atom 16 bits. */
+    case MIME_SVC_NtAddAtom:
+        return NtAddAtom(pointer32(a[0]), a[1], pointer32(a[2]));
+    case MIME_SVC_NtFindAtom:
+        return NtFindAtom(pointer32(a[0]), a[1], pointer32(a[2]));
+    case MIME_SVC_NtDeleteAtom:
+        return NtDeleteAtom((USHORT)a[0]);
     /* the waits of locks: an address only names the wait, and a thread id is a number, zero extended. */
     case MIME_SVC_NtWaitForAlertByThreadId:
         return NtWaitForAlertByThreadId(pointer32(a[0]), pointer32(a[1]));

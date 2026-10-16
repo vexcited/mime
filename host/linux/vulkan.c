@@ -507,9 +507,29 @@ static void create_device(MvkCall *call)
         info.enabledLayerCount = 0;
         info.enabledExtensionCount = n;
         info.ppEnabledExtensionNames = names;
+        /* timeline semaphores hand presents to the presenting thread: on whenever the gpu has them. */
+        VkPhysicalDeviceTimelineSemaphoreFeatures timeline = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+        VkPhysicalDeviceFeatures2 query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
+        c->fn.vkGetPhysicalDeviceFeatures2(physical, &query);
+        bool named = false;
+        for (VkBaseOutStructure *s = (VkBaseOutStructure *)info.pNext; s && timeline.timelineSemaphore; s = s->pNext) {
+            if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+                ((VkPhysicalDeviceVulkan12Features *)s)->timelineSemaphore = VK_TRUE;
+                named = true;
+            } else if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES) {
+                ((VkPhysicalDeviceTimelineSemaphoreFeatures *)s)->timelineSemaphore = VK_TRUE;
+                named = true;
+            }
+        }
+        if (timeline.timelineSemaphore && !named) {
+            timeline.pNext = (void *)info.pNext;
+            info.pNext = &timeline;
+        }
         result = c->fn.vkCreateDevice(physical, &info, NULL, &c->device);
         if (result == VK_SUCCESS) {
             c->physical_device = physical;
+            c->timelines = timeline.timelineSemaphore;
             PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
             mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, c->device);
             if (c->host_import && c->fn.vkCreateBuffer) {
@@ -730,8 +750,12 @@ static void queue_submit(MvkCall *call)
     for (uint32_t i = 0; i < count; i++)
         mvk_get_VkSubmitInfo(d, &submits[i]);
     VkFence fence = (VkFence)mvk_get_handle(d, 0);
-    if (!d->error && queue)
-        mvk_check(call, call->fn->vkQueueSubmit(queue, count, submits, fence), "vkQueueSubmit");
+    if (!d->error && queue) {
+        pthread_mutex_lock(&call->conn->queue_lock);
+        VkResult result = call->fn->vkQueueSubmit(queue, count, submits, fence);
+        pthread_mutex_unlock(&call->conn->queue_lock);
+        mvk_check(call, result, "vkQueueSubmit");
+    }
 }
 
 static void queue_submit2(MvkCall *call)
@@ -743,8 +767,12 @@ static void queue_submit2(MvkCall *call)
     for (uint32_t i = 0; i < count; i++)
         mvk_get_VkSubmitInfo2(d, &submits[i]);
     VkFence fence = (VkFence)mvk_get_handle(d, 0);
-    if (!d->error && queue)
-        mvk_check(call, call->fn->vkQueueSubmit2(queue, count, submits, fence), "vkQueueSubmit2");
+    if (!d->error && queue) {
+        pthread_mutex_lock(&call->conn->queue_lock);
+        VkResult result = call->fn->vkQueueSubmit2(queue, count, submits, fence);
+        pthread_mutex_unlock(&call->conn->queue_lock);
+        mvk_check(call, result, "vkQueueSubmit2");
+    }
 }
 
 static void reply_result(MvkCall *call, VkResult result)
@@ -754,15 +782,25 @@ static void reply_result(MvkCall *call, VkResult result)
     mvk_reply_end(call);
 }
 
+/* idle waits take the presents sent before them in too. */
 static void queue_wait_idle(MvkCall *call)
 {
     VkQueue queue = (VkQueue)(uintptr_t)mvk_get_handle(&call->in, 1);
-    reply_result(call, queue ? call->fn->vkQueueWaitIdle(queue) : VK_ERROR_DEVICE_LOST);
+    mvk_wsi_drain(call->conn);
+    pthread_mutex_lock(&call->conn->queue_lock);
+    VkResult result = queue ? call->fn->vkQueueWaitIdle(queue) : VK_ERROR_DEVICE_LOST;
+    pthread_mutex_unlock(&call->conn->queue_lock);
+    reply_result(call, result);
 }
 
 static void device_wait_idle(MvkCall *call)
 {
-    reply_result(call, call->conn->device ? call->fn->vkDeviceWaitIdle(call->conn->device) : VK_ERROR_DEVICE_LOST);
+    MvkConnection *c = call->conn;
+    mvk_wsi_drain(c);
+    pthread_mutex_lock(&c->queue_lock);
+    VkResult result = c->device ? call->fn->vkDeviceWaitIdle(c->device) : VK_ERROR_DEVICE_LOST;
+    pthread_mutex_unlock(&c->queue_lock);
+    reply_result(call, result);
 }
 
 static void create_object(MvkCall *call, int op)
@@ -1590,6 +1628,7 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     pthread_cond_init(&c->job_done, NULL);
     pthread_mutex_init(&c->watch_lock, NULL);
     pthread_cond_init(&c->watch_round, NULL);
+    pthread_mutex_init(&c->queue_lock, NULL);
     if (!c->call || !c->arena) {
         free(c->call);
         free(c->arena);

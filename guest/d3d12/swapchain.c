@@ -259,10 +259,19 @@ static HRESULT present(D12SwapChain *sc, UINT interval, UINT flags)
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = sc->images[index];
     barrier.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    /* the back buffer's writes, which the program made before presenting, visible to the blit. */
+    VkMemoryBarrier2 written = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    written.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    written.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    written.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    written.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
     VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &written;
     dep.imageMemoryBarrierCount = 1;
     dep.pImageMemoryBarriers = &barrier;
     vk->vkCmdPipelineBarrier2(cmd, &dep);
+    dep.memoryBarrierCount = 0;
     VkImageBlit blit = {0};
     blit.srcSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     UINT width = sc->source_width ? sc->source_width : sc->desc.Width;
