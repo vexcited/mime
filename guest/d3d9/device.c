@@ -863,7 +863,23 @@ static HRESULT STDMETHODCALLTYPE device_color_fill(IDirect3DDevice9Ex *iface, ID
         d->context->lpVtbl->ClearView(d->context, (ID3D11View *)rtv, c, &box, 1);
         D9SurfaceWritten(s);
     } else if (s->texture) {
-        hr = not_yet(d, "ColorFill of surfaces that are not render targets");
+        /* the color in the surface's own layout, uploaded as a lock would. */
+        BYTE block[16];
+        const D9Format *f = s->base.format;
+        RECT b = D9SurfaceBlockRect(s, &r);
+        UINT columns = (b.right - b.left + f->block - 1) / f->block, rows = D9FormatRows(f, b.bottom - b.top);
+        UINT pitch = D9_ALIGN(columns * f->bytes, 4);
+        BYTE *bytes = D9PackColor(f, color, block) ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)pitch * rows) : NULL;
+        if (bytes) {
+            for (UINT y = 0; y < rows; y++)
+                for (UINT x = 0; x < columns; x++)
+                    memcpy(bytes + (SIZE_T)y * pitch + x * f->bytes, block, f->bytes);
+            D9SurfaceUploadBytes(s, &b, bytes, pitch);
+            HeapFree(GetProcessHeap(), 0, bytes);
+            D9SurfaceWritten(s);
+        } else {
+            hr = D3DERR_INVALIDCALL;
+        }
     }
     D9Unlock(d);
     return hr;

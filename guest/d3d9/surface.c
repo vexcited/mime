@@ -174,11 +174,9 @@ HRESULT D9SurfaceDownload(D9Surface *s)
     return hr;
 }
 
-/* a rectangle of the surface's memory to the gpu, after the work before it. */
-void D9SurfaceUpload(D9Surface *s, const RECT *rect)
+/* a rectangle widened to whole blocks of the surface's format. */
+RECT D9SurfaceBlockRect(const D9Surface *s, const RECT *rect)
 {
-    if (!in_gpu(s) || !s->memory->bytes)
-        return;
     const D9Format *f = s->base.format;
     RECT r = rect ? *rect : (RECT){0, 0, (LONG)s->width, (LONG)s->height};
     if (f->block > 1) {
@@ -187,9 +185,24 @@ void D9SurfaceUpload(D9Surface *s, const RECT *rect)
         r.right = D9_MIN((LONG)D9_ALIGN((UINT)r.right, f->block), (LONG)D9_ALIGN(s->width, f->block));
         r.bottom = D9_MIN((LONG)D9_ALIGN((UINT)r.bottom, f->block), (LONG)D9_ALIGN(s->height, f->block));
     }
-    D3D11_BOX box = {(UINT)r.left, (UINT)r.top, 0, (UINT)r.right, (UINT)r.bottom, 1};
-    const BYTE *bytes = D9MemoryAt(s->memory, f, r.left, r.top, 0);
-    UINT pitch = s->memory->pitch, width = r.right - r.left, rows = D9FormatRows(f, r.bottom - r.top);
+    return r;
+}
+
+/* a rectangle of the surface's memory to the gpu, after the work before it. */
+void D9SurfaceUpload(D9Surface *s, const RECT *rect)
+{
+    if (!in_gpu(s) || !s->memory->bytes)
+        return;
+    RECT r = D9SurfaceBlockRect(s, rect);
+    D9SurfaceUploadBytes(s, &r, D9MemoryAt(s->memory, s->base.format, r.left, r.top, 0), s->memory->pitch);
+}
+
+/* texels laid out as programs lock them to a rectangle of whole blocks of the surface's texture. */
+void D9SurfaceUploadBytes(D9Surface *s, const RECT *r, const BYTE *bytes, UINT pitch)
+{
+    const D9Format *f = s->base.format;
+    D3D11_BOX box = {(UINT)r->left, (UINT)r->top, 0, (UINT)r->right, (UINT)r->bottom, 1};
+    UINT width = r->right - r->left, rows = D9FormatRows(f, r->bottom - r->top);
     BYTE *converted = NULL;
     if (f->stored != f->bytes) {
         UINT out_pitch = D9_ALIGN(width * f->stored, 4);

@@ -118,3 +118,126 @@ void D9ConvertUpload(const D9Format *f, const BYTE *in, UINT in_pitch, BYTE *out
         }
     }
 }
+
+static WORD half(float f)
+{
+    UINT bits;
+    memcpy(&bits, &f, 4);
+    UINT sign = bits >> 16 & 0x8000;
+    INT exponent = (INT)(bits >> 23 & 0xFF) - 127 + 15;
+    UINT mantissa = bits & 0x7FFFFF;
+    if (exponent <= 0)
+        return (WORD)sign;
+    if (exponent >= 31)
+        return (WORD)(sign | 0x7C00);
+    return (WORD)(sign | exponent << 10 | (mantissa + 0x1000) >> 13);
+}
+
+static UINT bits_of(UINT value8, UINT bits) { return (value8 * ((1u << bits) - 1) + 127) / 255; }
+
+/* a 565 color block of a single color, transparent when DXT1's alpha is under a half. */
+static void color_block(BYTE *out, UINT r, UINT g, UINT b, BOOL transparent)
+{
+    WORD c = (WORD)(bits_of(r, 5) << 11 | bits_of(g, 6) << 5 | bits_of(b, 5));
+    memcpy(out, &c, 2);
+    memcpy(out + 2, &c, 2);
+    memset(out + 4, transparent ? 0xFF : 0, 4);
+}
+
+/*
+ * a color as a block of the format, as ColorFill writes it: the
+ * components scaled to the format's, luminance from the red, green and
+ * blue weighted as BT.601 does, a guess. 0 for formats it cannot fill.
+ */
+UINT D9PackColor(const D9Format *f, D3DCOLOR color, BYTE out[16])
+{
+    UINT a = color >> 24, r = color >> 16 & 0xFF, g = color >> 8 & 0xFF, b = color & 0xFF;
+    UINT l = (r * 299 + g * 587 + b * 114 + 500) / 1000;
+    float fr = r / 255.0f, fg = g / 255.0f, fb = b / 255.0f, fa = a / 255.0f;
+    UINT v = 0;
+    WORD w[4];
+    float x[4];
+    memset(out, 0, 16);
+    switch ((DWORD)f->d3d) {
+    case D3DFMT_A8R8G8B8:
+    case D3DFMT_X8R8G8B8:
+        v = color;
+        break;
+    case D3DFMT_A8B8G8R8:
+    case D3DFMT_X8B8G8R8:
+        v = a << 24 | b << 16 | g << 8 | r;
+        break;
+    case D3DFMT_R5G6B5:
+        v = bits_of(r, 5) << 11 | bits_of(g, 6) << 5 | bits_of(b, 5);
+        break;
+    case D3DFMT_X1R5G5B5:
+    case D3DFMT_A1R5G5B5:
+        v = (a >> 7) << 15 | bits_of(r, 5) << 10 | bits_of(g, 5) << 5 | bits_of(b, 5);
+        break;
+    case D3DFMT_A4R4G4B4:
+    case D3DFMT_X4R4G4B4:
+        v = bits_of(a, 4) << 12 | bits_of(r, 4) << 8 | bits_of(g, 4) << 4 | bits_of(b, 4);
+        break;
+    case D3DFMT_A8:
+        v = a;
+        break;
+    case D3DFMT_A2B10G10R10:
+        v = bits_of(a, 2) << 30 | bits_of(b, 10) << 20 | bits_of(g, 10) << 10 | bits_of(r, 10);
+        break;
+    case D3DFMT_A2R10G10B10:
+        v = bits_of(a, 2) << 30 | bits_of(r, 10) << 20 | bits_of(g, 10) << 10 | bits_of(b, 10);
+        break;
+    case D3DFMT_G16R16:
+        v = g * 257 << 16 | r * 257;
+        break;
+    case D3DFMT_A16B16G16R16:
+        w[0] = (WORD)(r * 257), w[1] = (WORD)(g * 257), w[2] = (WORD)(b * 257), w[3] = (WORD)(a * 257);
+        memcpy(out, w, 8);
+        return f->bytes;
+    case D3DFMT_L8:
+        v = l;
+        break;
+    case D3DFMT_A8L8:
+        v = a << 8 | l;
+        break;
+    case D3DFMT_A4L4:
+        v = bits_of(a, 4) << 4 | bits_of(l, 4);
+        break;
+    case D3DFMT_L16:
+        v = l * 257;
+        break;
+    case D3DFMT_R16F:
+        v = half(fr);
+        break;
+    case D3DFMT_G16R16F:
+        v = (UINT)half(fg) << 16 | half(fr);
+        break;
+    case D3DFMT_A16B16G16R16F:
+        w[0] = half(fr), w[1] = half(fg), w[2] = half(fb), w[3] = half(fa);
+        memcpy(out, w, 8);
+        return f->bytes;
+    case D3DFMT_R32F:
+    case D3DFMT_G32R32F:
+    case D3DFMT_A32B32G32R32F:
+        x[0] = fr, x[1] = fg, x[2] = fb, x[3] = fa;
+        memcpy(out, x, f->bytes);
+        return f->bytes;
+    case D3DFMT_DXT1:
+        color_block(out, r, g, b, a < 128);
+        return f->bytes;
+    case D3DFMT_DXT2:
+    case D3DFMT_DXT3:
+        memset(out, (int)(bits_of(a, 4) * 0x11), 8);
+        color_block(out + 8, r, g, b, FALSE);
+        return f->bytes;
+    case D3DFMT_DXT4:
+    case D3DFMT_DXT5:
+        out[0] = out[1] = (BYTE)a;
+        color_block(out + 8, r, g, b, FALSE);
+        return f->bytes;
+    default:
+        return 0;
+    }
+    memcpy(out, &v, f->bytes);
+    return f->bytes;
+}

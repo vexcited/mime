@@ -55,6 +55,7 @@ typedef struct D9Format {
 const D9Format *D9GetFormat(D3DFORMAT format);
 UINT D9FormatPitch(const D9Format *f, UINT width);
 UINT D9FormatRows(const D9Format *f, UINT height);
+UINT D9PackColor(const D9Format *f, D3DCOLOR color, BYTE out[16]);
 /* the bytes of a level's texels as programs lock them, converted to the gpu's and back. */
 void D9ConvertUpload(const D9Format *f, const BYTE *in, UINT in_pitch, BYTE *out, UINT out_pitch, UINT width,
                      UINT rows);
@@ -414,6 +415,8 @@ ID3D11DepthStencilView *D9SurfaceDsv(D9Surface *surface);
 /* copies a surface's gpu texels to its memory, and its memory to the gpu. */
 HRESULT D9SurfaceDownload(D9Surface *surface);
 void D9SurfaceUpload(D9Surface *surface, const RECT *rect);
+RECT D9SurfaceBlockRect(const D9Surface *surface, const RECT *rect);
+void D9SurfaceUploadBytes(D9Surface *surface, const RECT *rect, const BYTE *bytes, UINT pitch);
 void D9SurfaceWritten(D9Surface *surface);
 UINT D9SurfaceSubresource(const D9Surface *surface);
 HRESULT D9SurfaceLock(D9Surface *surface, D3DLOCKED_RECT *locked, const RECT *rect, DWORD flags);
