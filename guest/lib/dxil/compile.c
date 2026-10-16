@@ -168,9 +168,9 @@ uint32_t dxil_type(Compiler *c, uint32_t t)
     case DT_VECTOR: r = spv_type_vector(&c->b, dxil_type(c, ty->element), ty->count); break;
     case DT_ARRAY: r = spv_type_array(&c->b, dxil_type(c, ty->element), ty->count ? ty->count : 1); break;
     case DT_STRUCT: {
-        uint32_t members[32];
-        if (ty->count > 32 || !ty->count) {
-            dxil_fail(c, "a structure too large");
+        uint32_t *members = dxil_alloc(c, (ty->count + 1) * sizeof(uint32_t));
+        if (!members || !ty->count) {
+            dxil_fail(c, "an empty structure");
             return c->t_u32;
         }
         for (uint32_t i = 0; i < ty->count; i++)
@@ -470,6 +470,67 @@ static uint32_t storage_of_space(Compiler *c, uint32_t space)
 
 static int pointer_of(Compiler *c, uint32_t id, Pointer *out);
 
+/* the type a dxil type is kept as in groupshared memory. */
+static uint32_t shared_type(Compiler *c, uint32_t t)
+{
+    if (c->shared_map[t])
+        return c->shared_map[t];
+    const DxType *ty = &c->m.types[t];
+    uint32_t r = dxil_type(c, t);
+    int f;
+    switch (ty->kind) {
+    case DT_HALF:
+    case DT_FLOAT:
+    case DT_DOUBLE:
+        if (type_width(c, r, &f) == 64 && !c->t_u64) {
+            spv_capability(&c->b, SpvCapabilityInt64);
+            c->t_u64 = spv_type_int(&c->b, 64, 0);
+        }
+        r = type_width(c, r, &f) == 64 ? c->t_u64 : type_width(c, r, &f) == 16 ? type_u16(c) : c->t_u32;
+        break;
+    case DT_VECTOR: r = spv_type_vector(&c->b, shared_type(c, ty->element), ty->count); break;
+    case DT_ARRAY: r = spv_type_array(&c->b, shared_type(c, ty->element), ty->count ? ty->count : 1); break;
+    case DT_STRUCT: {
+        uint32_t *members = dxil_alloc(c, (ty->count + 1) * sizeof(uint32_t));
+        if (!members)
+            return r;
+        for (uint32_t i = 0; i < ty->count; i++)
+            members[i] = shared_type(c, ty->members[i]);
+        r = spv_type_struct(&c->b, members, ty->count);
+        break;
+    }
+    default: break;
+    }
+    c->shared_map[t] = r;
+    return r;
+}
+
+static uint32_t memory_type(Compiler *c, uint32_t t, uint32_t storage)
+{
+    return storage == SpvStorageClassWorkgroup ? shared_type(c, t) : dxil_type(c, t);
+}
+
+/* a value of dxil type t read from or written to memory of another type, bit for bit. */
+static uint32_t reinterpret(Compiler *c, uint32_t value, uint32_t t, uint32_t from, uint32_t to)
+{
+    if (from == to)
+        return value;
+    const DxType *ty = &c->m.types[t];
+    if (ty->kind != DT_ARRAY && ty->kind != DT_STRUCT)
+        return spv_op1(&c->b, SpvOpBitcast, to, value);
+    uint32_t n = ty->count ? ty->count : 1, *parts = dxil_alloc(c, (n + 1) * sizeof(uint32_t));
+    if (!parts)
+        return value;
+    int shared = to != dxil_type(c, t);
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t e = ty->kind == DT_ARRAY ? ty->element : ty->members[i];
+        uint32_t plain = dxil_type(c, e), kept = shared_type(c, e);
+        parts[i] = reinterpret(c, dxil_extract(c, shared ? plain : kept, value, i), e, shared ? plain : kept,
+                               shared ? kept : plain);
+    }
+    return spv_op(&c->b, SpvOpCompositeConstruct, to, parts, n);
+}
+
 /* whether a pointer may be read as another pointee: scalars of the same width, read with a bitcast. */
 static int same_size(Compiler *c, uint32_t a, uint32_t b)
 {
@@ -511,7 +572,7 @@ static int access(Compiler *c, const Pointer *base, const uint32_t *indices, uin
         w[i] = dxil_value(c, indices[i]);
     }
     out->dx = t;
-    out->type = dxil_type(c, t);
+    out->type = memory_type(c, t, base->storage);
     out->storage = base->storage;
     out->id = spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, base->storage, out->type), w, count);
     return 0;
@@ -526,7 +587,7 @@ static int global_pointer(Compiler *c, uint32_t id, const DxValue *v, Pointer *o
         return dxil_fail(c, "a global that is not a pointer");
     if (!s->id) {
         uint32_t storage = storage_of_space(c, pt->width);
-        uint32_t type = dxil_type(c, pt->element);
+        uint32_t type = memory_type(c, pt->element, storage);
         uint32_t init = 0;
         if (storage == SpvStorageClassPrivate && v->ops && v->ops[0] != DX_NONE) {
             const DxValue *iv = dx_value(&c->m, NULL, v->ops[0]);
@@ -587,8 +648,8 @@ uint32_t dxil_load_pointer(Compiler *c, uint32_t id, uint32_t *type)
     Pointer p;
     if (pointer_of(c, id, &p))
         return 0;
-    *type = p.type;
-    return spv_load(&c->b, p.type, p.id);
+    *type = p.dx ? dxil_type(c, p.dx) : p.type;
+    return reinterpret(c, spv_load(&c->b, p.type, p.id), p.dx, p.type, *type);
 }
 
 void dxil_store_pointer(Compiler *c, uint32_t id, uint32_t value)
@@ -695,9 +756,9 @@ static void cast(Compiler *c, const DxInst *ins)
         Pointer p;
         if (pointer_of(c, ins->ops[0], &p))
             return;
-        if (!same_size(c, to_dx->element, p.dx))
-            return (void)dxil_fail(c, "a pointer cast to another type");
-        set_pointer(c, ins->value, &p);
+        /* others, as the i8 pointers lifetime markers take, fail where they are used. */
+        if (same_size(c, to_dx->element, p.dx))
+            set_pointer(c, ins->value, &p);
         return;
     }
     uint32_t to = dxil_type(c, ins->type), from = dxil_type(c, src->type);
@@ -880,8 +941,7 @@ static void load(Compiler *c, const DxInst *ins)
     if (dxil_resource_global(c, ins) || pointer_of(c, ins->ops[0], &p))
         return;
     uint32_t type = dxil_type(c, ins->type);
-    uint32_t v = spv_load(&c->b, p.type, p.id);
-    dxil_set_plain(c, ins->value, p.type == type ? v : spv_op1(&c->b, SpvOpBitcast, type, v));
+    dxil_set_plain(c, ins->value, reinterpret(c, spv_load(&c->b, p.type, p.id), ins->type, p.type, type));
 }
 
 static void store(Compiler *c, const DxInst *ins)
@@ -891,8 +951,8 @@ static void store(Compiler *c, const DxInst *ins)
         return;
     const DxValue *v = dx_value(&c->m, c->f, ins->ops[1]);
     uint32_t value = dxil_value(c, ins->ops[1]);
-    if (v && dxil_type(c, v->type) != p.type)
-        value = spv_op1(&c->b, SpvOpBitcast, p.type, value);
+    if (v)
+        value = reinterpret(c, value, v->type, dxil_type(c, v->type), p.type);
     spv_store(&c->b, p.id, value);
 }
 
@@ -1563,8 +1623,9 @@ static int build(Compiler *c)
     spv_capability(b, SpvCapabilityRuntimeDescriptorArray);
     make_types(c);
     c->type_map = dxil_alloc(c, (c->m.type_count + 64) * sizeof(uint32_t));
+    c->shared_map = dxil_alloc(c, (c->m.type_count + 64) * sizeof(uint32_t));
     c->module_values = dxil_alloc(c, (c->m.value_count + 1) * sizeof(Value));
-    if (!c->type_map || !c->module_values)
+    if (!c->type_map || !c->shared_map || !c->module_values)
         return -1;
     const DxNamedMetadata *entries = dx_named(&c->m, "dx.entryPoints");
     if (!entries || !entries->count || entries->nodes[0] >= c->m.metadata_count)

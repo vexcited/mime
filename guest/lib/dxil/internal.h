@@ -225,6 +225,8 @@ typedef struct Compiler {
     uint32_t t_void, t_bool, t_f32, t_u32, t_f16, t_u16, t_f64, t_u64;
     uint32_t t_vec[5], t_uvec[5], t_bvec[5];
     uint32_t *type_map;
+    /* groupshared memory's types: floats as integers of their width, which atomics take. */
+    uint32_t *shared_map;
 
     /* values: the module's, then the function's. */
     Value *module_values;

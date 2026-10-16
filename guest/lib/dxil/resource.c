@@ -1326,6 +1326,39 @@ static int buffer_store(Compiler *c, const DxInst *ins)
     return 0;
 }
 
+/* rawBufferVectorLoad and rawBufferVectorStore: a vector's components one after another. */
+static int buffer_vector(Compiler *c, const DxInst *ins, int store)
+{
+    Handle *h = handle_of(c, ins->ops[2]);
+    if (!h)
+        return -1;
+    const DxValue *v = store ? dx_value(&c->m, c->f, ins->ops[5]) : NULL;
+    if (store && !v)
+        return dxil_fail(c, "a store of nothing");
+    uint32_t vector = store ? v->type : c->m.types[ins->type].members[0];
+    const DxType *t = &c->m.types[vector];
+    uint32_t dx = t->kind == DT_VECTOR ? t->element : vector, n = t->kind == DT_VECTOR ? t->count : 1;
+    if (n > 4)
+        return dxil_fail(c, "a vector longer than 4");
+    Memory m;
+    if (memory_of(c, h, &m))
+        return -1;
+    uint32_t base = byte_address(c, h, ins->ops[3], ins->ops[4]), parts[4];
+    uint32_t value = store ? dxil_value(c, ins->ops[5]) : 0, type = dxil_type(c, dx);
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t address = spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, dxil_uconst(c, i * type_bytes(c, dx)));
+        if (store)
+            write_value(c, &m, address, n > 1 ? dxil_extract(c, type, value, i) : value, dx);
+        else
+            parts[i] = read_value(c, &m, address, dx);
+    }
+    if (!store) {
+        uint32_t result[2] = {n > 1 ? dxil_vector(c, type, parts, n) : parts[0], dxil_uconst(c, 0)};
+        dxil_set_parts(c, ins->value, result, 2);
+    }
+    return 0;
+}
+
 /* cbufferLoadLegacy: a row of 16 bytes, as the structure's members split it. */
 static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
 {
@@ -1786,6 +1819,8 @@ int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 139: return buffer_load(c, ins, op) ? -1 : 1;
     case 69:
     case 140: return buffer_store(c, ins) ? -1 : 1;
+    case 303:
+    case 304: return buffer_vector(c, ins, op == 304) ? -1 : 1;
     case 70: return update_counter(c, ins) ? -1 : 1;
     case 71: { /* checkAccessFullyMapped: a status of 0 is all mapped. */
         const DxValue *v = dx_value(&c->m, c->f, ins->ops[2]);
