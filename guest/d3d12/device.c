@@ -748,8 +748,8 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, FALSE, FALSE, device->has_atomic64, device->has_shared_atomic64, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS10, 8, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS11, 4, device->has_atomic64);
-    /* enhanced barriers are not there yet; relaxed format casting is what typeless images do. */
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS12, 12, 0, FALSE, TRUE);
+    /* enhanced barriers are memory barriers of their scopes; relaxed format casting is what typeless images do. */
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS12, 12, 0, TRUE, TRUE);
     /* a negative viewport height flips y and min depth above max depth flips z, as in vulkan. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS13, 24, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS14, 12, FALSE, FALSE, TRUE);

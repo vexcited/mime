@@ -1875,11 +1875,134 @@ static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 
         list->written_count = 0;
 }
 
-static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, UINT32 count, const void *groups)
+/* the vulkan stages of enhanced barriers' synchronization scopes, with the commands mime runs for them. */
+static VkPipelineStageFlags2 sync_stages(D12Device *device, UINT sync)
+{
+    VkPipelineStageFlags2 shaders = shader_stages(device), s = 0;
+    if (sync & (D3D12_BARRIER_SYNC_ALL | D3D12_BARRIER_SYNC_VIDEO_DECODE | D3D12_BARRIER_SYNC_VIDEO_PROCESS |
+                D3D12_BARRIER_SYNC_VIDEO_ENCODE | D3D12_BARRIER_SYNC_SPLIT))
+        return VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    if (sync & D3D12_BARRIER_SYNC_DRAW)
+        s |= VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    if (sync & D3D12_BARRIER_SYNC_INDEX_INPUT)
+        s |= VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
+    if (sync & D3D12_BARRIER_SYNC_VERTEX_SHADING) {
+        s |= VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | (shaders & ~(VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                                                                           VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR));
+        if (device->has_transform_feedback)
+            s |= VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT;
+    }
+    if (sync & D3D12_BARRIER_SYNC_PIXEL_SHADING) {
+        s |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        if (device->vrs_tier >= D3D12_VARIABLE_SHADING_RATE_TIER_2)
+            s |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
+    }
+    if (sync & D3D12_BARRIER_SYNC_DEPTH_STENCIL)
+        s |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT |
+             VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    if (sync & D3D12_BARRIER_SYNC_RENDER_TARGET)
+        s |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    if (sync & D3D12_BARRIER_SYNC_COMPUTE_SHADING)
+        s |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    if ((sync & D3D12_BARRIER_SYNC_RAYTRACING) && device->has_rt_pipeline)
+        s |= VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+    if (sync & (D3D12_BARRIER_SYNC_COPY | D3D12_BARRIER_SYNC_RESOLVE | D3D12_BARRIER_SYNC_CLEAR_UNORDERED_ACCESS_VIEW))
+        s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    /* indirect arguments and predicates: read by draws, by command generation, and by mime's compute shaders. */
+    if (sync & D3D12_BARRIER_SYNC_EXECUTE_INDIRECT) {
+        s |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+             VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        if (device->has_conditional)
+            s |= VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT;
+        if (device->has_dgc)
+            s |= VK_PIPELINE_STAGE_2_COMMAND_PREPROCESS_BIT_EXT;
+    }
+    if (sync & D3D12_BARRIER_SYNC_ALL_SHADING)
+        s |= shaders;
+    if (sync & D3D12_BARRIER_SYNC_NON_PIXEL_SHADING)
+        s |= shaders & ~VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    if (device->has_rt && (sync & (D3D12_BARRIER_SYNC_EMIT_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO |
+                                   D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE |
+                                   D3D12_BARRIER_SYNC_COPY_RAYTRACING_ACCELERATION_STRUCTURE)))
+        s |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+             VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    return s;
+}
+
+/* the accesses direct3d writes through. */
+#define WRITE_ACCESSES                                                                                                 \
+    (D3D12_BARRIER_ACCESS_RENDER_TARGET | D3D12_BARRIER_ACCESS_UNORDERED_ACCESS |                                      \
+     D3D12_BARRIER_ACCESS_DEPTH_STENCIL_WRITE | D3D12_BARRIER_ACCESS_STREAM_OUTPUT | D3D12_BARRIER_ACCESS_COPY_DEST |  \
+     D3D12_BARRIER_ACCESS_RESOLVE_DEST | D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_WRITE |                \
+     D3D12_BARRIER_ACCESS_VIDEO_DECODE_WRITE | D3D12_BARRIER_ACCESS_VIDEO_PROCESS_WRITE |                              \
+     D3D12_BARRIER_ACCESS_VIDEO_ENCODE_WRITE)
+
+/*
+ * one enhanced barrier into a memory barrier: its scopes are its
+ * synchronizations, its writes made available as a whole and visible to
+ * every access after, as images stay in the general layout. a barrier
+ * that splits begins where it ends, waiting for everything before.
+ */
+static void add_enhanced(D12Device *device, VkMemoryBarrier2 *b, UINT sync_before, UINT sync_after,
+                         UINT access_before, UINT access_after)
+{
+    if (sync_after == (UINT)D3D12_BARRIER_SYNC_SPLIT)
+        return;
+    VkPipelineStageFlags2 src = sync_stages(device, sync_before), dst = sync_stages(device, sync_after);
+    b->srcStageMask |= src;
+    b->dstStageMask |= dst;
+    if (src && !(access_before & D3D12_BARRIER_ACCESS_NO_ACCESS) &&
+        (access_before == D3D12_BARRIER_ACCESS_COMMON || (access_before & WRITE_ACCESSES)))
+        b->srcAccessMask |= VK_ACCESS_2_MEMORY_WRITE_BIT;
+    if (dst && !(access_after & D3D12_BARRIER_ACCESS_NO_ACCESS))
+        b->dstAccessMask |= VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+}
+
+static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, UINT32 count,
+                                           const D3D12_BARRIER_GROUP *groups)
 {
     D12CommandList *list = impl(iface);
-    if (list->open && count)
-        barrier(list);
+    if (!list->open || !count || !groups)
+        return;
+    D12Device *device = list->child.device;
+    VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    for (UINT32 g = 0; g < count; g++) {
+        for (UINT32 i = 0; i < groups[g].NumBarriers; i++) {
+            switch (groups[g].Type) {
+            case D3D12_BARRIER_TYPE_GLOBAL: {
+                const D3D12_GLOBAL_BARRIER *x = &groups[g].pGlobalBarriers[i];
+                add_enhanced(device, &b, x->SyncBefore, x->SyncAfter, x->AccessBefore, x->AccessAfter);
+                break;
+            }
+            case D3D12_BARRIER_TYPE_TEXTURE: {
+                const D3D12_TEXTURE_BARRIER *x = &groups[g].pTextureBarriers[i];
+                add_enhanced(device, &b, x->SyncBefore, x->SyncAfter, x->AccessBefore, x->AccessAfter);
+                break;
+            }
+            case D3D12_BARRIER_TYPE_BUFFER: {
+                const D3D12_BUFFER_BARRIER *x = &groups[g].pBufferBarriers[i];
+                add_enhanced(device, &b, x->SyncBefore, x->SyncAfter, x->AccessBefore, x->AccessAfter);
+                break;
+            }
+            default:
+                add_enhanced(device, &b, D3D12_BARRIER_SYNC_ALL, D3D12_BARRIER_SYNC_ALL, 0, 0);
+                break;
+            }
+        }
+    }
+    if (!b.srcStageMask && !b.dstStageMask)
+        return;
+    /* no work before or after is still a dependency vulkan takes from the top or to the bottom. */
+    if (!b.srcStageMask)
+        b.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
+    end_rendering(list);
+    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+    if (b.srcStageMask & b.dstStageMask & VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT)
+        list->written_count = 0;
 }
 
 /* ------------------------------------------------------------------ root signatures and arguments */
