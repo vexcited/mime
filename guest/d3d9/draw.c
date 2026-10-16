@@ -20,19 +20,30 @@ static float fbits(DWORD v)
 static void *cached(D9StateCache *cache, const void *desc, UINT size, void *(*make)(D9Device *, const void *),
                     D9Device *device)
 {
+    UINT hash = 2166136261u;
+    for (UINT i = 0; i < size / 4; i++)
+        hash = (hash ^ ((const UINT *)desc)[i]) * 16777619u;
+    D9StateEntry *last = &cache->entries[cache->last];
+    if (cache->count && last->hash == hash && last->size == size && !memcmp(last->desc, desc, size))
+        return last->object;
     for (UINT i = 0; i < cache->count; i++)
-        if (cache->entries[i].size == size && !memcmp(cache->entries[i].desc, desc, size))
+        if (cache->entries[i].hash == hash && cache->entries[i].size == size && !memcmp(cache->entries[i].desc, desc, size)) {
+            cache->last = i;
             return cache->entries[i].object;
+        }
     void *object = make(device, desc);
     if (!object)
         return NULL;
     UINT slot = cache->count < RTL_NUMBER_OF(cache->entries) ? cache->count++ : cache->next++ % RTL_NUMBER_OF(cache->entries);
     D9StateEntry *e = &cache->entries[slot];
+    /* the context keeps its own reference to a state still bound. */
     if (e->object)
         ((IUnknown *)e->object)->lpVtbl->Release((IUnknown *)e->object);
     memcpy(e->desc, desc, size);
     e->size = size;
+    e->hash = hash;
     e->object = object;
+    cache->last = slot;
     return object;
 }
 
@@ -66,6 +77,63 @@ static void *make_sampler(D9Device *d, const void *desc)
 {
     ID3D11SamplerState *s;
     return SUCCEEDED(d->d3d11->lpVtbl->CreateSamplerState(d->d3d11, desc, &s)) ? s : NULL;
+}
+
+UINT D9RenderStateGroups(D3DRENDERSTATETYPE state)
+{
+    switch (state) {
+    case D3DRS_ALPHABLENDENABLE:
+    case D3DRS_SRCBLEND:
+    case D3DRS_DESTBLEND:
+    case D3DRS_BLENDOP:
+    case D3DRS_SEPARATEALPHABLENDENABLE:
+    case D3DRS_SRCBLENDALPHA:
+    case D3DRS_DESTBLENDALPHA:
+    case D3DRS_BLENDOPALPHA:
+    case D3DRS_COLORWRITEENABLE:
+    case D3DRS_COLORWRITEENABLE1:
+    case D3DRS_COLORWRITEENABLE2:
+    case D3DRS_COLORWRITEENABLE3:
+    case D3DRS_BLENDFACTOR:
+    case D3DRS_MULTISAMPLEMASK:
+        return D9_STATES_BLEND;
+    case D3DRS_ZENABLE:
+    case D3DRS_ZWRITEENABLE:
+    case D3DRS_ZFUNC:
+    case D3DRS_STENCILENABLE:
+    case D3DRS_STENCILMASK:
+    case D3DRS_STENCILWRITEMASK:
+    case D3DRS_STENCILFAIL:
+    case D3DRS_STENCILZFAIL:
+    case D3DRS_STENCILPASS:
+    case D3DRS_STENCILFUNC:
+    case D3DRS_STENCILREF:
+    case D3DRS_TWOSIDEDSTENCILMODE:
+    case D3DRS_CCW_STENCILFAIL:
+    case D3DRS_CCW_STENCILZFAIL:
+    case D3DRS_CCW_STENCILPASS:
+    case D3DRS_CCW_STENCILFUNC:
+        return D9_STATES_DEPTH;
+    case D3DRS_FILLMODE:
+    case D3DRS_CULLMODE:
+    case D3DRS_DEPTHBIAS:
+    case D3DRS_SLOPESCALEDEPTHBIAS:
+    case D3DRS_SCISSORTESTENABLE:
+    case D3DRS_MULTISAMPLEANTIALIAS:
+    case D3DRS_ANTIALIASEDLINEENABLE:
+        return D9_STATES_RASTER;
+    case D3DRS_POINTSIZE:
+    case D3DRS_POINTSIZE_MIN:
+    case D3DRS_POINTSIZE_MAX:
+    case D3DRS_ALPHAREF:
+    case D3DRS_FOGCOLOR:
+    case D3DRS_FOGSTART:
+    case D3DRS_FOGEND:
+    case D3DRS_FOGDENSITY:
+        return D9_STATES_INTERNAL;
+    default:
+        return 0;
+    }
 }
 
 /* d3d9's blend factors as d3d11's; the alpha's colors are their alphas, as d3d11 takes only those there. */
@@ -301,11 +369,7 @@ static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info, 
 static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
 {
     ID3D11DeviceContext1 *ctx = d->context;
-    D3D11_MAPPED_SUBRESOURCE m;
-    if (FAILED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)d->cbs[pixel][2], 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
-        return;
-    float(*v)[4] = m.pData;
-    memset(v, 0, 24 * 16);
+    float v[24][4] = {{0}};
     const DWORD *rs = d->render_states;
     if (!pixel) {
         /* half a pixel right and down: direct3d 9's pixel center i is direct3d 10's i + 0.5. */
@@ -341,7 +405,15 @@ static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
             v[12 + i][1] = fbits(ts[D3DTSS_BUMPENVLOFFSET]);
         }
     }
+    if (d->internal_valid[pixel] && !memcmp(d->internal[pixel], v, sizeof(v)))
+        return;
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (FAILED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)d->cbs[pixel][2], 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+        return;
+    memcpy(m.pData, v, sizeof(v));
     ctx->lpVtbl->Unmap(ctx, (ID3D11Resource *)d->cbs[pixel][2], 0);
+    memcpy(d->internal[pixel], v, sizeof(v));
+    d->internal_valid[pixel] = TRUE;
 }
 
 /* ------------------------------------------------------------------ preparing a draw */
@@ -567,8 +639,11 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
     }
     if (d->indices)
         d->indices->used = TRUE;
-    if (d->targets_dirty || d->bound_srgb != !!d->render_states[D3DRS_SRGBWRITEENABLE])
+    if (d->targets_dirty || d->bound_srgb != !!d->render_states[D3DRS_SRGBWRITEENABLE]) {
         bind_targets(d);
+        /* depth tests and bias depend on the depth buffer. */
+        d->state_groups |= D9_STATES_DEPTH | D9_STATES_RASTER;
+    }
     if (d->viewport_dirty) {
         bind_viewport(d);
         d->internal_dirty = TRUE;
@@ -581,22 +656,43 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
         upload_constants(d, TRUE, ps->info, ps_shader->ff);
         d->ps_consts_dirty = FALSE;
     }
-    if (d->states_dirty || d->internal_dirty || d->ff_dirty || vs_shader->ff != d->bound_vs_ff) {
+    if ((d->state_groups & D9_STATES_INTERNAL) || d->internal_dirty || d->ff_dirty || vs_shader->ff != d->bound_vs_ff) {
         upload_internal(d, FALSE, vs_shader->ff);
         upload_internal(d, TRUE, FALSE);
         d->bound_vs_ff = vs_shader->ff;
         d->internal_dirty = FALSE;
         d->ff_dirty = FALSE;
     }
-    if (d->states_dirty) {
+    if (d->state_groups & D9_STATES_BLEND) {
         D3DCOLOR f = d->render_states[D3DRS_BLENDFACTOR];
         FLOAT factor[4] = {((f >> 16) & 0xFF) / 255.0f, ((f >> 8) & 0xFF) / 255.0f, (f & 0xFF) / 255.0f,
                            (f >> 24) / 255.0f};
-        ctx->lpVtbl->OMSetBlendState(ctx, blend_state(d), factor, d->render_states[D3DRS_MULTISAMPLEMASK]);
-        ctx->lpVtbl->OMSetDepthStencilState(ctx, depth_state(d), d->render_states[D3DRS_STENCILREF] & 0xFF);
-        ctx->lpVtbl->RSSetState(ctx, raster_state(d));
-        d->states_dirty = FALSE;
+        ID3D11BlendState *blend = blend_state(d);
+        if (blend != d->bound_blend || f != d->bound_blend_factor ||
+            d->render_states[D3DRS_MULTISAMPLEMASK] != d->bound_sample_mask) {
+            ctx->lpVtbl->OMSetBlendState(ctx, blend, factor, d->render_states[D3DRS_MULTISAMPLEMASK]);
+            d->bound_blend = blend;
+            d->bound_blend_factor = f;
+            d->bound_sample_mask = d->render_states[D3DRS_MULTISAMPLEMASK];
+        }
     }
+    if (d->state_groups & D9_STATES_DEPTH) {
+        ID3D11DepthStencilState *depth = depth_state(d);
+        if (depth != d->bound_depth || (d->render_states[D3DRS_STENCILREF] & 0xFF) != d->bound_stencil_ref) {
+            ctx->lpVtbl->OMSetDepthStencilState(ctx, depth, d->render_states[D3DRS_STENCILREF] & 0xFF);
+            d->bound_depth = depth;
+            d->bound_stencil_ref = d->render_states[D3DRS_STENCILREF] & 0xFF;
+        }
+    }
+    if (d->state_groups & D9_STATES_RASTER) {
+        ID3D11RasterizerState *raster = raster_state(d);
+        if (raster != d->bound_raster) {
+            ctx->lpVtbl->RSSetState(ctx, raster);
+            d->bound_raster = raster;
+        }
+    }
+    d->state_groups = 0;
+    d->states_dirty = FALSE;
     bind_textures(d, ps, vs);
     return TRUE;
 }
@@ -756,6 +852,10 @@ void D9ResetBindings(D9Device *d)
     d->bound_vs = d->bound_ps = NULL;
     d->bound_layout = NULL;
     d->bound_topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    d->bound_blend = NULL;
+    d->bound_depth = NULL;
+    d->bound_raster = NULL;
+    d->internal_valid[0] = d->internal_valid[1] = FALSE;
     memset(d->bound_srvs, 0, sizeof(d->bound_srvs));
     memset(d->bound_samplers, 0, sizeof(d->bound_samplers));
     d->streams_dirty = ~0u;
@@ -763,6 +863,7 @@ void D9ResetBindings(D9Device *d)
     d->targets_dirty = TRUE;
     d->viewport_dirty = TRUE;
     d->states_dirty = TRUE;
+    d->state_groups = D9_STATES_ALL;
     d->internal_dirty = TRUE;
     d->vs_consts_dirty = d->ps_consts_dirty = TRUE;
 }

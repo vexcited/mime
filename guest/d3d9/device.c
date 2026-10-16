@@ -1258,6 +1258,7 @@ static HRESULT STDMETHODCALLTYPE device_set_render_state(IDirect3DDevice9Ex *ifa
     if (d->render_states[state] != value) {
         d->render_states[state] = value;
         d->states_dirty = TRUE;
+        d->state_groups |= D9RenderStateGroups(state);
     }
     D9Unlock(d);
     return D3D_OK;

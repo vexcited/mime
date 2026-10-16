@@ -231,15 +231,23 @@ typedef struct D9Ring {
     UINT size, used;
 } D9Ring;
 
+/* what render states feed, so draws rebuild only that. */
+#define D9_STATES_BLEND 1u
+#define D9_STATES_DEPTH 2u
+#define D9_STATES_RASTER 4u
+#define D9_STATES_INTERNAL 8u
+#define D9_STATES_ALL 15u
+UINT D9RenderStateGroups(D3DRENDERSTATETYPE state);
+
 typedef struct D9StateEntry {
     BYTE desc[sizeof(D3D11_BLEND_DESC)];
-    UINT size;
+    UINT size, hash;
     void *object;
 } D9StateEntry;
 
 typedef struct D9StateCache {
     D9StateEntry entries[64];
-    UINT count, next;
+    UINT count, next, last;
 } D9StateCache;
 
 typedef struct D9Light {
@@ -296,6 +304,8 @@ struct D9Device {
     BOOL ps_b[16];
     /* what changed since the last draw. */
     BOOL targets_dirty, viewport_dirty, states_dirty, ff_dirty, vs_consts_dirty, ps_consts_dirty;
+    /* the D9_STATES_* groups of render states changed since the last draw. */
+    UINT state_groups;
     UINT samplers_dirty, textures_dirty, streams_dirty;
     BOOL indices_dirty;
     HCURSOR cursor;
@@ -321,7 +331,14 @@ struct D9Device {
     ID3D11ShaderResourceView *bound_srvs[D9_MAX_SAMPLERS];
     ID3D11SamplerState *bound_samplers[D9_MAX_SAMPLERS];
     BOOL bound_srgb, bound_vs_ff;
+    ID3D11BlendState *bound_blend;
+    ID3D11DepthStencilState *bound_depth;
+    ID3D11RasterizerState *bound_raster;
+    DWORD bound_blend_factor, bound_sample_mask, bound_stencil_ref;
     BOOL internal_dirty;
+    /* the internal constants last uploaded, so state changes that leave them alone upload nothing. */
+    float internal[2][24][4];
+    BOOL internal_valid[2];
     BOOL warned_fixed;
     /* fixed function's programs and the constants of the state. */
     struct D9FFProgram *ff_vs, *ff_ps;
