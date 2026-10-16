@@ -301,6 +301,40 @@ static void barrier(D12CommandList *list)
 {
     end_rendering(list);
     D12Barrier(list->child.device, list->cmd);
+    list->written_count = 0;
+}
+
+/*
+ * direct3d orders the draws and clears of a target as vulkan does only
+ * within one rendering: before attachments or a clear write images an
+ * earlier rendering or clear wrote, a barrier between them, outside rendering.
+ */
+static void order_targets(D12CommandList *list, const VkImage *images, UINT count)
+{
+    BOOL again = FALSE;
+    for (UINT i = 0; i < count && !again; i++)
+        for (UINT k = 0; k < list->written_count && !again; k++)
+            again = images[i] && images[i] == list->written[k];
+    if (again || list->written_count + count > RTL_NUMBER_OF(list->written)) {
+        const VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT |
+                                             VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        b.srcStageMask = b.dstStageMask = stages;
+        b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = b.srcAccessMask | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &b;
+        vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+        list->written_count = 0;
+    }
+    for (UINT i = 0; i < count; i++)
+        if (images[i])
+            list->written[list->written_count++] = images[i];
 }
 
 static void reset_state(D12CommandList *list)
@@ -632,6 +666,14 @@ static void begin_rendering(D12CommandList *list)
         info.pDepthAttachment = &depth;
     if (p->stencil_format && list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT))
         info.pStencilAttachment = &stencil;
+    VkImage images[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT + 1];
+    UINT n = 0;
+    for (UINT i = 0; i < p->rt_count; i++)
+        if (colors[i].imageView)
+            images[n++] = list->rtv[i].resource->image;
+    if (info.pDepthAttachment || info.pStencilAttachment)
+        images[n++] = list->dsv.resource->image;
+    order_targets(list, images, n);
     device->vk.vkCmdBeginRendering(list->cmd, &info);
     list->rendering = TRUE;
     list->targets_dirty = FALSE;
@@ -896,6 +938,7 @@ static HRESULT begin(D12CommandList *list, D12CommandAllocator *allocator, D12Pi
     list->open = TRUE;
     list->error = S_OK;
     list->render_samples = 0;
+    list->written_count = 0;
     reset_state(list);
     set_pipeline(list, initial);
     return S_OK;
@@ -1318,6 +1361,7 @@ static void clear_attachment_rects(D12CommandList *list, const D12TargetView *t,
     VkRenderingInfo info = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     info.renderArea.extent = t->extent;
     info.layerCount = t->range.layerCount;
+    order_targets(list, &t->resource->image, 1);
     if (clear->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) {
         info.colorAttachmentCount = 1;
         info.pColorAttachments = &att;
@@ -1367,6 +1411,7 @@ static void STDMETHODCALLTYPE list_clear_render_target_view(ID3D12GraphicsComman
         range.baseArrayLayer = 0;
         range.layerCount = 1;
     }
+    order_targets(list, &t->resource->image, 1);
     vk_of(list)->vkCmdClearColorImage(list->cmd, t->resource->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
 
@@ -1396,6 +1441,7 @@ static void STDMETHODCALLTYPE list_clear_depth_stencil_view(ID3D12GraphicsComman
     end_rendering(list);
     VkImageSubresourceRange range = t->range;
     range.aspectMask = aspects;
+    order_targets(list, &t->resource->image, 1);
     vk_of(list)->vkCmdClearDepthStencilImage(list->cmd, t->resource->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
 
@@ -1493,18 +1539,164 @@ static void STDMETHODCALLTYPE list_discard_resource(ID3D12GraphicsCommandList10 
 
 /* ------------------------------------------------------------------ barriers */
 
-/* every image is in the general layout: transitions, aliasing and uav barriers only order memory, all of them at once. */
+/* the stages of every kind of shader the device runs. */
+static VkPipelineStageFlags2 shader_stages(D12Device *device)
+{
+    VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    if (device->has_geometry)
+        stages |= VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT;
+    if (device->has_tessellation)
+        stages |= VK_PIPELINE_STAGE_2_TESSELLATION_CONTROL_SHADER_BIT |
+                  VK_PIPELINE_STAGE_2_TESSELLATION_EVALUATION_SHADER_BIT;
+    if (device->has_mesh)
+        stages |= VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT;
+    if (device->has_rt_pipeline)
+        stages |= VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+    return stages;
+}
+
+/*
+ * the work a resource state covers and its accesses, with the vulkan
+ * commands mime runs for it: clears and copies are transfers, uav clears
+ * included. a state of no such bit, common or one unknown, is every
+ * command's.
+ */
+static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *stages, VkAccessFlags2 *access)
+{
+    const UINT known = 0x3FFF | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+    VkPipelineStageFlags2 shaders = shader_stages(device), s = 0;
+    VkAccessFlags2 a = 0;
+    if (!state || (state & ~known)) {
+        *stages |= VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        *access |= VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        return;
+    }
+    if (state & D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) {
+        s |= VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | shaders;
+        a |= VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_INDEX_BUFFER) {
+        s |= VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
+        a |= VK_ACCESS_2_INDEX_READ_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_RENDER_TARGET) {
+        s |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+             VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+        s |= shaders | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT |
+             VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    }
+    if (state & (D3D12_RESOURCE_STATE_DEPTH_WRITE | D3D12_RESOURCE_STATE_DEPTH_READ)) {
+        s |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        a |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_DEPTH_WRITE) {
+        s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) {
+        s |= shaders & ~VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        a |= VK_ACCESS_2_SHADER_READ_BIT;
+        /* the inputs of acceleration structure builds are in this state. */
+        if (device->has_rt)
+            s |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    }
+    if (state & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
+        s |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        a |= VK_ACCESS_2_SHADER_READ_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_STREAM_OUT) {
+        s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        if (device->has_transform_feedback) {
+            s |= VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT;
+            a |= VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT | VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_READ_BIT_EXT |
+                 VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT;
+        }
+    }
+    /* indirect arguments and predicates: read by draws, by command generation, and by mime's compute shaders. */
+    if (state & D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT) {
+        s |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+             VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT;
+        if (device->has_conditional) {
+            s |= VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT;
+            a |= VK_ACCESS_2_CONDITIONAL_RENDERING_READ_BIT_EXT;
+        }
+        if (device->has_dgc) {
+            s |= VK_PIPELINE_STAGE_2_COMMAND_PREPROCESS_BIT_EXT;
+            a |= VK_ACCESS_2_COMMAND_PREPROCESS_READ_BIT_EXT;
+        }
+    }
+    if (state & (D3D12_RESOURCE_STATE_COPY_DEST | D3D12_RESOURCE_STATE_RESOLVE_DEST)) {
+        s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    }
+    if (state & (D3D12_RESOURCE_STATE_COPY_SOURCE | D3D12_RESOURCE_STATE_RESOLVE_SOURCE)) {
+        s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        a |= VK_ACCESS_2_TRANSFER_READ_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE) {
+        s |= shaders;
+        a |= VK_ACCESS_2_SHADER_READ_BIT;
+        if (device->has_rt) {
+            s |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                 VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR;
+            a |= VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        }
+    }
+    *stages |= s;
+    *access |= a;
+}
+
+/*
+ * every image is in the general layout, so barriers only order memory, all
+ * of a call's in one: a transition from the work of its state before to
+ * that of its state after, a uav barrier between the work of views and
+ * acceleration structures, an aliasing barrier between all work.
+ */
 static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 *iface, UINT count,
                                                     const D3D12_RESOURCE_BARRIER *barriers)
 {
     D12CommandList *list = impl(iface);
     if (!list->open || !count)
         return;
-    BOOL any = FALSE;
-    for (UINT i = 0; i < count && !any; i++)
-        any = !(barriers[i].Flags & D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY);
-    if (any)
-        barrier(list);
+    D12Device *device = list->child.device;
+    VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    for (UINT i = 0; i < count; i++) {
+        const D3D12_RESOURCE_BARRIER *r = &barriers[i];
+        if (r->Flags & D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY)
+            continue;
+        switch (r->Type) {
+        case D3D12_RESOURCE_BARRIER_TYPE_TRANSITION:
+            state_scope(device, r->Transition.StateBefore, &b.srcStageMask, &b.srcAccessMask);
+            state_scope(device, r->Transition.StateAfter, &b.dstStageMask, &b.dstAccessMask);
+            break;
+        case D3D12_RESOURCE_BARRIER_TYPE_UAV:
+            state_scope(device, D3D12_RESOURCE_STATE_UNORDERED_ACCESS | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+                        &b.srcStageMask, &b.srcAccessMask);
+            state_scope(device, D3D12_RESOURCE_STATE_UNORDERED_ACCESS | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+                        &b.dstStageMask, &b.dstAccessMask);
+            break;
+        default:
+            state_scope(device, 0, &b.srcStageMask, &b.srcAccessMask);
+            state_scope(device, 0, &b.dstStageMask, &b.dstAccessMask);
+            break;
+        }
+    }
+    if (!b.srcStageMask)
+        return;
+    end_rendering(list);
+    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+    if (b.srcStageMask & b.dstStageMask & VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT)
+        list->written_count = 0;
 }
 
 static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, UINT32 count, const void *groups)

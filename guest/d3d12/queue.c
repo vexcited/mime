@@ -484,6 +484,7 @@ static void STDMETHODCALLTYPE queue_execute_command_lists(ID3D12CommandQueue *if
     D12Queue *queue = queue_impl(iface);
     VkCommandBuffer buffers[64];
     UINT n = 0;
+    buffers[n++] = queue->child.device->boundary_cmd;
     for (UINT i = 0; i < count; i++) {
         VkCommandBuffer cmd = lists[i] ? D12CommandListBuffer(lists[i]) : VK_NULL_HANDLE;
         if (!cmd)

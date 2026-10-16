@@ -490,6 +490,18 @@ static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
     pool.queueFamilyIndex = device->family;
     if (vk->vkCreateCommandPool(vk->device, &pool, NULL, &device->init_pool) != VK_SUCCESS)
         return E_FAIL;
+    VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    alloc.commandPool = device->init_pool;
+    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandBufferCount = 1;
+    if (vk->vkAllocateCommandBuffers(vk->device, &alloc, &device->boundary_cmd) != VK_SUCCESS)
+        return E_FAIL;
+    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+    vk->vkBeginCommandBuffer(device->boundary_cmd, &begin);
+    D12Barrier(device, device->boundary_cmd);
+    if (vk->vkEndCommandBuffer(device->boundary_cmd) != VK_SUCCESS)
+        return E_FAIL;
     if (FAILED(hr = D12DescriptorsInit(device)))
         return hr;
     VkPipelineCacheCreateInfo cache = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};

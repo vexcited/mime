@@ -705,6 +705,9 @@ typedef struct D12CommandList {
     D12TargetView dsv;
     BOOL has_dsv;
     BOOL rendering;
+    /* the images attachments or clears wrote since the last barrier ordering them. */
+    VkImage written[16];
+    UINT written_count;
     BOOL targets_dirty;
     UINT render_samples;
     /* the render pass begun, for its resolves at its end. */
@@ -843,6 +846,8 @@ struct D12Device {
     CRITICAL_SECTION init_lock;
     VkCommandPool init_pool;
     VkCommandBuffer init_cmd;
+    /* a full barrier heading every ExecuteCommandLists, as resources decay between them. */
+    VkCommandBuffer boundary_cmd;
     BOOL init_recording;
     VkSemaphore init_timeline;
     UINT64 init_serial;
