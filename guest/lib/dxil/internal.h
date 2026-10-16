@@ -215,6 +215,8 @@ typedef struct Compiler {
     int native16;
     /* a compute shader takes derivatives over quads of four consecutive threads. */
     int compute_derivatives;
+    /* the shader asks whether what it reads is mapped: its image reads are sparse ones. */
+    int residency;
     const char *error;
 
     /* types. */
@@ -335,6 +337,7 @@ void dxil_execution_modes(Compiler *c, uint32_t main);
 /* task shaders: the payload and counts their returns emit, found before the code is written. */
 int dxil_prepare_task(Compiler *c, const DxFunction *f);
 int dxil_prepare_vertex_inputs(Compiler *c, const DxFunction *f);
+int dxil_uses_op(Compiler *c, const DxFunction *f, uint32_t op);
 void dxil_emit_tasks(Compiler *c);
 
 /* resource.c: handles and the operations of resources. */

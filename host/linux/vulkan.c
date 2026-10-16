@@ -782,6 +782,23 @@ static void reply_result(MvkCall *call, VkResult result)
     mvk_reply_end(call);
 }
 
+static void queue_bind_sparse(MvkCall *call)
+{
+    MvkDecoder *d = &call->in;
+    VkQueue queue = (VkQueue)(uintptr_t)mvk_get_handle(d, 1);
+    uint32_t count = mvk_get_u32(d);
+    VkBindSparseInfo *infos = mvk_alloc(d, sizeof(VkBindSparseInfo) * (count ? count : 1));
+    for (uint32_t i = 0; infos && i < count; i++)
+        mvk_get_VkBindSparseInfo(d, &infos[i]);
+    VkFence fence = (VkFence)mvk_get_handle(d, 0);
+    if (!d->error && infos && queue) {
+        pthread_mutex_lock(&call->conn->queue_lock);
+        VkResult result = call->fn->vkQueueBindSparse(queue, count, infos, fence);
+        pthread_mutex_unlock(&call->conn->queue_lock);
+        mvk_check(call, result, "vkQueueBindSparse");
+    }
+}
+
 /* idle waits take the presents sent before them in too. */
 static void queue_wait_idle(MvkCall *call)
 {
@@ -1448,6 +1465,7 @@ static void run_hand(MvkCall *call)
     case MVK_OP_QUEUE_SUBMIT: queue_submit(call); break;
     case MVK_OP_QUEUE_SUBMIT2: queue_submit2(call); break;
     case MVK_OP_QUEUE_WAIT_IDLE: queue_wait_idle(call); break;
+    case MVK_OP_QUEUE_BIND_SPARSE: queue_bind_sparse(call); break;
     case MVK_OP_DEVICE_WAIT_IDLE: device_wait_idle(call); break;
     case MVK_OP_CREATE_FENCE:
     case MVK_OP_CREATE_SEMAPHORE:

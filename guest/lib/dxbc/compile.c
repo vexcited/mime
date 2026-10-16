@@ -91,6 +91,9 @@ typedef struct Compiler {
     uint32_t max_tess_factor;
     /* the clamp of the level of detail of the sample being compiled, for the clamped forms. */
     const DxbcOperand *min_lod;
+    /* a form that writes a residency status is being compiled: its read's status, 0 where all was mapped. */
+    int feedback;
+    uint32_t feedback_status;
     uint32_t sample_positions;
     uint32_t t_vec[K_KINDS][5];
     uint32_t t_bvec[5];
@@ -2526,6 +2529,37 @@ static void store_texel(Compiler *c, const DxbcInstruction *ins, const DxbcOpera
     store(c, ins, d, pick(c, vec4, k, dst_mask(d), resource->swizzle), k);
 }
 
+/*
+ * an image read, through its sparse twin for the forms that write a
+ * residency status when reads may find tiles mapped to nothing: the
+ * status is 0 where every texel was mapped and 1 where one was not.
+ */
+static uint32_t image_read(Compiler *c, uint32_t opcode, uint32_t type, const uint32_t *w, uint32_t count)
+{
+    uint32_t sparse = 0;
+    if (c->feedback && c->options->residency) {
+        switch (opcode) {
+        case SpvOpImageSampleImplicitLod: sparse = SpvOpImageSparseSampleImplicitLod; break;
+        case SpvOpImageSampleExplicitLod: sparse = SpvOpImageSparseSampleExplicitLod; break;
+        case SpvOpImageSampleDrefImplicitLod: sparse = SpvOpImageSparseSampleDrefImplicitLod; break;
+        case SpvOpImageSampleDrefExplicitLod: sparse = SpvOpImageSparseSampleDrefExplicitLod; break;
+        case SpvOpImageFetch: sparse = SpvOpImageSparseFetch; break;
+        case SpvOpImageGather: sparse = SpvOpImageSparseGather; break;
+        case SpvOpImageDrefGather: sparse = SpvOpImageSparseDrefGather; break;
+        case SpvOpImageRead: sparse = SpvOpImageSparseRead; break;
+        default: break;
+        }
+    }
+    if (!sparse)
+        return spv_op(&c->b, opcode, type, w, count);
+    spv_capability(&c->b, SpvCapabilitySparseResidency);
+    uint32_t members[2] = {c->t_i32, type};
+    uint32_t r = spv_op(&c->b, sparse, spv_type_struct(&c->b, members, 2), w, count);
+    uint32_t resident = spv_op1(&c->b, SpvOpImageSparseTexelsResident, c->t_bool, extract(c, c->t_i32, r, 0));
+    c->feedback_status = spv_op3(&c->b, SpvOpSelect, c->t_u32, resident, uconst(c, 0), uconst(c, 1));
+    return extract(c, type, r, 1);
+}
+
 static void sample(Compiler *c, const DxbcInstruction *ins)
 {
     const DxbcOperand *address = &ins->operands[1], *resource = &ins->operands[2], *sampler = &ins->operands[3];
@@ -2584,12 +2618,12 @@ static void sample(Compiler *c, const DxbcInstruction *ins)
     uint32_t result;
     if (depth) {
         uint32_t op = implicit ? SpvOpImageSampleDrefImplicitLod : SpvOpImageSampleDrefExplicitLod;
-        result = splat(c, K_FLOAT, 4, spv_op(&c->b, op, c->t_f32, w, count));
+        result = splat(c, K_FLOAT, 4, image_read(c, op, c->t_f32, w, count));
         store_texel(c, ins, resource, result, K_FLOAT);
         return;
     }
     uint32_t op = implicit ? SpvOpImageSampleImplicitLod : SpvOpImageSampleExplicitLod;
-    result = spv_op(&c->b, op, vec_type(c, r->kind, 4), w, count);
+    result = image_read(c, op, vec_type(c, r->kind, 4), w, count);
     store_texel(c, ins, resource, result, r->kind);
 }
 
@@ -2626,7 +2660,7 @@ static void gather(Compiler *c, const DxbcInstruction *ins)
         }
     }
     Kind k = cmp ? K_FLOAT : r->kind;
-    uint32_t result = spv_op(&c->b, cmp ? SpvOpImageDrefGather : SpvOpImageGather, vec_type(c, k, 4), w, count);
+    uint32_t result = image_read(c, cmp ? SpvOpImageDrefGather : SpvOpImageGather, vec_type(c, k, 4), w, count);
     store_texel(c, ins, resource, result, k);
 }
 
@@ -2662,7 +2696,7 @@ static void fetch(Compiler *c, const DxbcInstruction *ins)
         }
         w[mask_at] = operands;
     }
-    uint32_t result = spv_op(&c->b, SpvOpImageFetch, vec_type(c, r->kind, 4), w, count);
+    uint32_t result = image_read(c, SpvOpImageFetch, vec_type(c, r->kind, 4), w, count);
     store_texel(c, ins, resource, result, r->kind);
 }
 
@@ -2931,7 +2965,8 @@ static void load_typed(Compiler *c, const DxbcInstruction *ins)
     uint32_t ptr = uav_pointer(c, resource, &image_type);
     uint32_t image = spv_load(&c->b, image_type, ptr);
     uint32_t coord = load_first(c, &ins->operands[1], coord_count(r->dim), K_UINT);
-    uint32_t v = spv_op2(&c->b, SpvOpImageRead, vec_type(c, r->kind, 4), image, coord);
+    uint32_t words[2] = {image, coord};
+    uint32_t v = image_read(c, SpvOpImageRead, vec_type(c, r->kind, 4), words, 2);
     store_texel(c, ins, resource, v, r->kind);
 }
 
@@ -3568,10 +3603,10 @@ static void samplepos(Compiler *c, const DxbcInstruction *ins)
 }
 
 /*
- * the forms of tiled resources that also write a residency status: every
- * resource is fully mapped here, so the plain form, and a status
- * check_access_fully_mapped says is. the clamped forms clamp the level of
- * detail of the sample.
+ * the forms of tiled resources that also write a residency status: the
+ * plain form, its reads sparse ones where tiles may map nothing, and their
+ * status, which check_access_fully_mapped reads, 0 when all was mapped.
+ * the clamped forms clamp the level of detail of the sample.
  */
 static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at);
 
@@ -3590,10 +3625,15 @@ static int feedback(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     int clamped = ins->opcode >= OP_SAMPLE_CLAMP_FEEDBACK;
     if (clamped)
         c->min_lod = &ins->operands[--plain.operand_count + 1];
+    c->feedback = 1;
+    c->feedback_status = 0;
     int result = instruction(c, &plain, at);
+    c->feedback = 0;
     c->min_lod = NULL;
     const DxbcOperand *status = &ins->operands[1];
-    store(c, NULL, status, splat_const(c, K_UINT, popcount(dst_mask(status)), 0), K_UINT);
+    uint32_t n = popcount(dst_mask(status));
+    store(c, NULL, status, c->feedback_status ? splat(c, K_UINT, n, c->feedback_status) : splat_const(c, K_UINT, n, 0),
+          K_UINT);
     return result;
 }
 
@@ -3643,9 +3683,14 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     case OP_SAMPLE_D_CLAMP_FEEDBACK:
     case OP_SAMPLE_C_CLAMP_FEEDBACK:
         return feedback(c, ins, at);
-    case OP_CHECK_ACCESS_FULLY_MAPPED:
-        store(c, NULL, &ins->operands[0], splat_const(c, K_UINT, popcount(dst_mask(&ins->operands[0])), ~0u), K_UINT);
+    case OP_CHECK_ACCESS_FULLY_MAPPED: {
+        uint32_t status = load_scalar(c, &ins->operands[1], ins->operands[1].swizzle[0], K_UINT);
+        uint32_t mapped = spv_op3(&c->b, SpvOpSelect, c->t_u32,
+                                  spv_op2(&c->b, SpvOpIEqual, c->t_bool, status, uconst(c, 0)), uconst(c, ~0u),
+                                  uconst(c, 0));
+        store(c, NULL, &ins->operands[0], splat(c, K_UINT, popcount(dst_mask(&ins->operands[0])), mapped), K_UINT);
         break;
+    }
     case OP_ABORT:
     case OP_DEBUG_BREAK:
         break;

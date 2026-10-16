@@ -692,6 +692,20 @@ int dxil_prepare_task(Compiler *c, const DxFunction *f)
     return c->error ? -1 : 0;
 }
 
+/* whether a function calls a dx.op. */
+int dxil_uses_op(Compiler *c, const DxFunction *f, uint32_t op)
+{
+    for (uint32_t i = 0; i < f->inst_count; i++) {
+        const DxInst *ins = &f->insts[i];
+        if (ins->op != DI_CALL || ins->count < 2)
+            continue;
+        const DxValue *v = dx_value(&c->m, f, ins->ops[1]);
+        if (v && v->kind == DV_INT && v->bits == op)
+            return 1;
+    }
+    return 0;
+}
+
 /* GetAttributeAtVertex's vertex, an i8. */
 static uint32_t vertex_index(Compiler *c, uint32_t id)
 {

@@ -155,6 +155,8 @@ typedef struct DxbcCompileOptions {
     int nonconstant_offsets;
     /* compute shaders take derivatives over quads, as VK_KHR_compute_shader_derivatives' linear groups. */
     int compute_derivatives;
+    /* reads report whether what they read is mapped, for CheckAccessFullyMapped. */
+    int residency;
 } DxbcCompileOptions;
 
 /* what a slot of a stage holds, as the shader declares it. */

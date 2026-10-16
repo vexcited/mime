@@ -380,6 +380,13 @@ UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT coun
     for (UINT i = 0; i < signal_count && s < RTL_NUMBER_OF(signal_infos) - 1; i++)
         signal_infos[s++] = signals[i];
     AcquireSRWLockExclusive(queue->queue_lock);
+    if (queue->bind_serial && w < RTL_NUMBER_OF(wait_infos)) {
+        wait_infos[w] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
+        wait_infos[w].semaphore = queue->timeline;
+        wait_infos[w].value = queue->bind_serial;
+        wait_infos[w++].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        queue->bind_serial = 0;
+    }
     UINT64 serial = queue->next_serial++;
     signal_infos[s] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     signal_infos[s].semaphore = queue->timeline;
@@ -481,6 +488,8 @@ static void STDMETHODCALLTYPE queue_update_tile_mappings(ID3D12CommandQueue *ifa
                                                          const UINT *heap_starts, const UINT *range_tile_counts,
                                                          D3D12_TILE_MAPPING_FLAGS flags)
 {
+    D12UpdateTileMappings(queue_impl(iface), D12ResourceFrom(resource), region_count, region_starts, region_sizes,
+                          D12HeapFrom(heap), range_count, range_flags, heap_starts, range_tile_counts);
 }
 
 static void STDMETHODCALLTYPE queue_copy_tile_mappings(ID3D12CommandQueue *iface, ID3D12Resource *dst,
@@ -490,6 +499,7 @@ static void STDMETHODCALLTYPE queue_copy_tile_mappings(ID3D12CommandQueue *iface
                                                        const D3D12_TILE_REGION_SIZE *size,
                                                        D3D12_TILE_MAPPING_FLAGS flags)
 {
+    D12CopyTileMappings(queue_impl(iface), D12ResourceFrom(dst), dst_start, D12ResourceFrom(src), src_start, size);
 }
 
 VkCommandBuffer D12CommandListBuffer(ID3D12CommandList *list);

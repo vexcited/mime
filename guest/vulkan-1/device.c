@@ -732,7 +732,14 @@ VKAPI_ATTR VkResult VKAPI_CALL vkDeviceWaitIdle(VkDevice device)
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueBindSparse(VkQueue queue, uint32_t count, const VkBindSparseInfo *info,
                                                  VkFence fence)
 {
-    return VK_ERROR_FEATURE_NOT_PRESENT;
+    MvkEncoder *e = mvk_call_begin(MVK_OP_QUEUE_BIND_SPARSE);
+    mvk_put_u64(e, queue->obj.id);
+    mvk_put_u32(e, count);
+    for (uint32_t i = 0; i < count; i++)
+        mvk_put_VkBindSparseInfo(e, &info[i]);
+    mvk_put_u64(e, (uint64_t)fence);
+    mvk_call_end(e);
+    return VK_SUCCESS;
 }
 
 /* ------------------------------------------------------------------ synchronization */

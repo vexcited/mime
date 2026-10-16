@@ -302,6 +302,7 @@ static HRESULT create_vulkan_device(D12Device *device)
         return DXGI_ERROR_UNSUPPORTED;
     }
     VkPhysicalDeviceFeatures *f = &features.features;
+    const VkPhysicalDeviceFeatures supported = *f;
     f->sparseBinding = f->sparseResidencyBuffer = f->sparseResidencyImage2D = f->sparseResidencyImage3D = FALSE;
     f->sparseResidency2Samples = f->sparseResidency4Samples = f->sparseResidency8Samples = FALSE;
     f->sparseResidency16Samples = f->sparseResidencyAliased = FALSE;
@@ -495,6 +496,26 @@ static HRESULT create_vulkan_device(D12Device *device)
     if (device->family == ~0u)
         return DXGI_ERROR_UNSUPPORTED;
     device->queue_count = D12_MIN(qprops[device->family].queueCount, 16u);
+
+    /*
+     * tiled resources: tier 1 binds buffers and 2D images of standard
+     * shapes, aliased; tier 2 also reads zero where nothing is mapped and
+     * tells shaders what is; tier 3 also tiles 3D images.
+     */
+    const VkPhysicalDeviceSparseProperties *sp = &device->properties.sparseProperties;
+    if ((qprops[device->family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) && supported.sparseBinding &&
+        supported.sparseResidencyBuffer && supported.sparseResidencyImage2D && supported.sparseResidencyAliased &&
+        sp->residencyStandard2DBlockShape) {
+        device->tiled_tier = D3D12_TILED_RESOURCES_TIER_1;
+        f->sparseBinding = f->sparseResidencyBuffer = f->sparseResidencyImage2D = f->sparseResidencyAliased = TRUE;
+        if (sp->residencyNonResidentStrict && supported.shaderResourceResidency && supported.shaderResourceMinLod) {
+            device->tiled_tier = D3D12_TILED_RESOURCES_TIER_2;
+            if (supported.sparseResidencyImage3D && sp->residencyStandard3DBlockShape) {
+                device->tiled_tier = D3D12_TILED_RESOURCES_TIER_3;
+                f->sparseResidencyImage3D = TRUE;
+            }
+        }
+    }
 
     float priorities[16];
     for (UINT i = 0; i < 16; i++)
@@ -787,7 +808,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         d->DoublePrecisionFloatShaderOps = f.shaderFloat64;
         d->OutputMergerLogicOp = device->has_logic_op;
         d->MinPrecisionSupport = D3D12_SHADER_MIN_PRECISION_SUPPORT_NONE;
-        d->TiledResourcesTier = D3D12_TILED_RESOURCES_TIER_NOT_SUPPORTED;
+        d->TiledResourcesTier = device->tiled_tier;
         d->ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3;
         d->TypedUAVLoadAdditionalFormats = f.shaderStorageImageReadWithoutFormat;
         d->ConservativeRasterizationTier = device->conservative_tier;
@@ -1459,7 +1480,7 @@ static HRESULT STDMETHODCALLTYPE device_create_placed_resource2(ID3D12Device14 *
     return device_create_placed_resource1(iface, heap, offset, desc, D3D12_RESOURCE_STATE_COMMON, clear, riid, out);
 }
 
-/* tiled resources are not supported, as the options report. */
+/* reserved resources, at the tier of tiled resources the options report. */
 static HRESULT STDMETHODCALLTYPE device_create_reserved_resource(ID3D12Device14 *iface, const D3D12_RESOURCE_DESC *desc,
                                                                  D3D12_RESOURCE_STATES state,
                                                                  const D3D12_CLEAR_VALUE *clear, REFIID riid,
@@ -1467,7 +1488,12 @@ static HRESULT STDMETHODCALLTYPE device_create_reserved_resource(ID3D12Device14 
 {
     if (out)
         *out = NULL;
-    return E_INVALIDARG;
+    if (!desc)
+        return E_INVALIDARG;
+    D3D12_RESOURCE_DESC1 d1 = desc1_of(desc);
+    D12Resource *resource = NULL;
+    HRESULT hr = D12CreateReservedResource(impl(iface), &d1, state, &resource);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&resource->iface : NULL, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_reserved_resource1(ID3D12Device14 *iface,
@@ -1609,6 +1635,11 @@ static void STDMETHODCALLTYPE device_get_resource_tiling(ID3D12Device14 *iface, 
                                                          D3D12_TILE_SHAPE *shape, UINT *subresource_count, UINT first,
                                                          D3D12_SUBRESOURCE_TILING *tilings)
 {
+    D12Resource *r = D12ResourceFrom(resource);
+    if (r) {
+        D12ResourceTiling(r, tile_count, packed, shape, subresource_count, first, tilings);
+        return;
+    }
     if (tile_count)
         *tile_count = 0;
     if (packed)

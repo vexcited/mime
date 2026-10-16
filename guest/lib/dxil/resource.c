@@ -779,7 +779,7 @@ static uint32_t wide_of(Compiler *c, uint32_t lo, uint32_t hi, uint32_t type)
  * and a status of zero. 64-bit texels are two words of the view, as
  * direct3d's R32G32 formats hold them.
  */
-static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t scalar)
+static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t scalar, uint32_t status)
 {
     uint32_t parts[5];
     uint32_t first = member_type(c, ins, 0, NULL);
@@ -792,8 +792,41 @@ static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t s
         for (uint32_t i = 0; i < 4; i++)
             parts[i] = dxil_convert(c, dxil_extract(c, scalar, vec4, i), scalar, member_type(c, ins, i, NULL));
     }
-    parts[4] = dxil_uconst(c, 0);
+    parts[4] = status ? status : dxil_uconst(c, 0);
     dxil_set_parts(c, ins->value, parts, 5);
+}
+
+/*
+ * an image operation, through its sparse twin when the shader asks
+ * whether what it read was mapped: its status is then 0 where every texel
+ * was and 1 where one was not, as statuses of reads of other memory are 0.
+ */
+static uint32_t image_op(Compiler *c, uint32_t opcode, uint32_t type, const uint32_t *w, uint32_t count,
+                         uint32_t *status)
+{
+    uint32_t sparse = 0;
+    *status = 0;
+    if (c->residency) {
+        switch (opcode) {
+        case SpvOpImageSampleImplicitLod: sparse = SpvOpImageSparseSampleImplicitLod; break;
+        case SpvOpImageSampleExplicitLod: sparse = SpvOpImageSparseSampleExplicitLod; break;
+        case SpvOpImageSampleDrefImplicitLod: sparse = SpvOpImageSparseSampleDrefImplicitLod; break;
+        case SpvOpImageSampleDrefExplicitLod: sparse = SpvOpImageSparseSampleDrefExplicitLod; break;
+        case SpvOpImageFetch: sparse = SpvOpImageSparseFetch; break;
+        case SpvOpImageGather: sparse = SpvOpImageSparseGather; break;
+        case SpvOpImageDrefGather: sparse = SpvOpImageSparseDrefGather; break;
+        case SpvOpImageRead: sparse = SpvOpImageSparseRead; break;
+        default: break;
+        }
+    }
+    if (!sparse)
+        return spv_op(&c->b, opcode, type, w, count);
+    spv_capability(&c->b, SpvCapabilitySparseResidency);
+    uint32_t members[2] = {t_i32(c), type};
+    uint32_t r = spv_op(&c->b, sparse, spv_type_struct(&c->b, members, 2), w, count);
+    uint32_t resident = spv_op1(&c->b, SpvOpImageSparseTexelsResident, c->t_bool, dxil_extract(c, t_i32(c), r, 0));
+    *status = spv_op3(&c->b, SpvOpSelect, c->t_u32, resident, dxil_uconst(c, 0), dxil_uconst(c, 1));
+    return dxil_extract(c, type, r, 1);
 }
 
 static uint32_t gather_operands(Compiler *c, const DxInst *ins, uint32_t first, uint32_t n, uint32_t scalar);
@@ -995,18 +1028,18 @@ static int sample(Compiler *c, const DxInst *ins, uint32_t op)
     w[mask_at] = operands;
     if (!operands)
         count--;
-    uint32_t scalar = sampled_type(c, h->r.comp), result;
+    uint32_t scalar = sampled_type(c, h->r.comp), result, status;
     if (cmp) {
         uint32_t opcode = implicit ? SpvOpImageSampleDrefImplicitLod : SpvOpImageSampleDrefExplicitLod;
-        uint32_t d = spv_op(&c->b, opcode, c->t_f32, w, count);
+        uint32_t d = image_op(c, opcode, c->t_f32, w, count, &status);
         uint32_t parts[4] = {d, d, d, d};
         result = dxil_vector(c, c->t_f32, parts, 4);
         scalar = c->t_f32;
     } else {
         uint32_t opcode = implicit ? SpvOpImageSampleImplicitLod : SpvOpImageSampleExplicitLod;
-        result = spv_op(&c->b, opcode, spv_type_vector(&c->b, scalar, 4), w, count);
+        result = image_op(c, opcode, spv_type_vector(&c->b, scalar, 4), w, count, &status);
     }
-    set_resret(c, ins, nonuniform(c, h, result), scalar);
+    set_resret(c, ins, nonuniform(c, h, result), scalar, status);
     return 0;
 }
 
@@ -1055,8 +1088,10 @@ static int gather(Compiler *c, const DxInst *ins, uint32_t op)
         w[count++] = dynamic;
     }
     uint32_t scalar = cmp ? c->t_f32 : sampled_type(c, h->r.comp);
-    uint32_t r = spv_op(&c->b, cmp ? SpvOpImageDrefGather : SpvOpImageGather, spv_type_vector(&c->b, scalar, 4), w, count);
-    set_resret(c, ins, nonuniform(c, h, r), scalar);
+    uint32_t status;
+    uint32_t r = image_op(c, cmp ? SpvOpImageDrefGather : SpvOpImageGather, spv_type_vector(&c->b, scalar, 4), w, count,
+                          &status);
+    set_resret(c, ins, nonuniform(c, h, r), scalar, status);
     return 0;
 }
 
@@ -1072,14 +1107,14 @@ static int texture_load(Compiler *c, const DxInst *ins)
     uint32_t coords = coord_count(h->r.kind) > 3 ? 3 : coord_count(h->r.kind);
     w[count++] = image;
     w[count++] = gather_operands(c, ins, 4, coords, c->t_u32);
-    uint32_t r;
+    uint32_t r, status;
     int ms = h->r.kind == RK_TEXTURE2DMS || h->r.kind == RK_TEXTURE2DMSARRAY;
     if (h->r.cls == CLASS_UAV) {
         if (ms) {
             w[count++] = SpvImageOperandsSampleMask;
             w[count++] = dxil_value(c, ins->ops[3]);
         }
-        r = spv_op(&c->b, SpvOpImageRead, spv_type_vector(&c->b, scalar, 4), w, count);
+        r = image_op(c, SpvOpImageRead, spv_type_vector(&c->b, scalar, 4), w, count, &status);
     } else {
         uint32_t mask_at = count++;
         if (ms) {
@@ -1107,9 +1142,9 @@ static int texture_load(Compiler *c, const DxInst *ins)
             w[1] = coords == 1 ? parts[0] : dxil_vector(c, c->t_u32, parts, coords);
         }
         w[mask_at] = operands;
-        r = spv_op(&c->b, SpvOpImageFetch, spv_type_vector(&c->b, scalar, 4), w, count);
+        r = image_op(c, SpvOpImageFetch, spv_type_vector(&c->b, scalar, 4), w, count, &status);
     }
-    set_resret(c, ins, nonuniform(c, h, r), scalar);
+    set_resret(c, ins, nonuniform(c, h, r), scalar, status);
     return 0;
 }
 
@@ -1223,7 +1258,7 @@ static int buffer_load(Compiler *c, const DxInst *ins, uint32_t op)
         uint32_t image = load_image(c, h, type);
         uint32_t r = spv_op2(&c->b, h->r.cls == CLASS_UAV ? SpvOpImageRead : SpvOpImageFetch,
                              spv_type_vector(&c->b, scalar, 4), image, dxil_value(c, ins->ops[3]));
-        set_resret(c, ins, nonuniform(c, h, r), scalar);
+        set_resret(c, ins, nonuniform(c, h, r), scalar, 0);
         return 0;
     }
     Memory m;
@@ -1637,7 +1672,12 @@ int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 69:
     case 140: return buffer_store(c, ins) ? -1 : 1;
     case 70: return update_counter(c, ins) ? -1 : 1;
-    case 71: dxil_set_plain(c, ins->value, spv_const_bool(&c->b, 1)); return 1;
+    case 71: { /* checkAccessFullyMapped: a status of 0 is all mapped. */
+        const DxValue *v = dx_value(&c->m, c->f, ins->ops[2]);
+        uint32_t status = dxil_convert(c, dxil_value(c, ins->ops[2]), v ? dxil_type(c, v->type) : c->t_u32, c->t_u32);
+        dxil_set_plain(c, ins->value, spv_op2(&c->b, SpvOpIEqual, c->t_bool, status, dxil_uconst(c, 0)));
+        return 1;
+    }
     case 72: return dimensions(c, ins) ? -1 : 1;
     case 73:
     case 74:

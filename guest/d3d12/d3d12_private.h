@@ -32,6 +32,7 @@
     X(vkGetPhysicalDeviceProperties2)                                                                                  \
     X(vkGetPhysicalDeviceFeatures2)                                                                                    \
     X(vkGetPhysicalDeviceFormatProperties)                                                                             \
+    X(vkGetPhysicalDeviceSparseImageFormatProperties)                                                                  \
     X(vkGetPhysicalDeviceImageFormatProperties)                                                                        \
     X(vkGetPhysicalDeviceMemoryProperties)                                                                             \
     X(vkGetPhysicalDeviceQueueFamilyProperties)                                                                        \
@@ -73,6 +74,8 @@
     X(vkCreateImage)                                                                                                   \
     X(vkDestroyImage)                                                                                                  \
     X(vkGetImageMemoryRequirements)                                                                                    \
+    X(vkGetImageSparseMemoryRequirements)                                                                              \
+    X(vkQueueBindSparse)                                                                                               \
     X(vkGetDeviceImageMemoryRequirements)                                                                              \
     X(vkBindImageMemory)                                                                                               \
     X(vkCreateImageView)                                                                                               \
@@ -325,7 +328,46 @@ struct D12Resource {
     BOOL swapchain;
     SRWLOCK views_lock;
     D12ImageView *views;
+    /*
+     * reserved resources: 64 KiB tiles, a buffer's own range of addresses,
+     * an image's tile shape and mip tail, and the heap tile each tile maps.
+     */
+    BOOL reserved;
+    struct D12Heap *sparse;
+    VkExtent3D tile_shape;
+    UINT standard_mips, packed_tiles;
+    VkDeviceSize tail_offset, tail_stride;
+    BOOL single_tail;
+    UINT tile_count;
+    struct D12Tile *tiles;
+    SRWLOCK tiles_lock;
 };
+
+/* where a tile of a reserved resource maps: a heap and its tile, no heap when it maps nothing. */
+typedef struct D12Tile {
+    struct D12Heap *heap;
+    UINT tile;
+} D12Tile;
+
+/* a tile of a reserved resource: in a mip's grid of tiles, or one of a layer's packed tiles, or of a buffer. */
+typedef struct D12TilePlace {
+    BOOL packed;
+    UINT mip, layer;
+    VkOffset3D at;
+    VkExtent3D extent;
+    VkDeviceSize opaque;
+} D12TilePlace;
+
+HRESULT D12CreateReservedResource(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, D3D12_RESOURCE_STATES state,
+                                  D12Resource **out);
+void D12ResourceTiling(D12Resource *resource, UINT *tile_count, D3D12_PACKED_MIP_INFO *packed,
+                       D3D12_TILE_SHAPE *shape, UINT *subresource_count, UINT first, D3D12_SUBRESOURCE_TILING *tilings);
+UINT D12TileIndex(const D12Resource *resource, const D3D12_TILED_RESOURCE_COORDINATE *at);
+BOOL D12TileAt(const D12Resource *resource, UINT tile, D12TilePlace *place);
+/* the tiles of a region: count of them in order, from a coordinate in a box or in the resource's order. */
+UINT D12RegionTiles(const D12Resource *resource, const D3D12_TILED_RESOURCE_COORDINATE *start,
+                    const D3D12_TILE_REGION_SIZE *size, UINT *tiles, UINT max);
+void D12FreeTiles(D12Resource *resource);
 
 D12Resource *D12ResourceFrom(ID3D12Resource *iface);
 HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
@@ -589,6 +631,8 @@ typedef struct D12Queue {
     /* the queue's own timeline: what was submitted and what the gpu finished. */
     VkSemaphore timeline;
     UINT64 next_serial;
+    /* the serial of tile mappings the next submission must wait for, as vulkan does not order them. */
+    UINT64 bind_serial;
 } D12Queue;
 
 HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, D12Queue **out);
@@ -596,6 +640,13 @@ D12Queue *D12QueueFrom(ID3D12CommandQueue *iface);
 UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
                       UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count);
 void D12QueueWaitIdle(D12Queue *queue);
+void D12UpdateTileMappings(D12Queue *queue, D12Resource *resource, UINT region_count,
+                           const D3D12_TILED_RESOURCE_COORDINATE *starts, const D3D12_TILE_REGION_SIZE *sizes,
+                           struct D12Heap *heap, UINT range_count, const D3D12_TILE_RANGE_FLAGS *flags,
+                           const UINT *heap_starts, const UINT *range_counts);
+void D12CopyTileMappings(D12Queue *queue, D12Resource *dst, const D3D12_TILED_RESOURCE_COORDINATE *dst_start,
+                         D12Resource *src, const D3D12_TILED_RESOURCE_COORDINATE *src_start,
+                         const D3D12_TILE_REGION_SIZE *size);
 
 HRESULT D12CreateSwapChain(D12Queue *queue, IDXGIFactory *factory, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,
                            const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen, IDXGISwapChain1 **out);
@@ -783,6 +834,7 @@ struct D12Device {
     /* variable rate shading: direct3d's tier, the tile size of rate images, 4 pixel wide rates, rates with viewports. */
     UINT vrs_tier, vrs_tile;
     UINT conservative_tier;
+    UINT tiled_tier;
     BOOL vrs_more_rates, vrs_viewports;
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;

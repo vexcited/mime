@@ -1209,11 +1209,49 @@ static void STDMETHODCALLTYPE list_copy_resource(ID3D12GraphicsCommandList10 *if
     }
 }
 
+/*
+ * tiles to or from a buffer, 64 KiB a tile in the region's order: a tile
+ * of a texture as rows of its shape, of a buffer or a mip tail its bytes.
+ */
 static void STDMETHODCALLTYPE list_copy_tiles(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *tiled,
                                               const D3D12_TILED_RESOURCE_COORDINATE *start,
                                               const D3D12_TILE_REGION_SIZE *size, ID3D12Resource *buffer,
                                               UINT64 buffer_offset, D3D12_TILE_COPY_FLAGS flags)
 {
+    D12CommandList *list = impl(iface);
+    D12Resource *r = D12ResourceFrom(tiled), *b = D12ResourceFrom(buffer);
+    if (!list->open || !r || !r->reserved || !b || !b->buffer || !size)
+        return;
+    UINT total = size->UseBox ? size->Width * size->Height * size->Depth : size->NumTiles;
+    UINT *tiles = HeapAlloc(GetProcessHeap(), 0, (total + 1) * sizeof(UINT));
+    if (!tiles)
+        return;
+    end_rendering(list);
+    BOOL to_buffer = (flags & D3D12_TILE_COPY_FLAG_SWIZZLED_TILED_RESOURCE_TO_LINEAR_BUFFER) != 0;
+    UINT n = D12RegionTiles(r, start, size, tiles, total);
+    D12Vk *vk = vk_of(list);
+    for (UINT i = 0; i < n; i++) {
+        D12TilePlace place;
+        if (!D12TileAt(r, tiles[i], &place))
+            continue;
+        VkDeviceSize at = b->offset + buffer_offset + (VkDeviceSize)i * 65536;
+        if (!r->image) {
+            VkBufferCopy region = {to_buffer ? place.opaque : at, to_buffer ? at : place.opaque, 65536};
+            vk->vkCmdCopyBuffer(list->cmd, to_buffer ? r->buffer : b->buffer, to_buffer ? b->buffer : r->buffer, 1,
+                                &region);
+            continue;
+        }
+        /* packed mips have no layout direct3d tells: their tiles do not copy. */
+        if (place.packed)
+            continue;
+        VkBufferImageCopy region = {at, r->tile_shape.width, r->tile_shape.height,
+                                    {VK_IMAGE_ASPECT_COLOR_BIT, place.mip, place.layer, 1}, place.at, place.extent};
+        if (to_buffer)
+            vk->vkCmdCopyImageToBuffer(list->cmd, r->image, VK_IMAGE_LAYOUT_GENERAL, b->buffer, 1, &region);
+        else
+            vk->vkCmdCopyBufferToImage(list->cmd, b->buffer, r->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    }
+    HeapFree(GetProcessHeap(), 0, tiles);
 }
 
 static void resolve(D12CommandList *list, D12Resource *d, UINT dst_sub, UINT dst_x, UINT dst_y, D12Resource *s,

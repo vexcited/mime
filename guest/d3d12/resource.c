@@ -826,6 +826,8 @@ static void resource_destroy(D12Resource *resource)
         vk->vkDestroyImage(vk->device, resource->image, NULL);
     if (resource->buffer)
         D12AccelerationStructuresForget(device, resource->va, resource->desc.Width);
+    if (resource->reserved)
+        D12FreeTiles(resource);
     if (resource->committed)
         D12Free(device, &resource->alloc);
     if (resource->heap && !resource->committed)
@@ -1189,5 +1191,299 @@ HRESULT D12CreateSwapchainResource(D12Device *device, VkImage image, const D3D12
     resource->heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
     D12ChildInit(&resource->child, device);
     *out = resource;
+    return S_OK;
+}
+
+/* ------------------------------------------------------------------ reserved resources */
+
+/*
+ * a reserved resource is a sparse vulkan buffer or image whose 64 KiB
+ * tiles map heap memory with vkQueueBindSparse. a texture's tiles are
+ * numbered as direct3d numbers them: layer after layer, each layer's
+ * standard mips mip after mip, each in rows of tiles, then the layer's
+ * packed mips, vulkan's mip tail. a mip tail all layers share is the first
+ * layer's.
+ */
+#define TILE_SIZE 65536u
+
+static UINT tiles_of(UINT texels, UINT shape) { return (texels + shape - 1) / shape; }
+
+/* a standard mip's size in tiles. */
+static UINT mip_tiles(const D12Resource *r, UINT mip, UINT *w, UINT *h, UINT *d)
+{
+    VkExtent3D e = D12MipExtent(r, mip);
+    *w = tiles_of(e.width, r->tile_shape.width);
+    *h = tiles_of(e.height, r->tile_shape.height);
+    *d = tiles_of(e.depth, r->tile_shape.depth);
+    return *w * *h * *d;
+}
+
+static UINT standard_tiles(const D12Resource *r)
+{
+    UINT n = 0, w, h, d;
+    for (UINT m = 0; m < r->standard_mips; m++)
+        n += mip_tiles(r, m, &w, &h, &d);
+    return n;
+}
+
+static UINT layer_packed(const D12Resource *r, UINT layer)
+{
+    return r->single_tail && layer ? 0 : r->packed_tiles;
+}
+
+static UINT layer_start(const D12Resource *r, UINT layer)
+{
+    UINT packed = r->single_tail ? (layer ? r->packed_tiles : 0) : layer * r->packed_tiles;
+    return layer * standard_tiles(r) + packed;
+}
+
+UINT D12TileIndex(const D12Resource *r, const D3D12_TILED_RESOURCE_COORDINATE *at)
+{
+    if (r->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+        return at->X < r->tile_count ? at->X : ~0u;
+    UINT mip, layer, w, h, d;
+    D12SubresourceDecompose(r, at->Subresource, &mip, &layer, NULL);
+    if (layer >= r->layers)
+        return ~0u;
+    UINT start = layer_start(r, layer);
+    if (mip >= r->standard_mips)
+        return at->X < layer_packed(r, layer) ? start + standard_tiles(r) + at->X : ~0u;
+    for (UINT m = 0; m < mip; m++)
+        start += mip_tiles(r, m, &w, &h, &d);
+    mip_tiles(r, mip, &w, &h, &d);
+    if (at->X >= w || at->Y >= h || at->Z >= d)
+        return ~0u;
+    return start + at->X + at->Y * w + at->Z * w * h;
+}
+
+BOOL D12TileAt(const D12Resource *r, UINT tile, D12TilePlace *place)
+{
+    memset(place, 0, sizeof(*place));
+    if (tile >= r->tile_count)
+        return FALSE;
+    if (r->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
+        place->packed = TRUE;
+        place->opaque = (VkDeviceSize)tile * TILE_SIZE;
+        return TRUE;
+    }
+    UINT standard = standard_tiles(r), layer = 0;
+    while (layer + 1 < r->layers && layer_start(r, layer + 1) <= tile)
+        layer++;
+    UINT rest = tile - layer_start(r, layer), w, h, d;
+    place->layer = layer;
+    if (rest >= standard) {
+        place->packed = TRUE;
+        place->mip = r->standard_mips;
+        place->opaque = r->tail_offset + (r->single_tail ? 0 : layer * r->tail_stride) +
+                        (VkDeviceSize)(rest - standard) * TILE_SIZE;
+        return TRUE;
+    }
+    UINT mip = 0;
+    for (UINT n; rest >= (n = mip_tiles(r, mip, &w, &h, &d)); mip++)
+        rest -= n;
+    mip_tiles(r, mip, &w, &h, &d);
+    VkExtent3D e = D12MipExtent(r, mip);
+    place->mip = mip;
+    place->at = (VkOffset3D){(INT)((rest % w) * r->tile_shape.width), (INT)((rest / w % h) * r->tile_shape.height),
+                             (INT)((rest / (w * h)) * r->tile_shape.depth)};
+    place->extent = (VkExtent3D){D12_MIN(r->tile_shape.width, e.width - (UINT)place->at.x),
+                                 D12_MIN(r->tile_shape.height, e.height - (UINT)place->at.y),
+                                 D12_MIN(r->tile_shape.depth, e.depth - (UINT)place->at.z)};
+    return TRUE;
+}
+
+UINT D12RegionTiles(const D12Resource *r, const D3D12_TILED_RESOURCE_COORDINATE *start,
+                    const D3D12_TILE_REGION_SIZE *size, UINT *tiles, UINT max)
+{
+    D3D12_TILED_RESOURCE_COORDINATE zero = {0};
+    D3D12_TILE_REGION_SIZE one = {1};
+    start = start ? start : &zero;
+    size = size ? size : &one;
+    UINT n = 0;
+    if (size->UseBox) {
+        for (UINT z = 0; z < size->Depth; z++)
+            for (UINT y = 0; y < size->Height; y++)
+                for (UINT x = 0; x < size->Width && n < max; x++) {
+                    D3D12_TILED_RESOURCE_COORDINATE at = {start->X + x, start->Y + y, start->Z + z, start->Subresource};
+                    UINT tile = D12TileIndex(r, &at);
+                    if (tile != ~0u)
+                        tiles[n++] = tile;
+                }
+        return n;
+    }
+    UINT first = D12TileIndex(r, start);
+    for (UINT i = 0; first != ~0u && i < size->NumTiles && first + i < r->tile_count && n < max; i++)
+        tiles[n++] = first + i;
+    return n;
+}
+
+void D12ResourceTiling(D12Resource *r, UINT *tile_count, D3D12_PACKED_MIP_INFO *packed, D3D12_TILE_SHAPE *shape,
+                       UINT *subresource_count, UINT first, D3D12_SUBRESOURCE_TILING *tilings)
+{
+    BOOL buffer = r->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER;
+    if (tile_count)
+        *tile_count = r->reserved ? r->tile_count : 0;
+    if (packed) {
+        memset(packed, 0, sizeof(*packed));
+        if (r->reserved && !buffer) {
+            packed->NumStandardMips = (UINT8)r->standard_mips;
+            packed->NumPackedMips = (UINT8)(r->mips - r->standard_mips);
+            packed->NumTilesForPackedMips = r->packed_tiles;
+            packed->StartTileIndexInOverallResource = r->packed_tiles ? standard_tiles(r) : 0;
+        }
+    }
+    if (shape) {
+        *shape = (D3D12_TILE_SHAPE){0};
+        if (r->reserved)
+            *shape = buffer ? (D3D12_TILE_SHAPE){TILE_SIZE, 1, 1}
+                            : (D3D12_TILE_SHAPE){r->tile_shape.width, r->tile_shape.height, r->tile_shape.depth};
+    }
+    if (!subresource_count)
+        return;
+    UINT count = buffer ? 1 : r->mips * r->layers;
+    UINT n = first < count ? D12_MIN(*subresource_count, count - first) : 0;
+    for (UINT i = 0; tilings && i < n; i++) {
+        UINT sub = first + i, mip, layer, w = 0, h = 0, d = 0;
+        D12SubresourceDecompose(r, sub, &mip, &layer, NULL);
+        D3D12_SUBRESOURCE_TILING *t = &tilings[i];
+        *t = (D3D12_SUBRESOURCE_TILING){0};
+        if (!r->reserved)
+            continue;
+        if (buffer) {
+            *t = (D3D12_SUBRESOURCE_TILING){r->tile_count, 1, 1, 0};
+        } else if (mip >= r->standard_mips) {
+            t->StartTileIndexInOverallResource = 0xFFFFFFFF;
+        } else {
+            D3D12_TILED_RESOURCE_COORDINATE at = {0, 0, 0, sub};
+            mip_tiles(r, mip, &w, &h, &d);
+            *t = (D3D12_SUBRESOURCE_TILING){w, (UINT16)h, (UINT16)d, D12TileIndex(r, &at)};
+        }
+    }
+    *subresource_count = n;
+}
+
+void D12FreeTiles(D12Resource *r)
+{
+    D12Device *device = r->child.device;
+    if (r->sparse) {
+        D12AddressRemove(device, r->sparse);
+        HeapFree(GetProcessHeap(), 0, r->sparse);
+        r->sparse = NULL;
+    }
+    if (r->reserved && r->buffer)
+        device->vk.vkDestroyBuffer(device->vk.device, r->buffer, NULL);
+    r->buffer = VK_NULL_HANDLE;
+    HeapFree(GetProcessHeap(), 0, r->tiles);
+    r->tiles = NULL;
+}
+
+/* a sparse buffer, its addresses its own, found as a heap's. */
+static HRESULT create_reserved_buffer(D12Device *device, D12Resource *r)
+{
+    D12Vk *vk = &device->vk;
+    VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    info.flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT |
+                 VK_BUFFER_CREATE_SPARSE_ALIASED_BIT;
+    info.size = D12_ALIGN(r->desc.Width, TILE_SIZE);
+    info.usage = buffer_usage(device);
+    if (vk->vkCreateBuffer(vk->device, &info, NULL, &r->buffer) != VK_SUCCESS)
+        return E_OUTOFMEMORY;
+    VkMemoryRequirements req;
+    vk->vkGetBufferMemoryRequirements(vk->device, r->buffer, &req);
+    if (TILE_SIZE % req.alignment)
+        return E_INVALIDARG;
+    D12Heap *h = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*h));
+    if (!h)
+        return E_OUTOFMEMORY;
+    h->child.device = device;
+    h->desc.SizeInBytes = info.size;
+    h->internal = TRUE;
+    h->buffer = r->buffer;
+    VkBufferDeviceAddressInfo address = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    address.buffer = r->buffer;
+    h->va = vk->vkGetBufferDeviceAddress(vk->device, &address);
+    r->sparse = h;
+    r->va = h->va;
+    r->tile_count = (UINT)(info.size / TILE_SIZE);
+    D12AddressAdd(device, h);
+    return S_OK;
+}
+
+/* a sparse image of direct3d's tile shapes, which vulkan's standard block shapes are. */
+static HRESULT create_reserved_texture(D12Device *device, D12Resource *r)
+{
+    D12Vk *vk = &device->vk;
+    VkImageCreateInfo info;
+    if (!image_info(device, &r->desc, &info))
+        return E_INVALIDARG;
+    info.flags |= VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT |
+                  VK_IMAGE_CREATE_SPARSE_ALIASED_BIT;
+    r->fmt = D3dGetFormat(r->desc.Format);
+    r->aspect = format_aspect(info.format);
+    if (r->aspect != VK_IMAGE_ASPECT_COLOR_BIT || info.samples != VK_SAMPLE_COUNT_1_BIT)
+        return E_INVALIDARG;
+    VkSparseImageFormatProperties props[4];
+    UINT count = RTL_NUMBER_OF(props);
+    vk->vkGetPhysicalDeviceSparseImageFormatProperties(vk->physical, info.format, info.imageType, info.samples,
+                                                       info.usage, info.tiling, &count, props);
+    if (!count || (props[0].flags & VK_SPARSE_IMAGE_FORMAT_NONSTANDARD_BLOCK_SIZE_BIT))
+        return E_INVALIDARG;
+    r->mips = info.mipLevels;
+    r->layers = info.arrayLayers;
+    r->samples = info.samples;
+    r->usage = info.usage;
+    r->desc.MipLevels = (UINT16)info.mipLevels;
+    if (vk->vkCreateImage(vk->device, &info, NULL, &r->image) != VK_SUCCESS)
+        return E_OUTOFMEMORY;
+    VkMemoryRequirements req;
+    vk->vkGetImageMemoryRequirements(vk->device, r->image, &req);
+    VkSparseImageMemoryRequirements sparse[4];
+    count = RTL_NUMBER_OF(sparse);
+    vk->vkGetImageSparseMemoryRequirements(vk->device, r->image, &count, sparse);
+    if (!count || TILE_SIZE % req.alignment || req.alignment != TILE_SIZE)
+        return E_INVALIDARG;
+    const VkSparseImageMemoryRequirements *s = &sparse[0];
+    r->tile_shape = s->formatProperties.imageGranularity;
+    r->standard_mips = D12_MIN(s->imageMipTailFirstLod, r->mips);
+    r->packed_tiles = r->standard_mips < r->mips ? (UINT)((s->imageMipTailSize + TILE_SIZE - 1) / TILE_SIZE) : 0;
+    r->tail_offset = s->imageMipTailOffset;
+    r->tail_stride = s->imageMipTailStride;
+    r->single_tail = (s->formatProperties.flags & VK_SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL_BIT) != 0;
+    r->tile_count = layer_start(r, r->layers);
+    init_image(device, r, FALSE);
+    return S_OK;
+}
+
+HRESULT D12CreateReservedResource(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, D3D12_RESOURCE_STATES state,
+                                  D12Resource **out)
+{
+    if (!device->tiled_tier || desc->Dimension < D3D12_RESOURCE_DIMENSION_BUFFER ||
+        desc->Dimension > D3D12_RESOURCE_DIMENSION_TEXTURE3D || desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D ||
+        (desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && device->tiled_tier < D3D12_TILED_RESOURCES_TIER_3))
+        return E_INVALIDARG;
+    BOOL buffer = desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER;
+    if (buffer && (!desc->Width || desc->Height != 1 || desc->DepthOrArraySize != 1 || desc->MipLevels != 1 ||
+                   desc->Layout != D3D12_TEXTURE_LAYOUT_ROW_MAJOR))
+        return E_INVALIDARG;
+    D12Resource *r = new_resource(device, desc);
+    if (!r)
+        return E_OUTOFMEMORY;
+    r->reserved = TRUE;
+    InitializeSRWLock(&r->tiles_lock);
+    r->heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
+    r->heap_props.CreationNodeMask = r->heap_props.VisibleNodeMask = 1;
+    r->initial_state = state;
+    if (buffer && !r->desc.Alignment)
+        r->desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+    HRESULT hr = buffer ? create_reserved_buffer(device, r) : create_reserved_texture(device, r);
+    if (SUCCEEDED(hr) && !(r->tiles = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)r->tile_count * sizeof(D12Tile))))
+        hr = E_OUTOFMEMORY;
+    if (FAILED(hr)) {
+        resource_destroy(r);
+        HeapFree(GetProcessHeap(), 0, r);
+        return hr;
+    }
+    D12ChildInit(&r->child, device);
+    *out = r;
     return S_OK;
 }

@@ -162,6 +162,7 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     options->root_count = count;
     options->nonconstant_offsets = device->has_maintenance8;
     options->compute_derivatives = device->has_compute_derivatives;
+    options->residency = device->tiled_tier >= D3D12_TILED_RESOURCES_TIER_2;
     DxbcShaderInfo info;
     int failed = dxil_is(bytecode, length) ? dxil_compile(bytecode, length, options, &info, &g_d12_allocator)
                                            : dxbc_compile(bytecode, length, options, &info, &g_d12_allocator);
