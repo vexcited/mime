@@ -317,9 +317,13 @@ struct D9Device {
     D3D11_PRIMITIVE_TOPOLOGY bound_topology;
     ID3D11ShaderResourceView *bound_srvs[D9_MAX_SAMPLERS];
     ID3D11SamplerState *bound_samplers[D9_MAX_SAMPLERS];
-    BOOL bound_srgb;
+    BOOL bound_srgb, bound_vs_ff;
     BOOL internal_dirty;
     BOOL warned_fixed;
+    /* fixed function's programs and the constants of the state. */
+    struct D9FFProgram *ff_vs, *ff_ps;
+    float ff_vs_consts[151][4];
+    float ff_ps_consts[27][4];
     BOOL software_vertex_processing;
     float npatch_segments;
     UINT palette;
@@ -622,6 +626,8 @@ typedef struct D9Shader {
     } iface;
     D9Resource base;
     D9ShaderInfo info;
+    /* a program of fixed function's, whose constants are the device's state. */
+    BOOL ff;
     D9Variant *variants;
     D9Variant *last;
 } D9Shader;
@@ -645,6 +651,45 @@ typedef struct D9VertexDecl {
     UINT colors;
     D9Layout *layouts;
 } D9VertexDecl;
+
+/* fixed function's programs, by the state they depend on. */
+typedef struct D9FFVSKey {
+    UINT inputs;
+    UINT tex_sizes;
+    UINT lights;
+    UINT tex_index, tex_gen, tex_flags;
+    BYTE material_sources;
+    BYTE pretransformed, lighting, specular, local_viewer, normalize, fog, range_fog, point_scale, blend, indexed;
+    BYTE stages;
+} D9FFVSKey;
+
+typedef struct D9FFPSStage {
+    BYTE color_op, alpha_op;
+    BYTE color_args[3], alpha_args[3];
+    BYTE result_temp, texture, projected;
+} D9FFPSStage;
+
+typedef struct D9FFPSKey {
+    D9FFPSStage stage[8];
+    BYTE stages, specular;
+} D9FFPSKey;
+
+typedef struct D9FFProgram {
+    struct D9FFProgram *next;
+    D9Shader *shader;
+    UINT size;
+    BYTE key[];
+} D9FFProgram;
+
+#define D9_FF_VS_CONSTANTS 151
+#define D9_FF_PS_CONSTANTS 27
+
+void D9FFVSKeyOf(const D9Device *device, D9FFVSKey *key);
+void D9FFPSKeyOf(const D9Device *device, D9FFPSKey *key);
+D9Shader *D9FFShader(D9Device *device, BOOL pixel, const void *key, UINT size);
+void D9FreeFFShaders(D9Device *device);
+void D9UpdateFFConstants(D9Device *device);
+void D9FFClipPlanes(const D9Device *device, float out[6][4]);
 
 /* the input slot of the zeros the inputs a declaration lacks read. */
 #define D9_ZERO_STREAM 16

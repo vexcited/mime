@@ -4,7 +4,7 @@
  * and booleans cb1, what d3d9.dll adds cb2), samplers s# are t# and s#.
  * outputs are written to temps and copied at the end, where the vertex
  * shader moves the position by half a pixel, as direct3d 9's pixel
- * centers are at integers, and the pixel shader applies fog and the
+ * centers are at integers and direct3d 10's at halves, and the pixel shader applies fog and the
  * alpha test of the device's state, as fixed function did after shaders
  * of model 2 and older. interpolated values sit in the registers of
  * their semantics, the same for every shader (D9VaryingSlot), so any
@@ -1149,7 +1149,7 @@ static void vs_epilogue(Tx *t)
             else
                 D9Op1(c, OP_MOV, dst, D9ImmF(1.0f));
         }
-    /* direct3d 9's pixel centers are at integers: the position moves half a pixel up and left. */
+    /* direct3d 9's pixel centers are at integers: the position moves half a pixel right and down. */
     D9Op3(c, OP_MAD, D9Dst(OPERAND_OUTPUT, D9_SLOT_POSITION, 3), D9TempSrc(p, REPL(3)),
           D9Cb(2, 0, SWZ(0, 1, 0, 0), -1, 0), D9TempSrc(p, SWZ_XYZW));
     D9Op1(c, OP_MOV, D9Dst(OPERAND_OUTPUT, D9_SLOT_POSITION, 0xC), D9TempSrc(p, SWZ_XYZW));

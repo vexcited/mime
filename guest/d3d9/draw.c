@@ -230,15 +230,17 @@ static ID3D11Buffer *make_cb(D9Device *d, UINT size)
 }
 
 /* the float, integer and boolean constants of a stage, with the shader's own definitions over them. */
-static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info)
+static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info, BOOL ff)
 {
     ID3D11DeviceContext1 *ctx = d->context;
     ID3D11Buffer **cbs = d->cbs[pixel];
-    const float(*f)[4] = pixel ? d->ps_f : d->vs_f;
+    const float(*f)[4] = ff ? (pixel ? d->ff_ps_consts : d->ff_vs_consts) : pixel ? d->ps_f : d->vs_f;
     const int(*ints)[4] = pixel ? d->ps_i : d->vs_i;
     const BOOL *bools = pixel ? d->ps_b : d->vs_b;
     D3D11_MAPPED_SUBRESOURCE m;
     UINT count = info->relative ? (pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) : D9_MAX(info->float_count, 1);
+    if (ff)
+        count = D9_MIN(count, pixel ? D9_FF_PS_CONSTANTS : D9_FF_VS_CONSTANTS);
     if (SUCCEEDED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)cbs[0], 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
         memcpy(m.pData, f, count * 16);
         for (UINT i = 0; i < info->def_count; i++)
@@ -263,7 +265,7 @@ static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info)
 }
 
 /* what d3d9.dll's code reads besides the program's constants: the half pixel, clip planes, points, fog, alpha. */
-static void upload_internal(D9Device *d, BOOL pixel)
+static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
 {
     ID3D11DeviceContext1 *ctx = d->context;
     D3D11_MAPPED_SUBRESOURCE m;
@@ -273,10 +275,14 @@ static void upload_internal(D9Device *d, BOOL pixel)
     memset(v, 0, 16 * 16);
     const DWORD *rs = d->render_states;
     if (!pixel) {
-        v[0][0] = d->viewport.Width ? -1.0f / d->viewport.Width : 0.0f;
-        v[0][1] = d->viewport.Height ? 1.0f / d->viewport.Height : 0.0f;
+        /* half a pixel right and down: direct3d 9's pixel center i is direct3d 10's i + 0.5. */
+        v[0][0] = d->viewport.Width ? 1.0f / d->viewport.Width : 0.0f;
+        v[0][1] = d->viewport.Height ? -1.0f / d->viewport.Height : 0.0f;
         v[0][2] = fbits(rs[D3DRS_POINTSIZE]);
-        memcpy(v[1], d->clip_planes, sizeof(d->clip_planes));
+        if (ff)
+            D9FFClipPlanes(d, (float(*)[4])v[1]);
+        else
+            memcpy(v[1], d->clip_planes, sizeof(d->clip_planes));
         v[7][0] = fbits(rs[D3DRS_POINTSIZE_MIN]);
         v[7][1] = fbits(rs[D3DRS_POINTSIZE_MAX]);
     } else {
@@ -387,19 +393,19 @@ static void bind_textures(D9Device *d, D9Variant *ps, D9Variant *vs)
 }
 
 /* the keys of the bound shaders under the device's state. */
-static void vs_key(D9Device *d, D3DPRIMITIVETYPE type, D9ShaderKey *key)
+static void vs_key(D9Device *d, D9Shader *shader, D3DPRIMITIVETYPE type, D9ShaderKey *key)
 {
     memset(key, 0, sizeof(*key));
     key->clip_planes = (BYTE)(d->render_states[D3DRS_CLIPPLANEENABLE] & 0x3F);
     key->point_size = type == D3DPT_POINTLIST;
-    if (d->decl && d->vs)
-        key->int_inputs = D9DeclIntegerInputs(d->decl, &d->vs->info);
+    if (d->decl)
+        key->int_inputs = D9DeclIntegerInputs(d->decl, &shader->info);
 }
 
-static void ps_key(D9Device *d, D3DPRIMITIVETYPE type, const D9Variant *vs, D9ShaderKey *key)
+static void ps_key(D9Device *d, D9Shader *shader, D3DPRIMITIVETYPE type, const D9Variant *vs, D9ShaderKey *key)
 {
     const DWORD *rs = d->render_states;
-    const D9ShaderInfo *info = &d->ps->info;
+    const D9ShaderInfo *info = &shader->info;
     memset(key, 0, sizeof(*key));
     key->ps_inputs = vs ? vs->outputs : 0;
     for (UINT i = 0; i < 16; i++) {
@@ -427,20 +433,36 @@ static void ps_key(D9Device *d, D3DPRIMITIVETYPE type, const D9Variant *vs, D9Sh
 static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
 {
     ID3D11DeviceContext1 *ctx = d->context;
-    if (!d->vs || !d->ps || !d->decl) {
-        if (!d->warned_fixed) {
-            D9Log("d3d9: draws without shaders, as fixed function makes them, are not supported yet");
-            d->warned_fixed = TRUE;
-        }
+    if (!d->decl)
         return FALSE;
+    /* without shaders, fixed function's programs of the state. */
+    D9Shader *vs_shader = d->vs, *ps_shader = d->ps;
+    if (!vs_shader) {
+        D9FFVSKey k;
+        D9FFVSKeyOf(d, &k);
+        vs_shader = D9FFShader(d, FALSE, &k, sizeof(k));
+    }
+    if (!ps_shader) {
+        D9FFPSKey k;
+        D9FFPSKeyOf(d, &k);
+        ps_shader = D9FFShader(d, TRUE, &k, sizeof(k));
+    }
+    if (!vs_shader || !ps_shader)
+        return FALSE;
+    if ((vs_shader->ff || ps_shader->ff) && (d->ff_dirty || d->states_dirty || d->viewport_dirty)) {
+        D9UpdateFFConstants(d);
+        if (vs_shader->ff)
+            d->vs_consts_dirty = TRUE;
+        if (ps_shader->ff)
+            d->ps_consts_dirty = TRUE;
     }
     D9ShaderKey key;
-    vs_key(d, type, &key);
-    D9Variant *vs = D9ShaderVariant(d->vs, &key);
+    vs_key(d, vs_shader, type, &key);
+    D9Variant *vs = D9ShaderVariant(vs_shader, &key);
     if (!vs || !vs->shader)
         return FALSE;
-    ps_key(d, type, vs, &key);
-    D9Variant *ps = D9ShaderVariant(d->ps, &key);
+    ps_key(d, ps_shader, type, vs, &key);
+    D9Variant *ps = D9ShaderVariant(ps_shader, &key);
     if (!ps || !ps->shader)
         return FALSE;
     if (vs != d->bound_vs) {
@@ -505,16 +527,17 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
         d->internal_dirty = TRUE;
     }
     if (d->vs_consts_dirty) {
-        upload_constants(d, FALSE, vs->info);
+        upload_constants(d, FALSE, vs->info, vs_shader->ff);
         d->vs_consts_dirty = FALSE;
     }
     if (d->ps_consts_dirty) {
-        upload_constants(d, TRUE, ps->info);
+        upload_constants(d, TRUE, ps->info, ps_shader->ff);
         d->ps_consts_dirty = FALSE;
     }
-    if (d->states_dirty || d->internal_dirty || d->ff_dirty) {
-        upload_internal(d, FALSE);
-        upload_internal(d, TRUE);
+    if (d->states_dirty || d->internal_dirty || d->ff_dirty || vs_shader->ff != d->bound_vs_ff) {
+        upload_internal(d, FALSE, vs_shader->ff);
+        upload_internal(d, TRUE, FALSE);
+        d->bound_vs_ff = vs_shader->ff;
         d->internal_dirty = FALSE;
         d->ff_dirty = FALSE;
     }
@@ -708,4 +731,5 @@ void D9FreeDraws(D9Device *d)
     D9ClearStateCache(&d->depth_cache);
     D9ClearStateCache(&d->raster_cache);
     D9ClearStateCache(&d->sampler_cache);
+    D9FreeFFShaders(d);
 }
