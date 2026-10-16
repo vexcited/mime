@@ -202,9 +202,8 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, device->has_compute_derivatives = TRUE)
     BOOL has_vrs = FALSE;
     WANT(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, has_vrs = TRUE)
-    BOOL has_maintenance5 = FALSE;
-    WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
-    if (has_maintenance5)
+    WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, device->has_maintenance5 = TRUE)
+    if (device->has_maintenance5)
         WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, device->has_dgc = TRUE)
     /* acceleration structures and ray queries need all of these. */
     BOOL rt_extensions = has_extension(available, count, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) &&
@@ -230,11 +229,13 @@ static HRESULT create_vulkan_device(D12Device *device)
 #undef WANT
     HeapFree(GetProcessHeap(), 0, available);
 
-    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
     VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT, &maintenance5};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT};
+    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+                                                            device->has_dgc ? (void *)&dgc : NULL};
     VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT atomic64 = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT, device->has_dgc ? (void *)&dgc : NULL};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT,
+        device->has_maintenance5 ? (void *)&maintenance5 : NULL};
     VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
                                                   device->has_atomic64 ? (void *)&atomic64 : atomic64.pNext};
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {
@@ -346,7 +347,10 @@ static HRESULT create_vulkan_device(D12Device *device)
     mesh.multiviewMeshShader = mesh.primitiveFragmentShadingRateMeshShader = FALSE;
     if (!mesh.meshShader || !mesh.taskShader)
         device->has_mesh = FALSE;
-    if (!dgc.deviceGeneratedCommands || !maintenance5.maintenance5)
+    /* shaders go to pipelines without shader modules. */
+    if (!maintenance5.maintenance5)
+        device->has_maintenance5 = FALSE;
+    if (!dgc.deviceGeneratedCommands || !device->has_maintenance5)
         device->has_dgc = FALSE;
     /* 64-bit atomics of typed views need them of images, of buffers and 64-bit integers; sparse ones are not used. */
     atomic64.sparseImageInt64Atomics = FALSE;

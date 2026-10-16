@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define MAX_CONNECTIONS 64
 #define MAX_PHYSICAL_DEVICES 16
@@ -88,9 +89,15 @@ static void bind(MvkConnection *c, uint64_t id, uint64_t handle)
     reverse_put(c, handle, id);
 }
 
+static uint64_t await_id(MvkConnection *c, uint64_t id);
+
+/* an id not bound yet may be a pipeline being created aside: its creation is waited for. */
 static uint64_t lookup(MvkConnection *c, uint64_t id)
 {
-    return id < c->handle_count ? c->handles[id] : 0;
+    uint64_t handle = id < c->handle_count ? c->handles[id] : 0;
+    if (!handle && id && c->jobs)
+        handle = await_id(c, id);
+    return handle;
 }
 
 uint64_t mvk_lookup(MvkConnection *c, uint64_t id)
@@ -988,6 +995,240 @@ static void query_pool_results(MvkCall *call)
     mvk_reply_end(call);
 }
 
+/* ------------------------------------------------------------------ pipelines created aside */
+
+/*
+ * a pipeline compiles for milliseconds, and the guest never waits for its
+ * creation: run in ring order it would hold every later call, a frame's
+ * submits included. the connection thread decodes it, so every handle is
+ * looked up there, and a pool of threads runs the driver's call; the ids
+ * are bound once it is done, and a lookup of one not bound yet waits for
+ * its creation alone. destructions of what a creation may still use wait
+ * for every creation before them.
+ */
+typedef struct MvkJob {
+    struct MvkJob *next, *prev; /* the connection's, in call order */
+    struct MvkJob *queued; /* the pool's */
+    MvkConnection *conn;
+    uint32_t op;
+    VkDevice device;
+    VkPipelineCache cache;
+    uint32_t count;
+    void *infos;
+    uint64_t *ids;
+    VkPipeline *pipelines;
+    bool libraries; /* links pipeline libraries, which a destruction must not take away */
+    VkResult result;
+    volatile int done;
+    uint8_t *memory; /* the call's copy, then the arena it decodes into */
+} MvkJob;
+
+static pthread_mutex_t g_pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_pool_work = PTHREAD_COND_INITIALIZER;
+static MvkJob *g_pool_first, *g_pool_last;
+static uint32_t g_pool_threads;
+
+static void *pool_main(void *arg)
+{
+    (void)arg;
+    mime_set_thread_name("mime-pipelines");
+    for (;;) {
+        pthread_mutex_lock(&g_pool_lock);
+        while (!g_pool_first)
+            pthread_cond_wait(&g_pool_work, &g_pool_lock);
+        MvkJob *job = g_pool_first;
+        g_pool_first = job->queued;
+        if (!g_pool_first)
+            g_pool_last = NULL;
+        pthread_mutex_unlock(&g_pool_lock);
+        const MvkDispatch *fn = &job->conn->fn;
+        job->result = job->op == MVK_OP_vkCreateGraphicsPipelines
+                          ? fn->vkCreateGraphicsPipelines(job->device, job->cache, job->count, job->infos, NULL,
+                                                          job->pipelines)
+                          : fn->vkCreateComputePipelines(job->device, job->cache, job->count, job->infos, NULL,
+                                                         job->pipelines);
+        MvkConnection *c = job->conn;
+        pthread_mutex_lock(&c->job_lock);
+        __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&c->jobs_finished, 1, __ATOMIC_RELEASE);
+        pthread_cond_broadcast(&c->job_done);
+        pthread_mutex_unlock(&c->job_lock);
+    }
+    return NULL;
+}
+
+static void pool_push(MvkJob *job)
+{
+    pthread_mutex_lock(&g_pool_lock);
+    if (!g_pool_threads) {
+        long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+        g_pool_threads = cpus > 4 ? (uint32_t)(cpus / 2 < 8 ? cpus / 2 : 8) : 2;
+        for (uint32_t i = 0; i < g_pool_threads; i++) {
+            pthread_t thread;
+            pthread_create(&thread, NULL, pool_main, NULL);
+            pthread_detach(thread);
+        }
+    }
+    job->queued = NULL;
+    if (g_pool_last)
+        g_pool_last->queued = job;
+    else
+        g_pool_first = job;
+    g_pool_last = job;
+    pthread_cond_signal(&g_pool_work);
+    pthread_mutex_unlock(&g_pool_lock);
+}
+
+/* binds the ids of a finished creation and forgets it. */
+static void finish_job(MvkConnection *c, MvkJob *job)
+{
+    if (job->prev)
+        job->prev->next = job->next;
+    else
+        c->jobs = job->next;
+    if (job->next)
+        job->next->prev = job->prev;
+    else
+        c->last_job = job->prev;
+    for (uint32_t i = 0; i < job->count; i++)
+        bind(c, job->ids[i], (uint64_t)job->pipelines[i]);
+    if (job->result != VK_SUCCESS)
+        mime_warn("vulkan: %s failed: %d", mvk_generated_names[job->op], job->result);
+    free(job->memory);
+    free(job);
+}
+
+static void wait_job(MvkConnection *c, MvkJob *job)
+{
+    pthread_mutex_lock(&c->job_lock);
+    while (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE))
+        pthread_cond_wait(&c->job_done, &c->job_lock);
+    pthread_mutex_unlock(&c->job_lock);
+    finish_job(c, job);
+}
+
+/* the creations done so far, bound. */
+static void reap_jobs(MvkConnection *c)
+{
+    for (MvkJob *job = c->jobs, *next; job; job = next) {
+        next = job->next;
+        if (__atomic_load_n(&job->done, __ATOMIC_ACQUIRE))
+            finish_job(c, job);
+    }
+}
+
+static void drain_jobs(MvkConnection *c)
+{
+    while (c->jobs)
+        wait_job(c, c->jobs);
+}
+
+static uint64_t await_id(MvkConnection *c, uint64_t id)
+{
+    for (MvkJob *job = c->jobs; job; job = job->next)
+        for (uint32_t i = 0; i < job->count; i++)
+            if (job->ids[i] == id) {
+                wait_job(c, job);
+                return id < c->handle_count ? c->handles[id] : 0;
+            }
+    return 0;
+}
+
+static bool links_libraries(const void *next)
+{
+    for (const VkBaseInStructure *s = next; s; s = s->pNext)
+        if (s->sType == VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR)
+            return true;
+    return false;
+}
+
+/* vkCreateGraphicsPipelines and vkCreateComputePipelines, decoded here and run by the pool. */
+static void create_pipelines_aside(MvkCall *call)
+{
+    MvkConnection *c = call->conn;
+    uint32_t op = call->header.op;
+    bool graphics = op == MVK_OP_vkCreateGraphicsPipelines;
+    size_t size = (size_t)(call->in.end - call->in.start), arena = size * 8 + 65536;
+    MvkJob *job = calloc(1, sizeof(*job));
+    uint8_t *memory = job ? malloc(size + arena) : NULL;
+    if (!memory) {
+        free(job);
+        mvk_check(call, VK_ERROR_OUT_OF_HOST_MEMORY, mvk_generated_names[op]);
+        return;
+    }
+    memcpy(memory, call->in.start, size);
+    MvkDecoder d = {memory, memory, memory + size, 0, c, memory + size, 0, arena};
+    job->conn = c;
+    job->op = op;
+    job->memory = memory;
+    job->device = (VkDevice)mvk_get_handle(&d, 1);
+    job->cache = (VkPipelineCache)mvk_get_handle(&d, 0);
+    job->count = mvk_get_u32(&d);
+    size_t info_size = graphics ? sizeof(VkGraphicsPipelineCreateInfo) : sizeof(VkComputePipelineCreateInfo);
+    if (mvk_get_u32(&d)) {
+        job->infos = mvk_alloc(&d, (size_t)job->count * info_size);
+        for (uint32_t i = 0; job->infos && i < job->count; i++) {
+            if (graphics) {
+                VkGraphicsPipelineCreateInfo *info = &((VkGraphicsPipelineCreateInfo *)job->infos)[i];
+                mvk_get_VkGraphicsPipelineCreateInfo(&d, info);
+                job->libraries |= links_libraries(info->pNext);
+            } else {
+                mvk_get_VkComputePipelineCreateInfo(&d, &((VkComputePipelineCreateInfo *)job->infos)[i]);
+            }
+        }
+    }
+    job->ids = mvk_alloc(&d, sizeof(uint64_t) * job->count);
+    job->pipelines = mvk_alloc(&d, sizeof(VkPipeline) * job->count);
+    for (uint32_t i = 0; job->ids && i < job->count; i++)
+        job->ids[i] = mvk_get_u64(&d);
+    if (d.error || !job->infos || !job->ids || !job->pipelines) {
+        mvk_malformed(call, mvk_generated_names[op]);
+        free(memory);
+        free(job);
+        return;
+    }
+    if (graphics ? !c->fn.vkCreateGraphicsPipelines : !c->fn.vkCreateComputePipelines) {
+        mvk_unsupported(call, mvk_generated_names[op]);
+        free(memory);
+        free(job);
+        return;
+    }
+    /* the ids may be those of pipelines destroyed before: their lookups now wait for this creation. */
+    for (uint32_t i = 0; i < job->count; i++)
+        if (job->ids[i] < c->handle_count)
+            c->handles[job->ids[i]] = 0;
+    job->prev = c->last_job;
+    if (c->last_job)
+        c->last_job->next = job;
+    else
+        c->jobs = job;
+    c->last_job = job;
+    pool_push(job);
+}
+
+/* calls that destroy what a creation aside may still use wait for all of them. */
+static bool waits_for_jobs(MvkConnection *c, uint32_t op)
+{
+    switch (op) {
+    case MVK_OP_vkDestroyShaderModule:
+    case MVK_OP_vkDestroyPipelineCache:
+    case MVK_OP_vkDestroyPipelineLayout:
+    case MVK_OP_vkDestroySampler:
+    case MVK_OP_vkDestroyDescriptorSetLayout:
+    case MVK_OP_vkDestroyRenderPass:
+    case MVK_OP_vkDestroySamplerYcbcrConversion:
+    case MVK_OP_DESTROY_DEVICE:
+        return true;
+    case MVK_OP_vkDestroyPipeline:
+        for (MvkJob *job = c->jobs; job; job = job->next)
+            if (job->libraries)
+                return true;
+        return false;
+    default:
+        return false;
+    }
+}
+
 /* ------------------------------------------------------------------ running calls */
 
 static void run_hand(MvkCall *call)
@@ -1047,7 +1288,19 @@ static void run_hand(MvkCall *call)
 static void run_call(MvkCall *call)
 {
     uint32_t op = call->header.op;
-    if (op > MVK_OP_NONE && op < MVK_OP_GENERATED_COUNT && mvk_generated_commands[op])
+    MvkConnection *c = call->conn;
+    if (c->jobs) {
+        uint32_t finished = __atomic_load_n(&c->jobs_finished, __ATOMIC_ACQUIRE);
+        if (finished != c->jobs_seen) {
+            c->jobs_seen = finished;
+            reap_jobs(c);
+        }
+        if (c->jobs && waits_for_jobs(c, op))
+            drain_jobs(c);
+    }
+    if (op == MVK_OP_vkCreateGraphicsPipelines || op == MVK_OP_vkCreateComputePipelines)
+        create_pipelines_aside(call);
+    else if (op > MVK_OP_NONE && op < MVK_OP_GENERATED_COUNT && mvk_generated_commands[op])
         mvk_generated_commands[op](call);
     else if (op >= MVK_OP_HAND && op < MVK_OP_HAND_END)
         run_hand(call);
@@ -1174,6 +1427,8 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     c->arena = malloc(ARENA_SIZE);
     pthread_mutex_init(&c->lock, NULL);
     pthread_cond_init(&c->cond, NULL);
+    pthread_mutex_init(&c->job_lock, NULL);
+    pthread_cond_init(&c->job_done, NULL);
     if (!c->call || !c->arena) {
         free(c->call);
         free(c->arena);
@@ -1227,6 +1482,7 @@ void mime_vk_close(uint64_t index)
     pthread_cond_signal(&c->cond);
     pthread_mutex_unlock(&c->lock);
     pthread_join(c->thread, NULL);
+    drain_jobs(c);
     mvk_wsi_close(c);
     if (c->device) {
         c->fn.vkDeviceWaitIdle(c->device);

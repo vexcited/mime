@@ -54,6 +54,13 @@ struct MvkConnection {
     struct MvkWsi *wsi; /* vkwsi.c */
     VkDeviceSize import_alignment;
 
+    /* pipelines being created aside, in the order of their calls, see vulkan.c. */
+    struct MvkJob *jobs, *last_job;
+    pthread_mutex_t job_lock;
+    pthread_cond_t job_done;
+    volatile uint32_t jobs_finished;
+    uint32_t jobs_seen;
+
     uint8_t *call;   /* a private copy of the call being run */
     uint8_t *arena;
     uint8_t *stream; /* a private copy of a command buffer's stream */

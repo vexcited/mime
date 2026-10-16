@@ -112,9 +112,40 @@ static int program_of(const void *bytecode, SIZE_T length)
     return code && size >= 8 ? (int)(code[0] >> 16) : -1;
 }
 
-/* compiles a stage against the root signature into a shader module. */
+/*
+ * a compiled stage: its SPIR-V handed to the pipeline itself with
+ * VK_KHR_maintenance5, as no shader module then outlives the call while
+ * the host compiles the pipeline aside, or a shader module.
+ */
+typedef struct D12Shader {
+    BOOL present;
+    VkShaderModule module;
+    VkShaderModuleCreateInfo code;
+    DxbcShaderInfo info;
+} D12Shader;
+
+static VkPipelineShaderStageCreateInfo stage_info(const D12Shader *shader, VkShaderStageFlagBits stage)
+{
+    VkPipelineShaderStageCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    info.pNext = shader->module ? NULL : &shader->code;
+    info.stage = stage;
+    info.module = shader->module;
+    info.pName = "main";
+    return info;
+}
+
+static void release_shader(D12Device *device, D12Shader *shader)
+{
+    if (shader->module)
+        device->vk.vkDestroyShaderModule(device->vk.device, shader->module, NULL);
+    else if (shader->present)
+        dxbc_free(&shader->info, &g_d12_allocator);
+    shader->present = FALSE;
+}
+
+/* compiles a stage against the root signature. */
 static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stage stage,
-                             const D3D12_SHADER_BYTECODE *code, DxbcCompileOptions *options, VkShaderModule *module)
+                             const D3D12_SHADER_BYTECODE *code, DxbcCompileOptions *options, D12Shader *shader)
 {
     const void *bytecode = code->pShaderBytecode;
     SIZE_T length = code->BytecodeLength;
@@ -143,10 +174,16 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     VkShaderModuleCreateInfo create = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create.codeSize = info.spirv_words * 4;
     create.pCode = info.spirv;
-    VkResult vr = device->vk.vkCreateShaderModule(device->vk.device, &create, NULL, module);
-    dxbc_free(&info, &g_d12_allocator);
-    if (vr != VK_SUCCESS)
-        return E_OUTOFMEMORY;
+    if (device->has_maintenance5) {
+        shader->code = create;
+        shader->info = info;
+    } else {
+        VkResult vr = device->vk.vkCreateShaderModule(device->vk.device, &create, NULL, &shader->module);
+        dxbc_free(&info, &g_d12_allocator);
+        if (vr != VK_SUCCESS)
+            return E_OUTOFMEMORY;
+    }
+    shader->present = TRUE;
     state->stage_mask |= 1u << stage;
     return S_OK;
 }
@@ -206,22 +243,18 @@ HRESULT D12CreateComputePipeline(D12Device *device, const D3D12_COMPUTE_PIPELINE
     HRESULT hr = pick_root(device, state, desc->pRootSignature, codes, 1);
     if (SUCCEEDED(hr)) {
         DxbcCompileOptions options = {0};
-        VkShaderModule module = VK_NULL_HANDLE;
-        hr = compile_stage(device, state, D12_CS, &desc->CS, &options, &module);
+        D12Shader shader = {0};
+        hr = compile_stage(device, state, D12_CS, &desc->CS, &options, &shader);
         if (SUCCEEDED(hr)) {
             VkComputePipelineCreateInfo info = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
             info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
-            info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-            info.stage.module = module;
-            info.stage.pName = "main";
+            info.stage = stage_info(&shader, VK_SHADER_STAGE_COMPUTE_BIT);
             info.layout = state->root->layout;
             if (device->vk.vkCreateComputePipelines(device->vk.device, device->pipeline_cache, 1, &info, NULL,
                                                     &state->pipeline) != VK_SUCCESS)
                 hr = E_INVALIDARG;
         }
-        if (module)
-            device->vk.vkDestroyShaderModule(device->vk.device, module, NULL);
+        release_shader(device, &shader);
     }
     return finish(device, state, hr, out);
 }
@@ -449,7 +482,7 @@ static VkStencilOpState stencil_state(const D3D12_DEPTH_STENCILOP_DESC1 *d)
 
 /* the vulkan pipeline of a graphics state: what direct3d 12 fixes in it, the rest dynamic. */
 static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const GraphicsDesc *g,
-                              const VkShaderModule *modules)
+                              const D12Shader *shaders)
 {
     VkPipelineShaderStageCreateInfo stages[D12_STAGES];
     UINT stage_count = 0;
@@ -463,9 +496,8 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
         [D12_MS] = VK_SHADER_STAGE_MESH_BIT_EXT,
     };
     for (UINT i = 0; i < D12_STAGES; i++)
-        if (modules[i] && i != D12_CS)
-            stages[stage_count++] = (VkPipelineShaderStageCreateInfo){
-                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_GRAPHICS[i], modules[i], "main"};
+        if (shaders[i].present && i != D12_CS)
+            stages[stage_count++] = stage_info(&shaders[i], VK_GRAPHICS[i]);
 
     VkVertexInputBindingDescription bindings[D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
     VkVertexInputBindingDivisorDescriptionKHR divisors[D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
@@ -504,7 +536,7 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
     };
     VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     assembly.topology = CLASSES[g->topology <= D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH ? g->topology : 0];
-    if (modules[D12_HS])
+    if (shaders[D12_HS].present)
         assembly.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
     VkPipelineTessellationStateCreateInfo tessellation = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO};
     tessellation.patchControlPoints = 3;
@@ -645,7 +677,7 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
     info.pStages = stages;
     info.pVertexInputState = state->mesh ? NULL : &vertex;
     info.pInputAssemblyState = state->mesh ? NULL : &assembly;
-    info.pTessellationState = modules[D12_HS] ? &tessellation : NULL;
+    info.pTessellationState = shaders[D12_HS].present ? &tessellation : NULL;
     info.pViewportState = &viewport;
     info.pRasterizationState = &raster;
     info.pMultisampleState = &multisample;
@@ -723,7 +755,7 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
         memcpy(state->so_strides, strides, sizeof(strides));
         state->rasterized_stream = g->so.RasterizedStream;
     }
-    VkShaderModule modules[D12_STAGES] = {0};
+    D12Shader shaders[D12_STAGES] = {0};
     for (UINT stage = 0; stage < D12_STAGES && SUCCEEDED(hr); stage++) {
         if (!g->shaders[stage].pShaderBytecode || stage == D12_CS)
             continue;
@@ -740,7 +772,7 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
             options.so_stride_count = 4;
             options.rasterized_stream = g->so.RasterizedStream;
         }
-        hr = compile_stage(device, state, (D12Stage)stage, &g->shaders[stage], &options, &modules[stage]);
+        hr = compile_stage(device, state, (D12Stage)stage, &g->shaders[stage], &options, &shaders[stage]);
     }
     if (SUCCEEDED(hr) && with_so && !g->shaders[D12_GS].pShaderBytecode) {
         const D3D12_SHADER_BYTECODE *last = g->shaders[D12_DS].pShaderBytecode ? &g->shaders[D12_DS] : &g->shaders[D12_VS];
@@ -757,7 +789,7 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
             options.so_strides = strides;
             options.so_stride_count = 4;
             options.rasterized_stream = g->so.RasterizedStream;
-            hr = compile_stage(device, state, D12_GS, &code, &options, &modules[D12_GS]);
+            hr = compile_stage(device, state, D12_GS, &code, &options, &shaders[D12_GS]);
             g_d12_allocator.free(NULL, gs);
         }
     }
@@ -765,10 +797,9 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
     g_d12_allocator.free(NULL, ps_inputs.elements);
     g_d12_allocator.free(NULL, primitives.elements);
     if (SUCCEEDED(hr))
-        hr = build_graphics(device, state, g, modules);
+        hr = build_graphics(device, state, g, shaders);
     for (UINT i = 0; i < D12_STAGES; i++)
-        if (modules[i])
-            device->vk.vkDestroyShaderModule(device->vk.device, modules[i], NULL);
+        release_shader(device, &shaders[i]);
     return finish(device, state, hr, out);
 }
 
