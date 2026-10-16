@@ -5,6 +5,9 @@
  */
 #include "msvcrt_private.h"
 
+/* x86 has its own, with the try levels of its frames, in x86/seh.c. */
+#if !defined(__i386__)
+
 DECLSPEC_NORETURN void MsvcrtLongjmpRestore(void *buf, int value);
 void MsvcrtLongjmpLanding(void);
 
@@ -43,3 +46,4 @@ void __cdecl longjmp(void *buf, int value)
     /* arm64 restores directly: mime's arm64 ntdll has no frame based unwinding yet. */
     MsvcrtLongjmpRestore(buf, value);
 }
+#endif

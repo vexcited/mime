@@ -1,6 +1,7 @@
 /*
  * the floating point environment: msvcrt's _control87 family over the
- * sse control register on x64 and fpcr and fpsr on arm64.
+ * sse control register on x64, the x87 control word and the sse one on
+ * x86, and fpcr and fpsr on arm64.
  */
 #include "msvcrt_private.h"
 
@@ -30,7 +31,9 @@
 #define _SW_INVALID 0x00000010
 #define _SW_DENORMAL 0x00080000
 
-#if defined(__x86_64__)
+#define _PC_24 0x00020000
+
+#if defined(__x86_64__) || defined(__i386__)
 
 static unsigned get_mxcsr(void)
 {
@@ -45,7 +48,7 @@ static void set_mxcsr(unsigned v)
 }
 
 /* msvcrt's control word from the sse control register. */
-static unsigned read_control(void)
+static unsigned sse_read_control(void)
 {
     unsigned m = get_mxcsr(), cw = _PC_53;
     if (m & 0x0080)
@@ -76,7 +79,7 @@ static unsigned read_control(void)
     return cw;
 }
 
-static void write_control(unsigned cw)
+static void sse_write_control(unsigned cw)
 {
     unsigned m = get_mxcsr() & ~0xffc0u;
     if (cw & _EM_INVALID)
@@ -107,7 +110,7 @@ static void write_control(unsigned cw)
     set_mxcsr(m);
 }
 
-static unsigned read_status(void)
+static unsigned sse_read_status(void)
 {
     unsigned m = get_mxcsr(), sw = 0;
     if (m & 0x01)
@@ -130,6 +133,69 @@ static void clear_status(void)
     set_mxcsr(get_mxcsr() & ~0x3fu);
     __asm__ __volatile__("fnclex");
 }
+
+#if defined(__x86_64__)
+static unsigned read_control(void) { return sse_read_control(); }
+static void write_control(unsigned cw) { sse_write_control(cw); }
+static unsigned read_status(void) { return sse_read_status(); }
+#else
+/* the x87 masks, precision and rounding are msvcrt's control word; the sse unit follows them. */
+static unsigned read_control(void)
+{
+    unsigned short x;
+    __asm__ __volatile__("fnstcw %0" : "=m"(x));
+    unsigned cw = 0;
+    if (x & 0x01)
+        cw |= _EM_INVALID;
+    if (x & 0x02)
+        cw |= _EM_DENORMAL;
+    if (x & 0x04)
+        cw |= _EM_ZERODIVIDE;
+    if (x & 0x08)
+        cw |= _EM_OVERFLOW;
+    if (x & 0x10)
+        cw |= _EM_UNDERFLOW;
+    if (x & 0x20)
+        cw |= _EM_INEXACT;
+    static const unsigned PRECISION[4] = {_PC_24, _PC_24, _PC_53, 0};
+    static const unsigned ROUNDING[4] = {_RC_NEAR, _RC_DOWN, _RC_UP, _RC_CHOP};
+    cw |= PRECISION[(x >> 8) & 3] | ROUNDING[(x >> 10) & 3];
+    return cw | (sse_read_control() & _DN_FLUSH);
+}
+
+static void write_control(unsigned cw)
+{
+    unsigned short x;
+    __asm__ __volatile__("fnstcw %0" : "=m"(x));
+    x &= ~0x0F3F;
+    x |= (cw & _EM_INVALID ? 0x01 : 0) | (cw & _EM_DENORMAL ? 0x02 : 0) | (cw & _EM_ZERODIVIDE ? 0x04 : 0) |
+         (cw & _EM_OVERFLOW ? 0x08 : 0) | (cw & _EM_UNDERFLOW ? 0x10 : 0) | (cw & _EM_INEXACT ? 0x20 : 0);
+    x |= (cw & _MCW_PC) == _PC_24 ? 0x000 : (cw & _MCW_PC) == _PC_53 ? 0x200 : 0x300;
+    x |= (unsigned short)(((cw & _MCW_RC) == _RC_DOWN ? 1 : (cw & _MCW_RC) == _RC_UP ? 2 : (cw & _MCW_RC) == _RC_CHOP ? 3 : 0) << 10);
+    __asm__ __volatile__("fldcw %0" : : "m"(x));
+    sse_write_control(cw);
+}
+
+static unsigned read_status(void)
+{
+    unsigned short x;
+    __asm__ __volatile__("fnstsw %0" : "=m"(x));
+    unsigned sw = sse_read_status();
+    if (x & 0x01)
+        sw |= _SW_INVALID;
+    if (x & 0x02)
+        sw |= _SW_DENORMAL;
+    if (x & 0x04)
+        sw |= _SW_ZERODIVIDE;
+    if (x & 0x08)
+        sw |= _SW_OVERFLOW;
+    if (x & 0x10)
+        sw |= _SW_UNDERFLOW;
+    if (x & 0x20)
+        sw |= _SW_INEXACT;
+    return sw;
+}
+#endif
 
 #else
 
@@ -258,10 +324,14 @@ unsigned int __cdecl _control87(unsigned int value, unsigned int mask)
     return cw;
 }
 
-/* _controlfp ignores the denormal exception mask, like msvcrt on 64 bit processors. */
+/* _controlfp ignores the denormal exception mask, and the precision but on x86, like msvcrt. */
 unsigned int __cdecl _controlfp(unsigned int value, unsigned int mask)
 {
+#if defined(__i386__)
+    return _control87(value, mask & ~(_EM_DENORMAL | _MCW_IC));
+#else
     return _control87(value, mask & ~(_EM_DENORMAL | _MCW_PC | _MCW_IC));
+#endif
 }
 
 errno_t __cdecl _controlfp_s(unsigned int *current, unsigned int value, unsigned int mask)
@@ -307,7 +377,7 @@ unsigned int __cdecl _clearfp(void)
 
 void __cdecl _fpreset(void)
 {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
     __asm__ __volatile__("fninit");
 #endif
     clear_status();
