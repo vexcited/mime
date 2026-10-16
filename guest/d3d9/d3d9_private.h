@@ -308,6 +308,9 @@ struct D9Device {
     UINT fvf_decl_count;
     /* what draws use: constant buffers of each stage, floats, integers and d3d9.dll's own, rings and zeros. */
     ID3D11Buffer *cbs[2][3];
+    /* the float constants' buffers of 16, 32, 64, 128 and 256 registers, the one bound as large as the shader reads. */
+    ID3D11Buffer *float_cbs[2][5];
+    UINT bound_bucket[2];
     ID3D11Buffer *zeros;
     D9Ring up_vertices, up_indices;
     D9StateCache blend_cache, depth_cache, raster_cache, sampler_cache;
@@ -577,6 +580,8 @@ typedef struct D9ShaderInfo {
     UINT def_count;
     UINT float_count;
     BOOL relative;
+    /* whether the code reads integer or boolean constants, whose buffer is uploaded only then. */
+    BOOL uses_ints;
 } D9ShaderInfo;
 
 /* the outputs a vertex shader before model 3 writes, in D9ShaderInfo.written. */
@@ -796,6 +801,8 @@ void D9FreeShaderInfo(D9ShaderInfo *info);
 /* the dxbc of a shader for a key, freed with HeapFree. */
 HRESULT D9TranslateShader(const D9ShaderInfo *info, const D9ShaderKey *key, void **bytecode, SIZE_T *size,
                           UINT *outputs);
+/* the registers of the float constants' buffer of a shader, the size of the buffer bound for it. */
+UINT D9FloatBucketSize(const D9ShaderInfo *info);
 
 /* the registers of direct3d 9's interpolated values, the same for every shader so any two link. */
 #define D9_SLOT_POSITION 28

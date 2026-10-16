@@ -229,7 +229,28 @@ static ID3D11Buffer *make_cb(D9Device *d, UINT size)
     return SUCCEEDED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, NULL, &b)) ? b : NULL;
 }
 
-/* the float, integer and boolean constants of a stage, with the shader's own definitions over them. */
+/* the registers of the float constants' buffer a shader reads: 16 to 256, or all with relative addressing. */
+static UINT bucket_of(const D9ShaderInfo *info)
+{
+    UINT count = info->relative ? 256 : info->float_count;
+    UINT bucket = 0;
+    while (bucket < 4 && (16u << bucket) < count)
+        bucket++;
+    return bucket;
+}
+
+UINT D9FloatBucketSize(const D9ShaderInfo *info)
+{
+    UINT max = info->pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS;
+    return D9_MIN(16u << bucket_of(info), max);
+}
+
+/*
+ * the float, integer and boolean constants of a stage, with the shader's
+ * own definitions over them, in a buffer no larger than what it reads:
+ * each upload renames the buffer, so small ones keep d3d11's ring of
+ * dynamic ranges from filling.
+ */
 static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info, BOOL ff)
 {
     ID3D11DeviceContext1 *ctx = d->context;
@@ -238,16 +259,28 @@ static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info, 
     const int(*ints)[4] = pixel ? d->ps_i : d->vs_i;
     const BOOL *bools = pixel ? d->ps_b : d->vs_b;
     D3D11_MAPPED_SUBRESOURCE m;
-    UINT count = info->relative ? (pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) : D9_MAX(info->float_count, 1);
-    if (ff)
-        count = D9_MIN(count, pixel ? D9_FF_PS_CONSTANTS : D9_FF_VS_CONSTANTS);
-    if (SUCCEEDED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)cbs[0], 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-        memcpy(m.pData, f, count * 16);
+    UINT bucket = bucket_of(info);
+    UINT count = D9FloatBucketSize(info);
+    UINT available = ff ? (pixel ? D9_FF_PS_CONSTANTS : D9_FF_VS_CONSTANTS) : count;
+    ID3D11Buffer *floats = d->float_cbs[pixel][bucket];
+    if (bucket != d->bound_bucket[pixel]) {
+        if (pixel)
+            ctx->lpVtbl->PSSetConstantBuffers(ctx, 0, 1, &floats);
+        else
+            ctx->lpVtbl->VSSetConstantBuffers(ctx, 0, 1, &floats);
+        d->bound_bucket[pixel] = bucket;
+    }
+    if (SUCCEEDED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)floats, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        memcpy(m.pData, f, D9_MIN(count, available) * 16);
+        if (available < count)
+            memset((BYTE *)m.pData + available * 16, 0, (count - available) * 16);
         for (UINT i = 0; i < info->def_count; i++)
             if ((info->defs[i].reg >> 16) == 2 && (info->defs[i].reg & 0xFFFF) < count)
                 memcpy((BYTE *)m.pData + (info->defs[i].reg & 0xFFFF) * 16, info->defs[i].v, 16);
-        ctx->lpVtbl->Unmap(ctx, (ID3D11Resource *)cbs[0], 0);
+        ctx->lpVtbl->Unmap(ctx, (ID3D11Resource *)floats, 0);
     }
+    if (!info->uses_ints)
+        return;
     if (SUCCEEDED(ctx->lpVtbl->Map(ctx, (ID3D11Resource *)cbs[1], 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
         UINT *words = m.pData;
         memcpy(words, ints, 16 * 16);
@@ -691,7 +724,12 @@ HRESULT D9DrawIndexedUP(D9Device *d, D3DPRIMITIVETYPE type, UINT min_index, UINT
 HRESULT D9InitDraws(D9Device *d)
 {
     for (UINT p = 0; p < 2; p++) {
-        d->cbs[p][0] = make_cb(d, (p ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) * 16);
+        for (UINT b = 0; b < 5; b++)
+            if (!(d->float_cbs[p][b] = make_cb(d, D9_MIN(16u << b, p ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) * 16)))
+                return E_OUTOFMEMORY;
+        d->cbs[p][0] = d->float_cbs[p][4];
+        d->cbs[p][0]->lpVtbl->AddRef(d->cbs[p][0]);
+        d->bound_bucket[p] = 4;
         d->cbs[p][1] = make_cb(d, 20 * 16);
         d->cbs[p][2] = make_cb(d, 24 * 16);
         for (UINT i = 0; i < 3; i++)
@@ -731,16 +769,25 @@ void D9ResetBindings(D9Device *d)
 
 void D9FreeDraws(D9Device *d)
 {
-    for (UINT p = 0; p < 2; p++)
+    for (UINT p = 0; p < 2; p++) {
         for (UINT i = 0; i < 3; i++)
             if (d->cbs[p][i])
                 d->cbs[p][i]->lpVtbl->Release(d->cbs[p][i]);
+        for (UINT b = 0; b < 5; b++)
+            if (d->float_cbs[p][b])
+                d->float_cbs[p][b]->lpVtbl->Release(d->float_cbs[p][b]);
+    }
+    memset(d->cbs, 0, sizeof(d->cbs));
+    memset(d->float_cbs, 0, sizeof(d->float_cbs));
     if (d->zeros)
         d->zeros->lpVtbl->Release(d->zeros);
     if (d->up_vertices.buffer)
         d->up_vertices.buffer->lpVtbl->Release(d->up_vertices.buffer);
     if (d->up_indices.buffer)
         d->up_indices.buffer->lpVtbl->Release(d->up_indices.buffer);
+    d->zeros = NULL;
+    memset(&d->up_vertices, 0, sizeof(d->up_vertices));
+    memset(&d->up_indices, 0, sizeof(d->up_indices));
     D9ClearStateCache(&d->blend_cache);
     D9ClearStateCache(&d->depth_cache);
     D9ClearStateCache(&d->raster_cache);

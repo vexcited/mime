@@ -1545,7 +1545,7 @@ static void declare(Tx *t, D9Code *d)
     const D9ShaderKey *key = t->key;
     D9CodePut(d, (info->pixel ? 0u : 1u) << 16 | 5 << 4);
     D9CodePut(d, 0);
-    UINT floats = info->relative ? (info->pixel ? D9_PS_CONSTANTS : D9_VS_CONSTANTS) : D9_MAX(info->float_count, 1);
+    UINT floats = D9FloatBucketSize(info);
     dcl(d, OP_DCL_CONSTANT_BUFFER | (info->relative ? 1u << 11 : 0), cb_decl(0, floats), NULL, 0);
     dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(1, 20), NULL, 0);
     dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(2, 24), NULL, 0);
@@ -1893,6 +1893,8 @@ HRESULT D9ParseShader(const DWORD *function, BOOL pixel, D9ShaderInfo *info)
                 else
                     info->vface = TRUE;
             }
+            if (type == RT_CONSTINT || type == RT_CONSTBOOL)
+                info->uses_ints = TRUE;
             if (pixel && info->major < 3 && type == RT_TEXTURE && num < 8)
                 info->in_declared |= 1u << (8 + num);
             if (pixel && info->major < 3 && type == RT_INPUT && num < 2)
