@@ -89,7 +89,8 @@ BOOLEAN MxFillPeb32(PVOID memory)
     PPEB native = NtCurrentPeb();
     PRTL_USER_PROCESS_PARAMETERS pp = native->ProcessParameters;
     SIZE_T strings = pp->ImagePathName.Length + pp->CommandLine.Length + pp->CurrentDirectory.DosPath.Length +
-                     pp->WindowTitle.Length + pp->DesktopInfo.Length + pp->ShellInfo.Length + pp->RuntimeData.Length + 32;
+                     pp->DllPath.Length + pp->WindowTitle.Length + pp->DesktopInfo.Length + pp->ShellInfo.Length +
+                     pp->RuntimeData.Length + 32;
     SIZE_T size = sizeof(MIME_PARAMETERS32) + strings + pp->EnvironmentSize;
     MIME_PARAMETERS32 *out = allocate32(size);
     if (!out)
@@ -124,6 +125,7 @@ BOOLEAN MxFillPeb32(PVOID memory)
     out->ImagePathName = copy_string32(&cursor, &pp->ImagePathName);
     out->CommandLine = copy_string32(&cursor, &pp->CommandLine);
     out->CurrentDirectory = copy_string32(&cursor, &pp->CurrentDirectory.DosPath);
+    out->DllPath = copy_string32(&cursor, &pp->DllPath);
     out->WindowTitle = copy_string32(&cursor, &pp->WindowTitle);
     out->DesktopInfo = copy_string32(&cursor, &pp->DesktopInfo);
     out->ShellInfo = copy_string32(&cursor, &pp->ShellInfo);

@@ -113,6 +113,9 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
         return;
     }
     DC_STATE *st = &dc->State;
+    /* without a rectangle there is nothing to fill or clip to: the background mode decides. */
+    if (!rect)
+        options &= ~(UINT)(ETO_OPAQUE | ETO_CLIPPED);
     RECT opaque = {0, 0, 0, 0};
     if (rect) {
         LONG l = rect->left, t = rect->top, r = rect->right, b = rect->bottom;

@@ -39,6 +39,148 @@ static MSG message64(const MSG32 *m)
     return (MSG){ptr32(m->Hwnd), m->Message, m->Wparam, (LONG_PTR)(ULONG_PTR)m->Lparam, m->Time, m->Point, m->Private};
 }
 
+/* a counted string's length back into the x86 one the call filled. */
+static void set_length32(ULONG value, const UNICODE_STRING *s)
+{
+    if (value)
+        ((MIME_STRING32 *)ptr32(value))->Length = s->Length;
+}
+
+static PVOID allocate(SIZE_T size)
+{
+    PVOID base = NULL;
+    return NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &size, MEM_RESERVE | MEM_COMMIT,
+                                              PAGE_READWRITE))
+               ? base
+               : NULL;
+}
+
+static void release(PVOID base)
+{
+    SIZE_T size = 0;
+    if (base)
+        NtFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
+}
+
+/* the 48-byte x86 MENUITEMINFOW widened; the 44-byte one before hbmpItem too. */
+static BOOLEAN menu_item64(const ULONG *p, MENUITEMINFOW *info)
+{
+    if (!p || (p[0] != 48 && p[0] != 44))
+        return FALSE;
+    *info = (MENUITEMINFOW){sizeof(*info), p[1], p[2], p[3], p[4], ptr32(p[5]), ptr32(p[6]), ptr32(p[7]), p[8],
+                            ptr32(p[9]), p[10], p[0] == 48 ? ptr32(p[11]) : NULL};
+    return TRUE;
+}
+
+/*
+ * the x86 OUTLINETEXTMETRICW: the same fields up to the four name offsets,
+ * which are 4 bytes each with no padding before them, then the strings.
+ */
+static ULONG outline_metrics32(const ULONG *a)
+{
+    const ULONG names = offsetof(OUTLINETEXTMETRICW, otmusMinimumPPEM) + sizeof(UINT), size32 = names + 16;
+    const ULONG delta = sizeof(OUTLINETEXTMETRICW) - size32;
+    ULONG64 v[4] = {a[0], 0, 0, a[3]};
+    ULONG need = (ULONG)MxCallService(MIME_SVC_NtGdiGetOutlineTextMetricsInternalW, v);
+    if (need < sizeof(OUTLINETEXTMETRICW))
+        return 0;
+    if (!a[2])
+        return need - delta;
+    PUCHAR native = allocate(2 * (SIZE_T)need);
+    if (!native)
+        return 0;
+    v[1] = need;
+    v[2] = (ULONG_PTR)native;
+    ULONG n = 0;
+    if (MxCallService(MIME_SVC_NtGdiGetOutlineTextMetricsInternalW, v) == need) {
+        OUTLINETEXTMETRICW *otm = (OUTLINETEXTMETRICW *)native;
+        PUCHAR out = native + need;
+        memcpy(out, native, names);
+        ((OUTLINETEXTMETRICW *)out)->otmSize = need - delta;
+        ULONG offsets[4] = {(ULONG)(ULONG_PTR)otm->otmpFamilyName - delta, (ULONG)(ULONG_PTR)otm->otmpFaceName - delta,
+                            (ULONG)(ULONG_PTR)otm->otmpStyleName - delta, (ULONG)(ULONG_PTR)otm->otmpFullName - delta};
+        memcpy(out + names, offsets, sizeof(offsets));
+        memcpy(out + size32, native + sizeof(OUTLINETEXTMETRICW), need - sizeof(OUTLINETEXTMETRICW));
+        n = a[1] < need - delta ? a[1] : need - delta;
+        memcpy(ptr32(a[2]), out, n);
+    }
+    release(native);
+    return n;
+}
+
+/* lists of handles, or of atoms with handles, narrowed into the x86 buffer. */
+static ULONG handle_list32(ULONG number, const ULONG *a)
+{
+    BOOLEAN props = number == MIME_SVC_NtUserBuildPropList;
+    ULONG max = props ? a[1] : a[4], count = 0;
+    SIZE_T item = props ? sizeof(PROPLISTITEM) : sizeof(HWND);
+    PVOID list = max ? allocate(max * item) : NULL;
+    if (max && !list)
+        return (ULONG)STATUS_NO_MEMORY;
+    ULONG64 v[7];
+    if (props) {
+        v[0] = a[0];
+        v[1] = max;
+        v[2] = (ULONG_PTR)list;
+        v[3] = (ULONG_PTR)&count;
+    } else {
+        v[0] = a[0];
+        v[1] = (LONG64)(LONG)a[1];
+        v[2] = a[2];
+        v[3] = a[3];
+        v[4] = max;
+        v[5] = (ULONG_PTR)list;
+        v[6] = (ULONG_PTR)&count;
+    }
+    NTSTATUS status = (NTSTATUS)MxCallService(number, v);
+    ULONG *out = ptr32(props ? a[2] : a[5]);
+    for (ULONG i = 0; out && i < count && i < max; i++) {
+        if (props) {
+            const PROPLISTITEM *p = (const PROPLISTITEM *)list + i;
+            out[2 * i] = p->Atom;
+            out[2 * i + 1] = (ULONG)(ULONG_PTR)p->Data;
+        } else {
+            out[i] = (ULONG)(ULONG_PTR)((HWND *)list)[i];
+        }
+    }
+    ULONG count_at = props ? a[3] : a[6];
+    if (count_at)
+        *(ULONG *)ptr32(count_at) = count;
+    release(list);
+    return (ULONG)status;
+}
+
+/* the 28-byte x86 INPUT records widened, sent in batches. */
+static ULONG send_input32(const ULONG *a)
+{
+    if (a[2] != 28 || !a[1])
+        return 0;
+    const ULONG *in = ptr32(a[1]);
+    INPUT batch[32];
+    ULONG sent = 0;
+    for (ULONG i = 0; i < a[0];) {
+        ULONG n = 0;
+        for (; n < RTL_NUMBER_OF(batch) && i < a[0]; n++, i++) {
+            const ULONG *p = in + 7 * i;
+            INPUT *input = &batch[n];
+            memset(input, 0, sizeof(*input));
+            input->type = p[0];
+            if (p[0] == INPUT_MOUSE)
+                input->mi = (MOUSEINPUT){(LONG)p[1], (LONG)p[2], p[3], p[4], p[5], p[6]};
+            else if (p[0] == INPUT_KEYBOARD)
+                input->ki = (KEYBDINPUT){(WORD)p[1], (WORD)(p[1] >> 16), p[2], p[3], p[4]};
+            else
+                input->hi = (HARDWAREINPUT){p[1], (WORD)p[2], (WORD)(p[2] >> 16)};
+        }
+        ULONG64 v[3] = {n, (ULONG_PTR)batch, sizeof(INPUT)};
+        ULONG done = (ULONG)MxCallService(MIME_SVC_NtUserSendInput, v);
+        sent += done;
+        if (done < n)
+            break;
+    }
+    return sent;
+}
+
 /*
  * the object records with a pointer sized member: BITMAP and the DIBSECTION
  * that starts with one keep bmBits, LOGBRUSH keeps lbHatch. the others have
@@ -372,6 +514,125 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[1] = a[1];
         v[2] = a[2];
         return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtUserUnregisterClass:
+    case MIME_SVC_NtUserDefSetText: {
+        BOOLEAN text = number == MIME_SVC_NtUserDefSetText;
+        UNICODE_STRING name = str32(a[text]);
+        v[0] = a[0];
+        v[1] = a[1];
+        v[text] = a[text] ? (ULONG_PTR)&name : 0;
+        return (ULONG)MxCallService(number, v);
+    }
+    case MIME_SVC_NtUserGetClassName: {
+        UNICODE_STRING name = str32(a[2]);
+        v[0] = a[0];
+        v[1] = a[1];
+        v[2] = a[2] ? (ULONG_PTR)&name : 0;
+        ULONG result = (ULONG)MxCallService(number, v);
+        set_length32(a[2], &name);
+        return result;
+    }
+    case MIME_SVC_NtUserBuildHwndList:
+    case MIME_SVC_NtUserBuildPropList:
+        return handle_list32(number, a);
+    case MIME_SVC_NtUserSendInput:
+        return send_input32(a);
+    case MIME_SVC_NtUserGetIconInfo: {
+        ICONINFO info = {0};
+        UNICODE_STRING module = str32(a[2]), resource = str32(a[3]);
+        v[0] = a[0];
+        v[1] = a[1] ? (ULONG_PTR)&info : 0;
+        v[2] = a[2] ? (ULONG_PTR)&module : 0;
+        v[3] = a[3] ? (ULONG_PTR)&resource : 0;
+        v[4] = a[4];
+        v[5] = a[5];
+        ULONG result = (ULONG)MxCallService(number, v);
+        if (result && a[1]) {
+            ULONG out[5] = {info.fIcon, info.xHotspot, info.yHotspot, (ULONG)(ULONG_PTR)info.hbmMask,
+                            (ULONG)(ULONG_PTR)info.hbmColor};
+            memcpy(ptr32(a[1]), out, sizeof(out));
+        }
+        if (result) {
+            set_length32(a[2], &module);
+            set_length32(a[3], &resource);
+        }
+        return result;
+    }
+    case MIME_SVC_NtUserThunkedMenuInfo: {
+        /* the 28-byte x86 MENUINFO. */
+        const ULONG *p = ptr32(a[1]);
+        if (!p || p[0] != 28)
+            return FALSE;
+        MENUINFO info = {sizeof(info), p[1], p[2], p[3], ptr32(p[4]), p[5], p[6]};
+        v[0] = a[0];
+        v[1] = (ULONG_PTR)&info;
+        return (ULONG)MxCallService(number, v);
+    }
+    case MIME_SVC_NtUserMimeGetMenuItemInfo: {
+        ULONG *p = ptr32(a[3]);
+        MENUITEMINFOW info;
+        if (!menu_item64(p, &info))
+            return FALSE;
+        v[0] = a[0];
+        v[1] = a[1];
+        v[2] = a[2];
+        v[3] = (ULONG_PTR)&info;
+        ULONG result = (ULONG)MxCallService(number, v);
+        if (result) {
+            ULONG out[12] = {p[0], info.fMask, info.fType, info.fState, info.wID, (ULONG)(ULONG_PTR)info.hSubMenu,
+                             (ULONG)(ULONG_PTR)info.hbmpChecked, (ULONG)(ULONG_PTR)info.hbmpUnchecked,
+                             (ULONG)info.dwItemData, (ULONG)(ULONG_PTR)info.dwTypeData, info.cch,
+                             (ULONG)(ULONG_PTR)info.hbmpItem};
+            memcpy(p, out, p[0]);
+        }
+        return result;
+    }
+    case MIME_SVC_NtUserGetCursorInfo: {
+        /* the 20-byte x86 CURSORINFO. */
+        ULONG *p = ptr32(a[0]);
+        if (!p || p[0] != 20)
+            return FALSE;
+        CURSORINFO info = {sizeof(info)};
+        v[0] = (ULONG_PTR)&info;
+        ULONG result = (ULONG)MxCallService(number, v);
+        if (result) {
+            p[1] = info.flags;
+            p[2] = (ULONG)(ULONG_PTR)info.hCursor;
+            p[3] = (ULONG)info.ptScreenPos.x;
+            p[4] = (ULONG)info.ptScreenPos.y;
+        }
+        return result;
+    }
+    case MIME_SVC_NtUserSetClipboardData:
+    case MIME_SVC_NtUserGetClipboardData: {
+        /* the 16-byte x86 MIME_CLIPBOARD_DATA. */
+        BOOLEAN get = number == MIME_SVC_NtUserGetClipboardData;
+        ULONG *p = ptr32(a[get ? 1 : 2]);
+        MIME_CLIPBOARD_DATA data = {0};
+        if (p)
+            data = (MIME_CLIPBOARD_DATA){ptr32(p[0]), p[1], p[2], p[3]};
+        v[0] = a[0];
+        v[1] = a[1];
+        v[get ? 1 : 2] = p ? (ULONG_PTR)&data : 0;
+        ULONG result = (ULONG)MxCallService(number, v);
+        if (get && result && p) {
+            p[1] = (ULONG)data.Size;
+            p[2] = data.Sequence;
+            p[3] = data.Gdi;
+        }
+        return result;
+    }
+    case MIME_SVC_NtGdiOpenDCW: {
+        /* DEVMODEW holds no pointers. */
+        UNICODE_STRING device = str32(a[0]), port = str32(a[2]);
+        for (ULONG i = 0; i < 8; i++)
+            v[i] = a[i];
+        v[0] = a[0] ? (ULONG_PTR)&device : 0;
+        v[2] = a[2] ? (ULONG_PTR)&port : 0;
+        return (ULONG)MxCallService(number, v);
+    }
+    case MIME_SVC_NtGdiGetOutlineTextMetricsInternalW:
+        return outline_metrics32(a);
     default:
         Mx32Unsupported(number);
         return 0;

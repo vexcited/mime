@@ -107,6 +107,74 @@ static void fill_info(const struct stat *st, const char *name, MimeFsInfo *info)
     info->attributes = attrs;
 }
 
+/* a utf-16 unit in upper case, as windows compares names: ascii, latin-1 and cyrillic. */
+static uint16_t upcase(uint16_t c)
+{
+    if ((c >= 'a' && c <= 'z') || (c >= 0xE0 && c <= 0xFE && c != 0xF7) || (c >= 0x430 && c <= 0x44F))
+        return c - 0x20;
+    if (c == 0xFF)
+        return 0x178;
+    if (c >= 0x450 && c <= 0x45F)
+        return c - 0x50;
+    return c;
+}
+
+static bool same_name(const char *a, const char *b)
+{
+    uint16_t wa[256], wb[256];
+    size_t na = mime_utf8_to_utf16(wa, MIME_ARRAY_COUNT(wa), a), nb = mime_utf8_to_utf16(wb, MIME_ARRAY_COUNT(wb), b);
+    if (na != nb)
+        return false;
+    for (size_t i = 0; i < na; i++) {
+        if (upcase(wa[i]) != upcase(wb[i]))
+            return false;
+    }
+    return true;
+}
+
+/*
+ * windows names ignore case and host ones do not: when the path is missing
+ * as written, each component after the volume root that is missing takes
+ * the spelling of an entry of its directory that differs only in case. the
+ * first missing one without such an entry, a file to create, stays as written.
+ */
+static void match_case(char *path, size_t root_length)
+{
+    struct stat st;
+    if (lstat(path, &st) == 0)
+        return;
+    char *component = path + root_length;
+    while (*component == '/')
+        component++;
+    while (*component) {
+        char *end = strchr(component, '/');
+        if (end)
+            *end = 0;
+        bool found = lstat(path, &st) == 0;
+        if (!found) {
+            char *dir_end = component - 1;
+            *dir_end = 0;
+            DIR *dir = opendir(dir_end == path ? "/" : path);
+            *dir_end = '/';
+            struct dirent *e;
+            while (dir && (e = readdir(dir))) {
+                if (strlen(e->d_name) == strlen(component) && same_name(e->d_name, component)) {
+                    memcpy(component, e->d_name, strlen(component));
+                    found = true;
+                    break;
+                }
+            }
+            if (dir)
+                closedir(dir);
+        }
+        if (end)
+            *end = '/';
+        if (!found || !end)
+            return;
+        component = end + 1;
+    }
+}
+
 /* converts a guest volume path to a host path, refusing to escape the volume. */
 static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_t chars, char *out, size_t out_size)
 {
@@ -150,6 +218,8 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
     }
     if (n == 0)
         snprintf(out, out_size, "/");
+    if (depth)
+        match_case(out, strlen(root));
     return true;
 }
 
