@@ -204,6 +204,9 @@ static void unbind_resources(D9Device *d)
 
 static void destroy_device(D9Device *d)
 {
+    if (d->recording)
+        D9ResourceRelease(&d->recording->base);
+    d->recording = NULL;
     unbind_resources(d);
     for (UINT i = 0; i < d->fvf_decl_count; i++)
         D9Unbind(&d->fvf_decls[i]->base);
@@ -1042,6 +1045,10 @@ static HRESULT STDMETHODCALLTYPE device_set_transform(IDirect3DDevice9Ex *iface,
     D3DMATRIX *m = transform_slot(d, state);
     if (!matrix)
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordTransform(d->recording, state, matrix);
+        return D3D_OK;
+    }
     if (m) {
         D9Lock(d);
         *m = *matrix;
@@ -1089,6 +1096,10 @@ static HRESULT STDMETHODCALLTYPE device_set_viewport(IDirect3DDevice9Ex *iface, 
     D9Surface *rt = d->targets[0];
     if (!viewport || (rt && (viewport->X + viewport->Width > rt->width || viewport->Y + viewport->Height > rt->height)))
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordViewport(d->recording, viewport);
+        return D3D_OK;
+    }
     D9Lock(d);
     d->viewport = *viewport;
     d->viewport_dirty = TRUE;
@@ -1110,6 +1121,10 @@ static HRESULT STDMETHODCALLTYPE device_set_material(IDirect3DDevice9Ex *iface, 
     D9Device *d = impl(iface);
     if (!material)
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordMaterial(d->recording, material);
+        return D3D_OK;
+    }
     D9Lock(d);
     d->material = *material;
     d->ff_dirty = TRUE;
@@ -1153,6 +1168,10 @@ static HRESULT STDMETHODCALLTYPE device_set_light(IDirect3DDevice9Ex *iface, DWO
     D9Device *d = impl(iface);
     if (!light || light->Type < D3DLIGHT_POINT || light->Type > D3DLIGHT_DIRECTIONAL)
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordLight(d->recording, index, light);
+        return D3D_OK;
+    }
     D9Lock(d);
     D9Light *l = light_slot(d, index, TRUE);
     if (l)
@@ -1176,6 +1195,10 @@ static HRESULT STDMETHODCALLTYPE device_get_light(IDirect3DDevice9Ex *iface, DWO
 static HRESULT STDMETHODCALLTYPE device_light_enable(IDirect3DDevice9Ex *iface, DWORD index, BOOL enable)
 {
     D9Device *d = impl(iface);
+    if (d->recording) {
+        D9RecordLightEnable(d->recording, index, !!enable);
+        return D3D_OK;
+    }
     D9Lock(d);
     D9Light *l = light_slot(d, index, TRUE);
     if (l)
@@ -1201,6 +1224,10 @@ static HRESULT STDMETHODCALLTYPE device_set_clip_plane(IDirect3DDevice9Ex *iface
     D9Device *d = impl(iface);
     if (index >= 6 || !plane)
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordClipPlane(d->recording, index, plane);
+        return D3D_OK;
+    }
     D9Lock(d);
     memcpy(d->clip_planes[index], plane, sizeof(d->clip_planes[index]));
     d->ff_dirty = TRUE;
@@ -1223,6 +1250,10 @@ static HRESULT STDMETHODCALLTYPE device_set_render_state(IDirect3DDevice9Ex *ifa
     D9Device *d = impl(iface);
     if ((UINT)state >= RTL_NUMBER_OF(d->render_states))
         return D3D_OK;
+    if (d->recording) {
+        D9RecordRenderState(d->recording, state, value);
+        return D3D_OK;
+    }
     D9Lock(d);
     if (d->render_states[state] != value) {
         d->render_states[state] = value;
@@ -1245,17 +1276,43 @@ static HRESULT STDMETHODCALLTYPE device_get_render_state(IDirect3DDevice9Ex *ifa
 static HRESULT STDMETHODCALLTYPE device_create_state_block(IDirect3DDevice9Ex *iface, D3DSTATEBLOCKTYPE type,
                                                            IDirect3DStateBlock9 **block)
 {
-    return not_yet(impl(iface), "CreateStateBlock");
+    D9Device *d = impl(iface);
+    if (!block)
+        return D3DERR_INVALIDCALL;
+    *block = NULL;
+    D9Lock(d);
+    D9StateBlock *b;
+    HRESULT hr = d->recording ? D3DERR_INVALIDCALL : D9CreateStateBlock(d, type, &b);
+    if (SUCCEEDED(hr))
+        *block = &b->iface;
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_begin_state_block(IDirect3DDevice9Ex *iface)
 {
-    return not_yet(impl(iface), "BeginStateBlock");
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    HRESULT hr = d->recording ? D3DERR_INVALIDCALL : D9NewStateBlock(d, &d->recording);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_end_state_block(IDirect3DDevice9Ex *iface, IDirect3DStateBlock9 **block)
 {
-    return not_yet(impl(iface), "EndStateBlock");
+    D9Device *d = impl(iface);
+    if (!block)
+        return D3DERR_INVALIDCALL;
+    *block = NULL;
+    D9Lock(d);
+    HRESULT hr = D3DERR_INVALIDCALL;
+    if (d->recording) {
+        *block = &d->recording->iface;
+        d->recording = NULL;
+        hr = D3D_OK;
+    }
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_clip_status(IDirect3DDevice9Ex *iface, const D3DCLIPSTATUS9 *status)
@@ -1313,6 +1370,11 @@ static HRESULT STDMETHODCALLTYPE device_set_texture(IDirect3DDevice9Ex *iface, D
     if (slot < 0 || (t && (t->base.pool == D3DPOOL_SYSTEMMEM || t->base.pool == D3DPOOL_SCRATCH)))
         return D3DERR_INVALIDCALL;
     D9Lock(d);
+    if (d->recording) {
+        D9RecordTexture(d->recording, slot, t);
+        D9Unlock(d);
+        return D3D_OK;
+    }
     if (d->textures[slot] != t) {
         set_texture(&d->textures[slot], t);
         d->textures_dirty |= 1u << slot;
@@ -1337,6 +1399,10 @@ static HRESULT STDMETHODCALLTYPE device_set_texture_stage_state(IDirect3DDevice9
     D9Device *d = impl(iface);
     if (stage >= D9_MAX_STAGES || (UINT)type >= RTL_NUMBER_OF(d->stage_states[0]))
         return D3D_OK;
+    if (d->recording) {
+        D9RecordStageState(d->recording, stage, type, value);
+        return D3D_OK;
+    }
     D9Lock(d);
     if (d->stage_states[stage][type] != value) {
         d->stage_states[stage][type] = value;
@@ -1364,6 +1430,10 @@ static HRESULT STDMETHODCALLTYPE device_set_sampler_state(IDirect3DDevice9Ex *if
     int slot = sampler_slot(sampler);
     if (slot < 0 || (UINT)type >= RTL_NUMBER_OF(d->sampler_states[0]))
         return D3D_OK;
+    if (d->recording) {
+        D9RecordSamplerState(d->recording, slot, type, value);
+        return D3D_OK;
+    }
     D9Lock(d);
     if (d->sampler_states[slot][type] != value) {
         d->sampler_states[slot][type] = value;
@@ -1394,6 +1464,10 @@ static HRESULT STDMETHODCALLTYPE device_get_palette_entries(IDirect3DDevice9Ex *
 
 static HRESULT STDMETHODCALLTYPE device_set_current_texture_palette(IDirect3DDevice9Ex *iface, UINT palette)
 {
+    if (impl(iface)->recording) {
+        D9RecordPalette(impl(iface)->recording, palette);
+        return D3D_OK;
+    }
     impl(iface)->palette = palette;
     return D3D_OK;
 }
@@ -1411,6 +1485,10 @@ static HRESULT STDMETHODCALLTYPE device_set_scissor_rect(IDirect3DDevice9Ex *ifa
     D9Device *d = impl(iface);
     if (!rect)
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordScissor(d->recording, rect);
+        return D3D_OK;
+    }
     D9Lock(d);
     d->scissor = *rect;
     d->viewport_dirty = TRUE;
@@ -1443,6 +1521,10 @@ static BOOL STDMETHODCALLTYPE device_get_software_vertex_processing(IDirect3DDev
 
 static HRESULT STDMETHODCALLTYPE device_set_npatch_mode(IDirect3DDevice9Ex *iface, float segments)
 {
+    if (impl(iface)->recording) {
+        D9RecordNPatch(impl(iface)->recording, segments);
+        return D3D_OK;
+    }
     impl(iface)->npatch_segments = segments;
     return D3D_OK;
 }
@@ -1521,6 +1603,11 @@ static HRESULT STDMETHODCALLTYPE device_set_vertex_declaration(IDirect3DDevice9E
 {
     D9Device *d = impl(iface);
     D9Lock(d);
+    if (d->recording) {
+        D9RecordDecl(d->recording, D9VertexDeclFrom(declaration));
+        D9Unlock(d);
+        return D3D_OK;
+    }
     set_decl(&d->decl, D9VertexDeclFrom(declaration));
     D9Unlock(d);
     return D3D_OK;
@@ -1568,7 +1655,9 @@ static HRESULT STDMETHODCALLTYPE device_set_fvf(IDirect3DDevice9Ex *iface, DWORD
             D9ResourceRelease(&v->base);
         }
     }
-    if (v)
+    if (v && d->recording)
+        D9RecordDecl(d->recording, v);
+    else if (v)
         set_decl(&d->decl, v);
     D9Unlock(d);
     return hr;
@@ -1608,6 +1697,11 @@ static HRESULT STDMETHODCALLTYPE device_set_vertex_shader(IDirect3DDevice9Ex *if
     if (s && s->info.pixel)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
+    if (d->recording) {
+        D9RecordShader(d->recording, FALSE, s);
+        D9Unlock(d);
+        return D3D_OK;
+    }
     set_shader(&d->vs, s);
     d->vs_consts_dirty = TRUE;
     D9Unlock(d);
@@ -1636,6 +1730,13 @@ static HRESULT set_constants(D9Device *d, void *bank, UINT size, UINT max, UINT 
     if (start >= max || count > max - start)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
+    if (d->recording) {
+        BOOL pixel = bank == d->ps_f || bank == d->ps_i || bank == d->ps_b;
+        UINT kind = bank == d->vs_f || bank == d->ps_f ? 0 : bank == d->vs_i || bank == d->ps_i ? 1 : 2;
+        D9RecordConstants(d->recording, pixel, kind, start, data, count);
+        D9Unlock(d);
+        return D3D_OK;
+    }
     memcpy((BYTE *)bank + (SIZE_T)start * size, data, (SIZE_T)count * size);
     *dirty = TRUE;
     D9Unlock(d);
@@ -1697,7 +1798,10 @@ static HRESULT STDMETHODCALLTYPE device_set_stream_source(IDirect3DDevice9Ex *if
     if (stream >= D9_MAX_STREAMS || (b && b->base.type != D3DRTYPE_VERTEXBUFFER))
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    D9DeviceSetStream(d, stream, b, offset, stride);
+    if (d->recording)
+        D9RecordStream(d->recording, stream, b, b ? offset : 0, b ? stride : 0);
+    else
+        D9DeviceSetStream(d, stream, b, offset, stride);
     D9Unlock(d);
     return D3D_OK;
 }
@@ -1724,6 +1828,10 @@ static HRESULT STDMETHODCALLTYPE device_set_stream_source_freq(IDirect3DDevice9E
     D9Device *d = impl(iface);
     if (stream >= D9_MAX_STREAMS)
         return D3DERR_INVALIDCALL;
+    if (d->recording) {
+        D9RecordStreamFreq(d->recording, stream, setting);
+        return D3D_OK;
+    }
     d->stream_freq[stream] = setting;
     return D3D_OK;
 }
@@ -1744,7 +1852,10 @@ static HRESULT STDMETHODCALLTYPE device_set_indices(IDirect3DDevice9Ex *iface, I
     if (b && b->base.type != D3DRTYPE_INDEXBUFFER)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    D9DeviceSetIndices(d, b);
+    if (d->recording)
+        D9RecordIndices(d->recording, b);
+    else
+        D9DeviceSetIndices(d, b);
     D9Unlock(d);
     return D3D_OK;
 }
@@ -1776,6 +1887,11 @@ static HRESULT STDMETHODCALLTYPE device_set_pixel_shader(IDirect3DDevice9Ex *ifa
     if (s && !s->info.pixel)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
+    if (d->recording) {
+        D9RecordShader(d->recording, TRUE, s);
+        D9Unlock(d);
+        return D3D_OK;
+    }
     set_shader(&d->ps, s);
     d->ps_consts_dirty = TRUE;
     D9Unlock(d);
@@ -1855,7 +1971,7 @@ static HRESULT STDMETHODCALLTYPE device_delete_patch(IDirect3DDevice9Ex *iface, 
 static HRESULT STDMETHODCALLTYPE device_create_query(IDirect3DDevice9Ex *iface, D3DQUERYTYPE type,
                                                      IDirect3DQuery9 **query)
 {
-    return not_yet(impl(iface), "CreateQuery");
+    return D9CreateQuery(impl(iface), type, query);
 }
 
 /* ------------------------------------------------------------------ IDirect3DDevice9Ex */

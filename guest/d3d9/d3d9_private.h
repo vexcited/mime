@@ -324,6 +324,8 @@ struct D9Device {
     struct D9FFProgram *ff_vs, *ff_ps;
     float ff_vs_consts[151][4];
     float ff_ps_consts[27][4];
+    /* the block BeginStateBlock records into, which setters change instead of the device. */
+    struct D9StateBlock *recording;
     BOOL software_vertex_processing;
     float npatch_segments;
     UINT palette;
@@ -690,6 +692,86 @@ D9Shader *D9FFShader(D9Device *device, BOOL pixel, const void *key, UINT size);
 void D9FreeFFShaders(D9Device *device);
 void D9UpdateFFConstants(D9Device *device);
 void D9FFClipPlanes(const D9Device *device, float out[6][4]);
+
+/* a state block's states, and their values. */
+typedef struct D9StateMask {
+    DWORD render_states[8];
+    UINT64 stage_states[D9_MAX_STAGES];
+    WORD sampler_states[D9_MAX_SAMPLERS];
+    DWORD transforms[16];
+    DWORD vs_f[8], ps_f[7];
+    DWORD vs_i, ps_i, vs_b, ps_b;
+    UINT textures, streams, stream_freq;
+    BYTE clip_planes;
+    BOOL material, viewport, scissor, vs, ps, decl, indices, palette, npatch, all_lights;
+} D9StateMask;
+
+typedef struct D9BlockLight {
+    DWORD index;
+    BOOL has_light, has_enable;
+    D3DLIGHT9 light;
+    BOOL enabled;
+} D9BlockLight;
+
+typedef struct D9StateValues {
+    DWORD render_states[256];
+    DWORD stage_states[D9_MAX_STAGES][33];
+    DWORD sampler_states[D9_MAX_SAMPLERS][14];
+    D3DMATRIX *transforms;
+    D3DMATERIAL9 material;
+    D9BlockLight *lights;
+    UINT light_count;
+    float clip_planes[6][4];
+    D3DVIEWPORT9 viewport;
+    RECT scissor;
+    D9Shader *vs, *ps;
+    struct D9VertexDecl *decl;
+    D9Texture *textures[D9_MAX_SAMPLERS];
+    struct {
+        D9Buffer *buffer;
+        UINT offset, stride;
+    } streams[D9_MAX_STREAMS];
+    UINT stream_freq[D9_MAX_STREAMS];
+    D9Buffer *indices;
+    float vs_f[D9_VS_CONSTANTS][4];
+    int vs_i[16][4];
+    BOOL vs_b[16];
+    float ps_f[D9_PS_CONSTANTS][4];
+    int ps_i[16][4];
+    BOOL ps_b[16];
+    UINT palette;
+    float npatch;
+} D9StateValues;
+
+typedef struct D9StateBlock {
+    IDirect3DStateBlock9 iface;
+    D9Resource base;
+    D9StateMask mask;
+    D9StateValues v;
+} D9StateBlock;
+
+HRESULT D9NewStateBlock(D9Device *device, D9StateBlock **out);
+HRESULT D9CreateQuery(D9Device *device, D3DQUERYTYPE type, IDirect3DQuery9 **out);
+HRESULT D9CreateStateBlock(D9Device *device, D3DSTATEBLOCKTYPE type, D9StateBlock **out);
+void D9RecordRenderState(D9StateBlock *b, DWORD state, DWORD value);
+void D9RecordStageState(D9StateBlock *b, DWORD stage, DWORD type, DWORD value);
+void D9RecordSamplerState(D9StateBlock *b, UINT slot, DWORD type, DWORD value);
+void D9RecordTransform(D9StateBlock *b, UINT index, const D3DMATRIX *m);
+void D9RecordMaterial(D9StateBlock *b, const D3DMATERIAL9 *m);
+void D9RecordLight(D9StateBlock *b, DWORD index, const D3DLIGHT9 *light);
+void D9RecordLightEnable(D9StateBlock *b, DWORD index, BOOL enable);
+void D9RecordClipPlane(D9StateBlock *b, DWORD index, const float *plane);
+void D9RecordViewport(D9StateBlock *b, const D3DVIEWPORT9 *viewport);
+void D9RecordScissor(D9StateBlock *b, const RECT *rect);
+void D9RecordShader(D9StateBlock *b, BOOL pixel, D9Shader *shader);
+void D9RecordDecl(D9StateBlock *b, struct D9VertexDecl *decl);
+void D9RecordTexture(D9StateBlock *b, UINT slot, D9Texture *texture);
+void D9RecordStream(D9StateBlock *b, UINT stream, D9Buffer *buffer, UINT offset, UINT stride);
+void D9RecordStreamFreq(D9StateBlock *b, UINT stream, UINT setting);
+void D9RecordIndices(D9StateBlock *b, D9Buffer *buffer);
+void D9RecordConstants(D9StateBlock *b, BOOL pixel, UINT kind, UINT start, const void *data, UINT count);
+void D9RecordPalette(D9StateBlock *b, UINT palette);
+void D9RecordNPatch(D9StateBlock *b, float segments);
 
 /* the input slot of the zeros the inputs a declaration lacks read. */
 #define D9_ZERO_STREAM 16
