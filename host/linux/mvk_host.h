@@ -32,8 +32,11 @@ struct MvkConnection {
     bool kicked;
     volatile bool closing;
 
-    uint64_t *handles; /* by guest id */
-    size_t handle_count;
+    /*
+     * host handles by guest id, in chunks that never move, so threads
+     * recording command buffers read them while the connection binds more.
+     */
+    uint64_t **handle_chunks;
     struct {
         uint64_t handle, id;
     } *reverse;        /* host handle to guest id, open addressing */
@@ -63,6 +66,18 @@ struct MvkConnection {
     volatile uint32_t jobs_finished;
     uint32_t jobs_seen;
 
+    /* command buffers recorded aside since the last submission, newest first, see vulkan.c. */
+    struct MvkRecord *records;
+    uint32_t records_pending;
+    pthread_mutex_t record_lock;
+    pthread_cond_t record_done;
+    /* the command pool of each command buffer, open addressing. */
+    struct {
+        VkCommandBuffer buffer;
+        VkCommandPool pool;
+    } *buffer_pools;
+    size_t buffer_pool_size, buffer_pool_used;
+
     /* timeline values the guest waits for, see vulkan.c. */
     pthread_t watcher;
     bool watching;
@@ -77,8 +92,6 @@ struct MvkConnection {
 
     uint8_t *call;   /* a private copy of the call being run */
     uint8_t *arena;
-    uint8_t *stream; /* a private copy of a command buffer's stream */
-    size_t stream_size;
 };
 
 uint64_t mvk_lookup(MvkConnection *c, uint64_t id);

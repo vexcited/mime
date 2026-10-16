@@ -73,19 +73,75 @@ static uint64_t reverse_get(MvkConnection *c, uint64_t handle)
     return 0;
 }
 
+/* the pool a command buffer came from, which its recordings must not share with another thread's. */
+static void pool_of_put(MvkConnection *c, VkCommandBuffer buffer, VkCommandPool pool)
+{
+    if (!buffer)
+        return;
+    if ((c->buffer_pool_used + 1) * 2 > c->buffer_pool_size) {
+        size_t old = c->buffer_pool_size;
+        __typeof__(c->buffer_pools) prev = c->buffer_pools;
+        c->buffer_pool_size = old ? old * 2 : 256;
+        c->buffer_pools = calloc(c->buffer_pool_size, sizeof(*c->buffer_pools));
+        c->buffer_pool_used = 0;
+        for (size_t i = 0; i < old; i++)
+            if (prev[i].buffer)
+                pool_of_put(c, prev[i].buffer, prev[i].pool);
+        free(prev);
+    }
+    size_t mask = c->buffer_pool_size - 1;
+    for (size_t i = mix((uint64_t)(uintptr_t)buffer) & mask;; i = (i + 1) & mask)
+        if (!c->buffer_pools[i].buffer || c->buffer_pools[i].buffer == buffer) {
+            if (!c->buffer_pools[i].buffer)
+                c->buffer_pool_used++;
+            c->buffer_pools[i].buffer = buffer;
+            c->buffer_pools[i].pool = pool;
+            return;
+        }
+}
+
+static VkCommandPool pool_of(MvkConnection *c, VkCommandBuffer buffer)
+{
+    if (!c->buffer_pool_size || !buffer)
+        return VK_NULL_HANDLE;
+    size_t mask = c->buffer_pool_size - 1;
+    for (size_t i = mix((uint64_t)(uintptr_t)buffer) & mask; c->buffer_pools[i].buffer; i = (i + 1) & mask)
+        if (c->buffer_pools[i].buffer == buffer)
+            return c->buffer_pools[i].pool;
+    return VK_NULL_HANDLE;
+}
+
+#define CHUNK_BITS 16u
+#define CHUNK_IDS (1u << CHUNK_BITS)
+#define CHUNKS (MAX_IDS >> CHUNK_BITS)
+
+static uint64_t table_get(MvkConnection *c, uint64_t id)
+{
+    if (!id || id >= MAX_IDS || !c->handle_chunks)
+        return 0;
+    uint64_t *chunk = __atomic_load_n(&c->handle_chunks[id >> CHUNK_BITS], __ATOMIC_ACQUIRE);
+    return chunk ? __atomic_load_n(&chunk[id & (CHUNK_IDS - 1)], __ATOMIC_ACQUIRE) : 0;
+}
+
+/* the connection's thread alone sets handles. */
+static void table_set(MvkConnection *c, uint64_t id, uint64_t handle)
+{
+    if (!id || id >= MAX_IDS || !c->handle_chunks)
+        return;
+    uint64_t *chunk = c->handle_chunks[id >> CHUNK_BITS];
+    if (!chunk) {
+        if (!handle || !(chunk = calloc(CHUNK_IDS, sizeof(uint64_t))))
+            return;
+        __atomic_store_n(&c->handle_chunks[id >> CHUNK_BITS], chunk, __ATOMIC_RELEASE);
+    }
+    __atomic_store_n(&chunk[id & (CHUNK_IDS - 1)], handle, __ATOMIC_RELEASE);
+}
+
 static void bind(MvkConnection *c, uint64_t id, uint64_t handle)
 {
     if (!id || id >= MAX_IDS)
         return;
-    if (id >= c->handle_count) {
-        size_t n = c->handle_count ? c->handle_count : 4096;
-        while (n <= id)
-            n *= 2;
-        c->handles = realloc(c->handles, n * sizeof(uint64_t));
-        memset(c->handles + c->handle_count, 0, (n - c->handle_count) * sizeof(uint64_t));
-        c->handle_count = n;
-    }
-    c->handles[id] = handle;
+    table_set(c, id, handle);
     reverse_put(c, handle, id);
 }
 
@@ -93,12 +149,21 @@ static uint64_t await_id(MvkConnection *c, uint64_t id);
 static void unwatch(MvkConnection *c, VkSemaphore semaphore);
 static void stop_watcher(MvkConnection *c);
 
-/* an id not bound yet may be a pipeline being created aside: its creation is waited for. */
+static uint64_t await_id_aside(MvkConnection *c, uint64_t id);
+
+/* the thread recording a command buffer aside, not the connection's. */
+static __thread bool t_recorder;
+
+/*
+ * an id not bound yet may be a pipeline being created aside: its creation
+ * is waited for, by the connection's thread, which binds it, or by a
+ * thread recording aside, which takes the handle from the creation.
+ */
 static uint64_t lookup(MvkConnection *c, uint64_t id)
 {
-    uint64_t handle = id < c->handle_count ? c->handles[id] : 0;
-    if (!handle && id && c->jobs)
-        handle = await_id(c, id);
+    uint64_t handle = table_get(c, id);
+    if (!handle && id && __atomic_load_n(&c->jobs, __ATOMIC_ACQUIRE))
+        handle = t_recorder ? await_id_aside(c, id) : await_id(c, id);
     return handle;
 }
 
@@ -644,8 +709,10 @@ static void allocate_command_buffers(MvkCall *call)
     VkResult result = d->error || !c->device ? VK_ERROR_INITIALIZATION_FAILED
                                              : c->fn.vkAllocateCommandBuffers(c->device, &info, buffers);
     if (result == VK_SUCCESS)
-        for (uint32_t i = 0; i < n; i++)
+        for (uint32_t i = 0; i < n; i++) {
             bind(c, ids[i], (uint64_t)(uintptr_t)buffers[i]);
+            pool_of_put(c, buffers[i], info.commandPool);
+        }
     mvk_put_u32(e, (uint32_t)result);
     mvk_reply_end(call);
 }
@@ -673,6 +740,161 @@ static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *st
  * the chunks of commands the guest wrote, which are copied before they are
  * read since the guest may write them meanwhile.
  */
+/*
+ * recordings aside: a command buffer's stream, copied here as it is sent,
+ * decoded and recorded by a pool of threads, each with its own arena, so
+ * the command buffers a program records on many threads are recorded on
+ * many here too. two of one command pool are recorded one after the
+ * other, as vulkan wants; submissions, and the calls that reset, free or
+ * allocate command buffers, wait for every recording sent before them.
+ * small streams, secondary command buffers and streams that execute
+ * others are recorded here, in order.
+ */
+typedef struct MvkRecord {
+    struct MvkRecord *queued; /* the pool's */
+    struct MvkRecord *next;   /* the connection's, newest first */
+    struct MvkRecord *after;  /* the last recording of the same command pool, waited for */
+    MvkConnection *conn;
+    VkCommandBuffer buffer;
+    VkCommandPool pool;
+    VkCommandBufferBeginInfo info;
+    uint8_t *stream;
+    size_t size;
+    volatile int done;
+} MvkRecord;
+
+#define RECORD_ASIDE_MIN 16384u
+
+static pthread_mutex_t g_record_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_record_work = PTHREAD_COND_INITIALIZER;
+static MvkRecord *g_record_first, *g_record_last;
+static uint32_t g_recorders;
+
+static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *stream, size_t size);
+
+static void record_stream(MvkConnection *c, VkCommandBuffer buffer, const VkCommandBufferBeginInfo *info,
+                          const uint8_t *stream, size_t size, uint8_t *arena, size_t arena_size)
+{
+    MvkCall outer = {.conn = c, .fn = &c->fn};
+    outer.header.reply = MVK_NO_REPLY;
+    outer.in = (MvkDecoder){NULL, NULL, NULL, 0, c, arena, 0, arena_size};
+    c->fn.vkBeginCommandBuffer(buffer, info);
+    run_stream(&outer, buffer, stream, size);
+    VkResult result = c->fn.vkEndCommandBuffer(buffer);
+    if (result != VK_SUCCESS)
+        mime_warn("vulkan: vkEndCommandBuffer failed: %d", result);
+}
+
+static void wait_record(MvkConnection *c, MvkRecord *r)
+{
+    pthread_mutex_lock(&c->record_lock);
+    while (!__atomic_load_n(&r->done, __ATOMIC_ACQUIRE))
+        pthread_cond_wait(&c->record_done, &c->record_lock);
+    pthread_mutex_unlock(&c->record_lock);
+}
+
+static void *recorder_main(void *arg)
+{
+    (void)arg;
+    mime_set_thread_name("mime-vk-record");
+    t_recorder = true;
+    uint8_t *arena = malloc(ARENA_SIZE);
+    for (;;) {
+        pthread_mutex_lock(&g_record_lock);
+        while (!g_record_first)
+            pthread_cond_wait(&g_record_work, &g_record_lock);
+        MvkRecord *r = g_record_first;
+        g_record_first = r->queued;
+        if (!g_record_first)
+            g_record_last = NULL;
+        pthread_mutex_unlock(&g_record_lock);
+        MvkConnection *c = r->conn;
+        if (r->after)
+            wait_record(c, r->after);
+        if (arena)
+            record_stream(c, r->buffer, &r->info, r->stream, r->size, arena, ARENA_SIZE);
+        free(r->stream);
+        r->stream = NULL;
+        pthread_mutex_lock(&c->record_lock);
+        __atomic_store_n(&r->done, 1, __ATOMIC_RELEASE);
+        c->records_pending--;
+        pthread_cond_broadcast(&c->record_done);
+        pthread_mutex_unlock(&c->record_lock);
+    }
+    return NULL;
+}
+
+static void record_push(MvkRecord *r)
+{
+    pthread_mutex_lock(&g_record_lock);
+    if (!g_recorders) {
+        long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+        g_recorders = cpus > 4 ? (uint32_t)(cpus / 2 < 8 ? cpus / 2 : 8) : 2;
+        for (uint32_t i = 0; i < g_recorders; i++) {
+            pthread_t thread;
+            pthread_create(&thread, NULL, recorder_main, NULL);
+            pthread_detach(thread);
+        }
+    }
+    r->queued = NULL;
+    if (g_record_last)
+        g_record_last->queued = r;
+    else
+        g_record_first = r;
+    g_record_last = r;
+    pthread_cond_signal(&g_record_work);
+    pthread_mutex_unlock(&g_record_lock);
+}
+
+/* every recording sent so far done, and forgotten. */
+static void drain_records(MvkConnection *c)
+{
+    if (!c->records)
+        return;
+    pthread_mutex_lock(&c->record_lock);
+    while (c->records_pending)
+        pthread_cond_wait(&c->record_done, &c->record_lock);
+    pthread_mutex_unlock(&c->record_lock);
+    while (c->records) {
+        MvkRecord *r = c->records;
+        c->records = r->next;
+        free(r);
+    }
+}
+
+static bool records_waited_for(uint32_t op)
+{
+    switch (op) {
+    case MVK_OP_QUEUE_SUBMIT:
+    case MVK_OP_QUEUE_SUBMIT2:
+    case MVK_OP_ALLOCATE_COMMAND_BUFFERS:
+    case MVK_OP_FREE_COMMAND_BUFFERS:
+    case MVK_OP_RESET_COMMAND_BUFFER:
+    case MVK_OP_RESET_COMMAND_POOL:
+    case MVK_OP_DESTROY_COMMAND_POOL:
+    case MVK_OP_DESTROY_DEVICE:
+    case MVK_OP_vkTrimCommandPool:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* whether a stream executes secondary command buffers, which must be recorded before. */
+static bool executes_others(const uint8_t *stream, size_t size)
+{
+    for (size_t at = 0; at + sizeof(MvkCallHeader) <= size;) {
+        MvkCallHeader h;
+        memcpy(&h, stream + at, sizeof(h));
+        if (h.size < sizeof(h) || (h.size & 7) || h.size > size - at)
+            return false;
+        if (h.op == MVK_OP_vkCmdExecuteCommands)
+            return true;
+        at += h.size;
+    }
+    return false;
+}
+
 static void record(MvkCall *call)
 {
     MvkConnection *c = call->conn;
@@ -682,17 +904,11 @@ static void record(MvkCall *call)
     mvk_get_VkCommandBufferBeginInfo(d, &info);
     uint64_t pa = mvk_get_u64(d);
     uint64_t total = mvk_get_u64(d);
-    if (d->error || !buffer || !c->device)
+    if (d->error || !buffer || !c->device || total > (1ull << 31))
         return;
-    if (total > c->stream_size) {
-        free(c->stream);
-        c->stream_size = MIME_ALIGN_UP(total, 1u << 20);
-        c->stream = malloc(c->stream_size);
-        if (!c->stream) {
-            c->stream_size = 0;
-            return;
-        }
-    }
+    uint8_t *stream = malloc(total ? total : 1);
+    if (!stream)
+        return;
     size_t at = 0;
     for (int chunks = 0; pa && at < total && chunks < 1 << 20; chunks++) {
         MvkStreamChunk *chunk = mime_vm_phys(c->vm, pa, MVK_STREAM_CHUNK);
@@ -701,14 +917,40 @@ static void record(MvkCall *call)
         MvkStreamChunk head = *chunk;
         size_t n = MIME_MIN((size_t)head.used, (size_t)MVK_STREAM_CHUNK - sizeof(head));
         n = MIME_MIN(n, (size_t)(total - at));
-        memcpy(c->stream + at, chunk + 1, n);
+        memcpy(stream + at, chunk + 1, n);
         at += n;
         pa = head.next_pa;
     }
-    c->fn.vkBeginCommandBuffer(buffer, &info);
-    run_stream(call, buffer, c->stream, at);
-    VkResult result = c->fn.vkEndCommandBuffer(buffer);
-    mvk_check(call, result, "vkEndCommandBuffer");
+    VkCommandPool pool = pool_of(c, buffer);
+    MvkRecord *last = NULL;
+    for (MvkRecord *r = c->records; r && !last; r = r->next)
+        if (r->pool == pool)
+            last = r;
+    bool aside = pool && at >= RECORD_ASIDE_MIN && !info.pInheritanceInfo && !executes_others(stream, at);
+    if (!aside) {
+        if (last)
+            wait_record(c, last);
+        if (executes_others(stream, at))
+            drain_records(c);
+        record_stream(c, buffer, &info, stream, at, d->arena + d->arena_used, d->arena_size - d->arena_used);
+        free(stream);
+        return;
+    }
+    MvkRecord *r = calloc(1, sizeof(*r));
+    if (!r) {
+        record_stream(c, buffer, &info, stream, at, d->arena + d->arena_used, d->arena_size - d->arena_used);
+        free(stream);
+        return;
+    }
+    *r = (MvkRecord){.after = last, .conn = c, .buffer = buffer, .pool = pool, .info = info, .stream = stream,
+                     .size = at};
+    r->info.pNext = NULL;
+    r->next = c->records;
+    c->records = r;
+    pthread_mutex_lock(&c->record_lock);
+    c->records_pending++;
+    pthread_mutex_unlock(&c->record_lock);
+    record_push(r);
 }
 
 static void reset_command_buffer(MvkCall *call)
@@ -1142,6 +1384,10 @@ static void pool_push(MvkJob *job)
 /* binds the ids of a finished creation and forgets it. */
 static void finish_job(MvkConnection *c, MvkJob *job)
 {
+    /* bound before it leaves the list, so a recording thread finds one or the other. */
+    for (uint32_t i = 0; i < job->count; i++)
+        bind(c, job->ids[i], (uint64_t)job->pipelines[i]);
+    pthread_mutex_lock(&c->job_lock);
     if (job->prev)
         job->prev->next = job->next;
     else
@@ -1150,8 +1396,7 @@ static void finish_job(MvkConnection *c, MvkJob *job)
         job->next->prev = job->prev;
     else
         c->last_job = job->prev;
-    for (uint32_t i = 0; i < job->count; i++)
-        bind(c, job->ids[i], (uint64_t)job->pipelines[i]);
+    pthread_mutex_unlock(&c->job_lock);
     if (job->result != VK_SUCCESS)
         mime_warn("vulkan: %s failed: %d", mvk_generated_names[job->op], job->result);
     free(job->memory);
@@ -1189,9 +1434,26 @@ static uint64_t await_id(MvkConnection *c, uint64_t id)
         for (uint32_t i = 0; i < job->count; i++)
             if (job->ids[i] == id) {
                 wait_job(c, job);
-                return id < c->handle_count ? c->handles[id] : 0;
+                return table_get(c, id);
             }
     return 0;
+}
+
+/* a recording thread's wait: the creation of the id, or its binding when it is done already. */
+static uint64_t await_id_aside(MvkConnection *c, uint64_t id)
+{
+    uint64_t handle = 0;
+    pthread_mutex_lock(&c->job_lock);
+    for (MvkJob *job = c->jobs; job && !handle; job = job->next)
+        for (uint32_t i = 0; i < job->count; i++)
+            if (job->ids[i] == id) {
+                while (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE))
+                    pthread_cond_wait(&c->job_done, &c->job_lock);
+                handle = (uint64_t)job->pipelines[i];
+                break;
+            }
+    pthread_mutex_unlock(&c->job_lock);
+    return handle ? handle : table_get(c, id);
 }
 
 static bool links_libraries(const void *next)
@@ -1255,14 +1517,15 @@ static void create_pipelines_aside(MvkCall *call)
     }
     /* the ids may be those of pipelines destroyed before: their lookups now wait for this creation. */
     for (uint32_t i = 0; i < job->count; i++)
-        if (job->ids[i] < c->handle_count)
-            c->handles[job->ids[i]] = 0;
+        table_set(c, job->ids[i], 0);
+    pthread_mutex_lock(&c->job_lock);
     job->prev = c->last_job;
     if (c->last_job)
         c->last_job->next = job;
     else
         c->jobs = job;
     c->last_job = job;
+    pthread_mutex_unlock(&c->job_lock);
     pool_push(job);
 }
 
@@ -1513,6 +1776,8 @@ static void run_call(MvkCall *call)
         if (c->jobs && waits_for_jobs(c, op))
             drain_jobs(c);
     }
+    if (c->records && records_waited_for(op))
+        drain_records(c);
     if (op == MVK_OP_vkCreateGraphicsPipelines || op == MVK_OP_vkCreateComputePipelines)
         create_pipelines_aside(call);
     else if (op > MVK_OP_NONE && op < MVK_OP_GENERATED_COUNT && mvk_generated_commands[op])
@@ -1640,6 +1905,7 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     c->reply = base + MVK_REPLY_OFFSET;
     c->call = malloc(MVK_MAX_CALL);
     c->arena = malloc(ARENA_SIZE);
+    c->handle_chunks = calloc(CHUNKS, sizeof(uint64_t *));
     pthread_mutex_init(&c->lock, NULL);
     pthread_cond_init(&c->cond, NULL);
     pthread_mutex_init(&c->job_lock, NULL);
@@ -1647,9 +1913,12 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     pthread_mutex_init(&c->watch_lock, NULL);
     pthread_cond_init(&c->watch_round, NULL);
     pthread_mutex_init(&c->queue_lock, NULL);
-    if (!c->call || !c->arena) {
+    pthread_mutex_init(&c->record_lock, NULL);
+    pthread_cond_init(&c->record_done, NULL);
+    if (!c->call || !c->arena || !c->handle_chunks) {
         free(c->call);
         free(c->arena);
+        free(c->handle_chunks);
         free(c);
         return MIME_HC_STATUS_NO_MEMORY;
     }
@@ -1700,6 +1969,7 @@ void mime_vk_close(uint64_t index)
     pthread_cond_signal(&c->cond);
     pthread_mutex_unlock(&c->lock);
     pthread_join(c->thread, NULL);
+    drain_records(c);
     drain_jobs(c);
     mvk_wsi_close(c);
     if (c->device)
@@ -1713,10 +1983,12 @@ void mime_vk_close(uint64_t index)
     if (c->library)
         dlclose(c->library);
     free(c->watches);
-    free(c->handles);
+    free(c->buffer_pools);
+    for (uint32_t i = 0; i < CHUNKS && c->handle_chunks; i++)
+        free(c->handle_chunks[i]);
+    free(c->handle_chunks);
     free(c->reverse);
     free(c->call);
     free(c->arena);
-    free(c->stream);
     free(c);
 }
