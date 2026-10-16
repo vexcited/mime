@@ -393,3 +393,70 @@ extern "C" void *__cdecl __RTDynamicCast(void *object, LONG vfdelta, const type_
         throw bad_cast::create("Bad dynamic_cast!");
     return result;
 }
+
+/* ------------------------------------------------------------------ vcruntime's helpers */
+
+/* std::exception of current compilers keeps its message in this, copied or freed through these. */
+struct __std_exception_data {
+    const char *what;
+    bool do_free;
+};
+
+extern "C" void __cdecl __std_exception_copy(const __std_exception_data *from, __std_exception_data *to)
+{
+    to->what = from->what;
+    to->do_free = false;
+    if (from->do_free && from->what) {
+        size_t n = strlen(from->what) + 1;
+        char *copy = static_cast<char *>(malloc(n));
+        if (copy) {
+            memcpy(copy, from->what, n);
+            to->what = copy;
+            to->do_free = true;
+        }
+    }
+}
+
+extern "C" void __cdecl __std_exception_destroy(__std_exception_data *data)
+{
+    if (data->do_free)
+        free(const_cast<char *>(data->what));
+    data->what = nullptr;
+    data->do_free = false;
+}
+
+/* std::type_info of current compilers, after its vtable: the undecorated name, made when asked, and the decorated one. */
+struct __std_type_info_data {
+    const char *undecorated;
+    const char decorated[1];
+};
+
+extern "C" int __cdecl __std_type_info_compare(const __std_type_info_data *a, const __std_type_info_data *b)
+{
+    return a == b ? 0 : strcmp(a->decorated + 1, b->decorated + 1);
+}
+
+extern "C" size_t __cdecl __std_type_info_hash(const __std_type_info_data *data)
+{
+#if defined(_WIN64)
+    size_t hash = 14695981039346656037ull, prime = 1099511628211ull;
+#else
+    size_t hash = 2166136261u, prime = 16777619u;
+#endif
+    for (const char *p = data->decorated + 1; *p; p++)
+        hash = (hash ^ (unsigned char)*p) * prime;
+    return hash;
+}
+
+extern "C" const char *__cdecl __std_type_info_name(__std_type_info_data *data, __type_info_node *root)
+{
+    if (!data->undecorated) {
+        char *undecorated = MsvcrtUndecorateType(data->decorated);
+        if (undecorated && InterlockedCompareExchangePointer((void **)&data->undecorated, undecorated, nullptr))
+            free(undecorated);
+    }
+    return data->undecorated ? data->undecorated : data->decorated;
+}
+
+/* the names are kept in the descriptors themselves: nothing to free. */
+extern "C" void __cdecl __std_type_info_destroy_list(__type_info_node *root) {}

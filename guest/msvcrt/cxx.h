@@ -179,6 +179,9 @@ struct MSVCRT_EH_THREAD {
     int throws;
     /* the object of the exception a catch is unwinding to, which the catches it leaves must not destroy. */
     void *caught_object;
+    /* the record and context of the exception the newest catch block handles, for __current_exception. */
+    void *current_record;
+    void *current_context;
     /* 64-bit windows: the state of each function whose catch block runs, its frame first. */
     ULONG_PTR kept[16][2];
     int kept_count;

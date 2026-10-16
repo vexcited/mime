@@ -428,6 +428,8 @@ static void push_catch(MSVCRT_CATCH *c, const EXCEPTION_RECORD *record, const CX
     c->context = context;
     c->next = thread->catches;
     thread->catches = c;
+    thread->current_record = &c->record;
+    thread->current_context = c->context;
     if (thread->throws > 0)
         thread->throws--;
     thread->caught_object = nullptr;
@@ -446,6 +448,8 @@ static void pop_catch(MSVCRT_CATCH *c)
             *link = c->next;
             break;
         }
+    thread->current_record = thread->catches ? &thread->catches->record : nullptr;
+    thread->current_context = thread->catches ? thread->catches->context : nullptr;
     if (!c->thrown.object || c->thrown.object == thread->caught_object)
         return;
     for (MSVCRT_CATCH *other = thread->catches; other; other = other->next)
@@ -1178,3 +1182,8 @@ extern "C" int __cdecl __CxxUnregisterExceptionObject(void *storage, int rethrow
     pop_catch(c);
     return 0;
 }
+
+/* the exception the newest catch block handles, as vcruntime's helpers of current compilers ask for it. */
+extern "C" void **__cdecl __current_exception(void) { return &MsvcrtEhThread()->current_record; }
+extern "C" void **__cdecl __current_exception_context(void) { return &MsvcrtEhThread()->current_context; }
+extern "C" int *__cdecl __processing_throw(void) { return &MsvcrtEhThread()->throws; }

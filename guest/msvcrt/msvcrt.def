@@ -948,3 +948,17 @@ EXPORTS
     _get_unexpected
     __unDName
     __unDNameEx
+    __current_exception
+    __current_exception_context
+    __processing_throw
+    __std_exception_copy
+    __std_exception_destroy
+    __std_type_info_compare
+    __std_type_info_hash
+    __std_type_info_name
+    __std_type_info_destroy_list
+    __std_terminate
+    __stdio_common_vsprintf
+    __stdio_common_vswprintf_s
+    _dupenv_s
+    _wdupenv_s

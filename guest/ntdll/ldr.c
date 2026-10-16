@@ -297,6 +297,7 @@ static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-crt-", L"ucrtbase.dll"},
     {L"api-ms-win-core-winrt-", L"ole32.dll"},
     {L"api-ms-win-core-synch-", L"kernelbase.dll"},
+    {L"api-ms-win-core-rtlsupport-", L"ntdll.dll"},
     {L"api-ms-win-core-", L"kernelbase.dll"},
     {L"api-ms-win-eventing-", L"kernelbase.dll"},
     {L"api-ms-win-security-base-", L"kernelbase.dll"},

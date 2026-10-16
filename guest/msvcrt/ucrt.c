@@ -178,6 +178,37 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf(ULONGLONG options, wchar_t 
     return (options & 2) || !buffer || (size_t)count < size ? count : -1;
 }
 
+/* the narrow __stdio_common_vswprintf: the same options, legacy truncation and a count of what was asked. */
+DECLSPEC_EXPORT int __cdecl __stdio_common_vsprintf(ULONGLONG options, char *buffer, size_t size, const char *format,
+                                                    void *locale, va_list args)
+{
+    if (!format || (!buffer && size)) {
+        MSVCRT_INVALID(EINVAL);
+        return -1;
+    }
+    va_list measure;
+    va_copy(measure, args);
+    int count = MsvcrtVsnprintf(NULL, 0, format, measure);
+    va_end(measure);
+    if (count < 0)
+        return count;
+    if (buffer && size) {
+        size_t capacity = options & 1 ? size : size - 1;
+        MsvcrtVsnprintf(buffer, capacity, format, args);
+        if ((size_t)count < size)
+            buffer[count] = 0;
+        else if (!(options & 1))
+            buffer[size - 1] = 0;
+    }
+    return (options & 2) || !buffer || (size_t)count < size ? count : -1;
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf_s(ULONGLONG options, wchar_t *buffer, size_t size,
+                                                      const wchar_t *format, void *locale, va_list args)
+{
+    return vswprintf_s(buffer, size, format, args);
+}
+
 DECLSPEC_EXPORT int __cdecl __stdio_common_vsscanf(ULONGLONG options, const char *buffer, size_t size,
                                                    const char *format, void *locale, va_list args)
 {
@@ -187,3 +218,4 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vsscanf(ULONGLONG options, const char
     }
     return MsvcrtScanA(NULL, buffer, size, format, args);
 }
+
