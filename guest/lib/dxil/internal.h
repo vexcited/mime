@@ -133,6 +133,8 @@ typedef struct SigElement {
     uint8_t shape;
     /* a value the rasterizer takes also goes to its location, for a following stage. */
     uint32_t loc_var, loc_scalar;
+    /* a mesh shader's output no pixel shader reads. */
+    uint8_t dropped;
     /* clip and cull distances: the first index in their built-in array. */
     uint32_t distance_base;
 } SigElement;
@@ -225,6 +227,10 @@ typedef struct Compiler {
     uint32_t gs_input, gs_max_vertices, gs_topology, gs_instances, gs_streams;
     uint32_t cp_in, cp_out, tess_domain, tess_partitioning, tess_primitive;
     uint32_t max_tess_factor;
+    /* mesh shaders: their outputs' counts and topology; task shaders: what the returns emit. */
+    uint32_t mesh_vertices, mesh_primitives, mesh_topology;
+    uint32_t payload, payload_type;
+    uint32_t task_counts[3];
     const DxFunction *patch_function;
     uint64_t flags;
     int depth_mode;
@@ -287,10 +293,17 @@ void dxil_set_plain(Compiler *c, uint32_t id, uint32_t spv);
 void dxil_begin_if(Compiler *c, uint32_t cond, uint32_t *merge);
 void dxil_end_if(Compiler *c, uint32_t merge);
 
+void dxil_set_pointer(Compiler *c, uint32_t id, uint32_t ptr, uint32_t type, uint32_t storage);
+/* the value a pointer operand points to, and its type. */
+uint32_t dxil_load_pointer(Compiler *c, uint32_t id, uint32_t *type);
+
 /* io.c: signatures and the stages' own operations. */
 int dxil_read_signatures(Compiler *c, const DxMetadata *list);
 int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op);
 void dxil_execution_modes(Compiler *c, uint32_t main);
+/* task shaders: the payload and counts their returns emit, found before the code is written. */
+int dxil_prepare_task(Compiler *c, const DxFunction *f);
+void dxil_emit_tasks(Compiler *c);
 
 /* resource.c: handles and the operations of resources. */
 int dxil_read_resources(Compiler *c, const DxMetadata *list);

@@ -128,6 +128,9 @@
     X(vkCmdDrawIndirectCount)                                                                                          \
     X(vkCmdDrawIndexedIndirectCount)                                                                                   \
     X(vkCmdDispatch)                                                                                                   \
+    X(vkCmdDrawMeshTasksEXT)                                                                                           \
+    X(vkCmdDrawMeshTasksIndirectEXT)                                                                                   \
+    X(vkCmdDrawMeshTasksIndirectCountEXT)                                                                              \
     X(vkCmdDispatchIndirect)                                                                                           \
     X(vkCmdSetViewportWithCount)                                                                                       \
     X(vkCmdSetScissorWithCount)                                                                                        \
@@ -409,7 +412,7 @@ void D12DescriptorsDestroy(D12Device *device);
 
 /* ------------------------------------------------------------------ root signatures */
 
-typedef enum D12Stage { D12_VS, D12_HS, D12_DS, D12_GS, D12_PS, D12_CS, D12_STAGES } D12Stage;
+typedef enum D12Stage { D12_VS, D12_HS, D12_DS, D12_GS, D12_PS, D12_CS, D12_AS, D12_MS, D12_STAGES } D12Stage;
 
 /* the bytes of push constants root arguments take at most: 64 dwords, which every gpu direct3d 12 runs on has. */
 #define D12_PUSH_SIZE 256
@@ -455,6 +458,8 @@ typedef struct D12PipelineState {
     ID3D12PipelineState iface;
     D12Child child;
     BOOL compute;
+    /* graphics of mesh shaders, without vertex input. */
+    BOOL mesh;
     D12RootSignature *root;
     VkPipeline pipeline;
     UINT stage_mask;
@@ -692,8 +697,8 @@ struct D12Device {
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_divisor, has_zero_divisor;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation, has_statistics, has_so_queries;
     BOOL has_conservative, has_line_rasterization, has_patch_points, has_unused_attachments;
-    /* shader model 6: 16-bit arithmetic, and the wave operations of every stage. */
-    BOOL has_native16, has_waves;
+    /* shader model 6: 16-bit arithmetic, the wave operations of every stage, mesh and amplification shaders. */
+    BOOL has_native16, has_waves, has_mesh;
     VkPipelineCache pipeline_cache;
     UINT family;
     UINT queue_count;

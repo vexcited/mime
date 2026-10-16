@@ -609,6 +609,10 @@ static UINT visibility_stages(D3D12_SHADER_VISIBILITY visibility)
         return 1u << D12_GS;
     case D3D12_SHADER_VISIBILITY_PIXEL:
         return 1u << D12_PS;
+    case D3D12_SHADER_VISIBILITY_AMPLIFICATION:
+        return 1u << D12_AS;
+    case D3D12_SHADER_VISIBILITY_MESH:
+        return 1u << D12_MS;
     case D3D12_SHADER_VISIBILITY_ALL:
         return (1u << D12_STAGES) - 1;
     default:

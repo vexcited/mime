@@ -548,6 +548,26 @@ static int pointer_of(Compiler *c, uint32_t id, Pointer *out)
     return 0;
 }
 
+void dxil_set_pointer(Compiler *c, uint32_t id, uint32_t ptr, uint32_t type, uint32_t storage)
+{
+    Value *s = dxil_slot(c, id);
+    if (!s)
+        return;
+    s->kind = VAL_POINTER;
+    s->id = ptr;
+    s->type = type;
+    s->storage = storage;
+}
+
+uint32_t dxil_load_pointer(Compiler *c, uint32_t id, uint32_t *type)
+{
+    Pointer p;
+    if (pointer_of(c, id, &p))
+        return 0;
+    *type = p.type;
+    return spv_load(&c->b, p.type, p.id);
+}
+
 static void set_pointer(Compiler *c, uint32_t id, const Pointer *p)
 {
     Value *s = dxil_slot(c, id);
@@ -1224,7 +1244,12 @@ static void terminator(Compiler *c, uint32_t b)
         c->b.block_open = 0;
         break;
     }
-    case TERM_RETURN: spv_return(&c->b); break;
+    case TERM_RETURN:
+        if (c->kind == KIND_AMPLIFICATION)
+            dxil_emit_tasks(c);
+        else
+            spv_return(&c->b);
+        break;
     default:
         spv_op_void(&c->b, SpvOpUnreachable, NULL, 0);
         c->b.block_open = 0;
@@ -1416,13 +1441,31 @@ static int read_properties(Compiler *c, const DxMetadata *list)
                 c->tess_domain = (uint32_t)dx_md_int(&c->m, v, 3, 0);
                 c->tess_partitioning = (uint32_t)dx_md_int(&c->m, v, 4, 0);
                 c->tess_primitive = (uint32_t)dx_md_int(&c->m, v, 5, 0);
-                c->max_tess_factor = (uint32_t)dx_md_int(&c->m, v, 6, 0);
+                const DxMetadata *factor = dx_md_op(&c->m, v, 6);
+                const DxValue *fv = factor && factor->kind == DM_VALUE ? dx_value(&c->m, NULL, factor->value) : NULL;
+                c->max_tess_factor = fv && fv->kind == DV_FLOAT ? (uint32_t)fv->bits : 0;
             }
             break;
         case 4:
             if (v)
                 for (uint32_t k = 0; k < 3; k++)
                     c->thread_group[k] = (uint32_t)dx_md_int(&c->m, v, k, 1);
+            break;
+        case 9:
+            /* the mesh shader: threads, vertices, primitives, the topology and the payload's size. */
+            if (v) {
+                for (uint32_t k = 0; k < 3; k++)
+                    c->thread_group[k] = (uint32_t)dx_md_int(&c->m, dx_md_op(&c->m, v, 0), k, 1);
+                c->mesh_vertices = (uint32_t)dx_md_int(&c->m, v, 1, 0);
+                c->mesh_primitives = (uint32_t)dx_md_int(&c->m, v, 2, 0);
+                c->mesh_topology = (uint32_t)dx_md_int(&c->m, v, 3, 2);
+            }
+            break;
+        case 10:
+            /* the amplification shader: threads and the payload's size. */
+            if (v)
+                for (uint32_t k = 0; k < 3; k++)
+                    c->thread_group[k] = (uint32_t)dx_md_int(&c->m, dx_md_op(&c->m, v, 0), k, 1);
             break;
         default: break;
         }
@@ -1456,6 +1499,12 @@ static int build(Compiler *c)
     }
     if (dxil_read_signatures(c, dx_md_op(&c->m, entry, 2)) || dxil_read_resources(c, dx_md_op(&c->m, entry, 3)))
         return -1;
+    if (c->kind == KIND_MESH || c->kind == KIND_AMPLIFICATION) {
+        spv_capability(b, SpvCapabilityMeshShadingEXT);
+        spv_extension(b, "SPV_EXT_mesh_shader");
+        if (c->kind == KIND_AMPLIFICATION && dxil_prepare_task(c, main_fn))
+            return -1;
+    }
 
     uint32_t main = spv_id(b);
     if (c->kind == KIND_HULL) {
@@ -1493,7 +1542,9 @@ static int build(Compiler *c)
                                       [KIND_GEOMETRY] = SpvExecutionModelGeometry,
                                       [KIND_HULL] = SpvExecutionModelTessellationControl,
                                       [KIND_DOMAIN] = SpvExecutionModelTessellationEvaluation,
-                                      [KIND_COMPUTE] = SpvExecutionModelGLCompute};
+                                      [KIND_COMPUTE] = SpvExecutionModelGLCompute,
+                                      [KIND_MESH] = SpvExecutionModelMeshEXT,
+                                      [KIND_AMPLIFICATION] = SpvExecutionModelTaskEXT};
     uint32_t model[2] = {MODELS[c->kind], main};
     spv_emit_string(b, SECTION_ENTRY_POINTS, SpvOpEntryPoint, model, 2, "main", c->interface, c->interface_count);
     dxil_execution_modes(c, main);
@@ -1537,7 +1588,7 @@ int dxil_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
     info->program = (DxbcProgram)kind;
     info->major = (version >> 4) & 0xF;
     info->minor = version & 0xF;
-    if (kind > KIND_COMPUTE) {
+    if (kind > KIND_COMPUTE && kind != KIND_MESH && kind != KIND_AMPLIFICATION) {
         set_error(info, "a shader kind not supported");
         return -1;
     }

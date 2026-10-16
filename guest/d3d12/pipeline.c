@@ -96,8 +96,9 @@ static const struct ID3D12PipelineStateVtbl g_pipeline_vtbl = {
 
 /* ------------------------------------------------------------------ shaders */
 
-static const DxbcProgram PROGRAMS[D12_STAGES] = {DXBC_VERTEX, DXBC_HULL,  DXBC_DOMAIN,
-                                                 DXBC_GEOMETRY, DXBC_PIXEL, DXBC_COMPUTE};
+/* the program each stage takes, as dxbc and dxil number them: 13 mesh and 14 amplification shaders. */
+static const int PROGRAMS[D12_STAGES] = {DXBC_VERTEX, DXBC_HULL,    DXBC_DOMAIN, DXBC_GEOMETRY,
+                                         DXBC_PIXEL,  DXBC_COMPUTE, 14,          13};
 
 /* the kind of program a container holds, from its dxbc code or its dxil part's header. */
 static int program_of(const void *bytecode, SIZE_T length)
@@ -119,7 +120,7 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     SIZE_T length = code->BytecodeLength;
     if (dxbc_check(bytecode, length))
         return E_INVALIDARG;
-    if (program_of(bytecode, length) != (int)PROGRAMS[stage])
+    if (program_of(bytecode, length) != PROGRAMS[stage])
         return E_INVALIDARG;
     UINT count;
     DxbcRootBinding *bindings = D12RootBindings(state->root, stage, &count);
@@ -448,13 +449,19 @@ static VkStencilOpState stencil_state(const D3D12_DEPTH_STENCILOP_DESC1 *d)
 static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const GraphicsDesc *g,
                               const VkShaderModule *modules)
 {
-    VkPipelineShaderStageCreateInfo stages[5];
+    VkPipelineShaderStageCreateInfo stages[D12_STAGES];
     UINT stage_count = 0;
-    static const VkShaderStageFlagBits VK_GRAPHICS[] = {
-        VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
-        VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_GEOMETRY_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
-    for (UINT i = 0; i < 5; i++)
-        if (modules[i])
+    static const VkShaderStageFlagBits VK_GRAPHICS[D12_STAGES] = {
+        [D12_VS] = VK_SHADER_STAGE_VERTEX_BIT,
+        [D12_HS] = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+        [D12_DS] = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+        [D12_GS] = VK_SHADER_STAGE_GEOMETRY_BIT,
+        [D12_PS] = VK_SHADER_STAGE_FRAGMENT_BIT,
+        [D12_AS] = VK_SHADER_STAGE_TASK_BIT_EXT,
+        [D12_MS] = VK_SHADER_STAGE_MESH_BIT_EXT,
+    };
+    for (UINT i = 0; i < D12_STAGES; i++)
+        if (modules[i] && i != D12_CS)
             stages[stage_count++] = (VkPipelineShaderStageCreateInfo){
                 VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_GRAPHICS[i], modules[i], "main"};
 
@@ -590,6 +597,16 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
         dynamic[13] = dynamic[14];
         dynamic_info.dynamicStateCount--;
     }
+    /* mesh pipelines have no vertex input: neither topology, restart, strides nor patches. */
+    if (state->mesh) {
+        UINT kept = 0;
+        for (UINT i = 0; i < dynamic_info.dynamicStateCount; i++)
+            if (dynamic[i] != VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY && dynamic[i] != VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE &&
+                dynamic[i] != VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE &&
+                dynamic[i] != VK_DYNAMIC_STATE_PATCH_CONTROL_POINTS_EXT)
+                dynamic[kept++] = dynamic[i];
+        dynamic_info.dynamicStateCount = kept;
+    }
 
     VkFormat colors[8];
     for (UINT i = 0; i < state->rt_count; i++)
@@ -612,8 +629,8 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
     info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     info.stageCount = stage_count;
     info.pStages = stages;
-    info.pVertexInputState = &vertex;
-    info.pInputAssemblyState = &assembly;
+    info.pVertexInputState = state->mesh ? NULL : &vertex;
+    info.pInputAssemblyState = state->mesh ? NULL : &assembly;
     info.pTessellationState = modules[D12_HS] ? &tessellation : NULL;
     info.pViewportState = &viewport;
     info.pRasterizationState = &raster;
@@ -628,19 +645,38 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
     return S_OK;
 }
 
+/*
+ * a mesh pipeline links its stages by semantic: the mesh shader writes
+ * where the pixel shader reads, which also learns what comes per
+ * primitive.
+ */
+static HRESULT link_mesh(const GraphicsDesc *g, DxbcSignature *ps_inputs, DxbcSignature *primitives)
+{
+    const D3D12_SHADER_BYTECODE *ms = &g->shaders[D12_MS], *ps = &g->shaders[D12_PS];
+    if (ps->pShaderBytecode && dxbc_parse_io(ps->pShaderBytecode, ps->BytecodeLength, 0, ps_inputs, &g_d12_allocator))
+        return E_INVALIDARG;
+    dxbc_parse_signature(ms->pShaderBytecode, ms->BytecodeLength, DXBC_FOURCC('P', 'S', 'G', '1'), primitives,
+                         &g_d12_allocator);
+    return S_OK;
+}
+
 static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12PipelineState **out)
 {
-    if (!g->shaders[D12_VS].pShaderBytecode)
+    BOOL mesh = g->shaders[D12_MS].pShaderBytecode != NULL;
+    if (mesh ? !device->has_mesh || g->shaders[D12_VS].pShaderBytecode || g->shaders[D12_HS].pShaderBytecode ||
+                   g->shaders[D12_DS].pShaderBytecode || g->shaders[D12_GS].pShaderBytecode
+             : !g->shaders[D12_VS].pShaderBytecode || g->shaders[D12_AS].pShaderBytecode)
         return E_INVALIDARG;
     if ((g->shaders[D12_HS].pShaderBytecode || g->shaders[D12_DS].pShaderBytecode) && !device->has_tessellation)
         return E_INVALIDARG;
     D12PipelineState *state = new_pipeline(device);
     if (!state)
         return E_OUTOFMEMORY;
+    state->mesh = mesh;
     const D3D12_SHADER_BYTECODE *codes[D12_STAGES];
     for (UINT i = 0; i < D12_STAGES; i++)
         codes[i] = &g->shaders[i];
-    HRESULT hr = pick_root(device, state, g->root, codes, D12_CS);
+    HRESULT hr = pick_root(device, state, g->root, codes, D12_STAGES);
     state->blend = g->blend;
     state->sample_mask = g->sample_mask;
     state->rasterizer = g->rasterizer;
@@ -652,13 +688,18 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
     state->dsv_format = g->dsv;
     state->samples = g->sample.Count ? g->sample.Count : 1;
     state->depth_bounds = g->depth_stencil.DepthBoundsTestEnable && device->has_depth_bounds;
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && !mesh)
         hr = input_layout(state, &g->input, &g->shaders[D12_VS]);
+    DxbcSignature ps_inputs = {0}, primitives = {0};
+    if (SUCCEEDED(hr) && mesh)
+        hr = link_mesh(g, &ps_inputs, &primitives);
 
     /* stream output goes from the geometry shader, or one passing through the last stage before it. */
     DxbcStreamOutput *so = NULL;
     UINT strides[4] = {0};
     BOOL with_so = g->so.NumEntries && g->so.pSODeclaration;
+    if (with_so && mesh)
+        hr = E_INVALIDARG;
     if (SUCCEEDED(hr) && with_so) {
         if (!device->has_transform_feedback || !(so = stream_output(&g->so)))
             hr = E_INVALIDARG;
@@ -669,11 +710,15 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
         state->rasterized_stream = g->so.RasterizedStream;
     }
     VkShaderModule modules[D12_STAGES] = {0};
-    for (UINT stage = D12_VS; stage <= D12_PS && SUCCEEDED(hr); stage++) {
-        if (!g->shaders[stage].pShaderBytecode)
+    for (UINT stage = 0; stage < D12_STAGES && SUCCEEDED(hr); stage++) {
+        if (!g->shaders[stage].pShaderBytecode || stage == D12_CS)
             continue;
         DxbcCompileOptions options = {0};
         options.sample_count = state->samples;
+        if (mesh) {
+            options.linked_inputs = &ps_inputs;
+            options.per_primitive = &primitives;
+        }
         if (with_so && stage == D12_GS) {
             options.so = so;
             options.so_count = g->so.NumEntries;
@@ -703,6 +748,8 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
         }
     }
     HeapFree(GetProcessHeap(), 0, so);
+    g_d12_allocator.free(NULL, ps_inputs.elements);
+    g_d12_allocator.free(NULL, primitives.elements);
     if (SUCCEEDED(hr))
         hr = build_graphics(device, state, g, modules);
     for (UINT i = 0; i < D12_STAGES; i++)
@@ -879,14 +926,11 @@ HRESULT D12CreatePipelineFromStream(D12Device *device, const D3D12_PIPELINE_STAT
             memcpy(&g.flags, data, sizeof(UINT));
             break;
         case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS:
-        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS: {
-            D3D12_SHADER_BYTECODE code;
-            memcpy(&code, data, sizeof(code));
-            /* mesh shaders are not supported, as OPTIONS7 reports. */
-            if (code.pShaderBytecode)
-                return E_INVALIDARG;
+            memcpy(&g.shaders[D12_AS], data, sizeof(D3D12_SHADER_BYTECODE));
             break;
-        }
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS:
+            memcpy(&g.shaders[D12_MS], data, sizeof(D3D12_SHADER_BYTECODE));
+            break;
         default:
             break;
         }
@@ -895,7 +939,7 @@ HRESULT D12CreatePipelineFromStream(D12Device *device, const D3D12_PIPELINE_STAT
             D12_ALIGN(p - (const BYTE *)desc->pPipelineStateSubobjectStream, sizeof(void *));
     }
     if (cs.pShaderBytecode) {
-        if (g.shaders[D12_VS].pShaderBytecode)
+        if (g.shaders[D12_VS].pShaderBytecode || g.shaders[D12_MS].pShaderBytecode)
             return E_INVALIDARG;
         D3D12_COMPUTE_PIPELINE_STATE_DESC compute = {g.root, cs};
         return D12CreateComputePipeline(device, &compute, out);

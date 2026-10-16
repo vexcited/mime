@@ -568,11 +568,14 @@ static BOOL prepare_draw(D12CommandList *list)
         list->bound_graphics = p;
         list->state_dirty = TRUE;
     }
+    /* mesh pipelines have no topology or vertex buffers: those wait for the next pipeline of vertices. */
     if (list->state_dirty) {
         emit_state(list);
-        emit_topology(list);
-        list->topology_dirty = FALSE;
-    } else if (list->topology_dirty) {
+        if (!p->mesh) {
+            emit_topology(list);
+            list->topology_dirty = FALSE;
+        }
+    } else if (list->topology_dirty && !p->mesh) {
         emit_topology(list);
         list->topology_dirty = FALSE;
     }
@@ -583,7 +586,8 @@ static BOOL prepare_draw(D12CommandList *list)
     list->state_dirty = FALSE;
     bind_sets(list, FALSE);
     push_root(list, FALSE);
-    emit_buffers(list);
+    if (!p->mesh)
+        emit_buffers(list);
     if (so && !list->so_active)
         begin_stream_output(list);
     return TRUE;
@@ -1560,6 +1564,15 @@ static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 
         else
             vk->vkCmdDrawIndexedIndirect(list->cmd, args->buffer, offset, max_count, signature->stride);
         break;
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH:
+        if (!list->pipeline || !list->pipeline->mesh || !prepare_draw(list))
+            return;
+        if (counts)
+            vk->vkCmdDrawMeshTasksIndirectCountEXT(list->cmd, args->buffer, offset, counts->buffer,
+                                                   counts->offset + count_offset, max_count, signature->stride);
+        else
+            vk->vkCmdDrawMeshTasksIndirectEXT(list->cmd, args->buffer, offset, max_count, signature->stride);
+        break;
     case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
         if (!prepare_dispatch(list))
             return;
@@ -1713,7 +1726,13 @@ static void STDMETHODCALLTYPE list_rs_set_shading_rate_image(ID3D12GraphicsComma
 {
 }
 
-static void STDMETHODCALLTYPE list_dispatch_mesh(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z) {}
+static void STDMETHODCALLTYPE list_dispatch_mesh(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z)
+{
+    D12CommandList *list = impl(iface);
+    if (!x || !y || !z || !list->pipeline || !list->pipeline->mesh || !prepare_draw(list))
+        return;
+    vk_of(list)->vkCmdDrawMeshTasksEXT(list->cmd, x, y, z);
+}
 
 static void STDMETHODCALLTYPE list_set_program(ID3D12GraphicsCommandList10 *iface, const void *desc) {}
 

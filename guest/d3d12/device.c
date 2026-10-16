@@ -195,14 +195,16 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME, device->has_conservative = TRUE)
     WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME, device->has_patch_points = TRUE)
     WANT(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, device->has_unused_attachments = TRUE)
+    WANT(VK_EXT_MESH_SHADER_EXTENSION_NAME, device->has_mesh = TRUE)
 #undef WANT
     HeapFree(GetProcessHeap(), 0, available);
 
+    VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, device->has_mesh ? (void *)&mesh : NULL};
     VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unused = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
-        device->has_patch_points ? (void *)&eds2 : NULL};
+        device->has_patch_points ? (void *)&eds2 : eds2.pNext};
     VkPhysicalDeviceRobustness2FeaturesEXT robust = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
                                                      device->has_unused_attachments ? (void *)&unused : unused.pNext};
     VkPhysicalDeviceDescriptorBufferFeaturesEXT db = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
@@ -278,9 +280,14 @@ static HRESULT create_vulkan_device(D12Device *device)
     f->alphaToOne = FALSE;
     f->wideLines = FALSE;
     device->has_native16 = f12.shaderFloat16 && f->shaderInt16;
+    /* mesh shaders of every limit direct3d's first tier has; views and rates they lack features for. */
+    mesh.multiviewMeshShader = mesh.primitiveFragmentShadingRateMeshShader = FALSE;
+    if (!mesh.meshShader || !mesh.taskShader)
+        device->has_mesh = FALSE;
 
+    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT, device->has_mesh ? (void *)&mesh_props : NULL};
     VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT, &dbp};
     VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
@@ -288,6 +295,10 @@ static HRESULT create_vulkan_device(D12Device *device)
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
     device->db = dbp;
     device->db.pNext = NULL;
+    if (mesh_props.maxMeshOutputVertices < 256 || mesh_props.maxMeshOutputPrimitives < 256 ||
+        mesh_props.maxMeshWorkGroupInvocations < 128 || mesh_props.maxTaskWorkGroupInvocations < 128 ||
+        mesh_props.maxTaskPayloadSize < 16384)
+        device->has_mesh = FALSE;
     VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     VkPhysicalDeviceProperties2 sub_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sub};
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &sub_props);
@@ -541,7 +552,7 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS5, 12, FALSE, 0, 0);
     FEATURE(D3D12_FEATURE_DISPLAYABLE, 8, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, FALSE, FALSE, 0, 0, FALSE);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, 0, 0);
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS8, 4, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS10, 8, 0);

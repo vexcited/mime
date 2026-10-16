@@ -133,6 +133,13 @@ typedef struct DxbcCompileOptions {
     uint32_t root_count;
     /* the render targets' sample count, which direct3d 12 shaders know from their pipeline state. */
     uint32_t sample_count;
+    /*
+     * mesh pipelines link stages by semantic: a mesh shader's outputs go
+     * where the pixel shader's inputs are, and the pixel shader's inputs
+     * the mesh shader writes per primitive are per primitive.
+     */
+    const DxbcSignature *linked_inputs;
+    const DxbcSignature *per_primitive;
 } DxbcCompileOptions;
 
 /* what a slot of a stage holds, as the shader declares it. */

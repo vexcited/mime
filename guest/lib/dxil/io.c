@@ -112,13 +112,15 @@ static uint32_t arrayed(Compiler *c, int sig)
     }
     if (sig == SIG_OUT && c->kind == KIND_HULL)
         return c->cp_out ? c->cp_out : 1;
+    if (c->kind == KIND_MESH)
+        return sig == SIG_OUT ? (c->mesh_vertices ? c->mesh_vertices : 1) : (c->mesh_primitives ? c->mesh_primitives : 1);
     return 0;
 }
 
 static uint32_t storage_of(Compiler *c, int sig)
 {
     if (sig == SIG_PATCH)
-        return c->kind == KIND_HULL ? SpvStorageClassOutput : SpvStorageClassInput;
+        return c->kind == KIND_HULL || c->kind == KIND_MESH ? SpvStorageClassOutput : SpvStorageClassInput;
     return sig == SIG_IN ? SpvStorageClassInput : SpvStorageClassOutput;
 }
 
@@ -166,6 +168,8 @@ static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *
     int pixel = c->kind == KIND_PIXEL, in = sig == SIG_IN;
     /* the outputs that reach the rasterizer, and those that take a built-in there. */
     int raster = sig == SIG_OUT && (c->kind == KIND_VERTEX || c->kind == KIND_DOMAIN || c->kind == KIND_GEOMETRY);
+    /* a mesh shader's primitive outputs take the built-ins of primitives. */
+    int primitive = sig == SIG_PATCH && c->kind == KIND_MESH;
     *shape = 0;
     *type = t_i32(c);
     switch (e->kind) {
@@ -189,19 +193,19 @@ static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *
         return 1;
     }
     case SEM_PRIMITIVE_ID:
-        if (!(pixel && in) && !(raster && c->kind == KIND_GEOMETRY))
+        if (!(pixel && in) && !(raster && c->kind == KIND_GEOMETRY) && !primitive)
             return 0;
         spv_capability(&c->b, SpvCapabilityGeometry);
         *which = SpvBuiltInPrimitiveId;
         return 1;
     case SEM_RENDER_TARGET_ARRAY_INDEX:
-        if (!(pixel && in) && !raster)
+        if (!(pixel && in) && !raster && !primitive)
             return 0;
         spv_capability(&c->b, pixel || c->kind == KIND_GEOMETRY ? SpvCapabilityGeometry : SpvCapabilityShaderLayer);
         *which = SpvBuiltInLayer;
         return 1;
     case SEM_VIEWPORT_ARRAY_INDEX:
-        if (!(pixel && in) && !raster)
+        if (!(pixel && in) && !raster && !primitive)
             return 0;
         spv_capability(&c->b, pixel || c->kind == KIND_GEOMETRY ? SpvCapabilityMultiViewport
                                                                 : SpvCapabilityShaderViewportIndex);
@@ -252,6 +256,12 @@ static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *
         *which = inner ? SpvBuiltInTessLevelInner : SpvBuiltInTessLevelOuter;
         return 1;
     }
+    case SEM_CULL_PRIMITIVE:
+        if (!primitive)
+            return 0;
+        *type = c->t_bool;
+        *which = SpvBuiltInCullPrimitiveEXT;
+        return 1;
     case SEM_VIEW_ID:
         if (!in)
             return 0;
@@ -262,23 +272,63 @@ static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *
     }
 }
 
-/* the location variable of an element. */
+static int same_semantic(const char *a, const char *b)
+{
+    if (!a || !b)
+        return 0;
+    for (; *a && *b; a++, b++) {
+        char x = *a >= 'a' && *a <= 'z' ? *a - 32 : *a, y = *b >= 'a' && *b <= 'z' ? *b - 32 : *b;
+        if (x != y)
+            return 0;
+    }
+    return *a == *b;
+}
+
+/* the element of a linked signature with the same semantic, or NULL. */
+static const DxbcSignatureElement *linked(const DxbcSignature *sig, const SigElement *e)
+{
+    for (uint32_t i = 0; sig && i < sig->count; i++)
+        if (sig->elements[i].semantic_index == e->semantic_index && same_semantic(sig->elements[i].name, e->name))
+            return &sig->elements[i];
+    return NULL;
+}
+
+/* the location variable of an element; 0 for a mesh shader's output no pixel shader reads. */
 static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_t n, uint32_t *var, uint32_t *scalar)
 {
     uint32_t storage = storage_of(c, sig);
     *scalar = interface_scalar(c, e->comp);
+    /* pixel shader targets are at their render target, the semantic index; the rest at their row. */
+    uint32_t location = c->kind == KIND_PIXEL && sig == SIG_OUT ? e->semantic_index : (uint32_t)e->row;
+    uint32_t component = e->col;
+    if (c->kind == KIND_MESH && c->options->linked_inputs) {
+        const DxbcSignatureElement *to = linked(c->options->linked_inputs, e);
+        if (!to) {
+            *var = 0;
+            return;
+        }
+        location = to->reg;
+        component = to->mask ? (uint32_t)__builtin_ctz(to->mask) : 0;
+    }
     uint32_t row_type = e->cols == 1 ? *scalar : spv_type_vector(&c->b, *scalar, e->cols);
     uint32_t type = e->rows > 1 ? spv_type_array(&c->b, row_type, e->rows) : row_type;
     *var = dxil_global(c, storage, n ? spv_type_array(&c->b, type, n) : type, 0);
-    /* pixel shader targets are at their render target, the semantic index; the rest at their row. */
-    uint32_t location = c->kind == KIND_PIXEL && sig == SIG_OUT ? e->semantic_index : (uint32_t)e->row;
     dxil_decorate(c, *var, SpvDecorationLocation, location);
-    if (e->col)
-        dxil_decorate(c, *var, SpvDecorationComponent, e->col);
+    if (component)
+        dxil_decorate(c, *var, SpvDecorationComponent, component);
     if (sig == SIG_PATCH)
-        spv_decorate(&c->b, *var, SpvDecorationPatch, NULL, 0);
-    if (c->kind == KIND_PIXEL && sig == SIG_IN)
-        interpolation(c, *var, e, *scalar != c->t_f32);
+        spv_decorate(&c->b, *var, c->kind == KIND_MESH ? SpvDecorationPerPrimitiveEXT : SpvDecorationPatch, NULL, 0);
+    if (c->kind == KIND_PIXEL && sig == SIG_IN) {
+        if (linked(c->options->per_primitive, e)) {
+            spv_capability(&c->b, SpvCapabilityMeshShadingEXT);
+            spv_extension(&c->b, "SPV_EXT_mesh_shader");
+            spv_decorate(&c->b, *var, SpvDecorationPerPrimitiveEXT, NULL, 0);
+            if (*scalar != c->t_f32)
+                spv_decorate(&c->b, *var, SpvDecorationFlat, NULL, 0);
+        } else {
+            interpolation(c, *var, e, *scalar != c->t_f32);
+        }
+    }
 }
 
 /* the variable of an element, made at its first access. */
@@ -302,7 +352,8 @@ static int make_variable(Compiler *c, int sig, SigElement *e)
         if (n || sig == SIG_PATCH) {
             dxil_decorate(c, e->var, SpvDecorationBuiltIn, which);
             if (sig == SIG_PATCH)
-                spv_decorate(&c->b, e->var, SpvDecorationPatch, NULL, 0);
+                spv_decorate(&c->b, e->var, c->kind == KIND_MESH ? SpvDecorationPerPrimitiveEXT : SpvDecorationPatch,
+                             NULL, 0);
         }
         /* a value the rasterizer takes may also be the next stage's input. */
         if (sig == SIG_OUT && e->row >= 0 && shape == 0 && which != SpvBuiltInFragDepth &&
@@ -326,6 +377,7 @@ static int make_variable(Compiler *c, int sig, SigElement *e)
     if (e->row < 0)
         return dxil_fail(c, "a system value not implemented");
     location_variable(c, sig, e, n, &e->var, &e->scalar);
+    e->dropped = !e->var;
     return 0;
 }
 
@@ -400,6 +452,10 @@ static int load_element(Compiler *c, const DxInst *ins, int sig, uint32_t vertex
     }
     if (make_variable(c, sig, e))
         return -1;
+    if (e->dropped) {
+        dxil_set_plain(c, ins->value, spv_const_null(&c->b, type));
+        return 0;
+    }
     uint32_t ptr = component_pointer(c, sig, e, e->var, e->scalar, e->builtin != 0, vertex, index_of(c, ins->ops[3]), col);
     value = spv_load(&c->b, e->scalar, ptr);
     if (e->kind == SEM_POSITION && c->kind == KIND_PIXEL && col == 3)
@@ -419,6 +475,8 @@ static int store_element(Compiler *c, const DxInst *ins, int sig, uint32_t value
     SigElement *e = element(c, s, (uint32_t)dxil_constant(c, ins->ops[2], 0));
     if (!e || make_variable(c, sig, e))
         return -1;
+    if (e->dropped)
+        return 0;
     const DxValue *v = dx_value(&c->m, c->f, ins->ops[value_op]);
     if (!v)
         return dxil_fail(c, "a store of nothing");
@@ -536,6 +594,88 @@ static int emit_stream(Compiler *c, const DxInst *ins, int emit, int cut)
     return 0;
 }
 
+/* ------------------------------------------------------------------ mesh and task shaders */
+
+/* emitIndices: a primitive's vertices, in the built-in array of triangles or lines. */
+static int emit_indices(Compiler *c, const DxInst *ins)
+{
+    uint32_t n = c->mesh_topology == 1 ? 2 : 3;
+    uint32_t vec = c->t_uvec[n];
+    uint32_t which = n == 2 ? SpvBuiltInPrimitiveLineIndicesEXT : SpvBuiltInPrimitiveTriangleIndicesEXT;
+    uint32_t array = spv_type_array(&c->b, vec, c->mesh_primitives ? c->mesh_primitives : 1);
+    uint32_t var = dxil_builtin(c, which, SpvStorageClassOutput, array);
+    uint32_t parts[3];
+    for (uint32_t i = 0; i < n; i++)
+        parts[i] = dxil_value(c, ins->ops[3 + i]);
+    uint32_t w[2] = {var, dxil_value(c, ins->ops[2])};
+    uint32_t ptr = spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassOutput, vec), w, 2);
+    spv_store(&c->b, ptr, dxil_vector(c, c->t_u32, parts, n));
+    return 0;
+}
+
+/* the task shader's payload, made at the first use; type is the dxil type of what it holds. */
+static uint32_t payload(Compiler *c, uint32_t type)
+{
+    if (!c->payload) {
+        c->payload_type = dxil_type(c, type);
+        c->payload = dxil_global(c, SpvStorageClassTaskPayloadWorkgroupEXT, c->payload_type, 0);
+    }
+    return c->payload;
+}
+
+/* getMeshPayload: a pointer to what the task shader passed. */
+static int mesh_payload(Compiler *c, const DxInst *ins)
+{
+    const DxType *t = &c->m.types[ins->type];
+    if (t->kind != DT_POINTER)
+        return dxil_fail(c, "a mesh payload that is not a pointer");
+    uint32_t var = payload(c, t->element);
+    dxil_set_pointer(c, ins->value, var, c->payload_type, SpvStorageClassTaskPayloadWorkgroupEXT);
+    return 0;
+}
+
+/* dispatchMesh: the counts and payload the task shader's returns emit. */
+static int dispatch_mesh(Compiler *c, const DxInst *ins)
+{
+    for (uint32_t i = 0; i < 3; i++)
+        spv_store(&c->b, c->task_counts[i], dxil_value(c, ins->ops[2 + i]));
+    uint32_t type, value = dxil_load_pointer(c, ins->ops[5], &type);
+    if (!value || !c->payload || type != c->payload_type)
+        return dxil_fail(c, "a mesh payload of another type");
+    spv_store(&c->b, c->payload, value);
+    return 0;
+}
+
+int dxil_prepare_task(Compiler *c, const DxFunction *f)
+{
+    for (uint32_t i = 0; i < 3; i++)
+        c->task_counts[i] = dxil_global(c, SpvStorageClassPrivate, c->t_u32, dxil_uconst(c, 0));
+    for (uint32_t i = 0; i < f->inst_count; i++) {
+        const DxInst *ins = &f->insts[i];
+        if (ins->op != DI_CALL || ins->count < 6)
+            continue;
+        const DxValue *op = dx_value(&c->m, f, ins->ops[1]);
+        const DxValue *p = dx_value(&c->m, f, ins->ops[5]);
+        if (!op || op->kind != DV_INT || op->bits != 173 || !p)
+            continue;
+        const DxType *t = &c->m.types[p->type];
+        if (t->kind == DT_POINTER)
+            payload(c, t->element);
+    }
+    return c->error ? -1 : 0;
+}
+
+void dxil_emit_tasks(Compiler *c)
+{
+    uint32_t w[4], n = 3;
+    for (uint32_t i = 0; i < 3; i++)
+        w[i] = spv_load(&c->b, c->t_u32, c->task_counts[i]);
+    if (c->payload)
+        w[n++] = c->payload;
+    spv_op_void(&c->b, SpvOpEmitMeshTasksEXT, w, n);
+    c->b.block_open = 0;
+}
+
 int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op)
 {
     switch (op) {
@@ -602,6 +742,16 @@ int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 257: /* startInstanceLocation */
         spv_capability(&c->b, SpvCapabilityDrawParameters);
         return builtin_scalar(c, ins, SpvBuiltInBaseInstance, t_i32(c)) ? -1 : 1;
+    case 168: { /* setMeshOutputCounts */
+        uint32_t w[2] = {dxil_value(c, ins->ops[2]), dxil_value(c, ins->ops[3])};
+        spv_op_void(&c->b, SpvOpSetMeshOutputsEXT, w, 2);
+        return 1;
+    }
+    case 169: return emit_indices(c, ins) ? -1 : 1;
+    case 170: return mesh_payload(c, ins) ? -1 : 1;
+    case 171: return store_element(c, ins, SIG_OUT, 5, dxil_value(c, ins->ops[6])) ? -1 : 1;
+    case 172: return store_element(c, ins, SIG_PATCH, 5, dxil_value(c, ins->ops[6])) ? -1 : 1;
+    case 173: return dispatch_mesh(c, ins) ? -1 : 1;
     case 77: { /* renderTargetGetSampleCount */
         uint32_t n = c->options->sample_count ? c->options->sample_count : 1;
         dxil_set_plain(c, ins->value, dxil_uconst(c, n));
@@ -676,7 +826,15 @@ void dxil_execution_modes(Compiler *c, uint32_t main)
         }
         break;
     }
+    case KIND_MESH:
+    case KIND_AMPLIFICATION:
     case KIND_COMPUTE: {
+        /* vulkan wants at least one vertex and primitive, which a shader writing none never uses. */
+        if (c->kind == KIND_MESH) {
+            mode1(c, main, SpvExecutionModeOutputVertices, c->mesh_vertices ? c->mesh_vertices : 1);
+            mode1(c, main, SpvExecutionModeOutputPrimitivesEXT, c->mesh_primitives ? c->mesh_primitives : 1);
+            mode(c, main, c->mesh_topology == 1 ? SpvExecutionModeOutputLinesEXT : SpvExecutionModeOutputTrianglesEXT);
+        }
         uint32_t w[5] = {main, SpvExecutionModeLocalSize, c->thread_group[0] ? c->thread_group[0] : 1,
                          c->thread_group[1] ? c->thread_group[1] : 1, c->thread_group[2] ? c->thread_group[2] : 1};
         spv_emit(&c->b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, w, 5);
