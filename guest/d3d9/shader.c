@@ -15,6 +15,8 @@ static void destroy(D9Shader *s)
         next = v->next;
         if (v->shader)
             v->shader->lpVtbl->Release(v->shader);
+        if (v->stream_out)
+            v->stream_out->lpVtbl->Release(v->stream_out);
         HeapFree(GetProcessHeap(), 0, v->dxbc);
         HeapFree(GetProcessHeap(), 0, v);
     }

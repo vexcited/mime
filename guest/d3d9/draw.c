@@ -697,6 +697,8 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
     return TRUE;
 }
 
+BOOL D9PrepareDraw(D9Device *d, D3DPRIMITIVETYPE type) { return prepare(d, type); }
+
 /* ------------------------------------------------------------------ the draws */
 
 HRESULT D9Draw(D9Device *d, D3DPRIMITIVETYPE type, UINT start, UINT primitives)
@@ -887,6 +889,12 @@ void D9FreeDraws(D9Device *d)
     if (d->up_indices.buffer)
         d->up_indices.buffer->lpVtbl->Release(d->up_indices.buffer);
     d->zeros = NULL;
+    if (d->processed)
+        d->processed->lpVtbl->Release(d->processed);
+    if (d->processed_read)
+        d->processed_read->lpVtbl->Release(d->processed_read);
+    d->processed = d->processed_read = NULL;
+    d->processed_size = 0;
     memset(&d->up_vertices, 0, sizeof(d->up_vertices));
     memset(&d->up_indices, 0, sizeof(d->up_indices));
     D9ClearStateCache(&d->blend_cache);

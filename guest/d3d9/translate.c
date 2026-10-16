@@ -1525,8 +1525,8 @@ static D9Opnd cb_decl(UINT slot, UINT size)
     return o;
 }
 
-/* the semantic of a pixel shader's input slot, for its signature. */
-static void slot_semantic(UINT slot, const char **name, UINT *index)
+/* the semantic of an interpolated value's slot, for signatures. */
+void D9SlotSemantic(UINT slot, const char **name, UINT *index)
 {
     if (slot < 8) {
         *name = "TEXCOORD", *index = slot;
@@ -1576,7 +1576,7 @@ static void declare(Tx *t, D9Code *d)
                 continue;
             const char *name;
             UINT index;
-            slot_semantic(slot, &name, &index);
+            D9SlotSemantic(slot, &name, &index);
             dcl(d, OP_DCL_OUTPUT, D9Dst(OPERAND_OUTPUT, slot, 0xF), NULL, 0);
             add_element(&t->outputs, name, index, 0, 3, slot, 0xF);
         }
@@ -1598,7 +1598,7 @@ static void declare(Tx *t, D9Code *d)
                 continue;
             const char *name;
             UINT index;
-            slot_semantic(slot, &name, &index);
+            D9SlotSemantic(slot, &name, &index);
             UINT interp = INTERP_LINEAR;
             if ((slot == 8 || slot == 9) && key->flat)
                 interp = INTERP_CONSTANT;

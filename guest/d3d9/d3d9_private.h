@@ -338,6 +338,9 @@ struct D9Device {
     UINT bound_bucket[2];
     ID3D11Buffer *zeros;
     D9Ring up_vertices, up_indices;
+    /* ProcessVertices' stream output and its copy read back. */
+    ID3D11Buffer *processed, *processed_read;
+    UINT processed_size;
     D9StateCache blend_cache, depth_cache, raster_cache, sampler_cache;
     /* what the context has bound, so draws set only what changed. */
     struct D9Variant *bound_vs, *bound_ps;
@@ -660,6 +663,8 @@ typedef struct D9Variant {
     SIZE_T size;
     /* vertex shaders: the registers of interpolated values written. */
     UINT outputs;
+    /* ProcessVertices: the shader streaming the outputs out, the position then the registers of outputs. */
+    ID3D11GeometryShader *stream_out;
 } D9Variant;
 
 typedef struct D9Shader {
@@ -845,6 +850,10 @@ UINT D9FloatBucketSize(const D9ShaderInfo *info);
 #define D9_SLOT_FACE 29
 #define D9_SLOT_POINT_COORD 30
 int D9VaryingSlot(UINT usage, UINT index);
+void D9SlotSemantic(UINT slot, const char **name, UINT *index);
+BOOL D9PrepareDraw(D9Device *device, D3DPRIMITIVETYPE type);
+HRESULT D9ProcessVertices(D9Device *device, UINT source, UINT dest, UINT count, D9Buffer *buffer,
+                          D9VertexDecl *declaration, DWORD flags);
 const char *D9UsageName(UINT usage);
 
 /* ------------------------------------------------------------------ adapters */

@@ -1597,7 +1597,14 @@ static HRESULT STDMETHODCALLTYPE device_process_vertices(IDirect3DDevice9Ex *ifa
                                                          UINT count, IDirect3DVertexBuffer9 *buffer,
                                                          IDirect3DVertexDeclaration9 *declaration, DWORD flags)
 {
-    return not_yet(impl(iface), "ProcessVertices");
+    D9Device *d = impl(iface);
+    D9Buffer *b = D9BufferFrom(buffer);
+    if (!b)
+        return D3DERR_INVALIDCALL;
+    D9Lock(d);
+    HRESULT hr = D9ProcessVertices(d, source, dest, count, b, D9VertexDeclFrom(declaration), flags);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_vertex_declaration(IDirect3DDevice9Ex *iface,
