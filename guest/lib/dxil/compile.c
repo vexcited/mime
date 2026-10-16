@@ -586,12 +586,37 @@ static uint32_t binop_opcode(Compiler *c, const DxInst *ins, int is_float, int i
     }
 }
 
+/* the signed integer type of the same shape as an unsigned one. */
+static uint32_t signed_type(Compiler *c, uint32_t dx)
+{
+    const DxType *t = &c->m.types[dx];
+    int f;
+    uint32_t scalar = dxil_type(c, dxil_component_type(c, dx));
+    uint32_t s = spv_type_int(&c->b, type_width(c, scalar, &f), 1);
+    return t->kind == DT_VECTOR ? spv_type_vector(&c->b, s, t->count) : s;
+}
+
 static void binop(Compiler *c, const DxInst *ins)
 {
     uint32_t type = dxil_type(c, ins->type);
     uint32_t a = dxil_value(c, ins->ops[0]), b = dxil_value(c, ins->ops[1]);
     uint32_t op = binop_opcode(c, ins, is_float_type(c, ins->type), is_bool_type(c, ins->type));
-    uint32_t r = spv_op2(&c->b, op, type, a, b);
+    uint32_t r;
+    if (op == SpvOpSDiv || op == SpvOpShiftRightArithmetic) {
+        /* on signed types: drivers may take the result type's signedness for the operation's. */
+        uint32_t st = signed_type(c, ins->type);
+        r = spv_op2(&c->b, op, st, spv_op1(&c->b, SpvOpBitcast, st, a),
+                    op == SpvOpShiftRightArithmetic ? b : spv_op1(&c->b, SpvOpBitcast, st, b));
+        r = spv_op1(&c->b, SpvOpBitcast, type, r);
+    } else if (op == SpvOpSRem) {
+        /* a less the truncated quotient times b: nvidia's OpSRem of a negative a is positive. */
+        uint32_t st = signed_type(c, ins->type);
+        uint32_t sa = spv_op1(&c->b, SpvOpBitcast, st, a), sb = spv_op1(&c->b, SpvOpBitcast, st, b);
+        uint32_t q = spv_op2(&c->b, SpvOpSDiv, st, sa, sb);
+        r = spv_op1(&c->b, SpvOpBitcast, type, spv_op2(&c->b, SpvOpISub, st, sa, spv_op2(&c->b, SpvOpIMul, st, q, sb)));
+    } else {
+        r = spv_op2(&c->b, op, type, a, b);
+    }
     if (ins->flags & DX_INST_PRECISE)
         spv_decorate(&c->b, r, SpvDecorationNoContraction, NULL, 0);
     dxil_set_plain(c, ins->value, r);
