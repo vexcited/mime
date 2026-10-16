@@ -30,7 +30,7 @@ DWORD WINAPI GetCurrentThreadId(void)
 
 static BOOL query_process(HANDLE process, PROCESS_BASIC_INFORMATION *info)
 {
-    NTSTATUS status = NtQueryInformationProcess(process, ProcessBasicInformation, info, sizeof(*info), NULL);
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessBasicInformation, info, sizeof(*info), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -38,7 +38,7 @@ static BOOL query_process(HANDLE process, PROCESS_BASIC_INFORMATION *info)
 
 static BOOL query_thread(HANDLE thread, THREAD_BASIC_INFORMATION *info)
 {
-    NTSTATUS status = NtQueryInformationThread(thread, ThreadBasicInformation, info, sizeof(*info), NULL);
+    NTSTATUS status = NtQueryInformationThread(thread, ThreadBasicInformation, info, sizeof(*info), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -90,14 +90,14 @@ BOOL WINAPI GetExitCodeThread(HANDLE thread, LPDWORD code)
 
 HANDLE WINAPI OpenProcess(DWORD access, BOOL inherit, DWORD id)
 {
-    CLIENT_ID cid = {(HANDLE)(ULONG_PTR)id, NULL};
+    CLIENT_ID cid = {(HANDLE)(ULONG_PTR)id, nullptr};
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, NULL, inherit ? OBJ_INHERIT : 0, NULL, NULL);
+    InitializeObjectAttributes(&oa, nullptr, inherit ? OBJ_INHERIT : 0, nullptr, nullptr);
     HANDLE handle;
     NTSTATUS status = NtOpenProcess(&handle, access, &oa, &cid);
     if (!NT_SUCCESS(status)) {
         KbSetError(status == STATUS_INVALID_CID ? ERROR_INVALID_PARAMETER : RtlNtStatusToDosError(status));
-        return NULL;
+        return nullptr;
     }
     return handle;
 }
@@ -107,14 +107,14 @@ HANDLE WINAPI OpenThread(DWORD access, BOOL inherit, DWORD id)
 {
     if (id != GetCurrentThreadId()) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     HANDLE handle;
     NTSTATUS status = NtDuplicateObject(NtCurrentProcess(), NtCurrentThread(), NtCurrentProcess(), &handle, access,
                                         inherit ? OBJ_INHERIT : 0, 0);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     return handle;
 }
@@ -163,7 +163,7 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
 {
     if (!start) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     SIZE_T commit = 0, reserve = 0;
     if (flags & STACK_SIZE_PARAM_IS_A_RESERVATION) {
@@ -174,19 +174,19 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
             reserve = (commit + DEFAULT_STACK_RESERVE - 1) & ~(SIZE_T)(DEFAULT_STACK_RESERVE - 1);
     }
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, NULL, (sa && sa->bInheritHandle) ? OBJ_INHERIT : 0, NULL,
-                               sa ? sa->lpSecurityDescriptor : NULL);
+    InitializeObjectAttributes(&oa, nullptr, (sa && sa->bInheritHandle) ? OBJ_INHERIT : 0, nullptr,
+                               sa ? sa->lpSecurityDescriptor : nullptr);
     HANDLE handle;
     NTSTATUS status = NtCreateThreadEx(&handle, THREAD_ALL_ACCESS, &oa, process, (PVOID)start, parameter,
                                        (flags & CREATE_SUSPENDED) ? THREAD_CREATE_FLAGS_CREATE_SUSPENDED : 0, 0, commit,
-                                       reserve, NULL);
+                                       reserve, nullptr);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     if (id) {
         THREAD_BASIC_INFORMATION info;
-        *id = NT_SUCCESS(NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), NULL))
+        *id = NT_SUCCESS(NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), nullptr))
                   ? (DWORD)(ULONG_PTR)info.ClientId.UniqueThread
                   : 0;
     }
@@ -196,13 +196,13 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
 HANDLE WINAPI CreateRemoteThread(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start,
                                  LPVOID parameter, DWORD flags, LPDWORD id)
 {
-    return CreateRemoteThreadEx(process, sa, stack, start, parameter, flags, NULL, id);
+    return CreateRemoteThreadEx(process, sa, stack, start, parameter, flags, nullptr, id);
 }
 
 HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID parameter,
                            DWORD flags, LPDWORD id)
 {
-    return CreateRemoteThreadEx(NtCurrentProcess(), sa, stack, start, parameter, flags, NULL, id);
+    return CreateRemoteThreadEx(NtCurrentProcess(), sa, stack, start, parameter, flags, nullptr, id);
 }
 
 DWORD WINAPI SuspendThread(HANDLE thread)
@@ -486,13 +486,13 @@ void KbInitializeCommandLine(void)
 {
     PRTL_USER_PROCESS_PARAMETERS pp = KbParams();
     if (pp->CommandLine.Buffer) {
-        int n = WideCharToMultiByte(CP_ACP, 0, pp->CommandLine.Buffer, pp->CommandLine.Length / sizeof(WCHAR), NULL, 0,
-                                    NULL, NULL);
+        int n = WideCharToMultiByte(CP_ACP, 0, pp->CommandLine.Buffer, pp->CommandLine.Length / sizeof(WCHAR), nullptr, 0,
+                                    nullptr, nullptr);
         g_command_line_a = KbAlloc((SIZE_T)n + 1);
         if (g_command_line_a) {
             if (n)
                 WideCharToMultiByte(CP_ACP, 0, pp->CommandLine.Buffer, pp->CommandLine.Length / sizeof(WCHAR),
-                                    g_command_line_a, n, NULL, NULL);
+                                    g_command_line_a, n, nullptr, nullptr);
             g_command_line_a[n] = 0;
         }
     }
@@ -529,7 +529,7 @@ void WINAPI GetStartupInfoW(LPSTARTUPINFOW info)
     info->dwFlags = pp->WindowFlags;
     info->wShowWindow = (WORD)pp->ShowWindowFlags;
     info->cbReserved2 = pp->RuntimeData.Length;
-    info->lpReserved2 = pp->RuntimeData.Length ? (LPBYTE)pp->RuntimeData.Buffer : NULL;
+    info->lpReserved2 = pp->RuntimeData.Length ? (LPBYTE)pp->RuntimeData.Buffer : nullptr;
     if (info->dwFlags & STARTF_USESTDHANDLES) {
         info->hStdInput = pp->StandardInput;
         info->hStdOutput = pp->StandardOutput;
@@ -545,20 +545,20 @@ void WINAPI GetStartupInfoA(LPSTARTUPINFOA info)
         GetStartupInfoW(&w);
         memcpy(&g_startup_a, &w, sizeof(g_startup_a));
         g_startup_a.cb = sizeof(g_startup_a);
-        g_startup_a.lpReserved = NULL;
-        g_startup_a.lpDesktop = NULL;
-        g_startup_a.lpTitle = NULL;
+        g_startup_a.lpReserved = nullptr;
+        g_startup_a.lpDesktop = nullptr;
+        g_startup_a.lpTitle = nullptr;
         if (w.lpDesktop) {
-            int n = WideCharToMultiByte(CP_ACP, 0, w.lpDesktop, -1, NULL, 0, NULL, NULL);
+            int n = WideCharToMultiByte(CP_ACP, 0, w.lpDesktop, -1, nullptr, 0, nullptr, nullptr);
             g_startup_a.lpDesktop = KbAlloc((SIZE_T)n);
             if (g_startup_a.lpDesktop)
-                WideCharToMultiByte(CP_ACP, 0, w.lpDesktop, -1, g_startup_a.lpDesktop, n, NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, w.lpDesktop, -1, g_startup_a.lpDesktop, n, nullptr, nullptr);
         }
         if (w.lpTitle) {
-            int n = WideCharToMultiByte(CP_ACP, 0, w.lpTitle, -1, NULL, 0, NULL, NULL);
+            int n = WideCharToMultiByte(CP_ACP, 0, w.lpTitle, -1, nullptr, 0, nullptr, nullptr);
             g_startup_a.lpTitle = KbAlloc((SIZE_T)n);
             if (g_startup_a.lpTitle)
-                WideCharToMultiByte(CP_ACP, 0, w.lpTitle, -1, g_startup_a.lpTitle, n, NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, w.lpTitle, -1, g_startup_a.lpTitle, n, nullptr, nullptr);
         }
     }
     *info = g_startup_a;
@@ -574,8 +574,8 @@ static PWSTR wide_environment(const char *ansi, SIZE_T *bytes)
     while (ansi[n] || ansi[n + 1])
         n++;
     n += 2;
-    int chars = MultiByteToWideChar(CP_ACP, 0, ansi, (int)n, NULL, 0);
-    PWSTR wide = chars > 0 ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : NULL;
+    int chars = MultiByteToWideChar(CP_ACP, 0, ansi, (int)n, nullptr, 0);
+    PWSTR wide = chars > 0 ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : nullptr;
     if (wide)
         MultiByteToWideChar(CP_ACP, 0, ansi, (int)n, wide, chars);
     *bytes = (SIZE_T)chars * sizeof(WCHAR);
@@ -643,12 +643,12 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         }
         executable[n] = 0;
     }
-    DWORD n = SearchPathW(NULL, executable, L".exe", MAX_PATH, full, NULL);
+    DWORD n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
     if (!n || n >= MAX_PATH) {
         KbSetError(ERROR_FILE_NOT_FOUND);
         return FALSE;
     }
-    n = directory ? GetFullPathNameW(directory, MAX_PATH, cwd, NULL) : GetCurrentDirectoryW(MAX_PATH, cwd);
+    n = directory ? GetFullPathNameW(directory, MAX_PATH, cwd, nullptr) : GetCurrentDirectoryW(MAX_PATH, cwd);
     if (!n || n >= MAX_PATH) {
         if (n >= MAX_PATH)
             KbSetError(ERROR_FILENAME_EXCED_RANGE);
@@ -661,7 +661,7 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         wcscat(default_command, L"\"");
         command_line = default_command;
     }
-    PWSTR converted = NULL;
+    PWSTR converted = nullptr;
     SIZE_T env_bytes = 0;
     if (environment && !(flags & CREATE_UNICODE_ENVIRONMENT)) {
         converted = wide_environment(environment, &env_bytes);
@@ -674,7 +674,7 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
         env_bytes = environment_bytes(environment);
     }
 
-    RTL_USER_PROCESS_PARAMETERS pp = {0};
+    RTL_USER_PROCESS_PARAMETERS pp = {};
     pp.MaximumLength = pp.Length = sizeof(pp);
     pp.Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     RtlInitUnicodeString(&pp.ImagePathName, full);
@@ -715,8 +715,8 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
     ULONG process_flags = ((flags & CREATE_BREAKAWAY_FROM_JOB) ? PROCESS_CREATE_FLAGS_BREAKAWAY : 0) |
                           (inherit ? PROCESS_CREATE_FLAGS_INHERIT_HANDLES : 0);
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
-                                           NULL, NULL, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, NULL,
-                                           NULL);
+                                           nullptr, nullptr, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, nullptr,
+                                           nullptr);
     KbFree(converted);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
@@ -744,7 +744,7 @@ BOOL WINAPI CreateProcessA(LPCSTR application, LPSTR command_line, LPSECURITY_AT
     sw.cb = sizeof(sw);
     sw.lpDesktop = KbAnsiToWideCp(CP_ACP, startup->lpDesktop);
     sw.lpTitle = KbAnsiToWideCp(CP_ACP, startup->lpTitle);
-    sw.lpReserved = NULL;
+    sw.lpReserved = nullptr;
     BOOL ok = CreateProcessW(app, cmd, process_sa, thread_sa, inherit, flags, environment, dir, &sw, info);
     KbFree(app);
     KbFree(cmd);
@@ -768,7 +768,7 @@ UINT WINAPI WinExec(LPCSTR command_line, UINT show)
         memcpy(copy, command_line, n + 1);
     else
         copy[0] = 0;
-    BOOL ok = CreateProcessA(NULL, copy, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    BOOL ok = CreateProcessA(nullptr, copy, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi);
     KbFree(copy);
     if (ok) {
         CloseHandle(pi.hThread);
@@ -792,7 +792,7 @@ static void to_filetime(LPFILETIME ft, ULONGLONG v)
 BOOL WINAPI GetThreadTimes(HANDLE thread, LPFILETIME creation, LPFILETIME exit, LPFILETIME kernel, LPFILETIME user)
 {
     ULONGLONG times[4];
-    NTSTATUS status = NtQueryInformationThread(thread, ThreadTimes, times, sizeof(times), NULL);
+    NTSTATUS status = NtQueryInformationThread(thread, ThreadTimes, times, sizeof(times), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     to_filetime(creation, times[0]);
@@ -805,7 +805,7 @@ BOOL WINAPI GetThreadTimes(HANDLE thread, LPFILETIME creation, LPFILETIME exit, 
 BOOL WINAPI GetProcessTimes(HANDLE process, LPFILETIME creation, LPFILETIME exit, LPFILETIME kernel, LPFILETIME user)
 {
     ULONGLONG times[4];
-    NTSTATUS status = NtQueryInformationProcess(process, ProcessTimes, times, sizeof(times), NULL);
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessTimes, times, sizeof(times), nullptr);
     if (NT_SUCCESS(status)) {
         to_filetime(creation, times[0]);
         to_filetime(exit, times[1]);
@@ -821,8 +821,8 @@ BOOL WINAPI GetProcessTimes(HANDLE process, LPFILETIME creation, LPFILETIME exit
         KbSetError(ERROR_NOT_SUPPORTED);
         return FALSE;
     }
-    ULONGLONG thread_times[4] = {0};
-    NtQueryInformationThread(NtCurrentThread(), ThreadTimes, thread_times, sizeof(thread_times), NULL);
+    ULONGLONG thread_times[4] = {};
+    NtQueryInformationThread(NtCurrentThread(), ThreadTimes, thread_times, sizeof(thread_times), nullptr);
     to_filetime(creation, (ULONGLONG)g_process_start_time);
     to_filetime(exit, 0);
     to_filetime(kernel, thread_times[2]);
@@ -849,14 +849,14 @@ BOOL WINAPI GetSystemTimes(LPFILETIME idle, LPFILETIME kernel, LPFILETIME user)
 BOOL WINAPI QueryProcessCycleTime(HANDLE process, PULONG64 cycles)
 {
     LARGE_INTEGER counter;
-    NtQueryPerformanceCounter(&counter, NULL);
+    NtQueryPerformanceCounter(&counter, nullptr);
     *cycles = (ULONG64)counter.QuadPart;
     return TRUE;
 }
 
 BOOL WINAPI QueryThreadCycleTime(HANDLE thread, PULONG64 cycles)
 {
-    return QueryProcessCycleTime(NULL, cycles);
+    return QueryProcessCycleTime(nullptr, cycles);
 }
 
 /* ------------------------------------------------------------------ apcs */
@@ -901,7 +901,7 @@ static void NTAPI user_apc(PVOID function, PVOID data, PVOID unused)
 
 DWORD WINAPI QueueUserAPC(PAPCFUNC apc, HANDLE thread, ULONG_PTR data)
 {
-    NTSTATUS status = NtQueueApcThread(thread, user_apc, (PVOID)apc, (PVOID)data, NULL);
+    NTSTATUS status = NtQueueApcThread(thread, user_apc, (PVOID)apc, (PVOID)data, nullptr);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
         return 0;
@@ -1049,9 +1049,9 @@ BOOL WINAPI GetProcessInformation(HANDLE process, PROCESS_INFORMATION_CLASS klas
     case ProcessMachineTypeInfo:
         if (size < sizeof(KB_PROCESS_MACHINE_INFORMATION))
             break;
-#if defined(__i386__)
+#ifdef __i386__
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_I386;
-#elif defined(__x86_64__)
+#elifdef __x86_64__
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_AMD64;
 #else
         ((KB_PROCESS_MACHINE_INFORMATION *)info)->ProcessMachine = IMAGE_FILE_MACHINE_ARM64;
@@ -1139,7 +1139,7 @@ HRESULT WINAPI GetThreadDescription(HANDLE thread, PWSTR *description)
 {
     if (!description)
         return E_INVALIDARG;
-    *description = NULL;
+    *description = nullptr;
     DWORD id = GetThreadId(thread);
     if (!id)
         return HRESULT_FROM_WIN32(GetLastError());
@@ -1326,12 +1326,12 @@ LPVOID WINAPI ConvertThreadToFiberEx(LPVOID parameter, DWORD flags)
     PTEB teb = NtCurrentTeb();
     if (teb->SameTebFlags & HAS_FIBER_DATA) {
         KbSetError(ERROR_ALREADY_FIBER);
-        return NULL;
+        return nullptr;
     }
     FIBER *f = KbAllocZero(sizeof(FIBER));
     if (!f) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     f->Parameter = parameter;
     f->StackBase = teb->NtTib.StackBase;
@@ -1358,7 +1358,7 @@ BOOL WINAPI ConvertFiberToThread(void)
     }
     FIBER *f = teb->NtTib.FiberData;
     teb->SameTebFlags &= (USHORT)~HAS_FIBER_DATA;
-    teb->NtTib.FiberData = NULL;
+    teb->NtTib.FiberData = nullptr;
     if (f && f->ConvertedThread)
         KbFree(f);
     return TRUE;
@@ -1374,7 +1374,7 @@ LPVOID WINAPI CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_
 {
     if (!start) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     if (!reserve)
         reserve = DEFAULT_STACK_RESERVE;
@@ -1384,12 +1384,12 @@ LPVOID WINAPI CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_
     FIBER *f = KbAllocZero(sizeof(FIBER));
     if (!f) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
-    PVOID stack = VirtualAlloc(NULL, reserve, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    PVOID stack = VirtualAlloc(nullptr, reserve, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!stack) {
         KbFree(f);
-        return NULL;
+        return nullptr;
     }
     f->Parameter = parameter;
     f->Start = start;
@@ -1397,12 +1397,12 @@ LPVOID WINAPI CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_
     f->StackLimit = stack;
     f->StackBase = (PUCHAR)stack + reserve;
     f->Context.ContextFlags = CONTEXT_FULL;
-#if defined(__i386__)
+#ifdef __i386__
     f->Context.Esp = ((ULONG_PTR)f->StackBase - 64) & ~(ULONG_PTR)15;
     f->Context.Eip = (ULONG_PTR)fiber_entry;
     ((PULONG)(ULONG_PTR)f->Context.Esp)[1] = (ULONG_PTR)f;
     f->Context.EFlags = 0x202;
-#elif defined(__x86_64__)
+#elifdef __x86_64__
     /* entered like a call: the return address slot below a 16 byte aligned frame. */
     f->Context.Rsp = (((ULONG_PTR)f->StackBase - 64) & ~(ULONG_PTR)15) - 8;
     f->Context.Rip = (ULONG64)fiber_entry;
@@ -1462,7 +1462,7 @@ void WINAPI SwitchToFiber(LPVOID fiber)
     teb->NtTib.StackLimit = target->StackLimit;
     teb->DeallocationStack = target->DeallocationStack;
     teb->FlsData = target->FlsData;
-#if defined(__aarch64__)
+#ifdef __aarch64__
     target->Context.X18 = (ULONG64)teb;
 #endif
     NtContinue(&target->Context, FALSE);
@@ -1480,7 +1480,7 @@ BOOL WINAPI GetProcessIoCounters(HANDLE process, PIO_COUNTERS counters)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    NTSTATUS status = NtQueryInformationProcess(process, ProcessIoCounters, counters, sizeof(*counters), NULL);
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessIoCounters, counters, sizeof(*counters), nullptr);
     if (status == STATUS_INVALID_INFO_CLASS || status == STATUS_NOT_IMPLEMENTED) {
         memset(counters, 0, sizeof(*counters));
         return TRUE;
@@ -1510,7 +1510,7 @@ BOOL WINAPI QueueUserWorkItem(LPTHREAD_START_ROUTINE function, PVOID context, UL
     }
     item->Function = function;
     item->Context = context;
-    HANDLE thread = CreateThread(NULL, 0, run_work_item, item, 0, NULL);
+    HANDLE thread = CreateThread(nullptr, 0, run_work_item, item, 0, nullptr);
     if (!thread) {
         KbFree(item);
         return FALSE;

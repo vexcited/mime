@@ -78,7 +78,7 @@ static DWORD copy_tree(LPCWSTR from, LPCWSTR to, BOOL replace, BOOL recurse)
         return GetLastError();
     if (!(attributes & FILE_ATTRIBUTE_DIRECTORY))
         return CopyFileW(from, to, !replace) ? ERROR_SUCCESS : GetLastError();
-    if (!CreateDirectoryW(to, NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+    if (!CreateDirectoryW(to, nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
         return GetLastError();
     if (!recurse)
         return ERROR_SUCCESS;
@@ -188,7 +188,7 @@ SHSTDAPI int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW operation)
     if (!operation || !operation->pFrom || operation->wFunc < FO_MOVE || operation->wFunc > FO_RENAME)
         return ERROR_INVALID_PARAMETER;
     operation->fAnyOperationsAborted = FALSE;
-    operation->hNameMappings = NULL;
+    operation->hNameMappings = nullptr;
     FILE_OP op = {operation, operation->pTo, FALSE};
     if (operation->wFunc != FO_DELETE) {
         if (!operation->pTo || !operation->pTo[0])
@@ -204,14 +204,14 @@ SHSTDAPI int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW operation)
         if (operation->wFunc != FO_RENAME && !(operation->fFlags & FOF_MULTIDESTFILES) &&
             (is_directory || sources > 1 || wildcard)) {
             op.IntoDirectory = TRUE;
-            if (!is_directory && !CreateDirectoryW(operation->pTo, NULL))
+            if (!is_directory && !CreateDirectoryW(operation->pTo, nullptr))
                 return (int)GetLastError();
         }
     }
     DWORD error = ERROR_SUCCESS;
     for (LPCWSTR p = operation->pFrom; *p && !error; p += wcslen(p) + 1) {
         WCHAR full[LONG_PATH];
-        DWORD n = GetFullPathNameW(p, LONG_PATH, full, NULL);
+        DWORD n = GetFullPathNameW(p, LONG_PATH, full, nullptr);
         if (!n || n >= LONG_PATH)
             error = ERROR_FILENAME_EXCED_RANGE;
         else

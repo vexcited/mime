@@ -220,7 +220,7 @@ unsigned long long __cdecl _wcstoui64_l(const wchar_t *s, wchar_t **end, int bas
 /* atoi and atol wrap on overflow; _atoi64 clamps like _strtoi64. */
 int __cdecl atoi(const char *s)
 {
-    return s ? (int)(int32_t)strtox(s, NULL, 10, 0, 32, 1, 0) : 0;
+    return s ? (int)(int32_t)strtox(s, nullptr, 10, 0, 32, 1, 0) : 0;
 }
 
 long __cdecl atol(const char *s)
@@ -230,7 +230,7 @@ long __cdecl atol(const char *s)
 
 long long __cdecl _atoi64(const char *s)
 {
-    return s ? _strtoi64(s, NULL, 10) : 0;
+    return s ? _strtoi64(s, nullptr, 10) : 0;
 }
 
 int __cdecl _atoi_l(const char *s, void *locale)
@@ -250,7 +250,7 @@ long long __cdecl _atoi64_l(const char *s, void *locale)
 
 int __cdecl _wtoi(const wchar_t *s)
 {
-    return s ? (int)(int32_t)strtox(s, NULL, 10, 0, 32, 1, 1) : 0;
+    return s ? (int)(int32_t)strtox(s, nullptr, 10, 0, 32, 1, 1) : 0;
 }
 
 long __cdecl _wtol(const wchar_t *s)
@@ -260,7 +260,7 @@ long __cdecl _wtol(const wchar_t *s)
 
 long long __cdecl _wtoi64(const wchar_t *s)
 {
-    return s ? _wcstoi64(s, NULL, 10) : 0;
+    return s ? _wcstoi64(s, nullptr, 10) : 0;
 }
 
 int __cdecl _wtoi_l(const wchar_t *s, void *locale)

@@ -13,10 +13,10 @@
 static BSTR allocate(UINT bytes)
 {
     if (bytes > BSTR_MAX_BYTES)
-        return NULL;
+        return nullptr;
     BYTE *block = AutAlloc(BSTR_HEADER + bytes + sizeof(WCHAR));
     if (!block)
-        return NULL;
+        return nullptr;
     *(DWORD *)(block + 4) = bytes;
     BYTE *text = block + BSTR_HEADER;
     text[bytes] = 0;
@@ -28,7 +28,7 @@ WINOLEAUTAPI BSTR WINAPI SysAllocStringByteLen(LPCSTR string, UINT length)
 {
     BSTR bstr = allocate(length);
     if (!bstr)
-        return NULL;
+        return nullptr;
     if (string)
         memcpy(bstr, string, length);
     else
@@ -39,14 +39,14 @@ WINOLEAUTAPI BSTR WINAPI SysAllocStringByteLen(LPCSTR string, UINT length)
 WINOLEAUTAPI BSTR WINAPI SysAllocStringLen(const OLECHAR *string, UINT length)
 {
     if (length > BSTR_MAX_BYTES / sizeof(WCHAR))
-        return NULL;
+        return nullptr;
     return SysAllocStringByteLen((LPCSTR)string, length * sizeof(WCHAR));
 }
 
 WINOLEAUTAPI BSTR WINAPI SysAllocString(const OLECHAR *string)
 {
     if (!string)
-        return NULL;
+        return nullptr;
     return SysAllocStringLen(string, (UINT)wcslen(string));
 }
 
@@ -85,7 +85,7 @@ WINOLEAUTAPI INT WINAPI SysReAllocString(BSTR *bstr, const OLECHAR *string)
         return FALSE;
     if (!string) {
         SysFreeString(*bstr);
-        *bstr = NULL;
+        *bstr = nullptr;
         return TRUE;
     }
     return SysReAllocStringLen(bstr, string, (UINT)wcslen(string));

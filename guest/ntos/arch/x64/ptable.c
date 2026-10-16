@@ -53,16 +53,16 @@ ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level)
         if (!(*entry & MM_PTE_VALID)) {
             /* the kernel's root entries exist from boot, so every process shares them. */
             if (!create || (!user && l == 0))
-                return NULL;
+                return nullptr;
             ULONG64 pa = MmAllocatePage();
             if (!pa)
-                return NULL;
+                return nullptr;
             PMMPFN pfn = MiGetPfn(pa);
             if (pfn)
                 pfn->Flags |= MM_PFN_PAGE_TABLE;
             *entry = pa | MM_PTE_VALID | MM_PTE_RW | MM_PTE_ACCESSED | (user ? MM_PTE_USER : 0);
         } else if (!MI_PTE_IS_TABLE(*entry, l)) {
-            return NULL; /* large page, cannot descend */
+            return nullptr; /* large page, cannot descend */
         }
         table = (ULONG64 *)HalPhysmap(*entry & MM_PTE_ADDR_MASK);
     }

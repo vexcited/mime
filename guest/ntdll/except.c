@@ -27,7 +27,7 @@ static PVOID add_handler(PLIST_ENTRY list, ULONG first, PVECTORED_EXCEPTION_HAND
 {
     VECTORED_HANDLER *h = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, sizeof(*h));
     if (!h)
-        return NULL;
+        return nullptr;
     h->Handler = handler;
     h->Refs = 1;
     RtlAcquireSRWLockExclusive(&g_vectored_lock);
@@ -132,14 +132,14 @@ void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context
         status = NtRaiseException(record, context, FALSE);
     }
     /* both calls only return on failure. */
-    EXCEPTION_RECORD nested = {0};
+    EXCEPTION_RECORD nested = {};
     nested.ExceptionCode = status;
     nested.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
     nested.ExceptionRecord = record;
     RtlRaiseException(&nested);
 }
 
-#if defined(__aarch64__)
+#ifdef __aarch64__
 /* the x64 build raises from x64/entry.S. */
 NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
 {
@@ -156,7 +156,7 @@ NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
 
 NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
 {
-    EXCEPTION_RECORD record = {0};
+    EXCEPTION_RECORD record = {};
     record.ExceptionCode = status;
     record.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
     RtlRaiseException(&record);
@@ -165,7 +165,7 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
         ;
 }
 
-#if defined(__aarch64__)
+#ifdef __aarch64__
 /* the x64 build unwinds in x64/unwind.c, the x86 one in x86/seh.c. */
 NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
 {
@@ -183,11 +183,11 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
 {
     PLDR_DATA_TABLE_ENTRY entry;
     if (!NT_SUCCESS(LdrFindEntryForAddress((PVOID)pc, &entry)))
-        return NULL;
+        return nullptr;
     ULONG size;
     IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY *table = LdrpImageDirectory(entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size);
     if (!table)
-        return NULL;
+        return nullptr;
     ULONG rva = (ULONG)(pc - (ULONG64)entry->DllBase);
     ULONG lo = 0, hi = size / sizeof(*table);
     while (lo < hi) {
@@ -205,6 +205,6 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
             return &table[mid];
         }
     }
-    return NULL;
+    return nullptr;
 }
 #endif

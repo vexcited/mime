@@ -26,7 +26,7 @@ enum { ST_NORMAL, ST_PERCENT, ST_FLAG, ST_WIDTH, ST_DOT, ST_PRECIS, ST_SIZE, ST_
 enum { CL_OTHER, CL_PERCENT, CL_DOT, CL_STAR, CL_ZERO, CL_DIGIT, CL_FLAG, CL_SIZE, CL_TYPE };
 
 /* character classes from ' ' to 'z' and the state transitions, read from msvcrt's __lookuptable. */
-static const unsigned char g_class['z' - ' ' + 1] = {
+static constexpr unsigned char g_class['z' - ' ' + 1] = {
     /*   ! " # $ % & ' ( ) * + , - . / */
     6, 0, 0, 6, 0, 1, 0, 0, 0, 0, 3, 6, 0, 6, 2, 0,
     /* 0 1 2 3 4 5 6 7 8 9 : ; < = > ? */
@@ -41,7 +41,7 @@ static const unsigned char g_class['z' - ' ' + 1] = {
     8, 0, 0, 8, 7, 8, 0, 7, 8, 0, 7,
 };
 
-static const unsigned char g_next[9][8] = {
+static constexpr unsigned char g_next[9][8] = {
     {0, 0, 0, 0, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0, 0, 1}, {0, 4, 4, 4, 0, 0, 0, 0},
     {0, 3, 3, 0, 5, 0, 0, 0}, {0, 2, 2, 3, 5, 5, 0, 0}, {0, 3, 3, 3, 5, 5, 0, 0},
     {0, 2, 2, 0, 0, 0, 0, 0}, {0, 6, 6, 6, 6, 6, 6, 0}, {0, 7, 7, 7, 7, 7, 7, 0},
@@ -141,13 +141,13 @@ static void sink_repeat_w(SINK *s, wchar_t c, int n)
 
 int MsvcrtVsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
 {
-    SINK s = {NULL, buf, size > INT_MAX ? INT_MAX : size, !buf, 0};
+    SINK s = {nullptr, buf, size > INT_MAX ? INT_MAX : size, !buf, 0};
     return format_a(&s, fmt, ap);
 }
 
 int MsvcrtVsnwprintf(wchar_t *buf, size_t size, const wchar_t *fmt, va_list ap)
 {
-    SINK s = {NULL, buf, size > INT_MAX / 2 ? INT_MAX / 2 : size, !buf, 0};
+    SINK s = {nullptr, buf, size > INT_MAX / 2 ? INT_MAX / 2 : size, !buf, 0};
     return format_w(&s, fmt, ap);
 }
 
@@ -157,13 +157,13 @@ int MsvcrtFormatA(FILE *f, const char *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    SINK s = {f, NULL, 0, 0, 0};
+    SINK s = {f, nullptr, 0, 0, 0};
     return format_a(&s, fmt, ap);
 }
 
 int MsvcrtFormatW(FILE *f, const wchar_t *fmt, va_list ap)
 {
-    SINK s = {f, NULL, 0, 0, 0};
+    SINK s = {f, nullptr, 0, 0, 0};
     return format_w(&s, fmt, ap);
 }
 
@@ -326,7 +326,7 @@ int __cdecl _vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    SINK s = {NULL, buf, size > INT_MAX ? INT_MAX : size, !buf, 0};
+    SINK s = {nullptr, buf, size > INT_MAX ? INT_MAX : size, !buf, 0};
     int r = format_a(&s, fmt, ap);
     if (buf && s.cnt && r >= 0)
         *(char *)s.buf = 0;
@@ -339,7 +339,7 @@ int __cdecl _vsnwprintf(wchar_t *buf, size_t size, const wchar_t *fmt, va_list a
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    SINK s = {NULL, buf, size > INT_MAX / 2 ? INT_MAX / 2 : size, !buf, 0};
+    SINK s = {nullptr, buf, size > INT_MAX / 2 ? INT_MAX / 2 : size, !buf, 0};
     int r = format_w(&s, fmt, ap);
     if (buf && s.cnt && r >= 0)
         *(wchar_t *)s.buf = 0;
@@ -421,7 +421,7 @@ int __cdecl _vscprintf(const char *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    return MsvcrtVsnprintf(NULL, 0, fmt, ap);
+    return MsvcrtVsnprintf(nullptr, 0, fmt, ap);
 }
 
 int __cdecl _vscwprintf(const wchar_t *fmt, va_list ap)
@@ -430,7 +430,7 @@ int __cdecl _vscwprintf(const wchar_t *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    return MsvcrtVsnwprintf(NULL, 0, fmt, ap);
+    return MsvcrtVsnwprintf(nullptr, 0, fmt, ap);
 }
 
 int __cdecl _scprintf(const char *fmt, ...)
@@ -463,7 +463,7 @@ int __cdecl _vsnprintf_s(char *buf, size_t size, size_t count, const char *fmt, 
         return -1;
     }
     size_t limit = count == _TRUNCATE || count >= size ? size - 1 : count;
-    SINK s = {NULL, buf, limit, 0, 0};
+    SINK s = {nullptr, buf, limit, 0, 0};
     int r = format_a(&s, fmt, ap);
     if (r >= 0) {
         *(char *)s.buf = 0;
@@ -487,7 +487,7 @@ int __cdecl _vsnwprintf_s(wchar_t *buf, size_t size, size_t count, const wchar_t
         return -1;
     }
     size_t limit = count == _TRUNCATE || count >= size ? size - 1 : count;
-    SINK s = {NULL, buf, limit, 0, 0};
+    SINK s = {nullptr, buf, limit, 0, 0};
     int r = format_w(&s, fmt, ap);
     if (r >= 0) {
         *(wchar_t *)s.buf = 0;
@@ -510,7 +510,7 @@ int __cdecl vsprintf_s(char *buf, size_t size, const char *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    SINK s = {NULL, buf, size - 1, 0, 0};
+    SINK s = {nullptr, buf, size - 1, 0, 0};
     int r = format_a(&s, fmt, ap);
     if (r < 0) {
         *buf = 0;
@@ -529,7 +529,7 @@ int __cdecl vswprintf_s(wchar_t *buf, size_t size, const wchar_t *fmt, va_list a
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    SINK s = {NULL, buf, size - 1, 0, 0};
+    SINK s = {nullptr, buf, size - 1, 0, 0};
     int r = format_w(&s, fmt, ap);
     if (r < 0) {
         *buf = 0;

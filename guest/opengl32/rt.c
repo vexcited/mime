@@ -23,10 +23,10 @@ static GL_LOCK g_heap_lock;
 
 static void *virtual_alloc(SIZE_T size)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T n = size;
     if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)))
-        return NULL;
+        return nullptr;
     return base;
 }
 
@@ -54,7 +54,7 @@ void *gl_alloc(SIZE_T size)
     if (k < 0) {
         p = virtual_alloc(total);
         if (!p)
-            return NULL;
+            return nullptr;
         *(SIZE_T *)p = total;
         *(int *)(p + 8) = -1;
         return p + 16;
@@ -74,7 +74,7 @@ void *gl_alloc(SIZE_T size)
         g_free[k] = ((FreeBlock *)p)->next;
     gl_unlock(&g_heap_lock);
     if (!p)
-        return NULL;
+        return nullptr;
     memset(p, 0, (SIZE_T)32 << k);
     *(int *)(p + 8) = k;
     return p + 16;
@@ -139,7 +139,7 @@ void gl_unlock(GL_LOCK *l)
 {
     if (--l->Depth)
         return;
-    l->Owner = NULL;
+    l->Owner = nullptr;
     __atomic_store_n(&l->Locked, 0, __ATOMIC_RELEASE);
 }
 
@@ -179,7 +179,7 @@ uint64_t gl_hash(const void *data, SIZE_T size, uint64_t seed)
 
 void *gl_name_get(GlNames *n, GLuint name)
 {
-    return name && name < n->count ? n->items[name] : NULL;
+    return name && name < n->count ? n->items[name] : nullptr;
 }
 
 void gl_name_set(GlNames *n, GLuint name, void *object)

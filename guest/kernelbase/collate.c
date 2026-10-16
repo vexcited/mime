@@ -61,12 +61,12 @@ static const DECOMPOSITION g_decompositions[] = {
 static const DECOMPOSITION *find_decomposition(WCHAR c)
 {
     if (c < 0xC0 || c > 0x17E)
-        return NULL;
+        return nullptr;
     /* the table pairs upper and lower case letters, so it is searched linearly. */
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_decompositions); i++)
         if (g_decompositions[i].Composed == c)
             return &g_decompositions[i];
-    return NULL;
+    return nullptr;
 }
 
 static WCHAR compose(WCHAR base, WCHAR mark)
@@ -262,7 +262,7 @@ static BOOL build_elements(LPCWSTR s, int len, DWORD flags, SORT_LIST *out)
     out->Capacity = RTL_NUMBER_OF(out->Inline);
     for (int i = 0; i < len; i++) {
         WCHAR c = s[i];
-        SORT_ELEMENT e = {0};
+        SORT_ELEMENT e = {};
         e.Position = (USHORT)(i < 0xFFFF ? i : 0xFFFF);
         if (!c)
             continue;
@@ -511,8 +511,8 @@ int WINAPI CompareStringA(LCID locale, DWORD flags, LPCSTR a, int alen, LPCSTR b
                            sizeof(value) / sizeof(WCHAR)))
             cp = value;
     }
-    int wa_len = MultiByteToWideChar(cp, 0, a, alen, NULL, 0);
-    int wb_len = MultiByteToWideChar(cp, 0, b, blen, NULL, 0);
+    int wa_len = MultiByteToWideChar(cp, 0, a, alen, nullptr, 0);
+    int wb_len = MultiByteToWideChar(cp, 0, b, blen, nullptr, 0);
     if ((!wa_len && alen) || (!wb_len && blen))
         return 0;
     PWSTR wa = KbAlloc(((SIZE_T)wa_len + 1) * sizeof(WCHAR));
@@ -774,7 +774,7 @@ static int map_string(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst
     }
     if (hash) {
         int key_len = src_len < 0 ? len - 1 : len;
-        int need = sort_key(flags & ~(DWORD)LCMAP_HASH, src, key_len, NULL, 0);
+        int need = sort_key(flags & ~(DWORD)LCMAP_HASH, src, key_len, nullptr, 0);
         if (!dst_len)
             return sizeof(DWORD);
         if (dst_len < (int)sizeof(DWORD)) {
@@ -879,7 +879,7 @@ int WINAPI LCMapStringA(LCID locale, DWORD flags, LPCSTR src, int src_len, LPSTR
             cp = value;
     }
     flags &= ~(DWORD)LOCALE_USE_CP_ACP;
-    int wlen = MultiByteToWideChar(cp, 0, src, src_len, NULL, 0);
+    int wlen = MultiByteToWideChar(cp, 0, src, src_len, nullptr, 0);
     if (!wlen)
         return 0;
     PWSTR wsrc = KbAlloc((SIZE_T)wlen * sizeof(WCHAR));
@@ -892,17 +892,17 @@ int WINAPI LCMapStringA(LCID locale, DWORD flags, LPCSTR src, int src_len, LPSTR
     if (flags & (LCMAP_SORTKEY | LCMAP_HASH)) {
         result = map_string(flags, wsrc, src_len < 0 ? -1 : wlen, (LPWSTR)dst, dst_len);
     } else {
-        int need = map_string(flags, wsrc, wlen, NULL, 0);
-        PWSTR wdst = need ? KbAlloc((SIZE_T)need * sizeof(WCHAR)) : NULL;
+        int need = map_string(flags, wsrc, wlen, nullptr, 0);
+        PWSTR wdst = need ? KbAlloc((SIZE_T)need * sizeof(WCHAR)) : nullptr;
         if (wdst) {
             map_string(flags, wsrc, wlen, wdst, need);
-            result = WideCharToMultiByte(cp, 0, wdst, need, NULL, 0, NULL, NULL);
+            result = WideCharToMultiByte(cp, 0, wdst, need, nullptr, 0, nullptr, nullptr);
             if (dst_len) {
                 if (result > dst_len) {
                     KbSetError(ERROR_INSUFFICIENT_BUFFER);
                     result = 0;
                 } else {
-                    result = WideCharToMultiByte(cp, 0, wdst, need, dst, dst_len, NULL, NULL);
+                    result = WideCharToMultiByte(cp, 0, wdst, need, dst, dst_len, nullptr, nullptr);
                 }
             }
             KbFree(wdst);
@@ -1027,7 +1027,7 @@ int WINAPI FoldStringA(DWORD flags, LPCSTR src, int src_len, LPSTR dst, int dst_
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    int wlen = MultiByteToWideChar(CP_ACP, 0, src, src_len, NULL, 0);
+    int wlen = MultiByteToWideChar(CP_ACP, 0, src, src_len, nullptr, 0);
     if (!wlen)
         return 0;
     PWSTR wsrc = KbAlloc((SIZE_T)wlen * sizeof(WCHAR));
@@ -1037,17 +1037,17 @@ int WINAPI FoldStringA(DWORD flags, LPCSTR src, int src_len, LPSTR dst, int dst_
     }
     MultiByteToWideChar(CP_ACP, 0, src, src_len, wsrc, wlen);
     int result = 0;
-    int need = FoldStringW(flags, wsrc, wlen, NULL, 0);
-    PWSTR wdst = need ? KbAlloc((SIZE_T)need * sizeof(WCHAR)) : NULL;
+    int need = FoldStringW(flags, wsrc, wlen, nullptr, 0);
+    PWSTR wdst = need ? KbAlloc((SIZE_T)need * sizeof(WCHAR)) : nullptr;
     if (wdst) {
         FoldStringW(flags, wsrc, wlen, wdst, need);
-        result = WideCharToMultiByte(CP_ACP, 0, wdst, need, NULL, 0, NULL, NULL);
+        result = WideCharToMultiByte(CP_ACP, 0, wdst, need, nullptr, 0, nullptr, nullptr);
         if (dst_len) {
             if (result > dst_len) {
                 KbSetError(ERROR_INSUFFICIENT_BUFFER);
                 result = 0;
             } else {
-                result = WideCharToMultiByte(CP_ACP, 0, wdst, need, dst, dst_len, NULL, NULL);
+                result = WideCharToMultiByte(CP_ACP, 0, wdst, need, dst, dst_len, nullptr, nullptr);
             }
         }
         KbFree(wdst);
@@ -1208,7 +1208,7 @@ int WINAPI GetStringScripts(DWORD flags, LPCWSTR string, int length, LPWSTR scri
     BOOL common = FALSE;
     result[0] = 0;
     for (int i = 0; i < length; i++) {
-        PCWSTR name = NULL;
+        PCWSTR name = nullptr;
         for (ULONG k = 0; k < RTL_NUMBER_OF(ranges); k++)
             if (string[i] >= ranges[k].First && string[i] <= ranges[k].Last)
                 name = ranges[k].Name;
@@ -1421,7 +1421,7 @@ BOOL WINAPI IsNormalizedString(NORM_FORM form, LPCWSTR src, int src_len)
     int len = src_len < 0 ? (int)wcslen(src) : src_len;
     if (!len)
         return TRUE;
-    int need = normalize(form, src, len, NULL, 0);
+    int need = normalize(form, src, len, nullptr, 0);
     if (need <= 0)
         return FALSE;
     if (need != len) {

@@ -10,7 +10,7 @@
 
 static D9Buffer *impl(void *iface) { return CONTAINING_RECORD((IDirect3DVertexBuffer9 *)iface, D9Buffer, iface.vb); }
 
-D9Buffer *D9BufferFrom(void *iface) { return iface ? impl(iface) : NULL; }
+D9Buffer *D9BufferFrom(void *iface) { return iface ? impl(iface) : nullptr; }
 
 static void destroy(D9Buffer *b)
 {
@@ -25,7 +25,7 @@ static void destroy(D9Buffer *b)
 static void destroy_resource(D9Resource *r) { destroy(CONTAINING_RECORD(r, D9Buffer, base)); }
 
 /* whether the gpu reads the buffer's own memory: dynamic buffers, mapped. */
-static BOOL mapped(const D9Buffer *b) { return b->memory == NULL; }
+static BOOL mapped(const D9Buffer *b) { return b->memory == nullptr; }
 
 /* the gpu is done with what it was given: a plain lock of a dynamic buffer it used waits for that. */
 static void wait_idle(D9Device *d)
@@ -47,7 +47,7 @@ static HRESULT lock(D9Buffer *b, UINT offset, UINT size, void **data, DWORD flag
     D9Device *d = b->base.device;
     if (!data)
         return D3DERR_INVALIDCALL;
-    *data = NULL;
+    *data = nullptr;
     if (offset > b->size || (size && offset + size > b->size))
         return D3DERR_INVALIDCALL;
     if (!size)
@@ -94,7 +94,7 @@ static HRESULT unlock(D9Buffer *b)
         return D3D_OK;
     if (mapped(b)) {
         d->context->lpVtbl->Unmap(d->context, (ID3D11Resource *)b->buffer, 0);
-        b->mapped_bytes = NULL;
+        b->mapped_bytes = nullptr;
         return D3D_OK;
     }
     if (b->buffer && b->dirty_hi > b->dirty_lo) {
@@ -113,7 +113,7 @@ static HRESULT STDMETHODCALLTYPE buffer_query(IDirect3DVertexBuffer9 *iface, REF
     D9Buffer *b = impl(iface);
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     const IID *own = b->base.type == D3DRTYPE_INDEXBUFFER ? &IID_IDirect3DIndexBuffer9 : &IID_IDirect3DVertexBuffer9;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DResource9) || IsEqualGUID(riid, own)) {
         *out = iface;
@@ -233,9 +233,9 @@ HRESULT D9CreateBuffer(D9Device *device, BOOL index, UINT size, DWORD usage, DWO
     D3D11_BUFFER_DESC desc = {D9_ALIGN(size, 4), dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT,
                               index ? D3D11_BIND_INDEX_BUFFER : D3D11_BIND_VERTEX_BUFFER,
                               dynamic ? D3D11_CPU_ACCESS_WRITE : 0};
-    HRESULT hr = device->d3d11->lpVtbl->CreateBuffer(device->d3d11, &desc, NULL, &b->buffer);
+    HRESULT hr = device->d3d11->lpVtbl->CreateBuffer(device->d3d11, &desc, nullptr, &b->buffer);
     if (SUCCEEDED(hr) && !dynamic) {
-        b->memory = VirtualAlloc(NULL, desc.ByteWidth, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        b->memory = VirtualAlloc(nullptr, desc.ByteWidth, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (!b->memory)
             hr = E_OUTOFMEMORY;
     }

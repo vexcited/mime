@@ -70,7 +70,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayAllocDescriptor(UINT dims, SAFEARRAY **out)
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (!dims || dims > 0xFFFF)
         return E_INVALIDARG;
     SIZE_T size = SA_PREFIX + sizeof(SAFEARRAY) + (dims - 1) * sizeof(SAFEARRAYBOUND);
@@ -130,15 +130,15 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayAllocData(SAFEARRAY *array)
 WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreate(VARTYPE vt, UINT dims, SAFEARRAYBOUND *bounds)
 {
     if (!bounds || !dims)
-        return NULL;
+        return nullptr;
     SAFEARRAY *array;
     if (FAILED(SafeArrayAllocDescriptorEx(vt, dims, &array)))
-        return NULL;
+        return nullptr;
     for (UINT i = 0; i < dims; i++)
         array->rgsabound[dims - 1 - i] = bounds[i];
     if (FAILED(SafeArrayAllocData(array))) {
         SafeArrayDestroyDescriptor(array);
-        return NULL;
+        return nullptr;
     }
     return array;
 }
@@ -161,13 +161,13 @@ static void clear_elements(SAFEARRAY *array)
         BSTR *items = array->pvData;
         for (SIZE_T i = 0; i < count; i++) {
             SysFreeString(items[i]);
-            items[i] = NULL;
+            items[i] = nullptr;
         }
     } else if (array->fFeatures & (FADF_UNKNOWN | FADF_DISPATCH)) {
         IUnknown **items = array->pvData;
         for (SIZE_T i = 0; i < count; i++) {
             AutRelease(items[i]);
-            items[i] = NULL;
+            items[i] = nullptr;
         }
     } else if (array->fFeatures & FADF_VARIANT) {
         VARIANT *items = array->pvData;
@@ -185,7 +185,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayDestroyData(SAFEARRAY *array)
     clear_elements(array);
     if (!(array->fFeatures & FADF_NOT_OWNED)) {
         AutFree(array->pvData);
-        array->pvData = NULL;
+        array->pvData = nullptr;
     }
     return S_OK;
 }
@@ -238,7 +238,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayAccessData(SAFEARRAY *array, void **data)
     if (!array || !data)
         return E_INVALIDARG;
     HRESULT hr = SafeArrayLock(array);
-    *data = SUCCEEDED(hr) ? array->pvData : NULL;
+    *data = SUCCEEDED(hr) ? array->pvData : nullptr;
     return hr;
 }
 
@@ -333,7 +333,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayPtrOfIndex(SAFEARRAY *array, LONG *indices,
 static HRESULT copy_element(SAFEARRAY *array, void *to, const void *from)
 {
     if (array->fFeatures & FADF_BSTR) {
-        BSTR source = *(const BSTR *)from, copy = NULL;
+        BSTR source = *(const BSTR *)from, copy = nullptr;
         if (source) {
             copy = SysAllocStringByteLen((LPCSTR)source, SysStringByteLen(source));
             if (!copy)
@@ -431,7 +431,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayCopy(SAFEARRAY *array, SAFEARRAY **out)
 {
     if (!out)
         return E_INVALIDARG;
-    *out = NULL;
+    *out = nullptr;
     if (!array)
         return S_OK;
     if (array->fFeatures & FADF_RECORD)

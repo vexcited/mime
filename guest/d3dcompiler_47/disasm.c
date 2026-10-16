@@ -287,7 +287,7 @@ static void print_bindings(Disasm *d, ID3D11ShaderReflection *r, UINT count)
             dim = b.Dimension < 11 ? DIMS[b.Dimension] : "NA";
             format = b.ReturnType < 9 ? FORMATS[b.ReturnType] : FORMATS[0];
             if (b.Dimension == D3D_SRV_DIMENSION_TEXTURE2DMS || b.Dimension == D3D_SRV_DIMENSION_TEXTURE2DMSARRAY) {
-                DcText t = {0};
+                DcText t = {};
                 if (b.NumSamples)
                     DcTextPrintf(&t, "%sMS%d", dim, b.NumSamples);
                 else
@@ -322,7 +322,7 @@ static void print_bindings(Disasm *d, ID3D11ShaderReflection *r, UINT count)
             dim = "r/w+cnt", format = "struct";
             break;
         }
-        DcText bind = {0}, id = {0}, count_text = {0};
+        DcText bind = {}, id = {}, count_text = {};
         if (b.Space)
             DcTextPrintf(&bind, "%s%u,space%u", prefix, b.BindPoint, b.Space);
         else
@@ -528,7 +528,7 @@ static const char *const OPCODE_NAMES[235] = {
     "dcl_resource", "dcl_constantbuffer", "dcl_sampler", "dcl_indexrange", "dcl_outputtopology",
     "dcl_inputprimitive", "dcl_maxout", "dcl_input", "dcl_input_sgv", "dcl_input_siv", "dcl_input_ps",
     "dcl_input_ps_sgv", "dcl_input_ps_siv", "dcl_output", "dcl_output_sgv", "dcl_output_siv", "dcl_temps",
-    "dcl_indexableTemp", "dcl_globalFlags", "jmp", "lod", "gather4", "samplepos", "sampleinfo", NULL, "hs_decls",
+    "dcl_indexableTemp", "dcl_globalFlags", "jmp", "lod", "gather4", "samplepos", "sampleinfo", nullptr, "hs_decls",
     "hs_control_point_phase", "hs_fork_phase", "hs_join_phase", "emit_stream", "cut_stream",
     "emit_then_cut_stream", "fcall", "bufinfo", "deriv_rtx_coarse", "deriv_rtx_fine", "deriv_rty_coarse",
     "deriv_rty_fine", "gather4_c", "gather4_po", "gather4_po_c", "rcp", "f32tof16", "f16tof32", "uaddc", "usubb",
@@ -544,7 +544,7 @@ static const char *const OPCODE_NAMES[235] = {
     "imm_atomic_xor", "imm_atomic_exch", "imm_atomic_cmp_exch", "imm_atomic_imax", "imm_atomic_imin",
     "imm_atomic_umax", "imm_atomic_umin", "sync", "dadd", "dmax", "dmin", "dmul", "deq", "dge", "dlt", "dne", "dmov",
     "dmovc", "dtof", "ftod", "eval_snapped", "eval_sample_index", "eval_centroid", "dcl_gsinstances", "abort",
-    "debug_break", NULL, "ddiv", "dfma", "drcp", "msad", "dtoi", "dtou", "itod", "utod", NULL, "gather4_s",
+    "debug_break", nullptr, "ddiv", "dfma", "drcp", "msad", "dtoi", "dtou", "itod", "utod", nullptr, "gather4_s",
     "gather4_c_s", "gather4_po_s", "gather4_po_c_s", "ld_s", "ldms_s", "ld_uav_typed_s", "ld_raw_s",
     "ld_structured_s", "sample_l_s", "sample_c_lz_s", "sample_cl_s", "sample_b_cl_s", "sample_d_cl_s",
     "sample_c_cl_s", "check_access_fully_mapped",
@@ -640,7 +640,7 @@ static const char *register_name(Disasm *d, UINT type)
     case OPERAND_INNER_COVERAGE:
         return "vInnerCoverage";
     }
-    return NULL;
+    return nullptr;
 }
 
 /* how literals print: as integers, as floats, or as whichever the bits look like. */
@@ -675,7 +675,7 @@ static void int_literal(Disasm *d, UINT v)
         out(d, "0x%08x", v);
 }
 
-static const char COMPONENTS[] = "xyzw";
+static constexpr char COMPONENTS[] = "xyzw";
 
 static void min_precision(Disasm *d, UINT value)
 {
@@ -905,7 +905,7 @@ static const char *primitive(UINT value)
     if (value < 8)
         return NAMES[value];
     if (value >= 8 && value <= 39) {
-        DcText t = {0};
+        DcText t = {};
         DcTextPrintf(&t, " patch%u ", value - 7);
         if (t.buf && t.length < sizeof(patch))
             memcpy(patch, t.buf, t.length + 1);
@@ -968,7 +968,7 @@ static void print_icb(Disasm *d, const DxbcInstruction *ins)
 static void print_declaration(Disasm *d, const DxbcInstruction *ins)
 {
     UINT op = ins->opcode, token = ins->token;
-    const DxbcOperand *operand = ins->operand_count ? &ins->operands[0] : NULL;
+    const DxbcOperand *operand = ins->operand_count ? &ins->operands[0] : nullptr;
     put(d, OPCODE_NAMES[op]);
     switch (op) {
     case OP_DCL_RESOURCE:
@@ -1211,7 +1211,7 @@ static void print_instruction(Disasm *d, const DxbcInstruction *ins)
         put(d, "\n");
         return;
     }
-    const char *name = op < 235 ? OPCODE_NAMES[op] : NULL;
+    const char *name = op < 235 ? OPCODE_NAMES[op] : nullptr;
     out(d, "%s", name ? name : "<unknown opcode>");
     BOOL offsets = ins->offset[0] || ins->offset[1] || ins->offset[2];
     if (offsets)
@@ -1292,7 +1292,7 @@ static HRESULT disassemble(LPCVOID data, SIZE_T size, UINT flags, LPCSTR comment
 {
     if (!data || size > 0xFFFFFFFF || !out_blob || (flags & ~0xF7u))
         return D3DERR_INVALIDCALL;
-    *out_blob = NULL;
+    *out_blob = nullptr;
     if (start >= size)
         return E_INVALIDARG;
     DcContainer c;
@@ -1317,15 +1317,15 @@ static HRESULT disassemble(LPCVOID data, SIZE_T size, UINT flags, LPCSTR comment
     d.hex = (flags & D3D_DISASM_PRINT_HEX_LITERALS) != 0;
     UINT major = (version >> 4) & 0xF, minor = version & 0xF;
     d.sm51 = major > 5 || (major == 5 && minor > 0);
-    DcReflection *reflection = NULL;
-    ID3D11ShaderReflection *r = NULL;
+    DcReflection *reflection = nullptr;
+    ID3D11ShaderReflection *r = nullptr;
     if (SUCCEEDED(DcReflectionCreate(&c, TRUE, &reflection)))
         r = DcReflectionInterface(reflection);
     if (r && !(flags & D3D_DISASM_INSTRUCTION_ONLY))
         print_header(&d, &c, r, comments);
     static const char *const PROGRAMS[] = {"ps", "vs", "gs", "hs", "ds", "cs"};
     UINT program = version >> 16;
-    const char *program_name = program < 6 ? PROGRAMS[program] : program == 0xFFF0 ? "lib" : NULL;
+    const char *program_name = program < 6 ? PROGRAMS[program] : program == 0xFFF0 ? "lib" : nullptr;
     if (!program_name) {
         hr = E_FAIL;
         goto done;
@@ -1390,7 +1390,7 @@ done:
 
 D3DCOMPILERAPI HRESULT WINAPI D3DDisassemble(LPCVOID data, SIZE_T size, UINT flags, LPCSTR comments, ID3DBlob **out)
 {
-    return disassemble(data, size, flags, comments, 0, (SIZE_T)-1, NULL, out);
+    return disassemble(data, size, flags, comments, 0, (SIZE_T)-1, nullptr, out);
 }
 
 D3DCOMPILERAPI HRESULT WINAPI D3DDisassembleRegion(LPCVOID data, SIZE_T size, UINT flags, LPCSTR comments,

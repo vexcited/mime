@@ -44,7 +44,7 @@ static OdbcAttr *OdbcFindAttr(OdbcDbc *dbc, SQLINTEGER attribute)
         if (dbc->attrs[i].id == attribute)
             return &dbc->attrs[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 void OdbcFreeDbcAttrs(OdbcDbc *dbc)
@@ -58,7 +58,7 @@ static SQLRETURN OdbcSetAttr(OdbcDbc *dbc, SQLINTEGER attribute, SQLPOINTER valu
 {
     if (attribute == SQL_ATTR_CONNECTION_DEAD || attribute == SQL_ATTR_AUTO_IPD)
         return OdbcFail(&dbc->h, ODBC_E_HY092);
-    PWSTR string = NULL;
+    PWSTR string = nullptr;
     if (OdbcStringAttr(attribute)) {
         if (!value)
             return OdbcFail(&dbc->h, ODBC_E_HY009);
@@ -218,12 +218,12 @@ __declspec(dllexport) SQLRETURN SQL_API SQLSetConnectOptionA(SQLHDBC dbc, SQLUSM
 
 __declspec(dllexport) SQLRETURN SQL_API SQLGetConnectOptionW(SQLHDBC dbc, SQLUSMALLINT option, SQLPOINTER value)
 {
-    return OdbcGetConnectAttr(dbc, option, value, SQL_MAX_OPTION_STRING_LENGTH * sizeof(WCHAR), NULL, FALSE);
+    return OdbcGetConnectAttr(dbc, option, value, SQL_MAX_OPTION_STRING_LENGTH * sizeof(WCHAR), nullptr, FALSE);
 }
 
 __declspec(dllexport) SQLRETURN SQL_API SQLGetConnectOptionA(SQLHDBC dbc, SQLUSMALLINT option, SQLPOINTER value)
 {
-    return OdbcGetConnectAttr(dbc, option, value, SQL_MAX_OPTION_STRING_LENGTH, NULL, TRUE);
+    return OdbcGetConnectAttr(dbc, option, value, SQL_MAX_OPTION_STRING_LENGTH, nullptr, TRUE);
 }
 
 /* ------------------------------------------------------------------ connecting */
@@ -460,7 +460,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLCompleteAsync(SQLSMALLINT type, SQLHA
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
-    OdbcHandle *h = type == SQL_HANDLE_DBC ? OdbcLookup(handle, SQL_HANDLE_DBC) : NULL;
+    OdbcHandle *h = type == SQL_HANDLE_DBC ? OdbcLookup(handle, SQL_HANDLE_DBC) : nullptr;
     if (h) {
         OdbcBegin(h);
         rc = OdbcFail(h, ODBC_E_HY010);

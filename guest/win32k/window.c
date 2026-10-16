@@ -14,7 +14,7 @@ static ULONG g_cascade;
 WND *WndLookup(HWND hwnd)
 {
     if (!hwnd)
-        return NULL;
+        return nullptr;
     WND *w = (WND *)UserLookup(hwnd, USER_TYPE_WINDOW);
     if (!w && g_desktop && (hwnd == WndHandle(g_desktop)))
         return g_desktop;
@@ -27,8 +27,8 @@ WND *WndDesktop(void)
         return g_desktop;
     WND *w = W32Alloc(sizeof(WND));
     if (!w)
-        return NULL;
-    w->Class = ClassFind(NULL, NULL, 32769, NULL);
+        return nullptr;
+    w->Class = ClassFind(nullptr, nullptr, 32769, nullptr);
     w->Style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     w->WindowRect = (RECT){0, 0, W32Display.Width, W32Display.Height};
     w->ClientRect = w->WindowRect;
@@ -41,7 +41,7 @@ WND *WndDesktop(void)
     }
     if (!UserCreateHandle(&w->Header, USER_TYPE_WINDOW)) {
         W32Free(w);
-        return NULL;
+        return nullptr;
     }
     g_desktop = w;
     return w;
@@ -64,12 +64,12 @@ BOOLEAN WndIsVisible(WND *w)
     for (; w && w != g_desktop; w = w->Parent)
         if (!(w->Style & WS_VISIBLE))
             return FALSE;
-    return w != NULL;
+    return w != nullptr;
 }
 
 BOOLEAN WndIsChildOf(WND *child, WND *parent)
 {
-    for (WND *w = child ? child->Parent : NULL; w; w = w->Parent)
+    for (WND *w = child ? child->Parent : nullptr; w; w = w->Parent)
         if (w == parent)
             return TRUE;
     return FALSE;
@@ -95,7 +95,7 @@ static void unlink_window(WND *w)
         w->Next->Prev = w->Prev;
     else
         p->LastChild = w->Prev;
-    w->Next = w->Prev = NULL;
+    w->Next = w->Prev = nullptr;
 }
 
 static void link_after(WND *parent, WND *w, WND *above)
@@ -116,7 +116,7 @@ static void link_after(WND *parent, WND *w, WND *above)
 /* places w below `after` in its parent, honoring the topmost band of top level windows. */
 static void link_window(WND *parent, WND *w, HWND after)
 {
-    WND *above = NULL;
+    WND *above = nullptr;
     BOOLEAN topmost_band = parent == g_desktop;
     if (after == HWND_BOTTOM) {
         above = parent->LastChild;
@@ -124,12 +124,12 @@ static void link_window(WND *parent, WND *w, HWND after)
             ; /* the bottom of the whole list is fine for a normal window */
         else if (topmost_band) {
             /* topmost windows stay above every normal window. */
-            above = NULL;
+            above = nullptr;
             for (WND *c = parent->FirstChild; c && (c->ExStyle & WS_EX_TOPMOST); c = c->Next)
                 above = c;
         }
     } else if (after == HWND_TOP || after == HWND_TOPMOST || after == HWND_NOTOPMOST || !after) {
-        above = NULL;
+        above = nullptr;
         if (topmost_band && !(w->ExStyle & WS_EX_TOPMOST))
             for (WND *c = parent->FirstChild; c && (c->ExStyle & WS_EX_TOPMOST); c = c->Next)
                 above = c;
@@ -138,7 +138,7 @@ static void link_window(WND *parent, WND *w, HWND after)
         if (a && a->Parent == parent && a != w)
             above = a;
         else
-            above = NULL;
+            above = nullptr;
     }
     if (above == w)
         above = w->Prev;
@@ -150,7 +150,7 @@ static void raise_owned(WND *owner)
 {
     for (WND *c = g_desktop->LastChild; c;) {
         WND *prev = c->Prev;
-        if (c->Owner == owner && c->Prev != NULL) {
+        if (c->Owner == owner && c->Prev != nullptr) {
             WND *o = owner;
             BOOLEAN below = FALSE;
             for (WND *x = owner->Next; x; x = x->Next)
@@ -192,7 +192,7 @@ static void parent_to_screen(WND *parent, RECT *r)
 void WndSetText(WND *w, PCWSTR text, ULONG chars)
 {
     W32Free(w->Text);
-    w->Text = NULL;
+    w->Text = nullptr;
     w->TextLength = 0;
     if (text) {
         w->Text = W32StrDup(text, chars);
@@ -359,17 +359,17 @@ static WND *find_paint(WND *w, W32THREAD *t)
         if (c)
             return c;
     }
-    return NULL;
+    return nullptr;
 }
 
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter)
 {
     if (!g_desktop)
-        return NULL;
+        return nullptr;
     if (filter) {
         WND *f = WndLookup(filter);
         if (!f || !WndIsVisible(f))
-            return NULL;
+            return nullptr;
         if (f->Thread == t && needs_paint(f))
             return f;
         return find_paint(f->FirstChild, t);
@@ -389,7 +389,7 @@ void WndUpdateHostConfig(WND *w, BOOLEAN activate)
 /* top level windows render into a surface the size of their window rectangle. */
 void WndEnsureSurface(WND *w)
 {
-    if (!WndIsTopLevel(w) || w->Parent == NULL || (w->ExStyle & 0x80000000u))
+    if (!WndIsTopLevel(w) || w->Parent == nullptr || (w->ExStyle & 0x80000000u))
         return;
     LONG width = w->WindowRect.right - w->WindowRect.left;
     LONG height = w->WindowRect.bottom - w->WindowRect.top;
@@ -583,7 +583,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             WndEnsureSurface(w);
         if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible && !(w->Style & WS_MINIMIZE)) {
             w->Flags |= WNDF_FRAME_DIRTY;
-            WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+            WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
         }
         if (w->Flags & WNDF_HOST_WINDOW)
             WndUpdateHostConfig(w, FALSE);
@@ -596,7 +596,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             if (visible) {
                 if (sized || (pos.flags & (SWP_SHOWWINDOW | SWP_FRAMECHANGED)) || !(pos.flags & SWP_NOZORDER) ||
                     !(pos.flags & SWP_NOCOPYBITS) || moved)
-                    WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+                    WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
             }
         }
     }
@@ -607,20 +607,20 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         WndActivate(w, FALSE);
     if ((pos.flags & SWP_HIDEWINDOW) && WndIsTopLevel(w) && InputForeground == w) {
         /* hand activation to the owner or the next visible window. */
-        WND *next = w->Owner && WndIsVisible(w->Owner) ? w->Owner : NULL;
+        WND *next = w->Owner && WndIsVisible(w->Owner) ? w->Owner : nullptr;
         for (WND *c = g_desktop->FirstChild; !next && c; c = c->Next)
             if (c != w && (c->Style & WS_VISIBLE) && c->Thread == w->Thread && !(c->ExStyle & WS_EX_NOACTIVATE))
                 next = c;
         if (next)
             WndActivate(next, FALSE);
         else
-            InputSetForeground(NULL);
+            InputSetForeground(nullptr);
     }
     if ((!visible || (w->Style & WS_MINIMIZE)) && w->Thread) {
         W32THREAD *t = w->Thread;
         WND *focus = WndLookup(t->Focus);
         if (focus && (focus == w || WndIsChildOf(focus, w)))
-            WndSetFocus(w->Parent && w->Parent != g_desktop ? w->Parent : NULL);
+            WndSetFocus(w->Parent && w->Parent != g_desktop ? w->Parent : nullptr);
     }
 
     if (!alive(w))
@@ -661,7 +661,7 @@ void WndDisplayChanged(void)
         if ((c->Style & WS_MAXIMIZE) && !(c->Flags & WNDF_FULLSCREEN)) {
             RECT r;
             maximized_rect(c, &r);
-            WndSetPos(c, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            WndSetPos(c, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         if (c->Thread)
             QueuePost(c->Thread, WndHandle(c), WM_DISPLAYCHANGE, 32,
@@ -675,7 +675,7 @@ static void deactivate_minimized(WND *w)
         return;
     WND *next = w->Owner;
     if (next && (!WndIsVisible(next) || (next->Style & (WS_MINIMIZE | WS_DISABLED))))
-        next = NULL;
+        next = nullptr;
     for (WND *c = g_desktop->FirstChild; !next && c; c = c->Next)
         if (c != w && (c->Style & WS_VISIBLE) && !(c->Style & (WS_MINIMIZE | WS_DISABLED)) &&
             c->Thread == w->Thread && !(c->ExStyle & WS_EX_NOACTIVATE))
@@ -684,9 +684,9 @@ static void deactivate_minimized(WND *w)
         WndActivate(next, FALSE);
         return;
     }
-    InputSetForeground(NULL);
+    InputSetForeground(nullptr);
     if (w->Thread)
-        w->Thread->Active = NULL;
+        w->Thread->Active = nullptr;
     MsgSend(w, WM_NCACTIVATE, FALSE, 0);
     if (alive(w))
         MsgSend(w, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, TRUE), 0);
@@ -700,7 +700,7 @@ void WndShow(WND *w, int cmd)
         cmd = SW_SHOWNORMAL;
     UserReference(&w->Header);
     if ((w->Flags & WNDF_FULLSCREEN) && cmd != SW_SHOW && cmd != SW_SHOWNA) {
-        WndFullscreen(w, FALSE, NULL);
+        WndFullscreen(w, FALSE, nullptr);
         if (!alive(w))
             goto done;
     }
@@ -834,7 +834,7 @@ void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect)
         target = w->FullscreenRect;
     }
     MenuRefreshWindowState(w);
-    WndSetPos(w, NULL, target.left, target.top, target.right - target.left, target.bottom - target.top,
+    WndSetPos(w, nullptr, target.left, target.top, target.right - target.left, target.bottom - target.top,
               SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 done:
     UserDereference(&w->Header);
@@ -851,7 +851,7 @@ void WndCenterOnOwner(WND *w)
     LONG y = ref.top + (ref.bottom - ref.top - height) / 2;
     x = W32Max(W32Display.Work.left, W32Min(x, W32Display.Work.right - width));
     y = W32Max(W32Display.Work.top, W32Min(y, W32Display.Work.bottom - height));
-    WndSetPos(w, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    WndSetPos(w, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 /* ------------------------------------------------------------------ activation and focus */
@@ -876,7 +876,7 @@ void WndActivate(WND *w, BOOLEAN click)
         if (old->Thread && w->Thread && old->Thread->Process != w->Thread->Process)
             MsgSend(old, WM_ACTIVATEAPP, FALSE, (LPARAM)w->Thread->Tid);
         if (old->Thread && old->Thread != w->Thread)
-            old->Thread->Active = NULL;
+            old->Thread->Active = nullptr;
         UserDereference(&old->Header);
     }
     if (!alive(w))
@@ -939,7 +939,7 @@ WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
             continue;
         return c;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* deepest window under pt, starting at a top level window. */
@@ -947,7 +947,7 @@ WND *WndFromPoint(WND *top, POINT pt)
 {
     WND *w = top;
     if (!w)
-        return NULL;
+        return nullptr;
     for (;;) {
         if (!RectContains(&w->ClientRect, pt.x, pt.y) || (w->Style & WS_MINIMIZE))
             return w;
@@ -970,16 +970,16 @@ static void free_window(WND *w)
     if (t) {
         HWND h = WndHandle(w);
         if (t->Focus == h)
-            t->Focus = NULL;
+            t->Focus = nullptr;
         if (t->Active == h)
-            t->Active = NULL;
+            t->Active = nullptr;
         if (t->Capture == h)
-            InputSetCapture(t, NULL, 0);
+            InputSetCapture(t, nullptr, 0);
         if (t->MouseWindow == h)
-            t->MouseWindow = NULL;
+            t->MouseWindow = nullptr;
     }
     if (InputForeground == w)
-        InputSetForeground(NULL);
+        InputSetForeground(nullptr);
     MenuWindowDestroyed(w);
     ClipboardWindowDestroyed(w);
     PropFreeWindow(w);
@@ -990,18 +990,18 @@ static void free_window(WND *w)
     LayerWindowDestroyed(w);
     if (w->Surface) {
         PaintRetireSurface(w->Surface);
-        w->Surface = NULL;
+        w->Surface = nullptr;
     }
     unlink_window(w);
-    for (WND *c = g_desktop ? g_desktop->FirstChild : NULL; c; c = c->Next)
+    for (WND *c = g_desktop ? g_desktop->FirstChild : nullptr; c; c = c->Next)
         if (c->Owner == w)
-            c->Owner = NULL;
+            c->Owner = nullptr;
     if (w->Class)
         w->Class->Windows--;
     W32Free(w->Text);
-    w->Text = NULL;
+    w->Text = nullptr;
     W32Free(w->Extra);
-    w->Extra = NULL;
+    w->Extra = nullptr;
     RgnFree(&w->Update);
     w->Header.Destroyed = TRUE;
     UserFreeHandle(&w->Header);
@@ -1013,7 +1013,7 @@ static WND *first_live_child(WND *w)
     for (WND *c = w->FirstChild; c; c = c->Next)
         if (!(c->Flags & WNDF_DESTROYING))
             return c;
-    return NULL;
+    return nullptr;
 }
 
 static void destroy_tree(WND *w)
@@ -1040,7 +1040,7 @@ void WndDestroy(WND *w)
     /* owned windows go first. */
     if (WndIsTopLevel(w)) {
         for (;;) {
-            WND *owned = NULL;
+            WND *owned = nullptr;
             for (WND *c = g_desktop->FirstChild; c; c = c->Next)
                 if (c->Owner == w && !(c->Flags & WNDF_DESTROYING))
                     owned = c;
@@ -1050,7 +1050,7 @@ void WndDestroy(WND *w)
         }
     }
     if (w->Style & WS_VISIBLE)
-        WndSetPos(w, NULL, 0, 0, 0, 0,
+        WndSetPos(w, nullptr, 0, 0, 0, 0,
                   SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | (WndIsTopLevel(w) ? 0 : SWP_NOACTIVATE));
     if (alive(w) && !(w->Flags & WNDF_DESTROYING))
         destroy_tree(w);
@@ -1063,7 +1063,7 @@ void WndDestroyThreadWindows(W32THREAD *t)
     if (!g_desktop)
         return;
     for (;;) {
-        WND *found = NULL;
+        WND *found = nullptr;
         for (WND *c = g_desktop->FirstChild; c && !found; c = c->Next)
             if (c->Thread == t && !(c->Flags & WNDF_DESTROYING))
                 found = c;
@@ -1095,7 +1095,7 @@ void WndDestroyThreadWindows(W32THREAD *t)
 static NTSTATUS capture_class_name(PUNICODE_STRING user, PWSTR *name, ATOM *atom)
 {
     UNICODE_STRING s;
-    *name = NULL;
+    *name = nullptr;
     *atom = 0;
     if (!user)
         return STATUS_INVALID_PARAMETER;
@@ -1105,7 +1105,7 @@ static NTSTATUS capture_class_name(PUNICODE_STRING user, PWSTR *name, ATOM *atom
         *atom = (ATOM)(ULONG_PTR)s.Buffer;
         return STATUS_SUCCESS;
     }
-    return W32CaptureString(user, name, NULL);
+    return W32CaptureString(user, name, nullptr);
 }
 
 /* the CREATESTRUCTW given to WM_NCCREATE and WM_CREATE, with its strings appended. */
@@ -1117,7 +1117,7 @@ static PVOID build_createstruct(WND *w, LPVOID param, HWND parent, int x, int y,
     SIZE_T total = sizeof(CREATESTRUCTW) + name_bytes + class_bytes;
     PUCHAR buf = W32Alloc(total);
     if (!buf)
-        return NULL;
+        return nullptr;
     CREATESTRUCTW *cs = (CREATESTRUCTW *)buf;
     cs->lpCreateParams = param;
     cs->hInstance = w->Instance;
@@ -1145,17 +1145,17 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
                                 int x, int y, int cx, int cy, HWND parent_h, HMENU menu, HINSTANCE instance,
                                 LPVOID param, DWORD flags)
 {
-    PWSTR class_name = NULL, name = NULL;
+    PWSTR class_name = nullptr, name = nullptr;
     ATOM atom;
     SIZE_T name_chars = 0;
-    HWND result = NULL;
+    HWND result = nullptr;
     if (!NT_SUCCESS(capture_class_name(user_class, &class_name, &atom)))
-        return NULL;
+        return nullptr;
     if (user_name) {
         UNICODE_STRING s;
         if (!NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s)))) {
             W32Free(class_name);
-            return NULL;
+            return nullptr;
         }
         if (!s.Length && s.Buffer && (ULONG_PTR)s.Buffer < 0x10000) {
             /* a resource ordinal as window name, as dialog templates give it: 0xFFFF then the ordinal. */
@@ -1167,20 +1167,20 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
             }
         } else if (!NT_SUCCESS(W32CaptureString(user_name, &name, &name_chars))) {
             W32Free(class_name);
-            return NULL;
+            return nullptr;
         }
     }
     UserEnter();
     W32THREAD *t = W32GetThread();
     WND *desktop = WndDesktop();
-    WND_CLASS *cls = t ? ClassFind(t->Process, class_name, atom, instance) : NULL;
+    WND_CLASS *cls = t ? ClassFind(t->Process, class_name, atom, instance) : nullptr;
     if (!cls || !desktop) {
         DbgPrint("win32k: CreateWindowEx: class %ws (%x) not found\n", class_name ? class_name : L"", atom);
         goto out;
     }
 
     BOOLEAN message_only = parent_h == HWND_MESSAGE;
-    WND *parent = desktop, *owner = NULL;
+    WND *parent = desktop, *owner = nullptr;
     if (parent_h && !message_only) {
         WND *p = WndLookup(parent_h);
         if (!p)
@@ -1188,7 +1188,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         if (style & WS_CHILD)
             parent = p;
         else
-            owner = p == desktop ? NULL : WndTopLevel(p);
+            owner = p == desktop ? nullptr : WndTopLevel(p);
     } else if (style & WS_CHILD) {
         if (!message_only)
             goto out; /* children need a parent */
@@ -1198,7 +1198,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     WND *w = W32Alloc(sizeof(WND));
     if (!w)
         goto out;
-    w->Extra = cls->WindowExtra > 0 ? W32Alloc((SIZE_T)cls->WindowExtra) : NULL;
+    w->Extra = cls->WindowExtra > 0 ? W32Alloc((SIZE_T)cls->WindowExtra) : nullptr;
     w->ExtraSize = cls->WindowExtra > 0 ? (ULONG)cls->WindowExtra : 0;
     if (!UserCreateHandle(&w->Header, USER_TYPE_WINDOW)) {
         W32Free(w->Extra);
@@ -1333,7 +1333,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         WndShow(w, SW_MAXIMIZE);
     } else if (style & WS_VISIBLE) {
         if (style & WS_CHILD)
-            WndSetPos(w, NULL, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         else
             WndShow(w, SW_SHOW);
     }
@@ -1403,7 +1403,7 @@ BOOL NTAPI NtUserShowWindowAsync(HWND hwnd, int cmd)
     WND *w = WndLookup(hwnd);
     BOOL queued = FALSE;
     if (can_touch(w)) {
-        queued = QueueWindowOperation(w->Thread, hwnd, (UINT)cmd, NULL);
+        queued = QueueWindowOperation(w->Thread, hwnd, (UINT)cmd, nullptr);
         if (!queued)
             W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
     } else {
@@ -1442,7 +1442,7 @@ BOOL NTAPI NtUserEnableWindow(HWND hwnd, BOOL enable)
                 w->Style |= WS_DISABLED;
                 W32THREAD *t = w->Thread;
                 if (t && (t->Focus == WndHandle(w) || WndIsChildOf(WndLookup(t->Focus), w)))
-                    WndSetFocus(NULL);
+                    WndSetFocus(nullptr);
                 if (alive(w))
                     MsgSend(w, WM_ENABLE, FALSE, 0);
             }
@@ -1459,12 +1459,12 @@ HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent_h)
     UserEnter();
     WND *w = WndLookup(hwnd);
     WND *p = parent_h ? WndLookup(parent_h) : WndDesktop();
-    HWND old = NULL;
+    HWND old = nullptr;
     if (can_touch(w) && p && p != w && !WndIsChildOf(p, w)) {
         old = WndHandle(w->Parent);
         BOOLEAN visible = (w->Style & WS_VISIBLE) != 0;
         if (visible)
-            WndSetPos(w, NULL, 0, 0, 0, 0, SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         RECT r = w->WindowRect;
         screen_to_parent(w, &r);
         WND *old_parent = w->Parent;
@@ -1473,7 +1473,7 @@ HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent_h)
             HostWindowDestroy(w);
             w->Flags &= ~WNDF_HOST_WINDOW;
             PaintRetireSurface(w->Surface);
-            w->Surface = NULL;
+            w->Surface = nullptr;
         }
         link_window(p, w, HWND_TOP);
         /* keep the position relative to the new parent. */
@@ -1481,7 +1481,7 @@ HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent_h)
         parent_to_screen(p, &nr);
         offset_tree(w, nr.left - w->WindowRect.left, nr.top - w->WindowRect.top);
         if (visible)
-            WndSetPos(w, NULL, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+            WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
     }
     UserLeave();
     return old;
@@ -1498,7 +1498,7 @@ static WND *root_owner(WND *w)
 HWND NTAPI NtUserGetAncestor(HWND hwnd, UINT flags)
 {
     UserEnter();
-    WND *w = WndLookup(hwnd), *r = NULL;
+    WND *w = WndLookup(hwnd), *r = nullptr;
     if (w && w != g_desktop) {
         switch (flags) {
         case GA_PARENT:
@@ -1564,9 +1564,9 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
         if (w->Style & WS_CHILD)
             return 0;
         old = (LONG_PTR)WndHandle(w->Owner);
-        w->Owner = value ? WndTopLevel(WndLookup((HWND)value)) : NULL;
+        w->Owner = value ? WndTopLevel(WndLookup((HWND)value)) : nullptr;
         if (w->Owner == w)
-            w->Owner = NULL;
+            w->Owner = nullptr;
         return old;
     case GWLP_ID:
         old = (LONG_PTR)w->Id;
@@ -1641,7 +1641,7 @@ LONG NTAPI NtUserSetWindowLong(HWND hwnd, int index, LONG value, BOOL ansi)
 
 BOOL NTAPI NtUserDefSetText(HWND hwnd, PUNICODE_STRING user_text)
 {
-    PWSTR text = NULL;
+    PWSTR text = nullptr;
     SIZE_T chars = 0;
     if (user_text && !NT_SUCCESS(W32CaptureString(user_text, &text, &chars)))
         return FALSE;
@@ -1651,7 +1651,7 @@ BOOL NTAPI NtUserDefSetText(HWND hwnd, PUNICODE_STRING user_text)
         WndSetText(w, text, (ULONG)chars);
     UserLeave();
     W32Free(text);
-    return w != NULL;
+    return w != nullptr;
 }
 
 int NTAPI NtUserInternalGetWindowText(HWND hwnd, LPWSTR buffer, int count)
@@ -1682,7 +1682,7 @@ static BOOLEAN class_name_matches(WND *w, PCWSTR name, ATOM atom)
 HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_class, PUNICODE_STRING user_name,
                               DWORD type)
 {
-    PWSTR class_name = NULL, name = NULL;
+    PWSTR class_name = nullptr, name = nullptr;
     ATOM atom = 0;
     BOOLEAN have_class = FALSE, have_name = FALSE;
     if (user_class) {
@@ -1697,11 +1697,11 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
         if (NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s))) && s.Buffer) {
             SIZE_T chars;
             W32CaptureString(user_name, &name, &chars);
-            have_name = name != NULL;
+            have_name = name != nullptr;
         }
     }
     UserEnter();
-    HWND result = NULL;
+    HWND result = nullptr;
     WND *parent = parent_h ? WndLookup(parent_h) : WndDesktop();
     if (parent_h == HWND_MESSAGE)
         parent = WndDesktop();
@@ -1709,7 +1709,7 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
         WND *c = parent->FirstChild;
         if (after_h) {
             WND *a = WndLookup(after_h);
-            c = a && a->Parent == parent ? a->Next : NULL;
+            c = a && a->Parent == parent ? a->Next : nullptr;
         }
         for (; c; c = c->Next) {
             if (c->Flags & WNDF_DESTROYING)
@@ -1762,7 +1762,7 @@ NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, 
         }
         while (c && !c->Next && c->Parent != parent)
             c = c->Parent;
-        c = c ? c->Next : NULL;
+        c = c ? c->Next : nullptr;
     }
     if (NT_SUCCESS(status) && n > max)
         status = STATUS_BUFFER_TOO_SMALL;
@@ -1785,7 +1785,7 @@ BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *user_wp)
     WND *w = WndLookup(hwnd);
     BOOL ok = FALSE;
     if (can_touch(w)) {
-        WINDOWPLACEMENT wp = {0};
+        WINDOWPLACEMENT wp = {};
         wp.length = sizeof(wp);
         wp.showCmd = (w->Style & WS_MINIMIZE) ? SW_SHOWMINIMIZED
                      : (w->Style & WS_MAXIMIZE) ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
@@ -1817,7 +1817,7 @@ BOOL WndSetPlacement(WND *w, const WINDOWPLACEMENT *placement)
     WINDOWPLACEMENT wp = *placement;
     UserReference(&w->Header);
     if (w->Flags & WNDF_FULLSCREEN) {
-        WndFullscreen(w, FALSE, NULL);
+        WndFullscreen(w, FALSE, nullptr);
         if (!alive(w)) {
             UserDereference(&w->Header);
             return FALSE;
@@ -1830,7 +1830,7 @@ BOOL WndSetPlacement(WND *w, const WINDOWPLACEMENT *placement)
         w->MinPosition = wp.ptMinPosition;
     if (!(w->Style & (WS_MINIMIZE | WS_MAXIMIZE))) {
         RECT r = wp.rcNormalPosition;
-        WndSetPos(w, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top,
+        WndSetPos(w, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
                   SWP_NOZORDER | SWP_NOACTIVATE);
     }
     BOOL ok = alive(w);
@@ -1880,11 +1880,11 @@ HWND NTAPI NtUserSetFocus(HWND hwnd)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HWND old = t ? t->Focus : NULL;
-    WND *w = hwnd ? WndLookup(hwnd) : NULL;
+    HWND old = t ? t->Focus : nullptr;
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if (hwnd && (!can_touch(w) || (w->Style & WS_DISABLED) || w->Thread != t)) {
         UserLeave();
-        return NULL;
+        return nullptr;
     }
     if (w && (w->Style & WS_MINIMIZE)) {
         UserLeave();
@@ -1899,12 +1899,12 @@ HWND NTAPI NtUserSetActiveWindow(HWND hwnd)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HWND old = t ? t->Active : NULL;
-    WND *w = hwnd ? WndLookup(hwnd) : NULL;
+    HWND old = t ? t->Active : nullptr;
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if (w && can_touch(w) && WndIsTopLevel(w) && w->Thread == t)
         WndActivate(w, FALSE);
     else if (!hwnd && t && InputForeground && InputForeground->Thread == t)
-        InputSetForeground(NULL);
+        InputSetForeground(nullptr);
     UserLeave();
     return old;
 }
@@ -1975,7 +1975,7 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
     }
     UserLeave();
     if (routine == MIME_HWND_UPDATEWINDOW && w)
-        NtUserRedrawWindow(hwnd, NULL, NULL, RDW_UPDATENOW | RDW_ALLCHILDREN);
+        NtUserRedrawWindow(hwnd, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
     return r;
 }
 
@@ -1983,9 +1983,9 @@ static WND *get_window_rel(WND *w, UINT cmd)
 {
     switch (cmd) {
     case GW_HWNDFIRST:
-        return w->Parent ? w->Parent->FirstChild : NULL;
+        return w->Parent ? w->Parent->FirstChild : nullptr;
     case GW_HWNDLAST:
-        return w->Parent ? w->Parent->LastChild : NULL;
+        return w->Parent ? w->Parent->LastChild : nullptr;
     case GW_HWNDNEXT:
         return w->Next;
     case GW_HWNDPREV:
@@ -1998,10 +1998,10 @@ static WND *get_window_rel(WND *w, UINT cmd)
         for (WND *c = g_desktop->FirstChild; c; c = c->Next)
             if (c->Owner == w && (c->Style & WS_VISIBLE) && !(c->Style & WS_DISABLED) && (c->Style & WS_POPUP))
                 return c;
-        return NULL;
+        return nullptr;
     }
     }
-    return NULL;
+    return nullptr;
 }
 
 static WND *find_dlg_item(WND *w, UINT_PTR id)
@@ -2009,7 +2009,7 @@ static WND *find_dlg_item(WND *w, UINT_PTR id)
     for (WND *c = w->FirstChild; c; c = c->Next)
         if (c->Id == id && !(c->Flags & WNDF_DESTROYING))
             return c;
-    return NULL;
+    return nullptr;
 }
 
 static void map_points(WND *from, WND *to, POINT *pts, UINT count)
@@ -2118,7 +2118,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         MIME_MAP_POINTS mp;
         if (!NT_SUCCESS(MimeCopyFromUser(&mp, (PVOID)param, sizeof(mp))) || mp.Count > 4096)
             break;
-        WND *to = mp.To ? WndLookup(mp.To) : NULL;
+        WND *to = mp.To ? WndLookup(mp.To) : nullptr;
         POINT local[64];
         POINT *pts = mp.Count <= 64 ? local : W32Alloc(mp.Count * sizeof(POINT));
         if (!pts)
@@ -2198,7 +2198,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         pt.x += w->ClientRect.left;
         pt.y += w->ClientRect.top;
         WND *c = WndChildFromPoint(w, pt, FALSE);
-        r = (ULONG_PTR)WndHandle(c ? c : (RectContains(&w->ClientRect, pt.x, pt.y) ? w : NULL));
+        r = (ULONG_PTR)WndHandle(c ? c : (RectContains(&w->ClientRect, pt.x, pt.y) ? w : nullptr));
         break;
     }
     case MIME_HWNDPARAM_SETCONTEXTHELPID:

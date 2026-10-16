@@ -82,7 +82,7 @@ void __cdecl _unlock_file(FILE *f)
 /* a free stream, locked, or NULL. */
 FILE *MsvcrtGetStream(void)
 {
-    FILE *result = NULL;
+    FILE *result = nullptr;
     _lock(_IOB_SCAN_LOCK);
     for (int i = 0; i < MsvcrtStreamCount && MsvcrtStreams; i++) {
         FILE *f = MsvcrtStreams[i];
@@ -101,11 +101,11 @@ FILE *MsvcrtGetStream(void)
                 MsvcrtUnlockFile(f);
                 continue;
             }
-            f->_ptr = f->_base = NULL;
+            f->_ptr = f->_base = nullptr;
             f->_cnt = 0;
             f->_flag = 0;
             f->_file = -1;
-            f->_tmpfname = NULL;
+            f->_tmpfname = nullptr;
             f->_bufsiz = 0;
             f->_charbuf = 0;
             result = f;
@@ -161,7 +161,7 @@ void MsvcrtFtbuf(int flag, FILE *f)
         MsvcrtFflushNolock(f);
         f->_flag &= ~(_IOYOURBUF | _IOFLRTN);
         f->_bufsiz = 0;
-        f->_ptr = f->_base = NULL;
+        f->_ptr = f->_base = nullptr;
     }
 }
 
@@ -472,15 +472,15 @@ FILE *MsvcrtOpenFileW(const wchar_t *name, const wchar_t *mode, int share, FILE 
     int oflag, sflag;
     if (!parse_mode(mode, &oflag, &sflag, &share)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     int fd = MsvcrtOpenW(name, oflag, share, _S_IREAD | _S_IWRITE, 0);
     if (fd < 0)
-        return NULL;
+        return nullptr;
     f->_flag = sflag;
     f->_cnt = 0;
-    f->_ptr = f->_base = NULL;
-    f->_tmpfname = NULL;
+    f->_ptr = f->_base = nullptr;
+    f->_tmpfname = nullptr;
     f->_file = fd;
     return f;
 }
@@ -489,12 +489,12 @@ static FILE *open_stream(const wchar_t *name, const wchar_t *mode, int share)
 {
     if (!name || !mode || !*mode) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     FILE *f = MsvcrtGetStream();
     if (!f)
-        return NULL;
-    FILE *r = NULL;
+        return nullptr;
+    FILE *r = nullptr;
     if (*name)
         r = MsvcrtOpenFileW(name, mode, share, f);
     else
@@ -514,11 +514,11 @@ FILE *__cdecl _fsopen(const char *name, const char *mode, int share)
 {
     if (!name || !mode) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     wchar_t *wn = MsvcrtPathToW(name);
     wchar_t *wm = mode_to_w(mode);
-    FILE *f = wn && wm ? open_stream(wn, wm, share) : NULL;
+    FILE *f = wn && wm ? open_stream(wn, wm, share) : nullptr;
     free(wn);
     free(wm);
     return f;
@@ -562,14 +562,14 @@ int MsvcrtFcloseNolock(FILE *f)
         if (f->_flag & _IOMYBUF) {
             free(f->_base);
             f->_flag &= ~_IOMYBUF;
-            f->_base = f->_ptr = NULL;
+            f->_base = f->_ptr = nullptr;
             f->_bufsiz = 0;
         }
         if (_close(f->_file) < 0)
             r = EOF;
         if (f->_tmpfname) {
             free(f->_tmpfname);
-            f->_tmpfname = NULL;
+            f->_tmpfname = nullptr;
         }
     }
     f->_flag = 0;
@@ -609,12 +609,12 @@ static FILE *reopen(const wchar_t *name, const wchar_t *mode, FILE *f, int share
 {
     if (!name || !mode || !f) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     MsvcrtLockFile(f);
     if (inuse(f))
         MsvcrtFcloseNolock(f);
-    f->_ptr = f->_base = NULL;
+    f->_ptr = f->_base = nullptr;
     f->_cnt = f->_flag = 0;
     FILE *r = MsvcrtOpenFileW(name, mode, share, f);
     MsvcrtUnlockFile(f);
@@ -630,11 +630,11 @@ FILE *__cdecl freopen(const char *name, const char *mode, FILE *f)
 {
     if (!name || !mode || !f) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     wchar_t *wn = MsvcrtPathToW(name);
     wchar_t *wm = mode_to_w(mode);
-    FILE *r = wn && wm ? reopen(wn, wm, f, _SH_DENYNO) : NULL;
+    FILE *r = wn && wm ? reopen(wn, wm, f, _SH_DENYNO) : nullptr;
     free(wn);
     free(wm);
     return r;
@@ -664,20 +664,20 @@ static FILE *fdopen_w(int fd, const wchar_t *mode)
 {
     if (!mode) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (!MsvcrtFdValid(fd)) {
         MSVCRT_INVALID(EBADF);
-        return NULL;
+        return nullptr;
     }
     int oflag, sflag, share = 0;
     if (!parse_mode(mode, &oflag, &sflag, &share)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     FILE *f = MsvcrtGetStream();
     if (!f)
-        return NULL;
+        return nullptr;
     f->_flag = sflag;
     f->_file = fd;
     MsvcrtUnlockFile(f);
@@ -688,10 +688,10 @@ FILE *__cdecl _fdopen(int fd, const char *mode)
 {
     if (!mode) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     wchar_t *wm = mode_to_w(mode);
-    FILE *f = wm ? fdopen_w(fd, wm) : NULL;
+    FILE *f = wm ? fdopen_w(fd, wm) : nullptr;
     free(wm);
     return f;
 }
@@ -978,7 +978,7 @@ char *__cdecl fgets(char *s, int n, FILE *f)
 {
     if (!s || n <= 0 || !f) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     MsvcrtLockFile(f);
     char *p = s;
@@ -987,7 +987,7 @@ char *__cdecl fgets(char *s, int n, FILE *f)
         int c = _fgetc_nolock(f);
         if (c == EOF) {
             if (p == s)
-                r = NULL;
+                r = nullptr;
             break;
         }
         *p++ = (char)c;
@@ -1003,7 +1003,7 @@ wchar_t *__cdecl fgetws(wchar_t *s, int n, FILE *f)
 {
     if (!s || n <= 0 || !f) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     MsvcrtLockFile(f);
     wchar_t *p = s;
@@ -1012,7 +1012,7 @@ wchar_t *__cdecl fgetws(wchar_t *s, int n, FILE *f)
         wint_t c = MsvcrtFgetwcNolock(f);
         if (c == WEOF) {
             if (p == s)
-                r = NULL;
+                r = nullptr;
             break;
         }
         *p++ = c;
@@ -1028,7 +1028,7 @@ char *__cdecl gets(char *s)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     FILE *f = msvcrt_stdin;
     MsvcrtLockFile(f);
@@ -1038,7 +1038,7 @@ char *__cdecl gets(char *s)
         if (c == EOF) {
             if (p == s) {
                 MsvcrtUnlockFile(f);
-                return NULL;
+                return nullptr;
             }
             break;
         }
@@ -1053,7 +1053,7 @@ wchar_t *__cdecl _getws(wchar_t *s)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     FILE *f = msvcrt_stdin;
     MsvcrtLockFile(f);
@@ -1063,7 +1063,7 @@ wchar_t *__cdecl _getws(wchar_t *s)
         if (c == WEOF) {
             if (p == s) {
                 MsvcrtUnlockFile(f);
-                return NULL;
+                return nullptr;
             }
             break;
         }
@@ -1530,7 +1530,7 @@ void __cdecl setbuf(FILE *f, char *buf)
     if (buf)
         setvbuf(f, buf, _IOFBF, BUFSIZ);
     else
-        setvbuf(f, NULL, _IONBF, 0);
+        setvbuf(f, nullptr, _IONBF, 0);
 }
 
 /* ------------------------------------------------------------------ temporary files */
@@ -1558,7 +1558,7 @@ static FILE *tmpfile_open(int share)
 {
     FILE *f = MsvcrtGetStream();
     if (!f)
-        return NULL;
+        return nullptr;
     _lock(_TMPNAM_LOCK);
     int saved = *_errno();
     int fd = -1;
@@ -1591,7 +1591,7 @@ static FILE *tmpfile_open(int share)
     }
     _unlock(_TMPNAM_LOCK);
     MsvcrtUnlockFile(f);
-    return fd >= 0 ? f : NULL;
+    return fd >= 0 ? f : nullptr;
 }
 
 FILE *__cdecl tmpfile(void)
@@ -1657,7 +1657,7 @@ static char *tempnam_impl(const char *dir, const char *prefix)
 {
     char base[MAX_PATH];
     const char *env = getenv("TMP");
-    const char *d = NULL;
+    const char *d = nullptr;
     DWORD attr;
     if (env && (attr = GetFileAttributesA(env)) != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
         d = env;
@@ -1672,7 +1672,7 @@ static char *tempnam_impl(const char *dir, const char *prefix)
     size_t dl = strlen(d), pl = strlen(prefix);
     char *out = malloc(dl + pl + 16);
     if (!out)
-        return NULL;
+        return nullptr;
     static unsigned counter;
     _lock(_TMPNAM_LOCK);
     for (unsigned i = 0; i < 0x7fffffff; i++) {

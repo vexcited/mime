@@ -70,7 +70,7 @@ static LRESULT CALLBACK dos_proc(LPSTR data, UINT message, LPARAM a, LPARAM b)
             break;
         }
         DWORD disposition = info->dwFlags & MMIO_CREATE ? CREATE_ALWAYS : OPEN_EXISTING;
-        HANDLE h = CreateFileW((LPCWSTR)a, access, share, NULL, disposition, FILE_ATTRIBUTE_NORMAL, NULL);
+        HANDLE h = CreateFileW((LPCWSTR)a, access, share, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h == INVALID_HANDLE_VALUE) {
             DWORD e = GetLastError();
             return e == ERROR_FILE_NOT_FOUND ? MMIOERR_FILENOTFOUND
@@ -89,7 +89,7 @@ static LRESULT CALLBACK dos_proc(LPSTR data, UINT message, LPARAM a, LPARAM b)
         return MMSYSERR_NOERROR;
     case MMIOM_READ: {
         DWORD done = 0;
-        if (!ReadFile(file, (void *)a, (DWORD)b, &done, NULL))
+        if (!ReadFile(file, (void *)a, (DWORD)b, &done, nullptr))
             return -1;
         info->lDiskOffset += done;
         return done;
@@ -97,7 +97,7 @@ static LRESULT CALLBACK dos_proc(LPSTR data, UINT message, LPARAM a, LPARAM b)
     case MMIOM_WRITE:
     case MMIOM_WRITEFLUSH: {
         DWORD done = 0;
-        if (!WriteFile(file, (const void *)a, (DWORD)b, &done, NULL))
+        if (!WriteFile(file, (const void *)a, (DWORD)b, &done, nullptr))
             return -1;
         info->lDiskOffset += done;
         if (message == MMIOM_WRITEFLUSH)
@@ -105,7 +105,7 @@ static LRESULT CALLBACK dos_proc(LPSTR data, UINT message, LPARAM a, LPARAM b)
         return done;
     }
     case MMIOM_SEEK: {
-        DWORD pos = SetFilePointer(file, (LONG)a, NULL, (DWORD)b);
+        DWORD pos = SetFilePointer(file, (LONG)a, nullptr, (DWORD)b);
         if (pos == INVALID_SET_FILE_POINTER)
             return -1;
         info->lDiskOffset = (LONG)pos;
@@ -141,7 +141,7 @@ static LPMMIOPROC find_proc(FOURCC fcc, BOOL *unicode)
         return dos_proc;
     if (fcc == FOURCC_MEM)
         return mem_proc;
-    LPMMIOPROC proc = NULL;
+    LPMMIOPROC proc = nullptr;
     RtlAcquireSRWLockShared(&g_procs_lock);
     for (UINT i = g_proc_count; i-- > 0;)
         if (g_procs[i].fcc == fcc) {
@@ -159,7 +159,7 @@ static LPMMIOPROC install(FOURCC fcc, LPMMIOPROC proc, DWORD flags, BOOL unicode
         BOOL u;
         return find_proc(fcc, &u);
     }
-    LPMMIOPROC result = NULL;
+    LPMMIOPROC result = nullptr;
     RtlAcquireSRWLockExclusive(&g_procs_lock);
     if (flags & MMIO_INSTALLPROC) {
         if (proc && g_proc_count < RTL_NUMBER_OF(g_procs)) {
@@ -205,7 +205,7 @@ WINMMAPI FOURCC WINAPI mmioStringToFOURCCA(LPCSTR text, UINT flags)
 
 WINMMAPI FOURCC WINAPI mmioStringToFOURCCW(LPCWSTR text, UINT flags)
 {
-    char c[4] = {0};
+    char c[4] = {};
     for (int i = 0; text && i < 4 && text[i]; i++)
         c[i] = (char)text[i];
     return text ? to_fourcc(c, 4, flags) : 0;
@@ -216,7 +216,7 @@ WINMMAPI FOURCC WINAPI mmioStringToFOURCCW(LPCWSTR text, UINT flags)
 /* the procedure of a name like file.ext+element: its extension's, if installed. */
 static FOURCC proc_of_name(LPCWSTR name)
 {
-    const WCHAR *plus = name ? wcschr(name, L'+') : NULL;
+    const WCHAR *plus = name ? wcschr(name, L'+') : nullptr;
     if (!plus)
         return FOURCC_DOS;
     const WCHAR *dot = plus;
@@ -224,7 +224,7 @@ static FOURCC proc_of_name(LPCWSTR name)
         dot--;
     if (dot == name || dot[-1] != L'.')
         return FOURCC_DOS;
-    char c[4] = {0};
+    char c[4] = {};
     for (int i = 0; i < 4 && dot + i < plus; i++)
         c[i] = (char)dot[i];
     return to_fourcc(c, 4, MMIO_TOUPPER);
@@ -235,20 +235,20 @@ static HMMIO open_common(LPWSTR name, LPMMIOINFO user, DWORD flags)
     if (flags & MMIO_PARSE) {
         /* the full path, back in the caller's buffer of 128 characters. */
         WCHAR full[MAX_PATH];
-        DWORD n = name ? GetFullPathNameW(name, MAX_PATH, full, NULL) : 0;
+        DWORD n = name ? GetFullPathNameW(name, MAX_PATH, full, nullptr) : 0;
         if (!n || n >= 128)
-            return NULL;
+            return nullptr;
         memcpy(name, full, (n + 1) * sizeof(WCHAR));
         return (HMMIO)TRUE;
     }
     if (flags & MMIO_EXIST)
-        return GetFileAttributesW(name) != INVALID_FILE_ATTRIBUTES ? (HMMIO)TRUE : NULL;
+        return GetFileAttributesW(name) != INVALID_FILE_ATTRIBUTES ? (HMMIO)TRUE : nullptr;
     if (flags & MMIO_DELETE)
-        return DeleteFileW(name) ? (HMMIO)TRUE : NULL;
+        return DeleteFileW(name) ? (HMMIO)TRUE : nullptr;
     if (flags & MMIO_GETTEMP) {
         WCHAR dir[MAX_PATH], temp[MAX_PATH];
         if (!GetTempPathW(MAX_PATH, dir) || !GetTempFileNameW(dir, L"sje", 0, temp))
-            return NULL;
+            return nullptr;
         memcpy(name, temp, (wcslen(temp) + 1) * sizeof(WCHAR));
         return (HMMIO)TRUE;
     }
@@ -256,7 +256,7 @@ static HMMIO open_common(LPWSTR name, LPMMIOINFO user, DWORD flags)
     if (!m) {
         if (user)
             user->wErrorRet = MMIOERR_OUTOFMEMORY;
-        return NULL;
+        return nullptr;
     }
     if (user) {
         m->info.fccIOProc = user->fccIOProc;
@@ -300,9 +300,9 @@ static HMMIO open_common(LPWSTR name, LPMMIOINFO user, DWORD flags)
         if (m->info.fccIOProc == FOURCC_MEM)
             m->info.adwInfo[0] = user ? user->adwInfo[0] : 0;
         LPARAM file = (LPARAM)name;
-        char narrow[MAX_PATH] = {0};
+        char narrow[MAX_PATH] = {};
         if (!m->unicode && name) {
-            WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, MAX_PATH, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, MAX_PATH, nullptr, nullptr);
             file = (LPARAM)narrow;
         }
         error = (UINT)send(m, MMIOM_OPEN, file, 0);
@@ -313,7 +313,7 @@ static HMMIO open_common(LPWSTR name, LPMMIOINFO user, DWORD flags)
         mm_free(m);
         if (user)
             user->wErrorRet = error;
-        return NULL;
+        return nullptr;
     }
     if (user)
         user->wErrorRet = 0;
@@ -324,12 +324,12 @@ WINMMAPI HMMIO WINAPI mmioOpenW(LPWSTR file, LPMMIOINFO info, DWORD flags) { ret
 
 WINMMAPI HMMIO WINAPI mmioOpenA(LPSTR file, LPMMIOINFO info, DWORD flags)
 {
-    WCHAR wide[MAX_PATH] = {0};
+    WCHAR wide[MAX_PATH] = {};
     if (file)
         MultiByteToWideChar(CP_ACP, 0, file, -1, wide, MAX_PATH);
-    HMMIO h = open_common(file ? wide : NULL, info, flags);
+    HMMIO h = open_common(file ? wide : nullptr, info, flags);
     if (h && file && (flags & (MMIO_PARSE | MMIO_GETTEMP)))
-        WideCharToMultiByte(CP_ACP, 0, wide, -1, file, (flags & MMIO_PARSE) ? 128 : MAX_PATH, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, wide, -1, file, (flags & MMIO_PARSE) ? 128 : MAX_PATH, nullptr, nullptr);
     return h;
 }
 
@@ -629,7 +629,7 @@ WINMMAPI LRESULT WINAPI mmioSendMessage(HMMIO h, UINT message, LPARAM param1, LP
 
 WINMMAPI MMRESULT WINAPI mmioRenameW(LPCWSTR from, LPCWSTR to, LPCMMIOINFO info, DWORD flags)
 {
-    MMIOINFO temp = {0};
+    MMIOINFO temp = {};
     BOOL unicode = TRUE;
     LPMMIOPROC proc = info && info->pIOProc ? info->pIOProc
                                              : find_proc(info && info->fccIOProc ? info->fccIOProc : FOURCC_DOS,
@@ -641,7 +641,7 @@ WINMMAPI MMRESULT WINAPI mmioRenameW(LPCWSTR from, LPCWSTR to, LPCMMIOINFO info,
 
 WINMMAPI MMRESULT WINAPI mmioRenameA(LPCSTR from, LPCSTR to, LPCMMIOINFO info, DWORD flags)
 {
-    WCHAR a[MAX_PATH] = {0}, b[MAX_PATH] = {0};
+    WCHAR a[MAX_PATH] = {}, b[MAX_PATH] = {};
     MultiByteToWideChar(CP_ACP, 0, from, -1, a, MAX_PATH);
     MultiByteToWideChar(CP_ACP, 0, to, -1, b, MAX_PATH);
     return mmioRenameW(a, b, info, flags);

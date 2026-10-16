@@ -12,9 +12,9 @@
 void *D3d10From11(void *iface, REFIID riid)
 {
     if (!iface)
-        return NULL;
+        return nullptr;
     IUnknown *unknown = iface;
-    void *out = NULL;
+    void *out = nullptr;
     unknown->lpVtbl->QueryInterface(unknown, riid, &out);
     unknown->lpVtbl->Release(unknown);
     return out;
@@ -24,7 +24,7 @@ static ID3D11DeviceContext4 *immediate(D3dDevice *device) { return &device->imme
 
 static void get_device(D3dDevice *device, ID3D10Device **out)
 {
-    *out = NULL;
+    *out = nullptr;
     device->iface.lpVtbl->QueryInterface(&device->iface, &IID_ID3D10Device, (void **)out);
 }
 
@@ -199,15 +199,15 @@ static const ID3D10Texture3DVtbl texture3d_vtbl = {RESOURCE_VTBL, VTBL_FN(textur
 /* structured buffers and clamped textures, which direct3d 10 cannot express, have no direct3d 10 interface. */
 void *D3d10ResourceInterface(D3dResource *r, REFIID riid)
 {
-    static const void *const vtbls[] = {NULL, &buffer_vtbl, &texture1d_vtbl, &texture2d_vtbl, &texture3d_vtbl};
-    static const GUID *const iids[] = {NULL, &IID_ID3D10Buffer, &IID_ID3D10Texture1D, &IID_ID3D10Texture2D,
+    static const void *const vtbls[] = {nullptr, &buffer_vtbl, &texture1d_vtbl, &texture2d_vtbl, &texture3d_vtbl};
+    static const GUID *const iids[] = {nullptr, &IID_ID3D10Buffer, &IID_ID3D10Texture1D, &IID_ID3D10Texture2D,
                                        &IID_ID3D10Texture3D};
     if (!IsEqualGUID(riid, &IID_ID3D10DeviceChild) && !IsEqualGUID(riid, &IID_ID3D10Resource) &&
         !IsEqualGUID(riid, iids[r->dimension]))
-        return NULL;
+        return nullptr;
     if (r->misc & (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER ? D3D11_RESOURCE_MISC_BUFFER_STRUCTURED
                                                                    : D3D11_RESOURCE_MISC_RESOURCE_CLAMP))
-        return NULL;
+        return nullptr;
     r->d3d10.lpVtbl = vtbls[r->dimension];
     return &r->d3d10;
 }
@@ -219,7 +219,7 @@ CHILD_METHODS(view, D3dView, &o->iface)
 static void STDMETHODCALLTYPE view_get_resource(void *iface, ID3D10Resource **resource)
 {
     ID3D11Resource *r = view_impl(iface)->resource->iface;
-    *resource = NULL;
+    *resource = nullptr;
     r->lpVtbl->QueryInterface(r, &IID_ID3D10Resource, (void **)resource);
 }
 
@@ -268,7 +268,7 @@ static const ID3D10DepthStencilViewVtbl dsv_vtbl = {VIEW_VTBL, VTBL_FN(dsv_get_d
  */
 void *D3d10ViewInterface(D3dView *view, REFIID riid)
 {
-    const void *vtbl = NULL;
+    const void *vtbl = nullptr;
     BOOL match = IsEqualGUID(riid, &IID_ID3D10DeviceChild) || IsEqualGUID(riid, &IID_ID3D10View);
     switch (view->kind) {
     case D3D_VIEW_SRV:
@@ -276,10 +276,10 @@ void *D3d10ViewInterface(D3dView *view, REFIID riid)
         match |= IsEqualGUID(riid, &IID_ID3D10ShaderResourceView) || IsEqualGUID(riid, &IID_ID3D10ShaderResourceView1);
         if (view->desc.srv.ViewDimension == D3D11_SRV_DIMENSION_BUFFEREX &&
             (view->desc.srv.BufferEx.Flags & D3D11_BUFFEREX_SRV_FLAG_RAW))
-            return NULL;
+            return nullptr;
         if (view->desc.srv.ViewDimension == D3D11_SRV_DIMENSION_BUFFER &&
             (view->resource->misc & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED))
-            return NULL;
+            return nullptr;
         break;
     case D3D_VIEW_RTV:
         vtbl = &rtv_vtbl;
@@ -289,13 +289,13 @@ void *D3d10ViewInterface(D3dView *view, REFIID riid)
         vtbl = &dsv_vtbl;
         match |= IsEqualGUID(riid, &IID_ID3D10DepthStencilView);
         if (view->desc.dsv.Flags)
-            return NULL;
+            return nullptr;
         break;
     case D3D_VIEW_UAV:
-        return NULL;
+        return nullptr;
     }
     if (!match)
-        return NULL;
+        return nullptr;
     view->d3d10.lpVtbl = vtbl;
     return &view->d3d10;
 }
@@ -364,7 +364,7 @@ static const ID3D10InputLayoutVtbl layout_vtbl = {CHILD_VTBL(layout)};
 static void *child_interface(D3d10Iface *d3d10, const void *vtbl, REFIID riid, const GUID *iid, const GUID *iid1)
 {
     if (!IsEqualGUID(riid, &IID_ID3D10DeviceChild) && !IsEqualGUID(riid, iid) && !(iid1 && IsEqualGUID(riid, iid1)))
-        return NULL;
+        return nullptr;
     d3d10->lpVtbl = vtbl;
     return d3d10;
 }
@@ -376,22 +376,22 @@ void *D3d10BlendInterface(D3dBlendState *state, REFIID riid)
 
 void *D3d10RasterizerInterface(D3dRasterizerState *state, REFIID riid)
 {
-    return child_interface(&state->d3d10, &rs_vtbl, riid, &IID_ID3D10RasterizerState, NULL);
+    return child_interface(&state->d3d10, &rs_vtbl, riid, &IID_ID3D10RasterizerState, nullptr);
 }
 
 void *D3d10DepthStencilInterface(D3dDepthStencilState *state, REFIID riid)
 {
-    return child_interface(&state->d3d10, &ds_vtbl, riid, &IID_ID3D10DepthStencilState, NULL);
+    return child_interface(&state->d3d10, &ds_vtbl, riid, &IID_ID3D10DepthStencilState, nullptr);
 }
 
 void *D3d10SamplerInterface(D3dSamplerState *state, REFIID riid)
 {
-    return child_interface(&state->d3d10, &sampler_vtbl, riid, &IID_ID3D10SamplerState, NULL);
+    return child_interface(&state->d3d10, &sampler_vtbl, riid, &IID_ID3D10SamplerState, nullptr);
 }
 
 void *D3d10InputLayoutInterface(D3dInputLayout *layout, REFIID riid)
 {
-    return child_interface(&layout->d3d10, &layout_vtbl, riid, &IID_ID3D10InputLayout, NULL);
+    return child_interface(&layout->d3d10, &layout_vtbl, riid, &IID_ID3D10InputLayout, nullptr);
 }
 
 /* ------------------------------------------------------------------ shaders */
@@ -406,8 +406,8 @@ void *D3d10ShaderInterface(D3dShader *shader, REFIID riid)
     const GUID *iid = shader->stage == D3D_VS   ? &IID_ID3D10VertexShader
                       : shader->stage == D3D_GS ? &IID_ID3D10GeometryShader
                       : shader->stage == D3D_PS ? &IID_ID3D10PixelShader
-                                                : NULL;
-    return iid ? child_interface(&shader->d3d10, &shader_vtbl, riid, iid, NULL) : NULL;
+                                                : nullptr;
+    return iid ? child_interface(&shader->d3d10, &shader_vtbl, riid, iid, nullptr) : nullptr;
 }
 
 /* ------------------------------------------------------------------ queries */
@@ -464,7 +464,7 @@ static HRESULT STDMETHODCALLTYPE async_get_data(void *iface, void *data, UINT si
         return c->lpVtbl->GetData(c, async, data, size, flags);
     if (size != async_get_data_size(iface))
         return E_INVALIDARG;
-    BYTE result[128] = {0};
+    BYTE result[128] = {};
     HRESULT hr = c->lpVtbl->GetData(c, async, result, D3D_MIN(q->iface.lpVtbl->GetDataSize(&q->iface), 120), flags);
     memcpy(data, result, D3D_MIN(size, 120));
     return hr;
@@ -489,7 +489,7 @@ void *D3d10AsyncInterface(D3dQuery *q, REFIID riid)
                      (query >= D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM0 && (query & 1));
     if (!IsEqualGUID(riid, &IID_ID3D10DeviceChild) && !IsEqualGUID(riid, &IID_ID3D10Asynchronous) &&
         !IsEqualGUID(riid, &IID_ID3D10Query) && !(predicate && IsEqualGUID(riid, &IID_ID3D10Predicate)))
-        return NULL;
+        return nullptr;
     q->d3d10.lpVtbl = &query_vtbl;
     return &q->d3d10;
 }

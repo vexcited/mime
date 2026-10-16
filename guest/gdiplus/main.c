@@ -83,15 +83,15 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateBitmapFromFile(const WCHAR *file, GpBi
 {
     if (!file || !bitmap)
         return InvalidParameter;
-    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
         return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? FileNotFound : Win32Error;
     }
     LARGE_INTEGER size;
     GpStatus status = Ok;
-    BYTE *data = NULL;
+    BYTE *data = nullptr;
     if (!GetFileSizeEx(h, &size))
         status = Win32Error;
     else if (size.QuadPart > GP_MAX_ENCODED)
@@ -102,7 +102,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateBitmapFromFile(const WCHAR *file, GpBi
         DWORD total = 0, want = (DWORD)size.QuadPart;
         while (total < want) {
             DWORD got = 0;
-            if (!ReadFile(h, data + total, want - total, &got, NULL) || !got)
+            if (!ReadFile(h, data + total, want - total, &got, nullptr) || !got)
                 break;
             total += got;
         }

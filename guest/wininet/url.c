@@ -204,7 +204,7 @@ static DWORD StoreComponent(const URL_TEXT *url, URL_RANGE range, void **pointer
         return ERROR_SUCCESS;
     SIZE_T unit = url->Wide ? sizeof(WCHAR) : 1;
     if (!*pointer) {
-        *pointer = range.Present ? (char *)url->Text + range.Start * unit : NULL;
+        *pointer = range.Present ? (char *)url->Text + range.Start * unit : nullptr;
         *length = range.Length;
         return ERROR_SUCCESS;
     }
@@ -281,7 +281,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetCrackUrlW(LPCWSTR url, DWORD length, DWORD f
 
 DECLSPEC_EXPORT BOOL WINAPI InternetCrackUrlA(LPCSTR url, DWORD length, DWORD flags, LPURL_COMPONENTSA components)
 {
-    _Static_assert(sizeof(URL_COMPONENTSA) == sizeof(URL_COMPONENTSW), "url components layout");
+    static_assert(sizeof(URL_COMPONENTSA) == sizeof(URL_COMPONENTSW), "url components layout");
     return CrackUrl(url, FALSE, length, flags, (URL_COMPONENTSW *)components);
 }
 

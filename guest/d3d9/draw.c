@@ -33,7 +33,7 @@ static void *cached(D9StateCache *cache, const void *desc, UINT size, void *(*ma
         }
     void *object = make(device, desc);
     if (!object)
-        return NULL;
+        return nullptr;
     UINT slot = cache->count < RTL_NUMBER_OF(cache->entries) ? cache->count++ : cache->next++ % RTL_NUMBER_OF(cache->entries);
     D9StateEntry *e = &cache->entries[slot];
     /* the context keeps its own reference to a state still bound. */
@@ -58,25 +58,25 @@ void D9ClearStateCache(D9StateCache *cache)
 static void *make_blend(D9Device *d, const void *desc)
 {
     ID3D11BlendState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateBlendState(d->d3d11, desc, &s)) ? s : NULL;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateBlendState(d->d3d11, desc, &s)) ? s : nullptr;
 }
 
 static void *make_depth(D9Device *d, const void *desc)
 {
     ID3D11DepthStencilState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateDepthStencilState(d->d3d11, desc, &s)) ? s : NULL;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateDepthStencilState(d->d3d11, desc, &s)) ? s : nullptr;
 }
 
 static void *make_raster(D9Device *d, const void *desc)
 {
     ID3D11RasterizerState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateRasterizerState(d->d3d11, desc, &s)) ? s : NULL;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateRasterizerState(d->d3d11, desc, &s)) ? s : nullptr;
 }
 
 static void *make_sampler(D9Device *d, const void *desc)
 {
     ID3D11SamplerState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateSamplerState(d->d3d11, desc, &s)) ? s : NULL;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateSamplerState(d->d3d11, desc, &s)) ? s : nullptr;
 }
 
 UINT D9RenderStateGroups(D3DRENDERSTATETYPE state)
@@ -208,7 +208,7 @@ static ID3D11BlendState *blend_state(D9Device *d)
 static ID3D11DepthStencilState *depth_state(D9Device *d)
 {
     const DWORD *rs = d->render_states;
-    D3D11_DEPTH_STENCIL_DESC desc = {0};
+    D3D11_DEPTH_STENCIL_DESC desc = {};
     BOOL depth = d->depth_stencil && rs[D3DRS_ZENABLE] != D3DZB_FALSE;
     desc.DepthEnable = depth;
     desc.DepthWriteMask = depth && rs[D3DRS_ZWRITEENABLE] ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
@@ -245,7 +245,7 @@ static INT depth_bias(D9Device *d)
 static ID3D11RasterizerState *raster_state(D9Device *d)
 {
     const DWORD *rs = d->render_states;
-    D3D11_RASTERIZER_DESC desc = {0};
+    D3D11_RASTERIZER_DESC desc = {};
     desc.FillMode = rs[D3DRS_FILLMODE] == D3DFILL_WIREFRAME ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
     /* direct3d 9's front faces are clockwise, as d3d11's are by default. */
     desc.CullMode = rs[D3DRS_CULLMODE] == D3DCULL_CW    ? D3D11_CULL_FRONT
@@ -263,7 +263,7 @@ static ID3D11RasterizerState *raster_state(D9Device *d)
 static ID3D11SamplerState *sampler_state(D9Device *d, UINT slot, BOOL compare)
 {
     const DWORD *ss = d->sampler_states[slot];
-    D3D11_SAMPLER_DESC desc = {0};
+    D3D11_SAMPLER_DESC desc = {};
     DWORD min = ss[D3DSAMP_MINFILTER], mag = ss[D3DSAMP_MAGFILTER], mip = ss[D3DSAMP_MIPFILTER];
     BOOL aniso = min == D3DTEXF_ANISOTROPIC || mag == D3DTEXF_ANISOTROPIC;
     UINT filter = (min >= D3DTEXF_LINEAR) << 4 | (mag >= D3DTEXF_LINEAR) << 2 | (mip >= D3DTEXF_LINEAR);
@@ -294,7 +294,7 @@ static ID3D11Buffer *make_cb(D9Device *d, UINT size)
 {
     D3D11_BUFFER_DESC desc = {size, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE};
     ID3D11Buffer *b;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, NULL, &b)) ? b : NULL;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, nullptr, &b)) ? b : nullptr;
 }
 
 /* the registers of the float constants' buffer a shader reads: 16 to 256, or all with relative addressing. */
@@ -452,13 +452,13 @@ UINT D9VertexCount(D3DPRIMITIVETYPE type, UINT primitives)
 
 static void bind_targets(D9Device *d)
 {
-    ID3D11RenderTargetView *rtvs[D9_MAX_TARGETS] = {0};
+    ID3D11RenderTargetView *rtvs[D9_MAX_TARGETS] = {};
     UINT count = 0;
     BOOL srgb = !!d->render_states[D3DRS_SRGBWRITEENABLE];
     for (UINT i = 0; i < D9_MAX_TARGETS; i++)
         if (d->targets[i] && (rtvs[i] = D9SurfaceRtv(d->targets[i], srgb)))
             count = i + 1;
-    ID3D11DepthStencilView *dsv = d->depth_stencil ? D9SurfaceDsv(d->depth_stencil) : NULL;
+    ID3D11DepthStencilView *dsv = d->depth_stencil ? D9SurfaceDsv(d->depth_stencil) : nullptr;
     d->context->lpVtbl->OMSetRenderTargets(d->context, count, rtvs, dsv);
     d->bound_srgb = srgb;
     d->targets_dirty = FALSE;
@@ -487,8 +487,8 @@ static void bind_textures(D9Device *d, D9Variant *ps, D9Variant *vs)
         if (t)
             D9TexturePrepare(t);
         BOOL compare = !vertex && ps && (ps->key.shadow & (1u << unit));
-        ID3D11ShaderResourceView *srv = t ? D9TextureSrv(t, d->sampler_states[slot][D3DSAMP_SRGBTEXTURE]) : NULL;
-        ID3D11SamplerState *sampler = t ? sampler_state(d, slot, compare) : NULL;
+        ID3D11ShaderResourceView *srv = t ? D9TextureSrv(t, d->sampler_states[slot][D3DSAMP_SRGBTEXTURE]) : nullptr;
+        ID3D11SamplerState *sampler = t ? sampler_state(d, slot, compare) : nullptr;
         if (srv != d->bound_srvs[slot]) {
             if (vertex)
                 ctx->lpVtbl->VSSetShaderResources(ctx, unit, 1, &srv);
@@ -585,17 +585,17 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
     if (!ps || !ps->shader)
         return FALSE;
     if (vs != d->bound_vs) {
-        ctx->lpVtbl->VSSetShader(ctx, (ID3D11VertexShader *)vs->shader, NULL, 0);
+        ctx->lpVtbl->VSSetShader(ctx, (ID3D11VertexShader *)vs->shader, nullptr, 0);
         d->bound_vs = vs;
         d->vs_consts_dirty = TRUE;
     }
     if (ps != d->bound_ps) {
-        ctx->lpVtbl->PSSetShader(ctx, (ID3D11PixelShader *)ps->shader, NULL, 0);
+        ctx->lpVtbl->PSSetShader(ctx, (ID3D11PixelShader *)ps->shader, nullptr, 0);
         d->bound_ps = ps;
         d->ps_consts_dirty = TRUE;
     }
     /* instanced streams, as SetStreamSourceFreq marks them, step once each count of instances. */
-    UINT instanced = 0, rates[16] = {0};
+    UINT instanced = 0, rates[16] = {};
     for (UINT i = 1; i < D9_MAX_STREAMS; i++)
         if (d->stream_freq[i] & D3DSTREAMSOURCE_INSTANCEDATA) {
             instanced |= 1u << i;
@@ -620,7 +620,7 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
             if (!(d->streams_dirty & (1u << i)))
                 continue;
             D9Buffer *b = d->streams[i].buffer;
-            ID3D11Buffer *buffer = b ? b->buffer : NULL;
+            ID3D11Buffer *buffer = b ? b->buffer : nullptr;
             UINT stride = d->streams[i].stride, offset = d->streams[i].offset;
             ctx->lpVtbl->IASetVertexBuffers(ctx, i, 1, &buffer, &stride, &offset);
         }
@@ -631,7 +631,7 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
             d->streams[i].buffer->used = TRUE;
     if (d->indices_dirty) {
         D9Buffer *b = d->indices;
-        ctx->lpVtbl->IASetIndexBuffer(ctx, b ? b->buffer : NULL,
+        ctx->lpVtbl->IASetIndexBuffer(ctx, b ? b->buffer : nullptr,
                                       b && b->base.d3d_format == D3DFMT_INDEX32 ? DXGI_FORMAT_R32_UINT
                                                                                  : DXGI_FORMAT_R16_UINT,
                                       0);
@@ -737,8 +737,8 @@ static BOOL ring_write(D9Device *d, D9Ring *ring, UINT bind, const void *data, U
             ring->buffer->lpVtbl->Release(ring->buffer);
         ring->size = D9_MAX(D9_ALIGN(size, 65536), 4u << 20);
         D3D11_BUFFER_DESC desc = {ring->size, D3D11_USAGE_DYNAMIC, bind, D3D11_CPU_ACCESS_WRITE};
-        if (FAILED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, NULL, &ring->buffer))) {
-            ring->buffer = NULL;
+        if (FAILED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, nullptr, &ring->buffer))) {
+            ring->buffer = nullptr;
             return FALSE;
         }
         ring->used = ring->size;
@@ -761,9 +761,9 @@ static BOOL ring_write(D9Device *d, D9Ring *ring, UINT bind, const void *data, U
 /* draws from memory leave stream 0, and the indices of indexed ones, unbound, as direct3d 9 does. */
 static void unbind_up(D9Device *d, BOOL indexed)
 {
-    D9DeviceSetStream(d, 0, NULL, 0, 0);
+    D9DeviceSetStream(d, 0, nullptr, 0, 0);
     if (indexed)
-        D9DeviceSetIndices(d, NULL);
+        D9DeviceSetIndices(d, nullptr);
 }
 
 HRESULT D9DrawUP(D9Device *d, D3DPRIMITIVETYPE type, UINT primitives, const void *data, UINT stride)
@@ -851,12 +851,12 @@ HRESULT D9InitDraws(D9Device *d)
 /* what the context has bound is forgotten: the next draw sets it all. */
 void D9ResetBindings(D9Device *d)
 {
-    d->bound_vs = d->bound_ps = NULL;
-    d->bound_layout = NULL;
+    d->bound_vs = d->bound_ps = nullptr;
+    d->bound_layout = nullptr;
     d->bound_topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-    d->bound_blend = NULL;
-    d->bound_depth = NULL;
-    d->bound_raster = NULL;
+    d->bound_blend = nullptr;
+    d->bound_depth = nullptr;
+    d->bound_raster = nullptr;
     d->internal_valid[0] = d->internal_valid[1] = FALSE;
     memset(d->bound_srvs, 0, sizeof(d->bound_srvs));
     memset(d->bound_samplers, 0, sizeof(d->bound_samplers));
@@ -888,12 +888,12 @@ void D9FreeDraws(D9Device *d)
         d->up_vertices.buffer->lpVtbl->Release(d->up_vertices.buffer);
     if (d->up_indices.buffer)
         d->up_indices.buffer->lpVtbl->Release(d->up_indices.buffer);
-    d->zeros = NULL;
+    d->zeros = nullptr;
     if (d->processed)
         d->processed->lpVtbl->Release(d->processed);
     if (d->processed_read)
         d->processed_read->lpVtbl->Release(d->processed_read);
-    d->processed = d->processed_read = NULL;
+    d->processed = d->processed_read = nullptr;
     d->processed_size = 0;
     memset(&d->up_vertices, 0, sizeof(d->up_vertices));
     memset(&d->up_indices, 0, sizeof(d->up_indices));

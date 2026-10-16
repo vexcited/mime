@@ -64,7 +64,7 @@ static BOOL read_default(LPCWSTR subkey, LPWSTR out, DWORD chars)
         return FALSE;
     WCHAR raw[1024];
     DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
-    LSTATUS status = RegQueryValueExW(key, NULL, NULL, &type, (BYTE *)raw, &bytes);
+    LSTATUS status = RegQueryValueExW(key, nullptr, nullptr, &type, (BYTE *)raw, &bytes);
     RegCloseKey(key);
     if (status || (type != REG_SZ && type != REG_EXPAND_SZ) || bytes < 2 * sizeof(WCHAR))
         return FALSE;
@@ -96,7 +96,7 @@ static LPWSTR build_command(LPCWSTR template, LPCWSTR file, LPCWSTR parameters)
     size += 4 * (file_length + parameter_length) + 4;
     LPWSTR command = ShAlloc(size * sizeof(WCHAR));
     if (!command)
-        return NULL;
+        return nullptr;
     LPWSTR d = command;
     BOOL used_file = FALSE;
     for (LPCWSTR p = template; *p; p++) {
@@ -133,7 +133,7 @@ static BOOL run(LPCWSTR application, LPWSTR command, LPCWSTR directory, int show
     PROCESS_INFORMATION process;
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = (WORD)show;
-    if (!CreateProcessW(application, command, NULL, NULL, FALSE, 0, NULL, directory, &startup, &process))
+    if (!CreateProcessW(application, command, nullptr, nullptr, FALSE, 0, nullptr, directory, &startup, &process))
         return FALSE;
     CloseHandle(process.hThread);
     if (info->fMask & SEE_MASK_NOCLOSEPROCESS)
@@ -159,7 +159,7 @@ static BOOL run_association(SHELLEXECUTEINFOW *info, LPCWSTR type, LPCWSTR verb,
     LPWSTR command = build_command(template, target, parameters);
     if (!command)
         return fail(info, ERROR_OUTOFMEMORY);
-    BOOL ok = run(NULL, command, info->lpDirectory, info->nShow, info);
+    BOOL ok = run(nullptr, command, info->lpDirectory, info->nShow, info);
     DWORD error = GetLastError();
     ShFree(command);
     if (!ok)
@@ -174,8 +174,8 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    info->hInstApp = NULL;
-    info->hProcess = NULL;
+    info->hInstApp = nullptr;
+    info->hProcess = nullptr;
     WCHAR target[MAX_PATH], scheme[32];
     if ((info->fMask & SEE_MASK_IDLIST) && info->lpIDList && (!info->lpFile || !info->lpFile[0])) {
         if (!ShPathFromIdList(info->lpIDList, target, MAX_PATH))
@@ -209,11 +209,11 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
         attributes = GetFileAttributesW(path);
     }
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-        DWORD n = GetFullPathNameW(target, MAX_PATH, path, NULL);
+        DWORD n = GetFullPathNameW(target, MAX_PATH, path, nullptr);
         attributes = n && n < MAX_PATH ? GetFileAttributesW(path) : INVALID_FILE_ATTRIBUTES;
     }
     if (attributes == INVALID_FILE_ATTRIBUTES && !wcschr(target, L'\\')) {
-        DWORD n = SearchPathW(NULL, target, L".exe", MAX_PATH, path, NULL);
+        DWORD n = SearchPathW(nullptr, target, L".exe", MAX_PATH, path, nullptr);
         if (n && n < MAX_PATH)
             attributes = GetFileAttributesW(path);
     }
@@ -267,7 +267,7 @@ SHSTDAPI HINSTANCE WINAPI FindExecutableW(LPCWSTR file, LPCWSTR directory, LPWST
         attributes = GetFileAttributesW(path);
     }
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-        DWORD n = SearchPathW(NULL, file, NULL, MAX_PATH, path, NULL);
+        DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
         attributes = n && n < MAX_PATH ? GetFileAttributesW(path) : INVALID_FILE_ATTRIBUTES;
     }
     if (attributes == INVALID_FILE_ATTRIBUTES)
@@ -312,7 +312,7 @@ SHSTDAPI HINSTANCE WINAPI FindExecutableA(LPCSTR file, LPCSTR directory, LPSTR r
     if ((!file || f) && (!directory || d)) {
         r = FindExecutableW(f, d, wide);
         if ((INT_PTR)r > 32)
-            WideCharToMultiByte(CP_ACP, 0, wide, -1, result, MAX_PATH, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, wide, -1, result, MAX_PATH, nullptr, nullptr);
     }
     ShFree(f);
     ShFree(d);
@@ -442,13 +442,13 @@ SHSTDAPI LPWSTR *WINAPI CommandLineToArgvW(LPCWSTR command_line, int *count)
 {
     if (!count) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     WCHAR module[MAX_PATH];
     if (!command_line || !command_line[0]) {
-        DWORD n = GetModuleFileNameW(NULL, module, MAX_PATH);
+        DWORD n = GetModuleFileNameW(nullptr, module, MAX_PATH);
         if (!n || n >= MAX_PATH)
-            return NULL;
+            return nullptr;
         /* the module path as a quoted program name, so its blanks do not split it. */
         WCHAR quoted[MAX_PATH + 2];
         _snwprintf(quoted, RTL_NUMBER_OF(quoted), L"\"%ls\"", module);
@@ -456,15 +456,15 @@ SHSTDAPI LPWSTR *WINAPI CommandLineToArgvW(LPCWSTR command_line, int *count)
         return CommandLineToArgvW(quoted, count);
     }
     SIZE_T chars;
-    int argc = split(command_line, NULL, NULL, &chars);
+    int argc = split(command_line, nullptr, nullptr, &chars);
     SIZE_T pointers = (SIZE_T)(argc + 1) * sizeof(LPWSTR);
     LPWSTR *argv = LocalAlloc(LMEM_FIXED, pointers + chars * sizeof(WCHAR));
     if (!argv) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     split(command_line, argv, (LPWSTR)((BYTE *)argv + pointers), &chars);
-    argv[argc] = NULL;
+    argv[argc] = nullptr;
     *count = argc;
     return argv;
 }

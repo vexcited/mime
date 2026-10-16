@@ -41,14 +41,14 @@ HCERTSTORE WINAPI PFXImportCertStore(CRYPT_DATA_BLOB *pPFX, LPCWSTR szPassword, 
 {
     if (!pPFX || !pPFX->pbData) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     if (!PFXIsPFXBlob(pPFX)) {
         SetLastError(CRYPT_E_BAD_ENCODE);
-        return NULL;
+        return nullptr;
     }
     SetLastError(ERROR_INVALID_PASSWORD);
-    return NULL;
+    return nullptr;
 }
 
 BOOL WINAPI PFXVerifyPassword(CRYPT_DATA_BLOB *pPFX, LPCWSTR szPassword, DWORD dwFlags)

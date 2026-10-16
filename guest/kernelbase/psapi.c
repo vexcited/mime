@@ -29,9 +29,9 @@ DECLSPEC_EXPORT BOOL WINAPI K32GetPerformanceInfo(PERFORMANCE_INFORMATION *info,
     }
     SYSTEM_BASIC_INFORMATION basic;
     UCHAR perf[0x158];
-    NTSTATUS status = NtQuerySystemInformation(SystemBasicInformation, &basic, sizeof(basic), NULL);
+    NTSTATUS status = NtQuerySystemInformation(SystemBasicInformation, &basic, sizeof(basic), nullptr);
     if (NT_SUCCESS(status))
-        status = NtQuerySystemInformation(SystemPerformanceInformation, perf, sizeof(perf), NULL);
+        status = NtQuerySystemInformation(SystemPerformanceInformation, perf, sizeof(perf), nullptr);
     if (!NT_SUCCESS(status)) {
         SetLastError(RtlNtStatusToDosError(status));
         return FALSE;
@@ -58,7 +58,7 @@ DECLSPEC_EXPORT BOOL WINAPI K32GetProcessMemoryInfo(HANDLE process, PROCESS_MEMO
         return FALSE;
     }
     VM_COUNTERS_EX counters;
-    NTSTATUS status = NtQueryInformationProcess(process, (PROCESSINFOCLASS)3, &counters, sizeof(counters), NULL);
+    NTSTATUS status = NtQueryInformationProcess(process, (PROCESSINFOCLASS)3, &counters, sizeof(counters), nullptr);
     if (!NT_SUCCESS(status)) {
         SetLastError(RtlNtStatusToDosError(status));
         return FALSE;

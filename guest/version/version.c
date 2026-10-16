@@ -23,11 +23,11 @@ static WORD rd16(const BYTE *p)
 static const BYTE *find_version(HMODULE module, DWORD *size)
 {
     HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(VS_VERSION_INFO), MAKEINTRESOURCEW(16));
-    HGLOBAL mem = res ? LoadResource(module, res) : NULL;
-    const BYTE *data = mem ? LockResource(mem) : NULL;
+    HGLOBAL mem = res ? LoadResource(module, res) : nullptr;
+    const BYTE *data = mem ? LockResource(mem) : nullptr;
     if (!data) {
         SetLastError(ERROR_RESOURCE_TYPE_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     *size = SizeofResource(module, res);
     return data;
@@ -36,7 +36,7 @@ static const BYTE *find_version(HMODULE module, DWORD *size)
 static HMODULE load_data(LPCWSTR file)
 {
     UINT mode = SetErrorMode(SEM_FAILCRITICALERRORS);
-    HMODULE module = LoadLibraryExW(file, NULL, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    HMODULE module = LoadLibraryExW(file, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
     SetErrorMode(mode);
     return module;
 }
@@ -221,7 +221,7 @@ VERAPI BOOL WINAPI VerQueryValueA(LPCVOID block, LPCSTR sub_block, LPVOID *buffe
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    int n = MultiByteToWideChar(CP_ACP, 0, sub_block, -1, NULL, 0);
+    int n = MultiByteToWideChar(CP_ACP, 0, sub_block, -1, nullptr, 0);
     WCHAR stack[128], *path = n <= 128 ? stack : HeapAlloc(GetProcessHeap(), 0, (SIZE_T)n * sizeof(WCHAR));
     if (!path) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -251,7 +251,7 @@ VERAPI BOOL WINAPI VerQueryValueA(LPCVOID block, LPCSTR sub_block, LPVOID *buffe
     SIZE_T offset = (SIZE_T)(node.Value - base);
     char *dst = (char *)base + aligned + 4 + offset;
     int room = (int)(aligned - offset);
-    int got = WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)node.Value, node.ValueLength, dst, room, NULL, NULL);
+    int got = WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)node.Value, node.ValueLength, dst, room, nullptr, nullptr);
     if (got <= 0) {
         SetLastError(ERROR_INVALID_DATA);
         return FALSE;
@@ -274,9 +274,9 @@ VERAPI BOOL WINAPI VerQueryValueA(LPCVOID block, LPCSTR sub_block, LPVOID *buffe
 static LPWSTR to_wide(LPCSTR s)
 {
     if (!s)
-        return NULL;
-    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, NULL, 0);
-    LPWSTR w = n > 0 ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)n * sizeof(WCHAR)) : NULL;
+        return nullptr;
+    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
+    LPWSTR w = n > 0 ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)n * sizeof(WCHAR)) : nullptr;
     if (w)
         MultiByteToWideChar(CP_ACP, 0, s, -1, w, n);
     return w;
@@ -346,7 +346,7 @@ VERAPI DWORD WINAPI VerLanguageNameA(DWORD lang, LPSTR buffer, DWORD size)
     WCHAR name[128];
     DWORD n = VerLanguageNameW(lang, name, 128);
     if (buffer && size) {
-        int got = WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, (int)size, NULL, NULL);
+        int got = WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, (int)size, nullptr, nullptr);
         if (got <= 0)
             buffer[size - 1] = 0;
     }
@@ -401,7 +401,7 @@ VERAPI DWORD WINAPI VerFindFileW(DWORD flags, LPCWSTR file, LPCWSTR win_dir, LPC
         win_dir = windows;
     }
     LPCWSTR dest = (flags & VFFF_ISSHAREDFILE) ? system : (app_dir ? app_dir : win_dir);
-    LPCWSTR cur = NULL;
+    LPCWSTR cur = nullptr;
     if (app_dir && file_in(app_dir, file))
         cur = app_dir;
     else if (file_in(win_dir, file))
@@ -430,14 +430,14 @@ VERAPI DWORD WINAPI VerFindFileA(DWORD flags, LPCSTR file, LPCSTR win_dir, LPCST
     free_wide(wa);
     r &= ~(DWORD)VFF_BUFFTOOSMALL;
     UINT croom = *cur_dir_len, droom = *dest_dir_len;
-    int cn = WideCharToMultiByte(CP_ACP, 0, cur, -1, NULL, 0, NULL, NULL);
-    int dn = WideCharToMultiByte(CP_ACP, 0, dest, -1, NULL, 0, NULL, NULL);
+    int cn = WideCharToMultiByte(CP_ACP, 0, cur, -1, nullptr, 0, nullptr, nullptr);
+    int dn = WideCharToMultiByte(CP_ACP, 0, dest, -1, nullptr, 0, nullptr, nullptr);
     *cur_dir_len = (UINT)cn;
     *dest_dir_len = (UINT)dn;
     if (!cur_dir || croom < (UINT)cn || !dest_dir || droom < (UINT)dn)
         return r | VFF_BUFFTOOSMALL;
-    WideCharToMultiByte(CP_ACP, 0, cur, -1, cur_dir, (int)croom, NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, dest, -1, dest_dir, (int)droom, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, cur, -1, cur_dir, (int)croom, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, dest, -1, dest_dir, (int)droom, nullptr, nullptr);
     return r;
 }
 
@@ -492,7 +492,7 @@ VERAPI DWORD WINAPI VerInstallFileA(DWORD flags, LPCSTR src_file, LPCSTR dest_fi
 {
     LPWSTR a = to_wide(src_file), b = to_wide(dest_file), c = to_wide(src_dir), d = to_wide(dest_dir),
            e = to_wide(cur_dir);
-    DWORD r = VerInstallFileW(flags, a, b, c, d, e, NULL, NULL);
+    DWORD r = VerInstallFileW(flags, a, b, c, d, e, nullptr, nullptr);
     if (tmp_file_len)
         *tmp_file_len = 0;
     free_wide(a);

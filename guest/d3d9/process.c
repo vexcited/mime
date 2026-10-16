@@ -27,8 +27,8 @@ static ID3D11GeometryShader *stream_out(D9Device *d, D9Variant *v, UINT *stride)
     UINT strides[1] = {*stride};
     if (FAILED(d->d3d11->lpVtbl->CreateGeometryShaderWithStreamOutput(d->d3d11, v->dxbc, v->size, entries, count,
                                                                        strides, 1, D3D11_SO_NO_RASTERIZED_STREAM,
-                                                                       NULL, &v->stream_out)))
-        v->stream_out = NULL;
+                                                                       nullptr, &v->stream_out)))
+        v->stream_out = nullptr;
     return v->stream_out;
 }
 
@@ -40,13 +40,13 @@ static BOOL processed_buffers(D9Device *d, UINT size)
         d->processed->lpVtbl->Release(d->processed);
     if (d->processed_read)
         d->processed_read->lpVtbl->Release(d->processed_read);
-    d->processed = d->processed_read = NULL;
+    d->processed = d->processed_read = nullptr;
     d->processed_size = 0;
     size = D9_MAX(D9_ALIGN(size, 65536), 65536);
     D3D11_BUFFER_DESC desc = {size, D3D11_USAGE_DEFAULT, D3D11_BIND_STREAM_OUTPUT};
     D3D11_BUFFER_DESC read = {size, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ};
-    if (FAILED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, NULL, &d->processed)) ||
-        FAILED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &read, NULL, &d->processed_read)))
+    if (FAILED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, nullptr, &d->processed)) ||
+        FAILED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &read, nullptr, &d->processed_read)))
         return FALSE;
     d->processed_size = size;
     return TRUE;
@@ -110,17 +110,17 @@ HRESULT D9ProcessVertices(D9Device *d, UINT source, UINT dest, UINT count, D9Buf
         return D3DERR_INVALIDCALL;
     D9Variant *vs = d->bound_vs;
     UINT so_stride;
-    ID3D11GeometryShader *gs = vs && vs->dxbc ? stream_out(d, vs, &so_stride) : NULL;
+    ID3D11GeometryShader *gs = vs && vs->dxbc ? stream_out(d, vs, &so_stride) : nullptr;
     if (!gs || !processed_buffers(d, count * so_stride))
         return D3DERR_INVALIDCALL;
     ID3D11DeviceContext1 *ctx = d->context;
     UINT offset = 0;
-    ctx->lpVtbl->GSSetShader(ctx, gs, NULL, 0);
+    ctx->lpVtbl->GSSetShader(ctx, gs, nullptr, 0);
     ctx->lpVtbl->SOSetTargets(ctx, 1, &d->processed, &offset);
     ctx->lpVtbl->Draw(ctx, count, source);
-    ID3D11Buffer *none = NULL;
+    ID3D11Buffer *none = nullptr;
     ctx->lpVtbl->SOSetTargets(ctx, 1, &none, &offset);
-    ctx->lpVtbl->GSSetShader(ctx, NULL, NULL, 0);
+    ctx->lpVtbl->GSSetShader(ctx, nullptr, nullptr, 0);
     D3D11_BOX box = {0, 0, 0, count * so_stride, 1, 1};
     ctx->lpVtbl->CopySubresourceRegion(ctx, (ID3D11Resource *)d->processed_read, 0, 0, 0, 0,
                                        (ID3D11Resource *)d->processed, 0, &box);

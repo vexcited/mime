@@ -17,7 +17,7 @@ static void theme_free(void *ctx, void *p)
     UserFree(p);
 }
 
-static const MimeAllocator g_alloc = {theme_alloc, theme_free, NULL};
+static const MimeAllocator g_alloc = {theme_alloc, theme_free, nullptr};
 
 typedef struct THEME_BITMAP {
     struct THEME_BITMAP *Next;
@@ -37,14 +37,14 @@ static struct {
 
 static PUCHAR read_file(LPCWSTR path, SIZE_T *size)
 {
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h == INVALID_HANDLE_VALUE)
-        return NULL;
+        return nullptr;
     DWORD high = 0, n = GetFileSize(h, &high), read = 0;
-    PUCHAR data = n && !high ? UserAlloc(n) : NULL;
-    if (data && (!ReadFile(h, data, n, &read, NULL) || read != n)) {
+    PUCHAR data = n && !high ? UserAlloc(n) : nullptr;
+    if (data && (!ReadFile(h, data, n, &read, nullptr) || read != n)) {
         UserFree(data);
-        data = NULL;
+        data = nullptr;
     }
     CloseHandle(h);
     if (data)
@@ -68,7 +68,7 @@ static ULONG NTAPI load_theme(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
         return TRUE;
     if (!mime_msstyles_open(&g_theme.Theme, file, size, mui_data, mui_data ? mui_size : 0, &g_alloc))
         return TRUE;
-    g_theme.Button = mime_msstyles_find_class(&g_theme.Theme, NULL, "Button");
+    g_theme.Button = mime_msstyles_find_class(&g_theme.Theme, nullptr, "Button");
     RtlInitializeCriticalSection(&g_theme.Lock);
     g_theme.Ready = g_theme.Button >= 0;
     return TRUE;
@@ -76,7 +76,7 @@ static ULONG NTAPI load_theme(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
 
 BOOL UserThemeActive(void)
 {
-    RtlRunOnceExecuteOnce(&g_theme.Once, load_theme, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_theme.Once, load_theme, nullptr, nullptr);
     return g_theme.Ready;
 }
 
@@ -91,11 +91,11 @@ static THEME_BITMAP *theme_bitmap(const MimeMsstylesImage *img)
     if (b)
         return b;
     if (!mime_png_is_png(img->data, img->size))
-        return NULL;
+        return nullptr;
     MimePngInfo info;
     uint8_t *pixels;
     if (mime_png_decode_alloc(img->data, img->size, &g_alloc, MIME_PNG_PREMULTIPLIED, &pixels, &info) != MIME_PNG_OK)
-        return NULL;
+        return nullptr;
     BITMAPINFO bi;
     memset(&bi, 0, sizeof(bi));
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -104,16 +104,16 @@ static THEME_BITMAP *theme_bitmap(const MimeMsstylesImage *img)
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     void *bits;
-    HBITMAP bm = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    HBITMAP bm = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     if (bm)
         memcpy(bits, pixels, (SIZE_T)info.width * info.height * 4);
     UserFree(pixels);
     if (!bm)
-        return NULL;
+        return nullptr;
     b = UserAlloc(sizeof(*b));
     if (!b) {
         DeleteObject(bm);
-        return NULL;
+        return nullptr;
     }
     b->ResId = img->res_id;
     b->Bitmap = bm;
@@ -215,7 +215,7 @@ BOOL UserThemeContentRect(int part, int state, const RECT *rect, RECT *content, 
 BOOL UserThemePartSize(int part, int state, UINT dpi, SIZE *size)
 {
     MimeMsstylesImage img;
-    if (!get_image(part, state, dpi, NULL, &img))
+    if (!get_image(part, state, dpi, nullptr, &img))
         return FALSE;
     size->cx = img.draw_width ? img.draw_width : img.src.right - img.src.left;
     size->cy = img.draw_height ? img.draw_height : img.src.bottom - img.src.top;

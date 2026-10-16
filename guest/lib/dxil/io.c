@@ -68,7 +68,7 @@ static SigElement *element(Compiler *c, Signature *sig, uint32_t id)
     if (id < sig->count)
         return &sig->elements[id];
     dxil_fail(c, "a signature element that does not exist");
-    return NULL;
+    return nullptr;
 }
 
 /* the 32-bit type an element has in the interface. */
@@ -127,26 +127,26 @@ static uint32_t storage_of(Compiler *c, int sig)
 static void interpolation(Compiler *c, uint32_t var, const SigElement *e, int integer)
 {
     switch (e->interp) {
-    case INTERP_CONSTANT: spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0); return;
-    case INTERP_LINEAR_CENTROID: spv_decorate(&c->b, var, SpvDecorationCentroid, NULL, 0); break;
-    case INTERP_NOPERSPECTIVE: spv_decorate(&c->b, var, SpvDecorationNoPerspective, NULL, 0); break;
+    case INTERP_CONSTANT: spv_decorate(&c->b, var, SpvDecorationFlat, nullptr, 0); return;
+    case INTERP_LINEAR_CENTROID: spv_decorate(&c->b, var, SpvDecorationCentroid, nullptr, 0); break;
+    case INTERP_NOPERSPECTIVE: spv_decorate(&c->b, var, SpvDecorationNoPerspective, nullptr, 0); break;
     case INTERP_NOPERSPECTIVE_CENTROID:
-        spv_decorate(&c->b, var, SpvDecorationNoPerspective, NULL, 0);
-        spv_decorate(&c->b, var, SpvDecorationCentroid, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationNoPerspective, nullptr, 0);
+        spv_decorate(&c->b, var, SpvDecorationCentroid, nullptr, 0);
         break;
     case INTERP_LINEAR_SAMPLE:
         spv_capability(&c->b, SpvCapabilitySampleRateShading);
-        spv_decorate(&c->b, var, SpvDecorationSample, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationSample, nullptr, 0);
         break;
     case INTERP_NOPERSPECTIVE_SAMPLE:
         spv_capability(&c->b, SpvCapabilitySampleRateShading);
-        spv_decorate(&c->b, var, SpvDecorationNoPerspective, NULL, 0);
-        spv_decorate(&c->b, var, SpvDecorationSample, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationNoPerspective, nullptr, 0);
+        spv_decorate(&c->b, var, SpvDecorationSample, nullptr, 0);
         break;
     default: break;
     }
     if (integer)
-        spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationFlat, nullptr, 0);
 }
 
 static uint32_t distance_count(const Signature *sig, uint8_t kind)
@@ -309,7 +309,7 @@ static const DxbcSignatureElement *linked(const DxbcSignature *sig, const SigEle
     for (uint32_t i = 0; sig && i < sig->count; i++)
         if (sig->elements[i].semantic_index == e->semantic_index && same_semantic(sig->elements[i].name, e->name))
             return &sig->elements[i];
-    return NULL;
+    return nullptr;
 }
 
 /* the location variable of an element; 0 for a mesh shader's output no pixel shader reads. */
@@ -338,18 +338,18 @@ static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_
     if (component)
         dxil_decorate(c, *var, SpvDecorationComponent, component);
     if (sig == SIG_PATCH)
-        spv_decorate(&c->b, *var, c->kind == KIND_MESH ? SpvDecorationPerPrimitiveEXT : SpvDecorationPatch, NULL, 0);
+        spv_decorate(&c->b, *var, c->kind == KIND_MESH ? SpvDecorationPerPrimitiveEXT : SpvDecorationPatch, nullptr, 0);
     if (c->kind == KIND_PIXEL && sig == SIG_IN) {
         if (linked(c->options->per_primitive, e)) {
             spv_capability(&c->b, SpvCapabilityMeshShadingEXT);
             spv_extension(&c->b, "SPV_EXT_mesh_shader");
-            spv_decorate(&c->b, *var, SpvDecorationPerPrimitiveEXT, NULL, 0);
+            spv_decorate(&c->b, *var, SpvDecorationPerPrimitiveEXT, nullptr, 0);
             if (*scalar != c->t_f32)
-                spv_decorate(&c->b, *var, SpvDecorationFlat, NULL, 0);
+                spv_decorate(&c->b, *var, SpvDecorationFlat, nullptr, 0);
         } else if (e->per_vertex) {
             spv_capability(&c->b, SpvCapabilityFragmentBarycentricKHR);
             spv_extension(&c->b, "SPV_KHR_fragment_shader_barycentric");
-            spv_decorate(&c->b, *var, SpvDecorationPerVertexKHR, NULL, 0);
+            spv_decorate(&c->b, *var, SpvDecorationPerVertexKHR, nullptr, 0);
         } else {
             interpolation(c, *var, e, *scalar != c->t_f32);
         }
@@ -380,7 +380,7 @@ static int make_variable(Compiler *c, int sig, SigElement *e)
             dxil_decorate(c, e->var, SpvDecorationBuiltIn, which);
             if (sig == SIG_PATCH)
                 spv_decorate(&c->b, e->var, c->kind == KIND_MESH ? SpvDecorationPerPrimitiveEXT : SpvDecorationPatch,
-                             NULL, 0);
+                             nullptr, 0);
         }
         /* a value the rasterizer takes may also be the next stage's input. */
         if (sig == SIG_OUT && e->row >= 0 && shape == 0 && which != SpvBuiltInFragDepth &&
@@ -592,12 +592,12 @@ static int discard(Compiler *c, const DxInst *ins)
     c->info->uses_discard = 1;
     uint64_t always = dxil_constant(c, ins->ops[2], 0);
     if (always & 1) {
-        spv_op_void(&c->b, SpvOpDemoteToHelperInvocation, NULL, 0);
+        spv_op_void(&c->b, SpvOpDemoteToHelperInvocation, nullptr, 0);
         return 0;
     }
     uint32_t merge;
     dxil_begin_if(c, dxil_value(c, ins->ops[2]), &merge);
-    spv_op_void(&c->b, SpvOpDemoteToHelperInvocation, NULL, 0);
+    spv_op_void(&c->b, SpvOpDemoteToHelperInvocation, nullptr, 0);
     dxil_end_if(c, merge);
     return 0;
 }
@@ -615,9 +615,9 @@ static int emit_stream(Compiler *c, const DxInst *ins, int emit, int cut)
         return 0;
     }
     if (emit)
-        spv_op_void(&c->b, SpvOpEmitVertex, NULL, 0);
+        spv_op_void(&c->b, SpvOpEmitVertex, nullptr, 0);
     if (cut)
-        spv_op_void(&c->b, SpvOpEndPrimitive, NULL, 0);
+        spv_op_void(&c->b, SpvOpEndPrimitive, nullptr, 0);
     return 0;
 }
 
@@ -803,7 +803,7 @@ int dxil_io_op(Compiler *c, const DxInst *ins, uint32_t op)
         return builtin_scalar(c, ins, SpvBuiltInViewIndex, t_i32(c)) ? -1 : 1;
     case 221: { /* isHelperLane */
         spv_capability(&c->b, SpvCapabilityDemoteToHelperInvocation);
-        uint32_t v = c->kind == KIND_PIXEL ? spv_op(&c->b, SpvOpIsHelperInvocationEXT, c->t_bool, NULL, 0)
+        uint32_t v = c->kind == KIND_PIXEL ? spv_op(&c->b, SpvOpIsHelperInvocationEXT, c->t_bool, nullptr, 0)
                                            : spv_const_bool(&c->b, 0);
         dxil_set_plain(c, ins->value, v);
         return 1;

@@ -25,7 +25,7 @@ typedef struct LDR_COR_HEADER {
 extern IMAGE_DOS_HEADER __ImageBase;
 
 PVOID LdrpNtdllBase;
-RTL_CRITICAL_SECTION LdrpLoaderLock = {NULL, -1, 0, NULL, NULL, 0};
+RTL_CRITICAL_SECTION LdrpLoaderLock = {nullptr, -1, 0, nullptr, nullptr, 0};
 PVOID LdrpKernel32ThreadInitThunk;
 
 static PEB_LDR_DATA g_ldr;
@@ -39,23 +39,23 @@ static BOOLEAN g_process_initialized;
 static void(NTAPI *g_wow64_initialize)(PCONTEXT context);
 void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
 static BOOLEAN g_process_detaching;
-static RTL_CRITICAL_SECTION g_peb_lock = {NULL, -1, 0, NULL, NULL, 0};
+static RTL_CRITICAL_SECTION g_peb_lock = {nullptr, -1, 0, nullptr, nullptr, 0};
 
-#if defined(__i386__)
-static const WCHAR g_system32[] = L"C:\\Windows\\SysWOW64\\";
+#ifdef __i386__
+static constexpr WCHAR g_system32[] = L"C:\\Windows\\SysWOW64\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_I386
 #elif defined(__x86_64__) && !defined(MIME_X64_NATIVE)
 /* the x64 system dlls, for programs run by the translator. */
-static const WCHAR g_system32[] = L"C:\\Windows\\SysX64\\";
+static constexpr WCHAR g_system32[] = L"C:\\Windows\\SysX64\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
-#elif defined(__x86_64__)
-static const WCHAR g_system32[] = L"C:\\Windows\\System32\\";
+#elifdef __x86_64__
+static constexpr WCHAR g_system32[] = L"C:\\Windows\\System32\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
 #else
-static const WCHAR g_system32[] = L"C:\\Windows\\System32\\";
+static constexpr WCHAR g_system32[] = L"C:\\Windows\\System32\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_ARM64
 #endif
-static const WCHAR g_windows[] = L"C:\\Windows\\";
+static constexpr WCHAR g_windows[] = L"C:\\Windows\\";
 
 /* modules with static thread local storage, indexed by their tls slot. */
 typedef struct TLS_MODULE {
@@ -85,26 +85,26 @@ PIMAGE_NT_HEADERS LdrpNtHeaders(PVOID base)
 {
     IMAGE_DOS_HEADER *dos = base;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE)
-        return NULL;
+        return nullptr;
     PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)((PUCHAR)base + dos->e_lfanew);
-    return nt->Signature == IMAGE_NT_SIGNATURE ? nt : NULL;
+    return nt->Signature == IMAGE_NT_SIGNATURE ? nt : nullptr;
 }
 
 PVOID LdrpImageDirectory(PVOID base, USHORT index, PULONG size)
 {
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!nt || index >= IMAGE_NUMBEROF_DIRECTORY_ENTRIES)
-        return NULL;
+        return nullptr;
     IMAGE_OPTIONAL_HEADER32 *opt32 = (void *)&nt->OptionalHeader;
     IMAGE_OPTIONAL_HEADER64 *opt64 = (void *)&nt->OptionalHeader;
     BOOLEAN pe32 = opt32->Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC;
     ULONG count = pe32 ? opt32->NumberOfRvaAndSizes : opt64->NumberOfRvaAndSizes;
     if (index >= count)
-        return NULL;
+        return nullptr;
     IMAGE_DATA_DIRECTORY *dir = pe32 ? &opt32->DataDirectory[index] : &opt64->DataDirectory[index];
     if (!dir->VirtualAddress || !dir->Size || dir->VirtualAddress >= opt32->SizeOfImage ||
         dir->Size > opt32->SizeOfImage - dir->VirtualAddress)
-        return NULL;
+        return nullptr;
     if (size)
         *size = dir->Size;
     return (PUCHAR)base + dir->VirtualAddress;
@@ -128,7 +128,7 @@ static BOOLEAN is_portable_il(PVOID base)
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 || !is_il_only(base))
         return FALSE;
-    const LDR_COR_HEADER *cor = LdrpImageDirectory(base, COR_DIRECTORY, NULL);
+    const LDR_COR_HEADER *cor = LdrpImageDirectory(base, COR_DIRECTORY, nullptr);
     return !(cor->Flags & COR_32BITREQUIRED) && !cor->NativeHeader.VirtualAddress && !cor->NativeHeader.Size;
 }
 
@@ -159,19 +159,19 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
     PLDR_DATA_TABLE_ENTRY e = heap_alloc(sizeof(*e));
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!e || !nt)
-        return NULL;
+        return nullptr;
     SIZE_T chars = wcslen(full_path);
     PWSTR copy = heap_wcsdup(full_path, chars);
     if (!copy) {
         heap_free(e);
-        return NULL;
+        return nullptr;
     }
     PCWSTR file = copy + chars;
     while (file > copy && file[-1] != '\\' && file[-1] != '/')
         file--;
     e->DllBase = base;
     e->SizeOfImage = nt->OptionalHeader.SizeOfImage;
-    e->EntryPoint = nt->OptionalHeader.AddressOfEntryPoint ? (PUCHAR)base + nt->OptionalHeader.AddressOfEntryPoint : NULL;
+    e->EntryPoint = nt->OptionalHeader.AddressOfEntryPoint ? (PUCHAR)base + nt->OptionalHeader.AddressOfEntryPoint : nullptr;
     e->FullDllName.Buffer = copy;
     e->FullDllName.Length = (USHORT)(chars * sizeof(WCHAR));
     e->FullDllName.MaximumLength = (USHORT)((chars + 1) * sizeof(WCHAR));
@@ -188,7 +188,7 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
         e->Flags |= LDRP_IMAGE_DLL;
     if (is_il_only(base)) {
         e->Flags |= LDRP_COR_ILONLY;
-        e->EntryPoint = NULL;
+        e->EntryPoint = nullptr;
     }
     InitializeListHead(&e->HashLinks);
     InitializeListHead(&e->InInitializationOrderLinks);
@@ -226,7 +226,7 @@ static PLDR_DATA_TABLE_ENTRY find_by_name(PCWSTR name)
         if (name_matches(&e->BaseDllName, name))
             return e;
     }
-    return NULL;
+    return nullptr;
 }
 
 static PLDR_DATA_TABLE_ENTRY find_by_base(PVOID base)
@@ -236,7 +236,7 @@ static PLDR_DATA_TABLE_ENTRY find_by_base(PVOID base)
         if (e->DllBase == base)
             return e;
     }
-    return NULL;
+    return nullptr;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI LdrFindEntryForAddress(PVOID address, PLDR_DATA_TABLE_ENTRY *entry)
@@ -255,11 +255,11 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrFindEntryForAddress(PVOID address, PLDR_DATA_TABL
 static PVOID image_base_from_memory(PVOID pc)
 {
     MEMORY_IMAGE_INFORMATION mi;
-    if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), pc, MemoryImageInformation, &mi, sizeof(mi), NULL)))
-        return NULL;
+    if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), pc, MemoryImageInformation, &mi, sizeof(mi), nullptr)))
+        return nullptr;
     if (!mi.ImageBase || (mi.ImageFlags & (MEMORY_IMAGE_PARTIAL_MAP | MEMORY_IMAGE_NOT_EXECUTABLE)) ||
         (ULONG_PTR)pc < (ULONG_PTR)mi.ImageBase)
-        return NULL;
+        return nullptr;
     return mi.ImageBase;
 }
 
@@ -272,7 +272,7 @@ static PVOID image_base_from_memory(PVOID pc)
 NTDLL_EXPORT PVOID NTAPI RtlPcToFileHeader(PVOID pc, PVOID *base)
 {
     PLDR_DATA_TABLE_ENTRY entry;
-    PVOID found = NULL;
+    PVOID found = nullptr;
     if (!g_process_initialized)
         found = image_base_from_memory(pc);
     else if (NT_SUCCESS(LdrFindEntryForAddress(pc, &entry)))
@@ -329,10 +329,10 @@ static PCWSTR resolve_api_set(PCWSTR name)
 static NTSTATUS open_image(PCWSTR dos_path, PHANDLE file)
 {
     UNICODE_STRING nt_path;
-    if (!RtlDosPathNameToNtPathName_U(dos_path, &nt_path, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(dos_path, &nt_path, nullptr, nullptr))
         return STATUS_OBJECT_PATH_SYNTAX_BAD;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt_path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt_path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtOpenFile(file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &iosb,
                                  FILE_SHARE_READ | FILE_SHARE_DELETE,
@@ -344,13 +344,13 @@ static NTSTATUS open_image(PCWSTR dos_path, PHANDLE file)
 static NTSTATUS map_image(HANDLE file, PVOID *base)
 {
     HANDLE section;
-    NTSTATUS status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, NULL, NULL,
+    NTSTATUS status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
                                       PAGE_EXECUTE, SEC_IMAGE, file);
     if (!NT_SUCCESS(status))
         return status;
     SIZE_T size = 0;
-    *base = NULL;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), base, 0, 0, NULL, &size, ViewShare, 0,
+    *base = nullptr;
+    status = NtMapViewOfSection(section, NtCurrentProcess(), base, 0, 0, nullptr, &size, ViewShare, 0,
                                 PAGE_EXECUTE_WRITECOPY);
     NtClose(section);
     if (status == STATUS_IMAGE_NOT_AT_BASE)
@@ -366,10 +366,10 @@ static NTSTATUS map_image(HANDLE file, PVOID *base)
 static BOOLEAN file_exists(PCWSTR dos_path)
 {
     UNICODE_STRING nt_path;
-    if (!RtlDosPathNameToNtPathName_U(dos_path, &nt_path, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(dos_path, &nt_path, nullptr, nullptr))
         return FALSE;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt_path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt_path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_BASIC_INFORMATION info;
     NTSTATUS status = NtQueryAttributesFile(&oa, &info);
     RtlFreeUnicodeString(&nt_path);
@@ -413,7 +413,7 @@ static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars
 static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_chars)
 {
     if (wcschr(name, '\\') || wcschr(name, '/') || (name[0] && name[1] == ':')) {
-        ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, NULL);
+        ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, nullptr);
         if (!n || n >= out_chars * sizeof(WCHAR))
             return STATUS_OBJECT_PATH_SYNTAX_BAD;
 #if defined(__i386__) || (defined(__x86_64__) && !defined(MIME_X64_NATIVE))
@@ -444,7 +444,7 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
     WCHAR path_value[2048];
     UNICODE_STRING var = RTL_CONSTANT_STRING(L"PATH");
     UNICODE_STRING value = {0, sizeof(path_value) - sizeof(WCHAR), path_value};
-    if (NT_SUCCESS(RtlQueryEnvironmentVariable_U(NULL, &var, &value))) {
+    if (NT_SUCCESS(RtlQueryEnvironmentVariable_U(nullptr, &var, &value))) {
         path_value[value.Length / sizeof(WCHAR)] = 0;
         if (search_list(path_value, name, out, out_chars))
             return STATUS_SUCCESS;
@@ -479,7 +479,7 @@ static NTSTATUS resolve_forwarder(PCSTR forward, PVOID *address, LOAD_CONTEXT *c
         ULONG ordinal = 0;
         for (PCSTR p = dot + 2; *p >= '0' && *p <= '9'; p++)
             ordinal = ordinal * 10 + (ULONG)(*p - '0');
-        return resolve_export(target, NULL, 0, ordinal, address, ctx, depth + 1);
+        return resolve_export(target, nullptr, 0, ordinal, address, ctx, depth + 1);
     }
     return resolve_export(target, dot + 1, 0, 0, address, ctx, depth + 1);
 }
@@ -563,9 +563,9 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
         PVOID address;
         if (IMAGE_SNAP_BY_ORDINAL(lookup->u1.Ordinal)) {
             ULONG ordinal = (ULONG)IMAGE_ORDINAL64(lookup->u1.Ordinal);
-            status = resolve_export(dep, NULL, 0, ordinal, &address, ctx, 0);
+            status = resolve_export(dep, nullptr, 0, ordinal, &address, ctx, 0);
             if (!NT_SUCCESS(status)) {
-                report_missing(module, dll_name, NULL, ordinal, status);
+                report_missing(module, dll_name, nullptr, ordinal, status);
                 return status;
             }
         } else {
@@ -605,7 +605,7 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
     }
     ULONG ignored;
     NtProtectVirtualMemory(NtCurrentProcess(), &protect_base, &protect_size, old, &ignored);
-    NtFlushInstructionCache(NtCurrentProcess(), NULL, 0);
+    NtFlushInstructionCache(NtCurrentProcess(), nullptr, 0);
     return status;
 }
 
@@ -675,7 +675,7 @@ static void free_thread_tls(void)
     PVOID *slots = teb->ThreadLocalStoragePointer;
     if (!slots)
         return;
-    teb->ThreadLocalStoragePointer = NULL;
+    teb->ThreadLocalStoragePointer = nullptr;
     TLS_VECTOR *v = CONTAINING_RECORD(slots, TLS_VECTOR, Slots);
     RemoveEntryList(&v->Link);
     for (ULONG i = 0; i < g_tls_count; i++)
@@ -692,7 +692,7 @@ static void call_tls_callbacks(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
     if (!tls || !tls->AddressOfCallBacks)
         return;
     for (PIMAGE_TLS_CALLBACK *cb = (PIMAGE_TLS_CALLBACK *)tls->AddressOfCallBacks; *cb; cb++)
-        (*cb)(e->DllBase, reason, NULL);
+        (*cb)(e->DllBase, reason, nullptr);
 }
 
 /* ------------------------------------------------------------------ dll entry points */
@@ -862,12 +862,12 @@ static void initialize_process(PCONTEXT context)
     ntdll->Flags |= LDRP_ENTRY_PROCESSED | LDRP_PROCESS_ATTACH_CALLED;
     InsertTailList(&g_ldr.InInitializationOrderModuleList, &ntdll->InInitializationOrderLinks);
 
-    LOAD_CONTEXT ctx = {TRUE, NULL};
+    LOAD_CONTEXT ctx = {TRUE, nullptr};
     NTSTATUS status;
 #if defined(__x86_64__) && defined(MIME_X64_NATIVE)
     ULONG_PTR peb32 = 0;
     if (NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), ProcessWow64Information, &peb32, sizeof(peb32),
-                                             NULL)) &&
+                                             nullptr)) &&
         peb32) {
         load_wow64(&ctx);
         status = allocate_thread_tls();
@@ -913,7 +913,7 @@ static void initialize_thread(void)
          l = l->Flink) {
         PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks);
         if ((e->Flags & LDRP_PROCESS_ATTACH_CALLED) && !(e->Flags & LDRP_DONT_CALL_FOR_THREADS) && e->DllBase != LdrpNtdllBase)
-            call_entry(e, DLL_THREAD_ATTACH, NULL);
+            call_entry(e, DLL_THREAD_ATTACH, nullptr);
     }
     PLDR_DATA_TABLE_ENTRY exe = find_by_base(NtCurrentPeb()->ImageBaseAddress);
     if (exe)
@@ -943,7 +943,7 @@ NTDLL_EXPORT void NTAPI LdrShutdownThread(void)
          l = l->Blink) {
         PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks);
         if ((e->Flags & LDRP_PROCESS_ATTACH_CALLED) && !(e->Flags & LDRP_DONT_CALL_FOR_THREADS) && e->DllBase != LdrpNtdllBase)
-            call_entry(e, DLL_THREAD_DETACH, NULL);
+            call_entry(e, DLL_THREAD_DETACH, nullptr);
     }
     free_thread_tls();
     RtlLeaveCriticalSection(&LdrpLoaderLock);
@@ -985,13 +985,13 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     WCHAR dll[MAX_PATH];
     unicode_to_cstr(name, dll, RTL_NUMBER_OF(dll));
     /* the search path argument is a ';' separated list unless it is a small flags value. */
-    LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : NULL};
+    LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : nullptr};
     RtlEnterCriticalSection(&LdrpLoaderLock);
     PLDR_DATA_TABLE_ENTRY e;
     NTSTATUS status = load_dll(dll, &ctx, &e);
     if (NT_SUCCESS(status)) {
         allocate_process_tls();
-        status = run_initializers(NULL);
+        status = run_initializers(nullptr);
         if (NT_SUCCESS(status))
             *base = e->DllBase;
     }
@@ -1008,7 +1008,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrUnloadDll(PVOID base)
         status = STATUS_SUCCESS;
         if (e->ObsoleteLoadCount != 0xFFFF && !(e->Flags & LDRP_STATIC_LINK) && --e->ReferenceCount == 0) {
             if (e->Flags & LDRP_PROCESS_ATTACH_CALLED)
-                call_entry(e, DLL_PROCESS_DETACH, NULL);
+                call_entry(e, DLL_PROCESS_DETACH, nullptr);
             /* dependencies keep their references; they stay loaded. */
             destroy_entry(e);
             NtUnmapViewOfSection(NtCurrentProcess(), base);
@@ -1060,7 +1060,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
                                                      ULONG flags)
 {
     char buf[256];
-    PCSTR cname = NULL;
+    PCSTR cname = nullptr;
     if (name) {
         if (name->Length >= sizeof(buf))
             return STATUS_NAME_TOO_LONG;
@@ -1072,10 +1072,10 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);
     NTSTATUS status = STATUS_DLL_NOT_FOUND;
     if (e) {
-        LOAD_CONTEXT ctx = {FALSE, NULL};
+        LOAD_CONTEXT ctx = {FALSE, nullptr};
         status = resolve_export(e, cname, 0, ordinal, address, &ctx, 0);
         if (NT_SUCCESS(status))
-            status = run_initializers(NULL);
+            status = run_initializers(nullptr);
     }
     RtlLeaveCriticalSection(&LdrpLoaderLock);
     return status;
@@ -1148,7 +1148,7 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlUserThreadStart(PVOID entry, PVOID 
 NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlExitUserThread(NTSTATUS status)
 {
     ULONG last = 0;
-    NtQueryInformationThread(NtCurrentThread(), ThreadAmILastThread, &last, sizeof(last), NULL);
+    NtQueryInformationThread(NtCurrentThread(), ThreadAmILastThread, &last, sizeof(last), nullptr);
     if (last)
         RtlExitUserProcess(status);
     LdrShutdownThread();

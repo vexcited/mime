@@ -30,7 +30,7 @@ static char **block_to_array_a(const char *block)
             count++;
     char **env = calloc(count + 1, sizeof(char *));
     if (!env)
-        return NULL;
+        return nullptr;
     size_t i = 0;
     for (const char *p = block; *p; p += strlen(p) + 1)
         if (*p != '=')
@@ -46,7 +46,7 @@ static wchar_t **block_to_array_w(const wchar_t *block)
             count++;
     wchar_t **env = calloc(count + 1, sizeof(wchar_t *));
     if (!env)
-        return NULL;
+        return nullptr;
     size_t i = 0;
     for (const wchar_t *p = block; *p; p += wcslen(p) + 1)
         if (*p != '=')
@@ -166,7 +166,7 @@ static int update_a(char ***penv, char *option, size_t len, int remove)
         return -1;
     }
     grown[count] = option;
-    grown[count + 1] = NULL;
+    grown[count + 1] = nullptr;
     *penv = grown;
     return 0;
 }
@@ -196,7 +196,7 @@ static int update_w(wchar_t ***penv, wchar_t *option, size_t len, int remove)
         return -1;
     }
     grown[count] = option;
-    grown[count + 1] = NULL;
+    grown[count + 1] = nullptr;
     *penv = grown;
     return 0;
 }
@@ -204,7 +204,7 @@ static int update_w(wchar_t ***penv, wchar_t *option, size_t len, int remove)
 /* entries replaced in the arrays are not freed: __initenv and returned getenv pointers may still use them. */
 int MsvcrtSetEnvA(const char *option, int primary)
 {
-    const char *eq = option ? strchr(option, '=') : NULL;
+    const char *eq = option ? strchr(option, '=') : nullptr;
     if (!eq || eq == option) {
         MsvcrtSetErrno(EINVAL);
         return -1;
@@ -230,7 +230,7 @@ int MsvcrtSetEnvA(const char *option, int primary)
     if (name) {
         memcpy(name, option, len);
         name[len] = 0;
-        if (!SetEnvironmentVariableA(name, remove ? NULL : eq + 1)) {
+        if (!SetEnvironmentVariableA(name, remove ? nullptr : eq + 1)) {
             free(name);
             MsvcrtSetErrno(EILSEQ);
             sync_exports();
@@ -244,7 +244,7 @@ int MsvcrtSetEnvA(const char *option, int primary)
 
 int MsvcrtSetEnvW(const wchar_t *option, int primary)
 {
-    const wchar_t *eq = option ? wcschr(option, '=') : NULL;
+    const wchar_t *eq = option ? wcschr(option, '=') : nullptr;
     if (!eq || eq == option) {
         MsvcrtSetErrno(EINVAL);
         return -1;
@@ -270,7 +270,7 @@ int MsvcrtSetEnvW(const wchar_t *option, int primary)
     if (name) {
         memcpy(name, option, len * sizeof(wchar_t));
         name[len] = 0;
-        if (!SetEnvironmentVariableW(name, remove ? NULL : eq + 1)) {
+        if (!SetEnvironmentVariableW(name, remove ? nullptr : eq + 1)) {
             free(name);
             MsvcrtSetErrno(EILSEQ);
             sync_exports();
@@ -351,7 +351,7 @@ static char *getenv_nolock(const char *name)
 {
     size_t len = strlen(name);
     int i = find_a(MsvcrtEnviron, name, len);
-    return i >= 0 ? MsvcrtEnviron[i] + len + 1 : NULL;
+    return i >= 0 ? MsvcrtEnviron[i] + len + 1 : nullptr;
 }
 
 static wchar_t *wgetenv_nolock(const wchar_t *name)
@@ -359,14 +359,14 @@ static wchar_t *wgetenv_nolock(const wchar_t *name)
     MsvcrtWenvInit();
     size_t len = wcslen(name);
     int i = find_w(MsvcrtWenviron, name, len);
-    return i >= 0 ? MsvcrtWenviron[i] + len + 1 : NULL;
+    return i >= 0 ? MsvcrtWenviron[i] + len + 1 : nullptr;
 }
 
 char *__cdecl getenv(const char *name)
 {
     if (!name) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     _lock(_ENV_LOCK);
     char *r = getenv_nolock(name);
@@ -378,7 +378,7 @@ wchar_t *__cdecl _wgetenv(const wchar_t *name)
 {
     if (!name) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     _lock(_ENV_LOCK);
     wchar_t *r = wgetenv_nolock(name);
@@ -448,7 +448,7 @@ errno_t __cdecl _dupenv_s(char **pbuf, size_t *plen, const char *name)
         MSVCRT_INVALID(EINVAL);
         return EINVAL;
     }
-    *pbuf = NULL;
+    *pbuf = nullptr;
     if (plen)
         *plen = 0;
     _lock(_ENV_LOCK);
@@ -471,7 +471,7 @@ errno_t __cdecl _wdupenv_s(wchar_t **pbuf, size_t *plen, const wchar_t *name)
         MSVCRT_INVALID(EINVAL);
         return EINVAL;
     }
-    *pbuf = NULL;
+    *pbuf = nullptr;
     if (plen)
         *plen = 0;
     _lock(_ENV_LOCK);
@@ -555,7 +555,7 @@ errno_t __cdecl _searchenv_s(const char *file, const char *var, char *buf, size_
     free(wf);
     free(wv);
     *buf = 0;
-    if (!r && !WideCharToMultiByte(CP_ACP, 0, wbuf, -1, buf, (int)size, NULL, NULL)) {
+    if (!r && !WideCharToMultiByte(CP_ACP, 0, wbuf, -1, buf, (int)size, nullptr, nullptr)) {
         MsvcrtSetErrno(ERANGE);
         r = ERANGE;
     }

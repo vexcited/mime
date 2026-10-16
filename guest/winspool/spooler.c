@@ -10,8 +10,8 @@
 PWSTR SpoolToWide(LPCSTR s)
 {
     if (!s)
-        return NULL;
-    int count = MultiByteToWideChar(CP_ACP, 0, s, -1, NULL, 0);
+        return nullptr;
+    int count = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
     PWSTR w = SpoolAlloc((count ? count : 1) * sizeof(WCHAR));
     if (w && count)
         MultiByteToWideChar(CP_ACP, 0, s, -1, w, count);
@@ -20,16 +20,16 @@ PWSTR SpoolToWide(LPCSTR s)
 
 BOOL SpoolToAnsi(PCWSTR s, LPSTR buffer, DWORD size)
 {
-    int count = WideCharToMultiByte(CP_ACP, 0, s, -1, NULL, 0, NULL, NULL);
+    int count = WideCharToMultiByte(CP_ACP, 0, s, -1, nullptr, 0, nullptr, nullptr);
     if (!buffer || !count || (DWORD)count > size)
         return FALSE;
-    WideCharToMultiByte(CP_ACP, 0, s, -1, buffer, count, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, s, -1, buffer, count, nullptr, nullptr);
     return TRUE;
 }
 
 PCWSTR SpoolNativeEnvironment(void)
 {
-#if defined(__x86_64__)
+#ifdef __x86_64__
     return L"Windows x64";
 #else
     return L"Windows ARM64";
@@ -55,7 +55,7 @@ PCWSTR SpoolEnvironmentDirectory(LPCWSTR environment)
         if (!_wcsicmp(environment, g_environments[i].environment))
             return g_environments[i].directory;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* checks the arguments every enumeration shares and reports an empty list. */
@@ -80,7 +80,7 @@ static BOOL SpoolCheckEnvironmentA(LPCSTR environment)
     PWSTR wide = SpoolToWide(environment);
     if (!wide)
         return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
-    BOOL known = SpoolEnvironmentDirectory(wide) != NULL;
+    BOOL known = SpoolEnvironmentDirectory(wide) != nullptr;
     SpoolFree(wide);
     return known ? TRUE : SpoolFail(ERROR_INVALID_ENVIRONMENT);
 }
@@ -121,7 +121,7 @@ __declspec(dllexport) BOOL WINAPI EnumPrinterDriversW(LPWSTR name, LPWSTR enviro
 {
     if (needed && returned && SpoolDriverLevel(level) && !SpoolCheckEnvironmentW(environment))
         return FALSE;
-    return SpoolEmpty(SpoolDriverLevel(level), NULL, 0, needed, returned);
+    return SpoolEmpty(SpoolDriverLevel(level), nullptr, 0, needed, returned);
 }
 
 __declspec(dllexport) BOOL WINAPI EnumPrinterDriversA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
@@ -129,7 +129,7 @@ __declspec(dllexport) BOOL WINAPI EnumPrinterDriversA(LPSTR name, LPSTR environm
 {
     if (needed && returned && SpoolDriverLevel(level) && !SpoolCheckEnvironmentA(environment))
         return FALSE;
-    return SpoolEmpty(SpoolDriverLevel(level), NULL, 0, needed, returned);
+    return SpoolEmpty(SpoolDriverLevel(level), nullptr, 0, needed, returned);
 }
 
 __declspec(dllexport) BOOL WINAPI EnumPortsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
@@ -283,7 +283,7 @@ __declspec(dllexport) BOOL WINAPI GetDefaultPrinterW(LPWSTR buffer, LPDWORD size
 
 __declspec(dllexport) BOOL WINAPI GetDefaultPrinterA(LPSTR buffer, LPDWORD size)
 {
-    return GetDefaultPrinterW(NULL, size);
+    return GetDefaultPrinterW(nullptr, size);
 }
 
 __declspec(dllexport) BOOL WINAPI SetDefaultPrinterW(LPCWSTR printer)
@@ -306,7 +306,7 @@ static HANDLE SpoolAddPrinter(DWORD level, LPBYTE printer)
         SetLastError(ERROR_INVALID_PARAMETER);
     else
         SetLastError(ERROR_UNKNOWN_PRINTER_DRIVER);
-    return NULL;
+    return nullptr;
 }
 
 __declspec(dllexport) HANDLE WINAPI AddPrinterW(LPWSTR name, DWORD level, LPBYTE printer)
@@ -352,7 +352,7 @@ __declspec(dllexport) BOOL WINAPI DeletePrinterConnectionA(LPSTR name)
 
 __declspec(dllexport) HANDLE WINAPI ConnectToPrinterDlg(HWND window, DWORD flags)
 {
-    return NULL;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ drivers */

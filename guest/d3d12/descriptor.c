@@ -21,14 +21,14 @@ static D12DescriptorHeap **heap_slot(D12Device *device, UINT id, BOOL make)
 {
     UINT page = id / PAGE_HEAPS;
     if (page >= 256)
-        return NULL;
+        return nullptr;
     D12DescriptorHeap ***pages = (D12DescriptorHeap ***)device->heaps;
     if (!pages[page]) {
         if (!make)
-            return NULL;
+            return nullptr;
         pages[page] = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, PAGE_HEAPS * sizeof(D12DescriptorHeap *));
         if (!pages[page])
-            return NULL;
+            return nullptr;
     }
     return &pages[page][id % PAGE_HEAPS];
 }
@@ -37,7 +37,7 @@ static UINT heap_register(D12Device *device, D12DescriptorHeap *heap)
 {
     AcquireSRWLockExclusive(&device->heap_lock);
     UINT id = device->heap_free_count ? device->heap_free_ids[--device->heap_free_count] : device->heap_next_id;
-    D12DescriptorHeap **slot = id < D12_MAX_HEAPS ? heap_slot(device, id, TRUE) : NULL;
+    D12DescriptorHeap **slot = id < D12_MAX_HEAPS ? heap_slot(device, id, TRUE) : nullptr;
     if (slot) {
         *slot = heap;
         if (id == device->heap_next_id)
@@ -54,7 +54,7 @@ static void heap_unregister(D12Device *device, UINT id)
     AcquireSRWLockExclusive(&device->heap_lock);
     D12DescriptorHeap **slot = heap_slot(device, id, FALSE);
     if (slot)
-        *slot = NULL;
+        *slot = nullptr;
     if (device->heap_free_count == device->heap_free_capacity) {
         UINT capacity = device->heap_free_capacity ? device->heap_free_capacity * 2 : 64;
         UINT *ids = device->heap_free_ids
@@ -74,11 +74,11 @@ D12DescriptorHeap *D12HandleHeap(D12Device *device, UINT64 ptr, UINT *index)
 {
     UINT id = (UINT)(ptr >> D12_HANDLE_SHIFT);
     D12DescriptorHeap **slot = heap_slot(device, id, FALSE);
-    D12DescriptorHeap *heap = slot ? *slot : NULL;
+    D12DescriptorHeap *heap = slot ? *slot : nullptr;
     if (!heap)
-        return NULL;
+        return nullptr;
     *index = (UINT)((ptr & (((UINT64)1 << D12_HANDLE_SHIFT) - 1)) >> D12_INCREMENT_SHIFT);
-    return *index < heap->desc.NumDescriptors ? heap : NULL;
+    return *index < heap->desc.NumDescriptors ? heap : nullptr;
 }
 
 /* ------------------------------------------------------------------ descriptor bytes */
@@ -110,9 +110,9 @@ static void image_descriptor(D12Device *device, VkDescriptorType type, VkImageVi
     VkDescriptorGetInfoEXT info = {VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
     info.type = type;
     if (type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
-        info.data.pSampledImage = view ? &image : NULL;
+        info.data.pSampledImage = view ? &image : nullptr;
     else
-        info.data.pStorageImage = view ? &image : NULL;
+        info.data.pStorageImage = view ? &image : nullptr;
     device->vk.vkGetDescriptorEXT(device->vk.device, &info, descriptor_size(device, type), out);
 }
 
@@ -126,11 +126,11 @@ static void address_descriptor(D12Device *device, VkDescriptorType type, VkDevic
     VkDescriptorGetInfoEXT info = {VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
     info.type = type;
     if (type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER)
-        info.data.pUniformTexelBuffer = address ? &addr : NULL;
+        info.data.pUniformTexelBuffer = address ? &addr : nullptr;
     else if (type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)
-        info.data.pStorageTexelBuffer = address ? &addr : NULL;
+        info.data.pStorageTexelBuffer = address ? &addr : nullptr;
     else
-        info.data.pStorageBuffer = address ? &addr : NULL;
+        info.data.pStorageBuffer = address ? &addr : nullptr;
     device->vk.vkGetDescriptorEXT(device->vk.device, &info, descriptor_size(device, type), out);
 }
 
@@ -253,7 +253,7 @@ static VkSampler create_sampler(D12Device *device, const D3D12_SAMPLER_DESC2 *d)
         }
     }
     VkSampler sampler = VK_NULL_HANDLE;
-    device->vk.vkCreateSampler(device->vk.device, &info, NULL, &sampler);
+    device->vk.vkCreateSampler(device->vk.device, &info, nullptr, &sampler);
     return sampler;
 }
 
@@ -337,12 +337,12 @@ HRESULT D12DescriptorsInit(D12Device *device)
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO, &mutable_info};
     binding_flags.bindingCount = 1;
     binding_flags.pBindingFlags = &partial;
-    VkDescriptorSetLayoutBinding binding = {0, VK_DESCRIPTOR_TYPE_MUTABLE_EXT, count, VK_SHADER_STAGE_ALL, NULL};
+    VkDescriptorSetLayoutBinding binding = {0, VK_DESCRIPTOR_TYPE_MUTABLE_EXT, count, VK_SHADER_STAGE_ALL, nullptr};
     VkDescriptorSetLayoutCreateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &binding_flags};
     info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     info.bindingCount = 1;
     info.pBindings = &binding;
-    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->resource_layout) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->resource_layout) != VK_SUCCESS)
         return E_FAIL;
 
     VkDeviceSize layout_size = 0;
@@ -350,14 +350,14 @@ HRESULT D12DescriptorsInit(D12Device *device)
 
     binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     binding.descriptorCount = D12_MIN(D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE, limits->maxDescriptorSetSamplers);
-    binding_flags.pNext = NULL;
-    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->sampler_layout) != VK_SUCCESS)
+    binding_flags.pNext = nullptr;
+    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->sampler_layout) != VK_SUCCESS)
         return E_FAIL;
 
     binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     binding.descriptorCount = 1;
     partial = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->record_layout) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->record_layout) != VK_SUCCESS)
         return E_FAIL;
 
     /* the views of 64-bit texels that typed views' 64-bit atomics go through, beside the heap's descriptors. */
@@ -371,7 +371,7 @@ HRESULT D12DescriptorsInit(D12Device *device)
         binding.descriptorType = VK_DESCRIPTOR_TYPE_MUTABLE_EXT;
         binding.descriptorCount = count;
         VkDeviceSize atomic_size = 0;
-        if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->atomic_layout) != VK_SUCCESS)
+        if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->atomic_layout) != VK_SUCCESS)
             return E_FAIL;
         vk->vkGetDescriptorSetLayoutSizeEXT(vk->device, device->atomic_layout, &atomic_size);
         device->atomic_stride = (UINT)(atomic_size / count);
@@ -379,9 +379,9 @@ HRESULT D12DescriptorsInit(D12Device *device)
             return DXGI_ERROR_UNSUPPORTED;
     }
 
-    info.pNext = NULL;
+    info.pNext = nullptr;
     info.bindingCount = 0;
-    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &device->empty_layout) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->empty_layout) != VK_SUCCESS)
         return E_FAIL;
 
     /* a mutable descriptor takes the room of the largest it may be, as the layout's size says. */
@@ -436,15 +436,15 @@ void D12DescriptorsDestroy(D12Device *device)
             HeapFree(GetProcessHeap(), 0, device->dummy_heaps[i]);
         }
     for (UINT i = 0; i < device->sampler_count; i++)
-        vk->vkDestroySampler(vk->device, device->samplers[i].sampler, NULL);
+        vk->vkDestroySampler(vk->device, device->samplers[i].sampler, nullptr);
     HeapFree(GetProcessHeap(), 0, device->samplers);
     HeapFree(GetProcessHeap(), 0, device->texels);
-    vk->vkDestroyDescriptorSetLayout(vk->device, device->resource_layout, NULL);
-    vk->vkDestroyDescriptorSetLayout(vk->device, device->sampler_layout, NULL);
-    vk->vkDestroyDescriptorSetLayout(vk->device, device->record_layout, NULL);
+    vk->vkDestroyDescriptorSetLayout(vk->device, device->resource_layout, nullptr);
+    vk->vkDestroyDescriptorSetLayout(vk->device, device->sampler_layout, nullptr);
+    vk->vkDestroyDescriptorSetLayout(vk->device, device->record_layout, nullptr);
     if (device->atomic_layout)
-        vk->vkDestroyDescriptorSetLayout(vk->device, device->atomic_layout, NULL);
-    vk->vkDestroyDescriptorSetLayout(vk->device, device->empty_layout, NULL);
+        vk->vkDestroyDescriptorSetLayout(vk->device, device->atomic_layout, nullptr);
+    vk->vkDestroyDescriptorSetLayout(vk->device, device->empty_layout, nullptr);
     if (device->heaps) {
         D12DescriptorHeap ***pages = (D12DescriptorHeap ***)device->heaps;
         for (UINT i = 0; i < 256; i++)
@@ -458,7 +458,7 @@ void D12DescriptorsDestroy(D12Device *device)
 
 D12DescriptorHeap *D12DescriptorHeapFrom(ID3D12DescriptorHeap *iface)
 {
-    return iface ? CONTAINING_RECORD(iface, D12DescriptorHeap, iface) : NULL;
+    return iface ? CONTAINING_RECORD(iface, D12DescriptorHeap, iface) : nullptr;
 }
 
 static D12DescriptorHeap *impl(ID3D12DescriptorHeap *iface)
@@ -475,7 +475,7 @@ static HRESULT STDMETHODCALLTYPE heap_query(ID3D12DescriptorHeap *iface, REFIID 
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -490,9 +490,9 @@ static void heap_destroy(D12DescriptorHeap *heap)
     if (heap->id)
         heap_unregister(device, heap->id);
     if (heap->buffer)
-        device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, NULL);
+        device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, nullptr);
     if (heap->memory)
-        device->vk.vkFreeMemory(device->vk.device, heap->memory, NULL);
+        device->vk.vkFreeMemory(device->vk.device, heap->memory, nullptr);
     else
         VirtualFree(heap->base, 0, MEM_RELEASE);
     HeapFree(GetProcessHeap(), 0, heap->infos);
@@ -581,7 +581,7 @@ static HRESULT descriptor_buffer(D12Device *device, D12DescriptorHeap *heap, UIN
     info.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
                  (samplers ? VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT
                            : VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    if (vk->vkCreateBuffer(vk->device, &info, NULL, &heap->buffer) != VK_SUCCESS)
+    if (vk->vkCreateBuffer(vk->device, &info, nullptr, &heap->buffer) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
     vk->vkGetBufferMemoryRequirements(vk->device, heap->buffer, &req);
@@ -600,7 +600,7 @@ static HRESULT descriptor_buffer(D12Device *device, D12DescriptorHeap *heap, UIN
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     alloc.allocationSize = req.size;
     alloc.memoryTypeIndex = type;
-    if (vk->vkAllocateMemory(vk->device, &alloc, NULL, &heap->memory) != VK_SUCCESS)
+    if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, &heap->memory) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     vk->vkBindBufferMemory(vk->device, heap->buffer, heap->memory, 0);
     if (vk->vkMapMemory(vk->device, heap->memory, 0, VK_WHOLE_SIZE, 0, (void **)&heap->base) != VK_SUCCESS)
@@ -656,7 +656,7 @@ static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *
     if (SUCCEEDED(hr) && size) {
         if (visible)
             hr = descriptor_buffer(device, heap, size, desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-        else if (!(heap->base = VirtualAlloc(NULL, (SIZE_T)size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)))
+        else if (!(heap->base = VirtualAlloc(nullptr, (SIZE_T)size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)))
             hr = E_OUTOFMEMORY;
     }
     if (SUCCEEDED(hr) && desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) {
@@ -725,7 +725,7 @@ static void write_atomic_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE des
 static void write_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, const BYTE *descriptor,
                        const DxbcRecord *record, const D12DescriptorInfo *info)
 {
-    write_atomic_view(device, dest, descriptor, record, info, NULL);
+    write_atomic_view(device, dest, descriptor, record, info, nullptr);
 }
 
 static DxbcRecord null_record(D12Device *device)
@@ -740,7 +740,7 @@ void D12CreateCbv(D12Device *device, const D3D12_CONSTANT_BUFFER_VIEW_DESC *desc
         record.address = desc->BufferLocation;
         record.size = desc->SizeInBytes;
     }
-    write_view(device, dest, device->null_descriptors[D12_DESC_SAMPLED_IMAGE], &record, NULL);
+    write_view(device, dest, device->null_descriptors[D12_DESC_SAMPLED_IMAGE], &record, nullptr);
 }
 
 /* the format, aspect and swizzle of a texture view, depth formats through their depth or stencil plane. */
@@ -860,13 +860,13 @@ void D12CreateSrv(D12Device *device, D12Resource *resource, const D3D12_SHADER_R
     /* shaders read the address of an acceleration structure from its record. */
     if (desc && desc->ViewDimension == D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE) {
         record.address = desc->RaytracingAccelerationStructure.Location;
-        write_view(device, dest, device->null_descriptors[D12_DESC_UNIFORM_TEXEL], &record, NULL);
+        write_view(device, dest, device->null_descriptors[D12_DESC_UNIFORM_TEXEL], &record, nullptr);
         return;
     }
     if (!resource) {
         BOOL buffer = desc && desc->ViewDimension == D3D12_SRV_DIMENSION_BUFFER;
         write_view(device, dest, device->null_descriptors[buffer ? D12_DESC_UNIFORM_TEXEL : D12_DESC_SAMPLED_IMAGE],
-                   &record, NULL);
+                   &record, nullptr);
         return;
     }
     D3D12_SHADER_RESOURCE_VIEW_DESC d;
@@ -890,7 +890,7 @@ void D12CreateSrv(D12Device *device, D12Resource *resource, const D3D12_SHADER_R
             texel_descriptor(device, FALSE, record.address, record.size, D3dGetFormat(d.Format)->vk, copy);
             descriptor = copy;
         }
-        D12DescriptorInfo info = {resource, NULL, VK_FORMAT_UNDEFINED, {0}, record.address - resource->va, record.size,
+        D12DescriptorInfo info = {resource, nullptr, VK_FORMAT_UNDEFINED, {0}, record.address - resource->va, record.size,
                                   D12_DESC_UNIFORM_TEXEL};
         write_view(device, dest, descriptor, &record, &info);
         return;
@@ -969,7 +969,7 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
     if (!resource) {
         BOOL buffer = desc && desc->ViewDimension == D3D12_UAV_DIMENSION_BUFFER;
         write_view(device, dest, device->null_descriptors[buffer ? D12_DESC_STORAGE_TEXEL : D12_DESC_STORAGE_IMAGE],
-                   &record, NULL);
+                   &record, nullptr);
         return;
     }
     D3D12_UNORDERED_ACCESS_VIEW_DESC d;
@@ -1015,9 +1015,9 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
                 wide = TRUE;
             }
         }
-        D12DescriptorInfo info = {resource, NULL, format, {0}, record.address - resource->va, record.size,
+        D12DescriptorInfo info = {resource, nullptr, format, {0}, record.address - resource->va, record.size,
                                   D12_DESC_STORAGE_TEXEL};
-        write_atomic_view(device, dest, descriptor, &record, &info, wide ? atomic : NULL);
+        write_atomic_view(device, dest, descriptor, &record, &info, wide ? atomic : nullptr);
         return;
     }
     UINT mip = 0, layer = 0, layers = 1, plane = 0;
@@ -1067,7 +1067,7 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
     if (!view)
         return;
     /* two words a texel: a view of 64-bit texels too, for 64-bit atomics. */
-    const BYTE *atomic = NULL;
+    const BYTE *atomic = nullptr;
     if (device->atomic_stride && (info.format == VK_FORMAT_R32G32_UINT || info.format == VK_FORMAT_R32G32_SINT)) {
         VkImageViewCreateInfo wide = info;
         wide.format = info.format == VK_FORMAT_R32G32_UINT ? VK_FORMAT_R64_UINT : VK_FORMAT_R64_SINT;
@@ -1086,21 +1086,21 @@ static D12TargetView *target_slot(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE
 {
     UINT index;
     D12DescriptorHeap *heap = D12HandleHeap(device, handle.ptr, &index);
-    return heap && heap->desc.Type == type ? &heap->targets[index] : NULL;
+    return heap && heap->desc.Type == type ? &heap->targets[index] : nullptr;
 }
 
 const D12TargetView *D12TargetFrom(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE handle)
 {
     UINT index;
     D12DescriptorHeap *heap = D12HandleHeap(device, handle.ptr, &index);
-    return heap && heap->targets ? &heap->targets[index] : NULL;
+    return heap && heap->targets ? &heap->targets[index] : nullptr;
 }
 
 const D12DescriptorInfo *D12DescriptorInfoFrom(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE handle)
 {
     UINT index;
     D12DescriptorHeap *heap = D12HandleHeap(device, handle.ptr, &index);
-    return heap && heap->infos ? &heap->infos[index] : NULL;
+    return heap && heap->infos ? &heap->infos[index] : nullptr;
 }
 
 /* the mip, layers and extent of an attachment; slices of a volume are layers of a 2d array view. */
@@ -1164,7 +1164,7 @@ void D12CreateRtv(D12Device *device, D12Resource *resource, const D3D12_RENDER_T
     VkImageViewCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     VkImageAspectFlags aspect;
     VkComponentMapping swizzle;
-    D12TargetView t = {0};
+    D12TargetView t = {};
     if (!view_format(resource, d.Format, TRUE, 0, &info.format, &aspect, &swizzle))
         return;
     info.subresourceRange.aspectMask = aspect;
@@ -1240,7 +1240,7 @@ void D12CreateDsv(D12Device *device, D12Resource *resource, const D3D12_DEPTH_ST
     VkImageViewCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     VkImageAspectFlags aspect;
     VkComponentMapping swizzle;
-    D12TargetView t = {0};
+    D12TargetView t = {};
     if (!view_format(resource, d.Format, TRUE, 0, &info.format, &aspect, &swizzle))
         return;
     info.subresourceRange.aspectMask = aspect;

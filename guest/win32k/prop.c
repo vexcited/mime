@@ -9,21 +9,21 @@ static WND_PROP *find_prop(WND *w, ATOM atom)
     for (ULONG i = 0; i < w->PropCount; i++)
         if (w->Props[i].Atom == atom)
             return &w->Props[i];
-    return NULL;
+    return nullptr;
 }
 
 void PropFreeWindow(WND *w)
 {
     W32Free(w->Props);
-    w->Props = NULL;
+    w->Props = nullptr;
     w->PropCount = 0;
     w->PropCapacity = 0;
 }
 
 HANDLE PropGetData(WND *w, ATOM atom)
 {
-    WND_PROP *p = atom ? find_prop(w, atom) : NULL;
-    return p ? p->Data : NULL;
+    WND_PROP *p = atom ? find_prop(w, atom) : nullptr;
+    return p ? p->Data : nullptr;
 }
 
 /* the dwm attributes dwmapi stores as properties change how the host shows the window. */
@@ -74,8 +74,8 @@ HANDLE NTAPI NtUserGetProp(HWND hwnd, ATOM atom)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    WND_PROP *p = w ? find_prop(w, atom) : NULL;
-    HANDLE data = p ? p->Data : NULL;
+    WND_PROP *p = w ? find_prop(w, atom) : nullptr;
+    HANDLE data = p ? p->Data : nullptr;
     UserLeave();
     return data;
 }
@@ -84,8 +84,8 @@ HANDLE NTAPI NtUserRemoveProp(HWND hwnd, ATOM atom)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    WND_PROP *p = w ? find_prop(w, atom) : NULL;
-    HANDLE data = NULL;
+    WND_PROP *p = w ? find_prop(w, atom) : nullptr;
+    HANDLE data = nullptr;
     if (p) {
         data = p->Data;
         ULONG i = (ULONG)(p - w->Props);
@@ -102,7 +102,7 @@ NTSTATUS NTAPI NtUserBuildPropList(HWND hwnd, ULONG max, PROPLISTITEM *user_list
     UserEnter();
     WND *w = WndLookup(hwnd);
     ULONG count = w ? w->PropCount : 0;
-    PROPLISTITEM *copy = NULL;
+    PROPLISTITEM *copy = nullptr;
     NTSTATUS status = w ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
     if (w && count) {
         copy = W32Alloc(count * sizeof(PROPLISTITEM));

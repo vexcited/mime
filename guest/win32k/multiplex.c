@@ -23,7 +23,7 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
         break;
     case MIME_NOPARAM_RELEASECAPTURE:
         if (t)
-            InputSetCapture(t, NULL, 0);
+            InputSetCapture(t, nullptr, 0);
         r = 1;
         break;
     case MIME_NOPARAM_GETMESSAGETIME:
@@ -78,7 +78,7 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
                 pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
             if (!IsListEmpty(&t->Input))
                 pending |= QS_INPUT;
-            if (WndFindNeedsPaint(t, NULL))
+            if (WndFindNeedsPaint(t, nullptr))
                 pending |= QS_PAINT;
             if (TimerNextDue(t) >= 0 && (LONG64)(KeQueryInterruptTime() / 10000) >= TimerNextDue(t))
                 pending |= QS_TIMER;
@@ -145,7 +145,7 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
     case MIME_TWOPARAM_WINDOWFROMPOINT: {
         POINT pt = {(LONG)param1, (LONG)param2};
         WND *desktop = WndDesktop();
-        for (WND *c = desktop ? desktop->FirstChild : NULL; c; c = c->Next) {
+        for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
             if (!(c->Style & WS_VISIBLE) || (c->Style & WS_MINIMIZE) || (c->ExStyle & WS_EX_TRANSPARENT) ||
                 (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, pt.x, pt.y) || !LayerHitTest(c, pt))
                 continue;
@@ -170,7 +170,7 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
     UserEnter();
     W32THREAD *t = W32GetThread();
     ci.flags = t && t->CursorShowCount >= 0 ? CURSOR_SHOWING : 0;
-    ci.hCursor = t ? t->Cursor : NULL;
+    ci.hCursor = t ? t->Cursor : nullptr;
     ci.ptScreenPos = InputCursorPos;
     UserLeave();
     if (!NT_SUCCESS(MimeCopyToUser(user_info, &ci, sizeof(ci)))) {

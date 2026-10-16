@@ -49,7 +49,7 @@ static NTSTATUS alloc_slot(AUDIO_SLOT *s)
 static void close_stream(AUDIO_SLOT *s)
 {
     if (s->Stream)
-        HalMimeHypercall(MIME_HC_AUDIO_CLOSE, s->Stream, 0, 0, 0, 0, 0, NULL);
+        HalMimeHypercall(MIME_HC_AUDIO_CLOSE, s->Stream, 0, 0, 0, 0, 0, nullptr);
     s->Stream = 0;
 }
 
@@ -63,7 +63,7 @@ NTSTATUS NTAPI NtGdiMimeAudioCreate(PVOID *base, PULONG index)
         if (p->Audio)
             memset(p->Audio, 0, sizeof(W32AUDIO));
     }
-    W32AUDIO *a = p ? p->Audio : NULL;
+    W32AUDIO *a = p ? p->Audio : nullptr;
     ULONG i = 0;
     if (!a)
         status = STATUS_NO_MEMORY;
@@ -75,7 +75,7 @@ NTSTATUS NTAPI NtGdiMimeAudioCreate(PVOID *base, PULONG index)
         else if (!a->Slots[i].User)
             status = alloc_slot(&a->Slots[i]);
     }
-    PVOID user = NULL;
+    PVOID user = nullptr;
     if (NT_SUCCESS(status)) {
         AUDIO_SLOT *s = &a->Slots[i];
         memset(s->Kernel, 0, MIME_AUDIO_HEADER_SIZE);
@@ -95,8 +95,8 @@ NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op)
     NTSTATUS status = STATUS_SUCCESS;
     UserEnter();
     W32PROCESS *p = W32GetProcess();
-    W32AUDIO *a = p ? p->Audio : NULL;
-    AUDIO_SLOT *s = a && index < MIME_AUDIO_MAX_STREAMS && a->Slots[index].InUse ? &a->Slots[index] : NULL;
+    W32AUDIO *a = p ? p->Audio : nullptr;
+    AUDIO_SLOT *s = a && index < MIME_AUDIO_MAX_STREAMS && a->Slots[index].InUse ? &a->Slots[index] : nullptr;
     if (!s) {
         status = STATUS_INVALID_HANDLE;
     } else if (op == MIME_AUDIO_OPEN) {
@@ -109,7 +109,7 @@ NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op)
             status = result == MIME_HC_STATUS_UNSUPPORTED ? STATUS_NOT_SUPPORTED : STATUS_DEVICE_NOT_READY;
     } else if (op == MIME_AUDIO_START || op == MIME_AUDIO_STOP) {
         if (!s->Stream ||
-            HalMimeHypercall(MIME_HC_AUDIO_START, s->Stream, op == MIME_AUDIO_START, 0, 0, 0, 0, NULL) != MIME_HC_STATUS_OK)
+            HalMimeHypercall(MIME_HC_AUDIO_START, s->Stream, op == MIME_AUDIO_START, 0, 0, 0, 0, nullptr) != MIME_HC_STATUS_OK)
             status = STATUS_DEVICE_NOT_READY;
     } else if (op == MIME_AUDIO_CLOSE) {
         close_stream(s);
@@ -131,6 +131,6 @@ void AudioFreeProcess(W32PROCESS *p)
         close_stream(&a->Slots[i]);
         free_slot(&a->Slots[i]);
     }
-    p->Audio = NULL;
+    p->Audio = nullptr;
     W32Free(a);
 }

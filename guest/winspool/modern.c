@@ -183,10 +183,10 @@ __declspec(dllexport) void WINAPI FreePrintPropertyValue(SpoolPropertyValue *val
         return;
     if (value->type == SPOOL_PROPERTY_STRING) {
         LocalFree(value->string);
-        value->string = NULL;
+        value->string = nullptr;
     } else if (value->type == SPOOL_PROPERTY_BUFFER) {
         LocalFree(value->blob.buffer);
-        value->blob.buffer = NULL;
+        value->blob.buffer = nullptr;
     }
 }
 
@@ -222,11 +222,11 @@ __declspec(dllexport) DWORD WINAPI PrinterMessageBoxA(HANDLE printer, DWORD erro
 __declspec(dllexport) LPWSTR WINAPI StartDocDlgW(HANDLE printer, DOC_INFO_1W *info)
 {
     SetLastError(ERROR_INVALID_HANDLE);
-    return NULL;
+    return nullptr;
 }
 
 __declspec(dllexport) LPSTR WINAPI StartDocDlgA(HANDLE printer, DOC_INFO_1A *info)
 {
     SetLastError(ERROR_INVALID_HANDLE);
-    return NULL;
+    return nullptr;
 }

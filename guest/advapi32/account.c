@@ -125,7 +125,7 @@ static BOOL machine_sid(SID *out)
     WCHAR name[96];
     for (DWORD i = 0; !found; i++) {
         DWORD n = RTL_NUMBER_OF(name);
-        if (RegEnumKeyExW(key, i, name, &n, NULL, NULL, NULL, NULL))
+        if (RegEnumKeyExW(key, i, name, &n, nullptr, nullptr, nullptr, nullptr))
             break;
         PSID sid;
         if (!wcsncmp(name, L"S-1-5-21-", 9) && ConvertStringSidToSidW(name, &sid)) {
@@ -147,7 +147,7 @@ static BOOL read_string(HKEY root, PCWSTR path, PCWSTR value, PWSTR out, DWORD c
     if (RegOpenKeyExW(root, path, 0, KEY_QUERY_VALUE, &key))
         return FALSE;
     DWORD type, size = (chars - 1) * sizeof(WCHAR);
-    LONG error = RegQueryValueExW(key, value, NULL, &type, (LPBYTE)out, &size);
+    LONG error = RegQueryValueExW(key, value, nullptr, &type, (LPBYTE)out, &size);
     RegCloseKey(key);
     if (error || (type != REG_SZ && type != REG_EXPAND_SZ))
         return FALSE;
@@ -290,16 +290,16 @@ ADVAPI BOOL WINAPI LookupAccountSidA(LPCSTR system, PSID sid, LPSTR name, LPDWOR
     AdvFree(s);
     if (!ok)
         return FALSE;
-    int nl = WideCharToMultiByte(CP_ACP, 0, n, -1, NULL, 0, NULL, NULL);
-    int dl = WideCharToMultiByte(CP_ACP, 0, d, -1, NULL, 0, NULL, NULL);
+    int nl = WideCharToMultiByte(CP_ACP, 0, n, -1, nullptr, 0, nullptr, nullptr);
+    int dl = WideCharToMultiByte(CP_ACP, 0, d, -1, nullptr, 0, nullptr, nullptr);
     if (!name || *name_size < (DWORD)nl || !domain || *domain_size < (DWORD)dl) {
         *name_size = nl;
         *domain_size = dl;
         AdvSetError(ERROR_INSUFFICIENT_BUFFER);
         return FALSE;
     }
-    WideCharToMultiByte(CP_ACP, 0, n, -1, name, nl, NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, d, -1, domain, dl, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, n, -1, name, nl, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, d, -1, domain, dl, nullptr, nullptr);
     *name_size = nl - 1;
     *domain_size = dl - 1;
     if (use)
@@ -311,7 +311,7 @@ ADVAPI BOOL WINAPI LookupAccountSidA(LPCSTR system, PSID sid, LPSTR name, LPDWOR
 static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_size, SID_NAME_USE *use)
 {
     PCWSTR slash = wcschr(account, L'\\');
-    WCHAR wanted_domain[256] = {0};
+    WCHAR wanted_domain[256] = {};
     PCWSTR name = account;
     if (slash) {
         if ((SIZE_T)(slash - account) >= RTL_NUMBER_OF(wanted_domain))
@@ -354,7 +354,7 @@ static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_siz
     WCHAR text[96], user[256];
     for (DWORD i = 0; !found; i++) {
         DWORD n = RTL_NUMBER_OF(text);
-        if (RegEnumKeyExW(key, i, text, &n, NULL, NULL, NULL, NULL))
+        if (RegEnumKeyExW(key, i, text, &n, nullptr, nullptr, nullptr, nullptr))
             break;
         PSID candidate;
         if (!ConvertStringSidToSidW(text, &candidate))
@@ -423,7 +423,7 @@ ADVAPI BOOL WINAPI LookupAccountNameA(LPCSTR system, LPCSTR account, PSID sid, L
     AdvFree(a);
     if (!ok)
         return FALSE;
-    int dl = WideCharToMultiByte(CP_ACP, 0, d, -1, NULL, 0, NULL, NULL);
+    int dl = WideCharToMultiByte(CP_ACP, 0, d, -1, nullptr, 0, nullptr, nullptr);
     if (!sid || *sid_size < length || !domain || *domain_size < (DWORD)dl) {
         *sid_size = length;
         *domain_size = dl;
@@ -431,7 +431,7 @@ ADVAPI BOOL WINAPI LookupAccountNameA(LPCSTR system, LPCSTR account, PSID sid, L
         return FALSE;
     }
     memcpy(sid, found, length);
-    WideCharToMultiByte(CP_ACP, 0, d, -1, domain, dl, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, d, -1, domain, dl, nullptr, nullptr);
     *sid_size = length;
     *domain_size = dl - 1;
     if (use)
@@ -446,7 +446,7 @@ ADVAPI BOOL WINAPI GetUserNameW(LPWSTR buffer, LPDWORD size)
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    TOKEN_USER *user = AdvQueryTokenUser(NULL);
+    TOKEN_USER *user = AdvQueryTokenUser(nullptr);
     WCHAR name[256], domain[256];
     SID_NAME_USE use;
     BOOL found = user && AdvLookupSid(user->User.Sid, name, RTL_NUMBER_OF(name), domain, RTL_NUMBER_OF(domain), &use);
@@ -476,13 +476,13 @@ ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size)
     DWORD chars = RTL_NUMBER_OF(name);
     if (!GetUserNameW(name, &chars))
         return FALSE;
-    DWORD n = (DWORD)WideCharToMultiByte(CP_ACP, 0, name, -1, NULL, 0, NULL, NULL);
+    DWORD n = (DWORD)WideCharToMultiByte(CP_ACP, 0, name, -1, nullptr, 0, nullptr, nullptr);
     if (!buffer || *size < n) {
         *size = n;
         AdvSetError(ERROR_INSUFFICIENT_BUFFER);
         return FALSE;
     }
-    WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, n, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, n, nullptr, nullptr);
     *size = n;
     return TRUE;
 }

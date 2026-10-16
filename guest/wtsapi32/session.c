@@ -164,8 +164,8 @@ typedef struct _WTS_CLIENT_DISPLAY {
     DWORD ColorDepth;
 } WTS_CLIENT_DISPLAY;
 
-_Static_assert(sizeof(WTSINFOW) == 216, "WTSINFOW layout");
-_Static_assert(offsetof(WTSCLIENTW, DeviceId) == 1780, "WTSCLIENTW layout");
+static_assert(sizeof(WTSINFOW) == 216, "WTSINFOW layout");
+static_assert(offsetof(WTSCLIENTW, DeviceId) == 1780, "WTSCLIENTW layout");
 
 FORCEINLINE void set_error(DWORD error)
 {
@@ -202,7 +202,7 @@ static void session_user(SESSION *s)
 {
     typedef BOOL(WINAPI * GET_USER_NAME)(LPWSTR, LPDWORD);
     HMODULE advapi = LoadLibraryW(L"advapi32.dll");
-    GET_USER_NAME get = advapi ? (GET_USER_NAME)(void *)GetProcAddress(advapi, "GetUserNameW") : NULL;
+    GET_USER_NAME get = advapi ? (GET_USER_NAME)(void *)GetProcAddress(advapi, "GetUserNameW") : nullptr;
     WCHAR name[256];
     DWORD n = RTL_NUMBER_OF(name);
     if (get && get(name, &n))
@@ -239,7 +239,7 @@ static DWORD describe(HANDLE server, DWORD id, SESSION *s)
         LARGE_INTEGER CurrentTime;
         BYTE Rest[32];
     } time;
-    if (NT_SUCCESS(NtQuerySystemInformation(SystemTimeOfDayInformation, &time, sizeof(time), NULL))) {
+    if (NT_SUCCESS(NtQuerySystemInformation(SystemTimeOfDayInformation, &time, sizeof(time), nullptr))) {
         s->LogonTime = id ? time.BootTime : (LARGE_INTEGER){0};
         s->CurrentTime = time.CurrentTime;
     }
@@ -317,7 +317,7 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationW(HANDLE server, DWORD id, WTS_INFO
     case WTSClientProtocolType:
         return give(&(USHORT){0}, sizeof(USHORT), buffer, returned); /* 0, the console */
     case WTSClientAddress: {
-        BYTE address[24] = {0}; /* AF_UNSPEC: no remote client */
+        BYTE address[24] = {}; /* AF_UNSPEC: no remote client */
         return give(address, sizeof(address), buffer, returned);
     }
     case WTSClientDisplay: {
@@ -403,7 +403,7 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationA(HANDLE server, DWORD id, WTS_INFO
     }
     LPWSTR wide;
     DWORD size;
-    if (!WTSQuerySessionInformationW(server, id, klass, buffer ? &wide : NULL, returned ? &size : NULL))
+    if (!WTSQuerySessionInformationW(server, id, klass, buffer ? &wide : nullptr, returned ? &size : nullptr))
         return FALSE;
     BOOL text = klass <= WTSDomainName && klass != WTSOEMId && klass != WTSSessionId;
     text |= klass == WTSClientName || klass == WTSClientDirectory;
@@ -412,10 +412,10 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationA(HANDLE server, DWORD id, WTS_INFO
         *returned = size;
         return TRUE;
     }
-    int n = WideCharToMultiByte(CP_ACP, 0, wide, -1, NULL, 0, NULL, NULL);
-    LPSTR out = n > 0 ? LocalAlloc(LMEM_FIXED, n) : NULL;
+    int n = WideCharToMultiByte(CP_ACP, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+    LPSTR out = n > 0 ? LocalAlloc(LMEM_FIXED, n) : nullptr;
     if (out)
-        WideCharToMultiByte(CP_ACP, 0, wide, -1, out, n, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, wide, -1, out, n, nullptr, nullptr);
     LocalFree(wide);
     if (!out)
         return FALSE;

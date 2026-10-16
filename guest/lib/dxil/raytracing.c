@@ -207,7 +207,7 @@ int dxil_ray_arguments(Compiler *c, const DxFunction *f)
             storage = SpvStorageClassIncomingCallableDataKHR;
         else
             storage = SpvStorageClassIncomingRayPayloadKHR;
-        uint32_t type = pointee_type(c, ft->members[k], NULL);
+        uint32_t type = pointee_type(c, ft->members[k], nullptr);
         uint32_t *var = k == 1 ? &c->hit_attributes : &c->incoming;
         if (!*var)
             *var = dxil_global(c, storage, type, 0);
@@ -348,11 +348,11 @@ static int ray_stage_op(Compiler *c, const DxInst *ins, uint32_t op)
 {
     switch (op) {
     case 155:
-        spv_op_void(&c->b, SpvOpIgnoreIntersectionKHR, NULL, 0);
+        spv_op_void(&c->b, SpvOpIgnoreIntersectionKHR, nullptr, 0);
         c->b.block_open = 0;
         return 1;
     case 156:
-        spv_op_void(&c->b, SpvOpTerminateRayKHR, NULL, 0);
+        spv_op_void(&c->b, SpvOpTerminateRayKHR, nullptr, 0);
         c->b.block_open = 0;
         return 1;
     case 157: return trace_ray(c, ins) ? -1 : 1;

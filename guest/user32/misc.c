@@ -295,7 +295,7 @@ static ACCEL_TABLE *new_accel_table(int count, const void *resource)
     ACCEL_TABLE *t = UserAlloc(sizeof(*t) + (SIZE_T)count * sizeof(ACCEL));
     if (!t) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     t->Count = count;
     t->Resource = resource;
@@ -331,9 +331,9 @@ static int read_accel_table(HACCEL accel, ACCEL *out, int max)
 WINUSERAPI HACCEL WINAPI LoadAcceleratorsW(HINSTANCE instance, LPCWSTR name)
 {
     HRSRC res = FindResourceW(instance, name, MAKEINTRESOURCEW(9));
-    const ACCEL_RESOURCE *data = res ? LockResource(LoadResource(instance, res)) : NULL;
+    const ACCEL_RESOURCE *data = res ? LockResource(LoadResource(instance, res)) : nullptr;
     if (!data)
-        return NULL;
+        return nullptr;
     RtlEnterCriticalSection(&g_accel_lock);
     for (ACCEL_TABLE *t = g_accels; t; t = t->Next)
         if (t->Resource == data) {
@@ -346,11 +346,11 @@ WINUSERAPI HACCEL WINAPI LoadAcceleratorsW(HINSTANCE instance, LPCWSTR name)
         ;
     if (!count) {
         SetLastError(ERROR_RESOURCE_DATA_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     ACCEL_TABLE *t = new_accel_table(count, data);
     if (!t)
-        return NULL;
+        return nullptr;
     for (int i = 0; i < count; i++)
         t->Entries[i] = (ACCEL){(BYTE)(data[i].Flags & 0x7F), data[i].Key, data[i].Cmd};
     publish_accel_table(t);
@@ -361,11 +361,11 @@ WINUSERAPI HACCEL WINAPI CreateAcceleratorTableW(LPACCEL entries, int count)
 {
     if (!entries || count <= 0) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
-    ACCEL_TABLE *t = new_accel_table(count, NULL);
+    ACCEL_TABLE *t = new_accel_table(count, nullptr);
     if (!t)
-        return NULL;
+        return nullptr;
     for (int i = 0; i < count; i++) {
         t->Entries[i] = entries[i];
         t->Entries[i].fVirt &= 0x7F;
@@ -386,7 +386,7 @@ WINUSERAPI int WINAPI CopyAcceleratorTableW(HACCEL accel, LPACCEL entries, int c
 
 WINUSERAPI BOOL WINAPI DestroyAcceleratorTable(HACCEL accel)
 {
-    ACCEL_TABLE *found = NULL;
+    ACCEL_TABLE *found = nullptr;
     RtlEnterCriticalSection(&g_accel_lock);
     for (ACCEL_TABLE **p = &g_accels; *p; p = &(*p)->Next)
         if ((HACCEL)*p == accel) {
@@ -437,14 +437,14 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
     if (msg->message != WM_KEYDOWN && msg->message != WM_SYSKEYDOWN && msg->message != WM_CHAR &&
         msg->message != WM_SYSCHAR)
         return 0;
-    int count = read_accel_table(accel, NULL, 0);
+    int count = read_accel_table(accel, nullptr, 0);
     if (count <= 0)
         return 0;
     ACCEL stack[32], *entries = count <= 32 ? stack : UserAlloc((SIZE_T)count * sizeof(ACCEL));
     if (!entries)
         return 0;
     count = read_accel_table(accel, entries, count);
-    const ACCEL *hit = NULL;
+    const ACCEL *hit = nullptr;
     for (int i = 0; i < count && !hit; i++)
         if (accel_matches(&entries[i], msg))
             hit = &entries[i];
@@ -510,12 +510,12 @@ WINUSERAPI void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object, LONG 
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)
 {
-    return NtUserSetWindowsHookEx(instance, NULL, thread, id, proc, FALSE);
+    return NtUserSetWindowsHookEx(instance, nullptr, thread, id, proc, FALSE);
 }
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExA(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)
 {
-    return NtUserSetWindowsHookEx(instance, NULL, thread, id, proc, TRUE);
+    return NtUserSetWindowsHookEx(instance, nullptr, thread, id, proc, TRUE);
 }
 
 WINUSERAPI BOOL WINAPI UnhookWindowsHookEx(HHOOK hook)
@@ -638,14 +638,14 @@ WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data)
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name)
 {
     ATOM atom = prop_atom(name, FALSE);
-    return atom ? NtUserGetProp(hwnd, atom) : NULL;
+    return atom ? NtUserGetProp(hwnd, atom) : nullptr;
 }
 
 WINUSERAPI HANDLE WINAPI RemovePropW(HWND hwnd, LPCWSTR name)
 {
     ATOM atom = prop_atom(name, FALSE);
     if (!atom)
-        return NULL;
+        return nullptr;
     HANDLE data = NtUserRemoveProp(hwnd, atom);
     if (data && !IS_INTRESOURCE(name))
         GlobalDeleteAtom(atom);
@@ -711,12 +711,12 @@ static int enum_props(HWND hwnd, PROPENUMPROCEXW proc_ex, PROPENUMPROCW proc, UL
 
 WINUSERAPI int WINAPI EnumPropsExW(HWND hwnd, PROPENUMPROCEXW proc, LPARAM param)
 {
-    return proc ? enum_props(hwnd, proc, NULL, (ULONG_PTR)param) : -1;
+    return proc ? enum_props(hwnd, proc, nullptr, (ULONG_PTR)param) : -1;
 }
 
 WINUSERAPI int WINAPI EnumPropsW(HWND hwnd, PROPENUMPROCW proc)
 {
-    return proc ? enum_props(hwnd, NULL, proc, 0) : -1;
+    return proc ? enum_props(hwnd, nullptr, proc, 0) : -1;
 }
 
 /* ------------------------------------------------------------------ layered windows and regions */
@@ -750,7 +750,7 @@ WINUSERAPI BOOL WINAPI UpdateLayeredWindow(HWND hwnd, HDC dst, POINT *dst_pos, S
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return NtUserUpdateLayeredWindow(hwnd, dst, dst_pos, size, src, src_pos, key, blend, flags, NULL);
+    return NtUserUpdateLayeredWindow(hwnd, dst, dst_pos, size, src, src_pos, key, blend, flags, nullptr);
 }
 
 WINUSERAPI int WINAPI SetWindowRgn(HWND hwnd, HRGN region, BOOL redraw)
@@ -837,16 +837,16 @@ static PVOID register_notification(HANDLE recipient, DWORD flags, BOOL power)
 {
     if (!recipient) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     if (!(flags & (DEVICE_NOTIFY_SERVICE_HANDLE | DEVICE_NOTIFY_CALLBACK)) && !IsWindow((HWND)recipient)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return NULL;
+        return nullptr;
     }
     NOTIFY_REGISTRATION *r = UserAlloc(sizeof(*r));
     if (!r) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     r->Recipient = recipient;
     r->Flags = flags;
@@ -881,7 +881,7 @@ WINUSERAPI HDEVNOTIFY WINAPI RegisterDeviceNotificationW(HANDLE recipient, LPVOI
 {
     if (!filter && !(flags & DEVICE_NOTIFY_ALL_INTERFACE_CLASSES)) {
         SetLastError(ERROR_INVALID_DATA);
-        return NULL;
+        return nullptr;
     }
     return register_notification(recipient, flags, FALSE);
 }
@@ -900,7 +900,7 @@ WINUSERAPI HPOWERNOTIFY WINAPI RegisterPowerSettingNotification(HANDLE recipient
 {
     if (!setting) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     return register_notification(recipient, flags, TRUE);
 }
@@ -963,11 +963,11 @@ WINUSERAPI BOOL WINAPI EnumDisplayDevicesA(LPCSTR device, DWORD index, PDISPLAY_
     DISPLAY_DEVICEA da;
     memset(&da, 0, sizeof(da));
     da.cb = info->cb;
-    WideCharToMultiByte(CP_ACP, 0, dw.DeviceName, -1, da.DeviceName, sizeof(da.DeviceName), NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, dw.DeviceString, -1, da.DeviceString, sizeof(da.DeviceString), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceName, -1, da.DeviceName, sizeof(da.DeviceName), nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceString, -1, da.DeviceString, sizeof(da.DeviceString), nullptr, nullptr);
     da.StateFlags = dw.StateFlags;
-    WideCharToMultiByte(CP_ACP, 0, dw.DeviceID, -1, da.DeviceID, sizeof(da.DeviceID), NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, dw.DeviceKey, -1, da.DeviceKey, sizeof(da.DeviceKey), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceID, -1, da.DeviceID, sizeof(da.DeviceID), nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, dw.DeviceKey, -1, da.DeviceKey, sizeof(da.DeviceKey), nullptr, nullptr);
     memcpy(info, &da, info->cb > sizeof(da) ? sizeof(da) : info->cb);
     return TRUE;
 }

@@ -13,7 +13,7 @@ static SRWLOCK g_drop_lock = SRWLOCK_INIT;
 static DROP_ENTRY *g_drops;
 static ULONG g_drop_count, g_drop_capacity;
 
-static const WCHAR g_target_prop[] = L"OleDropTargetInterface";
+static constexpr WCHAR g_target_prop[] = L"OleDropTargetInterface";
 
 static LONG find_entry(HWND hwnd)
 {
@@ -63,7 +63,7 @@ WINOLEAPI HRESULT WINAPI RevokeDragDrop(HWND hwnd)
 {
     AcquireSRWLockExclusive(&g_drop_lock);
     LONG i = hwnd ? find_entry(hwnd) : -1;
-    IDropTarget *target = NULL;
+    IDropTarget *target = nullptr;
     if (i >= 0) {
         target = g_drops[i].Target;
         g_drops[i] = g_drops[--g_drop_count];
@@ -82,14 +82,14 @@ IDropTarget *OleFindDropTarget(HWND hwnd)
     for (; hwnd; hwnd = GetAncestor(hwnd, GA_PARENT)) {
         AcquireSRWLockExclusive(&g_drop_lock);
         LONG i = find_entry(hwnd);
-        IDropTarget *target = i >= 0 ? g_drops[i].Target : NULL;
+        IDropTarget *target = i >= 0 ? g_drops[i].Target : nullptr;
         if (target)
             target->lpVtbl->AddRef(target);
         ReleaseSRWLockExclusive(&g_drop_lock);
         if (target)
             return target;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ the drag loop */
@@ -124,7 +124,7 @@ static DWORD current_key_state(void)
 static BOOL pump_messages(BOOL *escape)
 {
     MSG msg;
-    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
         if (msg.message == WM_QUIT) {
             PostQuitMessage((int)msg.wParam);
             return FALSE;
@@ -145,7 +145,7 @@ static BOOL pump_messages(BOOL *escape)
 static void set_feedback(IDropSource *source, DWORD effect)
 {
     if (source->lpVtbl->GiveFeedback(source, effect) == DRAGDROP_S_USEDEFAULTCURSORS)
-        SetCursor(LoadCursorW(NULL, (effect & ~DROPEFFECT_SCROLL) ? IDC_ARROW : IDC_NO));
+        SetCursor(LoadCursorW(nullptr, (effect & ~DROPEFFECT_SCROLL) ? IDC_ARROW : IDC_NO));
 }
 
 WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWORD ok_effects, DWORD *effect)
@@ -153,8 +153,8 @@ WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWOR
     if (!data || !source || !effect)
         return E_INVALIDARG;
     *effect = DROPEFFECT_NONE;
-    IDropTarget *target = NULL;
-    HWND target_window = NULL;
+    IDropTarget *target = nullptr;
+    HWND target_window = nullptr;
     DWORD current = DROPEFFECT_NONE;
     HRESULT hr;
     for (;;) {
@@ -172,7 +172,7 @@ WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWOR
 
         HWND window = WindowFromPoint(cursor);
         if (window != target_window) {
-            IDropTarget *next = window ? OleFindDropTarget(window) : NULL;
+            IDropTarget *next = window ? OleFindDropTarget(window) : nullptr;
             if (next != target) {
                 if (target) {
                     target->lpVtbl->DragLeave(target);
@@ -195,7 +195,7 @@ WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWOR
             current = DROPEFFECT_NONE;
         current &= ok_effects | DROPEFFECT_SCROLL;
         set_feedback(source, current);
-        MsgWaitForMultipleObjects(0, NULL, FALSE, 50, QS_ALLINPUT);
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
     }
 
     if (hr == DRAGDROP_S_DROP && target && (current & ~DROPEFFECT_SCROLL)) {

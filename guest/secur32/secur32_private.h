@@ -7,7 +7,6 @@
 #define MIME_BUILD_SECUR32
 #include <mime/win32/sspi.h>
 #include <mime/win32/winnls.h>
-#include <stdbool.h>
 
 #ifndef ERROR_CANT_ACCESS_DOMAIN_INFO
 #define ERROR_CANT_ACCESS_DOMAIN_INFO 1351L

@@ -21,9 +21,9 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 PWSTR SecAnsiToWide(PCSTR text)
 {
     if (!text)
-        return NULL;
-    int n = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
-    PWSTR out = n > 0 ? SecHeapAlloc(n * sizeof(WCHAR)) : NULL;
+        return nullptr;
+    int n = MultiByteToWideChar(CP_ACP, 0, text, -1, nullptr, 0);
+    PWSTR out = n > 0 ? SecHeapAlloc(n * sizeof(WCHAR)) : nullptr;
     if (out)
         MultiByteToWideChar(CP_ACP, 0, text, -1, out, n);
     return out;
@@ -32,11 +32,11 @@ PWSTR SecAnsiToWide(PCSTR text)
 PSTR SecWideToAnsi(PCWSTR text)
 {
     if (!text)
-        return NULL;
-    int n = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
-    PSTR out = n > 0 ? SecHeapAlloc(n) : NULL;
+        return nullptr;
+    int n = WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    PSTR out = n > 0 ? SecHeapAlloc(n) : nullptr;
     if (out)
-        WideCharToMultiByte(CP_ACP, 0, text, -1, out, n, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, text, -1, out, n, nullptr, nullptr);
     return out;
 }
 

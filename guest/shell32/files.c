@@ -12,7 +12,7 @@
 /* the index-th name of a DROPFILES list, or the count when index is ~0. */
 static UINT query_drop(HDROP drop, UINT index, LPWSTR wide, LPSTR ansi, UINT chars)
 {
-    DROPFILES *files = drop ? GlobalLock((HGLOBAL)drop) : NULL;
+    DROPFILES *files = drop ? GlobalLock((HGLOBAL)drop) : nullptr;
     if (!files)
         return 0;
     SIZE_T size = GlobalSize((HGLOBAL)drop);
@@ -52,13 +52,13 @@ static UINT query_drop(HDROP drop, UINT index, LPWSTR wide, LPSTR ansi, UINT cha
         if (count++ != index)
             continue;
         if (ansi) {
-            int needed = WideCharToMultiByte(CP_ACP, 0, name, -1, NULL, 0, NULL, NULL);
+            int needed = WideCharToMultiByte(CP_ACP, 0, name, -1, nullptr, 0, nullptr, nullptr);
             if (needed <= 0) {
                 result = 0;
             } else if (!chars) {
                 result = (UINT)needed - 1;
             } else {
-                int n = WideCharToMultiByte(CP_ACP, 0, name, -1, ansi, (int)chars, NULL, NULL);
+                int n = WideCharToMultiByte(CP_ACP, 0, name, -1, ansi, (int)chars, nullptr, nullptr);
                 ansi[chars - 1] = 0;
                 result = n > 0 ? (UINT)n - 1 : (UINT)strlen(ansi);
             }
@@ -82,18 +82,18 @@ static UINT query_drop(HDROP drop, UINT index, LPWSTR wide, LPSTR ansi, UINT cha
 
 SHSTDAPI UINT WINAPI DragQueryFileW(HDROP drop, UINT index, LPWSTR file, UINT chars)
 {
-    return query_drop(drop, index, file, NULL, file ? chars : 0);
+    return query_drop(drop, index, file, nullptr, file ? chars : 0);
 }
 
 SHSTDAPI UINT WINAPI DragQueryFileA(HDROP drop, UINT index, LPSTR file, UINT chars)
 {
     char none;
-    return query_drop(drop, index, NULL, file ? file : &none, file ? chars : 0);
+    return query_drop(drop, index, nullptr, file ? file : &none, file ? chars : 0);
 }
 
 SHSTDAPI BOOL WINAPI DragQueryPoint(HDROP drop, POINT *pt)
 {
-    DROPFILES *files = drop ? GlobalLock((HGLOBAL)drop) : NULL;
+    DROPFILES *files = drop ? GlobalLock((HGLOBAL)drop) : nullptr;
     if (!files)
         return FALSE;
     if (pt)
@@ -132,7 +132,7 @@ static BOOL class_string(LPCWSTR subkey, LPWSTR out, DWORD chars)
     if (RegOpenKeyExW(HKEY_CLASSES_ROOT, subkey, 0, KEY_READ, &key))
         return FALSE;
     DWORD type, bytes = (chars - 1) * sizeof(WCHAR);
-    LSTATUS status = RegQueryValueExW(key, NULL, NULL, &type, (BYTE *)out, &bytes);
+    LSTATUS status = RegQueryValueExW(key, nullptr, nullptr, &type, (BYTE *)out, &bytes);
     RegCloseKey(key);
     if (status || type != REG_SZ || bytes < 2 * sizeof(WCHAR))
         return FALSE;
@@ -170,18 +170,18 @@ static void type_name(LPCWSTR path, DWORD attributes, LPWSTR out)
 /* SHGFI_EXETYPE: "PE" or "MZ" in the low word, the subsystem version for windows programs in the high word. */
 static DWORD_PTR exe_type(LPCWSTR path)
 {
-    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-                              OPEN_EXISTING, 0, NULL);
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return 0;
     IMAGE_DOS_HEADER dos;
     IMAGE_NT_HEADERS64 nt;
     DWORD read;
     DWORD_PTR result = 0;
-    if (ReadFile(file, &dos, sizeof(dos), &read, NULL) && read == sizeof(dos) && dos.e_magic == 0x5A4D) {
+    if (ReadFile(file, &dos, sizeof(dos), &read, nullptr) && read == sizeof(dos) && dos.e_magic == 0x5A4D) {
         result = 0x5A4D;
         LARGE_INTEGER offset = {.QuadPart = dos.e_lfanew};
-        if (SetFilePointerEx(file, offset, NULL, FILE_BEGIN) && ReadFile(file, &nt, sizeof(nt), &read, NULL) &&
+        if (SetFilePointerEx(file, offset, nullptr, FILE_BEGIN) && ReadFile(file, &nt, sizeof(nt), &read, nullptr) &&
             read >= offsetof(IMAGE_NT_HEADERS64, OptionalHeader.Subsystem) + sizeof(USHORT) &&
             nt.Signature == IMAGE_NT_SIGNATURE) {
             result = 0x4550;
@@ -204,7 +204,7 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
         if (!ShPathFromIdList((PCIDLIST_ABSOLUTE)path, full, MAX_PATH))
             return 0;
     } else {
-        DWORD n = GetFullPathNameW(path, MAX_PATH, full, NULL);
+        DWORD n = GetFullPathNameW(path, MAX_PATH, full, nullptr);
         if (!n || n >= MAX_PATH)
             return 0;
     }
@@ -219,7 +219,7 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
         return 0;
     DWORD_PTR result = 1;
     if (flags & (SHGFI_ICON | SHGFI_SYSICONINDEX | SHGFI_ICONLOCATION)) {
-        info->hIcon = NULL;
+        info->hIcon = nullptr;
         info->iIcon = 0;
         result = 0;
     }
@@ -247,21 +247,21 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
 
 SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoA(LPCSTR path, DWORD attributes, SHFILEINFOA *info, UINT size, UINT flags)
 {
-    SHFILEINFOW wide = {0};
+    SHFILEINFOW wide = {};
     LPWSTR wide_path = (flags & SHGFI_PIDL) ? (LPWSTR)path : ShWiden(path);
     if (!wide_path)
         return 0;
     if (info && size >= sizeof(*info))
         wide.dwAttributes = info->dwAttributes;
-    DWORD_PTR result = SHGetFileInfoW(wide_path, attributes, info ? &wide : NULL, sizeof(wide), flags);
+    DWORD_PTR result = SHGetFileInfoW(wide_path, attributes, info ? &wide : nullptr, sizeof(wide), flags);
     if (!(flags & SHGFI_PIDL))
         ShFree(wide_path);
     if (info && size >= sizeof(*info) && !(flags & SHGFI_EXETYPE)) {
         info->hIcon = wide.hIcon;
         info->iIcon = wide.iIcon;
         info->dwAttributes = wide.dwAttributes;
-        WideCharToMultiByte(CP_ACP, 0, wide.szDisplayName, -1, info->szDisplayName, MAX_PATH, NULL, NULL);
-        WideCharToMultiByte(CP_ACP, 0, wide.szTypeName, -1, info->szTypeName, 80, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, wide.szDisplayName, -1, info->szDisplayName, MAX_PATH, nullptr, nullptr);
+        WideCharToMultiByte(CP_ACP, 0, wide.szTypeName, -1, info->szTypeName, 80, nullptr, nullptr);
     }
     return result;
 }
@@ -273,7 +273,7 @@ SHSTDAPI HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCK
 {
     if (!info || info->cbSize != sizeof(*info) || (UINT)id >= SIID_MAX_ICONS)
         return E_INVALIDARG;
-    LPCWSTR system = NULL;
+    LPCWSTR system = nullptr;
     switch (id) {
     case SIID_APPLICATION:
         system = IDI_APPLICATION;
@@ -296,15 +296,15 @@ SHSTDAPI HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCK
     default:
         break;
     }
-    info->hIcon = NULL;
+    info->hIcon = nullptr;
     info->iSysImageIndex = -1;
     info->iIcon = 0;
     info->szPath[0] = 0;
     /* there is no icon file to name, so only requests for the icon itself succeed. */
     if (!system || !(flags & SHGSI_ICON) || (flags & SHGSI_SYSICONINDEX))
         return HRESULT_FROM_WIN32(ERROR_RESOURCE_NAME_NOT_FOUND);
-    HICON shared = LoadIconW(NULL, system);
-    info->hIcon = shared ? CopyIcon(shared) : NULL;
+    HICON shared = LoadIconW(nullptr, system);
+    info->hIcon = shared ? CopyIcon(shared) : nullptr;
     if (!info->hIcon)
         return HRESULT_FROM_WIN32(ERROR_RESOURCE_NAME_NOT_FOUND);
     return S_OK;

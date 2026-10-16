@@ -124,7 +124,7 @@ static PRUNTIME_FUNCTION search_table(PRUNTIME_FUNCTION table, ULONG count, ULON
         else
             return &table[mid];
     }
-    return NULL;
+    return nullptr;
 }
 
 NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base, PVOID history)
@@ -135,10 +135,10 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
         PRUNTIME_FUNCTION table = LdrpImageDirectory(entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size);
         *image_base = (ULONG64)entry->DllBase;
         if (!table)
-            return NULL;
+            return nullptr;
         return search_table(table, size / sizeof(RUNTIME_FUNCTION), (ULONG)(pc - (ULONG64)entry->DllBase));
     }
-    PRUNTIME_FUNCTION found = NULL;
+    PRUNTIME_FUNCTION found = nullptr;
     RtlAcquireSRWLockShared(&g_dynamic_lock);
     for (PLIST_ENTRY l = g_dynamic.Flink; l != &g_dynamic; l = l->Flink) {
         DYNAMIC_TABLE *t = CONTAINING_RECORD(l, DYNAMIC_TABLE, Links);
@@ -171,8 +171,8 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlAddFunctionTable(PRUNTIME_FUNCTION table, ULONG co
     t->Base = base;
     t->Begin = base + (count ? table[0].BeginAddress : 0);
     t->End = base + (count ? table[count - 1].EndAddress : 0);
-    t->Callback = NULL;
-    t->Context = NULL;
+    t->Callback = nullptr;
+    t->Context = nullptr;
     RtlAcquireSRWLockExclusive(&g_dynamic_lock);
     InsertTailList(&g_dynamic, &t->Links);
     RtlReleaseSRWLockExclusive(&g_dynamic_lock);
@@ -208,7 +208,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlInstallFunctionTableCallback(ULONG64 identifier, U
 
 NTDLL_EXPORT BOOLEAN NTAPI RtlDeleteFunctionTable(PRUNTIME_FUNCTION table)
 {
-    DYNAMIC_TABLE *found = NULL;
+    DYNAMIC_TABLE *found = nullptr;
     RtlAcquireSRWLockExclusive(&g_dynamic_lock);
     for (PLIST_ENTRY l = g_dynamic.Flink; l != &g_dynamic; l = l->Flink) {
         DYNAMIC_TABLE *t = CONTAINING_RECORD(l, DYNAMIC_TABLE, Links);
@@ -221,7 +221,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDeleteFunctionTable(PRUNTIME_FUNCTION table)
     RtlReleaseSRWLockExclusive(&g_dynamic_lock);
     if (found)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, found);
-    return found != NULL;
+    return found != nullptr;
 }
 
 /*
@@ -240,8 +240,8 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlAddGrowableFunctionTable(PVOID *handle, PRUNTIME_
     t->Count = count;
     t->Base = t->Begin = begin;
     t->End = end;
-    t->Callback = NULL;
-    t->Context = NULL;
+    t->Callback = nullptr;
+    t->Context = nullptr;
     RtlAcquireSRWLockExclusive(&g_dynamic_lock);
     InsertTailList(&g_dynamic, &t->Links);
     RtlReleaseSRWLockExclusive(&g_dynamic_lock);
@@ -425,8 +425,8 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
 
     if (offset >= info->SizeOfProlog && in_epilog(pc, base, function, info)) {
         run_epilog(c, info, pointers);
-        *handler_data = NULL;
-        return NULL;
+        *handler_data = nullptr;
+        return nullptr;
     }
 
     for (;;) {
@@ -481,8 +481,8 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
                     c->Rsp += 8;
                 c->Rip = *(ULONG64 *)c->Rsp;
                 c->Rsp = *(ULONG64 *)(c->Rsp + 24);
-                *handler_data = NULL;
-                return NULL;
+                *handler_data = nullptr;
+                return nullptr;
             default: /* epilog descriptors and spare codes describe nothing to undo here. */
                 break;
             }
@@ -509,28 +509,28 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
         *handler_data = (PVOID)(handler + 1);
         return (PEXCEPTION_ROUTINE)(base + *handler);
     }
-    *handler_data = NULL;
-    return NULL;
+    *handler_data = nullptr;
+    return nullptr;
 }
 
 /* one frame up: virtual unwind, or a leaf function returning straight away. */
 static PEXCEPTION_ROUTINE unwind_frame(ULONG type, PCONTEXT c, PDISPATCHER_CONTEXT dc)
 {
     ULONG64 base = 0;
-    PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c->Rip, &base, NULL);
+    PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c->Rip, &base, nullptr);
     dc->ControlPc = c->Rip;
     dc->ImageBase = base;
     dc->FunctionEntry = f;
-    dc->LanguageHandler = NULL;
-    dc->HandlerData = NULL;
+    dc->LanguageHandler = nullptr;
+    dc->HandlerData = nullptr;
     if (!f) {
         dc->EstablisherFrame = c->Rsp;
         c->Rip = *(ULONG64 *)c->Rsp;
         c->Rsp += 8;
-        return NULL;
+        return nullptr;
     }
-    PVOID data = NULL;
-    PEXCEPTION_ROUTINE handler = RtlVirtualUnwind(type, base, c->Rip, f, c, &data, &dc->EstablisherFrame, NULL);
+    PVOID data = nullptr;
+    PEXCEPTION_ROUTINE handler = RtlVirtualUnwind(type, base, c->Rip, f, c, &data, &dc->EstablisherFrame, nullptr);
     dc->LanguageHandler = handler;
     dc->HandlerData = data;
     return handler;
@@ -564,7 +564,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
         dc.ContextRecord = &frame_context;
         dc.TargetIp = 0;
         dc.ScopeIndex = 0;
-        dc.HistoryTable = NULL;
+        dc.HistoryTable = nullptr;
         EXCEPTION_DISPOSITION r = handler(record, (PVOID)dc.EstablisherFrame, context, &dc);
         if (nested_frame == dc.EstablisherFrame) {
             record->ExceptionFlags &= ~EXCEPTION_NESTED_CALL;
@@ -573,7 +573,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
         switch (r) {
         case ExceptionContinueExecution:
             if (record->ExceptionFlags & EXCEPTION_NONCONTINUABLE) {
-                EXCEPTION_RECORD nested = {0};
+                EXCEPTION_RECORD nested = {};
                 nested.ExceptionCode = STATUS_NONCONTINUABLE_EXCEPTION;
                 nested.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
                 nested.ExceptionRecord = record;
@@ -588,7 +588,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
                 nested_frame = dc.EstablisherFrame;
             break;
         default: {
-            EXCEPTION_RECORD invalid = {0};
+            EXCEPTION_RECORD invalid = {};
             invalid.ExceptionCode = STATUS_INVALID_DISPOSITION;
             invalid.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
             invalid.ExceptionRecord = record;
@@ -701,7 +701,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
 NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
 {
     CONTEXT context;
-    RtlUnwindEx(target_frame, target_ip, record, value, &context, NULL);
+    RtlUnwindEx(target_frame, target_ip, record, value, &context, nullptr);
 }
 
 /* ------------------------------------------------------------ c language handler */

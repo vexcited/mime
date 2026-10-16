@@ -23,10 +23,10 @@ D3D10API HRESULT WINAPI D3D10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
                                                       IDXGISwapChain **swapchain, ID3D10Device **device)
 {
     if (swapchain)
-        *swapchain = NULL;
+        *swapchain = nullptr;
     if (!device)
         return E_INVALIDARG;
-    *device = NULL;
+    *device = nullptr;
     if (sdk != D3D10_SDK_VERSION) {
         D3d10SdkMismatch(sdk, D3D10_1_SDK_VERSION);
         return E_INVALIDARG;
@@ -38,7 +38,7 @@ D3D10API HRESULT WINAPI D3D10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
             return E_INVALIDARG;
     }
     flags = (flags | D3D10_DEVICE_FLAG_D3D10) & ~D3D10_CREATE_DEVICE_BGRA_SUPPORT;
-    ID3D11Device *d3d11 = NULL;
+    ID3D11Device *d3d11 = nullptr;
     HRESULT hr = D3d10CreateDevice11(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3d10DriverType(type), software,
                                      D3d10DeviceFlags(flags), D3D_FEATURE_LEVEL_10_0, desc, swapchain, &d3d11);
     if (SUCCEEDED(hr))
@@ -53,14 +53,14 @@ D3D10API HRESULT WINAPI D3D10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
 D3D10API HRESULT WINAPI D3D10CreateDevice(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE type, HMODULE software, UINT flags,
                                           UINT sdk, ID3D10Device **device)
 {
-    return D3D10CreateDeviceAndSwapChain(adapter, type, software, flags, sdk, NULL, NULL, device);
+    return D3D10CreateDeviceAndSwapChain(adapter, type, software, flags, sdk, nullptr, nullptr, device);
 }
 
 /* d3d10core.dll's, which windows' d3d10.dll imports. */
 static FARPROC core_entry(const char *name)
 {
     HMODULE core = LoadLibraryW(L"d3d10core.dll");
-    return core ? GetProcAddress(core, name) : NULL;
+    return core ? GetProcAddress(core, name) : nullptr;
 }
 
 D3D10API UINT64 WINAPI D3D10GetVersion(void)

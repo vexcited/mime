@@ -421,7 +421,7 @@ static const DxbcRootBinding *root_binding(Compiler *c, uint32_t type, uint32_t 
             return b;
     }
     fail(c, "register outside the root signature");
-    return NULL;
+    return nullptr;
 }
 
 /* a dword of the push constants, the offset a uint value in bytes. */
@@ -433,7 +433,7 @@ static uint32_t push_word(Compiler *c, uint32_t byte_offset)
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->push = global(c, SpvStorageClassPushConstant, block, 0);
     }
     /* reads past the 64 dwords are clamped, as vulkan leaves them undefined. */
@@ -491,7 +491,7 @@ static uint32_t nonuniform(Compiler *c, uint32_t id, uint32_t binding)
     };
     spv_capability(&c->b, SpvCapabilityShaderNonUniform);
     spv_capability(&c->b, capabilities[binding]);
-    spv_decorate(&c->b, id, SpvDecorationNonUniform, NULL, 0);
+    spv_decorate(&c->b, id, SpvDecorationNonUniform, nullptr, 0);
     return id;
 }
 
@@ -592,8 +592,8 @@ static uint32_t heap_record(Compiler *c, uint32_t index, uint32_t half)
         uint32_t block = spv_type_struct(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, NULL, 0);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, nullptr, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->records = global(c, SpvStorageClassStorageBuffer, block, 0);
         decorate1(c, c->records, SpvDecorationDescriptorSet, DXBC_ROOT_SET_RECORDS);
         decorate1(c, c->records, SpvDecorationBinding, 0);
@@ -623,7 +623,7 @@ static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t strid
     uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
     uint32_t offset = 0;
     spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-    spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+    spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
     return *cached = spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, block);
 }
 
@@ -672,7 +672,7 @@ static uint32_t cb_load(Compiler *c, uint32_t slot, uint32_t element, const Dxbc
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->cb_heap = global(c, SpvStorageClassUniform, spv_type_runtime_array(&c->b, block), 0);
         decorate1(c, c->cb_heap, SpvDecorationDescriptorSet, DXBC_SET_HEAP);
         decorate1(c, c->cb_heap, SpvDecorationBinding, DXBC_HEAP_UNIFORM_BUFFER);
@@ -1070,7 +1070,7 @@ static uint32_t pick(Compiler *c, uint32_t vec4, Kind k, uint8_t mask, const uin
 static void decorate_precise(Compiler *c, const DxbcInstruction *ins, uint32_t id)
 {
     if (ins->precise)
-        spv_decorate(&c->b, id, SpvDecorationNoContraction, NULL, 0);
+        spv_decorate(&c->b, id, SpvDecorationNoContraction, nullptr, 0);
 }
 
 /* ------------------------------------------------------------------ built-ins and the interface */
@@ -1087,7 +1087,7 @@ static uint32_t builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t 
     if (storage == SpvStorageClassInput && c->program == DXBC_PIXEL && type != c->t_bool &&
         (which == SpvBuiltInPrimitiveId || which == SpvBuiltInSampleId || which == SpvBuiltInLayer ||
          which == SpvBuiltInViewportIndex))
-        spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationFlat, nullptr, 0);
     if (which < 64)
         c->builtins[output][which] = var;
     return var;
@@ -1163,7 +1163,7 @@ static const DxbcSignatureElement *signature_element(const DxbcSignature *sig, u
     for (uint32_t i = 0; i < sig->count; i++)
         if (sig->elements[i].reg == reg && (sig->elements[i].mask & mask))
             return &sig->elements[i];
-    return NULL;
+    return nullptr;
 }
 
 static Kind component_kind(uint32_t type) { return type == 1 ? K_UINT : type == 2 ? K_INT : K_FLOAT; }
@@ -1213,26 +1213,26 @@ static void load_inputs(Compiler *c)
         if (c->program == DXBC_PIXEL) {
             switch (d->interpolation) {
             case INTERP_CONSTANT:
-                spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0);
+                spv_decorate(&c->b, var, SpvDecorationFlat, nullptr, 0);
                 break;
             case INTERP_LINEAR_CENTROID:
-                spv_decorate(&c->b, var, SpvDecorationCentroid, NULL, 0);
+                spv_decorate(&c->b, var, SpvDecorationCentroid, nullptr, 0);
                 break;
             case INTERP_LINEAR_NOPERSPECTIVE:
-                spv_decorate(&c->b, var, SpvDecorationNoPerspective, NULL, 0);
+                spv_decorate(&c->b, var, SpvDecorationNoPerspective, nullptr, 0);
                 break;
             case INTERP_LINEAR_NOPERSPECTIVE_CENTROID:
-                spv_decorate(&c->b, var, SpvDecorationNoPerspective, NULL, 0);
-                spv_decorate(&c->b, var, SpvDecorationCentroid, NULL, 0);
+                spv_decorate(&c->b, var, SpvDecorationNoPerspective, nullptr, 0);
+                spv_decorate(&c->b, var, SpvDecorationCentroid, nullptr, 0);
                 break;
             case INTERP_LINEAR_SAMPLE:
                 spv_capability(&c->b, SpvCapabilitySampleRateShading);
-                spv_decorate(&c->b, var, SpvDecorationSample, NULL, 0);
+                spv_decorate(&c->b, var, SpvDecorationSample, nullptr, 0);
                 break;
             case INTERP_LINEAR_NOPERSPECTIVE_SAMPLE:
                 spv_capability(&c->b, SpvCapabilitySampleRateShading);
-                spv_decorate(&c->b, var, SpvDecorationNoPerspective, NULL, 0);
-                spv_decorate(&c->b, var, SpvDecorationSample, NULL, 0);
+                spv_decorate(&c->b, var, SpvDecorationNoPerspective, nullptr, 0);
+                spv_decorate(&c->b, var, SpvDecorationSample, nullptr, 0);
                 break;
             default:
                 break;
@@ -1402,7 +1402,7 @@ static uint32_t tess_level(Compiler *c, int inner, uint32_t storage)
     int fresh = !c->builtins[storage == SpvStorageClassOutput][which];
     uint32_t var = builtin(c, which, storage, array);
     if (fresh)
-        spv_decorate(&c->b, var, SpvDecorationPatch, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationPatch, nullptr, 0);
     return var;
 }
 
@@ -1442,7 +1442,7 @@ static void store_patch_constants(Compiler *c)
             if (!d->var) {
                 d->var = global(c, SpvStorageClassOutput, v4, 0);
                 decorate1(c, d->var, SpvDecorationLocation, reg);
-                spv_decorate(&c->b, d->var, SpvDecorationPatch, NULL, 0);
+                spv_decorate(&c->b, d->var, SpvDecorationPatch, nullptr, 0);
             }
             spv_store(&c->b, d->var, value);
         }
@@ -1465,7 +1465,7 @@ static void load_patch_constants(Compiler *c)
         if (d->mask) {
             uint32_t var = global(c, SpvStorageClassInput, v4, 0);
             decorate1(c, var, SpvDecorationLocation, reg);
-            spv_decorate(&c->b, var, SpvDecorationPatch, NULL, 0);
+            spv_decorate(&c->b, var, SpvDecorationPatch, nullptr, 0);
             spv_store(&c->b, base, spv_load(&c->b, v4, var));
         }
         for (uint32_t i = 0; i < 4; i++) {
@@ -1536,7 +1536,7 @@ static void make_control_point_outputs(Compiler *c)
     uint32_t array = spv_type_array(&c->b, c->t_vec[K_FLOAT][4], c->cp_out ? c->cp_out : 1);
     for (uint32_t reg = 0; reg < MAX_REGS; reg++) {
         int declared = c->has_cp_phase ? c->output_decl[reg].declared
-                                       : signature_element(&c->info->outputs, reg, 0xF) != NULL;
+                                       : signature_element(&c->info->outputs, reg, 0xF) != nullptr;
         if (!declared)
             continue;
         c->cp_outputs[reg] = global(c, SpvStorageClassOutput, array, 0);
@@ -1683,7 +1683,7 @@ static void declare_captures(Compiler *c)
         if (!e->system_value && e->reg + 1 > location && e->reg < 32)
             location = e->reg + 1;
     }
-    uint32_t offsets[4] = {0}, strides[4] = {0};
+    uint32_t offsets[4] = {}, strides[4] = {};
     for (uint32_t i = 0; i < o->so_count; i++)
         if (o->so[i].output_slot < 4)
             strides[o->so[i].output_slot] += o->so[i].component_count * 4;
@@ -1696,7 +1696,7 @@ static void declare_captures(Compiler *c)
         offsets[slot] += so->component_count * 4;
         if (!so->semantic_name || !so->component_count)
             continue;
-        const DxbcSignatureElement *e = NULL;
+        const DxbcSignatureElement *e = nullptr;
         for (uint32_t k = 0; k < c->info->outputs.count && !e; k++) {
             const DxbcSignatureElement *x = &c->info->outputs.elements[k];
             if (x->stream == so->stream && x->semantic_index == so->semantic_index && same_name(x->name, so->semantic_name))
@@ -2128,7 +2128,7 @@ static void make_registers(Compiler *c)
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->table = global(c, SpvStorageClassUniform, block, 0);
         decorate1(c, c->table, SpvDecorationDescriptorSet, DXBC_SET_TABLE);
         decorate1(c, c->table, SpvDecorationBinding, c->binding);
@@ -2343,7 +2343,7 @@ static void store_doubles(Compiler *c, const DxbcInstruction *ins, const DxbcOpe
         uint32_t w[6] = {bits, bits, picks[0], picks[1], picks[2], picks[3]};
         bits = spv_op(&c->b, SpvOpVectorShuffle, vec_type(c, K_UINT, n), w, 2 + n);
     }
-    store(c, NULL, dst, bits, K_UINT);
+    store(c, nullptr, dst, bits, K_UINT);
 }
 
 /* 32 bit results of the double lanes, to the destination's components in order. */
@@ -2352,7 +2352,7 @@ static void store_lanes(Compiler *c, const DxbcOperand *dst, uint32_t value, Kin
     uint32_t n = popcount(dst_mask(dst));
     if (n == 1)
         value = extract(c, vec_type(c, k, 1), value, 0);
-    store(c, NULL, dst, value, k);
+    store(c, nullptr, dst, value, k);
 }
 
 static void double_binary(Compiler *c, const DxbcInstruction *ins, uint32_t op)
@@ -2999,7 +2999,7 @@ static uint32_t stride_of(Compiler *c, const DxbcOperand *resource)
 static void load_words(Compiler *c, const DxbcInstruction *ins, int structured)
 {
     const DxbcOperand *resource = &ins->operands[structured ? 3 : 2];
-    uint32_t base = word_index(c, &ins->operands[1], structured ? &ins->operands[2] : NULL, stride_of(c, resource));
+    uint32_t base = word_index(c, &ins->operands[1], structured ? &ins->operands[2] : nullptr, stride_of(c, resource));
     uint8_t mask = dst_mask(&ins->operands[0]);
     uint32_t parts[4], n = 0;
     for (uint32_t i = 0; i < 4; i++)
@@ -3015,7 +3015,7 @@ static void load_words(Compiler *c, const DxbcInstruction *ins, int structured)
 static void store_words(Compiler *c, const DxbcInstruction *ins, int structured)
 {
     const DxbcOperand *resource = &ins->operands[0];
-    uint32_t base = word_index(c, &ins->operands[1], structured ? &ins->operands[2] : NULL, stride_of(c, resource));
+    uint32_t base = word_index(c, &ins->operands[1], structured ? &ins->operands[2] : nullptr, stride_of(c, resource));
     const DxbcOperand *value = &ins->operands[structured ? 3 : 2];
     uint8_t mask = dst_mask(resource);
     for (uint32_t i = 0; i < 4; i++)
@@ -3071,7 +3071,7 @@ static uint32_t atomic_pointer(Compiler *c, const DxbcOperand *resource, const D
             offset.swizzle[0] = address->swizzle[1];
             word = word_index(c, address, &offset, c->tgsm_stride[reg]);
         } else {
-            word = word_index(c, address, NULL, 0);
+            word = word_index(c, address, nullptr, 0);
         }
         *scope = SpvScopeWorkgroup;
         return spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassWorkgroup, c->t_u32), c->tgsm[reg], &word, 1);
@@ -3086,7 +3086,7 @@ static uint32_t atomic_pointer(Compiler *c, const DxbcOperand *resource, const D
         DxbcOperand offset = *address;
         offset.swizzle[0] = address->swizzle[1];
         *scope = SpvScopeDevice;
-        uint32_t word = r->structured ? word_index(c, address, &offset, r->stride) : word_index(c, address, NULL, 0);
+        uint32_t word = r->structured ? word_index(c, address, &offset, r->stride) : word_index(c, address, nullptr, 0);
         if (rb.size) {
             *in = word_in_bounds(c, &rb, word);
             word = spv_op3(&c->b, SpvOpSelect, c->t_u32, *in, word, uconst(c, 0));
@@ -3097,7 +3097,7 @@ static uint32_t atomic_pointer(Compiler *c, const DxbcOperand *resource, const D
     uint32_t image_ptr = uav_pointer(c, resource, &image_type);
     uint32_t coord;
     if (r->raw) {
-        coord = word_index(c, address, NULL, 0);
+        coord = word_index(c, address, nullptr, 0);
     } else if (r->structured) {
         DxbcOperand offset = *address;
         offset.swizzle[0] = address->swizzle[1];
@@ -3282,7 +3282,7 @@ static Flow *push_flow(Compiler *c, int kind)
 {
     if (c->flow_depth >= 64) {
         fail(c, "control flow nested too deep");
-        return NULL;
+        return nullptr;
     }
     Flow *f = &c->flow[c->flow_depth++];
     __builtin_memset(f, 0, sizeof(*f));
@@ -3299,7 +3299,7 @@ static Flow *break_target(Compiler *c, int loops_only)
             return f;
     }
     fail(c, "break or continue outside a loop");
-    return NULL;
+    return nullptr;
 }
 
 /* the condition of a conditional instruction: its operand compared with zero as the token says. */
@@ -3399,7 +3399,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         return 0;
     }
     case OP_ELSE: {
-        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : NULL;
+        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : nullptr;
         if (!f || f->kind != FLOW_IF || !f->else_label)
             return fail(c, "else without if");
         if (b->block_open)
@@ -3409,7 +3409,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         return 0;
     }
     case OP_ENDIF: {
-        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : NULL;
+        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : nullptr;
         if (!f || f->kind != FLOW_IF)
             return fail(c, "endif without if");
         if (b->block_open)
@@ -3438,7 +3438,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         return 0;
     }
     case OP_ENDLOOP: {
-        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : NULL;
+        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : nullptr;
         if (!f || f->kind != FLOW_LOOP)
             return fail(c, "endloop without loop");
         if (b->block_open)
@@ -3497,7 +3497,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     }
     case OP_CASE:
     case OP_DEFAULT: {
-        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : NULL;
+        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : nullptr;
         if (!f || f->kind != FLOW_SWITCH)
             return fail(c, "case outside a switch");
         uint32_t label;
@@ -3516,7 +3516,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         return 0;
     }
     case OP_ENDSWITCH: {
-        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : NULL;
+        Flow *f = c->flow_depth ? &c->flow[c->flow_depth - 1] : nullptr;
         if (!f || f->kind != FLOW_SWITCH)
             return fail(c, "endswitch without switch");
         if (b->block_open)
@@ -3540,7 +3540,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         uint32_t merge;
         begin_conditional(c, condition(c, ins, &ins->operands[0]), &merge);
         spv_capability(b, SpvCapabilityDemoteToHelperInvocation);
-        spv_op_void(b, SpvOpDemoteToHelperInvocation, NULL, 0);
+        spv_op_void(b, SpvOpDemoteToHelperInvocation, nullptr, 0);
         spv_branch(b, merge);
         spv_label(b, merge);
         c->info->uses_discard = 1;
@@ -3618,7 +3618,7 @@ static void msad(Compiler *c, const DxbcInstruction *ins)
  * center, for 1, 2, 4, 8 and 16 samples: those of count n start at n - 1.
  * vulkan's standard sample locations are the same.
  */
-static const int8_t SAMPLE_POSITIONS[31][2] = {
+static constexpr int8_t SAMPLE_POSITIONS[31][2] = {
     {0, 0},   {4, 4},   {-4, -4}, {-2, -6}, {6, -2}, {-6, 2}, {2, 6},  {1, -3},  {-1, 3},  {5, 1},   {-3, -5},
     {-5, 5},  {-7, -1}, {3, 7},   {7, -7},  {1, 1},  {-1, -3}, {-3, 2}, {4, -1},  {-5, -2}, {2, 5},   {5, 3},
     {3, -5},  {-2, 6},  {0, -7},  {-4, -6}, {-6, 4}, {-8, 0},  {7, -4}, {6, 7},   {-7, -8}};
@@ -3700,10 +3700,10 @@ static int feedback(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     c->feedback_status = 0;
     int result = instruction(c, &plain, at);
     c->feedback = 0;
-    c->min_lod = NULL;
+    c->min_lod = nullptr;
     const DxbcOperand *status = &ins->operands[1];
     uint32_t n = popcount(dst_mask(status));
-    store(c, NULL, status, c->feedback_status ? splat(c, K_UINT, n, c->feedback_status) : splat_const(c, K_UINT, n, 0),
+    store(c, nullptr, status, c->feedback_status ? splat(c, K_UINT, n, c->feedback_status) : splat_const(c, K_UINT, n, 0),
           K_UINT);
     return result;
 }
@@ -3759,7 +3759,7 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
         uint32_t mapped = spv_op3(&c->b, SpvOpSelect, c->t_u32,
                                   spv_op2(&c->b, SpvOpIEqual, c->t_bool, status, uconst(c, 0)), uconst(c, ~0u),
                                   uconst(c, 0));
-        store(c, NULL, &ins->operands[0], splat(c, K_UINT, popcount(dst_mask(&ins->operands[0])), mapped), K_UINT);
+        store(c, nullptr, &ins->operands[0], splat(c, K_UINT, popcount(dst_mask(&ins->operands[0])), mapped), K_UINT);
         break;
     }
     case OP_ABORT:
@@ -4124,13 +4124,13 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
             if (index)
                 spv_op_void(&c->b, SpvOpEmitStreamVertex, &s, 1);
             else
-                spv_op_void(&c->b, SpvOpEmitVertex, NULL, 0);
+                spv_op_void(&c->b, SpvOpEmitVertex, nullptr, 0);
         }
         if (cut) {
             if (index)
                 spv_op_void(&c->b, SpvOpEndStreamPrimitive, &s, 1);
             else
-                spv_op_void(&c->b, SpvOpEndPrimitive, NULL, 0);
+                spv_op_void(&c->b, SpvOpEndPrimitive, nullptr, 0);
         }
         break;
     }
@@ -4221,7 +4221,7 @@ static int build(Compiler *c)
     make_registers(c);
 
     /* the body, or a hull shader's phases, then the subroutines. */
-    uint32_t void_fn = spv_type_function(b, c->t_void, NULL, 0);
+    uint32_t void_fn = spv_type_function(b, c->t_void, nullptr, 0);
     c->body = spv_id(b);
     if (c->program == DXBC_HULL) {
         make_control_point_outputs(c);

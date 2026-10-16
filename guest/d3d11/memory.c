@@ -145,17 +145,17 @@ static D3dBlock *new_block(D3dDevice *device, D3dMemoryKind kind, BOOL image, UI
     D3dVk *vk = &device->vk;
     D3dBlock *block = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*block));
     if (!block)
-        return NULL;
+        return nullptr;
     block->kind = kind;
     block->image = image;
     block->type = type;
     block->size = size;
     VkMemoryAllocateFlagsInfo flags = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
     VkMemoryAllocateInfo info = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags, size, type};
-    if (vk->vkAllocateMemory(vk->device, &info, NULL, &block->memory) != VK_SUCCESS)
+    if (vk->vkAllocateMemory(vk->device, &info, nullptr, &block->memory) != VK_SUCCESS)
         goto fail;
     if (device->memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
-        void *mapped = NULL;
+        void *mapped = nullptr;
         if (vk->vkMapMemory(vk->device, block->memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
             goto fail;
         block->mapped = mapped;
@@ -164,7 +164,7 @@ static D3dBlock *new_block(D3dDevice *device, D3dMemoryKind kind, BOOL image, UI
         VkBufferCreateInfo buffer = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         buffer.size = size;
         buffer.usage = buffer_usage(device);
-        if (vk->vkCreateBuffer(vk->device, &buffer, NULL, &block->buffer) != VK_SUCCESS)
+        if (vk->vkCreateBuffer(vk->device, &buffer, nullptr, &block->buffer) != VK_SUCCESS)
             goto fail;
         vk->vkBindBufferMemory(vk->device, block->buffer, block->memory, 0);
     }
@@ -175,11 +175,11 @@ static D3dBlock *new_block(D3dDevice *device, D3dMemoryKind kind, BOOL image, UI
     return block;
 fail:
     if (block->buffer)
-        vk->vkDestroyBuffer(vk->device, block->buffer, NULL);
+        vk->vkDestroyBuffer(vk->device, block->buffer, nullptr);
     if (block->memory)
-        vk->vkFreeMemory(vk->device, block->memory, NULL);
+        vk->vkFreeMemory(vk->device, block->memory, nullptr);
     HeapFree(GetProcessHeap(), 0, block);
-    return NULL;
+    return nullptr;
 }
 
 static HRESULT allocate(D3dDevice *device, D3dMemoryKind kind, BOOL image, UINT type, VkDeviceSize size,
@@ -189,7 +189,7 @@ static HRESULT allocate(D3dDevice *device, D3dMemoryKind kind, BOOL image, UINT 
     if (!size)
         size = 1;
     AcquireSRWLockExclusive(&device->memory_lock);
-    D3dBlock *block = NULL;
+    D3dBlock *block = nullptr;
     VkDeviceSize offset = 0;
     for (D3dBlock *b = device->blocks; b; b = b->next)
         if (b->kind == kind && b->image == image && b->type == type && take_range(b, size, align, &offset)) {
@@ -209,7 +209,7 @@ static HRESULT allocate(D3dDevice *device, D3dMemoryKind kind, BOOL image, UINT 
     out->buffer = block->buffer;
     out->offset = offset;
     out->size = size;
-    out->mapped = block->mapped ? block->mapped + offset : NULL;
+    out->mapped = block->mapped ? block->mapped + offset : nullptr;
     return S_OK;
 }
 
@@ -264,11 +264,11 @@ HRESULT D3dMemoryInit(D3dDevice *device)
     info.size = 65536;
     info.usage = buffer_usage(device);
     VkBuffer probe;
-    if (vk->vkCreateBuffer(vk->device, &info, NULL, &probe) != VK_SUCCESS)
+    if (vk->vkCreateBuffer(vk->device, &info, nullptr, &probe) != VK_SUCCESS)
         return E_FAIL;
     VkMemoryRequirements req;
     vk->vkGetBufferMemoryRequirements(vk->device, probe, &req);
-    vk->vkDestroyBuffer(vk->device, probe, NULL);
+    vk->vkDestroyBuffer(vk->device, probe, nullptr);
     for (UINT kind = 0; kind < D3D_MEMORY_KINDS; kind++) {
         int type = pick_type(device, kind, req.memoryTypeBits);
         device->buffer_types[kind] = type < 0 ? ~0u : (UINT)type;
@@ -289,17 +289,17 @@ static D3dRingChunk *ring_chunk(D3dDevice *device, VkDeviceSize size)
         D3dRingChunk *chunk = *link;
         if (chunk->serial <= completed && chunk->alloc.size >= size) {
             *link = chunk->next;
-            chunk->next = NULL;
+            chunk->next = nullptr;
             chunk->head = 0;
             return chunk;
         }
     }
     D3dRingChunk *chunk = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*chunk));
     if (!chunk)
-        return NULL;
+        return nullptr;
     if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_UPLOAD, D3D_MAX(RING_CHUNK_SIZE, size), 256, &chunk->alloc))) {
         HeapFree(GetProcessHeap(), 0, chunk);
-        return NULL;
+        return nullptr;
     }
     return chunk;
 }
@@ -397,7 +397,7 @@ VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk)
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[i].pBufferInfo = &buffers[i];
     }
-    vk->vkUpdateDescriptorSets(vk->device, D3D_STAGES, writes, 0, NULL);
+    vk->vkUpdateDescriptorSets(vk->device, D3D_STAGES, writes, 0, nullptr);
     return chunk->table_set;
 }
 
@@ -408,15 +408,15 @@ void D3dMemoryDestroy(D3dDevice *device)
         D3dBlock *block = device->blocks;
         device->blocks = block->next;
         if (block->buffer)
-            vk->vkDestroyBuffer(vk->device, block->buffer, NULL);
-        vk->vkFreeMemory(vk->device, block->memory, NULL);
+            vk->vkDestroyBuffer(vk->device, block->buffer, nullptr);
+        vk->vkFreeMemory(vk->device, block->memory, nullptr);
         HeapFree(GetProcessHeap(), 0, block->free);
         HeapFree(GetProcessHeap(), 0, block);
     }
     if (device->ring_current) {
         device->ring_current->next = device->ring_chunks;
         device->ring_chunks = device->ring_current;
-        device->ring_current = NULL;
+        device->ring_current = nullptr;
     }
     while (device->ring_chunks) {
         D3dRingChunk *chunk = device->ring_chunks;

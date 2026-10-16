@@ -17,7 +17,7 @@ POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init
 {
     POBJECT_TYPE type = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(OBJECT_TYPE), KI_TAG('O', 'b', 'T', 'y'));
     if (!type)
-        return NULL;
+        return nullptr;
     size_t len = wcslen(name);
     if (len >= RTL_NUMBER_OF(type->NameBuffer))
         len = RTL_NUMBER_OF(type->NameBuffer) - 1;
@@ -45,7 +45,7 @@ NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCE
     h->PointerCount = 1;
     h->HandleCount = 0;
     h->Type = type;
-    h->Directory = NULL;
+    h->Directory = nullptr;
     h->Flags = 0;
     if (attributes) {
         if (attributes->Attributes & OBJ_PERMANENT)
@@ -109,7 +109,7 @@ PDISPATCHER_HEADER ObGetWaitObject(PVOID object)
         return type->Init.WaitObject(object);
     if (type->Init.Waitable)
         return object;
-    return NULL;
+    return nullptr;
 }
 
 /* ---------------------------------------------------------- directory */
@@ -129,7 +129,7 @@ static PVOID directory_lookup(POBJECT_DIRECTORY dir, PCUNICODE_STRING name)
         if (RtlEqualUnicodeString(&h->Name, name, TRUE))
             return e->Object;
     }
-    return NULL;
+    return nullptr;
 }
 
 NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_STRING name)
@@ -176,13 +176,13 @@ static void remove_from_directory(OBJECT_HEADER *h)
             *link = e->Next;
             KeReleaseSpinLock(&g_namespace_lock, irql);
             ExFreePool(e);
-            h->Directory = NULL;
+            h->Directory = nullptr;
             return;
         }
         link = &(*link)->Next;
     }
     KeReleaseSpinLock(&g_namespace_lock, irql);
-    h->Directory = NULL;
+    h->Directory = nullptr;
 }
 
 /*
@@ -197,10 +197,10 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
     if (!path)
         return STATUS_INSUFFICIENT_RESOURCES;
     ULONG len = 0;
-    PVOID current = NULL;
+    PVOID current = nullptr;
 
     if (root) {
-        NTSTATUS status = ObReferenceHandle(root, NULL, mode, &current, NULL);
+        NTSTATUS status = ObReferenceHandle(root, nullptr, mode, &current, nullptr);
         if (!NT_SUCCESS(status)) {
             ExFreePool(path);
             return status;
@@ -309,7 +309,7 @@ NTSTATUS NTAPI ObReferenceObjectByName(PUNICODE_STRING name, ULONG attributes, P
                                        ACCESS_MASK access, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                                        PVOID parse_context, PVOID *object)
 {
-    return ObLookupObjectName(name, NULL, attributes, type, mode, parse_context, object);
+    return ObLookupObjectName(name, nullptr, attributes, type, mode, parse_context, object);
 }
 
 /* creates (or opens) a directory chain such as L"\\Device". */
@@ -318,7 +318,7 @@ NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out)
     UNICODE_STRING name;
     RtlInitUnicodeString(&name, path);
     PVOID existing;
-    if (NT_SUCCESS(ObLookupObjectName(&name, NULL, 0, ObDirectoryType, KernelMode, NULL, &existing))) {
+    if (NT_SUCCESS(ObLookupObjectName(&name, nullptr, 0, ObDirectoryType, KernelMode, nullptr, &existing))) {
         if (out)
             *out = existing;
         else
@@ -341,7 +341,7 @@ NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out)
         deref_parent = TRUE;
     }
     POBJECT_DIRECTORY dir;
-    NTSTATUS status = ObCreateObject(ObDirectoryType, NULL, KernelMode, sizeof(OBJECT_DIRECTORY), (PVOID *)&dir);
+    NTSTATUS status = ObCreateObject(ObDirectoryType, nullptr, KernelMode, sizeof(OBJECT_DIRECTORY), (PVOID *)&dir);
     if (NT_SUCCESS(status)) {
         memset(dir, 0, sizeof(*dir));
         UNICODE_STRING leaf;
@@ -371,13 +371,13 @@ NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING targ
     BOOLEAN deref = FALSE;
     if (slash > 1) {
         UNICODE_STRING dir_name = {(USHORT)((slash - 1) * 2), (USHORT)((slash - 1) * 2), (PWSTR)buf};
-        NTSTATUS status = ObLookupObjectName(&dir_name, NULL, 0, ObDirectoryType, KernelMode, NULL, (PVOID *)&parent);
+        NTSTATUS status = ObLookupObjectName(&dir_name, nullptr, 0, ObDirectoryType, KernelMode, nullptr, (PVOID *)&parent);
         if (!NT_SUCCESS(status))
             return status;
         deref = TRUE;
     }
     POBJECT_SYMBOLIC_LINK sl;
-    NTSTATUS status = ObCreateObject(ObSymbolicLinkType, NULL, KernelMode, sizeof(OBJECT_SYMBOLIC_LINK), (PVOID *)&sl);
+    NTSTATUS status = ObCreateObject(ObSymbolicLinkType, nullptr, KernelMode, sizeof(OBJECT_SYMBOLIC_LINK), (PVOID *)&sl);
     if (NT_SUCCESS(status)) {
         sl->Target.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, target->Length + sizeof(WCHAR), KI_TAG('O', 'b', 'S', 'l'));
         if (!sl->Target.Buffer) {
@@ -417,7 +417,7 @@ NTSTATUS NTAPI IoCreateSymbolicLink(PUNICODE_STRING link, PUNICODE_STRING target
 NTSTATUS NTAPI IoDeleteSymbolicLink(PUNICODE_STRING link)
 {
     PVOID object;
-    NTSTATUS status = ObLookupObjectName(link, NULL, OBJ_OPENLINK, ObSymbolicLinkType, KernelMode, NULL, &object);
+    NTSTATUS status = ObLookupObjectName(link, nullptr, OBJ_OPENLINK, ObSymbolicLinkType, KernelMode, nullptr, &object);
     if (!NT_SUCCESS(status))
         return status;
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -476,7 +476,7 @@ static void symlink_delete(PVOID object)
 
 void ObInitialize(void)
 {
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = DIRECTORY_ALL_ACCESS;
     ObTypeType = ObCreateObjectType(L"Type", &init);
     ObDirectoryType = ObCreateObjectType(L"Directory", &init);
@@ -484,7 +484,7 @@ void ObInitialize(void)
     init.DeleteProcedure = symlink_delete;
     ObSymbolicLinkType = ObCreateObjectType(L"SymbolicLink", &init);
 
-    ObCreateObject(ObDirectoryType, NULL, KernelMode, sizeof(OBJECT_DIRECTORY), (PVOID *)&ObRootDirectory);
+    ObCreateObject(ObDirectoryType, nullptr, KernelMode, sizeof(OBJECT_DIRECTORY), (PVOID *)&ObRootDirectory);
     memset(ObRootDirectory, 0, sizeof(*ObRootDirectory));
     OBJECT_TO_HEADER(ObRootDirectory)->Flags |= OB_FLAG_PERMANENT;
 
@@ -494,7 +494,7 @@ void ObInitialize(void)
         L"\\Callback", L"\\KernelObjects", L"\\RPC Control",
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(dirs); i++)
-        ObCreateDirectory(dirs[i], NULL);
+        ObCreateDirectory(dirs[i], nullptr);
     ObCreateSymbolicLink(L"\\??", L"\\GLOBAL??");
     ObCreateSymbolicLink(L"\\DosDevices", L"\\GLOBAL??");
     ObCreateSymbolicLink(L"\\SystemRoot", L"\\GLOBAL??\\C:\\Windows");

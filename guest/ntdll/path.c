@@ -176,7 +176,7 @@ NTDLL_EXPORT ULONG NTAPI RtlGetFullPathName_U(PCWSTR name, ULONG size, PWSTR buf
         PWSTR p = buffer + len;
         while (p > buffer && p[-1] != '\\')
             p--;
-        *file_part = *p ? p : NULL;
+        *file_part = *p ? p : nullptr;
     }
     return bytes;
 }
@@ -214,7 +214,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDosPathNameToNtPathName_U(PCWSTR dos, PUNICODE_STR
         PWSTR p = buf + plen + rlen;
         while (p > buf && p[-1] != '\\')
             p--;
-        *file_part = *p ? p : NULL;
+        *file_part = *p ? p : nullptr;
     }
     return TRUE;
 }
@@ -228,7 +228,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(PCWSTR dos, 
 NTDLL_EXPORT BOOLEAN NTAPI RtlDosPathNameToRelativeNtPathName_U(PCWSTR dos, PUNICODE_STRING nt, PCWSTR *file_part,
                                                                 PVOID relative)
 {
-    return RtlDosPathNameToNtPathName_U(dos, nt, file_part, NULL);
+    return RtlDosPathNameToNtPathName_U(dos, nt, file_part, nullptr);
 }
 
 NTDLL_EXPORT void NTAPI RtlReleaseRelativeName(PVOID relative)
@@ -271,10 +271,10 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetCurrentDirectory_U(PCUNICODE_STRING dir)
     }
     /* the directory must exist. */
     UNICODE_STRING nt;
-    if (!RtlDosPathNameToNtPathName_U(full, &nt, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(full, &nt, nullptr, nullptr))
         return STATUS_OBJECT_NAME_INVALID;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_BASIC_INFORMATION info;
     status = NtQueryAttributesFile(&oa, &info);
     RtlFreeUnicodeString(&nt);
@@ -298,10 +298,10 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetCurrentDirectory_U(PCUNICODE_STRING dir)
 NTDLL_EXPORT BOOLEAN NTAPI RtlDoesFileExists_U(PCWSTR name)
 {
     UNICODE_STRING nt;
-    if (!RtlDosPathNameToNtPathName_U(name, &nt, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(name, &nt, nullptr, nullptr))
         return FALSE;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_BASIC_INFORMATION info;
     NTSTATUS status = NtQueryAttributesFile(&oa, &info);
     RtlFreeUnicodeString(&nt);

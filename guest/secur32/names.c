@@ -30,7 +30,7 @@ DWORD SecComputerName(PWSTR out, DWORD capacity)
 static bool read_string(PCUNICODE_STRING key, PCWSTR name, PWSTR out, DWORD capacity)
 {
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, (PUNICODE_STRING)key, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, (PUNICODE_STRING)key, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE h;
     if (!NT_SUCCESS(NtOpenKey(&h, KEY_READ, &oa)))
         return false;
@@ -197,7 +197,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExA(EXTENDED_NAME_FORMAT format, LPSTR 
         SecSetError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
-    if (!GetUserNameExW(format, buffer ? wide : NULL, &wide_size)) {
+    if (!GetUserNameExW(format, buffer ? wide : nullptr, &wide_size)) {
         SecHeapFree(wide);
         *size = wide_size * 2;
         return FALSE;
@@ -234,7 +234,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY GetComputerObjectNameA(EXTENDED_NAME_FORMAT format
         SecSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    BOOLEAN ok = GetComputerObjectNameW(format, NULL, size);
+    BOOLEAN ok = GetComputerObjectNameW(format, nullptr, size);
     if (!ok)
         *size *= 2;
     return ok;
@@ -255,7 +255,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY SecpTranslateNameEx(PCWSTR domain, PCWSTR name, EX
                                                   EXTENDED_NAME_FORMAT *desired, ULONG count, PWSTR **names)
 {
     if (names)
-        *names = NULL;
+        *names = nullptr;
     SecSetError(ERROR_NO_SUCH_DOMAIN);
     return FALSE;
 }
@@ -272,7 +272,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY TranslateNameW(LPCWSTR name, EXTENDED_NAME_FORMAT 
         SecSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return SecpTranslateName(NULL, name, format, desired, buffer, size);
+    return SecpTranslateName(nullptr, name, format, desired, buffer, size);
 }
 
 SECURITYAPI BOOLEAN SEC_ENTRY TranslateNameA(LPCSTR name, EXTENDED_NAME_FORMAT format, EXTENDED_NAME_FORMAT desired,
@@ -282,12 +282,12 @@ SECURITYAPI BOOLEAN SEC_ENTRY TranslateNameA(LPCSTR name, EXTENDED_NAME_FORMAT f
         SecSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    PWSTR wide = name ? SecAnsiToWide(name) : NULL;
+    PWSTR wide = name ? SecAnsiToWide(name) : nullptr;
     if (name && !wide) {
         SecSetError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
-    BOOLEAN ok = TranslateNameW(wide, format, desired, NULL, size);
+    BOOLEAN ok = TranslateNameW(wide, format, desired, nullptr, size);
     SecHeapFree(wide);
     if (!ok)
         *size *= 2;

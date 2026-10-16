@@ -8,19 +8,18 @@
 #include <mime/abi.h>
 #include <mime/ddk.h>
 #include <mime/ntapi.h>
-#include <stdbool.h>
 
 #include "../rtl/rtl.h"
 
 #define KI_TAG(a, b, c, d) ((ULONG)(a) | (ULONG)(b) << 8 | (ULONG)(c) << 16 | (ULONG)(d) << 24)
 
-#if defined(__x86_64__)
+#ifdef __x86_64__
 #include "arch/x64/arch.h"
 #else
 #include "arch/arm64/arch.h"
 #endif
 
-__attribute__((returns_twice)) int KiSetJump(KJUMP_BUFFER *buffer);
+[[gnu::returns_twice]] int KiSetJump(KJUMP_BUFFER *buffer);
 DECLSPEC_NORETURN void KiLongJump(KJUMP_BUFFER *buffer, int value);
 void KiThreadStartup(void);
 DECLSPEC_NORETURN void KiEnterUserMode(PKTRAP_FRAME frame);
@@ -193,7 +192,7 @@ typedef struct _KPRCB {
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not */
 } KPRCB, *PKPRCB;
 
-#if defined(__x86_64__)
+#ifdef __x86_64__
 /* the processor's descriptor tables and the system call stack switch, then the fields of the kernel. */
 typedef struct _KPCR {
     ULONG64 *GdtBase;

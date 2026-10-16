@@ -754,7 +754,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     int scalar = pfx == 0xF2 || pfx == 0xF3;
     int lane = pfx == 0xF2 || pfx == 0x66 ? 8 : 4; /* element size */
     uint32_t sz = dbl ? 1u << 22 : 0;
-    uint32_t *ok = NULL, *done = NULL;
+    uint32_t *ok = nullptr, *done = nullptr;
     x->keep = 1; /* every case but the arithmetic, conversions to integers and compares */
     switch (op) {
     case 0x10: /* movups, movupd, movss, movsd */
@@ -1412,7 +1412,7 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         if (reads_condition(&insns[k]))
             flags_live = 1;
     }
-    Ctx x = {&e, cpu, rip, rip, 0, count, 0, -1, 0, 0, NULL};
+    Ctx x = {&e, cpu, rip, rip, 0, count, 0, -1, 0, 0, nullptr};
     prologue(&e);
     uint32_t end = count;
     if (nests(&insns[count - 1]))

@@ -820,7 +820,7 @@ static int reduce(double x, DD *r)
     for (int i = 0; i < 8; i++)
         w[i] = s + i < 48 ? g_two_over_pi[s + i] : 0;
     /* p = M * (w0 w1 ... w7), most significant word first in w, little endian in p. */
-    uint32_t p[11] = {0};
+    uint32_t p[11] = {};
     uint32_t m0 = (uint32_t)M, m1 = (uint32_t)(M >> 32);
     for (int i = 0; i < 8; i++) {
         uint64_t wi = w[7 - i];

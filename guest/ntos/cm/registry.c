@@ -52,7 +52,7 @@ static CM_NODE *new_node(CM_NODE *parent, const WCHAR *name, ULONG chars)
 {
     CM_NODE *n = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(CM_NODE) + chars * sizeof(WCHAR), KI_TAG('C', 'm', 'N', 'd'));
     if (!n)
-        return NULL;
+        return nullptr;
     n->Parent = parent;
     n->NameLength = (USHORT)chars;
     memcpy(n->Name, name, chars * sizeof(WCHAR));
@@ -133,7 +133,7 @@ static CM_VALUE *new_value(const WCHAR *name, ULONG chars)
 {
     CM_VALUE *v = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(CM_VALUE) + chars * sizeof(WCHAR), KI_TAG('C', 'm', 'V', 'l'));
     if (!v)
-        return NULL;
+        return nullptr;
     v->NameLength = (USHORT)chars;
     memcpy(v->Name, name, chars * sizeof(WCHAR));
     return v;
@@ -197,7 +197,7 @@ CM_NODE *CmpFindChild(CM_NODE *node, const WCHAR *name, ULONG chars)
     for (CM_NODE *c = node->Child; c; c = c->Next)
         if (compare_names(c->Name, c->NameLength, name, chars) == 0)
             return c;
-    return NULL;
+    return nullptr;
 }
 
 static NTSTATUS create_child(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG flags, CM_NODE **out)
@@ -211,7 +211,7 @@ static NTSTATUS create_child(CM_NODE *node, const WCHAR *name, ULONG chars, ULON
     n->Flags = flags | CM_NODE_CHILDREN_LOADED | CM_NODE_VALUES_LOADED;
     n->LastWrite = now();
     status = CmpJournalAppend(n, CM_JOURNAL_CREATE_KEY, flags & CM_NODE_LINK ? CM_JOURNAL_LINK : 0,
-                              NULL, 0, NULL, 0, n->LastWrite);
+                              nullptr, 0, nullptr, 0, n->LastWrite);
     if (!NT_SUCCESS(status)) {
         ExFreePool(n);
         return status;
@@ -224,7 +224,7 @@ static NTSTATUS create_child(CM_NODE *node, const WCHAR *name, ULONG chars, ULON
 
 CM_NODE *CmpCreateChild(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG flags)
 {
-    CM_NODE *n = NULL;
+    CM_NODE *n = nullptr;
     create_child(node, name, chars, flags, &n);
     return n;
 }
@@ -233,7 +233,7 @@ CM_NODE *CmpMount(CM_NODE *node, PCWSTR name, CM_HIVE *hive)
 {
     CM_NODE *n = CmpCreateChild(node, name, (ULONG)wcslen(name), 0);
     if (!n)
-        return NULL;
+        return nullptr;
     CM_HIVE_KEY key;
     if (NT_SUCCESS(CmpReadKey(hive, hive->RootCell, &key)))
         n->LastWrite = key.LastWrite;
@@ -248,7 +248,7 @@ CM_VALUE *CmpFindValue(CM_NODE *node, const WCHAR *name, ULONG chars)
     for (CM_VALUE *v = node->Values; v; v = v->Next)
         if (compare_names(v->Name, v->NameLength, name, chars) == 0)
             return v;
-    return NULL;
+    return nullptr;
 }
 
 NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, const void *data, ULONG length)
@@ -262,7 +262,7 @@ NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, 
     if (length)
         memcpy(copy, data, length);
     CM_VALUE *v = CmpFindValue(node, name, chars);
-    BOOLEAN created = v == NULL;
+    BOOLEAN created = v == nullptr;
     if (!v) {
         v = new_value(name, chars);
         if (!v) {
@@ -302,7 +302,7 @@ NTSTATUS CmpDeleteValue(CM_NODE *node, const WCHAR *name, ULONG chars)
         CM_VALUE *v = *link;
         if (compare_names(v->Name, v->NameLength, name, chars) == 0) {
             LARGE_INTEGER changed = now();
-            status = CmpJournalAppend(node, CM_JOURNAL_DELETE_VALUE, 0, name, chars, NULL, 0, changed);
+            status = CmpJournalAppend(node, CM_JOURNAL_DELETE_VALUE, 0, name, chars, nullptr, 0, changed);
             if (!NT_SUCCESS(status))
                 return status;
             *link = v->Next;
@@ -414,15 +414,15 @@ CM_NODE *CmpOpenPath(PCWSTR path, BOOLEAN create)
     static const WCHAR prefix[] = L"\\REGISTRY";
     ULONG len = (ULONG)wcslen(path), p = RTL_NUMBER_OF(prefix) - 1;
     if (len < p || compare_names(path, p, prefix, p) != 0 || len >= MAX_PATH_CHARS)
-        return NULL;
+        return nullptr;
     PWCHAR buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, MAX_PATH_CHARS * sizeof(WCHAR), KI_TAG('C', 'm', 'P', 't'));
     if (!buffer)
-        return NULL;
+        return nullptr;
     memcpy(buffer, path + p, (len - p) * sizeof(WCHAR));
     CM_PARSE_CONTEXT ctx = {create, TRUE, 0, 0};
-    CM_NODE *node = NULL;
+    CM_NODE *node = nullptr;
     if (!NT_SUCCESS(walk(CmpRoot, buffer, len - p, 0, &ctx, &node)))
-        node = NULL;
+        node = nullptr;
     ExFreePool(buffer);
     return node;
 }
@@ -432,7 +432,7 @@ CM_NODE *CmpOpenPath(PCWSTR path, BOOLEAN create)
 static NTSTATUS new_body(CM_NODE *node, PVOID *out)
 {
     CM_KEY_BODY *body;
-    NTSTATUS status = ObCreateObject(CmKeyType, NULL, KernelMode, sizeof(*body), (PVOID *)&body);
+    NTSTATUS status = ObCreateObject(CmKeyType, nullptr, KernelMode, sizeof(*body), (PVOID *)&body);
     if (NT_SUCCESS(status)) {
         body->Node = node;
         *out = body;
@@ -465,7 +465,7 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
 /* references a key handle and returns its node, refusing deleted keys. lock taken on success. */
 static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
 {
-    NTSTATUS status = ObReferenceHandle(handle, CmKeyType, KeGetPreviousMode(), (PVOID *)body, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, CmKeyType, KeGetPreviousMode(), (PVOID *)body, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     ExAcquireFastMutex(&CmpLock);
@@ -498,7 +498,7 @@ static BOOLEAN out_init(OUT_BUFFER *o, ULONG size)
     o->Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('C', 'm', 'O', 'u'));
     o->Size = size;
     o->Used = 0;
-    return o->Buffer != NULL;
+    return o->Buffer != nullptr;
 }
 
 static NTSTATUS out_finish(OUT_BUFFER *o, ULONG fixed, PVOID user, ULONG length, PULONG returned)
@@ -619,7 +619,7 @@ static NTSTATUS key_info(CM_NODE *node, ULONG klass, OUT_BUFFER *o, ULONG *fixed
         return STATUS_SUCCESS;
     case KeyNameInformation: {
         *fixed = 4;
-        ULONG chars = CmpFullPath(node, NULL, 0);
+        ULONG chars = CmpFullPath(node, nullptr, 0);
         if (!out_init(o, 4 + chars * sizeof(WCHAR)))
             return STATUS_INSUFFICIENT_RESOURCES;
         CmpFullPath(node, (PWCHAR)(o->Buffer + 4), chars);
@@ -859,7 +859,7 @@ static NTSTATUS delete_key(CM_NODE *node)
         status = STATUS_CANNOT_DELETE;
     } else {
         LARGE_INTEGER changed = now();
-        status = CmpJournalAppend(node, CM_JOURNAL_DELETE_KEY, 0, NULL, 0, NULL, 0, changed);
+        status = CmpJournalAppend(node, CM_JOURNAL_DELETE_KEY, 0, nullptr, 0, nullptr, 0, changed);
         if (!NT_SUCCESS(status))
             return status;
         CM_NODE **link = &node->Parent->Child;
@@ -885,7 +885,7 @@ NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
         create.Options = REG_OPTION_CREATE_LINK;
     BOOLEAN deleting = record->operation == CM_JOURNAL_DELETE_KEY || record->operation == CM_JOURNAL_DELETE_VALUE;
     CM_NODE *node;
-    NTSTATUS status = walk(CmpRoot, path, chars, OBJ_OPENLINK, deleting ? NULL : &create, &node);
+    NTSTATUS status = walk(CmpRoot, path, chars, OBJ_OPENLINK, deleting ? nullptr : &create, &node);
     ExFreePool(path);
     if (deleting && status == STATUS_OBJECT_NAME_NOT_FOUND)
         return STATUS_SUCCESS;
@@ -1017,7 +1017,7 @@ NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PUL
 {
     ExAcquireFastMutex(&CmpLock);
     CM_NODE *node = CmpOpenPath(key_path, FALSE);
-    CM_VALUE *v = NULL;
+    CM_VALUE *v = nullptr;
     if (node) {
         CmpLoadValues(node);
         v = CmpFindValue(node, name, (ULONG)wcslen(name));
@@ -1082,13 +1082,13 @@ static void link_key(PCWSTR path, PCWSTR target)
 void CmInitSystem1(void)
 {
     ExInitializeFastMutex(&CmpLock);
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;
     CmKeyType = ObCreateObjectType(L"Key", &init);
 
     static const WCHAR registry[] = L"REGISTRY";
-    CmpRoot = new_node(NULL, registry, RTL_NUMBER_OF(registry) - 1);
+    CmpRoot = new_node(nullptr, registry, RTL_NUMBER_OF(registry) - 1);
     CmpRoot->Flags = CM_NODE_CHILDREN_LOADED | CM_NODE_VALUES_LOADED | CM_NODE_VOLATILE;
     PVOID root;
     if (!CmpRoot || !NT_SUCCESS(new_body(CmpRoot, &root)))
@@ -1110,7 +1110,7 @@ void CmInitSystem1(void)
     mount(user, L".DEFAULT", L"\\SystemRoot\\System32\\config\\DEFAULT");
 
     /* the logged on user's hive, loaded by the profile service on windows. */
-    WCHAR sid[96] = {0}, path[160] = {0};
+    WCHAR sid[96] = {}, path[160] = {};
     _snwprintf(sid, RTL_NUMBER_OF(sid) - 1, L"S-1-5-21-%u-%u-%u-1001", HalBootInfo->user_sid[0], HalBootInfo->user_sid[1],
              HalBootInfo->user_sid[2]);
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:\\Users\\%hs\\NTUSER.DAT", HalBootInfo->user_name);
@@ -1126,7 +1126,7 @@ void CmInitSystem1(void)
         if (v && v->Type == REG_DWORD && v->DataLength == 4)
             memcpy(&current, v->Data, 4);
     }
-    WCHAR target[64] = {0};
+    WCHAR target[64] = {};
     _snwprintf(target, RTL_NUMBER_OF(target) - 1, L"\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet%03u", current);
     link_key(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet", target);
     link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");

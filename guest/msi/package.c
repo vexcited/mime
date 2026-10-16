@@ -145,7 +145,7 @@ UINT WINAPI MsiOpenPackageExW(LPCWSTR path, DWORD options, MSIHANDLE *out)
     }
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
-    MIME_MSI_PACKAGE *package = NULL;
+    MIME_MSI_PACKAGE *package = nullptr;
     if (!database)
         error = ERROR_INVALID_HANDLE;
     if (!error && !(package = MimeMsiAllocate(sizeof(*package))))

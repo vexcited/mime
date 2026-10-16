@@ -8,7 +8,7 @@
 
 static GpGraphics *graphics_cast(GpGraphics *graphics)
 {
-    return graphics && graphics->Magic == GP_GRAPHICS_MAGIC ? graphics : NULL;
+    return graphics && graphics->Magic == GP_GRAPHICS_MAGIC ? graphics : nullptr;
 }
 
 static GpStatus graphics_create(HDC hdc, GpBitmap *target, GpGraphics **graphics)
@@ -30,7 +30,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateFromHDC(HDC hdc, GpGraphics **graphics
         return InvalidParameter;
     if (!hdc)
         return OutOfMemory;
-    return graphics_create(hdc, NULL, graphics);
+    return graphics_create(hdc, nullptr, graphics);
 }
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image, GpGraphics **graphics)
@@ -38,7 +38,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image, GpGr
     GpBitmap *b = gp_bitmap_cast(image);
     if (!b || !graphics)
         return InvalidParameter;
-    return graphics_create(NULL, b, graphics);
+    return graphics_create(nullptr, b, graphics);
 }
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipDeleteGraphics(GpGraphics *graphics)
@@ -140,15 +140,15 @@ static GpStatus draw_to_bitmap(GpBitmap *dst, GpBitmap *src, INT x, INT y, INT w
 static GpStatus draw_to_hdc(GpGraphics *g, GpBitmap *src, INT x, INT y, INT width, INT height, BOOL flip_x,
                             BOOL flip_y)
 {
-    BITMAPINFO info = {0};
+    BITMAPINFO info = {};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
     info.bmiHeader.biWidth = src->Width;
     info.bmiHeader.biHeight = -src->Height;
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
     info.bmiHeader.biCompression = BI_RGB;
-    BYTE *bits = NULL;
-    HBITMAP dib = CreateDIBSection(g->Hdc, &info, DIB_RGB_COLORS, (void **)&bits, NULL, 0);
+    BYTE *bits = nullptr;
+    HBITMAP dib = CreateDIBSection(g->Hdc, &info, DIB_RGB_COLORS, (void **)&bits, nullptr, 0);
     if (!dib || !bits) {
         if (dib)
             DeleteObject(dib);

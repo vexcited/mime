@@ -47,11 +47,11 @@ static SCROLL_DATA *create_data(HWND hwnd, int bar)
         return d;
     d = UserAlloc(sizeof(*d));
     if (!d)
-        return NULL;
+        return nullptr;
     *d = g_scroll_default;
     if (!SetPropW(hwnd, g_scroll_prop[bar], d)) {
         UserFree(d);
-        return NULL;
+        return nullptr;
     }
     return d;
 }
@@ -77,16 +77,16 @@ static BOOL show_bars(HWND hwnd, int bar, BOOL show)
     if (next == style)
         return TRUE;
     SetWindowLongW(hwnd, GWL_STYLE, (LONG)next);
-    return SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+    return SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                         SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
 static void redraw_bar(HWND hwnd, int bar)
 {
     if (bar == SB_CTL)
-        InvalidateRect(hwnd, NULL, TRUE);
+        InvalidateRect(hwnd, nullptr, TRUE);
     else
-        RedrawWindow(hwnd, NULL, NULL, RDW_FRAME | RDW_INVALIDATE);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_FRAME | RDW_INVALIDATE);
 }
 
 /* stores the fields of info, clamps the page and position, returns the position. */
@@ -382,10 +382,10 @@ WINUSERAPI int WINAPI ScrollWindowEx(HWND hwnd, int dx, int dy, const RECT *rect
         for (HWND c = GetWindow(hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
             RECT r, overlap;
             GetWindowRect(c, &r);
-            MapWindowPoints(NULL, hwnd, (POINT *)&r, 2);
+            MapWindowPoints(nullptr, hwnd, (POINT *)&r, 2);
             if (rect && !IntersectRect(&overlap, &r, rect))
                 continue;
-            SetWindowPos(c, NULL, r.left + dx, r.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(c, nullptr, r.left + dx, r.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
     }
 
@@ -396,7 +396,7 @@ WINUSERAPI int WINAPI ScrollWindowEx(HWND hwnd, int dx, int dy, const RECT *rect
     if ((flags & SW_INVALIDATE) && !IsRectEmpty(&dirty)) {
         UINT rdw = RDW_INVALIDATE | ((flags & SW_ERASE) ? RDW_ERASE : 0) |
                    ((flags & SW_SCROLLCHILDREN) ? RDW_ALLCHILDREN : 0);
-        RedrawWindow(hwnd, &dirty, NULL, rdw);
+        RedrawWindow(hwnd, &dirty, nullptr, rdw);
     }
     return IsRectEmpty(&dirty) ? NULLREGION : SIMPLEREGION;
 }
@@ -404,5 +404,5 @@ WINUSERAPI int WINAPI ScrollWindowEx(HWND hwnd, int dx, int dy, const RECT *rect
 WINUSERAPI BOOL WINAPI ScrollWindow(HWND hwnd, int dx, int dy, const RECT *rect, const RECT *clip)
 {
     UINT flags = SW_INVALIDATE | SW_ERASE | (rect ? 0 : SW_SCROLLCHILDREN);
-    return ScrollWindowEx(hwnd, dx, dy, rect, clip, NULL, NULL, flags) != ERROR;
+    return ScrollWindowEx(hwnd, dx, dy, rect, clip, nullptr, nullptr, flags) != ERROR;
 }

@@ -212,7 +212,7 @@ THEMEAPI GetThemeStream(HTHEME handle, int part, int state, int prop, void **str
     if (!stream || !size)
         hr = E_POINTER;
     else if (mime_msstyles_get_stream(&UxStyles, theme->Class, part, state, prop, &data, &n) ||
-             mime_msstyles_get_filename(&UxStyles, theme->Class, part, state, prop, NULL, &data, &n)) {
+             mime_msstyles_get_filename(&UxStyles, theme->Class, part, state, prop, nullptr, &data, &n)) {
         *stream = (void *)data;
         *size = n;
     } else {
@@ -226,13 +226,13 @@ THEMEAPI GetThemeBitmap(HTHEME handle, int part, int state, int prop, ULONG flag
 {
     if (!bitmap)
         return E_POINTER;
-    *bitmap = NULL;
+    *bitmap = nullptr;
     if (flags & ~GBF_VALIDBITS)
         return E_INVALIDARG;
     BEGIN_THEME(handle);
     MimeMsstylesImage img;
     unsigned select = prop == TMT_GLYPHDIBDATA || prop == TMT_GLYPHIMAGEFILE ? MIME_MSSTYLES_GLYPH : 0;
-    UX_BITMAP *b = NULL;
+    UX_BITMAP *b = nullptr;
     if (mime_msstyles_get_image(&UxStyles, theme->Class, part, state, theme->Dpi, 0, 0, select, &img))
         b = UxGetBitmap(&img);
     if (!b) {

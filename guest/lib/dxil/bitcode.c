@@ -48,7 +48,7 @@ void *bc_arena_alloc(BcArena *a, size_t size)
         size_t chunk = size + 16 > CHUNK_SIZE ? size + 16 : CHUNK_SIZE;
         uint8_t *p = mime_alloc(a->alloc, chunk);
         if (!p)
-            return NULL;
+            return nullptr;
         *(void **)p = a->chunks;
         a->chunks = p;
         a->at = p + 16;
@@ -68,8 +68,8 @@ void bc_arena_free(BcArena *a)
         mime_free(a->alloc, p);
         p = next;
     }
-    a->chunks = NULL;
-    a->at = a->end = NULL;
+    a->chunks = nullptr;
+    a->at = a->end = nullptr;
 }
 
 BcMark bc_arena_mark(const BcArena *a) { return (BcMark){a->chunks, a->at, a->end}; }
@@ -93,7 +93,7 @@ static void *grow(BcArena *a, void *items, uint32_t count, uint32_t *capacity, s
     uint32_t want = *capacity ? *capacity * 2 : 8;
     void *p = bc_arena_alloc(a, want * size);
     if (!p)
-        return NULL;
+        return nullptr;
     if (items)
         __builtin_memcpy(p, items, count * size);
     *capacity = want;
@@ -155,11 +155,11 @@ static BlockInfo *block_info(Reader *r, uint32_t id, int create)
         if (r->info[i].id == id)
             return &r->info[i];
     if (!create)
-        return NULL;
+        return nullptr;
     r->info = grow(r->arena, r->info, r->info_count, &r->info_capacity, sizeof(BlockInfo));
     if (!r->info) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     BlockInfo *b = &r->info[r->info_count++];
     __builtin_memset(b, 0, sizeof(*b));
@@ -190,7 +190,7 @@ static void define_abbrev(Reader *r, AbbrevList *list)
         return;
     }
     for (uint32_t i = 0; i < count && !r->failed; i++) {
-        AbbrevOp op = {0};
+        AbbrevOp op = {};
         if (fixed(r, 1)) {
             op.kind = OP_LITERAL;
             op.value = vbr(r, 8);
@@ -236,10 +236,10 @@ static void push(Reader *r, Ops *ops, uint64_t v)
 static BcRecord *read_abbreviated(Reader *r, const Abbrev *a)
 {
     BcRecord *rec = bc_arena_alloc(r->arena, sizeof(BcRecord));
-    Ops ops = {0};
+    Ops ops = {};
     if (!rec) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     for (uint32_t i = 0; i < a->count && !r->failed; i++) {
         const AbbrevOp *op = &a->ops[i];
@@ -269,7 +269,7 @@ static BcRecord *read_abbreviated(Reader *r, const Abbrev *a)
     }
     if (r->failed || !ops.count) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     rec->code = (uint32_t)ops.items[0];
     rec->ops = ops.items + 1;
@@ -282,19 +282,19 @@ static BcRecord *read_unabbreviated(Reader *r)
     BcRecord *rec = bc_arena_alloc(r->arena, sizeof(BcRecord));
     if (!rec) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     rec->code = (uint32_t)vbr(r, 6);
     uint64_t n = vbr(r, 6);
     if (r->failed || n > (r->bits - r->pos)) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     rec->count = (uint32_t)n;
     rec->ops = bc_arena_alloc(r->arena, (n ? n : 1) * sizeof(uint64_t));
     if (!rec->ops) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     for (uint64_t i = 0; i < n && !r->failed; i++)
         rec->ops[i] = vbr(r, 6);
@@ -321,9 +321,9 @@ static BcBlock *read_block(Reader *r, uint32_t id, uint32_t width, int depth);
 /* the entries up to the block's end, or to the stream's end at the top level. */
 static void read_entries(Reader *r, BcBlock *block, uint32_t width, int depth)
 {
-    AbbrevList local = {0};
-    BlockInfo *setting = NULL;
-    Entries entries = {0};
+    AbbrevList local = {};
+    BlockInfo *setting = nullptr;
+    Entries entries = {};
     while (!r->failed) {
         if (depth == 0 && r->bits - r->pos < 32)
             break;
@@ -343,7 +343,7 @@ static void read_entries(Reader *r, BcBlock *block, uint32_t width, int depth)
             fixed(r, 32);
             BcBlock *child = read_block(r, sub, sub_width, depth + 1);
             if (child)
-                add_entry(r, &entries, NULL, child);
+                add_entry(r, &entries, nullptr, child);
             continue;
         }
         if (abbrev == ABBREV_DEFINE) {
@@ -365,7 +365,7 @@ static void read_entries(Reader *r, BcBlock *block, uint32_t width, int depth)
             uint32_t index = abbrev - ABBREV_FIRST;
             BlockInfo *inherited = block_info(r, block->id, 0);
             uint32_t inherited_count = inherited ? inherited->abbrevs.count : 0;
-            const Abbrev *a = NULL;
+            const Abbrev *a = nullptr;
             if (index < inherited_count)
                 a = &inherited->abbrevs.items[index];
             else if (index - inherited_count < local.count)
@@ -384,7 +384,7 @@ static void read_entries(Reader *r, BcBlock *block, uint32_t width, int depth)
                 setting = block_info(r, (uint32_t)rec->ops[0], 1);
             continue;
         }
-        add_entry(r, &entries, rec, NULL);
+        add_entry(r, &entries, rec, nullptr);
     }
     block->entries = entries.items;
     block->count = entries.count;
@@ -394,16 +394,16 @@ static BcBlock *read_block(Reader *r, uint32_t id, uint32_t width, int depth)
 {
     if (depth > 32 || width < 2 || width > 32) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     BcBlock *block = bc_arena_alloc(r->arena, sizeof(BcBlock));
     if (!block) {
         r->failed = 1;
-        return NULL;
+        return nullptr;
     }
     block->id = id;
     read_entries(r, block, width, depth);
-    return r->failed ? NULL : block;
+    return r->failed ? nullptr : block;
 }
 
 static uint32_t read32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
@@ -414,17 +414,17 @@ BcBlock *bc_parse(const uint8_t *data, size_t size, BcArena *arena)
     if (size >= 20 && read32(data) == 0x0B17C0DE) {
         uint32_t offset = read32(data + 8), length = read32(data + 12);
         if (offset > size || length > size - offset)
-            return NULL;
+            return nullptr;
         data += offset;
         size = length;
     }
     if (size < 4 || data[0] != 'B' || data[1] != 'C' || data[2] != 0xC0 || data[3] != 0xDE || (size & 3))
-        return NULL;
-    Reader r = {data, size * 8, 32, arena, NULL, 0, 0, 0};
+        return nullptr;
+    Reader r = {data, size * 8, 32, arena, nullptr, 0, 0, 0};
     BcBlock *top = bc_arena_alloc(arena, sizeof(BcBlock));
     if (!top)
-        return NULL;
+        return nullptr;
     top->id = ~0u;
     read_entries(&r, top, 2, 0);
-    return r.failed ? NULL : top;
+    return r.failed ? nullptr : top;
 }

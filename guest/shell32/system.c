@@ -13,9 +13,9 @@ SHSTDAPI BOOL WINAPI IsUserAnAdmin(void)
     static const BYTE admins[16] = {1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x20, 2, 0, 0};
     HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
     CHECK_MEMBERSHIP check =
-        advapi32 ? (CHECK_MEMBERSHIP)(void *)GetProcAddress(advapi32, "CheckTokenMembership") : NULL;
+        advapi32 ? (CHECK_MEMBERSHIP)(void *)GetProcAddress(advapi32, "CheckTokenMembership") : nullptr;
     BOOL member = FALSE;
-    if (check && !check(NULL, (PVOID)admins, &member))
+    if (check && !check(nullptr, (PVOID)admins, &member))
         member = FALSE;
     if (advapi32)
         FreeLibrary(advapi32);
@@ -30,7 +30,7 @@ SHSTDAPI int WINAPI SHCreateDirectoryExW(HWND hwnd, LPCWSTR path, const SECURITY
     WCHAR full[MAX_PATH];
     if (path[0] != L'\\' && path[1] != L':')
         return ERROR_BAD_PATHNAME;
-    DWORD n = GetFullPathNameW(path, MAX_PATH, full, NULL);
+    DWORD n = GetFullPathNameW(path, MAX_PATH, full, nullptr);
     if (!n || n >= MAX_PATH)
         return ERROR_FILENAME_EXCED_RANGE;
     if (GetFileAttributesW(full) != INVALID_FILE_ATTRIBUTES)
@@ -70,7 +70,7 @@ SHSTDAPI int WINAPI SHCreateDirectoryExA(HWND hwnd, LPCSTR path, const SECURITY_
 
 SHSTDAPI int WINAPI SHCreateDirectory(HWND hwnd, LPCWSTR path)
 {
-    return SHCreateDirectoryExW(hwnd, path, NULL);
+    return SHCreateDirectoryExW(hwnd, path, nullptr);
 }
 
 /* there is no recent documents list or jump list to add to. */
@@ -83,9 +83,9 @@ SHSTDAPI HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID folder, DWORD
 {
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     PWSTR base;
-    HRESULT hr = SHGetKnownFolderPath(folder, flags, NULL, &base);
+    HRESULT hr = SHGetKnownFolderPath(folder, flags, nullptr, &base);
     if (FAILED(hr))
         return hr;
     WCHAR path[MAX_PATH];
@@ -99,7 +99,7 @@ SHSTDAPI HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID folder, DWORD
         wcscpy(path, base);
     path[MAX_PATH - 1] = 0;
     ShFree(base);
-    return SHCreateItemFromParsingName(path, NULL, riid, object);
+    return SHCreateItemFromParsingName(path, nullptr, riid, object);
 }
 
 /* the desktop folder object needs an IShellFolder namespace, which is not implemented. */
@@ -108,7 +108,7 @@ SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(void **folder)
     MIME_STUB("shell32");
     if (!folder)
         return E_INVALIDARG;
-    *folder = NULL;
+    *folder = nullptr;
     return E_NOTIMPL;
 }
 
@@ -135,30 +135,30 @@ static BOOL CALLBACK find_icon_group(HMODULE module, LPCWSTR type, LPWSTR name, 
 SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
 {
     if (!file)
-        return NULL;
+        return nullptr;
     WCHAR path[MAX_PATH];
-    DWORD n = SearchPathW(NULL, file, NULL, MAX_PATH, path, NULL);
+    DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
     if (!n || n >= MAX_PATH)
-        return NULL;
+        return nullptr;
     int cx = GetSystemMetrics(SM_CXICON), cy = GetSystemMetrics(SM_CYICON);
     LPCWSTR dot = wcsrchr(path, L'.');
     if (dot && !_wcsicmp(dot, L".ico")) {
         if (index == (UINT)-1)
             return (HICON)1;
-        return index ? NULL : (HICON)LoadImageW(NULL, path, IMAGE_ICON, cx, cy, LR_LOADFROMFILE);
+        return index ? nullptr : (HICON)LoadImageW(nullptr, path, IMAGE_ICON, cx, cy, LR_LOADFROMFILE);
     }
-    HMODULE module = LoadLibraryExW(path, NULL, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    HMODULE module = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
     if (!module)
         return (HICON)1;
-    HICON icon = NULL;
+    HICON icon = nullptr;
     if (index == (UINT)-1) {
-        ICON_SEARCH search = {(UINT)-1, 0, NULL};
+        ICON_SEARCH search = {(UINT)-1, 0, nullptr};
         EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&search);
         icon = (HICON)(UINT_PTR)search.Seen;
     } else if ((int)index < 0) {
         icon = (HICON)LoadImageW(module, MAKEINTRESOURCEW(-(int)index), IMAGE_ICON, cx, cy, 0);
     } else {
-        ICON_SEARCH search = {index, 0, NULL};
+        ICON_SEARCH search = {index, 0, nullptr};
         EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&search);
         if (search.Name) {
             icon = (HICON)LoadImageW(module, search.Name, IMAGE_ICON, cx, cy, 0);
@@ -175,7 +175,7 @@ SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
 SHSTDAPI HICON WINAPI ExtractIconA(HINSTANCE instance, LPCSTR file, UINT index)
 {
     LPWSTR wide = ShWiden(file);
-    HICON icon = wide ? ExtractIconW(instance, wide, index) : NULL;
+    HICON icon = wide ? ExtractIconW(instance, wide, index) : nullptr;
     ShFree(wide);
     return icon;
 }

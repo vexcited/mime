@@ -339,7 +339,7 @@ char *WSAAPI inet_ntoa(struct in_addr in)
     WS_THREAD *t = WsThread();
     if (!t) {
         SetLastError(WSA_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     WsFormatIpv4(&in, t->ntoa);
     return t->ntoa;
@@ -404,12 +404,12 @@ PCSTR WSAAPI inet_ntop(INT family, const VOID *addr, PSTR string, size_t size)
 {
     if (family != AF_INET && family != AF_INET6) {
         SetLastError(WSAEAFNOSUPPORT);
-        return NULL;
+        return nullptr;
     }
     char text[INET6_ADDRSTRLEN];
     if (!addr || !string || (size_t)ntop(family, addr, text) >= size) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     memcpy(string, text, strlen(text) + 1);
     return string;
@@ -419,12 +419,12 @@ PCWSTR WSAAPI InetNtopW(INT family, const VOID *addr, PWSTR string, size_t size)
 {
     if (family != AF_INET && family != AF_INET6) {
         SetLastError(WSAEAFNOSUPPORT);
-        return NULL;
+        return nullptr;
     }
     char text[INET6_ADDRSTRLEN];
     if (!addr || !string || (size_t)ntop(family, addr, text) >= size) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     WsWiden(text, string, size);
     return string;

@@ -34,7 +34,7 @@ static DWORD profile_value(PCWSTR sid, PCWSTR value, PWSTR out, DWORD chars)
     if (error)
         return error;
     DWORD type, size = sizeof(raw) - sizeof(WCHAR);
-    error = RegQueryValueExW(key, value, NULL, &type, (LPBYTE)raw, &size);
+    error = RegQueryValueExW(key, value, nullptr, &type, (LPBYTE)raw, &size);
     RegCloseKey(key);
     if (error)
         return error;
@@ -48,7 +48,7 @@ static DWORD profile_value(PCWSTR sid, PCWSTR value, PWSTR out, DWORD chars)
 /* the string sid of a token's user, S-1-5-21-... */
 static BOOL token_sid_string(HANDLE token, PWSTR out, DWORD chars)
 {
-    HANDLE opened = NULL;
+    HANDLE opened = nullptr;
     if (token == (HANDLE)(LONG_PTR)-4 || token == (HANDLE)(LONG_PTR)-6) {
         if (!NT_SUCCESS(NtOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY, &opened)))
             return FALSE;
@@ -92,13 +92,13 @@ static BOOL return_path(PCWSTR path, LPWSTR buffer, LPDWORD size)
 
 static BOOL return_path_ansi(PCWSTR path, LPSTR buffer, LPDWORD size)
 {
-    DWORD n = (DWORD)WideCharToMultiByte(CP_ACP, 0, path, -1, NULL, 0, NULL, NULL);
+    DWORD n = (DWORD)WideCharToMultiByte(CP_ACP, 0, path, -1, nullptr, 0, nullptr, nullptr);
     if (!buffer || *size < n) {
         *size = n;
         set_error(ERROR_INSUFFICIENT_BUFFER);
         return FALSE;
     }
-    WideCharToMultiByte(CP_ACP, 0, path, -1, buffer, n, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, path, -1, buffer, n, nullptr, nullptr);
     *size = n;
     return TRUE;
 }
@@ -129,7 +129,7 @@ USERENV BOOL WINAPI GetUserProfileDirectoryW(HANDLE token, LPWSTR buffer, LPDWOR
         set_error(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return user_profile(token, path) && return_path(path, *size ? buffer : NULL, size);
+    return user_profile(token, path) && return_path(path, *size ? buffer : nullptr, size);
 }
 
 USERENV BOOL WINAPI GetProfileType(DWORD *flags)
@@ -174,13 +174,13 @@ USERENV BOOL WINAPI GetUserProfileDirectoryA(HANDLE token, LPSTR buffer, LPDWORD
         set_error(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return user_profile(token, path) && return_path_ansi(path, *size ? buffer : NULL, size);
+    return user_profile(token, path) && return_path_ansi(path, *size ? buffer : nullptr, size);
 }
 
 /* one of the directories the profile list itself names. */
 static BOOL list_directory(PCWSTR value, PWSTR path)
 {
-    DWORD error = profile_value(NULL, value, path, MAX_PATH);
+    DWORD error = profile_value(nullptr, value, path, MAX_PATH);
     if (error) {
         set_error(error);
         return FALSE;

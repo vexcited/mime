@@ -10,7 +10,7 @@ set(MIME_MACHINE_x86 x86)
 
 set(MIME_GUEST_C_OPTIONS -ffreestanding -nostdlibinc -fms-extensions -fno-stack-protector -gdwarf
     -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=
-    -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+    -Wall -Wextra -Wimplicit-fallthrough -Wno-unused-parameter -Wno-missing-field-initializers)
 # the c++ of the c runtime's own c++ abi: microsoft's, with exceptions and type information.
 set(MIME_GUEST_CXX_OPTIONS -fno-threadsafe-statics -fexceptions -fcxx-exceptions)
 
@@ -49,7 +49,7 @@ function(mime_objects target flavor)
     if(arg_INCLUDES)
         target_include_directories(${target} PRIVATE ${arg_INCLUDES})
     endif()
-    set_target_properties(${target} PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON CXX_STANDARD 17
+    set_target_properties(${target} PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON CXX_STANDARD 23
         CXX_STANDARD_REQUIRED ON)
     add_dependencies(${target} mime-gen-headers ${depends})
 endfunction()

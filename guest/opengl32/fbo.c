@@ -12,13 +12,13 @@
 GlFramebuffer *gl_framebuffer(GlContext *ctx, GLuint name)
 {
     void *f = gl_name_get(&ctx->fbos, name);
-    return f == GL_RESERVED ? NULL : f;
+    return f == GL_RESERVED ? nullptr : f;
 }
 
 GlRenderbuffer *gl_renderbuffer(GlContext *ctx, GLuint name)
 {
     void *r = gl_name_get(&ctx->shared->renderbuffers, name);
-    return r == GL_RESERVED ? NULL : r;
+    return r == GL_RESERVED ? nullptr : r;
 }
 
 /* the context whose state the host holds; another one starts from nothing. */
@@ -78,7 +78,7 @@ GLAPI void APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *names)
             }
             gl_free(r);
         }
-        gl_name_set(&ctx->shared->renderbuffers, names[i], NULL);
+        gl_name_set(&ctx->shared->renderbuffers, names[i], nullptr);
         if (ctx->renderbuffer == names[i])
             ctx->renderbuffer = 0;
     }
@@ -184,7 +184,7 @@ static GlFramebuffer *make(GlContext *ctx, GLuint name)
         return f;
     f = gl_alloc(sizeof(GlFramebuffer));
     if (!f)
-        return NULL;
+        return nullptr;
     f->name = name;
     f->draw_buffers[0] = GL_COLOR_ATTACHMENT0;
     f->read_buffer = GL_COLOR_ATTACHMENT0;
@@ -222,11 +222,11 @@ GLAPI void APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint *names)
                 gl_flush_clears(ctx);
                 gl_end_pass(ctx);
                 gl_device_unlock();
-                ctx->target_owner = NULL;
+                ctx->target_owner = nullptr;
             }
             gl_free(o);
         }
-        gl_name_set(&ctx->fbos, names[i], NULL);
+        gl_name_set(&ctx->fbos, names[i], nullptr);
         if (ctx->draw_fbo == names[i])
             ctx->draw_fbo = 0;
         if (ctx->read_fbo == names[i])
@@ -244,12 +244,12 @@ GLAPI GLboolean APIENTRY glIsFramebuffer(GLuint name)
 static GlFramebuffer *bound_fb(GlContext *ctx, GLenum target)
 {
     GLuint name = target == GL_READ_FRAMEBUFFER ? ctx->read_fbo : ctx->draw_fbo;
-    return name ? gl_framebuffer(ctx, name) : NULL;
+    return name ? gl_framebuffer(ctx, name) : nullptr;
 }
 
 static GlAttachment *attachment(GlFramebuffer *f, GLenum point, GlAttachment **second)
 {
-    *second = NULL;
+    *second = nullptr;
     if (point >= GL_COLOR_ATTACHMENT0 && point < GL_COLOR_ATTACHMENT0 + MIME_GPU_MAX_COLORS)
         return &f->color[point - GL_COLOR_ATTACHMENT0];
     if (point == GL_DEPTH_ATTACHMENT)
@@ -260,7 +260,7 @@ static GlAttachment *attachment(GlFramebuffer *f, GLenum point, GlAttachment **s
         *second = &f->stencil;
         return &f->depth;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void set_attachment(GlContext *ctx, GLenum target, GLenum point, int type, GLuint name, GLint level,
@@ -268,7 +268,7 @@ static void set_attachment(GlContext *ctx, GLenum target, GLenum point, int type
 {
     GlFramebuffer *f = bound_fb(ctx, target);
     GlAttachment *second;
-    GlAttachment *a = f ? attachment(f, point, &second) : NULL;
+    GlAttachment *a = f ? attachment(f, point, &second) : nullptr;
     if (!a) {
         gl_error(ctx, f ? GL_INVALID_ENUM : GL_INVALID_OPERATION);
         return;
@@ -351,7 +351,7 @@ void gl_resolve_target(GlContext *ctx, BOOL draw, GlTarget *t, const void **owne
 {
     memset(t, 0, sizeof(*t));
     GLuint name = draw ? ctx->draw_fbo : ctx->read_fbo;
-    GlFramebuffer *f = name ? gl_framebuffer(ctx, name) : NULL;
+    GlFramebuffer *f = name ? gl_framebuffer(ctx, name) : nullptr;
     if (!f) {
         GlSurface *s = ctx->surface;
         *owner = s;
@@ -506,7 +506,7 @@ GLAPI void APIENTRY glGetFramebufferAttachmentParameteriv(GLenum target, GLenum 
 GLAPI void APIENTRY glDrawBuffers(GLsizei n, const GLenum *bufs)
 {
     GL_CONTEXT_OR_RETURN();
-    GlFramebuffer *f = ctx->draw_fbo ? gl_framebuffer(ctx, ctx->draw_fbo) : NULL;
+    GlFramebuffer *f = ctx->draw_fbo ? gl_framebuffer(ctx, ctx->draw_fbo) : nullptr;
     if (!f) {
         if (n >= 1)
             ctx->draw_buffer = bufs[0];
@@ -521,7 +521,7 @@ GLAPI void APIENTRY glDrawBuffers(GLsizei n, const GLenum *bufs)
 GLAPI void APIENTRY glDrawBuffer(GLenum buf)
 {
     GL_CONTEXT_OR_RETURN();
-    GlFramebuffer *f = ctx->draw_fbo ? gl_framebuffer(ctx, ctx->draw_fbo) : NULL;
+    GlFramebuffer *f = ctx->draw_fbo ? gl_framebuffer(ctx, ctx->draw_fbo) : nullptr;
     if (f)
         glDrawBuffers(1, &buf);
     else
@@ -531,7 +531,7 @@ GLAPI void APIENTRY glDrawBuffer(GLenum buf)
 GLAPI void APIENTRY glReadBuffer(GLenum buf)
 {
     GL_CONTEXT_OR_RETURN();
-    GlFramebuffer *f = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : NULL;
+    GlFramebuffer *f = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : nullptr;
     if (f)
         f->read_buffer = buf;
     else
@@ -541,7 +541,7 @@ GLAPI void APIENTRY glReadBuffer(GLenum buf)
 BOOL gl_read_source(GlContext *ctx, MimeGpuAttachment *a, uint32_t *format, uint32_t *width, uint32_t *height)
 {
     memset(a, 0, sizeof(*a));
-    GlFramebuffer *f = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : NULL;
+    GlFramebuffer *f = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : nullptr;
     if (!f) {
         GlSurface *s = ctx->surface;
         if (!s)

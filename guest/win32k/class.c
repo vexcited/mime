@@ -22,7 +22,7 @@ HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type)
     if (!g_user_table) {
         g_user_table = W32Alloc(USER_MAX_HANDLES * sizeof(USER_ENTRY));
         if (!g_user_table)
-            return NULL;
+            return nullptr;
     }
     for (ULONG n = 0; n < USER_MAX_HANDLES; n++) {
         ULONG i = g_user_next;
@@ -39,14 +39,14 @@ HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type)
             return object->Handle;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 void UserFreeHandle(USER_OBJECT *object)
 {
     ULONG i = (ULONG)(ULONG_PTR)object->Handle & 0xFFFF;
     if (g_user_table && i < USER_MAX_HANDLES && g_user_table[i].Object == object)
-        g_user_table[i].Object = NULL;
+        g_user_table[i].Object = nullptr;
 }
 
 USER_OBJECT *UserLookup(HANDLE handle, UCHAR type)
@@ -54,14 +54,14 @@ USER_OBJECT *UserLookup(HANDLE handle, UCHAR type)
     ULONG_PTR v = (ULONG_PTR)handle;
     ULONG i = (ULONG)(v & 0xFFFF);
     if (!g_user_table || i < USER_FIRST_INDEX || i >= USER_MAX_HANDLES)
-        return NULL;
+        return nullptr;
     USER_OBJECT *o = g_user_table[i].Object;
     if (!o || (type && o->Type != type) || o->Destroyed)
-        return NULL;
+        return nullptr;
     /* a zero generation word matches any generation, like windows accepts 16 bit handles. */
     USHORT gen = (USHORT)(v >> 16);
     if (gen && gen != g_user_table[i].Generation)
-        return NULL;
+        return nullptr;
     return o;
 }
 
@@ -104,7 +104,7 @@ static const SYSTEM_CLASS g_builtin[] = {
     {L"#32770", 32770, MIME_FNID_DIALOG, CS_SAVEBITS | CS_DBLCLKS, 30 + 8 * 3, COLOR_3DFACE + 1, IDC_ARROW},
     {L"#32769", 32769, MIME_FNID_DESKTOP, CS_DBLCLKS, 8, COLOR_BACKGROUND + 1, IDC_ARROW},
     {L"#32768", 32768, MIME_FNID_MENU, CS_DROPSHADOW | CS_SAVEBITS | CS_DBLCLKS, 8, COLOR_MENU + 1, IDC_ARROW},
-    {L"Message", 0, MIME_FNID_MESSAGE, 0, 0, 0, NULL},
+    {L"Message", 0, MIME_FNID_MESSAGE, 0, 0, 0, nullptr},
 };
 
 static WND_CLASS *g_builtin_classes[RTL_NUMBER_OF(g_builtin)];
@@ -122,7 +122,7 @@ void ClassInitialize(void)
         c->WindowExtra = sc->WindowExtra;
         c->System = TRUE;
         c->Fnid = sc->Fnid;
-        c->Background = sc->Brush ? MetricsSysColorBrush(sc->Brush - 1) : NULL;
+        c->Background = sc->Brush ? MetricsSysColorBrush(sc->Brush - 1) : nullptr;
         InsertTailList(&g_system_classes, &c->Links);
         g_builtin_classes[i] = c;
     }
@@ -161,7 +161,7 @@ WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
         if (class_matches(c, name, atom))
             return c;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void free_class(WND_CLASS *c)
@@ -185,7 +185,7 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
     WNDCLASSEXW wc;
     if (!NT_SUCCESS(MimeCopyFromUser(&wc, user_wc, sizeof(wc))) || wc.cbSize != sizeof(wc))
         return 0;
-    PWSTR name = NULL, menu = NULL;
+    PWSTR name = nullptr, menu = nullptr;
     SIZE_T name_chars = 0;
     ATOM atom = 0;
     if (IS_INTRESOURCE(wc.lpszClassName)) {
@@ -194,8 +194,8 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
         W32Free(name);
         return 0;
     }
-    if (user_menu && !NT_SUCCESS(W32CaptureString(user_menu, &menu, NULL)))
-        menu = NULL;
+    if (user_menu && !NT_SUCCESS(W32CaptureString(user_menu, &menu, nullptr)))
+        menu = nullptr;
     if (wc.cbClsExtra < 0 || wc.cbWndExtra < 0 || wc.cbClsExtra > 40000 || wc.cbWndExtra > 40000) {
         W32Free(name);
         W32Free(menu);
@@ -225,7 +225,7 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
         WND_CLASS *c = W32Alloc(sizeof(WND_CLASS));
         if (c) {
             c->Name = name;
-            name = NULL;
+            name = nullptr;
             c->Atom = atom ? atom : AtomAdd(c->Name);
             c->Style = wc.style;
             c->Proc = wc.lpfnWndProc;
@@ -238,10 +238,10 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
             c->Cursor = wc.hCursor;
             c->Background = wc.hbrBackground;
             c->MenuName = menu;
-            menu = NULL;
+            menu = nullptr;
             c->Fnid = fnid;
             c->Process = p;
-            c->Extra = wc.cbClsExtra ? W32Alloc((SIZE_T)wc.cbClsExtra) : NULL;
+            c->Extra = wc.cbClsExtra ? W32Alloc((SIZE_T)wc.cbClsExtra) : nullptr;
             if (wc.style & CS_GLOBALCLASS)
                 InsertTailList(&g_global_classes, &c->Links);
             else
@@ -257,14 +257,14 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
 
 BOOL NTAPI NtUserUnregisterClass(PUNICODE_STRING user_name, HINSTANCE instance)
 {
-    PWSTR name = NULL;
+    PWSTR name = nullptr;
     UNICODE_STRING s;
     ATOM atom = 0;
     if (!NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s))))
         return FALSE;
     if (IS_INTRESOURCE(s.Buffer))
         atom = (ATOM)(ULONG_PTR)s.Buffer;
-    else if (!NT_SUCCESS(W32CaptureString(user_name, &name, NULL)))
+    else if (!NT_SUCCESS(W32CaptureString(user_name, &name, nullptr)))
         return FALSE;
     UserEnter();
     W32PROCESS *p = W32GetProcess();
@@ -282,14 +282,14 @@ BOOL NTAPI NtUserUnregisterClass(PUNICODE_STRING user_name, HINSTANCE instance)
 BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING user_name, LPWNDCLASSEXW user_wc, LPWSTR *menu,
                                 BOOL ansi)
 {
-    PWSTR name = NULL;
+    PWSTR name = nullptr;
     UNICODE_STRING s;
     ATOM atom = 0;
     if (!NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s))))
         return FALSE;
     if (IS_INTRESOURCE(s.Buffer))
         atom = (ATOM)(ULONG_PTR)s.Buffer;
-    else if (!NT_SUCCESS(W32CaptureString(user_name, &name, NULL)))
+    else if (!NT_SUCCESS(W32CaptureString(user_name, &name, nullptr)))
         return FALSE;
     UserEnter();
     WND_CLASS *c = ClassFind(W32GetProcess(), name, atom, instance);

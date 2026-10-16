@@ -20,7 +20,7 @@ static uint32_t dword(const uint8_t *p)
 
 static const uint8_t *sector(const MIME_CFB *f, uint32_t index)
 {
-    return index < f->SectorCount ? f->Data + ((size_t)index + 1) * f->SectorSize : NULL;
+    return index < f->SectorCount ? f->Data + ((size_t)index + 1) * f->SectorSize : nullptr;
 }
 
 static int chain_count(const MIME_CFB *f, uint32_t first, size_t *count)

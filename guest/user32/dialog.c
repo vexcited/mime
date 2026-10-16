@@ -52,7 +52,7 @@ typedef struct ITEM_INFO {
 static const WORD *read_name(const WORD *p, LPCWSTR *out)
 {
     if (*p == 0) {
-        *out = NULL;
+        *out = nullptr;
         return p + 1;
     }
     if (*p == 0xFFFF) {
@@ -138,7 +138,7 @@ static const WORD *parse_item(const WORD *p, BOOL extended, ITEM_INFO *it)
     p = read_name(p, &it->Class);
     p = read_name(p, &it->Title);
     it->DataSize = *p++;
-    it->Data = it->DataSize ? p : NULL;
+    it->Data = it->DataSize ? p : nullptr;
     p = (const WORD *)((const UCHAR *)p + it->DataSize);
     return p;
 }
@@ -168,12 +168,12 @@ static LPCWSTR builtin_class(LPCWSTR cls)
 
 static void compute_base_units(HFONT font, LONG *bx, LONG *by)
 {
-    HDC dc = GetDC(NULL);
+    HDC dc = GetDC(nullptr);
     HGDIOBJ old = SelectObject(dc, font);
     LONG height = 0;
-    LONG width = GdiGetCharDimensions(dc, NULL, &height);
+    LONG width = GdiGetCharDimensions(dc, nullptr, &height);
     SelectObject(dc, old);
-    ReleaseDC(NULL, dc);
+    ReleaseDC(nullptr, dc);
     *bx = width ? width : 8;
     *by = height ? height : 16;
 }
@@ -224,7 +224,7 @@ static void set_default_button(HWND dialog, HWND button)
 static void restore_default(HWND dialog)
 {
     DIALOG *d = get_dialog(dialog);
-    HWND def = d && d->DefId ? GetDlgItem(dialog, (int)d->DefId) : NULL;
+    HWND def = d && d->DefId ? GetDlgItem(dialog, (int)d->DefId) : nullptr;
     set_default_button(dialog, def);
 }
 
@@ -252,8 +252,8 @@ WINUSERAPI HWND WINAPI GetNextDlgTabItem(HWND dialog, HWND control, BOOL previou
 {
     HWND first = GetWindow(dialog, GW_CHILD);
     if (!first)
-        return NULL;
-    HWND c = control && IsChild(dialog, control) ? control : NULL;
+        return nullptr;
+    HWND c = control && IsChild(dialog, control) ? control : nullptr;
     HWND start = c;
     for (int guard = 0; guard < 4096; guard++) {
         if (!c)
@@ -274,7 +274,7 @@ WINUSERAPI HWND WINAPI GetNextDlgTabItem(HWND dialog, HWND control, BOOL previou
 WINUSERAPI HWND WINAPI GetNextDlgGroupItem(HWND dialog, HWND control, BOOL previous)
 {
     if (!control || !IsChild(dialog, control))
-        return GetNextDlgTabItem(dialog, NULL, previous);
+        return GetNextDlgTabItem(dialog, nullptr, previous);
     /* the group runs from a WS_GROUP control to the next one. */
     HWND group_start = control;
     while (!(GetWindowLongW(group_start, GWL_STYLE) & WS_GROUP)) {
@@ -341,7 +341,7 @@ static LRESULT default_dialog(HWND hwnd, DIALOG *d, UINT msg, WPARAM wparam, LPA
     }
     case WM_ACTIVATE:
         /* the default push button is only drawn as default while the dialog is active. */
-        RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
         if (LOWORD(wparam) == WA_INACTIVE) {
             HWND focus = GetFocus();
             if (d && focus && IsChild(hwnd, focus))
@@ -349,11 +349,11 @@ static LRESULT default_dialog(HWND hwnd, DIALOG *d, UINT msg, WPARAM wparam, LPA
         } else if (d && d->FocusSave && IsWindow(d->FocusSave)) {
             dialog_set_focus(hwnd, d->FocusSave);
         } else if (d) {
-            dialog_set_focus(hwnd, GetNextDlgTabItem(hwnd, NULL, FALSE));
+            dialog_set_focus(hwnd, GetNextDlgTabItem(hwnd, nullptr, FALSE));
         }
         return 0;
     case WM_SETFOCUS: {
-        HWND target = d && d->FocusSave && IsWindow(d->FocusSave) ? d->FocusSave : GetNextDlgTabItem(hwnd, NULL, FALSE);
+        HWND target = d && d->FocusSave && IsWindow(d->FocusSave) ? d->FocusSave : GetNextDlgTabItem(hwnd, nullptr, FALSE);
         if (target)
             dialog_set_focus(hwnd, target);
         return 0;
@@ -399,7 +399,7 @@ static LRESULT default_dialog(HWND hwnd, DIALOG *d, UINT msg, WPARAM wparam, LPA
     }
     case WM_SHOWWINDOW:
         if (wparam && d && !GetFocus())
-            dialog_set_focus(hwnd, GetNextDlgTabItem(hwnd, NULL, FALSE));
+            dialog_set_focus(hwnd, GetNextDlgTabItem(hwnd, nullptr, FALSE));
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     case WM_CHANGEUISTATE:
     case WM_UPDATEUISTATE:
@@ -452,7 +452,7 @@ HFONT UserGetMessageBoxFont(UINT dpi)
     ncm.cbSize = sizeof(ncm);
     UINT session = GetDpiForSystem();
     if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, session))
-        return NULL;
+        return nullptr;
     LOGFONTW lf = ncm.lfMessageFont;
     lf.lfHeight = (LONG)(((LONG64)lf.lfHeight * (LONG64)dpi + (LONG64)(session / 2)) / (LONG64)session);
     lf.lfWidth = (LONG)(((LONG64)lf.lfWidth * (LONG64)dpi + (LONG64)(session / 2)) / (LONG64)session);
@@ -486,11 +486,11 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
 
     DIALOG *d = UserAlloc(sizeof(DIALOG));
     if (!d)
-        return NULL;
+        return nullptr;
     d->Ansi = ansi;
     if (t.Style & (DS_SETFONT | DS_SHELLFONT)) {
         d->Font = create_dialog_font(&t, dpi);
-        d->OwnsFont = d->Font != NULL;
+        d->OwnsFont = d->Font != nullptr;
     }
     if (d->Font) {
         compute_base_units(d->Font, &d->BaseX, &d->BaseY);
@@ -514,7 +514,7 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
     }
     if (!(style & WS_CHILD) && (style & WS_CAPTION) == 0 && !(style & WS_POPUP))
         style |= WS_POPUP;
-    AdjustWindowRectExForDpi(&r, style, t.Menu != NULL, ex, dpi);
+    AdjustWindowRectExForDpi(&r, style, t.Menu != nullptr, ex, dpi);
     int width = r.right - r.left, height = r.bottom - r.top;
     int x = UserMulDiv(t.X, d->BaseX, 4), y = UserMulDiv(t.Y, d->BaseY, 8);
     if (t.Style & DS_CENTER) {
@@ -557,12 +557,12 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
 
     LPCWSTR cls = t.Class ? t.Class : L"#32770";
     HWND hwnd = CreateWindowExW(ex, cls, t.Caption, style, x, y, width, height, owner,
-                                (HMENU)NULL, instance, (LPVOID)param);
+                                (HMENU)nullptr, instance, (LPVOID)param);
     if (!hwnd) {
         if (d->OwnsFont)
             DeleteObject(d->Font);
         UserFree(d);
-        return NULL;
+        return nullptr;
     }
     SetWindowLongPtrW(hwnd, DWLP_MIME, (LONG_PTR)d);
     SetWindowLongPtrW(hwnd, DWLP_DLGPROC, (LONG_PTR)proc);
@@ -572,7 +572,7 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
 
     /* controls, in template order: the first created is the top of the z order. */
     const WORD *p = t.FirstItem;
-    HWND first_tab = NULL;
+    HWND first_tab = nullptr;
     for (WORD i = 0; i < t.Items; i++) {
         ITEM_INFO it;
         p = parse_item(p, t.Extended, &it);
@@ -585,7 +585,7 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
             if (t.Style & DS_NOFAILCREATE)
                 continue;
             DestroyWindow(hwnd);
-            return NULL;
+            return nullptr;
         }
         if (d->Font)
             SendMessageW(c, WM_SETFONT, (WPARAM)d->Font, 0);
@@ -595,11 +595,11 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
             first_tab = c;
     }
     if (!IsWindow(hwnd))
-        return NULL;
-    HWND focus = first_tab ? first_tab : GetNextDlgTabItem(hwnd, NULL, FALSE);
+        return nullptr;
+    HWND focus = first_tab ? first_tab : GetNextDlgTabItem(hwnd, nullptr, FALSE);
     INT_PTR init = SendMessageW(hwnd, WM_INITDIALOG, (WPARAM)focus, param);
     if (!IsWindow(hwnd))
-        return NULL;
+        return nullptr;
     if (init && focus)
         dialog_set_focus(hwnd, focus);
     if (t.Style & DS_SETFOREGROUND)
@@ -622,7 +622,7 @@ INT_PTR UserModalLoop(HWND dialog, HWND owner)
     BOOL quit = FALSE;
     INT_PTR result = -1;
     while (IsWindow(dialog) && (d = get_dialog(dialog)) && !d->Ended) {
-        BOOL got = GetMessageW(&msg, NULL, 0, 0);
+        BOOL got = GetMessageW(&msg, nullptr, 0, 0);
         if (got <= 0) {
             quit = got == 0;
             break;
@@ -632,7 +632,7 @@ INT_PTR UserModalLoop(HWND dialog, HWND owner)
             DispatchMessageW(&msg);
         }
     }
-    d = IsWindow(dialog) ? get_dialog(dialog) : NULL;
+    d = IsWindow(dialog) ? get_dialog(dialog) : nullptr;
     if (d)
         result = d->Result;
     if (owner_enabled)
@@ -666,7 +666,7 @@ static HWND find_owner(HWND parent)
 {
     /* modal dialogs are owned by the top level window of their parent. */
     if (!parent)
-        return NULL;
+        return nullptr;
     HWND root = GetAncestor(parent, GA_ROOT);
     return root ? root : parent;
 }
@@ -706,7 +706,7 @@ WINUSERAPI INT_PTR WINAPI DialogBoxIndirectParamA(HINSTANCE instance, LPCDLGTEMP
 static LPCDLGTEMPLATEW load_template(HINSTANCE instance, LPCWSTR name)
 {
     HRSRC res = FindResourceW(instance, name, RTW_DIALOG);
-    return res ? LockResource(LoadResource(instance, res)) : NULL;
+    return res ? LockResource(LoadResource(instance, res)) : nullptr;
 }
 
 WINUSERAPI INT_PTR WINAPI DialogBoxParamW(HINSTANCE instance, LPCWSTR name, HWND parent, DLGPROC proc, LPARAM param)
@@ -730,7 +730,7 @@ WINUSERAPI INT_PTR WINAPI DialogBoxParamA(HINSTANCE instance, LPCSTR name, HWND 
 WINUSERAPI HWND WINAPI CreateDialogParamW(HINSTANCE instance, LPCWSTR name, HWND parent, DLGPROC proc, LPARAM param)
 {
     LPCDLGTEMPLATEW t = load_template(instance, name);
-    return t ? CreateDialogIndirectParamW(instance, t, parent, proc, param) : NULL;
+    return t ? CreateDialogIndirectParamW(instance, t, parent, proc, param) : nullptr;
 }
 
 WINUSERAPI HWND WINAPI CreateDialogParamA(HINSTANCE instance, LPCSTR name, HWND parent, DLGPROC proc, LPARAM param)
@@ -738,7 +738,7 @@ WINUSERAPI HWND WINAPI CreateDialogParamA(HINSTANCE instance, LPCSTR name, HWND 
     LPWSTR w = UserAtoW(name);
     LPCDLGTEMPLATEW t = load_template(instance, w);
     UserFreeConverted(w, name);
-    return t ? UserCreateDialog(instance, t, parent, proc, param, TRUE, FALSE) : NULL;
+    return t ? UserCreateDialog(instance, t, parent, proc, param, TRUE, FALSE) : nullptr;
 }
 
 /* ------------------------------------------------------------------ keyboard navigation */
@@ -762,7 +762,7 @@ WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG msg)
         DispatchMessageW(msg);
         return TRUE;
     }
-    UINT code = dlg_code(msg->hwnd == dialog ? NULL : msg->hwnd);
+    UINT code = dlg_code(msg->hwnd == dialog ? nullptr : msg->hwnd);
     if (code & DLGC_WANTMESSAGE) {
         DispatchMessageW(msg);
         return TRUE;

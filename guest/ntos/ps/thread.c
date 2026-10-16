@@ -48,11 +48,11 @@ PVOID PsCreateIdleThread(PKPRCB prcb)
 {
     PETHREAD idle = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ETHREAD), KI_TAG('I', 'd', 'l', 'e'));
     PVOID limit;
-    PVOID alloc = idle ? MmAllocateKernelStack(KERNEL_STACK_SIZE, &limit) : NULL;
+    PVOID alloc = idle ? MmAllocateKernelStack(KERNEL_STACK_SIZE, &limit) : nullptr;
     if (!alloc) {
         if (idle)
             ExFreePool(idle);
-        return NULL;
+        return nullptr;
     }
     PVOID top = (PUCHAR)limit + KERNEL_STACK_SIZE;
     initialize_idle(idle, top, limit, prcb);
@@ -90,7 +90,7 @@ void PspReapDeadThreads(void)
 NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE routine, PVOID context, PETHREAD *out)
 {
     PETHREAD thread;
-    NTSTATUS status = ObCreateObject(PsThreadTypeObject, NULL, KernelMode, sizeof(ETHREAD), (PVOID *)&thread);
+    NTSTATUS status = ObCreateObject(PsThreadTypeObject, nullptr, KernelMode, sizeof(ETHREAD), (PVOID *)&thread);
     if (!NT_SUCCESS(status))
         return status;
     memset(thread, 0, sizeof(*thread));
@@ -218,7 +218,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     KiAttachProcess(&process->Pcb);
 
-    PVOID stack = NULL, teb_va = NULL;
+    PVOID stack = nullptr, teb_va = nullptr;
     SIZE_T size = stack_reserve;
     NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | MEM_COMMIT | (process->Machine == IMAGE_FILE_MACHINE_I386 ? 0 : MEM_TOP_DOWN), PAGE_READWRITE);
     /* the 32-bit teb that follows a wow64 thread's must be reachable from 32-bit code. */
@@ -227,7 +227,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
         status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT | (wow64 ? 0 : MEM_TOP_DOWN),
                                    PAGE_READWRITE);
     /* the translator runs on a stack of its own, the program keeps the thread stack. */
-    PVOID native_stack = NULL;
+    PVOID native_stack = nullptr;
     SIZE_T native_size = MIME_NATIVE_STACK_SIZE;
     if (NT_SUCCESS(status) && translated)
         status = MiAllocateVirtual(process, &native_stack, &native_size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN,
@@ -238,7 +238,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     }
 
     PETHREAD thread;
-    status = PspCreateThread(process, FALSE, user_thread_startup, NULL, &thread);
+    status = PspCreateThread(process, FALSE, user_thread_startup, nullptr, &thread);
     if (!NT_SUCCESS(status)) {
         KiAttachProcess(saved);
         return status;
@@ -486,7 +486,7 @@ static void NTAPI suspend_normal_routine(PVOID context, PVOID arg1, PVOID arg2)
         thread->Suspended = TRUE;
         KeSetEvent(&thread->SuspendEvent, 0, FALSE);
         KiReleaseDispatcherLock(state);
-        KeWaitForSingleObject(&thread->SuspendSemaphore, Suspended, UserMode, FALSE, NULL);
+        KeWaitForSingleObject(&thread->SuspendSemaphore, Suspended, UserMode, FALSE, nullptr);
     }
 }
 
@@ -496,9 +496,9 @@ void PspCheckForSuspendApc(PKTHREAD thread)
     if (thread->SuspendCount && !thread->Terminating && thread->State != Initialized &&
         thread->ApcStateProcess == thread->Process &&
         !thread->SuspendApcActive && !thread->SuspendApc.Inserted) {
-        KeInitializeApc(&thread->SuspendApc, thread, OriginalApcEnvironment, suspend_kernel_routine, NULL,
-                        suspend_normal_routine, KernelMode, NULL);
-        KeInsertQueueApc(&thread->SuspendApc, NULL, NULL, 0);
+        KeInitializeApc(&thread->SuspendApc, thread, OriginalApcEnvironment, suspend_kernel_routine, nullptr,
+                        suspend_normal_routine, KernelMode, nullptr);
+        KeInsertQueueApc(&thread->SuspendApc, nullptr, nullptr, 0);
     }
     KiReleaseDispatcherLock(state);
 }
@@ -514,7 +514,7 @@ NTSTATUS PspWaitForSuspension(PETHREAD thread)
         if (terminated) return STATUS_THREAD_IS_TERMINATING;
         if (ready) return STATUS_SUCCESS;
         PVOID objects[2] = {thread, &thread->Tcb.SuspendEvent};
-        NTSTATUS status = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, NULL, NULL);
+        NTSTATUS status = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, nullptr);
         if (status != STATUS_WAIT_0 && status != STATUS_WAIT_0 + 1)
             return status;
     }
@@ -623,7 +623,7 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
     if (!NT_SUCCESS(status))
         return status;
     if ((ULONG)klass == MX_THREAD_SUSPEND_GATE) {
-        PVOID gate = NULL;
+        PVOID gate = nullptr;
         MX_SUSPEND_GATE values;
         if (thread != PsCurrentThread())
             status = STATUS_ACCESS_DENIED;
@@ -655,7 +655,7 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
 
 NTSTATUS NTAPI NtYieldExecution(void)
 {
-    LARGE_INTEGER zero = {0};
+    LARGE_INTEGER zero = {};
     return KeDelayExecutionThread(UserMode, FALSE, &zero);
 }
 
@@ -709,7 +709,7 @@ NTSTATUS NTAPI NtWaitForAlertByThreadId(PVOID hint, PLARGE_INTEGER timeout)
     if (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t))))
         return STATUS_ACCESS_VIOLATION;
     NTSTATUS status =
-        KeWaitForSingleObject(&KiCurrentThread()->AlertByIdEvent, UserRequest, UserMode, FALSE, timeout ? &t : NULL);
+        KeWaitForSingleObject(&KiCurrentThread()->AlertByIdEvent, UserRequest, UserMode, FALSE, timeout ? &t : nullptr);
     return status == STATUS_WAIT_0 ? STATUS_ALERTED : status;
 }
 
@@ -730,7 +730,7 @@ NTSTATUS NTAPI NtQueueApcThread(HANDLE handle, PPS_APC_ROUTINE routine, PVOID ar
         ObDereferenceObject(thread);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    KeInitializeApc(apc, &thread->Tcb, OriginalApcEnvironment, user_apc_kernel_routine, NULL,
+    KeInitializeApc(apc, &thread->Tcb, OriginalApcEnvironment, user_apc_kernel_routine, nullptr,
                     (PKNORMAL_ROUTINE)routine, UserMode, arg1);
     if (!KeInsertQueueApc(apc, arg2, arg3, 0)) {
         ExFreePool(apc);
@@ -817,7 +817,7 @@ void PsDumpThreads(void)
         PKTHREAD k = &threads[i]->Tcb;
         PEPROCESS process = CONTAINING_RECORD(k->Process, EPROCESS, Pcb);
         const char *state = k->State < RTL_NUMBER_OF(states) ? states[k->State] : "?";
-        PVOID object = k->State == Waiting && k->WaitBlockList ? k->WaitBlockList->Object : NULL;
+        PVOID object = k->State == Waiting && k->WaitBlockList ? k->WaitBlockList->Object : nullptr;
         PKTRAP_FRAME frame = k->TrapFrame;
         ULONG64 pc = 0, sp = 0, top = 0;
         if (frame && KI_TRAP_FROM_USER(frame) && !process->SystemProcess) {

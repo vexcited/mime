@@ -22,15 +22,15 @@ static BOOL CALLBACK make_factory(INIT_ONCE *once, void *param, void **context)
 {
     HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
     HRESULT(WINAPI * create)(REFIID, void **) =
-        dxgi ? (HRESULT(WINAPI *)(REFIID, void **))(void *)GetProcAddress(dxgi, "CreateDXGIFactory1") : NULL;
+        dxgi ? (HRESULT(WINAPI *)(REFIID, void **))(void *)GetProcAddress(dxgi, "CreateDXGIFactory1") : nullptr;
     if (create && FAILED(create(&IID_IDXGIFactory1, (void **)&g_factory)))
-        g_factory = NULL;
+        g_factory = nullptr;
     return TRUE;
 }
 
 IDXGIFactory1 *D9Factory(void)
 {
-    InitOnceExecuteOnce(&g_factory_once, make_factory, NULL, NULL);
+    InitOnceExecuteOnce(&g_factory_once, make_factory, nullptr, nullptr);
     return g_factory;
 }
 
@@ -59,7 +59,7 @@ HRESULT D9GetOutput(UINT index, IDXGIAdapter1 **out_adapter, IDXGIOutput **out_o
         if (!o && n++ == index) {
             *out_adapter = adapter;
             if (out_output)
-                *out_output = NULL;
+                *out_output = nullptr;
             return D3D_OK;
         }
         adapter->lpVtbl->Release(adapter);
@@ -71,7 +71,7 @@ UINT D9AdapterCount(void)
 {
     UINT n = 0;
     IDXGIAdapter1 *adapter;
-    while (SUCCEEDED(D9GetOutput(n, &adapter, NULL))) {
+    while (SUCCEEDED(D9GetOutput(n, &adapter, nullptr))) {
         adapter->lpVtbl->Release(adapter);
         n++;
     }
@@ -108,8 +108,8 @@ static UINT list_modes(UINT adapter, D3DFORMAT format, D3DSCANLINEORDERING scanl
     if (!output)
         return 0;
     UINT count = 0;
-    DXGI_MODE_DESC *modes = NULL;
-    if (SUCCEEDED(output->lpVtbl->GetDisplayModeList(output, dxgi, 0, &count, NULL)) && count)
+    DXGI_MODE_DESC *modes = nullptr;
+    if (SUCCEEDED(output->lpVtbl->GetDisplayModeList(output, dxgi, 0, &count, nullptr)) && count)
         modes = HeapAlloc(GetProcessHeap(), 0, count * sizeof(*modes));
     if (modes && FAILED(output->lpVtbl->GetDisplayModeList(output, dxgi, 0, &count, modes)))
         count = 0;
@@ -169,14 +169,14 @@ static HRESULT current_mode(UINT adapter, D3DDISPLAYMODEEX *mode, D3DDISPLAYROTA
     if (FAILED(D9GetOutput(adapter, &a, &output)))
         return D3DERR_INVALIDCALL;
     a->lpVtbl->Release(a);
-    DEVMODEW dm = {0};
+    DEVMODEW dm = {};
     dm.dmSize = sizeof(dm);
-    DXGI_OUTPUT_DESC desc = {0};
+    DXGI_OUTPUT_DESC desc = {};
     if (output) {
         output->lpVtbl->GetDesc(output, &desc);
         output->lpVtbl->Release(output);
     }
-    if (!EnumDisplaySettingsW(output ? desc.DeviceName : NULL, ENUM_CURRENT_SETTINGS, &dm)) {
+    if (!EnumDisplaySettingsW(output ? desc.DeviceName : nullptr, ENUM_CURRENT_SETTINGS, &dm)) {
         dm.dmPelsWidth = GetSystemMetrics(SM_CXSCREEN);
         dm.dmPelsHeight = GetSystemMetrics(SM_CYSCREEN);
         dm.dmDisplayFrequency = 60;
@@ -340,7 +340,7 @@ static HRESULT STDMETHODCALLTYPE d3d_query(IDirect3D9Ex *iface, REFIID riid, voi
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3D9) ||
         (impl(iface)->ex && IsEqualGUID(riid, &IID_IDirect3D9Ex))) {
         *out = iface;
@@ -392,9 +392,9 @@ static HRESULT STDMETHODCALLTYPE d3d_get_adapter_identifier(IDirect3D9Ex *iface,
     IDXGIOutput *output;
     if (!id || FAILED(D9GetOutput(adapter, &a, &output)))
         return D3DERR_INVALIDCALL;
-    DXGI_ADAPTER_DESC1 desc = {0};
+    DXGI_ADAPTER_DESC1 desc = {};
     a->lpVtbl->GetDesc1(a, &desc);
-    LARGE_INTEGER version = {0};
+    LARGE_INTEGER version = {};
     a->lpVtbl->CheckInterfaceSupport(a, &IID_IDXGIDevice, &version);
     a->lpVtbl->Release(a);
     memset(id, 0, sizeof(*id));
@@ -403,12 +403,12 @@ static HRESULT STDMETHODCALLTYPE d3d_get_adapter_identifier(IDirect3D9Ex *iface,
                          : desc.VendorId == 0x8086 ? (sizeof(void *) == 8 ? "igdumdim64.dll" : "igdumdim32.dll")
                                                    : "mimed3d9.dll";
     lstrcpynA(id->Driver, driver, sizeof(id->Driver));
-    WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, id->Description, sizeof(id->Description), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, id->Description, sizeof(id->Description), nullptr, nullptr);
     if (output) {
-        DXGI_OUTPUT_DESC out = {0};
+        DXGI_OUTPUT_DESC out = {};
         output->lpVtbl->GetDesc(output, &out);
         output->lpVtbl->Release(output);
-        WideCharToMultiByte(CP_ACP, 0, out.DeviceName, -1, id->DeviceName, sizeof(id->DeviceName), NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, out.DeviceName, -1, id->DeviceName, sizeof(id->DeviceName), nullptr, nullptr);
     }
     if (!(flags & D3DENUM_NO_DRIVERVERSION))
         id->DriverVersion = version;
@@ -444,7 +444,7 @@ static HRESULT STDMETHODCALLTYPE d3d_get_adapter_display_mode(IDirect3D9Ex *ifac
     D3DDISPLAYMODEEX m;
     if (!mode)
         return D3DERR_INVALIDCALL;
-    HRESULT hr = current_mode(adapter, &m, NULL);
+    HRESULT hr = current_mode(adapter, &m, nullptr);
     if (SUCCEEDED(hr))
         *mode = (D3DDISPLAYMODE){m.Width, m.Height, m.RefreshRate, m.Format};
     return hr;
@@ -540,11 +540,11 @@ static HMONITOR STDMETHODCALLTYPE d3d_get_adapter_monitor(IDirect3D9Ex *iface, U
     IDXGIAdapter1 *a;
     IDXGIOutput *output;
     if (FAILED(D9GetOutput(adapter, &a, &output)))
-        return NULL;
+        return nullptr;
     a->lpVtbl->Release(a);
     if (!output)
-        return MonitorFromWindow(NULL, MONITOR_DEFAULTTOPRIMARY);
-    DXGI_OUTPUT_DESC desc = {0};
+        return MonitorFromWindow(nullptr, MONITOR_DEFAULTTOPRIMARY);
+    DXGI_OUTPUT_DESC desc = {};
     output->lpVtbl->GetDesc(output, &desc);
     output->lpVtbl->Release(output);
     return desc.Monitor;
@@ -555,7 +555,7 @@ static HRESULT create_device(IDirect3D9Ex *iface, UINT adapter, D3DDEVTYPE type,
 {
     if (!out || !params || adapter >= D9AdapterCount())
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (type != D3DDEVTYPE_HAL)
         return D3DERR_NOTAVAILABLE;
     D9Device *device;
@@ -569,7 +569,7 @@ static HRESULT STDMETHODCALLTYPE d3d_create_device(IDirect3D9Ex *iface, UINT ada
                                                    DWORD flags, D3DPRESENT_PARAMETERS *params,
                                                    IDirect3DDevice9 **out)
 {
-    return create_device(iface, adapter, type, focus, flags, params, NULL, (IDirect3DDevice9Ex **)out);
+    return create_device(iface, adapter, type, focus, flags, params, nullptr, (IDirect3DDevice9Ex **)out);
 }
 
 static UINT STDMETHODCALLTYPE d3d_get_adapter_mode_count_ex(IDirect3D9Ex *iface, UINT adapter,
@@ -607,9 +607,9 @@ static HRESULT STDMETHODCALLTYPE d3d_create_device_ex(IDirect3D9Ex *iface, UINT 
 static HRESULT STDMETHODCALLTYPE d3d_get_adapter_luid(IDirect3D9Ex *iface, UINT adapter, LUID *luid)
 {
     IDXGIAdapter1 *a;
-    if (!luid || FAILED(D9GetOutput(adapter, &a, NULL)))
+    if (!luid || FAILED(D9GetOutput(adapter, &a, nullptr)))
         return D3DERR_INVALIDCALL;
-    DXGI_ADAPTER_DESC1 desc = {0};
+    DXGI_ADAPTER_DESC1 desc = {};
     a->lpVtbl->GetDesc1(a, &desc);
     a->lpVtbl->Release(a);
     *luid = desc.AdapterLuid;

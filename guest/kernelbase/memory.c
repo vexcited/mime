@@ -13,7 +13,7 @@ LPVOID WINAPI VirtualAllocEx(HANDLE process, LPVOID address, SIZE_T size, DWORD 
     NTSTATUS status = NtAllocateVirtualMemory(process, &base, 0, &length, type, protect);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     return base;
 }
@@ -252,7 +252,7 @@ HANDLE WINAPI HeapCreate(DWORD options, SIZE_T initial, SIZE_T maximum)
     ULONG flags = options & (HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE | HEAP_CREATE_ENABLE_EXECUTE);
     if (!maximum)
         flags |= HEAP_GROWABLE;
-    HANDLE heap = RtlCreateHeap(flags, NULL, maximum, initial, NULL, NULL);
+    HANDLE heap = RtlCreateHeap(flags, nullptr, maximum, initial, nullptr, nullptr);
     if (!heap)
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
     return heap;
@@ -386,21 +386,21 @@ static RTL_SRWLOCK g_global_lock;
 static MOVEABLE *moveable_of(HGLOBAL h)
 {
     if (((ULONG_PTR)h & 0xF) != 8)
-        return NULL;
+        return nullptr;
     MOVEABLE *m = (MOVEABLE *)((PUCHAR)h - 8);
-    return m->Magic == MOVEABLE_MAGIC ? m : NULL;
+    return m->Magic == MOVEABLE_MAGIC ? m : nullptr;
 }
 
 static PVOID data_block(MOVEABLE *m)
 {
-    return m->Pointer ? (PUCHAR)m->Pointer - sizeof(DATA_HEADER) : NULL;
+    return m->Pointer ? (PUCHAR)m->Pointer - sizeof(DATA_HEADER) : nullptr;
 }
 
 static PVOID allocate_data(MOVEABLE *m, SIZE_T size, BOOL zero)
 {
     DATA_HEADER *h = RtlAllocateHeap(KbPeb()->ProcessHeap, zero ? HEAP_ZERO_MEMORY : 0, size + sizeof(DATA_HEADER));
     if (!h)
-        return NULL;
+        return nullptr;
     h->Magic = DATA_MAGIC;
     h->Pad = 0;
     h->Owner = m;
@@ -419,7 +419,7 @@ static HGLOBAL global_alloc(UINT flags, SIZE_T size, BOOL discardable)
     MOVEABLE *m = RtlAllocateHeap(heap, HEAP_ZERO_MEMORY, sizeof(MOVEABLE));
     if (!m) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     m->Magic = MOVEABLE_MAGIC;
     m->Flags = discardable ? FLAG_DISCARDABLE : 0;
@@ -429,7 +429,7 @@ static HGLOBAL global_alloc(UINT flags, SIZE_T size, BOOL discardable)
             m->Magic = 0;
             RtlFreeHeap(heap, 0, m);
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-            return NULL;
+            return nullptr;
         }
     }
     return &m->Pointer;
@@ -438,7 +438,7 @@ static HGLOBAL global_alloc(UINT flags, SIZE_T size, BOOL discardable)
 static HGLOBAL global_free(HGLOBAL h)
 {
     if (!h)
-        return NULL;
+        return nullptr;
     PVOID heap = KbPeb()->ProcessHeap;
     MOVEABLE *m = moveable_of(h);
     if (m) {
@@ -450,13 +450,13 @@ static HGLOBAL global_free(HGLOBAL h)
         RtlReleaseSRWLockExclusive(&g_global_lock);
         RtlFreeHeap(heap, 0, block);
         RtlFreeHeap(heap, 0, m);
-        return NULL;
+        return nullptr;
     }
     if (!RtlFreeHeap(heap, 0, h)) {
         KbSetError(ERROR_INVALID_HANDLE);
         return h;
     }
-    return NULL;
+    return nullptr;
 }
 
 static LPVOID global_lock(HGLOBAL h)
@@ -521,7 +521,7 @@ static HGLOBAL global_handle(LPCVOID p)
 {
     if (!p) {
         KbSetError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     if (moveable_of((HGLOBAL)p))
         return (HGLOBAL)p;
@@ -532,7 +532,7 @@ static HGLOBAL global_handle(LPCVOID p)
     }
     if (RtlSizeHeap(KbPeb()->ProcessHeap, 0, p) == (SIZE_T)-1) {
         KbSetError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return (HGLOBAL)p;
 }
@@ -554,11 +554,11 @@ static HGLOBAL global_realloc(HGLOBAL h, SIZE_T size, UINT flags, BOOL discardab
             SIZE_T old = RtlSizeHeap(heap, 0, h);
             if (old == (SIZE_T)-1) {
                 KbSetError(ERROR_INVALID_HANDLE);
-                return NULL;
+                return nullptr;
             }
             HGLOBAL nh = global_alloc(GMEM_MOVEABLE, old, discardable_flag);
             if (!nh)
-                return NULL;
+                return nullptr;
             MOVEABLE *nm = moveable_of(nh);
             if (old)
                 memcpy(nm->Pointer, h, old);
@@ -585,16 +585,16 @@ static HGLOBAL global_realloc(HGLOBAL h, SIZE_T size, UINT flags, BOOL discardab
                 ((DATA_HEADER *)block)->Magic = 0;
                 RtlFreeHeap(heap, 0, block);
             }
-            m->Pointer = NULL;
+            m->Pointer = nullptr;
         } else {
             KbSetError(ERROR_INVALID_HANDLE);
-            result = NULL;
+            result = nullptr;
         }
     } else if (!m->Pointer) {
         m->Pointer = allocate_data(m, size, (flags & GMEM_ZEROINIT) != 0);
         if (!m->Pointer) {
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-            result = NULL;
+            result = nullptr;
         }
     } else {
         ULONG hf = (flags & GMEM_ZEROINIT) ? HEAP_ZERO_MEMORY : 0;
@@ -605,7 +605,7 @@ static HGLOBAL global_realloc(HGLOBAL h, SIZE_T size, UINT flags, BOOL discardab
             m->Pointer = block + 1;
         } else {
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-            result = NULL;
+            result = nullptr;
         }
     }
     RtlReleaseSRWLockExclusive(&g_global_lock);
@@ -784,35 +784,35 @@ HANDLE WINAPI CreateFileMappingW(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD pr
         break;
     default:
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     LARGE_INTEGER size;
     size.LowPart = size_low;
     size.HighPart = (LONG)size_high;
     if (file == INVALID_HANDLE_VALUE) {
-        file = NULL;
+        file = nullptr;
         if (!size.QuadPart) {
             KbSetError(ERROR_INVALID_PARAMETER);
-            return NULL;
+            return nullptr;
         }
     } else if (!size.QuadPart) {
         LARGE_INTEGER current;
         if (GetFileSizeEx(file, &current) && !current.QuadPart) {
             KbSetError(ERROR_FILE_INVALID);
-            return NULL;
+            return nullptr;
         }
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!KbNamedObjectAttributes(&oa, &us, name, FALSE, sa))
-        return NULL;
+        return nullptr;
     if (name)
         oa.Attributes |= OBJ_OPENIF;
     HANDLE handle;
-    NTSTATUS status = NtCreateSection(&handle, access, &oa, size.QuadPart ? &size : NULL, page, sec, file);
+    NTSTATUS status = NtCreateSection(&handle, access, &oa, size.QuadPart ? &size : nullptr, page, sec, file);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     KbSetError(status == STATUS_OBJECT_NAME_EXISTS ? ERROR_ALREADY_EXISTS : ERROR_SUCCESS);
     return handle;
@@ -823,7 +823,7 @@ HANDLE WINAPI CreateFileMappingA(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD pr
 {
     PWSTR wname = KbAnsiToWideCp(CP_ACP, name);
     if (name && !wname)
-        return NULL;
+        return nullptr;
     HANDLE h = CreateFileMappingW(file, sa, protect, size_high, size_low, wname);
     KbFree(wname);
     return h;
@@ -833,19 +833,19 @@ HANDLE WINAPI OpenFileMappingW(DWORD access, BOOL inherit, LPCWSTR name)
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
-    if (!KbNamedObjectAttributes(&oa, &us, name, inherit, NULL))
-        return NULL;
+    if (!KbNamedObjectAttributes(&oa, &us, name, inherit, nullptr))
+        return nullptr;
     if (access == FILE_MAP_COPY)
         access = SECTION_MAP_READ;
     HANDLE handle;
     NTSTATUS status = NtOpenSection(&handle, access, &oa);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     return handle;
 }
@@ -854,7 +854,7 @@ HANDLE WINAPI OpenFileMappingA(DWORD access, BOOL inherit, LPCSTR name)
 {
     PWSTR wname = KbAnsiToWideCp(CP_ACP, name);
     if (name && !wname)
-        return NULL;
+        return nullptr;
     HANDLE h = OpenFileMappingW(access, inherit, wname);
     KbFree(wname);
     return h;
@@ -872,14 +872,14 @@ LPVOID WINAPI MapViewOfFileEx(HANDLE mapping, DWORD access, DWORD offset_high, D
                                          map_access_to_protect(access));
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     return address;
 }
 
 LPVOID WINAPI MapViewOfFile(HANDLE mapping, DWORD access, DWORD offset_high, DWORD offset_low, SIZE_T size)
 {
-    return MapViewOfFileEx(mapping, access, offset_high, offset_low, size, NULL);
+    return MapViewOfFileEx(mapping, access, offset_high, offset_low, size, nullptr);
 }
 
 BOOL WINAPI UnmapViewOfFile(LPCVOID base)

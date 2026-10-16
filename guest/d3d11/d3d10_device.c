@@ -16,13 +16,13 @@ static ID3D11Device5 *device11(ID3D10Device1 *iface) { return &impl(iface)->ifac
 static ID3D11DeviceContext4 *context(ID3D10Device1 *iface) { return &impl(iface)->immediate->iface; }
 
 /* the direct3d 11 interfaces behind direct3d 10 ones. */
-static ID3D11Resource *resource11(void *iface) { return iface ? D3D10_IMPL(D3dResource, iface)->iface : NULL; }
+static ID3D11Resource *resource11(void *iface) { return iface ? D3D10_IMPL(D3dResource, iface)->iface : nullptr; }
 
-static void *view11(void *iface) { return iface ? &D3D10_IMPL(D3dView, iface)->iface : NULL; }
+static void *view11(void *iface) { return iface ? &D3D10_IMPL(D3dView, iface)->iface : nullptr; }
 
-static void *shader11(void *iface) { return iface ? &D3D10_IMPL(D3dShader, iface)->iface : NULL; }
+static void *shader11(void *iface) { return iface ? &D3D10_IMPL(D3dShader, iface)->iface : nullptr; }
 
-static void *query11(void *iface) { return iface ? &D3D10_IMPL(D3dQuery, iface)->iface : NULL; }
+static void *query11(void *iface) { return iface ? &D3D10_IMPL(D3dQuery, iface)->iface : nullptr; }
 
 #define STATE11(type, state) ((state) ? (void *)&D3D10_IMPL(type, state)->iface : NULL)
 
@@ -30,7 +30,7 @@ static void *query11(void *iface) { return iface ? &D3D10_IMPL(D3dQuery, iface)-
 static HRESULT made(HRESULT hr, void *object, REFIID riid, void **out)
 {
     if (out)
-        *out = SUCCEEDED(hr) && object ? D3d10From11(object, riid) : NULL;
+        *out = SUCCEEDED(hr) && object ? D3d10From11(object, riid) : nullptr;
     return hr;
 }
 
@@ -73,7 +73,7 @@ static UINT convert_resources(ID3D11Buffer **out, ID3D10Buffer *const *in, UINT 
 {
     count = D3D_MIN(count, max);
     for (UINT i = 0; i < count; i++)
-        out[i] = in ? (ID3D11Buffer *)resource11(in[i]) : NULL;
+        out[i] = in ? (ID3D11Buffer *)resource11(in[i]) : nullptr;
     return count;
 }
 
@@ -81,7 +81,7 @@ static UINT convert_views(void **out, ID3D10ShaderResourceView *const *in, UINT 
 {
     count = D3D_MIN(count, SRV_SLOTS);
     for (UINT i = 0; i < count; i++)
-        out[i] = in ? view11(in[i]) : NULL;
+        out[i] = in ? view11(in[i]) : nullptr;
     return count;
 }
 
@@ -89,7 +89,7 @@ static UINT convert_samplers(ID3D11SamplerState **out, ID3D10SamplerState *const
 {
     count = D3D_MIN(count, SAMPLER_SLOTS);
     for (UINT i = 0; i < count; i++)
-        out[i] = in ? STATE11(D3dSamplerState, in[i]) : NULL;
+        out[i] = in ? STATE11(D3dSamplerState, in[i]) : nullptr;
     return count;
 }
 
@@ -167,17 +167,17 @@ static void STDMETHODCALLTYPE gs_set_samplers(ID3D10Device1 *iface, UINT slot, U
 
 static void STDMETHODCALLTYPE vs_set_shader(ID3D10Device1 *iface, ID3D10VertexShader *shader)
 {
-    context(iface)->lpVtbl->VSSetShader(context(iface), shader11(shader), NULL, 0);
+    context(iface)->lpVtbl->VSSetShader(context(iface), shader11(shader), nullptr, 0);
 }
 
 static void STDMETHODCALLTYPE gs_set_shader(ID3D10Device1 *iface, ID3D10GeometryShader *shader)
 {
-    context(iface)->lpVtbl->GSSetShader(context(iface), shader11(shader), NULL, 0);
+    context(iface)->lpVtbl->GSSetShader(context(iface), shader11(shader), nullptr, 0);
 }
 
 static void STDMETHODCALLTYPE ps_set_shader(ID3D10Device1 *iface, ID3D10PixelShader *shader)
 {
-    context(iface)->lpVtbl->PSSetShader(context(iface), shader11(shader), NULL, 0);
+    context(iface)->lpVtbl->PSSetShader(context(iface), shader11(shader), nullptr, 0);
 }
 
 static void STDMETHODCALLTYPE draw_indexed(ID3D10Device1 *iface, UINT count, UINT start, INT base)
@@ -241,7 +241,7 @@ static void STDMETHODCALLTYPE om_set_render_targets(ID3D10Device1 *iface, UINT c
     void *v[D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT];
     count = D3D_MIN(count, D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT);
     for (UINT i = 0; i < count; i++)
-        v[i] = views ? view11(views[i]) : NULL;
+        v[i] = views ? view11(views[i]) : nullptr;
     context(iface)->lpVtbl->OMSetRenderTargets(context(iface), count, (ID3D11RenderTargetView **)v, view11(depth));
 }
 
@@ -348,7 +348,7 @@ static void get_slots(ID3D10Device1 *iface, SlotGetter get, UINT slot, UINT coun
     if (!out)
         return;
     for (UINT i = 0; i < count; i++) {
-        void *object = NULL;
+        void *object = nullptr;
         get(context(iface), slot + i, 1, &object);
         out[i] = D3d10From11(object, riid);
     }
@@ -372,28 +372,28 @@ GET_SLOTS(gs_get_samplers, GSGetSamplers, ID3D10SamplerState, IID_ID3D10SamplerS
 
 static void STDMETHODCALLTYPE vs_get_shader(ID3D10Device1 *iface, ID3D10VertexShader **shader)
 {
-    ID3D11VertexShader *s = NULL;
-    context(iface)->lpVtbl->VSGetShader(context(iface), &s, NULL, NULL);
+    ID3D11VertexShader *s = nullptr;
+    context(iface)->lpVtbl->VSGetShader(context(iface), &s, nullptr, nullptr);
     *shader = D3d10From11(s, &IID_ID3D10VertexShader);
 }
 
 static void STDMETHODCALLTYPE gs_get_shader(ID3D10Device1 *iface, ID3D10GeometryShader **shader)
 {
-    ID3D11GeometryShader *s = NULL;
-    context(iface)->lpVtbl->GSGetShader(context(iface), &s, NULL, NULL);
+    ID3D11GeometryShader *s = nullptr;
+    context(iface)->lpVtbl->GSGetShader(context(iface), &s, nullptr, nullptr);
     *shader = D3d10From11(s, &IID_ID3D10GeometryShader);
 }
 
 static void STDMETHODCALLTYPE ps_get_shader(ID3D10Device1 *iface, ID3D10PixelShader **shader)
 {
-    ID3D11PixelShader *s = NULL;
-    context(iface)->lpVtbl->PSGetShader(context(iface), &s, NULL, NULL);
+    ID3D11PixelShader *s = nullptr;
+    context(iface)->lpVtbl->PSGetShader(context(iface), &s, nullptr, nullptr);
     *shader = D3d10From11(s, &IID_ID3D10PixelShader);
 }
 
 static void STDMETHODCALLTYPE ia_get_input_layout(ID3D10Device1 *iface, ID3D10InputLayout **layout)
 {
-    ID3D11InputLayout *l = NULL;
+    ID3D11InputLayout *l = nullptr;
     context(iface)->lpVtbl->IAGetInputLayout(context(iface), &l);
     *layout = D3d10From11(l, &IID_ID3D10InputLayout);
 }
@@ -401,9 +401,9 @@ static void STDMETHODCALLTYPE ia_get_input_layout(ID3D10Device1 *iface, ID3D10In
 static void STDMETHODCALLTYPE ia_get_vertex_buffers(ID3D10Device1 *iface, UINT slot, UINT count,
                                                     ID3D10Buffer **buffers, UINT *strides, UINT *offsets)
 {
-    ID3D11Buffer *b[VB_SLOTS] = {0};
+    ID3D11Buffer *b[VB_SLOTS] = {};
     count = D3D_MIN(count, VB_SLOTS);
-    context(iface)->lpVtbl->IAGetVertexBuffers(context(iface), slot, count, buffers ? b : NULL, strides, offsets);
+    context(iface)->lpVtbl->IAGetVertexBuffers(context(iface), slot, count, buffers ? b : nullptr, strides, offsets);
     for (UINT i = 0; buffers && i < count; i++)
         buffers[i] = D3d10From11(b[i], &IID_ID3D10Buffer);
 }
@@ -411,7 +411,7 @@ static void STDMETHODCALLTYPE ia_get_vertex_buffers(ID3D10Device1 *iface, UINT s
 static void STDMETHODCALLTYPE ia_get_index_buffer(ID3D10Device1 *iface, ID3D10Buffer **buffer, DXGI_FORMAT *format,
                                                   UINT *offset)
 {
-    ID3D11Buffer *b = NULL;
+    ID3D11Buffer *b = nullptr;
     context(iface)->lpVtbl->IAGetIndexBuffer(context(iface), &b, format, offset);
     void *b10 = D3d10From11(b, &IID_ID3D10Buffer);
     if (buffer)
@@ -427,7 +427,7 @@ static void STDMETHODCALLTYPE ia_get_primitive_topology(ID3D10Device1 *iface, D3
 
 static void STDMETHODCALLTYPE get_predication(ID3D10Device1 *iface, ID3D10Predicate **predicate, BOOL *value)
 {
-    ID3D11Predicate *p = NULL;
+    ID3D11Predicate *p = nullptr;
     context(iface)->lpVtbl->GetPredication(context(iface), &p, value);
     void *p10 = D3d10From11(p, &IID_ID3D10Predicate);
     if (predicate)
@@ -439,10 +439,10 @@ static void STDMETHODCALLTYPE get_predication(ID3D10Device1 *iface, ID3D10Predic
 static void STDMETHODCALLTYPE om_get_render_targets(ID3D10Device1 *iface, UINT count, ID3D10RenderTargetView **views,
                                                     ID3D10DepthStencilView **depth)
 {
-    ID3D11RenderTargetView *v[D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT] = {0};
-    ID3D11DepthStencilView *d = NULL;
+    ID3D11RenderTargetView *v[D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+    ID3D11DepthStencilView *d = nullptr;
     count = D3D_MIN(count, D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT);
-    context(iface)->lpVtbl->OMGetRenderTargets(context(iface), count, views ? v : NULL, depth ? &d : NULL);
+    context(iface)->lpVtbl->OMGetRenderTargets(context(iface), count, views ? v : nullptr, depth ? &d : nullptr);
     for (UINT i = 0; views && i < count; i++)
         views[i] = D3d10From11(v[i], &IID_ID3D10RenderTargetView);
     if (depth)
@@ -452,7 +452,7 @@ static void STDMETHODCALLTYPE om_get_render_targets(ID3D10Device1 *iface, UINT c
 static void STDMETHODCALLTYPE om_get_blend_state(ID3D10Device1 *iface, ID3D10BlendState **state, FLOAT factor[4],
                                                  UINT *mask)
 {
-    ID3D11BlendState *s = NULL;
+    ID3D11BlendState *s = nullptr;
     context(iface)->lpVtbl->OMGetBlendState(context(iface), &s, factor, mask);
     void *s10 = D3d10From11(s, &IID_ID3D10BlendState);
     if (state)
@@ -464,7 +464,7 @@ static void STDMETHODCALLTYPE om_get_blend_state(ID3D10Device1 *iface, ID3D10Ble
 static void STDMETHODCALLTYPE om_get_depth_stencil_state(ID3D10Device1 *iface, ID3D10DepthStencilState **state,
                                                          UINT *ref)
 {
-    ID3D11DepthStencilState *s = NULL;
+    ID3D11DepthStencilState *s = nullptr;
     context(iface)->lpVtbl->OMGetDepthStencilState(context(iface), &s, ref);
     void *s10 = D3d10From11(s, &IID_ID3D10DepthStencilState);
     if (state)
@@ -477,11 +477,11 @@ static void STDMETHODCALLTYPE om_get_depth_stencil_state(ID3D10Device1 *iface, I
 static void STDMETHODCALLTYPE so_get_targets(ID3D10Device1 *iface, UINT count, ID3D10Buffer **buffers, UINT *offsets)
 {
     if (buffers) {
-        ID3D11Buffer *b[D3D10_SO_BUFFER_SLOT_COUNT] = {0};
+        ID3D11Buffer *b[D3D10_SO_BUFFER_SLOT_COUNT] = {};
         UINT n = D3D_MIN(count, D3D10_SO_BUFFER_SLOT_COUNT);
         context(iface)->lpVtbl->SOGetTargets(context(iface), n, b);
         for (UINT i = 0; i < count; i++)
-            buffers[i] = i < n ? D3d10From11(b[i], &IID_ID3D10Buffer) : NULL;
+            buffers[i] = i < n ? D3d10From11(b[i], &IID_ID3D10Buffer) : nullptr;
     }
     for (UINT i = 0; offsets && i < count; i++)
         offsets[i] = i < D3D10_SO_BUFFER_SLOT_COUNT ? ~0u : 0;
@@ -489,7 +489,7 @@ static void STDMETHODCALLTYPE so_get_targets(ID3D10Device1 *iface, UINT count, I
 
 static void STDMETHODCALLTYPE rs_get_state(ID3D10Device1 *iface, ID3D10RasterizerState **state)
 {
-    ID3D11RasterizerState *s = NULL;
+    ID3D11RasterizerState *s = nullptr;
     context(iface)->lpVtbl->RSGetState(context(iface), &s);
     *state = D3d10From11(s, &IID_ID3D10RasterizerState);
 }
@@ -565,17 +565,17 @@ static BOOL misc11(UINT misc, BOOL cube, UINT *out)
 static HRESULT STDMETHODCALLTYPE create_buffer(ID3D10Device1 *iface, const D3D10_BUFFER_DESC *desc,
                                                const D3D10_SUBRESOURCE_DATA *data, ID3D10Buffer **out)
 {
-    D3D11_BUFFER_DESC d = {0};
+    D3D11_BUFFER_DESC d = {};
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc) {
         d = (D3D11_BUFFER_DESC){desc->ByteWidth, (D3D11_USAGE)desc->Usage, desc->BindFlags, desc->CPUAccessFlags};
         if (!misc11(desc->MiscFlags, FALSE, &d.MiscFlags))
             return E_INVALIDARG;
     }
-    ID3D11Buffer *buffer = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateBuffer(device11(iface), desc ? &d : NULL,
-                                                       (const D3D11_SUBRESOURCE_DATA *)data, out ? &buffer : NULL);
+    ID3D11Buffer *buffer = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateBuffer(device11(iface), desc ? &d : nullptr,
+                                                       (const D3D11_SUBRESOURCE_DATA *)data, out ? &buffer : nullptr);
     return made(hr, buffer, &IID_ID3D10Buffer, (void **)out);
 }
 
@@ -584,15 +584,15 @@ static HRESULT STDMETHODCALLTYPE create_texture1d(ID3D10Device1 *iface, const D3
 {
     D3D11_TEXTURE1D_DESC d;
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc) {
         memcpy(&d, desc, sizeof(d));
         if (!misc11(desc->MiscFlags, FALSE, &d.MiscFlags))
             return E_INVALIDARG;
     }
-    ID3D11Texture1D *texture = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateTexture1D(device11(iface), desc ? &d : NULL,
-                                                          (const D3D11_SUBRESOURCE_DATA *)data, out ? &texture : NULL);
+    ID3D11Texture1D *texture = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateTexture1D(device11(iface), desc ? &d : nullptr,
+                                                          (const D3D11_SUBRESOURCE_DATA *)data, out ? &texture : nullptr);
     return made(hr, texture, &IID_ID3D10Texture1D, (void **)out);
 }
 
@@ -601,15 +601,15 @@ static HRESULT STDMETHODCALLTYPE create_texture2d(ID3D10Device1 *iface, const D3
 {
     D3D11_TEXTURE2D_DESC d;
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc) {
         memcpy(&d, desc, sizeof(d));
         if (!misc11(desc->MiscFlags, TRUE, &d.MiscFlags))
             return E_INVALIDARG;
     }
-    ID3D11Texture2D *texture = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateTexture2D(device11(iface), desc ? &d : NULL,
-                                                          (const D3D11_SUBRESOURCE_DATA *)data, out ? &texture : NULL);
+    ID3D11Texture2D *texture = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateTexture2D(device11(iface), desc ? &d : nullptr,
+                                                          (const D3D11_SUBRESOURCE_DATA *)data, out ? &texture : nullptr);
     return made(hr, texture, &IID_ID3D10Texture2D, (void **)out);
 }
 
@@ -618,15 +618,15 @@ static HRESULT STDMETHODCALLTYPE create_texture3d(ID3D10Device1 *iface, const D3
 {
     D3D11_TEXTURE3D_DESC d;
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc) {
         memcpy(&d, desc, sizeof(d));
         if (!misc11(desc->MiscFlags, FALSE, &d.MiscFlags))
             return E_INVALIDARG;
     }
-    ID3D11Texture3D *texture = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateTexture3D(device11(iface), desc ? &d : NULL,
-                                                          (const D3D11_SUBRESOURCE_DATA *)data, out ? &texture : NULL);
+    ID3D11Texture3D *texture = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateTexture3D(device11(iface), desc ? &d : nullptr,
+                                                          (const D3D11_SUBRESOURCE_DATA *)data, out ? &texture : nullptr);
     return made(hr, texture, &IID_ID3D10Texture3D, (void **)out);
 }
 
@@ -634,10 +634,10 @@ static HRESULT STDMETHODCALLTYPE create_texture3d(ID3D10Device1 *iface, const D3
 static HRESULT create_srv(ID3D10Device1 *iface, ID3D10Resource *resource, const void *desc, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11ShaderResourceView *view = NULL;
+        *out = nullptr;
+    ID3D11ShaderResourceView *view = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateShaderResourceView(
-        device11(iface), resource11(resource), (const D3D11_SHADER_RESOURCE_VIEW_DESC *)desc, out ? &view : NULL);
+        device11(iface), resource11(resource), (const D3D11_SHADER_RESOURCE_VIEW_DESC *)desc, out ? &view : nullptr);
     return made(hr, view, riid, out);
 }
 
@@ -661,12 +661,12 @@ static HRESULT STDMETHODCALLTYPE create_render_target_view(ID3D10Device1 *iface,
 {
     D3D11_RENDER_TARGET_VIEW_DESC d;
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc)
         memcpy(&d, desc, sizeof(d));
-    ID3D11RenderTargetView *view = NULL;
+    ID3D11RenderTargetView *view = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateRenderTargetView(device11(iface), resource11(resource),
-                                                                 desc ? &d : NULL, out ? &view : NULL);
+                                                                 desc ? &d : nullptr, out ? &view : nullptr);
     return made(hr, view, &IID_ID3D10RenderTargetView, (void **)out);
 }
 
@@ -675,17 +675,17 @@ static HRESULT STDMETHODCALLTYPE create_depth_stencil_view(ID3D10Device1 *iface,
                                                            const D3D10_DEPTH_STENCIL_VIEW_DESC *desc,
                                                            ID3D10DepthStencilView **out)
 {
-    D3D11_DEPTH_STENCIL_VIEW_DESC d = {0};
+    D3D11_DEPTH_STENCIL_VIEW_DESC d = {};
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc) {
         d.Format = desc->Format;
         d.ViewDimension = (D3D11_DSV_DIMENSION)desc->ViewDimension;
         memcpy(&d.Texture2DArray, &desc->Texture2DArray, sizeof(d.Texture2DArray));
     }
-    ID3D11DepthStencilView *view = NULL;
+    ID3D11DepthStencilView *view = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateDepthStencilView(device11(iface), resource11(resource),
-                                                                 desc ? &d : NULL, out ? &view : NULL);
+                                                                 desc ? &d : nullptr, out ? &view : nullptr);
     return made(hr, view, &IID_ID3D10DepthStencilView, (void **)out);
 }
 
@@ -694,10 +694,10 @@ static HRESULT STDMETHODCALLTYPE create_input_layout(ID3D10Device1 *iface, const
                                                      ID3D10InputLayout **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11InputLayout *layout = NULL;
+        *out = nullptr;
+    ID3D11InputLayout *layout = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateInputLayout(device11(iface), (const D3D11_INPUT_ELEMENT_DESC *)elements,
-                                                            count, bytecode, length, out ? &layout : NULL);
+                                                            count, bytecode, length, out ? &layout : nullptr);
     return made(hr, layout, &IID_ID3D10InputLayout, (void **)out);
 }
 
@@ -705,10 +705,10 @@ static HRESULT STDMETHODCALLTYPE create_vertex_shader(ID3D10Device1 *iface, cons
                                                       ID3D10VertexShader **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11VertexShader *shader = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateVertexShader(device11(iface), bytecode, length, NULL,
-                                                             out ? &shader : NULL);
+        *out = nullptr;
+    ID3D11VertexShader *shader = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateVertexShader(device11(iface), bytecode, length, nullptr,
+                                                             out ? &shader : nullptr);
     return made(hr, shader, &IID_ID3D10VertexShader, (void **)out);
 }
 
@@ -716,10 +716,10 @@ static HRESULT STDMETHODCALLTYPE create_geometry_shader(ID3D10Device1 *iface, co
                                                         ID3D10GeometryShader **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11GeometryShader *shader = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateGeometryShader(device11(iface), bytecode, length, NULL,
-                                                               out ? &shader : NULL);
+        *out = nullptr;
+    ID3D11GeometryShader *shader = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateGeometryShader(device11(iface), bytecode, length, nullptr,
+                                                               out ? &shader : nullptr);
     return made(hr, shader, &IID_ID3D10GeometryShader, (void **)out);
 }
 
@@ -737,7 +737,7 @@ static HRESULT STDMETHODCALLTYPE create_geometry_shader_with_stream_output(ID3D1
     D3D11_SO_DECLARATION_ENTRY d[129];
     BOOL slot0 = TRUE;
     if (out)
-        *out = NULL;
+        *out = nullptr;
     count = D3D_MIN(count, RTL_NUMBER_OF(d));
     for (UINT i = 0; entries && i < count; i++) {
         d[i] = (D3D11_SO_DECLARATION_ENTRY){0,
@@ -749,10 +749,10 @@ static HRESULT STDMETHODCALLTYPE create_geometry_shader_with_stream_output(ID3D1
         slot0 &= !entries[i].OutputSlot;
     }
     BOOL strided = stride || (count && slot0);
-    ID3D11GeometryShader *shader = NULL;
+    ID3D11GeometryShader *shader = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateGeometryShaderWithStreamOutput(
-        device11(iface), bytecode, length, entries ? d : NULL, count, strided ? &stride : NULL, strided, 0, NULL,
-        out ? &shader : NULL);
+        device11(iface), bytecode, length, entries ? d : nullptr, count, strided ? &stride : nullptr, strided, 0, nullptr,
+        out ? &shader : nullptr);
     return made(hr, shader, &IID_ID3D10GeometryShader, (void **)out);
 }
 
@@ -760,10 +760,10 @@ static HRESULT STDMETHODCALLTYPE create_pixel_shader(ID3D10Device1 *iface, const
                                                      ID3D10PixelShader **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11PixelShader *shader = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreatePixelShader(device11(iface), bytecode, length, NULL,
-                                                            out ? &shader : NULL);
+        *out = nullptr;
+    ID3D11PixelShader *shader = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreatePixelShader(device11(iface), bytecode, length, nullptr,
+                                                            out ? &shader : nullptr);
     return made(hr, shader, &IID_ID3D10PixelShader, (void **)out);
 }
 
@@ -771,9 +771,9 @@ static HRESULT STDMETHODCALLTYPE create_pixel_shader(ID3D10Device1 *iface, const
 static HRESULT STDMETHODCALLTYPE create_blend_state(ID3D10Device1 *iface, const D3D10_BLEND_DESC *desc,
                                                     ID3D10BlendState **out)
 {
-    D3D11_BLEND_DESC d = {0};
+    D3D11_BLEND_DESC d = {};
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (desc) {
         d.AlphaToCoverageEnable = desc->AlphaToCoverageEnable;
         for (UINT i = 0; i < 8; i++) {
@@ -786,8 +786,8 @@ static HRESULT STDMETHODCALLTYPE create_blend_state(ID3D10Device1 *iface, const 
                 (D3D11_BLEND_OP)desc->BlendOpAlpha, desc->RenderTargetWriteMask[i]};
         }
     }
-    ID3D11BlendState *state = NULL;
-    HRESULT hr = device11(iface)->lpVtbl->CreateBlendState(device11(iface), desc ? &d : NULL, out ? &state : NULL);
+    ID3D11BlendState *state = nullptr;
+    HRESULT hr = device11(iface)->lpVtbl->CreateBlendState(device11(iface), desc ? &d : nullptr, out ? &state : nullptr);
     return state_error(made(hr, state, &IID_ID3D10BlendState, (void **)out));
 }
 
@@ -796,10 +796,10 @@ static HRESULT STDMETHODCALLTYPE create_blend_state1(ID3D10Device1 *iface, const
                                                      ID3D10BlendState1 **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11BlendState *state = NULL;
+        *out = nullptr;
+    ID3D11BlendState *state = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateBlendState(device11(iface), (const D3D11_BLEND_DESC *)desc,
-                                                           out ? &state : NULL);
+                                                           out ? &state : nullptr);
     return state_error(made(hr, state, &IID_ID3D10BlendState1, (void **)out));
 }
 
@@ -807,10 +807,10 @@ static HRESULT STDMETHODCALLTYPE create_depth_stencil_state(ID3D10Device1 *iface
                                                             ID3D10DepthStencilState **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11DepthStencilState *state = NULL;
+        *out = nullptr;
+    ID3D11DepthStencilState *state = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateDepthStencilState(
-        device11(iface), (const D3D11_DEPTH_STENCIL_DESC *)desc, out ? &state : NULL);
+        device11(iface), (const D3D11_DEPTH_STENCIL_DESC *)desc, out ? &state : nullptr);
     return state_error(made(hr, state, &IID_ID3D10DepthStencilState, (void **)out));
 }
 
@@ -818,10 +818,10 @@ static HRESULT STDMETHODCALLTYPE create_rasterizer_state(ID3D10Device1 *iface, c
                                                          ID3D10RasterizerState **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11RasterizerState *state = NULL;
+        *out = nullptr;
+    ID3D11RasterizerState *state = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateRasterizerState(device11(iface), (const D3D11_RASTERIZER_DESC *)desc,
-                                                                out ? &state : NULL);
+                                                                out ? &state : nullptr);
     return state_error(made(hr, state, &IID_ID3D10RasterizerState, (void **)out));
 }
 
@@ -829,20 +829,20 @@ static HRESULT STDMETHODCALLTYPE create_sampler_state(ID3D10Device1 *iface, cons
                                                       ID3D10SamplerState **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11SamplerState *state = NULL;
+        *out = nullptr;
+    ID3D11SamplerState *state = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateSamplerState(device11(iface), (const D3D11_SAMPLER_DESC *)desc,
-                                                             out ? &state : NULL);
+                                                             out ? &state : nullptr);
     return made(hr, state, &IID_ID3D10SamplerState, (void **)out);
 }
 
 static HRESULT STDMETHODCALLTYPE create_query(ID3D10Device1 *iface, const D3D10_QUERY_DESC *desc, ID3D10Query **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11Query *query = NULL;
+        *out = nullptr;
+    ID3D11Query *query = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateQuery(device11(iface), (const D3D11_QUERY_DESC *)desc,
-                                                      out ? &query : NULL);
+                                                      out ? &query : nullptr);
     return made(hr, query, &IID_ID3D10Query, (void **)out);
 }
 
@@ -850,10 +850,10 @@ static HRESULT STDMETHODCALLTYPE create_predicate(ID3D10Device1 *iface, const D3
                                                   ID3D10Predicate **out)
 {
     if (out)
-        *out = NULL;
-    ID3D11Predicate *predicate = NULL;
+        *out = nullptr;
+    ID3D11Predicate *predicate = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreatePredicate(device11(iface), (const D3D11_QUERY_DESC *)desc,
-                                                          out ? &predicate : NULL);
+                                                          out ? &predicate : nullptr);
     return made(hr, predicate, &IID_ID3D10Predicate, (void **)out);
 }
 
@@ -864,10 +864,10 @@ static HRESULT STDMETHODCALLTYPE create_counter(ID3D10Device1 *iface, const D3D1
     if (desc && desc->Counter <= 0x11)
         return DXGI_ERROR_UNSUPPORTED;
     if (out)
-        *out = NULL;
-    ID3D11Counter *counter = NULL;
+        *out = nullptr;
+    ID3D11Counter *counter = nullptr;
     HRESULT hr = device11(iface)->lpVtbl->CreateCounter(device11(iface), (const D3D11_COUNTER_DESC *)desc,
-                                                        out ? &counter : NULL);
+                                                        out ? &counter : nullptr);
     return made(hr, counter, &IID_ID3D10Counter, (void **)out);
 }
 
@@ -1031,7 +1031,7 @@ void *D3d10DeviceInterface(D3dDevice *device, REFIID riid)
 {
     if (!(device->flags & (D3D_CREATE_DEVICE_D3D10 | D3D_CREATE_DEVICE_D3D10_1)) ||
         (!IsEqualGUID(riid, &IID_ID3D10Device) && !IsEqualGUID(riid, &IID_ID3D10Device1)))
-        return NULL;
+        return nullptr;
     device->d3d10.lpVtbl = &device_vtbl;
     return &device->d3d10;
 }

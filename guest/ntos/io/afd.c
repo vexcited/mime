@@ -149,7 +149,7 @@ static ULONG g_events[AFD_EVENTS_BATCH] __attribute__((aligned(16)));
 
 static void lock(void)
 {
-    KeWaitForSingleObject(&g_lock, Executive, KernelMode, FALSE, NULL);
+    KeWaitForSingleObject(&g_lock, Executive, KernelMode, FALSE, nullptr);
 }
 
 static void unlock(void)
@@ -198,14 +198,14 @@ static AFD_REQUEST *new_request(PFILE_OBJECT file, ULONG kind, ULONG count, HAND
                                      KI_TAG('A', 'f', 'd', 'R'));
     if (!r) {
         *status = STATUS_INSUFFICIENT_RESOURCES;
-        return NULL;
+        return nullptr;
     }
     memset(r, 0, sizeof(*r));
     if (event) {
-        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, NULL);
+        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
         if (!NT_SUCCESS(*status)) {
             ExFreePool(r);
-            return NULL;
+            return nullptr;
         }
         KeClearEvent(r->Event);
     }
@@ -323,7 +323,7 @@ static AFD_SOCKET *find_host(ULONG id)
         if (s->Host == id)
             return s;
     }
-    return NULL;
+    return nullptr;
 }
 
 static ULONG64 now(void)
@@ -419,7 +419,7 @@ static void signal_select(AFD_SOCKET *s, ULONG revents)
 {
     if (!s->SelectMask || !s->SelectEvent)
         return;
-    LONG errors[10] = {0};
+    LONG errors[10] = {};
     ULONG fire = conditions(s, revents, errors) & s->SelectMask & s->Enabled;
     if (s->CloseReported)
         fire &= ~FD_CLOSE;
@@ -562,7 +562,7 @@ static ULONG try_accept(AFD_SOCKET *s, AFD_REQUEST *r)
             return done(r, MimeAfdStatus(e), 0);
         MIME_AFD_ADDRESS remote = g_addr;
         if (t->Host)
-            host(MIME_HC_NET_CLOSE, t->Host, 0, 0, 0, 0, NULL);
+            host(MIME_HC_NET_CLOSE, t->Host, 0, 0, 0, 0, nullptr);
         t->Host = (ULONG)id;
         t->Family = s->Family;
         t->Type = s->Type;
@@ -573,7 +573,7 @@ static ULONG try_accept(AFD_SOCKET *s, AFD_REQUEST *r)
         if (r->AcceptAddresses) {
             MIME_AFD_ADDRESS both[2];
             memset(both, 0, sizeof(both));
-            if (!host(MIME_HC_NET_NAME, t->Host, 0, pa(&g_addr), 0, 0, NULL))
+            if (!host(MIME_HC_NET_NAME, t->Host, 0, pa(&g_addr), 0, 0, nullptr))
                 both[0] = g_addr;
             both[1] = remote;
             attach_copy(r->Process, r->AcceptAddresses, both, sizeof(both), TRUE);
@@ -643,10 +643,10 @@ static ULONG wants(AFD_SOCKET *s)
 static void service(AFD_SOCKET *s)
 {
     for (int round = 0; round < 16 && s->Host && !s->Closed; round++) {
-        AFD_SOCKET *moved = NULL;
+        AFD_SOCKET *moved = nullptr;
         BOOLEAN progress = run_list(s, &s->Accepters, &moved);
-        progress |= run_list(s, &s->Receivers, NULL);
-        progress |= run_list(s, &s->Senders, NULL);
+        progress |= run_list(s, &s->Receivers, nullptr);
+        progress |= run_list(s, &s->Senders, nullptr);
         if (moved && moved != s)
             service(moved);
         BOOLEAN connecting = s->State == MIME_AFD_STATE_CONNECTING;
@@ -677,7 +677,7 @@ static void wake_pollers(void)
 static void NTAPI worker(PVOID context)
 {
     for (;;) {
-        KeWaitForSingleObject(&g_work, Executive, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(&g_work, Executive, KernelMode, FALSE, nullptr);
         lock();
         for (;;) {
             ULONG64 n = 0;
@@ -869,7 +869,7 @@ static NTSTATUS do_connect(PFILE_OBJECT file, AFD_SOCKET *s, HANDLE event, PVOID
         return immediate(r, status, 0);
     }
     g_addr = c.Address;
-    LONG e = host(MIME_HC_NET_CONNECT, s->Host, pa(&g_addr), 0, 0, 0, NULL);
+    LONG e = host(MIME_HC_NET_CONNECT, s->Host, pa(&g_addr), 0, 0, 0, nullptr);
     if (e && e != WSAEWOULDBLOCK) {
         unlock();
         return immediate(r, MimeAfdStatus(e), 0);
@@ -911,7 +911,7 @@ static NTSTATUS do_accept(PFILE_OBJECT file, AFD_SOCKET *s, HANDLE event, PVOID 
         return status;
     PFILE_OBJECT target;
     status = ObReferenceHandle((HANDLE)(ULONG_PTR)a.Socket, IoFileObjectTypeObject, KeGetPreviousMode(),
-                               (PVOID *)&target, NULL);
+                               (PVOID *)&target, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     if (target->DeviceObject != g_device || !target->FsContext) {
@@ -1010,10 +1010,10 @@ static NTSTATUS do_poll(PVOID input, ULONG in_len, PVOID output, ULONG out_len, 
     }
     status = KiCopyFromUser(p, input, size);
     for (ULONG i = 0; i < head.Count; i++) {
-        files[i] = NULL;
+        files[i] = nullptr;
         PFILE_OBJECT f;
         if (NT_SUCCESS(status) && NT_SUCCESS(ObReferenceHandle((HANDLE)(ULONG_PTR)p->Entries[i].Socket,
-                                                               IoFileObjectTypeObject, UserMode, (PVOID *)&f, NULL))) {
+                                                               IoFileObjectTypeObject, UserMode, (PVOID *)&f, nullptr))) {
             if (f->DeviceObject == g_device && f->FsContext)
                 files[i] = f;
             else
@@ -1033,7 +1033,7 @@ static NTSTATUS do_poll(PVOID input, ULONG in_len, PVOID output, ULONG out_len, 
         }
         ULONG n = 0;
         for (ULONG i = 0; i < head.Count; i++) {
-            AFD_SOCKET *s = files[i] ? files[i]->FsContext : NULL;
+            AFD_SOCKET *s = files[i] ? files[i]->FsContext : nullptr;
             hp[n].socket = s && !s->Closed ? s->Host : 0;
             hp[n].events = 0;
             hp[n].revents = 0;
@@ -1046,7 +1046,7 @@ static NTSTATUS do_poll(PVOID input, ULONG in_len, PVOID output, ULONG out_len, 
         ULONG ready = 0;
         for (ULONG i = 0; i < head.Count; i++) {
             MIME_AFD_POLL_ENTRY *e = &p->Entries[i];
-            AFD_SOCKET *s = files[i] ? files[i]->FsContext : NULL;
+            AFD_SOCKET *s = files[i] ? files[i]->FsContext : nullptr;
             if (!s || s->Closed) {
                 e->Results = MIME_AFD_POLL_INVALID;
             } else if (!s->Host) {
@@ -1078,7 +1078,7 @@ static NTSTATUS do_poll(PVOID input, ULONG in_len, PVOID output, ULONG out_len, 
             host(MIME_HC_NET_POLL, pa(hp), n, TRUE, 0, 0, &ignored);
         unlock();
         LARGE_INTEGER timeout = {.QuadPart = -left};
-        NTSTATUS wait = KeWaitForSingleObject(&waiter.Wake, UserRequest, UserMode, FALSE, left < 0 ? NULL : &timeout);
+        NTSTATUS wait = KeWaitForSingleObject(&waiter.Wake, UserRequest, UserMode, FALSE, left < 0 ? nullptr : &timeout);
         if (wait != STATUS_SUCCESS && wait != STATUS_TIMEOUT)
             status = wait;
     }
@@ -1133,7 +1133,7 @@ static NTSTATUS do_resolve(PVOID input, ULONG in_len, PVOID output, ULONG out_le
     unlock();
     ULONG64 count = 0;
     if (!e) {
-        NTSTATUS wait = KeWaitForSingleObject(&waiter.Wake, UserRequest, UserMode, FALSE, NULL);
+        NTSTATUS wait = KeWaitForSingleObject(&waiter.Wake, UserRequest, UserMode, FALSE, nullptr);
         lock();
         RemoveEntryList(&waiter.Links);
         if (waiter.Done)
@@ -1225,7 +1225,7 @@ static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PV
             break;
         } else {
             g_addr = *a;
-            e = host(MIME_HC_NET_BIND, s->Host, pa(&g_addr), 0, 0, 0, NULL);
+            e = host(MIME_HC_NET_BIND, s->Host, pa(&g_addr), 0, 0, 0, nullptr);
             if (!e)
                 s->Bound = TRUE;
         }
@@ -1240,7 +1240,7 @@ static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PV
             e = WSAEINVAL;
         else if (s->State == MIME_AFD_STATE_CONNECTED || s->State == MIME_AFD_STATE_CONNECTING)
             e = WSAEISCONN;
-        else if (!(e = host(MIME_HC_NET_LISTEN, s->Host, *(PULONG)in, 0, 0, 0, NULL)))
+        else if (!(e = host(MIME_HC_NET_LISTEN, s->Host, *(PULONG)in, 0, 0, 0, nullptr)))
             s->State = MIME_AFD_STATE_LISTENING;
         break;
     case IOCTL_AFD_SHUTDOWN: {
@@ -1250,7 +1250,7 @@ static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PV
         } else if (s->Type == SOCK_STREAM && s->State != MIME_AFD_STATE_CONNECTED) {
             e = WSAENOTCONN;
         } else {
-            e = host(MIME_HC_NET_SHUTDOWN, s->Host, how, 0, 0, 0, NULL);
+            e = host(MIME_HC_NET_SHUTDOWN, s->Host, how, 0, 0, 0, nullptr);
             if (e == WSAENOTCONN && s->Type == SOCK_DGRAM)
                 e = 0;
             if (!e) {
@@ -1270,7 +1270,7 @@ static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PV
             e = WSAENOTCONN;
         } else if (!peer && !s->Bound) {
             e = WSAEINVAL;
-        } else if (!(e = host(MIME_HC_NET_NAME, s->Host, peer, pa(&g_addr), 0, 0, NULL))) {
+        } else if (!(e = host(MIME_HC_NET_NAME, s->Host, peer, pa(&g_addr), 0, 0, nullptr))) {
             MIME_AFD_ADDRESS a = g_addr;
             unlock();
             status = KiCopyToUser(output, &a, sizeof(a));
@@ -1314,9 +1314,9 @@ static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PV
             e = WSAEFAULT;
             break;
         }
-        PKEVENT event = NULL;
+        PKEVENT event = nullptr;
         if (sel->Mask && sel->Event) {
-            status = ObReferenceHandle((HANDLE)(ULONG_PTR)sel->Event, ExEventType, UserMode, (PVOID *)&event, NULL);
+            status = ObReferenceHandle((HANDLE)(ULONG_PTR)sel->Event, ExEventType, UserMode, (PVOID *)&event, nullptr);
             if (!NT_SUCCESS(status))
                 break;
         }
@@ -1346,7 +1346,7 @@ static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PV
         if (in_len >= sizeof(ULONG64) && *(ULONG64 *)in) {
             PKEVENT event;
             if (NT_SUCCESS(ObReferenceHandle((HANDLE)(ULONG_PTR) * (ULONG64 *)in, ExEventType, UserMode,
-                                             (PVOID *)&event, NULL))) {
+                                             (PVOID *)&event, nullptr))) {
                 KeClearEvent(event);
                 ObDereferenceObject(event);
             }
@@ -1493,7 +1493,7 @@ NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
             found = TRUE;
             if (IsListEmpty(&s->Connects) && s->State == MIME_AFD_STATE_CONNECTING) {
                 /* a cancelled ConnectEx leaves a socket that can only be closed. */
-                host(MIME_HC_NET_SHUTDOWN, s->Host, 2, 0, 0, 0, NULL);
+                host(MIME_HC_NET_SHUTDOWN, s->Host, 2, 0, 0, 0, nullptr);
                 s->State = MIME_AFD_STATE_OPEN;
                 s->ConnectFailed = TRUE;
             }
@@ -1550,11 +1550,11 @@ static NTSTATUS NTAPI afd_cleanup(PDEVICE_OBJECT device, PIRP irp)
         fail_list(&s->Connects, STATUS_AFD_CANCELLED);
         fail_list(&s->Accepters, STATUS_AFD_CANCELLED);
         if (s->Host)
-            host(MIME_HC_NET_CLOSE, s->Host, 0, 0, 0, 0, NULL);
+            host(MIME_HC_NET_CLOSE, s->Host, 0, 0, 0, 0, nullptr);
         s->Host = 0;
         if (s->SelectEvent)
             ObDereferenceObject(s->SelectEvent);
-        s->SelectEvent = NULL;
+        s->SelectEvent = nullptr;
         RemoveEntryList(&s->Links);
         InitializeListHead(&s->Links);
         wake_pollers();
@@ -1568,7 +1568,7 @@ static NTSTATUS NTAPI afd_close(PDEVICE_OBJECT device, PIRP irp)
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
     if (file->FsContext) {
         ExFreePool(file->FsContext);
-        file->FsContext = NULL;
+        file->FsContext = nullptr;
     }
     return complete_irp(irp, STATUS_SUCCESS, 0);
 }
@@ -1609,12 +1609,12 @@ void IopInitializeAfd(void)
         KiLogPrintf("afd has no bounce buffer");
         return;
     }
-    NTSTATUS status = IoCreateDriver(L"\\Driver\\AFD", AfdDriverEntry, NULL);
+    NTSTATUS status = IoCreateDriver(L"\\Driver\\AFD", AfdDriverEntry, nullptr);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("afd failed to start: %08x", status);
         return;
     }
-    status = PsCreateSystemThread(NULL, 0, NULL, NULL, NULL, worker, NULL);
+    status = PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, worker, nullptr);
     if (!NT_SUCCESS(status))
         KiLogPrintf("afd has no worker: %08x", status);
 }

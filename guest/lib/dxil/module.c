@@ -137,7 +137,7 @@ static void *grow(Parser *p, void *items, uint32_t count, uint32_t *capacity, si
     uint32_t want = *capacity ? *capacity * 2 : 16;
     void *n = alloc(p, want * size);
     if (!n)
-        return NULL;
+        return nullptr;
     if (items)
         __builtin_memcpy(n, items, count * size);
     *capacity = want;
@@ -171,7 +171,7 @@ static DxType *type_at(Parser *p, uint32_t id)
 {
     if (id >= p->m->type_count) {
         fail(p, "bad type id");
-        return NULL;
+        return nullptr;
     }
     return &p->m->types[id];
 }
@@ -200,20 +200,20 @@ static uint32_t find_type(Parser *p, DxType t)
 
 uint32_t dx_pointer_type(DxModule *m, uint32_t element, uint32_t space)
 {
-    Parser p = {m, 0, NULL, 0, 0, 0};
-    return find_type(&p, (DxType){DT_POINTER, space, element, 0, NULL, NULL});
+    Parser p = {m, 0, nullptr, 0, 0, 0};
+    return find_type(&p, (DxType){DT_POINTER, space, element, 0, nullptr, nullptr});
 }
 
-static uint32_t int_type(Parser *p, uint32_t width) { return find_type(p, (DxType){DT_INT, width, 0, 0, NULL, NULL}); }
+static uint32_t int_type(Parser *p, uint32_t width) { return find_type(p, (DxType){DT_INT, width, 0, 0, nullptr, nullptr}); }
 
 static void read_types(Parser *p, const BcBlock *b)
 {
-    const char *pending_name = NULL;
+    const char *pending_name = nullptr;
     for (uint32_t i = 0; i < b->count && !p->failed; i++) {
         const BcRecord *r = b->entries[i].record;
         if (!r)
             continue;
-        DxType t = {0};
+        DxType t = {};
         t.element = DX_NONE;
         switch (r->code) {
         case TYPE_NUMENTRY: continue;
@@ -226,7 +226,7 @@ static void read_types(Parser *p, const BcBlock *b)
         case TYPE_OPAQUE:
             t.kind = DT_OPAQUE;
             t.name = pending_name;
-            pending_name = NULL;
+            pending_name = nullptr;
             break;
         case TYPE_INTEGER:
             if (r->count < 1)
@@ -260,7 +260,7 @@ static void read_types(Parser *p, const BcBlock *b)
                 t.members[k] = (uint32_t)r->ops[1 + k];
             if (r->code == TYPE_STRUCT_NAMED) {
                 t.name = pending_name;
-                pending_name = NULL;
+                pending_name = nullptr;
             }
             break;
         case TYPE_STRUCT_NAME: pending_name = record_string(p, r, 0); continue;
@@ -297,7 +297,7 @@ static DxValue *new_value(Parser *p, uint32_t *id)
         DxFunction *f = p->f;
         DxValue *values = grow(p, f->values, f->value_count, &p->value_capacity, sizeof(DxValue));
         if (!values)
-            return NULL;
+            return nullptr;
         f->values = values;
         *id = m->value_count + f->value_count;
         DxValue *v = &f->values[f->value_count++];
@@ -306,7 +306,7 @@ static DxValue *new_value(Parser *p, uint32_t *id)
     }
     DxValue *values = grow(p, m->values, m->value_count, &p->module_capacity, sizeof(DxValue));
     if (!values)
-        return NULL;
+        return nullptr;
     m->values = values;
     *id = m->value_count;
     DxValue *v = &m->values[m->value_count++];
@@ -322,7 +322,7 @@ const DxValue *dx_value(const DxModule *m, const DxFunction *f, uint32_t id)
         return &m->values[id];
     if (f && id - m->value_count < f->value_count)
         return &f->values[id - m->value_count];
-    return NULL;
+    return nullptr;
 }
 
 static void read_constants(Parser *p, const BcBlock *b)
@@ -430,7 +430,7 @@ static DxMetadata *new_md(Parser *p, uint32_t *capacity)
     DxModule *m = p->m;
     DxMetadata *list = grow(p, m->metadata, m->metadata_count, capacity, sizeof(DxMetadata));
     if (!list)
-        return NULL;
+        return nullptr;
     m->metadata = list;
     DxMetadata *md = &m->metadata[m->metadata_count++];
     __builtin_memset(md, 0, sizeof(*md));
@@ -440,7 +440,7 @@ static DxMetadata *new_md(Parser *p, uint32_t *capacity)
 static void read_metadata(Parser *p, const BcBlock *b, uint32_t *capacity, uint32_t *named_capacity)
 {
     DxModule *m = p->m;
-    const char *name = NULL;
+    const char *name = nullptr;
     for (uint32_t i = 0; i < b->count && !p->failed; i++) {
         const BcRecord *r = b->entries[i].record;
         if (!r)
@@ -460,7 +460,7 @@ static void read_metadata(Parser *p, const BcBlock *b, uint32_t *capacity, uint3
             n->nodes = alloc(p, r->count * sizeof(uint32_t));
             for (uint32_t k = 0; k < r->count && n->nodes; k++)
                 n->nodes[k] = (uint32_t)r->ops[k];
-            name = NULL;
+            name = nullptr;
             continue;
         }
         default: break;
@@ -507,15 +507,15 @@ const DxNamedMetadata *dx_named(const DxModule *m, const char *name)
         if (*a == *b)
             return &m->named[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 const DxMetadata *dx_md_op(const DxModule *m, const DxMetadata *node, uint32_t index)
 {
     if (!node || node->kind != DM_NODE || index >= node->count || node->ops[index] >= m->metadata_count)
-        return NULL;
+        return nullptr;
     const DxMetadata *md = &m->metadata[node->ops[index]];
-    return md->kind == DM_NULL ? NULL : md;
+    return md->kind == DM_NULL ? nullptr : md;
 }
 
 uint64_t dx_md_int(const DxModule *m, const DxMetadata *node, uint32_t index, uint64_t fallback)
@@ -523,7 +523,7 @@ uint64_t dx_md_int(const DxModule *m, const DxMetadata *node, uint32_t index, ui
     const DxMetadata *md = dx_md_op(m, node, index);
     if (!md || md->kind != DM_VALUE)
         return fallback;
-    const DxValue *v = dx_value(m, NULL, md->value);
+    const DxValue *v = dx_value(m, nullptr, md->value);
     if (!v || v->kind != DV_INT)
         return v && v->kind == DV_NULL ? 0 : fallback;
     return v->bits;
@@ -532,7 +532,7 @@ uint64_t dx_md_int(const DxModule *m, const DxMetadata *node, uint32_t index, ui
 const char *dx_md_string(const DxModule *m, const DxMetadata *node, uint32_t index)
 {
     const DxMetadata *md = dx_md_op(m, node, index);
-    return md && md->kind == DM_STRING ? md->string : NULL;
+    return md && md->kind == DM_STRING ? md->string : nullptr;
 }
 
 /* ------------------------------------------------------------------ functions */
@@ -584,7 +584,7 @@ static DxInst *new_inst(Parser *p, uint8_t op, uint32_t count)
     DxFunction *f = p->f;
     DxInst *insts = grow(p, f->insts, f->inst_count, &p->inst_capacity, sizeof(DxInst));
     if (!insts)
-        return NULL;
+        return nullptr;
     f->insts = insts;
     DxInst *ins = &f->insts[f->inst_count++];
     __builtin_memset(ins, 0, sizeof(*ins));
@@ -593,7 +593,7 @@ static DxInst *new_inst(Parser *p, uint8_t op, uint32_t count)
     ins->value = DX_NONE;
     ins->count = count;
     ins->ops = alloc(p, count * sizeof(uint32_t));
-    return ins->ops || !count ? ins : NULL;
+    return ins->ops || !count ? ins : nullptr;
 }
 
 /* the type an element pointer's indices reach from a base of type base. */
@@ -638,7 +638,7 @@ static int is_terminator(uint8_t op) { return op == DI_RET || op == DI_BR || op 
 static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
 {
     Cursor c = {p, r, 0};
-    DxInst *ins = NULL;
+    DxInst *ins = nullptr;
     uint32_t type = DX_NONE;
     switch (r->code) {
     case FUNC_BINOP: {
@@ -654,7 +654,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
         ins = new_inst(p, DI_CAST, 1);
         if (!ins)
             return;
-        ins->ops[0] = typed_operand(&c, NULL);
+        ins->ops[0] = typed_operand(&c, nullptr);
         type = (uint32_t)take(&c);
         ins->sub = (uint8_t)take(&c);
         break;
@@ -700,7 +700,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             return;
         ins->ops[1] = typed_operand(&c, &type);
         ins->ops[2] = operand(&c);
-        ins->ops[0] = r->code == FUNC_VSELECT ? typed_operand(&c, NULL) : operand(&c);
+        ins->ops[0] = r->code == FUNC_VSELECT ? typed_operand(&c, nullptr) : operand(&c);
         break;
     case FUNC_EXTRACTELT: {
         ins = new_inst(p, DI_EXTRACTELT, 2);
@@ -708,7 +708,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             return;
         uint32_t vt;
         ins->ops[0] = typed_operand(&c, &vt);
-        ins->ops[1] = typed_operand(&c, NULL);
+        ins->ops[1] = typed_operand(&c, nullptr);
         const DxType *t = type_at(p, vt);
         type = t ? t->element : DX_NONE;
         break;
@@ -719,7 +719,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             return;
         ins->ops[0] = typed_operand(&c, &type);
         ins->ops[1] = operand(&c);
-        ins->ops[2] = typed_operand(&c, NULL);
+        ins->ops[2] = typed_operand(&c, nullptr);
         break;
     case FUNC_SHUFFLEVEC: {
         ins = new_inst(p, DI_SHUFFLEVEC, 3);
@@ -731,9 +731,9 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
         ins->ops[2] = operand(&c);
         const DxType *t = type_at(p, vt);
         const DxValue *mask = dx_value(p->m, p->f, ins->ops[2]);
-        const DxType *mt = mask ? type_at(p, mask->type) : NULL;
+        const DxType *mt = mask ? type_at(p, mask->type) : nullptr;
         if (t && mt)
-            type = find_type(p, (DxType){DT_VECTOR, 0, t->element, mt->count, NULL, NULL});
+            type = find_type(p, (DxType){DT_VECTOR, 0, t->element, mt->count, nullptr, nullptr});
         break;
     }
     case FUNC_CMP:
@@ -748,13 +748,13 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
         const DxType *t = type_at(p, ot);
         type = int_type(p, 1);
         if (t && t->kind == DT_VECTOR)
-            type = find_type(p, (DxType){DT_VECTOR, 0, type, t->count, NULL, NULL});
+            type = find_type(p, (DxType){DT_VECTOR, 0, type, t->count, nullptr, nullptr});
         break;
     }
     case FUNC_RET:
         ins = new_inst(p, DI_RET, more(&c) ? 1 : 0);
         if (ins && ins->count)
-            ins->ops[0] = typed_operand(&c, NULL);
+            ins->ops[0] = typed_operand(&c, nullptr);
         break;
     case FUNC_BR:
         if (r->count == 1) {
@@ -841,8 +841,8 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
         ins = new_inst(p, DI_STORE, 2);
         if (!ins)
             return;
-        ins->ops[0] = typed_operand(&c, NULL);
-        ins->ops[1] = typed_operand(&c, NULL);
+        ins->ops[0] = typed_operand(&c, nullptr);
+        ins->ops[1] = typed_operand(&c, nullptr);
         break;
     case FUNC_EXTRACTVAL: {
         uint32_t at;
@@ -865,7 +865,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
     case FUNC_INSERTVAL: {
         Cursor peek = c;
         uint32_t agg = typed_operand(&peek, &type);
-        uint32_t val = typed_operand(&peek, NULL);
+        uint32_t val = typed_operand(&peek, nullptr);
         uint32_t n = r->count - peek.at;
         ins = new_inst(p, DI_INSERTVAL, 2 + n);
         if (!ins)
@@ -890,7 +890,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             const DxType *t = type_at(p, callee_type);
             fn_type = t && t->kind == DT_POINTER ? t->element : DX_NONE;
         }
-        const DxType *ft = fn_type != DX_NONE ? type_at(p, fn_type) : NULL;
+        const DxType *ft = fn_type != DX_NONE ? type_at(p, fn_type) : nullptr;
         if (!ft || ft->kind != DT_FUNCTION) {
             fail(p, "call of a non function");
             return;
@@ -901,7 +901,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             args[n++] = pt && pt->kind == DT_LABEL ? (uint32_t)take(&c) : operand(&c);
         }
         while (more(&c) && n < 64 && !p->failed)
-            args[n++] = typed_operand(&c, NULL);
+            args[n++] = typed_operand(&c, nullptr);
         ins = new_inst(p, DI_CALL, 1 + n);
         if (!ins)
             return;
@@ -928,7 +928,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             return;
         uint32_t pt;
         ins->ops[0] = typed_operand(&c, &pt);
-        ins->ops[1] = typed_operand(&c, NULL);
+        ins->ops[1] = typed_operand(&c, nullptr);
         ins->ops[2] = operand(&c);
         const DxType *t = type_at(p, pt);
         if (t) {
@@ -936,7 +936,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
             uint32_t *m = alloc(p, sizeof(members));
             if (m) {
                 __builtin_memcpy(m, members, sizeof(members));
-                type = add_type(p, (DxType){DT_STRUCT, 0, DX_NONE, 2, m, NULL});
+                type = add_type(p, (DxType){DT_STRUCT, 0, DX_NONE, 2, m, nullptr});
             }
         }
         break;
@@ -954,7 +954,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
     }
     ins->block = *block;
     ins->type = type;
-    const DxType *t = type != DX_NONE ? type_at(p, type) : NULL;
+    const DxType *t = type != DX_NONE ? type_at(p, type) : nullptr;
     if (t && t->kind != DT_VOID) {
         uint32_t id;
         DxValue *v = new_value(p, &id);
@@ -1024,7 +1024,7 @@ static void read_body(Parser *p, DxFunction *f, const BcBlock *b)
     if (!p->failed && block != f->block_count)
         fail(p, "a block without a terminator");
     (void)m;
-    p->f = NULL;
+    p->f = nullptr;
 }
 
 /* ------------------------------------------------------------------ the module */
@@ -1044,11 +1044,11 @@ int dx_module_read(DxModule *m, const uint8_t *bitcode, size_t size, const MimeA
 {
     __builtin_memset(m, 0, sizeof(*m));
     m->arena.alloc = allocator;
-    Parser p = {m, 0, NULL, 0, 0, 0};
+    Parser p = {m, 0, nullptr, 0, 0, 0};
     BcBlock *top = bc_parse(bitcode, size, &m->arena);
     if (!top)
         return fail(&p, "malformed bitcode");
-    const BcBlock *module = NULL;
+    const BcBlock *module = nullptr;
     for (uint32_t i = 0; i < top->count; i++)
         if (top->entries[i].block && top->entries[i].block->id == BLOCK_MODULE)
             module = top->entries[i].block;
@@ -1057,7 +1057,7 @@ int dx_module_read(DxModule *m, const uint8_t *bitcode, size_t size, const MimeA
 
     uint32_t function_capacity = 0, md_capacity = 0, named_capacity = 0, body = 0;
     /* the functions with bodies, in the order their bodies follow. */
-    uint32_t *bodies = NULL, body_count = 0, body_capacity = 0;
+    uint32_t *bodies = nullptr, body_count = 0, body_capacity = 0;
     for (uint32_t i = 0; i < module->count && !p.failed; i++) {
         const BcEntry *e = &module->entries[i];
         if (e->block) {

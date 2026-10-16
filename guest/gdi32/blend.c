@@ -25,8 +25,8 @@ static BOOL canvas_open(CANVAS *c, HDC ref, int width, int height)
     c->Dc = CreateCompatibleDC(ref);
     if (!c->Dc)
         return FALSE;
-    void *bits = NULL;
-    c->Bitmap = CreateDIBSection(c->Dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    void *bits = nullptr;
+    c->Bitmap = CreateDIBSection(c->Dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     if (!c->Bitmap || !bits) {
         if (c->Bitmap)
             DeleteObject(c->Bitmap);

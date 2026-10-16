@@ -18,8 +18,8 @@ void KiInitializeScheduler(void)
     for (int i = 0; i < MAXIMUM_PRIORITY; i++)
         InitializeListHead(&KiReadyListHead[i]);
     KiReadySummary = 0;
-    prcb->DpcHead.Next = NULL;
-    prcb->DpcTail = NULL;
+    prcb->DpcHead.Next = nullptr;
+    prcb->DpcTail = nullptr;
     KiProcessorBlock[0] = prcb;
 }
 
@@ -101,7 +101,7 @@ void KiInterruptThread(PKTHREAD thread)
  */
 static PKPRCB pick_processor(PKTHREAD thread)
 {
-    PKPRCB self = KeGetCurrentPrcb(), idle = NULL, low = NULL;
+    PKPRCB self = KeGetCurrentPrcb(), idle = nullptr, low = nullptr;
     int low_prio = thread->Priority;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];
@@ -249,7 +249,7 @@ BOOLEAN NTAPI KeInsertQueueDpc(PRKDPC dpc, PVOID arg1, PVOID arg2)
     dpc->Inserted = 1;
     dpc->SystemArgument1 = arg1;
     dpc->SystemArgument2 = arg2;
-    dpc->DpcListEntry.Next = NULL;
+    dpc->DpcListEntry.Next = nullptr;
     /* append at the tail so dpcs run in queue order. */
     PSINGLE_LIST_ENTRY *link = &prcb->DpcHead.Next;
     while (*link)

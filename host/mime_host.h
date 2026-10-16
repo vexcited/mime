@@ -6,7 +6,6 @@
 
 #include <pthread.h>
 #include <stdarg.h>
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -15,13 +14,13 @@
 #define MIME_ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 #define MIME_MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MIME_MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIME_ALIGN_UP(v, a) (((v) + ((a) - 1)) & ~((__typeof__(v))(a) - 1))
-#define MIME_ALIGN_DOWN(v, a) ((v) & ~((__typeof__(v))(a) - 1))
+#define MIME_ALIGN_UP(v, a) (((v) + ((a) - 1)) & ~((typeof(v))(a) - 1))
+#define MIME_ALIGN_DOWN(v, a) ((v) & ~((typeof(v))(a) - 1))
 
 #define MIME_PATH_MAX 1024
 
 /* names the calling thread, as ps and debuggers show it. */
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #define mime_set_thread_name(name) pthread_setname_np(name)
 #else
 #define mime_set_thread_name(name) pthread_setname_np(pthread_self(), name)
@@ -37,9 +36,9 @@ typedef enum MimeLogLevel {
 
 void mime_log_set_level(MimeLogLevel level);
 void mime_log_set_prefix(const char *prefix);
-void mime_log(MimeLogLevel level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+[[gnu::format(printf, 2, 3)]] void mime_log(MimeLogLevel level, const char *fmt, ...);
 void mime_logv(MimeLogLevel level, const char *fmt, va_list ap);
-_Noreturn void mime_fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+[[noreturn, gnu::format(printf, 1, 2)]] void mime_fatal(const char *fmt, ...);
 
 #define mime_debug(...) mime_log(MIME_LOG_DEBUG, __VA_ARGS__)
 #define mime_info(...) mime_log(MIME_LOG_INFO, __VA_ARGS__)

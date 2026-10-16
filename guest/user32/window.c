@@ -25,7 +25,7 @@ static ATOM register_class(const WNDCLASSEXW *wc, LPCWSTR menu, BOOL ansi)
     UNICODE_STRING name, menu_name;
     init_ustring(&name, wc->lpszClassName);
     init_ustring(&menu_name, menu);
-    ATOM a = NtUserRegisterClassExWOW(wc, &name, menu && !IS_INTRESOURCE(menu) ? &menu_name : NULL, 0,
+    ATOM a = NtUserRegisterClassExWOW(wc, &name, menu && !IS_INTRESOURCE(menu) ? &menu_name : nullptr, 0,
                                       ansi ? MIME_CLASS_ANSI : 0);
     if (!a)
         SetLastError(ERROR_CLASS_ALREADY_EXISTS);
@@ -34,7 +34,7 @@ static ATOM register_class(const WNDCLASSEXW *wc, LPCWSTR menu, BOOL ansi)
 
 WINUSERAPI ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *wc)
 {
-    return register_class(wc, wc ? wc->lpszMenuName : NULL, FALSE);
+    return register_class(wc, wc ? wc->lpszMenuName : nullptr, FALSE);
 }
 
 WINUSERAPI ATOM WINAPI RegisterClassExA(const WNDCLASSEXA *wca)
@@ -57,14 +57,14 @@ WINUSERAPI ATOM WINAPI RegisterClassExA(const WNDCLASSEXA *wca)
 WINUSERAPI ATOM WINAPI RegisterClassW(const WNDCLASSW *w)
 {
     WNDCLASSEXW wc = {sizeof(wc),   w->style,         w->lpfnWndProc,  w->cbClsExtra,    w->cbWndExtra, w->hInstance,
-                      w->hIcon,     w->hCursor,       w->hbrBackground, w->lpszMenuName, w->lpszClassName, NULL};
+                      w->hIcon,     w->hCursor,       w->hbrBackground, w->lpszMenuName, w->lpszClassName, nullptr};
     return RegisterClassExW(&wc);
 }
 
 WINUSERAPI ATOM WINAPI RegisterClassA(const WNDCLASSA *a)
 {
     WNDCLASSEXA wc = {sizeof(wc),   a->style,         a->lpfnWndProc,  a->cbClsExtra,    a->cbWndExtra, a->hInstance,
-                      a->hIcon,     a->hCursor,       a->hbrBackground, a->lpszMenuName, a->lpszClassName, NULL};
+                      a->hIcon,     a->hCursor,       a->hbrBackground, a->lpszMenuName, a->lpszClassName, nullptr};
     return RegisterClassExA(&wc);
 }
 
@@ -87,7 +87,7 @@ WINUSERAPI BOOL WINAPI GetClassInfoExW(HINSTANCE instance, LPCWSTR name, LPWNDCL
 {
     UNICODE_STRING s;
     init_ustring(&s, name);
-    LPWSTR menu = NULL;
+    LPWSTR menu = nullptr;
     ATOM a = (ATOM)NtUserGetClassInfoEx(instance, &s, wc, &menu, FALSE);
     if (a)
         wc->lpszClassName = name;
@@ -126,7 +126,7 @@ WINUSERAPI UINT WINAPI RealGetWindowClassA(HWND hwnd, LPSTR buffer, UINT count)
     UINT n = RealGetWindowClassW(hwnd, w, 256);
     if (!n || !count)
         return 0;
-    int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, buffer, (int)count - 1, NULL, NULL);
+    int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, buffer, (int)count - 1, nullptr, nullptr);
     buffer[a] = 0;
     return (UINT)a;
 }
@@ -137,7 +137,7 @@ WINUSERAPI int WINAPI GetClassNameA(HWND hwnd, LPSTR buffer, int count)
     int n = GetClassNameW(hwnd, w, 256);
     if (!n || count <= 0)
         return 0;
-    int a = WideCharToMultiByte(CP_ACP, 0, w, n, buffer, count - 1, NULL, NULL);
+    int a = WideCharToMultiByte(CP_ACP, 0, w, n, buffer, count - 1, nullptr, nullptr);
     buffer[a] = 0;
     return a;
 }
@@ -177,7 +177,7 @@ WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWS
     UNICODE_STRING cls, title;
     init_ustring(&cls, class_name);
     init_ustring(&title, name ? name : L"");
-    HWND h = NtUserCreateWindowEx(ex_style, &cls, name ? &title : NULL, style, x, y, width, height, parent, menu,
+    HWND h = NtUserCreateWindowEx(ex_style, &cls, name ? &title : nullptr, style, x, y, width, height, parent, menu,
                                   instance, param, 0);
     if (!h)
         SetLastError(ERROR_CANNOT_FIND_WND_CLASS);
@@ -223,7 +223,7 @@ WINUSERAPI BOOL WINAPI SetWindowPos(HWND hwnd, HWND after, int x, int y, int cx,
 
 WINUSERAPI BOOL WINAPI MoveWindow(HWND hwnd, int x, int y, int width, int height, BOOL repaint)
 {
-    return NtUserSetWindowPos(hwnd, NULL, x, y, width, height,
+    return NtUserSetWindowPos(hwnd, nullptr, x, y, width, height,
                               SWP_NOZORDER | SWP_NOACTIVATE | (repaint ? 0 : SWP_NOREDRAW));
 }
 
@@ -244,7 +244,7 @@ static DEFER_POS *defer_pos(HDWP dwp)
     DEFER_POS *d = (DEFER_POS *)dwp;
     if (!d || d->Magic != DEFER_MAGIC) {
         SetLastError(ERROR_INVALID_DWP_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return d;
 }
@@ -253,18 +253,18 @@ WINUSERAPI HDWP WINAPI BeginDeferWindowPos(int count)
 {
     if (count < 0) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     DEFER_POS *d = UserAlloc(sizeof(*d));
     if (!d)
-        return NULL;
+        return nullptr;
     d->Magic = DEFER_MAGIC;
     d->Capacity = count ? (UINT)count : 8;
     d->Items = UserAlloc(d->Capacity * sizeof(WINDOWPOS));
     if (!d->Items) {
         UserFree(d);
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     return (HDWP)d;
 }
@@ -280,11 +280,11 @@ WINUSERAPI HDWP WINAPI DeferWindowPos(HDWP dwp, HWND hwnd, HWND after, int x, in
 {
     DEFER_POS *d = defer_pos(dwp);
     if (!d)
-        return NULL;
+        return nullptr;
     if (!IsWindow(hwnd)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         free_defer(d);
-        return NULL;
+        return nullptr;
     }
     /* a second call for the same window updates the pending position. */
     for (UINT i = 0; i < d->Count; i++) {
@@ -314,7 +314,7 @@ WINUSERAPI HDWP WINAPI DeferWindowPos(HDWP dwp, HWND hwnd, HWND after, int x, in
         if (!items) {
             SetLastError(ERROR_NOT_ENOUGH_MEMORY);
             free_defer(d);
-            return NULL;
+            return nullptr;
         }
         memcpy(items, d->Items, d->Count * sizeof(WINDOWPOS));
         UserFree(d->Items);
@@ -424,7 +424,7 @@ WINUSERAPI HWND WINAPI GetDesktopWindow(void)
 
 WINUSERAPI HWND WINAPI GetShellWindow(void)
 {
-    return NULL;
+    return nullptr;
 }
 
 WINUSERAPI BOOL WINAPI IsChild(HWND parent, HWND child)
@@ -471,14 +471,14 @@ WINUSERAPI int WINAPI MapWindowPoints(HWND from, HWND to, LPPOINT points, UINT c
 
 WINUSERAPI BOOL WINAPI ClientToScreen(HWND hwnd, LPPOINT point)
 {
-    MIME_MAP_POINTS mp = {NULL, 1, point};
+    MIME_MAP_POINTS mp = {nullptr, 1, point};
     return NtUserCallHwndParam(hwnd, (ULONG_PTR)&mp, MIME_HWNDPARAM_MAPPOINTS) != 0;
 }
 
 WINUSERAPI BOOL WINAPI ScreenToClient(HWND hwnd, LPPOINT point)
 {
     MIME_MAP_POINTS mp = {hwnd, 1, point};
-    return NtUserCallHwndParam(NULL, (ULONG_PTR)&mp, MIME_HWNDPARAM_MAPPOINTS) != 0;
+    return NtUserCallHwndParam(nullptr, (ULONG_PTR)&mp, MIME_HWNDPARAM_MAPPOINTS) != 0;
 }
 
 WINUSERAPI HWND WINAPI ChildWindowFromPoint(HWND parent, POINT pt)
@@ -497,9 +497,9 @@ WINUSERAPI HWND WINAPI ChildWindowFromPointEx(HWND parent, POINT pt, UINT flags)
 {
     RECT client;
     if (!GetClientRect(parent, &client))
-        return NULL;
+        return nullptr;
     if (!PtInRect(&client, pt))
-        return NULL;
+        return nullptr;
     POINT screen = pt;
     ClientToScreen(parent, &screen);
     for (HWND c = GetWindow(parent, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
@@ -523,10 +523,10 @@ WINUSERAPI HWND WINAPI RealChildWindowFromPoint(HWND parent, POINT pt)
 {
     RECT client;
     if (!GetClientRect(parent, &client) || !PtInRect(&client, pt))
-        return NULL;
+        return nullptr;
     POINT screen = pt;
     ClientToScreen(parent, &screen);
-    HWND group = NULL;
+    HWND group = nullptr;
     for (HWND c = GetWindow(parent, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
         RECT r;
         LONG style = GetWindowLongW(c, GWL_STYLE);
@@ -551,7 +551,7 @@ WINUSERAPI HWND WINAPI RealChildWindowFromPoint(HWND parent, POINT pt)
 WINUSERAPI HWND WINAPI GetLastActivePopup(HWND hwnd)
 {
     if (!IsWindow(hwnd))
-        return NULL;
+        return nullptr;
     HWND active = GetActiveWindow();
     if (!active)
         active = GetForegroundWindow();
@@ -566,7 +566,7 @@ typedef struct OWNED_POPUPS {
     BOOL Show;
 } OWNED_POPUPS;
 
-static const WCHAR g_hidden_popup[] = L"MimeHiddenPopup";
+static constexpr WCHAR g_hidden_popup[] = L"MimeHiddenPopup";
 
 static BOOL CALLBACK show_owned_popup(HWND hwnd, LPARAM param)
 {
@@ -692,13 +692,13 @@ static HWND *build_list(HWND parent, BOOL children, DWORD thread, ULONG *count)
     for (;;) {
         HWND *list = UserAlloc(cap * sizeof(HWND));
         if (!list)
-            return NULL;
-        NTSTATUS status = NtUserBuildHwndList(NULL, parent, children, thread, cap, list, count);
+            return nullptr;
+        NTSTATUS status = NtUserBuildHwndList(nullptr, parent, children, thread, cap, list, count);
         if (NT_SUCCESS(status))
             return list;
         UserFree(list);
         if (status != STATUS_BUFFER_TOO_SMALL)
-            return NULL;
+            return nullptr;
         cap = *count + 16;
     }
 }
@@ -719,7 +719,7 @@ static BOOL enum_list(HWND parent, BOOL children, DWORD thread, WNDENUMPROC proc
 
 WINUSERAPI BOOL WINAPI EnumWindows(WNDENUMPROC proc, LPARAM param)
 {
-    return enum_list(NULL, FALSE, 0, proc, param);
+    return enum_list(nullptr, FALSE, 0, proc, param);
 }
 
 WINUSERAPI BOOL WINAPI EnumChildWindows(HWND parent, WNDENUMPROC proc, LPARAM param)
@@ -729,7 +729,7 @@ WINUSERAPI BOOL WINAPI EnumChildWindows(HWND parent, WNDENUMPROC proc, LPARAM pa
 
 WINUSERAPI BOOL WINAPI EnumThreadWindows(DWORD thread, WNDENUMPROC proc, LPARAM param)
 {
-    return enum_list(NULL, FALSE, thread, proc, param);
+    return enum_list(nullptr, FALSE, thread, proc, param);
 }
 
 WINUSERAPI HWND WINAPI FindWindowExW(HWND parent, HWND after, LPCWSTR class_name, LPCWSTR name)
@@ -737,12 +737,12 @@ WINUSERAPI HWND WINAPI FindWindowExW(HWND parent, HWND after, LPCWSTR class_name
     UNICODE_STRING cls, title;
     init_ustring(&cls, class_name);
     init_ustring(&title, name);
-    return NtUserFindWindowEx(parent, after, class_name ? &cls : NULL, name ? &title : NULL, 0);
+    return NtUserFindWindowEx(parent, after, class_name ? &cls : nullptr, name ? &title : nullptr, 0);
 }
 
 WINUSERAPI HWND WINAPI FindWindowW(LPCWSTR class_name, LPCWSTR name)
 {
-    return FindWindowExW(NULL, NULL, class_name, name);
+    return FindWindowExW(nullptr, nullptr, class_name, name);
 }
 
 WINUSERAPI HWND WINAPI FindWindowA(LPCSTR class_name, LPCSTR name)
@@ -916,7 +916,7 @@ WINUSERAPI BOOL WINAPI SystemParametersInfoForDpi(UINT action, UINT param, PVOID
 static void logfont_w_to_a(const LOGFONTW *w, LOGFONTA *a)
 {
     memcpy(a, w, offsetof(LOGFONTA, lfFaceName));
-    WideCharToMultiByte(CP_ACP, 0, w->lfFaceName, -1, a->lfFaceName, LF_FACESIZE, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w->lfFaceName, -1, a->lfFaceName, LF_FACESIZE, nullptr, nullptr);
 }
 
 WINUSERAPI BOOL WINAPI SystemParametersInfoA(UINT action, UINT param, PVOID data, UINT ini)
@@ -1027,7 +1027,7 @@ WINUSERAPI BOOL WINAPI GetMonitorInfoA(HMONITOR monitor, LPMONITORINFO info)
         return FALSE;
     memcpy(info, &w, sizeof(MONITORINFO));
     info->cbSize = sizeof(MONITORINFO) + CCHDEVICENAME;
-    WideCharToMultiByte(CP_ACP, 0, w.szDevice, -1, (LPSTR)(info + 1), CCHDEVICENAME, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w.szDevice, -1, (LPSTR)(info + 1), CCHDEVICENAME, nullptr, nullptr);
     return TRUE;
 }
 

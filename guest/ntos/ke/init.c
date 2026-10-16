@@ -128,8 +128,8 @@ void KiStartProcessors(void)
             break;
         KiProcessorBlock[i] = &pcr->Prcb;
         if (HalHypercall(MIME_HC_CPU_START, i, (ULONG64)KiSecondaryStartup, (ULONG64)pcr, (ULONG64)stack, 0, 0,
-                         NULL) != MIME_HC_STATUS_OK) {
-            KiProcessorBlock[i] = NULL;
+                         nullptr) != MIME_HC_STATUS_OK) {
+            KiProcessorBlock[i] = nullptr;
             break;
         }
         KeNumberProcessors = i + 1;
@@ -170,7 +170,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
                 MIME_NT_MINOR_VERSION, MIME_NT_BUILD_NUMBER, MIME_ARCH_NAME, boot->ram_size >> 20);
 
     extern BOOLEAN KiTraceUserExceptions;
-    KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != NULL;
+    KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
 
     MmInitialize(boot);
     ExInitializePool();
@@ -182,7 +182,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiInitializeTimers();
 
     PETHREAD phase1;
-    NTSTATUS status = PspCreateThread(PsInitialSystemProcess, TRUE, KiPhase1Initialization, NULL, &phase1);
+    NTSTATUS status = PspCreateThread(PsInitialSystemProcess, TRUE, KiPhase1Initialization, nullptr, &phase1);
     if (!NT_SUCCESS(status))
         KeBugCheckEx(0x00000032, status, 0, 0, 0); /* PHASE1_INITIALIZATION_FAILED */
     KiStartThread(&phase1->Tcb);

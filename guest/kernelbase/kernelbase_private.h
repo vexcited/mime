@@ -6,7 +6,6 @@
 
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
-#include <stdbool.h>
 
 FORCEINLINE PPEB KbPeb(void)
 {

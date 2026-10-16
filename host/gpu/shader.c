@@ -113,7 +113,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
 
     int version = 110;
     bool es = false;
-    char *version_line = NULL;
+    char *version_line = nullptr;
     for (char *p = text; *p;) {
         char *q = p;
         while (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n')
@@ -142,7 +142,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
                 char save = eol ? *eol : 0;
                 if (eol)
                     *eol = 0;
-                es = strstr(d, " es") != NULL;
+                es = strstr(d, " es") != nullptr;
                 if (eol)
                     *eol = save;
             }
@@ -150,7 +150,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
         break;
     }
 
-    Buf out = {0};
+    Buf out = {};
     bool lift = es || version < 330;
     if (lift) {
         buf_str(&out, "#version 330\n");
@@ -167,7 +167,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
     }
 
     /* the declarations of the replaced fragment outputs go after the last #extension line. */
-    Buf decl = {0};
+    Buf decl = {};
     if (fragment && lift) {
         if (uses(text, "gl_FragColor")) {
             buf_str(&out, "#define gl_FragColor mime_FragColor\n");
@@ -290,7 +290,7 @@ static Uniform *find_uniform(Program *p, const char *name)
     for (unsigned i = 0; i < p->uniform_count; i++)
         if (!strcmp(p->uniforms[i].name, name))
             return &p->uniforms[i];
-    return NULL;
+    return nullptr;
 }
 
 static Uniform *add_uniform(Program *p, const char *name)
@@ -350,15 +350,15 @@ static void reflect_struct(Program *p, spvc_compiler c, spvc_type_id type_id, co
 static const spvc_reflected_resource *resources(spvc_compiler c, spvc_resource_type type, size_t *count)
 {
     spvc_resources res;
-    const spvc_reflected_resource *list = NULL;
+    const spvc_reflected_resource *list = nullptr;
     *count = 0;
     if (type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE) {
         spvc_set active;
         if (spvc_compiler_get_active_interface_variables(c, &active) != SPVC_SUCCESS ||
             spvc_compiler_create_shader_resources_for_active_variables(c, &res, active) != SPVC_SUCCESS)
-            return NULL;
+            return nullptr;
     } else if (spvc_compiler_create_shader_resources(c, &res) != SPVC_SUCCESS) {
-        return NULL;
+        return nullptr;
     }
     spvc_resources_get_resource_list_for_type(res, type, &list, count);
     return list;
@@ -571,9 +571,9 @@ static spvc_compiler msl_compiler(spvc_context ctx, const uint32_t *spirv, size_
     spvc_parsed_ir ir;
     spvc_compiler c;
     if (spvc_context_parse_spirv(ctx, spirv, words, &ir) != SPVC_SUCCESS)
-        return NULL;
+        return nullptr;
     if (spvc_context_create_compiler(ctx, SPVC_BACKEND_MSL, ir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &c) != SPVC_SUCCESS)
-        return NULL;
+        return nullptr;
     spvc_compiler_options o;
     spvc_compiler_create_compiler_options(c, &o);
     spvc_compiler_options_set_uint(o, SPVC_COMPILER_OPTION_MSL_VERSION, 20400);
@@ -588,10 +588,10 @@ static spvc_compiler msl_compiler(spvc_context ctx, const uint32_t *spirv, size_
 
 static char *compile_msl(Program *p, spvc_compiler c, const char *stage)
 {
-    const char *src = NULL;
+    const char *src = nullptr;
     if (spvc_compiler_compile(c, &src) != SPVC_SUCCESS || !src) {
         buf_fmt(&p->log, "%s: metal translation failed\n", stage);
-        return NULL;
+        return nullptr;
     }
     return strdup(src);
 }
@@ -629,14 +629,14 @@ static glslang_shader_t *parse_stage(Program *p, glslang_stage_t stage, const ch
         buf_fmt(&p->log, "%s shader:\n", label);
         buf_str(&p->log, glslang_shader_get_info_log(sh));
         glslang_shader_delete(sh);
-        return NULL;
+        return nullptr;
     }
     return sh;
 }
 
 static uint32_t *stage_spirv(glslang_program_t *prog, glslang_stage_t stage, size_t *words)
 {
-    glslang_spv_options_t opt = {0};
+    glslang_spv_options_t opt = {};
     opt.disable_optimizer = true;
     glslang_program_SPIRV_generate_with_options(prog, stage, &opt);
     *words = glslang_program_SPIRV_get_size(prog);
@@ -647,8 +647,8 @@ static uint32_t *stage_spirv(glslang_program_t *prog, glslang_stage_t stage, siz
 
 static void write_info(Program *p, bool ok, MimeShaderResult *out)
 {
-    Buf b = {0};
-    MimeGpuProgramInfo info = {0};
+    Buf b = {};
+    MimeGpuProgramInfo info = {};
     buf_add(&b, &info, sizeof(info));
     info.status = ok ? 0 : 1;
     info.attrib_count = ok ? p->attrib_count : 0;
@@ -694,13 +694,13 @@ bool mime_shader_compile(const char *vs, size_t vs_len, const char *fs, size_t f
 {
     memset(out, 0, sizeof(*out));
     pthread_once(&g_once, init_glslang);
-    Program p = {0};
+    Program p = {};
     bool ok = false;
     char *vtext = lift_source(vs, vs_len, false), *ftext = lift_source(fs, fs_len, true);
     glslang_shader_t *vsh = parse_stage(&p, GLSLANG_STAGE_VERTEX, vtext, "vertex");
-    glslang_shader_t *fsh = vsh ? parse_stage(&p, GLSLANG_STAGE_FRAGMENT, ftext, "fragment") : NULL;
-    glslang_program_t *prog = NULL;
-    spvc_context ctx = NULL;
+    glslang_shader_t *fsh = vsh ? parse_stage(&p, GLSLANG_STAGE_FRAGMENT, ftext, "fragment") : nullptr;
+    glslang_program_t *prog = nullptr;
+    spvc_context ctx = nullptr;
     if (!fsh)
         goto done;
 
@@ -755,7 +755,7 @@ done:
     if (!ok) {
         free(out->msl[0]);
         free(out->msl[1]);
-        out->msl[0] = out->msl[1] = NULL;
+        out->msl[0] = out->msl[1] = nullptr;
     }
     write_info(&p, ok, out);
     out->ok = ok;

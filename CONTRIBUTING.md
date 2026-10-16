@@ -170,7 +170,8 @@ decoder and Windows visual style parser in `guest/lib`, using the fonts and the
 
 ## Code style
 
-- C17, four spaces, braces on the same line except for functions.
+- C23: `nullptr`, `bool`, `static_assert`, `typeof`, `constexpr`, `[[attributes]]`, `= {}`, `#embed`,
+  `<stdckdint.h>`. Four spaces, braces on the same line except for functions.
 - Mime's own names use the `Mime`/`mime_` prefixes; Windows functions keep
   their Windows names and signatures.
 - Comments are short, lowercase except identifiers, and end with a dot. Skip

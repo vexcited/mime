@@ -20,7 +20,7 @@
 #define X 0x200    /* undefined */
 #define P 0x400    /* far pointer, offset then selector */
 
-static const uint16_t g_one[256] = {
+static constexpr uint16_t g_one[256] = {
     /* 00 */ M, M, M, M, B, Z, I, I, M, M, M, M, B, Z, I, 0,
     /* 10 */ M, M, M, M, B, Z, I, I, M, M, M, M, B, Z, I, I,
     /* 20 */ M, M, M, M, B, Z, 0, I, M, M, M, M, B, Z, 0, I,
@@ -39,7 +39,7 @@ static const uint16_t g_one[256] = {
     /* f0 */ 0, 0, 0, 0, 0, 0, M, M, 0, 0, 0, 0, 0, 0, M, M,
 };
 
-static const uint16_t g_two[256] = {
+static constexpr uint16_t g_two[256] = {
     /* 00 */ M, M, M, M, X, 0, X, X, X, X, X, 0, X, M, X, X,
     /* 10 */ M, M, M, M, M, M, M, M, M, M, M, M, M, M, M, M,
     /* 20 */ X, X, X, X, X, X, X, X, M, M, M, M, M, M, M, M,

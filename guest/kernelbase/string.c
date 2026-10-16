@@ -133,7 +133,7 @@ int WINAPI lstrlenA(LPCSTR s)
 LPWSTR WINAPI lstrcpyW(LPWSTR dst, LPCWSTR src)
 {
     if (!dst || !src)
-        return NULL;
+        return nullptr;
     wcscpy(dst, src);
     return dst;
 }
@@ -141,7 +141,7 @@ LPWSTR WINAPI lstrcpyW(LPWSTR dst, LPCWSTR src)
 LPSTR WINAPI lstrcpyA(LPSTR dst, LPCSTR src)
 {
     if (!dst || !src)
-        return NULL;
+        return nullptr;
     strcpy(dst, src);
     return dst;
 }
@@ -149,7 +149,7 @@ LPSTR WINAPI lstrcpyA(LPSTR dst, LPCSTR src)
 LPWSTR WINAPI lstrcpynW(LPWSTR dst, LPCWSTR src, int count)
 {
     if (!dst || (!src && count > 1))
-        return NULL;
+        return nullptr;
     if (count <= 0)
         return dst;
     int i = 0;
@@ -162,7 +162,7 @@ LPWSTR WINAPI lstrcpynW(LPWSTR dst, LPCWSTR src, int count)
 LPSTR WINAPI lstrcpynA(LPSTR dst, LPCSTR src, int count)
 {
     if (!dst || (!src && count > 1))
-        return NULL;
+        return nullptr;
     if (count <= 0)
         return dst;
     int i = 0;
@@ -175,7 +175,7 @@ LPSTR WINAPI lstrcpynA(LPSTR dst, LPCSTR src, int count)
 LPWSTR WINAPI lstrcatW(LPWSTR dst, LPCWSTR src)
 {
     if (!dst || !src)
-        return NULL;
+        return nullptr;
     wcscat(dst, src);
     return dst;
 }
@@ -183,7 +183,7 @@ LPWSTR WINAPI lstrcatW(LPWSTR dst, LPCWSTR src)
 LPSTR WINAPI lstrcatA(LPSTR dst, LPCSTR src)
 {
     if (!dst || !src)
-        return NULL;
+        return nullptr;
     strcat(dst, src);
     return dst;
 }

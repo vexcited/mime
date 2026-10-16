@@ -2,7 +2,6 @@
 #ifndef MIME_CM_JOURNAL_FORMAT_H
 #define MIME_CM_JOURNAL_FORMAT_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

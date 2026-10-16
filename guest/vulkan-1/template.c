@@ -30,7 +30,7 @@ static Template *find(VkDescriptorUpdateTemplate tmpl)
 {
     uint64_t id = (uint64_t)tmpl;
     AcquireSRWLockShared(&g_lock);
-    Template *t = id < g_capacity ? g_templates[id] : NULL;
+    Template *t = id < g_capacity ? g_templates[id] : nullptr;
     ReleaseSRWLockShared(&g_lock);
     return t;
 }
@@ -89,9 +89,9 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorUpdateTemplate(VkDevice device, Vk
         return;
     uint64_t id = (uint64_t)tmpl;
     AcquireSRWLockExclusive(&g_lock);
-    Template *t = id < g_capacity ? g_templates[id] : NULL;
+    Template *t = id < g_capacity ? g_templates[id] : nullptr;
     if (t)
-        g_templates[id] = NULL;
+        g_templates[id] = nullptr;
     ReleaseSRWLockExclusive(&g_lock);
     if (t) {
         HeapFree(GetProcessHeap(), 0, t->entries);
@@ -227,9 +227,9 @@ VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSetWithTemplate(VkDevice device, Vk
                                                              VkDescriptorUpdateTemplate tmpl, const void *data)
 {
     Template *t = find(tmpl);
-    Writes w = {0};
+    Writes w = {};
     if (t && build(t, set, data, &w))
-        vkUpdateDescriptorSets(device, w.count, w.writes, 0, NULL);
+        vkUpdateDescriptorSets(device, w.count, w.writes, 0, nullptr);
     release(&w);
 }
 
@@ -237,7 +237,7 @@ VKAPI_ATTR void VKAPI_CALL vkCmdPushDescriptorSetWithTemplate(VkCommandBuffer bu
                                                               VkPipelineLayout layout, uint32_t set, const void *data)
 {
     Template *t = find(tmpl);
-    Writes w = {0};
+    Writes w = {};
     if (t && build(t, VK_NULL_HANDLE, data, &w))
         vkCmdPushDescriptorSet(buffer, t->bind_point, layout, set, w.count, w.writes);
     release(&w);

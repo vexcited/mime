@@ -66,7 +66,7 @@ static UINT substitute(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record,
     if (*token == L'#' || *token == L'!' || *token == L'$')
         return ERROR_CALL_NOT_IMPLEMENTED;
     if (*token == L'%') {
-        DWORD capacity = GetEnvironmentVariableW(token + 1, NULL, 0);
+        DWORD capacity = GetEnvironmentVariableW(token + 1, nullptr, 0);
         if (!capacity)
             return ERROR_SUCCESS;
         PWSTR value = MimeMsiAllocate((SIZE_T)capacity * sizeof(WCHAR));
@@ -96,7 +96,7 @@ static UINT format_part(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record
             continue;
         }
         (*cursor)++;
-        MSI_TEXT token = {0};
+        MSI_TEXT token = {};
         UINT error = append_text(&token, L"", 0);
         if (!error)
             error = format_part(package, record, cursor, properties, depth + 1, &token);
@@ -117,7 +117,7 @@ static UINT format_part(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record
 
 UINT MimeMsiFormatRecord(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record, PWSTR *out, DWORD *length)
 {
-    MSI_TEXT numeric = {0}, formatted = {0};
+    MSI_TEXT numeric = {}, formatted = {};
     WCHAR number[16];
     PCWSTR template = field_text(&record->Fields[0], number);
     UINT error = append_text(&numeric, L"", 0);
@@ -157,7 +157,7 @@ UINT WINAPI MsiFormatRecordW(MSIHANDLE install, MSIHANDLE handle, LPWSTR out, LP
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(install, MIME_MSI_KIND_PACKAGE);
     UINT error = !record || (install && !package) ? ERROR_INVALID_HANDLE : ERROR_SUCCESS;
-    PWSTR text = NULL;
+    PWSTR text = nullptr;
     DWORD length;
     if (!error)
         error = MimeMsiFormatRecord(package, record, &text, &length);

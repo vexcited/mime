@@ -30,7 +30,7 @@ typedef HRESULT(APIENTRY *OpenAdapter)(void *args);
 static HRESULT open_adapter(const char *name, void *args)
 {
     HMODULE d3d11 = GetModuleHandleA("D3D11.DLL");
-    OpenAdapter open = d3d11 ? (OpenAdapter)(void *)GetProcAddress(d3d11, name) : NULL;
+    OpenAdapter open = d3d11 ? (OpenAdapter)(void *)GetProcAddress(d3d11, name) : nullptr;
     return open ? open(args) : E_NOTIMPL;
 }
 

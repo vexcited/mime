@@ -102,7 +102,7 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
     t->CallbackDepth++;
     UserReference(&w->Header);
     ULONG depth = UserLeaveAll();
-    PVOID out = NULL;
+    PVOID out = nullptr;
     ULONG out_len = 0;
     NTSTATUS status = KeUserModeCallback(MIME_CB_WINDOWPROC, args, (ULONG)size, &out, &out_len);
     UserReenter(depth);
@@ -172,7 +172,7 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
     SENT_MESSAGE *sm = W32Alloc(sizeof(SENT_MESSAGE));
     if (!sm)
         return 0;
-    sm->Sender = notify ? NULL : self;
+    sm->Sender = notify ? nullptr : self;
     sm->Hwnd = WndHandle(w);
     sm->Msg = msg;
     sm->Wparam = wparam;
@@ -204,7 +204,7 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
         PVOID objects[2] = {&sm->Done, self ? (PVOID)&self->Event : (PVOID)&sm->Done};
         ULONG depth = UserLeaveAll();
         NTSTATUS status = KeWaitForMultipleObjects(self ? 2 : 1, objects, WaitAny, UserRequest, UserMode, FALSE,
-                                                   NULL, NULL);
+                                                   nullptr, nullptr);
         UserReenter(depth);
         if (status == STATUS_THREAD_IS_TERMINATING && !sm->Completed) {
             /* the receiver will complete into a message nobody waits for. */
@@ -263,7 +263,7 @@ static TIMER *find_timer(W32THREAD *t, HWND hwnd, UINT_PTR id)
         if (tm->Hwnd == hwnd && tm->Id == id && (hwnd || tm->Thread == t))
             return tm;
     }
-    return NULL;
+    return nullptr;
 }
 
 UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance)
@@ -271,7 +271,7 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
     UserEnter();
     W32THREAD *t = W32GetThread();
     UINT_PTR result = 0;
-    WND *w = hwnd ? WndLookup(hwnd) : NULL;
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if ((hwnd && (!w || w->Thread != t)) || !t)
         goto out;
     if (elapse < USER_TIMER_MINIMUM)
@@ -282,7 +282,7 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
         static UINT_PTR next_id = 0x7FFE;
         do
             id = ++next_id;
-        while (find_timer(t, NULL, id));
+        while (find_timer(t, nullptr, id));
     }
     TIMER *tm = find_timer(t, hwnd, id);
     if (!tm) {
@@ -314,7 +314,7 @@ BOOL NTAPI NtUserKillTimer(HWND hwnd, UINT_PTR id)
         W32Free(tm);
     }
     UserLeave();
-    return tm != NULL;
+    return tm != nullptr;
 }
 
 void TimerRemoveWindow(WND *w)
@@ -363,7 +363,7 @@ static BOOLEAN hwnd_matches(HWND msg_hwnd, HWND filter)
     if (!filter)
         return TRUE;
     if (filter == (HWND)(LONG_PTR)-1)
-        return msg_hwnd == NULL;
+        return msg_hwnd == nullptr;
     if (msg_hwnd == filter)
         return TRUE;
     WND *w = WndLookup(msg_hwnd), *f = WndLookup(filter);
@@ -427,12 +427,12 @@ static BOOLEAN input_hook_discards(W32THREAD *t, const MSG *m, BOOLEAN remove)
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
-        return HookActive(WH_KEYBOARD, t) && HookCall(WH_KEYBOARD, t, code, m->wParam, m->lParam, 0, NULL);
+        return HookActive(WH_KEYBOARD, t) && HookCall(WH_KEYBOARD, t, code, m->wParam, m->lParam, 0, nullptr);
     }
     BOOLEAN nc = m->message >= WM_NCMOUSEMOVE && m->message <= WM_NCXBUTTONDBLCLK;
     if ((!nc && (m->message < WM_MOUSEFIRST || m->message > WM_MOUSELAST)) || !HookActive(WH_MOUSE, t))
         return FALSE;
-    MOUSEHOOKSTRUCTEX mh = {0};
+    MOUSEHOOKSTRUCTEX mh = {};
     mh.pt = m->pt;
     mh.hwnd = m->hwnd;
     mh.wHitTestCode = nc ? LOWORD(m->wParam) : HTCLIENT;
@@ -441,7 +441,7 @@ static BOOLEAN input_hook_discards(W32THREAD *t, const MSG *m, BOOLEAN remove)
         (m->message >= WM_XBUTTONDOWN && m->message <= WM_XBUTTONDBLCLK) ||
         (m->message >= WM_NCXBUTTONDOWN && m->message <= WM_NCXBUTTONDBLCLK))
         mh.mouseData = (DWORD)(m->wParam & 0xFFFF0000);
-    return HookCall(WH_MOUSE, t, code, m->message, (LPARAM)&mh, sizeof(mh), NULL) != 0;
+    return HookCall(WH_MOUSE, t, code, m->message, (LPARAM)&mh, sizeof(mh), nullptr) != 0;
 }
 
 static void free_input(W32THREAD *t, QUEUED_MESSAGE *qm)
@@ -505,7 +505,7 @@ scan_posted:
             if (consumed || (got && remove)) {
                 RemoveEntryList(&qm->Links);
                 W32Free(qm);
-                qm = NULL;
+                qm = nullptr;
             }
             if (got) {
                 set_message_state(t, out);
@@ -522,7 +522,7 @@ scan_posted:
             continue;
 
         if (t->QuitPosted && range_matches(WM_QUIT, min, max)) {
-            out->hwnd = NULL;
+            out->hwnd = nullptr;
             out->message = WM_QUIT;
             out->wParam = (WPARAM)t->QuitCode;
             out->lParam = 0;
@@ -558,7 +558,7 @@ scan_posted:
             return FALSE;
 
         LONG64 due = TimerNextDue(t);
-        LARGE_INTEGER timeout, *pt = NULL;
+        LARGE_INTEGER timeout, *pt = nullptr;
         if (due >= 0) {
             LONG64 delta = due - (LONG64)now_ms();
             if (delta < 0)
@@ -570,7 +570,7 @@ scan_posted:
         NTSTATUS status = KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
         UserReenter(depth);
         if (status == STATUS_THREAD_IS_TERMINATING) {
-            out->hwnd = NULL;
+            out->hwnd = nullptr;
             out->message = WM_QUIT;
             out->wParam = 0;
             out->lParam = 0;
@@ -590,7 +590,7 @@ static BOOL copy_msg_out(MSG *user, const MSG *m)
 static void get_message_hook(W32THREAD *t, MSG *m, UINT flags)
 {
     if (HookActive(WH_GETMESSAGE, t))
-        HookCall(WH_GETMESSAGE, t, HC_ACTION, flags & (PM_REMOVE | PM_NOYIELD), (LPARAM)m, sizeof(*m), NULL);
+        HookCall(WH_GETMESSAGE, t, HC_ACTION, flags & (PM_REMOVE | PM_NOYIELD), (LPARAM)m, sizeof(*m), nullptr);
 }
 
 BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
@@ -631,7 +631,7 @@ BOOL NTAPI NtUserWaitMessage(void)
         if (!(t->ChangeBits & (QS_ALLINPUT))) {
             PaintFlushThread(t);
             LONG64 due = TimerNextDue(t);
-            LARGE_INTEGER timeout, *pt = NULL;
+            LARGE_INTEGER timeout, *pt = nullptr;
             if (due >= 0) {
                 LONG64 delta = due - (LONG64)now_ms();
                 timeout.QuadPart = -(delta < 0 ? 0 : delta) * 10000;
@@ -758,7 +758,7 @@ BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         broadcast(msg, wparam, lparam, TRUE);
         ok = TRUE;
     } else if (!hwnd) {
-        ok = QueuePost(W32GetThread(), NULL, msg, wparam, lparam);
+        ok = QueuePost(W32GetThread(), nullptr, msg, wparam, lparam);
     } else {
         WND *w = WndLookup(hwnd);
         if (w && w->Thread)
@@ -772,7 +772,7 @@ BOOL NTAPI NtUserPostThreadMessage(DWORD thread, UINT msg, WPARAM wparam, LPARAM
 {
     UserEnter();
     W32THREAD *t = W32LookupThread((HANDLE)(ULONG_PTR)thread);
-    BOOL ok = t && QueuePost(t, NULL, msg, wparam, lparam);
+    BOOL ok = t && QueuePost(t, nullptr, msg, wparam, lparam);
     UserLeave();
     return ok;
 }
@@ -807,7 +807,7 @@ static PWSTR capture_sz(LPARAM lparam, BOOLEAN user, ULONG *chars)
 {
     *chars = 0;
     if (!lparam)
-        return NULL;
+        return nullptr;
     ULONG cap = 64, n = 0;
     PWSTR buf = W32Alloc(cap * sizeof(WCHAR));
     while (buf) {
@@ -835,7 +835,7 @@ static PWSTR capture_sz(LPARAM lparam, BOOLEAN user, ULONG *chars)
 
 static HBRUSH class_background(WND *w)
 {
-    HBRUSH b = w->Class ? w->Class->Background : NULL;
+    HBRUSH b = w->Class ? w->Class->Background : nullptr;
     if ((ULONG_PTR)b && (ULONG_PTR)b <= COLOR_MENUBAR + 1)
         b = MetricsSysColorBrush((int)(ULONG_PTR)b - 1);
     return b;
@@ -972,7 +972,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
             return FALSE;
         }
         if (hit == HTCLIENT) {
-            HCURSOR c = w->Class ? w->Class->Cursor : NULL;
+            HCURSOR c = w->Class ? w->Class->Cursor : nullptr;
             if (c)
                 CursorSet(c);
             return FALSE;
@@ -998,7 +998,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_ACTIVATE:
         if (LOWORD(wparam) != WA_INACTIVE && !(w->Style & WS_MINIMIZE)) {
             W32THREAD *t = w->Thread;
-            WND *focus = t ? WndLookup(t->Focus) : NULL;
+            WND *focus = t ? WndLookup(t->Focus) : nullptr;
             if (!focus || (focus != w && !WndIsChildOf(focus, w)))
                 WndSetFocus(w);
         }
@@ -1130,13 +1130,13 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
 
     case WM_CANCELMODE:
         if (w->Thread && w->Thread->Capture == WndHandle(w))
-            InputSetCapture(w->Thread, NULL, 0);
+            InputSetCapture(w->Thread, nullptr, 0);
         return 0;
 
     case WM_DPICHANGED: {
         RECT r;
         if (read_lparam(&r, lparam, sizeof(r), user))
-            WndSetPos(w, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            WndSetPos(w, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
         return 0;
     }
 

@@ -38,7 +38,7 @@ BOOL KbSetStatus(NTSTATUS status)
 PLARGE_INTEGER KbTimeout(PLARGE_INTEGER storage, DWORD milliseconds)
 {
     if (milliseconds == INFINITE)
-        return NULL;
+        return nullptr;
     storage->QuadPart = -(LONGLONG)milliseconds * 10000;
     return storage;
 }
@@ -53,7 +53,7 @@ BOOL KbDosPathToNt(LPCWSTR dos, PUNICODE_STRING nt)
         KbSetError(ERROR_PATH_NOT_FOUND);
         return FALSE;
     }
-    if (!RtlDosPathNameToNtPathName_U(dos, nt, NULL, NULL)) {
+    if (!RtlDosPathNameToNtPathName_U(dos, nt, nullptr, nullptr)) {
         KbSetError(ERROR_PATH_NOT_FOUND);
         return FALSE;
     }
@@ -85,14 +85,14 @@ void WINAPI SetFileApisToOEM(void)
 PWSTR KbAnsiToWideCp(UINT cp, LPCSTR s)
 {
     if (!s)
-        return NULL;
-    int n = MultiByteToWideChar(cp, 0, s, -1, NULL, 0);
+        return nullptr;
+    int n = MultiByteToWideChar(cp, 0, s, -1, nullptr, 0);
     if (n <= 0)
-        return NULL;
+        return nullptr;
     PWSTR w = KbAlloc((SIZE_T)n * sizeof(WCHAR));
     if (!w) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     MultiByteToWideChar(cp, 0, s, -1, w, n);
     return w;
@@ -106,29 +106,29 @@ PWSTR KbAnsiToWide(LPCSTR s)
 PSTR KbWideToAnsi(LPCWSTR s)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     UINT cp = KbFileApiCodePage();
-    int n = WideCharToMultiByte(cp, 0, s, -1, NULL, 0, NULL, NULL);
+    int n = WideCharToMultiByte(cp, 0, s, -1, nullptr, 0, nullptr, nullptr);
     if (n <= 0)
-        return NULL;
+        return nullptr;
     PSTR a = KbAlloc((SIZE_T)n);
     if (!a) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
-    WideCharToMultiByte(cp, 0, s, -1, a, n, NULL, NULL);
+    WideCharToMultiByte(cp, 0, s, -1, a, n, nullptr, nullptr);
     return a;
 }
 
 DWORD KbWideResultToAnsi(LPCWSTR wide, LPSTR buffer, DWORD size)
 {
     UINT cp = KbFileApiCodePage();
-    int need = WideCharToMultiByte(cp, 0, wide, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(cp, 0, wide, -1, nullptr, 0, nullptr, nullptr);
     if (need <= 0)
         return 0;
     if ((DWORD)need > size || !buffer)
         return (DWORD)need;
-    WideCharToMultiByte(cp, 0, wide, -1, buffer, (int)size, NULL, NULL);
+    WideCharToMultiByte(cp, 0, wide, -1, buffer, (int)size, nullptr, nullptr);
     return (DWORD)need - 1;
 }
 
@@ -146,7 +146,7 @@ static HANDLE named_object_root(void)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     NTSTATUS status = NtOpenDirectoryObject(&root, DIRECTORY_QUERY | DIRECTORY_TRAVERSE | DIRECTORY_CREATE_OBJECT |
                                                        DIRECTORY_CREATE_SUBDIRECTORY,
                                             &oa);
@@ -156,9 +156,9 @@ static HANDLE named_object_root(void)
                                                   DIRECTORY_CREATE_SUBDIRECTORY,
                                        &oa);
         if (!NT_SUCCESS(status))
-            return NULL;
+            return nullptr;
     }
-    HANDLE previous = __sync_val_compare_and_swap(&g_named_root, NULL, root);
+    HANDLE previous = __sync_val_compare_and_swap(&g_named_root, nullptr, root);
     if (previous) {
         NtClose(root);
         return previous;
@@ -172,7 +172,7 @@ BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR 
     ULONG attributes = 0;
     if (inherit || (sa && sa->bInheritHandle))
         attributes |= OBJ_INHERIT;
-    InitializeObjectAttributes(oa, NULL, attributes, NULL, sa ? sa->lpSecurityDescriptor : NULL);
+    InitializeObjectAttributes(oa, nullptr, attributes, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
     if (!name)
         return TRUE;
     if (!_wcsnicmp(name, L"Local\\", 6))
@@ -285,7 +285,7 @@ BOOL WINAPI GetHandleInformation(HANDLE handle, LPDWORD flags)
         BOOLEAN Inherit;
         BOOLEAN ProtectFromClose;
     } info;
-    NTSTATUS status = NtQueryObject(handle, 4 /* ObjectHandleFlagInformation */, &info, sizeof(info), NULL);
+    NTSTATUS status = NtQueryObject(handle, 4 /* ObjectHandleFlagInformation */, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     *flags = (info.Inherit ? HANDLE_FLAG_INHERIT : 0) | (info.ProtectFromClose ? HANDLE_FLAG_PROTECT_FROM_CLOSE : 0);
@@ -343,7 +343,7 @@ PIMAGE_NT_HEADERS KbImageNtHeader(PVOID base)
 {
     PIMAGE_DOS_HEADER dos = base;
     if (!dos || dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 0x10000000)
-        return NULL;
+        return nullptr;
     PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)((PUCHAR)base + dos->e_lfanew);
-    return nt->Signature == IMAGE_NT_SIGNATURE ? nt : NULL;
+    return nt->Signature == IMAGE_NT_SIGNATURE ? nt : nullptr;
 }

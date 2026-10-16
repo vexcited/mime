@@ -7,6 +7,6 @@ DECLSPEC_EXPORT HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD vers
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     return E_NOTIMPL;
 }

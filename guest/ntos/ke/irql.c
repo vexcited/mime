@@ -75,7 +75,7 @@ void NTAPI KeLeaveCriticalRegion(void)
 {
     PKTHREAD t = KiCurrentThread();
     if (++t->KernelApcDisable == 0 && t->KernelApcPending && KeGetPcr()->Irql == PASSIVE_LEVEL)
-        KiDeliverApcs(KernelMode, NULL);
+        KiDeliverApcs(KernelMode, nullptr);
 }
 
 void NTAPI KeEnterGuardedRegion(void)
@@ -87,14 +87,14 @@ void NTAPI KeLeaveGuardedRegion(void)
 {
     PKTHREAD t = KiCurrentThread();
     if (++t->SpecialApcDisable == 0 && t->KernelApcPending && KeGetPcr()->Irql == PASSIVE_LEVEL)
-        KiDeliverApcs(KernelMode, NULL);
+        KiDeliverApcs(KernelMode, nullptr);
 }
 
 /* fast mutexes: a counted lock backed by a synchronization event. */
 void NTAPI ExInitializeFastMutex(PFAST_MUTEX mutex)
 {
     mutex->Count = 1;
-    mutex->Owner = NULL;
+    mutex->Owner = nullptr;
     mutex->Contention = 0;
     KeInitializeEvent(&mutex->Event, SynchronizationEvent, FALSE);
 }
@@ -106,14 +106,14 @@ void FASTCALL ExAcquireFastMutexUnsafe(PFAST_MUTEX mutex)
         KeBugCheckEx(0x000000E5, (ULONG_PTR)mutex, 0, 0, 0); /* recursive acquisition */
     if (__atomic_sub_fetch(&mutex->Count, 1, __ATOMIC_ACQUIRE) != 0) {
         mutex->Contention++;
-        KeWaitForSingleObject(&mutex->Event, WrFastMutex, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(&mutex->Event, WrFastMutex, KernelMode, FALSE, nullptr);
     }
     mutex->Owner = self;
 }
 
 void FASTCALL ExReleaseFastMutexUnsafe(PFAST_MUTEX mutex)
 {
-    mutex->Owner = NULL;
+    mutex->Owner = nullptr;
     if (__atomic_add_fetch(&mutex->Count, 1, __ATOMIC_RELEASE) != 1)
         KeSetEvent(&mutex->Event, 0, FALSE);
 }
@@ -190,7 +190,7 @@ NTSTATUS NTAPI ExInitializeResourceLite(PERESOURCE resource)
 NTSTATUS NTAPI ExDeleteResourceLite(PERESOURCE resource)
 {
     ExFreePool(resource->ExclusiveWaiters);
-    resource->ExclusiveWaiters = NULL;
+    resource->ExclusiveWaiters = nullptr;
     return STATUS_SUCCESS;
 }
 
@@ -202,11 +202,11 @@ BOOLEAN NTAPI ExAcquireResourceExclusiveLite(PERESOURCE resource, BOOLEAN wait)
         return TRUE;
     }
     if (!wait) {
-        LARGE_INTEGER zero = {0};
+        LARGE_INTEGER zero = {};
         if (KeWaitForSingleObject(resource->ExclusiveWaiters, Executive, KernelMode, FALSE, &zero) != STATUS_SUCCESS)
             return FALSE;
     } else {
-        KeWaitForSingleObject(resource->ExclusiveWaiters, Executive, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(resource->ExclusiveWaiters, Executive, KernelMode, FALSE, nullptr);
     }
     resource->Address = self;
     resource->ActiveCount = 1;
@@ -221,7 +221,7 @@ BOOLEAN NTAPI ExAcquireResourceSharedLite(PERESOURCE resource, BOOLEAN wait)
 void FASTCALL ExReleaseResourceLite(PERESOURCE resource)
 {
     if (--resource->ActiveCount == 0) {
-        resource->Address = NULL;
+        resource->Address = nullptr;
         KeSetEvent(resource->ExclusiveWaiters, 0, FALSE);
     }
 }

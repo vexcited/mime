@@ -26,13 +26,13 @@ static void send_message(const void *message, ULONG size)
         return;
     ULONG64 state = KiDisableInterrupts();
     memcpy(g_send_buffer, message, size);
-    HalHypercall(MIME_HC_CTRL_SEND, HalPhysicalOf(g_send_buffer), size, 0, 0, 0, 0, NULL);
+    HalHypercall(MIME_HC_CTRL_SEND, HalPhysicalOf(g_send_buffer), size, 0, 0, 0, 0, nullptr);
     KiRestoreInterrupts(state);
 }
 
 static void send_process_event(ULONG type, ULONG64 request_id, ULONG status, ULONG pid)
 {
-    MimeEvtProcess evt = {0};
+    MimeEvtProcess evt = {};
     evt.header.type = type;
     evt.header.size = sizeof(evt);
     evt.request_id = request_id;
@@ -116,7 +116,7 @@ void MimeSessionInterrupt(ULONG bits)
 {
     __atomic_fetch_or(&g_irq_bits, (LONG)bits, __ATOMIC_ACQ_REL);
     if (g_ready)
-        KeInsertQueueDpc(&g_irq_dpc, NULL, NULL);
+        KeInsertQueueDpc(&g_irq_dpc, nullptr, nullptr);
 }
 
 static void handle_run(const MimeCtrlRun *run, ULONG size)
@@ -142,7 +142,7 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
     }
     PEPROCESS process;
     NTSTATUS status =
-        PsCreateUserProcess(&image, &cmdline, run->cwd_chars ? &cwd : NULL, run->request_id, console, &process);
+        PsCreateUserProcess(&image, &cmdline, run->cwd_chars ? &cwd : nullptr, run->request_id, console, &process);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("cannot start %wZ: %08x", &image, status);
         ConsoleDereference(console);
@@ -154,7 +154,7 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
     ObDereferenceObject(process);
 }
 
-static void shutdown_machine(void)
+[[noreturn]] static void shutdown_machine(void)
 {
     KiLogPrintf("shutting down");
     PLIST_ENTRY e;
@@ -163,7 +163,7 @@ static void shutdown_machine(void)
         if (!p->SystemProcess && !p->Terminating)
             PspTerminateProcess(p, STATUS_SYSTEM_SHUTDOWN);
     }
-    HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, NULL);
+    HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, nullptr);
     for (;;)
         KiPause();
 }
@@ -173,7 +173,7 @@ void MiSessionInitialize(void)
 {
     KeInitializeEvent(&g_ctrl_event, SynchronizationEvent, FALSE);
     ExInitializeFastMutex(&g_console_lock);
-    KeInitializeDpc(&g_irq_dpc, irq_dpc, NULL);
+    KeInitializeDpc(&g_irq_dpc, irq_dpc, nullptr);
     g_ready = TRUE;
 
     MimeCtrlHeader ready = {MIME_EVT_READY, sizeof(ready)};
@@ -223,6 +223,6 @@ void MiSessionInitialize(void)
             PsDumpThreads();
             KiDumpServiceCalls();
         }
-        KeWaitForSingleObject(&g_ctrl_event, Executive, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(&g_ctrl_event, Executive, KernelMode, FALSE, nullptr);
     }
 }

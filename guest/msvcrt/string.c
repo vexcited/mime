@@ -97,7 +97,7 @@ void *__cdecl memchr(const void *s, int c, size_t n)
     for (; n; n--, p++)
         if (*p == (uint8_t)c)
             return (void *)p;
-    return NULL;
+    return nullptr;
 }
 
 void *__cdecl _memccpy(void *dst, const void *src, int c, size_t n)
@@ -108,7 +108,7 @@ void *__cdecl _memccpy(void *dst, const void *src, int c, size_t n)
         if ((*d++ = *s++) == (uint8_t)c)
             return d;
     }
-    return NULL;
+    return nullptr;
 }
 
 int __cdecl _memicmp(const void *a, const void *b, size_t n)
@@ -292,13 +292,13 @@ char *__cdecl strchr(const char *s, int c)
         if (*s == (char)c)
             return (char *)s;
         if (!*s)
-            return NULL;
+            return nullptr;
     }
 }
 
 char *__cdecl strrchr(const char *s, int c)
 {
-    const char *r = NULL;
+    const char *r = nullptr;
     for (;; s++) {
         if (*s == (char)c)
             r = s;
@@ -315,12 +315,12 @@ char *__cdecl strstr(const char *hay, const char *needle)
     for (; *hay; hay++)
         if (*hay == *needle && !strncmp(hay, needle, n))
             return (char *)hay;
-    return NULL;
+    return nullptr;
 }
 
 size_t __cdecl strspn(const char *s, const char *accept)
 {
-    unsigned char map[32] = {0};
+    unsigned char map[32] = {};
     for (; *accept; accept++)
         map[(unsigned char)*accept >> 3] |= 1 << (*accept & 7);
     size_t n = 0;
@@ -331,7 +331,7 @@ size_t __cdecl strspn(const char *s, const char *accept)
 
 size_t __cdecl strcspn(const char *s, const char *reject)
 {
-    unsigned char map[32] = {0};
+    unsigned char map[32] = {};
     map[0] = 1;
     for (; *reject; reject++)
         map[(unsigned char)*reject >> 3] |= 1 << (*reject & 7);
@@ -344,27 +344,27 @@ size_t __cdecl strcspn(const char *s, const char *reject)
 char *__cdecl strpbrk(const char *s, const char *accept)
 {
     s += strcspn(s, accept);
-    return *s ? (char *)s : NULL;
+    return *s ? (char *)s : nullptr;
 }
 
 char *__cdecl _strspnp(const char *s, const char *accept)
 {
     s += strspn(s, accept);
-    return *s ? (char *)s : NULL;
+    return *s ? (char *)s : nullptr;
 }
 
 char *__cdecl strtok_s(char *s, const char *delim, char **context)
 {
     if (!context || !delim || (!s && !*context)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (!s)
         s = *context;
     s += strspn(s, delim);
     if (!*s) {
         *context = s;
-        return NULL;
+        return nullptr;
     }
     char *end = s + strcspn(s, delim);
     if (*end)
@@ -379,7 +379,7 @@ char *__cdecl strtok(char *s, const char *delim)
     if (!s) {
         s = ptd->strtok_next;
         if (!s)
-            return NULL;
+            return nullptr;
     }
     return strtok_s(s, delim, &ptd->strtok_next);
 }
@@ -387,7 +387,7 @@ char *__cdecl strtok(char *s, const char *delim)
 char *__cdecl _strdup(const char *s)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     size_t n = strlen(s) + 1;
     char *d = malloc(n);
     if (d)
@@ -399,7 +399,7 @@ char *__cdecl _strlwr(char *s)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     for (char *p = s; *p; p++)
         *p = (char)MsvcrtToLower((unsigned char)*p);
@@ -410,7 +410,7 @@ char *__cdecl _strupr(char *s)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     for (char *p = s; *p; p++)
         *p = (char)MsvcrtToUpper((unsigned char)*p);
@@ -716,13 +716,13 @@ wchar_t *__cdecl wcschr(const wchar_t *s, wchar_t c)
         if (*s == c)
             return (wchar_t *)s;
         if (!*s)
-            return NULL;
+            return nullptr;
     }
 }
 
 wchar_t *__cdecl wcsrchr(const wchar_t *s, wchar_t c)
 {
-    const wchar_t *r = NULL;
+    const wchar_t *r = nullptr;
     for (;; s++) {
         if (*s == c)
             r = s;
@@ -739,7 +739,7 @@ wchar_t *__cdecl wcsstr(const wchar_t *hay, const wchar_t *needle)
     for (; *hay; hay++)
         if (*hay == *needle && !wcsncmp(hay, needle, n))
             return (wchar_t *)hay;
-    return NULL;
+    return nullptr;
 }
 
 size_t __cdecl wcsspn(const wchar_t *s, const wchar_t *accept)
@@ -771,27 +771,27 @@ size_t __cdecl wcscspn(const wchar_t *s, const wchar_t *reject)
 wchar_t *__cdecl wcspbrk(const wchar_t *s, const wchar_t *accept)
 {
     s += wcscspn(s, accept);
-    return *s ? (wchar_t *)s : NULL;
+    return *s ? (wchar_t *)s : nullptr;
 }
 
 wchar_t *__cdecl _wcsspnp(const wchar_t *s, const wchar_t *accept)
 {
     s += wcsspn(s, accept);
-    return *s ? (wchar_t *)s : NULL;
+    return *s ? (wchar_t *)s : nullptr;
 }
 
 wchar_t *__cdecl wcstok_s(wchar_t *s, const wchar_t *delim, wchar_t **context)
 {
     if (!context || !delim || (!s && !*context)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (!s)
         s = *context;
     s += wcsspn(s, delim);
     if (!*s) {
         *context = s;
-        return NULL;
+        return nullptr;
     }
     wchar_t *end = s + wcscspn(s, delim);
     if (*end)
@@ -806,7 +806,7 @@ wchar_t *__cdecl wcstok(wchar_t *s, const wchar_t *delim)
     if (!s) {
         s = ptd->wcstok_next;
         if (!s)
-            return NULL;
+            return nullptr;
     }
     return wcstok_s(s, delim, &ptd->wcstok_next);
 }
@@ -814,7 +814,7 @@ wchar_t *__cdecl wcstok(wchar_t *s, const wchar_t *delim)
 wchar_t *__cdecl _wcsdup(const wchar_t *s)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     size_t n = (wcslen(s) + 1) * sizeof(wchar_t);
     wchar_t *d = malloc(n);
     if (d)
@@ -826,7 +826,7 @@ wchar_t *__cdecl _wcslwr(wchar_t *s)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     for (wchar_t *p = s; *p; p++)
         *p = wlower(*p);
@@ -837,7 +837,7 @@ wchar_t *__cdecl _wcsupr(wchar_t *s)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     for (wchar_t *p = s; *p; p++)
         *p = wupper(*p);
@@ -1092,16 +1092,16 @@ unsigned char *__cdecl _mbschr(const unsigned char *s, unsigned int c)
         if (*s == c)
             return (unsigned char *)s;
     }
-    return c ? NULL : (unsigned char *)s;
+    return c ? nullptr : (unsigned char *)s;
 }
 
 unsigned char *__cdecl _mbsrchr(const unsigned char *s, unsigned int c)
 {
     if (!s) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
-    const unsigned char *r = NULL;
+    const unsigned char *r = nullptr;
     for (;; s++) {
         if (lead(*s) && s[1]) {
             if (((unsigned)s[0] << 8 | s[1]) == c)
@@ -1139,7 +1139,7 @@ unsigned char *__cdecl _mbsinc(const unsigned char *s)
 unsigned char *__cdecl _mbsdec(const unsigned char *start, const unsigned char *cur)
 {
     if (cur <= start)
-        return NULL;
+        return nullptr;
     const unsigned char *p = start, *prev = start;
     while (p < cur) {
         prev = p;
@@ -1232,7 +1232,7 @@ unsigned char *__cdecl _mbsstr(const unsigned char *hay, const unsigned char *ne
     for (; *hay; hay = _mbsinc(hay))
         if (!strncmp((const char *)hay, (const char *)needle, n))
             return (unsigned char *)hay;
-    return NULL;
+    return nullptr;
 }
 
 unsigned char *__cdecl _mbscpy(unsigned char *dst, const unsigned char *src)
@@ -1277,13 +1277,13 @@ size_t __cdecl _mbscspn(const unsigned char *s, const unsigned char *set)
 unsigned char *__cdecl _mbspbrk(const unsigned char *s, const unsigned char *set)
 {
     s += _mbscspn(s, set);
-    return *s ? (unsigned char *)s : NULL;
+    return *s ? (unsigned char *)s : nullptr;
 }
 
 unsigned char *__cdecl _mbsspnp(const unsigned char *s, const unsigned char *set)
 {
     s += _mbsspn(s, set);
-    return *s ? (unsigned char *)s : NULL;
+    return *s ? (unsigned char *)s : nullptr;
 }
 
 unsigned char *__cdecl _mbstok(unsigned char *s, const unsigned char *delim)
@@ -1292,12 +1292,12 @@ unsigned char *__cdecl _mbstok(unsigned char *s, const unsigned char *delim)
     if (!s) {
         s = ptd->mbstok_next;
         if (!s)
-            return NULL;
+            return nullptr;
     }
     s += _mbsspn(s, delim);
     if (!*s) {
         ptd->mbstok_next = s;
-        return NULL;
+        return nullptr;
     }
     unsigned char *end = s + _mbscspn(s, delim);
     if (*end) {

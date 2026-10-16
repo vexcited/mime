@@ -93,11 +93,11 @@ void MsvcrtTzset(void)
             MsvcrtDstbias = 0;
         }
         BOOL used = FALSE;
-        if (!WideCharToMultiByte(CP_ACP, 0, g_tzi.StandardName, -1, g_tzname_std, 63, NULL, &used) || used)
+        if (!WideCharToMultiByte(CP_ACP, 0, g_tzi.StandardName, -1, g_tzname_std, 63, nullptr, &used) || used)
             g_tzname_std[0] = 0;
         g_tzname_std[63] = 0;
         used = FALSE;
-        if (!WideCharToMultiByte(CP_ACP, 0, g_tzi.DaylightName, -1, g_tzname_dst, 63, NULL, &used) || used)
+        if (!WideCharToMultiByte(CP_ACP, 0, g_tzi.DaylightName, -1, g_tzname_dst, 63, nullptr, &used) || used)
             g_tzname_dst[0] = 0;
         g_tzname_dst[63] = 0;
     }
@@ -352,7 +352,7 @@ __time64_t __cdecl time(__time64_t *out)
 
 __time32_t __cdecl _time32(__time32_t *out)
 {
-    __time64_t t = _time64(NULL);
+    __time64_t t = _time64(nullptr);
     if (t > MAX_TIME32)
         t = -1;
     if (out)
@@ -379,7 +379,7 @@ errno_t __cdecl _gmtime64_s(struct tm *tm, const __time64_t *t)
 struct tm *__cdecl _gmtime64(const __time64_t *t)
 {
     struct tm *tm = &MsvcrtThreadData()->tm;
-    return _gmtime64_s(tm, t) ? NULL : tm;
+    return _gmtime64_s(tm, t) ? nullptr : tm;
 }
 
 struct tm *__cdecl gmtime(const __time64_t *t)
@@ -406,7 +406,7 @@ errno_t __cdecl _gmtime32_s(struct tm *tm, const __time32_t *t)
 struct tm *__cdecl _gmtime32(const __time32_t *t)
 {
     struct tm *tm = &MsvcrtThreadData()->tm;
-    return _gmtime32_s(tm, t) ? NULL : tm;
+    return _gmtime32_s(tm, t) ? nullptr : tm;
 }
 
 errno_t __cdecl _localtime64_s(struct tm *tm, const __time64_t *t)
@@ -434,7 +434,7 @@ errno_t __cdecl _localtime64_s(struct tm *tm, const __time64_t *t)
 struct tm *__cdecl _localtime64(const __time64_t *t)
 {
     struct tm *tm = &MsvcrtThreadData()->tm;
-    return _localtime64_s(tm, t) ? NULL : tm;
+    return _localtime64_s(tm, t) ? nullptr : tm;
 }
 
 struct tm *__cdecl localtime(const __time64_t *t)
@@ -455,7 +455,7 @@ errno_t __cdecl _localtime32_s(struct tm *tm, const __time32_t *t)
 struct tm *__cdecl _localtime32(const __time32_t *t)
 {
     struct tm *tm = &MsvcrtThreadData()->tm;
-    return _localtime32_s(tm, t) ? NULL : tm;
+    return _localtime32_s(tm, t) ? nullptr : tm;
 }
 
 /* normalizes tm and returns its value as utc seconds, or -1 out of range. */
@@ -682,7 +682,7 @@ errno_t __cdecl asctime_s(char *buf, size_t size, const struct tm *tm)
 char *__cdecl asctime(const struct tm *tm)
 {
     char *buf = MsvcrtThreadData()->asctime_buf;
-    return asctime_s(buf, 26, tm) ? NULL : buf;
+    return asctime_s(buf, 26, tm) ? nullptr : buf;
 }
 
 errno_t __cdecl _wasctime_s(wchar_t *buf, size_t size, const struct tm *tm)
@@ -708,14 +708,14 @@ errno_t __cdecl _wasctime_s(wchar_t *buf, size_t size, const struct tm *tm)
 wchar_t *__cdecl _wasctime(const struct tm *tm)
 {
     wchar_t *buf = MsvcrtThreadData()->wasctime_buf;
-    return _wasctime_s(buf, 26, tm) ? NULL : buf;
+    return _wasctime_s(buf, 26, tm) ? nullptr : buf;
 }
 
 char *__cdecl _ctime64(const __time64_t *t)
 {
     struct tm tm;
     if (!t || _localtime64_s(&tm, t))
-        return NULL;
+        return nullptr;
     char *buf = MsvcrtThreadData()->asctime_buf;
     format_asctime(&tm, buf);
     return buf;
@@ -729,7 +729,7 @@ char *__cdecl ctime(const __time64_t *t)
 char *__cdecl _ctime32(const __time32_t *t)
 {
     if (!t)
-        return NULL;
+        return nullptr;
     __time64_t t64 = *t;
     return _ctime64(&t64);
 }
@@ -753,7 +753,7 @@ wchar_t *__cdecl _wctime64(const __time64_t *t)
 {
     struct tm tm;
     if (!t || _localtime64_s(&tm, t))
-        return NULL;
+        return nullptr;
     return _wasctime(&tm);
 }
 
@@ -765,7 +765,7 @@ wchar_t *__cdecl _wctime(const __time64_t *t)
 wchar_t *__cdecl _wctime32(const __time32_t *t)
 {
     if (!t)
-        return NULL;
+        return nullptr;
     __time64_t t64 = *t;
     return _wctime64(&t64);
 }
@@ -874,7 +874,7 @@ static int strf_conv(STRF *s, char c, int alt, const struct tm *tm)
         if ((unsigned)tm->tm_wday > 6)
             return 0;
         {
-            char abbr[4] = {0};
+            char abbr[4] = {};
             memcpy(abbr, g_days[tm->tm_wday], 3);
             strf_puts(s, abbr);
         }
@@ -889,7 +889,7 @@ static int strf_conv(STRF *s, char c, int alt, const struct tm *tm)
         if ((unsigned)tm->tm_mon > 11)
             return 0;
         {
-            char abbr[4] = {0};
+            char abbr[4] = {};
             memcpy(abbr, g_months[tm->tm_mon], 3);
             strf_puts(s, abbr);
         }

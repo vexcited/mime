@@ -26,7 +26,7 @@ typedef struct MimeVm MimeVm;
 typedef struct MimeVcpu {
     MimeVm *vm;
     uint32_t index;
-#if defined(__linux__)
+#ifdef __linux__
     int fd;
     struct kvm_run *run;
     volatile bool running; /* in KVM_RUN, where a signal kicks it out */
@@ -68,7 +68,7 @@ typedef struct MimeFsHandle {
 } MimeFsHandle;
 
 /* the host page size: guest memory goes back to the host in these units. */
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #define MIME_HOST_PAGE 0x4000u
 #else
 #define MIME_HOST_PAGE 0x1000u
@@ -94,7 +94,7 @@ typedef struct MimeLazyRegion {
 #define MIME_VMM_MAX_WINDOWS 1024
 #define MIME_VMM_INPUT_QUEUE 1024
 
-#if defined(__linux__)
+#ifdef __linux__
 /* a host file mapped read only into the guest from the page cache, its own memslot. */
 typedef struct MimeFileWindow {
     uint64_t ipa;
@@ -115,7 +115,7 @@ struct MimeVm {
     uint32_t irq_intid;
     uint32_t vcpu_count;
     MimeVcpu vcpus[MIME_VMM_MAX_VCPUS];
-#if defined(__linux__)
+#ifdef __linux__
     int kvm_fd;
     int vm_fd;
     int irq_fd; /* eventfd raising the host interrupt through kvm's irqfd */
@@ -142,7 +142,7 @@ struct MimeVm {
 
     pthread_mutex_t fs_lock;
     MimeFsHandle *fs_handles[MIME_VMM_MAX_FS_HANDLES];
-#if defined(__linux__)
+#ifdef __linux__
     MimeFileWindow windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa */
 #else
     MimeLazyRegion rom;

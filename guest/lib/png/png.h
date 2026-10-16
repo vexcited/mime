@@ -5,7 +5,6 @@
 #ifndef MIME_LIB_PNG_PNG_H
 #define MIME_LIB_PNG_PNG_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

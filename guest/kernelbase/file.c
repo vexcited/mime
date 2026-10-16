@@ -58,10 +58,10 @@ static void set_filetime(FILETIME *ft, LONGLONG v)
 static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG options, PHANDLE handle)
 {
     UNICODE_STRING nt;
-    if (!RtlDosPathNameToNtPathName_U(path, &nt, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(path, &nt, nullptr, nullptr))
         return STATUS_OBJECT_PATH_NOT_FOUND;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtOpenFile(handle, access | SYNCHRONIZE, &oa, &iosb, share, options | FILE_SYNCHRONOUS_IO_NONALERT);
     RtlFreeUnicodeString(&nt);
@@ -89,7 +89,7 @@ static HANDLE open_device_name(LPCWSTR name, DWORD access)
         return (access & GENERIC_WRITE) ? KB_CONSOLE_OUTPUT : KB_CONSOLE_INPUT;
     if (!_wcsicmp(base, L"NUL"))
         return KB_NULL_DEVICE;
-    return NULL;
+    return nullptr;
 }
 
 HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disposition,
@@ -154,12 +154,12 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
     ULONG attributes = OBJ_CASE_INSENSITIVE;
     if (sa && sa->bInheritHandle)
         attributes |= OBJ_INHERIT;
-    InitializeObjectAttributes(&oa, &nt, attributes, NULL, sa ? sa->lpSecurityDescriptor : NULL);
-    IO_STATUS_BLOCK iosb = {0};
+    InitializeObjectAttributes(&oa, &nt, attributes, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
+    IO_STATUS_BLOCK iosb = {};
     HANDLE handle;
-    NTSTATUS status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, NULL,
+    NTSTATUS status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, nullptr,
                                    flags & FILE_ATTRIBUTE_VALID_FLAGS & ~(DWORD)FILE_ATTRIBUTE_DIRECTORY, share,
-                                   nt_disposition, options, NULL, 0);
+                                   nt_disposition, options, nullptr, 0);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status)) {
         if (status == STATUS_OBJECT_NAME_COLLISION)
@@ -197,8 +197,8 @@ HANDLE WINAPI CreateFile2(LPCWSTR name, DWORD access, DWORD share, DWORD disposi
                           LPCREATEFILE2_EXTENDED_PARAMETERS params)
 {
     DWORD flags = 0;
-    LPSECURITY_ATTRIBUTES sa = NULL;
-    HANDLE template_file = NULL;
+    LPSECURITY_ATTRIBUTES sa = nullptr;
+    HANDLE template_file = nullptr;
     if (params) {
         if (params->dwSize < sizeof(*params)) {
             KbSetError(ERROR_INVALID_PARAMETER);
@@ -237,14 +237,14 @@ HFILE WINAPI _lopen(LPCSTR path, int mode)
         share = FILE_SHARE_WRITE;
         break;
     }
-    HANDLE h = CreateFileA(path, access, share, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE h = CreateFileA(path, access, share, nullptr, OPEN_EXISTING, 0, nullptr);
     return h == INVALID_HANDLE_VALUE ? HFILE_ERROR : (HFILE)(LONG_PTR)h;
 }
 
 HFILE WINAPI _lcreat(LPCSTR path, int attributes)
 {
-    HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                           CREATE_ALWAYS, (DWORD)attributes & 7, NULL);
+    HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           CREATE_ALWAYS, (DWORD)attributes & 7, nullptr);
     return h == INVALID_HANDLE_VALUE ? HFILE_ERROR : (HFILE)(LONG_PTR)h;
 }
 
@@ -256,7 +256,7 @@ HFILE WINAPI _lclose(HFILE file)
 UINT WINAPI _lread(HFILE file, LPVOID buffer, UINT count)
 {
     DWORD read;
-    return ReadFile((HANDLE)(LONG_PTR)file, buffer, count, &read, NULL) ? read : (UINT)HFILE_ERROR;
+    return ReadFile((HANDLE)(LONG_PTR)file, buffer, count, &read, nullptr) ? read : (UINT)HFILE_ERROR;
 }
 
 UINT WINAPI _lwrite(HFILE file, LPCCH buffer, UINT count)
@@ -264,12 +264,12 @@ UINT WINAPI _lwrite(HFILE file, LPCCH buffer, UINT count)
     DWORD written;
     if (!count)
         return SetEndOfFile((HANDLE)(LONG_PTR)file) ? 0 : (UINT)HFILE_ERROR;
-    return WriteFile((HANDLE)(LONG_PTR)file, buffer, count, &written, NULL) ? written : (UINT)HFILE_ERROR;
+    return WriteFile((HANDLE)(LONG_PTR)file, buffer, count, &written, nullptr) ? written : (UINT)HFILE_ERROR;
 }
 
 LONG WINAPI _llseek(HFILE file, LONG offset, int origin)
 {
-    return (LONG)SetFilePointer((HANDLE)(LONG_PTR)file, offset, NULL, (DWORD)origin);
+    return (LONG)SetFilePointer((HANDLE)(LONG_PTR)file, offset, nullptr, (DWORD)origin);
 }
 
 /* ------------------------------------------------------------------ reading and writing */
@@ -277,13 +277,13 @@ LONG WINAPI _llseek(HFILE file, LONG offset, int origin)
 static HANDLE overlapped_event(LPOVERLAPPED ov)
 {
     /* the low bit of hEvent only suppresses completion port notification. */
-    return ov ? (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1) : NULL;
+    return ov ? (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1) : nullptr;
 }
 
 /* the completion port packet of a request names its OVERLAPPED, unless the low bit of hEvent is set. */
 static PVOID overlapped_port_context(LPOVERLAPPED ov)
 {
-    return ((ULONG_PTR)ov->hEvent & 1) ? NULL : ov;
+    return ((ULONG_PTR)ov->hEvent & 1) ? nullptr : ov;
 }
 
 BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPOVERLAPPED overlapped)
@@ -312,8 +312,8 @@ BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPO
         PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
         iosb->Status = STATUS_PENDING;
         iosb->Information = 0;
-        status = NtReadFile(file, overlapped_event(overlapped), NULL, overlapped_port_context(overlapped), iosb, buffer,
-                            length, &offset, NULL);
+        status = NtReadFile(file, overlapped_event(overlapped), nullptr, overlapped_port_context(overlapped), iosb, buffer,
+                            length, &offset, nullptr);
         if (status == STATUS_PENDING) {
             KbSetError(ERROR_IO_PENDING);
             return FALSE;
@@ -326,9 +326,9 @@ BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPO
         }
         return TRUE;
     }
-    status = NtReadFile(file, NULL, NULL, NULL, &local, buffer, length, NULL, NULL);
+    status = NtReadFile(file, nullptr, nullptr, nullptr, &local, buffer, length, nullptr, nullptr);
     if (status == STATUS_PENDING) {
-        NtWaitForSingleObject(file, FALSE, NULL);
+        NtWaitForSingleObject(file, FALSE, nullptr);
         status = local.Status;
     }
     if (status == STATUS_END_OF_FILE)
@@ -365,8 +365,8 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
         PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
         iosb->Status = STATUS_PENDING;
         iosb->Information = 0;
-        status = NtWriteFile(file, overlapped_event(overlapped), NULL, overlapped_port_context(overlapped), iosb,
-                             (PVOID)buffer, length, &offset, NULL);
+        status = NtWriteFile(file, overlapped_event(overlapped), nullptr, overlapped_port_context(overlapped), iosb,
+                             (PVOID)buffer, length, &offset, nullptr);
         if (status == STATUS_PENDING) {
             KbSetError(ERROR_IO_PENDING);
             return FALSE;
@@ -379,9 +379,9 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
         }
         return TRUE;
     }
-    status = NtWriteFile(file, NULL, NULL, NULL, &local, (PVOID)buffer, length, NULL, NULL);
+    status = NtWriteFile(file, nullptr, nullptr, nullptr, &local, (PVOID)buffer, length, nullptr, nullptr);
     if (status == STATUS_PENDING) {
-        NtWaitForSingleObject(file, FALSE, NULL);
+        NtWaitForSingleObject(file, FALSE, nullptr);
         status = local.Status;
     }
     if (!NT_SUCCESS(status))
@@ -413,10 +413,10 @@ static BOOL io_ex(BOOL write, HANDLE file, PVOID buffer, DWORD length, LPOVERLAP
     PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
     iosb->Status = STATUS_PENDING;
     iosb->Information = 0;
-    NTSTATUS status = write ? NtWriteFile(file, NULL, (PIO_APC_ROUTINE)completion_apc, (PVOID)completion, iosb, buffer,
-                                          length, &offset, NULL)
-                            : NtReadFile(file, NULL, (PIO_APC_ROUTINE)completion_apc, (PVOID)completion, iosb, buffer,
-                                         length, &offset, NULL);
+    NTSTATUS status = write ? NtWriteFile(file, nullptr, (PIO_APC_ROUTINE)completion_apc, (PVOID)completion, iosb, buffer,
+                                          length, &offset, nullptr)
+                            : NtReadFile(file, nullptr, (PIO_APC_ROUTINE)completion_apc, (PVOID)completion, iosb, buffer,
+                                         length, &offset, nullptr);
     if (NT_ERROR(status))
         return KbSetStatus(status);
     /* pending or done: the routine runs later either way. */
@@ -725,7 +725,7 @@ DWORD WINAPI GetFileAttributesW(LPCWSTR name)
     if (!KbDosPathToNt(name, &nt))
         return INVALID_FILE_ATTRIBUTES;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_NETWORK_OPEN_INFORMATION info;
     NTSTATUS status = NtQueryFullAttributesFile(&oa, &info);
     RtlFreeUnicodeString(&nt);
@@ -759,7 +759,7 @@ BOOL WINAPI GetFileAttributesExW(LPCWSTR name, GET_FILEEX_INFO_LEVELS level, LPV
     if (!KbDosPathToNt(name, &nt))
         return FALSE;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_NETWORK_OPEN_INFORMATION net;
     NTSTATUS status = NtQueryFullAttributesFile(&oa, &net);
     RtlFreeUnicodeString(&nt);
@@ -844,7 +844,7 @@ BOOL WINAPI GetFileInformationByHandle(HANDLE file, LPBY_HANDLE_FILE_INFORMATION
     IO_STATUS_BLOCK iosb;
     FILE_BASIC_INFORMATION basic;
     FILE_STANDARD_INFORMATION std;
-    FILE_INTERNAL_INFORMATION internal = {0};
+    FILE_INTERNAL_INFORMATION internal = {};
     NTSTATUS status = NtQueryInformationFile(file, &iosb, &basic, sizeof(basic), FileBasicInformation);
     if (NT_SUCCESS(status))
         status = NtQueryInformationFile(file, &iosb, &std, sizeof(std), FileStandardInformation);
@@ -868,7 +868,7 @@ static BOOL query_directory_by_handle(HANDLE file, FILE_INFORMATION_CLASS klass,
                                       BOOLEAN restart)
 {
     IO_STATUS_BLOCK iosb;
-    NTSTATUS status = NtQueryDirectoryFile(file, NULL, NULL, NULL, &iosb, info, size, klass, FALSE, NULL, restart);
+    NTSTATUS status = NtQueryDirectoryFile(file, nullptr, nullptr, nullptr, &iosb, info, size, klass, FALSE, nullptr, restart);
     if (status == STATUS_NO_MORE_FILES || status == STATUS_NO_SUCH_FILE) {
         KbSetError(ERROR_NO_MORE_FILES);
         return FALSE;
@@ -1164,13 +1164,13 @@ BOOL WINAPI CreateDirectoryW(LPCWSTR name, LPSECURITY_ATTRIBUTES sa)
     if (!KbDosPathToNt(name, &nt))
         return FALSE;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, sa ? sa->lpSecurityDescriptor : NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE h;
-    NTSTATUS status = NtCreateFile(&h, FILE_LIST_DIRECTORY | SYNCHRONIZE, &oa, &iosb, NULL, FILE_ATTRIBUTE_NORMAL,
+    NTSTATUS status = NtCreateFile(&h, FILE_LIST_DIRECTORY | SYNCHRONIZE, &oa, &iosb, nullptr, FILE_ATTRIBUTE_NORMAL,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_CREATE,
                                    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
-                                   NULL, 0);
+                                   nullptr, 0);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status)) {
         if (status == STATUS_OBJECT_NAME_INVALID)
@@ -1209,7 +1209,7 @@ static BOOL directory_has_entries(HANDLE dir)
     BOOLEAN restart = TRUE;
     for (;;) {
         NTSTATUS status =
-            NtQueryDirectoryFile(dir, NULL, NULL, NULL, &iosb, buf, sizeof(buf), FileNamesInformation, FALSE, NULL, restart);
+            NtQueryDirectoryFile(dir, nullptr, nullptr, nullptr, &iosb, buf, sizeof(buf), FileNamesInformation, FALSE, nullptr, restart);
         restart = FALSE;
         if (!NT_SUCCESS(status))
             return FALSE;
@@ -1279,8 +1279,8 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    HANDLE in = CreateFileW(source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-                            FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    HANDLE in = CreateFileW(source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                            FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (in == INVALID_HANDLE_VALUE)
         return FALSE;
     BY_HANDLE_FILE_INFORMATION info;
@@ -1289,9 +1289,9 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
         return FALSE;
     }
     DWORD attributes = info.dwFileAttributes & ~(DWORD)FILE_ATTRIBUTE_DIRECTORY;
-    HANDLE out = CreateFileW(destination, GENERIC_WRITE, 0, NULL,
+    HANDLE out = CreateFileW(destination, GENERIC_WRITE, 0, nullptr,
                              (flags & COPY_FILE_FAIL_IF_EXISTS) ? CREATE_NEW : CREATE_ALWAYS,
-                             attributes & ~(DWORD)FILE_ATTRIBUTE_READONLY, NULL);
+                             attributes & ~(DWORD)FILE_ATTRIBUTE_READONLY, nullptr);
     if (out == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
         CloseHandle(in);
@@ -1299,10 +1299,10 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
         return FALSE;
     }
     PUCHAR buffer = KbAlloc(COPY_CHUNK);
-    BOOL ok = buffer != NULL;
+    BOOL ok = buffer != nullptr;
     if (!ok)
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-    LARGE_INTEGER total, done, zero = {0};
+    LARGE_INTEGER total, done, zero = {};
     total.LowPart = info.nFileSizeLow;
     total.HighPart = (LONG)info.nFileSizeHigh;
     done.QuadPart = 0;
@@ -1317,7 +1317,7 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
                 break;
             }
             if (r == PROGRESS_QUIET)
-                progress = NULL;
+                progress = nullptr;
         }
         if (cancel && *cancel) {
             KbSetError(ERROR_REQUEST_ABORTED);
@@ -1325,13 +1325,13 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
             break;
         }
         DWORD got = 0, put;
-        if (!ReadFile(in, buffer, COPY_CHUNK, &got, NULL)) {
+        if (!ReadFile(in, buffer, COPY_CHUNK, &got, nullptr)) {
             ok = FALSE;
             break;
         }
         if (!got)
             break;
-        if (!WriteFile(out, buffer, got, &put, NULL) || put != got) {
+        if (!WriteFile(out, buffer, got, &put, nullptr) || put != got) {
             ok = FALSE;
             break;
         }
@@ -1356,7 +1356,7 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
 
 BOOL WINAPI CopyFileW(LPCWSTR source, LPCWSTR destination, BOOL fail_if_exists)
 {
-    return CopyFileExW(source, destination, NULL, NULL, NULL, fail_if_exists ? COPY_FILE_FAIL_IF_EXISTS : 0);
+    return CopyFileExW(source, destination, nullptr, nullptr, nullptr, fail_if_exists ? COPY_FILE_FAIL_IF_EXISTS : 0);
 }
 
 BOOL WINAPI CopyFileA(LPCSTR source, LPCSTR destination, BOOL fail_if_exists)
@@ -1377,7 +1377,7 @@ BOOL WINAPI CopyFileA(LPCSTR source, LPCSTR destination, BOOL fail_if_exists)
 static NTSTATUS rename_by_handle(LPCWSTR source, LPCWSTR destination, BOOL replace)
 {
     UNICODE_STRING nt_dest;
-    if (!RtlDosPathNameToNtPathName_U(destination, &nt_dest, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(destination, &nt_dest, nullptr, nullptr))
         return STATUS_OBJECT_PATH_NOT_FOUND;
     HANDLE h;
     NTSTATUS status = open_path(source, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -1387,7 +1387,7 @@ static NTSTATUS rename_by_handle(LPCWSTR source, LPCWSTR destination, BOOL repla
         KB_FILE_RENAME_INFORMATION *info = KbAlloc(size);
         if (info) {
             info->ReplaceIfExists = (BOOLEAN)replace;
-            info->RootDirectory = NULL;
+            info->RootDirectory = nullptr;
             info->FileNameLength = nt_dest.Length;
             memcpy(info->FileName, nt_dest.Buffer, nt_dest.Length);
             IO_STATUS_BLOCK iosb;
@@ -1423,8 +1423,8 @@ BOOL WINAPI MoveFileWithProgressW(LPCWSTR source, LPCWSTR destination, LPPROGRES
     DWORD dst_attr = GetFileAttributesW(destination);
     if (dst_attr != INVALID_FILE_ATTRIBUTES) {
         WCHAR a[MAX_PATH * 2], b[MAX_PATH * 2];
-        BOOL same = GetFullPathNameW(source, RTL_NUMBER_OF(a), a, NULL) &&
-                    GetFullPathNameW(destination, RTL_NUMBER_OF(b), b, NULL) && !_wcsicmp(a, b);
+        BOOL same = GetFullPathNameW(source, RTL_NUMBER_OF(a), a, nullptr) &&
+                    GetFullPathNameW(destination, RTL_NUMBER_OF(b), b, nullptr) && !_wcsicmp(a, b);
         if (!same && (!(flags & MOVEFILE_REPLACE_EXISTING) || (dst_attr & FILE_ATTRIBUTE_DIRECTORY))) {
             KbSetError(ERROR_ALREADY_EXISTS);
             return FALSE;
@@ -1441,7 +1441,7 @@ BOOL WINAPI MoveFileWithProgressW(LPCWSTR source, LPCWSTR destination, LPPROGRES
         KbSetError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
-    if (!CopyFileExW(source, destination, progress, data, NULL, 0))
+    if (!CopyFileExW(source, destination, progress, data, nullptr, 0))
         return FALSE;
     if (!DeleteFileW(source)) {
         DWORD error = GetLastError();
@@ -1454,7 +1454,7 @@ BOOL WINAPI MoveFileWithProgressW(LPCWSTR source, LPCWSTR destination, LPPROGRES
 
 BOOL WINAPI MoveFileExW(LPCWSTR source, LPCWSTR destination, DWORD flags)
 {
-    return MoveFileWithProgressW(source, destination, NULL, NULL, flags);
+    return MoveFileWithProgressW(source, destination, nullptr, nullptr, flags);
 }
 
 BOOL WINAPI MoveFileW(LPCWSTR source, LPCWSTR destination)
@@ -1580,7 +1580,7 @@ static const FILE_BOTH_DIR_INFORMATION *next_entry(FIND_STATE *f, PUNICODE_STRIN
 {
     if (f->Offset == (ULONG)~0u) {
         IO_STATUS_BLOCK iosb;
-        NTSTATUS status = NtQueryDirectoryFile(f->Directory, NULL, NULL, NULL, &iosb, f->Buffer, sizeof(f->Buffer),
+        NTSTATUS status = NtQueryDirectoryFile(f->Directory, nullptr, nullptr, nullptr, &iosb, f->Buffer, sizeof(f->Buffer),
                                                FileBothDirectoryInformation, FALSE, pattern, first);
         if (!NT_SUCCESS(status)) {
             if (status == STATUS_NO_MORE_FILES || status == STATUS_NO_SUCH_FILE ||
@@ -1588,7 +1588,7 @@ static const FILE_BOTH_DIR_INFORMATION *next_entry(FIND_STATE *f, PUNICODE_STRIN
                 KbSetError(first ? ERROR_FILE_NOT_FOUND : ERROR_NO_MORE_FILES);
             else
                 KbSetStatus(status);
-            return NULL;
+            return nullptr;
         }
         f->Offset = 0;
     }
@@ -1669,7 +1669,7 @@ HANDLE WINAPI FindFirstFileExW(LPCWSTR name, FINDEX_INFO_LEVELS level, LPVOID da
 
 HANDLE WINAPI FindFirstFileW(LPCWSTR name, LPWIN32_FIND_DATAW data)
 {
-    return FindFirstFileExW(name, FindExInfoStandard, data, FindExSearchNameMatch, NULL, 0);
+    return FindFirstFileExW(name, FindExInfoStandard, data, FindExSearchNameMatch, nullptr, 0);
 }
 
 static FIND_STATE *find_state(HANDLE h)
@@ -1677,7 +1677,7 @@ static FIND_STATE *find_state(HANDLE h)
     FIND_STATE *f = h;
     if (!f || f == INVALID_HANDLE_VALUE || ((ULONG_PTR)f & 7) || f->Magic != FIND_MAGIC) {
         KbSetError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return f;
 }
@@ -1692,11 +1692,11 @@ BOOL WINAPI FindNextFileW(HANDLE find, LPWIN32_FIND_DATAW data)
         return FALSE;
     }
     RtlEnterCriticalSection(&f->Lock);
-    const FILE_BOTH_DIR_INFORMATION *e = next_entry(f, NULL, FALSE);
+    const FILE_BOTH_DIR_INFORMATION *e = next_entry(f, nullptr, FALSE);
     if (e)
         fill_find_data(e, f->Level, data);
     RtlLeaveCriticalSection(&f->Lock);
-    return e != NULL;
+    return e != nullptr;
 }
 
 BOOL WINAPI FindClose(HANDLE find)
@@ -1715,10 +1715,10 @@ static void find_data_to_ansi(const WIN32_FIND_DATAW *w, LPWIN32_FIND_DATAA a)
 {
     memcpy(a, w, offsetof(WIN32_FIND_DATAA, cFileName));
     UINT cp = KbFileApiCodePage();
-    if (!WideCharToMultiByte(cp, 0, w->cFileName, -1, a->cFileName, sizeof(a->cFileName), NULL, NULL))
+    if (!WideCharToMultiByte(cp, 0, w->cFileName, -1, a->cFileName, sizeof(a->cFileName), nullptr, nullptr))
         a->cFileName[sizeof(a->cFileName) - 1] = 0;
     if (!WideCharToMultiByte(cp, 0, w->cAlternateFileName, -1, a->cAlternateFileName, sizeof(a->cAlternateFileName),
-                             NULL, NULL))
+                             nullptr, nullptr))
         a->cAlternateFileName[0] = 0;
 }
 
@@ -1745,7 +1745,7 @@ HANDLE WINAPI FindFirstFileExA(LPCSTR name, FINDEX_INFO_LEVELS level, LPVOID dat
 
 HANDLE WINAPI FindFirstFileA(LPCSTR name, LPWIN32_FIND_DATAA data)
 {
-    return FindFirstFileExA(name, FindExInfoStandard, data, FindExSearchNameMatch, NULL, 0);
+    return FindFirstFileExA(name, FindExInfoStandard, data, FindExSearchNameMatch, nullptr, 0);
 }
 
 BOOL WINAPI FindNextFileA(HANDLE find, LPWIN32_FIND_DATAA data)
@@ -1772,7 +1772,7 @@ HANDLE WINAPI FindFirstChangeNotificationW(LPCWSTR path, BOOL subtree, DWORD fil
         return INVALID_HANDLE_VALUE;
     }
     HANDLE event;
-    NTSTATUS status = NtCreateEvent(&event, EVENT_ALL_ACCESS, NULL, NotificationEvent, FALSE);
+    NTSTATUS status = NtCreateEvent(&event, EVENT_ALL_ACCESS, nullptr, NotificationEvent, FALSE);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;
@@ -1800,7 +1800,7 @@ HANDLE WINAPI ReOpenFile(HANDLE original, DWORD access, DWORD share, DWORD flags
             KbSetError(ERROR_FILENAME_EXCED_RANGE);
         return INVALID_HANDLE_VALUE;
     }
-    return CreateFileW(path, access, share, NULL, OPEN_EXISTING, flags, NULL);
+    return CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
 }
 
 /* the kernel posts every completion, so skipping the port on success is refused and callers keep packets. */

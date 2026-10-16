@@ -73,7 +73,7 @@ static void set_cursor(const MOVESIZE *ms)
             break;
         }
     }
-    SetCursor(LoadCursorW(NULL, id));
+    SetCursor(LoadCursorW(nullptr, id));
 }
 
 /* places the window for the mouse at pt, in screen coordinates. */
@@ -122,18 +122,18 @@ static void track(MOVESIZE *ms, POINT pt)
         SendMessageW(ms->Window, WM_SIZING, ms->Edge, (LPARAM)&r);
     }
     if (ms->Parent)
-        MapWindowPoints(NULL, ms->Parent, (POINT *)&r, 2);
+        MapWindowPoints(nullptr, ms->Parent, (POINT *)&r, 2);
     RECT now;
     GetWindowRect(ms->Window, &now);
     if (ms->Parent)
-        MapWindowPoints(NULL, ms->Parent, (POINT *)&now, 2);
+        MapWindowPoints(nullptr, ms->Parent, (POINT *)&now, 2);
     if (EqualRect(&now, &r))
         return;
     UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
     if (!ms->Size)
         flags |= SWP_NOSIZE;
-    SetWindowPos(ms->Window, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, flags);
-    RedrawWindow(ms->Window, NULL, NULL, RDW_UPDATENOW | RDW_ALLCHILDREN);
+    SetWindowPos(ms->Window, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, flags);
+    RedrawWindow(ms->Window, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
 /* an arrow key: picks the edge to size first, then steps. returns FALSE for other keys. */
@@ -189,7 +189,7 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
     MOVESIZE ms;
     memset(&ms, 0, sizeof(ms));
     ms.Window = hwnd;
-    ms.Parent = (style & WS_CHILD) ? GetParent(hwnd) : NULL;
+    ms.Parent = (style & WS_CHILD) ? GetParent(hwnd) : nullptr;
     ms.Size = size;
     ms.Maximized = (style & WS_MAXIMIZE) != 0;
     ms.Placement.length = sizeof(ms.Placement);
@@ -224,7 +224,7 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
         if (GetCapture() != hwnd)
             break;
         MSG msg;
-        BOOL received = GetMessageW(&msg, NULL, 0, 0);
+        BOOL received = GetMessageW(&msg, nullptr, 0, 0);
         if (received <= 0) {
             /* WM_QUIT ends the loop and stays in the queue for the caller. */
             if (!received)
@@ -236,8 +236,8 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
         case WM_MOUSEMOVE: {
             /* only the latest position matters. */
             MSG next;
-            while (PeekMessageW(&next, NULL, WM_MOUSEFIRST, WM_MOUSELAST, PM_NOREMOVE) &&
-                   next.message == WM_MOUSEMOVE && PeekMessageW(&next, NULL, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE))
+            while (PeekMessageW(&next, nullptr, WM_MOUSEFIRST, WM_MOUSELAST, PM_NOREMOVE) &&
+                   next.message == WM_MOUSEMOVE && PeekMessageW(&next, nullptr, WM_MOUSEMOVE, WM_MOUSEMOVE, PM_REMOVE))
                 msg = next;
             if (ms.Size && !ms.Edge)
                 break;
@@ -285,8 +285,8 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
         } else {
             RECT r = ms.Start;
             if (ms.Parent)
-                MapWindowPoints(NULL, ms.Parent, (POINT *)&r, 2);
-            SetWindowPos(hwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                MapWindowPoints(nullptr, ms.Parent, (POINT *)&r, 2);
+            SetWindowPos(hwnd, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
         }
     }
     if (GetCapture() == hwnd)

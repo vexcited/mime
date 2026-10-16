@@ -7,7 +7,7 @@ DECLSPEC_EXPORT BOOL WINAPI GetProcessGroupAffinity(HANDLE process, USHORT *coun
         return FALSE;
     }
     PROCESS_BASIC_INFORMATION info;
-    NTSTATUS status = NtQueryInformationProcess(process, ProcessBasicInformation, &info, sizeof(info), NULL);
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessBasicInformation, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status)) {
         SetLastError(RtlNtStatusToDosError(status));
         return FALSE;
@@ -43,7 +43,7 @@ DECLSPEC_EXPORT PVOID WINAPI VirtualAllocExNuma(HANDLE process, PVOID address, S
 {
     if (node != 0 && node != 0xffffffffu) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     return VirtualAllocEx(process, address, size, type, protection);
 }
@@ -52,5 +52,5 @@ DECLSPEC_EXPORT PVOID WINAPI VirtualAllocExNuma(HANDLE process, PVOID address, S
 DECLSPEC_EXPORT HANDLE WINAPI CreateMemoryResourceNotification(int kind)
 {
     SetLastError(kind == 0 || kind == 1 ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER);
-    return NULL;
+    return nullptr;
 }

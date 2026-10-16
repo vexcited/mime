@@ -33,7 +33,7 @@ static double fused(double x, double y, double z, unsigned precision, int minimu
     int ex, ey, ez;
     uint64_t mx = unpack(x, &ex, &sx), my = unpack(y, &ey, &sy), mz = unpack(z, &ez, &sz);
     uint32_t a[2] = {(uint32_t)mx, (uint32_t)(mx >> 32)}, b[2] = {(uint32_t)my, (uint32_t)(my >> 32)};
-    uint32_t product[4] = {0}, addend[2] = {(uint32_t)mz, (uint32_t)(mz >> 32)};
+    uint32_t product[4] = {}, addend[2] = {(uint32_t)mz, (uint32_t)(mz >> 32)};
     for (unsigned i = 0; i < 2; i++) {
         uint64_t carry = 0;
         for (unsigned j = 0; j < 2; j++) {
@@ -43,7 +43,7 @@ static double fused(double x, double y, double z, unsigned precision, int minimu
         }
         product[i + 2] = (uint32_t)carry;
     }
-    uint32_t p[LIMBS] = {0}, q[LIMBS] = {0};
+    uint32_t p[LIMBS] = {}, q[LIMBS] = {};
     insert(p, product, 4, (unsigned)(ex + ey + 2148));
     insert(q, addend, 2, (unsigned)(ez + 2148));
     BOOL sign = sx != sy;

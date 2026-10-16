@@ -17,7 +17,7 @@ static D3dContext *impl(ID3D11DeviceContext4 *iface) { return CONTAINING_RECORD(
 
 D3dContext *D3dContextFrom(ID3D11DeviceContext *iface)
 {
-    return iface ? CONTAINING_RECORD((void *)iface, D3dContext, iface) : NULL;
+    return iface ? CONTAINING_RECORD((void *)iface, D3dContext, iface) : nullptr;
 }
 
 /* the copies, clears and maps of context_copy.c. */
@@ -169,11 +169,11 @@ BOOL D3dContextRingAlloc(D3dContext *c, VkDeviceSize size, VkDeviceSize align, D
 const D3dRingSlice *D3dContextListRange(const D3dContext *c, const D3dResource *r)
 {
     if (c->type == D3D11_DEVICE_CONTEXT_IMMEDIATE || r->usage != D3D11_USAGE_DYNAMIC)
-        return NULL;
+        return nullptr;
     for (UINT i = 0; i < c->list_range_count; i++)
         if (c->list_ranges[i].resource == r)
             return &c->list_ranges[i].slice;
-    return NULL;
+    return nullptr;
 }
 
 /* a deferred discard: new bytes of the list's, which the list's commands read for the buffer from now on. */
@@ -181,7 +181,7 @@ const D3dRingSlice *D3dContextListDiscard(D3dContext *c, D3dResource *r)
 {
     D3dRingSlice slice;
     if (!D3dContextRingAlloc(c, r->buf.size, 256, &slice))
-        return NULL;
+        return nullptr;
     D3dContextUse(c, r);
     c->ia_dirty = TRUE;
     for (UINT i = 0; i < D3D_STAGES; i++)
@@ -197,7 +197,7 @@ const D3dRingSlice *D3dContextListDiscard(D3dContext *c, D3dResource *r)
             c->list_ranges ? HeapReAlloc(GetProcessHeap(), 0, c->list_ranges, capacity * sizeof(*list))
                            : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
         if (!list)
-            return NULL;
+            return nullptr;
         c->list_ranges = list;
         c->list_range_capacity = capacity;
     }
@@ -224,7 +224,7 @@ static BOOL begin_list(D3dContext *c)
     D3dVk *vk = &device->vk;
     VkCommandPoolCreateInfo pool = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool.queueFamilyIndex = device->queue_family;
-    if (vk->vkCreateCommandPool(vk->device, &pool, NULL, &c->list_pool) != VK_SUCCESS)
+    if (vk->vkCreateCommandPool(vk->device, &pool, nullptr, &c->list_pool) != VK_SUCCESS)
         return FALSE;
     VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     alloc.commandPool = c->list_pool;
@@ -255,7 +255,7 @@ static void begin_commands(D3dContext *c)
         goto fresh;
     }
     UINT64 completed = device->completed;
-    D3dCommandBuffer *cmd = NULL;
+    D3dCommandBuffer *cmd = nullptr;
     for (UINT pass = 0; pass < 2 && !cmd; pass++) {
         for (UINT i = 0; i < c->buffer_count && !cmd; i++)
             if (c->buffers[i].serial <= completed)
@@ -298,7 +298,7 @@ fresh:
     c->heap_bound[0] = c->heap_bound[1] = FALSE;
     c->tables_bound[0] = c->tables_bound[1] = FALSE;
     c->compute_bound = FALSE;
-    c->table_chunk = NULL;
+    c->table_chunk = nullptr;
     for (UINT i = 0; i < D3D_STAGES; i++)
         c->stages[i].table_valid = FALSE;
 }
@@ -349,7 +349,7 @@ UINT64 D3dContextSubmit(D3dContext *c, const VkSemaphoreSubmitInfo *wait, const 
     UINT64 serial = D3dSubmit(device, cmd, wait, signal);
     if (c->cmd) {
         c->cmd->serial = serial;
-        c->cmd = NULL;
+        c->cmd = nullptr;
     }
     return serial;
 }
@@ -357,7 +357,7 @@ UINT64 D3dContextSubmit(D3dContext *c, const VkSemaphoreSubmitInfo *wait, const 
 void D3dContextFlush(D3dContext *c)
 {
     if (c->cmd && c->type == D3D11_DEVICE_CONTEXT_IMMEDIATE)
-        D3dContextSubmit(c, NULL, NULL);
+        D3dContextSubmit(c, nullptr, nullptr);
 }
 
 /* ------------------------------------------------------------------ hazards */
@@ -370,7 +370,7 @@ static void unbind_inputs(D3dContext *c, D3dResource *r)
     for (UINT s = 0; s < D3D_STAGES; s++)
         for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; i++)
             if (c->stages[s].srv[i] && c->stages[s].srv[i]->resource == r) {
-                ref_view(c, &c->stages[s].srv[i], NULL);
+                ref_view(c, &c->stages[s].srv[i], nullptr);
                 c->stages[s].table_valid = FALSE;
             }
     if (r->dimension != D3D11_RESOURCE_DIMENSION_BUFFER)
@@ -378,16 +378,16 @@ static void unbind_inputs(D3dContext *c, D3dResource *r)
     for (UINT s = 0; s < D3D_STAGES; s++)
         for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; i++)
             if (c->stages[s].cb[i] == r) {
-                ref_resource(&c->stages[s].cb[i], NULL);
+                ref_resource(&c->stages[s].cb[i], nullptr);
                 c->stages[s].table_valid = FALSE;
             }
     for (UINT i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++)
         if (c->vb[i] == r) {
-            ref_resource(&c->vb[i], NULL);
+            ref_resource(&c->vb[i], nullptr);
             c->ia_dirty = TRUE;
         }
     if (c->ib == r) {
-        ref_resource(&c->ib, NULL);
+        ref_resource(&c->ib, nullptr);
         c->ia_dirty = TRUE;
     }
 }
@@ -437,8 +437,8 @@ static void set_constant_buffers(D3dContext *c, D3dStage stage, UINT slot, UINT 
     count = D3D_MIN(count, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - slot);
     D3dStageState *s = &c->stages[stage];
     for (UINT i = 0; i < count; i++) {
-        D3dResource *r = buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL;
-        ref_resource(&s->cb[slot + i], bound_as_output(c, r) ? NULL : r);
+        D3dResource *r = buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : nullptr;
+        ref_resource(&s->cb[slot + i], bound_as_output(c, r) ? nullptr : r);
         s->cb_first[slot + i] = first ? first[i] : 0;
         s->cb_count[slot + i] = num ? num[i] : D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT;
     }
@@ -453,9 +453,9 @@ static void set_shader_resources(D3dContext *c, D3dStage stage, UINT slot, UINT 
     count = D3D_MIN(count, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - slot);
     D3dStageState *s = &c->stages[stage];
     for (UINT i = 0; i < count; i++) {
-        D3dView *v = views ? D3dViewFrom(views[i], D3D_VIEW_SRV) : NULL;
+        D3dView *v = views ? D3dViewFrom(views[i], D3D_VIEW_SRV) : nullptr;
         if (v && bound_as_output(c, v->resource))
-            v = NULL;
+            v = nullptr;
         ref_view(c, &s->srv[slot + i], v);
     }
     s->table_valid = FALSE;
@@ -468,7 +468,7 @@ static void set_samplers(D3dContext *c, D3dStage stage, UINT slot, UINT count, I
     count = D3D_MIN(count, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - slot);
     D3dStageState *s = &c->stages[stage];
     for (UINT i = 0; i < count; i++)
-        ref_D3dSamplerState(c, &s->sampler[slot + i], samplers ? D3dSamplerFrom(samplers[i]) : NULL);
+        ref_D3dSamplerState(c, &s->sampler[slot + i], samplers ? D3dSamplerFrom(samplers[i]) : nullptr);
     s->table_valid = FALSE;
 }
 
@@ -492,9 +492,9 @@ static void get_constant_buffers(D3dContext *c, D3dStage stage, UINT slot, UINT 
 {
     for (UINT i = 0; i < count; i++) {
         UINT k = slot + i;
-        D3dResource *r = k < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT ? c->stages[stage].cb[k] : NULL;
+        D3dResource *r = k < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT ? c->stages[stage].cb[k] : nullptr;
         if (buffers) {
-            buffers[i] = r ? &r->u.buffer : NULL;
+            buffers[i] = r ? &r->u.buffer : nullptr;
             if (r)
                 D3dResourceAddRef(r);
         }
@@ -509,8 +509,8 @@ static void get_shader_resources(D3dContext *c, D3dStage stage, UINT slot, UINT 
                                  ID3D11ShaderResourceView **views)
 {
     for (UINT i = 0; i < count; i++) {
-        D3dView *v = slot + i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT ? c->stages[stage].srv[slot + i] : NULL;
-        views[i] = v ? (ID3D11ShaderResourceView *)&v->iface : NULL;
+        D3dView *v = slot + i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT ? c->stages[stage].srv[slot + i] : nullptr;
+        views[i] = v ? (ID3D11ShaderResourceView *)&v->iface : nullptr;
         if (v)
             InterlockedIncrement(&v->child.refs);
     }
@@ -520,8 +520,8 @@ static void get_samplers(D3dContext *c, D3dStage stage, UINT slot, UINT count, I
 {
     for (UINT i = 0; i < count; i++) {
         D3dSamplerState *s = slot + i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT ? c->stages[stage].sampler[slot + i]
-                                                                               : NULL;
-        samplers[i] = s ? (ID3D11SamplerState *)&s->iface : NULL;
+                                                                               : nullptr;
+        samplers[i] = s ? (ID3D11SamplerState *)&s->iface : nullptr;
         if (s)
             s->iface.lpVtbl->AddRef((void *)&s->iface);
     }
@@ -531,7 +531,7 @@ static void get_shader(D3dContext *c, D3dStage stage, void **shader, ID3D11Class
 {
     D3dShader *s = c->stages[stage].shader;
     if (shader) {
-        *shader = s ? &s->iface : NULL;
+        *shader = s ? &s->iface : nullptr;
         if (s)
             InterlockedIncrement(&s->child.refs);
     }
@@ -544,7 +544,7 @@ static void get_shader(D3dContext *c, D3dStage stage, void **shader, ID3D11Class
     static void STDMETHODCALLTYPE prefix##_set_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,  \
                                                                 ID3D11Buffer *const *buffers)                          \
     {                                                                                                                  \
-        set_constant_buffers(impl(iface), stage, slot, count, buffers, NULL, NULL);                                    \
+        set_constant_buffers(impl(iface), stage, slot, count, buffers, nullptr, nullptr);                                    \
     }                                                                                                                  \
     static void STDMETHODCALLTYPE prefix##_set_constant_buffers1(ID3D11DeviceContext4 *iface, UINT slot, UINT count, \
                                                                  ID3D11Buffer *const *buffers, const UINT *first,      \
@@ -570,7 +570,7 @@ static void get_shader(D3dContext *c, D3dStage stage, void **shader, ID3D11Class
     static void STDMETHODCALLTYPE prefix##_get_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,  \
                                                                 ID3D11Buffer **buffers)                                \
     {                                                                                                                  \
-        get_constant_buffers(impl(iface), stage, slot, count, buffers, NULL, NULL);                                    \
+        get_constant_buffers(impl(iface), stage, slot, count, buffers, nullptr, nullptr);                                    \
     }                                                                                                                  \
     static void STDMETHODCALLTYPE prefix##_get_constant_buffers1(ID3D11DeviceContext4 *iface, UINT slot, UINT count, \
                                                                  ID3D11Buffer **buffers, UINT *first, UINT *num)       \
@@ -622,9 +622,9 @@ static void STDMETHODCALLTYPE ia_set_vertex_buffers(ID3D11DeviceContext4 *iface,
     count = D3D_MIN(count, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - slot);
     for (UINT i = 0; i < count; i++) {
         UINT k = slot + i;
-        D3dResource *r = buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL;
+        D3dResource *r = buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : nullptr;
         if (bound_as_output(c, r))
-            r = NULL;
+            r = nullptr;
         UINT stride = strides ? strides[i] : 0;
         if (c->vb_stride[k] != stride)
             c->vertex_input_dirty = TRUE;
@@ -641,7 +641,7 @@ static void STDMETHODCALLTYPE ia_set_index_buffer(ID3D11DeviceContext4 *iface, I
 {
     D3dContext *c = impl(iface);
     D3dResource *r = D3dResourceFrom((ID3D11Resource *)buffer);
-    ref_resource(&c->ib, bound_as_output(c, r) ? NULL : r);
+    ref_resource(&c->ib, bound_as_output(c, r) ? nullptr : r);
     c->ib_format = format;
     c->ib_offset = offset;
     c->ib_version = ~0u;
@@ -661,7 +661,7 @@ static void STDMETHODCALLTYPE ia_set_primitive_topology(ID3D11DeviceContext4 *if
 static void STDMETHODCALLTYPE ia_get_input_layout(ID3D11DeviceContext4 *iface, ID3D11InputLayout **layout)
 {
     D3dInputLayout *l = impl(iface)->layout;
-    *layout = l ? &l->iface : NULL;
+    *layout = l ? &l->iface : nullptr;
     if (l)
         InterlockedIncrement(&l->child.refs);
 }
@@ -673,9 +673,9 @@ static void STDMETHODCALLTYPE ia_get_vertex_buffers(ID3D11DeviceContext4 *iface,
     for (UINT i = 0; i < count; i++) {
         UINT k = slot + i;
         BOOL valid = k < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
-        D3dResource *r = valid ? c->vb[k] : NULL;
+        D3dResource *r = valid ? c->vb[k] : nullptr;
         if (buffers) {
-            buffers[i] = r ? &r->u.buffer : NULL;
+            buffers[i] = r ? &r->u.buffer : nullptr;
             if (r)
                 D3dResourceAddRef(r);
         }
@@ -691,7 +691,7 @@ static void STDMETHODCALLTYPE ia_get_index_buffer(ID3D11DeviceContext4 *iface, I
 {
     D3dContext *c = impl(iface);
     if (buffer) {
-        *buffer = c->ib ? &c->ib->u.buffer : NULL;
+        *buffer = c->ib ? &c->ib->u.buffer : nullptr;
         if (c->ib)
             D3dResourceAddRef(c->ib);
     }
@@ -741,7 +741,7 @@ static void STDMETHODCALLTYPE rs_set_scissor_rects(ID3D11DeviceContext4 *iface, 
 static void STDMETHODCALLTYPE rs_get_state(ID3D11DeviceContext4 *iface, ID3D11RasterizerState **state)
 {
     D3dRasterizerState *s = impl(iface)->rasterizer;
-    *state = s ? (ID3D11RasterizerState *)&s->iface : NULL;
+    *state = s ? (ID3D11RasterizerState *)&s->iface : nullptr;
     if (s)
         InterlockedIncrement(&s->child.refs);
 }
@@ -791,7 +791,7 @@ static void set_render_targets(D3dContext *c, UINT count, ID3D11RenderTargetView
 {
     count = D3D_MIN(count, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT);
     for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
-        D3dView *v = i < count && views ? D3dViewFrom(views[i], D3D_VIEW_RTV) : NULL;
+        D3dView *v = i < count && views ? D3dViewFrom(views[i], D3D_VIEW_RTV) : nullptr;
         if (v)
             unbind_inputs(c, v->resource);
         ref_view(c, &c->rtv[i], v);
@@ -809,7 +809,7 @@ static void set_om_uavs(D3dContext *c, UINT start, UINT count, ID3D11UnorderedAc
                         const UINT *initial_counts)
 {
     for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++) {
-        D3dView *v = i >= start && i < start + count && views ? D3dViewFrom(views[i - start], D3D_VIEW_UAV) : NULL;
+        D3dView *v = i >= start && i < start + count && views ? D3dViewFrom(views[i - start], D3D_VIEW_UAV) : nullptr;
         if (v)
             unbind_inputs(c, v->resource);
         ref_view(c, &c->om_uav[i], v);
@@ -847,13 +847,13 @@ static void STDMETHODCALLTYPE om_get_render_targets(ID3D11DeviceContext4 *iface,
     D3dContext *c = impl(iface);
     if (views)
         for (UINT i = 0; i < count; i++) {
-            D3dView *v = i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ? c->rtv[i] : NULL;
-            views[i] = v ? (ID3D11RenderTargetView *)&v->iface : NULL;
+            D3dView *v = i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ? c->rtv[i] : nullptr;
+            views[i] = v ? (ID3D11RenderTargetView *)&v->iface : nullptr;
             if (v)
                 InterlockedIncrement(&v->child.refs);
         }
     if (depth) {
-        *depth = c->dsv ? (ID3D11DepthStencilView *)&c->dsv->iface : NULL;
+        *depth = c->dsv ? (ID3D11DepthStencilView *)&c->dsv->iface : nullptr;
         if (c->dsv)
             InterlockedIncrement(&c->dsv->child.refs);
     }
@@ -868,8 +868,8 @@ static void STDMETHODCALLTYPE om_get_render_targets_and_uavs(ID3D11DeviceContext
     om_get_render_targets(iface, count, views, depth);
     if (uavs)
         for (UINT i = 0; i < uav_count; i++) {
-            D3dView *v = uav_slot + i < D3D11_1_UAV_SLOT_COUNT ? c->om_uav[uav_slot + i] : NULL;
-            uavs[i] = v ? (ID3D11UnorderedAccessView *)&v->iface : NULL;
+            D3dView *v = uav_slot + i < D3D11_1_UAV_SLOT_COUNT ? c->om_uav[uav_slot + i] : nullptr;
+            uavs[i] = v ? (ID3D11UnorderedAccessView *)&v->iface : nullptr;
             if (v)
                 InterlockedIncrement(&v->child.refs);
         }
@@ -880,7 +880,7 @@ static void STDMETHODCALLTYPE om_get_blend_state(ID3D11DeviceContext4 *iface, ID
 {
     D3dContext *c = impl(iface);
     if (state) {
-        *state = c->blend ? (ID3D11BlendState *)&c->blend->iface : NULL;
+        *state = c->blend ? (ID3D11BlendState *)&c->blend->iface : nullptr;
         if (c->blend)
             InterlockedIncrement(&c->blend->child.refs);
     }
@@ -895,7 +895,7 @@ static void STDMETHODCALLTYPE om_get_depth_stencil_state(ID3D11DeviceContext4 *i
 {
     D3dContext *c = impl(iface);
     if (state) {
-        *state = c->depth_stencil ? &c->depth_stencil->iface : NULL;
+        *state = c->depth_stencil ? &c->depth_stencil->iface : nullptr;
         if (c->depth_stencil)
             InterlockedIncrement(&c->depth_stencil->child.refs);
     }
@@ -912,7 +912,7 @@ static void STDMETHODCALLTYPE cs_set_unordered_access_views(ID3D11DeviceContext4
         return;
     count = D3D_MIN(count, D3D11_1_UAV_SLOT_COUNT - slot);
     for (UINT i = 0; i < count; i++) {
-        D3dView *v = views ? D3dViewFrom(views[i], D3D_VIEW_UAV) : NULL;
+        D3dView *v = views ? D3dViewFrom(views[i], D3D_VIEW_UAV) : nullptr;
         if (v)
             unbind_inputs(c, v->resource);
         ref_view(c, &c->stages[D3D_CS].uav[slot + i], v);
@@ -926,8 +926,8 @@ static void STDMETHODCALLTYPE cs_get_unordered_access_views(ID3D11DeviceContext4
 {
     D3dContext *c = impl(iface);
     for (UINT i = 0; i < count; i++) {
-        D3dView *v = slot + i < D3D11_1_UAV_SLOT_COUNT ? c->stages[D3D_CS].uav[slot + i] : NULL;
-        views[i] = v ? (ID3D11UnorderedAccessView *)&v->iface : NULL;
+        D3dView *v = slot + i < D3D11_1_UAV_SLOT_COUNT ? c->stages[D3D_CS].uav[slot + i] : nullptr;
+        views[i] = v ? (ID3D11UnorderedAccessView *)&v->iface : nullptr;
         if (v)
             InterlockedIncrement(&v->child.refs);
     }
@@ -946,9 +946,9 @@ static void STDMETHODCALLTYPE so_set_targets(ID3D11DeviceContext4 *iface, UINT c
     if (c->xfb_active)
         end_rendering(c);
     for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++) {
-        D3dResource *r = i < count && buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : NULL;
+        D3dResource *r = i < count && buffers ? D3dResourceFrom((ID3D11Resource *)buffers[i]) : nullptr;
         if (r && !r->buf.so_counter)
-            r = NULL;
+            r = nullptr;
         unbind_inputs(c, r);
         ref_resource(&c->so[i], r);
         c->outputs_dirty = TRUE;
@@ -968,8 +968,8 @@ static void STDMETHODCALLTYPE so_get_targets(ID3D11DeviceContext4 *iface, UINT c
 {
     D3dContext *c = impl(iface);
     for (UINT i = 0; i < count; i++) {
-        D3dResource *r = i < D3D11_SO_BUFFER_SLOT_COUNT ? c->so[i] : NULL;
-        buffers[i] = r ? &r->u.buffer : NULL;
+        D3dResource *r = i < D3D11_SO_BUFFER_SLOT_COUNT ? c->so[i] : nullptr;
+        buffers[i] = r ? &r->u.buffer : nullptr;
         if (r)
             D3dResourceAddRef(r);
     }
@@ -1199,14 +1199,14 @@ static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
     if (DYN_CHANGED(reference, c->stencil_ref & 0xFF))
         vk->vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, c->dyn.reference);
 
-    const D3D11_BLEND_DESC1 *blend = c->blend ? &c->blend->desc : NULL;
+    const D3D11_BLEND_DESC1 *blend = c->blend ? &c->blend->desc : nullptr;
     VkBool32 enables[8];
     VkColorBlendEquationEXT equations[8];
     VkColorComponentFlags masks[8];
     VkBool32 logic = FALSE;
     VkLogicOp op = VK_LOGIC_OP_NO_OP;
     for (UINT i = 0; i < 8; i++) {
-        const D3D11_RENDER_TARGET_BLEND_DESC1 *t = blend ? &blend->RenderTarget[i] : NULL;
+        const D3D11_RENDER_TARGET_BLEND_DESC1 *t = blend ? &blend->RenderTarget[i] : nullptr;
         enables[i] = t && t->BlendEnable;
         equations[i] = (VkColorBlendEquationEXT){
             t ? blend_factor(t->SrcBlend, FALSE) : VK_BLEND_FACTOR_ONE,
@@ -1265,7 +1265,7 @@ static void emit_vertex_input(D3dContext *c, VkCommandBuffer cmd)
                 continue;
             VkVertexInputBindingDescription2EXT *b = &bindings[count++];
             b->sType = VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT;
-            b->pNext = NULL;
+            b->pNext = nullptr;
             b->binding = i;
             b->stride = c->vb_stride[i];
             b->inputRate = layout->instanced[i] ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
@@ -1273,7 +1273,7 @@ static void emit_vertex_input(D3dContext *c, VkCommandBuffer cmd)
             UINT step = layout->instanced[i] ? layout->step_rate[i] : 1;
             b->divisor = (step > 1 && device->has_divisor) || (!step && device->has_zero_divisor) ? step : 1;
         }
-    vk->vkCmdSetVertexInputEXT(cmd, count, bindings, layout ? layout->count : 0, layout ? layout->attributes : NULL);
+    vk->vkCmdSetVertexInputEXT(cmd, count, bindings, layout ? layout->count : 0, layout ? layout->attributes : nullptr);
 }
 
 static void emit_buffers(D3dContext *c, VkCommandBuffer cmd)
@@ -1294,7 +1294,7 @@ static void emit_buffers(D3dContext *c, VkCommandBuffer cmd)
             continue;
         }
         if (buffer)
-            vk->vkCmdBindVertexBuffers2(cmd, i, 1, &buffer, &offset, &size, NULL);
+            vk->vkCmdBindVertexBuffers2(cmd, i, 1, &buffer, &offset, &size, nullptr);
     }
     if (c->ib && (c->ia_dirty || c->ib_version != c->ib->buf.version) && c->ib_offset < c->ib->buf.size) {
         VkBuffer buffer;
@@ -1314,7 +1314,7 @@ static UINT table_value(D3dContext *c, D3dStage stage, UINT entry, D3dResource *
 {
     D3dStageState *s = &c->stages[stage];
     const DxbcShaderInfo *info = &s->shader->info;
-    *resource = NULL;
+    *resource = nullptr;
     if (entry == DXBC_TABLE_SAMPLE_COUNT)
         return c->render_samples ? c->render_samples : 1;
     if (entry < DXBC_TABLE_SAMPLER) {
@@ -1440,7 +1440,7 @@ static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
     VkPipelineBindPoint point = compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
     D3dVk *vk = &device->vk;
     if (!c->heap_bound[compute]) {
-        vk->vkCmdBindDescriptorSets(cmd, point, device->pipeline_layout, 0, 1, &device->heap.set, 0, NULL);
+        vk->vkCmdBindDescriptorSets(cmd, point, device->pipeline_layout, 0, 1, &device->heap.set, 0, nullptr);
         c->heap_bound[compute] = TRUE;
     }
     if (c->table_set && (changed || !c->tables_bound[compute])) {
@@ -1995,7 +1995,7 @@ static HRESULT STDMETHODCALLTYPE list_query(void *iface, REFIID riid, void **out
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -2072,7 +2072,7 @@ static void STDMETHODCALLTYPE execute_command_list(ID3D11DeviceContext4 *iface, 
         return;
     }
     D3dContextFlush(c);
-    UINT64 serial = D3dSubmit(c->child.device, list->cmd, NULL, NULL);
+    UINT64 serial = D3dSubmit(c->child.device, list->cmd, nullptr, nullptr);
     list->last_serial = serial;
     for (UINT i = 0; i < list->resource_count; i++)
         if (list->resources[i]->last_use < serial)
@@ -2085,43 +2085,43 @@ static void clear_state(D3dContext *c)
 {
     for (UINT s = 0; s < D3D_STAGES; s++) {
         D3dStageState *st = &c->stages[s];
-        ref_D3dShader(c, &st->shader, NULL);
+        ref_D3dShader(c, &st->shader, nullptr);
         for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; i++)
-            ref_resource(&st->cb[i], NULL);
+            ref_resource(&st->cb[i], nullptr);
         for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; i++)
-            ref_view(c, &st->srv[i], NULL);
+            ref_view(c, &st->srv[i], nullptr);
         for (UINT i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; i++)
-            ref_D3dSamplerState(c, &st->sampler[i], NULL);
+            ref_D3dSamplerState(c, &st->sampler[i], nullptr);
         for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++)
-            ref_view(c, &st->uav[i], NULL);
+            ref_view(c, &st->uav[i], nullptr);
         st->table_valid = FALSE;
     }
-    ref_D3dInputLayout(c, &c->layout, NULL);
+    ref_D3dInputLayout(c, &c->layout, nullptr);
     for (UINT i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++) {
-        ref_resource(&c->vb[i], NULL);
+        ref_resource(&c->vb[i], nullptr);
         c->vb_stride[i] = c->vb_offset[i] = 0;
     }
-    ref_resource(&c->ib, NULL);
+    ref_resource(&c->ib, nullptr);
     c->ib_format = DXGI_FORMAT_UNKNOWN;
     c->ib_offset = 0;
     c->topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-    ref_D3dRasterizerState(c, &c->rasterizer, NULL);
-    ref_D3dBlendState(c, &c->blend, NULL);
-    ref_D3dDepthStencilState(c, &c->depth_stencil, NULL);
+    ref_D3dRasterizerState(c, &c->rasterizer, nullptr);
+    ref_D3dBlendState(c, &c->blend, nullptr);
+    ref_D3dDepthStencilState(c, &c->depth_stencil, nullptr);
     for (UINT i = 0; i < 4; i++)
         c->blend_factor[i] = 1.0f;
     c->sample_mask = 0xFFFFFFFF;
     c->stencil_ref = 0;
     c->viewport_count = c->scissor_count = 0;
     for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
-        ref_view(c, &c->rtv[i], NULL);
+        ref_view(c, &c->rtv[i], nullptr);
     c->rtv_count = 0;
-    ref_view(c, &c->dsv, NULL);
+    ref_view(c, &c->dsv, nullptr);
     for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++)
-        ref_view(c, &c->om_uav[i], NULL);
+        ref_view(c, &c->om_uav[i], nullptr);
     for (UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
-        ref_resource(&c->so[i], NULL);
-    set_predication(&c->iface, NULL, FALSE);
+        ref_resource(&c->so[i], nullptr);
+    set_predication(&c->iface, nullptr, FALSE);
     c->outputs_dirty = TRUE;
     c->targets_dirty = c->shaders_dirty = c->ia_dirty = c->vertex_input_dirty = TRUE;
     c->rs_dirty = c->om_dirty = c->viewports_dirty = TRUE;
@@ -2142,7 +2142,7 @@ static HRESULT STDMETHODCALLTYPE finish_command_list(ID3D11DeviceContext4 *iface
     D3dContext *c = impl(iface);
     D3dDevice *device = c->child.device;
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (c->type != D3D11_DEVICE_CONTEXT_DEFERRED || !out)
         return DXGI_ERROR_INVALID_CALL;
     begin_commands(c);
@@ -2166,7 +2166,7 @@ static HRESULT STDMETHODCALLTYPE finish_command_list(ID3D11DeviceContext4 *iface
     list->resources = c->list_resources;
     list->resource_count = c->list_resource_count;
     c->list_pool = VK_NULL_HANDLE;
-    c->cmd = NULL;
+    c->cmd = nullptr;
     /* what stays bound is the list's too: the list holds it or clearing the state hands it over. */
     if (restore) {
         for (UINT s = 0; s < D3D_STAGES; s++) {
@@ -2196,11 +2196,11 @@ static HRESULT STDMETHODCALLTYPE finish_command_list(ID3D11DeviceContext4 *iface
     }
     list->held = c->list_held;
     list->held_count = c->list_held_count;
-    c->list_held = NULL;
+    c->list_held = nullptr;
     c->list_held_count = c->list_held_capacity = 0;
-    c->list_chunks = NULL;
+    c->list_chunks = nullptr;
     c->list_chunk_count = c->list_chunk_capacity = 0;
-    c->list_resources = NULL;
+    c->list_resources = nullptr;
     c->list_resource_count = c->list_resource_capacity = 0;
     c->list_map_count = 0;
     c->list_range_count = 0;
@@ -2224,7 +2224,7 @@ static void STDMETHODCALLTYPE swap_device_context_state(ID3D11DeviceContext4 *if
                                                         ID3DDeviceContextState **previous)
 {
     if (previous)
-        *previous = NULL;
+        *previous = nullptr;
 }
 
 static void STDMETHODCALLTYPE clear_view(ID3D11DeviceContext4 *iface, ID3D11View *view, const FLOAT color[4],
@@ -2318,7 +2318,7 @@ static HRESULT STDMETHODCALLTYPE context_query(ID3D11DeviceContext4 *iface, REFI
     if (!out)
         return E_POINTER;
     D3dContext *c = impl(iface);
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild) ||
         IsEqualGUID(riid, &IID_ID3D11DeviceContext) || IsEqualGUID(riid, &IID_ID3D11DeviceContext1) ||
         IsEqualGUID(riid, &IID_ID3D11DeviceContext2) || IsEqualGUID(riid, &IID_ID3D11DeviceContext3) ||
@@ -2624,7 +2624,7 @@ HRESULT D3dCreateContext(D3dDevice *device, D3D11_DEVICE_CONTEXT_TYPE type, D3dC
     VkCommandPoolCreateInfo pool = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool.queueFamilyIndex = device->queue_family;
-    if (device->vk.vkCreateCommandPool(device->vk.device, &pool, NULL, &c->pool) != VK_SUCCESS) {
+    if (device->vk.vkCreateCommandPool(device->vk.device, &pool, nullptr, &c->pool) != VK_SUCCESS) {
         DeleteCriticalSection(&c->lock);
         HeapFree(GetProcessHeap(), 0, c);
         return E_FAIL;
@@ -2645,14 +2645,14 @@ void D3dContextDestroy(D3dContext *c)
     for (UINT i = 0; i < c->list_resource_count; i++)
         D3dResourceRelease(c->list_resources[i]);
     if (c->list_pool)
-        device->vk.vkDestroyCommandPool(device->vk.device, c->list_pool, NULL);
+        device->vk.vkDestroyCommandPool(device->vk.device, c->list_pool, nullptr);
     HeapFree(GetProcessHeap(), 0, c->list_chunks);
     HeapFree(GetProcessHeap(), 0, c->list_resources);
     HeapFree(GetProcessHeap(), 0, c->list_ranges);
     for (UINT i = 0; i < c->list_held_count; i++)
         c->list_held[i]->lpVtbl->Release(c->list_held[i]);
     HeapFree(GetProcessHeap(), 0, c->list_held);
-    device->vk.vkDestroyCommandPool(device->vk.device, c->pool, NULL);
+    device->vk.vkDestroyCommandPool(device->vk.device, c->pool, nullptr);
     HeapFree(GetProcessHeap(), 0, c->buffers);
     MimePrivateClear(&c->child.data);
     DeleteCriticalSection(&c->lock);

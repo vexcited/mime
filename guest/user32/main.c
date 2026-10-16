@@ -13,10 +13,10 @@ LPWSTR UserAtoWn(LPCSTR s, int count, int *out_count)
 {
     if (count < 0)
         count = (int)strlen(s);
-    int n = count ? MultiByteToWideChar(CP_ACP, 0, s, count, NULL, 0) : 0;
+    int n = count ? MultiByteToWideChar(CP_ACP, 0, s, count, nullptr, 0) : 0;
     LPWSTR w = UserAlloc(((SIZE_T)n + 1) * sizeof(WCHAR));
     if (!w)
-        return NULL;
+        return nullptr;
     if (n)
         MultiByteToWideChar(CP_ACP, 0, s, count, w, n);
     w[n] = 0;
@@ -29,17 +29,17 @@ LPWSTR UserAtoW(LPCSTR s)
 {
     if (!s || IS_INTRESOURCE(s))
         return (LPWSTR)s;
-    return UserAtoWn(s, -1, NULL);
+    return UserAtoWn(s, -1, nullptr);
 }
 
 LPSTR UserWtoA(LPCWSTR s)
 {
     if (!s || IS_INTRESOURCE(s))
         return (LPSTR)s;
-    int n = WideCharToMultiByte(CP_ACP, 0, s, -1, NULL, 0, NULL, NULL);
+    int n = WideCharToMultiByte(CP_ACP, 0, s, -1, nullptr, 0, nullptr, nullptr);
     LPSTR a = UserAlloc((SIZE_T)(n ? n : 1));
     if (a)
-        WideCharToMultiByte(CP_ACP, 0, s, -1, a, n, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, s, -1, a, n, nullptr, nullptr);
     return a;
 }
 
@@ -91,7 +91,7 @@ static LRESULT call_ansi_proc(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, 
         if (is_char_message(msg) && wparam > 0x7F) {
             WCHAR wc = (WCHAR)wparam;
             char buf[4];
-            int n = WideCharToMultiByte(CP_ACP, 0, &wc, 1, buf, sizeof(buf), NULL, NULL);
+            int n = WideCharToMultiByte(CP_ACP, 0, &wc, 1, buf, sizeof(buf), nullptr, nullptr);
             LRESULT r = 0;
             for (int i = 0; i < n; i++)
                 r = proc(hwnd, msg, (UCHAR)buf[i], lparam);
@@ -129,7 +129,7 @@ LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL 
         if (!w)
             return 0;
         LRESULT n = NtUserMessageCall(hwnd, msg, wparam, (LPARAM)w, 0, MIME_MSGCALL_SEND, FALSE);
-        int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, (LPSTR)lparam, (int)wparam - 1, NULL, NULL);
+        int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, (LPSTR)lparam, (int)wparam - 1, nullptr, nullptr);
         ((LPSTR)lparam)[a] = 0;
         UserFree(w);
         return a;
@@ -234,7 +234,7 @@ static void register_system_class(PCWSTR name, WNDPROC proc, ULONG fnid, UINT st
     wc.lpszClassName = name;
     UNICODE_STRING s;
     RtlInitUnicodeString(&s, name);
-    NtUserRegisterClassExWOW(&wc, &s, NULL, fnid, MIME_CLASS_SYSTEM);
+    NtUserRegisterClassExWOW(&wc, &s, nullptr, fnid, MIME_CLASS_SYSTEM);
 }
 
 static void initialize_process(void)

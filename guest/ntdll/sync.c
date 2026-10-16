@@ -20,9 +20,9 @@ static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
     if (ev)
         return ev;
     HANDLE fresh;
-    if (!NT_SUCCESS(NtCreateEvent(&fresh, EVENT_ALL_ACCESS, NULL, SynchronizationEvent, FALSE)))
+    if (!NT_SUCCESS(NtCreateEvent(&fresh, EVENT_ALL_ACCESS, nullptr, SynchronizationEvent, FALSE)))
         RtlRaiseStatus(STATUS_NO_MEMORY);
-    HANDLE expected = NULL;
+    HANDLE expected = nullptr;
     if (!__atomic_compare_exchange_n(&cs->LockSemaphore, &expected, fresh, FALSE, __ATOMIC_ACQ_REL,
                                      __ATOMIC_ACQUIRE)) {
         NtClose(fresh);
@@ -33,11 +33,11 @@ static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSectionEx(PRTL_CRITICAL_SECTION cs, ULONG spin, ULONG flags)
 {
-    cs->DebugInfo = NULL;
+    cs->DebugInfo = nullptr;
     cs->LockCount = -1;
     cs->RecursionCount = 0;
-    cs->OwningThread = NULL;
-    cs->LockSemaphore = NULL;
+    cs->OwningThread = nullptr;
+    cs->LockSemaphore = nullptr;
     cs->SpinCount = spin & 0x00FFFFFF;
     return STATUS_SUCCESS;
 }
@@ -63,10 +63,10 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDeleteCriticalSection(PRTL_CRITICAL_SECTION cs)
 {
     if (cs->LockSemaphore)
         NtClose(cs->LockSemaphore);
-    cs->LockSemaphore = NULL;
+    cs->LockSemaphore = nullptr;
     cs->LockCount = -1;
     cs->RecursionCount = 0;
-    cs->OwningThread = NULL;
+    cs->OwningThread = nullptr;
     return STATUS_SUCCESS;
 }
 
@@ -88,7 +88,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlEnterCriticalSection(PRTL_CRITICAL_SECTION cs)
         YieldProcessor();
     }
     if (__atomic_add_fetch(&cs->LockCount, 1, __ATOMIC_ACQUIRE) != 0)
-        NtWaitForSingleObject(get_event(cs), FALSE, NULL);
+        NtWaitForSingleObject(get_event(cs), FALSE, nullptr);
 owned:
     cs->OwningThread = self;
     cs->RecursionCount = 1;
@@ -114,9 +114,9 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlLeaveCriticalSection(PRTL_CRITICAL_SECTION cs)
 {
     if (--cs->RecursionCount > 0)
         return STATUS_SUCCESS;
-    cs->OwningThread = NULL;
+    cs->OwningThread = nullptr;
     if (__atomic_sub_fetch(&cs->LockCount, 1, __ATOMIC_RELEASE) >= 0)
-        NtSetEvent(get_event(cs), NULL);
+        NtSetEvent(get_event(cs), nullptr);
     return STATUS_SUCCESS;
 }
 
@@ -195,7 +195,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlWaitOnAddress(const void *address, const void *co
 {
     if (size != 1 && size != 2 && size != 4 && size != 8)
         return STATUS_INVALID_PARAMETER;
-    ADDRESS_WAITER w = {NULL, address, NtCurrentThreadId(), 1};
+    ADDRESS_WAITER w = {nullptr, address, NtCurrentThreadId(), 1};
     ULONG b = bucket_of(address);
     bucket_lock(&g_wait_buckets[b].Lock);
     /* queued before the value is compared: a waker stores the value, then looks for waiters. */
@@ -288,13 +288,13 @@ static void srw_sleep(PRTL_SRWLOCK lock, ULONG_PTR busy)
         __atomic_compare_exchange_n((ULONG_PTR *)&lock->Ptr, &v, v | SRW_WAITING, FALSE, __ATOMIC_RELAXED,
                                     __ATOMIC_RELAXED)) {
         v |= SRW_WAITING;
-        RtlWaitOnAddress(&lock->Ptr, &v, sizeof(v), NULL);
+        RtlWaitOnAddress(&lock->Ptr, &v, sizeof(v), nullptr);
     }
 }
 
 NTDLL_EXPORT void NTAPI RtlInitializeSRWLock(PRTL_SRWLOCK lock)
 {
-    lock->Ptr = NULL;
+    lock->Ptr = nullptr;
 }
 
 NTDLL_EXPORT BOOLEAN NTAPI RtlTryAcquireSRWLockExclusive(PRTL_SRWLOCK lock)
@@ -363,7 +363,7 @@ NTDLL_EXPORT void NTAPI RtlReleaseSRWLockShared(PRTL_SRWLOCK lock)
 /* a generation counter: waiters sleep until it moves past the value they saw. */
 NTDLL_EXPORT void NTAPI RtlInitializeConditionVariable(PRTL_CONDITION_VARIABLE cv)
 {
-    cv->Ptr = NULL;
+    cv->Ptr = nullptr;
 }
 
 NTDLL_EXPORT void NTAPI RtlWakeConditionVariable(PRTL_CONDITION_VARIABLE cv)
@@ -423,7 +423,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSleepConditionVariableSRW(PRTL_CONDITION_VARIABLE
 
 NTDLL_EXPORT void NTAPI RtlRunOnceInitialize(PRTL_RUN_ONCE once)
 {
-    once->Ptr = NULL;
+    once->Ptr = nullptr;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlRunOnceBeginInitialize(PRTL_RUN_ONCE once, ULONG flags, PVOID *context)
@@ -448,7 +448,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlRunOnceBeginInitialize(PRTL_RUN_ONCE once, ULONG 
         if (++spins < SRW_SPINS)
             YieldProcessor();
         else
-            RtlWaitOnAddress(&once->Ptr, &v, sizeof(v), NULL);
+            RtlWaitOnAddress(&once->Ptr, &v, sizeof(v), nullptr);
     }
 }
 
@@ -469,9 +469,9 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlRunOnceExecuteOnce(PRTL_RUN_ONCE once, PRTL_RUN_O
     NTSTATUS status = RtlRunOnceBeginInitialize(once, 0, context);
     if (status != STATUS_PENDING)
         return status;
-    PVOID ctx = NULL;
+    PVOID ctx = nullptr;
     if (!fn(once, parameter, &ctx)) {
-        RtlRunOnceComplete(once, 4, NULL);
+        RtlRunOnceComplete(once, 4, nullptr);
         return STATUS_UNSUCCESSFUL;
     }
     RtlRunOnceComplete(once, 0, ctx);
@@ -511,7 +511,7 @@ NTDLL_EXPORT PSLIST_ENTRY NTAPI RtlInterlockedPopEntrySList(PSLIST_HEADER head)
     old.Whole = __atomic_load_n(&head->Whole, __ATOMIC_ACQUIRE);
     do {
         if (!old.S.Next)
-            return NULL;
+            return nullptr;
         next.S.Next = old.S.Next->Next;
         next.S.DepthSequence = ((old.S.DepthSequence - 1) & 0xFFFF) | ((old.S.DepthSequence + 0x10000) & ~0xFFFFull);
     } while (!cas_header(head, &old, next));
@@ -524,8 +524,8 @@ NTDLL_EXPORT PSLIST_ENTRY NTAPI RtlInterlockedFlushSList(PSLIST_HEADER head)
     old.Whole = __atomic_load_n(&head->Whole, __ATOMIC_ACQUIRE);
     do {
         if (!old.S.Next)
-            return NULL;
-        next.S.Next = NULL;
+            return nullptr;
+        next.S.Next = nullptr;
         next.S.DepthSequence = (old.S.DepthSequence + 0x10000) & ~0xFFFFull;
     } while (!cas_header(head, &old, next));
     return old.S.Next;

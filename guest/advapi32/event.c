@@ -21,7 +21,7 @@ ADVAPI ULONG WINAPI EventRegister(const GUID *id, PVOID callback, PVOID context,
     EVENT_PROVIDER *provider = AdvAlloc(sizeof(*provider));
     if (!provider)
         return ERROR_NOT_ENOUGH_MEMORY;
-    provider->Traits = NULL;
+    provider->Traits = nullptr;
     provider->DescriptorType = FALSE;
     AcquireSRWLockExclusive(&provider_lock);
     provider->Handle = ++next_provider;
@@ -60,14 +60,14 @@ ADVAPI ULONG WINAPI EventWriteTransfer(ULONGLONG handle, const void *descriptor,
     EVENT_PROVIDER *provider = providers;
     while (provider && provider->Handle != handle)
         provider = provider->Next;
-    BOOL exists = provider != NULL;
+    BOOL exists = provider != nullptr;
     ReleaseSRWLockShared(&provider_lock);
     return exists ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
 }
 
 ADVAPI ULONG WINAPI EventWrite(ULONGLONG handle, const void *descriptor, ULONG count, const void *data)
 {
-    return EventWriteTransfer(handle, descriptor, NULL, NULL, count, data);
+    return EventWriteTransfer(handle, descriptor, nullptr, nullptr, count, data);
 }
 
 ADVAPI BOOLEAN WINAPI EventEnabled(ULONGLONG handle, const void *descriptor)
@@ -86,7 +86,7 @@ ADVAPI ULONG WINAPI EventSetInformation(ULONGLONG handle, ULONG kind, const void
         return ERROR_INVALID_PARAMETER;
     if (kind != 0 && kind != 2 && kind != 3)
         return ERROR_NOT_SUPPORTED;
-    PVOID traits = NULL;
+    PVOID traits = nullptr;
     if (kind == 2) {
         if (size < 3 || size > 0xffff || *(const USHORT *)data != size)
             return ERROR_INVALID_PARAMETER;
@@ -145,7 +145,7 @@ ADVAPI ULONG WINAPI RegisterTraceGuidsW(PVOID callback, PVOID context, const GUI
 ADVAPI ULONG WINAPI RegisterTraceGuidsA(PVOID callback, PVOID context, const GUID *control, ULONG count,
                                         PVOID registrations, LPCSTR mof_path, LPCSTR mof_resource, ULONGLONG *handle)
 {
-    return RegisterTraceGuidsW(callback, context, control, count, registrations, NULL, NULL, handle);
+    return RegisterTraceGuidsW(callback, context, control, count, registrations, nullptr, nullptr, handle);
 }
 
 ADVAPI ULONG WINAPI UnregisterTraceGuids(ULONGLONG handle) { return ERROR_SUCCESS; }

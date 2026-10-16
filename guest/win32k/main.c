@@ -12,7 +12,7 @@ extern ULONG Win32kServiceCount;
 static KSERVICE_DESCRIPTOR g_services[2048];
 
 /* x64 code using floating point refers to it, as with msvc. */
-#if defined(__x86_64__)
+#ifdef __x86_64__
 int _fltused = 0x9875;
 #endif
 static LIST_ENTRY g_processes = {&g_processes, &g_processes};
@@ -56,7 +56,7 @@ void MimeRtlFree(PVOID p)
 NTSTATUS W32CaptureString(PUNICODE_STRING user, PWSTR *out, SIZE_T *chars)
 {
     UNICODE_STRING s;
-    *out = NULL;
+    *out = nullptr;
     if (chars)
         *chars = 0;
     if (!user)
@@ -104,17 +104,17 @@ void UserEnter(void)
         return;
     }
     for (;;) {
-        PKTHREAD expected = NULL;
+        PKTHREAD expected = nullptr;
         if (__atomic_compare_exchange_n(&g_lock_owner, &expected, self, FALSE, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
             break;
         __atomic_add_fetch(&g_lock_waiters, 1, __ATOMIC_RELAXED);
         /* recheck after announcing ourselves, then sleep until a release. */
-        expected = NULL;
+        expected = nullptr;
         if (__atomic_compare_exchange_n(&g_lock_owner, &expected, self, FALSE, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
             __atomic_sub_fetch(&g_lock_waiters, 1, __ATOMIC_RELAXED);
             break;
         }
-        KeWaitForSingleObject(&g_lock_event, Executive, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(&g_lock_event, Executive, KernelMode, FALSE, nullptr);
         __atomic_sub_fetch(&g_lock_waiters, 1, __ATOMIC_RELAXED);
     }
     g_lock_depth = 1;
@@ -126,7 +126,7 @@ void UserLeave(void)
         KeBugCheckEx(0x000000E3, 0x55534552, 0, 0, 0); /* RESOURCE_NOT_OWNED */
     if (--g_lock_depth)
         return;
-    __atomic_store_n(&g_lock_owner, NULL, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_lock_owner, nullptr, __ATOMIC_RELEASE);
     if (__atomic_load_n(&g_lock_waiters, __ATOMIC_RELAXED))
         KeSetEvent(&g_lock_event, 0, FALSE);
 }
@@ -208,7 +208,7 @@ ULONG AtomGetName(ATOM atom, PWSTR buffer, ULONG chars)
 UINT NTAPI NtUserRegisterWindowMessage(PUNICODE_STRING user_name)
 {
     PWSTR name;
-    if (!NT_SUCCESS(W32CaptureString(user_name, &name, NULL)) || !name)
+    if (!NT_SUCCESS(W32CaptureString(user_name, &name, nullptr)) || !name)
         return 0;
     UserEnter();
     ATOM a = *name ? AtomAdd(name) : 0;
@@ -227,11 +227,11 @@ W32PROCESS *W32GetProcess(void)
         return p;
     p = W32Alloc(sizeof(W32PROCESS));
     if (!p)
-        return NULL;
+        return nullptr;
     p->Process = process;
     p->Pid = PsGetCurrentProcessId();
     PPEB peb = PsGetProcessPeb(process);
-    PRTL_USER_PROCESS_PARAMETERS params = NULL;
+    PRTL_USER_PROCESS_PARAMETERS params = nullptr;
     UNICODE_STRING image;
     if (peb && NT_SUCCESS(MimeCopyFromUser(&params, &peb->ProcessParameters, sizeof(params))) && params &&
         NT_SUCCESS(MimeCopyFromUser(&image, &params->ImagePathName, sizeof(image)))) {
@@ -245,7 +245,7 @@ W32PROCESS *W32GetProcess(void)
     /* every process is treated as system dpi aware until dpi virtualization exists. */
     p->DpiAwareness = 1;
     InsertTailList(&g_processes, &p->Links);
-    PsSetProcessWin32Process(process, p, NULL);
+    PsSetProcessWin32Process(process, p, nullptr);
     return p;
 }
 
@@ -256,10 +256,10 @@ W32THREAD *W32GetThread(void)
         return t;
     W32PROCESS *p = W32GetProcess();
     if (!p)
-        return NULL;
+        return nullptr;
     t = W32Alloc(sizeof(W32THREAD));
     if (!t)
-        return NULL;
+        return nullptr;
     t->Thread = PsGetCurrentThread();
     t->Tid = PsGetCurrentThreadId();
     t->Process = p;
@@ -269,7 +269,7 @@ W32THREAD *W32GetThread(void)
     InitializeListHead(&t->Sent);
     t->CursorShowCount = 0;
     InsertTailList(&g_threads, &t->Links);
-    PsSetThreadWin32Thread(PsGetCurrentThread(), t, NULL);
+    PsSetThreadWin32Thread(PsGetCurrentThread(), t, nullptr);
     return t;
 }
 
@@ -280,7 +280,7 @@ W32THREAD *W32LookupThread(HANDLE tid)
         if (t->Tid == tid && !t->Destroying)
             return t;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void free_message_list(PLIST_ENTRY list)
@@ -322,9 +322,9 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
         KeSetEvent(&sm->Done, 0, FALSE);
     }
     if (InputForeground && InputForeground->Thread == t)
-        InputForeground = NULL;
+        InputForeground = nullptr;
     RemoveEntryList(&t->Links);
-    PsSetThreadWin32Thread(thread, NULL, t);
+    PsSetThreadWin32Thread(thread, nullptr, t);
     UserLeave();
     W32Free(t);
     return STATUS_SUCCESS;
@@ -349,7 +349,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
         MenuFreeProcess(p);
         ClassFreeProcess(p);
         RemoveEntryList(&p->Links);
-        PsSetProcessWin32Process(process, NULL, p);
+        PsSetProcessWin32Process(process, nullptr, p);
     }
     UserLeave();
     W32Free(p);
@@ -377,13 +377,13 @@ BOOL NTAPI NtUserInitializeClientPfnArrays(const MIME_CLIENT_INFO *user_info)
         p->ClientValid = TRUE;
     }
     UserLeave();
-    return p != NULL;
+    return p != nullptr;
 }
 
 WNDPROC W32ClientProc(W32PROCESS *p, ULONG fnid)
 {
     if (!p || !p->ClientValid || fnid >= MIME_FNID_COUNT)
-        return NULL;
+        return nullptr;
     return p->Client.Procs[fnid];
 }
 
@@ -420,7 +420,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     KeInitializeEvent(&g_lock_event, SynchronizationEvent, FALSE);
     Win32kInitializeServices(g_services);
-    if (!KeAddSystemServiceTable(g_services, NULL, Win32kServiceCount, NULL, 1)) {
+    if (!KeAddSystemServiceTable(g_services, nullptr, Win32kServiceCount, nullptr, 1)) {
         DbgPrint("win32k: cannot register the system service table\n");
         return STATUS_UNSUCCESSFUL;
     }

@@ -45,7 +45,7 @@ static void size_to_image(HWND hwnd, STATIC_DATA *s)
         }
     }
     if (cx && cy)
-        SetWindowPos(hwnd, NULL, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(hwnd, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 /* CStatic::LoadImageW of comctl32 v6. */
@@ -66,12 +66,12 @@ static void load_icon(HWND hwnd, STATIC_DATA *s, const CREATESTRUCTW *cs, HINSTA
     s->Image = UserLoadIconWithScaleDown(inst, name, cx, cy);
     /* our user32 resolves its own module to the system cursors, real user32 has none. */
     if (!s->Image && inst) {
-        s->Image = inst != User32Instance ? LoadCursorW(inst, name) : NULL;
+        s->Image = inst != User32Instance ? LoadCursorW(inst, name) : nullptr;
         if (s->Image) {
             s->OwnsImage = FALSE;
             return;
         }
-        s->Image = UserLoadIconWithScaleDown(NULL, name, cx, cy);
+        s->Image = UserLoadIconWithScaleDown(nullptr, name, cx, cy);
     }
 }
 
@@ -84,14 +84,14 @@ static HANDLE set_image(HWND hwnd, STATIC_DATA *s, HANDLE image, UINT type)
     s->ImageType = type;
     s->OwnsImage = FALSE;
     size_to_image(hwnd, s);
-    InvalidateRect(hwnd, NULL, TRUE);
+    InvalidateRect(hwnd, nullptr, TRUE);
     return old;
 }
 
 static HBRUSH ctl_brush(HWND hwnd, HDC dc)
 {
     HWND parent = GetParent(hwnd);
-    HBRUSH b = parent ? (HBRUSH)SendMessageW(parent, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)hwnd) : NULL;
+    HBRUSH b = parent ? (HBRUSH)SendMessageW(parent, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)hwnd) : nullptr;
     if (!b)
         b = (HBRUSH)DefWindowProcW(parent ? parent : hwnd, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)hwnd);
     return b;
@@ -149,7 +149,7 @@ static void paint_text(HWND hwnd, STATIC_DATA *s, HDC dc, const RECT *client)
     HGDIOBJ old = SelectObject(dc, s->Font ? s->Font : GetStockObject(SYSTEM_FONT));
     RECT r = *client;
     if (type == SS_SIMPLE)
-        ExtTextOutW(dc, 0, 0, ETO_OPAQUE | ETO_CLIPPED, &r, text, (UINT)n, NULL);
+        ExtTextOutW(dc, 0, 0, ETO_OPAQUE | ETO_CLIPPED, &r, text, (UINT)n, nullptr);
     else
         DrawTextW(dc, text, n, &r, flags);
     SelectObject(dc, old);
@@ -180,7 +180,7 @@ static void paint(HWND hwnd, STATIC_DATA *s, HDC dc)
                 x = (client.right - cx) / 2;
                 y = (client.bottom - cy) / 2;
             }
-            DrawIconEx(dc, x, y, s->Image, cx, cy, 0, NULL, DI_NORMAL);
+            DrawIconEx(dc, x, y, s->Image, cx, cy, 0, nullptr, DI_NORMAL);
         }
         break;
     }
@@ -311,7 +311,7 @@ LRESULT CALLBACK StaticProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case WM_SETFONT:
         s->Font = (HFONT)wparam;
         if (lparam)
-            InvalidateRect(hwnd, NULL, TRUE);
+            InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_GETFONT:
         return (LRESULT)s->Font;
@@ -320,11 +320,11 @@ LRESULT CALLBACK StaticProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         if (type == SS_ICON || type == SS_BITMAP)
             return TRUE;
         LRESULT r = DefWindowProcW(hwnd, msg, wparam, lparam);
-        InvalidateRect(hwnd, NULL, TRUE);
+        InvalidateRect(hwnd, nullptr, TRUE);
         return r;
     }
     case WM_ENABLE:
-        InvalidateRect(hwnd, NULL, TRUE);
+        InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_GETDLGCODE:
         return DLGC_STATIC;

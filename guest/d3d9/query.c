@@ -61,7 +61,7 @@ static HRESULT STDMETHODCALLTYPE query_query(IDirect3DQuery9 *iface, REFIID riid
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DQuery9)) {
         *out = iface;
         D9ResourceAddRef(&impl(iface)->base);
@@ -192,7 +192,7 @@ HRESULT D9CreateQuery(D9Device *d, D3DQUERYTYPE type, IDirect3DQuery9 **out)
     /* without an out pointer, whether the kind is supported. */
     if (!out)
         return D3D_OK;
-    *out = NULL;
+    *out = nullptr;
     D9Query *q = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*q));
     if (!q)
         return E_OUTOFMEMORY;

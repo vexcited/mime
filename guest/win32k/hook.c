@@ -48,7 +48,7 @@ static HOOK *next_hook(int id, PLIST_ENTRY from, const W32THREAD *t)
         if (applies(h, t))
             return h;
     }
-    return NULL;
+    return nullptr;
 }
 
 HOOK *HookLookup(HHOOK handle)
@@ -92,7 +92,7 @@ LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size)
     t->CallbackDepth++;
     UserReference(&h->Header);
     ULONG depth = UserLeaveAll();
-    PVOID out = NULL;
+    PVOID out = nullptr;
     ULONG out_len = 0;
     NTSTATUS status = KeUserModeCallback(MIME_CB_HOOKPROC, args, (ULONG)total, &out, &out_len);
     UserReenter(depth);
@@ -123,7 +123,7 @@ static LRESULT send_hook(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG 
     W32THREAD *owner = h->Owner;
     W32THREAD *self = PsGetCurrentThreadWin32Thread();
     SENT_MESSAGE *sm = W32Alloc(sizeof(SENT_MESSAGE));
-    PVOID copy = size ? W32Alloc(size) : NULL;
+    PVOID copy = size ? W32Alloc(size) : nullptr;
     if (!sm || (size && !copy)) {
         W32Free(sm);
         W32Free(copy);
@@ -155,14 +155,14 @@ static LRESULT send_hook(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG 
         PVOID objects[2] = {&sm->Done, self ? (PVOID)&self->Event : (PVOID)&sm->Done};
         ULONG depth = UserLeaveAll();
         NTSTATUS status = KeWaitForMultipleObjects(self ? 2 : 1, objects, WaitAny, UserRequest,
-                                                   self ? UserMode : KernelMode, FALSE, &timeout, NULL);
+                                                   self ? UserMode : KernelMode, FALSE, &timeout, nullptr);
         UserReenter(depth);
         if (status == STATUS_THREAD_IS_TERMINATING)
             break;
     }
     if (!sm->Completed) {
         /* the owner answers late into a call nobody waits for and frees it. */
-        sm->Sender = NULL;
+        sm->Sender = nullptr;
         sm->Notify = TRUE;
         return 0;
     }
@@ -184,9 +184,9 @@ static LRESULT call_hook(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG 
 
 LRESULT HookCall(int id, W32THREAD *t, int code, WPARAM wparam, LPARAM lparam, ULONG size, BOOLEAN *called)
 {
-    HOOK *h = id >= WH_MIN && id <= WH_MAX ? next_hook(id, chain(id)->Flink, t) : NULL;
+    HOOK *h = id >= WH_MIN && id <= WH_MAX ? next_hook(id, chain(id)->Flink, t) : nullptr;
     if (called)
-        *called = h != NULL;
+        *called = h != nullptr;
     return h ? call_hook(h, code, wparam, lparam, size) : 0;
 }
 
@@ -219,20 +219,20 @@ HHOOK NTAPI NtUserSetWindowsHookEx(HINSTANCE module, PUNICODE_STRING module_name
     (void)module_name;
     if (id < WH_MIN || id > WH_MAX || id == WH_HARDWARE) {
         W32SetLastError(ERROR_INVALID_HOOK_FILTER);
-        return NULL;
+        return nullptr;
     }
     if (!proc) {
         W32SetLastError(ERROR_INVALID_FILTER_PROC);
-        return NULL;
+        return nullptr;
     }
     if (id == WH_JOURNALRECORD || id == WH_JOURNALPLAYBACK) {
         W32SetLastError(ERROR_ACCESS_DENIED);
-        return NULL;
+        return nullptr;
     }
-    HHOOK result = NULL;
+    HHOOK result = nullptr;
     UserEnter();
     W32THREAD *self = W32GetThread();
-    W32THREAD *target = NULL;
+    W32THREAD *target = nullptr;
     if (!self)
         goto out;
     if (thread) {
@@ -278,7 +278,7 @@ BOOL NTAPI NtUserUnhookWindowsHookEx(HHOOK hook)
     else
         W32SetLastError(ERROR_INVALID_HOOK_HANDLE);
     UserLeave();
-    return h != NULL;
+    return h != nullptr;
 }
 
 /* low level hook structures cross threads and processes by copy, the other lparams are pointers of this process. */
@@ -297,8 +297,8 @@ LRESULT NTAPI NtUserCallNextHookEx(int code, WPARAM wparam, LPARAM lparam, BOOL 
     LRESULT r = 0;
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HOOK *cur = t ? t->CurrentHook : NULL;
-    HOOK *next = cur && !cur->Header.Destroyed ? next_hook(cur->Id, cur->Links.Flink, t) : NULL;
+    HOOK *cur = t ? t->CurrentHook : nullptr;
+    HOOK *next = cur && !cur->Header.Destroyed ? next_hook(cur->Id, cur->Links.Flink, t) : nullptr;
     if (next) {
         ULONG size = hook_data_size(cur->Id);
         UCHAR data[32];

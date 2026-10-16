@@ -38,7 +38,7 @@ BOOL gl_device_open(void)
         return FALSE;
     gl_device_lock();
     if (!GlDev.open && !GlDev.failed) {
-        PVOID base = NULL;
+        PVOID base = nullptr;
         ULONG size = 0;
         NTSTATUS status = NtGdiMimeGpuOpen(&base, &size);
         if (!NT_SUCCESS(status)) {
@@ -207,7 +207,7 @@ void gl_wait(uint64_t fence)
     for (int i = 0; i < 4000; i++) {
         if (gl_fence_done(fence))
             return;
-#if defined(__x86_64__)
+#ifdef __x86_64__
         __asm__ volatile("pause");
 #else
         __asm__ volatile("yield");
@@ -359,7 +359,7 @@ static BOOL grow(uint64_t size)
         block <<= 1;
     if (block > MIME_GPU_MAX_BLOCK_SIZE)
         return FALSE;
-    PVOID base = NULL;
+    PVOID base = nullptr;
     ULONG index = 0;
     if (!NT_SUCCESS(NtGdiMimeGpuAddBlock((ULONG)block, &base, &index)) || index >= MIME_GPU_MAX_BLOCKS)
         return FALSE;

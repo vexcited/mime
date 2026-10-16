@@ -51,23 +51,23 @@ static bool ascii_equal(PCSTR a, PCWSTR w)
 const SEC_PACKAGE *SecFindPackageW(PCWSTR name)
 {
     if (!name)
-        return NULL;
+        return nullptr;
     for (ULONG i = 0; i < SecPackageCount; i++) {
         if (!_wcsicmp(SecPackages[i].Name, name))
             return &SecPackages[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 const SEC_PACKAGE *SecFindPackageA(PCSTR name)
 {
     if (!name)
-        return NULL;
+        return nullptr;
     for (ULONG i = 0; i < SecPackageCount; i++) {
         if (ascii_equal(name, SecPackages[i].Name))
             return &SecPackages[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 static SIZE_T copy_wide(PWSTR out, PCWSTR text)
@@ -151,7 +151,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY EnumerateSecurityPackagesW(ULONG *count, P
     if (!count || !info)
         return SEC_E_INVALID_PARAMETER;
     *count = 0;
-    *info = NULL;
+    *info = nullptr;
     SIZE_T size = SecPackageCount * sizeof(SecPkgInfoW);
     for (ULONG i = 0; i < SecPackageCount; i++)
         size += strings_size(&SecPackages[i], sizeof(WCHAR));
@@ -171,7 +171,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY EnumerateSecurityPackagesA(ULONG *count, P
     if (!count || !info)
         return SEC_E_INVALID_PARAMETER;
     *count = 0;
-    *info = NULL;
+    *info = nullptr;
     SIZE_T size = SecPackageCount * sizeof(SecPkgInfoA);
     for (ULONG i = 0; i < SecPackageCount; i++)
         size += strings_size(&SecPackages[i], sizeof(CHAR));

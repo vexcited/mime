@@ -166,7 +166,7 @@ void NTAPI KeInitializeTimer(PKTIMER timer)
 BOOLEAN NTAPI KeSetTimerEx(PKTIMER timer, LARGE_INTEGER due, LONG period, PKDPC dpc)
 {
     ULONG64 s = KiAcquireDispatcherLock();
-    BOOLEAN was_set = timer->TimerListEntry.Flink != NULL;
+    BOOLEAN was_set = timer->TimerListEntry.Flink != nullptr;
     ULONG64 abs_due;
     if (due.QuadPart < 0)
         abs_due = KiQueryInterruptTime() + (ULONG64)(-due.QuadPart);
@@ -188,10 +188,10 @@ BOOLEAN NTAPI KeSetTimer(PKTIMER timer, LARGE_INTEGER due, PKDPC dpc)
 BOOLEAN NTAPI KeCancelTimer(PKTIMER timer)
 {
     ULONG64 s = KiAcquireDispatcherLock();
-    BOOLEAN was_set = timer->TimerListEntry.Flink != NULL;
+    BOOLEAN was_set = timer->TimerListEntry.Flink != nullptr;
     if (was_set) {
         RemoveEntryList(&timer->TimerListEntry);
-        timer->TimerListEntry.Flink = NULL;
+        timer->TimerListEntry.Flink = nullptr;
     }
     KiReleaseDispatcherLock(s);
     return was_set;
@@ -317,11 +317,11 @@ void KiClockInterrupt(PKTRAP_FRAME frame)
         if ((ULONG64)t->DueTime.QuadPart > now)
             break;
         RemoveEntryList(&t->TimerListEntry);
-        t->TimerListEntry.Flink = NULL;
+        t->TimerListEntry.Flink = nullptr;
         t->Header.SignalState = 1;
         KiSignalWaiters(&t->Header, 0);
         if (t->Dpc)
-            KeInsertQueueDpc(t->Dpc, (PVOID)(ULONG_PTR)now, NULL);
+            KeInsertQueueDpc(t->Dpc, (PVOID)(ULONG_PTR)now, nullptr);
         if (t->Period > 0)
             KiInsertTimer(t, now + (ULONG64)t->Period * 10000);
     }

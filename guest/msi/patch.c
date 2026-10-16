@@ -5,15 +5,15 @@ static UINT summary_text(MSIHANDLE summary, UINT property, PWSTR *out)
     UINT type;
     DWORD size = 0;
     WCHAR empty[1];
-    *out = NULL;
-    UINT error = MsiSummaryInfoGetPropertyW(summary, property, &type, NULL, NULL, empty, &size);
+    *out = nullptr;
+    UINT error = MsiSummaryInfoGetPropertyW(summary, property, &type, nullptr, nullptr, empty, &size);
     if ((error && error != ERROR_MORE_DATA) || type != 30 || !size)
         return ERROR_PATCH_PACKAGE_INVALID;
     *out = MimeMsiAllocate(((SIZE_T)size + 1) * sizeof(WCHAR));
     if (!*out)
         return ERROR_NOT_ENOUGH_MEMORY;
     size++;
-    error = MsiSummaryInfoGetPropertyW(summary, property, &type, NULL, NULL, *out, &size);
+    error = MsiSummaryInfoGetPropertyW(summary, property, &type, nullptr, nullptr, *out, &size);
     return error ? ERROR_PATCH_PACKAGE_INVALID : ERROR_SUCCESS;
 }
 
@@ -62,7 +62,7 @@ UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCW
     storage->Object.Destroy(&storage->Object);
     if (error)
         return error == ERROR_NOT_ENOUGH_MEMORY ? error : ERROR_PATCH_PACKAGE_INVALID;
-    PWSTR revision = NULL, targets = NULL;
+    PWSTR revision = nullptr, targets = nullptr;
     error = summary_text(summary, 9, &revision);
     if (!error)
         error = summary_text(summary, 7, &targets);

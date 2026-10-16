@@ -159,7 +159,7 @@ static UiWindow *find_window(uint32_t id)
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used && g_windows[i].id == id)
             return &g_windows[i];
-    return NULL;
+    return nullptr;
 }
 
 static UiWindow *find_by_nswindow(id window)
@@ -167,7 +167,7 @@ static UiWindow *find_by_nswindow(id window)
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used && g_windows[i].window == window)
             return &g_windows[i];
-    return NULL;
+    return nullptr;
 }
 
 static void update_presentation(void)
@@ -238,7 +238,7 @@ static void emit_mouse(id self, id event, uint32_t type, uint32_t button)
     NSPoint loc = MSG_POINT(event, "locationInWindow");
     NSRect frame = MSG_RECT(window, "frame");
     NSPoint screen = CGPointMake(frame.origin.x + loc.x, frame.origin.y + loc.y);
-    MimeInputEvent ev = {0};
+    MimeInputEvent ev = {};
     ev.type = type;
     ev.window_id = w->id;
     screen_point_to_guest(screen, &ev.x, &ev.y);
@@ -399,7 +399,7 @@ static void chrome_update(UiWindow *w)
     MSG_V(ca, "begin");
     MSG_V_BOOL(ca, "setDisableActions:", YES);
     ((void (*)(id, SEL, NSRect))objc_msgSend)(w->chrome_shadow, SEL_("setFrame:"), inner);
-    CGPathRef path = CGPathCreateWithRoundedRect(CGRectMake(0, 0, width, height), radius, radius, NULL);
+    CGPathRef path = CGPathCreateWithRoundedRect(CGRectMake(0, 0, width, height), radius, radius, nullptr);
     MSG_V_PTR(w->chrome_shadow, "setShadowPath:", path);
     CGPathRelease(path);
     CGColorRef black = CGColorCreateSRGB(0, 0, 0, 1);
@@ -545,7 +545,7 @@ static void view_mouse_moved(id self, SEL sel, id event)
     }
     NSInteger number = ((NSInteger(*)(id, SEL, NSPoint, NSInteger))objc_msgSend)(
         (id)CLS("NSWindow"), SEL_("windowNumberAtPoint:belowWindowWithWindowNumber:"), screen, 0);
-    UiWindow *under = NULL;
+    UiWindow *under = nullptr;
     for (int i = 0; i < MAX_WINDOWS && !under; i++)
         if (g_windows[i].used && g_windows[i].window &&
             ((NSInteger(*)(id, SEL))objc_msgSend)(g_windows[i].window, SEL_("windowNumber")) == number)
@@ -553,7 +553,7 @@ static void view_mouse_moved(id self, SEL sel, id event)
     if (!under)
         return;
     g_pointer_in_guest = true;
-    MimeInputEvent ev = {0};
+    MimeInputEvent ev = {};
     ev.type = MIME_INPUT_MOUSE_MOVE;
     ev.window_id = under->id;
     screen_point_to_guest(screen, &ev.x, &ev.y);
@@ -568,7 +568,7 @@ static void view_mouse_exited(id self, SEL sel, id event)
     UiWindow *w = find_by_nswindow(MSG_ID(self, "window"));
     if (!w)
         return;
-    MimeInputEvent ev = {0};
+    MimeInputEvent ev = {};
     ev.type = MIME_INPUT_MOUSE_LEAVE;
     ev.window_id = w->id;
     emit(&ev);
@@ -740,7 +740,7 @@ static const KeyMap *map_key(uint16_t mac)
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_keymap); i++)
         if (g_keymap[i].mac == mac)
             return &g_keymap[i];
-    return NULL;
+    return nullptr;
 }
 
 static void emit_key(id self, id event, uint32_t type)
@@ -752,7 +752,7 @@ static void emit_key(id self, id event, uint32_t type)
     const KeyMap *k = map_key(code);
     if (!k)
         return;
-    MimeInputEvent ev = {0};
+    MimeInputEvent ev = {};
     ev.type = type;
     ev.window_id = w->id;
     ev.vk = k->vk;
@@ -791,7 +791,7 @@ static void view_key_down(id self, SEL sel, id event)
             c = 0x08;
         if (c == '\r' || c == 0x03)
             c = '\r';
-        MimeInputEvent ev = {0};
+        MimeInputEvent ev = {};
         ev.type = MIME_INPUT_CHAR;
         ev.window_id = w->id;
         ev.ch = c;
@@ -844,7 +844,7 @@ static void delegate_did_move(id self, SEL sel, id notification)
         return;
     NSRect frame = MSG_RECT(window, "frame");
     MimeRect host = host_part(&w->config);
-    MimeInputEvent ev = {0};
+    MimeInputEvent ev = {};
     ev.type = MIME_INPUT_WINDOW_MOVED;
     ev.window_id = w->id;
     ev.x = (int32_t)(frame.origin.x * g_scale + 0.5) - host.left;
@@ -861,7 +861,7 @@ static void delegate_focus(id self, SEL sel, id notification, bool gained)
     UiWindow *w = find_by_nswindow(MSG_ID(notification, "object"));
     if (!w || (gained && (w->config.flags & MIME_WIN_MINIMIZED)))
         return;
-    MimeInputEvent ev = {0};
+    MimeInputEvent ev = {};
     ev.type = MIME_INPUT_WINDOW_FOCUS;
     ev.window_id = w->id;
     ev.x = gained ? 1 : 0;
@@ -884,7 +884,7 @@ static BOOL delegate_should_close(id self, SEL sel, id window)
 {
     UiWindow *w = find_by_nswindow(window);
     if (w) {
-        MimeInputEvent ev = {0};
+        MimeInputEvent ev = {};
         ev.type = MIME_INPUT_WINDOW_CLOSE;
         ev.window_id = w->id;
         emit(&ev);
@@ -1206,8 +1206,8 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     MSG_V(g_app, "finishLaunching");
     register_classes();
     update_screen_metrics();
-    mime_app_init(NULL, app_action, NULL);
-    clip_start(NULL);
+    mime_app_init(nullptr, app_action, nullptr);
+    clip_start(nullptr);
 }
 
 void mime_ui_run(void)
@@ -1268,7 +1268,7 @@ static void stop_main(void *arg)
 
 void mime_ui_stop(void)
 {
-    on_main(stop_main, NULL);
+    on_main(stop_main, nullptr);
 }
 
 static void create_main(void *arg)
@@ -1327,7 +1327,7 @@ void mime_ui_window_create(uint32_t id_)
                 memset(&g_windows[i], 0, sizeof(g_windows[i]));
                 g_windows[i].used = true;
                 g_windows[i].id = id_;
-                pthread_mutex_init(&g_windows[i].lock, NULL);
+                pthread_mutex_init(&g_windows[i].lock, nullptr);
                 break;
             }
         }
@@ -1365,7 +1365,7 @@ static void destroy_main(void *arg)
     pthread_mutex_lock(&w->lock);
     if (w->surface)
         CFRelease(w->surface);
-    w->surface = NULL;
+    w->surface = nullptr;
     pthread_mutex_unlock(&w->lock);
     pthread_mutex_destroy(&w->lock);
     w->window = nil;
@@ -1401,7 +1401,7 @@ static void icon_main(void *arg)
 {
     WindowIcon *icon = arg;
     if (find_window(icon->window_id))
-        mime_app_window_icon(icon->window_id, icon->width && icon->height ? icon->pixels : NULL,
+        mime_app_window_icon(icon->window_id, icon->width && icon->height ? icon->pixels : nullptr,
                               icon->width, icon->height, icon->width * 4);
     free(icon);
 }
@@ -1520,7 +1520,7 @@ static void config_main(void *arg)
     }
     if (cropping_changed) {
         pthread_mutex_lock(&w->lock);
-        w->dirty = w->surface != NULL;
+        w->dirty = w->surface != nullptr;
         pthread_mutex_unlock(&w->lock);
     }
 
@@ -1597,7 +1597,7 @@ static void config_main(void *arg)
 static void config_latest_main(void *arg)
 {
     uint32_t id_ = (uint32_t)(uintptr_t)arg;
-    MimeWinConfig *copy = NULL;
+    MimeWinConfig *copy = nullptr;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id_);
     if (w) {
@@ -1690,13 +1690,13 @@ static void present_main(void *arg)
 static IOSurfaceRef create_surface(uint32_t width, uint32_t height)
 {
     int32_t w = (int32_t)width, h = (int32_t)height, bpe = 4, format = 'BGRA';
-    CFNumberRef nw = CFNumberCreate(NULL, kCFNumberSInt32Type, &w);
-    CFNumberRef nh = CFNumberCreate(NULL, kCFNumberSInt32Type, &h);
-    CFNumberRef nb = CFNumberCreate(NULL, kCFNumberSInt32Type, &bpe);
-    CFNumberRef nf = CFNumberCreate(NULL, kCFNumberSInt32Type, &format);
+    CFNumberRef nw = CFNumberCreate(nullptr, kCFNumberSInt32Type, &w);
+    CFNumberRef nh = CFNumberCreate(nullptr, kCFNumberSInt32Type, &h);
+    CFNumberRef nb = CFNumberCreate(nullptr, kCFNumberSInt32Type, &bpe);
+    CFNumberRef nf = CFNumberCreate(nullptr, kCFNumberSInt32Type, &format);
     const void *keys[] = {kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat};
     const void *values[] = {nw, nh, nb, nf};
-    CFDictionaryRef props = CFDictionaryCreate(NULL, keys, values, 4, &kCFTypeDictionaryKeyCallBacks,
+    CFDictionaryRef props = CFDictionaryCreate(nullptr, keys, values, 4, &kCFTypeDictionaryKeyCallBacks,
                                                &kCFTypeDictionaryValueCallBacks);
     IOSurfaceRef surface = IOSurfaceCreate(props);
     CFRelease(props);
@@ -1740,13 +1740,13 @@ void mime_ui_window_present(uint32_t id_, const void *pixels, uint32_t width, ui
     }
     int32_t left = MIME_MAX(dirty.left, 0), top = MIME_MAX(dirty.top, 0);
     int32_t right = MIME_MIN(dirty.right, (int32_t)width), bottom = MIME_MIN(dirty.bottom, (int32_t)height);
-    IOSurfaceLock(w->surface, 0, NULL);
+    IOSurfaceLock(w->surface, 0, nullptr);
     uint8_t *base = IOSurfaceGetBaseAddress(w->surface);
     size_t row = IOSurfaceGetBytesPerRow(w->surface);
     for (int32_t y = top; y < bottom && left < right; y++)
         memcpy(base + (size_t)y * row + (size_t)left * 4, (const uint8_t *)pixels + (size_t)y * stride + (size_t)left * 4,
                (size_t)(right - left) * 4);
-    IOSurfaceUnlock(w->surface, 0, NULL);
+    IOSurfaceUnlock(w->surface, 0, nullptr);
     w->dirty = true;
     bool queue = !w->update_queued;
     w->update_queued = true;
@@ -1760,21 +1760,21 @@ static id wait_cursor(void)
     static id cursor;
     if (cursor)
         return cursor;
-    CGContextRef ctx = CGBitmapContextCreate(NULL, 64, 64, 8, 0, g_colorspace, kCGImageAlphaPremultipliedLast);
+    CGContextRef ctx = CGBitmapContextCreate(nullptr, 64, 64, 8, 0, g_colorspace, kCGImageAlphaPremultipliedLast);
     if (!ctx)
         return MSG_ID(CLS("NSCursor"), "arrowCursor");
     CGContextScaleCTM(ctx, 2, 2);
     CGMutablePathRef path = CGPathCreateMutable();
-    CGPathMoveToPoint(path, NULL, 9, 4);
-    CGPathAddLineToPoint(path, NULL, 23, 4);
-    CGPathAddLineToPoint(path, NULL, 23, 8);
-    CGPathAddLineToPoint(path, NULL, 17, 16);
-    CGPathAddLineToPoint(path, NULL, 23, 24);
-    CGPathAddLineToPoint(path, NULL, 23, 28);
-    CGPathAddLineToPoint(path, NULL, 9, 28);
-    CGPathAddLineToPoint(path, NULL, 9, 24);
-    CGPathAddLineToPoint(path, NULL, 15, 16);
-    CGPathAddLineToPoint(path, NULL, 9, 8);
+    CGPathMoveToPoint(path, nullptr, 9, 4);
+    CGPathAddLineToPoint(path, nullptr, 23, 4);
+    CGPathAddLineToPoint(path, nullptr, 23, 8);
+    CGPathAddLineToPoint(path, nullptr, 17, 16);
+    CGPathAddLineToPoint(path, nullptr, 23, 24);
+    CGPathAddLineToPoint(path, nullptr, 23, 28);
+    CGPathAddLineToPoint(path, nullptr, 9, 28);
+    CGPathAddLineToPoint(path, nullptr, 9, 24);
+    CGPathAddLineToPoint(path, nullptr, 15, 16);
+    CGPathAddLineToPoint(path, nullptr, 9, 8);
     CGPathCloseSubpath(path);
     CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
     CGContextSetRGBStrokeColor(ctx, 1, 1, 1, 1);
@@ -1850,7 +1850,7 @@ static void beep_main(void *arg)
 
 void mime_ui_beep(uint32_t type)
 {
-    on_main(beep_main, NULL);
+    on_main(beep_main, nullptr);
 }
 
 /* ------------------------------------------------------------------ clipboard */
@@ -1890,11 +1890,11 @@ static void clip_check(void *arg)
         bool text = MSG_ID_ID(pb, "availableTypeFromArray:", types) != nil;
         pthread_mutex_lock(&g_clip_lock);
         free(g_clip_text);
-        g_clip_text = NULL;
+        g_clip_text = nullptr;
         g_clip_chars = 0;
         g_clip_stale = text;
         pthread_mutex_unlock(&g_clip_lock);
-        MimeInputEvent ev = {0};
+        MimeInputEvent ev = {};
         ev.type = MIME_INPUT_CLIPBOARD;
         ev.x = text;
         emit(&ev);
@@ -1909,8 +1909,8 @@ static void clip_read_main(void *arg)
     id pb = MSG_ID(CLS("NSPasteboard"), "generalPasteboard");
     id str = MSG_ID_ID(pb, "stringForType:", NSPasteboardTypeString);
     NSUInteger n = str ? MSG_UINT(str, "length") : 0;
-    uint16_t *raw = n ? malloc(n * sizeof(uint16_t)) : NULL;
-    uint16_t *text = n ? malloc(n * 2 * sizeof(uint16_t)) : NULL;
+    uint16_t *raw = n ? malloc(n * sizeof(uint16_t)) : nullptr;
+    uint16_t *text = n ? malloc(n * 2 * sizeof(uint16_t)) : nullptr;
     size_t chars = 0;
     if (raw && text) {
         ((void (*)(id, SEL, uint16_t *, NSRange))objc_msgSend)(str, SEL_("getCharacters:range:"), raw, (NSRange){0, n});
@@ -1921,7 +1921,7 @@ static void clip_read_main(void *arg)
         }
     } else {
         free(text);
-        text = NULL;
+        text = nullptr;
     }
     free(raw);
     pthread_mutex_lock(&g_clip_lock);
@@ -1940,12 +1940,12 @@ static void clip_start(void *arg)
     dispatch_source_set_timer(g_clip_timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC,
                               250 * NSEC_PER_MSEC);
     /* once the run loop starts, when the machine exists. */
-    dispatch_async_f(dispatch_get_main_queue(), NULL, clip_check);
+    dispatch_async_f(dispatch_get_main_queue(), nullptr, clip_check);
 }
 
 static void app_became_active(id self, SEL sel, id notification)
 {
-    clip_check(NULL);
+    clip_check(nullptr);
     if (g_clip_timer && !g_clip_polling) {
         dispatch_resume(g_clip_timer);
         g_clip_polling = true;
@@ -2023,7 +2023,7 @@ size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
     pthread_mutex_unlock(&g_clip_lock);
     /* the main thread never waits for a vcpu, so this cannot deadlock. */
     if (stale)
-        dispatch_sync_f(dispatch_get_main_queue(), NULL, clip_read_main);
+        dispatch_sync_f(dispatch_get_main_queue(), nullptr, clip_read_main);
     pthread_mutex_lock(&g_clip_lock);
     size_t total = g_clip_chars;
     if (offset < total && count) {
@@ -2060,7 +2060,7 @@ static MetalLayer g_metal[MAX_METAL_LAYERS]; /* main thread only */
 static void metal_layout(MetalLayer *m)
 {
     pthread_mutex_lock(&g_windows_lock);
-    UiWindow *w = m->window_id ? find_window(m->window_id) : NULL;
+    UiWindow *w = m->window_id ? find_window(m->window_id) : nullptr;
     pthread_mutex_unlock(&g_windows_lock);
     id ca = CLS("CATransaction");
     MSG_V(ca, "begin");
@@ -2125,7 +2125,7 @@ void *mime_ui_metal_layer_create(void *device)
 static void metal_place_main(void *arg)
 {
     MetalLayer *p = arg;
-    MetalLayer *m = NULL, *free_slot = NULL;
+    MetalLayer *m = nullptr, *free_slot = nullptr;
     for (int i = 0; i < MAX_METAL_LAYERS && !m; i++) {
         if (g_metal[i].layer == p->layer)
             m = &g_metal[i];
@@ -2196,7 +2196,7 @@ static void screens_changed(id self, SEL cmd, id note)
         if (g_scale != old_scale) {
             MSG_V_DBL(w->content, "setContentsScale:", g_scale);
             pthread_mutex_lock(&w->lock);
-            w->dirty = w->surface != NULL;
+            w->dirty = w->surface != nullptr;
             pthread_mutex_unlock(&w->lock);
         }
         if (w->configured && !w->fullscreen && !w->fullscreen_transition) {

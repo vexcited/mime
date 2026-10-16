@@ -43,7 +43,7 @@ void HalLog(const char *text, SIZE_T length)
     while (length) {
         SIZE_T n = length < sizeof(g_log_buffer) ? length : sizeof(g_log_buffer);
         memcpy(g_log_buffer, text, n);
-        HalHypercall(MIME_HC_LOG, HalPhysicalOf(g_log_buffer), n, 0, 0, 0, 0, NULL);
+        HalHypercall(MIME_HC_LOG, HalPhysicalOf(g_log_buffer), n, 0, 0, 0, 0, nullptr);
         text += n;
         length -= n;
     }
@@ -58,7 +58,7 @@ void HalPanic(const char *text)
         n = sizeof(g_log_buffer);
     memcpy(g_log_buffer, text, n);
     for (;;)
-        HalHypercall(MIME_HC_PANIC, HalPhysicalOf(g_log_buffer), n, 0, 0, 0, 0, NULL);
+        HalHypercall(MIME_HC_PANIC, HalPhysicalOf(g_log_buffer), n, 0, 0, 0, 0, nullptr);
 }
 
 ULONG64 HalCounterToHns(ULONG64 delta)
@@ -89,12 +89,12 @@ const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars)
         if (n == chars && (n == sizeof(g_rom->entries[i].path) || !p[n]))
             return &g_rom->entries[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 const MimeRomEntry *HalRomEntry(ULONG index)
 {
-    return index < g_rom->count ? &g_rom->entries[index] : NULL;
+    return index < g_rom->count ? &g_rom->entries[index] : nullptr;
 }
 
 ULONG64 HalRomPhysical(const MimeRomEntry *entry)

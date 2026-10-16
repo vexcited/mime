@@ -35,7 +35,7 @@ static NTSTATUS NTAPI invalid_request(PDEVICE_OBJECT device, PIRP irp)
 NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *out)
 {
     PDRIVER_OBJECT driver;
-    NTSTATUS status = ObCreateObject(IoDriverObjectType, NULL, KernelMode,
+    NTSTATUS status = ObCreateObject(IoDriverObjectType, nullptr, KernelMode,
                                      sizeof(DRIVER_OBJECT) + sizeof(DRIVER_EXTENSION), (PVOID *)&driver);
     if (!NT_SUCCESS(status))
         return status;
@@ -56,9 +56,9 @@ NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *ou
         driver->DriverName.MaximumLength = (USHORT)(n.Length + sizeof(WCHAR));
     }
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &n, OBJ_PERMANENT | OBJ_KERNEL_HANDLE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &n, OBJ_PERMANENT | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     ObReferenceObject(driver);
-    status = ObInsertObjectNamed(driver, &oa, 0, KernelMode, NULL);
+    status = ObInsertObjectNamed(driver, &oa, 0, KernelMode, nullptr);
     UNICODE_STRING registry = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\System\\CurrentControlSet\\Services");
     status = init(driver, &registry);
     if (!NT_SUCCESS(status)) {
@@ -77,7 +77,7 @@ NTSTATUS NTAPI IoCreateDevice(PDRIVER_OBJECT driver, ULONG extension_size, PUNIC
 {
     PDEVICE_OBJECT device;
     ULONG size = sizeof(DEVICE_OBJECT) + ((extension_size + 15) & ~15u);
-    NTSTATUS status = ObCreateObject(IoDeviceObjectType, NULL, KernelMode, size, (PVOID *)&device);
+    NTSTATUS status = ObCreateObject(IoDeviceObjectType, nullptr, KernelMode, size, (PVOID *)&device);
     if (!NT_SUCCESS(status))
         return status;
     memset(device, 0, size);
@@ -98,9 +98,9 @@ NTSTATUS NTAPI IoCreateDevice(PDRIVER_OBJECT driver, ULONG extension_size, PUNIC
     driver->DeviceObject = device;
     if (name && name->Length) {
         OBJECT_ATTRIBUTES oa;
-        InitializeObjectAttributes(&oa, name, OBJ_PERMANENT | OBJ_KERNEL_HANDLE, NULL, NULL);
+        InitializeObjectAttributes(&oa, name, OBJ_PERMANENT | OBJ_KERNEL_HANDLE, nullptr, nullptr);
         ObReferenceObject(device);
-        status = ObInsertObjectNamed(device, &oa, 0, KernelMode, NULL);
+        status = ObInsertObjectNamed(device, &oa, 0, KernelMode, nullptr);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(device);
             return status;
@@ -138,7 +138,7 @@ PDEVICE_OBJECT NTAPI IoAttachDeviceToDeviceStack(PDEVICE_OBJECT source, PDEVICE_
 
 void NTAPI IoDetachDevice(PDEVICE_OBJECT target)
 {
-    target->AttachedDevice = NULL;
+    target->AttachedDevice = nullptr;
 }
 
 PDEVICE_OBJECT NTAPI IoGetRelatedDeviceObject(PFILE_OBJECT file)
@@ -151,7 +151,7 @@ PIRP NTAPI IoAllocateIrp(CCHAR stack_size, BOOLEAN charge_quota)
     ULONG size = sizeof(IRP) + (ULONG)stack_size * sizeof(IO_STACK_LOCATION);
     PIRP irp = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('I', 'r', 'p', ' '));
     if (!irp)
-        return NULL;
+        return nullptr;
     irp->Type = IO_TYPE_IRP;
     irp->Size = (USHORT)size;
     irp->StackCount = stack_size;
@@ -192,7 +192,7 @@ void FASTCALL IofCompleteRequest(PIRP irp, CCHAR boost)
              (irp->Cancel && (stack->Control & SL_INVOKE_ON_CANCEL)))) {
             PDEVICE_OBJECT dev = irp->Tail.Overlay.CurrentStackLocation < top
                                      ? irp->Tail.Overlay.CurrentStackLocation->DeviceObject
-                                     : NULL;
+                                     : nullptr;
             if (stack->CompletionRoutine(dev, irp, stack->Context) == STATUS_MORE_PROCESSING_REQUIRED)
                 return;
         }
@@ -213,7 +213,7 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
         return STATUS_INSUFFICIENT_RESOURCES;
     KEVENT event;
     KeInitializeEvent(&event, NotificationEvent, FALSE);
-    IO_STATUS_BLOCK local = {0};
+    IO_STATUS_BLOCK local = {};
     irp->UserEvent = &event;
     irp->UserIosb = &local;
     irp->UserBuffer = buffer;
@@ -232,7 +232,7 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
     stack->FileObject = file;
     NTSTATUS status = IofCallDriver(device, irp);
     if (status == STATUS_PENDING) {
-        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
         status = local.Status;
     } else {
         local = irp->IoStatus;
@@ -264,7 +264,7 @@ NTSTATUS IoQueryFileSize(PFILE_OBJECT file, ULONG64 *size)
     memset(&params, 0, sizeof(params));
     params.Parameters.QueryFile.Length = sizeof(info);
     params.Parameters.QueryFile.FileInformationClass = FileStandardInformation;
-    NTSTATUS status = IopSynchronousRequest(file, IRP_MJ_QUERY_INFORMATION, 0, &info, sizeof(info), &params, NULL);
+    NTSTATUS status = IopSynchronousRequest(file, IRP_MJ_QUERY_INFORMATION, 0, &info, sizeof(info), &params, nullptr);
     if (NT_SUCCESS(status))
         *size = (ULONG64)info.EndOfFile.QuadPart;
     return status;
@@ -284,7 +284,7 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
         return STATUS_SUCCESS;
     }
     PFILE_OBJECT file;
-    NTSTATUS status = ObCreateObject(IoFileObjectTypeObject, NULL, KernelMode, sizeof(FILE_OBJECT), (PVOID *)&file);
+    NTSTATUS status = ObCreateObject(IoFileObjectTypeObject, nullptr, KernelMode, sizeof(FILE_OBJECT), (PVOID *)&file);
     if (!NT_SUCCESS(status))
         return status;
     memset(file, 0, sizeof(*file));
@@ -313,7 +313,7 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
         file->FileName.MaximumLength = (USHORT)(remaining->Length + sizeof(WCHAR));
     }
 
-    IO_SECURITY_CONTEXT security = {0};
+    IO_SECURITY_CONTEXT security = {};
     security.DesiredAccess = op->DesiredAccess;
     IO_STACK_LOCATION params;
     memset(&params, 0, sizeof(params));
@@ -321,9 +321,9 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     params.Parameters.Create.Options = (op->Disposition << 24) | (op->Options & 0x00FFFFFF);
     params.Parameters.Create.FileAttributes = (USHORT)op->FileAttributes;
     params.Parameters.Create.ShareAccess = (USHORT)op->ShareAccess;
-    status = IopSynchronousRequest(file, IRP_MJ_CREATE, 0, NULL, 0, &params, &op->Iosb);
+    status = IopSynchronousRequest(file, IRP_MJ_CREATE, 0, nullptr, 0, &params, &op->Iosb);
     if (!NT_SUCCESS(status)) {
-        file->DeviceObject = NULL; /* never opened, no close irp */
+        file->DeviceObject = nullptr; /* never opened, no close irp */
         ObDereferenceObject(file);
         return status;
     }
@@ -336,14 +336,14 @@ static void file_close(PEPROCESS process, PVOID object, ULONG handle_count)
 {
     PFILE_OBJECT file = object;
     if (handle_count == 1 && file->DeviceObject)
-        IopSynchronousRequest(file, IRP_MJ_CLEANUP, 0, NULL, 0, NULL, NULL);
+        IopSynchronousRequest(file, IRP_MJ_CLEANUP, 0, nullptr, 0, nullptr, nullptr);
 }
 
 static void file_delete(PVOID object)
 {
     PFILE_OBJECT file = object;
     if (file->DeviceObject && (file->Flags & FO_HANDLE_CREATED))
-        IopSynchronousRequest(file, IRP_MJ_CLOSE, 0, NULL, 0, NULL, NULL);
+        IopSynchronousRequest(file, IRP_MJ_CLOSE, 0, nullptr, 0, nullptr, nullptr);
     if (file->FileName.Buffer)
         ExFreePool(file->FileName.Buffer);
     IopReleaseCompletion(file);
@@ -365,9 +365,9 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
     op.Options = options;
     op.FileAttributes = file_attributes;
     op.ShareAccess = share;
-    PFILE_OBJECT related = NULL;
+    PFILE_OBJECT related = nullptr;
     if (attributes->RootDirectory) {
-        NTSTATUS st = ObReferenceHandle(attributes->RootDirectory, NULL, mode, (PVOID *)&related, NULL);
+        NTSTATUS st = ObReferenceHandle(attributes->RootDirectory, nullptr, mode, (PVOID *)&related, nullptr);
         if (!NT_SUCCESS(st))
             return st;
         if (OBJECT_TO_HEADER(related)->Type == IoFileObjectTypeObject) {
@@ -391,7 +391,7 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
             buf[n] = 0;
             UNICODE_STRING remaining = {(USHORT)(n * 2), (USHORT)(n * 2 + 2), buf};
             PVOID found;
-            NTSTATUS st = parse_device(rel->DeviceObject, NULL, attributes->Attributes, &remaining, &remaining, &op, &found);
+            NTSTATUS st = parse_device(rel->DeviceObject, nullptr, attributes->Attributes, &remaining, &remaining, &op, &found);
             ExFreePool(buf);
             ObDereferenceObject(related);
             if (iosb)
@@ -404,7 +404,7 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
     }
     PVOID found;
     NTSTATUS status = ObLookupObjectName(attributes->ObjectName, attributes->RootDirectory, attributes->Attributes,
-                                         NULL, mode, &op, &found);
+                                         nullptr, mode, &op, &found);
     if (iosb)
         *iosb = op.Iosb;
     if (!NT_SUCCESS(status))
@@ -430,7 +430,7 @@ NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG opti
     op.ShareAccess = FILE_SHARE_READ | FILE_SHARE_DELETE;
     UNICODE_STRING p = *path;
     PVOID found;
-    NTSTATUS status = ObLookupObjectName(&p, NULL, OBJ_CASE_INSENSITIVE, NULL, KernelMode, &op, &found);
+    NTSTATUS status = ObLookupObjectName(&p, nullptr, OBJ_CASE_INSENSITIVE, nullptr, KernelMode, &op, &found);
     if (!NT_SUCCESS(status))
         return status;
     if (OBJECT_TO_HEADER(found)->Type != IoFileObjectTypeObject) {
@@ -457,7 +457,7 @@ PMDL NTAPI IoAllocateMdl(PVOID va, ULONG length, BOOLEAN secondary, BOOLEAN char
 {
     PMDL mdl = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MDL), KI_TAG('I', 'o', 'M', 'd'));
     if (!mdl)
-        return NULL;
+        return nullptr;
     mdl->StartVa = PAGE_ALIGN(va);
     mdl->ByteOffset = BYTE_OFFSET(va);
     mdl->ByteCount = length;
@@ -478,7 +478,7 @@ PIRP NTAPI IoBuildSynchronousFsdRequest(ULONG major, PDEVICE_OBJECT device, PVOI
 {
     PIRP irp = IoAllocateIrp(device->StackSize, FALSE);
     if (!irp)
-        return NULL;
+        return nullptr;
     irp->UserBuffer = buffer;
     irp->AssociatedIrp.SystemBuffer = buffer;
     irp->UserEvent = event;
@@ -499,7 +499,7 @@ PIRP NTAPI IoBuildDeviceIoControlRequest(ULONG code, PDEVICE_OBJECT device, PVOI
 {
     PIRP irp = IoAllocateIrp(device->StackSize, FALSE);
     if (!irp)
-        return NULL;
+        return nullptr;
     irp->UserBuffer = output;
     irp->AssociatedIrp.SystemBuffer = input;
     irp->UserEvent = event;
@@ -516,7 +516,7 @@ PIRP NTAPI IoBuildDeviceIoControlRequest(ULONG code, PDEVICE_OBJECT device, PVOI
 
 void IoInitialize(void)
 {
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = FILE_ALL_ACCESS;
     init.ParseProcedure = parse_device;
     IoDeviceObjectType = ObCreateObjectType(L"Device", &init);
@@ -532,7 +532,7 @@ void IoInitialize(void)
     IopInitializeConsole();
     IopInitializeAfd();
 
-    NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Ntfs", MimeFsDriverEntry, NULL);
+    NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Ntfs", MimeFsDriverEntry, nullptr);
     if (!NT_SUCCESS(status))
         KiLogPrintf("mimefs failed to start: %08x", status);
     ObCreateSymbolicLink(L"\\GLOBAL??\\C:", L"\\Device\\HarddiskVolume1");

@@ -10,7 +10,7 @@
 
 static D12QueryHeap *heap_impl(ID3D12QueryHeap *iface) { return CONTAINING_RECORD(iface, D12QueryHeap, iface); }
 
-D12QueryHeap *D12QueryHeapFrom(ID3D12QueryHeap *iface) { return iface ? heap_impl(iface) : NULL; }
+D12QueryHeap *D12QueryHeapFrom(ID3D12QueryHeap *iface) { return iface ? heap_impl(iface) : nullptr; }
 
 static HRESULT STDMETHODCALLTYPE heap_query(ID3D12QueryHeap *iface, REFIID riid, void **out)
 {
@@ -21,7 +21,7 @@ static HRESULT STDMETHODCALLTYPE heap_query(ID3D12QueryHeap *iface, REFIID riid,
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -31,10 +31,10 @@ static void heap_destroy(D12QueryHeap *heap)
 {
     D12Device *device = heap->child.device;
     if (heap->pool)
-        device->vk.vkDestroyQueryPool(device->vk.device, heap->pool, NULL);
+        device->vk.vkDestroyQueryPool(device->vk.device, heap->pool, nullptr);
     for (UINT i = 0; i < 4; i++)
         if (heap->so_pools[i])
-            device->vk.vkDestroyQueryPool(device->vk.device, heap->so_pools[i], NULL);
+            device->vk.vkDestroyQueryPool(device->vk.device, heap->so_pools[i], nullptr);
 }
 
 static ULONG STDMETHODCALLTYPE heap_release(ID3D12QueryHeap *iface)
@@ -103,7 +103,7 @@ static VkQueryPool make_pool(D12Device *device, VkQueryType type, UINT count)
     if (type == VK_QUERY_TYPE_PIPELINE_STATISTICS)
         info.pipelineStatistics = STATISTICS;
     VkQueryPool pool = VK_NULL_HANDLE;
-    if (device->vk.vkCreateQueryPool(device->vk.device, &info, NULL, &pool) != VK_SUCCESS)
+    if (device->vk.vkCreateQueryPool(device->vk.device, &info, nullptr, &pool) != VK_SUCCESS)
         return VK_NULL_HANDLE;
     device->vk.vkResetQueryPool(device->vk.device, pool, 0, count);
     return pool;
@@ -235,7 +235,7 @@ static D12CommandSignature *signature_impl(ID3D12CommandSignature *iface)
 
 D12CommandSignature *D12CommandSignatureFrom(ID3D12CommandSignature *iface)
 {
-    return iface ? signature_impl(iface) : NULL;
+    return iface ? signature_impl(iface) : nullptr;
 }
 
 static HRESULT STDMETHODCALLTYPE signature_query(ID3D12CommandSignature *iface, REFIID riid, void **out)
@@ -247,7 +247,7 @@ static HRESULT STDMETHODCALLTYPE signature_query(ID3D12CommandSignature *iface, 
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -263,7 +263,7 @@ static ULONG STDMETHODCALLTYPE signature_release(ID3D12CommandSignature *iface)
     if (!refs) {
         D12Device *device = signature->child.device;
         if (signature->layout)
-            device->vk.vkDestroyIndirectCommandsLayoutEXT(device->vk.device, signature->layout, NULL);
+            device->vk.vkDestroyIndirectCommandsLayoutEXT(device->vk.device, signature->layout, nullptr);
         if (signature->root)
             signature->root->iface.lpVtbl->Release(&signature->root->iface);
         HeapFree(GetProcessHeap(), 0, signature->args);
@@ -416,7 +416,7 @@ static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12
     info.tokenCount = desc->NumArgumentDescs;
     info.pTokens = tokens;
     VkIndirectCommandsLayoutEXT layout = VK_NULL_HANDLE;
-    if (device->vk.vkCreateIndirectCommandsLayoutEXT(device->vk.device, &info, NULL, &layout) != VK_SUCCESS)
+    if (device->vk.vkCreateIndirectCommandsLayoutEXT(device->vk.device, &info, nullptr, &layout) != VK_SUCCESS)
         return VK_NULL_HANDLE;
     return layout;
 }

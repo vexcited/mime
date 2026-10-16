@@ -32,7 +32,7 @@ static DcBlob *blob_impl(ID3DBlob *iface) { return CONTAINING_RECORD(iface, DcBl
 
 static HRESULT STDMETHODCALLTYPE blob_query(ID3DBlob *iface, REFIID riid, void **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &IID_ID3D10Blob))
         return E_NOINTERFACE;
     *out = iface;
@@ -99,14 +99,14 @@ static HRESULT last_error(void)
 
 D3DCOMPILERAPI HRESULT WINAPI D3DReadFileToBlob(LPCWSTR name, ID3DBlob **contents)
 {
-    HANDLE file = CreateFile2(name, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, NULL);
+    HANDLE file = CreateFile2(name, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return last_error();
-    LARGE_INTEGER size = {0};
+    LARGE_INTEGER size = {};
     HRESULT hr = S_OK;
     if (!GetFileSizeEx(file, &size))
         hr = last_error();
-    ID3DBlob *blob = NULL;
+    ID3DBlob *blob = nullptr;
     if (SUCCEEDED(hr))
         hr = DcCreateBlob((SIZE_T)size.QuadPart, &blob);
     if (SUCCEEDED(hr)) {
@@ -114,7 +114,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DReadFileToBlob(LPCWSTR name, ID3DBlob **content
         ULONGLONG left = (ULONGLONG)size.QuadPart;
         while (left) {
             DWORD chunk = left > 0xFFFFFFFF ? 0xFFFFFFFF : (DWORD)left, read = 0;
-            if (!ReadFile(file, at, chunk, &read, NULL) && FAILED(hr = last_error()))
+            if (!ReadFile(file, at, chunk, &read, nullptr) && FAILED(hr = last_error()))
                 break;
             if (read < chunk) {
                 hr = E_FAIL;
@@ -125,7 +125,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DReadFileToBlob(LPCWSTR name, ID3DBlob **content
         }
         if (SUCCEEDED(hr)) {
             *contents = blob;
-            blob = NULL;
+            blob = nullptr;
             hr = S_OK;
         }
     }
@@ -140,7 +140,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DWriteBlobToFile(ID3DBlob *blob, LPCWSTR name, B
     if (!blob)
         return E_INVALIDARG;
     /* overwrite picks CREATE_ALWAYS over CREATE_NEW by adding one, as windows does. */
-    HANDLE file = CreateFile2(name, GENERIC_WRITE, FILE_SHARE_READ, (DWORD)overwrite + 1, NULL);
+    HANDLE file = CreateFile2(name, GENERIC_WRITE, FILE_SHARE_READ, (DWORD)overwrite + 1, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return last_error();
     const BYTE *at = blob->lpVtbl->GetBufferPointer(blob);
@@ -148,7 +148,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DWriteBlobToFile(ID3DBlob *blob, LPCWSTR name, B
     HRESULT hr = S_OK;
     while (left) {
         DWORD chunk = left > 0xFFFFFFFF ? 0xFFFFFFFF : (DWORD)left, written = 0;
-        if (!WriteFile(file, at, chunk, &written, NULL) && FAILED(hr = last_error()))
+        if (!WriteFile(file, at, chunk, &written, nullptr) && FAILED(hr = last_error()))
             break;
         if (written < chunk) {
             hr = E_FAIL;
@@ -168,7 +168,7 @@ static void compile_error(LPCVOID data, LPCSTR name, const char *what, ID3DBlob 
 {
     if (!errors)
         return;
-    DcText text = {0};
+    DcText text = {};
     if (name)
         DcTextPrintf(&text, "%s(1,1): ", name);
     else
@@ -185,9 +185,9 @@ D3DCOMPILERAPI HRESULT WINAPI D3DCompile2(LPCVOID data, SIZE_T size, LPCSTR name
                                           SIZE_T secondary_size, ID3DBlob **code, ID3DBlob **errors)
 {
     if (code)
-        *code = NULL;
+        *code = nullptr;
     if (errors)
-        *errors = NULL;
+        *errors = nullptr;
     if ((secondary_flags & ~7u) || (!secondary_flags && (secondary || secondary_size)))
         return E_INVALIDARG;
     compile_error(data, name, "the HLSL compiler", errors);
@@ -198,7 +198,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DCompile(LPCVOID data, SIZE_T size, LPCSTR name,
                                          ID3DInclude *include, LPCSTR entry, LPCSTR target, UINT flags1,
                                          UINT flags2, ID3DBlob **code, ID3DBlob **errors)
 {
-    return D3DCompile2(data, size, name, defines, include, entry, target, flags1, flags2, 0, NULL, 0, code, errors);
+    return D3DCompile2(data, size, name, defines, include, entry, target, flags1, flags2, 0, nullptr, 0, code, errors);
 }
 
 D3DCOMPILERAPI HRESULT WINAPI D3DCompileFromFile(LPCWSTR file, const D3D_SHADER_MACRO *defines,
@@ -206,14 +206,14 @@ D3DCOMPILERAPI HRESULT WINAPI D3DCompileFromFile(LPCWSTR file, const D3D_SHADER_
                                                  UINT flags2, ID3DBlob **code, ID3DBlob **errors)
 {
     char name[260];
-    if (!WideCharToMultiByte(CP_UTF8, 0, file, -1, name, sizeof(name), NULL, NULL))
+    if (!WideCharToMultiByte(CP_UTF8, 0, file, -1, name, sizeof(name), nullptr, nullptr))
         return E_FAIL;
     name[259] = 0;
-    ID3DBlob *source = NULL;
+    ID3DBlob *source = nullptr;
     HRESULT hr = D3DReadFileToBlob(file, &source);
     if (SUCCEEDED(hr))
         hr = D3DCompile2(source->lpVtbl->GetBufferPointer(source), source->lpVtbl->GetBufferSize(source), name,
-                         defines, include, entry, target, flags1, flags2, 0, NULL, 0, code, errors);
+                         defines, include, entry, target, flags1, flags2, 0, nullptr, 0, code, errors);
     if (source)
         source->lpVtbl->Release(source);
     return hr;
@@ -224,9 +224,9 @@ D3DCOMPILERAPI HRESULT WINAPI D3DPreprocess(LPCVOID data, SIZE_T size, LPCSTR na
 {
     if (!data || !text)
         return E_INVALIDARG;
-    *text = NULL;
+    *text = nullptr;
     if (errors)
-        *errors = NULL;
+        *errors = nullptr;
     compile_error(data, name, "the HLSL preprocessor", errors);
     return E_FAIL;
 }
@@ -235,9 +235,9 @@ D3DCOMPILERAPI HRESULT WINAPI D3DAssemble(LPCVOID data, SIZE_T size, LPCSTR name
                                           ID3DInclude *include, UINT flags, ID3DBlob **code, ID3DBlob **errors)
 {
     if (code)
-        *code = NULL;
+        *code = nullptr;
     if (errors)
-        *errors = NULL;
+        *errors = nullptr;
     if (flags & ~3u)
         return D3DERR_INVALIDCALL;
     compile_error(data, name, "the shader assembler", errors);
@@ -249,7 +249,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DAssemble(LPCVOID data, SIZE_T size, LPCSTR name
 D3DCOMPILERAPI HRESULT WINAPI D3DCompressShaders(UINT count, D3D_SHADER_DATA *shaders, UINT flags, ID3DBlob **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -265,7 +265,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DCreateLinker(ID3D11Linker **linker)
 {
     if (!linker)
         return E_INVALIDARG;
-    *linker = NULL;
+    *linker = nullptr;
     return E_NOTIMPL;
 }
 
@@ -273,7 +273,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DLoadModule(LPCVOID data, SIZE_T size, ID3D11Mod
 {
     if (!module || !data || size - 1 > 0x7FFFFFFD)
         return E_INVALIDARG;
-    *module = NULL;
+    *module = nullptr;
     return E_NOTIMPL;
 }
 
@@ -281,14 +281,14 @@ D3DCOMPILERAPI HRESULT WINAPI D3DCreateFunctionLinkingGraph(UINT flags, ID3D11Fu
 {
     if (!graph || flags)
         return E_INVALIDARG;
-    *graph = NULL;
+    *graph = nullptr;
     return E_NOTIMPL;
 }
 
 D3DCOMPILERAPI HRESULT WINAPI D3DDisassemble10Effect(ID3D10Effect *effect, UINT flags, ID3DBlob **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -296,7 +296,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DDisassemble11Trace(LPCVOID data, SIZE_T size, I
                                                     UINT count, UINT flags, ID3DBlob **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 

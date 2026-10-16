@@ -130,7 +130,7 @@ WINGDIAPI BOOL WINAPI PolyDraw(HDC dc, const POINT *points, const BYTE *types, i
         BOOL ok;
         if (type == PT_MOVETO) {
             start = points[i];
-            ok = NtGdiMoveTo(dc, points[i].x, points[i].y, NULL);
+            ok = NtGdiMoveTo(dc, points[i].x, points[i].y, nullptr);
         } else if (type == PT_LINETO) {
             ok = NtGdiLineTo(dc, points[i].x, points[i].y);
         } else {
@@ -246,7 +246,7 @@ WINGDIAPI int WINAPI SetAbortProc(HDC dc, ABORTPROC proc)
 WINGDIAPI HDC WINAPI ResetDCW(HDC dc, const void *mode)
 {
     print_call(dc);
-    return NULL;
+    return nullptr;
 }
 
 WINGDIAPI HDC WINAPI ResetDCA(HDC dc, const void *mode)
@@ -343,6 +343,6 @@ WINGDIAPI BOOL WINAPI SwapBuffers(HDC dc)
         return FALSE;
     }
     HMODULE gl = GetModuleHandleW(L"opengl32.dll");
-    BOOL(WINAPI * swap)(HDC) = gl ? (BOOL(WINAPI *)(HDC))GetProcAddress(gl, "wglSwapBuffers") : NULL;
+    BOOL(WINAPI * swap)(HDC) = gl ? (BOOL(WINAPI *)(HDC))GetProcAddress(gl, "wglSwapBuffers") : nullptr;
     return swap ? swap(dc) : TRUE;
 }

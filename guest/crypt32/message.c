@@ -48,21 +48,21 @@ static DWORD item_at(der_item item, DWORD index, der_item *out)
 static void *reserve(PACK *pack, DWORD size)
 {
     if (pack->error)
-        return NULL;
+        return nullptr;
     DWORD start = (pack->used + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
     if (start > MESSAGE_LIMIT || size > MESSAGE_LIMIT - start) {
         pack->error = CRYPT_E_ASN1_LARGE;
-        return NULL;
+        return nullptr;
     }
     pack->used = start + size;
-    return pack->base ? pack->base + start : NULL;
+    return pack->base ? pack->base + start : nullptr;
 }
 
 static void blob(PACK *pack, CRYPT_DATA_BLOB *out, const BYTE *data, DWORD size, BOOL reverse)
 {
     if (pack->error)
         return;
-    BYTE *copy = size ? reserve(pack, size) : NULL;
+    BYTE *copy = size ? reserve(pack, size) : nullptr;
     if (copy) {
         if (reverse)
             for (DWORD i = 0; i < size; i++)
@@ -79,11 +79,11 @@ static void blob(PACK *pack, CRYPT_DATA_BLOB *out, const BYTE *data, DWORD size,
 static char *oid_string(PACK *pack, der_item oid)
 {
     if (pack->error)
-        return NULL;
+        return nullptr;
     char text[256];
     if (oid.length > 64 || DerParseOid(&oid, text, sizeof(text))) {
         pack->error = CRYPT_E_ASN1_CORRUPT;
-        return NULL;
+        return nullptr;
     }
     DWORD size = (DWORD)strlen(text) + 1;
     char *out = reserve(pack, size);
@@ -97,7 +97,7 @@ static void algorithm(PACK *pack, der_item item, CRYPT_ALGORITHM_IDENTIFIER *out
     if (pack->error)
         return;
     der_reader input = {item.content, item.length};
-    der_item oid, parameters = {0};
+    der_item oid, parameters = {};
     if (DerExpect(&input, ASN_OID, &oid) || (input.n && DerRead(&input, &parameters)) || input.n) {
         pack->error = CRYPT_E_ASN1_CORRUPT;
         return;
@@ -105,7 +105,7 @@ static void algorithm(PACK *pack, der_item item, CRYPT_ALGORITHM_IDENTIFIER *out
     char *name = oid_string(pack, oid);
     if (out)
         out->pszObjId = name;
-    blob(pack, out ? &out->Parameters : NULL, parameters.start, parameters.total, FALSE);
+    blob(pack, out ? &out->Parameters : nullptr, parameters.start, parameters.total, FALSE);
 }
 
 static void attributes(PACK *pack, der_item item, CRYPT_ATTRIBUTES *out)
@@ -115,7 +115,7 @@ static void attributes(PACK *pack, der_item item, CRYPT_ATTRIBUTES *out)
     DWORD count;
     if ((pack->error = item_count(item, &count)))
         return;
-    CRYPT_ATTRIBUTE *array = count ? reserve(pack, count * sizeof(*array)) : NULL;
+    CRYPT_ATTRIBUTE *array = count ? reserve(pack, count * sizeof(*array)) : nullptr;
     if (out) {
         out->cAttr = count;
         out->rgAttr = array;
@@ -138,7 +138,7 @@ static void attributes(PACK *pack, der_item item, CRYPT_ATTRIBUTES *out)
         DWORD n;
         if ((pack->error = item_count(values, &n)))
             break;
-        CRYPT_ATTR_BLOB *blobs = n ? reserve(pack, n * sizeof(*blobs)) : NULL;
+        CRYPT_ATTR_BLOB *blobs = n ? reserve(pack, n * sizeof(*blobs)) : nullptr;
         if (array) {
             array[i].pszObjId = name;
             array[i].cValue = n;
@@ -151,7 +151,7 @@ static void attributes(PACK *pack, der_item item, CRYPT_ATTRIBUTES *out)
                 pack->error = CRYPT_E_ASN1_CORRUPT;
                 break;
             }
-            blob(pack, blobs ? &blobs[j] : NULL, value.start, value.total, FALSE);
+            blob(pack, blobs ? &blobs[j] : nullptr, value.start, value.total, FALSE);
         }
     }
 }
@@ -161,7 +161,7 @@ static DWORD signer_info(der_item signer, DWORD type, PACK *pack)
     if (signer.tag != ASN_SEQUENCE)
         return CRYPT_E_ASN1_BADTAG;
     der_reader input = {signer.content, signer.length};
-    der_item version, sid, issuer, serial, hash, auth = {0}, encryption, encrypted, unauth = {0};
+    der_item version, sid, issuer, serial, hash, auth = {}, encryption, encrypted, unauth = {};
     int number;
     if (DerExpect(&input, ASN_INTEGER, &version) || DerParseInt(&version, &number) || number != 1 ||
         DerExpect(&input, ASN_SEQUENCE, &sid) || DerExpect(&input, ASN_SEQUENCE, &hash) ||
@@ -181,19 +181,19 @@ static DWORD signer_info(der_item signer, DWORD type, PACK *pack)
         algorithm(pack, hash, out);
     } else if (type == CMSG_SIGNER_CERT_INFO_PARAM) {
         CERT_INFO *out = reserve(pack, sizeof(*out));
-        blob(pack, out ? &out->Issuer : NULL, issuer.start, issuer.total, FALSE);
-        blob(pack, out ? &out->SerialNumber : NULL, serial.content, serial.length, TRUE);
+        blob(pack, out ? &out->Issuer : nullptr, issuer.start, issuer.total, FALSE);
+        blob(pack, out ? &out->SerialNumber : nullptr, serial.content, serial.length, TRUE);
     } else {
         CMSG_SIGNER_INFO *out = reserve(pack, sizeof(*out));
         if (out)
             out->dwVersion = number;
-        blob(pack, out ? &out->Issuer : NULL, issuer.start, issuer.total, FALSE);
-        blob(pack, out ? &out->SerialNumber : NULL, serial.content, serial.length, TRUE);
-        algorithm(pack, hash, out ? &out->HashAlgorithm : NULL);
-        algorithm(pack, encryption, out ? &out->HashEncryptionAlgorithm : NULL);
-        blob(pack, out ? &out->EncryptedHash : NULL, encrypted.content, encrypted.length, FALSE);
-        attributes(pack, auth, out ? &out->AuthAttrs : NULL);
-        attributes(pack, unauth, out ? &out->UnauthAttrs : NULL);
+        blob(pack, out ? &out->Issuer : nullptr, issuer.start, issuer.total, FALSE);
+        blob(pack, out ? &out->SerialNumber : nullptr, serial.content, serial.length, TRUE);
+        algorithm(pack, hash, out ? &out->HashAlgorithm : nullptr);
+        algorithm(pack, encryption, out ? &out->HashEncryptionAlgorithm : nullptr);
+        blob(pack, out ? &out->EncryptedHash : nullptr, encrypted.content, encrypted.length, FALSE);
+        attributes(pack, auth, out ? &out->AuthAttrs : nullptr);
+        attributes(pack, unauth, out ? &out->UnauthAttrs : nullptr);
     }
     return pack->error;
 }
@@ -243,7 +243,7 @@ static DWORD parse_message(MESSAGE *message, DWORD size)
         error = item_count(message->signers, &message->signer_count);
     for (DWORD i = 0; !error && i < message->signer_count; i++) {
         der_item signer;
-        PACK pack = {0};
+        PACK pack = {};
         error = item_at(message->signers, i, &signer);
         if (!error)
             error = signer_info(signer, CMSG_SIGNER_INFO_PARAM, &pack);
@@ -261,7 +261,7 @@ static void free_message(MESSAGE *message)
 
 static HCRYPTMSG publish(MESSAGE *message)
 {
-    HCRYPTMSG handle = NULL;
+    HCRYPTMSG handle = nullptr;
     AcquireSRWLockExclusive(&message_lock);
     for (DWORD i = 0; i < RTL_NUMBER_OF(messages); i++) {
         if (messages[i].message || messages[i].generation == 0xffff)
@@ -280,7 +280,7 @@ static MESSAGE *lookup(HCRYPTMSG handle)
     ULONG_PTR value = (ULONG_PTR)handle;
     DWORD index = value & 255;
     if ((value >> 24) != 0x4d || messages[index].generation != ((value >> 8) & 0xffff))
-        return NULL;
+        return nullptr;
     return messages[index].message;
 }
 
@@ -291,7 +291,7 @@ BOOL WINAPI CryptMsgClose(HCRYPTMSG handle)
     AcquireSRWLockExclusive(&message_lock);
     MESSAGE *message = lookup(handle);
     if (message)
-        messages[(ULONG_PTR)handle & 255].message = NULL;
+        messages[(ULONG_PTR)handle & 255].message = nullptr;
     ReleaseSRWLockExclusive(&message_lock);
     if (!message)
         return CrFail(ERROR_INVALID_HANDLE);
@@ -301,9 +301,9 @@ BOOL WINAPI CryptMsgClose(HCRYPTMSG handle)
 
 static DWORD get_parameter(MESSAGE *message, DWORD type, DWORD index, BYTE *out, DWORD *size)
 {
-    const void *source = NULL;
+    const void *source = nullptr;
     DWORD length = 0, value = 0;
-    der_item item = {0};
+    der_item item = {};
     BOOL packed = type >= CMSG_SIGNER_INFO_PARAM && type <= CMSG_SIGNER_UNAUTH_ATTR_PARAM;
     if (packed || type == CMSG_ENCODED_SIGNER) {
         if (index >= message->signer_count)
@@ -312,7 +312,7 @@ static DWORD get_parameter(MESSAGE *message, DWORD type, DWORD index, BYTE *out,
         if (error)
             return error;
         if (packed) {
-            PACK pack = {0};
+            PACK pack = {};
             error = signer_info(item, type, &pack);
             if (error)
                 return error;
@@ -405,7 +405,7 @@ static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *si
     }
     if (type != CERT_QUERY_OBJECT_FILE)
         return ERROR_INVALID_PARAMETER;
-    HANDLE file = CreateFileW(object, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE file = CreateFileW(object, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return GetLastError();
     LARGE_INTEGER length;
@@ -416,7 +416,7 @@ static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *si
         error = ERROR_FILE_TOO_LARGE;
     else if (!(*bytes = CrAlloc((SIZE_T)length.QuadPart)))
         error = ERROR_OUTOFMEMORY;
-    else if (!ReadFile(file, *bytes, (DWORD)length.QuadPart, &read, NULL))
+    else if (!ReadFile(file, *bytes, (DWORD)length.QuadPart, &read, nullptr))
         error = GetLastError();
     else if (read != length.QuadPart)
         error = ERROR_READ_FAULT;
@@ -465,9 +465,9 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
                               DWORD flags, DWORD *encoding, DWORD *content_type, DWORD *format_type,
                               HCERTSTORE *store_out, HCRYPTMSG *message_out, const void **context)
 {
-    if (store_out) *store_out = NULL;
-    if (message_out) *message_out = NULL;
-    if (context) *context = NULL;
+    if (store_out) *store_out = nullptr;
+    if (message_out) *message_out = nullptr;
+    if (context) *context = nullptr;
     if (encoding) *encoding = 0;
     if (content_type) *content_type = 0;
     if (format_type) *format_type = 0;
@@ -475,7 +475,7 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
         return CrFail(ERROR_INVALID_PARAMETER);
     if (!(format_flags & CERT_QUERY_FORMAT_FLAG_BINARY))
         return CrFail(CRYPT_E_NO_MATCH);
-    BYTE *bytes = NULL;
+    BYTE *bytes = nullptr;
     DWORD size = 0;
     DWORD error = read_object(object_type, object, &bytes, &size);
     DWORD type = CERT_QUERY_CONTENT_PKCS7_SIGNED, offset = 0, length = size;
@@ -485,7 +485,7 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
     }
     if (!error && (!(content_flags & (1u << type)) || length > MESSAGE_LIMIT))
         error = CRYPT_E_NO_MATCH;
-    MESSAGE *message = NULL;
+    MESSAGE *message = nullptr;
     if (!error) {
         message = CrAllocZero(sizeof(*message));
         if (!message || !(message->bytes = CrAlloc(length)))
@@ -496,9 +496,9 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
         }
     }
     CrFree(bytes);
-    HCERTSTORE store = NULL;
+    HCERTSTORE store = nullptr;
     if (!error && store_out) {
-        store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
+        store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
         if (!store)
             error = GetLastError();
         for (DWORD i = 0; !error && i < message->certificate_count; i++) {
@@ -506,20 +506,20 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
             error = item_at(message->certificates, i, &cert);
             if (!error && (cert.tag != ASN_SEQUENCE ||
                 !CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, cert.start, cert.total,
-                                                  CERT_STORE_ADD_ALWAYS, NULL)))
+                                                  CERT_STORE_ADD_ALWAYS, nullptr)))
                 error = CRYPT_E_ASN1_CORRUPT;
         }
         /* the current store has no crl insertion support. */
         if (!error && message->crl_count)
             error = ERROR_NOT_SUPPORTED;
     }
-    HCRYPTMSG handle = NULL;
+    HCRYPTMSG handle = nullptr;
     if (!error && message_out) {
         handle = publish(message);
         if (!handle)
             error = ERROR_OUTOFMEMORY;
         else
-            message = NULL;
+            message = nullptr;
     }
     free_message(message);
     if (error) {

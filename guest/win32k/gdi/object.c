@@ -34,7 +34,7 @@ HANDLE GdiCreateHandle(GDI_OBJECT *object, UCHAR type)
     if (!g_table) {
         g_table = W32Alloc(GDI_MAX_HANDLES * sizeof(GDI_ENTRY));
         if (!g_table)
-            return NULL;
+            return nullptr;
     }
     for (ULONG n = 0; n < GDI_MAX_HANDLES; n++) {
         ULONG i = g_next_free;
@@ -49,15 +49,15 @@ HANDLE GdiCreateHandle(GDI_OBJECT *object, UCHAR type)
         }
     }
     W32Trace("win32k: gdi handle table full\n");
-    return NULL;
+    return nullptr;
 }
 
 void GdiFreeHandle(GDI_OBJECT *object)
 {
     ULONG i = (ULONG)(ULONG_PTR)object->Handle & 0xFFFF;
     if (i && i < GDI_MAX_HANDLES && g_table[i].Object == object)
-        g_table[i].Object = NULL;
-    object->Handle = NULL;
+        g_table[i].Object = nullptr;
+    object->Handle = nullptr;
 }
 
 GDI_OBJECT *GdiLookup(HANDLE handle, UCHAR type)
@@ -65,12 +65,12 @@ GDI_OBJECT *GdiLookup(HANDLE handle, UCHAR type)
     ULONG_PTR v = (ULONG_PTR)handle;
     ULONG i = (ULONG)(v & 0xFFFF);
     if (!g_table || !i || i >= GDI_MAX_HANDLES)
-        return NULL;
+        return nullptr;
     GDI_OBJECT *o = g_table[i].Object;
     if (!o || o->Handle != handle)
-        return NULL;
+        return nullptr;
     if (type && o->Type != type)
-        return NULL;
+        return nullptr;
     return o;
 }
 
@@ -131,14 +131,14 @@ static BRUSH *new_brush(UINT style, COLORREF color, ULONG_PTR hatch)
 {
     BRUSH *b = W32Alloc(sizeof(BRUSH));
     if (!b)
-        return NULL;
+        return nullptr;
     b->Style = style;
     b->Color = color & 0xFFFFFF;
     b->Hatch = hatch;
     b->SysColor = -1;
     if (!GdiCreateHandle(&b->Header, GDI_TYPE_BRUSH)) {
         W32Free(b);
-        return NULL;
+        return nullptr;
     }
     return b;
 }
@@ -157,13 +157,13 @@ static PEN *new_pen(UINT style, LONG width, COLORREF color)
 {
     PEN *p = W32Alloc(sizeof(PEN));
     if (!p)
-        return NULL;
+        return nullptr;
     p->Style = style;
     p->Width = width;
     p->Color = color & 0xFFFFFF;
     if (!GdiCreateHandle(&p->Header, GDI_TYPE_PEN)) {
         W32Free(p);
-        return NULL;
+        return nullptr;
     }
     return p;
 }
@@ -172,12 +172,12 @@ static FONT *new_font(const LOGFONTW *lf)
 {
     FONT *f = W32Alloc(sizeof(FONT));
     if (!f)
-        return NULL;
+        return nullptr;
     f->Logical = *lf;
     f->Logical.lfFaceName[LF_FACESIZE - 1] = 0;
     if (!GdiCreateHandle(&f->Header, GDI_TYPE_FONT)) {
         W32Free(f);
-        return NULL;
+        return nullptr;
     }
     return f;
 }
@@ -186,11 +186,11 @@ GDI_REGION *GdiCreateRegion(void)
 {
     GDI_REGION *r = W32Alloc(sizeof(GDI_REGION));
     if (!r)
-        return NULL;
+        return nullptr;
     RgnInit(&r->Region);
     if (!GdiCreateHandle(&r->Header, GDI_TYPE_REGION)) {
         W32Free(r);
-        return NULL;
+        return nullptr;
     }
     return r;
 }
@@ -247,13 +247,13 @@ void GdiInitializeStockObjects(void)
 
 GDI_OBJECT *GdiStockObject(int index)
 {
-    return index >= 0 && index <= STOCK_LAST ? g_stock[index] : NULL;
+    return index >= 0 && index <= STOCK_LAST ? g_stock[index] : nullptr;
 }
 
 HANDLE GdiStockHandle(int index)
 {
     GDI_OBJECT *o = GdiStockObject(index);
-    return o ? o->Handle : NULL;
+    return o ? o->Handle : nullptr;
 }
 
 /* ------------------------------------------------------------------ services */
@@ -263,7 +263,7 @@ HANDLE NTAPI NtGdiGetStockObject(int index)
     UserEnter();
     GDI_OBJECT *o = GdiStockObject(index);
     UserLeave();
-    return o ? o->Handle : NULL;
+    return o ? o->Handle : nullptr;
 }
 
 BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
@@ -286,7 +286,7 @@ HBRUSH NTAPI NtGdiCreateSolidBrush(COLORREF color, HBRUSH reuse)
     UserEnter();
     BRUSH *b = new_brush(BS_SOLID, color, 0);
     UserLeave();
-    return b ? (HBRUSH)b->Header.Handle : NULL;
+    return b ? (HBRUSH)b->Header.Handle : nullptr;
 }
 
 HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH reuse)
@@ -294,18 +294,18 @@ HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH reuse)
     UserEnter();
     PEN *p = new_pen((UINT)style & PS_STYLE_MASK, width < 0 ? 0 : width, color);
     UserLeave();
-    return p ? (HPEN)p->Header.Handle : NULL;
+    return p ? (HPEN)p->Header.Handle : nullptr;
 }
 
 HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG flags, PVOID reserved)
 {
     LOGFONTW lf;
     if (size < sizeof(LOGFONTW) || !NT_SUCCESS(MimeCopyFromUser(&lf, font, sizeof(lf))))
-        return NULL;
+        return nullptr;
     UserEnter();
     FONT *f = new_font(&lf);
     UserLeave();
-    return f ? (HFONT)f->Header.Handle : NULL;
+    return f ? (HFONT)f->Header.Handle : nullptr;
 }
 
 int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
@@ -390,7 +390,7 @@ HRGN NTAPI NtGdiCreateRectRgn(int left, int top, int right, int bottom)
         RgnSetRect(&r->Region, &rc);
     }
     UserLeave();
-    return r ? (HRGN)r->Header.Handle : NULL;
+    return r ? (HRGN)r->Header.Handle : nullptr;
 }
 
 HRGN NTAPI NtGdiCreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height)
@@ -400,20 +400,20 @@ HRGN NTAPI NtGdiCreateRoundRectRgn(int left, int top, int right, int bottom, int
     if (r)
         RgnRoundRect(&r->Region, left, top, right, bottom, width, height);
     UserLeave();
-    return r ? (HRGN)r->Header.Handle : NULL;
+    return r ? (HRGN)r->Header.Handle : nullptr;
 }
 
 HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *data)
 {
     RGNDATAHEADER header;
     if (size < sizeof(header) || !NT_SUCCESS(MimeCopyFromUser(&header, data, sizeof(header))))
-        return NULL;
+        return nullptr;
     if (header.nCount > 100000 || size < sizeof(header) + header.nCount * sizeof(RECT))
-        return NULL;
+        return nullptr;
     RECT *rects = W32Alloc(header.nCount * sizeof(RECT) + 1);
     if (!rects)
-        return NULL;
-    HRGN result = NULL;
+        return nullptr;
+    HRGN result = nullptr;
     if (NT_SUCCESS(MimeCopyFromUser(rects, (const UCHAR *)data + header.dwSize, header.nCount * sizeof(RECT)))) {
         UserEnter();
         GDI_REGION *r = GdiCreateRegion();
@@ -430,7 +430,7 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
 int NTAPI NtGdiCombineRgn(HRGN dst, HRGN a, HRGN b, int mode)
 {
     UserEnter();
-    GDI_REGION *d = region_of(dst), *ra = region_of(a), *rb = mode == RGN_COPY ? NULL : region_of(b);
+    GDI_REGION *d = region_of(dst), *ra = region_of(a), *rb = mode == RGN_COPY ? nullptr : region_of(b);
     int result = ERROR;
     if (d && ra && (mode == RGN_COPY || rb) && mode >= RGN_AND && mode <= RGN_COPY) {
         REGION empty;

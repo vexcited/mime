@@ -32,7 +32,7 @@ static UINT open_product(PCWSTR product, HKEY *out, BOOL *machine)
 static UINT read_state(HKEY key, PCWSTR name, INSTALLSTATE *state)
 {
     DWORD value, type, bytes = sizeof(value);
-    UINT error = RegQueryValueExW(key, name, NULL, &type, (BYTE *)&value, &bytes);
+    UINT error = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&value, &bytes);
     if (!error && (bytes != sizeof(value) || type != REG_DWORD))
         error = ERROR_BAD_CONFIGURATION;
     if (!error) {
@@ -46,7 +46,7 @@ static UINT read_state(HKEY key, PCWSTR name, INSTALLSTATE *state)
 INSTALLSTATE WINAPI MsiQueryProductStateW(LPCWSTR product)
 {
     HKEY key;
-    UINT error = open_product(product, &key, NULL);
+    UINT error = open_product(product, &key, nullptr);
     if (error)
         return error == ERROR_INVALID_PARAMETER ? INSTALLSTATE_INVALIDARG :
                error == ERROR_UNKNOWN_PRODUCT ? INSTALLSTATE_UNKNOWN : INSTALLSTATE_BADCONFIG;
@@ -61,7 +61,7 @@ INSTALLSTATE WINAPI MsiQueryFeatureStateW(LPCWSTR product, LPCWSTR feature)
     if (!feature || !*feature || wcslen(feature) > 38)
         return INSTALLSTATE_INVALIDARG;
     HKEY key, features;
-    UINT error = open_product(product, &key, NULL);
+    UINT error = open_product(product, &key, nullptr);
     if (error)
         return error == ERROR_INVALID_PARAMETER ? INSTALLSTATE_INVALIDARG :
                error == ERROR_UNKNOWN_PRODUCT ? INSTALLSTATE_UNKNOWN : INSTALLSTATE_BADCONFIG;
@@ -80,7 +80,7 @@ INSTALLSTATE WINAPI MsiQueryFeatureStateW(LPCWSTR product, LPCWSTR feature)
 UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out)
 {
     DWORD bytes, type;
-    UINT error = RegQueryValueExW(key, name, NULL, &type, NULL, &bytes);
+    UINT error = RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes);
     if (error)
         return error;
     if (type != REG_SZ || bytes % sizeof(WCHAR) || bytes > 1024 * 1024)
@@ -88,7 +88,7 @@ UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out)
     PWSTR text = MimeMsiAllocate((SIZE_T)bytes + sizeof(WCHAR));
     if (!text)
         return ERROR_NOT_ENOUGH_MEMORY;
-    error = RegQueryValueExW(key, name, NULL, &type, (BYTE *)text, &bytes);
+    error = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)text, &bytes);
     if (!error && (type != REG_SZ || bytes % sizeof(WCHAR)))
         error = ERROR_BAD_CONFIGURATION;
     if (error)
@@ -114,7 +114,7 @@ UINT WINAPI MsiGetProductInfoW(LPCWSTR product, LPCWSTR attribute, LPWSTR out, L
         L"PackageName", L"ProductIcon", L"RegOwner", L"RegCompany", L"ProductID", L"PackageCode",
         L"Version", L"VersionMajor", L"VersionMinor", L"InstanceType", L"AuthorizedLUAApp"
     };
-    PWSTR text = NULL;
+    PWSTR text = nullptr;
     if (!wcscmp(attribute, L"AssignmentType"))
         text = MimeMsiDuplicate(machine ? L"1" : L"0");
     else {
@@ -152,13 +152,13 @@ UINT WINAPI MsiEnumFeaturesW(LPCWSTR product, DWORD index, LPWSTR feature, LPWST
     if (!feature)
         return ERROR_INVALID_PARAMETER;
     HKEY key, features;
-    UINT error = open_product(product, &key, NULL);
+    UINT error = open_product(product, &key, nullptr);
     if (error)
         return error;
     error = RegOpenKeyExW(key, L"Features", 0, KEY_READ, &features);
     if (!error) {
         DWORD length = 39;
-        error = RegEnumValueW(features, index, feature, &length, NULL, NULL, NULL, NULL);
+        error = RegEnumValueW(features, index, feature, &length, nullptr, nullptr, nullptr, nullptr);
         RegCloseKey(features);
         if (error == ERROR_MORE_DATA)
             error = ERROR_BAD_CONFIGURATION;
@@ -168,7 +168,7 @@ UINT WINAPI MsiEnumFeaturesW(LPCWSTR product, DWORD index, LPWSTR feature, LPWST
         HKEY parents;
         error = RegOpenKeyExW(key, L"FeatureParents", 0, KEY_READ, &parents);
         if (!error) {
-            PWSTR text = NULL;
+            PWSTR text = nullptr;
             error = MimeMsiRegistryText(parents, feature, &text);
             if (!error && wcslen(text) > 38)
                 error = ERROR_BAD_CONFIGURATION;
@@ -196,7 +196,7 @@ UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
     UINT error = open_product(product, &key, &machine);
     if (error)
         return error;
-    PWSTR path = NULL, source = NULL, transforms = NULL;
+    PWSTR path = nullptr, source = nullptr, transforms = nullptr;
     MSIHANDLE database = 0;
     error = MimeMsiRegistryText(key, L"LocalPackage", &path);
     if (!error && (!*path || wcslen(path) > 32760))

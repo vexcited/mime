@@ -18,7 +18,6 @@
 #ifndef MIME_LIB_MSSTYLES_H
 #define MIME_LIB_MSSTYLES_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

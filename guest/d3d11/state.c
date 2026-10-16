@@ -54,7 +54,7 @@ static HRESULT query(void *iface, const GUID *const *iids, UINT count, void *d3d
     for (UINT i = 0; i < count && !match; i++)
         match = IsEqualGUID(riid, iids[i]);
     if (!match && !d3d10) {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     object_add_ref(iface);
@@ -93,7 +93,7 @@ static D3dObject *find_cached(D3dDevice *device, D3dObject *list, SIZE_T desc_of
             object_add_ref(&o->iface);
             return o;
         }
-    return NULL;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ blend */
@@ -108,7 +108,7 @@ static HRESULT STDMETHODCALLTYPE blend_query(void *iface, REFIID riid, void **ou
 
 static ULONG STDMETHODCALLTYPE blend_release(void *iface)
 {
-    return release_cached(iface, (D3dObject **)&object(iface)->child.device->blend_states, NULL);
+    return release_cached(iface, (D3dObject **)&object(iface)->child.device->blend_states, nullptr);
 }
 
 static void STDMETHODCALLTYPE blend_get_desc1(void *iface, D3D11_BLEND_DESC1 *desc)
@@ -138,7 +138,7 @@ static const ID3D11BlendState1Vtbl blend_vtbl = {OBJECT_METHODS(blend), VTBL_FN(
 
 D3dBlendState *D3dBlendFrom(ID3D11BlendState *iface)
 {
-    return iface ? CONTAINING_RECORD((void *)iface, D3dBlendState, iface) : NULL;
+    return iface ? CONTAINING_RECORD((void *)iface, D3dBlendState, iface) : nullptr;
 }
 
 static BOOL valid_blend(D3D11_BLEND b) { return b >= D3D11_BLEND_ZERO && b <= D3D11_BLEND_INV_SRC1_ALPHA && b != 12 && b != 13; }
@@ -209,7 +209,7 @@ static HRESULT STDMETHODCALLTYPE rs_query(void *iface, REFIID riid, void **out)
 
 static ULONG STDMETHODCALLTYPE rs_release(void *iface)
 {
-    return release_cached(iface, (D3dObject **)&object(iface)->child.device->rasterizer_states, NULL);
+    return release_cached(iface, (D3dObject **)&object(iface)->child.device->rasterizer_states, nullptr);
 }
 
 static void STDMETHODCALLTYPE rs_get_desc2(void *iface, D3D11_RASTERIZER_DESC2 *desc)
@@ -232,7 +232,7 @@ static const ID3D11RasterizerState2Vtbl rs_vtbl = {OBJECT_METHODS(rs), VTBL_FN(r
 
 D3dRasterizerState *D3dRasterizerFrom(ID3D11RasterizerState *iface)
 {
-    return iface ? CONTAINING_RECORD((void *)iface, D3dRasterizerState, iface) : NULL;
+    return iface ? CONTAINING_RECORD((void *)iface, D3dRasterizerState, iface) : nullptr;
 }
 
 HRESULT D3dCreateRasterizerState(D3dDevice *device, const D3D11_RASTERIZER_DESC2 *desc, D3dRasterizerState **out)
@@ -283,7 +283,7 @@ static HRESULT STDMETHODCALLTYPE ds_query(void *iface, REFIID riid, void **out)
 
 static ULONG STDMETHODCALLTYPE ds_release(void *iface)
 {
-    return release_cached(iface, (D3dObject **)&object(iface)->child.device->depth_stencil_states, NULL);
+    return release_cached(iface, (D3dObject **)&object(iface)->child.device->depth_stencil_states, nullptr);
 }
 
 static void STDMETHODCALLTYPE ds_get_desc(void *iface, D3D11_DEPTH_STENCIL_DESC *desc)
@@ -295,7 +295,7 @@ static const ID3D11DepthStencilStateVtbl ds_vtbl = {OBJECT_METHODS(ds), VTBL_FN(
 
 D3dDepthStencilState *D3dDepthStencilFrom(ID3D11DepthStencilState *iface)
 {
-    return iface ? CONTAINING_RECORD((void *)iface, D3dDepthStencilState, iface) : NULL;
+    return iface ? CONTAINING_RECORD((void *)iface, D3dDepthStencilState, iface) : nullptr;
 }
 
 static BOOL valid_stencil_op(const D3D11_DEPTH_STENCILOP_DESC *op)
@@ -380,7 +380,7 @@ static const ID3D11SamplerStateVtbl sampler_vtbl = {OBJECT_METHODS(sampler), VTB
 
 D3dSamplerState *D3dSamplerFrom(ID3D11SamplerState *iface)
 {
-    return iface ? CONTAINING_RECORD((void *)iface, D3dSamplerState, iface) : NULL;
+    return iface ? CONTAINING_RECORD((void *)iface, D3dSamplerState, iface) : nullptr;
 }
 
 static VkSamplerAddressMode address_mode(D3D11_TEXTURE_ADDRESS_MODE mode)
@@ -444,7 +444,7 @@ static VkSampler create_sampler(D3dDevice *device, const D3D11_SAMPLER_DESC *d)
         info.borderColor = c[3] > 0.5f ? VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     }
     VkSampler sampler = VK_NULL_HANDLE;
-    device->vk.vkCreateSampler(device->vk.device, &info, NULL, &sampler);
+    device->vk.vkCreateSampler(device->vk.device, &info, nullptr, &sampler);
     return sampler;
 }
 
@@ -468,9 +468,9 @@ HRESULT D3dCreateSamplerState(D3dDevice *device, const D3D11_SAMPLER_DESC *desc,
             state->heap_index = state->sampler ? D3dHeapAlloc(device, D3D_HEAP_SAMPLER) : 0;
             if (!state->heap_index) {
                 if (state->sampler)
-                    device->vk.vkDestroySampler(device->vk.device, state->sampler, NULL);
+                    device->vk.vkDestroySampler(device->vk.device, state->sampler, nullptr);
                 HeapFree(GetProcessHeap(), 0, state);
-                state = NULL;
+                state = nullptr;
             } else {
                 D3dChildInit(&state->child, device);
                 D3dHeapWriteSampler(device, state->heap_index, state->sampler);
@@ -512,27 +512,27 @@ static const ID3D11InputLayoutVtbl layout_vtbl = {OBJECT_METHODS(layout)};
 
 D3dInputLayout *D3dInputLayoutFrom(ID3D11InputLayout *iface)
 {
-    return iface ? CONTAINING_RECORD((void *)iface, D3dInputLayout, iface) : NULL;
+    return iface ? CONTAINING_RECORD((void *)iface, D3dInputLayout, iface) : nullptr;
 }
 
 static void *heap_alloc(void *ctx, size_t size) { return HeapAlloc(GetProcessHeap(), 0, size); }
 static void heap_free(void *ctx, void *p) { HeapFree(GetProcessHeap(), 0, p); }
-const MimeAllocator g_d3d_allocator = {heap_alloc, heap_free, NULL};
+const MimeAllocator g_d3d_allocator = {heap_alloc, heap_free, nullptr};
 
 HRESULT D3dCreateInputLayout(D3dDevice *device, const D3D11_INPUT_ELEMENT_DESC *elements, UINT count,
                              const void *bytecode, SIZE_T length, D3dInputLayout **out)
 {
     if (count > D3D11_IA_VERTEX_INPUT_STRUCTURE_ELEMENT_COUNT || (count && !elements) || !bytecode)
         return E_INVALIDARG;
-    DxbcSignature inputs = {0};
+    DxbcSignature inputs = {};
     if (dxbc_parse_io(bytecode, length, 0, &inputs, &g_d3d_allocator))
         return E_INVALIDARG;
     D3dInputLayout *layout = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*layout));
     if (!layout) {
-        g_d3d_allocator.free(NULL, inputs.elements);
+        g_d3d_allocator.free(nullptr, inputs.elements);
         return E_OUTOFMEMORY;
     }
-    UINT offsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {0};
+    UINT offsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
     HRESULT hr = S_OK;
     for (UINT i = 0; i < count && SUCCEEDED(hr); i++) {
         const D3D11_INPUT_ELEMENT_DESC *e = &elements[i];
@@ -550,7 +550,7 @@ HRESULT D3dCreateInputLayout(D3dDevice *device, const D3D11_INPUT_ELEMENT_DESC *
         layout->step_rate[e->InputSlot] = e->InputSlotClass == D3D11_INPUT_PER_INSTANCE_DATA ? e->InstanceDataStepRate
                                                                                               : 1;
         /* the element feeds the shader's input of the same semantic; ones it does not read are left out. */
-        const DxbcSignatureElement *input = NULL;
+        const DxbcSignatureElement *input = nullptr;
         for (UINT k = 0; k < inputs.count && !input; k++)
             if (!_stricmp(inputs.elements[k].name, e->SemanticName) &&
                 inputs.elements[k].semantic_index == e->SemanticIndex)
@@ -576,7 +576,7 @@ HRESULT D3dCreateInputLayout(D3dDevice *device, const D3D11_INPUT_ELEMENT_DESC *
             hr = E_INVALIDARG;
         }
     }
-    g_d3d_allocator.free(NULL, inputs.elements);
+    g_d3d_allocator.free(nullptr, inputs.elements);
     if (FAILED(hr) || !out) {
         HeapFree(GetProcessHeap(), 0, layout);
         return FAILED(hr) ? hr : S_FALSE;
@@ -599,7 +599,7 @@ static const GUID *const LINKAGE_IIDS[] = {&IID_ID3D11ClassLinkage};
 
 static HRESULT STDMETHODCALLTYPE linkage_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, LINKAGE_IIDS, 1, NULL, riid, out);
+    return query(iface, LINKAGE_IIDS, 1, nullptr, riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE linkage_release(void *iface) { return layout_release(iface); }
@@ -608,7 +608,7 @@ static HRESULT STDMETHODCALLTYPE linkage_get_class_instance(void *iface, LPCSTR 
                                                             ID3D11ClassInstance **instance)
 {
     if (instance)
-        *instance = NULL;
+        *instance = nullptr;
     return E_INVALIDARG;
 }
 
@@ -617,7 +617,7 @@ static HRESULT STDMETHODCALLTYPE linkage_create_class_instance(void *iface, LPCS
                                                                UINT sampler_offset, ID3D11ClassInstance **instance)
 {
     if (instance)
-        *instance = NULL;
+        *instance = nullptr;
     D3dLog("d3d11: class instances are not implemented");
     return E_NOTIMPL;
 }
@@ -646,7 +646,7 @@ static const GUID *const STATE_IIDS[] = {&IID_ID3DDeviceContextState};
 
 static HRESULT STDMETHODCALLTYPE state_query(void *iface, REFIID riid, void **out)
 {
-    return query(iface, STATE_IIDS, 1, NULL, riid, out);
+    return query(iface, STATE_IIDS, 1, nullptr, riid, out);
 }
 
 static ULONG STDMETHODCALLTYPE state_release(void *iface) { return layout_release(iface); }

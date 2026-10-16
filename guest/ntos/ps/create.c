@@ -39,7 +39,7 @@ static PVOID arena_alloc(USER_ARENA *a, SIZE_T size)
 {
     SIZE_T off = (a->Used + 15) & ~(SIZE_T)15;
     if (off + size > a->Size)
-        return NULL;
+        return nullptr;
     a->Used = off + size;
     return a->Base + off;
 }
@@ -65,7 +65,7 @@ static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src
  */
 static NTSTATUS setup_wow64_peb(PEPROCESS process)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T size = PAGE_SIZE;
     NTSTATUS status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!NT_SUCCESS(status))
@@ -111,7 +111,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     if (!NT_SUCCESS(status))
         return status;
     SIZE_T size = 64 * 1024 + environment_bytes + p->RuntimeDataLength + p->WindowTitle.Length + p->DesktopInfo.Length;
-    PVOID base = NULL;
+    PVOID base = nullptr;
     status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
     if (!NT_SUCCESS(status)) {
         ExFreePool(environment);
@@ -153,7 +153,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     pp->ShowWindowFlags = p->ShowWindowFlags;
     pp->WindowFlags = p->WindowFlags;
     pp->ConsoleFlags = p->ConsoleFlags;
-    pp->ConsoleHandle = p->Detached ? CONSOLE_DETACHED : NULL;
+    pp->ConsoleHandle = p->Detached ? CONSOLE_DETACHED : nullptr;
     pp->StandardInput = p->StandardInput;
     pp->StandardOutput = p->StandardOutput;
     pp->StandardError = p->StandardError;
@@ -173,7 +173,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
                       : arena_string(&a, &pp->DesktopInfo, L"WinSta0\\Default", 15)) &&
                  arena_string(&a, &pp->ShellInfo, L"", 0);
     /* the runtime data is bytes: the c library's inherited file descriptors. */
-    PUCHAR runtime = ok ? arena_alloc(&a, p->RuntimeDataLength + sizeof(WCHAR)) : NULL;
+    PUCHAR runtime = ok ? arena_alloc(&a, p->RuntimeDataLength + sizeof(WCHAR)) : nullptr;
     if (runtime) {
         memcpy(runtime, p->RuntimeData, p->RuntimeDataLength);
         memset(runtime + p->RuntimeDataLength, 0, sizeof(WCHAR));
@@ -294,12 +294,12 @@ static NTSTATUS create_process(const PSP_PARAMS *p, ULONG64 request_id, MIME_CON
 
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     KiAttachProcess(&process->Pcb);
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T view = 0;
     status = MiMapViewOfSection(section, process, &base, 0, &view, PAGE_EXECUTE_WRITECOPY, 0);
     if (NT_SUCCESS(status)) {
         process->SectionBaseAddress = base;
-        PVOID ntdll = NULL;
+        PVOID ntdll = nullptr;
         SIZE_T ntdll_view = 0;
         status = MiMapViewOfSection(system_dll->Section, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0);
         if (status == STATUS_IMAGE_NOT_AT_BASE) {
@@ -314,7 +314,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, ULONG64 request_id, MIME_CON
         status = setup_wow64_peb(process);
     KiAttachProcess(saved);
 
-    PETHREAD thread = NULL;
+    PETHREAD thread = nullptr;
     if (NT_SUCCESS(status)) {
         PVOID entry = (PUCHAR)process->SectionBaseAddress + section->Image.EntryPoint;
         status = PspCreateUserThread(process, entry, process->Peb, suspended, section->Image.StackReserve,
@@ -341,7 +341,7 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
     PSP_PARAMS p = {.Image = *image, .CommandLine = *cmdline, .CurrentDirectory = cwd ? *cwd : default_cwd,
                     .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
-    return create_process(&p, request_id, console, FALSE, out, NULL);
+    return create_process(&p, request_id, console, FALSE, out, nullptr);
 }
 
 static void free_params(PSP_PARAMS *p)
@@ -391,7 +391,7 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
             }
             bytes += sizeof(pair);
         }
-        p->Environment = NT_SUCCESS(status) ? ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, KI_TAG('P', 's', 'E', 'n')) : NULL;
+        p->Environment = NT_SUCCESS(status) ? ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, KI_TAG('P', 's', 'E', 'n')) : nullptr;
         if (NT_SUCCESS(status))
             status = p->Environment ? KiCopyFromUser(p->Environment, pp.Environment, bytes) : STATUS_NO_MEMORY;
         p->EnvironmentBytes = bytes;
@@ -427,8 +427,8 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     PSP_PARAMS params;
     memset(&params, 0, sizeof(params));
     NTSTATUS status = capture_params(parameters, &params);
-    PEPROCESS process = NULL;
-    PETHREAD thread = NULL;
+    PEPROCESS process = nullptr;
+    PETHREAD thread = nullptr;
     if (NT_SUCCESS(status))
         status = create_process(&params, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
     free_params(&params);
@@ -442,7 +442,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     }
     if (!NT_SUCCESS(status))
         return status;
-    HANDLE ph = NULL, th = NULL;
+    HANDLE ph = nullptr, th = nullptr;
     ObReferenceObject(process);
     status = ObCreateHandle(PsCurrentProcess(), process, process_access, 0, &ph);
     if (!NT_SUCCESS(status))

@@ -189,13 +189,13 @@ char *strchr(const char *s, int c)
         if (*s == (char)c)
             return (char *)s;
         if (!*s)
-            return NULL;
+            return nullptr;
     }
 }
 
 char *strrchr(const char *s, int c)
 {
-    const char *last = NULL;
+    const char *last = nullptr;
     for (;; s++) {
         if (*s == (char)c)
             last = s;
@@ -210,7 +210,7 @@ char *strstr(const char *hay, const char *needle)
     for (; *hay; hay++)
         if (!strncmp(hay, needle, n))
             return (char *)hay;
-    return n ? NULL : (char *)hay;
+    return n ? nullptr : (char *)hay;
 }
 
 size_t wcslen(const wchar_t *s)
@@ -299,13 +299,13 @@ wchar_t *wcschr(const wchar_t *s, wchar_t c)
         if (*s == c)
             return (wchar_t *)s;
         if (!*s)
-            return NULL;
+            return nullptr;
     }
 }
 
 wchar_t *wcsrchr(const wchar_t *s, wchar_t c)
 {
-    const wchar_t *last = NULL;
+    const wchar_t *last = nullptr;
     for (;; s++) {
         if (*s == c)
             last = s;
@@ -323,7 +323,7 @@ wchar_t *wcsstr(const wchar_t *hay, const wchar_t *needle)
         if (wcsncmp(hay, needle, n) == 0)
             return (wchar_t *)hay;
     }
-    return NULL;
+    return nullptr;
 }
 
 wchar_t towupper(wchar_t c)

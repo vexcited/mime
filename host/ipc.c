@@ -47,7 +47,7 @@ bool mime_ipc_send(int fd, uint32_t type, const void *payload, uint32_t size)
 
 bool mime_ipc_recv(int fd, MimeIpcHeader *header, void **payload)
 {
-    *payload = NULL;
+    *payload = nullptr;
     if (!read_all(fd, header, sizeof(*header)) || header->size > MIME_IPC_MAX_PAYLOAD)
         return false;
     uint8_t *buf = malloc(header->size + 1);
@@ -67,7 +67,7 @@ int mime_ipc_connect(const char *socket_path)
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0)
         return -1;
-    struct sockaddr_un addr = {0};
+    struct sockaddr_un addr = {};
     addr.sun_family = AF_UNIX;
     mime_strlcpy(addr.sun_path, socket_path, sizeof(addr.sun_path));
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {

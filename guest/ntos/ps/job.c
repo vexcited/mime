@@ -84,7 +84,7 @@ NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS s
 static void post(EJOB *job, ULONG message, PEPROCESS process)
 {
     if (job->Port)
-        IopQueueCompletion(job->Port, job->Key, process ? process->UniqueProcessId : NULL, STATUS_SUCCESS, message);
+        IopQueueCompletion(job->Port, job->Key, process ? process->UniqueProcessId : nullptr, STATUS_SUCCESS, message);
 }
 
 /* every process of the job, referenced. */
@@ -129,7 +129,7 @@ static void job_delete(PVOID object)
 
 void PspInitializeJobs(void)
 {
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.Waitable = TRUE;
     init.ValidAccessMask = JOB_OBJECT_ALL_ACCESS;
     init.CloseProcedure = job_close;
@@ -164,7 +164,7 @@ static void join(EJOB *job, PEPROCESS process)
 /* a new process joins its creator's job, unless it may break away and asked to, or must. */
 void PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
 {
-    EJOB *job = parent ? parent->Job : NULL;
+    EJOB *job = parent ? parent->Job : nullptr;
     if (!job)
         return;
     ULONG limits = job->Limits.BasicLimitInformation.LimitFlags;
@@ -186,12 +186,12 @@ void PspJobProcessExit(PEPROCESS process)
     RemoveEntryList(&process->JobLinks);
     BOOLEAN last = --job->Active == 0;
     job->Terminated++;
-    process->Job = NULL;
+    process->Job = nullptr;
     KeReleaseSpinLock(&job->Lock, irql);
     BOOLEAN abnormal = ((ULONG)process->ExitStatus & 0xC0000000u) == 0xC0000000u;
     post(job, abnormal ? JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS : JOB_OBJECT_MSG_EXIT_PROCESS, process);
     if (last)
-        post(job, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, NULL);
+        post(job, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, nullptr);
     ObDereferenceObject(job);
 }
 
@@ -211,11 +211,11 @@ NTSTATUS NTAPI NtCreateJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATT
     if (!NT_SUCCESS(status))
         return status;
     EJOB *job;
-    status = ObCreateObject(PsJobType, attributes ? &oa : NULL, KeGetPreviousMode(), sizeof(*job), (PVOID *)&job);
+    status = ObCreateObject(PsJobType, attributes ? &oa : nullptr, KeGetPreviousMode(), sizeof(*job), (PVOID *)&job);
     if (NT_SUCCESS(status)) {
         init_job(job);
         HANDLE h;
-        status = ObInsertObjectNamed(job, attributes ? &oa : NULL, access, KeGetPreviousMode(), &h);
+        status = ObInsertObjectNamed(job, attributes ? &oa : nullptr, access, KeGetPreviousMode(), &h);
         if (NT_SUCCESS(status)) {
             NTSTATUS st = ObStoreHandle(handle, h);
             if (!NT_SUCCESS(st))
@@ -234,7 +234,7 @@ NTSTATUS NTAPI NtOpenJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, PsJobType, KeGetPreviousMode(), access, NULL, &h);
+    status = ObOpenObjectByName(&oa, PsJobType, KeGetPreviousMode(), access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -244,7 +244,7 @@ NTSTATUS NTAPI NtOpenJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
 NTSTATUS NTAPI NtAssignProcessToJobObject(HANDLE job_handle, HANDLE process_handle)
 {
     EJOB *job;
-    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, NULL);
+    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS process;
@@ -266,9 +266,9 @@ NTSTATUS NTAPI NtIsProcessInJob(HANDLE process_handle, HANDLE job_handle)
     NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_QUERY_LIMITED_INFORMATION, &process);
     if (!NT_SUCCESS(status))
         return status;
-    EJOB *job = NULL;
+    EJOB *job = nullptr;
     if (job_handle)
-        status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, NULL);
+        status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
     if (NT_SUCCESS(status))
         status = process->Job && (!job || process->Job == job) ? STATUS_PROCESS_IN_JOB : STATUS_PROCESS_NOT_IN_JOB;
     if (job)
@@ -280,7 +280,7 @@ NTSTATUS NTAPI NtIsProcessInJob(HANDLE process_handle, HANDLE job_handle)
 NTSTATUS NTAPI NtTerminateJobObject(HANDLE job_handle, NTSTATUS exit_status)
 {
     EJOB *job;
-    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, NULL);
+    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     terminate_all(job, exit_status);
@@ -296,7 +296,7 @@ NTSTATUS NTAPI NtTerminateJobObject(HANDLE job_handle, NTSTATUS exit_status)
 NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID info, ULONG length)
 {
     EJOB *job;
-    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, NULL);
+    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     union {
@@ -337,7 +337,7 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
                 break;
             }
             status = ObReferenceHandle(in.port.CompletionPort, IoCompletionObjectType, KeGetPreviousMode(), &port,
-                                       NULL);
+                                       nullptr);
             if (NT_SUCCESS(status)) {
                 job->Port = port;
                 job->Key = in.port.CompletionKey;
@@ -363,10 +363,10 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
 NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job_handle, ULONG klass, PVOID info, ULONG length,
                                            PULONG returned)
 {
-    EJOB *job = NULL;
+    EJOB *job = nullptr;
     NTSTATUS status;
     if (job_handle) {
-        status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, NULL);
+        status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
     } else {
         /* no handle asks about the job of the calling process. */
         job = PsCurrentProcess()->Job;
@@ -376,7 +376,7 @@ NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job_handle, ULONG klass, PVOID
     }
     if (!NT_SUCCESS(status))
         return status;
-    JOB_BASIC_ACCOUNTING accounting = {0};
+    JOB_BASIC_ACCOUNTING accounting = {};
     accounting.TotalProcesses = job->Total;
     accounting.ActiveProcesses = job->Active;
     accounting.TotalTerminatedProcesses = job->Terminated;

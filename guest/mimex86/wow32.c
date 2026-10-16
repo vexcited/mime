@@ -61,15 +61,15 @@ static void store_iosb32(ULONG address, const IO_STATUS_BLOCK *io)
 
 static PVOID allocate32(SIZE_T size)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     NTSTATUS status = NtAllocateVirtualMemory(NtCurrentProcess(), &base, 32, &size,
                                               MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!NT_SUCCESS(status))
-        return NULL;
+        return nullptr;
     if ((ULONG_PTR)base + size > 0x80000000ull) {
         SIZE_T release = 0;
         NtFreeVirtualMemory(NtCurrentProcess(), &base, &release, MEM_RELEASE);
-        return NULL;
+        return nullptr;
     }
     return base;
 }
@@ -139,14 +139,14 @@ BOOLEAN MxFillPeb32(PVOID memory)
 PVOID MxCreatePeb32(void)
 {
     PVOID peb = allocate32(0x1000);
-    return peb && MxFillPeb32(peb) ? peb : NULL;
+    return peb && MxFillPeb32(peb) ? peb : nullptr;
 }
 
 PVOID MxCreateTeb32(PVOID peb)
 {
     PULONG teb = allocate32(MIME_TEB_SIZE);
     if (!teb)
-        return NULL;
+        return nullptr;
     PTEB native = NtCurrentTeb();
     teb[0] = 0xFFFFFFFFu;
     teb[1] = (ULONG)(ULONG_PTR)native->NtTib.StackBase;
@@ -193,8 +193,8 @@ typedef struct {
     LARGE_INTEGER IoCounters[6];
 } PROCESS_INFORMATION32;
 
-_Static_assert(sizeof(THREAD_INFORMATION32) == 0x40, "x86 thread record");
-_Static_assert(sizeof(PROCESS_INFORMATION32) == 0xB8, "x86 process record");
+static_assert(sizeof(THREAD_INFORMATION32) == 0x40, "x86 thread record");
+static_assert(sizeof(PROCESS_INFORMATION32) == 0xB8, "x86 process record");
 
 /* converts the native process list into the x86 layout, threads and names included. */
 static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
@@ -203,7 +203,7 @@ static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
     PVOID native;
     NTSTATUS status;
     for (;;) {
-        native = NULL;
+        native = nullptr;
         SIZE_T alloc = size;
         status = NtAllocateVirtualMemory(NtCurrentProcess(), &native, 0, &alloc, MEM_RESERVE | MEM_COMMIT,
                                          PAGE_READWRITE);
@@ -222,7 +222,7 @@ static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
         /* first pass sizes, second pass writes when the caller's buffer holds everything. */
         for (int pass = 0; pass < 2 && NT_SUCCESS(status); pass++) {
             ULONG used = 0;
-            PROCESS_INFORMATION32 *last = NULL;
+            PROCESS_INFORMATION32 *last = nullptr;
             for (SYSTEM_PROCESS_INFORMATION *p = native;;
                  p = (SYSTEM_PROCESS_INFORMATION *)((PUCHAR)p + p->NextEntryOffset)) {
                 ULONG name = p->ImageName.Length ? p->ImageName.Length + sizeof(WCHAR) : 0;
@@ -290,8 +290,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
     UNICODE_STRING name;
     OBJECT_ATTRIBUTES oa;
-    IO_STATUS_BLOCK io = {0};
-    HANDLE handle = NULL;
+    IO_STATUS_BLOCK io = {};
+    HANDLE handle = nullptr;
     NTSTATUS status;
     if ((number >> 12) == 1)
         return (NTSTATUS)Mx32Win32kCall(number, a);
@@ -348,14 +348,14 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (a[4] || a[5] || a[9] || a[10])
             return STATUS_NOT_SUPPORTED;
         MIME_PARAMETERS32 *p = pointer32(a[8]);
-        RTL_USER_PROCESS_PARAMETERS pp = {0};
+        RTL_USER_PROCESS_PARAMETERS pp = {};
         pp.MaximumLength = pp.Length = sizeof(pp);
         pp.Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
         pp.ImagePathName = string32((ULONG)(ULONG_PTR)&p->ImagePathName);
         pp.CommandLine = string32((ULONG)(ULONG_PTR)&p->CommandLine);
         pp.CurrentDirectory.DosPath = string32((ULONG)(ULONG_PTR)&p->CurrentDirectory);
-        HANDLE process = NULL, thread = NULL;
-        status = NtCreateUserProcess(&process, &thread, a[2], a[3], NULL, NULL, a[6], a[7], &pp, NULL, NULL);
+        HANDLE process = nullptr, thread = nullptr;
+        status = NtCreateUserProcess(&process, &thread, a[2], a[3], nullptr, nullptr, a[6], a[7], &pp, nullptr, nullptr);
         if (NT_SUCCESS(status)) {
             store32(a[0], (ULONG_PTR)process);
             store32(a[1], (ULONG_PTR)thread);
@@ -366,8 +366,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (a[10])
             return STATUS_NOT_SUPPORTED;
         oa = attributes32(a[2], &name);
-        status = NtCreateThreadEx(&handle, a[1], a[2] ? &oa : NULL, handle32(a[3]), pointer32(a[4]),
-                                  pointer32(a[5]), a[6], a[7], a[8], a[9], NULL);
+        status = NtCreateThreadEx(&handle, a[1], a[2] ? &oa : nullptr, handle32(a[3]), pointer32(a[4]),
+                                  pointer32(a[5]), a[6], a[7], a[8], a[9], nullptr);
         if (NT_SUCCESS(status))
             store32(a[0], (ULONG_PTR)handle);
         return status;
@@ -379,7 +379,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtSuspendThread(handle32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtCreateEvent:
         oa = attributes32(a[2], &name);
-        status = NtCreateEvent(&handle, a[1], a[2] ? &oa : NULL, a[3], a[4]);
+        status = NtCreateEvent(&handle, a[1], a[2] ? &oa : nullptr, a[3], a[4]);
         if (NT_SUCCESS(status))
             store32(a[0], (ULONG_PTR)handle);
         return status;
@@ -387,9 +387,9 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtOpenMutant:
         oa = attributes32(a[2], &name);
         if (number == MIME_SVC_NtCreateMutant)
-            status = NtCreateMutant(&handle, a[1], a[2] ? &oa : NULL, a[3]);
+            status = NtCreateMutant(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
         else
-            status = NtOpenMutant(&handle, a[1], a[2] ? &oa : NULL);
+            status = NtOpenMutant(&handle, a[1], a[2] ? &oa : nullptr);
         if (NT_SUCCESS(status))
             store32(a[0], (ULONG_PTR)handle);
         return status;
@@ -420,7 +420,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         /* only the console protocol has fixed-width buffers and synchronous completion. */
         if (a[2] || a[5] < IOCTL_CONDRV_STATE || a[5] > IOCTL_CONDRV_SYNC_EVENT || (a[5] & 3))
             return STATUS_NOT_SUPPORTED;
-        status = NtDeviceIoControlFile(handle32(a[0]), handle32(a[1]), NULL, pointer32(a[3]), &io,
+        status = NtDeviceIoControlFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
                                        a[5], pointer32(a[6]), a[7], pointer32(a[8]), a[9]);
         store_iosb32(a[4], &io);
         return status;
@@ -429,10 +429,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (a[2] || !synchronous_file(handle32(a[0])))
             return STATUS_NOT_SUPPORTED;
         if (number == MIME_SVC_NtReadFile)
-            status = NtReadFile(handle32(a[0]), handle32(a[1]), NULL, pointer32(a[3]), &io,
+            status = NtReadFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
                                 pointer32(a[5]), a[6], pointer32(a[7]), pointer32(a[8]));
         else
-            status = NtWriteFile(handle32(a[0]), handle32(a[1]), NULL, pointer32(a[3]), &io,
+            status = NtWriteFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
                                  pointer32(a[5]), a[6], pointer32(a[7]), pointer32(a[8]));
         store_iosb32(a[4], &io);
         return status;
@@ -442,11 +442,11 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             return STATUS_NOT_SUPPORTED;
         name = a[9] ? string32(a[9]) : (UNICODE_STRING){0};
         if (number == MIME_SVC_NtQueryDirectoryFile)
-            status = NtQueryDirectoryFile(handle32(a[0]), handle32(a[1]), NULL, pointer32(a[3]), &io,
-                                           pointer32(a[5]), a[6], a[7], a[8], a[9] ? &name : NULL, a[10]);
+            status = NtQueryDirectoryFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
+                                           pointer32(a[5]), a[6], a[7], a[8], a[9] ? &name : nullptr, a[10]);
         else
-            status = NtQueryDirectoryFileEx(handle32(a[0]), handle32(a[1]), NULL, pointer32(a[3]), &io,
-                                             pointer32(a[5]), a[6], a[7], a[8], a[9] ? &name : NULL);
+            status = NtQueryDirectoryFileEx(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
+                                             pointer32(a[5]), a[6], a[7], a[8], a[9] ? &name : nullptr);
         store_iosb32(a[4], &io);
         return status;
     case MIME_SVC_NtQueryDefaultLocale:
@@ -459,7 +459,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         oa = attributes32(a[2], &name);
         if (number == MIME_SVC_NtCreateKey) {
             UNICODE_STRING klass = a[4] ? string32(a[4]) : (UNICODE_STRING){0};
-            status = NtCreateKey(&handle, a[1], &oa, a[3], a[4] ? &klass : NULL, a[5], pointer32(a[6]));
+            status = NtCreateKey(&handle, a[1], &oa, a[3], a[4] ? &klass : nullptr, a[5], pointer32(a[6]));
         } else if (number == MIME_SVC_NtOpenKeyEx) {
             status = NtOpenKeyEx(&handle, a[1], &oa, a[3]);
         } else {
@@ -581,10 +581,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return status;
     case MIME_SVC_NtCreateSymbolicLinkObject: {
         oa = attributes32(a[2], &name);
-        UNICODE_STRING target = {0};
+        UNICODE_STRING target = {};
         if (a[3])
             target = string32(a[3]);
-        status = NtCreateSymbolicLinkObject(&handle, a[1], &oa, a[3] ? &target : NULL);
+        status = NtCreateSymbolicLinkObject(&handle, a[1], &oa, a[3] ? &target : nullptr);
         if (NT_SUCCESS(status))
             store32(a[0], (ULONG_PTR)handle);
         return status;
@@ -610,7 +610,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
                 WCHAR Name[1];
             };
             SIZE_T size = offsetof(struct RENAME, Name) + p[2];
-            PVOID memory = NULL;
+            PVOID memory = nullptr;
             SIZE_T allocation = size;
             status = NtAllocateVirtualMemory(NtCurrentProcess(), &memory, 0, &allocation,
                                               MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -668,7 +668,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return status;
     case MIME_SVC_NtCreateSection:
         oa = attributes32(a[2], &name);
-        status = NtCreateSection(&handle, a[1], a[2] ? &oa : NULL, pointer32(a[3]), a[4], a[5], handle32(a[6]));
+        status = NtCreateSection(&handle, a[1], a[2] ? &oa : nullptr, pointer32(a[3]), a[4], a[5], handle32(a[6]));
         if (NT_SUCCESS(status))
             store32(a[0], (ULONG_PTR)handle);
         return status;
@@ -713,7 +713,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             if (a[3] < 28)
                 return STATUS_INFO_LENGTH_MISMATCH;
             THREAD_BASIC_INFORMATION info;
-            status = NtQueryInformationThread(handle32(a[0]), a[1], &info, sizeof(info), NULL);
+            status = NtQueryInformationThread(handle32(a[0]), a[1], &info, sizeof(info), nullptr);
             if (NT_SUCCESS(status)) {
                 ULONG out[7] = {(ULONG)info.ExitStatus,
                     a[0] == (ULONG)-2 ? (ULONG)(ULONG_PTR)MxCurrentTeb32() : 0,
@@ -732,7 +732,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             if (a[3] < 24)
                 return STATUS_INFO_LENGTH_MISMATCH;
             PROCESS_BASIC_INFORMATION info;
-            status = NtQueryInformationProcess(handle32(a[0]), a[1], &info, sizeof(info), NULL);
+            status = NtQueryInformationProcess(handle32(a[0]), a[1], &info, sizeof(info), nullptr);
             if (NT_SUCCESS(status)) {
                 ULONG out[6] = {(ULONG)info.ExitStatus,
                     a[0] == (ULONG)-1 ? (ULONG)(ULONG_PTR)MxCurrentPeb32() : 0,
@@ -752,7 +752,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             if (a[2] < 44)
                 return STATUS_INFO_LENGTH_MISMATCH;
             SYSTEM_BASIC_INFORMATION info;
-            status = NtQuerySystemInformation(a[0], &info, sizeof(info), NULL);
+            status = NtQuerySystemInformation(a[0], &info, sizeof(info), nullptr);
             if (NT_SUCCESS(status)) {
                 ULONG out[11] = {info.Reserved, info.TimerResolution, info.PageSize, info.NumberOfPhysicalPages,
                     info.LowestPhysicalPageNumber, info.HighestPhysicalPageNumber, info.AllocationGranularity,

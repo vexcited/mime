@@ -18,7 +18,7 @@ static DWORD MaxConnsPer10Server = 4;
 PWSTR InetDuplicate(LPCWSTR text)
 {
     if (!text)
-        return NULL;
+        return nullptr;
     SIZE_T bytes = ((SIZE_T)lstrlenW(text) + 1) * sizeof(WCHAR);
     PWSTR copy = HeapAlloc(GetProcessHeap(), 0, bytes);
     if (copy)
@@ -74,7 +74,7 @@ INET_OBJECT *InetReference(HINTERNET handle)
 {
     AcquireSRWLockShared(&TableLock);
     DWORD slot = SlotOf(handle);
-    INET_OBJECT *object = slot == UINT32_MAX ? NULL : Slots[slot];
+    INET_OBJECT *object = slot == UINT32_MAX ? nullptr : Slots[slot];
     if (object)
         InterlockedIncrement(&object->Refs);
     ReleaseSRWLockShared(&TableLock);
@@ -89,7 +89,7 @@ INET_OBJECT *InetReferenceType(HINTERNET handle, DWORD type)
     if (object && object->Type != type) {
         InetRelease(object);
         SetLastError(ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
-        return NULL;
+        return nullptr;
     }
     return object;
 }
@@ -100,7 +100,7 @@ static INET_OBJECT *CreateObject(DWORD type, INET_OBJECT *parent)
     INET_OBJECT *object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
     if (!object) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     object->Refs = 2;
     object->Type = type;
@@ -141,7 +141,7 @@ static INET_OBJECT *CreateObject(DWORD type, INET_OBJECT *parent)
         object->Refs = 1;
         InetRelease(object);
         SetLastError(ERROR_INTERNET_OUT_OF_HANDLES);
-        return NULL;
+        return nullptr;
     }
     WORD generation = (WORD)((Generations[slot] + 1) & 0x7FFF);
     Generations[slot] = generation ? generation : 1;
@@ -170,18 +170,18 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenW(LPCWSTR agent, DWORD access_type,
     if (access_type != INTERNET_OPEN_TYPE_PRECONFIG && access_type != INTERNET_OPEN_TYPE_DIRECT &&
         access_type != INTERNET_OPEN_TYPE_PROXY && access_type != INTERNET_OPEN_TYPE_PRECONFIG_WITH_NO_AUTOPROXY) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
-    INET_OBJECT *session = CreateObject(INTERNET_HANDLE_TYPE_INTERNET, NULL);
+    INET_OBJECT *session = CreateObject(INTERNET_HANDLE_TYPE_INTERNET, nullptr);
     if (!session)
-        return NULL;
+        return nullptr;
     session->AccessType = access_type;
     session->Flags = flags;
     if (agent && !(session->Agent = InetDuplicate(agent))) {
         InternetCloseHandle(session->Handle);
         InetRelease(session);
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     HINTERNET handle = session->Handle;
     InetRelease(session);
@@ -194,7 +194,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetConnectW(HINTERNET session, LPCWSTR ser
 {
     INET_OBJECT *parent = InetReferenceType(session, INTERNET_HANDLE_TYPE_INTERNET);
     if (!parent)
-        return NULL;
+        return nullptr;
     DWORD type, error = ERROR_SUCCESS;
     if (!server || !*server)
         error = ERROR_INVALID_PARAMETER;
@@ -210,12 +210,12 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetConnectW(HINTERNET session, LPCWSTR ser
     if (error) {
         InetRelease(parent);
         SetLastError(error);
-        return NULL;
+        return nullptr;
     }
     INET_OBJECT *connect = CreateObject(type, parent);
     InetRelease(parent);
     if (!connect)
-        return NULL;
+        return nullptr;
     connect->Flags |= flags;
     connect->Context = context;
     connect->Service = service;
@@ -227,7 +227,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetConnectW(HINTERNET session, LPCWSTR ser
         InternetCloseHandle(connect->Handle);
         InetRelease(connect);
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     NotifyCreated(connect);
     HINTERNET handle = connect->Handle;
@@ -242,11 +242,11 @@ DECLSPEC_EXPORT HINTERNET WINAPI HttpOpenRequestW(HINTERNET connect, LPCWSTR ver
 {
     INET_OBJECT *parent = InetReferenceType(connect, INTERNET_HANDLE_TYPE_CONNECT_HTTP);
     if (!parent)
-        return NULL;
+        return nullptr;
     INET_OBJECT *request = CreateObject(INTERNET_HANDLE_TYPE_HTTP_REQUEST, parent);
     InetRelease(parent);
     if (!request)
-        return NULL;
+        return nullptr;
     request->Flags = flags;
     request->Context = context;
     request->Verb = InetDuplicate(verb && *verb ? verb : L"GET");
@@ -257,7 +257,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI HttpOpenRequestW(HINTERNET connect, LPCWSTR ver
         InternetCloseHandle(request->Handle);
         InetRelease(request);
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     NotifyCreated(request);
     HINTERNET handle = request->Handle;
@@ -279,7 +279,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetCloseHandle(HINTERNET handle)
 {
     AcquireSRWLockExclusive(&TableLock);
     DWORD slot = SlotOf(handle);
-    INET_OBJECT *root = slot == UINT32_MAX ? NULL : Slots[slot];
+    INET_OBJECT *root = slot == UINT32_MAX ? nullptr : Slots[slot];
     if (!root) {
         ReleaseSRWLockExclusive(&TableLock);
         return InetFail(ERROR_INVALID_HANDLE);
@@ -297,7 +297,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetCloseHandle(HINTERNET handle)
     for (DWORD i = 0; i < SlotCount; i++)
         if (Slots[i] && DescendsFrom(Slots[i], root)) {
             closed[count++] = Slots[i];
-            Slots[i] = NULL;
+            Slots[i] = nullptr;
         }
     ReleaseSRWLockExclusive(&TableLock);
     /* the deepest handle is a request, two levels below its session. */
@@ -382,7 +382,7 @@ static PWSTR RequestUrl(INET_OBJECT *request)
         chars += lstrlenW(parts[i]);
     PWSTR url = HeapAlloc(GetProcessHeap(), 0, chars * sizeof(WCHAR));
     if (!url)
-        return NULL;
+        return nullptr;
     url[0] = 0;
     for (int i = 0; i < 5; i++)
         lstrcatW(url, parts[i]);
@@ -393,7 +393,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetQueryOptionW(HINTERNET handle, DWORD option,
 {
     if (!length)
         return InetFail(ERROR_INVALID_PARAMETER);
-    INET_OBJECT *object = NULL;
+    INET_OBJECT *object = nullptr;
     if (handle && !(object = InetReference(handle)))
         return FALSE;
     BOOL ok;
@@ -460,7 +460,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetQueryOptionW(HINTERNET handle, DWORD option,
 
 DECLSPEC_EXPORT BOOL WINAPI InternetSetOptionW(HINTERNET handle, DWORD option, LPVOID buffer, DWORD length)
 {
-    INET_OBJECT *object = NULL;
+    INET_OBJECT *object = nullptr;
     if (handle && !(object = InetReference(handle)))
         return FALSE;
     BOOL ok = TRUE;

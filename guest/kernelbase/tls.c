@@ -37,7 +37,7 @@ static void unlink_thread(void)
         InitializeListHead(&teb->TlsLinks);
     }
     PVOID *expansion = teb->TlsExpansionSlots;
-    teb->TlsExpansionSlots = NULL;
+    teb->TlsExpansionSlots = nullptr;
     RtlLeaveCriticalSection(&g_tls_lock);
     KbFree(expansion);
 }
@@ -88,9 +88,9 @@ DWORD WINAPI TlsAlloc(void)
     /* the slot may hold a stale value from a previous owner in this thread. */
     PTEB teb = NtCurrentTeb();
     if (index < TLS_MINIMUM_AVAILABLE)
-        teb->TlsSlots[index] = NULL;
+        teb->TlsSlots[index] = nullptr;
     else if (teb->TlsExpansionSlots)
-        teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] = NULL;
+        teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] = nullptr;
     return index;
 }
 
@@ -113,9 +113,9 @@ BOOL WINAPI TlsFree(DWORD index)
     for (PLIST_ENTRY e = g_tls_threads.Flink; e != &g_tls_threads; e = e->Flink) {
         PTEB teb = CONTAINING_RECORD(e, TEB, TlsLinks);
         if (index < TLS_MINIMUM_AVAILABLE)
-            teb->TlsSlots[index] = NULL;
+            teb->TlsSlots[index] = nullptr;
         else if (teb->TlsExpansionSlots)
-            teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] = NULL;
+            teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] = nullptr;
     }
     RtlLeaveCriticalSection(&g_tls_lock);
     if (index < TLS_MINIMUM_AVAILABLE)
@@ -133,16 +133,16 @@ LPVOID WINAPI TlsGetValue2(DWORD index)
         return teb->TlsSlots[index];
     if (index >= TLS_TOTAL) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
-    return teb->TlsExpansionSlots ? teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] : NULL;
+    return teb->TlsExpansionSlots ? teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] : nullptr;
 }
 
 LPVOID WINAPI TlsGetValue(DWORD index)
 {
     if (index >= TLS_TOTAL) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     KbSetError(ERROR_SUCCESS);
     return TlsGetValue2(index);
@@ -195,7 +195,7 @@ DWORD WINAPI FlsAlloc(PFLS_CALLBACK_FUNCTION callback)
     }
     FLS_DATA *data = NtCurrentTeb()->FlsData;
     if (data)
-        data->Slots[index] = NULL;
+        data->Slots[index] = nullptr;
     return index;
 }
 
@@ -216,11 +216,11 @@ BOOL WINAPI FlsFree(DWORD index)
     for (PLIST_ENTRY e = g_fls_list.Flink; e != &g_fls_list; e = e->Flink) {
         FLS_DATA *data = CONTAINING_RECORD(e, FLS_DATA, Links);
         PVOID value = data->Slots[index];
-        data->Slots[index] = NULL;
+        data->Slots[index] = nullptr;
         if (value && callback)
             callback(value);
     }
-    g_fls_callbacks[index] = NULL;
+    g_fls_callbacks[index] = nullptr;
     bit_clear(g_fls_bitmap, index);
     RtlLeaveCriticalSection(&g_fls_lock);
     return TRUE;
@@ -230,17 +230,17 @@ PVOID WINAPI FlsGetValue2(DWORD index)
 {
     if (!index || index >= FLS_SLOTS) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     FLS_DATA *data = NtCurrentTeb()->FlsData;
-    return data ? data->Slots[index] : NULL;
+    return data ? data->Slots[index] : nullptr;
 }
 
 PVOID WINAPI FlsGetValue(DWORD index)
 {
     if (!valid_fls(index)) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     KbSetError(ERROR_SUCCESS);
     return FlsGetValue2(index);
@@ -281,13 +281,13 @@ void KbFlsThreadCleanup(void)
         PVOID value = data->Slots[i];
         if (!value || !bit_test(g_fls_bitmap, i))
             continue;
-        data->Slots[i] = NULL;
+        data->Slots[i] = nullptr;
         PFLS_CALLBACK_FUNCTION callback = g_fls_callbacks[i];
         if (callback)
             callback(value);
     }
     RemoveEntryList(&data->Links);
-    teb->FlsData = NULL;
+    teb->FlsData = nullptr;
     RtlLeaveCriticalSection(&g_fls_lock);
     KbFree(data);
 }

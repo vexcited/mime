@@ -60,7 +60,7 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
         ReleaseSRWLockShared(&MimeMsiLock);
         return ERROR_SUCCESS;
     }
-    PWSTR list = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"TRANSFORMS")) : NULL;
+    PWSTR list = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"TRANSFORMS")) : nullptr;
     UINT error = !package ? ERROR_INVALID_HANDLE : !list ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
     if (!error && *list && (!wcscmp(MimeMsiGetProperty(package, L"TRANSFORMSSECURE"), L"1") ||
                            !wcscmp(MimeMsiGetProperty(package, L"TRANSFORMSATSOURCE"), L"1")))
@@ -91,7 +91,7 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
 static UINT execute_package(MSIHANDLE handle)
 {
     UINT error = ERROR_SUCCESS;
-    UINT level = (UINT)MsiSetInternalUI(INSTALLUILEVEL_NOCHANGE, NULL) & 0x1f;
+    UINT level = (UINT)MsiSetInternalUI(INSTALLUILEVEL_NOCHANGE, nullptr) & 0x1f;
     if (level == INSTALLUILEVEL_DEFAULT)
         level = INSTALLUILEVEL_FULL;
     if (!error) {
@@ -131,7 +131,7 @@ static UINT maintenance_command(MSIHANDLE handle, PCWSTR command)
 {
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
-    PWSTR transforms = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"TRANSFORMS")) : NULL;
+    PWSTR transforms = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"TRANSFORMS")) : nullptr;
     ReleaseSRWLockShared(&MimeMsiLock);
     if (!transforms)
         return package ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_HANDLE;
@@ -153,7 +153,7 @@ static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command)
 {
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(*handle, MIME_MSI_KIND_PACKAGE);
-    PWSTR product = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"ProductCode")) : NULL;
+    PWSTR product = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"ProductCode")) : nullptr;
     ReleaseSRWLockShared(&MimeMsiLock);
     if (!product)
         return package ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_HANDLE;
@@ -207,7 +207,7 @@ UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode)
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
     UINT error = MsiOpenProductW(product, &handle);
-    WCHAR options[8] = {0};
+    WCHAR options[8] = {};
     ULONG length = 0;
     if (mode & REINSTALLMODE_FILEMISSING) options[length++] = L'p';
     if (mode & REINSTALLMODE_FILEREPLACE) options[length++] = L'a';

@@ -65,7 +65,7 @@ static void msg_to_ansi(LPMSG msg)
     if ((msg->message == WM_CHAR || msg->message == WM_SYSCHAR) && msg->wParam > 0x7F) {
         WCHAR wc = (WCHAR)msg->wParam;
         char c = '?';
-        WideCharToMultiByte(CP_ACP, 0, &wc, 1, &c, 1, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, &wc, 1, &c, 1, nullptr, nullptr);
         msg->wParam = (UCHAR)c;
     }
 }
@@ -280,7 +280,7 @@ WINUSERAPI LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPA
         if (!w)
             return 0;
         LRESULT n = DefWindowProcW(hwnd, msg, wparam, (LPARAM)w);
-        int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, (LPSTR)lparam, (int)wparam - 1, NULL, NULL);
+        int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, (LPSTR)lparam, (int)wparam - 1, nullptr, nullptr);
         ((LPSTR)lparam)[a] = 0;
         UserFree(w);
         return a;
@@ -291,7 +291,7 @@ WINUSERAPI LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPA
         if (!w)
             return n;
         DefWindowProcW(hwnd, WM_GETTEXT, (WPARAM)n + 1, (LPARAM)w);
-        int a = WideCharToMultiByte(CP_ACP, 0, w, n, NULL, 0, NULL, NULL);
+        int a = WideCharToMultiByte(CP_ACP, 0, w, n, nullptr, 0, nullptr, nullptr);
         UserFree(w);
         return a;
     }

@@ -78,7 +78,7 @@ uint32_t dxil_builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t ty
          which == SpvBuiltInViewportIndex || which == SpvBuiltInViewIndex ||
          which == SpvBuiltInSubgroupLocalInvocationId || which == SpvBuiltInSubgroupSize ||
          which == SpvBuiltInSubgroupLtMask || which == SpvBuiltInShadingRateKHR))
-        spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0);
+        spv_decorate(&c->b, var, SpvDecorationFlat, nullptr, 0);
     if (c->builtin_count < 64) {
         c->builtins[c->builtin_count].which = which;
         c->builtins[c->builtin_count].storage = storage;
@@ -225,7 +225,7 @@ Value *dxil_slot(Compiler *c, uint32_t id)
     id -= c->m.value_count;
     if (c->f && id < c->f->value_count)
         return &c->values[id];
-    return NULL;
+    return nullptr;
 }
 
 static uint32_t half_to_float(uint32_t h)
@@ -590,7 +590,7 @@ static int global_pointer(Compiler *c, uint32_t id, const DxValue *v, Pointer *o
         uint32_t type = memory_type(c, pt->element, storage);
         uint32_t init = 0;
         if (storage == SpvStorageClassPrivate && v->ops && v->ops[0] != DX_NONE) {
-            const DxValue *iv = dx_value(&c->m, NULL, v->ops[0]);
+            const DxValue *iv = dx_value(&c->m, nullptr, v->ops[0]);
             if (iv && iv->kind != DV_UNDEF)
                 init = dxil_value(c, v->ops[0]);
         }
@@ -729,7 +729,7 @@ static void binop(Compiler *c, const DxInst *ins)
         r = spv_op2(&c->b, op, type, a, b);
     }
     if (ins->flags & DX_INST_PRECISE)
-        spv_decorate(&c->b, r, SpvDecorationNoContraction, NULL, 0);
+        spv_decorate(&c->b, r, SpvDecorationNoContraction, nullptr, 0);
     dxil_set_plain(c, ins->value, r);
 }
 
@@ -1025,7 +1025,7 @@ static const char *callee_name(Compiler *c, const DxInst *ins)
 {
     const DxValue *v = dx_value(&c->m, c->f, ins->ops[0]);
     if (!v || v->kind != DV_FUNCTION || v->inst >= c->m.function_count)
-        return NULL;
+        return nullptr;
     return c->m.functions[v->inst].name;
 }
 
@@ -1178,7 +1178,7 @@ static int find_demotions(Compiler *c)
         if (blk->copy || orphan_block(cfg, b))
             continue;
         for (uint32_t k = 0; k < blk->phi_count; k++) {
-            const DxValue *v = blk->phis[k].result < CFG_SYNTH ? dx_value(&c->m, f, blk->phis[k].result) : NULL;
+            const DxValue *v = blk->phis[k].result < CFG_SYNTH ? dx_value(&c->m, f, blk->phis[k].result) : nullptr;
             if (v && v->kind == DV_INSTRUCTION)
                 phi_block[v->inst] = b;
         }
@@ -1345,7 +1345,7 @@ static void terminator(Compiler *c, uint32_t b)
     default:
         /* ignoring a hit or ending the search already ended the block. */
         if (c->b.block_open)
-            spv_op_void(&c->b, SpvOpUnreachable, NULL, 0);
+            spv_op_void(&c->b, SpvOpUnreachable, nullptr, 0);
         c->b.block_open = 0;
         break;
     }
@@ -1358,7 +1358,7 @@ static int emit_block(Compiler *c, PhiTable *t, uint32_t b)
     c->current = b;
     spv_label(&c->b, c->labels[b]);
     if (orphan_block(cfg, b)) {
-        spv_op_void(&c->b, SpvOpUnreachable, NULL, 0);
+        spv_op_void(&c->b, SpvOpUnreachable, nullptr, 0);
         c->b.block_open = 0;
         return 0;
     }
@@ -1392,7 +1392,7 @@ static int emit_block(Compiler *c, PhiTable *t, uint32_t b)
     }
     /* demoted phi results go to their variables after every phi. */
     for (uint32_t k = 0; k < blk->phi_count; k++) {
-        Value *s = blk->phis[k].result < CFG_SYNTH ? dxil_slot(c, blk->phis[k].result) : NULL;
+        Value *s = blk->phis[k].result < CFG_SYNTH ? dxil_slot(c, blk->phis[k].result) : nullptr;
         if (s && s->demoted && s->var)
             spv_store(&c->b, s->var, s->id);
     }
@@ -1463,7 +1463,7 @@ static int compile_function(Compiler *c, const DxFunction *f, uint32_t id)
                 c->part_masks[ins->ops[j] - c->m.value_count] = ~0u;
     }
 
-    spv_function_begin(&c->b, id, c->t_void, spv_type_function(&c->b, c->t_void, NULL, 0));
+    spv_function_begin(&c->b, id, c->t_void, spv_type_function(&c->b, c->t_void, nullptr, 0));
     for (uint32_t i = 0; i < cfg->order_count; i++)
         if (emit_block(c, &t, cfg->order[i]))
             return -1;
@@ -1526,11 +1526,11 @@ int dxil_export_matches(const char *function, const char *export_name)
 static const DxFunction *function_of(Compiler *c, const DxMetadata *md)
 {
     if (!md || md->kind != DM_VALUE)
-        return NULL;
+        return nullptr;
     for (uint32_t i = 0; i < c->m.function_count; i++)
         if (c->m.functions[i].value == md->value && !c->m.functions[i].prototype)
             return &c->m.functions[i];
-    return NULL;
+    return nullptr;
 }
 
 /* the properties of the entry point: flags and each stage's description. */
@@ -1567,7 +1567,7 @@ static int read_properties(Compiler *c, const DxMetadata *list)
                 c->tess_partitioning = (uint32_t)dx_md_int(&c->m, v, 4, 0);
                 c->tess_primitive = (uint32_t)dx_md_int(&c->m, v, 5, 0);
                 const DxMetadata *factor = dx_md_op(&c->m, v, 6);
-                const DxValue *fv = factor && factor->kind == DM_VALUE ? dx_value(&c->m, NULL, factor->value) : NULL;
+                const DxValue *fv = factor && factor->kind == DM_VALUE ? dx_value(&c->m, nullptr, factor->value) : nullptr;
                 c->max_tess_factor = fv && fv->kind == DV_FLOAT ? (uint32_t)fv->bits : 0;
             }
             break;
@@ -1631,12 +1631,12 @@ static int build(Compiler *c)
     if (!entries || !entries->count || entries->nodes[0] >= c->m.metadata_count)
         return dxil_fail(c, "no entry point");
     const DxMetadata *entry = &c->m.metadata[entries->nodes[0]];
-    const DxMetadata *resources = NULL;
+    const DxMetadata *resources = nullptr;
     if (c->kind == KIND_LIBRARY) {
         /* a library's export, its resources those of the whole library. */
-        entry = NULL;
+        entry = nullptr;
         for (uint32_t i = 0; i < entries->count && !entry; i++) {
-            const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : NULL;
+            const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : nullptr;
             const DxFunction *fn = function_of(c, dx_md_op(&c->m, md, 0));
             if (fn && c->options->export_name && dxil_export_matches(fn->name, c->options->export_name))
                 entry = md;
@@ -1690,8 +1690,8 @@ static int build(Compiler *c)
             return -1;
         c->in_patch_function = 0;
         /* every invocation writes its control point; the first then writes the patch's constants. */
-        c->f = NULL;
-        uint32_t void_fn = spv_type_function(b, c->t_void, NULL, 0);
+        c->f = nullptr;
+        uint32_t void_fn = spv_type_function(b, c->t_void, nullptr, 0);
         spv_function_begin(b, main, c->t_void, void_fn);
         spv_label(b, spv_id(b));
         spv_op(b, SpvOpFunctionCall, c->t_void, &cp, 1);
@@ -1748,7 +1748,7 @@ int dxil_library_exports(const void *bytecode, size_t length, DxilExport *out, u
         count = 0;
         const DxNamedMetadata *entries = dx_named(&c->m, "dx.entryPoints");
         for (uint32_t i = 0; entries && i < entries->count; i++) {
-            const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : NULL;
+            const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : nullptr;
             const DxFunction *fn = function_of(c, dx_md_op(&c->m, md, 0));
             if (!fn || !fn->name)
                 continue;
@@ -1782,7 +1782,7 @@ int dxil_library_exports(const void *bytecode, size_t length, DxilExport *out, u
 int dxil_is(const void *bytecode, size_t length)
 {
     uint32_t size;
-    return dxbc_find_chunk(bytecode, length, DXBC_FOURCC('D', 'X', 'I', 'L'), &size) != NULL;
+    return dxbc_find_chunk(bytecode, length, DXBC_FOURCC('D', 'X', 'I', 'L'), &size) != nullptr;
 }
 
 static void set_error(DxbcShaderInfo *info, const char *error)

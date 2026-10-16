@@ -44,8 +44,8 @@ static ULONG NTAPI init_gdi(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
         g_gdi.GetAbcI = (GET_ABC_I)(void *)GetProcAddress(gdi, "GetCharABCWidthsI");
     }
     if (!g_gdi.GetGlyphIndices || !g_gdi.GetAbcI) {
-        g_gdi.GetGlyphIndices = NULL;
-        g_gdi.GetAbcI = NULL;
+        g_gdi.GetGlyphIndices = nullptr;
+        g_gdi.GetAbcI = nullptr;
     }
     return TRUE;
 }
@@ -216,12 +216,12 @@ HRESULT UspGetCache(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
     }
     if (!dc)
         return E_PENDING;
-    RtlRunOnceExecuteOnce(&g_gdi.Once, init_gdi, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_gdi.Once, init_gdi, nullptr, nullptr);
     c = UspAlloc(sizeof(*c));
     if (!c)
         return E_OUTOFMEMORY;
     c->Magic = CACHE_MAGIC;
-    c->Real = g_gdi.GetGlyphIndices != NULL;
+    c->Real = g_gdi.GetGlyphIndices != nullptr;
     if (!GetTextMetricsW(dc, &c->Metrics)) {
         UspFree(c);
         return E_INVALIDARG;
@@ -247,7 +247,7 @@ USPAPI ScriptFreeCache(SCRIPT_CACHE *cache)
         c->Magic = 0;
         UspFree(c);
     }
-    *cache = NULL;
+    *cache = nullptr;
     return S_OK;
 }
 
@@ -288,7 +288,7 @@ static BOOL lookup_abc(USP_CACHE *c, HDC dc, WORD glyph, BOOL no_index, ABC *abc
         return FALSE;
     BOOL ok;
     if (c->Real && !no_index) {
-        ok = g_gdi.GetAbcI(dc, glyph, 1, NULL, abc);
+        ok = g_gdi.GetAbcI(dc, glyph, 1, nullptr, abc);
     } else {
         ok = GetCharABCWidthsW(dc, glyph, glyph, abc);
         if (!ok) {
@@ -307,8 +307,8 @@ static BOOL lookup_abc(USP_CACHE *c, HDC dc, WORD glyph, BOOL no_index, ABC *abc
         if (!c->Known[glyph >> 8] || !c->Widths[glyph >> 8]) {
             UspFree(c->Known[glyph >> 8]);
             UspFree(c->Widths[glyph >> 8]);
-            c->Known[glyph >> 8] = NULL;
-            c->Widths[glyph >> 8] = NULL;
+            c->Known[glyph >> 8] = nullptr;
+            c->Widths[glyph >> 8] = nullptr;
             return TRUE;
         }
     }
@@ -425,7 +425,7 @@ USPAPI ScriptTextOut(const HDC dc, SCRIPT_CACHE *cache, int x, int y, UINT optio
     if (!shifted)
         return ExtTextOutW(dc, x, y, flags, rect, (LPCWSTR)glyphs, (UINT)count, (const INT *)adv) ? S_OK : E_FAIL;
     if (flags & ETO_OPAQUE)
-        ExtTextOutW(dc, x, y, ETO_OPAQUE, rect, NULL, 0, NULL);
+        ExtTextOutW(dc, x, y, ETO_OPAQUE, rect, nullptr, 0, nullptr);
     flags &= ~(UINT)ETO_OPAQUE;
     for (int i = 0; i < count; i++) {
         ExtTextOutW(dc, x + offsets[i].du, y - offsets[i].dv, flags, rect, (LPCWSTR)&glyphs[i], 1, &adv[i]);
@@ -674,7 +674,7 @@ USPAPI ScriptRecordDigitSubstitution(LCID locale, SCRIPT_DIGITSUBSTITUTE *sds)
         return E_POINTER;
     if (locale == LOCALE_USER_DEFAULT)
         locale = GetUserDefaultLCID();
-    WCHAR v[4] = {0};
+    WCHAR v[4] = {};
     int mode = SCRIPT_DIGITSUBSTITUTE_NONE;
     if (GetLocaleInfoW(locale, 0x1014 /* LOCALE_IDIGITSUBSTITUTION */, v, 4) > 0) {
         if (v[0] == '0')
@@ -729,7 +729,7 @@ USPAPI ScriptApplyDigitSubstitution(const SCRIPT_DIGITSUBSTITUTE *sds, SCRIPT_CO
  * where a word takes its kashida, by the class of the glyph that offers it:
  * the lowest wins, classes 8 and up never.
  */
-static const BYTE g_kashida_rank[16] = {8, 8, 8, 8, 8, 8, 8, 6, 0, 3, 2, 5, 7, 4, 1, 1};
+static constexpr BYTE g_kashida_rank[16] = {8, 8, 8, 8, 8, 8, 8, 6, 0, 3, 2, 5, 7, 4, 1, 1};
 
 enum { JUSTIFY_NONE, JUSTIFY_KASHIDA, JUSTIFY_CHARACTER, JUSTIFY_BLANK };
 
@@ -997,7 +997,7 @@ USPAPI UspAllocCache(int size, void **out)
 {
     if (!out)
         return E_INVALIDARG;
-    *out = size > 0 ? UspAlloc((SIZE_T)size) : NULL;
+    *out = size > 0 ? UspAlloc((SIZE_T)size) : nullptr;
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 

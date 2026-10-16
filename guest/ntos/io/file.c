@@ -32,8 +32,8 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
         KiFreeCapturedString(&name);
         return STATUS_OBJECT_NAME_INVALID;
     }
-    IO_STATUS_BLOCK local = {0};
-    HANDLE h = NULL;
+    IO_STATUS_BLOCK local = {};
+    HANDLE h = nullptr;
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
     KiFreeCapturedString(&name);
     if (!NT_SUCCESS(status)) {
@@ -51,13 +51,13 @@ NTSTATUS NTAPI NtCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
                             ULONG options, PVOID ea, ULONG ea_length)
 {
     return IoCreateFile(handle, access, attributes, iosb, allocation, file_attributes, share, disposition, options, ea,
-                        ea_length, 0, NULL, 0);
+                        ea_length, 0, nullptr, 0);
 }
 
 NTSTATUS NTAPI NtOpenFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                           ULONG share, ULONG options)
 {
-    return IoCreateFile(handle, access, attributes, iosb, NULL, 0, share, FILE_OPEN, options, NULL, 0, 0, NULL, 0);
+    return IoCreateFile(handle, access, attributes, iosb, nullptr, 0, share, FILE_OPEN, options, nullptr, 0, 0, nullptr, 0);
 }
 
 #define ZW_WRAP(call)                                                                                             \
@@ -84,7 +84,7 @@ NTSTATUS NTAPI ZwOpenFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES
 
 static NTSTATUS reference_file(HANDLE handle, PFILE_OBJECT *file)
 {
-    return ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)file, NULL);
+    return ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)file, nullptr);
 }
 
 static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_routine, PVOID apc_context,
@@ -121,7 +121,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
     if (use_position)
         offset = file->CurrentByteOffset;
 
-    PUCHAR bounce = NULL;
+    PUCHAR bounce = nullptr;
     if (mode == UserMode && length) {
         bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < IO_BOUNCE_SIZE ? length : IO_BOUNCE_SIZE, KI_TAG('I', 'o', 'B', 'n'));
         if (!bounce) {
@@ -130,7 +130,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         }
     }
     ULONG done = 0;
-    IO_STATUS_BLOCK io = {0};
+    IO_STATUS_BLOCK io = {};
     while (done < length || length == 0) {
         ULONG chunk = length - done;
         if (bounce && chunk > IO_BOUNCE_SIZE)
@@ -169,7 +169,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
     store_iosb(iosb, &io);
     if (event) {
         PKEVENT ev;
-        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, mode, (PVOID *)&ev, NULL))) {
+        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, mode, (PVOID *)&ev, nullptr))) {
             KeSetEvent(ev, 0, FALSE);
             ObDereferenceObject(ev);
         }
@@ -208,13 +208,13 @@ NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
 NTSTATUS NTAPI ZwReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                           PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(FALSE, handle, event, NULL, NULL, iosb, buffer, length, offset));
+    ZW_WRAP(rw_file(FALSE, handle, event, nullptr, nullptr, iosb, buffer, length, offset));
 }
 
 NTSTATUS NTAPI ZwWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                            PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(TRUE, handle, event, NULL, NULL, iosb, buffer, length, offset));
+    ZW_WRAP(rw_file(TRUE, handle, event, nullptr, nullptr, iosb, buffer, length, offset));
 }
 
 static NTSTATUS query_file(PFILE_OBJECT file, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass, PULONG written)
@@ -324,7 +324,7 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
         status = KiCopyFromUser(buf, info, length);
     else
         memcpy(buf, info, length);
-    IO_STATUS_BLOCK io = {0};
+    IO_STATUS_BLOCK io = {};
     if (NT_SUCCESS(status)) {
         if (klass == FilePositionInformation && length >= sizeof(FILE_POSITION_INFORMATION)) {
             file->CurrentByteOffset = ((PFILE_POSITION_INFORMATION)buf)->CurrentByteOffset;
@@ -375,7 +375,7 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
                            KernelMode);
     if (NT_SUCCESS(status)) {
         PFILE_OBJECT file;
-        status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&file, NULL);
+        status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&file, nullptr);
         if (NT_SUCCESS(status)) {
             ULONG written;
             status = query_file(file, info, length, klass, &written);
@@ -416,7 +416,7 @@ NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
-    UNICODE_STRING pat = {0};
+    UNICODE_STRING pat = {};
     if (pattern) {
         status = KiCaptureUnicodeString(&pat, pattern);
         if (!NT_SUCCESS(status)) {
@@ -434,7 +434,7 @@ NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
     memset(&params, 0, sizeof(params));
     params.Flags = (single ? SL_RETURN_SINGLE_ENTRY : 0) | (restart ? SL_RESTART_SCAN : 0);
     params.Parameters.QueryDirectory.Length = length;
-    params.Parameters.QueryDirectory.FileName = pattern ? &pat : NULL;
+    params.Parameters.QueryDirectory.FileName = pattern ? &pat : nullptr;
     params.Parameters.QueryDirectory.FileInformationClass = klass;
     IO_STATUS_BLOCK io;
     status = IopSynchronousRequest(file, IRP_MJ_DIRECTORY_CONTROL, IRP_MN_QUERY_DIRECTORY, buf, length, &params, &io);
@@ -502,8 +502,8 @@ NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
-    IO_STATUS_BLOCK io = {0};
-    status = IopSynchronousRequest(file, IRP_MJ_FLUSH_BUFFERS, 0, NULL, 0, NULL, &io);
+    IO_STATUS_BLOCK io = {};
+    status = IopSynchronousRequest(file, IRP_MJ_FLUSH_BUFFERS, 0, nullptr, 0, nullptr, &io);
     ObDereferenceObject(file);
     io.Status = status;
     NTSTATUS stored = store_iosb(iosb, &io);
@@ -522,7 +522,7 @@ static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, P
         return STATUS_INSUFFICIENT_RESOURCES;
     if (in_len)
         status = KiCopyFromUser(buf, input, in_len);
-    IO_STATUS_BLOCK io = {0};
+    IO_STATUS_BLOCK io = {};
     if (NT_SUCCESS(status)) {
         IO_STACK_LOCATION params;
         memset(&params, 0, sizeof(params));
@@ -538,7 +538,7 @@ static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, P
     store_iosb(iosb, &io);
     if (event) {
         PKEVENT ev;
-        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&ev, NULL))) {
+        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&ev, nullptr))) {
             KeSetEvent(ev, 0, FALSE);
             ObDereferenceObject(ev);
         }
@@ -592,11 +592,11 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
     if (!NT_SUCCESS(status))
         return status;
     if (IopIsNamedPipe(file))
-        NpfsCancel(file, PsCurrentProcess(), FALSE, NULL);
+        NpfsCancel(file, PsCurrentProcess(), FALSE, nullptr);
     else if (IopIsAfd(file))
-        AfdCancel(file, PsCurrentThread(), NULL);
+        AfdCancel(file, PsCurrentThread(), nullptr);
     ObDereferenceObject(file);
-    IO_STATUS_BLOCK io = {0};
+    IO_STATUS_BLOCK io = {};
     store_iosb(iosb, &io);
     return STATUS_SUCCESS;
 }
@@ -609,9 +609,9 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         return status;
     /* the request is named by its i/o status block, the start of its OVERLAPPED. */
     if (IopIsNamedPipe(file))
-        status = NpfsCancel(file, PsCurrentProcess(), request != NULL, request);
+        status = NpfsCancel(file, PsCurrentProcess(), request != nullptr, request);
     else if (IopIsAfd(file))
-        status = AfdCancel(file, NULL, request);
+        status = AfdCancel(file, nullptr, request);
     else
         status = STATUS_NOT_FOUND;
     ObDereferenceObject(file);

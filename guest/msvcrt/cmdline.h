@@ -93,7 +93,7 @@ static void PARSE_NAME(const CHAR_T *p, CHAR_T **argv, CHAR_T *args, int *quoted
         n++;
     }
     if (argv)
-        argv[n] = NULL;
+        argv[n] = nullptr;
     *argc = n;
     *chars = count;
 }

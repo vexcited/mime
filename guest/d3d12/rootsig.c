@@ -145,9 +145,9 @@ static HRESULT root_desc_to(const RootDesc *d, D3D_ROOT_SIGNATURE_VERSION versio
     BYTE *samplers = ranges + d->range_count * range_size;
     v->Version = version;
     v->Desc_1_0.NumParameters = d->param_count;
-    v->Desc_1_0.pParameters = d->param_count ? (void *)params : NULL;
+    v->Desc_1_0.pParameters = d->param_count ? (void *)params : nullptr;
     v->Desc_1_0.NumStaticSamplers = d->sampler_count;
-    v->Desc_1_0.pStaticSamplers = d->sampler_count ? (void *)samplers : NULL;
+    v->Desc_1_0.pStaticSamplers = d->sampler_count ? (void *)samplers : nullptr;
     v->Desc_1_0.Flags = d->flags;
     UINT range = 0;
     for (UINT i = 0; i < d->param_count; i++) {
@@ -158,7 +158,7 @@ static HRESULT root_desc_to(const RootDesc *d, D3D_ROOT_SIGNATURE_VERSION versio
             if (s->ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
                 D3D12_DESCRIPTOR_RANGE1 *r = (D3D12_DESCRIPTOR_RANGE1 *)ranges + range;
                 memcpy(r, s->DescriptorTable.pDescriptorRanges, s->DescriptorTable.NumDescriptorRanges * sizeof(*r));
-                p->DescriptorTable.pDescriptorRanges = s->DescriptorTable.NumDescriptorRanges ? r : NULL;
+                p->DescriptorTable.pDescriptorRanges = s->DescriptorTable.NumDescriptorRanges ? r : nullptr;
                 range += s->DescriptorTable.NumDescriptorRanges;
             }
             continue;
@@ -175,7 +175,7 @@ static HRESULT root_desc_to(const RootDesc *d, D3D_ROOT_SIGNATURE_VERSION versio
                                                 f->RegisterSpace, f->OffsetInDescriptorsFromTableStart};
             }
             p->DescriptorTable.NumDescriptorRanges = s->DescriptorTable.NumDescriptorRanges;
-            p->DescriptorTable.pDescriptorRanges = s->DescriptorTable.NumDescriptorRanges ? r : NULL;
+            p->DescriptorTable.pDescriptorRanges = s->DescriptorTable.NumDescriptorRanges ? r : nullptr;
             range += s->DescriptorTable.NumDescriptorRanges;
             break;
         }
@@ -477,16 +477,16 @@ static HRESULT serialize(const RootDesc *d, Writer *w)
 HRESULT D12SerializeRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc, ID3DBlob **blob, ID3DBlob **error)
 {
     if (blob)
-        *blob = NULL;
+        *blob = nullptr;
     if (error)
-        *error = NULL;
+        *error = nullptr;
     if (!desc || !blob)
         return E_INVALIDARG;
     RootDesc d;
     HRESULT hr = root_desc_from(desc, &d);
     if (FAILED(hr))
         return hr;
-    Writer w = {0};
+    Writer w = {};
     if (SUCCEEDED(hr = validate(&d, error)))
         hr = serialize(&d, &w);
     root_desc_free(&d);
@@ -497,7 +497,7 @@ HRESULT D12SerializeRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *des
     /* the container: its header, the one part's offset, the part's tag and size, then the part. */
     UINT part_size = (w.size + 3) & ~3u, total = 32 + 4 + 8 + part_size;
     ID3DBlob *out;
-    if (FAILED(hr = D12CreateBlob(NULL, total, &out))) {
+    if (FAILED(hr = D12CreateBlob(nullptr, total, &out))) {
         HeapFree(GetProcessHeap(), 0, w.data);
         return hr;
     }
@@ -518,7 +518,7 @@ HRESULT D12SerializeRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *des
 
 D12RootSignature *D12RootSignatureFrom(ID3D12RootSignature *iface)
 {
-    return iface ? CONTAINING_RECORD(iface, D12RootSignature, iface) : NULL;
+    return iface ? CONTAINING_RECORD(iface, D12RootSignature, iface) : nullptr;
 }
 
 static D12RootSignature *impl(ID3D12RootSignature *iface) { return CONTAINING_RECORD(iface, D12RootSignature, iface); }
@@ -531,7 +531,7 @@ static HRESULT STDMETHODCALLTYPE root_query(ID3D12RootSignature *iface, REFIID r
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -620,7 +620,7 @@ static UINT visibility_stages(D3D12_SHADER_VISIBILITY visibility)
     }
 }
 
-static const BYTE g_range_bind[] = {
+static constexpr BYTE g_range_bind[] = {
     [D3D12_DESCRIPTOR_RANGE_TYPE_SRV] = DXBC_BIND_SRV,
     [D3D12_DESCRIPTOR_RANGE_TYPE_UAV] = DXBC_BIND_UAV,
     [D3D12_DESCRIPTOR_RANGE_TYPE_CBV] = DXBC_BIND_CBV,
@@ -633,7 +633,7 @@ DxbcRootBinding *D12RootBindings(D12RootSignature *root, D12Stage stage, UINT *c
     DxbcRootBinding *out = HeapAlloc(GetProcessHeap(), 0, (root->binding_count + 1) * sizeof(*out));
     *count = 0;
     if (!out)
-        return NULL;
+        return nullptr;
     for (UINT i = 0; i < root->binding_count; i++)
         if (root->binding_stages[i] & (1u << stage))
             out[(*count)++] = root->bindings[i];
@@ -788,7 +788,7 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
         const D3D12_STATIC_SAMPLER_DESC1 *s = &d.samplers[i];
         D3D12_SAMPLER_DESC2 desc;
         static_sampler_desc(s, &desc);
-        samplers[i] = D12Sampler(device, &desc, NULL);
+        samplers[i] = D12Sampler(device, &desc, nullptr);
         DxbcRootBinding *b = &root->bindings[root->binding_count];
         b->type = DXBC_BIND_SAMPLER;
         b->source = DXBC_SOURCE_STATIC_SAMPLER;
@@ -807,7 +807,7 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
                      VK_DESCRIPTOR_SET_LAYOUT_CREATE_EMBEDDED_IMMUTABLE_SAMPLERS_BIT_EXT;
         info.bindingCount = 1;
         info.pBindings = &binding;
-        if (vk->vkCreateDescriptorSetLayout(vk->device, &info, NULL, &root->static_layout) != VK_SUCCESS)
+        if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &root->static_layout) != VK_SUCCESS)
             hr = E_OUTOFMEMORY;
     }
     if (SUCCEEDED(hr)) {
@@ -821,12 +821,12 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
         info.pSetLayouts = sets;
         info.pushConstantRangeCount = 1;
         info.pPushConstantRanges = &range;
-        if (vk->vkCreatePipelineLayout(vk->device, &info, NULL, &root->layout) != VK_SUCCESS)
+        if (vk->vkCreatePipelineLayout(vk->device, &info, nullptr, &root->layout) != VK_SUCCESS)
             hr = E_OUTOFMEMORY;
     }
     if (FAILED(hr)) {
         if (root->static_layout)
-            vk->vkDestroyDescriptorSetLayout(vk->device, root->static_layout, NULL);
+            vk->vkDestroyDescriptorSetLayout(vk->device, root->static_layout, nullptr);
         HeapFree(GetProcessHeap(), 0, root->params);
         HeapFree(GetProcessHeap(), 0, root->bindings);
         HeapFree(GetProcessHeap(), 0, root->binding_stages);

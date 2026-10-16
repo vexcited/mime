@@ -19,7 +19,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#if defined(_WIN32)
+#ifdef _WIN32
 /* the guest is freestanding: its runtime has these. */
 void *memcpy(void *dst, const void *src, size_t n);
 void *memset(void *dst, int c, size_t n);
@@ -29,7 +29,7 @@ size_t strlen(const char *s);
 #endif
 
 /* the guest implements the api, the host calls its driver through tables. */
-#if !defined(MVK_GUEST)
+#ifndef MVK_GUEST
 #define VK_NO_PROTOTYPES 1
 #endif
 #include <vulkan/vulkan_core.h>
@@ -182,7 +182,7 @@ static inline void *mvk_reserve(MvkEncoder *e, size_t n, size_t a)
         e->grow(e, n);
     if ((size_t)(e->end - e->p) < n) {
         e->overflow = 1;
-        return NULL;
+        return nullptr;
     }
     void *at = e->p;
     e->p += n;
@@ -283,7 +283,7 @@ static inline const void *mvk_take(MvkDecoder *d, size_t n, size_t a)
     if ((size_t)(d->end - d->p) < pad + n) {
         d->error = 1;
         d->p = d->end;
-        return NULL;
+        return nullptr;
     }
     d->p += pad;
     const void *at = d->p;
@@ -342,7 +342,7 @@ static inline void *mvk_alloc(MvkDecoder *d, size_t n)
         d->error = 1;
         static uint8_t scratch[64] __attribute__((aligned(16)));
         memset(scratch, 0, sizeof(scratch));
-        return n <= sizeof(scratch) ? scratch : NULL;
+        return n <= sizeof(scratch) ? scratch : nullptr;
     }
     void *p = d->arena + d->arena_used;
     d->arena_used += n;
@@ -355,7 +355,7 @@ static inline const char *mvk_get_string(MvkDecoder *d)
 {
     uint32_t n = mvk_get_u32(d);
     if (n == 0xFFFFFFFFu)
-        return NULL;
+        return nullptr;
     const char *s = mvk_take(d, (size_t)n + 1, 4);
     if (!s || s[n] != 0) {
         d->error = 1;
@@ -370,7 +370,7 @@ static inline const void *mvk_get_blob(MvkDecoder *d, size_t *size)
     if (n == ~0ull) {
         if (size)
             *size = 0;
-        return NULL;
+        return nullptr;
     }
     if (size)
         *size = (size_t)n;

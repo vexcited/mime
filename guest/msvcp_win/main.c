@@ -73,7 +73,7 @@ DECLSPEC_EXPORT DWORD __stdcall __std_parallel_algorithms_hw_threads(void) { ret
 
 DECLSPEC_EXPORT void *__stdcall __std_create_threadpool_work(void *callback, void *context, void *environment)
 {
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT void __stdcall __std_submit_threadpool_work(void *work) {}

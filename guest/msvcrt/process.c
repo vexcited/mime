@@ -45,7 +45,7 @@ uintptr_t __cdecl _beginthreadex(void *security, unsigned stack, THREADEX_START 
     args->start = (void *)start;
     args->arg = arg;
     args->ex = 1;
-    args->handle = NULL;
+    args->handle = nullptr;
     DWORD tid;
     HANDLE h = CreateThread(security, stack, thread_entry, args, flags, &tid);
     if (!h) {
@@ -80,7 +80,7 @@ uintptr_t __cdecl _beginthread(THREAD_START start, unsigned stack, void *arg)
     args->arg = arg;
     args->ex = 0;
     DWORD tid;
-    HANDLE h = CreateThread(NULL, stack, thread_entry, args, CREATE_SUSPENDED, &tid);
+    HANDLE h = CreateThread(nullptr, stack, thread_entry, args, CREATE_SUSPENDED, &tid);
     if (!h) {
         DWORD err = GetLastError();
         free(args);
@@ -100,7 +100,7 @@ uintptr_t __cdecl _beginthread(THREAD_START start, unsigned stack, void *arg)
 void __cdecl _endthread(void)
 {
     MSVCRT_THREAD_DATA *ptd = MsvcrtThreadData();
-    HANDLE h = ptd->beginthread ? ptd->thread_handle : NULL;
+    HANDLE h = ptd->beginthread ? ptd->thread_handle : nullptr;
     MsvcrtFreeThreadData();
     if (h)
         CloseHandle(h);
@@ -146,7 +146,7 @@ static unsigned char *inherit_block(WORD *size)
     }
     unsigned char *block = calloc(1, bytes);
     if (!block)
-        return NULL;
+        return nullptr;
     memcpy(block, &count, sizeof(int));
     unsigned char *flags = block + sizeof(int);
     unsigned char *handles = flags + count;
@@ -172,7 +172,7 @@ static wchar_t *join_args(const wchar_t *const *argv)
     wchar_t *cmd = malloc(len * sizeof(wchar_t));
     if (!cmd) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     cmd[0] = 0;
     for (int i = 0; argv && argv[i]; i++) {
@@ -188,7 +188,7 @@ static wchar_t *env_block(const wchar_t *const *envp, int *ok)
 {
     *ok = 1;
     if (!envp)
-        return NULL;
+        return nullptr;
     size_t len = 1;
     for (int i = 0; envp[i]; i++)
         len += wcslen(envp[i]) + 1;
@@ -204,7 +204,7 @@ static wchar_t *env_block(const wchar_t *const *envp, int *ok)
             FreeEnvironmentStringsW(current);
         MsvcrtSetErrno(ENOMEM);
         *ok = 0;
-        return NULL;
+        return nullptr;
     }
     wchar_t *q = block;
     for (const wchar_t *p = current; p && *p; p += wcslen(p) + 1)
@@ -264,7 +264,7 @@ static intptr_t create_child(int mode, const wchar_t *path, const wchar_t *const
     DWORD flags = CREATE_UNICODE_ENVIRONMENT;
     if (mode == _P_DETACH)
         flags |= DETACHED_PROCESS;
-    BOOL created = CreateProcessW(path, cmd, NULL, NULL, TRUE, flags, env, NULL, &si, &pi);
+    BOOL created = CreateProcessW(path, cmd, nullptr, nullptr, TRUE, flags, env, nullptr, &si, &pi);
     DWORD err = GetLastError();
     free(cmd);
     free(env);
@@ -391,7 +391,7 @@ intptr_t __cdecl _wspawnve(int mode, const wchar_t *path, const wchar_t *const *
 
 intptr_t __cdecl _wspawnv(int mode, const wchar_t *path, const wchar_t *const *argv)
 {
-    return _wspawnve(mode, path, argv, NULL);
+    return _wspawnve(mode, path, argv, nullptr);
 }
 
 intptr_t __cdecl _wspawnvpe(int mode, const wchar_t *file, const wchar_t *const *argv, const wchar_t *const *envp)
@@ -403,7 +403,7 @@ intptr_t __cdecl _wspawnvpe(int mode, const wchar_t *file, const wchar_t *const 
 
 intptr_t __cdecl _wspawnvp(int mode, const wchar_t *file, const wchar_t *const *argv)
 {
-    return _wspawnvpe(mode, file, argv, NULL);
+    return _wspawnvpe(mode, file, argv, nullptr);
 }
 
 /* converts a narrow argument vector; NULL in, NULL out. */
@@ -411,14 +411,14 @@ static wchar_t **widen_vector(const char *const *v, int *ok)
 {
     *ok = 1;
     if (!v)
-        return NULL;
+        return nullptr;
     int n = 0;
     while (v[n])
         n++;
     wchar_t **w = calloc(n + 1, sizeof(wchar_t *));
     if (!w) {
         *ok = 0;
-        return NULL;
+        return nullptr;
     }
     for (int i = 0; i < n; i++)
         if (!(w[i] = MsvcrtAToW(v[i])))
@@ -460,7 +460,7 @@ intptr_t __cdecl _spawnve(int mode, const char *path, const char *const *argv, c
 
 intptr_t __cdecl _spawnv(int mode, const char *path, const char *const *argv)
 {
-    return spawn_a(mode, path, argv, NULL, 0);
+    return spawn_a(mode, path, argv, nullptr, 0);
 }
 
 intptr_t __cdecl _spawnvpe(int mode, const char *file, const char *const *argv, const char *const *envp)
@@ -470,7 +470,7 @@ intptr_t __cdecl _spawnvpe(int mode, const char *file, const char *const *argv, 
 
 intptr_t __cdecl _spawnvp(int mode, const char *file, const char *const *argv)
 {
-    return spawn_a(mode, file, argv, NULL, 1);
+    return spawn_a(mode, file, argv, nullptr, 1);
 }
 
 /* the variadic forms collect their arguments into a vector. */
@@ -486,8 +486,8 @@ intptr_t __cdecl _spawnvp(int mode, const char *file, const char *const *argv)
         va_start(ap, arg0);                                                                                       \
         while (arg0 && n < MAX_SPAWN_ARGS && (argv[n] = va_arg(ap, const T *)))                                   \
             n++;                                                                                                  \
-        argv[n] = NULL;                                                                                           \
-        const T *const *envp = HAS_ENV ? va_arg(ap, const T *const *) : NULL;                                     \
+        argv[n] = nullptr;                                                                                           \
+        const T *const *envp = HAS_ENV ? va_arg(ap, const T *const *) : nullptr;                                     \
         va_end(ap);                                                                                               \
         return CALL(mode, path, argv, envp, SEARCH);                                                              \
     }
@@ -538,17 +538,17 @@ int __cdecl _wsystem(const wchar_t *command)
     const wchar_t *shell = comspec();
     if (!command)
         return _waccess(shell, 0) == 0 || GetFileAttributesW(L"cmd.exe") != INVALID_FILE_ATTRIBUTES;
-    const wchar_t *argv[] = {shell, L"/c", command, NULL};
-    intptr_t r = _wspawnve(_P_WAIT, shell, argv, NULL);
+    const wchar_t *argv[] = {shell, L"/c", command, nullptr};
+    intptr_t r = _wspawnve(_P_WAIT, shell, argv, nullptr);
     if (r == -1 && (*_errno() == ENOENT || *_errno() == EACCES))
-        r = _wspawnvpe(_P_WAIT, L"cmd.exe", argv, NULL);
+        r = _wspawnvpe(_P_WAIT, L"cmd.exe", argv, nullptr);
     return (int)r;
 }
 
 int __cdecl system(const char *command)
 {
     if (!command)
-        return _wsystem(NULL);
+        return _wsystem(nullptr);
     wchar_t *w = MsvcrtAToW(command);
     if (!w)
         return -1;
@@ -569,16 +569,16 @@ static wint_t g_ungetwch = WEOF;
 static HANDLE conin(void)
 {
     if (g_conin == INVALID_HANDLE_VALUE)
-        g_conin = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                              OPEN_EXISTING, 0, NULL);
+        g_conin = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
     return g_conin;
 }
 
 static HANDLE conout(void)
 {
     if (g_conout == INVALID_HANDLE_VALUE)
-        g_conout = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0,
-                               NULL);
+        g_conout = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
+                               nullptr);
     return g_conout;
 }
 
@@ -596,7 +596,7 @@ int __cdecl _putch(int c)
     _lock(_CONIO_LOCK);
     char ch = (char)c;
     DWORD written;
-    int r = WriteConsoleA(conout(), &ch, 1, &written, NULL) ? (unsigned char)ch : EOF;
+    int r = WriteConsoleA(conout(), &ch, 1, &written, nullptr) ? (unsigned char)ch : EOF;
     _unlock(_CONIO_LOCK);
     return r;
 }
@@ -605,7 +605,7 @@ wint_t __cdecl _putwch(wchar_t c)
 {
     _lock(_CONIO_LOCK);
     DWORD written;
-    wint_t r = WriteConsoleW(conout(), &c, 1, &written, NULL) ? c : WEOF;
+    wint_t r = WriteConsoleW(conout(), &c, 1, &written, nullptr) ? c : WEOF;
     _unlock(_CONIO_LOCK);
     return r;
 }
@@ -618,7 +618,7 @@ int __cdecl _cputs(const char *s)
     }
     _lock(_CONIO_LOCK);
     DWORD written;
-    int r = WriteConsoleA(conout(), s, (DWORD)strlen(s), &written, NULL) ? 0 : -1;
+    int r = WriteConsoleA(conout(), s, (DWORD)strlen(s), &written, nullptr) ? 0 : -1;
     _unlock(_CONIO_LOCK);
     return r;
 }
@@ -631,7 +631,7 @@ int __cdecl _cputws(const wchar_t *s)
     }
     _lock(_CONIO_LOCK);
     DWORD written;
-    int r = WriteConsoleW(conout(), s, (DWORD)wcslen(s), &written, NULL) ? 0 : -1;
+    int r = WriteConsoleW(conout(), s, (DWORD)wcslen(s), &written, nullptr) ? 0 : -1;
     _unlock(_CONIO_LOCK);
     return r;
 }
@@ -764,7 +764,7 @@ char *__cdecl _cgets(char *buf)
 {
     if (!buf) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     unsigned max = (unsigned char)buf[0];
     char *text = buf + 2;
@@ -797,7 +797,7 @@ int __cdecl _vcprintf(const char *fmt, va_list ap)
     char small[512];
     va_list copy;
     va_copy(copy, ap);
-    int n = MsvcrtVsnprintf(NULL, 0, fmt, copy);
+    int n = MsvcrtVsnprintf(nullptr, 0, fmt, copy);
     va_end(copy);
     if (n < 0)
         return -1;
@@ -825,7 +825,7 @@ int __cdecl _vcwprintf(const wchar_t *fmt, va_list ap)
 {
     va_list copy;
     va_copy(copy, ap);
-    int n = MsvcrtVsnwprintf(NULL, 0, fmt, copy);
+    int n = MsvcrtVsnwprintf(nullptr, 0, fmt, copy);
     va_end(copy);
     if (n < 0)
         return -1;
@@ -858,7 +858,7 @@ intptr_t __cdecl _wexecve(const wchar_t *path, const wchar_t *const *argv, const
 
 intptr_t __cdecl _wexecv(const wchar_t *path, const wchar_t *const *argv)
 {
-    return _wspawnve(_P_OVERLAY, path, argv, NULL);
+    return _wspawnve(_P_OVERLAY, path, argv, nullptr);
 }
 
 intptr_t __cdecl _wexecvpe(const wchar_t *file, const wchar_t *const *argv, const wchar_t *const *envp)
@@ -868,7 +868,7 @@ intptr_t __cdecl _wexecvpe(const wchar_t *file, const wchar_t *const *argv, cons
 
 intptr_t __cdecl _wexecvp(const wchar_t *file, const wchar_t *const *argv)
 {
-    return _wspawnvpe(_P_OVERLAY, file, argv, NULL);
+    return _wspawnvpe(_P_OVERLAY, file, argv, nullptr);
 }
 
 intptr_t __cdecl _execve(const char *path, const char *const *argv, const char *const *envp)
@@ -878,7 +878,7 @@ intptr_t __cdecl _execve(const char *path, const char *const *argv, const char *
 
 intptr_t __cdecl _execv(const char *path, const char *const *argv)
 {
-    return spawn_a(_P_OVERLAY, path, argv, NULL, 0);
+    return spawn_a(_P_OVERLAY, path, argv, nullptr, 0);
 }
 
 intptr_t __cdecl _execvpe(const char *file, const char *const *argv, const char *const *envp)
@@ -888,7 +888,7 @@ intptr_t __cdecl _execvpe(const char *file, const char *const *argv, const char 
 
 intptr_t __cdecl _execvp(const char *file, const char *const *argv)
 {
-    return spawn_a(_P_OVERLAY, file, argv, NULL, 1);
+    return spawn_a(_P_OVERLAY, file, argv, nullptr, 1);
 }
 
 static intptr_t exec_a(int mode, const char *path, const char *const *argv, const char *const *envp, int search)
@@ -912,8 +912,8 @@ static intptr_t exec_w(int mode, const wchar_t *path, const wchar_t *const *argv
         va_start(ap, arg0);                                                                                       \
         while (arg0 && n < MAX_SPAWN_ARGS && (argv[n] = va_arg(ap, const T *)))                                   \
             n++;                                                                                                  \
-        argv[n] = NULL;                                                                                           \
-        const T *const *envp = HAS_ENV ? va_arg(ap, const T *const *) : NULL;                                     \
+        argv[n] = nullptr;                                                                                           \
+        const T *const *envp = HAS_ENV ? va_arg(ap, const T *const *) : nullptr;                                     \
         va_end(ap);                                                                                               \
         return CALL(_P_OVERLAY, path, argv, envp, SEARCH);                                                        \
     }
@@ -942,7 +942,7 @@ static FILE *popen_w(const wchar_t *command, const wchar_t *mode)
 {
     if (!command || !mode) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     int reading = 0, text = _O_TEXT;
     for (const wchar_t *m = mode; *m; m++) {
@@ -957,11 +957,11 @@ static FILE *popen_w(const wchar_t *command, const wchar_t *mode)
     }
     if (mode[0] != 'r' && mode[0] != 'w') {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     int fds[2];
     if (_pipe(fds, 1024, text | _O_NOINHERIT) < 0)
-        return NULL;
+        return nullptr;
     int child_end = reading ? fds[1] : fds[0];
     int parent_end = reading ? fds[0] : fds[1];
     int std = reading ? 1 : 0;
@@ -970,17 +970,17 @@ static FILE *popen_w(const wchar_t *command, const wchar_t *mode)
     intptr_t process = -1;
     if (saved >= 0 && _dup2(child_end, std) == 0) {
         const wchar_t *shell = comspec();
-        const wchar_t *argv[] = {shell, L"/c", command, NULL};
-        process = _wspawnve(_P_NOWAIT, shell, argv, NULL);
+        const wchar_t *argv[] = {shell, L"/c", command, nullptr};
+        process = _wspawnve(_P_NOWAIT, shell, argv, nullptr);
         if (process == -1)
-            process = _wspawnvpe(_P_NOWAIT, L"cmd.exe", argv, NULL);
+            process = _wspawnvpe(_P_NOWAIT, L"cmd.exe", argv, nullptr);
     }
     if (saved >= 0) {
         _dup2(saved, std);
         _close(saved);
     }
     _close(child_end);
-    FILE *f = NULL;
+    FILE *f = nullptr;
     if (process != -1) {
         wchar_t fmode[3] = {reading ? 'r' : 'w', text == _O_BINARY ? 'b' : 't', 0};
         f = _wfdopen(parent_end, fmode);
@@ -1011,10 +1011,10 @@ FILE *__cdecl _popen(const char *command, const char *mode)
 {
     if (!command || !mode) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     wchar_t *wc = MsvcrtAToW(command), *wm = MsvcrtAToW(mode);
-    FILE *f = wc && wm ? popen_w(wc, wm) : NULL;
+    FILE *f = wc && wm ? popen_w(wc, wm) : nullptr;
     free(wc);
     free(wm);
     return f;

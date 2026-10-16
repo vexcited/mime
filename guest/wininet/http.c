@@ -163,7 +163,7 @@ static LPCWSTR LevelName(DWORD level)
     case HTTP_QUERY_HOST:
         return L"Host";
     }
-    return NULL;
+    return nullptr;
 }
 
 /* copies a string result, the length in bytes with the terminator when too small and without it after. */

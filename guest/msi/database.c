@@ -31,8 +31,8 @@ UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out)
 {
     if (!path || !out)
         return ERROR_INVALID_PARAMETER;
-    *out = NULL;
-    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    *out = nullptr;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return GetLastError();
     LARGE_INTEGER size;
@@ -40,7 +40,7 @@ UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out)
         CloseHandle(file);
         return ERROR_INSTALL_PACKAGE_INVALID;
     }
-    HANDLE mapping = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL);
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
     CloseHandle(file);
     if (!mapping)
         return GetLastError();
@@ -74,9 +74,9 @@ UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out)
         destroy_database(&database->Object);
         return ERROR_INSTALL_PACKAGE_INVALID;
     }
-    DWORD characters = GetFullPathNameW(path, 0, NULL, NULL);
-    database->Path = characters ? MimeMsiAllocate((SIZE_T)characters * sizeof(WCHAR)) : NULL;
-    if (!database->Path || !GetFullPathNameW(path, characters, database->Path, NULL)) {
+    DWORD characters = GetFullPathNameW(path, 0, nullptr, nullptr);
+    database->Path = characters ? MimeMsiAllocate((SIZE_T)characters * sizeof(WCHAR)) : nullptr;
+    if (!database->Path || !GetFullPathNameW(path, characters, database->Path, nullptr)) {
         destroy_database(&database->Object);
         return ERROR_NOT_ENOUGH_MEMORY;
     }
@@ -94,7 +94,7 @@ UINT MimeMsiOpenDatabaseFile(PCWSTR path, BOOL transform, MIME_MSI_DATABASE **ou
     error = MimeMsiLoadStrings(*out);
     if (error) {
         destroy_database(&(*out)->Object);
-        *out = NULL;
+        *out = nullptr;
     }
     return error;
 }

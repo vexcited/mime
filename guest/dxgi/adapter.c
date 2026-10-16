@@ -17,7 +17,7 @@ static HRESULT STDMETHODCALLTYPE adapter_query(IDXGIAdapter4 *iface, REFIID riid
     if (!out)
         return E_POINTER;
     DxgiAdapter *adapter = impl(iface);
-    *out = NULL;
+    *out = nullptr;
     for (UINT i = 0; i < RTL_NUMBER_OF(ADAPTER_IIDS); i++)
         if (IsEqualGUID(riid, ADAPTER_IIDS[i]))
             *out = &adapter->iface;
@@ -76,7 +76,7 @@ static HRESULT STDMETHODCALLTYPE adapter_enum_outputs(IDXGIAdapter4 *iface, UINT
 {
     if (!output)
         return DXGI_ERROR_INVALID_CALL;
-    *output = NULL;
+    *output = nullptr;
     DxgiAdapter *adapter = impl(iface);
     if (index || adapter->gpu != &DxgiGetVulkan()->gpus[0])
         return DXGI_ERROR_NOT_FOUND;
@@ -259,9 +259,9 @@ HRESULT DxgiCreateAdapter(DxgiFactory *factory, const DxgiGpu *gpu, REFIID riid,
 
 DxgiAdapter *DxgiAdapterFrom(IUnknown *unknown)
 {
-    IMimeDXGIAdapter *mime = NULL;
+    IMimeDXGIAdapter *mime = nullptr;
     if (!unknown || FAILED(unknown->lpVtbl->QueryInterface(unknown, &IID_IMimeDXGIAdapter, (void **)&mime)))
-        return NULL;
+        return nullptr;
     mime->lpVtbl->Release(mime);
-    return mime->lpVtbl == &mime_vtbl ? mime_impl(mime) : NULL;
+    return mime->lpVtbl == &mime_vtbl ? mime_impl(mime) : nullptr;
 }

@@ -48,7 +48,7 @@ INT gp_default_stride(INT width, PixelFormat format)
 GpBitmap *gp_bitmap_cast(GpImage *image)
 {
     if (!image || image->Magic != GP_IMAGE_MAGIC || image->Type != ImageTypeBitmap)
-        return NULL;
+        return nullptr;
     return (GpBitmap *)image;
 }
 
@@ -176,7 +176,7 @@ void gp_write_pixel(BYTE *row, INT x, PixelFormat format, ARGB c)
         break;
     case PixelFormat32bppRGB:
         c |= 0xff000000u;
-        /* fall through. */
+        [[fallthrough]];
     case PixelFormat32bppARGB:
         p = row + x * 4;
         p[0] = (BYTE)c;
@@ -262,7 +262,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateBitmapFromHBITMAP(HBITMAP hbm, HPALETT
     if (status != Ok)
         return status;
     BYTE *pixels = format == PixelFormat32bppRGB ? b->Bits : gp_alloc((SIZE_T)width * 4 * (SIZE_T)height);
-    HDC dc = CreateCompatibleDC(NULL);
+    HDC dc = CreateCompatibleDC(nullptr);
     if (!pixels || !dc) {
         if (dc)
             DeleteDC(dc);
@@ -271,7 +271,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateBitmapFromHBITMAP(HBITMAP hbm, HPALETT
         GdipDisposeImage(&b->Image);
         return OutOfMemory;
     }
-    BITMAPINFO info = {0};
+    BITMAPINFO info = {};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
     info.bmiHeader.biWidth = width;
     info.bmiHeader.biHeight = -height;
@@ -324,7 +324,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipBitmapLockBits(GpBitmap *bitmap, const GpRec
     BYTE *origin = b->Bits + (INT_PTR)r.Y * b->Stride + (INT_PTR)r.X * (GetPixelFormatSize(b->Format) / 8);
     BYTE *scan0;
     INT stride;
-    BYTE *buffer = NULL;
+    BYTE *buffer = nullptr;
     if (flags & ImageLockModeUserInputBuf) {
         if (!data->Scan0 || !data->Stride)
             return InvalidParameter;
@@ -370,8 +370,8 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipBitmapUnlockBits(GpBitmap *bitmap, BitmapDat
     if ((b->LockFlags & ImageLockModeWrite) && b->LockScan0 != origin)
         gp_convert(origin, b->Stride, b->Format, b->LockScan0, b->LockStride, b->LockFormat, r.Width, r.Height);
     gp_free(b->LockBuffer);
-    b->LockBuffer = NULL;
-    b->LockScan0 = NULL;
+    b->LockBuffer = nullptr;
+    b->LockScan0 = nullptr;
     b->Locked = FALSE;
     return Ok;
 }

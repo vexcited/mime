@@ -28,8 +28,8 @@ static HBITMAP create_dib(int width, int height, DWORD **bits)
     bi.bmiHeader.biHeight = -height;
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
-    void *p = NULL;
-    HBITMAP bm = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &p, NULL, 0);
+    void *p = nullptr;
+    HBITMAP bm = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &p, nullptr, 0);
     *bits = p;
     return bm;
 }
@@ -75,7 +75,7 @@ static BOOL decode_bmp(const uint8_t *d, size_t n, DWORD *out, int width, int he
 
 UX_BITMAP *UxGetBitmap(const MimeMsstylesImage *image)
 {
-    RtlRunOnceExecuteOnce(&g_bitmaps.Once, init_bitmaps, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_bitmaps.Once, init_bitmaps, nullptr, nullptr);
     COLORREF key = image->transparent && image->has_transparent_color ? image->transparent_color : CLR_INVALID;
     RtlEnterCriticalSection(&g_bitmaps.Lock);
     UX_BITMAP *b = g_bitmaps.List;
@@ -88,7 +88,7 @@ UX_BITMAP *UxGetBitmap(const MimeMsstylesImage *image)
     DWORD *bits;
     HBITMAP bm = create_dib(image->width, image->height, &bits);
     if (!bm)
-        return NULL;
+        return nullptr;
     BOOL ok = FALSE, alpha = TRUE;
     if (image->format == MIME_MSSTYLES_FORMAT_PNG) {
         MimePngInfo info;
@@ -103,7 +103,7 @@ UX_BITMAP *UxGetBitmap(const MimeMsstylesImage *image)
     }
     if (!ok) {
         DeleteObject(bm);
-        return NULL;
+        return nullptr;
     }
     /* TRANSPARENTCOLOR keys out opaque images, images with alpha keep theirs. */
     if (key != CLR_INVALID && !alpha) {
@@ -116,7 +116,7 @@ UX_BITMAP *UxGetBitmap(const MimeMsstylesImage *image)
     b = UxAlloc(sizeof(*b));
     if (!b) {
         DeleteObject(bm);
-        return NULL;
+        return nullptr;
     }
     b->Data = image->data;
     b->Key = key;
@@ -312,7 +312,7 @@ static BOOL draw_color_image(HDC dc, UX_THEME *theme, int part, int state, const
     img.sizing_margins.top = ci.sizing.top + ci.inset.top;
     img.sizing_margins.bottom = ci.sizing.bottom + ci.inset.bottom;
     MimeMsstylesRect frame = {0, 0, ci.width, ci.height};
-    UX_BITMAP fake = {NULL, NULL, CLR_INVALID, bm, bits, ci.width, ci.height};
+    UX_BITMAP fake = {nullptr, nullptr, CLR_INVALID, bm, bits, ci.width, ci.height};
     DRAW_SRC src = {CreateCompatibleDC(dc), &fake};
     HGDIOBJ old = SelectObject(src.Dc, bm);
     draw_frame(dc, &img, &frame, &src, rect, omit);
@@ -423,8 +423,8 @@ static void draw_border_fill(HDC dc, UX_THEME *theme, int part, int state, const
     int size = UxScale(theme, bf.Size);
     if (bf.Type != BT_RECT) {
         BOOL border = size && !(omit & OMIT_BORDER), fill = !bf.BorderOnly && !(omit & OMIT_CONTENT);
-        HPEN pen = border ? CreatePen(PS_SOLID, size, bf.BorderColor) : NULL;
-        HBRUSH brush = fill ? CreateSolidBrush(bf.FillColor) : NULL;
+        HPEN pen = border ? CreatePen(PS_SOLID, size, bf.BorderColor) : nullptr;
+        HBRUSH brush = fill ? CreateSolidBrush(bf.FillColor) : nullptr;
         HGDIOBJ old_pen = SelectObject(dc, pen ? (HGDIOBJ)pen : GetStockObject(NULL_PEN));
         HGDIOBJ old_brush = SelectObject(dc, brush ? (HGDIOBJ)brush : GetStockObject(NULL_BRUSH));
         if (bf.Type == BT_ELLIPSE)
@@ -621,7 +621,7 @@ THEMEAPI DrawThemeBackgroundEx(HTHEME handle, HDC dc, int part, int state, LPCRE
         hr = E_FAIL;
     else
         hr = draw_background(theme, dc, part, state, rect, options ? options->dwFlags : 0,
-                             options && (options->dwFlags & DTBG_CLIPRECT) ? &options->rcClip : NULL);
+                             options && (options->dwFlags & DTBG_CLIPRECT) ? &options->rcClip : nullptr);
     UxRelease(theme);
     return hr;
 }
@@ -697,7 +697,7 @@ static BOOL partially_transparent(UX_THEME *theme, int part, int state)
     if (prop_or(theme, part, state, TMT_GLYPHONLY, 0))
         return TRUE;
     MimeMsstylesImage img;
-    if (UxPartImage(theme, part, state, NULL, &img)) {
+    if (UxPartImage(theme, part, state, nullptr, &img)) {
         if (img.transparent || img.border_only)
             return TRUE;
         UX_BITMAP *b = UxGetBitmap(&img);
@@ -733,12 +733,12 @@ static HRGN alpha_region(UX_THEME *theme, int part, int state, const RECT *rect)
     DWORD *bits;
     HBITMAP bm = create_dib(w, h, &bits);
     if (!bm)
-        return NULL;
-    HDC mem = CreateCompatibleDC(NULL);
+        return nullptr;
+    HDC mem = CreateCompatibleDC(nullptr);
     HGDIOBJ old = SelectObject(mem, bm);
     memset(bits, 0, (SIZE_T)w * h * 4);
     RECT local = {0, 0, w, h};
-    draw_background(theme, mem, part, state, &local, 0, NULL);
+    draw_background(theme, mem, part, state, &local, 0, nullptr);
     GdiFlush();
     int threshold = prop_or(theme, part, state, TMT_ALPHATHRESHOLD, 255);
     SIZE_T cap = 64, count = 0;
@@ -770,13 +770,13 @@ static HRGN alpha_region(UX_THEME *theme, int part, int state, const RECT *rect)
     DeleteDC(mem);
     DeleteObject(bm);
     if (!data)
-        return NULL;
+        return nullptr;
     data->rdh.dwSize = sizeof(RGNDATAHEADER);
     data->rdh.iType = 1; /* RDH_RECTANGLES */
     data->rdh.nCount = (DWORD)count;
     data->rdh.nRgnSize = (DWORD)(count * sizeof(RECT));
     data->rdh.rcBound = *rect;
-    HRGN rgn = ExtCreateRegion(NULL, (DWORD)(sizeof(RGNDATAHEADER) + count * sizeof(RECT)), data);
+    HRGN rgn = ExtCreateRegion(nullptr, (DWORD)(sizeof(RGNDATAHEADER) + count * sizeof(RECT)), data);
     UxFree(data);
     return rgn;
 }
@@ -936,7 +936,7 @@ THEMEAPI DrawThemeIcon(HTHEME handle, HDC dc, int part, int state, LPCRECT rect,
     if (!rect)
         return E_POINTER;
     HMODULE comctl = GetModuleHandleW(L"comctl32.dll");
-    IMAGELIST_DRAW draw = comctl ? (IMAGELIST_DRAW)(void *)GetProcAddress(comctl, "ImageList_Draw") : NULL;
+    IMAGELIST_DRAW draw = comctl ? (IMAGELIST_DRAW)(void *)GetProcAddress(comctl, "ImageList_Draw") : nullptr;
     if (!draw)
         return E_FAIL;
     return draw(image_list, index, dc, rect->left, rect->top, 0) ? S_OK : E_FAIL;

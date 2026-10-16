@@ -4,11 +4,11 @@ PWSTR MimeMsiJoinPath(PCWSTR parent, PCWSTR name)
 {
     SIZE_T prefix = wcslen(parent), suffix = wcslen(name);
     if (prefix > 32760 || suffix > 32760 - prefix)
-        return NULL;
+        return nullptr;
     BOOL separator = prefix && parent[prefix - 1] != L'\\' && parent[prefix - 1] != L'/';
     PWSTR path = MimeMsiAllocate((prefix + suffix + 2) * sizeof(WCHAR));
     if (!path)
-        return NULL;
+        return nullptr;
     memcpy(path, parent, prefix * sizeof(WCHAR));
     if (separator)
         path[prefix++] = L'\\';
@@ -18,13 +18,13 @@ PWSTR MimeMsiJoinPath(PCWSTR parent, PCWSTR name)
 
 static UINT full_directory(PCWSTR name, PWSTR *out)
 {
-    DWORD capacity = GetFullPathNameW(name, 0, NULL, NULL);
+    DWORD capacity = GetFullPathNameW(name, 0, nullptr, nullptr);
     if (!capacity || capacity > 32760)
         return ERROR_INVALID_PARAMETER;
     PWSTR path = MimeMsiAllocate(((SIZE_T)capacity + 1) * sizeof(WCHAR));
     if (!path)
         return ERROR_NOT_ENOUGH_MEMORY;
-    DWORD length = GetFullPathNameW(name, capacity, path, NULL);
+    DWORD length = GetFullPathNameW(name, capacity, path, nullptr);
     if (!length || length >= capacity) {
         MimeMsiFree(path);
         return ERROR_INVALID_PARAMETER;
@@ -79,7 +79,7 @@ static UINT directory_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, PCW
     UINT error = ERROR_SUCCESS;
     if (!wcscmp(selected, L"..") || wcschr(selected, L'\\') || wcschr(selected, L'/') || wcschr(selected, L':'))
         error = ERROR_INSTALL_PACKAGE_INVALID;
-    PWSTR prefix = NULL, joined = NULL;
+    PWSTR prefix = nullptr, joined = nullptr;
     if (!error)
         error = directory_path(package, table, parent, source, depth + 1, &prefix);
     if (!error) {
@@ -105,7 +105,7 @@ static UINT get_path(MSIHANDLE handle, LPCWSTR name, BOOL source, LPWSTR out, LP
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
-    PWSTR path = NULL;
+    PWSTR path = nullptr;
     UINT error = package ? MimeMsiDirectoryPath(package, name, source, &path) : ERROR_INVALID_HANDLE;
     if (!error)
         error = MimeMsiCopyString(path, out, size);
@@ -130,7 +130,7 @@ UINT WINAPI MsiSetTargetPathW(MSIHANDLE handle, LPCWSTR name, LPCWSTR value)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
-    PWSTR previous = NULL, path = NULL;
+    PWSTR previous = nullptr, path = nullptr;
     UINT error = package ? MimeMsiDirectoryPath(package, name, FALSE, &previous) : ERROR_INVALID_HANDLE;
     if (!error)
         error = full_directory(value, &path);

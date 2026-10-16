@@ -77,13 +77,13 @@ PMMVAD MiFindVad(PMMADDRESS_SPACE as, ULONG_PTR va)
     for (PLIST_ENTRY e = as->VadList.Flink; e != &as->VadList; e = e->Flink) {
         PMMVAD v = CONTAINING_RECORD(e, MMVAD, Links);
         if (va < v->StartVa)
-            return NULL;
+            return nullptr;
         if (va < v->EndVa) {
             as->Hint = v;
             return v;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 BOOLEAN MiRangeIsFree(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
@@ -119,7 +119,7 @@ NTSTATUS MiInsertVad(PMMADDRESS_SPACE as, PMMVAD vad)
 void MiRemoveVad(PMMADDRESS_SPACE as, PMMVAD vad)
 {
     if (as->Hint == vad)
-        as->Hint = NULL;
+        as->Hint = nullptr;
     RemoveEntryList(&vad->Links);
 }
 
@@ -219,7 +219,7 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
     free_tables(as->Root, 0);
     MmFreePage(as->RootPhys);
     MiFlushTlbAsid(as->Asid);
-    as->Root = NULL;
+    as->Root = nullptr;
     as->RootPhys = 0;
 }
 
@@ -525,7 +525,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     ExAcquireFastMutex(&as->Lock);
     BOOLEAN handled = FALSE;
     PMMVAD vad = MiFindVad(as, page);
-    ULONG64 *pte = vad ? MiWalk(as->Root, page, FALSE, 3) : NULL;
+    ULONG64 *pte = vad ? MiWalk(as->Root, page, FALSE, 3) : nullptr;
     if (pte) {
         ULONG64 v = *pte;
         ULONG sw_protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
@@ -588,7 +588,7 @@ NTSTATUS NTAPI ZwAllocateVirtualMemory(HANDLE process, PVOID *base, ULONG_PTR ze
                                        ULONG protect)
 {
     PEPROCESS p;
-    NTSTATUS status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, NULL);
+    NTSTATUS status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     status = MiAllocateVirtual(p, base, size, type, protect);
@@ -618,7 +618,7 @@ NTSTATUS NTAPI NtFreeVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T s
 NTSTATUS NTAPI ZwFreeVirtualMemory(HANDLE process, PVOID *base, PSIZE_T size, ULONG type)
 {
     PEPROCESS p;
-    NTSTATUS status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, NULL);
+    NTSTATUS status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     status = MiFreeVirtual(p, base, size, type);
@@ -674,13 +674,13 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         }
     } else if (klass == MemoryImageInformation) {
         /* the image view holding the address; zeros for any other memory, as windows answers. */
-        MEMORY_IMAGE_INFORMATION mi = {0};
+        MEMORY_IMAGE_INFORMATION mi = {};
         PMMADDRESS_SPACE as = &process->AddressSpace;
         if (length < sizeof(mi)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
         } else {
             ExAcquireFastMutex(&as->Lock);
-            PMMVAD vad = (ULONG_PTR)base <= MM_HIGHEST_USER_ADDRESS ? MiFindVad(as, (ULONG_PTR)base) : NULL;
+            PMMVAD vad = (ULONG_PTR)base <= MM_HIGHEST_USER_ADDRESS ? MiFindVad(as, (ULONG_PTR)base) : nullptr;
             if (!vad) {
                 status = STATUS_INVALID_ADDRESS;
             } else if (vad->Type == MiVadImage && vad->Section) {
@@ -701,7 +701,7 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         PMMADDRESS_SPACE as = &process->AddressSpace;
         ExAcquireFastMutex(&as->Lock);
         PMMVAD vad = MiFindVad(as, (ULONG_PTR)base);
-        PSECTION section = vad ? vad->Section : NULL;
+        PSECTION section = vad ? vad->Section : nullptr;
         if (section)
             ObReferenceObject(section);
         ExReleaseFastMutex(&as->Lock);

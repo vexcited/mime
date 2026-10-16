@@ -353,7 +353,7 @@ static const VT_KEY *find_key(const VT_KEY *keys, ULONG count, USHORT vk, ULONG 
                    !(m & CTRL) == !(state & CTRL)))
             return &keys[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 /* a typed character as vt input reports it: a press of no key. */

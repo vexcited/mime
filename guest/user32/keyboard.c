@@ -10,7 +10,7 @@
 #define EXT 0x100 /* extended scan code, sent with the E0 prefix */
 
 /* virtual key of each set 1 scan code without the E0 prefix. */
-static const BYTE g_scan_to_vk[0x80] = {
+static constexpr BYTE g_scan_to_vk[0x80] = {
     [0x01] = VK_ESCAPE,     [0x02] = '1',          [0x03] = '2',          [0x04] = '3',
     [0x05] = '4',           [0x06] = '5',          [0x07] = '6',          [0x08] = '7',
     [0x09] = '8',           [0x0A] = '9',          [0x0B] = '0',          [0x0C] = VK_OEM_MINUS,
@@ -52,7 +52,7 @@ static const EXT_KEY g_extended[] = {
 };
 
 /* numeric keypad keys share their scan codes with the navigation keys. */
-static const BYTE g_numpad_scan[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
+static constexpr BYTE g_numpad_scan[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
 
 /* characters of the printable keys: unshifted and shifted. */
 typedef struct CHAR_KEY {
@@ -79,7 +79,7 @@ static const CHAR_KEY *char_key(UINT vk)
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_chars); i++)
         if (g_chars[i].Vk == vk)
             return &g_chars[i];
-    return NULL;
+    return nullptr;
 }
 
 static UINT generic_vk(UINT vk)
@@ -270,7 +270,7 @@ WINUSERAPI int WINAPI GetKeyNameTextW(LONG lparam, LPWSTR buffer, int size)
         if (ext && (scan == 0x1D || scan == 0x38))
             ext = FALSE;
     }
-    const WCHAR *name = NULL;
+    const WCHAR *name = nullptr;
     WCHAR single[2] = {0, 0};
     const KEY_NAME *table = ext ? g_key_names_ext : g_key_names;
     ULONG count = ext ? RTL_NUMBER_OF(g_key_names_ext) : RTL_NUMBER_OF(g_key_names);
@@ -309,7 +309,7 @@ WINUSERAPI int WINAPI ToAsciiEx(UINT vk, UINT scan, const BYTE *state, LPWORD ch
     if (n <= 0 || !chars)
         return n;
     char a = 0;
-    if (!WideCharToMultiByte(CP_ACP, 0, w, 1, &a, 1, NULL, NULL))
+    if (!WideCharToMultiByte(CP_ACP, 0, w, 1, &a, 1, nullptr, nullptr))
         return 0;
     chars[0] = (WORD)(BYTE)a;
     return 1;
@@ -375,7 +375,7 @@ WINUSERAPI HKL WINAPI ActivateKeyboardLayout(HKL layout, UINT flags)
 {
     if (layout != US_LAYOUT && layout != (HKL)HKL_NEXT && layout != (HKL)HKL_PREV) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     return US_LAYOUT;
 }

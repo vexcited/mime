@@ -32,7 +32,7 @@ HRESULT WINAPI UrlGetPartW(LPCWSTR url, LPWSTR out, DWORD *size, DWORD part, DWO
         PCWSTR limit = authority;
         while (*limit && *limit != L'/' && *limit != L'?' && *limit != L'#')
             limit++;
-        PCWSTR at = NULL, password = NULL;
+        PCWSTR at = nullptr, password = nullptr;
         for (PCWSTR p = authority; p < limit; p++)
             if (*p == L'@')
                 at = p;
@@ -141,7 +141,7 @@ HRESULT WINAPI UrlUnescapeW(LPWSTR url, LPWSTR out, DWORD *size, DWORD flags)
     }
     if (!out || !size)
         return E_INVALIDARG;
-    DWORD count = unescape(url, NULL, flags);
+    DWORD count = unescape(url, nullptr, flags);
     if (*size <= count) {
         *size = count + 1;
         return E_POINTER;

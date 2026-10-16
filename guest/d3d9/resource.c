@@ -103,9 +103,9 @@ HRESULT D9ResourceFreePrivateData(D9Resource *r, REFGUID guid)
     UINT n = 0;
     if (!guid)
         return D3DERR_INVALIDCALL;
-    if (MimePrivateGet(&r->data, guid, &n, NULL) == (HRESULT)0x887A0002)
+    if (MimePrivateGet(&r->data, guid, &n, nullptr) == (HRESULT)0x887A0002)
         return D3DERR_NOTFOUND;
-    MimePrivateSet(&r->data, guid, 0, NULL);
+    MimePrivateSet(&r->data, guid, 0, nullptr);
     return D3D_OK;
 }
 
@@ -125,7 +125,7 @@ HRESULT D9AllocMemory(D9Memory *memory, const D9Format *f, UINT width, UINT heig
     memory->pitch = D9FormatPitch(f, width);
     memory->slice = memory->pitch * D9FormatRows(f, height);
     memory->size = memory->slice * D9_MAX(depth, 1);
-    memory->bytes = VirtualAlloc(NULL, D9_MAX(memory->size, 1), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    memory->bytes = VirtualAlloc(nullptr, D9_MAX(memory->size, 1), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     return memory->bytes ? D3D_OK : E_OUTOFMEMORY;
 }
 
@@ -133,7 +133,7 @@ void D9FreeMemory(D9Memory *memory)
 {
     if (memory->bytes)
         VirtualFree(memory->bytes, 0, MEM_RELEASE);
-    memory->bytes = NULL;
+    memory->bytes = nullptr;
 }
 
 /* a lock's rectangle within a level, whole blocks of compressed formats. */

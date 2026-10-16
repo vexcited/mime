@@ -56,7 +56,7 @@ static HRESULT STDMETHODCALLTYPE item_query_interface(IShellItem *This, REFIID r
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -77,7 +77,7 @@ static HRESULT STDMETHODCALLTYPE item_bind_to_handler(IShellItem *This, IBindCtx
                                                       REFIID riid, void **object)
 {
     if (object)
-        *object = NULL;
+        *object = nullptr;
     return E_NOTIMPL;
 }
 
@@ -110,7 +110,7 @@ static HRESULT STDMETHODCALLTYPE item_get_parent(IShellItem *This, IShellItem **
     SH_ITEM *item = (SH_ITEM *)This;
     if (!parent)
         return E_INVALIDARG;
-    *parent = NULL;
+    *parent = nullptr;
     SIZE_T root = root_length(item->Path), length = wcslen(item->Path);
     if (length <= root)
         return MK_E_NOOBJECT;
@@ -134,7 +134,7 @@ static LPWSTR make_url(LPCWSTR path)
     SIZE_T length = wcslen(path);
     LPWSTR url = ShAlloc((8 + length * 3 + 1) * sizeof(WCHAR));
     if (!url)
-        return NULL;
+        return nullptr;
     wcscpy(url, L"file:///");
     LPWSTR d = url + 8;
     if (path[0] == L'\\' && path[1] == L'\\') {
@@ -164,7 +164,7 @@ static HRESULT STDMETHODCALLTYPE item_get_display_name(IShellItem *This, SIGDN f
     SH_ITEM *item = (SH_ITEM *)This;
     if (!name)
         return E_INVALIDARG;
-    *name = NULL;
+    *name = nullptr;
     BOOL root = wcslen(item->Path) <= root_length(item->Path);
     switch (form) {
     case SIGDN_FILESYSPATH:
@@ -236,11 +236,11 @@ SHSTDAPI HRESULT WINAPI SHCreateItemFromParsingName(PCWSTR path, IBindCtx *conte
 {
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     if (!path || !riid)
         return E_INVALIDARG;
     WCHAR full[MAX_PATH];
-    DWORD n = GetFullPathNameW(path, MAX_PATH, full, NULL);
+    DWORD n = GetFullPathNameW(path, MAX_PATH, full, nullptr);
     if (!n || n >= MAX_PATH)
         return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
     if (GetFileAttributesW(full) == INVALID_FILE_ATTRIBUTES)
@@ -256,7 +256,7 @@ SHSTDAPI HRESULT WINAPI SHCreateItemFromIDList(PCIDLIST_ABSOLUTE pidl, REFIID ri
 {
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     WCHAR path[MAX_PATH];
     if (!pidl || !riid || !ShPathFromIdList(pidl, path, MAX_PATH))
         return E_INVALIDARG;
@@ -273,7 +273,7 @@ static HRESULT STDMETHODCALLTYPE malloc_query_interface(IMalloc *This, REFIID ri
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -298,7 +298,7 @@ static void *STDMETHODCALLTYPE malloc_realloc(IMalloc *This, void *p, SIZE_T siz
         return ShAlloc(size);
     if (!size) {
         ShFree(p);
-        return NULL;
+        return nullptr;
     }
     return HeapReAlloc(GetProcessHeap(), 0, p, size);
 }
@@ -353,7 +353,7 @@ static HRESULT STDMETHODCALLTYPE handlers_query_interface(IEnumAssocHandlers *Th
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -390,7 +390,7 @@ SHSTDAPI HRESULT WINAPI SHAssocEnumHandlers(PCWSTR extension, ASSOC_FILTER filte
 {
     if (!enumerator)
         return E_INVALIDARG;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     if (!extension)
         return E_INVALIDARG;
     HANDLER_ENUM *e = ShAllocZero(sizeof(*e));
@@ -409,7 +409,7 @@ SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderW(LPBROWSEINFOW info)
 {
     if (info && info->pszDisplayName)
         info->pszDisplayName[0] = 0;
-    return NULL;
+    return nullptr;
 }
 
 SHSTDAPI void WINAPI SHChangeNotify(LONG event, UINT flags, LPCVOID item1, LPCVOID item2)

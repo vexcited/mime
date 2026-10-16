@@ -116,12 +116,12 @@ static TOKEN g_system = {TRUE, 0x3E7};
 static NTSTATUS open_token(const TOKEN *spec, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
     if (!g_token_type) {
-        OBJECT_TYPE_INITIALIZER init = {0};
+        OBJECT_TYPE_INITIALIZER init = {};
         init.ValidAccessMask = 0xF01FF;
         g_token_type = ObCreateObjectType(L"Token", &init);
     }
     TOKEN *t;
-    NTSTATUS status = ObCreateObject(g_token_type, NULL, KernelMode, sizeof(*t), (PVOID *)&t);
+    NTSTATUS status = ObCreateObject(g_token_type, nullptr, KernelMode, sizeof(*t), (PVOID *)&t);
     if (!NT_SUCCESS(status))
         return status;
     *t = *spec;
@@ -135,7 +135,7 @@ static NTSTATUS open_token(const TOKEN *spec, ACCESS_MASK access, ULONG attribut
 NTSTATUS NTAPI NtOpenProcessTokenEx(HANDLE process_handle, ACCESS_MASK access, ULONG attributes, PHANDLE token)
 {
     PEPROCESS process;
-    NTSTATUS status = ObReferenceHandle(process_handle, PsProcessTypeObject, KeGetPreviousMode(), (PVOID *)&process, NULL);
+    NTSTATUS status = ObReferenceHandle(process_handle, PsProcessTypeObject, KeGetPreviousMode(), (PVOID *)&process, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     const TOKEN *spec = process == PsInitialSystemProcess ? &g_system : &g_user;
@@ -250,7 +250,7 @@ NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, U
     TOKEN *t;
     if (!g_token_type)
         return STATUS_INVALID_HANDLE;
-    NTSTATUS status = ObReferenceHandle(handle, g_token_type, KeGetPreviousMode(), (PVOID *)&t, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, g_token_type, KeGetPreviousMode(), (PVOID *)&t, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     BUILDER b = {ExAllocatePool2(POOL_FLAG_NON_PAGED, 1024, KI_TAG('S', 'e', 'T', 'k')), 0, (ULONG_PTR)info};
@@ -271,7 +271,7 @@ NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disable_all, PVOID
                                        PULONG returned)
 {
     TOKEN *t;
-    NTSTATUS status = g_token_type ? ObReferenceHandle(handle, g_token_type, KeGetPreviousMode(), (PVOID *)&t, NULL)
+    NTSTATUS status = g_token_type ? ObReferenceHandle(handle, g_token_type, KeGetPreviousMode(), (PVOID *)&t, nullptr)
                                    : STATUS_INVALID_HANDLE;
     if (!NT_SUCCESS(status))
         return status;

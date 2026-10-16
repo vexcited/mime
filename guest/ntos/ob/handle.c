@@ -150,7 +150,7 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         return ObInsertObject(object, access, attrs, handle);
 
     UNICODE_STRING name = *attributes->ObjectName;
-    POBJECT_DIRECTORY parent = NULL;
+    POBJECT_DIRECTORY parent = nullptr;
     UNICODE_STRING leaf = name;
     ULONG len = name.Length / sizeof(WCHAR);
     ULONG slash = len;
@@ -158,7 +158,7 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         slash--;
     NTSTATUS status;
     if (attributes->RootDirectory) {
-        status = ObReferenceHandle(attributes->RootDirectory, ObDirectoryType, mode, (PVOID *)&parent, NULL);
+        status = ObReferenceHandle(attributes->RootDirectory, ObDirectoryType, mode, (PVOID *)&parent, nullptr);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(object);
             return status;
@@ -175,7 +175,7 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         }
         UNICODE_STRING dir = {(USHORT)((slash > 1 ? slash - 1 : 1) * 2), 0, name.Buffer};
         dir.MaximumLength = dir.Length;
-        status = ObLookupObjectName(&dir, NULL, 0, ObDirectoryType, mode, NULL, (PVOID *)&parent);
+        status = ObLookupObjectName(&dir, nullptr, 0, ObDirectoryType, mode, nullptr, (PVOID *)&parent);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(object);
             return STATUS_OBJECT_PATH_NOT_FOUND;
@@ -189,7 +189,7 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         PVOID existing;
         UNICODE_STRING full = name;
         NTSTATUS st = ObLookupObjectName(&full, attributes->RootDirectory, attrs, OBJECT_TO_HEADER(object)->Type,
-                                         mode, NULL, &existing);
+                                         mode, nullptr, &existing);
         ObDereferenceObject(parent);
         ObDereferenceObject(object);
         if (!NT_SUCCESS(st))
@@ -257,7 +257,7 @@ NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mod
 NTSTATUS NTAPI ObReferenceObjectByHandle(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                                          PVOID *object, PVOID info)
 {
-    return ObReferenceHandle(handle, type, mode, object, NULL);
+    return ObReferenceHandle(handle, type, mode, object, nullptr);
 }
 
 static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR index)
@@ -268,7 +268,7 @@ static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR
         return STATUS_INVALID_HANDLE;
     }
     PVOID obj = table->Entries[index].Object;
-    table->Entries[index].Object = NULL;
+    table->Entries[index].Object = nullptr;
     table->Count--;
     if (index < table->FirstFree)
         table->FirstFree = (ULONG)index;
@@ -339,7 +339,7 @@ NTSTATUS NTAPI NtSetInformationObject(HANDLE handle, ULONG klass, PVOID info, UL
     if (length < sizeof(flags))
         return STATUS_INFO_LENGTH_MISMATCH;
     NTSTATUS status = KiCopyFromUser(&flags, info, sizeof(flags));
-    return NT_SUCCESS(status) ? handle_flags(handle, &flags, TRUE, NULL) : status;
+    return NT_SUCCESS(status) ? handle_flags(handle, &flags, TRUE, nullptr) : status;
 }
 
 NTSTATUS NTAPI NtClose(HANDLE handle)
@@ -361,7 +361,7 @@ void ObKillProcessHandles(PEPROCESS process)
     }
     if (table->Entries)
         ExFreePool(table->Entries);
-    table->Entries = NULL;
+    table->Entries = nullptr;
     table->Capacity = 0;
 }
 
@@ -402,7 +402,7 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
     ACCESS_MASK granted = access;
     NTSTATUS status;
     if (source == NtCurrentProcess() || source == NtCurrentThread()) {
-        status = ObReferenceHandle(source, NULL, KernelMode, &object, &granted);
+        status = ObReferenceHandle(source, nullptr, KernelMode, &object, &granted);
     } else {
         PHANDLE_TABLE table = &source_process->HandleTable;
         ULONG_PTR index = HANDLE_TO_INDEX(source);
@@ -421,7 +421,7 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
         return status;
     if (!(options & DUPLICATE_SAME_ACCESS))
         granted = access;
-    HANDLE h = NULL;
+    HANDLE h = nullptr;
     if (target_process && target) {
         status = ObCreateHandle(target_process, object, granted, attributes, &h);
         if (!NT_SUCCESS(status)) {
@@ -440,7 +440,7 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
 NTSTATUS NTAPI NtDuplicateObject(HANDLE source_process_handle, HANDLE source, HANDLE target_process_handle,
                                  PHANDLE target, ACCESS_MASK access, ULONG attributes, ULONG options)
 {
-    PEPROCESS sp, tp = NULL;
+    PEPROCESS sp, tp = nullptr;
     NTSTATUS status = PsReferenceProcessHandle(source_process_handle, PROCESS_DUP_HANDLE, &sp);
     if (!NT_SUCCESS(status))
         return status;
@@ -451,8 +451,8 @@ NTSTATUS NTAPI NtDuplicateObject(HANDLE source_process_handle, HANDLE source, HA
             return status;
         }
     }
-    HANDLE h = NULL;
-    status = ObDuplicateHandle(sp, source, tp, target ? &h : NULL, access, attributes, options);
+    HANDLE h = nullptr;
+    status = ObDuplicateHandle(sp, source, tp, target ? &h : nullptr, access, attributes, options);
     if (NT_SUCCESS(status) && target) {
         if (KeGetPreviousMode() == UserMode)
             status = KiCopyToUser(target, &h, sizeof(h));
@@ -469,7 +469,7 @@ NTSTATUS NTAPI NtDuplicateObject(HANDLE source_process_handle, HANDLE source, HA
 
 static NTSTATUS capture_attributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name)
 {
-    name->Buffer = NULL;
+    name->Buffer = nullptr;
     if (!user) {
         memset(copy, 0, sizeof(*copy));
         return STATUS_SUCCESS;
@@ -534,7 +534,7 @@ NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, ObDirectoryType, KeGetPreviousMode(), access, NULL, &h);
+    status = ObOpenObjectByName(&oa, ObDirectoryType, KeGetPreviousMode(), access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -550,7 +550,7 @@ NTSTATUS NTAPI NtOpenSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJ
         return status;
     oa.Attributes |= OBJ_OPENLINK;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, ObSymbolicLinkType, KeGetPreviousMode(), access, NULL, &h);
+    status = ObOpenObjectByName(&oa, ObSymbolicLinkType, KeGetPreviousMode(), access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -600,7 +600,7 @@ NTSTATUS NTAPI NtMakeTemporaryObject(HANDLE handle)
 {
     PVOID object;
     ACCESS_MASK granted;
-    NTSTATUS status = ObReferenceHandle(handle, NULL, KeGetPreviousMode(), &object, &granted);
+    NTSTATUS status = ObReferenceHandle(handle, nullptr, KeGetPreviousMode(), &object, &granted);
     if (!NT_SUCCESS(status))
         return status;
     if (KeGetPreviousMode() == UserMode && !(granted & DELETE)) {
@@ -615,7 +615,7 @@ NTSTATUS NTAPI NtMakeTemporaryObject(HANDLE handle)
 NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, PULONG returned)
 {
     POBJECT_SYMBOLIC_LINK link;
-    NTSTATUS status = ObReferenceHandle(handle, ObSymbolicLinkType, KeGetPreviousMode(), (PVOID *)&link, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, ObSymbolicLinkType, KeGetPreviousMode(), (PVOID *)&link, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     UNICODE_STRING out;
@@ -641,12 +641,12 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
                              PULONG returned)
 {
     PVOID object;
-    NTSTATUS status = ObReferenceHandle(handle, NULL, KeGetPreviousMode(), &object, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, nullptr, KeGetPreviousMode(), &object, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     if (klass == ObjectNameInformation) {
         WCHAR buf[512];
-        UNICODE_STRING name = {0};
+        UNICODE_STRING name = {};
         if (OBJECT_TO_HEADER(object)->Directory)
             ObQueryNameString(object, &name, buf, RTL_NUMBER_OF(buf));
         ULONG need = sizeof(OBJECT_NAME_INFORMATION) + name.Length + sizeof(WCHAR);
@@ -673,7 +673,7 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             ULONG HandleCount, PointerCount, PagedPoolCharge, NonPagedPoolCharge, Reserved[3];
             ULONG NameInfoSize, TypeInfoSize, SecurityDescriptorSize;
             LARGE_INTEGER CreationTime;
-        } basic = {0};
+        } basic = {};
         basic.Attributes = (flags.Inherit ? OBJ_INHERIT : 0) | (flags.ProtectFromClose ? OBJ_PROTECT_CLOSE : 0);
         basic.GrantedAccess = granted;
         basic.HandleCount = (ULONG)OBJECT_TO_HEADER(object)->HandleCount;

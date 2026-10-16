@@ -82,7 +82,7 @@ BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, 
         return CrFail(ERROR_OUTOFMEMORY);
     engine->magic = ENGINE_MAGIC;
     engine->flags = pConfig->dwFlags;
-    engine->world = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0, 0, NULL);
+    engine->world = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0, 0, nullptr);
     if (!engine->world) {
         CrFree(engine);
         return FALSE;
@@ -108,9 +108,9 @@ BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, 
 static cr_engine *engine_of(HCERTCHAINENGINE handle)
 {
     if (handle == HCCE_CURRENT_USER || handle == HCCE_LOCAL_MACHINE || handle == HCCE_SERIAL_LOCAL_MACHINE)
-        return NULL;
+        return nullptr;
     cr_engine *engine = (cr_engine *)handle;
-    return engine->magic == ENGINE_MAGIC ? engine : NULL;
+    return engine->magic == ENGINE_MAGIC ? engine : nullptr;
 }
 
 void WINAPI CertFreeCertificateChainEngine(HCERTCHAINENGINE hChainEngine)
@@ -183,7 +183,7 @@ static PCCERT_CONTEXT find_issuer(HCERTSTORE store, PCCERT_CONTEXT subject, PCCE
     BYTE want[CR_MAX_HASH];
     DWORD want_size = 0;
     BOOL has_aki = authority_key_id(subject, want, &want_size);
-    PCCERT_CONTEXT candidate = NULL;
+    PCCERT_CONTEXT candidate = nullptr;
     while ((candidate = CertFindCertificateInStore(store, X509_ASN_ENCODING, 0, CERT_FIND_SUBJECT_NAME,
                                                    &subject->pCertInfo->Issuer, candidate))) {
         if (in_chain(certs, count, candidate))
@@ -218,7 +218,7 @@ static BOOL is_trusted_root(cr_engine *engine, PCCERT_CONTEXT root)
     if (!engine || !engine->roots)
         return FALSE;
     PCCERT_CONTEXT found = CertFindCertificateInStore(engine->roots, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, root,
-                                                      NULL);
+                                                      nullptr);
     if (!found)
         return FALSE;
     CertFreeCertificateContext(found);
@@ -250,7 +250,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
                                     LPVOID pvReserved, PCCERT_CHAIN_CONTEXT *ppChainContext)
 {
     if (ppChainContext)
-        *ppChainContext = NULL;
+        *ppChainContext = nullptr;
     if (!pCertContext || !ppChainContext || !pChainPara || pChainPara->cbSize < FIELD_OFFSET(CERT_CHAIN_PARA,
                                                                                                RequestedIssuancePolicy))
         return CrFail(E_INVALIDARG);
@@ -266,7 +266,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
     if (!block)
         return CrFail(ERROR_OUTOFMEMORY);
     PCCERT_CONTEXT certs[MAX_CHAIN];
-    DWORD errors[MAX_CHAIN] = {0}, infos[MAX_CHAIN] = {0}, chain_error = 0;
+    DWORD errors[MAX_CHAIN] = {}, infos[MAX_CHAIN] = {}, chain_error = 0;
     DWORD count = 0;
     certs[count++] = CertDuplicateCertificateContext(pCertContext);
     for (;;) {
@@ -288,7 +288,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         }
         int score = 0;
         DWORD status = 0;
-        PCCERT_CONTEXT issuer = find_issuer(hAdditionalStore, cur, certs, count, pTime, &score, NULL, &status);
+        PCCERT_CONTEXT issuer = find_issuer(hAdditionalStore, cur, certs, count, pTime, &score, nullptr, &status);
         if (score < 15)
             issuer = find_issuer(cur->hCertStore, cur, certs, count, pTime, &score, issuer, &status);
         if (score < 15 && engine)
@@ -360,7 +360,7 @@ void WINAPI CertFreeCertificateChain(PCCERT_CHAIN_CONTEXT pChainContext)
 PCCERT_CHAIN_CONTEXT WINAPI CertDuplicateCertificateChain(PCCERT_CHAIN_CONTEXT pChainContext)
 {
     if (!pChainContext)
-        return NULL;
+        return nullptr;
     InterlockedIncrement(&block_of(pChainContext)->refs);
     return pChainContext;
 }
@@ -443,7 +443,7 @@ static BOOL server_name_matches(PCCERT_CONTEXT cert, LPCWSTR host)
     }
     if (found || had_dns)
         return found;
-    DWORD n = CertGetNameStringW(cert, CERT_NAME_ATTR_TYPE, 0, szOID_COMMON_NAME, NULL, 0);
+    DWORD n = CertGetNameStringW(cert, CERT_NAME_ATTR_TYPE, 0, szOID_COMMON_NAME, nullptr, 0);
     WCHAR *cn = CrAlloc(n * sizeof(WCHAR));
     if (!cn)
         return FALSE;
@@ -467,7 +467,7 @@ BOOL WINAPI CertVerifyCertificateChainPolicy(LPCSTR pszPolicyOID, PCCERT_CHAIN_C
     LONG chain_index = -1, element_index = -1;
     DWORD error = 0;
     if (policy == 4 || policy == 9) {
-        const SSL_EXTRA_CERT_CHAIN_POLICY_PARA *ssl = pPolicyPara ? pPolicyPara->pvExtraPolicyPara : NULL;
+        const SSL_EXTRA_CERT_CHAIN_POLICY_PARA *ssl = pPolicyPara ? pPolicyPara->pvExtraPolicyPara : nullptr;
         DWORD checks = ssl ? ssl->fdwChecks : 0;
         if (checks & SECURITY_FLAG_IGNORE_UNKNOWN_CA)
             flags |= CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG;
@@ -531,7 +531,7 @@ PCCERT_CHAIN_CONTEXT WINAPI CertFindChainInStore(HCERTSTORE hCertStore, DWORD dw
                                                  PCCERT_CHAIN_CONTEXT pPrevChainContext)
 {
     const CERT_CHAIN_FIND_BY_ISSUER_PARA *para = pvFindPara;
-    PCCERT_CONTEXT cert = NULL;
+    PCCERT_CONTEXT cert = nullptr;
     if (pPrevChainContext) {
         if (pPrevChainContext->cChain && pPrevChainContext->rgpChain[0]->cElement)
             cert = CertDuplicateCertificateContext(pPrevChainContext->rgpChain[0]->rgpElement[0]->pCertContext);
@@ -542,7 +542,7 @@ PCCERT_CHAIN_CONTEXT WINAPI CertFindChainInStore(HCERTSTORE hCertStore, DWORD dw
         if (cert)
             CertFreeCertificateContext(cert);
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     while ((cert = CertEnumCertificatesInStore(hCertStore, cert))) {
         if (!(dwFindFlags & CERT_CHAIN_FIND_BY_ISSUER_NO_KEY_FLAG) && !CrHasPrivateKey(cert))
@@ -557,7 +557,7 @@ PCCERT_CHAIN_CONTEXT WINAPI CertFindChainInStore(HCERTSTORE hCertStore, DWORD dw
         PCCERT_CHAIN_CONTEXT chain;
         HCERTCHAINENGINE engine =
             (dwFindFlags & CERT_CHAIN_FIND_BY_ISSUER_LOCAL_MACHINE_FLAG) ? HCCE_LOCAL_MACHINE : HCCE_CURRENT_USER;
-        if (!CertGetCertificateChain(engine, cert, NULL, NULL, &chain_para, 0, NULL, &chain))
+        if (!CertGetCertificateChain(engine, cert, nullptr, nullptr, &chain_para, 0, nullptr, &chain))
             continue;
         DWORD chain_at = 0, element_at = 0;
         if (chain_has_issuer(chain, para, &chain_at, &element_at) &&
@@ -574,5 +574,5 @@ PCCERT_CHAIN_CONTEXT WINAPI CertFindChainInStore(HCERTSTORE hCertStore, DWORD dw
         CertFreeCertificateChain(chain);
     }
     SetLastError(CRYPT_E_NOT_FOUND);
-    return NULL;
+    return nullptr;
 }

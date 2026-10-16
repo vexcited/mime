@@ -49,7 +49,7 @@ typedef struct KB_FILE_PIPE_WAIT_FOR_BUFFER {
 
 static PVOID port_context(LPOVERLAPPED ov)
 {
-    return ((ULONG_PTR)ov->hEvent & 1) ? NULL : ov;
+    return ((ULONG_PTR)ov->hEvent & 1) ? nullptr : ov;
 }
 
 static HANDLE ov_event(LPOVERLAPPED ov)
@@ -66,15 +66,15 @@ static NTSTATUS pipe_control(HANDLE pipe, LPOVERLAPPED ov, ULONG code, PVOID in,
         PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)ov;
         iosb->Status = STATUS_PENDING;
         iosb->Information = 0;
-        status = NtFsControlFile(pipe, ov_event(ov), NULL, port_context(ov), iosb, code, in, in_len, out, out_len);
+        status = NtFsControlFile(pipe, ov_event(ov), nullptr, port_context(ov), iosb, code, in, in_len, out, out_len);
         if (information)
             *information = iosb->Information;
         return status;
     }
-    IO_STATUS_BLOCK iosb = {0};
-    status = NtFsControlFile(pipe, NULL, NULL, NULL, &iosb, code, in, in_len, out, out_len);
+    IO_STATUS_BLOCK iosb = {};
+    status = NtFsControlFile(pipe, nullptr, nullptr, nullptr, &iosb, code, in, in_len, out, out_len);
     if (status == STATUS_PENDING) {
-        NtWaitForSingleObject(pipe, FALSE, NULL);
+        NtWaitForSingleObject(pipe, FALSE, nullptr);
         status = iosb.Status;
     }
     if (information)
@@ -119,11 +119,11 @@ WINBASEAPI HANDLE WINAPI CreateNamedPipeW(LPCWSTR name, DWORD open_mode, DWORD p
     if (!KbDosPathToNt(name, &nt))
         return INVALID_HANDLE_VALUE;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE | (sa && sa->bInheritHandle ? OBJ_INHERIT : 0), NULL,
-                               sa ? sa->lpSecurityDescriptor : NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE | (sa && sa->bInheritHandle ? OBJ_INHERIT : 0), nullptr,
+                               sa ? sa->lpSecurityDescriptor : nullptr);
     LARGE_INTEGER default_timeout;
     default_timeout.QuadPart = timeout ? -(LONGLONG)timeout * 10000 : -500000;
-    IO_STATUS_BLOCK iosb = {0};
+    IO_STATUS_BLOCK iosb = {};
     HANDLE handle;
     NTSTATUS status = NtCreateNamedPipeFile(
         &handle, access, &oa, &iosb, share, disposition, options, (pipe_mode & PIPE_TYPE_MESSAGE) ? 1 : 0,
@@ -141,7 +141,7 @@ WINBASEAPI HANDLE WINAPI CreateNamedPipeW(LPCWSTR name, DWORD open_mode, DWORD p
 WINBASEAPI HANDLE WINAPI CreateNamedPipeA(LPCSTR name, DWORD open_mode, DWORD pipe_mode, DWORD max_instances,
                                           DWORD out_size, DWORD in_size, DWORD timeout, LPSECURITY_ATTRIBUTES sa)
 {
-    PWSTR w = name ? KbAnsiToWide(name) : NULL;
+    PWSTR w = name ? KbAnsiToWide(name) : nullptr;
     if (name && !w)
         return INVALID_HANDLE_VALUE;
     HANDLE h = CreateNamedPipeW(w, open_mode, pipe_mode, max_instances, out_size, in_size, timeout, sa);
@@ -151,7 +151,7 @@ WINBASEAPI HANDLE WINAPI CreateNamedPipeA(LPCSTR name, DWORD open_mode, DWORD pi
 
 WINBASEAPI BOOL WINAPI ConnectNamedPipe(HANDLE pipe, LPOVERLAPPED overlapped)
 {
-    NTSTATUS status = pipe_control(pipe, overlapped, FSCTL_PIPE_LISTEN, NULL, 0, NULL, 0, NULL);
+    NTSTATUS status = pipe_control(pipe, overlapped, FSCTL_PIPE_LISTEN, nullptr, 0, nullptr, 0, nullptr);
     if (status == STATUS_PENDING) {
         KbSetError(ERROR_IO_PENDING);
         return FALSE;
@@ -163,7 +163,7 @@ WINBASEAPI BOOL WINAPI ConnectNamedPipe(HANDLE pipe, LPOVERLAPPED overlapped)
 
 WINBASEAPI BOOL WINAPI DisconnectNamedPipe(HANDLE pipe)
 {
-    NTSTATUS status = pipe_control(pipe, NULL, FSCTL_PIPE_DISCONNECT, NULL, 0, NULL, 0, NULL);
+    NTSTATUS status = pipe_control(pipe, nullptr, FSCTL_PIPE_DISCONNECT, nullptr, 0, nullptr, 0, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -179,7 +179,7 @@ WINBASEAPI BOOL WINAPI PeekNamedPipe(HANDLE pipe, LPVOID buffer, DWORD size, LPD
         return FALSE;
     }
     ULONG_PTR info = 0;
-    NTSTATUS status = pipe_control(pipe, NULL, FSCTL_PIPE_PEEK, NULL, 0, peek, length, &info);
+    NTSTATUS status = pipe_control(pipe, nullptr, FSCTL_PIPE_PEEK, nullptr, 0, peek, length, &info);
     if (status == STATUS_BUFFER_OVERFLOW)
         status = STATUS_SUCCESS;
     if (!NT_SUCCESS(status)) {
@@ -272,7 +272,7 @@ WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateW(HANDLE pipe, LPDWORD state, LPDW
 static BOOL pipe_attribute(HANDLE pipe, const char *name, PULONG value)
 {
     IO_STATUS_BLOCK iosb;
-    NTSTATUS status = NtFsControlFile(pipe, NULL, NULL, NULL, &iosb, FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE, (PVOID)name,
+    NTSTATUS status = NtFsControlFile(pipe, nullptr, nullptr, nullptr, &iosb, FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE, (PVOID)name,
                                       (ULONG)strlen(name) + 1, value, sizeof(*value));
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
@@ -300,7 +300,7 @@ WINBASEAPI BOOL WINAPI GetNamedPipeServerSessionId(HANDLE pipe, PULONG id)
 WINBASEAPI BOOL WINAPI GetNamedPipeHandleStateA(HANDLE pipe, LPDWORD state, LPDWORD instances, LPDWORD max_collection,
                                                 LPDWORD collect_timeout, LPSTR user, DWORD user_size)
 {
-    if (!GetNamedPipeHandleStateW(pipe, state, instances, max_collection, collect_timeout, NULL, 0))
+    if (!GetNamedPipeHandleStateW(pipe, state, instances, max_collection, collect_timeout, nullptr, 0))
         return FALSE;
     if (user && user_size)
         user[0] = 0;
@@ -344,13 +344,13 @@ WINBASEAPI BOOL WINAPI WaitNamedPipeW(LPCWSTR name, DWORD timeout)
     UNICODE_STRING root;
     RtlInitUnicodeString(&root, L"\\Device\\NamedPipe\\");
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &root, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &root, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE device;
     NTSTATUS status = NtOpenFile(&device, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT);
     if (NT_SUCCESS(status)) {
-        status = pipe_control(device, NULL, FSCTL_PIPE_WAIT, wait, length, NULL, 0, NULL);
+        status = pipe_control(device, nullptr, FSCTL_PIPE_WAIT, wait, length, nullptr, 0, nullptr);
         NtClose(device);
     }
     KbFree(wait);
@@ -365,7 +365,7 @@ WINBASEAPI BOOL WINAPI WaitNamedPipeW(LPCWSTR name, DWORD timeout)
 
 WINBASEAPI BOOL WINAPI WaitNamedPipeA(LPCSTR name, DWORD timeout)
 {
-    PWSTR w = name ? KbAnsiToWide(name) : NULL;
+    PWSTR w = name ? KbAnsiToWide(name) : nullptr;
     if (name && !w)
         return FALSE;
     BOOL ok = WaitNamedPipeW(w, timeout);
@@ -384,8 +384,8 @@ WINBASEAPI BOOL WINAPI CreatePipe(PHANDLE read_pipe, PHANDLE write_pipe, LPSECUR
     UNICODE_STRING name;
     RtlInitUnicodeString(&name, buffer);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | (sa && sa->bInheritHandle ? OBJ_INHERIT : 0), NULL,
-                               sa ? sa->lpSecurityDescriptor : NULL);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | (sa && sa->bInheritHandle ? OBJ_INHERIT : 0), nullptr,
+                               sa ? sa->lpSecurityDescriptor : nullptr);
     LARGE_INTEGER timeout;
     timeout.QuadPart = -1200000000LL;
     if (!size)

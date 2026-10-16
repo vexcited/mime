@@ -363,7 +363,7 @@ HRESULT FxParseExpression(FxEffect *e, const BYTE *blob, UINT size, FxExpression
         registers = registers > end ? registers : end;
     }
     x->table_size = 4 * registers;
-    UINT **table = x->table_size ? FxAlloc(e, x->table_size * sizeof(*table)) : NULL;
+    UINT **table = x->table_size ? FxAlloc(e, x->table_size * sizeof(*table)) : nullptr;
     if (x->table_size && !table)
         return E_OUTOFMEMORY;
     x->table = table;
@@ -377,7 +377,7 @@ HRESULT FxParseExpression(FxEffect *e, const BYTE *blob, UINT size, FxExpression
         if (!v || (v->type->kind != FX_NUMERIC && v->type->kind != FX_STRUCT))
             return E_FAIL;
         for (UINT k = 0; k < 4 * count; k++)
-            table[4 * first + k] = k < v->type->size / 4 ? (UINT *)(v->data + 4 * k) : NULL;
+            table[4 * first + k] = k < v->type->size / 4 ? (UINT *)(v->data + 4 * k) : nullptr;
     }
 
     /* every instruction: its operation, inputs and output in range. */
@@ -572,13 +572,13 @@ static UINT unary(UINT op, UINT a)
 /* runs the program, its outputs written to out, which holds four components. */
 void FxRunExpression(const FxExpression *x, void *out)
 {
-    UINT temps[TEMPS] = {0};
+    UINT temps[TEMPS] = {};
     UINT *result = out;
     const UINT *p = x->code + 1;
     for (UINT i = 0; i < x->code[0]; i++) {
         UINT token = *p++, inputs = *p++, op = (token >> 20) & 0x7FF, n = token & 0xFFFFF;
         BOOL scalar = token >> 31;
-        const UINT *in[8] = {0};
+        const UINT *in[8] = {};
         for (UINT k = 0; k < inputs; k++)
             in[k] = input_at(x, &p, temps);
         UINT file = p[1], index = p[2];

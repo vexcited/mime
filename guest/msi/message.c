@@ -14,7 +14,7 @@ void MimeMsiCloseLog(void)
     if (log_file) {
         FlushFileBuffers(log_file);
         CloseHandle(log_file);
-        log_file = NULL;
+        log_file = nullptr;
     }
     log_lines = 0;
 }
@@ -57,13 +57,13 @@ UINT WINAPI MsiEnableLogW(DWORD mode, LPCWSTR path, DWORD attributes)
         return ERROR_INVALID_PARAMETER;
     if (path && (mode & INSTALLLOGMODE_LOGONLYONERROR))
         return ERROR_CALL_NOT_IMPLEMENTED;
-    HANDLE file = NULL;
+    HANDLE file = nullptr;
     if (path) {
-        file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
-                           attributes & INSTALLLOGATTRIBUTES_APPEND ? OPEN_ALWAYS : CREATE_ALWAYS, 0, NULL);
+        file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                           attributes & INSTALLLOGATTRIBUTES_APPEND ? OPEN_ALWAYS : CREATE_ALWAYS, 0, nullptr);
         if (file == INVALID_HANDLE_VALUE)
             return ERROR_INSTALL_LOG_FAILURE;
-        LARGE_INTEGER zero = {0}, position;
+        LARGE_INTEGER zero = {}, position;
         if (!SetFilePointerEx(file, zero, &position, FILE_END)) {
             CloseHandle(file);
             return ERROR_INSTALL_LOG_FAILURE;
@@ -71,7 +71,7 @@ UINT WINAPI MsiEnableLogW(DWORD mode, LPCWSTR path, DWORD attributes)
         if (!position.QuadPart) {
             WCHAR bom = 0xfeff;
             DWORD written;
-            if (!WriteFile(file, &bom, sizeof(bom), &written, NULL) || written != sizeof(bom)) {
+            if (!WriteFile(file, &bom, sizeof(bom), &written, nullptr) || written != sizeof(bom)) {
                 CloseHandle(file);
                 return ERROR_INSTALL_LOG_FAILURE;
             }
@@ -95,8 +95,8 @@ static BOOL log_message(UINT kind, PCWSTR text, DWORD length)
     if (length > UINT32_MAX / sizeof(WCHAR))
         return FALSE;
     DWORD bytes = length * sizeof(WCHAR), written;
-    if (!WriteFile(log_file, text, bytes, &written, NULL) || written != bytes ||
-        !WriteFile(log_file, L"\r\n", 4, &written, NULL) || written != 4)
+    if (!WriteFile(log_file, text, bytes, &written, nullptr) || written != bytes ||
+        !WriteFile(log_file, L"\r\n", 4, &written, nullptr) || written != 4)
         return FALSE;
     if (++log_lines >= 20 || (log_attributes & INSTALLLOGATTRIBUTES_FLUSHEACHLINE)) {
         log_lines = 0;
@@ -108,21 +108,21 @@ static BOOL log_message(UINT kind, PCWSTR text, DWORD length)
 static PCWSTR message_template(MIME_MSI_PACKAGE *package, UINT kind, const MIME_MSI_RECORD *record)
 {
     if (record->Fields[0].Kind != FIELD_NULL)
-        return NULL;
+        return nullptr;
     if (kind == 9)
         return package->ActionFormat;
     if (kind > 3 || !record->Count)
-        return NULL;
+        return nullptr;
     int code = MimeMsiFieldGetInteger(&record->Fields[1]);
     MIME_MSI_TABLE *table;
     if (code == MSI_NULL_INTEGER || MimeMsiLoadTable(package->Database, L"Error", &table) || table->Count != 2)
-        return NULL;
+        return nullptr;
     if ((table->Columns[1].Type & 0x0c00) != 0x0c00 || table->Columns[0].Width != 2)
-        return NULL;
+        return nullptr;
     for (ULONG row = 0; row < table->Rows; row++)
         if ((int)MimeMsiCell(table, row, 0) - 0x8000 == code)
             return package->Database->Strings[MimeMsiCell(table, row, 1)];
-    return NULL;
+    return nullptr;
 }
 
 int WINAPI MsiProcessMessage(MSIHANDLE install, INSTALLMESSAGE type, MSIHANDLE handle)
@@ -134,8 +134,8 @@ int WINAPI MsiProcessMessage(MSIHANDLE install, INSTALLMESSAGE type, MSIHANDLE h
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(install, MIME_MSI_KIND_PACKAGE);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     UINT error = package && record ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
-    MIME_MSI_RECORD *formatted_record = record, *copy = NULL;
-    PWSTR text = NULL;
+    MIME_MSI_RECORD *formatted_record = record, *copy = nullptr;
+    PWSTR text = nullptr;
     DWORD length = 0;
     if (!error && kind == 8 && record->Count >= 3) {
         PCWSTR template = record->Fields[3].Kind == FIELD_STRING ? record->Fields[3].String : L"";
@@ -166,7 +166,7 @@ int WINAPI MsiProcessMessage(MSIHANDLE install, INSTALLMESSAGE type, MSIHANDLE h
     if (!error && !log_message(kind, text, length))
         error = ERROR_INSTALL_LOG_FAILURE;
     MimeMsiFree(copy);
-    INSTALLUI_HANDLER_RECORD handler = (ui_filter & (1u << kind)) ? ui_handler : NULL;
+    INSTALLUI_HANDLER_RECORD handler = (ui_filter & (1u << kind)) ? ui_handler : nullptr;
     PVOID context = ui_context;
     HWND window = ui_window;
     INSTALLUILEVEL level = ui_level;

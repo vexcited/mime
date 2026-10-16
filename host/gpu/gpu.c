@@ -66,7 +66,7 @@ extern void objc_autoreleasePoolPop(void *pool);
         s_;                                                                                                            \
     })
 #define CLS(name) ((id)objc_getClass(name))
-#define MSG(type, obj, name, ...) ((type)objc_msgSend)((id)(obj), S(name), ##__VA_ARGS__)
+#define MSG(type, obj, name, ...) ((type)objc_msgSend)((id)(obj), S(name) __VA_OPT__(,) __VA_ARGS__)
 
 typedef id (*F_id)(id, SEL);
 typedef id (*F_id_id)(id, SEL, id);
@@ -279,7 +279,7 @@ static double now_s(void)
 static Channel *find_channel(uint64_t id_)
 {
     pthread_mutex_lock(&g_lock);
-    Channel *c = id_ < MAX_CHANNELS ? g_channels[id_] : NULL;
+    Channel *c = id_ < MAX_CHANNELS ? g_channels[id_] : nullptr;
     pthread_mutex_unlock(&g_lock);
     return c;
 }
@@ -298,7 +298,7 @@ static void *slot(void **table, uint32_t *cap, uint32_t id_, size_t size)
     return (uint8_t *)*table + (size_t)id_ * size;
 }
 
-#define SLOT(c, table, id_) ((__typeof__((c)->table))slot((void **)&(c)->table, &(c)->table##_cap, id_, sizeof(*(c)->table)))
+#define SLOT(c, table, id_) ((typeof((c)->table))slot((void **)&(c)->table, &(c)->table##_cap, id_, sizeof(*(c)->table)))
 
 static void release(id obj)
 {
@@ -338,7 +338,7 @@ static void *heap_ptr(Channel *c, const MimeGpuMem *m, uint64_t size)
 {
     uint64_t off;
     if (!heap(c, m, size, &off))
-        return NULL;
+        return nullptr;
     return c->block_base[m->block] + off;
 }
 
@@ -424,7 +424,7 @@ static void commit(Channel *c, uint64_t fence)
 static id texture_of(Channel *c, uint32_t id_, bool surface, bool depth)
 {
     if (surface) {
-        Surface *s = id_ < c->surfaces_cap ? &c->surfaces[id_] : NULL;
+        Surface *s = id_ < c->surfaces_cap ? &c->surfaces[id_] : nullptr;
         return s ? (depth ? s->depth : s->color) : nil;
     }
     return id_ < c->textures_cap ? c->textures[id_].tex : nil;
@@ -586,7 +586,7 @@ static void compile_job(void *arg)
     mime_shader_compile(j->vs, j->vs_len, j->fs, j->fs_len, j->bindings, j->bindings_len, &r);
     bool ok = r.ok;
     for (int s = 0; ok && s < MIME_GPU_STAGES; s++) {
-        char *error = NULL;
+        char *error = nullptr;
         j->p->fn[s] = make_function(r.msl[s], r.entry[s], &error);
         if (!j->p->fn[s]) {
             mime_warn("gpu: metal rejected a translated program: %s", error ? error : "");
@@ -661,12 +661,12 @@ static void program_create(Channel *c, const MimeGpuProgramCreate *pc)
 static Program *program_ready(Channel *c, uint32_t id_)
 {
     if (id_ >= c->programs_cap || !c->programs[id_])
-        return NULL;
+        return nullptr;
     Program *p = c->programs[id_];
     /* a program stays signaled once compiled. */
     dispatch_semaphore_wait(p->ready, DISPATCH_TIME_FOREVER);
     dispatch_semaphore_signal(p->ready);
-    return p->compiled ? p : NULL;
+    return p->compiled ? p : nullptr;
 }
 
 static void program_destroy(Channel *c, uint32_t id_)
@@ -678,7 +678,7 @@ static void program_destroy(Channel *c, uint32_t id_)
     release(p->fn[0]);
     release(p->fn[1]);
     free(p);
-    c->programs[id_] = NULL;
+    c->programs[id_] = nullptr;
 }
 
 /* ---------------------------------------------------------------- states */
@@ -909,14 +909,14 @@ static bool has_stencil(NSUInteger f)
 
 static Track *track_of(Channel *c, uint32_t id_, bool surface, bool depth)
 {
-    Track *t = NULL;
+    Track *t = nullptr;
     if (surface) {
         if (id_ < c->surfaces_cap)
             t = depth ? &c->surfaces[id_].depth_track : &c->surfaces[id_].color_track;
     } else if (id_ < c->textures_cap) {
         t = &c->textures[id_].track;
     }
-    return t && t->tracked ? t : NULL;
+    return t && t->tracked ? t : nullptr;
 }
 
 static void track_reset(Track *t, bool tracked)
@@ -937,9 +937,9 @@ static Aspect *pass_aspect(Channel *c, int i)
 {
     MimeGpuAttachment *a = pass_att(c, i);
     if (!a->id || a->level || a->slice || a->resolve)
-        return NULL;
+        return nullptr;
     Track *t = track_of(c, a->id, a->surface, i >= MIME_GPU_MAX_COLORS);
-    return t ? &t->aspect[i == MIME_GPU_MAX_COLORS + 1] : NULL;
+    return t ? &t->aspect[i == MIME_GPU_MAX_COLORS + 1] : nullptr;
 }
 
 static void aspect_clear_value(Channel *c, int i, Aspect *as)
@@ -1202,7 +1202,7 @@ static uint16_t format_of(Channel *c, const MimeGpuAttachment *a, bool depth)
     if (!a->id)
         return 0;
     if (a->surface) {
-        Surface *s = a->id < c->surfaces_cap ? &c->surfaces[a->id] : NULL;
+        Surface *s = a->id < c->surfaces_cap ? &c->surfaces[a->id] : nullptr;
         if (!s || !s->color)
             return 0;
         if (!depth)
@@ -1415,7 +1415,7 @@ static id clear_pipeline(Channel *c, uint32_t color_mask)
     } else {
         snprintf(src + n, sizeof(src) - (size_t)n, "fragment void mime_clear_fs() {}\n");
     }
-    char *error = NULL;
+    char *error = nullptr;
     id fs = make_function(src, "mime_clear_fs", &error);
     free(error);
     id vs = internal_function(c, "mime_clear_vs");
@@ -2022,7 +2022,7 @@ static void *channel_main(void *arg)
         if (__atomic_load_n(&c->hdr->put, __ATOMIC_ACQUIRE) == get && !wait_for_work(c, get))
             break;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* ---------------------------------------------------------------- hypercalls */
@@ -2033,7 +2033,7 @@ static bool add_block(Channel *c, uint32_t index, uint64_t pa, uint64_t size)
     if (!base || index >= MIME_GPU_MAX_BLOCKS || c->blocks[index] || ((uintptr_t)base & (MIME_GPU_ALIGN - 1)) ||
         (size & (MIME_GPU_ALIGN - 1)))
         return false;
-    id buf = MSG(F_id_p_u_u_blk, g_device, "newBufferWithBytesNoCopy:length:options:deallocator:", base, size, 0, NULL);
+    id buf = MSG(F_id_p_u_u_blk, g_device, "newBufferWithBytesNoCopy:length:options:deallocator:", base, size, 0, nullptr);
     if (!buf)
         return false;
     c->block_base[index] = base;
@@ -2061,8 +2061,8 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
     c->vm = vm;
     c->hdr = (MimeGpuHeader *)base;
     c->ring = base + MIME_GPU_HEADER_SIZE;
-    pthread_mutex_init(&c->lock, NULL);
-    pthread_cond_init(&c->cond, NULL);
+    pthread_mutex_init(&c->lock, nullptr);
+    pthread_cond_init(&c->cond, nullptr);
     void *pool = objc_autoreleasePoolPush();
     bool ok = add_block(c, 0, pa, size);
     c->queue = MSG(F_id, g_device, "newCommandQueue");
@@ -2082,7 +2082,7 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
         free(c);
         return MIME_HC_STATUS_NO_MEMORY;
     }
-    pthread_create(&c->thread, NULL, channel_main, c);
+    pthread_create(&c->thread, nullptr, channel_main, c);
     *channel = c->id;
     return MIME_HC_STATUS_OK;
 }
@@ -2112,9 +2112,9 @@ void mime_gpu_kick(uint64_t channel)
 void mime_gpu_close(uint64_t channel)
 {
     pthread_mutex_lock(&g_lock);
-    Channel *c = channel < MAX_CHANNELS ? g_channels[channel] : NULL;
+    Channel *c = channel < MAX_CHANNELS ? g_channels[channel] : nullptr;
     if (c)
-        g_channels[channel] = NULL;
+        g_channels[channel] = nullptr;
     pthread_mutex_unlock(&g_lock);
     if (!c)
         return;
@@ -2122,7 +2122,7 @@ void mime_gpu_close(uint64_t channel)
     c->stop = true;
     pthread_cond_signal(&c->cond);
     pthread_mutex_unlock(&c->lock);
-    pthread_join(c->thread, NULL);
+    pthread_join(c->thread, nullptr);
 
     void *pool = objc_autoreleasePoolPush();
     end_render(c);

@@ -108,7 +108,7 @@ static void local_unwind(EH3_FRAME *frame, const SCOPE *scopes, int stop, int to
 
 void __cdecl _local_unwind2(EH3_FRAME *frame, int stop) { local_unwind(frame, frame->scopes, stop, TOP_LEVEL3); }
 
-void __cdecl _global_unwind2(EH3_FRAME *frame) { RtlUnwind(frame, NULL, NULL, NULL); }
+void __cdecl _global_unwind2(EH3_FRAME *frame) { RtlUnwind(frame, nullptr, nullptr, nullptr); }
 
 /*
  * whether the __finally block running was reached by an unwind rather
@@ -229,7 +229,7 @@ void __cdecl MsvcrtSetjmp3(JUMP_BUFFER *buf, int count, const ULONG *args)
 {
     buf->Registration = read_fs0();
     buf->Cookie = JUMP_COOKIE;
-    buf->UnwindFunc = count >= 1 ? (void *)args[0] : NULL;
+    buf->UnwindFunc = count >= 1 ? (void *)args[0] : nullptr;
     buf->TryLevel = count >= 2 ? (int)args[1] : frame_level(buf->Registration);
     for (int i = 0; i < 6; i++)
         buf->UnwindData[i] = i + 2 < count ? args[i + 2] : 0;

@@ -206,7 +206,7 @@ BOOLEAN BltSurface(SURFACE *dst, const REGION *clip, LONG dx, LONG dy, LONG widt
     }
     RECT target = {dx, dy, dx + width, dy + height};
     BOOLEAN needs_dst = ((code >> 1) & 0x55) != (code & 0x55);
-    BRUSH *brush = dst_dc ? dst_dc->State.Brush : NULL;
+    BRUSH *brush = dst_dc ? dst_dc->State.Brush : nullptr;
     BOOLEAN needs_pat = ((code >> 4) & 0x0F) != (code & 0x0F);
     BOOLEAN overlap = src == dst && sy < dy;
     for (ULONG i = 0; i < clip->Count; i++) {
@@ -502,7 +502,7 @@ BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, 
     RECT r = {0, 0, 0, 0};
     UCHAR code = (UCHAR)(rop >> 16);
     BOOLEAN uses_src = ((code >> 2) & 0x33) != (code & 0x33);
-    DC *src = hsrc ? DcLookup(hsrc) : NULL;
+    DC *src = hsrc ? DcLookup(hsrc) : nullptr;
     if (begin_draw(hdst, &ctx)) {
         if (!uses_src) {
             r = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
@@ -627,7 +627,7 @@ void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RE
 static DC *path_dc(HDC hdc)
 {
     DC *dc = DcLookup(hdc);
-    return dc && DcIsPathOpen(dc) ? dc : NULL;
+    return dc && DcIsPathOpen(dc) ? dc : nullptr;
 }
 
 BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
@@ -968,7 +968,7 @@ static BOOL fill_region(HDC hdc, HRGN region, HBRUSH hbrush, int frame_w, int fr
     BOOL ok = FALSE;
     RECT dirty = {0, 0, 0, 0};
     GDI_REGION *r = (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION);
-    BRUSH *b = hbrush ? (BRUSH *)GdiLookup(hbrush, GDI_TYPE_BRUSH) : NULL;
+    BRUSH *b = hbrush ? (BRUSH *)GdiLookup(hbrush, GDI_TYPE_BRUSH) : nullptr;
     if (begin_draw(hdc, &ctx) && r && (b || invert)) {
         REGION area;
         RgnInit(&area);
@@ -1018,5 +1018,5 @@ BOOL NTAPI NtGdiFrameRgn(HDC hdc, HRGN region, HBRUSH brush, int width, int heig
 
 BOOL NTAPI NtGdiInvertRgn(HDC hdc, HRGN region)
 {
-    return fill_region(hdc, region, NULL, 0, 0, TRUE);
+    return fill_region(hdc, region, nullptr, 0, 0, TRUE);
 }

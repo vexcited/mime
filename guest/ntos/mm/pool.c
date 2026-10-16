@@ -20,7 +20,7 @@ typedef struct POOL_FREE {
     struct POOL_FREE *Next;
 } POOL_FREE;
 
-static const ULONG g_class_size[] = {32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2064};
+static constexpr ULONG g_class_size[] = {32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2064};
 #define POOL_CLASSES (sizeof(g_class_size) / sizeof(g_class_size[0]))
 static POOL_FREE *g_class_free[POOL_CLASSES];
 static SIZE_T g_pool_bytes;
@@ -64,7 +64,7 @@ static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
         SIZE_T pages = BYTES_TO_PAGES(size);
         ULONG64 pa = MmAllocateContiguous(pages);
         if (!pa)
-            return NULL;
+            return nullptr;
         PMMPFN p = MiGetPfn(pa);
         p->ShareCount = POOL_LARGE_MARK;
         p->Order = 0;
@@ -80,7 +80,7 @@ static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
     ULONG64 state = KiDisableInterrupts();
     if (!g_class_free[cls] && !refill(cls)) {
         KiRestoreInterrupts(state);
-        return NULL;
+        return nullptr;
     }
     POOL_FREE *f = g_class_free[cls];
     g_class_free[cls] = f->Next;

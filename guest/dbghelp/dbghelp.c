@@ -131,7 +131,7 @@ static SESSION *find_session(HANDLE process)
     for (SESSION *s = g_sessions; s; s = s->Next)
         if (s->Process == process)
             return s;
-    return NULL;
+    return nullptr;
 }
 
 DBGHELP BOOL WINAPI SymInitializeW(HANDLE process, PCWSTR search, BOOL invade)
@@ -148,7 +148,7 @@ DBGHELP BOOL WINAPI SymInitializeW(HANDLE process, PCWSTR search, BOOL invade)
     ReleaseSRWLockExclusive(&g_lock);
     if (!s)
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    return s != NULL;
+    return s != nullptr;
 }
 
 DBGHELP BOOL WINAPI SymInitialize(HANDLE process, PCSTR search, BOOL invade)
@@ -156,13 +156,13 @@ DBGHELP BOOL WINAPI SymInitialize(HANDLE process, PCSTR search, BOOL invade)
     WCHAR wide[MAX_PATH];
     if (search)
         MultiByteToWideChar(CP_ACP, 0, search, -1, wide, MAX_PATH);
-    return SymInitializeW(process, search ? wide : NULL, invade);
+    return SymInitializeW(process, search ? wide : nullptr, invade);
 }
 
 DBGHELP BOOL WINAPI SymCleanup(HANDLE process)
 {
     AcquireSRWLockExclusive(&g_lock);
-    SESSION *found = NULL;
+    SESSION *found = nullptr;
     for (SESSION **p = &g_sessions; *p; p = &(*p)->Next) {
         if ((*p)->Process == process) {
             found = *p;
@@ -199,7 +199,7 @@ DBGHELP BOOL WINAPI SymSetSearchPathW(HANDLE process, PCWSTR search)
     ReleaseSRWLockExclusive(&g_lock);
     if (!s)
         SetLastError(ERROR_INVALID_HANDLE);
-    return s != NULL;
+    return s != nullptr;
 }
 
 DBGHELP BOOL WINAPI SymGetSearchPathW(HANDLE process, PWSTR search, DWORD size)
@@ -211,7 +211,7 @@ DBGHELP BOOL WINAPI SymGetSearchPathW(HANDLE process, PWSTR search, DWORD size)
     ReleaseSRWLockShared(&g_lock);
     if (!s)
         SetLastError(ERROR_INVALID_HANDLE);
-    return s != NULL;
+    return s != nullptr;
 }
 
 /* ------------------------------------------------------------------ modules and symbols */
@@ -223,7 +223,7 @@ static BOOL own_process(HANDLE process)
 
 DBGHELP DWORD64 WINAPI SymGetModuleBase64(HANDLE process, DWORD64 address)
 {
-    HMODULE module = NULL;
+    HMODULE module = nullptr;
     if (!own_process(process) ||
         !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                             (LPCWSTR)(ULONG_PTR)address, &module))
@@ -234,7 +234,7 @@ DBGHELP DWORD64 WINAPI SymGetModuleBase64(HANDLE process, DWORD64 address)
 DBGHELP PVOID WINAPI SymFunctionTableAccess64(HANDLE process, DWORD64 address)
 {
     ULONG64 base;
-    return own_process(process) ? RtlLookupFunctionEntry(address, &base, NULL) : NULL;
+    return own_process(process) ? RtlLookupFunctionEntry(address, &base, nullptr) : nullptr;
 }
 
 /* the export of a module closest below an address, from its export directory. */
@@ -250,7 +250,7 @@ static BOOL nearest_export(BYTE *base, DWORD64 address, const char **name, DWORD
     DWORD *names = (DWORD *)(base + ex->AddressOfNames);
     WORD *ordinals = (WORD *)(base + ex->AddressOfNameOrdinals);
     DWORD rva = (DWORD)(address - (DWORD64)(ULONG_PTR)base), best = 0;
-    *name = NULL;
+    *name = nullptr;
     for (DWORD i = 0; i < ex->NumberOfNames; i++) {
         DWORD f = functions[ordinals[i]];
         /* forwarders point into the export directory and name no code. */
@@ -262,7 +262,7 @@ static BOOL nearest_export(BYTE *base, DWORD64 address, const char **name, DWORD
         }
     }
     *start = (DWORD64)(ULONG_PTR)base + best;
-    return *name != NULL;
+    return *name != nullptr;
 }
 
 DBGHELP BOOL WINAPI SymFromAddr(HANDLE process, DWORD64 address, PDWORD64 displacement, PSYMBOL_INFO symbol)
@@ -352,11 +352,11 @@ static BOOL unwind(CONTEXT *c)
 {
 #ifdef __x86_64__
     ULONG64 base;
-    PVOID function = RtlLookupFunctionEntry(c->Rip, &base, NULL);
+    PVOID function = RtlLookupFunctionEntry(c->Rip, &base, nullptr);
     if (function) {
         PVOID data;
         ULONG64 establisher;
-        RtlVirtualUnwind(0, base, c->Rip, function, c, &data, &establisher, NULL);
+        RtlVirtualUnwind(0, base, c->Rip, function, c, &data, &establisher, nullptr);
     } else {
         /* a leaf without unwind data: the return address is on top of the stack. */
         c->Rip = *(ULONG64 *)c->Rsp;
@@ -519,7 +519,7 @@ static ULONG32 put(DUMP *d, const void *data, ULONG32 size)
 {
     ULONG32 at = d->Rva;
     DWORD written;
-    if (d->Ok && size && (!WriteFile(d->File, data, size, &written, NULL) || written != size))
+    if (d->Ok && size && (!WriteFile(d->File, data, size, &written, nullptr) || written != size))
         d->Ok = FALSE;
     d->Rva += size;
     return at;
@@ -541,7 +541,7 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
         SetLastError(ERROR_NOT_SUPPORTED);
         return FALSE;
     }
-    if (SetFilePointer(file, 0, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
+    if (SetFilePointer(file, 0, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
         SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
@@ -552,14 +552,14 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
     NtQuerySystemTime(&now);
     header.TimeDateStamp = (ULONG32)(now.QuadPart / 10000000 - 11644473600ll);
     put(&d, &header, sizeof(header));
-    MINIDUMP_DIRECTORY directory[3] = {0};
+    MINIDUMP_DIRECTORY directory[3] = {};
     ULONG32 directory_rva = put(&d, directory, streams * sizeof(MINIDUMP_DIRECTORY));
 
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     RTL_OSVERSIONINFOEXW version = {sizeof(version)};
     RtlGetVersion(&version);
-    MINIDUMP_SYSTEM_INFO sys = {0};
+    MINIDUMP_SYSTEM_INFO sys = {};
     sys.ProcessorArchitecture = si.wProcessorArchitecture;
     sys.ProcessorLevel = si.wProcessorLevel;
     sys.ProcessorRevision = si.wProcessorRevision;
@@ -604,7 +604,7 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
 
     if (exception) {
         EXCEPTION_POINTERS *pointers = exception->ExceptionPointers;
-        MINIDUMP_EXCEPTION_STREAM e = {0};
+        MINIDUMP_EXCEPTION_STREAM e = {};
         e.ThreadId = exception->ThreadId;
         if (pointers && pointers->ExceptionRecord) {
             EXCEPTION_RECORD *r = pointers->ExceptionRecord;
@@ -625,13 +625,13 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
 
     /* the directory and the system information's string go back in place. */
     LONG end = (LONG)d.Rva;
-    SetFilePointer(file, (LONG)directory_rva, NULL, FILE_BEGIN);
+    SetFilePointer(file, (LONG)directory_rva, nullptr, FILE_BEGIN);
     d.Rva = directory_rva;
     put(&d, directory, streams * sizeof(MINIDUMP_DIRECTORY));
-    SetFilePointer(file, (LONG)sys_rva, NULL, FILE_BEGIN);
+    SetFilePointer(file, (LONG)sys_rva, nullptr, FILE_BEGIN);
     d.Rva = sys_rva;
     put(&d, &sys, sizeof(sys));
-    SetFilePointer(file, end, NULL, FILE_BEGIN);
+    SetFilePointer(file, end, nullptr, FILE_BEGIN);
     if (!d.Ok)
         return FALSE;
     return TRUE;

@@ -34,7 +34,7 @@ uint64_t mime_window_map(MimeVm *vm, int file, uint64_t *ipa_out)
     if (fd < 0)
         return MIME_HC_STATUS_NO_MEMORY;
     MimeLazyRegion r;
-    if (!mime_lazy_init(&r, ipa, size, fd, NULL, (uint64_t)st.st_size)) {
+    if (!mime_lazy_init(&r, ipa, size, fd, nullptr, (uint64_t)st.st_size)) {
         close(fd);
         return MIME_HC_STATUS_NO_MEMORY;
     }
@@ -50,7 +50,7 @@ static MimeLazyRegion *window_find(MimeVm *vm, uint64_t ipa)
     for (uint32_t i = 0; i < vm->window_count; i++)
         if (mime_lazy_contains(&vm->windows[i], ipa))
             return &vm->windows[i];
-    return NULL;
+    return nullptr;
 }
 
 static void window_unmap(MimeVm *vm, MimeLazyRegion *w)
@@ -81,7 +81,7 @@ void mime_window_unmap_all(MimeVm *vm)
 static void window_trim(MimeVm *vm, MimeLazyRegion *keep)
 {
     while (vm->window_bytes + MIME_LAZY_CHUNK > WINDOW_BUDGET) {
-        MimeLazyRegion *oldest = NULL;
+        MimeLazyRegion *oldest = nullptr;
         for (uint32_t i = 0; i < vm->window_count; i++) {
             MimeLazyRegion *w = &vm->windows[i];
             if (w != keep && w->filled_bytes && (!oldest || w->last_use < oldest->last_use))

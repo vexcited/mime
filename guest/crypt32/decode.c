@@ -14,7 +14,7 @@ void *ArenaAlloc(cr_arena *a, SIZE_T size)
 {
     SIZE_T offset = (a->used + 7) & ~(SIZE_T)7;
     a->used = offset + size;
-    return a->base ? a->base + offset : NULL;
+    return a->base ? a->base + offset : nullptr;
 }
 
 void *ArenaCopy(cr_arena *a, const void *data, SIZE_T size)
@@ -122,13 +122,13 @@ DWORD CrDecodeNameValueString(DWORD value_type, const BYTE *data, DWORD size, WC
     case CERT_RDN_TELETEX_STRING:
         if ((value_type & CERT_RDN_TYPE_MASK) == CERT_RDN_UTF8_STRING ||
             (!(value_type & CERT_RDN_DISABLE_IE4_UTF8_FLAG) && is_utf8(data, size))) {
-            int count = size ? MultiByteToWideChar(CP_UTF8, 0, (LPCCH)data, (int)size, NULL, 0) : 0;
+            int count = size ? MultiByteToWideChar(CP_UTF8, 0, (LPCCH)data, (int)size, nullptr, 0) : 0;
             if (count > 0 && out && (DWORD)count <= capacity)
                 MultiByteToWideChar(CP_UTF8, 0, (LPCCH)data, (int)size, out, count);
             n = count > 0 ? (DWORD)count : 0;
             break;
         }
-        /* fall through */
+        [[fallthrough]];
     default:
         for (DWORD i = 0; i < size; i++)
             PUT(data[i]);
@@ -155,12 +155,12 @@ static DWORD dec_oid(cr_arena *a, const der_item *item, LPSTR *out)
 static void dec_blob(cr_arena *a, const BYTE *data, DWORD size, CRYPT_DATA_BLOB *out)
 {
     out->cbData = size;
-    out->pbData = size ? ArenaCopy(a, data, size) : NULL;
+    out->pbData = size ? ArenaCopy(a, data, size) : nullptr;
 }
 
 static void dec_reversed(cr_arena *a, const BYTE *data, DWORD size, CRYPT_DATA_BLOB *out)
 {
-    BYTE *p = size ? ArenaAlloc(a, size) : NULL;
+    BYTE *p = size ? ArenaAlloc(a, size) : nullptr;
     if (p)
         for (DWORD i = 0; i < size; i++)
             p[i] = data[size - 1 - i];
@@ -241,13 +241,13 @@ static DWORD dec_extensions(cr_arena *a, const der_item *item, DWORD *count, PCE
     if (item->tag != ASN_SEQUENCE)
         return CRYPT_E_ASN1_BADTAG;
     DWORD n = DerCount(item);
-    PCERT_EXTENSION ext = n ? ArenaAlloc(a, n * sizeof(CERT_EXTENSION)) : NULL;
+    PCERT_EXTENSION ext = n ? ArenaAlloc(a, n * sizeof(CERT_EXTENSION)) : nullptr;
     der_reader r;
     DerOpen(&r, item);
     for (DWORD i = 0; i < n; i++) {
         der_item seq, oid, value;
         der_reader inner;
-        CERT_EXTENSION e = {0};
+        CERT_EXTENSION e = {};
         DWORD error = DerExpect(&r, ASN_SEQUENCE, &seq);
         if (error)
             return error;
@@ -313,7 +313,7 @@ static DWORD dec_value(cr_arena *a, const der_item *item, BOOL unicode, DWORD fl
         return 0;
     }
     DWORD conv = t | (flags & CERT_RDN_DISABLE_IE4_UTF8_FLAG);
-    DWORD n = CrDecodeNameValueString(conv, item->content, item->length, NULL, 0);
+    DWORD n = CrDecodeNameValueString(conv, item->content, item->length, nullptr, 0);
     WCHAR *w = ArenaAlloc(a, (n + 1) * sizeof(WCHAR));
     if (w) {
         CrDecodeNameValueString(conv, item->content, item->length, w, n);
@@ -329,7 +329,7 @@ static DWORD dec_name(cr_arena *a, const der_item *item, BOOL unicode, DWORD fla
     if (item->tag != ASN_SEQUENCE)
         return CRYPT_E_ASN1_BADTAG;
     DWORD n = DerCount(item);
-    PCERT_RDN rdns = n ? ArenaAlloc(a, n * sizeof(CERT_RDN)) : NULL;
+    PCERT_RDN rdns = n ? ArenaAlloc(a, n * sizeof(CERT_RDN)) : nullptr;
     der_reader r;
     DerOpen(&r, item);
     for (DWORD i = 0; i < n; i++) {
@@ -338,13 +338,13 @@ static DWORD dec_name(cr_arena *a, const der_item *item, BOOL unicode, DWORD fla
         if (error)
             return error;
         DWORD count = DerCount(&set);
-        PCERT_RDN_ATTR attrs = count ? ArenaAlloc(a, count * sizeof(CERT_RDN_ATTR)) : NULL;
+        PCERT_RDN_ATTR attrs = count ? ArenaAlloc(a, count * sizeof(CERT_RDN_ATTR)) : nullptr;
         der_reader inner;
         DerOpen(&inner, &set);
         for (DWORD j = 0; j < count; j++) {
             der_item seq, oid, value;
             der_reader fields;
-            CERT_RDN_ATTR attr = {0};
+            CERT_RDN_ATTR attr = {};
             if ((error = DerExpect(&inner, ASN_SEQUENCE, &seq)))
                 return error;
             DerOpen(&fields, &seq);
@@ -370,12 +370,12 @@ static DWORD dec_alt_name(cr_arena *a, const der_item *item, CERT_ALT_NAME_INFO 
     if (item->tag != ASN_SEQUENCE && item->tag != ASN_CONSTRUCTED_CONTEXT(1))
         return CRYPT_E_ASN1_BADTAG;
     DWORD n = DerCount(item);
-    PCERT_ALT_NAME_ENTRY entries = n ? ArenaAlloc(a, n * sizeof(CERT_ALT_NAME_ENTRY)) : NULL;
+    PCERT_ALT_NAME_ENTRY entries = n ? ArenaAlloc(a, n * sizeof(CERT_ALT_NAME_ENTRY)) : nullptr;
     der_reader r;
     DerOpen(&r, item);
     for (DWORD i = 0; i < n; i++) {
         der_item name;
-        CERT_ALT_NAME_ENTRY e = {0};
+        CERT_ALT_NAME_ENTRY e = {};
         DWORD error = DerRead(&r, &name);
         if (error)
             return error;
@@ -383,7 +383,7 @@ static DWORD dec_alt_name(cr_arena *a, const der_item *item, CERT_ALT_NAME_INFO 
         case ASN_CONSTRUCTED_CONTEXT(0): {
             der_reader inner;
             der_item oid, wrapper;
-            CERT_OTHER_NAME other = {0};
+            CERT_OTHER_NAME other = {};
             DerOpen(&inner, &name);
             if ((error = DerExpect(&inner, ASN_OID, &oid)) || (error = dec_oid(a, &oid, &other.pszObjId)) ||
                 (error = DerExpect(&inner, ASN_CONSTRUCTED_CONTEXT(0), &wrapper)))
@@ -507,7 +507,7 @@ static DWORD dec_cert_info(cr_arena *a, const der_item *item, CERT_INFO *info)
 
 typedef DWORD (*decode_fn)(cr_arena *a, const der_item *item, DWORD flags);
 
-#define TOP(type) type *top = ArenaAlloc(a, sizeof(type)), tmp = {0}
+#define TOP(type) type *top = ArenaAlloc(a, sizeof(type)), tmp = {}
 #define STORE() \
     do {        \
         if (top) \
@@ -660,7 +660,7 @@ static DWORD d_basic_constraints(cr_arena *a, const der_item *item, DWORD flags)
     if (DerPeek(&r, ASN_SEQUENCE)) {
         DerRead(&r, &it);
         DWORD n = DerCount(&it);
-        CERT_NAME_BLOB *names = n ? ArenaAlloc(a, n * sizeof(CERT_NAME_BLOB)) : NULL;
+        CERT_NAME_BLOB *names = n ? ArenaAlloc(a, n * sizeof(CERT_NAME_BLOB)) : nullptr;
         der_reader inner;
         DerOpen(&inner, &it);
         for (DWORD i = 0; i < n; i++) {
@@ -754,7 +754,7 @@ static DWORD d_utc_time(cr_arena *a, const der_item *item, DWORD flags)
 
 static DWORD d_oid(cr_arena *a, const der_item *item, DWORD flags)
 {
-    LPSTR *top = ArenaAlloc(a, sizeof(LPSTR)), oid = NULL;
+    LPSTR *top = ArenaAlloc(a, sizeof(LPSTR)), oid = nullptr;
     DWORD error = dec_oid(a, item, &oid);
     if (!error && top)
         *top = oid;
@@ -767,12 +767,12 @@ static DWORD d_eku(cr_arena *a, const der_item *item, DWORD flags)
     if (item->tag != ASN_SEQUENCE)
         return CRYPT_E_ASN1_BADTAG;
     DWORD n = DerCount(item);
-    LPSTR *oids = n ? ArenaAlloc(a, n * sizeof(LPSTR)) : NULL;
+    LPSTR *oids = n ? ArenaAlloc(a, n * sizeof(LPSTR)) : nullptr;
     der_reader r;
     DerOpen(&r, item);
     for (DWORD i = 0; i < n; i++) {
         der_item oid;
-        LPSTR s = NULL;
+        LPSTR s = nullptr;
         DWORD error = DerExpect(&r, ASN_OID, &oid);
         if (error || (error = dec_oid(a, &oid, &s)))
             return error;
@@ -947,7 +947,7 @@ static decode_fn decoder_for(LPCSTR type)
         case 73:
             return d_oid;
         }
-        return NULL;
+        return nullptr;
     }
     static const struct {
         LPCSTR oid;
@@ -970,7 +970,7 @@ static decode_fn decoder_for(LPCSTR type)
     for (DWORD i = 0; i < RTL_NUMBER_OF(map); i++)
         if (!strcmp(map[i].oid, type))
             return map[i].fn;
-    return NULL;
+    return nullptr;
 }
 
 /* measures then decodes; returns 0 and the size, writing only when base is not NULL. */
@@ -994,21 +994,21 @@ void *CrDecodeAlloc(LPCSTR type, const BYTE *data, DWORD size, DWORD flags, DWOR
     SIZE_T needed;
     if (!fn) {
         SetLastError(ERROR_FILE_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     if (!data || !size) {
         SetLastError(CRYPT_E_ASN1_EOD);
-        return NULL;
+        return nullptr;
     }
-    DWORD error = run_decoder(fn, data, size, flags, NULL, &needed);
+    DWORD error = run_decoder(fn, data, size, flags, nullptr, &needed);
     if (error) {
         SetLastError(error);
-        return NULL;
+        return nullptr;
     }
     BYTE *p = CrAllocZero(needed ? needed : 1);
     if (!p) {
         SetLastError(ERROR_OUTOFMEMORY);
-        return NULL;
+        return nullptr;
     }
     run_decoder(fn, data, size, flags, p, &needed);
     if (out_size)
@@ -1030,7 +1030,7 @@ BOOL WINAPI CryptDecodeObjectEx(DWORD dwCertEncodingType, LPCSTR lpszStructType,
     if (!pbEncoded || !cbEncoded)
         return CrFail(CRYPT_E_ASN1_EOD);
     SIZE_T needed;
-    DWORD error = run_decoder(fn, pbEncoded, cbEncoded, dwFlags, NULL, &needed);
+    DWORD error = run_decoder(fn, pbEncoded, cbEncoded, dwFlags, nullptr, &needed);
     if (error)
         return CrFail(error);
     if (needed > MAXDWORD)
@@ -1065,5 +1065,5 @@ BOOL WINAPI CryptDecodeObject(DWORD dwCertEncodingType, LPCSTR lpszStructType, c
                               DWORD cbEncoded, DWORD dwFlags, void *pvStructInfo, DWORD *pcbStructInfo)
 {
     return CryptDecodeObjectEx(dwCertEncodingType, lpszStructType, pbEncoded, cbEncoded,
-                               dwFlags & ~CRYPT_DECODE_ALLOC_FLAG, NULL, pvStructInfo, pcbStructInfo);
+                               dwFlags & ~CRYPT_DECODE_ALLOC_FLAG, nullptr, pvStructInfo, pcbStructInfo);
 }

@@ -8,7 +8,7 @@
 
 NTSTATUS AdvResolveToken(HANDLE token, ACCESS_MASK access, HANDLE *real, HANDLE *opened)
 {
-    *opened = NULL;
+    *opened = nullptr;
     *real = token;
     if (token == ADV_CURRENT_THREAD_TOKEN || token == ADV_CURRENT_THREAD_EFFECTIVE_TOKEN) {
         NTSTATUS status = NtOpenThreadToken(NtCurrentThread(), access, TRUE, opened);
@@ -31,7 +31,7 @@ static PVOID query_token(HANDLE token, TOKEN_INFORMATION_CLASS klass, NTSTATUS *
 {
     HANDLE real, opened;
     NTSTATUS status = AdvResolveToken(token ? token : ADV_CURRENT_THREAD_EFFECTIVE_TOKEN, TOKEN_QUERY, &real, &opened);
-    PVOID buffer = NULL;
+    PVOID buffer = nullptr;
     ULONG size = 256;
     while (NT_SUCCESS(status)) {
         AdvFree(buffer);
@@ -50,7 +50,7 @@ static PVOID query_token(HANDLE token, TOKEN_INFORMATION_CLASS klass, NTSTATUS *
         NtClose(opened);
     if (!NT_SUCCESS(status)) {
         AdvFree(buffer);
-        buffer = NULL;
+        buffer = nullptr;
     }
     if (result)
         *result = status;
@@ -59,22 +59,22 @@ static PVOID query_token(HANDLE token, TOKEN_INFORMATION_CLASS klass, NTSTATUS *
 
 TOKEN_USER *AdvQueryTokenUser(HANDLE token)
 {
-    return query_token(token, TokenUser, NULL);
+    return query_token(token, TokenUser, nullptr);
 }
 
 TOKEN_GROUPS *AdvQueryTokenGroups(HANDLE token)
 {
-    return query_token(token, TokenGroups, NULL);
+    return query_token(token, TokenGroups, nullptr);
 }
 
 PVOID AdvQueryToken(HANDLE token, DWORD klass)
 {
-    return query_token(token, klass, NULL);
+    return query_token(token, klass, nullptr);
 }
 
 BOOL AdvCurrentUserSid(void *storage)
 {
-    TOKEN_USER *user = AdvQueryTokenUser(NULL);
+    TOKEN_USER *user = AdvQueryTokenUser(nullptr);
     BOOL ok = user && AdvSidValid(user->User.Sid);
     if (ok)
         memcpy(storage, user->User.Sid, AdvSidLength(user->User.Sid));
@@ -129,8 +129,8 @@ ADVAPI BOOL WINAPI DuplicateTokenEx(HANDLE token, DWORD access, LPSECURITY_ATTRI
         BOOLEAN EffectiveOnly;
     } qos = {sizeof(qos), level, TRUE, FALSE}; /* dynamic tracking, as kernelbase asks */
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, NULL, sa && sa->bInheritHandle ? OBJ_INHERIT : 0, NULL,
-                               sa ? sa->lpSecurityDescriptor : NULL);
+    InitializeObjectAttributes(&oa, nullptr, sa && sa->bInheritHandle ? OBJ_INHERIT : 0, nullptr,
+                               sa ? sa->lpSecurityDescriptor : nullptr);
     oa.SecurityQualityOfService = &qos;
     NTSTATUS status = NtDuplicateToken(token, access, &oa, FALSE, type, result);
     if (status == STATUS_NOT_IMPLEMENTED)
@@ -141,7 +141,7 @@ ADVAPI BOOL WINAPI DuplicateTokenEx(HANDLE token, DWORD access, LPSECURITY_ATTRI
 
 ADVAPI BOOL WINAPI DuplicateToken(HANDLE token, SECURITY_IMPERSONATION_LEVEL level, PHANDLE result)
 {
-    return DuplicateTokenEx(token, TOKEN_IMPERSONATE | TOKEN_QUERY, NULL, level, TokenImpersonation, result);
+    return DuplicateTokenEx(token, TOKEN_IMPERSONATE | TOKEN_QUERY, nullptr, level, TokenImpersonation, result);
 }
 
 ADVAPI BOOL WINAPI AdjustTokenPrivileges(HANDLE token, BOOL disable_all, PTOKEN_PRIVILEGES state, DWORD length,
@@ -168,7 +168,7 @@ ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
     *member = FALSE;
     NTSTATUS status;
     TOKEN_USER *user = query_token(token, TokenUser, &status);
-    TOKEN_GROUPS *groups = user ? query_token(token, TokenGroups, &status) : NULL;
+    TOKEN_GROUPS *groups = user ? query_token(token, TokenGroups, &status) : nullptr;
     if (!groups) {
         AdvFree(user);
         return AdvSetStatus(status);
@@ -189,8 +189,8 @@ ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
 
 /* the luid of each privilege is its index in this table, as on every windows system. */
 static const PCWSTR g_privileges[] = {
-    NULL,
-    NULL,
+    nullptr,
+    nullptr,
     L"SeCreateTokenPrivilege",
     L"SeAssignPrimaryTokenPrivilege",
     L"SeLockMemoryPrivilege",

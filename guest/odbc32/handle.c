@@ -22,12 +22,12 @@ void OdbcUnlock(void)
 OdbcHandle *OdbcLookup(SQLHANDLE handle, SQLSMALLINT type)
 {
     if (!handle)
-        return NULL;
+        return nullptr;
     for (OdbcHandle *h = g_handles; h; h = h->next) {
         if (h == handle)
-            return h->type == type ? h : NULL;
+            return h->type == type ? h : nullptr;
     }
-    return NULL;
+    return nullptr;
 }
 
 OdbcEnv *OdbcLookupEnv(SQLHANDLE handle)

@@ -89,7 +89,7 @@ void DcBuilderInit(DcBuilder *b)
 void DcBuilderFree(DcBuilder *b)
 {
     DcFree(b->chunks);
-    b->chunks = NULL;
+    b->chunks = nullptr;
     b->count = b->capacity = 0;
 }
 
@@ -125,7 +125,7 @@ static void put32(BYTE *p, UINT v) { p[0] = (BYTE)v, p[1] = (BYTE)(v >> 8), p[2]
 HRESULT DcBuilderFinish(DcBuilder *b, ID3DBlob **out)
 {
     HRESULT hr = b->error;
-    ID3DBlob *blob = NULL;
+    ID3DBlob *blob = nullptr;
     if (SUCCEEDED(hr))
         hr = DcCreateBlob(b->size, &blob);
     if (SUCCEEDED(hr)) {

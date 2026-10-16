@@ -20,7 +20,7 @@ static Blob *blob_impl(ID3D10Blob *iface) { return CONTAINING_RECORD(iface, Blob
 
 static HRESULT STDMETHODCALLTYPE blob_query(ID3D10Blob *iface, REFIID riid, void **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &IID_ID3D10Blob))
         return E_NOINTERFACE;
     iface->lpVtbl->AddRef(iface);
@@ -182,7 +182,7 @@ D3D10API HRESULT WINAPI D3D10GetInputAndOutputSignatureBlob(const void *bytecode
 D3D10API HRESULT WINAPI D3D10GetShaderDebugInfo(const void *bytecode, SIZE_T length, ID3D10Blob **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!bytecode)
         return D3DERR_INVALIDCALL;
     if (length < 4 || memcmp(bytecode, "DXBC", 4))
@@ -225,7 +225,7 @@ D3D10API LPCSTR WINAPI D3D10GetPixelShaderProfile(ID3D10Device *device) { return
 static FARPROC compiler_entry(const char *name)
 {
     HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-    return compiler ? GetProcAddress(compiler, name) : NULL;
+    return compiler ? GetProcAddress(compiler, name) : nullptr;
 }
 
 typedef HRESULT(WINAPI *Compile)(const void *, SIZE_T, LPCSTR, const D3D10_SHADER_MACRO *, ID3D10Include *, LPCSTR,
@@ -239,9 +239,9 @@ D3D10API HRESULT WINAPI D3D10CompileShader(LPCSTR source, SIZE_T length, LPCSTR 
     if (flags & D3D10_SHADER_DEBUG)
         return E_NOTIMPL;
     if (shader)
-        *shader = NULL;
+        *shader = nullptr;
     if (errors)
-        *errors = NULL;
+        *errors = nullptr;
     if ((flags & 0xDF0301C0) || !entry)
         return D3DERR_INVALIDCALL;
     Compile compile = (Compile)(void *)compiler_entry("D3DCompile");
@@ -256,9 +256,9 @@ D3D10API HRESULT WINAPI D3D10PreprocessShader(LPCSTR source, SIZE_T length, LPCS
     typedef HRESULT(WINAPI * Preprocess)(const void *, SIZE_T, LPCSTR, const D3D10_SHADER_MACRO *, ID3D10Include *,
                                          ID3D10Blob **, ID3D10Blob **);
     if (text)
-        *text = NULL;
+        *text = nullptr;
     if (errors)
-        *errors = NULL;
+        *errors = nullptr;
     Preprocess preprocess = (Preprocess)(void *)compiler_entry("D3DPreprocess");
     return preprocess ? preprocess(source, length, file, defines, include, text, errors) : E_NOTIMPL;
 }
@@ -270,11 +270,11 @@ D3D10API HRESULT WINAPI D3D10CompileEffectFromMemory(void *data, SIZE_T length, 
                                                      ID3D10Blob **errors)
 {
     if (effect)
-        *effect = NULL;
+        *effect = nullptr;
     if (errors)
-        *errors = NULL;
+        *errors = nullptr;
     Compile compile = (Compile)(void *)compiler_entry("D3DCompile");
-    return compile ? compile(data, length, file, defines, include, NULL, "fx_4_0", hlsl_flags, fx_flags, effect, errors)
+    return compile ? compile(data, length, file, defines, include, nullptr, "fx_4_0", hlsl_flags, fx_flags, effect, errors)
                    : E_NOTIMPL;
 }
 
@@ -284,7 +284,7 @@ D3D10API HRESULT WINAPI D3D10DisassembleShader(const void *bytecode, SIZE_T leng
     typedef HRESULT(WINAPI * Disassemble)(const void *, SIZE_T, UINT, LPCSTR, ID3D10Blob **);
     if (!bytecode || !disassembly)
         return D3DERR_INVALIDCALL;
-    *disassembly = NULL;
+    *disassembly = nullptr;
     Disassemble disassemble = (Disassemble)(void *)compiler_entry("D3DDisassemble");
     return disassemble ? disassemble(bytecode, length, color ? 1 : 0, comments, disassembly) : E_NOTIMPL;
 }
@@ -346,12 +346,12 @@ static void put_indented(Text *t, const char *s, UINT indent)
 
 static HRESULT put_shader(Text *t, const D3D10_EFFECT_SHADER_DESC *desc, BOOL color, ID3D10Blob **blob)
 {
-    HRESULT hr = D3D10DisassembleShader(desc->pBytecode, desc->BytecodeLength, color, NULL, blob);
+    HRESULT hr = D3D10DisassembleShader(desc->pBytecode, desc->BytecodeLength, color, nullptr, blob);
     if (SUCCEEDED(hr))
         put_indented(t, (*blob)->lpVtbl->GetBufferPointer(*blob), 4);
     if (*blob)
         (*blob)->lpVtbl->Release(*blob);
-    *blob = NULL;
+    *blob = nullptr;
     return hr;
 }
 
@@ -364,9 +364,9 @@ D3D10API HRESULT WINAPI D3D10DisassembleEffect(ID3D10Effect *effect, BOOL color,
     static const char *const STAGES[3] = {"VertexShader", "GeometryShader", "PixelShader"};
     if (!effect || !disassembly)
         return D3DERR_INVALIDCALL;
-    *disassembly = NULL;
-    Text t = {0};
-    ID3D10Blob *blob = NULL;
+    *disassembly = nullptr;
+    Text t = {};
+    ID3D10Blob *blob = nullptr;
     D3D10_EFFECT_DESC desc;
     if (color)
         put(&t, "<pre><body bgcolor=\"#000000\"><body bgcolor=\"#000000\"><font color=\"#00ff00\">");

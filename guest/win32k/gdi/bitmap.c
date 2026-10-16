@@ -33,10 +33,10 @@ static void default_masks(SURFACE *s)
 SURFACE *SurfaceCreate(LONG width, LONG height, UCHAR bpp, ULONG flags)
 {
     if (width <= 0 || height <= 0 || width > 32768 || height > 32768)
-        return NULL;
+        return nullptr;
     SURFACE *s = W32Alloc(sizeof(SURFACE));
     if (!s)
-        return NULL;
+        return nullptr;
     s->Width = width;
     s->Height = height;
     s->Bpp = bpp;
@@ -56,7 +56,7 @@ SURFACE *SurfaceCreate(LONG width, LONG height, UCHAR bpp, ULONG flags)
     }
     if (!s->Bits) {
         W32Free(s);
-        return NULL;
+        return nullptr;
     }
     s->Flags |= SURF_OWNS_BITS;
     if (bpp == 1) {
@@ -77,7 +77,7 @@ SURFACE *SurfaceWrap(LONG width, LONG height, UCHAR bpp, PVOID bits, LONG stride
 {
     SURFACE *s = W32Alloc(sizeof(SURFACE));
     if (!s)
-        return NULL;
+        return nullptr;
     s->Width = width;
     s->Height = height;
     s->Bpp = bpp;
@@ -292,19 +292,19 @@ static BITMAPINFO *capture_info(const BITMAPINFO *user, UINT usage, DIB_DESC *d)
 {
     BITMAPINFOHEADER h;
     if (!NT_SUCCESS(MimeCopyFromUser(&h, user, sizeof(h))))
-        return NULL;
+        return nullptr;
     BITMAPINFO *info = W32Alloc(sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD) + 16);
     if (!info)
-        return NULL;
+        return nullptr;
     info->bmiHeader = h;
     if (h.biSize > 4096 || !describe_dib(info, usage, d)) {
         W32Free(info);
-        return NULL;
+        return nullptr;
     }
     SIZE_T table = d->HeaderSize - h.biSize;
     if (table && !NT_SUCCESS(MimeCopyFromUser(info->bmiColors, (const UCHAR *)user + h.biSize, table))) {
         W32Free(info);
-        return NULL;
+        return nullptr;
     }
     if (usage == DIB_PAL_COLORS) {
         /* palette indices: map to the default palette, which starts with the static colors. */
@@ -337,11 +337,11 @@ static SURFACE *wrap_dib_bits(const DIB_DESC *d, const BITMAPINFO *info, PVOID b
 HBITMAP NTAPI NtGdiCreateBitmap(int width, int height, UINT planes, UINT bpp, const void *bits)
 {
     if (width <= 0 || height <= 0 || planes != 1)
-        return NULL;
+        return nullptr;
     UCHAR depth = bpp <= 1 ? 1 : bpp <= 4 ? 4 : bpp <= 8 ? 8 : bpp <= 16 ? 16 : bpp <= 24 ? 24 : 32;
     UserEnter();
     SURFACE *s = SurfaceCreate(width, height, depth, 0);
-    HBITMAP h = NULL;
+    HBITMAP h = nullptr;
     if (s && GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
         h = (HBITMAP)s->Header.Handle;
         if (bits) {
@@ -359,16 +359,16 @@ HBITMAP NTAPI NtGdiCreateBitmap(int width, int height, UINT planes, UINT bpp, co
 HBITMAP NTAPI NtGdiCreateCompatibleBitmap(HDC hdc, int width, int height)
 {
     if (width < 0 || height < 0)
-        return NULL;
+        return nullptr;
     if (!width || !height)
-        return NtGdiCreateBitmap(1, 1, 1, 1, NULL);
+        return NtGdiCreateBitmap(1, 1, 1, 1, nullptr);
     UserEnter();
     DC *dc = DcLookup(hdc);
     UCHAR bpp = 32;
     if (dc && dc->Surface && (dc->Flags & DC_MEMORY))
         bpp = dc->Surface->Bpp;
-    SURFACE *s = dc ? SurfaceCreate(width, height, bpp, 0) : NULL;
-    HBITMAP h = NULL;
+    SURFACE *s = dc ? SurfaceCreate(width, height, bpp, 0) : nullptr;
+    HBITMAP h = nullptr;
     if (s && GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
         h = (HBITMAP)s->Header.Handle;
         if (bpp <= 8 && dc->Surface) {
@@ -388,23 +388,23 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
     DIB_DESC d;
     BITMAPINFO *info = capture_info(user_info, usage, &d);
     if (!info)
-        return NULL;
+        return nullptr;
     if (section) {
         /* file mapping backed dib sections are not supported yet. */
         W32Free(info);
-        return NULL;
+        return nullptr;
     }
     SIZE_T size = (SIZE_T)d.Stride * (SIZE_T)d.Height;
-    PVOID user = NULL;
+    PVOID user = nullptr;
     SIZE_T alloc = size;
     if (!NT_SUCCESS(ZwAllocateVirtualMemory(NtCurrentProcess(), &user, 0, &alloc, MEM_RESERVE | MEM_COMMIT,
                                             PAGE_READWRITE))) {
         W32Free(info);
-        return NULL;
+        return nullptr;
     }
     UserEnter();
     SURFACE *s = W32Alloc(sizeof(SURFACE));
-    HBITMAP h = NULL;
+    HBITMAP h = nullptr;
     if (s) {
         s->Width = d.Width;
         s->Height = d.Height;
@@ -426,18 +426,18 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
         if (GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP))
             h = (HBITMAP)s->Header.Handle;
         else
-            W32Free(s), s = NULL;
+            W32Free(s), s = nullptr;
     }
     UserLeave();
     W32Free(info);
     if (!h) {
         SIZE_T zero = 0;
         ZwFreeVirtualMemory(NtCurrentProcess(), &user, &zero, MEM_RELEASE);
-        return NULL;
+        return nullptr;
     }
     if (bits_out && !NT_SUCCESS(MimeCopyToUser(bits_out, &user, sizeof(user)))) {
         NtGdiDeleteObjectApp(h);
-        return NULL;
+        return nullptr;
     }
     return h;
 }
@@ -482,7 +482,7 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
     }
     PUCHAR buffer = W32Alloc((SIZE_T)d.Stride * lines);
     if (buffer) {
-        SURFACE *dst = SurfaceWrap(d.Width, (LONG)lines, d.Bpp, buffer, d.Stride, NULL);
+        SURFACE *dst = SurfaceWrap(d.Width, (LONG)lines, d.Bpp, buffer, d.Stride, nullptr);
         if (dst) {
             if (d.Bpp <= 8) {
                 memcpy(dst->Colors, s->Colors, sizeof(s->Colors));
@@ -514,7 +514,7 @@ static SURFACE *capture_dib(const void *bits, const BITMAPINFO *user_info, UINT 
     DIB_DESC d;
     BITMAPINFO *info = capture_info(user_info, usage, &d);
     if (!info)
-        return NULL;
+        return nullptr;
     if (lines == 0 || lines > (ULONG)d.Height)
         lines = (ULONG)d.Height;
     SIZE_T size = (SIZE_T)d.Stride * lines;
@@ -522,13 +522,13 @@ static SURFACE *capture_dib(const void *bits, const BITMAPINFO *user_info, UINT 
     if (!copy || !NT_SUCCESS(MimeCopyFromUser(copy, bits, size))) {
         W32Free(copy);
         W32Free(info);
-        return NULL;
+        return nullptr;
     }
     SURFACE *s = wrap_dib_bits(&d, info, copy, lines, 0);
     if (!s) {
         W32Free(copy);
         W32Free(info);
-        return NULL;
+        return nullptr;
     }
     *buffer = copy;
     *info_out = info;
@@ -613,7 +613,7 @@ LONG NTAPI NtGdiGetBitmapBits(HBITMAP bitmap, ULONG size, PUCHAR user_bits)
     UserEnter();
     SURFACE *s = SurfaceLookup(bitmap);
     LONG result = 0;
-    PUCHAR copy = NULL;
+    PUCHAR copy = nullptr;
     if (s) {
         LONG row = ddb_stride(s->Width, s->Bpp);
         ULONG total = (ULONG)row * (ULONG)s->Height;
@@ -621,7 +621,7 @@ LONG NTAPI NtGdiGetBitmapBits(HBITMAP bitmap, ULONG size, PUCHAR user_bits)
             result = (LONG)total;
         } else {
             ULONG n = size < total ? size : total;
-            copy = n ? W32Alloc(n) : NULL;
+            copy = n ? W32Alloc(n) : nullptr;
             if (copy) {
                 LONG bytes = (s->Width * s->Bpp + 7) / 8;
                 for (ULONG off = 0, y = 0; off < n; y++, off += (ULONG)row) {

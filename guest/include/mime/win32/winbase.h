@@ -1701,7 +1701,7 @@ FORCEINLINE PVOID InterlockedCompareExchangePointer(PVOID volatile *p, PVOID exc
     return comparand;
 }
 FORCEINLINE void MemoryBarrier(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
-#if defined(__x86_64__)
+#ifdef __x86_64__
 FORCEINLINE void YieldProcessor(void) { __asm__ volatile("pause"); }
 #else
 #if defined(__i386__) || defined(__x86_64__)

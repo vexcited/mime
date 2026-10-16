@@ -52,7 +52,7 @@ static const char *const g_skeleton[] = {
     "Windows/Temp",
     "Program Files",
     "Program Files (x86)",
-#if defined(__aarch64__)
+#ifdef __aarch64__
     "Program Files (Arm)", /* arm64 windows only */
 #endif
     "ProgramData",
@@ -248,7 +248,7 @@ static void write_stamp(const MimePaths *paths, const char *iso, const MimeWimIm
 
 int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
 {
-    char iso[MIME_PATH_MAX] = {0};
+    char iso[MIME_PATH_MAX] = {};
     uint32_t image_index = 0;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
@@ -311,8 +311,8 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
         }
     }
 
-    ExtractStats stats = {0};
-    PendingList pending = {0};
+    ExtractStats stats = {};
+    PendingList pending = {};
     const MimeWimDentry *sources[MIME_ARRAY_COUNT(g_rules)];
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_rules); i++) {
         sources[i] = mime_wim_lookup(wim, g_rules[i].source);

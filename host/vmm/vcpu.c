@@ -222,10 +222,10 @@ static void *vcpu_main(void *arg)
     /* the guest's timers wake this thread: the highest quality of service keeps macos from coalescing them late. */
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 
-    if (hv_vcpu_create(&handle, &exit, NULL) != HV_SUCCESS) {
+    if (hv_vcpu_create(&handle, &exit, nullptr) != HV_SUCCESS) {
         mime_error("hv_vcpu_create failed");
         mime_vm_request_stop(vm, 1);
-        return NULL;
+        return nullptr;
     }
     vcpu->handle = handle;
     vcpu->exit_info = exit;
@@ -297,7 +297,7 @@ static void *vcpu_main(void *arg)
         }
     }
     hv_vcpu_destroy(handle);
-    return NULL;
+    return nullptr;
 }
 
 bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t x0, uint64_t sp)

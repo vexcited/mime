@@ -177,7 +177,7 @@ static void release_range(void *objects, UINT start, UINT count)
     for (UINT i = start; i < start + count; i++)
         if (list[i]) {
             list[i]->lpVtbl->Release(list[i]);
-            list[i] = NULL;
+            list[i] = nullptr;
         }
 }
 
@@ -370,7 +370,7 @@ static HRESULT STDMETHODCALLTYPE sb_query(ID3D10StateBlock *iface, REFIID riid, 
     if (!out)
         return E_INVALIDARG;
     if (!IsEqualGUID(riid, &IID_ID3D10EffectPool)) {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     iface->lpVtbl->AddRef(iface);

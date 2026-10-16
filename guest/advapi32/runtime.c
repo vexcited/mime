@@ -9,7 +9,7 @@ ADVAPI BOOL WINAPI SetThreadToken(HANDLE *thread, HANDLE token)
     }
     THREAD_BASIC_INFORMATION info;
     NTSTATUS status = NtQueryInformationThread(thread ? *thread : NtCurrentThread(), ThreadBasicInformation,
-        &info, sizeof(info), NULL);
+        &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status)) {
         SetLastError(RtlNtStatusToDosError(status));
         return FALSE;
@@ -19,7 +19,7 @@ ADVAPI BOOL WINAPI SetThreadToken(HANDLE *thread, HANDLE token)
 
 ADVAPI BOOL WINAPI RevertToSelf(void)
 {
-    return SetThreadToken(NULL, NULL);
+    return SetThreadToken(nullptr, nullptr);
 }
 
 ADVAPI BOOL WINAPI SetKernelObjectSecurity(HANDLE handle, DWORD information, PVOID descriptor)

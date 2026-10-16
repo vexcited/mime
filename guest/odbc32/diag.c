@@ -29,7 +29,7 @@ static const struct {
     [ODBC_E_IM010] = {L"IM010", L"IM010", L"Data source name too long"},
 };
 
-static const WCHAR g_prefix[] = L"[Microsoft][ODBC Driver Manager] ";
+static constexpr WCHAR g_prefix[] = L"[Microsoft][ODBC Driver Manager] ";
 
 /* ------------------------------------------------------------------ posting */
 
@@ -96,9 +96,9 @@ BOOL OdbcCopyA(PCSTR src, SQLCHAR *dst, SQLLEN max)
 PWSTR OdbcToWide(const SQLCHAR *s, SQLLEN length)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     int n = length == SQL_NTS ? (int)strlen((PCSTR)s) : (int)length;
-    int count = n ? MultiByteToWideChar(CP_ACP, 0, (PCSTR)s, n, NULL, 0) : 0;
+    int count = n ? MultiByteToWideChar(CP_ACP, 0, (PCSTR)s, n, nullptr, 0) : 0;
     PWSTR w = OdbcAlloc((count + 1) * sizeof(WCHAR));
     if (w && count)
         MultiByteToWideChar(CP_ACP, 0, (PCSTR)s, n, w, count);
@@ -107,17 +107,17 @@ PWSTR OdbcToWide(const SQLCHAR *s, SQLLEN length)
 
 PSTR OdbcToAnsi(PCWSTR s)
 {
-    int count = WideCharToMultiByte(CP_ACP, 0, s, -1, NULL, 0, NULL, NULL);
+    int count = WideCharToMultiByte(CP_ACP, 0, s, -1, nullptr, 0, nullptr, nullptr);
     PSTR a = OdbcAlloc(count ? count : 1);
     if (a && count)
-        WideCharToMultiByte(CP_ACP, 0, s, -1, a, count, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, s, -1, a, count, nullptr, nullptr);
     return a;
 }
 
 PWSTR OdbcDupW(const SQLWCHAR *s, SQLLEN length)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     SQLLEN n = length == SQL_NTS ? (SQLLEN)wcslen(s) : length;
     PWSTR w = OdbcAlloc((n + 1) * sizeof(WCHAR));
     if (w)
@@ -158,7 +158,7 @@ static SQLRETURN OdbcOutputRecord(const OdbcRecord *record, SQLPOINTER state, SQ
         return OdbcCopyW(record->message, message, message_max) ? SQL_SUCCESS_WITH_INFO : SQL_SUCCESS;
     }
     if (state)
-        WideCharToMultiByte(CP_ACP, 0, record->state, -1, state, SQL_SQLSTATE_SIZE + 1, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, record->state, -1, state, SQL_SQLSTATE_SIZE + 1, nullptr, nullptr);
     PSTR text = OdbcToAnsi(record->message);
     if (!text)
         return SQL_ERROR;

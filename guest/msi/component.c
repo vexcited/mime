@@ -1,10 +1,10 @@
 #include "msi_private.h"
 
-static const WCHAR component_catalog[] = L"Software\\Mime\\Installer\\Components";
+static constexpr WCHAR component_catalog[] = L"Software\\Mime\\Installer\\Components";
 
 static UINT component_key_path(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR directory, PCWSTR key, PWSTR *out)
 {
-    PWSTR folder = NULL;
+    PWSTR folder = nullptr;
     UINT error = MimeMsiDirectoryPath(package, directory, FALSE, &folder);
     if (error)
         return error;
@@ -71,13 +71,13 @@ UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root)
         if (!MimeMsiPackGuid(guid, packed))
             return ERROR_INSTALL_PACKAGE_INVALID;
         BOOL selected;
-        PCWSTR directory = NULL;
+        PCWSTR directory = nullptr;
         error = MimeMsiComponentSelected(package, name, &directory, &selected);
         if (error)
             return error;
         if (!selected)
             continue;
-        PWSTR key_path = NULL;
+        PWSTR key_path = nullptr;
         error = component_key_path(package, name, directory, MimeMsiText(package->Database, table, row, key_column), &key_path);
         if (!error) {
             _snwprintf(path, RTL_NUMBER_OF(path), L"%s\\%s", component_catalog, packed);
@@ -108,7 +108,7 @@ static UINT open_component_catalogs(PCWSTR component, HKEY keys[2])
 
 static UINT enumerate_components(PCWSTR component, DWORD index, PWSTR out)
 {
-    HKEY keys[2] = {0};
+    HKEY keys[2] = {};
     UINT error = open_component_catalogs(component, keys);
     if (error)
         goto done;
@@ -119,8 +119,8 @@ static UINT enumerate_components(PCWSTR component, DWORD index, PWSTR out)
         for (DWORD entry = 0;; entry++) {
             WCHAR packed[33], guid[39];
             DWORD length = RTL_NUMBER_OF(packed);
-            UINT status = component ? RegEnumValueW(keys[context], entry, packed, &length, NULL, NULL, NULL, NULL) :
-                                      RegEnumKeyExW(keys[context], entry, packed, &length, NULL, NULL, NULL, NULL);
+            UINT status = component ? RegEnumValueW(keys[context], entry, packed, &length, nullptr, nullptr, nullptr, nullptr) :
+                                      RegEnumKeyExW(keys[context], entry, packed, &length, nullptr, nullptr, nullptr, nullptr);
             if (status == ERROR_NO_MORE_ITEMS)
                 break;
             if (status || !MimeMsiUnpackGuid(packed, guid)) {
@@ -129,7 +129,7 @@ static UINT enumerate_components(PCWSTR component, DWORD index, PWSTR out)
             }
             if (context && keys[0]) {
                 if (component) {
-                    if (RegQueryValueExW(keys[0], packed, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
+                    if (RegQueryValueExW(keys[0], packed, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS)
                         continue;
                 } else {
                     HKEY duplicate;
@@ -157,7 +157,7 @@ done:
 
 UINT WINAPI MsiEnumComponentsW(DWORD index, LPWSTR component)
 {
-    return component ? enumerate_components(NULL, index, component) : ERROR_INVALID_PARAMETER;
+    return component ? enumerate_components(nullptr, index, component) : ERROR_INVALID_PARAMETER;
 }
 
 UINT WINAPI MsiEnumClientsW(LPCWSTR component, DWORD index, LPWSTR product)
@@ -173,9 +173,9 @@ INSTALLSTATE WINAPI MsiGetComponentPathW(LPCWSTR product, LPCWSTR component, LPW
     WCHAR product_code[33], component_code[33];
     if ((out && !size) || !MimeMsiPackGuid(product, product_code) || !MimeMsiPackGuid(component, component_code))
         return INSTALLSTATE_INVALIDARG;
-    HKEY keys[2] = {0};
+    HKEY keys[2] = {};
     UINT error = open_component_catalogs(component_code, keys);
-    PWSTR path = NULL;
+    PWSTR path = nullptr;
     if (!error) {
         error = ERROR_FILE_NOT_FOUND;
         for (ULONG context = 0; context < 2; context++) {

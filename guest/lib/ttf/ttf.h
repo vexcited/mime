@@ -11,7 +11,6 @@
 #ifndef MIME_LIB_TTF_H
 #define MIME_LIB_TTF_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

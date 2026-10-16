@@ -16,7 +16,7 @@ static void edit_paint(HWND hwnd, EDIT *e, HDC dc)
     HWND parent = GetParent(hwnd);
     DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
     UINT msg = (style & ES_READONLY) || !IsWindowEnabled(hwnd) ? WM_CTLCOLORSTATIC : WM_CTLCOLOREDIT;
-    HBRUSH brush = parent ? (HBRUSH)SendMessageW(parent, msg, (WPARAM)dc, (LPARAM)hwnd) : NULL;
+    HBRUSH brush = parent ? (HBRUSH)SendMessageW(parent, msg, (WPARAM)dc, (LPARAM)hwnd) : nullptr;
     if (!brush)
         brush = GetSysColorBrush(msg == WM_CTLCOLOREDIT ? COLOR_WINDOW : COLOR_3DFACE);
     FillRect(dc, &r, brush);
@@ -59,7 +59,7 @@ static void edit_insert(HWND hwnd, LPCWSTR insert, int count, BOOL backspace)
     }
     DefWindowProcW(hwnd, WM_SETTEXT, 0, (LPARAM)text);
     UserFree(text);
-    InvalidateRect(hwnd, NULL, TRUE);
+    InvalidateRect(hwnd, nullptr, TRUE);
     HWND parent = GetParent(hwnd);
     if (parent)
         SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(hwnd), EN_CHANGE), (LPARAM)hwnd);
@@ -94,13 +94,13 @@ LRESULT CALLBACK EditProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case WM_SETFONT:
         e->Font = (HFONT)wparam;
         if (lparam)
-            InvalidateRect(hwnd, NULL, TRUE);
+            InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_GETFONT:
         return (LRESULT)e->Font;
     case WM_SETTEXT: {
         LRESULT r = DefWindowProcW(hwnd, msg, wparam, lparam);
-        InvalidateRect(hwnd, NULL, TRUE);
+        InvalidateRect(hwnd, nullptr, TRUE);
         return r;
     }
     case WM_GETDLGCODE:
@@ -114,7 +114,7 @@ LRESULT CALLBACK EditProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             return 0;
         WCHAR c = (WCHAR)wparam;
         if (c == L'\b')
-            edit_insert(hwnd, NULL, 0, TRUE);
+            edit_insert(hwnd, nullptr, 0, TRUE);
         else if (c >= L' ' || c == L'\t')
             edit_insert(hwnd, &c, 1, FALSE);
         return 0;
@@ -133,7 +133,7 @@ LRESULT CALLBACK EditProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         if (msg == EM_SETREADONLY) {
             DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
             SetWindowLongW(hwnd, GWL_STYLE, (LONG)(wparam ? style | ES_READONLY : style & ~(DWORD)ES_READONLY));
-            InvalidateRect(hwnd, NULL, TRUE);
+            InvalidateRect(hwnd, nullptr, TRUE);
         }
         return 1;
     case EM_GETSEL:
@@ -169,10 +169,10 @@ static BOOL combo_info(HWND hwnd, COMBOBOXINFO *info)
         info->stateButton = STATE_SYSTEM_INVISIBLE;
     }
     info->hwndCombo = hwnd;
-    info->hwndItem = FindWindowExW(hwnd, NULL, L"Edit", NULL);
+    info->hwndItem = FindWindowExW(hwnd, nullptr, L"Edit", nullptr);
     if (!info->hwndItem)
         info->hwndItem = hwnd;
-    info->hwndList = NULL;
+    info->hwndList = nullptr;
     return TRUE;
 }
 
@@ -269,7 +269,7 @@ LRESULT CALLBACK ScrollBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
     if (msg == WM_ERASEBKGND)
         return 1;
     if (msg == WM_ENABLE) {
-        InvalidateRect(hwnd, NULL, TRUE);
+        InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);

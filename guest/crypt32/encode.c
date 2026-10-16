@@ -171,14 +171,14 @@ static void enc_wide_value(enc_ctx *c, DWORD type, const WCHAR *s, DWORD n)
         }
         break;
     case CERT_RDN_UTF8_STRING: {
-        int size = n ? WideCharToMultiByte(CP_UTF8, 0, s, (int)n, NULL, 0, NULL, NULL) : 0;
+        int size = n ? WideCharToMultiByte(CP_UTF8, 0, s, (int)n, nullptr, 0, nullptr, nullptr) : 0;
         if (size > 0) {
             BYTE *utf8 = CrAlloc(size);
             if (!utf8) {
                 fail(c, ERROR_OUTOFMEMORY);
                 break;
             }
-            WideCharToMultiByte(CP_UTF8, 0, s, (int)n, (LPSTR)utf8, size, NULL, NULL);
+            WideCharToMultiByte(CP_UTF8, 0, s, (int)n, (LPSTR)utf8, size, nullptr, nullptr);
             DerWriteBytes(&c->w, utf8, size);
             CrFree(utf8);
         }
@@ -197,7 +197,7 @@ static void enc_wide_value(enc_ctx *c, DWORD type, const WCHAR *s, DWORD n)
 /* picks the string type windows uses for an attribute whose type is left to the encoder. */
 static DWORD choose_type(LPCSTR oid, DWORD flags, const WCHAR *s, DWORD n)
 {
-    PCCRYPT_OID_INFO info = oid ? CrFindOid(oid, CRYPT_RDN_ATTR_OID_GROUP_ID) : NULL;
+    PCCRYPT_OID_INFO info = oid ? CrFindOid(oid, CRYPT_RDN_ATTR_OID_GROUP_ID) : nullptr;
     if (info && info->ExtraInfo.cbData >= sizeof(DWORD)) {
         const DWORD *types = (const DWORD *)info->ExtraInfo.pbData;
         DWORD count = info->ExtraInfo.cbData / sizeof(DWORD);
@@ -265,7 +265,7 @@ static void enc_name(enc_ctx *c, const CERT_NAME_INFO *name, BOOL unicode)
         const CERT_RDN *rdn = &name->rgRDN[i];
         DWORD set = DerBegin(&c->w, ASN_SET);
         DWORD start = c->w.size;
-        DWORD *offsets = rdn->cRDNAttr > 1 ? CrAlloc(rdn->cRDNAttr * 2 * sizeof(DWORD)) : NULL;
+        DWORD *offsets = rdn->cRDNAttr > 1 ? CrAlloc(rdn->cRDNAttr * 2 * sizeof(DWORD)) : nullptr;
         for (DWORD j = 0; j < rdn->cRDNAttr && !c->w.error; j++) {
             const CERT_RDN_ATTR *attr = &rdn->rgRDNAttr[j];
             c->location = (i << 22) | (j << 16);
@@ -432,7 +432,7 @@ static void e_extensions(enc_ctx *c, const void *p)
 static void e_any_string(enc_ctx *c, const void *p)
 {
     const CERT_NAME_VALUE *v = p;
-    enc_value(c, NULL, v->dwValueType, &v->Value, FALSE);
+    enc_value(c, nullptr, v->dwValueType, &v->Value, FALSE);
 }
 
 static void e_unicode_string(enc_ctx *c, const void *p)
@@ -442,7 +442,7 @@ static void e_unicode_string(enc_ctx *c, const void *p)
         fail(c, CRYPT_E_ASN1_CHOICE);
         return;
     }
-    enc_value(c, NULL, v->dwValueType, &v->Value, TRUE);
+    enc_value(c, nullptr, v->dwValueType, &v->Value, TRUE);
 }
 
 static void e_name(enc_ctx *c, const void *p) { enc_name(c, p, FALSE); }
@@ -605,7 +605,7 @@ static encode_fn encoder_for(LPCSTR type)
         case 73:
             return e_oid;
         }
-        return NULL;
+        return nullptr;
     }
     static const struct {
         LPCSTR oid;
@@ -621,7 +621,7 @@ static encode_fn encoder_for(LPCSTR type)
     for (DWORD i = 0; i < RTL_NUMBER_OF(map); i++)
         if (!strcmp(map[i].oid, type))
             return map[i].fn;
-    return NULL;
+    return nullptr;
 }
 
 static DWORD run_encoder(encode_fn fn, const void *info, DWORD flags, enc_ctx *c)
@@ -644,16 +644,16 @@ BYTE *CrEncodeAlloc(LPCSTR type, const void *info, DWORD flags, DWORD *out_size)
     enc_ctx c;
     if (!fn) {
         SetLastError(ERROR_FILE_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     DWORD error = run_encoder(fn, info, flags, &c);
     if (error) {
         SetLastError(error);
-        return NULL;
+        return nullptr;
     }
     if (!c.w.data && !(c.w.data = CrAlloc(1))) {
         SetLastError(ERROR_OUTOFMEMORY);
-        return NULL;
+        return nullptr;
     }
     *out_size = c.w.size;
     return c.w.data;
@@ -708,5 +708,5 @@ BOOL WINAPI CryptEncodeObjectEx(DWORD dwCertEncodingType, LPCSTR lpszStructType,
 BOOL WINAPI CryptEncodeObject(DWORD dwCertEncodingType, LPCSTR lpszStructType, const void *pvStructInfo,
                               BYTE *pbEncoded, DWORD *pcbEncoded)
 {
-    return CryptEncodeObjectEx(dwCertEncodingType, lpszStructType, pvStructInfo, 0, NULL, pbEncoded, pcbEncoded);
+    return CryptEncodeObjectEx(dwCertEncodingType, lpszStructType, pvStructInfo, 0, nullptr, pbEncoded, pcbEncoded);
 }

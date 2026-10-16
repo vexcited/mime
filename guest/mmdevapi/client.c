@@ -255,7 +255,7 @@ static HRESULT STDMETHODCALLTYPE client_is_supported(void *This, AUDCLNT_SHAREMO
 {
     FORMAT f;
     if (closest)
-        *closest = NULL;
+        *closest = nullptr;
     if (!format || (mode == AUDCLNT_SHAREMODE_SHARED && !closest))
         return E_POINTER;
     if (mode != AUDCLNT_SHAREMODE_SHARED && mode != AUDCLNT_SHAREMODE_EXCLUSIVE)
@@ -303,7 +303,7 @@ static HRESULT STDMETHODCALLTYPE client_start(void *This)
     if (SUCCEEDED(hr)) {
         c->started = TRUE;
         if (c->event && !c->thread)
-            c->thread = CreateThread(NULL, 0, event_thread, c, 0, NULL);
+            c->thread = CreateThread(nullptr, 0, event_thread, c, 0, nullptr);
         if (c->event)
             SetEvent(c->event);
     }
@@ -363,7 +363,7 @@ static HRESULT STDMETHODCALLTYPE client_get_service(void *This, REFIID iid, void
     CLIENT *c = FROM(client, This);
     if (!iid || !object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (!c->initialized)
         return AUDCLNT_E_NOT_INITIALIZED;
     if (IsEqualGUID(iid, &IID_IAudioRenderClient))
@@ -453,7 +453,7 @@ static HRESULT STDMETHODCALLTYPE render_query(void *This, REFIID riid, void **ob
         client_add_ref(&FROM(render, This)->client);
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -481,7 +481,7 @@ static HRESULT STDMETHODCALLTYPE render_get_buffer(void *This, UINT32 frames, BY
     CLIENT *c = FROM(render, This);
     if (!data)
         return E_POINTER;
-    *data = NULL;
+    *data = nullptr;
     if (c->pending)
         return AUDCLNT_E_OUT_OF_ORDER;
     if (!frames)
@@ -512,7 +512,7 @@ static HRESULT STDMETHODCALLTYPE render_release_buffer(void *This, UINT32 frames
         return frames ? AUDCLNT_E_OUT_OF_ORDER : S_OK;
     UINT64 written = c->hdr->written;
     if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
-        ring_write(c, written, NULL, frames);
+        ring_write(c, written, nullptr, frames);
     else if (c->bounced)
         ring_write(c, written, c->scratch, frames);
     c->pending = 0;
@@ -533,7 +533,7 @@ static HRESULT STDMETHODCALLTYPE clock_query(void *This, REFIID riid, void **obj
         client_add_ref(&FROM(clock, This)->client);
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -585,7 +585,7 @@ static HRESULT STDMETHODCALLTYPE simple_query(void *This, REFIID riid, void **ob
         client_add_ref(&FROM(simple, This)->client);
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -637,7 +637,7 @@ static HRESULT STDMETHODCALLTYPE stream_query(void *This, REFIID riid, void **ob
         client_add_ref(&FROM(stream, This)->client);
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -715,7 +715,7 @@ static HRESULT STDMETHODCALLTYPE client_query(void *This, REFIID riid, void **ob
         client_add_ref(This);
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 

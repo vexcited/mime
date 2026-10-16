@@ -9,7 +9,7 @@
 static void basic_information(SYSTEM_BASIC_INFORMATION *basic)
 {
     memset(basic, 0, sizeof(*basic));
-    if (!NT_SUCCESS(NtQuerySystemInformation(SystemBasicInformation, basic, sizeof(*basic), NULL))) {
+    if (!NT_SUCCESS(NtQuerySystemInformation(SystemBasicInformation, basic, sizeof(*basic), nullptr))) {
         basic->PageSize = 0x1000;
         basic->AllocationGranularity = 0x10000;
         basic->MinimumUserModeAddress = 0x10000;
@@ -33,10 +33,10 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     SYSTEM_BASIC_INFORMATION basic;
     SYSTEM_PROCESSOR_INFORMATION cpu = {PROCESSOR_ARCHITECTURE_ARM64, 8, 0, 1, 0};
     basic_information(&basic);
-    NtQuerySystemInformation(SystemProcessorInformation, &cpu, sizeof(cpu), NULL);
+    NtQuerySystemInformation(SystemProcessorInformation, &cpu, sizeof(cpu), nullptr);
 #if (defined(__x86_64__) && !defined(MIME_X64_NATIVE)) || defined(__i386__)
     /* the processor the translator presents, family 6 model 0x9e stepping 10 as its cpuid says. */
-#if defined(__i386__)
+#ifdef __i386__
     cpu.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;
 #else
     cpu.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
@@ -51,9 +51,9 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     info->lpMaximumApplicationAddress = (LPVOID)basic.MaximumUserModeAddress;
     info->dwActiveProcessorMask = basic.ActiveProcessorsAffinityMask;
     info->dwNumberOfProcessors = (DWORD)(UCHAR)basic.NumberOfProcessors;
-#if defined(__x86_64__)
+#ifdef __x86_64__
     info->dwProcessorType = PROCESSOR_AMD_X8664;
-#elif defined(__i386__)
+#elifdef __i386__
     info->dwProcessorType = PROCESSOR_INTEL_PENTIUM;
 #else
     info->dwProcessorType = 0;
@@ -262,7 +262,7 @@ BOOL WINAPI GlobalMemoryStatusEx(LPMEMORYSTATUSEX status)
     UCHAR perf[0x158];
     ULONGLONG total = (ULONGLONG)basic.NumberOfPhysicalPages * basic.PageSize;
     ULONGLONG available = total / 2, limit = total * 2, committed = total - available;
-    if (NT_SUCCESS(NtQuerySystemInformation(SystemPerformanceInformation, perf, sizeof(perf), NULL))) {
+    if (NT_SUCCESS(NtQuerySystemInformation(SystemPerformanceInformation, perf, sizeof(perf), nullptr))) {
         available = (ULONGLONG)*(PULONG)(perf + SYSTEM_PERFORMANCE_AVAILABLE_PAGES) * basic.PageSize;
         committed = (ULONGLONG)*(PULONG)(perf + 0x50) * basic.PageSize;
         if (*(PULONG)(perf + 0x54))
@@ -320,7 +320,7 @@ static DWORD read_machine_string(PCWSTR key, PCWSTR name, PWSTR out, DWORD capac
     RtlInitUnicodeString(&path, key);
     RtlInitUnicodeString(&value, name);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE h;
     out[0] = 0;
     if (!NT_SUCCESS(NtOpenKey(&h, KEY_READ, &oa)))
@@ -439,7 +439,7 @@ BOOL WINAPI GetComputerNameExA(COMPUTER_NAME_FORMAT format, LPSTR buffer, LPDWOR
         KbSetError(ERROR_MORE_DATA);
         return FALSE;
     }
-    WideCharToMultiByte(CP_ACP, 0, w, -1, buffer, (int)*size, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w, -1, buffer, (int)*size, nullptr, nullptr);
     *size = n;
     return TRUE;
 }
@@ -723,7 +723,7 @@ static UINT firmware_tables(ULONG action, DWORD provider, DWORD id, PVOID buffer
 
 UINT WINAPI GetSystemFirmwareTable(DWORD provider, DWORD id, PVOID buffer, DWORD size)
 {
-    return firmware_tables(SystemFirmwareTable_Get, provider, id, buffer, size, NULL);
+    return firmware_tables(SystemFirmwareTable_Get, provider, id, buffer, size, nullptr);
 }
 
 UINT WINAPI EnumSystemFirmwareTables(DWORD provider, PVOID buffer, DWORD size)
@@ -761,7 +761,7 @@ EXECUTION_STATE WINAPI SetThreadExecutionState(EXECUTION_STATE flags)
 HANDLE WINAPI PowerCreateRequest(PREASON_CONTEXT context)
 {
     HANDLE h;
-    NTSTATUS status = NtCreateEvent(&h, EVENT_ALL_ACCESS, NULL, NotificationEvent, FALSE);
+    NTSTATUS status = NtCreateEvent(&h, EVENT_ALL_ACCESS, nullptr, NotificationEvent, FALSE);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;

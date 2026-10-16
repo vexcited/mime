@@ -13,9 +13,9 @@ static D3dView *impl(void *iface) { return CONTAINING_RECORD(iface, D3dView, ifa
 D3dView *D3dViewFrom(void *iface, D3dViewKind kind)
 {
     if (!iface)
-        return NULL;
+        return nullptr;
     D3dView *view = impl(iface);
-    return view->kind == kind ? view : NULL;
+    return view->kind == kind ? view : nullptr;
 }
 
 static const GUID *const SRV_IIDS[] = {&IID_ID3D11View, &IID_ID3D11ShaderResourceView,
@@ -34,9 +34,9 @@ static HRESULT STDMETHODCALLTYPE view_query(void *iface, REFIID riid, void **out
     BOOL match = IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild);
     for (UINT i = 0; i < 3 && !match; i++)
         match = IsEqualGUID(riid, IIDS[view->kind][i]);
-    void *d3d10 = match ? NULL : D3d10ViewInterface(view, riid);
+    void *d3d10 = match ? nullptr : D3d10ViewInterface(view, riid);
     if (!match && !d3d10) {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&view->child.refs);
@@ -324,7 +324,7 @@ static VkResult image_view(D3dDevice *device, D3dView *view, VkImageViewType typ
     info.components = swizzle;
     info.subresourceRange = view->range;
     view->format = format;
-    return device->vk.vkCreateImageView(device->vk.device, &info, NULL, &view->image_view);
+    return device->vk.vkCreateImageView(device->vk.device, &info, nullptr, &view->image_view);
 }
 
 /* a texel view of the buffer's current range, written to the view's own heap index. */
@@ -336,7 +336,7 @@ static BOOL buffer_view(D3dDevice *device, D3dView *view)
     info.format = view->format;
     info.offset = r->buf.offset + view->buffer_offset;
     info.range = view->buffer_size;
-    if (device->vk.vkCreateBufferView(device->vk.device, &info, NULL, &view->buffer_view) != VK_SUCCESS)
+    if (device->vk.vkCreateBufferView(device->vk.device, &info, nullptr, &view->buffer_view) != VK_SUCCESS)
         return FALSE;
     view->buffer_version = r->buf.version;
     D3dHeapWriteTexel(device, view->heap_kind, view->heap_index, view->buffer_view);
@@ -617,7 +617,7 @@ static HRESULT init_uav(D3dDevice *device, D3dView *view, const D3D11_UNORDERED_
             info.format = VK_FORMAT_R32_UINT;
             info.offset = view->counter.offset;
             info.range = 4;
-            if (device->vk.vkCreateBufferView(device->vk.device, &info, NULL, &view->counter_view) != VK_SUCCESS ||
+            if (device->vk.vkCreateBufferView(device->vk.device, &info, nullptr, &view->counter_view) != VK_SUCCESS ||
                 !(view->counter_index = D3dHeapAlloc(device, D3D_HEAP_STORAGE_TEXEL)))
                 return E_OUTOFMEMORY;
             D3dHeapWriteTexel(device, D3D_HEAP_STORAGE_TEXEL, view->counter_index, view->counter_view);

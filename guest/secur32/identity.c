@@ -48,7 +48,7 @@ static void identity_free(IDENTITY *id)
 
 static bool copy_part(PWSTR *out, const void *text, ULONG chars, bool ansi)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!text || !chars)
         return true;
     PWSTR s = SecHeapAlloc(((SIZE_T)chars + 1) * sizeof(WCHAR));
@@ -236,14 +236,14 @@ SECURITYAPI void SEC_ENTRY SspiFreeAuthIdentity(PSEC_WINNT_AUTH_IDENTITY_OPAQUE 
             SEC_WINNT_AUTH_IDENTITY_EXW *e = identity;
             if (!(e->Flags & SEC_WINNT_AUTH_IDENTITY_MARSHALLED)) {
                 SspiLocalFree(e->PackageList);
-                e->PackageList = NULL;
+                e->PackageList = nullptr;
             }
         }
         if (!(w->Flags & SEC_WINNT_AUTH_IDENTITY_MARSHALLED)) {
             SspiLocalFree(w->User);
             SspiLocalFree(w->Domain);
             SspiLocalFree(w->Password);
-            w->User = w->Domain = w->Password = NULL;
+            w->User = w->Domain = w->Password = nullptr;
         }
     }
     SspiLocalFree(identity);
@@ -278,12 +278,12 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiCopyAuthIdentity(PSEC_WINNT_AUTH_IDENT
 {
     if (!copy)
         return SEC_E_INVALID_TOKEN;
-    *copy = NULL;
+    *copy = nullptr;
     IDENTITY id;
     NTSTATUS status = parse(identity, &id);
     if (NT_SUCCESS(status)) {
         SEC_WINNT_AUTH_IDENTITY_EX2 *e;
-        status = build_ex2(&id, &e, NULL);
+        status = build_ex2(&id, &e, nullptr);
         if (NT_SUCCESS(status))
             *copy = e;
         identity_free(&id);
@@ -294,7 +294,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiCopyAuthIdentity(PSEC_WINNT_AUTH_IDENT
 static PWSTR local_string(PCWSTR s)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     SIZE_T bytes = (wcslen(s) + 1) * sizeof(WCHAR);
     PWSTR out = LocalAlloc(LMEM_FIXED, bytes);
     if (out)
@@ -308,14 +308,14 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncodeAuthIdentityAsStrings(PSEC_WINNT
 {
     if (!identity || !user || !domain)
         return STATUS_INVALID_PARAMETER;
-    *user = *domain = NULL;
+    *user = *domain = nullptr;
     if (packed)
-        *packed = NULL;
+        *packed = nullptr;
     IDENTITY id;
     NTSTATUS status = parse(identity, &id);
     if (!NT_SUCCESS(status))
         return SecNtStatusToSecStatus(status);
-    PWSTR u = local_string(id.User), d = local_string(id.Domain), p = packed ? local_string(id.Password) : NULL;
+    PWSTR u = local_string(id.User), d = local_string(id.Domain), p = packed ? local_string(id.Password) : nullptr;
     bool ok = (!id.User || u) && (!id.Domain || d) && (!packed || !id.Password || p);
     identity_free(&id);
     if (!ok) {
@@ -337,10 +337,10 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncodeStringsAsAuthIdentity(PCWSTR use
 {
     if (!identity || (!user && !domain && !packed))
         return SecNtStatusToSecStatus(STATUS_INVALID_PARAMETER);
-    *identity = NULL;
-    IDENTITY id = {0};
+    *identity = nullptr;
+    IDENTITY id = {};
     bool ok = true;
-    PCWSTR slash = user && (!domain || !*domain) ? wcschr(user, L'\\') : NULL;
+    PCWSTR slash = user && (!domain || !*domain) ? wcschr(user, L'\\') : nullptr;
     if (slash) {
         ok = copy_part(&id.Domain, user, (ULONG)(slash - user), false) &&
              copy_part(&id.User, slash + 1, (ULONG)wcslen(slash + 1), false);
@@ -352,7 +352,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncodeStringsAsAuthIdentity(PCWSTR use
     NTSTATUS status = STATUS_NO_MEMORY;
     if (ok) {
         SEC_WINNT_AUTH_IDENTITY_EX2 *e;
-        status = build_ex2(&id, &e, NULL);
+        status = build_ex2(&id, &e, nullptr);
         if (NT_SUCCESS(status))
             *identity = e;
     }
@@ -375,7 +375,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiCompareAuthIdentities(PSEC_WINNT_AUTH_
         *same_user = FALSE;
     if (same_identity)
         *same_identity = FALSE;
-    IDENTITY a = {0}, b = {0};
+    IDENTITY a = {}, b = {};
     NTSTATUS status = identity1 ? parse(identity1, &a) : STATUS_SUCCESS;
     if (NT_SUCCESS(status) && identity2)
         status = parse(identity2, &b);
@@ -397,7 +397,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiMarshalAuthIdentity(PSEC_WINNT_AUTH_ID
     if (!length || !bytes)
         return SEC_E_INVALID_TOKEN;
     *length = 0;
-    *bytes = NULL;
+    *bytes = nullptr;
     IDENTITY id;
     NTSTATUS status = parse(identity, &id);
     if (NT_SUCCESS(status)) {
@@ -415,7 +415,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiUnmarshalAuthIdentity(ULONG length, PC
 {
     if (!identity)
         return SEC_E_INVALID_TOKEN;
-    *identity = NULL;
+    *identity = nullptr;
     const SEC_WINNT_AUTH_IDENTITY_EX2 *e = (const SEC_WINNT_AUTH_IDENTITY_EX2 *)bytes;
     if (!bytes || length < sizeof(*e) || !is_ex2(e) || e->cbStructureLength > length || !valid_ex2(e))
         return SEC_E_INVALID_TOKEN;
@@ -447,7 +447,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiPrepareForCredRead(PSEC_WINNT_AUTH_IDE
                                                              PULONG type, PCWSTR *credman_target)
 {
     if (credman_target)
-        *credman_target = NULL;
+        *credman_target = nullptr;
     return SEC_E_UNSUPPORTED_FUNCTION;
 }
 
@@ -456,11 +456,11 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiPrepareForCredWrite(PSEC_WINNT_AUTH_ID
                                                               PUCHAR *credential_blob, PULONG credential_size)
 {
     if (credman_target)
-        *credman_target = NULL;
+        *credman_target = nullptr;
     if (user)
-        *user = NULL;
+        *user = nullptr;
     if (credential_blob)
-        *credential_blob = NULL;
+        *credential_blob = nullptr;
     return SEC_E_UNSUPPORTED_FUNCTION;
 }
 
@@ -468,7 +468,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiExcludePackage(PSEC_WINNT_AUTH_IDENTIT
                                                          PSEC_WINNT_AUTH_IDENTITY_OPAQUE *new_identity)
 {
     if (new_identity)
-        *new_identity = NULL;
+        *new_identity = nullptr;
     return SEC_E_UNSUPPORTED_FUNCTION;
 }
 
@@ -482,8 +482,8 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiGetTargetHostName(PCWSTR target, PWSTR
 {
     if (!host)
         return SEC_E_INVALID_PARAMETER;
-    *host = NULL;
-    PCWSTR start = target ? wcschr(target, L'/') : NULL;
+    *host = nullptr;
+    PCWSTR start = target ? wcschr(target, L'/') : nullptr;
     SIZE_T n;
     if (!start) {
         n = target ? wcslen(target) : 0;

@@ -122,12 +122,12 @@ static int SCAN_NAME(SOURCE *in, const SCHAR *fmt, va_list ap)
         case 'C':
             if (!widechar)
                 widechar = SCAN_WIDE ? -1 : 1;
-            /* fall through */
+            [[fallthrough]];
         case 'c': {
             int wide_out = SCAN_WIDE ? widechar >= 0 : widechar > 0;
             if (width == -1)
                 width = 1;
-            void *dst = suppress ? NULL : va_arg(ap, void *);
+            void *dst = suppress ? nullptr : va_arg(ap, void *);
             void *first = dst;
             size_t room = dst && in->secure ? va_arg(ap, unsigned) : (size_t)-1;
             int got = 0;
@@ -155,10 +155,10 @@ static int SCAN_NAME(SOURCE *in, const SCHAR *fmt, va_list ap)
         case 'S':
             if (!widechar)
                 widechar = SCAN_WIDE ? -1 : 1;
-            /* fall through */
+            [[fallthrough]];
         case 's': {
             int wide_out = SCAN_WIDE ? widechar >= 0 : widechar > 0;
-            void *dst = suppress ? NULL : va_arg(ap, void *);
+            void *dst = suppress ? nullptr : va_arg(ap, void *);
             void *first = dst;
             size_t room = dst && in->secure ? va_arg(ap, unsigned) : (size_t)-1;
             int got = 0;
@@ -202,7 +202,7 @@ static int SCAN_NAME(SOURCE *in, const SCHAR *fmt, va_list ap)
                 set++;
             const SCHAR *end = set;
             fmt = *set ? set + 1 : set;
-            void *dst = suppress ? NULL : va_arg(ap, void *);
+            void *dst = suppress ? nullptr : va_arg(ap, void *);
             void *first = dst;
             size_t room = dst && in->secure ? va_arg(ap, unsigned) : (size_t)-1;
             int got = 0;
@@ -388,7 +388,7 @@ static int SCAN_NAME(SOURCE *in, const SCHAR *fmt, va_list ap)
                 goto match_failure;
             num[n] = 0;
             int range;
-            double v = MsvcrtStrtod(num, NULL, &range);
+            double v = MsvcrtStrtod(num, nullptr, &range);
             if (!suppress) {
                 if (size == SZ_LONG || size == SZ_LONGDOUBLE)
                     *va_arg(ap, double *) = v;

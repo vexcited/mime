@@ -62,8 +62,8 @@ static void destroy_swapchain(D3dSwapChain *sc)
     D3dContextFlush(sc->device->immediate);
     vk->vkDeviceWaitIdle(vk->device);
     for (UINT i = 0; i < sc->image_count; i++)
-        vk->vkDestroySemaphore(vk->device, sc->present[i], NULL);
-    vk->vkDestroySwapchainKHR(vk->device, sc->swapchain, NULL);
+        vk->vkDestroySemaphore(vk->device, sc->present[i], nullptr);
+    vk->vkDestroySwapchainKHR(vk->device, sc->swapchain, nullptr);
     sc->swapchain = VK_NULL_HANDLE;
     sc->image_count = 0;
 }
@@ -141,7 +141,7 @@ static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     info.clipped = TRUE;
     info.oldSwapchain = sc->swapchain;
     VkSwapchainKHR swapchain;
-    if (vk->vkCreateSwapchainKHR(vk->device, &info, NULL, &swapchain) != VK_SUCCESS)
+    if (vk->vkCreateSwapchainKHR(vk->device, &info, nullptr, &swapchain) != VK_SUCCESS)
         return FALSE;
     destroy_swapchain(sc);
     sc->swapchain = swapchain;
@@ -152,7 +152,7 @@ static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     sc->image_count = images;
     VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (UINT i = 0; i < images; i++)
-        vk->vkCreateSemaphore(vk->device, &sem, NULL, &sc->present[i]);
+        vk->vkCreateSemaphore(vk->device, &sem, nullptr, &sc->present[i]);
     return TRUE;
 }
 
@@ -164,7 +164,7 @@ static HRESULT create_back_buffer(D3dSwapChain *sc)
         sc->desc.Width = D3D_MAX(client.right - client.left, 1);
     if (!sc->desc.Height)
         sc->desc.Height = D3D_MAX(client.bottom - client.top, 1);
-    D3D11_TEXTURE2D_DESC1 desc = {0};
+    D3D11_TEXTURE2D_DESC1 desc = {};
     desc.Width = sc->desc.Width;
     desc.Height = sc->desc.Height;
     desc.MipLevels = 1;
@@ -175,7 +175,7 @@ static HRESULT create_back_buffer(D3dSwapChain *sc)
     desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
     if (sc->desc.BufferUsage & DXGI_USAGE_UNORDERED_ACCESS)
         desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
-    HRESULT hr = D3dCreateTexture(sc->device, D3D11_RESOURCE_DIMENSION_TEXTURE2D, &desc, NULL, &sc->back);
+    HRESULT hr = D3dCreateTexture(sc->device, D3D11_RESOURCE_DIMENSION_TEXTURE2D, &desc, nullptr, &sc->back);
     if (SUCCEEDED(hr))
         sc->back->swapchain = TRUE;
     return hr;
@@ -204,7 +204,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     D3dWaitSerial(device, sc->acquire_serial[slot]);
     if (!sc->acquire[slot]) {
         VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        vk->vkCreateSemaphore(vk->device, &sem, NULL, &sc->acquire[slot]);
+        vk->vkCreateSemaphore(vk->device, &sem, nullptr, &sc->acquire[slot]);
     }
     UINT index = 0;
     VkResult r = vk->vkAcquireNextImageKHR(vk->device, sc->swapchain, UINT64_MAX, sc->acquire[slot], VK_NULL_HANDLE,
@@ -242,7 +242,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     VkImage source = sc->back->tex.image;
     if (sc->back->tex.samples > 1) {
         if (!sc->resolved) {
-            D3D11_TEXTURE2D_DESC1 desc = {0};
+            D3D11_TEXTURE2D_DESC1 desc = {};
             desc.Width = sc->back->tex.width;
             desc.Height = sc->back->tex.height;
             desc.MipLevels = desc.ArraySize = 1;
@@ -250,7 +250,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
             desc.SampleDesc.Count = 1;
             desc.Usage = D3D11_USAGE_DEFAULT;
             desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-            if (FAILED(D3dCreateTexture(device, D3D11_RESOURCE_DIMENSION_TEXTURE2D, &desc, NULL, &sc->resolved)))
+            if (FAILED(D3dCreateTexture(device, D3D11_RESOURCE_DIMENSION_TEXTURE2D, &desc, nullptr, &sc->resolved)))
                 return E_OUTOFMEMORY;
         }
         VkImageResolve resolve = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
@@ -261,7 +261,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
         source = sc->resolved->tex.image;
         D3dContextUse(c, sc->resolved);
     }
-    VkImageBlit blit = {0};
+    VkImageBlit blit = {};
     blit.srcSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.srcOffsets[1] = (VkOffset3D){sc->back->tex.width, sc->back->tex.height, 1};
     blit.dstSubresource = blit.srcSubresource;
@@ -305,7 +305,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     if (sc->present_count > latency)
         D3dWaitSerial(device, sc->frame_serials[(sc->present_count - latency - 1) % 16]);
     if (sc->latency)
-        ReleaseSemaphore(sc->latency, 1, NULL);
+        ReleaseSemaphore(sc->latency, 1, nullptr);
     return S_OK;
 }
 
@@ -323,7 +323,7 @@ static HRESULT STDMETHODCALLTYPE sc_query(IDXGISwapChain4 *iface, REFIID riid, v
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -344,9 +344,9 @@ static ULONG STDMETHODCALLTYPE sc_release(IDXGISwapChain4 *iface)
     D3dVk *vk = &device->vk;
     for (UINT i = 0; i < SEMAPHORES; i++)
         if (sc->acquire[i])
-            vk->vkDestroySemaphore(vk->device, sc->acquire[i], NULL);
+            vk->vkDestroySemaphore(vk->device, sc->acquire[i], nullptr);
     if (sc->surface)
-        vk->vkDestroySurfaceKHR(vk->instance, sc->surface, NULL);
+        vk->vkDestroySurfaceKHR(vk->instance, sc->surface, nullptr);
     if (sc->back)
         D3dResourceRelease(sc->back);
     if (sc->resolved)
@@ -403,7 +403,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_buffer(IDXGISwapChain4 *iface, UINT inde
     D3dSwapChain *sc = impl(iface);
     if (!surface)
         return DXGI_ERROR_INVALID_CALL;
-    *surface = NULL;
+    *surface = nullptr;
     BOOL flip = sc->desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL ||
                 sc->desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD;
     if (index && (!flip || index >= sc->desc.BufferCount))
@@ -438,7 +438,7 @@ static void enter_fullscreen(D3dSwapChain *sc, IDXGIOutput *output)
     RECT r = desc.DesktopCoordinates;
     SetWindowPos(sc->window, HWND_TOPMOST, r.left, r.top, r.right - r.left, r.bottom - r.top,
                  SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    SetWindowPos(sc->window, NULL, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+    SetWindowPos(sc->window, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
 }
 
 static void leave_fullscreen(D3dSwapChain *sc)
@@ -488,7 +488,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_fullscreen_state(IDXGISwapChain4 *iface,
     if (fullscreen)
         *fullscreen = sc->fullscreen_state;
     if (target) {
-        *target = NULL;
+        *target = nullptr;
         if (sc->fullscreen_state)
             sc_get_containing_output(iface, target);
     }
@@ -533,7 +533,7 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
     sc->desc.Height = height;
     sc->desc.Flags = flags;
     D3dResource *old = sc->back;
-    sc->back = NULL;
+    sc->back = nullptr;
     HRESULT hr = create_back_buffer(sc);
     if (FAILED(hr)) {
         sc->back = old;
@@ -543,7 +543,7 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
         D3dResourceRelease(old);
     if (sc->resolved) {
         D3dResourceRelease(sc->resolved);
-        sc->resolved = NULL;
+        sc->resolved = nullptr;
     }
     /* the surface format follows the back buffer's. */
     if (sc->swapchain && choose_format(sc) != sc->format)
@@ -560,7 +560,7 @@ static HRESULT STDMETHODCALLTYPE sc_resize_target(IDXGISwapChain4 *iface, const 
         return S_OK;
     RECT rect = {0, 0, mode->Width, mode->Height};
     AdjustWindowRectEx(&rect, GetWindowLongW(sc->window, GWL_STYLE), FALSE, GetWindowLongW(sc->window, GWL_EXSTYLE));
-    SetWindowPos(sc->window, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+    SetWindowPos(sc->window, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     return S_OK;
 }
@@ -609,7 +609,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_hwnd(IDXGISwapChain4 *iface, HWND *hwnd)
 static HRESULT STDMETHODCALLTYPE sc_get_core_window(IDXGISwapChain4 *iface, REFIID riid, void **window)
 {
     if (window)
-        *window = NULL;
+        *window = nullptr;
     return DXGI_ERROR_INVALID_CALL;
 }
 
@@ -625,7 +625,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_restrict_to_output(IDXGISwapChain4 *ifac
 {
     if (!output)
         return E_INVALIDARG;
-    *output = NULL;
+    *output = nullptr;
     return S_OK;
 }
 
@@ -703,7 +703,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_maximum_frame_latency(IDXGISwapChain4 *i
 static HANDLE STDMETHODCALLTYPE sc_get_frame_latency_waitable_object(IDXGISwapChain4 *iface)
 {
     D3dSwapChain *sc = impl(iface);
-    HANDLE handle = NULL;
+    HANDLE handle = nullptr;
     if (sc->latency)
         DuplicateHandle(GetCurrentProcess(), sc->latency, GetCurrentProcess(), &handle, 0, FALSE,
                         DUPLICATE_SAME_ACCESS);
@@ -832,20 +832,20 @@ HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window
         return hr;
     }
     VkWin32SurfaceCreateInfoKHR surface = {VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-    surface.hinstance = GetModuleHandleW(NULL);
+    surface.hinstance = GetModuleHandleW(nullptr);
     surface.hwnd = window;
-    if (device->vk.vkCreateWin32SurfaceKHR(device->vk.instance, &surface, NULL, &sc->surface) != VK_SUCCESS) {
+    if (device->vk.vkCreateWin32SurfaceKHR(device->vk.instance, &surface, nullptr, &sc->surface) != VK_SUCCESS) {
         D3dResourceRelease(sc->back);
         HeapFree(GetProcessHeap(), 0, sc);
         return DXGI_ERROR_UNSUPPORTED;
     }
     if (desc->Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
-        sc->latency = CreateSemaphoreW(NULL, sc->max_latency, 16, NULL);
+        sc->latency = CreateSemaphoreW(nullptr, sc->max_latency, 16, nullptr);
     factory->lpVtbl->AddRef(factory);
     device->iface.lpVtbl->AddRef(&device->iface);
     if (sc->fullscreen_state) {
         sc->fullscreen_state = FALSE;
-        sc_set_fullscreen_state(&sc->iface, TRUE, NULL);
+        sc_set_fullscreen_state(&sc->iface, TRUE, nullptr);
     }
     *out = (IDXGISwapChain1 *)&sc->iface;
     return S_OK;

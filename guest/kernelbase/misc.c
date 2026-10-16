@@ -40,7 +40,7 @@ static ULONG NTAPI init_atom_tables(PRTL_RUN_ONCE once, PVOID parameter, PVOID *
 
 static ATOM_TABLE *table(BOOL global)
 {
-    RtlRunOnceExecuteOnce(&g_atom_once, init_atom_tables, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_atom_once, init_atom_tables, nullptr, nullptr);
     return global ? &g_global_atoms : &g_local_atoms;
 }
 
@@ -73,7 +73,7 @@ static ATOM_ENTRY *lookup(ATOM_TABLE *t, LPCWSTR name, SIZE_T length)
     for (ATOM_ENTRY *e = t->Entries; e; e = e->Next)
         if (e->Length == length && !_wcsnicmp(e->Name, name, length))
             return e;
-    return NULL;
+    return nullptr;
 }
 
 static ATOM_ENTRY *lookup_atom(ATOM_TABLE *t, ATOM atom)
@@ -81,7 +81,7 @@ static ATOM_ENTRY *lookup_atom(ATOM_TABLE *t, ATOM atom)
     for (ATOM_ENTRY *e = t->Entries; e; e = e->Next)
         if (e->Atom == atom)
             return e;
-    return NULL;
+    return nullptr;
 }
 
 static ATOM table_add(ATOM_TABLE *t, LPCWSTR name)
@@ -115,7 +115,7 @@ static ATOM table_add(ATOM_TABLE *t, LPCWSTR name)
             if (!lookup_atom(t, candidate))
                 atom = candidate;
         }
-        e = atom ? KbAlloc(FIELD_OFFSET(ATOM_ENTRY, Name) + (length + 1) * sizeof(WCHAR)) : NULL;
+        e = atom ? KbAlloc(FIELD_OFFSET(ATOM_ENTRY, Name) + (length + 1) * sizeof(WCHAR)) : nullptr;
         if (e) {
             e->Atom = atom;
             e->References = 1;
@@ -248,7 +248,7 @@ static PWSTR atom_name_to_wide(LPCSTR name, BOOL *owned)
     if ((ULONG_PTR)name < 0x10000)
         return (PWSTR)name;
     PWSTR w = KbAnsiToWideCp(CP_ACP, name);
-    *owned = w != NULL;
+    *owned = w != nullptr;
     return w;
 }
 
@@ -262,11 +262,11 @@ static UINT atom_name_to_ansi(UINT (WINAPI *get)(ATOM, LPWSTR, int), ATOM atom, 
         KbSetError(ERROR_MORE_DATA);
         return 0;
     }
-    int r = WideCharToMultiByte(CP_ACP, 0, w, (int)n, buffer, size - 1, NULL, NULL);
+    int r = WideCharToMultiByte(CP_ACP, 0, w, (int)n, buffer, size - 1, nullptr, nullptr);
     if (r <= 0) {
         /* truncate to what fits, like the wide version. */
         char full[(MAX_ATOM_NAME + 1) * 2];
-        int all = WideCharToMultiByte(CP_ACP, 0, w, (int)n, full, sizeof(full), NULL, NULL);
+        int all = WideCharToMultiByte(CP_ACP, 0, w, (int)n, full, sizeof(full), nullptr, nullptr);
         r = all < size - 1 ? all : size - 1;
         memcpy(buffer, full, (SIZE_T)(r > 0 ? r : 0));
     }
@@ -388,7 +388,7 @@ UINT WINAPI GlobalGetAtomNameW(ATOM atom, LPWSTR buffer, int size)
         USHORT NameLength;
         WCHAR Name[MAX_ATOM_NAME + 1];
     } info;
-    NTSTATUS status = NtQueryInformationAtom(atom, 0, &info, sizeof(info), NULL);
+    NTSTATUS status = NtQueryInformationAtom(atom, 0, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status), 0;
     return copy_atom_name(info.Name, info.NameLength / sizeof(WCHAR), buffer, size);

@@ -63,12 +63,12 @@ void mime_host_volume_label(char *out, size_t size)
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns)
 {
     struct timespec ts = {(time_t)(timeout_ns / 1000000000u), (long)(timeout_ns % 1000000000u)};
-    syscall(SYS_futex, word, FUTEX_WAIT_PRIVATE, value, &ts, NULL, 0);
+    syscall(SYS_futex, word, FUTEX_WAIT_PRIVATE, value, &ts, nullptr, 0);
 }
 
 void mime_host_wake_word(uint32_t *word)
 {
-    syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, INT32_MAX, NULL, NULL, 0);
+    syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, INT32_MAX, nullptr, nullptr, 0);
 }
 
 /*
@@ -96,7 +96,7 @@ static uint32_t host_cpu_count(void)
 /* whether the kernel backs this ram in huge pages: always, or on request when it was asked. */
 static bool transparent_huge_pages(MimeVm *vm)
 {
-    char mode[128] = {0};
+    char mode[128] = {};
     FILE *f = fopen("/sys/kernel/mm/transparent_hugepage/enabled", "r");
     if (f) {
         if (!fgets(mode, sizeof(mode), f))
@@ -228,7 +228,7 @@ static bool load_cpuid(MimeVm *vm)
         if (ioctl(vm->kvm_fd, KVM_GET_SUPPORTED_CPUID, g_cpuid) == 0)
             break;
         free(g_cpuid);
-        g_cpuid = NULL;
+        g_cpuid = nullptr;
         if (errno != E2BIG || n > 4096) {
             mime_error("KVM_GET_SUPPORTED_CPUID failed: %s", strerror(errno));
             return false;
@@ -304,9 +304,9 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     vm->vcpu_count = host_cpu_count();
     vm->kvm_fd = vm->vm_fd = vm->irq_fd = -1;
     vm->next_slot = SLOT_FIRST_WINDOW;
-    pthread_mutex_init(&vm->lock, NULL);
-    pthread_cond_init(&vm->vcpu_cond, NULL);
-    pthread_mutex_init(&vm->fs_lock, NULL);
+    pthread_mutex_init(&vm->lock, nullptr);
+    pthread_cond_init(&vm->vcpu_cond, nullptr);
+    pthread_mutex_init(&vm->fs_lock, nullptr);
 
     vm->kvm_fd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
     if (vm->kvm_fd < 0) {
@@ -351,7 +351,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
      * 2 MiB aligned so the guest's large blocks match host huge pages.
      */
     uint64_t align = 2ull << 20;
-    uint8_t *raw = mmap(NULL, ram_size + align, PROT_READ | PROT_WRITE,
+    uint8_t *raw = mmap(nullptr, ram_size + align, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (raw == MAP_FAILED) {
         mime_error("cannot reserve %llu bytes of guest memory", (unsigned long long)ram_size);
@@ -376,7 +376,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
 
     struct sigaction sa = {.sa_handler = on_kick};
     sigemptyset(&sa.sa_mask);
-    sigaction(KICK_SIGNAL, &sa, NULL);
+    sigaction(KICK_SIGNAL, &sa, nullptr);
 
     mime_vm_init_boot(vm);
     vm->boot->irq_intid = MIME_X64_IRQ_VECTOR;
@@ -418,7 +418,7 @@ void mime_vm_destroy(MimeVm *vm)
 {
     for (uint32_t i = 0; i < vm->vcpu_count; i++) {
         if (vm->vcpus[i].thread)
-            pthread_join(vm->vcpus[i].thread, NULL);
+            pthread_join(vm->vcpus[i].thread, nullptr);
     }
     mime_fs_close_all(vm);
     mime_net_close_all();
@@ -568,14 +568,14 @@ static void *vcpu_main(void *arg)
     if (vcpu->fd < 0) {
         mime_error("KVM_CREATE_VCPU failed: %s", strerror(errno));
         mime_vm_request_stop(vm, 1);
-        return NULL;
+        return nullptr;
     }
-    vcpu->run = mmap(NULL, (size_t)g_vcpu_mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu->fd, 0);
+    vcpu->run = mmap(nullptr, (size_t)g_vcpu_mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu->fd, 0);
     if (vcpu->run == MAP_FAILED || !setup_vcpu(vcpu)) {
-        vcpu->run = NULL;
+        vcpu->run = nullptr;
         mime_error("cannot set up vcpu %u", vcpu->index);
         mime_vm_request_stop(vm, 1);
-        return NULL;
+        return nullptr;
     }
     vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS;
     /* kvm holds processors other than the first for an init and startup ipi pair; the guest starts them by hypercall. */
@@ -664,7 +664,7 @@ static void *vcpu_main(void *arg)
             break;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t x0, uint64_t sp)
@@ -702,7 +702,7 @@ bool mime_vm_start(MimeVm *vm)
 {
     pthread_t profiler;
     sem_init(&g_profile_sem, 0, 0);
-    if (pthread_create(&profiler, NULL, profile_thread, vm) == 0)
+    if (pthread_create(&profiler, nullptr, profile_thread, vm) == 0)
         pthread_detach(profiler);
     for (uint32_t i = 0; i < vm->vcpu_count; i++) {
         vm->vcpus[i].vm = vm;
@@ -812,7 +812,7 @@ static void profile_sample(MimeVcpu *vcpu)
 {
     struct kvm_regs regs;
     struct kvm_sregs sregs;
-    ProfileSample *table = vcpu->index < PROFILE_VCPUS ? g_samples[vcpu->index] : NULL;
+    ProfileSample *table = vcpu->index < PROFILE_VCPUS ? g_samples[vcpu->index] : nullptr;
     if (!table || ioctl(vcpu->fd, KVM_GET_REGS, &regs) != 0 || ioctl(vcpu->fd, KVM_GET_SREGS, &sregs) != 0)
         return;
     /* kernel addresses are the same in every process. */
@@ -927,8 +927,8 @@ static void *profile_thread(void *arg)
         profile_report(vm);
         for (uint32_t v = 0; v < PROFILE_VCPUS; v++) {
             free(g_samples[v]);
-            g_samples[v] = NULL;
+            g_samples[v] = nullptr;
         }
     }
-    return NULL;
+    return nullptr;
 }

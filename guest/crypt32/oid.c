@@ -5,13 +5,13 @@
  */
 #include "crypt32_private.h"
 
-static const DWORD types_ia5[] = {CERT_RDN_IA5_STRING, 0};
-static const DWORD types_printable[] = {CERT_RDN_PRINTABLE_STRING, 0};
-static const DWORD types_numeric[] = {CERT_RDN_NUMERIC_STRING, 0};
-static const DWORD types_ia5_utf8[] = {CERT_RDN_IA5_STRING, CERT_RDN_UTF8_STRING, 0};
-static const DWORD types_utf8[] = {CERT_RDN_UTF8_STRING, 0};
-static const DWORD sign_rsa[] = {CALG_RSA_SIGN, 0};
-static const DWORD sign_ecdsa[] = {CALG_OID_INFO_CNG_ONLY, 0};
+static constexpr DWORD types_ia5[] = {CERT_RDN_IA5_STRING, 0};
+static constexpr DWORD types_printable[] = {CERT_RDN_PRINTABLE_STRING, 0};
+static constexpr DWORD types_numeric[] = {CERT_RDN_NUMERIC_STRING, 0};
+static constexpr DWORD types_ia5_utf8[] = {CERT_RDN_IA5_STRING, CERT_RDN_UTF8_STRING, 0};
+static constexpr DWORD types_utf8[] = {CERT_RDN_UTF8_STRING, 0};
+static constexpr DWORD sign_rsa[] = {CALG_RSA_SIGN, 0};
+static constexpr DWORD sign_ecdsa[] = {CALG_OID_INFO_CNG_ONLY, 0};
 
 #define EXTRA(a) {sizeof(a), (BYTE *)(a)}
 #define ROW(oid, name, group, value) {sizeof(CRYPT_OID_INFO), oid, name, group, {value}, {0, NULL}, NULL, NULL}
@@ -21,15 +21,15 @@ static const DWORD sign_ecdsa[] = {CALG_OID_INFO_CNG_ONLY, 0};
 
 static const CRYPT_OID_INFO oid_table[] = {
     /* hashes. */
-    {sizeof(CRYPT_OID_INFO), szOID_OIWSEC_sha1, L"sha1", 1, {CALG_SHA1}, {0, NULL}, L"SHA1", NULL},
-    {sizeof(CRYPT_OID_INFO), szOID_RSA_MD5, L"md5", 1, {CALG_MD5}, {0, NULL}, L"MD5", NULL},
-    {sizeof(CRYPT_OID_INFO), szOID_NIST_sha256, L"sha256", 1, {CALG_SHA_256}, {0, NULL}, L"SHA256", NULL},
-    {sizeof(CRYPT_OID_INFO), szOID_NIST_sha384, L"sha384", 1, {CALG_SHA_384}, {0, NULL}, L"SHA384", NULL},
-    {sizeof(CRYPT_OID_INFO), szOID_NIST_sha512, L"sha512", 1, {CALG_SHA_512}, {0, NULL}, L"SHA512", NULL},
+    {sizeof(CRYPT_OID_INFO), szOID_OIWSEC_sha1, L"sha1", 1, {CALG_SHA1}, {0, nullptr}, L"SHA1", nullptr},
+    {sizeof(CRYPT_OID_INFO), szOID_RSA_MD5, L"md5", 1, {CALG_MD5}, {0, nullptr}, L"MD5", nullptr},
+    {sizeof(CRYPT_OID_INFO), szOID_NIST_sha256, L"sha256", 1, {CALG_SHA_256}, {0, nullptr}, L"SHA256", nullptr},
+    {sizeof(CRYPT_OID_INFO), szOID_NIST_sha384, L"sha384", 1, {CALG_SHA_384}, {0, nullptr}, L"SHA384", nullptr},
+    {sizeof(CRYPT_OID_INFO), szOID_NIST_sha512, L"sha512", 1, {CALG_SHA_512}, {0, nullptr}, L"SHA512", nullptr},
     /* public keys. */
-    {sizeof(CRYPT_OID_INFO), szOID_RSA_RSA, L"RSA", 3, {CALG_RSA_KEYX}, {0, NULL}, L"RSA", NULL},
-    {sizeof(CRYPT_OID_INFO), "1.2.840.10040.4.1", L"DSA", 3, {CALG_DSS_SIGN}, {0, NULL}, L"DSA", NULL},
-    {sizeof(CRYPT_OID_INFO), szOID_ECC_PUBLIC_KEY, L"ECC", 3, {CALG_OID_INFO_PARAMETERS}, {0, NULL}, L"ECC", NULL},
+    {sizeof(CRYPT_OID_INFO), szOID_RSA_RSA, L"RSA", 3, {CALG_RSA_KEYX}, {0, nullptr}, L"RSA", nullptr},
+    {sizeof(CRYPT_OID_INFO), "1.2.840.10040.4.1", L"DSA", 3, {CALG_DSS_SIGN}, {0, nullptr}, L"DSA", nullptr},
+    {sizeof(CRYPT_OID_INFO), szOID_ECC_PUBLIC_KEY, L"ECC", 3, {CALG_OID_INFO_PARAMETERS}, {0, nullptr}, L"ECC", nullptr},
     /* signatures. */
     ROWC(szOID_RSA_SHA256RSA, L"sha256RSA", 4, CALG_SHA_256, sign_rsa, L"SHA256", L"RSA"),
     ROWC(szOID_RSA_SHA384RSA, L"sha384RSA", 4, CALG_SHA_384, sign_rsa, L"SHA384", L"RSA"),
@@ -112,7 +112,7 @@ PCCRYPT_OID_INFO CrFindOid(LPCSTR oid, DWORD group)
     for (DWORD i = 0; i < RTL_NUMBER_OF(oid_table); i++)
         if (group_matches(&oid_table[i], group) && !strcmp(oid_table[i].pszOID, oid))
             return &oid_table[i];
-    return NULL;
+    return nullptr;
 }
 
 PCCRYPT_OID_INFO CrFindOidByName(LPCWSTR name, DWORD group)
@@ -120,13 +120,13 @@ PCCRYPT_OID_INFO CrFindOidByName(LPCWSTR name, DWORD group)
     for (DWORD i = 0; i < RTL_NUMBER_OF(oid_table); i++)
         if (group_matches(&oid_table[i], group) && !_wcsicmp(oid_table[i].pwszName, name))
             return &oid_table[i];
-    return NULL;
+    return nullptr;
 }
 
 PCCRYPT_OID_INFO WINAPI CryptFindOIDInfo(DWORD dwKeyType, void *pvKey, DWORD dwGroupId)
 {
     if (!pvKey)
-        return NULL;
+        return nullptr;
     for (DWORD i = 0; i < RTL_NUMBER_OF(oid_table); i++) {
         const CRYPT_OID_INFO *info = &oid_table[i];
         if (!group_matches(info, dwGroupId))
@@ -164,10 +164,10 @@ PCCRYPT_OID_INFO WINAPI CryptFindOIDInfo(DWORD dwKeyType, void *pvKey, DWORD dwG
             break;
         }
         default:
-            return NULL;
+            return nullptr;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 DWORD WINAPI CertOIDToAlgId(LPCSTR pszObjId)
@@ -184,7 +184,7 @@ LPCSTR WINAPI CertAlgIdToOID(DWORD dwAlgId)
 {
     ALG_ID alg = dwAlgId;
     PCCRYPT_OID_INFO info = CryptFindOIDInfo(CRYPT_OID_INFO_ALGID_KEY, &alg, 0);
-    return info ? info->pszOID : NULL;
+    return info ? info->pszOID : nullptr;
 }
 
 LPVOID WINAPI CryptMemAlloc(ULONG cbSize)

@@ -72,7 +72,7 @@ static void *zalloc(DcReflection *r, SIZE_T size)
 {
     DcBlock *block = DcAlloc(sizeof(DcBlock) + 8 + size);
     if (!block)
-        return NULL;
+        return nullptr;
     block->next = r->blocks;
     r->blocks = block;
     void *p = (BYTE *)block + ((sizeof(DcBlock) + 7) & ~(SIZE_T)7);
@@ -122,7 +122,7 @@ static DcType *type_impl(ID3D11ShaderReflectionType *iface) { return CONTAINING_
 /* the type behind an interface, or NULL for the null type and foreign objects. */
 static DcType *type_from(ID3D11ShaderReflectionType *iface)
 {
-    return iface && iface->lpVtbl == &type_vtbl ? type_impl(iface) : NULL;
+    return iface && iface->lpVtbl == &type_vtbl ? type_impl(iface) : nullptr;
 }
 
 static HRESULT STDMETHODCALLTYPE type_get_desc(ID3D11ShaderReflectionType *iface, D3D11_SHADER_TYPE_DESC *desc)
@@ -155,7 +155,7 @@ static ID3D11ShaderReflectionType *STDMETHODCALLTYPE type_member_by_name(ID3D11S
 static LPCSTR STDMETHODCALLTYPE type_member_name(ID3D11ShaderReflectionType *iface, UINT index)
 {
     DcType *type = type_impl(iface);
-    return index < type->desc.Members ? type->member_names[index] : NULL;
+    return index < type->desc.Members ? type->member_names[index] : nullptr;
 }
 
 static HRESULT STDMETHODCALLTYPE type_is_equal(ID3D11ShaderReflectionType *iface, ID3D11ShaderReflectionType *other)
@@ -167,13 +167,13 @@ static HRESULT STDMETHODCALLTYPE type_is_equal(ID3D11ShaderReflectionType *iface
 static ID3D11ShaderReflectionType *STDMETHODCALLTYPE type_sub(ID3D11ShaderReflectionType *iface)
 {
     DcType *type = type_impl(iface);
-    return type->sub ? &type->sub->iface : NULL;
+    return type->sub ? &type->sub->iface : nullptr;
 }
 
 static ID3D11ShaderReflectionType *STDMETHODCALLTYPE type_base(ID3D11ShaderReflectionType *iface)
 {
     DcType *type = type_impl(iface);
-    return type->base ? &type->base->iface : NULL;
+    return type->base ? &type->base->iface : nullptr;
 }
 
 static UINT STDMETHODCALLTYPE type_interface_count(ID3D11ShaderReflectionType *iface)
@@ -302,7 +302,7 @@ static HRESULT STDMETHODCALLTYPE reflection_query(ID3D11ShaderReflection *iface,
         return E_FAIL;
     if (!IsEqualGUID(riid, &IID_ID3D12ShaderReflection) && !IsEqualGUID(riid, &IID_ID3D11ShaderReflection) &&
         !IsEqualGUID(riid, &IID_IUnknown)) {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     *out = iface;
@@ -917,7 +917,7 @@ static HRESULT read_legacy(DcReflection *r, const BYTE *chunk, UINT size)
 /* the instruction counts of the STAT chunk, which comes in 28, 29 and 37 words. */
 static void read_stat(DcReflection *r, const BYTE *chunk, UINT size)
 {
-    UINT s[37] = {0};
+    UINT s[37] = {};
     for (UINT i = 0; i < size / 4 && i < 37; i++)
         s[i] = read32(chunk + i * 4);
     D3D11_SHADER_DESC *d = &r->desc;
@@ -981,7 +981,7 @@ static HRESULT read_all(DcReflection *r, const DcContainer *c)
         DcChunk chunk = DcGetChunk(c, index);
         if (chunk.size > 8)
             return E_FAIL;
-        BYTE bits[8] = {0};
+        BYTE bits[8] = {};
         memcpy(bits, chunk.data, chunk.size);
         r->requires |= read16(bits) & 0x3FFD;
     }
@@ -1023,7 +1023,7 @@ static HRESULT read_all(DcReflection *r, const DcContainer *c)
     for (UINT i = 0; i < 2 && index < 0; i++)
         if ((index = DcFindChunk(c, PATCHES[i].tag)) >= 0)
             stride = PATCHES[i].stride;
-    return read_signature(r, index >= 0 ? DcGetChunk(c, index).data : NULL, end, stride, 2,
+    return read_signature(r, index >= 0 ? DcGetChunk(c, index).data : nullptr, end, stride, 2,
                           &r->desc.PatchConstantParameters);
 }
 
@@ -1069,6 +1069,6 @@ D3DCOMPILERAPI HRESULT WINAPI D3DReflectLibrary(LPCVOID data, SIZE_T size, REFII
     if (FAILED(hr))
         return hr;
     if (reflector)
-        *reflector = NULL;
+        *reflector = nullptr;
     return E_NOTIMPL;
 }

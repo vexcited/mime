@@ -122,7 +122,7 @@ UINT WINAPI MsiSetFeatureStateW(MSIHANDLE handle, LPCWSTR name, INSTALLSTATE sta
     ULONG index = error ? UINT32_MAX : find_feature(package, name);
     if (!error && index == UINT32_MAX)
         error = ERROR_UNKNOWN_FEATURE;
-    MIME_MSI_FEATURE *replacement = NULL;
+    MIME_MSI_FEATURE *replacement = nullptr;
     if (!error) {
         SIZE_T bytes = (SIZE_T)package->FeatureCount * sizeof(*replacement);
         replacement = MimeMsiAllocate(bytes ? bytes : 1);
@@ -171,8 +171,8 @@ UINT WINAPI MsiSetInstallLevel(MSIHANDLE handle, int level)
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     UINT error = !package ? ERROR_INVALID_HANDLE : package->TransactionActive ? ERROR_FUNCTION_NOT_CALLED : MimeMsiLoadFeatures(package);
-    PWSTR previous_level = NULL;
-    INSTALLSTATE *previous_states = NULL;
+    PWSTR previous_level = nullptr;
+    INSTALLSTATE *previous_states = nullptr;
     BOOL previous_defaults = package ? package->ConfigureDefaults : FALSE;
     if (!error) {
         previous_level = MimeMsiDuplicate(MimeMsiGetProperty(package, L"INSTALLLEVEL"));
@@ -276,7 +276,7 @@ static UINT feature_cost(MIME_MSI_PACKAGE *package, ULONG feature, MSICOSTTREE t
             return ERROR_INSTALL_PACKAGE_INVALID;
         if (MimeMsiInteger(files, row, attributes) != 0x4000 || (file_version && *file_version))
             return ERROR_CALL_NOT_IMPLEMENTED;
-        PCWSTR directory = NULL;
+        PCWSTR directory = nullptr;
         for (ULONG entry = 0; entry < components->Rows; entry++) {
             PCWSTR key = MimeMsiText(package->Database, components, entry, component_id);
             if (!key || wcscmp(key, name))
@@ -288,7 +288,7 @@ static UINT feature_cost(MIME_MSI_PACKAGE *package, ULONG feature, MSICOSTTREE t
         }
         if (!directory)
             return ERROR_INSTALL_PACKAGE_INVALID;
-        PWSTR target = NULL;
+        PWSTR target = nullptr;
         error = MimeMsiDirectoryPath(package, directory, FALSE, &target);
         if (error)
             return error;

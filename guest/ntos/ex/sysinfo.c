@@ -303,7 +303,7 @@ static PCWSTR process_leaf(PEPROCESS p, ULONG *chars)
 {
     if (!p->ImagePath.Length) {
         *chars = 0;
-        return NULL;
+        return nullptr;
     }
     PCWSTR path = p->ImagePath.Buffer;
     ULONG n = p->ImagePath.Length / sizeof(WCHAR), start = n;
@@ -339,7 +339,7 @@ static ULONG process_thread_count(PEPROCESS p)
 static ULONG fill_processes(PUCHAR buffer, ULONG capacity, PUCHAR user_base)
 {
     ULONG used = 0;
-    SYSTEM_PROCESS_INFORMATION *last = NULL;
+    SYSTEM_PROCESS_INFORMATION *last = nullptr;
     ULONG64 lock = KiAcquireDispatcherLock();
     for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
         PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
@@ -394,7 +394,7 @@ static NTSTATUS query_processes(PVOID info, ULONG length, PULONG returned)
 {
     /* larger buffers than any process list needs are only filled up to this bound. */
     ULONG capacity = length < 0x100000 ? length : 0x100000;
-    PUCHAR buffer = capacity ? ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity, KI_TAG('P', 's', 'I', 'n')) : NULL;
+    PUCHAR buffer = capacity ? ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity, KI_TAG('P', 's', 'I', 'n')) : nullptr;
     if (capacity && !buffer)
         return STATUS_INSUFFICIENT_RESOURCES;
     ULONG need = fill_processes(buffer, capacity, info);
@@ -418,7 +418,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return query_processes(info, length, returned);
     case SystemBasicInformation:
     case SystemEmulationBasicInformation: {
-        SYSTEM_BASIC_INFORMATION b = {0};
+        SYSTEM_BASIC_INFORMATION b = {};
         b.TimerResolution = KI_CLOCK_TICK_HNS;
         b.PageSize = PAGE_SIZE;
         b.NumberOfPhysicalPages = (ULONG)MmGetTotalPages();
@@ -463,7 +463,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     }
     case SystemProcessorInformation:
     case SystemEmulationProcessorInformation: {
-        SYSTEM_PROCESSOR_INFORMATION p = {0};
+        SYSTEM_PROCESSOR_INFORMATION p = {};
         p.ProcessorArchitecture = MIME_NATIVE_ARCHITECTURE;
         p.ProcessorLevel = KiProcessorLevel();
         p.ProcessorRevision = KiProcessorRevision();
@@ -480,14 +480,14 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
             ULONG Reserved;
             ULONGLONG BootTimeBias;
             ULONGLONG SleepTimeBias;
-        } t = {0};
+        } t = {};
         t.BootTime.QuadPart = (LONGLONG)KeBootFiletime;
         KeQuerySystemTime(&t.CurrentTime);
         t.TimeZoneBias.QuadPart = (LONGLONG)HalBootInfo->timezone_bias * 60 * 10000000;
         return copy_info(info, &t, sizeof(t), length, returned);
     }
     case SystemPerformanceInformation: {
-        UCHAR perf[0x158] = {0};
+        UCHAR perf[0x158] = {};
         /* no paging file: the host swaps guest memory, so the limit is ram plus the host's swap. */
         ULONG64 total = MmGetTotalPages(), free = MmGetFreePages();
         *(PULONG)(perf + 0x4C) = (ULONG)free;                                            /* AvailablePages */

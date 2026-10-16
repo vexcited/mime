@@ -5,7 +5,7 @@
 WINOLEAPI HRESULT WINAPI CoCreateFreeThreadedMarshaler(IUnknown *outer, IUnknown **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     return E_NOTIMPL;
 }
 WINOLEAPI HRESULT WINAPI CoGetContextToken(ULONG_PTR *token)
@@ -18,7 +18,7 @@ WINOLEAPI HRESULT WINAPI CoGetContextToken(ULONG_PTR *token)
 WINOLEAPI HRESULT WINAPI CoGetObjectContext(REFIID iid, void **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     HRESULT hr = OleCheckApartment();
     return FAILED(hr) ? hr : E_NOINTERFACE;
 }
@@ -40,7 +40,7 @@ WINOLEAPI HRESULT WINAPI CoMarshalInterface(IStream *stream, REFIID iid, IUnknow
 WINOLEAPI HRESULT WINAPI CoUnmarshalInterface(IStream *stream, REFIID iid, void **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     return E_NOTIMPL;
 }
 WINOLEAPI HRESULT WINAPI CoGetMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *object,
@@ -75,7 +75,7 @@ WINOLEAPI HRESULT WINAPI CoWaitForMultipleHandles(DWORD flags, DWORD timeout, UL
 WINOLEAPI HRESULT WINAPI RoInitialize(UINT type)
 {
     if (type > 1) return E_INVALIDARG;
-    return CoInitializeEx(NULL, type ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
+    return CoInitializeEx(nullptr, type ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
 }
 WINOLEAPI void WINAPI RoUninitialize(void)
 {
@@ -115,7 +115,7 @@ WINOLEAPI HRESULT WINAPI CoSetProxyBlanket(IUnknown *proxy, DWORD authn_service,
 WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessageFilter **previous)
 {
     if (previous)
-        *previous = NULL;
+        *previous = nullptr;
     OLE_THREAD *t = OleThreadState(FALSE);
     if (!t || !t->ComInits || !t->Sta)
         return CO_E_NOT_SUPPORTED;

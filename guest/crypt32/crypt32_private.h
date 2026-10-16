@@ -7,7 +7,6 @@
 #define MIME_BUILD_CRYPT32
 #include <mime/win32/wincrypt.h>
 #include <mime/win32/winnls.h>
-#include <stdbool.h>
 
 #ifndef MAXDWORD
 #define MAXDWORD 0xFFFFFFFF

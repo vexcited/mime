@@ -10,9 +10,9 @@
 PWSTR AdvAnsiToWide(LPCSTR s)
 {
     if (!s)
-        return NULL;
-    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, NULL, 0);
-    PWSTR w = n > 0 ? AdvAlloc(n * sizeof(WCHAR)) : NULL;
+        return nullptr;
+    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
+    PWSTR w = n > 0 ? AdvAlloc(n * sizeof(WCHAR)) : nullptr;
     if (w)
         MultiByteToWideChar(CP_ACP, 0, s, -1, w, n);
     else
@@ -23,11 +23,11 @@ PWSTR AdvAnsiToWide(LPCSTR s)
 PSTR AdvWideToAnsi(LPCWSTR s)
 {
     if (!s)
-        return NULL;
-    int n = WideCharToMultiByte(CP_ACP, 0, s, -1, NULL, 0, NULL, NULL);
-    PSTR a = n > 0 ? AdvAlloc(n) : NULL;
+        return nullptr;
+    int n = WideCharToMultiByte(CP_ACP, 0, s, -1, nullptr, 0, nullptr, nullptr);
+    PSTR a = n > 0 ? AdvAlloc(n) : nullptr;
     if (a)
-        WideCharToMultiByte(CP_ACP, 0, s, -1, a, n, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, s, -1, a, n, nullptr, nullptr);
     else
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
     return a;

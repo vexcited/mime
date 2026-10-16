@@ -5,8 +5,8 @@
  */
 #include "crypt32_private.h"
 
-static const char b64_std[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-static const char b64_uri[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+static constexpr char b64_std[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static constexpr char b64_uri[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 static const struct {
     const char *begin;
@@ -62,9 +62,9 @@ static void base64_encode(sink *s, const BYTE *data, DWORD size, DWORD flags)
         for (int k = 0; k < 4; k++) {
             if (uri && quad[k] == '=')
                 break;
-            const char *escape = NULL;
+            const char *escape = nullptr;
             if (percent)
-                escape = quad[k] == '+' ? "%2B" : quad[k] == '/' ? "%2F" : quad[k] == '=' ? "%3D" : NULL;
+                escape = quad[k] == '+' ? "%2B" : quad[k] == '/' ? "%2F" : quad[k] == '=' ? "%3D" : nullptr;
             if (escape) {
                 memcpy(expanded + n, escape, 3);
                 n += 3;
@@ -235,7 +235,7 @@ BOOL WINAPI CryptBinaryToStringW(const BYTE *pbBinary, DWORD cbBinary, DWORD dwF
                                  DWORD *pcchString)
 {
     if (!pszString)
-        return CryptBinaryToStringA(pbBinary, cbBinary, dwFlags, NULL, pcchString);
+        return CryptBinaryToStringA(pbBinary, cbBinary, dwFlags, nullptr, pcchString);
     if (!pcchString || !*pcchString)
         return CrFail(ERROR_INVALID_PARAMETER);
     if ((dwFlags & 0x3FFFFFFF) == CRYPT_STRING_BINARY)
@@ -705,7 +705,7 @@ BOOL WINAPI CryptStringToBinaryW(LPCWSTR pszString, DWORD cchString, DWORD dwFla
     if (!narrow)
         return CrFail(ERROR_OUTOFMEMORY);
     if (cchString &&
-        !WideCharToMultiByte(CP_ACP, 0, pszString, (int)cchString, narrow, (int)cchString, NULL, NULL)) {
+        !WideCharToMultiByte(CP_ACP, 0, pszString, (int)cchString, narrow, (int)cchString, nullptr, nullptr)) {
         LocalFree(narrow);
         return FALSE;
     }

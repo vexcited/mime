@@ -176,7 +176,7 @@ UINT WINAPI MsiDatabaseOpenViewW(MSIHANDLE handle, LPCWSTR query, MSIHANDLE *out
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
     UINT error = database ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
-    MSI_VIEW *view = NULL;
+    MSI_VIEW *view = nullptr;
     if (!error) {
         view = MimeMsiAllocate(sizeof(*view));
         if (!view)
@@ -245,7 +245,7 @@ UINT WINAPI MsiViewExecute(MSIHANDLE handle, MSIHANDLE parameters)
         error = ERROR_INVALID_PARAMETER;
     if (!error) {
         MimeMsiFree(view->Rows);
-        view->Rows = NULL;
+        view->Rows = nullptr;
         view->Executed = FALSE;
         view->RowCount = view->Position = 0;
         SIZE_T bytes = (SIZE_T)view->Table->Rows * sizeof(ULONG);
@@ -284,7 +284,7 @@ UINT WINAPI MsiViewFetch(MSIHANDLE handle, MSIHANDLE *out)
     MSI_VIEW *view = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_VIEW);
     UINT error = !view ? ERROR_INVALID_HANDLE : !view->Executed || view->Revision != view->Database->Revision ? ERROR_FUNCTION_FAILED :
                  view->Position == view->RowCount ? ERROR_NO_MORE_ITEMS : ERROR_SUCCESS;
-    MIME_MSI_RECORD *record = NULL;
+    MIME_MSI_RECORD *record = nullptr;
     if (!error && !(record = MimeMsiRecordCreate(view->Count)))
         error = ERROR_NOT_ENOUGH_MEMORY;
     if (!error) {
@@ -319,7 +319,7 @@ UINT WINAPI MsiViewClose(MSIHANDLE handle)
     MSI_VIEW *view = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_VIEW);
     if (view) {
         MimeMsiFree(view->Rows);
-        view->Rows = NULL;
+        view->Rows = nullptr;
         view->RowCount = view->Position = 0;
         view->Executed = FALSE;
     }

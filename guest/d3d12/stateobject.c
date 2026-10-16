@@ -94,7 +94,7 @@ static BOOL name_equal(const WCHAR *a, const WCHAR *b)
 static WCHAR *name_copy(const WCHAR *s)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     SIZE_T n = 0;
     while (s[n])
         n++;
@@ -177,7 +177,7 @@ static SoShader *find_shader(D12StateObject *so, const WCHAR *name)
     for (UINT i = 0; i < so->shader_count; i++)
         if (name_equal(so->shaders[i].name, name))
             return &so->shaders[i];
-    return NULL;
+    return nullptr;
 }
 
 static SoHitGroup *find_group(D12StateObject *so, const WCHAR *name)
@@ -185,7 +185,7 @@ static SoHitGroup *find_group(D12StateObject *so, const WCHAR *name)
     for (UINT i = 0; i < so->group_count; i++)
         if (name_equal(so->groups[i].name, name))
             return &so->groups[i];
-    return NULL;
+    return nullptr;
 }
 
 static HRESULT add_shader(D12StateObject *so, const WCHAR *name, const char *function, SoBlob *library, UINT kind,
@@ -248,7 +248,7 @@ static HRESULT add_library(D12StateObject *so, const D3D12_DXIL_LIBRARY_DESC *d)
             if (exports[i].kind < DXIL_KIND_RAYGEN || exports[i].kind > DXIL_KIND_CALLABLE)
                 continue;
             WCHAR *name = name_from_ascii(exports[i].name);
-            hr = name ? add_shader(so, name, exports[i].name, blob, exports[i].kind, NULL) : E_OUTOFMEMORY;
+            hr = name ? add_shader(so, name, exports[i].name, blob, exports[i].kind, nullptr) : E_OUTOFMEMORY;
             HeapFree(GetProcessHeap(), 0, name);
         }
     }
@@ -270,7 +270,7 @@ static HRESULT add_library(D12StateObject *so, const D3D12_DXIL_LIBRARY_DESC *d)
         }
         /* functions that are no ray tracing shader are only called by others. */
         if (exports[found].kind >= DXIL_KIND_RAYGEN && exports[found].kind <= DXIL_KIND_CALLABLE)
-            hr = add_shader(so, e->Name, exports[found].name, blob, exports[found].kind, NULL);
+            hr = add_shader(so, e->Name, exports[found].name, blob, exports[found].kind, nullptr);
     }
     blob_release(blob);
     return hr;
@@ -332,7 +332,7 @@ static int subobject_index(const D3D12_STATE_OBJECT_DESC *desc, const D3D12_STAT
 static D12RootSignature *local_root_for(const D3D12_STATE_OBJECT_DESC *desc, const BYTE *associated,
                                         const WCHAR *name)
 {
-    D12RootSignature *fallback = NULL, *unassociated = NULL;
+    D12RootSignature *fallback = nullptr, *unassociated = nullptr;
     for (UINT i = 0; i < desc->NumSubobjects; i++) {
         const D3D12_STATE_SUBOBJECT *s = &desc->pSubobjects[i];
         if (s->Type == D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE && !associated[i] && !unassociated)
@@ -385,7 +385,7 @@ static HRESULT gather(D12StateObject *so, const D3D12_STATE_OBJECT_DESC *desc)
         }
         case D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY: hr = add_library(so, s->pDesc); break;
         case D3D12_STATE_SUBOBJECT_TYPE_EXISTING_COLLECTION: hr = add_collection(so, s->pDesc); break;
-        case D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP: hr = add_group(so, s->pDesc, NULL); break;
+        case D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP: hr = add_group(so, s->pDesc, nullptr); break;
         case D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG:
             so->shader_config = *(const D3D12_RAYTRACING_SHADER_CONFIG *)s->pDesc;
             so->has_shader_config = TRUE;
@@ -440,14 +440,14 @@ static HRESULT compile_shader(D12Device *device, D12StateObject *so, const SoSha
 {
     UINT global_count = 0, local_count = 0;
     DxbcRootBinding *global = D12RootBindings(so->global_root, D12_CS, &global_count);
-    DxbcRootBinding *locals = local ? D12RootBindings(local, D12_CS, &local_count) : NULL;
+    DxbcRootBinding *locals = local ? D12RootBindings(local, D12_CS, &local_count) : nullptr;
     DxbcRootBinding *all = HeapAlloc(GetProcessHeap(), 0, (global_count + local_count + 1) * sizeof(*all));
     HRESULT hr = E_OUTOFMEMORY;
     if (global && all && (!local || locals)) {
         memcpy(all, global, global_count * sizeof(*all));
         if (local_count)
             memcpy(all + global_count, locals, local_count * sizeof(*all));
-        DxbcCompileOptions options = {0};
+        DxbcCompileOptions options = {};
         options.root_signature = 1;
         options.root = all;
         options.root_count = global_count + local_count;
@@ -463,7 +463,7 @@ static HRESULT compile_shader(D12Device *device, D12StateObject *so, const SoSha
             VkShaderModuleCreateInfo create = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
             create.codeSize = info.spirv_words * 4;
             create.pCode = info.spirv;
-            hr = device->vk.vkCreateShaderModule(device->vk.device, &create, NULL, module) == VK_SUCCESS ? S_OK
+            hr = device->vk.vkCreateShaderModule(device->vk.device, &create, nullptr, module) == VK_SUCCESS ? S_OK
                                                                                                         : E_OUTOFMEMORY;
         }
         dxbc_free(&info, &g_d12_allocator);
@@ -529,7 +529,7 @@ static VkPipelineCreateFlags pipeline_flags(D12StateObject *so)
 static HRESULT build_own(D12Device *device, D12StateObject *so, BOOL library, VkPipeline *out, UINT group_base)
 {
     D12Vk *vk = &device->vk;
-    Builder b = {0};
+    Builder b = {};
     UINT max_stages = so->shader_count + 1, max_groups = so->shader_count + so->group_count + 1;
     b.stages = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, max_stages * sizeof(*b.stages));
     b.groups = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, max_groups * sizeof(*b.groups));
@@ -546,7 +546,7 @@ static HRESULT build_own(D12Device *device, D12StateObject *so, BOOL library, Vk
         VkRayTracingShaderGroupCreateInfoKHR *g = &b.groups[b.group_count];
         g->sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
         g->type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-        g->generalShader = use_shader(device, so, &b, s->name, s->kind, NULL, &hr);
+        g->generalShader = use_shader(device, so, &b, s->name, s->kind, nullptr, &hr);
         g->closestHitShader = g->anyHitShader = g->intersectionShader = VK_SHADER_UNUSED_KHR;
         so->identified[b.group_count].name = s->name;
         so->identified[b.group_count].kind = s->kind;
@@ -576,7 +576,7 @@ static HRESULT build_own(D12Device *device, D12StateObject *so, BOOL library, Vk
     so->identified_count = b.group_count;
 
     if (SUCCEEDED(hr)) {
-        VkRayTracingPipelineInterfaceCreateInfoKHR iface = {0};
+        VkRayTracingPipelineInterfaceCreateInfoKHR iface = {};
         set_interface(so, &iface);
         VkDynamicState dynamic = VK_DYNAMIC_STATE_RAY_TRACING_PIPELINE_STACK_SIZE_KHR;
         VkPipelineDynamicStateCreateInfo dyn = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
@@ -589,15 +589,15 @@ static HRESULT build_own(D12Device *device, D12StateObject *so, BOOL library, Vk
         info.groupCount = b.group_count;
         info.pGroups = b.groups;
         info.maxPipelineRayRecursionDepth = so->pipeline_config.MaxTraceRecursionDepth;
-        info.pLibraryInterface = library ? &iface : NULL;
-        info.pDynamicState = library ? NULL : &dyn;
+        info.pLibraryInterface = library ? &iface : nullptr;
+        info.pDynamicState = library ? nullptr : &dyn;
         info.layout = so->global_root->layout;
-        if (vk->vkCreateRayTracingPipelinesKHR(vk->device, VK_NULL_HANDLE, device->pipeline_cache, 1, &info, NULL,
+        if (vk->vkCreateRayTracingPipelinesKHR(vk->device, VK_NULL_HANDLE, device->pipeline_cache, 1, &info, nullptr,
                                                out) != VK_SUCCESS)
             hr = E_INVALIDARG;
     }
     for (UINT i = 0; i < b.stage_count; i++)
-        vk->vkDestroyShaderModule(vk->device, b.stages[i].module, NULL);
+        vk->vkDestroyShaderModule(vk->device, b.stages[i].module, nullptr);
     for (UINT i = 0; SUCCEEDED(hr) && i < b.group_count; i++) {
         so->identified[i].index = group_base + i;
         if (vk->vkGetRayTracingShaderGroupHandlesKHR(vk->device, *out, i, 1, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES,
@@ -669,7 +669,7 @@ static HRESULT build_executable(D12Device *device, D12StateObject *so)
     so->libraries[inherited] = own;
     so->library_count = inherited + 1;
 
-    VkRayTracingPipelineInterfaceCreateInfoKHR iface = {0};
+    VkRayTracingPipelineInterfaceCreateInfoKHR iface = {};
     set_interface(so, &iface);
     VkPipelineLibraryCreateInfoKHR link = {VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
     link.libraryCount = so->library_count;
@@ -685,7 +685,7 @@ static HRESULT build_executable(D12Device *device, D12StateObject *so)
     info.pLibraryInterface = &iface;
     info.pDynamicState = &dyn;
     info.layout = so->global_root->layout;
-    if (vk->vkCreateRayTracingPipelinesKHR(vk->device, VK_NULL_HANDLE, device->pipeline_cache, 1, &info, NULL,
+    if (vk->vkCreateRayTracingPipelinesKHR(vk->device, VK_NULL_HANDLE, device->pipeline_cache, 1, &info, nullptr,
                                            &so->pipeline) != VK_SUCCESS)
         return E_INVALIDARG;
     return S_OK;
@@ -695,7 +695,7 @@ static HRESULT build_executable(D12Device *device, D12StateObject *so)
 
 D12StateObject *D12StateObjectFrom(ID3D12StateObject *iface)
 {
-    return iface ? CONTAINING_RECORD(iface, D12StateObject, iface) : NULL;
+    return iface ? CONTAINING_RECORD(iface, D12StateObject, iface) : nullptr;
 }
 
 static D12StateObject *impl(ID3D12StateObject *iface) { return CONTAINING_RECORD(iface, D12StateObject, iface); }
@@ -710,10 +710,10 @@ static void state_destroy(D12StateObject *so)
     D12Device *device = so->child.device;
     D12Vk *vk = &device->vk;
     if (so->pipeline)
-        vk->vkDestroyPipeline(vk->device, so->pipeline, NULL);
+        vk->vkDestroyPipeline(vk->device, so->pipeline, nullptr);
     /* a library of its own is the last; the parent's go with the parent. */
     if (so->library_count)
-        vk->vkDestroyPipeline(vk->device, so->libraries[so->library_count - 1], NULL);
+        vk->vkDestroyPipeline(vk->device, so->libraries[so->library_count - 1], nullptr);
     HeapFree(GetProcessHeap(), 0, so->libraries);
     for (UINT i = 0; i < so->shader_count; i++) {
         HeapFree(GetProcessHeap(), 0, so->shaders[i].name);
@@ -747,7 +747,7 @@ static HRESULT STDMETHODCALLTYPE state_query(ID3D12StateObject *iface, REFIID ri
                IsEqualGUID(riid, &IID_ID3D12StateObjectProperties1)) {
         *out = &so->props;
     } else {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&so->child.refs);
@@ -828,14 +828,14 @@ static SoGroup *identified(D12StateObject *so, const WCHAR *name)
         for (UINT i = 0; i < o->identified_count; i++)
             if (name_equal(o->identified[i].name, name))
                 return &o->identified[i];
-    return NULL;
+    return nullptr;
 }
 
 static void *STDMETHODCALLTYPE props_get_shader_identifier(ID3D12StateObjectProperties1 *iface, LPCWSTR name)
 {
     D12StateObject *so = props_impl(iface);
-    SoGroup *g = so->pipeline ? identified(so, name) : NULL;
-    return g ? g->handle : NULL;
+    SoGroup *g = so->pipeline ? identified(so, name) : nullptr;
+    return g ? g->handle : nullptr;
 }
 
 /* a general shader's name, or a hit group's with "::closesthit", "::anyhit" or "::intersection". */
@@ -844,7 +844,7 @@ static UINT64 STDMETHODCALLTYPE props_get_shader_stack_size(ID3D12StateObjectPro
     D12StateObject *so = props_impl(iface);
     if (!name || !so->pipeline)
         return ~0ull;
-    static const WCHAR *const PARTS[4] = {NULL, L"closesthit", L"anyhit", L"intersection"};
+    static const WCHAR *const PARTS[4] = {nullptr, L"closesthit", L"anyhit", L"intersection"};
     WCHAR group[256];
     UINT n = 0;
     while (name[n] && !(name[n] == ':' && name[n + 1] == ':') && n + 1 < 256) {

@@ -5,14 +5,14 @@ WINGDIAPI HRGN WINAPI CreatePolygonRgn(const POINT *points, int count, int mode)
 {
     if (count < 0 || (count && !points) || (mode != ALTERNATE && mode != WINDING)) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     if (count < 3)
         return CreateRectRgn(0, 0, 0, 0);
-    HDC dc = CreateCompatibleDC(NULL);
+    HDC dc = CreateCompatibleDC(nullptr);
     if (!dc)
-        return NULL;
-    HRGN region = NULL;
+        return nullptr;
+    HRGN region = nullptr;
     SetPolyFillMode(dc, mode);
     if (BeginPath(dc) && Polygon(dc, points, count) && EndPath(dc))
         region = PathToRegion(dc);

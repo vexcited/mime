@@ -55,7 +55,7 @@ WINGDIAPI HGDIOBJ WINAPI SelectObject(HDC dc, HGDIOBJ h)
     case 0x04:
         return (HGDIOBJ)(LONG_PTR)NtGdiExtSelectClipRgn(dc, h, RGN_COPY);
     }
-    return NULL;
+    return nullptr;
 }
 
 WINGDIAPI BOOL WINAPI DeleteObject(HGDIOBJ h)
@@ -83,7 +83,7 @@ WINGDIAPI int WINAPI GetObjectA(HANDLE h, int size, LPVOID buffer)
         return sizeof(LOGFONTA);
     LOGFONTA lfa;
     memcpy(&lfa, &lfw, offsetof(LOGFONTA, lfFaceName));
-    WideCharToMultiByte(CP_ACP, 0, lfw.lfFaceName, -1, lfa.lfFaceName, LF_FACESIZE, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, lfw.lfFaceName, -1, lfa.lfFaceName, LF_FACESIZE, nullptr, nullptr);
     int n = size < (int)sizeof(lfa) ? size : (int)sizeof(lfa);
     memcpy(buffer, &lfa, (size_t)n);
     return n;
@@ -93,7 +93,7 @@ WINGDIAPI HGDIOBJ WINAPI GetCurrentObject(HDC dc, UINT type)
 {
     if (type == OBJ_PAL) {
         DWORD v;
-        return NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v) ? PalCurrent(dc) : NULL;
+        return NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v) ? PalCurrent(dc) : nullptr;
     }
     return NtGdiGetDCObject(dc, (int)type);
 }
@@ -107,17 +107,17 @@ WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC dc)
 
 WINGDIAPI HDC WINAPI CreateDCW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, const void *mode)
 {
-    return NtGdiOpenDCW(NULL, NULL, NULL, 0, TRUE, NULL, NULL, NULL);
+    return NtGdiOpenDCW(nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
 }
 
 WINGDIAPI HDC WINAPI CreateDCA(LPCSTR driver, LPCSTR device, LPCSTR output, const void *mode)
 {
-    return CreateDCW(NULL, NULL, NULL, NULL);
+    return CreateDCW(nullptr, nullptr, nullptr, nullptr);
 }
 
 WINGDIAPI HDC WINAPI CreateICW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, const void *mode)
 {
-    return CreateDCW(NULL, NULL, NULL, NULL);
+    return CreateDCW(nullptr, nullptr, nullptr, nullptr);
 }
 
 WINGDIAPI BOOL WINAPI DeleteDC(HDC dc)
@@ -339,7 +339,7 @@ WINGDIAPI BOOL WINAPI OffsetViewportOrgEx(HDC dc, int x, int y, LPPOINT old)
         return FALSE;
     if (old)
         *old = p;
-    return NtGdiSetViewportOrgEx(dc, p.x + x, p.y + y, NULL);
+    return NtGdiSetViewportOrgEx(dc, p.x + x, p.y + y, nullptr);
 }
 
 WINGDIAPI BOOL WINAPI OffsetWindowOrgEx(HDC dc, int x, int y, LPPOINT old)
@@ -349,7 +349,7 @@ WINGDIAPI BOOL WINAPI OffsetWindowOrgEx(HDC dc, int x, int y, LPPOINT old)
         return FALSE;
     if (old)
         *old = p;
-    return NtGdiSetWindowOrgEx(dc, p.x + x, p.y + y, NULL);
+    return NtGdiSetWindowOrgEx(dc, p.x + x, p.y + y, nullptr);
 }
 
 WINGDIAPI BOOL WINAPI GetCurrentPositionEx(HDC dc, LPPOINT p)
@@ -498,14 +498,14 @@ WINGDIAPI int WINAPI SetDIBitsToDevice(HDC dc, int x, int y, DWORD width, DWORD 
 {
     return NtGdiSetDIBitsToDeviceInternal(dc, x, y, width, height, src_x, src_y, start, lines, bits, info, usage,
                                           dib_bits_size(&info->bmiHeader), info->bmiHeader.biSize + 256 * 4, TRUE,
-                                          NULL);
+                                          nullptr);
 }
 
 WINGDIAPI int WINAPI StretchDIBits(HDC dc, int x, int y, int width, int height, int src_x, int src_y, int src_width,
                                    int src_height, const void *bits, const BITMAPINFO *info, UINT usage, DWORD rop)
 {
     return NtGdiStretchDIBitsInternal(dc, x, y, width, height, src_x, src_y, src_width, src_height, bits, info, usage,
-                                      rop, info->bmiHeader.biSize + 256 * 4, dib_bits_size(&info->bmiHeader), NULL);
+                                      rop, info->bmiHeader.biSize + 256 * 4, dib_bits_size(&info->bmiHeader), nullptr);
 }
 
 WINGDIAPI int WINAPI GetDIBits(HDC dc, HBITMAP bitmap, UINT start, UINT lines, LPVOID bits, LPBITMAPINFO info,
@@ -536,7 +536,7 @@ WINGDIAPI HBITMAP WINAPI CreateDIBitmap(HDC dc, const BITMAPINFOHEADER *header, 
 {
     LONG height = header->biHeight < 0 ? -header->biHeight : header->biHeight;
     HBITMAP bm = dc ? CreateCompatibleBitmap(dc, header->biWidth, height)
-                    : CreateBitmap(header->biWidth, height, 1, 1, NULL);
+                    : CreateBitmap(header->biWidth, height, 1, 1, nullptr);
     if (bm && init == CBM_INIT && bits && info)
         SetDIBits(dc, bm, 0, (UINT)height, bits, info, usage);
     return bm;
@@ -600,7 +600,7 @@ WINGDIAPI BOOL WINAPI SetBitmapDimensionEx(HBITMAP bitmap, int width, int height
         g_dimensions[slot].Bitmap = bitmap;
         g_dimensions[slot].Size = (SIZE){width, height};
     } else if (g_dimensions[slot].Bitmap == bitmap) {
-        g_dimensions[slot].Bitmap = NULL;
+        g_dimensions[slot].Bitmap = nullptr;
     }
     RtlReleaseSRWLockExclusive(&g_dimension_lock);
     if (old)
@@ -627,26 +627,26 @@ WINGDIAPI BOOL WINAPI PatBlt(HDC dc, int x, int y, int width, int height, DWORD 
 WINGDIAPI BOOL WINAPI GdiAlphaBlend(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
                                     int src_width, int src_height, BLENDFUNCTION blend)
 {
-    return NtGdiAlphaBlend(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, blend, NULL);
+    return NtGdiAlphaBlend(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, blend, nullptr);
 }
 
 /* ------------------------------------------------------------------ brushes and pens */
 
 WINGDIAPI HBRUSH WINAPI CreateSolidBrush(COLORREF color)
 {
-    return NtGdiCreateSolidBrush(color, NULL);
+    return NtGdiCreateSolidBrush(color, nullptr);
 }
 
 WINGDIAPI HBRUSH WINAPI CreateBrushIndirect(const LOGBRUSH *lb)
 {
     if (lb->lbStyle == BS_NULL)
         return GetStockObject(NULL_BRUSH);
-    return NtGdiCreateSolidBrush(lb->lbColor, NULL);
+    return NtGdiCreateSolidBrush(lb->lbColor, nullptr);
 }
 
 WINGDIAPI HBRUSH WINAPI CreateHatchBrush(int hatch, COLORREF color)
 {
-    return NtGdiCreateSolidBrush(color, NULL);
+    return NtGdiCreateSolidBrush(color, nullptr);
 }
 
 #define PATTERN_SAMPLE 8
@@ -676,16 +676,16 @@ static BOOL average_pattern(HBITMAP bitmap, const BITMAPINFO *info, UINT usage, 
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     bi.bmiHeader.biCompression = BI_RGB;
-    DWORD *pixels = NULL;
-    HDC mem = CreateCompatibleDC(NULL);
-    HBITMAP canvas = mem ? CreateDIBSection(mem, &bi, DIB_RGB_COLORS, (void **)&pixels, NULL, 0) : NULL;
+    DWORD *pixels = nullptr;
+    HDC mem = CreateCompatibleDC(nullptr);
+    HBITMAP canvas = mem ? CreateDIBSection(mem, &bi, DIB_RGB_COLORS, (void **)&pixels, nullptr, 0) : nullptr;
     BOOL ok = FALSE;
     if (canvas && pixels) {
         HGDIOBJ old = SelectObject(mem, canvas);
         SetStretchBltMode(mem, STRETCH_DELETESCANS);
         if (bitmap) {
             BITMAP bm;
-            HDC src = CreateCompatibleDC(NULL);
+            HDC src = CreateCompatibleDC(nullptr);
             if (src && GetObjectW(bitmap, sizeof(bm), &bm)) {
                 HGDIOBJ old_src = SelectObject(src, bitmap);
                 ok = old_src && StretchBlt(mem, 0, 0, PATTERN_SAMPLE, PATTERN_SAMPLE, src, 0, 0, bm.bmWidth,
@@ -726,12 +726,12 @@ WINGDIAPI HBRUSH WINAPI CreatePatternBrush(HBITMAP bitmap)
     BITMAP bm;
     if (handle_type(bitmap) != 0x05 || !NtGdiExtGetObjectW(bitmap, sizeof(bm), &bm)) {
         SetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     COLORREF color;
-    if (!average_pattern(bitmap, NULL, DIB_RGB_COLORS, &color))
+    if (!average_pattern(bitmap, nullptr, DIB_RGB_COLORS, &color))
         color = RGB(128, 128, 128);
-    return NtGdiCreateSolidBrush(color, NULL);
+    return NtGdiCreateSolidBrush(color, nullptr);
 }
 
 WINGDIAPI HBRUSH WINAPI CreateDIBPatternBrushPt(const void *packed, UINT usage)
@@ -740,34 +740,34 @@ WINGDIAPI HBRUSH WINAPI CreateDIBPatternBrushPt(const void *packed, UINT usage)
     if (!info || info->bmiHeader.biSize < sizeof(BITMAPINFOHEADER) || info->bmiHeader.biWidth <= 0 ||
         !info->bmiHeader.biHeight || usage > DIB_PAL_COLORS) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     COLORREF color;
-    if (!average_pattern(NULL, info, usage, &color))
+    if (!average_pattern(nullptr, info, usage, &color))
         color = RGB(128, 128, 128);
-    return NtGdiCreateSolidBrush(color, NULL);
+    return NtGdiCreateSolidBrush(color, nullptr);
 }
 
 WINGDIAPI HPEN WINAPI CreatePen(int style, int width, COLORREF color)
 {
-    return NtGdiCreatePen(style, width, color, NULL);
+    return NtGdiCreatePen(style, width, color, nullptr);
 }
 
 WINGDIAPI HPEN WINAPI CreatePenIndirect(const LOGPEN *lp)
 {
-    return NtGdiCreatePen((int)lp->lopnStyle, lp->lopnWidth.x, lp->lopnColor, NULL);
+    return NtGdiCreatePen((int)lp->lopnStyle, lp->lopnWidth.x, lp->lopnColor, nullptr);
 }
 
 WINGDIAPI HPEN WINAPI ExtCreatePen(DWORD style, DWORD width, const LOGBRUSH *lb, DWORD count, const DWORD *styles)
 {
-    return NtGdiCreatePen((int)(style & PS_STYLE_MASK), (int)width, lb ? lb->lbColor : 0, NULL);
+    return NtGdiCreatePen((int)(style & PS_STYLE_MASK), (int)width, lb ? lb->lbColor : 0, nullptr);
 }
 
 /* ------------------------------------------------------------------ fonts and text */
 
 WINGDIAPI HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lf)
 {
-    return lf ? NtGdiHfontCreate(lf, sizeof(*lf), 0, 0, NULL) : NULL;
+    return lf ? NtGdiHfontCreate(lf, sizeof(*lf), 0, 0, nullptr) : nullptr;
 }
 
 static void logfont_a_to_w(const LOGFONTA *a, LOGFONTW *w)
@@ -780,7 +780,7 @@ static void logfont_a_to_w(const LOGFONTA *a, LOGFONTW *w)
 WINGDIAPI HFONT WINAPI CreateFontIndirectA(const LOGFONTA *lf)
 {
     if (!lf)
-        return NULL;
+        return nullptr;
     LOGFONTW w;
     logfont_a_to_w(lf, &w);
     return CreateFontIndirectW(&w);
@@ -805,12 +805,12 @@ WINGDIAPI HFONT WINAPI CreateFontA(int height, int width, int escapement, int or
                                    DWORD underline, DWORD strikeout, DWORD charset, DWORD out_precision,
                                    DWORD clip_precision, DWORD quality, DWORD pitch, LPCSTR face)
 {
-    WCHAR wface[LF_FACESIZE] = {0};
+    WCHAR wface[LF_FACESIZE] = {};
     if (face)
         MultiByteToWideChar(CP_ACP, 0, face, -1, wface, LF_FACESIZE);
     wface[LF_FACESIZE - 1] = 0;
     return CreateFontW(height, width, escapement, orientation, weight, italic, underline, strikeout, charset,
-                       out_precision, clip_precision, quality, pitch, face ? wface : NULL);
+                       out_precision, clip_precision, quality, pitch, face ? wface : nullptr);
 }
 
 WINGDIAPI BOOL WINAPI ExtTextOutW(HDC dc, int x, int y, UINT options, const RECT *rect, LPCWSTR text, UINT count,
@@ -821,7 +821,7 @@ WINGDIAPI BOOL WINAPI ExtTextOutW(HDC dc, int x, int y, UINT options, const RECT
 
 WINGDIAPI BOOL WINAPI TextOutW(HDC dc, int x, int y, LPCWSTR text, int count)
 {
-    return NtGdiExtTextOutW(dc, x, y, 0, NULL, text, count, NULL, 0);
+    return NtGdiExtTextOutW(dc, x, y, 0, nullptr, text, count, nullptr, 0);
 }
 
 /* converts an ansi string to a heap copy; the caller frees it. */
@@ -829,10 +829,10 @@ static LPWSTR to_wide(LPCSTR s, int count, int *out_count)
 {
     if (count < 0)
         count = s ? (int)strlen(s) : 0;
-    int n = count ? MultiByteToWideChar(CP_ACP, 0, s, count, NULL, 0) : 0;
+    int n = count ? MultiByteToWideChar(CP_ACP, 0, s, count, nullptr, 0) : 0;
     LPWSTR w = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, ((SIZE_T)n + 1) * sizeof(WCHAR));
     if (!w)
-        return NULL;
+        return nullptr;
     if (n)
         MultiByteToWideChar(CP_ACP, 0, s, count, w, n);
     w[n] = 0;
@@ -853,14 +853,14 @@ WINGDIAPI BOOL WINAPI ExtTextOutA(HDC dc, int x, int y, UINT options, const RECT
     LPWSTR w = to_wide(text, (int)count, &n);
     if (!w)
         return FALSE;
-    BOOL ok = NtGdiExtTextOutW(dc, x, y, options, rect, w, n, (dx && (int)count == n) ? dx : NULL, 0);
+    BOOL ok = NtGdiExtTextOutW(dc, x, y, options, rect, w, n, (dx && (int)count == n) ? dx : nullptr, 0);
     free_wide(w);
     return ok;
 }
 
 WINGDIAPI BOOL WINAPI TextOutA(HDC dc, int x, int y, LPCSTR text, int count)
 {
-    return ExtTextOutA(dc, x, y, 0, NULL, text, (UINT)count, NULL);
+    return ExtTextOutA(dc, x, y, 0, nullptr, text, (UINT)count, nullptr);
 }
 
 WINGDIAPI BOOL WINAPI GetTextExtentExPointW(HDC dc, LPCWSTR text, int count, int max_extent, LPINT fit, LPINT dx,
@@ -871,7 +871,7 @@ WINGDIAPI BOOL WINAPI GetTextExtentExPointW(HDC dc, LPCWSTR text, int count, int
 
 WINGDIAPI BOOL WINAPI GetTextExtentPoint32W(HDC dc, LPCWSTR text, int count, LPSIZE size)
 {
-    return NtGdiGetTextExtentExW(dc, text, (ULONG)count, 0, NULL, NULL, size, 0);
+    return NtGdiGetTextExtentExW(dc, text, (ULONG)count, 0, nullptr, nullptr, size, 0);
 }
 
 WINGDIAPI BOOL WINAPI GetTextExtentPointW(HDC dc, LPCWSTR text, int count, LPSIZE size)
@@ -941,12 +941,12 @@ WINGDIAPI int WINAPI GetTextFaceA(HDC dc, int count, LPSTR name)
         return 0;
     if (!name)
         return n;
-    return WideCharToMultiByte(CP_ACP, 0, w, -1, name, count, NULL, NULL);
+    return WideCharToMultiByte(CP_ACP, 0, w, -1, name, count, nullptr, nullptr);
 }
 
 WINGDIAPI BOOL WINAPI GetCharWidth32W(HDC dc, UINT first, UINT last, LPINT widths)
 {
-    return last >= first && NtGdiGetCharWidthW(dc, first, last - first + 1, NULL, 0, widths);
+    return last >= first && NtGdiGetCharWidthW(dc, first, last - first + 1, nullptr, 0, widths);
 }
 
 WINGDIAPI BOOL WINAPI GetCharWidthW(HDC dc, UINT first, UINT last, LPINT widths)
@@ -956,7 +956,7 @@ WINGDIAPI BOOL WINAPI GetCharWidthW(HDC dc, UINT first, UINT last, LPINT widths)
 
 WINGDIAPI BOOL WINAPI GetCharABCWidthsW(HDC dc, UINT first, UINT last, LPABC abc)
 {
-    return last >= first && NtGdiGetCharABCWidthsW(dc, first, last - first + 1, NULL, 0, abc);
+    return last >= first && NtGdiGetCharABCWidthsW(dc, first, last - first + 1, nullptr, 0, abc);
 }
 
 WINGDIAPI DWORD WINAPI GetFontLanguageInfo(HDC dc)
@@ -1192,7 +1192,7 @@ static HRGN clip_region(HDC dc)
         return region;
     if (region)
         NtGdiDeleteObjectApp(region);
-    return NULL;
+    return nullptr;
 }
 
 WINGDIAPI int WINAPI OffsetClipRgn(HDC dc, int x, int y)
@@ -1223,7 +1223,7 @@ WINGDIAPI BOOL WINAPI RectVisible(HDC dc, const RECT *rect)
     if (r.left >= box.right || r.right <= box.left || r.top >= box.bottom || r.bottom <= box.top ||
         r.left == r.right || r.top == r.bottom)
         return FALSE;
-    HRGN region = kind == COMPLEXREGION ? clip_region(dc) : NULL;
+    HRGN region = kind == COMPLEXREGION ? clip_region(dc) : nullptr;
     if (!region)
         return TRUE;
     POINT p[2] = {{r.left, r.top}, {r.right, r.bottom}};
@@ -1243,7 +1243,7 @@ WINGDIAPI BOOL WINAPI PtVisible(HDC dc, int x, int y)
         return -1;
     if (kind == NULLREGION || x < box.left || x >= box.right || y < box.top || y >= box.bottom)
         return FALSE;
-    HRGN region = kind == COMPLEXREGION ? clip_region(dc) : NULL;
+    HRGN region = kind == COMPLEXREGION ? clip_region(dc) : nullptr;
     if (!region)
         return TRUE;
     POINT p = {x, y};

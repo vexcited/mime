@@ -22,7 +22,7 @@ static DEVICE_SET *set_of(HDEVINFO h)
     DEVICE_SET *s = h;
     if (!s || h == INVALID_HANDLE_VALUE || s->Magic != SET_MAGIC) {
         SetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return s;
 }
@@ -47,7 +47,7 @@ WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsW(const GUID *guid, PCWSTR enumer
 
 WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsA(const GUID *guid, PCSTR enumerator, HWND parent, DWORD flags)
 {
-    return SetupDiGetClassDevsW(guid, NULL, parent, flags);
+    return SetupDiGetClassDevsW(guid, nullptr, parent, flags);
 }
 
 WINSETUPAPI BOOL WINAPI SetupDiDestroyDeviceInfoList(HDEVINFO set)

@@ -28,17 +28,17 @@ ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level)
         ULONG64 *entry = &table[table_index(va, l)];
         if (!(*entry & MM_PTE_VALID)) {
             if (!create)
-                return NULL;
+                return nullptr;
             ULONG64 pa = MmAllocatePage();
             if (!pa)
-                return NULL;
+                return nullptr;
             PMMPFN pfn = MiGetPfn(pa);
             if (pfn)
                 pfn->Flags |= MM_PFN_PAGE_TABLE;
             KiDataSyncBarrier();
             *entry = pa | MM_PTE_VALID | MM_PTE_TABLE;
         } else if (!(*entry & MM_PTE_TABLE)) {
-            return NULL; /* block mapping, cannot descend */
+            return nullptr; /* block mapping, cannot descend */
         }
         table = (ULONG64 *)HalPhysmap(*entry & MM_PTE_ADDR_MASK);
     }

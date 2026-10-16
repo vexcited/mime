@@ -147,7 +147,7 @@ BOOL D12AddressLookup(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, VkBuffer 
 
 /* ------------------------------------------------------------------ heaps */
 
-D12Heap *D12HeapFrom(ID3D12Heap *iface) { return iface ? CONTAINING_RECORD(iface, D12Heap, iface) : NULL; }
+D12Heap *D12HeapFrom(ID3D12Heap *iface) { return iface ? CONTAINING_RECORD(iface, D12Heap, iface) : nullptr; }
 static D12Heap *heap_impl(ID3D12Heap1 *iface) { return CONTAINING_RECORD(iface, D12Heap, iface); }
 
 static void heap_destroy(D12Heap *heap)
@@ -156,10 +156,10 @@ static void heap_destroy(D12Heap *heap)
     if (heap->buffer) {
         D12AccelerationStructuresForget(device, heap->va, heap->desc.SizeInBytes);
         D12AddressRemove(device, heap);
-        device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, NULL);
+        device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, nullptr);
     }
     if (heap->memory)
-        device->vk.vkFreeMemory(device->vk.device, heap->memory, NULL);
+        device->vk.vkFreeMemory(device->vk.device, heap->memory, nullptr);
     HeapFree(GetProcessHeap(), 0, heap->free);
 }
 
@@ -172,7 +172,7 @@ static HRESULT STDMETHODCALLTYPE heap_query(ID3D12Heap1 *iface, REFIID riid, voi
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -222,7 +222,7 @@ static D3D12_HEAP_DESC *STDMETHODCALLTYPE heap_get_desc(ID3D12Heap1 *iface, D3D1
 static HRESULT STDMETHODCALLTYPE heap_get_protected_session(ID3D12Heap1 *iface, REFIID riid, void **session)
 {
     if (session)
-        *session = NULL;
+        *session = nullptr;
     return DXGI_ERROR_NOT_FOUND;
 }
 
@@ -249,11 +249,11 @@ static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, i
         info.size = heap->desc.SizeInBytes;
         info.usage = buffer_usage(device);
         VkBuffer probe;
-        if (vk->vkCreateBuffer(vk->device, &info, NULL, &probe) != VK_SUCCESS)
+        if (vk->vkCreateBuffer(vk->device, &info, nullptr, &probe) != VK_SUCCESS)
             return E_OUTOFMEMORY;
         VkMemoryRequirements req;
         vk->vkGetBufferMemoryRequirements(vk->device, probe, &req);
-        vk->vkDestroyBuffer(vk->device, probe, NULL);
+        vk->vkDestroyBuffer(vk->device, probe, nullptr);
         type = device->buffer_types[kind] != ~0u ? (int)device->buffer_types[kind] : pick_type(device, kind, req.memoryTypeBits);
         if (type < 0)
             return E_OUTOFMEMORY;
@@ -265,7 +265,7 @@ static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, i
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     alloc.allocationSize = heap->desc.SizeInBytes;
     alloc.memoryTypeIndex = type;
-    if (vk->vkAllocateMemory(vk->device, &alloc, NULL, &heap->memory) != VK_SUCCESS)
+    if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, &heap->memory) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     if (kind != D12_MEMORY_DEVICE &&
         vk->vkMapMemory(vk->device, heap->memory, 0, VK_WHOLE_SIZE, 0, (void **)&heap->mapped) != VK_SUCCESS)
@@ -274,7 +274,7 @@ static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, i
         VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = heap->desc.SizeInBytes;
         info.usage = buffer_usage(device);
-        if (vk->vkCreateBuffer(vk->device, &info, NULL, &heap->buffer) != VK_SUCCESS)
+        if (vk->vkCreateBuffer(vk->device, &info, nullptr, &heap->buffer) != VK_SUCCESS)
             return E_OUTOFMEMORY;
         vk->vkBindBufferMemory(vk->device, heap->buffer, heap->memory, 0);
         VkBufferDeviceAddressInfo address = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
@@ -403,7 +403,7 @@ HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 s
             return S_OK;
         }
     }
-    D3D12_HEAP_DESC desc = {0};
+    D3D12_HEAP_DESC desc = {};
     desc.SizeInBytes = D12_MAX(INTERNAL_HEAP_SIZE, D12_ALIGN(size, 1 << 20));
     desc.Properties.Type = kind == D12_MEMORY_UPLOAD     ? D3D12_HEAP_TYPE_UPLOAD
                            : kind == D12_MEMORY_READBACK ? D3D12_HEAP_TYPE_READBACK
@@ -448,7 +448,7 @@ void D12MemoryDestroy(D12Device *device)
         heap_destroy(heap);
         HeapFree(GetProcessHeap(), 0, heap);
     }
-    device->internal_heaps = NULL;
+    device->internal_heaps = nullptr;
 }
 
 /* ------------------------------------------------------------------ images */
@@ -827,18 +827,18 @@ D12ImageView *D12ResourceView(D12Resource *resource, const VkImageViewCreateInfo
 
     D12ImageView *view = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*view));
     if (!view)
-        return NULL;
+        return nullptr;
     view->info = *info;
     view->info.image = resource->image;
     view->usage.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
     view->usage.usage = usage;
     VkImageViewCreateInfo create = view->info;
     create.pNext = &view->usage;
-    if (device->vk.vkCreateImageView(device->vk.device, &create, NULL, &view->view) != VK_SUCCESS) {
+    if (device->vk.vkCreateImageView(device->vk.device, &create, nullptr, &view->view) != VK_SUCCESS) {
         HeapFree(GetProcessHeap(), 0, view);
-        return NULL;
+        return nullptr;
     }
-    view->info.pNext = NULL;
+    view->info.pNext = nullptr;
     AcquireSRWLockExclusive(&resource->views_lock);
     view->next = resource->views;
     resource->views = view;
@@ -850,7 +850,7 @@ D12ImageView *D12ResourceView(D12Resource *resource, const VkImageViewCreateInfo
 
 D12Resource *D12ResourceFrom(ID3D12Resource *iface)
 {
-    return iface ? CONTAINING_RECORD(iface, D12Resource, iface) : NULL;
+    return iface ? CONTAINING_RECORD(iface, D12Resource, iface) : nullptr;
 }
 
 static D12Resource *impl(ID3D12Resource2 *iface) { return CONTAINING_RECORD(iface, D12Resource, iface); }
@@ -861,11 +861,11 @@ static void resource_destroy(D12Resource *resource)
     D12Vk *vk = &device->vk;
     for (D12ImageView *v = resource->views, *next; v; v = next) {
         next = v->next;
-        vk->vkDestroyImageView(vk->device, v->view, NULL);
+        vk->vkDestroyImageView(vk->device, v->view, nullptr);
         HeapFree(GetProcessHeap(), 0, v);
     }
     if (resource->image && !resource->swapchain)
-        vk->vkDestroyImage(vk->device, resource->image, NULL);
+        vk->vkDestroyImage(vk->device, resource->image, nullptr);
     if (resource->buffer)
         D12AccelerationStructuresForget(device, resource->va, resource->desc.Width);
     if (resource->reserved)
@@ -886,7 +886,7 @@ static HRESULT STDMETHODCALLTYPE resource_query(ID3D12Resource2 *iface, REFIID r
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -939,7 +939,7 @@ static HRESULT STDMETHODCALLTYPE resource_map(ID3D12Resource2 *iface, UINT subre
     D12Resource *resource = impl(iface);
     if (!resource->mapped) {
         if (data)
-            *data = NULL;
+            *data = nullptr;
         return E_INVALIDARG;
     }
     if (subresource)
@@ -1008,7 +1008,7 @@ static HRESULT STDMETHODCALLTYPE resource_get_heap_properties(ID3D12Resource2 *i
 static HRESULT STDMETHODCALLTYPE resource_get_protected_session(ID3D12Resource2 *iface, REFIID riid, void **session)
 {
     if (session)
-        *session = NULL;
+        *session = nullptr;
     return DXGI_ERROR_NOT_FOUND;
 }
 
@@ -1052,10 +1052,10 @@ static void init_image(D12Device *device, D12Resource *resource, BOOL clear)
     device->vk.vkCmdPipelineBarrier2(cmd, &dep);
     if (clear) {
         if (resource->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-            VkClearDepthStencilValue zero = {0};
+            VkClearDepthStencilValue zero = {};
             device->vk.vkCmdClearDepthStencilImage(cmd, resource->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
         } else {
-            VkClearColorValue zero = {0};
+            VkClearColorValue zero = {};
             device->vk.vkCmdClearColorImage(cmd, resource->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
         }
     }
@@ -1098,7 +1098,7 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
     if (!feedback)
         resource->desc.MipLevels = (UINT16)info.mipLevels;
     resource->aspect = format_aspect(info.format);
-    if (vk->vkCreateImage(vk->device, &info, NULL, &resource->image) != VK_SUCCESS)
+    if (vk->vkCreateImage(vk->device, &info, nullptr, &resource->image) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
     vk->vkGetImageMemoryRequirements(vk->device, resource->image, &req);
@@ -1133,7 +1133,7 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
         resource->buffer = heap->buffer;
         resource->offset = offset;
         resource->va = heap->va + offset;
-        resource->mapped = heap->mapped ? heap->mapped + offset : NULL;
+        resource->mapped = heap->mapped ? heap->mapped + offset : nullptr;
         return S_OK;
     }
     /* committed buffers: aligned as windows aligns them, small ones as small resources are. */
@@ -1148,7 +1148,7 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
     resource->buffer = h->buffer;
     resource->offset = resource->alloc.offset;
     resource->va = h->va + resource->alloc.offset;
-    resource->mapped = h->mapped ? h->mapped + resource->alloc.offset : NULL;
+    resource->mapped = h->mapped ? h->mapped + resource->alloc.offset : nullptr;
     /* committed resources start zeroed, as windows makes them, even where memory is reused. */
     if (resource->mapped)
         memset(resource->mapped, 0, (SIZE_T)size);
@@ -1164,7 +1164,7 @@ static D12Resource *new_resource(D12Device *device, const D3D12_RESOURCE_DESC1 *
 {
     D12Resource *resource = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*resource));
     if (!resource)
-        return NULL;
+        return nullptr;
     resource->iface.lpVtbl = &g_resource_vtbl;
     resource->child.refs = 1;
     resource->child.device = device;
@@ -1203,7 +1203,7 @@ HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props,
     HRESULT hr = desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? create_buffer(device, resource, heap, offset)
                                                                     : create_texture(device, resource, heap, offset);
     if (FAILED(hr)) {
-        resource->heap = NULL;
+        resource->heap = nullptr;
         resource_destroy(resource);
         HeapFree(GetProcessHeap(), 0, resource);
         return hr;
@@ -1287,7 +1287,7 @@ UINT D12TileIndex(const D12Resource *r, const D3D12_TILED_RESOURCE_COORDINATE *a
     if (r->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
         return at->X < r->tile_count ? at->X : ~0u;
     UINT mip, layer, w, h, d;
-    D12SubresourceDecompose(r, at->Subresource, &mip, &layer, NULL);
+    D12SubresourceDecompose(r, at->Subresource, &mip, &layer, nullptr);
     if (layer >= r->layers)
         return ~0u;
     UINT start = layer_start(r, layer);
@@ -1340,7 +1340,7 @@ BOOL D12TileAt(const D12Resource *r, UINT tile, D12TilePlace *place)
 UINT D12RegionTiles(const D12Resource *r, const D3D12_TILED_RESOURCE_COORDINATE *start,
                     const D3D12_TILE_REGION_SIZE *size, UINT *tiles, UINT max)
 {
-    D3D12_TILED_RESOURCE_COORDINATE zero = {0};
+    D3D12_TILED_RESOURCE_COORDINATE zero = {};
     D3D12_TILE_REGION_SIZE one = {1};
     start = start ? start : &zero;
     size = size ? size : &one;
@@ -1389,7 +1389,7 @@ void D12ResourceTiling(D12Resource *r, UINT *tile_count, D3D12_PACKED_MIP_INFO *
     UINT n = first < count ? D12_MIN(*subresource_count, count - first) : 0;
     for (UINT i = 0; tilings && i < n; i++) {
         UINT sub = first + i, mip, layer, w = 0, h = 0, d = 0;
-        D12SubresourceDecompose(r, sub, &mip, &layer, NULL);
+        D12SubresourceDecompose(r, sub, &mip, &layer, nullptr);
         D3D12_SUBRESOURCE_TILING *t = &tilings[i];
         *t = (D3D12_SUBRESOURCE_TILING){0};
         if (!r->reserved)
@@ -1413,13 +1413,13 @@ void D12FreeTiles(D12Resource *r)
     if (r->sparse) {
         D12AddressRemove(device, r->sparse);
         HeapFree(GetProcessHeap(), 0, r->sparse);
-        r->sparse = NULL;
+        r->sparse = nullptr;
     }
     if (r->reserved && r->buffer)
-        device->vk.vkDestroyBuffer(device->vk.device, r->buffer, NULL);
+        device->vk.vkDestroyBuffer(device->vk.device, r->buffer, nullptr);
     r->buffer = VK_NULL_HANDLE;
     HeapFree(GetProcessHeap(), 0, r->tiles);
-    r->tiles = NULL;
+    r->tiles = nullptr;
 }
 
 /* a sparse buffer, its addresses its own, found as a heap's. */
@@ -1431,7 +1431,7 @@ static HRESULT create_reserved_buffer(D12Device *device, D12Resource *r)
                  VK_BUFFER_CREATE_SPARSE_ALIASED_BIT;
     info.size = D12_ALIGN(r->desc.Width, TILE_SIZE);
     info.usage = buffer_usage(device);
-    if (vk->vkCreateBuffer(vk->device, &info, NULL, &r->buffer) != VK_SUCCESS)
+    if (vk->vkCreateBuffer(vk->device, &info, nullptr, &r->buffer) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
     vk->vkGetBufferMemoryRequirements(vk->device, r->buffer, &req);
@@ -1478,7 +1478,7 @@ static HRESULT create_reserved_texture(D12Device *device, D12Resource *r)
     r->samples = info.samples;
     r->usage = info.usage;
     r->desc.MipLevels = (UINT16)info.mipLevels;
-    if (vk->vkCreateImage(vk->device, &info, NULL, &r->image) != VK_SUCCESS)
+    if (vk->vkCreateImage(vk->device, &info, nullptr, &r->image) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
     vk->vkGetImageMemoryRequirements(vk->device, r->image, &req);

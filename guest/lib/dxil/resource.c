@@ -56,10 +56,10 @@ int dxil_read_resources(Compiler *c, const DxMetadata *list)
             /* shader model 6.6 libraries cast their globals of handles to the resource's type. */
             const DxMetadata *g = dx_md_op(&c->m, md, 1);
             uint32_t gid = g && g->kind == DM_VALUE ? g->value : DX_NONE;
-            const DxValue *gv = gid != DX_NONE ? dx_value(&c->m, NULL, gid) : NULL;
+            const DxValue *gv = gid != DX_NONE ? dx_value(&c->m, nullptr, gid) : nullptr;
             if (gv && gv->kind == DV_EXPR && gv->sub == DX_EXPR_CAST && gv->count) {
                 gid = gv->ops[0];
-                gv = dx_value(&c->m, NULL, gid);
+                gv = dx_value(&c->m, nullptr, gid);
             }
             if (gv && gv->kind == DV_GLOBAL)
                 r->global = gid + 1;
@@ -128,7 +128,7 @@ static Handle *handle_of(Compiler *c, uint32_t id)
     Value *s = dxil_slot(c, id);
     if (!s || s->kind != VAL_HANDLE || s->handle >= c->handle_count) {
         dxil_fail(c, "a resource operation without its handle");
-        return NULL;
+        return nullptr;
     }
     return &c->handles[s->handle];
 }
@@ -172,7 +172,7 @@ static int create_from_binding(Compiler *c, const DxInst *ins)
 static uint32_t element_register(Compiler *c, uint32_t reg, const uint32_t *ops, uint32_t count)
 {
     const DxValue *base = dx_value(&c->m, c->f, ops[0]);
-    const DxType *t = base ? &c->m.types[c->m.types[base->type].element] : NULL;
+    const DxType *t = base ? &c->m.types[c->m.types[base->type].element] : nullptr;
     for (uint32_t i = 2; t && t->kind == DT_ARRAY && i < count; i++) {
         uint32_t below = 1;
         for (const DxType *e = &c->m.types[t->element]; e->kind == DT_ARRAY; e = &c->m.types[e->element])
@@ -316,7 +316,7 @@ static const DxbcRootBinding *root_binding(Compiler *c, uint32_t cls, uint32_t s
             return b;
     }
     dxil_fail(c, "a register outside the root signature");
-    return NULL;
+    return nullptr;
 }
 
 /* a dword of the push constants, the offset a uint value in bytes. */
@@ -328,7 +328,7 @@ static uint32_t push_word(Compiler *c, uint32_t byte_offset)
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->push = dxil_global(c, SpvStorageClassPushConstant, block, 0);
     }
     /* reads past the 64 dwords are clamped, as vulkan leaves them undefined. */
@@ -349,8 +349,8 @@ static uint32_t record_word(Compiler *c, uint32_t byte_offset)
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, NULL, 0);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, nullptr, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->record = dxil_global(c, SpvStorageClassShaderRecordBufferKHR, block, 0);
     }
     uint32_t w[3] = {c->record, dxil_uconst(c, 0),
@@ -400,7 +400,7 @@ static uint32_t handle_register(Compiler *c, const Handle *h)
 static const DxbcRootBinding *binding_of(Compiler *c, const Handle *h)
 {
     if (h->heap)
-        return NULL;
+        return nullptr;
     return root_binding(c, h->r.cls, h->r.space, h->r.lower);
 }
 
@@ -408,7 +408,7 @@ static uint32_t nonuniform(Compiler *c, const Handle *h, uint32_t id)
 {
     if (h->nonuniform) {
         spv_capability(&c->b, SpvCapabilityShaderNonUniform);
-        spv_decorate(&c->b, id, SpvDecorationNonUniform, NULL, 0);
+        spv_decorate(&c->b, id, SpvDecorationNonUniform, nullptr, 0);
     }
     return id;
 }
@@ -634,8 +634,8 @@ static uint32_t heap_record(Compiler *c, uint32_t index, uint32_t half)
         uint32_t block = spv_type_struct(&c->b, &array, 1);
         uint32_t offset = 0;
         spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, NULL, 0);
-        spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+        spv_member_decorate(&c->b, block, 0, SpvDecorationNonWritable, nullptr, 0);
+        spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
         c->records = dxil_global(c, SpvStorageClassStorageBuffer, block, 0);
         dxil_decorate(c, c->records, SpvDecorationDescriptorSet, DXBC_ROOT_SET_RECORDS);
         dxil_decorate(c, c->records, SpvDecorationBinding, 0);
@@ -664,7 +664,7 @@ static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t strid
     uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
     uint32_t offset = 0;
     spv_member_decorate(&c->b, block, 0, SpvDecorationOffset, &offset, 1);
-    spv_decorate(&c->b, block, SpvDecorationBlock, NULL, 0);
+    spv_decorate(&c->b, block, SpvDecorationBlock, nullptr, 0);
     return *cached = spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, block);
 }
 
@@ -794,7 +794,7 @@ static uint32_t wide_of(Compiler *c, uint32_t lo, uint32_t hi, uint32_t type)
 static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t scalar, uint32_t status)
 {
     uint32_t parts[5];
-    uint32_t first = member_type(c, ins, 0, NULL);
+    uint32_t first = member_type(c, ins, 0, nullptr);
     if (first == c->t_u64 || first == c->t_f64) {
         uint32_t u = scalar == c->t_u32 ? vec4 : spv_op1(&c->b, SpvOpBitcast, c->t_uvec[4], vec4);
         parts[0] = wide_of(c, dxil_extract(c, c->t_u32, u, 0), dxil_extract(c, c->t_u32, u, 1), first);
@@ -802,7 +802,7 @@ static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t s
         parts[2] = parts[3] = spv_const_null(&c->b, first);
     } else {
         for (uint32_t i = 0; i < 4; i++)
-            parts[i] = dxil_convert(c, dxil_extract(c, scalar, vec4, i), scalar, member_type(c, ins, i, NULL));
+            parts[i] = dxil_convert(c, dxil_extract(c, scalar, vec4, i), scalar, member_type(c, ins, i, nullptr));
     }
     parts[4] = status ? status : dxil_uconst(c, 0);
     dxil_set_parts(c, ins->value, parts, 5);
@@ -1332,7 +1332,7 @@ static int buffer_vector(Compiler *c, const DxInst *ins, int store)
     Handle *h = handle_of(c, ins->ops[2]);
     if (!h)
         return -1;
-    const DxValue *v = store ? dx_value(&c->m, c->f, ins->ops[5]) : NULL;
+    const DxValue *v = store ? dx_value(&c->m, c->f, ins->ops[5]) : nullptr;
     if (store && !v)
         return dxil_fail(c, "a store of nothing");
     uint32_t vector = store ? v->type : c->m.types[ins->type].members[0];
@@ -1412,7 +1412,7 @@ static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
                 words[i] = dxil_extract(c, c->t_u32, v, i);
     }
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t type = member_type(c, ins, i, NULL);
+        uint32_t type = member_type(c, ins, i, nullptr);
         if (!(mask & (1u << i))) {
             parts[i] = spv_const_null(&c->b, type);
         } else if (bytes == 8) {
@@ -1754,7 +1754,7 @@ static int write_feedback(Compiler *c, const DxInst *ins, uint32_t op)
  * direct3d's standard sample positions, in sixteenths of a pixel from its
  * center, for 1, 2, 4, 8 and 16 samples: those of count n start at n - 1.
  */
-static const int8_t SAMPLE_POSITIONS[31][2] = {
+static constexpr int8_t SAMPLE_POSITIONS[31][2] = {
     {0, 0},   {4, 4},   {-4, -4}, {-2, -6}, {6, -2}, {-6, 2}, {2, 6},  {1, -3},  {-1, 3},  {5, 1},   {-3, -5},
     {-5, 5},  {-7, -1}, {3, 7},   {7, -7},  {1, 1},  {-1, -3}, {-3, 2}, {4, -1},  {-5, -2}, {2, 5},   {5, 3},
     {3, -5},  {-2, 6},  {0, -7},  {-4, -6}, {-6, 4}, {-8, 0},  {7, -4}, {6, 7},   {-7, -8}};
@@ -1788,7 +1788,7 @@ static int sample_position(Compiler *c, const DxInst *ins, uint32_t count, uint3
     uint32_t xy = spv_load(&c->b, v2, spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassPrivate, v2), w, 2));
     uint32_t out[2] = {dxil_extract(c, c->t_f32, xy, 0), dxil_extract(c, c->t_f32, xy, 1)};
     for (uint32_t i = 0; i < 2; i++)
-        out[i] = dxil_convert(c, out[i], c->t_f32, member_type(c, ins, i, NULL));
+        out[i] = dxil_convert(c, out[i], c->t_f32, member_type(c, ins, i, nullptr));
     dxil_set_parts(c, ins->value, out, 2);
     return 0;
 }

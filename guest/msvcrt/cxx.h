@@ -24,7 +24,7 @@ inline void *operator new(size_t, void *p) { return p; }
 
 __declspec(noreturn) void __cdecl terminate(void);
 
-#if defined(__i386__)
+#ifdef __i386__
 #define __thiscall_member __thiscall
 #define MSVCRT_C_PREFIX "_"
 #else
@@ -34,7 +34,7 @@ __declspec(noreturn) void __cdecl terminate(void);
 
 /* the names of members the compiler would not emit under their own, by architecture. */
 #define MSVCRT_NAME(name) __asm__(MSVCRT_NAME_##name)
-#if defined(__i386__)
+#ifdef __i386__
 #define MSVCRT_NAME_BAD_CAST_DEFAULT "??_Fbad_cast@@QAEXXZ"
 #define MSVCRT_NAME_BAD_TYPEID_DEFAULT "??_Fbad_typeid@@QAEXXZ"
 #define MSVCRT_NAME_EXCEPTION_VECTOR_DELETING "??_Eexception@@UAEPAXI@Z"
@@ -141,7 +141,7 @@ struct RTTI_LOCATOR {
     ULONG cd_offset;
     int type;
     int hierarchy;
-#if defined(_WIN64)
+#ifdef _WIN64
     int self;
 #endif
 };

@@ -37,15 +37,15 @@ static BOOL sd_parts(const void *sd, SD_PARTS *p)
     if (a->Control & SE_SELF_RELATIVE) {
         const SECURITY_DESCRIPTOR_RELATIVE *r = sd;
         const BYTE *base = sd;
-        p->Owner = r->Owner ? (SID *)(base + r->Owner) : NULL;
-        p->Group = r->Group ? (SID *)(base + r->Group) : NULL;
-        p->Sacl = r->Sacl && (r->Control & SE_SACL_PRESENT) ? (ACL *)(base + r->Sacl) : NULL;
-        p->Dacl = r->Dacl && (r->Control & SE_DACL_PRESENT) ? (ACL *)(base + r->Dacl) : NULL;
+        p->Owner = r->Owner ? (SID *)(base + r->Owner) : nullptr;
+        p->Group = r->Group ? (SID *)(base + r->Group) : nullptr;
+        p->Sacl = r->Sacl && (r->Control & SE_SACL_PRESENT) ? (ACL *)(base + r->Sacl) : nullptr;
+        p->Dacl = r->Dacl && (r->Control & SE_DACL_PRESENT) ? (ACL *)(base + r->Dacl) : nullptr;
     } else {
         p->Owner = a->Owner;
         p->Group = a->Group;
-        p->Sacl = a->Control & SE_SACL_PRESENT ? a->Sacl : NULL;
-        p->Dacl = a->Control & SE_DACL_PRESENT ? a->Dacl : NULL;
+        p->Sacl = a->Control & SE_SACL_PRESENT ? a->Sacl : nullptr;
+        p->Dacl = a->Control & SE_DACL_PRESENT ? a->Dacl : nullptr;
     }
     return TRUE;
 }
@@ -219,11 +219,11 @@ static SECURITY_DESCRIPTOR *absolute_sd(PSECURITY_DESCRIPTOR sd)
     SECURITY_DESCRIPTOR *a = sd;
     if (!a || a->Revision != SECURITY_DESCRIPTOR_REVISION) {
         AdvSetError(ERROR_UNKNOWN_REVISION);
-        return NULL;
+        return nullptr;
     }
     if (a->Control & SE_SELF_RELATIVE) {
         AdvSetError(ERROR_INVALID_SECURITY_DESCR);
-        return NULL;
+        return nullptr;
     }
     return a;
 }
@@ -254,7 +254,7 @@ ADVAPI BOOL WINAPI SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR sd, BOOL prese
     if (!a)
         return FALSE;
     a->Control &= ~(SE_DACL_PRESENT | SE_DACL_DEFAULTED);
-    a->Dacl = NULL;
+    a->Dacl = nullptr;
     if (present) {
         a->Control |= SE_DACL_PRESENT | (defaulted ? SE_DACL_DEFAULTED : 0);
         a->Dacl = dacl;
@@ -268,7 +268,7 @@ ADVAPI BOOL WINAPI SetSecurityDescriptorSacl(PSECURITY_DESCRIPTOR sd, BOOL prese
     if (!a)
         return FALSE;
     a->Control &= ~(SE_SACL_PRESENT | SE_SACL_DEFAULTED);
-    a->Sacl = NULL;
+    a->Sacl = nullptr;
     if (present) {
         a->Control |= SE_SACL_PRESENT | (defaulted ? SE_SACL_DEFAULTED : 0);
         a->Sacl = sacl;
@@ -284,12 +284,12 @@ static ACE_HEADER *ace_at(const ACL *acl, DWORD index)
     for (DWORD i = 0; i < acl->AceCount; i++) {
         const ACE_HEADER *h = (const ACE_HEADER *)p;
         if (p + sizeof(*h) > end || h->AceSize < sizeof(*h) || p + h->AceSize > end)
-            return NULL;
+            return nullptr;
         if (i == index)
             return (ACE_HEADER *)h;
         p += h->AceSize;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* the first free byte after the aces, or NULL when the list is malformed. */
@@ -299,7 +299,7 @@ static BYTE *acl_end(const ACL *acl)
     for (DWORD i = 0; i < acl->AceCount; i++) {
         const ACE_HEADER *h = (const ACE_HEADER *)p;
         if (p + sizeof(*h) > end || h->AceSize < sizeof(*h) || p + h->AceSize > end)
-            return NULL;
+            return nullptr;
         p += h->AceSize;
     }
     return (BYTE *)p;
@@ -365,7 +365,7 @@ ADVAPI BOOL WINAPI GetAclInformation(PACL acl, LPVOID info, DWORD length, ACL_IN
 
 ADVAPI BOOL WINAPI GetAce(PACL acl, DWORD index, LPVOID *ace)
 {
-    ACE_HEADER *h = acl && ace ? ace_at(acl, index) : NULL;
+    ACE_HEADER *h = acl && ace ? ace_at(acl, index) : nullptr;
     if (!h) {
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -508,7 +508,7 @@ static void evaluate_dacl(const ACL *dacl, const IDENTITY *id, const GENERIC_MAP
 static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERIC_MAPPING mapping, LPDWORD granted,
                          LPBOOL status)
 {
-    IDENTITY id = {AdvQueryTokenUser(token), AdvQueryTokenGroups(token), NULL};
+    IDENTITY id = {AdvQueryTokenUser(token), AdvQueryTokenGroups(token), nullptr};
     if (!id.User || !id.Groups) {
         AdvFree(id.User);
         AdvFree(id.Groups);
@@ -621,7 +621,7 @@ typedef struct _OBJECTS_AND_NAME {
 
 ADVAPI void WINAPI BuildTrusteeWithSidW(PTRUSTEE_W trustee, PSID sid)
 {
-    trustee->pMultipleTrustee = NULL;
+    trustee->pMultipleTrustee = nullptr;
     trustee->MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
     trustee->TrusteeForm = TRUSTEE_IS_SID;
     trustee->TrusteeType = TRUSTEE_IS_UNKNOWN;
@@ -636,7 +636,7 @@ ADVAPI void WINAPI BuildTrusteeWithSidA(PTRUSTEE_W trustee, PSID sid)
 
 ADVAPI void WINAPI BuildTrusteeWithNameW(PTRUSTEE_W trustee, LPWSTR name)
 {
-    trustee->pMultipleTrustee = NULL;
+    trustee->pMultipleTrustee = nullptr;
     trustee->MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
     trustee->TrusteeForm = TRUSTEE_IS_NAME;
     trustee->TrusteeType = TRUSTEE_IS_UNKNOWN;
@@ -648,30 +648,30 @@ static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_M
     if (!trustee || !rights)
         return ERROR_INVALID_PARAMETER;
     BYTE storage[SECURITY_MAX_SID_SIZE];
-    const SID *sid = NULL;
-    PCWSTR name = NULL;
+    const SID *sid = nullptr;
+    PCWSTR name = nullptr;
     switch (trustee->TrusteeForm) {
     case TRUSTEE_IS_SID:
         sid = (const SID *)trustee->ptstrName;
         break;
     case TRUSTEE_IS_OBJECTS_AND_SID:
-        sid = trustee->ptstrName ? ((OBJECTS_AND_SID *)trustee->ptstrName)->pSid : NULL;
+        sid = trustee->ptstrName ? ((OBJECTS_AND_SID *)trustee->ptstrName)->pSid : nullptr;
         break;
     case TRUSTEE_IS_NAME:
         name = trustee->ptstrName;
         break;
     case TRUSTEE_IS_OBJECTS_AND_NAME:
-        name = trustee->ptstrName ? ((OBJECTS_AND_NAME *)trustee->ptstrName)->ptstrName : NULL;
+        name = trustee->ptstrName ? ((OBJECTS_AND_NAME *)trustee->ptstrName)->ptstrName : nullptr;
         break;
     default:
         return ERROR_INVALID_PARAMETER;
     }
     if (name) {
-        PWSTR wide = ansi ? AdvAnsiToWide((LPCSTR)name) : NULL;
+        PWSTR wide = ansi ? AdvAnsiToWide((LPCSTR)name) : nullptr;
         WCHAR domain[256];
         DWORD size = sizeof(storage), domain_size = RTL_NUMBER_OF(domain);
         SID_NAME_USE use;
-        BOOL found = LookupAccountNameW(NULL, wide ? wide : name, storage, &size, domain, &domain_size, &use);
+        BOOL found = LookupAccountNameW(nullptr, wide ? wide : name, storage, &size, domain, &domain_size, &use);
         AdvFree(wide);
         if (!found)
             return ERROR_NONE_MAPPED;
@@ -685,13 +685,13 @@ static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_M
     }
     if (!acl_valid(acl))
         return ERROR_INVALID_ACL;
-    IDENTITY id = {AdvQueryTokenUser(NULL), NULL, NULL};
+    IDENTITY id = {AdvQueryTokenUser(nullptr), nullptr, nullptr};
     if (id.User && AdvSidEqual(id.User->User.Sid, sid))
-        id.Groups = AdvQueryTokenGroups(NULL);
+        id.Groups = AdvQueryTokenGroups(nullptr);
     if (!id.Groups)
         id.Sid = sid;
     ACCESS_MASK allowed = 0, denied = 0;
-    evaluate_dacl(acl, &id, NULL, &allowed, &denied);
+    evaluate_dacl(acl, &id, nullptr, &allowed, &denied);
     AdvFree(id.User);
     AdvFree(id.Groups);
     *rights = allowed & ~denied;
@@ -721,7 +721,7 @@ static DWORD synthesize(BYTE **out, DWORD info, ACCESS_MASK all, ACCESS_MASK use
     AdvMakeSid(system, 5, 1, 18);
     AdvMakeSid(admins, 5, 2, 32, 544);
     AdvMakeSid(users, 5, 2, 32, 545);
-    PVOID primary = user_owned ? AdvQueryToken(NULL, TokenPrimaryGroup) : NULL;
+    PVOID primary = user_owned ? AdvQueryToken(nullptr, TokenPrimaryGroup) : nullptr;
     const SID *owner = user_owned ? (SID *)user : (SID *)admins;
     const SID *group = primary ? *(SID **)primary : (SID *)system;
     ACL *acl = (ACL *)acl_storage;
@@ -732,11 +732,11 @@ static DWORD synthesize(BYTE **out, DWORD info, ACCESS_MASK all, ACCESS_MASK use
         add_ace(acl, ACL_REVISION, ace_flags, all, user, ACCESS_ALLOWED_ACE_TYPE);
     else
         add_ace(acl, ACL_REVISION, ace_flags, users_read, users, ACCESS_ALLOWED_ACE_TYPE);
-    const SID *o = info & OWNER_SECURITY_INFORMATION ? owner : NULL;
-    const SID *g = info & GROUP_SECURITY_INFORMATION ? group : NULL;
-    const ACL *d = info & DACL_SECURITY_INFORMATION ? acl : NULL;
+    const SID *o = info & OWNER_SECURITY_INFORMATION ? owner : nullptr;
+    const SID *g = info & GROUP_SECURITY_INFORMATION ? group : nullptr;
+    const ACL *d = info & DACL_SECURITY_INFORMATION ? acl : nullptr;
     WORD control = d ? SE_DACL_AUTO_INHERITED : 0;
-    DWORD size = write_sd(NULL, 0, control, o, g, d);
+    DWORD size = write_sd(nullptr, 0, control, o, g, d);
     *out = LocalAlloc(LMEM_FIXED, size);
     if (*out)
         write_sd(*out, size, control, o, g, d);
@@ -748,7 +748,7 @@ static DWORD synthesize(BYTE **out, DWORD info, ACCESS_MASK all, ACCESS_MASK use
 static DWORD query_object(HANDLE handle, DWORD info, BYTE **out)
 {
     ULONG needed = 0;
-    NTSTATUS status = NtQuerySecurityObject(handle, info, NULL, 0, &needed);
+    NTSTATUS status = NtQuerySecurityObject(handle, info, nullptr, 0, &needed);
     if (status == STATUS_NOT_IMPLEMENTED || status == STATUS_INVALID_DEVICE_REQUEST)
         return ERROR_CALL_NOT_IMPLEMENTED;
     if (status != STATUS_BUFFER_TOO_SMALL)
@@ -759,7 +759,7 @@ static DWORD query_object(HANDLE handle, DWORD info, BYTE **out)
     status = NtQuerySecurityObject(handle, info, *out, needed, &needed);
     if (!NT_SUCCESS(status)) {
         LocalFree(*out);
-        *out = NULL;
+        *out = nullptr;
         return RtlNtStatusToDosError(status);
     }
     return ERROR_SUCCESS;
@@ -767,14 +767,14 @@ static DWORD query_object(HANDLE handle, DWORD info, BYTE **out)
 
 static DWORD file_security(LPCWSTR name, DWORD info, BYTE **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (info & SACL_SECURITY_INFORMATION)
         return ERROR_PRIVILEGE_NOT_HELD;
     DWORD attributes = GetFileAttributesW(name);
     if (attributes == INVALID_FILE_ATTRIBUTES)
         return GetLastError();
-    HANDLE h = CreateFileW(name, READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    HANDLE h = CreateFileW(name, READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     DWORD error = ERROR_CALL_NOT_IMPLEMENTED;
     if (h != INVALID_HANDLE_VALUE) {
         error = query_object(h, info, out);
@@ -796,11 +796,11 @@ static DWORD key_security(LPCWSTR name, DWORD info, BYTE **out)
         {L"MACHINE", HKEY_LOCAL_MACHINE},     {L"USERS", HKEY_USERS},
         {L"CURRENT_CONFIG", HKEY_CURRENT_CONFIG},
     };
-    *out = NULL;
+    *out = nullptr;
     if (info & SACL_SECURITY_INFORMATION)
         return ERROR_PRIVILEGE_NOT_HELD;
-    HKEY root = NULL;
-    PCWSTR rest = NULL;
+    HKEY root = nullptr;
+    PCWSTR rest = nullptr;
     for (ULONG i = 0; i < RTL_NUMBER_OF(roots) && !root; i++) {
         SIZE_T n = wcslen(roots[i].Name);
         if (!_wcsnicmp(name, roots[i].Name, n) && (name[n] == 0 || name[n] == L'\\')) {
@@ -864,7 +864,7 @@ ADVAPI DWORD WINAPI GetNamedSecurityInfoW(LPCWSTR name, SE_OBJECT_TYPE type, SEC
 {
     if (!name || (!sd && (owner || group || dacl || sacl)))
         return ERROR_INVALID_PARAMETER;
-    BYTE *copy = NULL;
+    BYTE *copy = nullptr;
     DWORD error;
     switch (type) {
     case SE_FILE_OBJECT:
@@ -893,13 +893,13 @@ ADVAPI DWORD WINAPI GetNamedSecurityInfoW(LPCWSTR name, SE_OBJECT_TYPE type, SEC
     SD_PARTS p;
     sd_parts(copy, &p);
     if (owner)
-        *owner = info & OWNER_SECURITY_INFORMATION ? p.Owner : NULL;
+        *owner = info & OWNER_SECURITY_INFORMATION ? p.Owner : nullptr;
     if (group)
-        *group = info & GROUP_SECURITY_INFORMATION ? p.Group : NULL;
+        *group = info & GROUP_SECURITY_INFORMATION ? p.Group : nullptr;
     if (dacl)
-        *dacl = info & DACL_SECURITY_INFORMATION ? p.Dacl : NULL;
+        *dacl = info & DACL_SECURITY_INFORMATION ? p.Dacl : nullptr;
     if (sacl)
-        *sacl = NULL;
+        *sacl = nullptr;
     if (sd)
         *sd = copy;
     else
@@ -944,20 +944,20 @@ typedef struct _EXPLICIT_ACCESS_W {
 /* the sid a trustee names, copied into storage of SECURITY_MAX_SID_SIZE bytes. */
 static DWORD trustee_sid(const TRUSTEE_W *trustee, BYTE *storage)
 {
-    const SID *sid = NULL;
-    PCWSTR name = NULL;
+    const SID *sid = nullptr;
+    PCWSTR name = nullptr;
     switch (trustee->TrusteeForm) {
     case TRUSTEE_IS_SID:
         sid = (const SID *)trustee->ptstrName;
         break;
     case TRUSTEE_IS_OBJECTS_AND_SID:
-        sid = trustee->ptstrName ? ((OBJECTS_AND_SID *)trustee->ptstrName)->pSid : NULL;
+        sid = trustee->ptstrName ? ((OBJECTS_AND_SID *)trustee->ptstrName)->pSid : nullptr;
         break;
     case TRUSTEE_IS_NAME:
         name = trustee->ptstrName;
         break;
     case TRUSTEE_IS_OBJECTS_AND_NAME:
-        name = trustee->ptstrName ? ((OBJECTS_AND_NAME *)trustee->ptstrName)->ptstrName : NULL;
+        name = trustee->ptstrName ? ((OBJECTS_AND_NAME *)trustee->ptstrName)->ptstrName : nullptr;
         break;
     default:
         return ERROR_INVALID_PARAMETER;
@@ -968,7 +968,7 @@ static DWORD trustee_sid(const TRUSTEE_W *trustee, BYTE *storage)
         WCHAR domain[256];
         DWORD size = SECURITY_MAX_SID_SIZE, domain_size = RTL_NUMBER_OF(domain);
         SID_NAME_USE use;
-        return LookupAccountNameW(NULL, name, storage, &size, domain, &domain_size, &use) ? ERROR_SUCCESS
+        return LookupAccountNameW(nullptr, name, storage, &size, domain, &domain_size, &use) ? ERROR_SUCCESS
                                                                                           : ERROR_NONE_MAPPED;
     }
     if (!AdvSidValid(sid))
@@ -1006,10 +1006,10 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
 {
     if (!result || (count && !entries))
         return ERROR_INVALID_PARAMETER;
-    *result = NULL;
+    *result = nullptr;
     if (old && !acl_valid(old))
         return ERROR_INVALID_ACL;
-    BYTE (*sids)[SECURITY_MAX_SID_SIZE] = count ? AdvAlloc(count * SECURITY_MAX_SID_SIZE) : NULL;
+    BYTE (*sids)[SECURITY_MAX_SID_SIZE] = count ? AdvAlloc(count * SECURITY_MAX_SID_SIZE) : nullptr;
     if (count && !sids)
         return ERROR_NOT_ENOUGH_MEMORY;
     DWORD size = sizeof(ACL), error = ERROR_SUCCESS;
@@ -1029,7 +1029,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
         if (!ace_replaced(ace, entries, (const BYTE (*)[SECURITY_MAX_SID_SIZE])sids, count))
             size += ace->AceSize;
     }
-    ACL *acl = NULL;
+    ACL *acl = nullptr;
     if (!error && size > 0xFFFC)
         error = ERROR_INVALID_ACL;
     if (!error && !(acl = LocalAlloc(LMEM_FIXED, size)))
@@ -1239,10 +1239,10 @@ ADVAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCWSTR 
         else
             ok = FALSE;
     }
-    BYTE *out = NULL;
+    BYTE *out = nullptr;
     DWORD need = 0;
     if (ok) {
-        const SID *o = has_owner ? (SID *)owner : NULL, *g = has_group ? (SID *)group : NULL;
+        const SID *o = has_owner ? (SID *)owner : nullptr, *g = has_group ? (SID *)group : nullptr;
         need = sizeof(SECURITY_DESCRIPTOR_RELATIVE) + (o ? LONG_ALIGN(AdvSidLength(o)) : 0) +
                (g ? LONG_ALIGN(AdvSidLength(g)) : 0) + (has_sacl ? LONG_ALIGN(sacl->AclSize) : 0) +
                (has_dacl ? LONG_ALIGN(dacl->AclSize) : 0);
@@ -1363,7 +1363,7 @@ ADVAPI DWORD WINAPI SetNamedSecurityInfoW(LPWSTR name, SE_OBJECT_TYPE type, SECU
 {
     if (!name)
         return ERROR_INVALID_PARAMETER;
-    BYTE *current = NULL;
+    BYTE *current = nullptr;
     DWORD error;
     /* the existing descriptor query also proves the object exists. */
     switch (type) {
@@ -1402,7 +1402,7 @@ ADVAPI DWORD WINAPI SetNamedSecurityInfoA(LPSTR name, SE_OBJECT_TYPE type, SECUR
 static DWORD check_key(HKEY key)
 {
     DWORD subkeys;
-    return RegQueryInfoKeyW(key, NULL, NULL, NULL, &subkeys, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    return RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, &subkeys, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
 ADVAPI LSTATUS WINAPI RegSetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
@@ -1420,7 +1420,7 @@ ADVAPI LSTATUS WINAPI RegGetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSE
         return error;
     if (info & SACL_SECURITY_INFORMATION)
         return ERROR_PRIVILEGE_NOT_HELD;
-    BYTE *copy = NULL;
+    BYTE *copy = nullptr;
     error = query_object(key, info, &copy);
     if (error == ERROR_CALL_NOT_IMPLEMENTED)
         error = synthesize(&copy, info, KEY_ALL_ACCESS, KEY_READ, CONTAINER_INHERIT_ACE | INHERITED_ACE, FALSE);
@@ -1445,7 +1445,7 @@ ADVAPI DWORD WINAPI GetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY
         return ERROR_INVALID_PARAMETER;
     if (info & SACL_SECURITY_INFORMATION)
         return ERROR_PRIVILEGE_NOT_HELD;
-    BYTE *copy = NULL;
+    BYTE *copy = nullptr;
     DWORD error = query_object(handle, info, &copy);
     /* objects the kernel keeps no descriptor for get what windows gives a new one of the user. */
     if (error == ERROR_CALL_NOT_IMPLEMENTED) {
@@ -1468,13 +1468,13 @@ ADVAPI DWORD WINAPI GetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY
     SD_PARTS p;
     sd_parts(copy, &p);
     if (owner)
-        *owner = info & OWNER_SECURITY_INFORMATION ? p.Owner : NULL;
+        *owner = info & OWNER_SECURITY_INFORMATION ? p.Owner : nullptr;
     if (group)
-        *group = info & GROUP_SECURITY_INFORMATION ? p.Group : NULL;
+        *group = info & GROUP_SECURITY_INFORMATION ? p.Group : nullptr;
     if (dacl)
-        *dacl = info & DACL_SECURITY_INFORMATION ? p.Dacl : NULL;
+        *dacl = info & DACL_SECURITY_INFORMATION ? p.Dacl : nullptr;
     if (sacl)
-        *sacl = NULL;
+        *sacl = nullptr;
     if (sd)
         *sd = copy;
     else
@@ -1502,9 +1502,9 @@ ADVAPI DWORD WINAPI SetEntriesInAclA(ULONG count, PEXPLICIT_ACCESS_A entries, PA
 {
     if (!result || (count && !entries))
         return ERROR_INVALID_PARAMETER;
-    EXPLICIT_ACCESS_W *wide = count ? AdvAlloc(count * sizeof(*wide)) : NULL;
-    OBJECTS_AND_NAME *objects = count ? AdvAlloc(count * sizeof(*objects)) : NULL;
-    PWSTR *names = count ? AdvAlloc(count * sizeof(*names)) : NULL;
+    EXPLICIT_ACCESS_W *wide = count ? AdvAlloc(count * sizeof(*wide)) : nullptr;
+    OBJECTS_AND_NAME *objects = count ? AdvAlloc(count * sizeof(*objects)) : nullptr;
+    PWSTR *names = count ? AdvAlloc(count * sizeof(*names)) : nullptr;
     if (count && (!wide || !objects || !names)) {
         AdvFree(wide);
         AdvFree(objects);
@@ -1514,7 +1514,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclA(ULONG count, PEXPLICIT_ACCESS_A entries, PA
     DWORD error = ERROR_SUCCESS;
     for (ULONG i = 0; i < count; i++) {
         memcpy(&wide[i], &entries[i], sizeof(wide[i]));
-        names[i] = NULL;
+        names[i] = nullptr;
         TRUSTEE_W *t = &wide[i].Trustee;
         if (t->TrusteeForm == TRUSTEE_IS_NAME && t->ptstrName) {
             names[i] = AdvAnsiToWide((LPCSTR)t->ptstrName);
@@ -1523,7 +1523,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclA(ULONG count, PEXPLICIT_ACCESS_A entries, PA
             objects[i] = *(OBJECTS_AND_NAME *)t->ptstrName;
             names[i] = AdvAnsiToWide((LPCSTR)objects[i].ptstrName);
             objects[i].ptstrName = names[i];
-            objects[i].ObjectTypeName = objects[i].InheritedObjectTypeName = NULL;
+            objects[i].ObjectTypeName = objects[i].InheritedObjectTypeName = nullptr;
             t->ptstrName = (LPWSTR)&objects[i];
         } else {
             continue;

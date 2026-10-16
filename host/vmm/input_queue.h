@@ -3,7 +3,6 @@
 
 #include "../../include/mime/abi.h"
 
-#include <stdbool.h>
 
 static inline bool mime_input_is_motion(const MimeInputEvent *event)
 {

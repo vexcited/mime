@@ -17,7 +17,7 @@ extern char **environ;
 #define LAUNCH_CONTROL_FD 3
 #define LAUNCH_LOCK_FD 4
 
-static const char g_launch_magic[8] = {'M', 'I', 'M', 'E', 'V', 'M', 'M', 1};
+static constexpr char g_launch_magic[8] = {'M', 'I', 'M', 'E', 'V', 'M', 'M', 1};
 
 static void read_holder(int fd, MimeInstanceHolder *holder)
 {
@@ -103,7 +103,7 @@ pid_t mime_instance_launch(const MimePaths *paths, int lock_fd)
     flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
 #endif
     posix_spawnattr_setflags(&attr, flags);
-    char *argv[] = {"mime-vmm", NULL};
+    char *argv[] = {"mime-vmm", nullptr};
     pid_t pid;
     int err = posix_spawn(&pid, exe, &actions, &attr, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -131,7 +131,7 @@ static pid_t socket_peer_pid(int fd)
     socklen_t len = sizeof(pid);
     if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) == 0)
         return pid;
-#elif defined(SO_PEERCRED)
+#elifdef SO_PEERCRED
     struct ucred cred;
     socklen_t len = sizeof(cred);
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) == 0)

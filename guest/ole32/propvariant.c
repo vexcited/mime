@@ -42,26 +42,26 @@ static HRESULT clear_vector(PROPVARIANT *value)
             hr = PropVariantClear(&value->capropvar.pElems[i]);
             break;
         case VT_BSTR: {
-            PROPVARIANT item = {0};
+            PROPVARIANT item = {};
             item.vt = VT_BSTR;
             item.bstrVal = value->cabstr.pElems[i];
             hr = clear_automation(&item);
             if (SUCCEEDED(hr))
-                value->cabstr.pElems[i] = NULL;
+                value->cabstr.pElems[i] = nullptr;
             break;
         }
         case VT_LPSTR:
         case VT_LPWSTR:
             CoTaskMemFree(value->calpstr.pElems[i]);
-            value->calpstr.pElems[i] = NULL;
+            value->calpstr.pElems[i] = nullptr;
             break;
         case VT_CF:
             CoTaskMemFree(value->caclipdata.pElems[i].pClipData);
-            value->caclipdata.pElems[i].pClipData = NULL;
+            value->caclipdata.pElems[i].pClipData = nullptr;
             break;
         case VT_BSTR_BLOB:
             CoTaskMemFree(value->cabstrblob.pElems[i].pData);
-            value->cabstrblob.pElems[i].pData = NULL;
+            value->cabstrblob.pElems[i].pData = nullptr;
             break;
         default:
             break;
@@ -144,14 +144,14 @@ static FARPROC automation_function(const char *name)
     HMODULE library = GetModuleHandleW(L"oleaut32.dll");
     if (!library)
         library = LoadLibraryW(L"oleaut32.dll");
-    return library ? GetProcAddress(library, name) : NULL;
+    return library ? GetProcAddress(library, name) : nullptr;
 }
 
 static HRESULT copy_bstr(BSTR source, BSTR *dest)
 {
     typedef UINT(WINAPI * BYTE_LEN)(BSTR);
     typedef BSTR(WINAPI * ALLOC_BYTE_LEN)(LPCSTR, UINT);
-    *dest = NULL;
+    *dest = nullptr;
     if (!source)
         return S_OK;
     BYTE_LEN length = (BYTE_LEN)automation_function("SysStringByteLen");
@@ -172,20 +172,20 @@ static void *copy_memory(const void *source, SIZE_T size)
 
 static HRESULT copy_string(const char *source, char **dest)
 {
-    *dest = source ? copy_memory(source, strlen(source) + 1) : NULL;
+    *dest = source ? copy_memory(source, strlen(source) + 1) : nullptr;
     return !source || *dest ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT copy_wide(const WCHAR *source, WCHAR **dest)
 {
-    *dest = source ? copy_memory(source, (wcslen(source) + 1) * sizeof(WCHAR)) : NULL;
+    *dest = source ? copy_memory(source, (wcslen(source) + 1) * sizeof(WCHAR)) : nullptr;
     return !source || *dest ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT copy_clipdata(const CLIPDATA *source, CLIPDATA *dest)
 {
     *dest = *source;
-    dest->pClipData = NULL;
+    dest->pClipData = nullptr;
     if (!source->pClipData || source->cbSize <= sizeof(source->ulClipFmt))
         return S_OK;
     SIZE_T size = source->cbSize - sizeof(source->ulClipFmt);
@@ -242,7 +242,7 @@ static HRESULT copy_vector_items(VARTYPE type, PROPVARIANT *dest, const PROPVARI
             break;
         case VT_BSTR_BLOB:
             dest->cabstrblob.pElems[i].pData = source->cabstrblob.pElems[i].pData ?
-                copy_memory(source->cabstrblob.pElems[i].pData, source->cabstrblob.pElems[i].cbSize) : NULL;
+                copy_memory(source->cabstrblob.pElems[i].pData, source->cabstrblob.pElems[i].cbSize) : nullptr;
             if (source->cabstrblob.pElems[i].pData && !dest->cabstrblob.pElems[i].pData)
                 hr = E_OUTOFMEMORY;
             break;
@@ -268,7 +268,7 @@ static HRESULT copy_value(PROPVARIANT *dest, const PROPVARIANT *source)
         SIZE_T size = vector_element_size(type);
         if (flags != VT_VECTOR || !vector_type(type) || !size)
             return DISP_E_BADVARTYPE;
-        dest->caub.pElems = NULL;
+        dest->caub.pElems = nullptr;
         if (!source->caub.cElems)
             return S_OK;
         dest->caub.pElems = copy_memory(source->caub.pElems, size * source->caub.cElems);
@@ -285,7 +285,7 @@ static HRESULT copy_value(PROPVARIANT *dest, const PROPVARIANT *source)
             return S_OK;
         typedef HRESULT(WINAPI * ARRAY_COPY)(SAFEARRAY *, SAFEARRAY **);
         ARRAY_COPY copy = (ARRAY_COPY)automation_function("SafeArrayCopy");
-        dest->parray = NULL;
+        dest->parray = nullptr;
         return copy ? copy(source->parray, &dest->parray) : CO_E_DLLNOTFOUND;
     }
     switch (type) {
@@ -301,11 +301,11 @@ static HRESULT copy_value(PROPVARIANT *dest, const PROPVARIANT *source)
     case VT_LPWSTR:
         return copy_wide(source->pwszVal, &dest->pwszVal);
     case VT_CLSID:
-        dest->puuid = source->puuid ? copy_memory(source->puuid, sizeof(CLSID)) : NULL;
+        dest->puuid = source->puuid ? copy_memory(source->puuid, sizeof(CLSID)) : nullptr;
         return !source->puuid || dest->puuid ? S_OK : E_OUTOFMEMORY;
     case VT_BLOB: case VT_BLOBOBJECT: case VT_BSTR_BLOB:
         dest->blob.pBlobData = source->blob.pBlobData ?
-            copy_memory(source->blob.pBlobData, source->blob.cbSize) : NULL;
+            copy_memory(source->blob.pBlobData, source->blob.cbSize) : nullptr;
         return !source->blob.pBlobData || dest->blob.pBlobData ? S_OK : E_OUTOFMEMORY;
     case VT_BSTR:
         return copy_bstr(source->bstrVal, &dest->bstrVal);

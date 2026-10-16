@@ -10,7 +10,7 @@
 
 static D9Texture *impl(IDirect3DBaseTexture9 *iface) { return CONTAINING_RECORD(iface, D9Texture, iface.base); }
 
-D9Texture *D9TextureFrom(IDirect3DBaseTexture9 *iface) { return iface ? impl(iface) : NULL; }
+D9Texture *D9TextureFrom(IDirect3DBaseTexture9 *iface) { return iface ? impl(iface) : nullptr; }
 
 static UINT sub_count(const D9Texture *t) { return t->levels * t->faces; }
 
@@ -88,7 +88,7 @@ ID3D11ShaderResourceView *D9TextureSrv(D9Texture *t, BOOL srgb)
     else
         hr = device->d3d11->lpVtbl->CreateShaderResourceView(device->d3d11, t->resource, &desc, slot);
     if (FAILED(hr))
-        *slot = NULL;
+        *slot = nullptr;
     return *slot;
 }
 
@@ -98,7 +98,7 @@ static void drop_views(D9Texture *t)
         t->srv->lpVtbl->Release(t->srv);
     if (t->srv_srgb)
         t->srv_srgb->lpVtbl->Release(t->srv_srgb);
-    t->srv = t->srv_srgb = NULL;
+    t->srv = t->srv_srgb = nullptr;
 }
 
 /* the mips of a texture that makes them, before it is drawn with. */
@@ -119,7 +119,7 @@ static HRESULT STDMETHODCALLTYPE texture_query(IDirect3DBaseTexture9 *iface, REF
     D9Texture *t = impl(iface);
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     const IID *own = t->base.type == D3DRTYPE_CUBETEXTURE     ? &IID_IDirect3DCubeTexture9
                      : t->base.type == D3DRTYPE_VOLUMETEXTURE ? &IID_IDirect3DVolumeTexture9
                                                               : &IID_IDirect3DTexture9;
@@ -223,7 +223,7 @@ static void STDMETHODCALLTYPE texture_generate_mip_sub_levels(IDirect3DBaseTextu
 static D9Surface *level_surface(D9Texture *t, UINT face, UINT level)
 {
     if (face >= t->faces || level >= t->levels || !t->surfaces)
-        return NULL;
+        return nullptr;
     return t->surfaces[face * t->levels + level];
 }
 
@@ -240,7 +240,7 @@ static HRESULT get_surface(D9Texture *t, UINT face, UINT level, IDirect3DSurface
     D9Surface *s = level_surface(t, face, level);
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = s ? &s->iface : NULL;
+    *out = s ? &s->iface : nullptr;
     if (!s)
         return D3DERR_INVALIDCALL;
     D9ResourceAddRef(&t->base);
@@ -252,7 +252,7 @@ static HRESULT lock_level(D9Texture *t, UINT face, UINT level, D3DLOCKED_RECT *l
     D9Surface *s = level_surface(t, face, level);
     if (!s) {
         if (locked)
-            locked->pBits = NULL, locked->Pitch = 0;
+            locked->pBits = nullptr, locked->Pitch = 0;
         return D3DERR_INVALIDCALL;
     }
     D9Lock(t->base.device);
@@ -332,7 +332,7 @@ static HRESULT STDMETHODCALLTYPE volume_query(IDirect3DVolume9 *iface, REFIID ri
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DVolume9)) {
         *out = iface;
         iface->lpVtbl->AddRef(iface);
@@ -359,7 +359,7 @@ static HRESULT STDMETHODCALLTYPE volume_get_device(IDirect3DVolume9 *iface, IDir
 static HRESULT STDMETHODCALLTYPE volume_set_private_data(IDirect3DVolume9 *iface, REFGUID guid, const void *data,
                                                          DWORD size, DWORD flags)
 {
-    D9Resource r = {0};
+    D9Resource r = {};
     r.data = volume_impl(iface)->data;
     HRESULT hr = D9ResourceSetPrivateData(&r, guid, data, size, flags);
     volume_impl(iface)->data = r.data;
@@ -369,14 +369,14 @@ static HRESULT STDMETHODCALLTYPE volume_set_private_data(IDirect3DVolume9 *iface
 static HRESULT STDMETHODCALLTYPE volume_get_private_data(IDirect3DVolume9 *iface, REFGUID guid, void *data,
                                                          DWORD *size)
 {
-    D9Resource r = {0};
+    D9Resource r = {};
     r.data = volume_impl(iface)->data;
     return D9ResourceGetPrivateData(&r, guid, data, size);
 }
 
 static HRESULT STDMETHODCALLTYPE volume_free_private_data(IDirect3DVolume9 *iface, REFGUID guid)
 {
-    D9Resource r = {0};
+    D9Resource r = {};
     r.data = volume_impl(iface)->data;
     HRESULT hr = D9ResourceFreePrivateData(&r, guid);
     volume_impl(iface)->data = r.data;
@@ -409,7 +409,7 @@ static HRESULT lock_box(D9Volume *v, D3DLOCKED_BOX *locked, const D3DBOX *box, D
     D9Memory *m = &t->memory[v->level];
     if (!locked)
         return D3DERR_INVALIDCALL;
-    locked->pBits = NULL;
+    locked->pBits = nullptr;
     locked->RowPitch = locked->SlicePitch = 0;
     D3DBOX b = box ? *box : (D3DBOX){0, 0, v->width, v->height, 0, v->depth};
     if (m->locked || b.Left >= b.Right || b.Top >= b.Bottom || b.Front >= b.Back || b.Right > v->width ||
@@ -438,7 +438,7 @@ static void upload_box(D9Texture *t, UINT level, const RECT *r, UINT front, UINT
     UINT width = r->right - r->left, rows = D9FormatRows(f, r->bottom - r->top);
     const BYTE *bytes = D9MemoryAt(m, f, r->left, r->top, front);
     UINT pitch = m->pitch, slice = m->slice;
-    BYTE *converted = NULL;
+    BYTE *converted = nullptr;
     if (f->stored != f->bytes) {
         UINT out_pitch = D9_ALIGN(width * f->stored, 4), slices = back - front;
         converted = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)out_pitch * rows * slices);
@@ -507,7 +507,7 @@ static HRESULT STDMETHODCALLTYPE vol_get_volume_level(IDirect3DVolumeTexture9 *i
     D9Texture *t = impl((IDirect3DBaseTexture9 *)iface);
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (level >= t->levels)
         return D3DERR_INVALIDCALL;
     *out = &t->volumes[level]->iface;
@@ -590,11 +590,11 @@ static HRESULT make_resource(D9Texture *t)
     if (t->base.type == D3DRTYPE_VOLUMETEXTURE) {
         D3D11_TEXTURE3D_DESC desc = {t->width, t->height, t->depth, t->d3d_levels, f->resource, D3D11_USAGE_DEFAULT,
                                      bind, 0, misc};
-        return d3d11->lpVtbl->CreateTexture3D(d3d11, &desc, NULL, (ID3D11Texture3D **)&t->resource);
+        return d3d11->lpVtbl->CreateTexture3D(d3d11, &desc, nullptr, (ID3D11Texture3D **)&t->resource);
     }
     D3D11_TEXTURE2D_DESC desc = {t->width, t->height, t->d3d_levels, t->faces, f->resource, {1, 0},
                                  D3D11_USAGE_DEFAULT, bind, 0, misc};
-    return d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, NULL, (ID3D11Texture2D **)&t->resource);
+    return d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, nullptr, (ID3D11Texture2D **)&t->resource);
 }
 
 static UINT mip(UINT size, UINT level) { return D9_MAX(size >> level, 1); }
@@ -740,7 +740,7 @@ void D9UploadLevel(D9Texture *t, UINT sub, UINT index, const RECT *r)
     UINT width = r->right - r->left, rows = D9FormatRows(f, r->bottom - r->top);
     const BYTE *bytes = D9MemoryAt(m, f, r->left, r->top, 0);
     UINT pitch = m->pitch;
-    BYTE *converted = NULL;
+    BYTE *converted = nullptr;
     if (f->stored != f->bytes) {
         UINT out_pitch = D9_ALIGN(width * f->stored, 4);
         converted = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)out_pitch * rows);

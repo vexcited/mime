@@ -70,7 +70,7 @@ void MsvcrtFreeThreadData(void)
         return;
     MSVCRT_THREAD_DATA *ptd = TlsGetValue(g_tls);
     if (ptd && ptd != &g_fallback_ptd) {
-        TlsSetValue(g_tls, NULL);
+        TlsSetValue(g_tls, nullptr);
         HeapFree(MsvcrtHeap, 0, ptd);
     }
 }
@@ -171,7 +171,7 @@ static PVOID g_invalid_handler; /* encoded, NULL until a handler is set */
 /* the encoding scrambles NULL too, so a handler never set is told apart before decoding. */
 static _invalid_parameter_handler invalid_handler(void)
 {
-    return g_invalid_handler ? (_invalid_parameter_handler)DecodePointer(g_invalid_handler) : NULL;
+    return g_invalid_handler ? (_invalid_parameter_handler)DecodePointer(g_invalid_handler) : nullptr;
 }
 
 void __cdecl _invalid_parameter(const wchar_t *expression, const wchar_t *function, const wchar_t *file,
@@ -187,7 +187,7 @@ void __cdecl _invalid_parameter(const wchar_t *expression, const wchar_t *functi
 
 void __cdecl _invalid_parameter_noinfo(void)
 {
-    _invalid_parameter(NULL, NULL, NULL, 0, 0);
+    _invalid_parameter(nullptr, nullptr, nullptr, 0, 0);
 }
 
 void __cdecl _invoke_watson(const wchar_t *expression, const wchar_t *function, const wchar_t *file,
@@ -199,7 +199,7 @@ void __cdecl _invoke_watson(const wchar_t *expression, const wchar_t *function, 
 _invalid_parameter_handler __cdecl _set_invalid_parameter_handler(_invalid_parameter_handler handler)
 {
     _invalid_parameter_handler old = invalid_handler();
-    g_invalid_handler = handler ? EncodePointer((PVOID)handler) : NULL;
+    g_invalid_handler = handler ? EncodePointer((PVOID)handler) : nullptr;
     return old;
 }
 
@@ -210,7 +210,7 @@ _invalid_parameter_handler __cdecl _get_invalid_parameter_handler(void)
 
 void MsvcrtInvalidParameter(void)
 {
-    _invalid_parameter(NULL, NULL, NULL, 0, 0);
+    _invalid_parameter(nullptr, nullptr, nullptr, 0, 0);
 }
 
 /* ------------------------------------------------------------------ locks */
@@ -271,7 +271,7 @@ static void *heap_alloc(size_t size, DWORD flags)
 {
     if (size > (size_t)-32) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     for (;;) {
         void *p = HeapAlloc(MsvcrtHeap, flags, size ? size : 1);
@@ -279,7 +279,7 @@ static void *heap_alloc(size_t size, DWORD flags)
             return p;
         if (!g_new_mode || !_callnewh(size)) {
             MsvcrtSetErrno(ENOMEM);
-            return NULL;
+            return nullptr;
         }
     }
 }
@@ -293,7 +293,7 @@ void *__cdecl calloc(size_t count, size_t size)
 {
     if (size && count > (size_t)-32 / size) {
         MSVCRT_INVALID(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     return heap_alloc(count * size, HEAP_ZERO_MEMORY);
 }
@@ -310,11 +310,11 @@ void *__cdecl realloc(void *p, size_t size)
         return malloc(size);
     if (!size) {
         free(p);
-        return NULL;
+        return nullptr;
     }
     if (size > (size_t)-32) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     for (;;) {
         void *q = HeapReAlloc(MsvcrtHeap, 0, p, size);
@@ -322,7 +322,7 @@ void *__cdecl realloc(void *p, size_t size)
             return q;
         if (!g_new_mode || !_callnewh(size)) {
             MsvcrtSetErrno(ENOMEM);
-            return NULL;
+            return nullptr;
         }
     }
 }
@@ -331,7 +331,7 @@ void *__cdecl _recalloc(void *p, size_t count, size_t size)
 {
     if (size && count > (size_t)-32 / size) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     size_t old = p ? HeapSize(MsvcrtHeap, 0, p) : 0;
     size_t total = count * size;
@@ -354,11 +354,11 @@ void *__cdecl _expand(void *p, size_t size)
 {
     if (!p) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (size > (size_t)-32) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     void *q = HeapReAlloc(MsvcrtHeap, HEAP_REALLOC_IN_PLACE_ONLY, p, size ? size : 1);
     if (!q)
@@ -368,7 +368,7 @@ void *__cdecl _expand(void *p, size_t size)
 
 int __cdecl _heapchk(void)
 {
-    return HeapValidate(MsvcrtHeap, 0, NULL) ? -2 : -3;
+    return HeapValidate(MsvcrtHeap, 0, nullptr) ? -2 : -3;
 }
 
 int __cdecl _heapmin(void)
@@ -391,7 +391,7 @@ void *__cdecl _aligned_offset_malloc(size_t size, size_t alignment, size_t offse
 {
     if (!alignment || (alignment & (alignment - 1)) || (offset && offset >= size)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (alignment < sizeof(void *))
         alignment = sizeof(void *);
@@ -399,11 +399,11 @@ void *__cdecl _aligned_offset_malloc(size_t size, size_t alignment, size_t offse
     size_t total = size + alignment - 1 + sizeof(void *) + gap;
     if (total < size) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     uintptr_t raw = (uintptr_t)malloc(total);
     if (!raw)
-        return NULL;
+        return nullptr;
     uintptr_t aligned = ((raw + sizeof(void *) + gap + offset + alignment - 1) & ~(alignment - 1)) - offset;
     ((uintptr_t *)((aligned - gap) & ~(sizeof(void *) - 1)))[-1] = raw;
     return (void *)aligned;
@@ -432,13 +432,13 @@ void *__cdecl _aligned_offset_realloc(void *p, size_t size, size_t alignment, si
         return _aligned_offset_malloc(size, alignment, offset);
     if (!size) {
         _aligned_free(p);
-        return NULL;
+        return nullptr;
     }
     uintptr_t raw = aligned_base(p);
     size_t old = HeapSize(MsvcrtHeap, 0, (void *)raw) - ((uintptr_t)p - raw);
     void *q = _aligned_offset_malloc(size, alignment, offset);
     if (!q)
-        return NULL;
+        return nullptr;
     memcpy(q, p, old < size ? old : size);
     _aligned_free(p);
     return q;
@@ -459,11 +459,11 @@ UINT MsvcrtCodePage(void)
 wchar_t *MsvcrtAToW(const char *s)
 {
     if (!s)
-        return NULL;
-    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, NULL, 0);
+        return nullptr;
+    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
     if (n <= 0) {
         MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     wchar_t *w = malloc(n * sizeof(wchar_t));
     if (w)
@@ -474,14 +474,14 @@ wchar_t *MsvcrtAToW(const char *s)
 char *MsvcrtWToA(const wchar_t *s)
 {
     if (!s)
-        return NULL;
-    int n = WideCharToMultiByte(CP_ACP, 0, s, -1, NULL, 0, NULL, NULL);
+        return nullptr;
+    int n = WideCharToMultiByte(CP_ACP, 0, s, -1, nullptr, 0, nullptr, nullptr);
     if (n <= 0) {
         MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     char *a = malloc(n);
     if (a)
-        WideCharToMultiByte(CP_ACP, 0, s, -1, a, n, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, s, -1, a, n, nullptr, nullptr);
     return a;
 }

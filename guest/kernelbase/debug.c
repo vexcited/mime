@@ -15,7 +15,7 @@ void KbRaiseExceptionWithContext(DWORD code, DWORD flags, DWORD count, const ULO
     memset(&record, 0, sizeof(record));
     record.ExceptionCode = (NTSTATUS)code;
     record.ExceptionFlags = flags & EXCEPTION_NONCONTINUABLE;
-    record.ExceptionRecord = NULL;
+    record.ExceptionRecord = nullptr;
     record.ExceptionAddress = (PVOID)RaiseException;
     if (arguments && count) {
         if (count > EXCEPTION_MAXIMUM_PARAMETERS)
@@ -37,7 +37,7 @@ void WINAPI RaiseFailFastException(PEXCEPTION_RECORD record, PCONTEXT context, D
             DbgPrint("kernelbase: access %llu at %p\n", (ULONGLONG)record->ExceptionInformation[0],
                 (PVOID)record->ExceptionInformation[1]);
     }
-#if defined(__x86_64__)
+#ifdef __x86_64__
     if (context) {
         DbgPrint("kernelbase: rip %p rsp %p rax %p rcx %p rdx %p\n", (PVOID)context->Rip,
             (PVOID)context->Rsp, (PVOID)context->Rax, (PVOID)context->Rcx, (PVOID)context->Rdx);
@@ -54,7 +54,7 @@ void WINAPI RaiseFailFastException(PEXCEPTION_RECORD record, PCONTEXT context, D
 LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter(LPTOP_LEVEL_EXCEPTION_FILTER filter)
 {
     PVOID old = __atomic_exchange_n(&g_top_filter, RtlEncodePointer((PVOID)filter), __ATOMIC_ACQ_REL);
-    return old ? (LPTOP_LEVEL_EXCEPTION_FILTER)RtlDecodePointer(old) : NULL;
+    return old ? (LPTOP_LEVEL_EXCEPTION_FILTER)RtlDecodePointer(old) : nullptr;
 }
 
 static void describe_address(PVOID address, char *out, SIZE_T size)
@@ -63,7 +63,7 @@ static void describe_address(PVOID address, char *out, SIZE_T size)
     if (NT_SUCCESS(LdrFindEntryForAddress(address, &entry))) {
         char name[64];
         int n = WideCharToMultiByte(CP_ACP, 0, entry->BaseDllName.Buffer, entry->BaseDllName.Length / sizeof(WCHAR),
-                                    name, sizeof(name) - 1, NULL, NULL);
+                                    name, sizeof(name) - 1, nullptr, nullptr);
         name[n > 0 ? n : 0] = 0;
         KbFormatA(out, size, "%p (%s+0x%llx)", address, name,
                   (ULONGLONG)((PUCHAR)address - (PUCHAR)entry->DllBase));
@@ -75,7 +75,7 @@ static void describe_address(PVOID address, char *out, SIZE_T size)
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
     /* no filter was ever set while the slot is still zero, not an encoded null. */
-    LPTOP_LEVEL_EXCEPTION_FILTER filter = g_top_filter ? RtlDecodePointer(g_top_filter) : NULL;
+    LPTOP_LEVEL_EXCEPTION_FILTER filter = g_top_filter ? RtlDecodePointer(g_top_filter) : nullptr;
     if (filter && __atomic_add_fetch(&g_in_filter, 1, __ATOMIC_ACQ_REL) == 1) {
         LONG r = filter(info);
         __atomic_sub_fetch(&g_in_filter, 1, __ATOMIC_ACQ_REL);

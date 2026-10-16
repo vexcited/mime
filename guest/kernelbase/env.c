@@ -10,7 +10,7 @@ DWORD WINAPI GetEnvironmentVariableW(LPCWSTR name, LPWSTR buffer, DWORD size)
         return 0;
     }
     SIZE_T chars = 0;
-    NTSTATUS status = RtlQueryEnvironmentVariable(NULL, name, wcslen(name), buffer, buffer ? size : 0, &chars);
+    NTSTATUS status = RtlQueryEnvironmentVariable(nullptr, name, wcslen(name), buffer, buffer ? size : 0, &chars);
     if (status == STATUS_BUFFER_TOO_SMALL)
         return (DWORD)chars;
     if (!NT_SUCCESS(status)) {
@@ -30,7 +30,7 @@ DWORD WINAPI GetEnvironmentVariableA(LPCSTR name, LPSTR buffer, DWORD size)
             KbSetError(ERROR_ENVVAR_NOT_FOUND);
         return 0;
     }
-    DWORD chars = GetEnvironmentVariableW(wname, NULL, 0);
+    DWORD chars = GetEnvironmentVariableW(wname, nullptr, 0);
     DWORD result = 0;
     if (chars) {
         PWSTR value = KbAlloc((SIZE_T)chars * sizeof(WCHAR));
@@ -39,11 +39,11 @@ DWORD WINAPI GetEnvironmentVariableA(LPCSTR name, LPSTR buffer, DWORD size)
         } else {
             DWORD got = GetEnvironmentVariableW(wname, value, chars);
             if (got < chars && (got || GetLastError() == ERROR_SUCCESS)) {
-                int need = WideCharToMultiByte(CP_ACP, 0, value, -1, NULL, 0, NULL, NULL);
+                int need = WideCharToMultiByte(CP_ACP, 0, value, -1, nullptr, 0, nullptr, nullptr);
                 if ((DWORD)need > size || !buffer) {
                     result = (DWORD)need;
                 } else {
-                    WideCharToMultiByte(CP_ACP, 0, value, -1, buffer, (int)size, NULL, NULL);
+                    WideCharToMultiByte(CP_ACP, 0, value, -1, buffer, (int)size, nullptr, nullptr);
                     result = (DWORD)need - 1;
                 }
             }
@@ -69,7 +69,7 @@ BOOL WINAPI SetEnvironmentVariableW(LPCWSTR name, LPCWSTR value)
     RtlInitUnicodeString(&n, name);
     if (value)
         RtlInitUnicodeString(&v, value);
-    NTSTATUS status = RtlSetEnvironmentVariable(NULL, &n, value ? &v : NULL);
+    NTSTATUS status = RtlSetEnvironmentVariable(nullptr, &n, value ? &v : nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -119,12 +119,12 @@ LPCH WINAPI GetEnvironmentStringsA(void)
 {
     LPWCH w = GetEnvironmentStringsW();
     if (!w)
-        return NULL;
+        return nullptr;
     SIZE_T n = block_chars(w);
-    int bytes = WideCharToMultiByte(CP_ACP, 0, w, (int)n, NULL, 0, NULL, NULL);
+    int bytes = WideCharToMultiByte(CP_ACP, 0, w, (int)n, nullptr, 0, nullptr, nullptr);
     LPCH a = KbAlloc((SIZE_T)bytes + 1);
     if (a) {
-        WideCharToMultiByte(CP_ACP, 0, w, (int)n, a, bytes, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, w, (int)n, a, bytes, nullptr, nullptr);
         a[bytes] = 0;
     } else {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
@@ -170,7 +170,7 @@ BOOL WINAPI SetEnvironmentStringsW(LPWCH env)
         return FALSE;
     }
     memcpy(copy, env, n * sizeof(WCHAR));
-    PWSTR old = NULL;
+    PWSTR old = nullptr;
     RtlSetCurrentEnvironment(copy, &old);
     KbParams()->EnvironmentSize = n * sizeof(WCHAR);
     /* the old block may be the initial one from the kernel, which is never freed. */
@@ -184,7 +184,7 @@ DWORD WINAPI ExpandEnvironmentStringsW(LPCWSTR src, LPWSTR dst, DWORD size)
         return 0;
     }
     SIZE_T chars = 0;
-    NTSTATUS status = RtlExpandEnvironmentStrings(NULL, src, wcslen(src), dst, dst ? size : 0, &chars);
+    NTSTATUS status = RtlExpandEnvironmentStrings(nullptr, src, wcslen(src), dst, dst ? size : 0, &chars);
     if (!NT_SUCCESS(status) && status != STATUS_BUFFER_TOO_SMALL) {
         KbSetStatus(status);
         return 0;
@@ -204,13 +204,13 @@ DWORD WINAPI ExpandEnvironmentStringsA(LPCSTR src, LPSTR dst, DWORD size)
             KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    DWORD chars = ExpandEnvironmentStringsW(wsrc, NULL, 0);
+    DWORD chars = ExpandEnvironmentStringsW(wsrc, nullptr, 0);
     DWORD result = 0;
-    PWSTR expanded = chars ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : NULL;
+    PWSTR expanded = chars ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : nullptr;
     if (expanded && ExpandEnvironmentStringsW(wsrc, expanded, chars)) {
-        int need = WideCharToMultiByte(CP_ACP, 0, expanded, -1, NULL, 0, NULL, NULL);
+        int need = WideCharToMultiByte(CP_ACP, 0, expanded, -1, nullptr, 0, nullptr, nullptr);
         if (dst && size >= (DWORD)need)
-            WideCharToMultiByte(CP_ACP, 0, expanded, -1, dst, (int)size, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, expanded, -1, dst, (int)size, nullptr, nullptr);
         result = (DWORD)need;
     } else if (chars && !expanded) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);

@@ -83,7 +83,7 @@ DECLSPEC_EXPORT int __cdecl _configure_narrow_argv(int mode)
 
 DECLSPEC_EXPORT FILE *__cdecl __acrt_iob_func(unsigned index)
 {
-    return index < 3 ? &MsvcrtIob[index] : NULL;
+    return index < 3 ? &MsvcrtIob[index] : nullptr;
 }
 
 DECLSPEC_EXPORT int __cdecl _get_stream_buffer_pointers(FILE *stream, char ***base, char ***pointer, int **count)
@@ -163,7 +163,7 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf(ULONGLONG options, wchar_t 
     }
     va_list measure;
     va_copy(measure, args);
-    int count = MsvcrtVsnwprintf(NULL, 0, format, measure);
+    int count = MsvcrtVsnwprintf(nullptr, 0, format, measure);
     va_end(measure);
     if (count < 0)
         return count;
@@ -188,7 +188,7 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vsprintf(ULONGLONG options, char *buf
     }
     va_list measure;
     va_copy(measure, args);
-    int count = MsvcrtVsnprintf(NULL, 0, format, measure);
+    int count = MsvcrtVsnprintf(nullptr, 0, format, measure);
     va_end(measure);
     if (count < 0)
         return count;
@@ -216,6 +216,6 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vsscanf(ULONGLONG options, const char
         MSVCRT_INVALID(EINVAL);
         return EOF;
     }
-    return MsvcrtScanA(NULL, buffer, size, format, args);
+    return MsvcrtScanA(nullptr, buffer, size, format, args);
 }
 

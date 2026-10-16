@@ -34,7 +34,7 @@ static LONG state_close(WINTRUST_DATA *data)
     BOOL valid = (token >> 24) == 0x57 && states[i].active && states[i].generation == generation;
     if (valid) {
         states[i].active = FALSE;
-        data->hWVTStateData = NULL;
+        data->hWVTStateData = nullptr;
     }
     ReleaseSRWLockExclusive(&state_lock);
     return valid ? 0 : E_INVALIDARG;
@@ -49,11 +49,11 @@ static LONG verify_file(const WINTRUST_DATA *data)
     HANDLE file = info->hFile;
     BOOL owned = !file;
     if (owned)
-        file = CreateFileW(info->pcwszFilePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+        file = CreateFileW(info->pcwszFilePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return owned ? HRESULT_FROM_WIN32(GetLastError()) : E_INVALIDARG;
-    LARGE_INTEGER size, position, zero = {0};
-    BYTE *bytes = NULL;
+    LARGE_INTEGER size, position, zero = {};
+    BYTE *bytes = nullptr;
     LONG result = 0;
     BOOL restore = FALSE;
     if (!GetFileSizeEx(file, &size))
@@ -67,12 +67,12 @@ static LONG verify_file(const WINTRUST_DATA *data)
     else {
         restore = !owned;
         DWORD read;
-        if (!SetFilePointerEx(file, zero, NULL, FILE_BEGIN) || !ReadFile(file, bytes, (DWORD)size.QuadPart, &read, NULL))
+        if (!SetFilePointerEx(file, zero, nullptr, FILE_BEGIN) || !ReadFile(file, bytes, (DWORD)size.QuadPart, &read, nullptr))
             result = HRESULT_FROM_WIN32(GetLastError());
         else if (read != size.QuadPart)
             result = HRESULT_FROM_WIN32(ERROR_READ_FAULT);
     }
-    if (restore && !SetFilePointerEx(file, position, NULL, FILE_BEGIN) && !result)
+    if (restore && !SetFilePointerEx(file, position, nullptr, FILE_BEGIN) && !result)
         result = HRESULT_FROM_WIN32(GetLastError());
     if (owned)
         CloseHandle(file);

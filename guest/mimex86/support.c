@@ -39,7 +39,7 @@ static u128 udivmod(u128 n, u128 d, u128 *rem)
 
 u128 __udivti3(u128 n, u128 d)
 {
-    return udivmod(n, d, NULL);
+    return udivmod(n, d, nullptr);
 }
 
 u128 __umodti3(u128 n, u128 d)
@@ -52,7 +52,7 @@ u128 __umodti3(u128 n, u128 d)
 s128 __divti3(s128 n, s128 d)
 {
     int negative = (n < 0) != (d < 0);
-    u128 q = udivmod(n < 0 ? -(u128)n : (u128)n, d < 0 ? -(u128)d : (u128)d, NULL);
+    u128 q = udivmod(n < 0 ? -(u128)n : (u128)n, d < 0 ? -(u128)d : (u128)d, nullptr);
     return negative ? -(s128)q : (s128)q;
 }
 
@@ -65,11 +65,11 @@ s128 __modti3(s128 n, s128 d)
 
 void *x86_alloc_code(size_t size)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T bytes = size;
     if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &bytes, MEM_COMMIT | MEM_RESERVE,
                                             PAGE_EXECUTE_READWRITE)))
-        return NULL;
+        return nullptr;
     return base;
 }
 

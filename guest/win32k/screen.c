@@ -23,7 +23,7 @@ SURFACE *ScreenSurface(void)
             g_screen->Flags |= SURF_RETIRED;
         else
             SurfaceDestroy(g_screen);
-        g_screen = NULL;
+        g_screen = nullptr;
     }
     if (!g_screen)
         g_screen = SurfaceCreate(W32Display.Width, W32Display.Height, 32, SURF_TOPDOWN);
@@ -58,7 +58,7 @@ static BOOLEAN read_presented(WND *w, ULONG *width, ULONG *height, RECT *client)
         memset(r, 0, sizeof(*r));
         r->window_id = (uint32_t)(ULONG_PTR)WndHandle(w);
         /* first the size, then the pixels into a buffer that holds them. */
-        if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, NULL))
+        if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, nullptr))
             return FALSE;
         SIZE_T need = (SIZE_T)r->width * r->height * 4;
         if (!need)
@@ -78,7 +78,7 @@ static BOOLEAN read_presented(WND *w, ULONG *width, ULONG *height, RECT *client)
         r->stride = r->width * 4;
         r->pixels_phys = (uint64_t)MmGetPhysicalAddress(g_pixels).QuadPart;
         ULONG want_w = r->width, want_h = r->height;
-        if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, NULL))
+        if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, nullptr))
             return FALSE;
         /* a present in between may have changed the size: once more. */
         if (r->width != want_w || r->height != want_h)

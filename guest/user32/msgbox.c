@@ -19,10 +19,10 @@
 #define MB_STRING_COUNT 11
 #define MB_STRING_BASE 800
 
-static const BYTE g_type_count[7] = {1, 2, 3, 3, 2, 2, 3};
-static const BYTE g_type_first[7] = {0, 2, 5, 12, 9, 16, 19};
+static constexpr BYTE g_type_count[7] = {1, 2, 3, 3, 2, 2, 3};
+static constexpr BYTE g_type_first[7] = {0, 2, 5, 12, 9, 16, 19};
 /* indexes into the string table, each group followed by the help button. */
-static const BYTE g_buttons[] = {0, 8, 0, 1, 8, 2, 3, 4, 8, 5, 6, 8, 5, 6, 1, 8, 3, 1, 8, 1, 9, 10, 8};
+static constexpr BYTE g_buttons[] = {0, 8, 0, 1, 8, 2, 3, 4, 8, 5, 6, 8, 5, 6, 1, 8, 3, 1, 8, 1, 9, 10, 8};
 
 typedef struct MSGBOX {
     MSGBOXPARAMSW Params;
@@ -204,7 +204,7 @@ static INT_PTR CALLBACK msgbox_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             if (ok)
                 SetWindowLongPtrW(ok, GWLP_ID, IDCANCEL);
         }
-        if (mb->Timeout != (DWORD)-1 && !SetTimer(hwnd, 0, mb->Timeout, NULL))
+        if (mb->Timeout != (DWORD)-1 && !SetTimer(hwnd, 0, mb->Timeout, nullptr))
             mb->Timeout = (DWORD)-1;
         return FALSE;
     }
@@ -320,14 +320,14 @@ static int box_layout_and_run(MSGBOX *mb)
     }
     BOOL has_icon = icon_ordinal != 0;
 
-    HDC dc = GetDCEx(NULL, NULL, DCX_WINDOW | DCX_CACHE);
+    HDC dc = GetDCEx(nullptr, nullptr, DCX_WINDOW | DCX_CACHE);
     HFONT font = UserGetMessageBoxFont(dpi);
     HGDIOBJ old_font = SelectObject(dc, font);
     LONG cy = 0;
-    LONG cx = GdiGetCharDimensions(dc, NULL, &cy);
+    LONG cx = GdiGetCharDimensions(dc, nullptr, &cy);
     if (!cx) {
         SelectObject(dc, old_font);
-        ReleaseDC(NULL, dc);
+        ReleaseDC(nullptr, dc);
         DeleteObject(font);
         return 0;
     }
@@ -381,7 +381,7 @@ static int box_layout_and_run(MSGBOX *mb)
             break;
     }
     SelectObject(dc, old_font);
-    ReleaseDC(NULL, dc);
+    ReleaseDC(nullptr, dc);
 
     int content = IH > TH ? IH : TH;
     int band_top = content + 2 * V14;
@@ -405,7 +405,7 @@ static int box_layout_and_run(MSGBOX *mb)
 
     /* the template, in dialog units. */
     SIZE_T text_len = wcslen(text), caption_len = wcslen(caption);
-    TEMPLATE_BUFFER t = {NULL, 0, 512 + (text_len + caption_len) * sizeof(WCHAR) + mb->Count * 64};
+    TEMPLATE_BUFFER t = {nullptr, 0, 512 + (text_len + caption_len) * sizeof(WCHAR) + mb->Count * 64};
     t.Data = UserAlloc(t.Capacity);
     if (!t.Data) {
         DeleteObject(font);
@@ -435,7 +435,7 @@ static int box_layout_and_run(MSGBOX *mb)
         put_item(&t, s, 0, bx + (int)i * (BW + G), by, BW, V14, (WORD)mb->Ids[i], 0x80, mb->Texts[i], 0, cx, cy, FALSE);
     }
     if (has_icon)
-        put_item(&t, 0x50020003u, 0, M, V14, 0, 0, MB_ICON_STATIC_ID, 0x82, NULL, icon_ordinal, cx, cy, FALSE);
+        put_item(&t, 0x50020003u, 0, M, V14, 0, 0, MB_ICON_STATIC_ID, 0x82, nullptr, icon_ordinal, cx, cy, FALSE);
     int dy = TH < IH ? (IH - TH) / 2 : 0;
     int tx = right ? W - CXS - TW : IW + T7;
     put_item(&t, right ? 0x50022082u : 0x50022080u, ex_text, tx, V14 + dy, TW, TH, 0xFFFF, 0x82, text, 0, cx, cy,
@@ -445,7 +445,7 @@ static int box_layout_and_run(MSGBOX *mb)
     if (!(style & MB_USERICON) && (style & MB_ICONMASK))
         MessageBeep(style & MB_ICONMASK);
 
-    HCURSOR old_cursor = SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(32512)));
+    HCURSOR old_cursor = SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
     HWND owner = p->hwndOwner;
     if (owner) {
         HWND root = GetAncestor(owner, GA_ROOT);

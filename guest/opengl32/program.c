@@ -12,13 +12,13 @@
 GlProgram *gl_program(GlContext *ctx, GLuint name)
 {
     void *p = gl_name_get(&ctx->shared->programs, name);
-    return p == GL_RESERVED ? NULL : p;
+    return p == GL_RESERVED ? nullptr : p;
 }
 
 static GlShader *shader(GlContext *ctx, GLuint name)
 {
     void *s = gl_name_get(&ctx->shared->shaders, name);
-    return s == GL_RESERVED ? NULL : s;
+    return s == GL_RESERVED ? nullptr : s;
 }
 
 /* programs and shaders share one name space, as gl requires. */
@@ -51,8 +51,8 @@ static void release_shader(GlContext *ctx, GlShader *s)
 {
     if (--s->refs)
         return;
-    gl_name_set(&ctx->shared->shaders, s->name, NULL);
-    gl_name_set(&ctx->shared->programs, s->name, NULL);
+    gl_name_set(&ctx->shared->shaders, s->name, nullptr);
+    gl_name_set(&ctx->shared->programs, s->name, nullptr);
     gl_free(s->source);
     gl_free(s);
 }
@@ -191,16 +191,16 @@ static void free_reflection(GlProgram *p)
     for (uint32_t i = 0; i < p->block_count; i++)
         gl_free(p->blocks[i].name);
     gl_free(p->blocks);
-    p->blocks = NULL;
+    p->blocks = nullptr;
     p->block_count = 0;
     gl_free(p->uniforms);
     gl_free(p->attribs);
     gl_free(p->ublock);
     gl_free(p->log);
-    p->uniforms = NULL;
-    p->attribs = NULL;
-    p->ublock = NULL;
-    p->log = NULL;
+    p->uniforms = nullptr;
+    p->attribs = nullptr;
+    p->ublock = nullptr;
+    p->log = nullptr;
     p->uniform_count = p->attrib_count = 0;
     p->attrib_mask = 0;
 }
@@ -220,8 +220,8 @@ static void destroy_program(GlContext *ctx, GlProgram *p)
     gl_heap_free(&p->info, gl_batch_fence());
     free_reflection(p);
     gl_free(p->bindings);
-    gl_name_set(&ctx->shared->programs, p->name, NULL);
-    gl_name_set(&ctx->shared->shaders, p->name, NULL);
+    gl_name_set(&ctx->shared->programs, p->name, nullptr);
+    gl_name_set(&ctx->shared->shaders, p->name, nullptr);
     gl_free(p);
 }
 
@@ -320,7 +320,7 @@ GLAPI void APIENTRY glLinkProgram(GLuint name)
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
-    const char *vs = NULL, *fs = NULL;
+    const char *vs = nullptr, *fs = nullptr;
     for (uint32_t i = 0; i < p->shader_count; i++) {
         GlShader *s = p->shaders[i];
         if (s->type == GL_VERTEX_SHADER && !vs)
@@ -453,14 +453,14 @@ BOOL gl_program_ready(GlProgram *p)
 GLAPI void APIENTRY glUseProgram(GLuint name)
 {
     GL_CONTEXT_OR_RETURN();
-    GlProgram *p = name ? gl_program(ctx, name) : NULL;
+    GlProgram *p = name ? gl_program(ctx, name) : nullptr;
     if (name && !p) {
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
     GlProgram *old = ctx->current_program;
     if (old && old->deleted && old != p) {
-        ctx->current_program = NULL;
+        ctx->current_program = nullptr;
         destroy_program(ctx, old);
     }
     ctx->program = name;
@@ -755,12 +755,12 @@ GLAPI void APIENTRY glGetActiveUniformBlockName(GLuint program, GLuint index, GL
 static GlUniform *lookup(GlContext *ctx, GlProgram *p, GLint location, GLint *element)
 {
     if (!p || location < 0 || !gl_program_ready(p))
-        return NULL;
+        return nullptr;
     uint32_t i = (uint32_t)location / 4096;
     *element = location % 4096;
     if (i >= p->uniform_count || *element >= p->uniforms[i].size) {
         gl_error(ctx, GL_INVALID_OPERATION);
-        return NULL;
+        return nullptr;
     }
     return &p->uniforms[i];
 }

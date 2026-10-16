@@ -136,7 +136,7 @@ static PKTHREAD volatile g_create_owner;
 
 static void lock(void)
 {
-    KeWaitForSingleObject(&g_lock, Executive, KernelMode, FALSE, NULL);
+    KeWaitForSingleObject(&g_lock, Executive, KernelMode, FALSE, nullptr);
 }
 
 static void unlock(void)
@@ -195,14 +195,14 @@ static NP_REQUEST *new_request(PFILE_OBJECT file, HANDLE event, PVOID apc_routin
     NP_REQUEST *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('N', 'p', 'R', 'q'));
     if (!r) {
         *status = STATUS_INSUFFICIENT_RESOURCES;
-        return NULL;
+        return nullptr;
     }
     memset(r, 0, sizeof(*r));
     if (event) {
-        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, NULL);
+        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
         if (!NT_SUCCESS(*status)) {
             ExFreePool(r);
-            return NULL;
+            return nullptr;
         }
         KeClearEvent(r->Event);
     }
@@ -279,7 +279,7 @@ static NTSTATUS pending(NP_REQUEST *r)
 {
     if (!r->Waiter)
         return STATUS_PENDING;
-    KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, NULL);
+    KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
     NTSTATUS status = r->Status;
     free_request(r);
     return status;
@@ -359,7 +359,7 @@ static NP_PIPE *find_pipe(PCUNICODE_STRING name)
         if (RtlEqualUnicodeString(&p->Name, name, TRUE))
             return p;
     }
-    return NULL;
+    return nullptr;
 }
 
 static NP_INSTANCE *listening_instance(NP_PIPE *p)
@@ -369,7 +369,7 @@ static NP_INSTANCE *listening_instance(NP_PIPE *p)
         if (in->State == FILE_PIPE_LISTENING_STATE && in->ServerOpen)
             return in;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void release_instance(NP_INSTANCE *in)
@@ -532,7 +532,7 @@ static NTSTATUS NTAPI np_cleanup(PDEVICE_OBJECT device, PIRP irp)
         release_instance(in);
     } else if (in && file->FsContext2 == END_CLIENT && in->ClientOpen && in->Client == file) {
         in->ClientOpen = FALSE;
-        in->Client = NULL;
+        in->Client = nullptr;
         fail_all(&in->ToClient.Readers, STATUS_PIPE_BROKEN);
         if (in->ServerOpen) {
             in->State = FILE_PIPE_CLOSING_STATE;
@@ -541,7 +541,7 @@ static NTSTATUS NTAPI np_cleanup(PDEVICE_OBJECT device, PIRP irp)
         }
         release_instance(in);
     }
-    file->FsContext = NULL;
+    file->FsContext = nullptr;
     unlock();
     return complete_irp(irp, STATUS_SUCCESS, 0);
 }
@@ -679,7 +679,7 @@ void IopInitializeNamedPipes(void)
     KeInitializeMutex(&g_lock, 0);
     KeInitializeMutex(&g_create_lock, 0);
     InitializeListHead(&g_pipes);
-    NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Npfs", NpfsDriverEntry, NULL);
+    NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Npfs", NpfsDriverEntry, nullptr);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("npfs failed to start: %08x", status);
         return;
@@ -719,17 +719,17 @@ NTSTATUS NTAPI NtCreateNamedPipeFile(PHANDLE handle, ACCESS_MASK access, POBJECT
     if (!NT_SUCCESS(status))
         return status;
     /* one server create at a time: the create request finds its parameters through the owner thread. */
-    KeWaitForSingleObject(&g_create_lock, Executive, KernelMode, FALSE, NULL);
+    KeWaitForSingleObject(&g_create_lock, Executive, KernelMode, FALSE, nullptr);
     lock();
     g_create_owner = KiCurrentThread();
     g_create_owner_params = &c;
     unlock();
-    IO_STATUS_BLOCK io = {0};
-    HANDLE h = NULL;
+    IO_STATUS_BLOCK io = {};
+    HANDLE h = nullptr;
     status = IopCreateFile(&h, access, &oa, &io, 0, share, disposition, options, KeGetPreviousMode());
     lock();
-    g_create_owner = NULL;
-    g_create_owner_params = NULL;
+    g_create_owner = nullptr;
+    g_create_owner_params = nullptr;
     unlock();
     KeReleaseMutex(&g_create_lock, FALSE);
     KiFreeCapturedString(&name);
@@ -751,7 +751,7 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
     NP_REQUEST *r = new_request(file, event, apc_routine, apc_context, iosb, buffer, length, &status);
     if (!r)
         return status;
-    PUCHAR copy = NULL;
+    PUCHAR copy = nullptr;
     if (write && length) {
         /* the data is taken now, in the writer's address space. */
         copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NP_DATA) + length, KI_TAG('N', 'p', 'D', 't'));
@@ -975,8 +975,8 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
             flush_queue(&in->ToServer);
             if (in->Client) {
                 /* the client end stays open but no longer belongs to the instance. */
-                in->Client->FsContext = NULL;
-                in->Client = NULL;
+                in->Client->FsContext = nullptr;
+                in->Client = nullptr;
                 in->ClientOpen = FALSE;
             }
             in->State = FILE_PIPE_DISCONNECTED_STATE;
@@ -991,7 +991,7 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
     case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:
     case FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE: {
         /* the processes and sessions of the two ends, asked by name. */
-        char name[32] = {0};
+        char name[32] = {};
         ULONG value = 0;
         status = in_len && in_len < sizeof(name) ? KiCopyFromUser(name, input, in_len) : STATUS_INVALID_PARAMETER;
         if (NT_SUCCESS(status)) {

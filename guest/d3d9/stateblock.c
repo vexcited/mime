@@ -10,21 +10,21 @@
  */
 #include "d3d9_private.h"
 
-static const BYTE ALL_RS[] = {29,  7,   8,   9,   14,  15,  16,  19,  20,  22,  23,  24,  25,  26,  28,  33,  34,  35,
+static constexpr BYTE ALL_RS[] = {29,  7,   8,   9,   14,  15,  16,  19,  20,  22,  23,  24,  25,  26,  28,  33,  34,  35,
                               36,  37,  38,  40,  27,  195, 48,  52,  53,  54,  55,  56,  57,  58,  59,  60,  128, 129,
                               130, 131, 132, 133, 134, 135, 198, 199, 200, 201, 202, 203, 204, 205, 139, 141, 140, 136,
                               137, 143, 142, 148, 147, 145, 146, 151, 152, 154, 155, 156, 157, 158, 159, 160, 161, 162,
                               163, 166, 167, 168, 170, 171, 172, 173, 174, 175, 176, 178, 179, 180, 181, 182, 183, 184,
                               185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 206, 207, 208, 209};
-static const BYTE PIXEL_RS[] = {7,   8,   9,   14,  15,  16,  19,  20,  23,  24,  25,  26,  33,  36,  37,  38,
+static constexpr BYTE PIXEL_RS[] = {7,   8,   9,   14,  15,  16,  19,  20,  23,  24,  25,  26,  33,  36,  37,  38,
                                 40,  27,  195, 52,  53,  54,  55,  56,  57,  58,  59,  60,  128, 129, 130, 131,
                                 132, 133, 134, 135, 198, 199, 200, 201, 202, 203, 204, 205, 168, 171, 174, 175,
                                 176, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 206, 207, 208, 209};
-static const BYTE VERTEX_RS[] = {9,   29,  22,  28,  34,  35,  36,  37,  38,  48,  139, 141, 140, 136, 137,
+static constexpr BYTE VERTEX_RS[] = {9,   29,  22,  28,  34,  35,  36,  37,  38,  48,  139, 141, 140, 136, 137,
                                  143, 142, 148, 147, 145, 146, 151, 152, 154, 155, 156, 157, 158, 159, 160,
                                  161, 162, 163, 166, 167, 170, 172, 173, 178, 179, 180, 181, 182, 183, 184};
-static const BYTE STAGE_STATES[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 22, 23, 24, 26, 27, 28};
-static const BYTE VERTEX_STAGE_STATES[] = {D3DTSS_TEXCOORDINDEX, D3DTSS_TEXTURETRANSFORMFLAGS};
+static constexpr BYTE STAGE_STATES[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 22, 23, 24, 26, 27, 28};
+static constexpr BYTE VERTEX_STAGE_STATES[] = {D3DTSS_TEXCOORDINDEX, D3DTSS_TEXTURETRANSFORMFLAGS};
 
 static D9StateBlock *impl(IDirect3DStateBlock9 *iface) { return CONTAINING_RECORD(iface, D9StateBlock, iface); }
 
@@ -122,7 +122,7 @@ static D9BlockLight *block_light(D9StateBlock *b, DWORD index)
     D9BlockLight *lights = b->v.lights ? HeapReAlloc(GetProcessHeap(), 0, b->v.lights, (b->v.light_count + 1) * sizeof(*lights))
                                        : HeapAlloc(GetProcessHeap(), 0, sizeof(*lights));
     if (!lights)
-        return NULL;
+        return nullptr;
     b->v.lights = lights;
     D9BlockLight *l = &lights[b->v.light_count++];
     memset(l, 0, sizeof(*l));
@@ -370,23 +370,23 @@ static void apply(D9StateBlock *b)
     if (m->scissor)
         dev->lpVtbl->SetScissorRect(dev, &v->scissor);
     if (m->vs)
-        dev->lpVtbl->SetVertexShader(dev, v->vs ? &v->vs->iface.vs : NULL);
+        dev->lpVtbl->SetVertexShader(dev, v->vs ? &v->vs->iface.vs : nullptr);
     if (m->ps)
-        dev->lpVtbl->SetPixelShader(dev, v->ps ? &v->ps->iface.ps : NULL);
+        dev->lpVtbl->SetPixelShader(dev, v->ps ? &v->ps->iface.ps : nullptr);
     if (m->decl)
-        dev->lpVtbl->SetVertexDeclaration(dev, v->decl ? &v->decl->iface : NULL);
+        dev->lpVtbl->SetVertexDeclaration(dev, v->decl ? &v->decl->iface : nullptr);
     for (UINT i = 0; i < D9_MAX_SAMPLERS; i++)
         if (m->textures & (1u << i))
-            dev->lpVtbl->SetTexture(dev, sampler_number(i), v->textures[i] ? &v->textures[i]->iface.base : NULL);
+            dev->lpVtbl->SetTexture(dev, sampler_number(i), v->textures[i] ? &v->textures[i]->iface.base : nullptr);
     for (UINT i = 0; i < D9_MAX_STREAMS; i++) {
         if (m->streams & (1u << i))
-            dev->lpVtbl->SetStreamSource(dev, i, v->streams[i].buffer ? &v->streams[i].buffer->iface.vb : NULL,
+            dev->lpVtbl->SetStreamSource(dev, i, v->streams[i].buffer ? &v->streams[i].buffer->iface.vb : nullptr,
                                          v->streams[i].offset, v->streams[i].stride);
         if (m->stream_freq & (1u << i))
             dev->lpVtbl->SetStreamSourceFreq(dev, i, v->stream_freq[i]);
     }
     if (m->indices)
-        dev->lpVtbl->SetIndices(dev, v->indices ? &v->indices->iface.ib : NULL);
+        dev->lpVtbl->SetIndices(dev, v->indices ? &v->indices->iface.ib : nullptr);
     for (UINT i = 0; i < D9_VS_CONSTANTS; i++)
         if (has_bit(m->vs_f, i))
             dev->lpVtbl->SetVertexShaderConstantF(dev, i, v->vs_f[i], 1);
@@ -415,7 +415,7 @@ static HRESULT STDMETHODCALLTYPE block_query(IDirect3DStateBlock9 *iface, REFIID
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DStateBlock9)) {
         *out = iface;
         D9ResourceAddRef(&impl(iface)->base);

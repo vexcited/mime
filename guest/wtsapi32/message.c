@@ -15,7 +15,7 @@ static DWORD WINAPI send_message(PVOID parameter)
 {
     SESSION_MESSAGE *message = parameter;
     HMODULE module = message->Module;
-    MessageBoxTimeoutW(NULL, message->Text, message->Title, message->Style, 0, message->Timeout);
+    MessageBoxTimeoutW(nullptr, message->Text, message->Title, message->Style, 0, message->Timeout);
     LocalFree(message);
     FreeLibraryAndExitThread(module, 0);
 }
@@ -57,7 +57,7 @@ DECLSPEC_EXPORT BOOL WINAPI WTSSendMessageW(HANDLE server, DWORD session, LPWSTR
     message->Style = style;
     message->Timeout = timeout ? timeout * 1000 : UINT32_MAX;
     if (wait) {
-        int result = MessageBoxTimeoutW(NULL, message->Text, message->Title, style, 0, message->Timeout);
+        int result = MessageBoxTimeoutW(nullptr, message->Text, message->Title, style, 0, message->Timeout);
         DWORD error = result ? ERROR_SUCCESS : GetLastError();
         LocalFree(message);
         if (!result) {
@@ -71,7 +71,7 @@ DECLSPEC_EXPORT BOOL WINAPI WTSSendMessageW(HANDLE server, DWORD session, LPWSTR
         LocalFree(message);
         return FALSE;
     }
-    HANDLE thread = CreateThread(NULL, 0, send_message, message, 0, NULL);
+    HANDLE thread = CreateThread(nullptr, 0, send_message, message, 0, nullptr);
     if (!thread) {
         DWORD error = GetLastError();
         FreeLibrary(message->Module);

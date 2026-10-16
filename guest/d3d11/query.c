@@ -12,12 +12,12 @@
 #define VTBL_FN(f) ((void *)(f))
 #define POOL_SLOTS RTL_NUMBER_OF(((D3dQueryPool *)0)->refs)
 
-static const UINT RESULT_STRIDE[D3D_QUERY_KINDS] = {0, 8, 11 * 8, 8, 16, 16, 16, 16};
+static constexpr UINT RESULT_STRIDE[D3D_QUERY_KINDS] = {0, 8, 11 * 8, 8, 16, 16, 16, 16};
 #define STREAM_KINDS (((1u << D3D11_SO_STREAM_COUNT) - 1) << D3D_QUERY_STREAM0)
 
 static D3dQuery *query_impl(void *iface) { return CONTAINING_RECORD(iface, D3dQuery, iface); }
 
-D3dQuery *D3dQueryFrom(ID3D11Asynchronous *iface) { return iface ? query_impl(iface) : NULL; }
+D3dQuery *D3dQueryFrom(ID3D11Asynchronous *iface) { return iface ? query_impl(iface) : nullptr; }
 
 /* ------------------------------------------------------------------ slots */
 
@@ -26,7 +26,7 @@ static D3dQueryPool *new_pool(D3dDevice *device, D3dQueryKind kind)
     D3dVk *vk = &device->vk;
     D3dQueryPool *pool = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*pool));
     if (!pool)
-        return NULL;
+        return nullptr;
     VkQueryPoolCreateInfo info = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
     info.queryCount = POOL_SLOTS;
     pool->kind = kind;
@@ -42,7 +42,7 @@ static D3dQueryPool *new_pool(D3dDevice *device, D3dQueryKind kind)
     } else {
         info.queryType = VK_QUERY_TYPE_TIMESTAMP;
     }
-    if (vk->vkCreateQueryPool(vk->device, &info, NULL, &pool->pool) != VK_SUCCESS)
+    if (vk->vkCreateQueryPool(vk->device, &info, nullptr, &pool->pool) != VK_SUCCESS)
         goto fail;
     if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_READBACK, POOL_SLOTS * RESULT_STRIDE[kind], 16, &pool->results)))
         goto fail;
@@ -50,9 +50,9 @@ static D3dQueryPool *new_pool(D3dDevice *device, D3dQueryKind kind)
     return pool;
 fail:
     if (pool->pool)
-        vk->vkDestroyQueryPool(vk->device, pool->pool, NULL);
+        vk->vkDestroyQueryPool(vk->device, pool->pool, nullptr);
     HeapFree(GetProcessHeap(), 0, pool);
-    return NULL;
+    return nullptr;
 }
 
 /* a slot reset and ready to begin: one the gpu is done with, or a new one. */
@@ -132,7 +132,7 @@ void D3dQueryPoolsDestroy(D3dDevice *device)
         while (device->query_pools[k]) {
             D3dQueryPool *pool = device->query_pools[k];
             device->query_pools[k] = pool->next;
-            vk->vkDestroyQueryPool(vk->device, pool->pool, NULL);
+            vk->vkDestroyQueryPool(vk->device, pool->pool, nullptr);
             D3dFree(device, &pool->results);
             HeapFree(GetProcessHeap(), 0, pool);
         }
@@ -250,8 +250,8 @@ void D3dQueriesRelease(D3dContext *c)
     }
     HeapFree(GetProcessHeap(), 0, c->queries);
     HeapFree(GetProcessHeap(), 0, c->query_copies);
-    c->queries = NULL;
-    c->query_copies = NULL;
+    c->queries = nullptr;
+    c->query_copies = nullptr;
     c->query_capacity = c->query_copy_capacity = c->query_copy_count = 0;
 }
 
@@ -369,7 +369,7 @@ HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT 
     if (data && size && size != data_size(q->desc.Query))
         return E_INVALIDARG;
     if (!size)
-        data = NULL;
+        data = nullptr;
     if (q->begun)
         return DXGI_ERROR_INVALID_CALL;
     /* polling without flushes flushes anyway after 254 calls that found nothing. */
@@ -469,7 +469,7 @@ static HRESULT STDMETHODCALLTYPE query_query(void *iface, REFIID riid, void **ou
     if (!out)
         return E_POINTER;
     D3dQuery *q = query_impl(iface);
-    void *d3d10 = NULL;
+    void *d3d10 = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild) ||
         IsEqualGUID(riid, &IID_ID3D11Asynchronous) || IsEqualGUID(riid, &IID_ID3D11Query) ||
         IsEqualGUID(riid, &IID_ID3D11Query1) || (is_predicate(q->desc.Query) && IsEqualGUID(riid, &IID_ID3D11Predicate)) ||
@@ -478,7 +478,7 @@ static HRESULT STDMETHODCALLTYPE query_query(void *iface, REFIID riid, void **ou
         *out = d3d10 ? d3d10 : iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 

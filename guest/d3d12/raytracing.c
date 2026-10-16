@@ -27,7 +27,7 @@ static const D3D12_GPU_VIRTUAL_ADDRESS_RANGE *region_of(D12Device *device, D3D12
         else
             return r;
     }
-    return NULL;
+    return nullptr;
 }
 
 void D12AccelerationRegionAdd(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, UINT64 size)
@@ -95,7 +95,7 @@ VkAccelerationStructureKHR D12AccelerationStructureAt(D12Device *device, D3D12_G
     info.size = size ? D12_MIN(size, available) : available;
     info.type = VK_ACCELERATION_STRUCTURE_TYPE_GENERIC_KHR;
     VkAccelerationStructureKHR handle;
-    if (vk->vkCreateAccelerationStructureKHR(vk->device, &info, NULL, &handle) != VK_SUCCESS)
+    if (vk->vkCreateAccelerationStructureKHR(vk->device, &info, nullptr, &handle) != VK_SUCCESS)
         return VK_NULL_HANDLE;
     VkAccelerationStructureDeviceAddressInfoKHR address = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
     address.accelerationStructure = handle;
@@ -126,7 +126,7 @@ VkAccelerationStructureKHR D12AccelerationStructureAt(D12Device *device, D3D12_G
     }
     ReleaseSRWLockExclusive(&device->as_lock);
     if (handle)
-        vk->vkDestroyAccelerationStructureKHR(vk->device, handle, NULL);
+        vk->vkDestroyAccelerationStructureKHR(vk->device, handle, nullptr);
     return found;
 }
 
@@ -138,7 +138,7 @@ void D12AccelerationStructuresForget(D12Device *device, D3D12_GPU_VIRTUAL_ADDRES
     AcquireSRWLockExclusive(&device->as_lock);
     UINT first = find(device, va), last = first;
     while (last < device->as_count && device->as_list[last].va < va + size)
-        vk->vkDestroyAccelerationStructureKHR(vk->device, device->as_list[last++].handle, NULL);
+        vk->vkDestroyAccelerationStructureKHR(vk->device, device->as_list[last++].handle, nullptr);
     memmove(&device->as_list[first], &device->as_list[last], (device->as_count - last) * sizeof(*device->as_list));
     device->as_count -= last - first;
     UINT kept = 0;
@@ -152,11 +152,11 @@ void D12AccelerationStructuresForget(D12Device *device, D3D12_GPU_VIRTUAL_ADDRES
 void D12AccelerationStructuresDestroy(D12Device *device)
 {
     for (UINT i = 0; i < device->as_count; i++)
-        device->vk.vkDestroyAccelerationStructureKHR(device->vk.device, device->as_list[i].handle, NULL);
+        device->vk.vkDestroyAccelerationStructureKHR(device->vk.device, device->as_list[i].handle, nullptr);
     HeapFree(GetProcessHeap(), 0, device->as_list);
     HeapFree(GetProcessHeap(), 0, device->as_regions);
-    device->as_list = NULL;
-    device->as_regions = NULL;
+    device->as_list = nullptr;
+    device->as_regions = nullptr;
     device->as_count = device->as_capacity = device->as_region_count = device->as_region_capacity = 0;
 }
 
@@ -320,7 +320,7 @@ void D12EmitPostbuildInfo(D12CommandAllocator *allocator, VkCommandBuffer cmd,
     UINT kinds = postbuild_queries(desc->InfoType, types, &stride);
     VkBuffer buffer;
     VkDeviceSize offset;
-    if (!kinds || !count || !D12AddressLookup(device, desc->DestBuffer, &buffer, &offset, NULL))
+    if (!kinds || !count || !D12AddressLookup(device, desc->DestBuffer, &buffer, &offset, nullptr))
         return;
     VkAccelerationStructureKHR stack[16], *handles = count <= 16 ? stack : HeapAlloc(GetProcessHeap(), 0, count * sizeof(*handles));
     if (!handles)
@@ -436,7 +436,7 @@ static uint32_t *count_shader(size_t *words)
     spv_decorate(b, array, SpvDecorationArrayStride, &stride, 1);
     uint32_t memory = spv_type_struct_unique(b, &array, 1);
     spv_member_decorate(b, memory, 0, SpvDecorationOffset, &zero, 1);
-    spv_decorate(b, memory, SpvDecorationBlock, NULL, 0);
+    spv_decorate(b, memory, SpvDecorationBlock, nullptr, 0);
     uint32_t memory_ptr = spv_type_pointer(b, SpvStorageClassPhysicalStorageBuffer, memory);
     uint32_t word_ptr = spv_type_pointer(b, SpvStorageClassPhysicalStorageBuffer, t_u32);
 
@@ -446,7 +446,7 @@ static uint32_t *count_shader(size_t *words)
         uint32_t offset = i < 3 ? 8 * i : 24 + 4 * (i - 3);
         spv_member_decorate(b, push_type, i, SpvDecorationOffset, &offset, 1);
     }
-    spv_decorate(b, push_type, SpvDecorationBlock, NULL, 0);
+    spv_decorate(b, push_type, SpvDecorationBlock, nullptr, 0);
     uint32_t push = spv_variable(b, spv_type_pointer(b, SpvStorageClassPushConstant, push_type),
                                  SpvStorageClassPushConstant, 0);
     uint32_t id = spv_variable(b, spv_type_pointer(b, SpvStorageClassInput, t_uvec3), SpvStorageClassInput, 0);
@@ -454,7 +454,7 @@ static uint32_t *count_shader(size_t *words)
     spv_decorate(b, id, SpvDecorationBuiltIn, &builtin, 1);
 
     uint32_t main = spv_id(b);
-    spv_function_begin(b, main, t_void, spv_type_function(b, t_void, NULL, 0));
+    spv_function_begin(b, main, t_void, spv_type_function(b, t_void, nullptr, 0));
     spv_label(b, spv_id(b));
     uint32_t pushed[5];
     for (uint32_t i = 0; i < 5; i++) {
@@ -514,7 +514,7 @@ HRESULT D12RaysInit(D12Device *device)
     module_info.codeSize = words * 4;
     module_info.pCode = code;
     VkShaderModule module;
-    VkResult vr = vk->vkCreateShaderModule(vk->device, &module_info, NULL, &module);
+    VkResult vr = vk->vkCreateShaderModule(vk->device, &module_info, nullptr, &module);
     mime_free(&g_d12_allocator, code);
     if (vr != VK_SUCCESS)
         return E_OUTOFMEMORY;
@@ -522,7 +522,7 @@ HRESULT D12RaysInit(D12Device *device)
     VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout.pushConstantRangeCount = 1;
     layout.pPushConstantRanges = &range;
-    if (vk->vkCreatePipelineLayout(vk->device, &layout, NULL, &device->rays_count_layout) == VK_SUCCESS) {
+    if (vk->vkCreatePipelineLayout(vk->device, &layout, nullptr, &device->rays_count_layout) == VK_SUCCESS) {
         VkComputePipelineCreateInfo info = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
         info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -530,10 +530,10 @@ HRESULT D12RaysInit(D12Device *device)
         info.stage.module = module;
         info.stage.pName = "main";
         info.layout = device->rays_count_layout;
-        vr = vk->vkCreateComputePipelines(vk->device, device->pipeline_cache, 1, &info, NULL,
+        vr = vk->vkCreateComputePipelines(vk->device, device->pipeline_cache, 1, &info, nullptr,
                                           &device->rays_count_pipeline);
     }
-    vk->vkDestroyShaderModule(vk->device, module, NULL);
+    vk->vkDestroyShaderModule(vk->device, module, nullptr);
     return device->rays_count_pipeline ? S_OK : E_FAIL;
 }
 
@@ -541,9 +541,9 @@ void D12RaysDestroy(D12Device *device)
 {
     D12Vk *vk = &device->vk;
     if (device->rays_count_pipeline)
-        vk->vkDestroyPipeline(vk->device, device->rays_count_pipeline, NULL);
+        vk->vkDestroyPipeline(vk->device, device->rays_count_pipeline, nullptr);
     if (device->rays_count_layout)
-        vk->vkDestroyPipelineLayout(vk->device, device->rays_count_layout, NULL);
+        vk->vkDestroyPipelineLayout(vk->device, device->rays_count_layout, nullptr);
 }
 
 void D12LimitRays(D12Device *device, VkCommandBuffer cmd, VkDeviceAddress src, UINT stride, UINT max_count,

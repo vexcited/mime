@@ -224,7 +224,7 @@ BOOL NTAPI NtGdiExtTextOutW(HDC hdc, int x, int y, UINT options, const RECT *use
     if (user_rect && !NT_SUCCESS(MimeCopyFromUser(&rect, user_rect, sizeof(rect))))
         return FALSE;
     PWSTR text = W32Alloc((SIZE_T)count * sizeof(WCHAR) + 2);
-    INT *dx = user_dx ? W32Alloc((SIZE_T)count * sizeof(INT) * ((options & ETO_PDY) ? 2 : 1) + 4) : NULL;
+    INT *dx = user_dx ? W32Alloc((SIZE_T)count * sizeof(INT) * ((options & ETO_PDY) ? 2 : 1) + 4) : nullptr;
     BOOL ok = FALSE;
     if (text && (!user_dx || dx) && NT_SUCCESS(MimeCopyFromUser(text, user_text, (SIZE_T)count * sizeof(WCHAR))) &&
         (!user_dx || NT_SUCCESS(MimeCopyFromUser(dx, user_dx, (SIZE_T)count * sizeof(INT) * ((options & ETO_PDY) ? 2 : 1))))) {
@@ -237,7 +237,7 @@ BOOL NTAPI NtGdiExtTextOutW(HDC hdc, int x, int y, UINT options, const RECT *use
         DC *dc = DcLookup(hdc);
         if (dc) {
             if (dc->Surface)
-                TextDraw(dc, x, y, options, user_rect ? &rect : NULL, text, (ULONG)count, dx);
+                TextDraw(dc, x, y, options, user_rect ? &rect : nullptr, text, (ULONG)count, dx);
             ok = TRUE;
         }
         UserLeave();
@@ -253,14 +253,14 @@ BOOL NTAPI NtGdiGetTextExtentExW(HDC hdc, LPCWSTR user_text, ULONG count, ULONG 
     if (count > MAX_TEXT)
         return FALSE;
     PWSTR text = W32Alloc((SIZE_T)count * sizeof(WCHAR) + 2);
-    ULONG *dx = user_dx ? W32Alloc((SIZE_T)count * sizeof(ULONG) + 4) : NULL;
+    ULONG *dx = user_dx ? W32Alloc((SIZE_T)count * sizeof(ULONG) + 4) : nullptr;
     BOOL ok = FALSE;
     SIZE sz = {0, 0};
     ULONG fitted = 0;
     if (text && (!user_dx || dx) && NT_SUCCESS(MimeCopyFromUser(text, user_text, (SIZE_T)count * sizeof(WCHAR)))) {
         UserEnter();
         DC *dc = DcLookup(hdc);
-        FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
+        FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
             LONG w = 0;
             for (ULONG i = 0; i < count; i++) {
@@ -294,7 +294,7 @@ BOOL NTAPI NtGdiGetTextMetricsW(HDC hdc, TEXTMETRICW *metrics, ULONG size)
 {
     UserEnter();
     DC *dc = DcLookup(hdc);
-    FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
+    FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     TEXTMETRICW tm;
     if (fi)
         tm = fi->Metrics;
@@ -309,8 +309,8 @@ int NTAPI NtGdiGetTextFaceW(HDC hdc, int count, LPWSTR name, BOOL alias)
 {
     UserEnter();
     DC *dc = DcLookup(hdc);
-    FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
-    WCHAR face[LF_FACESIZE] = {0};
+    FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
+    WCHAR face[LF_FACESIZE] = {};
     if (fi)
         FontGetFaceName(fi, face, LF_FACESIZE);
     UserLeave();
@@ -336,12 +336,12 @@ BOOL NTAPI NtGdiGetCharWidthW(HDC hdc, UINT first, UINT count, PWCHAR user_chars
     if (count > 65536)
         return FALSE;
     INT *widths = W32Alloc((SIZE_T)count * sizeof(INT) + 4);
-    PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR) + 2) : NULL;
+    PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR) + 2) : nullptr;
     BOOL ok = FALSE;
     if (widths && (!user_chars || (chars && NT_SUCCESS(MimeCopyFromUser(chars, user_chars, count * sizeof(WCHAR)))))) {
         UserEnter();
         DC *dc = DcLookup(hdc);
-        FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
+        FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
             for (UINT i = 0; i < count; i++) {
                 ULONG c = chars ? chars[i] : first + i;
@@ -365,12 +365,12 @@ BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_
     if (count > 65536)
         return FALSE;
     ABC *abc = W32Alloc((SIZE_T)count * sizeof(ABC) + 4);
-    PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR) + 2) : NULL;
+    PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR) + 2) : nullptr;
     BOOL ok = FALSE;
     if (abc && (!user_chars || (chars && NT_SUCCESS(MimeCopyFromUser(chars, user_chars, count * sizeof(WCHAR)))))) {
         UserEnter();
         DC *dc = DcLookup(hdc);
-        FONT_INSTANCE *fi = dc ? DcGetFont(dc) : NULL;
+        FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
             for (ULONG i = 0; i < count; i++) {
                 ULONG c = chars ? chars[i] : first + i;

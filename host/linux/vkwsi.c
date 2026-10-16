@@ -44,7 +44,7 @@ const char *const mvk_wsi_instance_extensions[] = {
     VK_KHR_SURFACE_EXTENSION_NAME,
     VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
     VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-    NULL,
+    nullptr,
 };
 
 bool mvk_wsi_device_extension(const char *name)
@@ -178,12 +178,12 @@ static MvkWsi *wsi_of(MvkConnection *c)
         return c->wsi;
     MvkWsi *w = calloc(1, sizeof(*w));
     if (!w)
-        return NULL;
-    pthread_mutex_init(&w->lock, NULL);
-    pthread_cond_init(&w->cond, NULL);
+        return nullptr;
+    pthread_mutex_init(&w->lock, nullptr);
+    pthread_cond_init(&w->cond, nullptr);
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
-#define INSTANCE(field, name) w->field = (__typeof__(w->field))c->gipa(c->instance, name)
-#define DEVICE(field, name) w->field = (__typeof__(w->field))(c->device ? gdpa(c->device, name) : NULL)
+#define INSTANCE(field, name) w->field = (typeof(w->field))c->gipa(c->instance, name)
+#define DEVICE(field, name) w->field = (typeof(w->field))(c->device ? gdpa(c->device, name) : NULL)
     INSTANCE(DestroySurface, "vkDestroySurfaceKHR");
     INSTANCE(SurfaceSupport, "vkGetPhysicalDeviceSurfaceSupportKHR");
     INSTANCE(SurfaceCapabilities, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
@@ -245,7 +245,7 @@ static VkQueue queue_family(MvkConnection *c, VkQueue queue, uint32_t *family)
 static bool family_graphics(MvkConnection *c, uint32_t family)
 {
     uint32_t count = 0;
-    c->fn.vkGetPhysicalDeviceQueueFamilyProperties(c->physical_device, &count, NULL);
+    c->fn.vkGetPhysicalDeviceQueueFamilyProperties(c->physical_device, &count, nullptr);
     VkQueueFamilyProperties props[32];
     count = count < 32 ? count : 32;
     c->fn.vkGetPhysicalDeviceQueueFamilyProperties(c->physical_device, &count, props);
@@ -256,7 +256,7 @@ static VkSemaphore new_semaphore(MvkConnection *c)
 {
     VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkSemaphore s = VK_NULL_HANDLE;
-    c->fn.vkCreateSemaphore(c->device, &info, NULL, &s);
+    c->fn.vkCreateSemaphore(c->device, &info, nullptr, &s);
     return s;
 }
 
@@ -266,11 +266,11 @@ static void destroy_swapchain_images(MvkConnection *c, Swapchain *s)
 {
     for (uint32_t i = 0; i < s->count; i++) {
         if (s->images[i])
-            c->fn.vkDestroyImage(c->device, s->images[i], NULL);
+            c->fn.vkDestroyImage(c->device, s->images[i], nullptr);
         if (s->memory[i])
-            c->fn.vkFreeMemory(c->device, s->memory[i], NULL);
+            c->fn.vkFreeMemory(c->device, s->memory[i], nullptr);
         if (s->released[i])
-            c->fn.vkDestroySemaphore(c->device, s->released[i], NULL);
+            c->fn.vkDestroySemaphore(c->device, s->released[i], nullptr);
     }
 }
 
@@ -325,10 +325,10 @@ void mvk_wsi_create_swapchain(MvkCall *call)
         c->fn.vkGetPhysicalDeviceFormatProperties(c->physical_device, format, &fp);
         if (!mutable && !(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
             usage &= ~VK_IMAGE_USAGE_STORAGE_BIT;
-        VkImageFormatListCreateInfo list = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, NULL, view_count, views};
+        VkImageFormatListCreateInfo list = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, nullptr, view_count, views};
         VkImageCreateInfo info = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .pNext = mutable && view_count ? &list : NULL,
+            .pNext = mutable && view_count ? &list : nullptr,
             .flags = mutable ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0,
             .imageType = VK_IMAGE_TYPE_2D,
             .format = format,
@@ -345,7 +345,7 @@ void mvk_wsi_create_swapchain(MvkCall *call)
         };
         result = VK_SUCCESS;
         for (uint32_t i = 0; i < count && result == VK_SUCCESS; i++) {
-            result = c->fn.vkCreateImage(c->device, &info, NULL, &s->images[i]);
+            result = c->fn.vkCreateImage(c->device, &info, nullptr, &s->images[i]);
             if (result != VK_SUCCESS)
                 break;
             VkMemoryRequirements req;
@@ -353,9 +353,9 @@ void mvk_wsi_create_swapchain(MvkCall *call)
             int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             if (type < 0)
                 type = memory_type(c, req.memoryTypeBits, 0);
-            VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
+            VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
             result = type < 0 ? VK_ERROR_OUT_OF_DEVICE_MEMORY
-                              : c->fn.vkAllocateMemory(c->device, &alloc, NULL, &s->memory[i]);
+                              : c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &s->memory[i]);
             if (result == VK_SUCCESS)
                 result = c->fn.vkBindImageMemory(c->device, s->images[i], s->memory[i], 0);
             s->released[i] = new_semaphore(c);
@@ -402,13 +402,13 @@ static void drop_swapchain(MvkConnection *c, Presenter *p, bool idle)
         if (!p->done[i])
             continue;
         if (idle)
-            c->fn.vkDestroySemaphore(c->device, p->done[i], NULL);
+            c->fn.vkDestroySemaphore(c->device, p->done[i], nullptr);
         else if (p->grave_count < MAX_GRAVE)
             p->grave[p->grave_count++] = p->done[i];
         p->done[i] = VK_NULL_HANDLE;
     }
     if (p->swapchain)
-        w->DestroySwapchain(c->device, p->swapchain, NULL);
+        w->DestroySwapchain(c->device, p->swapchain, nullptr);
     p->swapchain = VK_NULL_HANDLE;
     p->count = 0;
 }
@@ -418,7 +418,7 @@ static void drop_surface(MvkConnection *c, Presenter *p, bool idle)
     wait_frames(c, p);
     drop_swapchain(c, p, idle);
     if (p->surface)
-        c->wsi->DestroySurface(c->instance, p->surface, NULL);
+        c->wsi->DestroySurface(c->instance, p->surface, nullptr);
     p->surface = VK_NULL_HANDLE;
     p->checked_family = UINT32_MAX;
 }
@@ -429,31 +429,31 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
     pthread_mutex_lock(&p->lock);
     drop_surface(c, p, true);
     for (uint32_t i = 0; i < p->grave_count; i++)
-        c->fn.vkDestroySemaphore(c->device, p->grave[i], NULL);
+        c->fn.vkDestroySemaphore(c->device, p->grave[i], nullptr);
     for (uint32_t i = 0; i < FRAMES; i++) {
         if (p->frames[i].fence)
-            c->fn.vkDestroyFence(c->device, p->frames[i].fence, NULL);
+            c->fn.vkDestroyFence(c->device, p->frames[i].fence, nullptr);
         if (p->frames[i].acquired)
-            c->fn.vkDestroySemaphore(c->device, p->frames[i].acquired, NULL);
+            c->fn.vkDestroySemaphore(c->device, p->frames[i].acquired, nullptr);
     }
     if (p->pool)
-        c->fn.vkDestroyCommandPool(c->device, p->pool, NULL);
+        c->fn.vkDestroyCommandPool(c->device, p->pool, nullptr);
     if (p->gdi)
-        c->fn.vkDestroyImage(c->device, p->gdi, NULL);
+        c->fn.vkDestroyImage(c->device, p->gdi, nullptr);
     if (p->gdi_memory)
-        c->fn.vkFreeMemory(c->device, p->gdi_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->gdi_memory, nullptr);
     if (p->staging)
-        c->fn.vkDestroyBuffer(c->device, p->staging, NULL);
+        c->fn.vkDestroyBuffer(c->device, p->staging, nullptr);
     if (p->staging_memory)
-        c->fn.vkFreeMemory(c->device, p->staging_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->staging_memory, nullptr);
     if (p->last)
-        c->fn.vkDestroyImage(c->device, p->last, NULL);
+        c->fn.vkDestroyImage(c->device, p->last, nullptr);
     if (p->last_memory)
-        c->fn.vkFreeMemory(c->device, p->last_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->last_memory, nullptr);
     if (p->readback)
-        c->fn.vkDestroyBuffer(c->device, p->readback, NULL);
+        c->fn.vkDestroyBuffer(c->device, p->readback, nullptr);
     if (p->readback_memory)
-        c->fn.vkFreeMemory(c->device, p->readback_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->readback_memory, nullptr);
     bool attached = p->attached;
     pthread_mutex_unlock(&p->lock);
     pthread_mutex_destroy(&p->lock);
@@ -467,7 +467,7 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
 static Presenter *presenter_get(MvkConnection *c, uint32_t window)
 {
     pthread_mutex_lock(&g_presenters_lock);
-    Presenter *p = NULL, **slot = NULL;
+    Presenter *p = nullptr, **slot = nullptr;
     for (int i = 0; i < MAX_PRESENTERS; i++) {
         if (g_presenters[i] && g_presenters[i]->window == window)
             p = g_presenters[i];
@@ -475,13 +475,13 @@ static Presenter *presenter_get(MvkConnection *c, uint32_t window)
             slot = &g_presenters[i];
     }
     if (p && p->conn != c)
-        p = NULL;
+        p = nullptr;
     else if (!p && slot && (p = calloc(1, sizeof(*p)))) {
         p->window = window;
         p->conn = c;
         p->checked_family = UINT32_MAX;
         p->pool_family = UINT32_MAX;
-        pthread_mutex_init(&p->lock, NULL);
+        pthread_mutex_init(&p->lock, nullptr);
         *slot = p;
     }
     if (p)
@@ -499,7 +499,7 @@ static void presenter_put(MvkConnection *c, Presenter *p)
     if (last)
         for (int i = 0; i < MAX_PRESENTERS; i++)
             if (g_presenters[i] == p)
-                g_presenters[i] = NULL;
+                g_presenters[i] = nullptr;
     pthread_mutex_unlock(&g_presenters_lock);
     if (last) {
         pthread_mutex_lock(&c->queue_lock);
@@ -550,13 +550,13 @@ static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect client)
         MvkWsi *w = c->wsi;
         VkResult r = VK_ERROR_EXTENSION_NOT_PRESENT;
         if (native.x11 && w->CreateXlibSurface) {
-            VkXlibSurfaceCreateInfoKHR info = {VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR, NULL, 0, native.display,
+            VkXlibSurfaceCreateInfoKHR info = {VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR, nullptr, 0, native.display,
                                                (Window)native.window};
-            r = w->CreateXlibSurface(c->instance, &info, NULL, &p->surface);
+            r = w->CreateXlibSurface(c->instance, &info, nullptr, &p->surface);
         } else if (!native.x11 && w->CreateWaylandSurface) {
-            VkWaylandSurfaceCreateInfoKHR info = {VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR, NULL, 0,
+            VkWaylandSurfaceCreateInfoKHR info = {VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR, nullptr, 0,
                                                   native.display, native.surface};
-            r = w->CreateWaylandSurface(c->instance, &info, NULL, &p->surface);
+            r = w->CreateWaylandSurface(c->instance, &info, nullptr, &p->surface);
         }
         if (r != VK_SUCCESS) {
             mime_warn("vulkan: cannot make a surface on window %#x (%d)", p->window, (int)r);
@@ -639,7 +639,7 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
         .oldSwapchain = p->swapchain,
     };
     VkSwapchainKHR swapchain;
-    VkResult r = w->CreateSwapchain(c->device, &info, NULL, &swapchain);
+    VkResult r = w->CreateSwapchain(c->device, &info, nullptr, &swapchain);
     /* the old one goes either way, once nothing of it is in flight. */
     if (p->swapchain) {
         pthread_mutex_lock(&c->queue_lock);
@@ -671,22 +671,22 @@ static bool make_frames(MvkConnection *c, Presenter *p, uint32_t family)
         return true;
     wait_frames(c, p);
     if (p->pool)
-        c->fn.vkDestroyCommandPool(c->device, p->pool, NULL);
+        c->fn.vkDestroyCommandPool(c->device, p->pool, nullptr);
     p->pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo info = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, NULL,
+    VkCommandPoolCreateInfo info = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
                                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, family};
-    if (c->fn.vkCreateCommandPool(c->device, &info, NULL, &p->pool) != VK_SUCCESS)
+    if (c->fn.vkCreateCommandPool(c->device, &info, nullptr, &p->pool) != VK_SUCCESS)
         return false;
     p->pool_family = family;
     for (uint32_t i = 0; i < FRAMES; i++) {
         Frame *f = &p->frames[i];
-        VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL, p->pool,
+        VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p->pool,
                                              VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
         if (c->fn.vkAllocateCommandBuffers(c->device, &alloc, &f->cmd) != VK_SUCCESS)
             return false;
         if (!f->fence) {
-            VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, NULL, VK_FENCE_CREATE_SIGNALED_BIT};
-            if (c->fn.vkCreateFence(c->device, &fi, NULL, &f->fence) != VK_SUCCESS)
+            VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, VK_FENCE_CREATE_SIGNALED_BIT};
+            if (c->fn.vkCreateFence(c->device, &fi, nullptr, &f->fence) != VK_SUCCESS)
                 return false;
         }
         if (!f->acquired && !(f->acquired = new_semaphore(c)))
@@ -702,17 +702,17 @@ static bool make_gdi(MvkConnection *c, Presenter *p, uint32_t width, uint32_t he
         return true;
     wait_frames(c, p);
     if (p->gdi)
-        c->fn.vkDestroyImage(c->device, p->gdi, NULL);
+        c->fn.vkDestroyImage(c->device, p->gdi, nullptr);
     if (p->gdi_memory)
-        c->fn.vkFreeMemory(c->device, p->gdi_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->gdi_memory, nullptr);
     if (p->staging)
-        c->fn.vkDestroyBuffer(c->device, p->staging, NULL);
+        c->fn.vkDestroyBuffer(c->device, p->staging, nullptr);
     if (p->staging_memory)
-        c->fn.vkFreeMemory(c->device, p->staging_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->staging_memory, nullptr);
     p->gdi = VK_NULL_HANDLE;
     p->gdi_memory = p->staging_memory = VK_NULL_HANDLE;
     p->staging = VK_NULL_HANDLE;
-    p->staging_map = NULL;
+    p->staging_map = nullptr;
     p->gdi_valid = false;
     VkImageCreateInfo ii = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -726,24 +726,24 @@ static bool make_gdi(MvkConnection *c, Presenter *p, uint32_t width, uint32_t he
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-    if (c->fn.vkCreateImage(c->device, &ii, NULL, &p->gdi) != VK_SUCCESS)
+    if (c->fn.vkCreateImage(c->device, &ii, nullptr, &p->gdi) != VK_SUCCESS)
         return false;
     VkMemoryRequirements req;
     c->fn.vkGetImageMemoryRequirements(c->device, p->gdi, &req);
     int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
-    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, NULL, &p->gdi_memory) != VK_SUCCESS ||
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
+    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->gdi_memory) != VK_SUCCESS ||
         c->fn.vkBindImageMemory(c->device, p->gdi, p->gdi_memory, 0) != VK_SUCCESS)
         return false;
-    VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, (VkDeviceSize)width * height * 4,
+    VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, (VkDeviceSize)width * height * 4,
                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE};
-    if (c->fn.vkCreateBuffer(c->device, &bi, NULL, &p->staging) != VK_SUCCESS)
+    if (c->fn.vkCreateBuffer(c->device, &bi, nullptr, &p->staging) != VK_SUCCESS)
         return false;
     c->fn.vkGetBufferMemoryRequirements(c->device, p->staging, &req);
     type = memory_type(c, req.memoryTypeBits,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    alloc = (VkMemoryAllocateInfo){VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
-    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, NULL, &p->staging_memory) != VK_SUCCESS ||
+    alloc = (VkMemoryAllocateInfo){VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
+    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->staging_memory) != VK_SUCCESS ||
         c->fn.vkBindBufferMemory(c->device, p->staging, p->staging_memory, 0) != VK_SUCCESS ||
         c->fn.vkMapMemory(c->device, p->staging_memory, 0, VK_WHOLE_SIZE, 0, (void **)&p->staging_map) != VK_SUCCESS)
         return false;
@@ -761,9 +761,9 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
         return true;
     wait_frames(c, p);
     if (p->last)
-        c->fn.vkDestroyImage(c->device, p->last, NULL);
+        c->fn.vkDestroyImage(c->device, p->last, nullptr);
     if (p->last_memory)
-        c->fn.vkFreeMemory(c->device, p->last_memory, NULL);
+        c->fn.vkFreeMemory(c->device, p->last_memory, nullptr);
     p->last = VK_NULL_HANDLE;
     p->last_memory = VK_NULL_HANDLE;
     p->last_valid = false;
@@ -779,19 +779,19 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-    if (c->fn.vkCreateImage(c->device, &ii, NULL, &p->last) != VK_SUCCESS) {
+    if (c->fn.vkCreateImage(c->device, &ii, nullptr, &p->last) != VK_SUCCESS) {
         p->last = VK_NULL_HANDLE;
         return false;
     }
     VkMemoryRequirements req;
     c->fn.vkGetImageMemoryRequirements(c->device, p->last, &req);
     int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
-    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, NULL, &p->last_memory) != VK_SUCCESS ||
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
+    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->last_memory) != VK_SUCCESS ||
         c->fn.vkBindImageMemory(c->device, p->last, p->last_memory, 0) != VK_SUCCESS) {
-        c->fn.vkDestroyImage(c->device, p->last, NULL);
+        c->fn.vkDestroyImage(c->device, p->last, nullptr);
         if (p->last_memory)
-            c->fn.vkFreeMemory(c->device, p->last_memory, NULL);
+            c->fn.vkFreeMemory(c->device, p->last_memory, nullptr);
         p->last = VK_NULL_HANDLE;
         p->last_memory = VK_NULL_HANDLE;
         return false;
@@ -818,7 +818,7 @@ static void barrier(MvkConnection *c, VkCommandBuffer cmd, VkImage image, VkImag
         .image = image,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, VK_REMAINING_ARRAY_LAYERS},
     };
-    c->fn.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &b);
+    c->fn.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
 typedef struct Box {
@@ -873,7 +873,7 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     VkCommandBuffer cmd = f->cmd;
     VkImage dst = p->images[target];
     c->fn.vkResetCommandBuffer(cmd, 0);
-    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
+    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
                                       VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     c->fn.vkBeginCommandBuffer(cmd, &begin);
     barrier(c, cmd, dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
@@ -965,15 +965,15 @@ static VkResult submit_locked(MvkConnection *c, VkQueue queue, const VkSubmitInf
 static void release_only(MvkConnection *c, VkQueue queue, const Waits *waits, Swapchain *s, uint32_t index)
 {
     uint64_t none = 0;
-    VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, NULL, waits->count,
+    VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, nullptr, waits->count,
                                             waits->values, 1, &none};
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                           c->timelines ? &values : NULL,
+                           c->timelines ? &values : nullptr,
                            waits->count,
                            waits->semaphores,
                            waits->stages,
                            0,
-                           NULL,
+                           nullptr,
                            1,
                            &s->released[index]};
     if (submit_locked(c, queue, &submit, VK_NULL_HANDLE) == VK_SUCCESS)
@@ -1070,9 +1070,9 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         all.stages[all.count++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
         VkSemaphore signals[2] = {p->done[target], s->released[index]};
         uint64_t signal_values[2] = {0, 0};
-        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, NULL, all.count,
+        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, nullptr, all.count,
                                                 all.values, 2, signal_values};
-        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, c->timelines ? &values : NULL, all.count, all.semaphores,
+        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, c->timelines ? &values : nullptr, all.count, all.semaphores,
                                all.stages, 1, &f->cmd, 2, signals};
         c->fn.vkResetFences(c->device, 1, &f->fence);
         pthread_mutex_lock(&c->queue_lock);
@@ -1084,8 +1084,8 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
             return false;
         }
         s->pending[index] = true;
-        VkPresentInfoKHR info = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, NULL, 1, &p->done[target], 1, &p->swapchain,
-                                 &target, NULL};
+        VkPresentInfoKHR info = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, nullptr, 1, &p->done[target], 1, &p->swapchain,
+                                 &target, nullptr};
         r = w->QueuePresent(queue, &info);
         pthread_mutex_unlock(&c->queue_lock);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
@@ -1102,7 +1102,7 @@ static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const 
     MvkWsi *w = c->wsi;
     if (s->presenter && s->presenter->window != window) {
         presenter_put(c, s->presenter);
-        s->presenter = NULL;
+        s->presenter = nullptr;
     }
     if (!s->presenter && window && can_present(w))
         s->presenter = presenter_get(c, window);
@@ -1137,10 +1137,10 @@ static void *presenting_main(void *arg)
         PresentJob *job = w->first;
         w->first = job->next;
         if (!w->first)
-            w->last = NULL;
+            w->last = nullptr;
         w->busy = true;
         pthread_mutex_unlock(&w->lock);
-        Waits waits = {0};
+        Waits waits = {};
         if (job->ready) {
             waits.semaphores[0] = w->ready;
             waits.stages[0] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -1155,7 +1155,7 @@ static void *presenting_main(void *arg)
         free(job);
     }
     pthread_mutex_unlock(&w->lock);
-    return NULL;
+    return nullptr;
 }
 
 void mvk_wsi_drain(MvkConnection *c)
@@ -1178,14 +1178,14 @@ static void stop_presenting(MvkConnection *c)
     w->stop = true;
     pthread_cond_broadcast(&w->cond);
     pthread_mutex_unlock(&w->lock);
-    pthread_join(w->thread, NULL);
+    pthread_join(w->thread, nullptr);
     w->running = false;
     if (w->ready) {
         /* submissions still in flight signal it. */
         pthread_mutex_lock(&c->queue_lock);
         c->fn.vkDeviceWaitIdle(c->device);
         pthread_mutex_unlock(&c->queue_lock);
-        c->fn.vkDestroySemaphore(c->device, w->ready, NULL);
+        c->fn.vkDestroySemaphore(c->device, w->ready, nullptr);
     }
     w->ready = VK_NULL_HANDLE;
 }
@@ -1197,14 +1197,14 @@ static bool start_presenting(MvkConnection *c, MvkWsi *w)
         return true;
     if (!c->timelines)
         return false;
-    VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+    VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
     VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-    if (c->fn.vkCreateSemaphore(c->device, &info, NULL, &w->ready) != VK_SUCCESS)
+    if (c->fn.vkCreateSemaphore(c->device, &info, nullptr, &w->ready) != VK_SUCCESS)
         return false;
     w->ready_value = 0;
     w->stop = false;
-    if (pthread_create(&w->thread, NULL, presenting_main, c)) {
-        c->fn.vkDestroySemaphore(c->device, w->ready, NULL);
+    if (pthread_create(&w->thread, nullptr, presenting_main, c)) {
+        c->fn.vkDestroySemaphore(c->device, w->ready, nullptr);
         w->ready = VK_NULL_HANDLE;
         return false;
     }
@@ -1218,7 +1218,7 @@ void mvk_wsi_present(MvkCall *call)
     MvkConnection *c = call->conn;
     MvkDecoder *d = &call->in;
     VkQueue queue = (VkQueue)(uintptr_t)mvk_get_handle(d, 1);
-    Waits waits = {0};
+    Waits waits = {};
     uint32_t wait_count = mvk_get_u32(d);
     for (uint32_t i = 0; i < wait_count; i++) {
         VkSemaphore sem = (VkSemaphore)mvk_get_handle(d, 0);
@@ -1242,10 +1242,10 @@ void mvk_wsi_present(MvkCall *call)
     uint64_t ready = 0;
     if (waits.count && (aside || count > 1)) {
         uint64_t value = aside ? ++w->ready_value : 0;
-        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, NULL, waits.count,
+        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, nullptr, waits.count,
                                                 waits.values, 1, &value};
-        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, aside ? &values : NULL, waits.count, waits.semaphores,
-                               waits.stages, 0, NULL, aside ? 1 : 0, aside ? &w->ready : NULL};
+        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, aside ? &values : nullptr, waits.count, waits.semaphores,
+                               waits.stages, 0, nullptr, aside ? 1 : 0, aside ? &w->ready : nullptr};
         submit_locked(c, queue, &submit, VK_NULL_HANDLE);
         if (!aside) {
             pthread_mutex_lock(&c->queue_lock);
@@ -1279,7 +1279,7 @@ void mvk_wsi_present(MvkCall *call)
         PresentJob *job = calloc(1, sizeof(*job));
         if (!job)
             break;
-        *job = (PresentJob){NULL, s, index, window, client, queue, family, ready};
+        *job = (PresentJob){nullptr, s, index, window, client, queue, family, ready};
         s->pending[index] = true;
         pthread_mutex_lock(&w->lock);
         s->queued[index]++;
@@ -1315,12 +1315,12 @@ void mvk_wsi_acquire(MvkCall *call)
     VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     bool wait = s->pending[index];
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                           NULL,
+                           nullptr,
                            wait,
                            &s->released[index],
                            &stage,
                            0,
-                           NULL,
+                           nullptr,
                            semaphore != VK_NULL_HANDLE,
                            &semaphore};
     if (!wait && !semaphore && !fence)
@@ -1350,7 +1350,7 @@ void mvk_wsi_destroy_swapchain(MvkCall *call)
     if (!s || call->in.error)
         return;
     MvkWsi *w = c->wsi;
-    for (Swapchain **it = w ? &w->swapchains : NULL; it && *it; it = &(*it)->next) {
+    for (Swapchain **it = w ? &w->swapchains : nullptr; it && *it; it = &(*it)->next) {
         if (*it == s) {
             *it = s->next;
             break;
@@ -1376,7 +1376,7 @@ void mvk_wsi_close(MvkConnection *c)
     pthread_mutex_destroy(&w->lock);
     pthread_cond_destroy(&w->cond);
     free(w);
-    c->wsi = NULL;
+    c->wsi = nullptr;
 }
 
 /* ------------------------------------------------------------------ readback */
@@ -1390,7 +1390,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
                       uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client)
 {
     pthread_mutex_lock(&g_presenters_lock);
-    Presenter *p = NULL;
+    Presenter *p = nullptr;
     for (int i = 0; i < MAX_PRESENTERS; i++)
         if (g_presenters[i] && g_presenters[i]->window == window) {
             p = g_presenters[i];
@@ -1415,22 +1415,22 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
     VkDeviceSize size = (VkDeviceSize)p->last_extent.width * p->last_extent.height * 4;
     if (p->readback_size < size) {
         if (p->readback)
-            c->fn.vkDestroyBuffer(c->device, p->readback, NULL);
+            c->fn.vkDestroyBuffer(c->device, p->readback, nullptr);
         if (p->readback_memory)
-            c->fn.vkFreeMemory(c->device, p->readback_memory, NULL);
+            c->fn.vkFreeMemory(c->device, p->readback_memory, nullptr);
         p->readback = VK_NULL_HANDLE;
         p->readback_memory = VK_NULL_HANDLE;
         p->readback_size = 0;
-        VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                  VK_SHARING_MODE_EXCLUSIVE};
-        if (c->fn.vkCreateBuffer(c->device, &bi, NULL, &p->readback) != VK_SUCCESS)
+        if (c->fn.vkCreateBuffer(c->device, &bi, nullptr, &p->readback) != VK_SUCCESS)
             goto out;
         VkMemoryRequirements req;
         c->fn.vkGetBufferMemoryRequirements(c->device, p->readback, &req);
         int32_t type = memory_type(c, req.memoryTypeBits,
                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, (uint32_t)type};
-        if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, NULL, &p->readback_memory) != VK_SUCCESS ||
+        VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
+        if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->readback_memory) != VK_SUCCESS ||
             c->fn.vkBindBufferMemory(c->device, p->readback, p->readback_memory, 0) != VK_SUCCESS ||
             c->fn.vkMapMemory(c->device, p->readback_memory, 0, VK_WHOLE_SIZE, 0, (void **)&p->readback_map) !=
                 VK_SUCCESS)
@@ -1438,17 +1438,17 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
         p->readback_size = size;
     }
     VkCommandBuffer cmd;
-    VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL, p->pool,
+    VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p->pool,
                                       VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
     if (c->fn.vkAllocateCommandBuffers(c->device, &ai, &cmd) != VK_SUCCESS)
         goto out;
     VkFence fence;
     VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if (c->fn.vkCreateFence(c->device, &fi, NULL, &fence) != VK_SUCCESS) {
+    if (c->fn.vkCreateFence(c->device, &fi, nullptr, &fence) != VK_SUCCESS) {
         c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
         goto out;
     }
-    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
+    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
                                       VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     c->fn.vkBeginCommandBuffer(cmd, &begin);
     /* the present that wrote the image went first on this queue. */
@@ -1461,7 +1461,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
     };
     c->fn.vkCmdCopyImageToBuffer(cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, p->readback, 1, &copy);
     c->fn.vkEndCommandBuffer(cmd);
-    VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, 0, NULL, NULL, 1, &cmd, 0, NULL};
+    VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &cmd, 0, nullptr};
     if (submit_locked(c, p->last_queue, &submit, fence) == VK_SUCCESS &&
         c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS) {
         for (uint32_t y = 0; y < p->last_extent.height; y++)
@@ -1469,7 +1469,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
                    (size_t)p->last_extent.width * 4);
         ok = true;
     }
-    c->fn.vkDestroyFence(c->device, fence, NULL);
+    c->fn.vkDestroyFence(c->device, fence, nullptr);
     c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
 out:
     pthread_mutex_unlock(&p->lock);

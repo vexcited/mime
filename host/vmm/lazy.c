@@ -21,7 +21,7 @@ bool mime_lazy_init(MimeLazyRegion *r, uint64_t ipa, uint64_t size, int fd, cons
 {
     memset(r, 0, sizeof(*r));
     size = MIME_ALIGN_UP(size, MIME_LAZY_PAGE);
-    void *host = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    void *host = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     if (host == MAP_FAILED)
         return false;
     uint64_t chunks = (size + MIME_LAZY_CHUNK - 1) / MIME_LAZY_CHUNK;

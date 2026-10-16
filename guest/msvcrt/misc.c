@@ -407,7 +407,7 @@ void __cdecl abort(void)
         record.ExceptionCode = STATUS_FATAL_APP_EXIT;
         record.ExceptionAddress = __builtin_return_address(0);
         EXCEPTION_POINTERS pointers = {&record, &context};
-        SetUnhandledExceptionFilter(NULL);
+        SetUnhandledExceptionFilter(nullptr);
         UnhandledExceptionFilter(&pointers);
     }
     exit(3);
@@ -435,10 +435,10 @@ typedef int(WINAPI *MESSAGEBOXW)(HWND, LPCWSTR, LPCWSTR, UINT);
 static int message_box(const wchar_t *text, const wchar_t *caption, UINT type)
 {
     HMODULE user32 = LoadLibraryW(L"user32.dll");
-    MESSAGEBOXW box = user32 ? (MESSAGEBOXW)(void *)GetProcAddress(user32, "MessageBoxW") : NULL;
+    MESSAGEBOXW box = user32 ? (MESSAGEBOXW)(void *)GetProcAddress(user32, "MessageBoxW") : nullptr;
     if (!box)
         return 0;
-    return box(NULL, text, caption, type);
+    return box(nullptr, text, caption, type);
 }
 
 /* shortens s to at most max characters, keeping both ends around "...". */
@@ -465,7 +465,7 @@ void __cdecl _wassert(const wchar_t *message, const wchar_t *file, unsigned line
         HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
         DWORD written;
         if (h && h != INVALID_HANDLE_VALUE && GetFileType(h) == FILE_TYPE_CHAR &&
-            WriteConsoleW(h, text, (DWORD)wcslen(text), &written, NULL))
+            WriteConsoleW(h, text, (DWORD)wcslen(text), &written, nullptr))
             abort();
         fwprintf(msvcrt_stderr, L"%s", text);
         fflush(msvcrt_stderr);
@@ -473,7 +473,7 @@ void __cdecl _wassert(const wchar_t *message, const wchar_t *file, unsigned line
     }
     wchar_t text[540] = L"Assertion failed!\n\nProgram: ";
     wchar_t program[MAX_PATH + 1];
-    if (!GetModuleFileNameW(NULL, program, MAX_PATH))
+    if (!GetModuleFileNameW(nullptr, program, MAX_PATH))
         wcscpy(program, L"<program name unknown>");
     append_short(text, 540, program, 60);
     wcscat_s(text, 540, L"\nFile: ");
@@ -536,7 +536,7 @@ errno_t __cdecl rand_s(unsigned int *value)
     static RTLGENRANDOM gen;
     if (!gen) {
         HMODULE advapi = LoadLibraryW(L"advapi32.dll");
-        gen = advapi ? (RTLGENRANDOM)(void *)GetProcAddress(advapi, "SystemFunction036") : NULL;
+        gen = advapi ? (RTLGENRANDOM)(void *)GetProcAddress(advapi, "SystemFunction036") : nullptr;
     }
     if (gen && gen(value, sizeof(*value)))
         return 0;
@@ -680,7 +680,7 @@ void __cdecl qsort(void *base, size_t count, size_t size, COMPARE cmp)
         MSVCRT_INVALID(EINVAL);
         return;
     }
-    SORTCMP c = {cmp, NULL, NULL};
+    SORTCMP c = {cmp, nullptr, nullptr};
     sort(base, count, size, &c);
 }
 
@@ -690,7 +690,7 @@ void __cdecl qsort_s(void *base, size_t count, size_t size, COMPARE_S cmp, void 
         MSVCRT_INVALID(EINVAL);
         return;
     }
-    SORTCMP c = {NULL, cmp, context};
+    SORTCMP c = {nullptr, cmp, context};
     sort(base, count, size, &c);
 }
 
@@ -698,7 +698,7 @@ void *__cdecl bsearch(const void *key, const void *base, size_t count, size_t si
 {
     if (!cmp || (!base && count)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     size_t lo = 0, hi = count;
     while (lo < hi) {
@@ -712,14 +712,14 @@ void *__cdecl bsearch(const void *key, const void *base, size_t count, size_t si
         else
             lo = mid + 1;
     }
-    return NULL;
+    return nullptr;
 }
 
 void *__cdecl bsearch_s(const void *key, const void *base, size_t count, size_t size, COMPARE_S cmp, void *context)
 {
     if (!cmp || (!base && count)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     size_t lo = 0, hi = count;
     while (lo < hi) {
@@ -733,21 +733,21 @@ void *__cdecl bsearch_s(const void *key, const void *base, size_t count, size_t 
         else
             lo = mid + 1;
     }
-    return NULL;
+    return nullptr;
 }
 
 void *__cdecl _lfind(const void *key, const void *base, unsigned int *count, unsigned int size, COMPARE cmp)
 {
     if (!count || !cmp || (!base && *count)) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     for (unsigned i = 0; i < *count; i++) {
         const char *p = (const char *)base + (size_t)i * size;
         if (!cmp(key, p))
             return (void *)p;
     }
-    return NULL;
+    return nullptr;
 }
 
 void *__cdecl _lsearch(const void *key, void *base, unsigned int *count, unsigned int size, COMPARE cmp)
@@ -964,7 +964,7 @@ int __cdecl _beep(unsigned frequency, unsigned duration)
 {
     typedef BOOL(WINAPI * BEEP)(DWORD, DWORD);
     HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-    BEEP beep = k32 ? (BEEP)(void *)GetProcAddress(k32, "Beep") : NULL;
+    BEEP beep = k32 ? (BEEP)(void *)GetProcAddress(k32, "Beep") : nullptr;
     return beep ? beep(frequency, duration) : 0;
 }
 

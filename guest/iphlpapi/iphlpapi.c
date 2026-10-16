@@ -14,10 +14,10 @@
 #define ROUTE_METRIC 256
 
 /* the adapter name is a guid that differs between machines; this one is fixed for mime. */
-static const char loopback_guid[] = "{2D6A9B3C-5B0E-11F0-8E5B-806E6F6E6963}";
-static const WCHAR loopback_description[] = L"Software Loopback Interface 1";
-static const WCHAR loopback_friendly[] = L"Loopback Pseudo-Interface 1";
-static const char loopback_name[] = "loopback_0";
+static constexpr char loopback_guid[] = "{2D6A9B3C-5B0E-11F0-8E5B-806E6F6E6963}";
+static constexpr WCHAR loopback_description[] = L"Software Loopback Interface 1";
+static constexpr WCHAR loopback_friendly[] = L"Loopback Pseudo-Interface 1";
+static constexpr char loopback_name[] = "loopback_0";
 
 static HANDLE heap(void)
 {
@@ -26,7 +26,7 @@ static HANDLE heap(void)
 
 static ULONG64 loopback_luid(void)
 {
-    NET_LUID luid = {0};
+    NET_LUID luid = {};
     luid.Info.IfType = IF_TYPE_SOFTWARE_LOOPBACK;
     return luid.Value;
 }
@@ -88,7 +88,7 @@ typedef struct {
 static void *take(LAYOUT *l, SIZE_T size, SIZE_T align)
 {
     l->used = (l->used + align - 1) & ~(align - 1);
-    void *p = l->base ? l->base + l->used : NULL;
+    void *p = l->base ? l->base + l->used : nullptr;
     l->used += size;
     if (p)
         memset(p, 0, size);
@@ -154,7 +154,7 @@ static void layout_adapter(LAYOUT *l, ULONG family, ULONG flags)
         a->FriendlyName = friendly;
     }
     if (!(flags & GAA_FLAG_SKIP_UNICAST)) {
-        PIP_ADAPTER_UNICAST_ADDRESS_LH *next = a ? &a->FirstUnicastAddress : NULL;
+        PIP_ADAPTER_UNICAST_ADDRESS_LH *next = a ? &a->FirstUnicastAddress : nullptr;
         for (SIZE_T i = 0; i < RTL_NUMBER_OF(unicast); i++) {
             if (!family_wanted(family, unicast[i].family))
                 continue;
@@ -178,7 +178,7 @@ static void layout_adapter(LAYOUT *l, ULONG family, ULONG flags)
         }
     }
     if (flags & GAA_FLAG_INCLUDE_PREFIX) {
-        PIP_ADAPTER_PREFIX_XP *next = a ? &a->FirstPrefix : NULL;
+        PIP_ADAPTER_PREFIX_XP *next = a ? &a->FirstPrefix : nullptr;
         for (SIZE_T i = 0; i < RTL_NUMBER_OF(prefixes); i++) {
             if (!family_wanted(family, prefixes[i].family))
                 continue;
@@ -202,7 +202,7 @@ ULONG WINAPI GetAdaptersAddresses(ULONG family, ULONG flags, PVOID reserved, PIP
 {
     if (!size || reserved || (family != AF_UNSPEC && family != AF_INET && family != AF_INET6))
         return ERROR_INVALID_PARAMETER;
-    LAYOUT measure = {NULL, 0};
+    LAYOUT measure = {nullptr, 0};
     layout_adapter(&measure, family, flags);
     if (!addresses || *size < measure.used) {
         *size = (ULONG)measure.used;
@@ -290,7 +290,7 @@ static NOTIFICATION *notifications;
 static DWORD WINAPI initial_notification(LPVOID parameter)
 {
     NOTIFICATION *n = parameter;
-    n->callback(n->context, NULL, MibInitialNotification);
+    n->callback(n->context, nullptr, MibInitialNotification);
     return 0;
 }
 
@@ -309,7 +309,7 @@ static DWORD notify(ADDRESS_FAMILY family, CHANGE_CALLBACK callback, PVOID conte
     n->next = notifications;
     notifications = n;
     if (initial)
-        n->thread = CreateThread(NULL, 0, initial_notification, n, 0, &n->thread_id);
+        n->thread = CreateThread(nullptr, 0, initial_notification, n, 0, &n->thread_id);
     ReleaseSRWLockExclusive(&notifications_lock);
     *handle = (HANDLE)n;
     return NO_ERROR;
@@ -329,7 +329,7 @@ DWORD NETIOAPI_API_ NotifyIpInterfaceChange(ADDRESS_FAMILY family, PIPINTERFACE_
 
 DWORD NETIOAPI_API_ CancelMibChangeNotify2(HANDLE handle)
 {
-    NOTIFICATION *found = NULL;
+    NOTIFICATION *found = nullptr;
     AcquireSRWLockExclusive(&notifications_lock);
     for (NOTIFICATION **p = &notifications; *p; p = &(*p)->next) {
         if (*p == (NOTIFICATION *)handle) {
@@ -372,7 +372,7 @@ PCHAR NETIOAPI_API_ if_indextoname(NET_IFINDEX index, PCHAR name)
     NET_LUID luid;
     if (!name || ConvertInterfaceIndexToLuid(index, &luid) ||
         ConvertInterfaceLuidToNameA(&luid, name, IF_NAMESIZE))
-        return NULL;
+        return nullptr;
     return name;
 }
 

@@ -640,8 +640,8 @@ FORCEINLINE void IoCopyCurrentIrpStackLocationToNext(PIRP irp)
     PIO_STACK_LOCATION cur = IoGetCurrentIrpStackLocation(irp);
     PIO_STACK_LOCATION next = IoGetNextIrpStackLocation(irp);
     *next = *cur;
-    next->CompletionRoutine = NULL;
-    next->Context = NULL;
+    next->CompletionRoutine = nullptr;
+    next->Context = nullptr;
     next->Control = 0;
 }
 

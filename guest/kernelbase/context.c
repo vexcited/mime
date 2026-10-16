@@ -38,14 +38,14 @@ DECLSPEC_EXPORT PVOID WINAPI LocateXStateFeature(PCONTEXT context, DWORD feature
 {
     if (length)
         *length = 0;
-#if defined(__x86_64__)
+#ifdef __x86_64__
     if (context && feature < 2) {
         if (length)
             *length = feature ? 256 : 160;
         return feature ? (void *)&context->Xmm0 : (void *)&context->FltSave;
     }
 #endif
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI SetXStateFeaturesMask(PCONTEXT context, DWORD64 mask)
@@ -66,7 +66,7 @@ DECLSPEC_EXPORT BOOL WINAPI CopyContext(PCONTEXT destination, DWORD flags, PCONT
         return FALSE;
     }
     flags &= source->ContextFlags;
-#if defined(__x86_64__)
+#ifdef __x86_64__
     if (flags & 1) {
         destination->Rsp = source->Rsp;
         destination->Rip = source->Rip;

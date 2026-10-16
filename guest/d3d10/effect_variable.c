@@ -21,7 +21,7 @@ static HRESULT STDMETHODCALLTYPE fail2(void *iface, UINT_PTR a, UINT_PTR b) { re
 
 static HRESULT STDMETHODCALLTYPE fail3(void *iface, UINT_PTR a, UINT b, UINT c) { return E_FAIL; }
 
-static LPCSTR STDMETHODCALLTYPE fail_name(void *iface, UINT index) { return NULL; }
+static LPCSTR STDMETHODCALLTYPE fail_name(void *iface, UINT index) { return nullptr; }
 
 static ID3D10EffectType *STDMETHODCALLTYPE invalid_type_get(void *iface, UINT_PTR which) { return &FxInvalidType; }
 
@@ -211,13 +211,13 @@ static ID3D10EffectType *STDMETHODCALLTYPE type_member_by_semantic(ID3D10EffectT
 static LPCSTR STDMETHODCALLTYPE type_member_name(ID3D10EffectType *iface, UINT index)
 {
     FxType *t = type_impl(iface);
-    return t->kind == FX_STRUCT && index < t->member_count ? t->members[index].name : NULL;
+    return t->kind == FX_STRUCT && index < t->member_count ? t->members[index].name : nullptr;
 }
 
 static LPCSTR STDMETHODCALLTYPE type_member_semantic(ID3D10EffectType *iface, UINT index)
 {
     FxType *t = type_impl(iface);
-    return t->kind == FX_STRUCT && index < t->member_count ? t->members[index].semantic : NULL;
+    return t->kind == FX_STRUCT && index < t->member_count ? t->members[index].semantic : nullptr;
 }
 
 static const ID3D10EffectTypeVtbl type_vtbl = {
@@ -531,7 +531,7 @@ static HRESULT STDMETHODCALLTYPE get_view_array(void *iface, IUnknown **views, U
 static FxShader *shader_at(void *iface, UINT index)
 {
     FxVariable *v = impl(iface);
-    return index < FxElementCount(v->type) ? (FxShader *)v->data + index : NULL;
+    return index < FxElementCount(v->type) ? (FxShader *)v->data + index : nullptr;
 }
 
 static HRESULT STDMETHODCALLTYPE get_shader_desc(void *iface, UINT index, D3D10_EFFECT_SHADER_DESC *desc)
@@ -543,7 +543,7 @@ static HRESULT STDMETHODCALLTYPE get_shader_desc(void *iface, UINT index, D3D10_
     desc->IsInline = impl(iface)->name && !strcmp(impl(iface)->name, "$Anonymous");
     if (!s->code)
         return S_OK;
-    desc->pInputSignature = s->signature ? s->signature->lpVtbl->GetBufferPointer(s->signature) : NULL;
+    desc->pInputSignature = s->signature ? s->signature->lpVtbl->GetBufferPointer(s->signature) : nullptr;
     desc->pBytecode = s->code;
     desc->BytecodeLength = s->length;
     desc->SODecl = s->so_decl;
@@ -563,7 +563,7 @@ static HRESULT get_shader_object(void *iface, UINT index, UINT kind, IUnknown **
     FxShader *s = shader_at(iface, index);
     if (!out)
         return E_INVALIDARG;
-    *out = NULL;
+    *out = nullptr;
     if (!s || s->kind != kind)
         return E_FAIL;
     if ((*out = s->object))
@@ -626,7 +626,7 @@ static FxBlock *block_at(void *iface, UINT index)
 {
     FxVariable *v = impl(iface);
     if (index >= FxElementCount(v->type))
-        return NULL;
+        return nullptr;
     FxBlock *b = (FxBlock *)v->data + index;
     FxEvaluateBlock(v->effect, b);
     return b;
@@ -695,7 +695,7 @@ static HRESULT STDMETHODCALLTYPE set_texture_buffer(void *iface, ID3D10ShaderRes
     b->user = TRUE;
     if (b->buffer)
         b->buffer->lpVtbl->Release(b->buffer);
-    b->buffer = NULL;
+    b->buffer = nullptr;
     view->lpVtbl->AddRef(view);
     if (b->view)
         b->view->lpVtbl->Release(b->view);
@@ -776,14 +776,14 @@ static FxVariable *child(FxVariable *v, UINT index)
     FxType *t = v->type;
     UINT elements = t->elements, total = elements + (t->kind == FX_STRUCT ? t->member_count : 0);
     if (!v->children && !(v->children = FxAlloc(v->effect, total * sizeof(*v->children))))
-        return NULL;
+        return nullptr;
     if (v->children[index])
         return v->children[index];
     FxVariable *c = FxAlloc(v->effect, sizeof(*c));
     if (!c)
-        return NULL;
+        return nullptr;
     *c = *v;
-    c->children = NULL;
+    c->children = nullptr;
     c->member = TRUE;
     if (index < elements) {
         c->type = single_type(v->effect, t);
@@ -809,7 +809,7 @@ static FxVariable *child(FxVariable *v, UINT index)
     return c;
 }
 
-static FxBuffer *buffer_of(FxVariable *v) { return v->type->buffer_type ? CONTAINING_RECORD(v, FxBuffer, var) : NULL; }
+static FxBuffer *buffer_of(FxVariable *v) { return v->type->buffer_type ? CONTAINING_RECORD(v, FxBuffer, var) : nullptr; }
 
 /* a constant buffer's members are its variables. */
 static ID3D10EffectVariable *STDMETHODCALLTYPE var_member_by_index(void *iface, UINT index)

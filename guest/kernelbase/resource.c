@@ -45,14 +45,14 @@ HRSRC WINAPI FindResourceExW(HMODULE module, LPCWSTR type, LPCWSTR name, WORD la
 {
     if (!type || !name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     LDR_RESOURCE_INFO info = {(ULONG_PTR)type, (ULONG_PTR)name, language};
-    IMAGE_RESOURCE_DATA_ENTRY *entry = NULL;
+    IMAGE_RESOURCE_DATA_ENTRY *entry = nullptr;
     NTSTATUS status = LdrFindResource_U(resolve_module(module), &info, 3, &entry);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status);
-        return NULL;
+        return nullptr;
     }
     return (HRSRC)entry;
 }
@@ -67,7 +67,7 @@ HRSRC WINAPI FindResourceExA(HMODULE module, LPCSTR type, LPCSTR name, WORD lang
     BOOL free_type, free_name;
     LPWSTR wtype = name_to_wide(type, &free_type);
     LPWSTR wname = name_to_wide(name, &free_name);
-    HRSRC r = NULL;
+    HRSRC r = nullptr;
     if (wtype && wname)
         r = FindResourceExW(module, wtype, wname, language);
     else
@@ -88,13 +88,13 @@ HGLOBAL WINAPI LoadResource(HMODULE module, HRSRC resource)
 {
     if (!resource) {
         KbSetError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
-    PVOID data = NULL;
-    NTSTATUS status = LdrAccessResource(resolve_module(module), (IMAGE_RESOURCE_DATA_ENTRY *)resource, &data, NULL);
+    PVOID data = nullptr;
+    NTSTATUS status = LdrAccessResource(resolve_module(module), (IMAGE_RESOURCE_DATA_ENTRY *)resource, &data, nullptr);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status);
-        return NULL;
+        return nullptr;
     }
     return data;
 }
@@ -140,15 +140,15 @@ static IMAGE_RESOURCE_DIRECTORY *find_directory(HMODULE module, LPCWSTR type, LP
     NTSTATUS status = LdrFindResourceDirectory_U(module, &info, 0, root);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status == STATUS_RESOURCE_DATA_NOT_FOUND ? STATUS_RESOURCE_DATA_NOT_FOUND : status);
-        return NULL;
+        return nullptr;
     }
     if (!level)
         return *root;
-    IMAGE_RESOURCE_DIRECTORY *dir = NULL;
+    IMAGE_RESOURCE_DIRECTORY *dir = nullptr;
     status = LdrFindResourceDirectory_U(module, &info, level, &dir);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status);
-        return NULL;
+        return nullptr;
     }
     return dir;
 }
@@ -161,7 +161,7 @@ BOOL WINAPI EnumResourceTypesExW(HMODULE module, ENUMRESTYPEPROCW proc, LONG_PTR
     }
     module = resolve_module(module);
     IMAGE_RESOURCE_DIRECTORY *root;
-    IMAGE_RESOURCE_DIRECTORY *dir = find_directory(module, NULL, NULL, 0, &root);
+    IMAGE_RESOURCE_DIRECTORY *dir = find_directory(module, nullptr, nullptr, 0, &root);
     if (!dir)
         return FALSE;
     IMAGE_RESOURCE_DIRECTORY_ENTRY *e = (IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
@@ -190,7 +190,7 @@ BOOL WINAPI EnumResourceNamesExW(HMODULE module, LPCWSTR type, ENUMRESNAMEPROCW 
     }
     module = resolve_module(module);
     IMAGE_RESOURCE_DIRECTORY *root;
-    IMAGE_RESOURCE_DIRECTORY *dir = find_directory(module, type, NULL, 1, &root);
+    IMAGE_RESOURCE_DIRECTORY *dir = find_directory(module, type, nullptr, 1, &root);
     if (!dir)
         return FALSE;
     IMAGE_RESOURCE_DIRECTORY_ENTRY *e = (IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
@@ -254,7 +254,7 @@ static LPSTR wide_name_to_ansi(LPCWSTR name, PSTR buffer, int size)
 {
     if (IS_INTRESOURCE(name))
         return (LPSTR)name;
-    if (!WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, size, NULL, NULL))
+    if (!WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, size, nullptr, nullptr))
         buffer[size - 1] = 0;
     return buffer;
 }
@@ -338,7 +338,7 @@ BOOL WINAPI EnumResourceLanguagesA(HMODULE module, LPCSTR type, LPCSTR name, ENU
 HANDLE WINAPI BeginUpdateResourceW(LPCWSTR file, BOOL delete_existing)
 {
     KbSetError(ERROR_CALL_NOT_IMPLEMENTED);
-    return NULL;
+    return nullptr;
 }
 
 BOOL WINAPI UpdateResourceW(HANDLE update, LPCWSTR type, LPCWSTR name, WORD language, LPVOID data, DWORD size)
@@ -404,8 +404,8 @@ BOOL KbFindMessage(HMODULE module, DWORD id, DWORD lang, LPWSTR *text, BOOL *all
             *text = (LPWSTR)m->Text;
             return TRUE;
         }
-        int n = MultiByteToWideChar(CP_ACP, 0, (LPCCH)m->Text, -1, NULL, 0);
-        LPWSTR w = n > 0 ? KbAlloc((SIZE_T)n * sizeof(WCHAR)) : NULL;
+        int n = MultiByteToWideChar(CP_ACP, 0, (LPCCH)m->Text, -1, nullptr, 0);
+        LPWSTR w = n > 0 ? KbAlloc((SIZE_T)n * sizeof(WCHAR)) : nullptr;
         if (!w) {
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
             return FALSE;

@@ -21,7 +21,7 @@ static HRESULT normalize(D9Device *device, D3DPRESENT_PARAMETERS *params, HWND *
         (params->SwapEffect == D3DSWAPEFFECT_COPY && params->BackBufferCount > 1))
         return D3DERR_INVALIDCALL;
     if (params->Windowed) {
-        RECT client = {0};
+        RECT client = {};
         GetClientRect(*window, &client);
         if (!params->BackBufferWidth)
             params->BackBufferWidth = D9_MAX(client.right, 1);
@@ -47,17 +47,17 @@ static void release_output_buffers(D9Output *o)
         o->buffer->lpVtbl->Release(o->buffer);
     if (o->front)
         o->front->lpVtbl->Release(o->front);
-    o->buffer = o->front = NULL;
+    o->buffer = o->front = nullptr;
 }
 
 static void destroy_output(D9Output *o)
 {
     release_output_buffers(o);
     if (o->dxgi) {
-        o->dxgi->lpVtbl->SetFullscreenState(o->dxgi, FALSE, NULL);
+        o->dxgi->lpVtbl->SetFullscreenState(o->dxgi, FALSE, nullptr);
         o->dxgi->lpVtbl->Release(o->dxgi);
     }
-    o->dxgi = NULL;
+    o->dxgi = nullptr;
 }
 
 static void release_buffers(D9SwapChain *sc)
@@ -68,7 +68,7 @@ static void release_buffers(D9SwapChain *sc)
     release_output_buffers(&sc->output);
     if (sc->resolved)
         sc->resolved->lpVtbl->Release(sc->resolved);
-    sc->resolved = NULL;
+    sc->resolved = nullptr;
 }
 
 static DXGI_FORMAT dxgi_format(D3DFORMAT format)
@@ -80,7 +80,7 @@ static DXGI_FORMAT dxgi_format(D3DFORMAT format)
 /* the size a window's buffers have: its client area in windows, the back buffer's in fullscreen. */
 static void output_size(const D9SwapChain *sc, HWND window, UINT *width, UINT *height)
 {
-    RECT client = {0};
+    RECT client = {};
     if (sc->params.Windowed && GetClientRect(window, &client)) {
         *width = D9_MAX(client.right - client.left, 1);
         *height = D9_MAX(client.bottom - client.top, 1);
@@ -96,7 +96,7 @@ static HRESULT make_output(D9SwapChain *sc, HWND window, D9Output *o)
     memset(o, 0, sizeof(*o));
     o->window = window;
     output_size(sc, window, &o->width, &o->height);
-    DXGI_SWAP_CHAIN_DESC desc = {0};
+    DXGI_SWAP_CHAIN_DESC desc = {};
     desc.BufferDesc.Width = o->width;
     desc.BufferDesc.Height = o->height;
     desc.BufferDesc.RefreshRate.Numerator = params->FullScreen_RefreshRateInHz;
@@ -206,7 +206,7 @@ HRESULT D9ResetSwapChain(D9SwapChain *sc, D3DPRESENT_PARAMETERS *params)
         return hr;
     release_buffers(sc);
     if (params->Windowed != sc->params.Windowed)
-        sc->output.dxgi->lpVtbl->SetFullscreenState(sc->output.dxgi, !params->Windowed, NULL);
+        sc->output.dxgi->lpVtbl->SetFullscreenState(sc->output.dxgi, !params->Windowed, nullptr);
     sc->params = *params;
     if (window != sc->window) {
         destroy_output(&sc->output);
@@ -227,12 +227,12 @@ static D9Output *output_of(D9SwapChain *sc, HWND window)
             return &sc->others[i];
     D9Output *list = HeapAlloc(GetProcessHeap(), 0, (sc->other_count + 1) * sizeof(*list));
     if (!list)
-        return NULL;
+        return nullptr;
     memcpy(list, sc->others, sc->other_count * sizeof(*list));
     if (FAILED(make_output(sc, window, &list[sc->other_count]))) {
         destroy_output(&list[sc->other_count]);
         HeapFree(GetProcessHeap(), 0, list);
-        return NULL;
+        return nullptr;
     }
     HeapFree(GetProcessHeap(), 0, sc->others);
     sc->others = list;
@@ -276,7 +276,7 @@ static BOOL clip_stretch(RECT *src, RECT *dst, LONG src_w, LONG src_h, LONG dst_
 static ID3D11Resource *present_source(D9SwapChain *sc, D9Surface *back)
 {
     if (!back->texture)
-        return NULL;
+        return nullptr;
     D3D11_TEXTURE2D_DESC desc;
     back->texture->lpVtbl->GetDesc(back->texture, &desc);
     if (desc.SampleDesc.Count <= 1)
@@ -287,11 +287,11 @@ static ID3D11Resource *present_source(D9SwapChain *sc, D9Surface *back)
         desc.SampleDesc.Quality = 0;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         desc.MiscFlags = 0;
-        if (FAILED(device->d3d11->lpVtbl->CreateTexture2D(device->d3d11, &desc, NULL, &sc->resolved)))
-            return NULL;
+        if (FAILED(device->d3d11->lpVtbl->CreateTexture2D(device->d3d11, &desc, nullptr, &sc->resolved)))
+            return nullptr;
     }
-    device->mime->lpVtbl->Blit(device->mime, (ID3D11Resource *)sc->resolved, 0, NULL, (ID3D11Resource *)back->texture,
-                               0, NULL, FALSE);
+    device->mime->lpVtbl->Blit(device->mime, (ID3D11Resource *)sc->resolved, 0, nullptr, (ID3D11Resource *)back->texture,
+                               0, nullptr, FALSE);
     return (ID3D11Resource *)sc->resolved;
 }
 
@@ -324,8 +324,8 @@ HRESULT D9Present(D9SwapChain *sc, const RECT *source, const RECT *dest, HWND wi
                 o->buffer->lpVtbl->GetDesc(o->buffer, &desc);
                 desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
                 desc.MiscFlags = 0;
-                if (SUCCEEDED(device->d3d11->lpVtbl->CreateTexture2D(device->d3d11, &desc, NULL, &o->front)))
-                    device->mime->lpVtbl->Blit(device->mime, (ID3D11Resource *)o->front, 0, NULL, src, 0, NULL, TRUE);
+                if (SUCCEEDED(device->d3d11->lpVtbl->CreateTexture2D(device->d3d11, &desc, nullptr, &o->front)))
+                    device->mime->lpVtbl->Blit(device->mime, (ID3D11Resource *)o->front, 0, nullptr, src, 0, nullptr, TRUE);
             }
             if (o->front) {
                 device->mime->lpVtbl->Blit(device->mime, (ID3D11Resource *)o->front, 0, &dr, src, 0, &sr, linear);
@@ -371,7 +371,7 @@ static HRESULT STDMETHODCALLTYPE sc_query(IDirect3DSwapChain9Ex *iface, REFIID r
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DSwapChain9) ||
         (impl(iface)->device->ex && IsEqualGUID(riid, &IID_IDirect3DSwapChain9Ex))) {
         *out = iface;
@@ -446,13 +446,13 @@ static HRESULT STDMETHODCALLTYPE sc_get_front_buffer_data(IDirect3DSwapChain9Ex 
         return D3DERR_INVALIDCALL;
     D9Lock(sc->device);
     HRESULT hr = D3DERR_INVALIDCALL;
-    HDC screen = GetDC(NULL);
-    HDC memory = screen ? CreateCompatibleDC(screen) : NULL;
+    HDC screen = GetDC(nullptr);
+    HDC memory = screen ? CreateCompatibleDC(screen) : nullptr;
     BITMAPINFO bi = {{sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB}};
-    void *bits = NULL;
-    HBITMAP dib = memory ? CreateDIBSection(memory, &bi, DIB_RGB_COLORS, &bits, NULL, 0) : NULL;
+    void *bits = nullptr;
+    HBITMAP dib = memory ? CreateDIBSection(memory, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
     D3DLOCKED_RECT locked;
-    if (dib && SUCCEEDED(D9SurfaceLock(d, &locked, NULL, 0))) {
+    if (dib && SUCCEEDED(D9SurfaceLock(d, &locked, nullptr, 0))) {
         HGDIOBJ old = SelectObject(memory, dib);
         if (BitBlt(memory, 0, 0, width, height, screen, monitor.left, monitor.top, SRCCOPY)) {
             GdiFlush();
@@ -469,7 +469,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_front_buffer_data(IDirect3DSwapChain9Ex 
     if (memory)
         DeleteDC(memory);
     if (screen)
-        ReleaseDC(NULL, screen);
+        ReleaseDC(nullptr, screen);
     D9Unlock(sc->device);
     return hr;
 }
@@ -480,7 +480,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_back_buffer(IDirect3DSwapChain9Ex *iface
     D9SwapChain *sc = impl(iface);
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (index >= sc->back_buffer_count || type > D3DBACKBUFFER_TYPE_RIGHT)
         return D3DERR_INVALIDCALL;
     *out = &sc->back_buffers[index]->iface;
@@ -493,9 +493,9 @@ HRESULT D9RasterStatus(D9SwapChain *sc, D3DRASTER_STATUS *status)
 {
     if (!status)
         return D3DERR_INVALIDCALL;
-    DEVMODEW dm = {0};
+    DEVMODEW dm = {};
     dm.dmSize = sizeof(dm);
-    UINT rate = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1
+    UINT rate = EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1
                     ? dm.dmDisplayFrequency
                     : 60;
     UINT lines = dm.dmPelsHeight ? dm.dmPelsHeight : 1080;

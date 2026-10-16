@@ -14,7 +14,7 @@ typedef struct KI_SERVICE_TABLE {
 } KI_SERVICE_TABLE;
 
 static KSERVICE_DESCRIPTOR g_nt_services[MIME_NT_SERVICES_COUNT];
-static KI_SERVICE_TABLE g_tables[2] = {{g_nt_services, MIME_NT_SERVICES_COUNT}, {NULL, 0}};
+static KI_SERVICE_TABLE g_tables[2] = {{g_nt_services, MIME_NT_SERVICES_COUNT}, {nullptr, 0}};
 static UCHAR g_reported[2][4096 / 8];
 /* calls of each service, for the thread dump; racy counts are good enough for that. */
 static ULONG64 g_calls[2][4096];
@@ -105,7 +105,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG64 result;
     if (table < 2)
         g_calls[table][index]++;
-    KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : NULL;
+    KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
     if (table == 1 && !thread->Win32Thread && g_win32.ThreadCallout) {
         NTSTATUS status = convert_to_gui_thread();
         if (!NT_SUCCESS(status))
@@ -203,7 +203,7 @@ NTSTATUS NTAPI MimeCopyToUser(void *user_dst, const void *src, SIZE_T length)
 NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING copy, PCUNICODE_STRING src)
 {
     UNICODE_STRING s;
-    copy->Buffer = NULL;
+    copy->Buffer = nullptr;
     copy->Length = copy->MaximumLength = 0;
     if (!src)
         return STATUS_SUCCESS;
@@ -225,7 +225,7 @@ NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING copy, PCUNICODE_STRING src)
         memcpy(copy->Buffer, s.Buffer, s.Length);
     if (!NT_SUCCESS(status)) {
         ExFreePool(copy->Buffer);
-        copy->Buffer = NULL;
+        copy->Buffer = nullptr;
         return status;
     }
     copy->Buffer[s.Length / sizeof(WCHAR)] = 0;
@@ -238,7 +238,7 @@ void KiFreeCapturedString(PUNICODE_STRING s)
 {
     if (s->Buffer)
         ExFreePool(s->Buffer);
-    s->Buffer = NULL;
+    s->Buffer = nullptr;
 }
 
 void NTAPI ProbeForRead(PVOID address, SIZE_T length, ULONG alignment)

@@ -10,10 +10,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MIME_STATIC_ASSERT(e, m) _Static_assert(e, m)
+#define MIME_STATIC_ASSERT(e, m) static_assert(e, m)
 #define MIME_FIELD_AT(type, field, off) MIME_STATIC_ASSERT(offsetof(type, field) == (off), #type "." #field)
 
-#if defined(__i386__)
+#ifdef __i386__
 #define NTAPI __stdcall
 #define WINAPI __stdcall
 #define CALLBACK __stdcall
@@ -28,14 +28,14 @@
 #endif
 #define CDECL __cdecl
 #define DECLSPEC_IMPORT __declspec(dllimport)
-#if defined(__i386__)
+#ifdef __i386__
 #define DECLSPEC_EXPORT
 #else
 #define DECLSPEC_EXPORT __declspec(dllexport)
 #endif
 #define DECLSPEC_NORETURN __declspec(noreturn)
 #define DECLSPEC_ALIGN(x) __declspec(align(x))
-#define FORCEINLINE static inline __attribute__((always_inline))
+#define FORCEINLINE [[gnu::always_inline]] static inline
 #define UNALIGNED
 #define CONST const
 #define IN
@@ -348,7 +348,7 @@ typedef struct _OBJECT_ATTRIBUTES {
         (p)->Attributes = (a);                                                                                    \
         (p)->ObjectName = (n);                                                                                    \
         (p)->SecurityDescriptor = (s);                                                                            \
-        (p)->SecurityQualityOfService = NULL;                                                                     \
+        (p)->SecurityQualityOfService = nullptr;                                                                     \
     } while (0)
 
 #define MAX_PATH 260
@@ -360,9 +360,9 @@ typedef struct _OBJECT_ATTRIBUTES {
 FORCEINLINE struct _TEB *NtCurrentTeb(void)
 {
     struct _TEB *teb;
-#if defined(__i386__)
+#ifdef __i386__
     __asm__("movl %%fs:0x18, %0" : "=r"(teb));
-#elif defined(__x86_64__)
+#elifdef __x86_64__
     /* x64 code finds its teb through gs. */
     __asm__("movq %%gs:0x30, %0" : "=r"(teb));
 #else
@@ -907,7 +907,7 @@ typedef struct _IMAGE_NT_HEADERS64 {
     IMAGE_FILE_HEADER FileHeader;
     IMAGE_OPTIONAL_HEADER64 OptionalHeader;
 } IMAGE_NT_HEADERS64, *PIMAGE_NT_HEADERS64;
-#if defined(__i386__)
+#ifdef __i386__
 typedef IMAGE_NT_HEADERS32 IMAGE_NT_HEADERS, *PIMAGE_NT_HEADERS;
 #else
 typedef IMAGE_NT_HEADERS64 IMAGE_NT_HEADERS, *PIMAGE_NT_HEADERS;
@@ -1017,7 +1017,7 @@ typedef struct _IMAGE_TLS_DIRECTORY64 {
     ULONG Characteristics;
 } IMAGE_TLS_DIRECTORY64, *PIMAGE_TLS_DIRECTORY64;
 
-#if defined(__i386__)
+#ifdef __i386__
 typedef IMAGE_THUNK_DATA32 IMAGE_THUNK_DATA;
 typedef IMAGE_TLS_DIRECTORY32 IMAGE_TLS_DIRECTORY;
 #define IMAGE_SNAP_BY_ORDINAL(o) (((o) & 0x80000000u) != 0)
@@ -1222,14 +1222,14 @@ MIME_STATIC_ASSERT(offsetof(WOW64_CPURESERVED, Context) == 4, "wow64 cpu area la
 #define CONTEXT_I386_EXTENDED_REGISTERS (CONTEXT_I386 | 0x20)
 #define CONTEXT_I386_FULL (CONTEXT_I386 | 7)
 
-#if defined(__i386__)
+#ifdef __i386__
 typedef I386_CONTEXT CONTEXT, *PCONTEXT;
 #define CONTEXT_CONTROL CONTEXT_I386_CONTROL
 #define CONTEXT_INTEGER CONTEXT_I386_INTEGER
 #define CONTEXT_FLOATING_POINT CONTEXT_I386_FLOATING_POINT
 #define CONTEXT_FULL CONTEXT_I386_FULL
 #define CONTEXT_ALL (CONTEXT_I386 | 0x3F)
-#elif defined(__x86_64__)
+#elifdef __x86_64__
 typedef AMD64_CONTEXT CONTEXT, *PCONTEXT;
 #define CONTEXT_CONTROL CONTEXT_AMD64_CONTROL
 #define CONTEXT_INTEGER CONTEXT_AMD64_INTEGER
@@ -1330,7 +1330,7 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS {
     ULONG ProcessGroupId;
     ULONG LoaderThreads;
 } RTL_USER_PROCESS_PARAMETERS, *PRTL_USER_PROCESS_PARAMETERS;
-#if defined(__i386__)
+#ifdef __i386__
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CurrentDirectory, 0x24);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, ImagePathName, 0x38);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CommandLine, 0x40);
@@ -1357,7 +1357,7 @@ typedef struct _PEB_LDR_DATA {
     BOOLEAN ShutdownInProgress;
     HANDLE ShutdownThreadId;
 } PEB_LDR_DATA, *PPEB_LDR_DATA;
-#if defined(__i386__)
+#ifdef __i386__
 MIME_FIELD_AT(PEB_LDR_DATA, InLoadOrderModuleList, 0xc);
 MIME_FIELD_AT(PEB_LDR_DATA, InInitializationOrderModuleList, 0x1c);
 #else
@@ -1406,7 +1406,7 @@ typedef struct _LDR_DATA_TABLE_ENTRY {
     ULONG DependentLoadFlags;
     UCHAR SigningLevel;
 } LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
-#if defined(__i386__)
+#ifdef __i386__
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, DllBase, 0x18);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, FullDllName, 0x24);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, BaseDllName, 0x2c);
@@ -1425,7 +1425,7 @@ typedef struct _PEB {
     BOOLEAN ReadImageFileExecOptions;
     BOOLEAN BeingDebugged;
     UCHAR BitField;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding0[4];
 #endif
     HANDLE Mutant;
@@ -1438,7 +1438,7 @@ typedef struct _PEB {
     PVOID AtlThunkSListPtr;
     PVOID IFEOKey;
     ULONG CrossProcessFlags;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding1[4];
 #endif
     PVOID KernelCallbackTable;
@@ -1446,7 +1446,7 @@ typedef struct _PEB {
     ULONG AtlThunkSListPtr32;
     PVOID ApiSetMap;
     ULONG TlsExpansionCounter;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding2[4];
 #endif
     PVOID TlsBitmap;
@@ -1470,7 +1470,7 @@ typedef struct _PEB {
     PVOID GdiSharedHandleTable;
     PVOID ProcessStarterHelper;
     ULONG GdiDCAttributeList;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding3[4];
 #endif
     PVOID LoaderLock;
@@ -1482,11 +1482,11 @@ typedef struct _PEB {
     ULONG ImageSubsystem;
     ULONG ImageSubsystemMajorVersion;
     ULONG ImageSubsystemMinorVersion;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding4[4];
 #endif
     ULONG_PTR ActiveProcessAffinityMask;
-#if defined(__i386__)
+#ifdef __i386__
     ULONG GdiHandleBuffer[34];
 #else
     ULONG GdiHandleBuffer[60];
@@ -1495,7 +1495,7 @@ typedef struct _PEB {
     PVOID TlsExpansionBitmap;
     ULONG TlsExpansionBitmapBits[32];
     ULONG SessionId;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding5[4];
 #endif
     ULARGE_INTEGER AppCompatFlags;
@@ -1522,7 +1522,7 @@ typedef struct _PEB {
     PVOID EcCodeBitMap;
     PVOID pImageHeaderHash;
     ULONG TracingFlags;
-#if !defined(__i386__)
+#ifndef __i386__
     UCHAR Padding6[4];
 #endif
     ULONGLONG CsrServerReadOnlySharedMemoryBase;
@@ -1530,7 +1530,7 @@ typedef struct _PEB {
     LIST_ENTRY TppWorkerpList;
     PVOID WaitOnAddressHashTable[128];
 } PEB, *PPEB;
-#if defined(__i386__)
+#ifdef __i386__
 MIME_FIELD_AT(PEB, ImageBaseAddress, 0x8);
 MIME_FIELD_AT(PEB, Ldr, 0xc);
 MIME_FIELD_AT(PEB, ProcessParameters, 0x10);
@@ -1566,7 +1566,7 @@ typedef struct _GDI_TEB_BATCH {
     ULONG Buffer[310];
 } GDI_TEB_BATCH;
 
-#if defined(__i386__)
+#ifdef __i386__
 typedef struct _TEB {
     NT_TIB NtTib;
     PVOID EnvironmentPointer;
@@ -1900,13 +1900,13 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PL
 FORCEINLINE ULONG64 MimeReadQpc(void)
 {
     ULONG64 v;
-#if defined(__aarch64__)
+#ifdef __aarch64__
     __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
 #else
     /* x86 code translated on an arm64 machine has a tsc of its own: the translator answers the call. */
     if (USER_SHARED_DATA->NativeProcessorArchitecture != 9 /* PROCESSOR_ARCHITECTURE_AMD64 */) {
         LARGE_INTEGER counter;
-        NtQueryPerformanceCounter(&counter, NULL);
+        NtQueryPerformanceCounter(&counter, nullptr);
         return (ULONG64)counter.QuadPart;
     }
     ULONG lo, hi;

@@ -38,7 +38,7 @@ typedef struct _WKSTA_INFO_102 {
 } WKSTA_INFO_102;
 
 /* the workgroup windows setup joins, recorded nowhere else in mime. */
-static const WCHAR g_workgroup[] = L"WORKGROUP";
+static constexpr WCHAR g_workgroup[] = L"WORKGROUP";
 
 /* ---------------------------------------------------------------- buffers */
 
@@ -63,7 +63,7 @@ NETAPI NET_API_STATUS WINAPI NetApiBufferReallocate(LPVOID old, DWORD size, LPVO
         return ERROR_INVALID_PARAMETER;
     if (!size) {
         NetApiBufferFree(old);
-        *buffer = NULL;
+        *buffer = nullptr;
         return NERR_Success;
     }
     LPVOID p = old ? LocalReAlloc(old, size, LMEM_MOVEABLE) : LocalAlloc(LMEM_FIXED, size);
@@ -160,7 +160,7 @@ NETAPI NET_API_STATUS WINAPI NetShareEnum(LMSTR server, DWORD level, LPBYTE *buf
         return ERROR_INVALID_LEVEL;
     if (!buffer || !read || !total)
         return ERROR_INVALID_PARAMETER;
-    *buffer = NULL;
+    *buffer = nullptr;
     *read = 0;
     *total = 0;
     return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
@@ -182,7 +182,7 @@ NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicy(LPCWSTR server, LPVOID qu
 {
     if (!output)
         return ERROR_INVALID_PARAMETER;
-    *output = NULL;
+    *output = nullptr;
     if (qualifier || type < 1 || type > 3 || !input)
         return ERROR_INVALID_PARAMETER;
     return local_server(server) ? ERROR_NOT_SUPPORTED : ERROR_BAD_NETPATH;
@@ -194,6 +194,6 @@ NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicyFree(LPVOID *output)
         return ERROR_INVALID_PARAMETER;
     if (*output && LocalFree(*output))
         return ERROR_INVALID_PARAMETER;
-    *output = NULL;
+    *output = nullptr;
     return NERR_Success;
 }

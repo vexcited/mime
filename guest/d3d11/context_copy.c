@@ -241,7 +241,7 @@ static void update_texture(D3dContext *c, D3dResource *r, UINT sub, const D3D11_
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
     if (!cmd)
         return;
-    VkBufferImageCopy copy = {0};
+    VkBufferImageCopy copy = {};
     copy.bufferOffset = slice.offset;
     copy.imageSubresource = (VkImageSubresourceLayers){r->tex.aspect & ~VK_IMAGE_ASPECT_STENCIL_BIT, mip, layer, 1};
     if (r->tex.aspect == VK_IMAGE_ASPECT_STENCIL_BIT)
@@ -276,7 +276,7 @@ void D3dCtxUpdateSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, c
 static VkBufferImageCopy staging_copy(const D3dResource *staging, UINT sub, VkOffset3D at)
 {
     const D3dFormat *f = staging->tex.fmt;
-    VkBufferImageCopy c = {0};
+    VkBufferImageCopy c = {};
     c.bufferOffset = staging->tex.staging.offset + staging->tex.sub_offset[sub] +
                      (VkDeviceSize)at.z * staging->tex.sub_slice_pitch[sub] +
                      (VkDeviceSize)(at.y / f->block) * staging->tex.sub_row_pitch[sub] +
@@ -403,12 +403,12 @@ void D3dCtxCopyResource(D3dContext *c, ID3D11Resource *dst, ID3D11Resource *src)
     if (!d || !s || d == s || d->dimension != s->dimension)
         return;
     if (d->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
-        copy_buffer(c, d, 0, s, NULL);
+        copy_buffer(c, d, 0, s, nullptr);
         return;
     }
     UINT count = D3D_MIN(D3dSubresourceCount(d), D3dSubresourceCount(s));
     for (UINT i = 0; i < count; i++)
-        copy_texture(c, d, i, 0, 0, 0, s, i, NULL);
+        copy_texture(c, d, i, 0, 0, 0, s, i, nullptr);
 }
 
 void D3dCtxCopyStructureCount(D3dContext *c, ID3D11Buffer *dst, UINT offset, ID3D11UnorderedAccessView *src)
@@ -518,13 +518,13 @@ void D3dCtxClearRenderTargetView(D3dContext *c, ID3D11RenderTargetView *iface, c
         return;
     VkClearValue value;
     value.color = clear_color(view, color);
-    clear_attachment(c, view, &value, VK_IMAGE_ASPECT_COLOR_BIT, NULL, 0);
+    clear_attachment(c, view, &value, VK_IMAGE_ASPECT_COLOR_BIT, nullptr, 0);
 }
 
 void D3dCtxClearDepthStencilView(D3dContext *c, ID3D11DepthStencilView *iface, UINT flags, FLOAT depth,
                                  UINT8 stencil)
 {
-    D3dCtxClearDepthStencilRects(c, iface, flags, depth, stencil, NULL, 0);
+    D3dCtxClearDepthStencilRects(c, iface, flags, depth, stencil, nullptr, 0);
 }
 
 /* d3d9.dll's clears of depth buffers, which its viewport and rectangles bound. */
@@ -617,14 +617,14 @@ void D3dCtxClearUnorderedAccessViewUint(D3dContext *c, ID3D11UnorderedAccessView
 {
     D3dView *view = D3dViewFrom(iface, D3D_VIEW_UAV);
     if (view && values)
-        clear_uav(c, view, values, NULL);
+        clear_uav(c, view, values, nullptr);
 }
 
 void D3dCtxClearUnorderedAccessViewFloat(D3dContext *c, ID3D11UnorderedAccessView *iface, const FLOAT values[4])
 {
     D3dView *view = D3dViewFrom(iface, D3D_VIEW_UAV);
     if (view && values)
-        clear_uav(c, view, NULL, values);
+        clear_uav(c, view, nullptr, values);
 }
 
 /*
@@ -643,12 +643,12 @@ static void clear_uav_view(D3dContext *c, D3dView *view, const FLOAT color[4], c
     for (UINT i = 0; i < 4; i++)
         uints[i] = f->flags & D3D_FORMAT_INT ? (UINT)(INT)color[i] : 0;
     if (!count) {
-        clear_uav(c, view, f->flags & D3D_FORMAT_INT ? uints : NULL, f->flags & D3D_FORMAT_INT ? NULL : color);
+        clear_uav(c, view, f->flags & D3D_FORMAT_INT ? uints : nullptr, f->flags & D3D_FORMAT_INT ? nullptr : color);
         return;
     }
     BYTE element[16];
     UINT size;
-    if (!D3dPackClear(view->format, f->flags & D3D_FORMAT_INT ? uints : NULL, f->flags & D3D_FORMAT_INT ? NULL : color,
+    if (!D3dPackClear(view->format, f->flags & D3D_FORMAT_INT ? uints : nullptr, f->flags & D3D_FORMAT_INT ? nullptr : color,
                       element, &size))
         return;
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
@@ -706,11 +706,11 @@ void D3dCtxClearView(D3dContext *c, ID3D11View *iface, const FLOAT color[4], con
     if (view) {
         VkClearValue value;
         value.color = clear_color(view, color);
-        clear_attachment(c, view, &value, VK_IMAGE_ASPECT_COLOR_BIT, count ? rects : NULL, count);
+        clear_attachment(c, view, &value, VK_IMAGE_ASPECT_COLOR_BIT, count ? rects : nullptr, count);
         return;
     }
     if ((view = D3dViewFrom(iface, D3D_VIEW_UAV)))
-        clear_uav_view(c, view, color, count ? rects : NULL, count);
+        clear_uav_view(c, view, color, count ? rects : nullptr, count);
 }
 
 
@@ -731,7 +731,7 @@ void D3dCtxGenerateMips(D3dContext *c, ID3D11ShaderResourceView *iface)
     UINT first = view->range.baseMipLevel, count = view->range.levelCount;
     for (UINT mip = first + 1; mip < first + count; mip++) {
         VkExtent3D s = D3dMipExtent(r, mip - 1), d = D3dMipExtent(r, mip);
-        VkImageBlit blit = {0};
+        VkImageBlit blit = {};
         blit.srcSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, mip - 1,
                                                          view->range.baseArrayLayer, view->range.layerCount};
         blit.srcOffsets[1] = (VkOffset3D){s.width, s.height, s.depth};
@@ -765,7 +765,7 @@ void D3dCtxResolveSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, 
         c->child.device->vk.vkCmdResolveImage(cmd, s->tex.image, VK_IMAGE_LAYOUT_GENERAL, d->tex.image,
                                               VK_IMAGE_LAYOUT_GENERAL, 1, &resolve);
     else
-        copy_texture(c, d, dst_sub, 0, 0, 0, s, src_sub, NULL);
+        copy_texture(c, d, dst_sub, 0, 0, 0, s, src_sub, nullptr);
     c->pending_barrier = TRUE;
     D3dContextUse(c, s);
     D3dContextUse(c, d);

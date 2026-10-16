@@ -50,20 +50,20 @@ static CLIP_FORMAT *find_format(UINT format)
     for (ULONG i = 0; i < g_format_count; i++)
         if (g_formats[i].Format == format)
             return &g_formats[i];
-    return NULL;
+    return nullptr;
 }
 
 static void free_format(CLIP_FORMAT *f)
 {
     W32Free(f->Data);
-    f->Data = NULL;
+    f->Data = nullptr;
     f->Size = 0;
     if (f->Gdi && f->Handle) {
         GDI_OBJECT *o = GdiLookup(f->Handle, 0);
         if (o && !(o->Flags & (GDI_FLAG_STOCK | GDI_FLAG_SYSTEM)))
             GdiDeleteObject(o);
     }
-    f->Handle = NULL;
+    f->Handle = nullptr;
 }
 
 static void empty_formats(void)
@@ -81,18 +81,18 @@ static BOOLEAN caller_has_open(W32THREAD *t)
 static void notify_listeners(void)
 {
     for (ULONG i = 0; i < MAX_LISTENERS; i++) {
-        WND *w = g_listeners[i] ? WndLookup(g_listeners[i]) : NULL;
+        WND *w = g_listeners[i] ? WndLookup(g_listeners[i]) : nullptr;
         if (!w) {
-            g_listeners[i] = NULL;
+            g_listeners[i] = nullptr;
             continue;
         }
         QueuePost(w->Thread, g_listeners[i], WM_CLIPBOARDUPDATE, 0, 0);
     }
-    WND *v = g_viewer ? WndLookup(g_viewer) : NULL;
+    WND *v = g_viewer ? WndLookup(g_viewer) : nullptr;
     if (v)
         MsgSendKernel(v, WM_DRAWCLIPBOARD, (WPARAM)g_owner, 0, MIME_LPARAM_VALUE, 0);
     else
-        g_viewer = NULL;
+        g_viewer = nullptr;
 }
 
 /* text formats the system provides from another text format, like windows. */
@@ -135,7 +135,7 @@ static BOOLEAN host_page(void)
 {
     if (!g_host_page)
         g_host_page = MmAllocateContiguousPages(HOST_CHUNK);
-    return g_host_page != NULL;
+    return g_host_page != nullptr;
 }
 
 static void render_format(CLIP_FORMAT *f);
@@ -152,7 +152,7 @@ static void push_to_host(void)
         render_format(f);
         f = find_format(CF_UNICODETEXT);
     }
-    WCHAR *text = NULL;
+    WCHAR *text = nullptr;
     SIZE_T chars = 0;
     BOOLEAN widened = FALSE;
     if (f && f->Data && !f->Delayed) {
@@ -181,7 +181,7 @@ static void push_to_host(void)
         if (n)
             memcpy(g_host_page, (PUCHAR)text + offset, (SIZE_T)n);
         if (HalMimeHypercall(MIME_HC_CLIP_SET, (ULONG64)MmGetPhysicalAddress(g_host_page).QuadPart, n, offset, total, 0,
-                             0, NULL) != MIME_HC_STATUS_OK)
+                             0, nullptr) != MIME_HC_STATUS_OK)
             break;
         offset += n;
     } while (offset < total);
@@ -221,12 +221,12 @@ static void fetch_host_text(CLIP_FORMAT *f)
 /* another host application copied text: the contents become that text, not read yet. */
 static void pull_from_host(void)
 {
-    WND *old = g_owner ? WndLookup(g_owner) : NULL;
+    WND *old = g_owner ? WndLookup(g_owner) : nullptr;
     if (old)
         QueuePost(old->Thread, g_owner, WM_DESTROYCLIPBOARD, 0, 0);
     empty_formats();
-    g_owner = NULL;
-    g_owner_thread = NULL;
+    g_owner = nullptr;
+    g_owner_thread = nullptr;
     if (g_host_has_text) {
         CLIP_FORMAT *f = &g_formats[g_format_count++];
         memset(f, 0, sizeof(*f));
@@ -238,13 +238,13 @@ static void pull_from_host(void)
     g_sequence++;
     /* posted rather than sent: this runs on the input thread. */
     for (ULONG i = 0; i < MAX_LISTENERS; i++) {
-        WND *w = g_listeners[i] ? WndLookup(g_listeners[i]) : NULL;
+        WND *w = g_listeners[i] ? WndLookup(g_listeners[i]) : nullptr;
         if (w)
             QueuePost(w->Thread, g_listeners[i], WM_CLIPBOARDUPDATE, 0, 0);
         else
-            g_listeners[i] = NULL;
+            g_listeners[i] = nullptr;
     }
-    WND *v = g_viewer ? WndLookup(g_viewer) : NULL;
+    WND *v = g_viewer ? WndLookup(g_viewer) : nullptr;
     if (v)
         QueuePost(v->Thread, g_viewer, WM_DRAWCLIPBOARD, 0, 0);
 }
@@ -264,7 +264,7 @@ void ClipboardWindowDestroyed(WND *w)
 {
     HWND h = WndHandle(w);
     if (g_open_window == h)
-        g_open_window = NULL;
+        g_open_window = nullptr;
     if (g_owner == h) {
         /* windows sends WM_RENDERALLFORMATS first; formats that were never rendered are dropped. */
         ULONG kept = 0;
@@ -274,28 +274,28 @@ void ClipboardWindowDestroyed(WND *w)
             g_formats[kept++] = g_formats[i];
         }
         g_format_count = kept;
-        g_owner = NULL;
-        g_owner_thread = NULL;
+        g_owner = nullptr;
+        g_owner_thread = nullptr;
     }
     if (g_viewer == h)
-        g_viewer = NULL;
+        g_viewer = nullptr;
     for (ULONG i = 0; i < MAX_LISTENERS; i++)
         if (g_listeners[i] == h)
-            g_listeners[i] = NULL;
+            g_listeners[i] = nullptr;
 }
 
 void ClipboardThreadDestroyed(W32THREAD *t)
 {
     if (g_open_thread == t) {
-        g_open_thread = NULL;
-        g_open_window = NULL;
+        g_open_thread = nullptr;
+        g_open_window = nullptr;
         if (g_host_pending) {
             g_host_pending = FALSE;
             pull_from_host();
         }
     }
     if (g_owner_thread == t)
-        g_owner_thread = NULL;
+        g_owner_thread = nullptr;
 }
 
 /* ------------------------------------------------------------------ services */
@@ -304,7 +304,7 @@ BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    WND *w = owner ? WndLookup(owner) : NULL;
+    WND *w = owner ? WndLookup(owner) : nullptr;
     BOOL ok = FALSE;
     ULONG error = 0;
     if (owner && !w)
@@ -331,8 +331,8 @@ BOOL NTAPI NtUserCloseClipboard(void)
     BOOL ok = caller_has_open(t);
     BOOLEAN changed = FALSE;
     if (ok) {
-        g_open_thread = NULL;
-        g_open_window = NULL;
+        g_open_thread = nullptr;
+        g_open_window = nullptr;
         changed = g_changed;
         g_changed = FALSE;
         if (changed) {
@@ -359,12 +359,12 @@ BOOL NTAPI NtUserEmptyClipboard(void)
     W32THREAD *t = W32GetThread();
     BOOL ok = caller_has_open(t);
     if (ok) {
-        WND *old = g_owner ? WndLookup(g_owner) : NULL;
+        WND *old = g_owner ? WndLookup(g_owner) : nullptr;
         if (old && g_owner != g_open_window)
             MsgSendKernel(old, WM_DESTROYCLIPBOARD, 0, 0, MIME_LPARAM_VALUE, 0);
         empty_formats();
         g_owner = g_open_window;
-        g_owner_thread = g_open_window ? t : NULL;
+        g_owner_thread = g_open_window ? t : nullptr;
         g_changed = TRUE;
         g_sequence++;
     }
@@ -376,31 +376,31 @@ BOOL NTAPI NtUserEmptyClipboard(void)
 
 HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_DATA *user_data)
 {
-    MIME_CLIPBOARD_DATA d = {NULL, 0, 0, FALSE};
+    MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
     if (user_data && !NT_SUCCESS(MimeCopyFromUser(&d, user_data, sizeof(d)))) {
         W32SetLastError(ERROR_NOACCESS);
-        return NULL;
+        return nullptr;
     }
     if (!format || (d.Data && d.Size > 256 * 1024 * 1024)) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
-    PUCHAR copy = NULL;
+    PUCHAR copy = nullptr;
     if (d.Data) {
         copy = W32Alloc(d.Size);
         if (!copy) {
             W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return NULL;
+            return nullptr;
         }
         if (d.Size && !NT_SUCCESS(MimeCopyFromUser(copy, d.Data, d.Size))) {
             W32Free(copy);
             W32SetLastError(ERROR_NOACCESS);
-            return NULL;
+            return nullptr;
         }
     }
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HANDLE result = NULL;
+    HANDLE result = nullptr;
     /* the owner may render a delayed format without opening the clipboard. */
     BOOLEAN allowed = caller_has_open(t) || (g_rendering && g_owner_thread == t);
     if (allowed) {
@@ -416,10 +416,10 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
             f->Host = FALSE;
             f->Gdi = is_gdi_format(format) && !d.Data;
             f->Delayed = !d.Data && !handle;
-            f->Handle = f->Gdi ? handle : NULL;
+            f->Handle = f->Gdi ? handle : nullptr;
             f->Data = copy;
             f->Size = d.Data ? d.Size : 0;
-            copy = NULL;
+            copy = nullptr;
             if (f->Gdi && handle) {
                 /* the clipboard owns gdi objects from now on, beyond the life of the process. */
                 GDI_OBJECT *o = GdiLookup(handle, 0);
@@ -448,7 +448,7 @@ static void render_format(CLIP_FORMAT *f)
         fetch_host_text(f);
         return;
     }
-    WND *owner = g_owner ? WndLookup(g_owner) : NULL;
+    WND *owner = g_owner ? WndLookup(g_owner) : nullptr;
     if (!owner)
         return;
     g_rendering = TRUE;
@@ -461,12 +461,12 @@ HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
     MIME_CLIPBOARD_DATA d;
     if (!user_data || !NT_SUCCESS(MimeCopyFromUser(&d, user_data, sizeof(d)))) {
         W32SetLastError(ERROR_NOACCESS);
-        return NULL;
+        return nullptr;
     }
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HANDLE result = NULL;
-    PUCHAR copy = NULL;
+    HANDLE result = nullptr;
+    PUCHAR copy = nullptr;
     SIZE_T size = 0;
     ULONG error = 0;
     if (!caller_has_open(t)) {
@@ -495,7 +495,7 @@ HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
             d.Size = size;
             result = (HANDLE)1;
             if (n && !copy) {
-                result = NULL;
+                result = nullptr;
                 error = ERROR_NOT_ENOUGH_MEMORY;
             }
         }
@@ -503,12 +503,12 @@ HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
     }
     UserLeave();
     if (result && copy && !NT_SUCCESS(MimeCopyToUser(d.Data, copy, d.Size < size ? d.Size : size))) {
-        result = NULL;
+        result = nullptr;
         error = ERROR_NOACCESS;
     }
     W32Free(copy);
     if (result && !NT_SUCCESS(MimeCopyToUser(user_data, &d, sizeof(d)))) {
-        result = NULL;
+        result = nullptr;
         error = ERROR_NOACCESS;
     }
     if (error)
@@ -519,7 +519,7 @@ HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
 BOOL NTAPI NtUserIsClipboardFormatAvailable(UINT format)
 {
     UserEnter();
-    BOOL r = find_format(format) != NULL;
+    BOOL r = find_format(format) != nullptr;
     UserLeave();
     return r;
 }
@@ -582,7 +582,7 @@ int NTAPI NtUserGetClipboardFormatName(UINT format, LPWSTR user_name, int max)
 HWND NTAPI NtUserGetClipboardOwner(void)
 {
     UserEnter();
-    HWND h = g_owner && WndLookup(g_owner) ? g_owner : NULL;
+    HWND h = g_owner && WndLookup(g_owner) ? g_owner : nullptr;
     UserLeave();
     return h;
 }
@@ -590,7 +590,7 @@ HWND NTAPI NtUserGetClipboardOwner(void)
 HWND NTAPI NtUserGetOpenClipboardWindow(void)
 {
     UserEnter();
-    HWND h = g_open_thread ? g_open_window : NULL;
+    HWND h = g_open_thread ? g_open_window : nullptr;
     UserLeave();
     return h;
 }
@@ -598,7 +598,7 @@ HWND NTAPI NtUserGetOpenClipboardWindow(void)
 HWND NTAPI NtUserGetClipboardViewer(void)
 {
     UserEnter();
-    HWND h = g_viewer && WndLookup(g_viewer) ? g_viewer : NULL;
+    HWND h = g_viewer && WndLookup(g_viewer) ? g_viewer : nullptr;
     UserLeave();
     return h;
 }
@@ -607,9 +607,9 @@ HWND NTAPI NtUserSetClipboardViewer(HWND viewer)
 {
     UserEnter();
     WND *w = WndLookup(viewer);
-    HWND next = NULL;
+    HWND next = nullptr;
     if (w) {
-        next = g_viewer && WndLookup(g_viewer) ? g_viewer : NULL;
+        next = g_viewer && WndLookup(g_viewer) ? g_viewer : nullptr;
         g_viewer = viewer;
         /* the new viewer draws the current contents at once. */
         MsgSendKernel(w, WM_DRAWCLIPBOARD, (WPARAM)g_owner, 0, MIME_LPARAM_VALUE, 0);
@@ -626,7 +626,7 @@ BOOL NTAPI NtUserChangeClipboardChain(HWND remove, HWND next)
     WND *w = WndLookup(remove);
     BOOL r = FALSE;
     if (w) {
-        WND *first = g_viewer ? WndLookup(g_viewer) : NULL;
+        WND *first = g_viewer ? WndLookup(g_viewer) : nullptr;
         if (g_viewer == remove) {
             /* the first viewer leaves: the next one takes its place. */
             g_viewer = next;
@@ -676,7 +676,7 @@ BOOL NTAPI NtUserRemoveClipboardFormatListener(HWND hwnd)
     BOOL ok = FALSE;
     for (ULONG i = 0; i < MAX_LISTENERS; i++)
         if (g_listeners[i] == hwnd) {
-            g_listeners[i] = NULL;
+            g_listeners[i] = nullptr;
             ok = TRUE;
         }
     UserLeave();

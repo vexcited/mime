@@ -1,4 +1,5 @@
 #include "png.h"
+#include <stdckdint.h>
 #include "inflate.h"
 
 #define CHUNK(a, b, c, d) ((uint32_t)(a) << 24 | (uint32_t)(b) << 16 | (uint32_t)(c) << 8 | (uint32_t)(d))
@@ -8,9 +9,9 @@
 #define CHUNK_IEND CHUNK('I', 'E', 'N', 'D')
 #define CHUNK_TRNS CHUNK('t', 'R', 'N', 'S')
 
-static const uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+static constexpr uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
 
-static const uint32_t crc_table[256] = {
+static constexpr uint32_t crc_table[256] = {
     0x00000000u, 0x77073096u, 0xee0e612cu, 0x990951bau, 0x076dc419u, 0x706af48fu,
     0xe963a535u, 0x9e6495a3u, 0x0edb8832u, 0x79dcb8a4u, 0xe0d5e91eu, 0x97d2d988u,
     0x09b64c2bu, 0x7eb17cbdu, 0xe7b82d07u, 0x90bf1d91u, 0x1db71064u, 0x6ab020f2u,
@@ -76,7 +77,7 @@ typedef struct PngPass {
     size_t rowbytes;
 } PngPass;
 
-static const uint8_t adam7[7][4] = {
+static constexpr uint8_t adam7[7][4] = {
     {0, 0, 8, 8}, {4, 0, 8, 8}, {0, 4, 4, 8}, {2, 0, 4, 4}, {0, 2, 2, 4}, {1, 0, 2, 2}, {0, 1, 1, 2},
 };
 
@@ -476,11 +477,11 @@ int mime_png_decode(const void *data, size_t size, const MimeAllocator *alloc, u
         ps->h = p.info.height > ps->y0 ? (p.info.height - ps->y0 + ps->dy - 1) / ps->dy : 0;
         if (!ps->w)
             ps->h = 0;
-        if (__builtin_mul_overflow((size_t)ps->w, bits_per_pixel, &bits))
+        if (ckd_mul(&bits, (size_t)ps->w, bits_per_pixel))
             return MIME_PNG_ERR_UNSUPPORTED;
         ps->rowbytes = bits / 8 + (bits % 8 != 0);
-        if (__builtin_mul_overflow(ps->rowbytes + 1, (size_t)ps->h, &rowsize) ||
-            __builtin_add_overflow(total, rowsize, &total))
+        if (ckd_mul(&rowsize, ps->rowbytes + 1, (size_t)ps->h) ||
+            ckd_add(&total, total, rowsize))
             return MIME_PNG_ERR_UNSUPPORTED;
         if (ps->rowbytes > max_rowbytes)
             max_rowbytes = ps->rowbytes;
@@ -489,8 +490,8 @@ int mime_png_decode(const void *data, size_t size, const MimeAllocator *alloc, u
     /* workspace: decoder state, the filtered image data and a zero row standing in above the first row. */
     size_t state_size = (sizeof(MimeInflate) + 15) & ~(size_t)15;
     size_t ws_size;
-    if (__builtin_add_overflow(state_size, total, &ws_size) ||
-        __builtin_add_overflow(ws_size, max_rowbytes, &ws_size))
+    if (ckd_add(&ws_size, state_size, total) ||
+        ckd_add(&ws_size, ws_size, max_rowbytes))
         return MIME_PNG_ERR_UNSUPPORTED;
     uint8_t *ws = mime_alloc(alloc, ws_size);
     if (!ws)
@@ -500,7 +501,7 @@ int mime_png_decode(const void *data, size_t size, const MimeAllocator *alloc, u
     __builtin_memset(zero_row, 0, max_rowbytes);
 
     const uint8_t *z;
-    uint8_t *zbuf = NULL;
+    uint8_t *zbuf = nullptr;
     if (p.idat_count == 1) {
         z = p.first_idat + 8;
     } else {
@@ -569,7 +570,7 @@ int mime_png_decode_alloc(const void *data, size_t size, const MimeAllocator *al
 
     if (!out)
         return MIME_PNG_ERR_PARAM;
-    *out = NULL;
+    *out = nullptr;
     if (!data || !alloc)
         return MIME_PNG_ERR_PARAM;
     PngParse p;
@@ -577,7 +578,7 @@ int mime_png_decode_alloc(const void *data, size_t size, const MimeAllocator *al
     if (r)
         return r;
     inf = p.info;
-    if (__builtin_mul_overflow((size_t)inf.width * 4, (size_t)inf.height, &bytes))
+    if (ckd_mul(&bytes, (size_t)inf.width * 4, (size_t)inf.height))
         return MIME_PNG_ERR_UNSUPPORTED;
     uint8_t *buf = mime_alloc(alloc, bytes);
     if (!buf)

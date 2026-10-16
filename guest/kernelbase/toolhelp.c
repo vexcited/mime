@@ -124,14 +124,14 @@ WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
     LARGE_INTEGER size;
     size.QuadPart = sizeof(SNAPSHOT);
     HANDLE section;
-    NTSTATUS status = NtCreateSection(&section, SECTION_ALL_ACCESS, NULL, &size, PAGE_READWRITE, SEC_COMMIT, NULL);
+    NTSTATUS status = NtCreateSection(&section, SECTION_ALL_ACCESS, nullptr, &size, PAGE_READWRITE, SEC_COMMIT, nullptr);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;
     }
-    PVOID view = NULL;
+    PVOID view = nullptr;
     SIZE_T view_size = 0;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), &view, 0, 0, NULL, &view_size, ViewShare, 0, PAGE_READWRITE);
+    status = NtMapViewOfSection(section, NtCurrentProcess(), &view, 0, 0, nullptr, &view_size, ViewShare, 0, PAGE_READWRITE);
     if (!NT_SUCCESS(status)) {
         NtClose(section);
         KbSetStatus(status);
@@ -148,7 +148,7 @@ WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
         p->cntThreads = 1;
         p->pcPriClassBase = 8;
         PCWSTR image = KbParams()->ImagePathName.Buffer;
-        PCWSTR name = image ? wcsrchr(image, '\\') : NULL;
+        PCWSTR name = image ? wcsrchr(image, '\\') : nullptr;
         name = name ? name + 1 : image ? image : L"";
         SIZE_T n = wcslen(name);
         if (n >= MAX_PATH)
@@ -171,15 +171,15 @@ WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
 /* maps the snapshot behind a handle; NULL with the last error set when it is not one. */
 static SNAPSHOT *map_snapshot(HANDLE handle)
 {
-    PVOID view = NULL;
+    PVOID view = nullptr;
     SIZE_T size = 0;
-    NTSTATUS status = NtMapViewOfSection(handle, NtCurrentProcess(), &view, 0, 0, NULL, &size, ViewShare, 0,
+    NTSTATUS status = NtMapViewOfSection(handle, NtCurrentProcess(), &view, 0, 0, nullptr, &size, ViewShare, 0,
                                          PAGE_READWRITE);
     if (!NT_SUCCESS(status) || size < sizeof(SNAPSHOT)) {
         if (NT_SUCCESS(status))
             NtUnmapViewOfSection(NtCurrentProcess(), view);
         KbSetError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return view;
 }
@@ -236,8 +236,8 @@ static BOOL next_module_a(HANDLE handle, LPMODULEENTRY32 entry, BOOL first)
     entry->modBaseAddr = w.modBaseAddr;
     entry->modBaseSize = w.modBaseSize;
     entry->hModule = w.hModule;
-    WideCharToMultiByte(CP_ACP, 0, w.szModule, -1, entry->szModule, sizeof(entry->szModule), NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, w.szExePath, -1, entry->szExePath, sizeof(entry->szExePath), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w.szModule, -1, entry->szModule, sizeof(entry->szModule), nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, w.szExePath, -1, entry->szExePath, sizeof(entry->szExePath), nullptr, nullptr);
     return TRUE;
 }
 
@@ -293,7 +293,7 @@ static BOOL next_process_a(HANDLE handle, LPPROCESSENTRY32 entry, BOOL first)
         return FALSE;
     memcpy(entry, &w, offsetof(PROCESSENTRY32, szExeFile));
     entry->dwSize = sizeof(*entry);
-    WideCharToMultiByte(CP_ACP, 0, w.szExeFile, -1, entry->szExeFile, sizeof(entry->szExeFile), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w.szExeFile, -1, entry->szExeFile, sizeof(entry->szExeFile), nullptr, nullptr);
     return TRUE;
 }
 
@@ -395,14 +395,14 @@ WINBASEAPI BOOL WINAPI RegisterWaitForSingleObject(PHANDLE result, HANDLE object
         KbFree(w);
         return FALSE;
     }
-    w->Cancel = CreateEventW(NULL, TRUE, FALSE, NULL);
+    w->Cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     w->Callback = callback;
     w->Context = context;
     w->Timeout = timeout;
     w->Flags = flags;
     w->Refs = 2; /* the waiting thread and the caller's handle */
     if (w->Cancel)
-        w->Thread = CreateThread(NULL, 0, wait_thread, w, 0, NULL);
+        w->Thread = CreateThread(nullptr, 0, wait_thread, w, 0, nullptr);
     if (!w->Thread) {
         if (w->Cancel)
             NtClose(w->Cancel);
@@ -418,7 +418,7 @@ WINBASEAPI HANDLE WINAPI RegisterWaitForSingleObjectEx(HANDLE object, WAITORTIME
                                             ULONG flags)
 {
     HANDLE h;
-    return RegisterWaitForSingleObject(&h, object, callback, context, timeout, flags) ? h : NULL;
+    return RegisterWaitForSingleObject(&h, object, callback, context, timeout, flags) ? h : nullptr;
 }
 
 /* completion: NULL returns at once, INVALID_HANDLE_VALUE waits for a running callback, or an event to signal. */
@@ -448,7 +448,7 @@ WINBASEAPI BOOL WINAPI UnregisterWaitEx(HANDLE handle, HANDLE completion)
 
 WINBASEAPI BOOL WINAPI UnregisterWait(HANDLE handle)
 {
-    return UnregisterWaitEx(handle, NULL);
+    return UnregisterWaitEx(handle, nullptr);
 }
 
 /* ------------------------------------------------------------------ volumes */
@@ -461,7 +461,7 @@ static const WCHAR *const g_volume_names[2] = {
     L"\\\\?\\Volume{4d696d65-0000-0043-0000-000000000043}\\",
     L"\\\\?\\Volume{4d696d65-0000-005a-0000-00000000005a}\\",
 };
-static const WCHAR g_volume_roots[2] = {'C', 'Z'};
+static constexpr WCHAR g_volume_roots[2] = {'C', 'Z'};
 
 static int volume_index(LPCWSTR name)
 {
@@ -622,7 +622,7 @@ static const GEO_DATA *find_geo(GEOID id)
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_geos); i++)
         if (g_geos[i].Id == id)
             return &g_geos[i];
-    return NULL;
+    return nullptr;
 }
 
 WINBASEAPI int WINAPI GetGeoInfoW(GEOID id, GEOTYPE type, LPWSTR data, int length, LANGID language)
@@ -684,7 +684,7 @@ WINBASEAPI int WINAPI GetGeoInfoA(GEOID id, GEOTYPE type, LPSTR data, int length
     int n = GetGeoInfoW(id, type, wide, RTL_NUMBER_OF(wide), language);
     if (!n)
         return 0;
-    return WideCharToMultiByte(CP_ACP, 0, wide, -1, data, length, NULL, NULL);
+    return WideCharToMultiByte(CP_ACP, 0, wide, -1, data, length, nullptr, nullptr);
 }
 
 /* ------------------------------------------------------------------ thread contexts and device control */
@@ -715,11 +715,11 @@ WINBASEAPI BOOL WINAPI DeviceIoControl(HANDLE device, DWORD code, LPVOID in, DWO
         PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
         iosb->Status = STATUS_PENDING;
         iosb->Information = 0;
-        PVOID apc_context = ((ULONG_PTR)overlapped->hEvent & 1) ? NULL : overlapped;
+        PVOID apc_context = ((ULONG_PTR)overlapped->hEvent & 1) ? nullptr : overlapped;
         if (fs)
-            status = NtFsControlFile(device, overlapped->hEvent, NULL, apc_context, iosb, code, in, in_size, out, out_size);
+            status = NtFsControlFile(device, overlapped->hEvent, nullptr, apc_context, iosb, code, in, in_size, out, out_size);
         else
-            status = NtDeviceIoControlFile(device, overlapped->hEvent, NULL, apc_context, iosb, code, in, in_size, out,
+            status = NtDeviceIoControlFile(device, overlapped->hEvent, nullptr, apc_context, iosb, code, in, in_size, out,
                                            out_size);
         if (returned && !NT_ERROR(status) && status != STATUS_PENDING)
             *returned = (DWORD)iosb->Information;
@@ -727,11 +727,11 @@ WINBASEAPI BOOL WINAPI DeviceIoControl(HANDLE device, DWORD code, LPVOID in, DWO
             return KbSetStatus(status);
         return TRUE;
     }
-    IO_STATUS_BLOCK iosb = {0};
+    IO_STATUS_BLOCK iosb = {};
     if (fs)
-        status = NtFsControlFile(device, NULL, NULL, NULL, &iosb, code, in, in_size, out, out_size);
+        status = NtFsControlFile(device, nullptr, nullptr, nullptr, &iosb, code, in, in_size, out, out_size);
     else
-        status = NtDeviceIoControlFile(device, NULL, NULL, NULL, &iosb, code, in, in_size, out, out_size);
+        status = NtDeviceIoControlFile(device, nullptr, nullptr, nullptr, &iosb, code, in, in_size, out, out_size);
     if (status == STATUS_PENDING) {
         WaitForSingleObject(device, INFINITE);
         status = iosb.Status;

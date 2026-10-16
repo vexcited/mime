@@ -20,9 +20,9 @@ static BOOL is_drive(LPCWSTR path)
 static LPWSTR widen(LPCSTR path)
 {
     if (!path)
-        return NULL;
-    int n = MultiByteToWideChar(CP_ACP, 0, path, -1, NULL, 0);
-    LPWSTR wide = n > 0 ? HeapAlloc(GetProcessHeap(), 0, n * sizeof(WCHAR)) : NULL;
+        return nullptr;
+    int n = MultiByteToWideChar(CP_ACP, 0, path, -1, nullptr, 0);
+    LPWSTR wide = n > 0 ? HeapAlloc(GetProcessHeap(), 0, n * sizeof(WCHAR)) : nullptr;
     if (wide)
         MultiByteToWideChar(CP_ACP, 0, path, -1, wide, n);
     return wide;
@@ -107,7 +107,7 @@ LWSTDAPI BOOL WINAPI PathIsDirectoryEmptyA(LPCSTR path)
 LWSTDAPI LPWSTR WINAPI PathFindFileNameW(LPCWSTR path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     LPCWSTR name = path;
     for (LPCWSTR p = path; *p; p++)
         if ((is_separator(*p) || *p == L':') && p[1] && !is_separator(p[1]))
@@ -118,7 +118,7 @@ LWSTDAPI LPWSTR WINAPI PathFindFileNameW(LPCWSTR path)
 LWSTDAPI LPSTR WINAPI PathFindFileNameA(LPCSTR path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     LPCSTR name = path;
     for (LPCSTR p = path; *p; p++)
         if ((*p == '\\' || *p == '/' || *p == ':') && p[1] && p[1] != '\\' && p[1] != '/')
@@ -129,11 +129,11 @@ LWSTDAPI LPSTR WINAPI PathFindFileNameA(LPCSTR path)
 LWSTDAPI LPWSTR WINAPI PathFindExtensionW(LPCWSTR path)
 {
     if (!path)
-        return NULL;
-    LPCWSTR dot = NULL, p = path;
+        return nullptr;
+    LPCWSTR dot = nullptr, p = path;
     for (; *p; p++) {
         if (is_separator(*p) || *p == L' ')
-            dot = NULL;
+            dot = nullptr;
         else if (*p == L'.')
             dot = p;
     }
@@ -143,11 +143,11 @@ LWSTDAPI LPWSTR WINAPI PathFindExtensionW(LPCWSTR path)
 LWSTDAPI LPSTR WINAPI PathFindExtensionA(LPCSTR path)
 {
     if (!path)
-        return NULL;
-    LPCSTR dot = NULL, p = path;
+        return nullptr;
+    LPCSTR dot = nullptr, p = path;
     for (; *p; p++) {
         if (*p == '\\' || *p == '/' || *p == ' ')
-            dot = NULL;
+            dot = nullptr;
         else if (*p == '.')
             dot = p;
     }
@@ -157,11 +157,11 @@ LWSTDAPI LPSTR WINAPI PathFindExtensionA(LPCSTR path)
 LWSTDAPI LPWSTR WINAPI PathAddBackslashW(LPWSTR path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     SIZE_T length = wcslen(path);
     if (length && path[length - 1] != L'\\') {
         if (length + 1 >= MAX_PATH)
-            return NULL;
+            return nullptr;
         path[length++] = L'\\';
         path[length] = 0;
     }
@@ -189,7 +189,7 @@ static SIZE_T root_length(LPCWSTR path)
 LWSTDAPI LPWSTR WINAPI PathRemoveBackslashW(LPWSTR path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     SIZE_T length = wcslen(path);
     if (!length)
         return path;
@@ -206,7 +206,7 @@ LWSTDAPI BOOL WINAPI PathRemoveFileSpecW(LPWSTR path)
     if (!path || !path[0])
         return FALSE;
     SIZE_T root = root_length(path), length = wcslen(path);
-    LPWSTR cut = NULL;
+    LPWSTR cut = nullptr;
     for (LPWSTR p = path + root; *p; p++)
         if (is_separator(*p))
             cut = p;
@@ -250,10 +250,10 @@ LWSTDAPI void WINAPI PathStripPathW(LPWSTR path)
 LWSTDAPI LPWSTR WINAPI PathSkipRootW(LPCWSTR path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     SIZE_T root = root_length(path);
     if (!root || (is_drive(path) && root == 2))
-        return NULL;
+        return nullptr;
     return (LPWSTR)path + root;
 }
 
@@ -349,10 +349,10 @@ static void canonicalize(LPWSTR path)
 LWSTDAPI LPWSTR WINAPI PathCombineW(LPWSTR out, LPCWSTR directory, LPCWSTR file)
 {
     if (!out)
-        return NULL;
+        return nullptr;
     if (!directory && !file) {
         out[0] = 0;
-        return NULL;
+        return nullptr;
     }
     WCHAR buffer[MAX_PATH * 2];
     if (!file || !file[0]) {
@@ -386,7 +386,7 @@ LWSTDAPI LPWSTR WINAPI PathCombineW(LPWSTR out, LPCWSTR directory, LPCWSTR file)
     return out;
 fail:
     out[0] = 0;
-    return NULL;
+    return nullptr;
 }
 
 LWSTDAPI BOOL WINAPI PathAppendW(LPWSTR path, LPCWSTR more)
@@ -396,7 +396,7 @@ LWSTDAPI BOOL WINAPI PathAppendW(LPWSTR path, LPCWSTR more)
     if (!(is_separator(more[0]) && is_separator(more[1])) && !is_drive(more))
         while (is_separator(*more))
             more++;
-    return PathCombineW(path, path, more) != NULL;
+    return PathCombineW(path, path, more) != nullptr;
 }
 
 /* ------------------------------------------------------------------ command lines and quoting */
@@ -404,7 +404,7 @@ LWSTDAPI BOOL WINAPI PathAppendW(LPWSTR path, LPCWSTR more)
 LWSTDAPI LPWSTR WINAPI PathGetArgsW(LPCWSTR path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     BOOL quoted = FALSE;
     for (; *path; path++) {
         if (*path == L'"')

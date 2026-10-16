@@ -45,8 +45,8 @@ static NTSTATUS condrv(ULONG code, const void *in, ULONG in_len, void *out, ULON
         *done = 0;
     if (!g_condrv)
         return STATUS_INVALID_HANDLE;
-    IO_STATUS_BLOCK io = {0};
-    NTSTATUS status = NtDeviceIoControlFile(g_condrv, NULL, NULL, NULL, &io, code, (PVOID)in, in_len, out, out_len);
+    IO_STATUS_BLOCK io = {};
+    NTSTATUS status = NtDeviceIoControlFile(g_condrv, nullptr, nullptr, nullptr, &io, code, (PVOID)in, in_len, out, out_len);
     if (done && NT_SUCCESS(status))
         *done = io.Information;
     return status;
@@ -55,7 +55,7 @@ static NTSTATUS condrv(ULONG code, const void *in, ULONG in_len, void *out, ULON
 static BOOL query_state(MIME_CONDRV_STATE *st)
 {
     memset(st, 0, sizeof(*st));
-    return NT_SUCCESS(condrv(IOCTL_CONDRV_STATE, NULL, 0, st, sizeof(*st), NULL)) && (st->Flags & MIME_CONDRV_ATTACHED);
+    return NT_SUCCESS(condrv(IOCTL_CONDRV_STATE, nullptr, 0, st, sizeof(*st), nullptr)) && (st->Flags & MIME_CONDRV_ATTACHED);
 }
 
 /*
@@ -111,7 +111,7 @@ static BOOL write_utf8(HANDLE console, const UCHAR *bytes, DWORD length)
     do {
         DWORD n = length;
         const UCHAR *in = bytes;
-        PUCHAR heap = NULL;
+        PUCHAR heap = nullptr;
         if (n > MAX_WRITE)
             n = MAX_WRITE;
         if (n <= sizeof(buffer) - sizeof(ULONG)) {
@@ -124,7 +124,7 @@ static BOOL write_utf8(HANDLE console, const UCHAR *bytes, DWORD length)
         }
         memcpy((PUCHAR)in, &stream, sizeof(ULONG));
         memcpy((PUCHAR)in + sizeof(ULONG), bytes, n);
-        NTSTATUS status = condrv(IOCTL_CONDRV_WRITE, in, sizeof(ULONG) + n, NULL, 0, NULL);
+        NTSTATUS status = condrv(IOCTL_CONDRV_WRITE, in, sizeof(ULONG) + n, nullptr, 0, nullptr);
         KbFree(heap);
         if (!NT_SUCCESS(status))
             return KbSetStatus(status == STATUS_INVALID_HANDLE ? STATUS_INVALID_HANDLE : status);
@@ -147,7 +147,7 @@ BOOL KbConsoleWrite(HANDLE console, LPCWSTR text, DWORD chars)
         DWORD n = chars > 256 ? 256 : chars;
         if (n < chars && text[n - 1] >= 0xD800 && text[n - 1] <= 0xDBFF)
             n--;
-        int b = WideCharToMultiByte(CP_UTF8, 0, text, (int)n, bytes, sizeof(bytes), NULL, NULL);
+        int b = WideCharToMultiByte(CP_UTF8, 0, text, (int)n, bytes, sizeof(bytes), nullptr, nullptr);
         ok = b <= 0 || write_utf8(console, (const UCHAR *)bytes, (DWORD)b);
         text += n;
         chars -= n;
@@ -188,7 +188,7 @@ BOOL KbConsoleWriteBytes(HANDLE console, const void *data, DWORD length)
 static BOOL read_bytes(PUCHAR buffer, DWORD length, LPDWORD read)
 {
     ULONG_PTR done;
-    NTSTATUS status = condrv(IOCTL_CONDRV_READ, NULL, 0, buffer, length, &done);
+    NTSTATUS status = condrv(IOCTL_CONDRV_READ, nullptr, 0, buffer, length, &done);
     *read = (DWORD)done;
     return NT_SUCCESS(status) || KbSetStatus(status);
 }
@@ -196,7 +196,7 @@ static BOOL read_bytes(PUCHAR buffer, DWORD length, LPDWORD read)
 /* the driver's input event follows its input buffer. */
 static void sync_input_event(void)
 {
-    condrv(IOCTL_CONDRV_SYNC_EVENT, NULL, 0, NULL, 0, NULL);
+    condrv(IOCTL_CONDRV_SYNC_EVENT, nullptr, 0, nullptr, 0, nullptr);
 }
 
 static BOOL check_input(HANDLE console)
@@ -250,12 +250,12 @@ static HANDLE standard_handle(HANDLE pseudo, ULONG tty, PCWSTR stream, ACCESS_MA
     wcscat(path, stream);
     RtlInitUnicodeString(&name, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, OBJ_INHERIT, NULL, NULL);
+    InitializeObjectAttributes(&oa, &name, OBJ_INHERIT, nullptr, nullptr);
     IO_STATUS_BLOCK io;
     HANDLE h;
     if (!NT_SUCCESS(NtCreateFile(&h, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, &oa, &io,
-                                 NULL, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT,
-                                 NULL, 0)))
+                                 nullptr, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT,
+                                 nullptr, 0)))
         return pseudo;
     return h;
 }
@@ -275,15 +275,15 @@ void KbInitializeConsole(void)
 {
     UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_CONDRV_DEVICE);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, 0, NULL, NULL);
+    InitializeObjectAttributes(&oa, &name, 0, nullptr, nullptr);
     IO_STATUS_BLOCK io;
-    if (!NT_SUCCESS(NtCreateFile(&g_condrv, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &oa, &io, NULL, 0,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0)))
-        g_condrv = NULL;
-    if (!NT_SUCCESS(NtCreateEvent(&g_input_event, EVENT_ALL_ACCESS, NULL, NotificationEvent, FALSE)))
-        g_input_event = NULL;
+    if (!NT_SUCCESS(NtCreateFile(&g_condrv, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &oa, &io, nullptr, 0,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0)))
+        g_condrv = nullptr;
+    if (!NT_SUCCESS(NtCreateEvent(&g_input_event, EVENT_ALL_ACCESS, nullptr, NotificationEvent, FALSE)))
+        g_input_event = nullptr;
     MIME_CONDRV_REGISTER r = {(ULONG64)(ULONG_PTR)ctrl_routine, (ULONG64)(ULONG_PTR)g_input_event};
-    condrv(IOCTL_CONDRV_REGISTER, &r, sizeof(r), NULL, 0, NULL);
+    condrv(IOCTL_CONDRV_REGISTER, &r, sizeof(r), nullptr, 0, nullptr);
     MIME_CONDRV_STATE st;
     g_attached = query_state(&st);
     g_tty = st.Flags;
@@ -308,7 +308,7 @@ void KbInitializeConsole(void)
 HANDLE KbConsoleWaitHandle(HANDLE h)
 {
     if (h != KB_CONSOLE_INPUT || !g_attached || !g_input_event)
-        return NULL;
+        return nullptr;
     sync_input_event();
     return g_input_event;
 }
@@ -355,7 +355,7 @@ BOOL WINAPI SetStdHandleEx(DWORD which, HANDLE handle, PHANDLE previous)
 
 BOOL WINAPI SetStdHandle(DWORD which, HANDLE handle)
 {
-    return SetStdHandleEx(which, handle, NULL);
+    return SetStdHandleEx(which, handle, nullptr);
 }
 
 /* ------------------------------------------------------------------ console management */
@@ -382,7 +382,7 @@ BOOL WINAPI AllocConsole(void)
         return FALSE;
     }
     ULONG pid = ATTACH_PARENT_PROCESS;
-    NTSTATUS status = condrv(IOCTL_CONDRV_ATTACH, &pid, sizeof(pid), NULL, 0, NULL);
+    NTSTATUS status = condrv(IOCTL_CONDRV_ATTACH, &pid, sizeof(pid), nullptr, 0, nullptr);
     if (!NT_SUCCESS(status)) {
         KbSetError(ERROR_NOT_SUPPORTED);
         return FALSE;
@@ -394,7 +394,7 @@ BOOL WINAPI AllocConsole(void)
 
 BOOL WINAPI FreeConsole(void)
 {
-    condrv(IOCTL_CONDRV_FREE, NULL, 0, NULL, 0, NULL);
+    condrv(IOCTL_CONDRV_FREE, nullptr, 0, nullptr, 0, nullptr);
     g_attached = FALSE;
     return TRUE;
 }
@@ -402,7 +402,7 @@ BOOL WINAPI FreeConsole(void)
 BOOL WINAPI AttachConsole(DWORD process)
 {
     ULONG pid = process;
-    NTSTATUS status = condrv(IOCTL_CONDRV_ATTACH, &pid, sizeof(pid), NULL, 0, NULL);
+    NTSTATUS status = condrv(IOCTL_CONDRV_ATTACH, &pid, sizeof(pid), nullptr, 0, nullptr);
     if (!NT_SUCCESS(status)) {
         KbSetError(status == STATUS_ACCESS_DENIED    ? ERROR_ACCESS_DENIED
                    : status == STATUS_INVALID_HANDLE ? ERROR_INVALID_HANDLE
@@ -417,7 +417,7 @@ BOOL WINAPI AttachConsole(DWORD process)
 /* there is no console window, but programs such as qt's logging only ask whether one exists. */
 HWND WINAPI GetConsoleWindow(void)
 {
-    return g_attached ? CONSOLE_WINDOW : NULL;
+    return g_attached ? CONSOLE_WINDOW : nullptr;
 }
 
 UINT WINAPI GetConsoleCP(void)
@@ -489,7 +489,7 @@ BOOL WINAPI SetConsoleMode(HANDLE console, DWORD mode)
         }
         modes[1] = mode;
     }
-    return NT_SUCCESS(condrv(IOCTL_CONDRV_SET_MODE, modes, sizeof(modes), NULL, 0, NULL)) ||
+    return NT_SUCCESS(condrv(IOCTL_CONDRV_SET_MODE, modes, sizeof(modes), nullptr, 0, nullptr)) ||
            KbSetStatus(STATUS_INVALID_HANDLE);
 }
 
@@ -607,7 +607,7 @@ BOOL WINAPI ReadConsoleA(HANDLE console, LPVOID buffer, DWORD count, LPDWORD rea
     DWORD chars = 0;
     if (!ReadConsoleW(console, wide, count < RTL_NUMBER_OF(wide) ? count : RTL_NUMBER_OF(wide), &chars, control))
         return FALSE;
-    int n = chars ? WideCharToMultiByte(g_input_cp, 0, wide, (int)chars, buffer, (int)count, NULL, NULL) : 0;
+    int n = chars ? WideCharToMultiByte(g_input_cp, 0, wide, (int)chars, buffer, (int)count, nullptr, nullptr) : 0;
     if (read)
         *read = n > 0 ? (DWORD)n : 0;
     return TRUE;
@@ -619,7 +619,7 @@ BOOL KbConsoleRead(HANDLE console, LPVOID buffer, DWORD length, LPDWORD read)
     *read = 0;
     if (console == KB_CONSOLE_INPUT && KbConsoleIsRedirected(console))
         return read_bytes(buffer, length, read);
-    return ReadConsoleA(console, buffer, length, read, NULL);
+    return ReadConsoleA(console, buffer, length, read, nullptr);
 }
 
 /* ------------------------------------------------------------------ input records */
@@ -656,7 +656,7 @@ static void records_to_ansi(PINPUT_RECORD records, DWORD count)
             continue;
         WCHAR w = records[i].Event.KeyEvent.uChar.UnicodeChar;
         CHAR a = 0;
-        if (w && WideCharToMultiByte(g_input_cp == CP_UTF8 ? CP_ACP : g_input_cp, 0, &w, 1, &a, 1, NULL, NULL) != 1)
+        if (w && WideCharToMultiByte(g_input_cp == CP_UTF8 ? CP_ACP : g_input_cp, 0, &w, 1, &a, 1, nullptr, nullptr) != 1)
             a = '?';
         records[i].Event.KeyEvent.uChar.UnicodeChar = 0;
         records[i].Event.KeyEvent.uChar.AsciiChar = w < 0x80 ? (CHAR)w : a;
@@ -701,7 +701,7 @@ BOOL WINAPI GetNumberOfConsoleInputEvents(HANDLE console, LPDWORD count)
     if (!check_input(console))
         return FALSE;
     ULONG in = MIME_CONDRV_READ_PEEK | MIME_CONDRV_READ_NOWAIT, total = 0;
-    NTSTATUS status = condrv(IOCTL_CONDRV_READ_INPUT, &in, sizeof(in), &total, sizeof(total), NULL);
+    NTSTATUS status = condrv(IOCTL_CONDRV_READ_INPUT, &in, sizeof(in), &total, sizeof(total), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     *count = total;
@@ -731,7 +731,7 @@ static BOOL write_input(HANDLE console, const INPUT_RECORD *records, DWORD count
     in->Reserved = 0;
     memcpy(in + 1, records, count * sizeof(INPUT_RECORD));
     ULONG taken = 0;
-    NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, in, size, &taken, sizeof(taken), NULL);
+    NTSTATUS status = condrv(IOCTL_CONDRV_WRITE_INPUT, in, size, &taken, sizeof(taken), nullptr);
     KbFree(in);
     *written = taken;
     return NT_SUCCESS(status) || KbSetStatus(status);
@@ -773,7 +773,7 @@ static BOOL write_input_ansi(HANDLE console, const INPUT_RECORD *records, DWORD 
     UINT cp = g_input_cp;
     INPUT_RECORD carry;
     ULONG_PTR had = 0;
-    condrv(IOCTL_CONDRV_ANSI_CARRY, NULL, 0, &carry, sizeof(carry), &had);
+    condrv(IOCTL_CONDRV_ANSI_CARRY, nullptr, 0, &carry, sizeof(carry), &had);
     DWORD n = 0, i = 0, total = count + (had ? 1 : 0);
     BOOL keep = FALSE;
     while (i < total) {
@@ -804,7 +804,7 @@ static BOOL write_input_ansi(HANDLE console, const INPUT_RECORD *records, DWORD 
         }
     }
     if (keep)
-        condrv(IOCTL_CONDRV_ANSI_CARRY, &carry, sizeof(carry), NULL, 0, NULL);
+        condrv(IOCTL_CONDRV_ANSI_CARRY, &carry, sizeof(carry), nullptr, 0, nullptr);
     BOOL ok = write_input(console, wide, n, written, append);
     KbFree(wide);
     return ok;
@@ -836,7 +836,7 @@ BOOL WINAPI FlushConsoleInputBuffer(HANDLE console)
     if (!check_input(console))
         return FALSE;
     g_read_carry_length = 0;
-    condrv(IOCTL_CONDRV_FLUSH_INPUT, NULL, 0, NULL, 0, NULL);
+    condrv(IOCTL_CONDRV_FLUSH_INPUT, nullptr, 0, nullptr, 0, nullptr);
     return TRUE;
 }
 
@@ -892,7 +892,7 @@ DWORD WINAPI GetConsoleTitleA(LPSTR title, DWORD size)
     }
     WCHAR w[256];
     DWORD n = GetConsoleTitleW(w, RTL_NUMBER_OF(w));
-    int got = WideCharToMultiByte(CP_ACP, 0, w, -1, title, (int)size, NULL, NULL);
+    int got = WideCharToMultiByte(CP_ACP, 0, w, -1, title, (int)size, nullptr, nullptr);
     if (!got)
         title[size - 1] = 0;
     return n;
@@ -1080,7 +1080,7 @@ BOOL WINAPI GenerateConsoleCtrlEvent(DWORD event, DWORD group)
         return FALSE;
     }
     ULONG in[2] = {event, group};
-    NTSTATUS status = condrv(IOCTL_CONDRV_GENERATE, in, sizeof(in), NULL, 0, NULL);
+    NTSTATUS status = condrv(IOCTL_CONDRV_GENERATE, in, sizeof(in), nullptr, 0, nullptr);
     return NT_SUCCESS(status) || KbSetStatus(status);
 }
 
@@ -1118,7 +1118,7 @@ DWORD WINAPI GetConsoleProcessList(LPDWORD list, DWORD count)
         return 0;
     }
     ULONG ids[1 + 64];
-    if (!NT_SUCCESS(condrv(IOCTL_CONDRV_PROCESSES, NULL, 0, ids, sizeof(ids), NULL))) {
+    if (!NT_SUCCESS(condrv(IOCTL_CONDRV_PROCESSES, nullptr, 0, ids, sizeof(ids), nullptr))) {
         KbSetError(ERROR_INVALID_HANDLE);
         return 0;
     }

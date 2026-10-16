@@ -36,7 +36,7 @@ static UINT custom_action(MIME_MSI_PACKAGE *package, PCWSTR name, PWSTR *message
     if (!record)
         return ERROR_NOT_ENOUGH_MEMORY;
     error = MimeMsiFieldString(&record->Fields[0], target);
-    PWSTR formatted = NULL;
+    PWSTR formatted = nullptr;
     DWORD length;
     if (!error)
         error = MimeMsiFormatRecord(package, record, &formatted, &length);
@@ -82,7 +82,7 @@ UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
     if (!package)
         return ERROR_INVALID_HANDLE;
     UINT error = action_start(handle, action);
-    PWSTR message = NULL;
+    PWSTR message = nullptr;
     AcquireSRWLockExclusive(&MimeMsiLock);
     if (!error) {
         error = MimeMsiStandardAction(package, action);
@@ -133,12 +133,12 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
     }
     package->SequenceRunning = TRUE;
     package->Object.References++;
-    MIME_MSI_TABLE *table = NULL;
+    MIME_MSI_TABLE *table = nullptr;
     error = MimeMsiLoadTable(package->Database, name, &table);
     if (!error && (table->Count != 3 || !string_column(table, 0, L"Action") ||
         !string_column(table, 1, L"Condition") || wcscmp(table->Columns[2].Name, L"Sequence") || table->Columns[2].Width != 2))
         error = ERROR_INSTALL_PACKAGE_INVALID;
-    ULONG *heads = NULL, *next = NULL;
+    ULONG *heads = nullptr, *next = nullptr;
     if (!error) {
         SIZE_T bytes = (SIZE_T)table->Rows * sizeof(ULONG);
         if (bytes / sizeof(ULONG) != table->Rows)

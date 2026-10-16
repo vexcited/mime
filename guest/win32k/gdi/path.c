@@ -307,7 +307,7 @@ BOOLEAN RgnFromPolygons(REGION *out, const POINT *pts, const ULONG *counts, ULON
     }
     CROSSING *cross = W32Alloc((total + 2) * sizeof(CROSSING));
     LONG *spans = W32Alloc((total + 2) * sizeof(LONG));
-    RECT *rects = NULL;
+    RECT *rects = nullptr;
     ULONG count = 0, capacity = 0;
     BOOLEAN ok = cross && spans;
     LONG prev_first = -1, prev_count = 0; /* rects of the previous band, for vertical merging */
@@ -481,11 +481,11 @@ static DC *closed_path_dc(HDC hdc)
     DC *dc = DcLookup(hdc);
     if (!dc) {
         W32SetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     if (dc->PathState != PATH_CLOSED) {
         W32SetLastError(ERROR_CAN_NOT_COMPLETE);
-        return NULL;
+        return nullptr;
     }
     return dc;
 }
@@ -502,7 +502,7 @@ BOOL NTAPI NtGdiBeginPath(HDC hdc)
     UserLeave();
     if (!dc)
         W32SetLastError(ERROR_INVALID_HANDLE);
-    return dc != NULL;
+    return dc != nullptr;
 }
 
 BOOL NTAPI NtGdiEndPath(HDC hdc)
@@ -527,7 +527,7 @@ BOOL NTAPI NtGdiAbortPath(HDC hdc)
     UserLeave();
     if (!dc)
         W32SetLastError(ERROR_INVALID_HANDLE);
-    return dc != NULL;
+    return dc != nullptr;
 }
 
 BOOL NTAPI NtGdiCloseFigure(HDC hdc)
@@ -583,7 +583,7 @@ static BOOL paint_path(HDC hdc, BOOLEAN fill, BOOLEAN stroke)
 {
     UserEnter();
     DC *dc = closed_path_dc(hdc);
-    BOOL ok = dc != NULL;
+    BOOL ok = dc != nullptr;
     if (dc) {
         REGION clip;
         RgnInit(&clip);
@@ -661,7 +661,7 @@ HRGN NTAPI NtGdiPathToRegion(HDC hdc)
 {
     UserEnter();
     DC *dc = closed_path_dc(hdc);
-    HRGN h = NULL;
+    HRGN h = nullptr;
     if (dc) {
         GDI_REGION *r = GdiCreateRegion();
         if (r && path_region(dc, &r->Region))
@@ -699,8 +699,8 @@ int NTAPI NtGdiGetPath(HDC hdc, POINT *user_points, BYTE *user_types, int count)
     UserEnter();
     DC *dc = closed_path_dc(hdc);
     int result = -1;
-    POINT *pts = NULL;
-    BYTE *types = NULL;
+    POINT *pts = nullptr;
+    BYTE *types = nullptr;
     if (dc) {
         int n = (int)dc->Path.Count;
         if (count == 0) {

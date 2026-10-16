@@ -42,7 +42,7 @@ static ULONG64 next_random(void)
 
 static ULONG64 cycle_counter(void)
 {
-#if defined(__aarch64__)
+#ifdef __aarch64__
     ULONG64 value;
     __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
     return value;
@@ -254,7 +254,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcStringFreeA(RPC_CSTR *string)
         return RPC_S_INVALID_ARG;
     if (*string)
         HeapFree(GetProcessHeap(), 0, *string);
-    *string = NULL;
+    *string = nullptr;
     return RPC_S_OK;
 }
 
@@ -290,7 +290,7 @@ RPCRTAPI int RPC_ENTRY UuidEqual(UUID *a, UUID *b, RPC_STATUS *status)
 
 RPCRTAPI int RPC_ENTRY UuidIsNil(UUID *uuid, RPC_STATUS *status)
 {
-    return UuidCompare(uuid, NULL, status) == 0;
+    return UuidCompare(uuid, nullptr, status) == 0;
 }
 
 /* a 16 bit fold of the uuid; the windows hash function is not reproduced. */

@@ -268,7 +268,7 @@ BOOL WINAPI CryptVerifyCertificateSignature(HCRYPTPROV_LEGACY hCryptProv, DWORD 
 {
     CRYPT_DATA_BLOB blob = {cbEncoded, (BYTE *)pbEncoded};
     return CryptVerifyCertificateSignatureEx(hCryptProv, dwCertEncodingType, CRYPT_VERIFY_CERT_SIGN_SUBJECT_BLOB,
-                                             &blob, CRYPT_VERIFY_CERT_SIGN_ISSUER_PUBKEY, pPublicKey, 0, NULL);
+                                             &blob, CRYPT_VERIFY_CERT_SIGN_ISSUER_PUBKEY, pPublicKey, 0, nullptr);
 }
 
 BOOL WINAPI CryptVerifyCertificateSignatureEx(HCRYPTPROV_LEGACY hCryptProv, DWORD dwCertEncodingType,
@@ -303,13 +303,13 @@ BOOL WINAPI CryptVerifyCertificateSignatureEx(HCRYPTPROV_LEGACY hCryptProv, DWOR
         key = pvIssuer;
         break;
     case CRYPT_VERIFY_CERT_SIGN_ISSUER_CERT:
-        key = pvIssuer ? &((PCCERT_CONTEXT)pvIssuer)->pCertInfo->SubjectPublicKeyInfo : NULL;
+        key = pvIssuer ? &((PCCERT_CONTEXT)pvIssuer)->pCertInfo->SubjectPublicKeyInfo : nullptr;
         break;
     case CRYPT_VERIFY_CERT_SIGN_ISSUER_CHAIN: {
         PCCERT_CHAIN_CONTEXT chain = pvIssuer;
         key = chain && chain->cChain && chain->rgpChain[0]->cElement
                   ? &chain->rgpChain[0]->rgpElement[0]->pCertContext->pCertInfo->SubjectPublicKeyInfo
-                  : NULL;
+                  : nullptr;
         break;
     }
     case CRYPT_VERIFY_CERT_SIGN_ISSUER_NULL: {

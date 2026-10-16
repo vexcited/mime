@@ -41,7 +41,7 @@ static const SH_FOLDER g_folders[] = {
      L"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu"},
     {CSIDL_MYMUSIC, &FOLDERID_Music, L"My Music", FALSE, L"%USERPROFILE%\\Music"},
     {CSIDL_MYVIDEO, &FOLDERID_Videos, L"My Video", FALSE, L"%USERPROFILE%\\Videos"},
-    {CSIDL_FONTS, &FOLDERID_Fonts, NULL, FALSE, L"%SystemRoot%\\Fonts"},
+    {CSIDL_FONTS, &FOLDERID_Fonts, nullptr, FALSE, L"%SystemRoot%\\Fonts"},
     {CSIDL_TEMPLATES, &FOLDERID_Templates, L"Templates", FALSE,
      L"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Templates"},
     {CSIDL_COMMON_STARTMENU, &FOLDERID_CommonStartMenu, L"Common Start Menu", TRUE,
@@ -53,7 +53,7 @@ static const SH_FOLDER g_folders[] = {
     {CSIDL_COMMON_DESKTOPDIRECTORY, &FOLDERID_PublicDesktop, L"Common Desktop", TRUE, L"%PUBLIC%\\Desktop"},
     {CSIDL_APPDATA, &FOLDERID_RoamingAppData, L"AppData", FALSE, L"%USERPROFILE%\\AppData\\Roaming"},
     {CSIDL_LOCAL_APPDATA, &FOLDERID_LocalAppData, L"Local AppData", FALSE, L"%USERPROFILE%\\AppData\\Local"},
-    {NO_CSIDL, &FOLDERID_LocalAppDataLow, NULL, FALSE, L"%USERPROFILE%\\AppData\\LocalLow"},
+    {NO_CSIDL, &FOLDERID_LocalAppDataLow, nullptr, FALSE, L"%USERPROFILE%\\AppData\\LocalLow"},
     {CSIDL_INTERNET_CACHE, &FOLDERID_InternetCache, L"Cache", FALSE,
      L"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\INetCache"},
     {CSIDL_COOKIES, &FOLDERID_Cookies, L"Cookies", FALSE,
@@ -61,38 +61,38 @@ static const SH_FOLDER g_folders[] = {
     {CSIDL_HISTORY, &FOLDERID_History, L"History", FALSE,
      L"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\History"},
     {CSIDL_COMMON_APPDATA, &FOLDERID_ProgramData, L"Common AppData", TRUE, L"%ProgramData%"},
-    {CSIDL_WINDOWS, &FOLDERID_Windows, NULL, FALSE, L"%SystemRoot%"},
-    {CSIDL_SYSTEM, &FOLDERID_System, NULL, FALSE, L"%SystemRoot%\\System32"},
-    {CSIDL_SYSTEMX86, &FOLDERID_SystemX86, NULL, FALSE, L"%SystemRoot%\\SysWOW64"},
-    {CSIDL_PROGRAM_FILES, &FOLDERID_ProgramFiles, NULL, FALSE, L"%ProgramFiles%"},
-    {NO_CSIDL, &FOLDERID_ProgramFilesX64, NULL, FALSE, L"%ProgramW6432%"},
-    {CSIDL_PROGRAM_FILESX86, &FOLDERID_ProgramFilesX86, NULL, FALSE, L"%ProgramFiles(x86)%"},
-    {CSIDL_PROGRAM_FILES_COMMON, &FOLDERID_ProgramFilesCommon, NULL, FALSE, L"%CommonProgramFiles%"},
-    {NO_CSIDL, &FOLDERID_ProgramFilesCommonX64, NULL, FALSE, L"%CommonProgramW6432%"},
-    {CSIDL_PROGRAM_FILES_COMMONX86, &FOLDERID_ProgramFilesCommonX86, NULL, FALSE, L"%CommonProgramFiles(x86)%"},
+    {CSIDL_WINDOWS, &FOLDERID_Windows, nullptr, FALSE, L"%SystemRoot%"},
+    {CSIDL_SYSTEM, &FOLDERID_System, nullptr, FALSE, L"%SystemRoot%\\System32"},
+    {CSIDL_SYSTEMX86, &FOLDERID_SystemX86, nullptr, FALSE, L"%SystemRoot%\\SysWOW64"},
+    {CSIDL_PROGRAM_FILES, &FOLDERID_ProgramFiles, nullptr, FALSE, L"%ProgramFiles%"},
+    {NO_CSIDL, &FOLDERID_ProgramFilesX64, nullptr, FALSE, L"%ProgramW6432%"},
+    {CSIDL_PROGRAM_FILESX86, &FOLDERID_ProgramFilesX86, nullptr, FALSE, L"%ProgramFiles(x86)%"},
+    {CSIDL_PROGRAM_FILES_COMMON, &FOLDERID_ProgramFilesCommon, nullptr, FALSE, L"%CommonProgramFiles%"},
+    {NO_CSIDL, &FOLDERID_ProgramFilesCommonX64, nullptr, FALSE, L"%CommonProgramW6432%"},
+    {CSIDL_PROGRAM_FILES_COMMONX86, &FOLDERID_ProgramFilesCommonX86, nullptr, FALSE, L"%CommonProgramFiles(x86)%"},
     {CSIDL_MYPICTURES, &FOLDERID_Pictures, L"My Pictures", FALSE, L"%USERPROFILE%\\Pictures"},
-    {CSIDL_PROFILE, &FOLDERID_Profile, NULL, FALSE, L"%USERPROFILE%"},
-    {NO_CSIDL, &FOLDERID_UserProfiles, NULL, FALSE, L"%SystemDrive%\\Users"},
-    {NO_CSIDL, &FOLDERID_Public, NULL, FALSE, L"%PUBLIC%"},
+    {CSIDL_PROFILE, &FOLDERID_Profile, nullptr, FALSE, L"%USERPROFILE%"},
+    {NO_CSIDL, &FOLDERID_UserProfiles, nullptr, FALSE, L"%SystemDrive%\\Users"},
+    {NO_CSIDL, &FOLDERID_Public, nullptr, FALSE, L"%PUBLIC%"},
     {CSIDL_COMMON_TEMPLATES, &FOLDERID_CommonTemplates, L"Common Templates", TRUE,
      L"%ProgramData%\\Microsoft\\Windows\\Templates"},
     {CSIDL_COMMON_DOCUMENTS, &FOLDERID_PublicDocuments, L"Common Documents", TRUE, L"%PUBLIC%\\Documents"},
-    {NO_CSIDL, &FOLDERID_PublicDownloads, NULL, FALSE, L"%PUBLIC%\\Downloads"},
+    {NO_CSIDL, &FOLDERID_PublicDownloads, nullptr, FALSE, L"%PUBLIC%\\Downloads"},
     {CSIDL_COMMON_MUSIC, &FOLDERID_PublicMusic, L"CommonMusic", TRUE, L"%PUBLIC%\\Music"},
     {CSIDL_COMMON_PICTURES, &FOLDERID_PublicPictures, L"CommonPictures", TRUE, L"%PUBLIC%\\Pictures"},
     {CSIDL_COMMON_VIDEO, &FOLDERID_PublicVideos, L"CommonVideo", TRUE, L"%PUBLIC%\\Videos"},
-    {CSIDL_RESOURCES, &FOLDERID_ResourceDir, NULL, FALSE, L"%SystemRoot%\\Resources"},
+    {CSIDL_RESOURCES, &FOLDERID_ResourceDir, nullptr, FALSE, L"%SystemRoot%\\Resources"},
     {CSIDL_CDBURN_AREA, &FOLDERID_CDBurning, L"CD Burning", FALSE,
      L"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\Burn\\Burn"},
     {NO_CSIDL, &FOLDERID_Downloads, L"{374DE290-123F-4565-9164-39C4925E467B}", FALSE, L"%USERPROFILE%\\Downloads"},
     {NO_CSIDL, &FOLDERID_SavedGames, L"{4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}", FALSE,
      L"%USERPROFILE%\\Saved Games"},
     {NO_CSIDL, &FOLDERID_Links, L"{BFB9D5E0-C6A9-404C-B2B2-AE6DB6AF4968}", FALSE, L"%USERPROFILE%\\Links"},
-    {CSIDL_DRIVES, &FOLDERID_ComputerFolder, NULL, FALSE, NULL},
-    {CSIDL_NETWORK, &FOLDERID_NetworkFolder, NULL, FALSE, NULL},
-    {CSIDL_CONTROLS, &FOLDERID_ControlPanelFolder, NULL, FALSE, NULL},
-    {CSIDL_PRINTERS, &FOLDERID_PrintersFolder, NULL, FALSE, NULL},
-    {CSIDL_BITBUCKET, &FOLDERID_RecycleBinFolder, NULL, FALSE, NULL},
+    {CSIDL_DRIVES, &FOLDERID_ComputerFolder, nullptr, FALSE, nullptr},
+    {CSIDL_NETWORK, &FOLDERID_NetworkFolder, nullptr, FALSE, nullptr},
+    {CSIDL_CONTROLS, &FOLDERID_ControlPanelFolder, nullptr, FALSE, nullptr},
+    {CSIDL_PRINTERS, &FOLDERID_PrintersFolder, nullptr, FALSE, nullptr},
+    {CSIDL_BITBUCKET, &FOLDERID_RecycleBinFolder, nullptr, FALSE, nullptr},
 };
 
 #define SHELL_FOLDERS_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders"
@@ -104,7 +104,7 @@ static const SH_FOLDER *folder_by_csidl(int csidl)
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_folders); i++)
         if (g_folders[i].Csidl == csidl)
             return &g_folders[i];
-    return NULL;
+    return nullptr;
 }
 
 static const SH_FOLDER *folder_by_id(REFKNOWNFOLDERID id)
@@ -112,7 +112,7 @@ static const SH_FOLDER *folder_by_id(REFKNOWNFOLDERID id)
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_folders); i++)
         if (IsEqualGUID(g_folders[i].Id, id))
             return &g_folders[i];
-    return NULL;
+    return nullptr;
 }
 
 LPWSTR ShDuplicate(LPCWSTR text)
@@ -127,9 +127,9 @@ LPWSTR ShDuplicate(LPCWSTR text)
 LPWSTR ShWiden(LPCSTR text)
 {
     if (!text)
-        return NULL;
-    int n = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
-    LPWSTR wide = n > 0 ? ShAlloc(n * sizeof(WCHAR)) : NULL;
+        return nullptr;
+    int n = MultiByteToWideChar(CP_ACP, 0, text, -1, nullptr, 0);
+    LPWSTR wide = n > 0 ? ShAlloc(n * sizeof(WCHAR)) : nullptr;
     if (wide)
         MultiByteToWideChar(CP_ACP, 0, text, -1, wide, n);
     return wide;
@@ -160,7 +160,7 @@ static BOOL read_override(const SH_FOLDER *folder, LPWSTR out)
         return FALSE;
     WCHAR raw[MAX_PATH];
     DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
-    LSTATUS status = RegQueryValueExW(key, folder->Value, NULL, &type, (BYTE *)raw, &bytes);
+    LSTATUS status = RegQueryValueExW(key, folder->Value, nullptr, &type, (BYTE *)raw, &bytes);
     RegCloseKey(key);
     if (status || (type != REG_SZ && type != REG_EXPAND_SZ) || bytes < 2 * sizeof(WCHAR))
         return FALSE;
@@ -176,14 +176,14 @@ static HRESULT create_tree(LPWSTR path)
         if (*p != L'\\')
             continue;
         *p = 0;
-        if (!CreateDirectoryW(path, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        if (!CreateDirectoryW(path, nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
             DWORD error = GetLastError();
             *p = L'\\';
             return HRESULT_FROM_WIN32(error);
         }
         *p = L'\\';
     }
-    if (!CreateDirectoryW(path, NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+    if (!CreateDirectoryW(path, nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
         return HRESULT_FROM_WIN32(GetLastError());
     return S_OK;
 }
@@ -214,7 +214,7 @@ SHSTDAPI HRESULT WINAPI SHGetKnownFolderPath(REFKNOWNFOLDERID id, DWORD flags, H
 {
     if (!path)
         return E_INVALIDARG;
-    *path = NULL;
+    *path = nullptr;
     if (!id)
         return E_INVALIDARG;
     const SH_FOLDER *folder = folder_by_id(id);
@@ -266,7 +266,7 @@ SHSTDAPI HRESULT WINAPI SHGetFolderPathA(HWND hwnd, int csidl, HANDLE token, DWO
     WCHAR wide[MAX_PATH];
     HRESULT hr = SHGetFolderPathW(hwnd, csidl, token, flags, wide);
     path[0] = 0;
-    if (SUCCEEDED(hr) && !WideCharToMultiByte(CP_ACP, 0, wide, -1, path, MAX_PATH, NULL, NULL)) {
+    if (SUCCEEDED(hr) && !WideCharToMultiByte(CP_ACP, 0, wide, -1, path, MAX_PATH, nullptr, nullptr)) {
         path[0] = 0;
         hr = E_FAIL;
     }
@@ -275,12 +275,12 @@ SHSTDAPI HRESULT WINAPI SHGetFolderPathA(HWND hwnd, int csidl, HANDLE token, DWO
 
 SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathW(HWND hwnd, LPWSTR path, int csidl, BOOL create)
 {
-    return SUCCEEDED(SHGetFolderPathW(hwnd, csidl | (create ? CSIDL_FLAG_CREATE : 0), NULL, SHGFP_TYPE_CURRENT, path));
+    return SUCCEEDED(SHGetFolderPathW(hwnd, csidl | (create ? CSIDL_FLAG_CREATE : 0), nullptr, SHGFP_TYPE_CURRENT, path));
 }
 
 SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathA(HWND hwnd, LPSTR path, int csidl, BOOL create)
 {
-    return SUCCEEDED(SHGetFolderPathA(hwnd, csidl | (create ? CSIDL_FLAG_CREATE : 0), NULL, SHGFP_TYPE_CURRENT, path));
+    return SUCCEEDED(SHGetFolderPathA(hwnd, csidl | (create ? CSIDL_FLAG_CREATE : 0), nullptr, SHGFP_TYPE_CURRENT, path));
 }
 
 /* ------------------------------------------------------------------ item id lists */
@@ -289,10 +289,10 @@ static PIDLIST_ABSOLUTE make_list(DWORD signature, const void *data, SIZE_T byte
 {
     SIZE_T item = sizeof(USHORT) + sizeof(DWORD) + bytes;
     if (item > 0xFFFF)
-        return NULL;
+        return nullptr;
     BYTE *list = ShAllocZero(item + sizeof(USHORT));
     if (!list)
-        return NULL;
+        return nullptr;
     *(USHORT *)list = (USHORT)item;
     memcpy(list + sizeof(USHORT), &signature, sizeof(signature));
     memcpy(list + sizeof(USHORT) + sizeof(DWORD), data, bytes);
@@ -333,7 +333,7 @@ BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars)
     WCHAR buffer[MAX_PATH];
     LPCWSTR source;
     if (!pidl->mkid.cb) {
-        if (FAILED(resolve(folder_by_csidl(CSIDL_DESKTOPDIRECTORY), KF_FLAG_DONT_VERIFY, NULL, buffer)))
+        if (FAILED(resolve(folder_by_csidl(CSIDL_DESKTOPDIRECTORY), KF_FLAG_DONT_VERIFY, nullptr, buffer)))
             return FALSE;
         source = buffer;
     } else if (list_signature(pidl) == PIDL_PATH_SIGNATURE) {
@@ -361,7 +361,7 @@ SHSTDAPI UINT WINAPI ILGetSize(PCUIDLIST_RELATIVE pidl)
 SHSTDAPI PIDLIST_RELATIVE WINAPI ILClone(PCUIDLIST_RELATIVE pidl)
 {
     if (!pidl)
-        return NULL;
+        return nullptr;
     UINT size = ILGetSize(pidl);
     PIDLIST_RELATIVE copy = ShAlloc(size);
     if (copy)
@@ -392,7 +392,7 @@ SHSTDAPI BOOL WINAPI SHGetPathFromIDListA(PCIDLIST_ABSOLUTE pidl, LPSTR path)
     path[0] = 0;
     if (!ShPathFromIdList(pidl, wide, MAX_PATH))
         return FALSE;
-    if (!WideCharToMultiByte(CP_ACP, 0, wide, -1, path, MAX_PATH, NULL, NULL)) {
+    if (!WideCharToMultiByte(CP_ACP, 0, wide, -1, path, MAX_PATH, nullptr, nullptr)) {
         path[0] = 0;
         return FALSE;
     }
@@ -404,13 +404,13 @@ SHSTDAPI HRESULT WINAPI SHParseDisplayName(PCWSTR name, IBindCtx *context, PIDLI
 {
     if (!pidl)
         return E_INVALIDARG;
-    *pidl = NULL;
+    *pidl = nullptr;
     if (out)
         *out = 0;
     if (!name)
         return E_INVALIDARG;
     WCHAR full[MAX_PATH];
-    DWORD n = GetFullPathNameW(name, MAX_PATH, full, NULL);
+    DWORD n = GetFullPathNameW(name, MAX_PATH, full, nullptr);
     if (!n || n >= MAX_PATH)
         return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
     DWORD attributes = GetFileAttributesW(full);
@@ -427,7 +427,7 @@ SHSTDAPI HRESULT WINAPI SHParseDisplayName(PCWSTR name, IBindCtx *context, PIDLI
 SHSTDAPI PIDLIST_ABSOLUTE WINAPI ILCreateFromPathW(PCWSTR path)
 {
     PIDLIST_ABSOLUTE pidl;
-    return SUCCEEDED(SHParseDisplayName(path, NULL, &pidl, 0, NULL)) ? pidl : NULL;
+    return SUCCEEDED(SHParseDisplayName(path, nullptr, &pidl, 0, nullptr)) ? pidl : nullptr;
 }
 
 static HRESULT folder_list(const SH_FOLDER *folder, DWORD flags, HANDLE token, PIDLIST_ABSOLUTE *pidl)
@@ -451,7 +451,7 @@ SHSTDAPI HRESULT WINAPI SHGetFolderLocation(HWND hwnd, int csidl, HANDLE token, 
 {
     if (!pidl)
         return E_INVALIDARG;
-    *pidl = NULL;
+    *pidl = nullptr;
     if (reserved)
         return E_INVALIDARG;
     const SH_FOLDER *folder = folder_by_csidl(csidl & ~CSIDL_FLAG_MASK);
@@ -462,7 +462,7 @@ SHSTDAPI HRESULT WINAPI SHGetFolderLocation(HWND hwnd, int csidl, HANDLE token, 
 
 SHSTDAPI HRESULT WINAPI SHGetSpecialFolderLocation(HWND hwnd, int csidl, PIDLIST_ABSOLUTE *pidl)
 {
-    return SHGetFolderLocation(hwnd, csidl, NULL, 0, pidl);
+    return SHGetFolderLocation(hwnd, csidl, nullptr, 0, pidl);
 }
 
 SHSTDAPI HRESULT WINAPI SHGetKnownFolderIDList(REFKNOWNFOLDERID id, DWORD flags, HANDLE token,
@@ -470,7 +470,7 @@ SHSTDAPI HRESULT WINAPI SHGetKnownFolderIDList(REFKNOWNFOLDERID id, DWORD flags,
 {
     if (!pidl)
         return E_INVALIDARG;
-    *pidl = NULL;
+    *pidl = nullptr;
     if (!id)
         return E_INVALIDARG;
     const SH_FOLDER *folder = folder_by_id(id);

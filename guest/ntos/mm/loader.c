@@ -19,12 +19,12 @@ static PVOID find_export(PVOID base, const char *name, USHORT ordinal_hint, BOOL
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)base + dos->e_lfanew);
     IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
-        return NULL;
+        return nullptr;
     PIMAGE_EXPORT_DIRECTORY exp = (PIMAGE_EXPORT_DIRECTORY)((PUCHAR)base + dir.VirtualAddress);
     PULONG functions = (PULONG)((PUCHAR)base + exp->AddressOfFunctions);
     if (by_ordinal) {
         ULONG index = ordinal_hint - exp->Base;
-        return index < exp->NumberOfFunctions && functions[index] ? (PUCHAR)base + functions[index] : NULL;
+        return index < exp->NumberOfFunctions && functions[index] ? (PUCHAR)base + functions[index] : nullptr;
     }
     PULONG names = (PULONG)((PUCHAR)base + exp->AddressOfNames);
     PUSHORT ordinals = (PUSHORT)((PUCHAR)base + exp->AddressOfNameOrdinals);
@@ -39,7 +39,7 @@ static PVOID find_export(PVOID base, const char *name, USHORT ordinal_hint, BOOL
         else
             lo = mid + 1;
     }
-    return NULL;
+    return nullptr;
 }
 
 PVOID MiFindKernelExport(PVOID image_base, const char *name)
@@ -52,7 +52,7 @@ PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
     char ansi[128];
     ULONG n = name->Length / sizeof(WCHAR);
     if (n >= sizeof(ansi))
-        return NULL;
+        return nullptr;
     for (ULONG i = 0; i < n; i++)
         ansi[i] = (char)name->Buffer[i];
     ansi[n] = 0;
@@ -150,7 +150,7 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
     /* resolve imports against the kernel. */
     IMAGE_DATA_DIRECTORY imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     PVOID kernel = (PVOID)HalBootInfo->kernel_virt;
-    for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : NULL;
+    for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : nullptr;
          NT_SUCCESS(status) && d && d->Name; d++) {
         const char *dll = (const char *)base + d->Name;
         if (_stricmp(dll, "ntoskrnl.exe") != 0 && _stricmp(dll, "hal.dll") != 0) {
@@ -163,7 +163,7 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
         for (; names->u1.AddressOfData; names++, iat++) {
             PVOID target;
             if (IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal)) {
-                target = find_export(kernel, NULL, (USHORT)IMAGE_ORDINAL64(names->u1.Ordinal), TRUE);
+                target = find_export(kernel, nullptr, (USHORT)IMAGE_ORDINAL64(names->u1.Ordinal), TRUE);
             } else {
                 PIMAGE_IMPORT_BY_NAME by_name = (PIMAGE_IMPORT_BY_NAME)(base + names->u1.AddressOfData);
                 target = find_export(kernel, by_name->Name, 0, FALSE);
@@ -230,7 +230,7 @@ static PVOID section_export(PSECTION s, const char *name)
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)AT((ULONG)dos->e_lfanew);
     IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
-        return NULL;
+        return nullptr;
     IMAGE_EXPORT_DIRECTORY exp;
     memcpy(&exp, AT(dir.VirtualAddress), sizeof(exp));
     for (ULONG i = 0; i < exp.NumberOfNames; i++) {
@@ -253,7 +253,7 @@ static PVOID section_export(PSECTION s, const char *name)
             return (PVOID)(s->Image.ImageBase + func);
         }
     }
-    return NULL;
+    return nullptr;
 #undef AT
 }
 
@@ -311,8 +311,8 @@ PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine)
     switch (machine) {
     case IMAGE_FILE_MACHINE_I386:
     case IMAGE_FILE_MACHINE_AMD64:
-        return PspX86SystemDll.Section ? &PspX86SystemDll : NULL;
+        return PspX86SystemDll.Section ? &PspX86SystemDll : nullptr;
     default:
-        return NULL;
+        return nullptr;
     }
 }

@@ -118,7 +118,7 @@ static HRESULT query(UI_SETTINGS *s, REFIID riid, void **object)
     else if (IsEqualIID(riid, &IID_IUISettings3))
         *object = &s->Settings3;
     else {
-        *object = NULL;
+        *object = nullptr;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&s->References);
@@ -214,7 +214,7 @@ static DWORD read_dword(HKEY root, LPCWSTR path, LPCWSTR name, DWORD fallback)
     HKEY key;
     if (RegOpenKeyExW(root, path, 0, KEY_QUERY_VALUE, &key))
         return fallback;
-    LONG error = RegQueryValueExW(key, name, NULL, &type, (BYTE *)&value, &size);
+    LONG error = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&value, &size);
     RegCloseKey(key);
     return !error && type == REG_DWORD && size == sizeof(value) ? value : fallback;
 }
@@ -461,7 +461,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(IActivationFactory *This, REFIID 
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -481,7 +481,7 @@ static HRESULT STDMETHODCALLTYPE factory_iids(IActivationFactory *This, ULONG *c
     if (!count || !iids)
         return E_POINTER;
     *count = 0;
-    *iids = NULL;
+    *iids = nullptr;
     return S_OK;
 }
 
@@ -501,7 +501,7 @@ static HRESULT STDMETHODCALLTYPE factory_activate(IActivationFactory *This, IIns
         return E_POINTER;
     UI_SETTINGS *s = CbAlloc(sizeof(*s));
     if (!s) {
-        *instance = NULL;
+        *instance = nullptr;
         return E_OUTOFMEMORY;
     }
     s->Settings1.lpVtbl = &g_settings1;

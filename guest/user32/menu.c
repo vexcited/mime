@@ -42,7 +42,7 @@ WINUSERAPI BOOL WINAPI IsMenu(HMENU menu)
 WINUSERAPI HMENU WINAPI GetMenu(HWND hwnd)
 {
     if (GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD)
-        return NULL;
+        return nullptr;
     return (HMENU)GetWindowLongPtrW(hwnd, GWLP_ID);
 }
 
@@ -74,7 +74,7 @@ WINUSERAPI int WINAPI GetMenuItemCount(HMENU menu)
 
 static BOOL set_item(HMENU menu, UINT item, BOOL by_position, BOOL insert, const MENUITEMINFOW *mii)
 {
-    UNICODE_STRING text, *ptext = NULL;
+    UNICODE_STRING text, *ptext = nullptr;
     BOOL wants_text = (mii->fMask & MIIM_STRING) ||
                       ((mii->fMask & MIIM_TYPE) && !(mii->fType & (MFT_BITMAP | MFT_SEPARATOR | MFT_OWNERDRAW)));
     if (wants_text) {
@@ -157,7 +157,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemInfoA(HMENU menu, UINT item, BOOL by_position,
         w.dwTypeData = buffer;
         w.cch = RTL_NUMBER_OF(buffer);
     } else if (text) {
-        w.dwTypeData = NULL;
+        w.dwTypeData = nullptr;
         w.cch = 0;
     }
     if (!NtUserMimeGetMenuItemInfo(menu, item, by_position, &w))
@@ -169,7 +169,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemInfoA(HMENU menu, UINT item, BOOL by_position,
     if (text && (w.fType & MFT_BITMAP) && (info->fMask & MIIM_TYPE)) {
         info->dwTypeData = (LPSTR)w.dwTypeData;
     } else if (text && user_text && user_cch && w.dwTypeData == buffer) {
-        int n = WideCharToMultiByte(CP_ACP, 0, buffer, (int)w.cch, user_text, (int)user_cch - 1, NULL, NULL);
+        int n = WideCharToMultiByte(CP_ACP, 0, buffer, (int)w.cch, user_text, (int)user_cch - 1, nullptr, nullptr);
         user_text[n] = 0;
         info->cch = (UINT)n;
     } else if (text) {
@@ -200,7 +200,7 @@ WINUSERAPI HMENU WINAPI GetSubMenu(HMENU menu, int position)
 {
     MENUITEMINFOW mii = {sizeof(mii), MIIM_SUBMENU};
     if (!NtUserMimeGetMenuItemInfo(menu, (UINT)position, TRUE, &mii))
-        return NULL;
+        return nullptr;
     return mii.hSubMenu;
 }
 
@@ -228,7 +228,7 @@ WINUSERAPI UINT WINAPI GetMenuState(HMENU menu, UINT id, UINT flags)
 WINUSERAPI int WINAPI GetMenuStringW(HMENU menu, UINT id, LPWSTR buffer, int max, UINT flags)
 {
     MENUITEMINFOW mii = {sizeof(mii), MIIM_STRING};
-    mii.dwTypeData = max > 0 ? buffer : NULL;
+    mii.dwTypeData = max > 0 ? buffer : nullptr;
     mii.cch = max > 0 && buffer ? (UINT)max : 0;
     if (!NtUserMimeGetMenuItemInfo(menu, id, (flags & MF_BYPOSITION) != 0, &mii))
         return 0;
@@ -240,8 +240,8 @@ WINUSERAPI int WINAPI GetMenuStringA(HMENU menu, UINT id, LPSTR buffer, int max,
     WCHAR w[1024];
     int n = GetMenuStringW(menu, id, w, RTL_NUMBER_OF(w), flags);
     if (!buffer || max <= 0)
-        return n ? WideCharToMultiByte(CP_ACP, 0, w, n, NULL, 0, NULL, NULL) : 0;
-    int a = n ? WideCharToMultiByte(CP_ACP, 0, w, n, buffer, max - 1, NULL, NULL) : 0;
+        return n ? WideCharToMultiByte(CP_ACP, 0, w, n, nullptr, 0, nullptr, nullptr) : 0;
+    int a = n ? WideCharToMultiByte(CP_ACP, 0, w, n, buffer, max - 1, nullptr, nullptr) : 0;
     buffer[a] = 0;
     return a;
 }
@@ -391,7 +391,7 @@ WINUSERAPI BOOL WINAPI CheckMenuRadioItem(HMENU menu, UINT first, UINT last, UIN
         } else {
             mii.fState &= ~MFS_CHECKED;
         }
-        NtUserThunkedMenuItemInfo(menu, (UINT)i, TRUE, FALSE, &mii, NULL);
+        NtUserThunkedMenuItemInfo(menu, (UINT)i, TRUE, FALSE, &mii, nullptr);
     }
     return found;
 }
@@ -438,7 +438,7 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
     if (object == OBJID_MENU)
         menu = GetMenu(hwnd);
     else if (object == OBJID_SYSMENU)
-        menu = (wi.dwStyle & WS_SYSMENU) ? GetSystemMenu(hwnd, FALSE) : NULL;
+        menu = (wi.dwStyle & WS_SYSMENU) ? GetSystemMenu(hwnd, FALSE) : nullptr;
     else {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -449,7 +449,7 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
     }
     info->rcBar = (RECT){wi.rcClient.left, wi.rcClient.top, wi.rcClient.right, wi.rcClient.top};
     info->hMenu = menu;
-    info->hwndMenu = NULL;
+    info->hwndMenu = nullptr;
     info->fBarFocused = 0;
     info->fFocused = 0;
     info->fUnused = 0;
@@ -472,34 +472,34 @@ static const BYTE *parse_menu(const BYTE *p, const BYTE *end, HMENU menu, int de
     WORD flags;
     do {
         if (depth > 32 || p + sizeof(WORD) > end)
-            return NULL;
+            return nullptr;
         flags = *(const WORD *)p;
         p += sizeof(WORD);
         WORD id = 0;
         if (!(flags & MF_POPUP)) {
             if (p + sizeof(WORD) > end)
-                return NULL;
+                return nullptr;
             id = *(const WORD *)p;
             p += sizeof(WORD);
         }
         const WCHAR *text = (const WCHAR *)p;
         int len = menu_string_length(text, (const WCHAR *)end);
         if (len < 0)
-            return NULL;
+            return nullptr;
         p += (SIZE_T)(len + 1) * sizeof(WCHAR);
         UINT item_flags = flags & ~(MF_END | MF_POPUP);
         if (flags & MF_POPUP) {
             HMENU sub = CreatePopupMenu();
             if (!sub)
-                return NULL;
+                return nullptr;
             p = parse_menu(p, end, sub, depth + 1);
             if (!p) {
                 DestroyMenu(sub);
-                return NULL;
+                return nullptr;
             }
             AppendMenuW(menu, item_flags | MF_POPUP, (UINT_PTR)sub, text);
         } else if (!len && !id) {
-            AppendMenuW(menu, item_flags | MF_SEPARATOR, 0, NULL);
+            AppendMenuW(menu, item_flags | MF_SEPARATOR, 0, nullptr);
         } else {
             AppendMenuW(menu, item_flags, id, text);
         }
@@ -520,7 +520,7 @@ static const BYTE *parse_menu_ex(const BYTE *p, const BYTE *base, const BYTE *en
     do {
         p = align_up(p, base, 4);
         if (depth > 32 || p + 14 > end)
-            return NULL;
+            return nullptr;
         MENUITEMINFOW mii;
         memset(&mii, 0, sizeof(mii));
         mii.cbSize = sizeof(mii);
@@ -533,7 +533,7 @@ static const BYTE *parse_menu_ex(const BYTE *p, const BYTE *base, const BYTE *en
         const WCHAR *text = (const WCHAR *)p;
         int len = menu_string_length(text, (const WCHAR *)end);
         if (len < 0)
-            return NULL;
+            return nullptr;
         p += (SIZE_T)(len + 1) * sizeof(WCHAR);
         if (len) {
             mii.fMask |= MIIM_STRING;
@@ -543,11 +543,11 @@ static const BYTE *parse_menu_ex(const BYTE *p, const BYTE *base, const BYTE *en
             p = align_up(p, base, 4) + sizeof(DWORD); /* help id. */
             HMENU sub = CreatePopupMenu();
             if (!sub)
-                return NULL;
+                return nullptr;
             p = parse_menu_ex(p, base, end, sub, depth + 1);
             if (!p) {
                 DestroyMenu(sub);
-                return NULL;
+                return nullptr;
             }
             mii.fMask |= MIIM_SUBMENU;
             mii.hSubMenu = sub;
@@ -563,19 +563,19 @@ static HMENU load_menu_template(const BYTE *data, DWORD size)
 {
     const BYTE *end = data + size;
     if (size < 4)
-        return NULL;
+        return nullptr;
     WORD version = *(const WORD *)data, offset = *(const WORD *)(data + 2);
     const BYTE *items = data + 4 + offset;
     if (version > 1 || items > end)
-        return NULL;
+        return nullptr;
     HMENU menu = CreateMenu();
     if (!menu)
-        return NULL;
+        return nullptr;
     const BYTE *done = version ? parse_menu_ex(items, data, end, menu, 0) : parse_menu(items, end, menu, 0);
     if (!done) {
         DestroyMenu(menu);
         SetLastError(ERROR_INVALID_DATA);
-        return NULL;
+        return nullptr;
     }
     return menu;
 }
@@ -583,9 +583,9 @@ static HMENU load_menu_template(const BYTE *data, DWORD size)
 WINUSERAPI HMENU WINAPI LoadMenuW(HINSTANCE instance, LPCWSTR name)
 {
     HRSRC res = FindResourceW(instance, name, MAKEINTRESOURCEW(4));
-    const BYTE *data = res ? LockResource(LoadResource(instance, res)) : NULL;
+    const BYTE *data = res ? LockResource(LoadResource(instance, res)) : nullptr;
     if (!data)
-        return NULL;
+        return nullptr;
     return load_menu_template(data, SizeofResource(instance, res));
 }
 
@@ -634,7 +634,7 @@ static void split_accelerator(const WCHAR *text, int *label, const WCHAR **accel
 {
     const WCHAR *tab = wcschr(text, L'\t');
     *label = tab ? (int)(tab - text) : (int)wcslen(text);
-    *accel = tab ? tab + 1 : NULL;
+    *accel = tab ? tab + 1 : nullptr;
 }
 
 static BOOL load_items(POPUP_STATE *ps)
@@ -646,7 +646,7 @@ static BOOL load_items(POPUP_STATE *ps)
     if (!ps->Items)
         return FALSE;
     ps->Count = count;
-    HDC dc = GetDC(NULL);
+    HDC dc = GetDC(nullptr);
     HGDIOBJ old = SelectObject(dc, ps->Font);
     TEXTMETRICW tm;
     GetTextMetricsW(dc, &tm);
@@ -686,7 +686,7 @@ static BOOL load_items(POPUP_STATE *ps)
         }
     }
     SelectObject(dc, old);
-    ReleaseDC(NULL, dc);
+    ReleaseDC(nullptr, dc);
     ps->Width = scale(36, ps->Dpi) + label_width + (accel_width ? scale(32, ps->Dpi) + accel_width : 0) +
                 scale(32, ps->Dpi);
     if (ps->Width < scale(120, ps->Dpi))
@@ -733,7 +733,7 @@ static void paint_popup(POPUP_STATE *ps, HDC dc)
                 SelectObject(dc, old_brush);
                 DeleteObject(dot);
             } else {
-                MoveToEx(dc, cx - s, cy, NULL);
+                MoveToEx(dc, cx - s, cy, nullptr);
                 LineTo(dc, cx - s / 3, cy + s - s / 3);
                 LineTo(dc, cx + s + 1, cy - s);
             }
@@ -805,7 +805,7 @@ static void set_hot(POPUP_STATE *ps, int hot)
     if (hot == ps->Hot)
         return;
     ps->Hot = hot;
-    InvalidateRect(ps->Window, NULL, FALSE);
+    InvalidateRect(ps->Window, nullptr, FALSE);
     if (!(ps->Flags & TPM_NONOTIFY)) {
         UINT flags = 0, id = 0;
         if (hot >= 0) {
@@ -855,7 +855,7 @@ static void track(POPUP_STATE *ps)
     UINT up = (ps->Flags & TPM_RIGHTBUTTON) ? 0 : 1;
     while (!ps->Done) {
         MSG msg;
-        if (!GetMessageW(&msg, NULL, 0, 0)) {
+        if (!GetMessageW(&msg, nullptr, 0, 0)) {
             /* WM_QUIT ends the menu and stays in the queue for the caller. */
             PostQuitMessage((int)msg.wParam);
             break;
@@ -992,7 +992,7 @@ WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HW
         return FALSE;
     }
     BOOL notify = !(flags & TPM_NONOTIFY);
-    BOOL system = (HWND)NtUserMimeCallMenu(menu, 0, MIME_MENU_SYSTEMWINDOW) != NULL;
+    BOOL system = (HWND)NtUserMimeCallMenu(menu, 0, MIME_MENU_SYSTEMWINDOW) != nullptr;
     if (notify) {
         SendMessageW(hwnd, WM_ENTERMENULOOP, TRUE, 0);
         SendMessageW(hwnd, WM_INITMENUPOPUP, (WPARAM)menu, MAKELPARAM(0, system));
@@ -1007,9 +1007,9 @@ WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HW
     ps.Font = UserGetMessageFont(ps.Dpi);
     BOOL result = FALSE;
     if (load_items(&ps)) {
-        place_popup(&ps, &x, &y, params ? &params->rcExclude : NULL);
-        ps.Window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, L"#32768", NULL, WS_POPUP, x,
-                                    y, ps.Width, ps.Height, hwnd, NULL, User32Instance, NULL);
+        place_popup(&ps, &x, &y, params ? &params->rcExclude : nullptr);
+        ps.Window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, L"#32768", nullptr, WS_POPUP, x,
+                                    y, ps.Width, ps.Height, hwnd, nullptr, User32Instance, nullptr);
         if (ps.Window) {
             SetWindowLongPtrW(ps.Window, GWLP_USERDATA, (LONG_PTR)&ps);
             ShowWindow(ps.Window, SW_SHOWNA);
@@ -1047,7 +1047,7 @@ WINUSERAPI BOOL WINAPI TrackPopupMenu(HMENU menu, UINT flags, int x, int y, int 
 {
     (void)reserved;
     (void)rect;
-    return TrackPopupMenuEx(menu, flags, x, y, hwnd, NULL);
+    return TrackPopupMenuEx(menu, flags, x, y, hwnd, nullptr);
 }
 
 WINUSERAPI BOOL WINAPI EndMenu(void)
@@ -1070,7 +1070,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPREC
     if (popup && popup->Menu == menu && item < (UINT)popup->Count) {
         POPUP_ITEM *entry = &popup->Items[item];
         *rect = (RECT){0, entry->Top, popup->Width, entry->Top + entry->Height};
-        MapWindowPoints(popup->Window, NULL, (POINT *)rect, 2);
+        MapWindowPoints(popup->Window, nullptr, (POINT *)rect, 2);
         return TRUE;
     }
     SetLastError(ERROR_MENU_ITEM_NOT_FOUND);

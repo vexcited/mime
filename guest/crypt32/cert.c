@@ -31,13 +31,13 @@ cr_cert *CrCreateCert(const BYTE *encoded, DWORD size)
     DWORD info_size;
     CERT_SIGNED_CONTENT_INFO *signed_info = CrDecodeAlloc(X509_CERT, encoded, size, 0, &info_size);
     if (!signed_info)
-        return NULL;
+        return nullptr;
     CERT_INFO *info = CrDecodeAlloc(X509_CERT_TO_BE_SIGNED, signed_info->ToBeSigned.pbData,
                                     signed_info->ToBeSigned.cbData, 0, &info_size);
     DWORD encoded_size = signed_info->ToBeSigned.pbData - encoded + signed_info->ToBeSigned.cbData;
     CrFree(signed_info);
     if (!info)
-        return NULL;
+        return nullptr;
     /* keep the whole outer sequence, not trailing bytes after it. */
     der_reader r = {encoded, size};
     der_item outer;
@@ -47,7 +47,7 @@ cr_cert *CrCreateCert(const BYTE *encoded, DWORD size)
     if (!cert) {
         CrFree(info);
         SetLastError(ERROR_OUTOFMEMORY);
-        return NULL;
+        return nullptr;
     }
     BYTE *copy = (BYTE *)(cert + 1);
     memcpy(copy, encoded, encoded_size);
@@ -67,7 +67,7 @@ void CrFreeProps(cr_cert *cert)
         CrFree(p);
         p = next;
     }
-    cert->props = NULL;
+    cert->props = nullptr;
 }
 
 void CrReleaseCert(cr_cert *cert)
@@ -98,15 +98,15 @@ PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, con
 {
     if (GET_CERT_ENCODING_TYPE(dwCertEncodingType) != X509_ASN_ENCODING) {
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     if (!pbCertEncoded || !cbCertEncoded) {
         SetLastError(CRYPT_E_ASN1_EOD);
-        return NULL;
+        return nullptr;
     }
     cr_cert *cert = CrCreateCert(pbCertEncoded, cbCertEncoded);
     if (!cert)
-        return NULL;
+        return nullptr;
     cert->context.dwCertEncodingType = dwCertEncodingType;
     return &cert->context;
 }
@@ -114,7 +114,7 @@ PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, con
 PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(PCCERT_CONTEXT pCertContext)
 {
     if (!pCertContext)
-        return NULL;
+        return nullptr;
     InterlockedIncrement(&CrCert(pCertContext)->refs);
     return pCertContext;
 }
@@ -133,7 +133,7 @@ static cr_prop *find_prop(cr_cert *cert, DWORD id)
     for (cr_prop *p = cert->props; p; p = p->next)
         if (p->id == id)
             return p;
-    return NULL;
+    return nullptr;
 }
 
 static void remove_prop(cr_cert *cert, DWORD id)
@@ -161,7 +161,7 @@ static BOOL store_prop(cr_cert *cert, DWORD id, const void *data, DWORD size)
     cr_prop **tail = &cert->props;
     while (*tail)
         tail = &(*tail)->next;
-    p->next = NULL;
+    p->next = nullptr;
     *tail = p;
     CrUnlock();
     return TRUE;
@@ -174,8 +174,8 @@ static DWORD copy_key_prov_info(const CRYPT_KEY_PROV_INFO *src, BYTE *dst)
     CRYPT_KEY_PROV_INFO *out = (CRYPT_KEY_PROV_INFO *)dst;
     if (out) {
         *out = *src;
-        out->rgProvParam = NULL;
-        out->pwszContainerName = out->pwszProvName = NULL;
+        out->rgProvParam = nullptr;
+        out->pwszContainerName = out->pwszProvName = nullptr;
     }
     if (src->cProvParam) {
         size = (size + 7) & ~7;
@@ -185,7 +185,7 @@ static DWORD copy_key_prov_info(const CRYPT_KEY_PROV_INFO *src, BYTE *dst)
         for (DWORD i = 0; i < src->cProvParam; i++) {
             if (out) {
                 out->rgProvParam[i] = src->rgProvParam[i];
-                out->rgProvParam[i].pbData = src->rgProvParam[i].cbData ? dst + size : NULL;
+                out->rgProvParam[i].pbData = src->rgProvParam[i].cbData ? dst + size : nullptr;
                 if (src->rgProvParam[i].cbData)
                     memcpy(dst + size, src->rgProvParam[i].pbData, src->rgProvParam[i].cbData);
             }
@@ -309,7 +309,7 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
         BOOL ok;
         if (dwPropId == CERT_KEY_PROV_INFO_PROP_ID) {
             const CRYPT_KEY_PROV_INFO *info = (const CRYPT_KEY_PROV_INFO *)p->data;
-            DWORD size = copy_key_prov_info(info, NULL);
+            DWORD size = copy_key_prov_info(info, nullptr);
             if (!pvData) {
                 *pcbData = size;
                 ok = TRUE;
@@ -381,7 +381,7 @@ BOOL WINAPI CertSetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
     switch (dwPropId) {
     case CERT_KEY_PROV_INFO_PROP_ID: {
         const CRYPT_KEY_PROV_INFO *info = pvData;
-        DWORD size = copy_key_prov_info(info, NULL);
+        DWORD size = copy_key_prov_info(info, nullptr);
         /* the copy points into itself, so it is built at its final address. */
         cr_prop *p = CrAlloc(sizeof(cr_prop) + size);
         if (!p)
@@ -394,7 +394,7 @@ BOOL WINAPI CertSetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
         cr_prop **tail = &cert->props;
         while (*tail)
             tail = &(*tail)->next;
-        p->next = NULL;
+        p->next = nullptr;
         *tail = p;
         CrUnlock();
         return TRUE;
@@ -429,7 +429,7 @@ DWORD WINAPI CertEnumCertificateContextProperties(PCCERT_CONTEXT pCertContext, D
     if (dwPropId) {
         while (p && p->id != dwPropId)
             p = p->next;
-        p = p ? p->next : NULL;
+        p = p ? p->next : nullptr;
     }
     if (p)
         result = p->id;
@@ -520,20 +520,20 @@ PCERT_EXTENSION WINAPI CertFindExtension(LPCSTR pszObjId, DWORD cExtensions, CER
     for (DWORD i = 0; i < cExtensions; i++)
         if (!strcmp(rgExtensions[i].pszObjId, pszObjId))
             return &rgExtensions[i];
-    return NULL;
+    return nullptr;
 }
 
 PCERT_RDN_ATTR WINAPI CertFindRDNAttr(LPCSTR pszObjId, PCERT_NAME_INFO pName)
 {
     if (!pszObjId || !pName) {
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     for (DWORD i = 0; i < pName->cRDN; i++)
         for (DWORD j = 0; j < pName->rgRDN[i].cRDNAttr; j++)
             if (!strcmp(pName->rgRDN[i].rgRDNAttr[j].pszObjId, pszObjId))
                 return &pName->rgRDN[i].rgRDNAttr[j];
-    return NULL;
+    return nullptr;
 }
 
 LONG WINAPI CertVerifyTimeValidity(LPFILETIME pTimeToVerify, PCERT_INFO pCertInfo)
@@ -609,7 +609,7 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
     if (!pCertContext || !pcbUsage)
         return CrFail(E_INVALIDARG);
     const DWORD ext_only = 0x2, prop_only = 0x4;
-    CERT_ENHKEY_USAGE *from_ext = NULL, *from_prop = NULL;
+    CERT_ENHKEY_USAGE *from_ext = nullptr, *from_prop = nullptr;
     DWORD size;
     if (!(dwFlags & prop_only)) {
         PCERT_EXTENSION ext = CertFindExtension(szOID_ENHANCED_KEY_USAGE, pCertContext->pCertInfo->cExtension,
@@ -619,7 +619,7 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
     }
     if (!(dwFlags & ext_only)) {
         DWORD n = 0;
-        if (CertGetCertificateContextProperty(pCertContext, CERT_ENHKEY_USAGE_PROP_ID, NULL, &n)) {
+        if (CertGetCertificateContextProperty(pCertContext, CERT_ENHKEY_USAGE_PROP_ID, nullptr, &n)) {
             BYTE *data = CrAlloc(n);
             if (data && CertGetCertificateContextProperty(pCertContext, CERT_ENHKEY_USAGE_PROP_ID, data, &n))
                 from_prop = CrDecodeAlloc(X509_ENHANCED_KEY_USAGE, data, n, 0, &size);
@@ -635,7 +635,7 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
                 return CrFail(ERROR_MORE_DATA);
             }
             pUsage->cUsageIdentifier = 0;
-            pUsage->rgpszUsageIdentifier = NULL;
+            pUsage->rgpszUsageIdentifier = nullptr;
         }
         *pcbUsage = size;
         SetLastError(CRYPT_E_NOT_FOUND);
@@ -644,7 +644,7 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
     /* with both present windows reports the usages of the extension that the property also lists. */
     const CERT_ENHKEY_USAGE *use = from_ext ? from_ext : from_prop;
     DWORD count = 0, strings = 0;
-    add_usages(use, NULL, &count, NULL, &strings, FALSE);
+    add_usages(use, nullptr, &count, nullptr, &strings, FALSE);
     size = sizeof(CERT_ENHKEY_USAGE) + count * sizeof(LPSTR) + strings;
     BOOL ok = TRUE;
     if (pUsage) {
@@ -656,7 +656,7 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
             DWORD c = 0, s = 0;
             add_usages(use, list, &c, text, &s, TRUE);
             pUsage->cUsageIdentifier = count;
-            pUsage->rgpszUsageIdentifier = count ? list : NULL;
+            pUsage->rgpszUsageIdentifier = count ? list : nullptr;
         }
     }
     *pcbUsage = size;

@@ -10,14 +10,14 @@ DECLSPEC_EXPORT HANDLE WINAPI CreateJobObjectW(LPSECURITY_ATTRIBUTES sa, LPCWSTR
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!KbNamedObjectAttributes(&oa, &us, name, FALSE, sa))
-        return NULL;
+        return nullptr;
     if (name)
         oa.Attributes |= OBJ_OPENIF;
-    HANDLE h = NULL;
+    HANDLE h = nullptr;
     NTSTATUS status = NtCreateJobObject(&h, JOB_OBJECT_ALL_ACCESS, &oa);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     KbSetError(status == STATUS_OBJECT_NAME_EXISTS ? ERROR_ALREADY_EXISTS : ERROR_SUCCESS);
     return h;
@@ -25,9 +25,9 @@ DECLSPEC_EXPORT HANDLE WINAPI CreateJobObjectW(LPSECURITY_ATTRIBUTES sa, LPCWSTR
 
 DECLSPEC_EXPORT HANDLE WINAPI CreateJobObjectA(LPSECURITY_ATTRIBUTES sa, LPCSTR name)
 {
-    PWSTR wide = name ? KbAnsiToWideCp(CP_ACP, name) : NULL;
+    PWSTR wide = name ? KbAnsiToWideCp(CP_ACP, name) : nullptr;
     if (name && !wide)
-        return NULL;
+        return nullptr;
     HANDLE h = CreateJobObjectW(sa, wide);
     KbFree(wide);
     return h;
@@ -37,17 +37,17 @@ DECLSPEC_EXPORT HANDLE WINAPI OpenJobObjectW(DWORD access, BOOL inherit, LPCWSTR
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
-    if (!KbNamedObjectAttributes(&oa, &us, name, inherit, NULL))
-        return NULL;
-    HANDLE h = NULL;
+    if (!KbNamedObjectAttributes(&oa, &us, name, inherit, nullptr))
+        return nullptr;
+    HANDLE h = nullptr;
     NTSTATUS status = NtOpenJobObject(&h, access, &oa);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     return h;
 }
@@ -56,11 +56,11 @@ DECLSPEC_EXPORT HANDLE WINAPI OpenJobObjectA(DWORD access, BOOL inherit, LPCSTR 
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     PWSTR wide = KbAnsiToWideCp(CP_ACP, name);
     if (!wide)
-        return NULL;
+        return nullptr;
     HANDLE h = OpenJobObjectW(access, inherit, wide);
     KbFree(wide);
     return h;

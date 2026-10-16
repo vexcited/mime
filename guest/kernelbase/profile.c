@@ -35,17 +35,17 @@ static PWSTR profile_path(PCWSTR name)
         name = L"win.ini";
     if (!*name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     SIZE_T length = wcslen(name);
     if (length > 32700) {
         KbSetError(ERROR_FILENAME_EXCED_RANGE);
-        return NULL;
+        return nullptr;
     }
     PWSTR path = KbAlloc((length + MAX_PATH + 2) * sizeof(WCHAR));
     if (!path) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     if (name[0] == L'\\' || name[0] == L'/' || (length > 1 && name[1] == L':'))
         wcscpy(path, name);
@@ -53,7 +53,7 @@ static PWSTR profile_path(PCWSTR name)
         UINT count = GetWindowsDirectoryW(path, MAX_PATH);
         if (!count || count >= MAX_PATH) {
             KbFree(path);
-            return NULL;
+            return nullptr;
         }
         path[count++] = L'\\';
         wcscpy(path + count, name);
@@ -65,14 +65,14 @@ static BOOL load_profile(PCWSTR path, PROFILE *profile, BOOL missing_ok)
 {
     memset(profile, 0, sizeof(*profile));
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                              NULL, OPEN_EXISTING, 0, NULL);
+                              nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         if (!missing_ok || GetLastError() != ERROR_FILE_NOT_FOUND)
             return FALSE;
         profile->Text = KbAllocZero(sizeof(WCHAR));
         if (!profile->Text)
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return profile->Text != NULL;
+        return profile->Text != nullptr;
     }
     LARGE_INTEGER size;
     BOOL ok = GetFileSizeEx(file, &size);
@@ -81,13 +81,13 @@ static BOOL load_profile(PCWSTR path, PROFILE *profile, BOOL missing_ok)
         error = ERROR_FILE_TOO_LARGE;
         ok = FALSE;
     }
-    BYTE *bytes = ok ? KbAlloc((SIZE_T)size.QuadPart + 2) : NULL;
+    BYTE *bytes = ok ? KbAlloc((SIZE_T)size.QuadPart + 2) : nullptr;
     if (ok && !bytes) {
         error = ERROR_NOT_ENOUGH_MEMORY;
         ok = FALSE;
     }
     DWORD count = 0;
-    if (ok && (!ReadFile(file, bytes, (DWORD)size.QuadPart, &count, NULL) || count != size.QuadPart)) {
+    if (ok && (!ReadFile(file, bytes, (DWORD)size.QuadPart, &count, nullptr) || count != size.QuadPart)) {
         error = count != size.QuadPart ? ERROR_READ_FAULT : GetLastError();
         ok = FALSE;
     }
@@ -101,7 +101,7 @@ static BOOL load_profile(PCWSTR path, PROFILE *profile, BOOL missing_ok)
     }
     if (ok) {
         SIZE_T length = profile->Unicode ? (count - 2) / 2 :
-                        count ? (SIZE_T)MultiByteToWideChar(CP_ACP, 0, (PCSTR)bytes, count, NULL, 0) : 0;
+                        count ? (SIZE_T)MultiByteToWideChar(CP_ACP, 0, (PCSTR)bytes, count, nullptr, 0) : 0;
         if (count && !profile->Unicode && !length) {
             error = GetLastError();
             ok = FALSE;
@@ -130,7 +130,7 @@ static BOOL load_profile(PCWSTR path, PROFILE *profile, BOOL missing_ok)
     KbFree(bytes);
     if (!ok) {
         KbFree(profile->Text);
-        profile->Text = NULL;
+        profile->Text = nullptr;
         KbSetError(error);
     }
     return ok;
@@ -213,7 +213,7 @@ DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fall
     if (multiple && size > 1)
         out[1] = 0;
     PWSTR path = profile_path(filename);
-    PROFILE profile = {0};
+    PROFILE profile = {};
     BOOL loaded = path && load_profile(path, &profile, FALSE);
     DWORD error = loaded ? ERROR_SUCCESS : GetLastError(), used = 0;
     BOOL active = FALSE, found_section = FALSE, found_value = FALSE;
@@ -288,7 +288,7 @@ UINT WINAPI GetPrivateProfileIntW(LPCWSTR section, LPCWSTR key, INT fallback, LP
 
 static BOOL save_profile(PCWSTR path, PCWSTR text, SIZE_T length, BOOL unicode)
 {
-    int encoded = unicode ? 0 : length ? WideCharToMultiByte(CP_ACP, 0, text, (int)length, NULL, 0, NULL, NULL) : 0;
+    int encoded = unicode ? 0 : length ? WideCharToMultiByte(CP_ACP, 0, text, (int)length, nullptr, 0, nullptr, nullptr) : 0;
     if (!unicode && length && !encoded)
         return FALSE;
     SIZE_T size = unicode ? (length + 1) * sizeof(WCHAR) : (SIZE_T)encoded;
@@ -310,19 +310,19 @@ static BOOL save_profile(PCWSTR path, PCWSTR text, SIZE_T length, BOOL unicode)
         bytes[1] = 0xfe;
         memcpy(bytes + 2, text, length * sizeof(WCHAR));
     } else if (size)
-        WideCharToMultiByte(CP_ACP, 0, text, (int)length, (PSTR)bytes, encoded, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, text, (int)length, (PSTR)bytes, encoded, nullptr, nullptr);
     HANDLE file = INVALID_HANDLE_VALUE;
     for (ULONG i = 0; i < 32 && file == INVALID_HANDLE_VALUE; i++) {
         KbFormat(temporary, path_size, L"%s.mime-%u-%u.tmp", path, GetCurrentProcessId(),
                  (ULONG)InterlockedIncrement(&temporary_id));
-        file = CreateFileW(temporary, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        file = CreateFileW(temporary, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_EXISTS)
             break;
     }
     BOOL ok = file != INVALID_HANDLE_VALUE;
     DWORD error = ok ? ERROR_SUCCESS : GetLastError(), written;
     if (ok) {
-        ok = WriteFile(file, bytes, (DWORD)size, &written, NULL);
+        ok = WriteFile(file, bytes, (DWORD)size, &written, nullptr);
         if (!ok)
             error = GetLastError();
         else if (written != size) {
@@ -392,7 +392,7 @@ static BOOL edit_profile(PCWSTR section, PCWSTR key, PCWSTR value, PCWSTR path)
         start = end = found_section ? section_end : profile.Length;
     SIZE_T section_length = wcslen(section), key_length = key ? wcslen(key) : 0, value_length = value ? wcslen(value) : 0;
     SIZE_T capacity = profile.Length + section_length + key_length + value_length + 16;
-    PWSTR output = capacity <= PROFILE_LIMIT ? KbAlloc(capacity * sizeof(WCHAR)) : NULL;
+    PWSTR output = capacity <= PROFILE_LIMIT ? KbAlloc(capacity * sizeof(WCHAR)) : nullptr;
     if (!output) {
         KbFree(profile.Text);
         KbSetError(capacity > PROFILE_LIMIT ? ERROR_FILE_TOO_LARGE : ERROR_NOT_ENOUGH_MEMORY);
@@ -448,7 +448,7 @@ BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR val
     PWSTR path = profile_path(filename);
     if (!path)
         return FALSE;
-    HANDLE mutex = CreateMutexW(NULL, FALSE, L"Local\\MimeIniFiles");
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\MimeIniFiles");
     BOOL result = FALSE;
     if (mutex) {
         DWORD wait = WaitForSingleObject(mutex, INFINITE);
@@ -469,15 +469,15 @@ BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR val
 
 DWORD WINAPI GetProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fallback, LPWSTR out, DWORD size)
 {
-    return GetPrivateProfileStringW(section, key, fallback, out, size, NULL);
+    return GetPrivateProfileStringW(section, key, fallback, out, size, nullptr);
 }
 
 UINT WINAPI GetProfileIntW(LPCWSTR section, LPCWSTR key, INT fallback)
 {
-    return GetPrivateProfileIntW(section, key, fallback, NULL);
+    return GetPrivateProfileIntW(section, key, fallback, nullptr);
 }
 
 BOOL WINAPI WriteProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value)
 {
-    return WritePrivateProfileStringW(section, key, value, NULL);
+    return WritePrivateProfileStringW(section, key, value, nullptr);
 }

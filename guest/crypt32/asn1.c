@@ -235,7 +235,7 @@ DWORD DerParseInt(const der_item *item, int *value)
 
 void DerWriteInit(der_writer *w)
 {
-    w->data = NULL;
+    w->data = nullptr;
     w->size = 0;
     w->capacity = 0;
     w->error = 0;

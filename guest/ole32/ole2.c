@@ -10,9 +10,9 @@
 
 static IRunnableObject *runnable(IUnknown *object)
 {
-    IRunnableObject *result = NULL;
+    IRunnableObject *result = nullptr;
     if (object && FAILED(object->lpVtbl->QueryInterface(object, &IID_IRunnableObject, (void **)&result)))
-        result = NULL;
+        result = nullptr;
     return result;
 }
 
@@ -33,7 +33,7 @@ WINOLEAPI HRESULT WINAPI OleRun(IUnknown *object)
     IRunnableObject *r = runnable(object);
     if (!r)
         return S_OK;
-    HRESULT hr = r->lpVtbl->Run(r, NULL);
+    HRESULT hr = r->lpVtbl->Run(r, nullptr);
     r->lpVtbl->Release(r);
     return hr;
 }
@@ -65,18 +65,18 @@ typedef struct {
     OLEMENUGROUPWIDTHS Widths;
 } MENU_DESCRIPTOR;
 
-static const WCHAR g_menu_property[] = L"PROP_OLEMenuDescriptor";
+static constexpr WCHAR g_menu_property[] = L"PROP_OLEMenuDescriptor";
 
 WINOLEAPI HOLEMENU WINAPI OleCreateMenuDescriptor(HMENU shared, LPOLEMENUGROUPWIDTHS widths)
 {
     if (!shared || !widths)
-        return NULL;
+        return nullptr;
     HOLEMENU descriptor = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(MENU_DESCRIPTOR));
-    MENU_DESCRIPTOR *d = descriptor ? GlobalLock(descriptor) : NULL;
+    MENU_DESCRIPTOR *d = descriptor ? GlobalLock(descriptor) : nullptr;
     if (!d) {
         if (descriptor)
             GlobalFree(descriptor);
-        return NULL;
+        return nullptr;
     }
     d->Menu = shared;
     d->Widths = *widths;
@@ -129,7 +129,7 @@ WINOLEAPI BOOL WINAPI IsAccelerator(HACCEL accel, int count, MSG *msg, WORD *com
         return FALSE;
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     COPY_ACCELERATORS copy = user32 ? (COPY_ACCELERATORS)(void *)GetProcAddress(user32, "CopyAcceleratorTableW")
-                                    : NULL;
+                                    : nullptr;
     if (!copy)
         return FALSE;
     ACCEL_ENTRY *table = OleAlloc(count * sizeof(*table));
@@ -183,16 +183,16 @@ static LPOLESTR read_string(HKEY key, LPCWSTR subkey)
 {
     HKEY sub = key;
     if (subkey && RegOpenKeyExW(key, subkey, 0, KEY_READ, &sub))
-        return NULL;
+        return nullptr;
     DWORD type, bytes = 0;
-    LPOLESTR value = NULL;
-    if (!RegQueryValueExW(sub, NULL, NULL, &type, NULL, &bytes) && (type == REG_SZ || type == REG_EXPAND_SZ)) {
+    LPOLESTR value = nullptr;
+    if (!RegQueryValueExW(sub, nullptr, nullptr, &type, nullptr, &bytes) && (type == REG_SZ || type == REG_EXPAND_SZ)) {
         value = CoTaskMemAlloc(bytes + sizeof(WCHAR));
-        if (value && !RegQueryValueExW(sub, NULL, NULL, &type, (BYTE *)value, &bytes))
+        if (value && !RegQueryValueExW(sub, nullptr, nullptr, &type, (BYTE *)value, &bytes))
             value[bytes / sizeof(WCHAR)] = 0;
         else if (value) {
             CoTaskMemFree(value);
-            value = NULL;
+            value = nullptr;
         }
     }
     if (sub != key)
@@ -224,7 +224,7 @@ static BOOL read_number(HKEY key, LPCWSTR subkey, DWORD *out)
         return FALSE;
     WCHAR text[32];
     DWORD type, bytes = sizeof(text) - sizeof(WCHAR);
-    BOOL ok = !RegQueryValueExW(sub, NULL, NULL, &type, (BYTE *)text, &bytes);
+    BOOL ok = !RegQueryValueExW(sub, nullptr, nullptr, &type, (BYTE *)text, &bytes);
     if (ok && type == REG_DWORD && bytes == sizeof(DWORD)) {
         memcpy(out, text, sizeof(DWORD));
     } else if (ok && (type == REG_SZ || type == REG_EXPAND_SZ)) {
@@ -243,11 +243,11 @@ WINOLEAPI HRESULT WINAPI OleRegGetUserType(REFCLSID clsid, DWORD form, LPOLESTR 
 {
     if (!user_type)
         return E_INVALIDARG;
-    *user_type = NULL;
+    *user_type = nullptr;
     if (!clsid)
         return E_INVALIDARG;
     HKEY key;
-    if (OleOpenClassKey(clsid, NULL, KEY_READ, &key))
+    if (OleOpenClassKey(clsid, nullptr, KEY_READ, &key))
         return REGDB_E_CLASSNOTREG;
     if (form != USERCLASSTYPE_FULL) {
         WCHAR subkey[32];
@@ -255,7 +255,7 @@ WINOLEAPI HRESULT WINAPI OleRegGetUserType(REFCLSID clsid, DWORD form, LPOLESTR 
         *user_type = read_string(key, subkey);
     }
     if (!*user_type)
-        *user_type = read_string(key, NULL);
+        *user_type = read_string(key, nullptr);
     RegCloseKey(key);
     return *user_type ? S_OK : REGDB_E_READREGDB;
 }
@@ -268,14 +268,14 @@ WINOLEAPI HRESULT WINAPI OleRegGetMiscStatus(REFCLSID clsid, DWORD aspect, DWORD
     if (!clsid)
         return E_INVALIDARG;
     HKEY key;
-    if (OleOpenClassKey(clsid, NULL, KEY_READ, &key))
+    if (OleOpenClassKey(clsid, nullptr, KEY_READ, &key))
         return REGDB_E_CLASSNOTREG;
     HKEY misc;
     LSTATUS result = RegOpenKeyExW(key, L"MiscStatus", 0, KEY_READ, &misc);
     RegCloseKey(key);
     if (result)
         return REGDB_E_READREGDB;
-    read_number(misc, NULL, status);
+    read_number(misc, nullptr, status);
     WCHAR subkey[16];
     _snwprintf(subkey, RTL_NUMBER_OF(subkey), L"%u", (unsigned)aspect);
     read_number(misc, subkey, status);
@@ -307,7 +307,7 @@ static HRESULT copy_verbs(const OLEVERB *source, ULONG count, OLEVERB **result)
         return E_OUTOFMEMORY;
     for (ULONG i = 0; i < count; i++) {
         verbs[i] = source[i];
-        verbs[i].lpszVerbName = NULL;
+        verbs[i].lpszVerbName = nullptr;
         if (source[i].lpszVerbName) {
             SIZE_T bytes = (wcslen(source[i].lpszVerbName) + 1) * sizeof(WCHAR);
             verbs[i].lpszVerbName = CoTaskMemAlloc(bytes);
@@ -343,7 +343,7 @@ static HRESULT WINAPI verb_enum_query(IEnumOLEVERB *self, REFIID iid, void **res
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IEnumOLEVERB))
         return E_NOINTERFACE;
     *result = self;
@@ -408,7 +408,7 @@ static HRESULT WINAPI verb_enum_clone(IEnumOLEVERB *self, IEnumOLEVERB **clone)
 {
     if (!clone)
         return E_POINTER;
-    *clone = NULL;
+    *clone = nullptr;
     VERB_ENUM *e = (VERB_ENUM *)self;
     OLEVERB *verbs;
     HRESULT hr = copy_verbs(e->Verbs, e->Count, &verbs);
@@ -424,23 +424,23 @@ WINOLEAPI HRESULT WINAPI OleRegEnumVerbs(REFCLSID clsid, IEnumOLEVERB **enumerat
 {
     if (!enumerator)
         return E_INVALIDARG;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     if (!clsid)
         return E_INVALIDARG;
     HKEY key, verb_key;
-    if (OleOpenClassKey(clsid, NULL, KEY_READ, &key))
+    if (OleOpenClassKey(clsid, nullptr, KEY_READ, &key))
         return REGDB_E_CLASSNOTREG;
     LSTATUS result = RegOpenKeyExW(key, L"Verb", 0, KEY_READ, &verb_key);
     RegCloseKey(key);
     if (result)
         return OLEOBJ_E_NOVERBS;
-    OLEVERB *verbs = NULL;
+    OLEVERB *verbs = nullptr;
     ULONG count = 0, capacity = 0;
     HRESULT hr = S_OK;
     for (DWORD index = 0;; index++) {
         WCHAR name[64];
         DWORD chars = RTL_NUMBER_OF(name);
-        if (RegEnumKeyExW(verb_key, index, name, &chars, NULL, NULL, NULL, NULL))
+        if (RegEnumKeyExW(verb_key, index, name, &chars, nullptr, nullptr, nullptr, nullptr))
             break;
         LPOLESTR value = read_string(verb_key, name);
         if (!value)
@@ -514,22 +514,22 @@ WINOLEAPI HRESULT WINAPI OleSaveToStream(IPersistStream *object, IStream *stream
 WINOLEAPI HANDLE WINAPI OleDuplicateData(HANDLE source, CLIPFORMAT format, UINT flags)
 {
     if (!source)
-        return NULL;
+        return nullptr;
     /* gdi handles and metafiles are not duplicated, only global memory formats. */
     if (format == CF_BITMAP || format == CF_PALETTE || format == CF_ENHMETAFILE || format == CF_METAFILEPICT)
-        return NULL;
+        return nullptr;
     SIZE_T size = GlobalSize(source);
     const void *data = GlobalLock(source);
     if (!data)
-        return NULL;
+        return nullptr;
     HGLOBAL copy = GlobalAlloc(flags ? flags : GMEM_MOVEABLE, size);
-    void *dest = copy ? GlobalLock(copy) : NULL;
+    void *dest = copy ? GlobalLock(copy) : nullptr;
     if (dest) {
         memcpy(dest, data, size);
         GlobalUnlock(copy);
     } else if (copy) {
         GlobalFree(copy);
-        copy = NULL;
+        copy = nullptr;
     }
     GlobalUnlock(source);
     return copy;
@@ -541,7 +541,7 @@ static HRESULT no_object(void **object)
 {
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     return E_NOTIMPL;
 }
 
@@ -609,5 +609,5 @@ WINOLEAPI HRESULT WINAPI OleQueryCreateFromData(IDataObject *data)
 WINOLEAPI HGLOBAL WINAPI OleGetIconOfClass(REFCLSID clsid, LPOLESTR label, BOOL use_type_as_label)
 {
     MIME_STUB("ole32");
-    return NULL;
+    return nullptr;
 }

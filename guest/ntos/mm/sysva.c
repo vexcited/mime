@@ -34,7 +34,7 @@ PVOID MmAllocateSystemVa(SIZE_T pages)
     ULONG_PTR va = g_bump;
     if (va + pages * PAGE_SIZE > MIME_KVA_SYSTEM + MIME_KVA_SYSTEM_SIZE) {
         KeReleaseSpinLock(&g_lock, irql);
-        return NULL;
+        return nullptr;
     }
     g_bump += pages * PAGE_SIZE;
     KeReleaseSpinLock(&g_lock, irql);
@@ -58,7 +58,7 @@ PVOID MmMapPagesInSystem(const ULONG64 *pages, SIZE_T count, ULONG64 attrs)
 {
     PUCHAR va = MmAllocateSystemVa(count);
     if (!va)
-        return NULL;
+        return nullptr;
     for (SIZE_T i = 0; i < count; i++)
         MiMapPage(MiKernelRoot(), (ULONG_PTR)va + i * PAGE_SIZE, pages[i], attrs);
     return va;
@@ -70,14 +70,14 @@ PVOID MmAllocateKernelStack(SIZE_T size, PVOID *limit)
     SIZE_T pages = BYTES_TO_PAGES(size);
     PUCHAR va = MmAllocateSystemVa(pages + 1);
     if (!va)
-        return NULL;
+        return nullptr;
     for (SIZE_T i = 1; i <= pages; i++) {
         ULONG64 pa = MmAllocatePage();
         if (!pa) {
             for (SIZE_T j = 1; j < i; j++)
                 MmFreePage(MiUnmapPage(MiKernelRoot(), (ULONG_PTR)va + j * PAGE_SIZE, 0) & MM_PTE_ADDR_MASK);
             MmFreeSystemVa(va, pages + 1);
-            return NULL;
+            return nullptr;
         }
         MiMapPage(MiKernelRoot(), (ULONG_PTR)va + i * PAGE_SIZE, pa, MM_KERNEL_RW);
     }

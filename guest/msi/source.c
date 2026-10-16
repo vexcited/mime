@@ -35,7 +35,7 @@ static UINT source_product(PCWSTR product, PCWSTR sid, MSIINSTALLCONTEXT context
     if (error)
         return error;
     DWORD state, type, bytes = sizeof(state);
-    error = RegQueryValueExW(key, L"State", NULL, &type, (BYTE *)&state, &bytes);
+    error = RegQueryValueExW(key, L"State", nullptr, &type, (BYTE *)&state, &bytes);
     RegCloseKey(key);
     if (error || type != REG_DWORD || bytes != sizeof(state) || state != INSTALLSTATE_DEFAULT)
         return ERROR_BAD_CONFIGURATION;
@@ -75,10 +75,10 @@ static PWSTR normalize_source(PCWSTR source, DWORD type)
 {
     SIZE_T length = wcslen(source);
     if (!length || length > 32767)
-        return NULL;
+        return nullptr;
     PWSTR text = MimeMsiAllocate((length + 2) * sizeof(WCHAR));
     if (!text)
-        return NULL;
+        return nullptr;
     memcpy(text, source, length * sizeof(WCHAR));
     WCHAR separator = type == MSISOURCETYPE_URL ? L'/' : L'\\';
     if (type == MSISOURCETYPE_NETWORK)
@@ -105,7 +105,7 @@ static UINT add_source(MIME_MSI_PACKAGE *journal, HKEY root, PCWSTR path, DWORD 
     UINT error;
     for (;;) {
         _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index);
-        PWSTR existing = NULL;
+        PWSTR existing = nullptr;
         error = read_text(root, list, name, &existing);
         if (missing(error)) {
             error = write_text(journal, root, list, name, normalized);
@@ -178,16 +178,16 @@ UINT WINAPI MsiSourceListGetInfoW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEX
     WCHAR path[160];
     AcquireSRWLockShared(&source_lock);
     UINT error = source_product(product, sid, context, options, &root, path);
-    PWSTR text = NULL;
+    PWSTR text = nullptr;
     if (!error) {
         error = read_text(root, path, type ? L"LastUsedSource" : property, &text);
         if (missing(error))
             error = ERROR_SUCCESS;
     }
     PCWSTR value = text ? text : L"";
-    WCHAR kind[2] = {0};
+    WCHAR kind[2] = {};
     if (!error && (last || type) && *value) {
-        PCWSTR separator = wcslen(value) >= 3 && value[1] == L';' ? wcschr(value + 2, L';') : NULL;
+        PCWSTR separator = wcslen(value) >= 3 && value[1] == L';' ? wcschr(value + 2, L';') : nullptr;
         if (!separator || separator == value + 2 || !wcschr(L"num", value[0]))
             error = ERROR_BAD_CONFIGURATION;
         else {
@@ -215,7 +215,7 @@ UINT WINAPI MsiSourceListEnumSourcesW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCO
     WCHAR path[160], list[176], name[16];
     AcquireSRWLockShared(&source_lock);
     UINT error = source_product(product, sid, context, options, &root, path);
-    PWSTR text = NULL;
+    PWSTR text = nullptr;
     if (!error && index == UINT32_MAX)
         error = ERROR_NO_MORE_ITEMS;
     if (!error) {
@@ -257,7 +257,7 @@ UINT WINAPI MsiSourceListAddSourceW(LPCWSTR product, LPCWSTR user, DWORD reserve
     HKEY root;
     WCHAR path[160];
     AcquireSRWLockExclusive(&source_lock);
-    UINT error = source_product(product, NULL, context, 0, &root, path);
+    UINT error = source_product(product, nullptr, context, 0, &root, path);
     MIME_MSI_PACKAGE journal = {.TransactionActive = TRUE};
     if (!error)
         error = add_source(&journal, root, path, MSISOURCETYPE_NETWORK, source, FALSE);

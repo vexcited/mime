@@ -98,7 +98,7 @@ void NTAPI KeInitializeMutant(PRKMUTANT mutant, BOOLEAN initial_owner)
         KiReleaseDispatcherLock(s);
     } else {
         mutant->Header.SignalState = 1;
-        mutant->OwnerThread = NULL;
+        mutant->OwnerThread = nullptr;
     }
 }
 
@@ -128,13 +128,13 @@ LONG NTAPI KeReleaseMutant(PRKMUTANT mutant, KPRIORITY increment, BOOLEAN abando
             RemoveEntryList(&mutant->MutantListEntry);
             owner->KernelApcDisable += mutant->ApcDisable;
         }
-        mutant->OwnerThread = NULL;
+        mutant->OwnerThread = nullptr;
         KiSignalWaiters(&mutant->Header, increment);
     }
     KiReleaseDispatcherLock(s);
     if (owner == KiCurrentThread() && !owner->KernelApcDisable && !owner->SpecialApcDisable &&
         owner->KernelApcPending && KeGetPcr()->Irql == PASSIVE_LEVEL)
-        KiDeliverApcs(KernelMode, NULL);
+        KiDeliverApcs(KernelMode, nullptr);
     return old;
 }
 
@@ -201,7 +201,7 @@ void KiUnwaitThread(PKTHREAD thread, LONG_PTR status)
         }
     }
     cancel_thread_timer(thread);
-    thread->WaitBlockList = NULL;
+    thread->WaitBlockList = nullptr;
     thread->WaitStatus = status;
     KiReadyThread(thread);
 }
@@ -233,7 +233,7 @@ static void cancel_thread_timer(PKTHREAD thread)
 {
     if (thread->Timer.TimerListEntry.Flink) {
         RemoveEntryList(&thread->Timer.TimerListEntry);
-        thread->Timer.TimerListEntry.Flink = NULL;
+        thread->Timer.TimerListEntry.Flink = nullptr;
     }
 }
 
@@ -265,7 +265,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
         if (thread->KernelApcPending && !thread->KernelApcDisable && !thread->SpecialApcDisable &&
             KeGetPcr()->Irql == PASSIVE_LEVEL) {
             KiReleaseDispatcherLock(s);
-            KiDeliverApcs(KernelMode, NULL);
+            KiDeliverApcs(KernelMode, nullptr);
             continue;
         }
 
@@ -308,8 +308,8 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
             return STATUS_TIMEOUT;
         }
 
-        PKWAIT_BLOCK prev = NULL;
-        thread->WaitBlockList = NULL;
+        PKWAIT_BLOCK prev = nullptr;
+        thread->WaitBlockList = nullptr;
         for (ULONG i = 0; i < count; i++) {
             PKWAIT_BLOCK b = &blocks[i];
             b->Thread = thread;
@@ -317,7 +317,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
             b->WaitKey = (USHORT)i;
             b->WaitType = (UCHAR)type;
             b->BlockState = 1;
-            b->NextWaitBlock = NULL;
+            b->NextWaitBlock = nullptr;
             InsertTailList(&((PDISPATCHER_HEADER)objects[i])->WaitListHead, &b->WaitListEntry);
             if (prev)
                 prev->NextWaitBlock = b;
@@ -332,7 +332,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
             tb->WaitKey = (USHORT)STATUS_TIMEOUT;
             tb->WaitType = WaitAny;
             tb->BlockState = 1;
-            tb->NextWaitBlock = NULL;
+            tb->NextWaitBlock = nullptr;
             thread->Timer.Header.SignalState = 0;
             InsertTailList(&thread->Timer.Header.WaitListHead, &tb->WaitListEntry);
             if (prev)
@@ -366,7 +366,7 @@ NTSTATUS NTAPI KeWaitForSingleObject(PVOID object, KWAIT_REASON reason, KPROCESS
                                      PLARGE_INTEGER timeout)
 {
     PVOID objects[1] = {object};
-    return KiWaitObjects(1, objects, WaitAny, reason, mode, alertable, timeout, NULL);
+    return KiWaitObjects(1, objects, WaitAny, reason, mode, alertable, timeout, nullptr);
 }
 
 NTSTATUS NTAPI KeWaitForMultipleObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASON reason,
@@ -400,6 +400,6 @@ NTSTATUS NTAPI KeDelayExecutionThread(KPROCESSOR_MODE mode, BOOLEAN alertable, P
         KiReleaseDispatcherLock(s);
         return yielded ? STATUS_SUCCESS : STATUS_NO_YIELD_PERFORMED;
     }
-    NTSTATUS status = KiWaitObjects(0, NULL, WaitAny, DelayExecution, mode, alertable, interval, NULL);
+    NTSTATUS status = KiWaitObjects(0, nullptr, WaitAny, DelayExecution, mode, alertable, interval, nullptr);
     return status == STATUS_TIMEOUT ? STATUS_SUCCESS : status;
 }

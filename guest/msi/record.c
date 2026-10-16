@@ -175,7 +175,7 @@ void MimeMsiFieldInteger(MIME_MSI_FIELD *field, int value)
 
 UINT MimeMsiFieldString(MIME_MSI_FIELD *field, LPCWSTR value)
 {
-    PWSTR copy = NULL;
+    PWSTR copy = nullptr;
     UINT error = ERROR_SUCCESS;
     if (value && *value) {
         SIZE_T bytes = (wcslen(value) + 1) * sizeof(WCHAR);

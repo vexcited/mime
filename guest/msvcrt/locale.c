@@ -51,12 +51,12 @@ char *__cdecl setlocale(int category, const char *locale)
 {
     if (category < LC_ALL || category > LC_TIME) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (!locale || !*locale || !strcmp(locale, "C"))
         return g_locale_name;
     /* only the c locale exists: other names fail like an unknown locale. */
-    return NULL;
+    return nullptr;
 }
 
 wchar_t *__cdecl _wsetlocale(int category, const wchar_t *locale)
@@ -64,11 +64,11 @@ wchar_t *__cdecl _wsetlocale(int category, const wchar_t *locale)
     static wchar_t name[] = L"C";
     if (category < LC_ALL || category > LC_TIME) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (!locale || !*locale || !wcscmp(locale, L"C"))
         return name;
-    return NULL;
+    return nullptr;
 }
 
 struct lconv *__cdecl localeconv(void)
@@ -418,7 +418,7 @@ size_t __cdecl mbrtowc(wchar_t *dst, const char *src, size_t n, mbstate_t *state
 
 size_t __cdecl mbrlen(const char *src, size_t n, mbstate_t *state)
 {
-    return mbrtowc(NULL, src, n, state);
+    return mbrtowc(nullptr, src, n, state);
 }
 
 size_t __cdecl wcrtomb(char *dst, wchar_t c, mbstate_t *state)
@@ -460,7 +460,7 @@ size_t __cdecl mbsrtowcs(wchar_t *dst, const char **src, size_t n, mbstate_t *st
     for (; i < n; i++) {
         dst[i] = (unsigned char)s[i];
         if (!s[i]) {
-            *src = NULL;
+            *src = nullptr;
             return i;
         }
     }
@@ -492,7 +492,7 @@ size_t __cdecl wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *st
         }
         dst[i] = (char)s[i];
         if (!s[i]) {
-            *src = NULL;
+            *src = nullptr;
             return i;
         }
     }

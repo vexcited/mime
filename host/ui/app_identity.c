@@ -63,7 +63,7 @@ static void *g_sink_ctx;
 static bool g_initialized;
 static AppIdentity g_apps[APP_LIMIT];
 static AppWindow g_windows[APP_LIMIT];
-static const char g_proxy_magic[] = "mime app proxy 1";
+static constexpr char g_proxy_magic[] = "mime app proxy 1";
 static id g_proxy_app;
 static char g_proxy_icon[MIME_PATH_MAX];
 static char g_proxy_override[MIME_PATH_MAX];
@@ -88,7 +88,7 @@ static bool guest_image_path(const char *image, char *path, size_t size)
     if (!image[0] || image[1] != ':' || (image[2] != '\\' && image[2] != '/'))
         return false;
     const char *root = image[0] == 'C' || image[0] == 'c' ? g_paths.drive_c :
-                       image[0] == 'Z' || image[0] == 'z' ? "" : NULL;
+                       image[0] == 'Z' || image[0] == 'z' ? "" : nullptr;
     if (!root || !format_path(path, size, "%s%s", root, image + 2))
         return false;
     for (char *p = path; *p; p++)
@@ -113,12 +113,12 @@ static void image_name(const char *image, char *name, size_t size)
 
 static bool write_plist(const char *path, const char *name, const char *identifier)
 {
-    CFMutableDictionaryRef plist = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+    CFMutableDictionaryRef plist = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks,
                                                              &kCFTypeDictionaryValueCallBacks);
     if (!plist)
         return false;
-    CFStringRef display_name = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
-    CFStringRef bundle_id = CFStringCreateWithCString(NULL, identifier, kCFStringEncodingUTF8);
+    CFStringRef display_name = CFStringCreateWithCString(nullptr, name, kCFStringEncodingUTF8);
+    CFStringRef bundle_id = CFStringCreateWithCString(nullptr, identifier, kCFStringEncodingUTF8);
     bool result = false;
     if (display_name && bundle_id) {
         CFDictionarySetValue(plist, CFSTR("CFBundleExecutable"), display_name);
@@ -128,7 +128,7 @@ static bool write_plist(const char *path, const char *name, const char *identifi
         CFDictionarySetValue(plist, CFSTR("CFBundlePackageType"), CFSTR("APPL"));
         CFDictionarySetValue(plist, CFSTR("CFBundleVersion"), CFSTR("1"));
         CFDictionarySetValue(plist, CFSTR("NSHighResolutionCapable"), kCFBooleanTrue);
-        CFDataRef data = CFPropertyListCreateData(NULL, plist, kCFPropertyListXMLFormat_v1_0, 0, NULL);
+        CFDataRef data = CFPropertyListCreateData(nullptr, plist, kCFPropertyListXMLFormat_v1_0, 0, nullptr);
         if (data) {
             result = mime_write_file(path, CFDataGetBytePtr(data), (size_t)CFDataGetLength(data));
             CFRelease(data);
@@ -190,7 +190,7 @@ static bool prepare_bundle(AppIdentity *app, const char *image)
         !format_path(app->executable, sizeof(app->executable), "%s/%s", directory, name))
         return false;
     if (!mime_file_exists(app->executable)) {
-        if (copyfile(current, app->executable, NULL, COPYFILE_ALL | COPYFILE_CLONE | COPYFILE_EXCL) != 0) {
+        if (copyfile(current, app->executable, nullptr, COPYFILE_ALL | COPYFILE_CLONE | COPYFILE_EXCL) != 0) {
             unlink(app->executable);
             return false;
         }
@@ -204,7 +204,7 @@ static bool prepare_bundle(AppIdentity *app, const char *image)
         return false;
     if (!app->icon_override)
         unlink(app->override_path);
-    char host_image[MIME_PATH_MAX] = {0};
+    char host_image[MIME_PATH_MAX] = {};
     guest_image_path(image, host_image, sizeof(host_image));
     void *icon;
     size_t icon_size;
@@ -234,7 +234,7 @@ static void reap_proxy(void *ctx)
 {
     dispatch_source_t source = ctx;
     pid_t pid = (pid_t)dispatch_source_get_handle(source);
-    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+    while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
     dispatch_source_cancel(source);
     dispatch_release(source);
 }
@@ -249,7 +249,7 @@ static void stop_proxy(AppIdentity *app)
     if (app->reader) {
         dispatch_source_cancel(app->reader);
         dispatch_release(app->reader);
-        app->reader = NULL;
+        app->reader = nullptr;
     }
 }
 
@@ -298,7 +298,7 @@ static bool start_proxy(AppIdentity *app, const char *image)
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
-    char *argv[] = {app->executable, "--mime-app-proxy", NULL};
+    char *argv[] = {app->executable, "--mime-app-proxy", nullptr};
     pid_t pid;
     int error = posix_spawn(&pid, app->executable, &actions, &attr, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -379,7 +379,7 @@ void mime_app_window_set(uint32_t window_id, uint32_t process_id, const char *im
         mime_app_window_remove(window_id);
         return;
     }
-    AppWindow *window = NULL;
+    AppWindow *window = nullptr;
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_windows); i++) {
         AppWindow *w = &g_windows[i];
         if (w->app && w->window_id == window_id) {
@@ -394,7 +394,7 @@ void mime_app_window_set(uint32_t window_id, uint32_t process_id, const char *im
     }
     if (!window)
         return;
-    AppIdentity *app = NULL;
+    AppIdentity *app = nullptr;
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_apps); i++)
         if (g_apps[i].process_id == process_id) {
             app = &g_apps[i];
@@ -428,7 +428,7 @@ void mime_app_window_icon(uint32_t window_id, const void *pixels, uint32_t width
     bool reset = !pixels && !width && !height;
     if (!reset && (!pixels || !width || !height || width > 1024 || height > 1024 || stride < width * 4))
         return;
-    AppIdentity *app = NULL;
+    AppIdentity *app = nullptr;
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_windows); i++)
         if (g_windows[i].app && g_windows[i].window_id == window_id)
             app = g_windows[i].app;
@@ -445,16 +445,16 @@ void mime_app_window_icon(uint32_t window_id, const void *pixels, uint32_t width
     if (!format_path(temporary, sizeof(temporary), "%s%s", app->override_path, ".tmp"))
         return;
     CGColorSpaceRef colors = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pixels, (size_t)stride * height, NULL);
+    CGDataProviderRef provider = CGDataProviderCreateWithData(nullptr, pixels, (size_t)stride * height, nullptr);
     CGImageRef image = CGImageCreate(width, height, 8, 32, stride, colors,
-                                    kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, NULL, false,
+                                    kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, nullptr, false,
                                     kCGRenderingIntentDefault);
-    CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)temporary,
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(nullptr, (const UInt8 *)temporary,
                                                           (CFIndex)strlen(temporary), false);
     CGImageDestinationRef destination = image && url ?
-        CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, NULL) : NULL;
+        CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, nullptr) : nullptr;
     if (destination) {
-        CGImageDestinationAddImage(destination, image, NULL);
+        CGImageDestinationAddImage(destination, image, nullptr);
         if (CGImageDestinationFinalize(destination) && rename(temporary, app->override_path) == 0) {
             app->icon_override = true;
             send(app->fd, "i", 1, 0);

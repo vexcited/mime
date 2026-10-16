@@ -146,7 +146,7 @@ NTSTATUS NTAPI RtlUpcaseUnicodeString(PUNICODE_STRING dst, PCUNICODE_STRING src,
  * the ansi code page is windows-1252. characters outside latin-1 map to
  * '?' when narrowing; widening maps 0x80..0x9F through the cp1252 table.
  */
-static const WCHAR g_cp1252_high[32] = {
+static constexpr WCHAR g_cp1252_high[32] = {
     0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
     0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022,
     0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
@@ -284,7 +284,7 @@ NTSTATUS NTAPI RtlUnicodeStringToAnsiString(PANSI_STRING dst, PCUNICODE_STRING s
             return STATUS_BUFFER_OVERFLOW;
         len = dst->MaximumLength - 1u;
     }
-    RtlUnicodeToMultiByteN(dst->Buffer, len, NULL, src->Buffer, len * sizeof(WCHAR));
+    RtlUnicodeToMultiByteN(dst->Buffer, len, nullptr, src->Buffer, len * sizeof(WCHAR));
     dst->Buffer[len] = 0;
     dst->Length = (USHORT)len;
     return STATUS_SUCCESS;
@@ -303,7 +303,7 @@ NTSTATUS NTAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING dst, PCANSI_STRING s
     } else if (bytes > dst->MaximumLength) {
         return STATUS_BUFFER_OVERFLOW;
     }
-    RtlMultiByteToUnicodeN(dst->Buffer, bytes, NULL, src->Buffer, src->Length);
+    RtlMultiByteToUnicodeN(dst->Buffer, bytes, nullptr, src->Buffer, src->Length);
     dst->Length = (USHORT)bytes;
     if (bytes + sizeof(WCHAR) <= dst->MaximumLength)
         dst->Buffer[bytes / sizeof(WCHAR)] = 0;
@@ -313,7 +313,7 @@ NTSTATUS NTAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING dst, PCANSI_STRING s
 BOOLEAN NTAPI RtlCreateUnicodeString(PUNICODE_STRING s, PCWSTR source)
 {
     SIZE_T bytes = (wcslen(source) + 1) * sizeof(WCHAR);
-    s->Buffer = NULL;
+    s->Buffer = nullptr;
     s->Length = s->MaximumLength = 0;
     if (bytes > 0xFFFE)
         return FALSE;
@@ -330,7 +330,7 @@ void NTAPI RtlFreeUnicodeString(PUNICODE_STRING s)
 {
     if (s->Buffer)
         MimeRtlFree(s->Buffer);
-    s->Buffer = NULL;
+    s->Buffer = nullptr;
     s->Length = s->MaximumLength = 0;
 }
 
@@ -338,7 +338,7 @@ void NTAPI RtlFreeAnsiString(PANSI_STRING s)
 {
     if (s->Buffer)
         MimeRtlFree(s->Buffer);
-    s->Buffer = NULL;
+    s->Buffer = nullptr;
     s->Length = s->MaximumLength = 0;
 }
 

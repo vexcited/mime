@@ -13,7 +13,7 @@ static HRESULT first_adapter(IDXGIAdapter **adapter)
 {
     HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
     HRESULT(WINAPI * create)(REFIID, void **) =
-        dxgi ? (HRESULT(WINAPI *)(REFIID, void **))(void *)GetProcAddress(dxgi, "CreateDXGIFactory1") : NULL;
+        dxgi ? (HRESULT(WINAPI *)(REFIID, void **))(void *)GetProcAddress(dxgi, "CreateDXGIFactory1") : nullptr;
     if (!create)
         return E_FAIL;
     IDXGIFactory1 *factory;
@@ -31,11 +31,11 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
                                           ID3D11DeviceContext **context)
 {
     if (device)
-        *device = NULL;
+        *device = nullptr;
     if (level)
         *level = 0;
     if (context)
-        *context = NULL;
+        *context = nullptr;
     if ((adapter && type != D3D_DRIVER_TYPE_UNKNOWN) || (!adapter && type == D3D_DRIVER_TYPE_UNKNOWN))
         return E_INVALIDARG;
     if (type == D3D_DRIVER_TYPE_SOFTWARE && !software)
@@ -71,18 +71,18 @@ D3D11API HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
                                                       D3D_FEATURE_LEVEL *level, ID3D11DeviceContext **context)
 {
     if (swapchain) {
-        *swapchain = NULL;
+        *swapchain = nullptr;
         if (!desc)
             return E_INVALIDARG;
     }
-    ID3D11Device *d = NULL;
+    ID3D11Device *d = nullptr;
     HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, &d, level, context);
     if (FAILED(hr))
         return hr;
     if (swapchain) {
-        IDXGIDevice *dxgi = NULL;
-        IDXGIAdapter *parent = NULL;
-        IDXGIFactory *factory = NULL;
+        IDXGIDevice *dxgi = nullptr;
+        IDXGIAdapter *parent = nullptr;
+        IDXGIFactory *factory = nullptr;
         d->lpVtbl->QueryInterface(d, &IID_IDXGIDevice, (void **)&dxgi);
         dxgi->lpVtbl->GetAdapter(dxgi, &parent);
         hr = parent->lpVtbl->GetParent(parent, &IID_IDXGIFactory, (void **)&factory);
@@ -96,7 +96,7 @@ D3D11API HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
         if (FAILED(hr)) {
             if (context && *context) {
                 (*context)->lpVtbl->Release(*context);
-                *context = NULL;
+                *context = nullptr;
             }
             d->lpVtbl->Release(d);
             return hr;
@@ -116,8 +116,8 @@ D3D11API HRESULT WINAPI D3D11On12CreateDevice(IUnknown *device, UINT flags, cons
                                               D3D_FEATURE_LEVEL *level)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (context)
-        *context = NULL;
+        *context = nullptr;
     return E_NOTIMPL;
 }

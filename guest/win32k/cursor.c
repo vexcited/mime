@@ -24,7 +24,7 @@ static CURICON *lookup(HICON icon)
 SURFACE *CursorIconImage(HICON icon)
 {
     CURICON *cursor = lookup(icon);
-    return cursor && cursor->IsIcon && cursor->Ready ? cursor->Image : NULL;
+    return cursor && cursor->IsIcon && cursor->Ready ? cursor->Image : nullptr;
 }
 
 void CursorInitialize(void)
@@ -64,7 +64,7 @@ HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon)
 {
     UserEnter();
     CURICON *c = W32Alloc(sizeof(CURICON));
-    HICON h = NULL;
+    HICON h = nullptr;
     if (c) {
         c->IsIcon = icon != 0;
         c->Process = W32GetProcess();
@@ -80,13 +80,13 @@ HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon)
 static SURFACE *build_image(const MIME_CURSOR_DATA *d)
 {
     LONG w = (LONG)d->Width, h = (LONG)d->Height;
-    SURFACE *color = d->Color ? SurfaceLookup(d->Color) : NULL;
-    SURFACE *mask = d->Mask ? SurfaceLookup(d->Mask) : NULL;
+    SURFACE *color = d->Color ? SurfaceLookup(d->Color) : nullptr;
+    SURFACE *mask = d->Mask ? SurfaceLookup(d->Mask) : nullptr;
     if (w <= 0 || h <= 0 || w > 1024 || h > 1024 || (!color && !mask))
-        return NULL;
+        return nullptr;
     SURFACE *img = SurfaceCreate(w, h, 32, 0);
     if (!img)
-        return NULL;
+        return nullptr;
     BOOLEAN mono = !color;
     BOOLEAN has_alpha = FALSE;
     if (color && color->Bpp == 32) {
@@ -159,14 +159,14 @@ BOOL NTAPI NtUserDestroyCursor(HICON icon, BOOL force)
     if (c) {
         if (c->Image)
             SurfaceDestroy(c->Image);
-        c->Image = NULL;
+        c->Image = nullptr;
         c->Header.Destroyed = TRUE;
         UserFreeHandle(&c->Header);
         UserDereference(&c->Header);
     }
     UserLeave();
     (void)force;
-    return c != NULL;
+    return c != nullptr;
 }
 
 /* a process owned 32 bpp bitmap copy of the image, for GetIconInfo. */
@@ -174,7 +174,7 @@ static HBITMAP export_bitmap(SURFACE *src, BOOLEAN mask)
 {
     SURFACE *s = SurfaceCreate(src->Width, src->Height, mask ? 1 : 32, 0);
     if (!s)
-        return NULL;
+        return nullptr;
     for (LONG y = 0; y < src->Height; y++)
         for (LONG x = 0; x < src->Width; x++) {
             ULONG px = SurfaceGetPixel(src, x, y);
@@ -289,7 +289,7 @@ HCURSOR NTAPI NtUserSetCursor(HCURSOR cursor)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HCURSOR old = t ? t->Cursor : NULL;
+    HCURSOR old = t ? t->Cursor : nullptr;
     CursorSet(cursor);
     UserLeave();
     return old;

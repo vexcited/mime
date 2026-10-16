@@ -149,7 +149,7 @@ static VkResult load_physical_devices(VkInstance instance)
     MvkDecoder *d = mvk_call_wait(e);
     VkResult r = d ? (VkResult)mvk_get_u32(d) : VK_ERROR_INITIALIZATION_FAILED;
     uint32_t n = d ? mvk_get_u32(d) : 0;
-    uint32_t importable[16] = {0};
+    uint32_t importable[16] = {};
     for (uint32_t i = 0; i < n && i < 16; i++)
         importable[i] = d ? mvk_get_u32(d) : 0;
     mvk_call_done(d);
@@ -286,7 +286,7 @@ VkResult mvk_device_extensions(VkPhysicalDevice physical, VkExtensionProperties 
     mvk_put_u64(e, physical->obj.id);
     MvkDecoder *d = mvk_call_wait(e);
     VkResult r = d ? (VkResult)mvk_get_u32(d) : VK_ERROR_INITIALIZATION_FAILED;
-    VkExtensionProperties *list = NULL;
+    VkExtensionProperties *list = nullptr;
     uint32_t n = 0;
     if (r == VK_SUCCESS) {
         n = mvk_get_u32(d);
@@ -316,23 +316,23 @@ VkResult mvk_device_extensions(VkPhysicalDevice physical, VkExtensionProperties 
 static PFN_vkVoidFunction find_proc(const char *name)
 {
     if (!name)
-        return NULL;
+        return nullptr;
     for (const MvkProc *p = mvk_procs; p->name; p++)
         if (!strcmp(p->name, name))
             return p->fn;
-    return NULL;
+    return nullptr;
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char *name)
 {
     if (!name)
-        return NULL;
+        return nullptr;
     if (!strcmp(name, "vkGetInstanceProcAddr"))
         return (PFN_vkVoidFunction)vkGetInstanceProcAddr;
     /* without an instance, only the global commands. */
     if (!instance && strcmp(name, "vkCreateInstance") && strcmp(name, "vkEnumerateInstanceVersion") &&
         strcmp(name, "vkEnumerateInstanceExtensionProperties") && strcmp(name, "vkEnumerateInstanceLayerProperties"))
-        return NULL;
+        return nullptr;
     return find_proc(name);
 }
 

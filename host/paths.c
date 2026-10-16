@@ -1,7 +1,7 @@
 #include "mime_host.h"
 
 #include <errno.h>
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
 #include <stdio.h>
@@ -83,7 +83,7 @@ bool mime_paths_init(MimePaths *paths)
 
     char exe[MIME_PATH_MAX];
     char resolved[MIME_PATH_MAX];
-#if defined(__APPLE__)
+#ifdef __APPLE__
     uint32_t exe_size = sizeof(exe);
     bool found = _NSGetExecutablePath(exe, &exe_size) == 0;
 #else

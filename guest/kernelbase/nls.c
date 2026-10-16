@@ -11,7 +11,7 @@ typedef struct CODE_PAGE {
     const WCHAR *Name;
 } CODE_PAGE;
 
-static const WCHAR g_cp1252[128] = {
+static constexpr WCHAR g_cp1252[128] = {
     0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D,
     0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A,
     0x0153, 0x009D, 0x017E, 0x0178, 0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, 0x00A8, 0x00A9,
@@ -24,7 +24,7 @@ static const WCHAR g_cp1252[128] = {
     0x00FE, 0x00FF,
 };
 
-static const WCHAR g_cp437[128] = {
+static constexpr WCHAR g_cp437[128] = {
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, 0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC,
     0x00C4, 0x00C5, 0x00C9, 0x00E6, 0x00C6, 0x00F4, 0x00F6, 0x00F2, 0x00FB, 0x00F9, 0x00FF, 0x00D6, 0x00DC, 0x00A2,
     0x00A3, 0x00A5, 0x20A7, 0x0192, 0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA, 0x00BF, 0x2310,
@@ -38,7 +38,7 @@ static const WCHAR g_cp437[128] = {
 };
 
 /* the glyphs MB_USEGLYPHCHARS substitutes for the oem control characters 0x00..0x1F. */
-static const WCHAR g_cp437_glyphs[32] = {
+static constexpr WCHAR g_cp437_glyphs[32] = {
     0x0000, 0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022, 0x25D8, 0x25CB, 0x25D9,
     0x2642, 0x2640, 0x266A, 0x266B, 0x263C, 0x25BA, 0x25C4, 0x2195, 0x203C, 0x00B6, 0x00A7,
     0x25AC, 0x21A8, 0x2191, 0x2193, 0x2192, 0x2190, 0x221F, 0x2194, 0x25B2, 0x25BC,
@@ -52,9 +52,9 @@ static const CODE_PAGE g_code_pages[] = {
     {437, 1, g_cp437, L"437   (OEM - United States)"},
     {28591, 1, g_latin1, L"28591 (ISO 8859-1 Latin I)"},
     {20127, 1, g_ascii_high, L"20127 (US-ASCII)"},
-    {CP_UTF8, 4, NULL, L"65001 (UTF-8)"},
-    {CP_UTF7, 5, NULL, L"65000 (UTF-7)"},
-    {CP_SYMBOL, 1, NULL, L"42    (Symbol)"},
+    {CP_UTF8, 4, nullptr, L"65001 (UTF-8)"},
+    {CP_UTF7, 5, nullptr, L"65000 (UTF-7)"},
+    {CP_SYMBOL, 1, nullptr, L"42    (Symbol)"},
 };
 
 static UINT g_acp = 1252;
@@ -92,7 +92,7 @@ static const CODE_PAGE *find_code_page(UINT cp)
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_code_pages); i++)
         if (g_code_pages[i].Id == cp)
             return &g_code_pages[i];
-    return NULL;
+    return nullptr;
 }
 
 UINT WINAPI GetACP(void)
@@ -110,7 +110,7 @@ BOOL WINAPI IsValidCodePage(UINT cp)
     /* the pseudo code pages are not valid code page numbers here. */
     if (cp == CP_ACP || cp == CP_OEMCP || cp == CP_MACCP || cp == CP_THREAD_ACP)
         return FALSE;
-    return find_code_page(cp) != NULL;
+    return find_code_page(cp) != nullptr;
 }
 
 BOOL WINAPI GetCPInfo(UINT cp, LPCPINFO info)
@@ -160,7 +160,7 @@ BOOL WINAPI GetCPInfoExA(UINT cp, DWORD flags, LPCPINFOEXA info)
     if (!GetCPInfoExW(cp, flags, &w))
         return FALSE;
     memcpy(info, &w, offsetof(CPINFOEXA, CodePageName));
-    WideCharToMultiByte(CP_ACP, 0, w.CodePageName, -1, info->CodePageName, MAX_PATH, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w.CodePageName, -1, info->CodePageName, MAX_PATH, nullptr, nullptr);
     return TRUE;
 }
 
@@ -349,7 +349,7 @@ static BOOL wide_to_utf8(const WCHAR *s, int n, BYTE_OUT *o, BOOL strict)
 
 /* ------------------------------------------------------------------ utf-7 */
 
-static const char g_base64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static constexpr char g_base64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static int base64_value(UCHAR c)
 {
@@ -405,7 +405,7 @@ static BOOL utf7_direct(WCHAR c)
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
         return TRUE;
     /* the terminator is copied as is too. */
-    return !c || (c < 0x80 && strchr("'(),-./:? \t\r\n!\"#$%&*;<=>@[]^_`{|}", (char)c) != NULL);
+    return !c || (c < 0x80 && strchr("'(),-./:? \t\r\n!\"#$%&*;<=>@[]^_`{|}", (char)c) != nullptr);
 }
 
 static void wide_to_utf7(const WCHAR *s, int n, BYTE_OUT *o)
@@ -445,7 +445,7 @@ static void wide_to_utf7(const WCHAR *s, int n, BYTE_OUT *o)
 
 /* ------------------------------------------------------------------ best fit */
 
-static const char g_best_fit_latin1[] = "AAAAAA?CEEEEIIIIDNOOOOO?OUUUUY??aaaaaa?ceeeeiiiidnooooo?ouuuuy?y";
+static constexpr char g_best_fit_latin1[] = "AAAAAA?CEEEEIIIIDNOOOOO?OUUUUY??aaaaaa?ceeeeiiiidnooooo?ouuuuy?y";
 static const char g_best_fit_latin_a[] =
     "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIi??JjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUu"
     "UuUuUuWwYyYZzZzZzs";

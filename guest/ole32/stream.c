@@ -40,7 +40,7 @@ static HRESULT WINAPI stream_query(IStream *self, REFIID iid, void **result)
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!iid)
         return E_INVALIDARG;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IStream) && !IsEqualIID(iid, &IID_ISequentialStream))
@@ -193,7 +193,7 @@ static HRESULT WINAPI stream_stat(IStream *self, STATSTG *stat, DWORD flags)
 static HRESULT WINAPI stream_clone(IStream *self, IStream **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     MEMORY_STREAM *stream = (MEMORY_STREAM *)self, *clone = OleAllocZero(sizeof(*clone));
     if (!clone) return E_OUTOFMEMORY;
     clone->Interface.lpVtbl = &stream_vtable;
@@ -213,7 +213,7 @@ static const IStreamVtbl stream_vtable = {
 WINOLEAPI HRESULT WINAPI CreateStreamOnHGlobal(HGLOBAL memory, BOOL delete, IStream **result)
 {
     if (!result) return E_INVALIDARG;
-    *result = NULL;
+    *result = nullptr;
     if (memory && GlobalFlags(memory) == GMEM_INVALID_HANDLE) return E_INVALIDARG;
     MEMORY_STREAM *stream = OleAllocZero(sizeof(*stream));
     STREAM_STORAGE *storage = OleAllocZero(sizeof(*storage));
@@ -238,7 +238,7 @@ WINOLEAPI HRESULT WINAPI CreateStreamOnHGlobal(HGLOBAL memory, BOOL delete, IStr
 WINOLEAPI HRESULT WINAPI GetHGlobalFromStream(IStream *stream, HGLOBAL *memory)
 {
     if (!memory) return E_INVALIDARG;
-    *memory = NULL;
+    *memory = nullptr;
     if (!stream || stream->lpVtbl != &stream_vtable) return E_INVALIDARG;
     STREAM_STORAGE *storage = ((MEMORY_STREAM *)stream)->Storage;
     AcquireSRWLockShared(&storage->Lock);

@@ -144,12 +144,12 @@ static BOOL start_thread(void)
     if (g_mm.Thread)
         return TRUE;
     if (!g_mm.Wake)
-        g_mm.Wake = CreateEventW(NULL, FALSE, FALSE, NULL);
+        g_mm.Wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!g_mm.Idle)
-        g_mm.Idle = CreateEventW(NULL, TRUE, TRUE, NULL);
+        g_mm.Idle = CreateEventW(nullptr, TRUE, TRUE, nullptr);
     if (!g_mm.Wake || !g_mm.Idle)
         return FALSE;
-    g_mm.Thread = CreateThread(NULL, 0, timer_thread, NULL, 0, &g_mm.ThreadId);
+    g_mm.Thread = CreateThread(nullptr, 0, timer_thread, nullptr, 0, &g_mm.ThreadId);
     if (!g_mm.Thread)
         return FALSE;
     SetThreadPriority(g_mm.Thread, THREAD_PRIORITY_TIME_CRITICAL);
@@ -163,7 +163,7 @@ WINMMAPI MMRESULT WINAPI timeSetEvent(UINT delay, UINT resolution, LPTIMECALLBAC
         return 0;
     if (delay > MAX_PERIOD || delay < MIN_PERIOD)
         return 0;
-    RtlRunOnceExecuteOnce(&g_mm.Once, init_timers, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_mm.Once, init_timers, nullptr, nullptr);
     RtlEnterCriticalSection(&g_mm.Lock);
     UINT id = 0;
     if (start_thread()) {
@@ -191,7 +191,7 @@ WINMMAPI MMRESULT WINAPI timeSetEvent(UINT delay, UINT resolution, LPTIMECALLBAC
 
 WINMMAPI MMRESULT WINAPI timeKillEvent(UINT id)
 {
-    RtlRunOnceExecuteOnce(&g_mm.Once, init_timers, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_mm.Once, init_timers, nullptr, nullptr);
     RtlEnterCriticalSection(&g_mm.Lock);
     MM_TIMER *t = &g_mm.Timers[id & (MAX_TIMERS - 1)];
     if (!g_mm.Thread || !id || t->Id != id) {
@@ -230,22 +230,22 @@ static BOOL play_sound(BOOL has_sound, DWORD flags)
 
 WINMMAPI BOOL WINAPI PlaySoundW(LPCWSTR sound, HMODULE module, DWORD flags)
 {
-    return play_sound(sound != NULL, flags);
+    return play_sound(sound != nullptr, flags);
 }
 
 WINMMAPI BOOL WINAPI PlaySoundA(LPCSTR sound, HMODULE module, DWORD flags)
 {
-    return play_sound(sound != NULL, flags);
+    return play_sound(sound != nullptr, flags);
 }
 
 WINMMAPI BOOL WINAPI sndPlaySoundW(LPCWSTR sound, UINT flags)
 {
-    return play_sound(sound != NULL, flags & (SND_ASYNC | SND_NODEFAULT | SND_MEMORY | SND_LOOP | SND_NOSTOP));
+    return play_sound(sound != nullptr, flags & (SND_ASYNC | SND_NODEFAULT | SND_MEMORY | SND_LOOP | SND_NOSTOP));
 }
 
 WINMMAPI BOOL WINAPI sndPlaySoundA(LPCSTR sound, UINT flags)
 {
-    return play_sound(sound != NULL, flags & (SND_ASYNC | SND_NODEFAULT | SND_MEMORY | SND_LOOP | SND_NOSTOP));
+    return play_sound(sound != nullptr, flags & (SND_ASYNC | SND_NODEFAULT | SND_MEMORY | SND_LOOP | SND_NOSTOP));
 }
 
 WINMMAPI UINT WINAPI waveOutGetNumDevs(void)

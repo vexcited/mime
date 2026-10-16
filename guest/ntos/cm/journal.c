@@ -9,18 +9,18 @@ static BOOLEAN CmpJournalReady;
 
 static NTSTATUS flush(void)
 {
-    return IopSynchronousRequest(CmpJournalFile, IRP_MJ_FLUSH_BUFFERS, 0, NULL, 0, NULL, NULL);
+    return IopSynchronousRequest(CmpJournalFile, IRP_MJ_FLUSH_BUFFERS, 0, nullptr, 0, nullptr, nullptr);
 }
 
 static NTSTATUS truncate_tail(void)
 {
     FILE_END_OF_FILE_INFORMATION end;
     end.EndOfFile.QuadPart = (LONGLONG)CmpJournalOffset;
-    IO_STACK_LOCATION params = {0};
+    IO_STACK_LOCATION params = {};
     params.Parameters.SetFile.Length = sizeof(end);
     params.Parameters.SetFile.FileInformationClass = FileEndOfFileInformation;
     NTSTATUS status = IopSynchronousRequest(CmpJournalFile, IRP_MJ_SET_INFORMATION, 0, &end, sizeof(end),
-                                            &params, NULL);
+                                            &params, nullptr);
     return NT_SUCCESS(status) ? flush() : status;
 }
 
@@ -78,7 +78,7 @@ void CmpJournalInitialize(void)
 {
     UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\??\\C:\\Windows\\System32\\config\\mime-registry.log");
     OBJECT_ATTRIBUTES attributes;
-    InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     HANDLE handle;
     IO_STATUS_BLOCK io;
     CmpJournalStatus = IopCreateFile(&handle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE, &attributes,
@@ -86,7 +86,7 @@ void CmpJournalInitialize(void)
                                      FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, KernelMode);
     if (NT_SUCCESS(CmpJournalStatus)) {
         CmpJournalStatus = ObReferenceHandle(handle, IoFileObjectTypeObject, KernelMode,
-                                              (PVOID *)&CmpJournalFile, NULL);
+                                              (PVOID *)&CmpJournalFile, nullptr);
         ZwClose(handle);
     }
     if (NT_SUCCESS(CmpJournalStatus))
@@ -107,7 +107,7 @@ NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHA
         return STATUS_SUCCESS;
     if (!NT_SUCCESS(CmpJournalStatus))
         return CmpJournalStatus;
-    ULONG path_chars = CmpFullPath(node, NULL, 0);
+    ULONG path_chars = CmpFullPath(node, nullptr, 0);
     if (path_chars > CM_JOURNAL_MAX_PATH / sizeof(WCHAR))
         return STATUS_NAME_TOO_LONG;
     if (chars > CM_JOURNAL_MAX_NAME / sizeof(WCHAR) || length > CM_JOURNAL_MAX_DATA)
@@ -131,10 +131,10 @@ NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHA
         ExFreePool(bytes);
         return STATUS_OBJECT_NAME_INVALID;
     }
-    IO_STACK_LOCATION params = {0};
+    IO_STACK_LOCATION params = {};
     params.Parameters.Write.Length = size;
     params.Parameters.Write.ByteOffset.QuadPart = (LONGLONG)CmpJournalOffset;
-    IO_STATUS_BLOCK io = {0};
+    IO_STATUS_BLOCK io = {};
     NTSTATUS status = IopSynchronousRequest(CmpJournalFile, IRP_MJ_WRITE, 0, bytes, size, &params, &io);
     ExFreePool(bytes);
     if (NT_SUCCESS(status) && io.Information != size)

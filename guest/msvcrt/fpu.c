@@ -134,7 +134,7 @@ static void clear_status(void)
     __asm__ __volatile__("fnclex");
 }
 
-#if defined(__x86_64__)
+#ifdef __x86_64__
 static unsigned read_control(void) { return sse_read_control(); }
 static void write_control(unsigned cw) { sse_write_control(cw); }
 static unsigned read_status(void) { return sse_read_status(); }
@@ -327,7 +327,7 @@ unsigned int __cdecl _control87(unsigned int value, unsigned int mask)
 /* _controlfp ignores the denormal exception mask, and the precision but on x86, like msvcrt. */
 unsigned int __cdecl _controlfp(unsigned int value, unsigned int mask)
 {
-#if defined(__i386__)
+#ifdef __i386__
     return _control87(value, mask & ~(_EM_DENORMAL | _MCW_IC));
 #else
     return _control87(value, mask & ~(_EM_DENORMAL | _MCW_PC | _MCW_IC));

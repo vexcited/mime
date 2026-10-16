@@ -111,7 +111,7 @@ static BOOLEAN shadowed_by_rom(PCUNICODE_STRING dir, const WCHAR *name, ULONG ch
     memcpy(path, dir->Buffer, dlen * sizeof(WCHAR));
     path[dlen] = '\\';
     memcpy(path + dlen + 1, name, chars * sizeof(WCHAR));
-    return HalRomFind(path, dlen + 1 + chars) != NULL;
+    return HalRomFind(path, dlen + 1 + chars) != nullptr;
 }
 
 static NTSTATUS create_rom(PIRP irp, PFILE_OBJECT file, const MimeRomEntry *rom, ACCESS_MASK access, ULONG options,
@@ -134,7 +134,7 @@ static NTSTATUS create_rom(PIRP irp, PFILE_OBJECT file, const MimeRomEntry *rom,
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
 {
     if (!file->DeviceObject || file->DeviceObject->DriverObject != g_driver || !file->FsContext)
-        return NULL;
+        return nullptr;
     return ((MIMEFS_FCB *)file->FsContext)->Rom;
 }
 
@@ -144,7 +144,7 @@ const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
  */
 BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
 {
-    *ref = NULL;
+    *ref = nullptr;
     if (!file->DeviceObject || file->DeviceObject->DriverObject != g_driver || !file->FsContext)
         return FALSE;
     MIMEFS_FCB *fcb = file->FsContext;
@@ -171,7 +171,7 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         rom_info(fcb->Rom, info);
         return STATUS_SUCCESS;
     }
-    return host_status(HalHypercall(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, NULL), FALSE);
+    return host_status(HalHypercall(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
 }
 
 static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
@@ -226,7 +226,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     case FILE_OVERWRITE_IF: req->disposition = MIME_FS_DISP_OVERWRITE_IF; break;
     default: req->disposition = MIME_FS_DISP_OPEN; break;
     }
-    ULONG64 hs = HalHypercall(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, NULL);
+    ULONG64 hs = HalHypercall(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
         ExFreePool(req);
@@ -242,10 +242,10 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (!info || !fcb) {
         ExFreePool(info);
         ExFreePool(fcb);
-        HalHypercall(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, NULL);
+        HalHypercall(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     }
-    HalHypercall(MIME_HC_FS_QUERY, host, HalPhysicalOf(info), 0, 0, 0, 0, NULL);
+    HalHypercall(MIME_HC_FS_QUERY, host, HalPhysicalOf(info), 0, 0, 0, 0, nullptr);
     fcb->HostHandle = host;
     fcb->Volume = vol->HostVolume;
     fcb->FileId = info->file_id;
@@ -276,17 +276,17 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
     MIMEFS_FCB *fcb = file->FsContext;
     if (fcb && fcb->Rom) {
         ExFreePool(fcb);
-        file->FsContext = NULL;
+        file->FsContext = nullptr;
     } else if (fcb) {
         if (fcb->Cache)
             FsCacheClose(fcb->Cache);
         if (fcb->DeleteOnClose)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         if (fcb->DeleteOnClose)
-            HalHypercall(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, NULL);
-        HalHypercall(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, NULL);
+            HalHypercall(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr);
+        HalHypercall(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
         ExFreePool(fcb);
-        file->FsContext = NULL;
+        file->FsContext = nullptr;
     }
     return complete(irp, STATUS_SUCCESS, 0);
 }
@@ -514,7 +514,7 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         if (stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation)
             return complete(irp, STATUS_SUCCESS, 0);
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
-        ULONG64 hs = HalHypercall(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, NULL);
+        ULONG64 hs = HalHypercall(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);
         return complete(irp, host_status(hs, FALSE), 0);
     }
     case FileDispositionInformation:
@@ -637,7 +637,7 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
     if (!entry_size(klass, 0))
         return complete(irp, STATUS_INVALID_INFO_CLASS, 0);
 
-    BOOLEAN first_query = fcb->Pattern.Buffer == NULL;
+    BOOLEAN first_query = fcb->Pattern.Buffer == nullptr;
     if ((stack->Flags & SL_RESTART_SCAN) || first_query) {
         fcb->DirIndex = 0;
         fcb->RomIndex = 0;
@@ -677,7 +677,7 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
         ULONG index;
         if (!fcb->DotsDone) {
             MimeFsInfo *self = &de->info;
-            HalHypercall(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(self), 0, 0, 0, 0, NULL);
+            HalHypercall(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(self), 0, 0, 0, 0, nullptr);
             name = dot;
             name_chars = fcb->DotIndex + 1;
             index = fcb->DirIndex;
@@ -797,7 +797,7 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         if (!volume)
             return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
         NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume,
-                                                   HalPhysicalOf(volume), 0, 0, 0, 0, NULL), FALSE);
+                                                   HalPhysicalOf(volume), 0, 0, 0, 0, nullptr), FALSE);
         if (NT_SUCCESS(status) && (!volume->bytes_per_unit || volume->bytes_per_unit % 512 ||
             volume->total_units > INT64_MAX || volume->available_units > INT64_MAX || volume->free_units > INT64_MAX))
             status = STATUS_UNSUCCESSFUL;
@@ -833,7 +833,7 @@ static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_INVALID_HANDLE, 0);
     if (fcb->Rom)
         return complete(irp, STATUS_SUCCESS, 0);
-    ULONG64 hs = HalHypercall(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, NULL);
+    ULONG64 hs = HalHypercall(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
     return complete(irp, host_status(hs, FALSE), 0);
 }
 

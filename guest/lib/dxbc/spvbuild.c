@@ -48,7 +48,7 @@ void spv_free(SpvBuilder *b)
         mime_free(b->alloc, b->sections[i].words);
     mime_free(b->alloc, b->cache);
     __builtin_memset(b->sections, 0, sizeof(b->sections));
-    b->cache = NULL;
+    b->cache = nullptr;
 }
 
 uint32_t spv_id(SpvBuilder *b) { return b->next_id++; }
@@ -104,7 +104,7 @@ void spv_capability(SpvBuilder *b, uint32_t capability)
 
 void spv_extension(SpvBuilder *b, const char *name)
 {
-    spv_emit_string(b, SECTION_EXTENSIONS, SpvOpExtension, NULL, 0, name, NULL, 0);
+    spv_emit_string(b, SECTION_EXTENSIONS, SpvOpExtension, nullptr, 0, name, nullptr, 0);
 }
 
 void spv_decorate(SpvBuilder *b, uint32_t id, uint32_t decoration, const uint32_t *args, uint32_t count)
@@ -129,7 +129,7 @@ void spv_member_decorate(SpvBuilder *b, uint32_t id, uint32_t member, uint32_t d
 
 void spv_name(SpvBuilder *b, uint32_t id, const char *name)
 {
-    spv_emit_string(b, SECTION_DEBUG, SpvOpName, &id, 1, name, NULL, 0);
+    spv_emit_string(b, SECTION_DEBUG, SpvOpName, &id, 1, name, nullptr, 0);
 }
 
 /* ------------------------------------------------------------------ types and constants, made once */
@@ -223,9 +223,9 @@ static uint32_t unique(SpvBuilder *b, uint32_t op, uint32_t result_at, const uin
     return id;
 }
 
-uint32_t spv_type_void(SpvBuilder *b) { return cached(b, SpvOpTypeVoid, 0, NULL, 0); }
+uint32_t spv_type_void(SpvBuilder *b) { return cached(b, SpvOpTypeVoid, 0, nullptr, 0); }
 
-uint32_t spv_type_bool(SpvBuilder *b) { return cached(b, SpvOpTypeBool, 0, NULL, 0); }
+uint32_t spv_type_bool(SpvBuilder *b) { return cached(b, SpvOpTypeBool, 0, nullptr, 0); }
 
 uint32_t spv_type_int(SpvBuilder *b, uint32_t width, uint32_t signedness)
 {
@@ -302,14 +302,14 @@ uint32_t spv_type_sampled_image(SpvBuilder *b, uint32_t image)
     return cached(b, SpvOpTypeSampledImage, 0, &image, 1);
 }
 
-uint32_t spv_type_sampler(SpvBuilder *b) { return cached(b, SpvOpTypeSampler, 0, NULL, 0); }
+uint32_t spv_type_sampler(SpvBuilder *b) { return cached(b, SpvOpTypeSampler, 0, nullptr, 0); }
 uint32_t spv_type_matrix(SpvBuilder *b, uint32_t column, uint32_t count)
 {
     uint32_t w[2] = {column, count};
     return cached(b, SpvOpTypeMatrix, 0, w, 2);
 }
 
-uint32_t spv_type_opaque(SpvBuilder *b, uint32_t op) { return cached(b, op, 0, NULL, 0); }
+uint32_t spv_type_opaque(SpvBuilder *b, uint32_t op) { return cached(b, op, 0, nullptr, 0); }
 
 uint32_t spv_const(SpvBuilder *b, uint32_t type, uint32_t bits)
 {
@@ -393,7 +393,7 @@ uint32_t spv_glsl(SpvBuilder *b, uint32_t type, uint32_t instruction, const uint
 {
     if (!b->glsl) {
         b->glsl = spv_id(b);
-        spv_emit_string(b, SECTION_IMPORTS, SpvOpExtInstImport, &b->glsl, 1, "GLSL.std.450", NULL, 0);
+        spv_emit_string(b, SECTION_IMPORTS, SpvOpExtInstImport, &b->glsl, 1, "GLSL.std.450", nullptr, 0);
     }
     uint32_t w[8] = {b->glsl, instruction};
     for (uint32_t i = 0; i < count && i < 6; i++)
@@ -442,7 +442,7 @@ void spv_branch_conditional(SpvBuilder *b, uint32_t condition, uint32_t yes, uin
 
 void spv_return(SpvBuilder *b)
 {
-    spv_op_void(b, SpvOpReturn, NULL, 0);
+    spv_op_void(b, SpvOpReturn, nullptr, 0);
     b->block_open = 0;
 }
 
@@ -457,7 +457,7 @@ void spv_function_end(SpvBuilder *b)
 {
     if (b->block_open)
         spv_return(b);
-    spv_emit(b, SECTION_FUNCTIONS, SpvOpFunctionEnd, NULL, 0);
+    spv_emit(b, SECTION_FUNCTIONS, SpvOpFunctionEnd, nullptr, 0);
 }
 
 uint32_t *spv_finish(SpvBuilder *b, size_t *words)
@@ -468,10 +468,10 @@ uint32_t *spv_finish(SpvBuilder *b, size_t *words)
     /* the memory model goes between the imports and the entry points. */
     total += 3;
     if (b->failed)
-        return NULL;
+        return nullptr;
     uint32_t *out = mime_alloc(b->alloc, total * 4);
     if (!out)
-        return NULL;
+        return nullptr;
     size_t at = 0;
     out[at++] = SpvMagicNumber;
     out[at++] = 0x00010600;

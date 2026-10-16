@@ -72,8 +72,8 @@ static void destroy_swapchain(D12SwapChain *sc)
         return;
     D12QueueWaitIdle(sc->queue);
     for (UINT i = 0; i < sc->image_count; i++)
-        vk->vkDestroySemaphore(vk->device, sc->present[i], NULL);
-    vk->vkDestroySwapchainKHR(vk->device, sc->swapchain, NULL);
+        vk->vkDestroySemaphore(vk->device, sc->present[i], nullptr);
+    vk->vkDestroySwapchainKHR(vk->device, sc->swapchain, nullptr);
     sc->swapchain = VK_NULL_HANDLE;
     sc->image_count = 0;
 }
@@ -149,7 +149,7 @@ static BOOL create_swapchain(D12SwapChain *sc, VkPresentModeKHR mode)
     info.clipped = TRUE;
     info.oldSwapchain = sc->swapchain;
     VkSwapchainKHR swapchain;
-    if (vk->vkCreateSwapchainKHR(vk->device, &info, NULL, &swapchain) != VK_SUCCESS)
+    if (vk->vkCreateSwapchainKHR(vk->device, &info, nullptr, &swapchain) != VK_SUCCESS)
         return FALSE;
     destroy_swapchain(sc);
     sc->swapchain = swapchain;
@@ -160,7 +160,7 @@ static BOOL create_swapchain(D12SwapChain *sc, VkPresentModeKHR mode)
     sc->image_count = images;
     VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (UINT i = 0; i < images; i++)
-        vk->vkCreateSemaphore(vk->device, &sem, NULL, &sc->present[i]);
+        vk->vkCreateSemaphore(vk->device, &sem, nullptr, &sc->present[i]);
     return TRUE;
 }
 
@@ -173,7 +173,7 @@ static HRESULT create_buffers(D12SwapChain *sc)
         sc->desc.Width = D12_MAX(client.right - client.left, 1);
     if (!sc->desc.Height)
         sc->desc.Height = D12_MAX(client.bottom - client.top, 1);
-    D3D12_RESOURCE_DESC1 desc = {0};
+    D3D12_RESOURCE_DESC1 desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     desc.Width = sc->desc.Width;
     desc.Height = sc->desc.Height;
@@ -186,8 +186,8 @@ static HRESULT create_buffers(D12SwapChain *sc)
         desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     D3D12_HEAP_PROPERTIES heap = {D3D12_HEAP_TYPE_DEFAULT};
     for (UINT i = 0; i < sc->desc.BufferCount; i++) {
-        HRESULT hr = D12CreateResource(sc->device, &heap, D3D12_HEAP_FLAG_NONE, &desc, NULL, 0,
-                                       D3D12_RESOURCE_STATE_PRESENT, NULL, &sc->buffers[i]);
+        HRESULT hr = D12CreateResource(sc->device, &heap, D3D12_HEAP_FLAG_NONE, &desc, nullptr, 0,
+                                       D3D12_RESOURCE_STATE_PRESENT, nullptr, &sc->buffers[i]);
         if (FAILED(hr))
             return hr;
     }
@@ -199,7 +199,7 @@ static void release_buffers(D12SwapChain *sc)
     for (UINT i = 0; i < DXGI_MAX_SWAP_CHAIN_BUFFERS; i++)
         if (sc->buffers[i]) {
             sc->buffers[i]->iface.lpVtbl->Release(&sc->buffers[i]->iface);
-            sc->buffers[i] = NULL;
+            sc->buffers[i] = nullptr;
         }
 }
 
@@ -225,7 +225,7 @@ static HRESULT present(D12SwapChain *sc, UINT interval, UINT flags)
     wait_serial(sc, sc->slot_serial[slot]);
     if (!sc->acquire[slot]) {
         VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        vk->vkCreateSemaphore(vk->device, &sem, NULL, &sc->acquire[slot]);
+        vk->vkCreateSemaphore(vk->device, &sem, nullptr, &sc->acquire[slot]);
         VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         alloc.commandPool = sc->pool;
         alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -272,7 +272,7 @@ static HRESULT present(D12SwapChain *sc, UINT interval, UINT flags)
     dep.pImageMemoryBarriers = &barrier;
     vk->vkCmdPipelineBarrier2(cmd, &dep);
     dep.memoryBarrierCount = 0;
-    VkImageBlit blit = {0};
+    VkImageBlit blit = {};
     blit.srcSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     UINT width = sc->source_width ? sc->source_width : sc->desc.Width;
     UINT height = sc->source_height ? sc->source_height : sc->desc.Height;
@@ -316,7 +316,7 @@ static HRESULT present(D12SwapChain *sc, UINT interval, UINT flags)
     if (sc->present_count > latency)
         wait_serial(sc, sc->slot_serial[(sc->present_count - latency - 1) % SLOTS]);
     if (sc->latency)
-        ReleaseSemaphore(sc->latency, 1, NULL);
+        ReleaseSemaphore(sc->latency, 1, nullptr);
     return S_OK;
 }
 
@@ -334,7 +334,7 @@ static HRESULT STDMETHODCALLTYPE sc_query(IDXGISwapChain4 *iface, REFIID riid, v
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -355,10 +355,10 @@ static ULONG STDMETHODCALLTYPE sc_release(IDXGISwapChain4 *iface)
     destroy_swapchain(sc);
     for (UINT i = 0; i < SLOTS; i++)
         if (sc->acquire[i])
-            vk->vkDestroySemaphore(vk->device, sc->acquire[i], NULL);
-    vk->vkDestroyCommandPool(vk->device, sc->pool, NULL);
+            vk->vkDestroySemaphore(vk->device, sc->acquire[i], nullptr);
+    vk->vkDestroyCommandPool(vk->device, sc->pool, nullptr);
     if (sc->surface)
-        vk->vkDestroySurfaceKHR(vk->instance, sc->surface, NULL);
+        vk->vkDestroySurfaceKHR(vk->instance, sc->surface, nullptr);
     release_buffers(sc);
     if (sc->latency)
         CloseHandle(sc->latency);
@@ -409,7 +409,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_buffer(IDXGISwapChain4 *iface, UINT inde
     D12SwapChain *sc = impl(iface);
     if (!surface)
         return DXGI_ERROR_INVALID_CALL;
-    *surface = NULL;
+    *surface = nullptr;
     if (index >= sc->desc.BufferCount || !sc->buffers[index])
         return DXGI_ERROR_INVALID_CALL;
     return sc->buffers[index]->iface.lpVtbl->QueryInterface(&sc->buffers[index]->iface, riid, surface);
@@ -437,7 +437,7 @@ static void enter_fullscreen(D12SwapChain *sc, IDXGIOutput *output)
     RECT r = desc.DesktopCoordinates;
     SetWindowPos(sc->window, HWND_TOPMOST, r.left, r.top, r.right - r.left, r.bottom - r.top,
                  SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    SetWindowPos(sc->window, NULL, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+    SetWindowPos(sc->window, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
 }
 
 static void leave_fullscreen(D12SwapChain *sc)
@@ -487,7 +487,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_fullscreen_state(IDXGISwapChain4 *iface,
     if (fullscreen)
         *fullscreen = sc->fullscreen_state;
     if (target) {
-        *target = NULL;
+        *target = nullptr;
         if (sc->fullscreen_state)
             sc_get_containing_output(iface, target);
     }
@@ -558,7 +558,7 @@ static HRESULT STDMETHODCALLTYPE sc_resize_target(IDXGISwapChain4 *iface, const 
         return S_OK;
     RECT rect = {0, 0, (LONG)mode->Width, (LONG)mode->Height};
     AdjustWindowRectEx(&rect, GetWindowLongW(sc->window, GWL_STYLE), FALSE, GetWindowLongW(sc->window, GWL_EXSTYLE));
-    SetWindowPos(sc->window, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+    SetWindowPos(sc->window, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     return S_OK;
 }
@@ -607,7 +607,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_hwnd(IDXGISwapChain4 *iface, HWND *hwnd)
 static HRESULT STDMETHODCALLTYPE sc_get_core_window(IDXGISwapChain4 *iface, REFIID riid, void **window)
 {
     if (window)
-        *window = NULL;
+        *window = nullptr;
     return DXGI_ERROR_INVALID_CALL;
 }
 
@@ -623,7 +623,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_restrict_to_output(IDXGISwapChain4 *ifac
 {
     if (!output)
         return E_INVALIDARG;
-    *output = NULL;
+    *output = nullptr;
     return S_OK;
 }
 
@@ -697,7 +697,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_maximum_frame_latency(IDXGISwapChain4 *i
 static HANDLE STDMETHODCALLTYPE sc_get_frame_latency_waitable_object(IDXGISwapChain4 *iface)
 {
     D12SwapChain *sc = impl(iface);
-    HANDLE handle = NULL;
+    HANDLE handle = nullptr;
     if (sc->latency)
         DuplicateHandle(GetCurrentProcess(), sc->latency, GetCurrentProcess(), &handle, 0, FALSE,
                         DUPLICATE_SAME_ACCESS);
@@ -819,29 +819,29 @@ HRESULT D12CreateSwapChain(D12Queue *queue, IDXGIFactory *factory, HWND window, 
     VkCommandPoolCreateInfo pool = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool.queueFamilyIndex = queue->family;
-    HRESULT hr = device->vk.vkCreateCommandPool(device->vk.device, &pool, NULL, &sc->pool) == VK_SUCCESS
+    HRESULT hr = device->vk.vkCreateCommandPool(device->vk.device, &pool, nullptr, &sc->pool) == VK_SUCCESS
                      ? create_buffers(sc)
                      : E_OUTOFMEMORY;
     VkWin32SurfaceCreateInfoKHR surface = {VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-    surface.hinstance = GetModuleHandleW(NULL);
+    surface.hinstance = GetModuleHandleW(nullptr);
     surface.hwnd = window;
     if (SUCCEEDED(hr) &&
-        device->vk.vkCreateWin32SurfaceKHR(device->vk.instance, &surface, NULL, &sc->surface) != VK_SUCCESS)
+        device->vk.vkCreateWin32SurfaceKHR(device->vk.instance, &surface, nullptr, &sc->surface) != VK_SUCCESS)
         hr = DXGI_ERROR_UNSUPPORTED;
     if (FAILED(hr)) {
         release_buffers(sc);
         if (sc->pool)
-            device->vk.vkDestroyCommandPool(device->vk.device, sc->pool, NULL);
+            device->vk.vkDestroyCommandPool(device->vk.device, sc->pool, nullptr);
         HeapFree(GetProcessHeap(), 0, sc);
         return hr;
     }
     if (desc->Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
-        sc->latency = CreateSemaphoreW(NULL, sc->max_latency, 16, NULL);
+        sc->latency = CreateSemaphoreW(nullptr, sc->max_latency, 16, nullptr);
     factory->lpVtbl->AddRef(factory);
     queue->iface.lpVtbl->AddRef(&queue->iface);
     if (sc->fullscreen_state) {
         sc->fullscreen_state = FALSE;
-        sc_set_fullscreen_state(&sc->iface, TRUE, NULL);
+        sc_set_fullscreen_state(&sc->iface, TRUE, nullptr);
     }
     *out = (IDXGISwapChain1 *)&sc->iface;
     return S_OK;

@@ -29,13 +29,13 @@ static GlQuery *query(GlContext *ctx, GLuint name, GLenum target)
     void *object = gl_name_get(&ctx->queries, name);
     if (!object) {
         gl_error(ctx, GL_INVALID_OPERATION);
-        return NULL;
+        return nullptr;
     }
     if (object == GL_RESERVED) {
         object = gl_alloc(sizeof(GlQuery));
         if (!object) {
             gl_error(ctx, GL_OUT_OF_MEMORY);
-            return NULL;
+            return nullptr;
         }
         ((GlQuery *)object)->target = target;
         gl_name_set(&ctx->queries, name, object);
@@ -43,7 +43,7 @@ static GlQuery *query(GlContext *ctx, GLuint name, GLenum target)
     GlQuery *result = object;
     if (result->target != target) {
         gl_error(ctx, GL_INVALID_OPERATION);
-        return NULL;
+        return nullptr;
     }
     return result;
 }
@@ -77,7 +77,7 @@ GLAPI void APIENTRY glDeleteQueries(GLsizei count, const GLuint *names)
             ctx->elapsed_query = 0;
         if (object != GL_RESERVED)
             gl_free(object);
-        gl_name_set(&ctx->queries, names[i], NULL);
+        gl_name_set(&ctx->queries, names[i], nullptr);
     }
 }
 

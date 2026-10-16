@@ -143,8 +143,8 @@ static PVOID load_dll(PCWSTR name)
 {
     UNICODE_STRING s;
     RtlInitUnicodeString(&s, name);
-    PVOID base = NULL;
-    NTSTATUS status = LdrLoadDll(NULL, NULL, &s, &base);
+    PVOID base = nullptr;
+    NTSTATUS status = LdrLoadDll(nullptr, nullptr, &s, &base);
     if (!NT_SUCCESS(status))
         fatal("cannot load a wow64 dll", status);
     return base;
@@ -385,12 +385,12 @@ static NTSTATUS queue_apc32(const ULONG *a)
 static NTSTATUS other_thread_cpu(HANDLE thread, ULONG_PTR *area)
 {
     THREAD_BASIC_INFORMATION info;
-    NTSTATUS status = NtQueryInformationThread(thread, ThreadBasicInformation, &info, sizeof(info), NULL);
+    NTSTATUS status = NtQueryInformationThread(thread, ThreadBasicInformation, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status))
         return status;
     PTEB teb = info.TebBaseAddress;
     return NtReadVirtualMemory(NtCurrentProcess(), &teb->TlsSlots[WOW64_TLS_CPURESERVED], area, sizeof(*area),
-                               NULL);
+                               nullptr);
 }
 
 static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
@@ -423,7 +423,7 @@ static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN s
     if (!NT_SUCCESS(status))
         return status;
     WOW64_CPURESERVED cpu;
-    status = NtReadVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), NULL);
+    status = NtReadVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), nullptr);
     if (!NT_SUCCESS(status))
         return status;
     if (!setting) {
@@ -431,7 +431,7 @@ static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN s
         return STATUS_SUCCESS;
     }
     set_context32(&cpu, context);
-    return NtWriteVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), NULL);
+    return NtWriteVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), nullptr);
 }
 
 static DECLSPEC_NORETURN void unhandled32(const MIME_EXCEPTION32 *record, const I386_CONTEXT *context)
@@ -465,7 +465,7 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
             NtTestAlert();
         return (LONG)cpu->Context.Eax;
     case MIME_SVC_NtCallbackReturn: {
-        WOW64_FRAME *f = t ? t->Frame : NULL;
+        WOW64_FRAME *f = t ? t->Frame : nullptr;
         if (!f || !f->Callback)
             return STATUS_NO_CALLBACK_ACTIVE;
         f->Result = a[0];
@@ -521,21 +521,21 @@ static void map_ntdll32(ULONG transition)
 {
     UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\SysWOW64\\ntdll.dll");
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK io;
     HANDLE file, section;
     NTSTATUS status = NtOpenFile(&file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &io, FILE_SHARE_READ,
                                  FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
     if (!NT_SUCCESS(status))
         fatal("cannot open the 32-bit ntdll.dll", status);
-    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, NULL, NULL,
+    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
                              PAGE_EXECUTE_READ, SEC_IMAGE, file);
     NtClose(file);
     if (!NT_SUCCESS(status))
         fatal("invalid 32-bit ntdll.dll", status);
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T size = 0;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, NULL, &size, ViewShare, 0,
+    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0,
                                 PAGE_EXECUTE_WRITECOPY);
     NtClose(section);
     /* elsewhere than its base, the kernel relocated it. */
@@ -563,7 +563,7 @@ static void process_init(void)
 
     PVOID cpu = load_dll(L"wow64cpu.dll");
     NTSTATUS(NTAPI * cpu_init)(PCWSTR, SIZE_T *) = procedure(cpu, "BTCpuProcessInit");
-    NTSTATUS status = cpu_init(NULL, NULL);
+    NTSTATUS status = cpu_init(nullptr, nullptr);
     if (!NT_SUCCESS(status))
         fatal("wow64cpu.dll must sit below 4 GiB", status);
     g.Simulate = procedure(cpu, "BTCpuSimulate");

@@ -24,7 +24,7 @@
 #define MIME_ABI_VERSION 3
 
 /* guest physical layout. */
-#if defined(__x86_64__)
+#ifdef __x86_64__
 /*
  * x64 keeps the first 4 GiB for the system files and the apic page kvm
  * places at 0xfee00000, so ram never has to split around it.

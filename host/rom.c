@@ -8,5 +8,5 @@ const MimeRomEntry *mime_rom_find(const char *path)
     for (uint32_t i = 0; i < h->count; i++)
         if (strncasecmp(h->entries[i].path, path, sizeof(h->entries[i].path)) == 0)
             return &h->entries[i];
-    return NULL;
+    return nullptr;
 }

@@ -22,7 +22,7 @@ OLEACCAPI HRESULT WINAPI AccessibleObjectFromWindow(HWND hwnd, DWORD object_id, 
     MIME_STUB("oleacc");
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     return E_NOTIMPL;
 }
 
@@ -31,6 +31,6 @@ OLEACCAPI HRESULT WINAPI CreateStdAccessibleObject(HWND hwnd, LONG object_id, RE
     MIME_STUB("oleacc");
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     return E_NOTIMPL;
 }

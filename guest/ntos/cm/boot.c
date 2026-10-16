@@ -64,7 +64,7 @@ static PCWSTR product_name(PCWSTR edition)
     for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
         if (_wcsicmp(names[i].Edition, edition) == 0)
             return names[i].Name;
-    return NULL;
+    return nullptr;
 }
 
 static void version_data(PCWSTR user)
@@ -72,7 +72,7 @@ static void version_data(PCWSTR user)
     set_sz(NT_CURRENT_VERSION, L"SystemRoot", REG_SZ, L"C:\\Windows");
     set_sz(NT_CURRENT_VERSION, L"PathName", REG_SZ, L"C:\\Windows");
     set_sz(NT_CURRENT_VERSION, L"CurrentType", REG_SZ, L"Multiprocessor Free");
-    WCHAR build[16] = {0};
+    WCHAR build[16] = {};
     _snwprintf(build, RTL_NUMBER_OF(build) - 1, L"%u", MIME_NT_BUILD_NUMBER);
     set_sz(NT_CURRENT_VERSION, L"CurrentBuild", REG_SZ, build);
     set_sz(NT_CURRENT_VERSION, L"CurrentBuildNumber", REG_SZ, build);
@@ -89,7 +89,7 @@ static void version_data(PCWSTR user)
         CmpDeleteValue(node, L"PendingInstall", 14);
         CM_VALUE *edition = CmpFindValue(node, L"EditionID", 9);
         if (edition && edition->Type == REG_SZ) {
-            WCHAR id[64] = {0};
+            WCHAR id[64] = {};
             memcpy(id, edition->Data, edition->DataLength < sizeof(id) - 2 ? edition->DataLength : sizeof(id) - 2);
             PCWSTR name = product_name(id);
             if (name)
@@ -109,7 +109,7 @@ static void identity(PCWSTR computer, PCWSTR user, PCWSTR sid)
     set_sz(tcpip, L"Hostname", REG_SZ, computer);
     set_sz(tcpip, L"NV Hostname", REG_SZ, computer);
 
-    WCHAR key[160] = {0}, profile[96] = {0};
+    WCHAR key[160] = {}, profile[96] = {};
     _snwprintf(key, RTL_NUMBER_OF(key) - 1, NT_CURRENT_VERSION L"\\ProfileList\\%ls", sid);
     _snwprintf(profile, RTL_NUMBER_OF(profile) - 1, L"C:\\Users\\%ls", user);
     set_sz(key, L"ProfileImagePath", REG_EXPAND_SZ, profile);
@@ -125,7 +125,7 @@ static void identity(PCWSTR computer, PCWSTR user, PCWSTR sid)
 /* what winlogon writes when the user logs on: the volatile part of the environment. */
 static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
 {
-    WCHAR path[160] = {0}, sub[160] = {0}, text[160];
+    WCHAR path[160] = {}, sub[160] = {}, text[160];
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\REGISTRY\\USER\\%ls", sid);
     CM_NODE *hive = CmpOpenPath(path, FALSE);
     if (!hive)
@@ -162,12 +162,12 @@ static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
 /* HARDWARE\DESCRIPTION, built by the kernel at every boot. */
 static void hardware(void)
 {
-    WCHAR identifier[96] = {0}, vendor[48], name[64];
+    WCHAR identifier[96] = {}, vendor[48], name[64];
     widen(vendor, RTL_NUMBER_OF(vendor), KiProcessorVendor());
     widen(name, RTL_NUMBER_OF(name), HalBootInfo->cpu_name);
     KiFormatProcessorIdentifier(identifier, RTL_NUMBER_OF(identifier) - 1);
     for (ULONG cpu = 0; cpu < HalBootInfo->cpu_count; cpu++) {
-        WCHAR path[128] = {0};
+        WCHAR path[128] = {};
         _snwprintf(path, RTL_NUMBER_OF(path) - 1,
                    L"\\REGISTRY\\MACHINE\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\%u", cpu);
         if (!CmpOpenPath(path, TRUE))
@@ -217,7 +217,7 @@ static void firmware(void)
 static void machine_guid(void)
 {
     static const WCHAR hex[] = L"0123456789abcdef";
-    WCHAR text[40] = {0};
+    WCHAR text[40] = {};
     ULONG pos = 0;
     for (ULONG i = 0; i < 16 && pos + 2 < RTL_NUMBER_OF(text); i++) {
         if (i == 4 || i == 6 || i == 8 || i == 10)
@@ -231,7 +231,7 @@ static void machine_guid(void)
 /* the processor variables the session manager writes at boot. */
 static void processor_environment(void)
 {
-    WCHAR text[160] = {0}, identifier[96] = {0}, vendor[48];
+    WCHAR text[160] = {}, identifier[96] = {}, vendor[48];
     widen(vendor, RTL_NUMBER_OF(vendor), KiProcessorVendor());
     set_sz(ENVIRONMENT, L"PROCESSOR_ARCHITECTURE", REG_SZ, MIME_NATIVE_ARCHITECTURE_NAME);
     KiFormatProcessorIdentifier(identifier, RTL_NUMBER_OF(identifier) - 1);
@@ -250,7 +250,7 @@ static void processor_environment(void)
 
 void CmpSpecialize(void)
 {
-    WCHAR computer[16], user[24], sid[96] = {0};
+    WCHAR computer[16], user[24], sid[96] = {};
     widen(computer, RTL_NUMBER_OF(computer), HalBootInfo->computer_name);
     widen(user, RTL_NUMBER_OF(user), HalBootInfo->user_name);
     _snwprintf(sid, RTL_NUMBER_OF(sid) - 1, L"S-1-5-21-%u-%u-%u-1001", HalBootInfo->user_sid[0],

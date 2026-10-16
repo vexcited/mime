@@ -53,17 +53,17 @@ static MIME_FONT_ENUM_RECORD *enum_fonts(HDC dc, LPCWSTR face, BYTE charset, ULO
         chars = LF_FACESIZE - 1;
     ULONG size = 0;
     *count = 0;
-    ULONG n = NtGdiEnumFonts(dc, 0, 0, chars, face, charset, &size, NULL);
+    ULONG n = NtGdiEnumFonts(dc, 0, 0, chars, face, charset, &size, nullptr);
     if (!n || !size)
-        return NULL;
+        return nullptr;
     MIME_FONT_ENUM_RECORD *records = heap_alloc(size);
     if (!records)
-        return NULL;
+        return nullptr;
     ULONG got = size;
     n = NtGdiEnumFonts(dc, 0, 0, chars, face, charset, &got, records);
     if (!n || got > size) {
         heap_free(records);
-        return NULL;
+        return nullptr;
     }
     *count = n;
     return records;
@@ -74,7 +74,7 @@ WINGDIAPI int WINAPI EnumFontFamiliesExW(HDC dc, LPLOGFONTW lf, FONTENUMPROCW pr
     if (!lf || !proc)
         return 0;
     ULONG count;
-    MIME_FONT_ENUM_RECORD *records = enum_fonts(dc, lf->lfFaceName[0] ? lf->lfFaceName : NULL, lf->lfCharSet, &count);
+    MIME_FONT_ENUM_RECORD *records = enum_fonts(dc, lf->lfFaceName[0] ? lf->lfFaceName : nullptr, lf->lfCharSet, &count);
     /* the result is the last value the procedure returned, 1 when nothing was enumerated. */
     int result = 1;
     for (ULONG i = 0; i < count; i++) {
@@ -115,10 +115,10 @@ static int CALLBACK enum_a_thunk(const LOGFONTW *lf, const TEXTMETRICW *tm, DWOR
     memset(&ea, 0, sizeof(ea));
     memset(&na, 0, sizeof(na));
     memcpy(&ea.elfLogFont, &ew->elfLogFont, offsetof(LOGFONTA, lfFaceName));
-    WideCharToMultiByte(CP_ACP, 0, ew->elfLogFont.lfFaceName, -1, ea.elfLogFont.lfFaceName, LF_FACESIZE, NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, ew->elfFullName, -1, (LPSTR)ea.elfFullName, LF_FULLFACESIZE, NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, ew->elfStyle, -1, (LPSTR)ea.elfStyle, LF_FACESIZE, NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, ew->elfScript, -1, (LPSTR)ea.elfScript, LF_FACESIZE, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, ew->elfLogFont.lfFaceName, -1, ea.elfLogFont.lfFaceName, LF_FACESIZE, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, ew->elfFullName, -1, (LPSTR)ea.elfFullName, LF_FULLFACESIZE, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, ew->elfStyle, -1, (LPSTR)ea.elfStyle, LF_FACESIZE, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, ew->elfScript, -1, (LPSTR)ea.elfScript, LF_FACESIZE, nullptr, nullptr);
     tm_w_to_a((const TEXTMETRICW *)&nw->ntmTm, (TEXTMETRICA *)&na.ntmTm);
     na.ntmTm.ntmFlags = nw->ntmTm.ntmFlags;
     na.ntmTm.ntmSizeEM = nw->ntmTm.ntmSizeEM;
@@ -151,18 +151,18 @@ WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buff
 WINGDIAPI UINT WINAPI GetOutlineTextMetricsW(HDC dc, UINT size, LPOUTLINETEXTMETRICW otm)
 {
     if (!otm)
-        return NtGdiGetOutlineTextMetricsInternalW(dc, 0, NULL, NULL);
-    UINT needed = NtGdiGetOutlineTextMetricsInternalW(dc, 0, NULL, NULL);
+        return NtGdiGetOutlineTextMetricsInternalW(dc, 0, nullptr, nullptr);
+    UINT needed = NtGdiGetOutlineTextMetricsInternalW(dc, 0, nullptr, nullptr);
     if (!needed)
         return 0;
     if (size >= needed) {
-        return NtGdiGetOutlineTextMetricsInternalW(dc, size, otm, NULL);
+        return NtGdiGetOutlineTextMetricsInternalW(dc, size, otm, nullptr);
     }
     /* a short buffer receives the fixed part; the string offsets point past it then. */
     OUTLINETEXTMETRICW *full = heap_alloc(needed);
     if (!full)
         return 0;
-    UINT n = NtGdiGetOutlineTextMetricsInternalW(dc, needed, full, NULL);
+    UINT n = NtGdiGetOutlineTextMetricsInternalW(dc, needed, full, nullptr);
     if (n) {
         memcpy(otm, full, size < sizeof(*full) ? size : sizeof(*full));
         n = size;
@@ -173,7 +173,7 @@ WINGDIAPI UINT WINAPI GetOutlineTextMetricsW(HDC dc, UINT size, LPOUTLINETEXTMET
 
 WINGDIAPI UINT WINAPI GetOutlineTextMetricsA(HDC dc, UINT size, LPOUTLINETEXTMETRICA otm)
 {
-    UINT needed_w = NtGdiGetOutlineTextMetricsInternalW(dc, 0, NULL, NULL);
+    UINT needed_w = NtGdiGetOutlineTextMetricsInternalW(dc, 0, nullptr, nullptr);
     if (!needed_w)
         return 0;
     OUTLINETEXTMETRICW *w = heap_alloc(needed_w);
@@ -190,7 +190,7 @@ WINGDIAPI UINT WINAPI GetOutlineTextMetricsA(HDC dc, UINT size, LPOUTLINETEXTMET
     int lengths[4];
     UINT needed = sizeof(OUTLINETEXTMETRICA);
     for (int i = 0; i < 4; i++) {
-        lengths[i] = WideCharToMultiByte(CP_ACP, 0, names[i], -1, NULL, 0, NULL, NULL);
+        lengths[i] = WideCharToMultiByte(CP_ACP, 0, names[i], -1, nullptr, 0, nullptr, nullptr);
         needed += (UINT)lengths[i];
     }
     UINT result = needed;
@@ -209,7 +209,7 @@ WINGDIAPI UINT WINAPI GetOutlineTextMetricsA(HDC dc, UINT size, LPOUTLINETEXTMET
         UINT offset = sizeof(OUTLINETEXTMETRICA);
         PSTR *fields[4] = {&out->otmpFamilyName, &out->otmpFaceName, &out->otmpStyleName, &out->otmpFullName};
         for (int i = 0; i < 4; i++) {
-            WideCharToMultiByte(CP_ACP, 0, names[i], -1, (LPSTR)a + offset, lengths[i], NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, names[i], -1, (LPSTR)a + offset, lengths[i], nullptr, nullptr);
             *fields[i] = (PSTR)(ULONG_PTR)offset;
             offset += (UINT)lengths[i];
         }
@@ -266,7 +266,7 @@ WINGDIAPI BOOL WINAPI GetCharABCWidthsFloatW(HDC dc, UINT first, UINT last, LPAB
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return NtGdiGetCharABCWidthsW(dc, first, last - first + 1, NULL, MIME_GCABCW_FLOAT, abc);
+    return NtGdiGetCharABCWidthsW(dc, first, last - first + 1, nullptr, MIME_GCABCW_FLOAT, abc);
 }
 
 WINGDIAPI BOOL WINAPI GetCharABCWidthsI(HDC dc, UINT first, UINT count, LPWORD glyphs, LPABC abc)
@@ -293,7 +293,7 @@ WINGDIAPI BOOL WINAPI GetTextExtentPointI(HDC dc, LPWORD glyphs, int count, LPSI
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return NtGdiGetTextExtentExW(dc, (LPCWSTR)glyphs, (ULONG)count, 0, NULL, NULL, size, MIME_GTEE_INDICES);
+    return NtGdiGetTextExtentExW(dc, (LPCWSTR)glyphs, (ULONG)count, 0, nullptr, nullptr, size, MIME_GTEE_INDICES);
 }
 
 WINGDIAPI BOOL WINAPI GetCharWidth32A(HDC dc, UINT first, UINT last, LPINT widths)
@@ -337,11 +337,11 @@ WINGDIAPI DWORD WINAPI GetCharacterPlacementW(HDC dc, LPCWSTR text, int count, i
         return 0;
     SIZE size = {0, 0};
     int fit = count;
-    INT *dx = count ? heap_alloc((SIZE_T)count * sizeof(INT)) : NULL;
+    INT *dx = count ? heap_alloc((SIZE_T)count * sizeof(INT)) : nullptr;
     if (count && !dx)
         return 0;
     if (!GetTextExtentExPointW(dc, text, count, (flags & GCP_MAXEXTENT) ? max_extent : 0,
-                               (flags & GCP_MAXEXTENT) ? &fit : NULL, dx, &size)) {
+                               (flags & GCP_MAXEXTENT) ? &fit : nullptr, dx, &size)) {
         heap_free(dx);
         return 0;
     }
@@ -377,14 +377,14 @@ WINGDIAPI DWORD WINAPI GetCharacterPlacementA(HDC dc, LPCSTR text, int count, in
 {
     if (count < 0 || (count && !text))
         return 0;
-    int wide_count = count ? MultiByteToWideChar(CP_ACP, 0, text, count, NULL, 0) : 0;
+    int wide_count = count ? MultiByteToWideChar(CP_ACP, 0, text, count, nullptr, 0) : 0;
     WCHAR *wide = heap_alloc((SIZE_T)(wide_count + 1) * sizeof(WCHAR));
     if (!wide)
         return 0;
     if (wide_count)
         MultiByteToWideChar(CP_ACP, 0, text, count, wide, wide_count);
     GCP_RESULTSW w;
-    WCHAR *out = NULL;
+    WCHAR *out = nullptr;
     if (results) {
         w.lStructSize = sizeof(w);
         w.lpOrder = results->lpOrder;
@@ -394,13 +394,13 @@ WINGDIAPI DWORD WINAPI GetCharacterPlacementA(HDC dc, LPCSTR text, int count, in
         w.lpGlyphs = results->lpGlyphs;
         w.nGlyphs = results->nGlyphs;
         w.nMaxFit = results->nMaxFit;
-        w.lpOutString = out = results->lpOutString ? heap_alloc((SIZE_T)(w.nGlyphs + 1) * sizeof(WCHAR)) : NULL;
+        w.lpOutString = out = results->lpOutString ? heap_alloc((SIZE_T)(w.nGlyphs + 1) * sizeof(WCHAR)) : nullptr;
     }
-    DWORD r = GetCharacterPlacementW(dc, wide, wide_count, max_extent, results ? &w : NULL, flags);
+    DWORD r = GetCharacterPlacementW(dc, wide, wide_count, max_extent, results ? &w : nullptr, flags);
     if (results) {
         if (out && r)
-            WideCharToMultiByte(CP_ACP, 0, out, (int)w.nGlyphs, results->lpOutString, (int)results->nGlyphs, NULL,
-                                NULL);
+            WideCharToMultiByte(CP_ACP, 0, out, (int)w.nGlyphs, results->lpOutString, (int)results->nGlyphs, nullptr,
+                                nullptr);
         results->nGlyphs = w.nGlyphs;
         results->nMaxFit = w.nMaxFit;
     }
@@ -476,13 +476,13 @@ static int font_resource(LPCWSTR name, DWORD flags, BOOL add)
         return 0;
     }
     UNICODE_STRING nt;
-    if (!RtlDosPathNameToNtPathName_U(name, &nt, NULL, NULL)) {
+    if (!RtlDosPathNameToNtPathName_U(name, &nt, nullptr, nullptr)) {
         SetLastError(ERROR_FILE_NOT_FOUND);
         return 0;
     }
     ULONG chars = nt.Length / sizeof(WCHAR);
-    int r = add ? NtGdiAddFontResourceW(nt.Buffer, chars, 1, flags, 0, NULL)
-                : NtGdiRemoveFontResourceW(nt.Buffer, chars, 1, flags, 0, NULL);
+    int r = add ? NtGdiAddFontResourceW(nt.Buffer, chars, 1, flags, 0, nullptr)
+                : NtGdiRemoveFontResourceW(nt.Buffer, chars, 1, flags, 0, nullptr);
     RtlFreeUnicodeString(&nt);
     return r;
 }
@@ -511,9 +511,9 @@ WINGDIAPI HANDLE WINAPI AddFontMemResourceEx(PVOID data, DWORD size, PVOID reser
 {
     if (!data || !size || !count || reserved) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
-    return NtGdiAddFontMemResourceEx(data, size, NULL, 0, count);
+    return NtGdiAddFontMemResourceEx(data, size, nullptr, 0, count);
 }
 
 WINGDIAPI BOOL WINAPI RemoveFontMemResourceEx(HANDLE handle)

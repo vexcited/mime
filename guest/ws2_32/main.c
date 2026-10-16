@@ -16,7 +16,7 @@ static void free_thread(void)
     if (t && t->event)
         CloseHandle(t->event);
     WsFree(t);
-    TlsSetValue(thread_slot, NULL);
+    TlsSetValue(thread_slot, nullptr);
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
@@ -42,7 +42,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 WS_THREAD *WsThread(void)
 {
     if (thread_slot == TLS_OUT_OF_INDEXES)
-        return NULL;
+        return nullptr;
     WS_THREAD *t = TlsGetValue(thread_slot);
     if (!t) {
         t = WsAllocZero(sizeof(*t));
@@ -92,7 +92,7 @@ int WSAAPI WSAStartup(WORD version, LPWSADATA data)
     /* winsock 1 programs are told the historical limits, winsock 2 has none. */
     data->iMaxSockets = major == 1 ? 32767 : 0;
     data->iMaxUdpDg = major == 1 ? 65467 : 0;
-    data->lpVendorInfo = NULL;
+    data->lpVendorInfo = nullptr;
     copy_bounded(data->szDescription, sizeof(data->szDescription), "WinSock 2.0");
     copy_bounded(data->szSystemStatus, sizeof(data->szSystemStatus), "Running");
     if (result)
@@ -208,7 +208,7 @@ int WSAAPI __WSAFDIsSet(SOCKET fd, fd_set *set)
 
 WSAEVENT WSAAPI WSACreateEvent(void)
 {
-    return CreateEventA(NULL, TRUE, FALSE, NULL);
+    return CreateEventA(nullptr, TRUE, FALSE, nullptr);
 }
 
 BOOL WSAAPI WSACloseEvent(WSAEVENT event)
@@ -247,7 +247,7 @@ int WSAAPI WSACancelBlockingCall(void)
 FARPROC WSAAPI WSASetBlockingHook(FARPROC hook)
 {
     SetLastError(WSAEOPNOTSUPP);
-    return NULL;
+    return nullptr;
 }
 
 int WSAAPI WSAUnhookBlockingHook(void)

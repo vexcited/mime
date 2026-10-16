@@ -7,7 +7,7 @@
 #include <mime/win32/objbase.h>
 #include <mime/win32/winuser.h>
 
-#if defined(__i386__)
+#ifdef __i386__
 #pragma pack(push, 1)
 #endif
 
@@ -238,7 +238,7 @@ CDAPI BOOL WINAPI PrintDlgW(LPPRINTDLGW pd);
 CDAPI HRESULT WINAPI PrintDlgExW(LPPRINTDLGEXW pd);
 CDAPI BOOL WINAPI PageSetupDlgW(LPPAGESETUPDLGW psd);
 
-#if defined(__i386__)
+#ifdef __i386__
 #pragma pack(pop)
 #endif
 

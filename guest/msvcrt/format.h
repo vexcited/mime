@@ -119,8 +119,8 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
 
         /* ST_TYPE: the conversion itself. */
         char nbuf[600];
-        char *heap = NULL;
-        const void *text = NULL;
+        char *heap = nullptr;
+        const void *text = nullptr;
         int text_wide = 0;
         int len = 0;
         char prefix[2];
@@ -140,7 +140,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             if (!(flags & (FL_SHORT | FL_LONG | FL_WIDECHAR)))
                 flags |= FL_WIDECHAR;
 #endif
-            /* fall through */
+            [[fallthrough]];
         case 'c': {
             int arg = va_arg(ap, int);
 #if FORMAT_WIDE
@@ -169,7 +169,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             if (!(flags & (FL_SHORT | FL_LONG | FL_WIDECHAR)))
                 flags |= FL_WIDECHAR;
 #endif
-            /* fall through */
+            [[fallthrough]];
         case 's': {
             const void *s = va_arg(ap, const void *);
             int max = prec == -1 ? INT_MAX : prec;
@@ -225,7 +225,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
         case 'A':
             caps = 1;
             c += 'a' - 'A';
-            /* fall through */
+            [[fallthrough]];
         case 'e':
         case 'f':
         case 'g':

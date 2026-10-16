@@ -64,7 +64,7 @@ static uint64_t ctrl_recv(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t *
     memcpy(dst, node->data, node->size);
     vm->ctrl_head = node->next;
     if (!vm->ctrl_head)
-        vm->ctrl_tail = NULL;
+        vm->ctrl_tail = nullptr;
     else
         __atomic_fetch_or(&vm->shared->irq_pending, MIME_IRQ_CTRL, __ATOMIC_SEQ_CST);
     pthread_mutex_unlock(&vm->lock);
@@ -104,7 +104,7 @@ static uint64_t clip_set(MimeVm *vm, uint64_t pa, uint64_t len, uint64_t offset,
 {
     if (total > CLIP_MAX_BYTES || (total & 1) || offset > total || len > total - offset)
         return MIME_HC_STATUS_INVALID;
-    const void *src = len ? mime_vm_phys(vm, pa, len) : NULL;
+    const void *src = len ? mime_vm_phys(vm, pa, len) : nullptr;
     if (len && !src)
         return MIME_HC_STATUS_INVALID;
     pthread_mutex_lock(&g_clip_lock);
@@ -122,7 +122,7 @@ static uint64_t clip_set(MimeVm *vm, uint64_t pa, uint64_t len, uint64_t offset,
         if (offset + len == total) {
             mime_ui_clipboard_set((const uint16_t *)g_clip_pending, (size_t)(total / 2));
             free(g_clip_pending);
-            g_clip_pending = NULL;
+            g_clip_pending = nullptr;
         }
     }
     pthread_mutex_unlock(&g_clip_lock);
@@ -134,7 +134,7 @@ static uint64_t clip_get(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t of
     *total = 0;
     if ((capacity & 1) || (offset & 1) || capacity > CLIP_MAX_BYTES)
         return MIME_HC_STATUS_INVALID;
-    uint16_t *dst = NULL;
+    uint16_t *dst = nullptr;
     if (capacity) {
         dst = mime_vm_phys(vm, pa, capacity);
         if (!dst)
@@ -281,7 +281,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             break;
         }
         void *pixels = r->pixels_phys ? mime_vm_phys(vm, r->pixels_phys, (uint64_t)r->stride * r->capacity_height)
-                                      : NULL;
+                                      : nullptr;
         if (r->pixels_phys && !pixels) {
             status = MIME_HC_STATUS_INVALID;
             break;

@@ -118,7 +118,7 @@ static MIME_CONSOLE *find_run(ULONG64 request)
             return c;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 /*
@@ -168,7 +168,7 @@ MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size)
 {
     MIME_CONSOLE *c = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*c), KI_TAG('C', 'o', 'n', 's'));
     if (!c)
-        return NULL;
+        return nullptr;
     c->References = 1;
     c->RequestId = request;
     if (run_flags & MIME_RUN_TTY_INPUT)
@@ -213,7 +213,7 @@ void ConsoleDetach(PEPROCESS p)
 {
     ExAcquireFastMutex(&g_lock);
     MIME_CONSOLE *c = p->Console;
-    p->Console = NULL;
+    p->Console = nullptr;
     ExReleaseFastMutex(&g_lock);
     if (c)
         release(c);
@@ -223,7 +223,7 @@ void ConsoleProcessExit(PEPROCESS p)
 {
     ConsoleDetach(p);
     PKEVENT event = p->ConsoleInputEvent;
-    p->ConsoleInputEvent = NULL;
+    p->ConsoleInputEvent = nullptr;
     if (event)
         ObDereferenceObject(event);
 }
@@ -267,9 +267,9 @@ static void free_chunk(MIME_CONSOLE *c, CON_CHUNK *k, ULONG *acked)
 static MIME_CONDRV_RECORD *last_record(MIME_CONSOLE *c)
 {
     if (IsListEmpty(&c->Input))
-        return NULL;
+        return nullptr;
     CON_CHUNK *k = CONTAINING_RECORD(c->Input.Blink, CON_CHUNK, Links);
-    return k->Records && k->First < k->Length ? &k->Record[k->Length - 1] : NULL;
+    return k->Records && k->First < k->Length ? &k->Record[k->Length - 1] : nullptr;
 }
 
 static void set_output_paused(MIME_CONSOLE *c, BOOLEAN paused)
@@ -346,7 +346,7 @@ static NTSTATUS write_records(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG coun
         return STATUS_SUCCESS;
     }
     /* a single event that waited before a prepend may merge into the new ones, as it is written again after them. */
-    MIME_CONDRV_RECORD *alone = NULL;
+    MIME_CONDRV_RECORD *alone = nullptr;
     if (head && !IsListEmpty(&c->Input) && c->Input.Flink == c->Input.Blink) {
         CON_CHUNK *old = CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
         if (old->Records && old->Length - old->First == 1 && !old->Offset)
@@ -378,7 +378,7 @@ static BOOLEAN host_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length)
     }
     ULONG total = c->CarryLength + length;
     PUCHAR bytes = ExAllocatePool2(POOL_FLAG_NON_PAGED, total, KI_TAG('C', 'o', 'n', 'i'));
-    CON_CHUNK *k = bytes ? new_chunk(TRUE, 2 * total) : NULL;
+    CON_CHUNK *k = bytes ? new_chunk(TRUE, 2 * total) : nullptr;
     if (!k) {
         if (bytes)
             ExFreePool(bytes);
@@ -434,7 +434,7 @@ void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length)
     ExReleaseFastMutex(&g_lock);
     signal_events(events, count, TRUE);
     if (unacked)
-        send(c, MIME_EVT_CONSOLE_READ, unacked, NULL, 0);
+        send(c, MIME_EVT_CONSOLE_READ, unacked, nullptr, 0);
     release(c);
 }
 
@@ -530,7 +530,7 @@ void ConsoleHostEvent(ULONG64 request, ULONG event)
     if (event == CTRL_CLOSE_EVENT) {
         /* the run's reference goes with the terminal; a watchdog takes ours. */
         release(c);
-        if (attached && NT_SUCCESS(PsCreateSystemThread(NULL, 0, NULL, NULL, NULL, close_watchdog, c)))
+        if (attached && NT_SUCCESS(PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, close_watchdog, c)))
             return;
     }
     release(c);
@@ -718,7 +718,7 @@ static void after_read(MIME_CONSOLE *c, ULONG acked, BOOLEAN clear)
     ExReleaseFastMutex(&g_lock);
     signal_events(events, count, FALSE);
     if (acked)
-        send(c, MIME_EVT_CONSOLE_READ, acked, NULL, 0);
+        send(c, MIME_EVT_CONSOLE_READ, acked, nullptr, 0);
 }
 
 static NTSTATUS read_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, ULONG_PTR *information)
@@ -734,7 +734,7 @@ static NTSTATUS read_input(MIME_CONSOLE *c, PUCHAR out, ULONG length, ULONG_PTR 
             *information = n;
             return STATUS_SUCCESS;
         }
-        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, NULL);
+        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, nullptr);
         if (status != STATUS_SUCCESS)
             return status;
     }
@@ -760,7 +760,7 @@ static NTSTATUS read_records(MIME_CONSOLE *c, ULONG flags, PUCHAR buf, ULONG out
             *information = sizeof(ULONG) + n * sizeof(MIME_CONDRV_RECORD);
             return STATUS_SUCCESS;
         }
-        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, NULL);
+        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, nullptr);
         if (status != STATUS_SUCCESS)
             return status;
     }
@@ -779,7 +779,7 @@ static BOOLEAN normalize_records(MIME_CONDRV_RECORD *r, ULONG count)
             break;
         case CON_FOCUS_EVENT:
             r[i].Value = r[i].Value != 0;
-            /* fall through */
+            [[fallthrough]];
         case CON_WINDOW_BUFFER_SIZE_EVENT:
         case CON_MENU_EVENT: {
             ULONG value = r[i].Value;
@@ -809,7 +809,7 @@ static NTSTATUS wait_output(MIME_CONSOLE *c)
 {
     if (!c->OutputPaused)
         return STATUS_SUCCESS;
-    return KeWaitForSingleObject(&c->OutputResumed, UserRequest, UserMode, FALSE, NULL);
+    return KeWaitForSingleObject(&c->OutputResumed, UserRequest, UserMode, FALSE, nullptr);
 }
 
 static ULONG list_processes(MIME_CONSOLE *c, PULONG out, ULONG max)
@@ -833,7 +833,7 @@ static ULONG list_processes(MIME_CONSOLE *c, PULONG out, ULONG max)
 
 static NTSTATUS attach(PEPROCESS self, ULONG pid)
 {
-    MIME_CONSOLE *c = NULL;
+    MIME_CONSOLE *c = nullptr;
     if (pid == ATTACH_PARENT_PROCESS) {
         /* the parent of a program `mime run` started is the terminal itself. */
         ExAcquireFastMutex(&g_lock);
@@ -873,9 +873,9 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         if (in_len < sizeof(MIME_CONDRV_REGISTER))
             return complete(irp, STATUS_INVALID_PARAMETER, 0);
         MIME_CONDRV_REGISTER *r = (MIME_CONDRV_REGISTER *)buf;
-        PKEVENT event = NULL;
+        PKEVENT event = nullptr;
         if (r->InputEvent) {
-            status = ObReferenceHandle((HANDLE)(ULONG_PTR)r->InputEvent, ExEventType, UserMode, (PVOID *)&event, NULL);
+            status = ObReferenceHandle((HANDLE)(ULONG_PTR)r->InputEvent, ExEventType, UserMode, (PVOID *)&event, nullptr);
             if (!NT_SUCCESS(status))
                 return complete(irp, status, 0);
         }
@@ -1006,7 +1006,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             ExReleaseFastMutex(&g_lock);
             /* the terminal does the line editing, echo and ctrl+c the mode asks for. */
             if (tty && mode != old)
-                send(c, MIME_EVT_CONSOLE_MODE, mode, NULL, 0);
+                send(c, MIME_EVT_CONSOLE_MODE, mode, nullptr, 0);
         }
         break;
     case IOCTL_CONDRV_GENERATE:
@@ -1051,7 +1051,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         ExReleaseFastMutex(&g_lock);
         signal_events(events, count, FALSE);
         if (acked)
-            send(c, MIME_EVT_CONSOLE_READ, acked, NULL, 0);
+            send(c, MIME_EVT_CONSOLE_READ, acked, nullptr, 0);
         break;
     }
     default:
@@ -1100,7 +1100,7 @@ static NTSTATUS wait_input(MIME_CONSOLE *c)
         ExReleaseFastMutex(&g_lock);
         if (ready)
             return STATUS_SUCCESS;
-        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, NULL);
+        NTSTATUS status = KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, nullptr);
         if (status != STATUS_SUCCESS)
             return status;
     }
@@ -1189,7 +1189,7 @@ static NTSTATUS NTAPI con_query(PDEVICE_OBJECT device, PIRP irp)
     case FileStandardInformation: {
         if (length < sizeof(FILE_STANDARD_INFORMATION))
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        FILE_STANDARD_INFORMATION s = {0};
+        FILE_STANDARD_INFORMATION s = {};
         s.AllocationSize.QuadPart = 4096;
         s.EndOfFile.QuadPart = input ? input_available() : 0;
         s.NumberOfLinks = 1;
@@ -1225,7 +1225,7 @@ static NTSTATUS NTAPI con_fs_control(PDEVICE_OBJECT device, PIRP irp)
     memset(head, 0, 4 * sizeof(ULONG));
     head[0] = FILE_PIPE_CONNECTED_STATE;
     ULONG copied = 0;
-    MIME_CONSOLE *c = stream_of(irp) == STREAM_INPUT ? process_console(PsCurrentProcess()) : NULL;
+    MIME_CONSOLE *c = stream_of(irp) == STREAM_INPUT ? process_console(PsCurrentProcess()) : nullptr;
     if (c) {
         BOOLEAN eof;
         ULONG acked;
@@ -1233,7 +1233,7 @@ static NTSTATUS NTAPI con_fs_control(PDEVICE_OBJECT device, PIRP irp)
         head[1] = c->InputBytes;
         copied = take_input(c, buf + 4 * sizeof(ULONG), out_len - 4 * sizeof(ULONG), TRUE, &eof, &acked);
         /* the end of the input is next when its empty chunk heads the queue, whatever room the peek has. */
-        CON_CHUNK *head = IsListEmpty(&c->Input) ? NULL : CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
+        CON_CHUNK *head = IsListEmpty(&c->Input) ? nullptr : CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
         BOOLEAN at_end = head && !head->Records && !head->Length;
         BOOLEAN broken = at_end || (!c->InputBytes && (c->Flags & MIME_CONDRV_CLOSED));
         ExReleaseFastMutex(&g_lock);
@@ -1267,7 +1267,7 @@ void IopInitializeConsole(void)
 {
     ExInitializeFastMutex(&g_lock);
     InitializeListHead(&g_consoles);
-    NTSTATUS status = IoCreateDriver(L"\\Driver\\ConDrv", ConDrvEntry, NULL);
+    NTSTATUS status = IoCreateDriver(L"\\Driver\\ConDrv", ConDrvEntry, nullptr);
     if (!NT_SUCCESS(status))
         KiLogPrintf("condrv failed to start: %08x", status);
 }

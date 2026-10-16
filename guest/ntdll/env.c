@@ -29,7 +29,7 @@ static PCWSTR find_var(PCWSTR env, PCWSTR name, SIZE_T name_chars)
         if (eq && (SIZE_T)(eq - p) == name_chars && !_wcsnicmp(p, name, name_chars))
             return p;
     }
-    return NULL;
+    return nullptr;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlQueryEnvironmentVariable(PWSTR env, PCWSTR name, SIZE_T name_chars, PWSTR value,
@@ -38,10 +38,10 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlQueryEnvironmentVariable(PWSTR env, PCWSTR name, 
     BOOLEAN own = !env;
     if (own) {
         RtlAcquirePebLock();
-        env = *current_env(NULL);
+        env = *current_env(nullptr);
     }
     NTSTATUS status = STATUS_VARIABLE_NOT_FOUND;
-    PCWSTR entry = env ? find_var(env, name, name_chars) : NULL;
+    PCWSTR entry = env ? find_var(env, name, name_chars) : nullptr;
     if (entry) {
         PCWSTR v = entry + name_chars + 1;
         SIZE_T n = wcslen(v);
@@ -76,7 +76,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlCreateEnvironment(BOOLEAN clone, PWSTR *out)
     PVOID heap = NtCurrentPeb()->ProcessHeap;
     if (clone) {
         RtlAcquirePebLock();
-        PCWSTR env = *current_env(NULL);
+        PCWSTR env = *current_env(nullptr);
         SIZE_T n = env ? env_size(env) : 1;
         PWSTR copy = RtlAllocateHeap(heap, 0, n * sizeof(WCHAR));
         if (copy) {
@@ -114,7 +114,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetEnvironmentVariable(PWSTR *env_ptr, PCUNICODE_
     BOOLEAN own = !env_ptr;
     if (own) {
         RtlAcquirePebLock();
-        env_ptr = current_env(NULL);
+        env_ptr = current_env(nullptr);
     }
     PCWSTR env = *env_ptr ? *env_ptr : L"";
     SIZE_T old_size = env_size(env);
@@ -175,7 +175,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetEnvironmentVariable(PWSTR *env_ptr, PCUNICODE_
 NTDLL_EXPORT NTSTATUS NTAPI RtlSetCurrentEnvironment(PWSTR env, PWSTR *old)
 {
     RtlAcquirePebLock();
-    PWSTR *slot = current_env(NULL);
+    PWSTR *slot = current_env(nullptr);
     if (old)
         *old = *slot;
     *slot = env;

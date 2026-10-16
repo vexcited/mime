@@ -30,8 +30,8 @@ void MsvcrtStartupInit(void)
 {
     _acmdln = GetCommandLineA();
     _wcmdln = GetCommandLineW();
-    GetModuleFileNameA(NULL, g_pgm_name, MAX_PATH);
-    GetModuleFileNameW(NULL, g_wpgm_name, MAX_PATH);
+    GetModuleFileNameA(nullptr, g_pgm_name, MAX_PATH);
+    GetModuleFileNameW(nullptr, g_wpgm_name, MAX_PATH);
     _pgmptr = g_pgm_name;
     _wpgmptr = g_wpgm_name;
     OSVERSIONINFOW info = {sizeof(info)};
@@ -120,7 +120,7 @@ static int push_arg(void ***vec, int *n, int *cap, void *p)
 /* replaces each unquoted argument with wildcards by its sorted matches, like _cwild. */
 static int expand_a(char ***argv, int *argc, const int *quoted)
 {
-    void **out = NULL;
+    void **out = nullptr;
     int n = 0, cap = 0;
     for (int i = 0; i < *argc; i++) {
         char *arg = (*argv)[i];
@@ -158,7 +158,7 @@ static int expand_a(char ***argv, int *argc, const int *quoted)
             qsort(out + first, n - first, sizeof(void *), cmp_a);
         }
     }
-    if (!push_arg(&out, &n, &cap, NULL))
+    if (!push_arg(&out, &n, &cap, nullptr))
         return -1;
     *argv = (char **)out;
     *argc = n - 1;
@@ -167,7 +167,7 @@ static int expand_a(char ***argv, int *argc, const int *quoted)
 
 static int expand_w(wchar_t ***argv, int *argc, const int *quoted)
 {
-    void **out = NULL;
+    void **out = nullptr;
     int n = 0, cap = 0;
     for (int i = 0; i < *argc; i++) {
         wchar_t *arg = (*argv)[i];
@@ -205,7 +205,7 @@ static int expand_w(wchar_t ***argv, int *argc, const int *quoted)
             qsort(out + first, n - first, sizeof(void *), cmp_w);
         }
     }
-    if (!push_arg(&out, &n, &cap, NULL))
+    if (!push_arg(&out, &n, &cap, nullptr))
         return -1;
     *argv = (wchar_t **)out;
     *argc = n - 1;
@@ -222,7 +222,7 @@ static int setargv(int wildcard)
     const char *cmd = (_acmdln && *_acmdln) ? _acmdln : _pgmptr;
     int argc;
     size_t chars;
-    parse_a(cmd, NULL, NULL, NULL, &argc, &chars);
+    parse_a(cmd, nullptr, nullptr, nullptr, &argc, &chars);
     char **argv = malloc((argc + 1) * sizeof(char *) + chars);
     int *quoted = malloc((argc + 1) * sizeof(int));
     if (!argv || !quoted) {
@@ -249,7 +249,7 @@ static int wsetargv(int wildcard)
     const wchar_t *cmd = (_wcmdln && *_wcmdln) ? _wcmdln : _wpgmptr;
     int argc;
     size_t chars;
-    parse_w(cmd, NULL, NULL, NULL, &argc, &chars);
+    parse_w(cmd, nullptr, nullptr, nullptr, &argc, &chars);
     wchar_t **argv = malloc((argc + 1) * sizeof(wchar_t *) + chars * sizeof(wchar_t));
     int *quoted = malloc((argc + 1) * sizeof(int));
     if (!argv || !quoted) {
@@ -481,14 +481,14 @@ static void onexit_init(void)
     _PVFV *table = malloc(32 * sizeof(_PVFV));
     if (!table)
         return;
-    table[0] = NULL;
+    table[0] = nullptr;
     g_onexit_begin = EncodePointer(table);
     g_onexit_end = EncodePointer(table);
 }
 
 _onexit_t __cdecl _onexit(_onexit_t func)
 {
-    _onexit_t result = NULL;
+    _onexit_t result = nullptr;
     _lock(_EXIT_LOCK1);
     onexit_init();
     if (g_onexit_begin) {
@@ -506,7 +506,7 @@ _onexit_t __cdecl _onexit(_onexit_t func)
                 end = (_PVFV *)((char *)nb + used);
                 g_onexit_begin = EncodePointer(begin);
             } else {
-                end = NULL;
+                end = nullptr;
             }
         }
         if (end) {
@@ -526,13 +526,13 @@ int __cdecl atexit(_PVFV func)
 
 _onexit_t __cdecl __dllonexit(_onexit_t func, _PVFV **begin, _PVFV **end)
 {
-    _onexit_t result = NULL;
+    _onexit_t result = nullptr;
     _lock(_EXIT_LOCK1);
     size_t used = (char *)*end - (char *)*begin;
     size_t size = _msize(*begin);
     if (size == (size_t)-1) {
         _unlock(_EXIT_LOCK1);
-        return NULL;
+        return nullptr;
     }
     if (size < used + sizeof(_PVFV)) {
         size_t grow = size < 4096 ? size : 4096;
@@ -541,7 +541,7 @@ _onexit_t __cdecl __dllonexit(_onexit_t func, _PVFV **begin, _PVFV **end)
             nb = realloc(*begin, size + 32);
         if (!nb) {
             _unlock(_EXIT_LOCK1);
-            return NULL;
+            return nullptr;
         }
         *begin = nb;
         *end = (_PVFV *)((char *)nb + used);
@@ -565,7 +565,7 @@ PVOID __cdecl _decode_pointer(PVOID p)
 
 PVOID __cdecl _encoded_null(void)
 {
-    return EncodePointer(NULL);
+    return EncodePointer(nullptr);
 }
 
 /* calls the onexit functions last registered first; functions may register more. */
@@ -575,7 +575,7 @@ static void run_onexit(void)
         return;
     _PVFV *begin = DecodePointer(g_onexit_begin);
     _PVFV *end = DecodePointer(g_onexit_end);
-    PVOID null = EncodePointer(NULL);
+    PVOID null = EncodePointer(nullptr);
     _PVFV *p = end;
     while (--p >= begin) {
         if (*p == (_PVFV)null || !*p)
@@ -674,7 +674,7 @@ static const char *rterr_text(int code)
     for (size_t i = 0; i < sizeof(g_rterrs) / sizeof(g_rterrs[0]); i++)
         if (g_rterrs[i].code == code)
             return g_rterrs[i].text;
-    return NULL;
+    return nullptr;
 }
 
 static void write_stderr(const char *s)
@@ -682,7 +682,7 @@ static void write_stderr(const char *s)
     HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
     DWORD written;
     if (h && h != INVALID_HANDLE_VALUE)
-        WriteFile(h, s, (DWORD)strlen(s), &written, NULL);
+        WriteFile(h, s, (DWORD)strlen(s), &written, nullptr);
     OutputDebugStringA(s);
 }
 

@@ -53,7 +53,7 @@ typedef enum {
     ExceptionCollidedUnwind,
 } EXCEPTION_DISPOSITION;
 
-#if defined(_WIN64)
+#ifdef _WIN64
 #define CXX_PARAMS 4
 #else
 #define CXX_PARAMS 3
@@ -97,7 +97,7 @@ static bool cxx_throw(const EXCEPTION_RECORD *record, CXX_THROW *out)
         return false;
     out->object = (void *)record->ExceptionInformation[1];
     out->info = (const THROW_INFO *)record->ExceptionInformation[2];
-#if defined(_WIN64)
+#ifdef _WIN64
     out->base = record->NumberParameters >= 4 ? record->ExceptionInformation[3] : 0;
 #else
     out->base = 0;
@@ -129,7 +129,7 @@ static void *adjust_pointer(void *object, const RTTI_PMD &where)
     return p;
 }
 
-#if defined(__i386__)
+#ifdef __i386__
 typedef void(__thiscall *destructor_t)(void *);
 typedef void(__thiscall *copy_t)(void *, void *);
 typedef void(__thiscall *copy_virtual_t)(void *, void *, int);
@@ -268,7 +268,7 @@ struct FUNC_INFO3 {
     int try_map;
     ULONG ips;
     int ip_map;
-#if defined(_WIN64)
+#ifdef _WIN64
     int unwind_help;
 #endif
     int es_types;
@@ -280,7 +280,7 @@ struct HANDLER3 {
     int type;
     int catch_object;
     int code;
-#if defined(_WIN64)
+#ifdef _WIN64
     int frame;
 #endif
 };
@@ -316,12 +316,12 @@ static EH_FUNCTION *decode3(const FUNC_INFO3 *info, ULONG_PTR base)
             out->handlers[j].type = h[j].type ? static_cast<const type_info *>(AT(base, h[j].type)) : nullptr;
             out->handlers[j].catch_object = h[j].catch_object;
             out->handlers[j].code = (ULONG_PTR)AT(base, h[j].code);
-#if defined(_WIN64)
+#ifdef _WIN64
             out->handlers[j].frame = h[j].frame;
 #endif
         }
     }
-#if defined(_WIN64)
+#ifdef _WIN64
     f->ips = info->ips;
     f->ip_map = static_cast<EH_IP *>(allocate(f->ips * sizeof(EH_IP)));
     const int *ips = static_cast<const int *>(AT(base, info->ip_map));
@@ -477,7 +477,7 @@ extern "C" __declspec(noreturn) void __stdcall _CxxThrowException(void *object, 
     params[0] = (info->attributes & 8) ? CXX_PURE_MAGIC : CXX_MAGIC1;
     params[1] = (ULONG_PTR)object;
     params[2] = (ULONG_PTR)info;
-#if defined(_WIN64)
+#ifdef _WIN64
     void *base = nullptr;
     RtlPcToFileHeader((void *)info, &base);
     params[3] = (ULONG_PTR)base;
@@ -509,7 +509,7 @@ static int unwind_to(const EH_FUNCTION *f, ULONG_PTR frame, int current, int tar
     return current;
 }
 
-#if defined(_WIN64)
+#ifdef _WIN64
 static int state_from_ip(const EH_FUNCTION *f, ULONG_PTR ip)
 {
     int i = 0;
@@ -537,7 +537,7 @@ static bool covered(const EH_FUNCTION *f, int state)
     return false;
 }
 
-#if defined(_WIN64)
+#ifdef _WIN64
 
 /* ================================================================== 64-bit windows */
 
@@ -827,7 +827,7 @@ struct FH4_READER {
 static ULONG_PTR function_start(const DISPATCHER_CONTEXT *dc)
 {
     const ULONG *entry = static_cast<const ULONG *>(dc->FunctionEntry);
-#if defined(__x86_64__)
+#ifdef __x86_64__
     for (;;) {
         const BYTE *unwind = (const BYTE *)(dc->ImageBase + entry[2]);
         if (!((unwind[0] >> 3) & 4))

@@ -7,7 +7,7 @@
 #define MIME_MSVCRT_MATHTAB_H
 
 /* 2^(j/64) as hi + lo. */
-static const double g_exp2_table[64][2] = {
+static constexpr double g_exp2_table[64][2] = {
     {0x1.0000000000000p+0, 0x0.0p+0},
     {0x1.02c9a3e778061p+0, -0x1.19083535b085dp-56},
     {0x1.059b0d3158574p+0, 0x1.d73e2a475b465p-55},
@@ -75,7 +75,7 @@ static const double g_exp2_table[64][2] = {
 };
 
 /* log(k / 128) for k from 90 to 182 as hi + lo. */
-static const double g_log_table[93][2] = {
+static constexpr double g_log_table[93][2] = {
     {-0x1.68ac83e9c6a14p-2, -0x1.a64eadd740178p-58},
     {-0x1.5d5bddf595f30p-2, 0x1.6541148cbb8a2p-56},
     {-0x1.522ae0738a3d8p-2, 0x1.8f7e9b38a6979p-57},
@@ -172,7 +172,7 @@ static const double g_log_table[93][2] = {
 };
 
 /* atan(j / 16) for j from 0 to 16 as hi + lo. */
-static const double g_atan_table[17][2] = {
+static constexpr double g_atan_table[17][2] = {
     {0x0.0p+0, 0x0.0p+0},
     {0x1.ff55bb72cfdeap-5, -0x1.c934d86d23f1dp-60},
     {0x1.fd5ba9aac2f6ep-4, -0x1.cd37686760c17p-59},
@@ -212,7 +212,7 @@ static const double g_atan_table[17][2] = {
 #define TWO_OVER_PI_LO -0x1.6b01ec5417056p-55
 
 /* the bits of 2/pi, 32 per word, the first word holding 2^-1 to 2^-32. */
-static const uint32_t g_two_over_pi[48] = {
+static constexpr uint32_t g_two_over_pi[48] = {
     0xa2f9836e, 0x4e441529, 0xfc2757d1, 0xf534ddc0, 0xdb629599, 0x3c439041,
     0xfe5163ab, 0xdebbc561, 0xb7246e3a, 0x424dd2e0, 0x06492eea, 0x09d1921c,
     0xfe1deb1c, 0xb129a73e, 0xe88235f5, 0x2ebb4484, 0xe99c7026, 0xb45f7e41,

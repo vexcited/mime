@@ -62,7 +62,7 @@ ADVAPI BOOL WINAPI AllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY authority,
 
 ADVAPI PVOID WINAPI FreeSid(PSID sid)
 {
-    return sid && RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, sid) ? NULL : sid;
+    return sid && RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, sid) ? nullptr : sid;
 }
 
 ADVAPI BOOL WINAPI InitializeSid(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, BYTE count)

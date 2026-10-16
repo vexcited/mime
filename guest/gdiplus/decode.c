@@ -15,7 +15,7 @@ static void png_free(void *ctx, void *p)
     gp_free(p);
 }
 
-static const MimeAllocator g_png_alloc = {png_alloc, png_free, NULL};
+static const MimeAllocator g_png_alloc = {png_alloc, png_free, nullptr};
 
 static GpStatus png_status(int error)
 {
@@ -47,8 +47,8 @@ static GpStatus decode_png(const BYTE *data, SIZE_T size, GpBitmap **bitmap)
     if (format == PixelFormat32bppARGB) {
         status = png_status(mime_png_decode(data, size, &g_png_alloc, 0, b->Bits, (size_t)b->Stride));
     } else {
-        uint8_t *pixels = NULL;
-        status = png_status(mime_png_decode_alloc(data, size, &g_png_alloc, 0, &pixels, NULL));
+        uint8_t *pixels = nullptr;
+        status = png_status(mime_png_decode_alloc(data, size, &g_png_alloc, 0, &pixels, nullptr));
         if (status == Ok)
             gp_convert(b->Bits, b->Stride, format, pixels, b->Width * 4, PixelFormat32bppRGB, b->Width, b->Height);
         mime_free(&g_png_alloc, pixels);
@@ -237,7 +237,7 @@ static GpStatus decode_bmp(const BYTE *data, SIZE_T size, GpBitmap **bitmap)
     if (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 16 && bpp != 24 && bpp != 32)
         return InvalidParameter;
 
-    ARGB palette[256] = {0};
+    ARGB palette[256] = {};
     if (bpp <= 8) {
         UINT count = used && used < (1u << bpp) ? used : 1u << bpp;
         if (table + (SIZE_T)count * entry > size)
@@ -253,7 +253,7 @@ static GpStatus decode_bmp(const BYTE *data, SIZE_T size, GpBitmap **bitmap)
     const BYTE *bits = data + offset;
     SIZE_T available = size - offset;
     SIZE_T stride = ((SIZE_T)width * bpp + 31) / 32 * 4;
-    BYTE *indices = NULL;
+    BYTE *indices = nullptr;
     if (compression == BMP_RLE8 || compression == BMP_RLE4) {
         indices = gp_alloc_zero((SIZE_T)width * (SIZE_T)height);
         if (!indices)

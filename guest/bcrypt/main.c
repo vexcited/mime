@@ -7,13 +7,13 @@ DECLSPEC_EXPORT NTSTATUS WINAPI BCryptGenRandom(HANDLE algorithm, BYTE *buffer, 
 {
     if (flags & ~3u || (!buffer && length))
         return STATUS_INVALID_PARAMETER;
-    if ((flags & 2) ? algorithm != NULL : algorithm != (HANDLE)(ULONG_PTR)0x81)
+    if ((flags & 2) ? algorithm != nullptr : algorithm != (HANDLE)(ULONG_PTR)0x81)
         return STATUS_INVALID_HANDLE;
     if (!length)
         return STATUS_SUCCESS;
     HMODULE library = LoadLibraryW(L"advapi32.dll");
     typedef BOOLEAN (WINAPI *RANDOM)(void *, ULONG);
-    RANDOM random = library ? (RANDOM)GetProcAddress(library, "SystemFunction036") : NULL;
+    RANDOM random = library ? (RANDOM)GetProcAddress(library, "SystemFunction036") : nullptr;
     NTSTATUS status = random && random(buffer, length) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
     if (library)
         FreeLibrary(library);

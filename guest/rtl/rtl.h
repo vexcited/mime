@@ -6,7 +6,6 @@
 #define MIME_RTL_H
 
 #include <mime/nt.h>
-#include <stdbool.h>
 
 void *memcpy(void *dst, const void *src, size_t n);
 void *memmove(void *dst, const void *src, size_t n);

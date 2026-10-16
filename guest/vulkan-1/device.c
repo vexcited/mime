@@ -67,7 +67,7 @@ static void map_put(Map *m, uint64_t id, void *value)
 
 static void *map_get(Map *m, uint64_t id)
 {
-    void *v = NULL;
+    void *v = nullptr;
     AcquireSRWLockShared(&m->lock);
     if (m->size) {
         size_t mask = m->size - 1;
@@ -84,14 +84,14 @@ static void *map_get(Map *m, uint64_t id)
 /* removal keeps the slot, so probe chains stay whole; a later put reuses it. */
 static void *map_take(Map *m, uint64_t id)
 {
-    void *v = NULL;
+    void *v = nullptr;
     AcquireSRWLockExclusive(&m->lock);
     if (m->size) {
         size_t mask = m->size - 1;
         for (size_t i = mix(id) & mask; m->entries[i].id; i = (i + 1) & mask)
             if (m->entries[i].id == id) {
                 v = m->entries[i].value;
-                m->entries[i].value = NULL;
+                m->entries[i].value = nullptr;
                 break;
             }
     }
@@ -195,7 +195,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkAllocationCa
 
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice device, uint32_t family, uint32_t index, VkQueue *out)
 {
-    *out = NULL;
+    *out = nullptr;
     for (struct VkQueue_T *q = device->queues; q; q = q->next)
         if (q->family == family && q->index == index && !q->flags) {
             *out = q;
@@ -205,7 +205,7 @@ VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice device, uint32_t family, ui
 
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2 *info, VkQueue *out)
 {
-    *out = NULL;
+    *out = nullptr;
     for (struct VkQueue_T *q = device->queues; q; q = q->next)
         if (q->family == info->queueFamilyIndex && q->index == info->queueIndex && q->flags == info->flags) {
             *out = q;
@@ -284,7 +284,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMapMemory(VkDevice device, VkDeviceMemory memor
 {
     Memory *m = map_get(&g_memory, (uint64_t)memory);
     if (!m || !m->base) {
-        *data = NULL;
+        *data = nullptr;
         return VK_ERROR_MEMORY_MAP_FAILED;
     }
     *data = (uint8_t *)m->base + offset;
@@ -375,7 +375,7 @@ static Chunk *chunk_alloc(void)
         g_free_chunks = c->next;
     ReleaseSRWLockExclusive(&g_chunk_lock);
     if (c) {
-        c->next = NULL;
+        c->next = nullptr;
         c->memory->next_pa = 0;
         c->memory->used = 0;
     }
@@ -410,7 +410,7 @@ static void stream_release(Stream *s)
         }
     }
     ReleaseSRWLockExclusive(&g_chunk_lock);
-    s->first = s->last = NULL;
+    s->first = s->last = nullptr;
     s->read_serial = 0;
 }
 
@@ -494,7 +494,7 @@ static int cmd_spill(MvkEncoder *e, size_t n)
 MvkEncoder *mvk_cmd_begin(VkCommandBuffer buffer, uint32_t op)
 {
     if (!buffer || !buffer->recording || !buffer->stream)
-        return NULL;
+        return nullptr;
     Chunk *c = buffer->stream->last;
     size_t room = c ? MVK_STREAM_CHUNK - sizeof(MvkStreamChunk) - c->memory->used : 0;
     if (room >= 256) {
@@ -506,7 +506,7 @@ MvkEncoder *mvk_cmd_begin(VkCommandBuffer buffer, uint32_t op)
             buffer->enc = (MvkEncoder){0};
             buffer->enc.owner = buffer;
             if (!cmd_grow(&buffer->enc, 4096))
-                return NULL;
+                return nullptr;
         }
         buffer->enc = (MvkEncoder){buffer->scratch, buffer->scratch, buffer->scratch + buffer->scratch_size, 0,
                                    buffer, cmd_grow};
@@ -591,7 +591,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyCommandPool(VkDevice device, VkCommandPool p
 VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandPool(VkDevice device, VkCommandPool pool, VkCommandPoolResetFlags flags)
 {
     Pool *p = map_get(&g_pools, (uint64_t)pool);
-    for (VkCommandBuffer b = p ? p->buffers : NULL; b; b = b->pool_next) {
+    for (VkCommandBuffer b = p ? p->buffers : nullptr; b; b = b->pool_next) {
         Stream *s = stream_of(b);
         if (s)
             stream_release(s);
@@ -645,7 +645,7 @@ VKAPI_ATTR void VKAPI_CALL vkFreeCommandBuffers(VkDevice device, VkCommandPool p
     mvk_put_u64(e, (uint64_t)pool);
     uint32_t n = 0;
     for (uint32_t i = 0; i < count; i++)
-        n += buffers[i] != NULL;
+        n += buffers[i] != nullptr;
     mvk_put_u32(e, n);
     for (uint32_t i = 0; i < count; i++)
         if (buffers[i])
@@ -656,7 +656,7 @@ VKAPI_ATTR void VKAPI_CALL vkFreeCommandBuffers(VkDevice device, VkCommandPool p
         VkCommandBuffer b = buffers[i];
         if (!b)
             continue;
-        for (VkCommandBuffer *link = p ? &p->buffers : NULL; link && *link; link = &(*link)->pool_next)
+        for (VkCommandBuffer *link = p ? &p->buffers : nullptr; link && *link; link = &(*link)->pool_next)
             if (*link == b) {
                 *link = b->pool_next;
                 break;
@@ -672,11 +672,11 @@ VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer buffer, cons
         stream_release(s);
     buffer->bytes = 0;
     buffer->begin = *info;
-    buffer->begin.pNext = NULL;
-    buffer->has_inheritance = info->pInheritanceInfo != NULL;
+    buffer->begin.pNext = nullptr;
+    buffer->has_inheritance = info->pInheritanceInfo != nullptr;
     if (info->pInheritanceInfo) {
         buffer->inheritance = *info->pInheritanceInfo;
-        buffer->inheritance.pNext = NULL;
+        buffer->inheritance.pNext = nullptr;
         buffer->begin.pInheritanceInfo = &buffer->inheritance;
     }
     buffer->recording = 1;
@@ -926,8 +926,8 @@ VKAPI_ATTR void VKAPI_CALL vkGetDescriptorEXT(VkDevice device, const VkDescripto
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_GET_DESCRIPTOR);
     mvk_put_u32(e, (uint32_t)info->type);
-    const VkDescriptorImageInfo *image = NULL;
-    const VkDescriptorAddressInfoEXT *address = NULL;
+    const VkDescriptorImageInfo *image = nullptr;
+    const VkDescriptorAddressInfoEXT *address = nullptr;
     switch (info->type) {
     case VK_DESCRIPTOR_TYPE_SAMPLER:
         mvk_put_u64(e, info->data.pSampler ? (uint64_t)*info->data.pSampler : 0);

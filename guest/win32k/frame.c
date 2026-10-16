@@ -301,7 +301,7 @@ static void frame_free(void *ctx, void *p)
         ExFreePool(p);
 }
 
-static const MimeAllocator g_frame_alloc = {frame_alloc, frame_free, NULL};
+static const MimeAllocator g_frame_alloc = {frame_alloc, frame_free, nullptr};
 
 static struct {
     BOOLEAN Tried;
@@ -318,23 +318,23 @@ static PUCHAR read_whole_file(PCWSTR path, SIZE_T *size_out)
     UNICODE_STRING name;
     RtlInitUnicodeString(&name, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE h;
-    if (!NT_SUCCESS(ZwCreateFile(&h, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, NULL, 0, FILE_SHARE_READ, FILE_OPEN,
-                                 FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0)))
-        return NULL;
+    if (!NT_SUCCESS(ZwCreateFile(&h, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, nullptr, 0, FILE_SHARE_READ, FILE_OPEN,
+                                 FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, nullptr, 0)))
+        return nullptr;
     FILE_STANDARD_INFORMATION info;
-    PUCHAR data = NULL;
+    PUCHAR data = nullptr;
     if (NT_SUCCESS(ZwQueryInformationFile(h, &iosb, &info, sizeof(info), FileStandardInformation)) &&
         info.EndOfFile.QuadPart > 0 && info.EndOfFile.QuadPart < 32 * 1024 * 1024) {
         SIZE_T size = (SIZE_T)info.EndOfFile.QuadPart;
         data = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, FRAME_TAG);
-        LARGE_INTEGER off = {0};
-        if (data && (!NT_SUCCESS(ZwReadFile(h, NULL, NULL, NULL, &iosb, data, (ULONG)size, &off, NULL)) ||
+        LARGE_INTEGER off = {};
+        if (data && (!NT_SUCCESS(ZwReadFile(h, nullptr, nullptr, nullptr, &iosb, data, (ULONG)size, &off, nullptr)) ||
                      iosb.Information != size)) {
             ExFreePool(data);
-            data = NULL;
+            data = nullptr;
         }
         if (data)
             *size_out = size;
@@ -360,8 +360,8 @@ static BOOLEAN load_theme(void)
         W32Trace("win32k: cannot parse aero.msstyles\n");
         return FALSE;
     }
-    g_theme.Class = mime_msstyles_find_class(&g_theme.Theme, NULL, "DWMWindow");
-    const uint8_t *png = NULL;
+    g_theme.Class = mime_msstyles_find_class(&g_theme.Theme, nullptr, "DWMWindow");
+    const uint8_t *png = nullptr;
     uint32_t png_size = 0;
     if (g_theme.Class < 0 ||
         !mime_msstyles_get_stream(&g_theme.Theme, g_theme.Class, 0, 0, MIME_TMT_DISKSTREAM, &png, &png_size)) {
@@ -646,7 +646,7 @@ void FramePaint(WND *w)
             LONG size = MetricsGet(SM_CXSMICON, dpi);
             LONG ix = vis.left + scale(8, dpi);
             LONG iy = caption_top + (caption_bottom - caption_top - size) / 2;
-            HDC hdc = PaintGetDC(w, NULL, DCX_WINDOW);
+            HDC hdc = PaintGetDC(w, nullptr, DCX_WINDOW);
             DC *dc = DcLookup(hdc);
             if (dc) {
                 RgnCopy(&dc->VisRgn, &clip);
@@ -739,7 +739,7 @@ LRESULT FrameMouse(WND *w, UINT msg, LONG hit, POINT pt)
             w->CaptionTracking = w->CaptionPressed = 0;
             w->CaptionHot = (UCHAR)over;
             if (t && t->Capture == WndHandle(w))
-                InputSetCapture(t, NULL, 0);
+                InputSetCapture(t, nullptr, 0);
             repaint_buttons(w);
             if (over == tracked && !w->Header.Destroyed) {
                 UINT cmd = button_command(w, tracked);

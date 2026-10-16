@@ -42,37 +42,37 @@ void D12Defer(D12Device *device, VkObjectType type, UINT64 handle)
         return;
     switch (type) {
     case VK_OBJECT_TYPE_IMAGE:
-        vk->vkDestroyImage(vk->device, (VkImage)handle, NULL);
+        vk->vkDestroyImage(vk->device, (VkImage)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_IMAGE_VIEW:
-        vk->vkDestroyImageView(vk->device, (VkImageView)handle, NULL);
+        vk->vkDestroyImageView(vk->device, (VkImageView)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_BUFFER:
-        vk->vkDestroyBuffer(vk->device, (VkBuffer)handle, NULL);
+        vk->vkDestroyBuffer(vk->device, (VkBuffer)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_DEVICE_MEMORY:
-        vk->vkFreeMemory(vk->device, (VkDeviceMemory)handle, NULL);
+        vk->vkFreeMemory(vk->device, (VkDeviceMemory)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_SAMPLER:
-        vk->vkDestroySampler(vk->device, (VkSampler)handle, NULL);
+        vk->vkDestroySampler(vk->device, (VkSampler)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_PIPELINE:
-        vk->vkDestroyPipeline(vk->device, (VkPipeline)handle, NULL);
+        vk->vkDestroyPipeline(vk->device, (VkPipeline)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_QUERY_POOL:
-        vk->vkDestroyQueryPool(vk->device, (VkQueryPool)handle, NULL);
+        vk->vkDestroyQueryPool(vk->device, (VkQueryPool)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_PIPELINE_LAYOUT:
-        vk->vkDestroyPipelineLayout(vk->device, (VkPipelineLayout)handle, NULL);
+        vk->vkDestroyPipelineLayout(vk->device, (VkPipelineLayout)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT:
-        vk->vkDestroyDescriptorSetLayout(vk->device, (VkDescriptorSetLayout)handle, NULL);
+        vk->vkDestroyDescriptorSetLayout(vk->device, (VkDescriptorSetLayout)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_COMMAND_POOL:
-        vk->vkDestroyCommandPool(vk->device, (VkCommandPool)handle, NULL);
+        vk->vkDestroyCommandPool(vk->device, (VkCommandPool)handle, nullptr);
         break;
     case VK_OBJECT_TYPE_SEMAPHORE:
-        vk->vkDestroySemaphore(vk->device, (VkSemaphore)handle, NULL);
+        vk->vkDestroySemaphore(vk->device, (VkSemaphore)handle, nullptr);
         break;
     default:
         break;
@@ -161,11 +161,11 @@ static HRESULT create_vulkan_device(D12Device *device)
 {
     D12Vk *vk = &device->vk;
     UINT count = 0;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, NULL, &count, NULL);
+    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, nullptr);
     VkExtensionProperties *available = HeapAlloc(GetProcessHeap(), 0, (count + 1) * sizeof(*available));
     if (!available)
         return E_OUTOFMEMORY;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, NULL, &count, available);
+    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, available);
     static const char *const required[] = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
@@ -232,10 +232,10 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT};
     VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
-                                                            device->has_dgc ? (void *)&dgc : NULL};
+                                                            device->has_dgc ? (void *)&dgc : nullptr};
     VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT atomic64 = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT,
-        device->has_maintenance5 ? (void *)&maintenance5 : NULL};
+        device->has_maintenance5 ? (void *)&maintenance5 : nullptr};
     VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
                                                   device->has_atomic64 ? (void *)&atomic64 : atomic64.pNext};
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {
@@ -389,7 +389,7 @@ static HRESULT create_vulkan_device(D12Device *device)
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
     VkPhysicalDeviceFragmentShadingRatePropertiesKHR vrs_props = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR,
-        device->has_conservative ? (void *)&conservative : NULL};
+        device->has_conservative ? (void *)&conservative : nullptr};
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT,
         has_vrs ? (void *)&vrs_props : vrs_props.pNext};
@@ -409,7 +409,7 @@ static HRESULT create_vulkan_device(D12Device *device)
                                          device->has_transform_feedback ? (void *)&xfb : xfb.pNext};
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
     device->db = dbp;
-    device->db.pNext = NULL;
+    device->db.pNext = nullptr;
     /* direct3d aligns scratch memory to 256 bytes. */
     if (as_props.minAccelerationStructureScratchOffsetAlignment > D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT)
         device->has_rt = device->has_rt_pipeline = FALSE;
@@ -493,7 +493,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     device->has_so_queries = device->has_transform_feedback && xfb.transformFeedbackQueries;
 
     UINT families = 0;
-    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, NULL);
+    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, nullptr);
     VkQueueFamilyProperties qprops[16];
     families = D12_MIN(families, 16);
     vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, qprops);
@@ -538,7 +538,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     info.pQueueCreateInfos = &queue;
     info.enabledExtensionCount = n;
     info.ppEnabledExtensionNames = extensions;
-    if (vk->vkCreateDevice(vk->physical, &info, NULL, &vk->device) != VK_SUCCESS)
+    if (vk->vkCreateDevice(vk->physical, &info, nullptr, &vk->device) != VK_SUCCESS)
         return DXGI_ERROR_UNSUPPORTED;
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D12_VK_DEVICE_FUNCS(X)
@@ -552,7 +552,7 @@ static HRESULT create_vulkan_device(D12Device *device)
 
 static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
 {
-    IMimeDXGIAdapter *mime = NULL;
+    IMimeDXGIAdapter *mime = nullptr;
     if (FAILED(adapter->lpVtbl->QueryInterface(adapter, &IID_IMimeDXGIAdapter, (void **)&mime)))
         return E_INVALIDARG;
     MIME_DXGI_VULKAN v;
@@ -587,12 +587,12 @@ static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-    if (vk->vkCreateSemaphore(vk->device, &sem, NULL, &device->init_timeline) != VK_SUCCESS)
+    if (vk->vkCreateSemaphore(vk->device, &sem, nullptr, &device->init_timeline) != VK_SUCCESS)
         return E_FAIL;
     VkCommandPoolCreateInfo pool = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool.queueFamilyIndex = device->family;
-    if (vk->vkCreateCommandPool(vk->device, &pool, NULL, &device->init_pool) != VK_SUCCESS)
+    if (vk->vkCreateCommandPool(vk->device, &pool, nullptr, &device->init_pool) != VK_SUCCESS)
         return E_FAIL;
     VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     alloc.commandPool = device->init_pool;
@@ -609,14 +609,14 @@ static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
     if (FAILED(hr = D12DescriptorsInit(device)))
         return hr;
     VkPipelineCacheCreateInfo cache = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
-    if (vk->vkCreatePipelineCache(vk->device, &cache, NULL, &device->pipeline_cache) != VK_SUCCESS)
+    if (vk->vkCreatePipelineCache(vk->device, &cache, nullptr, &device->pipeline_cache) != VK_SUCCESS)
         return E_FAIL;
     if (device->has_rt_pipeline && FAILED(D12RaysInit(device)))
         device->has_rt_pipeline = FALSE;
-    VkSemaphoreTypeCreateInfo timeline = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL,
+    VkSemaphoreTypeCreateInfo timeline = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr,
                                           VK_SEMAPHORE_TYPE_TIMELINE, 0};
     VkSemaphoreCreateInfo wake = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timeline};
-    return vk->vkCreateSemaphore(vk->device, &wake, NULL, &device->waiter_wake) == VK_SUCCESS ? S_OK : E_FAIL;
+    return vk->vkCreateSemaphore(vk->device, &wake, nullptr, &device->waiter_wake) == VK_SUCCESS ? S_OK : E_FAIL;
 }
 
 void D12FenceWaiterStop(D12Device *device);
@@ -631,11 +631,11 @@ static void destroy_device(D12Device *device)
         D12RaysDestroy(device);
         D12DescriptorsDestroy(device);
         D12MemoryDestroy(device);
-        vk->vkDestroyPipelineCache(vk->device, device->pipeline_cache, NULL);
-        vk->vkDestroyCommandPool(vk->device, device->init_pool, NULL);
-        vk->vkDestroySemaphore(vk->device, device->init_timeline, NULL);
-        vk->vkDestroySemaphore(vk->device, device->waiter_wake, NULL);
-        vk->vkDestroyDevice(vk->device, NULL);
+        vk->vkDestroyPipelineCache(vk->device, device->pipeline_cache, nullptr);
+        vk->vkDestroyCommandPool(vk->device, device->init_pool, nullptr);
+        vk->vkDestroySemaphore(vk->device, device->init_timeline, nullptr);
+        vk->vkDestroySemaphore(vk->device, device->waiter_wake, nullptr);
+        vk->vkDestroyDevice(vk->device, nullptr);
     }
     if (device->adapter)
         device->adapter->lpVtbl->Release(device->adapter);
@@ -987,7 +987,7 @@ static HRESULT STDMETHODCALLTYPE device_query(ID3D12Device14 *iface, REFIID riid
             *out = iface;
             return S_OK;
         }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -1043,12 +1043,12 @@ static HRESULT STDMETHODCALLTYPE device_create_command_queue(ID3D12Device14 *ifa
                                                              REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12Queue *queue = NULL;
+    D12Queue *queue = nullptr;
     HRESULT hr = D12CreateQueue(impl(iface), desc, &queue);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&queue->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&queue->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_command_queue1(ID3D12Device14 *iface,
@@ -1062,10 +1062,10 @@ static HRESULT STDMETHODCALLTYPE device_create_command_allocator(ID3D12Device14 
                                                                  REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
-    D12CommandAllocator *allocator = NULL;
+        *out = nullptr;
+    D12CommandAllocator *allocator = nullptr;
     HRESULT hr = D12CreateCommandAllocator(impl(iface), type, &allocator);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&allocator->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&allocator->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_graphics_pipeline_state(ID3D12Device14 *iface,
@@ -1073,12 +1073,12 @@ static HRESULT STDMETHODCALLTYPE device_create_graphics_pipeline_state(ID3D12Dev
                                                                        REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12PipelineState *state = NULL;
+    D12PipelineState *state = nullptr;
     HRESULT hr = D12CreateGraphicsPipeline(impl(iface), desc, &state);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&state->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&state->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_compute_pipeline_state(ID3D12Device14 *iface,
@@ -1086,12 +1086,12 @@ static HRESULT STDMETHODCALLTYPE device_create_compute_pipeline_state(ID3D12Devi
                                                                       REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12PipelineState *state = NULL;
+    D12PipelineState *state = nullptr;
     HRESULT hr = D12CreateComputePipeline(impl(iface), desc, &state);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&state->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&state->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_pipeline_state(ID3D12Device14 *iface,
@@ -1099,12 +1099,12 @@ static HRESULT STDMETHODCALLTYPE device_create_pipeline_state(ID3D12Device14 *if
                                                               REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12PipelineState *state = NULL;
+    D12PipelineState *state = nullptr;
     HRESULT hr = D12CreatePipelineFromStream(impl(iface), desc, &state);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&state->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&state->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_command_list(ID3D12Device14 *iface, UINT node_mask,
@@ -1113,12 +1113,12 @@ static HRESULT STDMETHODCALLTYPE device_create_command_list(ID3D12Device14 *ifac
                                                             ID3D12PipelineState *initial, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!allocator)
         return E_INVALIDARG;
-    D12CommandList *list = NULL;
+    D12CommandList *list = nullptr;
     HRESULT hr = D12CreateCommandList(impl(iface), type, D12AllocatorFrom(allocator), D12PipelineFrom(initial), &list);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&list->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&list->iface : nullptr, riid, out);
 }
 
 /* a list made closed, without an allocator until its first Reset. */
@@ -1127,10 +1127,10 @@ static HRESULT STDMETHODCALLTYPE device_create_command_list1(ID3D12Device14 *ifa
                                                              D3D12_COMMAND_LIST_FLAGS flags, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
-    D12CommandList *list = NULL;
-    HRESULT hr = D12CreateCommandList(impl(iface), type, NULL, NULL, &list);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&list->iface : NULL, riid, out);
+        *out = nullptr;
+    D12CommandList *list = nullptr;
+    HRESULT hr = D12CreateCommandList(impl(iface), type, nullptr, nullptr, &list);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&list->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_descriptor_heap(ID3D12Device14 *iface,
@@ -1138,12 +1138,12 @@ static HRESULT STDMETHODCALLTYPE device_create_descriptor_heap(ID3D12Device14 *i
                                                                void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12DescriptorHeap *heap = NULL;
+    D12DescriptorHeap *heap = nullptr;
     HRESULT hr = D12CreateDescriptorHeap(impl(iface), desc, &heap);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&heap->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&heap->iface : nullptr, riid, out);
 }
 
 static UINT STDMETHODCALLTYPE device_get_descriptor_handle_increment_size(ID3D12Device14 *iface,
@@ -1156,10 +1156,10 @@ static HRESULT STDMETHODCALLTYPE device_create_root_signature(ID3D12Device14 *if
                                                               SIZE_T size, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
-    D12RootSignature *root = NULL;
+        *out = nullptr;
+    D12RootSignature *root = nullptr;
     HRESULT hr = D12CreateRootSignature(impl(iface), blob, size, &root);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&root->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&root->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_root_signature_from_library(ID3D12Device14 *iface, UINT node_mask,
@@ -1167,7 +1167,7 @@ static HRESULT STDMETHODCALLTYPE device_create_root_signature_from_library(ID3D1
                                                                            LPCWSTR subobject, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1236,7 +1236,7 @@ static void STDMETHODCALLTYPE device_create_sampler_feedback_uav(ID3D12Device14 
         desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
         desc.Texture2DArray.ArraySize = r->layers;
     }
-    D12CreateUav(impl(iface), r, NULL, &desc, handle);
+    D12CreateUav(impl(iface), r, nullptr, &desc, handle);
 }
 
 /* copies ranges of descriptors, each source and destination range cut where the other ends. */
@@ -1281,7 +1281,7 @@ static void STDMETHODCALLTYPE device_copy_descriptors_simple(ID3D12Device14 *ifa
 
 static D3D12_RESOURCE_DESC1 desc1_of(const D3D12_RESOURCE_DESC *desc)
 {
-    D3D12_RESOURCE_DESC1 d1 = {0};
+    D3D12_RESOURCE_DESC1 d1 = {};
     memcpy(&d1, desc, sizeof(*desc));
     return d1;
 }
@@ -1315,7 +1315,7 @@ static D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE device_get_resource_all
     ID3D12Device14 *iface, D3D12_RESOURCE_ALLOCATION_INFO *ret, UINT visible_mask, UINT count,
     const D3D12_RESOURCE_DESC *descs)
 {
-    *ret = allocation_info(impl(iface), count, descs, NULL, NULL);
+    *ret = allocation_info(impl(iface), count, descs, nullptr, nullptr);
     return ret;
 }
 
@@ -1323,7 +1323,7 @@ static D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE device_get_resource_all
     ID3D12Device14 *iface, D3D12_RESOURCE_ALLOCATION_INFO *ret, UINT visible_mask, UINT count,
     const D3D12_RESOURCE_DESC *descs, D3D12_RESOURCE_ALLOCATION_INFO1 *infos)
 {
-    *ret = allocation_info(impl(iface), count, descs, NULL, infos);
+    *ret = allocation_info(impl(iface), count, descs, nullptr, infos);
     return ret;
 }
 
@@ -1331,7 +1331,7 @@ static D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE device_get_resource_all
     ID3D12Device14 *iface, D3D12_RESOURCE_ALLOCATION_INFO *ret, UINT visible_mask, UINT count,
     const D3D12_RESOURCE_DESC1 *descs, D3D12_RESOURCE_ALLOCATION_INFO1 *infos)
 {
-    *ret = allocation_info(impl(iface), count, NULL, descs, infos);
+    *ret = allocation_info(impl(iface), count, nullptr, descs, infos);
     return ret;
 }
 
@@ -1340,7 +1340,7 @@ static D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE device_get_resource_all
     const D3D12_RESOURCE_DESC1 *descs, const UINT32 *castable_counts, const DXGI_FORMAT *const *castable,
     D3D12_RESOURCE_ALLOCATION_INFO1 *infos)
 {
-    *ret = allocation_info(impl(iface), count, NULL, descs, infos);
+    *ret = allocation_info(impl(iface), count, nullptr, descs, infos);
     return ret;
 }
 
@@ -1378,12 +1378,12 @@ static HRESULT create_resource(D12Device *device, const D3D12_HEAP_PROPERTIES *p
                                D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12Resource *resource = NULL;
+    D12Resource *resource = nullptr;
     HRESULT hr = D12CreateResource(device, props, flags, desc, heap, offset, state, clear, &resource);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&resource->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&resource->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_committed_resource(ID3D12Device14 *iface,
@@ -1396,11 +1396,11 @@ static HRESULT STDMETHODCALLTYPE device_create_committed_resource(ID3D12Device14
 {
     if (!desc || !props) {
         if (out)
-            *out = NULL;
+            *out = nullptr;
         return E_INVALIDARG;
     }
     D3D12_RESOURCE_DESC1 d1 = desc1_of(desc);
-    return create_resource(impl(iface), props, flags, &d1, NULL, 0, state, clear, riid, out);
+    return create_resource(impl(iface), props, flags, &d1, nullptr, 0, state, clear, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_committed_resource1(ID3D12Device14 *iface,
@@ -1424,10 +1424,10 @@ static HRESULT STDMETHODCALLTYPE device_create_committed_resource2(ID3D12Device1
 {
     if (!props) {
         if (out)
-            *out = NULL;
+            *out = nullptr;
         return E_INVALIDARG;
     }
-    return create_resource(impl(iface), props, flags, desc, NULL, 0, state, clear, riid, out);
+    return create_resource(impl(iface), props, flags, desc, nullptr, 0, state, clear, riid, out);
 }
 
 /* enhanced barriers' initial layout: every image lives in the general layout, so it says nothing. */
@@ -1438,22 +1438,22 @@ static HRESULT STDMETHODCALLTYPE device_create_committed_resource3(
 {
     if (!props) {
         if (out)
-            *out = NULL;
+            *out = nullptr;
         return E_INVALIDARG;
     }
-    return create_resource(impl(iface), props, flags, desc, NULL, 0, D3D12_RESOURCE_STATE_COMMON, clear, riid, out);
+    return create_resource(impl(iface), props, flags, desc, nullptr, 0, D3D12_RESOURCE_STATE_COMMON, clear, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_heap(ID3D12Device14 *iface, const D3D12_HEAP_DESC *desc, REFIID riid,
                                                     void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12Heap *heap = NULL;
+    D12Heap *heap = nullptr;
     HRESULT hr = D12CreateHeap(impl(iface), desc, &heap);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&heap->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&heap->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_heap1(ID3D12Device14 *iface, const D3D12_HEAP_DESC *desc, void *session,
@@ -1469,7 +1469,7 @@ static HRESULT STDMETHODCALLTYPE device_create_placed_resource(ID3D12Device14 *i
 {
     if (!desc || !heap) {
         if (out)
-            *out = NULL;
+            *out = nullptr;
         return E_INVALIDARG;
     }
     D3D12_RESOURCE_DESC1 d1 = desc1_of(desc);
@@ -1485,7 +1485,7 @@ static HRESULT STDMETHODCALLTYPE device_create_placed_resource1(ID3D12Device14 *
 {
     if (!desc || !heap) {
         if (out)
-            *out = NULL;
+            *out = nullptr;
         return E_INVALIDARG;
     }
     D12Heap *h = D12HeapFrom(heap);
@@ -1508,13 +1508,13 @@ static HRESULT STDMETHODCALLTYPE device_create_reserved_resource(ID3D12Device14 
                                                                  void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
     D3D12_RESOURCE_DESC1 d1 = desc1_of(desc);
-    D12Resource *resource = NULL;
+    D12Resource *resource = nullptr;
     HRESULT hr = D12CreateReservedResource(impl(iface), &d1, state, &resource);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&resource->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&resource->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_reserved_resource1(ID3D12Device14 *iface,
@@ -1546,7 +1546,7 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface
                                                            void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1580,10 +1580,10 @@ static HRESULT STDMETHODCALLTYPE device_create_fence(ID3D12Device14 *iface, UINT
                                                      REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
-    D12Fence *fence = NULL;
+        *out = nullptr;
+    D12Fence *fence = nullptr;
     HRESULT hr = D12CreateFence(impl(iface), initial, flags, &fence);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&fence->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&fence->iface : nullptr, riid, out);
 }
 
 HRESULT D12SetEventOnFences(D12Device *device, ID3D12Fence *const *fences, const UINT64 *values, UINT count,
@@ -1628,12 +1628,12 @@ static HRESULT STDMETHODCALLTYPE device_create_query_heap(ID3D12Device14 *iface,
                                                           REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12QueryHeap *heap = NULL;
+    D12QueryHeap *heap = nullptr;
     HRESULT hr = D12CreateQueryHeap(impl(iface), desc, &heap);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&heap->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&heap->iface : nullptr, riid, out);
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_stable_power_state(ID3D12Device14 *iface, BOOL enable) { return S_OK; }
@@ -1643,12 +1643,12 @@ static HRESULT STDMETHODCALLTYPE device_create_command_signature(ID3D12Device14 
                                                                  ID3D12RootSignature *root, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     if (!desc)
         return E_INVALIDARG;
-    D12CommandSignature *signature = NULL;
+    D12CommandSignature *signature = nullptr;
     HRESULT hr = D12CreateCommandSignature(impl(iface), desc, D12RootSignatureFrom(root), &signature);
-    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&signature->iface : NULL, riid, out);
+    return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&signature->iface : nullptr, riid, out);
 }
 
 static void STDMETHODCALLTYPE device_get_resource_tiling(ID3D12Device14 *iface, ID3D12Resource *resource,
@@ -1682,7 +1682,7 @@ static HRESULT STDMETHODCALLTYPE device_create_pipeline_library(ID3D12Device14 *
                                                                 REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return DXGI_ERROR_UNSUPPORTED;
 }
 
@@ -1690,7 +1690,7 @@ static HRESULT STDMETHODCALLTYPE device_open_existing_heap_from_address(ID3D12De
                                                                         REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1698,7 +1698,7 @@ static HRESULT STDMETHODCALLTYPE device_open_existing_heap_from_address1(ID3D12D
                                                                          SIZE_T size, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1706,7 +1706,7 @@ static HRESULT STDMETHODCALLTYPE device_open_existing_heap_from_file_mapping(ID3
                                                                              REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1714,7 +1714,7 @@ static HRESULT STDMETHODCALLTYPE device_create_protected_session(ID3D12Device14 
                                                                  void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1722,7 +1722,7 @@ static HRESULT STDMETHODCALLTYPE device_create_lifetime_tracker(ID3D12Device14 *
                                                                 void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1745,7 +1745,7 @@ static HRESULT STDMETHODCALLTYPE device_create_meta_command(ID3D12Device14 *ifac
                                                             const void *data, SIZE_T size, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return E_INVALIDARG;
 }
 
@@ -1754,9 +1754,9 @@ static HRESULT STDMETHODCALLTYPE device_create_state_object(ID3D12Device14 *ifac
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     D12StateObject *so;
-    HRESULT hr = D12CreateStateObject(impl(iface), desc, NULL, &so);
+    HRESULT hr = D12CreateStateObject(impl(iface), desc, nullptr, &so);
     if (FAILED(hr))
         return hr;
     ID3D12StateObject *object = (ID3D12StateObject *)so;
@@ -1793,7 +1793,7 @@ static HRESULT STDMETHODCALLTYPE device_add_to_state_object(ID3D12Device14 *ifac
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     D12StateObject *parent = D12StateObjectFrom(state), *so;
     if (!parent)
         return E_INVALIDARG;
@@ -1810,7 +1810,7 @@ static HRESULT STDMETHODCALLTYPE device_create_shader_cache_session(ID3D12Device
                                                                     REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
 }
 

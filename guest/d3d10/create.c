@@ -63,10 +63,10 @@ HRESULT D3d10CreateDevice11(IDXGIAdapter *adapter, D3D_DRIVER_TYPE type, HMODULE
                                      UINT, const DXGI_SWAP_CHAIN_DESC *, IDXGISwapChain **, ID3D11Device **,
                                      D3D_FEATURE_LEVEL *, ID3D11DeviceContext **);
     HMODULE d3d11 = LoadLibraryW(L"d3d11.dll");
-    Create create = d3d11 ? (Create)(void *)GetProcAddress(d3d11, "D3D11CreateDeviceAndSwapChain") : NULL;
+    Create create = d3d11 ? (Create)(void *)GetProcAddress(d3d11, "D3D11CreateDeviceAndSwapChain") : nullptr;
     if (!create)
         return E_FAIL;
-    return create(adapter, type, software, flags, &level, 1, D3D11_SDK_VERSION, desc, swapchain, device, NULL, NULL);
+    return create(adapter, type, software, flags, &level, 1, D3D11_SDK_VERSION, desc, swapchain, device, nullptr, nullptr);
 }
 
 /* unless single threaded, the device is protected from several threads at once. */

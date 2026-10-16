@@ -82,7 +82,7 @@ static BOOL number_value(PCWSTR text, int *number)
 
 static MSI_CONDITION_VALUE condition_value(MSI_CONDITION_PARSER *parser)
 {
-    MSI_CONDITION_VALUE value = {0};
+    MSI_CONDITION_VALUE value = {};
     if (parser->Kind == COND_NUMBER) {
         value.Integer = TRUE;
         if (!number_value(parser->Token, &value.Number))
@@ -106,7 +106,7 @@ static MSI_CONDITION_VALUE condition_value(MSI_CONDITION_PARSER *parser)
         } else if (prefix == L'$' || prefix == L'?')
             parser->Error = TRUE;
         else if (prefix == L'%') {
-            DWORD length = GetEnvironmentVariableW(parser->Token + 1, NULL, 0);
+            DWORD length = GetEnvironmentVariableW(parser->Token + 1, nullptr, 0);
             if (length) {
                 value.Text = MimeMsiAllocate((SIZE_T)length * sizeof(WCHAR));
                 if (value.Text && GetEnvironmentVariableW(parser->Token + 1, value.Text, length) >= length)

@@ -24,7 +24,7 @@ static void add_bind(const D12Resource *r, Binds *b, UINT tile, const D12Tile *t
     VkDeviceMemory memory = to->heap ? to->heap->memory : VK_NULL_HANDLE;
     VkDeviceSize offset = to->heap ? (VkDeviceSize)to->tile * TILE_SIZE : 0;
     if (place.packed) {
-        VkSparseMemoryBind *last = b->range_count ? &b->ranges[b->range_count - 1] : NULL;
+        VkSparseMemoryBind *last = b->range_count ? &b->ranges[b->range_count - 1] : nullptr;
         /* tiles next to each other, mapping memory next to each other or none, are one range. */
         if (last && last->resourceOffset + last->size == place.opaque && last->memory == memory &&
             (!memory || last->memoryOffset + last->size == offset)) {
@@ -45,7 +45,7 @@ static void bind_tiles(D12Queue *queue, D12Resource *r, const UINT *tiles, const
     D12Device *device = queue->child.device;
     if (!count)
         return;
-    Binds b = {0};
+    Binds b = {};
     b.ranges = HeapAlloc(GetProcessHeap(), 0, count * sizeof(*b.ranges));
     b.boxes = HeapAlloc(GetProcessHeap(), 0, count * sizeof(*b.boxes));
     if (!b.ranges || !b.boxes) {
@@ -118,8 +118,8 @@ void D12UpdateTileMappings(D12Queue *queue, D12Resource *r, UINT region_count,
     UINT n = 0;
     for (UINT i = 0; i < region_count; i++) {
         D3D12_TILE_REGION_SIZE whole = {r->tile_count};
-        const D3D12_TILE_REGION_SIZE *size = sizes ? &sizes[i] : !starts && region_count == 1 ? &whole : NULL;
-        n += D12RegionTiles(r, starts ? &starts[i] : NULL, size, tiles + n, total - n);
+        const D3D12_TILE_REGION_SIZE *size = sizes ? &sizes[i] : !starts && region_count == 1 ? &whole : nullptr;
+        n += D12RegionTiles(r, starts ? &starts[i] : nullptr, size, tiles + n, total - n);
     }
     UINT at = 0, count = 0;
     for (UINT range = 0; range < range_count && at < n; range++) {
@@ -129,11 +129,11 @@ void D12UpdateTileMappings(D12Queue *queue, D12Resource *r, UINT region_count,
         for (UINT k = 0; k < length && at < n; k++, at++) {
             if (flag & D3D12_TILE_RANGE_FLAG_SKIP)
                 continue;
-            D12Tile tile = {NULL, 0};
+            D12Tile tile = {nullptr, 0};
             if (!(flag & D3D12_TILE_RANGE_FLAG_NULL) && heap)
                 tile = (D12Tile){heap, start + (flag & D3D12_TILE_RANGE_FLAG_REUSE_SINGLE_TILE ? 0 : k)};
             if (tile.heap && (UINT64)(tile.tile + 1) * TILE_SIZE > tile.heap->desc.SizeInBytes)
-                tile.heap = NULL;
+                tile.heap = nullptr;
             mapped[count] = tiles[at];
             to[count++] = tile;
         }

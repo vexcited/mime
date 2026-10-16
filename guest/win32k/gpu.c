@@ -54,7 +54,7 @@ static NTSTATUS alloc_block(GPU_BLOCK *b, SIZE_T size)
 static W32GPU *process_gpu(void)
 {
     W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
-    return p ? p->Gpu : NULL;
+    return p ? p->Gpu : nullptr;
 }
 
 NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size)
@@ -62,7 +62,7 @@ NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size)
     NTSTATUS status = STATUS_SUCCESS;
     UserEnter();
     W32PROCESS *p = W32GetProcess();
-    W32GPU *g = p ? p->Gpu : NULL;
+    W32GPU *g = p ? p->Gpu : nullptr;
     if (p && !g) {
         g = W32Alloc(sizeof(W32GPU));
         status = g ? alloc_block(&g->Blocks[0], MIME_GPU_CHANNEL_SIZE) : STATUS_NO_MEMORY;
@@ -79,12 +79,12 @@ NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size)
         } else if (g) {
             free_block(&g->Blocks[0]);
             W32Free(g);
-            g = NULL;
+            g = nullptr;
         }
     } else if (!p) {
         status = STATUS_NO_MEMORY;
     }
-    PVOID user = g ? g->Blocks[0].User : NULL;
+    PVOID user = g ? g->Blocks[0].User : nullptr;
     UserLeave();
     if (!NT_SUCCESS(status))
         return status;
@@ -108,11 +108,11 @@ NTSTATUS NTAPI NtGdiMimeGpuAddBlock(ULONG size, PVOID *base, PULONG index)
     if (NT_SUCCESS(status))
         status = alloc_block(&g->Blocks[i], size);
     if (NT_SUCCESS(status) &&
-        HalMimeHypercall(MIME_HC_GPU_BLOCK, g->Channel, i, g->Blocks[i].Pa, size, 0, 0, NULL) != MIME_HC_STATUS_OK) {
+        HalMimeHypercall(MIME_HC_GPU_BLOCK, g->Channel, i, g->Blocks[i].Pa, size, 0, 0, nullptr) != MIME_HC_STATUS_OK) {
         free_block(&g->Blocks[i]);
         status = STATUS_INSUFFICIENT_RESOURCES;
     }
-    PVOID user = NULL;
+    PVOID user = nullptr;
     if (NT_SUCCESS(status)) {
         user = g->Blocks[i].User;
         g->BlockCount++;
@@ -130,7 +130,7 @@ NTSTATUS NTAPI NtGdiMimeGpuKick(void)
     W32GPU *g = process_gpu();
     if (!g)
         return STATUS_INVALID_DEVICE_STATE;
-    HalMimeHypercall(MIME_HC_GPU_KICK, g->Channel, 0, 0, 0, 0, 0, NULL);
+    HalMimeHypercall(MIME_HC_GPU_KICK, g->Channel, 0, 0, 0, 0, 0, nullptr);
     return STATUS_SUCCESS;
 }
 
@@ -172,10 +172,10 @@ NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
 /* the host window and the part of its surface a dc's window covers, nothing while it is hidden. */
 BOOL NTAPI NtGdiMimeGpuGetSurface(HDC hdc, MIME_GPU_SURFACE *user_surface)
 {
-    MIME_GPU_SURFACE s = {0};
+    MIME_GPU_SURFACE s = {};
     UserEnter();
     DC *dc = DcLookup(hdc);
-    WND *w = dc ? dc->Window : NULL;
+    WND *w = dc ? dc->Window : nullptr;
     if (w) {
         WND *top = w;
         while (top && !(top->Flags & WNDF_HOST_WINDOW))
@@ -203,9 +203,9 @@ void GpuFreeProcess(W32PROCESS *p)
     W32GPU *g = p->Gpu;
     if (!g)
         return;
-    HalMimeHypercall(MIME_HC_GPU_CLOSE, g->Channel, 0, 0, 0, 0, 0, NULL);
+    HalMimeHypercall(MIME_HC_GPU_CLOSE, g->Channel, 0, 0, 0, 0, 0, nullptr);
     for (ULONG i = 0; i < g->BlockCount; i++)
         free_block(&g->Blocks[i]);
-    p->Gpu = NULL;
+    p->Gpu = nullptr;
     W32Free(g);
 }

@@ -154,7 +154,7 @@ static DECLSPEC_NORETURN void mx_fatal(NTSTATUS status, const char *what)
 
 void *x86_alloc(size_t size)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T n = size;
     if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)))
         mx_fatal(STATUS_NO_MEMORY, "out of memory");
@@ -448,7 +448,7 @@ static void env_code_seen(X86Cpu *c, uint64_t address)
             return;
     MEMORY_BASIC_INFORMATION info;
     if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)address, MemoryBasicInformation, &info,
-                                         sizeof(info), NULL))) {
+                                         sizeof(info), nullptr))) {
         g_code_overflow = TRUE;
         return;
     }
@@ -480,13 +480,13 @@ static void allocation_range(ULONG64 base, ULONG64 *start, ULONG64 *end)
     MEMORY_BASIC_INFORMATION info;
     *start = *end = base;
     if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)base, MemoryBasicInformation, &info, sizeof(info),
-                                         NULL)))
+                                         nullptr)))
         return;
     ULONG64 allocation = (ULONG64)info.AllocationBase;
     *start = allocation ? allocation : (ULONG64)info.BaseAddress;
     *end = (ULONG64)info.BaseAddress + info.RegionSize;
     while (NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)*end, MemoryBasicInformation, &info,
-                                           sizeof(info), NULL)) &&
+                                           sizeof(info), nullptr)) &&
            (ULONG64)info.AllocationBase == allocation && allocation && info.RegionSize)
         *end = (ULONG64)info.BaseAddress + info.RegionSize;
 }
@@ -512,7 +512,7 @@ ULONG64 MxCallService(ULONG number, const ULONG64 *a)
 
 static NTSTATUS other_cpu(HANDLE handle, BOOLEAN setting, X86Cpu **out)
 {
-    ARM64_NT_CONTEXT native = {0};
+    ARM64_NT_CONTEXT native = {};
     native.ContextFlags = CONTEXT_ARM64_CONTROL;
     NTSTATUS status;
     if (setting) {
@@ -524,7 +524,7 @@ static NTSTATUS other_cpu(HANDLE handle, BOOLEAN setting, X86Cpu **out)
     if (!NT_SUCCESS(status))
         return status;
     THREAD_BASIC_INFORMATION info;
-    status = NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), NULL);
+    status = NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status))
         return status;
     if (info.ClientId.UniqueProcess != NtCurrentTeb()->ClientId.UniqueProcess || !info.TebBaseAddress)
@@ -582,21 +582,21 @@ static NTSTATUS native_load(ULONG table, PCWSTR file_name, const char *export_na
     UNICODE_STRING path;
     RtlInitUnicodeString(&path, buffer);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE file, section;
     NTSTATUS status = NtOpenFile(&file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ,
                                  FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
     if (!NT_SUCCESS(status))
         return status;
-    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, NULL, NULL,
+    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
                              PAGE_EXECUTE_READ, SEC_IMAGE, file);
     NtClose(file);
     if (!NT_SUCCESS(status))
         return status;
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T size = 0;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, NULL, &size, ViewShare, 0,
+    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0,
                                 PAGE_EXECUTE_WRITECOPY);
     NtClose(section);
     if (!NT_SUCCESS(status))
@@ -678,11 +678,11 @@ static void env_syscall(X86Cpu *c)
             for (ULONG p = ctx.Esp & ~3u, n = 0; n < 96; p += 4, n++) {
                 MEMORY_BASIC_INFORMATION info;
                 if (NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)(ULONG_PTR)p, MemoryBasicInformation, &info,
-                                         sizeof(info), NULL) || info.State != MEM_COMMIT)
+                                         sizeof(info), nullptr) || info.State != MEM_COMMIT)
                     break;
                 ULONG v = *(const ULONG *)(ULONG_PTR)p;
                 if (v > 0x10000 && !NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)(ULONG_PTR)v,
-                                                         MemoryBasicInformation, &info, sizeof(info), NULL) &&
+                                                         MemoryBasicInformation, &info, sizeof(info), nullptr) &&
                     info.Type == MEM_IMAGE && (info.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)))
                     mx_print("  [esp+%x] %08x", p - ctx.Esp, v);
             }
@@ -861,7 +861,7 @@ static PVOID image_export(PVOID base, const char *name)
         ((PIMAGE_NT_HEADERS32)nt)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT] :
         nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
-        return NULL;
+        return nullptr;
     PIMAGE_EXPORT_DIRECTORY exp = (PIMAGE_EXPORT_DIRECTORY)((PUCHAR)base + dir.VirtualAddress);
     PULONG names = (PULONG)((PUCHAR)base + exp->AddressOfNames);
     PUSHORT ordinals = (PUSHORT)((PUCHAR)base + exp->AddressOfNameOrdinals);
@@ -869,7 +869,7 @@ static PVOID image_export(PVOID base, const char *name)
     for (ULONG i = 0; i < exp->NumberOfNames; i++)
         if (!strcmp((const char *)base + names[i], name))
             return (PUCHAR)base + functions[ordinals[i]];
-    return NULL;
+    return nullptr;
 }
 
 /* applies the base relocations of an image that did not load at its preferred base. */
@@ -904,21 +904,21 @@ static void map_x64_ntdll(void)
     UNICODE_STRING path;
     RtlInitUnicodeString(&path, g_guest.is32 ? L"\\SystemRoot\\SysWOW64\\ntdll.dll" : L"\\SystemRoot\\SysX64\\ntdll.dll");
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE file, section;
     NTSTATUS status = NtOpenFile(&file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ,
                                  FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
     if (!NT_SUCCESS(status))
         mx_fatal(status, "cannot open the x64 ntdll.dll");
-    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, NULL, NULL,
+    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
                              PAGE_EXECUTE_READ, SEC_IMAGE, file);
     NtClose(file);
     if (!NT_SUCCESS(status))
         mx_fatal(status, "invalid x64 ntdll.dll");
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T size = 0;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, NULL, &size, ViewShare, 0,
+    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0,
                                 PAGE_EXECUTE_WRITECOPY);
     NtClose(section);
     if (status == STATUS_IMAGE_NOT_AT_BASE && !g_guest.is32)
@@ -1060,7 +1060,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserExceptionDispatcher(EXCEPTION_RECORD *rec
     MX_FRAME *f = t->frame;
     EXCEPTION_RECORD x64;
     memcpy(&x64, record, sizeof(x64));
-    x64.ExceptionRecord = NULL;
+    x64.ExceptionRecord = nullptr;
     /* the faulting instruction runs again if the program resumes. */
     x86_jit_fault(&f->cpu, context->Pc);
     f->cpu.rip = f->cpu.insn_rip;
@@ -1081,7 +1081,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserCallbackDispatcher(ULONG api, PVOID argum
         MX_CALLBACK32 callback;
         ULONG sp = (ULONG)c->r[X86_RSP];
         if (!Mx32MarshalCallback(&sp, api, arguments, length, &callback))
-            NtCallbackReturn(NULL, 0, STATUS_NOT_SUPPORTED);
+            NtCallbackReturn(nullptr, 0, STATUS_NOT_SUPPORTED);
         c->r[X86_RSP] = sp;
         ULONG *stack = (void *)(ULONG_PTR)c->r[X86_RSP];
         *--stack = callback.Length;
@@ -1090,7 +1090,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserCallbackDispatcher(ULONG api, PVOID argum
         *--stack = 0xFFFF0000u;
         c->r[X86_RSP] = (ULONG_PTR)stack;
         c->rip = g_guest.callback_dispatcher;
-        frame.CallbackResult = NULL;
+        frame.CallbackResult = nullptr;
         frame.CallbackLength = 0;
         frame.CallbackStatus = STATUS_UNSUCCESSFUL;
         emulate(t, &frame);
@@ -1105,7 +1105,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserCallbackDispatcher(ULONG api, PVOID argum
     c->rip = g_guest.callback_dispatcher;
     emulate(t, &frame);
     /* the x64 dispatcher returns through NtCallbackReturn and never comes back. */
-    NtCallbackReturn(NULL, 0, STATUS_UNSUCCESSFUL);
+    NtCallbackReturn(nullptr, 0, STATUS_UNSUCCESSFUL);
     mx_fatal(STATUS_UNSUCCESSFUL, "callback returned");
 }
 

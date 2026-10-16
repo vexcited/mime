@@ -83,7 +83,7 @@ void MsvcrtFreeFd(int fd)
         return;
     if (MsvcrtAppType() == _CONSOLE_APP && fd <= 2) {
         static const DWORD std[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
-        SetStdHandle(std[fd], NULL);
+        SetStdHandle(std[fd], nullptr);
     }
     io->osfhnd = -1;
     io->osfile = 0;
@@ -189,7 +189,7 @@ extern int _fmode;
 int MsvcrtOpenW(const wchar_t *name, int oflag, int shflag, int pmode, int secure)
 {
     DWORD access, share, disposition, attributes = FILE_ATTRIBUTE_NORMAL;
-    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, !(oflag & _O_NOINHERIT)};
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, !(oflag & _O_NOINHERIT)};
 
     switch (oflag & (_O_RDONLY | _O_WRONLY | _O_RDWR)) {
     case _O_RDONLY:
@@ -265,11 +265,11 @@ int MsvcrtOpenW(const wchar_t *name, int oflag, int shflag, int pmode, int secur
     int fd = MsvcrtAllocFd();
     if (fd < 0)
         return -1;
-    HANDLE h = CreateFileW(name, access, share, &sa, disposition, attributes, NULL);
+    HANDLE h = CreateFileW(name, access, share, &sa, disposition, attributes, nullptr);
     if (h == INVALID_HANDLE_VALUE && (access & (GENERIC_READ | GENERIC_WRITE)) == (GENERIC_READ | GENERIC_WRITE) &&
         (oflag & _O_WRONLY)) {
         access &= ~GENERIC_READ;
-        h = CreateFileW(name, access, share, &sa, disposition, attributes, NULL);
+        h = CreateFileW(name, access, share, &sa, disposition, attributes, nullptr);
     }
     if (h == INVALID_HANDLE_VALUE) {
         MsvcrtFd(fd)->osfile = 0;
@@ -308,29 +308,29 @@ int MsvcrtOpenW(const wchar_t *name, int oflag, int shflag, int pmode, int secur
 
     if ((osfile & (FTEXT | FDEV | FPIPE)) == FTEXT && io->textmode == TM_ANSI && (oflag & _O_RDWR)) {
         /* a ctrl-z ending a text file opened for update is removed. */
-        LARGE_INTEGER zero = {0}, end;
+        LARGE_INTEGER zero = {}, end;
         if (SetFilePointerEx(h, (LARGE_INTEGER){.QuadPart = -1}, &end, FILE_END)) {
             char last = 0;
             DWORD got = 0;
-            if (ReadFile(h, &last, 1, &got, NULL) && got == 1 && last == CTRLZ) {
-                SetFilePointerEx(h, end, NULL, FILE_BEGIN);
+            if (ReadFile(h, &last, 1, &got, nullptr) && got == 1 && last == CTRLZ) {
+                SetFilePointerEx(h, end, nullptr, FILE_BEGIN);
                 SetEndOfFile(h);
             }
         }
-        SetFilePointerEx(h, zero, NULL, FILE_BEGIN);
+        SetFilePointerEx(h, zero, nullptr, FILE_BEGIN);
     }
     if (io->textmode != TM_ANSI && (osfile & (FDEV | FPIPE)) == 0) {
-        LARGE_INTEGER zero = {0}, size;
+        LARGE_INTEGER zero = {}, size;
         if (GetFileSizeEx(h, &size) && !size.QuadPart && (access & GENERIC_WRITE)) {
             DWORD written;
             if (io->textmode == TM_UTF8)
-                WriteFile(h, "\xef\xbb\xbf", 3, &written, NULL);
+                WriteFile(h, "\xef\xbb\xbf", 3, &written, nullptr);
             else if (!(oflag & _O_WTEXT) || (oflag & _O_U16TEXT))
-                WriteFile(h, "\xff\xfe", 2, &written, NULL);
+                WriteFile(h, "\xff\xfe", 2, &written, nullptr);
         } else if ((access & GENERIC_READ) && size.QuadPart) {
             unsigned char bom[3];
             DWORD got = 0;
-            ReadFile(h, bom, 3, &got, NULL);
+            ReadFile(h, bom, 3, &got, nullptr);
             LONGLONG skip = 0;
             if (got >= 3 && bom[0] == 0xef && bom[1] == 0xbb && bom[2] == 0xbf) {
                 skip = 3;
@@ -341,9 +341,9 @@ int MsvcrtOpenW(const wchar_t *name, int oflag, int shflag, int pmode, int secur
                 if (oflag & _O_WTEXT)
                     io->textmode = TM_UTF16LE;
             }
-            SetFilePointerEx(h, (LARGE_INTEGER){.QuadPart = skip}, NULL, FILE_BEGIN);
+            SetFilePointerEx(h, (LARGE_INTEGER){.QuadPart = skip}, nullptr, FILE_BEGIN);
             if (oflag & _O_APPEND)
-                SetFilePointerEx(h, zero, NULL, FILE_END);
+                SetFilePointerEx(h, zero, nullptr, FILE_END);
         }
     }
     if (oflag & _O_APPEND)
@@ -355,12 +355,12 @@ int MsvcrtOpenW(const wchar_t *name, int oflag, int shflag, int pmode, int secur
 static wchar_t *path_to_w(const char *path)
 {
     if (!path)
-        return NULL;
+        return nullptr;
     UINT cp = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
-    int n = MultiByteToWideChar(cp, 0, path, -1, NULL, 0);
+    int n = MultiByteToWideChar(cp, 0, path, -1, nullptr, 0);
     if (n <= 0) {
         MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     wchar_t *w = malloc(n * sizeof(wchar_t));
     if (w)
@@ -656,7 +656,7 @@ static int raw_read(int fd, char *buf, unsigned count, DWORD *got)
     if (!count)
         return 1;
     DWORD n = 0;
-    if (!ReadFile(fd_handle(fd), buf, count, &n, NULL)) {
+    if (!ReadFile(fd_handle(fd), buf, count, &n, nullptr)) {
         DWORD err = GetLastError();
         if (err == ERROR_BROKEN_PIPE)
             return 1;
@@ -708,7 +708,7 @@ int MsvcrtReadNolock(int fd, void *buffer, unsigned count)
             }
         }
         if (keep && !(io->osfile & (FPIPE | FDEV)))
-            SetFilePointerEx(fd_handle(fd), (LARGE_INTEGER){.QuadPart = -(LONGLONG)keep}, NULL, FILE_CURRENT);
+            SetFilePointerEx(fd_handle(fd), (LARGE_INTEGER){.QuadPart = -(LONGLONG)keep}, nullptr, FILE_CURRENT);
         int n = MultiByteToWideChar(CP_UTF8, 0, tmp, (int)(got - keep), buffer, (int)room);
         free(tmp);
         wchar_t *w = buffer, *q = buffer;
@@ -754,7 +754,7 @@ int MsvcrtReadNolock(int fd, void *buffer, unsigned count)
                 p++;
                 wchar_t peek = 0;
                 DWORD n = 0;
-                if (!ReadFile(fd_handle(fd), &peek, 2, &n, NULL) || n != 2) {
+                if (!ReadFile(fd_handle(fd), &peek, 2, &n, nullptr) || n != 2) {
                     *q++ = CR;
                 } else if (io->osfile & (FDEV | FPIPE)) {
                     if (peek == LF) {
@@ -797,7 +797,7 @@ int MsvcrtReadNolock(int fd, void *buffer, unsigned count)
             p++;
             char peek = 0;
             DWORD n = 0;
-            if (!ReadFile(fd_handle(fd), &peek, 1, &n, NULL) || !n) {
+            if (!ReadFile(fd_handle(fd), &peek, 1, &n, nullptr) || !n) {
                 *q++ = CR;
             } else if (io->osfile & (FDEV | FPIPE)) {
                 if (peek == LF) {
@@ -837,7 +837,7 @@ int __cdecl _read(int fd, void *buf, unsigned int count)
 
 static int write_all(int fd, const void *buf, DWORD size, DWORD *written)
 {
-    if (!WriteFile(fd_handle(fd), buf, size, written, NULL)) {
+    if (!WriteFile(fd_handle(fd), buf, size, written, nullptr)) {
         DWORD err = GetLastError();
         if (err == ERROR_ACCESS_DENIED) {
             MsvcrtSetErrno(EBADF);
@@ -921,13 +921,13 @@ int MsvcrtWriteNolock(int fd, const void *buffer, unsigned count)
         }
         if ((io->osfile & FDEV) && GetFileType(fd_handle(fd)) == FILE_TYPE_CHAR) {
             DWORD chars;
-            if (!WriteConsoleW(fd_handle(fd), tmp, n, &chars, NULL)) {
+            if (!WriteConsoleW(fd_handle(fd), tmp, n, &chars, nullptr)) {
                 MsvcrtDosMapError(GetLastError());
                 return done ? (int)done : -1;
             }
         } else if (io->textmode == TM_UTF8) {
             char utf8[512 * 3];
-            int len = WideCharToMultiByte(CP_UTF8, 0, tmp, (int)n, utf8, sizeof(utf8), NULL, NULL);
+            int len = WideCharToMultiByte(CP_UTF8, 0, tmp, (int)n, utf8, sizeof(utf8), nullptr, nullptr);
             if (!write_all(fd, utf8, (DWORD)len, &written))
                 return done ? (int)done : -1;
             if ((int)written < len)
@@ -1215,9 +1215,9 @@ int __cdecl _pipe(int *fds, unsigned int size, int textmode)
     static CREATE_PIPE create_pipe;
     if (!create_pipe) {
         HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-        create_pipe = k32 ? (CREATE_PIPE)(void *)GetProcAddress(k32, "CreatePipe") : NULL;
+        create_pipe = k32 ? (CREATE_PIPE)(void *)GetProcAddress(k32, "CreatePipe") : nullptr;
     }
-    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, !(textmode & _O_NOINHERIT)};
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, !(textmode & _O_NOINHERIT)};
     HANDLE r, w;
     if (!create_pipe) {
         MsvcrtDosMapError(ERROR_CALL_NOT_IMPLEMENTED);

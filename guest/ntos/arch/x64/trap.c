@@ -92,7 +92,7 @@ static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
         /* privileged instructions and non canonical addresses both raise #gp; windows tells them apart by decoding. */
         if (frame->ErrorCode == 0) {
             PUCHAR rip = (PUCHAR)frame->Rip;
-            UCHAR op[2] = {0};
+            UCHAR op[2] = {};
             if (NT_SUCCESS(KiCopyFromUser(op, rip, 2)) &&
                 (op[0] == 0xF4 || op[0] == 0xFA || op[0] == 0xFB || op[0] == 0xE4 || op[0] == 0xE5 || op[0] == 0xE6 ||
                  op[0] == 0xE7 || op[0] == 0xEC || op[0] == 0xED || op[0] == 0xEE || op[0] == 0xEF ||
@@ -192,7 +192,7 @@ static void kernel_exception(PKTRAP_FRAME frame)
         }
         if (address <= MIME_USER_ADDRESS_LIMIT && thread && thread->FaultRecovery) {
             KJUMP_BUFFER *recovery = thread->FaultRecovery;
-            thread->FaultRecovery = NULL;
+            thread->FaultRecovery = nullptr;
             KeGetPcr()->Irql = PASSIVE_LEVEL;
             KiEnableInterrupts();
             KiLongJump(recovery, 1);
@@ -201,7 +201,7 @@ static void kernel_exception(PKTRAP_FRAME frame)
     if (frame->Vector == 13 && thread && thread->FaultRecovery) {
         /* a non canonical user pointer. */
         KJUMP_BUFFER *recovery = thread->FaultRecovery;
-        thread->FaultRecovery = NULL;
+        thread->FaultRecovery = nullptr;
         KeGetPcr()->Irql = PASSIVE_LEVEL;
         KiEnableInterrupts();
         KiLongJump(recovery, 1);

@@ -35,7 +35,7 @@ static ENV_VAR *find(ENV *env, const WCHAR *name, ULONG chars)
     for (ULONG i = 0; i < env->Count; i++)
         if (_wcsnicmp(env->Vars[i].Name, name, chars) == 0 && env->Vars[i].Name[chars] == 0)
             return &env->Vars[i];
-    return NULL;
+    return nullptr;
 }
 
 static void set(ENV *env, const WCHAR *name, ULONG name_chars, const WCHAR *value, ULONG value_chars)
@@ -46,7 +46,7 @@ static void set(ENV *env, const WCHAR *name, ULONG name_chars, const WCHAR *valu
             return;
         v = &env->Vars[env->Count];
         v->Name = dup(name, name_chars);
-        v->Value = NULL;
+        v->Value = nullptr;
         if (!v->Name)
             return;
         env->Count++;
@@ -86,7 +86,7 @@ static ULONG expand(ENV *env, const WCHAR *in, ULONG chars, PWCHAR out, ULONG ca
             ULONG end = i + 1;
             while (end < chars && in[end] != '%')
                 end++;
-            ENV_VAR *v = end < chars ? find(env, in + i + 1, end - i - 1) : NULL;
+            ENV_VAR *v = end < chars ? find(env, in + i + 1, end - i - 1) : nullptr;
             if (v) {
                 for (PCWSTR p = v->Value; *p && n + 1 < capacity; p++)
                     out[n++] = *p;
@@ -141,7 +141,7 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     ENV *env = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ENV), KI_TAG('P', 's', 'E', 'n'));
     if (!env)
         return STATUS_INSUFFICIENT_RESOURCES;
-    WCHAR computer[16], user[24], sid[96] = {0}, path[192] = {0};
+    WCHAR computer[16], user[24], sid[96] = {}, path[192] = {};
     for (ULONG i = 0; i < 16; i++)
         computer[i] = (UCHAR)HalBootInfo->computer_name[i];
     for (ULONG i = 0; i < 24; i++)

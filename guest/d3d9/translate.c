@@ -1253,13 +1253,13 @@ static void translate(Tx *t, const D9Inst *inst)
         return;
     }
     case D9_OP_ELSE:
-        D9Emit(&t->code, OP_ELSE, NULL, 0);
+        D9Emit(&t->code, OP_ELSE, nullptr, 0);
         return;
     case D9_OP_ENDIF:
-        D9Emit(&t->code, OP_ENDIF, NULL, 0);
+        D9Emit(&t->code, OP_ENDIF, nullptr, 0);
         return;
     case D9_OP_BREAK:
-        D9Emit(&t->code, OP_BREAK, NULL, 0);
+        D9Emit(&t->code, OP_BREAK, nullptr, 0);
         return;
     case D9_OP_LOOP:
     case D9_OP_REP: {
@@ -1274,7 +1274,7 @@ static void translate(Tx *t, const D9Inst *inst)
         D9Op1(&t->code, OP_MOV, D9Temp(l, 2), count);
         if (op == D9_OP_LOOP)
             D9Op1(&t->code, OP_MOV, D9Temp(l, 1), start);
-        D9Emit(&t->code, OP_LOOP, NULL, 0);
+        D9Emit(&t->code, OP_LOOP, nullptr, 0);
         D9Opnd left = D9TempScalar(l, 1);
         D9Emit(&t->code, OP_BREAKC, &left, 1);
         if (t->loop_depth < RTL_NUMBER_OF(t->loop_temps)) {
@@ -1301,7 +1301,7 @@ static void translate(Tx *t, const D9Inst *inst)
             D9Op2(&t->code, OP_IADD, D9Temp(l, 1), D9TempSrc(l, REPL(0)), step);
         }
         D9Op2(&t->code, OP_IADD, D9Temp(l, 2), D9TempSrc(l, REPL(1)), D9Imm4(~0u, ~0u, ~0u, ~0u));
-        D9Emit(&t->code, OP_ENDLOOP, NULL, 0);
+        D9Emit(&t->code, OP_ENDLOOP, nullptr, 0);
         return;
     }
     case D9_OP_CALL: {
@@ -1334,7 +1334,7 @@ static void translate(Tx *t, const D9Inst *inst)
         if (t->in_main)
             D9TranslateEpilogue(t);
         else
-            D9Emit(&t->code, OP_RET, NULL, 0);
+            D9Emit(&t->code, OP_RET, nullptr, 0);
         return;
     default:
         fail(t, "an instruction of an unknown kind");
@@ -1497,7 +1497,7 @@ static void D9TranslateEpilogue(Tx *t)
         ps_epilogue(t);
     else
         vs_epilogue(t);
-    D9Emit(&t->code, OP_RET, NULL, 0);
+    D9Emit(&t->code, OP_RET, nullptr, 0);
     t->next_temp = save;
 }
 
@@ -1546,14 +1546,14 @@ static void declare(Tx *t, D9Code *d)
     D9CodePut(d, (info->pixel ? 0u : 1u) << 16 | 5 << 4);
     D9CodePut(d, 0);
     UINT floats = D9FloatBucketSize(info);
-    dcl(d, OP_DCL_CONSTANT_BUFFER | (info->relative ? 1u << 11 : 0), cb_decl(0, floats), NULL, 0);
-    dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(1, 20), NULL, 0);
-    dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(2, 24), NULL, 0);
+    dcl(d, OP_DCL_CONSTANT_BUFFER | (info->relative ? 1u << 11 : 0), cb_decl(0, floats), nullptr, 0);
+    dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(1, 20), nullptr, 0);
+    dcl(d, OP_DCL_CONSTANT_BUFFER, cb_decl(2, 24), nullptr, 0);
     for (UINT s = 0; s < 20; s++) {
         if (!(t->samplers_used & (1u << s)))
             continue;
         BOOL shadow = t->sampler_dims[s] & 0x80;
-        dcl(d, OP_DCL_SAMPLER | (shadow ? 1u << 11 : 0), D9SamplerOpnd(s), NULL, 0);
+        dcl(d, OP_DCL_SAMPLER | (shadow ? 1u << 11 : 0), D9SamplerOpnd(s), nullptr, 0);
         UINT dim = (t->sampler_dims[s] & 0x7F) == 3 ? RES_TEXTURECUBE : (t->sampler_dims[s] & 0x7F) == 4 ? RES_TEXTURE3D : RES_TEXTURE2D;
         DWORD ret = RET_FLOAT | RET_FLOAT << 4 | RET_FLOAT << 8 | RET_FLOAT << 12;
         dcl(d, OP_DCL_RESOURCE | dim << 11, D9ResourceOpnd(s), &ret, 1);
@@ -1564,7 +1564,7 @@ static void declare(Tx *t, D9Code *d)
                 continue;
             UINT mask = info->in_mask[r] ? info->in_mask[r] : 0xF;
             UINT integer = key->int_inputs >> (r * 2) & 3;
-            dcl(d, OP_DCL_INPUT, D9Dst(OPERAND_INPUT, r, mask), NULL, 0);
+            dcl(d, OP_DCL_INPUT, D9Dst(OPERAND_INPUT, r, mask), nullptr, 0);
             add_element(&t->inputs, D9UsageName(info->in_usage[r]), info->in_index[r], 0,
                         integer == 1 ? 1 : integer == 2 ? 2 : 3, r, mask);
         }
@@ -1577,7 +1577,7 @@ static void declare(Tx *t, D9Code *d)
             const char *name;
             UINT index;
             D9SlotSemantic(slot, &name, &index);
-            dcl(d, OP_DCL_OUTPUT, D9Dst(OPERAND_OUTPUT, slot, 0xF), NULL, 0);
+            dcl(d, OP_DCL_OUTPUT, D9Dst(OPERAND_OUTPUT, slot, 0xF), nullptr, 0);
             add_element(&t->outputs, name, index, 0, 3, slot, 0xF);
         }
         if (t->writes_size) {
@@ -1604,7 +1604,7 @@ static void declare(Tx *t, D9Code *d)
                 interp = INTERP_CONSTANT;
             else if (t->centroid & (1u << slot))
                 interp = INTERP_LINEAR_CENTROID;
-            dcl(d, OP_DCL_INPUT_PS | interp << 11, D9Dst(OPERAND_INPUT, slot, 0xF), NULL, 0);
+            dcl(d, OP_DCL_INPUT_PS | interp << 11, D9Dst(OPERAND_INPUT, slot, 0xF), nullptr, 0);
             add_element(&t->inputs, name, index, 0, 3, slot, 0xF);
         }
         if (t->reads_position) {
@@ -1626,12 +1626,12 @@ static void declare(Tx *t, D9Code *d)
         UINT targets = info->major < 2 ? 1 : info->written & 0xF;
         for (UINT i = 0; i < 4; i++)
             if (targets & (1u << i)) {
-                dcl(d, OP_DCL_OUTPUT, D9Dst(OPERAND_OUTPUT, i, 0xF), NULL, 0);
+                dcl(d, OP_DCL_OUTPUT, D9Dst(OPERAND_OUTPUT, i, 0xF), nullptr, 0);
                 add_element(&t->outputs, "SV_Target", i, SV_TARGET, 3, i, 0xF);
             }
         if (info->writes_depth) {
             D9Opnd depth = {{1 | OPERAND_OUTPUT_DEPTH << 12}, 1};
-            dcl(d, OP_DCL_OUTPUT, depth, NULL, 0);
+            dcl(d, OP_DCL_OUTPUT, depth, nullptr, 0);
             add_element(&t->outputs, "SV_Depth", 0, SV_DEPTH, 3, ~0u, 1);
         }
     }
@@ -1748,14 +1748,14 @@ HRESULT D9TranslateShader(const D9ShaderInfo *info, const D9ShaderKey *key, void
     if (t.in_main)
         D9TranslateEpilogue(&t);
     else
-        D9Emit(c, OP_RET, NULL, 0);
+        D9Emit(c, OP_RET, nullptr, 0);
     if (t.failed) {
         D9Log("d3d9: no translation of a %s shader %u.%u: %s", info->pixel ? "pixel" : "vertex", info->major,
               info->minor, t.why ? t.why : "an instruction it cannot decode");
         D9CodeFree(c);
         return E_NOTIMPL;
     }
-    D9Code program = {0};
+    D9Code program = {};
     declare(&t, &program);
     for (UINT i = 0; i < c->count; i++)
         D9CodePut(&program, c->words[i]);

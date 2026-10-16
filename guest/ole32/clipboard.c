@@ -28,7 +28,7 @@ static DWORD g_clip_thread;
 static FARPROC user32_proc(const char *name)
 {
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    return user32 ? GetProcAddress(user32, name) : NULL;
+    return user32 ? GetProcAddress(user32, name) : nullptr;
 }
 
 static DWORD clipboard_sequence(void)
@@ -47,7 +47,7 @@ static BOOL ole_initialized(void)
 
 WINOLEAPI HRESULT WINAPI OleInitialize(void *reserved)
 {
-    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr))
         return hr;
     OLE_THREAD *t = OleThreadState(FALSE);
@@ -98,7 +98,7 @@ WINOLEAPI void WINAPI ReleaseStgMedium(STGMEDIUM *medium)
         if (!owner && medium->hMetaFilePict) {
             METAFILEPICT *pict = GlobalLock(medium->hMetaFilePict);
             HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
-            DELETE_GDI_HANDLE del = gdi32 ? (DELETE_GDI_HANDLE)(void *)GetProcAddress(gdi32, "DeleteMetaFile") : NULL;
+            DELETE_GDI_HANDLE del = gdi32 ? (DELETE_GDI_HANDLE)(void *)GetProcAddress(gdi32, "DeleteMetaFile") : nullptr;
             if (pict && del)
                 del(pict->hMF);
             if (pict)
@@ -110,7 +110,7 @@ WINOLEAPI void WINAPI ReleaseStgMedium(STGMEDIUM *medium)
         if (!owner && medium->hEnhMetaFile) {
             HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
             DELETE_GDI_HANDLE del =
-                gdi32 ? (DELETE_GDI_HANDLE)(void *)GetProcAddress(gdi32, "DeleteEnhMetaFile") : NULL;
+                gdi32 ? (DELETE_GDI_HANDLE)(void *)GetProcAddress(gdi32, "DeleteEnhMetaFile") : nullptr;
             if (del)
                 del(medium->hEnhMetaFile);
         }
@@ -126,15 +126,15 @@ static HGLOBAL copy_global(HGLOBAL source)
     SIZE_T size = GlobalSize(source);
     void *from = GlobalLock(source);
     if (!from)
-        return NULL;
+        return nullptr;
     HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size ? size : 1);
-    void *to = copy ? GlobalLock(copy) : NULL;
+    void *to = copy ? GlobalLock(copy) : nullptr;
     if (to) {
         memcpy(to, from, size);
         GlobalUnlock(copy);
     } else if (copy) {
         GlobalFree(copy);
-        copy = NULL;
+        copy = nullptr;
     }
     GlobalUnlock(source);
     return copy;
@@ -156,7 +156,7 @@ static FORMAT_ENUM *format_enum_create(const FORMATETC *formats, ULONG count)
 {
     FORMAT_ENUM *e = OleAllocZero(sizeof(*e) + count * sizeof(FORMATETC));
     if (!e)
-        return NULL;
+        return nullptr;
     e->Interface.lpVtbl = &g_format_enum_vtbl;
     e->Refs = 1;
     e->Count = count;
@@ -173,7 +173,7 @@ static HRESULT STDMETHODCALLTYPE format_enum_query_interface(IEnumFORMATETC *Thi
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -223,7 +223,7 @@ static HRESULT STDMETHODCALLTYPE format_enum_clone(IEnumFORMATETC *This, IEnumFO
     if (!clone)
         return E_INVALIDARG;
     FORMAT_ENUM *copy = format_enum_create(e->Formats, e->Count);
-    *clone = copy ? &copy->Interface : NULL;
+    *clone = copy ? &copy->Interface : nullptr;
     if (!copy)
         return E_OUTOFMEMORY;
     copy->Index = e->Index;
@@ -248,7 +248,7 @@ static IDataObject *current_object(void)
     AcquireSRWLockExclusive(&g_clip_lock);
     IDataObject *object = g_clip_object;
     if (object && clipboard_sequence() != g_clip_sequence)
-        object = NULL;
+        object = nullptr;
     if (object)
         object->lpVtbl->AddRef(object);
     ReleaseSRWLockExclusive(&g_clip_lock);
@@ -277,7 +277,7 @@ static HRESULT STDMETHODCALLTYPE clip_query_interface(IDataObject *This, REFIID 
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -308,10 +308,10 @@ static HRESULT STDMETHODCALLTYPE clip_get_data(IDataObject *This, FORMATETC *for
     HRESULT hr = check_format(format);
     if (FAILED(hr))
         return hr;
-    if (!OpenClipboard(NULL))
+    if (!OpenClipboard(nullptr))
         return CLIPBRD_E_CANT_OPEN;
     HANDLE data = GetClipboardData(format->cfFormat);
-    HGLOBAL copy = data ? copy_global(data) : NULL;
+    HGLOBAL copy = data ? copy_global(data) : nullptr;
     CloseClipboard();
     if (!copy)
         return data ? E_OUTOFMEMORY : DV_E_FORMATETC;
@@ -344,7 +344,7 @@ static HRESULT STDMETHODCALLTYPE clip_get_canonical_format_etc(IDataObject *This
     if (!in || !out)
         return E_INVALIDARG;
     *out = *in;
-    out->ptd = NULL;
+    out->ptd = nullptr;
     return DATA_S_SAMEFORMATETC;
 }
 
@@ -363,7 +363,7 @@ static HRESULT STDMETHODCALLTYPE clip_enum_format_etc(IDataObject *This, DWORD d
                                         CF_RIFF,        CF_WAVE,         CF_SYLK,    CF_DIF};
     if (!enumerator)
         return E_INVALIDARG;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     if (direction != DATADIR_GET)
         return E_NOTIMPL;
     IDataObject *source = current_object();
@@ -375,14 +375,14 @@ static HRESULT STDMETHODCALLTYPE clip_enum_format_etc(IDataObject *This, DWORD d
     FORMATETC formats[64];
     ULONG count = 0;
     ENUM_FORMATS next = (ENUM_FORMATS)(void *)user32_proc("EnumClipboardFormats");
-    if (next && OpenClipboard(NULL)) {
+    if (next && OpenClipboard(nullptr)) {
         for (UINT cf = next(0); cf && count < RTL_NUMBER_OF(formats); cf = next(cf))
-            formats[count++] = (FORMATETC){(CLIPFORMAT)cf, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+            formats[count++] = (FORMATETC){(CLIPFORMAT)cf, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
         CloseClipboard();
     } else {
         for (ULONG i = 0; i < RTL_NUMBER_OF(probed); i++)
             if (IsClipboardFormatAvailable(probed[i]))
-                formats[count++] = (FORMATETC){probed[i], NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+                formats[count++] = (FORMATETC){probed[i], nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
     }
     FORMAT_ENUM *e = format_enum_create(formats, count);
     if (!e)
@@ -430,7 +430,7 @@ static void render_formats(IDataObject *object)
             continue;
         }
         format.tymed = TYMED_HGLOBAL;
-        STGMEDIUM medium = {0};
+        STGMEDIUM medium = {};
         if (SUCCEEDED(object->lpVtbl->GetData(object, &format, &medium)) && medium.tymed == TYMED_HGLOBAL) {
             HGLOBAL copy = copy_global(medium.hGlobal);
             if (copy && !SetClipboardData(format.cfFormat, copy))
@@ -448,7 +448,7 @@ WINOLEAPI HRESULT WINAPI OleSetClipboard(IDataObject *data)
 {
     if (!ole_initialized())
         return CO_E_NOTINITIALIZED;
-    if (!OpenClipboard(NULL))
+    if (!OpenClipboard(nullptr))
         return CLIPBRD_E_CANT_OPEN;
     if (!EmptyClipboard()) {
         CloseClipboard();
@@ -474,7 +474,7 @@ WINOLEAPI HRESULT WINAPI OleGetClipboard(IDataObject **data)
 {
     if (!data)
         return E_INVALIDARG;
-    *data = NULL;
+    *data = nullptr;
     if (!ole_initialized())
         return CO_E_NOTINITIALIZED;
     CLIP_OBJECT *object = OleAllocZero(sizeof(*object));
@@ -500,10 +500,10 @@ WINOLEAPI HRESULT WINAPI OleIsCurrentClipboard(IDataObject *data)
 static void release_object(BOOL any_thread)
 {
     AcquireSRWLockExclusive(&g_clip_lock);
-    IDataObject *previous = NULL;
+    IDataObject *previous = nullptr;
     if (any_thread || g_clip_thread == GetCurrentThreadId()) {
         previous = g_clip_object;
-        g_clip_object = NULL;
+        g_clip_object = nullptr;
     }
     ReleaseSRWLockExclusive(&g_clip_lock);
     if (previous)

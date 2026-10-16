@@ -5,10 +5,10 @@
  */
 #include "mmdevapi_private.h"
 
-static const WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
-static const WCHAR DEVICE_NAME[] = L"Speakers (Mime Audio)";
-static const WCHAR DEVICE_DESC[] = L"Speakers";
-static const WCHAR INTERFACE_NAME[] = L"Mime Audio";
+static constexpr WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
+static constexpr WCHAR DEVICE_NAME[] = L"Speakers (Mime Audio)";
+static constexpr WCHAR DEVICE_DESC[] = L"Speakers";
+static constexpr WCHAR INTERFACE_NAME[] = L"Mime Audio";
 
 /* the compiler references it from code using floating point, without a crt to define it. */
 int _fltused = 0x9875;
@@ -20,9 +20,9 @@ void *MmTaskAlloc(SIZE_T size)
 {
     if (!g_task_alloc) {
         HMODULE ole32 = LoadLibraryW(L"ole32.dll");
-        g_task_alloc = ole32 ? (void *(WINAPI *)(SIZE_T))(void *)GetProcAddress(ole32, "CoTaskMemAlloc") : NULL;
+        g_task_alloc = ole32 ? (void *(WINAPI *)(SIZE_T))(void *)GetProcAddress(ole32, "CoTaskMemAlloc") : nullptr;
         if (!g_task_alloc)
-            return NULL;
+            return nullptr;
     }
     return g_task_alloc(size);
 }
@@ -60,7 +60,7 @@ static HRESULT STDMETHODCALLTYPE store_query(void *This, REFIID riid, void **obj
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -100,7 +100,7 @@ static HRESULT STDMETHODCALLTYPE store_get_value(void *This, REFPROPERTYKEY key,
     if (!key || !value)
         return E_POINTER;
     memset(value, 0, sizeof(*value));
-    const WCHAR *text = NULL;
+    const WCHAR *text = nullptr;
     if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 14)
         text = DEVICE_NAME;
     else if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 2)
@@ -154,7 +154,7 @@ static HRESULT STDMETHODCALLTYPE device_query(void *This, REFIID riid, void **ob
         *object = &g_endpoint;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -162,7 +162,7 @@ static HRESULT STDMETHODCALLTYPE device_activate(void *This, REFIID iid, DWORD c
 {
     if (!iid || !object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (IsEqualGUID(iid, &IID_IAudioClient) || IsEqualGUID(iid, &IID_IAudioClient2) || IsEqualGUID(iid, &IID_IAudioClient3))
         return MmCreateAudioClient(object);
     return E_NOINTERFACE;
@@ -218,7 +218,7 @@ static HRESULT STDMETHODCALLTYPE collection_query(void *This, REFIID riid, void 
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -235,7 +235,7 @@ static HRESULT STDMETHODCALLTYPE collection_item(void *This, UINT index, IMMDevi
     if (!device)
         return E_POINTER;
     if (index >= ((COLLECTION *)This)->count) {
-        *device = NULL;
+        *device = nullptr;
         return E_INVALIDARG;
     }
     *device = (IMMDevice *)&g_device;
@@ -259,7 +259,7 @@ static HRESULT STDMETHODCALLTYPE enum_query(void *This, REFIID riid, void **obje
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -268,7 +268,7 @@ static HRESULT STDMETHODCALLTYPE enum_endpoints(void *This, EDataFlow flow, DWOR
     if (!devices)
         return E_POINTER;
     if (flow > eAll || !mask || (mask & ~DEVICE_STATEMASK_ALL)) {
-        *devices = NULL;
+        *devices = nullptr;
         return E_INVALIDARG;
     }
     BOOL render = (flow == eRender || flow == eAll) && (mask & DEVICE_STATE_ACTIVE);
@@ -280,7 +280,7 @@ static HRESULT STDMETHODCALLTYPE enum_default(void *This, EDataFlow flow, ERole 
 {
     if (!device)
         return E_POINTER;
-    *device = NULL;
+    *device = nullptr;
     if (flow > eAll || role > eCommunications)
         return E_INVALIDARG;
     if (flow != eRender)
@@ -294,7 +294,7 @@ static HRESULT STDMETHODCALLTYPE enum_get_device(void *This, LPCWSTR id, IMMDevi
     if (!id || !device)
         return E_POINTER;
     if (wcscmp(id, DEVICE_ID)) {
-        *device = NULL;
+        *device = nullptr;
         return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
     }
     *device = (IMMDevice *)&g_device;
@@ -319,7 +319,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(IClassFactory *This, REFIID riid,
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -329,7 +329,7 @@ static HRESULT STDMETHODCALLTYPE factory_create(IClassFactory *This, IUnknown *o
 {
     if (!object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (outer)
         return CLASS_E_NOAGGREGATION;
     return enum_query(&g_enumerator, riid, object);
@@ -344,7 +344,7 @@ DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, vo
 {
     if (!object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (!IsEqualGUID(clsid, &CLSID_MMDeviceEnumerator))
         return CLASS_E_CLASSNOTAVAILABLE;
     return factory_query(&g_factory, riid, object);

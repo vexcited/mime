@@ -98,7 +98,7 @@ static UINT read_summary(MIME_MSI_DATABASE *database, MIME_MSI_SUMMARY *summary)
             } else {
                 if (value[bytes - 1])
                     goto done;
-                int characters = MultiByteToWideChar(codepage, 0, (PCSTR)value, (int)bytes, NULL, 0);
+                int characters = MultiByteToWideChar(codepage, 0, (PCSTR)value, (int)bytes, nullptr, 0);
                 if (!characters)
                     goto done;
                 property->Text = MimeMsiAllocate((SIZE_T)characters * sizeof(WCHAR));
@@ -122,7 +122,7 @@ done:
 UINT MimeMsiCreateSummary(MIME_MSI_DATABASE *database, MSIHANDLE *out)
 {
     *out = 0;
-    MIME_MSI_SUMMARY *summary = database ? MimeMsiAllocate(sizeof(*summary)) : NULL;
+    MIME_MSI_SUMMARY *summary = database ? MimeMsiAllocate(sizeof(*summary)) : nullptr;
     UINT error = !database ? ERROR_INVALID_HANDLE : !summary ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
     if (!error) {
         summary->Object.Kind = MIME_MSI_KIND_SUMMARY;
@@ -143,7 +143,7 @@ UINT WINAPI MsiGetSummaryInformationW(MSIHANDLE handle, LPCWSTR path, UINT updat
     *out = 0;
     if (updates)
         return ERROR_CALL_NOT_IMPLEMENTED;
-    MIME_MSI_DATABASE *storage = NULL;
+    MIME_MSI_DATABASE *storage = nullptr;
     if (path && *path) {
         UINT error = MimeMsiOpenStorageFile(path, 0, &storage);
         if (error)

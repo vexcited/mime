@@ -10,7 +10,7 @@ typedef struct {
 static void free_target_device(FORMATETC *format)
 {
     CoTaskMemFree(format->ptd);
-    format->ptd = NULL;
+    format->ptd = nullptr;
 }
 
 /* copies a format with its target device into task memory. */
@@ -53,11 +53,11 @@ static STATDATA *copy_statdata(const STATDATA *items, ULONG count)
 {
     STATDATA *copy = OleAllocZero((count ? count : 1) * sizeof(*copy));
     if (!copy)
-        return NULL;
+        return nullptr;
     for (ULONG i = 0; i < count; i++) {
         if (FAILED(copy_format(&copy[i].formatetc, &items[i].formatetc))) {
             free_statdata(copy, i);
-            return NULL;
+            return nullptr;
         }
         copy[i].advf = items[i].advf;
         copy[i].dwConnection = items[i].dwConnection;
@@ -71,7 +71,7 @@ static STATDATA *copy_statdata(const STATDATA *items, ULONG count)
 static HRESULT create_statdata_enum(const STATDATA *items, ULONG count, ULONG position, IEnumSTATDATA **result)
 {
     STATDATA_ENUM *e = OleAllocZero(sizeof(*e));
-    STATDATA *copy = e ? copy_statdata(items, count) : NULL;
+    STATDATA *copy = e ? copy_statdata(items, count) : nullptr;
     if (!copy) {
         OleFree(e);
         return E_OUTOFMEMORY;
@@ -89,7 +89,7 @@ static HRESULT WINAPI statdata_enum_query(IEnumSTATDATA *self, REFIID iid, void 
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IEnumSTATDATA))
         return E_NOINTERFACE;
     *result = self;
@@ -158,7 +158,7 @@ static HRESULT WINAPI statdata_enum_clone(IEnumSTATDATA *self, IEnumSTATDATA **c
 {
     if (!clone)
         return E_POINTER;
-    *clone = NULL;
+    *clone = nullptr;
     STATDATA_ENUM *e = (STATDATA_ENUM *)self;
     return create_statdata_enum(e->Items, e->Count, e->Position, clone);
 }
@@ -206,13 +206,13 @@ static IAdviseSink *list_remove(ADVISE_LIST *list, DWORD connection)
         list->Count--;
         return sink;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void list_free(ADVISE_LIST *list)
 {
     free_statdata(list->Items, list->Count);
-    list->Items = NULL;
+    list->Items = nullptr;
     list->Count = list->Capacity = 0;
 }
 
@@ -228,7 +228,7 @@ static HRESULT WINAPI data_query(IDataAdviseHolder *self, REFIID iid, void **res
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IDataAdviseHolder))
         return E_NOINTERFACE;
     *result = self;
@@ -255,7 +255,7 @@ static ULONG WINAPI data_release(IDataAdviseHolder *self)
 /* sends the current data in format to one sink. */
 static void send_data(IDataObject *data, FORMATETC *format, DWORD advf, IAdviseSink *sink)
 {
-    STGMEDIUM medium = {0};
+    STGMEDIUM medium = {};
     if (advf & ADVF_NODATA) {
         sink->lpVtbl->OnDataChange(sink, format, &medium);
         return;
@@ -302,7 +302,7 @@ static HRESULT WINAPI data_enum(IDataAdviseHolder *self, IEnumSTATDATA **enumera
 {
     if (!enumerator)
         return E_POINTER;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     ADVISE_LIST *list = &((DATA_HOLDER *)self)->List;
     return create_statdata_enum(list->Items, list->Count, 0, enumerator);
 }
@@ -337,7 +337,7 @@ WINOLEAPI HRESULT WINAPI CreateDataAdviseHolder(IDataAdviseHolder **result)
     if (!result)
         return E_INVALIDARG;
     DATA_HOLDER *holder = OleAllocZero(sizeof(*holder));
-    *result = NULL;
+    *result = nullptr;
     if (!holder)
         return E_OUTOFMEMORY;
     holder->Interface.lpVtbl = &data_vtable;
@@ -358,7 +358,7 @@ static HRESULT WINAPI ole_query(IOleAdviseHolder *self, REFIID iid, void **resul
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IOleAdviseHolder))
         return E_NOINTERFACE;
     *result = self;
@@ -388,7 +388,7 @@ static HRESULT WINAPI ole_advise(IOleAdviseHolder *self, IAdviseSink *sink, DWOR
         *connection = 0;
     if (!sink || !connection)
         return E_INVALIDARG;
-    return list_add(&((OLE_HOLDER *)self)->List, NULL, 0, sink, connection);
+    return list_add(&((OLE_HOLDER *)self)->List, nullptr, 0, sink, connection);
 }
 
 static HRESULT WINAPI ole_unadvise(IOleAdviseHolder *self, DWORD connection)
@@ -404,7 +404,7 @@ static HRESULT WINAPI ole_enum(IOleAdviseHolder *self, IEnumSTATDATA **enumerato
 {
     if (!enumerator)
         return E_POINTER;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     ADVISE_LIST *list = &((OLE_HOLDER *)self)->List;
     return create_statdata_enum(list->Items, list->Count, 0, enumerator);
 }
@@ -438,12 +438,12 @@ static HRESULT WINAPI ole_send_rename(IOleAdviseHolder *self, IMoniker *moniker)
 
 static HRESULT WINAPI ole_send_save(IOleAdviseHolder *self)
 {
-    return ole_send(self, SEND_SAVE, NULL);
+    return ole_send(self, SEND_SAVE, nullptr);
 }
 
 static HRESULT WINAPI ole_send_close(IOleAdviseHolder *self)
 {
-    return ole_send(self, SEND_CLOSE, NULL);
+    return ole_send(self, SEND_CLOSE, nullptr);
 }
 
 static const IOleAdviseHolderVtbl ole_vtable = {
@@ -456,7 +456,7 @@ WINOLEAPI HRESULT WINAPI CreateOleAdviseHolder(IOleAdviseHolder **result)
     if (!result)
         return E_INVALIDARG;
     OLE_HOLDER *holder = OleAllocZero(sizeof(*holder));
-    *result = NULL;
+    *result = nullptr;
     if (!holder)
         return E_OUTOFMEMORY;
     holder->Interface.lpVtbl = &ole_vtable;

@@ -65,7 +65,7 @@ static char *take(BUF *b) { return b->p ? b->p : dup(""); }
 
 static char *cat3(const char *a, const char *b, const char *c)
 {
-    BUF r = {0};
+    BUF r = {};
     put(&r, a);
     put(&r, b);
     put(&r, c);
@@ -127,7 +127,7 @@ static const char *operator_name(char c, BOOL underscore)
     };
     const char *const *table = underscore ? UNDERSCORE : PLAIN;
     size_t size = underscore ? sizeof(UNDERSCORE) / sizeof(*UNDERSCORE) : sizeof(PLAIN) / sizeof(*PLAIN);
-    return (unsigned char)c < size ? table[(unsigned char)c] : NULL;
+    return (unsigned char)c < size ? table[(unsigned char)c] : nullptr;
 }
 
 static char *remember_name(UND *u, char *name)
@@ -143,7 +143,7 @@ static char *identifier(UND *u)
     const char *end = strchr(u->in, '@');
     if (!end) {
         fail(u);
-        return NULL;
+        return nullptr;
     }
     char *r = dup_n(u->in, end - u->in);
     u->in = end + 1;
@@ -153,7 +153,7 @@ static char *identifier(UND *u)
 /* a template's arguments, types up to @, in angle brackets. */
 static char *template_arguments(UND *u)
 {
-    BUF r = {0};
+    BUF r = {};
     put(&r, "<");
     BOOL first = TRUE;
     while (*u->in && *u->in != '@' && !u->failed) {
@@ -207,7 +207,7 @@ static char *fragment(UND *u, BOOL first, char **special)
     char c = *u->in;
     if (c >= '0' && c <= '9') {
         u->in++;
-        return c - '0' < u->name_count ? dup(u->names[c - '0']) : (fail(u), (char *)NULL);
+        return c - '0' < u->name_count ? dup(u->names[c - '0']) : (fail(u), (char *)nullptr);
     }
     if (c == '?' && u->in[1] == '$') {
         /* a template has its own back references. */
@@ -215,7 +215,7 @@ static char *fragment(UND *u, BOOL first, char **special)
         UND saved = *u;
         u->name_count = 0;
         u->type_count = 0;
-        char *name = first && *u->in == '?' ? NULL : identifier(u);
+        char *name = first && *u->in == '?' ? nullptr : identifier(u);
         if (!name && first) {
             u->in++;
             const char *op = operator_name(*u->in == '_' ? u->in[1] : *u->in, *u->in == '_');
@@ -242,7 +242,7 @@ static char *fragment(UND *u, BOOL first, char **special)
         char code = *u->in++;
         if (code == '0' || code == '1') {
             *special = code == '0' ? dup("") : dup("~");
-            return NULL;
+            return nullptr;
         }
         BOOL underscore = code == '_';
         if (underscore)
@@ -256,33 +256,33 @@ static char *fragment(UND *u, BOOL first, char **special)
                 char *r = cat3(t ? t : "", " `RTTI Type Descriptor'", "");
                 free(t);
                 *special = r;
-                return NULL;
+                return nullptr;
             }
             case '1':
                 *special = dup("`RTTI Base Class Descriptor at (...)'");
                 while (*u->in && *u->in != '@' && !(u->in[0] >= 'A' && u->in[0] <= 'Z' && u->in[1] == '@'))
                     u->in++;
-                return NULL;
+                return nullptr;
             case '2':
                 *special = dup("`RTTI Base Class Array'");
-                return NULL;
+                return nullptr;
             case '3':
                 *special = dup("`RTTI Class Hierarchy Descriptor'");
-                return NULL;
+                return nullptr;
             case '4':
                 *special = dup("`RTTI Complete Object Locator'");
-                return NULL;
+                return nullptr;
             }
             fail(u);
-            return NULL;
+            return nullptr;
         }
         const char *op = operator_name(code, underscore);
         if (!op) {
             fail(u);
-            return NULL;
+            return nullptr;
         }
         *special = dup(op);
-        return NULL;
+        return nullptr;
     }
     return remember_name(u, identifier(u));
 }
@@ -292,10 +292,10 @@ static char *qualified_name(UND *u, char **special)
 {
     char *parts[32];
     int count = 0;
-    *special = NULL;
+    *special = nullptr;
     BOOL first = TRUE;
     while (*u->in && *u->in != '@' && !u->failed && count < 32) {
-        char *f = fragment(u, first, first ? special : &(char *){NULL});
+        char *f = fragment(u, first, first ? special : &(char *){nullptr});
         if (f)
             parts[count++] = f;
         first = FALSE;
@@ -304,7 +304,7 @@ static char *qualified_name(UND *u, char **special)
         u->in++;
     else
         fail(u);
-    BUF r = {0};
+    BUF r = {};
     for (int i = count - 1; i >= 0; i--) {
         put(&r, parts[i]);
         if (i)
@@ -374,7 +374,7 @@ static const char *basic_type(char c)
     case 'Z':
         return "...";
     }
-    return NULL;
+    return nullptr;
 }
 
 static const char *extended_type(char c)
@@ -411,7 +411,7 @@ static const char *extended_type(char c)
     case 'W':
         return "wchar_t";
     }
-    return NULL;
+    return nullptr;
 }
 
 static const char *cv_name(char c)
@@ -433,7 +433,7 @@ static const char *cv_name(char c)
 /* what a pointer or reference points at, its own qualifier after the star given. */
 static char *pointer_type(UND *u, const char *star)
 {
-    BUF suffix = {0};
+    BUF suffix = {};
     put(&suffix, star);
     for (;;) {
         if (*u->in == 'E') {
@@ -455,7 +455,7 @@ static char *pointer_type(UND *u, const char *star)
     if (*u->in == '6' || *u->in == '8') {
         BOOL member = *u->in == '8';
         u->in++;
-        char *cls = member ? qualified(u) : NULL;
+        char *cls = member ? qualified(u) : nullptr;
         char *inner = member ? cat3(cls ? cls : "", "::", s) : dup(s);
         if (member && *u->in)
             u->in++; /* the this qualifier */
@@ -469,7 +469,7 @@ static char *pointer_type(UND *u, const char *star)
             u->in++;
         BOOL pointer = *u->in >= 'P' && *u->in <= 'S';
         char *target = type(u);
-        BUF b = {0};
+        BUF b = {};
         put(&b, target ? target : "");
         if (*cv && !pointer) {
             put(&b, " ");
@@ -490,23 +490,23 @@ static char *type(UND *u)
     char c = *u->in;
     if (!c) {
         fail(u);
-        return NULL;
+        return nullptr;
     }
     if (c >= '0' && c <= '9') {
         u->in++;
-        return c - '0' < u->type_count ? dup(u->types[c - '0']) : (fail(u), (char *)NULL);
+        return c - '0' < u->type_count ? dup(u->types[c - '0']) : (fail(u), (char *)nullptr);
     }
     u->in++;
     const char *basic = basic_type(c);
     if (basic)
         return dup(basic);
-    char *r = NULL;
+    char *r = nullptr;
     switch (c) {
     case '_': {
         const char *e = extended_type(*u->in);
         if (!e) {
             fail(u);
-            return NULL;
+            return nullptr;
         }
         u->in++;
         r = dup(e);
@@ -566,7 +566,7 @@ static char *type(UND *u)
     case 'Y': {
         /* an array: its dimensions, then the element type. */
         int dims = *u->in >= '0' && *u->in <= '9' ? *u->in++ - '0' + 1 : 0;
-        BUF b = {0};
+        BUF b = {};
         for (int i = 0; i < dims; i++) {
             char n[4] = {'[', *u->in >= '0' && *u->in <= '9' ? (char)(*u->in + 1) : '?', ']', 0};
             u->in++;
@@ -580,7 +580,7 @@ static char *type(UND *u)
     }
     default:
         fail(u);
-        return NULL;
+        return nullptr;
     }
     return r;
 }
@@ -597,7 +597,7 @@ static char *argument(UND *u)
 
 static char *arguments(UND *u)
 {
-    BUF r = {0};
+    BUF r = {};
     put(&r, "(");
     if (*u->in == 'X') {
         u->in++;
@@ -644,7 +644,7 @@ static const char *calling_convention(char c)
     case 'Q':
         return "__vectorcall";
     }
-    return NULL;
+    return nullptr;
 }
 
 /* a function type around inner, a pointer's star or nothing: return type, convention, arguments. */
@@ -653,14 +653,14 @@ static char *function_type(UND *u, const char *inner, BOOL member)
     const char *cc = calling_convention(*u->in);
     if (!cc) {
         fail(u);
-        return NULL;
+        return nullptr;
     }
     u->in++;
     char *ret = *u->in == '@' ? (u->in++, dup("")) : type(u);
     char *args = arguments(u);
     if (*u->in == 'Z')
         u->in++;
-    BUF r = {0};
+    BUF r = {};
     put(&r, ret ? ret : "");
     put(&r, " (");
     if (!(u->flags & UNDNAME_NO_MS_KEYWORDS)) {
@@ -688,7 +688,7 @@ static char *symbol(UND *u)
         return type(u);
     }
     if (*u->in != '?')
-        return NULL;
+        return nullptr;
     u->in++;
     char *special;
     char *name = qualified_name(u, &special);
@@ -703,7 +703,7 @@ static char *symbol(UND *u)
         free(special);
         return name;
     }
-    BUF r = {0};
+    BUF r = {};
     if (c >= '0' && c <= '4') {
         /* a variable: static members and globals, its type and storage class. */
         u->in++;
@@ -773,7 +773,7 @@ static char *symbol(UND *u)
             goto done;
         }
         u->in++;
-        char *ret = *u->in == '@' ? (u->in++, NULL) : type(u);
+        char *ret = *u->in == '@' ? (u->in++, nullptr) : type(u);
         char *args = arguments(u);
         if (!(u->flags & UNDNAME_NO_ACCESS_SPECIFIERS))
             put(&r, access);
@@ -810,7 +810,7 @@ static char *symbol(UND *u)
 done:
     free(special);
     free(name);
-    return NULL;
+    return nullptr;
 }
 
 static char *undecorate(const char *decorated, unsigned flags)
@@ -826,7 +826,7 @@ static char *undecorate(const char *decorated, unsigned flags)
         free(u.types[i]);
     if (u.failed) {
         free(r);
-        return NULL;
+        return nullptr;
     }
     return r;
 }
@@ -845,7 +845,7 @@ char *__cdecl __unDNameEx(char *buffer, const char *decorated, int length, und_a
                           void *get_parameter, unsigned short flags)
 {
     if (!decorated || !alloc)
-        return NULL;
+        return nullptr;
     char *r = undecorate(decorated, flags);
     const char *text = r ? r : decorated;
     size_t n = strlen(text);
@@ -865,5 +865,5 @@ char *__cdecl __unDNameEx(char *buffer, const char *decorated, int length, und_a
 char *__cdecl __unDName(char *buffer, const char *decorated, int length, und_alloc_t alloc, und_free_t release,
                         unsigned short flags)
 {
-    return __unDNameEx(buffer, decorated, length, alloc, release, NULL, flags);
+    return __unDNameEx(buffer, decorated, length, alloc, release, nullptr, flags);
 }

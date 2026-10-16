@@ -51,7 +51,7 @@ static void notify(HWND hwnd, WORD code)
 static HBRUSH parent_brush(HWND hwnd, HDC dc, UINT msg)
 {
     HWND parent = GetParent(hwnd);
-    HBRUSH b = parent ? (HBRUSH)SendMessageW(parent, msg, (WPARAM)dc, (LPARAM)hwnd) : NULL;
+    HBRUSH b = parent ? (HBRUSH)SendMessageW(parent, msg, (WPARAM)dc, (LPARAM)hwnd) : nullptr;
     if (!b)
         b = (HBRUSH)DefWindowProcW(parent ? parent : hwnd, msg, (WPARAM)dc, (LPARAM)hwnd);
     return b;
@@ -113,7 +113,7 @@ static void draw_label(HWND hwnd, BUTTON *b, HDC dc, RECT *r, UINT flags, COLORR
     if (b->Image && b->ImageType == IMAGE_ICON) {
         int cx = GetSystemMetricsForDpi(SM_CXSMICON, UserWindowDpi(hwnd));
         DrawIconEx(dc, r->left + (r->right - r->left - cx) / 2, r->top + (r->bottom - r->top - cx) / 2, b->Image, cx,
-                   cx, 0, NULL, DI_NORMAL);
+                   cx, 0, nullptr, DI_NORMAL);
     }
     SetTextColor(dc, color);
     SetBkMode(dc, TRANSPARENT);
@@ -278,7 +278,7 @@ static void paint(HWND hwnd, BUTTON *b, HDC dc)
 
 static void redraw(HWND hwnd)
 {
-    InvalidateRect(hwnd, NULL, FALSE);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 static void click(HWND hwnd, BUTTON *b)

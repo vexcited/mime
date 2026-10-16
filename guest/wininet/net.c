@@ -23,7 +23,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url
     MIME_STUB("wininet");
     INET_OBJECT *object = InetReferenceType(session, INTERNET_HANDLE_TYPE_INTERNET);
     if (!object)
-        return NULL;
+        return nullptr;
     InetRelease(object);
     URL_COMPONENTSW components = {sizeof(components)};
     components.dwSchemeLength = 1;
@@ -37,7 +37,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url
     } else {
         SetLastError(ERROR_INTERNET_CANNOT_CONNECT);
     }
-    return NULL;
+    return nullptr;
 }
 
 /* only InternetOpenUrl, FtpOpenFile and sent requests make readable handles, and none succeeds yet. */
@@ -89,7 +89,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileW(HINTERNET connect, LPCWSTR se
 {
     MIME_STUB("wininet");
     FAIL_FTP(connect);
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpGetFileW(HINTERNET connect, LPCWSTR remote, LPCWSTR local, BOOL fail_if_exists,
@@ -123,7 +123,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI FtpOpenFileW(HINTERNET connect, LPCWSTR name, D
 {
     MIME_STUB("wininet");
     FAIL_FTP(connect);
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpCreateDirectoryW(HINTERNET connect, LPCWSTR name)
@@ -155,7 +155,7 @@ DECLSPEC_EXPORT BOOL WINAPI FtpCommandW(HINTERNET connect, BOOL expect_response,
 {
     MIME_STUB("wininet");
     if (ftp_command)
-        *ftp_command = NULL;
+        *ftp_command = nullptr;
     return FAIL_FTP(connect);
 }
 
@@ -172,7 +172,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI GopherFindFirstFileW(HINTERNET connect, LPCWSTR
 {
     MIME_STUB("wininet");
     SetLastError(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT HINTERNET WINAPI GopherOpenFileW(HINTERNET connect, LPCWSTR locator, LPCWSTR view, DWORD flags,
@@ -180,7 +180,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI GopherOpenFileW(HINTERNET connect, LPCWSTR loca
 {
     MIME_STUB("wininet");
     SetLastError(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GopherGetAttributeW(HINTERNET connect, LPCWSTR locator, LPCWSTR name, LPBYTE buffer,

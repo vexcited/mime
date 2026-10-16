@@ -66,8 +66,8 @@ static void draw_composited(HDC dc, LPCWSTR text, int count, DWORD flags, const 
     bi.bmiHeader.biHeight = -h;
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
-    DWORD *bits = NULL;
-    HBITMAP bm = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, (void **)&bits, NULL, 0);
+    DWORD *bits = nullptr;
+    HBITMAP bm = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, (void **)&bits, nullptr, 0);
     if (!bm)
         return;
     HDC mem = CreateCompatibleDC(dc);
@@ -120,7 +120,7 @@ THEMEAPI DrawThemeTextEx(HTHEME handle, HDC dc, int part, int state, LPCWSTR tex
     int font_prop = (opt & DTT_FONTPROP) ? options->iFontPropId : TMT_FONT;
     int color_prop = (opt & DTT_COLORPROP) ? options->iColorPropId : TMT_TEXTCOLOR;
     TEXT_STATE ts;
-    begin_text(theme, dc, part, state, font_prop, TRUE, color_prop, (opt & DTT_TEXTCOLOR) ? &options->crText : NULL,
+    begin_text(theme, dc, part, state, font_prop, TRUE, color_prop, (opt & DTT_TEXTCOLOR) ? &options->crText : nullptr,
                &ts);
     if (opt & DTT_CALCRECT) {
         DrawTextW(dc, text, count, rect, flags | DT_CALCRECT);
@@ -169,7 +169,7 @@ THEMEAPI GetThemeTextExtent(HTHEME handle, HDC dc, int part, int state, LPCWSTR 
         return hr;
     }
     TEXT_STATE ts;
-    begin_text(theme, dc, part, state, TMT_FONT, FALSE, 0, NULL, &ts);
+    begin_text(theme, dc, part, state, TMT_FONT, FALSE, 0, nullptr, &ts);
     RECT rc = {0, 0, 0, 0};
     if (bounds)
         rc = *bounds;
@@ -192,7 +192,7 @@ THEMEAPI GetThemeTextMetrics(HTHEME handle, HDC dc, int part, int state, TEXTMET
         hr = E_POINTER;
     if (SUCCEEDED(hr)) {
         TEXT_STATE ts;
-        begin_text(theme, dc, part, state, TMT_FONT, FALSE, 0, NULL, &ts);
+        begin_text(theme, dc, part, state, TMT_FONT, FALSE, 0, nullptr, &ts);
         if (!GetTextMetricsW(dc, metrics))
             hr = E_FAIL;
         end_text(dc, &ts);

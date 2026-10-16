@@ -23,7 +23,7 @@ typedef struct SHA256 {
     DWORD Used;
 } SHA256;
 
-static const DWORD g_sha_k[64] = {
+static constexpr DWORD g_sha_k[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
     0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -193,7 +193,7 @@ static BOOL kernel_random(BYTE *out, ULONG size)
         UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\CNG");
         OBJECT_ATTRIBUTES oa;
         IO_STATUS_BLOCK iosb;
-        InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
         NTSTATUS status = NtOpenFile(&g_rng.Device, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb,
                                      FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT);
         g_rng.DeviceState = NT_SUCCESS(status) ? 1 : 2;
@@ -201,11 +201,11 @@ static BOOL kernel_random(BYTE *out, ULONG size)
     if (g_rng.DeviceState != 1)
         return FALSE;
     IO_STATUS_BLOCK iosb;
-    NTSTATUS status = NtDeviceIoControlFile(g_rng.Device, NULL, NULL, NULL, &iosb, IOCTL_KSEC_RNG, NULL, 0, out, size);
+    NTSTATUS status = NtDeviceIoControlFile(g_rng.Device, nullptr, nullptr, nullptr, &iosb, IOCTL_KSEC_RNG, nullptr, 0, out, size);
     if (NT_SUCCESS(status) && iosb.Information == size)
         return TRUE;
     NtClose(g_rng.Device);
-    g_rng.Device = NULL;
+    g_rng.Device = nullptr;
     g_rng.DeviceState = 2;
     return FALSE;
 }
@@ -253,7 +253,7 @@ static void add_machine_guid(SHA256 *pool)
         return;
     WCHAR guid[64];
     DWORD size = sizeof(guid);
-    if (!RegQueryValueExW(key, L"MachineGuid", NULL, NULL, (LPBYTE)guid, &size))
+    if (!RegQueryValueExW(key, L"MachineGuid", nullptr, nullptr, (LPBYTE)guid, &size))
         sha256_update(pool, guid, size);
     RegCloseKey(key);
 }

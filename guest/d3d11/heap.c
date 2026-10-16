@@ -91,30 +91,30 @@ static void write_one(D3dDevice *device, UINT kind, UINT index, const VkDescript
     write.pImageInfo = image;
     write.pTexelBufferView = texel;
     write.pBufferInfo = buffer;
-    device->vk.vkUpdateDescriptorSets(device->vk.device, 1, &write, 0, NULL);
+    device->vk.vkUpdateDescriptorSets(device->vk.device, 1, &write, 0, nullptr);
 }
 
 void D3dHeapWriteImage(D3dDevice *device, UINT kind, UINT index, VkImageView view)
 {
     VkDescriptorImageInfo info = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
-    write_one(device, kind, index, &info, NULL, NULL);
+    write_one(device, kind, index, &info, nullptr, nullptr);
 }
 
 void D3dHeapWriteTexel(D3dDevice *device, UINT kind, UINT index, VkBufferView view)
 {
-    write_one(device, kind, index, NULL, &view, NULL);
+    write_one(device, kind, index, nullptr, &view, nullptr);
 }
 
 void D3dHeapWriteSampler(D3dDevice *device, UINT index, VkSampler sampler)
 {
     VkDescriptorImageInfo info = {sampler};
-    write_one(device, D3D_HEAP_SAMPLER, index, &info, NULL, NULL);
+    write_one(device, D3D_HEAP_SAMPLER, index, &info, nullptr, nullptr);
 }
 
 void D3dHeapWriteBuffer(D3dDevice *device, UINT index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range)
 {
     VkDescriptorBufferInfo info = {buffer, offset, range};
-    write_one(device, D3D_HEAP_UNIFORM_BUFFER, index, NULL, NULL, &info);
+    write_one(device, D3D_HEAP_UNIFORM_BUFFER, index, nullptr, nullptr, &info);
 }
 
 /*
@@ -153,7 +153,7 @@ HRESULT D3dHeapInit(D3dDevice *device)
     layout.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
     layout.bindingCount = D3D_HEAP_KINDS;
     layout.pBindings = bindings;
-    if (vk->vkCreateDescriptorSetLayout(vk->device, &layout, NULL, &device->heap_layout) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorSetLayout(vk->device, &layout, nullptr, &device->heap_layout) != VK_SUCCESS)
         return E_FAIL;
 
     VkDescriptorPoolCreateInfo pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -161,7 +161,7 @@ HRESULT D3dHeapInit(D3dDevice *device)
     pool.maxSets = 1;
     pool.poolSizeCount = D3D_HEAP_KINDS;
     pool.pPoolSizes = sizes;
-    if (vk->vkCreateDescriptorPool(vk->device, &pool, NULL, &device->heap_pool) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorPool(vk->device, &pool, nullptr, &device->heap_pool) != VK_SUCCESS)
         return E_FAIL;
     VkDescriptorSetAllocateInfo alloc = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     alloc.descriptorPool = device->heap_pool;
@@ -177,21 +177,21 @@ HRESULT D3dHeapInit(D3dDevice *device)
     VkDescriptorSetLayoutCreateInfo table_layout = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     table_layout.bindingCount = D3D_STAGES;
     table_layout.pBindings = tables;
-    if (vk->vkCreateDescriptorSetLayout(vk->device, &table_layout, NULL, &device->table_layout) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorSetLayout(vk->device, &table_layout, nullptr, &device->table_layout) != VK_SUCCESS)
         return E_FAIL;
     VkDescriptorPoolSize table_size = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1024 * D3D_STAGES};
     VkDescriptorPoolCreateInfo table_pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     table_pool.maxSets = 1024;
     table_pool.poolSizeCount = 1;
     table_pool.pPoolSizes = &table_size;
-    if (vk->vkCreateDescriptorPool(vk->device, &table_pool, NULL, &device->table_pool) != VK_SUCCESS)
+    if (vk->vkCreateDescriptorPool(vk->device, &table_pool, nullptr, &device->table_pool) != VK_SUCCESS)
         return E_FAIL;
 
     VkDescriptorSetLayout sets[2] = {device->heap_layout, device->table_layout};
     VkPipelineLayoutCreateInfo pipeline = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipeline.setLayoutCount = 2;
     pipeline.pSetLayouts = sets;
-    if (vk->vkCreatePipelineLayout(vk->device, &pipeline, NULL, &device->pipeline_layout) != VK_SUCCESS)
+    if (vk->vkCreatePipelineLayout(vk->device, &pipeline, nullptr, &device->pipeline_layout) != VK_SUCCESS)
         return E_FAIL;
 
     /* null descriptors read as zeros; the null sampler is direct3d's default state. */
@@ -205,7 +205,7 @@ HRESULT D3dHeapInit(D3dDevice *device)
     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler.maxLod = VK_LOD_CLAMP_NONE;
-    if (vk->vkCreateSampler(vk->device, &sampler, NULL, &device->null_sampler) != VK_SUCCESS)
+    if (vk->vkCreateSampler(vk->device, &sampler, nullptr, &device->null_sampler) != VK_SUCCESS)
         return E_FAIL;
     D3dHeapWriteSampler(device, 0, device->null_sampler);
     return S_OK;
@@ -285,22 +285,22 @@ static void destroy(D3dDevice *device, D3dGarbage *g)
     D3dVk *vk = &device->vk;
     switch (g->type) {
     case D3D_GARBAGE_IMAGE:
-        vk->vkDestroyImage(vk->device, (VkImage)g->handle, NULL);
+        vk->vkDestroyImage(vk->device, (VkImage)g->handle, nullptr);
         break;
     case D3D_GARBAGE_IMAGE_VIEW:
-        vk->vkDestroyImageView(vk->device, (VkImageView)g->handle, NULL);
+        vk->vkDestroyImageView(vk->device, (VkImageView)g->handle, nullptr);
         break;
     case D3D_GARBAGE_BUFFER_VIEW:
-        vk->vkDestroyBufferView(vk->device, (VkBufferView)g->handle, NULL);
+        vk->vkDestroyBufferView(vk->device, (VkBufferView)g->handle, nullptr);
         break;
     case D3D_GARBAGE_SAMPLER:
-        vk->vkDestroySampler(vk->device, (VkSampler)g->handle, NULL);
+        vk->vkDestroySampler(vk->device, (VkSampler)g->handle, nullptr);
         break;
     case D3D_GARBAGE_SHADER:
-        vk->vkDestroyShaderEXT(vk->device, (VkShaderEXT)g->handle, NULL);
+        vk->vkDestroyShaderEXT(vk->device, (VkShaderEXT)g->handle, nullptr);
         break;
     case D3D_GARBAGE_QUERY_POOL:
-        vk->vkDestroyQueryPool(vk->device, (VkQueryPool)g->handle, NULL);
+        vk->vkDestroyQueryPool(vk->device, (VkQueryPool)g->handle, nullptr);
         break;
     case D3D_GARBAGE_MEMORY:
         D3dFree(device, &g->alloc);
@@ -309,7 +309,7 @@ static void destroy(D3dDevice *device, D3dGarbage *g)
         heap_release(device, g->heap_kind, (UINT)g->handle, 0);
         break;
     case D3D_GARBAGE_COMMAND_POOL:
-        vk->vkDestroyCommandPool(vk->device, (VkCommandPool)g->handle, NULL);
+        vk->vkDestroyCommandPool(vk->device, (VkCommandPool)g->handle, nullptr);
         break;
     }
 }

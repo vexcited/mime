@@ -25,7 +25,7 @@ void D12Log(const char *format, ...)
 
 static void *d12_alloc(void *context, size_t size) { return HeapAlloc(GetProcessHeap(), 0, size); }
 static void d12_free(void *context, void *p) { HeapFree(GetProcessHeap(), 0, p); }
-const MimeAllocator g_d12_allocator = {d12_alloc, d12_free, NULL};
+const MimeAllocator g_d12_allocator = {d12_alloc, d12_free, nullptr};
 
 /* ------------------------------------------------------------------ blobs */
 
@@ -43,7 +43,7 @@ static HRESULT STDMETHODCALLTYPE blob_query(ID3DBlob *iface, REFIID riid, void *
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -86,7 +86,7 @@ static HRESULT first_adapter(IDXGIAdapter **adapter)
 {
     HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
     HRESULT(WINAPI * create)(REFIID, void **) =
-        dxgi ? (HRESULT(WINAPI *)(REFIID, void **))(void *)GetProcAddress(dxgi, "CreateDXGIFactory1") : NULL;
+        dxgi ? (HRESULT(WINAPI *)(REFIID, void **))(void *)GetProcAddress(dxgi, "CreateDXGIFactory1") : nullptr;
     if (!create)
         return E_FAIL;
     IDXGIFactory1 *factory;
@@ -106,7 +106,7 @@ BOOL D12DeviceUnlist(D12Device *device)
     if (dead)
         for (UINT i = 0; i < RTL_NUMBER_OF(g_devices); i++)
             if (g_devices[i] == device)
-                g_devices[i] = NULL;
+                g_devices[i] = nullptr;
     ReleaseSRWLockExclusive(&g_devices_lock);
     return dead;
 }
@@ -114,7 +114,7 @@ BOOL D12DeviceUnlist(D12Device *device)
 static HRESULT create_device(IUnknown *unknown, D3D_FEATURE_LEVEL level, REFIID riid, void **out)
 {
     if (out)
-        *out = NULL;
+        *out = nullptr;
     switch (level) {
     case D3D_FEATURE_LEVEL_1_0_GENERIC:
     case D3D_FEATURE_LEVEL_1_0_CORE:
@@ -129,7 +129,7 @@ static HRESULT create_device(IUnknown *unknown, D3D_FEATURE_LEVEL level, REFIID 
     }
     if (level > D3D_FEATURE_LEVEL_12_2)
         return DXGI_ERROR_UNSUPPORTED;
-    IDXGIAdapter *adapter = NULL;
+    IDXGIAdapter *adapter = nullptr;
     HRESULT hr;
     if (unknown) {
         if (FAILED(unknown->lpVtbl->QueryInterface(unknown, &IID_IDXGIAdapter, (void **)&adapter)))
@@ -140,7 +140,7 @@ static HRESULT create_device(IUnknown *unknown, D3D_FEATURE_LEVEL level, REFIID 
     DXGI_ADAPTER_DESC desc;
     adapter->lpVtbl->GetDesc(adapter, &desc);
 
-    D12Device *device = NULL;
+    D12Device *device = nullptr;
     AcquireSRWLockExclusive(&g_devices_lock);
     for (UINT i = 0; i < RTL_NUMBER_OF(g_devices) && !device; i++)
         if (g_devices[i] && g_devices[i]->adapter_luid.LowPart == desc.AdapterLuid.LowPart &&
@@ -202,7 +202,7 @@ static HRESULT STDMETHODCALLTYPE debug_query(ID3D12Debug6 *iface, REFIID riid, v
     else if (IsEqualGUID(riid, &IID_ID3D12Debug2))
         *out = &debug->debug2;
     else {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&debug->refs);
@@ -268,7 +268,7 @@ D3D12API HRESULT WINAPI D3D12GetDebugInterface(REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     return create_debug(riid, out);
 }
 
@@ -287,7 +287,7 @@ static HRESULT STDMETHODCALLTYPE dred_query(ID3D12DeviceRemovedExtendedDataSetti
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -328,7 +328,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(ID3D12DeviceFactory *iface, REFII
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -405,7 +405,7 @@ static HRESULT STDMETHODCALLTYPE sdk_query(ID3D12SDKConfiguration1 *iface, REFII
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -433,7 +433,7 @@ static HRESULT STDMETHODCALLTYPE sdk_create_factory(ID3D12SDKConfiguration1 *ifa
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     return create_factory(riid, out);
 }
 
@@ -447,7 +447,7 @@ static HRESULT get_interface(REFCLSID clsid, REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(clsid, &CLSID_D3D12Debug))
         return create_debug(riid, out);
     if (IsEqualGUID(clsid, &CLSID_D3D12DeviceFactory))
@@ -495,9 +495,9 @@ D3D12API HRESULT WINAPI D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_D
 {
     if (!desc || version != D3D_ROOT_SIGNATURE_VERSION_1_0) {
         if (blob)
-            *blob = NULL;
+            *blob = nullptr;
         if (error)
-            *error = NULL;
+            *error = nullptr;
         return E_INVALIDARG;
     }
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versioned = {D3D_ROOT_SIGNATURE_VERSION_1_0};
@@ -532,7 +532,7 @@ static HRESULT STDMETHODCALLTYPE deserializer_query(ID3D12VersionedRootSignature
     else if (IsEqualGUID(riid, &IID_ID3D12RootSignatureDeserializer))
         *out = &d->v10;
     else {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&d->refs);
@@ -566,7 +566,7 @@ static HRESULT STDMETHODCALLTYPE deserializer_at_version(ID3D12VersionedRootSign
     D12Deserializer *d = CONTAINING_RECORD(iface, D12Deserializer, iface);
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (version < D3D_ROOT_SIGNATURE_VERSION_1_0 || version > D3D_ROOT_SIGNATURE_VERSION_1_2)
         return E_INVALIDARG;
     if (d->descs[0]->Version == version) {
@@ -578,7 +578,7 @@ static HRESULT STDMETHODCALLTYPE deserializer_at_version(ID3D12VersionedRootSign
         HRESULT hr = D12ConvertRootSignature(d->descs[0], version, &converted);
         if (FAILED(hr))
             return hr;
-        if (InterlockedCompareExchangePointer((void **)&d->descs[version], converted, NULL))
+        if (InterlockedCompareExchangePointer((void **)&d->descs[version], converted, nullptr))
             HeapFree(GetProcessHeap(), 0, converted);
     }
     *out = d->descs[version];
@@ -615,7 +615,7 @@ static const D3D12_ROOT_SIGNATURE_DESC *STDMETHODCALLTYPE v10_desc(ID3D12RootSig
     const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc;
     if (FAILED(deserializer_at_version(&CONTAINING_RECORD(iface, D12Deserializer, v10)->iface,
                                        D3D_ROOT_SIGNATURE_VERSION_1_0, &desc)))
-        return NULL;
+        return nullptr;
     return &desc->Desc_1_0;
 }
 
@@ -625,7 +625,7 @@ static HRESULT create_deserializer(const void *data, SIZE_T size, REFIID riid, v
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (!data || !size)
         return E_INVALIDARG;
     D12Deserializer *d = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*d));

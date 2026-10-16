@@ -77,7 +77,7 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
     SIZE_T offset = 0;
     UINT error = ERROR_SUCCESS;
     while (offset < size && !error) {
-        ULONG mask, values[16] = {0};
+        ULONG mask, values[16] = {};
         if (!read_cell(data, size, &offset, 2, &mask)) {
             error = ERROR_INSTALL_PACKAGE_INVALID;
             break;
@@ -148,7 +148,7 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
             if (changed & (1u << column))
                 rows[(SIZE_T)row * table->Count + column] = values[column];
     }
-    MSI_TABLE_EDIT *edit = NULL;
+    MSI_TABLE_EDIT *edit = nullptr;
     if (!error) {
         edit = MimeMsiAllocate(sizeof(*edit));
         if (!edit)
@@ -168,7 +168,7 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
             }
             bytes += extra;
         }
-        edit->Table.Data = error ? NULL : MimeMsiAllocate(bytes ? bytes : 1);
+        edit->Table.Data = error ? nullptr : MimeMsiAllocate(bytes ? bytes : 1);
         if (!error && !edit->Table.Data)
             error = ERROR_NOT_ENOUGH_MEMORY;
         if (!error) {
@@ -215,7 +215,7 @@ static UINT apply_transform(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
             break;
         }
     }
-    MSI_TABLE_EDIT *edits = NULL;
+    MSI_TABLE_EDIT *edits = nullptr;
     for (SIZE_T i = 1; !error && i < transform->File.DirectorySize / 128; i++) {
         MIME_CFB_ENTRY entry;
         if (!MimeCfbEntry(&transform->File, (ULONG)i, &entry)) {
@@ -242,11 +242,11 @@ static UINT apply_transform(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
         for (MSI_TABLE_EDIT *prior = edits; !error && prior; prior = prior->Next)
             if (prior->Original == table)
                 error = ERROR_INSTALL_PACKAGE_INVALID;
-        BYTE *data = NULL;
+        BYTE *data = nullptr;
         SIZE_T size;
         if (!error)
             error = MimeMsiReadStream(transform, (PCWSTR)entry.Name, &data, &size);
-        MSI_TABLE_EDIT *edit = NULL;
+        MSI_TABLE_EDIT *edit = nullptr;
         if (!error)
             error = transform_table(database, transform, strings, table, data, size, flags, &edit);
         MimeMsiFree(data);
@@ -285,7 +285,7 @@ UINT WINAPI MsiDatabaseApplyTransformW(MSIHANDLE handle, LPCWSTR path, int flags
 {
     if (!path || !*path || (flags & ~0x3f))
         return ERROR_INVALID_PARAMETER;
-    MIME_MSI_DATABASE *transform = NULL;
+    MIME_MSI_DATABASE *transform = nullptr;
     UINT error = MimeMsiOpenDatabaseFile(path, TRUE, &transform);
     if (error)
         return error;

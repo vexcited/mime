@@ -103,7 +103,7 @@ static void put_key(wsink *s, DWORD flags, DWORD str_type, LPCSTR oid)
         return;
     if (str_type == CERT_XML_NAME_STR)
         put_str(s, (flags & KEY_OPEN) ? L"<" : L"</", FALSE);
-    PCCRYPT_OID_INFO info = str_type != CERT_OID_NAME_STR ? CrFindOid(oid, CRYPT_RDN_ATTR_OID_GROUP_ID) : NULL;
+    PCCRYPT_OID_INFO info = str_type != CERT_OID_NAME_STR ? CrFindOid(oid, CRYPT_RDN_ATTR_OID_GROUP_ID) : nullptr;
     if (info && info->pwszName[0] && (str_type != CERT_XML_NAME_STR || all_alpha(info->pwszName))) {
         if (str_type == CERT_XML_NAME_STR) {
             put_xml_escaped(s, info->pwszName);
@@ -174,7 +174,7 @@ DWORD CrNameToStr(const CERT_NAME_BLOB *name, DWORD str_type, WCHAR *out, DWORD 
     DWORD size;
     CERT_NAME_INFO *info = name && name->pbData
                                ? CrDecodeAlloc(X509_UNICODE_NAME, name->pbData, name->cbData, decode_flags, &size)
-                               : NULL;
+                               : nullptr;
     if (!info)
         return finish(&s);
     if (str_type & CERT_NAME_STR_REVERSE_FLAG)
@@ -233,12 +233,12 @@ DWORD WINAPI CertNameToStrW(DWORD dwCertEncodingType, PCERT_NAME_BLOB pName, DWO
 /* converts a wide result for the ansi functions with the same truncation rules. */
 static DWORD wide_to_ansi_result(LPCWSTR wide, LPSTR out, DWORD capacity)
 {
-    int needed = WideCharToMultiByte(CP_ACP, 0, wide, -1, NULL, 0, NULL, NULL);
+    int needed = WideCharToMultiByte(CP_ACP, 0, wide, -1, nullptr, 0, nullptr, nullptr);
     if (needed <= 0)
         needed = 1;
     if (!out || !capacity)
         return (DWORD)needed;
-    int written = WideCharToMultiByte(CP_ACP, 0, wide, -1, out, (int)capacity, NULL, NULL);
+    int written = WideCharToMultiByte(CP_ACP, 0, wide, -1, out, (int)capacity, nullptr, nullptr);
     if (written <= 0) {
         out[capacity - 1] = 0;
         return capacity;
@@ -248,7 +248,7 @@ static DWORD wide_to_ansi_result(LPCWSTR wide, LPSTR out, DWORD capacity)
 
 DWORD WINAPI CertNameToStrA(DWORD dwCertEncodingType, PCERT_NAME_BLOB pName, DWORD dwStrType, LPSTR psz, DWORD csz)
 {
-    DWORD n = CrNameToStr(pName, dwStrType, NULL, 0);
+    DWORD n = CrNameToStr(pName, dwStrType, nullptr, 0);
     WCHAR *wide = CrAlloc(n * sizeof(WCHAR));
     if (!wide) {
         if (psz && csz)
@@ -320,7 +320,7 @@ static DWORD parse_x500(LPCWSTR text, DWORD str_type, parsed_attr **out, DWORD *
             key_end--;
         DWORD key_length = (DWORD)(key_end - key);
         char oid[128];
-        LPCWSTR dotted = NULL;
+        LPCWSTR dotted = nullptr;
         if (key_length > 4 && !_wcsnicmp(key, L"OID.", 4))
             dotted = key + 4;
         else if (key_length && key[0] >= '0' && key[0] <= '9')
@@ -357,7 +357,7 @@ static DWORD parse_x500(LPCWSTR text, DWORD str_type, parsed_attr **out, DWORD *
         p++;
         while (*p && str_space(*p) && !wcschr(separators, *p))
             p++;
-        parsed_attr attr = {0};
+        parsed_attr attr = {};
         attr.position = p;
         attr.same_rdn = same_rdn;
         if (*p == '"') {
@@ -465,7 +465,7 @@ bad:
     CrFree(attrs);
     return CRYPT_E_INVALID_X500_STRING;
 oom:
-    *error_at = NULL;
+    *error_at = nullptr;
     for (DWORD i = 0; i < count; i++) {
         CrFree(attrs[i].oid);
         CrFree(attrs[i].value);
@@ -479,7 +479,7 @@ BOOL WINAPI CertStrToNameW(DWORD dwCertEncodingType, LPCWSTR pszX500, DWORD dwSt
                            BYTE *pbEncoded, DWORD *pcbEncoded, LPCWSTR *ppszError)
 {
     if (ppszError)
-        *ppszError = NULL;
+        *ppszError = nullptr;
     DWORD type = dwStrType & 0xFFFF;
     if (type && type != CERT_OID_NAME_STR && type != CERT_X500_NAME_STR)
         return CrFail(E_INVALIDARG);
@@ -490,9 +490,9 @@ BOOL WINAPI CertStrToNameW(DWORD dwCertEncodingType, LPCWSTR pszX500, DWORD dwSt
         rdn_flags |= CERT_RDN_ENABLE_UTF8_UNICODE_FLAG;
     if (dwStrType & CERT_NAME_STR_FORCE_UTF8_DIR_STR_FLAG)
         rdn_flags |= CERT_RDN_ENABLE_UTF8_UNICODE_FLAG | CERT_RDN_FORCE_UTF8_UNICODE_FLAG;
-    parsed_attr *attrs = NULL;
+    parsed_attr *attrs = nullptr;
     DWORD count = 0;
-    LPCWSTR error_at = NULL;
+    LPCWSTR error_at = nullptr;
     if (pszX500 && *pszX500) {
         DWORD error = parse_x500(pszX500, dwStrType, &attrs, &count, &error_at);
         if (error) {
@@ -578,20 +578,20 @@ BOOL WINAPI CertStrToNameA(DWORD dwCertEncodingType, LPCSTR pszX500, DWORD dwStr
                            BYTE *pbEncoded, DWORD *pcbEncoded, LPCSTR *ppszError)
 {
     if (ppszError)
-        *ppszError = NULL;
-    WCHAR *wide = NULL;
+        *ppszError = nullptr;
+    WCHAR *wide = nullptr;
     if (pszX500) {
-        int n = MultiByteToWideChar(CP_ACP, 0, pszX500, -1, NULL, 0);
+        int n = MultiByteToWideChar(CP_ACP, 0, pszX500, -1, nullptr, 0);
         wide = CrAlloc((n > 0 ? n : 1) * sizeof(WCHAR));
         if (!wide)
             return CrFail(ERROR_OUTOFMEMORY);
         MultiByteToWideChar(CP_ACP, 0, pszX500, -1, wide, n);
     }
-    LPCWSTR error_at = NULL;
+    LPCWSTR error_at = nullptr;
     BOOL ok = CertStrToNameW(dwCertEncodingType, wide, dwStrType, pvReserved, pbEncoded, pcbEncoded, &error_at);
     if (!ok && error_at && ppszError) {
         /* maps the position back through the ansi text. */
-        int bytes = WideCharToMultiByte(CP_ACP, 0, wide, (int)(error_at - wide), NULL, 0, NULL, NULL);
+        int bytes = WideCharToMultiByte(CP_ACP, 0, wide, (int)(error_at - wide), nullptr, 0, nullptr, nullptr);
         *ppszError = pszX500 + (bytes > 0 ? bytes : 0);
     }
     DWORD error = GetLastError();
@@ -611,7 +611,7 @@ static CERT_ALT_NAME_INFO *alt_names(PCCERT_CONTEXT cert, BOOL issuer)
         ext = CertFindExtension(issuer ? szOID_ISSUER_ALT_NAME : szOID_SUBJECT_ALT_NAME, info->cExtension,
                                 info->rgExtension);
     if (!ext)
-        return NULL;
+        return nullptr;
     DWORD size;
     return CrDecodeAlloc(X509_ALTERNATE_NAME, ext->Value.pbData, ext->Value.cbData, 0, &size);
 }
@@ -667,7 +667,7 @@ static BOOL put_upn(wsink *s, CERT_ALT_NAME_INFO *names)
         if (DerRead(&r, &value))
             continue;
         DWORD type = CrStringTypeFromTag(value.tag);
-        DWORD n = CrDecodeNameValueString(type, value.content, value.length, NULL, 0);
+        DWORD n = CrDecodeNameValueString(type, value.content, value.length, nullptr, 0);
         WCHAR *text = CrAlloc((n + 1) * sizeof(WCHAR));
         if (!text)
             return FALSE;
@@ -687,7 +687,7 @@ DWORD CrGetNameString(PCCERT_CONTEXT cert, DWORD type, DWORD flags, void *para, 
         return finish(&s);
     BOOL issuer = (flags & CERT_NAME_ISSUER_FLAG) != 0;
     const CERT_NAME_BLOB *name = issuer ? &cert->pCertInfo->Issuer : &cert->pCertInfo->Subject;
-    CERT_ALT_NAME_INFO *names = NULL;
+    CERT_ALT_NAME_INFO *names = nullptr;
     BOOL all = (flags & CERT_NAME_SEARCH_ALL_NAMES_FLAG) != 0;
     BOOL found = FALSE;
     switch (type) {
@@ -697,7 +697,7 @@ DWORD CrGetNameString(PCCERT_CONTEXT cert, DWORD type, DWORD flags, void *para, 
         break;
     case CERT_NAME_RDN_TYPE: {
         DWORD str_type = para ? *(const DWORD *)para : CERT_SIMPLE_NAME_STR;
-        DWORD n = CrNameToStr(name, str_type, NULL, 0);
+        DWORD n = CrNameToStr(name, str_type, nullptr, 0);
         WCHAR *text = CrAlloc(n * sizeof(WCHAR));
         if (text) {
             CrNameToStr(name, str_type, text, n);
@@ -717,7 +717,7 @@ DWORD CrGetNameString(PCCERT_CONTEXT cert, DWORD type, DWORD flags, void *para, 
     case CERT_NAME_FRIENDLY_DISPLAY_TYPE:
         if (!issuer) {
             DWORD size = 0;
-            if (CertGetCertificateContextProperty(cert, CERT_FRIENDLY_NAME_PROP_ID, NULL, &size) && size > 2) {
+            if (CertGetCertificateContextProperty(cert, CERT_FRIENDLY_NAME_PROP_ID, nullptr, &size) && size > 2) {
                 WCHAR *text = CrAllocZero(size + sizeof(WCHAR));
                 if (text && CertGetCertificateContextProperty(cert, CERT_FRIENDLY_NAME_PROP_ID, text, &size)) {
                     put_str(&s, text, FALSE);
@@ -728,7 +728,7 @@ DWORD CrGetNameString(PCCERT_CONTEXT cert, DWORD type, DWORD flags, void *para, 
                     break;
             }
         }
-        /* fall through */
+        [[fallthrough]];
     case CERT_NAME_SIMPLE_DISPLAY_TYPE: {
         static const LPCSTR order[] = {szOID_COMMON_NAME, szOID_ORGANIZATIONAL_UNIT_NAME, szOID_ORGANIZATION_NAME,
                                        szOID_RSA_emailAddr};
@@ -771,7 +771,7 @@ DWORD WINAPI CertGetNameStringW(PCCERT_CONTEXT pCertContext, DWORD dwType, DWORD
 DWORD WINAPI CertGetNameStringA(PCCERT_CONTEXT pCertContext, DWORD dwType, DWORD dwFlags, void *pvTypePara,
                                 LPSTR pszNameString, DWORD cchNameString)
 {
-    DWORD n = CrGetNameString(pCertContext, dwType, dwFlags, pvTypePara, NULL, 0);
+    DWORD n = CrGetNameString(pCertContext, dwType, dwFlags, pvTypePara, nullptr, 0);
     WCHAR *wide = CrAlloc(n * sizeof(WCHAR));
     if (!wide) {
         if (pszNameString && cchNameString)
@@ -781,12 +781,12 @@ DWORD WINAPI CertGetNameStringA(PCCERT_CONTEXT pCertContext, DWORD dwType, DWORD
     CrGetNameString(pCertContext, dwType, dwFlags, pvTypePara, wide, n);
     DWORD result;
     if ((dwFlags & CERT_NAME_SEARCH_ALL_NAMES_FLAG) && dwType == CERT_NAME_DNS_TYPE) {
-        int needed = WideCharToMultiByte(CP_ACP, 0, wide, (int)n, NULL, 0, NULL, NULL);
+        int needed = WideCharToMultiByte(CP_ACP, 0, wide, (int)n, nullptr, 0, nullptr, nullptr);
         if (!pszNameString || !cchNameString)
             result = (DWORD)needed;
         else
-            result = (DWORD)WideCharToMultiByte(CP_ACP, 0, wide, (int)n, pszNameString, (int)cchNameString, NULL,
-                                                NULL);
+            result = (DWORD)WideCharToMultiByte(CP_ACP, 0, wide, (int)n, pszNameString, (int)cchNameString, nullptr,
+                                                nullptr);
     } else {
         result = wide_to_ansi_result(wide, pszNameString, cchNameString);
     }
@@ -812,7 +812,7 @@ DWORD WINAPI CertRDNValueToStrW(DWORD dwValueType, PCERT_RDN_VALUE_BLOB pValue, 
         for (DWORD i = 0; i < pValue->cbData / 4 && c[i]; i++)
             put(&s, c[i] > 0xFFFF ? 0xFFFD : (WCHAR)c[i]);
     } else {
-        DWORD n = CrDecodeNameValueString(type, pValue->pbData, pValue->cbData, NULL, 0);
+        DWORD n = CrDecodeNameValueString(type, pValue->pbData, pValue->cbData, nullptr, 0);
         WCHAR *text = CrAlloc((n + 1) * sizeof(WCHAR));
         if (text) {
             CrDecodeNameValueString(type, pValue->pbData, pValue->cbData, text, n);
@@ -826,7 +826,7 @@ DWORD WINAPI CertRDNValueToStrW(DWORD dwValueType, PCERT_RDN_VALUE_BLOB pValue, 
 
 DWORD WINAPI CertRDNValueToStrA(DWORD dwValueType, PCERT_RDN_VALUE_BLOB pValue, LPSTR psz, DWORD csz)
 {
-    DWORD n = CertRDNValueToStrW(dwValueType, pValue, NULL, 0);
+    DWORD n = CertRDNValueToStrW(dwValueType, pValue, nullptr, 0);
     WCHAR *wide = CrAlloc(n * sizeof(WCHAR));
     if (!wide) {
         if (psz && csz)

@@ -45,8 +45,8 @@ HWND NTAPI NtUserSetCapture(HWND hwnd)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HWND old = t ? t->Capture : NULL;
-    WND *w = hwnd ? WndLookup(hwnd) : NULL;
+    HWND old = t ? t->Capture : nullptr;
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if (t && (!hwnd || (w && w->Thread == t)))
         InputSetCapture(t, w, 0);
     UserLeave();
@@ -120,7 +120,7 @@ static W32THREAD *mouse_target_thread(const MimeInputEvent *ev)
     if (InputForeground && InputForeground->Thread && InputForeground->Thread->Capture)
         return InputForeground->Thread;
     WND *w = WndLookup((HWND)(ULONG_PTR)ev->window_id);
-    return w ? w->Thread : NULL;
+    return w ? w->Thread : nullptr;
 }
 
 /*
@@ -183,9 +183,9 @@ static UINT button_message(UINT button, BOOLEAN down, BOOLEAN nc);
 /* low level hooks see input before it reaches any queue; a nonzero answer drops it. */
 static BOOLEAN low_level_key(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
 {
-    if (!HookActive(WH_KEYBOARD_LL, NULL))
+    if (!HookActive(WH_KEYBOARD_LL, nullptr))
         return FALSE;
-    KBDLLHOOKSTRUCT k = {0};
+    KBDLLHOOKSTRUCT k = {};
     BOOLEAN up = ev->type == MIME_INPUT_KEY_UP;
     BOOLEAN alt = (ev->modifiers & MIME_MOD_ALT) != 0;
     if (ev->type == MIME_INPUT_CHAR) {
@@ -208,14 +208,14 @@ static BOOLEAN low_level_key(const MimeInputEvent *ev, BOOLEAN injected, ULONG_P
     k.dwExtraInfo = extra;
     BOOLEAN sys = (alt && !(ev->modifiers & MIME_MOD_CONTROL)) || ev->vk == VK_F10;
     WPARAM msg = sys ? (up ? WM_SYSKEYUP : WM_SYSKEYDOWN) : (up ? WM_KEYUP : WM_KEYDOWN);
-    return HookCall(WH_KEYBOARD_LL, NULL, HC_ACTION, msg, (LPARAM)&k, sizeof(k), NULL) != 0;
+    return HookCall(WH_KEYBOARD_LL, nullptr, HC_ACTION, msg, (LPARAM)&k, sizeof(k), nullptr) != 0;
 }
 
 static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
 {
-    if (!HookActive(WH_MOUSE_LL, NULL))
+    if (!HookActive(WH_MOUSE_LL, nullptr))
         return FALSE;
-    MSLLHOOKSTRUCT m = {0};
+    MSLLHOOKSTRUCT m = {};
     m.pt = (POINT){ev->x, ev->y};
     UINT msg = WM_MOUSEMOVE;
     if (ev->type == MIME_INPUT_MOUSE_DOWN || ev->type == MIME_INPUT_MOUSE_UP) {
@@ -230,7 +230,7 @@ static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG
         m.flags |= LLMHF_INJECTED;
     m.time = W32TickCount();
     m.dwExtraInfo = extra;
-    return HookCall(WH_MOUSE_LL, NULL, HC_ACTION, msg, (LPARAM)&m, sizeof(m), NULL) != 0;
+    return HookCall(WH_MOUSE_LL, nullptr, HC_ACTION, msg, (LPARAM)&m, sizeof(m), nullptr) != 0;
 }
 
 /* the characters the host sends right after a key press share its fate. */
@@ -239,7 +239,7 @@ static BOOLEAN g_key_dropped;
 
 static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
 {
-    W32THREAD *t = NULL;
+    W32THREAD *t = nullptr;
     if (ev->type == MIME_INPUT_CLIPBOARD) {
         ClipboardHostChanged(ev->x != 0);
         return;
@@ -282,11 +282,11 @@ static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR
     case MIME_INPUT_KEY_DOWN:
     case MIME_INPUT_KEY_UP:
     case MIME_INPUT_CHAR:
-        t = InputForeground ? InputForeground->Thread : NULL;
+        t = InputForeground ? InputForeground->Thread : nullptr;
         break;
     default: {
         WND *w = WndLookup((HWND)(ULONG_PTR)ev->window_id);
-        t = w ? w->Thread : NULL;
+        t = w ? w->Thread : nullptr;
         break;
     }
     }
@@ -432,7 +432,7 @@ static void NTAPI input_thread(PVOID context)
     PKEVENT ready = HalMimeGetInputEvent();
     ULONG64 pa = (ULONG64)MmGetPhysicalAddress(g_events).QuadPart;
     for (;;) {
-        KeWaitForSingleObject(ready, Executive, KernelMode, FALSE, NULL);
+        KeWaitForSingleObject(ready, Executive, KernelMode, FALSE, nullptr);
         for (;;) {
             ULONG64 count = 0;
             if (HalMimeHypercall(MIME_HC_INPUT_RECV, pa, INPUT_BATCH, 0, 0, 0, 0, &count) != MIME_HC_STATUS_OK ||
@@ -459,7 +459,7 @@ void InputInitialize(void)
     const MimeBootInfo *boot = HalMimeGetBootInfo();
     InputCursorPos = (POINT){(LONG)boot->display.width / 2, (LONG)boot->display.height / 2};
     HANDLE thread;
-    NTSTATUS status = PsCreateSystemThread(&thread, 0, NULL, NULL, NULL, input_thread, NULL);
+    NTSTATUS status = PsCreateSystemThread(&thread, 0, nullptr, nullptr, nullptr, input_thread, nullptr);
     if (NT_SUCCESS(status))
         ZwClose(thread);
     else
@@ -500,13 +500,13 @@ static WND *hit_test(WND *top, POINT pt, LONG *hit)
         }
         LONG h = (LONG)MsgSend(w, WM_NCHITTEST, 0, MAKELPARAM(pt.x, pt.y));
         if (w->Header.Destroyed)
-            return NULL;
+            return nullptr;
         if (h != HTTRANSPARENT || !w->Parent || WndIsTopLevel(w)) {
             *hit = h == HTTRANSPARENT ? HTNOWHERE : h;
             return w;
         }
         /* look for a sibling below the transparent window before falling back to the parent. */
-        WND *next = NULL;
+        WND *next = nullptr;
         for (WND *s = w->Next; s; s = s->Next)
             if ((s->Style & WS_VISIBLE) && RectContains(&s->WindowRect, pt.x, pt.y)) {
                 next = s;
@@ -514,12 +514,12 @@ static WND *hit_test(WND *top, POINT pt, LONG *hit)
             }
         w = next ? WndFromPoint(next, pt) : w->Parent;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void track_mouse(W32THREAD *t, WND *w, LONG hit)
 {
-    HWND h = w ? WndHandle(w) : NULL;
+    HWND h = w ? WndHandle(w) : nullptr;
     BOOLEAN nc = hit != HTCLIENT;
     WND *old = WndLookup(t->MouseWindow);
     if (old && (old != w || (old->CaptionHot && !nc))) {
@@ -643,7 +643,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         /* disabled window: a click on a window disabled by a modal popup brings the popup forward. */
         if (remove && ev->type == MIME_INPUT_MOUSE_DOWN) {
             WND *top = WndTopLevel(w);
-            WND *popup = NULL;
+            WND *popup = nullptr;
             WND *desktop = WndDesktop();
             for (WND *c = desktop->FirstChild; c; c = c->Next)
                 if (c->Owner == top && (c->Style & WS_VISIBLE) && !(c->Style & WS_DISABLED))
@@ -691,7 +691,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         sync_mouse_state(t, ev, qm->Msg.wParam);
         UserReference(&w->Header);
         if (ev->type == MIME_INPUT_MOUSE_DOWN) {
-            g_last_click.Hwnd = dbl ? NULL : WndHandle(w);
+            g_last_click.Hwnd = dbl ? nullptr : WndHandle(w);
             g_last_click.Message = dbl ? 0 : msg;
             g_last_click.Time = (DWORD)ev->time_ms;
             g_last_click.Pt = pt;
@@ -715,7 +715,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         } else if (!w->Header.Destroyed) {
             /* under capture the mouse window is still the one under the pointer, without hit test messages. */
             WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
-            WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, pt) : NULL;
+            WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, pt) : nullptr;
             track_mouse(t, under, under && RectContains(&under->ClientRect, pt.x, pt.y) ? HTCLIENT : HTNOWHERE);
         }
         BOOLEAN dead = w->Header.Destroyed;
@@ -840,7 +840,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
     }
     case MIME_INPUT_WINDOW_MOVED:
         w->Flags |= WNDF_HOST_MOVING;
-        WndSetPos(w, NULL, ev->x, ev->y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        WndSetPos(w, nullptr, ev->x, ev->y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (!w->Header.Destroyed)
             w->Flags &= ~WNDF_HOST_MOVING;
         break;
@@ -859,8 +859,8 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
             }
         } else if (InputForeground == w) {
             UserReference(&w->Header);
-            InputSetForeground(NULL);
-            t->Active = NULL;
+            InputSetForeground(nullptr);
+            t->Active = nullptr;
             MsgSend(w, WM_NCACTIVATE, FALSE, 0);
             if (!w->Header.Destroyed)
                 MsgSend(w, WM_ACTIVATE, WA_INACTIVE, 0);
@@ -882,7 +882,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
             QueuePost(t, t->MouseWindow, (t->Track.dwFlags & TME_NONCLIENT) ? WM_NCMOUSELEAVE : WM_MOUSELEAVE, 0, 0);
             t->Track.dwFlags &= ~TME_LEAVE;
         }
-        t->MouseWindow = NULL;
+        t->MouseWindow = nullptr;
         break;
     }
     return FALSE;

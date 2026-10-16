@@ -13,7 +13,7 @@ UINT MimeMsiSaveDirectories(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     _snwprintf(catalog, RTL_NUMBER_OF(catalog), L"%s\\Directories", path);
     for (ULONG row = 0; row < table->Rows && !error; row++) {
         PCWSTR name = MimeMsiText(package->Database, table, row, id);
-        PWSTR directory = NULL;
+        PWSTR directory = nullptr;
         if (!name || !*name)
             error = ERROR_INSTALL_PACKAGE_INVALID;
         else
@@ -41,7 +41,7 @@ static UINT restore_directories(MIME_MSI_PACKAGE *package, HKEY product, BOOL va
         error = ERROR_INSTALL_PACKAGE_INVALID;
     for (ULONG row = 0; !error && row < table->Rows; row++) {
         PCWSTR name = MimeMsiText(package->Database, table, row, id);
-        PWSTR directory = NULL, current = NULL;
+        PWSTR directory = nullptr, current = nullptr;
         if (!name || !*name)
             error = ERROR_INSTALL_PACKAGE_INVALID;
         else

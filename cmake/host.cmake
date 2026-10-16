@@ -13,7 +13,7 @@ if(NOT MIME_BUILD_HOST)
     return()
 endif()
 
-set(host_warnings -Wall -Wextra -Wno-unused-parameter)
+set(host_warnings -Wall -Wextra -Wimplicit-fallthrough -Wno-unused-parameter)
 # linux's host code uses gnu extensions.
 set(host_gnu ON)
 if(APPLE)

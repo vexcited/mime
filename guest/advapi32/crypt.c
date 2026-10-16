@@ -93,7 +93,7 @@ static PROVIDER *provider(HCRYPTPROV handle)
     PROVIDER *p = (PROVIDER *)handle;
     if (!p || p->Magic != PROV_MAGIC) {
         AdvSetError(NTE_BAD_UID);
-        return NULL;
+        return nullptr;
     }
     return p;
 }
@@ -168,7 +168,7 @@ ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, L
     p->Name = index;
     /* without a name the container is the user's, as on windows. */
     if (container && *container) {
-        WideCharToMultiByte(CP_ACP, 0, container, -1, p->Container, sizeof(p->Container), NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, container, -1, p->Container, sizeof(p->Container), nullptr, nullptr);
     } else if ((flags & CRYPT_VERIFYCONTEXT) != CRYPT_VERIFYCONTEXT) {
         DWORD size = sizeof(p->Container);
         if (!GetUserNameA(p->Container, &size))
@@ -339,7 +339,7 @@ static HASH *hash_object(HCRYPTHASH handle)
     HASH *h = (HASH *)handle;
     if (!h || h->Magic != HASH_MAGIC) {
         AdvSetError(NTE_BAD_HASH);
-        return NULL;
+        return nullptr;
     }
     return h;
 }
@@ -421,7 +421,7 @@ static BOOL finish_hash(HASH *h)
     if (h->Finished)
         return TRUE;
     HMODULE crypt32 = LoadLibraryW(L"crypt32.dll");
-    HASH_FUNCTION hash = crypt32 ? (HASH_FUNCTION)(void *)GetProcAddress(crypt32, "CryptHashCertificate") : NULL;
+    HASH_FUNCTION hash = crypt32 ? (HASH_FUNCTION)(void *)GetProcAddress(crypt32, "CryptHashCertificate") : nullptr;
     DWORD size = sizeof(h->Value);
     BOOL ok = hash && hash(0, h->Algorithm, 0, h->Data, h->Length, h->Value, &size) && size == h->Size;
     if (crypt32)
@@ -433,7 +433,7 @@ static BOOL finish_hash(HASH *h)
     if (h->Data)
         SecureZeroMemory(h->Data, h->Length);
     AdvFree(h->Data);
-    h->Data = NULL;
+    h->Data = nullptr;
     h->Length = h->Capacity = 0;
     h->Finished = TRUE;
     return TRUE;
@@ -476,7 +476,7 @@ ADVAPI BOOL WINAPI CryptGetHashParam(HCRYPTHASH handle, DWORD param, BYTE *data,
     case HP_HASHVAL:
         /* a size query leaves the hash open for more data. */
         if (!data)
-            return return_param(h->Value, h->Size, NULL, length);
+            return return_param(h->Value, h->Size, nullptr, length);
         return finish_hash(h) && return_param(h->Value, h->Size, data, length);
     default:
         AdvSetError(NTE_BAD_TYPE);
@@ -569,7 +569,7 @@ ADVAPI BOOL WINAPI CryptGetProvParam(HCRYPTPROV handle, DWORD param, BYTE *data,
     switch (param) {
     case PP_NAME: {
         CHAR name[128];
-        int n = WideCharToMultiByte(CP_ACP, 0, g_providers[p->Name].Name, -1, name, sizeof(name), NULL, NULL);
+        int n = WideCharToMultiByte(CP_ACP, 0, g_providers[p->Name].Name, -1, name, sizeof(name), nullptr, nullptr);
         return return_param(name, (DWORD)n, data, length);
     }
     case PP_CONTAINER:
@@ -609,7 +609,7 @@ ADVAPI BOOL WINAPI CryptGetProvParam(HCRYPTPROV handle, DWORD param, BYTE *data,
             strcpy(a.szName, g_algorithms[i].Name);
             ok = return_param(&a, sizeof(a), data, length);
         } else {
-            PROV_ENUMALGS_EX a = {0};
+            PROV_ENUMALGS_EX a = {};
             a.aiAlgid = g_algorithms[i].Id;
             a.dwDefaultLen = a.dwMinLen = a.dwMaxLen = g_algorithms[i].Bits;
             a.dwNameLen = (DWORD)strlen(g_algorithms[i].Name) + 1;
@@ -660,7 +660,7 @@ ADVAPI BOOL WINAPI CryptEnumProvidersA(DWORD index, DWORD *reserved, DWORD flags
         return FALSE;
     }
     CHAR ansi[128];
-    int n = WideCharToMultiByte(CP_ACP, 0, g_providers[index].Name, -1, ansi, sizeof(ansi), NULL, NULL);
+    int n = WideCharToMultiByte(CP_ACP, 0, g_providers[index].Name, -1, ansi, sizeof(ansi), nullptr, nullptr);
     if (type)
         *type = g_providers[index].Type;
     return return_param(ansi, (DWORD)n, (BYTE *)name, size);
@@ -685,7 +685,7 @@ static KEY *key_object(HCRYPTKEY handle)
     KEY *k = (KEY *)handle;
     if (!k || k->Magic != KEY_MAGIC) {
         AdvSetError(NTE_BAD_KEY);
-        return NULL;
+        return nullptr;
     }
     return k;
 }
@@ -774,7 +774,7 @@ ADVAPI BOOL WINAPI CryptSetHashParam(HCRYPTHASH handle, DWORD param, const BYTE 
     if (h->Data)
         SecureZeroMemory(h->Data, h->Length);
     AdvFree(h->Data);
-    h->Data = NULL;
+    h->Data = nullptr;
     h->Length = h->Capacity = 0;
     h->Finished = TRUE;
     return TRUE;
@@ -797,5 +797,5 @@ ADVAPI BOOL WINAPI CryptSignHashW(HCRYPTHASH handle, DWORD spec, LPCWSTR descrip
 ADVAPI BOOL WINAPI CryptSignHashA(HCRYPTHASH handle, DWORD spec, LPCSTR description, DWORD flags, BYTE *signature,
                                   DWORD *length)
 {
-    return CryptSignHashW(handle, spec, NULL, flags, signature, length);
+    return CryptSignHashW(handle, spec, nullptr, flags, signature, length);
 }

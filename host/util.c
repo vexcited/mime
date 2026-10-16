@@ -46,7 +46,7 @@ int64_t mime_file_mtime(const char *path)
     struct stat st;
     if (stat(path, &st) != 0)
         return -1;
-#if defined(__APPLE__)
+#ifdef __APPLE__
     return (int64_t)st.st_mtimespec.tv_sec * 1000000000 + st.st_mtimespec.tv_nsec;
 #else
     return (int64_t)st.st_mtim.tv_sec * 1000000000 + st.st_mtim.tv_nsec;
@@ -57,17 +57,17 @@ void *mime_read_file(const char *path, size_t *size_out)
 {
     int fd = open(path, O_RDONLY);
     if (fd < 0)
-        return NULL;
+        return nullptr;
     struct stat st;
     if (fstat(fd, &st) != 0) {
         close(fd);
-        return NULL;
+        return nullptr;
     }
     size_t size = (size_t)st.st_size;
     uint8_t *data = malloc(size + 1);
     if (!data) {
         close(fd);
-        return NULL;
+        return nullptr;
     }
     size_t done = 0;
     while (done < size) {
@@ -77,7 +77,7 @@ void *mime_read_file(const char *path, size_t *size_out)
                 continue;
             free(data);
             close(fd);
-            return NULL;
+            return nullptr;
         }
         done += (size_t)n;
     }

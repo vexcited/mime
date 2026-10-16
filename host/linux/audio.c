@@ -149,7 +149,7 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
 uint64_t mime_audio_start(uint64_t stream, uint64_t running)
 {
     pthread_mutex_lock(&g_lock);
-    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : NULL;
+    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : nullptr;
     bool ok = true;
     if (s && s->running != (running != 0)) {
         ok = running ? SDL_ResumeAudioStreamDevice(s->stream) : SDL_PauseAudioStreamDevice(s->stream);
@@ -165,9 +165,9 @@ uint64_t mime_audio_start(uint64_t stream, uint64_t running)
 void mime_audio_close(uint64_t stream)
 {
     pthread_mutex_lock(&g_lock);
-    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : NULL;
+    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : nullptr;
     if (s)
-        g_streams[stream] = NULL;
+        g_streams[stream] = nullptr;
     pthread_mutex_unlock(&g_lock);
     if (s)
         destroy(s);

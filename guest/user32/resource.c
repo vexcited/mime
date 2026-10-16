@@ -34,7 +34,7 @@ static BOOL read_at(USER_RESFILE *f, ULONG64 offset, void *buffer, DWORD length)
 {
     if (offset > f->Size || length > f->Size - offset)
         return FALSE;
-    OVERLAPPED ov = {0};
+    OVERLAPPED ov = {};
     ov.Offset = (DWORD)offset;
     ov.OffsetHigh = (DWORD)(offset >> 32);
     DWORD read = 0;
@@ -54,13 +54,13 @@ static ULONG rva_to_offset(USER_RESFILE *f, ULONG rva)
 
 USER_RESFILE *UserResOpen(PCWSTR path)
 {
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h == INVALID_HANDLE_VALUE)
-        return NULL;
+        return nullptr;
     USER_RESFILE *f = UserAlloc(sizeof(*f));
     if (!f) {
         CloseHandle(h);
-        return NULL;
+        return nullptr;
     }
     memset(f, 0, sizeof(*f));
     f->File = h;
@@ -80,11 +80,11 @@ USER_RESFILE *UserResOpen(PCWSTR path)
         nt.FileHeader.NumberOfSections <= 96) {
         ULONG64 optional = (ULONG)dos.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER);
         ULONG directories = nt.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? 112 : nt.Magic == 0x10b ? 96 : 0;
-        IMAGE_DATA_DIRECTORY dir = {0};
+        IMAGE_DATA_DIRECTORY dir = {};
         if (directories && nt.FileHeader.SizeOfOptionalHeader >= directories + 3 * sizeof(dir))
             read_at(f, optional + directories + IMAGE_DIRECTORY_ENTRY_RESOURCE * sizeof(dir), &dir, sizeof(dir));
         ULONG count = nt.FileHeader.NumberOfSections;
-        f->Section = dir.VirtualAddress && count ? UserAlloc(count * sizeof(IMAGE_SECTION_HEADER)) : NULL;
+        f->Section = dir.VirtualAddress && count ? UserAlloc(count * sizeof(IMAGE_SECTION_HEADER)) : nullptr;
         if (f->Section &&
             read_at(f, optional + nt.FileHeader.SizeOfOptionalHeader, f->Section, count * sizeof(IMAGE_SECTION_HEADER))) {
             f->Sections = count;
@@ -95,7 +95,7 @@ USER_RESFILE *UserResOpen(PCWSTR path)
         UserFree(f->Section);
         UserFree(f);
         CloseHandle(h);
-        return NULL;
+        return nullptr;
     }
     RtlInitializeCriticalSection(&f->Lock);
     return f;
@@ -141,25 +141,25 @@ static ULONG find_entry(USER_RESFILE *f, ULONG dir_offset, LPCWSTR name)
 const void *UserResFind(USER_RESFILE *f, LPCWSTR type, LPCWSTR name, WORD lang, DWORD *size)
 {
     if (!f)
-        return NULL;
+        return nullptr;
     ULONG t = find_entry(f, f->ResourceOffset, type);
     if (!(t & 0x80000000u))
-        return NULL;
+        return nullptr;
     ULONG n = find_entry(f, f->ResourceOffset + (t & 0x7FFFFFFFu), name);
     if (!(n & 0x80000000u))
-        return NULL;
+        return nullptr;
     ULONG lang_dir = f->ResourceOffset + (n & 0x7FFFFFFFu);
     ULONG l = lang ? find_entry(f, lang_dir, (LPCWSTR)(ULONG_PTR)lang) : 0;
     if (!l)
-        l = find_entry(f, lang_dir, NULL);
+        l = find_entry(f, lang_dir, nullptr);
     if (!l || (l & 0x80000000u))
-        return NULL;
+        return nullptr;
     IMAGE_RESOURCE_DATA_ENTRY d;
     if (!read_at(f, f->ResourceOffset + l, &d, sizeof(d)))
-        return NULL;
+        return nullptr;
     ULONG off = rva_to_offset(f, d.OffsetToData);
     if (!off)
-        return NULL;
+        return nullptr;
 
     RtlEnterCriticalSection(&f->Lock);
     USER_RESDATA *r = f->Cache;
@@ -174,12 +174,12 @@ const void *UserResFind(USER_RESFILE *f, LPCWSTR type, LPCWSTR name, WORD lang, 
             f->Cache = r;
         } else {
             UserFree(r);
-            r = NULL;
+            r = nullptr;
         }
     }
     RtlLeaveCriticalSection(&f->Lock);
     if (!r)
-        return NULL;
+        return nullptr;
     if (size)
         *size = r->Size;
     return r->Data;
@@ -280,7 +280,7 @@ WINUSERAPI int WINAPI LoadStringA(HINSTANCE instance, UINT id, LPSTR buffer, int
     int n = LoadStringW(instance, id, w, 1024);
     if (!buffer || max <= 0)
         return 0;
-    int a = WideCharToMultiByte(CP_ACP, 0, w, n, buffer, max - 1, NULL, NULL);
+    int a = WideCharToMultiByte(CP_ACP, 0, w, n, buffer, max - 1, nullptr, nullptr);
     buffer[a] = 0;
     return a;
 }
@@ -315,7 +315,7 @@ static void png_free(void *ctx, void *p)
     UserFree(p);
 }
 
-static const MimeAllocator g_png_alloc = {png_alloc, png_free, NULL};
+static const MimeAllocator g_png_alloc = {png_alloc, png_free, nullptr};
 
 /* decodes an RTW_ICON or RTW_CURSOR image: a png or a dib with its AND mask. */
 static BOOL decode_icon_image(const UCHAR *data, DWORD size, ICON_IMAGE *out)
@@ -343,7 +343,7 @@ static BOOL decode_icon_image(const UCHAR *data, DWORD size, ICON_IMAGE *out)
     ULONG and_stride = (ULONG)((w + 31) / 32 * 4);
     const UCHAR *and_bits = xor_bits + xor_stride * (ULONG)h;
     if ((SIZE_T)(and_bits - data) + and_stride * (ULONG)h > size)
-        and_bits = NULL;
+        and_bits = nullptr;
     PULONG px = UserAlloc((SIZE_T)w * (SIZE_T)h * 4);
     if (!px)
         return FALSE;
@@ -357,7 +357,7 @@ static BOOL decode_icon_image(const UCHAR *data, DWORD size, ICON_IMAGE *out)
                 }
     for (int y = 0; y < h; y++) {
         const UCHAR *row = xor_bits + (ULONG)(h - 1 - y) * xor_stride;
-        const UCHAR *mask = and_bits ? and_bits + (ULONG)(h - 1 - y) * and_stride : NULL;
+        const UCHAR *mask = and_bits ? and_bits + (ULONG)(h - 1 - y) * and_stride : nullptr;
         for (int x = 0; x < w; x++) {
             ULONG b, g, r, a = 255;
             switch (bpp) {
@@ -404,17 +404,17 @@ static HICON create_icon_object(const ICON_IMAGE *img, BOOL icon, POINT hotspot,
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     void *bits;
-    HBITMAP color = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    HBITMAP color = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     if (!color)
-        return NULL;
+        return nullptr;
     memcpy(bits, img->Pixels, (SIZE_T)img->Width * (SIZE_T)img->Height * 4);
     HICON h = NtUserCreateEmptyCurObject(icon);
     if (h) {
         MIME_CURSOR_DATA d = {(ULONG)img->Width, (ULONG)img->Height, (ULONG)hotspot.x, (ULONG)hotspot.y,
-                              icon, flags, color, NULL};
-        if (!NtUserSetCursorIconData(h, NULL, NULL, &d)) {
+                              icon, flags, color, nullptr};
+        if (!NtUserSetCursorIconData(h, nullptr, nullptr, &d)) {
             NtUserDestroyCursor(h, TRUE);
-            h = NULL;
+            h = nullptr;
         }
     }
     DeleteObject(color);
@@ -473,43 +473,43 @@ HICON UserLoadIconFromResources(USER_RESFILE *file, HINSTANCE module, LPCWSTR na
 {
     const void *group;
     DWORD size;
-    HRSRC res = NULL;
+    HRSRC res = nullptr;
     LPCWSTR group_type = icon ? RTW_GROUP_ICON : RTW_GROUP_CURSOR;
     LPCWSTR image_type = icon ? RTW_ICON : RTW_CURSOR;
     if (file) {
         group = UserResFind(file, group_type, name, 0, &size);
     } else {
         res = FindResourceW(module, name, group_type);
-        group = res ? LockResource(LoadResource(module, res)) : NULL;
+        group = res ? LockResource(LoadResource(module, res)) : nullptr;
         size = res ? SizeofResource(module, res) : 0;
     }
     if (!group)
-        return NULL;
+        return nullptr;
     WORD id = pick_icon(group, size, cx, cy, icon);
     if (!id)
-        return NULL;
+        return nullptr;
     const UCHAR *data;
     DWORD data_size;
     if (file) {
         data = UserResFind(file, image_type, MAKEINTRESOURCEW(id), 0, &data_size);
     } else {
         res = FindResourceW(module, MAKEINTRESOURCEW(id), image_type);
-        data = res ? LockResource(LoadResource(module, res)) : NULL;
+        data = res ? LockResource(LoadResource(module, res)) : nullptr;
         data_size = res ? SizeofResource(module, res) : 0;
     }
     if (!data)
-        return NULL;
+        return nullptr;
     POINT hotspot = {0, 0};
     if (!icon) {
         if (data_size < 4)
-            return NULL;
+            return nullptr;
         hotspot = (POINT){((const WORD *)data)[0], ((const WORD *)data)[1]};
         data += 4;
         data_size -= 4;
     }
     ICON_IMAGE img;
     if (!decode_icon_image(data, data_size, &img))
-        return NULL;
+        return nullptr;
     /* scale to the requested size with a box filter when no exact size exists. */
     if ((cx && img.Width != cx) || (cy && img.Height != cy)) {
         int tw = cx ? cx : img.Width, th = cy ? cy : img.Height;
@@ -579,24 +579,24 @@ static HICON load_shared(HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL ic
         }
     RtlLeaveCriticalSection(&g_shared_lock);
 
-    HICON h = NULL;
+    HICON h = nullptr;
     if (system && !icon) {
         /* system cursors are shown by the host with its native cursor. */
         h = NtUserCreateEmptyCurObject(FALSE);
         if (h) {
-            MIME_CURSOR_DATA d = {(ULONG)cx, (ULONG)cy, 0, 0, FALSE, MIME_CURSORF_SYSTEM | (ULONG)(ULONG_PTR)name, NULL, NULL};
-            NtUserSetCursorIconData(h, NULL, NULL, &d);
+            MIME_CURSOR_DATA d = {(ULONG)cx, (ULONG)cy, 0, 0, FALSE, MIME_CURSORF_SYSTEM | (ULONG)(ULONG_PTR)name, nullptr, nullptr};
+            NtUserSetCursorIconData(h, nullptr, nullptr, &d);
         }
     } else if (system) {
-        h = UserLoadIconFromResources(UserSystemResources(), NULL, system_icon_resource(name), cx, cy, icon, flags);
+        h = UserLoadIconFromResources(UserSystemResources(), nullptr, system_icon_resource(name), cx, cy, icon, flags);
     } else {
-        h = UserLoadIconFromResources(NULL, module, name, cx, cy, icon, flags);
+        h = UserLoadIconFromResources(nullptr, module, name, cx, cy, icon, flags);
     }
     if (!h)
-        return NULL;
+        return nullptr;
     SHARED_ICON *s = UserAlloc(sizeof(*s));
     if (s) {
-        *s = (SHARED_ICON){NULL, module, key, cx, cy, icon, h};
+        *s = (SHARED_ICON){nullptr, module, key, cx, cy, icon, h};
         RtlEnterCriticalSection(&g_shared_lock);
         s->Next = g_shared;
         g_shared = s;
@@ -614,7 +614,7 @@ HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy
 {
     /* user32 itself has no resources with the IDI_ values. */
     if (instance == User32Instance && IS_INTRESOURCE(name) && (ULONG_PTR)name >= 32512 && (ULONG_PTR)name <= 32518)
-        return NULL;
+        return nullptr;
     if (!instance && IS_INTRESOURCE(name)) {
         WORD id = 0;
         switch ((ULONG_PTR)name) {
@@ -639,7 +639,7 @@ HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy
             break;
         }
         if (id) {
-            HICON h = UserLoadIconFromResources(UserImageResources(), NULL, MAKEINTRESOURCEW(id), cx, cy, TRUE, 0);
+            HICON h = UserLoadIconFromResources(UserImageResources(), nullptr, MAKEINTRESOURCEW(id), cx, cy, TRUE, 0);
             if (h)
                 return h;
         }
@@ -651,15 +651,15 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
 {
     if (type == IMAGE_BITMAP) {
         HRSRC res = FindResourceW(instance, name, RTW_BITMAP);
-        const BITMAPINFO *bi = res ? LockResource(LoadResource(instance, res)) : NULL;
+        const BITMAPINFO *bi = res ? LockResource(LoadResource(instance, res)) : nullptr;
         if (!bi)
-            return NULL;
+            return nullptr;
         ULONG colors = bi->bmiHeader.biBitCount <= 8 ? (bi->bmiHeader.biClrUsed ? bi->bmiHeader.biClrUsed : 1u << bi->bmiHeader.biBitCount) : 0;
         if (bi->bmiHeader.biCompression == BI_BITFIELDS)
             colors = 3;
         const void *bits = (const UCHAR *)bi + bi->bmiHeader.biSize + colors * sizeof(RGBQUAD);
         void *dib_bits;
-        HBITMAP bm = CreateDIBSection(NULL, bi, DIB_RGB_COLORS, &dib_bits, NULL, 0);
+        HBITMAP bm = CreateDIBSection(nullptr, bi, DIB_RGB_COLORS, &dib_bits, nullptr, 0);
         if (bm) {
             LONG h = bi->bmiHeader.biHeight < 0 ? -bi->bmiHeader.biHeight : bi->bmiHeader.biHeight;
             SIZE_T stride = (SIZE_T)((bi->bmiHeader.biWidth * bi->bmiHeader.biBitCount + 31) / 32 * 4);
@@ -679,7 +679,7 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
         cy = GetSystemMetricsForDpi(icon ? SM_CYICON : SM_CYCURSOR, dpi);
     if ((flags & LR_SHARED) || !instance || instance == User32Instance)
         return load_shared(instance, name, cx, cy, icon, flags);
-    return UserLoadIconFromResources(NULL, instance, name, cx, cy, icon, flags);
+    return UserLoadIconFromResources(nullptr, instance, name, cx, cy, icon, flags);
 }
 
 WINUSERAPI HANDLE WINAPI LoadImageA(HINSTANCE instance, LPCSTR name, UINT type, int cx, int cy, UINT flags)
@@ -695,7 +695,7 @@ WINUSERAPI HBITMAP WINAPI LoadBitmapW(HINSTANCE instance, LPCWSTR name)
 {
     if (!instance) {
         SetLastError(ERROR_RESOURCE_NAME_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     return LoadImageW(instance, name, IMAGE_BITMAP, 0, 0, 0);
 }
@@ -724,22 +724,22 @@ WINUSERAPI HICON WINAPI CreateIconIndirect(PICONINFO info)
 {
     BITMAP bm;
     if (!info || !GetObjectW(info->hbmColor ? info->hbmColor : info->hbmMask, sizeof(bm), &bm))
-        return NULL;
+        return nullptr;
     HICON h = NtUserCreateEmptyCurObject(info->fIcon);
     if (!h)
-        return NULL;
+        return nullptr;
     MIME_CURSOR_DATA d = {(ULONG)bm.bmWidth, (ULONG)(info->hbmColor ? bm.bmHeight : bm.bmHeight / 2),
                           info->xHotspot, info->yHotspot, info->fIcon, 0, info->hbmColor, info->hbmMask};
-    if (!NtUserSetCursorIconData(h, NULL, NULL, &d)) {
+    if (!NtUserSetCursorIconData(h, nullptr, nullptr, &d)) {
         NtUserDestroyCursor(h, TRUE);
-        return NULL;
+        return nullptr;
     }
     return h;
 }
 
 WINUSERAPI BOOL WINAPI GetIconInfo(HICON icon, PICONINFO info)
 {
-    return NtUserGetIconInfo(icon, info, NULL, NULL, NULL, FALSE);
+    return NtUserGetIconInfo(icon, info, nullptr, nullptr, nullptr, FALSE);
 }
 
 static BOOL is_shared(HICON icon)
@@ -769,7 +769,7 @@ WINUSERAPI HICON WINAPI CopyIcon(HICON icon)
 {
     ICONINFO info;
     if (!GetIconInfo(icon, &info))
-        return NULL;
+        return nullptr;
     HICON copy = CreateIconIndirect(&info);
     DeleteObject(info.hbmColor);
     DeleteObject(info.hbmMask);
@@ -780,18 +780,18 @@ WINUSERAPI HANDLE WINAPI CopyImage(HANDLE image, UINT type, int cx, int cy, UINT
 {
     if (type == IMAGE_ICON || type == IMAGE_CURSOR)
         return CopyIcon(image);
-    return NULL;
+    return nullptr;
 }
 
 WINUSERAPI BOOL WINAPI DrawIconEx(HDC dc, int x, int y, HICON icon, int cx, int cy, UINT step, HBRUSH brush,
                                   UINT flags)
 {
-    return NtUserDrawIconEx(dc, x, y, icon, cx, cy, step, brush, flags, FALSE, NULL);
+    return NtUserDrawIconEx(dc, x, y, icon, cx, cy, step, brush, flags, FALSE, nullptr);
 }
 
 WINUSERAPI BOOL WINAPI DrawIcon(HDC dc, int x, int y, HICON icon)
 {
-    return NtUserDrawIconEx(dc, x, y, icon, 0, 0, 0, NULL, DI_NORMAL | DI_DEFAULTSIZE, FALSE, NULL);
+    return NtUserDrawIconEx(dc, x, y, icon, 0, 0, 0, nullptr, DI_NORMAL | DI_DEFAULTSIZE, FALSE, nullptr);
 }
 
 WINUSERAPI HCURSOR WINAPI SetCursor(HCURSOR cursor)
@@ -801,7 +801,7 @@ WINUSERAPI HCURSOR WINAPI SetCursor(HCURSOR cursor)
 
 WINUSERAPI HCURSOR WINAPI GetCursor(void)
 {
-    HCURSOR c = NtUserSetCursor(NULL);
+    HCURSOR c = NtUserSetCursor(nullptr);
     NtUserSetCursor(c);
     return c;
 }
@@ -817,20 +817,20 @@ WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y,
 {
     if (width <= 0 || height <= 0 || !and_plane || !xor_plane) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     int stride = (width + 15) / 16 * 2;
     SIZE_T plane = (SIZE_T)stride * (SIZE_T)height;
     BYTE *bits = UserAlloc(plane * 2);
     if (!bits)
-        return NULL;
+        return nullptr;
     memcpy(bits, and_plane, plane);
     memcpy(bits + plane, xor_plane, plane);
     HBITMAP mask = CreateBitmap(width, height * 2, 1, 1, bits);
     UserFree(bits);
     if (!mask)
-        return NULL;
-    ICONINFO info = {FALSE, (DWORD)hot_x, (DWORD)hot_y, mask, NULL};
+        return nullptr;
+    ICONINFO info = {FALSE, (DWORD)hot_x, (DWORD)hot_y, mask, nullptr};
     HCURSOR cursor = CreateIconIndirect(&info);
     DeleteObject(mask);
     (void)instance;
@@ -841,12 +841,12 @@ WINUSERAPI HICON WINAPI CreateIconFromResource(PBYTE data, DWORD size, BOOL icon
 {
     if (!data || version != 0x30000) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     POINT hotspot = {0, 0};
     if (!icon) {
         if (size < 4)
-            return NULL;
+            return nullptr;
         hotspot.x = ((WORD *)data)[0];
         hotspot.y = ((WORD *)data)[1];
         data += 4;
@@ -855,7 +855,7 @@ WINUSERAPI HICON WINAPI CreateIconFromResource(PBYTE data, DWORD size, BOOL icon
     ICON_IMAGE image;
     if (!decode_icon_image(data, size, &image)) {
         SetLastError(ERROR_INVALID_DATA);
-        return NULL;
+        return nullptr;
     }
     HICON result = create_icon_object(&image, icon, hotspot, 0);
     UserFree(image.Pixels);

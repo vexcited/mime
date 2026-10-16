@@ -18,7 +18,7 @@ void *FxAlloc(FxEffect *effect, SIZE_T size)
 {
     FxArena *block = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(FxArena) + 8 + size);
     if (!block)
-        return NULL;
+        return nullptr;
     block->next = effect->arena;
     effect->arena = block;
     return (BYTE *)block + ((sizeof(FxArena) + 7) & ~7);
@@ -194,7 +194,7 @@ static BOOL next(FxReader *r, UINT *out)
 static const BYTE *next_bytes(FxReader *r, UINT size)
 {
     if (r->pos > r->size || r->size - r->pos < size)
-        return NULL;
+        return nullptr;
     const BYTE *p = r->base + r->pos;
     r->pos += size;
     return p;
@@ -204,14 +204,14 @@ static const BYTE *next_bytes(FxReader *r, UINT size)
 static const BYTE *data_at(FxReader *r, UINT offset, UINT size)
 {
     if (offset > r->data_size || r->data_size - offset < size)
-        return NULL;
+        return nullptr;
     return r->data + offset;
 }
 
 /* a string of the unstructured data, NULL for offset 0; FALSE when it runs past the data. */
 static BOOL string_at(FxReader *r, UINT offset, const char **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!offset)
         return TRUE;
     if (offset >= r->data_size)
@@ -229,7 +229,7 @@ static const BYTE *block_at(FxReader *r, UINT offset, UINT *size)
 {
     const BYTE *p = data_at(r, offset, 4);
     if (!p)
-        return NULL;
+        return nullptr;
     *size = read32(p);
     return data_at(r, offset + 4, *size);
 }
@@ -421,7 +421,7 @@ static FxBuffer *find_buffer(FxEffect *effect, const char *name)
         for (UINT i = 0; i < effect->buffer_count; i++)
             if (effect->buffers[i].var.name && !strcmp(effect->buffers[i].var.name, name))
                 return &effect->buffers[i];
-    return NULL;
+    return nullptr;
 }
 
 FxVariable *FxFindVariable(FxEffect *effect, const char *name)
@@ -430,7 +430,7 @@ FxVariable *FxFindVariable(FxEffect *effect, const char *name)
         for (UINT i = 0; i < effect->variable_count; i++)
             if (effect->variables[i].name && !strcmp(effect->variables[i].name, name))
                 return &effect->variables[i];
-    return NULL;
+    return nullptr;
 }
 
 /* a name a child effect gives may not be one of its pool's. */
@@ -514,14 +514,14 @@ static HRESULT read_shader(FxReader *r, FxShader *s, UINT kind, UINT code_offset
 static FxShader *new_shader(FxReader *r)
 {
     FxEffect *e = r->effect;
-    return e->shader_count < e->shader_capacity ? &e->shaders[e->shader_count++] : NULL;
+    return e->shader_count < e->shader_capacity ? &e->shaders[e->shader_count++] : nullptr;
 }
 
 static FxBlock *new_block(FxReader *r, UINT kind)
 {
     FxEffect *e = r->effect;
     if (e->block_count >= e->block_capacity)
-        return NULL;
+        return nullptr;
     FxBlock *b = &e->blocks[e->block_count++];
     b->kind = kind;
     /* the defaults of d3d10.dll's blocks, before their assignments. */
@@ -599,7 +599,7 @@ static HRESULT read_assignments(FxReader *r, UINT count, UINT kind, void *block,
     const BYTE *records = next_bytes(r, 16 * count);
     if (!records)
         return E_FAIL;
-    FxAssignment *list = count ? FxAlloc(e, count * sizeof(*list)) : NULL;
+    FxAssignment *list = count ? FxAlloc(e, count * sizeof(*list)) : nullptr;
     if (count && !list)
         return E_OUTOFMEMORY;
     UINT kept = 0;
@@ -714,7 +714,7 @@ static HRESULT read_assignments(FxReader *r, UINT count, UINT kind, void *block,
             const BYTE *si = data_at(r, offset, 8);
             UINT shader_kind = state == 6 ? FX_VERTEXSHADER : state == 7 ? FX_PIXELSHADER : FX_GEOMETRYSHADER;
             FxShader *s =
-                si && info->object >= FX_PIXELSHADER && info->object <= FX_GEOMETRYSHADER ? new_shader(r) : NULL;
+                si && info->object >= FX_PIXELSHADER && info->object <= FX_GEOMETRYSHADER ? new_shader(r) : nullptr;
             if (!s || ++r->inline_shaders > r->header[18])
                 return E_FAIL;
             HRESULT hr = read_shader(r, s, shader_kind, read32(si), read32(si + 4));
@@ -965,7 +965,7 @@ static UINT parse_so(const char *text, D3D10_SO_DECLARATION_ENTRY *out, char *na
             scale *= 10;
             name[n] = 0;
         }
-        entry->SemanticName = strcmp(name, "$SKIP") ? name : NULL;
+        entry->SemanticName = strcmp(name, "$SKIP") ? name : nullptr;
         entry->SemanticIndex = index;
         entry->ComponentCount = 4;
         if (*text == '.') {
@@ -1018,7 +1018,7 @@ static HRESULT create_state(FxEffect *e, FxBlock *b)
     ID3D10Device *d = e->device;
     if (b->state)
         b->state->lpVtbl->Release(b->state);
-    b->state = NULL;
+    b->state = nullptr;
     switch (b->kind) {
     case FX_BLOCK_DEPTHSTENCIL:
         return d->lpVtbl->CreateDepthStencilState(d, &b->desc.depth_stencil, (ID3D10DepthStencilState **)&b->state);
@@ -1042,7 +1042,7 @@ static HRESULT bind_to_device(FxEffect *e)
             continue;
         D3D10_BUFFER_DESC desc = {b->size, D3D10_USAGE_DEFAULT,
                                   b->tbuffer ? D3D10_BIND_SHADER_RESOURCE : D3D10_BIND_CONSTANT_BUFFER};
-        hr = d->lpVtbl->CreateBuffer(d, &desc, NULL, &b->buffer);
+        hr = d->lpVtbl->CreateBuffer(d, &desc, nullptr, &b->buffer);
         if (SUCCEEDED(hr) && b->tbuffer) {
             D3D10_SHADER_RESOURCE_VIEW_DESC view = {DXGI_FORMAT_R32G32B32A32_UINT, D3D10_SRV_DIMENSION_BUFFER};
             view.Buffer.ElementWidth = b->size / 16;
@@ -1068,14 +1068,14 @@ static void evaluate(FxAssignment *a)
 {
     const FxStateInfo *info = &STATES[a->state];
     if (a->kind == 6) {
-        UINT out[4] = {0};
+        UINT out[4] = {};
         memcpy(out, a->target, state_size(info));
         FxRunExpression(a->expression, out);
         memcpy(a->target, out, state_size(info));
         return;
     }
     if (a->kind == 4 || a->kind == 5) {
-        UINT out[4] = {0}, index;
+        UINT out[4] = {}, index;
         if (a->kind == 4)
             index = *(const UINT *)a->index_source->data;
         else
@@ -1113,7 +1113,7 @@ static void upload(FxEffect *e, FxBuffer *b)
 {
     if (!b->dirty || b->user || !b->buffer)
         return;
-    e->device->lpVtbl->UpdateSubresource(e->device, (ID3D10Resource *)b->buffer, 0, NULL, b->store, b->size, b->size);
+    e->device->lpVtbl->UpdateSubresource(e->device, (ID3D10Resource *)b->buffer, 0, nullptr, b->store, b->size, b->size);
     b->dirty = FALSE;
 }
 
@@ -1184,10 +1184,10 @@ static void apply_pass(FxPass *p)
         d->lpVtbl->RSSetState(d, (ID3D10RasterizerState *)p->rasterizer->state);
     }
     if (p->rtv_count && p->rtv[0]) {
-        ID3D10RenderTargetView *rtv[D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT] = {0};
+        ID3D10RenderTargetView *rtv[D3D10_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
         for (UINT i = 0; i < p->rtv_count; i++)
-            rtv[i] = p->rtv[i] ? *p->rtv[i] : NULL;
-        d->lpVtbl->OMSetRenderTargets(d, p->rtv_count, rtv, p->dsv ? *p->dsv : NULL);
+            rtv[i] = p->rtv[i] ? *p->rtv[i] : nullptr;
+        d->lpVtbl->OMSetRenderTargets(d, p->rtv_count, rtv, p->dsv ? *p->dsv : nullptr);
     }
     if (p->vs)
         apply_shader(e, p->vs);
@@ -1212,7 +1212,7 @@ static HRESULT STDMETHODCALLTYPE pass_get_desc(ID3D10EffectPass *iface, D3D10_PA
     desc->Name = p->name;
     desc->Annotations = p->annotation_count;
     evaluate_pass(p);
-    FxShader *s = p->vs && p->vs->signature ? p->vs : p->gs && p->gs->signature ? p->gs : NULL;
+    FxShader *s = p->vs && p->vs->signature ? p->vs : p->gs && p->gs->signature ? p->gs : nullptr;
     if (s) {
         desc->pIAInputSignature = s->signature->lpVtbl->GetBufferPointer(s->signature);
         desc->IAInputSignatureSize = s->signature->lpVtbl->GetBufferSize(s->signature);
@@ -1239,7 +1239,7 @@ static HRESULT shader_desc(FxPass *p, FxShader *s, UINT null_index, D3D10_PASS_S
     }
     if (!s->variable) {
         FxVariable *v = FxAlloc(p->effect, sizeof(*v));
-        FxType *t = v ? FxAlloc(p->effect, sizeof(*t)) : NULL;
+        FxType *t = v ? FxAlloc(p->effect, sizeof(*t)) : nullptr;
         if (!t)
             return E_OUTOFMEMORY;
         t->kind = FX_OBJECT;
@@ -1479,7 +1479,7 @@ static HRESULT STDMETHODCALLTYPE effect_query(ID3D10Effect *iface, REFIID riid, 
     FxEffect *e = effect_impl(iface);
     if (!out)
         return E_INVALIDARG;
-    *out = NULL;
+    *out = nullptr;
     if (!IsEqualGUID(riid, &IID_ID3D10EffectPool))
         return E_NOINTERFACE;
     *out = e->is_pool ? (void *)&e->pool_iface : (void *)&e->iface;
@@ -1520,7 +1520,7 @@ static HRESULT STDMETHODCALLTYPE effect_get_desc(ID3D10Effect *iface, D3D10_EFFE
     FxEffect *e = effect_impl(iface);
     if (!desc)
         return E_INVALIDARG;
-    desc->IsChildEffect = e->pool != NULL;
+    desc->IsChildEffect = e->pool != nullptr;
     desc->SharedConstantBuffers = e->pool ? e->pool->buffer_count : 0;
     desc->SharedGlobalVariables = e->pool ? e->pool->variable_count : 0;
     desc->ConstantBuffers = e->buffer_count;
@@ -1542,7 +1542,7 @@ static ID3D10EffectConstantBuffer *STDMETHODCALLTYPE effect_buffer_by_index(ID3D
 
 static ID3D10EffectConstantBuffer *STDMETHODCALLTYPE effect_buffer_by_name(ID3D10Effect *iface, LPCSTR name)
 {
-    FxBuffer *b = name && !effect_impl(iface)->optimized ? find_buffer(effect_impl(iface), name) : NULL;
+    FxBuffer *b = name && !effect_impl(iface)->optimized ? find_buffer(effect_impl(iface), name) : nullptr;
     return (ID3D10EffectConstantBuffer *)(b ? &b->var.iface : &FxInvalidBuffer.iface);
 }
 
@@ -1558,7 +1558,7 @@ static ID3D10EffectVariable *STDMETHODCALLTYPE effect_variable_by_index(ID3D10Ef
 
 static ID3D10EffectVariable *STDMETHODCALLTYPE effect_variable_by_name(ID3D10Effect *iface, LPCSTR name)
 {
-    FxVariable *v = name && !effect_impl(iface)->optimized ? FxFindVariable(effect_impl(iface), name) : NULL;
+    FxVariable *v = name && !effect_impl(iface)->optimized ? FxFindVariable(effect_impl(iface), name) : nullptr;
     return v ? &v->iface : &FxInvalidVariable.iface;
 }
 
@@ -1688,7 +1688,7 @@ static HRESULT load(FxEffect *e, const void *data, SIZE_T length)
 
 static HRESULT create(void *data, SIZE_T length, ID3D10Device *device, FxEffect *pool, BOOL is_pool, FxEffect **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!device)
         return D3DERR_INVALIDCALL;
     FxEffect *e = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*e));
@@ -1720,10 +1720,10 @@ D3D10API HRESULT WINAPI D3D10CreateEffectFromMemory(void *data, SIZE_T length, U
     FxEffect *e;
     if (!effect)
         return E_INVALIDARG;
-    *effect = NULL;
-    if ((flags & D3D10_EFFECT_COMPILE_CHILD_EFFECT) ? !pool : pool != NULL)
+    *effect = nullptr;
+    if ((flags & D3D10_EFFECT_COMPILE_CHILD_EFFECT) ? !pool : pool != nullptr)
         return E_INVALIDARG;
-    HRESULT hr = create(data, length, device, pool ? pool_impl(pool) : NULL, FALSE, &e);
+    HRESULT hr = create(data, length, device, pool ? pool_impl(pool) : nullptr, FALSE, &e);
     if (SUCCEEDED(hr))
         *effect = &e->iface;
     return hr;
@@ -1735,8 +1735,8 @@ D3D10API HRESULT WINAPI D3D10CreateEffectPoolFromMemory(void *data, SIZE_T lengt
     FxEffect *e;
     if (!pool)
         return E_INVALIDARG;
-    *pool = NULL;
-    HRESULT hr = create(data, length, device, NULL, TRUE, &e);
+    *pool = nullptr;
+    HRESULT hr = create(data, length, device, nullptr, TRUE, &e);
     if (SUCCEEDED(hr))
         *pool = &e->pool_iface;
     return hr;

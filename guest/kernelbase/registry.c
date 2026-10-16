@@ -59,12 +59,12 @@ typedef struct KB_KEY_FULL {
 
 static const PCWSTR g_predefined_paths[PREDEFINED_COUNT] = {
     L"\\Registry\\Machine\\Software\\Classes",
-    NULL, /* HKEY_CURRENT_USER, the key of the token's user */
+    nullptr, /* HKEY_CURRENT_USER, the key of the token's user */
     L"\\Registry\\Machine",
     L"\\Registry\\User",
-    NULL,
+    nullptr,
     L"\\Registry\\Machine\\System\\CurrentControlSet\\Hardware Profiles\\Current",
-    NULL,
+    nullptr,
     L"\\Registry\\User\\.Default\\Software\\Classes\\Local Settings",
 };
 
@@ -88,7 +88,7 @@ static LONG open_path(PCWSTR path, ACCESS_MASK access, HANDLE *out)
     UNICODE_STRING us;
     OBJECT_ATTRIBUTES oa;
     RtlInitUnicodeString(&us, path);
-    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     return to_error(NtOpenKey(out, access, &oa));
 }
 
@@ -120,7 +120,7 @@ static LONG resolve_key(HKEY key, HANDLE *out)
         error = open_path(g_predefined_paths[index], MAXIMUM_ALLOWED, &h);
     if (error)
         return error;
-    if (__atomic_compare_exchange_n(&g_predefined[index], &(HANDLE){NULL}, h, FALSE, __ATOMIC_ACQ_REL,
+    if (__atomic_compare_exchange_n(&g_predefined[index], &(HANDLE){nullptr}, h, FALSE, __ATOMIC_ACQ_REL,
                                     __ATOMIC_ACQUIRE)) {
         *out = h;
     } else {
@@ -143,7 +143,7 @@ LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM acc
         return ERROR_INVALID_PARAMETER;
     if (options & ~(DWORD)REG_OPTION_OPEN_LINK)
         return ERROR_INVALID_PARAMETER;
-    *result = NULL;
+    *result = nullptr;
     if ((!subkey || !*subkey) && is_predefined(key)) {
         HANDLE h;
         LONG error = resolve_key(key, &h);
@@ -159,7 +159,7 @@ LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM acc
     OBJECT_ATTRIBUTES oa;
     RtlInitUnicodeString(&us, subkey ? subkey : L"");
     InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE | ((options & REG_OPTION_OPEN_LINK) ? OBJ_OPENLINK : 0),
-                               root, NULL);
+                               root, nullptr);
     HANDLE h;
     NTSTATUS status = NtOpenKey(&h, clean_access(access), &oa);
     if (!NT_SUCCESS(status) && !us.Length) {
@@ -230,8 +230,8 @@ static NTSTATUS create_key_path(PHANDLE key, ACCESS_MASK access, POBJECT_ATTRIBU
     parent_attributes.ObjectName = &parent;
     parent_attributes.Attributes &= ~OBJ_OPENLINK;
     HANDLE parent_key;
-    status = create_key_path(&parent_key, KEY_CREATE_SUB_KEY, &parent_attributes, NULL,
-                              options & ~(ULONG)REG_OPTION_CREATE_LINK, NULL);
+    status = create_key_path(&parent_key, KEY_CREATE_SUB_KEY, &parent_attributes, nullptr,
+                              options & ~(ULONG)REG_OPTION_CREATE_LINK, nullptr);
     if (!NT_SUCCESS(status))
         return status;
 
@@ -265,12 +265,12 @@ LSTATUS WINAPI RegCreateKeyExW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR 
     OBJECT_ATTRIBUTES oa;
     RtlInitUnicodeString(&name, subkey);
     InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | ((options & REG_OPTION_OPEN_LINK) ? OBJ_OPENLINK : 0),
-                               root, sa ? sa->lpSecurityDescriptor : NULL);
+                               root, sa ? sa->lpSecurityDescriptor : nullptr);
     if (klass)
         RtlInitUnicodeString(&class_name, klass);
     HANDLE h;
     ULONG disp = 0;
-    NTSTATUS status = create_key_path(&h, clean_access(access), &oa, klass ? &class_name : NULL,
+    NTSTATUS status = create_key_path(&h, clean_access(access), &oa, klass ? &class_name : nullptr,
                                        options & ~(DWORD)REG_OPTION_OPEN_LINK, &disp);
     if (!NT_SUCCESS(status))
         return to_error(status);
@@ -303,7 +303,7 @@ LSTATUS WINAPI RegCreateKeyW(HKEY key, LPCWSTR subkey, HKEY *result)
         *result = key;
         return ERROR_SUCCESS;
     }
-    return RegCreateKeyExW(key, subkey, 0, NULL, 0, MAXIMUM_ALLOWED, NULL, result, NULL);
+    return RegCreateKeyExW(key, subkey, 0, nullptr, 0, MAXIMUM_ALLOWED, nullptr, result, nullptr);
 }
 
 LSTATUS WINAPI RegCreateKeyA(HKEY key, LPCSTR subkey, HKEY *result)
@@ -314,7 +314,7 @@ LSTATUS WINAPI RegCreateKeyA(HKEY key, LPCSTR subkey, HKEY *result)
         *result = key;
         return ERROR_SUCCESS;
     }
-    return RegCreateKeyExA(key, subkey, 0, NULL, 0, MAXIMUM_ALLOWED, NULL, result, NULL);
+    return RegCreateKeyExA(key, subkey, 0, nullptr, 0, MAXIMUM_ALLOWED, nullptr, result, nullptr);
 }
 
 LSTATUS WINAPI RegCloseKey(HKEY key)
@@ -451,12 +451,12 @@ LSTATUS WINAPI RegQueryValueExA(HKEY key, LPCSTR name, LPDWORD reserved, LPDWORD
     DWORD need = info->DataLength;
     if (is_string_type(info->Type)) {
         int wchars = (int)(info->DataLength / sizeof(WCHAR));
-        need = wchars ? (DWORD)WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)info->Data, wchars, NULL, 0, NULL, NULL) : 0;
+        need = wchars ? (DWORD)WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)info->Data, wchars, nullptr, 0, nullptr, nullptr) : 0;
         if (data) {
             if (*size < need)
                 error = ERROR_MORE_DATA;
             else if (wchars)
-                WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)info->Data, wchars, (LPSTR)data, (int)*size, NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)info->Data, wchars, (LPSTR)data, (int)*size, nullptr, nullptr);
         }
     } else if (data) {
         if (*size < need)
@@ -504,7 +504,7 @@ LSTATUS WINAPI RegSetValueExA(HKEY key, LPCSTR name, DWORD reserved, DWORD type,
         return ERROR_NOT_ENOUGH_MEMORY;
     LONG error;
     if (is_string_type(type) && data && size) {
-        int wchars = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)data, (int)size, NULL, 0);
+        int wchars = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)data, (int)size, nullptr, 0);
         PWSTR wdata = KbAlloc(((SIZE_T)wchars + 1) * sizeof(WCHAR));
         if (!wdata) {
             KbFree(wname);
@@ -551,7 +551,7 @@ LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags
     DWORD capacity = data ? *size : 0;
     if (data && (flags & RRF_ZEROONFAILURE))
         memset(data, 0, capacity);
-    HKEY opened = NULL;
+    HKEY opened = nullptr;
     if (subkey && *subkey) {
         LONG error = RegOpenKeyExW(key, subkey, 0, KEY_QUERY_VALUE, &opened);
         if (error)
@@ -560,7 +560,7 @@ LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags
     }
     HANDLE h;
     LONG error = resolve_key(key, &h);
-    KB_KEY_VALUE_PARTIAL *info = NULL;
+    KB_KEY_VALUE_PARTIAL *info = nullptr;
     if (!error)
         error = query_value(h, value, &info);
     if (opened)
@@ -570,11 +570,11 @@ LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags
     DWORD actual_type = info->Type;
     PBYTE bytes = info->Data;
     DWORD length = info->DataLength;
-    PWSTR expanded = NULL;
+    PWSTR expanded = nullptr;
     if (actual_type == REG_EXPAND_SZ && !(flags & RRF_NOEXPAND)) {
         /* the expanded string is reported as REG_SZ. */
-        DWORD chars = ExpandEnvironmentStringsW((LPCWSTR)bytes, NULL, 0);
-        expanded = chars ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : NULL;
+        DWORD chars = ExpandEnvironmentStringsW((LPCWSTR)bytes, nullptr, 0);
+        expanded = chars ? KbAlloc((SIZE_T)chars * sizeof(WCHAR)) : nullptr;
         if (expanded) {
             ExpandEnvironmentStringsW((LPCWSTR)bytes, expanded, chars);
             bytes = (PBYTE)expanded;
@@ -625,8 +625,8 @@ LSTATUS WINAPI RegGetValueA(HKEY key, LPCSTR subkey, LPCSTR value, DWORD flags, 
     PWSTR wsub = KbAnsiToWideCp(CP_ACP, subkey);
     PWSTR wvalue = KbAnsiToWideCp(CP_ACP, value);
     DWORD wsize = 0, wtype = 0;
-    LONG error = RegGetValueW(key, wsub, wvalue, flags & ~(DWORD)RRF_ZEROONFAILURE, &wtype, NULL, &wsize);
-    PBYTE wdata = NULL;
+    LONG error = RegGetValueW(key, wsub, wvalue, flags & ~(DWORD)RRF_ZEROONFAILURE, &wtype, nullptr, &wsize);
+    PBYTE wdata = nullptr;
     if (!error) {
         wdata = KbAlloc(wsize + sizeof(WCHAR));
         error = wdata ? RegGetValueW(key, wsub, wvalue, flags & ~(DWORD)RRF_ZEROONFAILURE, &wtype, wdata, &wsize)
@@ -636,9 +636,9 @@ LSTATUS WINAPI RegGetValueA(HKEY key, LPCSTR subkey, LPCSTR value, DWORD flags, 
         DWORD need = wsize;
         if (is_string_type(wtype)) {
             int wchars = (int)(wsize / sizeof(WCHAR));
-            need = (DWORD)WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)wdata, wchars, NULL, 0, NULL, NULL);
+            need = (DWORD)WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)wdata, wchars, nullptr, 0, nullptr, nullptr);
             if (data && *size >= need)
-                WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)wdata, wchars, data, (int)*size, NULL, NULL);
+                WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)wdata, wchars, data, (int)*size, nullptr, nullptr);
         } else if (data && *size >= need) {
             memcpy(data, wdata, need);
         }
@@ -661,7 +661,7 @@ LSTATUS WINAPI RegSetKeyValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD ty
 {
     HKEY target = key;
     if (subkey && *subkey) {
-        LONG error = RegCreateKeyExW(key, subkey, 0, NULL, 0, KEY_SET_VALUE, NULL, &target, NULL);
+        LONG error = RegCreateKeyExW(key, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &target, nullptr);
         if (error)
             return error;
     }
@@ -675,7 +675,7 @@ LSTATUS WINAPI RegSetKeyValueA(HKEY key, LPCSTR subkey, LPCSTR value, DWORD type
 {
     HKEY target = key;
     if (subkey && *subkey) {
-        LONG error = RegCreateKeyExA(key, subkey, 0, NULL, 0, KEY_SET_VALUE, NULL, &target, NULL);
+        LONG error = RegCreateKeyExA(key, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &target, nullptr);
         if (error)
             return error;
     }
@@ -800,14 +800,14 @@ LSTATUS WINAPI RegEnumKeyExW(HKEY key, DWORD index, LPWSTR name, LPDWORD name_si
 
 static LONG narrow_name(LPCWSTR wide, LPSTR out, LPDWORD out_size)
 {
-    int need = WideCharToMultiByte(CP_ACP, 0, wide, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(CP_ACP, 0, wide, -1, nullptr, 0, nullptr, nullptr);
     if (need <= 0)
         return ERROR_INVALID_PARAMETER;
     if (*out_size < (DWORD)need) {
         *out_size = (DWORD)need - 1;
         return ERROR_MORE_DATA;
     }
-    WideCharToMultiByte(CP_ACP, 0, wide, -1, out, (int)*out_size, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, wide, -1, out, (int)*out_size, nullptr, nullptr);
     *out_size = (DWORD)need - 1;
     return ERROR_SUCCESS;
 }
@@ -819,7 +819,7 @@ LSTATUS WINAPI RegEnumKeyExA(HKEY key, DWORD index, LPSTR name, LPDWORD name_siz
         return ERROR_INVALID_PARAMETER;
     WCHAR wname[256], wclass[256];
     DWORD wname_size = RTL_NUMBER_OF(wname), wclass_size = RTL_NUMBER_OF(wclass);
-    LONG error = RegEnumKeyExW(key, index, wname, &wname_size, NULL, klass ? wclass : NULL, klass ? &wclass_size : NULL,
+    LONG error = RegEnumKeyExW(key, index, wname, &wname_size, nullptr, klass ? wclass : nullptr, klass ? &wclass_size : nullptr,
                                last_write);
     if (error)
         return error;
@@ -832,13 +832,13 @@ LSTATUS WINAPI RegEnumKeyExA(HKEY key, DWORD index, LPSTR name, LPDWORD name_siz
 LSTATUS WINAPI RegEnumKeyW(HKEY key, DWORD index, LPWSTR name, DWORD size)
 {
     DWORD n = size;
-    return RegEnumKeyExW(key, index, name, &n, NULL, NULL, NULL, NULL);
+    return RegEnumKeyExW(key, index, name, &n, nullptr, nullptr, nullptr, nullptr);
 }
 
 LSTATUS WINAPI RegEnumKeyA(HKEY key, DWORD index, LPSTR name, DWORD size)
 {
     DWORD n = size;
-    return RegEnumKeyExA(key, index, name, &n, NULL, NULL, NULL, NULL);
+    return RegEnumKeyExA(key, index, name, &n, nullptr, nullptr, nullptr, nullptr);
 }
 
 LSTATUS WINAPI RegEnumValueW(HKEY key, DWORD index, LPWSTR name, LPDWORD name_size, LPDWORD reserved, LPDWORD type,
@@ -878,28 +878,28 @@ LSTATUS WINAPI RegEnumValueA(HKEY key, DWORD index, LPSTR name, LPDWORD name_siz
         return ERROR_INVALID_PARAMETER;
     WCHAR wname[16384];
     DWORD wname_size = RTL_NUMBER_OF(wname), wtype = 0, wdata_size = 0;
-    LONG error = RegEnumValueW(key, index, wname, &wname_size, NULL, &wtype, NULL, &wdata_size);
+    LONG error = RegEnumValueW(key, index, wname, &wname_size, nullptr, &wtype, nullptr, &wdata_size);
     if (error)
         return error;
     PBYTE wdata = KbAlloc(wdata_size + sizeof(WCHAR));
     if (!wdata)
         return ERROR_NOT_ENOUGH_MEMORY;
     wname_size = RTL_NUMBER_OF(wname);
-    error = RegEnumValueW(key, index, wname, &wname_size, NULL, &wtype, wdata, &wdata_size);
+    error = RegEnumValueW(key, index, wname, &wname_size, nullptr, &wtype, wdata, &wdata_size);
     if (!error)
         error = narrow_name(wname, name, name_size);
     if (!error) {
         DWORD need = wdata_size;
         if (is_string_type(wtype))
             need = wdata_size ? (DWORD)WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)wdata, (int)(wdata_size / sizeof(WCHAR)),
-                                                           NULL, 0, NULL, NULL)
+                                                           nullptr, 0, nullptr, nullptr)
                               : 0;
         if (data) {
             if (*data_size < need)
                 error = ERROR_MORE_DATA;
             else if (is_string_type(wtype) && need)
                 WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)wdata, (int)(wdata_size / sizeof(WCHAR)), (LPSTR)data,
-                                    (int)*data_size, NULL, NULL);
+                                    (int)*data_size, nullptr, nullptr);
             else
                 memcpy(data, wdata, need);
         }
@@ -965,12 +965,12 @@ LSTATUS WINAPI RegQueryInfoKeyA(HKEY key, LPSTR klass, LPDWORD class_size, LPDWO
         return ERROR_INVALID_PARAMETER;
     WCHAR wclass[256];
     DWORD wclass_size = RTL_NUMBER_OF(wclass);
-    LONG error = RegQueryInfoKeyW(key, klass ? wclass : NULL, klass ? &wclass_size : NULL, NULL, subkeys, max_subkey,
+    LONG error = RegQueryInfoKeyW(key, klass ? wclass : nullptr, klass ? &wclass_size : nullptr, nullptr, subkeys, max_subkey,
                                   max_class, values, max_value_name, max_value, security, last_write);
     if (!error && klass)
         error = narrow_name(wclass, klass, class_size);
     else if (!error && class_size)
-        RegQueryInfoKeyW(key, NULL, class_size, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+        RegQueryInfoKeyW(key, nullptr, class_size, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     return error;
 }
 
@@ -1018,7 +1018,7 @@ static LONG delete_tree(HKEY key)
     WCHAR name[256];
     for (;;) {
         DWORD size = RTL_NUMBER_OF(name);
-        LONG error = RegEnumKeyExW(key, 0, name, &size, NULL, NULL, NULL, NULL);
+        LONG error = RegEnumKeyExW(key, 0, name, &size, nullptr, nullptr, nullptr, nullptr);
         if (error == ERROR_NO_MORE_ITEMS)
             break;
         if (error)
@@ -1036,7 +1036,7 @@ static LONG delete_tree(HKEY key)
     }
     for (;;) {
         DWORD size = RTL_NUMBER_OF(name);
-        LONG error = RegEnumValueW(key, 0, name, &size, NULL, NULL, NULL, NULL);
+        LONG error = RegEnumValueW(key, 0, name, &size, nullptr, nullptr, nullptr, nullptr);
         if (error == ERROR_NO_MORE_ITEMS)
             return ERROR_SUCCESS;
         if (error)
@@ -1091,7 +1091,7 @@ LSTATUS WINAPI RegNotifyChangeKeyValue(HKEY key, BOOL subtree, DWORD filter, HAN
     if (error)
         return error;
     IO_STATUS_BLOCK iosb;
-    NTSTATUS status = NtNotifyChangeKey(h, event, NULL, NULL, &iosb, filter, (BOOLEAN)subtree, NULL, 0, (BOOLEAN)async);
+    NTSTATUS status = NtNotifyChangeKey(h, event, nullptr, nullptr, &iosb, filter, (BOOLEAN)subtree, nullptr, 0, (BOOLEAN)async);
     if (status == STATUS_PENDING)
         status = STATUS_SUCCESS;
     return to_error(status);

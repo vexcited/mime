@@ -141,14 +141,14 @@ static size_t blob_slot(const uint8_t hash[20], size_t capacity)
 static WimBlob *find_blob(MimeWim *wim, const uint8_t hash[20])
 {
     if (!wim->blob_capacity)
-        return NULL;
+        return nullptr;
     size_t i = blob_slot(hash, wim->blob_capacity);
     while (wim->blobs[i].used) {
         if (memcmp(wim->blobs[i].hash, hash, 20) == 0)
             return &wim->blobs[i];
         i = (i + 1) & (wim->blob_capacity - 1);
     }
-    return NULL;
+    return nullptr;
 }
 
 static bool is_zero_hash(const uint8_t hash[20])
@@ -303,7 +303,7 @@ static bool load_solid_chunks(MimeWim *wim, WimSolid *s)
     if (pos > s->res.offset + s->res.stored_size) {
         mime_error("corrupt solid wim chunk table");
         free(s->chunk_start);
-        s->chunk_start = NULL;
+        s->chunk_start = nullptr;
         return false;
     }
     return true;
@@ -376,12 +376,12 @@ static bool mem_sink(void *ctx, const void *data, size_t size)
 
 static void *read_resource_mem(MimeWim *wim, const WimResource *res, size_t *size_out)
 {
-    MemSink m = {0};
+    MemSink m = {};
     m.capacity = (size_t)res->original_size + 1;
     m.data = mime_xmalloc(m.capacity);
     if (!read_resource(wim, res, mem_sink, &m)) {
         free(m.data);
-        return NULL;
+        return nullptr;
     }
     *size_out = m.size;
     return m.data;
@@ -390,7 +390,7 @@ static void *read_resource_mem(MimeWim *wim, const WimResource *res, size_t *siz
 static WimBlob *insert_blob(MimeWim *wim, const uint8_t hash[20])
 {
     if (find_blob(wim, hash))
-        return NULL;
+        return nullptr;
     size_t slot = blob_slot(hash, wim->blob_capacity);
     while (wim->blobs[slot].used)
         slot = (slot + 1) & (wim->blob_capacity - 1);
@@ -541,7 +541,7 @@ MimeWim *mime_wim_open(MimeReader reader)
     if (!wim_read(wim, 0, hdr, sizeof(hdr)) || memcmp(hdr, "MSWIM\0\0\0", 8) != 0) {
         mime_error("not a wim file");
         free(wim);
-        return NULL;
+        return nullptr;
     }
     wim->version = rd32(hdr + 12);
     wim->flags = rd32(hdr + 16);
@@ -549,7 +549,7 @@ MimeWim *mime_wim_open(MimeReader reader)
     if (rd16(hdr + 42) > 1) {
         mime_error("split wim files are not supported");
         free(wim);
-        return NULL;
+        return nullptr;
     }
     wim->image_count = rd32(hdr + 44);
     parse_reshdr(hdr + 48, &wim->blob_table_res);
@@ -570,19 +570,19 @@ MimeWim *mime_wim_open(MimeReader reader)
         } else {
             mime_error("unsupported wim compression (flags 0x%x)", wim->flags);
             free(wim);
-            return NULL;
+            return nullptr;
         }
     }
     if (wim->chunk_size > max_chunk || (wim->ctype == WIM_CTYPE_LZX && wim->chunk_size != MIME_LZX_MAX_CHUNK)) {
         mime_error("unsupported wim chunk size %u", wim->chunk_size);
         free(wim);
-        return NULL;
+        return nullptr;
     }
     wim->chunk_in = mime_xmalloc(wim->chunk_size + 64);
     wim->chunk_out = mime_xmalloc(wim->chunk_size + 64);
     if (!load_blob_table(wim) || !load_xml(wim)) {
         mime_wim_close(wim);
-        return NULL;
+        return nullptr;
     }
     return wim;
 }
@@ -676,7 +676,7 @@ static char *pool_name(MimeWim *wim, const uint8_t *utf16, size_t chars)
 {
     size_t need = chars * 3 + 1;
     if (wim->name_used + need > wim->name_capacity)
-        return NULL;
+        return nullptr;
     char *out = wim->name_pool + wim->name_used;
     uint16_t tmp[512];
     if (chars > 511)
@@ -691,7 +691,7 @@ static char *pool_name(MimeWim *wim, const uint8_t *utf16, size_t chars)
 static MimeWimDentry *new_dentry(MimeWim *wim)
 {
     if (wim->dentry_count == wim->dentry_capacity)
-        return NULL;
+        return nullptr;
     MimeWimDentry *d = &wim->dentry_pool[wim->dentry_count++];
     memset(d, 0, sizeof(*d));
     return d;
@@ -741,7 +741,7 @@ static bool load_children(MimeWim *wim, MimeWimDentry *dir, uint64_t off, int de
 {
     if (depth > 128)
         return false;
-    MimeWimDentry *last = NULL;
+    MimeWimDentry *last = nullptr;
     while (off + 8 <= wim->meta_size) {
         uint64_t length = rd64(wim->meta_data + off);
         if (length <= 8)
@@ -775,8 +775,8 @@ bool mime_wim_select_image(MimeWim *wim, uint32_t index)
     free(wim->meta_data);
     free(wim->dentry_pool);
     free(wim->name_pool);
-    wim->meta_data = NULL;
-    wim->root = NULL;
+    wim->meta_data = nullptr;
+    wim->root = nullptr;
 
     size_t size;
     wim->meta_data = read_resource_mem(wim, &wim->metadata[index - 1], &size);
@@ -828,7 +828,7 @@ MimeWimDentry *mime_wim_lookup(MimeWim *wim, const char *path)
         while (p[n] && p[n] != '/' && p[n] != '\\')
             n++;
         if (n >= sizeof(component))
-            return NULL;
+            return nullptr;
         memcpy(component, p, n);
         component[n] = 0;
         p += n;
@@ -850,7 +850,7 @@ uint64_t mime_wim_blob_size(MimeWim *wim, const uint8_t hash[20])
 
 uint64_t mime_wim_blob_order(MimeWim *wim, const uint8_t hash[20])
 {
-    WimBlob *b = is_zero_hash(hash) ? NULL : find_blob(wim, hash);
+    WimBlob *b = is_zero_hash(hash) ? nullptr : find_blob(wim, hash);
     if (!b)
         return 0;
     if (b->solid < 0)

@@ -34,7 +34,7 @@ int dxbc_check(const void *bytecode, size_t length)
 const void *dxbc_find_chunk(const void *bytecode, size_t length, uint32_t tag, uint32_t *size)
 {
     if (dxbc_check(bytecode, length))
-        return NULL;
+        return nullptr;
     const uint8_t *b = bytecode;
     uint32_t count = read32(b + 28);
     for (uint32_t i = 0; i < count; i++) {
@@ -45,7 +45,7 @@ const void *dxbc_find_chunk(const void *bytecode, size_t length, uint32_t tag, u
             return b + offset + 8;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ the checksum */
@@ -126,7 +126,7 @@ int dxbc_parse_signature(const void *bytecode, size_t length, uint32_t tag, Dxbc
                          const MimeAllocator *alloc)
 {
     out->count = 0;
-    out->elements = NULL;
+    out->elements = nullptr;
     uint32_t size;
     const uint8_t *chunk = dxbc_find_chunk(bytecode, length, tag, &size);
     if (!chunk || size < 8)
@@ -178,10 +178,10 @@ int dxbc_parse_io(const void *bytecode, size_t length, int output, DxbcSignature
     const uint32_t *tags = output ? outputs : inputs;
     uint32_t count = output ? 3 : 2;
     for (uint32_t i = 0; i < count; i++)
-        if (dxbc_find_chunk(bytecode, length, tags[i], NULL))
+        if (dxbc_find_chunk(bytecode, length, tags[i], nullptr))
             return dxbc_parse_signature(bytecode, length, tags[i], out, alloc);
     /* no signature chunk: nothing goes in or out. */
     out->count = 0;
-    out->elements = NULL;
+    out->elements = nullptr;
     return 0;
 }

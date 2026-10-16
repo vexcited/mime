@@ -161,13 +161,13 @@ static bool pe_resource(const Pe *pe, const char *type_str, uint32_t type_id, co
         return false;
     if (!res_entry(pe, e & 0x7fffffffu, name_str, name_id, &e) || !(e & 0x80000000u))
         return false;
-    if (!res_entry(pe, e & 0x7fffffffu, NULL, ~0u, &e) || (e & 0x80000000u))
+    if (!res_entry(pe, e & 0x7fffffffu, nullptr, ~0u, &e) || (e & 0x80000000u))
         return false;
     uint32_t at = pe->rsrc + e;
     if (e > pe->rsrc_end - pe->rsrc || (uint64_t)at + 16 > pe->rsrc_end)
         return false;
     uint32_t rva = rd32(pe->d + at), sz = rd32(pe->d + at + 4), off;
-    if (!pe_rva(pe, rva, sz, &off, NULL))
+    if (!pe_rva(pe, rva, sz, &off, nullptr))
         return false;
     *data = pe->d + off;
     *size = sz;
@@ -178,7 +178,7 @@ static size_t pe_string(const Pe *pe, uint32_t id, uint16_t *buf, size_t cap)
 {
     const uint8_t *d;
     uint32_t size;
-    if (id > 0xffffu || !pe_resource(pe, NULL, RT_STRING_ID, NULL, (id >> 4) + 1, &d, &size))
+    if (id > 0xffffu || !pe_resource(pe, nullptr, RT_STRING_ID, nullptr, (id >> 4) + 1, &d, &size))
         return 0;
     uint32_t pos = 0;
     for (uint32_t i = 0; i < 16; i++) {
@@ -280,7 +280,7 @@ static int find_plain(const MimeMsstyles *ms, const char *name)
         n++;
     }
     for (uint32_t c = 0; c < ms->class_count; c++)
-        if (class_eq(ms, (int)c, NULL, 0, w, n))
+        if (class_eq(ms, (int)c, nullptr, 0, w, n))
             return (int)c;
     return -1;
 }
@@ -607,7 +607,7 @@ bool mime_msstyles_open_variant(MimeMsstyles *ms, const void *file, size_t size,
 bool mime_msstyles_open(MimeMsstyles *ms, const void *file, size_t size, const void *mui, size_t mui_size,
                         const MimeAllocator *alloc)
 {
-    return mime_msstyles_open_variant(ms, file, size, mui, mui_size, NULL, NULL, alloc);
+    return mime_msstyles_open_variant(ms, file, size, mui, mui_size, nullptr, nullptr, alloc);
 }
 
 uint32_t mime_msstyles_class_count(const MimeMsstyles *ms)
@@ -667,7 +667,7 @@ static int match_app(const MimeMsstyles *ms, const uint16_t *app, size_t app_n, 
                 return (int)c;
     if (!app_n || fallback)
         for (uint32_t c = 0; c < ms->class_count; c++)
-            if (class_eq(ms, (int)c, NULL, 0, cls, cls_n))
+            if (class_eq(ms, (int)c, nullptr, 0, cls, cls_n))
                 return (int)c;
     return -1;
 }
@@ -685,18 +685,18 @@ static size_t cat(uint16_t *dst, size_t n, const char *s, const uint16_t *w, siz
 static int match_dark(const MimeMsstyles *ms, const uint16_t *app, size_t app_n, const uint16_t *cls, size_t cls_n)
 {
     uint16_t dark[MAX_NAME];
-    size_t n = cat(dark, 0, "DarkMode", NULL, 0);
+    size_t n = cat(dark, 0, "DarkMode", nullptr, 0);
     if (app_n)
         n = cat(dark, n, "_", app, app_n);
     int r = match_app(ms, dark, n, cls, cls_n, false);
     if (r >= 0)
         return r;
-    n = cat(dark, 0, "DarkMode_DarkTheme", NULL, 0);
+    n = cat(dark, 0, "DarkMode_DarkTheme", nullptr, 0);
     if (app_n)
         n = cat(dark, n, "_", app, app_n);
     r = match_app(ms, dark, n, cls, cls_n, false);
     if (r < 0 && app_n) {
-        n = cat(dark, 0, "DarkMode_DarkTheme", NULL, 0);
+        n = cat(dark, 0, "DarkMode_DarkTheme", nullptr, 0);
         r = match_app(ms, dark, n, cls, cls_n, false);
     }
     return r;
@@ -747,7 +747,7 @@ int mime_msstyles_match_class_a(const MimeMsstyles *ms, const char *class_list, 
         return -1;
     widen(class_list, wl, 512);
     widen(app, wa, MAX_NAME);
-    return mime_msstyles_match_class(ms, wl, app ? wa : NULL, flags);
+    return mime_msstyles_match_class(ms, wl, app ? wa : nullptr, flags);
 }
 
 int mime_msstyles_base_class(const MimeMsstyles *ms, int cls)
@@ -770,7 +770,7 @@ static void fill_prop(const MimeMsstyles *ms, const MimeMsstylesRec *r, MimeMsst
     out->state = r->state;
     out->res_id = r->res;
     out->size = r->size;
-    out->data = r->res ? NULL : ms->variant + r->off + REC_HEADER;
+    out->data = r->res ? nullptr : ms->variant + r->off + REC_HEADER;
 }
 
 uint32_t mime_msstyles_record_count(const MimeMsstyles *ms)
@@ -858,7 +858,7 @@ static const MimeMsstylesRec *block_find(const MimeMsstyles *ms, int cls, int pa
         if (r->prop == prop)
             return r;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* a part section: the state block, then the part level block. */
@@ -874,7 +874,7 @@ static const MimeMsstylesRec *part_find(const MimeMsstyles *ms, int cls, int par
 static const MimeMsstylesRec *lookup(const MimeMsstyles *ms, int cls, int part, int state, int prop)
 {
     if (!ms || cls < 0 || (uint32_t)cls >= ms->class_count)
-        return NULL;
+        return nullptr;
     int c = cls;
     for (uint32_t guard = 0; c >= 0 && guard <= ms->class_count; guard++) {
         int p = part > 0 && has_part(ms, c, part) ? part : 0;
@@ -887,7 +887,7 @@ static const MimeMsstylesRec *lookup(const MimeMsstyles *ms, int cls, int part, 
             break;
         c = ms->base[c] >= 0 ? ms->base[c] : ms->globals;
     }
-    return NULL;
+    return nullptr;
 }
 
 bool mime_msstyles_find_prop(const MimeMsstyles *ms, int cls, int part, int state, int prop, MimeMsstylesProp *out)
@@ -895,7 +895,7 @@ bool mime_msstyles_find_prop(const MimeMsstyles *ms, int cls, int part, int stat
     const MimeMsstylesRec *r = lookup(ms, cls, part, state, prop);
     if (r)
         fill_prop(ms, r, out);
-    return r != NULL;
+    return r != nullptr;
 }
 
 bool mime_msstyles_find_prop_exact(const MimeMsstyles *ms, int cls, int part, int state, int prop,
@@ -906,7 +906,7 @@ bool mime_msstyles_find_prop_exact(const MimeMsstyles *ms, int cls, int part, in
     const MimeMsstylesRec *r = block_find(ms, cls, part, state, prop);
     if (r)
         fill_prop(ms, r, out);
-    return r != NULL;
+    return r != nullptr;
 }
 
 /* value decoding. */
@@ -1253,7 +1253,7 @@ static bool prop_resource(const MimeMsstyles *ms, const MimeMsstylesProp *p, con
 {
     if (p->res_id <= 0 || p->res_id > 0xffff)
         return false;
-    return mime_msstyles_resource(ms, type, 0, NULL, (uint32_t)p->res_id, data, size);
+    return mime_msstyles_resource(ms, type, 0, nullptr, (uint32_t)p->res_id, data, size);
 }
 
 bool mime_msstyles_get_filename(const MimeMsstyles *ms, int cls, int part, int state, int prop, int32_t *res_id,
@@ -1332,7 +1332,7 @@ bool mime_msstyles_doc_string(const MimeMsstyles *ms, int prop, uint16_t *buf, s
                                   0,
                                   (int32_t)rd32(r + 20),
                                   rd32(r + 28),
-                                  rd32(r + 20) ? NULL : r + REC_HEADER};
+                                  rd32(r + 20) ? nullptr : r + REC_HEADER};
             return mime_msstyles_prop_string(ms, &p, buf, cap);
         }
         if (step >= size - pos)
@@ -1344,10 +1344,10 @@ bool mime_msstyles_doc_string(const MimeMsstyles *ms, int prop, uint16_t *buf, s
 
 /* images. */
 
-static const int32_t imagefile_ids[7] = {3002, 3003, 3004, 3005, 3006, 3009, 3010};
-static const int32_t mindpi_ids[7] = {2420, 2421, 2422, 2423, 2424, 2433, 2434};
-static const int32_t minsize_ids[7] = {3404, 3405, 3406, 3407, 3408, 3410, 3411};
-static const int32_t composed_ids[7] = {5144, 5145, 5146, 5147, 5148, 5152, 5153};
+static constexpr int32_t imagefile_ids[7] = {3002, 3003, 3004, 3005, 3006, 3009, 3010};
+static constexpr int32_t mindpi_ids[7] = {2420, 2421, 2422, 2423, 2424, 2433, 2434};
+static constexpr int32_t minsize_ids[7] = {3404, 3405, 3406, 3407, 3408, 3410, 3411};
+static constexpr int32_t composed_ids[7] = {5144, 5145, 5146, 5147, 5148, 5152, 5153};
 
 #define TMT_COMPOSEDIMAGEFILE 5143
 #define TMT_COMPOSEDGLYPHIMAGEFILE 5149
@@ -1444,7 +1444,7 @@ bool mime_msstyles_get_image(const MimeMsstyles *ms, int cls, int part, int stat
         }
     }
 
-    const MimeMsstylesRec *file = NULL;
+    const MimeMsstylesRec *file = nullptr;
     int sel = -1;
     if (nk > 0) {
         if (out->image_select_type == MIME_IST_DPI) {
@@ -1487,7 +1487,7 @@ bool mime_msstyles_get_image(const MimeMsstyles *ms, int cls, int part, int stat
         if (!file)
             file = lookup(ms, cls, part, state, glyph ? TMT_COMPOSEDGLYPHIMAGEFILE : TMT_COMPOSEDIMAGEFILE);
         if (glyph && out->glyph_type != MIME_GT_IMAGEGLYPH)
-            file = NULL;
+            file = nullptr;
         out->min_dpi = 96;
     }
 

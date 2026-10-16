@@ -47,7 +47,7 @@ static void section_delete(PVOID object)
 static NTSTATUS alloc_section(ULONG64 size, PSECTION *out)
 {
     PSECTION s;
-    NTSTATUS status = ObCreateObject(MmSectionType, NULL, KernelMode, sizeof(SECTION), (PVOID *)&s);
+    NTSTATUS status = ObCreateObject(MmSectionType, nullptr, KernelMode, sizeof(SECTION), (PVOID *)&s);
     if (!NT_SUCCESS(status))
         return status;
     memset(s, 0, sizeof(*s));
@@ -357,7 +357,7 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
     for (USHORT i = 0; NT_SUCCESS(status) && i < nt->FileHeader.NumberOfSections; i++)
         if ((ULONG64)sec[i].PointerToRawData + sec[i].SizeOfRawData > size)
             status = STATUS_INVALID_IMAGE_FORMAT;
-    PSECTION s = NULL;
+    PSECTION s = nullptr;
     if (NT_SUCCESS(status))
         status = alloc_section(info.SizeOfImage, &s);
     if (!NT_SUCCESS(status)) {
@@ -404,7 +404,7 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
     if (IoGetFileWindow(file, &pa, &size, &ref)) {
         NTSTATUS status = create_source_image(file, pa, size, ref, out);
         if (NT_SUCCESS(status) && index < RTL_NUMBER_OF(g_rom_images)) {
-            PSECTION expected = NULL;
+            PSECTION expected = nullptr;
             ObReferenceObject(*out);
             if (!__atomic_compare_exchange_n(&g_rom_images[index], &expected, *out, FALSE, __ATOMIC_ACQ_REL,
                                              __ATOMIC_ACQUIRE))
@@ -612,7 +612,7 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
     }
 
     PMMVAD vad = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MMVAD), KI_TAG('M', 'm', 'V', 'd'));
-    ULONG64 *private_pages = NULL;
+    ULONG64 *private_pages = nullptr;
     if (vad && image && relocated)
         private_pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, pages * sizeof(ULONG64), KI_TAG('M', 'm', 'R', 'p'));
     if (!vad || (image && relocated && !private_pages)) {
@@ -711,7 +711,7 @@ NTSTATUS MiUnmapViewOfSection(PEPROCESS process, PVOID base)
 NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *section)
 {
     PSECTION s;
-    NTSTATUS status = MiCreateDataSection(NULL, size, PAGE_READWRITE, SEC_COMMIT, &s);
+    NTSTATUS status = MiCreateDataSection(nullptr, size, PAGE_READWRITE, SEC_COMMIT, &s);
     if (!NT_SUCCESS(status))
         return status;
     if (commit_all(s))
@@ -728,7 +728,7 @@ NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *sec
 NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section)
 {
     PSECTION s;
-    NTSTATUS status = ObCreateObject(MmSectionType, NULL, KernelMode, sizeof(SECTION), (PVOID *)&s);
+    NTSTATUS status = ObCreateObject(MmSectionType, nullptr, KernelMode, sizeof(SECTION), (PVOID *)&s);
     if (!NT_SUCCESS(status))
         return status;
     memset(s, 0, sizeof(*s));
@@ -750,7 +750,7 @@ NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *secti
 NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *user_base, BOOLEAN writable)
 {
     SIZE_T size = 0;
-    *user_base = NULL;
+    *user_base = nullptr;
     return MiMapViewOfSection(section, process, user_base, 0, &size, writable ? PAGE_READWRITE : PAGE_READONLY,
                               MEM_TOP_DOWN);
 }
@@ -777,13 +777,13 @@ NTSTATUS NTAPI MmUnmapViewInSystemSpace(PVOID base)
 NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
                                PLARGE_INTEGER maximum_size, ULONG protect, ULONG allocation, HANDLE file_handle)
 {
-    LARGE_INTEGER size = {0};
+    LARGE_INTEGER size = {};
     if (maximum_size && !NT_SUCCESS(KiCopyFromUser(&size, maximum_size, sizeof(size))))
         return STATUS_ACCESS_VIOLATION;
-    PFILE_OBJECT file = NULL;
+    PFILE_OBJECT file = nullptr;
     NTSTATUS status;
     if (file_handle) {
-        status = ObReferenceHandle(file_handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, NULL);
+        status = ObReferenceHandle(file_handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, nullptr);
         if (!NT_SUCCESS(status))
             return status;
     }
@@ -805,7 +805,7 @@ NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
         return status;
     }
     HANDLE h;
-    status = ObInsertObjectNamed(section, attributes ? &oa : NULL, access, KeGetPreviousMode(), &h);
+    status = ObInsertObjectNamed(section, attributes ? &oa : nullptr, access, KeGetPreviousMode(), &h);
     KiFreeCapturedString(&name);
     if (NT_SUCCESS(status)) {
         NTSTATUS st = ObStoreHandle(handle, h);
@@ -834,7 +834,7 @@ NTSTATUS NTAPI NtOpenSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, MmSectionType, KeGetPreviousMode(), access, NULL, &h);
+    status = ObOpenObjectByName(&oa, MmSectionType, KeGetPreviousMode(), access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -847,13 +847,13 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
 {
     PVOID b;
     SIZE_T vs = 0;
-    LARGE_INTEGER off = {0};
+    LARGE_INTEGER off = {};
     if (!NT_SUCCESS(KiCopyFromUser(&b, base, sizeof(b))) ||
         (view_size && !NT_SUCCESS(KiCopyFromUser(&vs, view_size, sizeof(vs)))) ||
         (offset && !NT_SUCCESS(KiCopyFromUser(&off, offset, sizeof(off)))))
         return STATUS_ACCESS_VIOLATION;
     PSECTION section;
-    NTSTATUS status = ObReferenceHandle(section_handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&section, NULL);
+    NTSTATUS status = ObReferenceHandle(section_handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&section, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS process;
@@ -878,11 +878,11 @@ NTSTATUS NTAPI ZwMapViewOfSection(HANDLE section, HANDLE process, PVOID *base, U
                                   ULONG protect)
 {
     PSECTION s;
-    NTSTATUS status = ObReferenceHandle(section, MmSectionType, KernelMode, (PVOID *)&s, NULL);
+    NTSTATUS status = ObReferenceHandle(section, MmSectionType, KernelMode, (PVOID *)&s, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS p;
-    status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, NULL);
+    status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, nullptr);
     if (NT_SUCCESS(status)) {
         SIZE_T vs = view_size ? *view_size : 0;
         status = MiMapViewOfSection(s, p, base, offset ? (ULONG64)offset->QuadPart : 0, &vs, protect, allocation);
@@ -913,7 +913,7 @@ NTSTATUS NTAPI NtUnmapViewOfSectionEx(HANDLE process_handle, PVOID base, ULONG f
 NTSTATUS NTAPI ZwUnmapViewOfSection(HANDLE process, PVOID base)
 {
     PEPROCESS p;
-    NTSTATUS status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, NULL);
+    NTSTATUS status = ObReferenceHandle(process, PsProcessTypeObject, KernelMode, (PVOID *)&p, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     status = MiUnmapViewOfSection(p, base);
@@ -949,7 +949,7 @@ typedef struct _SECTION_IMAGE_INFORMATION {
 NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned)
 {
     PSECTION s;
-    NTSTATUS status = ObReferenceHandle(handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&s, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&s, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     union {
@@ -990,7 +990,7 @@ NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T len
 
 void MiInitializeSections(void)
 {
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = SECTION_ALL_ACCESS;
     init.DeleteProcedure = section_delete;
     MmSectionType = ObCreateObjectType(L"Section", &init);

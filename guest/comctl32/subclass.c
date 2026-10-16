@@ -71,7 +71,7 @@ static SUBCLASS *find_entry(SUBCLASS_HEADER *header, SUBCLASSPROC proc, UINT_PTR
     for (SUBCLASS *entry = header->First; entry; entry = entry->Next)
         if (!entry->Removed && entry->Proc == proc && entry->Id == id)
             return entry;
-    return NULL;
+    return nullptr;
 }
 
 /* frees removed entries, and the header with the hook once no subclass is left. */
@@ -132,7 +132,7 @@ static LRESULT CALLBACK master_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 
 WINCOMMCTRLAPI BOOL WINAPI SetWindowSubclass(HWND hwnd, SUBCLASSPROC proc, UINT_PTR id, DWORD_PTR ref_data)
 {
-    if (!proc || !hwnd || !IsWindow(hwnd) || GetWindowThreadProcessId(hwnd, NULL) != GetCurrentThreadId())
+    if (!proc || !hwnd || !IsWindow(hwnd) || GetWindowThreadProcessId(hwnd, nullptr) != GetCurrentThreadId())
         return FALSE;
     SUBCLASS_HEADER *header = find_header(hwnd);
     if (header) {
@@ -179,17 +179,17 @@ WINCOMMCTRLAPI BOOL WINAPI SetWindowSubclass(HWND hwnd, SUBCLASSPROC proc, UINT_
 
 WINCOMMCTRLAPI BOOL WINAPI GetWindowSubclass(HWND hwnd, SUBCLASSPROC proc, UINT_PTR id, DWORD_PTR *ref_data)
 {
-    SUBCLASS_HEADER *header = hwnd ? find_header(hwnd) : NULL;
-    SUBCLASS *entry = header ? find_entry(header, proc, id) : NULL;
+    SUBCLASS_HEADER *header = hwnd ? find_header(hwnd) : nullptr;
+    SUBCLASS *entry = header ? find_entry(header, proc, id) : nullptr;
     if (ref_data)
         *ref_data = entry ? entry->RefData : 0;
-    return entry != NULL;
+    return entry != nullptr;
 }
 
 WINCOMMCTRLAPI BOOL WINAPI RemoveWindowSubclass(HWND hwnd, SUBCLASSPROC proc, UINT_PTR id)
 {
-    SUBCLASS_HEADER *header = hwnd ? find_header(hwnd) : NULL;
-    SUBCLASS *entry = header ? find_entry(header, proc, id) : NULL;
+    SUBCLASS_HEADER *header = hwnd ? find_header(hwnd) : nullptr;
+    SUBCLASS *entry = header ? find_entry(header, proc, id) : nullptr;
     if (!entry)
         return FALSE;
     entry->Removed = TRUE;
@@ -199,7 +199,7 @@ WINCOMMCTRLAPI BOOL WINAPI RemoveWindowSubclass(HWND hwnd, SUBCLASSPROC proc, UI
 
 WINCOMMCTRLAPI LRESULT WINAPI DefSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    SUBCLASS_FRAME *frame = g_frame_tls != TLS_OUT_OF_INDEXES ? TlsGetValue(g_frame_tls) : NULL;
+    SUBCLASS_FRAME *frame = g_frame_tls != TLS_OUT_OF_INDEXES ? TlsGetValue(g_frame_tls) : nullptr;
     for (; frame; frame = frame->Previous)
         if (frame->Header->Window == hwnd)
             return call_next(frame, hwnd, msg, wparam, lparam);

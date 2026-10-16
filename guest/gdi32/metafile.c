@@ -9,14 +9,14 @@ WINGDIAPI HDC WINAPI CreateMetaFileW(LPCWSTR file)
 {
     MIME_STUB("gdi32");
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return NULL;
+    return nullptr;
 }
 
 WINGDIAPI HMETAFILE WINAPI CloseMetaFile(HDC dc)
 {
     MIME_STUB("gdi32");
     SetLastError(ERROR_INVALID_HANDLE);
-    return NULL;
+    return nullptr;
 }
 
 WINGDIAPI BOOL WINAPI DeleteMetaFile(HMETAFILE metafile)
@@ -51,5 +51,5 @@ WINGDIAPI HMETAFILE WINAPI CopyMetaFileW(HMETAFILE metafile, LPCWSTR file)
 {
     MIME_STUB("gdi32");
     SetLastError(ERROR_INVALID_HANDLE);
-    return NULL;
+    return nullptr;
 }

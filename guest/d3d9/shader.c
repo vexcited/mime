@@ -7,7 +7,7 @@
 
 static D9Shader *impl(void *iface) { return CONTAINING_RECORD((IDirect3DVertexShader9 *)iface, D9Shader, iface.vs); }
 
-D9Shader *D9ShaderFrom(void *iface) { return iface ? impl(iface) : NULL; }
+D9Shader *D9ShaderFrom(void *iface) { return iface ? impl(iface) : nullptr; }
 
 static void destroy(D9Shader *s)
 {
@@ -37,7 +37,7 @@ D9Variant *D9ShaderVariant(D9Shader *s, const D9ShaderKey *key)
             return s->last = v;
     D9Variant *v = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*v));
     if (!v)
-        return NULL;
+        return nullptr;
     v->key = *key;
     v->info = &s->info;
     D9Device *device = s->base.device;
@@ -45,18 +45,18 @@ D9Variant *D9ShaderVariant(D9Shader *s, const D9ShaderKey *key)
     if (SUCCEEDED(hr)) {
         ID3D11Device1 *d3d11 = device->d3d11;
         if (s->info.pixel)
-            hr = d3d11->lpVtbl->CreatePixelShader(d3d11, v->dxbc, v->size, NULL, (ID3D11PixelShader **)&v->shader);
+            hr = d3d11->lpVtbl->CreatePixelShader(d3d11, v->dxbc, v->size, nullptr, (ID3D11PixelShader **)&v->shader);
         else
-            hr = d3d11->lpVtbl->CreateVertexShader(d3d11, v->dxbc, v->size, NULL, (ID3D11VertexShader **)&v->shader);
+            hr = d3d11->lpVtbl->CreateVertexShader(d3d11, v->dxbc, v->size, nullptr, (ID3D11VertexShader **)&v->shader);
         if (FAILED(hr))
             D9Log("d3d9: d3d11 refused the translation of a %s shader: %08x", s->info.pixel ? "pixel" : "vertex", hr);
     }
     /* a failed translation is kept, so the draws that need it skip without trying again. */
     if (FAILED(hr))
-        v->shader = NULL;
+        v->shader = nullptr;
     if (s->info.pixel) {
         HeapFree(GetProcessHeap(), 0, v->dxbc);
-        v->dxbc = NULL;
+        v->dxbc = nullptr;
     }
     v->next = s->variants;
     s->variants = v;
@@ -68,7 +68,7 @@ static HRESULT STDMETHODCALLTYPE shader_query(IDirect3DVertexShader9 *iface, REF
     D9Shader *s = impl(iface);
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) ||
         IsEqualGUID(riid, s->info.pixel ? &IID_IDirect3DPixelShader9 : &IID_IDirect3DVertexShader9)) {
         *out = iface;
@@ -135,7 +135,7 @@ static D9VertexDecl *decl_impl(IDirect3DVertexDeclaration9 *iface)
     return CONTAINING_RECORD(iface, D9VertexDecl, iface);
 }
 
-D9VertexDecl *D9VertexDeclFrom(IDirect3DVertexDeclaration9 *iface) { return iface ? decl_impl(iface) : NULL; }
+D9VertexDecl *D9VertexDeclFrom(IDirect3DVertexDeclaration9 *iface) { return iface ? decl_impl(iface) : nullptr; }
 
 static void destroy_decl(D9VertexDecl *d)
 {
@@ -155,7 +155,7 @@ static HRESULT STDMETHODCALLTYPE decl_query(IDirect3DVertexDeclaration9 *iface, 
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DVertexDeclaration9)) {
         *out = iface;
         D9ResourceAddRef(&decl_impl(iface)->base);
@@ -405,14 +405,14 @@ ID3D11InputLayout *D9DeclLayout(D9VertexDecl *d, D9Device *device, D9Variant *vs
     }
     D9Layout *l = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*l));
     if (!l)
-        return NULL;
+        return nullptr;
     l->variant = vs;
     l->instanced = instanced;
     memcpy(l->rates, rates, sizeof(l->rates));
     HRESULT hr = device->d3d11->lpVtbl->CreateInputLayout(device->d3d11, descs, n, vs->dxbc, vs->size, &l->layout);
     if (FAILED(hr)) {
         D9Log("d3d9: no input layout of a declaration of %u elements: %08x", d->count, hr);
-        l->layout = NULL;
+        l->layout = nullptr;
     }
     l->next = d->layouts;
     d->layouts = l;

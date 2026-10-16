@@ -164,7 +164,7 @@ static NTSTATUS read_data(CM_HIVE *hive, ULONG cell, ULONG length, PUCHAR out)
 NTSTATUS CmpReadValue(CM_HIVE *hive, const CM_HIVE_KEY *key, ULONG index, PWCHAR name, PUSHORT name_chars,
                       PULONG type, PUCHAR *data, PULONG data_length)
 {
-    *data = NULL;
+    *data = nullptr;
     ULONG vk_cell;
     NTSTATUS status = read_cell(hive, key->ValueList, index * 4, &vk_cell, 4);
     UCHAR vk[0x14 + 512];

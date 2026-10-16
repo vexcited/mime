@@ -146,7 +146,7 @@ static PDNS_RECORD new_record(const char *name, int charset, WORD type, WORD len
     SIZE_T name_bytes = charset == DnsCharSetUnicode ? chars * sizeof(WCHAR) : chars;
     PDNS_RECORD r = heap_alloc(sizeof(DNS_RECORD) + name_bytes);
     if (!r)
-        return NULL;
+        return nullptr;
     BYTE *storage = (BYTE *)(r + 1);
     if (charset == DnsCharSetUnicode) {
         for (SIZE_T i = 0; i < chars; i++)
@@ -179,13 +179,13 @@ static PDNS_RECORD new_ptr_record(const char *name, int charset, const char *tar
     SIZE_T bytes = charset == DnsCharSetUnicode ? chars * sizeof(WCHAR) : chars;
     PDNS_RECORD r = new_record(name, charset, DNS_TYPE_PTR, sizeof(PVOID));
     if (!r)
-        return NULL;
+        return nullptr;
     SIZE_T name_chars = strlen(name) + 1;
     SIZE_T name_bytes = charset == DnsCharSetUnicode ? name_chars * sizeof(WCHAR) : name_chars;
     PDNS_RECORD grown = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, r, sizeof(DNS_RECORD) + name_bytes + bytes);
     if (!grown) {
         free_list(r);
-        return NULL;
+        return nullptr;
     }
     r = grown;
     r->pName = r + 1;
@@ -206,13 +206,13 @@ static DNS_STATUS query(const char *name, int charset, WORD type, DWORD options,
 {
     if (!name || !results)
         return ERROR_INVALID_PARAMETER;
-    *results = NULL;
+    *results = nullptr;
     SIZE_T n = strlen(name);
     if (!n || n > 255 || name[0] == '.' || strstr(name, ".."))
         return ERROR_INVALID_NAME;
     if (!(options & DNS_QUERY_NO_LOCAL_NAME)) {
         if (is_local_name(name)) {
-            PDNS_RECORD head = NULL, *tail = &head;
+            PDNS_RECORD head = nullptr, *tail = &head;
             if (type == DNS_TYPE_AAAA || type == DNS_TYPE_ALL) {
                 PDNS_RECORD r = new_record(name, charset, DNS_TYPE_AAAA, sizeof(IP6_ADDRESS));
                 if (!r)
@@ -266,15 +266,15 @@ DNS_STATUS WINAPI DnsQuery_W(PCWSTR name, WORD type, DWORD options, PVOID extra,
     if (!name || !results)
         return ERROR_INVALID_PARAMETER;
     char narrow[512];
-    int n = WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, sizeof(narrow), NULL, NULL);
+    int n = WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, sizeof(narrow), nullptr, nullptr);
     if (n <= 0) {
-        *results = NULL;
+        *results = nullptr;
         return ERROR_INVALID_NAME;
     }
     /* a name outside ascii is never local, so the unicode copy of the query name is only needed for ascii. */
     for (int i = 0; narrow[i]; i++) {
         if ((UCHAR)narrow[i] >= 0x80) {
-            *results = NULL;
+            *results = nullptr;
             return strchr(narrow, '.') ? DNS_ERROR_NO_DNS_SERVERS : DNS_ERROR_RCODE_NAME_ERROR;
         }
     }

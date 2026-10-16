@@ -48,11 +48,11 @@ static void set_length32(ULONG value, const UNICODE_STRING *s)
 
 static PVOID allocate(SIZE_T size)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     return NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &size, MEM_RESERVE | MEM_COMMIT,
                                               PAGE_READWRITE))
                ? base
-               : NULL;
+               : nullptr;
 }
 
 static void release(PVOID base)
@@ -68,7 +68,7 @@ static BOOLEAN menu_item64(const ULONG *p, MENUITEMINFOW *info)
     if (!p || (p[0] != 48 && p[0] != 44))
         return FALSE;
     *info = (MENUITEMINFOW){sizeof(*info), p[1], p[2], p[3], p[4], ptr32(p[5]), ptr32(p[6]), ptr32(p[7]), p[8],
-                            ptr32(p[9]), p[10], p[0] == 48 ? ptr32(p[11]) : NULL};
+                            ptr32(p[9]), p[10], p[0] == 48 ? ptr32(p[11]) : nullptr};
     return TRUE;
 }
 
@@ -114,7 +114,7 @@ static ULONG handle_list32(ULONG number, const ULONG *a)
     BOOLEAN props = number == MIME_SVC_NtUserBuildPropList;
     ULONG max = props ? a[1] : a[4], count = 0;
     SIZE_T item = props ? sizeof(PROPLISTITEM) : sizeof(HWND);
-    PVOID list = max ? allocate(max * item) : NULL;
+    PVOID list = max ? allocate(max * item) : nullptr;
     if (max && !list)
         return (ULONG)STATUS_NO_MEMORY;
     ULONG64 v[7];
@@ -233,7 +233,7 @@ static ULONG get_object32(const ULONG *a)
 
 ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
 {
-    ULONG64 v[16] = {0};
+    ULONG64 v[16] = {};
     switch (number) {
 #include "x86/win32k_calls.h"
     case MIME_SVC_NtUserInitializeClientPfnArrays: {
@@ -249,7 +249,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     }
     /* the vulkan connection: its memory lies below 4 gib in a 32-bit process, so pointers narrow. */
     case MIME_SVC_NtGdiMimeVkOpen: {
-        PVOID base = NULL;
+        PVOID base = nullptr;
         v[0] = (ULONG_PTR)&base;
         ULONG status = (ULONG)MxCallService(number, v);
         if (NT_SUCCESS(status) && a[0])
@@ -257,7 +257,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         return status;
     }
     case MIME_SVC_NtGdiMimeVkAlloc: {
-        PVOID base = NULL;
+        PVOID base = nullptr;
         v[0] = a[0];
         v[1] = (ULONG_PTR)&base;
         v[2] = a[2];
@@ -290,7 +290,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtUserGetClassInfoEx: {
         UNICODE_STRING name = str32(a[1]);
         WNDCLASSEXW wc = {sizeof(wc)};
-        LPWSTR menu = NULL;
+        LPWSTR menu = nullptr;
         v[0] = a[0];
         v[1] = a[1] ? (ULONG_PTR)&name : 0;
         v[2] = (ULONG_PTR)&wc;
@@ -371,7 +371,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         return (ULONG)MxCallService(number, v);
     }
     case MIME_SVC_NtGdiCreateDIBSection: {
-        PVOID bits = NULL;
+        PVOID bits = nullptr;
         for (ULONG i = 0; i < 8; i++)
             v[i] = a[i];
         v[8] = a[8] ? (ULONG_PTR)&bits : 0;
@@ -387,7 +387,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     }
     case MIME_SVC_NtUserGetMessage:
     case MIME_SVC_NtUserPeekMessage: {
-        MSG msg = {0};
+        MSG msg = {};
         v[0] = (ULONG_PTR)&msg;
         v[1] = a[1];
         v[2] = a[2];
@@ -411,7 +411,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtUserBeginPaint:
     case MIME_SVC_NtUserEndPaint: {
         PAINT32 *p = ptr32(a[1]);
-        PAINTSTRUCT ps = {0};
+        PAINTSTRUCT ps = {};
         if (number == MIME_SVC_NtUserEndPaint) {
             ps.hdc = ptr32(p->Dc);
             ps.fErase = p->Erase;
@@ -538,7 +538,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtUserSendInput:
         return send_input32(a);
     case MIME_SVC_NtUserGetIconInfo: {
-        ICONINFO info = {0};
+        ICONINFO info = {};
         UNICODE_STRING module = str32(a[2]), resource = str32(a[3]);
         v[0] = a[0];
         v[1] = a[1] ? (ULONG_PTR)&info : 0;
@@ -608,7 +608,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         /* the 16-byte x86 MIME_CLIPBOARD_DATA. */
         BOOLEAN get = number == MIME_SVC_NtUserGetClipboardData;
         ULONG *p = ptr32(a[get ? 1 : 2]);
-        MIME_CLIPBOARD_DATA data = {0};
+        MIME_CLIPBOARD_DATA data = {};
         if (p)
             data = (MIME_CLIPBOARD_DATA){ptr32(p[0]), p[1], p[2], p[3]};
         v[0] = a[0];

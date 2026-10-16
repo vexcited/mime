@@ -222,7 +222,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device, const VkSwa
     s->id = mvk_new_id();
     for (uint32_t i = 0; i < s->count; i++)
         s->images[i] = mvk_new_id();
-    const VkImageFormatListCreateInfo *list = NULL;
+    const VkImageFormatListCreateInfo *list = nullptr;
     for (const VkBaseInStructure *x = info->pNext; x; x = x->pNext)
         if (x->sType == VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO)
             list = (const VkImageFormatListCreateInfo *)x;
@@ -341,7 +341,7 @@ static void target(HWND hwnd, uint32_t *window, RECT *client)
     HWND top = GetAncestor(hwnd, GA_ROOT);
     if (!top)
         top = hwnd;
-    RECT wr = {0}, cr = {0};
+    RECT wr = {}, cr = {};
     POINT origin = {0, 0};
     GetWindowRect(top, &wr);
     GetClientRect(hwnd, &cr);

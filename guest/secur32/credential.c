@@ -29,12 +29,12 @@ static bool is_package(ULONG_PTR p)
 static SEC_CREDENTIAL *find(PCredHandle handle)
 {
     if (!handle || !is_package(handle->dwLower))
-        return NULL;
+        return nullptr;
     for (SEC_CREDENTIAL *c = g_credentials; c; c = c->Next) {
         if ((ULONG_PTR)c == handle->dwUpper && (ULONG_PTR)c->Package == handle->dwLower)
             return c;
     }
-    return NULL;
+    return nullptr;
 }
 
 bool SecLookupCredential(PCredHandle handle, const SEC_PACKAGE **package, ULONG *use)
@@ -46,7 +46,7 @@ bool SecLookupCredential(PCredHandle handle, const SEC_PACKAGE **package, ULONG 
         *use = c->Use;
     }
     RtlLeaveCriticalSection(&g_lock);
-    return c != NULL;
+    return c != nullptr;
 }
 
 /* packages that take a SEC_WINNT_AUTH_IDENTITY as authentication data. */
@@ -68,13 +68,13 @@ static bool takes_identity(const SEC_PACKAGE *p)
 static PWSTR join_name(const void *domain, ULONG domain_length, const void *user, ULONG user_length, bool ansi)
 {
     if (!user || !user_length)
-        return NULL;
+        return nullptr;
     if (!domain)
         domain_length = 0;
     ULONG n = domain_length + (domain_length ? 1 : 0) + user_length;
     PWSTR out = SecHeapAlloc((n + 1) * sizeof(WCHAR));
     if (!out)
-        return NULL;
+        return nullptr;
     ULONG at = 0;
     for (int part = 0; part < 2; part++) {
         const void *text = part ? user : domain;
@@ -143,7 +143,7 @@ static SECURITY_STATUS acquire(const SEC_PACKAGE *package, ULONG use, void *auth
         return SEC_E_INSUFFICIENT_MEMORY;
     c->Package = package;
     c->Use = use;
-    c->Name = auth_data && takes_identity(package) ? identity_name(auth_data, ansi) : NULL;
+    c->Name = auth_data && takes_identity(package) ? identity_name(auth_data, ansi) : nullptr;
     RtlEnterCriticalSection(&g_lock);
     c->Next = g_credentials;
     g_credentials = c;
@@ -193,7 +193,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY FreeCredentialsHandle(PCredHandle credenti
 /* the user name of SECPKG_CRED_ATTR_NAMES, in a heap copy. */
 static SECURITY_STATUS credential_name(PCredHandle credential, PWSTR *name)
 {
-    *name = NULL;
+    *name = nullptr;
     RtlEnterCriticalSection(&g_lock);
     SEC_CREDENTIAL *c = find(credential);
     bool names = c && takes_identity(c->Package);
@@ -261,10 +261,10 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryCredentialsAttributesA(PCredHandle cr
     SECURITY_STATUS status = credential_name(credential, &name);
     if (status != SEC_E_OK)
         return status;
-    int n = WideCharToMultiByte(CP_ACP, 0, name, -1, NULL, 0, NULL, NULL);
-    PSTR out = n > 0 ? LocalAlloc(LMEM_FIXED, n) : NULL;
+    int n = WideCharToMultiByte(CP_ACP, 0, name, -1, nullptr, 0, nullptr, nullptr);
+    PSTR out = n > 0 ? LocalAlloc(LMEM_FIXED, n) : nullptr;
     if (out)
-        WideCharToMultiByte(CP_ACP, 0, name, -1, out, n, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, name, -1, out, n, nullptr, nullptr);
     SecHeapFree(name);
     if (!out)
         return SEC_E_INSUFFICIENT_MEMORY;

@@ -29,20 +29,20 @@ static BOOL sync_fence(GlContext *ctx, GLsync handle, uint64_t *fence)
     gl_device_unlock();
     if (!sync)
         gl_error(ctx, GL_INVALID_VALUE);
-    return sync != NULL;
+    return sync != nullptr;
 }
 
 GLAPI GLsync APIENTRY glFenceSync(GLenum condition, GLbitfield flags)
 {
-    GL_CONTEXT_OR_RETURN(NULL);
+    GL_CONTEXT_OR_RETURN(nullptr);
     if (condition != GL_SYNC_GPU_COMMANDS_COMPLETE || flags) {
         gl_error(ctx, condition != GL_SYNC_GPU_COMMANDS_COMPLETE ? GL_INVALID_ENUM : GL_INVALID_VALUE);
-        return NULL;
+        return nullptr;
     }
     GlSync *sync = gl_alloc(sizeof(*sync));
     if (!sync) {
         gl_error(ctx, GL_OUT_OF_MEMORY);
-        return NULL;
+        return nullptr;
     }
     gl_device_lock();
     gl_flush_clears(ctx);
@@ -58,7 +58,7 @@ GLAPI GLboolean APIENTRY glIsSync(GLsync handle)
 {
     GL_CONTEXT_OR_RETURN(GL_FALSE);
     gl_device_lock();
-    BOOL exists = *find_sync(ctx, handle) != NULL;
+    BOOL exists = *find_sync(ctx, handle) != nullptr;
     gl_device_unlock();
     return exists;
 }

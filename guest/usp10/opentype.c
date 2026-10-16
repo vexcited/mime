@@ -34,12 +34,12 @@ static OPENTYPE_TAG tag_at(const USP_TABLE *t, DWORD offset)
 
 static void read_table(HDC dc, DWORD tag, USP_TABLE *t)
 {
-    DWORD size = GetFontData(dc, tag, 0, NULL, 0);
+    DWORD size = GetFontData(dc, tag, 0, nullptr, 0);
     if (size == GDI_ERROR || !size || !(t->Data = UspAlloc(size)))
         return;
     if (GetFontData(dc, tag, 0, t->Data, size) != size) {
         UspFree(t->Data);
-        t->Data = NULL;
+        t->Data = nullptr;
         return;
     }
     t->Size = size;
@@ -485,7 +485,7 @@ USPAPI ScriptShapeOpenType(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysi
     /* the features asked for each range, applied to the glyphs of its characters. */
     for (int c = 0; c < count; c++) {
         int r = range_of(range_chars, ranges, c);
-        const TEXTRANGE_PROPERTIES *props = r >= 0 ? range_properties[r] : NULL;
+        const TEXTRANGE_PROPERTIES *props = r >= 0 ? range_properties[r] : nullptr;
         if (!props || (c > 0 && clusters[c] == clusters[c - 1]))
             continue;
         for (int f = 0; f < props->cotfRecords; f++) {
@@ -519,7 +519,7 @@ USPAPI ScriptPlaceOpenType(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysi
     BOOL changed = FALSE;
     for (int c = 0; c < count; c++) {
         int r = range_of(range_chars, ranges, c);
-        const TEXTRANGE_PROPERTIES *props = r >= 0 ? range_properties[r] : NULL;
+        const TEXTRANGE_PROPERTIES *props = r >= 0 ? range_properties[r] : nullptr;
         if (!props || (c > 0 && clusters[c] == clusters[c - 1]))
             continue;
         int g = clusters[c];

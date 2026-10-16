@@ -28,7 +28,7 @@ static bool query_status(const MimePaths *paths, MimeIpcStatus *status)
     bool ok = false;
     MimeIpcHeader h;
     void *payload;
-    if (mime_ipc_send(fd, MIME_IPC_STATUS, NULL, 0) && mime_ipc_recv(fd, &h, &payload)) {
+    if (mime_ipc_send(fd, MIME_IPC_STATUS, nullptr, 0) && mime_ipc_recv(fd, &h, &payload)) {
         if (h.type == MIME_IPC_STATUS_REPLY && h.size >= sizeof(MimeIpcStatus)) {
             memcpy(status, payload, sizeof(*status));
             ok = true;
@@ -76,7 +76,7 @@ static int wait_ready(const MimePaths *paths, pid_t pid, bool quiet)
     uint64_t deadline = mime_now_ns() + 30ull * 1000000000ull;
     while (mime_now_ns() < deadline) {
         int wstatus;
-        bool exited = pid > 0 ? waitpid(pid, &wstatus, WNOHANG) == pid : !mime_instance_running(paths, NULL);
+        bool exited = pid > 0 ? waitpid(pid, &wstatus, WNOHANG) == pid : !mime_instance_running(paths, nullptr);
         if (exited) {
             mime_error("the machine exited during boot");
             print_log_tail(paths);
@@ -184,7 +184,7 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
         printf("Mime machine is not running.\n");
         return 0;
     }
-    mime_ipc_send(fd, MIME_IPC_STOP, NULL, 0);
+    mime_ipc_send(fd, MIME_IPC_STOP, nullptr, 0);
     MimeIpcHeader h;
     void *payload;
     /* the daemon closes the connection once the guest has powered off. */
@@ -297,7 +297,7 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     if (!getcwd(cwd, sizeof(cwd)))
         mime_strlcpy(cwd, "/", sizeof(cwd));
 
-    MimeIpcRun header = {0};
+    MimeIpcRun header = {};
     if (isatty(STDIN_FILENO))
         header.flags |= MIME_RUN_TTY_INPUT;
     if (isatty(STDOUT_FILENO))
@@ -337,12 +337,12 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     fcntl(g_signal_pipe[1], F_SETFD, FD_CLOEXEC);
     fcntl(g_signal_pipe[0], F_SETFL, O_NONBLOCK);
     fcntl(g_signal_pipe[1], F_SETFL, O_NONBLOCK);
-    struct sigaction sa = {0};
+    struct sigaction sa = {};
     sa.sa_handler = on_run_signal;
     sigemptyset(&sa.sa_mask);
     int signals[] = {SIGINT, SIGQUIT, SIGHUP, SIGTERM, SIGWINCH};
     for (size_t i = 0; i < MIME_ARRAY_COUNT(signals); i++)
-        sigaction(signals[i], &sa, NULL);
+        sigaction(signals[i], &sa, nullptr);
     signal(SIGPIPE, SIG_IGN);
 
     int exit_code = 1;

@@ -43,7 +43,7 @@ static ULONG NTAPI init_imm(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
 
 static void lock(void)
 {
-    RtlRunOnceExecuteOnce(&g_imm.Once, init_imm, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_imm.Once, init_imm, nullptr, nullptr);
     RtlEnterCriticalSection(&g_imm.Lock);
 }
 
@@ -63,9 +63,9 @@ static IMM_CONTEXT *from_handle(HIMC himc)
 {
     ULONG_PTR v = (ULONG_PTR)himc;
     if (!v || (v & 3) || v / 4 - 1 >= g_imm.Count)
-        return NULL;
+        return nullptr;
     IMM_CONTEXT *c = &g_imm.Contexts[v / 4 - 1];
-    return c->Used ? c : NULL;
+    return c->Used ? c : nullptr;
 }
 
 static HIMC new_context(DWORD thread, BOOL is_default)
@@ -79,7 +79,7 @@ static HIMC new_context(DWORD thread, BOOL is_default)
             ULONG cap = g_imm.Capacity ? g_imm.Capacity * 2 : 16;
             IMM_CONTEXT *n = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, HEAP_ZERO_MEMORY, cap * sizeof(*n));
             if (!n)
-                return NULL;
+                return nullptr;
             if (g_imm.Contexts) {
                 memcpy(n, g_imm.Contexts, g_imm.Count * sizeof(*n));
                 RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, g_imm.Contexts);
@@ -116,7 +116,7 @@ static BOOL window_context(HWND hwnd, HIMC *himc)
         return FALSE;
     HANDLE prop = GetPropW(hwnd, IMM_PROP);
     if (prop == IMM_NULL_CONTEXT)
-        *himc = NULL;
+        *himc = nullptr;
     else if (prop && from_handle((HIMC)prop))
         *himc = (HIMC)prop;
     else
@@ -152,15 +152,15 @@ IMMAPI BOOL WINAPI ImmDestroyContext(HIMC himc)
 IMMAPI HIMC WINAPI ImmGetContext(HWND hwnd)
 {
     if (!hwnd)
-        return NULL;
+        return nullptr;
     if (!IsWindow(hwnd)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return NULL;
+        return nullptr;
     }
-    HIMC himc = NULL;
+    HIMC himc = nullptr;
     lock();
     if (!window_context(hwnd, &himc))
-        himc = NULL;
+        himc = nullptr;
     unlock();
     return himc;
 }
@@ -178,9 +178,9 @@ static void set_window_context(HWND hwnd, HIMC himc)
 IMMAPI HIMC WINAPI ImmAssociateContext(HWND hwnd, HIMC himc)
 {
     if (!hwnd || !IsWindow(hwnd))
-        return NULL;
+        return nullptr;
     lock();
-    HIMC old = NULL;
+    HIMC old = nullptr;
     if ((!himc || owned_by_thread(himc)) && window_context(hwnd, &old) && old != himc)
         set_window_context(hwnd, himc);
     unlock();
@@ -254,7 +254,7 @@ IMMAPI BOOL WINAPI ImmGetCompositionWindow(HIMC himc, LPCOMPOSITIONFORM form)
     if (c)
         *form = c->Composition;
     unlock();
-    return c != NULL;
+    return c != nullptr;
 }
 
 IMMAPI BOOL WINAPI ImmSetCompositionWindow(HIMC himc, LPCOMPOSITIONFORM form)
@@ -355,7 +355,7 @@ IMMAPI BOOL WINAPI ImmGetConversionStatus(HIMC himc, LPDWORD conversion, LPDWORD
             *sentence = c->Sentence;
     }
     unlock();
-    return c != NULL;
+    return c != nullptr;
 }
 
 IMMAPI BOOL WINAPI ImmSetConversionStatus(HIMC himc, DWORD conversion, DWORD sentence)
@@ -386,7 +386,7 @@ IMMAPI UINT WINAPI ImmGetVirtualKey(HWND hwnd)
 /* windows creates an "IME" class window per thread; mime has none, which callers handle as NULL. */
 IMMAPI HWND WINAPI ImmGetDefaultIMEWnd(HWND hwnd)
 {
-    return NULL;
+    return nullptr;
 }
 
 IMMAPI BOOL WINAPI ImmIsIME(HKL hkl)
@@ -463,7 +463,7 @@ IMMAPI LRESULT WINAPI ImmRequestMessageW(HIMC himc, WPARAM wparam, LPARAM lparam
 IMMAPI BOOL WINAPI ImmGenerateMessage(HIMC himc)
 {
     lock();
-    BOOL ok = from_handle(himc) != NULL;
+    BOOL ok = from_handle(himc) != nullptr;
     unlock();
     return ok;
 }

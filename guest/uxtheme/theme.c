@@ -21,7 +21,7 @@ static void ux_lib_free(void *ctx, void *p)
     UxFree(p);
 }
 
-const MimeAllocator UxAllocator = {ux_lib_alloc, ux_lib_free, NULL};
+const MimeAllocator UxAllocator = {ux_lib_alloc, ux_lib_free, nullptr};
 MimeMsstyles UxStyles;
 
 static struct {
@@ -50,13 +50,13 @@ static DWORD g_app_properties = STAP_VALIDBITS;
 
 static const void *map_file(LPCWSTR path, SIZE_T *size)
 {
-    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
-        return NULL;
+        return nullptr;
     DWORD high = 0, low = GetFileSize(file, &high);
-    const void *view = NULL;
+    const void *view = nullptr;
     if (low && low != INVALID_FILE_SIZE && !high) {
-        HANDLE mapping = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL);
+        HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
         if (mapping) {
             view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
             CloseHandle(mapping);
@@ -91,7 +91,7 @@ static ULONG NTAPI load_style(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
 
 BOOL UxThemeLoaded(void)
 {
-    RtlRunOnceExecuteOnce(&g_style.Once, load_style, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_style.Once, load_style, nullptr, nullptr);
     return g_style.Ready;
 }
 
@@ -105,10 +105,10 @@ static HTHEME new_handle(UX_THEME *theme)
     if (i == g_handles.Count) {
         if (g_handles.Count == g_handles.Capacity) {
             ULONG cap = g_handles.Capacity ? g_handles.Capacity * 2 : 64;
-            UX_SLOT *slots = cap <= 0x10000 ? UxAlloc(cap * sizeof(*slots)) : NULL;
+            UX_SLOT *slots = cap <= 0x10000 ? UxAlloc(cap * sizeof(*slots)) : nullptr;
             if (!slots) {
                 RtlLeaveCriticalSection(&g_handles.Lock);
-                return NULL;
+                return nullptr;
             }
             if (g_handles.Slots)
                 memcpy(slots, g_handles.Slots, g_handles.Count * sizeof(*slots));
@@ -135,10 +135,10 @@ static UX_SLOT *find_slot(HTHEME handle)
     ULONG_PTR value = (ULONG_PTR)handle;
     ULONG i = (ULONG)(value & 0xFFFF);
     if ((ULONG64)value >> 32 || !g_handles.Slots || i >= g_handles.Count)
-        return NULL;
+        return nullptr;
     UX_SLOT *slot = &g_handles.Slots[i];
     if (!slot->Theme || slot->Closed || slot->Generation != (WORD)(value >> 16))
-        return NULL;
+        return nullptr;
     return slot;
 }
 
@@ -146,11 +146,11 @@ UX_THEME *UxAcquire(HTHEME handle, HRESULT *hr)
 {
     if (!UxThemeLoaded()) {
         *hr = E_HANDLE;
-        return NULL;
+        return nullptr;
     }
     RtlEnterCriticalSection(&g_handles.Lock);
     UX_SLOT *slot = find_slot(handle);
-    UX_THEME *theme = NULL;
+    UX_THEME *theme = nullptr;
     if (slot) {
         slot->Uses++;
         theme = slot->Theme;
@@ -169,7 +169,7 @@ void UxRelease(UX_THEME *theme)
             continue;
         if (--slot->Uses <= 0) {
             UxFree(slot->Theme);
-            slot->Theme = NULL;
+            slot->Theme = nullptr;
         }
         break;
     }
@@ -180,10 +180,10 @@ void UxRelease(UX_THEME *theme)
 static LPWSTR atom_prop(HWND hwnd, LPCWSTR prop, LPWSTR buf, int size)
 {
     if (!hwnd)
-        return NULL;
+        return nullptr;
     ATOM atom = (ATOM)(ULONG_PTR)GetPropW(hwnd, prop);
     if (!atom || !GetAtomNameW(atom, buf, size))
-        return NULL;
+        return nullptr;
     if (buf[0] == '$' && !buf[1])
         buf[0] = 0;
     return buf;
@@ -193,11 +193,11 @@ static HTHEME open_theme(HWND hwnd, LPCWSTR class_list, DWORD flags, UINT dpi)
 {
     if (hwnd && !IsWindow(hwnd)) {
         SetLastError((DWORD)E_HANDLE);
-        return NULL;
+        return nullptr;
     }
     if (!class_list) {
         SetLastError((DWORD)E_POINTER);
-        return NULL;
+        return nullptr;
     }
     SetLastError(0);
     if (hwnd)
@@ -205,26 +205,26 @@ static HTHEME open_theme(HWND hwnd, LPCWSTR class_list, DWORD flags, UINT dpi)
     DWORD allow = (flags & OTD_NONCLIENT) ? STAP_ALLOW_NONCLIENT : STAP_ALLOW_CONTROLS;
     if (!UxThemeLoaded() || !(g_app_properties & allow)) {
         SetLastError((DWORD)UX_E_NOTFOUND);
-        return NULL;
+        return nullptr;
     }
     WCHAR app_buf[260], ids_buf[260];
     LPCWSTR app = atom_prop(hwnd, UX_PROP_SUBAPPNAME, app_buf, 260);
     LPCWSTR ids = atom_prop(hwnd, UX_PROP_SUBIDLIST, ids_buf, 260);
     int cls = -1;
     if (ids && *ids)
-        cls = mime_msstyles_match_class(&UxStyles, (const uint16_t *)ids, app && *app ? (const uint16_t *)app : NULL,
+        cls = mime_msstyles_match_class(&UxStyles, (const uint16_t *)ids, app && *app ? (const uint16_t *)app : nullptr,
                                         0);
     if (cls < 0)
         cls = mime_msstyles_match_class(&UxStyles, (const uint16_t *)class_list,
-                                        app && *app ? (const uint16_t *)app : NULL, 0);
+                                        app && *app ? (const uint16_t *)app : nullptr, 0);
     if (cls < 0) {
         SetLastError((DWORD)UX_E_NOTFOUND);
-        return NULL;
+        return nullptr;
     }
     UX_THEME *theme = UxAlloc(sizeof(*theme));
     if (!theme) {
         SetLastError((DWORD)E_OUTOFMEMORY);
-        return NULL;
+        return nullptr;
     }
     theme->Class = cls;
     theme->Dpi = dpi ? dpi : GetDpiForSystem();
@@ -235,7 +235,7 @@ static HTHEME open_theme(HWND hwnd, LPCWSTR class_list, DWORD flags, UINT dpi)
     if (!handle) {
         UxFree(theme);
         SetLastError((DWORD)E_OUTOFMEMORY);
-        return NULL;
+        return nullptr;
     }
     if (hwnd)
         SetPropW(hwnd, UX_PROP_THEME, handle);
@@ -256,7 +256,7 @@ THEMEAPI_(HTHEME) OpenThemeDataForDpi(HWND hwnd, LPCWSTR class_list, UINT dpi)
 {
     if (dpi > 480) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     return open_theme(hwnd, class_list, 0, dpi);
 }
@@ -272,7 +272,7 @@ THEMEAPI CloseThemeData(HTHEME handle)
         slot->Closed = TRUE;
         if (--slot->Uses <= 0) {
             UxFree(slot->Theme);
-            slot->Theme = NULL;
+            slot->Theme = nullptr;
         }
         hr = S_OK;
     }
@@ -284,7 +284,7 @@ THEMEAPI_(HTHEME) GetWindowTheme(HWND hwnd)
 {
     if (!IsWindow(hwnd)) {
         SetLastError((DWORD)E_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return GetPropW(hwnd, UX_PROP_THEME);
 }
@@ -297,7 +297,7 @@ static BOOL apply_string_prop(HWND hwnd, LPCWSTR s, LPCWSTR prop)
     ATOM old = (ATOM)(ULONG_PTR)GetPropW(hwnd, prop);
     BOOL changed;
     if (!old) {
-        changed = s != NULL;
+        changed = s != nullptr;
     } else if (s) {
         WCHAR buf[260];
         changed = !GetAtomNameW(old, buf, 260) || wcscmp(buf, s) != 0;
@@ -385,7 +385,7 @@ THEMEAPI EnableThemeDialogTexture(HWND hwnd, DWORD flags)
 
 THEMEAPI_(BOOL) IsThemeDialogTextureEnabled(HWND hwnd)
 {
-    return GetPropW(hwnd, UX_PROP_DIALOGTEXTURE) != NULL;
+    return GetPropW(hwnd, UX_PROP_DIALOGTEXTURE) != nullptr;
 }
 
 static HRESULT copy_string(LPWSTR dst, int size, LPCWSTR src)

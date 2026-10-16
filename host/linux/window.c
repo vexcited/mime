@@ -34,7 +34,7 @@ uint64_t mime_window_map(MimeVm *vm, int file, uint64_t *ipa_out)
     }
     if (ipa + size > MIME_WINDOW_BASE + MIME_WINDOW_SIZE)
         return MIME_HC_STATUS_NO_MEMORY;
-    void *host = mmap(NULL, size, PROT_READ, MAP_SHARED, file, 0);
+    void *host = mmap(nullptr, size, PROT_READ, MAP_SHARED, file, 0);
     if (host == MAP_FAILED)
         return errno == ENOMEM ? MIME_HC_STATUS_NO_MEMORY : MIME_HC_STATUS_IO_ERROR;
     uint32_t slot = mime_kvm_alloc_slot(vm);
@@ -53,7 +53,7 @@ uint64_t mime_window_map(MimeVm *vm, int file, uint64_t *ipa_out)
 static void unmap_at(MimeVm *vm, uint32_t at)
 {
     MimeFileWindow *w = &vm->windows[at];
-    mime_kvm_set_slot(vm, w->slot, w->ipa, 0, NULL, true);
+    mime_kvm_set_slot(vm, w->slot, w->ipa, 0, nullptr, true);
     mime_kvm_free_slot(vm, w->slot);
     munmap(w->host, w->size);
     memmove(w, w + 1, (vm->window_count - at - 1) * sizeof(MimeFileWindow));

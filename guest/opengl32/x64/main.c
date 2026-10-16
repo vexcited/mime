@@ -22,5 +22,5 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 
 PROC WINAPI wglGetProcAddress(LPCSTR name)
 {
-    return name ? GetProcAddress(g_self, name) : NULL;
+    return name ? GetProcAddress(g_self, name) : nullptr;
 }

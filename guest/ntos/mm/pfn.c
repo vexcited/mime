@@ -20,7 +20,7 @@ PMMPFN MiGetPfn(ULONG64 pa)
 {
     ULONG64 index = (pa - g_ram_base) >> PAGE_SHIFT;
     if (pa < g_ram_base || index >= g_ram_pages)
-        return NULL;
+        return nullptr;
     return &g_pfn[index];
 }
 
@@ -123,7 +123,7 @@ static void discard_free(BOOLEAN idle)
             budget -= (bytes < budget ? bytes : budget);
             RemoveEntryList(&p->ListEntry);
             insert_free(p, order, TRUE);
-            HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa((ULONG64)(p - g_pfn)), bytes, 0, 0, 0, 0, NULL);
+            HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa((ULONG64)(p - g_pfn)), bytes, 0, 0, 0, 0, nullptr);
         }
     }
     g_freed_since_discard = 0;
@@ -232,7 +232,7 @@ SIZE_T MmGetTotalPages(void)
 PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes)
 {
     ULONG64 pa = MmAllocateContiguous(BYTES_TO_PAGES(bytes));
-    return pa ? HalPhysmap(pa) : NULL;
+    return pa ? HalPhysmap(pa) : nullptr;
 }
 
 void NTAPI MmFreeContiguousPages(PVOID va, SIZE_T bytes)
@@ -280,7 +280,7 @@ void MmInitialize(MimeBootInfo *boot)
     ULONG64 db_bytes = ROUND_TO_PAGES(g_ram_pages * sizeof(MMPFN));
     g_pfn = (PMMPFN)HalPhysmap(db_phys);
     /* entries are written sparsely, one per free block, which huge pages would each commit whole. */
-    HalHypercall(MIME_HC_MEM_ADVISE, db_phys, db_bytes, MIME_MEM_SPARSE, 0, 0, 0, NULL);
+    HalHypercall(MIME_HC_MEM_ADVISE, db_phys, db_bytes, MIME_MEM_SPARSE, 0, 0, 0, nullptr);
     if (boot->memory_block_shift > PAGE_SHIFT + 4 && boot->memory_block_shift - PAGE_SHIFT <= MM_MAX_ORDER)
         g_discard_min_order = boot->memory_block_shift - PAGE_SHIFT;
     ULONG64 start = (db_phys + db_bytes - g_ram_base) >> PAGE_SHIFT;

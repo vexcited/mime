@@ -8,7 +8,7 @@
  */
 #include "secur32_private.h"
 
-static const WCHAR g_lsa_ready[] = L"\\SECURITY\\LSA_AUTHENTICATION_INITIALIZED";
+static constexpr WCHAR g_lsa_ready[] = L"\\SECURITY\\LSA_AUTHENTICATION_INITIALIZED";
 
 /*
  * sspicli opens the event lsa sets once it accepts clients and returns the
@@ -19,7 +19,7 @@ static NTSTATUS connect_lsa(void)
 {
     UNICODE_STRING name = {sizeof(g_lsa_ready) - sizeof(WCHAR), sizeof(g_lsa_ready), (PWSTR)g_lsa_ready};
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE event;
     NTSTATUS status = NtOpenEvent(&event, SYNCHRONIZE, &oa);
     if (!NT_SUCCESS(status))
@@ -122,7 +122,7 @@ static SEC_CALL_DATA *call_data(PBOOL allocated)
 {
     *allocated = FALSE;
     if (SecTlsCallData == TLS_OUT_OF_INDEXES)
-        return NULL;
+        return nullptr;
     SEC_CALL_DATA *data = TlsGetValue(SecTlsCallData);
     if (data)
         return data;
@@ -132,7 +132,7 @@ static SEC_CALL_DATA *call_data(PBOOL allocated)
         return data;
     }
     LocalFree(data);
-    return NULL;
+    return nullptr;
 }
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SeciAllocateAndSetCallFlags(ULONG flags, PBOOL allocated)
@@ -153,7 +153,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SeciAllocateAndSetIPAddress(PVOID address,
     SEC_CALL_DATA *data = call_data(allocated);
     if (!data)
         return SEC_E_INSUFFICIENT_MEMORY;
-    PVOID copy = NULL;
+    PVOID copy = nullptr;
     if (length) {
         copy = LocalAlloc(LMEM_FIXED, length);
         if (!copy)
@@ -175,7 +175,7 @@ SECURITYAPI void SEC_ENTRY SeciFreeCallContext(void)
         return;
     LocalFree(data->Address);
     LocalFree(data);
-    TlsSetValue(SecTlsCallData, NULL);
+    TlsSetValue(SecTlsCallData, nullptr);
 }
 
 /* ------------------------------------------------------------------ target information */
@@ -184,7 +184,7 @@ SECURITYAPI void SEC_ENTRY SeciFreeCallContext(void)
 SECURITYAPI NTSTATUS NTAPI CredMarshalTargetInfo(PVOID target, PUSHORT *buffer, PULONG size)
 {
     if (buffer)
-        *buffer = NULL;
+        *buffer = nullptr;
     return STATUS_NOT_SUPPORTED;
 }
 

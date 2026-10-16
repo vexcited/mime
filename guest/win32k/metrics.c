@@ -96,7 +96,7 @@ COLORREF MetricsSysColor(int index)
 
 HBRUSH MetricsSysColorBrush(int index)
 {
-    return index >= 0 && index < NUM_SYSCOLORS && g_brushes[index] ? (HBRUSH)g_brushes[index]->Header.Handle : NULL;
+    return index >= 0 && index < NUM_SYSCOLORS && g_brushes[index] ? (HBRUSH)g_brushes[index]->Header.Handle : nullptr;
 }
 
 static int scale(int v, UINT dpi)
@@ -366,7 +366,7 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         if (!NT_SUCCESS(MimeCopyFromUser(&hc.cbSize, data, sizeof(UINT))) || hc.cbSize != sizeof(hc))
             return FALSE;
         hc.dwFlags = 0x00000002; /* HCF_AVAILABLE */
-        hc.lpszDefaultScheme = NULL;
+        hc.lpszDefaultScheme = nullptr;
         return NT_SUCCESS(MimeCopyToUser(data, &hc, sizeof(hc)));
     }
     case SPI_GETANIMATION: {

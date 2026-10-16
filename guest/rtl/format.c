@@ -307,7 +307,7 @@ static int format(Sink *s, const void *fmt_ptr, bool wide_fmt, va_list ap)
 
 int mime_vformat(char *buf, size_t size, const char *fmt, va_list ap)
 {
-    Sink s = {buf, NULL, size, 0};
+    Sink s = {buf, nullptr, size, 0};
     return format(&s, fmt, false, ap);
 }
 
@@ -322,7 +322,7 @@ int mime_format(char *buf, size_t size, const char *fmt, ...)
 
 int _vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
 {
-    Sink s = {buf, NULL, size + 1, 0};
+    Sink s = {buf, nullptr, size + 1, 0};
     char dummy;
     if (!buf)
         s.buf = &dummy, s.size = 0;
@@ -341,7 +341,7 @@ int _snprintf(char *buf, size_t size, const char *fmt, ...)
 
 int _vsnwprintf(wchar_t *buf, size_t count, const wchar_t *fmt, va_list ap)
 {
-    Sink s = {NULL, buf, count + 1, 0};
+    Sink s = {nullptr, buf, count + 1, 0};
     int n = format(&s, fmt, true, ap);
     return (size_t)n > count ? -1 : n;
 }

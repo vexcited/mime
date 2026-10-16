@@ -18,7 +18,7 @@ void gl_invalidate_bindings(GlContext *ctx)
     memset(&ctx->pipeline_desc, 0, sizeof(ctx->pipeline_desc));
     ctx->pipeline_id = 0;
     ctx->depth_id = 0;
-    ctx->uniforms_of = NULL;
+    ctx->uniforms_of = nullptr;
 }
 
 /* ---------------------------------------------------------------- vertex arrays */
@@ -26,7 +26,7 @@ void gl_invalidate_bindings(GlContext *ctx)
 static GlVertexArray *vao(GlContext *ctx, GLuint name)
 {
     void *v = gl_name_get(&ctx->vaos, name);
-    return v == GL_RESERVED ? NULL : v;
+    return v == GL_RESERVED ? nullptr : v;
 }
 
 GLAPI void APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays)
@@ -71,7 +71,7 @@ GLAPI void APIENTRY glDeleteVertexArrays(GLsizei n, const GLuint *arrays)
             glBindVertexArray(0);
         if (o != GL_RESERVED)
             gl_free(o);
-        gl_name_set(&ctx->vaos, arrays[i], NULL);
+        gl_name_set(&ctx->vaos, arrays[i], nullptr);
     }
 }
 
@@ -350,7 +350,7 @@ GLAPI void APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *pa
 GLAPI void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void **pointer)
 {
     GL_CONTEXT_OR_RETURN();
-    *pointer = index < MIME_GPU_MAX_ATTRIBS ? (void *)ctx->vao->attribs[index].pointer : NULL;
+    *pointer = index < MIME_GPU_MAX_ATTRIBS ? (void *)ctx->vao->attribs[index].pointer : nullptr;
 }
 
 /* ---------------------------------------------------------------- formats */
@@ -989,14 +989,14 @@ static GlProgram *begin_draw(GlContext *ctx)
             gl_log("draws without a program (fixed function) are not supported");
             warned = TRUE;
         }
-        return NULL;
+        return nullptr;
     }
     if (!gl_program_ready(p))
-        return NULL;
+        return nullptr;
     if (ctx->cull_face && ctx->cull_mode == GL_FRONT_AND_BACK)
-        return NULL;
+        return nullptr;
     gl_begin_pass(ctx);
-    return ctx->pass_open ? p : NULL;
+    return ctx->pass_open ? p : nullptr;
 }
 
 static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instances, GLuint base_instance)
@@ -1031,7 +1031,7 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
     if (needs_conversion(mode)) {
         GlMem idx;
         uint32_t n, prim;
-        if (convert_primitive(mode, NULL, 0, start, r.count, &idx, &n, &prim)) {
+        if (convert_primitive(mode, nullptr, 0, start, r.count, &idx, &n, &prim)) {
             MimeGpuDrawIndexed *d = gl_emit(MIME_GPU_DRAW_INDEXED, sizeof(MimeGpuDrawIndexed));
             d->primitive = prim;
             d->count = n;
@@ -1099,7 +1099,7 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
         return;
     }
     /* the indices, as memory the cpu reads and maybe the gpu too. */
-    GlBuffer *eb = ctx->vao->element_buffer ? gl_buffer(ctx, ctx->vao->element_buffer) : NULL;
+    GlBuffer *eb = ctx->vao->element_buffer ? gl_buffer(ctx, ctx->vao->element_buffer) : nullptr;
     const uint8_t *data;
     if (eb) {
         if (!eb->mem.ptr || (uint64_t)(ULONG_PTR)indices + (uint64_t)count * index_size(type) > eb->size) {

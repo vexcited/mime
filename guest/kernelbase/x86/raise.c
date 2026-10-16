@@ -2,7 +2,7 @@
 
 void WINAPI RaiseException(DWORD code, DWORD flags, DWORD count, const ULONG_PTR *arguments)
 {
-    EXCEPTION_RECORD record = {0};
+    EXCEPTION_RECORD record = {};
     record.ExceptionCode = code;
     record.ExceptionFlags = flags & EXCEPTION_NONCONTINUABLE;
     if (arguments) {

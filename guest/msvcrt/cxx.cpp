@@ -73,7 +73,7 @@ extern "C" void *__thiscall_member MsvcrtTypeInfoDeleting(type_info *self, unsig
     return self;
 }
 
-#if defined(_WIN64)
+#ifdef _WIN64
 __asm__(".section .rdata,\"dr\"\n.p2align 3\n.quad 0\n.globl \"??_7type_info@@6B@\"\n\"??_7type_info@@6B@\":\n"
         ".quad \"" MSVCRT_NAME_TYPE_INFO_DELETING "\"\n.text\n");
 #else
@@ -291,7 +291,7 @@ static const RTTI_LOCATOR *locator_of(const void *object)
 /* the image whose rvas a locator's fields count from: on x86 they are addresses. */
 static ULONG_PTR locator_base(const RTTI_LOCATOR *locator)
 {
-#if defined(_WIN64)
+#ifdef _WIN64
     if (locator->signature == 1)
         return (ULONG_PTR)locator - locator->self;
     void *base = nullptr;
@@ -345,7 +345,7 @@ static ptrdiff_t base_offset(const char *p, const RTTI_PMD &pmd)
 static const RTTI_BASE *base_at(ULONG_PTR base, const RTTI_HIERARCHY *hierarchy, unsigned i)
 {
     const int *array = static_cast<const int *>(RTTI_PTR(base, hierarchy->bases));
-#if defined(_WIN64)
+#ifdef _WIN64
     return static_cast<const RTTI_BASE *>(RTTI_PTR(base, array[i]));
 #else
     return reinterpret_cast<const RTTI_BASE *const *>(array)[i];
@@ -438,7 +438,7 @@ extern "C" int __cdecl __std_type_info_compare(const __std_type_info_data *a, co
 
 extern "C" size_t __cdecl __std_type_info_hash(const __std_type_info_data *data)
 {
-#if defined(_WIN64)
+#ifdef _WIN64
     size_t hash = 14695981039346656037ull, prime = 1099511628211ull;
 #else
     size_t hash = 2166136261u, prime = 16777619u;

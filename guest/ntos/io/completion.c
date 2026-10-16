@@ -46,7 +46,7 @@ static void completion_delete(PVOID object)
 
 void IopInitializeCompletion(void)
 {
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = IO_COMPLETION_ALL_ACCESS;
     init.DeleteProcedure = completion_delete;
     IoCompletionObjectType = ObCreateObjectType(L"IoCompletion", &init);
@@ -101,7 +101,7 @@ void IopSignalFile(PFILE_OBJECT file)
 NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port_handle, PVOID key)
 {
     IO_COMPLETION *port;
-    NTSTATUS status = ObReferenceHandle(port_handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, NULL);
+    NTSTATUS status = ObReferenceHandle(port_handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     IO_COMPLETION_CONTEXT *ctx = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*ctx), KI_TAG('I', 'o', 'C', 'c'));
@@ -111,7 +111,7 @@ NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port_handle, PVOID key)
     }
     ctx->Port = port;
     ctx->Key = key;
-    if (__atomic_compare_exchange_n(&file->CompletionContext, &(PVOID){NULL}, ctx, FALSE, __ATOMIC_ACQ_REL,
+    if (__atomic_compare_exchange_n(&file->CompletionContext, &(PVOID){nullptr}, ctx, FALSE, __ATOMIC_ACQ_REL,
                                     __ATOMIC_ACQUIRE))
         return STATUS_SUCCESS;
     ExFreePool(ctx);
@@ -125,7 +125,7 @@ void IopReleaseCompletion(PFILE_OBJECT file)
     IO_COMPLETION_CONTEXT *ctx = file->CompletionContext;
     if (!ctx)
         return;
-    file->CompletionContext = NULL;
+    file->CompletionContext = nullptr;
     ObDereferenceObject(ctx->Port);
     ExFreePool(ctx);
 }
@@ -138,7 +138,7 @@ NTSTATUS NTAPI NtCreateIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_
     if (!NT_SUCCESS(status))
         return status;
     IO_COMPLETION *port;
-    status = ObCreateObject(IoCompletionObjectType, attributes ? &oa : NULL, KeGetPreviousMode(), sizeof(*port),
+    status = ObCreateObject(IoCompletionObjectType, attributes ? &oa : nullptr, KeGetPreviousMode(), sizeof(*port),
                             (PVOID *)&port);
     if (NT_SUCCESS(status)) {
         memset(port, 0, sizeof(*port));
@@ -146,7 +146,7 @@ NTSTATUS NTAPI NtCreateIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_
         KeInitializeSpinLock(&port->Lock);
         InitializeListHead(&port->Queue);
         HANDLE h;
-        status = ObInsertObjectNamed(port, attributes ? &oa : NULL, access ? access : IO_COMPLETION_ALL_ACCESS,
+        status = ObInsertObjectNamed(port, attributes ? &oa : nullptr, access ? access : IO_COMPLETION_ALL_ACCESS,
                                      KeGetPreviousMode(), &h);
         if (NT_SUCCESS(status))
             status = ObStoreHandle(handle, h);
@@ -163,7 +163,7 @@ NTSTATUS NTAPI NtOpenIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_AT
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, IoCompletionObjectType, KeGetPreviousMode(), access, NULL, &h);
+    status = ObOpenObjectByName(&oa, IoCompletionObjectType, KeGetPreviousMode(), access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -173,7 +173,7 @@ NTSTATUS NTAPI NtOpenIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_AT
 NTSTATUS NTAPI NtSetIoCompletion(HANDLE handle, PVOID key, PVOID apc_context, NTSTATUS io_status, ULONG_PTR information)
 {
     IO_COMPLETION *port;
-    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     status = queue_packet(port, key, apc_context, io_status, information);
@@ -194,7 +194,7 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
     IO_COMPLETION *port;
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     *removed = 0;
-    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, mode, (PVOID *)&port, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, mode, (PVOID *)&port, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     ULONG n = 0;
@@ -202,7 +202,7 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
     while (status == STATUS_SUCCESS) {
         KIRQL irql;
         KeAcquireSpinLock(&port->Lock, &irql);
-        IO_COMPLETION_PACKET *p = NULL;
+        IO_COMPLETION_PACKET *p = nullptr;
         if (!IsListEmpty(&port->Queue)) {
             p = CONTAINING_RECORD(RemoveHeadList(&port->Queue), IO_COMPLETION_PACKET, Links);
             port->Count--;
@@ -217,7 +217,7 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
         if (++n == count)
             break;
         /* more only when they are already queued. */
-        LARGE_INTEGER zero = {0};
+        LARGE_INTEGER zero = {};
         if (KeWaitForSingleObject(&port->Packets, UserRequest, mode, FALSE, &zero) != STATUS_SUCCESS)
             break;
     }
@@ -228,7 +228,7 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
 
 static NTSTATUS capture_timeout(PLARGE_INTEGER user, PLARGE_INTEGER storage, PLARGE_INTEGER *out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!user)
         return STATUS_SUCCESS;
     NTSTATUS status = KiCopyFromUser(storage, user, sizeof(*storage));
@@ -291,7 +291,7 @@ NTSTATUS NTAPI NtQueryIoCompletion(HANDLE handle, ULONG klass, PVOID info, ULONG
     if (length < sizeof(IO_COMPLETION_BASIC_INFORMATION))
         return STATUS_INFO_LENGTH_MISMATCH;
     IO_COMPLETION *port;
-    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     IO_COMPLETION_BASIC_INFORMATION basic = {port->Count};
@@ -318,8 +318,8 @@ void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_ST
     PKAPC apc = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(KAPC), KI_TAG('I', 'o', 'A', 'p'));
     if (!apc)
         return;
-    KeInitializeApc(apc, &thread->Tcb, OriginalApcEnvironment, apc_free, NULL, (PKNORMAL_ROUTINE)routine, UserMode,
+    KeInitializeApc(apc, &thread->Tcb, OriginalApcEnvironment, apc_free, nullptr, (PKNORMAL_ROUTINE)routine, UserMode,
                     context);
-    if (!KeInsertQueueApc(apc, iosb, NULL, IO_NO_INCREMENT))
+    if (!KeInsertQueueApc(apc, iosb, nullptr, IO_NO_INCREMENT))
         ExFreePool(apc);
 }

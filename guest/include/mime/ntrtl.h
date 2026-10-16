@@ -81,7 +81,7 @@ typedef struct _SLIST_ENTRY {
     struct _SLIST_ENTRY *Next;
 } SLIST_ENTRY, *PSLIST_ENTRY;
 
-#if defined(__i386__)
+#ifdef __i386__
 typedef union DECLSPEC_ALIGN(8) _SLIST_HEADER {
     ULONGLONG Whole;
     struct {

@@ -44,7 +44,7 @@ UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZ
 {
     MIME_CFB *file = &database->File;
     MIME_CFB_ENTRY entry;
-    *out = NULL;
+    *out = nullptr;
     *size = 0;
     if (!MimeCfbEntry(file, 0, &entry))
         return ERROR_INSTALL_PACKAGE_INVALID;
@@ -89,7 +89,7 @@ static UINT table_stream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, S
 
 UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database)
 {
-    BYTE *pool = NULL, *data = NULL;
+    BYTE *pool = nullptr, *data = nullptr;
     SIZE_T pool_size, data_size;
     UINT error = table_stream(database, L"_StringPool", &pool, &pool_size);
     if (!error)
@@ -129,7 +129,7 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database)
         }
         if (!length)
             continue;
-        int characters = MultiByteToWideChar(codepage, 0, (PCSTR)data + offset, length, NULL, 0);
+        int characters = MultiByteToWideChar(codepage, 0, (PCSTR)data + offset, length, nullptr, 0);
         if (!characters) {
             error = ERROR_INSTALL_PACKAGE_INVALID;
             break;
@@ -280,7 +280,7 @@ ULONG MimeMsiColumn(const MIME_MSI_TABLE *table, PCWSTR name, BOOL text)
 PCWSTR MimeMsiText(const MIME_MSI_DATABASE *database, const MIME_MSI_TABLE *table, ULONG row, ULONG column)
 {
     if (row >= table->Rows || column >= table->Count || (table->Columns[column].Type & 0x0c00) != 0x0c00)
-        return NULL;
+        return nullptr;
     return database->Strings[MimeMsiCell(table, row, column)];
 }
 

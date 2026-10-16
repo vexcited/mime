@@ -25,7 +25,7 @@ static void cache_drop(CLIP_CACHE *c)
 {
     if (c->Handle)
         GlobalFree(c->Handle);
-    c->Handle = NULL;
+    c->Handle = nullptr;
     c->Format = 0;
     c->Sequence = 0;
 }
@@ -35,7 +35,7 @@ static CLIP_CACHE *cache_find(UINT format)
     for (int i = 0; i < CACHE_SIZE; i++)
         if (g_cache[i].Handle && g_cache[i].Format == format)
             return &g_cache[i];
-    return NULL;
+    return nullptr;
 }
 
 static void cache_store(UINT format, HGLOBAL handle, DWORD sequence)
@@ -44,7 +44,7 @@ static void cache_store(UINT format, HGLOBAL handle, DWORD sequence)
     if (c && c->Handle != handle)
         cache_drop(c);
     if (!c || !c->Format) {
-        c = NULL;
+        c = nullptr;
         for (int i = 0; i < CACHE_SIZE && !c; i++)
             if (!g_cache[i].Handle)
                 c = &g_cache[i];
@@ -99,26 +99,26 @@ WINUSERAPI DWORD WINAPI GetClipboardSequenceNumber(void)
 
 WINUSERAPI HANDLE WINAPI SetClipboardData(UINT format, HANDLE data)
 {
-    MIME_CLIPBOARD_DATA d = {NULL, 0, 0, FALSE};
+    MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
     if (!data) {
         /* delayed rendering: the owner gets WM_RENDERFORMAT when the format is read. */
-        NtUserSetClipboardData(format, NULL, NULL);
-        return NULL;
+        NtUserSetClipboardData(format, nullptr, nullptr);
+        return nullptr;
     }
     if (is_gdi_format(format))
-        return NtUserSetClipboardData(format, data, &d) ? data : NULL;
+        return NtUserSetClipboardData(format, data, &d) ? data : nullptr;
     SIZE_T size = GlobalSize(data);
     void *p = GlobalLock(data);
     if (!p) {
         SetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     d.Data = p;
     d.Size = size;
-    HANDLE r = NtUserSetClipboardData(format, NULL, &d);
+    HANDLE r = NtUserSetClipboardData(format, nullptr, &d);
     GlobalUnlock(data);
     if (!r)
-        return NULL;
+        return nullptr;
     /* the clipboard owns the memory now; this process keeps reading it until the contents change. */
     cache_store(format, data, NtUserGetClipboardSequenceNumber());
     return data;
@@ -126,24 +126,24 @@ WINUSERAPI HANDLE WINAPI SetClipboardData(UINT format, HANDLE data)
 
 static HGLOBAL fetch_memory(UINT format, DWORD *sequence)
 {
-    MIME_CLIPBOARD_DATA d = {NULL, 0, 0, FALSE};
+    MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
     HANDLE h = NtUserGetClipboardData(format, &d);
     if (!h || d.Gdi)
-        return NULL;
+        return nullptr;
     *sequence = d.Sequence;
     CLIP_CACHE *c = cache_find(format);
     if (c && c->Sequence == d.Sequence)
         return c->Handle;
     HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, d.Size ? d.Size : 1);
     if (!mem)
-        return NULL;
+        return nullptr;
     void *p = GlobalLock(mem);
     d.Data = p;
     h = NtUserGetClipboardData(format, &d);
     GlobalUnlock(mem);
     if (!h) {
         GlobalFree(mem);
-        return NULL;
+        return nullptr;
     }
     cache_store(format, mem, d.Sequence);
     return mem;
@@ -165,18 +165,18 @@ static HANDLE synthesize_text(UINT format)
         const void *p = GlobalLock(src);
         if (!p)
             continue;
-        HGLOBAL out = NULL;
+        HGLOBAL out = nullptr;
         if (from == CF_UNICODETEXT) {
             const WCHAR *w = p;
             int chars = 0;
             while ((SIZE_T)(chars + 1) * sizeof(WCHAR) <= size && w[chars])
                 chars++;
             UINT cp = format == CF_OEMTEXT ? CP_OEMCP : CP_ACP;
-            int n = WideCharToMultiByte(cp, 0, w, chars, NULL, 0, NULL, NULL);
+            int n = WideCharToMultiByte(cp, 0, w, chars, nullptr, 0, nullptr, nullptr);
             out = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)n + 1);
-            char *a = out ? GlobalLock(out) : NULL;
+            char *a = out ? GlobalLock(out) : nullptr;
             if (a) {
-                WideCharToMultiByte(cp, 0, w, chars, a, n, NULL, NULL);
+                WideCharToMultiByte(cp, 0, w, chars, a, n, nullptr, nullptr);
                 a[n] = 0;
                 GlobalUnlock(out);
             }
@@ -187,9 +187,9 @@ static HANDLE synthesize_text(UINT format)
                 chars++;
             UINT cp = from == CF_OEMTEXT ? CP_OEMCP : CP_ACP;
             if (format == CF_UNICODETEXT) {
-                int n = MultiByteToWideChar(cp, 0, a, chars, NULL, 0);
+                int n = MultiByteToWideChar(cp, 0, a, chars, nullptr, 0);
                 out = GlobalAlloc(GMEM_MOVEABLE, ((SIZE_T)n + 1) * sizeof(WCHAR));
-                WCHAR *w = out ? GlobalLock(out) : NULL;
+                WCHAR *w = out ? GlobalLock(out) : nullptr;
                 if (w) {
                     MultiByteToWideChar(cp, 0, a, chars, w, n);
                     w[n] = 0;
@@ -197,16 +197,16 @@ static HANDLE synthesize_text(UINT format)
                 }
             } else {
                 /* ansi and oem: through unicode. */
-                int n = MultiByteToWideChar(cp, 0, a, chars, NULL, 0);
+                int n = MultiByteToWideChar(cp, 0, a, chars, nullptr, 0);
                 WCHAR *w = UserAlloc(((SIZE_T)n + 1) * sizeof(WCHAR));
                 if (w) {
                     MultiByteToWideChar(cp, 0, a, chars, w, n);
                     UINT to = format == CF_OEMTEXT ? CP_OEMCP : CP_ACP;
-                    int m = WideCharToMultiByte(to, 0, w, n, NULL, 0, NULL, NULL);
+                    int m = WideCharToMultiByte(to, 0, w, n, nullptr, 0, nullptr, nullptr);
                     out = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)m + 1);
-                    char *b = out ? GlobalLock(out) : NULL;
+                    char *b = out ? GlobalLock(out) : nullptr;
                     if (b) {
-                        WideCharToMultiByte(to, 0, w, n, b, m, NULL, NULL);
+                        WideCharToMultiByte(to, 0, w, n, b, m, nullptr, nullptr);
                         b[m] = 0;
                         GlobalUnlock(out);
                     }
@@ -219,12 +219,12 @@ static HANDLE synthesize_text(UINT format)
             cache_store(format, out, sequence);
         return out;
     }
-    return NULL;
+    return nullptr;
 }
 
 WINUSERAPI HANDLE WINAPI GetClipboardData(UINT format)
 {
-    MIME_CLIPBOARD_DATA d = {NULL, 0, 0, FALSE};
+    MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
     HANDLE h = NtUserGetClipboardData(format, &d);
     if (h && d.Gdi)
         return h;
@@ -239,7 +239,7 @@ WINUSERAPI HANDLE WINAPI GetClipboardData(UINT format)
             return c->Handle;
         return synthesize_text(format);
     }
-    return NULL;
+    return nullptr;
 }
 
 WINUSERAPI BOOL WINAPI IsClipboardFormatAvailable(UINT format)
@@ -304,7 +304,7 @@ WINUSERAPI int WINAPI GetClipboardFormatNameA(UINT format, LPSTR name, int max)
     int n = NtUserGetClipboardFormatName(format, w, RTL_NUMBER_OF(w));
     if (!n)
         return 0;
-    int a = WideCharToMultiByte(CP_ACP, 0, w, n, name, max - 1, NULL, NULL);
+    int a = WideCharToMultiByte(CP_ACP, 0, w, n, name, max - 1, nullptr, nullptr);
     name[a] = 0;
     return a;
 }

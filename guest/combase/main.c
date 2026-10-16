@@ -28,7 +28,7 @@ typedef void(WINAPI *CO_UNINITIALIZE)(void);
 static FARPROC ole32_proc(LPCSTR name)
 {
     HMODULE ole32 = LoadLibraryW(L"ole32.dll");
-    return ole32 ? GetProcAddress(ole32, name) : NULL;
+    return ole32 ? GetProcAddress(ole32, name) : nullptr;
 }
 
 ROAPI HRESULT WINAPI RoInitialize(RO_INIT_TYPE type)
@@ -38,7 +38,7 @@ ROAPI HRESULT WINAPI RoInitialize(RO_INIT_TYPE type)
     CO_INITIALIZE_EX initialize = (CO_INITIALIZE_EX)(void *)ole32_proc("CoInitializeEx");
     if (!initialize)
         return E_UNEXPECTED;
-    return initialize(NULL, type == RO_INIT_MULTITHREADED ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
+    return initialize(nullptr, type == RO_INIT_MULTITHREADED ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
 }
 
 ROAPI void WINAPI RoUninitialize(void)
@@ -59,7 +59,7 @@ ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void 
 {
     if (!factory)
         return E_POINTER;
-    *factory = NULL;
+    *factory = nullptr;
     if (!class_id || !riid)
         return E_INVALIDARG;
     UINT32 length;
@@ -74,7 +74,7 @@ ROAPI HRESULT WINAPI RoActivateInstance(HSTRING class_id, IInspectable **instanc
 {
     if (!instance)
         return E_POINTER;
-    *instance = NULL;
+    *instance = nullptr;
     IActivationFactory *factory;
     HRESULT hr = RoGetActivationFactory(class_id, &IID_IActivationFactory, (void **)&factory);
     if (FAILED(hr))
@@ -106,7 +106,7 @@ ROAPI HRESULT WINAPI GetRestrictedErrorInfo(void **info)
 {
     if (!info)
         return E_POINTER;
-    *info = NULL;
+    *info = nullptr;
     return S_FALSE;
 }
 
@@ -122,5 +122,5 @@ ROAPI HRESULT WINAPI RoCaptureErrorContext(HRESULT error)
 
 ROAPI void WINAPI RoFailFastWithErrorContext(HRESULT error)
 {
-    RaiseFailFastException(NULL, NULL, 0);
+    RaiseFailFastException(nullptr, nullptr, 0);
 }

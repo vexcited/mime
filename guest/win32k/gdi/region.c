@@ -26,7 +26,7 @@ void RgnInit(REGION *r)
 {
     r->Count = 0;
     r->Capacity = 0;
-    r->Rects = NULL;
+    r->Rects = nullptr;
     r->Extents = (RECT){0, 0, 0, 0};
 }
 

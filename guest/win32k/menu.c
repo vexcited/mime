@@ -63,10 +63,10 @@ static MENU *menu_create(BOOLEAN popup)
 {
     MENU *m = W32Alloc(sizeof(MENU));
     if (!m)
-        return NULL;
+        return nullptr;
     if (!UserCreateHandle(&m->Header, USER_TYPE_MENU)) {
         W32Free(m);
-        return NULL;
+        return nullptr;
     }
     m->Popup = popup;
     m->OwnerPid = PsGetCurrentProcessId();
@@ -77,7 +77,7 @@ static MENU *menu_create(BOOLEAN popup)
 static void free_item(MENU_ITEM *it)
 {
     W32Free(it->Text);
-    it->Text = NULL;
+    it->Text = nullptr;
     it->TextLength = 0;
 }
 
@@ -94,10 +94,10 @@ static void menu_destroy(MENU *m)
         free_item(it);
     }
     W32Free(m->Items);
-    m->Items = NULL;
+    m->Items = nullptr;
     m->Count = 0;
     if (m->SystemOf && m->SystemOf->SystemMenu == (HMENU)m->Header.Handle)
-        m->SystemOf->SystemMenu = NULL;
+        m->SystemOf->SystemMenu = nullptr;
     UserDereference(&m->Header);
 }
 
@@ -118,7 +118,7 @@ static void sync_close_button(MENU *m)
         w->Flags |= WNDF_NOCLOSE;
     if (old != w->Flags && FrameHasCaption(w->Style, w->ExStyle)) {
         w->Flags |= WNDF_FRAME_DIRTY;
-        WndInvalidateRegion(w, NULL, RDW_FRAME | RDW_INVALIDATE);
+        WndInvalidateRegion(w, nullptr, RDW_FRAME | RDW_INVALIDATE);
     }
 }
 
@@ -126,10 +126,10 @@ static void sync_close_button(MENU *m)
 static MENU_ITEM *find_item(MENU *m, UINT item, BOOLEAN by_position, MENU **owner, ULONG *index, int depth)
 {
     if (!m || depth > 16)
-        return NULL;
+        return nullptr;
     if (by_position) {
         if (item >= m->Count)
-            return NULL;
+            return nullptr;
         if (owner)
             *owner = m;
         if (index)
@@ -152,7 +152,7 @@ static MENU_ITEM *find_item(MENU *m, UINT item, BOOLEAN by_position, MENU **owne
             return it;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static BOOLEAN insert_slot(MENU *m, ULONG pos)
@@ -200,21 +200,21 @@ static BOOLEAN apply_info(MENU *m, MENU_ITEM *it, const MENUITEMINFOW *mii, PWST
         it->Type = (it->Type & ~ITEM_TYPE_MASK) | (mii->fType & ITEM_TYPE_MASK);
         if (mii->fType & MFT_BITMAP) {
             it->Bitmap = (HBITMAP)(ULONG_PTR)(DWORD)(ULONG_PTR)mii->dwTypeData;
-            set_text(it, NULL, 0);
+            set_text(it, nullptr, 0);
             W32Free(text);
-            text = NULL;
+            text = nullptr;
         } else if (mii->fType & MFT_SEPARATOR) {
-            set_text(it, NULL, 0);
+            set_text(it, nullptr, 0);
         } else {
             set_text(it, text, chars);
-            text = NULL;
+            text = nullptr;
         }
     }
     if (mii->fMask & MIIM_FTYPE)
         it->Type = mii->fType & ITEM_TYPE_MASK & ~MFT_BITMAP;
     if (mii->fMask & MIIM_STRING) {
         set_text(it, text, chars);
-        text = NULL;
+        text = nullptr;
     }
     if (mii->fMask & MIIM_BITMAP)
         it->Bitmap = mii->hbmpItem;
@@ -230,7 +230,7 @@ static BOOLEAN apply_info(MENU *m, MENU_ITEM *it, const MENUITEMINFOW *mii, PWST
     if (mii->fMask & MIIM_ID)
         it->Id = mii->wID;
     if (mii->fMask & MIIM_SUBMENU) {
-        MENU *sub = mii->hSubMenu ? menu_lookup(mii->hSubMenu) : NULL;
+        MENU *sub = mii->hSubMenu ? menu_lookup(mii->hSubMenu) : nullptr;
         if (mii->hSubMenu && (!sub || sub == m)) {
             W32Free(text);
             return FALSE;
@@ -269,9 +269,9 @@ void MenuWindowDestroyed(WND *w)
 {
     if (w->SystemMenu) {
         MENU *m = menu_lookup(w->SystemMenu);
-        w->SystemMenu = NULL;
+        w->SystemMenu = nullptr;
         if (m) {
-            m->SystemOf = NULL;
+            m->SystemOf = nullptr;
             menu_destroy(m);
         }
     }
@@ -293,7 +293,7 @@ typedef struct SYSMENU_ENTRY {
 /* the english strings of the default system menu; the tab separates the accelerator text. */
 static const SYSMENU_ENTRY g_sysmenu[] = {
     {SC_RESTORE, L"&Restore"}, {SC_MOVE, L"&Move"},          {SC_SIZE, L"&Size"}, {SC_MINIMIZE, L"Mi&nimize"},
-    {SC_MAXIMIZE, L"Ma&ximize"}, {0, NULL},                  {SC_CLOSE, L"&Close\tAlt+F4"},
+    {SC_MAXIMIZE, L"Ma&ximize"}, {0, nullptr},                  {SC_CLOSE, L"&Close\tAlt+F4"},
 };
 
 static void append_item(MENU *m, UINT id, PCWSTR text, UINT type, UINT state)
@@ -346,12 +346,12 @@ void MenuRefreshWindowState(WND *w)
 
 static MENU *system_menu(WND *w, BOOLEAN create)
 {
-    MENU *m = w->SystemMenu ? menu_lookup(w->SystemMenu) : NULL;
+    MENU *m = w->SystemMenu ? menu_lookup(w->SystemMenu) : nullptr;
     if (m || !create)
         return m;
     m = menu_create(TRUE);
     if (!m)
-        return NULL;
+        return nullptr;
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_sysmenu); i++)
         append_item(m, g_sysmenu[i].Id, g_sysmenu[i].Text, g_sysmenu[i].Text ? MFT_STRING : MFT_SEPARATOR,
                     g_sysmenu[i].Id == SC_CLOSE ? MFS_DEFAULT : 0);
@@ -368,7 +368,7 @@ HMENU NTAPI NtUserCreateMenu(void)
 {
     UserEnter();
     MENU *m = menu_create(FALSE);
-    HMENU h = m ? (HMENU)m->Header.Handle : NULL;
+    HMENU h = m ? (HMENU)m->Header.Handle : nullptr;
     UserLeave();
     if (!h)
         W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -379,7 +379,7 @@ HMENU NTAPI NtUserCreatePopupMenu(void)
 {
     UserEnter();
     MENU *m = menu_create(TRUE);
-    HMENU h = m ? (HMENU)m->Header.Handle : NULL;
+    HMENU h = m ? (HMENU)m->Header.Handle : nullptr;
     UserLeave();
     if (!h)
         W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -391,15 +391,15 @@ BOOL NTAPI NtUserDestroyMenu(HMENU menu)
     UserEnter();
     MENU *m = menu_lookup(menu);
     if (m && m->SystemOf)
-        m->SystemOf->SystemMenu = NULL;
+        m->SystemOf->SystemMenu = nullptr;
     if (m) {
-        m->SystemOf = NULL;
+        m->SystemOf = nullptr;
         menu_destroy(m);
     }
     UserLeave();
     if (!m)
         W32SetLastError(ERROR_INVALID_MENU_HANDLE);
-    return m != NULL;
+    return m != nullptr;
 }
 
 BOOL NTAPI NtUserThunkedMenuItemInfo(HMENU menu, UINT item, BOOL by_position, BOOL insert, LPMENUITEMINFOW user_info,
@@ -415,7 +415,7 @@ BOOL NTAPI NtUserThunkedMenuItemInfo(HMENU menu, UINT item, BOOL by_position, BO
         MimeCopyFromUser(&mii, user_info, sizeof(mii));
     else
         mii.fMask &= ~(MIIM_BITMAP | MIIM_STRING | MIIM_FTYPE);
-    PWSTR text = NULL;
+    PWSTR text = nullptr;
     SIZE_T chars = 0;
     if (user_text && !NT_SUCCESS(W32CaptureString(user_text, &text, &chars))) {
         W32SetLastError(ERROR_NOACCESS);
@@ -453,8 +453,8 @@ BOOL NTAPI NtUserThunkedMenuItemInfo(HMENU menu, UINT item, BOOL by_position, BO
         if (ok && owner->SystemOf)
             sync_close_button(owner);
     } else {
-        MENU *owner = NULL;
-        MENU_ITEM *it = find_item(m, item, by_position, &owner, NULL, 0);
+        MENU *owner = nullptr;
+        MENU_ITEM *it = find_item(m, item, by_position, &owner, nullptr, 0);
         if (it) {
             ok = apply_info(owner, it, &mii, text, chars);
             if (!ok)
@@ -484,8 +484,8 @@ BOOL NTAPI NtUserMimeGetMenuItemInfo(HMENU menu, UINT item, BOOL by_position, LP
         MimeCopyFromUser(&mii, user_info, sizeof(mii));
     UserEnter();
     MENU *m = menu_lookup(menu);
-    MENU_ITEM *it = m ? find_item(m, item, by_position, NULL, NULL, 0) : NULL;
-    PWSTR text = NULL;
+    MENU_ITEM *it = m ? find_item(m, item, by_position, nullptr, nullptr, 0) : nullptr;
+    PWSTR text = nullptr;
     ULONG length = 0;
     BOOLEAN want_text = FALSE;
     if (it) {
@@ -568,7 +568,7 @@ ULONG_PTR NTAPI NtUserMimeCallMenu(HMENU menu, ULONG_PTR param, ULONG routine)
                     continue;
                 if ((it->State & MFS_GRAYED) && !(flags & 1 /* GMDI_USEDISABLED */))
                     break;
-                MENU *sub = it->SubMenu ? menu_lookup(it->SubMenu) : NULL;
+                MENU *sub = it->SubMenu ? menu_lookup(it->SubMenu) : nullptr;
                 if (sub && (flags & 2 /* GMDI_GOINTOPOPUPS */)) {
                     /* the user lock is recursive. */
                     ULONG_PTR inner = NtUserMimeCallMenu(it->SubMenu, param, routine);
@@ -625,7 +625,7 @@ static void apply_menu_info(MENU *m, const MENUINFO *mi, int depth)
         m->MenuData = mi->dwMenuData;
     if ((mi->fMask & MIM_APPLYTOSUBMENUS) && depth < 16)
         for (ULONG i = 0; i < m->Count; i++) {
-            MENU *sub = m->Items[i].SubMenu ? menu_lookup(m->Items[i].SubMenu) : NULL;
+            MENU *sub = m->Items[i].SubMenu ? menu_lookup(m->Items[i].SubMenu) : nullptr;
             if (sub)
                 apply_menu_info(sub, mi, depth + 1);
         }
@@ -645,14 +645,14 @@ BOOL NTAPI NtUserThunkedMenuInfo(HMENU menu, LPCMENUINFO user_info)
     UserLeave();
     if (!m)
         W32SetLastError(ERROR_INVALID_MENU_HANDLE);
-    return m != NULL;
+    return m != nullptr;
 }
 
 static BOOL remove_item(HMENU menu, UINT position, UINT flags, BOOLEAN destroy)
 {
     UserEnter();
     MENU *m = menu_lookup(menu);
-    MENU *owner = NULL;
+    MENU *owner = nullptr;
     ULONG index = 0;
     BOOL ok = FALSE;
     if (m && find_item(m, position, (flags & MF_BYPOSITION) != 0, &owner, &index, 0)) {
@@ -681,8 +681,8 @@ UINT NTAPI NtUserEnableMenuItem(HMENU menu, UINT id, UINT flags)
 {
     UserEnter();
     MENU *m = menu_lookup(menu);
-    MENU *owner = NULL;
-    MENU_ITEM *it = m ? find_item(m, id, (flags & MF_BYPOSITION) != 0, &owner, NULL, 0) : NULL;
+    MENU *owner = nullptr;
+    MENU_ITEM *it = m ? find_item(m, id, (flags & MF_BYPOSITION) != 0, &owner, nullptr, 0) : nullptr;
     UINT old = (UINT)-1;
     if (it) {
         old = it->State & (MF_GRAYED | MF_DISABLED);
@@ -699,7 +699,7 @@ DWORD NTAPI NtUserCheckMenuItem(HMENU menu, UINT id, UINT flags)
 {
     UserEnter();
     MENU *m = menu_lookup(menu);
-    MENU_ITEM *it = m ? find_item(m, id, (flags & MF_BYPOSITION) != 0, NULL, NULL, 0) : NULL;
+    MENU_ITEM *it = m ? find_item(m, id, (flags & MF_BYPOSITION) != 0, nullptr, nullptr, 0) : nullptr;
     DWORD old = (DWORD)-1;
     if (it) {
         old = it->State & MF_CHECKED;
@@ -742,7 +742,7 @@ BOOL NTAPI NtUserSetMenu(HWND hwnd, HMENU menu, BOOL repaint)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    MENU *m = menu ? menu_lookup(menu) : NULL;
+    MENU *m = menu ? menu_lookup(menu) : nullptr;
     ULONG error = 0;
     if (!w)
         error = ERROR_INVALID_WINDOW_HANDLE;
@@ -767,23 +767,23 @@ HMENU NTAPI NtUserGetSystemMenu(HWND hwnd, BOOL revert)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    HMENU h = NULL;
+    HMENU h = nullptr;
     if (w) {
         if (revert) {
             MENU *m = system_menu(w, FALSE);
             if (m) {
-                w->SystemMenu = NULL;
-                m->SystemOf = NULL;
+                w->SystemMenu = nullptr;
+                m->SystemOf = nullptr;
                 menu_destroy(m);
             }
             if (w->Flags & WNDF_NOCLOSE) {
                 w->Flags &= ~WNDF_NOCLOSE;
                 if (FrameHasCaption(w->Style, w->ExStyle))
-                    WndInvalidateRegion(w, NULL, RDW_FRAME | RDW_INVALIDATE);
+                    WndInvalidateRegion(w, nullptr, RDW_FRAME | RDW_INVALIDATE);
             }
         } else if (w->Style & WS_SYSMENU || !(w->Style & WS_CHILD)) {
             MENU *m = system_menu(w, TRUE);
-            h = m ? (HMENU)m->Header.Handle : NULL;
+            h = m ? (HMENU)m->Header.Handle : nullptr;
         }
     }
     UserLeave();
@@ -799,7 +799,7 @@ BOOL NTAPI NtUserDrawMenuBar(HWND hwnd)
     UserLeave();
     if (!w)
         W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-    return w != NULL;
+    return w != nullptr;
 }
 
 BOOL NTAPI NtUserEndMenu(void)

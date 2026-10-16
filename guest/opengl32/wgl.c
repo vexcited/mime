@@ -239,7 +239,7 @@ GlSurface *gl_surface_for(HDC dc, int pixel_format)
 {
     MIME_GPU_SURFACE info;
     if (!NtGdiMimeGpuGetSurface(dc, &info))
-        return NULL;
+        return nullptr;
     gl_device_lock();
     GlSurface *s = g_surfaces;
     while (s && s->hwnd != info.Window)
@@ -294,15 +294,15 @@ static HGLRC create_context(HDC dc, GlContext *share, int major, int minor, int 
     int format = dc_pixel_format(dc);
     if (!format) {
         set_last_error(ERROR_INVALID_PIXEL_FORMAT);
-        return NULL;
+        return nullptr;
     }
     if (!gpu_format(format) || !gl_device_open()) {
         set_last_error(ERROR_NOT_SUPPORTED);
-        return NULL;
+        return nullptr;
     }
     GlContext *ctx = gl_alloc(sizeof(GlContext));
     if (!ctx)
-        return NULL;
+        return nullptr;
     if (share) {
         ctx->shared = share->shared;
         __atomic_fetch_add(&ctx->shared->refs, 1, __ATOMIC_ACQ_REL);
@@ -321,14 +321,14 @@ static HGLRC create_context(HDC dc, GlContext *share, int major, int minor, int 
 
 GLAPI HGLRC WINAPI wglCreateContext(HDC dc)
 {
-    return create_context(dc, NULL, 3, 0, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB);
+    return create_context(dc, nullptr, 3, 0, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB);
 }
 
 GLAPI HGLRC WINAPI wglCreateLayerContext(HDC dc, int layer)
 {
     if (layer) {
         set_last_error(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     return wglCreateContext(dc);
 }
@@ -353,7 +353,7 @@ GLAPI HGLRC WINAPI wglCreateContextAttribsARB(HDC dc, HGLRC share, const int *at
     }
     if (major > 4 || (major == 4 && minor > 1)) {
         set_last_error(ERROR_INVALID_VERSION_ARB);
-        return NULL;
+        return nullptr;
     }
     /* below 3.2 there are no profiles: the context is compatible. */
     if (major < 3 || (major == 3 && minor < 2)) {
@@ -377,7 +377,7 @@ static void release_current(void)
     gl_publish();
     gl_device_unlock();
     ctx->thread = 0;
-    NtCurrentTeb()->glCurrentRC = NULL;
+    NtCurrentTeb()->glCurrentRC = nullptr;
 }
 
 GLAPI BOOL WINAPI wglMakeCurrent(HDC dc, HGLRC rc)
@@ -431,7 +431,7 @@ GLAPI HGLRC WINAPI wglGetCurrentContext(void)
 GLAPI HDC WINAPI wglGetCurrentDC(void)
 {
     GlContext *ctx = gl_current();
-    return ctx ? ctx->dc : NULL;
+    return ctx ? ctx->dc : nullptr;
 }
 
 GLAPI HDC WINAPI wglGetCurrentReadDCARB(void)
@@ -485,7 +485,7 @@ GLAPI BOOL WINAPI wglCopyContext(HGLRC src, HGLRC dst, UINT mask)
 GLAPI BOOL WINAPI wglSwapBuffers(HDC dc)
 {
     GlContext *ctx = gl_current();
-    GlSurface *s = NULL;
+    GlSurface *s = nullptr;
     int format = dc_pixel_format(dc);
     if (ctx && ctx->dc == dc)
         s = ctx->surface;
@@ -539,7 +539,7 @@ GLAPI int WINAPI wglGetSwapIntervalEXT(void)
 
 /* ---------------------------------------------------------------- extensions */
 
-static const char g_wgl_extensions[] = "WGL_ARB_extensions_string WGL_EXT_extensions_string WGL_ARB_pixel_format "
+static constexpr char g_wgl_extensions[] = "WGL_ARB_extensions_string WGL_EXT_extensions_string WGL_ARB_pixel_format "
                                        "WGL_ARB_create_context WGL_ARB_create_context_profile WGL_EXT_swap_control "
                                        "WGL_ARB_make_current_read";
 
@@ -556,7 +556,7 @@ GLAPI const char *WINAPI wglGetExtensionsStringEXT(void)
 GLAPI PROC WINAPI wglGetProcAddress(LPCSTR name)
 {
     if (!name)
-        return NULL;
+        return nullptr;
     ULONG lo = 0, hi = GlProcCount;
     while (lo < hi) {
         ULONG mid = (lo + hi) / 2;
@@ -568,7 +568,7 @@ GLAPI PROC WINAPI wglGetProcAddress(LPCSTR name)
         else
             lo = mid + 1;
     }
-    return NULL;
+    return nullptr;
 }
 
 GLAPI BOOL WINAPI wglUseFontBitmapsA(HDC dc, DWORD first, DWORD count, DWORD list_base)

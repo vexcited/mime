@@ -21,7 +21,7 @@ void AutErrorDetach(void)
 {
     if (error_slot == TLS_OUT_OF_INDEXES) return;
     IUnknown *info = TlsGetValue(error_slot);
-    TlsSetValue(error_slot, NULL);
+    TlsSetValue(error_slot, nullptr);
     AutRelease(info);
 }
 static ULONG WINAPI error_addref(ERROR_INTERFACE *self) { return InterlockedIncrement(&self->Object->Refs); }
@@ -40,7 +40,7 @@ static ULONG WINAPI error_release(ERROR_INTERFACE *self)
 static HRESULT WINAPI error_query(ERROR_INTERFACE *self, REFIID iid, void **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!iid) return E_INVALIDARG;
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &error_iid)) *result = &self->Object->Info;
     else if (IsEqualIID(iid, &create_iid)) *result = &self->Object->Create;
@@ -57,7 +57,7 @@ static HRESULT WINAPI get_guid(ERROR_INTERFACE *self, GUID *guid)
 static HRESULT copy_string(BSTR source, BSTR *result)
 {
     if (!result) return E_POINTER;
-    *result = source ? SysAllocStringLen(source, SysStringLen(source)) : NULL;
+    *result = source ? SysAllocStringLen(source, SysStringLen(source)) : nullptr;
     return source && !*result ? E_OUTOFMEMORY : S_OK;
 }
 static HRESULT WINAPI get_source(ERROR_INTERFACE *self, BSTR *result) { return copy_string(self->Object->Source, result); }
@@ -77,7 +77,7 @@ static HRESULT WINAPI set_guid(ERROR_INTERFACE *self, REFGUID guid)
 }
 static HRESULT set_string(BSTR *target, LPCOLESTR source)
 {
-    BSTR copy = source ? SysAllocString(source) : NULL;
+    BSTR copy = source ? SysAllocString(source) : nullptr;
     if (source && !copy) return E_OUTOFMEMORY;
     SysFreeString(*target);
     *target = copy;
@@ -110,7 +110,7 @@ static const struct {
 WINOLEAUTAPI HRESULT WINAPI CreateErrorInfo(void **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     ERROR_OBJECT *object = AutAllocZero(sizeof(*object));
     if (!object) return E_OUTOFMEMORY;
     object->Info.Vtbl = &info_vtable; object->Info.Object = object;
@@ -132,11 +132,11 @@ WINOLEAUTAPI HRESULT WINAPI SetErrorInfo(ULONG reserved, IUnknown *info)
 WINOLEAUTAPI HRESULT WINAPI GetErrorInfo(ULONG reserved, IUnknown **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (reserved) return E_INVALIDARG;
     if (error_slot != TLS_OUT_OF_INDEXES) {
         *result = TlsGetValue(error_slot);
-        TlsSetValue(error_slot, NULL);
+        TlsSetValue(error_slot, nullptr);
     }
     return *result ? S_OK : S_FALSE;
 }

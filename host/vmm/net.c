@@ -12,7 +12,7 @@
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <net/if_dl.h>
 #include <sys/event.h>
 #else
@@ -67,7 +67,7 @@ typedef struct NetResolve {
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static MimeVm *g_vm;
 static int g_kq = -1; /* the kqueue, or the epoll instance on linux */
-#if !defined(__APPLE__)
+#ifndef __APPLE__
 static int g_stop_fd = -1;
 #define STOP_WATCH UINT64_MAX
 #endif
@@ -171,7 +171,7 @@ static bool to_host(const MimeNetAddr *a, struct sockaddr_storage *ss, socklen_t
     memset(ss, 0, sizeof(*ss));
     if (a->family == WIN_AF_INET) {
         struct sockaddr_in *in = (struct sockaddr_in *)ss;
-#if defined(__APPLE__)
+#ifdef __APPLE__
         in->sin_len = sizeof(*in);
 #endif
         in->sin_family = AF_INET;
@@ -182,7 +182,7 @@ static bool to_host(const MimeNetAddr *a, struct sockaddr_storage *ss, socklen_t
     }
     if (a->family == WIN_AF_INET6) {
         struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)ss;
-#if defined(__APPLE__)
+#ifdef __APPLE__
         in6->sin6_len = sizeof(*in6);
 #endif
         in6->sin6_family = AF_INET6;
@@ -216,7 +216,7 @@ static void from_host(const struct sockaddr *sa, MimeNetAddr *a)
 
 static MimeNetAddr *guest_addr(MimeVm *vm, uint64_t pa)
 {
-    return pa ? mime_vm_phys(vm, pa, sizeof(MimeNetAddr)) : NULL;
+    return pa ? mime_vm_phys(vm, pa, sizeof(MimeNetAddr)) : nullptr;
 }
 
 /* ------------------------------------------------------------ the socket table and the ring */
@@ -224,10 +224,10 @@ static MimeNetAddr *guest_addr(MimeVm *vm, uint64_t pa)
 static NetSocket *lookup(uint64_t id)
 {
     if (!id || id > UINT32_MAX)
-        return NULL;
+        return nullptr;
     NetSocket *s = &g_sockets[id & NET_SLOT_MASK];
     if (s->fd < 0 || s->gen != (uint32_t)(id >> 12))
-        return NULL;
+        return nullptr;
     return s;
 }
 
@@ -248,14 +248,14 @@ static void push_ring(uint32_t id)
 static void *watch_thread(void *arg)
 {
     (void)arg;
-#if defined(__APPLE__)
+#ifdef __APPLE__
     struct kevent events[64];
 #else
     struct epoll_event events[64];
 #endif
     for (;;) {
-#if defined(__APPLE__)
-        int n = kevent(g_kq, NULL, 0, events, 64, NULL);
+#ifdef __APPLE__
+        int n = kevent(g_kq, nullptr, 0, events, 64, nullptr);
 #else
         int n = epoll_wait(g_kq, events, 64, -1);
 #endif
@@ -267,16 +267,16 @@ static void *watch_thread(void *arg)
         bool raise = false;
         pthread_mutex_lock(&g_lock);
         for (int i = 0; i < n; i++) {
-#if defined(__APPLE__)
+#ifdef __APPLE__
             if (events[i].filter == EVFILT_USER) {
                 pthread_mutex_unlock(&g_lock);
-                return NULL;
+                return nullptr;
             }
             NetSocket *s = lookup((uint64_t)(uintptr_t)events[i].udata);
 #else
             if (events[i].data.u64 == STOP_WATCH) {
                 pthread_mutex_unlock(&g_lock);
-                return NULL;
+                return nullptr;
             }
             NetSocket *s = lookup(events[i].data.u64);
 #endif
@@ -290,7 +290,7 @@ static void *watch_thread(void *arg)
         if (raise)
             mime_vm_raise_irq(g_vm, MIME_IRQ_NET);
     }
-    return NULL;
+    return nullptr;
 }
 
 /* called with the lock held. */
@@ -301,13 +301,13 @@ static bool start(MimeVm *vm)
     for (uint32_t i = 0; i < NET_SLOTS; i++)
         g_sockets[i].fd = -1;
     g_vm = vm;
-#if defined(__APPLE__)
+#ifdef __APPLE__
     g_kq = kqueue();
     if (g_kq < 0)
         return false;
     struct kevent ev;
-    EV_SET(&ev, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);
-    kevent(g_kq, &ev, 1, NULL, 0, NULL);
+    EV_SET(&ev, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+    kevent(g_kq, &ev, 1, nullptr, 0, nullptr);
 #else
     g_kq = epoll_create1(EPOLL_CLOEXEC);
     g_stop_fd = eventfd(0, EFD_CLOEXEC);
@@ -316,7 +316,7 @@ static bool start(MimeVm *vm)
     struct epoll_event ev = {.events = EPOLLIN, .data.u64 = STOP_WATCH};
     epoll_ctl(g_kq, EPOLL_CTL_ADD, g_stop_fd, &ev);
 #endif
-    if (pthread_create(&g_thread, NULL, watch_thread, NULL)) {
+    if (pthread_create(&g_thread, nullptr, watch_thread, nullptr)) {
         close(g_kq);
         g_kq = -1;
         return false;
@@ -354,7 +354,7 @@ static NetSocket *add_socket(int fd, bool stream)
         s->queued = false;
         return s;
     }
-    return NULL;
+    return nullptr;
 }
 
 static uint64_t net_socket(MimeVm *vm, uint64_t family, uint64_t type, uint64_t protocol, uint64_t *value)
@@ -435,12 +435,12 @@ static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
     void *data = len ? mime_vm_phys(vm, pa, len) : &dummy;
     if (!data)
         return MIME_HC_STATUS_INVALID;
-    MimeNetAddr *a = NULL;
+    MimeNetAddr *a = nullptr;
     if (addr_pa && !(a = guest_addr(vm, addr_pa)))
         return MIME_HC_STATUS_INVALID;
     struct sockaddr_storage ss;
     struct iovec iov = {data, len};
-    struct msghdr msg = {0};
+    struct msghdr msg = {};
     msg.msg_name = &ss;
     msg.msg_namelen = sizeof(ss);
     msg.msg_iov = &iov;
@@ -509,7 +509,7 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
         r = sockopt_int(fd, SOL_SOCKET, SO_OOBINLINE, set, (int)v, value);
         break;
     case MIME_NET_OPT_KEEPIDLE:
-#if defined(__APPLE__)
+#ifdef __APPLE__
         r = sockopt_int(fd, IPPROTO_TCP, TCP_KEEPALIVE, set, (int)v, value);
 #else
         r = sockopt_int(fd, IPPROTO_TCP, TCP_KEEPIDLE, set, (int)v, value);
@@ -550,7 +550,7 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
     }
     case MIME_NET_OPT_NREAD: {
         int n = 0;
-#if defined(__APPLE__)
+#ifdef __APPLE__
         if (!s->stream) {
             socklen_t nl = sizeof(n);
             r = getsockopt(fd, SOL_SOCKET, SO_NREAD, &n, &nl);
@@ -623,7 +623,7 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
 {
     if (count > NET_MAX_POLL)
         return MIME_HC_STATUS_INVALID;
-    MimeNetPoll *entries = count ? mime_vm_phys(vm, pa, count * sizeof(MimeNetPoll)) : NULL;
+    MimeNetPoll *entries = count ? mime_vm_phys(vm, pa, count * sizeof(MimeNetPoll)) : nullptr;
     if (count && !entries)
         return MIME_HC_STATUS_INVALID;
     struct pollfd fds[NET_MAX_POLL];
@@ -637,7 +637,7 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
     if (count)
         poll(fds, (nfds_t)count, 0);
     uint64_t ready = 0;
-#if defined(__APPLE__)
+#ifdef __APPLE__
     struct kevent changes[2 * NET_MAX_POLL];
     int nchanges = 0;
 #endif
@@ -653,7 +653,7 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
         if (!arm || !socks[i])
             continue;
         /* armed even when ready: a watch that fires at once costs a wakeup, a missed one a stall. */
-#if defined(__APPLE__)
+#ifdef __APPLE__
         void *udata = (void *)(uintptr_t)e->socket;
         if (e->events & MIME_NET_READ)
             EV_SET(&changes[nchanges++], fds[i].fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, udata);
@@ -671,9 +671,9 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
             epoll_ctl(g_kq, EPOLL_CTL_ADD, fds[i].fd, &ev);
 #endif
     }
-#if defined(__APPLE__)
+#ifdef __APPLE__
     if (nchanges)
-        kevent(g_kq, changes, nchanges, NULL, 0, NULL);
+        kevent(g_kq, changes, nchanges, nullptr, 0, nullptr);
 #endif
     *value = ready;
     return MIME_HC_STATUS_OK;
@@ -681,7 +681,7 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
 
 static uint64_t net_events(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *value)
 {
-    uint32_t *out = max ? mime_vm_phys(vm, pa, max * sizeof(uint32_t)) : NULL;
+    uint32_t *out = max ? mime_vm_phys(vm, pa, max * sizeof(uint32_t)) : nullptr;
     if (max && !out)
         return MIME_HC_STATUS_INVALID;
     uint64_t n = 0;
@@ -725,11 +725,11 @@ static int32_t resolve_error(int e)
 static void *resolve_thread(void *arg)
 {
     NetResolve *r = arg;
-    struct addrinfo hints = {0}, *list = NULL;
+    struct addrinfo hints = {}, *list = nullptr;
     hints.ai_family = r->family;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_ADDRCONFIG;
-    int e = getaddrinfo(r->name, NULL, &hints, &list);
+    int e = getaddrinfo(r->name, nullptr, &hints, &list);
     pthread_mutex_lock(&g_lock);
     if (e) {
         r->error = resolve_error(e);
@@ -753,12 +753,12 @@ static void *resolve_thread(void *arg)
     push_ring(MIME_NET_RESOLVED | r->id);
     pthread_mutex_unlock(&g_lock);
     mime_vm_raise_irq(g_vm, MIME_IRQ_NET);
-    return NULL;
+    return nullptr;
 }
 
 static uint64_t net_resolve(MimeVm *vm, uint64_t pa, uint64_t len, uint64_t family, uint64_t *value)
 {
-    const char *name = len ? mime_vm_phys(vm, pa, len) : NULL;
+    const char *name = len ? mime_vm_phys(vm, pa, len) : nullptr;
     if (!name || len >= sizeof(((NetResolve *)0)->name))
         return MIME_HC_STATUS_INVALID;
     if (!start(vm))
@@ -805,7 +805,7 @@ static uint64_t net_answer(MimeVm *vm, uint64_t id, uint64_t pa, uint64_t max, u
         status = fail(value, r->error);
     } else {
         uint64_t n = r->count < max ? r->count : max;
-        MimeNetAddr *out = n ? mime_vm_phys(vm, pa, n * sizeof(MimeNetAddr)) : NULL;
+        MimeNetAddr *out = n ? mime_vm_phys(vm, pa, n * sizeof(MimeNetAddr)) : nullptr;
         if (n && !out) {
             status = MIME_HC_STATUS_INVALID;
         } else {
@@ -839,7 +839,7 @@ static uint8_t prefix_bits(const struct sockaddr *mask)
 
 static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *value)
 {
-    MimeNetInterface *out = max ? mime_vm_phys(vm, pa, max * sizeof(MimeNetInterface)) : NULL;
+    MimeNetInterface *out = max ? mime_vm_phys(vm, pa, max * sizeof(MimeNetInterface)) : nullptr;
     if (max && !out)
         return MIME_HC_STATUS_INVALID;
     struct ifaddrs *list;
@@ -868,7 +868,7 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
             from_host(ifa->ifa_addr, &e->addr);
             /* the link entry of the same interface has the mtu and the hardware address. */
             for (struct ifaddrs *link = list; link; link = link->ifa_next) {
-#if defined(__APPLE__)
+#ifdef __APPLE__
                 if (!link->ifa_addr || link->ifa_addr->sa_family != AF_LINK || strcmp(link->ifa_name, ifa->ifa_name))
                     continue;
                 const struct sockaddr_dl *dl = (const struct sockaddr_dl *)link->ifa_addr;
@@ -912,9 +912,9 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t value = 0, status = MIME_HC_STATUS_OK;
     pthread_mutex_lock(&g_lock);
-    NetSocket *s = NULL;
+    NetSocket *s = nullptr;
     if (nr >= MIME_HC_NET_CLOSE && nr <= MIME_HC_NET_OPTION) {
-        s = g_kq >= 0 ? lookup(regs[1]) : NULL;
+        s = g_kq >= 0 ? lookup(regs[1]) : nullptr;
         if (!s) {
             status = fail(&value, 10038); /* WSAENOTSOCK */
             goto done;
@@ -1043,20 +1043,20 @@ void mime_net_close_all(void)
         if (g_sockets[i].fd >= 0)
             close_socket(&g_sockets[i]);
     }
-#if defined(__APPLE__)
+#ifdef __APPLE__
     struct kevent ev;
-    EV_SET(&ev, 0, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
-    kevent(g_kq, &ev, 1, NULL, 0, NULL);
+    EV_SET(&ev, 0, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+    kevent(g_kq, &ev, 1, nullptr, 0, nullptr);
 #else
     uint64_t one = 1;
     if (write(g_stop_fd, &one, sizeof(one)) < 0)
         mime_warn("cannot stop the network watch");
 #endif
     pthread_mutex_unlock(&g_lock);
-    pthread_join(g_thread, NULL);
+    pthread_join(g_thread, nullptr);
     close(g_kq);
     g_kq = -1;
-#if !defined(__APPLE__)
+#ifndef __APPLE__
     close(g_stop_fd);
     g_stop_fd = -1;
 #endif

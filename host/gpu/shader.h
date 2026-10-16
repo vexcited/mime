@@ -2,7 +2,6 @@
 #define MIME_HOST_GPU_SHADER_H
 
 #include <mime/gpu.h>
-#include <stdbool.h>
 #include <stddef.h>
 
 typedef struct MimeShaderResult {

@@ -22,7 +22,7 @@ void OleProcessAttach(void)
 OLE_THREAD *OleThreadState(BOOL create)
 {
     if (g_tls == TLS_OUT_OF_INDEXES)
-        return NULL;
+        return nullptr;
     OLE_THREAD *t = TlsGetValue(g_tls);
     if (!t && create) {
         t = OleAllocZero(sizeof(*t));
@@ -35,7 +35,7 @@ OLE_THREAD *OleThreadState(BOOL create)
 static void leave_apartment(OLE_THREAD *t)
 {
     IMessageFilter *filter = t->MessageFilter;
-    t->MessageFilter = NULL;
+    t->MessageFilter = nullptr;
     if (filter)
         filter->lpVtbl->Release(filter);
     if (!t->Sta)
@@ -51,7 +51,7 @@ void OleThreadDetach(void)
         return;
     if (t->ComInits)
         leave_apartment(t);
-    TlsSetValue(g_tls, NULL);
+    TlsSetValue(g_tls, nullptr);
     OleFree(t);
 }
 
@@ -90,7 +90,7 @@ WINOLEAPI HRESULT WINAPI CoInitializeEx(void *reserved, DWORD flags)
 
 WINOLEAPI HRESULT WINAPI CoInitialize(void *reserved)
 {
-    return CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    return CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 }
 
 WINOLEAPI void WINAPI CoUninitialize(void)
@@ -148,7 +148,7 @@ WINOLEAPI void *WINAPI CoTaskMemRealloc(void *p, SIZE_T size)
         return OleAlloc(size);
     if (!size) {
         OleFree(p);
-        return NULL;
+        return nullptr;
     }
     return HeapReAlloc(GetProcessHeap(), 0, p, size);
 }
@@ -166,7 +166,7 @@ static HRESULT STDMETHODCALLTYPE malloc_query_interface(IMalloc *This, REFIID ri
         *object = This;
         return S_OK;
     }
-    *object = NULL;
+    *object = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -221,7 +221,7 @@ WINOLEAPI HRESULT WINAPI CoGetMalloc(DWORD context, IMalloc **malloc)
     if (!malloc)
         return E_INVALIDARG;
     if (context != MEMCTX_TASK) {
-        *malloc = NULL;
+        *malloc = nullptr;
         return E_INVALIDARG;
     }
     *malloc = &g_malloc;
@@ -325,7 +325,7 @@ static BOOL read_class_string(LPCWSTR subkey, LPCWSTR name, WCHAR *out, DWORD ch
         return FALSE;
     WCHAR raw[MAX_PATH];
     DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
-    LSTATUS status = RegQueryValueExW(key, name, NULL, &type, (BYTE *)raw, &bytes);
+    LSTATUS status = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)raw, &bytes);
     RegCloseKey(key);
     if (status || (type != REG_SZ && type != REG_EXPAND_SZ) || bytes < sizeof(WCHAR))
         return FALSE;
@@ -348,7 +348,7 @@ WINOLEAPI HRESULT WINAPI CLSIDFromProgID(LPCOLESTR progid, LPCLSID clsid)
     if (wcslen(progid) > MAX_PATH - 8)
         return CO_E_CLASSSTRING;
     _snwprintf(subkey, MAX_PATH, L"%ls\\CLSID", progid);
-    if (!read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)) || !OleParseGuid(value, clsid)) {
+    if (!read_class_string(subkey, nullptr, value, RTL_NUMBER_OF(value)) || !OleParseGuid(value, clsid)) {
         memset(clsid, 0, sizeof(*clsid));
         return CO_E_CLASSSTRING;
     }
@@ -359,12 +359,12 @@ WINOLEAPI HRESULT WINAPI ProgIDFromCLSID(REFCLSID clsid, LPOLESTR *progid)
 {
     if (!progid)
         return E_INVALIDARG;
-    *progid = NULL;
+    *progid = nullptr;
     WCHAR subkey[64], value[MAX_PATH];
     wcscpy(subkey, L"CLSID\\");
     OleFormatGuid(clsid, subkey + 6);
     wcscat(subkey, L"\\ProgID");
-    if (!read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)))
+    if (!read_class_string(subkey, nullptr, value, RTL_NUMBER_OF(value)))
         return REGDB_E_CLASSNOTREG;
     SIZE_T bytes = (wcslen(value) + 1) * sizeof(WCHAR);
     *progid = CoTaskMemAlloc(bytes);
@@ -415,7 +415,7 @@ WINOLEAPI HRESULT WINAPI CoCreateGuid(GUID *guid)
         return E_INVALIDARG;
     if (!create) {
         HMODULE rpcrt4 = LoadLibraryW(L"rpcrt4.dll");
-        create = rpcrt4 ? (UUID_CREATE)(void *)GetProcAddress(rpcrt4, "UuidCreate") : NULL;
+        create = rpcrt4 ? (UUID_CREATE)(void *)GetProcAddress(rpcrt4, "UuidCreate") : nullptr;
         if (!create)
             return HRESULT_FROM_WIN32(GetLastError());
     }
@@ -456,9 +456,9 @@ static HRESULT get_inproc_class_object(REFCLSID clsid, REFIID riid, void **objec
     wcscpy(subkey, L"CLSID\\");
     OleFormatGuid(clsid, subkey + 6);
     wcscat(subkey, L"\\InprocServer32");
-    if (!read_class_string(subkey, NULL, path, RTL_NUMBER_OF(path)) || !path[0])
+    if (!read_class_string(subkey, nullptr, path, RTL_NUMBER_OF(path)) || !path[0])
         return REGDB_E_CLASSNOTREG;
-    HMODULE module = LoadLibraryExW(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    HMODULE module = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!module) {
         DWORD error = GetLastError();
         return error ? HRESULT_FROM_WIN32(error) : CO_E_DLLNOTFOUND;
@@ -552,7 +552,7 @@ WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie)
 /* the referenced object registered for the class in one of the contexts, or NULL. */
 static IUnknown *find_registered_class(REFCLSID clsid, DWORD context)
 {
-    IUnknown *object = NULL;
+    IUnknown *object = nullptr;
     AcquireSRWLockExclusive(&g_class_lock);
     for (CLASS_ENTRY *e = g_classes; e; e = e->Next) {
         DWORD match = e->Context & context;
@@ -591,7 +591,7 @@ static BOOL get_treat_as(REFCLSID clsid, CLSID *treat)
     wcscpy(subkey, L"CLSID\\");
     OleFormatGuid(clsid, subkey + 6);
     wcscat(subkey, L"\\TreatAs");
-    return read_class_string(subkey, NULL, value, RTL_NUMBER_OF(value)) && OleParseGuid(value, treat) &&
+    return read_class_string(subkey, nullptr, value, RTL_NUMBER_OF(value)) && OleParseGuid(value, treat) &&
            !IsEqualCLSID(treat, &CLSID_NULL);
 }
 
@@ -600,7 +600,7 @@ WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid)
     if (!old_clsid || !new_clsid)
         return E_INVALIDARG;
     HKEY key;
-    if (OleOpenClassKey(old_clsid, NULL, KEY_READ | KEY_WRITE, &key))
+    if (OleOpenClassKey(old_clsid, nullptr, KEY_READ | KEY_WRITE, &key))
         return REGDB_E_CLASSNOTREG;
     HRESULT hr = S_OK;
     if (IsEqualCLSID(old_clsid, new_clsid) || IsEqualCLSID(new_clsid, &CLSID_NULL)) {
@@ -611,10 +611,10 @@ WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid)
         WCHAR value[39];
         OleFormatGuid(new_clsid, value);
         HKEY treat;
-        if (RegCreateKeyExW(key, L"TreatAs", 0, NULL, 0, KEY_WRITE, NULL, &treat, NULL))
+        if (RegCreateKeyExW(key, L"TreatAs", 0, nullptr, 0, KEY_WRITE, nullptr, &treat, nullptr))
             hr = REGDB_E_WRITEREGDB;
         else {
-            if (RegSetValueExW(treat, NULL, 0, REG_SZ, (const BYTE *)value, sizeof(value)))
+            if (RegSetValueExW(treat, nullptr, 0, REG_SZ, (const BYTE *)value, sizeof(value)))
                 hr = REGDB_E_WRITEREGDB;
             RegCloseKey(treat);
         }
@@ -627,7 +627,7 @@ WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *s
 {
     if (!object)
         return E_INVALIDARG;
-    *object = NULL;
+    *object = nullptr;
     if (!clsid || !riid)
         return E_INVALIDARG;
     HRESULT hr = OleCheckApartment();
@@ -651,17 +651,17 @@ WINOLEAPI HRESULT WINAPI CoCreateInstance(REFCLSID clsid, IUnknown *outer, DWORD
 {
     if (!object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (!riid)
         return E_INVALIDARG;
     IClassFactory *factory;
-    HRESULT hr = CoGetClassObject(clsid, context, NULL, &IID_IClassFactory, (void **)&factory);
+    HRESULT hr = CoGetClassObject(clsid, context, nullptr, &IID_IClassFactory, (void **)&factory);
     if (FAILED(hr))
         return hr;
     hr = factory->lpVtbl->CreateInstance(factory, outer, riid, object);
     factory->lpVtbl->Release(factory);
     if (FAILED(hr))
-        *object = NULL;
+        *object = nullptr;
     return hr;
 }
 
@@ -671,7 +671,7 @@ WINOLEAPI HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, IUnknown *outer, DWO
     if (!count || !results)
         return E_INVALIDARG;
     for (DWORD i = 0; i < count; i++) {
-        results[i].pItf = NULL;
+        results[i].pItf = nullptr;
         results[i].hr = E_NOINTERFACE;
     }
     IUnknown *unknown;
@@ -704,7 +704,7 @@ WINOLEAPI void WINAPI CoFreeUnusedLibrariesEx(DWORD delay, DWORD reserved)
         LPFNCANUNLOADNOW can = (LPFNCANUNLOADNOW)(void *)GetProcAddress(g_servers[i], "DllCanUnloadNow");
         if (can && can() == S_OK) {
             idle[count++] = g_servers[i];
-            g_servers[i] = NULL;
+            g_servers[i] = nullptr;
         }
     }
     ReleaseSRWLockExclusive(&g_lock);

@@ -116,7 +116,7 @@ static uint32_t host_cpu_count(void)
 {
     int n = 1;
     size_t len = sizeof(n);
-    if (sysctlbyname("hw.logicalcpu", &n, &len, NULL, 0) != 0 || n < 1)
+    if (sysctlbyname("hw.logicalcpu", &n, &len, nullptr, 0) != 0 || n < 1)
         n = 1;
     uint32_t max = MIME_VMM_MAX_VCPUS;
     if (hv_vm_get_max_vcpu_count(&max) == HV_SUCCESS && (uint32_t)n > max)
@@ -137,7 +137,7 @@ uint64_t mime_vm_default_ram(void)
 {
     uint64_t mem = 0;
     size_t len = sizeof(mem);
-    if (sysctlbyname("hw.memsize", &mem, &len, NULL, 0) != 0 || !mem)
+    if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) != 0 || !mem)
         return MIME_VMM_FALLBACK_RAM;
     return MIME_ALIGN_DOWN(MIME_MIN(mem, MIME_VMM_MAX_RAM), 2ull << 20);
 }
@@ -148,9 +148,9 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     vm->paths = paths;
     vm->ram_size = ram_size;
     vm->vcpu_count = host_cpu_count();
-    pthread_mutex_init(&vm->lock, NULL);
-    pthread_cond_init(&vm->vcpu_cond, NULL);
-    pthread_mutex_init(&vm->fs_lock, NULL);
+    pthread_mutex_init(&vm->lock, nullptr);
+    pthread_cond_init(&vm->vcpu_cond, nullptr);
+    pthread_mutex_init(&vm->fs_lock, nullptr);
 
     hv_vm_config_t config = hv_vm_config_create();
     hv_vm_config_set_ipa_size(config, 36);
@@ -161,7 +161,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
         return false;
     }
 
-    vm->ram = mmap(NULL, ram_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    vm->ram = mmap(nullptr, ram_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     if (vm->ram == MAP_FAILED) {
         mime_error("cannot reserve %llu bytes of guest memory", (unsigned long long)ram_size);
         return false;
@@ -212,7 +212,7 @@ void mime_vm_destroy(MimeVm *vm)
 {
     for (uint32_t i = 0; i < vm->vcpu_count; i++) {
         if (vm->vcpus[i].thread)
-            pthread_join(vm->vcpus[i].thread, NULL);
+            pthread_join(vm->vcpus[i].thread, nullptr);
     }
     mime_fs_close_all(vm);
     mime_net_close_all();

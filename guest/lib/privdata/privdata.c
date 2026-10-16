@@ -32,12 +32,12 @@ static MimePrivateEntry *take(MimePrivateData *data, REFGUID guid)
             *link = entry->next;
             return entry;
         }
-    return NULL;
+    return nullptr;
 }
 
 static HRESULT store(MimePrivateData *data, REFGUID guid, UINT size, const void *bytes, IUnknown *unknown)
 {
-    MimePrivateEntry *entry = NULL;
+    MimePrivateEntry *entry = nullptr;
     if (size || unknown) {
         entry = HeapAlloc(GetProcessHeap(), 0, sizeof(*entry) + size);
         if (!entry)
@@ -66,14 +66,14 @@ HRESULT MimePrivateSet(MimePrivateData *data, REFGUID guid, UINT size, const voi
 {
     if (!guid || (size && !bytes))
         return E_INVALIDARG;
-    return store(data, guid, bytes ? size : 0, bytes, NULL);
+    return store(data, guid, bytes ? size : 0, bytes, nullptr);
 }
 
 HRESULT MimePrivateSetInterface(MimePrivateData *data, REFGUID guid, const IUnknown *unknown)
 {
     if (!guid)
         return E_INVALIDARG;
-    return store(data, guid, unknown ? sizeof(IUnknown *) : 0, NULL, (IUnknown *)unknown);
+    return store(data, guid, unknown ? sizeof(IUnknown *) : 0, nullptr, (IUnknown *)unknown);
 }
 
 HRESULT MimePrivateGet(MimePrivateData *data, REFGUID guid, UINT *size, void *bytes)
@@ -109,7 +109,7 @@ HRESULT MimePrivateGet(MimePrivateData *data, REFGUID guid, UINT *size, void *by
 void MimePrivateClear(MimePrivateData *data)
 {
     MimePrivateEntry *entry = data->first;
-    data->first = NULL;
+    data->first = nullptr;
     while (entry) {
         MimePrivateEntry *next = entry->next;
         entry_free(entry);

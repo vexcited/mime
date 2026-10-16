@@ -51,7 +51,7 @@ static MIMEFS_CACHE *find(ULONG volume, ULONG64 file_id)
     for (MIMEFS_CACHE *c = g_buckets[bucket(volume, file_id)]; c; c = c->Next)
         if (c->Volume == volume && c->FileId == file_id)
             return c;
-    return NULL;
+    return nullptr;
 }
 
 static void unhash(MIMEFS_CACHE *c)
@@ -66,7 +66,7 @@ static void unhash(MIMEFS_CACHE *c)
 static void release(MIMEFS_CACHE *c)
 {
     if (c->Window)
-        HalHypercall(MIME_HC_FS_UNMAP, c->Window, 0, 0, 0, 0, 0, NULL);
+        HalHypercall(MIME_HC_FS_UNMAP, c->Window, 0, 0, 0, 0, 0, nullptr);
     RemoveEntryList(&c->Lru);
     g_entries--;
     ExFreePool(c);
@@ -98,19 +98,19 @@ static void trim(ULONG keep)
 MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
 {
     if (info->size == 0 || info->file_id == DETACHED)
-        return NULL;
+        return nullptr;
     ExAcquireFastMutex(&g_lock);
     MIMEFS_CACHE *c = find(volume, info->file_id);
     if (c && (c->Size != info->size || c->WriteTime != info->write_time)) {
         /* changed behind our back, typically by a host program. */
         detach(c);
-        c = NULL;
+        c = nullptr;
     }
     if (!c) {
         c = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*c), KI_TAG('M', 'f', 'C', 'f'));
         if (!c) {
             ExReleaseFastMutex(&g_lock);
-            return NULL;
+            return nullptr;
         }
         c->Volume = volume;
         c->FileId = info->file_id;

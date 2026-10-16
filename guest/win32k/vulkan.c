@@ -35,7 +35,7 @@ static void free_block(VK_BLOCK *b, BOOLEAN unmap)
         ObDereferenceObject(b->Section);
     if (b->Kernel)
         MmFreeContiguousPages(b->Kernel, b->Size);
-    b->User = b->Section = b->Kernel = NULL;
+    b->User = b->Section = b->Kernel = nullptr;
 }
 
 static NTSTATUS alloc_block(VK_BLOCK *b, SIZE_T size)
@@ -57,7 +57,7 @@ static NTSTATUS alloc_block(VK_BLOCK *b, SIZE_T size)
 static W32VK *process_vk(void)
 {
     W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
-    return p ? p->Vk : NULL;
+    return p ? p->Vk : nullptr;
 }
 
 NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base)
@@ -65,7 +65,7 @@ NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base)
     NTSTATUS status = STATUS_SUCCESS;
     UserEnter();
     W32PROCESS *p = W32GetProcess();
-    W32VK *v = p ? p->Vk : NULL;
+    W32VK *v = p ? p->Vk : nullptr;
     if (p && !v) {
         v = W32Alloc(sizeof(W32VK));
         status = v ? alloc_block(&v->Main, MVK_CONNECTION_SIZE) : STATUS_NO_MEMORY;
@@ -80,12 +80,12 @@ NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base)
         } else if (v) {
             free_block(&v->Main, TRUE);
             W32Free(v);
-            v = NULL;
+            v = nullptr;
         }
     } else if (!p) {
         status = STATUS_NO_MEMORY;
     }
-    PVOID user = v ? v->Main.User : NULL;
+    PVOID user = v ? v->Main.User : nullptr;
     UserLeave();
     if (!NT_SUCCESS(status))
         return status;
@@ -101,7 +101,7 @@ NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa)
     UserEnter();
     W32VK *v = process_vk();
     NTSTATUS status = v ? STATUS_SUCCESS : STATUS_INVALID_DEVICE_STATE;
-    VK_BLOCK *b = v ? W32Alloc(sizeof(VK_BLOCK)) : NULL;
+    VK_BLOCK *b = v ? W32Alloc(sizeof(VK_BLOCK)) : nullptr;
     if (v && !b)
         status = STATUS_NO_MEMORY;
     if (NT_SUCCESS(status))
@@ -111,9 +111,9 @@ NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa)
         v->Blocks = b;
     } else if (b) {
         W32Free(b);
-        b = NULL;
+        b = nullptr;
     }
-    PVOID user = b ? b->User : NULL;
+    PVOID user = b ? b->User : nullptr;
     ULONG64 phys = b ? b->Pa : 0;
     UserLeave();
     if (!NT_SUCCESS(status))
@@ -129,7 +129,7 @@ NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base)
     UserEnter();
     W32VK *v = process_vk();
     NTSTATUS status = STATUS_INVALID_PARAMETER;
-    for (VK_BLOCK **link = v ? &v->Blocks : NULL; link && *link; link = &(*link)->Next) {
+    for (VK_BLOCK **link = v ? &v->Blocks : nullptr; link && *link; link = &(*link)->Next) {
         VK_BLOCK *b = *link;
         if (b->User == base) {
             *link = b->Next;
@@ -148,7 +148,7 @@ NTSTATUS NTAPI NtGdiMimeVkKick(void)
     W32VK *v = process_vk();
     if (!v)
         return STATUS_INVALID_DEVICE_STATE;
-    HalMimeHypercall(MIME_HC_VK_KICK, v->Connection, 0, 0, 0, 0, 0, NULL);
+    HalMimeHypercall(MIME_HC_VK_KICK, v->Connection, 0, 0, 0, 0, 0, nullptr);
     return STATUS_SUCCESS;
 }
 
@@ -217,7 +217,7 @@ void VkFreeProcess(W32PROCESS *p)
     W32VK *v = p->Vk;
     if (!v)
         return;
-    HalMimeHypercall(MIME_HC_VK_CLOSE, v->Connection, 0, 0, 0, 0, 0, NULL);
+    HalMimeHypercall(MIME_HC_VK_CLOSE, v->Connection, 0, 0, 0, 0, 0, nullptr);
     while (v->Blocks) {
         VK_BLOCK *b = v->Blocks;
         v->Blocks = b->Next;
@@ -225,6 +225,6 @@ void VkFreeProcess(W32PROCESS *p)
         W32Free(b);
     }
     free_block(&v->Main, FALSE);
-    p->Vk = NULL;
+    p->Vk = nullptr;
     W32Free(v);
 }

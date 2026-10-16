@@ -18,10 +18,10 @@ WINBASEAPI HANDLE WINAPI CreateIoCompletionPort(HANDLE file, HANDLE existing, UL
 {
     HANDLE port = existing;
     if (!existing) {
-        NTSTATUS status = NtCreateIoCompletion(&port, STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 3, NULL, concurrency);
+        NTSTATUS status = NtCreateIoCompletion(&port, STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 3, nullptr, concurrency);
         if (!NT_SUCCESS(status)) {
             KbSetStatus(status);
-            return NULL;
+            return nullptr;
         }
     }
     if (file != INVALID_HANDLE_VALUE) {
@@ -32,7 +32,7 @@ WINBASEAPI HANDLE WINAPI CreateIoCompletionPort(HANDLE file, HANDLE existing, UL
             if (!existing)
                 NtClose(port);
             KbSetStatus(status);
-            return NULL;
+            return nullptr;
         }
     }
     return port;
@@ -50,7 +50,7 @@ WINBASEAPI BOOL WINAPI GetQueuedCompletionStatus(HANDLE port, LPDWORD bytes, PUL
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtRemoveIoCompletion(port, &k, &ctx, &iosb, KbTimeout(&t, milliseconds));
     if (status != STATUS_SUCCESS) {
-        *overlapped = NULL;
+        *overlapped = nullptr;
         if (status == STATUS_TIMEOUT)
             KbSetError(WAIT_TIMEOUT);
         else

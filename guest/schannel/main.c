@@ -10,7 +10,6 @@
  */
 #include <mime/win32/sspi.h>
 #include <mime/win32/winnls.h>
-#include <stdbool.h>
 
 #define SECPKG_INTERFACE_VERSION 0x00010000
 
@@ -81,7 +80,7 @@ __declspec(dllexport) BOOL WINAPI SslEmptyCacheW(LPWSTR target, DWORD flags)
     static const WCHAR ready[] = L"\\SECURITY\\LSA_AUTHENTICATION_INITIALIZED";
     UNICODE_STRING name = {sizeof(ready) - sizeof(WCHAR), sizeof(ready), (PWSTR)ready};
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE event;
     NTSTATUS status = NtOpenEvent(&event, SYNCHRONIZE, &oa);
     if (NT_SUCCESS(status)) {
@@ -94,10 +93,10 @@ __declspec(dllexport) BOOL WINAPI SslEmptyCacheW(LPWSTR target, DWORD flags)
 
 __declspec(dllexport) BOOL WINAPI SslEmptyCacheA(LPSTR target, DWORD flags)
 {
-    PWSTR wide = NULL;
+    PWSTR wide = nullptr;
     if (target) {
-        int n = MultiByteToWideChar(CP_ACP, 0, target, -1, NULL, 0);
-        wide = n > 0 ? LocalAlloc(LMEM_FIXED, n * sizeof(WCHAR)) : NULL;
+        int n = MultiByteToWideChar(CP_ACP, 0, target, -1, nullptr, 0);
+        wide = n > 0 ? LocalAlloc(LMEM_FIXED, n * sizeof(WCHAR)) : nullptr;
         if (!wide) {
             SetLastError((DWORD)SEC_E_INSUFFICIENT_MEMORY);
             return FALSE;
@@ -148,7 +147,7 @@ __declspec(dllexport) void WINAPI SslGenerateRandomBits(PUCHAR data, LONG size)
 {
     static ULONG seed;
     LARGE_INTEGER counter;
-    NtQueryPerformanceCounter(&counter, NULL);
+    NtQueryPerformanceCounter(&counter, nullptr);
     ULONG s = seed ^ counter.LowPart ^ (ULONG)(ULONG_PTR)&counter;
     for (LONG i = 0; data && i < size; i++)
         data[i] = (UCHAR)(RtlRandomEx(&s) >> 7);
@@ -200,7 +199,7 @@ static bool take_vector(READER *r, DWORD width, READER *out)
         n = n << 8 | p[i];
     out->Data = r->Data;
     out->Left = n;
-    return take(r, n, NULL);
+    return take(r, n, nullptr);
 }
 
 /* the extension block of a ClientHello handshake message, false when malformed. */
@@ -211,10 +210,10 @@ static bool hello_extensions(const BYTE *message, DWORD size, READER *extensions
     if (!take(&r, 1, &type) || *type != TLS_CLIENT_HELLO || !take_vector(&r, 3, &body))
         return false;
     /* version and random, then the session id, cipher suites and compression methods. */
-    if (!take(&body, 34, NULL) || !take_vector(&body, 1, &skip) || !take_vector(&body, 2, &skip) ||
+    if (!take(&body, 34, nullptr) || !take_vector(&body, 1, &skip) || !take_vector(&body, 2, &skip) ||
         !take_vector(&body, 1, &skip))
         return false;
-    extensions->Data = NULL;
+    extensions->Data = nullptr;
     extensions->Left = 0;
     if (!body.Left)
         return true;
@@ -242,7 +241,7 @@ static SECURITY_STATUS hello_message(const BYTE *data, DWORD size, DWORD options
         *missing = record + 5 - size;
         return SEC_E_INCOMPLETE_MESSAGE;
     }
-    *message = data[0] == TLS_HANDSHAKE ? data + 5 : NULL;
+    *message = data[0] == TLS_HANDSHAKE ? data + 5 : nullptr;
     *length = data[0] == TLS_HANDSHAKE ? record : 0;
     return SEC_E_OK;
 }
@@ -288,7 +287,7 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslGetServerIdentity(PBYTE hello, D
     }
     if (!hello_extensions(message, length, &extensions))
         return SEC_E_INVALID_TOKEN;
-    *identity = NULL;
+    *identity = nullptr;
     *identity_size = 0;
     WORD type;
     while (next_extension(&extensions, &type, &data)) {
@@ -320,7 +319,7 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslGetExtensions(const BYTE *hello,
         return status;
     *missing = 0;
     for (BYTE i = 0; i < count; i++) {
-        wanted[i].pExtData = NULL;
+        wanted[i].pExtData = nullptr;
         wanted[i].cbExtData = 0;
     }
     if (!message)

@@ -27,14 +27,14 @@ HRESULT D9CreateDirect3D(UINT sdk, BOOL ex, IDirect3D9Ex **out);
 __declspec(dllexport) IDirect3D9 *WINAPI Direct3DCreate9(UINT sdk)
 {
     IDirect3D9Ex *d3d;
-    return SUCCEEDED(D9CreateDirect3D(sdk, FALSE, &d3d)) ? (IDirect3D9 *)d3d : NULL;
+    return SUCCEEDED(D9CreateDirect3D(sdk, FALSE, &d3d)) ? (IDirect3D9 *)d3d : nullptr;
 }
 
 __declspec(dllexport) HRESULT WINAPI Direct3DCreate9Ex(UINT sdk, IDirect3D9Ex **out)
 {
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     return D9CreateDirect3D(sdk, TRUE, out);
 }
 
@@ -49,7 +49,7 @@ __declspec(dllexport) HRESULT WINAPI Direct3DCreate9On12Ex(UINT sdk, void *args,
     return Direct3DCreate9Ex(sdk, out);
 }
 
-__declspec(dllexport) void *WINAPI Direct3DShaderValidatorCreate9(void) { return NULL; }
+__declspec(dllexport) void *WINAPI Direct3DShaderValidatorCreate9(void) { return nullptr; }
 
 __declspec(dllexport) void WINAPI PSGPError(void *device, DWORD error, DWORD value) {}
 

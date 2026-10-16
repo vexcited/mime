@@ -23,7 +23,7 @@ SHSTDAPI HRESULT WINAPI GetCurrentProcessExplicitAppUserModelID(LPWSTR *out)
     if (!out)
         return E_POINTER;
     AcquireSRWLockShared(&app_id_lock);
-    *out = app_id ? ShDuplicate(app_id) : NULL;
+    *out = app_id ? ShDuplicate(app_id) : nullptr;
     HRESULT hr = app_id ? (*out ? S_OK : E_OUTOFMEMORY) : E_FAIL;
     ReleaseSRWLockShared(&app_id_lock);
     return hr;
@@ -33,7 +33,7 @@ SHSTDAPI HRESULT WINAPI SHGetPropertyStoreForWindow(HWND window, REFIID iid, voi
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (!IsWindow(window))
         return HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE);
     return E_NOINTERFACE;

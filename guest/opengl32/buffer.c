@@ -10,7 +10,7 @@
 GlBuffer *gl_buffer(GlContext *ctx, GLuint name)
 {
     void *b = gl_name_get(&ctx->shared->buffers, name);
-    return b == GL_RESERVED ? NULL : b;
+    return b == GL_RESERVED ? nullptr : b;
 }
 
 static GLuint *binding_of(GlContext *ctx, GLenum target)
@@ -31,14 +31,14 @@ static GLuint *binding_of(GlContext *ctx, GLenum target)
     case GL_UNIFORM_BUFFER:
         return &ctx->uniform_buffer;
     default:
-        return NULL;
+        return nullptr;
     }
 }
 
 GlBuffer *gl_bound_buffer(GlContext *ctx, GLenum target)
 {
     GLuint *b = binding_of(ctx, target);
-    return b ? gl_buffer(ctx, *b) : NULL;
+    return b ? gl_buffer(ctx, *b) : nullptr;
 }
 
 GLAPI void APIENTRY glGenBuffers(GLsizei n, GLuint *buffers)
@@ -59,7 +59,7 @@ static GlBuffer *make(GlContext *ctx, GLuint name)
     if (!b) {
         b = gl_alloc(sizeof(GlBuffer));
         if (!b)
-            return NULL;
+            return nullptr;
         b->name = name;
         b->usage = GL_STATIC_DRAW;
         b->dirty_index_range = TRUE;
@@ -81,7 +81,7 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
             gl_heap_free(&b->mem, b->last_use);
             gl_free(b);
         }
-        gl_name_set(&ctx->shared->buffers, name, NULL);
+        gl_name_set(&ctx->shared->buffers, name, nullptr);
         if (ctx->array_buffer == name)
             ctx->array_buffer = 0;
         if (ctx->vao->element_buffer == name)
@@ -235,11 +235,11 @@ GLAPI void APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeipt
 
 GLAPI void *APIENTRY glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access)
 {
-    GL_CONTEXT_OR_RETURN(NULL);
+    GL_CONTEXT_OR_RETURN(nullptr);
     GlBuffer *b = gl_bound_buffer(ctx, target);
     if (!b || b->mapped || offset < 0 || length < 0 || (uint64_t)(offset + length) > b->size) {
         gl_error(ctx, !b || b->mapped ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
-        return NULL;
+        return nullptr;
     }
     if (!(access & GL_MAP_UNSYNCHRONIZED_BIT) && in_use(b)) {
         uint64_t keep = (access & GL_MAP_INVALIDATE_BUFFER_BIT) ? 0 : b->size;
@@ -247,7 +247,7 @@ GLAPI void *APIENTRY glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr
             gl_wait(b->last_use);
         } else if (!rename(b, b->size, keep)) {
             gl_error(ctx, GL_OUT_OF_MEMORY);
-            return NULL;
+            return nullptr;
         }
     }
     b->mapped = TRUE;
@@ -260,11 +260,11 @@ GLAPI void *APIENTRY glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr
 
 GLAPI void *APIENTRY glMapBuffer(GLenum target, GLenum access)
 {
-    GL_CONTEXT_OR_RETURN(NULL);
+    GL_CONTEXT_OR_RETURN(nullptr);
     GlBuffer *b = gl_bound_buffer(ctx, target);
     if (!b) {
         gl_error(ctx, GL_INVALID_OPERATION);
-        return NULL;
+        return nullptr;
     }
     GLbitfield bits = access == GL_READ_ONLY ? GL_MAP_READ_BIT
                       : access == GL_WRITE_ONLY ? GL_MAP_WRITE_BIT
@@ -336,7 +336,7 @@ GLAPI void APIENTRY glGetBufferPointerv(GLenum target, GLenum pname, void **para
 {
     GL_CONTEXT_OR_RETURN();
     GlBuffer *b = gl_bound_buffer(ctx, target);
-    *params = b && b->mapped ? b->mem.ptr + b->map_offset : NULL;
+    *params = b && b->mapped ? b->mem.ptr + b->map_offset : nullptr;
 }
 
 GLAPI void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target, GLintptr read_offset,

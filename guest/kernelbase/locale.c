@@ -81,7 +81,7 @@ static const LOCALE_DATA g_en_us = {
     {L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August", L"September", L"October",
      L"November", L"December"},
     {L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec"},
-    {NULL},
+    {nullptr},
     L"0409:00000409",
 };
 
@@ -97,7 +97,7 @@ static const LOCALE_DATA g_en_gb = {
     {L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August", L"September", L"October",
      L"November", L"December"},
     {L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec"},
-    {NULL},
+    {nullptr},
     L"0809:00000809",
 };
 
@@ -112,7 +112,7 @@ static const LOCALE_DATA g_fr_fr = {
     {L"janvier", L"février", L"mars", L"avril", L"mai", L"juin", L"juillet", L"août", L"septembre", L"octobre",
      L"novembre", L"décembre"},
     {L"janv.", L"févr.", L"mars", L"avr.", L"mai", L"juin", L"juil.", L"août", L"sept.", L"oct.", L"nov.", L"déc."},
-    {NULL},
+    {nullptr},
     L"040c:0000040c",
 };
 
@@ -127,7 +127,7 @@ static const LOCALE_DATA g_de_de = {
     {L"Januar", L"Februar", L"März", L"April", L"Mai", L"Juni", L"Juli", L"August", L"September", L"Oktober",
      L"November", L"Dezember"},
     {L"Jan", L"Feb", L"Mär", L"Apr", L"Mai", L"Jun", L"Jul", L"Aug", L"Sep", L"Okt", L"Nov", L"Dez"},
-    {NULL},
+    {nullptr},
     L"0407:00000407",
 };
 
@@ -143,7 +143,7 @@ static const LOCALE_DATA g_invariant = {
     {L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August", L"September", L"October",
      L"November", L"December"},
     {L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec"},
-    {NULL},
+    {nullptr},
     L"0409:00000409",
 };
 
@@ -226,12 +226,12 @@ static const LOCALE_DATA *find_locale(LCID lcid)
             if (PRIMARYLANGID(g_locales[i]->Lcid) == PRIMARYLANGID(lcid) && SUBLANGID(g_locales[i]->Lcid) == 1)
                 return g_locales[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 BOOL KbIsSupportedLcid(LCID lcid)
 {
-    return find_locale(lcid) != NULL;
+    return find_locale(lcid) != nullptr;
 }
 
 static const LOCALE_DATA *locale_or_error(LCID lcid)
@@ -281,7 +281,7 @@ static PCWSTR name_from_lcid(LCID lcid, BOOL allow_neutral)
             if (PRIMARYLANGID(g_locale_ids[i].Lcid) == PRIMARYLANGID(lcid) && SUBLANGID(g_locale_ids[i].Lcid) == 1)
                 return g_locale_ids[i].Name;
     }
-    return NULL;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ default locales */
@@ -405,7 +405,7 @@ LCID WINAPI LocaleNameToLCID(LPCWSTR name, DWORD flags)
 int WINAPI ResolveLocaleName(LPCWSTR name, LPWSTR resolved, int size)
 {
     LCID lcid = lcid_from_name(name, FALSE);
-    PCWSTR n = lcid ? name_from_lcid(lcid, FALSE) : NULL;
+    PCWSTR n = lcid ? name_from_lcid(lcid, FALSE) : nullptr;
     if (!n && name) {
         /* fall back to the language part of an unknown name. */
         WCHAR language[16];
@@ -416,7 +416,7 @@ int WINAPI ResolveLocaleName(LPCWSTR name, LPWSTR resolved, int size)
         }
         language[i] = 0;
         lcid = lcid_from_name(language, FALSE);
-        n = lcid ? name_from_lcid(lcid, FALSE) : NULL;
+        n = lcid ? name_from_lcid(lcid, FALSE) : nullptr;
     }
     if (!n) {
         if (size && resolved)
@@ -440,7 +440,7 @@ LCID WINAPI ConvertDefaultLocale(LCID locale)
 
 BOOL WINAPI IsValidLocale(LCID locale, DWORD flags)
 {
-    return find_locale(locale) != NULL;
+    return find_locale(locale) != nullptr;
 }
 
 BOOL WINAPI IsValidLocaleName(LPCWSTR name)
@@ -468,7 +468,7 @@ int WINAPI GetUserDefaultGeoName(LPWSTR name, int size)
 
 /* ------------------------------------------------------------------ locale information */
 
-static const BYTE g_font_signature[32] = {0xAF, 0x00, 0x00, 0xA0, 0x7B, 0x20, 0x00, 0x80, 0x00, 0x00, 0x00,
+static constexpr BYTE g_font_signature[32] = {0xAF, 0x00, 0x00, 0xA0, 0x7B, 0x20, 0x00, 0x80, 0x00, 0x00, 0x00,
                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x9F, 0x01, 0x00, 0x00, 0x00, 0x00,
                                           0xDF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF};
 
@@ -569,7 +569,7 @@ static BOOL locale_value(const LOCALE_DATA *l, LCTYPE type, BOOL genitive, LOCAL
         NUMBER_VALUE(LOCALE_ICENTURY, 1);
         NUMBER_VALUE(LOCALE_ITLZERO, l->Hour24);
         NUMBER_VALUE(LOCALE_IDAYLZERO, l->ShortDate[0] == 'd' && l->ShortDate[1] == 'd');
-        NUMBER_VALUE(LOCALE_IMONLZERO, wcsstr(l->ShortDate, L"MM") != NULL);
+        NUMBER_VALUE(LOCALE_IMONLZERO, wcsstr(l->ShortDate, L"MM") != nullptr);
         TEXT_VALUE(LOCALE_S1159, l->Am);
         TEXT_VALUE(LOCALE_S2359, l->Pm);
         TEXT_VALUE(LOCALE_SSHORTESTAM, l->Am[0] ? L"a" : L"");
@@ -713,7 +713,7 @@ int WINAPI GetLocaleInfoW(LCID locale, LCTYPE type, LPWSTR data, int size)
 int WINAPI GetLocaleInfoEx(LPCWSTR name, LCTYPE type, LPWSTR data, int size)
 {
     LCID lcid = lcid_from_name(name, TRUE);
-    const LOCALE_DATA *l = lcid ? find_locale(lcid) : NULL;
+    const LOCALE_DATA *l = lcid ? find_locale(lcid) : nullptr;
     if (!l) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
@@ -751,14 +751,14 @@ int WINAPI GetLocaleInfoA(LCID locale, LCTYPE type, LPSTR data, int size)
     if (!get_locale_info(l, is_neutral_lcid(locale), type, w, RTL_NUMBER_OF(w)))
         return 0;
     UINT cp = (type & LOCALE_USE_CP_ACP) ? CP_ACP : l->AnsiCodePage;
-    int need = WideCharToMultiByte(cp, 0, w, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(cp, 0, w, -1, nullptr, 0, nullptr, nullptr);
     if (!size)
         return need;
     if (size < need) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
         return 0;
     }
-    return WideCharToMultiByte(cp, 0, w, -1, data, size, NULL, NULL);
+    return WideCharToMultiByte(cp, 0, w, -1, data, size, nullptr, nullptr);
 }
 
 BOOL WINAPI SetLocaleInfoW(LCID locale, LCTYPE type, LPCWSTR data)
@@ -783,7 +783,7 @@ static int calendar_info(const LOCALE_DATA *l, CALID calendar, CALTYPE type, LPW
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    PCWSTR text = NULL;
+    PCWSTR text = nullptr;
     DWORD number = 0;
     BOOL numeric = FALSE;
     if (base >= CAL_SDAYNAME1 && base < CAL_SDAYNAME1 + 7)
@@ -874,7 +874,7 @@ int WINAPI GetCalendarInfoEx(LPCWSTR name, CALID calendar, LPCWSTR reserved, CAL
                              LPDWORD value)
 {
     LCID lcid = lcid_from_name(name, TRUE);
-    const LOCALE_DATA *l = lcid ? find_locale(lcid) : NULL;
+    const LOCALE_DATA *l = lcid ? find_locale(lcid) : nullptr;
     if (!l) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
@@ -1072,7 +1072,7 @@ int WINAPI GetDateFormatEx(LPCWSTR name, DWORD flags, const SYSTEMTIME *date, LP
                            LPCWSTR calendar)
 {
     LCID lcid = lcid_from_name(name, TRUE);
-    const LOCALE_DATA *l = lcid ? find_locale(lcid) : NULL;
+    const LOCALE_DATA *l = lcid ? find_locale(lcid) : nullptr;
     if (!l) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
@@ -1190,7 +1190,7 @@ int WINAPI GetTimeFormatW(LCID locale, DWORD flags, const SYSTEMTIME *time, LPCW
 int WINAPI GetTimeFormatEx(LPCWSTR name, DWORD flags, const SYSTEMTIME *time, LPCWSTR format, LPWSTR buffer, int size)
 {
     LCID lcid = lcid_from_name(name, TRUE);
-    const LOCALE_DATA *l = lcid ? find_locale(lcid) : NULL;
+    const LOCALE_DATA *l = lcid ? find_locale(lcid) : nullptr;
     if (!l) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
@@ -1203,14 +1203,14 @@ static int narrow_result(UINT cp, int wide_result, PCWSTR wide, LPSTR buffer, in
 {
     if (!wide_result)
         return 0;
-    int need = WideCharToMultiByte(cp, 0, wide, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(cp, 0, wide, -1, nullptr, 0, nullptr, nullptr);
     if (!size)
         return need;
     if (size < need) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
         return 0;
     }
-    return WideCharToMultiByte(cp, 0, wide, -1, buffer, size, NULL, NULL);
+    return WideCharToMultiByte(cp, 0, wide, -1, buffer, size, nullptr, nullptr);
 }
 
 int WINAPI GetDateFormatA(LCID locale, DWORD flags, const SYSTEMTIME *date, LPCSTR format, LPSTR buffer, int size)
@@ -1284,7 +1284,7 @@ BOOL WINAPI EnumCalendarInfoW(CALINFO_ENUMPROCW proc, LCID locale, CALID calenda
         return FALSE;
     }
     if (!GetCalendarInfoW(locale, calendar == ENUM_ALL_CALENDARS ? CAL_GREGORIAN : calendar, type, buffer,
-                          RTL_NUMBER_OF(buffer), NULL))
+                          RTL_NUMBER_OF(buffer), nullptr))
         return FALSE;
     proc(buffer);
     return TRUE;
@@ -1392,7 +1392,7 @@ static void put_grouped(TEXT_OUT *o, PCWSTR integer, UINT grouping, PCWSTR separ
     }
     SIZE_T n = wcslen(integer);
     /* mark the positions, counted from the right, after which a separator goes. */
-    BOOL separate[128] = {0};
+    BOOL separate[128] = {};
     SIZE_T pos = 0;
     for (UINT g = 0; count && g < 64; g++) {
         UINT size = g < count ? groups[g] : (repeat ? groups[count - 1] : 0);
@@ -1509,7 +1509,7 @@ int WINAPI GetNumberFormatW(LCID locale, DWORD flags, LPCWSTR value, const NUMBE
 int WINAPI GetNumberFormatEx(LPCWSTR name, DWORD flags, LPCWSTR value, const NUMBERFMTW *format, LPWSTR buffer, int size)
 {
     LCID lcid = lcid_from_name(name, TRUE);
-    const LOCALE_DATA *l = lcid ? find_locale(lcid) : NULL;
+    const LOCALE_DATA *l = lcid ? find_locale(lcid) : nullptr;
     if (!l) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
@@ -1529,7 +1529,7 @@ int WINAPI GetNumberFormatA(LCID locale, DWORD flags, LPCSTR value, const NUMBER
     UINT cp = (flags & LOCALE_USE_CP_ACP) ? CP_ACP : l->AnsiCodePage;
     PWSTR wvalue = KbAnsiToWideCp(cp, value);
     NUMBERFMTW wf;
-    PWSTR dec = NULL, sep = NULL;
+    PWSTR dec = nullptr, sep = nullptr;
     if (format) {
         wf.NumDigits = format->NumDigits;
         wf.LeadingZero = format->LeadingZero;
@@ -1541,7 +1541,7 @@ int WINAPI GetNumberFormatA(LCID locale, DWORD flags, LPCSTR value, const NUMBER
         wf.lpThousandSep = sep;
     }
     WCHAR w[512];
-    int r = wvalue ? number_format(l, flags, wvalue, format ? &wf : NULL, w, RTL_NUMBER_OF(w)) : 0;
+    int r = wvalue ? number_format(l, flags, wvalue, format ? &wf : nullptr, w, RTL_NUMBER_OF(w)) : 0;
     KbFree(wvalue);
     KbFree(dec);
     KbFree(sep);
@@ -1610,7 +1610,7 @@ int WINAPI GetCurrencyFormatEx(LPCWSTR name, DWORD flags, LPCWSTR value, const C
                                int size)
 {
     LCID lcid = lcid_from_name(name, TRUE);
-    const LOCALE_DATA *l = lcid ? find_locale(lcid) : NULL;
+    const LOCALE_DATA *l = lcid ? find_locale(lcid) : nullptr;
     if (!l) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;

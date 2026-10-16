@@ -1,13 +1,13 @@
 #include "trust_private.h"
 
-static const BYTE oid_signed[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,7,2};
-static const BYTE oid_indirect[] = {0x2b,6,1,4,1,0x82,0x37,2,1,4};
-static const BYTE oid_pe[] = {0x2b,6,1,4,1,0x82,0x37,2,1,15};
-static const BYTE oid_sha256[] = {0x60,0x86,0x48,1,0x65,3,4,2,1};
-static const BYTE oid_sha1[] = {0x2b,0x0e,3,2,0x1a};
-static const BYTE oid_rsa[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,1};
-static const BYTE oid_type[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,3};
-static const BYTE oid_digest[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,4};
+static constexpr BYTE oid_signed[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,7,2};
+static constexpr BYTE oid_indirect[] = {0x2b,6,1,4,1,0x82,0x37,2,1,4};
+static constexpr BYTE oid_pe[] = {0x2b,6,1,4,1,0x82,0x37,2,1,15};
+static constexpr BYTE oid_sha256[] = {0x60,0x86,0x48,1,0x65,3,4,2,1};
+static constexpr BYTE oid_sha1[] = {0x2b,0x0e,3,2,0x1a};
+static constexpr BYTE oid_rsa[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,1};
+static constexpr BYTE oid_type[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,3};
+static constexpr BYTE oid_digest[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,4};
 
 BOOL WtTake(WT_BYTES *input, BYTE tag, WT_DER *item)
 {
@@ -175,7 +175,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
         serial.value.data++;
         serial.value.size--;
     }
-    PCCERT_CONTEXT cert = NULL;
+    PCCERT_CONTEXT cert = nullptr;
     while ((cert = CertEnumCertificatesInStore(store, cert))) {
         CRYPT_INTEGER_BLOB number = cert->pCertInfo->SerialNumber;
         while (number.cbData > 1 && !number.pbData[number.cbData - 1])
@@ -195,7 +195,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
     LONG result = signature(attributes, encrypted, alg, cert);
     if (!result) {
         LPSTR usages[] = {szOID_PKIX_KP_CODE_SIGNING};
-        CERT_CHAIN_PARA para = {0};
+        CERT_CHAIN_PARA para = {};
         para.cbSize = sizeof(para);
         para.RequestedUsage.Usage.cUsageIdentifier = 1;
         para.RequestedUsage.Usage.rgpszUsageIdentifier = usages;
@@ -207,8 +207,8 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
             flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
         else if (options->dwProvFlags & WTD_REVOCATION_CHECK_END_CERT)
             flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT;
-        PCCERT_CHAIN_CONTEXT chain = NULL;
-        if (!CertGetCertificateChain(NULL, cert, NULL, store, &para, flags, NULL, &chain))
+        PCCERT_CHAIN_CONTEXT chain = nullptr;
+        if (!CertGetCertificateChain(nullptr, cert, nullptr, store, &para, flags, nullptr, &chain))
             result = TRUST_E_SUBJECT_NOT_TRUSTED;
         else {
             CERT_CHAIN_POLICY_PARA policy = {sizeof(policy)};
@@ -255,7 +255,7 @@ LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD c
     LONG result = file_digest(content, image, checksum, directory, certificate);
     if (result)
         return result;
-    HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
+    HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
     if (!store)
         return E_OUTOFMEMORY;
     DWORD count = 0;
@@ -263,7 +263,7 @@ LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD c
         WT_DER cert;
         if (++count > 64 || !WtTake(&certs.value, 0x30, &cert) ||
             !CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, cert.encoded.data, cert.encoded.size,
-                                              CERT_STORE_ADD_ALWAYS, NULL)) {
+                                              CERT_STORE_ADD_ALWAYS, nullptr)) {
             result = TRUST_E_SUBJECT_FORM_UNKNOWN;
             break;
         }

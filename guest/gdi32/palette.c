@@ -44,7 +44,7 @@ static PALETTE *lookup(HPALETTE h)
 {
     ULONG_PTR v = (ULONG_PTR)h;
     if ((v & ~(ULONG_PTR)0xFFFF) != PAL_HANDLE_BASE || (v & 0xFFFF) >= PAL_MAX)
-        return NULL;
+        return nullptr;
     if (!(v & 0xFFFF))
         return (PALETTE *)&g_default;
     return g_palettes[v & 0xFFFF];
@@ -64,7 +64,7 @@ HPALETTE PalDefault(void)
 BOOL PalIsPalette(HGDIOBJ h)
 {
     RtlAcquireSRWLockShared(&g_lock);
-    BOOL ok = lookup(h) != NULL;
+    BOOL ok = lookup(h) != nullptr;
     RtlReleaseSRWLockShared(&g_lock);
     return ok;
 }
@@ -76,15 +76,15 @@ BOOL PalDelete(HPALETTE h)
     RtlAcquireSRWLockExclusive(&g_lock);
     PALETTE *p = lookup(h);
     if (p) {
-        g_palettes[(ULONG_PTR)h & 0xFFFF] = NULL;
+        g_palettes[(ULONG_PTR)h & 0xFFFF] = nullptr;
         for (UINT i = 0; i < PAL_DC_MAX; i++)
             if (g_selected[i].Palette == h)
-                g_selected[i].Dc = NULL, g_selected[i].Palette = NULL;
+                g_selected[i].Dc = nullptr, g_selected[i].Palette = nullptr;
     }
     RtlReleaseSRWLockExclusive(&g_lock);
     if (p)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, p);
-    return p != NULL;
+    return p != nullptr;
 }
 
 /* like windows, a palette object reads as its entry count. */
@@ -121,7 +121,7 @@ void PalForgetDC(HDC dc)
     RtlAcquireSRWLockExclusive(&g_lock);
     for (UINT i = 0; i < PAL_DC_MAX; i++)
         if (g_selected[i].Dc == dc)
-            g_selected[i].Dc = NULL, g_selected[i].Palette = NULL;
+            g_selected[i].Dc = nullptr, g_selected[i].Palette = nullptr;
     RtlReleaseSRWLockExclusive(&g_lock);
 }
 
@@ -129,18 +129,18 @@ WINGDIAPI HPALETTE WINAPI CreatePalette(const LOGPALETTE *logical)
 {
     if (!logical) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     UINT count = logical->palNumEntries;
     PALETTE *p = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0,
                                  offsetof(PALETTE, Entries) + (count ? count : 1) * sizeof(PALETTEENTRY));
     if (!p) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     p->Count = count;
     memcpy(p->Entries, logical->palPalEntry, count * sizeof(PALETTEENTRY));
-    HPALETTE h = NULL;
+    HPALETTE h = nullptr;
     RtlAcquireSRWLockExclusive(&g_lock);
     for (UINT i = 1; i < PAL_MAX; i++) {
         if (!g_palettes[i]) {
@@ -161,7 +161,7 @@ WINGDIAPI HPALETTE WINAPI SelectPalette(HDC dc, HPALETTE palette, BOOL backgroun
 {
     if (!dc_valid(dc) || !PalIsPalette(palette)) {
         SetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     HPALETTE old = PalDefault();
     int free_slot = -1;
@@ -171,7 +171,7 @@ WINGDIAPI HPALETTE WINAPI SelectPalette(HDC dc, HPALETTE palette, BOOL backgroun
         if (g_selected[i].Dc == dc) {
             old = g_selected[i].Palette;
             if (palette == PalDefault())
-                g_selected[i].Dc = NULL, g_selected[i].Palette = NULL;
+                g_selected[i].Dc = nullptr, g_selected[i].Palette = nullptr;
             else
                 g_selected[i].Palette = palette;
             stored = TRUE;

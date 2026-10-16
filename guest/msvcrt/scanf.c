@@ -91,7 +91,7 @@ static void store_char(void **dst, int c, int wide_out)
         if (c > 0xff) {
             char mb[8];
             wchar_t w = (wchar_t)c;
-            int n = WideCharToMultiByte(CP_ACP, 0, &w, 1, mb, sizeof(mb), NULL, NULL);
+            int n = WideCharToMultiByte(CP_ACP, 0, &w, 1, mb, sizeof(mb), nullptr, nullptr);
             for (int i = 0; i < n; i++)
                 *p++ = mb[i];
         } else {
@@ -159,7 +159,7 @@ int __cdecl vsscanf(const char *str, const char *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return EOF;
     }
-    return MsvcrtScanA(NULL, str, (size_t)-1, fmt, ap);
+    return MsvcrtScanA(nullptr, str, (size_t)-1, fmt, ap);
 }
 
 int __cdecl vswscanf(const wchar_t *str, const wchar_t *fmt, va_list ap)
@@ -168,7 +168,7 @@ int __cdecl vswscanf(const wchar_t *str, const wchar_t *fmt, va_list ap)
         MSVCRT_INVALID(EINVAL);
         return EOF;
     }
-    return MsvcrtScanW(NULL, str, (size_t)-1, fmt, ap);
+    return MsvcrtScanW(nullptr, str, (size_t)-1, fmt, ap);
 }
 
 int __cdecl sscanf(const char *str, const char *fmt, ...)
@@ -197,7 +197,7 @@ int __cdecl sscanf_s(const char *str, const char *fmt, ...)
     }
     va_list ap;
     va_start(ap, fmt);
-    int r = scan_any_a(NULL, str, (size_t)-1, fmt, ap, 1);
+    int r = scan_any_a(nullptr, str, (size_t)-1, fmt, ap, 1);
     va_end(ap);
     return r;
 }
@@ -210,7 +210,7 @@ int __cdecl swscanf_s(const wchar_t *str, const wchar_t *fmt, ...)
     }
     va_list ap;
     va_start(ap, fmt);
-    int r = scan_any_w(NULL, str, (size_t)-1, fmt, ap, 1);
+    int r = scan_any_w(nullptr, str, (size_t)-1, fmt, ap, 1);
     va_end(ap);
     return r;
 }
@@ -223,7 +223,7 @@ int __cdecl _snscanf(const char *str, size_t len, const char *fmt, ...)
     }
     va_list ap;
     va_start(ap, fmt);
-    int r = MsvcrtScanA(NULL, str, len, fmt, ap);
+    int r = MsvcrtScanA(nullptr, str, len, fmt, ap);
     va_end(ap);
     return r;
 }
@@ -236,7 +236,7 @@ int __cdecl _snwscanf(const wchar_t *str, size_t len, const wchar_t *fmt, ...)
     }
     va_list ap;
     va_start(ap, fmt);
-    int r = MsvcrtScanW(NULL, str, len, fmt, ap);
+    int r = MsvcrtScanW(nullptr, str, len, fmt, ap);
     va_end(ap);
     return r;
 }
@@ -259,7 +259,7 @@ int __cdecl vfscanf(FILE *f, const char *fmt, va_list ap)
         return EOF;
     }
     MsvcrtLockFile(f);
-    int r = MsvcrtScanA(f, NULL, 0, fmt, ap);
+    int r = MsvcrtScanA(f, nullptr, 0, fmt, ap);
     MsvcrtUnlockFile(f);
     return r;
 }
@@ -271,7 +271,7 @@ int __cdecl vfwscanf(FILE *f, const wchar_t *fmt, va_list ap)
         return EOF;
     }
     MsvcrtLockFile(f);
-    int r = MsvcrtScanW(f, NULL, 0, fmt, ap);
+    int r = MsvcrtScanW(f, nullptr, 0, fmt, ap);
     MsvcrtUnlockFile(f);
     return r;
 }
@@ -301,7 +301,7 @@ static int vfscanf_s(FILE *f, const char *fmt, va_list ap)
         return EOF;
     }
     MsvcrtLockFile(f);
-    int r = scan_any_a(f, NULL, 0, fmt, ap, 1);
+    int r = scan_any_a(f, nullptr, 0, fmt, ap, 1);
     MsvcrtUnlockFile(f);
     return r;
 }
@@ -313,7 +313,7 @@ static int vfwscanf_s(FILE *f, const wchar_t *fmt, va_list ap)
         return EOF;
     }
     MsvcrtLockFile(f);
-    int r = scan_any_w(f, NULL, 0, fmt, ap, 1);
+    int r = scan_any_w(f, nullptr, 0, fmt, ap, 1);
     MsvcrtUnlockFile(f);
     return r;
 }

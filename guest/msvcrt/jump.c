@@ -6,7 +6,7 @@
 #include "msvcrt_private.h"
 
 /* x86 has its own, with the try levels of its frames, in x86/seh.c. */
-#if !defined(__i386__)
+#ifndef __i386__
 
 DECLSPEC_NORETURN void MsvcrtLongjmpRestore(void *buf, int value);
 void MsvcrtLongjmpLanding(void);
@@ -22,7 +22,7 @@ void __cdecl longjmp(void *buf, int value)
 {
     if (!value)
         value = 1;
-#if defined(__x86_64__)
+#ifdef __x86_64__
     ULONG_PTR frame = ((ULONG_PTR *)buf)[0];
     if (frame) {
         /*

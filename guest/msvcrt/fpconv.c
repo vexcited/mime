@@ -535,13 +535,13 @@ char *__cdecl _ecvt(double value, int ndigits, int *decpt, int *sign)
         ndigits = 348;
     if (ndigits < 0)
         ndigits = 0;
-    return cvt_digits(buf, 350, value, ndigits, decpt, sign, 0) ? NULL : buf;
+    return cvt_digits(buf, 350, value, ndigits, decpt, sign, 0) ? nullptr : buf;
 }
 
 char *__cdecl _fcvt(double value, int ndec, int *decpt, int *sign)
 {
     char *buf = MsvcrtThreadData()->cvt_buf;
-    return cvt_digits(buf, 350, value, ndec, decpt, sign, 1) ? NULL : buf;
+    return cvt_digits(buf, 350, value, ndec, decpt, sign, 1) ? nullptr : buf;
 }
 
 errno_t __cdecl _ecvt_s(char *buf, size_t size, double value, int ndigits, int *decpt, int *sign)
@@ -599,7 +599,7 @@ errno_t __cdecl _gcvt_s(char *buf, size_t size, double value, int ndigits)
 
 char *__cdecl _gcvt(double value, int ndigits, char *buf)
 {
-    return _gcvt_s(buf, (size_t)ndigits + 32, value, ndigits) ? NULL : buf;
+    return _gcvt_s(buf, (size_t)ndigits + 32, value, ndigits) ? nullptr : buf;
 }
 
 /* ------------------------------------------------------------------ decimal to double */
@@ -660,7 +660,7 @@ static double make_double(uint64_t mant, int e2, int sticky, int *range)
     return v;
 }
 
-static const double g_pow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+static constexpr double g_pow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
                                  1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
 
 #define MAX_SIG_DIGITS 800
@@ -911,7 +911,7 @@ double __cdecl atof(const char *s)
         MSVCRT_INVALID(EINVAL);
         return 0;
     }
-    return strtod(s, NULL);
+    return strtod(s, nullptr);
 }
 
 double __cdecl _atof_l(const char *s, void *locale)
@@ -925,7 +925,7 @@ double __cdecl _wtof(const wchar_t *s)
         MSVCRT_INVALID(EINVAL);
         return 0;
     }
-    return wcstod(s, NULL);
+    return wcstod(s, nullptr);
 }
 
 double __cdecl _wtof_l(const wchar_t *s, void *locale)
@@ -952,7 +952,7 @@ int __cdecl _atodbl(_CRT_DOUBLE *out, char *s)
     while (MSVCRT_CTYPE(*p) & _SPACE)
         p++;
     int range;
-    out->x = MsvcrtStrtod(p, NULL, &range);
+    out->x = MsvcrtStrtod(p, nullptr, &range);
     return range == 1 ? 3 : range == 2 ? 4 : 0;
 }
 
@@ -972,7 +972,7 @@ int __cdecl _atoflt(_CRT_FLOAT *out, const char *s)
     while (MSVCRT_CTYPE(*p) & _SPACE)
         p++;
     int range;
-    double v = MsvcrtStrtod(p, NULL, &range);
+    double v = MsvcrtStrtod(p, nullptr, &range);
     if (!range && (v > FLT_MAX || v < -FLT_MAX))
         range = 1;
     out->f = (float)v;

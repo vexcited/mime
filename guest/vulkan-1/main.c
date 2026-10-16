@@ -44,7 +44,7 @@ BOOL mvk_connect(void)
         return TRUE;
     AcquireSRWLockExclusive(&g_connect_lock);
     if (!g_header) {
-        PVOID base = NULL;
+        PVOID base = nullptr;
         if (NT_SUCCESS(NtGdiMimeVkOpen(&base)) && base) {
             g_base = base;
             g_ring = g_base + MVK_RING_OFFSET;
@@ -54,7 +54,7 @@ BOOL mvk_connect(void)
         }
     }
     ReleaseSRWLockExclusive(&g_connect_lock);
-    return g_header != NULL;
+    return g_header != nullptr;
 }
 
 /* ------------------------------------------------------------------ ids */
@@ -113,9 +113,9 @@ static Deferred *g_deferred;
 
 void *mvk_block_alloc(SIZE_T size, ULONG64 *pa)
 {
-    PVOID base = NULL;
+    PVOID base = nullptr;
     if (!mvk_connect() || !NT_SUCCESS(NtGdiMimeVkAlloc(size, &base, pa)))
-        return NULL;
+        return nullptr;
     return base;
 }
 
@@ -192,7 +192,7 @@ static Scratch *scratch(void)
     if (!s) {
         s = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*s));
         if (!s)
-            return NULL;
+            return nullptr;
         s->size = 64 << 10;
         s->buffer = HeapAlloc(GetProcessHeap(), 0, s->size);
         TlsSetValue(g_tls, s);
@@ -203,11 +203,11 @@ static Scratch *scratch(void)
 MvkEncoder *mvk_call_begin(uint32_t op)
 {
     if (!mvk_connect())
-        return NULL;
+        return nullptr;
     Scratch *s = scratch();
     if (!s || !s->buffer)
-        return NULL;
-    s->enc = (MvkEncoder){s->buffer, s->buffer, s->buffer + s->size, 0, NULL, grow};
+        return nullptr;
+    s->enc = (MvkEncoder){s->buffer, s->buffer, s->buffer + s->size, 0, nullptr, grow};
     MvkCallHeader *h = mvk_reserve(&s->enc, sizeof(MvkCallHeader), 8);
     h->op = op;
     return &s->enc;
@@ -307,7 +307,7 @@ static MvkDecoder g_reply_decoder;
 MvkDecoder *mvk_call_wait(MvkEncoder *e)
 {
     if (!e || e->overflow)
-        return NULL;
+        return nullptr;
     AcquireSRWLockExclusive(&g_reply_lock);
     uint64_t serial = submit(e, 0, MVK_REPLY_SIZE);
     mvk_wait_serial(serial);
@@ -315,9 +315,9 @@ MvkDecoder *mvk_call_wait(MvkEncoder *e)
     memcpy(&status, g_reply, 4);
     if (g_header->lost || status != 0) {
         ReleaseSRWLockExclusive(&g_reply_lock);
-        return NULL;
+        return nullptr;
     }
-    g_reply_decoder = (MvkDecoder){g_reply, g_reply + 8, g_reply + MVK_REPLY_SIZE, 0, NULL, NULL, 0, 0};
+    g_reply_decoder = (MvkDecoder){g_reply, g_reply + 8, g_reply + MVK_REPLY_SIZE, 0, nullptr, nullptr, 0, 0};
     return &g_reply_decoder;
 }
 
@@ -377,7 +377,7 @@ void mvk_skip_pointer(MvkDecoder *d)
 /* the decoders of input structs only run on the host. */
 void *mvk_get_chain(MvkDecoder *d)
 {
-    return NULL;
+    return nullptr;
 }
 
 uint64_t mvk_get_handle(MvkDecoder *d, int dispatchable)

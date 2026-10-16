@@ -58,7 +58,7 @@ static PendingRun *find_run(uint64_t request_id)
     for (int i = 0; i < MAX_RUNS; i++)
         if (g_runs[i].used && g_runs[i].request_id == request_id)
             return &g_runs[i];
-    return NULL;
+    return nullptr;
 }
 
 /* sends to the client of a run; an exit or an error finishes it. */
@@ -170,7 +170,7 @@ void mime_daemon_guest_halted(MimeVm *vm, int exit_code)
     }
     pthread_cond_broadcast(&g_credit);
     for (int i = 0; i < g_stop_count; i++) {
-        mime_ipc_send(g_stop_fds[i], MIME_IPC_OK, NULL, 0);
+        mime_ipc_send(g_stop_fds[i], MIME_IPC_OK, nullptr, 0);
         close(g_stop_fds[i]);
     }
     g_stop_count = 0;
@@ -209,7 +209,7 @@ static bool is_windows_path(const char *p)
 static void append_arg(char *cmdline, size_t size, const char *arg)
 {
     size_t n = strlen(cmdline);
-    bool quote = !*arg || strpbrk(arg, " \t\"") != NULL;
+    bool quote = !*arg || strpbrk(arg, " \t\"") != nullptr;
     if (n && n + 1 < size)
         cmdline[n++] = ' ';
     if (quote && n + 1 < size)
@@ -272,7 +272,7 @@ static uint64_t handle_run(int fd, char *payload, uint32_t size)
         host_to_guest_path(cwd, guest_cwd, sizeof(guest_cwd));
     }
 
-    char cmdline[8192] = {0};
+    char cmdline[8192] = {};
     append_arg(cmdline, sizeof(cmdline), image);
     for (int i = 1; i < argc; i++)
         append_arg(cmdline, sizeof(cmdline), args[i]);
@@ -375,11 +375,11 @@ static void serve_run(int fd, uint64_t request)
             uint32_t value;
             memcpy(&value, data, sizeof(value));
             queue_console(h.type == MIME_IPC_SIGNAL ? MIME_CTRL_CONSOLE_EVENT : MIME_CTRL_CONSOLE_SIZE, request, value,
-                          NULL, 0);
+                          nullptr, 0);
         }
         free(payload);
     }
-    queue_console(MIME_CTRL_CONSOLE_EVENT, request, 2 /* CTRL_CLOSE_EVENT */, NULL, 0);
+    queue_console(MIME_CTRL_CONSOLE_EVENT, request, 2 /* CTRL_CLOSE_EVENT */, nullptr, 0);
     pthread_mutex_lock(&g_runs_lock);
     PendingRun *r = find_run(request);
     if (r)
@@ -397,11 +397,11 @@ static void *client_thread(void *arg)
     void *payload;
     if (!mime_ipc_recv(fd, &h, &payload)) {
         close(fd);
-        return NULL;
+        return nullptr;
     }
     switch (h.type) {
     case MIME_IPC_STATUS: {
-        MimeIpcStatus st = {0};
+        MimeIpcStatus st = {};
         st.ready = g_vm.guest_ready;
         st.pid = (uint32_t)getpid();
         st.uptime_ms = (mime_now_ns() - g_start_ns) / 1000000;
@@ -421,7 +421,7 @@ static void *client_thread(void *arg)
         } else {
             uint64_t request = handle_run(fd, payload, h.size);
             free(payload);
-            payload = NULL;
+            payload = nullptr;
             if (request)
                 serve_run(fd, request);
         }
@@ -448,14 +448,14 @@ static void *client_thread(void *arg)
         break;
     }
     free(payload);
-    return NULL;
+    return nullptr;
 }
 
 static void *accept_thread(void *arg)
 {
     mime_set_thread_name("mime-ipc");
     for (;;) {
-        int fd = accept(g_listen_fd, NULL, NULL);
+        int fd = accept(g_listen_fd, nullptr, nullptr);
         if (fd < 0) {
             if (errno == EINTR)
                 continue;
@@ -466,10 +466,10 @@ static void *accept_thread(void *arg)
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
 #endif
         pthread_t t;
-        pthread_create(&t, NULL, client_thread, (void *)(intptr_t)fd);
+        pthread_create(&t, nullptr, client_thread, (void *)(intptr_t)fd);
         pthread_detach(t);
     }
-    return NULL;
+    return nullptr;
 }
 
 static void on_input(void *ctx, const MimeInputEvent *ev)
@@ -504,7 +504,7 @@ static bool listen_socket(const MimePaths *paths)
     g_listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (g_listen_fd < 0)
         return false;
-    struct sockaddr_un addr = {0};
+    struct sockaddr_un addr = {};
     addr.sun_family = AF_UNIX;
     mime_strlcpy(addr.sun_path, paths->socket, sizeof(addr.sun_path));
     if (bind(g_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(g_listen_fd, 16) != 0) {
@@ -545,7 +545,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_instance_publish(lock_fd, paths);
     atexit(cleanup_files);
 
-    mime_ui_init(on_input, NULL);
+    mime_ui_init(on_input, nullptr);
 
     uint64_t ram = mime_vm_default_ram();
     const char *ram_env = getenv("MIME_RAM_MB");
@@ -563,7 +563,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         return 1;
 
     pthread_t t;
-    pthread_create(&t, NULL, accept_thread, NULL);
+    pthread_create(&t, nullptr, accept_thread, nullptr);
     pthread_detach(t);
 
     mime_ui_run();

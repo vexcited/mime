@@ -95,7 +95,7 @@ static void branch_to(Cfg *c, uint32_t b, uint32_t target)
     CfgBlock *blk = &c->blocks[b];
     blk->term = TERM_BRANCH;
     blk->cond = DX_NONE;
-    blk->cases = NULL;
+    blk->cases = nullptr;
 }
 
 static void redirect(Cfg *c, uint32_t from, uint32_t old_to, uint32_t new_to)
@@ -113,7 +113,7 @@ static CfgPhi *add_phi(Cfg *c, uint32_t b, uint32_t result, uint32_t type, uint3
     CfgPhi *phis = alloc(c, (c->blocks[b].phi_count + 1) * sizeof(CfgPhi));
     uint32_t *preds = u32s(c, capacity ? capacity : 1), *values = u32s(c, capacity ? capacity : 1);
     if (!phis || !preds || !values)
-        return NULL;
+        return nullptr;
     CfgBlock *blk = &c->blocks[b];
     if (blk->phis)
         __builtin_memcpy(phis, blk->phis, blk->phi_count * sizeof(CfgPhi));
@@ -213,7 +213,7 @@ static void analyze(Cfg *c)
     uint32_t n = c->count, edges = 0;
     for (uint32_t b = 0; b < n; b++) {
         CfgBlock *blk = &c->blocks[b];
-        blk->pred = NULL;
+        blk->pred = nullptr;
         blk->pred_count = 0;
         blk->idom = DX_NONE;
         if (live(c, b))
@@ -614,7 +614,7 @@ static uint32_t hoist(Cfg *c, uint32_t h)
     CfgBlock *hb = &c->blocks[h], *tb = &c->blocks[top];
     tb->phis = hb->phis;
     tb->phi_count = hb->phi_count;
-    hb->phis = NULL;
+    hb->phis = nullptr;
     hb->phi_count = 0;
     for (uint32_t i = 0; i < hb->pred_count; i++)
         redirect(c, hb->pred[i], h, top);

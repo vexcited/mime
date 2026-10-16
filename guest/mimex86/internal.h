@@ -89,8 +89,8 @@ static inline uint64_t x86_ea(X86Cpu *c, const X86Insn *i)
     return a;
 }
 
-__attribute__((noreturn)) void x86_fault(X86Cpu *c, uint32_t code, uint64_t p0, uint64_t p1);
-__attribute__((noreturn)) void x86_undefined(X86Cpu *c);
+[[noreturn]] void x86_fault(X86Cpu *c, uint32_t code, uint64_t p0, uint64_t p1);
+[[noreturn]] void x86_undefined(X86Cpu *c);
 
 /* lazy flags. */
 uint32_t x86_arith_flags(X86Cpu *c);

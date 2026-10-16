@@ -378,7 +378,7 @@ static ULONG process_cookie(void)
     static ULONG cookie;
     if (!cookie) {
         ULONG c = 0;
-        NtQueryInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)36 /* ProcessCookie */, &c, sizeof(c), NULL);
+        NtQueryInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)36 /* ProcessCookie */, &c, sizeof(c), nullptr);
         cookie = c | 1;
     }
     return cookie;

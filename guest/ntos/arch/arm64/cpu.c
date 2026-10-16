@@ -104,7 +104,7 @@ void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
         {0x403A, offsetof(KI_PROCESSOR_IDS, Mmfr2)}, {0x5801, offsetof(KI_PROCESSOR_IDS, Ctr)},
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(registers); i++) {
-        WCHAR value[16] = {0};
+        WCHAR value[16] = {};
         _snwprintf(value, RTL_NUMBER_OF(value) - 1, L"CP %04X", registers[i].Encoding);
         ULONG64 v = *(const ULONG64 *)((const UCHAR *)&KiProcessorIds + registers[i].Offset);
         set(key, value, REG_QWORD, &v, sizeof(v));

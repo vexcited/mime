@@ -73,7 +73,7 @@ DC *DcCreate(ULONG flags)
 {
     DC *dc = W32Alloc(sizeof(DC));
     if (!dc)
-        return NULL;
+        return nullptr;
     dc->Flags = flags;
     dc->Dpi = W32SystemDpi();
     RgnInit(&dc->VisRgn);
@@ -83,7 +83,7 @@ DC *DcCreate(ULONG flags)
     if (!GdiCreateHandle(&dc->Header, GDI_TYPE_DC)) {
         RgnFree(&dc->VisRgn);
         W32Free(dc);
-        return NULL;
+        return nullptr;
     }
     return dc;
 }
@@ -202,9 +202,9 @@ HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
 {
     UserEnter();
     DC *dc = DcCreate(DC_MEMORY);
-    HDC result = NULL;
+    HDC result = nullptr;
     if (dc) {
-        DC *ref = hdc ? DcLookup(hdc) : NULL;
+        DC *ref = hdc ? DcLookup(hdc) : nullptr;
         if (ref)
             dc->Dpi = ref->Dpi;
         /* memory dcs start with a 1x1 monochrome bitmap. */
@@ -225,7 +225,7 @@ HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port,
 {
     /* the display dc reads the screen as composed from the windows; what it draws is not shown. */
     UserEnter();
-    HDC h = PaintGetDC(WndDesktop(), NULL, DCX_WINDOW);
+    HDC h = PaintGetDC(WndDesktop(), nullptr, DCX_WINDOW);
     UserLeave();
     return h;
 }
@@ -316,7 +316,7 @@ BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result
     UserEnter();
     DC *dc = DcLookup(hdc);
     DWORD old = CLR_INVALID;
-    BOOL ok = dc != NULL;
+    BOOL ok = dc != nullptr;
     if (dc) {
         DC_STATE *s = &dc->State;
         switch (index) {
@@ -404,7 +404,7 @@ BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
     UserEnter();
     DC *dc = DcLookup(hdc);
     DWORD v = 0;
-    BOOL ok = dc != NULL;
+    BOOL ok = dc != nullptr;
     if (dc) {
         DC_STATE *s = &dc->State;
         switch (index) {
@@ -472,7 +472,7 @@ BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
     UserEnter();
     DC *dc = DcLookup(hdc);
     POINT p = {0, 0};
-    BOOL ok = dc != NULL;
+    BOOL ok = dc != nullptr;
     if (dc) {
         switch (index) {
         case MIME_DCPT_VIEWPORTORG:
@@ -513,7 +513,7 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
     }
     UserEnter();
     DC *dc = DcLookup(hdc);
-    BOOL ok = dc != NULL;
+    BOOL ok = dc != nullptr;
     if (dc) {
         for (int i = 0; i < count; i++) {
             if (mode == 1) { /* logical to device */
@@ -553,7 +553,7 @@ BOOL NTAPI NtGdiSetViewportOrgEx(HDC hdc, int x, int y, LPPOINT old)
     UserLeave();
     if (dc && old)
         MimeCopyToUser(old, &prev, sizeof(prev));
-    return dc != NULL;
+    return dc != nullptr;
 }
 
 BOOL NTAPI NtGdiSetWindowOrgEx(HDC hdc, int x, int y, LPPOINT old)
@@ -568,7 +568,7 @@ BOOL NTAPI NtGdiSetWindowOrgEx(HDC hdc, int x, int y, LPPOINT old)
     UserLeave();
     if (dc && old)
         MimeCopyToUser(old, &prev, sizeof(prev));
-    return dc != NULL;
+    return dc != nullptr;
 }
 
 BOOL NTAPI NtGdiMoveTo(HDC hdc, int x, int y, POINT *old)
@@ -585,7 +585,7 @@ BOOL NTAPI NtGdiMoveTo(HDC hdc, int x, int y, POINT *old)
     UserLeave();
     if (dc && old)
         MimeCopyToUser(old, &prev, sizeof(prev));
-    return dc != NULL;
+    return dc != nullptr;
 }
 
 /* ------------------------------------------------------------------ selection */
@@ -594,7 +594,7 @@ HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
 {
     UserEnter();
     DC *dc = DcLookup(hdc);
-    HANDLE h = NULL;
+    HANDLE h = nullptr;
     if (dc) {
         switch (type) {
         case OBJ_BRUSH:
@@ -607,7 +607,7 @@ HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
             h = dc->State.Font->Header.Handle;
             break;
         case OBJ_BITMAP:
-            h = dc->Surface && dc->Surface->Header.Handle ? dc->Surface->Header.Handle : NULL;
+            h = dc->Surface && dc->Surface->Header.Handle ? dc->Surface->Header.Handle : nullptr;
             break;
         }
     }
@@ -620,14 +620,14 @@ HBITMAP NTAPI NtGdiSelectBitmap(HDC hdc, HBITMAP bitmap)
     UserEnter();
     DC *dc = DcLookup(hdc);
     SURFACE *s = SurfaceLookup(bitmap);
-    HBITMAP old = NULL;
+    HBITMAP old = nullptr;
     if (dc && s && (dc->Flags & DC_MEMORY)) {
         /* a bitmap can be selected into one dc at a time. */
         if (s->Header.SelectCount && dc->Surface != s) {
             UserLeave();
-            return NULL;
+            return nullptr;
         }
-        old = dc->Surface && dc->Surface != dc->DefaultBitmap ? (HBITMAP)dc->Surface->Header.Handle : NULL;
+        old = dc->Surface && dc->Surface != dc->DefaultBitmap ? (HBITMAP)dc->Surface->Header.Handle : nullptr;
         if (!old && dc->DefaultBitmap) {
             /* windows hands back a stock 1x1 bitmap; the default one stands in for it. */
             if (!dc->DefaultBitmap->Header.Handle)
@@ -646,7 +646,7 @@ HBRUSH NTAPI NtGdiSelectBrush(HDC hdc, HBRUSH brush)
     UserEnter();
     DC *dc = DcLookup(hdc);
     BRUSH *b = (BRUSH *)GdiLookup(brush, GDI_TYPE_BRUSH);
-    HBRUSH old = NULL;
+    HBRUSH old = nullptr;
     if (dc && b) {
         old = (HBRUSH)dc->State.Brush->Header.Handle;
         select_unref(&dc->State.Brush->Header);
@@ -662,7 +662,7 @@ HPEN NTAPI NtGdiSelectPen(HDC hdc, HPEN pen)
     UserEnter();
     DC *dc = DcLookup(hdc);
     PEN *p = (PEN *)GdiLookup(pen, GDI_TYPE_PEN);
-    HPEN old = NULL;
+    HPEN old = nullptr;
     if (dc && p) {
         old = (HPEN)dc->State.Pen->Header.Handle;
         select_unref(&dc->State.Pen->Header);
@@ -678,7 +678,7 @@ HFONT NTAPI NtGdiSelectFont(HDC hdc, HFONT font)
     UserEnter();
     DC *dc = DcLookup(hdc);
     FONT *f = (FONT *)GdiLookup(font, GDI_TYPE_FONT);
-    HFONT old = NULL;
+    HFONT old = nullptr;
     if (dc && f) {
         old = (HFONT)dc->State.Font->Header.Handle;
         select_unref(&dc->State.Font->Header);
@@ -759,7 +759,7 @@ int NTAPI NtGdiExtSelectClipRgn(HDC hdc, HRGN region, int mode)
     DC *dc = DcLookup(hdc);
     int result = ERROR;
     if (dc) {
-        GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : NULL;
+        GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : nullptr;
         if (!r && mode == RGN_COPY) {
             RgnClear(&dc->State.ClipRgn);
             dc->State.HasClip = FALSE;

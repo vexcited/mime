@@ -21,7 +21,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(IDXGIFactory7 *iface, REFIID riid
             *out = iface;
             return S_OK;
         }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -62,7 +62,7 @@ static HRESULT STDMETHODCALLTYPE factory_get_private_data(IDXGIFactory7 *iface, 
 static HRESULT STDMETHODCALLTYPE factory_get_parent(IDXGIFactory7 *iface, REFIID riid, void **parent)
 {
     if (parent)
-        *parent = NULL;
+        *parent = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -70,7 +70,7 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapters1(IDXGIFactory7 *iface, UI
 {
     if (!adapter)
         return DXGI_ERROR_INVALID_CALL;
-    *adapter = NULL;
+    *adapter = nullptr;
     const DxgiVulkan *vk = DxgiGetVulkan();
     if (index >= vk->count)
         return DXGI_ERROR_NOT_FOUND;
@@ -106,10 +106,10 @@ static HRESULT STDMETHODCALLTYPE factory_create_swap_chain_for_hwnd(IDXGIFactory
 {
     if (!swapchain)
         return DXGI_ERROR_INVALID_CALL;
-    *swapchain = NULL;
+    *swapchain = nullptr;
     if (!device || !window || !desc || !IsWindow(window))
         return DXGI_ERROR_INVALID_CALL;
-    IMimeDXGIPresenter *presenter = NULL;
+    IMimeDXGIPresenter *presenter = nullptr;
     if (FAILED(device->lpVtbl->QueryInterface(device, &IID_IMimeDXGIPresenter, (void **)&presenter)))
         return DXGI_ERROR_INVALID_CALL;
     HRESULT hr = presenter->lpVtbl->CreateSwapChain(presenter, (IDXGIFactory *)iface, window, desc, fullscreen,
@@ -123,7 +123,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_swap_chain(IDXGIFactory7 *iface,
 {
     if (!swapchain)
         return DXGI_ERROR_INVALID_CALL;
-    *swapchain = NULL;
+    *swapchain = nullptr;
     if (!desc)
         return DXGI_ERROR_INVALID_CALL;
     DXGI_SWAP_CHAIN_DESC1 desc1 = {
@@ -144,7 +144,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_swap_chain(IDXGIFactory7 *iface,
         .Scaling = desc->BufferDesc.Scaling,
         .Windowed = desc->Windowed,
     };
-    return factory_create_swap_chain_for_hwnd(iface, device, desc->OutputWindow, &desc1, &fullscreen, NULL,
+    return factory_create_swap_chain_for_hwnd(iface, device, desc->OutputWindow, &desc1, &fullscreen, nullptr,
                                               (IDXGISwapChain1 **)swapchain);
 }
 
@@ -152,7 +152,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_software_adapter(IDXGIFactory7 *
                                                                  IDXGIAdapter **adapter)
 {
     if (adapter)
-        *adapter = NULL;
+        *adapter = nullptr;
     return module ? DXGI_ERROR_UNSUPPORTED : DXGI_ERROR_INVALID_CALL;
 }
 
@@ -167,7 +167,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_swap_chain_for_core_window(IDXGI
                                                                            IDXGISwapChain1 **swapchain)
 {
     if (swapchain)
-        *swapchain = NULL;
+        *swapchain = nullptr;
     return DXGI_ERROR_INVALID_CALL;
 }
 
@@ -208,7 +208,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_swap_chain_for_composition(IDXGI
                                                                            IDXGISwapChain1 **swapchain)
 {
     if (swapchain)
-        *swapchain = NULL;
+        *swapchain = nullptr;
     return DXGI_ERROR_UNSUPPORTED;
 }
 
@@ -219,7 +219,7 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_luid(IDXGIFactory7 *ifa
 {
     if (!adapter)
         return DXGI_ERROR_INVALID_CALL;
-    *adapter = NULL;
+    *adapter = nullptr;
     const DxgiVulkan *vk = DxgiGetVulkan();
     for (UINT i = 0; i < vk->count; i++)
         if (vk->gpus[i].desc.AdapterLuid.LowPart == luid.LowPart &&
@@ -231,7 +231,7 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_luid(IDXGIFactory7 *ifa
 static HRESULT STDMETHODCALLTYPE factory_enum_warp_adapter(IDXGIFactory7 *iface, REFIID riid, void **adapter)
 {
     if (adapter)
-        *adapter = NULL;
+        *adapter = nullptr;
     return DXGI_ERROR_NOT_FOUND;
 }
 
@@ -250,7 +250,7 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_gpu_preference(IDXGIFac
 {
     if (!adapter || preference > DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)
         return DXGI_ERROR_INVALID_CALL;
-    *adapter = NULL;
+    *adapter = nullptr;
     const DxgiVulkan *vk = DxgiGetVulkan();
     if (index >= vk->count)
         return DXGI_ERROR_NOT_FOUND;

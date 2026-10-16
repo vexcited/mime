@@ -266,7 +266,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
 {
     if (!out)
         return E_INVALIDARG;
-    *out = NULL;
+    *out = nullptr;
     LONG days, seconds;
     SYSTEMTIME time;
     if (!split_date(date, &days, &seconds) || !VariantTimeToSystemTime(date, &time))
@@ -278,7 +278,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
     WCHAR text[160];
     int n = 0;
     if (show_date) {
-        int written = GetDateFormatW(locale, DATE_SHORTDATE | override, &time, NULL, text, 80);
+        int written = GetDateFormatW(locale, DATE_SHORTDATE | override, &time, nullptr, text, 80);
         if (!written)
             return E_INVALIDARG;
         n = written - 1;
@@ -286,7 +286,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
     if (show_time) {
         if (n)
             text[n++] = L' ';
-        if (!GetTimeFormatW(locale, override, &time, NULL, text + n, (int)RTL_NUMBER_OF(text) - n))
+        if (!GetTimeFormatW(locale, override, &time, nullptr, text + n, (int)RTL_NUMBER_OF(text) - n))
             return E_INVALIDARG;
     } else {
         text[n] = 0;
@@ -537,7 +537,7 @@ WINOLEAUTAPI HRESULT WINAPI LoadTypeLib(LPCOLESTR file, void **library)
     MIME_STUB("oleaut32");
     if (!library)
         return E_INVALIDARG;
-    *library = NULL;
+    *library = nullptr;
     return TYPE_E_CANTLOADLIBRARY;
 }
 

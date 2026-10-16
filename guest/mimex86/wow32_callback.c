@@ -70,12 +70,12 @@ BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG leng
 PVOID Mx32CallbackResult(const MX_CALLBACK32 *callback, PVOID result, ULONG *length)
 {
     if (*length < 12)
-        return NULL;
+        return nullptr;
     const ULONG *small = result;
     MIME_WINDOWPROC_ARGS *args = callback->Native;
     ULONG bytes = small[1];
     if (bytes > *length - 12)
-        return NULL;
+        return nullptr;
     if (bytes && args->LparamKind == MIME_LPARAM_INOUT) {
         const UCHAR *data = (const void *)(small + 3);
         if ((args->Msg == WM_WINDOWPOSCHANGING || args->Msg == WM_WINDOWPOSCHANGED) && bytes >= sizeof(WINDOWPOS32)) {

@@ -737,12 +737,12 @@ D9Shader *D9FFShader(D9Device *d, BOOL pixel, const void *key, UINT size)
     if (!a || !p) {
         HeapFree(GetProcessHeap(), 0, a);
         HeapFree(GetProcessHeap(), 0, p);
-        return NULL;
+        return nullptr;
     }
     a->n = 0;
     a->failed = FALSE;
     HRESULT hr = pixel ? pixel_program(key, a) : vertex_program(key, a);
-    D9Shader *s = NULL;
+    D9Shader *s = nullptr;
     if (SUCCEEDED(hr) && SUCCEEDED(D9CreateShader(d, a->words, pixel, &s))) {
         s->ff = TRUE;
         /* the device's own: bound, its reference let go, as programs' references would keep the device. */
@@ -768,7 +768,7 @@ void D9FreeFFShaders(D9Device *d)
                 D9Unbind(&p->shader->base);
             HeapFree(GetProcessHeap(), 0, p);
         }
-        *list = NULL;
+        *list = nullptr;
     }
 }
 

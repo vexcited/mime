@@ -22,17 +22,17 @@ D3D10_1API HRESULT WINAPI D3D10CreateDeviceAndSwapChain1(IDXGIAdapter *adapter, 
                                                          IDXGISwapChain **swapchain, ID3D10Device1 **device)
 {
     if (swapchain)
-        *swapchain = NULL;
+        *swapchain = nullptr;
     if (!device)
         return E_INVALIDARG;
-    *device = NULL;
+    *device = nullptr;
     if (sdk != D3D10_1_SDK_VERSION) {
         D3d10SdkMismatch(sdk, D3D10_1_SDK_VERSION);
         return E_INVALIDARG;
     }
     if (level != D3D10_FEATURE_LEVEL_10_0 && level != D3D10_FEATURE_LEVEL_10_1 && (level & 0xF000) != 0x9000)
         return E_INVALIDARG;
-    if (type == D3D10_DRIVER_TYPE_SOFTWARE ? !software && !adapter : software != NULL)
+    if (type == D3D10_DRIVER_TYPE_SOFTWARE ? !software && !adapter : software != nullptr)
         return E_INVALIDARG;
     if (type != D3D10_DRIVER_TYPE_HARDWARE) {
         if (D3d10DriverType(type) == D3D_DRIVER_TYPE_UNKNOWN)
@@ -40,7 +40,7 @@ D3D10_1API HRESULT WINAPI D3D10CreateDeviceAndSwapChain1(IDXGIAdapter *adapter, 
         if (D3d10AdapterMismatch(adapter, type))
             return E_INVALIDARG;
     }
-    ID3D11Device *d3d11 = NULL;
+    ID3D11Device *d3d11 = nullptr;
     HRESULT hr = D3d10CreateDevice11(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3d10DriverType(type), software,
                                      D3d10DeviceFlags(flags | D3D10_DEVICE_FLAG_D3D10_1), (D3D_FEATURE_LEVEL)level,
                                      desc, swapchain, &d3d11);
@@ -58,7 +58,7 @@ D3D10_1API HRESULT WINAPI D3D10CreateDevice1(IDXGIAdapter *adapter, D3D10_DRIVER
                                              UINT flags, D3D10_FEATURE_LEVEL1 level, UINT sdk,
                                              ID3D10Device1 **device)
 {
-    return D3D10CreateDeviceAndSwapChain1(adapter, type, software, flags, level, sdk, NULL, NULL, device);
+    return D3D10CreateDeviceAndSwapChain1(adapter, type, software, flags, level, sdk, nullptr, nullptr, device);
 }
 
 /* ------------------------------------------------------------------ d3d10_1core.dll */
@@ -66,7 +66,7 @@ D3D10_1API HRESULT WINAPI D3D10CreateDevice1(IDXGIAdapter *adapter, D3D10_DRIVER
 static FARPROC core_entry(const char *name)
 {
     HMODULE core = LoadLibraryW(L"d3d10_1core.dll");
-    return core ? GetProcAddress(core, name) : NULL;
+    return core ? GetProcAddress(core, name) : nullptr;
 }
 
 D3D10API UINT64 WINAPI D3D10GetVersion(void)
@@ -87,7 +87,7 @@ D3D10API HRESULT WINAPI D3D10RegisterLayers(void)
 static HRESULT d3d10_entry(const char *name, FARPROC *out)
 {
     HMODULE d3d10 = LoadLibraryW(L"d3d10.dll");
-    *out = d3d10 ? GetProcAddress(d3d10, name) : NULL;
+    *out = d3d10 ? GetProcAddress(d3d10, name) : nullptr;
     if (*out)
         return S_OK;
     DWORD error = GetLastError();
@@ -118,9 +118,9 @@ FORWARD(HRESULT, D3D10PreprocessShader,
         (source, length, file, defines, include, text, errors), hr)
 FORWARD(HRESULT, D3D10ReflectShader, (const void *bytecode, SIZE_T length, ID3D10ShaderReflection **reflector),
         (bytecode, length, reflector), hr)
-FORWARD(LPCSTR, D3D10GetVertexShaderProfile, (ID3D10Device * device), (device), NULL)
-FORWARD(LPCSTR, D3D10GetGeometryShaderProfile, (ID3D10Device * device), (device), NULL)
-FORWARD(LPCSTR, D3D10GetPixelShaderProfile, (ID3D10Device * device), (device), NULL)
+FORWARD(LPCSTR, D3D10GetVertexShaderProfile, (ID3D10Device * device), (device), nullptr)
+FORWARD(LPCSTR, D3D10GetGeometryShaderProfile, (ID3D10Device * device), (device), nullptr)
+FORWARD(LPCSTR, D3D10GetPixelShaderProfile, (ID3D10Device * device), (device), nullptr)
 FORWARD(HRESULT, D3D10GetInputSignatureBlob, (const void *bytecode, SIZE_T length, ID3D10Blob **blob),
         (bytecode, length, blob), hr)
 FORWARD(HRESULT, D3D10GetOutputSignatureBlob, (const void *bytecode, SIZE_T length, ID3D10Blob **blob),

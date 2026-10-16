@@ -71,7 +71,7 @@ static const SEC_PACKAGE *profile_package(PCWSTR profile)
         if (!_wcsicmp(g_profiles[i].Profile, profile))
             return SecFindPackageW(g_profiles[i].Package);
     }
-    return NULL;
+    return nullptr;
 }
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SaslGetProfilePackageW(LPWSTR profile, PSecPkgInfoW *info)
@@ -105,7 +105,7 @@ static SECURITY_STATUS identify(PSecBufferDesc input)
 {
     if (!input || !input->pBuffers)
         return SEC_E_INVALID_TOKEN;
-    PSecBuffer token = NULL;
+    PSecBuffer token = nullptr;
     for (ULONG i = 0; i < input->cBuffers && !token; i++) {
         if ((input->pBuffers[i].BufferType & ~SECBUFFER_ATTRMASK) == SECBUFFER_TOKEN)
             token = &input->pBuffers[i];

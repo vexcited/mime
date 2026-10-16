@@ -110,14 +110,14 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlOpenCurrentUser(ACCESS_MASK access, PHANDLE key)
     NTSTATUS status = RtlFormatCurrentUserKeyPath(&path);
     OBJECT_ATTRIBUTES oa;
     if (NT_SUCCESS(status)) {
-        InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
         status = NtOpenKey(key, access, &oa);
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, path.Buffer);
     }
     if (!NT_SUCCESS(status)) {
         /* without a loaded user hive windows falls back to the default user. */
         UNICODE_STRING fallback = RTL_CONSTANT_STRING(L"\\REGISTRY\\USER\\.DEFAULT");
-        InitializeObjectAttributes(&oa, &fallback, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        InitializeObjectAttributes(&oa, &fallback, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
         status = NtOpenKey(key, access, &oa);
     }
     return status;

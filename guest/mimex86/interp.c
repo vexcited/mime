@@ -81,14 +81,14 @@ static inline int carry(X86Cpu *c)
 
 /* ------------------------------------------------------------ faults */
 
-__attribute__((noreturn)) void x86_fault(X86Cpu *c, uint32_t code, uint64_t p0, uint64_t p1)
+[[noreturn]] void x86_fault(X86Cpu *c, uint32_t code, uint64_t p0, uint64_t p1)
 {
     c->rip = c->insn_rip;
     c->env->fault(c, code, p0, p1);
-    __builtin_unreachable();
+    unreachable();
 }
 
-__attribute__((noreturn)) void x86_undefined(X86Cpu *c)
+[[noreturn]] void x86_undefined(X86Cpu *c)
 {
     x86_fault(c, X86_STATUS_ILLEGAL_INSTRUCTION, 0, 0);
 }
@@ -1053,7 +1053,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
 
 /* ------------------------------------------------------------ one byte map */
 
-static inline __attribute__((always_inline)) void exec(X86Cpu *c, const X86Insn *i)
+[[gnu::always_inline]] static inline void exec(X86Cpu *c, const X86Insn *i)
 {
     c->insn_rip = c->rip;
     c->rip += i->len;
@@ -1223,7 +1223,8 @@ static inline __attribute__((always_inline)) void exec(X86Cpu *c, const X86Insn 
     case 0x90:
         if (!(i->rex & 1))
             return; /* nop and pause */
-        /* fallthrough: xchg r8, rax */
+        /* xchg r8, rax. */
+        [[fallthrough]];
     case 0x91: case 0x92: case 0x93: case 0x94: case 0x95: case 0x96: case 0x97: {
         int reg = (op & 7) | ((i->rex & 1) << 3);
         uint64_t a = get_reg(c, X86_RAX, size, 1), b = get_reg(c, reg, size, 1);
@@ -1582,7 +1583,7 @@ void x86_set_native(uint64_t rip, X86Native fn)
     uint32_t n = __atomic_load_n(&g_native_count, __ATOMIC_ACQUIRE);
     for (uint32_t i = 0; i < n; i++) {
         if (g_natives[i].rip == rip || !g_natives[i].fn) {
-            g_natives[i].fn = NULL;
+            g_natives[i].fn = nullptr;
             g_natives[i].rip = rip;
             __atomic_store_n(&g_natives[i].fn, fn, __ATOMIC_RELEASE);
             goto bounds;
@@ -1605,32 +1606,32 @@ void x86_clear_native(uint64_t start, uint64_t end)
     uint32_t n = __atomic_load_n(&g_native_count, __ATOMIC_ACQUIRE);
     for (uint32_t i = 0; i < n; i++)
         if (g_natives[i].rip >= start && g_natives[i].rip < end)
-            __atomic_store_n(&g_natives[i].fn, NULL, __ATOMIC_RELEASE);
+            __atomic_store_n(&g_natives[i].fn, nullptr, __ATOMIC_RELEASE);
 }
 
 static X86Native native_at(uint64_t rip)
 {
     if (rip < g_native_low || rip > g_native_high)
-        return NULL;
+        return nullptr;
     uint32_t n = __atomic_load_n(&g_native_count, __ATOMIC_ACQUIRE);
     for (uint32_t i = 0; i < n; i++)
         if (g_natives[i].rip == rip)
             return __atomic_load_n(&g_natives[i].fn, __ATOMIC_ACQUIRE);
-    return NULL;
+    return nullptr;
 }
 
 static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow_native)
 {
-    X86Native native = allow_native ? native_at(rip) : NULL;
+    X86Native native = allow_native ? native_at(rip) : nullptr;
     if (native) {
         X86Block *b = cache_alloc(bc, sizeof(X86Block));
         b->rip = rip;
         b->native = native;
-        b->fallback = NULL;
-        b->succ[0] = b->succ[1] = NULL;
+        b->fallback = nullptr;
+        b->succ[0] = b->succ[1] = nullptr;
         b->succ_rip[0] = b->succ_rip[1] = 0;
-        b->jit = NULL;
-        b->jit_offsets = NULL;
+        b->jit = nullptr;
+        b->jit_offsets = nullptr;
         b->runs = ~0u;
         b->count = 0;
         uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
@@ -1659,12 +1660,12 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
         c->env->code_seen(c, rip);
     X86Block *b = cache_alloc(bc, sizeof(X86Block) + n * sizeof(X86Insn));
     b->rip = rip;
-    b->native = NULL;
-    b->fallback = NULL;
-    b->succ[0] = b->succ[1] = NULL;
+    b->native = nullptr;
+    b->fallback = nullptr;
+    b->succ[0] = b->succ[1] = nullptr;
     b->succ_rip[0] = b->succ_rip[1] = 0;
-    b->jit = NULL;
-    b->jit_offsets = NULL;
+    b->jit = nullptr;
+    b->jit_offsets = nullptr;
     b->runs = 0;
     b->count = n;
     __builtin_memcpy(b->insns, buf, n * sizeof(X86Insn));
@@ -1713,7 +1714,7 @@ void x86_free_blocks(X86Cpu *c)
     }
     free_code(bc);
     x86_free(bc, sizeof(*bc));
-    c->blocks = NULL;
+    c->blocks = nullptr;
 }
 
 void x86_flush_blocks(X86Cpu *c)
@@ -1821,17 +1822,17 @@ void x86_jit_fault(X86Cpu *c, uint64_t pc)
 
 void x86_run(X86Cpu *c)
 {
-    X86Block *prev = NULL;
-    c->jit_block = NULL; /* after a fault in translated code restarted the run */
+    X86Block *prev = nullptr;
+    c->jit_block = nullptr; /* after a fault in translated code restarted the run */
     while (c->rip != c->exit_rip) {
         if (c->suspend_pending && *c->suspend_pending && c->env->suspend) {
             c->env->suspend(c);
-            prev = NULL;
+            prev = nullptr;
         }
         if (c->code_epoch && *c->code_epoch != c->blocks_epoch) {
             c->blocks_epoch = *c->code_epoch;
             x86_flush_blocks(c);
-            prev = NULL;
+            prev = nullptr;
         }
         if (c->trace)
             c->trace[(*c->trace_pos)++ % X86_TRACE_SIZE] = c->rip;
@@ -1853,7 +1854,7 @@ void x86_run(X86Cpu *c)
         if (b->jit) {
             c->jit_block = b;
             uint32_t ran = ((uint32_t (*)(X86Cpu *))(void *)b->jit)(c);
-            c->jit_block = NULL;
+            c->jit_block = nullptr;
             c->steps += ran;
             i += ran;
         }

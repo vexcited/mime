@@ -13,7 +13,7 @@
 cr_store *CrStore(HCERTSTORE handle)
 {
     cr_store *store = handle;
-    return store && store->magic == CR_STORE_MAGIC ? store : NULL;
+    return store && store->magic == CR_STORE_MAGIC ? store : nullptr;
 }
 
 static cr_store *new_store(DWORD flags)
@@ -21,7 +21,7 @@ static cr_store *new_store(DWORD flags)
     cr_store *store = CrAllocZero(sizeof(cr_store));
     if (!store) {
         SetLastError(ERROR_OUTOFMEMORY);
-        return NULL;
+        return nullptr;
     }
     store->magic = CR_STORE_MAGIC;
     store->refs = 1;
@@ -56,7 +56,7 @@ static void link_cert(cr_store *store, cr_cert *cert)
     cert->store = store;
     cert->context.hCertStore = store;
     CrLock();
-    cert->next = NULL;
+    cert->next = nullptr;
     cert->prev = store->tail;
     if (store->tail)
         store->tail->next = cert;
@@ -79,7 +79,7 @@ static void unlink_cert(cr_cert *cert)
 
 static cr_cert *find_same(cr_store *store, PCCERT_CONTEXT cert)
 {
-    cr_cert *found = NULL;
+    cr_cert *found = nullptr;
     CrLock();
     for (cr_cert *c = store->head; c; c = c->next)
         if (!c->deleted && CrSameCert(&c->context, cert)) {
@@ -98,17 +98,17 @@ static cr_store *add_target(cr_store *store)
     for (DWORD i = 0; i < store->child_count; i++)
         if (store->child_flags[i] & CERT_PHYSICAL_STORE_ADD_ENABLE_FLAG)
             return add_target(store->children[i]);
-    return NULL;
+    return nullptr;
 }
 
 /* adds a copy of a certificate following the disposition rules of CertAddCertificateContextToStore. */
 static BOOL add_cert(cr_store *store, PCCERT_CONTEXT source, DWORD disposition, PCCERT_CONTEXT *result)
 {
     if (result)
-        *result = NULL;
+        *result = nullptr;
     if (disposition < CERT_STORE_ADD_NEW || disposition > CERT_STORE_ADD_NEWER_INHERIT_PROPERTIES)
         return CrFail(E_INVALIDARG);
-    cr_cert *existing = NULL;
+    cr_cert *existing = nullptr;
     if (store) {
         store = add_target(store);
         if (!store || (store->flags & CERT_STORE_READONLY_FLAG))
@@ -187,7 +187,7 @@ BOOL WINAPI CertAddEncodedCertificateToStore(HCERTSTORE hCertStore, DWORD dwCert
                                              PCCERT_CONTEXT *ppCertContext)
 {
     if (ppCertContext)
-        *ppCertContext = NULL;
+        *ppCertContext = nullptr;
     PCCERT_CONTEXT cert = CertCreateCertificateContext(dwCertEncodingType, pbCertEncoded, cbCertEncoded);
     if (!cert)
         return FALSE;
@@ -199,7 +199,7 @@ BOOL WINAPI CertAddEncodedCertificateToStore(HCERTSTORE hCertStore, DWORD dwCert
 BOOL CrAddEncoded(HCERTSTORE store, const BYTE *data, DWORD size)
 {
     return CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, data, size,
-                                            CERT_STORE_ADD_ALWAYS, NULL);
+                                            CERT_STORE_ADD_ALWAYS, nullptr);
 }
 
 BOOL WINAPI CertDeleteCertificateFromStore(PCCERT_CONTEXT pCertContext)
@@ -223,7 +223,7 @@ BOOL WINAPI CertDeleteCertificateFromStore(PCCERT_CONTEXT pCertContext)
 /* the next live certificate of a plain store after prev, referenced. */
 static cr_cert *next_in(cr_store *store, cr_cert *prev)
 {
-    cr_cert *found = NULL;
+    cr_cert *found = nullptr;
     CrLock();
     cr_cert *c = prev ? prev->next : store->head;
     for (; c; c = c->next)
@@ -251,10 +251,10 @@ static cr_cert *enum_store(cr_store *store, cr_cert *prev)
 {
     if (!store->collection) {
         if (prev && prev->store != store)
-            return NULL;
+            return nullptr;
         return next_in(store, prev);
     }
-    cr_cert *found = NULL;
+    cr_cert *found = nullptr;
     CrLock();
     DWORD i = 0;
     if (prev) {
@@ -266,7 +266,7 @@ static cr_cert *enum_store(cr_store *store, cr_cert *prev)
             i = store->child_count;
     }
     for (; !found && i < store->child_count; i++)
-        found = enum_store(store->children[i], NULL);
+        found = enum_store(store->children[i], nullptr);
     CrUnlock();
     return found;
 }
@@ -278,14 +278,14 @@ PCCERT_CONTEXT WINAPI CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_
         if (pPrevCertContext)
             CertFreeCertificateContext(pPrevCertContext);
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
-    cr_cert *found = enum_store(store, pPrevCertContext ? CrCert(pPrevCertContext) : NULL);
+    cr_cert *found = enum_store(store, pPrevCertContext ? CrCert(pPrevCertContext) : nullptr);
     if (pPrevCertContext)
         CertFreeCertificateContext(pPrevCertContext);
     if (!found) {
         SetLastError(CRYPT_E_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     return &found->context;
 }
@@ -366,7 +366,7 @@ static BOOL hash_matches(PCCERT_CONTEXT cert, DWORD prop, const CRYPT_HASH_BLOB 
 static BOOL usage_matches(PCCERT_CONTEXT cert, DWORD flags, const CERT_ENHKEY_USAGE *want)
 {
     DWORD size = 0;
-    if (!CertGetEnhancedKeyUsage(cert, flags & 0x6, NULL, &size))
+    if (!CertGetEnhancedKeyUsage(cert, flags & 0x6, nullptr, &size))
         return FALSE;
     CERT_ENHKEY_USAGE *have = CrAlloc(size);
     if (!have)
@@ -417,14 +417,14 @@ static BOOL cert_matches(PCCERT_CONTEXT cert, DWORD type, DWORD flags, const voi
     case CERT_COMPARE_HASH_STR: {
         BYTE want[20];
         DWORD size = sizeof(want);
-        if (!para || !CryptStringToBinaryW(para, 0, CRYPT_STRING_HEX, want, &size, NULL, NULL) || size != 20)
+        if (!para || !CryptStringToBinaryW(para, 0, CRYPT_STRING_HEX, want, &size, nullptr, nullptr) || size != 20)
             return FALSE;
         CRYPT_HASH_BLOB blob = {size, want};
         return hash_matches(cert, CERT_SHA1_HASH_PROP_ID, &blob);
     }
     case CERT_COMPARE_PROPERTY: {
         DWORD size = 0;
-        return para && CertGetCertificateContextProperty(cert, *(const DWORD *)para, NULL, &size);
+        return para && CertGetCertificateContextProperty(cert, *(const DWORD *)para, nullptr, &size);
     }
     case CERT_COMPARE_PUBLIC_KEY:
         return para && CertComparePublicKeyInfo(cert->dwCertEncodingType, (PCERT_PUBLIC_KEY_INFO)para,
@@ -439,7 +439,7 @@ static BOOL cert_matches(PCCERT_CONTEXT cert, DWORD type, DWORD flags, const voi
     case CERT_COMPARE_NAME_STR_A: {
         if (!para)
             return FALSE;
-        int n = MultiByteToWideChar(CP_ACP, 0, para, -1, NULL, 0);
+        int n = MultiByteToWideChar(CP_ACP, 0, para, -1, nullptr, 0);
         WCHAR *w = CrAlloc(n * sizeof(WCHAR));
         if (!w)
             return FALSE;
@@ -511,14 +511,14 @@ PCCERT_CONTEXT WINAPI CertFindCertificateInStore(HCERTSTORE hCertStore, DWORD dw
         if (pPrevCertContext)
             CertFreeCertificateContext(pPrevCertContext);
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     PCCERT_CONTEXT cert = pPrevCertContext;
     while ((cert = CertEnumCertificatesInStore(hCertStore, cert)))
         if (cert_matches(cert, dwFindType, dwFindFlags, pvFindPara))
             return cert;
     SetLastError(CRYPT_E_NOT_FOUND);
-    return NULL;
+    return nullptr;
 }
 
 PCCERT_CONTEXT WINAPI CertGetSubjectCertificateFromStore(HCERTSTORE hCertStore, DWORD dwCertEncodingType,
@@ -526,9 +526,9 @@ PCCERT_CONTEXT WINAPI CertGetSubjectCertificateFromStore(HCERTSTORE hCertStore, 
 {
     if (!pCertId) {
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
-    return CertFindCertificateInStore(hCertStore, dwCertEncodingType, 0, CERT_FIND_SUBJECT_CERT, pCertId, NULL);
+    return CertFindCertificateInStore(hCertStore, dwCertEncodingType, 0, CERT_FIND_SUBJECT_CERT, pCertId, nullptr);
 }
 
 #define CERT_STORE_SIGNATURE_FLAG 0x00000001
@@ -546,24 +546,24 @@ PCCERT_CONTEXT WINAPI CertGetIssuerCertificateFromStore(HCERTSTORE hCertStore, P
         if (pPrevIssuerContext)
             CertFreeCertificateContext(pPrevIssuerContext);
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     if (CrIsSelfIssued(pSubjectContext)) {
         if (pPrevIssuerContext)
             CertFreeCertificateContext(pPrevIssuerContext);
         SetLastError(CRYPT_E_SELF_SIGNED);
-        return NULL;
+        return nullptr;
     }
     PCCERT_CONTEXT issuer = CertFindCertificateInStore(hCertStore, pSubjectContext->dwCertEncodingType, 0,
                                                        CERT_FIND_ISSUER_OF, pSubjectContext, pPrevIssuerContext);
     if (!issuer)
-        return NULL;
+        return nullptr;
     DWORD flags = *pdwFlags;
     if ((flags & CERT_STORE_SIGNATURE_FLAG) &&
         !CrVerifySignedBlob(pSubjectContext->pbCertEncoded, pSubjectContext->cbCertEncoded,
                             &issuer->pCertInfo->SubjectPublicKeyInfo))
         flags &= ~CERT_STORE_SIGNATURE_FLAG;
-    if ((flags & CERT_STORE_TIME_VALIDITY_FLAG) && !CertVerifyTimeValidity(NULL, pSubjectContext->pCertInfo))
+    if ((flags & CERT_STORE_TIME_VALIDITY_FLAG) && !CertVerifyTimeValidity(nullptr, pSubjectContext->pCertInfo))
         flags &= ~CERT_STORE_TIME_VALIDITY_FLAG;
     if (flags & CERT_STORE_REVOCATION_FLAG)
         flags |= CERT_STORE_NO_CRL_FLAG;
@@ -616,8 +616,8 @@ static DWORD add_elements(HCERTSTORE store, const BYTE *data, DWORD size, DWORD 
                     CertSetCertificateContextProperty(cert, props[i].id, 0, value);
             }
             prop_count = 0;
-            PCCERT_CONTEXT added = NULL;
-            BOOL ok = store ? CertAddCertificateContextToStore(store, cert, disposition, last ? &added : NULL) : TRUE;
+            PCCERT_CONTEXT added = nullptr;
+            BOOL ok = store ? CertAddCertificateContextToStore(store, cert, disposition, last ? &added : nullptr) : TRUE;
             if (last) {
                 if (!store) {
                     added = CertDuplicateCertificateContext(cert);
@@ -645,7 +645,7 @@ BOOL CrLoadSerialized(HCERTSTORE store, const BYTE *data, DWORD size)
     DWORD zero, magic;
     if (size < 8 || !read_dword(data, &zero) || !read_dword(data + 4, &magic) || zero || magic != SERIALIZED_MAGIC)
         return CrFail(CRYPT_E_FILE_ERROR);
-    DWORD error = add_elements(store, data + 8, size - 8, CERT_STORE_ADD_ALWAYS, NULL);
+    DWORD error = add_elements(store, data + 8, size - 8, CERT_STORE_ADD_ALWAYS, nullptr);
     return error ? CrFail(error) : TRUE;
 }
 
@@ -694,12 +694,12 @@ static BOOL load_any(HCERTSTORE store, const BYTE *data, DWORD size)
         return TRUE;
     /* base64 text, with or without a pem header. */
     DWORD n = 0;
-    if (!CryptStringToBinaryA((LPCSTR)data, size, CRYPT_STRING_BASE64_ANY, NULL, &n, NULL, NULL))
+    if (!CryptStringToBinaryA((LPCSTR)data, size, CRYPT_STRING_BASE64_ANY, nullptr, &n, nullptr, nullptr))
         return CrFail(CRYPT_E_FILE_ERROR);
     BYTE *decoded = CrAlloc(n);
     if (!decoded)
         return CrFail(ERROR_OUTOFMEMORY);
-    BOOL ok = CryptStringToBinaryA((LPCSTR)data, size, CRYPT_STRING_BASE64_ANY, decoded, &n, NULL, NULL) &&
+    BOOL ok = CryptStringToBinaryA((LPCSTR)data, size, CRYPT_STRING_BASE64_ANY, decoded, &n, nullptr, nullptr) &&
               (CrLoadPkcs7(store, decoded, n) || CrAddEncoded(store, decoded, n));
     CrFree(decoded);
     return ok ? TRUE : CrFail(CRYPT_E_FILE_ERROR);
@@ -716,7 +716,7 @@ static BOOL load_file(HCERTSTORE store, HANDLE file)
     if (!data)
         return CrFail(ERROR_OUTOFMEMORY);
     DWORD read = 0;
-    BOOL ok = ReadFile(file, data, size.LowPart, &read, NULL);
+    BOOL ok = ReadFile(file, data, size.LowPart, &read, nullptr);
     if (ok)
         ok = read ? load_any(store, data, read) : TRUE;
     CrFree(data);
@@ -745,9 +745,9 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
         SetLastError(provider == 9 || provider == 10 || provider == 12 || provider == 13 || provider == 14
                          ? ERROR_SUCCESS
                          : ERROR_CALL_NOT_IMPLEMENTED);
-        return NULL;
+        return nullptr;
     }
-    cr_store *store = NULL;
+    cr_store *store = nullptr;
     switch (provider) {
     case 2:
         store = new_store(dwFlags);
@@ -759,12 +759,12 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
     case 14: {
         if (!pvPara) {
             SetLastError(E_INVALIDARG);
-            return NULL;
+            return nullptr;
         }
         DWORD location = (dwFlags & CERT_SYSTEM_STORE_LOCATION_MASK) >> CERT_SYSTEM_STORE_LOCATION_SHIFT;
         if (location > 9 || location == 3) {
             SetLastError(E_INVALIDARG);
-            return NULL;
+            return nullptr;
         }
         store = new_store(dwFlags & ~CERT_SYSTEM_STORE_LOCATION_MASK);
         if (store)
@@ -781,7 +781,7 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
         const CRYPT_DATA_BLOB *blob = pvPara;
         if (!blob) {
             SetLastError(E_INVALIDARG);
-            return NULL;
+            return nullptr;
         }
         store = new_store(dwFlags & ~CERT_STORE_READONLY_FLAG);
         if (store && !(provider == 5 ? CrLoadPkcs7(store, blob->pbData, blob->cbData)
@@ -789,21 +789,21 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
             DWORD error = GetLastError();
             CertCloseStore(store, 0);
             SetLastError(error);
-            return NULL;
+            return nullptr;
         }
         break;
     }
     case 3: {
         if (!pvPara || pvPara == INVALID_HANDLE_VALUE) {
             SetLastError(ERROR_INVALID_HANDLE);
-            return NULL;
+            return nullptr;
         }
         store = new_store(dwFlags & ~CERT_STORE_READONLY_FLAG);
         if (store && !load_file(store, (HANDLE)pvPara)) {
             DWORD error = GetLastError();
             CertCloseStore(store, 0);
             SetLastError(error);
-            return NULL;
+            return nullptr;
         }
         break;
     }
@@ -811,16 +811,16 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
     case 8: {
         if (!pvPara) {
             SetLastError(E_INVALIDARG);
-            return NULL;
+            return nullptr;
         }
         HANDLE file;
         if (provider == 7)
-            file = CreateFileA(pvPara, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+            file = CreateFileA(pvPara, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         else
-            file = CreateFileW(pvPara, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+            file = CreateFileW(pvPara, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         if (file == INVALID_HANDLE_VALUE) {
             if (dwFlags & CERT_STORE_OPEN_EXISTING_FLAG)
-                return NULL;
+                return nullptr;
             return new_store(dwFlags & ~CERT_STORE_READONLY_FLAG);
         }
         store = new_store(dwFlags & ~CERT_STORE_READONLY_FLAG);
@@ -830,7 +830,7 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
         if (store && !ok) {
             CertCloseStore(store, 0);
             SetLastError(error);
-            return NULL;
+            return nullptr;
         }
         if (store)
             store->flags |= dwFlags & CERT_STORE_READONLY_FLAG;
@@ -838,7 +838,7 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
     }
     default:
         SetLastError(ERROR_FILE_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     if (store && provider >= 5 && provider != 11)
         store->flags |= dwFlags & CERT_STORE_READONLY_FLAG;
@@ -849,7 +849,7 @@ HCERTSTORE WINAPI CertOpenSystemStoreW(HCRYPTPROV_LEGACY hProv, LPCWSTR szSubsys
 {
     if (!szSubsystemProtocol) {
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     return CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, hProv,
                          CERT_STORE_NO_CRYPT_RELEASE_FLAG | CERT_SYSTEM_STORE_CURRENT_USER, szSubsystemProtocol);
@@ -859,7 +859,7 @@ HCERTSTORE WINAPI CertOpenSystemStoreA(HCRYPTPROV_LEGACY hProv, LPCSTR szSubsyst
 {
     if (!szSubsystemProtocol) {
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     return CertOpenStore(CERT_STORE_PROV_SYSTEM_A, 0, hProv,
                          CERT_STORE_NO_CRYPT_RELEASE_FLAG | CERT_SYSTEM_STORE_CURRENT_USER, szSubsystemProtocol);
@@ -870,7 +870,7 @@ HCERTSTORE WINAPI CertDuplicateStore(HCERTSTORE hCertStore)
     cr_store *store = CrStore(hCertStore);
     if (!store) {
         SetLastError(E_INVALIDARG);
-        return NULL;
+        return nullptr;
     }
     InterlockedIncrement(&store->opens);
     InterlockedIncrement(&store->refs);
@@ -888,7 +888,7 @@ BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
     if (!InterlockedDecrement(&store->opens)) {
         /* releases the store's own references; contexts the program still holds keep it alive. */
         for (;;) {
-            cr_cert *victim = NULL;
+            cr_cert *victim = nullptr;
             CrLock();
             for (cr_cert *c = store->head; c; c = c->next)
                 if (!c->deleted) {
@@ -963,7 +963,7 @@ void WINAPI CertRemoveStoreFromCollection(HCERTSTORE hCollectionStore, HCERTSTOR
     cr_store *collection = CrStore(hCollectionStore);
     if (!collection)
         return;
-    cr_store *removed = NULL;
+    cr_store *removed = nullptr;
     CrLock();
     for (DWORD i = 0; i < collection->child_count; i++)
         if (collection->children[i] == hSiblingStore) {
@@ -1025,7 +1025,7 @@ BOOL WINAPI CertSetStoreProperty(HCERTSTORE hCertStore, DWORD dwPropId, DWORD dw
     cr_store *store = CrStore(hCertStore);
     if (!store || dwPropId != CERT_STORE_LOCALIZED_NAME_PROP_ID)
         return CrFail(E_INVALIDARG);
-    WCHAR *copy = NULL;
+    WCHAR *copy = nullptr;
     const CRYPT_DATA_BLOB *blob = pvData;
     if (blob) {
         copy = CrAllocZero(blob->cbData + sizeof(WCHAR));
@@ -1055,7 +1055,7 @@ static void serialize_cert(der_writer *w, PCCERT_CONTEXT cert)
         if (id == CERT_KEY_CONTEXT_PROP_ID || id == CERT_KEY_PROV_HANDLE_PROP_ID || id == CERT_KEY_PROV_INFO_PROP_ID)
             continue;
         DWORD size = 0;
-        if (!CertGetCertificateContextProperty(cert, id, NULL, &size))
+        if (!CertGetCertificateContextProperty(cert, id, nullptr, &size))
             continue;
         BYTE *data = CrAlloc(size ? size : 1);
         if (!data)
@@ -1109,7 +1109,7 @@ BOOL WINAPI CertAddSerializedElementToStore(HCERTSTORE hCertStore, const BYTE *p
         return CrFail(E_INVALIDARG);
     if (!(dwContextTypeFlags & CERT_STORE_CERTIFICATE_CONTEXT_FLAG))
         return CrFail(E_INVALIDARG);
-    PCCERT_CONTEXT last = NULL;
+    PCCERT_CONTEXT last = nullptr;
     DWORD error = add_elements(hCertStore, pbElement, cbElement, dwAddDisposition, &last);
     if (error)
         return CrFail(error);
@@ -1131,16 +1131,16 @@ static void write_pkcs7(der_writer *w, HCERTSTORE store)
     DWORD wrapper = DerBegin(w, ASN_CONSTRUCTED_CONTEXT(0));
     DWORD signed_data = DerBegin(w, ASN_SEQUENCE);
     DerWriteInt(w, 1);
-    DerWriteTlv(w, ASN_SET, NULL, 0);
+    DerWriteTlv(w, ASN_SET, nullptr, 0);
     DWORD content = DerBegin(w, ASN_SEQUENCE);
     DerWriteOid(w, szOID_RSA_data);
     DerEnd(w, content);
     DWORD certs = DerBegin(w, ASN_CONSTRUCTED_CONTEXT(0));
-    PCCERT_CONTEXT cert = NULL;
+    PCCERT_CONTEXT cert = nullptr;
     while ((cert = CertEnumCertificatesInStore(store, cert)))
         DerWriteBytes(w, cert->pbCertEncoded, cert->cbCertEncoded);
     DerEnd(w, certs);
-    DerWriteTlv(w, ASN_SET, NULL, 0);
+    DerWriteTlv(w, ASN_SET, nullptr, 0);
     DerEnd(w, signed_data);
     DerEnd(w, wrapper);
     DerEnd(w, info);
@@ -1156,7 +1156,7 @@ BOOL WINAPI CertSaveStore(HCERTSTORE hCertStore, DWORD dwEncodingType, DWORD dwS
     if (dwSaveAs == CERT_STORE_SAVE_AS_STORE) {
         put_dword(&w, 0);
         put_dword(&w, SERIALIZED_MAGIC);
-        PCCERT_CONTEXT cert = NULL;
+        PCCERT_CONTEXT cert = nullptr;
         while ((cert = CertEnumCertificatesInStore(hCertStore, cert)))
             serialize_cert(&w, cert);
         put_dword(&w, 0);
@@ -1187,20 +1187,20 @@ BOOL WINAPI CertSaveStore(HCERTSTORE hCertStore, DWORD dwEncodingType, DWORD dwS
     }
     case CERT_STORE_SAVE_TO_FILE: {
         DWORD written;
-        ok = WriteFile((HANDLE)pvSaveToPara, w.data, w.size, &written, NULL);
+        ok = WriteFile((HANDLE)pvSaveToPara, w.data, w.size, &written, nullptr);
         break;
     }
     case CERT_STORE_SAVE_TO_FILENAME_A:
     case CERT_STORE_SAVE_TO_FILENAME_W: {
         HANDLE file = dwSaveTo == CERT_STORE_SAVE_TO_FILENAME_A
-                          ? CreateFileA(pvSaveToPara, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL)
-                          : CreateFileW(pvSaveToPara, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+                          ? CreateFileA(pvSaveToPara, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr)
+                          : CreateFileW(pvSaveToPara, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
         if (file == INVALID_HANDLE_VALUE) {
             ok = FALSE;
             break;
         }
         DWORD written;
-        ok = WriteFile(file, w.data, w.size, &written, NULL);
+        ok = WriteFile(file, w.data, w.size, &written, nullptr);
         CloseHandle(file);
         break;
     }

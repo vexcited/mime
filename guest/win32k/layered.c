@@ -43,7 +43,7 @@ SURFACE *LayerPrepare(WND *w, const RECT *dirty)
     if (!s || !needs_compose(w)) {
         if (w->Present) {
             PaintRetireSurface(w->Present);
-            w->Present = NULL;
+            w->Present = nullptr;
         }
         return s;
     }
@@ -54,7 +54,7 @@ SURFACE *LayerPrepare(WND *w, const RECT *dirty)
         if (w->Present)
             PaintRetireSurface(w->Present);
         w->Present = p;
-        dirty = NULL;
+        dirty = nullptr;
     }
     RECT bounds = {0, 0, s->Width, s->Height}, r = bounds;
     if (dirty && !RectIntersect(&r, dirty, &bounds))
@@ -97,12 +97,12 @@ void LayerWindowDestroyed(WND *w)
 {
     if (w->Present) {
         PaintRetireSurface(w->Present);
-        w->Present = NULL;
+        w->Present = nullptr;
     }
     if (w->Shape) {
         RgnFree(w->Shape);
         W32Free(w->Shape);
-        w->Shape = NULL;
+        w->Shape = nullptr;
     }
     w->LayerFlags = 0;
 }
@@ -124,9 +124,9 @@ void LayerStyleChanged(WND *w)
     w->LayerFlags = 0;
     if (w->Present) {
         PaintRetireSurface(w->Present);
-        w->Present = NULL;
+        w->Present = nullptr;
     }
-    WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
+    WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 /* ------------------------------------------------------------------ services */
@@ -148,7 +148,7 @@ BOOL NTAPI NtUserSetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha,
         w->LayerKey = key & 0xFFFFFF;
         if (was_update || first) {
             /* the window paints itself again, and becomes visible once it has attributes. */
-            WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
+            WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
             if (WndIsTopLevel(w))
                 WndUpdateHostConfig(w, FALSE);
         }
@@ -274,13 +274,13 @@ BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC hdst, POINT *user_dst_pos, S
         BOOLEAN first = !(w->LayerFlags & MIME_LAYER_UPDATE);
         w->LayerFlags = MIME_LAYER_UPDATE;
         if ((swp & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
-            WndSetPos(w, NULL, x, y, cx, cy, swp);
+            WndSetPos(w, nullptr, x, y, cx, cy, swp);
         /* the window no longer paints: its pixels come from the caller. */
-        WndValidate(w, NULL);
+        WndValidate(w, nullptr);
         w->Flags &= ~(WNDF_FRAME_DIRTY | WNDF_INTERNAL_PAINT);
         if (WndIsTopLevel(w))
             WndEnsureSurface(w);
-        DC *src = hsrc ? DcLookup(hsrc) : NULL;
+        DC *src = hsrc ? DcLookup(hsrc) : nullptr;
         if (src && src->Surface && w->Surface) {
             RECT area = {0, 0, w->Surface->Width, w->Surface->Height};
             if (user_dirty) {
@@ -289,7 +289,7 @@ BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC hdst, POINT *user_dst_pos, S
                     clipped = (RECT){0, 0, 0, 0};
                 area = clipped;
             }
-            copy_layer(w, src, src_pos, &area, key, user_blend ? &blend : NULL, flags);
+            copy_layer(w, src, src_pos, &area, key, user_blend ? &blend : nullptr, flags);
             SurfaceMarkDirty(w->Surface, &area);
         }
         if (first && WndIsTopLevel(w))
@@ -308,10 +308,10 @@ int NTAPI NtUserSetWindowRgn(HWND hwnd, HRGN region, BOOL redraw)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : NULL;
+    GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : nullptr;
     int ok = 0;
     if (w && (!region || r)) {
-        REGION *shape = NULL;
+        REGION *shape = nullptr;
         if (r) {
             shape = W32Alloc(sizeof(REGION));
             if (shape) {
@@ -330,10 +330,10 @@ int NTAPI NtUserSetWindowRgn(HWND hwnd, HRGN region, BOOL redraw)
                 GdiDeleteObject(&r->Header);
             if (WndIsTopLevel(w) && w->Surface) {
                 if (redraw)
-                    WndInvalidateRegion(w, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
+                    WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
                 redraw_all(w);
             } else if (redraw && w->Parent) {
-                WndInvalidateRegion(w->Parent, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+                WndInvalidateRegion(w->Parent, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
             }
             ok = 1;
         }
@@ -348,7 +348,7 @@ int NTAPI NtUserGetWindowRgnEx(HWND hwnd, HRGN region, UINT reserved)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : NULL;
+    GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : nullptr;
     int result = ERROR;
     if (w && r && w->Shape && RgnCopy(&r->Region, w->Shape))
         result = RgnComplexity(&r->Region);

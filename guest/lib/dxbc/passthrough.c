@@ -80,8 +80,8 @@ static void put_code(Writer *w, const DxbcSignature *sig, uint32_t primitive)
     uint32_t vertices = VERTICES[primitive & 7];
     uint32_t passed = PASSED_COUNT[primitive & 7];
     /* the registers the outputs fill, each with its components and system value. */
-    uint8_t masks[32] = {0};
-    uint32_t svs[32] = {0};
+    uint8_t masks[32] = {};
+    uint32_t svs[32] = {};
     for (uint32_t i = 0; i < sig->count; i++) {
         const DxbcSignatureElement *e = &sig->elements[i];
         if (e->reg >= 32)
@@ -138,7 +138,7 @@ void *dxbc_passthrough_gs(const void *bytecode, size_t length, uint32_t primitiv
                                      DXBC_FOURCC('S', 'H', 'E', 'X')};
     DxbcSignature sig;
     if (dxbc_parse_io(bytecode, length, 1, &sig, alloc))
-        return NULL;
+        return nullptr;
     Writer w = {0, 0, 0, alloc, 0};
     put(&w, "DXBC", 4);
     for (int i = 0; i < 4; i++)
@@ -163,7 +163,7 @@ void *dxbc_passthrough_gs(const void *bytecode, size_t length, uint32_t primitiv
     mime_free(alloc, sig.elements);
     if (w.failed) {
         mime_free(alloc, w.data);
-        return NULL;
+        return nullptr;
     }
     set32(&w, 24, (uint32_t)w.size);
     uint32_t sum[4];

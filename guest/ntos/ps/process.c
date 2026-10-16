@@ -40,14 +40,14 @@ void PspFreeId(HANDLE id)
     ULONG i = (ULONG)((ULONG_PTR)id / 4);
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_cid_lock);
     if (i < g_cid_capacity)
-        g_cid_table[i] = NULL;
+        g_cid_table[i] = nullptr;
     KeReleaseSpinLock(&g_cid_lock, irql);
 }
 
 static PVOID lookup_cid(HANDLE id, POBJECT_TYPE type)
 {
     ULONG i = (ULONG)((ULONG_PTR)id / 4);
-    PVOID object = NULL;
+    PVOID object = nullptr;
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_cid_lock);
     if (i < g_cid_capacity && g_cid_table[i] && OBJECT_TO_HEADER(g_cid_table[i])->Type == type) {
         object = g_cid_table[i];
@@ -81,12 +81,12 @@ NTSTATUS NTAPI PsLookupThreadByThreadId(HANDLE id, PETHREAD *thread)
 
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process)
 {
-    return ObReferenceHandle(handle, PsProcessTypeObject, KeGetPreviousMode(), (PVOID *)process, NULL);
+    return ObReferenceHandle(handle, PsProcessTypeObject, KeGetPreviousMode(), (PVOID *)process, nullptr);
 }
 
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread)
 {
-    return ObReferenceHandle(handle, PsThreadTypeObject, KeGetPreviousMode(), (PVOID *)thread, NULL);
+    return ObReferenceHandle(handle, PsThreadTypeObject, KeGetPreviousMode(), (PVOID *)thread, nullptr);
 }
 
 PEPROCESS NTAPI PsGetCurrentProcess(void)
@@ -144,7 +144,7 @@ NTSTATUS NTAPI PsSetCreateProcessNotifyRoutine(PCREATE_PROCESS_NOTIFY_ROUTINE ro
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_process_notify); i++) {
         if (remove && g_process_notify[i] == routine) {
-            g_process_notify[i] = NULL;
+            g_process_notify[i] = nullptr;
             return STATUS_SUCCESS;
         }
         if (!remove && !g_process_notify[i]) {
@@ -181,7 +181,7 @@ static void process_delete(PVOID object)
 NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
 {
     PEPROCESS process;
-    NTSTATUS status = ObCreateObject(PsProcessTypeObject, NULL, KernelMode, sizeof(EPROCESS), (PVOID *)&process);
+    NTSTATUS status = ObCreateObject(PsProcessTypeObject, nullptr, KernelMode, sizeof(EPROCESS), (PVOID *)&process);
     if (!NT_SUCCESS(status))
         return status;
     memset(process, 0, sizeof(*process));
@@ -406,7 +406,7 @@ void PsInitialize(void)
     g_cid_capacity = 65536 / 4;
     g_cid_table = ExAllocatePool2(POOL_FLAG_NON_PAGED, g_cid_capacity * sizeof(PVOID), KI_TAG('P', 's', 'C', 'i'));
 
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = PROCESS_ALL_ACCESS;
     init.DeleteProcedure = process_delete;
     init.WaitObject = process_wait_object;
@@ -419,7 +419,7 @@ void PsInitialize(void)
 
     /* the system process owns kernel handles and system threads. */
     PEPROCESS system;
-    ObCreateObject(PsProcessTypeObject, NULL, KernelMode, sizeof(EPROCESS), (PVOID *)&system);
+    ObCreateObject(PsProcessTypeObject, nullptr, KernelMode, sizeof(EPROCESS), (PVOID *)&system);
     memset(system, 0, sizeof(*system));
     system->Pcb.Header.Type = ProcessObject;
     InitializeListHead(&system->Pcb.Header.WaitListHead);

@@ -41,7 +41,7 @@ static void reverse_put(MvkConnection *c, uint64_t handle, uint64_t id)
         return;
     if ((c->reverse_used + 1) * 2 > c->reverse_size) {
         size_t old = c->reverse_size;
-        __typeof__(c->reverse) prev = c->reverse;
+        typeof(c->reverse) prev = c->reverse;
         c->reverse_size = old ? old * 2 : 1024;
         c->reverse = calloc(c->reverse_size, sizeof(*c->reverse));
         c->reverse_used = 0;
@@ -93,7 +93,7 @@ void mvk_track(MvkConnection *c, uint64_t handle, int kind)
     pthread_mutex_lock(&c->live_lock);
     if ((c->live_used + 1) * 2 > c->live_size) {
         size_t old = c->live_size;
-        __typeof__(c->live) prev = c->live, next = calloc(old ? old * 2 : 1024, sizeof(*c->live));
+        typeof(c->live) prev = c->live, next = calloc(old ? old * 2 : 1024, sizeof(*c->live));
         if (!next) {
             pthread_mutex_unlock(&c->live_lock);
             return;
@@ -137,7 +137,7 @@ void mvk_forget(MvkConnection *c, uint64_t handle)
 
 static int by_kind(const void *a, const void *b)
 {
-    const __typeof__(*((MvkConnection *)0)->live) *x = a, *y = b;
+    const typeof(*((MvkConnection *)0)->live) *x = a, *y = b;
     return (int)x->kind - (int)y->kind;
 }
 
@@ -156,7 +156,7 @@ static void destroy_leftovers(MvkConnection *c)
     for (size_t i = 0; i < n && c->device; i++)
         mvk_destroy_kind(&c->fn, c->device, (int)c->live[i].kind, c->live[i].handle);
     free(c->live);
-    c->live = NULL;
+    c->live = nullptr;
     c->live_size = c->live_used = 0;
     pthread_mutex_unlock(&c->live_lock);
 }
@@ -168,7 +168,7 @@ static void pool_of_put(MvkConnection *c, VkCommandBuffer buffer, VkCommandPool 
         return;
     if ((c->buffer_pool_used + 1) * 2 > c->buffer_pool_size) {
         size_t old = c->buffer_pool_size;
-        __typeof__(c->buffer_pools) prev = c->buffer_pools;
+        typeof(c->buffer_pools) prev = c->buffer_pools;
         c->buffer_pool_size = old ? old * 2 : 256;
         c->buffer_pools = calloc(c->buffer_pool_size, sizeof(*c->buffer_pools));
         c->buffer_pool_used = 0;
@@ -314,12 +314,12 @@ MvkEncoder *mvk_reply_begin(MvkCall *c)
     /* a call nobody waits for replies into nothing. */
     static uint8_t sink[16];
     if (c->header.reply == MVK_NO_REPLY) {
-        c->out = (MvkEncoder){sink, sink + 8, sink + 8, 0, c->conn, NULL};
+        c->out = (MvkEncoder){sink, sink + 8, sink + 8, 0, c->conn, nullptr};
         c->replying = 1;
         return &c->out;
     }
     uint8_t *base = c->conn->reply + c->header.reply;
-    c->out = (MvkEncoder){base, base + 8, base + c->header.reply_size, 0, c->conn, NULL};
+    c->out = (MvkEncoder){base, base + 8, base + c->header.reply_size, 0, c->conn, nullptr};
     c->replying = 1;
     return &c->out;
 }
@@ -336,7 +336,7 @@ void *mvk_get_chain(MvkDecoder *d)
 {
     uint32_t type = mvk_get_u32(d);
     if (!type || d->error)
-        return NULL;
+        return nullptr;
     void *s = mvk_get_chain_struct(d, (VkStructureType)type);
     if (!s)
         d->error = 1;
@@ -406,7 +406,7 @@ static bool load_library(MvkConnection *c)
         return false;
     }
     c->gipa = (PFN_vkGetInstanceProcAddr)dlsym(c->library, "vkGetInstanceProcAddr");
-    return c->gipa != NULL;
+    return c->gipa != nullptr;
 }
 
 static bool host_has(const VkExtensionProperties *list, uint32_t count, const char *name)
@@ -436,12 +436,12 @@ static void instance_extensions(MvkCall *call)
         return;
     }
     PFN_vkEnumerateInstanceExtensionProperties enumerate =
-        (PFN_vkEnumerateInstanceExtensionProperties)c->gipa(NULL, "vkEnumerateInstanceExtensionProperties");
-    PFN_vkEnumerateInstanceVersion version = (PFN_vkEnumerateInstanceVersion)c->gipa(NULL, "vkEnumerateInstanceVersion");
+        (PFN_vkEnumerateInstanceExtensionProperties)c->gipa(nullptr, "vkEnumerateInstanceExtensionProperties");
+    PFN_vkEnumerateInstanceVersion version = (PFN_vkEnumerateInstanceVersion)c->gipa(nullptr, "vkEnumerateInstanceVersion");
     uint32_t count = 0, api = VK_API_VERSION_1_0;
-    enumerate(NULL, &count, NULL);
+    enumerate(nullptr, &count, nullptr);
     VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
-    enumerate(NULL, &count, list);
+    enumerate(nullptr, &count, list);
     if (version)
         version(&api);
     mvk_put_u32(e, (uint32_t)VK_SUCCESS);
@@ -479,11 +479,11 @@ static void create_instance(MvkCall *call)
     if (!d->error && load_library(c) && !c->instance) {
         /* the guest's layers do not exist here, and only extensions the host has go through. */
         PFN_vkEnumerateInstanceExtensionProperties enumerate =
-            (PFN_vkEnumerateInstanceExtensionProperties)c->gipa(NULL, "vkEnumerateInstanceExtensionProperties");
+            (PFN_vkEnumerateInstanceExtensionProperties)c->gipa(nullptr, "vkEnumerateInstanceExtensionProperties");
         uint32_t count = 0;
-        enumerate(NULL, &count, NULL);
+        enumerate(nullptr, &count, nullptr);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
-        enumerate(NULL, &count, list);
+        enumerate(nullptr, &count, list);
         const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 8));
         uint32_t n = 0;
         for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
@@ -496,13 +496,13 @@ static void create_instance(MvkCall *call)
                 names[n++] = *x;
         free(list);
         info.enabledLayerCount = 0;
-        info.ppEnabledLayerNames = NULL;
+        info.ppEnabledLayerNames = nullptr;
         info.enabledExtensionCount = n;
         info.ppEnabledExtensionNames = names;
-        PFN_vkCreateInstance create = (PFN_vkCreateInstance)c->gipa(NULL, "vkCreateInstance");
-        result = create(&info, NULL, &c->instance);
+        PFN_vkCreateInstance create = (PFN_vkCreateInstance)c->gipa(nullptr, "vkCreateInstance");
+        result = create(&info, nullptr, &c->instance);
         if (result == VK_SUCCESS) {
-            mvk_load_dispatch(&c->fn, c->gipa, c->instance, NULL, NULL);
+            mvk_load_dispatch(&c->fn, c->gipa, c->instance, nullptr, nullptr);
             bind(c, id, (uint64_t)(uintptr_t)c->instance);
         }
     }
@@ -517,19 +517,19 @@ static void create_instance(MvkCall *call)
 static uint32_t importable_types(MvkConnection *c, VkPhysicalDevice physical)
 {
     uint32_t count = 0;
-    c->fn.vkEnumerateDeviceExtensionProperties(physical, NULL, &count, NULL);
+    c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
     VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
-    c->fn.vkEnumerateDeviceExtensionProperties(physical, NULL, &count, list);
+    c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
     bool has = host_has(list, count, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     free(list);
     if (!has)
         return 0;
     float priority = 1.0f;
-    VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, NULL, 0, 0, 1, &priority};
+    VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0, 0, 1, &priority};
     const char *ext = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
-    VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, NULL, 0, 1, &queue, 0, NULL, 1, &ext, NULL};
+    VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, 0, 1, &queue, 0, nullptr, 1, &ext, nullptr};
     VkDevice device;
-    if (c->fn.vkCreateDevice(physical, &info, NULL, &device) != VK_SUCCESS)
+    if (c->fn.vkCreateDevice(physical, &info, nullptr, &device) != VK_SUCCESS)
         return 0;
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
     PFN_vkGetMemoryHostPointerPropertiesEXT props =
@@ -542,7 +542,7 @@ static uint32_t importable_types(MvkConnection *c, VkPhysicalDevice physical)
         props(device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, probe, &out) == VK_SUCCESS)
         bits = out.memoryTypeBits;
     free(probe);
-    destroy(device, NULL);
+    destroy(device, nullptr);
     return bits;
 }
 
@@ -580,13 +580,13 @@ static void device_extensions(MvkCall *call)
     VkPhysicalDevice physical = (VkPhysicalDevice)mvk_get_handle(d, 1);
     MvkEncoder *e = mvk_reply_begin(call);
     uint32_t count = 0;
-    if (!physical || c->fn.vkEnumerateDeviceExtensionProperties(physical, NULL, &count, NULL) < 0) {
+    if (!physical || c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr) < 0) {
         mvk_put_u32(e, (uint32_t)VK_ERROR_INITIALIZATION_FAILED);
         mvk_reply_end(call);
         return;
     }
     VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
-    c->fn.vkEnumerateDeviceExtensionProperties(physical, NULL, &count, list);
+    c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
     mvk_put_u32(e, (uint32_t)VK_SUCCESS);
     uint32_t n = 0;
     for (uint32_t i = 0; i < count; i++)
@@ -639,9 +639,9 @@ static void create_device(MvkCall *call)
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     if (!d->error && physical && !c->device) {
         uint32_t count = 0;
-        c->fn.vkEnumerateDeviceExtensionProperties(physical, NULL, &count, NULL);
+        c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
-        c->fn.vkEnumerateDeviceExtensionProperties(physical, NULL, &count, list);
+        c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
         const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 4));
         uint32_t n = 0;
         for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
@@ -679,7 +679,7 @@ static void create_device(MvkCall *call)
             timeline.pNext = (void *)info.pNext;
             info.pNext = &timeline;
         }
-        result = c->fn.vkCreateDevice(physical, &info, NULL, &c->device);
+        result = c->fn.vkCreateDevice(physical, &info, nullptr, &c->device);
         if (result == VK_SUCCESS) {
             c->physical_device = physical;
             c->timelines = timeline.timelineSemaphore;
@@ -702,7 +702,7 @@ static void create_device(MvkCall *call)
                 c->fn.vkGetDeviceQueue(c->device, family, index, &q);
                 bind(c, qid, (uint64_t)(uintptr_t)q);
                 if (q && c->queue_count < sizeof(c->queues) / sizeof(c->queues[0]))
-                    c->queues[c->queue_count++] = (__typeof__(c->queues[0])){q, family};
+                    c->queues[c->queue_count++] = (typeof(c->queues[0])){q, family};
             }
         }
     }
@@ -724,7 +724,7 @@ static void destroy_device(MvkCall *call)
     stop_watcher(c);
     c->fn.vkDeviceWaitIdle(c->device);
     destroy_leftovers(c);
-    c->fn.vkDestroyDevice(c->device, NULL);
+    c->fn.vkDestroyDevice(c->device, nullptr);
     bind(c, id, 0);
     c->device = VK_NULL_HANDLE;
     c->physical_device = VK_NULL_HANDLE;
@@ -759,10 +759,10 @@ static void allocate_memory(MvkCall *call)
                 import.pNext = info.pNext;
                 info.pNext = &import;
                 info.allocationSize = span;
-                result = c->fn.vkAllocateMemory(c->device, &info, NULL, &memory);
+                result = c->fn.vkAllocateMemory(c->device, &info, nullptr, &memory);
             }
         } else {
-            result = c->fn.vkAllocateMemory(c->device, &info, NULL, &memory);
+            result = c->fn.vkAllocateMemory(c->device, &info, nullptr, &memory);
         }
         if (result == VK_SUCCESS) {
             bind(c, id, (uint64_t)memory);
@@ -779,7 +779,7 @@ static void free_memory(MvkCall *call)
     uint64_t id = mvk_get_u64(&call->in);
     VkDeviceMemory memory = (VkDeviceMemory)lookup(c, id);
     if (memory && c->device) {
-        c->fn.vkFreeMemory(c->device, memory, NULL);
+        c->fn.vkFreeMemory(c->device, memory, nullptr);
         mvk_forget(c, (uint64_t)memory);
     }
     bind(c, id, 0);
@@ -870,7 +870,7 @@ static void record_stream(MvkConnection *c, VkCommandBuffer buffer, const VkComm
 {
     MvkCall outer = {.conn = c, .fn = &c->fn};
     outer.header.reply = MVK_NO_REPLY;
-    outer.in = (MvkDecoder){NULL, NULL, NULL, 0, c, arena, 0, arena_size};
+    outer.in = (MvkDecoder){nullptr, nullptr, nullptr, 0, c, arena, 0, arena_size};
     c->fn.vkBeginCommandBuffer(buffer, info);
     run_stream(&outer, buffer, stream, size);
     VkResult result = c->fn.vkEndCommandBuffer(buffer);
@@ -899,7 +899,7 @@ static void *recorder_main(void *arg)
         MvkRecord *r = g_record_first;
         g_record_first = r->queued;
         if (!g_record_first)
-            g_record_last = NULL;
+            g_record_last = nullptr;
         pthread_mutex_unlock(&g_record_lock);
         MvkConnection *c = r->conn;
         if (r->after)
@@ -907,14 +907,14 @@ static void *recorder_main(void *arg)
         if (arena)
             record_stream(c, r->buffer, &r->info, r->stream, r->size, arena, ARENA_SIZE);
         free(r->stream);
-        r->stream = NULL;
+        r->stream = nullptr;
         pthread_mutex_lock(&c->record_lock);
         __atomic_store_n(&r->done, 1, __ATOMIC_RELEASE);
         c->records_pending--;
         pthread_cond_broadcast(&c->record_done);
         pthread_mutex_unlock(&c->record_lock);
     }
-    return NULL;
+    return nullptr;
 }
 
 static void record_push(MvkRecord *r)
@@ -925,11 +925,11 @@ static void record_push(MvkRecord *r)
         g_recorders = cpus > 4 ? (uint32_t)(cpus / 2 < 8 ? cpus / 2 : 8) : 2;
         for (uint32_t i = 0; i < g_recorders; i++) {
             pthread_t thread;
-            pthread_create(&thread, NULL, recorder_main, NULL);
+            pthread_create(&thread, nullptr, recorder_main, nullptr);
             pthread_detach(thread);
         }
     }
-    r->queued = NULL;
+    r->queued = nullptr;
     if (g_record_last)
         g_record_last->queued = r;
     else
@@ -1015,7 +1015,7 @@ static void record(MvkCall *call)
         pa = head.next_pa;
     }
     VkCommandPool pool = pool_of(c, buffer);
-    MvkRecord *last = NULL;
+    MvkRecord *last = nullptr;
     for (MvkRecord *r = c->records; r && !last; r = r->next)
         if (r->pool == pool)
             last = r;
@@ -1037,7 +1037,7 @@ static void record(MvkCall *call)
     }
     *r = (MvkRecord){.after = last, .conn = c, .buffer = buffer, .pool = pool, .info = info, .stream = stream,
                      .size = at};
-    r->info.pNext = NULL;
+    r->info.pNext = nullptr;
     r->next = c->records;
     c->records = r;
     pthread_mutex_lock(&c->record_lock);
@@ -1070,7 +1070,7 @@ static void destroy_command_pool(MvkCall *call)
     uint64_t id = mvk_get_u64(d);
     VkCommandPool pool = (VkCommandPool)lookup(call->conn, id);
     if (call->conn->device && pool) {
-        call->fn->vkDestroyCommandPool(call->conn->device, pool, NULL);
+        call->fn->vkDestroyCommandPool(call->conn->device, pool, nullptr);
         mvk_forget(call->conn, (uint64_t)pool);
     }
     bind(call->conn, id, 0);
@@ -1168,22 +1168,22 @@ static void create_object(MvkCall *call, int op)
         VkFenceCreateInfo info;
         mvk_get_VkFenceCreateInfo(d, &info);
         if (!d->error && c->device)
-            result = c->fn.vkCreateFence(c->device, &info, NULL, (VkFence *)&handle);
+            result = c->fn.vkCreateFence(c->device, &info, nullptr, (VkFence *)&handle);
     } else if (op == MVK_OP_CREATE_SEMAPHORE) {
         VkSemaphoreCreateInfo info;
         mvk_get_VkSemaphoreCreateInfo(d, &info);
         if (!d->error && c->device)
-            result = c->fn.vkCreateSemaphore(c->device, &info, NULL, (VkSemaphore *)&handle);
+            result = c->fn.vkCreateSemaphore(c->device, &info, nullptr, (VkSemaphore *)&handle);
     } else if (op == MVK_OP_CREATE_EVENT) {
         VkEventCreateInfo info;
         mvk_get_VkEventCreateInfo(d, &info);
         if (!d->error && c->device)
-            result = c->fn.vkCreateEvent(c->device, &info, NULL, (VkEvent *)&handle);
+            result = c->fn.vkCreateEvent(c->device, &info, nullptr, (VkEvent *)&handle);
     } else if (op == MVK_OP_CREATE_DESCRIPTOR_POOL) {
         VkDescriptorPoolCreateInfo info;
         mvk_get_VkDescriptorPoolCreateInfo(d, &info);
         if (!d->error && c->device)
-            result = c->fn.vkCreateDescriptorPool(c->device, &info, NULL, (VkDescriptorPool *)&handle);
+            result = c->fn.vkCreateDescriptorPool(c->device, &info, nullptr, (VkDescriptorPool *)&handle);
     }
     if (result == VK_SUCCESS) {
         bind(c, id, handle);
@@ -1202,15 +1202,15 @@ static void destroy_object(MvkCall *call, int op)
     uint64_t handle = lookup(c, id);
     if (handle && c->device) {
         if (op == MVK_OP_DESTROY_FENCE)
-            c->fn.vkDestroyFence(c->device, (VkFence)handle, NULL);
+            c->fn.vkDestroyFence(c->device, (VkFence)handle, nullptr);
         else if (op == MVK_OP_DESTROY_SEMAPHORE) {
             unwatch(c, (VkSemaphore)handle);
-            c->fn.vkDestroySemaphore(c->device, (VkSemaphore)handle, NULL);
+            c->fn.vkDestroySemaphore(c->device, (VkSemaphore)handle, nullptr);
         }
         else if (op == MVK_OP_DESTROY_EVENT)
-            c->fn.vkDestroyEvent(c->device, (VkEvent)handle, NULL);
+            c->fn.vkDestroyEvent(c->device, (VkEvent)handle, nullptr);
         else if (op == MVK_OP_DESTROY_DESCRIPTOR_POOL)
-            c->fn.vkDestroyDescriptorPool(c->device, (VkDescriptorPool)handle, NULL);
+            c->fn.vkDestroyDescriptorPool(c->device, (VkDescriptorPool)handle, nullptr);
         mvk_forget(c, handle);
     }
     bind(c, id, 0);
@@ -1276,7 +1276,7 @@ static void get_descriptor(MvkCall *call)
     VkDescriptorGetInfoEXT info = {VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
     info.type = (VkDescriptorType)mvk_get_u32(d);
     VkSampler sampler = VK_NULL_HANDLE;
-    VkDescriptorImageInfo image = {0};
+    VkDescriptorImageInfo image = {};
     VkDescriptorAddressInfoEXT address = {VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT};
     if (info.type == VK_DESCRIPTOR_TYPE_SAMPLER) {
         sampler = (VkSampler)mvk_get_handle(d, 0);
@@ -1304,7 +1304,7 @@ static void get_descriptor(MvkCall *call)
         }
     }
     uint64_t size = mvk_get_u64(d);
-    uint8_t bytes[256] = {0};
+    uint8_t bytes[256] = {};
     if (size > sizeof(bytes))
         size = sizeof(bytes);
     if (!d->error && call->conn->device && call->fn->vkGetDescriptorEXT)
@@ -1389,7 +1389,7 @@ static void query_pool_results(MvkCall *call)
     uint64_t size = mvk_get_u64(d), stride = mvk_get_u64(d);
     uint32_t flags = mvk_get_u32(d);
     MvkEncoder *e = mvk_reply_begin(call);
-    void *data = size <= call->header.reply_size ? mvk_alloc(d, size) : NULL;
+    void *data = size <= call->header.reply_size ? mvk_alloc(d, size) : nullptr;
     VkResult result = data && call->conn->device
                           ? call->fn->vkGetQueryPoolResults(call->conn->device, pool, first, count, size, data, stride, flags)
                           : VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -1442,13 +1442,13 @@ static void *pool_main(void *arg)
         MvkJob *job = g_pool_first;
         g_pool_first = job->queued;
         if (!g_pool_first)
-            g_pool_last = NULL;
+            g_pool_last = nullptr;
         pthread_mutex_unlock(&g_pool_lock);
         const MvkDispatch *fn = &job->conn->fn;
         job->result = job->op == MVK_OP_vkCreateGraphicsPipelines
-                          ? fn->vkCreateGraphicsPipelines(job->device, job->cache, job->count, job->infos, NULL,
+                          ? fn->vkCreateGraphicsPipelines(job->device, job->cache, job->count, job->infos, nullptr,
                                                           job->pipelines)
-                          : fn->vkCreateComputePipelines(job->device, job->cache, job->count, job->infos, NULL,
+                          : fn->vkCreateComputePipelines(job->device, job->cache, job->count, job->infos, nullptr,
                                                          job->pipelines);
         MvkConnection *c = job->conn;
         pthread_mutex_lock(&c->job_lock);
@@ -1457,7 +1457,7 @@ static void *pool_main(void *arg)
         pthread_cond_broadcast(&c->job_done);
         pthread_mutex_unlock(&c->job_lock);
     }
-    return NULL;
+    return nullptr;
 }
 
 static void pool_push(MvkJob *job)
@@ -1468,11 +1468,11 @@ static void pool_push(MvkJob *job)
         g_pool_threads = cpus > 4 ? (uint32_t)(cpus / 2 < 8 ? cpus / 2 : 8) : 2;
         for (uint32_t i = 0; i < g_pool_threads; i++) {
             pthread_t thread;
-            pthread_create(&thread, NULL, pool_main, NULL);
+            pthread_create(&thread, nullptr, pool_main, nullptr);
             pthread_detach(thread);
         }
     }
-    job->queued = NULL;
+    job->queued = nullptr;
     if (g_pool_last)
         g_pool_last->queued = job;
     else
@@ -1575,7 +1575,7 @@ static void create_pipelines_aside(MvkCall *call)
     bool graphics = op == MVK_OP_vkCreateGraphicsPipelines;
     size_t size = (size_t)(call->in.end - call->in.start), arena = size * 8 + 65536;
     MvkJob *job = calloc(1, sizeof(*job));
-    uint8_t *memory = job ? malloc(size + arena) : NULL;
+    uint8_t *memory = job ? malloc(size + arena) : nullptr;
     if (!memory) {
         free(job);
         mvk_check(call, VK_ERROR_OUT_OF_HOST_MEMORY, mvk_generated_names[op]);
@@ -1673,7 +1673,7 @@ typedef struct MvkWatch {
 
 static void wake_watcher(MvkConnection *c)
 {
-    VkSemaphoreSignalInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, NULL, c->wake, ++c->wake_value};
+    VkSemaphoreSignalInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, nullptr, c->wake, ++c->wake_value};
     c->fn.vkSignalSemaphore(c->device, &signal);
 }
 
@@ -1681,8 +1681,8 @@ static void *watcher_main(void *arg)
 {
     MvkConnection *c = arg;
     mime_set_thread_name("mime-vk-watch");
-    VkSemaphore *semaphores = NULL;
-    uint64_t *values = NULL;
+    VkSemaphore *semaphores = nullptr;
+    uint64_t *values = nullptr;
     uint32_t capacity = 0;
     for (;;) {
         pthread_mutex_lock(&c->watch_lock);
@@ -1704,7 +1704,7 @@ static void *watcher_main(void *arg)
         values[n++] = c->wake_value + 1;
         pthread_mutex_unlock(&c->watch_lock);
 
-        VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, NULL, VK_SEMAPHORE_WAIT_ANY_BIT, n,
+        VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, nullptr, VK_SEMAPHORE_WAIT_ANY_BIT, n,
                                     semaphores, values};
         c->fn.vkWaitSemaphores(c->device, &wait, 1000000000ull);
 
@@ -1730,7 +1730,7 @@ static void *watcher_main(void *arg)
     }
     free(semaphores);
     free(values);
-    return NULL;
+    return nullptr;
 }
 
 static void watch_semaphores(MvkCall *call)
@@ -1741,14 +1741,14 @@ static void watch_semaphores(MvkCall *call)
     if (d->error || !c->device || !c->fn.vkWaitSemaphores)
         return;
     if (!c->watching) {
-        VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+        VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
         VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-        if (c->fn.vkCreateSemaphore(c->device, &info, NULL, &c->wake) != VK_SUCCESS)
+        if (c->fn.vkCreateSemaphore(c->device, &info, nullptr, &c->wake) != VK_SUCCESS)
             return;
         c->wake_value = 0;
         c->watch_stop = false;
         c->watching = true;
-        pthread_create(&c->watcher, NULL, watcher_main, c);
+        pthread_create(&c->watcher, nullptr, watcher_main, c);
     }
     pthread_mutex_lock(&c->watch_lock);
     for (uint32_t i = 0; i < n && !d->error; i++) {
@@ -1801,8 +1801,8 @@ static void stop_watcher(MvkConnection *c)
     c->watch_stop = true;
     pthread_mutex_unlock(&c->watch_lock);
     wake_watcher(c);
-    pthread_join(c->watcher, NULL);
-    c->fn.vkDestroySemaphore(c->device, c->wake, NULL);
+    pthread_join(c->watcher, nullptr);
+    c->fn.vkDestroySemaphore(c->device, c->wake, nullptr);
     c->wake = VK_NULL_HANDLE;
     c->watch_count = 0;
     c->watching = false;
@@ -1991,7 +1991,7 @@ static void *connection_main(void *arg)
         if (wait && wait <= header.serial)
             mime_vm_raise_irq(c->vm, MIME_IRQ_GPU);
     }
-    return NULL;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ hypercalls */
@@ -2011,16 +2011,16 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     c->call = malloc(MVK_MAX_CALL);
     c->arena = malloc(ARENA_SIZE);
     c->handle_chunks = calloc(CHUNKS, sizeof(uint64_t *));
-    pthread_mutex_init(&c->lock, NULL);
-    pthread_cond_init(&c->cond, NULL);
-    pthread_mutex_init(&c->job_lock, NULL);
-    pthread_cond_init(&c->job_done, NULL);
-    pthread_mutex_init(&c->watch_lock, NULL);
-    pthread_cond_init(&c->watch_round, NULL);
-    pthread_mutex_init(&c->queue_lock, NULL);
-    pthread_mutex_init(&c->record_lock, NULL);
-    pthread_cond_init(&c->record_done, NULL);
-    pthread_mutex_init(&c->live_lock, NULL);
+    pthread_mutex_init(&c->lock, nullptr);
+    pthread_cond_init(&c->cond, nullptr);
+    pthread_mutex_init(&c->job_lock, nullptr);
+    pthread_cond_init(&c->job_done, nullptr);
+    pthread_mutex_init(&c->watch_lock, nullptr);
+    pthread_cond_init(&c->watch_round, nullptr);
+    pthread_mutex_init(&c->queue_lock, nullptr);
+    pthread_mutex_init(&c->record_lock, nullptr);
+    pthread_cond_init(&c->record_done, nullptr);
+    pthread_mutex_init(&c->live_lock, nullptr);
     if (!c->call || !c->arena || !c->handle_chunks) {
         free(c->call);
         free(c->arena);
@@ -2042,7 +2042,7 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     c->index = i;
     g_connections[i] = c;
     pthread_mutex_unlock(&g_lock);
-    pthread_create(&c->thread, NULL, connection_main, c);
+    pthread_create(&c->thread, nullptr, connection_main, c);
     *index = i;
     return MIME_HC_STATUS_OK;
 }
@@ -2050,7 +2050,7 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
 void mime_vk_kick(uint64_t index)
 {
     pthread_mutex_lock(&g_lock);
-    MvkConnection *c = index < MAX_CONNECTIONS ? g_connections[index] : NULL;
+    MvkConnection *c = index < MAX_CONNECTIONS ? g_connections[index] : nullptr;
     if (c) {
         pthread_mutex_lock(&c->lock);
         c->kicked = true;
@@ -2064,9 +2064,9 @@ void mime_vk_kick(uint64_t index)
 void mime_vk_close(uint64_t index)
 {
     pthread_mutex_lock(&g_lock);
-    MvkConnection *c = index < MAX_CONNECTIONS ? g_connections[index] : NULL;
+    MvkConnection *c = index < MAX_CONNECTIONS ? g_connections[index] : nullptr;
     if (c)
-        g_connections[index] = NULL;
+        g_connections[index] = nullptr;
     pthread_mutex_unlock(&g_lock);
     if (!c)
         return;
@@ -2074,7 +2074,7 @@ void mime_vk_close(uint64_t index)
     c->closing = true;
     pthread_cond_signal(&c->cond);
     pthread_mutex_unlock(&c->lock);
-    pthread_join(c->thread, NULL);
+    pthread_join(c->thread, nullptr);
     drain_records(c);
     drain_jobs(c);
     mvk_wsi_close(c);
@@ -2083,11 +2083,11 @@ void mime_vk_close(uint64_t index)
     if (c->device) {
         c->fn.vkDeviceWaitIdle(c->device);
         destroy_leftovers(c);
-        c->fn.vkDestroyDevice(c->device, NULL);
+        c->fn.vkDestroyDevice(c->device, nullptr);
     }
     free(c->live);
     if (c->instance)
-        c->fn.vkDestroyInstance(c->instance, NULL);
+        c->fn.vkDestroyInstance(c->instance, nullptr);
     if (c->library)
         dlclose(c->library);
     free(c->watches);

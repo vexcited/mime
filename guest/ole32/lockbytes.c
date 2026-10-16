@@ -16,7 +16,7 @@ static HRESULT WINAPI bytes_query(ILockBytes *self, REFIID iid, void **result)
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!iid)
         return E_INVALIDARG;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_ILockBytes))
@@ -163,7 +163,7 @@ WINOLEAPI HRESULT WINAPI CreateILockBytesOnHGlobal(HGLOBAL memory, BOOL delete_o
 {
     if (!result)
         return E_INVALIDARG;
-    *result = NULL;
+    *result = nullptr;
     GLOBAL_BYTES *bytes = OleAllocZero(sizeof(*bytes));
     if (!bytes)
         return E_OUTOFMEMORY;
@@ -184,7 +184,7 @@ WINOLEAPI HRESULT WINAPI GetHGlobalFromILockBytes(ILockBytes *self, HGLOBAL *mem
 {
     if (!memory)
         return E_INVALIDARG;
-    *memory = NULL;
+    *memory = nullptr;
     if (!self || self->lpVtbl != &bytes_vtable)
         return E_INVALIDARG;
     GLOBAL_BYTES *bytes = (GLOBAL_BYTES *)self;

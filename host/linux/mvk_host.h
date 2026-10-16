@@ -9,7 +9,6 @@
 #include "../vmm/vmm.h"
 
 #include <pthread.h>
-#include <stdbool.h>
 
 #include <mime/mvk_wire.h>
 

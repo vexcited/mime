@@ -257,8 +257,8 @@ bool mime_udf_lookup(MimeUdf *udf, const char *path, MimeUdfFile *out)
 {
     char component[512];
     MimeUdfFile cur = udf->root;
-    cur.extents = NULL;
-    cur.inline_data = NULL;
+    cur.extents = nullptr;
+    cur.inline_data = nullptr;
     /* deep copy the root so every level can be freed uniformly. */
     if (udf->root.extent_count) {
         cur.extents = mime_xmalloc(sizeof(MimeUdfExtent) * udf->root.extent_count);
@@ -302,7 +302,7 @@ MimeUdf *mime_udf_open(const char *image_path)
     udf->fd = open(image_path, O_RDONLY);
     if (udf->fd < 0) {
         free(udf);
-        return NULL;
+        return nullptr;
     }
     udf->block_size = UDF_SECTOR;
 
@@ -310,7 +310,7 @@ MimeUdf *mime_udf_open(const char *image_path)
     if (!read_at(udf, 256ull * UDF_SECTOR, sec, sizeof(sec)) || tag_id(sec) != UDF_TAG_ANCHOR) {
         mime_error("image has no udf anchor, not a windows installation iso?");
         mime_udf_close(udf);
-        return NULL;
+        return nullptr;
     }
     uint32_t vds_len = rd32(sec + 16);
     uint32_t vds_loc = rd32(sec + 20);
@@ -336,19 +336,19 @@ MimeUdf *mime_udf_open(const char *image_path)
     if (!have_partition || !have_lvd || udf->block_size != UDF_SECTOR) {
         mime_error("unsupported udf volume layout");
         mime_udf_close(udf);
-        return NULL;
+        return nullptr;
     }
 
     if (!read_block(udf, (uint64_t)udf->partition_start + fsd_lbn, sec) || tag_id(sec) != UDF_TAG_FILE_SET) {
         mime_error("udf file set descriptor not found");
         mime_udf_close(udf);
-        return NULL;
+        return nullptr;
     }
     uint32_t root_lbn = rd32(sec + 400 + 4);
     if (!load_file_entry(udf, root_lbn, &udf->root) || !udf->root.is_dir) {
         mime_error("cannot read udf root directory");
         mime_udf_close(udf);
-        return NULL;
+        return nullptr;
     }
     return udf;
 }

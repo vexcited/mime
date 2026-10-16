@@ -87,13 +87,13 @@ struct MimeLzms {
  * both slot tables are runs of slots sharing a count of extra bits. a
  * slot covers base to base + 2^extra - 1 and the next slot starts after.
  */
-static const uint8_t g_offset_runs[][2] = {
+static constexpr uint8_t g_offset_runs[][2] = {
     {0, 8},   {2, 9},   {3, 7},   {4, 10},  {5, 15},  {6, 15},  {7, 20},
     {8, 20},  {9, 30},  {10, 33}, {11, 40}, {12, 42}, {13, 45}, {14, 60},
     {15, 73}, {16, 80}, {17, 85}, {18, 95}, {19, 105}, {20, 6}, {30, 1},
 };
 
-static const uint8_t g_length_runs[][2] = {
+static constexpr uint8_t g_length_runs[][2] = {
     {0, 26}, {1, 4}, {2, 6}, {3, 4}, {4, 5}, {5, 2}, {6, 1},
     {7, 1},  {8, 1}, {9, 1}, {10, 1}, {16, 1}, {30, 1},
 };
@@ -312,7 +312,7 @@ static bool compute_lengths(MimeLzms *z, const LzmsCode *c)
     /* parents always come after their children. */
     uint32_t root = 2 * n - 2;
     z->node_depth[root] = 0;
-    uint32_t len_count[LZMS_MAX_CODE_LEN + 1] = {0};
+    uint32_t len_count[LZMS_MAX_CODE_LEN + 1] = {};
     for (uint32_t i = root; i-- > 0;) {
         uint32_t depth = z->node_depth[z->node_parent[i]] + 1u;
         if (depth > LZMS_MAX_CODE_LEN)
@@ -563,7 +563,7 @@ bool mime_lzms_decompress(MimeLzms *z, const void *in_ptr, size_t in_size, void 
     br_init(&br, in, in_size);
 
     uint32_t main_state = 0, match_state = 0, lz_state = 0, delta_state = 0;
-    uint32_t lz_rep_states[2] = {0}, delta_rep_states[2] = {0};
+    uint32_t lz_rep_states[2] = {}, delta_rep_states[2] = {};
     uint64_t lz_recent[4] = {1, 2, 3, 4};
     uint64_t delta_recent[4] = {1, 2, 3, 4}; /* power << 32 | raw offset */
     enum { ITEM_LITERAL, ITEM_LZ, ITEM_DELTA } prev = ITEM_LITERAL;

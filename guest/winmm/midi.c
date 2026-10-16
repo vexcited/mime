@@ -7,7 +7,7 @@ WINMMAPI MMRESULT WINAPI midiInOpen(HANDLE *out, UINT id, DWORD_PTR callback, DW
 {
     if (!out)
         return MMSYSERR_INVALPARAM;
-    *out = NULL;
+    *out = nullptr;
     return MMSYSERR_BADDEVICEID;
 }
 

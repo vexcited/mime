@@ -10,7 +10,7 @@ static HANDLE finish_create(NTSTATUS status, HANDLE handle)
 {
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     KbSetError(status == STATUS_OBJECT_NAME_EXISTS ? ERROR_ALREADY_EXISTS : ERROR_SUCCESS);
     return handle;
@@ -21,7 +21,7 @@ static HANDLE finish_open(NTSTATUS status, const HANDLE *handle)
 {
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     return *handle;
 }
@@ -32,7 +32,7 @@ static BOOL prepare_open(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR name
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return KbNamedObjectAttributes(oa, us, name, inherit, NULL);
+    return KbNamedObjectAttributes(oa, us, name, inherit, nullptr);
 }
 
 static BOOL prepare_create(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR name, const SECURITY_ATTRIBUTES *sa)
@@ -47,11 +47,11 @@ static BOOL prepare_create(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR na
 /* ansi object names use the ansi code page, not the file api one. */
 #define WITH_WIDE_NAME(name, expr)                                                                                \
     do {                                                                                                          \
-        PWSTR wname_ = NULL;                                                                                      \
+        PWSTR wname_ = nullptr;                                                                                      \
         if (name) {                                                                                               \
             wname_ = KbAnsiToWideCp(CP_ACP, name);                                                                \
             if (!wname_)                                                                                          \
-                return NULL;                                                                                      \
+                return nullptr;                                                                                      \
         }                                                                                                         \
         HANDLE result_ = (expr);                                                                                  \
         KbFree(wname_);                                                                                           \
@@ -64,13 +64,13 @@ HANDLE WINAPI CreateEventExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWORD flags
 {
     if (flags & ~(DWORD)(CREATE_EVENT_MANUAL_RESET | CREATE_EVENT_INITIAL_SET)) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_create(&oa, &us, name, sa))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     NTSTATUS status = NtCreateEvent(&h, access, &oa,
                                     (flags & CREATE_EVENT_MANUAL_RESET) ? NotificationEvent : SynchronizationEvent,
                                     (flags & CREATE_EVENT_INITIAL_SET) != 0);
@@ -98,8 +98,8 @@ HANDLE WINAPI OpenEventW(DWORD access, BOOL inherit, LPCWSTR name)
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_open(&oa, &us, name, inherit))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     return finish_open(NtOpenEvent(&h, access, &oa), &h);
 }
 
@@ -107,14 +107,14 @@ HANDLE WINAPI OpenEventA(DWORD access, BOOL inherit, LPCSTR name)
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     WITH_WIDE_NAME(name, OpenEventW(access, inherit, wname_));
 }
 
 BOOL WINAPI SetEvent(HANDLE event)
 {
-    NTSTATUS status = NtSetEvent(event, NULL);
+    NTSTATUS status = NtSetEvent(event, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -122,7 +122,7 @@ BOOL WINAPI SetEvent(HANDLE event)
 
 BOOL WINAPI ResetEvent(HANDLE event)
 {
-    NTSTATUS status = NtResetEvent(event, NULL);
+    NTSTATUS status = NtResetEvent(event, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -130,7 +130,7 @@ BOOL WINAPI ResetEvent(HANDLE event)
 
 BOOL WINAPI PulseEvent(HANDLE event)
 {
-    NTSTATUS status = NtPulseEvent(event, NULL);
+    NTSTATUS status = NtPulseEvent(event, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -142,13 +142,13 @@ HANDLE WINAPI CreateMutexExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWORD flags
 {
     if (flags & ~(DWORD)CREATE_MUTEX_INITIAL_OWNER) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_create(&oa, &us, name, sa))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     NTSTATUS status = NtCreateMutant(&h, access, &oa, (flags & CREATE_MUTEX_INITIAL_OWNER) != 0);
     return finish_create(status, h);
 }
@@ -173,8 +173,8 @@ HANDLE WINAPI OpenMutexW(DWORD access, BOOL inherit, LPCWSTR name)
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_open(&oa, &us, name, inherit))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     return finish_open(NtOpenMutant(&h, access, &oa), &h);
 }
 
@@ -182,14 +182,14 @@ HANDLE WINAPI OpenMutexA(DWORD access, BOOL inherit, LPCSTR name)
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     WITH_WIDE_NAME(name, OpenMutexW(access, inherit, wname_));
 }
 
 BOOL WINAPI ReleaseMutex(HANDLE mutex)
 {
-    NTSTATUS status = NtReleaseMutant(mutex, NULL);
+    NTSTATUS status = NtReleaseMutant(mutex, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -202,13 +202,13 @@ HANDLE WINAPI CreateSemaphoreExW(LPSECURITY_ATTRIBUTES sa, LONG initial, LONG ma
 {
     if (maximum <= 0 || initial < 0 || initial > maximum || flags) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_create(&oa, &us, name, sa))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     NTSTATUS status = NtCreateSemaphore(&h, access, &oa, initial, maximum);
     return finish_create(status, h);
 }
@@ -234,8 +234,8 @@ HANDLE WINAPI OpenSemaphoreW(DWORD access, BOOL inherit, LPCWSTR name)
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_open(&oa, &us, name, inherit))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     return finish_open(NtOpenSemaphore(&h, access, &oa), &h);
 }
 
@@ -243,7 +243,7 @@ HANDLE WINAPI OpenSemaphoreA(DWORD access, BOOL inherit, LPCSTR name)
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     WITH_WIDE_NAME(name, OpenSemaphoreW(access, inherit, wname_));
 }
@@ -266,13 +266,13 @@ HANDLE WINAPI CreateWaitableTimerExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWO
 {
     if (flags & ~(DWORD)(CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_create(&oa, &us, name, sa))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     NTSTATUS status = NtCreateTimer(&h, access, &oa,
                                     (flags & CREATE_WAITABLE_TIMER_MANUAL_RESET) ? NotificationTimer : SynchronizationTimer);
     return finish_create(status, h);
@@ -293,8 +293,8 @@ HANDLE WINAPI OpenWaitableTimerW(DWORD access, BOOL inherit, LPCWSTR name)
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING us;
     if (!prepare_open(&oa, &us, name, inherit))
-        return NULL;
-    HANDLE h = NULL;
+        return nullptr;
+    HANDLE h = nullptr;
     return finish_open(NtOpenTimer(&h, access, &oa), &h);
 }
 
@@ -307,7 +307,7 @@ BOOL WINAPI SetWaitableTimerEx(HANDLE timer, const LARGE_INTEGER *due, LONG peri
         return FALSE;
     }
     LARGE_INTEGER d = *due;
-    NTSTATUS status = NtSetTimer(timer, &d, (PVOID)completion, arg, FALSE, period, NULL);
+    NTSTATUS status = NtSetTimer(timer, &d, (PVOID)completion, arg, FALSE, period, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -316,7 +316,7 @@ BOOL WINAPI SetWaitableTimerEx(HANDLE timer, const LARGE_INTEGER *due, LONG peri
 BOOL WINAPI SetWaitableTimer(HANDLE timer, const LARGE_INTEGER *due, LONG period, PTIMERAPCROUTINE completion,
                              LPVOID arg, BOOL resume)
 {
-    if (!SetWaitableTimerEx(timer, due, period, completion, arg, NULL, 0))
+    if (!SetWaitableTimerEx(timer, due, period, completion, arg, nullptr, 0))
         return FALSE;
     /* resuming a suspended system is not supported: windows reports it this way. */
     if (resume)
@@ -326,7 +326,7 @@ BOOL WINAPI SetWaitableTimer(HANDLE timer, const LARGE_INTEGER *due, LONG period
 
 BOOL WINAPI CancelWaitableTimer(HANDLE timer)
 {
-    NTSTATUS status = NtCancelTimer(timer, NULL);
+    NTSTATUS status = NtCancelTimer(timer, nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -415,7 +415,7 @@ DWORD WINAPI WaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, BOOL a
         if (status == STATUS_TIMEOUT && KbRunPendingApcs())
             return WAIT_IO_COMPLETION;
     }
-    while (status == STATUS_TIMEOUT && (!alertable || timeout == NULL || timeout->QuadPart != 0)) {
+    while (status == STATUS_TIMEOUT && (!alertable || timeout == nullptr || timeout->QuadPart != 0)) {
         status = NtWaitForMultipleObjects(n, copy, all ? WaitAll : WaitAny, (BOOLEAN)alertable, timeout);
         if (!(status == STATUS_ALERTED && alertable && milliseconds == INFINITE))
             break;

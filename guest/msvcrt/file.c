@@ -10,10 +10,10 @@ wchar_t *MsvcrtPathToW(const char *path);
 static char *path_to_a(const wchar_t *w, char *buf, size_t size, int alloc_min)
 {
     UINT cp = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
-    int n = WideCharToMultiByte(cp, 0, w, -1, NULL, 0, NULL, NULL);
+    int n = WideCharToMultiByte(cp, 0, w, -1, nullptr, 0, nullptr, nullptr);
     if (n <= 0) {
         MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     if (!buf) {
         size_t want = (size_t)n > size ? (size_t)n : size;
@@ -22,14 +22,14 @@ static char *path_to_a(const wchar_t *w, char *buf, size_t size, int alloc_min)
         buf = malloc(want);
         if (!buf) {
             MsvcrtSetErrno(ENOMEM);
-            return NULL;
+            return nullptr;
         }
         size = want;
     } else if ((size_t)n > size) {
         MsvcrtSetErrno(ERANGE);
-        return NULL;
+        return nullptr;
     }
-    WideCharToMultiByte(cp, 0, w, -1, buf, (int)size, NULL, NULL);
+    WideCharToMultiByte(cp, 0, w, -1, buf, (int)size, nullptr, nullptr);
     return buf;
 }
 
@@ -189,7 +189,7 @@ int __cdecl _wmkdir(const wchar_t *path)
         MSVCRT_INVALID(EINVAL);
         return -1;
     }
-    if (!CreateDirectoryW(path, NULL)) {
+    if (!CreateDirectoryW(path, nullptr)) {
         MsvcrtDosMapError(GetLastError());
         return -1;
     }
@@ -280,15 +280,15 @@ int __cdecl _chdir(const char *path)
 
 static wchar_t *get_wcwd(void)
 {
-    DWORD n = GetCurrentDirectoryW(0, NULL);
+    DWORD n = GetCurrentDirectoryW(0, nullptr);
     if (!n) {
         MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     wchar_t *w = malloc(n * sizeof(wchar_t));
     if (!w) {
         MsvcrtSetErrno(ENOMEM);
-        return NULL;
+        return nullptr;
     }
     GetCurrentDirectoryW(n, w);
     return w;
@@ -298,11 +298,11 @@ wchar_t *__cdecl _wgetcwd(wchar_t *buf, int size)
 {
     if (buf && size <= 0) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     wchar_t *cwd = get_wcwd();
     if (!cwd)
-        return NULL;
+        return nullptr;
     size_t n = wcslen(cwd) + 1;
     if (!buf) {
         size_t want = (size_t)size > n ? (size_t)size : n;
@@ -310,12 +310,12 @@ wchar_t *__cdecl _wgetcwd(wchar_t *buf, int size)
         if (!buf) {
             free(cwd);
             MsvcrtSetErrno(ENOMEM);
-            return NULL;
+            return nullptr;
         }
     } else if (n > (size_t)size) {
         free(cwd);
         MsvcrtSetErrno(ERANGE);
-        return NULL;
+        return nullptr;
     }
     memcpy(buf, cwd, n * sizeof(wchar_t));
     free(cwd);
@@ -326,11 +326,11 @@ char *__cdecl _getcwd(char *buf, int size)
 {
     if (buf && size <= 0) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     wchar_t *cwd = get_wcwd();
     if (!cwd)
-        return NULL;
+        return nullptr;
     char *r = path_to_a(cwd, buf, size > 0 ? (size_t)size : 0, 0);
     free(cwd);
     return r;
@@ -350,21 +350,21 @@ wchar_t *__cdecl _wgetdcwd(int drive, wchar_t *buf, int size)
 {
     if (buf && size <= 0) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     if (!drive)
         return _wgetcwd(buf, size);
     if (!drive_valid(drive)) {
         *__doserrno() = ERROR_INVALID_DRIVE;
         MSVCRT_INVALID(EACCES);
-        return NULL;
+        return nullptr;
     }
     wchar_t spec[3] = {(wchar_t)('A' + drive - 1), ':', 0};
     wchar_t tmp[MAX_PATH];
-    DWORD n = GetFullPathNameW(spec, MAX_PATH, tmp, NULL);
+    DWORD n = GetFullPathNameW(spec, MAX_PATH, tmp, nullptr);
     if (!n || n >= MAX_PATH) {
         MsvcrtDosMapError(n ? ERROR_FILENAME_EXCED_RANGE : GetLastError());
-        return NULL;
+        return nullptr;
     }
     size_t len = wcslen(tmp) + 1;
     if (!buf) {
@@ -372,11 +372,11 @@ wchar_t *__cdecl _wgetdcwd(int drive, wchar_t *buf, int size)
         buf = malloc(want * sizeof(wchar_t));
         if (!buf) {
             MsvcrtSetErrno(ENOMEM);
-            return NULL;
+            return nullptr;
         }
     } else if (len > (size_t)size) {
         MsvcrtSetErrno(ERANGE);
-        return NULL;
+        return nullptr;
     }
     memcpy(buf, tmp, len * sizeof(wchar_t));
     return buf;
@@ -386,11 +386,11 @@ char *__cdecl _getdcwd(int drive, char *buf, int size)
 {
     if (buf && size <= 0) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
-    wchar_t *w = _wgetdcwd(drive, NULL, 0);
+    wchar_t *w = _wgetdcwd(drive, nullptr, 0);
     if (!w)
-        return NULL;
+        return nullptr;
     char *r = path_to_a(w, buf, size > 0 ? (size_t)size : 0, 0);
     free(w);
     return r;
@@ -446,7 +446,7 @@ unsigned __cdecl _getdiskfree(unsigned drive, struct _diskfree_t *info)
     }
     wchar_t root[4] = {(wchar_t)('A' + drive - 1), ':', '\\', 0};
     DWORD spc, bps, free_clusters, total;
-    if (!GetDiskFreeSpaceW(drive ? root : NULL, &spc, &bps, &free_clusters, &total)) {
+    if (!GetDiskFreeSpaceW(drive ? root : nullptr, &spc, &bps, &free_clusters, &total)) {
         DWORD err = GetLastError();
         MsvcrtDosMapError(err);
         return err;
@@ -464,10 +464,10 @@ wchar_t *MsvcrtWfullpath(wchar_t *buf, const wchar_t *path, size_t size)
 {
     if (!path || !*path)
         return _wgetcwd(buf, (int)(size > INT_MAX ? INT_MAX : size));
-    DWORD n = GetFullPathNameW(path, 0, NULL, NULL);
+    DWORD n = GetFullPathNameW(path, 0, nullptr, nullptr);
     if (!n) {
         MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     int allocated = 0;
     if (!buf) {
@@ -475,15 +475,15 @@ wchar_t *MsvcrtWfullpath(wchar_t *buf, const wchar_t *path, size_t size)
         buf = malloc(want * sizeof(wchar_t));
         if (!buf) {
             MsvcrtSetErrno(ENOMEM);
-            return NULL;
+            return nullptr;
         }
         size = want;
         allocated = 1;
     } else if (n > size) {
         MsvcrtSetErrno(ERANGE);
-        return NULL;
+        return nullptr;
     }
-    DWORD r = GetFullPathNameW(path, (DWORD)size, buf, NULL);
+    DWORD r = GetFullPathNameW(path, (DWORD)size, buf, nullptr);
     if (!r || r >= size) {
         if (allocated)
             free(buf);
@@ -491,7 +491,7 @@ wchar_t *MsvcrtWfullpath(wchar_t *buf, const wchar_t *path, size_t size)
             MsvcrtSetErrno(ERANGE);
         else
             MsvcrtDosMapError(GetLastError());
-        return NULL;
+        return nullptr;
     }
     return buf;
 }
@@ -500,7 +500,7 @@ wchar_t *__cdecl _wfullpath(wchar_t *buf, const wchar_t *path, size_t size)
 {
     if (buf && !size) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
     return MsvcrtWfullpath(buf, path, size);
 }
@@ -509,15 +509,15 @@ char *__cdecl _fullpath(char *buf, const char *path, size_t size)
 {
     if (buf && !size) {
         MSVCRT_INVALID(EINVAL);
-        return NULL;
+        return nullptr;
     }
-    wchar_t *wpath = path && *path ? MsvcrtPathToW(path) : NULL;
+    wchar_t *wpath = path && *path ? MsvcrtPathToW(path) : nullptr;
     if (path && *path && !wpath)
-        return NULL;
-    wchar_t *full = MsvcrtWfullpath(NULL, wpath, 0);
+        return nullptr;
+    wchar_t *full = MsvcrtWfullpath(nullptr, wpath, 0);
     free(wpath);
     if (!full)
-        return NULL;
+        return nullptr;
     char *r = path_to_a(full, buf, buf ? size : 0, MAX_PATH);
     free(full);
     return r;
@@ -546,7 +546,7 @@ char *__cdecl _fullpath(char *buf, const char *path, size_t size)
         if (path[0] && path[1] == ':')                                                                            \
             drive_end = path + 2;                                                                                 \
         p = drive_end;                                                                                            \
-        const T *last_slash = NULL, *last_dot = NULL;                                                             \
+        const T *last_slash = nullptr, *last_dot = nullptr;                                                             \
         for (const T *q = p; *q; q++) {                                                                           \
             if (*q == '\\' || *q == '/')                                                                          \
                 last_slash = q;                                                                                   \
@@ -617,7 +617,7 @@ void __cdecl _wsplitpath(const wchar_t *path, wchar_t *drive, wchar_t *dir, wcha
         T sep[2] = {'\\', 0};                                                                                     \
         T dot[2] = {'.', 0};                                                                                      \
         T colon[2] = {':', 0};                                                                                    \
-        const T *pieces[7] = {0};                                                                                 \
+        const T *pieces[7] = {};                                                                                 \
         int k = 0;                                                                                                \
         if (drive && *drive) {                                                                                    \
             pieces[k++] = drive;                                                                                  \
@@ -798,10 +798,10 @@ static int stat_w(const wchar_t *path, struct _stat64 *st)
     WIN32_FILE_ATTRIBUTE_DATA data;
     if (!GetFileAttributesExW(path, GetFileExInfoStandard, &data)) {
         /* a drive or share root may refuse attributes but still exist. */
-        wchar_t *full = MsvcrtWfullpath(NULL, path, 0);
+        wchar_t *full = MsvcrtWfullpath(nullptr, path, 0);
         if (full && is_root(full) && GetDriveTypeW(full) > DRIVE_NO_ROOT_DIR) {
             free(full);
-            st->st_mode = MsvcrtAttribToMode(FILE_ATTRIBUTE_DIRECTORY, NULL);
+            st->st_mode = MsvcrtAttribToMode(FILE_ATTRIBUTE_DIRECTORY, nullptr);
             st->st_nlink = 1;
             st->st_dev = st->st_rdev = drive - 1;
             st->st_mtime = st->st_atime = st->st_ctime = MsvcrtLocalToTime(1980, 1, 1, 0, 0, 0, -1);
@@ -864,10 +864,10 @@ static int fstat_fd(int fd, struct _stat64 *st)
             static PEEK peek;
             if (!peek) {
                 HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-                peek = k32 ? (PEEK)(void *)GetProcAddress(k32, "PeekNamedPipe") : NULL;
+                peek = k32 ? (PEEK)(void *)GetProcAddress(k32, "PeekNamedPipe") : nullptr;
             }
             DWORD avail = 0;
-            if (peek && peek(h, NULL, 0, NULL, &avail, NULL))
+            if (peek && peek(h, nullptr, 0, nullptr, &avail, nullptr))
                 st->st_size = avail;
         }
         return 0;
@@ -885,7 +885,7 @@ static int fstat_fd(int fd, struct _stat64 *st)
         MsvcrtDosMapError(GetLastError());
         return -1;
     }
-    st->st_mode = MsvcrtAttribToMode(info.dwFileAttributes, NULL);
+    st->st_mode = MsvcrtAttribToMode(info.dwFileAttributes, nullptr);
     st->st_nlink = (short)info.nNumberOfLinks;
     st->st_size = (long long)info.nFileSizeHigh << 32 | info.nFileSizeLow;
     st->st_mtime = MsvcrtFileTimeToTime(&info.ftLastWriteTime);
@@ -1086,7 +1086,7 @@ static int find_name_a(const WIN32_FIND_DATAW *fd, char *name)
 {
     UINT cp = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
     BOOL used = FALSE;
-    if (!WideCharToMultiByte(cp, 0, fd->cFileName, -1, name, 260, NULL, &used)) {
+    if (!WideCharToMultiByte(cp, 0, fd->cFileName, -1, name, 260, nullptr, &used)) {
         MsvcrtSetErrno(EINVAL);
         return 0;
     }
@@ -1125,7 +1125,7 @@ static int wfill64i32(const WIN32_FIND_DATAW *fd, struct _wfinddata64i32_t *out)
 
 static intptr_t find_first(const wchar_t *spec, WIN32_FIND_DATAW *fd)
 {
-    HANDLE h = FindFirstFileExW(spec, FindExInfoStandard, fd, FindExSearchNameMatch, NULL, 0);
+    HANDLE h = FindFirstFileExW(spec, FindExInfoStandard, fd, FindExSearchNameMatch, nullptr, 0);
     if (h == INVALID_HANDLE_VALUE) {
         find_fail();
         return -1;
@@ -1319,7 +1319,7 @@ int __cdecl _futime64(int fd, struct __utimbuf64 *times)
     }
     struct __utimbuf64 now;
     if (!times) {
-        now.actime = now.modtime = _time64(NULL);
+        now.actime = now.modtime = _time64(nullptr);
         times = &now;
     }
     if (times->actime < 0 || times->modtime < 0) {
@@ -1329,7 +1329,7 @@ int __cdecl _futime64(int fd, struct __utimbuf64 *times)
     FILETIME access, write;
     time_to_filetime(times->actime, &access);
     time_to_filetime(times->modtime, &write);
-    if (!SetFileTime((HANDLE)_get_osfhandle(fd), NULL, &access, &write)) {
+    if (!SetFileTime((HANDLE)_get_osfhandle(fd), nullptr, &access, &write)) {
         MsvcrtSetErrno(EINVAL);
         return -1;
     }
@@ -1384,7 +1384,7 @@ int __cdecl _wutime(const wchar_t *path, struct __utimbuf64 *times)
 static struct __utimbuf64 *widen_times(const struct __utimbuf32 *t, struct __utimbuf64 *out)
 {
     if (!t)
-        return NULL;
+        return nullptr;
     out->actime = t->actime;
     out->modtime = t->modtime;
     return out;
@@ -1477,10 +1477,10 @@ errno_t __cdecl _wmktemp_s(wchar_t *tmpl, size_t size)
 
 char *__cdecl _mktemp(char *tmpl)
 {
-    return tmpl && !_mktemp_s(tmpl, strlen(tmpl) + 1) ? tmpl : NULL;
+    return tmpl && !_mktemp_s(tmpl, strlen(tmpl) + 1) ? tmpl : nullptr;
 }
 
 wchar_t *__cdecl _wmktemp(wchar_t *tmpl)
 {
-    return tmpl && !_wmktemp_s(tmpl, wcslen(tmpl) + 1) ? tmpl : NULL;
+    return tmpl && !_wmktemp_s(tmpl, wcslen(tmpl) + 1) ? tmpl : nullptr;
 }

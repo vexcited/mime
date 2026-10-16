@@ -6,19 +6,19 @@
 #include "ole32_private.h"
 #include <mime/stub.h>
 
-static const BYTE g_signature[8] = {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1};
+static constexpr BYTE g_signature[8] = {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1};
 
 WINOLEAPI HRESULT WINAPI StgIsStorageFile(LPCOLESTR name)
 {
     if (!name)
         return STG_E_INVALIDNAME;
-    HANDLE file = CreateFileW(name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileW(name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return STG_E_FILENOTFOUND;
     BYTE header[8];
     DWORD read = 0;
-    BOOL ok = ReadFile(file, header, sizeof(header), &read, NULL);
+    BOOL ok = ReadFile(file, header, sizeof(header), &read, nullptr);
     CloseHandle(file);
     if (!ok || read != sizeof(header))
         return S_FALSE;
@@ -50,7 +50,7 @@ WINOLEAPI HRESULT WINAPI WriteClassStm(IStream *stream, REFCLSID clsid)
 {
     if (!stream || !clsid)
         return E_INVALIDARG;
-    return stream->lpVtbl->Write(stream, clsid, sizeof(CLSID), NULL);
+    return stream->lpVtbl->Write(stream, clsid, sizeof(CLSID), nullptr);
 }
 
 WINOLEAPI HRESULT WINAPI StgCreateDocfile(LPCOLESTR name, DWORD mode, DWORD reserved, IStorage **storage)
@@ -58,7 +58,7 @@ WINOLEAPI HRESULT WINAPI StgCreateDocfile(LPCOLESTR name, DWORD mode, DWORD rese
     MIME_STUB("ole32");
     if (!storage)
         return STG_E_INVALIDPOINTER;
-    *storage = NULL;
+    *storage = nullptr;
     return STG_E_INVALIDFUNCTION;
 }
 
@@ -68,7 +68,7 @@ WINOLEAPI HRESULT WINAPI StgOpenStorage(LPCOLESTR name, IStorage *priority, DWOR
     MIME_STUB("ole32");
     if (!storage)
         return STG_E_INVALIDPOINTER;
-    *storage = NULL;
+    *storage = nullptr;
     return STG_E_INVALIDFUNCTION;
 }
 
@@ -78,7 +78,7 @@ WINOLEAPI HRESULT WINAPI StgCreateDocfileOnILockBytes(ILockBytes *bytes, DWORD m
     MIME_STUB("ole32");
     if (!storage)
         return STG_E_INVALIDPOINTER;
-    *storage = NULL;
+    *storage = nullptr;
     return STG_E_INVALIDFUNCTION;
 }
 
@@ -88,7 +88,7 @@ WINOLEAPI HRESULT WINAPI StgOpenStorageOnILockBytes(ILockBytes *bytes, IStorage 
     MIME_STUB("ole32");
     if (!storage)
         return STG_E_INVALIDPOINTER;
-    *storage = NULL;
+    *storage = nullptr;
     return STG_E_INVALIDFUNCTION;
 }
 
@@ -98,7 +98,7 @@ WINOLEAPI HRESULT WINAPI ReadFmtUserTypeStg(IStorage *storage, CLIPFORMAT *forma
     if (format)
         *format = 0;
     if (user_type)
-        *user_type = NULL;
+        *user_type = nullptr;
     return E_NOTIMPL;
 }
 

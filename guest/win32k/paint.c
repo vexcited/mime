@@ -33,7 +33,7 @@ static ULONG window_id(WND *w)
 
 static ULONG64 hypercall(ULONG64 nr, ULONG64 a1)
 {
-    return HalMimeHypercall(nr, a1, 0, 0, 0, 0, 0, NULL);
+    return HalMimeHypercall(nr, a1, 0, 0, 0, 0, 0, nullptr);
 }
 
 void HostWindowCreate(WND *w)
@@ -73,10 +73,10 @@ static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
 
 static void host_icon(WND *w)
 {
-    HICON handles[] = {w->Icon, w->IconSmall, w->Class ? w->Class->Icon : NULL,
-                       w->Class ? w->Class->IconSmall : NULL};
-    SURFACE *surface = NULL;
-    HICON icon = NULL;
+    HICON handles[] = {w->Icon, w->IconSmall, w->Class ? w->Class->Icon : nullptr,
+                       w->Class ? w->Class->IconSmall : nullptr};
+    SURFACE *surface = nullptr;
+    HICON icon = nullptr;
     for (ULONG i = 0; i < RTL_NUMBER_OF(handles); i++) {
         surface = CursorIconImage(handles[i]);
         if (surface) {
@@ -204,7 +204,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     if ((c->flags & (MIME_WIN_VISIBLE | MIME_WIN_APPWINDOW)) == (MIME_WIN_VISIBLE | MIME_WIN_APPWINDOW))
         host_icon(w);
     else
-        w->HostIcon = NULL;
+        w->HostIcon = nullptr;
 }
 
 void HostPresent(WND *w, const RECT *dirty)
@@ -246,7 +246,7 @@ BOOL NTAPI NtUserMessageBeep(UINT type)
 
 void PaintPresent(WND *top)
 {
-    SURFACE *s = top ? top->Surface : NULL;
+    SURFACE *s = top ? top->Surface : nullptr;
     if (!s || !(top->Flags & WNDF_HOST_WINDOW) || RectEmpty(&s->Dirty))
         return;
     if (!WndIsVisible(top) || (top->Style & WS_MINIMIZE))
@@ -278,7 +278,7 @@ void PaintRetireSurface(SURFACE *s)
 {
     if (!s)
         return;
-    s->Window = NULL;
+    s->Window = nullptr;
     if (s->Header.SelectCount)
         s->Flags |= SURF_RETIRED;
     else
@@ -291,11 +291,11 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
 {
     DC *dc = DcCreate(DC_WINDOW | DC_CACHE);
     if (!dc)
-        return NULL;
+        return nullptr;
     dc->Window = w;
     dc->Dpi = WndGetDpi(w);
-    WND *top = w ? WndTopLevel(w) : NULL;
-    SURFACE *s = top && top != WndDesktop() ? top->Surface : NULL;
+    WND *top = w ? WndTopLevel(w) : nullptr;
+    SURFACE *s = top && top != WndDesktop() ? top->Surface : nullptr;
     if (!top || top == WndDesktop()) {
         /* the screen and the desktop: the screen's surface, all of it, composed when read. */
         SURFACE *screen = ScreenSurface();
@@ -313,7 +313,7 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
         dc->DefaultBitmap = SurfaceCreate(1, 1, 32, 0);
         if (!dc->DefaultBitmap) {
             DcFree(dc);
-            return NULL;
+            return nullptr;
         }
         DcSetSurface(dc, dc->DefaultBitmap);
         RgnClear(&dc->VisRgn);
@@ -351,8 +351,8 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
 
 void PaintReleaseDC(DC *dc)
 {
-    SURFACE *s = dc->DefaultBitmap ? NULL : dc->Surface;
-    WND *top = dc->Window ? WndTopLevel(dc->Window) : NULL;
+    SURFACE *s = dc->DefaultBitmap ? nullptr : dc->Surface;
+    WND *top = dc->Window ? WndTopLevel(dc->Window) : nullptr;
     DcFree(dc);
     if (s && s->Header.SelectCount && --s->Header.SelectCount == 0 && (s->Flags & SURF_RETIRED))
         SurfaceDestroy(s);
@@ -363,19 +363,19 @@ HDC NTAPI NtUserGetDCEx(HWND hwnd, HRGN clip, ULONG flags)
 {
     UserEnter();
     WND *w = hwnd ? WndLookup(hwnd) : WndDesktop();
-    HDC dc = w ? PaintGetDC(w, clip, flags) : NULL;
+    HDC dc = w ? PaintGetDC(w, clip, flags) : nullptr;
     UserLeave();
     return dc;
 }
 
 HDC NTAPI NtUserGetDC(HWND hwnd)
 {
-    return NtUserGetDCEx(hwnd, NULL, DCX_USESTYLE);
+    return NtUserGetDCEx(hwnd, nullptr, DCX_USESTYLE);
 }
 
 HDC NTAPI NtUserGetWindowDC(HWND hwnd)
 {
-    return NtUserGetDCEx(hwnd, NULL, DCX_WINDOW | DCX_USESTYLE);
+    return NtUserGetDCEx(hwnd, nullptr, DCX_WINDOW | DCX_USESTYLE);
 }
 
 int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
@@ -384,7 +384,7 @@ int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
     DC *dc = DcLookup(hdc);
     int ok = 0;
     if (dc && (dc->Flags & DC_WINDOW) && !(dc->Flags & DC_PAINT)) {
-        WND *top = dc->Window ? WndTopLevel(dc->Window) : NULL;
+        WND *top = dc->Window ? WndTopLevel(dc->Window) : nullptr;
         PaintReleaseDC(dc);
         /* drawing outside the paint cycle shows up at the next idle point; present now for animations. */
         if (top && top->Thread == W32GetThread())
@@ -408,16 +408,16 @@ HDC PaintBegin(WND *w, PAINTSTRUCT *ps)
     }
     if (w->Header.Destroyed) {
         UserDereference(&w->Header);
-        return NULL;
+        return nullptr;
     }
     RECT box = {0, 0, 0, 0};
     if (!RgnIsEmpty(&w->Update)) {
         box = w->Update.Extents;
         RectOffset(&box, -w->ClientRect.left, -w->ClientRect.top);
     }
-    HDC hdc = PaintGetDC(w, NULL, DCX_INTERSECTUPDATE | DCX_USESTYLE);
+    HDC hdc = PaintGetDC(w, nullptr, DCX_INTERSECTUPDATE | DCX_USESTYLE);
     BOOLEAN erase = (w->Flags & WNDF_ERASE_PENDING) != 0;
-    WndValidate(w, NULL);
+    WndValidate(w, nullptr);
     DC *dc = DcLookup(hdc);
     if (dc)
         dc->Flags |= DC_PAINT;
@@ -449,7 +449,7 @@ HDC NTAPI NtUserBeginPaint(HWND hwnd, PAINTSTRUCT *user_ps)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    HDC hdc = NULL;
+    HDC hdc = nullptr;
     if (w && w->Thread == W32GetThread()) {
         PAINTSTRUCT ps;
         hdc = PaintBegin(w, &ps);
@@ -457,7 +457,7 @@ HDC NTAPI NtUserBeginPaint(HWND hwnd, PAINTSTRUCT *user_ps)
             DC *dc = DcLookup(hdc);
             if (dc)
                 PaintReleaseDC(dc);
-            hdc = NULL;
+            hdc = nullptr;
         }
     }
     UserLeave();
@@ -501,7 +501,7 @@ static void update_now(WND *w, BOOLEAN children)
             MsgSend(p, WM_PAINT, 0, 0);
             /* a window procedure that does not validate would loop forever. */
             if (!p->Header.Destroyed && !RgnIsEmpty(&p->Update))
-                WndValidate(p, NULL);
+                WndValidate(p, nullptr);
         }
         UserDereference(&p->Header);
     }
@@ -520,13 +520,13 @@ BOOL NTAPI NtUserRedrawWindow(HWND hwnd, const RECT *user_rect, HRGN region, UIN
         have_rect = TRUE;
     }
     UserEnter();
-    WND *w = hwnd ? WndLookup(hwnd) : NULL;
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if (!hwnd) {
         /* the whole screen: every top level window. */
         WND *desktop = WndDesktop();
-        for (WND *c = desktop ? desktop->FirstChild : NULL; c; c = c->Next)
+        for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next)
             if (c->Style & WS_VISIBLE)
-                WndInvalidateRegion(c, NULL, (flags | RDW_ALLCHILDREN | RDW_FRAME) & ~(RDW_UPDATENOW | RDW_ERASENOW));
+                WndInvalidateRegion(c, nullptr, (flags | RDW_ALLCHILDREN | RDW_FRAME) & ~(RDW_UPDATENOW | RDW_ERASENOW));
         UserLeave();
         return TRUE;
     }
@@ -555,7 +555,7 @@ BOOL NTAPI NtUserRedrawWindow(HWND hwnd, const RECT *user_rect, HRGN region, UIN
             RgnSetRect(&rgn, &c);
             whole = FALSE;
         }
-        WndInvalidateRegion(w, whole ? NULL : &rgn, flags);
+        WndInvalidateRegion(w, whole ? nullptr : &rgn, flags);
     }
     RgnFree(&rgn);
     if ((flags & (RDW_UPDATENOW | RDW_ERASENOW)) && w->Thread == W32GetThread())
@@ -566,12 +566,12 @@ BOOL NTAPI NtUserRedrawWindow(HWND hwnd, const RECT *user_rect, HRGN region, UIN
 
 BOOL NTAPI NtUserInvalidateRect(HWND hwnd, const RECT *rect, BOOL erase)
 {
-    return NtUserRedrawWindow(hwnd, rect, NULL, RDW_INVALIDATE | (erase ? RDW_ERASE : 0));
+    return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_INVALIDATE | (erase ? RDW_ERASE : 0));
 }
 
 BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect)
 {
-    return NtUserRedrawWindow(hwnd, rect, NULL, RDW_VALIDATE | RDW_NOCHILDREN);
+    return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE | RDW_NOCHILDREN);
 }
 
 BOOL NTAPI NtUserGetUpdateRect(HWND hwnd, LPRECT user_rect, BOOL erase)
@@ -589,7 +589,7 @@ BOOL NTAPI NtUserGetUpdateRect(HWND hwnd, LPRECT user_rect, BOOL erase)
         if (user_rect)
             MimeCopyToUser(user_rect, &box, sizeof(box));
         if (erase && nonempty && (w->Flags & WNDF_ERASE_PENDING) && w->Thread == W32GetThread()) {
-            HDC hdc = PaintGetDC(w, NULL, DCX_INTERSECTUPDATE | DCX_USESTYLE);
+            HDC hdc = PaintGetDC(w, nullptr, DCX_INTERSECTUPDATE | DCX_USESTYLE);
             w->Flags &= ~WNDF_ERASE_PENDING;
             if (hdc) {
                 MsgSend(w, WM_ERASEBKGND, (WPARAM)hdc, 0);

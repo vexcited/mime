@@ -37,9 +37,9 @@ MIME_MSI_OBJECT *MimeMsiGetHandle(MSIHANDLE handle, ULONG kind)
 {
     ULONG slot = handle & 0xFFFF;
     if (!slot || slot >= RTL_NUMBER_OF(handles) || handles[slot].Generation != handle >> 16)
-        return NULL;
+        return nullptr;
     MIME_MSI_OBJECT *object = handles[slot].Object;
-    return object && (!kind || object->Kind == kind) ? object : NULL;
+    return object && (!kind || object->Kind == kind) ? object : nullptr;
 }
 
 void MimeMsiRelease(MIME_MSI_OBJECT *object)
@@ -53,7 +53,7 @@ UINT WINAPI MsiCloseHandle(MSIHANDLE handle)
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_OBJECT *object = MimeMsiGetHandle(handle, 0);
     if (object) {
-        handles[handle & 0xFFFF].Object = NULL;
+        handles[handle & 0xFFFF].Object = nullptr;
         MimeMsiRelease(object);
     }
     ReleaseSRWLockExclusive(&MimeMsiLock);
@@ -69,7 +69,7 @@ UINT WINAPI MsiCloseAllHandles(void)
         MIME_MSI_OBJECT *object = handles[i].Object;
         if (!object || handles[i].Thread != thread)
             continue;
-        handles[i].Object = NULL;
+        handles[i].Object = nullptr;
         MimeMsiRelease(object);
         count++;
     }
@@ -84,7 +84,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
         for (ULONG i = 1; i < RTL_NUMBER_OF(handles); i++) {
             if (handles[i].Object) {
                 MimeMsiRelease(handles[i].Object);
-                handles[i].Object = NULL;
+                handles[i].Object = nullptr;
             }
         }
     }

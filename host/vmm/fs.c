@@ -12,7 +12,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <sys/mount.h>
 #define ST_BIRTH(st) ((st)->st_birthtimespec)
 #define ST_ATIME(st) ((st)->st_atimespec)
@@ -192,12 +192,12 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
     /* split into components, normalising separators, '.' and '..'. */
     char *components[256];
     int depth = 0;
-    char *save = NULL;
+    char *save = nullptr;
     for (char *p = utf8; *p; p++) {
         if (*p == '\\')
             *p = '/';
     }
-    for (char *tok = strtok_r(utf8, "/", &save); tok; tok = strtok_r(NULL, "/", &save)) {
+    for (char *tok = strtok_r(utf8, "/", &save); tok; tok = strtok_r(nullptr, "/", &save)) {
         if (strcmp(tok, ".") == 0)
             continue;
         if (strcmp(tok, "..") == 0) {
@@ -226,7 +226,7 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
 static MimeFsHandle *get_handle(MimeVm *vm, uint64_t h)
 {
     if (h == 0 || h > MIME_VMM_MAX_FS_HANDLES)
-        return NULL;
+        return nullptr;
     return vm->fs_handles[h - 1];
 }
 
@@ -257,7 +257,7 @@ static void free_handle(MimeVm *vm, uint64_t h)
     free(fh->host_path);
     free(fh->dir_entries);
     free(fh);
-    vm->fs_handles[h - 1] = NULL;
+    vm->fs_handles[h - 1] = nullptr;
 }
 
 static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
@@ -447,7 +447,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_VOLUME_QUERY: {
         MimeFsVolumeInfo *info = mime_vm_phys(vm, a[2], sizeof(*info));
         const char *root = a[1] == MIME_FS_VOLUME_SYSTEM ? vm->paths->drive_c :
-                           a[1] == MIME_FS_VOLUME_HOST ? "/" : NULL;
+                           a[1] == MIME_FS_VOLUME_HOST ? "/" : nullptr;
         if (!info || !root) {
             status = MIME_HC_STATUS_INVALID;
             break;
@@ -489,7 +489,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         }
         if (a[2] == 0 || !fh->dir_entries) {
             free(fh->dir_entries);
-            fh->dir_entries = NULL;
+            fh->dir_entries = nullptr;
             fh->dir_count = 0;
             load_dir(fh);
         }

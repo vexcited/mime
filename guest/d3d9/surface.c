@@ -8,7 +8,7 @@
  */
 #include "d3d9_private.h"
 
-D9Surface *D9SurfaceFrom(IDirect3DSurface9 *iface) { return iface ? CONTAINING_RECORD(iface, D9Surface, iface) : NULL; }
+D9Surface *D9SurfaceFrom(IDirect3DSurface9 *iface) { return iface ? CONTAINING_RECORD(iface, D9Surface, iface) : nullptr; }
 
 static D9Surface *impl(IDirect3DSurface9 *iface) { return CONTAINING_RECORD(iface, D9Surface, iface); }
 
@@ -82,7 +82,7 @@ ID3D11RenderTargetView *D9SurfaceRtv(D9Surface *s, BOOL srgb)
     }
     ID3D11Device1 *d3d11 = s->base.device->d3d11;
     if (FAILED(d3d11->lpVtbl->CreateRenderTargetView(d3d11, (ID3D11Resource *)s->texture, &desc, slot)))
-        *slot = NULL;
+        *slot = nullptr;
     return *slot;
 }
 
@@ -105,13 +105,13 @@ ID3D11DepthStencilView *D9SurfaceDsv(D9Surface *s)
     }
     ID3D11Device1 *d3d11 = s->base.device->d3d11;
     if (FAILED(d3d11->lpVtbl->CreateDepthStencilView(d3d11, (ID3D11Resource *)s->texture, &desc, &s->dsv)))
-        s->dsv = NULL;
+        s->dsv = nullptr;
     return s->dsv;
 }
 
 /* ------------------------------------------------------------------ memory */
 
-static BOOL in_gpu(const D9Surface *s) { return s->texture != NULL; }
+static BOOL in_gpu(const D9Surface *s) { return s->texture != nullptr; }
 
 /* whether the surface's memory holds its texels without asking the gpu. */
 static BOOL memory_current(const D9Surface *s)
@@ -143,21 +143,21 @@ HRESULT D9SurfaceDownload(D9Surface *s)
     ID3D11DeviceContext1 *ctx = device->context;
     D3D11_TEXTURE2D_DESC desc = {s->width, s->height, 1, 1, f->resource, {1, 0}, D3D11_USAGE_STAGING, 0,
                                  D3D11_CPU_ACCESS_READ};
-    ID3D11Texture2D *staging, *resolved = NULL;
-    if (FAILED(hr = d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, NULL, &staging)))
+    ID3D11Texture2D *staging, *resolved = nullptr;
+    if (FAILED(hr = d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, nullptr, &staging)))
         return hr;
     ID3D11Resource *source = (ID3D11Resource *)s->texture;
     UINT sub = D9SurfaceSubresource(s);
     if (s->samples > 1) {
         desc.Usage = D3D11_USAGE_DEFAULT;
         desc.CPUAccessFlags = 0;
-        if (SUCCEEDED(d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, NULL, &resolved))) {
+        if (SUCCEEDED(d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, nullptr, &resolved))) {
             ctx->lpVtbl->ResolveSubresource(ctx, (ID3D11Resource *)resolved, 0, source, 0, f->view);
             source = (ID3D11Resource *)resolved;
             sub = 0;
         }
     }
-    ctx->lpVtbl->CopySubresourceRegion(ctx, (ID3D11Resource *)staging, 0, 0, 0, 0, source, sub, NULL);
+    ctx->lpVtbl->CopySubresourceRegion(ctx, (ID3D11Resource *)staging, 0, 0, 0, 0, source, sub, nullptr);
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (SUCCEEDED(hr = ctx->lpVtbl->Map(ctx, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped))) {
         UINT rows = D9FormatRows(f, s->height);
@@ -203,7 +203,7 @@ void D9SurfaceUploadBytes(D9Surface *s, const RECT *r, const BYTE *bytes, UINT p
     const D9Format *f = s->base.format;
     D3D11_BOX box = {(UINT)r->left, (UINT)r->top, 0, (UINT)r->right, (UINT)r->bottom, 1};
     UINT width = r->right - r->left, rows = D9FormatRows(f, r->bottom - r->top);
-    BYTE *converted = NULL;
+    BYTE *converted = nullptr;
     if (f->stored != f->bytes) {
         UINT out_pitch = D9_ALIGN(width * f->stored, 4);
         converted = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)out_pitch * rows);
@@ -231,7 +231,7 @@ static HRESULT STDMETHODCALLTYPE surface_query(IDirect3DSurface9 *iface, REFIID 
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DResource9) ||
         IsEqualGUID(riid, &IID_IDirect3DSurface9)) {
         *out = iface;
@@ -283,7 +283,7 @@ static HRESULT STDMETHODCALLTYPE surface_get_container(IDirect3DSurface9 *iface,
     D9Surface *s = impl(iface);
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (s->container)
         return s->container->iface.base.lpVtbl->QueryInterface(&s->container->iface.base, riid, out);
     if (s->swapchain)
@@ -322,7 +322,7 @@ HRESULT D9SurfaceLock(D9Surface *s, D3DLOCKED_RECT *locked, const RECT *rect, DW
     const D9Format *f = s->base.format;
     if (!locked)
         return D3DERR_INVALIDCALL;
-    locked->pBits = NULL;
+    locked->pBits = nullptr;
     locked->Pitch = 0;
     RECT r;
     if (s->memory->locked || !lockable(s) || (f->flags & D9_FORMAT_NULL) ||
@@ -383,12 +383,12 @@ static HRESULT STDMETHODCALLTYPE surface_get_dc(IDirect3DSurface9 *iface, HDC *d
     D3DFORMAT format = s->base.d3d_format;
     if (!dc)
         return D3DERR_INVALIDCALL;
-    *dc = NULL;
+    *dc = nullptr;
     if (s->dc || (format != D3DFMT_X8R8G8B8 && format != D3DFMT_A8R8G8B8 && format != D3DFMT_R5G6B5 &&
                   format != D3DFMT_X1R5G5B5))
         return D3DERR_INVALIDCALL;
     D3DLOCKED_RECT locked;
-    HRESULT hr = D9SurfaceLock(s, &locked, NULL, 0);
+    HRESULT hr = D9SurfaceLock(s, &locked, nullptr, 0);
     if (FAILED(hr))
         return hr;
     struct {
@@ -403,12 +403,12 @@ static HRESULT STDMETHODCALLTYPE surface_get_dc(IDirect3DSurface9 *iface, HDC *d
         info.header.biBitCount = 16;
     }
     void *bits;
-    s->bitmap = CreateDIBSection(NULL, (BITMAPINFO *)&info, DIB_RGB_COLORS, &bits, NULL, 0);
-    s->dc = s->bitmap ? CreateCompatibleDC(NULL) : NULL;
+    s->bitmap = CreateDIBSection(nullptr, (BITMAPINFO *)&info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    s->dc = s->bitmap ? CreateCompatibleDC(nullptr) : nullptr;
     if (!s->dc) {
         if (s->bitmap)
             DeleteObject(s->bitmap);
-        s->bitmap = NULL;
+        s->bitmap = nullptr;
         D9SurfaceUnlock(s);
         return D3DERR_INVALIDCALL;
     }
@@ -435,8 +435,8 @@ static HRESULT STDMETHODCALLTYPE surface_release_dc(IDirect3DSurface9 *iface, HD
     }
     DeleteDC(s->dc);
     DeleteObject(s->bitmap);
-    s->dc = NULL;
-    s->bitmap = NULL;
+    s->dc = nullptr;
+    s->bitmap = nullptr;
     return D9SurfaceUnlock(s);
 }
 
@@ -479,7 +479,7 @@ HRESULT D9SurfaceMakeTexture(D9Surface *s)
     if (s->samples == D3DMULTISAMPLE_NONMASKABLE)
         desc.SampleDesc.Count = 2u << D9_MIN(s->quality, 2);
     ID3D11Device1 *d3d11 = s->base.device->d3d11;
-    return d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, NULL, &s->texture);
+    return d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, nullptr, &s->texture);
 }
 
 HRESULT D9NewSurface(D9Device *device, D3DFORMAT format, DWORD usage, D3DPOOL pool, UINT width, UINT height,

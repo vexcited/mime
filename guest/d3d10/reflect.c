@@ -56,7 +56,7 @@ static void *alloc(Reflection *r, SIZE_T size)
 {
     RBlock *block = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(RBlock) + size + 8);
     if (!block)
-        return NULL;
+        return nullptr;
     block->next = r->blocks;
     r->blocks = block;
     return (BYTE *)block + ((sizeof(RBlock) + 7) & ~7);
@@ -122,7 +122,7 @@ static ID3D10ShaderReflectionType *STDMETHODCALLTYPE type_member_by_name(ID3D10S
 static LPCSTR STDMETHODCALLTYPE type_member_name(ID3D10ShaderReflectionType *iface, UINT index)
 {
     RType *t = (RType *)iface;
-    return index < t->desc.Members ? t->names[index] : NULL;
+    return index < t->desc.Members ? t->names[index] : nullptr;
 }
 
 static const ID3D10ShaderReflectionTypeVtbl type_vtbl = {type_get_desc, type_member_by_index, type_member_by_name,
@@ -182,11 +182,11 @@ static const char *string_at(Reflection *r, const BYTE *chunk, UINT offset)
 {
     const BYTE *s = chunk + offset;
     if (s < chunk || s >= r->end)
-        return NULL;
+        return nullptr;
     for (const BYTE *p = s; p < r->end; p++)
         if (!*p)
             return (const char *)s;
-    return NULL;
+    return nullptr;
 }
 
 /* whether count entries of size bytes at offset fit in the container. */
@@ -446,7 +446,7 @@ static HRESULT STDMETHODCALLTYPE reflection_query(ID3D10ShaderReflection *iface,
     if (!out)
         return E_FAIL;
     if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &IID_ID3D10ShaderReflection)) {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     *out = iface;
@@ -533,7 +533,7 @@ D3D10API HRESULT WINAPI D3D10ReflectShader(const void *bytecode, SIZE_T length, 
 {
     if (!out || !bytecode)
         return E_INVALIDARG;
-    *out = NULL;
+    *out = nullptr;
     Reflection *r = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*r));
     if (!r)
         return E_OUTOFMEMORY;

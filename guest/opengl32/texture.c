@@ -100,13 +100,13 @@ static int slot_of_sampler(GLenum type)
 GlTexture *gl_texture(GlContext *ctx, GLuint name)
 {
     void *t = gl_name_get(&ctx->shared->textures, name);
-    return t == GL_RESERVED ? NULL : t;
+    return t == GL_RESERVED ? nullptr : t;
 }
 
 GlTexture *gl_unit_texture(GlContext *ctx, GLuint unit, GLenum sampler_type)
 {
     if (unit >= 32)
-        return NULL;
+        return nullptr;
     return gl_texture(ctx, ctx->units[unit][slot_of_sampler(sampler_type)]);
 }
 
@@ -115,7 +115,7 @@ static GlTexture *bound(GlContext *ctx, GLenum target)
     if (target >= GL_TEXTURE_CUBE_MAP_POSITIVE_X && target <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z)
         target = GL_TEXTURE_CUBE_MAP;
     int s = slot_of(target);
-    return s < 0 ? NULL : gl_texture(ctx, ctx->units[ctx->active_texture][s]);
+    return s < 0 ? nullptr : gl_texture(ctx, ctx->units[ctx->active_texture][s]);
 }
 
 /* ---------------------------------------------------------------- formats */
@@ -300,7 +300,7 @@ static GlTexture *make(GlContext *ctx, GLuint name, GLenum target)
         return t;
     t = gl_alloc(sizeof(GlTexture));
     if (!t)
-        return NULL;
+        return nullptr;
     t->name = name;
     t->target = target;
     t->sampler.min_filter = target == GL_TEXTURE_RECTANGLE ? GL_LINEAR : GL_NEAREST_MIPMAP_LINEAR;
@@ -385,7 +385,7 @@ GLAPI void APIENTRY glDeleteTextures(GLsizei n, const GLuint *textures)
             destroy_host(o);
             gl_free(o);
         }
-        gl_name_set(&ctx->shared->textures, name, NULL);
+        gl_name_set(&ctx->shared->textures, name, nullptr);
         for (int u = 0; u < 32; u++)
             for (int s = 0; s < SLOT_COUNT; s++)
                 if (ctx->units[u][s] == name)
@@ -495,7 +495,7 @@ static const uint8_t *unpack_source(GlContext *ctx, const void *pixels)
 {
     if (ctx->pixel_unpack) {
         GlBuffer *b = gl_buffer(ctx, ctx->pixel_unpack);
-        return b && b->mem.ptr ? b->mem.ptr + (ULONG_PTR)pixels : NULL;
+        return b && b->mem.ptr ? b->mem.ptr + (ULONG_PTR)pixels : nullptr;
     }
     return pixels;
 }
@@ -1046,7 +1046,7 @@ GLAPI void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *para
 
 GLAPI void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *params)
 {
-    GLint v[4] = {0};
+    GLint v[4] = {};
     glGetTexParameteriv(target, pname, v);
     int count = pname == GL_TEXTURE_SWIZZLE_RGBA ? 4 : 1;
     for (int i = 0; i < count; i++)
@@ -1280,7 +1280,7 @@ BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h,
     uint8_t *dst = pixels;
     if (ctx->pixel_pack) {
         GlBuffer *b = gl_buffer(ctx, ctx->pixel_pack);
-        dst = b && b->mem.ptr ? b->mem.ptr + (ULONG_PTR)pixels : NULL;
+        dst = b && b->mem.ptr ? b->mem.ptr + (ULONG_PTR)pixels : nullptr;
     }
     if (dst) {
         uint32_t dbpp = gl_client_pixel_bytes(format, type);

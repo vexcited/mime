@@ -22,17 +22,17 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
     *base_out = base;
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!nt)
-        return NULL;
+        return nullptr;
     /* resource only images such as mui files are often pe32, whose data directories sit 16 bytes earlier. */
     PUCHAR optional = (PUCHAR)&nt->OptionalHeader;
     BOOLEAN pe32 = nt->OptionalHeader.Magic == 0x10B;
     ULONG count = pe32 ? *(PULONG)(optional + 92) : nt->OptionalHeader.NumberOfRvaAndSizes;
     IMAGE_DATA_DIRECTORY *dirs = pe32 ? (IMAGE_DATA_DIRECTORY *)(optional + 96) : nt->OptionalHeader.DataDirectory;
     if (count <= IMAGE_DIRECTORY_ENTRY_RESOURCE)
-        return NULL;
+        return nullptr;
     IMAGE_DATA_DIRECTORY *dir = &dirs[IMAGE_DIRECTORY_ENTRY_RESOURCE];
     if (!dir->VirtualAddress)
-        return NULL;
+        return nullptr;
     *size = dir->Size;
     if (*image)
         return (IMAGE_RESOURCE_DIRECTORY *)(base + dir->VirtualAddress);
@@ -43,7 +43,7 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
             dir->VirtualAddress < sec->VirtualAddress + (sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData))
             return (IMAGE_RESOURCE_DIRECTORY *)(base + sec->PointerToRawData + (dir->VirtualAddress - sec->VirtualAddress));
     }
-    return NULL;
+    return nullptr;
 }
 
 static int compare_name(const IMAGE_RESOURCE_DIR_STRING_U *s, PCWSTR name)
@@ -92,7 +92,7 @@ static IMAGE_RESOURCE_DIRECTORY_ENTRY *find_entry(IMAGE_RESOURCE_DIRECTORY *root
             else
                 hi = mid - 1;
         }
-        return NULL;
+        return nullptr;
     }
     LONG lo = 0, hi = (LONG)dir->NumberOfNamedEntries - 1;
     while (lo <= hi) {
@@ -107,13 +107,13 @@ static IMAGE_RESOURCE_DIRECTORY_ENTRY *find_entry(IMAGE_RESOURCE_DIRECTORY *root
         else
             hi = mid - 1;
     }
-    return NULL;
+    return nullptr;
 }
 
 static IMAGE_RESOURCE_DIRECTORY *subdirectory(IMAGE_RESOURCE_DIRECTORY *root, IMAGE_RESOURCE_DIRECTORY_ENTRY *e)
 {
     if (!(e->OffsetToData & 0x80000000))
-        return NULL;
+        return nullptr;
     return (IMAGE_RESOURCE_DIRECTORY *)((PUCHAR)root + (e->OffsetToData & 0x7FFFFFFF));
 }
 
@@ -129,7 +129,7 @@ static IMAGE_RESOURCE_DIRECTORY_ENTRY *find_language(IMAGE_RESOURCE_DIRECTORY *r
     }
     if (dir->NumberOfNamedEntries + dir->NumberOfIdEntries)
         return (IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    return NULL;
+    return nullptr;
 }
 
 /* level 1 = type directory, 2 = name directory, 3 = data entry. */
@@ -198,7 +198,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrAccessResource(PVOID handle, const IMAGE_RESOURCE
         *data = base + rva;
     } else {
         IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
-        *data = NULL;
+        *data = nullptr;
         for (ULONG i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
             ULONG span = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
             if (rva >= sec->VirtualAddress && rva < sec->VirtualAddress + span) {

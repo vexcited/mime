@@ -84,9 +84,9 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     VkCommandBufferSubmitInfo buffers[2];
     UINT count = 0;
     if (init)
-        buffers[count++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, NULL, init};
+        buffers[count++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
     if (cmd)
-        buffers[count++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, NULL, cmd};
+        buffers[count++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, cmd};
     VkSemaphoreSubmitInfo signals[2] = {{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO}};
     signals[0].semaphore = device->timeline;
     signals[0].value = serial;
@@ -181,11 +181,11 @@ static HRESULT create_vulkan_device(D3dDevice *device)
 {
     D3dVk *vk = &device->vk;
     UINT count = 0;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, NULL, &count, NULL);
+    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, nullptr);
     VkExtensionProperties *available = HeapAlloc(GetProcessHeap(), 0, (count + 1) * sizeof(*available));
     if (!available)
         return E_OUTOFMEMORY;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, NULL, &count, available);
+    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, available);
     static const char *const required[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
                                            VK_EXT_ROBUSTNESS_2_EXTENSION_NAME};
     const char *extensions[16];
@@ -295,7 +295,7 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     device->has_depth_bounds = FALSE;
 
     UINT families = 0;
-    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, NULL);
+    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, nullptr);
     VkQueueFamilyProperties props[16];
     families = D3D_MIN(families, 16);
     vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, props);
@@ -317,7 +317,7 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     info.pQueueCreateInfos = &queue;
     info.enabledExtensionCount = n;
     info.ppEnabledExtensionNames = extensions;
-    if (vk->vkCreateDevice(vk->physical, &info, NULL, &vk->device) != VK_SUCCESS)
+    if (vk->vkCreateDevice(vk->physical, &info, nullptr, &vk->device) != VK_SUCCESS)
         return DXGI_ERROR_UNSUPPORTED;
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D3D_VK_DEVICE_FUNCS(X)
@@ -328,7 +328,7 @@ static HRESULT create_vulkan_device(D3dDevice *device)
 
 static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
 {
-    IMimeDXGIAdapter *mime = NULL;
+    IMimeDXGIAdapter *mime = nullptr;
     if (FAILED(adapter->lpVtbl->QueryInterface(adapter, &IID_IMimeDXGIAdapter, (void **)&mime)))
         return E_INVALIDARG;
     MIME_DXGI_VULKAN v;
@@ -361,14 +361,14 @@ static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-    if (vk->vkCreateSemaphore(vk->device, &sem, NULL, &device->timeline) != VK_SUCCESS)
+    if (vk->vkCreateSemaphore(vk->device, &sem, nullptr, &device->timeline) != VK_SUCCESS)
         return E_FAIL;
     device->next_serial = 1;
 
     VkCommandPoolCreateInfo pool = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool.queueFamilyIndex = device->queue_family;
-    if (vk->vkCreateCommandPool(vk->device, &pool, NULL, &device->init_pool) != VK_SUCCESS)
+    if (vk->vkCreateCommandPool(vk->device, &pool, nullptr, &device->init_pool) != VK_SUCCESS)
         return E_FAIL;
 
     if (FAILED(hr = D3dMemoryInit(device)) || FAILED(hr = D3dHeapInit(device)))
@@ -393,15 +393,15 @@ static void destroy_device(D3dDevice *device)
             D3dFree(device, &device->so_dummy);
         D3dMemoryDestroy(device);
         D3dHeapDestroy(device);
-        vk->vkDestroySampler(vk->device, device->null_sampler, NULL);
-        vk->vkDestroyDescriptorPool(vk->device, device->heap_pool, NULL);
-        vk->vkDestroyDescriptorPool(vk->device, device->table_pool, NULL);
-        vk->vkDestroyPipelineLayout(vk->device, device->pipeline_layout, NULL);
-        vk->vkDestroyDescriptorSetLayout(vk->device, device->heap_layout, NULL);
-        vk->vkDestroyDescriptorSetLayout(vk->device, device->table_layout, NULL);
-        vk->vkDestroyCommandPool(vk->device, device->init_pool, NULL);
-        vk->vkDestroySemaphore(vk->device, device->timeline, NULL);
-        vk->vkDestroyDevice(vk->device, NULL);
+        vk->vkDestroySampler(vk->device, device->null_sampler, nullptr);
+        vk->vkDestroyDescriptorPool(vk->device, device->heap_pool, nullptr);
+        vk->vkDestroyDescriptorPool(vk->device, device->table_pool, nullptr);
+        vk->vkDestroyPipelineLayout(vk->device, device->pipeline_layout, nullptr);
+        vk->vkDestroyDescriptorSetLayout(vk->device, device->heap_layout, nullptr);
+        vk->vkDestroyDescriptorSetLayout(vk->device, device->table_layout, nullptr);
+        vk->vkDestroyCommandPool(vk->device, device->init_pool, nullptr);
+        vk->vkDestroySemaphore(vk->device, device->timeline, nullptr);
+        vk->vkDestroyDevice(vk->device, nullptr);
     }
     if (device->adapter)
         device->adapter->lpVtbl->Release(device->adapter);
@@ -420,7 +420,7 @@ static HRESULT STDMETHODCALLTYPE device_query(ID3D11Device5 *iface, REFIID riid,
     if (!out)
         return E_POINTER;
     D3dDevice *device = impl(iface);
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11Device) ||
         IsEqualGUID(riid, &IID_ID3D11Device1) || IsEqualGUID(riid, &IID_ID3D11Device2) ||
         IsEqualGUID(riid, &IID_ID3D11Device3) || IsEqualGUID(riid, &IID_ID3D11Device4) ||
@@ -466,7 +466,7 @@ static HRESULT STDMETHODCALLTYPE device_create_buffer(ID3D11Device5 *iface, cons
     if (!desc)
         return E_INVALIDARG;
     D3dResource *resource;
-    HRESULT hr = D3dCreateBuffer(impl(iface), desc, data, buffer ? &resource : NULL);
+    HRESULT hr = D3dCreateBuffer(impl(iface), desc, data, buffer ? &resource : nullptr);
     if (SUCCEEDED(hr) && buffer)
         *buffer = &resource->u.buffer;
     return buffer || FAILED(hr) ? hr : S_FALSE;
@@ -478,7 +478,7 @@ static HRESULT create_texture(ID3D11Device5 *iface, D3D11_RESOURCE_DIMENSION dim
     if (!desc)
         return E_INVALIDARG;
     D3dResource *resource;
-    HRESULT hr = D3dCreateTexture(impl(iface), dimension, desc, data, out ? &resource : NULL);
+    HRESULT hr = D3dCreateTexture(impl(iface), dimension, desc, data, out ? &resource : nullptr);
     if (SUCCEEDED(hr) && out)
         *out = resource->iface;
     return out || FAILED(hr) ? hr : S_FALSE;
@@ -535,7 +535,7 @@ static HRESULT create_view(ID3D11Device5 *iface, D3dViewKind kind, ID3D11Resourc
     if (!resource)
         return E_INVALIDARG;
     D3dView *view;
-    HRESULT hr = D3dCreateView(impl(iface), kind, resource, desc, 0, out ? &view : NULL);
+    HRESULT hr = D3dCreateView(impl(iface), kind, resource, desc, 0, out ? &view : nullptr);
     if (SUCCEEDED(hr) && out)
         *out = &view->iface;
     return out || FAILED(hr) ? hr : S_FALSE;
@@ -575,7 +575,7 @@ static HRESULT STDMETHODCALLTYPE device_create_shader_resource_view(ID3D11Device
     D3D11_SHADER_RESOURCE_VIEW_DESC1 desc1;
     if (desc)
         srv_desc1(desc, &desc1);
-    return device_create_shader_resource_view1(iface, resource, desc ? &desc1 : NULL,
+    return device_create_shader_resource_view1(iface, resource, desc ? &desc1 : nullptr,
                                                (ID3D11ShaderResourceView1 **)view);
 }
 
@@ -590,7 +590,7 @@ static HRESULT STDMETHODCALLTYPE device_create_unordered_access_view(ID3D11Devic
                                                                      const D3D11_UNORDERED_ACCESS_VIEW_DESC *desc,
                                                                      ID3D11UnorderedAccessView **view)
 {
-    D3D11_UNORDERED_ACCESS_VIEW_DESC1 desc1, *p = NULL;
+    D3D11_UNORDERED_ACCESS_VIEW_DESC1 desc1, *p = nullptr;
     if (desc) {
         memset(&desc1, 0, sizeof(desc1));
         desc1.Format = desc->Format;
@@ -622,7 +622,7 @@ static HRESULT STDMETHODCALLTYPE device_create_render_target_view(ID3D11Device5 
                                                                   const D3D11_RENDER_TARGET_VIEW_DESC *desc,
                                                                   ID3D11RenderTargetView **view)
 {
-    D3D11_RENDER_TARGET_VIEW_DESC1 desc1, *p = NULL;
+    D3D11_RENDER_TARGET_VIEW_DESC1 desc1, *p = nullptr;
     if (desc) {
         memset(&desc1, 0, sizeof(desc1));
         desc1.Format = desc->Format;
@@ -656,7 +656,7 @@ static HRESULT STDMETHODCALLTYPE device_create_input_layout(ID3D11Device5 *iface
                                                             ID3D11InputLayout **layout)
 {
     D3dInputLayout *object;
-    HRESULT hr = D3dCreateInputLayout(impl(iface), elements, count, bytecode, length, layout ? &object : NULL);
+    HRESULT hr = D3dCreateInputLayout(impl(iface), elements, count, bytecode, length, layout ? &object : nullptr);
     if (SUCCEEDED(hr) && layout)
         *layout = &object->iface;
     return layout || FAILED(hr) ? hr : S_FALSE;
@@ -670,7 +670,7 @@ static HRESULT create_shader(ID3D11Device5 *iface, D3dStage stage, const void *b
         return E_INVALIDARG;
     D3dShader *shader;
     HRESULT hr = D3dCreateShader(impl(iface), stage, bytecode, length, so, so_count, strides, stride_count,
-                                 rasterized, out ? &shader : NULL);
+                                 rasterized, out ? &shader : nullptr);
     if (SUCCEEDED(hr) && out)
         *out = &shader->iface;
     return out || FAILED(hr) ? hr : S_FALSE;
@@ -680,14 +680,14 @@ static HRESULT STDMETHODCALLTYPE device_create_vertex_shader(ID3D11Device5 *ifac
                                                              SIZE_T length, ID3D11ClassLinkage *linkage,
                                                              ID3D11VertexShader **shader)
 {
-    return create_shader(iface, D3D_VS, bytecode, length, NULL, 0, NULL, 0, 0, (void **)shader);
+    return create_shader(iface, D3D_VS, bytecode, length, nullptr, 0, nullptr, 0, 0, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_geometry_shader(ID3D11Device5 *iface, const void *bytecode,
                                                                SIZE_T length, ID3D11ClassLinkage *linkage,
                                                                ID3D11GeometryShader **shader)
 {
-    return create_shader(iface, D3D_GS, bytecode, length, NULL, 0, NULL, 0, 0, (void **)shader);
+    return create_shader(iface, D3D_GS, bytecode, length, nullptr, 0, nullptr, 0, 0, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_geometry_shader_with_stream_output(
@@ -705,28 +705,28 @@ static HRESULT STDMETHODCALLTYPE device_create_pixel_shader(ID3D11Device5 *iface
                                                             SIZE_T length, ID3D11ClassLinkage *linkage,
                                                             ID3D11PixelShader **shader)
 {
-    return create_shader(iface, D3D_PS, bytecode, length, NULL, 0, NULL, 0, 0, (void **)shader);
+    return create_shader(iface, D3D_PS, bytecode, length, nullptr, 0, nullptr, 0, 0, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_hull_shader(ID3D11Device5 *iface, const void *bytecode,
                                                            SIZE_T length, ID3D11ClassLinkage *linkage,
                                                            ID3D11HullShader **shader)
 {
-    return create_shader(iface, D3D_HS, bytecode, length, NULL, 0, NULL, 0, 0, (void **)shader);
+    return create_shader(iface, D3D_HS, bytecode, length, nullptr, 0, nullptr, 0, 0, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_domain_shader(ID3D11Device5 *iface, const void *bytecode,
                                                              SIZE_T length, ID3D11ClassLinkage *linkage,
                                                              ID3D11DomainShader **shader)
 {
-    return create_shader(iface, D3D_DS, bytecode, length, NULL, 0, NULL, 0, 0, (void **)shader);
+    return create_shader(iface, D3D_DS, bytecode, length, nullptr, 0, nullptr, 0, 0, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_compute_shader(ID3D11Device5 *iface, const void *bytecode,
                                                               SIZE_T length, ID3D11ClassLinkage *linkage,
                                                               ID3D11ComputeShader **shader)
 {
-    return create_shader(iface, D3D_CS, bytecode, length, NULL, 0, NULL, 0, 0, (void **)shader);
+    return create_shader(iface, D3D_CS, bytecode, length, nullptr, 0, nullptr, 0, 0, (void **)shader);
 }
 
 HRESULT D3dCreateClassLinkage(D3dDevice *device, ID3D11ClassLinkage **out);
@@ -744,7 +744,7 @@ static HRESULT STDMETHODCALLTYPE device_create_blend_state1(ID3D11Device5 *iface
     if (!desc)
         return E_INVALIDARG;
     D3dBlendState *object;
-    HRESULT hr = D3dCreateBlendState(impl(iface), desc, state ? &object : NULL);
+    HRESULT hr = D3dCreateBlendState(impl(iface), desc, state ? &object : nullptr);
     if (SUCCEEDED(hr) && state)
         *state = &object->iface;
     return state || FAILED(hr) ? hr : S_FALSE;
@@ -780,7 +780,7 @@ static HRESULT STDMETHODCALLTYPE device_create_depth_stencil_state(ID3D11Device5
     if (!desc)
         return E_INVALIDARG;
     D3dDepthStencilState *object;
-    HRESULT hr = D3dCreateDepthStencilState(impl(iface), desc, state ? &object : NULL);
+    HRESULT hr = D3dCreateDepthStencilState(impl(iface), desc, state ? &object : nullptr);
     if (SUCCEEDED(hr) && state)
         *state = &object->iface;
     return state || FAILED(hr) ? hr : S_FALSE;
@@ -793,7 +793,7 @@ static HRESULT STDMETHODCALLTYPE device_create_rasterizer_state2(ID3D11Device5 *
     if (!desc)
         return E_INVALIDARG;
     D3dRasterizerState *object;
-    HRESULT hr = D3dCreateRasterizerState(impl(iface), desc, state ? &object : NULL);
+    HRESULT hr = D3dCreateRasterizerState(impl(iface), desc, state ? &object : nullptr);
     if (SUCCEEDED(hr) && state)
         *state = &object->iface;
     return state || FAILED(hr) ? hr : S_FALSE;
@@ -829,7 +829,7 @@ static HRESULT STDMETHODCALLTYPE device_create_sampler_state(ID3D11Device5 *ifac
     if (!desc)
         return E_INVALIDARG;
     D3dSamplerState *object;
-    HRESULT hr = D3dCreateSamplerState(impl(iface), desc, state ? &object : NULL);
+    HRESULT hr = D3dCreateSamplerState(impl(iface), desc, state ? &object : nullptr);
     if (SUCCEEDED(hr) && state)
         *state = &object->iface;
     return state || FAILED(hr) ? hr : S_FALSE;
@@ -841,7 +841,7 @@ static HRESULT STDMETHODCALLTYPE device_create_query1(ID3D11Device5 *iface, cons
     if (!desc)
         return E_INVALIDARG;
     D3dQuery *object;
-    HRESULT hr = D3dCreateQuery(impl(iface), desc, query ? &object : NULL);
+    HRESULT hr = D3dCreateQuery(impl(iface), desc, query ? &object : nullptr);
     if (SUCCEEDED(hr) && query)
         *query = &object->iface;
     return query || FAILED(hr) ? hr : S_FALSE;
@@ -870,7 +870,7 @@ static HRESULT STDMETHODCALLTYPE device_create_counter(ID3D11Device5 *iface, con
                                                        ID3D11Counter **counter)
 {
     if (counter)
-        *counter = NULL;
+        *counter = nullptr;
     return DXGI_ERROR_UNSUPPORTED;
 }
 
@@ -878,7 +878,7 @@ static HRESULT STDMETHODCALLTYPE device_create_deferred_context(ID3D11Device5 *i
                                                                 ID3D11DeviceContext **context)
 {
     if (context)
-        *context = NULL;
+        *context = nullptr;
     if (flags)
         return E_INVALIDARG;
     if (!context)
@@ -894,7 +894,7 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_resource(ID3D11Device5 *ifac
                                                              void **resource)
 {
     if (resource)
-        *resource = NULL;
+        *resource = nullptr;
     D3dLog("d3d11: shared resources are not implemented");
     return E_INVALIDARG;
 }
@@ -904,7 +904,7 @@ static HRESULT STDMETHODCALLTYPE device_check_format_support(ID3D11Device5 *ifac
 {
     if (!support)
         return E_INVALIDARG;
-    *support = D3dFormatSupport(impl(iface), format, NULL);
+    *support = D3dFormatSupport(impl(iface), format, nullptr);
     return *support ? S_OK : E_FAIL;
 }
 
@@ -1095,7 +1095,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support_entry(ID3D11Device
         if (!data || size != sizeof(D3D11_FEATURE_DATA_FORMAT_SUPPORT))
             return E_INVALIDARG;
         D3D11_FEATURE_DATA_FORMAT_SUPPORT *out = data;
-        out->OutFormatSupport = D3dFormatSupport(impl(iface), out->InFormat, NULL);
+        out->OutFormatSupport = D3dFormatSupport(impl(iface), out->InFormat, nullptr);
         return S_OK;
     }
     return device_check_feature_support(iface, feature, data, size);
@@ -1202,7 +1202,7 @@ static HRESULT STDMETHODCALLTYPE device_create_device_context_state(ID3D11Device
 static HRESULT STDMETHODCALLTYPE device_open_shared_resource_by_name(ID3D11Device5 *iface, LPCWSTR name,
                                                                      DWORD access, REFIID riid, void **resource)
 {
-    return device_open_shared_resource(iface, NULL, riid, resource);
+    return device_open_shared_resource(iface, nullptr, riid, resource);
 }
 
 static void STDMETHODCALLTYPE device_get_resource_tiling(ID3D11Device5 *iface, ID3D11Resource *resource,
@@ -1250,7 +1250,7 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_fence(ID3D11Device5 *iface, 
                                                           void **fence)
 {
     if (fence)
-        *fence = NULL;
+        *fence = nullptr;
     return E_NOTIMPL;
 }
 
@@ -1258,7 +1258,7 @@ static HRESULT STDMETHODCALLTYPE device_create_fence(ID3D11Device5 *iface, UINT6
                                                      REFIID riid, void **fence)
 {
     if (fence)
-        *fence = NULL;
+        *fence = nullptr;
     D3dLog("d3d11: fences are not implemented");
     return E_NOTIMPL;
 }

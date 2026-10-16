@@ -39,7 +39,7 @@ static ULONG NTAPI init_buffers(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
 
 static void lock_buffers(void)
 {
-    RtlRunOnceExecuteOnce(&g_buffers.Once, init_buffers, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_buffers.Once, init_buffers, nullptr, nullptr);
     RtlEnterCriticalSection(&g_buffers.Lock);
 }
 
@@ -47,7 +47,7 @@ static void lock_buffers(void)
 static UX_BUFFER *find_buffer(HPAINTBUFFER handle, BOOL unlink)
 {
     lock_buffers();
-    UX_BUFFER **link = &g_buffers.List, *b = NULL;
+    UX_BUFFER **link = &g_buffers.List, *b = nullptr;
     while (*link && *link != (UX_BUFFER *)handle)
         link = &(*link)->Next;
     if (*link) {
@@ -75,21 +75,21 @@ THEMEAPI_(HPAINTBUFFER) BeginBufferedPaint(HDC target, const RECT *rect, BP_BUFF
                                            BP_PAINTPARAMS *params, HDC *dc)
 {
     if (dc)
-        *dc = NULL;
+        *dc = nullptr;
     if (!target || !rect || !dc || format > BPBF_TOPDOWNMONODIB ||
         (params && params->cbSize != sizeof(BP_PAINTPARAMS))) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     int w = rect->right - rect->left, h = rect->bottom - rect->top;
     if (w <= 0 || h <= 0) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     UX_BUFFER *b = UxAlloc(sizeof(*b));
     if (!b) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     b->Magic = BUFFER_MAGIC;
     b->Target = target;
@@ -120,9 +120,9 @@ THEMEAPI_(HPAINTBUFFER) BeginBufferedPaint(HDC target, const RECT *rect, BP_BUFF
         bi.Header.biPlanes = 1;
         bi.Header.biBitCount = format == BPBF_TOPDOWNMONODIB ? 1 : 32;
         bi.Colors[1].rgbRed = bi.Colors[1].rgbGreen = bi.Colors[1].rgbBlue = 255;
-        void *bits = NULL;
-        b->Bitmap = CreateDIBSection(target, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
-        b->Bits = format == BPBF_TOPDOWNMONODIB ? NULL : bits;
+        void *bits = nullptr;
+        b->Bitmap = CreateDIBSection(target, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        b->Bits = format == BPBF_TOPDOWNMONODIB ? nullptr : bits;
     }
     if (!b->Dc || !b->Bitmap) {
         if (b->Dc)
@@ -131,10 +131,10 @@ THEMEAPI_(HPAINTBUFFER) BeginBufferedPaint(HDC target, const RECT *rect, BP_BUFF
             DeleteObject(b->Bitmap);
         UxFree(b);
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     b->OldBitmap = SelectObject(b->Dc, b->Bitmap);
-    SetWindowOrgEx(b->Dc, rect->left, rect->top, NULL);
+    SetWindowOrgEx(b->Dc, rect->left, rect->top, nullptr);
     /* the buffer starts with the drawing attributes of the target. */
     SelectObject(b->Dc, GetCurrentObject(target, OBJ_FONT));
     SelectObject(b->Dc, GetCurrentObject(target, OBJ_BRUSH));
@@ -162,7 +162,7 @@ THEMEAPI EndBufferedPaint(HPAINTBUFFER handle, BOOL update_target)
         int saved = SaveDC(b->Target);
         if (b->HasExclude)
             ExcludeClipRect(b->Target, b->Exclude.left, b->Exclude.top, b->Exclude.right, b->Exclude.bottom);
-        SetWindowOrgEx(b->Dc, 0, 0, NULL);
+        SetWindowOrgEx(b->Dc, 0, 0, nullptr);
         if (b->HasBlend)
             GdiAlphaBlend(b->Target, b->Rect.left, b->Rect.top, w, h, b->Dc, 0, 0, w, h, b->Blend);
         else
@@ -189,13 +189,13 @@ THEMEAPI GetBufferedPaintTargetRect(HPAINTBUFFER handle, RECT *rect)
 THEMEAPI_(HDC) GetBufferedPaintTargetDC(HPAINTBUFFER handle)
 {
     UX_BUFFER *b = find_buffer(handle, FALSE);
-    return b ? b->Target : NULL;
+    return b ? b->Target : nullptr;
 }
 
 THEMEAPI_(HDC) GetBufferedPaintDC(HPAINTBUFFER handle)
 {
     UX_BUFFER *b = find_buffer(handle, FALSE);
-    return b ? b->Dc : NULL;
+    return b ? b->Dc : nullptr;
 }
 
 THEMEAPI GetBufferedPaintBits(HPAINTBUFFER handle, RGBQUAD **bits, int *row_pixels)
@@ -259,12 +259,12 @@ THEMEAPI_(HANIMATIONBUFFER) BeginBufferedAnimation(HWND hwnd, HDC target, const 
                                                    BP_ANIMATIONPARAMS *animation_params, HDC *from, HDC *to)
 {
     if (from)
-        *from = NULL;
+        *from = nullptr;
     if (to)
-        *to = NULL;
+        *to = nullptr;
     if (!from || !to) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     return (HANIMATIONBUFFER)BeginBufferedPaint(target, rect, format, paint_params, to);
 }

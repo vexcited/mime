@@ -7,6 +7,6 @@ DECLSPEC_EXPORT HRESULT WINAPI DWriteCreateFactory(UINT type, REFIID iid, IUnkno
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }

@@ -10,7 +10,7 @@
 
 static D12Fence *fence_impl(ID3D12Fence1 *iface) { return CONTAINING_RECORD(iface, D12Fence, iface); }
 
-D12Fence *D12FenceFrom(ID3D12Fence *iface) { return iface ? CONTAINING_RECORD(iface, D12Fence, iface) : NULL; }
+D12Fence *D12FenceFrom(ID3D12Fence *iface) { return iface ? CONTAINING_RECORD(iface, D12Fence, iface) : nullptr; }
 
 /* the value the gpu or cpu signalled last, asked of the host. */
 UINT64 D12FenceValue(D12Fence *fence)
@@ -51,8 +51,8 @@ static void fence_block(D12Fence *fence, UINT64 value)
 static DWORD WINAPI waiter_main(void *param)
 {
     D12Device *device = param;
-    VkSemaphore *semaphores = NULL;
-    UINT64 *values = NULL;
+    VkSemaphore *semaphores = nullptr;
+    UINT64 *values = nullptr;
     UINT capacity = 0;
     while (!device->waiter_stop) {
         UINT64 wakes = __atomic_load_n((const volatile UINT64 *)&device->waiter_wakes, __ATOMIC_ACQUIRE);
@@ -75,7 +75,7 @@ static DWORD WINAPI waiter_main(void *param)
             ReleaseSRWLockExclusive(&fence->lock);
             if (empty) {
                 *link = fence->next_waiting;
-                fence->next_waiting = NULL;
+                fence->next_waiting = nullptr;
                 fence->iface.lpVtbl->Release(&fence->iface);
                 continue;
             }
@@ -139,14 +139,14 @@ void D12FenceWaiterStop(D12Device *device)
     D12FenceWake(device);
     WaitForSingleObject(device->waiter, INFINITE);
     CloseHandle(device->waiter);
-    device->waiter = NULL;
+    device->waiter = nullptr;
 }
 
 static HRESULT add_wait(D12Fence *fence, UINT64 value, HANDLE event)
 {
     D12Device *device = fence->child.device;
     AcquireSRWLockExclusive(&device->fence_lock);
-    if (!device->waiter && !(device->waiter = CreateThread(NULL, 0, waiter_main, device, 0, NULL))) {
+    if (!device->waiter && !(device->waiter = CreateThread(nullptr, 0, waiter_main, device, 0, nullptr))) {
         ReleaseSRWLockExclusive(&device->fence_lock);
         return E_OUTOFMEMORY;
     }
@@ -185,7 +185,7 @@ static HRESULT STDMETHODCALLTYPE fence_query(ID3D12Fence1 *iface, REFIID riid, v
         *out = iface;
         return S_OK;
     }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -197,7 +197,7 @@ static ULONG STDMETHODCALLTYPE fence_release(ID3D12Fence1 *iface)
     ULONG refs = InterlockedDecrement(&fence->child.refs);
     if (!refs) {
         D12Device *device = fence->child.device;
-        device->vk.vkDestroySemaphore(device->vk.device, fence->semaphore, NULL);
+        device->vk.vkDestroySemaphore(device->vk.device, fence->semaphore, nullptr);
         HeapFree(GetProcessHeap(), 0, fence->waits);
         D12ChildRelease(&fence->child);
         HeapFree(GetProcessHeap(), 0, fence);
@@ -299,7 +299,7 @@ HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags,
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     type.initialValue = value;
     VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-    if (device->vk.vkCreateSemaphore(device->vk.device, &info, NULL, &fence->semaphore) != VK_SUCCESS) {
+    if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &fence->semaphore) != VK_SUCCESS) {
         HeapFree(GetProcessHeap(), 0, fence);
         return E_OUTOFMEMORY;
     }
@@ -342,7 +342,7 @@ HRESULT D12SetEventOnFences(D12Device *device, ID3D12Fence *const *fences, const
 
 static D12Queue *queue_impl(ID3D12CommandQueue *iface) { return CONTAINING_RECORD(iface, D12Queue, iface); }
 
-D12Queue *D12QueueFrom(ID3D12CommandQueue *iface) { return iface ? queue_impl(iface) : NULL; }
+D12Queue *D12QueueFrom(ID3D12CommandQueue *iface) { return iface ? queue_impl(iface) : nullptr; }
 
 /*
  * submits command buffers, the device's own commands first, waiting and
@@ -359,9 +359,9 @@ UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT coun
     VkSemaphoreSubmitInfo wait_infos[9], signal_infos[9];
     UINT n = 0, w = 0, s = 0;
     if (init)
-        cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, NULL, init};
+        cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
     for (UINT i = 0; i < count && n < RTL_NUMBER_OF(cmds); i++)
-        cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, NULL, buffers[i]};
+        cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, buffers[i]};
     /* another queue's submission ran the device's commands: this one waits for them. */
     if (!init && init_serial) {
         wait_infos[w] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
@@ -428,7 +428,7 @@ static HRESULT STDMETHODCALLTYPE queue_query(ID3D12CommandQueue *iface, REFIID r
     } else if (IsEqualGUID(riid, &IID_IMimeDXGIPresenter)) {
         *out = &queue->presenter;
     } else {
-        *out = NULL;
+        *out = nullptr;
         return E_NOINTERFACE;
     }
     InterlockedIncrement(&queue->child.refs);
@@ -447,7 +447,7 @@ static ULONG STDMETHODCALLTYPE queue_release(ID3D12CommandQueue *iface)
     if (!refs) {
         D12Device *device = queue->child.device;
         D12QueueWaitIdle(queue);
-        device->vk.vkDestroySemaphore(device->vk.device, queue->timeline, NULL);
+        device->vk.vkDestroySemaphore(device->vk.device, queue->timeline, nullptr);
         D12ChildRelease(&queue->child);
         HeapFree(GetProcessHeap(), 0, queue);
     }
@@ -516,12 +516,12 @@ static void STDMETHODCALLTYPE queue_execute_command_lists(ID3D12CommandQueue *if
         if (!cmd)
             continue;
         if (n == RTL_NUMBER_OF(buffers)) {
-            D12QueueSubmit(queue, buffers, n, NULL, 0, NULL, 0);
+            D12QueueSubmit(queue, buffers, n, nullptr, 0, nullptr, 0);
             n = 0;
         }
         buffers[n++] = cmd;
     }
-    D12QueueSubmit(queue, buffers, n, NULL, 0, NULL, 0);
+    D12QueueSubmit(queue, buffers, n, nullptr, 0, nullptr, 0);
 }
 
 static void STDMETHODCALLTYPE queue_set_marker(ID3D12CommandQueue *iface, UINT metadata, const void *data, UINT size)
@@ -544,7 +544,7 @@ static HRESULT STDMETHODCALLTYPE queue_signal(ID3D12CommandQueue *iface, ID3D12F
     signal.semaphore = fence->semaphore;
     signal.value = value;
     signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    D12QueueSubmit(queue, NULL, 0, NULL, 0, &signal, 1);
+    D12QueueSubmit(queue, nullptr, 0, nullptr, 0, &signal, 1);
     D12FenceWake(queue->child.device);
     return S_OK;
 }
@@ -559,7 +559,7 @@ static HRESULT STDMETHODCALLTYPE queue_wait(ID3D12CommandQueue *iface, ID3D12Fen
     wait.semaphore = fence->semaphore;
     wait.value = value;
     wait.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    D12QueueSubmit(queue, NULL, 0, &wait, 1, NULL, 0);
+    D12QueueSubmit(queue, nullptr, 0, &wait, 1, nullptr, 0);
     return S_OK;
 }
 
@@ -675,7 +675,7 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-    if (device->vk.vkCreateSemaphore(device->vk.device, &info, NULL, &queue->timeline) != VK_SUCCESS) {
+    if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &queue->timeline) != VK_SUCCESS) {
         HeapFree(GetProcessHeap(), 0, queue);
         return E_OUTOFMEMORY;
     }

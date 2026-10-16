@@ -154,7 +154,7 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
         }
         if (far <= MIME_USER_ADDRESS_LIMIT && thread && thread->FaultRecovery) {
             KJUMP_BUFFER *recovery = thread->FaultRecovery;
-            thread->FaultRecovery = NULL;
+            thread->FaultRecovery = nullptr;
             KeGetPcr()->Irql = PASSIVE_LEVEL;
             KiEnableInterrupts();
             KiLongJump(recovery, 1);

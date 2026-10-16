@@ -55,7 +55,7 @@ DWORD WINAPI GetFullPathNameW(LPCWSTR name, DWORD size, LPWSTR buffer, LPWSTR *f
     }
     if (size > 0x7FFF)
         size = 0x7FFF;
-    ULONG bytes = RtlGetFullPathName_U(name, size * sizeof(WCHAR), size ? buffer : NULL, file_part);
+    ULONG bytes = RtlGetFullPathName_U(name, size * sizeof(WCHAR), size ? buffer : nullptr, file_part);
     if (!bytes) {
         KbSetError(ERROR_INVALID_NAME);
         return 0;
@@ -72,7 +72,7 @@ DWORD WINAPI GetFullPathNameA(LPCSTR name, DWORD size, LPSTR buffer, LPSTR *file
         return 0;
     }
     WCHAR full[MAX_PATH * 4];
-    PWSTR wpart = NULL;
+    PWSTR wpart = nullptr;
     DWORD n = GetFullPathNameW(w, RTL_NUMBER_OF(full), full, &wpart);
     KbFree(w);
     if (!n)
@@ -85,10 +85,10 @@ DWORD WINAPI GetFullPathNameA(LPCSTR name, DWORD size, LPSTR buffer, LPSTR *file
     if (file_part && r < size && buffer) {
         if (wpart) {
             UINT cp = KbFileApiCodePage();
-            int prefix = WideCharToMultiByte(cp, 0, full, (int)(wpart - full), NULL, 0, NULL, NULL);
+            int prefix = WideCharToMultiByte(cp, 0, full, (int)(wpart - full), nullptr, 0, nullptr, nullptr);
             *file_part = buffer + prefix;
         } else {
-            *file_part = NULL;
+            *file_part = nullptr;
         }
     }
     return r;
@@ -282,7 +282,7 @@ DWORD WINAPI GetTempPathW(DWORD size, LPWSTR buffer)
         n = GetWindowsDirectoryW(tmp, RTL_NUMBER_OF(tmp));
     if (!n || n >= RTL_NUMBER_OF(tmp))
         return 0;
-    n = GetFullPathNameW(tmp, MAX_PATH, full, NULL);
+    n = GetFullPathNameW(tmp, MAX_PATH, full, nullptr);
     if (!n || n >= MAX_PATH)
         return 0;
     if (full[n - 1] != '\\') {
@@ -338,7 +338,7 @@ UINT WINAPI GetTempFileNameW(LPCWSTR path, LPCWSTR prefix, UINT unique, LPWSTR b
     UINT num = start;
     do {
         KbFormat(buffer, MAX_PATH, L"%s%X.TMP", base, num);
-        HANDLE h = CreateFileW(buffer, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, 0);
+        HANDLE h = CreateFileW(buffer, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, 0);
         if (h != INVALID_HANDLE_VALUE) {
             CloseHandle(h);
             KbSetError(ERROR_SUCCESS);
@@ -363,7 +363,7 @@ UINT WINAPI GetTempFileNameA(LPCSTR path, LPCSTR prefix, UINT unique, LPSTR buff
     if (wp && (wx || !prefix)) {
         r = GetTempFileNameW(wp, wx, unique, result);
         if (r)
-            WideCharToMultiByte(KbFileApiCodePage(), 0, result, -1, buffer, MAX_PATH, NULL, NULL);
+            WideCharToMultiByte(KbFileApiCodePage(), 0, result, -1, buffer, MAX_PATH, nullptr, nullptr);
     } else if (!path) {
         KbSetError(ERROR_INVALID_PARAMETER);
     }
@@ -399,11 +399,11 @@ static PWSTR default_search_path(void)
     SIZE_T app = pp->ImagePathName.Length / sizeof(WCHAR);
     while (app && pp->ImagePathName.Buffer[app - 1] != '\\')
         app--;
-    DWORD path_chars = GetEnvironmentVariableW(L"PATH", NULL, 0);
+    DWORD path_chars = GetEnvironmentVariableW(L"PATH", nullptr, 0);
     SIZE_T total = app + wcslen(sys) + wcslen(win) + path_chars + 16;
     PWSTR list = KbAlloc(total * sizeof(WCHAR));
     if (!list)
-        return NULL;
+        return nullptr;
     SIZE_T n = 0;
     if (app) {
         memcpy(list, pp->ImagePathName.Buffer, app * sizeof(WCHAR));
@@ -433,7 +433,7 @@ DWORD WINAPI SearchPathW(LPCWSTR path, LPCWSTR name, LPCWSTR extension, DWORD si
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    PWSTR list = NULL;
+    PWSTR list = nullptr;
     if (!path) {
         list = default_search_path();
         if (!list) {
@@ -459,17 +459,17 @@ DWORD WINAPI SearchPathA(LPCSTR path, LPCSTR name, LPCSTR extension, DWORD size,
     DWORD r = 0;
     if (wn && (wp || !path) && (we || !extension)) {
         WCHAR result[MAX_PATH * 2];
-        PWSTR part = NULL;
+        PWSTR part = nullptr;
         DWORD n = SearchPathW(wp, wn, we, RTL_NUMBER_OF(result), result, &part);
         if (n && n < RTL_NUMBER_OF(result)) {
             r = KbWideResultToAnsi(result, buffer, size);
             if (file_part && r < size && buffer) {
                 if (part) {
-                    int prefix = WideCharToMultiByte(KbFileApiCodePage(), 0, result, (int)(part - result), NULL, 0,
-                                                     NULL, NULL);
+                    int prefix = WideCharToMultiByte(KbFileApiCodePage(), 0, result, (int)(part - result), nullptr, 0,
+                                                     nullptr, nullptr);
                     *file_part = buffer + prefix;
                 } else {
-                    *file_part = NULL;
+                    *file_part = nullptr;
                 }
             }
         }
@@ -486,7 +486,7 @@ BOOL WINAPI NeedCurrentDirectoryForExePathW(LPCWSTR name)
 {
     if (name && wcschr(name, '\\'))
         return TRUE;
-    return GetEnvironmentVariableW(L"NoDefaultCurrentDirectoryInExePath", NULL, 0) == 0;
+    return GetEnvironmentVariableW(L"NoDefaultCurrentDirectoryInExePath", nullptr, 0) == 0;
 }
 
 /* ------------------------------------------------------------------ drives */
@@ -498,7 +498,7 @@ static BOOL drive_exists(WCHAR letter)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE h;
     if (!NT_SUCCESS(NtOpenSymbolicLinkObject(&h, SYMBOLIC_LINK_QUERY, &oa)))
         return FALSE;
@@ -601,10 +601,10 @@ static BOOL volume_root(LPCWSTR path, PWSTR root, SIZE_T chars)
 static NTSTATUS open_root(LPCWSTR root, PHANDLE h)
 {
     UNICODE_STRING nt;
-    if (!RtlDosPathNameToNtPathName_U(root, &nt, NULL, NULL))
+    if (!RtlDosPathNameToNtPathName_U(root, &nt, nullptr, nullptr))
         return STATUS_OBJECT_PATH_INVALID;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtOpenFile(h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -641,7 +641,7 @@ UINT WINAPI GetDriveTypeW(LPCWSTR root)
 UINT WINAPI GetDriveTypeA(LPCSTR root)
 {
     if (!root)
-        return GetDriveTypeW(NULL);
+        return GetDriveTypeW(nullptr);
     PWSTR w = KbAnsiToWide(root);
     if (!w)
         return DRIVE_NO_ROOT_DIR;
@@ -732,17 +732,17 @@ BOOL WINAPI GetVolumeInformationA(LPCSTR root, LPSTR name, DWORD name_size, LPDW
     if (root && !wroot)
         return FALSE;
     WCHAR wname[MAX_PATH + 1], wfs[MAX_PATH + 1];
-    BOOL ok = GetVolumeInformationW(wroot, name ? wname : NULL, RTL_NUMBER_OF(wname), serial, max_component, flags,
-                                    fs_name ? wfs : NULL, RTL_NUMBER_OF(wfs));
+    BOOL ok = GetVolumeInformationW(wroot, name ? wname : nullptr, RTL_NUMBER_OF(wname), serial, max_component, flags,
+                                    fs_name ? wfs : nullptr, RTL_NUMBER_OF(wfs));
     KbFree(wroot);
     if (!ok)
         return FALSE;
     UINT cp = KbFileApiCodePage();
-    if (name && !WideCharToMultiByte(cp, 0, wname, -1, name, (int)name_size, NULL, NULL)) {
+    if (name && !WideCharToMultiByte(cp, 0, wname, -1, name, (int)name_size, nullptr, nullptr)) {
         KbSetError(ERROR_BAD_LENGTH);
         return FALSE;
     }
-    if (fs_name && !WideCharToMultiByte(cp, 0, wfs, -1, fs_name, (int)fs_name_size, NULL, NULL)) {
+    if (fs_name && !WideCharToMultiByte(cp, 0, wfs, -1, fs_name, (int)fs_name_size, nullptr, nullptr)) {
         KbSetError(ERROR_BAD_LENGTH);
         return FALSE;
     }
@@ -756,7 +756,7 @@ BOOL WINAPI GetVolumePathNameW(LPCWSTR path, LPWSTR volume, DWORD size)
         return FALSE;
     }
     WCHAR full[MAX_PATH * 2], root[MAX_PATH];
-    DWORD n = GetFullPathNameW(path, RTL_NUMBER_OF(full), full, NULL);
+    DWORD n = GetFullPathNameW(path, RTL_NUMBER_OF(full), full, nullptr);
     if (!n || n >= RTL_NUMBER_OF(full) || !volume_root(full, root, RTL_NUMBER_OF(root)))
         return FALSE;
     if (wcslen(root) >= size) {
@@ -779,7 +779,7 @@ BOOL WINAPI GetDiskFreeSpaceExW(LPCWSTR root, PULARGE_INTEGER available, PULARGE
         wcscpy(dir, root);
         if (n && dir[n - 1] != '\\' && dir[n - 1] != '/')
             wcscat(dir, L"\\");
-    } else if (!volume_root(NULL, dir, RTL_NUMBER_OF(dir))) {
+    } else if (!volume_root(nullptr, dir, RTL_NUMBER_OF(dir))) {
         return FALSE;
     }
     HANDLE h;
@@ -875,7 +875,7 @@ DWORD WINAPI QueryDosDeviceW(LPCWSTR device, LPWSTR target, DWORD size)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE h;
     NTSTATUS status = NtOpenSymbolicLinkObject(&h, SYMBOLIC_LINK_QUERY, &oa);
     if (!NT_SUCCESS(status)) {
@@ -921,7 +921,7 @@ DWORD WINAPI QueryDosDeviceA(LPCSTR device, LPSTR target, DWORD size)
     DWORD n = QueryDosDeviceW(w, buf, size);
     DWORD r = 0;
     if (n) {
-        r = WideCharToMultiByte(CP_ACP, 0, buf, (int)n, target, (int)size, NULL, NULL);
+        r = WideCharToMultiByte(CP_ACP, 0, buf, (int)n, target, (int)size, nullptr, nullptr);
         if (!r)
             KbSetError(ERROR_INSUFFICIENT_BUFFER);
     }
@@ -946,7 +946,7 @@ static BOOL dos_device_target(DWORD flags, LPCWSTR target, PUNICODE_STRING nt)
 {
     if (flags & DDD_RAW_TARGET_PATH)
         return RtlCreateUnicodeString(nt, target);
-    return RtlDosPathNameToNtPathName_U(target, nt, NULL, NULL);
+    return RtlDosPathNameToNtPathName_U(target, nt, nullptr, nullptr);
 }
 
 static BOOL remove_dos_device(DWORD flags, LPCWSTR path, LPCWSTR target)
@@ -954,7 +954,7 @@ static BOOL remove_dos_device(DWORD flags, LPCWSTR path, LPCWSTR target)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE h;
     NTSTATUS status = NtOpenSymbolicLinkObject(&h, SYMBOLIC_LINK_QUERY | DELETE, &oa);
     if (!NT_SUCCESS(status)) {
@@ -1010,7 +1010,7 @@ BOOL WINAPI DefineDosDeviceW(DWORD flags, LPCWSTR device, LPCWSTR target)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     HANDLE h;
     if (NT_SUCCESS(NtOpenSymbolicLinkObject(&h, DELETE, &oa))) {
         NtMakeTemporaryObject(h);
@@ -1041,7 +1041,7 @@ BOOL WINAPI DefineDosDeviceA(DWORD flags, LPCSTR device, LPCSTR target)
 BOOL WINAPI Wow64DisableWow64FsRedirection(PVOID *old)
 {
     if (old)
-        *old = NULL;
+        *old = nullptr;
     return TRUE;
 }
 

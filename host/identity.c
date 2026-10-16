@@ -44,7 +44,7 @@ static void make_machine_uuid(char *out, size_t size)
              r[2] & 0xFFFF, r[3]);
 }
 
-#if defined(__linux__)
+#ifdef __linux__
 /* a line of a sysfs file, empty when it cannot be read. */
 static void read_line(const char *path, char *out, size_t size)
 {
@@ -102,7 +102,7 @@ const MimeHardwareProfile *mime_hardware_profile(void)
     char mhz[32];
     read_line("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", mhz, sizeof(mhz));
     profile.cpu_name = cpu;
-    profile.cpu_mhz = (uint32_t)(strtoull(mhz, NULL, 10) / 1000);
+    profile.cpu_mhz = (uint32_t)(strtoull(mhz, nullptr, 10) / 1000);
     profile.cpu_midr = 0;
     profile.manufacturer = manufacturer[0] ? manufacturer : "System manufacturer";
     profile.product = product[0] ? product : "System Product Name";
@@ -172,7 +172,7 @@ bool mime_identity_load(const MimePaths *paths, MimeIdentity *out)
     size_t size;
     char *text = mime_read_file(path, &size);
     if (text) {
-        for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
+        for (char *line = strtok(text, "\n"); line; line = strtok(nullptr, "\n")) {
             char *eq = strchr(line, '=');
             if (!eq)
                 continue;
@@ -185,9 +185,9 @@ bool mime_identity_load(const MimePaths *paths, MimeIdentity *out)
             else if (strcmp(line, "sid") == 0)
                 sscanf(v, "S-1-5-21-%u-%u-%u", &out->sid[0], &out->sid[1], &out->sid[2]);
             else if (strcmp(line, "serial") == 0)
-                out->volume_serial = (uint32_t)strtoul(v, NULL, 16);
+                out->volume_serial = (uint32_t)strtoul(v, nullptr, 16);
             else if (strcmp(line, "installed") == 0)
-                out->install_filetime = strtoull(v, NULL, 10);
+                out->install_filetime = strtoull(v, nullptr, 10);
             else if (strcmp(line, "machineserial") == 0)
                 mime_strlcpy(out->machine_serial, v, sizeof(out->machine_serial));
             else if (strcmp(line, "uuid") == 0)
@@ -215,7 +215,7 @@ bool mime_identity_load(const MimePaths *paths, MimeIdentity *out)
         changed = true;
     }
     if (!out->install_filetime) {
-        out->install_filetime = ((uint64_t)time(NULL) + 11644473600ull) * 10000000ull;
+        out->install_filetime = ((uint64_t)time(nullptr) + 11644473600ull) * 10000000ull;
         changed = true;
     }
     if (!out->machine_serial[0]) {

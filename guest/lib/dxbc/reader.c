@@ -11,7 +11,7 @@ static int read_index(DxbcInstruction *ins, const uint32_t **p, const uint32_t *
                       DxbcIndex *index)
 {
     index->immediate = 0;
-    index->relative = NULL;
+    index->relative = nullptr;
     switch (representation) {
     case INDEX_IMMEDIATE32:
     case INDEX_IMMEDIATE32_RELATIVE:

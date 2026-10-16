@@ -69,25 +69,25 @@ static BOOLEAN in_stack(EXCEPTION_REGISTRATION_RECORD *frame)
 
 BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT context)
 {
-    EXCEPTION_REGISTRATION_RECORD *frame = NtCurrentTeb()->NtTib.ExceptionList, *nested = NULL;
+    EXCEPTION_REGISTRATION_RECORD *frame = NtCurrentTeb()->NtTib.ExceptionList, *nested = nullptr;
     while (frame && frame != END_OF_LIST) {
         if (!in_stack(frame)) {
             record->ExceptionFlags |= EXCEPTION_STACK_INVALID;
             return FALSE;
         }
-        EXCEPTION_REGISTRATION_RECORD *dispatcher = NULL;
+        EXCEPTION_REGISTRATION_RECORD *dispatcher = nullptr;
         EXCEPTION_DISPOSITION disposition =
             RtlpExecuteHandlerForException(record, frame, context, &dispatcher, frame->Handler);
         if (frame == nested) {
             record->ExceptionFlags &= ~EXCEPTION_NESTED_CALL;
-            nested = NULL;
+            nested = nullptr;
         }
         switch (disposition) {
         case ExceptionContinueExecution:
             if (!(record->ExceptionFlags & EXCEPTION_NONCONTINUABLE))
                 return TRUE;
             {
-                EXCEPTION_RECORD noncontinuable = {0};
+                EXCEPTION_RECORD noncontinuable = {};
                 noncontinuable.ExceptionCode = STATUS_NONCONTINUABLE_EXCEPTION;
                 noncontinuable.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
                 noncontinuable.ExceptionRecord = record;
@@ -103,7 +103,7 @@ BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT conte
                 nested = dispatcher;
             break;
         default: {
-            EXCEPTION_RECORD invalid = {0};
+            EXCEPTION_RECORD invalid = {};
             invalid.ExceptionCode = STATUS_INVALID_DISPOSITION;
             invalid.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
             invalid.ExceptionRecord = record;
@@ -146,7 +146,7 @@ NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTIO
             RtlRaiseStatus(STATUS_INVALID_UNWIND_TARGET);
         if (!in_stack(frame))
             RtlRaiseStatus(STATUS_BAD_STACK);
-        EXCEPTION_REGISTRATION_RECORD *dispatcher = NULL;
+        EXCEPTION_REGISTRATION_RECORD *dispatcher = nullptr;
         EXCEPTION_DISPOSITION disposition =
             RtlpExecuteHandlerForUnwind(record, frame, &context, &dispatcher, frame->Handler);
         if (disposition == ExceptionCollidedUnwind)

@@ -9,7 +9,6 @@
 
 #include "../ui/ui.h"
 
-#include <stdbool.h>
 
 typedef struct MimeUiNative {
     bool x11;        /* else wayland */

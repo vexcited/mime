@@ -628,7 +628,7 @@ WND *WndLookup(HWND hwnd);
 WND *WndDesktop(void);
 static inline HWND WndHandle(WND *w)
 {
-    return w ? (HWND)w->Header.Handle : NULL;
+    return w ? (HWND)w->Header.Handle : nullptr;
 }
 BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop */
 WND *WndTopLevel(WND *w);

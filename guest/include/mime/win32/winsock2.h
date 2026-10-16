@@ -305,7 +305,7 @@ typedef struct protoent {
 typedef struct WSAData {
     WORD wVersion;
     WORD wHighVersion;
-#if defined(__i386__)
+#ifdef __i386__
     char szDescription[WSADESCRIPTION_LEN + 1];
     char szSystemStatus[WSASYS_STATUS_LEN + 1];
     unsigned short iMaxSockets;

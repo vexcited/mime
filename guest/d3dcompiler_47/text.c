@@ -35,7 +35,7 @@ void DcTextPuts(DcText *t, const char *s) { DcTextAppend(t, s, strlen(s)); }
 void DcTextFree(DcText *t)
 {
     DcFree(t->buf);
-    t->buf = NULL;
+    t->buf = nullptr;
     t->length = t->capacity = 0;
 }
 

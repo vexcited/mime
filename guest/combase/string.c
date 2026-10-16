@@ -23,7 +23,7 @@ typedef struct SHARED_STRING {
     WCHAR Text[1];
 } SHARED_STRING;
 
-_Static_assert(sizeof(STRING_HEADER) <= sizeof(HSTRING_HEADER), "string reference header size");
+static_assert(sizeof(STRING_HEADER) <= sizeof(HSTRING_HEADER), "string reference header size");
 
 static HRESULT allocate(UINT32 length, SHARED_STRING **out)
 {
@@ -46,7 +46,7 @@ ROAPI HRESULT WINAPI WindowsCreateString(LPCWSTR source, UINT32 length, HSTRING 
 {
     if (!string)
         return E_INVALIDARG;
-    *string = NULL;
+    *string = nullptr;
     if (!length)
         return S_OK;
     if (!source)
@@ -65,7 +65,7 @@ ROAPI HRESULT WINAPI WindowsCreateStringReference(LPCWSTR source, UINT32 length,
 {
     if (!string || !header)
         return E_INVALIDARG;
-    *string = NULL;
+    *string = nullptr;
     if (!length)
         return S_OK;
     /* a reference must point at a terminated string. */
@@ -99,7 +99,7 @@ ROAPI HRESULT WINAPI WindowsDuplicateString(HSTRING string, HSTRING *copy)
 {
     if (!copy)
         return E_INVALIDARG;
-    *copy = NULL;
+    *copy = nullptr;
     SHARED_STRING *s = (SHARED_STRING *)string;
     if (!s)
         return S_OK;

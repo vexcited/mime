@@ -8,7 +8,7 @@ LWSTDAPI HRESULT WINAPI QISearch(void *base, const QITAB *table, REFIID iid, voi
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (!base || !table || !iid)
         return E_INVALIDARG;
     const QITAB *entry = table;
@@ -28,7 +28,7 @@ LWSTDAPI HRESULT WINAPI SHStrDupW(LPCWSTR string, LPWSTR *out)
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (!string)
         return E_INVALIDARG;
     SIZE_T bytes = (wcslen(string) + 1) * sizeof(WCHAR);

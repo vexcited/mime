@@ -103,7 +103,7 @@ static HRESULT STDMETHODCALLTYPE output_query(IDXGIOutput6 *iface, REFIID riid, 
             *out = iface;
             return S_OK;
         }
-    *out = NULL;
+    *out = nullptr;
     return E_NOINTERFACE;
 }
 
@@ -190,7 +190,7 @@ static HRESULT STDMETHODCALLTYPE output_get_display_mode_list(IDXGIOutput6 *ifac
     if (!count)
         return DXGI_ERROR_INVALID_CALL;
     if (!modes)
-        return get_modes1(iface, format, flags, count, NULL);
+        return get_modes1(iface, format, flags, count, nullptr);
     DXGI_MODE_DESC1 *all = HeapAlloc(GetProcessHeap(), 0, (RTL_NUMBER_OF(RESOLUTIONS) + 1) * sizeof(*all));
     if (!all)
         return E_OUTOFMEMORY;
@@ -359,7 +359,7 @@ static HRESULT STDMETHODCALLTYPE output_duplicate_output(IDXGIOutput6 *iface, IU
                                                          IDXGIOutputDuplication **duplication)
 {
     if (duplication)
-        *duplication = NULL;
+        *duplication = nullptr;
     return DXGI_ERROR_UNSUPPORTED;
 }
 

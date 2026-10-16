@@ -33,7 +33,7 @@ static int finish(X86Cpu *c, ULONG64 value)
 
 static int call6(X86Cpu *c, void *fn, int args)
 {
-    ULONG64 a[6] = {0};
+    ULONG64 a[6] = {};
     for (int i = 0; i < args; i++)
         a[i] = arg(c, i);
     MxSetSuspendCritical(c, 0);
@@ -245,11 +245,11 @@ static PIMAGE_NT_HEADERS64 x64_headers(PVOID base)
 {
     PIMAGE_DOS_HEADER dos = base;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 0x1000)
-        return NULL;
+        return nullptr;
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE || nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
         nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-        return NULL;
+        return nullptr;
     return nt;
 }
 
@@ -258,7 +258,7 @@ static BOOLEAN is_image(PVOID base)
 {
     MEMORY_BASIC_INFORMATION info;
     return NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), base, MemoryBasicInformation, &info, sizeof(info),
-                                           NULL)) &&
+                                           nullptr)) &&
            info.Type == MEM_IMAGE && info.AllocationBase == base;
 }
 
@@ -337,7 +337,7 @@ void MxImageMapped(PVOID base)
 
 void MxImageUnmapping(PVOID base)
 {
-    PIMAGE_NT_HEADERS64 nt = base && is_image(base) ? x64_headers(base) : NULL;
+    PIMAGE_NT_HEADERS64 nt = base && is_image(base) ? x64_headers(base) : nullptr;
     if (nt)
         x86_clear_native((ULONG64)base, (ULONG64)base + nt->OptionalHeader.SizeOfImage);
 }

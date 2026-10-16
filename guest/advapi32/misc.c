@@ -22,7 +22,7 @@ ADVAPI HANDLE WINAPI RegisterEventSourceW(LPCWSTR server, LPCWSTR source)
 {
     if (!AdvIsLocalSystem(server)) {
         AdvSetError(RPC_S_SERVER_UNAVAILABLE);
-        return NULL;
+        return nullptr;
     }
     if (!source)
         source = L"";
@@ -30,7 +30,7 @@ ADVAPI HANDLE WINAPI RegisterEventSourceW(LPCWSTR server, LPCWSTR source)
     EVENT_SOURCE *s = AdvAlloc(sizeof(*s) + (n + 1) * sizeof(WCHAR));
     if (!s) {
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     s->Magic = EVENT_SOURCE_MAGIC;
     memcpy(s->Name, source, (n + 1) * sizeof(WCHAR));
@@ -40,7 +40,7 @@ ADVAPI HANDLE WINAPI RegisterEventSourceW(LPCWSTR server, LPCWSTR source)
 ADVAPI HANDLE WINAPI RegisterEventSourceA(LPCSTR server, LPCSTR source)
 {
     PWSTR s = AdvAnsiToWide(server), n = AdvAnsiToWide(source);
-    HANDLE h = (!server || s) && (!source || n) ? RegisterEventSourceW(s, n) : NULL;
+    HANDLE h = (!server || s) && (!source || n) ? RegisterEventSourceW(s, n) : nullptr;
     AdvFree(s);
     AdvFree(n);
     return h;
@@ -51,7 +51,7 @@ static EVENT_SOURCE *event_source(HANDLE h)
     EVENT_SOURCE *s = h;
     if (!s || s->Magic != EVENT_SOURCE_MAGIC) {
         AdvSetError(ERROR_INVALID_HANDLE);
-        return NULL;
+        return nullptr;
     }
     return s;
 }
@@ -114,7 +114,7 @@ ADVAPI BOOL WINAPI ReportEventA(HANDLE h, WORD type, WORD category, DWORD id, PS
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    PWSTR *wide = count ? AdvAllocZero(count * sizeof(PWSTR)) : NULL;
+    PWSTR *wide = count ? AdvAllocZero(count * sizeof(PWSTR)) : nullptr;
     if (count && !wide) {
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
@@ -138,16 +138,16 @@ ADVAPI SC_HANDLE WINAPI OpenSCManagerW(LPCWSTR machine, LPCWSTR database, DWORD 
 {
     if (database && _wcsicmp(database, L"ServicesActive") && _wcsicmp(database, L"ServicesFailed")) {
         AdvSetError(ERROR_DATABASE_DOES_NOT_EXIST);
-        return NULL;
+        return nullptr;
     }
     AdvSetError(AdvIsLocalSystem(machine) ? ERROR_ACCESS_DENIED : RPC_S_SERVER_UNAVAILABLE);
-    return NULL;
+    return nullptr;
 }
 
 ADVAPI SC_HANDLE WINAPI OpenSCManagerA(LPCSTR machine, LPCSTR database, DWORD access)
 {
     PWSTR m = AdvAnsiToWide(machine), d = AdvAnsiToWide(database);
-    SC_HANDLE h = (!machine || m) && (!database || d) ? OpenSCManagerW(m, d, access) : NULL;
+    SC_HANDLE h = (!machine || m) && (!database || d) ? OpenSCManagerW(m, d, access) : nullptr;
     AdvFree(m);
     AdvFree(d);
     return h;
@@ -157,13 +157,13 @@ ADVAPI SC_HANDLE WINAPI OpenSCManagerA(LPCSTR machine, LPCSTR database, DWORD ac
 ADVAPI SC_HANDLE WINAPI OpenServiceW(SC_HANDLE manager, LPCWSTR name, DWORD access)
 {
     AdvSetError(ERROR_INVALID_HANDLE);
-    return NULL;
+    return nullptr;
 }
 
 ADVAPI SC_HANDLE WINAPI OpenServiceA(SC_HANDLE manager, LPCSTR name, DWORD access)
 {
     AdvSetError(ERROR_INVALID_HANDLE);
-    return NULL;
+    return nullptr;
 }
 
 ADVAPI BOOL WINAPI CloseServiceHandle(SC_HANDLE handle)
@@ -197,30 +197,30 @@ ADVAPI BOOL WINAPI GetCurrentHwProfileW(HW_PROFILE_INFOW *info)
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    HKEY db = NULL, profile = NULL, dock = NULL;
+    HKEY db = nullptr, profile = nullptr, dock = nullptr;
     DWORD current = 1, size = sizeof(current);
     WCHAR path[64];
     BOOL ok = !RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\IDConfigDB", 0,
                              KEY_QUERY_VALUE, &db) &&
-              !RegQueryValueExW(db, L"CurrentConfig", NULL, NULL, (LPBYTE)&current, &size) &&
+              !RegQueryValueExW(db, L"CurrentConfig", nullptr, nullptr, (LPBYTE)&current, &size) &&
               _snwprintf(path, RTL_NUMBER_OF(path), L"Hardware Profiles\\%04u", current) > 0 &&
               !RegOpenKeyExW(db, path, 0, KEY_QUERY_VALUE, &profile) &&
               !RegOpenKeyExW(db, L"CurrentDockInfo", 0, KEY_QUERY_VALUE, &dock);
     if (ok) {
         size = sizeof(DWORD);
-        if (RegQueryValueExW(dock, L"DockingState", NULL, NULL, (LPBYTE)&info->dwDockInfo, &size) ||
+        if (RegQueryValueExW(dock, L"DockingState", nullptr, nullptr, (LPBYTE)&info->dwDockInfo, &size) ||
             !info->dwDockInfo || (info->dwDockInfo & 3) == 3) {
             size = sizeof(DWORD);
-            if (RegQueryValueExW(profile, L"DockState", NULL, NULL, (LPBYTE)&info->dwDockInfo, &size) ||
+            if (RegQueryValueExW(profile, L"DockState", nullptr, nullptr, (LPBYTE)&info->dwDockInfo, &size) ||
                 !info->dwDockInfo)
                 info->dwDockInfo = DOCKINFO_UNDOCKED | DOCKINFO_DOCKED | DOCKINFO_USER_SUPPLIED;
         }
         size = sizeof(info->szHwProfileGuid);
-        if (RegQueryValueExW(profile, L"HwProfileGuid", NULL, NULL, (LPBYTE)info->szHwProfileGuid, &size))
+        if (RegQueryValueExW(profile, L"HwProfileGuid", nullptr, nullptr, (LPBYTE)info->szHwProfileGuid, &size))
             info->szHwProfileGuid[0] = 0;
         info->szHwProfileGuid[RTL_NUMBER_OF(info->szHwProfileGuid) - 1] = 0;
         size = sizeof(info->szHwProfileName);
-        if (RegQueryValueExW(profile, L"FriendlyName", NULL, NULL, (LPBYTE)info->szHwProfileName, &size))
+        if (RegQueryValueExW(profile, L"FriendlyName", nullptr, nullptr, (LPBYTE)info->szHwProfileName, &size))
             info->szHwProfileName[0] = 0;
         info->szHwProfileName[RTL_NUMBER_OF(info->szHwProfileName) - 1] = 0;
     } else {
@@ -247,9 +247,9 @@ ADVAPI BOOL WINAPI GetCurrentHwProfileA(HW_PROFILE_INFOA *info)
         return FALSE;
     info->dwDockInfo = w.dwDockInfo;
     if (!WideCharToMultiByte(CP_ACP, 0, w.szHwProfileGuid, -1, info->szHwProfileGuid, sizeof(info->szHwProfileGuid),
-                             NULL, NULL) ||
+                             nullptr, nullptr) ||
         !WideCharToMultiByte(CP_ACP, 0, w.szHwProfileName, -1, info->szHwProfileName, sizeof(info->szHwProfileName),
-                             NULL, NULL)) {
+                             nullptr, nullptr)) {
         AdvSetError(ERROR_INTERNAL_ERROR);
         return FALSE;
     }
@@ -309,11 +309,11 @@ ADVAPI LSTATUS WINAPI RegSetValueW(HKEY key, LPCWSTR subkey, DWORD type, LPCWSTR
         return ERROR_INVALID_PARAMETER;
     HKEY target = key;
     if (subkey && *subkey) {
-        LSTATUS error = RegCreateKeyExW(key, subkey, 0, NULL, 0, KEY_SET_VALUE, NULL, &target, NULL);
+        LSTATUS error = RegCreateKeyExW(key, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &target, nullptr);
         if (error)
             return error;
     }
-    LSTATUS error = RegSetValueExW(target, NULL, 0, REG_SZ, (const BYTE *)data,
+    LSTATUS error = RegSetValueExW(target, nullptr, 0, REG_SZ, (const BYTE *)data,
                                    (DWORD)(wcslen(data) + 1) * sizeof(WCHAR));
     if (target != key)
         RegCloseKey(target);
@@ -342,7 +342,7 @@ ADVAPI LSTATUS WINAPI RegQueryValueW(HKEY key, LPCWSTR subkey, LPWSTR data, PLON
             return error;
     }
     DWORD type, bytes = size ? (DWORD)*size : 0;
-    LSTATUS error = RegQueryValueExW(target, NULL, NULL, &type, (BYTE *)data, size ? &bytes : NULL);
+    LSTATUS error = RegQueryValueExW(target, nullptr, nullptr, &type, (BYTE *)data, size ? &bytes : nullptr);
     if (error == ERROR_FILE_NOT_FOUND) {
         /* a key without a default value reads as an empty string. */
         bytes = sizeof(WCHAR);
@@ -367,19 +367,19 @@ ADVAPI LSTATUS WINAPI RegQueryValueA(HKEY key, LPCSTR subkey, LPSTR data, PLONG 
     if (subkey && !s)
         return ERROR_NOT_ENOUGH_MEMORY;
     LONG wide_size = 0;
-    LSTATUS error = RegQueryValueW(key, s, NULL, &wide_size);
-    PWSTR w = !error ? AdvAlloc(wide_size + sizeof(WCHAR)) : NULL;
+    LSTATUS error = RegQueryValueW(key, s, nullptr, &wide_size);
+    PWSTR w = !error ? AdvAlloc(wide_size + sizeof(WCHAR)) : nullptr;
     if (!error && !w)
         error = ERROR_NOT_ENOUGH_MEMORY;
     if (!error)
         error = RegQueryValueW(key, s, w, &wide_size);
     if (!error) {
         w[wide_size / sizeof(WCHAR)] = 0;
-        int need = WideCharToMultiByte(CP_ACP, 0, w, -1, NULL, 0, NULL, NULL);
+        int need = WideCharToMultiByte(CP_ACP, 0, w, -1, nullptr, 0, nullptr, nullptr);
         if (data && *size < need)
             error = ERROR_MORE_DATA;
         else if (data)
-            WideCharToMultiByte(CP_ACP, 0, w, -1, data, *size, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, w, -1, data, *size, nullptr, nullptr);
         if (size)
             *size = need;
     }

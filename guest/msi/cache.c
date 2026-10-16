@@ -55,7 +55,7 @@ UINT MimeMsiCacheTransforms(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product
 static UINT read_number(HKEY key, PCWSTR name, DWORD *out)
 {
     DWORD type, size = sizeof(*out);
-    UINT error = RegQueryValueExW(key, name, NULL, &type, (BYTE *)out, &size);
+    UINT error = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)out, &size);
     if (error == ERROR_FILE_NOT_FOUND || error == ERROR_MORE_DATA ||
         (!error && (type != REG_DWORD || size != sizeof(*out))))
         return ERROR_BAD_CONFIGURATION;
@@ -67,7 +67,7 @@ UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product)
     HKEY key;
     UINT error = RegOpenKeyExW(product, L"Transforms", 0, KEY_READ, &key);
     if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
-        PWSTR names = NULL;
+        PWSTR names = nullptr;
         error = MimeMsiRegistryText(product, L"Transforms", &names);
         if (error == ERROR_FILE_NOT_FOUND)
             error = ERROR_SUCCESS;
@@ -84,7 +84,7 @@ UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product)
         error = ERROR_BAD_CONFIGURATION;
     for (DWORD index = 1; !error && index <= count; index++) {
         WCHAR name[32];
-        PWSTR path = NULL;
+        PWSTR path = nullptr;
         DWORD flags;
         _snwprintf(name, RTL_NUMBER_OF(name), L"Flags%u", index);
         error = read_number(key, name, &flags);
@@ -109,7 +109,7 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
         return ERROR_SUCCESS;
     if (*list == L'@' || *list == L'|')
         return ERROR_CALL_NOT_IMPLEMENTED;
-    PWSTR copy = MimeMsiDuplicate(list), directory = NULL;
+    PWSTR copy = MimeMsiDuplicate(list), directory = nullptr;
     if (!copy)
         return ERROR_NOT_ENOUGH_MEMORY;
     AcquireSRWLockShared(&MimeMsiLock);
@@ -141,7 +141,7 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
         else if (!absolute && (wcschr(cursor, L'\\') || wcschr(cursor, L'/') || wcschr(cursor, L':')))
             error = ERROR_INVALID_PARAMETER;
         kind = absolute;
-        PWSTR path = NULL;
+        PWSTR path = nullptr;
         if (!error) {
             path = absolute ? MimeMsiDuplicate(cursor) : MimeMsiJoinPath(directory, cursor);
             if (!path)

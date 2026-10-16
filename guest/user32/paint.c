@@ -38,7 +38,7 @@ WINUSERAPI HWND WINAPI WindowFromDC(HDC dc)
 {
     DWORD window = 0;
     if (!NtGdiGetDCDword(dc, MIME_DCDW_WINDOW, &window))
-        return NULL;
+        return nullptr;
     return (HWND)(ULONG_PTR)window;
 }
 
@@ -49,7 +49,7 @@ WINUSERAPI BOOL WINAPI InvalidateRect(HWND hwnd, const RECT *rect, BOOL erase)
 
 WINUSERAPI BOOL WINAPI InvalidateRgn(HWND hwnd, HRGN region, BOOL erase)
 {
-    return NtUserRedrawWindow(hwnd, NULL, region, RDW_INVALIDATE | (erase ? RDW_ERASE : 0));
+    return NtUserRedrawWindow(hwnd, nullptr, region, RDW_INVALIDATE | (erase ? RDW_ERASE : 0));
 }
 
 WINUSERAPI BOOL WINAPI ValidateRect(HWND hwnd, const RECT *rect)
@@ -59,7 +59,7 @@ WINUSERAPI BOOL WINAPI ValidateRect(HWND hwnd, const RECT *rect)
 
 WINUSERAPI BOOL WINAPI ValidateRgn(HWND hwnd, HRGN region)
 {
-    return NtUserRedrawWindow(hwnd, NULL, region, RDW_VALIDATE | RDW_NOCHILDREN);
+    return NtUserRedrawWindow(hwnd, nullptr, region, RDW_VALIDATE | RDW_NOCHILDREN);
 }
 
 WINUSERAPI BOOL WINAPI RedrawWindow(HWND hwnd, const RECT *rect, HRGN region, UINT flags)
@@ -214,7 +214,7 @@ enum {
 
 static void line(HDC dc, int x0, int y0, int x1, int y1)
 {
-    MoveToEx(dc, x0, y0, NULL);
+    MoveToEx(dc, x0, y0, nullptr);
     LineTo(dc, x1, y1);
 }
 
@@ -516,7 +516,7 @@ static BOOL draw_state_item(HDC dc, DRAWSTATEPROC proc, UINT type, LPARAM ldata,
         POINT org;
         OffsetViewportOrgEx(dc, x, y, &org);
         ok = proc(dc, ldata, wdata, cx, cy);
-        SetViewportOrgEx(dc, org.x, org.y, NULL);
+        SetViewportOrgEx(dc, org.x, org.y, nullptr);
     } else if (type == DST_TEXT || type == DST_PREFIXTEXT) {
         RECT r = {x, y, x + cx, y + cy};
         UINT format = DT_NOCLIP | (type == DST_TEXT ? DT_NOPREFIX : 0) | ((flags & DSS_HIDEPREFIX) ? DT_HIDEPREFIX : 0) |
@@ -525,7 +525,7 @@ static BOOL draw_state_item(HDC dc, DRAWSTATEPROC proc, UINT type, LPARAM ldata,
         ok = DrawTextW(dc, (LPCWSTR)ldata, len, &r, format) != 0;
         SetBkMode(dc, old_mode);
     } else if (type == DST_ICON) {
-        ok = DrawIconEx(dc, x, y, (HICON)ldata, cx, cy, 0, NULL, DI_NORMAL);
+        ok = DrawIconEx(dc, x, y, (HICON)ldata, cx, cy, 0, nullptr, DI_NORMAL);
     } else if (type == DST_BITMAP) {
         HDC mem = CreateCompatibleDC(dc);
         if (mem) {
@@ -605,7 +605,7 @@ WINUSERAPI BOOL WINAPI GrayStringW(HDC dc, HBRUSH brush, GRAYSTRINGPROC proc, LP
     if (cx <= 0 || cy <= 0)
         return FALSE;
     HDC mem = CreateCompatibleDC(dc);
-    HBITMAP bitmap = mem ? CreateCompatibleBitmap(dc, cx, cy) : NULL;
+    HBITMAP bitmap = mem ? CreateCompatibleBitmap(dc, cx, cy) : nullptr;
     if (!bitmap) {
         if (mem)
             DeleteDC(mem);
@@ -692,7 +692,7 @@ static void draw_underline(HDC dc, int x, int y, LPCWSTR line, int pos, const TE
     HPEN pen = CreatePen(PS_SOLID, 1, GetTextColor(dc));
     HGDIOBJ old = SelectObject(dc, pen);
     int uy = y + tm->tmAscent + 1;
-    MoveToEx(dc, left, uy, NULL);
+    MoveToEx(dc, left, uy, nullptr);
     LineTo(dc, left + ch.cx, uy);
     SelectObject(dc, old);
     DeleteObject(pen);
@@ -702,14 +702,14 @@ static void draw_tabbed(HDC dc, int x, int y, LPCWSTR text, int count, UINT form
 {
     UINT opts = (format & DT_NOCLIP) ? 0 : ETO_CLIPPED;
     if (!(format & DT_EXPANDTABS)) {
-        ExtTextOutW(dc, x, y, opts, clip, text, (UINT)count, NULL);
+        ExtTextOutW(dc, x, y, opts, clip, text, (UINT)count, nullptr);
         return;
     }
     int pos = x, start = 0;
     for (int i = 0; i <= count; i++) {
         if (i == count || text[i] == L'\t') {
             if (i > start) {
-                ExtTextOutW(dc, pos, y, opts, clip, text + start, (UINT)(i - start), NULL);
+                ExtTextOutW(dc, pos, y, opts, clip, text + start, (UINT)(i - start), nullptr);
                 pos += text_width(dc, text + start, i - start, 0, 0);
             }
             if (i < count && tab_width)
@@ -894,7 +894,7 @@ WINUSERAPI int WINAPI DrawTextExW(HDC dc, LPWSTR text, int count, LPRECT rect, U
 
 WINUSERAPI int WINAPI DrawTextW(HDC dc, LPCWSTR text, int count, LPRECT rect, UINT format)
 {
-    return DrawTextExW(dc, (LPWSTR)text, count, rect, format & ~DT_MODIFYSTRING, NULL);
+    return DrawTextExW(dc, (LPWSTR)text, count, rect, format & ~DT_MODIFYSTRING, nullptr);
 }
 
 WINUSERAPI int WINAPI DrawTextA(HDC dc, LPCSTR text, int count, LPRECT rect, UINT format)
@@ -903,7 +903,7 @@ WINUSERAPI int WINAPI DrawTextA(HDC dc, LPCSTR text, int count, LPRECT rect, UIN
     LPWSTR w = UserAtoWn(text, count, &n);
     if (!w)
         return 0;
-    int r = DrawTextExW(dc, w, n, rect, format & ~DT_MODIFYSTRING, NULL);
+    int r = DrawTextExW(dc, w, n, rect, format & ~DT_MODIFYSTRING, nullptr);
     UserFree(w);
     return r;
 }
@@ -914,7 +914,7 @@ WINUSERAPI LONG WINAPI TabbedTextOutW(HDC dc, int x, int y, LPCWSTR text, int co
     TEXTMETRICW tm;
     GetTextMetricsW(dc, &tm);
     int tab_width = tabs > 0 && positions ? positions[0] : tm.tmAveCharWidth * 8;
-    draw_tabbed(dc, x, y, text, count, DT_EXPANDTABS | DT_NOCLIP, tab_width, NULL);
+    draw_tabbed(dc, x, y, text, count, DT_EXPANDTABS | DT_NOCLIP, tab_width, nullptr);
     return MAKELONG(text_width(dc, text, count, DT_EXPANDTABS, tab_width), tm.tmHeight);
 }
 

@@ -8,7 +8,7 @@
 
 D9Device *D9DeviceFrom(IDirect3DDevice9 *iface)
 {
-    return iface ? CONTAINING_RECORD((IDirect3DDevice9Ex *)iface, D9Device, iface) : NULL;
+    return iface ? CONTAINING_RECORD((IDirect3DDevice9Ex *)iface, D9Device, iface) : nullptr;
 }
 
 static D9Device *impl(IDirect3DDevice9Ex *iface) { return CONTAINING_RECORD(iface, D9Device, iface); }
@@ -112,7 +112,7 @@ static void default_state(D9Device *d)
 static D9Resource *bind_target(D9Surface *s)
 {
     if (!s)
-        return NULL;
+        return nullptr;
     return s->container ? &s->container->base : &s->base;
 }
 
@@ -129,7 +129,7 @@ static void set_surface(D9Surface **slot, D9Surface *s)
 
 static void set_texture(D9Texture **slot, D9Texture *t)
 {
-    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = t ? &t->base : NULL;
+    D9Resource *old = *slot ? &(*slot)->base : nullptr, *r = t ? &t->base : nullptr;
     if (old == r)
         return;
     D9Bind(r);
@@ -139,7 +139,7 @@ static void set_texture(D9Texture **slot, D9Texture *t)
 
 static void set_buffer(D9Buffer **slot, D9Buffer *b)
 {
-    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = b ? &b->base : NULL;
+    D9Resource *old = *slot ? &(*slot)->base : nullptr, *r = b ? &b->base : nullptr;
     if (old == r)
         return;
     D9Bind(r);
@@ -163,7 +163,7 @@ void D9DeviceSetIndices(D9Device *d, D9Buffer *b)
 
 static void set_shader(D9Shader **slot, D9Shader *s)
 {
-    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = s ? &s->base : NULL;
+    D9Resource *old = *slot ? &(*slot)->base : nullptr, *r = s ? &s->base : nullptr;
     if (old == r)
         return;
     D9Bind(r);
@@ -173,7 +173,7 @@ static void set_shader(D9Shader **slot, D9Shader *s)
 
 static void set_decl(D9VertexDecl **slot, D9VertexDecl *v)
 {
-    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = v ? &v->base : NULL;
+    D9Resource *old = *slot ? &(*slot)->base : nullptr, *r = v ? &v->base : nullptr;
     if (old == r)
         return;
     D9Bind(r);
@@ -184,17 +184,17 @@ static void set_decl(D9VertexDecl **slot, D9VertexDecl *v)
 /* what Reset and the device's end let go: every binding but the targets. */
 static void unbind_resources(D9Device *d)
 {
-    set_shader(&d->vs, NULL);
-    set_shader(&d->ps, NULL);
-    set_decl(&d->decl, NULL);
+    set_shader(&d->vs, nullptr);
+    set_shader(&d->ps, nullptr);
+    set_decl(&d->decl, nullptr);
     for (UINT i = 0; i < D9_MAX_SAMPLERS; i++)
-        set_texture(&d->textures[i], NULL);
+        set_texture(&d->textures[i], nullptr);
     for (UINT i = 0; i < D9_MAX_STREAMS; i++) {
-        set_buffer(&d->streams[i].buffer, NULL);
+        set_buffer(&d->streams[i].buffer, nullptr);
         d->streams[i].offset = d->streams[i].stride = 0;
         d->stream_freq[i] = 1;
     }
-    set_buffer(&d->indices, NULL);
+    set_buffer(&d->indices, nullptr);
     d->textures_dirty = ~0u;
     d->streams_dirty = ~0u;
     d->indices_dirty = TRUE;
@@ -206,15 +206,15 @@ static void destroy_device(D9Device *d)
 {
     if (d->recording)
         D9ResourceRelease(&d->recording->base);
-    d->recording = NULL;
+    d->recording = nullptr;
     unbind_resources(d);
     for (UINT i = 0; i < d->fvf_decl_count; i++)
         D9Unbind(&d->fvf_decls[i]->base);
     HeapFree(GetProcessHeap(), 0, d->fvf_decls);
     D9FreeDraws(d);
     for (UINT i = 0; i < D9_MAX_TARGETS; i++)
-        set_surface(&d->targets[i], NULL);
-    set_surface(&d->depth_stencil, NULL);
+        set_surface(&d->targets[i], nullptr);
+    set_surface(&d->depth_stencil, nullptr);
     D9DestroyImplicitSurface(d->auto_depth);
     for (UINT i = 0; i < d->swapchain_count; i++)
         D9DestroySwapChain(d->swapchains[i]);
@@ -272,9 +272,9 @@ HRESULT D9CreateDevice(IDirect3D9Ex *d3d, BOOL ex, UINT adapter, D3DDEVTYPE type
     if (!focus && !params->hDeviceWindow)
         return D3DERR_INVALIDCALL;
     HMODULE module = LoadLibraryW(L"d3d11.dll");
-    Create create = module ? (Create)(void *)GetProcAddress(module, "D3D11CreateDevice") : NULL;
+    Create create = module ? (Create)(void *)GetProcAddress(module, "D3D11CreateDevice") : nullptr;
     IDXGIAdapter1 *dxgi_adapter;
-    if (!create || FAILED(D9GetOutput(adapter, &dxgi_adapter, NULL)))
+    if (!create || FAILED(D9GetOutput(adapter, &dxgi_adapter, nullptr)))
         return D3DERR_NOTAVAILABLE;
     D9Device *d = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*d));
     if (!d) {
@@ -292,10 +292,10 @@ HRESULT D9CreateDevice(IDirect3D9Ex *d3d, BOOL ex, UINT adapter, D3DDEVTYPE type
     d->max_frame_latency = 3;
     InitializeCriticalSection(&d->lock);
     const D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;
-    ID3D11Device *d3d11 = NULL;
-    ID3D11DeviceContext *context = NULL;
-    HRESULT hr = create((IDXGIAdapter *)dxgi_adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                        &level, 1, D3D11_SDK_VERSION, &d3d11, NULL, &context);
+    ID3D11Device *d3d11 = nullptr;
+    ID3D11DeviceContext *context = nullptr;
+    HRESULT hr = create((IDXGIAdapter *)dxgi_adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                        &level, 1, D3D11_SDK_VERSION, &d3d11, nullptr, &context);
     dxgi_adapter->lpVtbl->Release(dxgi_adapter);
     if (SUCCEEDED(hr)) {
         d3d11->lpVtbl->QueryInterface(d3d11, &IID_ID3D11Device1, (void **)&d->d3d11);
@@ -346,7 +346,7 @@ static HRESULT STDMETHODCALLTYPE device_query(IDirect3DDevice9Ex *iface, REFIID 
 {
     if (!out)
         return E_POINTER;
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDirect3DDevice9) ||
         (impl(iface)->ex && IsEqualGUID(riid, &IID_IDirect3DDevice9Ex))) {
         *out = iface;
@@ -378,8 +378,8 @@ static UINT STDMETHODCALLTYPE device_get_available_texture_mem(IDirect3DDevice9E
 {
     IDXGIAdapter1 *adapter;
     UINT64 bytes = 512ull << 20;
-    if (SUCCEEDED(D9GetOutput(impl(iface)->creation.AdapterOrdinal, &adapter, NULL))) {
-        DXGI_ADAPTER_DESC1 desc = {0};
+    if (SUCCEEDED(D9GetOutput(impl(iface)->creation.AdapterOrdinal, &adapter, nullptr))) {
+        DXGI_ADAPTER_DESC1 desc = {};
         adapter->lpVtbl->GetDesc1(adapter, &desc);
         adapter->lpVtbl->Release(adapter);
         bytes = desc.DedicatedVideoMemory + desc.SharedSystemMemory;
@@ -435,7 +435,7 @@ static HRESULT STDMETHODCALLTYPE device_set_cursor_properties(IDirect3DDevice9Ex
         return D3DERR_INVALIDCALL;
     D9Lock(d);
     D3DLOCKED_RECT locked;
-    HRESULT hr = D9SurfaceLock(s, &locked, NULL, D3DLOCK_READONLY);
+    HRESULT hr = D9SurfaceLock(s, &locked, nullptr, D3DLOCK_READONLY);
     if (SUCCEEDED(hr)) {
         BYTE *bits = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)s->width * s->height * 4);
         if (bits) {
@@ -443,9 +443,9 @@ static HRESULT STDMETHODCALLTYPE device_set_cursor_properties(IDirect3DDevice9Ex
                 memcpy(bits + (SIZE_T)row * s->width * 4, (BYTE *)locked.pBits + (SIZE_T)row * locked.Pitch,
                        (SIZE_T)s->width * 4);
             HBITMAP color = CreateBitmap(s->width, s->height, 1, 32, bits);
-            HBITMAP mask = CreateBitmap(s->width, s->height, 1, 1, NULL);
+            HBITMAP mask = CreateBitmap(s->width, s->height, 1, 1, nullptr);
             ICONINFO info = {FALSE, x, y, mask, color};
-            HCURSOR cursor = color && mask ? CreateIconIndirect(&info) : NULL;
+            HCURSOR cursor = color && mask ? CreateIconIndirect(&info) : nullptr;
             if (cursor) {
                 if (d->cursor)
                     DestroyCursor(d->cursor);
@@ -487,11 +487,11 @@ static HRESULT STDMETHODCALLTYPE device_create_additional_swap_chain(IDirect3DDe
     D9Device *d = impl(iface);
     if (!params || !out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     D9Lock(d);
     D9SwapChain **list = HeapReAlloc(GetProcessHeap(), 0, d->swapchains, (d->swapchain_count + 1) * sizeof(*list));
     HRESULT hr = list ? D3D_OK : E_OUTOFMEMORY;
-    D9SwapChain *sc = NULL;
+    D9SwapChain *sc = nullptr;
     if (list) {
         d->swapchains = list;
         hr = D9CreateSwapChain(d, params, &sc);
@@ -511,7 +511,7 @@ static HRESULT STDMETHODCALLTYPE device_get_swap_chain(IDirect3DDevice9Ex *iface
     D9Device *d = impl(iface);
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (index >= d->swapchain_count)
         return D3DERR_INVALIDCALL;
     D9SwapChain *sc = d->swapchains[index];
@@ -533,12 +533,12 @@ static HRESULT reset(D9Device *d, D3DPRESENT_PARAMETERS *params, D3DDISPLAYMODEE
     if (D9SwapChainInUse(sc) || (d->auto_depth && d->auto_depth->base.refs))
         return D3DERR_INVALIDCALL;
     for (UINT i = 0; i < D9_MAX_TARGETS; i++)
-        set_surface(&d->targets[i], NULL);
-    set_surface(&d->depth_stencil, NULL);
+        set_surface(&d->targets[i], nullptr);
+    set_surface(&d->depth_stencil, nullptr);
     unbind_resources(d);
     D9FreeDraws(d);
     D9DestroyImplicitSurface(d->auto_depth);
-    d->auto_depth = NULL;
+    d->auto_depth = nullptr;
     HRESULT hr = D9ResetSwapChain(sc, params);
     if (SUCCEEDED(hr))
         hr = make_auto_depth(d, params);
@@ -556,7 +556,7 @@ static HRESULT STDMETHODCALLTYPE device_reset(IDirect3DDevice9Ex *iface, D3DPRES
 {
     D9Device *d = impl(iface);
     D9Lock(d);
-    HRESULT hr = reset(d, params, NULL);
+    HRESULT hr = reset(d, params, nullptr);
     D9Unlock(d);
     return hr;
 }
@@ -577,7 +577,7 @@ static HRESULT STDMETHODCALLTYPE device_get_back_buffer(IDirect3DDevice9Ex *ifac
     D9Device *d = impl(iface);
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (swapchain >= d->swapchain_count)
         return D3DERR_INVALIDCALL;
     D9SwapChain *sc = d->swapchains[swapchain];
@@ -620,7 +620,7 @@ static HRESULT create_texture(D9Device *d, D3DRESOURCETYPE type, UINT width, UIN
 {
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if ((shared && !d->ex) || (pool == D3DPOOL_MANAGED && d->ex))
         return D3DERR_INVALIDCALL;
     D9Texture *t;
@@ -662,7 +662,7 @@ static HRESULT create_buffer(D9Device *d, BOOL index, UINT length, DWORD usage, 
 {
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if ((shared && !d->ex) || (pool == D3DPOOL_MANAGED && d->ex))
         return D3DERR_INVALIDCALL;
     D9Buffer *b;
@@ -694,7 +694,7 @@ static HRESULT create_surface(D9Device *d, UINT width, UINT height, D3DFORMAT fo
 {
     if (!out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     if (shared && !d->ex)
         return D3DERR_INVALIDCALL;
     D9Surface *s;
@@ -750,7 +750,7 @@ static HRESULT STDMETHODCALLTYPE device_update_surface(IDirect3DDevice9Ex *iface
     }
     const BYTE *bytes = D9MemoryAt(s->memory, f, r.left, r.top, 0);
     UINT pitch = s->memory->pitch;
-    BYTE *converted = NULL;
+    BYTE *converted = nullptr;
     if (f->stored != f->bytes) {
         UINT rows = D9FormatRows(f, h), out_pitch = D9_ALIGN(w * f->stored, 4);
         converted = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)out_pitch * rows);
@@ -869,7 +869,7 @@ static HRESULT STDMETHODCALLTYPE device_color_fill(IDirect3DDevice9Ex *iface, ID
         RECT b = D9SurfaceBlockRect(s, &r);
         UINT columns = (b.right - b.left + f->block - 1) / f->block, rows = D9FormatRows(f, b.bottom - b.top);
         UINT pitch = D9_ALIGN(columns * f->bytes, 4);
-        BYTE *bytes = D9PackColor(f, color, block) ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)pitch * rows) : NULL;
+        BYTE *bytes = D9PackColor(f, color, block) ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)pitch * rows) : nullptr;
         if (bytes) {
             for (UINT y = 0; y < rows; y++)
                 for (UINT x = 0; x < columns; x++)
@@ -925,7 +925,7 @@ static HRESULT STDMETHODCALLTYPE device_get_render_target(IDirect3DDevice9Ex *if
         return D3DERR_INVALIDCALL;
     D9Lock(d);
     D9Surface *s = d->targets[index];
-    *out = s ? &s->iface : NULL;
+    *out = s ? &s->iface : nullptr;
     if (s)
         D9SurfaceAddRef(s);
     D9Unlock(d);
@@ -954,7 +954,7 @@ static HRESULT STDMETHODCALLTYPE device_get_depth_stencil_surface(IDirect3DDevic
         return D3DERR_INVALIDCALL;
     D9Lock(d);
     D9Surface *s = d->depth_stencil;
-    *out = s ? &s->iface : NULL;
+    *out = s ? &s->iface : nullptr;
     if (s)
         D9SurfaceAddRef(s);
     D9Unlock(d);
@@ -1026,7 +1026,7 @@ static HRESULT STDMETHODCALLTYPE device_clear(IDirect3DDevice9Ex *iface, DWORD c
         color_floats(color, c);
         for (UINT i = 0; i < D9_MAX_TARGETS; i++) {
             D9Surface *s = d->targets[i];
-            ID3D11RenderTargetView *rtv = s ? D9SurfaceRtv(s, d->render_states[D3DRS_SRGBWRITEENABLE]) : NULL;
+            ID3D11RenderTargetView *rtv = s ? D9SurfaceRtv(s, d->render_states[D3DRS_SRGBWRITEENABLE]) : nullptr;
             if (!rtv)
                 continue;
             for (UINT j = 0; j < n; j += 16)
@@ -1034,7 +1034,7 @@ static HRESULT STDMETHODCALLTYPE device_clear(IDirect3DDevice9Ex *iface, DWORD c
             D9SurfaceWritten(s);
         }
     }
-    ID3D11DepthStencilView *dsv = d->depth_stencil ? D9SurfaceDsv(d->depth_stencil) : NULL;
+    ID3D11DepthStencilView *dsv = d->depth_stencil ? D9SurfaceDsv(d->depth_stencil) : nullptr;
     if (n && dsv && (flags & (D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL))) {
         UINT which = (flags & D3DCLEAR_ZBUFFER ? D3D11_CLEAR_DEPTH : 0) |
                      (flags & D3DCLEAR_STENCIL ? D3D11_CLEAR_STENCIL : 0);
@@ -1051,7 +1051,7 @@ static HRESULT STDMETHODCALLTYPE device_clear(IDirect3DDevice9Ex *iface, DWORD c
 
 static D3DMATRIX *transform_slot(D9Device *d, D3DTRANSFORMSTATETYPE state)
 {
-    return (UINT)state < RTL_NUMBER_OF(d->transforms) ? &d->transforms[state] : NULL;
+    return (UINT)state < RTL_NUMBER_OF(d->transforms) ? &d->transforms[state] : nullptr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_transform(IDirect3DDevice9Ex *iface, D3DTRANSFORMSTATETYPE state,
@@ -1163,11 +1163,11 @@ static D9Light *light_slot(D9Device *d, DWORD index, BOOL grow)
         if (d->lights[i].index == index)
             return &d->lights[i];
     if (!grow)
-        return NULL;
+        return nullptr;
     D9Light *lights = d->lights ? HeapReAlloc(GetProcessHeap(), 0, d->lights, (d->light_count + 1) * sizeof(*lights))
                                 : HeapAlloc(GetProcessHeap(), 0, sizeof(*lights));
     if (!lights)
-        return NULL;
+        return nullptr;
     d->lights = lights;
     D9Light *l = &lights[d->light_count++];
     memset(l, 0, sizeof(*l));
@@ -1296,7 +1296,7 @@ static HRESULT STDMETHODCALLTYPE device_create_state_block(IDirect3DDevice9Ex *i
     D9Device *d = impl(iface);
     if (!block)
         return D3DERR_INVALIDCALL;
-    *block = NULL;
+    *block = nullptr;
     D9Lock(d);
     D9StateBlock *b;
     HRESULT hr = d->recording ? D3DERR_INVALIDCALL : D9CreateStateBlock(d, type, &b);
@@ -1320,12 +1320,12 @@ static HRESULT STDMETHODCALLTYPE device_end_state_block(IDirect3DDevice9Ex *ifac
     D9Device *d = impl(iface);
     if (!block)
         return D3DERR_INVALIDCALL;
-    *block = NULL;
+    *block = nullptr;
     D9Lock(d);
     HRESULT hr = D3DERR_INVALIDCALL;
     if (d->recording) {
         *block = &d->recording->iface;
-        d->recording = NULL;
+        d->recording = nullptr;
         hr = D3D_OK;
     }
     D9Unlock(d);
@@ -1365,7 +1365,7 @@ static HRESULT STDMETHODCALLTYPE device_get_texture(IDirect3DDevice9Ex *iface, D
     int slot = sampler_slot(stage);
     if (!texture)
         return D3DERR_INVALIDCALL;
-    *texture = NULL;
+    *texture = nullptr;
     if (slot < 0)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
@@ -1614,7 +1614,7 @@ static HRESULT STDMETHODCALLTYPE device_create_vertex_declaration(IDirect3DDevic
     D9Device *d = impl(iface);
     if (!elements || !declaration)
         return D3DERR_INVALIDCALL;
-    *declaration = NULL;
+    *declaration = nullptr;
     D9VertexDecl *v;
     HRESULT hr = D9CreateVertexDecl(d, elements, 0, &v);
     if (SUCCEEDED(hr))
@@ -1644,7 +1644,7 @@ static HRESULT STDMETHODCALLTYPE device_get_vertex_declaration(IDirect3DDevice9E
     if (!declaration)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    *declaration = d->decl ? &d->decl->iface : NULL;
+    *declaration = d->decl ? &d->decl->iface : nullptr;
     if (d->decl)
         D9ResourceAddRef(&d->decl->base);
     D9Unlock(d);
@@ -1658,7 +1658,7 @@ static HRESULT STDMETHODCALLTYPE device_set_fvf(IDirect3DDevice9Ex *iface, DWORD
     if (!fvf)
         return D3D_OK;
     D9Lock(d);
-    D9VertexDecl *v = NULL;
+    D9VertexDecl *v = nullptr;
     for (UINT i = 0; i < d->fvf_decl_count && !v; i++)
         if (d->fvf_decls[i]->fvf == fvf)
             v = d->fvf_decls[i];
@@ -1700,7 +1700,7 @@ static HRESULT create_shader(D9Device *d, const DWORD *code, BOOL pixel, void **
 {
     if (!code || !out)
         return D3DERR_INVALIDCALL;
-    *out = NULL;
+    *out = nullptr;
     D9Shader *s;
     HRESULT hr = D9CreateShader(d, code, pixel, &s);
     if (SUCCEEDED(hr))
@@ -1738,7 +1738,7 @@ static HRESULT STDMETHODCALLTYPE device_get_vertex_shader(IDirect3DDevice9Ex *if
     if (!shader)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    *shader = d->vs ? &d->vs->iface.vs : NULL;
+    *shader = d->vs ? &d->vs->iface.vs : nullptr;
     if (d->vs)
         D9ResourceAddRef(&d->vs->base);
     D9Unlock(d);
@@ -1838,7 +1838,7 @@ static HRESULT STDMETHODCALLTYPE device_get_stream_source(IDirect3DDevice9Ex *if
         return D3DERR_INVALIDCALL;
     D9Lock(d);
     D9Buffer *b = d->streams[stream].buffer;
-    *buffer = b ? &b->iface.vb : NULL;
+    *buffer = b ? &b->iface.vb : nullptr;
     if (b)
         D9ResourceAddRef(&b->base);
     *offset = d->streams[stream].offset;
@@ -1891,7 +1891,7 @@ static HRESULT STDMETHODCALLTYPE device_get_indices(IDirect3DDevice9Ex *iface, I
         return D3DERR_INVALIDCALL;
     D9Lock(d);
     D9Buffer *b = d->indices;
-    *buffer = b ? &b->iface.ib : NULL;
+    *buffer = b ? &b->iface.ib : nullptr;
     if (b)
         D9ResourceAddRef(&b->base);
     D9Unlock(d);
@@ -1928,7 +1928,7 @@ static HRESULT STDMETHODCALLTYPE device_get_pixel_shader(IDirect3DDevice9Ex *ifa
     if (!shader)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    *shader = d->ps ? &d->ps->iface.ps : NULL;
+    *shader = d->ps ? &d->ps->iface.ps : nullptr;
     if (d->ps)
         D9ResourceAddRef(&d->ps->base);
     D9Unlock(d);
@@ -2045,7 +2045,7 @@ static HRESULT STDMETHODCALLTYPE device_wait_for_vblank(IDirect3DDevice9Ex *ifac
     D9Device *d = impl(iface);
     if (swapchain >= d->swapchain_count)
         return D3DERR_INVALIDCALL;
-    IDXGIOutput *output = NULL;
+    IDXGIOutput *output = nullptr;
     IDXGISwapChain *sc = d->swapchains[swapchain]->output.dxgi;
     if (SUCCEEDED(sc->lpVtbl->GetContainingOutput(sc, &output)) && output) {
         output->lpVtbl->WaitForVBlank(output);

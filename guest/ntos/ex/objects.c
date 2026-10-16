@@ -71,7 +71,7 @@ void ExInitialize(void)
     init_shared_data();
     KeInitializeEvent(&MimeInputReadyEvent, SynchronizationEvent, FALSE);
     KeInitializeEvent(&MimeGpuEvent, NotificationEvent, FALSE);
-    OBJECT_TYPE_INITIALIZER init = {0};
+    OBJECT_TYPE_INITIALIZER init = {};
     init.Waitable = TRUE;
     init.ValidAccessMask = EVENT_ALL_ACCESS;
     ExEventType = ObCreateObjectType(L"Event", &init);
@@ -95,12 +95,12 @@ static NTSTATUS create_named(POBJECT_TYPE type, ULONG size, PHANDLE handle, ACCE
     if (!NT_SUCCESS(status))
         return status;
     PVOID object;
-    status = ObCreateObject(type, attributes ? &oa : NULL, KeGetPreviousMode(), size, &object);
+    status = ObCreateObject(type, attributes ? &oa : nullptr, KeGetPreviousMode(), size, &object);
     if (NT_SUCCESS(status)) {
         memset(object, 0, size);
         init(object, a, b);
         HANDLE h;
-        status = ObInsertObjectNamed(object, attributes ? &oa : NULL, access, KeGetPreviousMode(), &h);
+        status = ObInsertObjectNamed(object, attributes ? &oa : nullptr, access, KeGetPreviousMode(), &h);
         if (NT_SUCCESS(status)) {
             NTSTATUS st = ObStoreHandle(handle, h);
             if (!NT_SUCCESS(st))
@@ -119,7 +119,7 @@ static NTSTATUS open_named(POBJECT_TYPE type, PHANDLE handle, ACCESS_MASK access
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, type, KeGetPreviousMode(), access, NULL, &h);
+    status = ObOpenObjectByName(&oa, type, KeGetPreviousMode(), access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -151,7 +151,7 @@ NTSTATUS NTAPI NtCreateEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
 {
     if (type != NotificationEvent && type != SynchronizationEvent)
         return STATUS_INVALID_PARAMETER;
-    return create_named(ExEventType, sizeof(KEVENT), handle, access, attributes, NULL, init_event, type, state);
+    return create_named(ExEventType, sizeof(KEVENT), handle, access, attributes, nullptr, init_event, type, state);
 }
 
 NTSTATUS NTAPI ZwCreateEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, EVENT_TYPE type,
@@ -173,7 +173,7 @@ NTSTATUS NTAPI NtOpenEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
 static NTSTATUS event_op(HANDLE handle, PLONG previous, int op)
 {
     PKEVENT event;
-    NTSTATUS status = ObReferenceHandle(handle, ExEventType, KeGetPreviousMode(), (PVOID *)&event, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, ExEventType, KeGetPreviousMode(), (PVOID *)&event, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = op == 0 ? KeSetEvent(event, 1, FALSE) : op == 1 ? KeResetEvent(event) : KePulseEvent(event, 1, FALSE);
@@ -209,7 +209,7 @@ NTSTATUS NTAPI NtResetEvent(HANDLE handle, PLONG previous)
 
 NTSTATUS NTAPI NtClearEvent(HANDLE handle)
 {
-    return event_op(handle, NULL, 1);
+    return event_op(handle, nullptr, 1);
 }
 
 NTSTATUS NTAPI NtPulseEvent(HANDLE handle, PLONG previous)
@@ -219,7 +219,7 @@ NTSTATUS NTAPI NtPulseEvent(HANDLE handle, PLONG previous)
 
 NTSTATUS NTAPI NtCreateMutant(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, BOOLEAN owner)
 {
-    return create_named(ExMutantType, sizeof(KMUTANT), handle, access, attributes, NULL, init_mutant, owner, 0);
+    return create_named(ExMutantType, sizeof(KMUTANT), handle, access, attributes, nullptr, init_mutant, owner, 0);
 }
 
 NTSTATUS NTAPI NtOpenMutant(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
@@ -230,7 +230,7 @@ NTSTATUS NTAPI NtOpenMutant(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
 NTSTATUS NTAPI NtReleaseMutant(HANDLE handle, PLONG previous)
 {
     PKMUTANT m;
-    NTSTATUS status = ObReferenceHandle(handle, ExMutantType, KeGetPreviousMode(), (PVOID *)&m, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, ExMutantType, KeGetPreviousMode(), (PVOID *)&m, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = KeReleaseMutant(m, 1, FALSE, FALSE);
@@ -247,7 +247,7 @@ NTSTATUS NTAPI NtCreateSemaphore(PHANDLE handle, ACCESS_MASK access, POBJECT_ATT
 {
     if (maximum <= 0 || initial < 0 || initial > maximum)
         return STATUS_INVALID_PARAMETER;
-    return create_named(ExSemaphoreType, sizeof(KSEMAPHORE), handle, access, attributes, NULL, init_semaphore,
+    return create_named(ExSemaphoreType, sizeof(KSEMAPHORE), handle, access, attributes, nullptr, init_semaphore,
                         (ULONG_PTR)initial, (ULONG_PTR)maximum);
 }
 
@@ -259,7 +259,7 @@ NTSTATUS NTAPI NtOpenSemaphore(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
 NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous)
 {
     PKSEMAPHORE s;
-    NTSTATUS status = ObReferenceHandle(handle, ExSemaphoreType, KeGetPreviousMode(), (PVOID *)&s, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, ExSemaphoreType, KeGetPreviousMode(), (PVOID *)&s, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = KeReleaseSemaphore(s, 1, count, FALSE);
@@ -273,7 +273,7 @@ NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous)
 
 NTSTATUS NTAPI NtCreateTimer(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, TIMER_TYPE type)
 {
-    return create_named(ExTimerType, sizeof(ETIMER), handle, access, attributes, NULL, init_timer, type, 0);
+    return create_named(ExTimerType, sizeof(ETIMER), handle, access, attributes, nullptr, init_timer, type, 0);
 }
 
 NTSTATUS NTAPI NtOpenTimer(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
@@ -288,11 +288,11 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
     LARGE_INTEGER d;
     if (!NT_SUCCESS(KiCopyFromUser(&d, due, sizeof(d))))
         return STATUS_ACCESS_VIOLATION;
-    NTSTATUS status = ObReferenceHandle(handle, ExTimerType, KeGetPreviousMode(), (PVOID *)&t, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, ExTimerType, KeGetPreviousMode(), (PVOID *)&t, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
-    KeSetTimerEx(&t->Timer, d, period, NULL);
+    KeSetTimerEx(&t->Timer, d, period, nullptr);
     ObDereferenceObject(t);
     if (previous)
         KiCopyToUser(previous, &state, sizeof(state));
@@ -302,7 +302,7 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
 NTSTATUS NTAPI NtCancelTimer(HANDLE handle, PBOOLEAN current)
 {
     ETIMER *t;
-    NTSTATUS status = ObReferenceHandle(handle, ExTimerType, KeGetPreviousMode(), (PVOID *)&t, NULL);
+    NTSTATUS status = ObReferenceHandle(handle, ExTimerType, KeGetPreviousMode(), (PVOID *)&t, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
@@ -324,7 +324,7 @@ NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLE
     NTSTATUS status = STATUS_SUCCESS;
     ULONG referenced = 0;
     for (; referenced < count; referenced++) {
-        status = ObReferenceHandle(handles[referenced], NULL, KeGetPreviousMode(), &objects[referenced], NULL);
+        status = ObReferenceHandle(handles[referenced], nullptr, KeGetPreviousMode(), &objects[referenced], nullptr);
         if (!NT_SUCCESS(status))
             break;
         waits[referenced] = ObGetWaitObject(objects[referenced]);
@@ -335,7 +335,7 @@ NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLE
         }
     }
     if (NT_SUCCESS(status)) {
-        PKWAIT_BLOCK blocks = NULL;
+        PKWAIT_BLOCK blocks = nullptr;
         if (count > THREAD_WAIT_OBJECTS) {
             blocks = ExAllocatePool2(POOL_FLAG_NON_PAGED, count * sizeof(KWAIT_BLOCK), KI_TAG('E', 'x', 'W', 'b'));
             if (!blocks)
@@ -356,7 +356,7 @@ NTSTATUS NTAPI NtWaitForSingleObject(HANDLE handle, BOOLEAN alertable, PLARGE_IN
     LARGE_INTEGER t;
     if (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t))))
         return STATUS_ACCESS_VIOLATION;
-    return ExWaitHandles(1, &handle, WaitAny, alertable, timeout ? &t : NULL, KeGetPreviousMode());
+    return ExWaitHandles(1, &handle, WaitAny, alertable, timeout ? &t : nullptr, KeGetPreviousMode());
 }
 
 NTSTATUS NTAPI ZwWaitForSingleObject(HANDLE handle, BOOLEAN alertable, PLARGE_INTEGER timeout)
@@ -379,13 +379,13 @@ NTSTATUS NTAPI NtWaitForMultipleObjects(ULONG count, PHANDLE handles, WAIT_TYPE 
     if (!NT_SUCCESS(KiCopyFromUser(copy, handles, count * sizeof(HANDLE))) ||
         (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t)))))
         return STATUS_ACCESS_VIOLATION;
-    return ExWaitHandles(count, copy, type == WaitAll ? WaitAll : WaitAny, alertable, timeout ? &t : NULL, UserMode);
+    return ExWaitHandles(count, copy, type == WaitAll ? WaitAll : WaitAny, alertable, timeout ? &t : nullptr, UserMode);
 }
 
 NTSTATUS NTAPI NtSignalAndWaitForSingleObject(HANDLE signal, HANDLE wait, BOOLEAN alertable, PLARGE_INTEGER timeout)
 {
     PVOID object;
-    NTSTATUS status = ObReferenceHandle(signal, NULL, KeGetPreviousMode(), &object, NULL);
+    NTSTATUS status = ObReferenceHandle(signal, nullptr, KeGetPreviousMode(), &object, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     POBJECT_TYPE type = ObGetObjectType(object);

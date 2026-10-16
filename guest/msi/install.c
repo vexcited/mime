@@ -69,19 +69,19 @@ UINT MimeMsiWriteRegistry(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCW
     value->Path = MimeMsiDuplicate(path);
     value->ValueName = MimeMsiDuplicate(name);
     UINT error = !created->Path || !value->Path || !value->ValueName ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
-    HKEY key = NULL;
+    HKEY key = nullptr;
     DWORD disposition;
     if (!error)
-        error = RegCreateKeyExW(root, path, 0, NULL, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, NULL, &key, &disposition);
+        error = RegCreateKeyExW(root, path, 0, nullptr, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, nullptr, &key, &disposition);
     if (!error && disposition == REG_CREATED_NEW_KEY) {
         created->RegistryKind = 2;
         created->Root = root;
         created->Next = package->Changes;
         package->Changes = created;
-        created = NULL;
+        created = nullptr;
     }
     if (!error) {
-        error = RegQueryValueExW(key, name, NULL, &value->OldType, NULL, &value->OldBytes);
+        error = RegQueryValueExW(key, name, nullptr, &value->OldType, nullptr, &value->OldBytes);
         if (error == ERROR_FILE_NOT_FOUND)
             error = ERROR_SUCCESS;
         else if (!error) {
@@ -93,7 +93,7 @@ UINT MimeMsiWriteRegistry(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCW
                 if (!value->OldData)
                     error = ERROR_NOT_ENOUGH_MEMORY;
                 else
-                    error = RegQueryValueExW(key, name, NULL, &value->OldType, value->OldData, &value->OldBytes);
+                    error = RegQueryValueExW(key, name, nullptr, &value->OldType, value->OldData, &value->OldBytes);
             }
         }
     }
@@ -106,7 +106,7 @@ UINT MimeMsiWriteRegistry(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCW
         value->Root = root;
         value->Next = package->Changes;
         package->Changes = value;
-        value = NULL;
+        value = nullptr;
     }
     if (created) {
         MimeMsiFree(created->Path);
@@ -202,7 +202,7 @@ static UINT make_directory(MIME_MSI_PACKAGE *package, PCWSTR path, ULONG depth)
         MimeMsiFree(change);
         return ERROR_NOT_ENOUGH_MEMORY;
     }
-    if (!CreateDirectoryW(path, NULL)) {
+    if (!CreateDirectoryW(path, nullptr)) {
         error = GetLastError();
         if (error == ERROR_ALREADY_EXISTS) {
             attributes = GetFileAttributesW(path);
@@ -510,7 +510,7 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
         PCWSTR component_name = MimeMsiText(package->Database, table, row, component);
         PCWSTR filename = MimeMsiText(package->Database, table, row, name);
         PCWSTR file_version = MimeMsiText(package->Database, table, row, version);
-        PCWSTR directory = NULL;
+        PCWSTR directory = nullptr;
         BOOL selected;
         if (!component_name || !filename || !*filename)
             return ERROR_INSTALL_PACKAGE_INVALID;
@@ -538,11 +538,11 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
         if (!*filename || !wcscmp(filename, L".") || !wcscmp(filename, L"..") ||
             wcschr(filename, L'\\') || wcschr(filename, L'/') || wcschr(filename, L':'))
             return ERROR_INSTALL_PACKAGE_INVALID;
-        PWSTR source = NULL, target = NULL;
+        PWSTR source = nullptr, target = nullptr;
         error = MimeMsiDirectoryPath(package, directory, TRUE, &source);
         if (!error)
             error = MimeMsiDirectoryPath(package, directory, FALSE, &target);
-        MIME_MSI_FILE_PLAN *file = !error ? MimeMsiAllocate(sizeof(*file)) : NULL;
+        MIME_MSI_FILE_PLAN *file = !error ? MimeMsiAllocate(sizeof(*file)) : nullptr;
         if (!error && !file)
             error = ERROR_NOT_ENOUGH_MEMORY;
         if (!error) {
@@ -585,8 +585,8 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
 
 static UINT validate_cost(MIME_MSI_PACKAGE *package)
 {
-    ULONGLONG required[26] = {0};
-    DWORD cluster[26] = {0};
+    ULONGLONG required[26] = {};
+    DWORD cluster[26] = {};
     BOOL insufficient = FALSE;
     for (MIME_MSI_FILE_PLAN *file = package->Files; file; file = file->Next) {
         WCHAR drive = file->Target[0];
@@ -627,7 +627,7 @@ static UINT validate_cost(MIME_MSI_PACKAGE *package)
             continue;
         WCHAR root[] = {(WCHAR)(L'A' + i), L':', L'\\', 0};
         ULARGE_INTEGER available;
-        if (!GetDiskFreeSpaceExW(root, &available, NULL, NULL))
+        if (!GetDiskFreeSpaceExW(root, &available, nullptr, nullptr))
             return GetLastError();
         if (required[i] > available.QuadPart)
             insufficient = TRUE;
@@ -661,7 +661,7 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
     HANDLE source = INVALID_HANDLE_VALUE;
     UINT error = ERROR_SUCCESS;
     if (!file->Data) {
-        source = CreateFileW(file->Source, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+        source = CreateFileW(file->Source, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         if (source == INVALID_HANDLE_VALUE)
             return GetLastError();
         LARGE_INTEGER size;
@@ -725,9 +725,9 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
         MimeMsiFree(change);
         return error;
     }
-    BYTE *buffer = file->Data ? NULL : MimeMsiAllocate(64 * 1024);
+    BYTE *buffer = file->Data ? nullptr : MimeMsiAllocate(64 * 1024);
     if (buffer)
-        source = CreateFileW(file->Source, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+        source = CreateFileW(file->Source, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (!file->Data && (!buffer || source == INVALID_HANDLE_VALUE)) {
         error = buffer ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
         if (change->Backup)
@@ -738,8 +738,8 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
         MimeMsiFree(change);
         return error;
     }
-    HANDLE output = CreateFileW(file->Target, GENERIC_WRITE, 0, NULL,
-                                attributes == INVALID_FILE_ATTRIBUTES ? CREATE_NEW : OPEN_EXISTING, 0, NULL);
+    HANDLE output = CreateFileW(file->Target, GENERIC_WRITE, 0, nullptr,
+                                attributes == INVALID_FILE_ATTRIBUTES ? CREATE_NEW : OPEN_EXISTING, 0, nullptr);
     if (output == INVALID_HANDLE_VALUE) {
         error = GetLastError();
         if (file->MissingOnly && (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS)) {
@@ -765,11 +765,11 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
     while (remaining && !error) {
         DWORD wanted = remaining < 64 * 1024 ? remaining : 64 * 1024, read = wanted, written;
         const BYTE *data = file->Data ? file->Data + file->Size - remaining : buffer;
-        if (!file->Data && !ReadFile(source, buffer, wanted, &read, NULL))
+        if (!file->Data && !ReadFile(source, buffer, wanted, &read, nullptr))
             error = GetLastError();
         else if (!read)
             error = ERROR_INSTALL_PACKAGE_INVALID;
-        else if (!WriteFile(output, data, read, &written, NULL))
+        else if (!WriteFile(output, data, read, &written, nullptr))
             error = GetLastError();
         else if (written != read)
             error = ERROR_WRITE_FAULT;
@@ -796,7 +796,7 @@ UINT MimeMsiCopyInstalledFile(MIME_MSI_PACKAGE *package, PCWSTR source, PCWSTR t
         return GetLastError();
     if (info.nFileSizeHigh || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
         return ERROR_INSTALL_PACKAGE_INVALID;
-    MIME_MSI_FILE_PLAN file = {0};
+    MIME_MSI_FILE_PLAN file = {};
     file.Source = (PWSTR)source;
     file.Target = (PWSTR)target;
     file.Size = info.nFileSizeLow;

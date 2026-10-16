@@ -129,7 +129,7 @@ static BOOL *capability(GlContext *ctx, GLenum cap, uint32_t *dirty)
         *dirty = 0;
         return &ctx->framebuffer_srgb;
     default:
-        return NULL;
+        return nullptr;
     }
 }
 
@@ -538,7 +538,7 @@ GLAPI void APIENTRY glFinish(void)
 
 GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
 {
-    GL_CONTEXT_OR_RETURN(NULL);
+    GL_CONTEXT_OR_RETURN(nullptr);
     switch (name) {
     case GL_VENDOR:
         return (const GLubyte *)"Mime";
@@ -559,22 +559,22 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
     case GL_EXTENSIONS:
         if (ctx->profile == WGL_CONTEXT_CORE_PROFILE_BIT_ARB) {
             gl_error(ctx, GL_INVALID_ENUM);
-            return NULL;
+            return nullptr;
         }
         return (const GLubyte *)g_extensions;
     default:
         gl_error(ctx, GL_INVALID_ENUM);
-        return NULL;
+        return nullptr;
     }
 }
 
 GLAPI const GLubyte *APIENTRY glGetStringi(GLenum name, GLuint index)
 {
-    GL_CONTEXT_OR_RETURN(NULL);
+    GL_CONTEXT_OR_RETURN(nullptr);
     split_extensions();
     if (name != GL_EXTENSIONS || index >= (GLuint)extension_count) {
         gl_error(ctx, name != GL_EXTENSIONS ? GL_INVALID_ENUM : GL_INVALID_VALUE);
-        return NULL;
+        return nullptr;
     }
     return (const GLubyte *)extension_list[index];
 }
@@ -884,12 +884,12 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_DRAW_BUFFER:
     case GL_DRAW_BUFFER0: {
-        GlFramebuffer *fb = ctx->draw_fbo ? gl_framebuffer(ctx, ctx->draw_fbo) : NULL;
+        GlFramebuffer *fb = ctx->draw_fbo ? gl_framebuffer(ctx, ctx->draw_fbo) : nullptr;
         v[0] = fb ? fb->draw_buffers[0] : ctx->draw_buffer;
         return 1;
     }
     case GL_READ_BUFFER: {
-        GlFramebuffer *fb = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : NULL;
+        GlFramebuffer *fb = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : nullptr;
         v[0] = fb ? fb->read_buffer : ctx->read_buffer;
         return 1;
     }
@@ -1010,7 +1010,7 @@ GLAPI void APIENTRY glGetIntegerv(GLenum pname, GLint *data)
 
 GLAPI void APIENTRY glGetInteger64v(GLenum pname, GLint64 *data)
 {
-    GLint v[16] = {0};
+    GLint v[16] = {};
     glGetIntegerv(pname, v);
     for (int i = 0; i < 4; i++)
         data[i] = v[i];
@@ -1054,7 +1054,7 @@ GLAPI void APIENTRY glGetBooleani_v(GLenum target, GLuint index, GLboolean *data
 
 GLAPI void APIENTRY glGetPointerv(GLenum pname, void **params)
 {
-    *params = NULL;
+    *params = nullptr;
 }
 
 /* ---------------------------------------------------------------- debug */

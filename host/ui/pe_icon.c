@@ -58,7 +58,7 @@ static const uint8_t *rva_data(const PeResources *pe, uint32_t rva, uint32_t len
         if (range(pe->size, file_offset, length))
             return pe->image + file_offset;
     }
-    return NULL;
+    return nullptr;
 }
 
 static bool resources_open(PeResources *pe, const void *image, size_t size)
@@ -90,17 +90,17 @@ static bool resources_open(PeResources *pe, const void *image, size_t size)
     if (!resource_rva || pe->root_size < 16)
         return false;
     pe->root = rva_data(pe, resource_rva, pe->root_size);
-    return pe->root != NULL;
+    return pe->root != nullptr;
 }
 
 static const uint8_t *directory(const PeResources *pe, uint32_t offset, uint32_t *count)
 {
     if (!range(pe->root_size, offset, 16))
-        return NULL;
+        return nullptr;
     const uint8_t *dir = pe->root + offset;
     *count = (uint32_t)read16(dir + 12) + read16(dir + 14);
     if (!range(pe->root_size, (size_t)offset + 16, (size_t)*count * 8))
-        return NULL;
+        return nullptr;
     return dir + 16;
 }
 
@@ -128,10 +128,10 @@ static const uint8_t *resource_data(const PeResources *pe, uint32_t type_dir, in
 {
     uint32_t language_dir, count;
     if (!directory_child(pe, type_dir, identifier, &language_dir))
-        return NULL;
+        return nullptr;
     const uint8_t *entries = directory(pe, language_dir, &count);
     if (!entries)
-        return NULL;
+        return nullptr;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t offset = read32(entries + (size_t)i * 8 + 4);
         if (offset & 0x80000000u || !range(pe->root_size, offset, 16))
@@ -142,14 +142,14 @@ static const uint8_t *resource_data(const PeResources *pe, uint32_t type_dir, in
         if (data)
             return data;
     }
-    return NULL;
+    return nullptr;
 }
 
 bool mime_pe_icon_extract(const void *image, size_t size, int32_t group_id, void **icon, size_t *icon_size)
 {
     if (!icon || !icon_size)
         return false;
-    *icon = NULL;
+    *icon = nullptr;
     *icon_size = 0;
     PeResources pe;
     uint32_t groups_dir, icons_dir;
@@ -195,7 +195,7 @@ bool mime_pe_icon_read(const char *path, int32_t group_id, void **icon, size_t *
 {
     if (!icon || !icon_size)
         return false;
-    *icon = NULL;
+    *icon = nullptr;
     *icon_size = 0;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0)
@@ -203,7 +203,7 @@ bool mime_pe_icon_read(const char *path, int32_t group_id, void **icon, size_t *
     struct stat st;
     bool result = false;
     if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && (uint64_t)st.st_size <= SIZE_MAX) {
-        void *image = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        void *image = mmap(nullptr, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (image != MAP_FAILED) {
             result = mime_pe_icon_extract(image, (size_t)st.st_size, group_id, icon, icon_size);
             munmap(image, (size_t)st.st_size);

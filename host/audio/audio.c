@@ -88,7 +88,7 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     s->volume = 65536;
     AudioComponentDescription desc = {kAudioUnitType_Output, kAudioUnitSubType_DefaultOutput,
                                       kAudioUnitManufacturer_Apple, 0, 0};
-    AudioComponent component = AudioComponentFindNext(NULL, &desc);
+    AudioComponent component = AudioComponentFindNext(nullptr, &desc);
     AudioStreamBasicDescription format = {
         .mSampleRate = h.rate,
         .mFormatID = kAudioFormatLinearPCM,
@@ -131,7 +131,7 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
 uint64_t mime_audio_start(uint64_t stream, uint64_t running)
 {
     pthread_mutex_lock(&g_lock);
-    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : NULL;
+    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : nullptr;
     OSStatus err = 0;
     if (s && s->running != (running != 0)) {
         err = running ? AudioOutputUnitStart(s->unit) : AudioOutputUnitStop(s->unit);
@@ -147,9 +147,9 @@ uint64_t mime_audio_start(uint64_t stream, uint64_t running)
 void mime_audio_close(uint64_t stream)
 {
     pthread_mutex_lock(&g_lock);
-    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : NULL;
+    Stream *s = stream < MAX_STREAMS ? g_streams[stream] : nullptr;
     if (s)
-        g_streams[stream] = NULL;
+        g_streams[stream] = nullptr;
     pthread_mutex_unlock(&g_lock);
     /* disposing waits for a callback in progress, after which the guest may reuse the memory. */
     if (s)

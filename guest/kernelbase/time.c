@@ -403,7 +403,7 @@ BOOL WINAPI SystemTimeToTzSpecificLocalTimeEx(const DYNAMIC_TIME_ZONE_INFORMATIO
     TIME_ZONE_INFORMATION info;
     if (tz)
         memcpy(&info, tz, sizeof(info));
-    return SystemTimeToTzSpecificLocalTime(tz ? &info : NULL, universal, local);
+    return SystemTimeToTzSpecificLocalTime(tz ? &info : nullptr, universal, local);
 }
 
 BOOL WINAPI TzSpecificLocalTimeToSystemTime(const TIME_ZONE_INFORMATION *tz, const SYSTEMTIME *local,
@@ -428,7 +428,7 @@ BOOL WINAPI TzSpecificLocalTimeToSystemTime(const TIME_ZONE_INFORMATION *tz, con
 
 BOOL WINAPI DosDateTimeToFileTime(WORD date, WORD time, LPFILETIME file_time)
 {
-    SYSTEMTIME st = {0};
+    SYSTEMTIME st = {};
     st.wYear = (WORD)((date >> 9) + 1980);
     st.wMonth = (WORD)((date >> 5) & 0xF);
     st.wDay = (WORD)(date & 0x1F);

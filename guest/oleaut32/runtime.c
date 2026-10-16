@@ -7,25 +7,25 @@ WINOLEAUTAPI HRESULT WINAPI SafeArraySetRecordInfo(SAFEARRAY *array, IRecordInfo
 WINOLEAUTAPI HRESULT WINAPI GetRecordInfoFromTypeInfo(void *type, IRecordInfo **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     return E_NOTIMPL;
 }
 WINOLEAUTAPI HRESULT WINAPI LoadTypeLibEx(LPCOLESTR path, int kind, void **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     return (HRESULT)0x80029c4aL;
 }
 WINOLEAUTAPI HRESULT WINAPI LoadRegTypeLib(REFGUID id, WORD major, WORD minor, LCID locale, void **result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     return (HRESULT)0x8002801dL;
 }
 WINOLEAUTAPI HRESULT WINAPI QueryPathOfRegTypeLib(REFGUID id, WORD major, WORD minor, LCID locale, BSTR *result)
 {
     if (!result) return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     return (HRESULT)0x8002801dL;
 }
 WINOLEAUTAPI HRESULT WINAPI VariantChangeTypeEx(VARIANT *destination, const VARIANT *source,

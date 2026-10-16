@@ -21,5 +21,5 @@ void NTAPI KiUserCallbackDispatcher(ULONG api, PVOID arguments, ULONG length)
     typedef NTSTATUS (CALLBACK *CALLBACK_FN)(PVOID, ULONG);
     CALLBACK_FN *table = NtCurrentPeb()->KernelCallbackTable;
     NTSTATUS status = table[api](arguments, length);
-    NtCallbackReturn(NULL, 0, status);
+    NtCallbackReturn(nullptr, 0, status);
 }

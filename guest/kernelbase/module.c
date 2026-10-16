@@ -12,7 +12,7 @@ typedef BOOL (*MODULE_VISITOR)(PLDR_DATA_TABLE_ENTRY entry, void *context);
 static void visit_modules(MODULE_VISITOR visit, void *context)
 {
     ULONG_PTR cookie = 0;
-    LdrLockLoaderLock(0, NULL, &cookie);
+    LdrLockLoaderLock(0, nullptr, &cookie);
     PLIST_ENTRY head = &KbPeb()->Ldr->InLoadOrderModuleList;
     for (PLIST_ENTRY e = head->Flink; e != head; e = e->Flink) {
         PLDR_DATA_TABLE_ENTRY entry = CONTAINING_RECORD(e, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
@@ -94,10 +94,10 @@ HMODULE WINAPI GetModuleHandleW(LPCWSTR name)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, name);
     PVOID base;
-    NTSTATUS status = LdrGetDllHandle(NULL, NULL, &us, &base);
+    NTSTATUS status = LdrGetDllHandle(nullptr, nullptr, &us, &base);
     if (!NT_SUCCESS(status)) {
         KbSetError(ERROR_MOD_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     return base;
 }
@@ -108,7 +108,7 @@ HMODULE WINAPI GetModuleHandleA(LPCSTR name)
         return KbPeb()->ImageBaseAddress;
     PWSTR w = KbAnsiToWide(name);
     if (!w)
-        return NULL;
+        return nullptr;
     HMODULE h = GetModuleHandleW(w);
     KbFree(w);
     return h;
@@ -120,7 +120,7 @@ BOOL WINAPI GetModuleHandleExW(DWORD flags, LPCWSTR name, HMODULE *module)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *module = NULL;
+    *module = nullptr;
     if ((flags & ~(DWORD)(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT |
                           GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS)) ||
         ((flags & GET_MODULE_HANDLE_EX_FLAG_PIN) && (flags & GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT))) {
@@ -157,7 +157,7 @@ BOOL WINAPI GetModuleHandleExA(DWORD flags, LPCSTR name, HMODULE *module)
     PWSTR w = KbAnsiToWide(name);
     if (!w) {
         if (module)
-            *module = NULL;
+            *module = nullptr;
         return FALSE;
     }
     BOOL ok = GetModuleHandleExW(flags, w, module);
@@ -181,16 +181,16 @@ DWORD WINAPI GetModuleFileNameA(HMODULE module, LPSTR buffer, DWORD size)
         return 0;
     }
     UINT cp = KbFileApiCodePage();
-    int need = WideCharToMultiByte(cp, 0, w, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(cp, 0, w, -1, nullptr, 0, nullptr, nullptr);
     if ((DWORD)need <= size) {
-        WideCharToMultiByte(cp, 0, w, -1, buffer, (int)size, NULL, NULL);
+        WideCharToMultiByte(cp, 0, w, -1, buffer, (int)size, nullptr, nullptr);
         return (DWORD)need - 1;
     }
     /* truncate on a character boundary and terminate, like windows. */
     int written = 0;
     for (DWORD i = 0; w[i]; i++) {
         char tmp[8];
-        int len = WideCharToMultiByte(cp, 0, &w[i], 1, tmp, sizeof(tmp), NULL, NULL);
+        int len = WideCharToMultiByte(cp, 0, &w[i], 1, tmp, sizeof(tmp), nullptr, nullptr);
         if ((DWORD)(written + len) > size - 1)
             break;
         memcpy(buffer + written, tmp, (SIZE_T)len);
@@ -218,13 +218,13 @@ DLL_DIRECTORY_COOKIE WINAPI AddDllDirectory(LPCWSTR directory)
     if (!directory || RtlDetermineDosPathNameType_U(directory) == RtlPathTypeRelative ||
         RtlDetermineDosPathNameType_U(directory) == RtlPathTypeDriveRelative) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     SIZE_T n = wcslen(directory);
     DLL_DIRECTORY *d = KbAlloc(offsetof(DLL_DIRECTORY, Path) + (n + 1) * sizeof(WCHAR));
     if (!d) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     memcpy(d->Path, directory, (n + 1) * sizeof(WCHAR));
     RtlAcquireSRWLockExclusive(&g_dll_dir_lock);
@@ -265,7 +265,7 @@ BOOL WINAPI SetDefaultDllDirectories(DWORD flags)
 
 BOOL WINAPI SetDllDirectoryW(LPCWSTR directory)
 {
-    PWSTR copy = NULL;
+    PWSTR copy = nullptr;
     if (directory) {
         SIZE_T n = wcslen(directory);
         copy = KbAlloc((n + 1) * sizeof(WCHAR));
@@ -340,13 +340,13 @@ static PWSTR build_search_path(LPCWSTR name, DWORD flags)
     if (!search && !(flags & LOAD_WITH_ALTERED_SEARCH_PATH))
         search = g_default_dll_flags;
     if (!search && !altered && !g_dll_directory && !g_user_dirs)
-        return NULL;
+        return nullptr;
     if (search & LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)
         search |= LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32;
     SIZE_T capacity = 8192;
     PWSTR list = KbAlloc(capacity * sizeof(WCHAR));
     if (!list)
-        return NULL;
+        return nullptr;
     SIZE_T n = 0;
     list[0] = 0;
     PRTL_USER_PROCESS_PARAMETERS pp = KbParams();
@@ -376,7 +376,7 @@ static PWSTR build_search_path(LPCWSTR name, DWORD flags)
     }
     if (!n) {
         KbFree(list);
-        return NULL;
+        return nullptr;
     }
     return list;
 }
@@ -419,35 +419,35 @@ static HMODULE load_datafile(LPCWSTR name, DWORD flags)
             return loaded;
     }
     WCHAR path[MAX_PATH * 2];
-    if (!SearchPathW(NULL, name, wcschr(name, '.') ? NULL : L".dll", RTL_NUMBER_OF(path), path, NULL)) {
+    if (!SearchPathW(nullptr, name, wcschr(name, '.') ? nullptr : L".dll", RTL_NUMBER_OF(path), path, nullptr)) {
         KbSetError(ERROR_MOD_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     HANDLE file = CreateFileW(path, GENERIC_READ,
                               (flags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE) ? 0 : FILE_SHARE_READ | FILE_SHARE_DELETE,
-                              NULL, OPEN_EXISTING, 0, NULL);
+                              nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
-        return NULL;
+        return nullptr;
     HANDLE section;
     NTSTATUS status =
-        NtCreateSection(&section, SECTION_MAP_READ | SECTION_QUERY, NULL, NULL, PAGE_READONLY, SEC_COMMIT, file);
+        NtCreateSection(&section, SECTION_MAP_READ | SECTION_QUERY, nullptr, nullptr, PAGE_READONLY, SEC_COMMIT, file);
     NtClose(file);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
-    PVOID base = NULL;
+    PVOID base = nullptr;
     SIZE_T size = 0;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, NULL, &size, ViewShare, 0, PAGE_READONLY);
+    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0, PAGE_READONLY);
     NtClose(section);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
-        return NULL;
+        return nullptr;
     }
     if (!KbImageNtHeader(base)) {
         NtUnmapViewOfSection(NtCurrentProcess(), base);
         KbSetError(ERROR_BAD_EXE_FORMAT);
-        return NULL;
+        return nullptr;
     }
     /* ntdll's resource functions read handles with a low bit set as raw file mappings. */
     return (HMODULE)((ULONG_PTR)base | 1);
@@ -457,11 +457,11 @@ HMODULE WINAPI LoadLibraryExW(LPCWSTR name, HANDLE file, DWORD flags)
 {
     if (!name || file) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     if (!*name) {
         KbSetError(ERROR_MOD_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     if (flags & (LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE | LOAD_LIBRARY_AS_IMAGE_RESOURCE))
         return load_datafile(name, flags);
@@ -469,30 +469,30 @@ HMODULE WINAPI LoadLibraryExW(LPCWSTR name, HANDLE file, DWORD flags)
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, name);
     ULONG ldr_flags = (flags & DONT_RESOLVE_DLL_REFERENCES) ? 2 : 0;
-    PVOID base = NULL;
+    PVOID base = nullptr;
     NTSTATUS status = LdrLoadDll(search, &ldr_flags, &us, &base);
     KbFree(search);
     if (!NT_SUCCESS(status)) {
         set_load_error(status);
-        return NULL;
+        return nullptr;
     }
     return base;
 }
 
 HMODULE WINAPI LoadLibraryW(LPCWSTR name)
 {
-    return LoadLibraryExW(name, NULL, 0);
+    return LoadLibraryExW(name, nullptr, 0);
 }
 
 HMODULE WINAPI LoadLibraryExA(LPCSTR name, HANDLE file, DWORD flags)
 {
     if (!name) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     PWSTR w = KbAnsiToWide(name);
     if (!w)
-        return NULL;
+        return nullptr;
     HMODULE h = LoadLibraryExW(w, file, flags);
     KbFree(w);
     return h;
@@ -500,13 +500,13 @@ HMODULE WINAPI LoadLibraryExA(LPCSTR name, HANDLE file, DWORD flags)
 
 HMODULE WINAPI LoadLibraryA(LPCSTR name)
 {
-    return LoadLibraryExA(name, NULL, 0);
+    return LoadLibraryExA(name, nullptr, 0);
 }
 
 HMODULE WINAPI LoadPackagedLibrary(LPCWSTR name, DWORD reserved)
 {
     KbSetError(APPMODEL_ERROR_NO_PACKAGE);
-    return NULL;
+    return nullptr;
 }
 
 BOOL WINAPI FreeLibrary(HMODULE module)
@@ -536,12 +536,12 @@ FARPROC WINAPI GetProcAddress(HMODULE module, LPCSTR name)
     PVOID base = module_base(module);
     if (is_datafile(module)) {
         KbSetError(ERROR_PROC_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
-    PVOID address = NULL;
+    PVOID address = nullptr;
     NTSTATUS status;
     if (IS_INTRESOURCE(name)) {
-        status = LdrGetProcedureAddress(base, NULL, (ULONG)(ULONG_PTR)name, &address);
+        status = LdrGetProcedureAddress(base, nullptr, (ULONG)(ULONG_PTR)name, &address);
     } else {
         ANSI_STRING as;
         RtlInitAnsiString(&as, name);
@@ -549,7 +549,7 @@ FARPROC WINAPI GetProcAddress(HMODULE module, LPCSTR name)
     }
     if (!NT_SUCCESS(status)) {
         KbSetError(status == STATUS_DLL_NOT_FOUND ? ERROR_MOD_NOT_FOUND : ERROR_PROC_NOT_FOUND);
-        return NULL;
+        return nullptr;
     }
     return (FARPROC)address;
 }
@@ -569,7 +569,7 @@ static BOOL is_current_process(HANDLE process)
     if (process == NtCurrentProcess())
         return TRUE;
     PROCESS_BASIC_INFORMATION info;
-    if (!NT_SUCCESS(NtQueryInformationProcess(process, ProcessBasicInformation, &info, sizeof(info), NULL)))
+    if (!NT_SUCCESS(NtQueryInformationProcess(process, ProcessBasicInformation, &info, sizeof(info), nullptr)))
         return FALSE;
     return info.UniqueProcessId == GetCurrentProcessId();
 }
@@ -660,7 +660,7 @@ DWORD WINAPI K32GetModuleBaseNameA(HANDLE process, HMODULE module, LPSTR name, D
     DWORD n = K32GetModuleBaseNameW(process, module, w, RTL_NUMBER_OF(w));
     if (!n || !size)
         return 0;
-    int got = WideCharToMultiByte(CP_ACP, 0, w, -1, name, (int)size, NULL, NULL);
+    int got = WideCharToMultiByte(CP_ACP, 0, w, -1, name, (int)size, nullptr, nullptr);
     if (!got) {
         name[size - 1] = 0;
         return size - 1;
@@ -684,7 +684,7 @@ DWORD WINAPI K32GetModuleFileNameExA(HANDLE process, HMODULE module, LPSTR name,
     DWORD n = K32GetModuleFileNameExW(process, module, w, RTL_NUMBER_OF(w));
     if (!n || !size)
         return 0;
-    int got = WideCharToMultiByte(CP_ACP, 0, w, -1, name, (int)size, NULL, NULL);
+    int got = WideCharToMultiByte(CP_ACP, 0, w, -1, name, (int)size, nullptr, nullptr);
     if (!got) {
         name[size - 1] = 0;
         return size - 1;
@@ -695,7 +695,7 @@ DWORD WINAPI K32GetModuleFileNameExA(HANDLE process, HMODULE module, LPSTR name,
 static BOOL process_image_name(HANDLE process, PWSTR out, DWORD *chars)
 {
     UCHAR buf[sizeof(UNICODE_STRING) + MAX_PATH * 4 * sizeof(WCHAR)];
-    NTSTATUS status = NtQueryInformationProcess(process, ProcessImageFileNameWin32, buf, sizeof(buf), NULL);
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessImageFileNameWin32, buf, sizeof(buf), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     UNICODE_STRING *us = (UNICODE_STRING *)buf;
@@ -737,12 +737,12 @@ BOOL WINAPI QueryFullProcessImageNameA(HANDLE process, DWORD flags, LPSTR name, 
     DWORD chars = RTL_NUMBER_OF(w);
     if (!process_image_name(process, w, &chars))
         return FALSE;
-    int need = WideCharToMultiByte(CP_ACP, 0, w, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(CP_ACP, 0, w, -1, nullptr, 0, nullptr, nullptr);
     if ((DWORD)need > *size) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
         return FALSE;
     }
-    WideCharToMultiByte(CP_ACP, 0, w, -1, name, (int)*size, NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, w, -1, name, (int)*size, nullptr, nullptr);
     *size = (DWORD)need - 1;
     return TRUE;
 }

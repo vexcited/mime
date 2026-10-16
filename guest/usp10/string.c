@@ -67,7 +67,7 @@ static void free_string(USP_STRING *s)
 static USP_STRING *get_string(SCRIPT_STRING_ANALYSIS ssa)
 {
     USP_STRING *s = ssa;
-    return s && s->Magic == STRING_MAGIC ? s : NULL;
+    return s && s->Magic == STRING_MAGIC ? s : nullptr;
 }
 
 /* the text as shaped: stars for passwords, prefix ampersands made invisible. */
@@ -78,13 +78,13 @@ static WCHAR *prepare_text(const void *string, int length, int charset, DWORD fl
     if (charset != -1) {
         CHARSETINFO info;
         UINT cp = TranslateCharsetInfo((DWORD *)(ULONG_PTR)(UINT)charset, &info, TCI_SRCCHARSET) ? info.ciACP : CP_ACP;
-        n = MultiByteToWideChar(cp, 0, string, length, NULL, 0);
+        n = MultiByteToWideChar(cp, 0, string, length, nullptr, 0);
         if (n <= 0 || !(text = UspAlloc((SIZE_T)n * sizeof(WCHAR))))
-            return NULL;
+            return nullptr;
         MultiByteToWideChar(cp, 0, string, length, text, n);
     } else {
         if (!(text = UspAlloc((SIZE_T)n * sizeof(WCHAR))))
-            return NULL;
+            return nullptr;
         memcpy(text, string, (SIZE_T)n * sizeof(WCHAR));
     }
     *hotkey = -1;
@@ -179,7 +179,7 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
     }
     for (int i = 0; i < items; i++)
         levels[i] = (BYTE)s->Item[i].a.s.uBidiLevel;
-    ScriptLayout(items, levels, s->Visual, NULL);
+    ScriptLayout(items, levels, s->Visual, nullptr);
     UspFree(levels);
 
     /* shaped and placed item by item, in visual order. */
@@ -199,7 +199,7 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
         if (FAILED(hr))
             return hr;
         hr = ScriptPlace(s->Dc, &s->Cache, s->Glyph + g, count, s->Attr + g, &it->a, s->Advance + g, s->Offset + g,
-                         NULL);
+                         nullptr);
         if (FAILED(hr))
             return hr;
         s->First[i] = g;
@@ -217,12 +217,12 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
             int start = it->iCharPos;
             if (s->Count[i])
                 ScriptApplyLogicalWidth(dx + start, it[1].iCharPos - start, s->Count[i], s->Cluster + start,
-                                        s->Attr + s->First[i], s->Advance + s->First[i], &it->a, NULL,
+                                        s->Attr + s->First[i], s->Advance + s->First[i], &it->a, nullptr,
                                         s->Justify + s->First[i]);
         }
     }
 
-    TEXTMETRICW tm = {0};
+    TEXTMETRICW tm = {};
     GetTextMetricsW(s->Dc, &tm);
     s->Ascent = tm.tmAscent;
     if (s->Flags & SSA_TAB) {
@@ -300,7 +300,7 @@ USPAPI ScriptStringAnalyse(HDC dc, const void *string, int length, int max_glyph
 {
     if (!ssa)
         return E_INVALIDARG;
-    *ssa = NULL;
+    *ssa = nullptr;
     if (!string || length < 1 || length > 0xFFFF || (tabs && !tabs->pTabStops && tabs->cTabStops > 0))
         return E_INVALIDARG;
     if (dx)
@@ -340,7 +340,7 @@ USPAPI ScriptStringAnalyse(HDC dc, const void *string, int length, int max_glyph
             } else {
                 *t = (USP_STRING){.Magic = STRING_MAGIC, .Dc = dc, .Flags = flags, .Width = width,
                                   .Text = s->Text, .Hotkey = s->Hotkey < kept ? s->Hotkey : -1};
-                s->Text = NULL;
+                s->Text = nullptr;
                 free_string(s);
                 s = t;
                 hr = kept ? analyse(s, kept, &sc, &st, dx, tabs) : S_OK;
@@ -360,26 +360,26 @@ USPAPI ScriptStringFree(SCRIPT_STRING_ANALYSIS *ssa)
     if (!ssa || !get_string(*ssa))
         return E_INVALIDARG;
     free_string(*ssa);
-    *ssa = NULL;
+    *ssa = nullptr;
     return S_OK;
 }
 
 USPAPI_(const SIZE *) ScriptString_pSize(SCRIPT_STRING_ANALYSIS ssa)
 {
     USP_STRING *s = get_string(ssa);
-    return s ? &s->Size : NULL;
+    return s ? &s->Size : nullptr;
 }
 
 USPAPI_(const int *) ScriptString_pcOutChars(SCRIPT_STRING_ANALYSIS ssa)
 {
     USP_STRING *s = get_string(ssa);
-    return s ? &s->Chars : NULL;
+    return s ? &s->Chars : nullptr;
 }
 
 USPAPI_(const SCRIPT_LOGATTR *) ScriptString_pLogAttr(SCRIPT_STRING_ANALYSIS ssa)
 {
     USP_STRING *s = get_string(ssa);
-    return s ? s->LogAttr : NULL;
+    return s ? s->LogAttr : nullptr;
 }
 
 /* the item holding character cp, the first or last one for positions outside the string. */
@@ -495,9 +495,9 @@ static void draw_items(USP_STRING *s, int left, int y, UINT options, const RECT 
     for (int v = 0; v < s->Items; v++) {
         int i = s->Visual[v];
         if (s->Count[i])
-            ScriptTextOut(s->Dc, &s->Cache, x, y, options, clip, &s->Item[i].a, NULL, 0, s->Glyph + s->First[i],
+            ScriptTextOut(s->Dc, &s->Cache, x, y, options, clip, &s->Item[i].a, nullptr, 0, s->Glyph + s->First[i],
                           s->Count[i], s->Advance + s->First[i],
-                          s->Justify != s->Advance ? s->Justify + s->First[i] : NULL, s->Offset + s->First[i]);
+                          s->Justify != s->Advance ? s->Justify + s->First[i] : nullptr, s->Offset + s->First[i]);
         x += item_width(s, i);
     }
 }
@@ -507,7 +507,7 @@ typedef DWORD(WINAPI *GET_SYS_COLOR)(int index);
 static COLORREF sys_color(int index, COLORREF fallback)
 {
     HMODULE user = GetModuleHandleW(L"user32.dll");
-    GET_SYS_COLOR get = user ? (GET_SYS_COLOR)(void *)GetProcAddress(user, "GetSysColor") : NULL;
+    GET_SYS_COLOR get = user ? (GET_SYS_COLOR)(void *)GetProcAddress(user, "GetSysColor") : nullptr;
     return get ? get(index) : fallback;
 }
 
@@ -541,7 +541,7 @@ USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, c
 
     UINT item_options = options & ~(UINT)ETO_OPAQUE;
     if ((options & ETO_OPAQUE) && rect)
-        ExtTextOutW(dc, 0, 0, ETO_OPAQUE, rect, NULL, 0, NULL);
+        ExtTextOutW(dc, 0, 0, ETO_OPAQUE, rect, nullptr, 0, nullptr);
     else
         item_options = options;
     BOOL only_hotkey = (s->Flags & SSA_HOTKEYONLY) == SSA_HOTKEYONLY;
@@ -588,7 +588,7 @@ USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, c
                 span.right = box.right;
             if (span.left >= span.right)
                 continue;
-            ExtTextOutW(dc, 0, 0, ETO_OPAQUE, &span, NULL, 0, NULL);
+            ExtTextOutW(dc, 0, 0, ETO_OPAQUE, &span, nullptr, 0, nullptr);
             draw_items(s, left, y, (options & ~(UINT)ETO_OPAQUE) | ETO_CLIPPED, &span);
         }
         SetBkColor(dc, old_bk);
@@ -598,6 +598,6 @@ USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, c
 
     SetTextAlign(dc, align);
     if (align & TA_UPDATECP)
-        MoveToEx(dc, x + s->Size.cx, y, NULL);
+        MoveToEx(dc, x + s->Size.cx, y, nullptr);
     return S_OK;
 }

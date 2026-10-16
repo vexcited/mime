@@ -88,8 +88,8 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
     if (!vk->get_instance_proc)
         return TRUE;
     PFN_vkEnumerateInstanceVersion enumerate_version =
-        (PFN_vkEnumerateInstanceVersion)vk->get_instance_proc(NULL, "vkEnumerateInstanceVersion");
-    PFN_vkCreateInstance create = (PFN_vkCreateInstance)vk->get_instance_proc(NULL, "vkCreateInstance");
+        (PFN_vkEnumerateInstanceVersion)vk->get_instance_proc(nullptr, "vkEnumerateInstanceVersion");
+    PFN_vkCreateInstance create = (PFN_vkCreateInstance)vk->get_instance_proc(nullptr, "vkCreateInstance");
     uint32_t version = VK_API_VERSION_1_0;
     if (!enumerate_version || !create || enumerate_version(&version) != VK_SUCCESS ||
         version < VK_API_VERSION_1_3)
@@ -104,7 +104,7 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
     info.pApplicationInfo = &app;
     info.enabledExtensionCount = RTL_NUMBER_OF(extensions);
     info.ppEnabledExtensionNames = extensions;
-    if (create(&info, NULL, &vk->instance) != VK_SUCCESS)
+    if (create(&info, nullptr, &vk->instance) != VK_SUCCESS)
         return TRUE;
 
 #define PROC(name) ((PFN_##name)vk->get_instance_proc(vk->instance, #name))
@@ -141,7 +141,7 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
 
 const DxgiVulkan *DxgiGetVulkan(void)
 {
-    InitOnceExecuteOnce(&g_vulkan_once, init_vulkan, NULL, NULL);
+    InitOnceExecuteOnce(&g_vulkan_once, init_vulkan, nullptr, nullptr);
     return &g_vulkan;
 }
 
@@ -149,7 +149,7 @@ DXGIAPI HRESULT WINAPI CreateDXGIFactory2(UINT flags, REFIID riid, void **factor
 {
     if (!factory)
         return E_INVALIDARG;
-    *factory = NULL;
+    *factory = nullptr;
     if (flags & ~DXGI_CREATE_FACTORY_DEBUG)
         return DXGI_ERROR_INVALID_CALL;
     return DxgiCreateFactory(flags, riid, factory);
@@ -169,7 +169,7 @@ DXGIAPI HRESULT WINAPI CreateDXGIFactory(REFIID riid, void **factory)
 DXGIAPI HRESULT WINAPI DXGIGetDebugInterface1(UINT flags, REFIID riid, void **debug)
 {
     if (debug)
-        *debug = NULL;
+        *debug = nullptr;
     return E_NOINTERFACE;
 }
 

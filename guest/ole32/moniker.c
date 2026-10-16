@@ -43,7 +43,7 @@ static HRESULT WINAPI moniker_enum_query(IEnumMoniker *self, REFIID iid, void **
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IEnumMoniker))
         return E_NOINTERFACE;
     *result = self;
@@ -103,7 +103,7 @@ static HRESULT WINAPI moniker_enum_clone(IEnumMoniker *self, IEnumMoniker **clon
 {
     if (!clone)
         return E_POINTER;
-    *clone = NULL;
+    *clone = nullptr;
     MONIKER_ENUM *e = (MONIKER_ENUM *)self;
     return create_moniker_enum(e->Items, e->Count, e->Position, clone);
 }
@@ -158,7 +158,7 @@ static BOOL rot_find(IMoniker *name, IUnknown **object, FILETIME *time)
     IMoniker **names = rot_snapshot(&count);
     if (!names)
         return FALSE;
-    IMoniker *match = NULL;
+    IMoniker *match = nullptr;
     for (ULONG i = 0; i < count && !match; i++)
         if (names[i] == name || name->lpVtbl->IsEqual(name, names[i]) == S_OK)
             match = names[i];
@@ -187,7 +187,7 @@ static HRESULT WINAPI rot_query(IRunningObjectTable *self, REFIID iid, void **re
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IRunningObjectTable))
         return E_NOINTERFACE;
     *result = self;
@@ -212,7 +212,7 @@ static HRESULT WINAPI rot_register(IRunningObjectTable *self, DWORD flags, IUnkn
     *cookie = 0;
     if (!object || !name || (flags & ~(ROTFLAGS_REGISTRATIONKEEPSALIVE | ROTFLAGS_ALLOWANYCLIENT)))
         return E_INVALIDARG;
-    HRESULT hr = rot_find(name, NULL, NULL) ? MK_S_MONIKERALREADYREGISTERED : S_OK;
+    HRESULT hr = rot_find(name, nullptr, nullptr) ? MK_S_MONIKERALREADYREGISTERED : S_OK;
     AcquireSRWLockExclusive(&g_rot_lock);
     if (g_rot_count == g_rot_capacity) {
         ULONG capacity = g_rot_capacity ? g_rot_capacity * 2 : 8;
@@ -241,7 +241,7 @@ static HRESULT WINAPI rot_register(IRunningObjectTable *self, DWORD flags, IUnkn
 
 static HRESULT WINAPI rot_revoke(IRunningObjectTable *self, DWORD cookie)
 {
-    ROT_ENTRY removed = {0};
+    ROT_ENTRY removed = {};
     AcquireSRWLockExclusive(&g_rot_lock);
     for (ULONG i = 0; i < g_rot_count; i++) {
         if (g_rot[i].Cookie == cookie) {
@@ -262,17 +262,17 @@ static HRESULT WINAPI rot_is_running(IRunningObjectTable *self, IMoniker *name)
 {
     if (!name)
         return E_INVALIDARG;
-    return rot_find(name, NULL, NULL) ? S_OK : S_FALSE;
+    return rot_find(name, nullptr, nullptr) ? S_OK : S_FALSE;
 }
 
 static HRESULT WINAPI rot_get_object(IRunningObjectTable *self, IMoniker *name, IUnknown **object)
 {
     if (!object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (!name)
         return E_INVALIDARG;
-    return rot_find(name, object, NULL) ? S_OK : MK_E_UNAVAILABLE;
+    return rot_find(name, object, nullptr) ? S_OK : MK_E_UNAVAILABLE;
 }
 
 static HRESULT WINAPI rot_note_change_time(IRunningObjectTable *self, DWORD cookie, FILETIME *time)
@@ -296,14 +296,14 @@ static HRESULT WINAPI rot_get_time(IRunningObjectTable *self, IMoniker *name, FI
 {
     if (!name || !time)
         return E_INVALIDARG;
-    return rot_find(name, NULL, time) ? S_OK : MK_E_UNAVAILABLE;
+    return rot_find(name, nullptr, time) ? S_OK : MK_E_UNAVAILABLE;
 }
 
 static HRESULT WINAPI rot_enum_running(IRunningObjectTable *self, IEnumMoniker **enumerator)
 {
     if (!enumerator)
         return E_POINTER;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     ULONG count;
     IMoniker **names = rot_snapshot(&count);
     if (!names)
@@ -323,7 +323,7 @@ WINOLEAPI HRESULT WINAPI GetRunningObjectTable(DWORD reserved, IRunningObjectTab
 {
     if (!table)
         return E_INVALIDARG;
-    *table = NULL;
+    *table = nullptr;
     if (reserved)
         return E_UNEXPECTED;
     HRESULT hr = OleCheckApartment();
@@ -369,7 +369,7 @@ static HRESULT WINAPI bind_query(IBindCtx *self, REFIID iid, void **result)
 {
     if (!result)
         return E_POINTER;
-    *result = NULL;
+    *result = nullptr;
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IBindCtx))
         return E_NOINTERFACE;
     *result = self;
@@ -388,7 +388,7 @@ static HRESULT WINAPI bind_release_bound(IBindCtx *self)
     AcquireSRWLockExclusive(&bc->Lock);
     IUnknown **bound = bc->Bound;
     ULONG count = bc->BoundCount;
-    bc->Bound = NULL;
+    bc->Bound = nullptr;
     bc->BoundCount = bc->BoundCapacity = 0;
     ReleaseSRWLockExclusive(&bc->Lock);
     for (ULONG i = 0; i < count; i++)
@@ -503,7 +503,7 @@ static HRESULT WINAPI bind_register_param(IBindCtx *self, LPOLESTR key, IUnknown
         return E_OUTOFMEMORY;
     memcpy(copy, key, bytes);
     object->lpVtbl->AddRef(object);
-    IUnknown *old = NULL;
+    IUnknown *old = nullptr;
     AcquireSRWLockExclusive(&bc->Lock);
     LONG index = find_param(bc, key);
     if (index >= 0) {
@@ -512,7 +512,7 @@ static HRESULT WINAPI bind_register_param(IBindCtx *self, LPOLESTR key, IUnknown
     } else if (grow((void **)&bc->Params, bc->ParamCount, &bc->ParamCapacity, sizeof(*bc->Params))) {
         bc->Params[bc->ParamCount].Key = copy;
         bc->Params[bc->ParamCount++].Object = object;
-        copy = NULL;
+        copy = nullptr;
     } else {
         old = object;
         index = -2;
@@ -528,7 +528,7 @@ static HRESULT WINAPI bind_get_param(IBindCtx *self, LPOLESTR key, IUnknown **ob
 {
     if (!object)
         return E_POINTER;
-    *object = NULL;
+    *object = nullptr;
     if (!key)
         return E_INVALIDARG;
     BIND_CONTEXT *bc = (BIND_CONTEXT *)self;
@@ -546,7 +546,7 @@ static HRESULT WINAPI bind_enum_params(IBindCtx *self, IEnumString **enumerator)
 {
     if (!enumerator)
         return E_POINTER;
-    *enumerator = NULL;
+    *enumerator = nullptr;
     return E_NOTIMPL;
 }
 
@@ -555,7 +555,7 @@ static HRESULT WINAPI bind_revoke_param(IBindCtx *self, LPOLESTR key)
     if (!key)
         return E_INVALIDARG;
     BIND_CONTEXT *bc = (BIND_CONTEXT *)self;
-    BIND_PARAM removed = {0};
+    BIND_PARAM removed = {};
     AcquireSRWLockExclusive(&bc->Lock);
     LONG index = find_param(bc, key);
     if (index >= 0) {
@@ -580,7 +580,7 @@ WINOLEAPI HRESULT WINAPI CreateBindCtx(DWORD reserved, IBindCtx **context)
 {
     if (!context)
         return E_INVALIDARG;
-    *context = NULL;
+    *context = nullptr;
     if (reserved)
         return E_INVALIDARG;
     BIND_CONTEXT *bc = OleAllocZero(sizeof(*bc));
@@ -603,7 +603,7 @@ WINOLEAPI HRESULT WINAPI CreateFileMoniker(LPCOLESTR path, IMoniker **moniker)
     MIME_STUB("ole32");
     if (!moniker)
         return E_INVALIDARG;
-    *moniker = NULL;
+    *moniker = nullptr;
     return E_NOTIMPL;
 }
 
@@ -612,7 +612,7 @@ WINOLEAPI HRESULT WINAPI CreateItemMoniker(LPCOLESTR delimiter, LPCOLESTR item, 
     MIME_STUB("ole32");
     if (!moniker)
         return E_INVALIDARG;
-    *moniker = NULL;
+    *moniker = nullptr;
     return E_NOTIMPL;
 }
 
@@ -620,7 +620,7 @@ WINOLEAPI HRESULT WINAPI CreateGenericComposite(IMoniker *first, IMoniker *rest,
 {
     if (!composite)
         return E_POINTER;
-    *composite = NULL;
+    *composite = nullptr;
     /* a composite of one moniker is that moniker; true composites are not implemented. */
     if (first && rest)
         return E_NOTIMPL;

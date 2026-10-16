@@ -30,7 +30,7 @@ static D3dResource *impl(ID3D11Resource *iface)
     return CONTAINING_RECORD((void *)iface, D3dResource, u);
 }
 
-D3dResource *D3dResourceFrom(ID3D11Resource *iface) { return iface ? impl(iface) : NULL; }
+D3dResource *D3dResourceFrom(ID3D11Resource *iface) { return iface ? impl(iface) : nullptr; }
 
 UINT D3dSubresourceCount(const D3dResource *r)
 {
@@ -158,7 +158,7 @@ static void free_spares(D3dResource *r)
     }
     HeapFree(GetProcessHeap(), 0, spares->list);
     HeapFree(GetProcessHeap(), 0, spares);
-    r->buf.spares = NULL;
+    r->buf.spares = nullptr;
 }
 
 /* the uniform buffer descriptor of a range of the buffer's current bytes. */
@@ -190,7 +190,7 @@ UINT D3dBufferCbv(D3dResource *r, UINT offset, UINT size)
 
 static HRESULT resource_query_common(D3dResource *r, REFIID riid, void **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_ID3D11DeviceChild) ||
         IsEqualGUID(riid, &IID_ID3D11Resource))
         *out = r->iface;
@@ -368,7 +368,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_get_shared_handle(IDXGIResource1 *iface, H
 {
     if (!handle)
         return E_INVALIDARG;
-    *handle = NULL;
+    *handle = nullptr;
     return dxgi_impl(iface)->misc & D3D11_RESOURCE_MISC_SHARED ? E_NOTIMPL : E_INVALIDARG;
 }
 
@@ -545,7 +545,7 @@ static D3dResource *new_resource(D3dDevice *device, D3D11_RESOURCE_DIMENSION dim
 {
     D3dResource *r = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*r));
     if (!r)
-        return NULL;
+        return nullptr;
     D3dChildInit(&r->child, device);
     r->dimension = dimension;
     r->iface = (ID3D11Resource *)&r->u;
@@ -682,7 +682,7 @@ static VkBufferImageCopy staging_region(const D3dResource *r, UINT index, VkDevi
 {
     UINT mip, layer;
     D3dSubresourceDecompose(r, index, &mip, &layer);
-    VkBufferImageCopy c = {0};
+    VkBufferImageCopy c = {};
     c.bufferOffset = base + r->tex.sub_offset[index];
     c.bufferRowLength = r->tex.sub_row_pitch[index] / r->tex.fmt->block_bytes * r->tex.fmt->block;
     c.bufferImageHeight = r->tex.sub_slice_pitch[index] / r->tex.sub_row_pitch[index] * r->tex.fmt->block;
@@ -882,7 +882,7 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D && (bind & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS)))
             info.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
-        if (device->vk.vkCreateImage(device->vk.device, &info, NULL, &r->tex.image) != VK_SUCCESS) {
+        if (device->vk.vkCreateImage(device->vk.device, &info, nullptr, &r->tex.image) != VK_SUCCESS) {
             destroy(r);
             return E_INVALIDARG;
         }

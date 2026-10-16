@@ -217,7 +217,7 @@ HRESULT D9Container(const D9Signature *inputs, const D9Signature *outputs, const
 {
     static const DWORD TAGS[3] = {MAKEFOURCC('I', 'S', 'G', 'N'), MAKEFOURCC('O', 'S', 'G', 'N'),
                                   MAKEFOURCC('S', 'H', 'E', 'X')};
-    D9Code c = {0};
+    D9Code c = {};
     D9CodePut(&c, MAKEFOURCC('D', 'X', 'B', 'C'));
     for (UINT i = 0; i < 4; i++)
         D9CodePut(&c, 0);

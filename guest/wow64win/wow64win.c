@@ -62,11 +62,11 @@ static NTSTATUS callback(ULONG api, PVOID arguments, ULONG length)
     ULONG stack = Wow64CpuArea()->Context.Esp - 0x100;
     MX_CALLBACK32 marshaled;
     if (!Mx32MarshalCallback(&stack, api, arguments, length, &marshaled))
-        return NtCallbackReturn(NULL, 0, STATUS_NOT_SUPPORTED);
+        return NtCallbackReturn(nullptr, 0, STATUS_NOT_SUPPORTED);
     ULONG result = 0, result_length = 0;
     NTSTATUS status = Wow64KiUserCallbackDispatcher(api, (ULONG)(ULONG_PTR)marshaled.Guest, marshaled.Length,
                                                     &result, &result_length);
-    PVOID out = result ? Mx32CallbackResult(&marshaled, (PVOID)(ULONG_PTR)result, &result_length) : NULL;
+    PVOID out = result ? Mx32CallbackResult(&marshaled, (PVOID)(ULONG_PTR)result, &result_length) : nullptr;
     return NtCallbackReturn(out, out ? result_length : 0, status);
 }
 

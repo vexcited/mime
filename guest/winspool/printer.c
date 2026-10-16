@@ -9,7 +9,7 @@ static SpoolHandle *g_handles;
 
 SpoolHandle *SpoolLookup(HANDLE printer)
 {
-    SpoolHandle *found = NULL;
+    SpoolHandle *found = nullptr;
     AcquireSRWLockShared(&g_lock);
     for (SpoolHandle *h = g_handles; h && printer; h = h->next) {
         if (h == printer) {
@@ -44,7 +44,7 @@ __declspec(dllexport) BOOL WINAPI OpenPrinter2W(LPCWSTR name, LPHANDLE printer, 
 {
     if (!printer)
         return SpoolFail(ERROR_INVALID_PARAMETER);
-    *printer = NULL;
+    *printer = nullptr;
     if (!SpoolIsLocalServer(name))
         return SpoolFail(ERROR_INVALID_PRINTER_NAME);
     SpoolHandle *h = SpoolAlloc(sizeof(*h));
@@ -61,7 +61,7 @@ __declspec(dllexport) BOOL WINAPI OpenPrinter2W(LPCWSTR name, LPHANDLE printer, 
 
 __declspec(dllexport) BOOL WINAPI OpenPrinterW(LPWSTR name, LPHANDLE printer, LPPRINTER_DEFAULTSW defaults)
 {
-    return OpenPrinter2W(name, printer, defaults, NULL);
+    return OpenPrinter2W(name, printer, defaults, nullptr);
 }
 
 __declspec(dllexport) BOOL WINAPI OpenPrinterA(LPSTR name, LPHANDLE printer, LPPRINTER_DEFAULTSA defaults)
@@ -69,10 +69,10 @@ __declspec(dllexport) BOOL WINAPI OpenPrinterA(LPSTR name, LPHANDLE printer, LPP
     PWSTR wide = SpoolToWide(name);
     if (name && !wide)
         return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
-    PRINTER_DEFAULTSW w = {0};
+    PRINTER_DEFAULTSW w = {};
     if (defaults)
         w.DesiredAccess = defaults->DesiredAccess;
-    BOOL ok = OpenPrinter2W(wide, printer, defaults ? &w : NULL, NULL);
+    BOOL ok = OpenPrinter2W(wide, printer, defaults ? &w : nullptr, nullptr);
     SpoolFree(wide);
     return ok;
 }
@@ -332,7 +332,7 @@ __declspec(dllexport) BOOL WINAPI CloseSpoolFileHandle(HANDLE printer, HANDLE fi
 __declspec(dllexport) HANDLE WINAPI CreatePrinterIC(HANDLE printer, LPDEVMODEW devmode)
 {
     SpoolNoPrinter(printer);
-    return NULL;
+    return nullptr;
 }
 
 __declspec(dllexport) BOOL WINAPI PlayGdiScriptOnPrinterIC(HANDLE ic, LPBYTE in, DWORD in_size, LPBYTE out,
@@ -483,12 +483,12 @@ static DWORD SpoolServerData(LPCWSTR name, LPDWORD type, LPBYTE data, DWORD size
     }
     DWORD bytes = (DWORD)(wcslen(text) + 1) * sizeof(WCHAR);
     if (ansi)
-        bytes = (DWORD)WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
+        bytes = (DWORD)WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr);
     *needed = bytes;
     if (size < bytes || !data)
         return ERROR_MORE_DATA;
     if (ansi)
-        WideCharToMultiByte(CP_ACP, 0, text, -1, (LPSTR)data, size, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, text, -1, (LPSTR)data, size, nullptr, nullptr);
     else
         memcpy(data, text, bytes);
     return ERROR_SUCCESS;

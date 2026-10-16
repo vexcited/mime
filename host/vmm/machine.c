@@ -16,10 +16,10 @@
 void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len)
 {
     if (pa < MIME_RAM_BASE)
-        return NULL;
+        return nullptr;
     uint64_t off = pa - MIME_RAM_BASE;
     if (off > vm->ram_size || len > vm->ram_size - off)
-        return NULL;
+        return nullptr;
     return vm->ram + off;
 }
 
@@ -32,7 +32,7 @@ uint64_t mime_unix_to_filetime(struct timespec ts)
 static void parse_uuid(const char *text, uint8_t out[16])
 {
     memset(out, 0, 16);
-    uint32_t words[6] = {0};
+    uint32_t words[6] = {};
     if (sscanf(text, "%8x-%4x-%4x-%4x-%4x%8x", &words[0], &words[1], &words[2], &words[3], &words[4],
                &words[5]) == 6) {
         for (int i = 0; i < 4; i++)
@@ -121,7 +121,7 @@ void mime_vm_request_stop(MimeVm *vm, int exit_code)
 void mime_vm_queue_ctrl(MimeVm *vm, const void *msg, uint32_t size)
 {
     MimeCtrlNode *node = mime_xmalloc(sizeof(MimeCtrlNode) + size);
-    node->next = NULL;
+    node->next = nullptr;
     node->size = size;
     memcpy(node->data, msg, size);
     pthread_mutex_lock(&vm->lock);

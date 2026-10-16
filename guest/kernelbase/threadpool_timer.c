@@ -53,7 +53,7 @@ static DWORD WINAPI timer_worker(void *parameter)
         timer->Due = now + timer->Period;
         timer->Running = TRUE;
         ReleaseSRWLockExclusive(&timer->Lock);
-        CALLBACK_INSTANCE instance = {0};
+        CALLBACK_INSTANCE instance = {};
         timer->Callback(&instance, timer->Context, timer);
         finish_callback(&instance);
         AcquireSRWLockExclusive(&timer->Lock);
@@ -69,20 +69,20 @@ DECLSPEC_EXPORT void *WINAPI CreateThreadpoolTimer(TIMER_CALLBACK callback, void
 {
     if (!callback || environment) {
         SetLastError(environment ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     POOL_TIMER *timer = KbAllocZero(sizeof(*timer));
     if (!timer) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
     timer->Callback = callback;
     timer->Context = context;
     timer->Refs = 2;
-    HANDLE thread = CreateThread(NULL, 0, timer_worker, timer, 0, NULL);
+    HANDLE thread = CreateThread(nullptr, 0, timer_worker, timer, 0, nullptr);
     if (!thread) {
         KbFree(timer);
-        return NULL;
+        return nullptr;
     }
     CloseHandle(thread);
     return timer;
@@ -91,7 +91,7 @@ DECLSPEC_EXPORT void *WINAPI CreateThreadpoolTimer(TIMER_CALLBACK callback, void
 DECLSPEC_EXPORT void WINAPI SetThreadpoolTimer(POOL_TIMER *timer, const FILETIME *due, DWORD period, DWORD window)
 {
     AcquireSRWLockExclusive(&timer->Lock);
-    timer->Armed = due != NULL;
+    timer->Armed = due != nullptr;
     timer->Period = period;
     if (due) {
         LONGLONG ticks = (LONGLONG)(((ULONGLONG)due->dwHighDateTime << 32) | due->dwLowDateTime);
@@ -186,7 +186,7 @@ static DWORD WINAPI wait_worker(void *parameter)
         wait->Armed = FALSE;
         wait->Running = TRUE;
         ReleaseSRWLockExclusive(&wait->Lock);
-        CALLBACK_INSTANCE instance = {0};
+        CALLBACK_INSTANCE instance = {};
         wait->Callback(&instance, wait->Context, wait, result);
         finish_callback(&instance);
         AcquireSRWLockExclusive(&wait->Lock);
@@ -202,26 +202,26 @@ DECLSPEC_EXPORT void *WINAPI CreateThreadpoolWait(WAIT_CALLBACK callback, void *
 {
     if (!callback || environment) {
         SetLastError(environment ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER);
-        return NULL;
+        return nullptr;
     }
     POOL_WAIT *wait = KbAllocZero(sizeof(*wait));
     if (!wait) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return NULL;
+        return nullptr;
     }
-    wait->Wake = CreateEventW(NULL, FALSE, FALSE, NULL);
+    wait->Wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!wait->Wake) {
         KbFree(wait);
-        return NULL;
+        return nullptr;
     }
     wait->Callback = callback;
     wait->Context = context;
     wait->Refs = 2;
-    HANDLE thread = CreateThread(NULL, 0, wait_worker, wait, 0, NULL);
+    HANDLE thread = CreateThread(nullptr, 0, wait_worker, wait, 0, nullptr);
     if (!thread) {
         CloseHandle(wait->Wake);
         KbFree(wait);
-        return NULL;
+        return nullptr;
     }
     CloseHandle(thread);
     return wait;
@@ -230,7 +230,7 @@ DECLSPEC_EXPORT void *WINAPI CreateThreadpoolWait(WAIT_CALLBACK callback, void *
 DECLSPEC_EXPORT void WINAPI SetThreadpoolWait(POOL_WAIT *wait, HANDLE object, const FILETIME *timeout)
 {
     AcquireSRWLockExclusive(&wait->Lock);
-    wait->Armed = object != NULL;
+    wait->Armed = object != nullptr;
     wait->Object = object;
     wait->Due = 0;
     if (object && timeout) {

@@ -69,7 +69,7 @@ typedef struct HEAP {
 
 static PHEAP g_heaps[64];
 static ULONG g_heap_count;
-static RTL_CRITICAL_SECTION g_heap_list_lock = {NULL, -1, 0, NULL, NULL, 0};
+static RTL_CRITICAL_SECTION g_heap_list_lock = {nullptr, -1, 0, nullptr, nullptr, 0};
 
 static ULONG bin_index(ULONG granules)
 {
@@ -81,12 +81,12 @@ static ULONG bin_index(ULONG granules)
 
 static HEAP_BLOCK *next_block(HEAP_BLOCK *b)
 {
-    return (b->Flags & BLOCK_LAST) ? NULL : (HEAP_BLOCK *)((PUCHAR)b + (SIZE_T)b->Size * HEAP_GRANULE);
+    return (b->Flags & BLOCK_LAST) ? nullptr : (HEAP_BLOCK *)((PUCHAR)b + (SIZE_T)b->Size * HEAP_GRANULE);
 }
 
 static HEAP_BLOCK *prev_block(HEAP_BLOCK *b)
 {
-    return b->PrevSize ? (HEAP_BLOCK *)((PUCHAR)b - (SIZE_T)b->PrevSize * HEAP_GRANULE) : NULL;
+    return b->PrevSize ? (HEAP_BLOCK *)((PUCHAR)b - (SIZE_T)b->PrevSize * HEAP_GRANULE) : nullptr;
 }
 
 static void insert_free(PHEAP heap, HEAP_BLOCK *b)
@@ -148,7 +148,7 @@ static BOOLEAN grow(PHEAP heap, ULONG granules)
     SIZE_T need = (SIZE_T)granules * HEAP_GRANULE + sizeof(HEAP_SEGMENT);
     while (size < need)
         size *= 2;
-    PVOID base = NULL;
+    PVOID base = nullptr;
     ULONG protect = (heap->Flags & HEAP_CREATE_ENABLE_EXECUTE) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
     if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &size, MEM_RESERVE | MEM_COMMIT, protect)))
         return FALSE;
@@ -176,16 +176,16 @@ static HEAP_BLOCK *find_free(PHEAP heap, ULONG granules)
             }
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static PVOID allocate_large(PHEAP heap, SIZE_T size)
 {
     SIZE_T total = sizeof(HEAP_LARGE) + sizeof(HEAP_BLOCK) + size;
-    PVOID base = NULL;
+    PVOID base = nullptr;
     ULONG protect = (heap->Flags & HEAP_CREATE_ENABLE_EXECUTE) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
     if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &total, MEM_RESERVE | MEM_COMMIT, protect)))
-        return NULL;
+        return nullptr;
     HEAP_LARGE *large = base;
     large->Reserved = total;
     large->Requested = size;
@@ -207,10 +207,10 @@ static PVOID allocate_locked(PHEAP heap, SIZE_T size)
     HEAP_BLOCK *b = find_free(heap, granules);
     if (!b) {
         if (!grow(heap, granules))
-            return NULL;
+            return nullptr;
         b = find_free(heap, granules);
         if (!b)
-            return NULL;
+            return nullptr;
     }
     remove_free(heap, b);
     if (b->Size >= granules + 2) {
@@ -236,7 +236,7 @@ static HEAP_BLOCK *block_of(PVOID p)
 {
     HEAP_BLOCK *b = (HEAP_BLOCK *)p - 1;
     if (((ULONG_PTR)p & (HEAP_GRANULE - 1)) || b->Magic != BLOCK_MAGIC || !(b->Flags & BLOCK_BUSY))
-        return NULL;
+        return nullptr;
     return b;
 }
 
@@ -274,11 +274,11 @@ NTDLL_EXPORT PVOID NTAPI RtlCreateHeap(ULONG flags, PVOID base, SIZE_T reserve, 
 {
     SIZE_T size = reserve ? reserve : HEAP_SEGMENT_SIZE;
     size = (size + 0xFFFF) & ~(SIZE_T)0xFFFF;
-    BOOLEAN external = base != NULL;
+    BOOLEAN external = base != nullptr;
     if (!base) {
         ULONG protect = (flags & HEAP_CREATE_ENABLE_EXECUTE) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
         if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &size, MEM_RESERVE | MEM_COMMIT, protect)))
-            return NULL;
+            return nullptr;
     }
     PHEAP heap = base;
     memset(heap, 0, sizeof(*heap));
@@ -344,7 +344,7 @@ NTDLL_EXPORT PVOID NTAPI RtlDestroyHeap(PVOID handle)
         SIZE_T size = 0;
         NtFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
     }
-    return NULL;
+    return nullptr;
 }
 
 static void heap_failure(ULONG flags, NTSTATUS status)
@@ -357,17 +357,17 @@ NTDLL_EXPORT PVOID NTAPI RtlAllocateHeap(PVOID handle, ULONG flags, SIZE_T size)
 {
     PHEAP heap = handle;
     if (!heap || heap->Signature != HEAP_SIGNATURE)
-        return NULL;
+        return nullptr;
     if (size > (sizeof(SIZE_T) == 4 ? 0x7FFFFFFFull : 1ull << 46)) {
         heap_failure(flags | heap->Flags, STATUS_NO_MEMORY);
-        return NULL;
+        return nullptr;
     }
     lock_heap(heap, flags);
     PVOID p = allocate_locked(heap, size);
     unlock_heap(heap, flags);
     if (!p) {
         heap_failure(flags | heap->Flags, STATUS_NO_MEMORY);
-        return NULL;
+        return nullptr;
     }
     if (flags & HEAP_ZERO_MEMORY)
         memset(p, 0, size);
@@ -409,15 +409,15 @@ NTDLL_EXPORT PVOID NTAPI RtlReAllocateHeap(PVOID handle, ULONG flags, PVOID p, S
 {
     PHEAP heap = handle;
     if (!p)
-        return NULL;
+        return nullptr;
     if (!heap || heap->Signature != HEAP_SIGNATURE)
-        return NULL;
+        return nullptr;
     HEAP_BLOCK *b = block_of(p);
     if (!b)
-        return NULL;
+        return nullptr;
     SIZE_T old = usable_size(b);
     lock_heap(heap, flags);
-    PVOID result = NULL;
+    PVOID result = nullptr;
     if (!(b->Flags & BLOCK_LARGE) && size < HEAP_LARGE_THRESHOLD) {
         ULONG granules = (ULONG)(((size ? size : 1) + sizeof(HEAP_BLOCK) + HEAP_GRANULE - 1) / HEAP_GRANULE);
         if (granules < 2)
@@ -458,7 +458,7 @@ NTDLL_EXPORT PVOID NTAPI RtlReAllocateHeap(PVOID handle, ULONG flags, PVOID p, S
     unlock_heap(heap, flags);
     if (!result) {
         heap_failure(flags | heap->Flags, STATUS_NO_MEMORY);
-        return NULL;
+        return nullptr;
     }
     if ((flags & HEAP_ZERO_MEMORY) && size > old)
         memset((PUCHAR)result + old, 0, size - old);
@@ -482,7 +482,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlValidateHeap(PVOID handle, ULONG flags, PVOID p)
     PHEAP heap = handle;
     if (!heap || heap->Signature != HEAP_SIGNATURE)
         return FALSE;
-    return p ? block_of(p) != NULL : TRUE;
+    return p ? block_of(p) != nullptr : TRUE;
 }
 
 NTDLL_EXPORT SIZE_T NTAPI RtlCompactHeap(PVOID handle, ULONG flags)
@@ -521,7 +521,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlQueryHeapInformation(PVOID heap, ULONG klass, PVO
 void LdrpInitializeProcessHeap(void)
 {
     PPEB peb = NtCurrentPeb();
-    peb->ProcessHeap = RtlCreateHeap(HEAP_GROWABLE, NULL, 0, 0, NULL, NULL);
+    peb->ProcessHeap = RtlCreateHeap(HEAP_GROWABLE, nullptr, 0, 0, nullptr, nullptr);
 }
 
 PVOID MimeRtlAllocate(SIZE_T size)

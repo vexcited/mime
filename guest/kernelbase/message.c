@@ -59,7 +59,7 @@ static ULONG NTAPI load_system_messages(PRTL_RUN_ONCE once, PVOID parameter, PVO
     UINT n = GetSystemDirectoryW(path, MAX_PATH);
     if (n && n < MAX_PATH) {
         wcscat(path, L"\\en-US\\kernelbase.dll.mui");
-        g_system_messages = LoadLibraryExW(path, NULL, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+        g_system_messages = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
     }
     return TRUE;
 }
@@ -67,7 +67,7 @@ static ULONG NTAPI load_system_messages(PRTL_RUN_ONCE once, PVOID parameter, PVO
 static BOOL find_system_message(DWORD id, DWORD lang, LPWSTR *text, BOOL *allocated)
 {
     DWORD saved = GetLastError();
-    RtlRunOnceExecuteOnce(&g_system_messages_once, load_system_messages, NULL, NULL);
+    RtlRunOnceExecuteOnce(&g_system_messages_once, load_system_messages, nullptr, nullptr);
     KbSetError(saved);
     *allocated = FALSE;
     if (g_system_messages) {
@@ -207,7 +207,7 @@ static BOOL format_message(PCWSTR text, DWORD flags, va_list *args, BOOL ansi, O
     BOOL ignore = (flags & FORMAT_MESSAGE_IGNORE_INSERTS) != 0;
     DWORD width = flags & FORMAT_MESSAGE_MAX_WIDTH_MASK;
     ULONG_PTR fetched[MAX_INSERTS + 2 * MAX_INSERTS];
-    const ULONG_PTR *array = NULL;
+    const ULONG_PTR *array = nullptr;
     ULONG slot_of[MAX_INSERTS + 1];
     if (!ignore) {
         if (!args) {
@@ -224,7 +224,7 @@ static BOOL format_message(PCWSTR text, DWORD flags, va_list *args, BOOL ansi, O
             array = (const ULONG_PTR *)args;
         } else {
             /* scan the message to learn how many slots each insert number uses. */
-            UCHAR stars[MAX_INSERTS + 1] = {0};
+            UCHAR stars[MAX_INSERTS + 1] = {};
             ULONG highest = 0;
             for (PCWSTR p = text; *p; p++) {
                 if (*p != '%')
@@ -397,12 +397,12 @@ DWORD WINAPI FormatMessageW(DWORD flags, LPCVOID source, DWORD id, DWORD lang, L
         return 0;
     }
     if (flags & FORMAT_MESSAGE_ALLOCATE_BUFFER)
-        *(LPWSTR *)buffer = NULL;
+        *(LPWSTR *)buffer = nullptr;
     LPWSTR text;
     BOOL allocated;
     if (!get_message_text(flags, source, id, lang, &text, &allocated, FALSE))
         return 0;
-    OUT_BUFFER o = {0};
+    OUT_BUFFER o = {};
     BOOL ok = format_message(text, flags, args, FALSE, &o);
     if (allocated)
         KbFree(text);
@@ -425,12 +425,12 @@ DWORD WINAPI FormatMessageA(DWORD flags, LPCVOID source, DWORD id, DWORD lang, L
         return 0;
     }
     if (flags & FORMAT_MESSAGE_ALLOCATE_BUFFER)
-        *(LPSTR *)buffer = NULL;
+        *(LPSTR *)buffer = nullptr;
     LPWSTR text;
     BOOL allocated;
     if (!get_message_text(flags, source, id, lang, &text, &allocated, TRUE))
         return 0;
-    OUT_BUFFER o = {0};
+    OUT_BUFFER o = {};
     BOOL ok = format_message(text, flags, args, TRUE, &o);
     if (allocated)
         KbFree(text);
@@ -442,21 +442,21 @@ DWORD WINAPI FormatMessageA(DWORD flags, LPCVOID source, DWORD id, DWORD lang, L
         return 0;
     }
     PCWSTR wide = o.Data ? o.Data : L"";
-    int need = WideCharToMultiByte(CP_ACP, 0, wide, -1, NULL, 0, NULL, NULL);
+    int need = WideCharToMultiByte(CP_ACP, 0, wide, -1, nullptr, 0, nullptr, nullptr);
     if (flags & FORMAT_MESSAGE_ALLOCATE_BUFFER) {
         DWORD bytes = (DWORD)need > size ? (DWORD)need : size;
         LPSTR out = LocalAlloc(LMEM_FIXED, bytes);
         if (!out) {
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
         } else {
-            WideCharToMultiByte(CP_ACP, 0, wide, -1, out, need, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, wide, -1, out, need, nullptr, nullptr);
             *(LPSTR *)buffer = out;
             result = (DWORD)need - 1;
         }
     } else if ((DWORD)need > size) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
     } else {
-        WideCharToMultiByte(CP_ACP, 0, wide, -1, buffer, (int)size, NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, wide, -1, buffer, (int)size, nullptr, nullptr);
         result = (DWORD)need - 1;
     }
     KbFree(o.Data);

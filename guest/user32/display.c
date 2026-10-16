@@ -9,9 +9,9 @@ WINUSERAPI BOOL WINAPI EnumDisplaySettingsW(LPCWSTR device, DWORD index, DEVMODE
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    DISPLAY_DEVICEW display = {0};
+    DISPLAY_DEVICEW display = {};
     display.cb = sizeof(display);
-    if (!EnumDisplayDevicesW(NULL, 0, &display, 0) ||
+    if (!EnumDisplayDevicesW(nullptr, 0, &display, 0) ||
         (device && *device && _wcsicmp(device, display.DeviceName)))
         return FALSE;
     memset(mode, 0, sizeof(*mode));

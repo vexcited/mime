@@ -8,7 +8,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRU
 DECLSPEC_EXPORT HANDLE WINAPI AvSetMmThreadCharacteristicsW(LPCWSTR task, DWORD *index)
 {
     SetLastError(task && index ? ERROR_SERVICE_NOT_ACTIVE : ERROR_INVALID_PARAMETER);
-    return NULL;
+    return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI AvSetMmThreadPriority(HANDLE task, int priority)

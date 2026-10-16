@@ -26,7 +26,7 @@ static void free_cb(void *ctx, void *p)
     ExFreePool(p);
 }
 
-const MimeAllocator FontAllocator = {alloc_cb, free_cb, NULL};
+const MimeAllocator FontAllocator = {alloc_cb, free_cb, nullptr};
 
 /* ------------------------------------------------------------------ file access */
 
@@ -35,12 +35,12 @@ static HANDLE open_font_file(PCWSTR path)
     UNICODE_STRING name;
     RtlInitUnicodeString(&name, path);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE h;
-    if (!NT_SUCCESS(ZwCreateFile(&h, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, NULL, 0, FILE_SHARE_READ, FILE_OPEN,
-                                 FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0)))
-        return NULL;
+    if (!NT_SUCCESS(ZwCreateFile(&h, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, nullptr, 0, FILE_SHARE_READ, FILE_OPEN,
+                                 FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, nullptr, 0)))
+        return nullptr;
     return h;
 }
 
@@ -49,7 +49,7 @@ static BOOLEAN read_at(HANDLE h, ULONG64 offset, PVOID buffer, ULONG length)
     IO_STATUS_BLOCK iosb;
     LARGE_INTEGER off;
     off.QuadPart = (LONGLONG)offset;
-    NTSTATUS status = ZwReadFile(h, NULL, NULL, NULL, &iosb, buffer, length, &off, NULL);
+    NTSTATUS status = ZwReadFile(h, nullptr, nullptr, nullptr, &iosb, buffer, length, &off, nullptr);
     return NT_SUCCESS(status) && iosb.Information == length;
 }
 
@@ -95,7 +95,7 @@ static BOOLEAN load_file(FONT_FILE *f)
                 f->Size = size;
             } else if (f->Data) {
                 ExFreePool(f->Data);
-                f->Data = NULL;
+                f->Data = nullptr;
             }
         }
         ZwClose(h);
@@ -104,7 +104,7 @@ static BOOLEAN load_file(FONT_FILE *f)
         f->Failed = TRUE;
         W32Trace("win32k: cannot load font %ws\n", f->Path);
     }
-    return f->Data != NULL;
+    return f->Data != nullptr;
 }
 
 /* ------------------------------------------------------------------ registration */
@@ -333,7 +333,7 @@ ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
     wcscpy(file->Path, path);
     file->OwnerPid = owner;
     file->Hidden = hidden;
-    FONT_SOURCE src = {h, NULL, 0};
+    FONT_SOURCE src = {h, nullptr, 0};
     register_source(file, &src);
     ZwClose(h);
     ULONG added = file->FaceCount;
@@ -345,7 +345,7 @@ ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
 /* registers fonts held in memory, copied into the kernel. */
 ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **out)
 {
-    *out = NULL;
+    *out = nullptr;
     if (!g_faces || !size)
         return 0;
     FONT_FILE *file = W32Alloc(sizeof(FONT_FILE));
@@ -361,7 +361,7 @@ ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **out)
     file->Memory = TRUE;
     file->Hidden = TRUE;
     file->OwnerPid = owner;
-    FONT_SOURCE src = {NULL, file->Data, size};
+    FONT_SOURCE src = {nullptr, file->Data, size};
     register_source(file, &src);
     if (!file->FaceCount) {
         ExFreePool(file->Data);
@@ -379,7 +379,7 @@ ULONG FontFaceCount(void)
 
 FONT_FACE *FontFaceAt(ULONG index)
 {
-    return index < g_face_count ? &g_faces[index] : NULL;
+    return index < g_face_count ? &g_faces[index] : nullptr;
 }
 
 BOOLEAN FontFaceVisible(FONT_FACE *f)
@@ -412,12 +412,12 @@ void FontInitialize(void)
         return;
     UNICODE_STRING dir_name = RTL_CONSTANT_STRING(L"\\SystemRoot\\Fonts");
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &dir_name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    InitializeObjectAttributes(&oa, &dir_name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     HANDLE dir;
-    NTSTATUS status = ZwCreateFile(&dir, FILE_LIST_DIRECTORY | SYNCHRONIZE, &oa, &iosb, NULL, 0,
+    NTSTATUS status = ZwCreateFile(&dir, FILE_LIST_DIRECTORY | SYNCHRONIZE, &oa, &iosb, nullptr, 0,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN,
-                                   FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+                                   FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0);
     if (!NT_SUCCESS(status)) {
         W32Trace("win32k: cannot open the fonts directory: %08x\n", status);
         return;
@@ -425,8 +425,8 @@ void FontInitialize(void)
     UCHAR *buffer = W32Alloc(16384);
     BOOLEAN restart = TRUE;
     while (buffer) {
-        status = ZwQueryDirectoryFile(dir, NULL, NULL, NULL, &iosb, buffer, 16384, FileDirectoryInformation, FALSE,
-                                      NULL, restart);
+        status = ZwQueryDirectoryFile(dir, nullptr, nullptr, nullptr, &iosb, buffer, 16384, FileDirectoryInformation, FALSE,
+                                      nullptr, restart);
         restart = FALSE;
         if (!NT_SUCCESS(status))
             break;
@@ -441,7 +441,7 @@ void FontInitialize(void)
                 if (base + chars < MAX_PATH) {
                     memcpy(path + base, info->FileName, chars * sizeof(WCHAR));
                     path[base + chars] = 0;
-                    FontRegisterFile(path, NULL, FALSE);
+                    FontRegisterFile(path, nullptr, FALSE);
                 }
             }
             if (!info->NextEntryOffset)
@@ -459,8 +459,8 @@ void FontInitialize(void)
 BOOLEAN FontReadTable(FONT_FACE *f, ULONG tag, ULONG offset, PVOID buffer, ULONG size, ULONG *table_size)
 {
     FONT_FILE *file = f->File;
-    HANDLE h = NULL;
-    FONT_SOURCE src = {NULL, file->Data, file->Size};
+    HANDLE h = nullptr;
+    FONT_SOURCE src = {nullptr, file->Data, file->Size};
     if (!file->Data) {
         h = open_font_file(file->Path);
         if (!h)
@@ -547,9 +547,9 @@ static PCWSTR substitute(PCWSTR name)
 
 FONT_FACE *FontMatchFace(const LOGFONTW *lf)
 {
-    PCWSTR wanted = lf->lfFaceName[0] ? substitute(lf->lfFaceName) : NULL;
+    PCWSTR wanted = lf->lfFaceName[0] ? substitute(lf->lfFaceName) : nullptr;
     LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL;
-    FONT_FACE *best = NULL;
+    FONT_FACE *best = nullptr;
     LONG best_score = 0x7FFFFFFF;
     for (int pass = 0; pass < 2 && !best; pass++) {
         PCWSTR name = wanted;
@@ -650,7 +650,7 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
 {
     FONT_FACE *face = FontMatchFace(lf);
     if (!face || !FontLoadFace(face))
-        return NULL;
+        return nullptr;
     const MimeTtfMetrics *m = &face->Metrics;
     LONG em;
     if (lf->lfHeight < 0)
@@ -674,7 +674,7 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
     }
     FONT_INSTANCE *fi = W32Alloc(sizeof(FONT_INSTANCE));
     if (!fi)
-        return NULL;
+        return nullptr;
     fi->Face = face;
     fi->EmPixels = em;
     fi->Width = lf->lfWidth;
@@ -748,7 +748,7 @@ const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index)
     if (!*page) {
         *page = W32Alloc(256 * sizeof(GLYPH));
         if (!*page)
-            return NULL;
+            return nullptr;
     }
     GLYPH *g = &(*page)[index & 0xFF];
     if (!g->Ready) {

@@ -1,7 +1,7 @@
 #include "msi_private.h"
 #include <mime/ntrtl.h>
 
-static const BYTE guid_positions[32] = {
+static constexpr BYTE guid_positions[32] = {
     8, 7, 6, 5, 4, 3, 2, 1, 13, 12, 11, 10, 18, 17, 16, 15,
     21, 20, 23, 22, 26, 25, 28, 27, 30, 29, 32, 31, 34, 33, 36, 35
 };
@@ -60,7 +60,7 @@ static BOOL catalog_contains(HKEY key, PCWSTR name, BOOL values)
     if (!key)
         return FALSE;
     if (values)
-        return RegQueryValueExW(key, name, NULL, NULL, NULL, NULL) == ERROR_SUCCESS;
+        return RegQueryValueExW(key, name, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
     HKEY child;
     if (RegOpenKeyExW(key, name, 0, KEY_READ, &child))
         return FALSE;
@@ -70,7 +70,7 @@ static BOOL catalog_contains(HKEY key, PCWSTR name, BOOL values)
 
 static UINT enumerate_catalog(PCWSTR category, PCWSTR code, DWORD index, LPWSTR out)
 {
-    HKEY keys[3] = {0};
+    HKEY keys[3] = {};
     UINT error = open_catalogs(category, code, keys);
     if (error)
         goto done;
@@ -81,8 +81,8 @@ static UINT enumerate_catalog(PCWSTR category, PCWSTR code, DWORD index, LPWSTR 
         for (DWORD entry = 0;; entry++) {
             WCHAR packed[33], guid[39];
             DWORD length = RTL_NUMBER_OF(packed);
-            LSTATUS status = code ? RegEnumValueW(keys[i], entry, packed, &length, NULL, NULL, NULL, NULL) :
-                                   RegEnumKeyExW(keys[i], entry, packed, &length, NULL, NULL, NULL, NULL);
+            LSTATUS status = code ? RegEnumValueW(keys[i], entry, packed, &length, nullptr, nullptr, nullptr, nullptr) :
+                                   RegEnumKeyExW(keys[i], entry, packed, &length, nullptr, nullptr, nullptr, nullptr);
             if (status == ERROR_NO_MORE_ITEMS)
                 break;
             if (status) {
@@ -97,7 +97,7 @@ static UINT enumerate_catalog(PCWSTR category, PCWSTR code, DWORD index, LPWSTR 
             }
             BOOL duplicate = FALSE;
             for (ULONG previous = 0; previous < i; previous++)
-                if (catalog_contains(keys[previous], packed, code != NULL))
+                if (catalog_contains(keys[previous], packed, code != nullptr))
                     duplicate = TRUE;
             if (duplicate)
                 continue;
@@ -128,7 +128,7 @@ UINT WINAPI MsiEnumRelatedProductsW(LPCWSTR upgrade, DWORD reserved, DWORD index
 static UINT registry_text(HKEY key, PCWSTR name, PWSTR *out, DWORD expected)
 {
     DWORD bytes = 0, type;
-    UINT error = RegQueryValueExW(key, name, NULL, &type, NULL, &bytes);
+    UINT error = RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes);
     if (error)
         return error;
     if (type != expected || bytes % sizeof(WCHAR) || bytes > 1024 * 1024)
@@ -137,7 +137,7 @@ static UINT registry_text(HKEY key, PCWSTR name, PWSTR *out, DWORD expected)
     if (!text)
         return ERROR_NOT_ENOUGH_MEMORY;
     DWORD capacity = bytes;
-    error = RegQueryValueExW(key, name, NULL, &type, (BYTE *)text, &capacity);
+    error = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)text, &capacity);
     if (!error && (type != expected || capacity % sizeof(WCHAR)))
         error = ERROR_BAD_CONFIGURATION;
     if (error)
@@ -208,7 +208,7 @@ UINT WINAPI MsiGetPatchInfoW(LPCWSTR patch, LPCWSTR attribute, LPWSTR out, LPDWO
             continue;
         if (error)
             return error;
-        PWSTR text = NULL;
+        PWSTR text = nullptr;
         error = registry_text(key, attribute, &text, REG_SZ);
         RegCloseKey(key);
         if (!error)
@@ -227,9 +227,9 @@ UINT WINAPI MsiEnumPatchesW(LPCWSTR product, DWORD index, LPWSTR patch, LPWSTR t
     if (!MimeMsiPackGuid(product, packed) || !patch || !transforms || !size)
         return ERROR_INVALID_PARAMETER;
     _snwprintf(category, RTL_NUMBER_OF(category), L"Products\\%s\\Patches", packed);
-    HKEY keys[3] = {0};
-    UINT error = open_catalogs(category, NULL, keys);
-    PWSTR lists[3] = {0};
+    HKEY keys[3] = {};
+    UINT error = open_catalogs(category, nullptr, keys);
+    PWSTR lists[3] = {};
     if (error)
         goto done;
     for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
@@ -257,7 +257,7 @@ UINT WINAPI MsiEnumPatchesW(LPCWSTR product, DWORD index, LPWSTR patch, LPWSTR t
                 index--;
                 continue;
             }
-            PWSTR text = NULL;
+            PWSTR text = nullptr;
             error = registry_text(keys[i], entry, &text, REG_SZ);
             if (!error) {
                 DWORD capacity = *size;
