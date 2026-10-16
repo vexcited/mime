@@ -480,6 +480,12 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
             unhandled32(record, context);
         memcpy(&t->Record, record, sizeof(t->Record));
         memcpy(&t->Context, context, sizeof(t->Context));
+        /* a context without the extended registers, as RtlCaptureContext makes, keeps the processor's. */
+        if ((context->ContextFlags & CONTEXT_I386_EXTENDED_REGISTERS) != CONTEXT_I386_EXTENDED_REGISTERS) {
+            DECLSPEC_ALIGN(16) UCHAR state[512];
+            __asm__ volatile("fxsave %0" : "=m"(state));
+            memcpy(t->Context.ExtendedRegisters, state, sizeof(state));
+        }
         deliver_exception(t);
         return (LONG)cpu->Context.Eax;
     }

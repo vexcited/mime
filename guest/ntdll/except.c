@@ -3,8 +3,9 @@
  *
  * dispatch order: vectored exception handlers, then frame based handlers,
  * then vectored continue handlers. frame based dispatch needs the arm64
- * unwinder, which is not written yet, so unhandled exceptions go straight
- * to the top level filter and then back to the kernel as second chance.
+ * unwinder, which is not written yet, so there unhandled exceptions go
+ * straight to the top level filter and then back to the kernel as second
+ * chance.
  */
 #include "ntdll_private.h"
 
@@ -98,7 +99,7 @@ static LONG call_handlers(PLIST_ENTRY list, PEXCEPTION_RECORD record, PCONTEXT c
     return result;
 }
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT context);
 #endif
 
@@ -106,7 +107,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchException(PEXCEPTION_RECORD record, PCONTE
 {
     if (call_handlers(&g_vectored, record, context) == EXCEPTION_CONTINUE_EXECUTION)
         return TRUE;
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
     if (RtlDispatchFrameException(record, context))
         return TRUE;
 #endif
@@ -164,8 +165,8 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
         ;
 }
 
-#if !defined(__x86_64__)
-/* the x64 build unwinds in x64/unwind.c. */
+#if defined(__aarch64__)
+/* the x64 build unwinds in x64/unwind.c, the x86 one in x86/seh.c. */
 NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
 {
     DbgPrint("RtlUnwind: frame based unwinding is not supported yet\n");
