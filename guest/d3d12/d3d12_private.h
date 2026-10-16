@@ -171,6 +171,7 @@
     X(vkCmdSetDepthClipEnableEXT)                                                                                      \
     X(vkCmdSetVertexInputEXT)                                                                                          \
     X(vkCmdSetPatchControlPointsEXT)                                                                                   \
+    X(vkCmdSetFragmentShadingRateKHR)                                                                                  \
     X(vkCmdSetTessellationDomainOriginEXT)                                                                             \
     X(vkCmdSetRasterizationStreamEXT)                                                                                  \
     X(vkCmdSetConservativeRasterizationModeEXT)                                                                        \
@@ -709,6 +710,10 @@ typedef struct D12CommandList {
     VkImage written[16];
     UINT written_count;
     BOOL targets_dirty;
+    /* variable rate shading: the rate, its two combiners, the image of rates. */
+    UINT shading_rate, rate_combiners[2];
+    D12Resource *rate_image;
+    BOOL rate_dirty;
     UINT render_samples;
     /* the render pass begun, for its resolves at its end. */
     D3D12_RENDER_PASS_RENDER_TARGET_DESC pass_targets[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT];
@@ -775,6 +780,9 @@ struct D12Device {
     /* 64-bit atomics of typed views and of shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
     BOOL has_barycentrics, has_maintenance8;
+    /* variable rate shading: direct3d's tier, the tile size of rate images, 4 pixel wide rates, rates with viewports. */
+    UINT vrs_tier, vrs_tile;
+    BOOL vrs_more_rates, vrs_viewports;
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;
     VkShaderStageFlags dgc_stages;

@@ -510,6 +510,10 @@ static BOOL image_info(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, VkIm
     info->usage = D12ImageUsage(desc->Flags, f);
     if (depth)
         info->usage &= ~VK_IMAGE_USAGE_STORAGE_BIT;
+    /* any 2D texture of R8_UINT may be a shading rate image. */
+    if (device->vrs_tier >= D3D12_VARIABLE_SHADING_RATE_TIER_2 && desc->Format == DXGI_FORMAT_R8_UINT &&
+        info->imageType == VK_IMAGE_TYPE_2D && info->samples == VK_SAMPLE_COUNT_1_BIT)
+        info->usage |= VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
     /* views of other formats of the same size: typeless formats and the casting direct3d 12 allows. */
     if (!(f->flags & (D3D_FORMAT_DEPTH | D3D_FORMAT_STENCIL)) || !depth) {
         info->flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;

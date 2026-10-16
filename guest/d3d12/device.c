@@ -199,6 +199,8 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, device->has_atomic64 = TRUE)
     WANT(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, device->has_barycentrics = TRUE)
     WANT(VK_KHR_MAINTENANCE_8_EXTENSION_NAME, device->has_maintenance8 = TRUE)
+    BOOL has_vrs = FALSE;
+    WANT(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, has_vrs = TRUE)
     BOOL has_maintenance5 = FALSE;
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, has_maintenance5 = TRUE)
     if (has_maintenance5)
@@ -281,8 +283,11 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceMaintenance8FeaturesKHR maintenance8 = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR,
         device->has_barycentrics ? (void *)&barycentric : barycentric.pNext};
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR vrs = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR,
+        device->has_maintenance8 ? (void *)&maintenance8 : maintenance8.pNext};
     VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                          device->has_maintenance8 ? (void *)&maintenance8 : maintenance8.pNext};
+                                          has_vrs ? (void *)&vrs : vrs.pNext};
     vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
 
     if (!robust.nullDescriptor || !db.descriptorBuffer || !mutable_type.mutableDescriptorType ||
@@ -334,6 +339,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     f->wideLines = FALSE;
     device->has_native16 = f12.shaderFloat16 && f->shaderInt16;
     /* mesh shaders of every limit direct3d's first tier has; views and rates they lack features for. */
+    BOOL mesh_rates = mesh.primitiveFragmentShadingRateMeshShader;
     mesh.multiviewMeshShader = mesh.primitiveFragmentShadingRateMeshShader = FALSE;
     if (!mesh.meshShader || !mesh.taskShader)
         device->has_mesh = FALSE;
@@ -366,10 +372,12 @@ static HRESULT create_vulkan_device(D12Device *device)
     if (!device->has_rt_pipeline)
         rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
 
+    VkPhysicalDeviceFragmentShadingRatePropertiesKHR vrs_props = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR};
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT};
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT, has_vrs ? (void *)&vrs_props : NULL};
     VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT,
-                                                          device->has_dgc ? (void *)&dgc_props : NULL};
+                                                          device->has_dgc ? (void *)&dgc_props : dgc_props.pNext};
     VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
         device->has_mesh ? (void *)&mesh_props : mesh_props.pNext};
@@ -404,6 +412,36 @@ static HRESULT create_vulkan_device(D12Device *device)
         mesh_props.maxMeshWorkGroupInvocations < 128 || mesh_props.maxTaskWorkGroupInvocations < 128 ||
         mesh_props.maxTaskPayloadSize < 16384)
         device->has_mesh = FALSE;
+    /*
+     * variable rate shading: a rate per draw at tier 1; at tier 2 also per
+     * primitive and from an image of square tiles of a size direct3d knows,
+     * combined in every way.
+     */
+    VkFormatProperties rate_format;
+    vk->vkGetPhysicalDeviceFormatProperties(vk->physical, VK_FORMAT_R8_UINT, &rate_format);
+    VkExtent2D tile_min = vrs_props.minFragmentShadingRateAttachmentTexelSize;
+    VkExtent2D tile_max = vrs_props.maxFragmentShadingRateAttachmentTexelSize;
+    for (UINT size = 8; size <= 32 && !device->vrs_tile; size *= 2)
+        if (size >= tile_min.width && size >= tile_min.height && size <= tile_max.width && size <= tile_max.height)
+            device->vrs_tile = size;
+    if (has_vrs && vrs.pipelineFragmentShadingRate) {
+        device->vrs_tier = D3D12_VARIABLE_SHADING_RATE_TIER_1;
+        if (vrs.primitiveFragmentShadingRate && vrs.attachmentFragmentShadingRate &&
+            vrs_props.fragmentShadingRateNonTrivialCombinerOps && vrs_props.fragmentShadingRateStrictMultiplyCombiner &&
+            device->vrs_tile &&
+            (rate_format.optimalTilingFeatures & VK_FORMAT_FEATURE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR))
+            device->vrs_tier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
+        device->vrs_more_rates = vrs_props.maxFragmentSize.width >= 4 && vrs_props.maxFragmentSize.height >= 4 &&
+                                 vrs_props.maxFragmentSizeAspectRatio >= 2;
+        device->vrs_viewports = vrs_props.primitiveFragmentShadingRateWithMultipleViewports;
+    }
+    if (device->vrs_tier < D3D12_VARIABLE_SHADING_RATE_TIER_2) {
+        vrs.primitiveFragmentShadingRate = vrs.attachmentFragmentShadingRate = FALSE;
+        device->vrs_tile = 0;
+    } else {
+        mesh.primitiveFragmentShadingRateMeshShader = device->has_mesh && mesh_rates;
+    }
+
     VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     VkPhysicalDeviceProperties2 sub_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sub};
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &sub_props);
@@ -673,7 +711,8 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS5, 12, FALSE, 0,
             device->has_rt_pipeline ? D3D12_RAYTRACING_TIER_1_1 : D3D12_RAYTRACING_TIER_NOT_SUPPORTED);
     FEATURE(D3D12_FEATURE_DISPLAYABLE, 8, FALSE, 0);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, FALSE, FALSE, 0, 0, FALSE);
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, device->vrs_more_rates, device->vrs_viewports, device->vrs_tier,
+            device->vrs_tile, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS8, 4, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, FALSE, FALSE, device->has_atomic64, device->has_shared_atomic64, FALSE, 0);

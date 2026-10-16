@@ -262,6 +262,13 @@ static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *
         *type = c->t_bool;
         *which = SpvBuiltInCullPrimitiveEXT;
         return 1;
+    case SEM_SHADING_RATE:
+        if (!(pixel && in) && !raster && !primitive && !(sig == SIG_OUT && c->kind == KIND_VERTEX))
+            return 0;
+        spv_capability(&c->b, SpvCapabilityFragmentShadingRateKHR);
+        spv_extension(&c->b, "SPV_KHR_fragment_shading_rate");
+        *which = pixel ? SpvBuiltInShadingRateKHR : SpvBuiltInPrimitiveShadingRateKHR;
+        return 1;
     case SEM_BARYCENTRICS: {
         if (!(pixel && in))
             return 0;

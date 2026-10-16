@@ -589,9 +589,10 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
         VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,      VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
         VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BOUNDS,
         VK_DYNAMIC_STATE_PATCH_CONTROL_POINTS_EXT,
+        VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR,
     };
     VkPipelineDynamicStateCreateInfo dynamic_info = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dynamic_info.dynamicStateCount = RTL_NUMBER_OF(dynamic) - (device->has_patch_points ? 0 : 1);
+    dynamic_info.dynamicStateCount = RTL_NUMBER_OF(dynamic) - 1 - (device->has_patch_points ? 0 : 1);
     dynamic_info.pDynamicStates = dynamic;
     if (!state->depth_bounds) {
         dynamic[13] = dynamic[14];
@@ -607,6 +608,8 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
                 dynamic[kept++] = dynamic[i];
         dynamic_info.dynamicStateCount = kept;
     }
+    if (device->vrs_tier)
+        dynamic[dynamic_info.dynamicStateCount++] = VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;
 
     VkFormat colors[8];
     for (UINT i = 0; i < state->rt_count; i++)
@@ -627,6 +630,8 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
 
     VkGraphicsPipelineCreateInfo info = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
     info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+    if (device->vrs_tier >= D3D12_VARIABLE_SHADING_RATE_TIER_2)
+        info.flags |= VK_PIPELINE_CREATE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
     info.stageCount = stage_count;
     info.pStages = stages;
     info.pVertexInputState = state->mesh ? NULL : &vertex;

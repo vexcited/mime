@@ -76,7 +76,8 @@ uint32_t dxil_builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t ty
     if (storage == SpvStorageClassInput && c->kind == KIND_PIXEL && type != c->t_bool &&
         (which == SpvBuiltInPrimitiveId || which == SpvBuiltInSampleId || which == SpvBuiltInLayer ||
          which == SpvBuiltInViewportIndex || which == SpvBuiltInViewIndex ||
-         which == SpvBuiltInSubgroupLocalInvocationId || which == SpvBuiltInSubgroupSize || which == SpvBuiltInSubgroupLtMask))
+         which == SpvBuiltInSubgroupLocalInvocationId || which == SpvBuiltInSubgroupSize ||
+         which == SpvBuiltInSubgroupLtMask || which == SpvBuiltInShadingRateKHR))
         spv_decorate(&c->b, var, SpvDecorationFlat, NULL, 0);
     if (c->builtin_count < 64) {
         c->builtins[c->builtin_count].which = which;

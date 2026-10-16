@@ -366,6 +366,10 @@ static void reset_state(D12CommandList *list)
     list->rendering = FALSE;
     list->targets_dirty = TRUE;
     list->state_dirty = TRUE;
+    list->shading_rate = D3D12_SHADING_RATE_1X1;
+    list->rate_combiners[0] = list->rate_combiners[1] = D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
+    list->rate_image = NULL;
+    list->rate_dirty = TRUE;
     list->bound_graphics = NULL;
     list->bound_cs = VK_NULL_HANDLE;
     list->rt_state = NULL;
@@ -668,6 +672,24 @@ static void begin_rendering(D12CommandList *list)
         info.pDepthAttachment = &depth;
     if (p->stencil_format && list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT))
         info.pStencilAttachment = &stencil;
+    /* the image of rates, when it covers what is rendered. */
+    VkRenderingFragmentShadingRateAttachmentInfoKHR rates = {
+        VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR};
+    D12Resource *r = list->rate_image;
+    if (r && device->vrs_tile && (UINT64)r->desc.Width * device->vrs_tile >= area.width &&
+        (UINT64)r->desc.Height * device->vrs_tile >= area.height) {
+        VkImageViewCreateInfo view = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = VK_FORMAT_R8_UINT;
+        view.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        D12ImageView *v = D12ResourceView(r, &view, VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR);
+        if (v) {
+            rates.imageView = v->view;
+            rates.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            rates.shadingRateAttachmentTexelSize = (VkExtent2D){device->vrs_tile, device->vrs_tile};
+            info.pNext = &rates;
+        }
+    }
     VkImage images[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT + 1];
     UINT n = 0;
     for (UINT i = 0; i < p->rt_count; i++)
@@ -727,6 +749,23 @@ static void end_stream_output(D12CommandList *list)
 
 /* ------------------------------------------------------------------ draws and dispatches */
 
+/* direct3d's combiners are vulkan's, its sum of rates' logarithms a product of sizes. */
+static void emit_shading_rate(D12CommandList *list)
+{
+    static const VkFragmentShadingRateCombinerOpKHR OPS[] = {
+        VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_KHR,
+        VK_FRAGMENT_SHADING_RATE_COMBINER_OP_MIN_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_MAX_KHR,
+        VK_FRAGMENT_SHADING_RATE_COMBINER_OP_MUL_KHR};
+    D12Device *device = list->child.device;
+    VkExtent2D size = {1u << (list->shading_rate >> 2 & 3), 1u << (list->shading_rate & 3)};
+    VkFragmentShadingRateCombinerOpKHR ops[2];
+    for (UINT i = 0; i < 2; i++)
+        ops[i] = device->vrs_tier >= D3D12_VARIABLE_SHADING_RATE_TIER_2 && list->rate_combiners[i] < RTL_NUMBER_OF(OPS)
+                     ? OPS[list->rate_combiners[i]]
+                     : VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR;
+    device->vk.vkCmdSetFragmentShadingRateKHR(list->cmd, &size, ops);
+}
+
 static BOOL prepare_draw(D12CommandList *list)
 {
     D12Device *device = list->child.device;
@@ -761,6 +800,10 @@ static BOOL prepare_draw(D12CommandList *list)
     if (list->state_dirty || list->viewports_dirty) {
         emit_viewports(list);
         list->viewports_dirty = FALSE;
+    }
+    if (device->vrs_tier && (list->state_dirty || list->rate_dirty)) {
+        emit_shading_rate(list);
+        list->rate_dirty = FALSE;
     }
     list->state_dirty = FALSE;
     bind_sets(list, FALSE);
@@ -1687,7 +1730,8 @@ static VkPipelineStageFlags2 shader_stages(D12Device *device)
  */
 static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *stages, VkAccessFlags2 *access)
 {
-    const UINT known = 0x3FFF | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+    const UINT known = 0x3FFF | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE |
+                       D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE;
     VkPipelineStageFlags2 shaders = shader_stages(device), s = 0;
     VkAccessFlags2 a = 0;
     if (!state || (state & ~known)) {
@@ -1762,6 +1806,15 @@ static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *st
     if (state & (D3D12_RESOURCE_STATE_COPY_SOURCE | D3D12_RESOURCE_STATE_RESOLVE_SOURCE)) {
         s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
         a |= VK_ACCESS_2_TRANSFER_READ_BIT;
+    }
+    if (state & D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE) {
+        if (device->vrs_tier >= D3D12_VARIABLE_SHADING_RATE_TIER_2) {
+            s |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
+            a |= VK_ACCESS_2_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR;
+        } else {
+            s |= VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            a |= VK_ACCESS_2_MEMORY_READ_BIT;
+        }
     }
     if (state & D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE) {
         s |= shaders;
@@ -2319,10 +2372,24 @@ static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *if
 static void STDMETHODCALLTYPE list_rs_set_shading_rate(ID3D12GraphicsCommandList10 *iface, UINT rate,
                                                        const UINT *combiners)
 {
+    D12CommandList *list = impl(iface);
+    list->shading_rate = rate;
+    list->rate_combiners[0] = combiners ? combiners[0] : D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
+    list->rate_combiners[1] = combiners ? combiners[1] : D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
+    list->rate_dirty = TRUE;
 }
 
+/* the image is an attachment of the rendering, which begins again with it. */
 static void STDMETHODCALLTYPE list_rs_set_shading_rate_image(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *image)
 {
+    D12CommandList *list = impl(iface);
+    D12Resource *r = D12ResourceFrom(image);
+    if (r && (!r->image || !(r->usage & VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR)))
+        r = NULL;
+    if (r != list->rate_image) {
+        list->rate_image = r;
+        list->targets_dirty = TRUE;
+    }
 }
 
 static void STDMETHODCALLTYPE list_dispatch_mesh(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z)
