@@ -24,6 +24,8 @@ static void read_tags(Compiler *c, const DxMetadata *tags, ResourceInfo *r)
             r->comp = (uint8_t)value;
         else if (tag == 1)
             r->stride = (uint32_t)value;
+        else if (tag == 2)
+            r->feedback = (uint8_t)value;
     }
 }
 
@@ -78,6 +80,9 @@ int dxil_read_resources(Compiler *c, const DxMetadata *list)
                 r->counter = (uint8_t)dx_md_int(&c->m, md, 8, 0);
                 r->rov = (uint8_t)dx_md_int(&c->m, md, 9, 0);
                 read_tags(c, dx_md_op(&c->m, md, 10), r);
+                /* feedback maps are words. */
+                if (r->kind == RK_FEEDBACK_TEXTURE2D || r->kind == RK_FEEDBACK_TEXTURE2DARRAY)
+                    r->comp = COMP_U32;
                 break;
             case CLASS_CBV:
                 r->kind = RK_CBUFFER;
@@ -278,6 +283,12 @@ static int annotate(Compiler *c, const DxInst *ins)
         h.r.cls = uav ? CLASS_UAV : CLASS_SRV;
         h.r.stride = w1;
         break;
+    case RK_FEEDBACK_TEXTURE2D:
+    case RK_FEEDBACK_TEXTURE2DARRAY:
+        h.r.cls = CLASS_UAV;
+        h.r.comp = COMP_U32;
+        h.r.feedback = (uint8_t)w1;
+        break;
     default:
         h.r.cls = uav ? CLASS_UAV : CLASS_SRV;
         h.r.comp = (uint8_t)w1;
@@ -437,6 +448,7 @@ static void image_shape(uint32_t kind, uint32_t *dim, uint32_t *arrayed, uint32_
     case RK_TEXTURE3D: *dim = SpvDim3D; break;
     case RK_TEXTURECUBE: *dim = SpvDimCube; break;
     case RK_TEXTURECUBEARRAY: *dim = SpvDimCube, *arrayed = 1; break;
+    case RK_FEEDBACK_TEXTURE2DARRAY: *dim = SpvDim2D, *arrayed = 1; break;
     case RK_TYPED_BUFFER:
     case RK_RAW_BUFFER:
     case RK_STRUCTURED_BUFFER: *dim = SpvDimBuffer; break;
@@ -861,7 +873,8 @@ static uint32_t coord_count(uint32_t kind)
     case RK_STRUCTURED_BUFFER: return 1;
     case RK_TEXTURE1DARRAY:
     case RK_TEXTURE2D:
-    case RK_TEXTURE2DMS: return 2;
+    case RK_TEXTURE2DMS:
+    case RK_FEEDBACK_TEXTURE2D: return 2;
     case RK_TEXTURECUBEARRAY: return 4;
     default: return 3;
     }
@@ -1625,6 +1638,83 @@ static int barrier_by(Compiler *c, uint32_t memory, uint32_t flags)
     return 0;
 }
 
+/*
+ * WriteSamplerFeedback and its kin: the mip a sample at the coordinates
+ * takes, floored and within the texture's mips, goes to the word of the
+ * feedback map's region the coordinates fall in, wrapped: its least for
+ * min mip maps, its bit for mip region used maps. the levels of detail
+ * are vulkan's query's, the bias and gradient forms computing theirs.
+ */
+static int write_feedback(Compiler *c, const DxInst *ins, uint32_t op)
+{
+    Handle *fb = handle_of(c, ins->ops[2]), *tex = handle_of(c, ins->ops[3]), *smp = handle_of(c, ins->ops[4]);
+    if (!fb || !tex || !smp)
+        return -1;
+    spv_capability(&c->b, SpvCapabilityImageQuery);
+    uint32_t type, si = sampled_image(c, tex, smp, 0, &type);
+    uint32_t image = load_image(c, tex, type);
+    uint32_t uv = gather_operands(c, ins, 5, 2, c->t_f32);
+    uint32_t levels = spv_op1(&c->b, SpvOpImageQueryLevels, c->t_u32, image);
+    uint32_t lod;
+    if (op == 176) {
+        lod = dxil_value(c, ins->ops[9]);
+    } else if (op == 177) {
+        /* the larger of the gradients' lengths in texels of the first mip, its logarithm. */
+        uint32_t n = coord_count(tex->r.kind) > 3 ? 3 : coord_count(tex->r.kind);
+        uint32_t size = spv_op2(&c->b, SpvOpImageQuerySizeLod, n > 1 ? c->t_uvec[n] : c->t_u32, image, dxil_uconst(c, 0));
+        uint32_t wh[2] = {n > 1 ? dxil_extract(c, c->t_u32, size, 0) : size,
+                          n > 1 ? dxil_extract(c, c->t_u32, size, 1) : dxil_uconst(c, 1)};
+        uint32_t texels = spv_op1(&c->b, SpvOpConvertUToF, c->t_vec[2], dxil_vector(c, c->t_u32, wh, 2));
+        uint32_t dx = spv_op2(&c->b, SpvOpFMul, c->t_vec[2], gather_operands(c, ins, 9, 2, c->t_f32), texels);
+        uint32_t dy = spv_op2(&c->b, SpvOpFMul, c->t_vec[2], gather_operands(c, ins, 12, 2, c->t_f32), texels);
+        uint32_t lengths[2] = {spv_op2(&c->b, SpvOpDot, c->t_f32, dx, dx), spv_op2(&c->b, SpvOpDot, c->t_f32, dy, dy)};
+        uint32_t rho = spv_glsl(&c->b, c->t_f32, GLSLstd450FMax, lengths, 2);
+        uint32_t log = spv_glsl(&c->b, c->t_f32, GLSLstd450Log2, &rho, 1);
+        lod = spv_op2(&c->b, SpvOpFMul, c->t_f32, log, dxil_fconst(c, 0.5f));
+    } else if (dxil_derivatives(c)) {
+        uint32_t q = spv_op2(&c->b, SpvOpImageQueryLod, c->t_vec[2], si, uv);
+        lod = dxil_extract(c, c->t_f32, q, op == 175 ? 1 : 0);
+        if (op == 175)
+            lod = spv_op2(&c->b, SpvOpFAdd, c->t_f32, lod, dxil_value(c, ins->ops[9]));
+    } else {
+        lod = dxil_fconst(c, 0.0f);
+    }
+    uint32_t clamp_at = op == 174 ? 9 : op == 175 ? 10 : op == 177 ? 15 : 0;
+    if (clamp_at && !dxil_is_undef(c, ins->ops[clamp_at])) {
+        uint32_t pair[2] = {lod, dxil_value(c, ins->ops[clamp_at])};
+        lod = spv_glsl(&c->b, c->t_f32, GLSLstd450FMax, pair, 2);
+    }
+    uint32_t top = spv_op1(&c->b, SpvOpConvertUToF, c->t_f32, spv_op2(&c->b, SpvOpISub, c->t_u32, levels, dxil_uconst(c, 1)));
+    uint32_t bounds[3] = {spv_glsl(&c->b, c->t_f32, GLSLstd450Floor, &lod, 1), dxil_fconst(c, 0.0f), top};
+    uint32_t mip = spv_op1(&c->b, SpvOpConvertFToU, c->t_u32, spv_glsl(&c->b, c->t_f32, GLSLstd450NClamp, bounds, 3));
+
+    int array = fb->r.kind == RK_FEEDBACK_TEXTURE2DARRAY;
+    uint32_t map_type = image_type(c, fb, 0, 1);
+    uint32_t map = load_image(c, fb, map_type);
+    uint32_t extent = spv_op1(&c->b, SpvOpImageQuerySize, array ? c->t_uvec[3] : c->t_uvec[2], map);
+    uint32_t grid[2] = {dxil_extract(c, c->t_u32, extent, 0), dxil_extract(c, c->t_u32, extent, 1)};
+    uint32_t coords[3];
+    for (uint32_t i = 0; i < 2; i++) {
+        uint32_t u = dxil_extract(c, c->t_f32, uv, i);
+        uint32_t wrapped = spv_op2(&c->b, SpvOpFSub, c->t_f32, u, spv_glsl(&c->b, c->t_f32, GLSLstd450Floor, &u, 1));
+        uint32_t at = spv_op1(&c->b, SpvOpConvertFToU, c->t_u32,
+                              spv_op2(&c->b, SpvOpFMul, c->t_f32, wrapped,
+                                      spv_op1(&c->b, SpvOpConvertUToF, c->t_f32, grid[i])));
+        uint32_t last = spv_op2(&c->b, SpvOpISub, c->t_u32, grid[i], dxil_uconst(c, 1));
+        uint32_t pair[2] = {at, last};
+        coords[i] = spv_glsl(&c->b, c->t_u32, GLSLstd450UMin, pair, 2);
+    }
+    if (array)
+        coords[2] = spv_op1(&c->b, SpvOpConvertFToU, c->t_u32, dxil_value(c, ins->ops[7]));
+    uint32_t ptr_var = image_pointer(c, fb, map_type);
+    uint32_t w[3] = {ptr_var, dxil_vector(c, c->t_u32, coords, array ? 3 : 2), dxil_uconst(c, 0)};
+    uint32_t texel = spv_op(&c->b, SpvOpImageTexelPointer, spv_type_pointer(&c->b, SpvStorageClassImage, c->t_u32), w, 3);
+    uint32_t value = fb->r.feedback ? spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, dxil_uconst(c, 1), mip) : mip;
+    uint32_t a[4] = {texel, dxil_uconst(c, SpvScopeDevice), dxil_uconst(c, 0), value};
+    spv_op(&c->b, fb->r.feedback ? SpvOpAtomicOr : SpvOpAtomicUMin, c->t_u32, a, 4);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ sample positions */
 
 /*
@@ -1730,6 +1820,10 @@ int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 245: /* barrierByMemoryHandle: a view's memory. */
         return barrier_by(c, 1, (uint32_t)dxil_constant(c, ins->ops[3], 0)) ? -1 : 1;
     case 81: return calculate_lod(c, ins) ? -1 : 1;
+    case 174:
+    case 175:
+    case 176:
+    case 177: return write_feedback(c, ins, op) ? -1 : 1;
     default: return 0;
     }
 }

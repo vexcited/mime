@@ -384,6 +384,8 @@ void D12Footprints(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, UINT fir
 D12ImageView *D12ResourceView(D12Resource *resource, const VkImageViewCreateInfo *info, VkImageUsageFlags usage);
 VkImageUsageFlags D12ImageUsage(D3D12_RESOURCE_FLAGS flags, const D3dFormat *fmt);
 VkImageAspectFlags D12PlaneAspect(const D12Resource *resource, UINT plane);
+BOOL D12IsFeedback(DXGI_FORMAT format);
+VkExtent2D D12FeedbackExtent(const D3D12_RESOURCE_DESC1 *desc);
 
 /* ------------------------------------------------------------------ descriptors */
 

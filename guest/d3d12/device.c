@@ -773,7 +773,8 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_DISPLAYABLE, 8, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, device->vrs_more_rates, device->vrs_viewports, device->vrs_tier,
             device->vrs_tile, FALSE);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 0);
+    /* sampler feedback at tier 0.9, its maps storage images of words. */
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 90);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS8, 4, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, FALSE, FALSE, device->has_atomic64, device->has_shared_atomic64, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS10, 8, 0);
@@ -1222,10 +1223,20 @@ static void STDMETHODCALLTYPE device_create_sampler2(ID3D12Device14 *iface, cons
         D12CreateSampler(impl(iface), desc, handle);
 }
 
+/* a feedback map's view: of its 32-bit words, an array when its texture has layers. */
 static void STDMETHODCALLTYPE device_create_sampler_feedback_uav(ID3D12Device14 *iface, ID3D12Resource *target,
                                                                  ID3D12Resource *feedback,
                                                                  D3D12_CPU_DESCRIPTOR_HANDLE handle)
 {
+    D12Resource *r = D12ResourceFrom(feedback);
+    if (!r || !D12IsFeedback(r->desc.Format))
+        return;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC desc = {DXGI_FORMAT_R32_UINT, D3D12_UAV_DIMENSION_TEXTURE2D};
+    if (r->layers > 1) {
+        desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+        desc.Texture2DArray.ArraySize = r->layers;
+    }
+    D12CreateUav(impl(iface), r, NULL, &desc, handle);
 }
 
 /* copies ranges of descriptors, each source and destination range cut where the other ends. */

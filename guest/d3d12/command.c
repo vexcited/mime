@@ -1296,12 +1296,43 @@ static void STDMETHODCALLTYPE list_resolve_subresource(ID3D12GraphicsCommandList
     resolve(impl(iface), D12ResourceFrom(dst), dst_sub, 0, 0, D12ResourceFrom(src), src_sub, NULL);
 }
 
+/*
+ * a min mip feedback map decoded to, or encoded from, a texture of R8_UINT
+ * of its regions: a blit between its words and the bytes. mip region used
+ * maps are not decoded.
+ */
+static void code_feedback(D12CommandList *list, D12Resource *d, UINT dst_sub, D12Resource *s, UINT src_sub, BOOL decode)
+{
+    D12Resource *map = decode ? s : d, *bytes = decode ? d : s;
+    if (!list->open || !map->image || !bytes->image)
+        return;
+    if (map->desc.Format != DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE) {
+        D12Log("d3d12: mip region used feedback maps are not decoded");
+        return;
+    }
+    end_rendering(list);
+    VkExtent2D e = D12FeedbackExtent(&map->desc);
+    VkImageSubresourceLayers map_layers = {VK_IMAGE_ASPECT_COLOR_BIT, 0, (decode ? src_sub : dst_sub) % map->layers, 1};
+    VkImageSubresourceLayers byte_layers = subresource_layers(bytes, decode ? dst_sub : src_sub);
+    VkExtent3D b = D12MipExtent(bytes, byte_layers.mipLevel);
+    VkOffset3D size = {(INT)D12_MIN(e.width, b.width), (INT)D12_MIN(e.height, b.height), 1};
+    VkImageBlit blit = {decode ? map_layers : byte_layers, {{0}, size}, decode ? byte_layers : map_layers, {{0}, size}};
+    vk_of(list)->vkCmdBlitImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                                &blit, VK_FILTER_NEAREST);
+}
+
 static void STDMETHODCALLTYPE list_resolve_subresource_region(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *dst,
                                                               UINT dst_sub, UINT dst_x, UINT dst_y,
                                                               ID3D12Resource *src, UINT src_sub, D3D12_RECT *rect,
                                                               DXGI_FORMAT format, D3D12_RESOLVE_MODE mode)
 {
-    resolve(impl(iface), D12ResourceFrom(dst), dst_sub, dst_x, dst_y, D12ResourceFrom(src), src_sub, rect);
+    D12Resource *d = D12ResourceFrom(dst), *s = D12ResourceFrom(src);
+    if ((mode == D3D12_RESOLVE_MODE_DECODE_SAMPLER_FEEDBACK || mode == D3D12_RESOLVE_MODE_ENCODE_SAMPLER_FEEDBACK) &&
+        d && s) {
+        code_feedback(impl(iface), d, dst_sub, s, src_sub, mode == D3D12_RESOLVE_MODE_DECODE_SAMPLER_FEEDBACK);
+        return;
+    }
+    resolve(impl(iface), d, dst_sub, dst_x, dst_y, s, src_sub, rect);
 }
 
 /* ------------------------------------------------------------------ input assembler, rasterizer, output merger */
@@ -1699,6 +1730,13 @@ static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, con
         return;
     end_rendering(list);
     D12Resource *r = info->resource;
+    /* feedback maps clear to nothing sampled, whatever the values. */
+    static const UINT none_min[4] = {0xFF}, none_used[4] = {0};
+    if (D12IsFeedback(r->desc.Format)) {
+        uints = r->desc.Format == DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE ? none_min : none_used;
+        floats = NULL;
+        rect_count = 0;
+    }
     if (r->buffer) {
         BYTE pattern[16];
         UINT size = 4;

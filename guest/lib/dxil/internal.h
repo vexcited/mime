@@ -160,6 +160,8 @@ typedef struct ResourceInfo {
     uint32_t stride;
     uint32_t samples;
     uint8_t counter, coherent, rov, comparison;
+    /* feedback maps: 0 min mip, 1 mip region used. */
+    uint8_t feedback;
     /* libraries: the global standing for the range, 0 for none. */
     uint32_t global;
 } ResourceInfo;

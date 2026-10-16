@@ -468,8 +468,50 @@ VkImageUsageFlags D12ImageUsage(D3D12_RESOURCE_FLAGS flags, const D3dFormat *fmt
 }
 
 /* the vulkan image a texture description makes; FALSE for what vulkan cannot make. */
+BOOL D12IsFeedback(DXGI_FORMAT format)
+{
+    return format == DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE ||
+           format == DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE;
+}
+
+/* a feedback map's size in regions of its texture's first mip, 4x4 texels when the description says none. */
+VkExtent2D D12FeedbackExtent(const D3D12_RESOURCE_DESC1 *desc)
+{
+    UINT rw = desc->SamplerFeedbackMipRegion.Width ? desc->SamplerFeedbackMipRegion.Width : 4;
+    UINT rh = desc->SamplerFeedbackMipRegion.Height ? desc->SamplerFeedbackMipRegion.Height : 4;
+    return (VkExtent2D){(UINT)((desc->Width + rw - 1) / rw), (desc->Height + rh - 1) / rh};
+}
+
+/*
+ * a feedback map is an image of 32-bit words, one a region: the least mip
+ * sampled for min mip maps, 0xFF when none, a bit a mip for mip region used
+ * maps. shaders reach it as a storage image.
+ */
+static BOOL feedback_info(const D3D12_RESOURCE_DESC1 *desc, VkImageCreateInfo *info)
+{
+    if (desc->Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D)
+        return FALSE;
+    VkExtent2D e = D12FeedbackExtent(desc);
+    memset(info, 0, sizeof(*info));
+    info->sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info->imageType = VK_IMAGE_TYPE_2D;
+    info->format = VK_FORMAT_R32_UINT;
+    info->extent = (VkExtent3D){e.width, e.height, 1};
+    info->mipLevels = 1;
+    info->arrayLayers = desc->DepthOrArraySize ? desc->DepthOrArraySize : 1;
+    info->samples = VK_SAMPLE_COUNT_1_BIT;
+    info->tiling = VK_IMAGE_TILING_OPTIMAL;
+    info->usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info->sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    return TRUE;
+}
+
 static BOOL image_info(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, VkImageCreateInfo *info)
 {
+    if (D12IsFeedback(desc->Format))
+        return feedback_info(desc, info);
     const D3dFormat *f = D3dGetFormat(desc->Format);
     if (f->vk == VK_FORMAT_UNDEFINED)
         return FALSE;
@@ -1046,12 +1088,15 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
     VkImageCreateInfo info;
     if (!image_info(device, desc, &info))
         return E_INVALIDARG;
-    resource->fmt = D3dGetFormat(desc->Format);
+    BOOL feedback = D12IsFeedback(desc->Format);
+    resource->fmt = D3dGetFormat(feedback ? DXGI_FORMAT_R32_UINT : desc->Format);
     resource->mips = info.mipLevels;
     resource->layers = info.arrayLayers;
     resource->samples = info.samples;
     resource->usage = info.usage;
-    resource->desc.MipLevels = (UINT16)info.mipLevels;
+    /* a feedback map keeps its texture's mips in its description. */
+    if (!feedback)
+        resource->desc.MipLevels = (UINT16)info.mipLevels;
     resource->aspect = format_aspect(info.format);
     if (vk->vkCreateImage(vk->device, &info, NULL, &resource->image) != VK_SUCCESS)
         return E_OUTOFMEMORY;
@@ -1074,7 +1119,7 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
     }
     BOOL clear = !heap && !(resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED) &&
                  (desc->Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
-                                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
+                                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) && !feedback;
     init_image(device, resource, clear);
     return S_OK;
 }
