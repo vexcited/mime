@@ -1254,6 +1254,60 @@ static void load_inputs(Compiler *c)
     }
 }
 
+/* the clip or cull distances of the inputs, their count and a register's first one, in signature order. */
+static uint32_t input_distances(Compiler *c, uint32_t sv, uint32_t reg, uint32_t *base)
+{
+    uint32_t n = 0;
+    *base = 0;
+    for (uint32_t i = 0; i < c->info->inputs.count; i++) {
+        const DxbcSignatureElement *e = &c->info->inputs.elements[i];
+        if (e->system_value != sv)
+            continue;
+        if (e->reg == reg)
+            *base = n;
+        n += popcount(e->mask);
+    }
+    return n;
+}
+
+/*
+ * a system value each vertex brings: its clip or cull distances, or the
+ * point size, from the built ins of the stage before. the others, such
+ * as the layer, read as zeros, which vulkan does not pass between stages.
+ */
+static void load_vertex_system_value(Compiler *c, InputDecl *d, uint32_t reg, uint32_t vertices)
+{
+    uint32_t fptr = spv_type_pointer(&c->b, SpvStorageClassPrivate, c->t_f32);
+    uint32_t in_fptr = spv_type_pointer(&c->b, SpvStorageClassInput, c->t_f32);
+    uint8_t mask = d->mask | d->sv_mask;
+    uint32_t var = 0, base = 0;
+    if (d->sv == SV_CLIP_DISTANCE || d->sv == SV_CULL_DISTANCE) {
+        uint32_t count = input_distances(c, d->sv, reg, &base);
+        uint32_t which = d->sv == SV_CLIP_DISTANCE ? SpvBuiltInClipDistance : SpvBuiltInCullDistance;
+        spv_capability(&c->b, d->sv == SV_CLIP_DISTANCE ? SpvCapabilityClipDistance : SpvCapabilityCullDistance);
+        uint32_t distances = spv_type_array(&c->b, c->t_f32, count ? count : 1);
+        var = builtin(c, which, SpvStorageClassInput, spv_type_array(&c->b, distances, vertices));
+    } else if (d->sv == SV_MIME_POINT_SIZE) {
+        var = builtin(c, SpvBuiltInPointSize, SpvStorageClassInput, spv_type_array(&c->b, c->t_f32, vertices));
+    }
+    for (uint32_t v = 0; v < vertices; v++) {
+        uint32_t at[3] = {uconst(c, v), uconst(c, reg), 0};
+        for (uint32_t i = 0, k = 0; i < 4; i++) {
+            if (!(mask & (1 << i)))
+                continue;
+            uint32_t value = fconst(c, 0.0f);
+            if (var && d->sv == SV_MIME_POINT_SIZE) {
+                value = spv_load(&c->b, c->t_f32, spv_access(&c->b, in_fptr, var, at, 1));
+            } else if (var) {
+                uint32_t where[2] = {at[0], uconst(c, base + k++)};
+                value = spv_load(&c->b, c->t_f32, spv_access(&c->b, in_fptr, var, where, 2));
+            }
+            at[2] = uconst(c, i);
+            spv_store(&c->b, spv_access(&c->b, fptr, c->inputs, at, 3), value);
+        }
+    }
+}
+
 /*
  * the inputs of geometry, hull and domain shaders: an array per register,
  * a vec4 per vertex of the primitive or control point of the patch.
@@ -1277,8 +1331,8 @@ static void load_vertex_inputs(Compiler *c, uint32_t vertices)
             var = global(c, SpvStorageClassInput, array, 0);
             decorate1(c, var, SpvDecorationLocation, reg);
         } else {
-            fail(c, "per vertex input system value not implemented");
-            return;
+            load_vertex_system_value(c, d, reg, vertices);
+            continue;
         }
         d->var = var;
         for (uint32_t v = 0; v < vertices; v++) {
@@ -1619,10 +1673,16 @@ static void declare_captures(Compiler *c)
     c->captures = mime_alloc(c->alloc, o->so_count * sizeof(*c->captures));
     if (!c->captures)
         return;
-    uint32_t location = c->output_count;
-    for (uint32_t i = 0; i < c->info->outputs.count; i++)
-        if (c->info->outputs.elements[i].reg + 1 > location && c->info->outputs.elements[i].reg < 32)
-            location = c->info->outputs.elements[i].reg + 1;
+    /* past the registers that have locations: system values are built ins and take none. */
+    uint32_t location = 0;
+    for (uint32_t reg = 0; reg < c->output_count; reg++)
+        if (c->output_decl[reg].declared && c->output_decl[reg].sv == SV_UNDEFINED)
+            location = reg + 1;
+    for (uint32_t i = 0; i < c->info->outputs.count; i++) {
+        const DxbcSignatureElement *e = &c->info->outputs.elements[i];
+        if (!e->system_value && e->reg + 1 > location && e->reg < 32)
+            location = e->reg + 1;
+    }
     uint32_t offsets[4] = {0}, strides[4] = {0};
     for (uint32_t i = 0; i < o->so_count; i++)
         if (o->so[i].output_slot < 4)
