@@ -573,6 +573,10 @@ int dxil_math_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 85:
     case 86: {
         static const uint32_t DERIVATIVES[4] = {SpvOpDPdxCoarse, SpvOpDPdyCoarse, SpvOpDPdxFine, SpvOpDPdyFine};
+        if (!dxil_derivatives(c)) {
+            r = spv_const_null(&c->b, type);
+            break;
+        }
         spv_capability(&c->b, SpvCapabilityDerivativeControl);
         r = spv_op1(&c->b, DERIVATIVES[op - 83], type, arg(c, ins, 0));
         break;

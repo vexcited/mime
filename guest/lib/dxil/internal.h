@@ -213,6 +213,8 @@ typedef struct Compiler {
     Cfg *cfg;
     uint32_t kind;
     int native16;
+    /* a compute shader takes derivatives over quads of four consecutive threads. */
+    int compute_derivatives;
     const char *error;
 
     /* types. */
@@ -303,6 +305,8 @@ uint32_t dxil_value(Compiler *c, uint32_t id);
 Value *dxil_slot(Compiler *c, uint32_t id);
 /* a constant integer operand, or fallback when it is not constant. */
 uint64_t dxil_constant(Compiler *c, uint32_t id, uint64_t fallback);
+int dxil_is_constant(Compiler *c, uint32_t id);
+int dxil_derivatives(Compiler *c);
 int dxil_is_undef(Compiler *c, uint32_t id);
 /* a value converted to a type: a bitcast or a conversion of widths. */
 uint32_t dxil_convert(Compiler *c, uint32_t value, uint32_t from, uint32_t to);

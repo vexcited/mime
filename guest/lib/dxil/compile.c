@@ -346,6 +346,28 @@ uint64_t dxil_constant(Compiler *c, uint32_t id, uint64_t fallback)
     return fallback;
 }
 
+/*
+ * whether derivatives are there: in pixel shaders, and in compute shaders
+ * of whole quads when the device takes them, the quad four consecutive
+ * threads as in direct3d's compute shaders.
+ */
+int dxil_derivatives(Compiler *c)
+{
+    if (c->kind == KIND_PIXEL)
+        return 1;
+    uint32_t threads = c->thread_group[0] * c->thread_group[1] * c->thread_group[2];
+    if (c->kind != KIND_COMPUTE || !c->options->compute_derivatives || !threads || threads % 4)
+        return 0;
+    c->compute_derivatives = 1;
+    return 1;
+}
+
+int dxil_is_constant(Compiler *c, uint32_t id)
+{
+    const DxValue *v = dx_value(&c->m, c->f, id);
+    return v && (v->kind == DV_INT || v->kind == DV_NULL);
+}
+
 int dxil_is_undef(Compiler *c, uint32_t id)
 {
     const DxValue *v = dx_value(&c->m, c->f, id);

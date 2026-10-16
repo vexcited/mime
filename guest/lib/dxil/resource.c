@@ -877,11 +877,11 @@ static uint32_t const_offset(Compiler *c, const DxInst *ins, uint32_t first, uin
             parts[i] = spv_const(&c->b, t_i32(c), 0);
             continue;
         }
-        uint64_t k = dxil_constant(c, id, ~0ull);
-        if (k == ~0ull) {
+        if (!dxil_is_constant(c, id)) {
             constant = 0;
             continue;
         }
+        uint64_t k = dxil_constant(c, id, 0);
         any |= (uint32_t)k != 0;
         parts[i] = spv_const(&c->b, t_i32(c), (uint32_t)k);
     }
@@ -956,14 +956,14 @@ static int sample(Compiler *c, const DxInst *ins, uint32_t op)
     case 65: lod = dxil_fconst(c, 0.0f); break;
     default: break;
     }
-    /* implicit derivatives outside a pixel shader: the first level. */
-    int implicit = c->kind == KIND_PIXEL && !lod && !ddx;
+    /* implicit derivatives where there are none: the first level. */
+    int implicit = !lod && !ddx && dxil_derivatives(c);
     if (!implicit && !lod && !ddx) {
         lod = dxil_fconst(c, 0.0f);
         bias = 0;
     }
     uint32_t dynamic, offset = const_offset(c, ins, 8, h->r.kind, &dynamic);
-    if (dynamic)
+    if (dynamic && !c->options->nonconstant_offsets)
         return dxil_fail(c, "a sample with offsets that are not constant");
     uint32_t mask_at = count++;
     if (bias) {
@@ -982,6 +982,10 @@ static int sample(Compiler *c, const DxInst *ins, uint32_t op)
     if (offset) {
         operands |= SpvImageOperandsConstOffsetMask;
         w[count++] = offset;
+    } else if (dynamic) {
+        spv_capability(&c->b, SpvCapabilityImageGatherExtended);
+        operands |= SpvImageOperandsOffsetMask;
+        w[count++] = dynamic;
     }
     if (clamp && (implicit || ddx)) {
         spv_capability(&c->b, SpvCapabilityMinLod);
@@ -1027,10 +1031,11 @@ static int gather(Compiler *c, const DxInst *ins, uint32_t op)
     if (h->r.kind == RK_TEXTURE2D || h->r.kind == RK_TEXTURE2DARRAY) {
         for (uint32_t i = 0; i < 2; i++) {
             uint32_t id = ins->ops[8 + i];
-            uint64_t k = dxil_is_undef(c, id) ? 0 : dxil_constant(c, id, ~0ull);
-            if (k == ~0ull)
+            if (dxil_is_undef(c, id))
+                continue;
+            if (!dxil_is_constant(c, id))
                 constant = 0;
-            any |= k != 0;
+            any |= (uint32_t)dxil_constant(c, id, 0) != 0;
         }
         if (constant && any) {
             for (uint32_t i = 0; i < 2; i++)
@@ -1064,8 +1069,9 @@ static int texture_load(Compiler *c, const DxInst *ins)
     uint32_t type = image_type(c, h, 0, 0), scalar = sampled_type(c, h->r.comp);
     uint32_t image = load_image(c, h, type);
     uint32_t w[8], count = 0, operands = 0;
+    uint32_t coords = coord_count(h->r.kind) > 3 ? 3 : coord_count(h->r.kind);
     w[count++] = image;
-    w[count++] = gather_operands(c, ins, 4, coord_count(h->r.kind) > 3 ? 3 : coord_count(h->r.kind), c->t_u32);
+    w[count++] = gather_operands(c, ins, 4, coords, c->t_u32);
     uint32_t r;
     int ms = h->r.kind == RK_TEXTURE2DMS || h->r.kind == RK_TEXTURE2DMSARRAY;
     if (h->r.cls == CLASS_UAV) {
@@ -1083,10 +1089,22 @@ static int texture_load(Compiler *c, const DxInst *ins)
             operands |= SpvImageOperandsLodMask;
             w[count++] = dxil_is_undef(c, ins->ops[3]) ? dxil_uconst(c, 0) : dxil_value(c, ins->ops[3]);
         }
-        uint32_t dynamic, offset = ms ? 0 : const_offset(c, ins, 7, h->r.kind, &dynamic);
+        uint32_t dynamic = 0, offset = ms ? 0 : const_offset(c, ins, 7, h->r.kind, &dynamic);
         if (offset) {
             operands |= SpvImageOperandsConstOffsetMask;
             w[count++] = offset;
+        } else if (dynamic) {
+            /* a fetch's offset only moves its texel: added to the coordinates, past the array index. */
+            uint32_t n = spatial_count(h->r.kind), parts[3];
+            for (uint32_t i = 0; i < coords; i++) {
+                uint32_t k = coords == 1 ? w[1] : dxil_extract(c, c->t_u32, w[1], i);
+                if (i < n)
+                    k = spv_op2(&c->b, SpvOpIAdd, c->t_u32, k,
+                                spv_op1(&c->b, SpvOpBitcast, c->t_u32,
+                                        n == 1 ? dynamic : dxil_extract(c, t_i32(c), dynamic, i)));
+                parts[i] = k;
+            }
+            w[1] = coords == 1 ? parts[0] : dxil_vector(c, c->t_u32, parts, coords);
         }
         w[mask_at] = operands;
         r = spv_op(&c->b, SpvOpImageFetch, spv_type_vector(&c->b, scalar, 4), w, count);
@@ -1390,6 +1408,10 @@ static int calculate_lod(Compiler *c, const DxInst *ins)
     Handle *h = handle_of(c, ins->ops[2]), *s = handle_of(c, ins->ops[3]);
     if (!h || !s)
         return -1;
+    if (!dxil_derivatives(c)) {
+        dxil_set_plain(c, ins->value, dxil_fconst(c, 0.0f));
+        return 0;
+    }
     spv_capability(&c->b, SpvCapabilityImageQuery);
     uint32_t type;
     uint32_t si = sampled_image(c, h, s, 0, &type);

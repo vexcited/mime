@@ -779,7 +779,7 @@ struct D12Device {
     BOOL has_native16, has_waves, has_mesh;
     /* 64-bit atomics of typed views and of shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
-    BOOL has_barycentrics, has_maintenance8;
+    BOOL has_barycentrics, has_maintenance8, has_compute_derivatives;
     /* variable rate shading: direct3d's tier, the tile size of rate images, 4 pixel wide rates, rates with viewports. */
     UINT vrs_tier, vrs_tile;
     BOOL vrs_more_rates, vrs_viewports;

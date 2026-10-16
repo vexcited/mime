@@ -199,6 +199,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     WANT(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, device->has_atomic64 = TRUE)
     WANT(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, device->has_barycentrics = TRUE)
     WANT(VK_KHR_MAINTENANCE_8_EXTENSION_NAME, device->has_maintenance8 = TRUE)
+    WANT(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, device->has_compute_derivatives = TRUE)
     BOOL has_vrs = FALSE;
     WANT(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, has_vrs = TRUE)
     BOOL has_maintenance5 = FALSE;
@@ -286,8 +287,10 @@ static HRESULT create_vulkan_device(D12Device *device)
     VkPhysicalDeviceFragmentShadingRateFeaturesKHR vrs = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR,
         device->has_maintenance8 ? (void *)&maintenance8 : maintenance8.pNext};
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, has_vrs ? (void *)&vrs : vrs.pNext};
     VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                          has_vrs ? (void *)&vrs : vrs.pNext};
+                                          device->has_compute_derivatives ? (void *)&derivatives : derivatives.pNext};
     vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
 
     if (!robust.nullDescriptor || !db.descriptorBuffer || !mutable_type.mutableDescriptorType ||
@@ -355,6 +358,10 @@ static HRESULT create_vulkan_device(D12Device *device)
     device->has_shared_atomic64 = f12.shaderSharedInt64Atomics && f->shaderInt64;
     if (!barycentric.fragmentShaderBarycentric)
         device->has_barycentrics = FALSE;
+    /* direct3d's compute shaders take derivatives over quads of consecutive threads, vulkan's linear groups. */
+    derivatives.computeDerivativeGroupQuads = FALSE;
+    if (!derivatives.computeDerivativeGroupLinear)
+        device->has_compute_derivatives = FALSE;
     /* copies between depth or stencil and color images. */
     if (!maintenance8.maintenance8)
         device->has_maintenance8 = FALSE;

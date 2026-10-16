@@ -151,6 +151,10 @@ typedef struct DxbcCompileOptions {
      */
     const char *export_name;
     uint32_t handle_bits, increment_shift;
+    /* samples may take offsets that are not constant, as VK_KHR_maintenance8 allows. */
+    int nonconstant_offsets;
+    /* compute shaders take derivatives over quads, as VK_KHR_compute_shader_derivatives' linear groups. */
+    int compute_derivatives;
 } DxbcCompileOptions;
 
 /* what a slot of a stage holds, as the shader declares it. */

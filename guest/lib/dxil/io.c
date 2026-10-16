@@ -895,6 +895,11 @@ void dxil_execution_modes(Compiler *c, uint32_t main)
         uint32_t w[5] = {main, SpvExecutionModeLocalSize, c->thread_group[0] ? c->thread_group[0] : 1,
                          c->thread_group[1] ? c->thread_group[1] : 1, c->thread_group[2] ? c->thread_group[2] : 1};
         spv_emit(&c->b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, w, 5);
+        if (c->compute_derivatives) {
+            spv_capability(&c->b, SpvCapabilityComputeDerivativeGroupLinearNV);
+            spv_extension(&c->b, "SPV_KHR_compute_shader_derivatives");
+            mode(c, main, SpvExecutionModeDerivativeGroupLinearNV);
+        }
         break;
     }
     default: break;

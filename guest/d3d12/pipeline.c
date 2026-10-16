@@ -129,6 +129,8 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     options->root_signature = 1;
     options->root = bindings;
     options->root_count = count;
+    options->nonconstant_offsets = device->has_maintenance8;
+    options->compute_derivatives = device->has_compute_derivatives;
     DxbcShaderInfo info;
     int failed = dxil_is(bytecode, length) ? dxil_compile(bytecode, length, options, &info, &g_d12_allocator)
                                            : dxbc_compile(bytecode, length, options, &info, &g_d12_allocator);
