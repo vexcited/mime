@@ -121,10 +121,47 @@ static void set_surface(D9Surface **slot, D9Surface *s)
         D9Unbind(&old->base);
 }
 
+static void set_texture(D9Texture **slot, D9Texture *t)
+{
+    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = t ? &t->base : NULL;
+    if (old == r)
+        return;
+    D9Bind(r);
+    *slot = t;
+    D9Unbind(old);
+}
+
+static void set_buffer(D9Buffer **slot, D9Buffer *b)
+{
+    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = b ? &b->base : NULL;
+    if (old == r)
+        return;
+    D9Bind(r);
+    *slot = b;
+    D9Unbind(old);
+}
+
+/* what Reset and the device's end let go: every binding but the targets. */
+static void unbind_resources(D9Device *d)
+{
+    for (UINT i = 0; i < D9_MAX_SAMPLERS; i++)
+        set_texture(&d->textures[i], NULL);
+    for (UINT i = 0; i < D9_MAX_STREAMS; i++) {
+        set_buffer(&d->streams[i].buffer, NULL);
+        d->streams[i].offset = d->streams[i].stride = 0;
+        d->stream_freq[i] = 1;
+    }
+    set_buffer(&d->indices, NULL);
+    d->textures_dirty = ~0u;
+    d->streams_dirty = ~0u;
+    d->indices_dirty = TRUE;
+}
+
 /* ------------------------------------------------------------------ lifetime */
 
 static void destroy_device(D9Device *d)
 {
+    unbind_resources(d);
     for (UINT i = 0; i < D9_MAX_TARGETS; i++)
         set_surface(&d->targets[i], NULL);
     set_surface(&d->depth_stencil, NULL);
@@ -237,6 +274,8 @@ HRESULT D9CreateDevice(IDirect3D9Ex *d3d, BOOL ex, UINT adapter, D3DDEVTYPE type
     }
     set_surface(&d->targets[0], sc->back_buffers[0]);
     set_surface(&d->depth_stencil, d->auto_depth);
+    for (UINT i = 0; i < D9_MAX_STREAMS; i++)
+        d->stream_freq[i] = 1;
     default_state(d);
     *out = d;
     return D3D_OK;
@@ -446,6 +485,7 @@ static HRESULT reset(D9Device *d, D3DPRESENT_PARAMETERS *params, D3DDISPLAYMODEE
     for (UINT i = 0; i < D9_MAX_TARGETS; i++)
         set_surface(&d->targets[i], NULL);
     set_surface(&d->depth_stencil, NULL);
+    unbind_resources(d);
     d->context->lpVtbl->ClearState(d->context);
     D9DestroyImplicitSurface(d->auto_depth);
     d->auto_depth = NULL;
@@ -523,11 +563,29 @@ static void STDMETHODCALLTYPE device_get_gamma_ramp(IDirect3DDevice9Ex *iface, U
 
 /* ------------------------------------------------------------------ resources */
 
+static HRESULT create_texture(D9Device *d, D3DRESOURCETYPE type, UINT width, UINT height, UINT depth, UINT levels,
+                              DWORD usage, D3DFORMAT format, D3DPOOL pool, void **out, HANDLE *shared)
+{
+    if (!out)
+        return D3DERR_INVALIDCALL;
+    *out = NULL;
+    if ((shared && !d->ex) || (pool == D3DPOOL_MANAGED && d->ex))
+        return D3DERR_INVALIDCALL;
+    D9Texture *t;
+    D9Lock(d);
+    HRESULT hr = D9CreateTexture(d, type, width, height, depth, levels, usage, format, pool, &t);
+    D9Unlock(d);
+    if (SUCCEEDED(hr))
+        *out = &t->iface.base;
+    return hr;
+}
+
 static HRESULT STDMETHODCALLTYPE device_create_texture(IDirect3DDevice9Ex *iface, UINT width, UINT height,
                                                        UINT levels, DWORD usage, D3DFORMAT format, D3DPOOL pool,
                                                        IDirect3DTexture9 **texture, HANDLE *shared)
 {
-    return not_yet(impl(iface), "CreateTexture");
+    return create_texture(impl(iface), D3DRTYPE_TEXTURE, width, height, 1, levels, usage, format, pool,
+                          (void **)texture, shared);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_volume_texture(IDirect3DDevice9Ex *iface, UINT width, UINT height,
@@ -535,28 +593,47 @@ static HRESULT STDMETHODCALLTYPE device_create_volume_texture(IDirect3DDevice9Ex
                                                               D3DPOOL pool, IDirect3DVolumeTexture9 **texture,
                                                               HANDLE *shared)
 {
-    return not_yet(impl(iface), "CreateVolumeTexture");
+    return create_texture(impl(iface), D3DRTYPE_VOLUMETEXTURE, width, height, depth, levels, usage, format, pool,
+                          (void **)texture, shared);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_cube_texture(IDirect3DDevice9Ex *iface, UINT edge, UINT levels,
                                                             DWORD usage, D3DFORMAT format, D3DPOOL pool,
                                                             IDirect3DCubeTexture9 **texture, HANDLE *shared)
 {
-    return not_yet(impl(iface), "CreateCubeTexture");
+    return create_texture(impl(iface), D3DRTYPE_CUBETEXTURE, edge, edge, 1, levels, usage, format, pool,
+                          (void **)texture, shared);
+}
+
+static HRESULT create_buffer(D9Device *d, BOOL index, UINT length, DWORD usage, DWORD fvf, D3DFORMAT format,
+                             D3DPOOL pool, void **out, HANDLE *shared)
+{
+    if (!out)
+        return D3DERR_INVALIDCALL;
+    *out = NULL;
+    if ((shared && !d->ex) || (pool == D3DPOOL_MANAGED && d->ex))
+        return D3DERR_INVALIDCALL;
+    D9Buffer *b;
+    D9Lock(d);
+    HRESULT hr = D9CreateBuffer(d, index, length, usage, fvf, format, pool, &b);
+    D9Unlock(d);
+    if (SUCCEEDED(hr))
+        *out = &b->iface.vb;
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_vertex_buffer(IDirect3DDevice9Ex *iface, UINT length, DWORD usage,
                                                              DWORD fvf, D3DPOOL pool, IDirect3DVertexBuffer9 **buffer,
                                                              HANDLE *shared)
 {
-    return not_yet(impl(iface), "CreateVertexBuffer");
+    return create_buffer(impl(iface), FALSE, length, usage, fvf, D3DFMT_VERTEXDATA, pool, (void **)buffer, shared);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_index_buffer(IDirect3DDevice9Ex *iface, UINT length, DWORD usage,
                                                             D3DFORMAT format, D3DPOOL pool,
                                                             IDirect3DIndexBuffer9 **buffer, HANDLE *shared)
 {
-    return not_yet(impl(iface), "CreateIndexBuffer");
+    return create_buffer(impl(iface), TRUE, length, usage, 0, format, pool, (void **)buffer, shared);
 }
 
 static HRESULT create_surface(D9Device *d, UINT width, UINT height, D3DFORMAT format, DWORD usage, D3DPOOL pool,
@@ -642,7 +719,11 @@ static HRESULT STDMETHODCALLTYPE device_update_surface(IDirect3DDevice9Ex *iface
 static HRESULT STDMETHODCALLTYPE device_update_texture(IDirect3DDevice9Ex *iface, IDirect3DBaseTexture9 *source,
                                                        IDirect3DBaseTexture9 *dest)
 {
-    return not_yet(impl(iface), "UpdateTexture");
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    HRESULT hr = D9UpdateTexture(d, D9TextureFrom(source), D9TextureFrom(dest));
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_render_target_data(IDirect3DDevice9Ex *iface,
@@ -1141,19 +1222,51 @@ static HRESULT STDMETHODCALLTYPE device_get_clip_status(IDirect3DDevice9Ex *ifac
     return D3D_OK;
 }
 
+/* the sampler slots: 16 of pixel shaders, the displacement map's, then the 4 of vertex shaders. */
+static int sampler_slot(DWORD sampler)
+{
+    if (sampler < 16)
+        return sampler;
+    if (sampler >= D3DDMAPSAMPLER && sampler <= D3DVERTEXTEXTURESAMPLER3)
+        return 16 + sampler - D3DDMAPSAMPLER;
+    return -1;
+}
+
 static HRESULT STDMETHODCALLTYPE device_get_texture(IDirect3DDevice9Ex *iface, DWORD stage,
                                                     IDirect3DBaseTexture9 **texture)
 {
+    D9Device *d = impl(iface);
+    int slot = sampler_slot(stage);
     if (!texture)
         return D3DERR_INVALIDCALL;
     *texture = NULL;
+    if (slot < 0)
+        return D3DERR_INVALIDCALL;
+    D9Lock(d);
+    D9Texture *t = d->textures[slot];
+    if (t) {
+        *texture = &t->iface.base;
+        D9ResourceAddRef(&t->base);
+    }
+    D9Unlock(d);
     return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_texture(IDirect3DDevice9Ex *iface, DWORD stage,
                                                     IDirect3DBaseTexture9 *texture)
 {
-    return texture ? not_yet(impl(iface), "SetTexture") : D3D_OK;
+    D9Device *d = impl(iface);
+    int slot = sampler_slot(stage);
+    D9Texture *t = D9TextureFrom(texture);
+    if (slot < 0 || (t && (t->base.pool == D3DPOOL_SYSTEMMEM || t->base.pool == D3DPOOL_SCRATCH)))
+        return D3DERR_INVALIDCALL;
+    D9Lock(d);
+    if (d->textures[slot] != t) {
+        set_texture(&d->textures[slot], t);
+        d->textures_dirty |= 1u << slot;
+    }
+    D9Unlock(d);
+    return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_texture_stage_state(IDirect3DDevice9Ex *iface, DWORD stage,
@@ -1179,16 +1292,6 @@ static HRESULT STDMETHODCALLTYPE device_set_texture_stage_state(IDirect3DDevice9
     }
     D9Unlock(d);
     return D3D_OK;
-}
-
-/* the sampler slots: 16 of pixel shaders, the displacement map's, then the 4 of vertex shaders. */
-static int sampler_slot(DWORD sampler)
-{
-    if (sampler < 16)
-        return sampler;
-    if (sampler >= D3DDMAPSAMPLER && sampler <= D3DVERTEXTEXTURESAMPLER3)
-        return 16 + sampler - D3DDMAPSAMPLER;
-    return -1;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_sampler_state(IDirect3DDevice9Ex *iface, DWORD sampler,
@@ -1450,18 +1553,33 @@ static HRESULT STDMETHODCALLTYPE device_get_vs_constant_b(IDirect3DDevice9Ex *if
 static HRESULT STDMETHODCALLTYPE device_set_stream_source(IDirect3DDevice9Ex *iface, UINT stream,
                                                           IDirect3DVertexBuffer9 *buffer, UINT offset, UINT stride)
 {
-    if (stream >= D9_MAX_STREAMS)
+    D9Device *d = impl(iface);
+    D9Buffer *b = D9BufferFrom(buffer);
+    if (stream >= D9_MAX_STREAMS || (b && b->base.type != D3DRTYPE_VERTEXBUFFER))
         return D3DERR_INVALIDCALL;
-    return buffer ? not_yet(impl(iface), "SetStreamSource") : D3D_OK;
+    D9Lock(d);
+    set_buffer(&d->streams[stream].buffer, b);
+    d->streams[stream].offset = b ? offset : 0;
+    d->streams[stream].stride = b ? stride : 0;
+    d->streams_dirty |= 1u << stream;
+    D9Unlock(d);
+    return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_stream_source(IDirect3DDevice9Ex *iface, UINT stream,
                                                           IDirect3DVertexBuffer9 **buffer, UINT *offset, UINT *stride)
 {
+    D9Device *d = impl(iface);
     if (stream >= D9_MAX_STREAMS || !buffer || !offset || !stride)
         return D3DERR_INVALIDCALL;
-    *buffer = NULL;
-    *offset = *stride = 0;
+    D9Lock(d);
+    D9Buffer *b = d->streams[stream].buffer;
+    *buffer = b ? &b->iface.vb : NULL;
+    if (b)
+        D9ResourceAddRef(&b->base);
+    *offset = d->streams[stream].offset;
+    *stride = d->streams[stream].stride;
+    D9Unlock(d);
     return D3D_OK;
 }
 
@@ -1479,20 +1597,34 @@ static HRESULT STDMETHODCALLTYPE device_get_stream_source_freq(IDirect3DDevice9E
     D9Device *d = impl(iface);
     if (stream >= D9_MAX_STREAMS || !setting)
         return D3DERR_INVALIDCALL;
-    *setting = d->stream_freq[stream] ? d->stream_freq[stream] : 1;
+    *setting = d->stream_freq[stream];
     return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_indices(IDirect3DDevice9Ex *iface, IDirect3DIndexBuffer9 *buffer)
 {
-    return buffer ? not_yet(impl(iface), "SetIndices") : D3D_OK;
+    D9Device *d = impl(iface);
+    D9Buffer *b = D9BufferFrom(buffer);
+    if (b && b->base.type != D3DRTYPE_INDEXBUFFER)
+        return D3DERR_INVALIDCALL;
+    D9Lock(d);
+    set_buffer(&d->indices, b);
+    d->indices_dirty = TRUE;
+    D9Unlock(d);
+    return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_indices(IDirect3DDevice9Ex *iface, IDirect3DIndexBuffer9 **buffer)
 {
+    D9Device *d = impl(iface);
     if (!buffer)
         return D3DERR_INVALIDCALL;
-    *buffer = NULL;
+    D9Lock(d);
+    D9Buffer *b = d->indices;
+    *buffer = b ? &b->iface.ib : NULL;
+    if (b)
+        D9ResourceAddRef(&b->base);
+    D9Unlock(d);
     return D3D_OK;
 }
 

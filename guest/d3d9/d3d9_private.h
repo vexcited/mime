@@ -127,6 +127,15 @@ struct D9Surface {
     HBITMAP bitmap;
 };
 
+/* a level of a volume texture, whose references are its texture's. */
+typedef struct D9Volume {
+    IDirect3DVolume9 iface;
+    D9Texture *container;
+    MimePrivateData data;
+    UINT level;
+    UINT width, height, depth;
+} D9Volume;
+
 struct D9Texture {
     union {
         IDirect3DBaseTexture9 base;
@@ -136,14 +145,48 @@ struct D9Texture {
     } iface;
     D9Resource base;
     ID3D11Resource *resource;
-    UINT width, height, depth, levels, faces;
+    UINT width, height, depth, faces;
+    /* the levels programs see, and those of the d3d11 texture, more when it makes its mips. */
+    UINT levels, d3d_levels;
     DWORD lod;
     D3DTEXTUREFILTERTYPE autogen_filter;
     BOOL autogen_dirty;
+    /* each face's levels in turn. */
     D9Surface **surfaces;
+    D9Volume **volumes;
     D9Memory *memory;
     ID3D11ShaderResourceView *srv, *srv_srgb;
 };
+
+typedef struct D9Buffer {
+    union {
+        IDirect3DVertexBuffer9 vb;
+        IDirect3DIndexBuffer9 ib;
+    } iface;
+    D9Resource base;
+    ID3D11Buffer *buffer;
+    UINT size;
+    DWORD fvf;
+    /* the bytes of buffers that are not mapped, and the range locks changed. */
+    BYTE *memory;
+    UINT dirty_lo, dirty_hi;
+    BYTE *mapped_bytes;
+    UINT locks;
+    BOOL mapped_once;
+    /* drawn with since it was last discarded. */
+    BOOL used;
+} D9Buffer;
+
+D9Texture *D9TextureFrom(IDirect3DBaseTexture9 *iface);
+HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT height, UINT depth, UINT levels,
+                        DWORD usage, D3DFORMAT format, D3DPOOL pool, D9Texture **out);
+ID3D11ShaderResourceView *D9TextureSrv(D9Texture *texture, BOOL srgb);
+void D9TexturePrepare(D9Texture *texture);
+HRESULT D9UpdateTexture(D9Device *device, D9Texture *source, D9Texture *dest);
+void D9UploadLevel(D9Texture *texture, UINT sub, UINT index, const RECT *rect);
+D9Buffer *D9BufferFrom(void *iface);
+HRESULT D9CreateBuffer(D9Device *device, BOOL index, UINT size, DWORD usage, DWORD fvf, D3DFORMAT format,
+                       D3DPOOL pool, D9Buffer **out);
 
 /* ------------------------------------------------------------------ the swap chain */
 
@@ -207,6 +250,12 @@ struct D9Device {
     UINT swapchain_count;
     BOOL in_scene;
 
+    D9Texture *textures[D9_MAX_SAMPLERS];
+    struct {
+        D9Buffer *buffer;
+        UINT offset, stride;
+    } streams[D9_MAX_STREAMS];
+    D9Buffer *indices;
     D9Surface *targets[D9_MAX_TARGETS];
     D9Surface *depth_stencil;
     D9Surface *auto_depth;
@@ -231,7 +280,8 @@ struct D9Device {
     BOOL ps_b[16];
     /* what changed since the last draw. */
     BOOL targets_dirty, viewport_dirty, states_dirty, ff_dirty, vs_consts_dirty, ps_consts_dirty;
-    UINT samplers_dirty;
+    UINT samplers_dirty, textures_dirty, streams_dirty;
+    BOOL indices_dirty;
     HCURSOR cursor;
     BOOL cursor_shown;
     BOOL software_vertex_processing;

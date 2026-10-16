@@ -128,7 +128,7 @@ static HRESULT ensure_memory(D9Surface *s)
 
 UINT D9SurfaceSubresource(const D9Surface *s)
 {
-    return s->container ? s->face * s->container->levels + s->level : 0;
+    return s->container ? s->face * s->container->d3d_levels + s->level : 0;
 }
 
 /* the surface's texels from the gpu, resolved first when multisampled. */
@@ -518,6 +518,7 @@ HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT for
         hr = D9AllocMemory(s->memory, f, width, height, 1);
     if (FAILED(hr)) {
         destroy(s);
+        device->iface.lpVtbl->Release(&device->iface);
         return hr == E_OUTOFMEMORY ? hr : D3DERR_OUTOFVIDEOMEMORY;
     }
     *out = s;
