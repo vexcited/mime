@@ -417,6 +417,13 @@ static void set_root_words(D12CommandList *list, BOOL compute, UINT index, UINT 
     if (at + count > 64)
         return;
     memcpy(&s->push[at], data, count * 4);
+    if (s->push_hi <= s->push_lo) {
+        s->push_lo = at;
+        s->push_hi = at + count;
+    } else {
+        s->push_lo = D12_MIN(s->push_lo, at);
+        s->push_hi = D12_MAX(s->push_hi, at + count);
+    }
     s->push_dirty = TRUE;
 }
 
@@ -485,9 +492,18 @@ static void push_root(D12CommandList *list, BOOL compute)
     D12RootState *s = root_state(list, compute);
     if (!s->root || !s->root->push_size || (list->pushed_compute == compute && !s->push_dirty))
         return;
-    vk_of(list)->vkCmdPushConstants(list->cmd, s->root->layout, VK_SHADER_STAGE_ALL, 0, s->root->push_size, s->push);
+    /* push constants another layout or the other bind point wrote go again whole, otherwise the words changed. */
+    UINT lo = 0, hi = s->root->push_size;
+    if (list->pushed_compute == compute && s->push_hi > s->push_lo) {
+        lo = s->push_lo * 4;
+        hi = D12_MIN(s->push_hi * 4, s->root->push_size);
+    }
+    if (hi > lo)
+        vk_of(list)->vkCmdPushConstants(list->cmd, s->root->layout, VK_SHADER_STAGE_ALL, lo, hi - lo,
+                                        (const BYTE *)s->push + lo);
     list->pushed_compute = compute;
     s->push_dirty = FALSE;
+    s->push_lo = s->push_hi = 0;
 }
 
 /* ------------------------------------------------------------------ fixed function state */

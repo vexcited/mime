@@ -700,6 +700,8 @@ typedef struct D12RootState {
     D12RootSignature *root;
     UINT push[64];
     BOOL push_dirty;
+    /* the words changed since the last push, which alone go again while the push constants stay ours. */
+    UINT push_lo, push_hi;
     BOOL sets_dirty;
 } D12RootState;
 
