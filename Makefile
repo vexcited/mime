@@ -621,8 +621,9 @@ DXBC_READER_SRC := guest/lib/dxbc/container.c guest/lib/dxbc/reader.c
 EXTRA_OBJ_d3dcompiler_47 := $(patsubst %.c,$(OBJ)/user/%.o,$(DXBC_READER_SRC))
 X64_EXTRA_OBJ_d3dcompiler_47 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DXBC_READER_SRC))
 
-EXTRA_OBJ_d3d9 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC))
-X64_EXTRA_OBJ_d3d9 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC))
+# d3d9 writes dxbc containers, checksummed as d3d11 reads them.
+EXTRA_OBJ_d3d9 := $(patsubst %.c,$(OBJ)/user/%.o,$(DX_LIB_SRC) guest/lib/dxbc/container.c)
+X64_EXTRA_OBJ_d3d9 := $(patsubst %.c,$(X64_OBJ)/%.o,$(DX_LIB_SRC) guest/lib/dxbc/container.c)
 
 # d3d10 reads containers; d3d10_1 makes devices as d3d10 does.
 EXTRA_OBJ_d3d10 := $(OBJ)/user/guest/lib/dxbc/container.o

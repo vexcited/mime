@@ -1119,6 +1119,13 @@ static uint32_t system_input(Compiler *c, uint32_t sv, Kind *kind)
         uint32_t base = spv_load(&c->b, c->t_i32, builtin(c, SpvBuiltInBaseInstance, SpvStorageClassInput, c->t_i32));
         return spv_op1(&c->b, SpvOpBitcast, c->t_u32, spv_op2(&c->b, SpvOpISub, c->t_i32, index, base));
     }
+    case SV_MIME_POINT_COORD: {
+        *kind = K_FLOAT;
+        uint32_t v2 = c->t_vec[K_FLOAT][2];
+        uint32_t v = spv_load(&c->b, v2, builtin(c, SpvBuiltInPointCoord, SpvStorageClassInput, v2));
+        uint32_t parts[4] = {extract(c, c->t_f32, v, 0), extract(c, c->t_f32, v, 1), fconst(c, 0.0f), fconst(c, 1.0f)};
+        return spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_FLOAT][4], parts, 4);
+    }
     case SV_IS_FRONT_FACE: {
         uint32_t v = spv_load(&c->b, c->t_bool, builtin(c, SpvBuiltInFrontFacing, SpvStorageClassInput, c->t_bool));
         return spv_op3(&c->b, SpvOpSelect, c->t_u32, v, uconst(c, ~0u), uconst(c, 0));
@@ -1178,7 +1185,7 @@ static void load_inputs(Compiler *c)
             uint32_t value = system_input(c, d->sv, &kind);
             uint32_t index = uconst(c, reg);
             uint32_t base = spv_access(&c->b, vptr, c->inputs, &index, 1);
-            if (d->sv == SV_POSITION) {
+            if (d->sv == SV_POSITION || d->sv == SV_MIME_POINT_COORD) {
                 spv_store(&c->b, base, value);
             } else {
                 value = bitcast(c, value, kind, K_FLOAT, 1);
@@ -1538,6 +1545,10 @@ static void store_outputs(Compiler *c)
                 }
             break;
         }
+        case SV_MIME_POINT_SIZE:
+            spv_store(&c->b, builtin(c, SpvBuiltInPointSize, SpvStorageClassOutput, c->t_f32),
+                      extract(c, c->t_f32, value, 0));
+            break;
         case SV_RENDER_TARGET_ARRAY_INDEX:
         case SV_VIEWPORT_ARRAY_INDEX: {
             uint32_t which = d->sv == SV_RENDER_TARGET_ARRAY_INDEX ? SpvBuiltInLayer : SpvBuiltInViewportIndex;

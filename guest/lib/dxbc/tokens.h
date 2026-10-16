@@ -339,6 +339,9 @@ enum DxbcSystemValue {
     SV_DEPTH_LESS_EQUAL = 68,
     SV_STENCIL_REF = 69,
     SV_INNER_COVERAGE = 70,
+    /* d3d9.dll's own: a vertex's point size, and the coordinates within a point sprite. */
+    SV_MIME_POINT_SIZE = 0x4D50,
+    SV_MIME_POINT_COORD = 0x4D51,
 };
 
 /* the pixel shader interpolation modes of dcl_input_ps. */

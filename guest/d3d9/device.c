@@ -108,17 +108,23 @@ static void default_state(D9Device *d)
     d->scissor = (RECT){0, 0, rt ? (LONG)rt->width : 0, rt ? (LONG)rt->height : 0};
 }
 
+/* what holds a surface's binds: its texture for levels, itself otherwise. */
+static D9Resource *bind_target(D9Surface *s)
+{
+    if (!s)
+        return NULL;
+    return s->container ? &s->container->base : &s->base;
+}
+
 /* binds a surface as the device holds them, the old one let go. */
 static void set_surface(D9Surface **slot, D9Surface *s)
 {
     if (*slot == s)
         return;
-    if (s)
-        D9Bind(&s->base);
+    D9Bind(bind_target(s));
     D9Surface *old = *slot;
     *slot = s;
-    if (old)
-        D9Unbind(&old->base);
+    D9Unbind(bind_target(old));
 }
 
 static void set_texture(D9Texture **slot, D9Texture *t)
@@ -141,9 +147,46 @@ static void set_buffer(D9Buffer **slot, D9Buffer *b)
     D9Unbind(old);
 }
 
+void D9DeviceSetStream(D9Device *d, UINT stream, D9Buffer *b, UINT offset, UINT stride)
+{
+    set_buffer(&d->streams[stream].buffer, b);
+    d->streams[stream].offset = b ? offset : 0;
+    d->streams[stream].stride = b ? stride : 0;
+    d->streams_dirty |= 1u << stream;
+}
+
+void D9DeviceSetIndices(D9Device *d, D9Buffer *b)
+{
+    set_buffer(&d->indices, b);
+    d->indices_dirty = TRUE;
+}
+
+static void set_shader(D9Shader **slot, D9Shader *s)
+{
+    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = s ? &s->base : NULL;
+    if (old == r)
+        return;
+    D9Bind(r);
+    *slot = s;
+    D9Unbind(old);
+}
+
+static void set_decl(D9VertexDecl **slot, D9VertexDecl *v)
+{
+    D9Resource *old = *slot ? &(*slot)->base : NULL, *r = v ? &v->base : NULL;
+    if (old == r)
+        return;
+    D9Bind(r);
+    *slot = v;
+    D9Unbind(old);
+}
+
 /* what Reset and the device's end let go: every binding but the targets. */
 static void unbind_resources(D9Device *d)
 {
+    set_shader(&d->vs, NULL);
+    set_shader(&d->ps, NULL);
+    set_decl(&d->decl, NULL);
     for (UINT i = 0; i < D9_MAX_SAMPLERS; i++)
         set_texture(&d->textures[i], NULL);
     for (UINT i = 0; i < D9_MAX_STREAMS; i++) {
@@ -162,6 +205,10 @@ static void unbind_resources(D9Device *d)
 static void destroy_device(D9Device *d)
 {
     unbind_resources(d);
+    for (UINT i = 0; i < d->fvf_decl_count; i++)
+        D9Unbind(&d->fvf_decls[i]->base);
+    HeapFree(GetProcessHeap(), 0, d->fvf_decls);
+    D9FreeDraws(d);
     for (UINT i = 0; i < D9_MAX_TARGETS; i++)
         set_surface(&d->targets[i], NULL);
     set_surface(&d->depth_stencil, NULL);
@@ -256,7 +303,7 @@ HRESULT D9CreateDevice(IDirect3D9Ex *d3d, BOOL ex, UINT adapter, D3DDEVTYPE type
         d->factory = (IDXGIFactory *)D9Factory();
         d->factory->lpVtbl->AddRef(d->factory);
     }
-    if (FAILED(hr) || !d->d3d11 || !d->mime || !d->context) {
+    if (FAILED(hr) || !d->d3d11 || !d->mime || !d->context || FAILED(D9InitDraws(d))) {
         destroy_device(d);
         return D3DERR_NOTAVAILABLE;
     }
@@ -486,7 +533,7 @@ static HRESULT reset(D9Device *d, D3DPRESENT_PARAMETERS *params, D3DDISPLAYMODEE
         set_surface(&d->targets[i], NULL);
     set_surface(&d->depth_stencil, NULL);
     unbind_resources(d);
-    d->context->lpVtbl->ClearState(d->context);
+    D9FreeDraws(d);
     D9DestroyImplicitSurface(d->auto_depth);
     d->auto_depth = NULL;
     HRESULT hr = D9ResetSwapChain(sc, params);
@@ -497,6 +544,8 @@ static HRESULT reset(D9Device *d, D3DPRESENT_PARAMETERS *params, D3DDISPLAYMODEE
     set_surface(&d->targets[0], sc->back_buffers[0]);
     set_surface(&d->depth_stencil, d->auto_depth);
     default_state(d);
+    if (FAILED(D9InitDraws(d)))
+        return D3DERR_DEVICELOST;
     return D3D_OK;
 }
 
@@ -841,6 +890,8 @@ static HRESULT STDMETHODCALLTYPE device_set_render_target(IDirect3DDevice9Ex *if
     if (!index) {
         d->viewport = (D3DVIEWPORT9){0, 0, s->width, s->height, 0.0f, 1.0f};
         d->scissor = (RECT){0, 0, (LONG)s->width, (LONG)s->height};
+        d->viewport_dirty = TRUE;
+        d->internal_dirty = TRUE;
     }
     d->targets_dirty = TRUE;
     D9Unlock(d);
@@ -1041,6 +1092,7 @@ static HRESULT STDMETHODCALLTYPE device_set_viewport(IDirect3DDevice9Ex *iface, 
     D9Lock(d);
     d->viewport = *viewport;
     d->viewport_dirty = TRUE;
+    d->internal_dirty = TRUE;
     D9Unlock(d);
     return D3D_OK;
 }
@@ -1402,20 +1454,32 @@ static float STDMETHODCALLTYPE device_get_npatch_mode(IDirect3DDevice9Ex *iface)
 static HRESULT STDMETHODCALLTYPE device_draw_primitive(IDirect3DDevice9Ex *iface, D3DPRIMITIVETYPE type, UINT start,
                                                        UINT count)
 {
-    return not_yet(impl(iface), "DrawPrimitive");
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    HRESULT hr = D9Draw(d, type, start, count);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_draw_indexed_primitive(IDirect3DDevice9Ex *iface, D3DPRIMITIVETYPE type,
                                                                INT base, UINT min_index, UINT vertices, UINT start,
                                                                UINT count)
 {
-    return not_yet(impl(iface), "DrawIndexedPrimitive");
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    HRESULT hr = D9DrawIndexed(d, type, base, start, count);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_draw_primitive_up(IDirect3DDevice9Ex *iface, D3DPRIMITIVETYPE type,
                                                           UINT count, const void *data, UINT stride)
 {
-    return not_yet(impl(iface), "DrawPrimitiveUP");
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    HRESULT hr = D9DrawUP(d, type, count, data, stride);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_draw_indexed_primitive_up(IDirect3DDevice9Ex *iface, D3DPRIMITIVETYPE type,
@@ -1423,7 +1487,11 @@ static HRESULT STDMETHODCALLTYPE device_draw_indexed_primitive_up(IDirect3DDevic
                                                                   const void *indices, D3DFORMAT index_format,
                                                                   const void *data, UINT stride)
 {
-    return not_yet(impl(iface), "DrawIndexedPrimitiveUP");
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    HRESULT hr = D9DrawIndexedUP(d, type, min_index, vertices, count, indices, index_format, data, stride);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_process_vertices(IDirect3DDevice9Ex *iface, UINT source, UINT dest,
@@ -1437,54 +1505,125 @@ static HRESULT STDMETHODCALLTYPE device_create_vertex_declaration(IDirect3DDevic
                                                                   const D3DVERTEXELEMENT9 *elements,
                                                                   IDirect3DVertexDeclaration9 **declaration)
 {
-    return not_yet(impl(iface), "CreateVertexDeclaration");
+    D9Device *d = impl(iface);
+    if (!elements || !declaration)
+        return D3DERR_INVALIDCALL;
+    *declaration = NULL;
+    D9VertexDecl *v;
+    HRESULT hr = D9CreateVertexDecl(d, elements, 0, &v);
+    if (SUCCEEDED(hr))
+        *declaration = &v->iface;
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_vertex_declaration(IDirect3DDevice9Ex *iface,
                                                                IDirect3DVertexDeclaration9 *declaration)
 {
-    return declaration ? not_yet(impl(iface), "SetVertexDeclaration") : D3D_OK;
+    D9Device *d = impl(iface);
+    D9Lock(d);
+    set_decl(&d->decl, D9VertexDeclFrom(declaration));
+    D9Unlock(d);
+    return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_vertex_declaration(IDirect3DDevice9Ex *iface,
                                                                IDirect3DVertexDeclaration9 **declaration)
 {
+    D9Device *d = impl(iface);
     if (!declaration)
         return D3DERR_INVALIDCALL;
-    *declaration = NULL;
+    D9Lock(d);
+    *declaration = d->decl ? &d->decl->iface : NULL;
+    if (d->decl)
+        D9ResourceAddRef(&d->decl->base);
+    D9Unlock(d);
     return D3D_OK;
 }
 
+/* SetFVF sets the declaration of the format, made once for the device's life. */
 static HRESULT STDMETHODCALLTYPE device_set_fvf(IDirect3DDevice9Ex *iface, DWORD fvf)
 {
-    impl(iface)->fvf = fvf;
-    return D3D_OK;
+    D9Device *d = impl(iface);
+    if (!fvf)
+        return D3D_OK;
+    D9Lock(d);
+    D9VertexDecl *v = NULL;
+    for (UINT i = 0; i < d->fvf_decl_count && !v; i++)
+        if (d->fvf_decls[i]->fvf == fvf)
+            v = d->fvf_decls[i];
+    HRESULT hr = D3D_OK;
+    if (!v) {
+        D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH + 1];
+        D9FvfElements(fvf, elements);
+        D9VertexDecl **list = d->fvf_decls ? HeapReAlloc(GetProcessHeap(), 0, d->fvf_decls,
+                                                         (d->fvf_decl_count + 1) * sizeof(*list))
+                                           : HeapAlloc(GetProcessHeap(), 0, sizeof(*list));
+        hr = list ? D9CreateVertexDecl(d, elements, fvf, &v) : E_OUTOFMEMORY;
+        if (list)
+            d->fvf_decls = list;
+        if (SUCCEEDED(hr)) {
+            /* the device's own reference must not keep it alive. */
+            d->fvf_decls[d->fvf_decl_count++] = v;
+            D9Bind(&v->base);
+            D9ResourceRelease(&v->base);
+        }
+    }
+    if (v)
+        set_decl(&d->decl, v);
+    D9Unlock(d);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_fvf(IDirect3DDevice9Ex *iface, DWORD *fvf)
 {
+    D9Device *d = impl(iface);
     if (!fvf)
         return D3DERR_INVALIDCALL;
-    *fvf = impl(iface)->fvf;
+    *fvf = d->decl ? d->decl->fvf : 0;
     return D3D_OK;
+}
+
+static HRESULT create_shader(D9Device *d, const DWORD *code, BOOL pixel, void **out)
+{
+    if (!code || !out)
+        return D3DERR_INVALIDCALL;
+    *out = NULL;
+    D9Shader *s;
+    HRESULT hr = D9CreateShader(d, code, pixel, &s);
+    if (SUCCEEDED(hr))
+        *out = &s->iface.vs;
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_vertex_shader(IDirect3DDevice9Ex *iface, const DWORD *code,
                                                              IDirect3DVertexShader9 **shader)
 {
-    return not_yet(impl(iface), "CreateVertexShader");
+    return create_shader(impl(iface), code, FALSE, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_vertex_shader(IDirect3DDevice9Ex *iface, IDirect3DVertexShader9 *shader)
 {
-    return shader ? not_yet(impl(iface), "SetVertexShader") : D3D_OK;
+    D9Device *d = impl(iface);
+    D9Shader *s = D9ShaderFrom(shader);
+    if (s && s->info.pixel)
+        return D3DERR_INVALIDCALL;
+    D9Lock(d);
+    set_shader(&d->vs, s);
+    d->vs_consts_dirty = TRUE;
+    D9Unlock(d);
+    return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_vertex_shader(IDirect3DDevice9Ex *iface, IDirect3DVertexShader9 **shader)
 {
+    D9Device *d = impl(iface);
     if (!shader)
         return D3DERR_INVALIDCALL;
-    *shader = NULL;
+    D9Lock(d);
+    *shader = d->vs ? &d->vs->iface.vs : NULL;
+    if (d->vs)
+        D9ResourceAddRef(&d->vs->base);
+    D9Unlock(d);
     return D3D_OK;
 }
 
@@ -1558,10 +1697,7 @@ static HRESULT STDMETHODCALLTYPE device_set_stream_source(IDirect3DDevice9Ex *if
     if (stream >= D9_MAX_STREAMS || (b && b->base.type != D3DRTYPE_VERTEXBUFFER))
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    set_buffer(&d->streams[stream].buffer, b);
-    d->streams[stream].offset = b ? offset : 0;
-    d->streams[stream].stride = b ? stride : 0;
-    d->streams_dirty |= 1u << stream;
+    D9DeviceSetStream(d, stream, b, offset, stride);
     D9Unlock(d);
     return D3D_OK;
 }
@@ -1608,8 +1744,7 @@ static HRESULT STDMETHODCALLTYPE device_set_indices(IDirect3DDevice9Ex *iface, I
     if (b && b->base.type != D3DRTYPE_INDEXBUFFER)
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    set_buffer(&d->indices, b);
-    d->indices_dirty = TRUE;
+    D9DeviceSetIndices(d, b);
     D9Unlock(d);
     return D3D_OK;
 }
@@ -1631,19 +1766,32 @@ static HRESULT STDMETHODCALLTYPE device_get_indices(IDirect3DDevice9Ex *iface, I
 static HRESULT STDMETHODCALLTYPE device_create_pixel_shader(IDirect3DDevice9Ex *iface, const DWORD *code,
                                                             IDirect3DPixelShader9 **shader)
 {
-    return not_yet(impl(iface), "CreatePixelShader");
+    return create_shader(impl(iface), code, TRUE, (void **)shader);
 }
 
 static HRESULT STDMETHODCALLTYPE device_set_pixel_shader(IDirect3DDevice9Ex *iface, IDirect3DPixelShader9 *shader)
 {
-    return shader ? not_yet(impl(iface), "SetPixelShader") : D3D_OK;
+    D9Device *d = impl(iface);
+    D9Shader *s = D9ShaderFrom(shader);
+    if (s && !s->info.pixel)
+        return D3DERR_INVALIDCALL;
+    D9Lock(d);
+    set_shader(&d->ps, s);
+    d->ps_consts_dirty = TRUE;
+    D9Unlock(d);
+    return D3D_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_pixel_shader(IDirect3DDevice9Ex *iface, IDirect3DPixelShader9 **shader)
 {
+    D9Device *d = impl(iface);
     if (!shader)
         return D3DERR_INVALIDCALL;
-    *shader = NULL;
+    D9Lock(d);
+    *shader = d->ps ? &d->ps->iface.ps : NULL;
+    if (d->ps)
+        D9ResourceAddRef(&d->ps->base);
+    D9Unlock(d);
     return D3D_OK;
 }
 

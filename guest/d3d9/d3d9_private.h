@@ -226,6 +226,22 @@ void D9ForgetSwapChain(D9Device *device, D9SwapChain *swapchain);
 #define D9_VS_CONSTANTS 256
 #define D9_PS_CONSTANTS 224
 
+typedef struct D9Ring {
+    ID3D11Buffer *buffer;
+    UINT size, used;
+} D9Ring;
+
+typedef struct D9StateEntry {
+    BYTE desc[sizeof(D3D11_BLEND_DESC)];
+    UINT size;
+    void *object;
+} D9StateEntry;
+
+typedef struct D9StateCache {
+    D9StateEntry entries[64];
+    UINT count, next;
+} D9StateCache;
+
 typedef struct D9Light {
     DWORD index;
     BOOL enabled;
@@ -284,6 +300,26 @@ struct D9Device {
     BOOL indices_dirty;
     HCURSOR cursor;
     BOOL cursor_shown;
+
+    struct D9Shader *vs, *ps;
+    struct D9VertexDecl *decl;
+    /* the declarations of the flexible vertex formats SetFVF set, kept for the device's life. */
+    struct D9VertexDecl **fvf_decls;
+    UINT fvf_decl_count;
+    /* what draws use: constant buffers of each stage, floats, integers and d3d9.dll's own, rings and zeros. */
+    ID3D11Buffer *cbs[2][3];
+    ID3D11Buffer *zeros;
+    D9Ring up_vertices, up_indices;
+    D9StateCache blend_cache, depth_cache, raster_cache, sampler_cache;
+    /* what the context has bound, so draws set only what changed. */
+    struct D9Variant *bound_vs, *bound_ps;
+    ID3D11InputLayout *bound_layout;
+    D3D11_PRIMITIVE_TOPOLOGY bound_topology;
+    ID3D11ShaderResourceView *bound_srvs[D9_MAX_SAMPLERS];
+    ID3D11SamplerState *bound_samplers[D9_MAX_SAMPLERS];
+    BOOL bound_srgb;
+    BOOL internal_dirty;
+    BOOL warned_fixed;
     BOOL software_vertex_processing;
     float npatch_segments;
     UINT palette;
@@ -296,6 +332,17 @@ HRESULT D9CreateDevice(IDirect3D9Ex *d3d, BOOL ex, UINT adapter, D3DDEVTYPE type
                        D3DPRESENT_PARAMETERS *params, D3DDISPLAYMODEEX *mode, D9Device **out);
 void D9Lock(D9Device *device);
 void D9Unlock(D9Device *device);
+HRESULT D9InitDraws(D9Device *device);
+void D9FreeDraws(D9Device *device);
+void D9ResetBindings(D9Device *device);
+UINT D9VertexCount(D3DPRIMITIVETYPE type, UINT primitives);
+HRESULT D9Draw(D9Device *device, D3DPRIMITIVETYPE type, UINT start, UINT primitives);
+HRESULT D9DrawIndexed(D9Device *device, D3DPRIMITIVETYPE type, INT base, UINT start, UINT primitives);
+HRESULT D9DrawUP(D9Device *device, D3DPRIMITIVETYPE type, UINT primitives, const void *data, UINT stride);
+HRESULT D9DrawIndexedUP(D9Device *device, D3DPRIMITIVETYPE type, UINT min_index, UINT vertices, UINT primitives,
+                        const void *indices, D3DFORMAT format, const void *data, UINT stride);
+void D9DeviceSetStream(D9Device *device, UINT stream, struct D9Buffer *buffer, UINT offset, UINT stride);
+void D9DeviceSetIndices(D9Device *device, struct D9Buffer *buffer);
 /* the caps of the adapter, filled as for the device. */
 void D9FillCaps(UINT adapter, D3DCAPS9 *caps);
 
@@ -338,6 +385,297 @@ void D9DestroyImplicitSurface(D9Surface *surface);
 HRESULT D9SurfaceMakeTexture(D9Surface *surface);
 void D9FreeMemory(D9Memory *memory);
 HRESULT D9AllocMemory(D9Memory *memory, const D9Format *f, UINT width, UINT height, UINT depth);
+
+/* ------------------------------------------------------------------ dxbc */
+
+typedef struct D9Code {
+    DWORD *words;
+    UINT count, capacity;
+    BOOL failed;
+} D9Code;
+
+/* an operand as its tokens. */
+typedef struct D9Opnd {
+    DWORD words[10];
+    UINT count;
+} D9Opnd;
+
+typedef struct D9SigElement {
+    const char *name;
+    UINT index;
+    UINT system_value;
+    UINT component_type;
+    UINT reg;
+    BYTE mask, used;
+} D9SigElement;
+
+typedef struct D9Signature {
+    UINT count;
+    D9SigElement elements[40];
+} D9Signature;
+
+void D9CodePut(D9Code *c, DWORD word);
+void D9CodeFree(D9Code *c);
+D9Opnd D9Dst(UINT type, UINT reg, UINT mask);
+D9Opnd D9Src(UINT type, UINT reg, UINT swizzle);
+D9Opnd D9Temp(UINT reg, UINT mask);
+D9Opnd D9TempSrc(UINT reg, UINT swizzle);
+D9Opnd D9TempScalar(UINT reg, UINT component);
+D9Opnd D9Imm4(DWORD x, DWORD y, DWORD z, DWORD w);
+D9Opnd D9Imm(DWORD v);
+D9Opnd D9ImmF(float f);
+D9Opnd D9Cb(UINT slot, UINT element, UINT swizzle, int rel_reg, UINT rel_component);
+D9Opnd D9ResourceOpnd(UINT reg);
+D9Opnd D9SamplerOpnd(UINT reg);
+D9Opnd D9Mod(D9Opnd o, UINT modifier);
+D9Opnd D9Neg(D9Opnd o);
+D9Opnd D9Abs(D9Opnd o);
+void D9Emit(D9Code *c, DWORD opcode, const D9Opnd *ops, UINT count);
+void D9Op1(D9Code *c, DWORD op, D9Opnd d, D9Opnd a);
+void D9Op2(D9Code *c, DWORD op, D9Opnd d, D9Opnd a, D9Opnd b);
+void D9Op3(D9Code *c, DWORD op, D9Opnd d, D9Opnd a, D9Opnd b, D9Opnd e);
+HRESULT D9Container(const D9Signature *inputs, const D9Signature *outputs, const D9Code *code, void **out,
+                    SIZE_T *size);
+
+/* ------------------------------------------------------------------ shaders */
+
+/* direct3d 9's opcodes. */
+enum {
+    D9_OP_NOP = 0,
+    D9_OP_MOV = 1,
+    D9_OP_ADD = 2,
+    D9_OP_SUB = 3,
+    D9_OP_MAD = 4,
+    D9_OP_MUL = 5,
+    D9_OP_RCP = 6,
+    D9_OP_RSQ = 7,
+    D9_OP_DP3 = 8,
+    D9_OP_DP4 = 9,
+    D9_OP_MIN = 10,
+    D9_OP_MAX = 11,
+    D9_OP_SLT = 12,
+    D9_OP_SGE = 13,
+    D9_OP_EXP = 14,
+    D9_OP_LOG = 15,
+    D9_OP_LIT = 16,
+    D9_OP_DST = 17,
+    D9_OP_LRP = 18,
+    D9_OP_FRC = 19,
+    D9_OP_M4x4 = 20,
+    D9_OP_M4x3 = 21,
+    D9_OP_M3x4 = 22,
+    D9_OP_M3x3 = 23,
+    D9_OP_M3x2 = 24,
+    D9_OP_CALL = 25,
+    D9_OP_CALLNZ = 26,
+    D9_OP_LOOP = 27,
+    D9_OP_RET = 28,
+    D9_OP_ENDLOOP = 29,
+    D9_OP_LABEL = 30,
+    D9_OP_DCL = 31,
+    D9_OP_POW = 32,
+    D9_OP_CRS = 33,
+    D9_OP_SGN = 34,
+    D9_OP_ABS = 35,
+    D9_OP_NRM = 36,
+    D9_OP_SINCOS = 37,
+    D9_OP_REP = 38,
+    D9_OP_ENDREP = 39,
+    D9_OP_IF = 40,
+    D9_OP_IFC = 41,
+    D9_OP_ELSE = 42,
+    D9_OP_ENDIF = 43,
+    D9_OP_BREAK = 44,
+    D9_OP_BREAKC = 45,
+    D9_OP_MOVA = 46,
+    D9_OP_DEFB = 47,
+    D9_OP_DEFI = 48,
+    D9_OP_TEXCOORD = 64,
+    D9_OP_TEXKILL = 65,
+    D9_OP_TEX = 66,
+    D9_OP_TEXBEM = 67,
+    D9_OP_TEXBEML = 68,
+    D9_OP_TEXREG2AR = 69,
+    D9_OP_TEXREG2GB = 70,
+    D9_OP_TEXM3x2PAD = 71,
+    D9_OP_TEXM3x2TEX = 72,
+    D9_OP_TEXM3x3PAD = 73,
+    D9_OP_TEXM3x3TEX = 74,
+    D9_OP_TEXM3x3SPEC = 76,
+    D9_OP_TEXM3x3VSPEC = 77,
+    D9_OP_EXPP = 78,
+    D9_OP_LOGP = 79,
+    D9_OP_CND = 80,
+    D9_OP_DEF = 81,
+    D9_OP_TEXREG2RGB = 82,
+    D9_OP_TEXDP3TEX = 83,
+    D9_OP_TEXM3x2DEPTH = 84,
+    D9_OP_TEXDP3 = 85,
+    D9_OP_TEXM3x3 = 86,
+    D9_OP_TEXDEPTH = 87,
+    D9_OP_CMP = 88,
+    D9_OP_BEM = 89,
+    D9_OP_DP2ADD = 90,
+    D9_OP_DSX = 91,
+    D9_OP_DSY = 92,
+    D9_OP_TEXLDD = 93,
+    D9_OP_SETP = 94,
+    D9_OP_TEXLDL = 95,
+    D9_OP_BREAKP = 96,
+    D9_OP_PHASE = 0xFFFD,
+    D9_OP_COMMENT = 0xFFFE,
+    D9_OP_END = 0xFFFF,
+};
+
+typedef struct D9Param {
+    DWORD token;
+    /* the address register's token of relative addressing, from model 2 on. */
+    DWORD rel;
+    BOOL has_rel;
+} D9Param;
+
+typedef struct D9Inst {
+    UINT opcode, control;
+    BOOL predicated, coissue;
+    BOOL has_dst;
+    D9Param dst, pred, src[4];
+    UINT src_count;
+    DWORD usage;
+    DWORD values[4];
+    /* the words it takes, its token included. */
+    UINT words;
+} D9Inst;
+
+/* what a shader's code declares and uses, read once when it is made. */
+typedef struct D9ShaderInfo {
+    BOOL pixel;
+    UINT major, minor;
+    DWORD *code;
+    UINT words;
+    /* inputs of vertex shaders and pixel shaders of model 3, outputs of vertex shaders of model 3, by register. */
+    BYTE in_usage[16], in_index[16], in_mask[16];
+    BOOL in_centroid[16];
+    UINT in_declared;
+    BYTE out_usage[16], out_index[16], out_mask[16];
+    UINT out_declared;
+    /* the sampler types declared, as dcl's: 2 2d, 3 cube, 4 volume. */
+    BYTE sampler_type[16];
+    /* outputs written: vertex shaders before model 3 by kind, pixel shaders their color targets. */
+    UINT written;
+    BOOL writes_depth, vpos, vface;
+    /* the constants the shader defines itself, which override the device's. */
+    struct {
+        UINT reg;
+        DWORD v[4];
+    } *defs;
+    UINT def_count;
+    UINT float_count;
+    BOOL relative;
+} D9ShaderInfo;
+
+/* the outputs a vertex shader before model 3 writes, in D9ShaderInfo.written. */
+#define D9_OUT_POS 0x1
+#define D9_OUT_FOG 0x2
+#define D9_OUT_PTS 0x4
+#define D9_OUT_D0 0x8
+#define D9_OUT_T0 0x20
+
+/* what of the device's state a translation depends on. */
+typedef struct D9ShaderKey {
+    /* pixel shaders: the registers the vertex shader writes, others read as zeros. */
+    UINT ps_inputs;
+    /* the types of the textures of samplers shaders do not declare: 2 bits each, 0 2d, 1 cube, 2 volume. */
+    UINT sampler_types;
+    /* samplers bound to depth textures, which compare. */
+    WORD shadow;
+    /* 0 none, 1 the vertex's, 2 exp, 3 exp2, 4 linear of the depth. */
+    BYTE fog;
+    /* the alpha test's comparison, 0 for none. */
+    BYTE alpha_func;
+    BYTE flat;
+    /* vertex shaders: the render state's point size, written when the shader writes none. */
+    BYTE point_size;
+    /* vertex shaders: the user clip planes enabled. */
+    BYTE clip_planes;
+    /* pixel shaders: texture coordinates are those within the point. */
+    BYTE point_sprite;
+    /* vertex shaders: inputs whose attributes are integers turned to floats, 2 bits each, 1 unsigned, 2 signed. */
+    UINT int_inputs;
+} D9ShaderKey;
+
+typedef struct D9Variant {
+    struct D9Variant *next;
+    D9ShaderKey key;
+    const D9ShaderInfo *info;
+    /* the d3d11 shader, null when the translation failed, and the dxbc of vertex shaders, for input layouts. */
+    ID3D11DeviceChild *shader;
+    void *dxbc;
+    SIZE_T size;
+    /* vertex shaders: the registers of interpolated values written. */
+    UINT outputs;
+} D9Variant;
+
+typedef struct D9Shader {
+    union {
+        IDirect3DVertexShader9 vs;
+        IDirect3DPixelShader9 ps;
+    } iface;
+    D9Resource base;
+    D9ShaderInfo info;
+    D9Variant *variants;
+    D9Variant *last;
+} D9Shader;
+
+typedef struct D9Layout {
+    struct D9Layout *next;
+    D9Variant *variant;
+    UINT instanced;
+    UINT rates[16];
+    ID3D11InputLayout *layout;
+} D9Layout;
+
+typedef struct D9VertexDecl {
+    IDirect3DVertexDeclaration9 iface;
+    D9Resource base;
+    D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH + 1];
+    UINT count;
+    DWORD fvf;
+    UINT streams;
+    BOOL pretransformed;
+    UINT colors;
+    D9Layout *layouts;
+} D9VertexDecl;
+
+/* the input slot of the zeros the inputs a declaration lacks read. */
+#define D9_ZERO_STREAM 16
+
+D9Shader *D9ShaderFrom(void *iface);
+HRESULT D9CreateShader(D9Device *device, const DWORD *code, BOOL pixel, D9Shader **out);
+D9Variant *D9ShaderVariant(D9Shader *shader, const D9ShaderKey *key);
+D9VertexDecl *D9VertexDeclFrom(IDirect3DVertexDeclaration9 *iface);
+HRESULT D9CreateVertexDecl(D9Device *device, const D3DVERTEXELEMENT9 *elements, DWORD fvf, D9VertexDecl **out);
+UINT D9FvfElements(DWORD fvf, D3DVERTEXELEMENT9 *elements);
+UINT D9DeclIntegerInputs(const D9VertexDecl *decl, const D9ShaderInfo *vs);
+ID3D11InputLayout *D9DeclLayout(D9VertexDecl *decl, D9Device *device, D9Variant *vs, UINT instanced,
+                                const UINT *rates);
+
+UINT D9RegType(DWORD token);
+UINT D9RegNum(DWORD token);
+BOOL D9Decode(const D9ShaderInfo *info, const DWORD *code, UINT left, D9Inst *inst);
+HRESULT D9ParseShader(const DWORD *code, BOOL pixel, D9ShaderInfo *info);
+void D9FreeShaderInfo(D9ShaderInfo *info);
+/* the dxbc of a shader for a key, freed with HeapFree. */
+HRESULT D9TranslateShader(const D9ShaderInfo *info, const D9ShaderKey *key, void **bytecode, SIZE_T *size,
+                          UINT *outputs);
+
+/* the registers of direct3d 9's interpolated values, the same for every shader so any two link. */
+#define D9_SLOT_POSITION 28
+#define D9_SLOT_POINT_SIZE 29
+#define D9_SLOT_CLIP 30
+#define D9_SLOT_FACE 29
+#define D9_SLOT_POINT_COORD 30
+int D9VaryingSlot(UINT usage, UINT index);
+const char *D9UsageName(UINT usage);
 
 /* ------------------------------------------------------------------ adapters */
 
