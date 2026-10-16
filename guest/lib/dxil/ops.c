@@ -320,6 +320,136 @@ static uint32_t quad_swap(Compiler *c, uint32_t type, uint32_t value, uint32_t d
     return spv_op(&c->b, SpvOpGroupNonUniformQuadSwap, type, w, 3);
 }
 
+/* a value compared with another by its bits, as WaveMatch compares lanes' values. */
+static uint32_t same_bits(Compiler *c, uint32_t type, uint32_t a, uint32_t b)
+{
+    if (type == c->t_bool)
+        return spv_op2(&c->b, SpvOpLogicalEqual, c->t_bool, a, b);
+    uint32_t as = type;
+    if (type == c->t_f32)
+        as = c->t_u32;
+    else if (type == c->t_f16)
+        as = c->t_u16;
+    else if (type == c->t_f64)
+        as = c->t_u64;
+    if (as != type) {
+        a = spv_op1(&c->b, SpvOpBitcast, as, a);
+        b = spv_op1(&c->b, SpvOpBitcast, as, b);
+    }
+    return spv_op2(&c->b, SpvOpIEqual, c->t_bool, a, b);
+}
+
+/*
+ * waveMatch: a loop taking the first active lane's value each time, the
+ * lanes equal to it leaving it together with their ballot.
+ */
+static void wave_match(Compiler *c, const DxInst *ins)
+{
+    subgroup(c, SpvCapabilityGroupNonUniformBallot);
+    uint32_t value = arg(c, ins, 0), type = dxil_type(c, arg_type(c, ins, 0));
+    uint32_t header = spv_id(&c->b), body = spv_id(&c->b), cont = spv_id(&c->b), merge = spv_id(&c->b);
+    spv_branch(&c->b, header);
+    spv_label(&c->b, header);
+    uint32_t loop[3] = {merge, cont, SpvLoopControlMaskNone};
+    spv_op_void(&c->b, SpvOpLoopMerge, loop, 3);
+    spv_branch(&c->b, body);
+    spv_label(&c->b, body);
+    uint32_t first = spv_op2(&c->b, SpvOpGroupNonUniformBroadcastFirst, type, subgroup_scope(c), value);
+    uint32_t same = same_bits(c, type, value, first);
+    uint32_t mask = spv_op2(&c->b, SpvOpGroupNonUniformBallot, c->t_uvec[4], subgroup_scope(c), same);
+    spv_branch_conditional(&c->b, same, merge, cont);
+    spv_label(&c->b, cont);
+    spv_branch(&c->b, header);
+    spv_label(&c->b, merge);
+    uint32_t parts[4];
+    for (uint32_t i = 0; i < 4; i++)
+        parts[i] = dxil_extract(c, c->t_u32, mask, i);
+    dxil_set_parts(c, ins->value, parts, 4);
+}
+
+/* the lanes of a multi prefix operation's mask below this one. */
+static uint32_t lanes_before(Compiler *c, const DxInst *ins)
+{
+    uint32_t words[4];
+    for (uint32_t i = 0; i < 4; i++)
+        words[i] = arg(c, ins, 1 + i);
+    uint32_t mask = dxil_vector(c, c->t_u32, words, 4);
+    uint32_t below = spv_load(&c->b, c->t_uvec[4], dxil_builtin(c, SpvBuiltInSubgroupLtMask, SpvStorageClassInput,
+                                                                  c->t_uvec[4]));
+    return spv_op2(&c->b, SpvOpBitwiseAnd, c->t_uvec[4], mask, below);
+}
+
+static uint32_t multi_prefix_count(Compiler *c, const DxInst *ins)
+{
+    subgroup(c, SpvCapabilityGroupNonUniformBallot);
+    uint32_t lanes = lanes_before(c, ins);
+    uint32_t v = spv_op2(&c->b, SpvOpGroupNonUniformBallot, c->t_uvec[4], subgroup_scope(c), arg(c, ins, 0));
+    uint32_t w[3] = {subgroup_scope(c), SpvGroupOperationReduce, spv_op2(&c->b, SpvOpBitwiseAnd, c->t_uvec[4], v, lanes)};
+    return spv_op(&c->b, SpvOpGroupNonUniformBallotBitCount, c->t_u32, w, 3);
+}
+
+/*
+ * waveMultiPrefixOp: the operation over the lanes of the mask below this
+ * one, a loop over every lane of the wave, each shuffled to all, those of
+ * the mask below this one taken. its operations, read from dxc's output:
+ * 0 sum, 1 and, 2 or, 3 xor, 4 product.
+ */
+static uint32_t multi_prefix(Compiler *c, const DxInst *ins)
+{
+    subgroup(c, SpvCapabilityGroupNonUniformShuffle);
+    subgroup(c, SpvCapabilityGroupNonUniformBallot);
+    uint32_t value = arg(c, ins, 0), type = dxil_type(c, ins->type);
+    uint32_t kind = (uint32_t)dxil_constant(c, ins->ops[7], 0);
+    int is_float = type == c->t_f32 || type == c->t_f16 || type == c->t_f64;
+    uint32_t op, identity;
+    switch (kind) {
+    case 0: op = is_float ? SpvOpFAdd : SpvOpIAdd, identity = splat(c, ins->type, 0); break;
+    case 1: op = SpvOpBitwiseAnd, identity = splat(c, ins->type, ~0ull); break;
+    case 2: op = SpvOpBitwiseOr, identity = splat(c, ins->type, 0); break;
+    case 3: op = SpvOpBitwiseXor, identity = splat(c, ins->type, 0); break;
+    default: {
+        op = is_float ? SpvOpFMul : SpvOpIMul;
+        uint64_t one = type == c->t_f32 ? 0x3F800000 : type == c->t_f16 ? 0x3C00 : type == c->t_f64 ? 0x3FF0000000000000ull : 1;
+        identity = splat(c, ins->type, one);
+        break;
+    }
+    }
+    uint32_t lanes = lanes_before(c, ins);
+    uint32_t size = spv_load(&c->b, c->t_u32, dxil_builtin(c, SpvBuiltInSubgroupSize, SpvStorageClassInput, c->t_u32));
+    uint32_t before = c->b.block;
+    uint32_t header = spv_id(&c->b), body = spv_id(&c->b), cont = spv_id(&c->b), merge = spv_id(&c->b);
+    uint32_t next = spv_id(&c->b), taken = spv_id(&c->b), lane = spv_id(&c->b), acc = spv_id(&c->b);
+    spv_branch(&c->b, header);
+    spv_label(&c->b, header);
+    uint32_t phi_lane[6] = {c->t_u32, lane, dxil_uconst(c, 0), before, next, cont};
+    spv_emit(&c->b, SECTION_FUNCTIONS, SpvOpPhi, phi_lane, 6);
+    uint32_t phi_acc[6] = {type, acc, identity, before, taken, cont};
+    spv_emit(&c->b, SECTION_FUNCTIONS, SpvOpPhi, phi_acc, 6);
+    uint32_t more = spv_op2(&c->b, SpvOpULessThan, c->t_bool, lane, size);
+    uint32_t loop[3] = {merge, cont, SpvLoopControlMaskNone};
+    spv_op_void(&c->b, SpvOpLoopMerge, loop, 3);
+    spv_branch_conditional(&c->b, more, body, merge);
+    spv_label(&c->b, body);
+    uint32_t v = spv_op3(&c->b, SpvOpGroupNonUniformShuffle, type, subgroup_scope(c), value, lane);
+    uint32_t word = spv_op2(&c->b, SpvOpVectorExtractDynamic, c->t_u32, lanes,
+                            spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, lane, dxil_uconst(c, 5)));
+    uint32_t bit = spv_op2(&c->b, SpvOpBitwiseAnd, c->t_u32,
+                           spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, word,
+                                   spv_op2(&c->b, SpvOpBitwiseAnd, c->t_u32, lane, dxil_uconst(c, 31))),
+                           dxil_uconst(c, 1));
+    uint32_t take = spv_op2(&c->b, SpvOpINotEqual, c->t_bool, bit, dxil_uconst(c, 0));
+    uint32_t combined = spv_op2(&c->b, op, type, acc, v);
+    uint32_t select[5] = {type, taken, take, combined, acc};
+    spv_emit(&c->b, SECTION_FUNCTIONS, SpvOpSelect, select, 5);
+    spv_branch(&c->b, cont);
+    spv_label(&c->b, cont);
+    uint32_t add[4] = {c->t_u32, next, lane, dxil_uconst(c, 1)};
+    spv_emit(&c->b, SECTION_FUNCTIONS, SpvOpIAdd, add, 4);
+    spv_branch(&c->b, header);
+    spv_label(&c->b, merge);
+    return acc;
+}
+
 /* quadVote: any or all of the quad's lanes. */
 static uint32_t quad_vote(Compiler *c, const DxInst *ins)
 {
@@ -533,6 +663,9 @@ int dxil_math_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 135: r = bit_count(c, ins, SpvGroupOperationReduce); break;
     case 136: r = bit_count(c, ins, SpvGroupOperationExclusiveScan); break;
     case 222: r = quad_vote(c, ins); break;
+    case 165: wave_match(c, ins); return c->error ? -1 : 1;
+    case 166: r = multi_prefix(c, ins); break;
+    case 167: r = multi_prefix_count(c, ins); break;
     default: return 0;
     }
     if (c->error)
