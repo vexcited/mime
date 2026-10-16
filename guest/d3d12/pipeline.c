@@ -122,12 +122,18 @@ typedef struct D12Shader {
     VkShaderModule module;
     VkShaderModuleCreateInfo code;
     DxbcShaderInfo info;
+    /* the wave size a WaveSize attribute asks of vulkan, chained before the code. */
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo wave;
 } D12Shader;
 
 static VkPipelineShaderStageCreateInfo stage_info(const D12Shader *shader, VkShaderStageFlagBits stage)
 {
     VkPipelineShaderStageCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     info.pNext = shader->module ? NULL : &shader->code;
+    if (shader->wave.requiredSubgroupSize) {
+        ((D12Shader *)shader)->wave.pNext = (void *)info.pNext;
+        info.pNext = &shader->wave;
+    }
     info.stage = stage;
     info.module = shader->module;
     info.pName = "main";
@@ -171,6 +177,33 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
         D12Log("d3d12: shader compilation failed: %s", info.error);
         dxbc_free(&info, &g_d12_allocator);
         return E_INVALIDARG;
+    }
+    /* WaveSize: the preferred size, else the smallest of the range the gpu runs for the stage. */
+    if (info.wave_min) {
+        static const VkShaderStageFlags STAGES[D12_STAGES] = {
+            [D12_CS] = VK_SHADER_STAGE_COMPUTE_BIT, [D12_AS] = VK_SHADER_STAGE_TASK_BIT_EXT,
+            [D12_MS] = VK_SHADER_STAGE_MESH_BIT_EXT};
+        BOOL control = (device->wave_stages & STAGES[stage]) != 0;
+        UINT size = 0, candidates[8], n = 0;
+        if (info.wave_preferred)
+            candidates[n++] = info.wave_preferred;
+        for (UINT want = info.wave_min; want && want <= info.wave_max && n < RTL_NUMBER_OF(candidates); want *= 2)
+            candidates[n++] = want;
+        for (UINT i = 0; i < n && !size; i++)
+            if (candidates[i] == device->wave_size ||
+                (control && candidates[i] >= device->wave_min && candidates[i] <= device->wave_max))
+                size = candidates[i];
+        if (!size) {
+            D12Log("d3d12: a shader of waves of %u to %u lanes, which the gpu does not run", info.wave_min,
+                   info.wave_max);
+            dxbc_free(&info, &g_d12_allocator);
+            return E_INVALIDARG;
+        }
+        /* a gpu of one size runs it as it is; one of several is told the size where the stage may be. */
+        if (device->wave_min != device->wave_max && control) {
+            shader->wave.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO;
+            shader->wave.requiredSubgroupSize = size;
+        }
     }
     VkShaderModuleCreateInfo create = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create.codeSize = info.spirv_words * 4;

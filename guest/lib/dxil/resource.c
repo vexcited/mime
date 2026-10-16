@@ -1600,6 +1600,31 @@ static int barrier(Compiler *c, uint32_t mode)
     return 0;
 }
 
+/*
+ * shader model 6.8's barriers, read from dxc's output: memory types 1 views,
+ * 2 shared memory, 4 and 8 the records of nodes; semantics 1 a group sync, 2
+ * group scope, 4 device scope.
+ */
+static int barrier_by(Compiler *c, uint32_t memory, uint32_t flags)
+{
+    uint32_t scope = (flags & 4) ? SpvScopeDevice : SpvScopeWorkgroup;
+    uint32_t semantics = 0;
+    if (memory & 2)
+        semantics |= SpvMemorySemanticsWorkgroupMemoryMask;
+    if (memory & 13)
+        semantics |= SpvMemorySemanticsImageMemoryMask | SpvMemorySemanticsUniformMemoryMask;
+    if (semantics)
+        semantics |= SpvMemorySemanticsAcquireReleaseMask;
+    if (flags & 1) {
+        uint32_t w[3] = {dxil_uconst(c, SpvScopeWorkgroup), dxil_uconst(c, scope), dxil_uconst(c, semantics)};
+        spv_op_void(&c->b, SpvOpControlBarrier, w, 3);
+    } else if (semantics) {
+        uint32_t w[2] = {dxil_uconst(c, scope), dxil_uconst(c, semantics)};
+        spv_op_void(&c->b, SpvOpMemoryBarrier, w, 2);
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ sample positions */
 
 /*
@@ -1698,6 +1723,12 @@ int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 78: return atomic(c, ins, 0) ? -1 : 1;
     case 79: return atomic(c, ins, 1) ? -1 : 1;
     case 80: return barrier(c, (uint32_t)dxil_constant(c, ins->ops[2], 0)) ? -1 : 1;
+    case 244: /* barrierByMemoryType */
+        return barrier_by(c, (uint32_t)dxil_constant(c, ins->ops[2], 0), (uint32_t)dxil_constant(c, ins->ops[3], 0))
+                   ? -1
+                   : 1;
+    case 245: /* barrierByMemoryHandle: a view's memory. */
+        return barrier_by(c, 1, (uint32_t)dxil_constant(c, ins->ops[3], 0)) ? -1 : 1;
     case 81: return calculate_lod(c, ins) ? -1 : 1;
     default: return 0;
     }

@@ -240,6 +240,8 @@ typedef struct Compiler {
     ResourceInfo *ranges[4];
     uint32_t range_count[4];
     uint32_t thread_group[3];
+    /* WaveSize: the smallest, the largest and the preferred size of the waves, 0 for any. */
+    uint32_t wave_min, wave_max, wave_preferred;
     uint32_t gs_input, gs_max_vertices, gs_topology, gs_instances, gs_streams;
     uint32_t cp_in, cp_out, tess_domain, tess_partitioning, tess_primitive;
     uint32_t max_tess_factor;

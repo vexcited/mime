@@ -200,8 +200,9 @@ typedef struct DxbcShaderInfo {
     uint32_t tess_domain;
     uint32_t tess_partitioning;
     uint32_t tess_output_primitive;
-    /* compute shaders. */
+    /* compute shaders: the threads, and the wave sizes they take, 0 for any. */
     uint32_t thread_group[3];
+    uint32_t wave_min, wave_max, wave_preferred;
 
     uint32_t *spirv;
     size_t spirv_words;

@@ -320,6 +320,7 @@ static HRESULT create_vulkan_device(D12Device *device)
     feedback.geometryStreams = feedback.geometryStreams && feedback.transformFeedback;
     conditional.inheritedConditionalRendering = FALSE;
     device->has_logic_op = f->logicOp;
+    device->has_msaa_storage = f->shaderStorageImageMultisample;
     device->has_statistics = f->pipelineStatisticsQuery;
     device->has_depth_bounds = f->depthBounds;
     device->has_geometry = f->geometryShader;
@@ -472,9 +473,17 @@ static HRESULT create_vulkan_device(D12Device *device)
         }
     }
 
-    VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
+    VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &p13};
     VkPhysicalDeviceProperties2 sub_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sub};
     vk->vkGetPhysicalDeviceProperties2(vk->physical, &sub_props);
+    /* the sizes of waves: the one the gpu runs, and the range shaders may ask for with subgroup size control. */
+    device->wave_size = device->wave_min = device->wave_max = sub.subgroupSize;
+    if (f13.subgroupSizeControl && p13.minSubgroupSize && p13.maxSubgroupSize >= p13.minSubgroupSize) {
+        device->wave_min = p13.minSubgroupSize;
+        device->wave_max = p13.maxSubgroupSize;
+        device->wave_stages = p13.requiredSubgroupSizeStages;
+    }
     VkSubgroupFeatureFlags wave_ops = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
                                       VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
                                       VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT;
@@ -773,7 +782,8 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS12, 12, 0, TRUE, TRUE);
     /* a negative viewport height flips y and min depth above max depth flips z, as in vulkan. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS13, 24, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE);
-    FEATURE(D3D12_FEATURE_D3D12_OPTIONS14, 12, FALSE, FALSE, TRUE);
+    /* advanced texture operations need offsets that are not constant, writable multisampled textures storage ones. */
+    FEATURE(D3D12_FEATURE_D3D12_OPTIONS14, 12, device->has_maintenance8, device->has_msaa_storage, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS15, 8, TRUE, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS16, 8, TRUE, FALSE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS17, 8, FALSE, FALSE);
@@ -896,9 +906,9 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         CHECK(D3D12_FEATURE_DATA_SHADER_MODEL)
         if (d->HighestShaderModel < D3D_SHADER_MODEL_5_1 || d->HighestShaderModel > D3D_SHADER_MODEL_6_9)
             return E_INVALIDARG;
-        /* dxil of shader model 6.6 compiles, without the mesh, ray tracing and feedback features others report. */
-        if (d->HighestShaderModel > D3D_SHADER_MODEL_6_6)
-            d->HighestShaderModel = D3D_SHADER_MODEL_6_6;
+        /* dxil up to shader model 6.8 compiles; mesh, ray tracing and the rest of what is optional others report. */
+        if (d->HighestShaderModel > D3D_SHADER_MODEL_6_8)
+            d->HighestShaderModel = D3D_SHADER_MODEL_6_8;
         return S_OK;
     }
     case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -909,8 +919,8 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         VkPhysicalDeviceFeatures2 f2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         device->vk.vkGetPhysicalDeviceFeatures2(device->vk.physical, &f2);
         d->WaveOps = device->has_waves;
-        d->WaveLaneCountMin = sub.subgroupSize;
-        d->WaveLaneCountMax = sub.subgroupSize;
+        d->WaveLaneCountMin = device->wave_min;
+        d->WaveLaneCountMax = device->wave_max;
         /* guessed: vulkan does not tell how many lanes run at once. */
         d->TotalLaneCount = sub.subgroupSize * 32;
         d->ExpandedComputeResourceStates = TRUE;

@@ -830,11 +830,14 @@ struct D12Device {
     BOOL has_native16, has_waves, has_mesh;
     /* 64-bit atomics of typed views and of shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
-    BOOL has_barycentrics, has_maintenance5, has_maintenance8, has_compute_derivatives;
+    BOOL has_barycentrics, has_maintenance5, has_maintenance8, has_compute_derivatives, has_msaa_storage;
     /* variable rate shading: direct3d's tier, the tile size of rate images, 4 pixel wide rates, rates with viewports. */
     UINT vrs_tier, vrs_tile;
     UINT conservative_tier;
     UINT tiled_tier;
+    /* waves: the size the gpu runs, the range shaders may ask for, the stages that may ask. */
+    UINT wave_size, wave_min, wave_max;
+    VkShaderStageFlags wave_stages;
     BOOL vrs_more_rates, vrs_viewports;
     /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
     BOOL has_dgc;

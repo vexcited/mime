@@ -1532,6 +1532,19 @@ static int read_properties(Compiler *c, const DxMetadata *list)
                 for (uint32_t k = 0; k < 3; k++)
                     c->thread_group[k] = (uint32_t)dx_md_int(&c->m, dx_md_op(&c->m, v, 0), k, 1);
             break;
+        case 11:
+            /* shader model 6.6's WaveSize: one size. */
+            if (v)
+                c->wave_min = c->wave_max = c->wave_preferred = (uint32_t)dx_md_int(&c->m, v, 0, 0);
+            break;
+        case 23:
+            /* shader model 6.8's WaveSize: the smallest, the largest and the preferred size. */
+            if (v) {
+                c->wave_min = (uint32_t)dx_md_int(&c->m, v, 0, 0);
+                c->wave_max = (uint32_t)dx_md_int(&c->m, v, 1, 0);
+                c->wave_preferred = (uint32_t)dx_md_int(&c->m, v, 2, 0);
+            }
+            break;
         case 8:
             /* a library's function: its shader kind. */
             if (c->kind == KIND_LIBRARY)
@@ -1783,6 +1796,9 @@ int dxil_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
         result = -1;
     }
     info->program = (DxbcProgram)c->kind;
+    info->wave_min = c->wave_min;
+    info->wave_max = c->wave_max ? c->wave_max : c->wave_min;
+    info->wave_preferred = c->wave_preferred;
     info->thread_group[0] = c->thread_group[0];
     info->thread_group[1] = c->thread_group[1];
     info->thread_group[2] = c->thread_group[2];
