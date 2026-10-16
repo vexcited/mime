@@ -1,0 +1,22 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "the machine's own processor",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build"
+        },
+        {
+            "name": "arm64",
+            "displayName": "an arm64 guest, as on macos, built anywhere",
+            "inherits": "default",
+            "binaryDir": "${sourceDir}/build-arm64",
+            "cacheVariables": { "MIME_GUEST_ARCH": "arm64", "MIME_BUILD_HOST": "OFF" }
+        }
+    ],
+    "buildPresets": [
+        { "name": "default", "configurePreset": "default" },
+        { "name": "arm64", "configurePreset": "arm64" }
+    ]
+}

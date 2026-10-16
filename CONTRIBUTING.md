@@ -4,22 +4,33 @@ Thanks for your interest. This guide explains how to build and run Mime, how it 
 
 ## Building
 
-Mime builds on macOS on Apple Silicon with the Homebrew LLVM toolchain. Apple's own `clang` cannot produce Windows binaries, so put Homebrew's first in `PATH`.
+Mime builds with CMake and Ninja, and LLVM's clang 19 or later, which compiles both the host program and
+the Windows side. Apple's own `clang` cannot produce Windows binaries, so on macOS put Homebrew's first in
+`PATH`.
 
 ```sh
-brew install llvm lld
+brew install llvm lld cmake ninja
 export PATH="$(brew --prefix llvm)/bin:$PATH"
-make -j8
+cmake --preset default
+cmake --build --preset default
 ```
 
-On Linux the build needs LLVM itself besides clang and lld: `llvm-nm`, `llvm-rc` and `llvm-strip` come from it, `llvm` on Arch Linux.
+On Linux the build needs LLVM itself besides clang and lld: `llvm-nm`, `llvm-rc`, `llvm-strip`,
+`llvm-readobj` and `llvm-dlltool` come from it, `llvm` on Arch Linux. The guest runs the host's processor:
+arm64 on macOS, x64 on Linux x86_64. Linux arm64 has no virtual machine backend yet, so there the build
+makes the arm64 guest only. `cmake --preset arm64` builds the arm64 guest on any machine, into `build-arm64`.
 
-| Target          | Output                                                                                 |
-|-----------------|----------------------------------------------------------------------------------------|
-| `make host`     | `build/mime`, the command line program with the system files embedded, ad hoc signed.  |
-| `make guest`    | `build/guest/system32`: `ntoskrnl.exe`, `win32k.sys` and the system DLLs.              |
-| `make examples` | `build/examples/*.exe`, one program per file in `examples/`.                           |
-| `make clean`    | Removes `build/`.                                                                      |
+| Target                                  | Output                                                                                    |
+|-----------------------------------------|-------------------------------------------------------------------------------------------|
+| `cmake --build build`                   | Everything below but the tests.                                                           |
+| `cmake --build build --target mime`     | `build/mime`, the command line program with the system files embedded, ad hoc signed.     |
+| `cmake --build build --target guest`    | `build/guest`: `ntoskrnl.exe`, `win32k.sys` and the system DLLs of each processor.        |
+| `cmake --build build --target examples` | `build/examples/x64/*.exe`, one program per file in `examples/`, and arm64 ones on macOS. |
+| `cmake --build build --target tests`    | `build/tests/<processor>/*.exe`, the test programs.                                       |
+| `cmake --build build --target test-x86` | Builds and runs the 32-bit suite, `tools/runtime32/run.py`.                               |
+| `cmake --build build --target clean`    | Removes what the build made.                                                              |
+
+`build/compile_commands.json` gives editors the flags of every file.
 
 ## Running
 
@@ -32,7 +43,7 @@ build/mime down
 `build/mime` is self contained: the kernel, drivers and DLLs are embedded in
 it and mapped into the virtual machine, never written to disk, so it is the
 only file to distribute. The machine uses the files of the binary that
-started it, so to test a change: `make`, `mime down`, then `mime run` again.
+started it, so to test a change: `cmake --build build`, `mime down`, then `mime run` again.
 
 Mime follows the XDG base directories:
 
@@ -142,6 +153,7 @@ decoder and Windows visual style parser in `guest/lib`, using the fonts and the
 | `guest/lib/`                                                                            | TrueType, PNG and visual style libraries.                                                                                              |
 | `guest/include/`                                                                        | Windows and NT headers, written for Mime.                                                                                              |
 | `tools/`                                                                                | Build generators (syscalls, embedded files, version resources, checksums), syscall tables and `progress.sh`.                           |
+| `CMakeLists.txt`, `cmake/`                                                              | The build.                                                                                                                             |
 | `examples/`                                                                             | Small Windows programs built against Mime.                                                                                             |
 | `docs/`                                                                                 | One page per Windows component.                                                                                                        |
 

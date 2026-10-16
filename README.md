@@ -9,24 +9,26 @@ Mime runs ARM64, x64, and experimental [32-bit x86 programs](docs/x86.md) on mac
 
 ## Getting started
 
-On macOS you need macOS 15 or later on Apple silicon, the Homebrew LLVM toolchain and a Windows 11 `arm64` ISO.
+On macOS you need macOS 15 or later on Apple silicon, the Homebrew LLVM toolchain, CMake, Ninja and a Windows 11 `arm64` ISO.
 
 ```sh
-brew install llvm lld
+brew install llvm lld cmake ninja
 export PATH="$(brew --prefix llvm)/bin:$PATH"
 
-make
+cmake --preset default
+cmake --build --preset default
 build/mime setup ~/Downloads/Windows11_arm64.iso
 build/mime run build/examples/messagebox.exe
 build/mime down
 ```
 
-On Linux you need an x86_64 machine with KVM, LLVM with clang and lld, SDL3, `wayland-client`, a Vulkan loader for [Vulkan](docs/vulkan.md) programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan. See [the Linux host](docs/host.md#linux).
+On Linux you need an x86_64 machine with KVM, LLVM with clang and lld, CMake, Ninja, SDL3, `wayland-client`, a Vulkan loader for [Vulkan](docs/vulkan.md) programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan. See [the Linux host](docs/host.md#linux).
 
 ```sh
-sudo pacman -S llvm clang lld sdl3 wayland vulkan-icd-loader # on arch linux
+sudo pacman -S llvm clang lld cmake ninja sdl3 wayland vulkan-icd-loader # on arch linux
 
-make
+cmake --preset default
+cmake --build --preset default
 build/mime setup ~/Downloads/Windows11_x64.iso
 build/mime run build/examples/x64/messagebox.exe
 build/mime down
