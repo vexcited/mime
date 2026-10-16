@@ -625,6 +625,11 @@ typedef struct D12CommandList {
     D12CommandAllocator *allocator;
     VkCommandBuffer cmd;
     BOOL open;
+    /* bundles: the calls recorded, replayed on the list that executes them, and the initial pipeline state. */
+    BOOL recording;
+    BYTE *calls;
+    SIZE_T call_size, call_capacity;
+    struct D12PipelineState *bundle_initial;
     HRESULT error;
 
     D12PipelineState *pipeline;

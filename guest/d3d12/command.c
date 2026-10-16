@@ -755,6 +755,7 @@ static ULONG STDMETHODCALLTYPE list_release(ID3D12GraphicsCommandList10 *iface)
             list->allocator->recording = NULL;
         if (list->allocator)
             list->allocator->iface.lpVtbl->Release(&list->allocator->iface);
+        HeapFree(GetProcessHeap(), 0, list->calls);
         D12ChildRelease(&list->child);
         HeapFree(GetProcessHeap(), 0, list);
     }
@@ -1455,11 +1456,6 @@ static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, U
 
 /* ------------------------------------------------------------------ root signatures and arguments */
 
-static void STDMETHODCALLTYPE list_execute_bundle(ID3D12GraphicsCommandList10 *iface, ID3D12GraphicsCommandList *bundle)
-{
-    D12Log("d3d12: bundles are not supported yet");
-}
-
 static void STDMETHODCALLTYPE list_set_descriptor_heaps(ID3D12GraphicsCommandList10 *iface, UINT count,
                                                         ID3D12DescriptorHeap *const *heaps)
 {
@@ -1866,6 +1862,425 @@ static void STDMETHODCALLTYPE list_dispatch_mesh(ID3D12GraphicsCommandList10 *if
 
 static void STDMETHODCALLTYPE list_set_program(ID3D12GraphicsCommandList10 *iface, const void *desc) {}
 
+/* ------------------------------------------------------------------ bundles */
+
+/*
+ * a bundle records the calls made on it and the list executing it makes
+ * them again, so it inherits that list's root signatures, arguments and
+ * heaps, and leaves its own state behind, as direct3d's bundles do.
+ */
+enum {
+    CALL_DRAW,
+    CALL_DRAW_INDEXED,
+    CALL_DISPATCH,
+    CALL_DISPATCH_MESH,
+    CALL_TOPOLOGY,
+    CALL_BLEND_FACTOR,
+    CALL_STENCIL_REF,
+    CALL_FRONT_BACK_STENCIL_REF,
+    CALL_DEPTH_BOUNDS,
+    CALL_DEPTH_BIAS,
+    CALL_STRIP_CUT,
+    CALL_PIPELINE,
+    CALL_HEAPS,
+    CALL_ROOT_SIGNATURE,
+    CALL_ROOT_TABLE,
+    CALL_ROOT_CONSTANTS,
+    CALL_ROOT_VIEW,
+    CALL_INDEX_BUFFER,
+    CALL_VERTEX_BUFFERS,
+    CALL_EXECUTE_INDIRECT,
+};
+
+typedef struct BundleCall {
+    UINT op;
+    /* the bytes of the call, this header included. */
+    UINT size;
+    /* compute bind point for root calls. */
+    UINT compute;
+    UINT count;
+    UINT64 a[6];
+} BundleCall;
+
+/* a call to record, with room for extra bytes after it; NULL when out of memory. */
+static BundleCall *record(D12CommandList *list, UINT op, UINT extra)
+{
+    if (!list->recording)
+        return NULL;
+    SIZE_T size = D12_ALIGN(sizeof(BundleCall) + extra, 8);
+    if (list->call_size + size > list->call_capacity) {
+        SIZE_T capacity = D12_MAX(list->call_capacity * 2, list->call_size + size + 4096);
+        BYTE *calls = list->calls ? HeapReAlloc(GetProcessHeap(), 0, list->calls, capacity)
+                                  : HeapAlloc(GetProcessHeap(), 0, capacity);
+        if (!calls) {
+            list->error = E_OUTOFMEMORY;
+            return NULL;
+        }
+        list->calls = calls;
+        list->call_capacity = capacity;
+    }
+    BundleCall *call = (BundleCall *)(list->calls + list->call_size);
+    memset(call, 0, sizeof(*call));
+    call->op = op;
+    call->size = (UINT)size;
+    list->call_size += size;
+    return call;
+}
+
+static void STDMETHODCALLTYPE bundle_draw_instanced(ID3D12GraphicsCommandList10 *iface, UINT vertices, UINT instances,
+                                                    UINT start_vertex, UINT start_instance)
+{
+    BundleCall *c = record(impl(iface), CALL_DRAW, 0);
+    if (c)
+        c->a[0] = vertices, c->a[1] = instances, c->a[2] = start_vertex, c->a[3] = start_instance;
+}
+
+static void STDMETHODCALLTYPE bundle_draw_indexed_instanced(ID3D12GraphicsCommandList10 *iface, UINT indices,
+                                                            UINT instances, UINT start_index, INT base_vertex,
+                                                            UINT start_instance)
+{
+    BundleCall *c = record(impl(iface), CALL_DRAW_INDEXED, 0);
+    if (c)
+        c->a[0] = indices, c->a[1] = instances, c->a[2] = start_index, c->a[3] = (UINT)base_vertex,
+        c->a[4] = start_instance;
+}
+
+static void STDMETHODCALLTYPE bundle_dispatch(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z)
+{
+    BundleCall *c = record(impl(iface), CALL_DISPATCH, 0);
+    if (c)
+        c->a[0] = x, c->a[1] = y, c->a[2] = z;
+}
+
+static void STDMETHODCALLTYPE bundle_dispatch_mesh(ID3D12GraphicsCommandList10 *iface, UINT x, UINT y, UINT z)
+{
+    BundleCall *c = record(impl(iface), CALL_DISPATCH_MESH, 0);
+    if (c)
+        c->a[0] = x, c->a[1] = y, c->a[2] = z;
+}
+
+static void STDMETHODCALLTYPE bundle_ia_set_primitive_topology(ID3D12GraphicsCommandList10 *iface,
+                                                               D3D_PRIMITIVE_TOPOLOGY t)
+{
+    BundleCall *c = record(impl(iface), CALL_TOPOLOGY, 0);
+    if (c)
+        c->a[0] = t;
+}
+
+static void STDMETHODCALLTYPE bundle_om_set_blend_factor(ID3D12GraphicsCommandList10 *iface, const FLOAT factor[4])
+{
+    BundleCall *c = record(impl(iface), CALL_BLEND_FACTOR, 16);
+    if (c) {
+        c->count = factor != NULL;
+        if (factor)
+            memcpy(c + 1, factor, 16);
+    }
+}
+
+static void STDMETHODCALLTYPE bundle_om_set_stencil_ref(ID3D12GraphicsCommandList10 *iface, UINT ref)
+{
+    BundleCall *c = record(impl(iface), CALL_STENCIL_REF, 0);
+    if (c)
+        c->a[0] = ref;
+}
+
+static void STDMETHODCALLTYPE bundle_om_set_front_and_back_stencil_ref(ID3D12GraphicsCommandList10 *iface,
+                                                                       UINT front, UINT back)
+{
+    BundleCall *c = record(impl(iface), CALL_FRONT_BACK_STENCIL_REF, 0);
+    if (c)
+        c->a[0] = front, c->a[1] = back;
+}
+
+static void STDMETHODCALLTYPE bundle_om_set_depth_bounds(ID3D12GraphicsCommandList10 *iface, FLOAT min, FLOAT max)
+{
+    BundleCall *c = record(impl(iface), CALL_DEPTH_BOUNDS, 8);
+    if (c) {
+        FLOAT v[2] = {min, max};
+        memcpy(c + 1, v, 8);
+    }
+}
+
+static void STDMETHODCALLTYPE bundle_rs_set_depth_bias(ID3D12GraphicsCommandList10 *iface, FLOAT bias, FLOAT clamp,
+                                                       FLOAT slope)
+{
+    BundleCall *c = record(impl(iface), CALL_DEPTH_BIAS, 12);
+    if (c) {
+        FLOAT v[3] = {bias, clamp, slope};
+        memcpy(c + 1, v, 12);
+    }
+}
+
+static void STDMETHODCALLTYPE bundle_ia_set_strip_cut(ID3D12GraphicsCommandList10 *iface,
+                                                      D3D12_INDEX_BUFFER_STRIP_CUT_VALUE value)
+{
+    BundleCall *c = record(impl(iface), CALL_STRIP_CUT, 0);
+    if (c)
+        c->a[0] = value;
+}
+
+static void STDMETHODCALLTYPE bundle_set_pipeline_state(ID3D12GraphicsCommandList10 *iface, ID3D12PipelineState *state)
+{
+    BundleCall *c = record(impl(iface), CALL_PIPELINE, 0);
+    if (c)
+        c->a[0] = (UINT64)(ULONG_PTR)state;
+}
+
+static void STDMETHODCALLTYPE bundle_set_descriptor_heaps(ID3D12GraphicsCommandList10 *iface, UINT count,
+                                                          ID3D12DescriptorHeap *const *heaps)
+{
+    BundleCall *c = record(impl(iface), CALL_HEAPS, 0);
+    if (c) {
+        c->count = D12_MIN(count, 2u);
+        for (UINT i = 0; i < c->count; i++)
+            c->a[i] = (UINT64)(ULONG_PTR)heaps[i];
+    }
+}
+
+static void bundle_root_signature(ID3D12GraphicsCommandList10 *iface, BOOL compute, ID3D12RootSignature *root)
+{
+    BundleCall *c = record(impl(iface), CALL_ROOT_SIGNATURE, 0);
+    if (c)
+        c->compute = compute, c->a[0] = (UINT64)(ULONG_PTR)root;
+}
+
+static void STDMETHODCALLTYPE bundle_set_compute_root_signature(ID3D12GraphicsCommandList10 *iface,
+                                                                ID3D12RootSignature *root)
+{
+    bundle_root_signature(iface, TRUE, root);
+}
+
+static void STDMETHODCALLTYPE bundle_set_graphics_root_signature(ID3D12GraphicsCommandList10 *iface,
+                                                                 ID3D12RootSignature *root)
+{
+    bundle_root_signature(iface, FALSE, root);
+}
+
+static void bundle_root_table(ID3D12GraphicsCommandList10 *iface, BOOL compute, UINT index,
+                              D3D12_GPU_DESCRIPTOR_HANDLE base)
+{
+    BundleCall *c = record(impl(iface), CALL_ROOT_TABLE, 0);
+    if (c)
+        c->compute = compute, c->a[0] = index, c->a[1] = base.ptr;
+}
+
+static void STDMETHODCALLTYPE bundle_set_compute_root_descriptor_table(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                       D3D12_GPU_DESCRIPTOR_HANDLE base)
+{
+    bundle_root_table(iface, TRUE, index, base);
+}
+
+static void STDMETHODCALLTYPE bundle_set_graphics_root_descriptor_table(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                        D3D12_GPU_DESCRIPTOR_HANDLE base)
+{
+    bundle_root_table(iface, FALSE, index, base);
+}
+
+static void bundle_root_constants(ID3D12GraphicsCommandList10 *iface, BOOL compute, UINT index, UINT count,
+                                  const void *data, UINT offset)
+{
+    BundleCall *c = record(impl(iface), CALL_ROOT_CONSTANTS, count * 4);
+    if (c) {
+        c->compute = compute, c->count = count, c->a[0] = index, c->a[1] = offset;
+        memcpy(c + 1, data, count * 4);
+    }
+}
+
+static void STDMETHODCALLTYPE bundle_set_compute_root_32bit_constant(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                     UINT data, UINT offset)
+{
+    bundle_root_constants(iface, TRUE, index, 1, &data, offset);
+}
+
+static void STDMETHODCALLTYPE bundle_set_graphics_root_32bit_constant(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                      UINT data, UINT offset)
+{
+    bundle_root_constants(iface, FALSE, index, 1, &data, offset);
+}
+
+static void STDMETHODCALLTYPE bundle_set_compute_root_32bit_constants(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                      UINT count, const void *data, UINT offset)
+{
+    bundle_root_constants(iface, TRUE, index, count, data, offset);
+}
+
+static void STDMETHODCALLTYPE bundle_set_graphics_root_32bit_constants(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                                       UINT count, const void *data, UINT offset)
+{
+    bundle_root_constants(iface, FALSE, index, count, data, offset);
+}
+
+static void bundle_root_view(ID3D12GraphicsCommandList10 *iface, BOOL compute, UINT index,
+                             D3D12_GPU_VIRTUAL_ADDRESS address)
+{
+    BundleCall *c = record(impl(iface), CALL_ROOT_VIEW, 0);
+    if (c)
+        c->compute = compute, c->a[0] = index, c->a[1] = address;
+}
+
+static void STDMETHODCALLTYPE bundle_set_compute_root_view(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                           D3D12_GPU_VIRTUAL_ADDRESS address)
+{
+    bundle_root_view(iface, TRUE, index, address);
+}
+
+static void STDMETHODCALLTYPE bundle_set_graphics_root_view(ID3D12GraphicsCommandList10 *iface, UINT index,
+                                                            D3D12_GPU_VIRTUAL_ADDRESS address)
+{
+    bundle_root_view(iface, FALSE, index, address);
+}
+
+static void STDMETHODCALLTYPE bundle_ia_set_index_buffer(ID3D12GraphicsCommandList10 *iface,
+                                                         const D3D12_INDEX_BUFFER_VIEW *view)
+{
+    BundleCall *c = record(impl(iface), CALL_INDEX_BUFFER, sizeof(*view));
+    if (c) {
+        c->count = view != NULL;
+        if (view)
+            memcpy(c + 1, view, sizeof(*view));
+    }
+}
+
+static void STDMETHODCALLTYPE bundle_ia_set_vertex_buffers(ID3D12GraphicsCommandList10 *iface, UINT start, UINT count,
+                                                           const D3D12_VERTEX_BUFFER_VIEW *views)
+{
+    count = D12_MIN(count, (UINT)D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
+    BundleCall *c = record(impl(iface), CALL_VERTEX_BUFFERS, count * sizeof(*views));
+    if (c) {
+        c->count = count, c->a[0] = start, c->a[1] = views != NULL;
+        if (views)
+            memcpy(c + 1, views, count * sizeof(*views));
+    }
+}
+
+static void STDMETHODCALLTYPE bundle_execute_indirect(ID3D12GraphicsCommandList10 *iface,
+                                                      ID3D12CommandSignature *signature, UINT max_count,
+                                                      ID3D12Resource *arguments, UINT64 arguments_offset,
+                                                      ID3D12Resource *count, UINT64 count_offset)
+{
+    BundleCall *c = record(impl(iface), CALL_EXECUTE_INDIRECT, 0);
+    if (c)
+        c->a[0] = (UINT64)(ULONG_PTR)signature, c->a[1] = max_count, c->a[2] = (UINT64)(ULONG_PTR)arguments,
+        c->a[3] = arguments_offset, c->a[4] = (UINT64)(ULONG_PTR)count, c->a[5] = count_offset;
+}
+
+static HRESULT bundle_begin(D12CommandList *list, D12CommandAllocator *allocator, D12PipelineState *initial)
+{
+    if (list->recording || !allocator || allocator->type != D3D12_COMMAND_LIST_TYPE_BUNDLE)
+        return E_INVALIDARG;
+    if (list->allocator != allocator) {
+        allocator->iface.lpVtbl->AddRef(&allocator->iface);
+        if (list->allocator)
+            list->allocator->iface.lpVtbl->Release(&list->allocator->iface);
+        list->allocator = allocator;
+    }
+    list->recording = TRUE;
+    list->error = S_OK;
+    list->call_size = 0;
+    list->bundle_initial = initial;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE bundle_close(ID3D12GraphicsCommandList10 *iface)
+{
+    D12CommandList *list = impl(iface);
+    if (!list->recording)
+        return E_FAIL;
+    list->recording = FALSE;
+    return list->error;
+}
+
+static HRESULT STDMETHODCALLTYPE bundle_reset(ID3D12GraphicsCommandList10 *iface, ID3D12CommandAllocator *allocator,
+                                              ID3D12PipelineState *initial)
+{
+    return bundle_begin(impl(iface), D12AllocatorFrom(allocator), D12PipelineFrom(initial));
+}
+
+static void STDMETHODCALLTYPE bundle_clear_state(ID3D12GraphicsCommandList10 *iface, ID3D12PipelineState *state) {}
+
+/* makes the calls a bundle recorded on the list executing it. */
+static void STDMETHODCALLTYPE list_execute_bundle(ID3D12GraphicsCommandList10 *iface, ID3D12GraphicsCommandList *bundle_iface)
+{
+    D12CommandList *list = impl(iface), *bundle = bundle_iface ? impl((ID3D12GraphicsCommandList10 *)bundle_iface) : NULL;
+    if (!list->open || !bundle || bundle->type != D3D12_COMMAND_LIST_TYPE_BUNDLE || bundle->recording)
+        return;
+    const struct ID3D12GraphicsCommandList10Vtbl *v = iface->lpVtbl;
+    if (bundle->bundle_initial)
+        v->SetPipelineState(iface, &bundle->bundle_initial->iface);
+    for (SIZE_T at = 0; at + sizeof(BundleCall) <= bundle->call_size;) {
+        const BundleCall *c = (const BundleCall *)(bundle->calls + at);
+        const void *extra = c + 1;
+        at += c->size;
+        switch (c->op) {
+        case CALL_DRAW: v->DrawInstanced(iface, (UINT)c->a[0], (UINT)c->a[1], (UINT)c->a[2], (UINT)c->a[3]); break;
+        case CALL_DRAW_INDEXED:
+            v->DrawIndexedInstanced(iface, (UINT)c->a[0], (UINT)c->a[1], (UINT)c->a[2], (INT)(UINT)c->a[3],
+                                    (UINT)c->a[4]);
+            break;
+        case CALL_DISPATCH: v->Dispatch(iface, (UINT)c->a[0], (UINT)c->a[1], (UINT)c->a[2]); break;
+        case CALL_DISPATCH_MESH: v->DispatchMesh(iface, (UINT)c->a[0], (UINT)c->a[1], (UINT)c->a[2]); break;
+        case CALL_TOPOLOGY: v->IASetPrimitiveTopology(iface, (D3D_PRIMITIVE_TOPOLOGY)c->a[0]); break;
+        case CALL_BLEND_FACTOR: v->OMSetBlendFactor(iface, c->count ? extra : NULL); break;
+        case CALL_STENCIL_REF: v->OMSetStencilRef(iface, (UINT)c->a[0]); break;
+        case CALL_FRONT_BACK_STENCIL_REF: v->OMSetFrontAndBackStencilRef(iface, (UINT)c->a[0], (UINT)c->a[1]); break;
+        case CALL_DEPTH_BOUNDS: {
+            FLOAT b[2];
+            memcpy(b, extra, 8);
+            v->OMSetDepthBounds(iface, b[0], b[1]);
+            break;
+        }
+        case CALL_DEPTH_BIAS: {
+            FLOAT b[3];
+            memcpy(b, extra, 12);
+            v->RSSetDepthBias(iface, b[0], b[1], b[2]);
+            break;
+        }
+        case CALL_STRIP_CUT: v->IASetIndexBufferStripCutValue(iface, (D3D12_INDEX_BUFFER_STRIP_CUT_VALUE)c->a[0]); break;
+        case CALL_PIPELINE: v->SetPipelineState(iface, (ID3D12PipelineState *)(ULONG_PTR)c->a[0]); break;
+        case CALL_HEAPS: {
+            ID3D12DescriptorHeap *heaps[2] = {(ID3D12DescriptorHeap *)(ULONG_PTR)c->a[0],
+                                              (ID3D12DescriptorHeap *)(ULONG_PTR)c->a[1]};
+            v->SetDescriptorHeaps(iface, c->count, heaps);
+            break;
+        }
+        case CALL_ROOT_SIGNATURE:
+            if (c->compute)
+                v->SetComputeRootSignature(iface, (ID3D12RootSignature *)(ULONG_PTR)c->a[0]);
+            else
+                v->SetGraphicsRootSignature(iface, (ID3D12RootSignature *)(ULONG_PTR)c->a[0]);
+            break;
+        case CALL_ROOT_TABLE: {
+            D3D12_GPU_DESCRIPTOR_HANDLE base = {c->a[1]};
+            if (c->compute)
+                v->SetComputeRootDescriptorTable(iface, (UINT)c->a[0], base);
+            else
+                v->SetGraphicsRootDescriptorTable(iface, (UINT)c->a[0], base);
+            break;
+        }
+        case CALL_ROOT_CONSTANTS:
+            if (c->compute)
+                v->SetComputeRoot32BitConstants(iface, (UINT)c->a[0], c->count, extra, (UINT)c->a[1]);
+            else
+                v->SetGraphicsRoot32BitConstants(iface, (UINT)c->a[0], c->count, extra, (UINT)c->a[1]);
+            break;
+        case CALL_ROOT_VIEW:
+            if (c->compute)
+                v->SetComputeRootConstantBufferView(iface, (UINT)c->a[0], c->a[1]);
+            else
+                v->SetGraphicsRootConstantBufferView(iface, (UINT)c->a[0], c->a[1]);
+            break;
+        case CALL_INDEX_BUFFER: v->IASetIndexBuffer(iface, c->count ? extra : NULL); break;
+        case CALL_VERTEX_BUFFERS: v->IASetVertexBuffers(iface, (UINT)c->a[0], c->count, c->a[1] ? extra : NULL); break;
+        case CALL_EXECUTE_INDIRECT:
+            v->ExecuteIndirect(iface, (ID3D12CommandSignature *)(ULONG_PTR)c->a[0], (UINT)c->a[1],
+                               (ID3D12Resource *)(ULONG_PTR)c->a[2], c->a[3], (ID3D12Resource *)(ULONG_PTR)c->a[4],
+                               c->a[5]);
+            break;
+        default: break;
+        }
+    }
+}
+
 static const struct ID3D12GraphicsCommandList10Vtbl g_list_vtbl = {
     list_query,
     list_add_ref,
@@ -1955,6 +2370,97 @@ static const struct ID3D12GraphicsCommandList10Vtbl g_list_vtbl = {
     list_set_program,
 };
 
+/* a bundle records what it may hold; everything else does nothing, as no open list runs it. */
+static const struct ID3D12GraphicsCommandList10Vtbl g_bundle_vtbl = {
+    list_query,
+    list_add_ref,
+    list_release,
+    list_get_private_data,
+    list_set_private_data,
+    list_set_private_data_interface,
+    list_set_name,
+    list_get_device,
+    list_get_type,
+    bundle_close,
+    bundle_reset,
+    bundle_clear_state,
+    bundle_draw_instanced,
+    bundle_draw_indexed_instanced,
+    bundle_dispatch,
+    list_copy_buffer_region,
+    list_copy_texture_region,
+    list_copy_resource,
+    list_copy_tiles,
+    list_resolve_subresource,
+    bundle_ia_set_primitive_topology,
+    list_rs_set_viewports,
+    list_rs_set_scissor_rects,
+    bundle_om_set_blend_factor,
+    bundle_om_set_stencil_ref,
+    bundle_set_pipeline_state,
+    list_resource_barrier,
+    list_execute_bundle,
+    bundle_set_descriptor_heaps,
+    bundle_set_compute_root_signature,
+    bundle_set_graphics_root_signature,
+    bundle_set_compute_root_descriptor_table,
+    bundle_set_graphics_root_descriptor_table,
+    bundle_set_compute_root_32bit_constant,
+    bundle_set_graphics_root_32bit_constant,
+    bundle_set_compute_root_32bit_constants,
+    bundle_set_graphics_root_32bit_constants,
+    bundle_set_compute_root_view,
+    bundle_set_graphics_root_view,
+    bundle_set_compute_root_view,
+    bundle_set_graphics_root_view,
+    bundle_set_compute_root_view,
+    bundle_set_graphics_root_view,
+    bundle_ia_set_index_buffer,
+    bundle_ia_set_vertex_buffers,
+    list_so_set_targets,
+    list_om_set_render_targets,
+    list_clear_depth_stencil_view,
+    list_clear_render_target_view,
+    list_clear_uav_uint,
+    list_clear_uav_float,
+    list_discard_resource,
+    list_begin_query,
+    list_end_query,
+    list_resolve_query_data,
+    list_set_predication,
+    list_set_marker,
+    list_set_marker,
+    list_end_event,
+    bundle_execute_indirect,
+    list_atomic_copy_uint,
+    list_atomic_copy_uint64,
+    bundle_om_set_depth_bounds,
+    list_set_sample_positions,
+    list_resolve_subresource_region,
+    list_set_view_instance_mask,
+    list_write_buffer_immediate,
+    list_set_protected_session,
+    list_begin_render_pass,
+    list_end_render_pass,
+    list_meta_command,
+    list_meta_command,
+    list_build_acceleration_structure,
+    list_emit_postbuild_info,
+    list_copy_acceleration_structure,
+    list_set_pipeline_state1,
+    list_dispatch_rays,
+    list_rs_set_shading_rate,
+    list_rs_set_shading_rate_image,
+    bundle_dispatch_mesh,
+    list_barrier,
+    bundle_om_set_front_and_back_stencil_ref,
+    bundle_rs_set_depth_bias,
+    bundle_ia_set_strip_cut,
+    list_set_program,
+    list_set_program,
+};
+
+
 HRESULT D12CreateCommandList(D12Device *device, D3D12_COMMAND_LIST_TYPE type, D12CommandAllocator *allocator,
                              D12PipelineState *initial, D12CommandList **out)
 {
@@ -1964,12 +2470,13 @@ HRESULT D12CreateCommandList(D12Device *device, D3D12_COMMAND_LIST_TYPE type, D1
     D12CommandList *list = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*list));
     if (!list)
         return E_OUTOFMEMORY;
-    list->iface.lpVtbl = &g_list_vtbl;
+    BOOL bundle = type == D3D12_COMMAND_LIST_TYPE_BUNDLE;
+    list->iface.lpVtbl = bundle ? &g_bundle_vtbl : &g_list_vtbl;
     list->child.refs = 1;
     list->child.device = device;
     list->type = type;
     if (allocator) {
-        HRESULT hr = begin(list, allocator, initial);
+        HRESULT hr = bundle ? bundle_begin(list, allocator, initial) : begin(list, allocator, initial);
         if (FAILED(hr)) {
             if (list->allocator)
                 list->allocator->iface.lpVtbl->Release(&list->allocator->iface);
