@@ -202,7 +202,8 @@
     X(vkGetRayTracingShaderGroupHandlesKHR)                                                                            \
     X(vkGetRayTracingShaderGroupStackSizeKHR)                                                                          \
     X(vkCmdTraceRaysKHR)                                                                                               \
-    X(vkCmdSetRayTracingPipelineStackSizeKHR)
+    X(vkCmdSetRayTracingPipelineStackSizeKHR)                                                                          \
+    X(vkCmdTraceRaysIndirect2KHR)
 
 typedef struct D12Vk {
     VkInstance instance;
@@ -775,6 +776,9 @@ struct D12Device {
     VkShaderStageFlags dgc_stages;
     /* acceleration structures and ray queries, and ray tracing pipelines. */
     BOOL has_rt, has_rt_pipeline;
+    /* the compute pipeline limiting indirect rays to a count. */
+    VkPipelineLayout rays_count_layout;
+    VkPipeline rays_count_pipeline;
     /* acceleration structures by gpu virtual address. */
     SRWLOCK as_lock;
     D12AccelerationStructure *as_list;
@@ -861,6 +865,11 @@ void D12AccelerationStructuresDestroy(D12Device *device);
 void D12PrebuildInfo(D12Device *device, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS *inputs,
                      D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO *info);
 UINT D12CheckDriverMatchingIdentifier(D12Device *device, UINT type, const void *identifier);
+HRESULT D12RaysInit(D12Device *device);
+void D12RaysDestroy(D12Device *device);
+/* copies indirect rays arguments to dst, packed, the width of those past the count zero. */
+void D12LimitRays(D12Device *device, VkCommandBuffer cmd, VkDeviceAddress src, UINT stride, UINT max_count,
+                  VkDeviceAddress count, VkDeviceAddress dst);
 /* commands, recorded outside rendering. */
 void D12BuildAccelerationStructure(D12Device *device, VkCommandBuffer cmd,
                                    const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC *desc);

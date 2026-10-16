@@ -632,7 +632,7 @@ $(foreach d,$(EXTRA_DLLS),$(eval $(call EXTRA_DLL,$(firstword $(subst :, ,$(d)))
 
 USER_CFLAGS_dxgi += -Ithird_party/khronos
 USER_CFLAGS_d3d11 += -Ithird_party/khronos
-USER_CFLAGS_d3d12 += -Ithird_party/khronos
+USER_CFLAGS_d3d12 += -Ithird_party/khronos -Ithird_party/SPIRV-Cross
 USER_CFLAGS_lib += -Ithird_party/SPIRV-Cross
 
 sysx64: $(X64_FILES)

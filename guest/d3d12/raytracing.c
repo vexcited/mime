@@ -9,6 +9,8 @@
  */
 #include "d3d12_private.h"
 
+#include "../lib/dxbc/spvbuild.h"
+
 /* ------------------------------------------------------------------ objects */
 
 /* the region of the buffers made for acceleration structures holding va, NULL outside them. */
@@ -396,4 +398,160 @@ UINT D12CheckDriverMatchingIdentifier(D12Device *device, UINT type, const void *
     VkAccelerationStructureCompatibilityKHR compatible = VK_ACCELERATION_STRUCTURE_COMPATIBILITY_INCOMPATIBLE_KHR;
     device->vk.vkGetDeviceAccelerationStructureCompatibilityKHR(device->vk.device, &version, &compatible);
     return compatible == VK_ACCELERATION_STRUCTURE_COMPATIBILITY_COMPATIBLE_KHR ? 0 : 2;
+}
+
+/* ------------------------------------------------------------------ indirect rays limited by a count */
+
+/* the words of direct3d's indirect rays arguments, and the word of their width. */
+#define RAYS_WORDS (sizeof(D3D12_DISPATCH_RAYS_DESC) / 4)
+#define RAYS_WIDTH_WORD (offsetof(D3D12_DISPATCH_RAYS_DESC, Width) / 4)
+
+typedef struct CountPush {
+    VkDeviceAddress src, dst, count;
+    UINT stride, max_count;
+} CountPush;
+
+static uint32_t aligned_load(SpvBuilder *b, uint32_t type, uint32_t ptr)
+{
+    uint32_t w[3] = {ptr, SpvMemoryAccessAlignedMask, 4};
+    return spv_op(b, SpvOpLoad, type, w, 3);
+}
+
+/*
+ * a compute shader copying the commands of an indirect rays call one an
+ * invocation, tightly packed, the width of those past the count zero, so
+ * vulkan's indirect trace rays commands run only the first count.
+ */
+static uint32_t *count_shader(size_t *words)
+{
+    SpvBuilder sb, *b = &sb;
+    spv_init(b, &g_d12_allocator);
+    spv_capability(b, SpvCapabilityShader);
+    spv_capability(b, SpvCapabilityPhysicalStorageBufferAddresses);
+    b->addressing = SpvAddressingModelPhysicalStorageBuffer64;
+    uint32_t t_void = spv_type_void(b), t_bool = spv_type_bool(b), t_u32 = spv_type_int(b, 32, 0);
+    uint32_t t_uvec2 = spv_type_vector(b, t_u32, 2), t_uvec3 = spv_type_vector(b, t_u32, 3);
+    uint32_t stride = 4, zero = 0;
+    uint32_t array = spv_type_runtime_array_unique(b, t_u32);
+    spv_decorate(b, array, SpvDecorationArrayStride, &stride, 1);
+    uint32_t memory = spv_type_struct_unique(b, &array, 1);
+    spv_member_decorate(b, memory, 0, SpvDecorationOffset, &zero, 1);
+    spv_decorate(b, memory, SpvDecorationBlock, NULL, 0);
+    uint32_t memory_ptr = spv_type_pointer(b, SpvStorageClassPhysicalStorageBuffer, memory);
+    uint32_t word_ptr = spv_type_pointer(b, SpvStorageClassPhysicalStorageBuffer, t_u32);
+
+    uint32_t members[5] = {t_uvec2, t_uvec2, t_uvec2, t_u32, t_u32};
+    uint32_t push_type = spv_type_struct_unique(b, members, 5);
+    for (uint32_t i = 0; i < 5; i++) {
+        uint32_t offset = i < 3 ? 8 * i : 24 + 4 * (i - 3);
+        spv_member_decorate(b, push_type, i, SpvDecorationOffset, &offset, 1);
+    }
+    spv_decorate(b, push_type, SpvDecorationBlock, NULL, 0);
+    uint32_t push = spv_variable(b, spv_type_pointer(b, SpvStorageClassPushConstant, push_type),
+                                 SpvStorageClassPushConstant, 0);
+    uint32_t id = spv_variable(b, spv_type_pointer(b, SpvStorageClassInput, t_uvec3), SpvStorageClassInput, 0);
+    uint32_t builtin = SpvBuiltInGlobalInvocationId;
+    spv_decorate(b, id, SpvDecorationBuiltIn, &builtin, 1);
+
+    uint32_t main = spv_id(b);
+    spv_function_begin(b, main, t_void, spv_type_function(b, t_void, NULL, 0));
+    spv_label(b, spv_id(b));
+    uint32_t pushed[5];
+    for (uint32_t i = 0; i < 5; i++) {
+        uint32_t index = spv_const(b, t_u32, i);
+        uint32_t type = members[i];
+        pushed[i] = spv_load(b, type, spv_access(b, spv_type_pointer(b, SpvStorageClassPushConstant, type), push, &index, 1));
+    }
+    uint32_t xyz = spv_load(b, t_uvec3, id);
+    uint32_t e[2] = {xyz, 0};
+    uint32_t i = spv_op(b, SpvOpCompositeExtract, t_u32, e, 2);
+    uint32_t then = spv_id(b), merge = spv_id(b);
+    uint32_t below_max = spv_op2(b, SpvOpULessThan, t_bool, i, pushed[4]);
+    uint32_t sel[2] = {merge, SpvSelectionControlMaskNone};
+    spv_op_void(b, SpvOpSelectionMerge, sel, 2);
+    spv_branch_conditional(b, below_max, then, merge);
+    spv_label(b, then);
+    uint32_t src = spv_op1(b, SpvOpBitcast, memory_ptr, pushed[0]);
+    uint32_t dst = spv_op1(b, SpvOpBitcast, memory_ptr, pushed[1]);
+    uint32_t count_at = spv_op1(b, SpvOpBitcast, memory_ptr, pushed[2]);
+    uint32_t c0 = spv_const(b, t_u32, 0);
+    uint32_t chain[3] = {count_at, c0, c0};
+    uint32_t count = aligned_load(b, t_u32, spv_op(b, SpvOpAccessChain, word_ptr, chain, 3));
+    uint32_t inside = spv_op2(b, SpvOpULessThan, t_bool, i, count);
+    uint32_t from = spv_op2(b, SpvOpIMul, t_u32, i, spv_op2(b, SpvOpShiftRightLogical, t_u32, pushed[3], spv_const(b, t_u32, 2)));
+    uint32_t to = spv_op2(b, SpvOpIMul, t_u32, i, spv_const(b, t_u32, RAYS_WORDS));
+    for (uint32_t w = 0; w < RAYS_WORDS; w++) {
+        uint32_t k = spv_const(b, t_u32, w);
+        uint32_t in[3] = {src, c0, spv_op2(b, SpvOpIAdd, t_u32, from, k)};
+        uint32_t v = aligned_load(b, t_u32, spv_op(b, SpvOpAccessChain, word_ptr, in, 3));
+        if (w == RAYS_WIDTH_WORD)
+            v = spv_op3(b, SpvOpSelect, t_u32, inside, v, c0);
+        uint32_t out[3] = {dst, c0, spv_op2(b, SpvOpIAdd, t_u32, to, k)};
+        uint32_t st[4] = {spv_op(b, SpvOpAccessChain, word_ptr, out, 3), v, SpvMemoryAccessAlignedMask, 4};
+        spv_op_void(b, SpvOpStore, st, 4);
+    }
+    spv_branch(b, merge);
+    spv_label(b, merge);
+    spv_return(b);
+    spv_function_end(b);
+    uint32_t model[2] = {SpvExecutionModelGLCompute, main}, interface[2] = {push, id};
+    spv_emit_string(b, SECTION_ENTRY_POINTS, SpvOpEntryPoint, model, 2, "main", interface, 2);
+    uint32_t size[5] = {main, SpvExecutionModeLocalSize, 64, 1, 1};
+    spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, size, 5);
+    uint32_t *code = spv_finish(b, words);
+    spv_free(b);
+    return code;
+}
+
+HRESULT D12RaysInit(D12Device *device)
+{
+    D12Vk *vk = &device->vk;
+    size_t words;
+    uint32_t *code = count_shader(&words);
+    if (!code)
+        return E_OUTOFMEMORY;
+    VkShaderModuleCreateInfo module_info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    module_info.codeSize = words * 4;
+    module_info.pCode = code;
+    VkShaderModule module;
+    VkResult vr = vk->vkCreateShaderModule(vk->device, &module_info, NULL, &module);
+    mime_free(&g_d12_allocator, code);
+    if (vr != VK_SUCCESS)
+        return E_OUTOFMEMORY;
+    VkPushConstantRange range = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CountPush)};
+    VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.pushConstantRangeCount = 1;
+    layout.pPushConstantRanges = &range;
+    if (vk->vkCreatePipelineLayout(vk->device, &layout, NULL, &device->rays_count_layout) == VK_SUCCESS) {
+        VkComputePipelineCreateInfo info = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+        info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        info.stage.module = module;
+        info.stage.pName = "main";
+        info.layout = device->rays_count_layout;
+        vr = vk->vkCreateComputePipelines(vk->device, device->pipeline_cache, 1, &info, NULL,
+                                          &device->rays_count_pipeline);
+    }
+    vk->vkDestroyShaderModule(vk->device, module, NULL);
+    return device->rays_count_pipeline ? S_OK : E_FAIL;
+}
+
+void D12RaysDestroy(D12Device *device)
+{
+    D12Vk *vk = &device->vk;
+    if (device->rays_count_pipeline)
+        vk->vkDestroyPipeline(vk->device, device->rays_count_pipeline, NULL);
+    if (device->rays_count_layout)
+        vk->vkDestroyPipelineLayout(vk->device, device->rays_count_layout, NULL);
+}
+
+void D12LimitRays(D12Device *device, VkCommandBuffer cmd, VkDeviceAddress src, UINT stride, UINT max_count,
+                  VkDeviceAddress count, VkDeviceAddress dst)
+{
+    D12Vk *vk = &device->vk;
+    CountPush push = {src, dst, count, stride, max_count};
+    vk->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, device->rays_count_pipeline);
+    vk->vkCmdPushConstants(cmd, device->rays_count_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+    vk->vkCmdDispatch(cmd, (max_count + 63) / 64, 1, 1);
 }

@@ -323,6 +323,7 @@ static UINT argument_size(const D3D12_INDIRECT_ARGUMENT_DESC *a)
     case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW:
     case D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW:
     case D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW: return sizeof(D3D12_GPU_VIRTUAL_ADDRESS);
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS: return sizeof(D3D12_DISPATCH_RAYS_DESC);
     default: return 0;
     }
 }
@@ -338,7 +339,8 @@ static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12
                                                  D12RootSignature *root, VkShaderStageFlags *stages)
 {
     D3D12_INDIRECT_ARGUMENT_TYPE last = desc->pArgumentDescs[desc->NumArgumentDescs - 1].Type;
-    if (!device->has_dgc || desc->NumArgumentDescs > 16 || last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS)
+    if (!device->has_dgc || desc->NumArgumentDescs > 16 ||
+        (last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS && !device->has_rt_pipeline))
         return VK_NULL_HANDLE;
     VkIndirectCommandsLayoutTokenEXT tokens[16];
     VkIndirectCommandsPushConstantTokenEXT pushes[16];
@@ -357,6 +359,7 @@ static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12
         case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_INDEXED_EXT; break;
         case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DISPATCH_EXT; break;
         case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_MESH_TASKS_EXT; break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS: t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_TRACE_RAYS2_EXT; break;
         case D3D12_INDIRECT_ARGUMENT_TYPE_VERTEX_BUFFER_VIEW:
             t->type = VK_INDIRECT_COMMANDS_TOKEN_TYPE_VERTEX_BUFFER_EXT;
             vertex[i].vertexBindingUnit = a->VertexBuffer.Slot;
@@ -391,7 +394,11 @@ static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12
         }
         offset += argument_size(a);
     }
-    VkShaderStageFlags wanted = last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH ? VK_SHADER_STAGE_COMPUTE_BIT
+    VkShaderStageFlags rays = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
+                              VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |
+                              VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CALLABLE_BIT_KHR;
+    VkShaderStageFlags wanted = last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH        ? VK_SHADER_STAGE_COMPUTE_BIT
+                                : last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS ? rays
                                 : last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH
                                     ? VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT
                                     : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
@@ -400,6 +407,8 @@ static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12
                                                                     : 0) |
                                           (device->has_geometry ? VK_SHADER_STAGE_GEOMETRY_BIT : 0);
     *stages = wanted & device->dgc_stages;
+    if (last == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS && *stages != rays)
+        return VK_NULL_HANDLE;
     VkIndirectCommandsLayoutCreateInfoEXT info = {VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_CREATE_INFO_EXT};
     info.shaderStages = *stages;
     info.indirectStride = D12_MAX(desc->ByteStride, offset);

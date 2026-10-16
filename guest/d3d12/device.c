@@ -342,14 +342,16 @@ static HRESULT create_vulkan_device(D12Device *device)
     /* builds on the gpu only, without capture and replay. */
     as.accelerationStructureCaptureReplay = as.accelerationStructureHostCommands = FALSE;
     as.accelerationStructureIndirectBuild = FALSE;
-    rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
     if (!as.accelerationStructure || !ray_query.rayQuery || !rt_maintenance.rayTracingMaintenance1)
         device->has_rt = FALSE;
     rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplay = FALSE;
     rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplayMixed = FALSE;
+    /* direct3d's indirect rays arguments are vulkan's second indirect trace rays command. */
     if (!device->has_rt || !rt_pipeline.rayTracingPipeline || !rt_pipeline.rayTraversalPrimitiveCulling ||
-        !group_handles.pipelineLibraryGroupHandles)
+        !group_handles.pipelineLibraryGroupHandles || !rt_maintenance.rayTracingPipelineTraceRaysIndirect2)
         device->has_rt_pipeline = FALSE;
+    if (!device->has_rt_pipeline)
+        rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
 
     VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT};
@@ -487,6 +489,8 @@ static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
     VkPipelineCacheCreateInfo cache = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     if (vk->vkCreatePipelineCache(vk->device, &cache, NULL, &device->pipeline_cache) != VK_SUCCESS)
         return E_FAIL;
+    if (device->has_rt_pipeline && FAILED(D12RaysInit(device)))
+        device->has_rt_pipeline = FALSE;
     device->waiter_wake = CreateEventW(NULL, FALSE, FALSE, NULL);
     return device->waiter_wake ? S_OK : E_FAIL;
 }
@@ -500,6 +504,7 @@ static void destroy_device(D12Device *device)
     if (vk->device) {
         vk->vkDeviceWaitIdle(vk->device);
         D12AccelerationStructuresDestroy(device);
+        D12RaysDestroy(device);
         D12DescriptorsDestroy(device);
         D12MemoryDestroy(device);
         vk->vkDestroyPipelineCache(vk->device, device->pipeline_cache, NULL);

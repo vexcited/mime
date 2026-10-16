@@ -55,9 +55,14 @@ BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignme
     if (!b)
         return FALSE;
     b->size = D12_MAX(size + alignment, (UINT64)1 << 20);
+    /* generated commands' preprocessing, and indirect arguments shaders write through the address. */
     VkBufferUsageFlags2CreateInfoKHR usage = {VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR};
-    usage.usage = VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT_KHR;
-    VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &usage};
+    usage.usage = VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT_KHR |
+                  VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT_KHR | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT_KHR;
+    VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, device->has_dgc ? &usage : NULL};
+    info.usage = device->has_dgc ? 0
+                                 : VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     info.size = b->size;
     VkMemoryRequirements req;
     int type = -1;
@@ -1654,6 +1659,8 @@ static void STDMETHODCALLTYPE list_end_event(ID3D12GraphicsCommandList10 *iface)
 
 /* ------------------------------------------------------------------ indirect */
 
+static VkPipeline prepare_rays(D12CommandList *list);
+
 /*
  * commands the gpu generates from the argument buffer, each changing root
  * arguments, vertex or index buffers before its draw or dispatch. root
@@ -1666,12 +1673,17 @@ static void generated_commands(D12CommandList *list, D12CommandSignature *signat
 {
     D12Device *device = list->child.device;
     D12Vk *vk = &device->vk;
-    BOOL compute = signature->stages == VK_SHADER_STAGE_COMPUTE_BIT;
-    if (compute ? !prepare_dispatch(list) : !prepare_draw(list))
-        return;
-    D12PipelineState *p = list->pipeline;
+    BOOL rays = (signature->stages & VK_SHADER_STAGE_RAYGEN_BIT_KHR) != 0;
+    BOOL compute = rays || signature->stages == VK_SHADER_STAGE_COMPUTE_BIT;
     VkGeneratedCommandsPipelineInfoEXT pipeline = {VK_STRUCTURE_TYPE_GENERATED_COMMANDS_PIPELINE_INFO_EXT};
-    pipeline.pipeline = p->pipeline;
+    if (rays) {
+        if (!(pipeline.pipeline = prepare_rays(list)))
+            return;
+    } else {
+        if (compute ? !prepare_dispatch(list) : !prepare_draw(list))
+            return;
+        pipeline.pipeline = list->pipeline->pipeline;
+    }
     VkGeneratedCommandsMemoryRequirementsInfoEXT req_info = {
         VK_STRUCTURE_TYPE_GENERATED_COMMANDS_MEMORY_REQUIREMENTS_INFO_EXT, &pipeline};
     req_info.indirectCommandsLayout = signature->layout;
@@ -1761,6 +1773,31 @@ static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 
         for (UINT i = 0; i < max_count; i++)
             vk->vkCmdDispatchIndirect(list->cmd, args->buffer, offset + (VkDeviceSize)i * signature->stride);
         break;
+    case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS: {
+        /* direct3d's arguments are vulkan's VkTraceRaysIndirectCommand2KHR, limited to a count by a copy. */
+        VkDeviceAddress at = args->va + arguments_offset;
+        VkDeviceSize stride = signature->stride;
+        if (counts) {
+            VkDeviceAddress limited;
+            if (!list->open || !D12ScratchAlloc(list->allocator, (UINT64)max_count * sizeof(D3D12_DISPATCH_RAYS_DESC), 16,
+                                                ~0u, &limited))
+                return;
+            end_rendering(list);
+            D12LimitRays(list->child.device, list->cmd, at, signature->stride, max_count, counts->va + count_offset,
+                         limited);
+            list->bound_cs = VK_NULL_HANDLE;
+            list->pushed_compute = -1;
+            list->compute.sets_dirty = list->compute.push_dirty = TRUE;
+            barrier(list);
+            at = limited;
+            stride = sizeof(D3D12_DISPATCH_RAYS_DESC);
+        }
+        if (!prepare_rays(list))
+            return;
+        for (UINT i = 0; i < max_count; i++)
+            vk->vkCmdTraceRaysIndirect2KHR(list->cmd, at + i * stride);
+        break;
+    }
     default:
         D12Log("d3d12: indirect argument type %u is not supported", last->Type);
         break;
@@ -1925,13 +1962,12 @@ static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList
         list->rt_state = D12StateObjectFrom(state);
 }
 
-/* direct3d's shader tables are vulkan's: the ray generation record is a region of one record. */
-static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc)
+/* binds the ray tracing pipeline and the compute root arguments for rays; the pipeline, VK_NULL_HANDLE for none. */
+static VkPipeline prepare_rays(D12CommandList *list)
 {
-    D12CommandList *list = impl(iface);
     VkPipeline pipeline = list->rt_state ? D12StateObjectPipeline(list->rt_state) : VK_NULL_HANDLE;
-    if (!list->open || !desc || !pipeline || !list->compute.root || !desc->Width || !desc->Height || !desc->Depth)
-        return;
+    if (!list->open || !pipeline || !list->compute.root)
+        return VK_NULL_HANDLE;
     D12Vk *vk = vk_of(list);
     end_rendering(list);
     if (list->bound_rt != pipeline) {
@@ -1942,6 +1978,16 @@ static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *if
     set_offsets(list, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, list->compute.root);
     push_root(list, TRUE);
     vk->vkCmdSetRayTracingPipelineStackSizeKHR(list->cmd, (UINT32)D12StateObjectStackSize(list->rt_state));
+    return pipeline;
+}
+
+/* direct3d's shader tables are vulkan's: the ray generation record is a region of one record. */
+static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc)
+{
+    D12CommandList *list = impl(iface);
+    if (!desc || !desc->Width || !desc->Height || !desc->Depth || !prepare_rays(list))
+        return;
+    D12Vk *vk = vk_of(list);
     VkStridedDeviceAddressRegionKHR raygen = {desc->RayGenerationShaderRecord.StartAddress,
                                               desc->RayGenerationShaderRecord.SizeInBytes,
                                               desc->RayGenerationShaderRecord.SizeInBytes};
