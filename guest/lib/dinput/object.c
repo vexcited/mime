@@ -83,7 +83,12 @@ static HRESULT STDMETHODCALLTYPE obj_query(void *This, REFIID riid, void **out)
     else if (!obj->di8 && (IsEqualGUID(riid, &IID_IDirectInputA) || IsEqualGUID(riid, &IID_IDirectInput2A) ||
                            IsEqualGUID(riid, &IID_IDirectInput7A)))
         *out = &obj->vtbl_a;
-    else
+    else if (!obj->di8 && IsEqualGUID(riid, &IID_IDirectInputJoyConfig)) {
+        /* an object aggregated in this one, made on first use. */
+        *out = DiJoyConfigFor(obj);
+        if (!*out)
+            return E_OUTOFMEMORY;
+    } else
         return E_NOINTERFACE;
     InterlockedIncrement(&obj->ref);
     return S_OK;
@@ -99,6 +104,7 @@ static ULONG STDMETHODCALLTYPE obj_release(void *This)
     DIOBJ *obj = obj_from(This);
     LONG ref = InterlockedDecrement(&obj->ref);
     if (!ref) {
+        DiJoyConfigFree(obj);
         HeapFree(GetProcessHeap(), 0, obj);
         InterlockedDecrement(&DiLocks);
     }

@@ -1,6 +1,6 @@
 /*
- * what winmm keeps besides devices: installable drivers, the joysticks of
- * the legacy api, auxiliary devices, the rest of wave input, versions.
+ * what winmm keeps besides devices: installable drivers, auxiliary
+ * devices, the rest of wave input, versions.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -151,59 +151,6 @@ WINMMAPI HMODULE WINAPI DrvGetModuleHandle(HDRVR h)
 WINMMAPI HMODULE WINAPI GetDriverModuleHandle(HDRVR h)
 {
     return DrvGetModuleHandle(h);
-}
-
-/* ------------------------------------------------------------------ joysticks */
-
-/* the legacy joystick api sees no joystick: windows' driver supports sixteen, none plugged in. */
-WINMMAPI UINT WINAPI joyGetNumDevs(void)
-{
-    return 16;
-}
-
-WINMMAPI MMRESULT WINAPI joyGetDevCapsW(UINT_PTR id, void *caps, UINT size)
-{
-    return id < 16 ? JOYERR_PARMS : MMSYSERR_NODRIVER;
-}
-
-WINMMAPI MMRESULT WINAPI joyGetDevCapsA(UINT_PTR id, void *caps, UINT size)
-{
-    return joyGetDevCapsW(id, caps, size);
-}
-
-WINMMAPI MMRESULT WINAPI joyGetPos(UINT id, void *info)
-{
-    return id < 16 ? JOYERR_UNPLUGGED : JOYERR_PARMS;
-}
-
-WINMMAPI MMRESULT WINAPI joyGetPosEx(UINT id, void *info)
-{
-    return id < 16 ? JOYERR_UNPLUGGED : JOYERR_PARMS;
-}
-
-WINMMAPI MMRESULT WINAPI joyGetThreshold(UINT id, LPUINT threshold)
-{
-    return id < 16 ? JOYERR_UNPLUGGED : JOYERR_PARMS;
-}
-
-WINMMAPI MMRESULT WINAPI joySetThreshold(UINT id, UINT threshold)
-{
-    return id < 16 ? JOYERR_UNPLUGGED : JOYERR_PARMS;
-}
-
-WINMMAPI MMRESULT WINAPI joySetCapture(HWND hwnd, UINT id, UINT period, BOOL changed)
-{
-    return id < 16 ? JOYERR_UNPLUGGED : JOYERR_PARMS;
-}
-
-WINMMAPI MMRESULT WINAPI joyReleaseCapture(UINT id)
-{
-    return id < 16 ? JOYERR_NOERROR : JOYERR_PARMS;
-}
-
-WINMMAPI MMRESULT WINAPI joyConfigChanged(DWORD flags)
-{
-    return JOYERR_NOERROR;
 }
 
 /* ------------------------------------------------------------------ auxiliary devices */

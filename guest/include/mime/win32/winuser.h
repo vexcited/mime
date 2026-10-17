@@ -1465,6 +1465,8 @@ WINUSERAPI LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPA
 WINUSERAPI LRESULT WINAPI CallWindowProcW(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 WINUSERAPI LRESULT WINAPI SendMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 WINUSERAPI LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI UINT WINAPI RegisterWindowMessageW(LPCWSTR name);
+WINUSERAPI UINT WINAPI RegisterWindowMessageA(LPCSTR name);
 WINUSERAPI BOOL WINAPI PostMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 WINUSERAPI BOOL WINAPI PostThreadMessageW(DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam);
 WINUSERAPI void WINAPI PostQuitMessage(int code);

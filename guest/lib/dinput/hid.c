@@ -367,12 +367,30 @@ BOOL DiHidFindPath(const WCHAR *path, GUID *instance)
     return found;
 }
 
+/* the device a winmm joystick id names. */
+BOOL DiHidByJoystick(DWORD id, GUID *instance, USHORT *vid, USHORT *pid, USHORT *usage)
+{
+    BOOL found = FALSE;
+    RtlEnterCriticalSection(&DiLock);
+    for (DWORD i = 0; i < g_count && !found; i++)
+        if (g_list[i].joystick == id) {
+            *instance = g_list[i].instance;
+            *vid = g_list[i].vid;
+            *pid = g_list[i].pid;
+            *usage = g_list[i].usage;
+            found = TRUE;
+        }
+    RtlLeaveCriticalSection(&DiLock);
+    return found;
+}
+
 /* ------------------------------------------------------------------ calibration */
 
 typedef struct CAL {
     LONG cmin, cctr, cmax; /* raw calibration */
     LONG rmin, rmax, rctr; /* the range reported */
     DWORD dz, sat, mode;
+    BOOL legacy_raw; /* dinput.dll before 7: raw values of a signed range come back from 0 */
     DWORD cpoints;
     CPOINT cp[MAXCPOINTSNUM];
     LONG low_sat, low_len, low_out, low_span, hi_dz, hi_len, hi_out, hi_span;
@@ -400,7 +418,7 @@ static void recalc(CAL *c)
 static LONG cook(const CAL *c, LONG x)
 {
     if (c->mode == DIPROPCALIBRATIONMODE_RAW)
-        return x;
+        return c->legacy_raw ? x - c->cmin : x;
     BOOL hi = x >= c->hi_dz;
     LONG base = hi ? c->hi_dz : c->low_sat, d;
     if (x <= base) {
@@ -1541,6 +1559,8 @@ static HRESULT set_axis(DIDEV *dev, DWORD id, DWORD index, const DIPROPHEADER *h
         break;
     case 10:
         c->mode = d->dwData;
+        c->legacy_raw = c->mode == DIPROPCALIBRATIONMODE_RAW && !dev->di8 && dev->version < 0x0700 &&
+                        dev->version != 0x05B2 && (c->cmin & 0x8000);
         break;
     case 11: {
         const DIPROPCAL *cal = (const DIPROPCAL *)h;

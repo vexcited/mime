@@ -573,7 +573,101 @@ WINMMAPI HMODULE WINAPI GetDriverModuleHandle(HDRVR driver);
 #define JOYSTICKID1 0
 #define JOYSTICKID2 1
 
+#define JOY_BUTTON1 0x0001
+#define JOY_BUTTON2 0x0002
+#define JOY_BUTTON3 0x0004
+#define JOY_BUTTON4 0x0008
+#define JOY_BUTTON1CHG 0x0100
+#define JOY_POVCENTERED ((WORD)-1)
+#define JOY_RETURNX 0x00000001
+#define JOY_RETURNY 0x00000002
+#define JOY_RETURNZ 0x00000004
+#define JOY_RETURNR 0x00000008
+#define JOY_RETURNU 0x00000010
+#define JOY_RETURNV 0x00000020
+#define JOY_RETURNPOV 0x00000040
+#define JOY_RETURNBUTTONS 0x00000080
+#define JOY_RETURNRAWDATA 0x00000100
+#define JOY_RETURNPOVCTS 0x00000200
+#define JOY_RETURNCENTERED 0x00000400
+#define JOY_USEDEADZONE 0x00000800
+#define JOY_RETURNALL 0x000000FF
+#define JOYCAPS_HASZ 0x0001
+#define JOYCAPS_HASR 0x0002
+#define JOYCAPS_HASU 0x0004
+#define JOYCAPS_HASV 0x0008
+#define JOYCAPS_HASPOV 0x0010
+#define JOYCAPS_POV4DIR 0x0020
+#define JOYCAPS_POVCTS 0x0040
+#define MAX_JOYSTICKOEMVXDNAME 260
+#define MM_JOY1MOVE 0x3A0
+#define MM_JOY1ZMOVE 0x3A2
+#define MM_JOY1BUTTONDOWN 0x3B5
+#define MM_JOY1BUTTONUP 0x3B7
+
+typedef struct tagJOYCAPSA {
+    WORD wMid;
+    WORD wPid;
+    CHAR szPname[MAXPNAMELEN];
+    UINT wXmin, wXmax, wYmin, wYmax, wZmin, wZmax;
+    UINT wNumButtons;
+    UINT wPeriodMin, wPeriodMax;
+    UINT wRmin, wRmax, wUmin, wUmax, wVmin, wVmax;
+    UINT wCaps;
+    UINT wMaxAxes, wNumAxes, wMaxButtons;
+    CHAR szRegKey[MAXPNAMELEN];
+    CHAR szOEMVxD[MAX_JOYSTICKOEMVXDNAME];
+} JOYCAPSA, *LPJOYCAPSA;
+
+typedef struct tagJOYCAPSW {
+    WORD wMid;
+    WORD wPid;
+    WCHAR szPname[MAXPNAMELEN];
+    UINT wXmin, wXmax, wYmin, wYmax, wZmin, wZmax;
+    UINT wNumButtons;
+    UINT wPeriodMin, wPeriodMax;
+    UINT wRmin, wRmax, wUmin, wUmax, wVmin, wVmax;
+    UINT wCaps;
+    UINT wMaxAxes, wNumAxes, wMaxButtons;
+    WCHAR szRegKey[MAXPNAMELEN];
+    WCHAR szOEMVxD[MAX_JOYSTICKOEMVXDNAME];
+} JOYCAPSW, *LPJOYCAPSW;
+
+typedef struct tagJOYCAPS2A {
+    JOYCAPSA caps;
+    GUID ManufacturerGuid, ProductGuid, NameGuid;
+} JOYCAPS2A;
+
+typedef struct tagJOYCAPS2W {
+    JOYCAPSW caps;
+    GUID ManufacturerGuid, ProductGuid, NameGuid;
+} JOYCAPS2W;
+
+typedef struct joyinfo_tag {
+    UINT wXpos, wYpos, wZpos;
+    UINT wButtons;
+} JOYINFO, *LPJOYINFO;
+
+typedef struct joyinfoex_tag {
+    DWORD dwSize;
+    DWORD dwFlags;
+    DWORD dwXpos, dwYpos, dwZpos, dwRpos, dwUpos, dwVpos;
+    DWORD dwButtons;
+    DWORD dwButtonNumber;
+    DWORD dwPOV;
+    DWORD dwReserved1, dwReserved2;
+} JOYINFOEX, *LPJOYINFOEX;
+
 WINMMAPI UINT WINAPI joyGetNumDevs(void);
+WINMMAPI MMRESULT WINAPI joyGetDevCapsW(UINT_PTR id, LPJOYCAPSW caps, UINT size);
+WINMMAPI MMRESULT WINAPI joyGetDevCapsA(UINT_PTR id, LPJOYCAPSA caps, UINT size);
+WINMMAPI MMRESULT WINAPI joyGetPos(UINT id, LPJOYINFO info);
+WINMMAPI MMRESULT WINAPI joyGetPosEx(UINT id, LPJOYINFOEX info);
+WINMMAPI MMRESULT WINAPI joyGetThreshold(UINT id, LPUINT threshold);
+WINMMAPI MMRESULT WINAPI joySetThreshold(UINT id, UINT threshold);
+WINMMAPI MMRESULT WINAPI joySetCapture(HWND hwnd, UINT id, UINT period, BOOL changed);
+WINMMAPI MMRESULT WINAPI joyReleaseCapture(UINT id);
+WINMMAPI MMRESULT WINAPI joyConfigChanged(DWORD flags);
 WINMMAPI UINT WINAPI mmsystemGetVersion(void);
 
 

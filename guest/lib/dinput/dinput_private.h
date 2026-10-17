@@ -11,6 +11,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
 #include <mime/win32/dinput.h>
+#include <mime/win32/dinputd.h>
 
 #define DI8_VERSION 0x0800
 #define DI_MAX_PATH MAX_PATH
@@ -33,9 +34,13 @@ typedef struct DIOBJ {
     LONG ref;
     BOOL di8;
     DWORD version; /* 0 until initialized */
+    void *joycfg;  /* dinput.dll's IDirectInputJoyConfig, made at its first query */
 } DIOBJ;
 
 HRESULT DiCreateObject(REFIID riid, void **out, BOOL di8);
+/* joycfg.c */
+void *DiJoyConfigFor(DIOBJ *obj);
+void DiJoyConfigFree(DIOBJ *obj);
 HRESULT DiCreateHelper(HINSTANCE instance, DWORD version, REFIID riid, void **out, IUnknown *outer, BOOL di8);
 
 /* ------------------------------------------------------------------ devices */
@@ -188,6 +193,7 @@ BOOL DiHidEntry(DWORD index, GUID *instance, BYTE *type7, BYTE *type8);
 BOOL DiHidLookup(const GUID *guid, DWORD *index);
 HRESULT DiHidInit(DIDEV *dev, DWORD index);
 BOOL DiHidFindPath(const WCHAR *path, GUID *instance);
+BOOL DiHidByJoystick(DWORD id, GUID *instance, USHORT *vid, USHORT *pid, USHORT *usage);
 const WCHAR *DiHidUsageName(USHORT page, USHORT usage);
 
 /* names.c */

@@ -13,4 +13,9 @@
 MMRESULT MmErrorTextW(MMRESULT error, LPWSTR text, UINT size);
 MMRESULT MmErrorTextA(MMRESULT error, LPSTR text, UINT size);
 
+/* the module, which directinput is created for. */
+extern HINSTANCE WinmmModule;
+/* the joysticks closed as the dll goes. */
+void WinmmJoyDetach(void);
+
 #endif
