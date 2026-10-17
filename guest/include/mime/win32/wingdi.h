@@ -473,6 +473,8 @@ WINGDIAPI BOOL WINAPI DeleteDC(HDC dc);
 WINGDIAPI int WINAPI SaveDC(HDC dc);
 WINGDIAPI BOOL WINAPI RestoreDC(HDC dc, int saved);
 WINGDIAPI int WINAPI GetDeviceCaps(HDC dc, int index);
+WINGDIAPI BOOL WINAPI SetDeviceGammaRamp(HDC dc, LPVOID ramp);
+WINGDIAPI BOOL WINAPI GetDeviceGammaRamp(HDC dc, LPVOID ramp);
 WINGDIAPI HBITMAP WINAPI CreateCompatibleBitmap(HDC dc, int width, int height);
 WINGDIAPI HBITMAP WINAPI CreateBitmap(int width, int height, UINT planes, UINT bpp, const void *bits);
 WINGDIAPI HBITMAP WINAPI CreateDIBSection(HDC dc, const BITMAPINFO *info, UINT usage, void **bits, HANDLE section,

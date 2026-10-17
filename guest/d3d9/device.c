@@ -598,19 +598,34 @@ static HRESULT STDMETHODCALLTYPE device_set_dialog_box_mode(IDirect3DDevice9Ex *
     return D3D_OK;
 }
 
+/*
+ * the ramp of an implicit swap chain, those of CreateAdditionalSwapChain
+ * have none, shown while it is fullscreen; a
+ * windowed one only keeps it. there is no calibrator, as on a system
+ * without one, so D3DSGR_CALIBRATE changes nothing.
+ */
 static void STDMETHODCALLTYPE device_set_gamma_ramp(IDirect3DDevice9Ex *iface, UINT swapchain, DWORD flags,
                                                     const D3DGAMMARAMP *ramp)
 {
     D9Device *d = impl(iface);
-    if (swapchain < d->swapchain_count && ramp)
-        d->swapchains[swapchain]->gamma = *ramp;
+    D9Lock(d);
+    if (ramp && swapchain < d->swapchain_count && d->swapchains[swapchain]->implicit) {
+        D9SwapChain *sc = d->swapchains[swapchain];
+        sc->gamma = *ramp;
+        sc->gamma_set = TRUE;
+        D9ShowGamma(sc);
+    }
+    D9Unlock(d);
 }
 
+/* what was set, zero before. */
 static void STDMETHODCALLTYPE device_get_gamma_ramp(IDirect3DDevice9Ex *iface, UINT swapchain, D3DGAMMARAMP *ramp)
 {
     D9Device *d = impl(iface);
-    if (swapchain < d->swapchain_count && ramp)
+    D9Lock(d);
+    if (ramp && swapchain < d->swapchain_count && d->swapchains[swapchain]->implicit)
         *ramp = d->swapchains[swapchain]->gamma;
+    D9Unlock(d);
 }
 
 /* ------------------------------------------------------------------ resources */

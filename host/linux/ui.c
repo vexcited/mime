@@ -9,6 +9,7 @@
  * buffer and post the rest as calls the main loop runs.
  */
 #include "display.h"
+#include "gamma.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -552,9 +553,26 @@ static void draw(UiWindow *w)
     if (w->texture && w->has_dirty) {
         MimeRect d = w->dirty;
         SDL_Rect r = {d.left, d.top, d.right - d.left, d.bottom - d.top};
-        if (r.w > 0 && r.h > 0)
+        uint8_t table[3][256];
+        void *locked;
+        int pitch;
+        if (r.w > 0 && r.h > 0 && mime_gamma_table(table) && SDL_LockTexture(w->texture, &r, &locked, &pitch)) {
+            /* through the display's ramp, blue, green, red then alpha in memory. */
+            for (int y = 0; y < r.h; y++) {
+                const uint8_t *in = w->pixels + ((size_t)(d.top + y) * w->width + (size_t)d.left) * 4;
+                uint8_t *out = (uint8_t *)locked + (size_t)y * (size_t)pitch;
+                for (int x = 0; x < r.w; x++, in += 4, out += 4) {
+                    out[0] = table[2][in[0]];
+                    out[1] = table[1][in[1]];
+                    out[2] = table[0][in[2]];
+                    out[3] = in[3];
+                }
+            }
+            SDL_UnlockTexture(w->texture);
+        } else if (r.w > 0 && r.h > 0) {
             SDL_UpdateTexture(w->texture, &r, w->pixels + ((size_t)d.top * w->width + (size_t)d.left) * 4,
                               (int)w->width * 4);
+        }
         w->has_dirty = false;
     }
     pthread_mutex_unlock(&w->lock);
@@ -1485,6 +1503,28 @@ static void rumble_main(void *arg)
     if (g)
         SDL_RumbleGamepad(g, c->low, c->high, c->low || c->high ? 600000 : 0);
     free(c);
+}
+
+/* a new ramp shows on every window drawn here at once; swapchains take it at their next present. */
+static void regrade_main(void *arg)
+{
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        UiWindow *w = &g_windows[i];
+        if (!w->used || !w->renderer || !w->pixels || !w->shown)
+            continue;
+        pthread_mutex_lock(&w->lock);
+        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+        w->has_dirty = true;
+        pthread_mutex_unlock(&w->lock);
+        draw(w);
+    }
+}
+
+void mime_ui_gamma(const uint16_t *ramp)
+{
+    mime_gamma_set(ramp);
+    if (g_video)
+        on_main(regrade_main, nullptr);
 }
 
 void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)

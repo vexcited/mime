@@ -219,7 +219,9 @@ struct D9SwapChain {
     D9Surface *back_buffers[D3DPRESENT_BACK_BUFFERS_MAX_EX];
     UINT back_buffer_count;
     UINT present_count;
+    /* the program's ramp, zero until it sets one, shown while fullscreen. */
     D3DGAMMARAMP gamma;
+    BOOL gamma_set, gamma_shown;
 };
 
 HRESULT D9CreateSwapChain(D9Device *device, D3DPRESENT_PARAMETERS *params, D9SwapChain **out);
@@ -228,6 +230,8 @@ void D9DestroySwapChain(D9SwapChain *swapchain);
 HRESULT D9Present(D9SwapChain *swapchain, const RECT *source, const RECT *dest, HWND window, const RGNDATA *dirty,
                   DWORD flags);
 BOOL D9SwapChainInUse(const D9SwapChain *swapchain);
+/* the ramp on the display while the swap chain is fullscreen, or taken off. */
+void D9ShowGamma(D9SwapChain *swapchain);
 HRESULT D9RasterStatus(D9SwapChain *swapchain, D3DRASTER_STATUS *status);
 /* takes an additional swap chain out of its device's list. */
 void D9ForgetSwapChain(D9Device *device, D9SwapChain *swapchain);

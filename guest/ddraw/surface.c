@@ -6,6 +6,7 @@
  * one are implicit: they die with their root. see docs/ddraw.md.
  */
 #include "ddraw_private.h"
+#include <mime/ntuser.h>
 
 static const IDirectDrawSurfaceVtbl surf1_vtbl;
 static const IDirectDrawSurface2Vtbl surf2_vtbl;
@@ -413,6 +414,7 @@ static void destroy(DDSURF *s)
     }
     release_dc(s);
     free_private(s);
+    DdHideGamma(s);
     HeapFree(GetProcessHeap(), 0, s->gamma);
     free_memory(s);
     RemoveEntryList(&s->links);
@@ -2062,12 +2064,32 @@ static HRESULT STDMETHODCALLTYPE gamma_get_ramp(IDirectDrawGammaControl *This, D
         *ramp = *s->gamma;
         return DdLeave(DD_OK);
     }
-    for (int i = 0; i < 256; i++)
-        ramp->red[i] = ramp->green[i] = ramp->blue[i] = (WORD)(i * 0x101);
-    return DdLeave(DD_OK);
+    /* none set: gdi's ramp of the display. */
+    HDC dc = GetDC(nullptr);
+    BOOL ok = dc && GetDeviceGammaRamp(dc, ramp);
+    if (dc)
+        ReleaseDC(nullptr, dc);
+    return DdLeave(ok ? DD_OK : DDERR_UNSUPPORTED);
 }
 
-/* the ramp shows while the object holds exclusive mode, applied as the primary reaches the screen. */
+void DdShowGamma(DDRAW *dd)
+{
+    DDSURF *s = dd->primary;
+    if (s && s->gamma && DdIsExclusiveOwner(dd) && (dd->flags & DDF_ACTIVE)) {
+        NtGdiMimeGamma(MIME_GAMMA_DEVICE, (PUSHORT)s->gamma);
+        s->gamma_shown = TRUE;
+    }
+}
+
+/* windows writes back the ramp it found, gdi's, which is what the display shows once the device ramp goes. */
+void DdHideGamma(DDSURF *s)
+{
+    if (s->gamma_shown)
+        NtGdiMimeGamma(MIME_GAMMA_DEVICE, nullptr);
+    s->gamma_shown = FALSE;
+}
+
+/* the ramp shows while the object holds exclusive mode, else it is only kept. no calibrator is known. */
 static HRESULT STDMETHODCALLTYPE gamma_set_ramp(IDirectDrawGammaControl *This, DWORD flags, LPDDGAMMARAMP ramp)
 {
     HRESULT hr;
@@ -2083,16 +2105,18 @@ static HRESULT STDMETHODCALLTYPE gamma_set_ramp(IDirectDrawGammaControl *This, D
     if (s->lost)
         return DdLeave(DDERR_SURFACELOST);
     if (!ramp) {
+        DdHideGamma(s);
         HeapFree(GetProcessHeap(), 0, s->gamma);
         s->gamma = nullptr;
-    } else {
-        if (!s->gamma)
-            s->gamma = HeapAlloc(GetProcessHeap(), 0, sizeof(*s->gamma));
-        if (!s->gamma)
-            return DdLeave(DDERR_OUTOFMEMORY);
-        *s->gamma = *ramp;
+        return DdLeave(DD_OK);
     }
-    DdPresentDirty(s, nullptr);
+    if (!s->gamma)
+        s->gamma = HeapAlloc(GetProcessHeap(), 0, sizeof(*s->gamma));
+    if (!s->gamma)
+        return DdLeave(DDERR_OUTOFMEMORY);
+    *s->gamma = *ramp;
+    if (s->dd && s->dd->primary == s)
+        DdShowGamma(s->dd);
     return DdLeave(DD_OK);
 }
 

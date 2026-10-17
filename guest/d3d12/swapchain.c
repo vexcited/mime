@@ -20,6 +20,8 @@ typedef struct D12SwapChain {
     DXGI_SWAP_CHAIN_DESC1 desc;
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen;
     BOOL fullscreen_state;
+    /* the output a fullscreen swap chain owns, which its gamma controls. */
+    IDXGIOutput *owned;
     BOOL windowed_saved;
     RECT windowed_rect;
     LONG windowed_style, windowed_ex_style;
@@ -440,8 +442,28 @@ static void enter_fullscreen(D12SwapChain *sc, IDXGIOutput *output)
     SetWindowPos(sc->window, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
 }
 
+/* an owned output knows when its swap chain lets it go, and shows gdi's gamma again. */
+static void own(IDXGIOutput *output, BOOL owned)
+{
+    IMimeDXGIOutput *mime;
+    if (SUCCEEDED(output->lpVtbl->QueryInterface(output, &IID_IMimeDXGIOutput, (void **)&mime))) {
+        mime->lpVtbl->SetFullscreenOwner(mime, owned);
+        mime->lpVtbl->Release(mime);
+    }
+}
+
+static void disown(D12SwapChain *sc)
+{
+    if (!sc->owned)
+        return;
+    own(sc->owned, FALSE);
+    sc->owned->lpVtbl->Release(sc->owned);
+    sc->owned = nullptr;
+}
+
 static void leave_fullscreen(D12SwapChain *sc)
 {
+    disown(sc);
     if (!sc->windowed_saved)
         return;
     SetWindowLongW(sc->window, GWL_STYLE, sc->windowed_style);
@@ -456,6 +478,12 @@ static HRESULT STDMETHODCALLTYPE sc_get_containing_output(IDXGISwapChain4 *iface
 {
     if (!output)
         return DXGI_ERROR_INVALID_CALL;
+    IDXGIOutput *owned = impl(iface)->owned;
+    if (owned) {
+        owned->lpVtbl->AddRef(owned);
+        *output = owned;
+        return S_OK;
+    }
     IDXGIAdapter *adapter = impl(iface)->device->adapter;
     return adapter->lpVtbl->EnumOutputs(adapter, 0, output);
 }
@@ -471,8 +499,11 @@ static HRESULT STDMETHODCALLTYPE sc_set_fullscreen_state(IDXGISwapChain4 *iface,
             output->lpVtbl->AddRef(output);
         else if (FAILED(sc_get_containing_output(iface, &output)))
             return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+        disown(sc);
         enter_fullscreen(sc, output);
-        output->lpVtbl->Release(output);
+        /* the output is the swap chain's until it leaves fullscreen. */
+        own(output, TRUE);
+        sc->owned = output;
     } else if (sc->fullscreen_state) {
         leave_fullscreen(sc);
     }

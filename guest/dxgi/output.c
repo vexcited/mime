@@ -5,13 +5,24 @@
  */
 #include "dxgi_private.h"
 #include <mime/display_modes.h>
+#include <mime/ntuser.h>
+
+static const GUID IID_D3D12Device = {0x189819F1, 0x1DB6, 0x4B57, {0xBE, 0x54, 0x18, 0x21, 0x33, 0x9B, 0x85, 0xF7}};
+
+/* who owns an output, as dxgi.dll counts it: gamma works for exclusive owners alone. */
+enum { OWNER_NONE, OWNER_SHARED, OWNER_EXCLUSIVE };
 
 typedef struct DxgiOutput {
     IDXGIOutput6 iface;
+    IMimeDXGIOutput mime;
     LONG refs;
     DxgiAdapter *adapter;
     HMONITOR monitor;
+    UINT owner;
+    /* the program's curve, its scale and offset kept apart as they are never applied. */
     DXGI_GAMMA_CONTROL *gamma;
+    DXGI_RGB scale, offset;
+    BOOL gamma_shown;
     MimePrivateData data;
 } DxgiOutput;
 
@@ -100,8 +111,51 @@ static HRESULT STDMETHODCALLTYPE output_query(IDXGIOutput6 *iface, REFIID riid, 
             *out = iface;
             return S_OK;
         }
+    if (IsEqualGUID(riid, &IID_IMimeDXGIOutput)) {
+        InterlockedIncrement(&impl(iface)->refs);
+        *out = &impl(iface)->mime;
+        return S_OK;
+    }
     *out = nullptr;
     return E_NOINTERFACE;
+}
+
+/* the 1025 points of a curve sampled for the display's 256 entries. */
+static void show_gamma(DxgiOutput *output)
+{
+    USHORT ramp[3][256];
+    const DXGI_RGB *curve = output->gamma->GammaCurve;
+    for (UINT i = 0; i < 256; i++) {
+        UINT at = i * 1024 / 255;
+        float t = i * 1024 / 255.0f - at;
+        UINT next = at < 1024 ? at + 1 : at;
+        float rgb[3] = {curve[at].Red + (curve[next].Red - curve[at].Red) * t,
+                        curve[at].Green + (curve[next].Green - curve[at].Green) * t,
+                        curve[at].Blue + (curve[next].Blue - curve[at].Blue) * t};
+        for (UINT c = 0; c < 3; c++) {
+            float v = rgb[c] > 0.0f ? rgb[c] < 1.0f ? rgb[c] : 1.0f : 0.0f;
+            ramp[c][i] = (USHORT)(v * 65535.0f + 0.5f);
+        }
+    }
+    NtGdiMimeGamma(MIME_GAMMA_DEVICE, &ramp[0][0]);
+    output->gamma_shown = TRUE;
+}
+
+/* an owner gone: the display shows gdi's ramp again, as windows' kernel switches back. */
+static void hide_gamma(DxgiOutput *output)
+{
+    if (output->gamma_shown)
+        NtGdiMimeGamma(MIME_GAMMA_DEVICE, nullptr);
+    output->gamma_shown = FALSE;
+}
+
+static void set_owner(DxgiOutput *output, UINT owner)
+{
+    output->owner = owner;
+    if (owner == OWNER_EXCLUSIVE && output->gamma)
+        show_gamma(output);
+    else
+        hide_gamma(output);
 }
 
 static ULONG STDMETHODCALLTYPE output_add_ref(IDXGIOutput6 *iface) { return InterlockedIncrement(&impl(iface)->refs); }
@@ -111,6 +165,7 @@ static ULONG STDMETHODCALLTYPE output_release(IDXGIOutput6 *iface)
     DxgiOutput *output = impl(iface);
     ULONG refs = InterlockedDecrement(&output->refs);
     if (!refs) {
+        hide_gamma(output);
         MimePrivateClear(&output->data);
         output->adapter->iface.lpVtbl->Release(&output->adapter->iface);
         HeapFree(GetProcessHeap(), 0, output->gamma);
@@ -272,18 +327,30 @@ static HRESULT STDMETHODCALLTYPE output_wait_for_vblank(IDXGIOutput6 *iface)
     return S_OK;
 }
 
+/* direct3d 12 devices cannot take an output, their swap chains alone own it. */
 static HRESULT STDMETHODCALLTYPE output_take_ownership(IDXGIOutput6 *iface, IUnknown *device, BOOL exclusive)
 {
-    return device ? S_OK : DXGI_ERROR_INVALID_CALL;
+    if (!device)
+        return DXGI_ERROR_INVALID_CALL;
+    IUnknown *d3d12;
+    if (SUCCEEDED(device->lpVtbl->QueryInterface(device, &IID_D3D12Device, (void **)&d3d12))) {
+        d3d12->lpVtbl->Release(d3d12);
+        return DXGI_ERROR_INVALID_CALL;
+    }
+    set_owner(impl(iface), exclusive ? OWNER_EXCLUSIVE : OWNER_SHARED);
+    return S_OK;
 }
 
-static void STDMETHODCALLTYPE output_release_ownership(IDXGIOutput6 *iface) {}
+static void STDMETHODCALLTYPE output_release_ownership(IDXGIOutput6 *iface)
+{
+    set_owner(impl(iface), OWNER_NONE);
+}
 
 static HRESULT STDMETHODCALLTYPE output_get_gamma_control_capabilities(IDXGIOutput6 *iface,
                                                                        DXGI_GAMMA_CONTROL_CAPABILITIES *caps)
 {
-    if (!caps)
-        return E_INVALIDARG;
+    if (impl(iface)->owner != OWNER_EXCLUSIVE)
+        return DXGI_ERROR_INVALID_CALL;
     caps->ScaleAndOffsetSupported = FALSE;
     caps->MaxConvertedValue = 1.0f;
     caps->MinConvertedValue = 0.0f;
@@ -293,30 +360,32 @@ static HRESULT STDMETHODCALLTYPE output_get_gamma_control_capabilities(IDXGIOutp
     return S_OK;
 }
 
+/* the curve shows as it is while the output is owned exclusively; scale and offset are not supported. */
 static HRESULT STDMETHODCALLTYPE output_set_gamma_control(IDXGIOutput6 *iface, const DXGI_GAMMA_CONTROL *control)
 {
-    if (!control)
-        return E_INVALIDARG;
     DxgiOutput *output = impl(iface);
+    if (output->owner != OWNER_EXCLUSIVE || !control)
+        return DXGI_ERROR_INVALID_CALL;
     if (!output->gamma && !(output->gamma = HeapAlloc(GetProcessHeap(), 0, sizeof(*output->gamma))))
         return E_OUTOFMEMORY;
     *output->gamma = *control;
+    output->scale = control->Scale;
+    output->offset = control->Offset;
+    output->gamma->Scale = (DXGI_RGB){1.0f, 1.0f, 1.0f};
+    output->gamma->Offset = (DXGI_RGB){};
+    show_gamma(output);
     return S_OK;
 }
 
+/* what the program set, which an output never set has not. */
 static HRESULT STDMETHODCALLTYPE output_get_gamma_control(IDXGIOutput6 *iface, DXGI_GAMMA_CONTROL *control)
 {
-    if (!control)
-        return E_INVALIDARG;
     DxgiOutput *output = impl(iface);
-    if (output->gamma) {
-        *control = *output->gamma;
-        return S_OK;
-    }
-    memset(control, 0, sizeof(*control));
-    control->Scale.Red = control->Scale.Green = control->Scale.Blue = 1.0f;
-    for (UINT i = 0; i < 1025; i++)
-        control->GammaCurve[i].Red = control->GammaCurve[i].Green = control->GammaCurve[i].Blue = i / 1024.0f;
+    if (output->owner != OWNER_EXCLUSIVE || !control || !output->gamma)
+        return DXGI_ERROR_INVALID_CALL;
+    *control = *output->gamma;
+    control->Scale = output->scale;
+    control->Offset = output->offset;
     return S_OK;
 }
 
@@ -451,12 +520,37 @@ static const IDXGIOutput6Vtbl output_vtbl = {
     output_check_hardware_composition_support,
 };
 
+static DxgiOutput *from_mime(IMimeDXGIOutput *iface) { return CONTAINING_RECORD(iface, DxgiOutput, mime); }
+
+static HRESULT STDMETHODCALLTYPE mime_query(IMimeDXGIOutput *iface, REFIID riid, void **out)
+{
+    return output_query(&from_mime(iface)->iface, riid, out);
+}
+
+static ULONG STDMETHODCALLTYPE mime_add_ref(IMimeDXGIOutput *iface)
+{
+    return output_add_ref(&from_mime(iface)->iface);
+}
+
+static ULONG STDMETHODCALLTYPE mime_release(IMimeDXGIOutput *iface)
+{
+    return output_release(&from_mime(iface)->iface);
+}
+
+static void STDMETHODCALLTYPE mime_set_fullscreen_owner(IMimeDXGIOutput *iface, BOOL owned)
+{
+    set_owner(from_mime(iface), owned ? OWNER_EXCLUSIVE : OWNER_NONE);
+}
+
+static const IMimeDXGIOutputVtbl mime_vtbl = {mime_query, mime_add_ref, mime_release, mime_set_fullscreen_owner};
+
 HRESULT DxgiCreateOutput(DxgiAdapter *adapter, HMONITOR monitor, IDXGIOutput **out)
 {
     DxgiOutput *output = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*output));
     if (!output)
         return E_OUTOFMEMORY;
     output->iface.lpVtbl = &output_vtbl;
+    output->mime.lpVtbl = &mime_vtbl;
     output->refs = 1;
     output->adapter = adapter;
     adapter->iface.lpVtbl->AddRef(&adapter->iface);

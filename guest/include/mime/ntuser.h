@@ -482,6 +482,12 @@ W32KAPI NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkKick(void);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms);
 
+/* the display's gamma ramps, three channels of 256 values, red first. */
+#define MIME_GAMMA_GET 0    /* the ramp gdi set for the session, the identity before any */
+#define MIME_GAMMA_SET 1    /* gdi's ramp */
+#define MIME_GAMMA_DEVICE 2 /* the calling process's fullscreen ramp over gdi's, null to drop it */
+W32KAPI NTSTATUS NTAPI NtGdiMimeGamma(ULONG op, PUSHORT ramp);
+
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
 W32KAPI BOOL NTAPI NtUserCloseClipboard(void);
 W32KAPI BOOL NTAPI NtUserEmptyClipboard(void);

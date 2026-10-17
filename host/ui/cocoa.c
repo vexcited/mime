@@ -1853,6 +1853,11 @@ void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
 {
 }
 
+/* the display's gamma ramp is not applied on macos yet. */
+void mime_ui_gamma(const uint16_t *ramp)
+{
+}
+
 static void beep_main(void *arg)
 {
     NSBeep();

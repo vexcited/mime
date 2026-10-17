@@ -491,6 +491,64 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTDestroyDCFromMemory(const D3DKMT_DESTROYDCFROM
     return NtGdiDdDDIDestroyDCFromMemory(desc);
 }
 
+/* ------------------------------------------------------------------ gamma */
+
+/* a dc of the display, which windows maps to its monitor; printers and metafiles have no ramp. */
+static BOOL display_dc(HDC dc)
+{
+    return GetObjectType(dc) == OBJ_DC && GetDeviceCaps(dc, TECHNOLOGY) == DT_RASDISPLAY;
+}
+
+/* how far each entry's high byte may stray from its index, read once as windows' color server does. */
+static LONG gamma_range(void)
+{
+    static LONG range = -1;
+    if (range < 0) {
+        DWORD value, size = sizeof(value);
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM",
+                         L"GdiIcmGammaRange", RRF_RT_REG_DWORD, nullptr, &value, &size) ||
+            value > 0x7FFFFFFF)
+            value = 128;
+        range = (LONG)value;
+    }
+    return range;
+}
+
+WINGDIAPI BOOL WINAPI SetDeviceGammaRamp(HDC dc, LPVOID ramp)
+{
+    if (!ramp) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!dc || !display_dc(dc))
+        return FALSE;
+    /* no monotony is asked, and the low bytes are free. */
+    const WORD *values = ramp;
+    LONG range = gamma_range();
+    for (LONG i = 0; i < 3 * 256; i++) {
+        LONG high = values[i] >> 8, index = i & 255;
+        if (high < index - range || high > index + range)
+            return FALSE;
+    }
+    return NT_SUCCESS(NtGdiMimeGamma(MIME_GAMMA_SET, (PUSHORT)ramp));
+}
+
+/* gdi's ramp, not what a fullscreen program shows over it. */
+WINGDIAPI BOOL WINAPI GetDeviceGammaRamp(HDC dc, LPVOID ramp)
+{
+    if (!ramp) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!dc)
+        return FALSE;
+    if (!display_dc(dc) || !NT_SUCCESS(NtGdiMimeGamma(MIME_GAMMA_GET, ramp))) {
+        memset(ramp, 0, 3 * 256 * sizeof(WORD));
+        return FALSE;
+    }
+    return TRUE;
+}
+
 WINGDIAPI HBITMAP WINAPI CreateDIBSection(HDC dc, const BITMAPINFO *info, UINT usage, void **bits, HANDLE section,
                                           DWORD offset)
 {

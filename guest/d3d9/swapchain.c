@@ -6,6 +6,7 @@
  * rectangle asked, as direct3d 9 does in windows.
  */
 #include "d3d9_private.h"
+#include <mime/ntuser.h>
 
 static D9SwapChain *impl(IDirect3DSwapChain9Ex *iface) { return CONTAINING_RECORD(iface, D9SwapChain, iface); }
 
@@ -169,8 +170,6 @@ HRESULT D9CreateSwapChain(D9Device *device, D3DPRESENT_PARAMETERS *params, D9Swa
     sc->device = device;
     sc->params = *params;
     sc->window = window;
-    for (UINT i = 0; i < 256; i++)
-        sc->gamma.red[i] = sc->gamma.green[i] = sc->gamma.blue[i] = (WORD)(i * 257);
     if (FAILED(hr = make_output(sc, window, &sc->output)) || FAILED(hr = make_buffers(sc))) {
         D9DestroySwapChain(sc);
         return hr;
@@ -179,8 +178,20 @@ HRESULT D9CreateSwapChain(D9Device *device, D3DPRESENT_PARAMETERS *params, D9Swa
     return D3D_OK;
 }
 
+void D9ShowGamma(D9SwapChain *sc)
+{
+    BOOL show = sc->gamma_set && !sc->params.Windowed;
+    if (show)
+        NtGdiMimeGamma(MIME_GAMMA_DEVICE, (PUSHORT)&sc->gamma);
+    else if (sc->gamma_shown)
+        NtGdiMimeGamma(MIME_GAMMA_DEVICE, nullptr);
+    sc->gamma_shown = show;
+}
+
 void D9DestroySwapChain(D9SwapChain *sc)
 {
+    sc->gamma_set = FALSE;
+    D9ShowGamma(sc);
     release_buffers(sc);
     destroy_output(&sc->output);
     for (UINT i = 0; i < sc->other_count; i++)
@@ -214,7 +225,11 @@ HRESULT D9ResetSwapChain(D9SwapChain *sc, D3DPRESENT_PARAMETERS *params)
         if (FAILED(hr = make_output(sc, window, &sc->output)))
             return hr;
     }
-    return make_buffers(sc);
+    if (FAILED(hr = make_buffers(sc)))
+        return hr;
+    /* a reset to fullscreen shows the ramp again, uncalibrated. */
+    D9ShowGamma(sc);
+    return D3D_OK;
 }
 
 /* the output of a window presents name, made the first time. */

@@ -273,6 +273,7 @@ enum {
 
     MIME_HC_POINTER = 0x44,     /* (MIME_POINTER_*, window_id, left, top, right, bottom) screen rectangle */
     MIME_HC_PAD_RUMBLE = 0x45,  /* (pad, low frequency motor, high frequency motor) from 0 to 65535 */
+    MIME_HC_GAMMA = 0x46,       /* (pa of three channels of 256 values, red first, or 0 for the identity) */
 };
 
 /* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */

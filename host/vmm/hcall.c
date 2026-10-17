@@ -311,6 +311,15 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_PAD_RUMBLE:
         mime_ui_pad_rumble((uint32_t)regs[1], (uint16_t)regs[2], (uint16_t)regs[3]);
         break;
+    case MIME_HC_GAMMA: {
+        const uint16_t *ramp = regs[1] ? mime_vm_phys(vm, regs[1], 3 * 256 * sizeof(uint16_t)) : nullptr;
+        if (regs[1] && !ramp) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        mime_ui_gamma(ramp);
+        break;
+    }
     case MIME_HC_POINTER: {
         MimeRect rect = {(int32_t)regs[3], (int32_t)regs[4], (int32_t)regs[5], (int32_t)regs[6]};
         mime_ui_pointer((uint32_t)regs[1], (uint32_t)regs[2], &rect);

@@ -5,7 +5,8 @@
  * once. pixels go through gdi, which converts every format, 8 bit ones
  * with the primary's palette, into the window's surface; mode x's 320
  * pixel wide primary is stretched over the 640 by 480 mode it runs in.
- * a gamma ramp of the exclusive owner's primary applies on the way.
+ * a gamma ramp of the exclusive owner's primary is the display's, which
+ * the host applies.
  */
 #include "ddraw_private.h"
 
@@ -54,57 +55,6 @@ static BOOL describe(DDSURF *s, DIBINFO *info)
     default:
         return FALSE;
     }
-}
-
-static DWORD channel_shift(DWORD mask, DWORD *bits)
-{
-    DWORD shift = 0;
-    *bits = 0;
-    if (!mask)
-        return 0;
-    while (!(mask & 1)) {
-        mask >>= 1;
-        shift++;
-    }
-    while (mask & 1) {
-        mask >>= 1;
-        (*bits)++;
-    }
-    return shift;
-}
-
-static BYTE to8(DWORD v, DWORD shift, DWORD bits)
-{
-    if (!bits)
-        return 0;
-    v = v >> shift & ((1u << bits) - 1);
-    return (BYTE)(bits >= 8 ? v >> (bits - 8) : v * 255 / ((1u << bits) - 1));
-}
-
-/* rows of a rectangle through the ramp as 32 bit pixels; null when the format has no rgb. */
-static DWORD *apply_gamma(DDSURF *primary, const RECT *rect, const DDGAMMARAMP *ramp)
-{
-    const DDPIXELFORMAT *pf = &primary->format.pf;
-    DWORD size = primary->format.bpp / 8;
-    if (size < 2 || !(pf->dwFlags & DDPF_RGB))
-        return nullptr;
-    LONG width = rect->right - rect->left, height = rect->bottom - rect->top;
-    DWORD *out = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)width * height * 4);
-    if (!out)
-        return nullptr;
-    DWORD rb, gb, bb;
-    DWORD rs = channel_shift(pf->dwRBitMask, &rb), gs = channel_shift(pf->dwGBitMask, &gb),
-          bs = channel_shift(pf->dwBBitMask, &bb);
-    for (LONG y = 0; y < height; y++) {
-        const BYTE *row = primary->memory + (SIZE_T)(rect->top + y) * primary->desc.lPitch + rect->left * size;
-        DWORD *dst = out + (SIZE_T)y * width;
-        for (LONG x = 0; x < width; x++, row += size) {
-            DWORD v = row[0] | row[1] << 8 | (size > 2 ? (DWORD)row[2] << 16 : 0) | (size > 3 ? (DWORD)row[3] << 24 : 0);
-            dst[x] = (DWORD)(ramp->red[to8(v, rs, rb)] >> 8) << 16 | (DWORD)(ramp->green[to8(v, gs, gb)] >> 8) << 8 |
-                     ramp->blue[to8(v, bs, bb)] >> 8;
-        }
-    }
-    return out;
 }
 
 /* the window the primary shows in: the clipper's, else the device window, else the focus window. */
@@ -160,24 +110,9 @@ static void present_rect(DDSURF *primary, RECT rect)
     info.header.biHeight = -height;
     const BYTE *pixels = primary->memory + (SIZE_T)rect.top * primary->desc.lPitch;
     LONG src_x = rect.left;
-    DWORD *graded = nullptr;
-    const DDGAMMARAMP *ramp = primary->gamma && DdIsExclusiveOwner(dd) ? primary->gamma : nullptr;
-    if (ramp && info.header.biBitCount == 8) {
-        for (int i = 0; i < 256; i++)
-            info.colors[i] = (RGBQUAD){(BYTE)(ramp->blue[info.colors[i].rgbBlue] >> 8),
-                                       (BYTE)(ramp->green[info.colors[i].rgbGreen] >> 8),
-                                       (BYTE)(ramp->red[info.colors[i].rgbRed] >> 8), 0};
-    } else if (ramp && (graded = apply_gamma(primary, &rect, ramp))) {
-        info.header.biWidth = width;
-        info.header.biBitCount = 32;
-        info.header.biCompression = BI_RGB;
-        pixels = (const BYTE *)graded;
-        src_x = 0;
-    }
     StretchDIBits(dc, origin.x, origin.y, width * scale, height * scale, src_x, 0, width, height, pixels,
                   (BITMAPINFO *)&info, DIB_RGB_COLORS, SRCCOPY);
     ReleaseDC(window, dc);
-    HeapFree(GetProcessHeap(), 0, graded);
 }
 
 static DWORD WINAPI scanout(void *arg)

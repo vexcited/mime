@@ -183,6 +183,7 @@ static void activate_app(DDRAW *dd, BOOL active)
     HWND window = dd->device;
     if (active) {
         dd->flags |= DDF_ACTIVE;
+        DdShowGamma(dd);
         if (dd->mode_width && !(dd->flags & DDF_MODESET))
             DdSetDisplayMode(dd, dd->mode_width, dd->mode_height, dd->mode_bpp, dd->mode_refresh, 0);
         if ((dd->level & (DDSCL_FULLSCREEN | DDSCL_NOWINDOWCHANGES)) == DDSCL_FULLSCREEN && IsWindowVisible(window)) {
@@ -192,6 +193,8 @@ static void activate_app(DDRAW *dd, BOOL active)
         return;
     }
     dd->flags &= ~DDF_ACTIVE;
+    if (dd->primary)
+        DdHideGamma(dd->primary);
     DdLoseSurfaces(dd);
     if (dd->flags & DDF_MODESET) {
         ChangeDisplaySettingsW(nullptr, 0);
@@ -287,6 +290,8 @@ void DdReleaseExclusive(DDRAW *dd)
         return;
     g_exclusive = nullptr;
     dd->flags &= ~(DDF_EXCLUSIVE | DDF_ACTIVE);
+    if (dd->primary)
+        DdHideGamma(dd->primary);
     if (!dd->level_v1 && (dd->flags & DDF_MODESET))
         DdRestoreDisplayMode(dd);
     unclip_cursor(dd);
@@ -382,6 +387,7 @@ HRESULT DdSetCooperativeLevel(DDRAW *dd, DWORD version, HWND window, DWORD flags
         if (g_exclusive != dd) {
             g_exclusive = dd;
             dd->flags |= DDF_EXCLUSIVE | DDF_ACTIVE;
+            DdShowGamma(dd);
             if (window)
                 SetForegroundWindow(window);
         }

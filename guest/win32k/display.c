@@ -4,7 +4,8 @@
  * which then become the screen windows see. the host shows a fullscreen
  * window of a smaller mode scaled to its screen, as a monitor would, and
  * drawing stays 32 bits. a mode set with CDS_FULLSCREEN goes back when the
- * process that set it ends, as windows does.
+ * process that set it ends, as windows does. the gamma ramps are kept
+ * here too.
  */
 #include "win32k.h"
 #include <mime/win32/winspool.h>
@@ -91,10 +92,13 @@ static void set_mode(BOOLEAN active, DWORD width, DWORD height, DWORD bits, HAND
         MetricsDisplayChanged();
 }
 
+static void gamma_process_exited(HANDLE pid);
+
 void DisplayProcessExited(HANDLE pid)
 {
     if (g_mode.active && g_mode.owner && g_mode.owner == pid)
         set_mode(FALSE, 0, 0, 0, nullptr);
+    gamma_process_exited(pid);
 }
 
 static BOOLEAN our_device(PUNICODE_STRING user_device)
@@ -206,4 +210,87 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
     UserLeave();
     (void)lparam;
     return result;
+}
+
+/* ------------------------------------------------------------------ gamma */
+
+/*
+ * the display's gamma as windows composes it: gdi's ramp belongs to the
+ * session and stays when its process ends, and a fullscreen program's
+ * device ramp replaces it until the program drops it or ends. the host
+ * shows everything through the result.
+ */
+#define RAMP_VALUES (3 * 256)
+
+static USHORT g_gdi_ramp[RAMP_VALUES];
+static BOOLEAN g_gdi_ramp_set;
+static USHORT g_device_ramp[RAMP_VALUES];
+static HANDLE g_device_owner;
+static USHORT *g_host_ramp; /* contiguous, as the host reads it */
+
+static void identity_ramp(USHORT *ramp)
+{
+    for (ULONG c = 0; c < 3; c++)
+        for (ULONG i = 0; i < 256; i++)
+            ramp[c * 256 + i] = (USHORT)(i * 257);
+}
+
+static void apply_gamma(void)
+{
+    const USHORT *ramp = g_device_owner ? g_device_ramp : g_gdi_ramp_set ? g_gdi_ramp : nullptr;
+    if (ramp && !g_host_ramp) {
+        PHYSICAL_ADDRESS highest;
+        highest.QuadPart = -1;
+        g_host_ramp = MmAllocateContiguousMemory(RAMP_VALUES * sizeof(USHORT), highest);
+    }
+    ULONG64 pa = 0;
+    if (ramp && g_host_ramp) {
+        memcpy(g_host_ramp, ramp, RAMP_VALUES * sizeof(USHORT));
+        pa = (ULONG64)MmGetPhysicalAddress(g_host_ramp).QuadPart;
+    }
+    HalMimeHypercall(MIME_HC_GAMMA, pa, 0, 0, 0, 0, 0, nullptr);
+}
+
+static void gamma_process_exited(HANDLE pid)
+{
+    if (g_device_owner && g_device_owner == pid) {
+        g_device_owner = nullptr;
+        apply_gamma();
+    }
+}
+
+NTSTATUS NTAPI NtGdiMimeGamma(ULONG op, PUSHORT user_ramp)
+{
+    USHORT ramp[RAMP_VALUES];
+    NTSTATUS status;
+    if (op == MIME_GAMMA_GET) {
+        UserEnter();
+        if (g_gdi_ramp_set)
+            memcpy(ramp, g_gdi_ramp, sizeof(ramp));
+        else
+            identity_ramp(ramp);
+        UserLeave();
+        return MimeCopyToUser(user_ramp, ramp, sizeof(ramp));
+    }
+    if (op != MIME_GAMMA_SET && op != MIME_GAMMA_DEVICE)
+        return STATUS_INVALID_PARAMETER;
+    if (op == MIME_GAMMA_SET && !user_ramp)
+        return STATUS_INVALID_PARAMETER;
+    if (user_ramp && !NT_SUCCESS(status = MimeCopyFromUser(ramp, user_ramp, sizeof(ramp))))
+        return status;
+    UserEnter();
+    HANDLE pid = PsGetCurrentProcessId();
+    if (op == MIME_GAMMA_SET) {
+        memcpy(g_gdi_ramp, ramp, sizeof(ramp));
+        g_gdi_ramp_set = TRUE;
+        apply_gamma();
+    } else if (user_ramp) {
+        memcpy(g_device_ramp, ramp, sizeof(ramp));
+        g_device_owner = pid;
+        apply_gamma();
+    } else {
+        gamma_process_exited(pid);
+    }
+    UserLeave();
+    return STATUS_SUCCESS;
 }

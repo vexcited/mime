@@ -104,6 +104,9 @@ HRESULT DdWaitForVerticalBlank(DWORD flags);
 HRESULT DdGetScanLine(DWORD *line);
 void DdReleaseExclusive(DDRAW *dd);
 BOOL DdIsExclusiveOwner(DDRAW *dd);
+/* the primary's gamma ramp on the display while its object is the active exclusive owner, else taken off. */
+void DdShowGamma(DDRAW *dd);
+void DdHideGamma(DDSURF *primary);
 DDRAW *DdExclusiveOwner(void);
 
 /* ------------------------------------------------------------------ surfaces */
@@ -185,6 +188,7 @@ struct DDSURF {
     DWORD priority, lod;
     LIST_ENTRY private_data;
     DDGAMMARAMP *gamma; /* of the primary, null for none */
+    BOOL gamma_shown;   /* on the display, as the exclusive owner's */
     DDMODE mode;       /* the display mode it was made in */
     LIST_ENTRY links;  /* in the directdraw object's list */
 };

@@ -20,6 +20,7 @@
  */
 #include "mvk_host.h"
 #include "display.h"
+#include "gamma.h"
 
 struct wl_display;
 struct wl_surface;
@@ -77,6 +78,36 @@ typedef struct Frame {
     VkSemaphore acquired;
 } Frame;
 
+/* the display's gamma: the frame composed in an image of its own, then drawn through the ramp. */
+typedef struct GammaPass {
+    bool broken; /* could not be made: frames show without the ramp */
+    VkFormat format; /* of the render pass and pipeline */
+    VkRenderPass pass;
+    VkDescriptorSetLayout set_layout;
+    VkPipelineLayout layout;
+    VkPipeline pipeline;
+    VkDescriptorPool pool;
+    VkDescriptorSet set;
+    VkSampler sampler;
+    VkImage compose;
+    VkDeviceMemory compose_memory;
+    VkImageView compose_view;
+    VkExtent2D compose_extent;
+    VkFormat compose_format;
+    VkImage ramp;
+    VkDeviceMemory ramp_memory;
+    VkImageView ramp_view;
+    VkBuffer staging;
+    VkDeviceMemory staging_memory;
+    uint16_t *staging_map;
+    uint32_t generation;
+    bool ramp_stale; /* the staging buffer holds a ramp the image has not */
+    bool ramp_valid;
+    VkSwapchainKHR views_of;
+    VkImageView views[MAX_HOST_IMAGES];
+    VkFramebuffer framebuffers[MAX_HOST_IMAGES];
+} GammaPass;
+
 struct Presenter {
     uint32_t window;
     MvkConnection *conn;
@@ -133,6 +164,8 @@ struct Presenter {
     /* semaphores a present may still wait for when the window went: freed once the device is idle. */
     VkSemaphore grave[MAX_GRAVE];
     uint32_t grave_count;
+
+    GammaPass gamma;
 };
 
 /* a present handed to the presenting thread. */
@@ -395,10 +428,25 @@ static void wait_frames(MvkConnection *c, Presenter *p)
             c->fn.vkWaitForFences(c->device, 1, &p->frames[i].fence, VK_TRUE, UINT64_MAX);
 }
 
+static void gamma_drop_views(MvkConnection *c, Presenter *p)
+{
+    GammaPass *g = &p->gamma;
+    for (uint32_t i = 0; i < MAX_HOST_IMAGES; i++) {
+        if (g->framebuffers[i])
+            c->fn.vkDestroyFramebuffer(c->device, g->framebuffers[i], nullptr);
+        if (g->views[i])
+            c->fn.vkDestroyImageView(c->device, g->views[i], nullptr);
+        g->framebuffers[i] = VK_NULL_HANDLE;
+        g->views[i] = VK_NULL_HANDLE;
+    }
+    g->views_of = VK_NULL_HANDLE;
+}
+
 /* the host swapchain goes; its semaphores wait in the grave unless the device is idle. */
 static void drop_swapchain(MvkConnection *c, Presenter *p, bool idle)
 {
     MvkWsi *w = c->wsi;
+    gamma_drop_views(c, p);
     for (uint32_t i = 0; i < p->count; i++) {
         if (!p->done[i])
             continue;
@@ -423,6 +471,8 @@ static void drop_surface(MvkConnection *c, Presenter *p, bool idle)
     p->surface = VK_NULL_HANDLE;
     p->checked_family = UINT32_MAX;
 }
+
+static void gamma_destroy(MvkConnection *c, Presenter *p);
 
 /* with the device idle: everything of the presenter. */
 static void destroy_presenter(MvkConnection *c, Presenter *p)
@@ -455,6 +505,7 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
         c->fn.vkDestroyBuffer(c->device, p->readback, nullptr);
     if (p->readback_memory)
         c->fn.vkFreeMemory(c->device, p->readback_memory, nullptr);
+    gamma_destroy(c, p);
     bool attached = p->attached;
     pthread_mutex_unlock(&p->lock);
     pthread_mutex_destroy(&p->lock);
@@ -802,6 +853,381 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
     return true;
 }
 
+/* ------------------------------------------------------------------ the display's gamma */
+
+static void barrier(MvkConnection *c, VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
+                    VkAccessFlags src_access, VkAccessFlags dst_access, VkPipelineStageFlags src_stage,
+                    VkPipelineStageFlags dst_stage);
+
+/* the unorm twin of a format the pass reads raw, undefined for those it leaves alone. */
+static VkFormat unorm_of(VkFormat f)
+{
+    switch (f) {
+    case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_B8G8R8A8_UNORM:
+        return VK_FORMAT_B8G8R8A8_UNORM;
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_R8G8B8A8_UNORM:
+        return VK_FORMAT_R8G8B8A8_UNORM;
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+    case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
+        return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+    case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+    case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        return f;
+    default:
+        return VK_FORMAT_UNDEFINED;
+    }
+}
+
+static void gamma_drop_pipeline(MvkConnection *c, GammaPass *g)
+{
+    if (g->pipeline)
+        c->fn.vkDestroyPipeline(c->device, g->pipeline, nullptr);
+    if (g->pass)
+        c->fn.vkDestroyRenderPass(c->device, g->pass, nullptr);
+    g->pipeline = VK_NULL_HANDLE;
+    g->pass = VK_NULL_HANDLE;
+    g->format = VK_FORMAT_UNDEFINED;
+}
+
+static void gamma_drop_compose(MvkConnection *c, GammaPass *g)
+{
+    if (g->compose_view)
+        c->fn.vkDestroyImageView(c->device, g->compose_view, nullptr);
+    if (g->compose)
+        c->fn.vkDestroyImage(c->device, g->compose, nullptr);
+    if (g->compose_memory)
+        c->fn.vkFreeMemory(c->device, g->compose_memory, nullptr);
+    g->compose_view = VK_NULL_HANDLE;
+    g->compose = VK_NULL_HANDLE;
+    g->compose_memory = VK_NULL_HANDLE;
+    g->compose_extent = (VkExtent2D){0, 0};
+}
+
+static void gamma_destroy(MvkConnection *c, Presenter *p)
+{
+    GammaPass *g = &p->gamma;
+    gamma_drop_views(c, p);
+    gamma_drop_pipeline(c, g);
+    gamma_drop_compose(c, g);
+    if (g->ramp_view)
+        c->fn.vkDestroyImageView(c->device, g->ramp_view, nullptr);
+    if (g->ramp)
+        c->fn.vkDestroyImage(c->device, g->ramp, nullptr);
+    if (g->ramp_memory)
+        c->fn.vkFreeMemory(c->device, g->ramp_memory, nullptr);
+    if (g->staging)
+        c->fn.vkDestroyBuffer(c->device, g->staging, nullptr);
+    if (g->staging_memory)
+        c->fn.vkFreeMemory(c->device, g->staging_memory, nullptr);
+    if (g->sampler)
+        c->fn.vkDestroySampler(c->device, g->sampler, nullptr);
+    if (g->pool)
+        c->fn.vkDestroyDescriptorPool(c->device, g->pool, nullptr);
+    if (g->layout)
+        c->fn.vkDestroyPipelineLayout(c->device, g->layout, nullptr);
+    if (g->set_layout)
+        c->fn.vkDestroyDescriptorSetLayout(c->device, g->set_layout, nullptr);
+    memset(g, 0, sizeof(*g));
+}
+
+static bool gamma_image(MvkConnection *c, VkImageCreateInfo *info, VkImage *image, VkDeviceMemory *memory,
+                        VkFormat view_format, VkImageView *view)
+{
+    if (c->fn.vkCreateImage(c->device, info, nullptr, image) != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements req;
+    c->fn.vkGetImageMemoryRequirements(c->device, *image, &req);
+    int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
+    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, memory) != VK_SUCCESS ||
+        c->fn.vkBindImageMemory(c->device, *image, *memory, 0) != VK_SUCCESS)
+        return false;
+    VkImageViewCreateInfo vi = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = *image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = view_format,
+        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    };
+    return c->fn.vkCreateImageView(c->device, &vi, nullptr, view) == VK_SUCCESS;
+}
+
+/* what stays for the presenter's life: the layouts, the sampler, the ramp's image and its staging buffer. */
+static bool gamma_base(MvkConnection *c, GammaPass *g)
+{
+    if (g->set)
+        return true;
+    VkDescriptorSetLayoutBinding bindings[2] = {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+    };
+    VkDescriptorSetLayoutCreateInfo sli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, bindings};
+    if (c->fn.vkCreateDescriptorSetLayout(c->device, &sli, nullptr, &g->set_layout) != VK_SUCCESS)
+        return false;
+    VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 4};
+    VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &g->set_layout, 1,
+                                      &push};
+    if (c->fn.vkCreatePipelineLayout(c->device, &pli, nullptr, &g->layout) != VK_SUCCESS)
+        return false;
+    VkSamplerCreateInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = VK_FILTER_NEAREST,
+        .minFilter = VK_FILTER_NEAREST,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    };
+    if (c->fn.vkCreateSampler(c->device, &si, nullptr, &g->sampler) != VK_SUCCESS)
+        return false;
+    VkImageCreateInfo ri = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_R16G16B16A16_UNORM,
+        .extent = {256, 1, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (!gamma_image(c, &ri, &g->ramp, &g->ramp_memory, VK_FORMAT_R16G16B16A16_UNORM, &g->ramp_view))
+        return false;
+    VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, 256 * 8, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                             VK_SHARING_MODE_EXCLUSIVE};
+    if (c->fn.vkCreateBuffer(c->device, &bi, nullptr, &g->staging) != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements req;
+    c->fn.vkGetBufferMemoryRequirements(c->device, g->staging, &req);
+    int32_t type = memory_type(c, req.memoryTypeBits,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
+    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &g->staging_memory) != VK_SUCCESS ||
+        c->fn.vkBindBufferMemory(c->device, g->staging, g->staging_memory, 0) != VK_SUCCESS ||
+        c->fn.vkMapMemory(c->device, g->staging_memory, 0, VK_WHOLE_SIZE, 0, (void **)&g->staging_map) != VK_SUCCESS)
+        return false;
+    VkDescriptorPoolSize size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+    VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 1, &size};
+    if (c->fn.vkCreateDescriptorPool(c->device, &dpi, nullptr, &g->pool) != VK_SUCCESS)
+        return false;
+    VkDescriptorSetAllocateInfo dsi = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, g->pool, 1,
+                                       &g->set_layout};
+    return c->fn.vkAllocateDescriptorSets(c->device, &dsi, &g->set) == VK_SUCCESS;
+}
+
+/* the render pass and pipeline that write a swapchain image of format f. */
+static bool gamma_pipeline(MvkConnection *c, GammaPass *g, VkFormat f)
+{
+    if (g->pipeline && g->format == f)
+        return true;
+    gamma_drop_pipeline(c, g);
+    const uint32_t *vs, *fs;
+    size_t vs_size, fs_size;
+    if (!mime_gamma_shaders(&vs, &vs_size, &fs, &fs_size))
+        return false;
+    VkAttachmentDescription attachment = {0, f, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                          VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                          VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
+                                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
+    VkAttachmentReference ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &ref};
+    VkSubpassDependency dependency = {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                                      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0};
+    VkRenderPassCreateInfo rpi = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO, nullptr, 0, 1, &attachment, 1, &subpass, 1,
+                                  &dependency};
+    if (c->fn.vkCreateRenderPass(c->device, &rpi, nullptr, &g->pass) != VK_SUCCESS)
+        return false;
+    VkShaderModule modules[2] = {};
+    VkShaderModuleCreateInfo vmi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, vs_size, vs};
+    VkShaderModuleCreateInfo fmi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, fs_size, fs};
+    bool ok = c->fn.vkCreateShaderModule(c->device, &vmi, nullptr, &modules[0]) == VK_SUCCESS &&
+              c->fn.vkCreateShaderModule(c->device, &fmi, nullptr, &modules[1]) == VK_SUCCESS;
+    if (ok) {
+        VkPipelineShaderStageCreateInfo stages[2] = {
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, modules[0],
+             "main", nullptr},
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, modules[1],
+             "main", nullptr},
+        };
+        VkPipelineVertexInputStateCreateInfo vertex = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                                                           nullptr, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE};
+        VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, nullptr, 0,
+                                                      1, nullptr, 1, nullptr};
+        VkPipelineRasterizationStateCreateInfo raster = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .cullMode = VK_CULL_MODE_NONE,
+            .lineWidth = 1.0f,
+        };
+        VkPipelineMultisampleStateCreateInfo multisample = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        };
+        VkPipelineColorBlendAttachmentState blend = {.colorWriteMask = 0xF};
+        VkPipelineColorBlendStateCreateInfo blending = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                                                        .attachmentCount = 1,
+                                                        .pAttachments = &blend};
+        VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0, 2,
+                                                    dynamic_states};
+        VkGraphicsPipelineCreateInfo gpi = {
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .stageCount = 2,
+            .pStages = stages,
+            .pVertexInputState = &vertex,
+            .pInputAssemblyState = &assembly,
+            .pViewportState = &viewport,
+            .pRasterizationState = &raster,
+            .pMultisampleState = &multisample,
+            .pColorBlendState = &blending,
+            .pDynamicState = &dynamic,
+            .layout = g->layout,
+            .renderPass = g->pass,
+        };
+        ok = c->fn.vkCreateGraphicsPipelines(c->device, VK_NULL_HANDLE, 1, &gpi, nullptr, &g->pipeline) == VK_SUCCESS;
+    }
+    for (int i = 0; i < 2; i++)
+        if (modules[i])
+            c->fn.vkDestroyShaderModule(c->device, modules[i], nullptr);
+    if (!ok)
+        return false;
+    g->format = f;
+    return true;
+}
+
+/* the image frames are composed in, the swapchain's size and format, read raw through a unorm view. */
+static bool gamma_compose(MvkConnection *c, Presenter *p)
+{
+    GammaPass *g = &p->gamma;
+    if (g->compose && g->compose_extent.width == p->extent.width && g->compose_extent.height == p->extent.height &&
+        g->compose_format == p->format)
+        return true;
+    gamma_drop_compose(c, g);
+    VkImageCreateInfo ii = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = p->format,
+        .extent = {p->extent.width, p->extent.height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (!gamma_image(c, &ii, &g->compose, &g->compose_memory, unorm_of(p->format), &g->compose_view))
+        return false;
+    g->compose_extent = p->extent;
+    g->compose_format = p->format;
+    VkDescriptorImageInfo images[2] = {
+        {g->sampler, g->compose_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {g->sampler, g->ramp_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+    };
+    VkWriteDescriptorSet writes[2] = {
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, g->set, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         &images[0], nullptr, nullptr},
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, g->set, 1, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         &images[1], nullptr, nullptr},
+    };
+    c->fn.vkUpdateDescriptorSets(c->device, 2, writes, 0, nullptr);
+    return true;
+}
+
+static bool gamma_views(MvkConnection *c, Presenter *p)
+{
+    GammaPass *g = &p->gamma;
+    if (g->views_of == p->swapchain)
+        return true;
+    gamma_drop_views(c, p);
+    for (uint32_t i = 0; i < p->count; i++) {
+        VkImageViewCreateInfo vi = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = p->images[i],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = p->format,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        if (c->fn.vkCreateImageView(c->device, &vi, nullptr, &g->views[i]) != VK_SUCCESS)
+            return false;
+        VkFramebufferCreateInfo fi = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, nullptr, 0, g->pass, 1, &g->views[i],
+                                      p->extent.width, p->extent.height, 1};
+        if (c->fn.vkCreateFramebuffer(c->device, &fi, nullptr, &g->framebuffers[i]) != VK_SUCCESS)
+            return false;
+    }
+    g->views_of = p->swapchain;
+    return true;
+}
+
+/* whether this frame goes through the ramp, everything for it made and a new ramp staged. */
+static bool gamma_prepare(MvkConnection *c, Presenter *p)
+{
+    GammaPass *g = &p->gamma;
+    uint16_t ramp[3][256];
+    uint32_t generation;
+    if (!mime_gamma_ramp(ramp, &generation) || g->broken || unorm_of(p->format) == VK_FORMAT_UNDEFINED)
+        return false;
+    if (!gamma_base(c, g) || !gamma_pipeline(c, g, p->format) || !gamma_compose(c, p) || !gamma_views(c, p)) {
+        mime_warn("vulkan: no gamma pass on window %#x", p->window);
+        wait_frames(c, p);
+        gamma_destroy(c, p);
+        g->broken = true;
+        return false;
+    }
+    if (generation != g->generation || !g->ramp_valid) {
+        wait_frames(c, p);
+        for (int i = 0; i < 256; i++) {
+            g->staging_map[i * 4 + 0] = ramp[0][i];
+            g->staging_map[i * 4 + 1] = ramp[1][i];
+            g->staging_map[i * 4 + 2] = ramp[2][i];
+            g->staging_map[i * 4 + 3] = 0xFFFF;
+        }
+        g->generation = generation;
+        g->ramp_stale = true;
+    }
+    return true;
+}
+
+/* the composed frame drawn through the ramp into the swapchain image, which the render pass leaves ready to present. */
+static void gamma_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, uint32_t target)
+{
+    GammaPass *g = &p->gamma;
+    if (g->ramp_stale) {
+        barrier(c, cmd, g->ramp, g->ramp_valid ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkBufferImageCopy copy = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {256, 1, 1}};
+        c->fn.vkCmdCopyBufferToImage(cmd, g->staging, g->ramp, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        barrier(c, cmd, g->ramp, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        g->ramp_stale = false;
+        g->ramp_valid = true;
+    }
+    barrier(c, cmd, g->compose, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    VkRenderPassBeginInfo begin = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr, g->pass, g->framebuffers[target],
+                                   {{0, 0}, p->extent}, 0, nullptr};
+    c->fn.vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    c->fn.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
+    c->fn.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout, 0, 1, &g->set, 0, nullptr);
+    uint32_t srgb = is_srgb(p->format);
+    c->fn.vkCmdPushConstants(cmd, g->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(srgb), &srgb);
+    VkViewport viewport = {0, 0, (float)p->extent.width, (float)p->extent.height, 0, 1};
+    VkRect2D scissor = {{0, 0}, p->extent};
+    c->fn.vkCmdSetViewport(cmd, 0, 1, &viewport);
+    c->fn.vkCmdSetScissor(cmd, 0, 1, &scissor);
+    c->fn.vkCmdDraw(cmd, 3, 1, 0, 0);
+    c->fn.vkCmdEndRenderPass(cmd);
+}
+
 /* ------------------------------------------------------------------ recording */
 
 static void barrier(MvkConnection *c, VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
@@ -876,16 +1302,20 @@ static Box to_pixels(const MimeUiFrame *f, MimeRect r)
 }
 
 static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Swapchain *s, uint32_t index,
-                   const MimeUiFrame *frame, MimeRect client, bool upload)
+                   const MimeUiFrame *frame, MimeRect client, bool upload, bool gamma)
 {
     VkCommandBuffer cmd = f->cmd;
-    VkImage dst = p->images[target];
+    /* through the ramp, the frame is composed first, after the last frame's pass read it. */
+    VkImage dst = gamma ? p->gamma.compose : p->images[target];
     c->fn.vkResetCommandBuffer(cmd, 0);
     VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
                                       VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     c->fn.vkBeginCommandBuffer(cmd, &begin);
     barrier(c, cmd, dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
-            VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            gamma ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT
+                  : VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT);
     /* a subsurface is the client area alone; the whole window has its border and frame around it. */
     if (!frame->subsurface) {
         VkClearColorValue black = {{0, 0, 0, 1}};
@@ -947,8 +1377,11 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     }
     barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-    barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    if (gamma)
+        gamma_record(c, p, cmd, target);
+    else
+        barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
     c->fn.vkEndCommandBuffer(cmd);
 }
 
@@ -1071,12 +1504,13 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         }
         make_last(c, p, s->extent, srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM);
         p->last_queue = queue;
-        record(c, p, f, target, s, index, frame, client, upload);
+        bool gamma = gamma_prepare(c, p);
+        record(c, p, f, target, s, index, frame, client, upload, gamma);
 
         Waits all = *waits;
         all.semaphores[all.count] = f->acquired;
         all.values[all.count] = 0;
-        all.stages[all.count++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        all.stages[all.count++] = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSemaphore signals[2] = {p->done[target], s->released[index]};
         uint64_t signal_values[2] = {0, 0};
         VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, nullptr, all.count,

@@ -29,6 +29,8 @@ bool mime_ui_window_readback(MimeWinReadback *r, void *pixels);
 void mime_ui_set_cursor(uint32_t cursor);
 void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect);
 void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high);
+/* the display's gamma ramp, three channels of 256 values; null for the identity. */
+void mime_ui_gamma(const uint16_t *ramp);
 void mime_ui_beep(uint32_t type);
 
 /*

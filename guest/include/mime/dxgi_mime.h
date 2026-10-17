@@ -1,7 +1,8 @@
 /*
  * what dxgi.dll and the direct3d dlls tell each other beyond windows'
- * interfaces: the vulkan device behind an adapter, and the swap chains a
- * direct3d device makes for the factory.
+ * interfaces: the vulkan device behind an adapter, the swap chains a
+ * direct3d device makes for the factory, and the output a fullscreen swap
+ * chain owns.
  */
 #ifndef MIME_DXGI_MIME_H
 #define MIME_DXGI_MIME_H
@@ -33,5 +34,13 @@ typedef struct IMimeDXGIPresenter IMimeDXGIPresenter;
                                                 IDXGIOutput *restrict_to, IDXGISwapChain1 **swapchain);
 MIME_COM_INTERFACE(IMimeDXGIPresenter)
 MIME_DEFINE_GUID(IID_IMimeDXGIPresenter, 0x313CF4C8, 0x7593, 0x4D3D, 0xB7, 0xC9, 0x95, 0xCE, 0x68, 0x96, 0x5A, 0x32);
+
+/* implemented by outputs: a swap chain owns its output while fullscreen, as dxgi.dll's swap chains do. */
+typedef struct IMimeDXGIOutput IMimeDXGIOutput;
+#define IMimeDXGIOutput_METHODS(T)                                                                                     \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    void(STDMETHODCALLTYPE *SetFullscreenOwner)(T * This, BOOL owned);
+MIME_COM_INTERFACE(IMimeDXGIOutput)
+MIME_DEFINE_GUID(IID_IMimeDXGIOutput, 0x6B0E3A52, 0x9D4C, 0x4F1B, 0xA8, 0x27, 0x3E, 0x51, 0xC9, 0x0D, 0x7A, 0x64);
 
 #endif

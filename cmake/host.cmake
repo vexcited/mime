@@ -81,6 +81,8 @@ else()
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
     set_source_files_properties(host/linux/gpu.c PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${MIME_VK_GEN};${CMAKE_SOURCE_DIR}/third_party/glslang")
+    set_source_files_properties(host/linux/gamma.c PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/glslang")
     set_source_files_properties(host/linux/vulkan.c host/linux/vkwsi.c PROPERTIES
         COMPILE_OPTIONS -Wno-missing-field-initializers
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${MIME_VK_GEN}")
