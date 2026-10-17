@@ -9,7 +9,7 @@
 #include <mime/win32/wingdi.h>
 
 #ifdef MIME_BUILD_WINSPOOL
-#define WINSPOOLAPI __declspec(dllexport)
+#define WINSPOOLAPI DECLSPEC_EXPORT
 #else
 #define WINSPOOLAPI DECLSPEC_IMPORT
 #endif

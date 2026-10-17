@@ -15,7 +15,7 @@ DIMOUSE DiMouseState;
 static LIST_ENTRY g_acquired = {&g_acquired, &g_acquired};
 static LONG g_keyboards = -1, g_mice = -1; /* acquired instances, -1 before the first */
 static LONG g_exclusive_keyboards, g_exclusive_mice;
-static HANDLE g_thread;
+HANDLE DiWorker;
 static HWND g_window;
 static BOOL g_pending_e1;
 
@@ -76,6 +76,14 @@ DWORD DiNextSequence(void)
     if (!v)
         v = InterlockedIncrement(counter);
     return (DWORD)v;
+}
+
+/* the clock sequence of the guids dinput makes, shared like the sequence numbers (guessed place). */
+LONG DiNextUuidCounter(void)
+{
+    static LONG local;
+    LONG *counter = shared() ? (LONG *)(g_shared + 8) : &local;
+    return InterlockedIncrement(counter);
 }
 
 static EXCLUSIVE *find_exclusive(const GUID *guid)
@@ -318,17 +326,17 @@ static DWORD WINAPI worker(void *ready)
 }
 
 /* started at the first acquisition, kept for the process's life. */
-static BOOL start_worker(void)
+BOOL DiStartWorker(void)
 {
-    if (g_thread)
+    if (DiWorker)
         return g_window != nullptr;
     HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!ready)
         return FALSE;
-    g_thread = CreateThread(nullptr, 0, worker, ready, 0, nullptr);
-    if (g_thread) {
-        SetThreadPriority(g_thread, THREAD_PRIORITY_HIGHEST);
-        HANDLE both[2] = {ready, g_thread};
+    DiWorker = CreateThread(nullptr, 0, worker, ready, 0, nullptr);
+    if (DiWorker) {
+        SetThreadPriority(DiWorker, THREAD_PRIORITY_HIGHEST);
+        HANDLE both[2] = {ready, DiWorker};
         WaitForMultipleObjects(2, both, FALSE, INFINITE);
     }
     CloseHandle(ready);
@@ -388,7 +396,7 @@ HRESULT DiEmulAcquire(DIDEV *dev)
         else
             seed_mouse();
     }
-    if (!start_worker()) {
+    if (!DiStartWorker()) {
         RtlLeaveCriticalSection(&DiLock);
         return E_FAIL;
     }

@@ -48,6 +48,10 @@ typedef struct DIOBJECT {
     DWORD ofs;   /* in the native state */
     DWORD type;  /* DIDFT_* with the instance */
     DWORD flags; /* DIDOI_* */
+    /* what a hid object adds to its description. */
+    WORD page, usage, collection, designator;
+    DWORD dimension;
+    WORD exponent, report;
 } DIOBJECT;
 
 /* what differs between keyboards, mice and game controllers. */
@@ -63,11 +67,19 @@ typedef struct DICLASS {
     BOOL (*name)(DIDEV *dev, const DIOBJECT *object, WCHAR *name);
     /* a property of the class, E_NOTIMPL to leave it to the device. */
     HRESULT (*get_property)(DIDEV *dev, DWORD id, const DIOBJECT *object, DIPROPHEADER *header);
+    HRESULT (*set_property)(DIDEV *dev, DWORD id, const DIOBJECT *object, const DIPROPHEADER *header);
+    /* where data comes from once acquired; the keyboard and mouse's when null. */
+    HRESULT (*start)(DIDEV *dev);
+    void (*stop)(DIDEV *dev);
+    /* the object of a DIPH_BYUSAGE id, -1 for none; null when the class has no usages. */
+    int (*find_usage)(DIDEV *dev, DWORD usage);
+    void (*release)(DIDEV *dev);
     const WCHAR *control_panel;
 } DICLASS;
 
 extern const DICLASS DiKeyboardClass;
 extern const DICLASS DiMouseClass;
+extern const DICLASS DiHidClass;
 
 /* one buffered event, as GetDeviceData hands it out. */
 typedef struct DIEVENT {
@@ -130,6 +142,11 @@ struct DIDEV {
     DWORD ffgain;
     WCHAR user[DI_MAX_PATH];
     LIST_ENTRY links;              /* in the list of acquired devices */
+    /* a hid device's: its class data, top level usage, and the c_dfDIJoystick offsets old versions report. */
+    void *hid;
+    WORD usage_page, usage;
+    BOOL legacy;
+    DWORD legacy_ofs[DI_MAX_OBJECTS];
 };
 
 HRESULT DiCreateDevice(DIOBJ *obj, REFGUID guid, REFIID riid, void **out, IUnknown *outer);
@@ -158,8 +175,20 @@ void DiEmulForeground(DIDEV *dev);
 BOOL DiExclusiveTake(DIDEV *dev, HRESULT *hr);
 void DiExclusiveRelease(DIDEV *dev);
 DWORD DiNextSequence(void);
+BOOL DiStartWorker(void);
+extern HANDLE DiWorker;
+LONG DiNextUuidCounter(void);
 void DiBufferEvent(DIDEV *dev, DWORD native_ofs, DWORD data, DWORD time, DWORD sequence);
 void DiSignal(DIDEV *dev);
+
+/* hid.c: the system's hid collections, listed as windows' dinput lists them. */
+void DiHidRebuild(BOOL force);
+DWORD DiHidCount(void);
+BOOL DiHidEntry(DWORD index, GUID *instance, BYTE *type7, BYTE *type8);
+BOOL DiHidLookup(const GUID *guid, DWORD *index);
+HRESULT DiHidInit(DIDEV *dev, DWORD index);
+BOOL DiHidFindPath(const WCHAR *path, GUID *instance);
+const WCHAR *DiHidUsageName(USHORT page, USHORT usage);
 
 /* names.c */
 const WCHAR *DiKeyFixedName(DWORD dik);

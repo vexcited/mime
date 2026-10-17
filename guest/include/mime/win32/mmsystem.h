@@ -8,7 +8,7 @@
 #include <mime/win32/mmreg.h>
 
 #ifdef MIME_BUILD_WINMM
-#define WINMMAPI __declspec(dllexport)
+#define WINMMAPI DECLSPEC_EXPORT
 #else
 #define WINMMAPI DECLSPEC_IMPORT
 #endif

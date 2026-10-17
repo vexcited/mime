@@ -7,8 +7,8 @@
 #include <mime/win32/uxtheme.h>
 
 #ifdef MIME_BUILD_DWMAPI
-#define DWMAPI __declspec(dllexport) HRESULT WINAPI
-#define DWMAPI_(type) __declspec(dllexport) type WINAPI
+#define DWMAPI DECLSPEC_EXPORT HRESULT WINAPI
+#define DWMAPI_(type) DECLSPEC_EXPORT type WINAPI
 #else
 #define DWMAPI DECLSPEC_IMPORT HRESULT WINAPI
 #define DWMAPI_(type) DECLSPEC_IMPORT type WINAPI

@@ -272,6 +272,7 @@ enum {
     MIME_HC_AUDIO_CLOSE = 0x42, /* (stream) returns once the host no longer reads its memory */
 
     MIME_HC_POINTER = 0x44,     /* (MIME_POINTER_*, window_id, left, top, right, bottom) screen rectangle */
+    MIME_HC_PAD_RUMBLE = 0x45,  /* (pad, low frequency motor, high frequency motor) from 0 to 65535 */
 };
 
 /* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */
@@ -612,6 +613,18 @@ enum {
     MIME_INPUT_WINDOW_STATE = 13,  /* x is a windows show command. */
     MIME_INPUT_WINDOW_FULLSCREEN = 14, /* flags is 1 on entry, 0 on exit. */
     MIME_INPUT_DISPLAY = 15,       /* the boot information display changed: width and height. */
+    MIME_INPUT_PAD_ADDED = 16,     /* a game controller: pad, pad_vid, pad_pid */
+    MIME_INPUT_PAD_REMOVED = 17,   /* pad */
+    MIME_INPUT_PAD_STATE = 18,     /* pad, pad_buttons, pad_axes */
+};
+
+/*
+ * a game controller's state as an xbox 360 controller's: XINPUT_GAMEPAD's
+ * button bits, then the left and right sticks from -32768 to 32767 with up
+ * positive, and the triggers from 0 to 255.
+ */
+enum {
+    MIME_PAD_LX, MIME_PAD_LY, MIME_PAD_RX, MIME_PAD_RY, MIME_PAD_LT, MIME_PAD_RT, MIME_PAD_AXES,
 };
 
 enum {
@@ -645,6 +658,10 @@ typedef struct MimeInputEvent {
     uint64_t time_ms;
     int32_t width, height; /* fullscreen frame dimensions in guest pixels. */
     int32_t dx, dy;    /* motion of a mouse move in guest pixels, unaccelerated when the host can tell */
+    uint32_t pad;      /* the host's id of a game controller */
+    uint16_t pad_buttons;
+    uint16_t pad_vid, pad_pid;
+    int16_t pad_axes[MIME_PAD_AXES];
 } MimeInputEvent;
 
 #endif

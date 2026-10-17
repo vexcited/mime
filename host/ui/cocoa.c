@@ -1848,6 +1848,11 @@ void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect)
 {
 }
 
+/* game controllers are not read on macos yet. */
+void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
+{
+}
+
 static void beep_main(void *arg)
 {
     NSBeep();

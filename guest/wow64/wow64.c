@@ -371,6 +371,12 @@ WOW64API void NTAPI Wow64ApcRoutine(PVOID packed, PVOID argument2, PVOID argumen
     call32(&frame, (ULONG)((ULONG_PTR)packed >> 32), args, 3, stack - 0x100);
 }
 
+void Mx32ApcRoutine(ULONG routine, ULONG context, PVOID *native, PVOID *argument)
+{
+    *native = (PVOID)Wow64ApcRoutine;
+    *argument = (PVOID)((ULONG64)routine << 32 | context);
+}
+
 static NTSTATUS queue_apc32(const ULONG *a)
 {
     ULONG64 packed = (ULONG64)a[1] << 32 | a[2];

@@ -311,10 +311,33 @@ static void NTAPI apc_free(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, 
 }
 
 /* runs routine(context, iosb, 0) in the requesting thread at its next alertable wait. */
+void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
+{
+    if (!((ULONG_PTR)*apc_routine & 1))
+        return;
+    *apc_routine = (PVOID)((ULONG_PTR)*apc_routine & ~(ULONG_PTR)1);
+    if (*iosb)
+        *iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)*iosb | 1);
+}
+
+/* the bytes of a status block and where they go, the 32-bit layout for a marked one. */
+ULONG IopIosbImage(PIO_STATUS_BLOCK iosb, NTSTATUS status, ULONG_PTR information, PVOID *address, ULONG64 image[2])
+{
+    *address = (PVOID)((ULONG_PTR)iosb & ~(ULONG_PTR)1);
+    if ((ULONG_PTR)iosb & 1) {
+        image[0] = (ULONG)status | (ULONG64)(ULONG)information << 32;
+        return 8;
+    }
+    IO_STATUS_BLOCK io = {.Status = status, .Information = information};
+    memcpy(image, &io, sizeof(io));
+    return sizeof(io);
+}
+
 void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_STATUS_BLOCK iosb)
 {
     if (!routine)
         return;
+    iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)iosb & ~(ULONG_PTR)1);
     PKAPC apc = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(KAPC), KI_TAG('I', 'o', 'A', 'p'));
     if (!apc)
         return;

@@ -1401,14 +1401,103 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_APP_ID, "mime");
+    /* game controllers report to windows whatever window is in front, and to no window at all. */
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         mime_info("no display (%s): windows are not shown", SDL_GetError());
         return;
     }
     g_call_event = SDL_RegisterEvents(1);
     g_video = g_call_event != 0;
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+        mime_info("no game controllers (%s)", SDL_GetError());
     if (g_video)
         update_display();
+}
+
+/* ------------------------------------------------------------------ game controllers */
+
+/* a controller's state as an xbox 360 controller's, up positive as windows has it. */
+static void emit_pad(SDL_JoystickID id, uint32_t type)
+{
+    MimeInputEvent ev = {.type = type, .pad = id};
+    SDL_Gamepad *g = SDL_GetGamepadFromID(id);
+    if (type == MIME_INPUT_PAD_REMOVED || !g) {
+        ev.type = MIME_INPUT_PAD_REMOVED;
+        emit(&ev);
+        return;
+    }
+    ev.pad_vid = SDL_GetGamepadVendor(g);
+    ev.pad_pid = SDL_GetGamepadProduct(g);
+    static const struct {
+        SDL_GamepadButton button;
+        uint16_t bit;
+    } BUTTONS[] = {
+        {SDL_GAMEPAD_BUTTON_DPAD_UP, 0x0001},      {SDL_GAMEPAD_BUTTON_DPAD_DOWN, 0x0002},
+        {SDL_GAMEPAD_BUTTON_DPAD_LEFT, 0x0004},    {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 0x0008},
+        {SDL_GAMEPAD_BUTTON_START, 0x0010},        {SDL_GAMEPAD_BUTTON_BACK, 0x0020},
+        {SDL_GAMEPAD_BUTTON_LEFT_STICK, 0x0040},   {SDL_GAMEPAD_BUTTON_RIGHT_STICK, 0x0080},
+        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, 0x0100}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0x0200},
+        {SDL_GAMEPAD_BUTTON_GUIDE, 0x0400},        {SDL_GAMEPAD_BUTTON_SOUTH, 0x1000},
+        {SDL_GAMEPAD_BUTTON_EAST, 0x2000},         {SDL_GAMEPAD_BUTTON_WEST, 0x4000},
+        {SDL_GAMEPAD_BUTTON_NORTH, 0x8000},
+    };
+    for (size_t i = 0; i < sizeof(BUTTONS) / sizeof(BUTTONS[0]); i++)
+        if (SDL_GetGamepadButton(g, BUTTONS[i].button))
+            ev.pad_buttons |= BUTTONS[i].bit;
+    int lx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX), ly = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY);
+    int rx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTX), ry = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTY);
+    ev.pad_axes[MIME_PAD_LX] = (int16_t)lx;
+    ev.pad_axes[MIME_PAD_LY] = (int16_t)(ly == -32768 ? 32767 : -ly);
+    ev.pad_axes[MIME_PAD_RX] = (int16_t)rx;
+    ev.pad_axes[MIME_PAD_RY] = (int16_t)(ry == -32768 ? 32767 : -ry);
+    ev.pad_axes[MIME_PAD_LT] = (int16_t)(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * 255 / 32767);
+    ev.pad_axes[MIME_PAD_RT] = (int16_t)(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 255 / 32767);
+    emit(&ev);
+}
+
+static void pad_added(SDL_JoystickID id)
+{
+    if (!SDL_GetGamepadFromID(id) && !SDL_OpenGamepad(id))
+        return;
+    emit_pad(id, MIME_INPUT_PAD_ADDED);
+    emit_pad(id, MIME_INPUT_PAD_STATE);
+}
+
+static void pad_removed(SDL_JoystickID id)
+{
+    emit_pad(id, MIME_INPUT_PAD_REMOVED);
+    SDL_Gamepad *g = SDL_GetGamepadFromID(id);
+    if (g)
+        SDL_CloseGamepad(g);
+}
+
+typedef struct RumbleCall {
+    uint32_t pad;
+    uint16_t low, high;
+} RumbleCall;
+
+/* xinput's motors run until told otherwise; sdl's for as long as asked, so for a long while. */
+static void rumble_main(void *arg)
+{
+    RumbleCall *c = arg;
+    SDL_Gamepad *g = SDL_GetGamepadFromID(c->pad);
+    if (g)
+        SDL_RumbleGamepad(g, c->low, c->high, c->low || c->high ? 600000 : 0);
+    free(c);
+}
+
+void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
+{
+    RumbleCall *c = malloc(sizeof(*c));
+    if (!c)
+        return;
+    *c = (RumbleCall){pad, low, high};
+    if (!g_video) {
+        free(c);
+        return;
+    }
+    on_main(rumble_main, c);
 }
 
 static void handle_event(const SDL_Event *e)
@@ -1438,6 +1527,17 @@ static void handle_event(const SDL_Event *e)
     }
     case SDL_EVENT_MOUSE_WHEEL:
         emit_wheel(&e->wheel);
+        break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+        pad_added(e->gdevice.which);
+        break;
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        pad_removed(e->gdevice.which);
+        break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        emit_pad(e->gdevice.which, MIME_INPUT_PAD_STATE);
         break;
     case SDL_EVENT_WINDOW_MOUSE_LEAVE: {
         UiWindow *w = find_by_sdl(e->window.windowID);

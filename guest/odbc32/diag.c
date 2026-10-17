@@ -194,14 +194,14 @@ static SQLRETURN OdbcGetDiagRec(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT 
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetDiagRecW(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetDiagRecW(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
                                                        SQLWCHAR *state, SQLINTEGER *native, SQLWCHAR *message,
                                                        SQLSMALLINT message_max, SQLSMALLINT *message_length)
 {
     return OdbcGetDiagRec(type, handle, record, state, native, message, message_max, message_length, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetDiagRecA(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetDiagRecA(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
                                                        SQLCHAR *state, SQLINTEGER *native, SQLCHAR *message,
                                                        SQLSMALLINT message_max, SQLSMALLINT *message_length)
 {
@@ -234,14 +234,14 @@ static SQLRETURN OdbcError(SQLHENV env, SQLHDBC dbc, SQLHSTMT stmt, SQLPOINTER s
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLErrorW(SQLHENV env, SQLHDBC dbc, SQLHSTMT stmt, SQLWCHAR *state,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLErrorW(SQLHENV env, SQLHDBC dbc, SQLHSTMT stmt, SQLWCHAR *state,
                                                   SQLINTEGER *native, SQLWCHAR *message, SQLSMALLINT message_max,
                                                   SQLSMALLINT *message_length)
 {
     return OdbcError(env, dbc, stmt, state, native, message, message_max, message_length, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLErrorA(SQLHENV env, SQLHDBC dbc, SQLHSTMT stmt, SQLCHAR *state,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLErrorA(SQLHENV env, SQLHDBC dbc, SQLHSTMT stmt, SQLCHAR *state,
                                                   SQLINTEGER *native, SQLCHAR *message, SQLSMALLINT message_max,
                                                   SQLSMALLINT *message_length)
 {
@@ -338,7 +338,7 @@ static SQLRETURN OdbcGetDiagField(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLIN
     }
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetDiagFieldW(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetDiagFieldW(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
                                                          SQLSMALLINT field, SQLPOINTER value,
                                                          SQLSMALLINT buffer_length, SQLSMALLINT *length)
 {
@@ -348,7 +348,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLGetDiagFieldW(SQLSMALLINT type, SQLHA
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetDiagFieldA(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetDiagFieldA(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT record,
                                                          SQLSMALLINT field, SQLPOINTER value,
                                                          SQLSMALLINT buffer_length, SQLSMALLINT *length)
 {

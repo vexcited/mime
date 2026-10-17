@@ -239,11 +239,12 @@ static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information
 {
     r->Status = status;
     r->Information = information;
-    IO_STATUS_BLOCK io;
-    io.Status = status;
-    io.Information = information;
-    if (r->Iosb)
-        copy_to_process(r->Process, r->Iosb, &io, sizeof(io));
+    if (r->Iosb) {
+        ULONG64 image[2];
+        PVOID address;
+        ULONG length = IopIosbImage(r->Iosb, status, information, &address, image);
+        copy_to_process(r->Process, address, image, length);
+    }
     if (r->Event)
         KeSetEvent(r->Event, IO_NO_INCREMENT, FALSE);
     IopSignalFile(r->File);

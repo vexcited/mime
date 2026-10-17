@@ -21,6 +21,10 @@ static const WCHAR MOUSE_NAME[] = L"\\\\?\\ACPI#MIME0F13#0#{378de44c-56ef-11d1-b
 
 #define MAX_REGISTRATIONS 64
 #define RING 1024
+#define MAX_PADS 16
+#define MAX_HID_DATA 32
+/* the room a packet takes as the caller reads it. */
+#define MAX_PACKET (sizeof(RAWINPUTHEADER) + 8 + MAX_HID_DATA)
 
 typedef struct W32RAW {
     RAWINPUTDEVICE Devices[MAX_REGISTRATIONS];
@@ -36,8 +40,23 @@ typedef struct PACKET {
     union {
         RAWMOUSE Mouse;
         RAWKEYBOARD Keyboard;
+        struct {
+            DWORD SizeHid, Count;
+            BYTE Data[MAX_HID_DATA];
+        } Hid;
     };
 } PACKET;
+
+/* a game controller's hid collection, a device of raw input. */
+typedef struct HID_DEVICE {
+    BOOLEAN Used;
+    ULONG HostId;
+    HANDLE Handle;
+    MIME_PAD_HID Info;
+} HID_DEVICE;
+
+static HID_DEVICE g_hid[MAX_PADS];
+static ULONG g_hid_handles;
 
 static PACKET g_ring[RING];
 static ULONG g_serial;
@@ -224,17 +243,20 @@ static const RAWINPUTDEVICE *registration(const W32RAW *raw, USHORT page, USHORT
     return page_only;
 }
 
+/* what a registration for an exact usage hears of the devices present when it is made or dropped. */
 static void notify_device(const RAWINPUTDEVICE *d, HWND target, BOOLEAN arrival)
 {
     WND *w = WndLookup(target);
     if (!w)
         return;
+    WPARAM change = arrival ? GIDC_ARRIVAL : GIDC_REMOVAL;
     if (usage_matches(d, 1, 6))
-        QueuePost(w->Thread, target, WM_INPUT_DEVICE_CHANGE, arrival ? GIDC_ARRIVAL : GIDC_REMOVAL,
-                  (LPARAM)KEYBOARD_HANDLE);
+        QueuePost(w->Thread, target, WM_INPUT_DEVICE_CHANGE, change, (LPARAM)KEYBOARD_HANDLE);
     if (usage_matches(d, 1, 2))
-        QueuePost(w->Thread, target, WM_INPUT_DEVICE_CHANGE, arrival ? GIDC_ARRIVAL : GIDC_REMOVAL,
-                  (LPARAM)MOUSE_HANDLE);
+        QueuePost(w->Thread, target, WM_INPUT_DEVICE_CHANGE, change, (LPARAM)MOUSE_HANDLE);
+    for (ULONG i = 0; i < MAX_PADS; i++)
+        if (g_hid[i].Used && d->usUsagePage == g_hid[i].Info.UsagePage && d->usUsage == g_hid[i].Info.Usage)
+            QueuePost(w->Thread, target, WM_INPUT_DEVICE_CHANGE, change, (LPARAM)g_hid[i].Handle);
 }
 
 /* windows' checks of one entry, then each replaces the process's registration of its usage. */
@@ -367,16 +389,16 @@ void RawFreeProcess(W32PROCESS *p)
  * input in the background. true when the foreground process wants no
  * legacy messages for it.
  */
-static BOOLEAN deliver(PACKET *packet, USHORT usage)
+static BOOLEAN deliver_usage(PACKET *packet, USHORT page, USHORT usage)
 {
     WND *fg = InputForeground;
     W32THREAD *fg_thread = fg ? fg->Thread : nullptr;
     W32PROCESS *fg_process = fg_thread ? fg_thread->Process : nullptr;
     BOOLEAN no_legacy = FALSE;
-    BOOLEAN fg_registered = fg_process && registration(fg_process->Raw, 1, usage);
+    BOOLEAN fg_registered = fg_process && registration(fg_process->Raw, page, usage);
     for (PLIST_ENTRY e = W32Processes.Flink; e != &W32Processes; e = e->Flink) {
         W32PROCESS *p = CONTAINING_RECORD(e, W32PROCESS, Links);
-        const RAWINPUTDEVICE *d = registration(p->Raw, 1, usage);
+        const RAWINPUTDEVICE *d = registration(p->Raw, page, usage);
         if (!d)
             continue;
         HWND target = d->hwndTarget;
@@ -403,6 +425,11 @@ static BOOLEAN deliver(PACKET *packet, USHORT usage)
         QueuePost(w->Thread, target, WM_INPUT, code, (LPARAM)(ULONG_PTR)serial);
     }
     return no_legacy;
+}
+
+static BOOLEAN deliver(PACKET *packet, USHORT usage)
+{
+    return deliver_usage(packet, 1, usage);
 }
 
 /* the raw form of a host event, false to keep its legacy messages. */
@@ -482,6 +509,8 @@ static PACKET *lookup(HRAWINPUT input)
 
 static UINT body_size(const PACKET *p)
 {
+    if (p->Type == RIM_TYPEHID)
+        return 8 + p->Hid.SizeHid * p->Hid.Count;
     return p->Type == RIM_TYPEMOUSE ? sizeof(RAWMOUSE) : sizeof(RAWKEYBOARD);
 }
 
@@ -492,6 +521,8 @@ static UINT render(const PACKET *p, BYTE *out)
     memcpy(out, &h, sizeof(h));
     if (p->Type == RIM_TYPEMOUSE)
         memcpy(out + sizeof(h), &p->Mouse, sizeof(p->Mouse));
+    else if (p->Type == RIM_TYPEHID)
+        memcpy(out + sizeof(h), &p->Hid, body_size(p));
     else
         memcpy(out + sizeof(h), &p->Keyboard, sizeof(p->Keyboard));
     return h.dwSize;
@@ -503,7 +534,7 @@ UINT NTAPI NtUserGetRawInputData(HRAWINPUT input, UINT command, PVOID user_data,
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return (UINT)-1;
     }
-    BYTE buffer[sizeof(RAWINPUT)];
+    BYTE buffer[MAX_PACKET];
     UserEnter();
     PACKET *p = lookup(input);
     UINT need = p ? (command == RID_HEADER ? sizeof(RAWINPUTHEADER) : render(p, buffer)) : 0;
@@ -552,7 +583,7 @@ UINT NTAPI NtUserGetRawInputBuffer(PRAWINPUT user_data, PUINT user_size, UINT he
     UserEnter();
     W32THREAD *t = W32GetThread();
     UINT count = 0, used = 0, first = 0;
-    BYTE buffer[sizeof(RAWINPUT)];
+    BYTE buffer[MAX_PACKET];
     UINT result = 0;
     for (PLIST_ENTRY e = t ? t->Posted.Flink : nullptr; e && e != &t->Posted;) {
         QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
@@ -600,14 +631,39 @@ UINT NTAPI NtUserGetRawInputBuffer(PRAWINPUT user_data, PUINT user_size, UINT he
 
 /* ------------------------------------------------------------------ devices */
 
+static HID_DEVICE *hid_device(HANDLE handle)
+{
+    for (ULONG i = 0; i < MAX_PADS; i++)
+        if (g_hid[i].Used && g_hid[i].Handle == handle)
+            return &g_hid[i];
+    return nullptr;
+}
+
+/* the keyboard and the mouse, then the hid collections in the order they came. */
 UINT NTAPI NtUserGetRawInputDeviceList(PRAWINPUTDEVICELIST user_list, PUINT user_count, UINT size)
 {
-    static const RAWINPUTDEVICELIST DEVICES[] = {{KEYBOARD_HANDLE, RIM_TYPEKEYBOARD}, {MOUSE_HANDLE, RIM_TYPEMOUSE}};
-    UINT have = RTL_NUMBER_OF(DEVICES), count;
+    RAWINPUTDEVICELIST devices[2 + MAX_PADS] = {{KEYBOARD_HANDLE, RIM_TYPEKEYBOARD}, {MOUSE_HANDLE, RIM_TYPEMOUSE}};
+    UINT have = 2, count;
     if (size != sizeof(RAWINPUTDEVICELIST) || !user_count) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return (UINT)-1;
     }
+    UserEnter();
+    HID_DEVICE *order[MAX_PADS];
+    UINT pads = 0;
+    for (ULONG i = 0; i < MAX_PADS; i++)
+        if (g_hid[i].Used)
+            order[pads++] = &g_hid[i];
+    /* handles grow with each arrival, which is the order windows lists them in. */
+    for (UINT i = 1; i < pads; i++)
+        for (UINT j = i; j && order[j - 1]->Handle > order[j]->Handle; j--) {
+            HID_DEVICE *t = order[j];
+            order[j] = order[j - 1];
+            order[j - 1] = t;
+        }
+    for (UINT i = 0; i < pads; i++)
+        devices[have++] = (RAWINPUTDEVICELIST){order[i]->Handle, RIM_TYPEHID};
+    UserLeave();
     if (!user_list) {
         if (!NT_SUCCESS(MimeCopyToUser(user_count, &have, sizeof(have)))) {
             W32SetLastError(ERROR_NOACCESS);
@@ -624,37 +680,52 @@ UINT NTAPI NtUserGetRawInputDeviceList(PRAWINPUTDEVICELIST user_list, PUINT user
         W32SetLastError(ERROR_INSUFFICIENT_BUFFER);
         return (UINT)-1;
     }
-    if (!NT_SUCCESS(MimeCopyToUser(user_list, DEVICES, sizeof(DEVICES)))) {
+    if (!NT_SUCCESS(MimeCopyToUser(user_list, devices, have * sizeof(*devices)))) {
         W32SetLastError(ERROR_NOACCESS);
         return (UINT)-1;
     }
     return have;
 }
 
-/* the name in characters, the info in bytes; null data asks for the size. */
+/* the name in characters, the rest in bytes; null data asks for the size. */
 UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID user_data, PUINT user_size)
 {
-    if (device != KEYBOARD_HANDLE && device != MOUSE_HANDLE) {
-        W32SetLastError(ERROR_INVALID_HANDLE);
-        return (UINT)-1;
-    }
-    BOOLEAN keyboard = device == KEYBOARD_HANDLE;
     UINT size;
     if (!user_size || !NT_SUCCESS(MimeCopyFromUser(&size, user_size, sizeof(size)))) {
         W32SetLastError(ERROR_NOACCESS);
         return (UINT)-1;
     }
+    UserEnter();
+    HID_DEVICE *hid = hid_device(device);
+    HID_DEVICE copy;
+    if (hid)
+        copy = *hid;
+    UserLeave();
+    if (device != KEYBOARD_HANDLE && device != MOUSE_HANDLE && !hid) {
+        W32SetLastError(ERROR_INVALID_HANDLE);
+        return (UINT)-1;
+    }
+    BOOLEAN keyboard = device == KEYBOARD_HANDLE;
     const void *data;
     UINT need, units;
     RID_DEVICE_INFO info = {sizeof(info)};
     switch (command) {
     case RIDI_DEVICENAME:
-        data = keyboard ? KEYBOARD_NAME : MOUSE_NAME;
-        units = keyboard ? RTL_NUMBER_OF(KEYBOARD_NAME) : RTL_NUMBER_OF(MOUSE_NAME);
+        if (hid) {
+            data = copy.Info.Path;
+            units = (UINT)wcslen(copy.Info.Path) + 1;
+        } else {
+            data = keyboard ? KEYBOARD_NAME : MOUSE_NAME;
+            units = keyboard ? RTL_NUMBER_OF(KEYBOARD_NAME) : RTL_NUMBER_OF(MOUSE_NAME);
+        }
         need = units * sizeof(WCHAR);
         break;
     case RIDI_DEVICEINFO:
-        if (keyboard) {
+        if (hid) {
+            info.dwType = RIM_TYPEHID;
+            info.hid = (RID_DEVICE_INFO_HID){copy.Info.VendorId, copy.Info.ProductId, copy.Info.Version,
+                                             copy.Info.UsagePage, copy.Info.Usage};
+        } else if (keyboard) {
             info.dwType = RIM_TYPEKEYBOARD;
             info.keyboard = (RID_DEVICE_INFO_KEYBOARD){4, 0, 1, 12, 3, 101};
         } else {
@@ -676,9 +747,9 @@ UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID user_d
         }
         break;
     case RIDI_PREPARSEDDATA:
-        /* the keyboard and mouse are no hid devices to their readers. */
-        units = need = 0;
-        data = nullptr;
+        /* the bytes HidD_GetPreparsedData gives; the keyboard and mouse are no hid devices to their readers. */
+        data = hid ? copy.Info.Preparsed : nullptr;
+        units = need = hid ? copy.Info.PreparsedLength : 0;
         break;
     default:
         W32SetLastError(ERROR_INVALID_PARAMETER);
@@ -696,4 +767,61 @@ UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID user_d
         return (UINT)-1;
     }
     return units;
+}
+
+/* ------------------------------------------------------------------ game controllers */
+
+/* tells every process whose registration takes a collection's usage that it came or went. */
+static void notify_all(const HID_DEVICE *d, BOOLEAN arrival)
+{
+    for (PLIST_ENTRY e = W32Processes.Flink; e != &W32Processes; e = e->Flink) {
+        W32PROCESS *p = CONTAINING_RECORD(e, W32PROCESS, Links);
+        const RAWINPUTDEVICE *r = registration(p->Raw, d->Info.UsagePage, d->Info.Usage);
+        WND *w = r && (r->dwFlags & RIDEV_DEVNOTIFY) && r->hwndTarget ? WndLookup(r->hwndTarget) : nullptr;
+        if (w)
+            QueuePost(w->Thread, r->hwndTarget, WM_INPUT_DEVICE_CHANGE, arrival ? GIDC_ARRIVAL : GIDC_REMOVAL,
+                      (LPARAM)d->Handle);
+    }
+}
+
+/* a controller's collection comes and goes with it, and each new state is one report to its readers. */
+void RawPadEvent(const MimeInputEvent *ev)
+{
+    HID_DEVICE *d = nullptr;
+    for (ULONG i = 0; i < MAX_PADS && !d; i++)
+        if (g_hid[i].Used && g_hid[i].HostId == ev->pad)
+            d = &g_hid[i];
+    switch (ev->type) {
+    case MIME_INPUT_PAD_ADDED:
+        for (ULONG i = 0; i < MAX_PADS && !d; i++)
+            if (!g_hid[i].Used)
+                d = &g_hid[i];
+        if (!d || d->Used || !MimePadHidInfo(ev->pad, &d->Info))
+            return;
+        d->Used = TRUE;
+        d->HostId = ev->pad;
+        /* windows' user handles of devices, guessed. */
+        d->Handle = (HANDLE)(ULONG_PTR)(0x10101 + 2 * g_hid_handles++);
+        notify_all(d, TRUE);
+        return;
+    case MIME_INPUT_PAD_REMOVED:
+        if (!d)
+            return;
+        notify_all(d, FALSE);
+        d->Used = FALSE;
+        return;
+    case MIME_INPUT_PAD_STATE: {
+        MIME_PAD_HID now;
+        if (!d || !MimePadHidInfo(ev->pad, &now))
+            return;
+        PACKET packet = {};
+        packet.Type = RIM_TYPEHID;
+        packet.Device = d->Handle;
+        packet.Hid.SizeHid = sizeof(now.Report);
+        packet.Hid.Count = 1;
+        memcpy(packet.Hid.Data, now.Report, sizeof(now.Report));
+        deliver_usage(&packet, d->Info.UsagePage, d->Info.Usage);
+        return;
+    }
+    }
 }

@@ -58,6 +58,9 @@ NTSYSCALLAPI ULONG NTAPI NtGetTickCount(void);
 NTSYSCALLAPI NTSTATUS NTAPI NtIsProcessInJob(HANDLE process, HANDLE job);
 NTSYSCALLAPI NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, PVOID *base, ULONG_PTR zero_bits, SIZE_T commit_size, PLARGE_INTEGER offset, PSIZE_T view_size, SECTION_INHERIT inherit, ULONG allocation_type, ULONG protect);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
+NTSYSCALLAPI NTSTATUS NTAPI NtPlugPlayControl(ULONG klass, PVOID buffer, ULONG length);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryDirectoryObject(HANDLE handle, PVOID buffer, ULONG length, BOOLEAN single,
+                                             BOOLEAN restart, PULONG context, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb, ULONG share, ULONG options);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);

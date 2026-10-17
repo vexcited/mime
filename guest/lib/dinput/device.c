@@ -84,6 +84,8 @@ static ULONG STDMETHODCALLTYPE dev_release(void *This)
         unlock(dev, DI_OK);
         if (dev->event)
             CloseHandle(dev->event);
+        if (dev->cls && dev->cls->release)
+            dev->cls->release(dev);
         HeapFree(GetProcessHeap(), 0, dev->ring);
         RtlDeleteCriticalSection(&dev->lock);
         HeapFree(GetProcessHeap(), 0, dev);
@@ -114,14 +116,25 @@ static HRESULT initialize(DIDEV *dev, HINSTANCE instance, DWORD version, REFGUID
         return hr;
     if (dev->acquired)
         return DIERR_ACQUIRED;
-    DWORD which = ~0u;
+    DWORD which = ~0u, hid = ~0u;
     for (DWORD i = 0; i < RTL_NUMBER_OF(SYSTEM); i++)
         if (IsEqualGUID(guid, SYSTEM[i].guid))
             which = i;
-    if (which == ~0u)
+    if (which == ~0u) {
+        /* a hid device, the list rebuilt once when it is not there. */
+        if (!DiHidLookup(guid, &hid)) {
+            DiHidRebuild(FALSE);
+            if (!DiHidLookup(guid, &hid))
+                return DIERR_DEVICENOTREG;
+        }
+    } else if (!SYSTEM[which].keyboard && !GetSystemMetrics(SM_MOUSEPRESENT)) {
         return DIERR_DEVICENOTREG;
-    if (!SYSTEM[which].keyboard && !GetSystemMetrics(SM_MOUSEPRESENT))
-        return DIERR_DEVICENOTREG;
+    }
+    if (dev->cls && dev->cls->release)
+        dev->cls->release(dev);
+    dev->cls = nullptr;
+    dev->legacy = FALSE;
+    dev->usage_page = dev->usage = 0;
     dev->formatted = FALSE;
     dev->missing_count = 0;
     if (dev->event) {
@@ -140,6 +153,10 @@ static HRESULT initialize(DIDEV *dev, HINSTANCE instance, DWORD version, REFGUID
     dev->window = nullptr;
     dev->em = 0;
     dev->version = version;
+    for (DWORD i = 0; i < DI_MAX_OBJECTS; i++)
+        dev->app_ofs[i] = ~0u;
+    if (hid != ~0u)
+        return DiHidInit(dev, hid);
     dev->cls = SYSTEM[which].keyboard ? &DiKeyboardClass : &DiMouseClass;
     dev->instance = *guid;
     dev->product = SYSTEM[which].keyboard ? GUID_SysKeyboard : GUID_SysMouse;
@@ -230,6 +247,10 @@ HRESULT DiDeviceInfo(DIDEV *dev, DIDEVICEINSTANCEW *info)
     info->dwDevType = dev->devtype;
     DiCopyW(info->tszInstanceName, dev->name, DI_MAX_PATH);
     DiCopyW(info->tszProductName, dev->name, DI_MAX_PATH);
+    if (size >= sizeof(DIDEVICEINSTANCEW)) {
+        info->wUsagePage = dev->usage_page;
+        info->wUsage = dev->usage;
+    }
     return DI_OK;
 }
 
@@ -280,9 +301,18 @@ static BOOL describe(DIDEV *dev, DWORD index, DIDEVICEOBJECTINSTANCEW *out)
     DWORD size = out->dwSize;
     memset((BYTE *)out + sizeof(DWORD), 0, size - sizeof(DWORD));
     out->guidType = *obj->guid;
-    out->dwOfs = obj->ofs;
+    out->dwOfs = dev->legacy ? dev->legacy_ofs[index] : obj->ofs;
     out->dwType = obj->type;
     out->dwFlags = obj->flags;
+    if (size >= sizeof(DIDEVICEOBJECTINSTANCEW)) {
+        out->wCollectionNumber = obj->collection;
+        out->wDesignatorIndex = obj->designator;
+        out->wUsagePage = obj->page;
+        out->wUsage = obj->usage;
+        out->dwDimension = obj->dimension;
+        out->wExponent = obj->exponent;
+        out->wReportId = obj->report;
+    }
     return dev->cls->name(dev, obj, out->tszName);
 }
 
@@ -325,7 +355,19 @@ static HRESULT enum_objects(DIDEV *dev, void *callback, void *context, DWORD fla
     filter &= 0xFF0000FF;
     if (!(filter & 0xFF))
         filter |= 0xDF;
-    for (DWORD i = 0; i < dev->count; i++) {
+    /* old versions walk a joystick in c_dfDIJoystick's order, over the objects it maps. */
+    DWORD order[DI_MAX_OBJECTS], total = 0;
+    if (dev->legacy) {
+        for (DWORD ofs = 0; ofs < sizeof(DIJOYSTATE); ofs++)
+            for (DWORD i = 0; i < dev->count; i++)
+                if (dev->legacy_ofs[i] == ofs)
+                    order[total++] = i;
+    } else {
+        for (DWORD i = 0; i < dev->count; i++)
+            order[total++] = i;
+    }
+    for (DWORD n = 0; n < total; n++) {
+        DWORD i = order[n];
         const DIOBJECT *obj = &dev->objects[i];
         if ((obj->type & DIDFT_ALIAS) && !(include & DIDFT_ALIAS))
             continue;
@@ -333,7 +375,7 @@ static HRESULT enum_objects(DIDEV *dev, void *callback, void *context, DWORD fla
             continue;
         if (!(obj->type & filter & 0xFF) || ((filter & 0xFF000000) & ~obj->type))
             continue;
-        if (collection && collection != 0xFFFF)
+        if (collection && (collection == 0xFFFF ? obj->collection : obj->collection != collection))
             break;
         DIDEVICEOBJECTINSTANCEW info = {sizeof(info)};
         if (!describe(dev, i, &info))
@@ -376,7 +418,10 @@ static HRESULT resolve(DIDEV *dev, DWORD id, DWORD how, int *index)
         *index = DiFindObject(dev, id, how);
         return *index < 0 ? DIERR_OBJECTNOTFOUND : DI_OK;
     case DIPH_BYUSAGE:
-        return DIERR_UNSUPPORTED;
+        if (!dev->cls || !dev->cls->find_usage)
+            return DIERR_UNSUPPORTED;
+        *index = dev->cls->find_usage(dev, id);
+        return *index < 0 ? DIERR_NOTFOUND : DI_OK;
     default:
         return E_INVALIDARG;
     }
@@ -587,6 +632,12 @@ static HRESULT set_property(DIDEV *dev, REFGUID guid, const DIPROPHEADER *h)
     HRESULT hr = check_property(dev, guid, h, &prop, &index);
     if (FAILED(hr))
         return hr;
+    /* a hid axis takes its calibration even while acquired. */
+    if (dev->cls->set_property && !(prop->flags & PROP_READ_ONLY)) {
+        hr = dev->cls->set_property(dev, prop->id, index >= 0 ? &dev->objects[index] : nullptr, h);
+        if (hr != E_NOTIMPL)
+            return hr;
+    }
     hr = level_check(prop, index);
     if (FAILED(hr))
         return hr;
@@ -709,7 +760,7 @@ static HRESULT acquire(DIDEV *dev)
     dev->acquired = TRUE;
     dev->lost_iconic = FALSE;
     dev->cls->acquire(dev);
-    hr = DiEmulAcquire(dev);
+    hr = dev->cls->start ? dev->cls->start(dev) : DiEmulAcquire(dev);
     if (FAILED(hr)) {
         dev->acquired = FALSE;
         dev->cls->unacquire(dev);
@@ -743,7 +794,10 @@ static HRESULT unacquire(DIDEV *dev)
     dev->acquired = FALSE;
     if (dev->coop & DISCL_EXCLUSIVE)
         DiExclusiveRelease(dev);
-    DiEmulUnacquire(dev);
+    if (dev->cls->stop)
+        dev->cls->stop(dev);
+    else
+        DiEmulUnacquire(dev);
     dev->cls->unacquire(dev);
     return DI_OK;
 }
@@ -756,7 +810,10 @@ void DiDeviceLost(DIDEV *dev)
         dev->acquired = FALSE;
         if (dev->coop & DISCL_EXCLUSIVE)
             DiExclusiveRelease(dev);
-        DiEmulUnacquire(dev);
+        if (dev->cls->stop)
+            dev->cls->stop(dev);
+        else
+            DiEmulUnacquire(dev);
         dev->cls->unacquire(dev);
         dev->status = DIERR_INPUTLOST;
         dev->lost_iconic = dev->window && IsWindow(dev->window) && IsIconic(dev->window);

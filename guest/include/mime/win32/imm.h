@@ -7,7 +7,7 @@
 #include <mime/win32/winuser.h>
 
 #ifdef MIME_BUILD_IMM32
-#define IMMAPI __declspec(dllexport)
+#define IMMAPI DECLSPEC_EXPORT
 #else
 #define IMMAPI DECLSPEC_IMPORT
 #endif

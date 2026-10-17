@@ -283,7 +283,8 @@ static ULONG registered_raw32(const ULONG *a)
 static ULONG raw_data32(const ULONG *a)
 {
     UINT *size = ptr32(a[3]);
-    BYTE buffer[sizeof(RAWINPUT)];
+    /* room for a hid packet's reports too. */
+    BYTE buffer[256];
     UINT inner = sizeof(buffer);
     ULONG64 v[5] = {a[0], a[1], (ULONG_PTR)buffer, (ULONG_PTR)&inner, a[4] == 16 ? sizeof(RAWINPUTHEADER) : 0};
     ULONG result = (ULONG)MxCallService(MIME_SVC_NtUserGetRawInputData, v);

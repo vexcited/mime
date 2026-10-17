@@ -109,6 +109,8 @@ struct DSDEVICE {
 extern RTL_CRITICAL_SECTION DsLock;
 extern HINSTANCE DsModule;
 extern const GUID DsDeviceGuid;
+extern const WCHAR DsDeviceName[];
+extern const WCHAR DsDeviceModule[];
 extern DSDEVICE *DsDevices;
 
 /* main.c */
@@ -119,6 +121,9 @@ DWORD DsFormatSize(const WAVEFORMATEX *f);
 WORD DsFormatTag(const WAVEFORMATEX *f);
 BOOL DsValidFormat(const WAVEFORMATEX *f);
 float DsAmplitude(LONG hundredths);
+
+/* private.c */
+HRESULT DsCreatePrivate(REFIID riid, void **out);
 
 /* device.c */
 extern const IDirectSound8Vtbl DsDeviceVtbl;

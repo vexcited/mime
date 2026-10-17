@@ -11,9 +11,12 @@ static NTSTATUS store_iosb(PIO_STATUS_BLOCK user, const IO_STATUS_BLOCK *iosb)
 {
     if (!user)
         return STATUS_SUCCESS;
+    ULONG64 image[2];
+    PVOID address;
+    ULONG length = IopIosbImage(user, iosb->Status, iosb->Information, &address, image);
     if (KeGetPreviousMode() == UserMode)
-        return KiCopyToUser(user, iosb, sizeof(*iosb));
-    *user = *iosb;
+        return KiCopyToUser(address, image, length);
+    memcpy(address, image, length);
     return STATUS_SUCCESS;
 }
 
@@ -104,6 +107,11 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         ObDereferenceObject(file);
         return status;
     }
+    if (IopIsPad(file)) {
+        status = PadReadWrite(file, write, event, apc_routine, apc_context, iosb, buffer, length);
+        ObDereferenceObject(file);
+        return status;
+    }
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     LARGE_INTEGER offset;
     offset.QuadPart = -1;
@@ -189,13 +197,19 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
 NTSTATUS NTAPI NtReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                           PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    return rw_file(FALSE, handle, event, (PVOID)apc, apc_context, iosb, buffer, length, offset);
+    PVOID routine = (PVOID)apc;
+    if (KeGetPreviousMode() == UserMode)
+        IopTakeIosb32(&routine, &iosb);
+    return rw_file(FALSE, handle, event, routine, apc_context, iosb, buffer, length, offset);
 }
 
 NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                            PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    return rw_file(TRUE, handle, event, (PVOID)apc, apc_context, iosb, buffer, length, offset);
+    PVOID routine = (PVOID)apc;
+    if (KeGetPreviousMode() == UserMode)
+        IopTakeIosb32(&routine, &iosb);
+    return rw_file(TRUE, handle, event, routine, apc_context, iosb, buffer, length, offset);
 }
 
 NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
@@ -557,9 +571,14 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
-    /* sockets read the caller's buffers themselves and may stay pending. */
+    PVOID routine = (PVOID)apc;
+    if (KeGetPreviousMode() == UserMode)
+        IopTakeIosb32(&routine, &iosb);
+    /* sockets and game controllers read the caller's buffers themselves and may stay pending. */
     if (IopIsAfd(file))
-        status = AfdDeviceControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
+        status = AfdDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
+    else if (IopIsPad(file))
+        status = PadDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
         status = buffered_control(file, IRP_MJ_DEVICE_CONTROL, event, apc_context, iosb, code, input, in_len, output,
                                   out_len);
@@ -575,8 +594,11 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
+    PVOID routine = (PVOID)apc;
+    if (KeGetPreviousMode() == UserMode)
+        IopTakeIosb32(&routine, &iosb);
     if (IopIsNamedPipe(file))
-        status = NpfsFsControl(file, event, (PVOID)apc, apc_context, iosb, code, input, in_len, output, out_len);
+        status = NpfsFsControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
         status = buffered_control(file, IRP_MJ_FILE_SYSTEM_CONTROL, event, apc_context, iosb, code, input, in_len,
                                   output, out_len);
@@ -595,6 +617,8 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         NpfsCancel(file, PsCurrentProcess(), FALSE, nullptr);
     else if (IopIsAfd(file))
         AfdCancel(file, PsCurrentThread(), nullptr);
+    else if (IopIsPad(file))
+        PadCancel(file, PsCurrentThread(), nullptr);
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {};
     store_iosb(iosb, &io);
@@ -612,6 +636,8 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         status = NpfsCancel(file, PsCurrentProcess(), request != nullptr, request);
     else if (IopIsAfd(file))
         status = AfdCancel(file, nullptr, request);
+    else if (IopIsPad(file))
+        status = PadCancel(file, nullptr, request);
     else
         status = STATUS_NOT_FOUND;
     ObDereferenceObject(file);

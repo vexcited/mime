@@ -7,8 +7,8 @@
 #include <mime/win32/wingdi.h>
 
 #ifdef MIME_BUILD_USP10
-#define USPAPI __declspec(dllexport) HRESULT WINAPI
-#define USPAPI_(type) __declspec(dllexport) type WINAPI
+#define USPAPI DECLSPEC_EXPORT HRESULT WINAPI
+#define USPAPI_(type) DECLSPEC_EXPORT type WINAPI
 #else
 #define USPAPI DECLSPEC_IMPORT HRESULT WINAPI
 #define USPAPI_(type) DECLSPEC_IMPORT type WINAPI

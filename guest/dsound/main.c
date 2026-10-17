@@ -16,8 +16,8 @@ HINSTANCE DsModule;
 
 /* mmdevapi's endpoint {0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}, whose guid is the device's. */
 const GUID DsDeviceGuid = {0x6d696d65, 0x0000, 0x4000, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
-static const WCHAR device_name[] = L"Speakers (Mime Audio)";
-static const WCHAR device_module[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
+const WCHAR DsDeviceName[] = L"Speakers (Mime Audio)";
+const WCHAR DsDeviceModule[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
 
 static LONG g_objects;
 
@@ -193,7 +193,7 @@ static HRESULT enumerate(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, void *context
     if (!call_enum(w, a, nullptr, L"Primary Sound Driver", L"", context))
         return DS_OK;
     GUID guid = DsDeviceGuid;
-    call_enum(w, a, &guid, device_name, device_module, context);
+    call_enum(w, a, &guid, DsDeviceName, DsDeviceModule, context);
     return DS_OK;
 }
 
@@ -306,6 +306,8 @@ static HRESULT STDMETHODCALLTYPE factory_create(IClassFactory *This, IUnknown *o
         ds->lpVtbl->Release(ds);
         return hr;
     }
+    if (IsEqualGUID(&f->clsid, &CLSID_DirectSoundPrivate))
+        return DsCreatePrivate(riid, out);
     if (IsEqualGUID(&f->clsid, &CLSID_DirectSoundCapture) || IsEqualGUID(&f->clsid, &CLSID_DirectSoundCapture8)) {
         IDirectSoundCapture *c;
         HRESULT hr = DsCreateCapture(nullptr, &c, IsEqualGUID(&f->clsid, &CLSID_DirectSoundCapture8), FALSE);

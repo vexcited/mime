@@ -501,3 +501,117 @@ void ObInitialize(void)
     ObCreateSymbolicLink(L"\\GLOBAL??\\Global", L"\\GLOBAL??");
     ObCreateSymbolicLink(L"\\Sessions\\1\\BaseNamedObjects\\Global", L"\\BaseNamedObjects");
 }
+
+/* ------------------------------------------------------------------ listing a directory */
+
+typedef struct DIRECTORY_INFORMATION {
+    UNICODE_STRING Name;
+    UNICODE_STRING TypeName;
+} DIRECTORY_INFORMATION;
+
+/*
+ * windows' layout: the entries, a zeroed one, then their strings, each
+ * ending in a null; the context is the index of the next entry, in the
+ * order of the hash buckets.
+ */
+NTSTATUS NTAPI NtQueryDirectoryObject(HANDLE handle, PVOID buffer, ULONG length, BOOLEAN single, BOOLEAN restart,
+                                      PULONG user_context, PULONG user_returned)
+{
+    POBJECT_DIRECTORY dir;
+    NTSTATUS status = ObReferenceHandle(handle, ObDirectoryType, KeGetPreviousMode(), (PVOID *)&dir, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG start = 0;
+    if (!restart && user_context && !NT_SUCCESS(KiCopyFromUser(&start, user_context, sizeof(start)))) {
+        ObDereferenceObject(dir);
+        return STATUS_ACCESS_VIOLATION;
+    }
+    if (length > 0x100000)
+        length = 0x100000;
+    PUCHAR out = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('O', 'b', 'Q', 'd'));
+    if (!out) {
+        ObDereferenceObject(dir);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    /* first pass counts what fits, second writes it; names are copied under the lock. */
+    ULONG index = 0, taken = 0, needed = 0;
+    SIZE_T strings = 0;
+    BOOLEAN more = FALSE;
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespace_lock);
+    ULONG total = 0;
+    for (ULONG b = 0; b < OB_DIRECTORY_BUCKETS; b++)
+        for (OBJECT_DIRECTORY_ENTRY *e = dir->Buckets[b]; e; e = e->Next)
+            total++;
+    for (ULONG pass = 0; pass < 2; pass++) {
+        index = 0;
+        ULONG count = 0;
+        SIZE_T text = 0;
+        for (ULONG b = 0; b < OB_DIRECTORY_BUCKETS; b++) {
+            for (OBJECT_DIRECTORY_ENTRY *e = dir->Buckets[b]; e; e = e->Next, index++) {
+                if (index < start)
+                    continue;
+                OBJECT_HEADER *h = OBJECT_TO_HEADER(e->Object);
+                POBJECT_TYPE type = ObGetObjectType(e->Object);
+                SIZE_T name = h->Name.Length + sizeof(WCHAR), type_name = type->Name.Length + sizeof(WCHAR);
+                if (pass == 0) {
+                    SIZE_T size = (count + 2) * sizeof(DIRECTORY_INFORMATION) + text + name + type_name;
+                    if ((single && count == 1) || size > length) {
+                        if (!count)
+                            needed = (ULONG)size;
+                        more = TRUE;
+                        goto counted;
+                    }
+                    count++;
+                    text += name + type_name;
+                    continue;
+                }
+                if (count >= taken)
+                    goto written;
+                DIRECTORY_INFORMATION *info = (DIRECTORY_INFORMATION *)out + count;
+                PUCHAR place = out + (taken + 1) * sizeof(DIRECTORY_INFORMATION) + text;
+                memcpy(place, h->Name.Buffer, h->Name.Length);
+                ((PWCHAR)place)[h->Name.Length / sizeof(WCHAR)] = 0;
+                info->Name = (UNICODE_STRING){h->Name.Length, (USHORT)name, (PWSTR)place};
+                memcpy(place + name, type->Name.Buffer, type->Name.Length);
+                ((PWCHAR)(place + name))[type->Name.Length / sizeof(WCHAR)] = 0;
+                info->TypeName = (UNICODE_STRING){type->Name.Length, (USHORT)type_name, (PWSTR)(place + name)};
+                text += name + type_name;
+                count++;
+            }
+        }
+    counted:
+        if (pass == 0) {
+            taken = count;
+            strings = text;
+        }
+    }
+written:
+    KeReleaseSpinLock(&g_namespace_lock, irql);
+    ObDereferenceObject(dir);
+    ULONG used = (ULONG)((taken + 1) * sizeof(DIRECTORY_INFORMATION) + strings);
+    if (!taken) {
+        ExFreePool(out);
+        if (start >= total)
+            return STATUS_NO_MORE_ENTRIES;
+        if (user_returned)
+            KiCopyToUser(user_returned, &needed, sizeof(needed));
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    memset((DIRECTORY_INFORMATION *)out + taken, 0, sizeof(DIRECTORY_INFORMATION));
+    /* the pointers become the caller's. */
+    for (ULONG i = 0; i < taken; i++) {
+        DIRECTORY_INFORMATION *info = (DIRECTORY_INFORMATION *)out + i;
+        info->Name.Buffer = (PWSTR)((PUCHAR)buffer + ((PUCHAR)info->Name.Buffer - out));
+        info->TypeName.Buffer = (PWSTR)((PUCHAR)buffer + ((PUCHAR)info->TypeName.Buffer - out));
+    }
+    status = KiCopyToUser(buffer, out, used);
+    ExFreePool(out);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG next = start + taken;
+    if (user_context)
+        KiCopyToUser(user_context, &next, sizeof(next));
+    if (user_returned)
+        KiCopyToUser(user_returned, &used, sizeof(used));
+    return more && !single ? STATUS_MORE_ENTRIES : STATUS_SUCCESS;
+}

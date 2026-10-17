@@ -95,7 +95,7 @@ static BOOL SpoolValidDevmodeA(PDEVMODEA dm)
     return TRUE;
 }
 
-__declspec(dllexport) BOOL WINAPI IsValidDevmodeW(PDEVMODEW devmode, SIZE_T size)
+DECLSPEC_EXPORT BOOL WINAPI IsValidDevmodeW(PDEVMODEW devmode, SIZE_T size)
 {
     if (!devmode || size < offsetof(DEVMODEW, dmFields) + sizeof(DWORD) ||
         size < (SIZE_T)devmode->dmSize + devmode->dmDriverExtra)
@@ -103,7 +103,7 @@ __declspec(dllexport) BOOL WINAPI IsValidDevmodeW(PDEVMODEW devmode, SIZE_T size
     return SpoolValidDevmodeW(devmode);
 }
 
-__declspec(dllexport) BOOL WINAPI IsValidDevmodeA(PDEVMODEA devmode, SIZE_T size)
+DECLSPEC_EXPORT BOOL WINAPI IsValidDevmodeA(PDEVMODEA devmode, SIZE_T size)
 {
     if (!devmode || size < offsetof(DEVMODEA, dmFields) + sizeof(DWORD) ||
         size < (SIZE_T)devmode->dmSize + devmode->dmDriverExtra)
@@ -127,34 +127,34 @@ static LONG SpoolDocumentProperties(const void *output, DWORD mode)
     return -1;
 }
 
-__declspec(dllexport) LONG WINAPI DocumentPropertiesW(HWND window, HANDLE printer, LPWSTR device, PDEVMODEW output,
+DECLSPEC_EXPORT LONG WINAPI DocumentPropertiesW(HWND window, HANDLE printer, LPWSTR device, PDEVMODEW output,
                                                       PDEVMODEW input, DWORD mode)
 {
     return SpoolDocumentProperties(output, mode);
 }
 
-__declspec(dllexport) LONG WINAPI DocumentPropertiesA(HWND window, HANDLE printer, LPSTR device, PDEVMODEA output,
+DECLSPEC_EXPORT LONG WINAPI DocumentPropertiesA(HWND window, HANDLE printer, LPSTR device, PDEVMODEA output,
                                                       PDEVMODEA input, DWORD mode)
 {
     return SpoolDocumentProperties(output, mode);
 }
 
 /* shows the driver's advanced page; returns 1 when it was confirmed. */
-__declspec(dllexport) LONG WINAPI AdvancedDocumentPropertiesW(HWND window, HANDLE printer, LPWSTR device,
+DECLSPEC_EXPORT LONG WINAPI AdvancedDocumentPropertiesW(HWND window, HANDLE printer, LPWSTR device,
                                                               PDEVMODEW output, PDEVMODEW input)
 {
     SetLastError(ERROR_INVALID_HANDLE);
     return 0;
 }
 
-__declspec(dllexport) LONG WINAPI AdvancedDocumentPropertiesA(HWND window, HANDLE printer, LPSTR device,
+DECLSPEC_EXPORT LONG WINAPI AdvancedDocumentPropertiesA(HWND window, HANDLE printer, LPSTR device,
                                                               PDEVMODEA output, PDEVMODEA input)
 {
     SetLastError(ERROR_INVALID_HANDLE);
     return 0;
 }
 
-__declspec(dllexport) LONG WINAPI AdvancedSetupDialog(HWND window, HANDLE instance, LPDEVMODEA input,
+DECLSPEC_EXPORT LONG WINAPI AdvancedSetupDialog(HWND window, HANDLE instance, LPDEVMODEA input,
                                                       LPDEVMODEA output)
 {
     SetLastError(ERROR_INVALID_PRINTER_NAME);
@@ -163,7 +163,7 @@ __declspec(dllexport) LONG WINAPI AdvancedSetupDialog(HWND window, HANDLE instan
 
 /* ------------------------------------------------------------------ device capabilities */
 
-__declspec(dllexport) int WINAPI DeviceCapabilitiesW(LPCWSTR device, LPCWSTR port, WORD capability, LPWSTR output,
+DECLSPEC_EXPORT int WINAPI DeviceCapabilitiesW(LPCWSTR device, LPCWSTR port, WORD capability, LPWSTR output,
                                                      const DEVMODEW *devmode)
 {
     if (devmode && !SpoolValidDevmodeW((PDEVMODEW)devmode))
@@ -172,7 +172,7 @@ __declspec(dllexport) int WINAPI DeviceCapabilitiesW(LPCWSTR device, LPCWSTR por
     return -1;
 }
 
-__declspec(dllexport) int WINAPI DeviceCapabilitiesA(LPCSTR device, LPCSTR port, WORD capability, LPSTR output,
+DECLSPEC_EXPORT int WINAPI DeviceCapabilitiesA(LPCSTR device, LPCSTR port, WORD capability, LPSTR output,
                                                      const DEVMODEA *devmode)
 {
     if (devmode && !SpoolValidDevmodeA((PDEVMODEA)devmode))
@@ -182,13 +182,13 @@ __declspec(dllexport) int WINAPI DeviceCapabilitiesA(LPCSTR device, LPCSTR port,
 }
 
 /* the 16-bit era entry points: ExtDeviceMode opens the device by name first. */
-__declspec(dllexport) LONG WINAPI ExtDeviceMode(HWND window, HANDLE instance, LPDEVMODEA output, LPSTR device,
+DECLSPEC_EXPORT LONG WINAPI ExtDeviceMode(HWND window, HANDLE instance, LPDEVMODEA output, LPSTR device,
                                                 LPSTR port, LPDEVMODEA input, LPSTR profile, DWORD mode)
 {
     SetLastError(ERROR_INVALID_PRINTER_NAME);
     return -1;
 }
 
-__declspec(dllexport) void WINAPI DeviceMode(HWND window, HANDLE instance, LPSTR device, LPSTR port)
+DECLSPEC_EXPORT void WINAPI DeviceMode(HWND window, HANDLE instance, LPSTR device, LPSTR port)
 {
 }

@@ -531,6 +531,7 @@ void IoInitialize(void)
     IopInitializeNamedPipes();
     IopInitializeConsole();
     IopInitializeAfd();
+    IopInitializePads();
 
     NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Ntfs", MimeFsDriverEntry, nullptr);
     if (!NT_SUCCESS(status))

@@ -207,13 +207,27 @@ static HRESULT enum_devices(DIOBJ *obj, DWORD type, void *callback, void *contex
     HRESULT hr = DiCheckVersion(DiModule, obj->version, obj->di8);
     if (FAILED(hr))
         return hr;
-    if (type & DIDEVTYPE_HID)
-        return DI_OK;
+    /* the system devices, then the hid collections in the order setupapi lists them. */
+    DiHidRebuild(TRUE);
+    DWORD hid_count = DiHidCount();
     DWORD wanted = flags ^ 0x00FF0000;
-    for (DWORD i = 0; i < RTL_NUMBER_OF(SYSTEM_DEVICES); i++) {
-        if (!obj->di8 && filter && filter != system_type(i, FALSE))
+    for (DWORD i = 0; i < RTL_NUMBER_OF(SYSTEM_DEVICES) + hid_count; i++) {
+        GUID guid;
+        BYTE type7, type8;
+        if (i < RTL_NUMBER_OF(SYSTEM_DEVICES)) {
+            if (type & DIDEVTYPE_HID)
+                continue;
+            guid = *SYSTEM_DEVICES[i];
+            type7 = system_type(i, FALSE);
+        } else if (!DiHidEntry(i - RTL_NUMBER_OF(SYSTEM_DEVICES), &guid, &type7, &type8)) {
             continue;
-        DIDEV *dev = probe(obj, SYSTEM_DEVICES[i]);
+        }
+        if (!obj->di8 && filter && filter != type7)
+            continue;
+        /* directx 3 had no joysticks. */
+        if (!obj->di8 && type7 == DIDEVTYPE_JOYSTICK && obj->version <= 0x0300)
+            continue;
+        DIDEV *dev = probe(obj, &guid);
         if (!dev)
             continue;
         DIDEVCAPS caps = {sizeof(DIDEVCAPS_DX3)};
@@ -302,7 +316,7 @@ static SIZE_T length_w(const WCHAR *s, SIZE_T max)
     return n;
 }
 
-/* game controllers are found by the path of their hid interface; there are none to find yet. */
+/* game controllers are found by the path of their hid interface, the list rebuilt once on a miss. */
 static HRESULT find_device(DIOBJ *obj, REFGUID class_guid, const WCHAR *name, LPGUID out)
 {
     if (!class_guid)
@@ -313,7 +327,10 @@ static HRESULT find_device(DIOBJ *obj, REFGUID class_guid, const WCHAR *name, LP
         return E_POINTER;
     if (!IsEqualGUID(class_guid, &GUID_HIDClass))
         return DIERR_DEVICENOTREG;
-    return DIERR_DEVICENOTREG;
+    if (DiHidFindPath(name, out))
+        return DI_OK;
+    DiHidRebuild(FALSE);
+    return DiHidFindPath(name, out) ? DI_OK : DIERR_DEVICENOTREG;
 }
 
 static HRESULT STDMETHODCALLTYPE obj_find_device_w(void *This, REFGUID class_guid, LPCWSTR name, LPGUID out)

@@ -1,0 +1,8 @@
+; the ordinals of xinput9_1_0.dll.
+LIBRARY xinput9_1_0.dll
+EXPORTS
+    DllMain @1 PRIVATE
+    XInputGetCapabilities @2
+    XInputGetDSoundAudioDeviceGuids @3
+    XInputGetState @4
+    XInputSetState @5

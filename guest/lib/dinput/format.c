@@ -12,11 +12,13 @@ static BOOL object_matches(DIDEV *dev, const DIOBJECTDATAFORMAT *o, const DIOBJE
     if ((o->dwType & 0x1F000000) & ~obj->type)
         return FALSE;
     if (o->pguid) {
-        /* a usage in place of a guid: keyboards and mice have none. */
-        if (o->dwFlags & DIDOI_GUIDISUSAGE)
+        /* a usage and its page in place of a guid; keyboards and mice have none. */
+        if (o->dwFlags & DIDOI_GUIDISUSAGE) {
+            if (!obj->page || (DWORD)(ULONG_PTR)o->pguid != (DWORD)MAKELONG(obj->usage, obj->page))
+                return FALSE;
+        } else if (!IsEqualGUID(o->pguid, &GUID_NULL) && !IsEqualGUID(o->pguid, obj->guid)) {
             return FALSE;
-        if (!IsEqualGUID(o->pguid, &GUID_NULL) && !IsEqualGUID(o->pguid, obj->guid))
-            return FALSE;
+        }
     }
     if ((o->dwType & mask) != mask && ((o->dwType ^ obj->type) & mask))
         return FALSE;
@@ -56,6 +58,15 @@ HRESULT DiSetDataFormat(DIDEV *dev, const DIDATAFORMAT *df)
         for (DWORD i = 0; i < dev->count && found == ~0u; i++)
             if (!used[i] && object_matches(dev, o, &dev->objects[i], mask))
                 found = i;
+        /* before dinput 6 a throttle was the z axis, so an unmatched z takes a slider. */
+        if (found == ~0u && !dev->di8 && dev->version < 0x0600 && o->pguid &&
+            !(o->dwFlags & DIDOI_GUIDISUSAGE) && IsEqualGUID(o->pguid, &GUID_ZAxis)) {
+            DIOBJECTDATAFORMAT slider = *o;
+            slider.pguid = &GUID_Slider;
+            for (DWORD i = 0; i < dev->count && found == ~0u; i++)
+                if (!used[i] && object_matches(dev, &slider, &dev->objects[i], mask))
+                    found = i;
+        }
         if (found != ~0u) {
             if ((dev->objects[found].type & (DIDFT_AXIS | DIDFT_POV)) && (o->dwOfs & 3))
                 return E_INVALIDARG;

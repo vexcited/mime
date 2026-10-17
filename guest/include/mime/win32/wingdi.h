@@ -8,7 +8,7 @@
 
 #ifdef MIME_BUILD_GDI32
 #undef WINGDIAPI
-#define WINGDIAPI __declspec(dllexport)
+#define WINGDIAPI DECLSPEC_EXPORT
 #endif
 
 #define LF_FACESIZE 32
@@ -1205,7 +1205,7 @@ WINGDIAPI BOOL WINAPI GdiGradientFill(HDC dc, PTRIVERTEX vertices, ULONG vertex_
 
 /* msimg32 exports. */
 #ifdef MIME_BUILD_MSIMG32
-#define MSIMG32API __declspec(dllexport)
+#define MSIMG32API DECLSPEC_EXPORT
 #else
 #define MSIMG32API DECLSPEC_IMPORT
 #endif

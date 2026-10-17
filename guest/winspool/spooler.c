@@ -99,13 +99,13 @@ static BOOL SpoolPrinterLevel(DWORD level)
     return level <= 2 || level == 4 || level == 5;
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrintersW(DWORD flags, LPWSTR name, DWORD level, LPBYTE buffer, DWORD size,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrintersW(DWORD flags, LPWSTR name, DWORD level, LPBYTE buffer, DWORD size,
                                                 LPDWORD needed, LPDWORD returned)
 {
     return SpoolEmpty(SpoolPrinterLevel(level), buffer, size, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrintersA(DWORD flags, LPSTR name, DWORD level, LPBYTE buffer, DWORD size,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrintersA(DWORD flags, LPSTR name, DWORD level, LPBYTE buffer, DWORD size,
                                                 LPDWORD needed, LPDWORD returned)
 {
     return SpoolEmpty(SpoolPrinterLevel(level), buffer, size, needed, returned);
@@ -116,7 +116,7 @@ static BOOL SpoolDriverLevel(DWORD level)
     return (level >= 1 && level <= 6) || level == 8;
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrinterDriversW(LPWSTR name, LPWSTR environment, DWORD level, LPBYTE buffer,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrinterDriversW(LPWSTR name, LPWSTR environment, DWORD level, LPBYTE buffer,
                                                       DWORD size, LPDWORD needed, LPDWORD returned)
 {
     if (needed && returned && SpoolDriverLevel(level) && !SpoolCheckEnvironmentW(environment))
@@ -124,7 +124,7 @@ __declspec(dllexport) BOOL WINAPI EnumPrinterDriversW(LPWSTR name, LPWSTR enviro
     return SpoolEmpty(SpoolDriverLevel(level), nullptr, 0, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrinterDriversA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrinterDriversA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
                                                       DWORD size, LPDWORD needed, LPDWORD returned)
 {
     if (needed && returned && SpoolDriverLevel(level) && !SpoolCheckEnvironmentA(environment))
@@ -132,31 +132,31 @@ __declspec(dllexport) BOOL WINAPI EnumPrinterDriversA(LPSTR name, LPSTR environm
     return SpoolEmpty(SpoolDriverLevel(level), nullptr, 0, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPortsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+DECLSPEC_EXPORT BOOL WINAPI EnumPortsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                              LPDWORD returned)
 {
     return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPortsA(LPSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+DECLSPEC_EXPORT BOOL WINAPI EnumPortsA(LPSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                              LPDWORD returned)
 {
     return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumMonitorsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+DECLSPEC_EXPORT BOOL WINAPI EnumMonitorsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                                 LPDWORD returned)
 {
     return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumMonitorsA(LPSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+DECLSPEC_EXPORT BOOL WINAPI EnumMonitorsA(LPSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                                 LPDWORD returned)
 {
     return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrintProcessorsW(LPWSTR name, LPWSTR environment, DWORD level, LPBYTE buffer,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorsW(LPWSTR name, LPWSTR environment, DWORD level, LPBYTE buffer,
                                                        DWORD size, LPDWORD needed, LPDWORD returned)
 {
     if (needed && returned && level == 1 && !SpoolCheckEnvironmentW(environment))
@@ -164,7 +164,7 @@ __declspec(dllexport) BOOL WINAPI EnumPrintProcessorsW(LPWSTR name, LPWSTR envir
     return SpoolEmpty(level == 1, buffer, size, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrintProcessorsA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorsA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
                                                        DWORD size, LPDWORD needed, LPDWORD returned)
 {
     if (needed && returned && level == 1 && !SpoolCheckEnvironmentA(environment))
@@ -182,14 +182,14 @@ static BOOL SpoolEnumDatatypes(DWORD level, LPDWORD needed, LPDWORD returned)
     return SpoolFail(ERROR_UNKNOWN_PRINTPROCESSOR);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrintProcessorDatatypesW(LPWSTR name, LPWSTR processor, DWORD level,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorDatatypesW(LPWSTR name, LPWSTR processor, DWORD level,
                                                                LPBYTE buffer, DWORD size, LPDWORD needed,
                                                                LPDWORD returned)
 {
     return SpoolEnumDatatypes(level, needed, returned);
 }
 
-__declspec(dllexport) BOOL WINAPI EnumPrintProcessorDatatypesA(LPSTR name, LPSTR processor, DWORD level,
+DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorDatatypesA(LPSTR name, LPSTR processor, DWORD level,
                                                                LPBYTE buffer, DWORD size, LPDWORD needed,
                                                                LPDWORD returned)
 {
@@ -247,25 +247,25 @@ static BOOL SpoolDirectoryA(LPSTR environment, DWORD level, LPBYTE buffer, DWORD
     return SpoolToAnsi(path, (LPSTR)buffer, size) ? TRUE : SpoolFail(ERROR_INSUFFICIENT_BUFFER);
 }
 
-__declspec(dllexport) BOOL WINAPI GetPrinterDriverDirectoryW(LPWSTR name, LPWSTR environment, DWORD level,
+DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriverDirectoryW(LPWSTR name, LPWSTR environment, DWORD level,
                                                              LPBYTE buffer, DWORD size, LPDWORD needed)
 {
     return SpoolDirectoryW(environment, level, buffer, size, needed, L"DRIVERS");
 }
 
-__declspec(dllexport) BOOL WINAPI GetPrinterDriverDirectoryA(LPSTR name, LPSTR environment, DWORD level,
+DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriverDirectoryA(LPSTR name, LPSTR environment, DWORD level,
                                                              LPBYTE buffer, DWORD size, LPDWORD needed)
 {
     return SpoolDirectoryA(environment, level, buffer, size, needed, L"DRIVERS");
 }
 
-__declspec(dllexport) BOOL WINAPI GetPrintProcessorDirectoryW(LPWSTR name, LPWSTR environment, DWORD level,
+DECLSPEC_EXPORT BOOL WINAPI GetPrintProcessorDirectoryW(LPWSTR name, LPWSTR environment, DWORD level,
                                                               LPBYTE buffer, DWORD size, LPDWORD needed)
 {
     return SpoolDirectoryW(environment, level, buffer, size, needed, L"PRTPROCS");
 }
 
-__declspec(dllexport) BOOL WINAPI GetPrintProcessorDirectoryA(LPSTR name, LPSTR environment, DWORD level,
+DECLSPEC_EXPORT BOOL WINAPI GetPrintProcessorDirectoryA(LPSTR name, LPSTR environment, DWORD level,
                                                               LPBYTE buffer, DWORD size, LPDWORD needed)
 {
     return SpoolDirectoryA(environment, level, buffer, size, needed, L"PRTPROCS");
@@ -274,24 +274,24 @@ __declspec(dllexport) BOOL WINAPI GetPrintProcessorDirectoryA(LPSTR name, LPSTR 
 /* ------------------------------------------------------------------ default printer */
 
 /* there is no default printer: the size is left alone. */
-__declspec(dllexport) BOOL WINAPI GetDefaultPrinterW(LPWSTR buffer, LPDWORD size)
+DECLSPEC_EXPORT BOOL WINAPI GetDefaultPrinterW(LPWSTR buffer, LPDWORD size)
 {
     if (!size)
         return SpoolFail(ERROR_INVALID_PARAMETER);
     return SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI GetDefaultPrinterA(LPSTR buffer, LPDWORD size)
+DECLSPEC_EXPORT BOOL WINAPI GetDefaultPrinterA(LPSTR buffer, LPDWORD size)
 {
     return GetDefaultPrinterW(nullptr, size);
 }
 
-__declspec(dllexport) BOOL WINAPI SetDefaultPrinterW(LPCWSTR printer)
+DECLSPEC_EXPORT BOOL WINAPI SetDefaultPrinterW(LPCWSTR printer)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
-__declspec(dllexport) BOOL WINAPI SetDefaultPrinterA(LPCSTR printer)
+DECLSPEC_EXPORT BOOL WINAPI SetDefaultPrinterA(LPCSTR printer)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
@@ -309,48 +309,48 @@ static HANDLE SpoolAddPrinter(DWORD level, LPBYTE printer)
     return nullptr;
 }
 
-__declspec(dllexport) HANDLE WINAPI AddPrinterW(LPWSTR name, DWORD level, LPBYTE printer)
+DECLSPEC_EXPORT HANDLE WINAPI AddPrinterW(LPWSTR name, DWORD level, LPBYTE printer)
 {
     return SpoolAddPrinter(level, printer);
 }
 
-__declspec(dllexport) HANDLE WINAPI AddPrinterA(LPSTR name, DWORD level, LPBYTE printer)
+DECLSPEC_EXPORT HANDLE WINAPI AddPrinterA(LPSTR name, DWORD level, LPBYTE printer)
 {
     return SpoolAddPrinter(level, printer);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterConnectionW(LPWSTR name)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterConnectionW(LPWSTR name)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterConnectionA(LPSTR name)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterConnectionA(LPSTR name)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterConnection2W(HWND window, LPCWSTR name, DWORD level, PVOID info)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterConnection2W(HWND window, LPCWSTR name, DWORD level, PVOID info)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
 /* the ansi form is not implemented by windows either. */
-__declspec(dllexport) BOOL WINAPI AddPrinterConnection2A(HWND window, LPCSTR name, DWORD level, PVOID info)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterConnection2A(HWND window, LPCSTR name, DWORD level, PVOID info)
 {
     return SpoolFail(ERROR_NOT_SUPPORTED);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrinterConnectionW(LPWSTR name)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrinterConnectionW(LPWSTR name)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrinterConnectionA(LPSTR name)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrinterConnectionA(LPSTR name)
 {
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
-__declspec(dllexport) HANDLE WINAPI ConnectToPrinterDlg(HWND window, DWORD flags)
+DECLSPEC_EXPORT HANDLE WINAPI ConnectToPrinterDlg(HWND window, DWORD flags)
 {
     return nullptr;
 }
@@ -367,43 +367,43 @@ static BOOL SpoolAddDriver(DWORD level, LPBYTE info)
     return SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterDriverW(LPWSTR name, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterDriverW(LPWSTR name, DWORD level, LPBYTE info)
 {
     return SpoolAddDriver(level, info);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterDriverA(LPSTR name, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterDriverA(LPSTR name, DWORD level, LPBYTE info)
 {
     return SpoolAddDriver(level, info);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterDriverExW(LPWSTR name, DWORD level, LPBYTE info, DWORD flags)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterDriverExW(LPWSTR name, DWORD level, LPBYTE info, DWORD flags)
 {
     return SpoolAddDriver(level, info);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrinterDriverExA(LPSTR name, DWORD level, LPBYTE info, DWORD flags)
+DECLSPEC_EXPORT BOOL WINAPI AddPrinterDriverExA(LPSTR name, DWORD level, LPBYTE info, DWORD flags)
 {
     return SpoolAddDriver(level, info);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrinterDriverW(LPWSTR name, LPWSTR environment, LPWSTR driver)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrinterDriverW(LPWSTR name, LPWSTR environment, LPWSTR driver)
 {
     return SpoolCheckEnvironmentW(environment) && SpoolFail(ERROR_UNKNOWN_PRINTER_DRIVER);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrinterDriverA(LPSTR name, LPSTR environment, LPSTR driver)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrinterDriverA(LPSTR name, LPSTR environment, LPSTR driver)
 {
     return SpoolCheckEnvironmentA(environment) && SpoolFail(ERROR_UNKNOWN_PRINTER_DRIVER);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrinterDriverExW(LPWSTR name, LPWSTR environment, LPWSTR driver,
+DECLSPEC_EXPORT BOOL WINAPI DeletePrinterDriverExW(LPWSTR name, LPWSTR environment, LPWSTR driver,
                                                          DWORD flags, DWORD version)
 {
     return SpoolCheckEnvironmentW(environment) && SpoolFail(ERROR_UNKNOWN_PRINTER_DRIVER);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrinterDriverExA(LPSTR name, LPSTR environment, LPSTR driver, DWORD flags,
+DECLSPEC_EXPORT BOOL WINAPI DeletePrinterDriverExA(LPSTR name, LPSTR environment, LPSTR driver, DWORD flags,
                                                          DWORD version)
 {
     return SpoolCheckEnvironmentA(environment) && SpoolFail(ERROR_UNKNOWN_PRINTER_DRIVER);
@@ -411,121 +411,121 @@ __declspec(dllexport) BOOL WINAPI DeletePrinterDriverExA(LPSTR name, LPSTR envir
 
 /* ------------------------------------------------------------------ ports, monitors, processors, providers */
 
-__declspec(dllexport) BOOL WINAPI AddPortW(LPWSTR name, HWND window, LPWSTR monitor)
+DECLSPEC_EXPORT BOOL WINAPI AddPortW(LPWSTR name, HWND window, LPWSTR monitor)
 {
     return SpoolFail(ERROR_UNKNOWN_PRINT_MONITOR);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPortA(LPSTR name, HWND window, LPSTR monitor)
+DECLSPEC_EXPORT BOOL WINAPI AddPortA(LPSTR name, HWND window, LPSTR monitor)
 {
     return SpoolFail(ERROR_UNKNOWN_PRINT_MONITOR);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPortExW(LPWSTR name, DWORD level, LPBYTE buffer, LPWSTR monitor)
+DECLSPEC_EXPORT BOOL WINAPI AddPortExW(LPWSTR name, DWORD level, LPBYTE buffer, LPWSTR monitor)
 {
     return SpoolFail(ERROR_UNKNOWN_PRINT_MONITOR);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPortExA(LPSTR name, DWORD level, LPBYTE buffer, LPSTR monitor)
+DECLSPEC_EXPORT BOOL WINAPI AddPortExA(LPSTR name, DWORD level, LPBYTE buffer, LPSTR monitor)
 {
     return SpoolFail(ERROR_UNKNOWN_PRINT_MONITOR);
 }
 
-__declspec(dllexport) BOOL WINAPI ConfigurePortW(LPWSTR name, HWND window, LPWSTR port)
+DECLSPEC_EXPORT BOOL WINAPI ConfigurePortW(LPWSTR name, HWND window, LPWSTR port)
 {
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
-__declspec(dllexport) BOOL WINAPI ConfigurePortA(LPSTR name, HWND window, LPSTR port)
+DECLSPEC_EXPORT BOOL WINAPI ConfigurePortA(LPSTR name, HWND window, LPSTR port)
 {
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePortW(LPWSTR name, HWND window, LPWSTR port)
+DECLSPEC_EXPORT BOOL WINAPI DeletePortW(LPWSTR name, HWND window, LPWSTR port)
 {
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePortA(LPSTR name, HWND window, LPSTR port)
+DECLSPEC_EXPORT BOOL WINAPI DeletePortA(LPSTR name, HWND window, LPSTR port)
 {
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
-__declspec(dllexport) BOOL WINAPI SetPortW(LPWSTR name, LPWSTR port, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI SetPortW(LPWSTR name, LPWSTR port, DWORD level, LPBYTE info)
 {
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
-__declspec(dllexport) BOOL WINAPI SetPortA(LPSTR name, LPSTR port, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI SetPortA(LPSTR name, LPSTR port, DWORD level, LPBYTE info)
 {
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
 /* monitors, processors and providers name a dll that would have to be in a spool directory. */
-__declspec(dllexport) BOOL WINAPI AddMonitorW(LPWSTR name, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI AddMonitorW(LPWSTR name, DWORD level, LPBYTE info)
 {
     return SpoolFail(level == 2 ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_LEVEL);
 }
 
-__declspec(dllexport) BOOL WINAPI AddMonitorA(LPSTR name, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI AddMonitorA(LPSTR name, DWORD level, LPBYTE info)
 {
     return SpoolFail(level == 2 ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_LEVEL);
 }
 
-__declspec(dllexport) BOOL WINAPI DeleteMonitorW(LPWSTR name, LPWSTR environment, LPWSTR monitor)
+DECLSPEC_EXPORT BOOL WINAPI DeleteMonitorW(LPWSTR name, LPWSTR environment, LPWSTR monitor)
 {
     return SpoolFail(ERROR_UNKNOWN_PRINT_MONITOR);
 }
 
-__declspec(dllexport) BOOL WINAPI DeleteMonitorA(LPSTR name, LPSTR environment, LPSTR monitor)
+DECLSPEC_EXPORT BOOL WINAPI DeleteMonitorA(LPSTR name, LPSTR environment, LPSTR monitor)
 {
     return SpoolFail(ERROR_UNKNOWN_PRINT_MONITOR);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrintProcessorW(LPWSTR name, LPWSTR environment, LPWSTR path,
+DECLSPEC_EXPORT BOOL WINAPI AddPrintProcessorW(LPWSTR name, LPWSTR environment, LPWSTR path,
                                                      LPWSTR processor)
 {
     return SpoolCheckEnvironmentW(environment) && SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrintProcessorA(LPSTR name, LPSTR environment, LPSTR path, LPSTR processor)
+DECLSPEC_EXPORT BOOL WINAPI AddPrintProcessorA(LPSTR name, LPSTR environment, LPSTR path, LPSTR processor)
 {
     return SpoolCheckEnvironmentA(environment) && SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrintProcessorW(LPWSTR name, LPWSTR environment, LPWSTR processor)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrintProcessorW(LPWSTR name, LPWSTR environment, LPWSTR processor)
 {
     return SpoolCheckEnvironmentW(environment) && SpoolFail(ERROR_UNKNOWN_PRINTPROCESSOR);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrintProcessorA(LPSTR name, LPSTR environment, LPSTR processor)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrintProcessorA(LPSTR name, LPSTR environment, LPSTR processor)
 {
     return SpoolCheckEnvironmentA(environment) && SpoolFail(ERROR_UNKNOWN_PRINTPROCESSOR);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrintProvidorW(LPWSTR name, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI AddPrintProvidorW(LPWSTR name, DWORD level, LPBYTE info)
 {
     return SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI AddPrintProvidorA(LPSTR name, DWORD level, LPBYTE info)
+DECLSPEC_EXPORT BOOL WINAPI AddPrintProvidorA(LPSTR name, DWORD level, LPBYTE info)
 {
     return SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrintProvidorW(LPWSTR name, LPWSTR environment, LPWSTR provider)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrintProvidorW(LPWSTR name, LPWSTR environment, LPWSTR provider)
 {
     return SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
-__declspec(dllexport) BOOL WINAPI DeletePrintProvidorA(LPSTR name, LPSTR environment, LPSTR provider)
+DECLSPEC_EXPORT BOOL WINAPI DeletePrintProvidorA(LPSTR name, LPSTR environment, LPSTR provider)
 {
     return SpoolFail(ERROR_FILE_NOT_FOUND);
 }
 
 /* ------------------------------------------------------------------ execution context */
 
-__declspec(dllexport) BOOL WINAPI GetPrintExecutionData(PRINT_EXECUTION_DATA *data)
+DECLSPEC_EXPORT BOOL WINAPI GetPrintExecutionData(PRINT_EXECUTION_DATA *data)
 {
     if (!data)
         return SpoolFail(ERROR_INVALID_PARAMETER);

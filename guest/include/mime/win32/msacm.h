@@ -11,7 +11,7 @@
 #include <mime/win32/mmreg.h>
 
 #ifdef MIME_BUILD_MSACM32
-#define MSACMAPI __declspec(dllexport)
+#define MSACMAPI DECLSPEC_EXPORT
 #else
 #define MSACMAPI DECLSPEC_IMPORT
 #endif

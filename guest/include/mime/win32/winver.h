@@ -7,7 +7,7 @@
 #include <mime/win32/winbase.h>
 
 #ifdef MIME_BUILD_VERSION
-#define VERAPI __declspec(dllexport)
+#define VERAPI DECLSPEC_EXPORT
 #else
 #define VERAPI DECLSPEC_IMPORT
 #endif

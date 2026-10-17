@@ -7,8 +7,8 @@
 #include <mime/win32/winuser.h>
 
 #ifdef MIME_BUILD_UXTHEME
-#define THEMEAPI __declspec(dllexport) HRESULT WINAPI
-#define THEMEAPI_(type) __declspec(dllexport) type WINAPI
+#define THEMEAPI DECLSPEC_EXPORT HRESULT WINAPI
+#define THEMEAPI_(type) DECLSPEC_EXPORT type WINAPI
 #else
 #define THEMEAPI DECLSPEC_IMPORT HRESULT WINAPI
 #define THEMEAPI_(type) DECLSPEC_IMPORT type WINAPI

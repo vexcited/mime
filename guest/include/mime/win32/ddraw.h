@@ -9,7 +9,7 @@
 #include <mime/win32/wingdi.h>
 
 #ifdef MIME_BUILD_DDRAW
-#define DDRAWAPI __declspec(dllexport)
+#define DDRAWAPI DECLSPEC_EXPORT
 #else
 #define DDRAWAPI DECLSPEC_IMPORT
 #endif

@@ -138,7 +138,7 @@ static SQLRETURN OdbcAllocHandle(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE *o
     return OdbcFail(h, ODBC_E_HY092);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLAllocHandle(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE *output)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocHandle(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE *output)
 {
     OdbcLock();
     SQLRETURN rc = OdbcAllocHandle(type, input, output, 0);
@@ -146,7 +146,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLAllocHandle(SQLSMALLINT type, SQLHAND
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLAllocHandleStd(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE *output)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocHandleStd(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE *output)
 {
     OdbcLock();
     SQLRETURN rc = OdbcAllocHandle(type, input, output, SQL_OV_ODBC3);
@@ -154,7 +154,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLAllocHandleStd(SQLSMALLINT type, SQLH
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLAllocEnv(SQLHENV *env)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocEnv(SQLHENV *env)
 {
     OdbcLock();
     SQLRETURN rc = OdbcAllocEnv(env, SQL_OV_ODBC2);
@@ -162,7 +162,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLAllocEnv(SQLHENV *env)
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLAllocConnect(SQLHENV env, SQLHDBC *dbc)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocConnect(SQLHENV env, SQLHDBC *dbc)
 {
     OdbcLock();
     SQLRETURN rc = OdbcAllocDbc(env, dbc);
@@ -170,7 +170,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLAllocConnect(SQLHENV env, SQLHDBC *db
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLAllocStmt(SQLHDBC dbc, SQLHSTMT *stmt)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocStmt(SQLHDBC dbc, SQLHSTMT *stmt)
 {
     OdbcLock();
     SQLRETURN rc = OdbcAllocOnDbc(dbc, stmt);
@@ -205,7 +205,7 @@ static SQLRETURN OdbcFreeDbc(SQLHANDLE handle)
     return SQL_SUCCESS;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLFreeHandle(SQLSMALLINT type, SQLHANDLE handle)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLFreeHandle(SQLSMALLINT type, SQLHANDLE handle)
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
@@ -217,7 +217,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLFreeHandle(SQLSMALLINT type, SQLHANDL
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLFreeEnv(SQLHENV env)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLFreeEnv(SQLHENV env)
 {
     OdbcLock();
     SQLRETURN rc = OdbcFreeEnv(env);
@@ -225,7 +225,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLFreeEnv(SQLHENV env)
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLFreeConnect(SQLHDBC dbc)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLFreeConnect(SQLHDBC dbc)
 {
     OdbcLock();
     SQLRETURN rc = OdbcFreeDbc(dbc);
@@ -280,7 +280,7 @@ static SQLRETURN OdbcSetEnvAttr(SQLHENV handle, SQLINTEGER attribute, SQLPOINTER
     return OdbcReturn(&env->h, SQL_SUCCESS);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLSetEnvAttr(SQLHENV env, SQLINTEGER attribute, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLSetEnvAttr(SQLHENV env, SQLINTEGER attribute, SQLPOINTER value,
                                                       SQLINTEGER length)
 {
     OdbcLock();
@@ -325,7 +325,7 @@ static SQLRETURN OdbcGetEnvAttr(SQLHENV handle, SQLINTEGER attribute, SQLPOINTER
     return OdbcReturn(&env->h, SQL_SUCCESS);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetEnvAttr(SQLHENV env, SQLINTEGER attribute, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetEnvAttr(SQLHENV env, SQLINTEGER attribute, SQLPOINTER value,
                                                       SQLINTEGER buffer_length, SQLINTEGER *length)
 {
     OdbcLock();
@@ -336,12 +336,12 @@ __declspec(dllexport) SQLRETURN SQL_API SQLGetEnvAttr(SQLHENV env, SQLINTEGER at
 
 /* ------------------------------------------------------------------ connection pooling */
 
-__declspec(dllexport) DWORD SQL_API ODBCGetTryWaitValue(void)
+DECLSPEC_EXPORT DWORD SQL_API ODBCGetTryWaitValue(void)
 {
     return 120;
 }
 
-__declspec(dllexport) BOOL SQL_API ODBCSetTryWaitValue(DWORD value)
+DECLSPEC_EXPORT BOOL SQL_API ODBCSetTryWaitValue(DWORD value)
 {
     return TRUE;
 }

@@ -133,6 +133,13 @@ static void mx_print(const char *format, ...)
     NtDisplayString(&s);
 }
 
+/* the emulator runs any apc routine as x86 code. */
+void Mx32ApcRoutine(ULONG routine, ULONG context, PVOID *native, PVOID *argument)
+{
+    *native = (PVOID)(ULONG_PTR)routine;
+    *argument = (PVOID)(ULONG_PTR)context;
+}
+
 void Mx32Unsupported(ULONG number)
 {
     static ULONG reported[256];

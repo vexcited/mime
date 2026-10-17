@@ -8,7 +8,7 @@
 #include <mime/win32/winbase.h>
 
 #ifdef MIME_BUILD_ODBC32
-#define SQL_EXPORT __declspec(dllexport)
+#define SQL_EXPORT DECLSPEC_EXPORT
 #else
 #define SQL_EXPORT DECLSPEC_IMPORT
 #endif

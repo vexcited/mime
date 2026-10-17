@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png msstyles compound audio dinput)
+    foreach(lib privdata dxbc dxil png msstyles compound audio dinput xinput)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -238,9 +238,10 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     mmdevapi:0x7FF4A0000000 gdiplus:0x7FF490000000 wininet:0x7FF480000000 urlmon:0x7FF470000000
     msimg32:0x7FF460000000 oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000
     d3d11:0x7FF420000000 msvcp_win:0x7FF410000000 d3dcompiler_47:0x7FF400000000 d3d12:0x7FF3E0000000
-    d3d9:0x7FF3D0000000 setupapi:0x7FF3C0000000 d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000
+    d3d9:0x7FF3D0000000 cfgmgr32:0x7FF2F0000000 setupapi:0x7FF3C0000000 d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000
     d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000 dsound:0x7FF320000000
-    ddraw:0x7FF310000000 dinput:0x7FF300000000)
+    ddraw:0x7FF310000000 dinput:0x7FF300000000 hid:0x7FF2E0000000 xinput1_4:0x7FF2D0000000
+    xinput1_3:0x7FF2C0000000 xinput1_2:0x7FF2B0000000 xinput1_1:0x7FF2A0000000 xinput9_1_0:0x7FF290000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
@@ -250,6 +251,11 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     # dinput8 and dinput are revisions of one engine.
     set(objects_dinput8 ${arch}-lib-dinput)
     set(objects_dinput ${arch}-lib-dinput)
+    # the xinput dlls are revisions of one engine.
+    foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
+        set(objects_${xinput} ${arch}-lib-xinput)
+        set(libs_${xinput} ${MIME_LIB_${arch}}/setupapi.lib)
+    endforeach()
     set(objects_gdiplus ${arch}-lib-png)
     set(objects_dxgi ${arch}-lib-privdata)
     set(objects_d3d11 ${arch}-lib-privdata ${arch}-lib-dxbc)
@@ -265,6 +271,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
+    set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib)
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)

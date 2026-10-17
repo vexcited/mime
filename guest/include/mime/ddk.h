@@ -909,6 +909,18 @@ NTKERNELAPI NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS kla
 NTKERNELAPI ULONG64 NTAPI HalMimeHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
                                            ULONG64 a5, ULONG64 a6, PULONG64 value);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetInputEvent(void);
+/* game controllers, from the host's input events: their hid and xusb devices (io/hid.c). */
+struct MimeInputEvent;
+NTKERNELAPI void NTAPI MimePadEvent(const struct MimeInputEvent *ev);
+/* a controller's hid collection for raw input: its interface path, preparsed data and current report. */
+typedef struct MIME_PAD_HID {
+    WCHAR Path[128];
+    const UCHAR *Preparsed;
+    ULONG PreparsedLength;
+    USHORT VendorId, ProductId, Version, UsagePage, Usage;
+    UCHAR Report[15];
+} MIME_PAD_HID;
+NTKERNELAPI BOOLEAN NTAPI MimePadHidInfo(ULONG host, MIME_PAD_HID *info);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetGpuEvent(void);
 /* copies that treat the pointer as user memory and recover from faults, for drivers. */
 NTKERNELAPI NTSTATUS NTAPI MimeCopyFromUser(void *dst, const void *user_src, SIZE_T length);

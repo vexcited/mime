@@ -8,7 +8,7 @@
 
 #ifdef MIME_BUILD_USER32
 #undef WINUSERAPI
-#define WINUSERAPI __declspec(dllexport)
+#define WINUSERAPI DECLSPEC_EXPORT
 #endif
 
 #ifndef WINAPIV

@@ -740,6 +740,7 @@ void InputCursorMoved(void);
 void InputCursorShown(void);
 void InputForegroundChanged(void);
 BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected);
+void RawPadEvent(const MimeInputEvent *ev);
 void RawFreeProcess(W32PROCESS *p);
 
 /* ------------------------------------------------------------------ painting and presentation */

@@ -181,47 +181,47 @@ SQLRETURN OdbcGetConnectAttr(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER va
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLSetConnectAttrW(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLSetConnectAttrW(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
                                                            SQLINTEGER length)
 {
     return OdbcSetConnectAttr(dbc, attribute, value, length, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLSetConnectAttrA(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLSetConnectAttrA(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
                                                            SQLINTEGER length)
 {
     return OdbcSetConnectAttr(dbc, attribute, value, length, TRUE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetConnectAttrW(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetConnectAttrW(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
                                                            SQLINTEGER buffer_length, SQLINTEGER *length)
 {
     return OdbcGetConnectAttr(dbc, attribute, value, buffer_length, length, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetConnectAttrA(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetConnectAttrA(SQLHDBC dbc, SQLINTEGER attribute, SQLPOINTER value,
                                                            SQLINTEGER buffer_length, SQLINTEGER *length)
 {
     return OdbcGetConnectAttr(dbc, attribute, value, buffer_length, length, TRUE);
 }
 
 /* odbc 2 options: strings are null terminated and read into SQL_MAX_OPTION_STRING_LENGTH buffers. */
-__declspec(dllexport) SQLRETURN SQL_API SQLSetConnectOptionW(SQLHDBC dbc, SQLUSMALLINT option, SQLULEN value)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLSetConnectOptionW(SQLHDBC dbc, SQLUSMALLINT option, SQLULEN value)
 {
     return OdbcSetConnectAttr(dbc, option, (SQLPOINTER)value, SQL_NTS, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLSetConnectOptionA(SQLHDBC dbc, SQLUSMALLINT option, SQLULEN value)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLSetConnectOptionA(SQLHDBC dbc, SQLUSMALLINT option, SQLULEN value)
 {
     return OdbcSetConnectAttr(dbc, option, (SQLPOINTER)value, SQL_NTS, TRUE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetConnectOptionW(SQLHDBC dbc, SQLUSMALLINT option, SQLPOINTER value)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetConnectOptionW(SQLHDBC dbc, SQLUSMALLINT option, SQLPOINTER value)
 {
     return OdbcGetConnectAttr(dbc, option, value, SQL_MAX_OPTION_STRING_LENGTH * sizeof(WCHAR), nullptr, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetConnectOptionA(SQLHDBC dbc, SQLUSMALLINT option, SQLPOINTER value)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetConnectOptionA(SQLHDBC dbc, SQLUSMALLINT option, SQLPOINTER value)
 {
     return OdbcGetConnectAttr(dbc, option, value, SQL_MAX_OPTION_STRING_LENGTH, nullptr, TRUE);
 }
@@ -248,7 +248,7 @@ static SQLRETURN OdbcConnect(SQLHDBC handle, SQLSMALLINT dsn_length, SQLLEN dsn_
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLConnectW(SQLHDBC dbc, SQLWCHAR *dsn, SQLSMALLINT dsn_length,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLConnectW(SQLHDBC dbc, SQLWCHAR *dsn, SQLSMALLINT dsn_length,
                                                     SQLWCHAR *user, SQLSMALLINT user_length, SQLWCHAR *password,
                                                     SQLSMALLINT password_length)
 {
@@ -256,7 +256,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLConnectW(SQLHDBC dbc, SQLWCHAR *dsn, 
     return OdbcConnect(dbc, dsn_length, chars, user_length, password_length);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLConnectA(SQLHDBC dbc, SQLCHAR *dsn, SQLSMALLINT dsn_length, SQLCHAR *user,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLConnectA(SQLHDBC dbc, SQLCHAR *dsn, SQLSMALLINT dsn_length, SQLCHAR *user,
                                                     SQLSMALLINT user_length, SQLCHAR *password,
                                                     SQLSMALLINT password_length)
 {
@@ -283,28 +283,28 @@ static SQLRETURN OdbcDriverConnect(SQLHDBC handle, SQLSMALLINT in_length, SQLSMA
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDriverConnectW(SQLHDBC dbc, SQLHWND window, SQLWCHAR *in,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDriverConnectW(SQLHDBC dbc, SQLHWND window, SQLWCHAR *in,
                                                           SQLSMALLINT in_length, SQLWCHAR *out, SQLSMALLINT out_max,
                                                           SQLSMALLINT *out_length, SQLUSMALLINT completion)
 {
     return OdbcDriverConnect(dbc, in_length, out_max, completion);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDriverConnectA(SQLHDBC dbc, SQLHWND window, SQLCHAR *in,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDriverConnectA(SQLHDBC dbc, SQLHWND window, SQLCHAR *in,
                                                           SQLSMALLINT in_length, SQLCHAR *out, SQLSMALLINT out_max,
                                                           SQLSMALLINT *out_length, SQLUSMALLINT completion)
 {
     return OdbcDriverConnect(dbc, in_length, out_max, completion);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLBrowseConnectW(SQLHDBC dbc, SQLWCHAR *in, SQLSMALLINT in_length,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLBrowseConnectW(SQLHDBC dbc, SQLWCHAR *in, SQLSMALLINT in_length,
                                                           SQLWCHAR *out, SQLSMALLINT out_max,
                                                           SQLSMALLINT *out_length)
 {
     return OdbcDriverConnect(dbc, in_length, out_max, SQL_DRIVER_NOPROMPT);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLBrowseConnectA(SQLHDBC dbc, SQLCHAR *in, SQLSMALLINT in_length,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLBrowseConnectA(SQLHDBC dbc, SQLCHAR *in, SQLSMALLINT in_length,
                                                           SQLCHAR *out, SQLSMALLINT out_max, SQLSMALLINT *out_length)
 {
     return OdbcDriverConnect(dbc, in_length, out_max, SQL_DRIVER_NOPROMPT);
@@ -324,7 +324,7 @@ static SQLRETURN OdbcDbcFail(SQLHDBC handle, enum OdbcError error)
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDisconnect(SQLHDBC dbc)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDisconnect(SQLHDBC dbc)
 {
     return OdbcDbcFail(dbc, ODBC_E_08003);
 }
@@ -352,19 +352,19 @@ static SQLRETURN OdbcGetInfo(SQLHDBC handle, SQLUSMALLINT type, SQLPOINTER value
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetInfoW(SQLHDBC dbc, SQLUSMALLINT type, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetInfoW(SQLHDBC dbc, SQLUSMALLINT type, SQLPOINTER value,
                                                     SQLSMALLINT buffer_length, SQLSMALLINT *length)
 {
     return OdbcGetInfo(dbc, type, value, buffer_length, length, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetInfoA(SQLHDBC dbc, SQLUSMALLINT type, SQLPOINTER value,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetInfoA(SQLHDBC dbc, SQLUSMALLINT type, SQLPOINTER value,
                                                     SQLSMALLINT buffer_length, SQLSMALLINT *length)
 {
     return OdbcGetInfo(dbc, type, value, buffer_length, length, TRUE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLGetFunctions(SQLHDBC dbc, SQLUSMALLINT function, SQLUSMALLINT *supported)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetFunctions(SQLHDBC dbc, SQLUSMALLINT function, SQLUSMALLINT *supported)
 {
     return OdbcDbcFail(dbc, ODBC_E_HY010);
 }
@@ -388,13 +388,13 @@ static SQLRETURN OdbcNativeSql(SQLHDBC handle, const void *in, SQLINTEGER in_len
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLNativeSqlW(SQLHDBC dbc, SQLWCHAR *in, SQLINTEGER in_length, SQLWCHAR *out,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLNativeSqlW(SQLHDBC dbc, SQLWCHAR *in, SQLINTEGER in_length, SQLWCHAR *out,
                                                       SQLINTEGER out_max, SQLINTEGER *out_length)
 {
     return OdbcNativeSql(dbc, in, in_length, out, out_max);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLNativeSqlA(SQLHDBC dbc, SQLCHAR *in, SQLINTEGER in_length, SQLCHAR *out,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLNativeSqlA(SQLHDBC dbc, SQLCHAR *in, SQLINTEGER in_length, SQLCHAR *out,
                                                       SQLINTEGER out_max, SQLINTEGER *out_length)
 {
     return OdbcNativeSql(dbc, in, in_length, out, out_max);
@@ -428,12 +428,12 @@ static SQLRETURN OdbcEndTran(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT com
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLEndTran(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT completion)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLEndTran(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT completion)
 {
     return OdbcEndTran(type, handle, completion);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLTransact(SQLHENV env, SQLHDBC dbc, SQLUSMALLINT completion)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLTransact(SQLHENV env, SQLHDBC dbc, SQLUSMALLINT completion)
 {
     if (dbc)
         return OdbcEndTran(SQL_HANDLE_DBC, dbc, (SQLSMALLINT)completion);
@@ -442,7 +442,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLTransact(SQLHENV env, SQLHDBC dbc, SQ
     return SQL_INVALID_HANDLE;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLCancelHandle(SQLSMALLINT type, SQLHANDLE handle)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLCancelHandle(SQLSMALLINT type, SQLHANDLE handle)
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
@@ -456,7 +456,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLCancelHandle(SQLSMALLINT type, SQLHAN
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLCompleteAsync(SQLSMALLINT type, SQLHANDLE handle, RETCODE *result)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLCompleteAsync(SQLSMALLINT type, SQLHANDLE handle, RETCODE *result)
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
@@ -495,7 +495,7 @@ static SQLRETURN OdbcEnumerate(SQLHENV handle, SQLUSMALLINT direction, SQLSMALLI
     return rc;
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDataSourcesW(SQLHENV env, SQLUSMALLINT direction, SQLWCHAR *name,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDataSourcesW(SQLHENV env, SQLUSMALLINT direction, SQLWCHAR *name,
                                                         SQLSMALLINT name_max, SQLSMALLINT *name_length,
                                                         SQLWCHAR *description, SQLSMALLINT description_max,
                                                         SQLSMALLINT *description_length)
@@ -503,7 +503,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLDataSourcesW(SQLHENV env, SQLUSMALLIN
     return OdbcEnumerate(env, direction, name_max, description_max, TRUE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDataSourcesA(SQLHENV env, SQLUSMALLINT direction, SQLCHAR *name,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDataSourcesA(SQLHENV env, SQLUSMALLINT direction, SQLCHAR *name,
                                                         SQLSMALLINT name_max, SQLSMALLINT *name_length,
                                                         SQLCHAR *description, SQLSMALLINT description_max,
                                                         SQLSMALLINT *description_length)
@@ -511,7 +511,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLDataSourcesA(SQLHENV env, SQLUSMALLIN
     return OdbcEnumerate(env, direction, name_max, description_max, TRUE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDriversW(SQLHENV env, SQLUSMALLINT direction, SQLWCHAR *description,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDriversW(SQLHENV env, SQLUSMALLINT direction, SQLWCHAR *description,
                                                     SQLSMALLINT description_max, SQLSMALLINT *description_length,
                                                     SQLWCHAR *attributes, SQLSMALLINT attributes_max,
                                                     SQLSMALLINT *attributes_length)
@@ -519,7 +519,7 @@ __declspec(dllexport) SQLRETURN SQL_API SQLDriversW(SQLHENV env, SQLUSMALLINT di
     return OdbcEnumerate(env, direction, description_max, attributes_max, FALSE);
 }
 
-__declspec(dllexport) SQLRETURN SQL_API SQLDriversA(SQLHENV env, SQLUSMALLINT direction, SQLCHAR *description,
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDriversA(SQLHENV env, SQLUSMALLINT direction, SQLCHAR *description,
                                                     SQLSMALLINT description_max, SQLSMALLINT *description_length,
                                                     SQLCHAR *attributes, SQLSMALLINT attributes_max,
                                                     SQLSMALLINT *attributes_length)

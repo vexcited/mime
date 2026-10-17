@@ -240,11 +240,12 @@ static void free_request(AFD_REQUEST *r)
    ended the request before it went pending skips, like windows. */
 static void finish_request(AFD_REQUEST *r)
 {
-    IO_STATUS_BLOCK io;
-    io.Status = r->Status;
-    io.Information = r->Information;
-    if (r->Iosb)
-        attach_copy(r->Process, r->Iosb, &io, sizeof(io), TRUE);
+    if (r->Iosb) {
+        ULONG64 image[2];
+        PVOID address;
+        ULONG length = IopIosbImage(r->Iosb, r->Status, r->Information, &address, image);
+        attach_copy(r->Process, address, image, length, TRUE);
+    }
     if (r->Event)
         KeSetEvent(r->Event, IO_NO_INCREMENT, FALSE);
     IopSignalFile(r->File);
@@ -1468,7 +1469,7 @@ static BOOLEAN cancel_list(LIST_ENTRY *list, PFILE_OBJECT file, PETHREAD thread,
         AFD_REQUEST *r = CONTAINING_RECORD(e, AFD_REQUEST, Links);
         e = e->Flink;
         if (r->File != file || r->Process != PsCurrentProcess() || (thread && r->Thread != thread) ||
-            (iosb && r->Iosb != iosb))
+            (iosb && ((ULONG_PTR)r->Iosb & ~(ULONG_PTR)1) != (ULONG_PTR)iosb))
             continue;
         RemoveEntryList(&r->Links);
         r->Status = STATUS_AFD_CANCELLED;

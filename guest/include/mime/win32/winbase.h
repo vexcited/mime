@@ -733,6 +733,8 @@ WINBASEAPI BOOL WINAPI ReadFileEx(HANDLE file, LPVOID buffer, DWORD length, LPOV
 WINBASEAPI BOOL WINAPI WriteFileEx(HANDLE file, LPCVOID buffer, DWORD length, LPOVERLAPPED overlapped,
                                    LPOVERLAPPED_COMPLETION_ROUTINE completion);
 WINBASEAPI BOOL WINAPI GetOverlappedResult(HANDLE file, LPOVERLAPPED overlapped, LPDWORD transferred, BOOL wait);
+WINBASEAPI BOOL WINAPI DeviceIoControl(HANDLE device, DWORD code, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
+                                      LPDWORD returned, LPOVERLAPPED overlapped);
 
 /* pipes. */
 #define PIPE_ACCESS_INBOUND 0x00000001

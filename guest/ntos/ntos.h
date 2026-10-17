@@ -805,6 +805,9 @@ NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64
 void IopInitializeCompletion(void);
 void IopInitializeNamedPipes(void);
 void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_STATUS_BLOCK iosb);
+/* wow64 marks a 32-bit status block with bit 0 of the apc routine; inside, bit 0 of the block's address carries it. */
+void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb);
+ULONG IopIosbImage(PIO_STATUS_BLOCK iosb, NTSTATUS status, ULONG_PTR information, PVOID *address, ULONG64 image[2]);
 BOOLEAN IopIsNamedPipe(PFILE_OBJECT file);
 NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc_routine, PVOID apc_context,
                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length);
@@ -819,6 +822,63 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
 NTSTATUS AfdReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
                       PVOID buffer, ULONG length);
 NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+
+/* request.c: a request of user mode a driver answers itself, maybe later. */
+typedef struct IO_USER_REQUEST {
+    LIST_ENTRY Links;  /* for the driver's queues */
+    PFILE_OBJECT File;
+    PEPROCESS Process;
+    PETHREAD Thread;
+    PKEVENT Event;
+    PVOID ApcRoutine, ApcContext;
+    PIO_STATUS_BLOCK Iosb;
+    PVOID Buffer;      /* the caller's */
+    ULONG Length;
+    BOOLEAN Waiter;    /* a synchronous caller sleeps on Done and frees the request */
+    BOOLEAN Immediate; /* completed before its call returned */
+    KEVENT Done;
+    NTSTATUS Status;
+    ULONG_PTR Information;
+} IO_USER_REQUEST;
+
+IO_USER_REQUEST *IopNewUserRequest(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context,
+                                   PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, NTSTATUS *status);
+NTSTATUS IopCopyToRequester(IO_USER_REQUEST *r, PVOID dst, const void *src, SIZE_T length);
+void IopCompleteUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR information);
+NTSTATUS IopImmediateUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR information);
+NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r);
+/* hid.c: game controllers' hid and xusb devices, answering their files' requests. */
+BOOLEAN IopIsPad(PFILE_OBJECT file);
+NTSTATUS PadReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                      PVOID buffer, ULONG length);
+NTSTATUS PadDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb, ULONG code,
+                          PVOID input, ULONG in_len, PVOID output, ULONG out_len);
+NTSTATUS PadCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+
+/* hidparse.c: a report descriptor's top level collections, each with its preparsed data, and its report ids. */
+typedef struct HIDP_COLLECTION {
+    USHORT UsagePage, Usage;
+    USHORT InputLength, OutputLength, FeatureLength; /* with the id byte */
+    USHORT PreparsedLength;
+    PUCHAR Preparsed;
+} HIDP_COLLECTION;
+
+typedef struct HIDP_REPORT_ID {
+    UCHAR ReportId, Collection;
+    USHORT InputLength, OutputLength, FeatureLength;
+} HIDP_REPORT_ID;
+
+typedef struct HIDP_PARSE {
+    ULONG Collections;
+    HIDP_COLLECTION *Collection;
+    ULONG ReportIds;
+    HIDP_REPORT_ID *ReportId;
+    ULONG BreakOffset, ErrorCode; /* where and why a descriptor was refused */
+} HIDP_PARSE;
+
+NTSTATUS HidpParseDescriptor(const UCHAR *descriptor, ULONG length, HIDP_PARSE *out);
+void HidpFreeParse(HIDP_PARSE *parse);
+void IopInitializePads(void);
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                        ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
 void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information, BOOLEAN synchronous);

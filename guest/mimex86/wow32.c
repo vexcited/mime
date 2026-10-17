@@ -7,6 +7,9 @@
 #include "mime_svc_nt.h"
 #include "x86.h"
 
+#define FILE_DEVICE_KEYBOARD 0x0B
+#define FILE_DEVICE_BATTERY 0x29
+
 /* advapi32_private.h declares it for the dlls that use it. */
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor, ULONG length,
                                                   PULONG needed);
@@ -278,6 +281,19 @@ static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
     return status;
 }
 
+/* how this cpu runs a 32-bit apc routine(context, ...): the native routine and its first argument. */
+void Mx32ApcRoutine(ULONG routine, ULONG context, PVOID *native, PVOID *argument);
+
+/* i/o that may complete later: the kernel writes the 32-bit status block itself, told by bit 0 of the apc routine. */
+static PVOID io_apc32(ULONG routine, ULONG context, PVOID *apc_context)
+{
+    PVOID native = nullptr;
+    *apc_context = pointer32(context);
+    if (routine)
+        Mx32ApcRoutine(routine, context, &native, apc_context);
+    return (PVOID)((ULONG_PTR)native | 1);
+}
+
 static BOOLEAN synchronous_file(HANDLE file)
 {
     IO_STATUS_BLOCK io;
@@ -380,6 +396,45 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtTerminateThread(handle32(a[0]), a[1]);
     case MIME_SVC_NtClose:
         return NtClose(handle32(a[0]));
+    case MIME_SVC_NtPlugPlayControl:
+        /* mime's requests hold no pointers. */
+        return NtPlugPlayControl(a[0], pointer32(a[1]), a[2]);
+    case MIME_SVC_NtQueryDirectoryObject: {
+        /* the 64-bit entries are twice as large, so what they hold always fits the caller's buffer once packed. */
+        ULONG length = a[2];
+        PUCHAR wide = nullptr;
+        SIZE_T size = length ? length : 1;
+        status = NtAllocateVirtualMemory(NtCurrentProcess(), (PVOID *)&wide, 0, &size, MEM_COMMIT | MEM_RESERVE,
+                                         PAGE_READWRITE);
+        if (!NT_SUCCESS(status))
+            return status;
+        ULONG returned = 0;
+        status = NtQueryDirectoryObject(handle32(a[0]), wide, length, (BOOLEAN)a[3], (BOOLEAN)a[4], pointer32(a[5]),
+                                        &returned);
+        if (NT_SUCCESS(status)) {
+            const UNICODE_STRING *in = (const UNICODE_STRING *)wide;
+            ULONG n = 0;
+            while (in[n * 2].Buffer)
+                n++;
+            PUCHAR out = pointer32(a[1]);
+            PUCHAR text = out + (n + 1) * 16;
+            ULONG *entry = (ULONG *)out;
+            for (ULONG i = 0; i < 2 * n; i++) {
+                SIZE_T bytes = in[i].Length + sizeof(WCHAR);
+                memcpy(text, in[i].Buffer, bytes);
+                entry[i * 2] = in[i].Length | (ULONG)(in[i].MaximumLength) << 16;
+                entry[i * 2 + 1] = (ULONG)(ULONG_PTR)text;
+                text += bytes;
+            }
+            memset(out + n * 16, 0, 16);
+            returned = (ULONG)(text - out);
+        }
+        if (a[6] && (NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL))
+            store32(a[6], returned);
+        SIZE_T zero = 0;
+        NtFreeVirtualMemory(NtCurrentProcess(), (PVOID *)&wide, &zero, MEM_RELEASE);
+        return status;
+    }
     case MIME_SVC_NtDuplicateObject: {
         HANDLE target = nullptr;
         status = NtDuplicateObject(handle32(a[0]), handle32(a[1]), handle32(a[2]), a[3] ? &target : nullptr, a[4], a[5],
@@ -504,26 +559,36 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             handles[i] = handle32(source[i]);
         return NtWaitForMultipleObjects(a[0], handles, a[2], (BOOLEAN)a[3], pointer32(a[4]));
     }
-    case MIME_SVC_NtDeviceIoControlFile:
-        /* only the console protocol has fixed-width buffers and synchronous completion. */
-        if (a[2] || a[5] < IOCTL_CONDRV_STATE || a[5] > IOCTL_CONDRV_SYNC_EVENT || (a[5] & 3))
+    case MIME_SVC_NtDeviceIoControlFile: {
+        /* the console's, hid's and xusb's buffers hold no pointers, so they need no conversion. */
+        ULONG type = a[5] >> 16;
+        BOOLEAN console = a[5] >= IOCTL_CONDRV_STATE && a[5] <= IOCTL_CONDRV_SYNC_EVENT && !(a[5] & 3);
+        if (!console && type != FILE_DEVICE_KEYBOARD && type != 0x8000 && type != FILE_DEVICE_BATTERY)
             return STATUS_NOT_SUPPORTED;
-        status = NtDeviceIoControlFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
-                                       a[5], pointer32(a[6]), a[7], pointer32(a[8]), a[9]);
-        store_iosb32(a[4], &io);
+        PVOID context;
+        PVOID apc = io_apc32(a[2], a[3], &context);
+        return NtDeviceIoControlFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), a[5],
+                                     pointer32(a[6]), a[7], pointer32(a[8]), a[9]);
+    }
+    case MIME_SVC_NtCancelIoFile:
+        status = NtCancelIoFile(handle32(a[0]), &io);
+        store_iosb32(a[1], &io);
+        return status;
+    case MIME_SVC_NtCancelIoFileEx:
+        /* requests keep the caller's 32-bit status block, which names the one to cancel. */
+        status = NtCancelIoFileEx(handle32(a[0]), pointer32(a[1]), &io);
+        store_iosb32(a[2], &io);
         return status;
     case MIME_SVC_NtReadFile:
-    case MIME_SVC_NtWriteFile:
-        if (a[2] || !synchronous_file(handle32(a[0])))
-            return STATUS_NOT_SUPPORTED;
+    case MIME_SVC_NtWriteFile: {
+        PVOID context;
+        PVOID apc = io_apc32(a[2], a[3], &context);
         if (number == MIME_SVC_NtReadFile)
-            status = NtReadFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
-                                pointer32(a[5]), a[6], pointer32(a[7]), pointer32(a[8]));
-        else
-            status = NtWriteFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
-                                 pointer32(a[5]), a[6], pointer32(a[7]), pointer32(a[8]));
-        store_iosb32(a[4], &io);
-        return status;
+            return NtReadFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
+                              pointer32(a[7]), pointer32(a[8]));
+        return NtWriteFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
+                           pointer32(a[7]), pointer32(a[8]));
+    }
     case MIME_SVC_NtQueryDirectoryFile:
     case MIME_SVC_NtQueryDirectoryFileEx:
         if (a[2] || !synchronous_file(handle32(a[0])))

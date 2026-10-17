@@ -24,7 +24,7 @@ static HRESULT SpoolEnvironmentResultA(LPCSTR environment)
 
 /* ------------------------------------------------------------------ core drivers */
 
-__declspec(dllexport) HRESULT WINAPI CorePrinterDriverInstalledW(LPCWSTR server, LPCWSTR environment, GUID driver,
+DECLSPEC_EXPORT HRESULT WINAPI CorePrinterDriverInstalledW(LPCWSTR server, LPCWSTR environment, GUID driver,
                                                                  FILETIME date, DWORDLONG version, BOOL *installed)
 {
     if (!installed)
@@ -35,7 +35,7 @@ __declspec(dllexport) HRESULT WINAPI CorePrinterDriverInstalledW(LPCWSTR server,
     return hr;
 }
 
-__declspec(dllexport) HRESULT WINAPI CorePrinterDriverInstalledA(LPCSTR server, LPCSTR environment, GUID driver,
+DECLSPEC_EXPORT HRESULT WINAPI CorePrinterDriverInstalledA(LPCSTR server, LPCSTR environment, GUID driver,
                                                                  FILETIME date, DWORDLONG version, BOOL *installed)
 {
     if (!installed)
@@ -55,14 +55,14 @@ static HRESULT SpoolGetCoreDrivers(const void *keys, DWORD count, PVOID drivers)
     return HRESULT_FROM_WIN32(ERROR_UNKNOWN_PRINTER_DRIVER);
 }
 
-__declspec(dllexport) HRESULT WINAPI GetCorePrinterDriversW(LPCWSTR server, LPCWSTR environment, LPCWSTR keys,
+DECLSPEC_EXPORT HRESULT WINAPI GetCorePrinterDriversW(LPCWSTR server, LPCWSTR environment, LPCWSTR keys,
                                                             DWORD count, PVOID drivers)
 {
     HRESULT hr = SpoolEnvironmentResultW(environment);
     return SUCCEEDED(hr) ? SpoolGetCoreDrivers(keys, count, drivers) : hr;
 }
 
-__declspec(dllexport) HRESULT WINAPI GetCorePrinterDriversA(LPCSTR server, LPCSTR environment, LPCSTR keys,
+DECLSPEC_EXPORT HRESULT WINAPI GetCorePrinterDriversA(LPCSTR server, LPCSTR environment, LPCSTR keys,
                                                             DWORD count, PVOID drivers)
 {
     HRESULT hr = SpoolEnvironmentResultA(environment);
@@ -77,7 +77,7 @@ static BOOL SpoolPackagePathArgs(const void *package, const void *cab, DWORD cab
     return package && required && (!cab_size || cab);
 }
 
-__declspec(dllexport) HRESULT WINAPI GetPrinterDriverPackagePathW(LPCWSTR server, LPCWSTR environment,
+DECLSPEC_EXPORT HRESULT WINAPI GetPrinterDriverPackagePathW(LPCWSTR server, LPCWSTR environment,
                                                                   LPCWSTR language, LPCWSTR package, LPWSTR cab,
                                                                   DWORD cab_size, LPDWORD required)
 {
@@ -87,7 +87,7 @@ __declspec(dllexport) HRESULT WINAPI GetPrinterDriverPackagePathW(LPCWSTR server
     return SUCCEEDED(hr) ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : hr;
 }
 
-__declspec(dllexport) HRESULT WINAPI GetPrinterDriverPackagePathA(LPCSTR server, LPCSTR environment,
+DECLSPEC_EXPORT HRESULT WINAPI GetPrinterDriverPackagePathA(LPCSTR server, LPCSTR environment,
                                                                   LPCSTR language, LPCSTR package, LPSTR cab,
                                                                   DWORD cab_size, LPDWORD required)
 {
@@ -98,38 +98,38 @@ __declspec(dllexport) HRESULT WINAPI GetPrinterDriverPackagePathA(LPCSTR server,
 }
 
 /* every package operation names an inf file; none can be found in the empty driver store. */
-__declspec(dllexport) HRESULT WINAPI UploadPrinterDriverPackageW(LPCWSTR server, LPCWSTR inf, LPCWSTR environment,
+DECLSPEC_EXPORT HRESULT WINAPI UploadPrinterDriverPackageW(LPCWSTR server, LPCWSTR inf, LPCWSTR environment,
                                                                  DWORD flags, HWND window, LPWSTR destination,
                                                                  PULONG destination_size)
 {
     return inf ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : E_INVALIDARG;
 }
 
-__declspec(dllexport) HRESULT WINAPI UploadPrinterDriverPackageA(LPCSTR server, LPCSTR inf, LPCSTR environment,
+DECLSPEC_EXPORT HRESULT WINAPI UploadPrinterDriverPackageA(LPCSTR server, LPCSTR inf, LPCSTR environment,
                                                                  DWORD flags, HWND window, LPSTR destination,
                                                                  PULONG destination_size)
 {
     return inf ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : E_INVALIDARG;
 }
 
-__declspec(dllexport) HRESULT WINAPI InstallPrinterDriverFromPackageW(LPCWSTR server, LPCWSTR inf, LPCWSTR driver,
+DECLSPEC_EXPORT HRESULT WINAPI InstallPrinterDriverFromPackageW(LPCWSTR server, LPCWSTR inf, LPCWSTR driver,
                                                                       LPCWSTR environment, DWORD flags)
 {
     return driver ? HRESULT_FROM_WIN32(ERROR_UNKNOWN_PRINTER_DRIVER) : E_INVALIDARG;
 }
 
-__declspec(dllexport) HRESULT WINAPI InstallPrinterDriverFromPackageA(LPCSTR server, LPCSTR inf, LPCSTR driver,
+DECLSPEC_EXPORT HRESULT WINAPI InstallPrinterDriverFromPackageA(LPCSTR server, LPCSTR inf, LPCSTR driver,
                                                                       LPCSTR environment, DWORD flags)
 {
     return driver ? HRESULT_FROM_WIN32(ERROR_UNKNOWN_PRINTER_DRIVER) : E_INVALIDARG;
 }
 
-__declspec(dllexport) HRESULT WINAPI DeletePrinterDriverPackageW(LPCWSTR server, LPCWSTR inf, LPCWSTR environment)
+DECLSPEC_EXPORT HRESULT WINAPI DeletePrinterDriverPackageW(LPCWSTR server, LPCWSTR inf, LPCWSTR environment)
 {
     return inf ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : E_INVALIDARG;
 }
 
-__declspec(dllexport) HRESULT WINAPI DeletePrinterDriverPackageA(LPCSTR server, LPCSTR inf, LPCSTR environment)
+DECLSPEC_EXPORT HRESULT WINAPI DeletePrinterDriverPackageA(LPCSTR server, LPCSTR inf, LPCSTR environment)
 {
     return inf ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : E_INVALIDARG;
 }
@@ -137,28 +137,28 @@ __declspec(dllexport) HRESULT WINAPI DeletePrinterDriverPackageA(LPCSTR server, 
 /* ------------------------------------------------------------------ named job properties */
 
 /* jobs only exist on printers, so these all fail on the handle. */
-__declspec(dllexport) DWORD WINAPI GetJobNamedPropertyValue(HANDLE printer, DWORD job, PCWSTR name, PVOID value)
+DECLSPEC_EXPORT DWORD WINAPI GetJobNamedPropertyValue(HANDLE printer, DWORD job, PCWSTR name, PVOID value)
 {
     return ERROR_INVALID_HANDLE;
 }
 
-__declspec(dllexport) DWORD WINAPI SetJobNamedProperty(HANDLE printer, DWORD job, const void *property)
+DECLSPEC_EXPORT DWORD WINAPI SetJobNamedProperty(HANDLE printer, DWORD job, const void *property)
 {
     return ERROR_INVALID_HANDLE;
 }
 
-__declspec(dllexport) DWORD WINAPI DeleteJobNamedProperty(HANDLE printer, DWORD job, PCWSTR name)
+DECLSPEC_EXPORT DWORD WINAPI DeleteJobNamedProperty(HANDLE printer, DWORD job, PCWSTR name)
 {
     return ERROR_INVALID_HANDLE;
 }
 
-__declspec(dllexport) DWORD WINAPI EnumJobNamedProperties(HANDLE printer, DWORD job, DWORD *count, PVOID *properties)
+DECLSPEC_EXPORT DWORD WINAPI EnumJobNamedProperties(HANDLE printer, DWORD job, DWORD *count, PVOID *properties)
 {
     return ERROR_INVALID_HANDLE;
 }
 
 /* EnumJobNamedProperties never returns an array, so there is nothing to free. */
-__declspec(dllexport) void WINAPI FreePrintNamedPropertyArray(DWORD count, PVOID *properties)
+DECLSPEC_EXPORT void WINAPI FreePrintNamedPropertyArray(DWORD count, PVOID *properties)
 {
 }
 
@@ -177,7 +177,7 @@ typedef struct SpoolPropertyValue {
 #define SPOOL_PROPERTY_STRING 1
 #define SPOOL_PROPERTY_BUFFER 10
 
-__declspec(dllexport) void WINAPI FreePrintPropertyValue(SpoolPropertyValue *value)
+DECLSPEC_EXPORT void WINAPI FreePrintPropertyValue(SpoolPropertyValue *value)
 {
     if (!value)
         return;
@@ -192,40 +192,40 @@ __declspec(dllexport) void WINAPI FreePrintPropertyValue(SpoolPropertyValue *val
 
 /* ------------------------------------------------------------------ print workflow */
 
-__declspec(dllexport) HRESULT WINAPI GetPrintOutputInfo(HWND window, PCWSTR printer, HANDLE *file, PWSTR *port)
+DECLSPEC_EXPORT HRESULT WINAPI GetPrintOutputInfo(HWND window, PCWSTR printer, HANDLE *file, PWSTR *port)
 {
     if (!file || !port)
         return E_INVALIDARG;
     return HRESULT_FROM_WIN32(ERROR_INVALID_PRINTER_NAME);
 }
 
-__declspec(dllexport) HRESULT WINAPI ReportJobProcessingProgress(HANDLE printer, ULONG job, int operation,
+DECLSPEC_EXPORT HRESULT WINAPI ReportJobProcessingProgress(HANDLE printer, ULONG job, int operation,
                                                                  int progress)
 {
     return HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE);
 }
 
-__declspec(dllexport) DWORD WINAPI PrinterMessageBoxW(HANDLE printer, DWORD error, HWND window, LPWSTR text,
+DECLSPEC_EXPORT DWORD WINAPI PrinterMessageBoxW(HANDLE printer, DWORD error, HWND window, LPWSTR text,
                                                       LPWSTR caption, DWORD type)
 {
     SetLastError(ERROR_INVALID_HANDLE);
     return 0;
 }
 
-__declspec(dllexport) DWORD WINAPI PrinterMessageBoxA(HANDLE printer, DWORD error, HWND window, LPSTR text,
+DECLSPEC_EXPORT DWORD WINAPI PrinterMessageBoxA(HANDLE printer, DWORD error, HWND window, LPSTR text,
                                                       LPSTR caption, DWORD type)
 {
     SetLastError(ERROR_INVALID_HANDLE);
     return 0;
 }
 
-__declspec(dllexport) LPWSTR WINAPI StartDocDlgW(HANDLE printer, DOC_INFO_1W *info)
+DECLSPEC_EXPORT LPWSTR WINAPI StartDocDlgW(HANDLE printer, DOC_INFO_1W *info)
 {
     SetLastError(ERROR_INVALID_HANDLE);
     return nullptr;
 }
 
-__declspec(dllexport) LPSTR WINAPI StartDocDlgA(HANDLE printer, DOC_INFO_1A *info)
+DECLSPEC_EXPORT LPSTR WINAPI StartDocDlgA(HANDLE printer, DOC_INFO_1A *info)
 {
     SetLastError(ERROR_INVALID_HANDLE);
     return nullptr;
