@@ -1,6 +1,8 @@
 /*
  * memory and string functions, narrow and wide.
  */
+/* the definitions of the functions the builtins would call. */
+#define MIME_RTL_NO_BUILTINS
 #include "msvcrt_private.h"
 
 typedef uint64_t __attribute__((may_alias, aligned(1))) u64u;

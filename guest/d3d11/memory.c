@@ -355,6 +355,102 @@ BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize alig
     return TRUE;
 }
 
+/* ------------------------------------------------------------------ the constant buffer ring */
+
+#define CB_CHUNK_SIZE (4ull << 20)
+#define CB_WINDOW ((VkDeviceSize)D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16)
+#define CB_STEP 256
+/* chunks with descriptors take an eighth of the uniform buffer heap each, so at most six. */
+#define CB_CHUNKS_MAX 6
+
+struct D3dCbChunk {
+    D3dCbChunk *next;
+    D3dAllocation alloc;
+    VkDeviceSize head;
+    UINT64 serial;
+    LONG pins;
+    UINT cbv_base;
+};
+
+static D3dCbChunk *cb_chunk(D3dDevice *device)
+{
+    UINT64 completed = D3dCompleted(device);
+    for (D3dCbChunk **link = &device->cb_chunks; *link; link = &(*link)->next) {
+        D3dCbChunk *chunk = *link;
+        if (chunk->serial <= completed && !chunk->pins) {
+            *link = chunk->next;
+            chunk->next = nullptr;
+            chunk->head = 0;
+            return chunk;
+        }
+    }
+    if (device->cb_chunk_count >= CB_CHUNKS_MAX)
+        return nullptr;
+    D3dCbChunk *chunk = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*chunk));
+    if (!chunk)
+        return nullptr;
+    /* a window past the last slice keeps every descriptor inside the buffer. */
+    UINT count = (UINT)(CB_CHUNK_SIZE / CB_STEP);
+    if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_UPLOAD, CB_CHUNK_SIZE + CB_WINDOW, CB_STEP, &chunk->alloc))) {
+        HeapFree(GetProcessHeap(), 0, chunk);
+        return nullptr;
+    }
+    chunk->cbv_base = D3dHeapAllocRange(device, D3D_HEAP_UNIFORM_BUFFER, count);
+    if (!chunk->cbv_base) {
+        D3dFree(device, &chunk->alloc);
+        HeapFree(GetProcessHeap(), 0, chunk);
+        return nullptr;
+    }
+    D3dHeapWriteBuffers(device, chunk->cbv_base, chunk->alloc.buffer, chunk->alloc.offset, CB_STEP, CB_WINDOW, count);
+    device->cb_chunk_count++;
+    return chunk;
+}
+
+BOOL D3dCbAlloc(D3dDevice *device, VkDeviceSize size, D3dCbSlice *out, BOOL *retired)
+{
+    *retired = FALSE;
+    if (size > CB_WINDOW)
+        return FALSE;
+    size = D3D_ALIGN(size, CB_STEP);
+    AcquireSRWLockExclusive(&device->cb_lock);
+    D3dCbChunk *chunk = device->cb_current;
+    if (!chunk || chunk->head + size > CB_CHUNK_SIZE) {
+        D3dCbChunk *next = cb_chunk(device);
+        if (!next) {
+            ReleaseSRWLockExclusive(&device->cb_lock);
+            return FALSE;
+        }
+        if (chunk) {
+            chunk->serial = D3D_MAX(chunk->serial, device->next_serial);
+            chunk->next = device->cb_chunks;
+            device->cb_chunks = chunk;
+            *retired = TRUE;
+        }
+        chunk = device->cb_current = next;
+    }
+    VkDeviceSize offset = chunk->head;
+    chunk->head += size;
+    chunk->pins++;
+    out->chunk = chunk;
+    out->buffer = chunk->alloc.buffer;
+    out->offset = chunk->alloc.offset + offset;
+    out->mapped = chunk->alloc.mapped + offset;
+    out->cbv = chunk->cbv_base + (UINT)(offset / CB_STEP);
+    ReleaseSRWLockExclusive(&device->cb_lock);
+    return TRUE;
+}
+
+/* a buffer leaves its chunk, which the gpu may read until serial. */
+void D3dCbUnpin(D3dDevice *device, D3dCbChunk *chunk, UINT64 serial)
+{
+    if (!chunk)
+        return;
+    AcquireSRWLockExclusive(&device->cb_lock);
+    chunk->serial = D3D_MAX(chunk->serial, serial);
+    chunk->pins--;
+    ReleaseSRWLockExclusive(&device->cb_lock);
+}
+
 /* gives back the end of the last slice cut from its chunk. */
 void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize reserved, VkDeviceSize used)
 {
@@ -421,6 +517,16 @@ void D3dMemoryDestroy(D3dDevice *device)
     while (device->ring_chunks) {
         D3dRingChunk *chunk = device->ring_chunks;
         device->ring_chunks = chunk->next;
+        HeapFree(GetProcessHeap(), 0, chunk);
+    }
+    if (device->cb_current) {
+        device->cb_current->next = device->cb_chunks;
+        device->cb_chunks = device->cb_current;
+        device->cb_current = nullptr;
+    }
+    while (device->cb_chunks) {
+        D3dCbChunk *chunk = device->cb_chunks;
+        device->cb_chunks = chunk->next;
         HeapFree(GetProcessHeap(), 0, chunk);
     }
 }

@@ -38,6 +38,19 @@ UINT D3dHeapAlloc(D3dDevice *device, UINT kind)
     return index;
 }
 
+UINT D3dHeapAllocRange(D3dDevice *device, UINT kind, UINT count)
+{
+    D3dHeap *heap = &device->heap;
+    UINT index = 0;
+    AcquireSRWLockExclusive(&heap->lock);
+    if (heap->next[kind] + count <= heap->capacity[kind]) {
+        index = heap->next[kind];
+        heap->next[kind] += count;
+    }
+    ReleaseSRWLockExclusive(&heap->lock);
+    return index;
+}
+
 static void heap_release(D3dDevice *device, UINT kind, UINT index, UINT64 serial)
 {
     D3dHeap *heap = &device->heap;
@@ -115,6 +128,25 @@ void D3dHeapWriteBuffer(D3dDevice *device, UINT index, VkBuffer buffer, VkDevice
 {
     VkDescriptorBufferInfo info = {buffer, offset, range};
     write_one(device, D3D_HEAP_UNIFORM_BUFFER, index, nullptr, nullptr, &info);
+}
+
+void D3dHeapWriteBuffers(D3dDevice *device, UINT index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize stride,
+                         VkDeviceSize range, UINT count)
+{
+    VkDescriptorBufferInfo *infos = HeapAlloc(GetProcessHeap(), 0, count * sizeof(*infos));
+    if (!infos)
+        return;
+    for (UINT i = 0; i < count; i++)
+        infos[i] = (VkDescriptorBufferInfo){buffer, offset + i * stride, range};
+    VkWriteDescriptorSet write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = device->heap.set;
+    write.dstBinding = D3D_HEAP_UNIFORM_BUFFER;
+    write.dstArrayElement = index;
+    write.descriptorCount = count;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = infos;
+    device->vk.vkUpdateDescriptorSets(device->vk.device, 1, &write, 0, nullptr);
+    HeapFree(GetProcessHeap(), 0, infos);
 }
 
 /*

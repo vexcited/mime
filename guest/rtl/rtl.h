@@ -11,6 +11,17 @@ void *memcpy(void *dst, const void *src, size_t n);
 void *memmove(void *dst, const void *src, size_t n);
 void *memset(void *dst, int c, size_t n);
 int memcmp(const void *a, const void *b, size_t n);
+/*
+ * freestanding code has no builtins, so a copy of four bytes would call
+ * memcpy: these name the builtins, which inline fixed sizes and call the
+ * runtime for the rest.
+ */
+#if defined(__clang__) && !defined(MIME_RTL_NO_BUILTINS)
+#define memcpy(d, s, n) __builtin_memcpy((d), (s), (n))
+#define memmove(d, s, n) __builtin_memmove((d), (s), (n))
+#define memset(d, c, n) __builtin_memset((d), (c), (n))
+#define memcmp(a, b, n) __builtin_memcmp((a), (b), (n))
+#endif
 size_t strlen(const char *s);
 size_t strnlen(const char *s, size_t max);
 int strcmp(const char *a, const char *b);

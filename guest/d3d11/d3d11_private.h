@@ -209,6 +209,7 @@ typedef enum D3dMemoryKind {
 
 /* the ring of upload memory: per frame data, renamed buffers and descriptor tables. */
 typedef struct D3dRingChunk D3dRingChunk;
+typedef struct D3dCbChunk D3dCbChunk;
 
 typedef struct D3dRingSlice {
     D3dRingChunk *chunk;
@@ -263,11 +264,16 @@ typedef struct D3dHeap {
 } D3dHeap;
 
 UINT D3dHeapAlloc(D3dDevice *device, UINT kind);
+/* count indices in a row, never freed, or 0 when the heap has no such room left. */
+UINT D3dHeapAllocRange(D3dDevice *device, UINT kind, UINT count);
 void D3dHeapFree(D3dDevice *device, UINT kind, UINT index);
 void D3dHeapWriteImage(D3dDevice *device, UINT kind, UINT index, VkImageView view);
 void D3dHeapWriteTexel(D3dDevice *device, UINT kind, UINT index, VkBufferView view);
 void D3dHeapWriteSampler(D3dDevice *device, UINT index, VkSampler sampler);
 void D3dHeapWriteBuffer(D3dDevice *device, UINT index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+/* count uniform buffer descriptors from index, each stride bytes further in the buffer. */
+void D3dHeapWriteBuffers(D3dDevice *device, UINT index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize stride,
+                         VkDeviceSize range, UINT count);
 
 struct D3dResource {
     ID3D11Resource *iface; /* the object's own interface, a buffer or a texture */
@@ -295,6 +301,9 @@ struct D3dResource {
         void *spares;
         /* the uniform buffer descriptor of the whole current range, made when first bound. */
         UINT cbv;
+        /* a dynamic constant buffer discarded into the constant buffer ring: its chunk and descriptor. */
+        D3dCbChunk *cb_chunk;
+        UINT cb_cbv;
         /* stream output targets: where in the buffer the count of bytes written is, after the data. */
         VkDeviceSize so_counter;
     } buf;
@@ -343,6 +352,7 @@ void D3dSubresourceDecompose(const D3dResource *resource, UINT index, UINT *mip,
 VkExtent3D D3dMipExtent(const D3dResource *resource, UINT mip);
 UINT D3dBufferCbv(D3dResource *resource, UINT offset, UINT size);
 BOOL D3dBufferRename(D3dDevice *device, D3dResource *resource);
+BOOL D3dBufferDiscardCb(D3dDevice *device, D3dResource *resource, BOOL *retired);
 void D3dImageCopyRegions(const D3dResource *resource, UINT index, VkDeviceSize base, VkBufferImageCopy *regions,
                          UINT *count);
 
@@ -603,6 +613,12 @@ struct D3dDevice {
     D3dRingChunk *ring_chunks;
     D3dRingChunk *ring_current;
 
+    /* the constant buffer ring: where dynamic constant buffers go when discarded. */
+    SRWLOCK cb_lock;
+    D3dCbChunk *cb_chunks;
+    D3dCbChunk *cb_current;
+    UINT cb_chunk_count;
+
     /* descriptors. */
     D3dHeap heap;
     VkDescriptorSetLayout heap_layout;
@@ -681,6 +697,22 @@ void D3dRingRetire(D3dDevice *device, UINT64 serial);
 VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk);
 void D3dMemoryDestroy(D3dDevice *device);
 
+/*
+ * a dynamic constant buffer's bytes after a discard: a slice of a chunk
+ * whose uniform buffer descriptors, one each 256 bytes, were made with it.
+ * a chunk is reused once no buffer is in it and the gpu is done with it.
+ */
+typedef struct D3dCbSlice {
+    D3dCbChunk *chunk;
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    BYTE *mapped;
+    UINT cbv;
+} D3dCbSlice;
+/* a slice, and whether the chunk before was retired, which the caller submits for. */
+BOOL D3dCbAlloc(D3dDevice *device, VkDeviceSize size, D3dCbSlice *out, BOOL *retired);
+void D3dCbUnpin(D3dDevice *device, D3dCbChunk *chunk, UINT64 serial);
+
 /* the flags a format supports, for CheckFormatSupport. */
 UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2);
 VkImageUsageFlags D3dImageUsage(UINT bind, UINT misc, D3D11_USAGE usage);
@@ -754,6 +786,8 @@ struct D3dContext {
     D3dInputLayout *layout;
     D3D11_PRIMITIVE_TOPOLOGY topology;
     D3dResource *vb[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+    /* past the last vertex buffer bound. */
+    UINT vb_high;
     UINT vb_stride[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
     UINT vb_offset[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
     UINT vb_version[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
@@ -847,7 +881,17 @@ D3dContext *D3dContextFrom(ID3D11DeviceContext *iface);
 VkCommandBuffer D3dContextCommands(D3dContext *context, BOOL transfer);
 void D3dContextFlush(D3dContext *context);
 UINT64 D3dContextSubmit(D3dContext *context, const VkSemaphoreSubmitInfo *wait, const VkSemaphoreSubmitInfo *signal);
-void D3dContextUse(D3dContext *context, D3dResource *resource);
+void D3dContextUseList(D3dContext *context, D3dResource *resource);
+/* the resource is read or written by what is being recorded: on the immediate context, a serial. */
+static inline void D3dContextUse(D3dContext *context, D3dResource *resource)
+{
+    if (!resource)
+        return;
+    if (context->type == D3D11_DEVICE_CONTEXT_IMMEDIATE)
+        resource->last_use = context->child.device->next_serial;
+    else
+        D3dContextUseList(context, resource);
+}
 BOOL D3dContextRingAlloc(D3dContext *context, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
 const D3dRingSlice *D3dContextListRange(const D3dContext *context, const D3dResource *resource);
 const D3dRingSlice *D3dContextListDiscard(D3dContext *context, D3dResource *resource);

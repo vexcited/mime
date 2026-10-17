@@ -499,6 +499,96 @@ static void on_dump_signal(int sig)
 
 static void on_profile_signal(int sig) { mime_vcpu_toggle_profile(); }
 
+#ifdef __linux__
+/*
+ * MIME_HOST_PROFILE=<file> samples the host's own code: a timer of the
+ * process's cpu time interrupts whichever thread runs, its instruction
+ * pointer and thread are kept, and the samples go to the file at exit
+ * with the process's mappings, for tools/hostprof.py.
+ */
+#include <signal.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <ucontext.h>
+
+#define HOST_PROFILE_MAX (4u << 20)
+static uint64_t *g_host_ips;
+static uint32_t *g_host_tids;
+/* the names of the threads sampled, taken as they run, as many end before the dump. */
+static struct {
+    uint32_t tid;
+    char name[16];
+} g_host_names[512];
+static uint32_t g_host_count;
+static const char *g_host_profile;
+
+static void on_host_sample(int sig, siginfo_t *info, void *context)
+{
+    uint32_t i = __atomic_fetch_add(&g_host_count, 1, __ATOMIC_RELAXED);
+    if (i >= HOST_PROFILE_MAX)
+        return;
+    const ucontext_t *uc = context;
+#if defined(__x86_64__)
+    g_host_ips[i] = (uint64_t)uc->uc_mcontext.gregs[REG_RIP];
+#elif defined(__aarch64__)
+    g_host_ips[i] = (uint64_t)uc->uc_mcontext.pc;
+#endif
+    uint32_t tid = (uint32_t)syscall(SYS_gettid);
+    g_host_tids[i] = tid;
+    uint32_t slot = tid % 512;
+    if (g_host_names[slot].tid != tid) {
+        g_host_names[slot].tid = tid;
+        prctl(PR_GET_NAME, g_host_names[slot].name);
+    }
+}
+
+static void host_profile_dump(void)
+{
+    FILE *out = fopen(g_host_profile, "w");
+    if (!out)
+        return;
+    FILE *maps = fopen("/proc/self/maps", "r");
+    char line[1024];
+    while (maps && fgets(line, sizeof(line), maps))
+        fprintf(out, "MAP %s", line);
+    if (maps)
+        fclose(maps);
+    uint32_t n = MIME_MIN(g_host_count, HOST_PROFILE_MAX);
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t slot = g_host_tids[i] % 512;
+        const char *comm = g_host_names[slot].tid == g_host_tids[i] && g_host_names[slot].name[0] ? g_host_names[slot].name : "?";
+        fprintf(out, "S %s %llx\n", comm, (unsigned long long)g_host_ips[i]);
+    }
+    fclose(out);
+}
+
+static void host_profile_start(void)
+{
+    g_host_profile = getenv("MIME_HOST_PROFILE");
+    if (!g_host_profile || !*g_host_profile)
+        return;
+    g_host_ips = calloc(HOST_PROFILE_MAX, sizeof(*g_host_ips));
+    g_host_tids = calloc(HOST_PROFILE_MAX, sizeof(*g_host_tids));
+    if (!g_host_ips || !g_host_tids)
+        return;
+    struct sigaction sa = {};
+    sa.sa_sigaction = on_host_sample;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigaction(SIGRTMIN + 3, &sa, nullptr);
+    struct sigevent ev = {};
+    ev.sigev_notify = SIGEV_SIGNAL;
+    ev.sigev_signo = SIGRTMIN + 3;
+    timer_t timer;
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &ev, &timer) != 0)
+        return;
+    struct itimerspec spec = {{0, 500000}, {0, 500000}};
+    timer_settime(timer, 0, &spec, nullptr);
+    atexit(host_profile_dump);
+}
+#else
+static void host_profile_start(void) {}
+#endif
+
 static bool listen_socket(const MimePaths *paths)
 {
     unlink(paths->socket);
@@ -538,6 +628,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     signal(SIGINT, on_signal);
     signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log */
     signal(SIGPROF, on_profile_signal); /* kill -PROF starts and stops the profiler */
+    host_profile_start();
     {
         /* loaded now, as the handler cannot load libgcc. */
         void *frame;

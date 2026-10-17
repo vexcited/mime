@@ -16,22 +16,34 @@ static float fbits(DWORD v)
 
 /* ------------------------------------------------------------------ state objects */
 
-/* a small cache of d3d11 state objects by their descriptions, the oldest replaced when full. */
-static void *cached(D9StateCache *cache, const void *desc, UINT size, void *(*make)(D9Device *, const void *),
+/*
+ * a small cache of d3d11 state objects by the direct3d 9 states they are
+ * made of, a few words, the oldest replaced when full.
+ */
+static BOOL same_key(const DWORD *a, const DWORD *b, UINT words)
+{
+    for (UINT i = 0; i < words; i++)
+        if (a[i] != b[i])
+            return FALSE;
+    return TRUE;
+}
+
+static void *cached(D9StateCache *cache, const DWORD *key, UINT words, void *(*make)(D9Device *, const DWORD *),
                     D9Device *device)
 {
     UINT hash = 2166136261u;
-    for (UINT i = 0; i < size / 4; i++)
-        hash = (hash ^ ((const UINT *)desc)[i]) * 16777619u;
+    for (UINT i = 0; i < words; i++)
+        hash = (hash ^ key[i]) * 16777619u;
+    UINT size = words * sizeof(DWORD);
     D9StateEntry *last = &cache->entries[cache->last];
-    if (cache->count && last->hash == hash && last->size == size && !memcmp(last->desc, desc, size))
+    if (cache->count && last->hash == hash && last->size == size && same_key(last->key, key, words))
         return last->object;
     for (UINT i = 0; i < cache->count; i++)
-        if (cache->entries[i].hash == hash && cache->entries[i].size == size && !memcmp(cache->entries[i].desc, desc, size)) {
+        if (cache->entries[i].hash == hash && cache->entries[i].size == size && same_key(cache->entries[i].key, key, words)) {
             cache->last = i;
             return cache->entries[i].object;
         }
-    void *object = make(device, desc);
+    void *object = make(device, key);
     if (!object)
         return nullptr;
     UINT slot = cache->count < RTL_NUMBER_OF(cache->entries) ? cache->count++ : cache->next++ % RTL_NUMBER_OF(cache->entries);
@@ -39,7 +51,7 @@ static void *cached(D9StateCache *cache, const void *desc, UINT size, void *(*ma
     /* the context keeps its own reference to a state still bound. */
     if (e->object)
         ((IUnknown *)e->object)->lpVtbl->Release((IUnknown *)e->object);
-    memcpy(e->desc, desc, size);
+    memcpy(e->key, key, size);
     e->size = size;
     e->hash = hash;
     e->object = object;
@@ -53,30 +65,6 @@ void D9ClearStateCache(D9StateCache *cache)
         if (cache->entries[i].object)
             ((IUnknown *)cache->entries[i].object)->lpVtbl->Release((IUnknown *)cache->entries[i].object);
     memset(cache, 0, sizeof(*cache));
-}
-
-static void *make_blend(D9Device *d, const void *desc)
-{
-    ID3D11BlendState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateBlendState(d->d3d11, desc, &s)) ? s : nullptr;
-}
-
-static void *make_depth(D9Device *d, const void *desc)
-{
-    ID3D11DepthStencilState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateDepthStencilState(d->d3d11, desc, &s)) ? s : nullptr;
-}
-
-static void *make_raster(D9Device *d, const void *desc)
-{
-    ID3D11RasterizerState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateRasterizerState(d->d3d11, desc, &s)) ? s : nullptr;
-}
-
-static void *make_sampler(D9Device *d, const void *desc)
-{
-    ID3D11SamplerState *s;
-    return SUCCEEDED(d->d3d11->lpVtbl->CreateSamplerState(d->d3d11, desc, &s)) ? s : nullptr;
 }
 
 UINT D9RenderStateGroups(D3DRENDERSTATETYPE state)
@@ -182,53 +170,84 @@ static void blend_pair(DWORD src, DWORD dst, BOOL alpha, D3D11_BLEND *s, D3D11_B
 
 static D3D11_BLEND_OP blend_op(DWORD op) { return op >= 1 && op <= 5 ? (D3D11_BLEND_OP)op : D3D11_BLEND_OP_ADD; }
 
+enum { BK_ENABLE, BK_SRC, BK_DEST, BK_OP, BK_SEPARATE, BK_SRC_ALPHA, BK_DEST_ALPHA, BK_OP_ALPHA, BK_MASK, BK_WORDS = BK_MASK + 4 };
+
+static void *make_blend(D9Device *d, const DWORD *k)
+{
+    D3D11_BLEND_DESC desc = {FALSE, TRUE};
+    D3D11_RENDER_TARGET_BLEND_DESC t = {!!k[BK_ENABLE]};
+    blend_pair(k[BK_SRC], k[BK_DEST], FALSE, &t.SrcBlend, &t.DestBlend);
+    t.BlendOp = blend_op(k[BK_OP]);
+    if (k[BK_SEPARATE]) {
+        blend_pair(k[BK_SRC_ALPHA], k[BK_DEST_ALPHA], TRUE, &t.SrcBlendAlpha, &t.DestBlendAlpha);
+        t.BlendOpAlpha = blend_op(k[BK_OP_ALPHA]);
+    } else {
+        blend_pair(k[BK_SRC], k[BK_DEST], TRUE, &t.SrcBlendAlpha, &t.DestBlendAlpha);
+        t.BlendOpAlpha = t.BlendOp;
+    }
+    for (UINT i = 0; i < 4; i++) {
+        desc.RenderTarget[i] = t;
+        desc.RenderTarget[i].RenderTargetWriteMask = (UINT8)(k[BK_MASK + i] & 0xF);
+    }
+    ID3D11BlendState *s;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateBlendState(d->d3d11, &desc, &s)) ? s : nullptr;
+}
+
 static ID3D11BlendState *blend_state(D9Device *d)
 {
     const DWORD *rs = d->render_states;
-    D3D11_BLEND_DESC desc = {FALSE, TRUE};
-    D3D11_RENDER_TARGET_BLEND_DESC t = {!!rs[D3DRS_ALPHABLENDENABLE]};
-    blend_pair(rs[D3DRS_SRCBLEND], rs[D3DRS_DESTBLEND], FALSE, &t.SrcBlend, &t.DestBlend);
-    t.BlendOp = blend_op(rs[D3DRS_BLENDOP]);
-    if (rs[D3DRS_SEPARATEALPHABLENDENABLE]) {
-        blend_pair(rs[D3DRS_SRCBLENDALPHA], rs[D3DRS_DESTBLENDALPHA], TRUE, &t.SrcBlendAlpha, &t.DestBlendAlpha);
-        t.BlendOpAlpha = blend_op(rs[D3DRS_BLENDOPALPHA]);
-    } else {
-        blend_pair(rs[D3DRS_SRCBLEND], rs[D3DRS_DESTBLEND], TRUE, &t.SrcBlendAlpha, &t.DestBlendAlpha);
-        t.BlendOpAlpha = t.BlendOp;
-    }
-    static const D3DRENDERSTATETYPE MASKS[4] = {D3DRS_COLORWRITEENABLE, D3DRS_COLORWRITEENABLE1,
-                                                D3DRS_COLORWRITEENABLE2, D3DRS_COLORWRITEENABLE3};
-    for (UINT i = 0; i < 4; i++) {
-        desc.RenderTarget[i] = t;
-        desc.RenderTarget[i].RenderTargetWriteMask = (UINT8)(rs[MASKS[i]] & 0xF);
-    }
-    return cached(&d->blend_cache, &desc, sizeof(desc), make_blend, d);
+    const DWORD k[BK_WORDS] = {rs[D3DRS_ALPHABLENDENABLE], rs[D3DRS_SRCBLEND], rs[D3DRS_DESTBLEND],
+                               rs[D3DRS_BLENDOP], rs[D3DRS_SEPARATEALPHABLENDENABLE], rs[D3DRS_SRCBLENDALPHA],
+                               rs[D3DRS_DESTBLENDALPHA], rs[D3DRS_BLENDOPALPHA], rs[D3DRS_COLORWRITEENABLE],
+                               rs[D3DRS_COLORWRITEENABLE1], rs[D3DRS_COLORWRITEENABLE2], rs[D3DRS_COLORWRITEENABLE3]};
+    return cached(&d->blend_cache, k, BK_WORDS, make_blend, d);
+}
+
+enum {
+    DK_DEPTH, DK_WRITE, DK_FUNC, DK_STENCIL, DK_READ_MASK, DK_WRITE_MASK, DK_FRONT, DK_BACK = DK_FRONT + 4,
+    DK_WORDS = DK_BACK + 4
+};
+
+static void *make_depth(D9Device *d, const DWORD *k)
+{
+    D3D11_DEPTH_STENCIL_DESC desc = {};
+    desc.DepthEnable = k[DK_DEPTH];
+    desc.DepthWriteMask = k[DK_DEPTH] && k[DK_WRITE] ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+    desc.DepthFunc = k[DK_FUNC] >= 1 && k[DK_FUNC] <= 8 ? (D3D11_COMPARISON_FUNC)k[DK_FUNC] : D3D11_COMPARISON_LESS_EQUAL;
+    desc.StencilEnable = k[DK_STENCIL];
+    desc.StencilReadMask = (UINT8)k[DK_READ_MASK];
+    desc.StencilWriteMask = (UINT8)k[DK_WRITE_MASK];
+#define OP(v) ((v) >= 1 && (v) <= 8 ? (D3D11_STENCIL_OP)(v) : D3D11_STENCIL_OP_KEEP)
+#define CMP(v) ((v) >= 1 && (v) <= 8 ? (D3D11_COMPARISON_FUNC)(v) : D3D11_COMPARISON_ALWAYS)
+    const DWORD *f = k + DK_FRONT, *b = k + DK_BACK;
+    desc.FrontFace = (D3D11_DEPTH_STENCILOP_DESC){OP(f[0]), OP(f[1]), OP(f[2]), CMP(f[3])};
+    desc.BackFace = (D3D11_DEPTH_STENCILOP_DESC){OP(b[0]), OP(b[1]), OP(b[2]), CMP(b[3])};
+#undef OP
+#undef CMP
+    ID3D11DepthStencilState *s;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateDepthStencilState(d->d3d11, &desc, &s)) ? s : nullptr;
 }
 
 static ID3D11DepthStencilState *depth_state(D9Device *d)
 {
     const DWORD *rs = d->render_states;
-    D3D11_DEPTH_STENCIL_DESC desc = {};
     BOOL depth = d->depth_stencil && rs[D3DRS_ZENABLE] != D3DZB_FALSE;
-    desc.DepthEnable = depth;
-    desc.DepthWriteMask = depth && rs[D3DRS_ZWRITEENABLE] ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
-    desc.DepthFunc = rs[D3DRS_ZFUNC] >= 1 && rs[D3DRS_ZFUNC] <= 8 ? (D3D11_COMPARISON_FUNC)rs[D3DRS_ZFUNC]
-                                                                 : D3D11_COMPARISON_LESS_EQUAL;
-    desc.StencilEnable = d->depth_stencil && rs[D3DRS_STENCILENABLE];
-    desc.StencilReadMask = (UINT8)rs[D3DRS_STENCILMASK];
-    desc.StencilWriteMask = (UINT8)rs[D3DRS_STENCILWRITEMASK];
-#define OP(v) ((v) >= 1 && (v) <= 8 ? (D3D11_STENCIL_OP)(v) : D3D11_STENCIL_OP_KEEP)
-#define CMP(v) ((v) >= 1 && (v) <= 8 ? (D3D11_COMPARISON_FUNC)(v) : D3D11_COMPARISON_ALWAYS)
-    desc.FrontFace = (D3D11_DEPTH_STENCILOP_DESC){OP(rs[D3DRS_STENCILFAIL]), OP(rs[D3DRS_STENCILZFAIL]),
-                                                  OP(rs[D3DRS_STENCILPASS]), CMP(rs[D3DRS_STENCILFUNC])};
-    if (rs[D3DRS_TWOSIDEDSTENCILMODE])
-        desc.BackFace = (D3D11_DEPTH_STENCILOP_DESC){OP(rs[D3DRS_CCW_STENCILFAIL]), OP(rs[D3DRS_CCW_STENCILZFAIL]),
-                                                     OP(rs[D3DRS_CCW_STENCILPASS]), CMP(rs[D3DRS_CCW_STENCILFUNC])};
-    else
-        desc.BackFace = desc.FrontFace;
-#undef OP
-#undef CMP
-    return cached(&d->depth_cache, &desc, sizeof(desc), make_depth, d);
+    BOOL two = rs[D3DRS_TWOSIDEDSTENCILMODE];
+    const DWORD k[DK_WORDS] = {depth,
+                               rs[D3DRS_ZWRITEENABLE] != 0,
+                               rs[D3DRS_ZFUNC],
+                               d->depth_stencil && rs[D3DRS_STENCILENABLE],
+                               rs[D3DRS_STENCILMASK] & 0xFF,
+                               rs[D3DRS_STENCILWRITEMASK] & 0xFF,
+                               rs[D3DRS_STENCILFAIL],
+                               rs[D3DRS_STENCILZFAIL],
+                               rs[D3DRS_STENCILPASS],
+                               rs[D3DRS_STENCILFUNC],
+                               rs[two ? D3DRS_CCW_STENCILFAIL : D3DRS_STENCILFAIL],
+                               rs[two ? D3DRS_CCW_STENCILZFAIL : D3DRS_STENCILZFAIL],
+                               rs[two ? D3DRS_CCW_STENCILPASS : D3DRS_STENCILPASS],
+                               rs[two ? D3DRS_CCW_STENCILFUNC : D3DRS_STENCILFUNC]};
+    return cached(&d->depth_cache, k, DK_WORDS, make_depth, d);
 }
 
 /* depth bias in units of the depth buffer's resolution, as d3d11 takes it. */
@@ -242,50 +261,78 @@ static INT depth_bias(D9Device *d)
     return (INT)(bias * scale);
 }
 
+enum { RK_FILL, RK_CULL, RK_BIAS, RK_SLOPE, RK_SCISSOR, RK_MULTISAMPLE, RK_LINES, RK_WORDS };
+
+static void *make_raster(D9Device *d, const DWORD *k)
+{
+    D3D11_RASTERIZER_DESC desc = {};
+    desc.FillMode = k[RK_FILL] == D3DFILL_WIREFRAME ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
+    /* direct3d 9's front faces are clockwise, as d3d11's are by default. */
+    desc.CullMode = k[RK_CULL] == D3DCULL_CW    ? D3D11_CULL_FRONT
+                    : k[RK_CULL] == D3DCULL_CCW ? D3D11_CULL_BACK
+                                                : D3D11_CULL_NONE;
+    desc.DepthBias = (INT)k[RK_BIAS];
+    desc.SlopeScaledDepthBias = fbits(k[RK_SLOPE]);
+    desc.DepthClipEnable = TRUE;
+    desc.ScissorEnable = k[RK_SCISSOR];
+    desc.MultisampleEnable = k[RK_MULTISAMPLE];
+    desc.AntialiasedLineEnable = k[RK_LINES];
+    ID3D11RasterizerState *s;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateRasterizerState(d->d3d11, &desc, &s)) ? s : nullptr;
+}
+
 static ID3D11RasterizerState *raster_state(D9Device *d)
 {
     const DWORD *rs = d->render_states;
-    D3D11_RASTERIZER_DESC desc = {};
-    desc.FillMode = rs[D3DRS_FILLMODE] == D3DFILL_WIREFRAME ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
-    /* direct3d 9's front faces are clockwise, as d3d11's are by default. */
-    desc.CullMode = rs[D3DRS_CULLMODE] == D3DCULL_CW    ? D3D11_CULL_FRONT
-                    : rs[D3DRS_CULLMODE] == D3DCULL_CCW ? D3D11_CULL_BACK
-                                                        : D3D11_CULL_NONE;
-    desc.DepthBias = depth_bias(d);
-    desc.SlopeScaledDepthBias = fbits(rs[D3DRS_SLOPESCALEDEPTHBIAS]);
-    desc.DepthClipEnable = TRUE;
-    desc.ScissorEnable = !!rs[D3DRS_SCISSORTESTENABLE];
-    desc.MultisampleEnable = !!rs[D3DRS_MULTISAMPLEANTIALIAS];
-    desc.AntialiasedLineEnable = !!rs[D3DRS_ANTIALIASEDLINEENABLE];
-    return cached(&d->raster_cache, &desc, sizeof(desc), make_raster, d);
+    const DWORD k[RK_WORDS] = {rs[D3DRS_FILLMODE],
+                               rs[D3DRS_CULLMODE],
+                               (DWORD)depth_bias(d),
+                               rs[D3DRS_SLOPESCALEDEPTHBIAS],
+                               rs[D3DRS_SCISSORTESTENABLE] != 0,
+                               rs[D3DRS_MULTISAMPLEANTIALIAS] != 0,
+                               rs[D3DRS_ANTIALIASEDLINEENABLE] != 0};
+    return cached(&d->raster_cache, k, RK_WORDS, make_raster, d);
 }
 
-static ID3D11SamplerState *sampler_state(D9Device *d, UINT slot, BOOL compare)
+enum { SK_MIN, SK_MAG, SK_MIP, SK_ANISOTROPY, SK_ADDRESS, SK_BIAS = SK_ADDRESS + 3, SK_BORDER, SK_LEVEL, SK_COMPARE,
+       SK_WORDS };
+
+static void *make_sampler(D9Device *d, const DWORD *k)
 {
-    const DWORD *ss = d->sampler_states[slot];
     D3D11_SAMPLER_DESC desc = {};
-    DWORD min = ss[D3DSAMP_MINFILTER], mag = ss[D3DSAMP_MAGFILTER], mip = ss[D3DSAMP_MIPFILTER];
+    DWORD min = k[SK_MIN], mag = k[SK_MAG], mip = k[SK_MIP];
     BOOL aniso = min == D3DTEXF_ANISOTROPIC || mag == D3DTEXF_ANISOTROPIC;
     UINT filter = (min >= D3DTEXF_LINEAR) << 4 | (mag >= D3DTEXF_LINEAR) << 2 | (mip >= D3DTEXF_LINEAR);
-    if (aniso && ss[D3DSAMP_MAXANISOTROPY] > 1)
+    if (aniso && k[SK_ANISOTROPY] > 1)
         filter = 0x55;
-    desc.Filter = (D3D11_FILTER)(filter | (compare ? 0x80 : 0));
+    desc.Filter = (D3D11_FILTER)(filter | (k[SK_COMPARE] ? 0x80 : 0));
     for (UINT i = 0; i < 3; i++) {
-        DWORD a = ss[D3DSAMP_ADDRESSU + i];
+        DWORD a = k[SK_ADDRESS + i];
         (&desc.AddressU)[i] = a >= 1 && a <= 5 ? (D3D11_TEXTURE_ADDRESS_MODE)a : D3D11_TEXTURE_ADDRESS_WRAP;
     }
-    desc.MipLODBias = fbits(ss[D3DSAMP_MIPMAPLODBIAS]);
-    desc.MaxAnisotropy = D9_MAX(D9_MIN(ss[D3DSAMP_MAXANISOTROPY], 16), 1);
-    desc.ComparisonFunc = compare ? D3D11_COMPARISON_LESS_EQUAL : D3D11_COMPARISON_NEVER;
-    D3DCOLOR border = ss[D3DSAMP_BORDERCOLOR];
+    desc.MipLODBias = fbits(k[SK_BIAS]);
+    desc.MaxAnisotropy = D9_MAX(D9_MIN(k[SK_ANISOTROPY], 16), 1);
+    desc.ComparisonFunc = k[SK_COMPARE] ? D3D11_COMPARISON_LESS_EQUAL : D3D11_COMPARISON_NEVER;
+    D3DCOLOR border = k[SK_BORDER];
     desc.BorderColor[0] = ((border >> 16) & 0xFF) / 255.0f;
     desc.BorderColor[1] = ((border >> 8) & 0xFF) / 255.0f;
     desc.BorderColor[2] = (border & 0xFF) / 255.0f;
     desc.BorderColor[3] = (border >> 24) / 255.0f;
     /* the largest level is the most detailed one sampled; without mips only it. */
-    desc.MinLOD = (float)ss[D3DSAMP_MAXMIPLEVEL];
+    desc.MinLOD = (float)k[SK_LEVEL];
     desc.MaxLOD = mip == D3DTEXF_NONE ? desc.MinLOD : D3D11_FLOAT32_MAX;
-    return cached(&d->sampler_cache, &desc, sizeof(desc), make_sampler, d);
+    ID3D11SamplerState *s;
+    return SUCCEEDED(d->d3d11->lpVtbl->CreateSamplerState(d->d3d11, &desc, &s)) ? s : nullptr;
+}
+
+static ID3D11SamplerState *sampler_state(D9Device *d, UINT slot, BOOL compare)
+{
+    const DWORD *ss = d->sampler_states[slot];
+    const DWORD k[SK_WORDS] = {ss[D3DSAMP_MINFILTER],    ss[D3DSAMP_MAGFILTER],     ss[D3DSAMP_MIPFILTER],
+                               ss[D3DSAMP_MAXANISOTROPY], ss[D3DSAMP_ADDRESSU],      ss[D3DSAMP_ADDRESSV],
+                               ss[D3DSAMP_ADDRESSW],      ss[D3DSAMP_MIPMAPLODBIAS], ss[D3DSAMP_BORDERCOLOR],
+                               ss[D3DSAMP_MAXMIPLEVEL],   compare};
+    return cached(&d->sampler_cache, k, SK_WORDS, make_sampler, d);
 }
 
 /* ------------------------------------------------------------------ constants */

@@ -1408,6 +1408,8 @@ WINBASEAPI DWORD WINAPI GetProcessIdOfThread(HANDLE thread);
 WINBASEAPI HANDLE WINAPI OpenProcess(DWORD access, BOOL inherit, DWORD id);
 WINBASEAPI HANDLE WINAPI OpenThread(DWORD access, BOOL inherit, DWORD id);
 WINBASEAPI DWORD WINAPI SuspendThread(HANDLE thread);
+WINBASEAPI BOOL WINAPI GetThreadContext(HANDLE thread, PCONTEXT context);
+WINBASEAPI BOOL WINAPI SetThreadContext(HANDLE thread, const CONTEXT *context);
 WINBASEAPI DWORD WINAPI ResumeThread(HANDLE thread);
 WINBASEAPI void WINAPI Sleep(DWORD milliseconds);
 WINBASEAPI DWORD WINAPI SleepEx(DWORD milliseconds, BOOL alertable);

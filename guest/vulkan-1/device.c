@@ -869,21 +869,101 @@ VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t count, co
     return VK_SUCCESS;
 }
 
+/*
+ * timeline semaphores whose values the host keeps in header slots, so
+ * reading one asks nothing. a slot is reused once the host ran the
+ * destruction of its last semaphore, after which it writes there no more.
+ */
+typedef struct Mirror {
+    uint64_t semaphore;
+    uint64_t freed;
+    uint64_t signaled;
+} Mirror;
+
+static Mirror g_mirrors[MVK_MIRRORS];
+static SRWLOCK g_mirror_lock;
+
+static int find_mirror(uint64_t semaphore)
+{
+    for (int i = 0; i < MVK_MIRRORS; i++)
+        if (g_mirrors[i].semaphore == semaphore)
+            return i;
+    return -1;
+}
+
+static void mirror(uint64_t semaphore, uint64_t initial)
+{
+    volatile uint64_t *slots = mvk_mirrors();
+    if (!slots)
+        return;
+    uint64_t done = mvk_done_serial();
+    AcquireSRWLockExclusive(&g_mirror_lock);
+    int slot = -1;
+    for (int i = 0; i < MVK_MIRRORS && slot < 0; i++)
+        if (!g_mirrors[i].semaphore && g_mirrors[i].freed <= done)
+            slot = i;
+    if (slot >= 0) {
+        g_mirrors[slot] = (Mirror){semaphore, 0, initial};
+        __atomic_store_n(&slots[slot], initial, __ATOMIC_RELEASE);
+        MvkEncoder *e = mvk_call_begin(MVK_OP_MIRROR_SEMAPHORE);
+        mvk_put_u64(e, semaphore);
+        mvk_put_u32(e, (uint32_t)slot);
+        mvk_call_end(e);
+    }
+    ReleaseSRWLockExclusive(&g_mirror_lock);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo *info,
                                                  const VkAllocationCallbacks *allocator, VkSemaphore *semaphore)
 {
-    return create_object(MVK_OP_CREATE_SEMAPHORE, (uint64_t *)semaphore,
-                         (void (*)(MvkEncoder *, const void *))mvk_put_VkSemaphoreCreateInfo, info);
+    VkResult r = create_object(MVK_OP_CREATE_SEMAPHORE, (uint64_t *)semaphore,
+                               (void (*)(MvkEncoder *, const void *))mvk_put_VkSemaphoreCreateInfo, info);
+    for (const VkBaseInStructure *p = info->pNext; p; p = p->pNext)
+        if (p->sType == VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO &&
+            ((const VkSemaphoreTypeCreateInfo *)p)->semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE)
+            mirror((uint64_t)*semaphore, ((const VkSemaphoreTypeCreateInfo *)p)->initialValue);
+    return r;
 }
 
 VKAPI_ATTR void VKAPI_CALL vkDestroySemaphore(VkDevice device, VkSemaphore semaphore,
                                               const VkAllocationCallbacks *allocator)
 {
+    if (!semaphore)
+        return;
+    AcquireSRWLockExclusive(&g_mirror_lock);
+    int slot = find_mirror((uint64_t)semaphore);
     destroy_object(MVK_OP_DESTROY_SEMAPHORE, (uint64_t)semaphore);
+    if (slot >= 0)
+        g_mirrors[slot] = (Mirror){0, mvk_last_serial(), 0};
+    ReleaseSRWLockExclusive(&g_mirror_lock);
+}
+
+static VkResult get_semaphore_value(VkDevice device, VkSemaphore semaphore, uint64_t *value);
+
+/* whether mirrored values already show the wait done, which then asks nothing. */
+static BOOL mirrors_reached(VkDevice device, const VkSemaphoreWaitInfo *info)
+{
+    BOOL any = (info->flags & VK_SEMAPHORE_WAIT_ANY_BIT) != 0;
+    for (uint32_t i = 0; i < info->semaphoreCount; i++) {
+        AcquireSRWLockShared(&g_mirror_lock);
+        int slot = find_mirror((uint64_t)info->pSemaphores[i]);
+        ReleaseSRWLockShared(&g_mirror_lock);
+        uint64_t value = 0;
+        if (slot < 0 || get_semaphore_value(device, info->pSemaphores[i], &value) != VK_SUCCESS)
+            return FALSE;
+        BOOL reached = value >= info->pValues[i];
+        if (any && reached)
+            return TRUE;
+        if (!any && !reached)
+            return FALSE;
+    }
+    return !any && info->semaphoreCount;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo *info, uint64_t timeout)
 {
+    if (mirrors_reached(device, info))
+        return VK_SUCCESS;
     ULONGLONG start = GetTickCount64();
     for (;;) {
         uint64_t seen = mvk_events();
@@ -908,6 +988,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemapho
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t *value)
 {
+    return get_semaphore_value(device, semaphore, value);
+}
+
+static VkResult get_semaphore_value(VkDevice device, VkSemaphore semaphore, uint64_t *value)
+{
+    AcquireSRWLockShared(&g_mirror_lock);
+    int slot = semaphore ? find_mirror((uint64_t)semaphore) : -1;
+    if (slot >= 0) {
+        uint64_t v = __atomic_load_n(&mvk_mirrors()[slot], __ATOMIC_ACQUIRE);
+        *value = v > g_mirrors[slot].signaled ? v : g_mirrors[slot].signaled;
+        ReleaseSRWLockShared(&g_mirror_lock);
+        return VK_SUCCESS;
+    }
+    ReleaseSRWLockShared(&g_mirror_lock);
     MvkEncoder *e = mvk_call_begin(MVK_OP_SEMAPHORE_VALUE);
     mvk_put_u64(e, (uint64_t)semaphore);
     MvkDecoder *d = mvk_call_wait(e);
@@ -1023,6 +1117,11 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetAccelerationStructureOpaqueCaptureDescriptor
 
 VKAPI_ATTR VkResult VKAPI_CALL vkSignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo *info)
 {
+    AcquireSRWLockExclusive(&g_mirror_lock);
+    int slot = find_mirror((uint64_t)info->semaphore);
+    if (slot >= 0 && info->value > g_mirrors[slot].signaled)
+        g_mirrors[slot].signaled = info->value;
+    ReleaseSRWLockExclusive(&g_mirror_lock);
     MvkEncoder *e = mvk_call_begin(MVK_OP_SIGNAL_SEMAPHORE);
     mvk_put_VkSemaphoreSignalInfo(e, info);
     mvk_call_end(e);

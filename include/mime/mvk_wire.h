@@ -21,8 +21,8 @@
 #include <stdint.h>
 #ifdef _WIN32
 /* the guest is freestanding: its runtime has these. */
-void *memcpy(void *dst, const void *src, size_t n);
-void *memset(void *dst, int c, size_t n);
+void *(memcpy)(void *dst, const void *src, size_t n);
+void *(memset)(void *dst, int c, size_t n);
 size_t strlen(const char *s);
 #else
 #include <string.h>
@@ -42,6 +42,8 @@ size_t strlen(const char *s);
 #define MVK_REPLY_SIZE (MVK_CONNECTION_SIZE - MVK_REPLY_OFFSET)
 #define MVK_MAX_CALL (MVK_RING_SIZE / 2)
 
+#define MVK_MIRRORS 384
+
 typedef struct MvkHeader {
     /* written by the guest. */
     volatile uint64_t put;         /* bytes written to the ring since creation */
@@ -54,7 +56,11 @@ typedef struct MvkHeader {
     volatile uint32_t lost;        /* the host stopped running this connection after an error */
     volatile uint64_t events;      /* counts the watched semaphores that reached their values */
     uint64_t host_pad[4];
+    /* the values of mirrored timeline semaphores, kept by the host as they advance, never ahead. */
+    volatile uint64_t mirror[MVK_MIRRORS];
 } MvkHeader;
+
+_Static_assert(sizeof(MvkHeader) <= MVK_HEADER_SIZE, "the header fits its page");
 
 /* NtGdiMimeVkWait of a serial with this bit: until events differs from the rest of it. */
 #define MVK_WAIT_EVENTS (1ull << 63)
@@ -125,6 +131,7 @@ enum {
     MVK_OP_PRESENT,
     MVK_OP_GET_DESCRIPTOR,
     MVK_OP_WATCH_SEMAPHORES,        /* timeline values whose reaching counts in events */
+    MVK_OP_MIRROR_SEMAPHORE,        /* a timeline semaphore whose value the host keeps in a header slot */
     MVK_OP_HAND_END,
 };
 
@@ -161,6 +168,13 @@ typedef struct MvkDecoder {
     size_t arena_used, arena_size;
 } MvkDecoder;
 
+/* fixed sizes inline even where the runtime is built without builtins. */
+#if defined(__GNUC__) || defined(__clang__)
+#define MVK_COPY __builtin_memcpy
+#else
+#define MVK_COPY memcpy
+#endif
+
 static inline void mvk_align(MvkEncoder *e, size_t a)
 {
     size_t pad = (size_t)(-(uintptr_t)(e->p - e->start)) & (a - 1);
@@ -171,7 +185,8 @@ static inline void mvk_align(MvkEncoder *e, size_t a)
         e->p = e->end;
         return;
     }
-    memset(e->p, 0, pad);
+    for (size_t i = 0; i < pad; i++)
+        e->p[i] = 0;
     e->p += pad;
 }
 
@@ -200,28 +215,28 @@ static inline void mvk_put_u16(MvkEncoder *e, uint16_t v)
 {
     void *at = mvk_reserve(e, 2, 2);
     if (at)
-        memcpy(at, &v, 2);
+        MVK_COPY(at, &v, 2);
 }
 
 static inline void mvk_put_u32(MvkEncoder *e, uint32_t v)
 {
     void *at = mvk_reserve(e, 4, 4);
     if (at)
-        memcpy(at, &v, 4);
+        MVK_COPY(at, &v, 4);
 }
 
 static inline void mvk_put_u64(MvkEncoder *e, uint64_t v)
 {
     void *at = mvk_reserve(e, 8, 8);
     if (at)
-        memcpy(at, &v, 8);
+        MVK_COPY(at, &v, 8);
 }
 
 static inline void mvk_put_bytes(MvkEncoder *e, const void *data, size_t n)
 {
     void *at = mvk_reserve(e, n, 4);
     if (at && n)
-        memcpy(at, data, n);
+        MVK_COPY(at, data, n);
 }
 
 /* bytes of a known length, NULL as an all ones length. */
@@ -252,28 +267,28 @@ static inline void mvk_put_handle(MvkEncoder *e, int dispatchable, uint64_t id)
 static inline uint32_t mvk_f32_bits(float f)
 {
     uint32_t v;
-    memcpy(&v, &f, 4);
+    MVK_COPY(&v, &f, 4);
     return v;
 }
 
 static inline uint64_t mvk_f64_bits(double f)
 {
     uint64_t v;
-    memcpy(&v, &f, 8);
+    MVK_COPY(&v, &f, 8);
     return v;
 }
 
 static inline float mvk_bits_f32(uint32_t v)
 {
     float f;
-    memcpy(&f, &v, 4);
+    MVK_COPY(&f, &v, 4);
     return f;
 }
 
 static inline double mvk_bits_f64(uint64_t v)
 {
     double f;
-    memcpy(&f, &v, 8);
+    MVK_COPY(&f, &v, 8);
     return f;
 }
 
@@ -302,7 +317,7 @@ static inline uint16_t mvk_get_u16(MvkDecoder *d)
     uint16_t v = 0;
     const void *at = mvk_take(d, 2, 2);
     if (at)
-        memcpy(&v, at, 2);
+        MVK_COPY(&v, at, 2);
     return v;
 }
 
@@ -311,7 +326,7 @@ static inline uint32_t mvk_get_u32(MvkDecoder *d)
     uint32_t v = 0;
     const void *at = mvk_take(d, 4, 4);
     if (at)
-        memcpy(&v, at, 4);
+        MVK_COPY(&v, at, 4);
     return v;
 }
 
@@ -320,7 +335,7 @@ static inline uint64_t mvk_get_u64(MvkDecoder *d)
     uint64_t v = 0;
     const void *at = mvk_take(d, 8, 8);
     if (at)
-        memcpy(&v, at, 8);
+        MVK_COPY(&v, at, 8);
     return v;
 }
 
@@ -328,7 +343,7 @@ static inline void mvk_get_bytes(MvkDecoder *d, void *out, size_t n)
 {
     const void *at = mvk_take(d, n, 4);
     if (at && n)
-        memcpy(out, at, n);
+        MVK_COPY(out, at, n);
     else if (n)
         memset(out, 0, n);
 }

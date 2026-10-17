@@ -259,7 +259,7 @@ typedef struct D9Ring {
 UINT D9RenderStateGroups(D3DRENDERSTATETYPE state);
 
 typedef struct D9StateEntry {
-    BYTE desc[sizeof(D3D11_BLEND_DESC)];
+    DWORD key[16];
     UINT size, hash;
     void *object;
 } D9StateEntry;

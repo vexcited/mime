@@ -117,14 +117,16 @@ static void ref_view(D3dContext *c, D3dView **slot, D3dView *v)
  * done; a deferred context notes it in the command list, whose execution
  * tells when.
  */
-void D3dContextUse(D3dContext *c, D3dResource *r)
+static void update_vb_high(D3dContext *c)
 {
-    if (!r)
-        return;
-    if (c->type == D3D11_DEVICE_CONTEXT_IMMEDIATE) {
-        r->last_use = c->child.device->next_serial;
-        return;
-    }
+    UINT high = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
+    while (high && !c->vb[high - 1])
+        high--;
+    c->vb_high = high;
+}
+
+void D3dContextUseList(D3dContext *c, D3dResource *r)
+{
     if (r->list_mark == c->list_id)
         return;
     if (c->list_resource_count == c->list_resource_capacity) {
@@ -385,6 +387,7 @@ static void unbind_inputs(D3dContext *c, D3dResource *r)
         if (c->vb[i] == r) {
             ref_resource(&c->vb[i], nullptr);
             c->ia_dirty = TRUE;
+            update_vb_high(c);
         }
     if (c->ib == r) {
         ref_resource(&c->ib, nullptr);
@@ -633,6 +636,7 @@ static void STDMETHODCALLTYPE ia_set_vertex_buffers(ID3D11DeviceContext4 *iface,
         c->vb_offset[k] = offsets ? offsets[i] : 0;
         c->vb_version[k] = ~0u;
     }
+    update_vb_high(c);
     c->ia_dirty = TRUE;
 }
 
@@ -1101,7 +1105,8 @@ static void emit_viewports(D3dContext *c, VkCommandBuffer cmd, VkExtent2D area)
  */
 #define DYN_CHANGED(field, value) (c->state_dirty || c->dyn.field != (value) ? (c->dyn.field = (value), TRUE) : FALSE)
 
-static BOOL dyn_changed_bytes(D3dContext *c, void *field, const void *value, SIZE_T size)
+static inline __attribute__((always_inline)) BOOL dyn_changed_bytes(D3dContext *c, void *field, const void *value,
+                                                                  SIZE_T size)
 {
     if (!c->state_dirty && !memcmp(field, value, size))
         return FALSE;
@@ -1279,7 +1284,7 @@ static void emit_vertex_input(D3dContext *c, VkCommandBuffer cmd)
 static void emit_buffers(D3dContext *c, VkCommandBuffer cmd)
 {
     D3dVk *vk = &c->child.device->vk;
-    for (UINT i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++) {
+    for (UINT i = 0; i < c->vb_high; i++) {
         D3dResource *r = c->vb[i];
         if (r && c->vb_version[i] == r->buf.version && !c->ia_dirty)
             continue;
@@ -1690,7 +1695,7 @@ static BOOL prepare_draw(D3dContext *c)
     if (so && !c->xfb_active)
         begin_stream_output(c, cmd);
     emit_buffers(c, cmd);
-    for (UINT i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++)
+    for (UINT i = 0; i < c->vb_high; i++)
         D3dContextUse(c, c->vb[i]);
     D3dContextUse(c, c->ib);
     return TRUE;
@@ -2101,6 +2106,7 @@ static void clear_state(D3dContext *c)
         ref_resource(&c->vb[i], nullptr);
         c->vb_stride[i] = c->vb_offset[i] = 0;
     }
+    c->vb_high = 0;
     ref_resource(&c->ib, nullptr);
     c->ib_format = DXGI_FORMAT_UNKNOWN;
     c->ib_offset = 0;

@@ -1673,6 +1673,8 @@ static bool waits_for_jobs(MvkConnection *c, uint32_t op)
 typedef struct MvkWatch {
     VkSemaphore semaphore;
     uint64_t value;
+    /* a mirror's header slot, which stays watched for the value after the one it holds; -1 for a wait. */
+    int32_t slot;
 } MvkWatch;
 
 static void wake_watcher(MvkConnection *c)
@@ -1716,8 +1718,16 @@ static void *watcher_main(void *arg)
         bool reached = false;
         for (uint32_t i = 0; i < c->watch_count;) {
             uint64_t value = 0;
-            if (c->fn.vkGetSemaphoreCounterValue(c->device, c->watches[i].semaphore, &value) != VK_SUCCESS ||
-                value >= c->watches[i].value) {
+            VkResult got = c->fn.vkGetSemaphoreCounterValue(c->device, c->watches[i].semaphore, &value);
+            if (c->watches[i].slot >= 0 && got == VK_SUCCESS) {
+                if (value >= c->watches[i].value) {
+                    __atomic_store_n(&c->header->mirror[c->watches[i].slot], value, __ATOMIC_RELEASE);
+                    c->watches[i].value = value + 1;
+                }
+                i++;
+                continue;
+            }
+            if (got != VK_SUCCESS || value >= c->watches[i].value) {
                 c->watches[i] = c->watches[--c->watch_count];
                 reached = true;
             } else {
@@ -1737,37 +1747,70 @@ static void *watcher_main(void *arg)
     return nullptr;
 }
 
+static bool start_watcher(MvkConnection *c)
+{
+    if (c->watching)
+        return true;
+    VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+    VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+    if (c->fn.vkCreateSemaphore(c->device, &info, nullptr, &c->wake) != VK_SUCCESS)
+        return false;
+    c->wake_value = 0;
+    c->watch_stop = false;
+    c->watching = true;
+    pthread_create(&c->watcher, nullptr, watcher_main, c);
+    return true;
+}
+
+static void add_watch(MvkConnection *c, VkSemaphore semaphore, uint64_t value, int32_t slot)
+{
+    if (c->watch_count == c->watch_capacity) {
+        c->watch_capacity = c->watch_capacity ? c->watch_capacity * 2 : 16;
+        c->watches = realloc(c->watches, c->watch_capacity * sizeof(*c->watches));
+    }
+    c->watches[c->watch_count++] = (MvkWatch){semaphore, value, slot};
+}
+
+/*
+ * a timeline semaphore the guest reads without asking: its value goes to a
+ * header slot now and each time it advances, which the guest only reuses
+ * once this connection ran the semaphore's destruction.
+ */
+static void mirror_semaphore(MvkCall *call)
+{
+    MvkConnection *c = call->conn;
+    MvkDecoder *d = &call->in;
+    VkSemaphore semaphore = (VkSemaphore)mvk_get_handle(d, 0);
+    uint32_t slot = mvk_get_u32(d);
+    if (d->error || !c->device || !semaphore || slot >= MVK_MIRRORS || !c->fn.vkWaitSemaphores || !start_watcher(c))
+        return;
+    pthread_mutex_lock(&c->watch_lock);
+    uint64_t value = 0;
+    if (c->fn.vkGetSemaphoreCounterValue(c->device, semaphore, &value) == VK_SUCCESS) {
+        __atomic_store_n(&c->header->mirror[slot], value, __ATOMIC_RELEASE);
+        add_watch(c, semaphore, value + 1, (int32_t)slot);
+    }
+    pthread_mutex_unlock(&c->watch_lock);
+    wake_watcher(c);
+}
+
 static void watch_semaphores(MvkCall *call)
 {
     MvkConnection *c = call->conn;
     MvkDecoder *d = &call->in;
     uint32_t n = mvk_get_u32(d);
-    if (d->error || !c->device || !c->fn.vkWaitSemaphores)
+    if (d->error || !c->device || !c->fn.vkWaitSemaphores || !start_watcher(c))
         return;
-    if (!c->watching) {
-        VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
-        VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-        if (c->fn.vkCreateSemaphore(c->device, &info, nullptr, &c->wake) != VK_SUCCESS)
-            return;
-        c->wake_value = 0;
-        c->watch_stop = false;
-        c->watching = true;
-        pthread_create(&c->watcher, nullptr, watcher_main, c);
-    }
     pthread_mutex_lock(&c->watch_lock);
     for (uint32_t i = 0; i < n && !d->error; i++) {
         VkSemaphore semaphore = (VkSemaphore)mvk_get_handle(d, 0);
         uint64_t value = mvk_get_u64(d);
         bool known = !semaphore;
         for (uint32_t k = 0; k < c->watch_count && !known; k++)
-            known = c->watches[k].semaphore == semaphore && c->watches[k].value == value;
+            known = c->watches[k].slot < 0 && c->watches[k].semaphore == semaphore && c->watches[k].value == value;
         if (known)
             continue;
-        if (c->watch_count == c->watch_capacity) {
-            c->watch_capacity = c->watch_capacity ? c->watch_capacity * 2 : 16;
-            c->watches = realloc(c->watches, c->watch_capacity * sizeof(*c->watches));
-        }
-        c->watches[c->watch_count++] = (MvkWatch){semaphore, value};
+        add_watch(c, semaphore, value, -1);
     }
     pthread_mutex_unlock(&c->watch_lock);
     wake_watcher(c);
@@ -1864,6 +1907,7 @@ static void run_hand(MvkCall *call)
     case MVK_OP_PRESENT: mvk_wsi_present(call); break;
     case MVK_OP_GET_DESCRIPTOR: get_descriptor(call); break;
     case MVK_OP_WATCH_SEMAPHORES: watch_semaphores(call); break;
+    case MVK_OP_MIRROR_SEMAPHORE: mirror_semaphore(call); break;
     default:
         mime_warn("vulkan: unknown call %#x", call->header.op);
         break;

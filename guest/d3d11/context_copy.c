@@ -65,9 +65,17 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
         }
         if (type == D3D11_MAP_WRITE_DISCARD) {
             /* a range the gpu does not use, so the program never waits. */
-            renaming(c);
-            if (r->last_use > device->completed && !D3dBufferRename(device, r))
+            BOOL retired;
+            if (D3dBufferDiscardCb(device, r, &retired)) {
+                if (retired)
+                    D3dContextFlush(c);
+            } else if (r->buf.cb_chunk) {
                 hr = wait_idle(c, r, flags);
+            } else {
+                renaming(c);
+                if (r->last_use > device->completed && !D3dBufferRename(device, r))
+                    hr = wait_idle(c, r, flags);
+            }
         } else if (type != D3D11_MAP_WRITE_NO_OVERWRITE) {
             hr = wait_idle(c, r, flags);
         }

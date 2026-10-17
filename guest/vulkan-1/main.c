@@ -392,6 +392,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
+volatile uint64_t *mvk_mirrors(void) { return g_header ? g_header->mirror : nullptr; }
+
 uint64_t mvk_done_serial(void)
 {
     return g_header ? __atomic_load_n(&g_header->done, __ATOMIC_ACQUIRE) : 0;

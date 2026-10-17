@@ -69,6 +69,7 @@ static void destroy(D3dResource *r)
     if (r->dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
         D3dDeferFree(device, serial, &r->buf.alloc);
         free_cbv(device, serial, r->buf.cbv);
+        D3dCbUnpin(device, r->buf.cb_chunk, serial);
         free_spares(r);
     } else {
         D3dDefer(device, serial, D3D_GARBAGE_IMAGE, (UINT64)r->tex.image);
@@ -94,6 +95,29 @@ static D3dSpares *spares_of(D3dResource *r) { return (D3dSpares *)r->buf.spares;
  * a fresh range for a discarded dynamic buffer: one the gpu is done with,
  * or a new one. the old range waits for what was recorded up to now.
  */
+/*
+ * a dynamic constant buffer discarded: a new slice of the constant buffer
+ * ring, its descriptor made long ago. buffers that already left the ring
+ * for a range of their own keep renaming that way.
+ */
+BOOL D3dBufferDiscardCb(D3dDevice *device, D3dResource *r, BOOL *retired)
+{
+    *retired = FALSE;
+    if (r->usage != D3D11_USAGE_DYNAMIC || !(r->bind & D3D11_BIND_CONSTANT_BUFFER) || r->buf.spares)
+        return FALSE;
+    D3dCbSlice slice;
+    if (!D3dCbAlloc(device, r->buf.size, &slice, retired))
+        return FALSE;
+    D3dCbUnpin(device, r->buf.cb_chunk, D3D_MAX(r->last_use, device->next_serial));
+    r->buf.cb_chunk = slice.chunk;
+    r->buf.cb_cbv = slice.cbv;
+    r->buf.buffer = slice.buffer;
+    r->buf.offset = slice.offset;
+    r->buf.mapped = slice.mapped;
+    r->buf.version++;
+    return TRUE;
+}
+
 BOOL D3dBufferRename(D3dDevice *device, D3dResource *r)
 {
     D3dSpares *spares = spares_of(r);
@@ -168,6 +192,8 @@ UINT D3dBufferCbv(D3dResource *r, UINT offset, UINT size)
         return 0;
     size = D3D_MIN(size, r->buf.size - offset);
     UINT whole = D3D_MIN(r->buf.size, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
+    if (r->buf.cb_chunk && !offset && D3D_MIN(size, whole) == whole)
+        return r->buf.cb_cbv;
     if (offset || D3D_MIN(size, whole) != whole)
         return D3dCbvIndex(r->child.device, r->buf.buffer, r->buf.offset + offset, size);
     /* the whole range, the usual binding, has its own descriptor that renames carry along. */

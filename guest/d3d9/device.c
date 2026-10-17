@@ -13,9 +13,18 @@ D9Device *D9DeviceFrom(IDirect3DDevice9 *iface)
 
 static D9Device *impl(IDirect3DDevice9Ex *iface) { return CONTAINING_RECORD(iface, D9Device, iface); }
 
-void D9Lock(D9Device *device) { EnterCriticalSection(&device->lock); }
+/* as windows' runtime, only a device made D3DCREATE_MULTITHREADED takes a lock. */
+void D9Lock(D9Device *device)
+{
+    if (device->multithreaded)
+        EnterCriticalSection(&device->lock);
+}
 
-void D9Unlock(D9Device *device) { LeaveCriticalSection(&device->lock); }
+void D9Unlock(D9Device *device)
+{
+    if (device->multithreaded)
+        LeaveCriticalSection(&device->lock);
+}
 
 static HRESULT not_yet(D9Device *device, const char *what)
 {
