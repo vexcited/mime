@@ -277,11 +277,17 @@ static HRESULT process_vertices(RUN *run, const D3DPROCESSVERTICES *p)
     D3DTLVERTEX *out = tl_at(l, p->wDest);
     float *clip = l->tl_clip + (SIZE_T)p->wDest * 4;
     WORD *codes = l->tl_codes + p->wDest;
+    BOOL ramp = IsEqualGUID(&dev->guid, &IID_IDirect3DRampDevice);
     if (op == D3DPROCESSVERTICES_COPY) {
         memcpy(out, src, (SIZE_T)count * sizeof(D3DTLVERTEX));
         memset(codes, 0, count * sizeof(WORD));
-        for (DWORD i = 0; i < count; i++)
+        for (DWORD i = 0; i < count; i++) {
             grow_extents(l, &out[i]);
+            if (ramp) {
+                out[i].color = D3dRampConvert(dev, out[i].color, out[i].specular);
+                out[i].specular &= 0xFF000000;
+            }
+        }
         l->status &= 0xFF000FFF;
         run->clipped = FALSE;
         return D3D_OK;
@@ -306,6 +312,10 @@ static HRESULT process_vertices(RUN *run, const D3DPROCESSVERTICES *p)
         grow_extents(l, &out[i]);
         if (!lit) {
             memcpy(&out[i].color, in + 4, 8);
+            if (ramp) {
+                out[i].color = D3dRampConvert(dev, out[i].color, out[i].specular);
+                out[i].specular &= 0xFF000000;
+            }
         } else if (!material) {
             out[i].color = 0xFFFFFFFF;
             out[i].specular = 0;

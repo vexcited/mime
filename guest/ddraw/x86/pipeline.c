@@ -457,6 +457,10 @@ void D3dLegacyLight(D3DDEV *dev, const BYTE *src, DWORD fvf, DWORD count, BYTE *
     const D3DMATERIAL *m = &l->material;
     LAYOUT in;
     layout_of(fvf, &in);
+    if (IsEqualGUID(&dev->guid, &IID_IDirect3DRampDevice)) {
+        D3dRampLight(dev, src, in.stride, in.normal, count, dst, dst_stride);
+        return;
+    }
     D3DMATRIX wv = mul(&dev->transforms[D3DTRANSFORMSTATE_WORLD], &dev->transforms[D3DTRANSFORMSTATE_VIEW]);
     const D3DMATRIX *view = &dev->transforms[D3DTRANSFORMSTATE_VIEW];
     float nm[3][3];

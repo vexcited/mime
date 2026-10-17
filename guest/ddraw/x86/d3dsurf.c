@@ -181,6 +181,7 @@ void D3dSurfFree(DDSURF *s)
     if (!x)
         return;
     DbImageDestroy(x->image);
+    HeapFree(GetProcessHeap(), 0, x->nearest);
     HeapFree(GetProcessHeap(), 0, x);
     s->d3d = nullptr;
 }
@@ -255,6 +256,56 @@ static BOOL upload(D3DSURFX *x, DDSURF *s)
     return TRUE;
 }
 
+void D3dSurfQuantize(DDSURF *s, const BYTE *cube)
+{
+    D3DSURFX *x = extension(s);
+    if (!x)
+        return;
+    x->cubed = cube != nullptr;
+    if (cube)
+        memcpy(x->cube, cube, sizeof(x->cube));
+}
+
+/* the entry closest to a color, found once per 15-bit color and palette. */
+static BYTE nearest_entry(D3DSURFX *x, const DECODE *d, DDPAL *pal, DWORD argb)
+{
+    DWORD key = (argb >> 9 & 0x7C00) | (argb >> 6 & 0x3E0) | (argb >> 3 & 0x1F);
+    DWORD uniqueness = pal ? pal->uniqueness + 1 : 0;
+    if (!x->nearest || x->nearest_palette != uniqueness) {
+        if (!x->nearest)
+            x->nearest = HeapAlloc(GetProcessHeap(), 0, 32768 * sizeof(WORD));
+        if (!x->nearest)
+            return 0;
+        memset(x->nearest, 0xFF, 32768 * sizeof(WORD));
+        x->nearest_palette = uniqueness;
+    }
+    if (x->nearest[key] != 0xFFFF)
+        return (BYTE)x->nearest[key];
+    int r = argb >> 16 & 0xF8, g = argb >> 8 & 0xF8, b = argb & 0xF8;
+    DWORD best = 0, distance = 0xFFFFFFFF, count = pal ? pal->count : 256;
+    for (DWORD i = 0; i < count && i < 256; i++) {
+        int dr = (int)(d->colors[i] >> 16 & 0xFF) - r, dg = (int)(d->colors[i] >> 8 & 0xFF) - g,
+            db = (int)(d->colors[i] & 0xFF) - b;
+        DWORD dist = (DWORD)(dr * dr + dg * dg + db * db);
+        if (dist < distance) {
+            distance = dist;
+            best = i;
+        }
+    }
+    x->nearest[key] = (WORD)best;
+    return (BYTE)best;
+}
+
+/* a color of a palettized target as an index, the color cube's as d3dim quantizes to it. */
+static DWORD quantize(D3DSURFX *x, const DECODE *d, DDPAL *pal, DWORD argb)
+{
+    if (!x->cubed)
+        return nearest_entry(x, d, pal, argb);
+    DWORD r = (5 * (argb >> 16 & 0xFF) + 128) >> 8, g = (5 * (argb >> 8 & 0xFF) + 128) >> 8,
+          b = (5 * (argb & 0xFF) + 128) >> 8;
+    return x->cube[36 * r + 6 * g + b];
+}
+
 /* direct3d's drawing back in the memory. */
 static void read_back(D3DSURFX *x, DDSURF *s)
 {
@@ -266,17 +317,19 @@ static void read_back(D3DSURFX *x, DDSURF *s)
     } else {
         DECODE d;
         UINT width = s->desc.dwWidth, height = s->desc.dwHeight;
-        DWORD *rows = decoder(s, &d) && !d.palette ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)width * height * 4)
-                                                   : nullptr;
+        BOOL ok = decoder(s, &d) && (!d.palette || d.bits == 8);
+        DWORD *rows = ok ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)width * height * 4) : nullptr;
         if (rows && DbImageRead(x->image, nullptr, rows, width * 4))
             for (UINT y = 0; y < height; y++) {
                 BYTE *dst = s->memory + (SIZE_T)y * s->desc.lPitch;
-                for (UINT xx = 0; xx < width; xx++)
-                    store(dst, d.bits, (LONG)xx, encode(&d, rows[(SIZE_T)y * width + xx]));
+                for (UINT xx = 0; xx < width; xx++) {
+                    DWORD argb = rows[(SIZE_T)y * width + xx];
+                    store(dst, d.bits, (LONG)xx, d.palette ? quantize(x, &d, s->palette, argb) : encode(&d, argb));
+                }
             }
         HeapFree(GetProcessHeap(), 0, rows);
     }
-    x->generation = s->generation;
+    x->generation = chain_generation(s, (x->usage & DB_TARGET) ? 1 : level_count(s));
 }
 
 void DdSurfSync(DDSURF *s)

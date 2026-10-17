@@ -79,6 +79,7 @@ typedef struct D3DBLOCK {
 } D3DBLOCK;
 
 typedef struct D3DLEGACY D3DLEGACY;
+typedef struct D3DPAL8 D3DPAL8;
 
 struct D3DDEV {
     IDirect3DDevice7 iface7;
@@ -120,6 +121,7 @@ struct D3DDEV {
     /* what the backend shows of this device is stale after another device drew. */
     BOOL keyed;               /* the key test the color key added is on */
     DWORD stage_end;          /* the stage disabled for lack of its texture, D3D_STAGES for none */
+    D3DPAL8 *pal8;            /* the entries it takes of an 8-bit target's palette. */
     BYTE *scratch;            /* vertices packed for the backend */
     SIZE_T scratch_size;
     LIST_ENTRY links;
@@ -361,6 +363,16 @@ HRESULT D3dExecute(D3DDEV *dev, D3DEXECBUF *buffer, DWORD flags);
 HRESULT D3dPick(D3DDEV *dev, D3DEXECBUF *buffer, const D3DRECT *rect);
 void D3dExecuteBufferDeviceGone(D3DEXECBUF *b);
 
+/* ramp.c: 8-bit palettized targets and the ramp device's colors. */
+void D3dPal8Target(D3DDEV *dev);
+void D3dPal8Free(D3DDEV *dev);
+/* a vertex color of the mono model as its ramp's color. */
+DWORD D3dRampConvert(D3DDEV *dev, DWORD color, DWORD specular);
+DWORD D3dRampBackground(D3DDEV *dev, const D3DMATERIAL *m);
+/* vertices with positions and normals lit in gray, their ramp colors written at each output vertex. */
+void D3dRampLight(D3DDEV *dev, const BYTE *src, DWORD stride, DWORD normal, DWORD count, BYTE *dst,
+                  DWORD dst_stride);
+
 /* pipeline.c: the first interfaces' lighting and vertex fog. */
 /* the colors of lit vertices, diffuse and specular, written at each output vertex. */
 void D3dLegacyLight(D3DDEV *dev, const BYTE *src, DWORD fvf, DWORD count, BYTE *dst, DWORD dst_stride);
@@ -389,6 +401,11 @@ typedef struct D3DSURFX {
     DWORD key;            /* the key it was uploaded with */
     DWORD palette;        /* the palette's uniqueness it was uploaded with */
     /* a depth fill waiting for the buffer to be bound, the backend clearing only what is. */
+    /* a palettized target's pixels back to indices: through a color cube, or to the nearest entry. */
+    BOOL cubed;
+    BYTE cube[216];
+    WORD *nearest;
+    DWORD nearest_palette;
     BOOL fill;
     float fill_z;
     DWORD fill_stencil;
@@ -401,6 +418,8 @@ DbImage *D3dSurfImage(D3DDEV *dev, DDSURF *s, DWORD usage);
 void D3dSurfDrawn(DDSURF *s);
 /* a clear covering a whole target makes its memory irrelevant. */
 void D3dSurfReplaced(DDSURF *s);
+/* how a palettized target's colors become indices, a 6x6x6 cube's entries or the nearest without one. */
+void D3dSurfQuantize(DDSURF *s, const BYTE *cube);
 
 /* ------------------------------------------------------------------ vertex buffers */
 

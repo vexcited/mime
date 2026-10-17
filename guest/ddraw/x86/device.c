@@ -623,6 +623,7 @@ void D3dHoldTargets(D3DDEV *dev, DDSURF *target, DDSURF *depth)
         old_palette->iface.lpVtbl->Release(&old_palette->iface);
     unhold(dev, old_depth);
     unhold(dev, old_target);
+    D3dPal8Target(dev);
 }
 
 static void default_state(D3DDEV *dev)
@@ -1041,6 +1042,7 @@ void D3dDevDestroy(D3DDEV *dev)
     HeapFree(GetProcessHeap(), 0, dev->blocks);
     HeapFree(GetProcessHeap(), 0, dev->lights);
     HeapFree(GetProcessHeap(), 0, dev->scratch);
+    D3dPal8Free(dev);
     RemoveEntryList(&dev->links);
     D3DOBJ *d3d = dev->d3d;
     BOOL held = dev->version != 1;

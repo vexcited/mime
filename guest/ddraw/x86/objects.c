@@ -409,7 +409,9 @@ HRESULT D3dViewportClear(D3DVIEWPORTOBJ *vp, DWORD count, const D3DRECT *rects, 
         color = 0;
         if (vp->background_set) {
             D3DMATHANDLE *h = D3dMaterialHandle(dev, vp->background);
-            if (h) {
+            if (h && IsEqualGUID(&dev->guid, &IID_IDirect3DRampDevice)) {
+                color = D3dRampBackground(dev, &h->data);
+            } else if (h) {
                 const D3DCOLORVALUE *c = &h->data.diffuse;
                 color = ((DWORD)(c->a * 255.0f) & 0xFF) << 24 | ((DWORD)(c->r * 255.0f) & 0xFF) << 16 |
                         ((DWORD)(c->g * 255.0f) & 0xFF) << 8 | ((DWORD)(c->b * 255.0f) & 0xFF);

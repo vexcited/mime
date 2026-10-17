@@ -614,6 +614,26 @@ HRESULT D3dLegacyRender(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const voi
         D3dLegacyLight(dev, vertices, fvf, vertex_count, l->lit + 12, out_stride);
         vertices = l->lit;
         fvf = out_fvf;
+    } else if (IsEqualGUID(&dev->guid, &IID_IDirect3DRampDevice) && (fvf & D3DFVF_DIFFUSE)) {
+        /* the mono model's colors as their ramps', in a copy. */
+        DWORD stride = D3dFvfSize(fvf), at = D3dFvfSize(fvf & (D3DFVF_POSITION_MASK | D3DFVF_NORMAL | D3DFVF_RESERVED1));
+        SIZE_T need = (SIZE_T)stride * vertex_count;
+        if (need > l->lit_size) {
+            BYTE *lit = l->lit ? HeapReAlloc(GetProcessHeap(), 0, l->lit, need) : HeapAlloc(GetProcessHeap(), 0, need);
+            if (!lit)
+                return DDERR_OUTOFMEMORY;
+            l->lit = lit;
+            l->lit_size = need;
+        }
+        memcpy(l->lit, vertices, need);
+        for (DWORD i = 0; i < vertex_count; i++) {
+            DWORD *c = (DWORD *)(l->lit + (SIZE_T)i * stride + at);
+            DWORD specular = (fvf & D3DFVF_SPECULAR) ? c[1] : 0;
+            c[0] = D3dRampConvert(dev, c[0], specular);
+            if (fvf & D3DFVF_SPECULAR)
+                c[1] &= 0xFF000000;
+        }
+        vertices = l->lit;
     }
     D3dDevActivate(dev);
     BOOL alpha = diffuse_alpha(dev);
