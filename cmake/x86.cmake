@@ -113,6 +113,14 @@ foreach(entry IN LISTS MIME_X86_DLLS)
         INCLUDES ${includes_${name}} IMPORTS ${${imports}})
 endforeach()
 
+if(MIME_GUEST_ARCH STREQUAL "x64")
+    # direct3d 8 over the 32-bit d3d9. windows has no 64-bit d3d8 to take the exports from, so its .def is ours.
+    mime_sources(sources d3d8 x86)
+    mime_dll(d3d8 x86 BASE 0x32000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-privdata
+        DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.def IMPORTS_DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.imports.def
+        IMPORTS ntdll kernel32 user32 gdi32 d3d9)
+endif()
+
 # winspool is a driver file.
 mime_glob(sources guest/winspool/*.c)
 mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources} OBJECTS x86-chkstk

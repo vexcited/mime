@@ -5,6 +5,8 @@
 #ifndef MIME_WIN32_D3D9TYPES_H
 #define MIME_WIN32_D3D9TYPES_H
 
+/* d3d8.h takes these types without the four whose layout or values differ in direct3d 8. */
+
 #include <mime/win32/objbase.h>
 #include <mime/win32/wingdi.h>
 
@@ -730,6 +732,7 @@ typedef enum _D3DMULTISAMPLE_TYPE {
     D3DMULTISAMPLE_FORCE_DWORD = 0x7FFFFFFF
 } D3DMULTISAMPLE_TYPE;
 
+#ifndef MIME_D3D8_TYPES
 typedef enum _D3DSWAPEFFECT {
     D3DSWAPEFFECT_DISCARD = 1,
     D3DSWAPEFFECT_FLIP = 2,
@@ -738,6 +741,7 @@ typedef enum _D3DSWAPEFFECT {
     D3DSWAPEFFECT_FLIPEX = 5,
     D3DSWAPEFFECT_FORCE_DWORD = 0x7FFFFFFF
 } D3DSWAPEFFECT;
+#endif
 
 typedef enum _D3DPOOL {
     D3DPOOL_DEFAULT = 0,
@@ -749,6 +753,7 @@ typedef enum _D3DPOOL {
 
 #define D3DPRESENT_RATE_DEFAULT 0x00000000
 
+#ifndef MIME_D3D8_TYPES
 typedef struct _D3DPRESENT_PARAMETERS_ {
     UINT BackBufferWidth, BackBufferHeight;
     D3DFORMAT BackBufferFormat;
@@ -764,6 +769,7 @@ typedef struct _D3DPRESENT_PARAMETERS_ {
     UINT FullScreen_RefreshRateInHz;
     UINT PresentationInterval;
 } D3DPRESENT_PARAMETERS;
+#endif
 
 #define D3DPRESENTFLAG_LOCKABLE_BACKBUFFER 0x00000001
 #define D3DPRESENTFLAG_DISCARD_DEPTHSTENCIL 0x00000002
@@ -857,6 +863,7 @@ typedef struct _D3DINDEXBUFFER_DESC {
     UINT Size;
 } D3DINDEXBUFFER_DESC;
 
+#ifndef MIME_D3D8_TYPES
 typedef struct _D3DSURFACE_DESC {
     D3DFORMAT Format;
     D3DRESOURCETYPE Type;
@@ -866,7 +873,9 @@ typedef struct _D3DSURFACE_DESC {
     DWORD MultiSampleQuality;
     UINT Width, Height;
 } D3DSURFACE_DESC;
+#endif
 
+#ifndef MIME_D3D8_TYPES
 typedef struct _D3DVOLUME_DESC {
     D3DFORMAT Format;
     D3DRESOURCETYPE Type;
@@ -874,6 +883,7 @@ typedef struct _D3DVOLUME_DESC {
     D3DPOOL Pool;
     UINT Width, Height, Depth;
 } D3DVOLUME_DESC;
+#endif
 
 typedef struct _D3DLOCKED_RECT {
     INT Pitch;
