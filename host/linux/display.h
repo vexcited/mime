@@ -23,6 +23,8 @@ typedef struct MimeUiFrame {
     MimeRect host;                      /* window relative part the host window covers */
     MimeRect visible;
     uint32_t surface_width, surface_height; /* the guest surface */
+    double scale;                           /* host window pixels per guest pixel */
+    double origin_x, origin_y;              /* where the host part starts, in host window pixels */
     bool subsurface;
     bool shown;
 } MimeUiFrame;

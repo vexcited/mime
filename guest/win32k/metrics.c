@@ -60,6 +60,7 @@ static void read_display(void)
     if (RectEmpty(&W32Display.Work))
         W32Display.Work = (RECT){0, 0, W32Display.Width, W32Display.Height};
     W32Display.RefreshHz = boot->display.refresh_hz ? boot->display.refresh_hz : 60;
+    DisplayApplyMode();
 }
 
 void MetricsInitialize(void)
@@ -74,13 +75,15 @@ void MetricsInitialize(void)
     W32SystemFont = W32MessageFontForDpi(W32Display.Dpi);
 }
 
-/* the host display changed size or work area. */
+/* the host display changed size or work area, or a program set a display mode. */
 void MetricsDisplayChanged(void)
 {
     LONG width = W32Display.Width, height = W32Display.Height;
     RECT work = W32Display.Work;
+    DWORD bits = W32Display.Bits;
     read_display();
-    if (width != W32Display.Width || height != W32Display.Height || memcmp(&work, &W32Display.Work, sizeof(work)))
+    if (width != W32Display.Width || height != W32Display.Height || bits != W32Display.Bits ||
+        memcmp(&work, &W32Display.Work, sizeof(work)))
         WndDisplayChanged();
 }
 

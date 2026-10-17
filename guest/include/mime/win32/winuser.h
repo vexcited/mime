@@ -1556,8 +1556,42 @@ WINUSERAPI HMONITOR WINAPI MonitorFromPoint(POINT point, DWORD flags);
 
 #define ENUM_CURRENT_SETTINGS ((DWORD)-1)
 #define ENUM_REGISTRY_SETTINGS ((DWORD)-2)
+#define EDS_RAWMODE 0x00000002
+#define EDS_ROTATEDMODE 0x00000004
+
+/* ChangeDisplaySettings flags and results. */
+#define CDS_UPDATEREGISTRY 0x00000001
+#define CDS_TEST 0x00000002
+#define CDS_FULLSCREEN 0x00000004
+#define CDS_GLOBAL 0x00000008
+#define CDS_SET_PRIMARY 0x00000010
+#define CDS_VIDEOPARAMETERS 0x00000020
+#define CDS_ENABLE_UNSAFE_MODES 0x00000100
+#define CDS_DISABLE_UNSAFE_MODES 0x00000200
+#define CDS_RESET 0x40000000
+#define CDS_RESET_EX 0x20000000
+#define CDS_NORESET 0x10000000
+#define DISP_CHANGE_SUCCESSFUL 0
+#define DISP_CHANGE_RESTART 1
+#define DISP_CHANGE_FAILED -1
+#define DISP_CHANGE_BADMODE -2
+#define DISP_CHANGE_NOTUPDATED -3
+#define DISP_CHANGE_BADFLAGS -4
+#define DISP_CHANGE_BADPARAM -5
+#define DISP_CHANGE_BADDUALVIEW -6
+
 struct _devicemodeW;
+struct _devicemodeA;
 WINUSERAPI BOOL WINAPI EnumDisplaySettingsW(LPCWSTR device, DWORD index, struct _devicemodeW *mode);
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsA(LPCSTR device, DWORD index, struct _devicemodeA *mode);
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsExW(LPCWSTR device, DWORD index, struct _devicemodeW *mode, DWORD flags);
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsExA(LPCSTR device, DWORD index, struct _devicemodeA *mode, DWORD flags);
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsW(struct _devicemodeW *mode, DWORD flags);
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsA(struct _devicemodeA *mode, DWORD flags);
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsExW(LPCWSTR device, struct _devicemodeW *mode, HWND window, DWORD flags,
+                                                LPVOID param);
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsExA(LPCSTR device, struct _devicemodeA *mode, HWND window, DWORD flags,
+                                                LPVOID param);
 WINUSERAPI BOOL WINAPI GetMonitorInfoW(HMONITOR monitor, LPMONITORINFO info);
 
 /* GetDCEx flags. */

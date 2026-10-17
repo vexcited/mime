@@ -770,6 +770,7 @@ typedef struct W32_DISPLAY {
     RECT Work;
     UINT Dpi;
     UINT RefreshHz;
+    DWORD Bits; /* of the display mode a program set, 32 otherwise */
 } W32_DISPLAY;
 
 extern W32_DISPLAY W32Display;
@@ -785,6 +786,9 @@ HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
 void MetricsDisplayChanged(void);
+/* display.c */
+void DisplayApplyMode(void);
+void DisplayProcessExited(HANDLE pid);
 void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);

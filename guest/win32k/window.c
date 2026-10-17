@@ -664,7 +664,7 @@ void WndDisplayChanged(void)
             WndSetPos(c, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         if (c->Thread)
-            QueuePost(c->Thread, WndHandle(c), WM_DISPLAYCHANGE, 32,
+            QueuePost(c->Thread, WndHandle(c), WM_DISPLAYCHANGE, W32Display.Bits,
                       MAKELPARAM((WORD)W32Display.Width, (WORD)W32Display.Height));
     }
 }

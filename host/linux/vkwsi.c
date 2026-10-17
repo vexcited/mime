@@ -870,10 +870,9 @@ static void blit(MvkConnection *c, VkCommandBuffer cmd, VkImage src, Box s, uint
 /* the window relative guest rect r in host window pixels. */
 static Box to_pixels(const MimeUiFrame *f, MimeRect r)
 {
-    double sx = (double)f->pixel_width / MIME_MAX(f->host.right - f->host.left, 1);
-    double sy = (double)f->pixel_height / MIME_MAX(f->host.bottom - f->host.top, 1);
-    return (Box){(r.left - f->host.left) * sx, (r.top - f->host.top) * sy, (r.right - f->host.left) * sx,
-                 (r.bottom - f->host.top) * sy};
+    double s = f->scale;
+    return (Box){f->origin_x + (r.left - f->host.left) * s, f->origin_y + (r.top - f->host.top) * s,
+                 f->origin_x + (r.right - f->host.left) * s, f->origin_y + (r.bottom - f->host.top) * s};
 }
 
 static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Swapchain *s, uint32_t index,

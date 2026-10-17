@@ -48,6 +48,7 @@ typedef struct UiWindow {
     uint8_t *pixels; /* the latest guest surface, copied by the presenting vcpu */
     uint32_t width, height;
     uint32_t pixel_width, pixel_height; /* the host window */
+    int32_t logical_width, logical_height; /* the host window in sdl window coordinates */
     MimeRect dirty;
     bool has_dirty;
     bool present_queued;
@@ -144,12 +145,40 @@ static MimeRect host_part(const MimeWinConfig *c)
                       MIME_MAX(v.bottom, in.bottom)};
 }
 
+/*
+ * where the guest window sits in its host window, in sdl window
+ * coordinates per guest pixel and an offset. a window is drawn at the
+ * display's scale, but a fullscreen one fills the host window: one made
+ * for a display mode smaller than the screen is scaled up, its aspect
+ * kept and the rest left black, as a monitor shows a smaller mode.
+ */
+typedef struct Fit {
+    double scale;
+    double x, y;
+} Fit;
+
+static Fit window_fit(const UiWindow *w)
+{
+    Fit fit = {1.0 / g_scale, 0, 0};
+    if (!w->fullscreen || w->logical_width <= 0 || w->logical_height <= 0)
+        return fit;
+    MimeRect host = host_part(&w->config);
+    double gw = host.right - host.left, gh = host.bottom - host.top;
+    if (gw <= 0 || gh <= 0)
+        return fit;
+    fit.scale = fmin(w->logical_width / gw, w->logical_height / gh);
+    fit.x = (w->logical_width - gw * fit.scale) / 2;
+    fit.y = (w->logical_height - gh * fit.scale) / 2;
+    return fit;
+}
+
 /* a point of the host window, in sdl window coordinates, as guest screen pixels. */
 static void window_point_to_guest(UiWindow *w, float x, float y, int32_t *gx, int32_t *gy)
 {
     MimeRect host = host_part(&w->config);
-    *gx = w->config.rect.left + host.left + (int32_t)lround(x * g_scale);
-    *gy = w->config.rect.top + host.top + (int32_t)lround(y * g_scale);
+    Fit fit = window_fit(w);
+    *gx = w->config.rect.left + host.left + (int32_t)lround((x - fit.x) / fit.scale);
+    *gy = w->config.rect.top + host.top + (int32_t)lround((y - fit.y) / fit.scale);
 }
 
 static uint32_t modifiers_of(SDL_Keymod mod)
@@ -378,12 +407,16 @@ static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, vo
 
 static void update_pixel_size(UiWindow *w)
 {
-    int width = 0, height = 0;
-    if (w->window)
+    int width = 0, height = 0, logical_width = 0, logical_height = 0;
+    if (w->window) {
         SDL_GetWindowSizeInPixels(w->window, &width, &height);
+        SDL_GetWindowSize(w->window, &logical_width, &logical_height);
+    }
     pthread_mutex_lock(&w->lock);
     w->pixel_width = (uint32_t)MIME_MAX(width, 0);
     w->pixel_height = (uint32_t)MIME_MAX(height, 0);
+    w->logical_width = logical_width;
+    w->logical_height = logical_height;
     pthread_mutex_unlock(&w->lock);
 }
 
@@ -497,11 +530,13 @@ static void draw(UiWindow *w)
     if (!w->texture)
         return;
     MimeRect vis = visible_part(&w->config), host = host_part(&w->config);
-    SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, 0);
+    /* around a window the fit leaves smaller than the screen, black as a monitor's border. */
+    SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, w->fullscreen ? 255 : 0);
     SDL_RenderClear(w->renderer);
     SDL_FRect src = {(float)vis.left, (float)vis.top, (float)(vis.right - vis.left), (float)(vis.bottom - vis.top)};
-    SDL_FRect dst = {(float)((vis.left - host.left) / g_scale), (float)((vis.top - host.top) / g_scale),
-                     (float)((vis.right - vis.left) / g_scale), (float)((vis.bottom - vis.top) / g_scale)};
+    Fit fit = window_fit(w);
+    SDL_FRect dst = {(float)(fit.x + (vis.left - host.left) * fit.scale), (float)(fit.y + (vis.top - host.top) * fit.scale),
+                     (float)((vis.right - vis.left) * fit.scale), (float)((vis.bottom - vis.top) * fit.scale)};
     SDL_RenderTexture(w->renderer, w->texture, &src, &dst);
     if (w->config.border_color) {
         uint32_t c = w->config.border_color;
@@ -850,10 +885,11 @@ static bool wayland_globals(struct wl_display *display)
 static MimeRect client_in_window(UiWindow *w, MimeRect client)
 {
     MimeRect host = host_part(&w->config);
-    return (MimeRect){(int32_t)lround((client.left - host.left) / g_scale),
-                      (int32_t)lround((client.top - host.top) / g_scale),
-                      (int32_t)lround((client.right - host.left) / g_scale),
-                      (int32_t)lround((client.bottom - host.top) / g_scale)};
+    Fit fit = window_fit(w);
+    return (MimeRect){(int32_t)lround(fit.x + (client.left - host.left) * fit.scale),
+                      (int32_t)lround(fit.y + (client.top - host.top) * fit.scale),
+                      (int32_t)lround(fit.x + (client.right - host.left) * fit.scale),
+                      (int32_t)lround(fit.y + (client.bottom - host.top) * fit.scale)};
 }
 
 static void destroy_subsurface(UiWindow *w)
@@ -1063,6 +1099,12 @@ bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame)
     pthread_mutex_unlock(&g_windows_lock);
     frame->host = host_part(&w->config);
     frame->visible = visible_part(&w->config);
+    /* where the guest window lands in the host window's pixels. */
+    Fit fit = window_fit(w);
+    double density = w->logical_width > 0 ? (double)w->pixel_width / w->logical_width : 1.0;
+    frame->scale = fit.scale * density;
+    frame->origin_x = fit.x * density;
+    frame->origin_y = fit.y * density;
     frame->surface_width = w->pixels ? w->width : 0;
     frame->surface_height = w->pixels ? w->height : 0;
     frame->shown = w->shown && !(w->config.flags & MIME_WIN_MINIMIZED);
@@ -1071,8 +1113,6 @@ bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame)
     if (frame->subsurface) {
         /* the client area at the window's density. */
         MimeRect r = client_in_window(w, client);
-        int32_t logical = MIME_MAX(host_part(&w->config).right - host_part(&w->config).left, 1);
-        double density = w->pixel_width ? w->pixel_width * g_scale / logical : 1.0;
         frame->pixel_width = (uint32_t)MIME_MAX(lround((r.right - r.left) * density), 0);
         frame->pixel_height = (uint32_t)MIME_MAX(lround((r.bottom - r.top) * density), 0);
         moved = memcmp(&r, &w->vk_place, sizeof(r)) != 0;
@@ -1378,6 +1418,7 @@ static void handle_event(const SDL_Event *e)
         break;
     }
     case SDL_EVENT_WINDOW_EXPOSED:
+    case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
         UiWindow *w = find_by_sdl(e->window.windowID);
         if (w)

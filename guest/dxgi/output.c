@@ -4,6 +4,7 @@
  * at the same rate, as a panel's scaler takes them, so games can list them.
  */
 #include "dxgi_private.h"
+#include <mime/display_modes.h>
 
 typedef struct DxgiOutput {
     IDXGIOutput6 iface;
@@ -19,15 +20,6 @@ static DxgiOutput *impl(IDXGIOutput6 *iface) { return CONTAINING_RECORD(iface, D
 static const GUID *const OUTPUT_IIDS[] = {
     &IID_IUnknown,     &IID_IDXGIObject,  &IID_IDXGIOutput,  &IID_IDXGIOutput1, &IID_IDXGIOutput2,
     &IID_IDXGIOutput3, &IID_IDXGIOutput4, &IID_IDXGIOutput5, &IID_IDXGIOutput6,
-};
-
-static const struct {
-    USHORT width, height;
-} RESOLUTIONS[] = {
-    {640, 480},   {720, 480},   {720, 576},   {800, 600},   {1024, 768},  {1152, 864},  {1176, 664},
-    {1280, 720},  {1280, 768},  {1280, 800},  {1280, 960},  {1280, 1024}, {1360, 768},  {1366, 768},
-    {1440, 900},  {1600, 900},  {1600, 1024}, {1600, 1200}, {1680, 1050}, {1920, 1080}, {1920, 1200},
-    {2048, 1152}, {2560, 1080}, {2560, 1440}, {2560, 1600}, {3440, 1440}, {3840, 2160},
 };
 
 /* the formats a display can scan out, those swap chains take. */
@@ -46,6 +38,7 @@ static BOOL displayable(DXGI_FORMAT format)
     }
 }
 
+/* the panel's own mode, which a program changing the display mode does not change. */
 static void native_mode(DxgiOutput *output, UINT *width, UINT *height, UINT *rate)
 {
     MONITORINFOEXW info = {sizeof(info)};
@@ -53,9 +46,13 @@ static void native_mode(DxgiOutput *output, UINT *width, UINT *height, UINT *rat
     GetMonitorInfoW(output->monitor, (MONITORINFO *)&info);
     *width = info.rcMonitor.right - info.rcMonitor.left;
     *height = info.rcMonitor.bottom - info.rcMonitor.top;
-    *rate = EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1
-                ? mode.dmDisplayFrequency
-                : 60;
+    *rate = 60;
+    if (EnumDisplaySettingsW(info.szDevice, ENUM_REGISTRY_SETTINGS, &mode)) {
+        *width = mode.dmPelsWidth;
+        *height = mode.dmPelsHeight;
+        if (mode.dmDisplayFrequency > 1)
+            *rate = mode.dmDisplayFrequency;
+    }
 }
 
 /* the modes in ascending order, the native one included, or their count with no array. */
@@ -63,11 +60,11 @@ static UINT list_modes(DxgiOutput *output, DXGI_FORMAT format, DXGI_MODE_DESC1 *
 {
     UINT width, height, rate, n = 0;
     native_mode(output, &width, &height, &rate);
-    for (UINT i = 0; i <= RTL_NUMBER_OF(RESOLUTIONS); i++) {
+    for (UINT i = 0; i <= RTL_NUMBER_OF(MIME_DISPLAY_RESOLUTIONS); i++) {
         UINT w = width, h = height;
-        if (i < RTL_NUMBER_OF(RESOLUTIONS)) {
-            w = RESOLUTIONS[i].width;
-            h = RESOLUTIONS[i].height;
+        if (i < RTL_NUMBER_OF(MIME_DISPLAY_RESOLUTIONS)) {
+            w = MIME_DISPLAY_RESOLUTIONS[i].width;
+            h = MIME_DISPLAY_RESOLUTIONS[i].height;
             if (w > width || h > height || (w == width && h == height))
                 continue;
         }
@@ -191,10 +188,10 @@ static HRESULT STDMETHODCALLTYPE output_get_display_mode_list(IDXGIOutput6 *ifac
         return DXGI_ERROR_INVALID_CALL;
     if (!modes)
         return get_modes1(iface, format, flags, count, nullptr);
-    DXGI_MODE_DESC1 *all = HeapAlloc(GetProcessHeap(), 0, (RTL_NUMBER_OF(RESOLUTIONS) + 1) * sizeof(*all));
+    DXGI_MODE_DESC1 *all = HeapAlloc(GetProcessHeap(), 0, (RTL_NUMBER_OF(MIME_DISPLAY_RESOLUTIONS) + 1) * sizeof(*all));
     if (!all)
         return E_OUTOFMEMORY;
-    UINT n = RTL_NUMBER_OF(RESOLUTIONS) + 1;
+    UINT n = RTL_NUMBER_OF(MIME_DISPLAY_RESOLUTIONS) + 1;
     HRESULT hr = get_modes1(iface, format, flags, &n, all);
     if (SUCCEEDED(hr)) {
         for (UINT i = 0; i < n && i < *count; i++)
@@ -219,7 +216,7 @@ static HRESULT STDMETHODCALLTYPE output_find_closest_matching_mode1(IDXGIOutput6
     if (mode->Format == DXGI_FORMAT_UNKNOWN && !device)
         return DXGI_ERROR_INVALID_CALL;
     DXGI_FORMAT format = mode->Format == DXGI_FORMAT_UNKNOWN ? DXGI_FORMAT_R8G8B8A8_UNORM : mode->Format;
-    DXGI_MODE_DESC1 modes[RTL_NUMBER_OF(RESOLUTIONS) + 1];
+    DXGI_MODE_DESC1 modes[RTL_NUMBER_OF(MIME_DISPLAY_RESOLUTIONS) + 1];
     UINT n = RTL_NUMBER_OF(modes);
     get_modes1(iface, format, 0, &n, modes);
     if (!n)

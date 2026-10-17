@@ -393,6 +393,16 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[8] = (LONG64)(LONG)a[8];
         return (ULONG)MxCallService(number, v);
     }
+    /* DEVMODEW has no pointers, only the device name is a counted string. */
+    case MIME_SVC_NtUserEnumDisplaySettings:
+    case MIME_SVC_NtUserChangeDisplaySettings: {
+        UNICODE_STRING device = str32(a[0]);
+        v[0] = a[0] ? (ULONG_PTR)&device : 0;
+        v[1] = a[1];
+        v[2] = a[2];
+        v[3] = a[3];
+        return (ULONG)MxCallService(number, v);
+    }
     case MIME_SVC_NtUserFindWindowEx: {
         UNICODE_STRING klass = str32(a[2]), name = str32(a[3]);
         v[0] = (LONG64)(LONG)a[0];

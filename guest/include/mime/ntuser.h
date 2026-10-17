@@ -415,6 +415,11 @@ W32KAPI BOOL NTAPI NtUserKillTimer(HWND hwnd, UINT_PTR id);
 W32KAPI BOOL NTAPI NtUserTrackMouseEvent(TRACKMOUSEEVENT *track);
 
 W32KAPI BOOL NTAPI NtUserSystemParametersInfo(UINT action, UINT param, PVOID data, UINT ini);
+struct _devicemodeW;
+W32KAPI NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, struct _devicemodeW *mode,
+                                                 DWORD flags);
+W32KAPI LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, struct _devicemodeW *mode, DWORD flags,
+                                               PVOID param);
 W32KAPI BOOL NTAPI NtUserSystemParametersInfoForDpi(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 W32KAPI BOOL NTAPI NtUserMessageBeep(UINT type);
 

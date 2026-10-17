@@ -230,6 +230,12 @@ HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port,
     return h;
 }
 
+/* a dc of the screen while a program set an 8 bit display mode. */
+static BOOLEAN palette_display(const DC *dc)
+{
+    return W32Display.Bits == 8 && !(dc && dc->Surface && (dc->Flags & DC_MEMORY));
+}
+
 int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
 {
     UserEnter();
@@ -258,15 +264,18 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = W32Display.Height;
         break;
     case BITSPIXEL:
-        v = dc && dc->Surface && (dc->Flags & DC_MEMORY) ? dc->Surface->Bpp : 32;
+        v = dc && dc->Surface && (dc->Flags & DC_MEMORY) ? dc->Surface->Bpp : (int)W32Display.Bits;
         break;
     case PLANES:
         v = 1;
         break;
     case NUMBRUSHES:
     case NUMPENS:
-    case NUMCOLORS:
         v = -1;
+        break;
+    case NUMCOLORS:
+        /* a palette display has the twenty static colors, others more than an int says. */
+        v = palette_display(dc) ? 20 : -1;
         break;
     case ASPECTX:
     case ASPECTY:
@@ -280,11 +289,13 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = (int)dpi;
         break;
     case SIZEPALETTE:
+        v = palette_display(dc) ? 256 : 0;
+        break;
     case NUMRESERVED:
-        v = 0;
+        v = palette_display(dc) ? 20 : 0;
         break;
     case COLORRES:
-        v = 24;
+        v = palette_display(dc) ? 18 : 24;
         break;
     case VREFRESH:
         v = (int)W32Display.RefreshHz;
@@ -296,7 +307,7 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = 0x7F;
         break;
     case RASTERCAPS:
-        v = RC_BITBLT | RC_STRETCHBLT | RC_DI_BITMAP | RC_DIBTODEV | RC_STRETCHDIB;
+        v = RC_BITBLT | RC_STRETCHBLT | RC_DI_BITMAP | RC_DIBTODEV | RC_STRETCHDIB | (palette_display(dc) ? RC_PALETTE : 0);
         break;
     case TEXTCAPS:
         v = 0x7807;

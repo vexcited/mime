@@ -2,28 +2,107 @@
 #include "user32_private.h"
 #include <mime/win32/winspool.h>
 
-WINUSERAPI BOOL WINAPI EnumDisplaySettingsW(LPCWSTR device, DWORD index, DEVMODEW *mode)
+/* the display modes live in win32k, which also changes them; see guest/win32k/display.c. */
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsExW(LPCWSTR device, DWORD index, DEVMODEW *mode, DWORD flags)
 {
-    if (!mode || mode->dmSize < sizeof(*mode) ||
-        (index != 0 && index != (DWORD)-1 && index != (DWORD)-2)) {
+    if (!mode) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    DISPLAY_DEVICEW display = {};
-    display.cb = sizeof(display);
-    if (!EnumDisplayDevicesW(nullptr, 0, &display, 0) ||
-        (device && *device && _wcsicmp(device, display.DeviceName)))
+    UNICODE_STRING name;
+    if (device)
+        RtlInitUnicodeString(&name, device);
+    return NT_SUCCESS(NtUserEnumDisplaySettings(device ? &name : nullptr, index, mode, flags));
+}
+
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsW(LPCWSTR device, DWORD index, DEVMODEW *mode)
+{
+    return EnumDisplaySettingsExW(device, index, mode, 0);
+}
+
+/* the ansi DEVMODE: the same fields, the two names in bytes. */
+static void mode_to_ansi(const DEVMODEW *w, DEVMODEA *a, WORD size)
+{
+    DEVMODEA m;
+    memset(&m, 0, sizeof(m));
+    WideCharToMultiByte(CP_ACP, 0, w->dmDeviceName, -1, (LPSTR)m.dmDeviceName, sizeof(m.dmDeviceName), nullptr,
+                        nullptr);
+    memcpy(&m.dmSpecVersion, &w->dmSpecVersion, offsetof(DEVMODEW, dmFormName) - offsetof(DEVMODEW, dmSpecVersion));
+    WideCharToMultiByte(CP_ACP, 0, w->dmFormName, -1, (LPSTR)m.dmFormName, sizeof(m.dmFormName), nullptr, nullptr);
+    memcpy(&m.dmLogPixels, &w->dmLogPixels, sizeof(DEVMODEW) - offsetof(DEVMODEW, dmLogPixels));
+    m.dmSize = size < sizeof(m) ? size : sizeof(m);
+    m.dmDriverExtra = 0;
+    memcpy(a, &m, m.dmSize);
+}
+
+static void mode_from_ansi(const DEVMODEA *a, DEVMODEW *w)
+{
+    DEVMODEA m;
+    memset(&m, 0, sizeof(m));
+    memcpy(&m, a, a->dmSize < sizeof(m) ? a->dmSize : sizeof(m));
+    memset(w, 0, sizeof(*w));
+    MultiByteToWideChar(CP_ACP, 0, (LPCSTR)m.dmDeviceName, sizeof(m.dmDeviceName), w->dmDeviceName,
+                        RTL_NUMBER_OF(w->dmDeviceName));
+    w->dmDeviceName[RTL_NUMBER_OF(w->dmDeviceName) - 1] = 0;
+    memcpy(&w->dmSpecVersion, &m.dmSpecVersion, offsetof(DEVMODEA, dmFormName) - offsetof(DEVMODEA, dmSpecVersion));
+    MultiByteToWideChar(CP_ACP, 0, (LPCSTR)m.dmFormName, sizeof(m.dmFormName), w->dmFormName,
+                        RTL_NUMBER_OF(w->dmFormName));
+    w->dmFormName[RTL_NUMBER_OF(w->dmFormName) - 1] = 0;
+    memcpy(&w->dmLogPixels, &m.dmLogPixels, sizeof(DEVMODEA) - offsetof(DEVMODEA, dmLogPixels));
+    /* an ansi mode's size counts byte names; the wide one's counts wide names. */
+    w->dmSize = a->dmSize >= sizeof(DEVMODEA) ? sizeof(DEVMODEW) : a->dmSize + sizeof(DEVMODEW) - sizeof(DEVMODEA);
+    w->dmDriverExtra = 0;
+}
+
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsExA(LPCSTR device, DWORD index, DEVMODEA *mode, DWORD flags)
+{
+    if (!mode) {
+        SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
-    memset(mode, 0, sizeof(*mode));
-    mode->dmSize = sizeof(*mode);
-    mode->dmSpecVersion = 0x401;
-    lstrcpynW(mode->dmDeviceName, display.DeviceName, CCHDEVICENAME);
-    mode->dmFields = 0x005c0020;
-    mode->dmBitsPerPel = 32;
-    mode->dmPelsWidth = GetSystemMetrics(SM_CXSCREEN);
-    mode->dmPelsHeight = GetSystemMetrics(SM_CYSCREEN);
-    mode->dmDisplayFrequency = 60;
-    return TRUE;
+    }
+    LPWSTR name = UserAtoW(device);
+    DEVMODEW w = {.dmSize = sizeof(w)};
+    BOOL ok = EnumDisplaySettingsExW(name, index, &w, flags);
+    UserFreeConverted(name, device);
+    if (ok)
+        mode_to_ansi(&w, mode, mode->dmSize);
+    return ok;
+}
+
+WINUSERAPI BOOL WINAPI EnumDisplaySettingsA(LPCSTR device, DWORD index, DEVMODEA *mode)
+{
+    return EnumDisplaySettingsExA(device, index, mode, 0);
+}
+
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsExW(LPCWSTR device, DEVMODEW *mode, HWND window, DWORD flags,
+                                                LPVOID param)
+{
+    UNICODE_STRING name;
+    if (device)
+        RtlInitUnicodeString(&name, device);
+    return NtUserChangeDisplaySettings(device ? &name : nullptr, mode, flags, param);
+}
+
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsW(DEVMODEW *mode, DWORD flags)
+{
+    return ChangeDisplaySettingsExW(nullptr, mode, nullptr, flags, nullptr);
+}
+
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsExA(LPCSTR device, DEVMODEA *mode, HWND window, DWORD flags,
+                                                LPVOID param)
+{
+    DEVMODEW w;
+    if (mode)
+        mode_from_ansi(mode, &w);
+    LPWSTR name = UserAtoW(device);
+    LONG result = ChangeDisplaySettingsExW(name, mode ? &w : nullptr, window, flags, param);
+    UserFreeConverted(name, device);
+    return result;
+}
+
+WINUSERAPI LONG WINAPI ChangeDisplaySettingsA(DEVMODEA *mode, DWORD flags)
+{
+    return ChangeDisplaySettingsExA(nullptr, mode, nullptr, flags, nullptr);
 }
 
 WINUSERAPI LONG WINAPI GetDisplayConfigBufferSizes(UINT flags, UINT *paths, UINT *modes)

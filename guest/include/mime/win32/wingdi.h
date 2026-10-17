@@ -167,6 +167,7 @@
 #define RC_DI_BITMAP 0x0080
 #define RC_DIBTODEV 0x0200
 #define RC_STRETCHDIB 0x2000
+#define RC_PALETTE 0x0100
 
 /* fonts. */
 #define FW_DONTCARE 0
