@@ -485,6 +485,11 @@ HRESULT DdBlt(DDSURF *dst, const RECT *dst_in, DDSURF *src, DWORD src_version, c
     }
     if (!dst->memory || (job.src && !job.src->memory))
         return DDERR_SURFACELOST;
+    DdSurfSync(dst);
+    if (job.src)
+        DdSurfSync(job.src);
+    if (job.op == DDBLT_DEPTHFILL)
+        D3dSurfDepthFill(dst, &d, job.fill);
     if (job.src && (is_fourcc(dst) || is_fourcc(job.src)) && !job.convert)
         return DdBltBlocks(dst, &d, job.src, &s);
     RECT dirty = {};
@@ -578,6 +583,8 @@ HRESULT DdBltFast(DDSURF *dst, DWORD x, DWORD y, DDSURF *src, const RECT *src_in
     }
     if (!dst->memory || !src->memory)
         return DDERR_SURFACELOST;
+    DdSurfSync(dst);
+    DdSurfSync(src);
     if ((is_fourcc(dst) || is_fourcc(src)) && !job.convert)
         return DdBltBlocks(dst, &d, src, &s);
     run_rect(&job, &d, &s);

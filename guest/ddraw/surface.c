@@ -414,6 +414,7 @@ static void destroy(DDSURF *s)
     }
     release_dc(s);
     free_private(s);
+    D3dSurfFree(s);
     DdHideGamma(s);
     HeapFree(GetProcessHeap(), 0, s->gamma);
     free_memory(s);
@@ -496,6 +497,7 @@ static void bump(DDSURF *s)
 {
     if (s->uniqueness && !++s->uniqueness)
         s->uniqueness = 1;
+    s->generation++;
 }
 
 /* pixels changed: a new uniqueness value, and the screen shows the primary's change. */
@@ -909,12 +911,18 @@ static void swap_memory(DDSURF *a, DDSURF *b)
     BYTE *memory = a->memory;
     DDMEM *mem = a->mem;
     BOOL gdi = a->gdi;
+    struct D3DSURFX *d3d = a->d3d;
+    DWORD generation = a->generation;
     a->memory = b->memory;
     a->mem = b->mem;
     a->gdi = b->gdi;
+    a->d3d = b->d3d;
+    a->generation = b->generation;
     b->memory = memory;
     b->mem = mem;
     b->gdi = gdi;
+    b->d3d = d3d;
+    b->generation = generation;
 }
 
 /* a mipmap flips level by level, each to the same place in its chain. */
@@ -1338,6 +1346,7 @@ static HRESULT lock(DDSURF *s, DWORD version, const RECT *rect, void *desc, DWOR
     }
     if (!s->memory)
         return DDERR_SURFACELOST;
+    DdSurfSync(s);
     BYTE *pointer = rect_pointer(s, rect);
     if (rect)
         s->locks[s->rect_locks++] = (DDLOCKED){*rect, pointer};
@@ -1452,6 +1461,7 @@ static HRESULT STDMETHODCALLTYPE surf_get_dc(void *This, HDC *out)
     }
     if (s->format.gdi == D3DDDIFMT_UNKNOWN || !s->memory)
         return DdLeave(DDERR_CANTCREATEDC);
+    DdSurfSync(s);
     PALETTEENTRY table[256];
     dc_colors(s, table);
     D3DKMT_CREATEDCFROMMEMORY d = {

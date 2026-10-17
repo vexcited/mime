@@ -76,6 +76,7 @@ HRESULT DdCreate(const GUID *guid, DWORD version, void **out, BOOL initialize)
     dd->iface7.lpVtbl = &dd7_vtbl;
     dd->magic = DDRAW_MAGIC;
     dd->initialized = initialize;
+    dd->dx7 = version == DDV7;
     InitializeListHead(&dd->surfaces);
     InitializeListHead(&dd->palettes);
     InitializeListHead(&dd->clippers);
@@ -90,6 +91,9 @@ HRESULT DdCreate(const GUID *guid, DWORD version, void **out, BOOL initialize)
 
 static void destroy(DDRAW *dd)
 {
+#ifndef _WIN64
+    D3dObjDestroy(dd);
+#endif
     /* what was made through the object goes with it; programs still holding them find them dead. */
     while (!IsListEmpty(&dd->surfaces))
         DdSurfKill(CONTAINING_RECORD(dd->surfaces.Flink, DDSURF, links));
@@ -132,7 +136,7 @@ ULONG DdRelease(DDRAW *dd, LONG *iface_ref)
 }
 
 /* IUnknown is IDirectDraw. */
-HRESULT DdQuery(DDRAW *dd, REFIID riid, void **out)
+HRESULT DdQuery(DDRAW *dd, DWORD caller, REFIID riid, void **out)
 {
     if (!out)
         return DDERR_INVALIDPARAMS;
@@ -149,7 +153,11 @@ HRESULT DdQuery(DDRAW *dd, REFIID riid, void **out)
     else if (IsEqualGUID(riid, &IID_IDirectDraw7))
         version = DDV7;
     else
+#ifdef _WIN64
         return E_NOINTERFACE;
+#else
+        return D3dObjQuery(dd, caller, riid, out);
+#endif
     DdAddRef(dd, ref_of(dd, version));
     *out = DdIface(dd, version);
     return S_OK;
@@ -180,7 +188,7 @@ static HRESULT STDMETHODCALLTYPE dd_query(void *This, REFIID riid, void **out)
     if (!dd)
         return DDERR_INVALIDOBJECT;
     DdEnter();
-    return DdLeave(DdQuery(dd, riid, out));
+    return DdLeave(DdQuery(dd, version_of(This), riid, out));
 }
 
 static ULONG STDMETHODCALLTYPE dd_add_ref(void *This)

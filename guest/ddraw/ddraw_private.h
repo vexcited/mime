@@ -48,6 +48,7 @@ struct DDRAW {
     LONG ref;  /* all interfaces together */
     DWORD magic;
     BOOL initialized;
+    BOOL dx7;     /* made by DirectDrawCreateEx, as directx 7 makes its objects */
     DWORD flags;
     DWORD level;  /* the DDSCL flags of the last call */
     BOOL level_v1; /* set through IDirectDraw, whose mode outlives exclusive mode */
@@ -61,6 +62,7 @@ struct DDRAW {
     LIST_ENTRY surfaces;
     LIST_ENTRY palettes;
     LIST_ENTRY clippers;
+    struct D3DOBJ *d3d; /* its direct3d object, made at the first query */
     LIST_ENTRY links; /* in the process's list */
 };
 
@@ -83,7 +85,8 @@ static inline HRESULT DdLeave(HRESULT hr)
 
 DDRAW *DdFromIface(void *iface);
 HRESULT DdCreate(const GUID *guid, DWORD version, void **out, BOOL initialize);
-HRESULT DdQuery(DDRAW *dd, REFIID riid, void **out);
+/* caller is the version of the interface queried. */
+HRESULT DdQuery(DDRAW *dd, DWORD caller, REFIID riid, void **out);
 ULONG DdAddRef(DDRAW *dd, LONG *iface_ref);
 ULONG DdRelease(DDRAW *dd, LONG *iface_ref);
 void *DdIface(DDRAW *dd, DWORD version);
@@ -190,6 +193,8 @@ struct DDSURF {
     DDGAMMARAMP *gamma; /* of the primary, null for none */
     BOOL gamma_shown;   /* on the display, as the exclusive owner's */
     DDMODE mode;       /* the display mode it was made in */
+    DWORD generation;  /* counts every change of its pixels */
+    struct D3DSURFX *d3d; /* its copy where direct3d draws, which travels with the memory */
     LIST_ENTRY links;  /* in the directdraw object's list */
 };
 
@@ -279,6 +284,21 @@ RGNDATA *DdClipRegion(DDCLIP *c, const RECT *bounds);
 void DdPresentDirty(DDSURF *primary, const RECT *rect);
 void DdPresentFlip(DDSURF *primary);
 void DdPresentStop(DDRAW *dd);
+
+/* x86/: direct3d 1 to 7, which only 32-bit windows has. */
+#ifdef _WIN64
+static inline void DdSurfSync(DDSURF *s) {}
+static inline void D3dSurfFree(DDSURF *s) {}
+static inline void D3dSurfDepthFill(DDSURF *s, const RECT *rect, DWORD value) {}
+#else
+/* the memory current before the cpu reads or writes it, direct3d's drawing read back. */
+void DdSurfSync(DDSURF *s);
+void D3dSurfFree(DDSURF *s);
+/* a depth fill reaches the depth buffer direct3d draws with. */
+void D3dSurfDepthFill(DDSURF *s, const RECT *rect, DWORD value);
+HRESULT D3dObjQuery(DDRAW *dd, DWORD version, REFIID riid, void **out);
+void D3dObjDestroy(DDRAW *dd);
+#endif
 
 /* caps.c */
 HRESULT DdGetCaps(DDRAW *dd, DDCAPS *driver, DDCAPS *emulation);

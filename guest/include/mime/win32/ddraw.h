@@ -625,6 +625,15 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDPF_BUMPLUMINANCE 0x00040000
 #define DDPF_BUMPDUDV 0x00080000
 
+/* bit depths, as direct3d's descriptions list them. */
+#define DDBD_1 0x00004000
+#define DDBD_2 0x00002000
+#define DDBD_4 0x00001000
+#define DDBD_8 0x00000800
+#define DDBD_16 0x00000400
+#define DDBD_24 0x00000200
+#define DDBD_32 0x00000100
+
 #ifndef MAKEFOURCC
 #define MAKEFOURCC(a, b, c, d) ((DWORD)(BYTE)(a) | ((DWORD)(BYTE)(b) << 8) | ((DWORD)(BYTE)(c) << 16) | ((DWORD)(BYTE)(d) << 24))
 #endif

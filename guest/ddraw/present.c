@@ -80,6 +80,7 @@ static void present_rect(DDSURF *primary, RECT rect)
     RECT bounds = {0, 0, (LONG)primary->desc.dwWidth, (LONG)primary->desc.dwHeight};
     if (!IntersectRect(&rect, &rect, &bounds))
         return;
+    DdSurfSync(primary);
     DIBINFO info;
     if (!describe(primary, &info))
         return;
