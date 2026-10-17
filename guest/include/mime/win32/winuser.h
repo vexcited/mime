@@ -1522,6 +1522,34 @@ WINUSERAPI BOOL WINAPI SetProcessDPIAware(void);
 WINUSERAPI BOOL WINAPI SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT context);
 WINUSERAPI HWND WINAPI SetFocus(HWND hwnd);
 WINUSERAPI HWND WINAPI GetFocus(void);
+
+#define GUI_CARETBLINKING 0x00000001
+#define GUI_INMOVESIZE 0x00000002
+#define GUI_INMENUMODE 0x00000004
+#define GUI_SYSTEMMENUMODE 0x00000008
+#define GUI_POPUPMENUMODE 0x00000010
+
+typedef struct tagGUITHREADINFO {
+    DWORD cbSize;
+    DWORD flags;
+    HWND hwndActive;
+    HWND hwndFocus;
+    HWND hwndCapture;
+    HWND hwndMenuOwner;
+    HWND hwndMoveSize;
+    HWND hwndCaret;
+    RECT rcCaret;
+} GUITHREADINFO, *PGUITHREADINFO, *LPGUITHREADINFO;
+
+WINUSERAPI BOOL WINAPI GetGUIThreadInfo(DWORD thread, PGUITHREADINFO info);
+WINUSERAPI BOOL WINAPI CreateCaret(HWND hwnd, HBITMAP bitmap, int width, int height);
+WINUSERAPI BOOL WINAPI DestroyCaret(void);
+WINUSERAPI BOOL WINAPI ShowCaret(HWND hwnd);
+WINUSERAPI BOOL WINAPI HideCaret(HWND hwnd);
+WINUSERAPI BOOL WINAPI SetCaretPos(int x, int y);
+WINUSERAPI BOOL WINAPI GetCaretPos(LPPOINT point);
+WINUSERAPI UINT WINAPI GetCaretBlinkTime(void);
+WINUSERAPI BOOL WINAPI SetCaretBlinkTime(UINT milliseconds);
 WINUSERAPI HWND WINAPI SetActiveWindow(HWND hwnd);
 WINUSERAPI HWND WINAPI GetActiveWindow(void);
 WINUSERAPI HWND WINAPI GetForegroundWindow(void);
@@ -2434,6 +2462,8 @@ WINUSERAPI int WINAPI GetKeyboardLayoutList(int count, HKL *list);
 WINUSERAPI HKL WINAPI GetKeyboardLayout(DWORD thread);
 WINUSERAPI int WINAPI GetKeyboardType(int which);
 WINUSERAPI BOOL WINAPI IsCharAlphaW(WCHAR ch);
+WINUSERAPI BOOL WINAPI IsCharUpperW(WCHAR ch);
+WINUSERAPI BOOL WINAPI IsCharLowerW(WCHAR ch);
 WINUSERAPI BOOL WINAPI GetKeyboardLayoutNameW(LPWSTR name);
 WINUSERAPI HKL WINAPI ActivateKeyboardLayout(HKL layout, UINT flags);
 WINUSERAPI HKL WINAPI LoadKeyboardLayoutW(LPCWSTR name, UINT flags);

@@ -6,12 +6,15 @@
 
 WINUSERAPI HDC WINAPI BeginPaint(HWND hwnd, LPPAINTSTRUCT ps)
 {
+    UserCaretPaint(hwnd, TRUE);
     return NtUserBeginPaint(hwnd, ps);
 }
 
 WINUSERAPI BOOL WINAPI EndPaint(HWND hwnd, const PAINTSTRUCT *ps)
 {
-    return NtUserEndPaint(hwnd, ps);
+    BOOL r = NtUserEndPaint(hwnd, ps);
+    UserCaretPaint(hwnd, FALSE);
+    return r;
 }
 
 WINUSERAPI HDC WINAPI GetDC(HWND hwnd)

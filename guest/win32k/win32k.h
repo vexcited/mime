@@ -697,6 +697,9 @@ void TimerProcessExpired(W32THREAD *t, LONG64 *next_due);
 void TimerRemoveWindow(WND *w);
 void TimerRemoveThread(W32THREAD *t);
 BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN remove, MSG *out);
+/* sets or kills a timer of the thread's, the lock held; a system one posts WM_SYSTIMER. */
+UINT_PTR TimerSet(W32THREAD *t, HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, BOOLEAN system);
+BOOLEAN TimerKill(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system);
 LONG64 TimerNextDue(W32THREAD *t);
 
 /* ------------------------------------------------------------------ hooks */

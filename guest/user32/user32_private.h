@@ -133,6 +133,12 @@ UINT UserWindowDpi(HWND hwnd);
 BOOL UserScrollBarMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 void UserFreeScrollData(HWND hwnd);
 BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+
+/* caret.c: the blink of the caret, its hiding while its window paints, and its end with its window. */
+BOOL UserCaretTimer(HWND hwnd, WPARAM id);
+void UserCaretPaint(HWND hwnd, BOOL begin);
+void UserCaretDestroyed(HWND hwnd);
+HWND UserCaretInfo(RECT *rect);
 void UserDrawScrollBar(HWND hwnd, HDC dc);
 void UserTrackScrollBar(HWND hwnd, POINT screen);
 

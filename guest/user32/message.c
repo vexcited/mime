@@ -217,6 +217,8 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
     LRESULT result;
     if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result) || UserDefScrollBars(hwnd, msg, wparam, lparam, &result))
         return result;
+    if (msg == WM_SYSTIMER && UserCaretTimer(hwnd, wparam))
+        return 0;
     return NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_DEFWINDOWPROC, FALSE);
 }
 

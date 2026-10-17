@@ -198,6 +198,7 @@ WINUSERAPI HWND WINAPI CreateWindowExA(DWORD ex_style, LPCSTR class_name, LPCSTR
 
 WINUSERAPI BOOL WINAPI DestroyWindow(HWND hwnd)
 {
+    UserCaretDestroyed(hwnd);
     return NtUserDestroyWindow(hwnd);
 }
 

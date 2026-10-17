@@ -2214,6 +2214,14 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         w->TouchFlags = (ULONG)param;
         r = 1;
         break;
+    case MIME_HWNDPARAM_SYSTIMER: {
+        MIME_SYS_TIMER st;
+        if (!NT_SUCCESS(MimeCopyFromUser(&st, (PVOID)param, sizeof(st))))
+            break;
+        W32THREAD *t = W32GetThread();
+        r = st.Elapse ? TimerSet(t, hwnd, st.Id, st.Elapse, nullptr, TRUE) : TimerKill(t, hwnd, st.Id, TRUE);
+        break;
+    }
     case MIME_HWNDPARAM_ENABLECLOSE: {
         ULONG old = w->Flags;
         if (param)

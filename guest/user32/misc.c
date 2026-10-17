@@ -569,36 +569,6 @@ WINUSERAPI UINT WINAPI GetDoubleClickTime(void)
     return 500;
 }
 
-WINUSERAPI UINT WINAPI GetCaretBlinkTime(void)
-{
-    return 530;
-}
-
-WINUSERAPI BOOL WINAPI CreateCaret(HWND hwnd, HBITMAP bitmap, int width, int height)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI DestroyCaret(void)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI ShowCaret(HWND hwnd)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI HideCaret(HWND hwnd)
-{
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI SetCaretPos(int x, int y)
-{
-    return TRUE;
-}
-
 WINUSERAPI BOOL WINAPI ExitWindowsEx(UINT flags, DWORD reason)
 {
     return FALSE;

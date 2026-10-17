@@ -198,7 +198,13 @@ enum {
     MIME_HWNDPARAM_SETCONTEXTHELPID,
     MIME_HWNDPARAM_ENABLECLOSE,         /* nonzero enables SC_CLOSE, zero greys the close button */
     MIME_HWNDPARAM_SETTOUCH,            /* MIME_TOUCH_REGISTERED and TWF_* flags, 0 unregisters */
+    MIME_HWNDPARAM_SYSTIMER,            /* MIME_SYS_TIMER pointer, an elapse of 0 kills the timer */
 };
+
+typedef struct MIME_SYS_TIMER {
+    UINT_PTR Id;
+    UINT Elapse;
+} MIME_SYS_TIMER;
 
 #define MIME_TOUCH_REGISTERED 0x80000000u
 

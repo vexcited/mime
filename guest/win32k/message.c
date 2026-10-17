@@ -273,6 +273,8 @@ typedef struct TIMER {
     UINT Elapse;
     TIMERPROC Proc;
     ULONG64 Due; /* milliseconds of interrupt time */
+    /* posts WM_SYSTIMER, as the caret's blinking does, apart from the program's timers of the same id. */
+    BOOLEAN System;
 } TIMER;
 
 static LIST_ENTRY g_timers = {&g_timers, &g_timers};
@@ -282,24 +284,21 @@ static ULONG64 now_ms(void)
     return KeQueryInterruptTime() / 10000;
 }
 
-static TIMER *find_timer(W32THREAD *t, HWND hwnd, UINT_PTR id)
+static TIMER *find_timer(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system)
 {
     for (PLIST_ENTRY e = g_timers.Flink; e != &g_timers; e = e->Flink) {
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
-        if (tm->Hwnd == hwnd && tm->Id == id && (hwnd || tm->Thread == t))
+        if (tm->Hwnd == hwnd && tm->Id == id && tm->System == system && (hwnd || tm->Thread == t))
             return tm;
     }
     return nullptr;
 }
 
-UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance)
+UINT_PTR TimerSet(W32THREAD *t, HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, BOOLEAN system)
 {
-    UserEnter();
-    W32THREAD *t = W32GetThread();
-    UINT_PTR result = 0;
     WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if ((hwnd && (!w || w->Thread != t)) || !t)
-        goto out;
+        return 0;
     if (elapse < USER_TIMER_MINIMUM)
         elapse = USER_TIMER_MINIMUM;
     if (elapse > USER_TIMER_MAXIMUM)
@@ -308,13 +307,13 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
         static UINT_PTR next_id = 0x7FFE;
         do
             id = ++next_id;
-        while (find_timer(t, nullptr, id));
+        while (find_timer(t, nullptr, id, system));
     }
-    TIMER *tm = find_timer(t, hwnd, id);
+    TIMER *tm = find_timer(t, hwnd, id, system);
     if (!tm) {
         tm = W32Alloc(sizeof(TIMER));
         if (!tm)
-            goto out;
+            return 0;
         InsertTailList(&g_timers, &tm->Links);
     }
     tm->Thread = t;
@@ -322,10 +321,26 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
     tm->Id = id;
     tm->Elapse = elapse;
     tm->Proc = proc;
+    tm->System = system;
     tm->Due = now_ms() + elapse;
-    result = hwnd ? (id ? id : 1) : id;
     QueueWake(t, 0);
-out:
+    return hwnd ? (id ? id : 1) : id;
+}
+
+BOOLEAN TimerKill(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system)
+{
+    TIMER *tm = find_timer(t, hwnd, id, system);
+    if (tm) {
+        RemoveEntryList(&tm->Links);
+        W32Free(tm);
+    }
+    return tm != nullptr;
+}
+
+UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance)
+{
+    UserEnter();
+    UINT_PTR result = TimerSet(W32GetThread(), hwnd, id, elapse, proc, FALSE);
     UserLeave();
     (void)tolerance;
     return result;
@@ -334,13 +349,9 @@ out:
 BOOL NTAPI NtUserKillTimer(HWND hwnd, UINT_PTR id)
 {
     UserEnter();
-    TIMER *tm = find_timer(W32GetThread(), hwnd, id);
-    if (tm) {
-        RemoveEntryList(&tm->Links);
-        W32Free(tm);
-    }
+    BOOLEAN killed = TimerKill(W32GetThread(), hwnd, id, FALSE);
     UserLeave();
-    return tm != nullptr;
+    return killed;
 }
 
 void TimerRemoveWindow(WND *w)
@@ -407,15 +418,16 @@ static BOOLEAN range_matches(UINT msg, UINT min, UINT max)
 
 BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN remove, MSG *out)
 {
-    if (!range_matches(WM_TIMER, min, max))
+    BOOLEAN user = range_matches(WM_TIMER, min, max), system = range_matches(WM_SYSTIMER, min, max);
+    if (!user && !system)
         return FALSE;
     ULONG64 now = now_ms();
     for (PLIST_ENTRY e = g_timers.Flink; e != &g_timers; e = e->Flink) {
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
-        if (tm->Thread != t || tm->Due > now || !hwnd_matches(tm->Hwnd, hwnd))
+        if (tm->Thread != t || tm->Due > now || !hwnd_matches(tm->Hwnd, hwnd) || !(tm->System ? system : user))
             continue;
         out->hwnd = tm->Hwnd;
-        out->message = WM_TIMER;
+        out->message = tm->System ? WM_SYSTIMER : WM_TIMER;
         out->wParam = tm->Id;
         out->lParam = (LPARAM)tm->Proc;
         out->time = (DWORD)now;
