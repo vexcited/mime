@@ -427,8 +427,12 @@ UINT NTAPI NtUserSendInput(UINT count, const INPUT *user_inputs, int size)
     return done;
 }
 
+HANDLE InputThreadId, InputProcessId;
+
 static void NTAPI input_thread(PVOID context)
 {
+    InputThreadId = PsGetCurrentThreadId();
+    InputProcessId = PsGetCurrentProcessId();
     PKEVENT ready = HalMimeGetInputEvent();
     ULONG64 pa = (ULONG64)MmGetPhysicalAddress(g_events).QuadPart;
     for (;;) {

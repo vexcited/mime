@@ -723,6 +723,8 @@ void InputInitialize(void);
 BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max, BOOLEAN remove,
                        BOOLEAN *consumed);
 extern POINT InputCursorPos;
+/* the raw input thread, which owns the desktop window as csrss's threads do in windows. */
+extern HANDLE InputThreadId, InputProcessId;
 extern UCHAR InputAsyncKeys[256];
 extern WND *InputForeground;
 void InputSetForeground(WND *w);

@@ -474,15 +474,6 @@ typedef struct IDXGIDevice2 IDXGIDevice2;
 typedef struct IDXGIDevice3 IDXGIDevice3;
 typedef struct IDXGIDevice4 IDXGIDevice4;
 
-/*
- * each interface's methods after its parent's, as a macro of the
- * interface type, so a vtable lists them in windows' order.
- */
-#define MIME_IUNKNOWN_METHODS(T)                                                                                       \
-    HRESULT(STDMETHODCALLTYPE *QueryInterface)(T * This, REFIID riid, void **object);                                  \
-    ULONG(STDMETHODCALLTYPE *AddRef)(T * This);                                                                        \
-    ULONG(STDMETHODCALLTYPE *Release)(T * This);
-
 #define IDXGIObject_METHODS(T)                                                                                         \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *SetPrivateData)(T * This, REFGUID name, UINT size, const void *data);                  \
@@ -750,15 +741,6 @@ typedef struct IDXGIDevice4 IDXGIDevice4;
                                                 DXGI_OFFER_RESOURCE_PRIORITY priority, UINT flags);                    \
     HRESULT(STDMETHODCALLTYPE *ReclaimResources1)(T * This, UINT count, IDXGIResource *const *resources,               \
                                                   UINT *results);
-
-/* the vtable and object of an interface whose methods macro is I_METHODS. */
-#define MIME_COM_INTERFACE(I)                                                                                          \
-    typedef struct I##Vtbl {                                                                                           \
-        I##_METHODS(I)                                                                                                 \
-    } I##Vtbl;                                                                                                         \
-    struct I {                                                                                                         \
-        const I##Vtbl *lpVtbl;                                                                                         \
-    };
 
 MIME_COM_INTERFACE(IDXGIObject)
 MIME_COM_INTERFACE(IDXGIDeviceSubObject)

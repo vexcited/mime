@@ -2107,7 +2107,12 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         r = (ULONG_PTR)WndHandle(find_dlg_item(w, param));
         break;
     case MIME_HWNDPARAM_GETTHREADPROCESSID:
-        if (w->Thread) {
+        if (w == g_desktop && InputThreadId) {
+            DWORD pid = (DWORD)(ULONG_PTR)InputProcessId;
+            if (param)
+                MimeCopyToUser((PVOID)param, &pid, sizeof(pid));
+            r = (ULONG_PTR)InputThreadId;
+        } else if (w->Thread) {
             DWORD pid = (DWORD)(ULONG_PTR)w->Thread->Process->Pid;
             if (param)
                 MimeCopyToUser((PVOID)param, &pid, sizeof(pid));

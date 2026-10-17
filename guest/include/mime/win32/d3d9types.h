@@ -15,9 +15,12 @@ typedef DWORD D3DCOLOR;
 #define D3DCOLOR_RGBA(r, g, b, a) D3DCOLOR_ARGB(a, r, g, b)
 #define D3DCOLOR_XRGB(r, g, b) D3DCOLOR_ARGB(0xFF, r, g, b)
 
+#ifndef D3DVECTOR_DEFINED
+#define D3DVECTOR_DEFINED
 typedef struct _D3DVECTOR {
     float x, y, z;
 } D3DVECTOR;
+#endif
 
 typedef struct _D3DCOLORVALUE {
     float r, g, b, a;

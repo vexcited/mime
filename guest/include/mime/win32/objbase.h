@@ -123,6 +123,24 @@ typedef enum _APTTYPEQUALIFIER {
 /* ------------------------------------------------------------------ IUnknown */
 
 typedef struct IUnknown IUnknown, *LPUNKNOWN;
+/*
+ * each interface's methods after its parent's, as a macro of the
+ * interface type, so a vtable lists them in windows' order.
+ */
+#define MIME_IUNKNOWN_METHODS(T)                                                                                       \
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(T * This, REFIID riid, void **object);                                  \
+    ULONG(STDMETHODCALLTYPE *AddRef)(T * This);                                                                        \
+    ULONG(STDMETHODCALLTYPE *Release)(T * This);
+
+/* the vtable and object of an interface whose methods macro is I_METHODS. */
+#define MIME_COM_INTERFACE(I)                                                                                          \
+    typedef struct I##Vtbl {                                                                                           \
+        I##_METHODS(I)                                                                                                 \
+    } I##Vtbl;                                                                                                         \
+    struct I {                                                                                                         \
+        const I##Vtbl *lpVtbl;                                                                                         \
+    };
+
 typedef struct IUnknownVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(IUnknown *This, REFIID riid, void **object);
     ULONG(STDMETHODCALLTYPE *AddRef)(IUnknown *This);

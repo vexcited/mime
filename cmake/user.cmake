@@ -239,12 +239,13 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     msimg32:0x7FF460000000 oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000
     d3d11:0x7FF420000000 msvcp_win:0x7FF410000000 d3dcompiler_47:0x7FF400000000 d3d12:0x7FF3E0000000
     d3d9:0x7FF3D0000000 setupapi:0x7FF3C0000000 d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000
-    d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000)
+    d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000 dsound:0x7FF320000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
     set(objects_msi ${arch}-lib-compound)
     set(objects_winmm ${arch}-lib-audio)
+    set(objects_dsound ${arch}-lib-audio)
     set(objects_gdiplus ${arch}-lib-png)
     set(objects_dxgi ${arch}-lib-privdata)
     set(objects_d3d11 ${arch}-lib-privdata ${arch}-lib-dxbc)
