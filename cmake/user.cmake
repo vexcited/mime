@@ -278,7 +278,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
 endforeach()
 
 # the acm codecs windows registers in Drivers32, drivers in files of their own.
-set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000)
+set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000 msgsm32:0x7FF330000000)
 foreach(arch IN LISTS MIME_USER_ARCHS)
     foreach(entry IN LISTS MIME_ACM_CODECS)
         string(REPLACE ":" ";" entry ${entry})
