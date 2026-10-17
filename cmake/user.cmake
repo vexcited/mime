@@ -239,7 +239,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     msimg32:0x7FF460000000 oleacc:0x7FF450000000 oledlg:0x7FF440000000 combase:0x7FF430000000
     d3d11:0x7FF420000000 msvcp_win:0x7FF410000000 d3dcompiler_47:0x7FF400000000 d3d12:0x7FF3E0000000
     d3d9:0x7FF3D0000000 setupapi:0x7FF3C0000000 d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000
-    d3d10:0x7FF390000000 d3d10_1:0x7FF380000000)
+    d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
@@ -259,6 +259,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10_1 ${arch}-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
+    set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
@@ -273,6 +274,19 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}
             INCLUDES ${includes_${name}} IMPORTS ntdll kernel32 user32 gdi32 win32u LIBS ${libs_${name}})
+    endforeach()
+endforeach()
+
+# the acm codecs windows registers in Drivers32, drivers in files of their own.
+set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000)
+foreach(arch IN LISTS MIME_USER_ARCHS)
+    foreach(entry IN LISTS MIME_ACM_CODECS)
+        string(REPLACE ":" ";" entry ${entry})
+        list(GET entry 0 name)
+        list(GET entry 1 base)
+        mime_glob(sources guest/${name}/*.c)
+        mime_dll(${name} ${arch} BASE ${base} FILE ${name}.acm SOURCES ${sources} OBJECTS ${arch}-chkstk
+            INCLUDES guest/lib IMPORTS ntdll kernel32 user32)
     endforeach()
 endforeach()
 

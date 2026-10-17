@@ -286,6 +286,84 @@ static BOOLEAN synchronous_file(HANDLE file)
            (mode & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
 }
 
+/* NtQueryVirtualMemory with the 32-bit layouts of what it returns; memory above the 32-bit space is not the caller's. */
+static NTSTATUS query_memory32(const ULONG *a)
+{
+    PVOID base = pointer32(a[1]);
+    ULONG length = a[4];
+    PVOID out = pointer32(a[3]);
+    NTSTATUS status;
+    switch (a[2]) {
+    case MemoryBasicInformation: {
+        if (length < 28)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        MEMORY_BASIC_INFORMATION m;
+        status = NtQueryVirtualMemory(handle32(a[0]), base, MemoryBasicInformation, &m, sizeof(m), nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+        ULONG_PTR end = (ULONG_PTR)m.BaseAddress + m.RegionSize;
+        if ((ULONG_PTR)m.BaseAddress >= 0x100000000ull)
+            return STATUS_INVALID_PARAMETER;
+        if (end > 0x100000000ull)
+            end = 0x100000000ull;
+        ULONG *o = out;
+        o[0] = (ULONG)(ULONG_PTR)m.BaseAddress;
+        o[1] = (ULONG)(ULONG_PTR)m.AllocationBase;
+        o[2] = m.AllocationProtect;
+        o[3] = (ULONG)(end - (ULONG_PTR)m.BaseAddress);
+        o[4] = m.State;
+        o[5] = m.Protect;
+        o[6] = m.Type;
+        store32(a[5], 28);
+        return STATUS_SUCCESS;
+    }
+    case MemoryImageInformation: {
+        if (length < 16)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        MEMORY_IMAGE_INFORMATION m;
+        status = NtQueryVirtualMemory(handle32(a[0]), base, MemoryImageInformation, &m, sizeof(m), nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+        ULONG *o = out;
+        o[0] = (ULONG)(ULONG_PTR)m.ImageBase;
+        o[1] = (ULONG)m.SizeOfImage;
+        o[2] = m.ImageFlags;
+        o[3] = m.Reserved;
+        store32(a[5], 16);
+        return STATUS_SUCCESS;
+    }
+    case MemoryMappedFilenameInformation: {
+        /* the native string follows its header; the 32-bit one is 8 bytes shorter. */
+        SIZE_T size = (SIZE_T)length + 8;
+        PVOID native = nullptr;
+        status = NtAllocateVirtualMemory(NtCurrentProcess(), &native, 0, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (!NT_SUCCESS(status))
+            return status;
+        SIZE_T needed = 0;
+        status = NtQueryVirtualMemory(handle32(a[0]), base, MemoryMappedFilenameInformation, native, length + 8, &needed);
+        if (NT_SUCCESS(status)) {
+            UNICODE_STRING *name = native;
+            if (sizeof(MIME_STRING32) + name->MaximumLength > length) {
+                status = STATUS_BUFFER_OVERFLOW;
+            } else {
+                MIME_STRING32 *o = out;
+                PWSTR text = (PWSTR)(o + 1);
+                memmove(text, name->Buffer, name->MaximumLength);
+                *o = (MIME_STRING32){name->Length, name->MaximumLength, (ULONG)(ULONG_PTR)text};
+                store32(a[5], sizeof(*o) + name->MaximumLength);
+            }
+        } else if (status == STATUS_BUFFER_OVERFLOW || status == STATUS_INFO_LENGTH_MISMATCH) {
+            store32(a[5], needed > 8 ? needed - 8 : needed);
+        }
+        SIZE_T release = 0;
+        NtFreeVirtualMemory(NtCurrentProcess(), &native, &release, MEM_RELEASE);
+        return status;
+    }
+    default:
+        return STATUS_INVALID_INFO_CLASS;
+    }
+}
+
 NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
     UNICODE_STRING name;
@@ -344,6 +422,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         return status;
     }
+    case MIME_SVC_NtQueryVirtualMemory:
+        return query_memory32(a);
     case MIME_SVC_NtCreateUserProcess: {
         if (a[4] || a[5] || a[9] || a[10])
             return STATUS_NOT_SUPPORTED;

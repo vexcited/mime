@@ -677,7 +677,9 @@ typedef struct _MEMORY_BASIC_INFORMATION {
     PVOID BaseAddress;
     PVOID AllocationBase;
     DWORD AllocationProtect;
+#ifdef _WIN64
     WORD PartitionId;
+#endif
     SIZE_T RegionSize;
     DWORD State;
     DWORD Protect;

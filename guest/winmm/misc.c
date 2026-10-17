@@ -51,6 +51,13 @@ WINMMAPI HDRVR WINAPI OpenDriver(LPCWSTR name, LPCWSTR section, LPARAM param)
     if (RegGetValueW(HKEY_LOCAL_MACHINE, key, name, RRF_RT_REG_SZ, nullptr, file, &size))
         lstrcpynW(file, name, MAX_PATH);
     HMODULE module = LoadLibraryW(file);
+    /* a path the installation does not have, such as setup's X: drive, falls back to the file's name. */
+    const WCHAR *base = file;
+    for (const WCHAR *p = file; *p; p++)
+        if (*p == '\\' || *p == '/')
+            base = p + 1;
+    if (!module && base != file)
+        module = LoadLibraryW(base);
     DRIVERPROC proc = module ? (DRIVERPROC)(void *)GetProcAddress(module, "DriverProc") : nullptr;
     if (!proc) {
         if (module)
