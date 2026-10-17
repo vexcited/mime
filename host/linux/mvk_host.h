@@ -142,6 +142,10 @@ void mvk_reply_chain_struct(MvkEncoder *e, const VkBaseOutStructure *s);
 void mvk_put_chain(MvkEncoder *e, const void *next);
 uint64_t mvk_dispatch_id(const void *object);
 
+/* a connection of the host's own, for opengl: its instance, then the device its caller made. */
+bool mvk_internal_instance(MvkConnection *c, uint32_t api);
+void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice device, uint32_t family);
+
 /* vkwsi.c: surfaces and swapchains. */
 extern const char *const mvk_wsi_instance_extensions[];
 bool mvk_wsi_device_extension(const char *name);
@@ -154,5 +158,18 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
 void mvk_wsi_close(MvkConnection *c);
 /* every present sent so far submitted. */
 void mvk_wsi_drain(MvkConnection *c);
+
+/*
+ * an image the host renders to, presented on a guest window as a one image
+ * swapchain would be, its rows bottom first as gl keeps them. it is in
+ * VK_IMAGE_LAYOUT_PRESENT_SRC_KHR when presented,
+ * and rendered to again once the semaphore acquire returns was waited for.
+ */
+typedef struct Swapchain MvkImageChain;
+MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat format, VkExtent2D extent);
+void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, uint32_t family, VkSemaphore rendered,
+                           uint32_t window, MimeRect client, bool sync);
+VkSemaphore mvk_wsi_chain_acquire(MvkConnection *c, MvkImageChain *s);
+void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s);
 
 #endif

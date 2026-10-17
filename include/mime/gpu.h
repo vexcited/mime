@@ -130,11 +130,19 @@ typedef struct MimeGpuTextureSwizzle {
     uint32_t swizzle;
 } MimeGpuTextureSwizzle;
 
+/* the buffer of a copy: a texture, or a surface's back buffer or depth and stencil buffer, and its stencil. */
+enum {
+    MIME_GPU_COPY_TEXTURE = 0,
+    MIME_GPU_COPY_SURFACE = 1,
+    MIME_GPU_COPY_SURFACE_DEPTH = 2,
+    MIME_GPU_COPY_STENCIL = 0x100, /* the stencil of a depth and stencil format, not its depth */
+};
+
 /* a region of a texture and its rows in the heap. */
 typedef struct MimeGpuTextureCopy {
     MimeGpuCmd cmd;
     uint32_t id;      /* texture, or the surface when surface is set */
-    uint32_t surface; /* 1: back buffer of surface id */
+    uint32_t surface; /* MIME_GPU_COPY_* */
     uint32_t level, slice;
     uint32_t x, y, z, width, height, depth;
     MimeGpuMem mem;

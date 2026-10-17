@@ -20,27 +20,33 @@ if(APPLE)
     set(host_gnu OFF)
 endif()
 
+# the host gpu translates glsl through glslang, and SPIRV-Cross reflects it and writes metal on macos, kept in
+# third_party with their licenses.
+mime_glob(shaderc_sources third_party/glslang/glslang/GenericCodeGen/*.cpp
+    third_party/glslang/glslang/MachineIndependent/*.cpp
+    third_party/glslang/glslang/MachineIndependent/preprocessor/*.cpp third_party/glslang/glslang/ResourceLimits/*.cpp
+    third_party/glslang/glslang/CInterface/*.cpp third_party/glslang/SPIRV/CInterface/*.cpp)
+list(APPEND shaderc_sources third_party/glslang/glslang/OSDependent/Unix/ossource.cpp)
+foreach(file GlslangToSpv InReadableOrder Logger SpvBuilder SpvPostProcess SpvTools disassemble doc)
+    list(APPEND shaderc_sources third_party/glslang/SPIRV/${file}.cpp)
+endforeach()
+set(spirv_cross spirv_cfg spirv_cross spirv_cross_c spirv_cross_parsed_ir spirv_cross_util spirv_parser)
+if(APPLE)
+    list(APPEND spirv_cross spirv_glsl spirv_msl)
+endif()
+foreach(file IN LISTS spirv_cross)
+    list(APPEND shaderc_sources third_party/SPIRV-Cross/${file}.cpp)
+endforeach()
+add_library(shaderc OBJECT ${shaderc_sources})
+target_compile_options(shaderc PRIVATE -w)
+if(APPLE)
+    target_compile_definitions(shaderc PRIVATE SPIRV_CROSS_C_API_MSL=1 SPIRV_CROSS_C_API_GLSL=1)
+endif()
+target_include_directories(shaderc PRIVATE third_party/glslang third_party/glslang/glslang third_party)
+set_target_properties(shaderc PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+
 if(APPLE)
     mime_glob(host_sources host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c)
-
-    # the host gpu translates glsl through glslang and SPIRV-Cross, kept in third_party with their licenses.
-    mime_glob(shaderc_sources third_party/glslang/glslang/GenericCodeGen/*.cpp
-        third_party/glslang/glslang/MachineIndependent/*.cpp
-        third_party/glslang/glslang/MachineIndependent/preprocessor/*.cpp third_party/glslang/glslang/ResourceLimits/*.cpp
-        third_party/glslang/glslang/CInterface/*.cpp third_party/glslang/SPIRV/CInterface/*.cpp)
-    list(APPEND shaderc_sources third_party/glslang/glslang/OSDependent/Unix/ossource.cpp)
-    foreach(file GlslangToSpv InReadableOrder Logger SpvBuilder SpvPostProcess SpvTools disassemble doc)
-        list(APPEND shaderc_sources third_party/glslang/SPIRV/${file}.cpp)
-    endforeach()
-    foreach(file spirv_cfg spirv_cross spirv_cross_c spirv_cross_parsed_ir spirv_cross_util spirv_glsl spirv_msl
-            spirv_parser)
-        list(APPEND shaderc_sources third_party/SPIRV-Cross/${file}.cpp)
-    endforeach()
-    add_library(shaderc OBJECT ${shaderc_sources})
-    target_compile_options(shaderc PRIVATE -w)
-    target_compile_definitions(shaderc PRIVATE SPIRV_CROSS_C_API_MSL=1 SPIRV_CROSS_C_API_GLSL=1)
-    target_include_directories(shaderc PRIVATE third_party/glslang third_party/glslang/glslang third_party)
-    set_target_properties(shaderc PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
     add_executable(mime ${host_sources} ${MIME_GEN}/rom.S $<TARGET_OBJECTS:shaderc>)
     set_source_files_properties(host/gpu/gpu.c host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
@@ -59,6 +65,7 @@ else()
     find_package(Threads REQUIRED)
     mime_glob(host_sources host/*.c host/setup/*.c host/linux/*.c host/vmm/*.c)
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
+    list(APPEND host_sources host/gpu/shader.c)
 
     # the vulkan wire, generated from the registry.
     add_library(mvk-host OBJECT ${MIME_VK_GEN}/mvk_structs.c ${MIME_VK_GEN}/mvk_host_commands.c)
@@ -69,12 +76,17 @@ else()
     set_target_properties(mvk-host PROPERTIES C_STANDARD 23 C_EXTENSIONS ON)
     add_dependencies(mvk-host mime-gen-vulkan)
 
-    add_executable(mime ${host_sources} ${MIME_GEN}/rom.S $<TARGET_OBJECTS:mvk-host>)
+    add_executable(mime ${host_sources} ${MIME_GEN}/rom.S $<TARGET_OBJECTS:mvk-host> $<TARGET_OBJECTS:shaderc>)
+    set_source_files_properties(host/gpu/shader.c PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
+    set_source_files_properties(host/linux/gpu.c PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
+        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${MIME_VK_GEN};${CMAKE_SOURCE_DIR}/third_party/glslang")
     set_source_files_properties(host/linux/vulkan.c host/linux/vkwsi.c PROPERTIES
         COMPILE_OPTIONS -Wno-missing-field-initializers
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${MIME_VK_GEN}")
     target_compile_definitions(mime PRIVATE _GNU_SOURCE)
     target_link_libraries(mime PRIVATE PkgConfig::HOST_LIBS Threads::Threads m)
+    set_target_properties(mime PROPERTIES LINKER_LANGUAGE CXX)
     add_dependencies(mime mime-gen-vulkan)
 endif()
 

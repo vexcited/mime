@@ -68,6 +68,7 @@ typedef struct Swapchain {
     VkSemaphore released[MAX_IMAGES]; /* signaled by the last present of the image */
     bool pending[MAX_IMAGES];
     uint32_t queued[MAX_IMAGES]; /* presents of the image the presenting thread did not submit yet */
+    bool flip; /* rows bottom first, as gl keeps them */
 } Swapchain;
 
 typedef struct Frame {
@@ -825,9 +826,9 @@ typedef struct Box {
     double left, top, right, bottom;
 } Box;
 
-/* blits src scaled onto dst, both cut to their images. */
+/* blits src scaled onto dst, both cut to their images, src upside down when flip. */
 static void blit(MvkConnection *c, VkCommandBuffer cmd, VkImage src, Box s, uint32_t sw, uint32_t sh, VkImage dst,
-                 Box d, uint32_t dw, uint32_t dh)
+                 Box d, uint32_t dw, uint32_t dh, bool flip)
 {
     if (s.right <= s.left || s.bottom <= s.top || d.right <= d.left || d.bottom <= d.top)
         return;
@@ -854,6 +855,14 @@ static void blit(MvkConnection *c, VkCommandBuffer cmd, VkImage src, Box s, uint
         return;
     bool same = region.srcOffsets[1].x - region.srcOffsets[0].x == region.dstOffsets[1].x - region.dstOffsets[0].x &&
                 region.srcOffsets[1].y - region.srcOffsets[0].y == region.dstOffsets[1].y - region.dstOffsets[0].y;
+    if (flip) {
+        int32_t top = region.srcOffsets[0].y;
+        region.srcOffsets[0].y = (int32_t)sh - region.srcOffsets[1].y;
+        region.srcOffsets[1].y = (int32_t)sh - top;
+        int32_t t = region.srcOffsets[0].y;
+        region.srcOffsets[0].y = region.srcOffsets[1].y;
+        region.srcOffsets[1].y = t;
+    }
     c->fn.vkCmdBlitImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                          &region, same ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
 }
@@ -910,7 +919,7 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     if (p->gdi_valid && !frame->subsurface) {
         MimeRect v = frame->visible;
         blit(c, cmd, p->gdi, (Box){v.left, v.top, v.right, v.bottom}, p->gdi_width, p->gdi_height, dst,
-             to_pixels(frame, v), p->extent.width, p->extent.height);
+             to_pixels(frame, v), p->extent.width, p->extent.height, false);
         barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -922,14 +931,15 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
             VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     Box area = frame->subsurface ? (Box){0, 0, p->extent.width, p->extent.height} : to_pixels(frame, client);
     blit(c, cmd, src, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, dst, area,
-         p->extent.width, p->extent.height);
+         p->extent.width, p->extent.height, s->flip);
     /* and kept, for captures of the screen. */
     if (p->last) {
         barrier(c, cmd, p->last, p->last_valid ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
         blit(c, cmd, src, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, p->last,
-             (Box){0, 0, p->last_extent.width, p->last_extent.height}, p->last_extent.width, p->last_extent.height);
+             (Box){0, 0, p->last_extent.width, p->last_extent.height}, p->last_extent.width, p->last_extent.height,
+             s->flip);
         barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -1377,6 +1387,97 @@ void mvk_wsi_close(MvkConnection *c)
     pthread_cond_destroy(&w->cond);
     free(w);
     c->wsi = nullptr;
+}
+
+/* ------------------------------------------------------------------ images of the host's own */
+
+MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat format, VkExtent2D extent)
+{
+    if (!wsi_of(c))
+        return nullptr;
+    Swapchain *s = calloc(1, sizeof(*s));
+    if (!s)
+        return nullptr;
+    s->format = format;
+    s->extent = extent;
+    s->mode = VK_PRESENT_MODE_FIFO_KHR;
+    s->count = 1;
+    s->images[0] = image;
+    s->flip = true;
+    s->released[0] = new_semaphore(c);
+    if (!s->released[0]) {
+        free(s);
+        return nullptr;
+    }
+    return s;
+}
+
+/* as a guest present of the chain's image, which waits for rendered. */
+void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, uint32_t family, VkSemaphore rendered,
+                           uint32_t window, MimeRect client, bool sync)
+{
+    MvkWsi *w = wsi_of(c);
+    if (!w || s->pending[0])
+        return;
+    s->mode = sync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+    Waits waits = {};
+    if (rendered) {
+        waits.semaphores[0] = rendered;
+        waits.stages[0] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        waits.count = 1;
+    }
+    if (!start_presenting(c, w)) {
+        present_one(c, queue, family, &waits, s, 0, window, client);
+        return;
+    }
+    uint64_t ready = 0;
+    if (waits.count) {
+        ready = ++w->ready_value;
+        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, nullptr, waits.count,
+                                                waits.values, 1, &ready};
+        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, &values, waits.count, waits.semaphores, waits.stages,
+                               0, nullptr, 1, &w->ready};
+        submit_locked(c, queue, &submit, VK_NULL_HANDLE);
+    }
+    PresentJob *job = calloc(1, sizeof(*job));
+    if (!job)
+        return;
+    *job = (PresentJob){nullptr, s, 0, window, client, queue, family, ready};
+    s->pending[0] = true;
+    pthread_mutex_lock(&w->lock);
+    s->queued[0]++;
+    if (w->last)
+        w->last->next = job;
+    else
+        w->first = job;
+    w->last = job;
+    pthread_cond_broadcast(&w->cond);
+    pthread_mutex_unlock(&w->lock);
+}
+
+/* the semaphore the next rendering to the image waits for, once its present was submitted; null when none. */
+VkSemaphore mvk_wsi_chain_acquire(MvkConnection *c, MvkImageChain *s)
+{
+    MvkWsi *w = c->wsi;
+    if (w && w->running) {
+        pthread_mutex_lock(&w->lock);
+        while (s->queued[0])
+            pthread_cond_wait(&w->cond, &w->lock);
+        pthread_mutex_unlock(&w->lock);
+    }
+    if (!s->pending[0])
+        return VK_NULL_HANDLE;
+    s->pending[0] = false;
+    return s->released[0];
+}
+
+/* the image stays the caller's. */
+void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s)
+{
+    if (!s)
+        return;
+    s->images[0] = VK_NULL_HANDLE;
+    free_swapchain(c, s);
 }
 
 /* ------------------------------------------------------------------ readback */

@@ -2006,6 +2006,61 @@ static void *connection_main(void *arg)
 
 /* ------------------------------------------------------------------ hypercalls */
 
+/* ------------------------------------------------------------------ the host's own device */
+
+/*
+ * opengl's channels render through a connection of the host's own: no
+ * guest ring, an instance with the presenter's surfaces, and a device its
+ * caller makes with what it needs.
+ */
+bool mvk_internal_instance(MvkConnection *c, uint32_t api)
+{
+    if (!load_library(c))
+        return false;
+    PFN_vkEnumerateInstanceExtensionProperties enumerate =
+        (PFN_vkEnumerateInstanceExtensionProperties)c->gipa(nullptr, "vkEnumerateInstanceExtensionProperties");
+    uint32_t count = 0;
+    enumerate(nullptr, &count, nullptr);
+    VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
+    enumerate(nullptr, &count, list);
+    const char *names[8];
+    uint32_t n = 0;
+    for (const char *const *x = mvk_wsi_instance_extensions; *x && n < 8; x++)
+        if (host_has(list, count, *x))
+            names[n++] = *x;
+    free(list);
+    VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "mime", 1, "mime", 1, api};
+    VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app, 0, nullptr, n, names};
+    PFN_vkCreateInstance create = (PFN_vkCreateInstance)c->gipa(nullptr, "vkCreateInstance");
+    if (create(&info, nullptr, &c->instance) != VK_SUCCESS)
+        return false;
+    mvk_load_dispatch(&c->fn, c->gipa, c->instance, nullptr, nullptr);
+    pthread_mutex_init(&c->queue_lock, nullptr);
+    pthread_mutex_init(&c->live_lock, nullptr);
+    return true;
+}
+
+/* the device the caller made on the instance, with one queue of family. */
+void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice device, uint32_t family)
+{
+    c->physical_device = physical;
+    c->device = device;
+    c->timelines = true;
+    c->host_import = true;
+    PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
+    mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, device);
+    VkPhysicalDeviceExternalMemoryHostPropertiesEXT host = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+    VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &host};
+    c->fn.vkGetPhysicalDeviceProperties2(physical, &props);
+    c->import_alignment = host.minImportedHostPointerAlignment ? host.minImportedHostPointerAlignment : 4096;
+    VkQueue q = VK_NULL_HANDLE;
+    c->fn.vkGetDeviceQueue(device, family, 0, &q);
+    c->queues[0].queue = q;
+    c->queues[0].family = family;
+    c->queue_count = 1;
+}
+
 uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
 {
     if (size != MVK_CONNECTION_SIZE)

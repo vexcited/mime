@@ -525,6 +525,9 @@ static void decode_texel(uint32_t f, const uint8_t *s, float c[4])
     case MTL_D32F_S8:
         c[0] = *(const float *)s;
         break;
+    case MTL_D16:
+        c[0] = *(const uint16_t *)s / 65535.0f;
+        break;
     case MTL_RG32F:
         c[0] = ((const float *)s)[0];
         c[1] = ((const float *)s)[1];
@@ -709,6 +712,16 @@ void gl_pack_row(uint32_t src_format, const uint8_t *src, GLenum format, GLenum 
         }
     }
     uint32_t sb = gl_format_bytes(src_format), db = gl_client_pixel_bytes(format, type);
+    if (format == GL_STENCIL_INDEX) {
+        /* stencil values go out as integers, not normalized. */
+        for (uint32_t x = 0; x < width; x++, src += sb, dst += db) {
+            if (type == GL_FLOAT)
+                *(float *)dst = src[0];
+            else
+                store_integer(dst, type, 0, src[0]);
+        }
+        return;
+    }
     for (uint32_t x = 0; x < width; x++, src += sb, dst += db) {
         float c[4];
         decode_texel(src_format, src, c);

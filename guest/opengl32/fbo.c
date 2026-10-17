@@ -564,6 +564,46 @@ BOOL gl_read_source(GlContext *ctx, MimeGpuAttachment *a, uint32_t *format, uint
     return TRUE;
 }
 
+/*
+ * the buffer depth or stencil reads come from, the read framebuffer's or
+ * the window's, and the format of what a copy of it gives: the depth or the
+ * stencil alone of a format with both. flags is what the copy names.
+ */
+BOOL gl_read_depth_source(GlContext *ctx, BOOL stencil, MimeGpuAttachment *a, uint32_t *format, uint32_t *flags,
+                          uint32_t *width, uint32_t *height)
+{
+    memset(a, 0, sizeof(*a));
+    GlFramebuffer *f = ctx->read_fbo ? gl_framebuffer(ctx, ctx->read_fbo) : nullptr;
+    uint32_t mtl;
+    if (!f) {
+        GlSurface *s = ctx->surface;
+        if (!s || !(stencil ? s->stencil_format : s->depth_format))
+            return FALSE;
+        a->id = s->id;
+        mtl = stencil ? s->stencil_format : s->depth_format;
+        *flags = MIME_GPU_COPY_SURFACE_DEPTH;
+        *width = s->info.Width;
+        *height = s->info.Height;
+    } else {
+        uint16_t fmt;
+        uint32_t samples;
+        if (!resolve_attachment(ctx, stencil ? &f->stencil : &f->depth, a, &fmt, width, height, &samples) ||
+            samples > 1)
+            return FALSE;
+        mtl = fmt;
+        *flags = MIME_GPU_COPY_TEXTURE;
+    }
+    if (mtl == 260) {
+        mtl = stencil ? 253 : 252;
+        if (stencil)
+            *flags |= MIME_GPU_COPY_STENCIL;
+    } else if (stencil != (mtl == 253)) {
+        return FALSE;
+    }
+    *format = mtl;
+    return TRUE;
+}
+
 /* ---------------------------------------------------------------- passes */
 
 void gl_end_pass(GlContext *ctx)

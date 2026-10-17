@@ -422,6 +422,8 @@ void gl_end_pass(GlContext *ctx);
 void gl_flush_clears(GlContext *ctx);
 GlFramebuffer *gl_framebuffer(GlContext *ctx, GLuint name);
 BOOL gl_read_source(GlContext *ctx, MimeGpuAttachment *a, uint32_t *format, uint32_t *width, uint32_t *height);
+BOOL gl_read_depth_source(GlContext *ctx, BOOL stencil, MimeGpuAttachment *a, uint32_t *format, uint32_t *flags,
+                          uint32_t *width, uint32_t *height);
 
 /* buffers, buffer.c. */
 GlBuffer *gl_buffer(GlContext *ctx, GLuint name);

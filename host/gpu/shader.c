@@ -1,17 +1,21 @@
 /*
- * glsl programs to metal shading language.
+ * glsl programs to metal shading language, or to spir-v for vulkan.
  *
  * the guest sends a program's glsl sources as the application wrote them.
  * sources older than glsl 3.30 are lifted to 3.30 with a few macros, then
  * glslang compiles both stages to spir-v under the relaxed vulkan rules,
  * which gather the loose uniforms into one block, and SPIRV-Cross writes
- * metal source for each stage. the reflection the guest needs to answer gl
+ * metal source for each stage. vulkan takes glslang's spir-v itself, with the
+ * locations and bindings chosen here written into its decorations. the
+ * reflection the guest needs to answer gl
  * queries is read from the spir-v: attribute locations, follow the
  * application's bindings, the uniform block layout and the texture slots
  * of every sampler.
  *
- * vertex positions are flipped vertically and depth is moved to metal's
- * range, so rows of every texture keep gl's order, bottom first.
+ * on metal vertex positions are flipped vertically and depth is moved to
+ * metal's range, so rows of every texture keep gl's order, bottom first.
+ * vulkan's framebuffer rows already run that way from gl's bottom, and its
+ * pipelines take gl's depth range.
  */
 #include "shader.h"
 
@@ -282,8 +286,25 @@ typedef struct Program {
         MimeGpuUniformBlockInfo info;
     } blocks[MIME_GPU_MAX_UNIFORM_BLOCKS];
     unsigned block_count;
+    MimeShaderBinding bindings[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES];
+    unsigned binding_count;
     Buf log;
 } Program;
+
+/* a uniform buffer both stages may share, or a sampler of one stage. */
+static void add_binding(Program *p, uint32_t binding, uint32_t count, int stage, uint32_t kind, uint32_t slot,
+                        uint32_t gl_type, uint32_t bytes)
+{
+    for (unsigned i = 0; i < p->binding_count; i++) {
+        if (p->bindings[i].binding == binding) {
+            p->bindings[i].stages |= 1u << stage;
+            if (bytes > p->bindings[i].bytes)
+                p->bindings[i].bytes = bytes;
+            return;
+        }
+    }
+    p->bindings[p->binding_count++] = (MimeShaderBinding){binding, count, 1u << stage, kind, slot, gl_type, bytes};
+}
 
 static Uniform *find_uniform(Program *p, const char *name)
 {
@@ -531,6 +552,8 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionM
         }
         spvc_compiler_set_decoration(c, ubo[i].id, SpvDecorationDescriptorSet, 0);
         spvc_compiler_set_decoration(c, ubo[i].id, SpvDecorationBinding, slot);
+        add_binding(p, slot, 1, stage, loose ? MIME_SHADER_UNIFORMS : MIME_SHADER_BLOCK, 0, 0, (uint32_t)size);
+#ifdef __APPLE__
         spvc_msl_resource_binding b;
         spvc_msl_resource_binding_init(&b);
         b.stage = model;
@@ -538,6 +561,7 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionM
         b.binding = slot;
         b.msl_buffer = slot;
         spvc_compiler_msl_add_resource_binding(c, &b);
+#endif
     }
 
     const spvc_reflected_resource *img = resources(c, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &n);
@@ -545,6 +569,11 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionM
     for (size_t i = 0; i < n; i++) {
         spvc_type t = spvc_compiler_get_type_handle(c, img[i].type_id);
         unsigned count = array_size_of(t) ? array_size_of(t) : 1;
+        if (slot + count > MIME_GPU_MAX_TEXTURES) {
+            buf_str(&p->log, "samplers exceed the texture units of a stage\n");
+            return false;
+        }
+#ifdef __APPLE__
         spvc_compiler_set_decoration(c, img[i].id, SpvDecorationDescriptorSet, 1);
         spvc_compiler_set_decoration(c, img[i].id, SpvDecorationBinding, 1 + i);
         spvc_msl_resource_binding b;
@@ -555,6 +584,12 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionM
         b.msl_texture = slot;
         b.msl_sampler = slot;
         spvc_compiler_msl_add_resource_binding(c, &b);
+#else
+        spvc_compiler_set_decoration(c, img[i].id, SpvDecorationDescriptorSet, 0);
+        spvc_compiler_set_decoration(c, img[i].id, SpvDecorationBinding, MIME_SHADER_TEXTURE_BINDING(stage, slot));
+        add_binding(p, MIME_SHADER_TEXTURE_BINDING(stage, slot), count, stage, MIME_SHADER_TEXTURE, slot,
+                    gl_type_of(c, t), 0);
+#endif
         char name[256];
         snprintf(name, sizeof(name), array_size_of(t) ? "%s[0]" : "%s", img[i].name);
         Uniform *u = add_uniform(p, name);
@@ -566,6 +601,7 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionM
     return true;
 }
 
+#ifdef __APPLE__
 static spvc_compiler msl_compiler(spvc_context ctx, const uint32_t *spirv, size_t words, bool vertex)
 {
     spvc_parsed_ir ir;
@@ -595,6 +631,36 @@ static char *compile_msl(Program *p, spvc_compiler c, const char *stage)
     }
     return strdup(src);
 }
+#else
+/* a compiler for reflection alone: the spir-v stays glslang's. */
+static spvc_compiler msl_compiler(spvc_context ctx, const uint32_t *spirv, size_t words, bool vertex)
+{
+    spvc_parsed_ir ir;
+    spvc_compiler c;
+    if (spvc_context_parse_spirv(ctx, spirv, words, &ir) != SPVC_SUCCESS)
+        return nullptr;
+    if (spvc_context_create_compiler(ctx, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &c) != SPVC_SUCCESS)
+        return nullptr;
+    return c;
+}
+
+/* writes the locations and bindings the compiler holds now into the decorations of the spir-v. */
+static void patch_spirv(spvc_compiler c, uint32_t *words, size_t count)
+{
+    for (size_t i = 5; i < count;) {
+        uint32_t n = words[i] >> 16, op = words[i] & 0xFFFF;
+        if (!n || i + n > count)
+            break;
+        if (op == SpvOpDecorate && n >= 4) {
+            SpvDecoration d = (SpvDecoration)words[i + 2];
+            if ((d == SpvDecorationLocation || d == SpvDecorationBinding || d == SpvDecorationDescriptorSet) &&
+                spvc_compiler_has_decoration(c, words[i + 1], d))
+                words[i + 3] = spvc_compiler_get_decoration(c, words[i + 1], d);
+        }
+        i += n;
+    }
+}
+#endif
 
 /* ---------------------------------------------------------------- driver */
 
@@ -719,8 +785,15 @@ bool mime_shader_compile(const char *vs, size_t vs_len, const char *fs, size_t f
     spvc_context_create(&ctx);
     spvc_compiler vc = msl_compiler(ctx, vspv, vwords, true);
     spvc_compiler fc = msl_compiler(ctx, fspv, fwords, false);
+#ifdef __APPLE__
     free(vspv);
     free(fspv);
+#else
+    out->spirv[0] = vspv;
+    out->spirv[1] = fspv;
+    out->spirv_words[0] = vwords;
+    out->spirv_words[1] = fwords;
+#endif
     if (!vc || !fc) {
         buf_fmt(&p.log, "spir-v: %s\n", spvc_context_get_last_error_string(ctx));
         goto done;
@@ -731,6 +804,7 @@ bool mime_shader_compile(const char *vs, size_t vs_len, const char *fs, size_t f
     if (!bind_resources(&p, vc, MIME_GPU_STAGE_VERTEX, SpvExecutionModelVertex) ||
         !bind_resources(&p, fc, MIME_GPU_STAGE_FRAGMENT, SpvExecutionModelFragment))
         goto done;
+#ifdef __APPLE__
     out->msl[0] = compile_msl(&p, vc, "vertex");
     out->msl[1] = compile_msl(&p, fc, "fragment");
     if (!out->msl[0] || !out->msl[1])
@@ -739,6 +813,17 @@ bool mime_shader_compile(const char *vs, size_t vs_len, const char *fs, size_t f
              spvc_compiler_get_cleansed_entry_point_name(vc, "main", SpvExecutionModelVertex));
     snprintf(out->entry[1], sizeof(out->entry[1]), "%s",
              spvc_compiler_get_cleansed_entry_point_name(fc, "main", SpvExecutionModelFragment));
+#else
+    patch_spirv(vc, out->spirv[0], out->spirv_words[0]);
+    patch_spirv(fc, out->spirv[1], out->spirv_words[1]);
+    if (p.binding_count) {
+        out->bindings = malloc(p.binding_count * sizeof(MimeShaderBinding));
+        memcpy(out->bindings, p.bindings, p.binding_count * sizeof(MimeShaderBinding));
+        out->binding_count = p.binding_count;
+    }
+    snprintf(out->entry[0], sizeof(out->entry[0]), "main");
+    snprintf(out->entry[1], sizeof(out->entry[1]), "main");
+#endif
     ok = true;
 
 done:
@@ -753,9 +838,15 @@ done:
     free(vtext);
     free(ftext);
     if (!ok) {
-        free(out->msl[0]);
-        free(out->msl[1]);
-        out->msl[0] = out->msl[1] = nullptr;
+        for (int s = 0; s < MIME_GPU_STAGES; s++) {
+            free(out->msl[s]);
+            free(out->spirv[s]);
+            out->msl[s] = nullptr;
+            out->spirv[s] = nullptr;
+        }
+        free(out->bindings);
+        out->bindings = nullptr;
+        out->binding_count = 0;
     }
     write_info(&p, ok, out);
     out->ok = ok;
@@ -773,8 +864,11 @@ done:
 
 void mime_shader_free(MimeShaderResult *r)
 {
-    free(r->msl[0]);
-    free(r->msl[1]);
+    for (int s = 0; s < MIME_GPU_STAGES; s++) {
+        free(r->msl[s]);
+        free(r->spirv[s]);
+    }
+    free(r->bindings);
     free(r->info);
     memset(r, 0, sizeof(*r));
 }

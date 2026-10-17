@@ -502,7 +502,8 @@ static void texture_create(Channel *c, const MimeGpuTextureCreate *t)
 
 static void texture_copy(Channel *c, const MimeGpuTextureCopy *t, bool upload)
 {
-    id tex = texture_of(c, t->id, t->surface, false);
+    uint32_t kind = t->surface & 0xFF;
+    id tex = texture_of(c, t->id, kind != MIME_GPU_COPY_TEXTURE, kind == MIME_GPU_COPY_SURFACE_DEPTH);
     uint32_t image = t->image_bytes ? t->image_bytes : t->row_bytes * t->height;
     uint64_t bytes = (uint64_t)image * (t->depth ? t->depth : 1);
     uint64_t off;
@@ -513,21 +514,27 @@ static void texture_copy(Channel *c, const MimeGpuTextureCopy *t, bool upload)
     MTLOrigin origin = {t->x, t->y, t->z};
     end_render(c);
     if (upload)
-        write_texture(c, t->id, t->surface, false,
-                      t->depth <= 1 && covers(c, t->id, t->surface, t->level, t->slice, t->x, t->y, t->width, t->height));
+        write_texture(c, t->id, kind != MIME_GPU_COPY_TEXTURE, kind == MIME_GPU_COPY_SURFACE_DEPTH,
+                      t->depth <= 1 && covers(c, t->id, kind != MIME_GPU_COPY_TEXTURE, t->level, t->slice, t->x, t->y,
+                                              t->width, t->height));
     else
-        materialize(c, t->id, t->surface, false);
+        materialize(c, t->id, kind != MIME_GPU_COPY_TEXTURE, kind == MIME_GPU_COPY_SURFACE_DEPTH);
+    /* a depth and stencil format copies one of the two: MTLBlitOptionDepthFromDepthStencil or the stencil one. */
+    NSUInteger format = MSG(NSUInteger (*)(id, SEL), tex, "pixelFormat");
+    NSUInteger options = format == PIXEL_D32S8 ? ((t->surface & MIME_GPU_COPY_STENCIL) ? 2 : 1) : 0;
     id b = blit_encoder(c);
     if (upload)
-        ((void (*)(id, SEL, id, NSUInteger, NSUInteger, NSUInteger, MTLSize, id, NSUInteger, NSUInteger, MTLOrigin))
-             objc_msgSend)(b, S("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:"
-                                "destinationSlice:destinationLevel:destinationOrigin:"),
-                           buf, off, t->row_bytes, image, size, tex, t->slice, t->level, origin);
+        ((void (*)(id, SEL, id, NSUInteger, NSUInteger, NSUInteger, MTLSize, id, NSUInteger, NSUInteger, MTLOrigin,
+                   NSUInteger))objc_msgSend)(
+            b, S("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:"
+                 "destinationSlice:destinationLevel:destinationOrigin:options:"),
+            buf, off, t->row_bytes, image, size, tex, t->slice, t->level, origin, options);
     else
-        ((void (*)(id, SEL, id, NSUInteger, NSUInteger, MTLOrigin, MTLSize, id, NSUInteger, NSUInteger, NSUInteger))
-             objc_msgSend)(b, S("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:"
-                                "destinationOffset:destinationBytesPerRow:destinationBytesPerImage:"),
-                           tex, t->slice, t->level, origin, size, buf, off, t->row_bytes, image);
+        ((void (*)(id, SEL, id, NSUInteger, NSUInteger, MTLOrigin, MTLSize, id, NSUInteger, NSUInteger, NSUInteger,
+                   NSUInteger))objc_msgSend)(
+            b, S("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:"
+                 "destinationOffset:destinationBytesPerRow:destinationBytesPerImage:options:"),
+            tex, t->slice, t->level, origin, size, buf, off, t->row_bytes, image, options);
 }
 
 /* ---------------------------------------------------------------- programs */

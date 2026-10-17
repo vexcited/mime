@@ -1238,9 +1238,17 @@ BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h,
                          void *pixels)
 {
     MimeGpuAttachment src;
-    uint32_t mtl, sw, sh;
-    if (!gl_read_source(ctx, &src, &mtl, &sw, &sh))
+    uint32_t mtl, sw, sh, flags = MIME_GPU_COPY_TEXTURE;
+    if (format == GL_DEPTH_COMPONENT || format == GL_STENCIL_INDEX) {
+        if (!gl_read_depth_source(ctx, format == GL_STENCIL_INDEX, &src, &mtl, &flags, &sw, &sh)) {
+            gl_error(ctx, GL_INVALID_OPERATION);
+            return TRUE;
+        }
+    } else if (!gl_read_source(ctx, &src, &mtl, &sw, &sh)) {
         return FALSE;
+    } else if (src.surface) {
+        flags = MIME_GPU_COPY_SURFACE;
+    }
     GLenum error = gl_pixel_transfer_error(mtl, format, type);
     if (error) {
         gl_error(ctx, error);
@@ -1262,7 +1270,7 @@ BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h,
     gl_device_lock();
     MimeGpuTextureCopy *c = gl_emit(MIME_GPU_TEXTURE_READ, sizeof(MimeGpuTextureCopy));
     c->id = src.id;
-    c->surface = src.surface;
+    c->surface = flags;
     c->level = src.level;
     c->slice = src.slice;
     c->x = (uint32_t)x0;
