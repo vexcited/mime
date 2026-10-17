@@ -61,7 +61,7 @@ typedef wchar_t WCHAR, *PWCHAR, *PWSTR, *LPWSTR;
 typedef const wchar_t *PCWSTR, *LPCWSTR, *PCWCH;
 typedef wchar_t *PWCH;
 typedef int INT, *PINT, *LPINT, BOOL, *PBOOL, *LPBOOL;
-typedef unsigned int UINT, *PUINT;
+typedef unsigned int UINT, *PUINT, *LPUINT;
 typedef long LONG, *PLONG, *LPLONG;
 typedef unsigned long ULONG, *PULONG, DWORD, *PDWORD, *LPDWORD;
 typedef long long LONGLONG, *PLONGLONG, LONG64, INT64;

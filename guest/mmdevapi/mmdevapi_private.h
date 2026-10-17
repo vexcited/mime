@@ -7,32 +7,7 @@
 #include <mime/win32/objbase.h>
 #include <mime/win32/propidl.h>
 
-#pragma pack(push, 1)
-typedef struct tWAVEFORMATEX {
-    WORD wFormatTag;
-    WORD nChannels;
-    DWORD nSamplesPerSec;
-    DWORD nAvgBytesPerSec;
-    WORD nBlockAlign;
-    WORD wBitsPerSample;
-    WORD cbSize;
-} WAVEFORMATEX;
-
-typedef struct {
-    WAVEFORMATEX Format;
-    union {
-        WORD wValidBitsPerSample;
-        WORD wSamplesPerBlock;
-        WORD wReserved;
-    } Samples;
-    DWORD dwChannelMask;
-    GUID SubFormat;
-} WAVEFORMATEXTENSIBLE;
-#pragma pack(pop)
-
-#define WAVE_FORMAT_PCM 1
-#define WAVE_FORMAT_IEEE_FLOAT 3
-#define WAVE_FORMAT_EXTENSIBLE 0xFFFE
+#include <mime/win32/mmreg.h>
 
 typedef LONGLONG REFERENCE_TIME;
 

@@ -5,6 +5,7 @@
 #define MIME_WIN32_MMSYSTEM_H
 
 #include <mime/win32/winbase.h>
+#include <mime/win32/mmreg.h>
 
 #ifdef MIME_BUILD_WINMM
 #define WINMMAPI __declspec(dllexport)
@@ -103,12 +104,475 @@ WINMMAPI BOOL WINAPI PlaySoundW(LPCWSTR sound, HMODULE module, DWORD flags);
 WINMMAPI BOOL WINAPI PlaySoundA(LPCSTR sound, HMODULE module, DWORD flags);
 WINMMAPI BOOL WINAPI sndPlaySoundW(LPCWSTR sound, UINT flags);
 WINMMAPI BOOL WINAPI sndPlaySoundA(LPCSTR sound, UINT flags);
-WINMMAPI UINT WINAPI waveOutGetNumDevs(void);
-WINMMAPI UINT WINAPI waveInGetNumDevs(void);
 WINMMAPI UINT WINAPI midiOutGetNumDevs(void);
 WINMMAPI UINT WINAPI midiInGetNumDevs(void);
+
+/* ------------------------------------------------------------------ devices */
+
+#define MAXPNAMELEN 32
+#define MAXERRORLENGTH 256
+#define WAVERR_BASE 32
+#define WAVERR_BADFORMAT (WAVERR_BASE + 0)
+#define WAVERR_STILLPLAYING (WAVERR_BASE + 1)
+#define WAVERR_UNPREPARED (WAVERR_BASE + 2)
+#define WAVERR_SYNC (WAVERR_BASE + 3)
+#define MIXERR_BASE 1024
+#define MIXERR_INVALLINE (MIXERR_BASE + 0)
+#define MIXERR_INVALCONTROL (MIXERR_BASE + 1)
+#define MIXERR_INVALVALUE (MIXERR_BASE + 2)
+
+#define MM_MICROSOFT 1
+#define MM_WAVE_MAPPER 2
+#define MM_MSFT_WDMAUDIO_WAVEOUT 100
+#define MM_MSFT_WDMAUDIO_MIXER 104
+
+#define WAVE_MAPPER ((UINT)-1)
+#define WAVE_FORMAT_QUERY 0x0001
+#define WAVE_ALLOWSYNC 0x0002
+#define WAVE_MAPPED 0x0004
+#define WAVE_FORMAT_DIRECT 0x0008
+#define WAVE_MAPPED_DEFAULT_COMMUNICATION_DEVICE 0x0010
+
+#define CALLBACK_TYPEMASK 0x00070000
+#define CALLBACK_NULL 0x00000000
+#define CALLBACK_WINDOW 0x00010000
+#define CALLBACK_TASK 0x00020000
+#define CALLBACK_FUNCTION 0x00030000
+#define CALLBACK_THREAD CALLBACK_TASK
+#define CALLBACK_EVENT 0x00050000
+
+#define DCB_NULL 0x0000
+#define DCB_WINDOW 0x0001
+#define DCB_TASK 0x0002
+#define DCB_FUNCTION 0x0003
+#define DCB_EVENT 0x0005
+#define DCB_TYPEMASK 0x0007
+#define DCB_NOSWITCH 0x0008
+
+#define MM_WOM_OPEN 0x3BB
+#define MM_WOM_CLOSE 0x3BC
+#define MM_WOM_DONE 0x3BD
+#define MM_WIM_OPEN 0x3BE
+#define MM_WIM_CLOSE 0x3BF
+#define MM_WIM_DATA 0x3C0
+#define MM_MIXM_LINE_CHANGE 0x3D0
+#define MM_MIXM_CONTROL_CHANGE 0x3D1
+#define WOM_OPEN MM_WOM_OPEN
+#define WOM_CLOSE MM_WOM_CLOSE
+#define WOM_DONE MM_WOM_DONE
+#define WIM_OPEN MM_WIM_OPEN
+#define WIM_CLOSE MM_WIM_CLOSE
+#define WIM_DATA MM_WIM_DATA
+
+#define DRV_QUERYDEVICEINTERFACE 0x080C
+#define DRV_QUERYDEVICEINTERFACESIZE 0x080D
+#define DRV_QUERYDEVNODE 0x080B
+#define DRV_QUERYFUNCTIONINSTANCEID 0x0811
+#define DRV_QUERYFUNCTIONINSTANCEIDSIZE 0x0812
+#define DRVM_MAPPER_PREFERRED_GET 0x2015
+#define DRVM_MAPPER_CONSOLEVOICECOM_GET 0x2017
+#define DRVM_MAPPER_PREFERRED_FLAGS_PREFERREDONLY 0x00000001
+
+#define WAVECAPS_PITCH 0x0001
+#define WAVECAPS_PLAYBACKRATE 0x0002
+#define WAVECAPS_VOLUME 0x0004
+#define WAVECAPS_LRVOLUME 0x0008
+#define WAVECAPS_SYNC 0x0010
+#define WAVECAPS_SAMPLEACCURATE 0x0020
+
+#define WAVE_INVALIDFORMAT 0x00000000
+#define WAVE_FORMAT_1M08 0x00000001
+#define WAVE_FORMAT_96S16 0x00080000
+
+#define WHDR_DONE 0x00000001
+#define WHDR_PREPARED 0x00000002
+#define WHDR_BEGINLOOP 0x00000004
+#define WHDR_ENDLOOP 0x00000008
+#define WHDR_INQUEUE 0x00000010
+
+DECLARE_HANDLE(HWAVE);
+DECLARE_HANDLE(HWAVEIN);
+DECLARE_HANDLE(HWAVEOUT);
+DECLARE_HANDLE(HMIXER);
+DECLARE_HANDLE(HMIXEROBJ);
+typedef HWAVEIN *LPHWAVEIN;
+typedef HWAVEOUT *LPHWAVEOUT;
+typedef HMIXER *LPHMIXER;
+
+typedef void(CALLBACK *LPDRVCALLBACK)(HANDLE device, UINT message, DWORD_PTR user, DWORD_PTR param1, DWORD_PTR param2);
+typedef LPDRVCALLBACK LPWAVECALLBACK;
+
+typedef struct wavehdr_tag {
+    LPSTR lpData;
+    DWORD dwBufferLength;
+    DWORD dwBytesRecorded;
+    DWORD_PTR dwUser;
+    DWORD dwFlags;
+    DWORD dwLoops;
+    struct wavehdr_tag *lpNext;
+    DWORD_PTR reserved;
+} WAVEHDR, *PWAVEHDR, *LPWAVEHDR;
+
+typedef struct tagWAVEOUTCAPSA {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    CHAR szPname[MAXPNAMELEN];
+    DWORD dwFormats;
+    WORD wChannels;
+    WORD wReserved1;
+    DWORD dwSupport;
+} WAVEOUTCAPSA, *LPWAVEOUTCAPSA;
+
+typedef struct tagWAVEOUTCAPSW {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    WCHAR szPname[MAXPNAMELEN];
+    DWORD dwFormats;
+    WORD wChannels;
+    WORD wReserved1;
+    DWORD dwSupport;
+} WAVEOUTCAPSW, *LPWAVEOUTCAPSW;
+
+typedef struct tagWAVEINCAPSA {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    CHAR szPname[MAXPNAMELEN];
+    DWORD dwFormats;
+    WORD wChannels;
+    WORD wReserved1;
+} WAVEINCAPSA, *LPWAVEINCAPSA;
+
+typedef struct tagWAVEINCAPSW {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    WCHAR szPname[MAXPNAMELEN];
+    DWORD dwFormats;
+    WORD wChannels;
+    WORD wReserved1;
+} WAVEINCAPSW, *LPWAVEINCAPSW;
+
+WINMMAPI LRESULT WINAPI DriverCallback(DWORD_PTR callback, DWORD flags, HANDLE device, DWORD message, DWORD_PTR user,
+                                       DWORD_PTR param1, DWORD_PTR param2);
+
+WINMMAPI UINT WINAPI waveOutGetNumDevs(void);
+WINMMAPI MMRESULT WINAPI waveOutGetDevCapsA(UINT_PTR id, LPWAVEOUTCAPSA caps, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutGetDevCapsW(UINT_PTR id, LPWAVEOUTCAPSW caps, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutOpen(LPHWAVEOUT out, UINT id, LPCWAVEFORMATEX format, DWORD_PTR callback,
+                                     DWORD_PTR instance, DWORD flags);
+WINMMAPI MMRESULT WINAPI waveOutClose(HWAVEOUT wave);
+WINMMAPI MMRESULT WINAPI waveOutPrepareHeader(HWAVEOUT wave, LPWAVEHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutUnprepareHeader(HWAVEOUT wave, LPWAVEHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutWrite(HWAVEOUT wave, LPWAVEHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutPause(HWAVEOUT wave);
+WINMMAPI MMRESULT WINAPI waveOutRestart(HWAVEOUT wave);
+WINMMAPI MMRESULT WINAPI waveOutReset(HWAVEOUT wave);
+WINMMAPI MMRESULT WINAPI waveOutBreakLoop(HWAVEOUT wave);
+WINMMAPI MMRESULT WINAPI waveOutGetPosition(HWAVEOUT wave, LPMMTIME time, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutGetVolume(HWAVEOUT wave, LPDWORD volume);
+WINMMAPI MMRESULT WINAPI waveOutSetVolume(HWAVEOUT wave, DWORD volume);
+WINMMAPI MMRESULT WINAPI waveOutGetPitch(HWAVEOUT wave, LPDWORD pitch);
+WINMMAPI MMRESULT WINAPI waveOutSetPitch(HWAVEOUT wave, DWORD pitch);
+WINMMAPI MMRESULT WINAPI waveOutGetPlaybackRate(HWAVEOUT wave, LPDWORD rate);
+WINMMAPI MMRESULT WINAPI waveOutSetPlaybackRate(HWAVEOUT wave, DWORD rate);
+WINMMAPI MMRESULT WINAPI waveOutGetID(HWAVEOUT wave, LPUINT id);
+WINMMAPI MMRESULT WINAPI waveOutMessage(HWAVEOUT wave, UINT message, DWORD_PTR param1, DWORD_PTR param2);
+WINMMAPI MMRESULT WINAPI waveOutGetErrorTextA(MMRESULT error, LPSTR text, UINT size);
+WINMMAPI MMRESULT WINAPI waveOutGetErrorTextW(MMRESULT error, LPWSTR text, UINT size);
+
+WINMMAPI UINT WINAPI waveInGetNumDevs(void);
+WINMMAPI MMRESULT WINAPI waveInGetDevCapsA(UINT_PTR id, LPWAVEINCAPSA caps, UINT size);
+WINMMAPI MMRESULT WINAPI waveInGetDevCapsW(UINT_PTR id, LPWAVEINCAPSW caps, UINT size);
+WINMMAPI MMRESULT WINAPI waveInOpen(LPHWAVEIN in, UINT id, LPCWAVEFORMATEX format, DWORD_PTR callback,
+                                    DWORD_PTR instance, DWORD flags);
+WINMMAPI MMRESULT WINAPI waveInClose(HWAVEIN wave);
+
+/* ------------------------------------------------------------------ mixers */
+
+#define MIXER_SHORT_NAME_CHARS 16
+#define MIXER_LONG_NAME_CHARS 64
+
+#define MIXER_OBJECTF_HANDLE 0x80000000
+#define MIXER_OBJECTF_MIXER 0x00000000
+#define MIXER_OBJECTF_HMIXER (MIXER_OBJECTF_HANDLE | MIXER_OBJECTF_MIXER)
+#define MIXER_OBJECTF_WAVEOUT 0x10000000
+#define MIXER_OBJECTF_HWAVEOUT (MIXER_OBJECTF_HANDLE | MIXER_OBJECTF_WAVEOUT)
+#define MIXER_OBJECTF_WAVEIN 0x20000000
+#define MIXER_OBJECTF_HWAVEIN (MIXER_OBJECTF_HANDLE | MIXER_OBJECTF_WAVEIN)
+#define MIXER_OBJECTF_MIDIOUT 0x30000000
+#define MIXER_OBJECTF_HMIDIOUT (MIXER_OBJECTF_HANDLE | MIXER_OBJECTF_MIDIOUT)
+#define MIXER_OBJECTF_MIDIIN 0x40000000
+#define MIXER_OBJECTF_HMIDIIN (MIXER_OBJECTF_HANDLE | MIXER_OBJECTF_MIDIIN)
+#define MIXER_OBJECTF_AUX 0x50000000
+
+#define MIXERLINE_LINEF_ACTIVE 0x00000001
+#define MIXERLINE_LINEF_DISCONNECTED 0x00008000
+#define MIXERLINE_LINEF_SOURCE 0x80000000
+
+#define MIXERLINE_COMPONENTTYPE_DST_FIRST 0x00000000
+#define MIXERLINE_COMPONENTTYPE_DST_SPEAKERS (MIXERLINE_COMPONENTTYPE_DST_FIRST + 4)
+#define MIXERLINE_COMPONENTTYPE_DST_WAVEIN (MIXERLINE_COMPONENTTYPE_DST_FIRST + 7)
+#define MIXERLINE_COMPONENTTYPE_SRC_FIRST 0x00001000
+#define MIXERLINE_COMPONENTTYPE_SRC_WAVEOUT (MIXERLINE_COMPONENTTYPE_SRC_FIRST + 8)
+
+#define MIXERLINE_TARGETTYPE_UNDEFINED 0
+#define MIXERLINE_TARGETTYPE_WAVEOUT 1
+#define MIXERLINE_TARGETTYPE_WAVEIN 2
+
+#define MIXER_GETLINEINFOF_DESTINATION 0x00000000
+#define MIXER_GETLINEINFOF_SOURCE 0x00000001
+#define MIXER_GETLINEINFOF_LINEID 0x00000002
+#define MIXER_GETLINEINFOF_COMPONENTTYPE 0x00000003
+#define MIXER_GETLINEINFOF_TARGETTYPE 0x00000004
+#define MIXER_GETLINEINFOF_QUERYMASK 0x0000000F
+
+#define MIXERCONTROL_CONTROLF_UNIFORM 0x00000001
+#define MIXERCONTROL_CONTROLF_MULTIPLE 0x00000002
+#define MIXERCONTROL_CONTROLF_DISABLED 0x80000000
+
+#define MIXERCONTROL_CT_CLASS_FADER 0x50000000
+#define MIXERCONTROL_CT_CLASS_SWITCH 0x20000000
+#define MIXERCONTROL_CT_SC_SWITCH_BOOLEAN 0x00000000
+#define MIXERCONTROL_CT_UNITS_BOOLEAN 0x00010000
+#define MIXERCONTROL_CT_UNITS_UNSIGNED 0x00030000
+#define MIXERCONTROL_CONTROLTYPE_FADER (MIXERCONTROL_CT_CLASS_FADER | MIXERCONTROL_CT_UNITS_UNSIGNED)
+#define MIXERCONTROL_CONTROLTYPE_VOLUME (MIXERCONTROL_CONTROLTYPE_FADER + 1)
+#define MIXERCONTROL_CONTROLTYPE_BOOLEAN \
+    (MIXERCONTROL_CT_CLASS_SWITCH | MIXERCONTROL_CT_SC_SWITCH_BOOLEAN | MIXERCONTROL_CT_UNITS_BOOLEAN)
+#define MIXERCONTROL_CONTROLTYPE_MUTE (MIXERCONTROL_CONTROLTYPE_BOOLEAN + 2)
+
+#define MIXER_GETLINECONTROLSF_ALL 0x00000000
+#define MIXER_GETLINECONTROLSF_ONEBYID 0x00000001
+#define MIXER_GETLINECONTROLSF_ONEBYTYPE 0x00000002
+#define MIXER_GETLINECONTROLSF_QUERYMASK 0x0000000F
+
+#define MIXER_GETCONTROLDETAILSF_VALUE 0x00000000
+#define MIXER_GETCONTROLDETAILSF_LISTTEXT 0x00000001
+#define MIXER_GETCONTROLDETAILSF_QUERYMASK 0x0000000F
+#define MIXER_SETCONTROLDETAILSF_VALUE 0x00000000
+#define MIXER_SETCONTROLDETAILSF_CUSTOM 0x00000001
+#define MIXER_SETCONTROLDETAILSF_QUERYMASK 0x0000000F
+
+typedef struct tagMIXERCAPSA {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    CHAR szPname[MAXPNAMELEN];
+    DWORD fdwSupport;
+    DWORD cDestinations;
+} MIXERCAPSA, *LPMIXERCAPSA;
+
+typedef struct tagMIXERCAPSW {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    WCHAR szPname[MAXPNAMELEN];
+    DWORD fdwSupport;
+    DWORD cDestinations;
+} MIXERCAPSW, *LPMIXERCAPSW;
+
+typedef struct tagMIXERLINEA {
+    DWORD cbStruct;
+    DWORD dwDestination;
+    DWORD dwSource;
+    DWORD dwLineID;
+    DWORD fdwLine;
+    DWORD_PTR dwUser;
+    DWORD dwComponentType;
+    DWORD cChannels;
+    DWORD cConnections;
+    DWORD cControls;
+    CHAR szShortName[MIXER_SHORT_NAME_CHARS];
+    CHAR szName[MIXER_LONG_NAME_CHARS];
+    struct {
+        DWORD dwType;
+        DWORD dwDeviceID;
+        WORD wMid;
+        WORD wPid;
+        MMVERSION vDriverVersion;
+        CHAR szPname[MAXPNAMELEN];
+    } Target;
+} MIXERLINEA, *LPMIXERLINEA;
+
+typedef struct tagMIXERLINEW {
+    DWORD cbStruct;
+    DWORD dwDestination;
+    DWORD dwSource;
+    DWORD dwLineID;
+    DWORD fdwLine;
+    DWORD_PTR dwUser;
+    DWORD dwComponentType;
+    DWORD cChannels;
+    DWORD cConnections;
+    DWORD cControls;
+    WCHAR szShortName[MIXER_SHORT_NAME_CHARS];
+    WCHAR szName[MIXER_LONG_NAME_CHARS];
+    struct {
+        DWORD dwType;
+        DWORD dwDeviceID;
+        WORD wMid;
+        WORD wPid;
+        MMVERSION vDriverVersion;
+        WCHAR szPname[MAXPNAMELEN];
+    } Target;
+} MIXERLINEW, *LPMIXERLINEW;
+
+typedef struct tagMIXERCONTROLA {
+    DWORD cbStruct;
+    DWORD dwControlID;
+    DWORD dwControlType;
+    DWORD fdwControl;
+    DWORD cMultipleItems;
+    CHAR szShortName[MIXER_SHORT_NAME_CHARS];
+    CHAR szName[MIXER_LONG_NAME_CHARS];
+    union {
+        struct {
+            LONG lMinimum;
+            LONG lMaximum;
+        };
+        struct {
+            DWORD dwMinimum;
+            DWORD dwMaximum;
+        };
+        DWORD dwReserved[6];
+    } Bounds;
+    union {
+        DWORD cSteps;
+        DWORD cbCustomData;
+        DWORD dwReserved[6];
+    } Metrics;
+} MIXERCONTROLA, *LPMIXERCONTROLA;
+
+typedef struct tagMIXERCONTROLW {
+    DWORD cbStruct;
+    DWORD dwControlID;
+    DWORD dwControlType;
+    DWORD fdwControl;
+    DWORD cMultipleItems;
+    WCHAR szShortName[MIXER_SHORT_NAME_CHARS];
+    WCHAR szName[MIXER_LONG_NAME_CHARS];
+    union {
+        struct {
+            LONG lMinimum;
+            LONG lMaximum;
+        };
+        struct {
+            DWORD dwMinimum;
+            DWORD dwMaximum;
+        };
+        DWORD dwReserved[6];
+    } Bounds;
+    union {
+        DWORD cSteps;
+        DWORD cbCustomData;
+        DWORD dwReserved[6];
+    } Metrics;
+} MIXERCONTROLW, *LPMIXERCONTROLW;
+
+typedef struct tagMIXERLINECONTROLSA {
+    DWORD cbStruct;
+    DWORD dwLineID;
+    union {
+        DWORD dwControlID;
+        DWORD dwControlType;
+    };
+    DWORD cControls;
+    DWORD cbmxctrl;
+    LPMIXERCONTROLA pamxctrl;
+} MIXERLINECONTROLSA, *LPMIXERLINECONTROLSA;
+
+typedef struct tagMIXERLINECONTROLSW {
+    DWORD cbStruct;
+    DWORD dwLineID;
+    union {
+        DWORD dwControlID;
+        DWORD dwControlType;
+    };
+    DWORD cControls;
+    DWORD cbmxctrl;
+    LPMIXERCONTROLW pamxctrl;
+} MIXERLINECONTROLSW, *LPMIXERLINECONTROLSW;
+
+typedef struct tMIXERCONTROLDETAILS {
+    DWORD cbStruct;
+    DWORD dwControlID;
+    DWORD cChannels;
+    union {
+        HWND hwndOwner;
+        DWORD cMultipleItems;
+    };
+    DWORD cbDetails;
+    LPVOID paDetails;
+} MIXERCONTROLDETAILS, *LPMIXERCONTROLDETAILS;
+
+typedef struct tMIXERCONTROLDETAILS_UNSIGNED {
+    DWORD dwValue;
+} MIXERCONTROLDETAILS_UNSIGNED;
+
+typedef struct tMIXERCONTROLDETAILS_BOOLEAN {
+    LONG fValue;
+} MIXERCONTROLDETAILS_BOOLEAN;
+
 WINMMAPI UINT WINAPI mixerGetNumDevs(void);
+WINMMAPI MMRESULT WINAPI mixerGetDevCapsA(UINT_PTR id, LPMIXERCAPSA caps, UINT size);
+WINMMAPI MMRESULT WINAPI mixerGetDevCapsW(UINT_PTR id, LPMIXERCAPSW caps, UINT size);
+WINMMAPI MMRESULT WINAPI mixerOpen(LPHMIXER mixer, UINT id, DWORD_PTR callback, DWORD_PTR instance, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerClose(HMIXER mixer);
+WINMMAPI MMRESULT WINAPI mixerGetID(HMIXEROBJ object, UINT *id, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerGetLineInfoA(HMIXEROBJ object, LPMIXERLINEA line, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerGetLineInfoW(HMIXEROBJ object, LPMIXERLINEW line, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerGetLineControlsA(HMIXEROBJ object, LPMIXERLINECONTROLSA controls, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerGetLineControlsW(HMIXEROBJ object, LPMIXERLINECONTROLSW controls, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerGetControlDetailsA(HMIXEROBJ object, LPMIXERCONTROLDETAILS details, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerGetControlDetailsW(HMIXEROBJ object, LPMIXERCONTROLDETAILS details, DWORD flags);
+WINMMAPI MMRESULT WINAPI mixerSetControlDetails(HMIXEROBJ object, LPMIXERCONTROLDETAILS details, DWORD flags);
+WINMMAPI DWORD WINAPI mixerMessage(HMIXER mixer, UINT message, DWORD_PTR param1, DWORD_PTR param2);
+
+/* ------------------------------------------------------------------ auxiliary devices */
+
 WINMMAPI UINT WINAPI auxGetNumDevs(void);
+
+/* ------------------------------------------------------------------ installable drivers */
+
+DECLARE_HANDLE(HDRVR);
+typedef LRESULT(CALLBACK *DRIVERPROC)(DWORD_PTR id, HDRVR driver, UINT message, LPARAM param1, LPARAM param2);
+
+#define DRV_LOAD 0x0001
+#define DRV_ENABLE 0x0002
+#define DRV_OPEN 0x0003
+#define DRV_CLOSE 0x0004
+#define DRV_DISABLE 0x0005
+#define DRV_FREE 0x0006
+#define DRV_CONFIGURE 0x0007
+#define DRV_QUERYCONFIGURE 0x0008
+#define DRV_INSTALL 0x0009
+#define DRV_REMOVE 0x000A
+#define DRV_RESERVED 0x0800
+#define DRV_USER 0x4000
+#define DRVCNF_OK 0x0001
+
+WINMMAPI HDRVR WINAPI OpenDriver(LPCWSTR name, LPCWSTR section, LPARAM param);
+WINMMAPI LRESULT WINAPI CloseDriver(HDRVR driver, LPARAM param1, LPARAM param2);
+WINMMAPI LRESULT WINAPI SendDriverMessage(HDRVR driver, UINT message, LPARAM param1, LPARAM param2);
+WINMMAPI LRESULT WINAPI DefDriverProc(DWORD_PTR id, HDRVR driver, UINT message, LPARAM param1, LPARAM param2);
+WINMMAPI HMODULE WINAPI DrvGetModuleHandle(HDRVR driver);
+WINMMAPI HMODULE WINAPI GetDriverModuleHandle(HDRVR driver);
+
+/* ------------------------------------------------------------------ joysticks */
+
+#define JOYERR_BASE 160
+#define JOYERR_NOERROR 0
+#define JOYERR_PARMS (JOYERR_BASE + 5)
+#define JOYERR_NOCANDO (JOYERR_BASE + 6)
+#define JOYERR_UNPLUGGED (JOYERR_BASE + 7)
+#define JOYSTICKID1 0
+#define JOYSTICKID2 1
+
+WINMMAPI UINT WINAPI joyGetNumDevs(void);
+WINMMAPI UINT WINAPI mmsystemGetVersion(void);
 
 
 /* ------------------------------------------------------------------ buffered file i/o */

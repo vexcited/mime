@@ -65,6 +65,7 @@ set(gdi ntdll kernel32 gdi32)
 set(user_gdi ntdll kernel32 user32 gdi32)
 set(crypt ntdll kernel32 crypt32)
 set(objects_msi x86-lib-compound)
+set(objects_winmm x86-lib-audio)
 set(objects_gdiplus x86-lib-png)
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
