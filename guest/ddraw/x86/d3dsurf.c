@@ -171,6 +171,12 @@ static D3DSURFX *extension(DDSURF *s)
 
 void D3dSurfFree(DDSURF *s)
 {
+    while (s->aggregates) {
+        D3DAGG *a = s->aggregates;
+        s->aggregates = a->next;
+        a->inner->lpVtbl->Release(a->inner);
+        HeapFree(GetProcessHeap(), 0, a);
+    }
     D3DSURFX *x = s->d3d;
     if (!x)
         return;

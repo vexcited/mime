@@ -992,7 +992,11 @@ HRESULT DdEnumCreatable(DDRAW *dd, DWORD version, DDSURFACEDESC2 *desc, void *co
 /* the d3d interfaces of a surface are d3dim's, which 64-bit windows has none of. */
 HRESULT DdSurfQueryD3D(DDSURF *s, REFIID riid, void **out)
 {
+#ifdef _WIN64
     return E_NOINTERFACE;
+#else
+    return D3dSurfQuery(s, riid, out);
+#endif
 }
 
 /* ------------------------------------------------------------------ the adapter */

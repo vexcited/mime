@@ -17,26 +17,53 @@ D3DOBJ *D3dObjFromIface7(IDirect3D7 *iface)
     return iface && iface->lpVtbl == &d3d7_vtbl ? CONTAINING_RECORD(iface, D3DOBJ, iface7) : nullptr;
 }
 
-/* directx 7 objects answer the seventh interface; the first three are d3dim's, for the other objects. */
+/*
+ * directx 7 objects answer the seventh interface, the others the first
+ * three, which d3dim's object serves. it shares the count of the
+ * directdraw interface first asked for it.
+ */
 HRESULT D3dObjQuery(DDRAW *dd, DWORD version, REFIID riid, void **out)
 {
-    if (!IsEqualGUID(riid, &IID_IDirect3D7) || !dd->dx7)
+    BOOL legacy = IsEqualGUID(riid, &IID_IDirect3D) || IsEqualGUID(riid, &IID_IDirect3D2) ||
+                  IsEqualGUID(riid, &IID_IDirect3D3);
+    if (dd->dx7 ? !IsEqualGUID(riid, &IID_IDirect3D7) : !legacy)
         return E_NOINTERFACE;
     if (!dd->d3d) {
         D3DOBJ *d3d = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*d3d));
         if (!d3d)
             return DDERR_OUTOFMEMORY;
         d3d->iface7.lpVtbl = &d3d7_vtbl;
+        D3dLegacyInitObj(d3d);
         d3d->dd = dd;
-        d3d->outer = DDV7;
+        d3d->outer = dd->dx7 ? DDV7 : version;
         InitializeListHead(&d3d->devices);
         InitializeListHead(&d3d->buffers);
+        InitializeListHead(&d3d->viewports);
+        InitializeListHead(&d3d->lights);
+        InitializeListHead(&d3d->materials);
         dd->d3d = d3d;
     }
     IUnknown *outer = DdIface(dd, dd->d3d->outer);
     outer->lpVtbl->AddRef(outer);
-    *out = &dd->d3d->iface7;
+    D3DOBJ *d3d = dd->d3d;
+    if (dd->dx7)
+        *out = &d3d->iface7;
+    else if (IsEqualGUID(riid, &IID_IDirect3D))
+        *out = &d3d->iface1;
+    else if (IsEqualGUID(riid, &IID_IDirect3D2))
+        *out = &d3d->iface2;
+    else
+        *out = &d3d->iface3;
     return S_OK;
+}
+
+static void orphan(LIST_ENTRY *list)
+{
+    while (!IsListEmpty(list)) {
+        LIST_ENTRY *e = list->Flink;
+        RemoveEntryList(e);
+        InitializeListHead(e);
+    }
 }
 
 /* with its directdraw object: what is left of it is unreachable, as devices hold the object. */
@@ -45,12 +72,21 @@ void D3dObjDestroy(DDRAW *dd)
     D3DOBJ *d3d = dd->d3d;
     if (!d3d)
         return;
-    while (!IsListEmpty(&d3d->buffers)) {
-        D3DVB *vb = CONTAINING_RECORD(d3d->buffers.Flink, D3DVB, links);
-        RemoveEntryList(&vb->links);
-        InitializeListHead(&vb->links);
-        vb->d3d = nullptr;
-    }
+    for (LIST_ENTRY *e = d3d->buffers.Flink; e != &d3d->buffers; e = e->Flink)
+        CONTAINING_RECORD(e, D3DVB, links)->d3d = nullptr;
+    for (LIST_ENTRY *e = d3d->viewports.Flink; e != &d3d->viewports; e = e->Flink)
+        CONTAINING_RECORD(e, D3DVIEWPORTOBJ, links)->d3d = nullptr;
+    for (LIST_ENTRY *e = d3d->lights.Flink; e != &d3d->lights; e = e->Flink)
+        CONTAINING_RECORD(e, D3DLIGHTOBJ, links)->d3d = nullptr;
+    for (LIST_ENTRY *e = d3d->materials.Flink; e != &d3d->materials; e = e->Flink)
+        CONTAINING_RECORD(e, D3DMATERIALOBJ, links)->d3d = nullptr;
+    for (LIST_ENTRY *e = d3d->devices.Flink; e != &d3d->devices; e = e->Flink)
+        CONTAINING_RECORD(e, D3DDEV, links)->d3d = nullptr;
+    orphan(&d3d->devices);
+    orphan(&d3d->buffers);
+    orphan(&d3d->viewports);
+    orphan(&d3d->lights);
+    orphan(&d3d->materials);
     dd->d3d = nullptr;
     HeapFree(GetProcessHeap(), 0, d3d);
 }
@@ -58,6 +94,18 @@ void D3dObjDestroy(DDRAW *dd)
 static IUnknown *outer_of(D3DOBJ *d3d)
 {
     return DdIface(d3d->dd, d3d->outer);
+}
+
+void D3dObjAddRef(D3DOBJ *d3d)
+{
+    IUnknown *outer = outer_of(d3d);
+    outer->lpVtbl->AddRef(outer);
+}
+
+void D3dObjRelease(D3DOBJ *d3d)
+{
+    IUnknown *outer = outer_of(d3d);
+    outer->lpVtbl->Release(outer);
 }
 
 /* ------------------------------------------------------------------ devices and their descriptions */
@@ -84,7 +132,7 @@ BOOL D3dIsDeviceGuid(const GUID *guid)
            IsEqualGUID(guid, &IID_IDirect3DTnLHalDevice);
 }
 
-static void prim_caps(D3DPRIMCAPS *c, BOOL hal)
+void D3dPrimCaps(D3DPRIMCAPS *c, BOOL hal)
 {
     c->dwSize = sizeof(*c);
     c->dwMiscCaps = hal ? 0x72 : 0x70;
@@ -113,7 +161,7 @@ BOOL D3dDeviceDesc7(const GUID *guid, D3DDEVICEDESC7 *d)
     BOOL tnl = IsEqualGUID(guid, &IID_IDirect3DTnLHalDevice), hal = tnl || IsEqualGUID(guid, &IID_IDirect3DHALDevice);
     if (!hal && !IsEqualGUID(guid, &IID_IDirect3DRGBDevice) && !IsEqualGUID(guid, &IID_IDirect3DMMXDevice))
         return FALSE;
-    prim_caps(&d->dpcTriCaps, hal);
+    D3dPrimCaps(&d->dpcTriCaps, hal);
     d->dpcLineCaps = d->dpcTriCaps;
     d->dwMinTextureWidth = d->dwMinTextureHeight = 1;
     d->dwStencilCaps = 0xFF;

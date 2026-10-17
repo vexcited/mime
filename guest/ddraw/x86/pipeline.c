@@ -389,3 +389,254 @@ HRESULT D3dProcess(D3DDEV *dev, const BYTE *src, DWORD src_fvf, BYTE *dst, DWORD
         HeapFree(GetProcessHeap(), 0, lights);
     return D3D_OK;
 }
+
+/* ------------------------------------------------------------------ the first interfaces' lighting */
+
+/* a light of the current viewport, in camera space. */
+typedef struct OLDLIT {
+    const D3DLIGHT2 *light;
+    BOOL second;          /* a D3DLIGHT2, whose range, attenuation and falloff differ */
+    VEC color, position;
+    VEC axis;             /* the spot's direction, from the light */
+    VEC toward;           /* toward a directional or parallel point light */
+    float cos_umbra, cos_penumbra, linear, inv_width;
+} OLDLIT;
+
+/* how much of a point or spot light reaches a vertex, 0 for nothing; dir is toward the light. */
+static float old_attenuation(const OLDLIT *lit, VEC p, VEC *dir)
+{
+    const D3DLIGHT2 *L = lit->light;
+    VEC d = sub(lit->position, p);
+    float dist2 = dot(d, d);
+    if (dist2 == 0.0f)
+        return 0.0f;
+    if (lit->second && dist2 >= L->dvRange * L->dvRange)
+        return 0.0f;
+    float dist = (float)sqrt(dist2);
+    *dir = scale(d, 1.0f / dist);
+    float factor;
+    if (lit->second) {
+        /* the attenuation of the second light multiplies, by how far within the range. */
+        float t = (L->dvRange - dist) / L->dvRange;
+        factor = L->dvAttenuation0 + L->dvAttenuation1 * t + L->dvAttenuation2 * t * t;
+        if (L->dvAttenuation0 == 0.0f && L->dvAttenuation1 == 0.0f && L->dvAttenuation2 == 0.0f)
+            return 0.0f;
+    } else {
+        float a = L->dvAttenuation0 + L->dvAttenuation1 * dist + L->dvAttenuation2 * dist2;
+        if (a > 1000.0f)
+            return 0.0f;
+        factor = 1.0f / (a > 1.0f ? a : 1.0f);
+    }
+    if (L->dltType == D3DLIGHT_SPOT) {
+        float c = -dot(*dir, lit->axis);
+        if (c <= lit->cos_penumbra)
+            return 0.0f;
+        if (c < lit->cos_umbra) {
+            if (!lit->second)
+                factor *= 1.0f - (lit->cos_umbra - c) * lit->linear;
+            else if (L->dvFalloff == 1.0f)
+                factor *= (c - lit->cos_penumbra) * lit->inv_width;
+            else
+                factor *= (float)pow((c - lit->cos_penumbra) * lit->inv_width, L->dvFalloff);
+        }
+    }
+    return factor;
+}
+
+/*
+ * vertices lit by the lights of the current viewport and the current
+ * material: the ambient light state on the material's ambient, its
+ * emissive, then each light's color on its diffuse and, from a halfway
+ * vector to the eye, its specular. vertex colors stand for the
+ * material's diffuse and specular when COLORVERTEX is on, guessed from
+ * directx 6's description.
+ */
+void D3dLegacyLight(D3DDEV *dev, const BYTE *src, DWORD fvf, DWORD count, BYTE *dst, DWORD dst_stride)
+{
+    D3DLEGACY *l = dev->legacy;
+    const D3DMATERIAL *m = &l->material;
+    LAYOUT in;
+    layout_of(fvf, &in);
+    D3DMATRIX wv = mul(&dev->transforms[D3DTRANSFORMSTATE_WORLD], &dev->transforms[D3DTRANSFORMSTATE_VIEW]);
+    const D3DMATRIX *view = &dev->transforms[D3DTRANSFORMSTATE_VIEW];
+    float nm[3][3];
+    normal_matrix(&wv, nm);
+    OLDLIT stack[16], *lights = stack;
+    DWORD n = 0, capacity = RTL_NUMBER_OF(stack);
+    if (l->current) {
+        if (l->current->light_count > capacity) {
+            capacity = l->current->light_count;
+            lights = HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*lights));
+            if (!lights) {
+                lights = stack;
+                capacity = RTL_NUMBER_OF(stack);
+            }
+        }
+        LIST_ENTRY *list = &l->current->lights;
+        for (LIST_ENTRY *e = list->Flink; e != list && n < capacity; e = e->Flink) {
+            D3DLIGHTOBJ *obj = CONTAINING_RECORD(e, D3DLIGHTOBJ, vp_links);
+            const D3DLIGHT2 *L = &obj->data;
+            BOOL second = L->dwSize == sizeof(D3DLIGHT2);
+            if (!obj->set || (second && !(L->dwFlags & D3DLIGHT_ACTIVE)))
+                continue;
+            OLDLIT *lit = &lights[n++];
+            lit->light = L;
+            lit->second = second;
+            lit->color = value_rgb(&L->dcvColor);
+            VEC pos = {L->dvPosition.x, L->dvPosition.y, L->dvPosition.z};
+            VEC dir = {L->dvDirection.x, L->dvDirection.y, L->dvDirection.z};
+            lit->position = point_by(view, pos);
+            lit->axis = normalize(direction_by(view, dir));
+            /* a parallel point light shines from where its position points, guessed in world space. */
+            lit->toward = L->dltType == D3DLIGHT_PARALLELPOINT ? normalize(direction_by(view, pos))
+                                                               : scale(lit->axis, -1.0f);
+            lit->cos_umbra = (float)cos(L->dvTheta * 0.5);
+            lit->cos_penumbra = (float)cos(L->dvPhi * 0.5);
+            float width = lit->cos_umbra - lit->cos_penumbra;
+            lit->linear = width > 0.0f ? 1.0f / width : 0.0f;
+            lit->inv_width = width != 0.0f ? 1.0f / width : 1.0f;
+        }
+        l->current->lights_dirty = FALSE;
+    }
+    VEC ambient = bytes(l->light_states[D3DLIGHTSTATE_AMBIENT]);
+    BOOL vertex_colors = l->light_states[D3DLIGHTSTATE_COLORVERTEX] != 0;
+    BOOL specular_on = dev->rs[D3DRENDERSTATE_SPECULARENABLE] && m->dvPower > 0.001f;
+    for (DWORD i = 0; i < count; i++) {
+        const BYTE *v = src + (SIZE_T)i * in.stride;
+        VEC p, raw;
+        memcpy(&p, v, sizeof(p));
+        memcpy(&raw, v + in.normal, sizeof(raw));
+        VEC cam = point_by(&wv, p);
+        VEC normal = {raw.x * nm[0][0] + raw.y * nm[1][0] + raw.z * nm[2][0],
+                      raw.x * nm[0][1] + raw.y * nm[1][1] + raw.z * nm[2][1],
+                      raw.x * nm[0][2] + raw.y * nm[1][2] + raw.z * nm[2][2]};
+        VEC md = value_rgb(&m->dcvDiffuse), ms = value_rgb(&m->dcvSpecular);
+        DWORD diffuse_alpha = alpha_of(m->dcvDiffuse.a), specular_alpha = alpha_of(m->dcvSpecular.a);
+        if (vertex_colors && in.has_diffuse) {
+            DWORD c = read_dword(v, in.diffuse);
+            md = scale(bytes(c), 1.0f / 255.0f);
+            diffuse_alpha = c >> 24;
+        }
+        if (vertex_colors && in.has_specular) {
+            DWORD c = read_dword(v, in.specular);
+            ms = scale(bytes(c), 1.0f / 255.0f);
+            specular_alpha = c >> 24;
+        }
+        VEC diffuse = {}, specular = {};
+        for (DWORD j = 0; j < n; j++) {
+            const OLDLIT *lit = &lights[j];
+            DWORD type = lit->light->dltType;
+            VEC dir;
+            float factor = 1.0f;
+            if (type == D3DLIGHT_DIRECTIONAL || type == D3DLIGHT_PARALLELPOINT)
+                dir = lit->toward;
+            else if ((factor = old_attenuation(lit, cam, &dir)) == 0.0f)
+                continue;
+            float ndotl = dot(normal, dir);
+            if (ndotl <= 0.0f)
+                continue;
+            diffuse = add(diffuse, scale(lit->color, ndotl * factor));
+            if (!specular_on || (lit->second && (lit->light->dwFlags & D3DLIGHT_NO_SPECULAR)))
+                continue;
+            VEC h = normalize(add(dir, normalize(scale(cam, -1.0f))));
+            float ndoth = dot(normal, h);
+            if (ndoth <= 0.0f)
+                continue;
+            specular = add(specular, scale(lit->color, factor * (float)pow(ndoth > 1.0f ? 1.0f : ndoth, m->dvPower)));
+        }
+        VEC base = add(times(scale(ambient, 1.0f / 255.0f), value_rgb(&m->dcvAmbient)), value_rgb(&m->dcvEmissive));
+        DWORD out[2] = {pack(scale(add(base, times(diffuse, md)), 255.0f), diffuse_alpha),
+                        pack(scale(times(specular, ms), 255.0f), specular_alpha)};
+        memcpy(dst + (SIZE_T)i * dst_stride, out, sizeof(out));
+    }
+    if (lights != stack)
+        HeapFree(GetProcessHeap(), 0, lights);
+}
+
+/* the fog of the light states for a camera space depth, when FOGENABLE asks for vertex fog. */
+DWORD D3dLegacyFog(D3DDEV *dev, float z)
+{
+    const DWORD *s = dev->legacy->light_states;
+    if (!dev->rs[D3DRENDERSTATE_FOGENABLE] || s[D3DLIGHTSTATE_FOGMODE] == D3DFOG_NONE)
+        return 255;
+    float start, end, density, f = 1.0f;
+    memcpy(&start, &s[D3DLIGHTSTATE_FOGSTART], 4);
+    memcpy(&end, &s[D3DLIGHTSTATE_FOGEND], 4);
+    memcpy(&density, &s[D3DLIGHTSTATE_FOGDENSITY], 4);
+    switch (s[D3DLIGHTSTATE_FOGMODE]) {
+    case D3DFOG_LINEAR:
+        f = end == start ? 1.0f : (end - z) / (end - start);
+        break;
+    case D3DFOG_EXP:
+        f = (float)exp(-density * z);
+        break;
+    case D3DFOG_EXP2:
+        f = (float)exp(-(density * z) * (density * z));
+        break;
+    }
+    return clamp_byte((f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f) * 255.0f);
+}
+
+/* the colors a vertex has, white and black when it has none. */
+static void vertex_colors(const LAYOUT *l, const BYTE *v, DWORD *colors)
+{
+    colors[0] = l->has_diffuse ? read_dword(v, l->diffuse) : 0xFFFFFFFF;
+    colors[1] = l->has_specular ? read_dword(v, l->specular) : 0;
+}
+
+HRESULT D3dLegacyProcess(D3DDEV *dev, const BYTE *src, DWORD src_fvf, BYTE *dst, DWORD dst_fvf, DWORD count,
+                         DWORD op)
+{
+    D3DLEGACY *l = dev->legacy;
+    LAYOUT in, out;
+    layout_of(src_fvf, &in);
+    layout_of(dst_fvf, &out);
+    BOOL lighting = (op & D3DVOP_LIGHT) && in.has_normal && l->light_states[D3DLIGHTSTATE_MATERIAL];
+    DWORD *colors = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)count * 8 + 8);
+    if (!colors)
+        return DDERR_OUTOFMEMORY;
+    if (lighting)
+        D3dLegacyLight(dev, src, src_fvf, count, (BYTE *)colors, 8);
+    else
+        for (DWORD i = 0; i < count; i++)
+            vertex_colors(&in, src + (SIZE_T)i * in.stride, colors + 2 * i);
+    D3DMATRIX wv = mul(&dev->transforms[D3DTRANSFORMSTATE_WORLD], &dev->transforms[D3DTRANSFORMSTATE_VIEW]);
+    D3DMATRIX all = mul(&wv, &dev->transforms[D3DTRANSFORMSTATE_PROJECTION]);
+    all = mul(&all, &l->clip_map);
+    const D3DVIEWPORT7 *vp = &dev->viewport;
+    BOOL fog = dev->rs[D3DRENDERSTATE_FOGENABLE] && l->light_states[D3DLIGHTSTATE_FOGMODE] != D3DFOG_NONE;
+    DWORD uni = 0, every = 0xFFF;
+    for (DWORD i = 0; i < count; i++) {
+        const BYTE *v = src + (SIZE_T)i * in.stride;
+        BYTE *o = dst + (SIZE_T)i * out.stride;
+        VEC p;
+        memcpy(&p, v, sizeof(p));
+        float x = p.x * all._11 + p.y * all._21 + p.z * all._31 + all._41;
+        float y = p.x * all._12 + p.y * all._22 + p.z * all._32 + all._42;
+        float z = p.x * all._13 + p.y * all._23 + p.z * all._33 + all._43;
+        float w = p.x * all._14 + p.y * all._24 + p.z * all._34 + all._44;
+        if (op & D3DVOP_CLIP) {
+            DWORD code = (x < -w ? D3DCLIP_LEFT : 0) | (x > w ? D3DCLIP_RIGHT : 0) | (y > w ? D3DCLIP_TOP : 0) |
+                         (y < -w ? D3DCLIP_BOTTOM : 0) | (z < 0.0f ? D3DCLIP_FRONT : 0) | (z > w ? D3DCLIP_BACK : 0);
+            uni |= code;
+            every &= code;
+        }
+        float rhw = w != 0.0f ? 1.0f / w : 0.0f;
+        float screen[4] = {(float)vp->dwX + (x * rhw + 1.0f) * 0.5f * (float)vp->dwWidth,
+                           (float)vp->dwY + (1.0f - y * rhw) * 0.5f * (float)vp->dwHeight, z * rhw, rhw};
+        memcpy(o, screen, (dst_fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW ? 16 : 12);
+        DWORD *c = colors + 2 * i;
+        if (fog)
+            c[1] = (c[1] & 0x00FFFFFF) | D3dLegacyFog(dev, point_by(&wv, p).z) << 24;
+        if (out.has_diffuse)
+            memcpy(o + out.diffuse, &c[0], 4);
+        if (out.has_specular)
+            memcpy(o + out.specular, &c[1], 4);
+        for (DWORD t = 0; t < in.sets && t < out.sets && t < 8; t++)
+            memcpy(o + out.tex[t], v + in.tex[t], in.tex_size[t] < out.tex_size[t] ? in.tex_size[t] : out.tex_size[t]);
+    }
+    if ((op & D3DVOP_CLIP) && count)
+        l->status = (l->status | uni) & ((every << 12) | 0xFF000FFF);
+    HeapFree(GetProcessHeap(), 0, colors);
+    return D3D_OK;
+}

@@ -30,6 +30,11 @@ static BOOL active(D3DDEV *dev)
     return g_active == dev;
 }
 
+BOOL D3dDevIsActive(D3DDEV *dev)
+{
+    return g_active == dev;
+}
+
 static void push_rs(D3DDEV *dev, DWORD type, DWORD value)
 {
     switch (type) {
@@ -172,21 +177,36 @@ static BOOL valid_transform(DWORD type)
            (type >= D3DTRANSFORMSTATE_TEXTURE0 && type <= D3DTRANSFORMSTATE_TEXTURE7);
 }
 
+/* the projection of the first interfaces ends with their viewport's clip volume. */
+static void push_transform(D3DDEV *dev, DWORD type)
+{
+    D3DMATRIX m = dev->transforms[type];
+    if (type == D3DTRANSFORMSTATE_PROJECTION && dev->legacy)
+        m = D3dMultiply(&m, D3dLegacyClipMap(dev));
+    DbSetTransform(dev->db, transform9(type), &m._11);
+}
+
+void D3dPushProjection(D3DDEV *dev)
+{
+    if (active(dev))
+        push_transform(dev, D3DTRANSFORMSTATE_PROJECTION);
+}
+
 /* everything of the device to the backend, which another device's work changed. */
 void D3dDevActivate(D3DDEV *dev)
 {
     if (g_active == dev)
         return;
     g_active = dev;
-    for (DWORD i = 0; i < 256; i++)
-        if (dev->rs[i] != 0xFFFFFFFF)
-            push_rs(dev, i, dev->rs[i]);
     for (DWORD stage = 0; stage < D3D_STAGES; stage++)
         for (DWORD t = D3DTSS_COLOROP; t <= D3DTSS_TEXTURETRANSFORMFLAGS; t++)
             push_tss(dev, stage, t, dev->tss[stage][t]);
+    for (DWORD i = 0; i < 256; i++)
+        if (dev->rs[i] != 0xFFFFFFFF)
+            push_rs(dev, i, dev->rs[i]);
     for (DWORD t = 1; t < RTL_NUMBER_OF(dev->transforms); t++)
         if (valid_transform(t))
-            DbSetTransform(dev->db, transform9(t), &dev->transforms[t]._11);
+            push_transform(dev, t);
     DbSetViewport(dev->db, dev->viewport.dwX, dev->viewport.dwY, dev->viewport.dwWidth, dev->viewport.dwHeight,
                   dev->viewport.dvMinZ, dev->viewport.dvMaxZ);
     DbSetMaterial(dev->db, &dev->material);
@@ -199,32 +219,34 @@ void D3dDevActivate(D3DDEV *dev)
         DbSetClipPlane(dev->db, i, dev->clip_planes[i]);
     dev->keyed = FALSE;
     dev->stage_end = D3D_STAGES;
+    if (dev->legacy)
+        D3dLegacyActivate(dev);
 }
 
 /* ------------------------------------------------------------------ immediate state changes */
 
-static void set_rs(D3DDEV *dev, DWORD type, DWORD value)
+void D3dSetRs(D3DDEV *dev, DWORD type, DWORD value)
 {
     dev->rs[type] = value;
     if (active(dev))
         push_rs(dev, type, value);
 }
 
-static void set_tss(D3DDEV *dev, DWORD stage, DWORD type, DWORD value)
+void D3dSetTss(D3DDEV *dev, DWORD stage, DWORD type, DWORD value)
 {
     dev->tss[stage][type] = value;
     if (active(dev) && !(type == D3DTSS_COLOROP && stage == dev->stage_end))
         push_tss(dev, stage, type, value);
 }
 
-static void set_transform(D3DDEV *dev, DWORD type, const D3DMATRIX *m)
+void D3dSetTransform(D3DDEV *dev, DWORD type, const D3DMATRIX *m)
 {
     dev->transforms[type] = *m;
     if (active(dev))
-        DbSetTransform(dev->db, transform9(type), &m->_11);
+        push_transform(dev, type);
 }
 
-static void set_viewport(D3DDEV *dev, const D3DVIEWPORT7 *vp)
+void D3dSetViewport(D3DDEV *dev, const D3DVIEWPORT7 *vp)
 {
     dev->viewport = *vp;
     /* a depth range thinner than a thousandth is widened toward the middle. */
@@ -239,14 +261,14 @@ static void set_viewport(D3DDEV *dev, const D3DVIEWPORT7 *vp)
                       dev->viewport.dvMinZ, dev->viewport.dvMaxZ);
 }
 
-static void set_material(D3DDEV *dev, const D3DMATERIAL7 *m)
+void D3dSetMaterial(D3DDEV *dev, const D3DMATERIAL7 *m)
 {
     dev->material = *m;
     if (active(dev))
         DbSetMaterial(dev->db, m);
 }
 
-static D3DLIGHTSLOT *light_slot(D3DDEV *dev, DWORD index)
+D3DLIGHTSLOT *D3dLightSlot(D3DDEV *dev, DWORD index)
 {
     if (index >= dev->light_count) {
         DWORD count = index + 10;
@@ -261,9 +283,9 @@ static D3DLIGHTSLOT *light_slot(D3DDEV *dev, DWORD index)
     return &dev->lights[index];
 }
 
-static HRESULT set_light(D3DDEV *dev, DWORD index, const D3DLIGHT7 *light)
+HRESULT D3dSetLight(D3DDEV *dev, DWORD index, const D3DLIGHT7 *light)
 {
-    D3DLIGHTSLOT *slot = light_slot(dev, index);
+    D3DLIGHTSLOT *slot = D3dLightSlot(dev, index);
     if (!slot)
         return DDERR_OUTOFMEMORY;
     slot->light = *light;
@@ -273,16 +295,16 @@ static HRESULT set_light(D3DDEV *dev, DWORD index, const D3DLIGHT7 *light)
     return D3D_OK;
 }
 
-static HRESULT light_enable(D3DDEV *dev, DWORD index, BOOL enable)
+HRESULT D3dLightEnable(D3DDEV *dev, DWORD index, BOOL enable)
 {
-    D3DLIGHTSLOT *slot = light_slot(dev, index);
+    D3DLIGHTSLOT *slot = D3dLightSlot(dev, index);
     if (!slot)
         return DDERR_OUTOFMEMORY;
     if (!slot->set) {
         /* a light enabled before it was set is a white directional light along z. */
         D3DLIGHT7 light = {D3DLIGHT_DIRECTIONAL, {{1.0f}, {1.0f}, {1.0f}, {0.0f}}};
         light.dvDirection.z = 1.0f;
-        set_light(dev, index, &light);
+        D3dSetLight(dev, index, &light);
     }
     slot->enabled = enable != 0;
     if (active(dev))
@@ -297,22 +319,46 @@ static void set_clip_plane(D3DDEV *dev, DWORD index, const float *plane)
         DbSetClipPlane(dev->db, index, plane);
 }
 
-static void set_texture(D3DDEV *dev, DWORD stage, DDSURF *s)
+/* the surface references a device holds, through the interface of its version; an aggregate holds none. */
+static void hold(D3DDEV *dev, DDSURF *s)
 {
-    if (dev->textures[stage] == s)
+    if (s && dev->surface_version)
+        DdSurfAddRef(s, DdSurfRefOf(s, dev->surface_version));
+}
+
+static void unhold(D3DDEV *dev, DDSURF *s)
+{
+    if (s && dev->surface_version)
+        DdSurfRelease(s, DdSurfRefOf(s, dev->surface_version));
+}
+
+/* a texture bound through a handle holds no reference: the surface going unbinds it. */
+void D3dSetTexture(D3DDEV *dev, DWORD stage, DDSURF *s)
+{
+    if (dev->textures[stage] == s && !(dev->weak_textures >> stage & 1))
         return;
     if (s)
-        DdSurfAddRef(s, DdSurfRefOf(s, DDV7));
+        hold(dev, s);
     DDSURF *old = dev->textures[stage];
+    BOOL weak = dev->weak_textures >> stage & 1;
     dev->textures[stage] = s;
-    if (old)
-        DdSurfRelease(old, DdSurfRefOf(old, DDV7));
+    dev->weak_textures &= ~(1u << stage);
+    if (old && !weak)
+        unhold(dev, old);
+}
+
+void D3dSetTextureWeak(D3DDEV *dev, DWORD stage, DDSURF *s)
+{
+    D3dSetTexture(dev, stage, nullptr);
+    dev->textures[stage] = s;
+    if (s)
+        dev->weak_textures |= 1u << stage;
 }
 
 /* ------------------------------------------------------------------ the targets and textures of a draw */
 
 /* the targets bound, and depth fills waiting for the depth buffer done now that it is. */
-static BOOL bind_targets(D3DDEV *dev)
+BOOL D3dBindTargets(D3DDEV *dev)
 {
     D3dDevActivate(dev);
     DbImage *target = D3dSurfImage(dev, dev->target, DB_TARGET);
@@ -333,11 +379,6 @@ static BOOL bind_targets(D3DDEV *dev)
     return TRUE;
 }
 
-/*
- * the textures of the stages, and the color key of the first: its keyed
- * texels have alpha 0 and are not drawn, as the hardware drivers of
- * direct3d 7 did through the alpha test.
- */
 /* whether an operation reads its texture argument, as the stage's arguments ask. */
 static BOOL reads_texture(DWORD op, DWORD arg1, DWORD arg2)
 {
@@ -354,6 +395,11 @@ static BOOL reads_texture(DWORD op, DWORD arg1, DWORD arg2)
     }
 }
 
+/*
+ * the textures of the stages, and the color key of the first: its keyed
+ * texels have alpha 0 and are not drawn, as the hardware drivers of
+ * direct3d 7 did through the alpha test.
+ */
 static void bind_textures(D3DDEV *dev)
 {
     BOOL keyed = FALSE;
@@ -388,6 +434,27 @@ static void bind_textures(D3DDEV *dev)
 }
 
 /* ------------------------------------------------------------------ drawing */
+
+HRESULT D3dClearRects(D3DDEV *dev, DWORD n, const D3DRECT *list, DWORD flags, DWORD color, float z, DWORD stencil)
+{
+    if (!n)
+        return D3D_OK;
+    BOOL whole = (flags & D3DCLEAR_TARGET) && n == 1 && !list[0].x1 && !list[0].y1 &&
+                 list[0].x2 == (LONG)dev->target->desc.dwWidth && list[0].y2 == (LONG)dev->target->desc.dwHeight;
+    /* a target cleared whole needs nothing of its memory. */
+    if (whole)
+        D3dSurfReplaced(dev->target);
+    if (!D3dBindTargets(dev))
+        return DDERR_SURFACELOST;
+    /* the backend clears within its viewport, which the rectangles may pass. */
+    DbSetViewport(dev->db, 0, 0, dev->target->desc.dwWidth, dev->target->desc.dwHeight, 0.0f, 1.0f);
+    HRESULT hr = DbClear(dev->db, n, list, flags, color, z, stencil);
+    DbSetViewport(dev->db, dev->viewport.dwX, dev->viewport.dwY, dev->viewport.dwWidth, dev->viewport.dwHeight,
+                  dev->viewport.dvMinZ, dev->viewport.dvMaxZ);
+    if (flags & D3DCLEAR_TARGET)
+        D3dSurfDrawn(dev->target);
+    return SUCCEEDED(hr) ? D3D_OK : hr;
+}
 
 DWORD D3dFvfSize(DWORD fvf)
 {
@@ -435,10 +502,10 @@ HRESULT D3dDraw(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const void *verti
     DWORD primitives = D3dPrimitiveCount(type, indices ? index_count : vertex_count);
     if (!primitives || !vertices || !vertex_count)
         return D3D_OK;
-    if (!bind_targets(dev))
+    if (!D3dBindTargets(dev))
         return DDERR_SURFACELOST;
     bind_textures(dev);
-    BOOL unlit = (flags & D3DDP_DONOTLIGHT) && dev->rs[D3DRENDERSTATE_LIGHTING];
+    BOOL unlit = dev->version == 7 && (flags & D3DDP_DONOTLIGHT) && dev->rs[D3DRENDERSTATE_LIGHTING];
     if (unlit)
         DbSetRenderState(dev->db, D3DRENDERSTATE_LIGHTING, FALSE);
     DWORD stride = D3dFvfSize(fvf);
@@ -496,7 +563,7 @@ const BYTE *D3dPackStrided(D3DDEV *dev, DWORD fvf, const D3DDRAWPRIMITIVESTRIDED
 
 /* ------------------------------------------------------------------ creation */
 
-static DDSURF *attached_depth(DDSURF *s)
+DDSURF *D3dAttachedDepth(DDSURF *s)
 {
     for (LIST_ENTRY *e = s->attached.Flink; e != &s->attached; e = e->Flink) {
         DDSURF *a = CONTAINING_RECORD(e, DDATTACH, links)->surface;
@@ -506,7 +573,7 @@ static DDSURF *attached_depth(DDSURF *s)
     return nullptr;
 }
 
-static DWORD ddbd_of(DWORD bits)
+DWORD D3dDdbd(DWORD bits)
 {
     switch (bits) {
     case 1:
@@ -528,37 +595,34 @@ static DWORD ddbd_of(DWORD bits)
     }
 }
 
-static BOOL palettized(const DDSURF *s)
+BOOL D3dPalettized(const DDSURF *s)
 {
     return (s->format.pf.dwFlags & (DDPF_PALETTEINDEXED4 | DDPF_PALETTEINDEXED8)) != 0;
 }
 
 /* the checks CreateDevice and SetRenderTarget share: the surface must take 3d drawing and a palette if indexed. */
-static HRESULT check_palette(DDSURF *target)
+HRESULT D3dCheckPalette(DDSURF *target)
 {
     if (!target->palette && target->format.bpp < 16)
         return DDERR_NOPALETTEATTACHED;
     return D3D_OK;
 }
 
-static void hold_targets(D3DDEV *dev, DDSURF *target, DDSURF *depth)
+void D3dHoldTargets(D3DDEV *dev, DDSURF *target, DDSURF *depth)
 {
-    DdSurfAddRef(target, DdSurfRefOf(target, DDV7));
-    if (depth)
-        DdSurfAddRef(depth, DdSurfRefOf(depth, DDV7));
-    if (target->palette)
+    hold(dev, target);
+    hold(dev, depth);
+    if (target->palette && dev->surface_version)
         target->palette->iface.lpVtbl->AddRef(&target->palette->iface);
     DDSURF *old_target = dev->target, *old_depth = dev->depth;
     DDPAL *old_palette = dev->palette;
     dev->target = target;
     dev->depth = depth;
     dev->palette = target->palette;
-    if (old_palette)
+    if (old_palette && dev->surface_version)
         old_palette->iface.lpVtbl->Release(&old_palette->iface);
-    if (old_depth)
-        DdSurfRelease(old_depth, DdSurfRefOf(old_depth, DDV7));
-    if (old_target)
-        DdSurfRelease(old_target, DdSurfRefOf(old_target, DDV7));
+    unhold(dev, old_depth);
+    unhold(dev, old_target);
 }
 
 static void default_state(D3DDEV *dev)
@@ -666,13 +730,13 @@ HRESULT D3dCreateDevice7(D3DOBJ *d3d, const GUID *guid, DDSURF *target, IDirect3
         return DDERR_INVALIDCAPS;
     if (target->desc.dwWidth > 2048 || target->desc.dwHeight > 2048)
         return DDERR_INVALIDOBJECT;
-    HRESULT hr = check_palette(target);
+    HRESULT hr = D3dCheckPalette(target);
     if (FAILED(hr))
         return hr;
-    DDSURF *depth = attached_depth(target);
+    DDSURF *depth = D3dAttachedDepth(target);
     if (hal && !(caps & DDSCAPS_VIDEOMEMORY))
         return D3DERR_SURFACENOTINVIDMEM;
-    if ((target->format.pf.dwFlags & DDPF_RGB) && !(ddbd_of(target->format.bpp) & desc.dwDeviceRenderBitDepth))
+    if ((target->format.pf.dwFlags & DDPF_RGB) && !(D3dDdbd(target->format.bpp) & desc.dwDeviceRenderBitDepth))
         return DDERR_INVALIDPIXELFORMAT;
     if (depth) {
         DWORD zcaps = depth->desc.ddsCaps.dwCaps;
@@ -680,12 +744,12 @@ HRESULT D3dCreateDevice7(D3DOBJ *d3d, const GUID *guid, DDSURF *target, IDirect3
             return D3DERR_ZBUFF_NEEDS_VIDEOMEMORY;
         if (!hal && !(zcaps & DDSCAPS_SYSTEMMEMORY))
             return D3DERR_ZBUFF_NEEDS_SYSTEMMEMORY;
-        if ((depth->format.pf.dwFlags & DDPF_ZBUFFER) && !ddbd_of(depth->format.pf.dwZBufferBitDepth))
+        if ((depth->format.pf.dwFlags & DDPF_ZBUFFER) && !D3dDdbd(depth->format.pf.dwZBufferBitDepth))
             return DDERR_INVALIDPIXELFORMAT;
     }
-    if (!(ddbd_of(target->format.bpp) & desc.dwDeviceRenderBitDepth))
+    if (!(D3dDdbd(target->format.bpp) & desc.dwDeviceRenderBitDepth))
         return DDERR_INVALIDOBJECT;
-    if (!palettized(target) && (!target->format.pf.dwRBitMask || !target->format.pf.dwGBitMask ||
+    if (!D3dPalettized(target) && (!target->format.pf.dwRBitMask || !target->format.pf.dwGBitMask ||
                                 !target->format.pf.dwBBitMask))
         return DDERR_INVALIDPIXELFORMAT;
     DbDevice *db = DbDeviceGet();
@@ -696,15 +760,17 @@ HRESULT D3dCreateDevice7(D3DOBJ *d3d, const GUID *guid, DDSURF *target, IDirect3
         return DDERR_OUTOFMEMORY;
     dev->iface7.lpVtbl = &dev7_vtbl;
     dev->ref = 1;
+    dev->version = 7;
+    dev->surface_version = DDV7;
     dev->d3d = d3d;
     dev->guid = *guid;
     dev->hal = hal;
     dev->desc = desc;
     dev->db = db;
-    hold_targets(dev, target, depth);
+    D3dHoldTargets(dev, target, depth);
     default_state(dev);
     InsertTailList(&d3d->devices, &dev->links);
-    d3d->iface7.lpVtbl->AddRef(&d3d->iface7);
+    D3dObjAddRef(d3d);
     *out = &dev->iface7;
     return D3D_OK;
 }
@@ -782,36 +848,36 @@ static HRESULT apply_block(D3DDEV *dev, D3DBLOCK *b)
         switch (item->op) {
         case D3DI_RS:
             if (item->a < 256 && dev->rs[item->a] != item->b)
-                set_rs(dev, item->a, item->b);
+                D3dSetRs(dev, item->a, item->b);
             break;
         case D3DI_TSS:
             if (item->a < D3D_STAGES && item->b < 32 && dev->tss[item->a][item->b] != item->value)
-                set_tss(dev, item->a, item->b, item->value);
+                D3dSetTss(dev, item->a, item->b, item->value);
             break;
         case D3DI_TEXTURE:
-            set_texture(dev, item->a, item->texture);
+            D3dSetTexture(dev, item->a, item->texture);
             break;
         case D3DI_VIEWPORT: {
             const D3DVIEWPORT7 *vp = &item->viewport;
             DWORD w = dev->target->desc.dwWidth, h = dev->target->desc.dwHeight;
             if (vp->dwX > w || vp->dwY > h || vp->dwX + vp->dwWidth > w || vp->dwY + vp->dwHeight > h)
                 return DDERR_INVALIDPARAMS;
-            set_viewport(dev, vp);
+            D3dSetViewport(dev, vp);
             break;
         }
         case D3DI_MATERIAL:
-            set_material(dev, &item->material);
+            D3dSetMaterial(dev, &item->material);
             break;
         case D3DI_LIGHT:
-            if (FAILED(set_light(dev, item->a, &item->light)))
+            if (FAILED(D3dSetLight(dev, item->a, &item->light)))
                 return DDERR_OUTOFMEMORY;
             break;
         case D3DI_LIGHTENABLE:
-            light_enable(dev, item->a, item->b);
+            D3dLightEnable(dev, item->a, item->b);
             break;
         case D3DI_TRANSFORM:
             if (valid_transform(item->a))
-                set_transform(dev, item->a, &item->matrix);
+                D3dSetTransform(dev, item->a, &item->matrix);
             break;
         case D3DI_CLIPPLANE:
             if (item->a < D3D_CLIP_PLANES)
@@ -961,12 +1027,14 @@ static ULONG STDMETHODCALLTYPE dev7_add_ref(IDirect3DDevice7 *This)
     return ref;
 }
 
-static void destroy(D3DDEV *dev)
+void D3dDevDestroy(D3DDEV *dev)
 {
     if (g_active == dev)
         g_active = nullptr;
+    if (dev->legacy)
+        D3dLegacyDestroy(dev);
     for (DWORD i = 0; i < D3D_STAGES; i++)
-        set_texture(dev, i, nullptr);
+        D3dSetTexture(dev, i, nullptr);
     for (DWORD i = 0; i < dev->block_count; i++)
         free_block(dev->blocks[i]);
     free_block(dev->recording);
@@ -975,14 +1043,15 @@ static void destroy(D3DDEV *dev)
     HeapFree(GetProcessHeap(), 0, dev->scratch);
     RemoveEntryList(&dev->links);
     D3DOBJ *d3d = dev->d3d;
-    if (dev->palette)
+    BOOL held = dev->version != 1;
+    if (dev->palette && dev->surface_version)
         dev->palette->iface.lpVtbl->Release(&dev->palette->iface);
-    if (dev->depth)
-        DdSurfRelease(dev->depth, DdSurfRefOf(dev->depth, DDV7));
-    if (dev->target)
-        DdSurfRelease(dev->target, DdSurfRefOf(dev->target, DDV7));
+    unhold(dev, dev->depth);
+    unhold(dev, dev->target);
     HeapFree(GetProcessHeap(), 0, dev);
-    d3d->iface7.lpVtbl->Release(&d3d->iface7);
+    /* a first device, which its surface owns, holds nothing of the direct3d object. */
+    if (held)
+        D3dObjRelease(d3d);
 }
 
 static ULONG STDMETHODCALLTYPE dev7_release(IDirect3DDevice7 *This)
@@ -993,7 +1062,7 @@ static ULONG STDMETHODCALLTYPE dev7_release(IDirect3DDevice7 *This)
         return 0;
     ULONG ref = (ULONG)--dev->ref;
     if (!ref)
-        destroy(dev);
+        D3dDevDestroy(dev);
     DdLeave(D3D_OK);
     return ref;
 }
@@ -1106,14 +1175,14 @@ static HRESULT STDMETHODCALLTYPE dev7_set_render_target(IDirect3DDevice7 *This, 
     if (!target)
         return DdLeave(DDERR_INVALIDOBJECT);
     if (!(target->desc.ddsCaps.dwCaps & DDSCAPS_3DDEVICE) ||
-        !(ddbd_of(target->format.bpp) & dev->desc.dwDeviceRenderBitDepth))
+        !(D3dDdbd(target->format.bpp) & dev->desc.dwDeviceRenderBitDepth))
         return DdLeave(DDERR_INVALIDCAPS);
     if (target->desc.dwWidth > 2048 || target->desc.dwHeight > 2048)
         return DdLeave(DDERR_INVALIDPARAMS);
-    if (FAILED(hr = check_palette(target)))
+    if (FAILED(hr = D3dCheckPalette(target)))
         return DdLeave(hr);
-    hold_targets(dev, target, attached_depth(target));
-    if (!palettized(target) &&
+    D3dHoldTargets(dev, target, D3dAttachedDepth(target));
+    if (!D3dPalettized(target) &&
         (!target->format.pf.dwRBitMask || !target->format.pf.dwGBitMask || !target->format.pf.dwBBitMask))
         return DdLeave(DDERR_INVALIDPIXELFORMAT);
     return DdLeave(D3D_OK);
@@ -1164,23 +1233,9 @@ static HRESULT STDMETHODCALLTYPE dev7_clear(IDirect3DDevice7 *This, DWORD count,
                 list[n++] = (D3DRECT){{c.left}, {c.top}, {c.right}, {c.bottom}};
         }
     }
-    BOOL whole = (flags & D3DCLEAR_TARGET) && n == 1 && !list[0].x1 && !list[0].y1 &&
-                 list[0].x2 == (LONG)dev->target->desc.dwWidth && list[0].y2 == (LONG)dev->target->desc.dwHeight;
-    hr = D3D_OK;
-    if (n) {
-        /* a target cleared whole needs nothing of its memory. */
-        if (whole)
-            D3dSurfReplaced(dev->target);
-        if (bind_targets(dev)) {
-            hr = DbClear(dev->db, n, list, flags, color, z, stencil);
-            if (flags & D3DCLEAR_TARGET)
-                D3dSurfDrawn(dev->target);
-        } else {
-            hr = DDERR_SURFACELOST;
-        }
-    }
+    hr = D3dClearRects(dev, n, list, flags, color, z, stencil);
     HeapFree(GetProcessHeap(), 0, list);
-    return DdLeave(SUCCEEDED(hr) ? D3D_OK : hr);
+    return DdLeave(hr);
 }
 
 /* ------------------------------------------------------------------ transforms, viewport, material, lights */
@@ -1200,7 +1255,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_transform(IDirect3DDevice7 *This, D3DT
             return DdLeave(DDERR_OUTOFMEMORY);
         item->matrix = *matrix;
     } else if (valid_transform(type)) {
-        set_transform(dev, type, matrix);
+        D3dSetTransform(dev, type, matrix);
     }
     return DdLeave(D3D_OK);
 }
@@ -1218,7 +1273,7 @@ static HRESULT STDMETHODCALLTYPE dev7_get_transform(IDirect3DDevice7 *This, D3DT
     return DdLeave(D3D_OK);
 }
 
-static D3DMATRIX multiply(const D3DMATRIX *a, const D3DMATRIX *b)
+D3DMATRIX D3dMultiply(const D3DMATRIX *a, const D3DMATRIX *b)
 {
     D3DMATRIX r;
     const float *x = &a->_11, *y = &b->_11;
@@ -1239,8 +1294,8 @@ static HRESULT STDMETHODCALLTYPE dev7_multiply_transform(IDirect3DDevice7 *This,
         return hr;
     if (!valid_transform(type) || !matrix)
         return DdLeave(DDERR_INVALIDPARAMS);
-    D3DMATRIX m = multiply(matrix, &dev->transforms[type]);
-    set_transform(dev, type, &m);
+    D3DMATRIX m = D3dMultiply(matrix, &dev->transforms[type]);
+    D3dSetTransform(dev, type, &m);
     return DdLeave(D3D_OK);
 }
 
@@ -1262,7 +1317,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_viewport(IDirect3DDevice7 *This, LPD3D
     DWORD w = dev->target->desc.dwWidth, h = dev->target->desc.dwHeight;
     if (vp->dwX > w || vp->dwY > h || vp->dwX + vp->dwWidth > w || vp->dwY + vp->dwHeight > h)
         return DdLeave(DDERR_INVALIDPARAMS);
-    set_viewport(dev, vp);
+    D3dSetViewport(dev, vp);
     return DdLeave(D3D_OK);
 }
 
@@ -1292,7 +1347,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_material(IDirect3DDevice7 *This, LPD3D
             return DdLeave(DDERR_OUTOFMEMORY);
         item->material = *material;
     } else {
-        set_material(dev, material);
+        D3dSetMaterial(dev, material);
     }
     return DdLeave(D3D_OK);
 }
@@ -1345,7 +1400,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_light(IDirect3DDevice7 *This, DWORD in
         item->light = *light;
         return DdLeave(D3D_OK);
     }
-    return DdLeave(set_light(dev, index, light));
+    return DdLeave(D3dSetLight(dev, index, light));
 }
 
 static HRESULT STDMETHODCALLTYPE dev7_get_light(IDirect3DDevice7 *This, DWORD index, LPD3DLIGHT7 light)
@@ -1368,7 +1423,7 @@ static HRESULT STDMETHODCALLTYPE dev7_light_enable(IDirect3DDevice7 *This, DWORD
         return hr;
     if (dev->recording)
         return DdLeave(append(dev->recording, D3DI_LIGHTENABLE, index, enable != 0) ? D3D_OK : DDERR_OUTOFMEMORY);
-    return DdLeave(light_enable(dev, index, enable));
+    return DdLeave(D3dLightEnable(dev, index, enable));
 }
 
 /* an enabled light reads back as 128, as windows' does. */
@@ -1428,7 +1483,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_render_state(IDirect3DDevice7 *This, D
     }
     if ((DWORD)type >= 256 || dev->rs[type] == value)
         return DdLeave(D3D_OK);
-    set_rs(dev, type, value);
+    D3dSetRs(dev, type, value);
     return DdLeave(legacy_state(type) ? DDERR_INVALIDPARAMS : D3D_OK);
 }
 
@@ -1605,7 +1660,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_texture(IDirect3DDevice7 *This, DWORD 
         record_texture(item, s);
         return DdLeave(D3D_OK);
     }
-    set_texture(dev, stage, s);
+    D3dSetTexture(dev, stage, s);
     return DdLeave(D3D_OK);
 }
 
@@ -1639,7 +1694,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_texture_stage_state(IDirect3DDevice7 *
     if (stage >= D3D_STAGES || type < D3DTSS_COLOROP || type > D3DTSS_TEXTURETRANSFORMFLAGS)
         return DdLeave(DDERR_INVALIDPARAMS);
     if (dev->tss[stage][type] != value)
-        set_tss(dev, stage, type, value);
+        D3dSetTss(dev, stage, type, value);
     return DdLeave(D3D_OK);
 }
 
@@ -1891,8 +1946,8 @@ static HRESULT STDMETHODCALLTYPE dev7_compute_sphere_visibility(IDirect3DDevice7
         return hr;
     if (!centers || !radii || !results)
         return DdLeave(DDERR_INVALIDPARAMS);
-    D3DMATRIX wv = multiply(&dev->transforms[D3DTRANSFORMSTATE_WORLD], &dev->transforms[D3DTRANSFORMSTATE_VIEW]);
-    D3DMATRIX all = multiply(&wv, &dev->transforms[D3DTRANSFORMSTATE_PROJECTION]);
+    D3DMATRIX wv = D3dMultiply(&dev->transforms[D3DTRANSFORMSTATE_WORLD], &dev->transforms[D3DTRANSFORMSTATE_VIEW]);
+    D3DMATRIX all = D3dMultiply(&wv, &dev->transforms[D3DTRANSFORMSTATE_PROJECTION]);
     DWORD planes = dev->rs[D3DRENDERSTATE_CLIPPLANEENABLE];
     for (DWORD i = 0; i < count; i++) {
         DWORD any = 0, every = 0xFFF;

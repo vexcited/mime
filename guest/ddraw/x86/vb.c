@@ -7,11 +7,32 @@
 #include "d3d_private.h"
 
 static const IDirect3DVertexBuffer7Vtbl vb7_vtbl;
+static const IDirect3DVertexBufferVtbl vb1_vtbl;
 
 D3DVB *D3dVbFromIface7(void *iface)
 {
     IDirect3DVertexBuffer7 *i = iface;
     return i && i->lpVtbl == &vb7_vtbl ? CONTAINING_RECORD(i, D3DVB, iface7) : nullptr;
+}
+
+static D3DVB *create(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, HRESULT *hr)
+{
+    *hr = DDERR_OUTOFMEMORY;
+    D3DVB *vb = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*vb));
+    if (!vb)
+        return nullptr;
+    vb->ref = 1;
+    vb->d3d = d3d;
+    vb->desc = *desc;
+    vb->stride = D3dFvfSize(desc->dwFVF);
+    vb->data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)vb->stride * desc->dwNumVertices);
+    if (!vb->data) {
+        HeapFree(GetProcessHeap(), 0, vb);
+        return nullptr;
+    }
+    InsertHeadList(&d3d->buffers, &vb->links);
+    *hr = D3D_OK;
+    return vb;
 }
 
 HRESULT D3dCreateVertexBuffer7(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWORD flags,
@@ -25,23 +46,13 @@ HRESULT D3dCreateVertexBuffer7(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWO
     /* a surface of no width, which ddraw refuses, guessed. */
     if (!desc->dwNumVertices)
         return DDERR_INVALIDPARAMS;
-    D3DVB *vb = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*vb));
-    if (!vb)
-        return E_OUTOFMEMORY;
-    vb->iface7.lpVtbl = &vb7_vtbl;
-    vb->ref = 1;
-    vb->d3d = d3d;
-    vb->desc = *desc;
-    vb->stride = D3dFvfSize(desc->dwFVF);
-    vb->data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)vb->stride * desc->dwNumVertices);
-    if (!vb->data) {
-        HeapFree(GetProcessHeap(), 0, vb);
-        return DDERR_OUTOFMEMORY;
+    HRESULT hr;
+    D3DVB *vb = create(d3d, desc, &hr);
+    if (vb) {
+        vb->iface7.lpVtbl = &vb7_vtbl;
+        *out = &vb->iface7;
     }
-    InsertHeadList(&d3d->buffers, &vb->links);
-    (void)flags;
-    *out = &vb->iface7;
-    return D3D_OK;
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE vb7_query(IDirect3DVertexBuffer7 *This, REFIID riid, void **out)
@@ -83,6 +94,7 @@ static ULONG STDMETHODCALLTYPE vb7_release(IDirect3DVertexBuffer7 *This)
         RemoveEntryList(&vb->links);
         HeapFree(GetProcessHeap(), 0, vb->data);
         vb->iface7.lpVtbl = nullptr;
+        vb->iface1.lpVtbl = nullptr;
         HeapFree(GetProcessHeap(), 0, vb);
     }
     DdLeave(D3D_OK);
@@ -221,4 +233,126 @@ static const IDirect3DVertexBuffer7Vtbl vb7_vtbl = {
     vb7_get_desc,
     vb7_optimize,
     vb7_process_vertices_strided,
+};
+
+/* ------------------------------------------------------------------ the first interface's, d3dim.dll's */
+
+D3DVB *D3dVbFromIface1(void *iface)
+{
+    IDirect3DVertexBuffer *i = iface;
+    return i && i->lpVtbl == &vb1_vtbl ? CONTAINING_RECORD(i, D3DVB, iface1) : nullptr;
+}
+
+/* only the low twelve bits of a format, a stride made of them. */
+HRESULT D3dCreateVertexBuffer1(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWORD flags,
+                               IDirect3DVertexBuffer **out)
+{
+    *out = nullptr;
+    if (desc->dwNumVertices > 0xFFFF)
+        return D3DERR_TOOMANYVERTICES;
+    if (desc->dwCaps & D3DVBCAPS_OPTIMIZED)
+        return DDERR_INVALIDPARAMS;
+    if ((desc->dwFVF & 0xFFFFF000) || !D3dFvfSize(desc->dwFVF) || (desc->dwFVF & D3DFVF_POSITION_MASK) > D3DFVF_XYZRHW)
+        return D3DERR_INVALIDVERTEXFORMAT;
+    if (!desc->dwNumVertices)
+        return DDERR_INVALIDPARAMS;
+    HRESULT hr;
+    D3DVB *vb = create(d3d, desc, &hr);
+    /* the seventh's methods serve it too, through a vtable no caller sees. */
+    if (vb) {
+        vb->iface7.lpVtbl = &vb7_vtbl;
+        vb->iface1.lpVtbl = &vb1_vtbl;
+        *out = &vb->iface1;
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE vb1_query(IDirect3DVertexBuffer *This, REFIID riid, void **out)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    if (!out)
+        return DDERR_INVALIDPARAMS;
+    *out = nullptr;
+    if (!vb)
+        return DDERR_INVALIDOBJECT;
+    if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &IID_IDirect3DVertexBuffer))
+        return E_NOINTERFACE;
+    DdEnter();
+    vb->ref++;
+    DdLeave(D3D_OK);
+    *out = &vb->iface1;
+    return D3D_OK;
+}
+
+static ULONG STDMETHODCALLTYPE vb1_add_ref(IDirect3DVertexBuffer *This)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    return vb ? vb7_add_ref(&vb->iface7) : 0;
+}
+
+static ULONG STDMETHODCALLTYPE vb1_release(IDirect3DVertexBuffer *This)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    return vb ? vb7_release(&vb->iface7) : 0;
+}
+
+static HRESULT STDMETHODCALLTYPE vb1_lock(IDirect3DVertexBuffer *This, DWORD flags, LPVOID *data, LPDWORD size)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    return vb ? vb7_lock(&vb->iface7, flags, data, size) : DDERR_INVALIDOBJECT;
+}
+
+static HRESULT STDMETHODCALLTYPE vb1_unlock(IDirect3DVertexBuffer *This)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    return vb ? vb7_unlock(&vb->iface7) : DDERR_INVALIDOBJECT;
+}
+
+/* through the device's current viewport, lights and material; transforming always. */
+static HRESULT STDMETHODCALLTYPE vb1_process_vertices(IDirect3DVertexBuffer *This, DWORD op, DWORD dst_index,
+                                                      DWORD count, LPDIRECT3DVERTEXBUFFER src_iface, DWORD src_index,
+                                                      LPDIRECT3DDEVICE3 device, DWORD flags)
+{
+    D3DVB *dst = D3dVbFromIface1(This), *src = D3dVbFromIface1(src_iface);
+    D3DDEV *dev = D3dDevFromLegacy(device);
+    if (!dst || !src || !dev)
+        return DDERR_INVALIDOBJECT;
+    DdEnter();
+    HRESULT hr = D3dLegacyDownloadCurrent(dev);
+    if (FAILED(hr))
+        return DdLeave(hr);
+    if (src_index >= src->desc.dwNumVertices || dst_index >= dst->desc.dwNumVertices)
+        return DdLeave(D3D_OK);
+    count = count < src->desc.dwNumVertices - src_index ? count : src->desc.dwNumVertices - src_index;
+    count = count < dst->desc.dwNumVertices - dst_index ? count : dst->desc.dwNumVertices - dst_index;
+    hr = D3dLegacyProcess(dev, src->data + (SIZE_T)src_index * src->stride, src->desc.dwFVF,
+                          dst->data + (SIZE_T)dst_index * dst->stride, dst->desc.dwFVF, count, op);
+    return DdLeave(hr);
+}
+
+static HRESULT STDMETHODCALLTYPE vb1_get_desc(IDirect3DVertexBuffer *This, LPD3DVERTEXBUFFERDESC desc)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    return vb ? vb7_get_desc(&vb->iface7, desc) : DDERR_INVALIDOBJECT;
+}
+
+static HRESULT STDMETHODCALLTYPE vb1_optimize(IDirect3DVertexBuffer *This, LPDIRECT3DDEVICE3 device, DWORD flags)
+{
+    D3DVB *vb = D3dVbFromIface1(This);
+    if (!vb)
+        return DDERR_INVALIDPARAMS;
+    if (!D3dDevFromLegacy(device))
+        return DDERR_INVALIDOBJECT;
+    if (flags)
+        return DDERR_INVALIDPARAMS;
+    if (vb->optimized)
+        return D3DERR_VERTEXBUFFEROPTIMIZED;
+    if (vb->locks)
+        return D3DERR_VERTEXBUFFERLOCKED;
+    vb->optimized = TRUE;
+    return D3D_OK;
+}
+
+static const IDirect3DVertexBufferVtbl vb1_vtbl = {
+    vb1_query,  vb1_add_ref, vb1_release, vb1_lock, vb1_unlock, vb1_process_vertices, vb1_get_desc, vb1_optimize,
 };

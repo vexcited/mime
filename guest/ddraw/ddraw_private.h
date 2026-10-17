@@ -195,6 +195,7 @@ struct DDSURF {
     DDMODE mode;       /* the display mode it was made in */
     DWORD generation;  /* counts every change of its pixels */
     struct D3DSURFX *d3d; /* its copy where direct3d draws, which travels with the memory */
+    struct D3DAGG *aggregates; /* the direct3d objects aggregated in it, released with it */
     LIST_ENTRY links;  /* in the directdraw object's list */
 };
 
@@ -298,6 +299,8 @@ void D3dSurfFree(DDSURF *s);
 void D3dSurfDepthFill(DDSURF *s, const RECT *rect, DWORD value);
 HRESULT D3dObjQuery(DDRAW *dd, DWORD version, REFIID riid, void **out);
 void D3dObjDestroy(DDRAW *dd);
+/* the textures and first devices aggregated in a surface of the first directdraw versions. */
+HRESULT D3dSurfQuery(DDSURF *s, REFIID riid, void **out);
 #endif
 
 /* caps.c */
