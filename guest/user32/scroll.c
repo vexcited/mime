@@ -406,3 +406,275 @@ WINUSERAPI BOOL WINAPI ScrollWindow(HWND hwnd, int dx, int dy, const RECT *rect,
     UINT flags = SW_INVALIDATE | SW_ERASE | (rect ? 0 : SW_SCROLLCHILDREN);
     return ScrollWindowEx(hwnd, dx, dy, rect, clip, nullptr, nullptr, flags) != ERROR;
 }
+
+/* ------------------------------------------------------------------ drawing and tracking */
+
+/* where the parts of a bar lie: its arrows, the track between them and the thumb. */
+typedef struct BAR {
+    BOOL vert, enabled;
+    RECT arrow1, arrow2, track, thumb;
+    BOOL has_thumb;
+    int room, size, offset, thick;
+    const SCROLL_DATA *data;
+} BAR;
+
+static const SCROLL_DATA *data_or_default(HWND hwnd, int bar)
+{
+    const SCROLL_DATA *d = find_data(hwnd, bar);
+    return d ? d : &g_scroll_default;
+}
+
+static void layout(HWND hwnd, int bar, const RECT *r, BAR *b)
+{
+    memset(b, 0, sizeof(*b));
+    DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
+    b->vert = bar == SB_VERT || (bar == SB_CTL && (style & SBS_VERT));
+    b->data = data_or_default(hwnd, bar);
+    b->enabled = IsWindowEnabled(hwnd) && b->data->Arrows != ESB_DISABLE_BOTH;
+    int len = b->vert ? r->bottom - r->top : r->right - r->left;
+    b->thick = b->vert ? r->right - r->left : r->bottom - r->top;
+    int arrow = b->thick * 2 <= len ? b->thick : len / 2;
+    b->arrow1 = b->arrow2 = b->track = *r;
+    if (b->vert) {
+        b->arrow1.bottom = r->top + arrow;
+        b->arrow2.top = r->bottom - arrow;
+        b->track.top = b->arrow1.bottom;
+        b->track.bottom = b->arrow2.top;
+    } else {
+        b->arrow1.right = r->left + arrow;
+        b->arrow2.left = r->right - arrow;
+        b->track.left = b->arrow1.right;
+        b->track.right = b->arrow2.left;
+    }
+    const SCROLL_DATA *d = b->data;
+    int span = d->Max - d->Min + 1;
+    b->room = b->vert ? b->track.bottom - b->track.top : b->track.right - b->track.left;
+    if (!b->enabled || span <= 0 || b->room <= 0 || (d->Page && (int)d->Page >= span))
+        return;
+    int size = d->Page ? UserMulDiv(b->room, (int)d->Page, span) : b->thick;
+    int min = GetSystemMetrics(b->vert ? SM_CYVTHUMB : SM_CXHTHUMB) / 2;
+    if (size < min)
+        size = min;
+    if (size > b->room)
+        size = b->room;
+    int steps = span - (d->Page ? (int)d->Page : 1);
+    int pos = d == find_data(hwnd, bar) && GetCapture() == hwnd ? d->TrackPos : d->Pos;
+    b->offset = steps > 0 ? UserMulDiv(b->room - size, pos - d->Min, steps) : 0;
+    b->size = size;
+    b->has_thumb = TRUE;
+    b->thumb = b->track;
+    if (b->vert) {
+        b->thumb.top += b->offset;
+        b->thumb.bottom = b->thumb.top + size;
+    } else {
+        b->thumb.left += b->offset;
+        b->thumb.right = b->thumb.left + size;
+    }
+}
+
+static void draw(HWND hwnd, int bar, HDC dc, const RECT *r)
+{
+    BAR b;
+    layout(hwnd, bar, r, &b);
+    UINT arrows = b.data->Arrows;
+    UINT first = !b.enabled || (arrows & ESB_DISABLE_LTUP) ? DFCS_INACTIVE : 0;
+    UINT second = !b.enabled || (arrows & ESB_DISABLE_RTDN) ? DFCS_INACTIVE : 0;
+    DrawFrameControl(dc, &b.arrow1, DFC_SCROLL, (b.vert ? DFCS_SCROLLUP : DFCS_SCROLLLEFT) | first);
+    DrawFrameControl(dc, &b.arrow2, DFC_SCROLL, (b.vert ? DFCS_SCROLLDOWN : DFCS_SCROLLRIGHT) | second);
+    FillRect(dc, &b.track, GetSysColorBrush(COLOR_SCROLLBAR));
+    if (b.has_thumb)
+        DrawEdge(dc, &b.thumb, EDGE_RAISED, BF_RECT | BF_MIDDLE);
+}
+
+void UserDrawScrollBar(HWND hwnd, HDC dc)
+{
+    RECT r;
+    GetClientRect(hwnd, &r);
+    draw(hwnd, SB_CTL, dc, &r);
+}
+
+/* a standard bar's rectangle in screen coordinates, beside or under the client area. */
+static BOOL standard_rect(HWND hwnd, int bar, RECT *r)
+{
+    DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
+    if (!(style & (bar == SB_VERT ? WS_VSCROLL : WS_HSCROLL)))
+        return FALSE;
+    RECT c;
+    GetClientRect(hwnd, &c);
+    MapWindowPoints(hwnd, nullptr, (POINT *)&c, 2);
+    UINT dpi = GetDpiForWindow(hwnd);
+    if (bar == SB_VERT)
+        *r = (RECT){c.right, c.top, c.right + GetSystemMetricsForDpi(SM_CXVSCROLL, dpi), c.bottom};
+    else
+        *r = (RECT){c.left, c.bottom, c.right, c.bottom + GetSystemMetricsForDpi(SM_CYHSCROLL, dpi)};
+    return TRUE;
+}
+
+/* the standard bars and the box between them, drawn after the rest of the frame. */
+static void draw_standard(HWND hwnd)
+{
+    RECT w, v, h;
+    BOOL has_v = standard_rect(hwnd, SB_VERT, &v), has_h = standard_rect(hwnd, SB_HORZ, &h);
+    if (!has_v && !has_h)
+        return;
+    GetWindowRect(hwnd, &w);
+    HDC dc = GetWindowDC(hwnd);
+    if (!dc)
+        return;
+    if (has_v) {
+        OffsetRect(&v, -w.left, -w.top);
+        draw(hwnd, SB_VERT, dc, &v);
+    }
+    if (has_h) {
+        OffsetRect(&h, -w.left, -w.top);
+        draw(hwnd, SB_HORZ, dc, &h);
+    }
+    if (has_v && has_h) {
+        RECT box = {v.left, h.top, v.right, h.bottom};
+        FillRect(dc, &box, GetSysColorBrush(COLOR_3DFACE));
+    }
+    ReleaseDC(hwnd, dc);
+}
+
+enum { PART_NONE, PART_ARROW1, PART_PAGE1, PART_THUMB, PART_PAGE2, PART_ARROW2 };
+
+static int part_at(const BAR *b, POINT pt)
+{
+    if (PtInRect(&b->arrow1, pt))
+        return PART_ARROW1;
+    if (PtInRect(&b->arrow2, pt))
+        return PART_ARROW2;
+    if (!PtInRect(&b->track, pt) || !b->has_thumb)
+        return PART_NONE;
+    if (PtInRect(&b->thumb, pt))
+        return PART_THUMB;
+    int at = b->vert ? pt.y : pt.x, start = b->vert ? b->thumb.top : b->thumb.left;
+    return at < start ? PART_PAGE1 : PART_PAGE2;
+}
+
+/* the position a thumb dragged to a point stands for. */
+static int thumb_position(const BAR *b, POINT pt, int grab)
+{
+    const SCROLL_DATA *d = b->data;
+    int steps = d->Max - d->Min + 1 - (d->Page ? (int)d->Page : 1);
+    int free = b->room - b->size;
+    int at = (b->vert ? pt.y - b->track.top : pt.x - b->track.left) - grab;
+    if (at < 0)
+        at = 0;
+    if (at > free)
+        at = free;
+    return free > 0 ? d->Min + UserMulDiv(at, steps, free) : d->Min;
+}
+
+/*
+ * a press on a bar followed until the button is released: arrows and the
+ * track repeat their line and page scrolls, the thumb is dragged.
+ */
+static void track(HWND hwnd, int bar, POINT pt)
+{
+    RECT r;
+    if (bar == SB_CTL) {
+        GetClientRect(hwnd, &r);
+        MapWindowPoints(hwnd, nullptr, (POINT *)&r, 2);
+    } else if (!standard_rect(hwnd, bar, &r)) {
+        return;
+    }
+    BAR b;
+    layout(hwnd, bar, &r, &b);
+    int part = part_at(&b, pt);
+    if (!b.enabled || part == PART_NONE)
+        return;
+    if ((part == PART_ARROW1 && (b.data->Arrows & ESB_DISABLE_LTUP)) ||
+        (part == PART_ARROW2 && (b.data->Arrows & ESB_DISABLE_RTDN)))
+        return;
+    UINT msg = b.vert ? WM_VSCROLL : WM_HSCROLL;
+    HWND target = bar == SB_CTL ? GetParent(hwnd) : hwnd;
+    LPARAM from = bar == SB_CTL ? (LPARAM)hwnd : 0;
+    static const WORD CODES[] = {0, SB_LINEUP, SB_PAGEUP, SB_THUMBTRACK, SB_PAGEDOWN, SB_LINEDOWN};
+    int grab = part == PART_THUMB ? (b.vert ? pt.y - b.thumb.top : pt.x - b.thumb.left) : 0;
+    SCROLL_DATA *d = create_data(hwnd, bar);
+    if (!d)
+        return;
+    SetCapture(hwnd);
+    if (part != PART_THUMB)
+        SendMessageW(target, msg, CODES[part], from);
+    DWORD next = GetTickCount() + 400;
+    int last_pos = d->Pos;
+    POINT cursor = pt;
+    while (GetCapture() == hwnd) {
+        MSG m;
+        BOOL up = FALSE;
+        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+            if (m.message == WM_LBUTTONUP || m.message == WM_NCLBUTTONUP) {
+                up = TRUE;
+                break;
+            }
+            if (m.message >= WM_MOUSEFIRST && m.message <= WM_MOUSELAST)
+                continue;
+            if (m.message >= WM_NCMOUSEMOVE && m.message <= WM_NCMBUTTONDBLCLK)
+                continue;
+            if (m.message == WM_QUIT) {
+                PostQuitMessage((int)m.wParam);
+                up = TRUE;
+                break;
+            }
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+        if (up || !(GetAsyncKeyState(VK_LBUTTON) & 0x8000))
+            break;
+        GetCursorPos(&cursor);
+        if (part == PART_THUMB) {
+            layout(hwnd, bar, &r, &b);
+            int pos = thumb_position(&b, cursor, grab);
+            if (pos != last_pos) {
+                last_pos = pos;
+                d->TrackPos = pos;
+                SendMessageW(target, msg, MAKEWPARAM(SB_THUMBTRACK, (WORD)pos), from);
+                if (bar == SB_CTL)
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                else
+                    redraw_bar(hwnd, bar);
+            }
+        } else if (GetTickCount() >= next) {
+            layout(hwnd, bar, &r, &b);
+            if (part_at(&b, cursor) == part)
+                SendMessageW(target, msg, CODES[part], from);
+            next = GetTickCount() + 50;
+        }
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+    }
+    if (GetCapture() == hwnd)
+        ReleaseCapture();
+    if (part == PART_THUMB)
+        SendMessageW(target, msg, MAKEWPARAM(SB_THUMBPOSITION, (WORD)last_pos), from);
+    SendMessageW(target, msg, SB_ENDSCROLL, from);
+    if (bar == SB_CTL)
+        InvalidateRect(hwnd, nullptr, FALSE);
+    else
+        redraw_bar(hwnd, bar);
+}
+
+void UserTrackScrollBar(HWND hwnd, POINT screen)
+{
+    track(hwnd, SB_CTL, screen);
+}
+
+/* the part of DefWindowProc for the standard bars: drawing them with the frame, and presses on them. */
+BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
+{
+    switch (msg) {
+    case WM_NCPAINT:
+        *result = NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_DEFWINDOWPROC, FALSE);
+        draw_standard(hwnd);
+        return TRUE;
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+        if (wparam != HTVSCROLL && wparam != HTHSCROLL)
+            return FALSE;
+        track(hwnd, wparam == HTVSCROLL ? SB_VERT : SB_HORZ, (POINT){(short)LOWORD(lparam), (short)HIWORD(lparam)});
+        *result = 0;
+        return TRUE;
+    }
+    return FALSE;
+}

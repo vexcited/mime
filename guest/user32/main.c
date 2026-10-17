@@ -110,11 +110,164 @@ LRESULT UserCallProc(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM w
     return proc(hwnd, msg, wparam, lparam);
 }
 
+static LRESULT send_w(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_SEND, FALSE);
+}
+
+enum { CONTROL_NONE, CONTROL_LIST, CONTROL_COMBO, CONTROL_EDIT };
+
+/* the system control a window is, whose unicode procedure an ansi sender's strings must reach converted. */
+static int control_kind(HWND hwnd, BOOL *strings)
+{
+    WCHAR name[16];
+    if (!GetClassNameW(hwnd, name, 16))
+        return CONTROL_NONE;
+    DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
+    if (!lstrcmpiW(name, L"ListBox") || !lstrcmpiW(name, L"ComboLBox")) {
+        *strings = !(style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) || (style & LBS_HASSTRINGS);
+        return CONTROL_LIST;
+    }
+    if (!lstrcmpiW(name, L"ComboBox")) {
+        *strings = (style & CBS_HASSTRINGS) != 0;
+        return CONTROL_COMBO;
+    }
+    if (!lstrcmpiW(name, L"Edit")) {
+        *strings = TRUE;
+        return CONTROL_EDIT;
+    }
+    return CONTROL_NONE;
+}
+
+/* an item's text for an ansi caller, in the ansi code page, its length in bytes. */
+static LRESULT ansi_item_text(HWND hwnd, UINT len_msg, UINT text_msg, WPARAM index, LPSTR out)
+{
+    LRESULT n = send_w(hwnd, len_msg, index, 0);
+    if (n < 0)
+        return n;
+    LPWSTR w = UserAlloc(((SIZE_T)n + 1) * sizeof(WCHAR));
+    if (!w)
+        return -1;
+    n = send_w(hwnd, text_msg, index, (LPARAM)w);
+    int bytes = n >= 0 ? WideCharToMultiByte(CP_ACP, 0, w, (int)n, out, out ? (int)n * 2 + 1 : 0, nullptr, nullptr) : 0;
+    if (out && n >= 0)
+        out[bytes] = 0;
+    UserFree(w);
+    return n < 0 ? n : bytes;
+}
+
+/* the string messages of the list, combo box and edit controls for ansi senders. */
+static BOOL control_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
+{
+    BOOL in_string = FALSE, always = FALSE;
+    switch (msg) {
+    case LB_ADDSTRING:
+    case LB_INSERTSTRING:
+    case LB_FINDSTRING:
+    case LB_FINDSTRINGEXACT:
+    case LB_SELECTSTRING:
+    case CB_ADDSTRING:
+    case CB_INSERTSTRING:
+    case CB_FINDSTRING:
+    case CB_FINDSTRINGEXACT:
+    case CB_SELECTSTRING:
+    case EM_REPLACESEL:
+        in_string = TRUE;
+        break;
+    case LB_DIR:
+    case LB_ADDFILE:
+    case CB_DIR:
+        in_string = always = TRUE;
+        break;
+    case LB_GETTEXT:
+    case LB_GETTEXTLEN:
+    case CB_GETLBTEXT:
+    case CB_GETLBTEXTLEN:
+    case LB_INITSTORAGE:
+    case CB_INITSTORAGE:
+    case EM_GETLINE:
+    case EM_SETPASSWORDCHAR:
+    case EM_GETPASSWORDCHAR:
+        break;
+    default:
+        return FALSE;
+    }
+    BOOL strings = FALSE;
+    int kind = control_kind(hwnd, &strings);
+    if (kind == CONTROL_NONE)
+        return FALSE;
+    if (in_string) {
+        if (!strings && !always)
+            return FALSE;
+        LPWSTR w = UserAtoW((LPCSTR)lparam);
+        if (lparam && !w) {
+            *result = LB_ERR;
+            return TRUE;
+        }
+        *result = send_w(hwnd, msg, wparam, (LPARAM)w);
+        UserFreeConverted(w, (void *)lparam);
+        return TRUE;
+    }
+    switch (msg) {
+    case LB_GETTEXT:
+    case CB_GETLBTEXT:
+        if (!strings)
+            return FALSE;
+        *result = ansi_item_text(hwnd, msg == LB_GETTEXT ? LB_GETTEXTLEN : CB_GETLBTEXTLEN, msg, wparam, (LPSTR)lparam);
+        return TRUE;
+    case LB_GETTEXTLEN:
+    case CB_GETLBTEXTLEN:
+        if (!strings)
+            return FALSE;
+        *result = ansi_item_text(hwnd, msg, msg == LB_GETTEXTLEN ? LB_GETTEXT : CB_GETLBTEXT, wparam, nullptr);
+        return TRUE;
+    case LB_INITSTORAGE:
+    case CB_INITSTORAGE:
+        *result = send_w(hwnd, msg, wparam, lparam * 2);
+        return TRUE;
+    case EM_GETLINE: {
+        if (!lparam)
+            return FALSE;
+        WORD max = *(WORD *)lparam;
+        LPWSTR w = UserAlloc(((SIZE_T)max + 1) * sizeof(WCHAR));
+        if (!w) {
+            *result = 0;
+            return TRUE;
+        }
+        *(WORD *)w = max;
+        LRESULT n = send_w(hwnd, msg, wparam, (LPARAM)w);
+        *result = n > 0 ? WideCharToMultiByte(CP_ACP, 0, w, (int)n, (LPSTR)lparam, max, nullptr, nullptr) : 0;
+        UserFree(w);
+        return TRUE;
+    }
+    case EM_SETPASSWORDCHAR: {
+        char c = (char)wparam;
+        WCHAR wc = 0;
+        if (c)
+            MultiByteToWideChar(CP_ACP, 0, &c, 1, &wc, 1);
+        *result = send_w(hwnd, msg, wc, lparam);
+        return TRUE;
+    }
+    case EM_GETPASSWORDCHAR: {
+        WCHAR wc = (WCHAR)send_w(hwnd, msg, wparam, lparam);
+        char c = 0;
+        if (wc)
+            WideCharToMultiByte(CP_ACP, 0, &wc, 1, &c, 1, nullptr, nullptr);
+        *result = (UCHAR)c;
+        return TRUE;
+    }
+    }
+    return FALSE;
+}
+
 /* sends a message given in ansi or unicode; win32k only carries unicode. */
 LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi)
 {
     if (!ansi)
         return NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_SEND, FALSE);
+    LRESULT result;
+    if (control_message(hwnd, msg, wparam, lparam, &result))
+        return result;
     switch (msg) {
     case WM_SETTEXT: {
         LPWSTR w = UserAtoW((LPCSTR)lparam);
@@ -248,6 +401,7 @@ static void initialize_process(void)
     User32Client.Procs[MIME_FNID_EDIT] = EditProc;
     User32Client.Procs[MIME_FNID_LISTBOX] = ListBoxProc;
     User32Client.Procs[MIME_FNID_COMBOBOX] = ComboBoxProc;
+    User32Client.Procs[MIME_FNID_COMBOLBOX] = ListBoxProc;
     User32Client.Procs[MIME_FNID_SCROLLBAR] = ScrollBarProc;
     User32Client.Procs[MIME_FNID_DIALOG] = DialogProc;
     User32Client.Procs[MIME_FNID_MESSAGE] = MessageWindowProc;
@@ -261,6 +415,7 @@ static void initialize_process(void)
     register_system_class(L"Edit", EditProc, MIME_FNID_EDIT, 0);
     register_system_class(L"ListBox", ListBoxProc, MIME_FNID_LISTBOX, 0);
     register_system_class(L"ComboBox", ComboBoxProc, MIME_FNID_COMBOBOX, 0);
+    register_system_class(L"ComboLBox", ListBoxProc, MIME_FNID_COMBOLBOX, CS_SAVEBITS);
     register_system_class(L"ScrollBar", ScrollBarProc, MIME_FNID_SCROLLBAR, 0);
     register_system_class(L"#32770", DialogProc, MIME_FNID_DIALOG, 0);
     register_system_class(L"#32769", DesktopProc, MIME_FNID_DESKTOP, 0);

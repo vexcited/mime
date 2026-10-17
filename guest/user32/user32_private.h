@@ -132,6 +132,9 @@ UINT UserWindowDpi(HWND hwnd);
 /* scroll bar state kept in window properties, scroll.c. */
 BOOL UserScrollBarMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 void UserFreeScrollData(HWND hwnd);
+BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+void UserDrawScrollBar(HWND hwnd, HDC dc);
+void UserTrackScrollBar(HWND hwnd, POINT screen);
 
 /* dialogs. */
 HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGPROC proc, LPARAM param, BOOL ansi,

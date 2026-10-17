@@ -268,7 +268,7 @@ void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags)
         return;
     }
     if (flags & RDW_INVALIDATE) {
-        if ((flags & RDW_FRAME) && !RgnRectIn(&rgn, &w->ClientRect)) {
+        if (flags & RDW_FRAME) {
             /* touches the non client area unless it lies entirely in the client. */
             REGION nc;
             RgnInit(&nc);
