@@ -165,7 +165,8 @@ mime_dll(mmdevapi x86 BASE 0x45000000 SOURCES ${MIME_MMDEVAPI_SOURCES} OBJECTS x
 mime_dll(avrt x86 BASE 0x43000000 SOURCES guest/avrt/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 gdi32 win32u)
 
 # the acm codecs of 32-bit programs.
-set(MIME_X86_ACM_CODECS msg711:0x41000000 imaadp32:0x40000000 msadp32:0x3F000000 msgsm32:0x3E000000)
+set(MIME_X86_ACM_CODECS msg711:0x41000000 imaadp32:0x40000000 msadp32:0x3F000000 msgsm32:0x3E000000
+    l3codeca:0x31000000)
 foreach(entry IN LISTS MIME_X86_ACM_CODECS)
     string(REPLACE ":" ";" entry ${entry})
     list(GET entry 0 name)
