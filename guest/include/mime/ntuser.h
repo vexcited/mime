@@ -551,6 +551,10 @@ W32KAPI HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH r
 W32KAPI HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG flags, PVOID reserved);
 W32KAPI HBITMAP NTAPI NtGdiCreateBitmap(int width, int height, UINT planes, UINT bpp, const void *bits);
 W32KAPI HBITMAP NTAPI NtGdiCreateCompatibleBitmap(HDC dc, int width, int height);
+struct _D3DKMT_CREATEDCFROMMEMORY;
+struct _D3DKMT_DESTROYDCFROMMEMORY;
+W32KAPI NTSTATUS NTAPI NtGdiDdDDICreateDCFromMemory(struct _D3DKMT_CREATEDCFROMMEMORY *desc);
+W32KAPI NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const struct _D3DKMT_DESTROYDCFROMMEMORY *desc);
 W32KAPI HBITMAP NTAPI NtGdiCreateDIBSection(HDC dc, HANDLE section, DWORD offset, const BITMAPINFO *info,
                                             UINT usage, UINT header_size, ULONG flags, ULONG_PTR color_space,
                                             PVOID *bits);

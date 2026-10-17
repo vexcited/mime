@@ -386,8 +386,21 @@ int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
     if (dc && (dc->Flags & DC_WINDOW) && !(dc->Flags & DC_PAINT)) {
         WND *top = dc->Window ? WndTopLevel(dc->Window) : nullptr;
         PaintReleaseDC(dc);
-        /* drawing outside the paint cycle shows up at the next idle point; present now for animations. */
-        if (top && top->Thread == W32GetThread())
+        /*
+         * drawing outside the paint cycle reaches the screen now, from any
+         * thread, as the dwm composes it. a thread that never pumps still
+         * gets its frame, drawn here as showing the window would draw it.
+         */
+        if (top && !(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && top->Thread == W32GetThread()) {
+            UserReference(&top->Header);
+            top->Flags &= ~WNDF_FRAME_DIRTY;
+            MsgSend(top, WM_NCPAINT, 1, 0);
+            BOOLEAN gone = top->Header.Destroyed;
+            UserDereference(&top->Header);
+            if (gone)
+                top = nullptr;
+        }
+        if (top)
             PaintPresent(top);
         ok = 1;
     }

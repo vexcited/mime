@@ -1482,6 +1482,8 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
 WINUSERAPI BOOL WINAPI DestroyIcon(HICON icon);
 WINUSERAPI BOOL WINAPI DestroyCursor(HCURSOR cursor);
 WINUSERAPI BOOL WINAPI SetCursorPos(int x, int y);
+WINUSERAPI BOOL WINAPI ClipCursor(const RECT *rect);
+WINUSERAPI BOOL WINAPI GetClipCursor(LPRECT rect);
 WINUSERAPI HCURSOR WINAPI SetCursor(HCURSOR cursor);
 WINUSERAPI int WINAPI LoadStringW(HINSTANCE instance, UINT id, LPWSTR buffer, int count);
 WINUSERAPI int WINAPI GetSystemMetrics(int index);

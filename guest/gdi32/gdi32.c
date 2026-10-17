@@ -4,6 +4,7 @@
  */
 #include "gdi32_private.h"
 #include <mime/win32/winnls.h>
+#include <mime/win32/d3dkmthk.h>
 #include <mime/stub.h>
 
 static UCHAR handle_type(HGDIOBJ h)
@@ -477,6 +478,17 @@ WINGDIAPI HBITMAP WINAPI CreateBitmap(int width, int height, UINT planes, UINT b
 WINGDIAPI HBITMAP WINAPI CreateBitmapIndirect(const BITMAP *bm)
 {
     return NtGdiCreateBitmap(bm->bmWidth, bm->bmHeight, bm->bmPlanes, bm->bmBitsPixel, bm->bmBits);
+}
+
+/* a dc drawing into caller memory, as ddraw's surfaces have them. */
+WINGDIAPI NTSTATUS APIENTRY D3DKMTCreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *desc)
+{
+    return NtGdiDdDDICreateDCFromMemory(desc);
+}
+
+WINGDIAPI NTSTATUS APIENTRY D3DKMTDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *desc)
+{
+    return NtGdiDdDDIDestroyDCFromMemory(desc);
 }
 
 WINGDIAPI HBITMAP WINAPI CreateDIBSection(HDC dc, const BITMAPINFO *info, UINT usage, void **bits, HANDLE section,

@@ -151,6 +151,7 @@ void GdiInitializeStockObjects(void);
 #define SURF_CONTIGUOUS 0x08  /* physically contiguous, presentable to the host */
 #define SURF_TOPDOWN 0x10
 #define SURF_RETIRED 0x20     /* replaced window surface, freed when the last dc releases it */
+#define SURF_FOREIGN 0x40     /* user bits the caller owns, from D3DKMTCreateDCFromMemory */
 
 typedef struct SURFACE {
     GDI_OBJECT Header;

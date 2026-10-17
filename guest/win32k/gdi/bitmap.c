@@ -3,6 +3,7 @@
  * transfer services.
  */
 #include "../win32k.h"
+#include <mime/win32/d3dkmthk.h>
 
 static const RGBQUAD g_mono[2] = {{0, 0, 0, 0}, {255, 255, 255, 0}};
 
@@ -110,7 +111,7 @@ void SurfaceDestroy(SURFACE *s)
             MmFreeContiguousMemory(s->Bits);
         else
             W32Free(s->Bits);
-    } else if ((s->Flags & SURF_USER_BITS) && s->UserBits) {
+    } else if ((s->Flags & SURF_USER_BITS) && s->UserBits && !(s->Flags & SURF_FOREIGN)) {
         PVOID base = s->UserBits;
         SIZE_T size = 0;
         ZwFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
@@ -440,6 +441,113 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
         return nullptr;
     }
     return h;
+}
+
+/* ------------------------------------------------------------------ dcs over caller memory */
+
+/*
+ * D3DKMTCreateDCFromMemory: a memory dc whose bitmap is the caller's
+ * memory, rows top down at the caller's pitch, for the formats windows
+ * takes. ddraw draws on its surfaces with gdi this way. the memory stays
+ * the caller's.
+ */
+NTSTATUS NTAPI NtGdiDdDDICreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *user_desc)
+{
+    D3DKMT_CREATEDCFROMMEMORY d;
+    if (!user_desc || !NT_SUCCESS(MimeCopyFromUser(&d, user_desc, sizeof(d))))
+        return STATUS_INVALID_PARAMETER;
+    UCHAR bpp;
+    DWORD masks[3] = {};
+    switch (d.Format) {
+    case D3DDDIFMT_A8R8G8B8:
+    case D3DDDIFMT_X8R8G8B8:
+        bpp = 32;
+        masks[0] = 0x00FF0000, masks[1] = 0x0000FF00, masks[2] = 0x000000FF;
+        break;
+    case D3DDDIFMT_R8G8B8:
+        bpp = 24;
+        masks[0] = 0x00FF0000, masks[1] = 0x0000FF00, masks[2] = 0x000000FF;
+        break;
+    case D3DDDIFMT_R5G6B5:
+        bpp = 16;
+        masks[0] = 0xF800, masks[1] = 0x07E0, masks[2] = 0x001F;
+        break;
+    case D3DDDIFMT_X1R5G5B5:
+    case D3DDDIFMT_A1R5G5B5:
+        bpp = 16;
+        masks[0] = 0x7C00, masks[1] = 0x03E0, masks[2] = 0x001F;
+        break;
+    case D3DDDIFMT_P8:
+        bpp = 8;
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (!d.pMemory || !d.Width || !d.Height || d.Width > 32768 || d.Height > 32768 ||
+        (ULONG64)d.Pitch < ((ULONG64)d.Width * bpp + 7) / 8 || (bpp == 8 && !d.pColorTable))
+        return STATUS_INVALID_PARAMETER;
+    PALETTEENTRY table[256];
+    if (bpp == 8 && !NT_SUCCESS(MimeCopyFromUser(table, d.pColorTable, sizeof(table))))
+        return STATUS_INVALID_PARAMETER;
+    UserEnter();
+    NTSTATUS status = STATUS_NO_MEMORY;
+    SURFACE *s = W32Alloc(sizeof(SURFACE));
+    DC *dc = s ? DcCreate(DC_MEMORY) : nullptr;
+    if (dc) {
+        s->Width = (LONG)d.Width;
+        s->Height = (LONG)d.Height;
+        s->Bpp = bpp;
+        s->Flags = SURF_USER_BITS | SURF_FOREIGN | SURF_TOPDOWN;
+        s->UserBits = d.pMemory;
+        s->UserSize = (SIZE_T)d.Pitch * d.Height;
+        s->Stride = (LONG)d.Pitch;
+        s->Bits = d.pMemory;
+        memcpy(s->Masks, masks, sizeof(masks));
+        s->Info = (BITMAPINFOHEADER){sizeof(BITMAPINFOHEADER), (LONG)d.Width, -(LONG)d.Height, 1, bpp,
+                                     bpp == 16 ? BI_BITFIELDS : BI_RGB};
+        s->Info.biSizeImage = (DWORD)s->UserSize;
+        if (bpp == 8) {
+            for (ULONG i = 0; i < 256; i++)
+                s->Colors[i] = (RGBQUAD){table[i].peBlue, table[i].peGreen, table[i].peRed, 0};
+            s->ColorCount = 256;
+        }
+        DC *ref = d.hDeviceDc ? DcLookup(d.hDeviceDc) : nullptr;
+        if (ref)
+            dc->Dpi = ref->Dpi;
+        if (GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
+            DcSetSurface(dc, s);
+            d.hDc = (HDC)dc->Header.Handle;
+            d.hBitmap = s->Header.Handle;
+            status = STATUS_SUCCESS;
+        }
+    }
+    if (!NT_SUCCESS(status)) {
+        if (dc)
+            DcFree(dc);
+        W32Free(s);
+    }
+    UserLeave();
+    if (NT_SUCCESS(status) && !NT_SUCCESS(MimeCopyToUser(&user_desc->hDc, &d.hDc, sizeof(d.hDc) + sizeof(d.hBitmap))))
+        status = STATUS_INVALID_PARAMETER;
+    return status;
+}
+
+NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *user_desc)
+{
+    D3DKMT_DESTROYDCFROMMEMORY d;
+    if (!user_desc || !NT_SUCCESS(MimeCopyFromUser(&d, user_desc, sizeof(d))))
+        return STATUS_INVALID_PARAMETER;
+    UserEnter();
+    DC *dc = DcLookup(d.hDc);
+    SURFACE *s = SurfaceLookup(d.hBitmap);
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+    if (dc && s && dc->Surface == s && (s->Flags & SURF_FOREIGN)) {
+        GdiDeleteObject(&dc->Header);
+        GdiDeleteObject(&s->Header);
+        status = STATUS_SUCCESS;
+    }
+    UserLeave();
+    return status;
 }
 
 /* copies scanlines of a bitmap into a caller dib, converting formats. */

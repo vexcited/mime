@@ -1,0 +1,53 @@
+/* the kernel thunks of the display driver model gdi32 exports, as far as mime has them. */
+#ifndef MIME_WIN32_D3DKMTHK_H
+#define MIME_WIN32_D3DKMTHK_H
+
+#include <mime/win32/wingdi.h>
+
+#ifndef D3DKMTAPI
+#define D3DKMTAPI WINGDIAPI
+#endif
+
+/* the d3dddi formats, the values of D3DFORMAT. */
+typedef enum _D3DDDIFORMAT {
+    D3DDDIFMT_UNKNOWN = 0,
+    D3DDDIFMT_R8G8B8 = 20,
+    D3DDDIFMT_A8R8G8B8 = 21,
+    D3DDDIFMT_X8R8G8B8 = 22,
+    D3DDDIFMT_R5G6B5 = 23,
+    D3DDDIFMT_X1R5G5B5 = 24,
+    D3DDDIFMT_A1R5G5B5 = 25,
+    D3DDDIFMT_A4R4G4B4 = 26,
+    D3DDDIFMT_R3G3B2 = 27,
+    D3DDDIFMT_A8 = 28,
+    D3DDDIFMT_A8R3G3B2 = 29,
+    D3DDDIFMT_X4R4G4B4 = 30,
+    D3DDDIFMT_A2B10G10R10 = 31,
+    D3DDDIFMT_A8B8G8R8 = 32,
+    D3DDDIFMT_X8B8G8R8 = 33,
+    D3DDDIFMT_A8P8 = 40,
+    D3DDDIFMT_P8 = 41,
+    D3DDDIFMT_FORCE_UINT = 0x7FFFFFFF,
+} D3DDDIFORMAT;
+
+typedef struct _D3DKMT_CREATEDCFROMMEMORY {
+    VOID *pMemory;
+    D3DDDIFORMAT Format;
+    UINT Width;
+    UINT Height;
+    UINT Pitch;
+    HDC hDeviceDc;
+    PALETTEENTRY *pColorTable;
+    HDC hDc;
+    HANDLE hBitmap;
+} D3DKMT_CREATEDCFROMMEMORY;
+
+typedef struct _D3DKMT_DESTROYDCFROMMEMORY {
+    HDC hDc;
+    HANDLE hBitmap;
+} D3DKMT_DESTROYDCFROMMEMORY;
+
+D3DKMTAPI NTSTATUS APIENTRY D3DKMTCreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *desc);
+D3DKMTAPI NTSTATUS APIENTRY D3DKMTDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *desc);
+
+#endif

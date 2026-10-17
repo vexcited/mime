@@ -3,6 +3,7 @@
 #include <mime/ntrtl.h>
 #include <mime/ntuser.h>
 #include <mime/wow32.h>
+#include <mime/win32/d3dkmthk.h>
 #include "mime_svc_win32k.h"
 
 void Mx32Unsupported(ULONG number);
@@ -401,6 +402,28 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[1] = a[1];
         v[2] = a[2];
         v[3] = a[3];
+        return (ULONG)MxCallService(number, v);
+    }
+    /* the x86 layout: memory, format, width, height, pitch, device dc, color table, then dc and bitmap back. */
+    case MIME_SVC_NtGdiDdDDICreateDCFromMemory: {
+        ULONG *p = ptr32(a[0]);
+        if (!p)
+            return STATUS_INVALID_PARAMETER;
+        D3DKMT_CREATEDCFROMMEMORY desc = {ptr32(p[0]), p[1], p[2], p[3], p[4], ptr32(p[5]), ptr32(p[6])};
+        v[0] = (ULONG_PTR)&desc;
+        ULONG status = (ULONG)MxCallService(number, v);
+        if (NT_SUCCESS(status)) {
+            p[7] = (ULONG)(ULONG_PTR)desc.hDc;
+            p[8] = (ULONG)(ULONG_PTR)desc.hBitmap;
+        }
+        return status;
+    }
+    case MIME_SVC_NtGdiDdDDIDestroyDCFromMemory: {
+        const ULONG *p = ptr32(a[0]);
+        if (!p)
+            return STATUS_INVALID_PARAMETER;
+        D3DKMT_DESTROYDCFROMMEMORY desc = {ptr32(p[0]), ptr32(p[1])};
+        v[0] = (ULONG_PTR)&desc;
         return (ULONG)MxCallService(number, v);
     }
     case MIME_SVC_NtUserFindWindowEx: {
