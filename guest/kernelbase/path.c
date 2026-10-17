@@ -232,14 +232,10 @@ UINT WINAPI GetSystemDirectoryW(LPWSTR buffer, UINT size)
 
 UINT WINAPI GetSystemWow64DirectoryW(LPWSTR buffer, UINT size)
 {
-    KbSetError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
-}
-
-UINT WINAPI GetSystemWow64DirectoryA(LPSTR buffer, UINT size)
-{
-    KbSetError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+    WCHAR dir[MAX_PATH + 16];
+    windows_directory(dir, MAX_PATH);
+    wcscat(dir, L"\\SysWOW64");
+    return copy_result(dir, buffer, size);
 }
 
 static UINT directory_a(UINT(WINAPI *fn)(LPWSTR, UINT), LPSTR buffer, UINT size)
@@ -264,6 +260,11 @@ UINT WINAPI GetSystemWindowsDirectoryA(LPSTR buffer, UINT size)
 UINT WINAPI GetSystemDirectoryA(LPSTR buffer, UINT size)
 {
     return directory_a(GetSystemDirectoryW, buffer, size);
+}
+
+UINT WINAPI GetSystemWow64DirectoryA(LPSTR buffer, UINT size)
+{
+    return directory_a(GetSystemWow64DirectoryW, buffer, size);
 }
 
 /* ------------------------------------------------------------------ temporary files */

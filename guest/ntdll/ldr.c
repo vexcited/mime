@@ -396,13 +396,36 @@ static BOOLEAN try_directory(PCWSTR dir, SIZE_T dir_chars, PCWSTR name, PWSTR ou
     return FALSE;
 }
 
+#if defined(__i386__) || (defined(__x86_64__) && !defined(MIME_X64_NATIVE))
+/* System32 holds the dlls of another processor, so a search through it means this processor's copies. */
+static BOOLEAN is_native_system32(PCWSTR dir, SIZE_T chars)
+{
+    static const WCHAR system32[] = L"C:\\Windows\\System32";
+    SIZE_T n = RTL_NUMBER_OF(system32) - 1;
+    if (chars == n + 1 && dir[n] == '\\')
+        chars = n;
+    return chars == n && !_wcsnicmp(dir, system32, n);
+}
+#else
+static BOOLEAN is_native_system32(PCWSTR dir, SIZE_T chars)
+{
+    return FALSE;
+}
+#endif
+
 static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars)
 {
     while (list && *list) {
         PCWSTR end = list;
         while (*end && *end != ';')
             end++;
-        if (end > list && try_directory(list, (SIZE_T)(end - list), name, out, out_chars))
+        SIZE_T chars = (SIZE_T)(end - list);
+        PCWSTR dir = list;
+        if (is_native_system32(list, chars)) {
+            dir = g_system32;
+            chars = wcslen(g_system32);
+        }
+        if (chars && try_directory(dir, chars, name, out, out_chars))
             return TRUE;
         list = *end ? end + 1 : end;
     }

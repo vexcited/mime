@@ -4,6 +4,8 @@
 #include "msvcrt_private.h"
 
 enum { SZ_SHORT = 1, SZ_LONG, SZ_LONGLONG, SZ_LONGDOUBLE };
+/* the size of %p, %z, %t and a bare %I. */
+#define SZ_POINTER (sizeof(void *) == 8 ? SZ_LONGLONG : 0)
 
 /* where characters come from: a stream or a counted string. */
 typedef struct {

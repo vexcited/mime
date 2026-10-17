@@ -526,6 +526,62 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (NT_SUCCESS(status))
             store32(a[0], (ULONG_PTR)handle);
         return status;
+    case MIME_SVC_NtOpenEvent:
+    case MIME_SVC_NtOpenSemaphore:
+    case MIME_SVC_NtOpenTimer:
+    case MIME_SVC_NtOpenSection:
+        oa = attributes32(a[2], &name);
+        if (number == MIME_SVC_NtOpenEvent)
+            status = NtOpenEvent(&handle, a[1], &oa);
+        else if (number == MIME_SVC_NtOpenSemaphore)
+            status = NtOpenSemaphore(&handle, a[1], &oa);
+        else if (number == MIME_SVC_NtOpenTimer)
+            status = NtOpenTimer(&handle, a[1], &oa);
+        else
+            status = NtOpenSection(&handle, a[1], &oa);
+        if (NT_SUCCESS(status))
+            store32(a[0], (ULONG_PTR)handle);
+        return status;
+    case MIME_SVC_NtOpenProcess: {
+        /* the 32-bit client id holds two zero extended ids. */
+        const ULONG *source = pointer32(a[3]);
+        CLIENT_ID cid = {};
+        if (source) {
+            cid.UniqueProcess = (HANDLE)(ULONG_PTR)source[0];
+            cid.UniqueThread = (HANDLE)(ULONG_PTR)source[1];
+        }
+        oa = attributes32(a[2], &name);
+        status = NtOpenProcess(&handle, a[1], a[2] ? &oa : nullptr, source ? &cid : nullptr);
+        if (NT_SUCCESS(status))
+            store32(a[0], (ULONG_PTR)handle);
+        return status;
+    }
+    case MIME_SVC_NtClearEvent:
+        return NtClearEvent(handle32(a[0]));
+    case MIME_SVC_NtPulseEvent:
+        return NtPulseEvent(handle32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtCreateSemaphore:
+        oa = attributes32(a[2], &name);
+        status = NtCreateSemaphore(&handle, a[1], a[2] ? &oa : nullptr, a[3], a[4]);
+        if (NT_SUCCESS(status))
+            store32(a[0], (ULONG_PTR)handle);
+        return status;
+    case MIME_SVC_NtReleaseSemaphore:
+        return NtReleaseSemaphore(handle32(a[0]), a[1], pointer32(a[2]));
+    case MIME_SVC_NtCreateTimer:
+        oa = attributes32(a[2], &name);
+        status = NtCreateTimer(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
+        if (NT_SUCCESS(status))
+            store32(a[0], (ULONG_PTR)handle);
+        return status;
+    case MIME_SVC_NtSetTimer:
+        /* the apc routine runs as x86 code. */
+        return NtSetTimer(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), pointer32(a[3]), (BOOLEAN)a[4], a[5],
+                          pointer32(a[6]));
+    case MIME_SVC_NtCancelTimer:
+        return NtCancelTimer(handle32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtSignalAndWaitForSingleObject:
+        return NtSignalAndWaitForSingleObject(handle32(a[0]), handle32(a[1]), (BOOLEAN)a[2], pointer32(a[3]));
     case MIME_SVC_NtCreateMutant:
     case MIME_SVC_NtOpenMutant:
         oa = attributes32(a[2], &name);

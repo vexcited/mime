@@ -94,10 +94,13 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             case 'j':
             case 'z':
             case 't':
-                flags |= FL_I64;
+                /* without a size these are as wide as a pointer, but intmax_t is always 64 bits. */
+                if (c == 'j' || sizeof(void *) == 8)
+                    flags |= FL_I64;
                 if (c == 'I') {
                     if (fmt[0] == '6' && fmt[1] == '4') {
                         fmt += 2;
+                        flags |= FL_I64;
                         break;
                     }
                     if (fmt[0] == '3' && fmt[1] == '2') {
@@ -269,8 +272,9 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
                 flags |= FL_FORCEOCTAL;
             break;
         case 'p':
-            prec = 16;
-            flags |= FL_I64;
+            prec = 2 * sizeof(void *);
+            if (sizeof(void *) == 8)
+                flags |= FL_I64;
             hexadd = 'A' - '9' - 1;
             radix = 16;
             break;

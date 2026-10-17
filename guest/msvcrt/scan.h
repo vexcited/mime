@@ -79,12 +79,15 @@ static int SCAN_NAME(SOURCE *in, const SCHAR *fmt, va_list ap)
                     size = 0;
                     fmt += 3;
                 } else {
-                    size = SZ_LONGLONG;
+                    size = SZ_POINTER;
                     fmt++;
                 }
                 break;
             case 'z':
             case 't':
+                size = SZ_POINTER;
+                fmt++;
+                break;
             case 'j':
                 size = SZ_LONGLONG;
                 fmt++;
@@ -261,7 +264,7 @@ static int SCAN_NAME(SOURCE *in, const SCHAR *fmt, va_list ap)
         case 'p': {
             int base = conv == 'o' ? 8 : (conv == 'x' || conv == 'X' || conv == 'p') ? 16 : conv == 'i' ? 0 : 10;
             if (conv == 'p')
-                size = SZ_LONGLONG;
+                size = SZ_POINTER;
             uint64_t value = 0;
             int neg = 0, digits = 0;
             c = src_get(in);

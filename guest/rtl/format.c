@@ -200,7 +200,7 @@ static int format(Sink *s, const void *fmt_ptr, bool wide_fmt, va_list ap)
                     i += 2;
                     size = 0;
                 } else {
-                    size = 3;
+                    size = c == 'j' || sizeof(void *) == 8 ? 3 : 0;
                 }
             } else if (c == 'w') {
                 wide_arg = true;
@@ -231,8 +231,8 @@ static int format(Sink *s, const void *fmt_ptr, bool wide_fmt, va_list ap)
             break;
         }
         case 'p': {
-            uint64_t v = (uint64_t)va_arg(ap, void *);
-            put_number(s, v, 16, true, false, width ? width : 16, precision, left, '0', false, false);
+            uint64_t v = (uintptr_t)va_arg(ap, void *);
+            put_number(s, v, 16, true, false, width ? width : 2 * sizeof(void *), precision, left, '0', false, false);
             break;
         }
         case 'c': {
