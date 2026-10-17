@@ -1343,6 +1343,21 @@ typedef struct {
 #define WH_MIN (-1)
 #define WH_MAX 14
 #define HC_ACTION 0
+
+typedef struct tagCWPSTRUCT {
+    LPARAM lParam;
+    WPARAM wParam;
+    UINT message;
+    HWND hwnd;
+} CWPSTRUCT, *PCWPSTRUCT, *LPCWPSTRUCT;
+
+typedef struct tagCWPRETSTRUCT {
+    LRESULT lResult;
+    LPARAM lParam;
+    WPARAM wParam;
+    UINT message;
+    HWND hwnd;
+} CWPRETSTRUCT, *PCWPRETSTRUCT, *LPCWPRETSTRUCT;
 #define HC_GETNEXT 1
 #define HC_SKIP 2
 #define HC_NOREMOVE 3
@@ -2189,6 +2204,8 @@ WINUSERAPI int WINAPI ToAscii(UINT vk, UINT scan, const BYTE *state, LPWORD char
 WINUSERAPI int WINAPI ToAsciiEx(UINT vk, UINT scan, const BYTE *state, LPWORD chars, UINT flags, HKL layout);
 WINUSERAPI int WINAPI GetKeyboardLayoutList(int count, HKL *list);
 WINUSERAPI HKL WINAPI GetKeyboardLayout(DWORD thread);
+WINUSERAPI int WINAPI GetKeyboardType(int which);
+WINUSERAPI BOOL WINAPI IsCharAlphaW(WCHAR ch);
 WINUSERAPI BOOL WINAPI GetKeyboardLayoutNameW(LPWSTR name);
 WINUSERAPI HKL WINAPI ActivateKeyboardLayout(HKL layout, UINT flags);
 WINUSERAPI HKL WINAPI LoadKeyboardLayoutW(LPCWSTR name, UINT flags);

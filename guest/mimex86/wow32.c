@@ -380,6 +380,14 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtTerminateThread(handle32(a[0]), a[1]);
     case MIME_SVC_NtClose:
         return NtClose(handle32(a[0]));
+    case MIME_SVC_NtDuplicateObject: {
+        HANDLE target = nullptr;
+        status = NtDuplicateObject(handle32(a[0]), handle32(a[1]), handle32(a[2]), a[3] ? &target : nullptr, a[4], a[5],
+                                   a[6]);
+        if (NT_SUCCESS(status) && a[3])
+            store32(a[3], (ULONG_PTR)target);
+        return status;
+    }
     case MIME_SVC_NtTestAlert:
         return NtTestAlert();
     case MIME_SVC_NtDisplayString:

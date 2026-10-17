@@ -58,7 +58,8 @@ set(MIME_X86_DLLS
     msi:0x5f000000:user mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:user_gdi wininet:0x5a000000:user urlmon:0x59000000:user msimg32:0x58000000:gdi
     oleacc:0x57000000:user oledlg:0x56000000:user combase:0x54000000:user usp10:0x51000000:gdi
-    setupapi:0x46000000:base msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:all_five)
+    setupapi:0x46000000:base msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:all_five
+    dinput8:0x3B000000:all_five dinput:0x3A000000:all_five)
 set(base ntdll kernel32)
 set(user ntdll kernel32 user32)
 set(gdi ntdll kernel32 gdi32)
@@ -68,6 +69,8 @@ set(acm ntdll kernel32 user32 gdi32 winmm)
 set(objects_msi x86-lib-compound)
 set(objects_winmm x86-lib-audio)
 set(objects_dsound x86-lib-audio)
+set(objects_dinput8 x86-lib-dinput)
+set(objects_dinput x86-lib-dinput)
 set(objects_gdiplus x86-lib-png)
 
 if(MIME_GUEST_ARCH STREQUAL "x64")

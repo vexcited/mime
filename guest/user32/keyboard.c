@@ -356,6 +356,21 @@ WINUSERAPI int WINAPI GetKeyboardLayoutList(int count, HKL *list)
     return 1;
 }
 
+/* the keyboard win32k reports to raw input: an enhanced 101/102 key one. */
+WINUSERAPI int WINAPI GetKeyboardType(int which)
+{
+    switch (which) {
+    case 0:
+        return 4;
+    case 1:
+        return 0;
+    case 2:
+        return 12;
+    default:
+        return 0;
+    }
+}
+
 WINUSERAPI HKL WINAPI GetKeyboardLayout(DWORD thread)
 {
     return US_LAYOUT;

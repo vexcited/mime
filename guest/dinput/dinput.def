@@ -1,0 +1,10 @@
+; the ordinals of windows' dinput.dll.
+LIBRARY dinput.dll
+EXPORTS
+    DirectInputCreateA @1
+    DirectInputCreateEx @2
+    DirectInputCreateW @3
+    DllCanUnloadNow @4 PRIVATE
+    DllGetClassObject @5 PRIVATE
+    DllRegisterServer @6 PRIVATE
+    DllUnregisterServer @7 PRIVATE

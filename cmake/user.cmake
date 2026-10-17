@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png msstyles compound audio)
+    foreach(lib privdata dxbc dxil png msstyles compound audio dinput)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -240,13 +240,16 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     d3d11:0x7FF420000000 msvcp_win:0x7FF410000000 d3dcompiler_47:0x7FF400000000 d3d12:0x7FF3E0000000
     d3d9:0x7FF3D0000000 setupapi:0x7FF3C0000000 d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000
     d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000 dsound:0x7FF320000000
-    ddraw:0x7FF310000000)
+    ddraw:0x7FF310000000 dinput:0x7FF300000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
     set(objects_msi ${arch}-lib-compound)
     set(objects_winmm ${arch}-lib-audio)
     set(objects_dsound ${arch}-lib-audio)
+    # dinput8 and dinput are revisions of one engine.
+    set(objects_dinput8 ${arch}-lib-dinput)
+    set(objects_dinput ${arch}-lib-dinput)
     set(objects_gdiplus ${arch}-lib-png)
     set(objects_dxgi ${arch}-lib-privdata)
     set(objects_d3d11 ${arch}-lib-privdata ${arch}-lib-dxbc)

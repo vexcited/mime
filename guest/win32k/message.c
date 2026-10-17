@@ -143,6 +143,33 @@ static void complete_sent(SENT_MESSAGE *sm, LRESULT result)
     KeSetEvent(&sm->Done, 0, FALSE);
 }
 
+/*
+ * a sent message reaching its window procedure, between the thread's
+ * WH_CALLWNDPROC and WH_CALLWNDPROCRET hooks. those see a pointer
+ * parameter as 0: it lives in the kernel until the procedure gets it.
+ */
+static LRESULT call_sent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind, ULONG size, BOOLEAN own)
+{
+    W32THREAD *t = w->Thread;
+    HWND hwnd = WndHandle(w);
+    LPARAM shown = kind == MIME_LPARAM_VALUE ? lparam : 0;
+    if (HookActive(WH_CALLWNDPROC, t)) {
+        CWPSTRUCT cwp = {shown, wparam, msg, hwnd};
+        UserReference(&w->Header);
+        HookCall(WH_CALLWNDPROC, t, HC_ACTION, own, (LPARAM)&cwp, sizeof(cwp), nullptr);
+        BOOLEAN gone = w->Header.Destroyed;
+        UserDereference(&w->Header);
+        if (gone)
+            return 0;
+    }
+    LRESULT r = MsgCallWindowProc(w, w->Proc, w->Ansi, msg, wparam, lparam, kind, size);
+    if (HookActive(WH_CALLWNDPROCRET, t)) {
+        CWPRETSTRUCT ret = {r, shown, wparam, msg, hwnd};
+        HookCall(WH_CALLWNDPROCRET, t, HC_ACTION, own, (LPARAM)&ret, sizeof(ret), nullptr);
+    }
+    return r;
+}
+
 void MsgProcessSent(W32THREAD *t)
 {
     while (!IsListEmpty(&t->Sent)) {
@@ -157,8 +184,7 @@ void MsgProcessSent(W32THREAD *t)
         } else {
             WND *w = WndLookup(sm->Hwnd);
             if (w && w->Thread == t)
-                r = MsgCallWindowProc(w, w->Proc, w->Ansi, sm->Msg, sm->Wparam, sm->Lparam, sm->LparamKind,
-                                      sm->LparamSize);
+                r = call_sent(w, sm->Msg, sm->Wparam, sm->Lparam, sm->LparamKind, sm->LparamSize, FALSE);
         }
         t->Receiving = prev;
         complete_sent(sm, r);
@@ -226,7 +252,7 @@ LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lpar
     if (!target)
         return DefWindowProcKernel(w, msg, wparam, lparam);
     if (target == W32GetThread())
-        return MsgCallWindowProc(w, w->Proc, w->Ansi, msg, wparam, lparam, lparam_kind, lparam_size);
+        return call_sent(w, msg, wparam, lparam, lparam_kind, lparam_size, TRUE);
     if (target->Destroying)
         return 0;
     return send_to_thread(target, w, msg, wparam, lparam, lparam_kind, lparam_size, FALSE);
