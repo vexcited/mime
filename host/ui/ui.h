@@ -27,6 +27,7 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
 /* the last image presented to a window through vulkan: see MimeWinReadback. */
 bool mime_ui_window_readback(MimeWinReadback *r, void *pixels);
 void mime_ui_set_cursor(uint32_t cursor);
+void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect);
 void mime_ui_beep(uint32_t type);
 
 /*

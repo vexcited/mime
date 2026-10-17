@@ -308,6 +308,11 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_WIN_CURSOR:
         mime_ui_set_cursor((uint32_t)regs[1]);
         break;
+    case MIME_HC_POINTER: {
+        MimeRect rect = {(int32_t)regs[3], (int32_t)regs[4], (int32_t)regs[5], (int32_t)regs[6]};
+        mime_ui_pointer((uint32_t)regs[1], (uint32_t)regs[2], &rect);
+        break;
+    }
     case MIME_HC_BEEP:
         mime_ui_beep((uint32_t)regs[1]);
         break;

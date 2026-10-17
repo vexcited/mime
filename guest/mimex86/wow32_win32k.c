@@ -232,6 +232,113 @@ static ULONG get_object32(const ULONG *a)
     return (ULONG)MxCallService(MIME_SVC_NtGdiExtGetObjectW, v);
 }
 
+/* ------------------------------------------------------------------ raw input */
+
+typedef struct RAWINPUTDEVICE32 {
+    USHORT Page, Usage;
+    ULONG Flags, Target;
+} RAWINPUTDEVICE32;
+
+static ULONG register_raw32(const ULONG *a)
+{
+    const RAWINPUTDEVICE32 *in = ptr32(a[0]);
+    UINT count = a[1];
+    if (a[2] != sizeof(RAWINPUTDEVICE32) || !in || !count || count > 64) {
+        ULONG64 v[3] = {a[0], a[1], sizeof(RAWINPUTDEVICE) + 1};
+        return (ULONG)MxCallService(MIME_SVC_NtUserRegisterRawInputDevices, v);
+    }
+    RAWINPUTDEVICE devices[64];
+    for (UINT i = 0; i < count; i++)
+        devices[i] = (RAWINPUTDEVICE){in[i].Page, in[i].Usage, in[i].Flags, ptr32(in[i].Target)};
+    ULONG64 v[3] = {(ULONG_PTR)devices, count, sizeof(RAWINPUTDEVICE)};
+    return (ULONG)MxCallService(MIME_SVC_NtUserRegisterRawInputDevices, v);
+}
+
+static ULONG registered_raw32(const ULONG *a)
+{
+    RAWINPUTDEVICE devices[64];
+    UINT *count = ptr32(a[1]);
+    BOOLEAN size_ok = a[2] == sizeof(RAWINPUTDEVICE32);
+    UINT have = count ? *count : 0;
+    if (have > 64)
+        have = 64;
+    ULONG64 v[3] = {a[0] ? (ULONG_PTR)devices : 0, a[1], size_ok ? sizeof(RAWINPUTDEVICE) : 0};
+    UINT inner = have;
+    if (count && a[0])
+        v[1] = (ULONG_PTR)&inner;
+    ULONG result = (ULONG)MxCallService(MIME_SVC_NtUserGetRegisteredRawInputDevices, v);
+    if (count && a[0]) {
+        *count = inner;
+        if (result != (ULONG)-1) {
+            RAWINPUTDEVICE32 *out = ptr32(a[0]);
+            for (UINT i = 0; i < result; i++)
+                out[i] = (RAWINPUTDEVICE32){devices[i].usUsagePage, devices[i].usUsage, devices[i].dwFlags,
+                                            (ULONG)(ULONG_PTR)devices[i].hwndTarget};
+        }
+    }
+    return result;
+}
+
+/* the 16-byte x86 header before the same device data. */
+static ULONG raw_data32(const ULONG *a)
+{
+    UINT *size = ptr32(a[3]);
+    BYTE buffer[sizeof(RAWINPUT)];
+    UINT inner = sizeof(buffer);
+    ULONG64 v[5] = {a[0], a[1], (ULONG_PTR)buffer, (ULONG_PTR)&inner, a[4] == 16 ? sizeof(RAWINPUTHEADER) : 0};
+    ULONG result = (ULONG)MxCallService(MIME_SVC_NtUserGetRawInputData, v);
+    if (result == (ULONG)-1)
+        return result;
+    const RAWINPUTHEADER *h = (const RAWINPUTHEADER *)buffer;
+    UINT body = result - sizeof(RAWINPUTHEADER);
+    UINT need = a[1] == RID_HEADER ? 16 : 16 + body;
+    if (!size)
+        return (ULONG)-1;
+    if (!a[2]) {
+        *size = need;
+        return 0;
+    }
+    if (*size < need) {
+        NtCurrentTeb()->LastErrorValue = 122; /* ERROR_INSUFFICIENT_BUFFER */
+        return (ULONG)-1;
+    }
+    ULONG *out = ptr32(a[2]);
+    out[0] = h->dwType;
+    out[1] = 16 + (ULONG)(h->dwSize - sizeof(RAWINPUTHEADER));
+    out[2] = (ULONG)(ULONG_PTR)h->hDevice;
+    out[3] = (ULONG)h->wParam;
+    if (a[1] != RID_HEADER)
+        memcpy(out + 4, buffer + sizeof(RAWINPUTHEADER), body);
+    return need;
+}
+
+/* windows hands x86 programs this buffer with 64-bit headers, the data 8 bytes later. */
+static ULONG raw_buffer32(const ULONG *a)
+{
+    ULONG64 v[3] = {a[0], a[1], a[2] == 16 ? sizeof(RAWINPUTHEADER) : 0};
+    return (ULONG)MxCallService(MIME_SVC_NtUserGetRawInputBuffer, v);
+}
+
+static ULONG raw_devices32(const ULONG *a)
+{
+    RAWINPUTDEVICELIST list[64];
+    UINT *count = ptr32(a[1]);
+    UINT inner = count ? (*count > 64 ? 64 : *count) : 0;
+    ULONG64 v[3] = {a[0] ? (ULONG_PTR)list : 0, count ? (ULONG_PTR)&inner : 0,
+                    a[2] == 8 ? sizeof(RAWINPUTDEVICELIST) : 0};
+    ULONG result = (ULONG)MxCallService(MIME_SVC_NtUserGetRawInputDeviceList, v);
+    if (count)
+        *count = inner;
+    if (a[0] && result != (ULONG)-1) {
+        ULONG *out = ptr32(a[0]);
+        for (UINT i = 0; i < result; i++) {
+            out[i * 2] = (ULONG)(ULONG_PTR)list[i].hDevice;
+            out[i * 2 + 1] = list[i].dwType;
+        }
+    }
+    return result;
+}
+
 ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
 {
     ULONG64 v[16] = {};
@@ -724,6 +831,34 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     }
     case MIME_SVC_NtGdiGetOutlineTextMetricsInternalW:
         return outline_metrics32(a);
+    case MIME_SVC_NtUserMsgWaitForMultipleObjectsEx: {
+        HANDLE handles[64];
+        const ULONG *in = ptr32(a[1]);
+        ULONG count = a[0] < 64 ? a[0] : 64;
+        for (ULONG i = 0; in && i < count; i++)
+            handles[i] = (HANDLE)(LONG_PTR)(LONG)in[i];
+        v[0] = a[0];
+        v[1] = in ? (ULONG_PTR)handles : 0;
+        v[2] = a[2];
+        v[3] = a[3];
+        v[4] = a[4];
+        return (ULONG)MxCallService(number, v);
+    }
+    case MIME_SVC_NtUserRegisterRawInputDevices:
+        return register_raw32(a);
+    case MIME_SVC_NtUserGetRegisteredRawInputDevices:
+        return registered_raw32(a);
+    case MIME_SVC_NtUserGetRawInputData:
+        return raw_data32(a);
+    case MIME_SVC_NtUserGetRawInputBuffer:
+        return raw_buffer32(a);
+    case MIME_SVC_NtUserGetRawInputDeviceList:
+        return raw_devices32(a);
+    case MIME_SVC_NtUserGetRawInputDeviceInfo:
+        /* the names and RID_DEVICE_INFO are the same in both. */
+        for (ULONG i = 0; i < 4; i++)
+            v[i] = a[i];
+        return (ULONG)MxCallService(number, v);
     default:
         Mx32Unsupported(number);
         return 0;

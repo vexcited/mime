@@ -26,7 +26,10 @@ static struct {
 
 void InputSetForeground(WND *w)
 {
+    WND *old = InputForeground;
     InputForeground = w;
+    if (old != w)
+        InputForegroundChanged();
 }
 
 void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit)
@@ -237,9 +240,25 @@ static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG
 static BOOLEAN g_chars_follow_key;
 static BOOLEAN g_key_dropped;
 
-static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR extra)
+static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR extra)
 {
     W32THREAD *t = nullptr;
+    MimeInputEvent copy = *in;
+    const MimeInputEvent *ev = &copy;
+    switch (copy.type) {
+    case MIME_INPUT_MOUSE_MOVE:
+    case MIME_INPUT_MOUSE_DOWN:
+    case MIME_INPUT_MOUSE_UP:
+    case MIME_INPUT_MOUSE_WHEEL: {
+        /* a locked pointer reports motion alone, which moves the cursor from where it is. */
+        POINT pt = (copy.flags & 4) ? (POINT){InputCursorPos.x + copy.dx, InputCursorPos.y + copy.dy}
+                                    : (POINT){copy.x, copy.y};
+        pt = InputClampCursor(pt);
+        copy.x = pt.x;
+        copy.y = pt.y;
+        break;
+    }
+    }
     if (ev->type == MIME_INPUT_CLIPBOARD) {
         ClipboardHostChanged(ev->x != 0);
         return;
@@ -269,6 +288,9 @@ static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR
             return;
         break;
     }
+    BOOLEAN no_legacy = RawInputEvent(ev, injected);
+    if (no_legacy && (ev->type == MIME_INPUT_KEY_DOWN || ev->type == MIME_INPUT_KEY_UP))
+        g_key_dropped = TRUE;
     update_async_keys(ev);
     WPARAM mouse_state = mouse_key_state(ev);
     switch (ev->type) {
@@ -290,7 +312,7 @@ static void dispatch_event(const MimeInputEvent *ev, BOOLEAN injected, ULONG_PTR
         break;
     }
     }
-    if (!t)
+    if (!t || no_legacy)
         return;
     /* coalesce consecutive mouse moves still waiting in the queue. */
     if (ev->type == MIME_INPUT_MOUSE_MOVE && !IsListEmpty(&t->Input)) {
@@ -396,6 +418,10 @@ static BOOLEAN injected_event(const INPUT *in, MimeInputEvent *ev)
     }
     ev->x = pt.x;
     ev->y = pt.y;
+    if (mi->dwFlags & MOUSEEVENTF_MOVE) {
+        ev->dx = (mi->dwFlags & MOUSEEVENTF_ABSOLUTE) ? pt.x - InputCursorPos.x : mi->dx;
+        ev->dy = (mi->dwFlags & MOUSEEVENTF_ABSOLUTE) ? pt.y - InputCursorPos.y : mi->dy;
+    }
     WND *top = WndChildFromPoint(WndDesktop(), pt, FALSE);
     ev->window_id = top ? (uint32_t)(ULONG_PTR)WndHandle(top) : 0;
     return TRUE;

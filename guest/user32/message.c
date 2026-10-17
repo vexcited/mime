@@ -163,7 +163,9 @@ WINUSERAPI BOOL WINAPI InSendMessage(void)
 WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask,
                                                     DWORD flags)
 {
-    /* checks the queue, then waits on the handles in short slices so new messages are noticed. */
+    if (!(flags & MWMO_WAITALL))
+        return NtUserMsgWaitForMultipleObjectsEx(count, handles, timeout, mask, flags);
+    /* all the handles and the queue: the handles in short slices so new messages are noticed. */
     DWORD start = GetTickCount();
     for (;;) {
         if (HIWORD(GetQueueStatus(mask)))

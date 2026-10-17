@@ -270,6 +270,15 @@ enum {
     MIME_HC_AUDIO_OPEN = 0x40,  /* (pa, size) -> stream, plays the format of the header at pa */
     MIME_HC_AUDIO_START = 0x41, /* (stream, running) */
     MIME_HC_AUDIO_CLOSE = 0x42, /* (stream) returns once the host no longer reads its memory */
+
+    MIME_HC_POINTER = 0x44,     /* (MIME_POINTER_*, window_id, left, top, right, bottom) screen rectangle */
+};
+
+/* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */
+enum {
+    MIME_POINTER_FREE = 0,
+    MIME_POINTER_CONFINED = 1,
+    MIME_POINTER_RELATIVE = 2,
 };
 
 enum {
@@ -631,10 +640,11 @@ typedef struct MimeInputEvent {
     uint32_t scancode; /* set 1 scancode, 0x100 marks extended keys */
     uint32_t ch;       /* utf-32 code point for MIME_INPUT_CHAR */
     int32_t wheel;     /* WHEEL_DELTA units, positive away from the user */
-    uint32_t flags;    /* 1 = horizontal wheel, 2 = key repeat */
+    uint32_t flags;    /* 1 = horizontal wheel, 2 = key repeat, 4 = relative motion, x and y unknown */
     uint32_t state_request; /* native window-state request id. */
     uint64_t time_ms;
     int32_t width, height; /* fullscreen frame dimensions in guest pixels. */
+    int32_t dx, dy;    /* motion of a mouse move in guest pixels, unaccelerated when the host can tell */
 } MimeInputEvent;
 
 #endif

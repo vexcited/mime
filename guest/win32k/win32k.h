@@ -429,6 +429,7 @@ typedef struct W32PROCESS {
     struct W32GPU *Gpu; /* gpu.c */
     struct W32VK *Vk;   /* vulkan.c */
     struct W32AUDIO *Audio; /* audio.c */
+    struct W32RAW *Raw;     /* rawinput.c */
     ULONG ImageChars;
     WCHAR ImagePath[512];
 } W32PROCESS;
@@ -502,6 +503,7 @@ typedef struct W32THREAD {
 
 W32THREAD *W32GetThread(void);  /* current thread, created on demand */
 W32PROCESS *W32GetProcess(void);
+extern LIST_ENTRY W32Processes;
 W32THREAD *W32LookupThread(HANDLE tid);
 void QueueWake(W32THREAD *t, ULONG bits);
 BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -730,6 +732,15 @@ extern UCHAR InputAsyncKeys[256];
 extern WND *InputForeground;
 void InputSetForeground(WND *w);
 void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit);
+extern BOOLEAN InputCursorHidden; /* the host shows no cursor */
+/* rawinput.c */
+POINT InputClampCursor(POINT pt);
+void InputUpdatePointer(void);
+void InputCursorMoved(void);
+void InputCursorShown(void);
+void InputForegroundChanged(void);
+BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected);
+void RawFreeProcess(W32PROCESS *p);
 
 /* ------------------------------------------------------------------ painting and presentation */
 

@@ -15,7 +15,7 @@ static KSERVICE_DESCRIPTOR g_services[2048];
 #ifdef __x86_64__
 int _fltused = 0x9875;
 #endif
-static LIST_ENTRY g_processes = {&g_processes, &g_processes};
+LIST_ENTRY W32Processes = {&W32Processes, &W32Processes};
 static LIST_ENTRY g_threads = {&g_threads, &g_threads};
 
 /* ------------------------------------------------------------------ memory */
@@ -244,7 +244,7 @@ W32PROCESS *W32GetProcess(void)
     InitializeListHead(&p->Classes);
     /* every process is treated as system dpi aware until dpi virtualization exists. */
     p->DpiAwareness = 1;
-    InsertTailList(&g_processes, &p->Links);
+    InsertTailList(&W32Processes, &p->Links);
     PsSetProcessWin32Process(process, p, nullptr);
     return p;
 }
@@ -347,6 +347,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
         GpuFreeProcess(p);
         VkFreeProcess(p);
         AudioFreeProcess(p);
+        RawFreeProcess(p);
         MenuFreeProcess(p);
         ClassFreeProcess(p);
         RemoveEntryList(&p->Links);

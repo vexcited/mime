@@ -43,6 +43,7 @@ typedef struct UiWindow {
     uint32_t state_request;
     int state_command;
     double wheel_x, wheel_y;
+    double motion_x, motion_y; /* fractions of guest pixels moved, kept for the next motion */
 
     pthread_mutex_t lock;
     uint8_t *pixels; /* the latest guest surface, copied by the presenting vcpu */
@@ -338,6 +339,36 @@ static void emit_mouse(SDL_WindowID id, float x, float y, uint32_t type, uint32_
     window_point_to_guest(w, x, y, &ev.x, &ev.y);
     ev.button = button;
     ev.modifiers = modifiers_of(SDL_GetModState());
+    if (w->window && SDL_GetWindowRelativeMouseMode(w->window))
+        ev.flags |= 4;
+    emit(&ev);
+}
+
+/* motion in guest pixels; locked, the device's own counts, as raw input reports them. */
+static void emit_motion(const SDL_MouseMotionEvent *m)
+{
+    UiWindow *w = find_by_sdl(m->windowID);
+    if (!w)
+        return;
+    MimeInputEvent ev = {};
+    ev.type = MIME_INPUT_MOUSE_MOVE;
+    ev.window_id = w->id;
+    ev.modifiers = modifiers_of(SDL_GetModState());
+    double scale = 1.0;
+    if (w->window && SDL_GetWindowRelativeMouseMode(w->window))
+        ev.flags |= 4;
+    else {
+        window_point_to_guest(w, m->x, m->y, &ev.x, &ev.y);
+        scale = window_fit(w).scale;
+    }
+    w->motion_x += m->xrel / scale;
+    w->motion_y += m->yrel / scale;
+    ev.dx = (int32_t)w->motion_x;
+    ev.dy = (int32_t)w->motion_y;
+    w->motion_x -= ev.dx;
+    w->motion_y -= ev.dy;
+    if ((ev.flags & 4) && !ev.dx && !ev.dy)
+        return;
     emit(&ev);
 }
 
@@ -1185,6 +1216,53 @@ void mime_ui_set_cursor(uint32_t cursor)
     on_main(cursor_main, (void *)(uintptr_t)cursor);
 }
 
+typedef struct PointerCall {
+    uint32_t mode, window_id;
+    MimeRect rect;
+} PointerCall;
+
+static void pointer_main(void *arg)
+{
+    PointerCall *c = arg;
+    static SDL_Window *held;
+    UiWindow *w = find_window(c->window_id);
+    SDL_Window *window = w && c->mode != MIME_POINTER_FREE ? w->window : nullptr;
+    if (held && held != window) {
+        SDL_SetWindowRelativeMouseMode(held, false);
+        SDL_SetWindowMouseRect(held, nullptr);
+    }
+    held = window;
+    if (window) {
+        SDL_SetWindowRelativeMouseMode(window, c->mode == MIME_POINTER_RELATIVE);
+        if (c->mode == MIME_POINTER_CONFINED) {
+            MimeRect host = host_part(&w->config);
+            Fit fit = window_fit(w);
+            double left = fit.x + (c->rect.left - w->config.rect.left - host.left) * fit.scale;
+            double top = fit.y + (c->rect.top - w->config.rect.top - host.top) * fit.scale;
+            SDL_Rect r = {(int)ceil(left), (int)ceil(top),
+                          (int)floor((c->rect.right - c->rect.left) * fit.scale),
+                          (int)floor((c->rect.bottom - c->rect.top) * fit.scale)};
+            SDL_SetWindowMouseRect(window, r.w > 0 && r.h > 0 ? &r : nullptr);
+        } else {
+            SDL_SetWindowMouseRect(window, nullptr);
+        }
+    }
+    free(c);
+}
+
+void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect)
+{
+    PointerCall *c = malloc(sizeof(*c));
+    if (!c)
+        return;
+    *c = (PointerCall){mode, window_id, *rect};
+    if (!g_video) {
+        free(c);
+        return;
+    }
+    on_main(pointer_main, c);
+}
+
 void mime_ui_beep(uint32_t type)
 {
 }
@@ -1348,7 +1426,7 @@ static void handle_event(const SDL_Event *e)
         emit_text(&e->text);
         break;
     case SDL_EVENT_MOUSE_MOTION:
-        emit_mouse(e->motion.windowID, e->motion.x, e->motion.y, MIME_INPUT_MOUSE_MOVE, 0);
+        emit_motion(&e->motion);
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {

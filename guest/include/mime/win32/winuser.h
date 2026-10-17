@@ -1458,6 +1458,10 @@ WINUSERAPI BOOL WINAPI PeekMessageW(LPMSG msg, HWND hwnd, UINT min, UINT max, UI
 WINUSERAPI BOOL WINAPI TranslateMessage(const MSG *msg);
 WINUSERAPI LRESULT WINAPI DispatchMessageW(const MSG *msg);
 WINUSERAPI BOOL WINAPI WaitMessage(void);
+WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjects(DWORD count, const HANDLE *handles, BOOL wait_all, DWORD timeout,
+                                                  DWORD mask);
+WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask,
+                                                    DWORD flags);
 WINUSERAPI HDC WINAPI BeginPaint(HWND hwnd, LPPAINTSTRUCT ps);
 WINUSERAPI BOOL WINAPI EndPaint(HWND hwnd, const PAINTSTRUCT *ps);
 WINUSERAPI HDC WINAPI GetDC(HWND hwnd);
@@ -1482,6 +1486,7 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
 WINUSERAPI BOOL WINAPI DestroyIcon(HICON icon);
 WINUSERAPI BOOL WINAPI DestroyCursor(HCURSOR cursor);
 WINUSERAPI BOOL WINAPI SetCursorPos(int x, int y);
+WINUSERAPI int WINAPI ShowCursor(BOOL show);
 WINUSERAPI BOOL WINAPI ClipCursor(const RECT *rect);
 WINUSERAPI BOOL WINAPI GetClipCursor(LPRECT rect);
 WINUSERAPI HCURSOR WINAPI SetCursor(HCURSOR cursor);
@@ -2597,5 +2602,171 @@ WINUSERAPI LPARAM WINAPI ReuseDDElParam(LPARAM lparam, UINT msg_in, UINT msg_out
 WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR data);
 WINUSERAPI int WINAPI GetKeyNameTextW(LONG lparam, LPWSTR buffer, int size);
 WINUSERAPI HBITMAP WINAPI LoadBitmapW(HINSTANCE instance, LPCWSTR name);
+
+/* ------------------------------------------------------------------ raw input */
+
+#define WM_INPUT_DEVICE_CHANGE 0x00FE
+#define GIDC_ARRIVAL 1
+#define GIDC_REMOVAL 2
+#define RIM_INPUT 0
+#define RIM_INPUTSINK 1
+#define GET_RAWINPUT_CODE_WPARAM(wparam) ((wparam) & 0xFF)
+
+DECLARE_HANDLE(HRAWINPUT);
+
+#define RIM_TYPEMOUSE 0
+#define RIM_TYPEKEYBOARD 1
+#define RIM_TYPEHID 2
+
+#define RIDEV_REMOVE 0x00000001
+#define RIDEV_EXCLUDE 0x00000010
+#define RIDEV_PAGEONLY 0x00000020
+#define RIDEV_NOLEGACY 0x00000030
+#define RIDEV_INPUTSINK 0x00000100
+#define RIDEV_CAPTUREMOUSE 0x00000200
+#define RIDEV_NOHOTKEYS 0x00000200
+#define RIDEV_APPKEYS 0x00000400
+#define RIDEV_EXINPUTSINK 0x00001000
+#define RIDEV_DEVNOTIFY 0x00002000
+#define RIDEV_EXMODEMASK 0x000000F0
+
+#define RID_INPUT 0x10000003
+#define RID_HEADER 0x10000005
+#define RIDI_PREPARSEDDATA 0x20000005
+#define RIDI_DEVICENAME 0x20000007
+#define RIDI_DEVICEINFO 0x2000000B
+
+#define MOUSE_MOVE_RELATIVE 0x00
+#define MOUSE_MOVE_ABSOLUTE 0x01
+#define MOUSE_VIRTUAL_DESKTOP 0x02
+#define MOUSE_ATTRIBUTES_CHANGED 0x04
+#define MOUSE_MOVE_NOCOALESCE 0x08
+
+#define RI_MOUSE_LEFT_BUTTON_DOWN 0x0001
+#define RI_MOUSE_LEFT_BUTTON_UP 0x0002
+#define RI_MOUSE_RIGHT_BUTTON_DOWN 0x0004
+#define RI_MOUSE_RIGHT_BUTTON_UP 0x0008
+#define RI_MOUSE_MIDDLE_BUTTON_DOWN 0x0010
+#define RI_MOUSE_MIDDLE_BUTTON_UP 0x0020
+#define RI_MOUSE_BUTTON_4_DOWN 0x0040
+#define RI_MOUSE_BUTTON_4_UP 0x0080
+#define RI_MOUSE_BUTTON_5_DOWN 0x0100
+#define RI_MOUSE_BUTTON_5_UP 0x0200
+#define RI_MOUSE_WHEEL 0x0400
+#define RI_MOUSE_HWHEEL 0x0800
+
+#define RI_KEY_MAKE 0
+#define RI_KEY_BREAK 1
+#define RI_KEY_E0 2
+#define RI_KEY_E1 4
+
+typedef struct tagRAWINPUTDEVICE {
+    USHORT usUsagePage;
+    USHORT usUsage;
+    DWORD dwFlags;
+    HWND hwndTarget;
+} RAWINPUTDEVICE, *PRAWINPUTDEVICE, *LPRAWINPUTDEVICE;
+typedef const RAWINPUTDEVICE *PCRAWINPUTDEVICE;
+
+typedef struct tagRAWINPUTDEVICELIST {
+    HANDLE hDevice;
+    DWORD dwType;
+} RAWINPUTDEVICELIST, *PRAWINPUTDEVICELIST;
+
+typedef struct tagRAWINPUTHEADER {
+    DWORD dwType;
+    DWORD dwSize;
+    HANDLE hDevice;
+    WPARAM wParam;
+} RAWINPUTHEADER, *PRAWINPUTHEADER, *LPRAWINPUTHEADER;
+
+typedef struct tagRAWMOUSE {
+    USHORT usFlags;
+    union {
+        ULONG ulButtons;
+        struct {
+            USHORT usButtonFlags;
+            USHORT usButtonData;
+        };
+    };
+    ULONG ulRawButtons;
+    LONG lLastX;
+    LONG lLastY;
+    ULONG ulExtraInformation;
+} RAWMOUSE, *PRAWMOUSE, *LPRAWMOUSE;
+
+typedef struct tagRAWKEYBOARD {
+    USHORT MakeCode;
+    USHORT Flags;
+    USHORT Reserved;
+    USHORT VKey;
+    UINT Message;
+    ULONG ExtraInformation;
+} RAWKEYBOARD, *PRAWKEYBOARD, *LPRAWKEYBOARD;
+
+typedef struct tagRAWHID {
+    DWORD dwSizeHid;
+    DWORD dwCount;
+    BYTE bRawData[1];
+} RAWHID, *PRAWHID, *LPRAWHID;
+
+typedef struct tagRAWINPUT {
+    RAWINPUTHEADER header;
+    union {
+        RAWMOUSE mouse;
+        RAWKEYBOARD keyboard;
+        RAWHID hid;
+    } data;
+} RAWINPUT, *PRAWINPUT, *LPRAWINPUT;
+
+#ifdef _WIN64
+#define RAWINPUT_ALIGN(x) (((ULONG_PTR)(x) + sizeof(ULONGLONG) - 1) & ~(sizeof(ULONGLONG) - 1))
+#else
+#define RAWINPUT_ALIGN(x) (((ULONG_PTR)(x) + sizeof(DWORD) - 1) & ~(sizeof(DWORD) - 1))
+#endif
+#define NEXTRAWINPUTBLOCK(ptr) ((PRAWINPUT)RAWINPUT_ALIGN((ULONG_PTR)((PBYTE)(ptr) + (ptr)->header.dwSize)))
+
+typedef struct tagRID_DEVICE_INFO_MOUSE {
+    DWORD dwId;
+    DWORD dwNumberOfButtons;
+    DWORD dwSampleRate;
+    BOOL fHasHorizontalWheel;
+} RID_DEVICE_INFO_MOUSE;
+
+typedef struct tagRID_DEVICE_INFO_KEYBOARD {
+    DWORD dwType;
+    DWORD dwSubType;
+    DWORD dwKeyboardMode;
+    DWORD dwNumberOfFunctionKeys;
+    DWORD dwNumberOfIndicators;
+    DWORD dwNumberOfKeysTotal;
+} RID_DEVICE_INFO_KEYBOARD;
+
+typedef struct tagRID_DEVICE_INFO_HID {
+    DWORD dwVendorId;
+    DWORD dwProductId;
+    DWORD dwVersionNumber;
+    USHORT usUsagePage;
+    USHORT usUsage;
+} RID_DEVICE_INFO_HID;
+
+typedef struct tagRID_DEVICE_INFO {
+    DWORD cbSize;
+    DWORD dwType;
+    union {
+        RID_DEVICE_INFO_MOUSE mouse;
+        RID_DEVICE_INFO_KEYBOARD keyboard;
+        RID_DEVICE_INFO_HID hid;
+    };
+} RID_DEVICE_INFO, *PRID_DEVICE_INFO, *LPRID_DEVICE_INFO;
+
+WINUSERAPI BOOL WINAPI RegisterRawInputDevices(PCRAWINPUTDEVICE devices, UINT count, UINT size);
+WINUSERAPI UINT WINAPI GetRegisteredRawInputDevices(PRAWINPUTDEVICE devices, PUINT count, UINT size);
+WINUSERAPI UINT WINAPI GetRawInputData(HRAWINPUT input, UINT command, LPVOID data, PUINT size, UINT header_size);
+WINUSERAPI UINT WINAPI GetRawInputBuffer(PRAWINPUT data, PUINT size, UINT header_size);
+WINUSERAPI UINT WINAPI GetRawInputDeviceList(PRAWINPUTDEVICELIST list, PUINT count, UINT size);
+WINUSERAPI UINT WINAPI GetRawInputDeviceInfoW(HANDLE device, UINT command, LPVOID data, PUINT size);
+WINUSERAPI UINT WINAPI GetRawInputDeviceInfoA(HANDLE device, UINT command, LPVOID data, PUINT size);
+WINUSERAPI LRESULT WINAPI DefRawInputProc(PRAWINPUT *input, INT count, UINT header_size);
 
 #endif

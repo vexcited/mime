@@ -74,10 +74,14 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
             MsgProcessSent(t);
             ULONG flags = (ULONG)param;
             ULONG pending = 0;
-            if (!IsListEmpty(&t->Posted) || t->QuitPosted)
+            for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink)
+                pending |= CONTAINING_RECORD(e, QUEUED_MESSAGE, Links)->Msg.message == WM_INPUT
+                               ? QS_RAWINPUT
+                               : QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+            if (t->QuitPosted)
                 pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
             if (!IsListEmpty(&t->Input))
-                pending |= QS_INPUT;
+                pending |= QS_MOUSE | QS_KEY;
             if (WndFindNeedsPaint(t, nullptr))
                 pending |= QS_PAINT;
             if (TimerNextDue(t) >= 0 && (LONG64)(KeQueryInterruptTime() / 10000) >= TimerNextDue(t))
@@ -122,6 +126,7 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_SETCURSORPOS:
         InputCursorPos = (POINT){(LONG)param1, (LONG)param2};
+        InputCursorMoved();
         r = 1;
         break;
     case MIME_TWOPARAM_MONITORFROMPOINT:

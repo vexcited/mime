@@ -1843,6 +1843,11 @@ void mime_ui_set_cursor(uint32_t cursor)
     on_main(cursor_main, (void *)(uintptr_t)cursor);
 }
 
+/* the pointer stays free: locking and confining it are not done on macos yet. */
+void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect)
+{
+}
+
 static void beep_main(void *arg)
 {
     NSBeep();

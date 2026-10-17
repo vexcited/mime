@@ -30,7 +30,7 @@ BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     qm->Msg.time = W32TickCount();
     qm->Msg.pt = InputCursorPos;
     InsertTailList(&t->Posted, &qm->Links);
-    QueueWake(t, QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
+    QueueWake(t, msg == WM_INPUT ? QS_RAWINPUT : QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
     return TRUE;
 }
 
@@ -599,6 +599,9 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
+    /* what is in the queue now is no longer new to MsgWaitForMultipleObjects. */
+    if (t)
+        t->ChangeBits = 0;
     if (t && MsgPeek(t, &m, hwnd, min, max, PM_REMOVE, TRUE))
         get_message_hook(t, &m, PM_REMOVE);
     UserLeave();
@@ -613,6 +616,8 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
+    if (t)
+        t->ChangeBits = 0;
     BOOLEAN got = t && MsgPeek(t, &m, hwnd, min, max, flags, FALSE);
     if (got)
         get_message_hook(t, &m, flags);
@@ -646,6 +651,120 @@ BOOL NTAPI NtUserWaitMessage(void)
     }
     UserLeave();
     return TRUE;
+}
+
+/* the queue bits a thread has waiting, as GetQueueStatus reports them. */
+static ULONG pending_bits(W32THREAD *t)
+{
+    ULONG pending = 0;
+    for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink) {
+        QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
+        pending |= qm->Msg.message == WM_INPUT ? QS_RAWINPUT : QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+    }
+    if (t->QuitPosted)
+        pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+    if (!IsListEmpty(&t->Input))
+        pending |= QS_MOUSE | QS_KEY;
+    if (!IsListEmpty(&t->Sent))
+        pending |= QS_SENDMESSAGE;
+    return pending;
+}
+
+#define WAIT_HANDLES 64
+#define WAIT_FAILED_VALUE 0xFFFFFFFFu
+#define WAIT_FOREVER 0xFFFFFFFFu
+#define WAIT_OBJECT 0u
+#define WAIT_ABANDONED 0x80u
+#define WAIT_TIMED_OUT 0x102u
+#define WAIT_IO 0xC0u
+
+/*
+ * the handles and the queue together: the queue answers once input of
+ * the mask arrived since the thread last looked, or with
+ * MWMO_INPUTAVAILABLE whenever some waits. waiting for all handles is
+ * left to user32.
+ */
+DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_handles, DWORD timeout, DWORD mask,
+                                              DWORD flags)
+{
+    HANDLE handles[WAIT_HANDLES];
+    if (count >= WAIT_HANDLES || (flags & MWMO_WAITALL) ||
+        (count && !NT_SUCCESS(MimeCopyFromUser(handles, user_handles, count * sizeof(HANDLE))))) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return WAIT_FAILED_VALUE;
+    }
+    PVOID objects[WAIT_HANDLES];
+    for (DWORD i = 0; i < count; i++) {
+        if (!NT_SUCCESS(ObReferenceObjectByHandle(handles[i], SYNCHRONIZE, nullptr, UserMode, &objects[i], nullptr))) {
+            for (DWORD j = 0; j < i; j++)
+                ObDereferenceObject(objects[j]);
+            W32SetLastError(ERROR_INVALID_HANDLE);
+            return WAIT_FAILED_VALUE;
+        }
+    }
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    objects[count] = t ? &t->Event : nullptr;
+    void *blocks = count + 1 > 3 ? W32Alloc((count + 1) * 64) : nullptr;
+    LONG64 deadline = timeout == WAIT_FOREVER ? -1 : (LONG64)now_ms() + timeout;
+    DWORD result = WAIT_FAILED_VALUE;
+    while (t) {
+        MsgProcessSent(t);
+        ULONG ready = (flags & MWMO_INPUTAVAILABLE) ? pending_bits(t) | t->ChangeBits : t->ChangeBits;
+        if (ready & mask) {
+            t->ChangeBits &= ~mask;
+            result = WAIT_OBJECT + count;
+            break;
+        }
+        if ((mask & QS_PAINT) && WndFindNeedsPaint(t, nullptr)) {
+            result = WAIT_OBJECT + count;
+            break;
+        }
+        LONG64 due = TimerNextDue(t);
+        if ((mask & QS_TIMER) && due >= 0 && due <= (LONG64)now_ms()) {
+            result = WAIT_OBJECT + count;
+            break;
+        }
+        LARGE_INTEGER wait, *pw = nullptr;
+        LONG64 until = deadline;
+        if ((mask & QS_TIMER) && due >= 0 && (until < 0 || due < until))
+            until = due;
+        if (until >= 0) {
+            LONG64 delta = until - (LONG64)now_ms();
+            wait.QuadPart = -(delta < 0 ? 0 : delta) * 10000;
+            pw = &wait;
+        }
+        if (count + 1 > 3 && !blocks)
+            break;
+        PaintFlushThread(t);
+        ULONG depth = UserLeaveAll();
+        NTSTATUS status = KeWaitForMultipleObjects(count + 1, objects, WaitAny, UserRequest, UserMode,
+                                                   (flags & MWMO_ALERTABLE) != 0, pw, blocks);
+        UserReenter(depth);
+        if (status == STATUS_USER_APC || status == STATUS_ALERTED) {
+            result = WAIT_IO;
+            break;
+        }
+        if (status == STATUS_THREAD_IS_TERMINATING)
+            break;
+        if ((ULONG)status < count) {
+            result = WAIT_OBJECT + (ULONG)status;
+            break;
+        }
+        if ((ULONG)status >= 0x80 && (ULONG)status < 0x80 + count) {
+            result = WAIT_ABANDONED + ((ULONG)status - 0x80);
+            break;
+        }
+        if (status == STATUS_TIMEOUT && deadline >= 0 && (LONG64)now_ms() >= deadline) {
+            result = WAIT_TIMED_OUT;
+            break;
+        }
+    }
+    UserLeave();
+    W32Free(blocks);
+    for (DWORD i = 0; i < count; i++)
+        ObDereferenceObject(objects[i]);
+    return result;
 }
 
 LRESULT NTAPI NtUserDispatchMessage(const MSG *user_msg)

@@ -508,6 +508,16 @@ W32KAPI BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC dst, POINT *dst_pos,
 W32KAPI int NTAPI NtUserSetWindowRgn(HWND hwnd, HRGN region, BOOL redraw);
 W32KAPI int NTAPI NtUserGetWindowRgnEx(HWND hwnd, HRGN region, UINT reserved);
 W32KAPI BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO info);
+W32KAPI BOOL NTAPI NtUserClipCursor(const RECT *rect);
+W32KAPI DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask,
+                                                      DWORD flags);
+W32KAPI BOOL NTAPI NtUserGetClipCursor(LPRECT rect);
+W32KAPI BOOL NTAPI NtUserRegisterRawInputDevices(PCRAWINPUTDEVICE devices, UINT count, UINT size);
+W32KAPI UINT NTAPI NtUserGetRegisteredRawInputDevices(PRAWINPUTDEVICE devices, PUINT count, UINT size);
+W32KAPI UINT NTAPI NtUserGetRawInputData(HRAWINPUT input, UINT command, PVOID data, PUINT size, UINT header_size);
+W32KAPI UINT NTAPI NtUserGetRawInputBuffer(PRAWINPUT data, PUINT size, UINT header_size);
+W32KAPI UINT NTAPI NtUserGetRawInputDeviceList(PRAWINPUTDEVICELIST list, PUINT count, UINT size);
+W32KAPI UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID data, PUINT size);
 W32KAPI BOOL NTAPI NtUserAttachThreadInput(DWORD attach, DWORD to, BOOL do_attach);
 W32KAPI BOOL NTAPI NtUserIsTouchWindow(HWND hwnd, PULONG flags);
 W32KAPI BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data);

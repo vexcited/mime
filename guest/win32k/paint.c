@@ -222,6 +222,8 @@ void HostPresent(WND *w, const RECT *dirty)
     hypercall(MIME_HC_WIN_PRESENT, (ULONG64)MmGetPhysicalAddress(p).QuadPart);
 }
 
+BOOLEAN InputCursorHidden;
+
 void HostSetCursor(ULONG cursor)
 {
     static ULONG current = ~0u;
@@ -229,6 +231,14 @@ void HostSetCursor(ULONG cursor)
         return;
     current = cursor;
     hypercall(MIME_HC_WIN_CURSOR, cursor);
+    BOOLEAN hidden = cursor == MIME_CURSOR_HIDDEN;
+    if (hidden != InputCursorHidden) {
+        InputCursorHidden = hidden;
+        if (hidden)
+            InputUpdatePointer();
+        else
+            InputCursorShown();
+    }
 }
 
 void HostBeep(UINT type)
