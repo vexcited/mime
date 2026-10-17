@@ -83,6 +83,13 @@ function(mime_dll name arch)
             list(APPEND depends ${item})
         endif()
     endforeach()
+    # a module's own resources, as the command tables of mci drivers, sit beside its sources.
+    set(script)
+    set(resource)
+    if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
+        set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
+        set(resource RESOURCE ${arg_FILE})
+    endif()
     if(arch STREQUAL "x86")
         set(def ${arg_DEF})
         set(imports_def ${arg_IMPORTS_DEF})
@@ -108,10 +115,11 @@ function(mime_dll name arch)
         endif()
         if(arg_NOIMPLIB)
             mime_link(${output} x86 OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /def:${def} /noimplib
-                DEPENDS ${def} ${depends} GROUPS guest)
+                DEPENDS ${def} ${depends} ${resource} ${script} GROUPS guest)
         else()
             mime_link(${output} x86 OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /def:${def}
-                DEPENDS ${def} ${imports_def} ${depends} IMPLIB ${implib} IMPORTS ${imports_def} GROUPS guest)
+                DEPENDS ${def} ${imports_def} ${depends} IMPLIB ${implib} IMPORTS ${imports_def} ${resource} ${script}
+                GROUPS guest)
         endif()
     else()
         if(NOT arg_DEF AND EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.def)
@@ -123,10 +131,10 @@ function(mime_dll name arch)
         endif()
         if(arg_NOIMPLIB)
             mime_link(${output} ${arch} OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /noimplib DEPENDS ${depends}
-                RESOURCE ${arg_FILE} GROUPS guest)
+                RESOURCE ${arg_FILE} ${script} GROUPS guest)
         else()
             mime_link(${output} ${arch} OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} DEPENDS ${depends}
-                IMPLIB ${implib} RESOURCE ${arg_FILE} GROUPS guest)
+                IMPLIB ${implib} RESOURCE ${arg_FILE} ${script} GROUPS guest)
         endif()
     endif()
     mime_rom_file(${output} ${MIME_ROM_${arch}}/${arg_FILE})
@@ -300,6 +308,22 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         mime_glob(sources guest/${name}/*.c)
         mime_dll(${name} ${arch} BASE ${base} FILE ${name}.acm SOURCES ${sources} OBJECTS ${arch}-chkstk
             INCLUDES guest/lib IMPORTS ntdll kernel32 user32)
+    endforeach()
+endforeach()
+
+# the mci drivers of [MCI32], device drivers in dlls of their own.
+set(MIME_MCI_DRIVERS mciwave:0x7FF280000000:winmm mciseq:0x7FF270000000:winmm
+    mciqtz32:0x7FF260000000:winmm,msacm32 mcicda:0x7FF250000000:winmm)
+foreach(arch IN LISTS MIME_USER_ARCHS)
+    foreach(entry IN LISTS MIME_MCI_DRIVERS)
+        string(REPLACE ":" ";" entry ${entry})
+        list(GET entry 0 name)
+        list(GET entry 1 base)
+        list(GET entry 2 extra)
+        string(REPLACE "," ";" extra ${extra})
+        mime_glob(sources guest/${name}/*.c)
+        mime_dll(${name} ${arch} BASE ${base} SOURCES ${sources} OBJECTS ${arch}-chkstk
+            IMPORTS ntdll kernel32 user32 ${extra})
     endforeach()
 endforeach()
 

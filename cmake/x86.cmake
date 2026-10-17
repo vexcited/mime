@@ -164,6 +164,19 @@ mime_dll(mmdevapi x86 BASE 0x45000000 SOURCES ${MIME_MMDEVAPI_SOURCES} OBJECTS x
     IMPORTS ntdll kernel32 user32 gdi32 win32u)
 mime_dll(avrt x86 BASE 0x43000000 SOURCES guest/avrt/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 gdi32 win32u)
 
+# the mci drivers of 32-bit programs.
+set(MIME_X86_MCI_DRIVERS mciwave:0x30000000:winmm mciseq:0x2F000000:winmm mciqtz32:0x2E000000:winmm,msacm32
+    mcicda:0x2D000000:winmm)
+foreach(entry IN LISTS MIME_X86_MCI_DRIVERS)
+    string(REPLACE ":" ";" entry ${entry})
+    list(GET entry 0 name)
+    list(GET entry 1 base)
+    list(GET entry 2 extra)
+    string(REPLACE "," ";" extra ${extra})
+    mime_sources(sources ${name} x86)
+    mime_dll(${name} x86 BASE ${base} SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 ${extra})
+endforeach()
+
 # the acm codecs of 32-bit programs.
 set(MIME_X86_ACM_CODECS msg711:0x41000000 imaadp32:0x40000000 msadp32:0x3F000000 msgsm32:0x3E000000
     l3codeca:0x31000000)

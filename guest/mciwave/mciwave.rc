@@ -1,0 +1,13 @@
+
+/* waveaudio play with hold, the custom table windows names by the string "#96". */
+96 RCDATA
+BEGIN
+    L"play\0", 0x806L, 0,
+    L"notify\0", 0x1L, 5,
+    L"wait\0", 0x2L, 5,
+    L"from\0", 0x4L, 2,
+    L"to\0", 0x8L, 2,
+    L"hold\0", 0x1000000L, 5,
+    L"\0", 0x0L, 3,
+    L"\0", 0x0L, 6
+END

@@ -86,28 +86,31 @@ function(mime_only_targets out)
     set(${out} ${list} PARENT_SCOPE)
 endfunction()
 
-# the version resource of system file <name>, from tools/genversion.sh.
+# the version resource of system file <name>, from tools/genversion.sh, followed by the resources of the
+# script <extra> when given.
 function(mime_resource name)
     get_property(done GLOBAL PROPERTY MIME_RESOURCE_${name})
     if(done)
         return()
     endif()
     set_property(GLOBAL PROPERTY MIME_RESOURCE_${name} TRUE)
+    set(extra ${ARGN})
     add_custom_command(OUTPUT ${MIME_GEN}/res/${name}.res
-        COMMAND sh ${CMAKE_SOURCE_DIR}/tools/genversion.sh ${name} ${MIME_GEN}/res/${name}.rc
+        COMMAND sh ${CMAKE_SOURCE_DIR}/tools/genversion.sh ${name} ${MIME_GEN}/res/${name}.rc ${extra}
         COMMAND ${MIME_LLVM_RC} -no-preprocess -c 1252 -fo ${MIME_GEN}/res/${name}.res ${MIME_GEN}/res/${name}.rc
-        DEPENDS tools/genversion.sh VERBATIM)
+        DEPENDS tools/genversion.sh ${extra} VERBATIM)
 endfunction()
 
 set(MIME_LINK_FLAGS /nologo /debug:dwarf /nodefaultlib /opt:ref /incremental:no /filealign:0x1000 /version:10.0
     /osversion:10.0 /Brepro /release)
 
 # mime_link(<output> <arch> OBJECTS <specs>... [LIBS <files>...] [FLAGS <lld-link flags>...] [DEPENDS <files>...]
-#           [IMPLIB <lib>] [RESOURCE <file name>] [IMPORTS <imports.def>] [GROUPS <groups>...])
+#           [IMPLIB <lib>] [RESOURCE <file name>] [RESOURCE_SCRIPT <rc>] [IMPORTS <imports.def>]
+#           [GROUPS <groups>...])
 # links a pe file. IMPLIB has lld-link write the import library, IMPORTS has llvm-dlltool make it from a
 # definition of stdcall names instead, as x86 import libraries keep the decoration the dll drops.
 function(mime_link output arch)
-    cmake_parse_arguments(PARSE_ARGV 2 arg "" "IMPLIB;RESOURCE;IMPORTS" "OBJECTS;LIBS;FLAGS;DEPENDS;GROUPS")
+    cmake_parse_arguments(PARSE_ARGV 2 arg "" "IMPLIB;RESOURCE;RESOURCE_SCRIPT;IMPORTS" "OBJECTS;LIBS;FLAGS;DEPENDS;GROUPS")
     mime_object_list(objects ${arg_OBJECTS})
     mime_object_targets(object_targets ${arg_OBJECTS})
     set(flags /machine:${MIME_MACHINE_${arch}} ${MIME_LINK_FLAGS} ${arg_FLAGS})
@@ -126,7 +129,7 @@ function(mime_link output arch)
     endif()
     set(resource)
     if(arg_RESOURCE)
-        mime_resource(${arg_RESOURCE})
+        mime_resource(${arg_RESOURCE} ${arg_RESOURCE_SCRIPT})
         set(resource ${MIME_GEN}/res/${arg_RESOURCE}.res)
     endif()
     get_filename_component(directory ${output} DIRECTORY)
