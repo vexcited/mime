@@ -37,6 +37,8 @@ static const ExtractRule g_rules[] = {
     {"Windows/System32/en-US/kernelbase.dll.mui", "Windows/System32/en-US/kernelbase.dll.mui", true},
     {"Windows/System32/en-US/kernel32.dll.mui", "Windows/System32/en-US/kernel32.dll.mui", true},
     {"Windows/Media", "Windows/Media", true},
+    /* the sound set of the gs wavetable synth. */
+    {"Windows/System32/drivers/gm.dls", "Windows/System32/drivers/gm.dls", true},
     /* the registry hives of a fresh install, which the kernel loads and specializes at boot. */
     {"Windows/System32/config/SYSTEM", "Windows/System32/config/SYSTEM", false},
     {"Windows/System32/config/SOFTWARE", "Windows/System32/config/SOFTWARE", false},
@@ -58,6 +60,7 @@ static const char *const g_skeleton[] = {
     "ProgramData",
     "Users/Public",
     "Windows/System32/config",
+    "Windows/System32/drivers",
 };
 
 typedef struct UdfReaderCtx {

@@ -29,6 +29,17 @@ typedef UINT MMVERSION;
 #define MMSYSERR_BADERRNUM 9
 #define MMSYSERR_INVALFLAG 10
 #define MMSYSERR_INVALPARAM 11
+#define MMSYSERR_HANDLEBUSY 12
+#define MMSYSERR_INVALIDALIAS 13
+#define MMSYSERR_BADDB 14
+#define MMSYSERR_KEYNOTFOUND 15
+#define MMSYSERR_READERROR 16
+#define MMSYSERR_WRITEERROR 17
+#define MMSYSERR_DELETEERROR 18
+#define MMSYSERR_VALNOTFOUND 19
+#define MMSYSERR_NODRIVERCB 20
+#define MMSYSERR_MOREDATA 21
+#define MMSYSERR_LASTERROR 21
 
 #define TIMERR_BASE 96
 #define TIMERR_NOERROR 0
@@ -104,8 +115,6 @@ WINMMAPI BOOL WINAPI PlaySoundW(LPCWSTR sound, HMODULE module, DWORD flags);
 WINMMAPI BOOL WINAPI PlaySoundA(LPCSTR sound, HMODULE module, DWORD flags);
 WINMMAPI BOOL WINAPI sndPlaySoundW(LPCWSTR sound, UINT flags);
 WINMMAPI BOOL WINAPI sndPlaySoundA(LPCSTR sound, UINT flags);
-WINMMAPI UINT WINAPI midiOutGetNumDevs(void);
-WINMMAPI UINT WINAPI midiInGetNumDevs(void);
 
 /* ------------------------------------------------------------------ devices */
 
@@ -254,6 +263,218 @@ typedef struct tagWAVEINCAPSW {
     WORD wChannels;
     WORD wReserved1;
 } WAVEINCAPSW, *LPWAVEINCAPSW;
+
+/* ------------------------------------------------------------------ midi */
+
+#define MIDIERR_BASE 64
+#define MIDIERR_UNPREPARED (MIDIERR_BASE + 0)
+#define MIDIERR_STILLPLAYING (MIDIERR_BASE + 1)
+#define MIDIERR_NOMAP (MIDIERR_BASE + 2)
+#define MIDIERR_NOTREADY (MIDIERR_BASE + 3)
+#define MIDIERR_NODEVICE (MIDIERR_BASE + 4)
+#define MIDIERR_INVALIDSETUP (MIDIERR_BASE + 5)
+#define MIDIERR_BADOPENMODE (MIDIERR_BASE + 6)
+#define MIDIERR_DONT_CONTINUE (MIDIERR_BASE + 7)
+
+#define MIDI_MAPPER ((UINT)-1)
+#define MIDI_IO_STATUS 0x00000020
+#define MIDI_IO_COOKED 0x00000002
+#define MIDI_CACHE_ALL 1
+#define MIDI_CACHE_BESTFIT 2
+#define MIDI_CACHE_QUERY 3
+#define MIDI_UNCACHE 4
+
+#define MM_MIM_OPEN 0x3C1
+#define MM_MIM_CLOSE 0x3C2
+#define MM_MIM_DATA 0x3C3
+#define MM_MIM_LONGDATA 0x3C4
+#define MM_MIM_ERROR 0x3C5
+#define MM_MIM_LONGERROR 0x3C6
+#define MM_MOM_OPEN 0x3C7
+#define MM_MOM_CLOSE 0x3C8
+#define MM_MOM_DONE 0x3C9
+#define MM_MOM_POSITIONCB 0x3CA
+#define MIM_OPEN MM_MIM_OPEN
+#define MIM_CLOSE MM_MIM_CLOSE
+#define MIM_DATA MM_MIM_DATA
+#define MIM_LONGDATA MM_MIM_LONGDATA
+#define MIM_ERROR MM_MIM_ERROR
+#define MIM_LONGERROR MM_MIM_LONGERROR
+#define MOM_OPEN MM_MOM_OPEN
+#define MOM_CLOSE MM_MOM_CLOSE
+#define MOM_DONE MM_MOM_DONE
+#define MOM_POSITIONCB MM_MOM_POSITIONCB
+
+#define MOD_MIDIPORT 1
+#define MOD_SYNTH 2
+#define MOD_SQSYNTH 3
+#define MOD_FMSYNTH 4
+#define MOD_MAPPER 5
+#define MOD_WAVETABLE 6
+#define MOD_SWSYNTH 7
+
+#define MIDICAPS_VOLUME 0x0001
+#define MIDICAPS_LRVOLUME 0x0002
+#define MIDICAPS_CACHE 0x0004
+#define MIDICAPS_STREAM 0x0008
+
+#define MHDR_DONE 0x00000001
+#define MHDR_PREPARED 0x00000002
+#define MHDR_INQUEUE 0x00000004
+#define MHDR_ISSTRM 0x00000008
+
+#define MEVT_F_SHORT 0x00000000
+#define MEVT_F_LONG 0x80000000
+#define MEVT_F_CALLBACK 0x40000000
+#define MEVT_EVENTTYPE(x) ((BYTE)(((x) >> 24) & 0xFF))
+#define MEVT_EVENTPARM(x) ((DWORD)((x) & 0x00FFFFFF))
+#define MEVT_SHORTMSG ((BYTE)0x00)
+#define MEVT_TEMPO ((BYTE)0x01)
+#define MEVT_NOP ((BYTE)0x02)
+#define MEVT_LONGMSG ((BYTE)0x80)
+#define MEVT_COMMENT ((BYTE)0x82)
+#define MEVT_VERSION ((BYTE)0x84)
+
+#define MIDIPROP_SET 0x80000000
+#define MIDIPROP_GET 0x40000000
+#define MIDIPROP_TIMEDIV 0x00000001
+#define MIDIPROP_TEMPO 0x00000002
+
+#define MIDISTRM_ERROR (-2)
+#define MIDIPATCHSIZE 128
+
+DECLARE_HANDLE(HMIDI);
+DECLARE_HANDLE(HMIDIIN);
+DECLARE_HANDLE(HMIDIOUT);
+DECLARE_HANDLE(HMIDISTRM);
+typedef HMIDIIN *LPHMIDIIN;
+typedef HMIDIOUT *LPHMIDIOUT;
+typedef HMIDISTRM *LPHMIDISTRM;
+typedef LPDRVCALLBACK LPMIDICALLBACK;
+typedef WORD PATCHARRAY[MIDIPATCHSIZE];
+typedef WORD *LPPATCHARRAY;
+typedef WORD KEYARRAY[MIDIPATCHSIZE];
+typedef WORD *LPKEYARRAY;
+
+typedef struct tagMIDIOUTCAPSA {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    CHAR szPname[MAXPNAMELEN];
+    WORD wTechnology;
+    WORD wVoices;
+    WORD wNotes;
+    WORD wChannelMask;
+    DWORD dwSupport;
+} MIDIOUTCAPSA, *PMIDIOUTCAPSA, *LPMIDIOUTCAPSA;
+
+typedef struct tagMIDIOUTCAPSW {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    WCHAR szPname[MAXPNAMELEN];
+    WORD wTechnology;
+    WORD wVoices;
+    WORD wNotes;
+    WORD wChannelMask;
+    DWORD dwSupport;
+} MIDIOUTCAPSW, *PMIDIOUTCAPSW, *LPMIDIOUTCAPSW;
+
+typedef struct tagMIDIINCAPSA {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    CHAR szPname[MAXPNAMELEN];
+    DWORD dwSupport;
+} MIDIINCAPSA, *PMIDIINCAPSA, *LPMIDIINCAPSA;
+
+typedef struct tagMIDIINCAPSW {
+    WORD wMid;
+    WORD wPid;
+    MMVERSION vDriverVersion;
+    WCHAR szPname[MAXPNAMELEN];
+    DWORD dwSupport;
+} MIDIINCAPSW, *PMIDIINCAPSW, *LPMIDIINCAPSW;
+
+typedef struct midihdr_tag {
+    LPSTR lpData;
+    DWORD dwBufferLength;
+    DWORD dwBytesRecorded;
+    DWORD_PTR dwUser;
+    DWORD dwFlags;
+    struct midihdr_tag *lpNext;
+    DWORD_PTR reserved;
+    DWORD dwOffset;
+    DWORD_PTR dwReserved[8];
+} MIDIHDR, *PMIDIHDR, *LPMIDIHDR;
+
+typedef struct midievent_tag {
+    DWORD dwDeltaTime;
+    DWORD dwStreamID;
+    DWORD dwEvent;
+    DWORD dwParms[1];
+} MIDIEVENT;
+
+typedef struct midistrmbuffver_tag {
+    DWORD dwVersion;
+    DWORD dwMid;
+    DWORD dwOEMVersion;
+} MIDISTRMBUFFVER;
+
+typedef struct midiproptimediv_tag {
+    DWORD cbStruct;
+    DWORD dwTimeDiv;
+} MIDIPROPTIMEDIV, *LPMIDIPROPTIMEDIV;
+
+typedef struct midiproptempo_tag {
+    DWORD cbStruct;
+    DWORD dwTempo;
+} MIDIPROPTEMPO, *LPMIDIPROPTEMPO;
+
+WINMMAPI UINT WINAPI midiOutGetNumDevs(void);
+WINMMAPI UINT WINAPI midiInGetNumDevs(void);
+WINMMAPI MMRESULT WINAPI midiOutGetDevCapsA(UINT_PTR id, LPMIDIOUTCAPSA caps, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutGetDevCapsW(UINT_PTR id, LPMIDIOUTCAPSW caps, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutGetVolume(HMIDIOUT h, LPDWORD volume);
+WINMMAPI MMRESULT WINAPI midiOutSetVolume(HMIDIOUT h, DWORD volume);
+WINMMAPI MMRESULT WINAPI midiOutGetErrorTextA(MMRESULT error, LPSTR text, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutGetErrorTextW(MMRESULT error, LPWSTR text, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutOpen(LPHMIDIOUT out, UINT id, DWORD_PTR callback, DWORD_PTR instance, DWORD flags);
+WINMMAPI MMRESULT WINAPI midiOutClose(HMIDIOUT h);
+WINMMAPI MMRESULT WINAPI midiOutPrepareHeader(HMIDIOUT h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutUnprepareHeader(HMIDIOUT h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutShortMsg(HMIDIOUT h, DWORD message);
+WINMMAPI MMRESULT WINAPI midiOutLongMsg(HMIDIOUT h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiOutReset(HMIDIOUT h);
+WINMMAPI MMRESULT WINAPI midiOutCachePatches(HMIDIOUT h, UINT bank, LPWORD patches, UINT flags);
+WINMMAPI MMRESULT WINAPI midiOutCacheDrumPatches(HMIDIOUT h, UINT patch, LPWORD keys, UINT flags);
+WINMMAPI MMRESULT WINAPI midiOutGetID(HMIDIOUT h, LPUINT id);
+WINMMAPI MMRESULT WINAPI midiOutMessage(HMIDIOUT h, UINT message, DWORD_PTR param1, DWORD_PTR param2);
+WINMMAPI MMRESULT WINAPI midiStreamOpen(LPHMIDISTRM out, LPUINT id, DWORD count, DWORD_PTR callback,
+                                        DWORD_PTR instance, DWORD flags);
+WINMMAPI MMRESULT WINAPI midiStreamClose(HMIDISTRM h);
+WINMMAPI MMRESULT WINAPI midiStreamProperty(HMIDISTRM h, LPBYTE data, DWORD property);
+WINMMAPI MMRESULT WINAPI midiStreamPosition(HMIDISTRM h, LPMMTIME time, UINT size);
+WINMMAPI MMRESULT WINAPI midiStreamOut(HMIDISTRM h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiStreamPause(HMIDISTRM h);
+WINMMAPI MMRESULT WINAPI midiStreamRestart(HMIDISTRM h);
+WINMMAPI MMRESULT WINAPI midiStreamStop(HMIDISTRM h);
+WINMMAPI MMRESULT WINAPI midiInGetDevCapsA(UINT_PTR id, LPMIDIINCAPSA caps, UINT size);
+WINMMAPI MMRESULT WINAPI midiInGetDevCapsW(UINT_PTR id, LPMIDIINCAPSW caps, UINT size);
+WINMMAPI MMRESULT WINAPI midiInGetErrorTextA(MMRESULT error, LPSTR text, UINT size);
+WINMMAPI MMRESULT WINAPI midiInGetErrorTextW(MMRESULT error, LPWSTR text, UINT size);
+WINMMAPI MMRESULT WINAPI midiInOpen(LPHMIDIIN out, UINT id, DWORD_PTR callback, DWORD_PTR instance, DWORD flags);
+WINMMAPI MMRESULT WINAPI midiInClose(HMIDIIN h);
+WINMMAPI MMRESULT WINAPI midiInPrepareHeader(HMIDIIN h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiInUnprepareHeader(HMIDIIN h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiInAddBuffer(HMIDIIN h, LPMIDIHDR header, UINT size);
+WINMMAPI MMRESULT WINAPI midiInStart(HMIDIIN h);
+WINMMAPI MMRESULT WINAPI midiInStop(HMIDIIN h);
+WINMMAPI MMRESULT WINAPI midiInReset(HMIDIIN h);
+WINMMAPI MMRESULT WINAPI midiInGetID(HMIDIIN h, LPUINT id);
+WINMMAPI MMRESULT WINAPI midiInMessage(HMIDIIN h, UINT message, DWORD_PTR param1, DWORD_PTR param2);
+WINMMAPI MMRESULT WINAPI midiConnect(HMIDI h, HMIDIOUT out, LPVOID reserved);
+WINMMAPI MMRESULT WINAPI midiDisconnect(HMIDI h, HMIDIOUT out, LPVOID reserved);
 
 WINMMAPI LRESULT WINAPI DriverCallback(DWORD_PTR callback, DWORD flags, HANDLE device, DWORD message, DWORD_PTR user,
                                        DWORD_PTR param1, DWORD_PTR param2);
