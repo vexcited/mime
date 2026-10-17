@@ -69,6 +69,7 @@ static void timer_delete(PVOID object)
 void ExInitialize(void)
 {
     init_shared_data();
+    ExpInitializeAtoms();
     KeInitializeEvent(&MimeInputReadyEvent, SynchronizationEvent, FALSE);
     KeInitializeEvent(&MimeGpuEvent, NotificationEvent, FALSE);
     OBJECT_TYPE_INITIALIZER init = {};

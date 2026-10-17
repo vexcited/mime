@@ -899,6 +899,7 @@ extern KUSER_SHARED_DATA *SharedUserData;
 extern ULONG64 KeBootFiletime;
 
 void ExInitialize(void);
+void ExpInitializeAtoms(void);
 void ExUpdateSystemTime(void);
 NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
                        PLARGE_INTEGER timeout, KPROCESSOR_MODE mode);

@@ -1,0 +1,298 @@
+/*
+ * the global atom table every process of the session shares: integer
+ * atoms below 0xC000 named "#n", string atoms from 0xC000 compared without
+ * case and counted by their users, as windows' rtl atom tables keep them.
+ * see docs/ntoskrnl.md.
+ */
+#include "../ntos.h"
+
+#define MAX_ATOMS 0x4000
+#define MAX_NAME 255
+#define FIRST_STRING_ATOM 0xC000
+#define ATOM_PINNED 0x01
+
+enum { AtomBasicInformation, AtomTableInformation };
+
+typedef struct ATOM_ENTRY {
+    USHORT Count; /* 0 for a free slot */
+    USHORT Flags;
+    USHORT Length;
+    WCHAR Name[MAX_NAME];
+} ATOM_ENTRY;
+
+static ATOM_ENTRY *g_atoms[MAX_ATOMS];
+static ULONG g_used;
+static KGUARDED_MUTEX g_lock;
+
+void ExpInitializeAtoms(void)
+{
+    KeInitializeGuardedMutex(&g_lock);
+}
+
+static void lock(void)
+{
+    KeAcquireGuardedMutex(&g_lock);
+}
+
+static void unlock(void)
+{
+    KeReleaseGuardedMutex(&g_lock);
+}
+
+/* "#n" with decimal digits alone names the integer atom n, which must lie below 0xC000. */
+static BOOLEAN integer_atom(const WCHAR *name, ULONG chars, USHORT *atom, NTSTATUS *status)
+{
+    if (!chars || name[0] != L'#')
+        return FALSE;
+    ULONG value = 0;
+    for (ULONG i = 1; i < chars; i++) {
+        if (name[i] < L'0' || name[i] > L'9')
+            return FALSE;
+        value = value * 10 + (name[i] - L'0');
+        if (value > 0xFFFF)
+            value = 0x10000;
+    }
+    if (chars == 1)
+        return FALSE;
+    *status = value && value < FIRST_STRING_ATOM ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    *atom = (USHORT)value;
+    return TRUE;
+}
+
+static BOOLEAN same(const ATOM_ENTRY *e, const WCHAR *name, ULONG chars)
+{
+    if (e->Length != chars)
+        return FALSE;
+    for (ULONG i = 0; i < chars; i++)
+        if (RtlUpcaseUnicodeChar(e->Name[i]) != RtlUpcaseUnicodeChar(name[i]))
+            return FALSE;
+    return TRUE;
+}
+
+static int lookup(const WCHAR *name, ULONG chars)
+{
+    for (ULONG i = 0; i < MAX_ATOMS; i++)
+        if (g_atoms[i] && g_atoms[i]->Count && same(g_atoms[i], name, chars))
+            return (int)i;
+    return -1;
+}
+
+static ATOM_ENTRY *entry_of(USHORT atom)
+{
+    if (atom < FIRST_STRING_ATOM || atom - FIRST_STRING_ATOM >= MAX_ATOMS)
+        return nullptr;
+    ATOM_ENTRY *e = g_atoms[atom - FIRST_STRING_ATOM];
+    return e && e->Count ? e : nullptr;
+}
+
+/* the caller's counted name, copied in; a name too long for an atom is refused. */
+static NTSTATUS capture(PWSTR user_name, ULONG length, WCHAR *name, ULONG *chars)
+{
+    if (!user_name || (length & 1))
+        return STATUS_INVALID_PARAMETER;
+    if (length > MAX_NAME * sizeof(WCHAR))
+        return STATUS_INVALID_PARAMETER;
+    *chars = length / sizeof(WCHAR);
+    if (KeGetPreviousMode() == UserMode)
+        return KiCopyFromUser(name, user_name, length);
+    memcpy(name, user_name, length);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS store_atom(PUSHORT user_atom, USHORT atom)
+{
+    if (!user_atom)
+        return STATUS_SUCCESS;
+    if (KeGetPreviousMode() == UserMode)
+        return KiCopyToUser(user_atom, &atom, sizeof(atom));
+    *user_atom = atom;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS add_atom(PWSTR user_name, ULONG length, PUSHORT user_atom)
+{
+    WCHAR name[MAX_NAME];
+    ULONG chars;
+    NTSTATUS status = capture(user_name, length, name, &chars);
+    if (!NT_SUCCESS(status))
+        return status;
+    USHORT atom;
+    if (integer_atom(name, chars, &atom, &status))
+        return NT_SUCCESS(status) ? store_atom(user_atom, atom) : status;
+    if (!chars)
+        return STATUS_INVALID_PARAMETER;
+    lock();
+    int index = lookup(name, chars);
+    if (index >= 0) {
+        ATOM_ENTRY *e = g_atoms[index];
+        if (!(e->Flags & ATOM_PINNED) && e->Count < 0xFFFF)
+            e->Count++;
+    } else {
+        for (ULONG i = 0; i < MAX_ATOMS && index < 0; i++)
+            if (!g_atoms[i] || !g_atoms[i]->Count)
+                index = (int)i;
+        if (index < 0) {
+            unlock();
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        if (!g_atoms[index] &&
+            !(g_atoms[index] = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATOM_ENTRY), KI_TAG('A', 't', 'o', 'm')))) {
+            unlock();
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        ATOM_ENTRY *e = g_atoms[index];
+        e->Count = 1;
+        e->Flags = 0;
+        e->Length = (USHORT)chars;
+        memcpy(e->Name, name, chars * sizeof(WCHAR));
+        g_used++;
+    }
+    unlock();
+    return store_atom(user_atom, (USHORT)(FIRST_STRING_ATOM + index));
+}
+
+NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom)
+{
+    return add_atom(name, length, atom);
+}
+
+/* the flags say which table; the session's global one is the only one here. */
+NTSTATUS NTAPI NtAddAtomEx(PWSTR name, ULONG length, PUSHORT atom, ULONG flags)
+{
+    return add_atom(name, length, atom);
+}
+
+NTSTATUS NTAPI NtFindAtom(PWSTR user_name, ULONG length, PUSHORT user_atom)
+{
+    WCHAR name[MAX_NAME];
+    ULONG chars;
+    NTSTATUS status = capture(user_name, length, name, &chars);
+    if (!NT_SUCCESS(status))
+        return status;
+    USHORT atom;
+    if (integer_atom(name, chars, &atom, &status))
+        return NT_SUCCESS(status) ? store_atom(user_atom, atom) : status;
+    if (!chars)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    lock();
+    int index = lookup(name, chars);
+    unlock();
+    if (index < 0)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    return store_atom(user_atom, (USHORT)(FIRST_STRING_ATOM + index));
+}
+
+/* a user less; the last one frees the atom, unless it is pinned. integer atoms are never stored. */
+NTSTATUS NTAPI NtDeleteAtom(USHORT atom)
+{
+    if (atom && atom < FIRST_STRING_ATOM)
+        return STATUS_SUCCESS;
+    lock();
+    ATOM_ENTRY *e = entry_of(atom);
+    NTSTATUS status = STATUS_INVALID_HANDLE;
+    if (e) {
+        status = STATUS_SUCCESS;
+        if (!(e->Flags & ATOM_PINNED) && !--e->Count)
+            g_used--;
+    }
+    unlock();
+    return status;
+}
+
+NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    BYTE buffer[8 + (MAX_NAME + 1) * sizeof(WCHAR)];
+    ULONG size;
+    NTSTATUS status = STATUS_SUCCESS;
+    switch (klass) {
+    case AtomBasicInformation: {
+        USHORT count, flags, chars;
+        WCHAR name[MAX_NAME + 1];
+        if (atom && atom < FIRST_STRING_ATOM) {
+            /* an integer atom answers for its "#n" name, pinned, with one user. */
+            WCHAR digits[8];
+            ULONG n = 0, v = atom;
+            do
+                digits[n++] = (WCHAR)(L'0' + v % 10);
+            while (v /= 10);
+            name[0] = L'#';
+            for (ULONG i = 0; i < n; i++)
+                name[1 + i] = digits[n - 1 - i];
+            chars = (USHORT)(n + 1);
+            count = 1;
+            flags = ATOM_PINNED;
+        } else {
+            lock();
+            ATOM_ENTRY *e = entry_of(atom);
+            if (e) {
+                count = e->Count;
+                flags = e->Flags;
+                chars = e->Length;
+                memcpy(name, e->Name, chars * sizeof(WCHAR));
+            }
+            unlock();
+            if (!e)
+                return STATUS_INVALID_HANDLE;
+        }
+        name[chars] = 0;
+        if (length < 8)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        /* the name is cut to fit, guessed from rtl's copy. */
+        ULONG room = (length - 6) / sizeof(WCHAR);
+        if (room <= chars) {
+            chars = (USHORT)(room ? room - 1 : 0);
+            name[chars] = 0;
+            status = STATUS_BUFFER_TOO_SMALL;
+        }
+        USHORT header[3] = {count, flags, (USHORT)(chars * sizeof(WCHAR))};
+        memcpy(buffer, header, sizeof(header));
+        memcpy(buffer + 6, name, (chars + 1) * sizeof(WCHAR));
+        size = 6 + (chars + 1) * sizeof(WCHAR);
+        break;
+    }
+    case AtomTableInformation: {
+        if (length < sizeof(ULONG))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        ULONG fits = (length - sizeof(ULONG)) / sizeof(USHORT), n = 0;
+        lock();
+        ULONG total = g_used;
+        if (total > fits) {
+            unlock();
+            return STATUS_INFO_LENGTH_MISMATCH;
+        }
+        size = sizeof(ULONG) + total * sizeof(USHORT);
+        BYTE *table = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('A', 't', 'o', 'm'));
+        if (!table) {
+            unlock();
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        for (ULONG i = 0; i < MAX_ATOMS && n < total; i++)
+            if (g_atoms[i] && g_atoms[i]->Count) {
+                USHORT value = (USHORT)(FIRST_STRING_ATOM + i);
+                memcpy(table + sizeof(ULONG) + n++ * sizeof(USHORT), &value, sizeof(value));
+            }
+        unlock();
+        memcpy(table, &n, sizeof(n));
+        status = KeGetPreviousMode() == UserMode ? KiCopyToUser(info, table, size) : (memcpy(info, table, size), STATUS_SUCCESS);
+        ExFreePool(table);
+        if (NT_SUCCESS(status) && returned)
+            status = KeGetPreviousMode() == UserMode ? KiCopyToUser(returned, &size, sizeof(size)) : (*returned = size, STATUS_SUCCESS);
+        return status;
+    }
+    default:
+        return STATUS_INVALID_INFO_CLASS;
+    }
+    if (size > length)
+        size = length;
+    NTSTATUS copied = KeGetPreviousMode() == UserMode ? KiCopyToUser(info, buffer, size)
+                                                      : (memcpy(info, buffer, size), STATUS_SUCCESS);
+    if (!NT_SUCCESS(copied))
+        return copied;
+    if (returned) {
+        copied = KeGetPreviousMode() == UserMode ? KiCopyToUser(returned, &size, sizeof(size))
+                                                 : (*returned = size, STATUS_SUCCESS);
+        if (!NT_SUCCESS(copied))
+            return copied;
+    }
+    return status;
+}
