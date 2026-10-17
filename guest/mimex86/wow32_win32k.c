@@ -266,6 +266,64 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
             *(PULONG)ptr32(a[1]) = (ULONG)(ULONG_PTR)base;
         return status;
     }
+    case MIME_SVC_NtGdiMimeGpuOpen: {
+        PVOID base = nullptr;
+        ULONG size = 0;
+        v[0] = (ULONG_PTR)&base;
+        v[1] = (ULONG_PTR)&size;
+        ULONG status = (ULONG)MxCallService(number, v);
+        if (NT_SUCCESS(status) && a[0])
+            *(PULONG)ptr32(a[0]) = (ULONG)(ULONG_PTR)base;
+        if (NT_SUCCESS(status) && a[1])
+            *(PULONG)ptr32(a[1]) = size;
+        return status;
+    }
+    case MIME_SVC_NtGdiMimeGpuAddBlock: {
+        PVOID base = nullptr;
+        ULONG index = 0;
+        v[0] = a[0];
+        v[1] = (ULONG_PTR)&base;
+        v[2] = (ULONG_PTR)&index;
+        ULONG status = (ULONG)MxCallService(number, v);
+        if (NT_SUCCESS(status) && a[1])
+            *(PULONG)ptr32(a[1]) = (ULONG)(ULONG_PTR)base;
+        if (NT_SUCCESS(status) && a[2])
+            *(PULONG)ptr32(a[2]) = index;
+        return status;
+    }
+    case MIME_SVC_NtGdiMimeGpuWait:
+        v[0] = a[0] | (ULONG64)a[1] << 32;
+        v[1] = a[2];
+        return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtGdiMimeGpuGetSurface: {
+        /* MIME_GPU_SURFACE is a window handle and five longs. */
+        MIME_GPU_SURFACE surface = {};
+        v[0] = a[0];
+        v[1] = (ULONG_PTR)&surface;
+        ULONG ok = (ULONG)MxCallService(number, v);
+        PULONG out = ptr32(a[1]);
+        if (ok && out) {
+            out[0] = (ULONG)(ULONG_PTR)surface.Window;
+            out[1] = surface.HostWindow;
+            out[2] = (ULONG)surface.X;
+            out[3] = (ULONG)surface.Y;
+            out[4] = surface.Width;
+            out[5] = surface.Height;
+        }
+        return ok;
+    }
+    case MIME_SVC_NtGdiMimeAudioCreate: {
+        PVOID base = nullptr;
+        ULONG index = 0;
+        v[0] = (ULONG_PTR)&base;
+        v[1] = (ULONG_PTR)&index;
+        ULONG status = (ULONG)MxCallService(number, v);
+        if (NT_SUCCESS(status) && a[0])
+            *(PULONG)ptr32(a[0]) = (ULONG)(ULONG_PTR)base;
+        if (NT_SUCCESS(status) && a[1])
+            *(PULONG)ptr32(a[1]) = index;
+        return status;
+    }
     case MIME_SVC_NtGdiMimeVkFree:
         v[0] = a[0];
         return (ULONG)MxCallService(number, v);

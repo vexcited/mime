@@ -275,6 +275,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     endforeach()
 endforeach()
 
+mime_glob(MIME_MMDEVAPI_SOURCES guest/mmdevapi/*.c)
+
 # opengl on the host gpu: a native dll without imports, so the translator can map it into x64 processes
 # too, where an x64 opengl32.dll of stubs forwards each call to it, see mime/mx64.h and tools/gengl.c.
 set(opengl32_options -Wno-ignored-attributes -DNTSYSCALLAPI= -DW32KAPI=)

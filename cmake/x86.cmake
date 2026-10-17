@@ -131,3 +131,13 @@ add_custom_command(OUTPUT ${gen86}/ucrtbase.def ${gen86}/ucrtbase.imports.def
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} COMMAND_EXPAND_LISTS VERBATIM)
 mime_dll(ucrtbase x86 BASE 0x47000000 ENTRY /noentry OBJECTS ${objects} DEF ${gen86}/ucrtbase.def
     IMPORTS_DEF ${gen86}/ucrtbase.imports.def DEPENDS ${gen86}/ucrtbase.imports.def ${MIME_LIB_x86}/msvcrt.lib)
+
+# opengl for 32-bit programs: the same implementation over the same gpu channel, its system calls through the
+# 32-bit ntdll and win32u.
+mime_dll(opengl32 x86 BASE 0x44000000 ENTRY /noentry SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GL_GEN}/procs.c
+    OBJECTS ${MIME_RUNTIME_x86} OPTIONS ${opengl32_options} INCLUDES ${opengl32_includes} IMPORTS ntdll win32u)
+
+# the audio endpoints of 32-bit programs.
+mime_dll(mmdevapi x86 BASE 0x45000000 SOURCES ${MIME_MMDEVAPI_SOURCES} OBJECTS x86-chkstk
+    IMPORTS ntdll kernel32 user32 gdi32 win32u)
+mime_dll(avrt x86 BASE 0x43000000 SOURCES guest/avrt/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 gdi32 win32u)
