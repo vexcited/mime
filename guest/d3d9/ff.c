@@ -585,6 +585,9 @@ static HRESULT pixel_program(const D9FFPSKey *k, Asm *a)
                    cs(PC_LUMINANCE + i - 1, REP(1)));
                 OP(a, D9_OP_MUL, w(P_TEX, 7), r(P_TEX), rs(P_ARG + 1, REP(0)));
             }
+        } else {
+            /* a stage without a texture reads it as opaque white, so its default modulate keeps the diffuse color. */
+            OP(a, D9_OP_MOV, w(P_TEX, 0xF), cs(PC_K, REP(1)));
         }
         bumped = FALSE;
         if (s->color_op == D3DTOP_BUMPENVMAP || s->color_op == D3DTOP_BUMPENVMAPLUMINANCE) {
