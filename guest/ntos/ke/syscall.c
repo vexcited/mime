@@ -89,6 +89,8 @@ void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args)
 char KiTraceSyscallImage[16];
 /* the service whose callers are walked too, from the kernel option trace-stack=<service name>. */
 char KiTraceStackService[40];
+/* a part of a service name the traced calls must have, from the kernel option trace-filter=<text>. */
+char KiTraceFilter[40];
 
 static const char *service_name(ULONG table, ULONG index)
 {
@@ -136,7 +138,8 @@ void KiSystemService(PKTRAP_FRAME frame)
         if (stack > 16 - KI_SERVICE_REGISTER_ARGS)
             stack = 16 - KI_SERVICE_REGISTER_ARGS;
         BOOLEAN trace = KiTraceSyscallImage[0] &&
-                        (KiTraceSyscallImage[0] == '*' || !strcmp(PsCurrentProcess()->ImageFileName, KiTraceSyscallImage));
+                        (KiTraceSyscallImage[0] == '*' || !strcmp(PsCurrentProcess()->ImageFileName, KiTraceSyscallImage)) &&
+                        (!KiTraceFilter[0] || strstr(service_name(table, index), KiTraceFilter));
         BOOLEAN copied = !stack || NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS],
                                                              (PVOID)KI_SERVICE_STACK_ARGS(frame),
                                                              stack * sizeof(ULONG64)));
@@ -160,9 +163,20 @@ void KiSystemService(PKTRAP_FRAME frame)
             result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
         else
             result = KiCallService(t->Table[index].Routine, args, stack);
-        if (trace)
+        if (trace) {
             KiLogPrintf("svc %u.%u %s = %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), result);
+            /* the message a queue call returned, as window, message, wparam and lparam. */
+            if (table == 1 && (ULONG)result == 1 && !strncmp(service_name(table, index), "NtUser", 6) &&
+                (!strcmp(service_name(table, index) + 6, "PeekMessage") || !strcmp(service_name(table, index) + 6, "GetMessage"))) {
+                ULONG64 msg[4];
+                if (NT_SUCCESS(KiCopyFromUser(msg, (PVOID)args[0], sizeof(msg))))
+                    KiLogPrintf("msg %u.%u hwnd %llx message %llx wparam %llx lparam %llx",
+                                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+                                (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, msg[0], msg[1] & 0xFFFFFFFF,
+                                msg[2], msg[3]);
+            }
+        }
     }
     if (table < 2) {
         ULONG64 held = HalReadCounter() - started - (thread->BlockedTicks - blocked);
