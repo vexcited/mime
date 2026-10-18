@@ -335,9 +335,9 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     info.swapchainCount = 1;
     info.pSwapchains = &sc->swapchain;
     info.pImageIndices = &index;
-    AcquireSRWLockExclusive(&device->queue_lock);
+    AcquireSRWLockExclusive(device->queue_lock);
     vk->vkQueuePresentKHR(device->queue, &info);
-    ReleaseSRWLockExclusive(&device->queue_lock);
+    ReleaseSRWLockExclusive(device->queue_lock);
 
     /* no more frames ahead of the gpu than the latency allows. */
     UINT latency = sc->desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT ? sc->max_latency

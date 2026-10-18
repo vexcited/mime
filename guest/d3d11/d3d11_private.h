@@ -594,8 +594,9 @@ struct D3dDevice {
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
 
-    /* the queue is the device's, submissions from contexts and swap chains alike. */
-    SRWLOCK queue_lock;
+    /* the queue is shared by the process's devices on the adapter, submissions from contexts and swap chains alike. */
+    SRWLOCK *queue_lock;
+    struct D3dSharedVk *shared;
     VkSemaphore timeline;
     UINT64 next_serial;
     volatile UINT64 completed;

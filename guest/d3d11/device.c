@@ -79,7 +79,7 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
                  const VkSemaphoreSubmitInfo *signal)
 {
     VkCommandBuffer init = D3dTakeInitCommands(device);
-    AcquireSRWLockExclusive(&device->queue_lock);
+    AcquireSRWLockExclusive(device->queue_lock);
     UINT64 serial = device->next_serial;
     VkCommandBufferSubmitInfo buffers[2];
     UINT count = 0;
@@ -104,7 +104,7 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
         D3dLog("d3d11: vkQueueSubmit2 failed");
     device->next_serial = serial + 1;
     device->renames = 0;
-    ReleaseSRWLockExclusive(&device->queue_lock);
+    ReleaseSRWLockExclusive(device->queue_lock);
     if (init)
         D3dInitDone(device);
     return serial;
@@ -175,6 +175,127 @@ static BOOL has_extension(const VkExtensionProperties *list, UINT count, const c
         if (!strcmp(list[i].extensionName, name))
             return TRUE;
     return FALSE;
+}
+
+/*
+ * the host serves one vulkan device to a process, so the devices a process makes on an adapter share it,
+ * and its queue, which they take turns on. it goes with the last of them.
+ */
+typedef struct D3dSharedVk {
+    struct D3dSharedVk *next;
+    LONG refs;
+    D3dVk vk;
+    VkQueue queue;
+    UINT queue_family;
+    BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
+    BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
+    BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
+    SRWLOCK queue_lock;
+} D3dSharedVk;
+
+static D3dSharedVk *g_shared_vk;
+static SRWLOCK g_shared_vk_lock = SRWLOCK_INIT;
+
+static void use_shared(D3dDevice *device, D3dSharedVk *shared)
+{
+    device->vk = shared->vk;
+    device->queue = shared->queue;
+    device->queue_family = shared->queue_family;
+    device->queue_lock = &shared->queue_lock;
+    device->shared = shared;
+#define COPY(field) device->field = shared->field
+    COPY(has_depth_clip);
+    COPY(has_custom_border);
+    COPY(has_transform_feedback);
+    COPY(has_conditional);
+    COPY(has_line_rasterization);
+    COPY(has_divisor);
+    COPY(has_zero_divisor);
+    COPY(has_statistics);
+    COPY(has_precise_occlusion);
+    COPY(has_so_queries);
+    COPY(has_logic_op);
+    COPY(has_depth_bounds);
+    COPY(has_geometry);
+    COPY(has_tessellation);
+#undef COPY
+}
+
+static HRESULT create_vulkan_device(D3dDevice *device);
+
+/* the shared device of the adapter's vulkan device, made on first use. */
+static HRESULT acquire_vulkan_device(D3dDevice *device)
+{
+    AcquireSRWLockExclusive(&g_shared_vk_lock);
+    for (D3dSharedVk *s = g_shared_vk; s; s = s->next) {
+        if (s->vk.instance == device->vk.instance && s->vk.physical == device->vk.physical) {
+            s->refs++;
+            use_shared(device, s);
+            ReleaseSRWLockExclusive(&g_shared_vk_lock);
+            return S_OK;
+        }
+    }
+    HRESULT hr = create_vulkan_device(device);
+    if (SUCCEEDED(hr)) {
+        D3dSharedVk *s = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*s));
+        if (!s) {
+            device->vk.vkDestroyDevice(device->vk.device, nullptr);
+            device->vk.device = VK_NULL_HANDLE;
+            ReleaseSRWLockExclusive(&g_shared_vk_lock);
+            return E_OUTOFMEMORY;
+        }
+        s->refs = 1;
+        s->vk = device->vk;
+        s->queue = device->queue;
+        s->queue_family = device->queue_family;
+        InitializeSRWLock(&s->queue_lock);
+#define COPY(field) s->field = device->field
+        COPY(has_depth_clip);
+        COPY(has_custom_border);
+        COPY(has_transform_feedback);
+        COPY(has_conditional);
+        COPY(has_line_rasterization);
+        COPY(has_divisor);
+        COPY(has_zero_divisor);
+        COPY(has_statistics);
+        COPY(has_precise_occlusion);
+        COPY(has_so_queries);
+        COPY(has_logic_op);
+        COPY(has_depth_bounds);
+        COPY(has_geometry);
+        COPY(has_tessellation);
+#undef COPY
+        device->queue_lock = &s->queue_lock;
+        device->shared = s;
+        s->next = g_shared_vk;
+        g_shared_vk = s;
+    }
+    ReleaseSRWLockExclusive(&g_shared_vk_lock);
+    return hr;
+}
+
+/* drops a device's hold, destroying the vulkan device when it is the last. */
+static void release_vulkan_device(D3dDevice *device)
+{
+    D3dSharedVk *shared = device->shared;
+    if (!shared)
+        return;
+    AcquireSRWLockExclusive(&g_shared_vk_lock);
+    BOOL last = --shared->refs == 0;
+    if (last) {
+        for (D3dSharedVk **p = &g_shared_vk; *p; p = &(*p)->next) {
+            if (*p == shared) {
+                *p = shared->next;
+                break;
+            }
+        }
+    }
+    ReleaseSRWLockExclusive(&g_shared_vk_lock);
+    if (last) {
+        device->vk.vkDestroyDevice(device->vk.device, nullptr);
+        HeapFree(GetProcessHeap(), 0, shared);
+    }
+    device->shared = nullptr;
 }
 
 static HRESULT create_vulkan_device(D3dDevice *device)
@@ -304,8 +425,10 @@ static HRESULT create_vulkan_device(D3dDevice *device)
         if ((props[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
             (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
             device->queue_family = i;
-    if (device->queue_family == ~0u)
+    if (device->queue_family == ~0u) {
+        D3dLog("d3d11: the gpu has no queue family for graphics and compute");
         return DXGI_ERROR_UNSUPPORTED;
+    }
 
     float priority = 1.0f;
     VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -317,8 +440,11 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     info.pQueueCreateInfos = &queue;
     info.enabledExtensionCount = n;
     info.ppEnabledExtensionNames = extensions;
-    if (vk->vkCreateDevice(vk->physical, &info, nullptr, &vk->device) != VK_SUCCESS)
+    VkResult created = vk->vkCreateDevice(vk->physical, &info, nullptr, &vk->device);
+    if (created != VK_SUCCESS) {
+        D3dLog("d3d11: vkCreateDevice failed with %d", created);
         return DXGI_ERROR_UNSUPPORTED;
+    }
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
@@ -339,8 +465,10 @@ static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
     vk->physical = v.PhysicalDevice;
     vk->vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)v.GetInstanceProcAddr;
     device->api_version = v.ApiVersion;
-    if (!vk->instance || !vk->physical)
+    if (!vk->instance || !vk->physical) {
+        D3dLog("d3d11: the adapter has no vulkan device");
         return DXGI_ERROR_UNSUPPORTED;
+    }
 #define X(name) vk->name = (PFN_##name)vk->vkGetInstanceProcAddr(vk->instance, #name);
     D3D_VK_INSTANCE_FUNCS(X)
 #undef X
@@ -349,7 +477,7 @@ static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
     device->properties = props.properties;
     vk->vkGetPhysicalDeviceMemoryProperties(vk->physical, &device->memory);
 
-    HRESULT hr = create_vulkan_device(device);
+    HRESULT hr = acquire_vulkan_device(device);
     if (FAILED(hr))
         return hr;
 
@@ -401,7 +529,7 @@ static void destroy_device(D3dDevice *device)
         vk->vkDestroyDescriptorSetLayout(vk->device, device->table_layout, nullptr);
         vk->vkDestroyCommandPool(vk->device, device->init_pool, nullptr);
         vk->vkDestroySemaphore(vk->device, device->timeline, nullptr);
-        vk->vkDestroyDevice(vk->device, nullptr);
+        release_vulkan_device(device);
     }
     if (device->adapter)
         device->adapter->lpVtbl->Release(device->adapter);
