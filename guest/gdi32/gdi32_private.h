@@ -135,3 +135,13 @@ HENHMETAFILE EmfCreateHandle(BYTE *data, DWORD size);
 EMF *EmfLookup(HENHMETAFILE handle);
 BOOL EmfValid(const BYTE *data, DWORD size);
 BOOL EmfCancelPlay(HDC dc);
+
+/* ------------------------------------------------------------------ printers (printer.c) */
+
+extern volatile LONG PrnDcCount;
+BOOL PrnIsPrinterDc(HDC dc);
+HDC PrnCreateDC(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only, BOOL *handled);
+BOOL PrnDeleteDC(HDC dc);
+BOOL PrnGetDeviceCaps(HDC dc, int index, int *value);
+int PrnEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out, BOOL *handled);
+HDC PrnCreateDCA(LPCSTR driver, LPCSTR device, const void *mode, BOOL info_only, BOOL *handled);

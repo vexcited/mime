@@ -58,20 +58,6 @@ PCWSTR SpoolEnvironmentDirectory(LPCWSTR environment)
     return nullptr;
 }
 
-/* checks the arguments every enumeration shares and reports an empty list. */
-static BOOL SpoolEmpty(BOOL valid_level, LPBYTE buffer, DWORD size, LPDWORD needed, LPDWORD returned)
-{
-    if (!needed || !returned)
-        return SpoolFail(ERROR_INVALID_PARAMETER);
-    if (!valid_level)
-        return SpoolFail(ERROR_INVALID_LEVEL);
-    if (buffer)
-        memset(buffer, 0, size);
-    *needed = 0;
-    *returned = 0;
-    return TRUE;
-}
-
 /* converts an optional ansi environment and checks that it names a known one. */
 static BOOL SpoolCheckEnvironmentA(LPCSTR environment)
 {
@@ -94,21 +80,83 @@ static BOOL SpoolCheckEnvironmentW(LPCWSTR environment)
 
 /* ------------------------------------------------------------------ enumeration */
 
+#include "info.h"
+
 static BOOL SpoolPrinterLevel(DWORD level)
 {
     return level <= 2 || level == 4 || level == 5;
 }
 
+/* true for the name of the local server, or of its print provider, or none. */
+static BOOL SpoolIsLocalProvider(LPCWSTR name)
+{
+    if (!name || !*name)
+        return TRUE;
+    if (!_wcsicmp(name, InfoProvider()))
+        return TRUE;
+    if (name[0] != L'\\' || name[1] != L'\\')
+        return FALSE;
+    WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+    if (GetComputerNameW(computer, &size) && !_wcsicmp(name + 2, computer))
+        return TRUE;
+    return !_wcsicmp(name + 2, L"localhost");
+}
+
+static BOOL SpoolEnumPrinters(DWORD flags, LPCWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+                              LPDWORD returned, BOOL ansi)
+{
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (!SpoolPrinterLevel(level))
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    if (buffer)
+        memset(buffer, 0, size);
+    *needed = 0;
+    *returned = 0;
+    int indexes[16];
+    int count = 0;
+    BOOL local = SpoolIsLocalProvider(name);
+    if (name && *name && !local) {
+        /* the name of one printer lists that printer. */
+        int one = (flags & PRINTER_ENUM_NAME) ? SpoolFindPrinter(name) : -1;
+        if (one < 0)
+            return SpoolFail(ERROR_INVALID_NAME);
+        indexes[count++] = one;
+    } else if (flags & PRINTER_ENUM_NAME) {
+        /* without a name the print providers are what is listed, one level up from the printers. */
+        if ((!name || !*name) && level == 1 && !(flags & PRINTER_ENUM_LOCAL))
+            return InfoEnumContainers(buffer, size, needed, returned, ansi);
+        for (int i = 0; i < SpoolPrinterCount() && count < 16; i++)
+            indexes[count++] = i;
+    } else if (flags & PRINTER_ENUM_LOCAL) {
+        for (int i = 0; i < SpoolPrinterCount() && count < 16; i++)
+            indexes[count++] = i;
+    } else if (flags & PRINTER_ENUM_DEFAULT) {
+        int d = SpoolDefaultPrinter();
+        if (d >= 0)
+            indexes[count++] = d;
+    }
+    return InfoEnumPrinters(indexes, count, level, buffer, size, needed, returned, ansi);
+}
+
 DECLSPEC_EXPORT BOOL WINAPI EnumPrintersW(DWORD flags, LPWSTR name, DWORD level, LPBYTE buffer, DWORD size,
                                                 LPDWORD needed, LPDWORD returned)
 {
-    return SpoolEmpty(SpoolPrinterLevel(level), buffer, size, needed, returned);
+    return SpoolEnumPrinters(flags, name, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPrintersA(DWORD flags, LPSTR name, DWORD level, LPBYTE buffer, DWORD size,
                                                 LPDWORD needed, LPDWORD returned)
 {
-    return SpoolEmpty(SpoolPrinterLevel(level), buffer, size, needed, returned);
+    PWSTR wide = SpoolToWide(name);
+    if (name && !wide)
+        return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
+    BOOL ok = SpoolEnumPrinters(flags, wide, level, buffer, size, needed, returned, TRUE);
+    DWORD error = GetLastError();
+    SpoolFree(wide);
+    SetLastError(error);
+    return ok;
 }
 
 static BOOL SpoolDriverLevel(DWORD level)
@@ -116,84 +164,139 @@ static BOOL SpoolDriverLevel(DWORD level)
     return (level >= 1 && level <= 6) || level == 8;
 }
 
+/* a list of names of one kind in the form of the level asked for; the drivers are listed for levels 1 to 3. */
+static BOOL SpoolEnumNames(DWORD kind, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, LPDWORD returned,
+                           BOOL ansi)
+{
+    if (buffer)
+        memset(buffer, 0, size);
+    *needed = 0;
+    *returned = 0;
+    if (kind == INFO_DRIVER && !InfoDriverLevel(level))
+        return TRUE;
+    return InfoEnumNames(kind, level, buffer, size, needed, returned, ansi);
+}
+
 DECLSPEC_EXPORT BOOL WINAPI EnumPrinterDriversW(LPWSTR name, LPWSTR environment, DWORD level, LPBYTE buffer,
                                                       DWORD size, LPDWORD needed, LPDWORD returned)
 {
-    if (needed && returned && SpoolDriverLevel(level) && !SpoolCheckEnvironmentW(environment))
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (!SpoolDriverLevel(level))
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    if (!SpoolCheckEnvironmentW(environment))
         return FALSE;
-    return SpoolEmpty(SpoolDriverLevel(level), nullptr, 0, needed, returned);
+    return SpoolEnumNames(INFO_DRIVER, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPrinterDriversA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
                                                       DWORD size, LPDWORD needed, LPDWORD returned)
 {
-    if (needed && returned && SpoolDriverLevel(level) && !SpoolCheckEnvironmentA(environment))
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (!SpoolDriverLevel(level))
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    if (!SpoolCheckEnvironmentA(environment))
         return FALSE;
-    return SpoolEmpty(SpoolDriverLevel(level), nullptr, 0, needed, returned);
+    return SpoolEnumNames(INFO_DRIVER, level, buffer, size, needed, returned, TRUE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPortsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                              LPDWORD returned)
 {
-    return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1 && level != 2)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return SpoolEnumNames(INFO_PORT, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPortsA(LPSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                              LPDWORD returned)
 {
-    return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1 && level != 2)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return SpoolEnumNames(INFO_PORT, level, buffer, size, needed, returned, TRUE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumMonitorsW(LPWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                                 LPDWORD returned)
 {
-    return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1 && level != 2)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return SpoolEnumNames(INFO_MONITOR, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumMonitorsA(LPSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                                 LPDWORD returned)
 {
-    return SpoolEmpty(level == 1 || level == 2, buffer, size, needed, returned);
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1 && level != 2)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return SpoolEnumNames(INFO_MONITOR, level, buffer, size, needed, returned, TRUE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorsW(LPWSTR name, LPWSTR environment, DWORD level, LPBYTE buffer,
                                                        DWORD size, LPDWORD needed, LPDWORD returned)
 {
-    if (needed && returned && level == 1 && !SpoolCheckEnvironmentW(environment))
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    if (!SpoolCheckEnvironmentW(environment))
         return FALSE;
-    return SpoolEmpty(level == 1, buffer, size, needed, returned);
+    return SpoolEnumNames(INFO_PROCESSOR, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorsA(LPSTR name, LPSTR environment, DWORD level, LPBYTE buffer,
                                                        DWORD size, LPDWORD needed, LPDWORD returned)
 {
-    if (needed && returned && level == 1 && !SpoolCheckEnvironmentA(environment))
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    if (!SpoolCheckEnvironmentA(environment))
         return FALSE;
-    return SpoolEmpty(level == 1, buffer, size, needed, returned);
+    return SpoolEnumNames(INFO_PROCESSOR, level, buffer, size, needed, returned, TRUE);
 }
 
-/* with no print processor installed every processor name is unknown. */
-static BOOL SpoolEnumDatatypes(DWORD level, LPDWORD needed, LPDWORD returned)
+/* the data types of the print processor winprint, and a failure for any other processor. */
+static BOOL SpoolEnumDatatypes(LPCWSTR processor, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+                               LPDWORD returned, BOOL ansi)
 {
     if (!needed || !returned)
         return SpoolFail(ERROR_INVALID_PARAMETER);
     if (level != 1)
         return SpoolFail(ERROR_INVALID_LEVEL);
-    return SpoolFail(ERROR_UNKNOWN_PRINTPROCESSOR);
+    if (!processor || _wcsicmp(processor, L"winprint"))
+        return SpoolFail(ERROR_UNKNOWN_PRINTPROCESSOR);
+    return SpoolEnumNames(INFO_DATATYPE, level, buffer, size, needed, returned, ansi);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorDatatypesW(LPWSTR name, LPWSTR processor, DWORD level,
                                                                LPBYTE buffer, DWORD size, LPDWORD needed,
                                                                LPDWORD returned)
 {
-    return SpoolEnumDatatypes(level, needed, returned);
+    return SpoolEnumDatatypes(processor, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorDatatypesA(LPSTR name, LPSTR processor, DWORD level,
                                                                LPBYTE buffer, DWORD size, LPDWORD needed,
                                                                LPDWORD returned)
 {
-    return SpoolEnumDatatypes(level, needed, returned);
+    PWSTR wide = SpoolToWide(processor);
+    if (processor && !wide)
+        return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
+    BOOL ok = SpoolEnumDatatypes(wide, level, buffer, size, needed, returned, TRUE);
+    DWORD error = GetLastError();
+    SpoolFree(wide);
+    SetLastError(error);
+    return ok;
 }
 
 /* ------------------------------------------------------------------ spool directories */
@@ -273,27 +376,62 @@ DECLSPEC_EXPORT BOOL WINAPI GetPrintProcessorDirectoryA(LPSTR name, LPSTR enviro
 
 /* ------------------------------------------------------------------ default printer */
 
-/* there is no default printer: the size is left alone. */
+/* the name of the default printer: the chosen one if there is one, else the first of the printers. */
 DECLSPEC_EXPORT BOOL WINAPI GetDefaultPrinterW(LPWSTR buffer, LPDWORD size)
 {
     if (!size)
         return SpoolFail(ERROR_INVALID_PARAMETER);
-    return SpoolFail(ERROR_FILE_NOT_FOUND);
+    int index = SpoolDefaultPrinter();
+    if (index < 0)
+        return SpoolFail(ERROR_FILE_NOT_FOUND);
+    LPCWSTR name = SpoolPrinterAt(index)->Name;
+    DWORD chars = (DWORD)wcslen(name) + 1;
+    if (!buffer || *size < chars) {
+        *size = chars;
+        return SpoolFail(ERROR_INSUFFICIENT_BUFFER);
+    }
+    memcpy(buffer, name, chars * sizeof(WCHAR));
+    *size = chars;
+    return TRUE;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetDefaultPrinterA(LPSTR buffer, LPDWORD size)
 {
-    return GetDefaultPrinterW(nullptr, size);
+    if (!size)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    int index = SpoolDefaultPrinter();
+    if (index < 0)
+        return SpoolFail(ERROR_FILE_NOT_FOUND);
+    LPCWSTR name = SpoolPrinterAt(index)->Name;
+    int chars = WideCharToMultiByte(CP_ACP, 0, name, -1, nullptr, 0, nullptr, nullptr);
+    if (!buffer || *size < (DWORD)chars) {
+        *size = (DWORD)chars;
+        return SpoolFail(ERROR_INSUFFICIENT_BUFFER);
+    }
+    WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, chars, nullptr, nullptr);
+    *size = (DWORD)chars;
+    return TRUE;
 }
 
+/* a null or empty name asks for a default to be picked, which the first printer is. */
 DECLSPEC_EXPORT BOOL WINAPI SetDefaultPrinterW(LPCWSTR printer)
 {
-    return SpoolFail(ERROR_INVALID_PRINTER_NAME);
+    int index = printer && *printer ? SpoolFindPrinter(printer) : (SpoolPrinterCount() ? 0 : -1);
+    if (index < 0)
+        return SpoolFail(ERROR_INVALID_PRINTER_NAME);
+    return SpoolSetDefaultPrinter(index) ? TRUE : SpoolFail(ERROR_ACCESS_DENIED);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI SetDefaultPrinterA(LPCSTR printer)
 {
-    return SpoolFail(ERROR_INVALID_PRINTER_NAME);
+    PWSTR wide = SpoolToWide(printer);
+    if (printer && !wide)
+        return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
+    BOOL ok = SetDefaultPrinterW(wide);
+    DWORD error = GetLastError();
+    SpoolFree(wide);
+    SetLastError(error);
+    return ok;
 }
 
 /* ------------------------------------------------------------------ printers and connections */

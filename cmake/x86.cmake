@@ -174,7 +174,8 @@ mime_dll(riched32 x86 BASE 0x16000000 SOURCES ${sources} OBJECTS x86-chkstk IMPO
 
 # winspool is a driver file.
 mime_glob(sources guest/winspool/*.c)
-mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources} OBJECTS x86-chkstk
+mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources}
+    OBJECTS x86-chkstk x86-lib-png:guest/lib/png/deflate.c x86-lib-png:guest/lib/png/inflate.c INCLUDES guest/lib
     IMPORTS ntdll kernel32 user32 gdi32)
 
 # bthprops is a control panel file.

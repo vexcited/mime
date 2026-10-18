@@ -219,14 +219,35 @@ DECLSPEC_EXPORT DWORD WINAPI PrinterMessageBoxA(HANDLE printer, DWORD error, HWN
     return 0;
 }
 
+/*
+ * the dialog that asks where a document that goes to a file port is saved: the name chosen, a buffer to
+ * free with GlobalFree, NULL when the user cancelled, and (LPWSTR)-1 for a printer whose port is no file.
+ */
 DECLSPEC_EXPORT LPWSTR WINAPI StartDocDlgW(HANDLE printer, DOC_INFO_1W *info)
 {
-    SetLastError(ERROR_INVALID_HANDLE);
-    return nullptr;
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return nullptr;
+    const SpoolPrinter *pr = SpoolPrinterAt(h->printer);
+    if (_wcsicmp(pr->Port, L"PORTPROMPT:") && _wcsicmp(pr->Port, L"FILE:"))
+        return (LPWSTR)(LONG_PTR)-1;
+    PWSTR path = SpoolAskOutput(info && info->pDocName ? info->pDocName : L"Document", h->printer);
+    if (!path)
+        SetLastError(ERROR_CANCELLED);
+    return path;
 }
 
 DECLSPEC_EXPORT LPSTR WINAPI StartDocDlgA(HANDLE printer, DOC_INFO_1A *info)
 {
-    SetLastError(ERROR_INVALID_HANDLE);
-    return nullptr;
+    DOC_INFO_1W wide = {SpoolToWide(info ? info->pDocName : nullptr), nullptr, nullptr};
+    LPWSTR path = StartDocDlgW(printer, &wide);
+    SpoolFree(wide.pDocName);
+    if (!path || path == (LPWSTR)(LONG_PTR)-1)
+        return (LPSTR)path;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    LPSTR ansi = SpoolAlloc((SIZE_T)(bytes ? bytes : 1));
+    if (ansi && bytes)
+        WideCharToMultiByte(CP_ACP, 0, path, -1, ansi, bytes, nullptr, nullptr);
+    SpoolFree(path);
+    return ansi;
 }

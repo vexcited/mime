@@ -3,6 +3,8 @@
  * open printer, a print job or a form.
  */
 #include "winspool_private.h"
+#include "info.h"
+#include <stddef.h>
 
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static SpoolHandle *g_handles;
@@ -21,6 +23,17 @@ SpoolHandle *SpoolLookup(HANDLE printer)
     if (!found)
         SetLastError(ERROR_INVALID_HANDLE);
     return found;
+}
+
+/* the server handle is not a printer: what needs one fails on it as on any bad handle. */
+SpoolHandle *SpoolLookupPrinter(HANDLE printer)
+{
+    SpoolHandle *h = SpoolLookup(printer);
+    if (h && h->printer < 0) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return nullptr;
+    }
+    return h;
 }
 
 /* ------------------------------------------------------------------ opening */
@@ -45,12 +58,30 @@ DECLSPEC_EXPORT BOOL WINAPI OpenPrinter2W(LPCWSTR name, LPHANDLE printer, PPRINT
     if (!printer)
         return SpoolFail(ERROR_INVALID_PARAMETER);
     *printer = nullptr;
-    if (!SpoolIsLocalServer(name))
-        return SpoolFail(ERROR_INVALID_PRINTER_NAME);
+    int index = -1;
+    if (!SpoolIsLocalServer(name)) {
+        index = SpoolFindPrinter(name);
+        if (index < 0)
+            return SpoolFail(ERROR_INVALID_PRINTER_NAME);
+    }
     SpoolHandle *h = SpoolAlloc(sizeof(*h));
     if (!h)
         return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
-    h->access = defaults ? defaults->DesiredAccess : SERVER_ACCESS_ENUMERATE;
+    h->printer = index;
+    if (index >= 0) {
+        h->access = defaults && defaults->DesiredAccess ? defaults->DesiredAccess : PRINTER_ACCESS_USE;
+        if (defaults && defaults->pDatatype)
+            _snwprintf(h->datatype, ARRAYSIZE(h->datatype), L"%ls", defaults->pDatatype);
+        /* a device mode given with the defaults is a copy of what the program asked for, taken as is when valid. */
+        if (defaults && defaults->pDevMode && defaults->pDevMode->dmSize >= offsetof(DEVMODEW, dmFields) + sizeof(DWORD)) {
+            SIZE_T bytes = defaults->pDevMode->dmSize + defaults->pDevMode->dmDriverExtra;
+            h->devmode = SpoolAlloc(bytes < sizeof(DEVMODEW) ? sizeof(DEVMODEW) : bytes);
+            if (h->devmode)
+                memcpy(h->devmode, defaults->pDevMode, bytes);
+        }
+    } else {
+        h->access = defaults ? defaults->DesiredAccess : SERVER_ACCESS_ENUMERATE;
+    }
     AcquireSRWLockExclusive(&g_lock);
     h->next = g_handles;
     g_handles = h;
@@ -70,10 +101,23 @@ DECLSPEC_EXPORT BOOL WINAPI OpenPrinterA(LPSTR name, LPHANDLE printer, LPPRINTER
     if (name && !wide)
         return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
     PRINTER_DEFAULTSW w = {};
-    if (defaults)
+    PWSTR datatype = nullptr;
+    DEVMODEW *devmode = nullptr;
+    if (defaults) {
         w.DesiredAccess = defaults->DesiredAccess;
+        datatype = SpoolToWide(defaults->pDatatype);
+        w.pDatatype = datatype;
+        if (defaults->pDevMode) {
+            devmode = SpoolDevmodeFromAnsi(defaults->pDevMode);
+            w.pDevMode = devmode;
+        }
+    }
     BOOL ok = OpenPrinter2W(wide, printer, defaults ? &w : nullptr, nullptr);
+    DWORD error = GetLastError();
     SpoolFree(wide);
+    SpoolFree(datatype);
+    SpoolFree(devmode);
+    SetLastError(error);
     return ok;
 }
 
@@ -86,81 +130,161 @@ DECLSPEC_EXPORT BOOL WINAPI OpenPrinter2A(LPCSTR name, LPHANDLE printer, PPRINTE
 
 DECLSPEC_EXPORT BOOL WINAPI ClosePrinter(HANDLE printer)
 {
-    BOOL found = FALSE;
+    SpoolHandle *found = nullptr;
     AcquireSRWLockExclusive(&g_lock);
     for (SpoolHandle **link = &g_handles; *link && printer; link = &(*link)->next) {
         if (*link == printer) {
+            found = *link;
             *link = (*link)->next;
-            found = TRUE;
             break;
         }
     }
     ReleaseSRWLockExclusive(&g_lock);
     if (!found)
         return SpoolFail(ERROR_INVALID_HANDLE);
-    SpoolFree(printer);
+    /* a document that was not ended is given up. */
+    SpoolAbortJob(found);
+    SpoolFree(found->devmode);
+    SpoolFree(found);
     return TRUE;
 }
 
 /* ------------------------------------------------------------------ printer state */
 
-/* the server handle is not a printer: functions that need one fail on it as on any bad handle. */
-static BOOL SpoolNoPrinter(HANDLE printer)
+/* the handle, then the size pointer, then the level, in the order windows checks them. */
+static BOOL SpoolGetPrinter(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, BOOL ansi)
 {
-    return SpoolFail(ERROR_INVALID_HANDLE);
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (!needed)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level > 9)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return InfoGetPrinter(h->printer, level, buffer, size, needed, ansi);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetPrinterW(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolGetPrinter(printer, level, buffer, size, needed, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetPrinterA(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolGetPrinter(printer, level, buffer, size, needed, TRUE);
+}
+
+/*
+ * the settings of a printer are those the user chooses, kept per user: level 9 changes them, level 0
+ * commands are accepted, everything that would install or reconfigure a printer needs rights nobody has here.
+ */
+static BOOL SpoolSetPrinter(HANDLE printer, DWORD level, LPBYTE buffer, DWORD command, BOOL ansi)
+{
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (level == 0 && !buffer)
+        return command <= PRINTER_CONTROL_SET_STATUS ? TRUE : SpoolFail(ERROR_INVALID_PRINTER_COMMAND);
+    if (level == 9 && buffer) {
+        PRINTER_INFO_9W *info = (PRINTER_INFO_9W *)buffer;
+        if (!info->pDevMode)
+            return TRUE;
+        DEVMODEW *wide = ansi ? SpoolDevmodeFromAnsi((DEVMODEA *)info->pDevMode) : info->pDevMode;
+        if (wide) {
+            DEVMODEW *dm = SpoolUserDevmode(h->printer);
+            if (dm) {
+                SpoolMergeDevmode(h->printer, dm, wide);
+                SpoolStoreUserDevmode(h->printer, dm);
+                SpoolFree(dm);
+            }
+            if (ansi)
+                SpoolFree(wide);
+        }
+        return TRUE;
+    }
+    return SpoolFail(ERROR_ACCESS_DENIED);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI SetPrinterW(HANDLE printer, DWORD level, LPBYTE buffer, DWORD command)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolSetPrinter(printer, level, buffer, command, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI SetPrinterA(HANDLE printer, DWORD level, LPBYTE buffer, DWORD command)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolSetPrinter(printer, level, buffer, command, TRUE);
 }
 
+/* the handle is made again with the defaults, which for a printer here means the same printer. */
 DECLSPEC_EXPORT BOOL WINAPI ResetPrinterW(HANDLE printer, LPPRINTER_DEFAULTSW defaults)
 {
-    return SpoolNoPrinter(printer);
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (defaults && defaults->pDatatype)
+        _snwprintf(h->datatype, ARRAYSIZE(h->datatype), L"%ls", defaults->pDatatype);
+    return TRUE;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI ResetPrinterA(HANDLE printer, LPPRINTER_DEFAULTSA defaults)
 {
-    return SpoolNoPrinter(printer);
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (defaults && defaults->pDatatype) {
+        PWSTR wide = SpoolToWide(defaults->pDatatype);
+        if (wide)
+            _snwprintf(h->datatype, ARRAYSIZE(h->datatype), L"%ls", wide);
+        SpoolFree(wide);
+    }
+    return TRUE;
 }
 
+/* printers that are built in cannot be deleted. */
 DECLSPEC_EXPORT BOOL WINAPI DeletePrinter(HANDLE printer)
 {
-    return SpoolNoPrinter(printer);
+    if (!SpoolLookupPrinter(printer))
+        return FALSE;
+    return SpoolFail(ERROR_ACCESS_DENIED);
+}
+
+/* the driver of the printer, in the environments this build has. */
+static BOOL SpoolGetDriver(HANDLE printer, LPCWSTR environment, DWORD level, LPBYTE buffer, DWORD size,
+                           LPDWORD needed, BOOL ansi)
+{
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (!needed)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (!InfoDriverLevel(level))
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    if (environment && *environment && !SpoolEnvironmentDirectory(environment))
+        return SpoolFail(ERROR_INVALID_ENVIRONMENT);
+    return InfoGetDriver(h->printer, level, buffer, size, needed, ansi);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriverW(HANDLE printer, LPWSTR environment, DWORD level, LPBYTE buffer,
                                                     DWORD size, LPDWORD needed)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolGetDriver(printer, environment, level, buffer, size, needed, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriverA(HANDLE printer, LPSTR environment, DWORD level, LPBYTE buffer,
                                                     DWORD size, LPDWORD needed)
 {
-    return SpoolNoPrinter(printer);
+    PWSTR wide = SpoolToWide(environment);
+    BOOL ok = SpoolGetDriver(printer, wide, level, buffer, size, needed, TRUE);
+    DWORD error = GetLastError();
+    SpoolFree(wide);
+    SetLastError(error);
+    return ok;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriver2W(HWND window, HANDLE printer, LPWSTR environment, DWORD level,
                                                      LPBYTE buffer, DWORD size, LPDWORD needed)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolGetDriver(printer, environment, level, buffer, size, needed, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriver2A(HWND window, HANDLE printer, LPSTR environment, DWORD level,
@@ -169,21 +293,35 @@ DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriver2A(HWND window, HANDLE printer, LPST
     return SpoolFail(ERROR_NOT_SUPPORTED);
 }
 
+/* the printing preferences, which are the device mode the user can change. */
 DECLSPEC_EXPORT BOOL WINAPI PrinterProperties(HWND window, HANDLE printer)
 {
-    return SpoolNoPrinter(printer);
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    DEVMODEW *dm = SpoolUserDevmode(h->printer);
+    if (!dm)
+        return SpoolFail(ERROR_NOT_ENOUGH_MEMORY);
+    BOOL accepted = SpoolPreferences(window, h->printer, dm) == IDOK;
+    if (accepted)
+        SpoolStoreUserDevmode(h->printer, dm);
+    SpoolFree(dm);
+    return accepted;
 }
 
+/* nothing changes on a printer that is built in, and the server has no printer to watch. */
 DECLSPEC_EXPORT DWORD WINAPI WaitForPrinterChange(HANDLE printer, DWORD flags)
 {
-    SpoolNoPrinter(printer);
+    SpoolLookupPrinter(printer);
     return 0;
 }
 
 DECLSPEC_EXPORT HANDLE WINAPI FindFirstPrinterChangeNotification(HANDLE printer, DWORD flags, DWORD options,
                                                                         LPVOID notify_options)
 {
-    SpoolNoPrinter(printer);
+    if (!SpoolLookup(printer))
+        return INVALID_HANDLE_VALUE;
+    SetLastError(ERROR_NOT_SUPPORTED);
     return INVALID_HANDLE_VALUE;
 }
 
@@ -204,134 +342,137 @@ DECLSPEC_EXPORT BOOL WINAPI FreePrinterNotifyInfo(PPRINTER_NOTIFY_INFO info)
     return SpoolFail(ERROR_INVALID_PARAMETER);
 }
 
-/* ------------------------------------------------------------------ documents and jobs */
+/* ------------------------------------------------------------------ jobs */
 
-DECLSPEC_EXPORT DWORD WINAPI StartDocPrinterW(HANDLE printer, DWORD level, LPBYTE info)
+/* the documents of this process are listed, and can be told to stop. */
+static BOOL SpoolEnumJobs(HANDLE printer, DWORD first, DWORD count, DWORD level, LPBYTE buffer, DWORD size,
+                          LPDWORD needed, LPDWORD returned, BOOL ansi)
 {
-    SpoolNoPrinter(printer);
-    return 0;
-}
-
-DECLSPEC_EXPORT DWORD WINAPI StartDocPrinterA(HANDLE printer, DWORD level, LPBYTE info)
-{
-    SpoolNoPrinter(printer);
-    return 0;
-}
-
-DECLSPEC_EXPORT BOOL WINAPI StartPagePrinter(HANDLE printer)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI EndPagePrinter(HANDLE printer)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI EndDocPrinter(HANDLE printer)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI AbortPrinter(HANDLE printer)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI WritePrinter(HANDLE printer, LPVOID buffer, DWORD size, LPDWORD written)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI FlushPrinter(HANDLE printer, LPVOID buffer, DWORD size, LPDWORD written,
-                                               DWORD sleep)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI ReadPrinter(HANDLE printer, LPVOID buffer, DWORD size, LPDWORD read)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI SeekPrinter(HANDLE printer, LARGE_INTEGER distance, PLARGE_INTEGER position,
-                                               DWORD method, BOOL write)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI AddJobW(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI AddJobA(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI ScheduleJob(HANDLE printer, DWORD job)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI GetJobW(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD size,
-                                          LPDWORD needed)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI GetJobA(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD size,
-                                          LPDWORD needed)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI SetJobW(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD command)
-{
-    return SpoolNoPrinter(printer);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI SetJobA(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD command)
-{
-    return SpoolNoPrinter(printer);
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (!needed || !returned)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1 && level != 2)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return SpoolJobsEnum(h->printer, level, first, count, buffer, size, needed, returned, ansi);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumJobsW(HANDLE printer, DWORD first, DWORD count, DWORD level, LPBYTE buffer,
                                             DWORD size, LPDWORD needed, LPDWORD returned)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolEnumJobs(printer, first, count, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumJobsA(HANDLE printer, DWORD first, DWORD count, DWORD level, LPBYTE buffer,
                                             DWORD size, LPDWORD needed, LPDWORD returned)
 {
-    return SpoolNoPrinter(printer);
+    return SpoolEnumJobs(printer, first, count, level, buffer, size, needed, returned, TRUE);
+}
+
+static BOOL SpoolGetJob(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, BOOL ansi)
+{
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    if (!needed)
+        return SpoolFail(ERROR_INVALID_PARAMETER);
+    if (level != 1 && level != 2)
+        return SpoolFail(ERROR_INVALID_LEVEL);
+    return SpoolJobGet(h->printer, job, level, buffer, size, needed, ansi);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GetJobW(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD size,
+                                          LPDWORD needed)
+{
+    return SpoolGetJob(printer, job, level, buffer, size, needed, FALSE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GetJobA(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD size,
+                                          LPDWORD needed)
+{
+    return SpoolGetJob(printer, job, level, buffer, size, needed, TRUE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI SetJobW(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD command)
+{
+    SpoolHandle *h = SpoolLookupPrinter(printer);
+    if (!h)
+        return FALSE;
+    return SpoolJobSet(h->printer, job, command);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI SetJobA(HANDLE printer, DWORD job, DWORD level, LPBYTE buffer, DWORD command)
+{
+    return SetJobW(printer, job, level, buffer, command);
+}
+
+/* jobs made with AddJob are files of the spool directory that nothing here picks up. */
+DECLSPEC_EXPORT BOOL WINAPI AddJobW(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
+{
+    if (!SpoolLookupPrinter(printer))
+        return FALSE;
+    return SpoolFail(ERROR_NOT_SUPPORTED);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI AddJobA(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
+{
+    return AddJobW(printer, level, buffer, size, needed);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI ScheduleJob(HANDLE printer, DWORD job)
+{
+    if (!SpoolLookupPrinter(printer))
+        return FALSE;
+    return SpoolFail(ERROR_INVALID_PARAMETER);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI ReadPrinter(HANDLE printer, LPVOID buffer, DWORD size, LPDWORD read)
+{
+    if (!SpoolLookupPrinter(printer))
+        return FALSE;
+    return SpoolFail(ERROR_NOT_SUPPORTED);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI SeekPrinter(HANDLE printer, LARGE_INTEGER distance, PLARGE_INTEGER position,
+                                               DWORD method, BOOL write)
+{
+    if (!SpoolLookupPrinter(printer))
+        return FALSE;
+    return SpoolFail(ERROR_NOT_SUPPORTED);
 }
 
 /* spool file handles belong to jobs started with StartDocPrinter. */
 DECLSPEC_EXPORT HANDLE WINAPI GetSpoolFileHandle(HANDLE printer)
 {
-    SpoolNoPrinter(printer);
+    if (!SpoolLookupPrinter(printer))
+        return INVALID_HANDLE_VALUE;
+    SetLastError(ERROR_NOT_SUPPORTED);
     return INVALID_HANDLE_VALUE;
 }
 
 DECLSPEC_EXPORT HANDLE WINAPI CommitSpoolData(HANDLE printer, HANDLE file, DWORD size)
 {
-    SpoolNoPrinter(printer);
+    if (!SpoolLookupPrinter(printer))
+        return INVALID_HANDLE_VALUE;
+    SetLastError(ERROR_NOT_SUPPORTED);
     return INVALID_HANDLE_VALUE;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI CloseSpoolFileHandle(HANDLE printer, HANDLE file)
 {
-    return SpoolNoPrinter(printer);
+    if (!SpoolLookupPrinter(printer))
+        return FALSE;
+    return SpoolFail(ERROR_NOT_SUPPORTED);
 }
 
 /* ------------------------------------------------------------------ information contexts */
 
 DECLSPEC_EXPORT HANDLE WINAPI CreatePrinterIC(HANDLE printer, LPDEVMODEW devmode)
 {
-    SpoolNoPrinter(printer);
+    SpoolLookupPrinter(printer);
+    if (printer && GetLastError() != ERROR_INVALID_HANDLE)
+        SetLastError(ERROR_NOT_SUPPORTED);
     return nullptr;
 }
 
@@ -354,7 +495,7 @@ static BOOL SpoolFormLevel(DWORD level)
 }
 
 static BOOL SpoolEnumForms(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
-                           LPDWORD returned)
+                           LPDWORD returned, BOOL ansi)
 {
     if (!needed || !returned)
         return SpoolFail(ERROR_INVALID_PARAMETER);
@@ -364,24 +505,23 @@ static BOOL SpoolEnumForms(HANDLE printer, DWORD level, LPBYTE buffer, DWORD siz
         return FALSE;
     if (buffer)
         memset(buffer, 0, size);
-    *needed = 0;
-    *returned = 0;
-    return TRUE;
+    return InfoEnumForms(level, buffer, size, needed, returned, ansi);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumFormsW(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                              LPDWORD returned)
 {
-    return SpoolEnumForms(printer, level, buffer, size, needed, returned);
+    return SpoolEnumForms(printer, level, buffer, size, needed, returned, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI EnumFormsA(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                              LPDWORD returned)
 {
-    return SpoolEnumForms(printer, level, buffer, size, needed, returned);
+    return SpoolEnumForms(printer, level, buffer, size, needed, returned, TRUE);
 }
 
-static BOOL SpoolGetForm(HANDLE printer, const void *name, DWORD level, LPDWORD needed)
+static BOOL SpoolGetForm(HANDLE printer, LPCWSTR name, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
+                         BOOL ansi)
 {
     if (!SpoolLookup(printer))
         return FALSE;
@@ -389,22 +529,30 @@ static BOOL SpoolGetForm(HANDLE printer, const void *name, DWORD level, LPDWORD 
         return SpoolFail(ERROR_INVALID_PARAMETER);
     if (!SpoolFormLevel(level))
         return SpoolFail(ERROR_INVALID_LEVEL);
-    return SpoolFail(ERROR_INVALID_FORM_NAME);
+    const SpoolPaper *paper = name ? SpoolFindPaperByName(name) : nullptr;
+    if (!paper)
+        return SpoolFail(ERROR_INVALID_FORM_NAME);
+    return InfoGetForm(paper, level, buffer, size, needed, ansi);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetFormW(HANDLE printer, LPWSTR name, DWORD level, LPBYTE buffer, DWORD size,
                                            LPDWORD needed)
 {
-    return SpoolGetForm(printer, name, level, needed);
+    return SpoolGetForm(printer, name, level, buffer, size, needed, FALSE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetFormA(HANDLE printer, LPSTR name, DWORD level, LPBYTE buffer, DWORD size,
                                            LPDWORD needed)
 {
-    return SpoolGetForm(printer, name, level, needed);
+    PWSTR wide = SpoolToWide(name);
+    BOOL ok = SpoolGetForm(printer, wide, level, buffer, size, needed, TRUE);
+    DWORD error = GetLastError();
+    SpoolFree(wide);
+    SetLastError(error);
+    return ok;
 }
 
-/* changing forms needs SERVER_ACCESS_ADMINISTER, and the form list is empty. */
+/* changing forms needs SERVER_ACCESS_ADMINISTER, and the forms are those built in. */
 static BOOL SpoolChangeForm(HANDLE printer, BOOL add)
 {
     SpoolHandle *h = SpoolLookup(printer);

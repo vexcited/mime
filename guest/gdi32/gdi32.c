@@ -129,19 +129,38 @@ WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC dc)
     return NtGdiCreateCompatibleDC(dc);
 }
 
+/* a printer dc when the driver and device name a printer, else a display dc: the display ignores the arguments. */
+static HDC create_dc(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only)
+{
+    BOOL handled;
+    HDC printer = PrnCreateDC(driver, device, mode, info_only, &handled);
+    if (handled)
+        return printer;
+    return NtGdiOpenDCW(nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
+}
+
+static HDC create_dc_a(LPCSTR driver, LPCSTR device, const void *mode, BOOL info_only)
+{
+    BOOL handled;
+    HDC printer = PrnCreateDCA(driver, device, mode, info_only, &handled);
+    if (handled)
+        return printer;
+    return NtGdiOpenDCW(nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
+}
+
 WINGDIAPI HDC WINAPI CreateDCW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, const void *mode)
 {
-    return NtGdiOpenDCW(nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
+    return create_dc(driver, device, mode, FALSE);
 }
 
 WINGDIAPI HDC WINAPI CreateDCA(LPCSTR driver, LPCSTR device, LPCSTR output, const void *mode)
 {
-    return CreateDCW(nullptr, nullptr, nullptr, nullptr);
+    return create_dc_a(driver, device, mode, FALSE);
 }
 
 WINGDIAPI HDC WINAPI CreateICW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, const void *mode)
 {
-    return CreateDCW(nullptr, nullptr, nullptr, nullptr);
+    return create_dc(driver, device, mode, TRUE);
 }
 
 WINGDIAPI BOOL WINAPI DeleteDC(HDC dc)
@@ -149,6 +168,8 @@ WINGDIAPI BOOL WINAPI DeleteDC(HDC dc)
     if (MfActive(dc))
         return MfDeleteDC(dc);
     PalForgetDC(dc);
+    if (PrnDcCount && PrnDeleteDC(dc))
+        return TRUE;
     return NtGdiDeleteObjectApp(dc);
 }
 
@@ -166,6 +187,11 @@ WINGDIAPI BOOL WINAPI RestoreDC(HDC dc, int saved)
 
 WINGDIAPI int WINAPI GetDeviceCaps(HDC dc, int index)
 {
+    if (PrnDcCount) {
+        int value;
+        if (PrnGetDeviceCaps(dc, index, &value))
+            return value;
+    }
     if (MfDcCount) {
         BOOL handled;
         int value = MfGetDeviceCaps(dc, index, &handled);

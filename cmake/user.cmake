@@ -259,7 +259,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     cryptui:0x7FF1A0000000 ndfapi:0x7FF190000000 winusb:0x7FF180000000 bthprops:0x7FF170000000
     dhcpcsvc:0x7FF160000000 esent:0x7FF150000000 uiautomationcore:0x7FF140000000
     riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
-    dcomp:0x7FF030000000
+    dcomp:0x7FF030000000 prntvpt:0x7FF020000000
     mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -295,6 +295,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_riched32 ${MIME_LIB_${arch}}/riched20.lib)
     # winhttp inflates gzip and deflate bodies with the png decoder's inflate.
     set(objects_winhttp ${arch}-lib-png:guest/lib/png/inflate.c)
+    # winspool writes the pages of a PDF flate coded.
+    set(objects_winspool ${arch}-lib-png:guest/lib/png/deflate.c ${arch}-lib-png:guest/lib/png/inflate.c)
+    set(includes_winspool guest/lib)
     set(includes_winhttp guest/lib)
     set(libs_winhttp ${MIME_LIB_${arch}}/ws2_32.lib)
     # wininet too, and reaches servers through winsock.

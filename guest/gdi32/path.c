@@ -390,71 +390,17 @@ WINGDIAPI LONG WINAPI SetBitmapBits(HBITMAP bitmap, DWORD size, const void *bits
     return NtGdiSetBitmapBits(bitmap, size, bits);
 }
 
-/* ------------------------------------------------------------------ printing */
-
-/*
- * there are no printers: every dc is a display dc, and the document calls
- * fail the way gdi32 fails them on a display dc, with SP_ERROR and no
- * error code. an invalid dc reports ERROR_INVALID_HANDLE.
- */
-static int print_call(HDC dc)
-{
-    DWORD v;
-    if (!MfActive(dc) && !NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v))
-        SetLastError(ERROR_INVALID_HANDLE);
-    return SP_ERROR;
-}
-
-WINGDIAPI int WINAPI StartDocW(HDC dc, const DOCINFOW *info)
-{
-    return print_call(dc);
-}
-
-WINGDIAPI int WINAPI StartDocA(HDC dc, const DOCINFOA *info)
-{
-    return print_call(dc);
-}
-
-WINGDIAPI int WINAPI EndDoc(HDC dc)
-{
-    return print_call(dc);
-}
-
-WINGDIAPI int WINAPI StartPage(HDC dc)
-{
-    return print_call(dc);
-}
-
-WINGDIAPI int WINAPI EndPage(HDC dc)
-{
-    return print_call(dc);
-}
-
-WINGDIAPI int WINAPI AbortDoc(HDC dc)
-{
-    return print_call(dc);
-}
-
-WINGDIAPI int WINAPI SetAbortProc(HDC dc, ABORTPROC proc)
-{
-    return print_call(dc);
-}
-
-/* only printer dcs can be reset. */
-WINGDIAPI HDC WINAPI ResetDCW(HDC dc, const void *mode)
-{
-    print_call(dc);
-    return nullptr;
-}
-
-WINGDIAPI HDC WINAPI ResetDCA(HDC dc, const void *mode)
-{
-    return ResetDCW(dc, mode);
-}
+/* ------------------------------------------------------------------ escapes */
 
 /* the display driver implements no escapes; QUERYESCSUPPORT answers for the escapes gdi32 handles itself. */
 WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out)
 {
+    if (PrnDcCount) {
+        BOOL handled;
+        int result = PrnEscape(dc, escape, in_size, in, out_size, out, &handled);
+        if (handled)
+            return result;
+    }
     if (escape == QUERYESCSUPPORT) {
         if (!in || in_size < 4)
             return 0;
@@ -467,7 +413,7 @@ WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int o
 
 WINGDIAPI int WINAPI Escape(HDC dc, int escape, int in_size, LPCSTR in, LPVOID out)
 {
-    return ExtEscape(dc, escape, in_size, in, 0, out);
+    return ExtEscape(dc, escape, in_size, in, out ? 0x10000 : 0, out);
 }
 
 /* ------------------------------------------------------------------ pixel formats */

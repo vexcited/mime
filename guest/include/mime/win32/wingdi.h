@@ -150,6 +150,13 @@
 #define COLORRES 108
 #define PHYSICALWIDTH 110
 #define PHYSICALHEIGHT 111
+#define PHYSICALOFFSETX 112
+#define PHYSICALOFFSETY 113
+#define SCALINGFACTORX 114
+#define SCALINGFACTORY 115
+#define COLORMGMTCAPS 121
+#define NUMMARKERS 20
+#define PDEVICESIZE 26
 #define VREFRESH 116
 #define DESKTOPVERTRES 117
 #define DESKTOPHORZRES 118
@@ -164,6 +171,9 @@
 #define DT_PLOTTER 0
 #define DT_RASDISPLAY 1
 #define DT_RASPRINTER 2
+#define DT_RASCAMERA 3
+#define DT_CHARSTREAM 4
+#define DT_DISPFILE 6
 #define DT_METAFILE 5
 #define RC_BITBLT 1
 #define RC_STRETCHBLT 0x0800
@@ -171,6 +181,15 @@
 #define RC_DIBTODEV 0x0200
 #define RC_STRETCHDIB 0x2000
 #define RC_PALETTE 0x0100
+#define RC_BANDING 0x0002
+#define RC_SCALING 0x0004
+#define RC_BITMAP64 0x0008
+#define RC_GDI20_OUTPUT 0x0010
+#define RC_GDI20_STATE 0x0020
+#define RC_SAVEBITMAP 0x0040
+#define RC_FLOODFILL 0x1000
+#define RC_OP_DX_OUTPUT 0x4000
+#define RC_DEVBITS 0x8000
 
 /* fonts. */
 #define FW_DONTCARE 0
@@ -498,6 +517,9 @@ WINGDIAPI DWORD WINAPI GetObjectType(HGDIOBJ object);
 WINGDIAPI int WINAPI GetObjectW(HANDLE object, int size, LPVOID buffer);
 WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC dc);
 WINGDIAPI HDC WINAPI CreateDCW(LPCWSTR driver, LPCWSTR device, LPCWSTR port, const void *mode);
+WINGDIAPI HDC WINAPI CreateDCA(LPCSTR driver, LPCSTR device, LPCSTR port, const void *mode);
+WINGDIAPI HDC WINAPI CreateICW(LPCWSTR driver, LPCWSTR device, LPCWSTR port, const void *mode);
+WINGDIAPI HDC WINAPI CreateICA(LPCSTR driver, LPCSTR device, LPCSTR port, const void *mode);
 WINGDIAPI BOOL WINAPI DeleteDC(HDC dc);
 WINGDIAPI int WINAPI SaveDC(HDC dc);
 WINGDIAPI BOOL WINAPI RestoreDC(HDC dc, int saved);
@@ -965,7 +987,22 @@ typedef struct tagDESIGNVECTOR {
 #define SP_OUTOFDISK (-4)
 #define SP_OUTOFMEMORY (-5)
 
+#define NEWFRAME 1
+#define ABORTDOC 2
+#define NEXTBAND 3
+#define SETCOLORTABLE 4
+#define GETCOLORTABLE 5
+#define FLUSHOUTPUT 6
+#define DRAFTMODE 7
 #define QUERYESCSUPPORT 8
+#define SETABORTPROC 9
+#define STARTDOC 10
+#define ENDDOC 11
+#define GETPHYSPAGESIZE 12
+#define GETPRINTINGOFFSET 13
+#define GETSCALINGFACTOR 14
+#define SETCOPYCOUNT 17
+#define SELECTPAPERSOURCE 18
 #define PASSTHROUGH 19
 #define GETTECHNOLOGY 20
 #define POSTSCRIPT_PASSTHROUGH 4115
@@ -1118,6 +1155,7 @@ WINGDIAPI int WINAPI EndPage(HDC dc);
 WINGDIAPI int WINAPI AbortDoc(HDC dc);
 WINGDIAPI int WINAPI SetAbortProc(HDC dc, ABORTPROC proc);
 WINGDIAPI HDC WINAPI ResetDCW(HDC dc, const void *mode);
+WINGDIAPI HDC WINAPI ResetDCA(HDC dc, const void *mode);
 WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out);
 WINGDIAPI int WINAPI Escape(HDC dc, int escape, int in_size, LPCSTR in, LPVOID out);
 WINGDIAPI LONG WINAPI GetBitmapBits(HBITMAP bitmap, LONG size, LPVOID bits);
