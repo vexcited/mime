@@ -19,5 +19,6 @@ extern HINSTANCE g_comdlg32;
 HRESULT ItemDialogCreate(BOOL save, IUnknown *outer, REFIID riid, void **object);
 
 void DlgProcessAttach(void);
+void DlgSetError(DWORD error);
 
 #endif

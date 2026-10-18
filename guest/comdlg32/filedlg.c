@@ -9,6 +9,7 @@
 #include "filedlg.h"
 #include <mime/win32/commctrl.h>
 #include <mime/win32/shellapi.h>
+#include <mime/win32/commdlg.h>
 #include <mime/win32/shlwapi.h>
 #include <mime/win32/winnls.h>
 
@@ -2923,6 +2924,65 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             on_tree_notify(dialog, header);
         return FALSE;
     }
+    case CDM_GETSPEC:
+    case CDM_GETFILEPATH:
+    case CDM_GETFOLDERPATH: {
+        WCHAR text[MAX_PATH * 2];
+        text[0] = 0;
+        if (message == CDM_GETFOLDERPATH) {
+            lstrcpynW(text, dialog->Folder, MAX_PATH);
+        } else {
+            name_text(dialog, text, RTL_NUMBER_OF(text));
+            if (message == CDM_GETFILEPATH && text[0] != L'"') {
+                WCHAR full[MAX_PATH];
+                if (resolve_name(dialog, text, full))
+                    lstrcpynW(text, full, RTL_NUMBER_OF(text));
+            }
+        }
+        int needed = lstrlenW(text) + 1;
+        if (lparam && (int)wparam >= needed)
+            lstrcpyW((WCHAR *)lparam, text);
+        SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, needed);
+        return TRUE;
+    }
+    case CDM_SETCONTROLTEXT:
+    case CDM_HIDECONTROL: {
+        /* the controls under the numbers dlgs.h gives them. */
+        HWND control = nullptr;
+        switch (wparam) {
+        case IDOK:
+            control = dialog->OkButton;
+            break;
+        case IDCANCEL:
+            control = dialog->CancelButton;
+            break;
+        case 0x441:
+            control = dialog->TypeLabel;
+            break;
+        case 0x442:
+            control = dialog->NameLabelWindow;
+            break;
+        case 0x470:
+            control = dialog->TypeCombo;
+            break;
+        case 0x480:
+            control = dialog->NameEdit;
+            break;
+        case 0x410:
+            control = dialog->ReadOnlyBox;
+            break;
+        }
+        if (control) {
+            if (message == CDM_SETCONTROLTEXT)
+                SetWindowTextW(control, (LPCWSTR)lparam);
+            else
+                ShowWindow(control, SW_HIDE);
+        }
+        return TRUE;
+    }
+    case CDM_SETDEFEXT:
+        FdSetDefaultExtension(dialog, (LPCWSTR)lparam);
+        return TRUE;
     case WM_FD_CLOSE:
         end_dialog(dialog, dialog->Result, IDABORT);
         return TRUE;
