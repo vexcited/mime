@@ -2,6 +2,7 @@
  * handle tables and handle based object services.
  */
 #include "../ntos.h"
+#include "../se/se.h"
 
 #define KERNEL_HANDLE_BIT 0xFFFFFFFF80000000ull
 #define OBJ_PROTECT_CLOSE 0x00000001 /* the handle attribute SetHandleInformation's HANDLE_FLAG_PROTECT_FROM_CLOSE sets */
@@ -168,6 +169,19 @@ NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *li
 /* consumes the caller's pointer reference to object. */
 NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
+    /* the system access right is the security privilege's to give, as the open of a file or key asks it. */
+    if ((access & ACCESS_SYSTEM_SECURITY) && KeGetPreviousMode() == UserMode &&
+        !SepSinglePrivilegeCheck(SE_SECURITY_PRIVILEGE, UserMode)) {
+        ObDereferenceObject(object);
+        return STATUS_PRIVILEGE_NOT_HELD;
+    }
+    if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_SD_PENDING) {
+        NTSTATUS status = ObAssignSecurity(object, nullptr, nullptr, KernelMode);
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(object);
+            return status;
+        }
+    }
     PEPROCESS process = PsCurrentProcess();
     if ((attributes & OBJ_KERNEL_HANDLE) || (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_KERNEL))
         process = PsInitialSystemProcess, attributes |= OBJ_KERNEL_HANDLE;
@@ -184,8 +198,14 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
     ULONG attrs = attributes ? attributes->Attributes : 0;
     if (mode == UserMode)
         attrs &= ~OBJ_KERNEL_HANDLE;
-    if (!attributes || !attributes->ObjectName || !attributes->ObjectName->Length)
+    if (!attributes || !attributes->ObjectName || !attributes->ObjectName->Length) {
+        NTSTATUS status = ObAssignSecurity(object, attributes, nullptr, mode);
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(object);
+            return status;
+        }
         return ObInsertObject(object, access, attrs, handle);
+    }
 
     UNICODE_STRING name = *attributes->ObjectName;
     POBJECT_DIRECTORY parent = nullptr;
@@ -222,7 +242,9 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         leaf.Length = leaf.MaximumLength = (USHORT)((len - slash) * 2);
     }
 
-    status = ObInsertIntoDirectory(parent, object, &leaf);
+    status = ObAssignSecurity(object, attributes, parent, mode);
+    if (NT_SUCCESS(status))
+        status = ObInsertIntoDirectory(parent, object, &leaf);
     if (status == STATUS_OBJECT_NAME_COLLISION && (attrs & OBJ_OPENIF)) {
         PVOID existing;
         UNICODE_STRING full = name;

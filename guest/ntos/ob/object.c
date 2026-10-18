@@ -46,7 +46,7 @@ NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCE
     h->HandleCount = 0;
     h->Type = type;
     h->Directory = nullptr;
-    h->Flags = 0;
+    h->Flags = OB_FLAG_SD_PENDING;
     if (attributes) {
         if (attributes->Attributes & OBJ_PERMANENT)
             h->Flags |= OB_FLAG_PERMANENT;
@@ -480,10 +480,13 @@ void ObInitialize(void)
     ObpInitializeSecurity();
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = DIRECTORY_ALL_ACCESS;
+    ObSetGenericMapping(&init, 0x20000, 0x20000, 0x20000, 0xF0001);
     ObTypeType = ObCreateObjectType(L"Type", &init);
+    ObSetGenericMapping(&init, 0x20003, 0x2000C, 0x20003, 0xF000F);
     ObDirectoryType = ObCreateObjectType(L"Directory", &init);
     init.ValidAccessMask = SYMBOLIC_LINK_ALL_ACCESS;
     init.DeleteProcedure = symlink_delete;
+    ObSetGenericMapping(&init, 0x20001, 0x20000, 0x20001, 0xF0001);
     ObSymbolicLinkType = ObCreateObjectType(L"SymbolicLink", &init);
 
     ObCreateObject(ObDirectoryType, nullptr, KernelMode, sizeof(OBJECT_DIRECTORY), (PVOID *)&ObRootDirectory);

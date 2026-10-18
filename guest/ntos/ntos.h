@@ -618,6 +618,7 @@ MIME_STATIC_ASSERT(sizeof(OBJECT_HEADER) == 64, "OBJECT_HEADER");
 
 #define OB_FLAG_PERMANENT 0x1
 #define OB_FLAG_KERNEL 0x2
+#define OB_FLAG_SD_PENDING 0x4 /* made, no security descriptor assigned yet */
 
 #define OBJECT_TO_HEADER(o) ((OBJECT_HEADER *)((PUCHAR)(o) - sizeof(OBJECT_HEADER)))
 #define HEADER_TO_OBJECT(h) ((PVOID)((PUCHAR)(h) + sizeof(OBJECT_HEADER)))
@@ -659,6 +660,64 @@ extern POBJECT_DIRECTORY ObRootDirectory;
 void ObInitialize(void);
 void ObpInitializeSecurity(void);
 void ObpFreeSecurity(PVOID header);
+
+/*
+ * security descriptors the kernel keeps, always self relative and shared by reference count: the parts an object
+ * has, the stored one of a file or key, the default of a token. A blob is never changed once made.
+ */
+typedef struct _SD_BLOB {
+    volatile LONG Refs;
+    ULONG Length;
+    UCHAR Data[1];
+} SD_BLOB;
+
+#define SD_MAX_LENGTH 0x10000
+#define ACCESS_SYSTEM_SECURITY 0x01000000
+
+/* a right the descriptor of an object grants for the generic ones, read, write, execute and all. */
+typedef const ULONG *SD_MAPPING;
+
+SD_BLOB *SeSdAllocate(ULONG length);
+SD_BLOB *SeSdReference(SD_BLOB *sd);
+void SeSdDereference(SD_BLOB *sd);
+/* the blob of a descriptor of the caller, absolute or self relative, checked; STATUS_INVALID_SECURITY_DESCR. */
+NTSTATUS SeSdCapture(const void *descriptor, KPROCESSOR_MODE mode, SD_BLOB **out);
+/* a blob made of the bytes of a self relative descriptor, which must be valid. */
+NTSTATUS SeSdFromBytes(const void *descriptor, ULONG length, SD_BLOB **out);
+/* what a new object of the calling thread gets from its parent and its creator, both optional. */
+NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
+                    KPROCESSOR_MODE mode, SD_BLOB **out);
+/* the same with nothing from the creator or the parent, for a thread acting as one token: cached. */
+NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
+/* what an object nobody gave a descriptor gets: the system and the administrators own it. */
+NTSTATUS SeSdSystemDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
+/* a descriptor changed by the parts of the information; the checks of the kernel for a caller in user mode. */
+NTSTATUS SeSdSet(ULONG information, const SD_BLOB *modification, const SD_BLOB *old, SD_MAPPING mapping,
+                 KPROCESSOR_MODE mode, SD_BLOB **out);
+/* the parts of the information in the layout of NtQuerySecurityObject; *length is the room, then what is needed. */
+NTSTATUS SeSdQuery(ULONG information, const SD_BLOB *sd, PVOID buffer, PULONG length);
+/* the rights a handle needs to read or change the parts of the information. */
+ACCESS_MASK SeSdReadRights(ULONG information);
+ACCESS_MASK SeSdWriteRights(ULONG information);
+
+/* a descriptor from its parts, for the defaults of the kernel; the ace specs are allow aces of the sids. */
+typedef struct _SD_ACE {
+    UCHAR Flags;
+    ULONG Mask;
+    const UCHAR *Sid;
+} SD_ACE;
+NTSTATUS SeSdBuild(const UCHAR *owner, const UCHAR *group, USHORT control, const SD_ACE *dacl, ULONG dacl_count,
+                   SD_BLOB **out);
+/* the well known sids, 12 to 28 bytes each. */
+extern const UCHAR SeSidSystem[12], SeSidAdministrators[16], SeSidUsers[16], SeSidEveryone[12],
+    SeSidAuthenticatedUsers[12], SeSidCreatorOwner[12], SeSidTrustedInstaller[32], SeSidAllAppPackages[16],
+    SeSidRestrictedPackages[16];
+
+/* stores the descriptor of a new object, from the attributes of its creation and the directory it joins. */
+NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode);
+/* the descriptor of an object, whole, in a blob of its own (the object's or its file system's). */
+NTSTATUS ObReferenceSecurity(PVOID object, SD_BLOB **sd);
+NTSTATUS ObStoreSecurity(PVOID object, SD_BLOB *sd);
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
 NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child);
 NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG count);

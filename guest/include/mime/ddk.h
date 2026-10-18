@@ -344,6 +344,7 @@ typedef struct _IO_SECURITY_CONTEXT {
     PVOID AccessState;
     ACCESS_MASK DesiredAccess;
     ULONG FullCreateOptions;
+    PVOID SecurityDescriptor; /* Mime: the descriptor the creator offered, a self relative copy in pool, or NULL */
 } IO_SECURITY_CONTEXT, *PIO_SECURITY_CONTEXT;
 
 typedef struct _IO_STACK_LOCATION {
@@ -842,7 +843,23 @@ typedef struct _OBJECT_TYPE_INITIALIZER {
     NTSTATUS (*ParseProcedure)(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete_name,
                                PUNICODE_STRING remaining, PVOID context, PVOID *found);
     PVOID (*WaitObject)(PVOID object); /* dispatcher object to wait on, if not the body itself */
+    /* the generic rights as read, write, execute and all; objects of a type that has the last get a security descriptor */
+    ULONG GenericMapping[4];
+    /*
+     * objects whose descriptor is kept by their file system or the registry: the whole descriptor as a referenced
+     * blob, NULL for none, and a new whole one to store. Mime's SD_BLOB, see ntos.h.
+     */
+    NTSTATUS (*GetSecurity)(PVOID object, PVOID *blob);
+    NTSTATUS (*PutSecurity)(PVOID object, PVOID blob);
 } OBJECT_TYPE_INITIALIZER;
+
+static inline void ObSetGenericMapping(OBJECT_TYPE_INITIALIZER *init, ULONG read, ULONG write, ULONG execute, ULONG all)
+{
+    init->GenericMapping[0] = read;
+    init->GenericMapping[1] = write;
+    init->GenericMapping[2] = execute;
+    init->GenericMapping[3] = all;
+}
 
 NTKERNELAPI POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init);
 NTKERNELAPI NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ULONG body_size,

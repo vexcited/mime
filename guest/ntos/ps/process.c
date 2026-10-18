@@ -626,10 +626,12 @@ void PsInitialize(void)
     init.ValidAccessMask = PROCESS_ALL_ACCESS;
     init.DeleteProcedure = process_delete;
     init.WaitObject = process_wait_object;
+    ObSetGenericMapping(&init, 0x20410, 0x20BEA, 0x121001, 0x1FFFFF);
     PsProcessTypeObject = ObCreateObjectType(L"Process", &init);
     init.ValidAccessMask = THREAD_ALL_ACCESS;
     init.DeleteProcedure = PspThreadDelete;
     init.WaitObject = thread_wait_object;
+    ObSetGenericMapping(&init, 0x20048, 0x20437, 0x121800, 0x1FFFFF);
     PsThreadTypeObject = ObCreateObjectType(L"Thread", &init);
     PspInitializeJobs();
 

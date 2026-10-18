@@ -187,6 +187,7 @@ void PspInitializeJobs(void)
     init.ValidAccessMask = JOB_OBJECT_ALL_ACCESS;
     init.CloseProcedure = job_close;
     init.DeleteProcedure = job_delete;
+    ObSetGenericMapping(&init, 0x20004, 0x2000B, 0x120000, 0x1F003F);
     PsJobType = ObCreateObjectType(L"Job", &init);
 }
 

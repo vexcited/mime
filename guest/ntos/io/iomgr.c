@@ -526,6 +526,7 @@ void IoInitialize(void)
     init.CloseProcedure = file_close;
     init.DeleteProcedure = file_delete;
     init.WaitObject = file_wait_object;
+    ObSetGenericMapping(&init, 0x120089, 0x120116, 0x1200A0, 0x1F01FF);
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
     IopInitializeCompletion();
     IopInitializeNamedPipes();

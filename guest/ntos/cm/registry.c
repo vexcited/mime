@@ -1085,6 +1085,7 @@ void CmInitSystem1(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;
+    ObSetGenericMapping(&init, 0x20019, 0x20006, 0x20019, 0xF003F);
     CmKeyType = ObCreateObjectType(L"Key", &init);
 
     static const WCHAR registry[] = L"REGISTRY";

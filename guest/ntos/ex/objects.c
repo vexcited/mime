@@ -128,13 +128,17 @@ void ExInitialize(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.Waitable = TRUE;
     init.ValidAccessMask = EVENT_ALL_ACCESS;
+    ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     ExEventType = ObCreateObjectType(L"Event", &init);
     init.ValidAccessMask = MUTANT_ALL_ACCESS;
+    ObSetGenericMapping(&init, 0x20001, 0x20000, 0x120000, 0x1F0001);
     ExMutantType = ObCreateObjectType(L"Mutant", &init);
     init.ValidAccessMask = SEMAPHORE_ALL_ACCESS;
+    ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     ExSemaphoreType = ObCreateObjectType(L"Semaphore", &init);
     init.ValidAccessMask = TIMER_ALL_ACCESS;
     init.DeleteProcedure = timer_delete;
+    ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     ExTimerType = ObCreateObjectType(L"Timer", &init);
     MiInitializeSections();
 }

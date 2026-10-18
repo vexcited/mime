@@ -103,9 +103,11 @@ static void types(void)
         return;
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = STANDARD_RIGHTS_REQUIRED | WINSTA_ALL_ACCESS;
+    ObSetGenericMapping(&init, 0x20303, 0x2001C, 0x20060, 0xF037F);
     g_winsta_type = ObCreateObjectType(L"WindowStation", &init);
     init.ValidAccessMask = STANDARD_RIGHTS_REQUIRED | DESKTOP_ALL_ACCESS;
     init.DeleteProcedure = delete_desktop;
+    ObSetGenericMapping(&init, 0x20041, 0x200BE, 0x20100, 0xF01FF);
     g_desktop_type = ObCreateObjectType(L"Desktop", &init);
 }
 

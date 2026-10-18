@@ -9,8 +9,6 @@
 
 #include "../ntos.h"
 
-typedef PVOID PSID;
-typedef PVOID PACL;
 
 #define SEP_SID_MAX 68 /* 8 bytes and 15 sub authorities */
 #define SEP_MAX_GROUPS 0x1000

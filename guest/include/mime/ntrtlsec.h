@@ -304,6 +304,24 @@ NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relati
 #define PROCESS_TRUST_LABEL_SECURITY_INFORMATION 0x00000080
 #define ACCESS_FILTER_SECURITY_INFORMATION 0x00000100
 
+/*
+ * the owner, primary group and default dacl of the token a new object is made for, asked for only when the
+ * descriptor of the creator and the parent leave them open. The values stay valid for the call.
+ */
+#define MIME_SEC_OWNER 0
+#define MIME_SEC_GROUP 1
+#define MIME_SEC_DACL 2
+typedef struct MIME_SEC_DEFAULTS {
+    NTSTATUS (*Fetch)(void *context, ULONG which, PVOID *value);
+    void *Context;
+} MIME_SEC_DEFAULTS;
+
+/* the aces of the sacl of the kinds the information selects, or just their size when there is no destination. */
+ULONG MimeSecFilterSacl(const ACL *sacl, PACL out, ULONG information);
+NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *object,
+                          const GUID **types, ULONG type_count, BOOLEAN container, ULONG flags,
+                          const GENERIC_MAPPING *mapping, const MIME_SEC_DEFAULTS *defaults);
+
 NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
                                              PSECURITY_DESCRIPTOR *object, BOOLEAN container, HANDLE token,
                                              const GENERIC_MAPPING *mapping);

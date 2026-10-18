@@ -855,6 +855,7 @@ void SepInitialize(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = TOKEN_ALL_ACCESS;
     init.DeleteProcedure = token_delete;
+    ObSetGenericMapping(&init, 0x2001A, 0x201E0, 0x20005, 0xF01FF);
     SeTokenObjectType = ObCreateObjectType(L"Token", &init);
 
     g_system_token = make_system_token();

@@ -1130,5 +1130,6 @@ void MiInitializeSections(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = SECTION_ALL_ACCESS;
     init.DeleteProcedure = section_delete;
+    ObSetGenericMapping(&init, 0x20005, 0x20002, 0x20008, 0xF001F);
     MmSectionType = ObCreateObjectType(L"Section", &init);
 }

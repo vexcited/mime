@@ -49,6 +49,7 @@ void IopInitializeCompletion(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = IO_COMPLETION_ALL_ACCESS;
     init.DeleteProcedure = completion_delete;
+    ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     IoCompletionObjectType = ObCreateObjectType(L"IoCompletion", &init);
 }
 
