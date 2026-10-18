@@ -259,6 +259,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     cryptui:0x7FF1A0000000 ndfapi:0x7FF190000000 winusb:0x7FF180000000 bthprops:0x7FF170000000
     dhcpcsvc:0x7FF160000000 esent:0x7FF150000000 uiautomationcore:0x7FF140000000
     riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
+    dcomp:0x7FF030000000
     mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -324,6 +325,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
+    # dcomp draws with shaders assembled at build time.
+    set(includes_dcomp ${MIME_SHADERS_GEN})
+    set(depends_dcomp mime-gen-shaders)
     foreach(entry IN LISTS MIME_EXTRA_DLLS)
         string(REPLACE ":" ";" entry ${entry})
         list(GET entry 0 name)
@@ -336,7 +340,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         endif()
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}
-            INCLUDES ${includes_${name}} IMPORTS ntdll kernel32 user32 gdi32 win32u LIBS ${libs_${name}})
+            INCLUDES ${includes_${name}} IMPORTS ntdll kernel32 user32 gdi32 win32u LIBS ${libs_${name}}
+            DEPENDS ${depends_${name}})
     endforeach()
 endforeach()
 

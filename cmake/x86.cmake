@@ -115,7 +115,7 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
         IMPORTS ntdll kernel32 win32u user32 DEPENDS mime-gen-vulkan)
     list(APPEND MIME_X86_DLLS dxgi:0x52000000:all_five d3d11:0x50000000:all_five d3dcompiler_47:0x4F000000:all_five
         d3d10core:0x4E000000:base d3d10_1core:0x4D000000:base d3d10:0x4C000000:all_five d3d10_1:0x4B000000:all_five
-        d3d12:0x4A000000:all_five d3d9:0x49000000:all_five)
+        d3d12:0x4A000000:all_five d3d9:0x49000000:all_five dcomp:0x13000000:all_five)
     set(objects_dxgi x86-lib-privdata)
     set(objects_d3d11 x86-lib-privdata x86-lib-dxbc)
     set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
@@ -127,6 +127,9 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
+    # dcomp draws with shaders assembled at build time.
+    set(includes_dcomp ${MIME_SHADERS_GEN})
+    set(depends_dcomp mime-gen-shaders)
 endif()
 
 foreach(entry IN LISTS MIME_X86_DLLS)
@@ -136,7 +139,7 @@ foreach(entry IN LISTS MIME_X86_DLLS)
     list(GET entry 2 imports)
     mime_sources(sources ${name} x86)
     mime_dll(${name} x86 BASE ${address} SOURCES ${sources} OBJECTS x86-chkstk ${objects_${name}}
-        INCLUDES ${includes_${name}} IMPORTS ${${imports}})
+        INCLUDES ${includes_${name}} IMPORTS ${${imports}} DEPENDS ${depends_${name}})
 endforeach()
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
