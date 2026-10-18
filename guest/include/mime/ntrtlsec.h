@@ -167,6 +167,9 @@ typedef struct _SECURITY_DESCRIPTOR_RELATIVE {
 #define DACL_SECURITY_INFORMATION 0x00000004
 #define SACL_SECURITY_INFORMATION 0x00000008
 
+#define STATUS_BAD_INHERITANCE_ACL ((NTSTATUS)0xC000007DL)
+#define STATUS_INVALID_OWNER ((NTSTATUS)0xC000005AL)
+#define STATUS_INVALID_PRIMARY_GROUP ((NTSTATUS)0xC000005BL)
 #define STATUS_UNKNOWN_REVISION ((NTSTATUS)0xC0000058L)
 #define STATUS_REVISION_MISMATCH ((NTSTATUS)0xC0000059L)
 #define STATUS_INVALID_ACL ((NTSTATUS)0xC0000077L)
@@ -193,7 +196,7 @@ NTSYSAPI BOOLEAN NTAPI RtlEqualSid(PSID a, PSID b);
 NTSYSAPI BOOLEAN NTAPI RtlEqualPrefixSid(PSID a, PSID b);
 NTSYSAPI NTSTATUS NTAPI RtlCopySid(ULONG length, PSID dst, PSID src);
 NTSYSAPI NTSTATUS NTAPI RtlInitializeSid(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, UCHAR count);
-NTSYSAPI NTSTATUS RtlInitializeSidEx(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, UCHAR count, ...);
+NTSYSAPI NTSTATUS RtlInitializeSidEx(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, ULONG count, ...);
 NTSYSAPI NTSTATUS NTAPI RtlAllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY authority, UCHAR count, ULONG s0,
                                                     ULONG s1, ULONG s2, ULONG s3, ULONG s4, ULONG s5, ULONG s6,
                                                     ULONG s7, PSID *sid);
@@ -249,6 +252,8 @@ NTSYSAPI NTSTATUS NTAPI RtlAddProcessTrustLabelAce(PACL acl, ULONG revision, ULO
 NTSYSAPI NTSTATUS NTAPI RtlAddAccessFilterAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
                                               ACCESS_MASK mask, PVOID condition, USHORT condition_length);
 NTSYSAPI VOID NTAPI RtlMapGenericMask(PACCESS_MASK mask, const GENERIC_MAPPING *mapping);
+NTSYSAPI BOOLEAN NTAPI RtlAreAllAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired);
+NTSYSAPI BOOLEAN NTAPI RtlAreAnyAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired);
 
 /* security descriptors */
 NTSYSAPI NTSTATUS NTAPI RtlCreateSecurityDescriptor(PSECURITY_DESCRIPTOR sd, ULONG revision);
@@ -284,5 +289,42 @@ NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR relativ
                                                     PULONG sacl_size, PSID owner, PULONG owner_size, PSID group,
                                                     PULONG group_size);
 NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relative, PULONG size);
+
+/* private object security. */
+#define SEF_DACL_AUTO_INHERIT 0x01
+#define SEF_SACL_AUTO_INHERIT 0x02
+#define SEF_DEFAULT_DESCRIPTOR_FOR_OBJECT 0x04
+#define SEF_AVOID_PRIVILEGE_CHECK 0x08
+#define SEF_AVOID_OWNER_CHECK 0x10
+#define SEF_DEFAULT_OWNER_FROM_PARENT 0x20
+#define SEF_DEFAULT_GROUP_FROM_PARENT 0x40
+#define LABEL_SECURITY_INFORMATION 0x00000010
+#define ATTRIBUTE_SECURITY_INFORMATION 0x00000020
+#define SCOPE_SECURITY_INFORMATION 0x00000040
+#define PROCESS_TRUST_LABEL_SECURITY_INFORMATION 0x00000080
+#define ACCESS_FILTER_SECURITY_INFORMATION 0x00000100
+
+NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
+                                             PSECURITY_DESCRIPTOR *object, BOOLEAN container, HANDLE token,
+                                             const GENERIC_MAPPING *mapping);
+NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObjectEx(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
+                                               PSECURITY_DESCRIPTOR *object, const GUID *type, BOOLEAN container,
+                                               ULONG flags, HANDLE token, const GENERIC_MAPPING *mapping);
+NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObjectWithMultipleInheritance(
+    PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *object, const GUID **types,
+    ULONG type_count, BOOLEAN container, ULONG flags, HANDLE token, const GENERIC_MAPPING *mapping);
+NTSYSAPI NTSTATUS NTAPI RtlDeleteSecurityObject(PSECURITY_DESCRIPTOR *object);
+NTSYSAPI NTSTATUS NTAPI RtlQuerySecurityObject(PSECURITY_DESCRIPTOR object, SECURITY_INFORMATION information,
+                                               PSECURITY_DESCRIPTOR result, ULONG length, PULONG needed);
+NTSYSAPI NTSTATUS NTAPI RtlSetSecurityObject(SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR modification,
+                                             PSECURITY_DESCRIPTOR *object, const GENERIC_MAPPING *mapping,
+                                             HANDLE token);
+NTSYSAPI NTSTATUS NTAPI RtlSetSecurityObjectEx(SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR modification,
+                                               PSECURITY_DESCRIPTOR *object, ULONG flags,
+                                               const GENERIC_MAPPING *mapping, HANDLE token);
+NTSYSAPI NTSTATUS NTAPI RtlConvertToAutoInheritSecurityObject(PSECURITY_DESCRIPTOR parent,
+                                                              PSECURITY_DESCRIPTOR current,
+                                                              PSECURITY_DESCRIPTOR *result, const GUID *type,
+                                                              BOOLEAN container, const GENERIC_MAPPING *mapping);
 
 #endif

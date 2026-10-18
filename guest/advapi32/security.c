@@ -107,10 +107,40 @@ static BOOL identity_matches(const IDENTITY *id, const SID *sid, BOOL deny)
     return FALSE;
 }
 
-/* walks the dacl in order: each bit is decided by the first allow or deny ace that mentions it. */
-static void evaluate_dacl(const ACL *dacl, const IDENTITY *id, const GENERIC_MAPPING *mapping, ACCESS_MASK *allowed,
-                          ACCESS_MASK *denied)
+/* a node of an object type tree. */
+typedef struct OBJECT_TYPE_LIST {
+    WORD Level;
+    WORD Sbz;
+    GUID *ObjectType;
+} OBJECT_TYPE_LIST;
+
+#define ACCESS_MAX_LEVEL 4
+
+/* PRINCIPAL_SELF stands for the sid the caller names in the aces that hold it. */
+static const SID *ace_sid(const SID *sid, const SID *self)
 {
+    static const BYTE principal_self[12] = {1, 1, 0, 0, 0, 0, 0, 5, 10, 0, 0, 0};
+    return self && AdvSidEqual(sid, (const SID *)principal_self) ? self : sid;
+}
+
+/* the last node below the one at index, in the order the list is given. */
+static DWORD subtree_end(const OBJECT_TYPE_LIST *list, DWORD count, DWORD index)
+{
+    DWORD end = index + 1;
+    while (end < count && list[end].Level > list[index].Level)
+        end++;
+    return end;
+}
+
+/*
+ * the user mode version of SeAccessCheck, for kernels without NtAccessCheck. every node of the object type
+ * tree has its own granted and denied bits: an ace for a type reaches its subtree, and a deny also reaches the
+ * nodes above, since the whole is not usable when a part of it is forbidden. without a tree there is one node.
+ */
+static void evaluate_tree(const ACL *dacl, const IDENTITY *id, const GENERIC_MAPPING *mapping, const SID *self,
+                          const OBJECT_TYPE_LIST *list, DWORD count, ACCESS_MASK *allowed, ACCESS_MASK *denied)
+{
+    DWORD nodes = count ? count : 1;
     for (DWORD i = 0; i < dacl->AceCount; i++) {
         const ACCESS_ALLOWED_ACE *ace = (const ACCESS_ALLOWED_ACE *)ace_at(dacl, i);
         if (!ace)
@@ -118,25 +148,77 @@ static void evaluate_dacl(const ACL *dacl, const IDENTITY *id, const GENERIC_MAP
         if (ace->Header.AceFlags & INHERIT_ONLY_ACE)
             continue;
         BYTE type = ace->Header.AceType;
-        if (type != ACCESS_ALLOWED_ACE_TYPE && type != ACCESS_DENIED_ACE_TYPE)
+        const SID *sid;
+        DWORD first = 0, last = nodes, ancestors = 0;
+        if (type == ACCESS_ALLOWED_ACE_TYPE || type == ACCESS_DENIED_ACE_TYPE) {
+            if (ace->Header.AceSize < offsetof(ACCESS_ALLOWED_ACE, SidStart) + 8)
+                continue;
+            sid = (const SID *)&ace->SidStart;
+        } else if (type == ACCESS_ALLOWED_OBJECT_ACE_TYPE || type == ACCESS_DENIED_OBJECT_ACE_TYPE) {
+            const BYTE *raw = (const BYTE *)ace;
+            DWORD flags = *(const DWORD *)(raw + 8);
+            DWORD offset = 12 + 16 * (flags & 1) + 16 * ((flags >> 1) & 1);
+            if (ace->Header.AceSize < offset + 8)
+                continue;
+            sid = (const SID *)(raw + offset);
+            if (flags & 1) {
+                /* an ace for a type needs the node of that type. */
+                const GUID *guid = (const GUID *)(raw + 12);
+                DWORD node = 0;
+                while (node < count && memcmp(list[node].ObjectType, guid, sizeof(GUID)) != 0)
+                    node++;
+                if (node == count)
+                    continue;
+                first = node;
+                last = subtree_end(list, count, node);
+                ancestors = node;
+            }
+        } else {
             continue;
-        if (ace->Header.AceSize < offsetof(ACCESS_ALLOWED_ACE, SidStart) + 8)
-            continue;
+        }
         DWORD mask = ace->Mask;
         if (mapping)
             MapGenericMask(&mask, (PGENERIC_MAPPING)mapping);
-        if (!identity_matches(id, (const SID *)&ace->SidStart, type == ACCESS_DENIED_ACE_TYPE))
+        if (!identity_matches(id, ace_sid(sid, self), type == ACCESS_DENIED_ACE_TYPE ||
+                                                           type == ACCESS_DENIED_OBJECT_ACE_TYPE))
             continue;
-        if (type == ACCESS_ALLOWED_ACE_TYPE)
-            *allowed |= mask & ~*denied;
-        else
-            *denied |= mask & ~*allowed;
+        if (type == ACCESS_ALLOWED_ACE_TYPE || type == ACCESS_ALLOWED_OBJECT_ACE_TYPE) {
+            for (DWORD n = first; n < last; n++)
+                allowed[n] |= mask & ~denied[n];
+        } else {
+            for (DWORD n = first; n < last; n++)
+                denied[n] |= mask & ~allowed[n];
+            /* the nodes above, the ones whose subtree holds the denied one. */
+            DWORD level = first < count ? list[first].Level : 0;
+            for (DWORD n = ancestors; n > 0 && level > 0; n--) {
+                if (list[n - 1].Level < level) {
+                    denied[n - 1] |= mask & ~allowed[n - 1];
+                    level = list[n - 1].Level;
+                }
+            }
+        }
     }
 }
 
-/* the user mode version of SeAccessCheck, for kernels without NtAccessCheck. */
-static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERIC_MAPPING mapping, LPDWORD granted,
-                         LPBOOL status)
+/* the tree has to start at level zero and go down one level at a time, with a type for each node. */
+static BOOL object_types_valid(const OBJECT_TYPE_LIST *list, DWORD count)
+{
+    if (list[0].Level != 0)
+        return FALSE;
+    for (DWORD i = 0; i < count; i++) {
+        if (!list[i].ObjectType || list[i].Level > ACCESS_MAX_LEVEL || (i && list[i].Level > list[i - 1].Level + 1) ||
+            (i && list[i].Level == 0))
+            return FALSE;
+        for (DWORD j = 0; j < i; j++)
+            if (memcmp(list[i].ObjectType, list[j].ObjectType, sizeof(GUID)) == 0)
+                return FALSE;
+    }
+    return TRUE;
+}
+
+/* the check of every node. results[i] is the granted access, or zero when the node was refused. */
+static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERIC_MAPPING mapping, const SID *self,
+                         const OBJECT_TYPE_LIST *list, DWORD count, DWORD *results, BOOL *statuses)
 {
     IDENTITY id = {AdvQueryTokenUser(token), AdvQueryTokenGroups(token), nullptr};
     if (!id.User || !id.Groups) {
@@ -145,24 +227,70 @@ static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERI
         AdvSetError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
-    ACCESS_MASK wanted = desired & ~MAXIMUM_ALLOWED, allowed = 0, denied = 0;
+    DWORD nodes = count ? count : 1;
+    ACCESS_MASK stack[16];
+    ACCESS_MASK *masks = nodes <= 8 ? stack : AdvAlloc(nodes * 2 * sizeof(ACCESS_MASK));
+    if (!masks) {
+        AdvFree(id.User);
+        AdvFree(id.Groups);
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    ACCESS_MASK *allowed = masks, *denied = masks + nodes;
+    memset(masks, 0, nodes * 2 * sizeof(ACCESS_MASK));
+    ACCESS_MASK wanted = desired & ~MAXIMUM_ALLOWED;
     if (!(p->Control & SE_DACL_PRESENT) || !p->Dacl) {
-        allowed = mapping->GenericAll | (desired & ~(MAXIMUM_ALLOWED | ACCESS_SYSTEM_SECURITY));
+        for (DWORD n = 0; n < nodes; n++)
+            allowed[n] = mapping->GenericAll | (desired & ~(MAXIMUM_ALLOWED | ACCESS_SYSTEM_SECURITY));
     } else {
         /* the owner may always read and change the dacl. */
         if (p->Owner && identity_matches(&id, p->Owner, FALSE))
-            allowed |= READ_CONTROL | WRITE_DAC;
-        evaluate_dacl(p->Dacl, &id, mapping, &allowed, &denied);
+            for (DWORD n = 0; n < nodes; n++)
+                allowed[n] = READ_CONTROL | WRITE_DAC;
+        evaluate_tree(p->Dacl, &id, mapping, self, list, count, allowed, denied);
     }
     AdvFree(id.User);
     AdvFree(id.Groups);
-    allowed &= ~ACCESS_SYSTEM_SECURITY; /* needs SeSecurityPrivilege, which the user does not hold */
-    ACCESS_MASK result = desired & MAXIMUM_ALLOWED ? allowed | wanted : wanted;
-    BOOL ok = (wanted & ~allowed) == 0 && result != 0;
-    *granted = ok ? (desired & MAXIMUM_ALLOWED ? allowed : wanted) : 0;
-    *status = ok;
-    if (!ok)
-        AdvSetError(ERROR_ACCESS_DENIED);
+    for (DWORD n = 0; n < nodes; n++) {
+        ACCESS_MASK granted = allowed[n] & ~ACCESS_SYSTEM_SECURITY; /* needs SeSecurityPrivilege */
+        ACCESS_MASK result = desired & MAXIMUM_ALLOWED ? granted | wanted : wanted;
+        BOOL ok = (wanted & ~granted) == 0 && result != 0;
+        results[n] = ok ? (desired & MAXIMUM_ALLOWED ? granted : wanted) : 0;
+        statuses[n] = ok;
+    }
+    if (masks != stack)
+        AdvFree(masks);
+    return TRUE;
+}
+
+/* what the access check functions share before they look at the descriptor. */
+static BOOL check_arguments(PSECURITY_DESCRIPTOR sd, DWORD desired, PGENERIC_MAPPING mapping, PPRIVILEGE_SET privileges,
+                            LPDWORD privileges_length, const OBJECT_TYPE_LIST *list, DWORD count, SD_PARTS *p)
+{
+    if (!sd_parts(sd, p) || !p->Owner || !p->Group) {
+        AdvSetError(ERROR_INVALID_SECURITY_DESCR);
+        return FALSE;
+    }
+    if (*privileges_length < sizeof(PRIVILEGE_SET)) {
+        *privileges_length = sizeof(PRIVILEGE_SET);
+        AdvSetError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    if (desired & GENERIC_BITS) {
+        AdvSetError(ERROR_GENERIC_NOT_MAPPED);
+        return FALSE;
+    }
+    if (!privileges) {
+        AdvSetError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    if (count && (!list || !object_types_valid(list, count))) {
+        AdvSetError(list ? ERROR_INVALID_PARAMETER : ERROR_NOACCESS);
+        return FALSE;
+    }
+    privileges->PrivilegeCount = 0;
+    privileges->Control = 0;
+    *privileges_length = sizeof(PRIVILEGE_SET);
     return TRUE;
 }
 
@@ -184,32 +312,84 @@ ADVAPI BOOL WINAPI AccessCheck(PSECURITY_DESCRIPTOR sd, HANDLE token, DWORD desi
         return TRUE;
     }
     SD_PARTS p;
-    if (!sd_parts(sd, &p) || !p.Owner || !p.Group) {
-        AdvSetError(ERROR_INVALID_SECURITY_DESCR);
+    if (!check_arguments(sd, desired, mapping, privileges, privileges_length, nullptr, 0, &p))
         return FALSE;
-    }
-    if (*privileges_length < sizeof(PRIVILEGE_SET)) {
-        *privileges_length = sizeof(PRIVILEGE_SET);
-        AdvSetError(ERROR_INSUFFICIENT_BUFFER);
+    if (!access_check(&p, token, desired, mapping, nullptr, nullptr, 0, granted, status))
         return FALSE;
-    }
-    if (desired & GENERIC_BITS) {
-        AdvSetError(ERROR_GENERIC_NOT_MAPPED);
-        return FALSE;
-    }
-    if (!privileges) {
+    if (!*status)
+        AdvSetError(ERROR_ACCESS_DENIED);
+    return TRUE;
+}
+
+/* the root of the tree decides, which a refused part of the tree has already told. */
+ADVAPI BOOL WINAPI AccessCheckByType(PSECURITY_DESCRIPTOR sd, PSID self, HANDLE token, DWORD desired,
+                                     OBJECT_TYPE_LIST *list, DWORD count, PGENERIC_MAPPING mapping,
+                                     PPRIVILEGE_SET privileges, LPDWORD privileges_length, LPDWORD granted,
+                                     LPBOOL status)
+{
+    if (!mapping || !privileges_length || !granted || !status) {
         AdvSetError(ERROR_NOACCESS);
         return FALSE;
     }
-    privileges->PrivilegeCount = 0;
-    privileges->Control = 0;
-    *privileges_length = sizeof(PRIVILEGE_SET);
-    return access_check(&p, token, desired, mapping, granted, status);
+    SD_PARTS p;
+    if (!check_arguments(sd, desired, mapping, privileges, privileges_length, list, count, &p))
+        return FALSE;
+    DWORD node_granted[1];
+    BOOL node_status[1];
+    DWORD *results = node_granted;
+    BOOL *statuses = node_status;
+    DWORD nodes = count ? count : 1;
+    DWORD *heap = nullptr;
+    if (nodes > 1) {
+        heap = AdvAlloc(nodes * (sizeof(DWORD) + sizeof(BOOL)));
+        if (!heap) {
+            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        results = heap;
+        statuses = (BOOL *)(heap + nodes);
+    }
+    BOOL ok = access_check(&p, token, desired, mapping, self, list, count, results, statuses);
+    if (ok) {
+        *granted = results[0];
+        *status = statuses[0];
+        if (!*status)
+            AdvSetError(ERROR_ACCESS_DENIED);
+    }
+    AdvFree(heap);
+    return ok;
+}
+
+/* every node has its own access and status, the status being zero or an error code. */
+ADVAPI BOOL WINAPI AccessCheckByTypeResultList(PSECURITY_DESCRIPTOR sd, PSID self, HANDLE token, DWORD desired,
+                                               OBJECT_TYPE_LIST *list, DWORD count, PGENERIC_MAPPING mapping,
+                                               PPRIVILEGE_SET privileges, LPDWORD privileges_length,
+                                               LPDWORD granted, LPDWORD statuses)
+{
+    if (!mapping || !privileges_length || !granted || !statuses || !count) {
+        AdvSetError(count ? ERROR_NOACCESS : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SD_PARTS p;
+    if (!check_arguments(sd, desired, mapping, privileges, privileges_length, list, count, &p))
+        return FALSE;
+    BOOL *flags = AdvAlloc(count * sizeof(BOOL));
+    if (!flags) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    BOOL ok = access_check(&p, token, desired, mapping, self, list, count, granted, flags);
+    if (ok)
+        for (DWORD i = 0; i < count; i++)
+            statuses[i] = flags[i] ? ERROR_SUCCESS : ERROR_ACCESS_DENIED;
+    AdvFree(flags);
+    return ok;
 }
 
 /* ---------------------------------------------------------------- trustees */
 
-static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_MASK rights)
+/* the rights an acl gives a trustee, or the rights it audits for it when audit_failed is given. */
+static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_MASK rights, PACCESS_MASK audit_failed)
 {
     if (!trustee || !rights)
         return ERROR_INVALID_PARAMETER;
@@ -246,6 +426,9 @@ static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_M
     if (!AdvSidValid(sid))
         return ERROR_INVALID_SID;
     if (!acl) {
+        /* no audit entries, which the account lookup behind this call reports as a bad parameter. */
+        if (audit_failed)
+            return ERROR_INVALID_PARAMETER;
         *rights = STANDARD_RIGHTS_ALL | SPECIFIC_RIGHTS_ALL;
         return ERROR_SUCCESS;
     }
@@ -256,8 +439,43 @@ static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_M
         id.Groups = AdvQueryTokenGroups(nullptr);
     if (!id.Groups)
         id.Sid = sid;
+    if (audit_failed) {
+        /* every audit ace of the trustee or of a group it is in adds its mask for the outcomes it names. */
+        ACCESS_MASK successful = 0, failed = 0;
+        BOOL any = FALSE;
+        for (DWORD i = 0; i < acl->AceCount; i++) {
+            const ACCESS_ALLOWED_ACE *ace = (const ACCESS_ALLOWED_ACE *)ace_at(acl, i);
+            if (!ace)
+                break;
+            BYTE type = ace->Header.AceType;
+            const BYTE *raw = (const BYTE *)ace;
+            const SID *ace_sid_ptr;
+            if (type == SYSTEM_AUDIT_ACE_TYPE) {
+                ace_sid_ptr = (const SID *)&ace->SidStart;
+            } else if (type == SYSTEM_AUDIT_OBJECT_ACE_TYPE) {
+                DWORD flags = *(const DWORD *)(raw + 8);
+                ace_sid_ptr = (const SID *)(raw + 12 + 16 * (flags & 1) + 16 * ((flags >> 1) & 1));
+            } else {
+                continue;
+            }
+            any = TRUE;
+            if (!identity_matches(&id, ace_sid_ptr, FALSE))
+                continue;
+            if (ace->Header.AceFlags & SUCCESSFUL_ACCESS_ACE_FLAG)
+                successful |= ace->Mask;
+            if (ace->Header.AceFlags & FAILED_ACCESS_ACE_FLAG)
+                failed |= ace->Mask;
+        }
+        AdvFree(id.User);
+        AdvFree(id.Groups);
+        if (!any)
+            return ERROR_INVALID_PARAMETER;
+        *rights = successful;
+        *audit_failed = failed;
+        return ERROR_SUCCESS;
+    }
     ACCESS_MASK allowed = 0, denied = 0;
-    evaluate_dacl(acl, &id, nullptr, &allowed, &denied);
+    evaluate_tree(acl, &id, nullptr, nullptr, nullptr, 0, &allowed, &denied);
     AdvFree(id.User);
     AdvFree(id.Groups);
     *rights = allowed & ~denied;
@@ -266,12 +484,28 @@ static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_M
 
 ADVAPI DWORD WINAPI GetEffectiveRightsFromAclW(PACL acl, PTRUSTEE_W trustee, PACCESS_MASK rights)
 {
-    return effective_rights(acl, trustee, FALSE, rights);
+    return effective_rights(acl, trustee, FALSE, rights, nullptr);
 }
 
 ADVAPI DWORD WINAPI GetEffectiveRightsFromAclA(PACL acl, PTRUSTEE_W trustee, PACCESS_MASK rights)
 {
-    return effective_rights(acl, trustee, TRUE, rights);
+    return effective_rights(acl, trustee, TRUE, rights, nullptr);
+}
+
+ADVAPI DWORD WINAPI GetAuditedPermissionsFromAclW(PACL acl, PTRUSTEE_W trustee, PACCESS_MASK successful,
+                                                  PACCESS_MASK failed)
+{
+    if (!successful || !failed)
+        return ERROR_INVALID_PARAMETER;
+    return effective_rights(acl, trustee, FALSE, successful, failed);
+}
+
+ADVAPI DWORD WINAPI GetAuditedPermissionsFromAclA(PACL acl, PTRUSTEE_W trustee, PACCESS_MASK successful,
+                                                  PACCESS_MASK failed)
+{
+    if (!successful || !failed)
+        return ERROR_INVALID_PARAMETER;
+    return effective_rights(acl, trustee, TRUE, successful, failed);
 }
 
 /* ---------------------------------------------------------------- object security */

@@ -1,0 +1,281 @@
+/*
+ * private object security, the access mask helpers and the audit alarms.
+ *
+ * the first are wrappers over the rtl routines in ntdll, which keep the descriptors of a subsystem's own
+ * objects. there is no audit log, so the alarms fail the way a caller without the audit privilege does.
+ */
+#include "advapi32_private.h"
+
+#ifndef ACCESS_SYSTEM_SECURITY
+#define ACCESS_SYSTEM_SECURITY 0x01000000L
+#endif
+#ifndef READ_CONTROL
+#define READ_CONTROL 0x00020000L
+#endif
+#ifndef WRITE_DAC
+#define WRITE_DAC 0x00040000L
+#endif
+#ifndef WRITE_OWNER
+#define WRITE_OWNER 0x00080000L
+#endif
+
+#define BACKUP_SECURITY_INFORMATION 0x00010000L
+#define PROTECTED_SACL_SECURITY_INFORMATION 0x40000000L
+#define UNPROTECTED_SACL_SECURITY_INFORMATION 0x10000000L
+
+static BOOL finish(NTSTATUS status)
+{
+    if (NT_SUCCESS(status))
+        return TRUE;
+    return AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI CreatePrivateObjectSecurity(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
+                                               PSECURITY_DESCRIPTOR *object, BOOL container, HANDLE token,
+                                               PGENERIC_MAPPING mapping)
+{
+    return finish(RtlNewSecurityObject(parent, creator, object, container != 0, token, mapping));
+}
+
+ADVAPI BOOL WINAPI CreatePrivateObjectSecurityEx(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
+                                                 PSECURITY_DESCRIPTOR *object, GUID *type, BOOL container,
+                                                 ULONG flags, HANDLE token, PGENERIC_MAPPING mapping)
+{
+    return finish(RtlNewSecurityObjectEx(parent, creator, object, type, container != 0, flags, token, mapping));
+}
+
+ADVAPI BOOL WINAPI CreatePrivateObjectSecurityWithMultipleInheritance(
+    PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *object, GUID **types,
+    ULONG count, BOOL container, ULONG flags, HANDLE token, PGENERIC_MAPPING mapping)
+{
+    return finish(RtlNewSecurityObjectWithMultipleInheritance(parent, creator, object, (const GUID **)types, count,
+                                                              container != 0, flags, token, mapping));
+}
+
+ADVAPI BOOL WINAPI DestroyPrivateObjectSecurity(PSECURITY_DESCRIPTOR *object)
+{
+    return finish(RtlDeleteSecurityObject(object));
+}
+
+ADVAPI BOOL WINAPI GetPrivateObjectSecurity(PSECURITY_DESCRIPTOR object, SECURITY_INFORMATION information,
+                                            PSECURITY_DESCRIPTOR result, DWORD length, PDWORD needed)
+{
+    return finish(RtlQuerySecurityObject(object, information, result, length, needed));
+}
+
+ADVAPI BOOL WINAPI SetPrivateObjectSecurity(SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR modification,
+                                            PSECURITY_DESCRIPTOR *object, PGENERIC_MAPPING mapping, HANDLE token)
+{
+    return finish(RtlSetSecurityObject(information, modification, object, mapping, token));
+}
+
+ADVAPI BOOL WINAPI SetPrivateObjectSecurityEx(SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR modification,
+                                              PSECURITY_DESCRIPTOR *object, ULONG flags, PGENERIC_MAPPING mapping,
+                                              HANDLE token)
+{
+    return finish(RtlSetSecurityObjectEx(information, modification, object, flags, mapping, token));
+}
+
+ADVAPI BOOL WINAPI ConvertToAutoInheritPrivateObjectSecurity(PSECURITY_DESCRIPTOR parent,
+                                                             PSECURITY_DESCRIPTOR current,
+                                                             PSECURITY_DESCRIPTOR *result, GUID *type,
+                                                             BOOLEAN container, PGENERIC_MAPPING mapping)
+{
+    return finish(RtlConvertToAutoInheritSecurityObject(parent, current, result, type, container, mapping));
+}
+
+/* ---------------------------------------------------------------- access masks */
+
+ADVAPI BOOL WINAPI AreAllAccessesGranted(DWORD granted, DWORD desired)
+{
+    return RtlAreAllAccessesGranted(granted, desired);
+}
+
+ADVAPI BOOL WINAPI AreAnyAccessesGranted(DWORD granted, DWORD desired)
+{
+    return RtlAreAnyAccessesGranted(granted, desired);
+}
+
+/* the access a handle needs to read the parts of a descriptor the information names. */
+ADVAPI void WINAPI QuerySecurityAccessMask(SECURITY_INFORMATION information, LPDWORD desired)
+{
+    DWORD mask = 0;
+    if (information & BACKUP_SECURITY_INFORMATION)
+        mask = ACCESS_SYSTEM_SECURITY | READ_CONTROL;
+    if (information & (0x17 | 0x20 | 0x40 | 0x80 | 0x100))
+        mask |= READ_CONTROL;
+    if (information & 8)
+        mask |= ACCESS_SYSTEM_SECURITY;
+    *desired = mask;
+}
+
+/* and the access to change them. */
+ADVAPI void WINAPI SetSecurityAccessMask(SECURITY_INFORMATION information, LPDWORD desired)
+{
+    DWORD mask = 0;
+    if (information & BACKUP_SECURITY_INFORMATION)
+        mask = ACCESS_SYSTEM_SECURITY | WRITE_DAC | WRITE_OWNER;
+    if (information & 0x13)
+        mask |= WRITE_OWNER;
+    if (information & (4 | 0x20 | 0x80 | 0x100))
+        mask |= WRITE_DAC;
+    if (information & (8 | 0x40))
+        mask |= ACCESS_SYSTEM_SECURITY;
+    if ((information & 0x1F8) && (information & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)))
+        mask |= ACCESS_SYSTEM_SECURITY;
+    *desired = mask;
+}
+
+ADVAPI BOOL WINAPI GetKernelObjectSecurity(HANDLE handle, SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR sd,
+                                           DWORD length, LPDWORD needed)
+{
+    return finish(NtQuerySecurityObject(handle, information, sd, length, needed));
+}
+
+/* ---------------------------------------------------------------- audit alarms */
+
+/*
+ * all of them end in a system service that asks for the audit privilege first. nothing in a session holds it
+ * enabled, so they fail with ERROR_PRIVILEGE_NOT_HELD, after clearing what they report back.
+ */
+static BOOL not_held(void)
+{
+    AdvSetError(ERROR_PRIVILEGE_NOT_HELD);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI AccessCheckAndAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, LPWSTR type_name, LPWSTR name,
+                                             PSECURITY_DESCRIPTOR sd, DWORD desired, PGENERIC_MAPPING mapping,
+                                             BOOL creation, LPDWORD granted, LPBOOL status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckAndAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, LPSTR type_name, LPSTR name,
+                                             PSECURITY_DESCRIPTOR sd, DWORD desired, PGENERIC_MAPPING mapping,
+                                             BOOL creation, LPDWORD granted, LPBOOL status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckByTypeAndAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, LPCWSTR type_name,
+                                                   LPCWSTR name, PSECURITY_DESCRIPTOR sd, PSID self, DWORD desired,
+                                                   DWORD audit_type, DWORD flags, PVOID types, DWORD type_count,
+                                                   PGENERIC_MAPPING mapping, BOOL creation, LPDWORD granted,
+                                                   LPBOOL status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckByTypeAndAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, LPCSTR type_name,
+                                                   LPCSTR name, PSECURITY_DESCRIPTOR sd, PSID self, DWORD desired,
+                                                   DWORD audit_type, DWORD flags, PVOID types, DWORD type_count,
+                                                   PGENERIC_MAPPING mapping, BOOL creation, LPDWORD granted,
+                                                   LPBOOL status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckByTypeResultListAndAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, LPCWSTR type_name,
+                                                             LPCWSTR name, PSECURITY_DESCRIPTOR sd, PSID self,
+                                                             DWORD desired, DWORD audit_type, DWORD flags,
+                                                             PVOID types, DWORD type_count,
+                                                             PGENERIC_MAPPING mapping, BOOL creation,
+                                                             LPDWORD granted, LPDWORD status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckByTypeResultListAndAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, LPCSTR type_name,
+                                                             LPCSTR name, PSECURITY_DESCRIPTOR sd, PSID self,
+                                                             DWORD desired, DWORD audit_type, DWORD flags,
+                                                             PVOID types, DWORD type_count,
+                                                             PGENERIC_MAPPING mapping, BOOL creation,
+                                                             LPDWORD granted, LPDWORD status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckByTypeResultListAndAuditAlarmByHandleW(
+    LPCWSTR subsystem, LPVOID handle_id, HANDLE token, LPCWSTR type_name, LPCWSTR name, PSECURITY_DESCRIPTOR sd,
+    PSID self, DWORD desired, DWORD audit_type, DWORD flags, PVOID types, DWORD type_count,
+    PGENERIC_MAPPING mapping, BOOL creation, LPDWORD granted, LPDWORD status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI AccessCheckByTypeResultListAndAuditAlarmByHandleA(
+    LPCSTR subsystem, LPVOID handle_id, HANDLE token, LPCSTR type_name, LPCSTR name, PSECURITY_DESCRIPTOR sd,
+    PSID self, DWORD desired, DWORD audit_type, DWORD flags, PVOID types, DWORD type_count,
+    PGENERIC_MAPPING mapping, BOOL creation, LPDWORD granted, LPDWORD status, LPBOOL generate)
+{
+    *generate = FALSE;
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectOpenAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, LPWSTR type_name, LPWSTR name,
+                                         PSECURITY_DESCRIPTOR sd, HANDLE token, DWORD desired, DWORD granted,
+                                         PPRIVILEGE_SET privileges, BOOL creation, BOOL access_granted,
+                                         LPBOOL generate)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectOpenAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, LPSTR type_name, LPSTR name,
+                                         PSECURITY_DESCRIPTOR sd, HANDLE token, DWORD desired, DWORD granted,
+                                         PPRIVILEGE_SET privileges, BOOL creation, BOOL access_granted,
+                                         LPBOOL generate)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectPrivilegeAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, HANDLE token, DWORD desired,
+                                              PPRIVILEGE_SET privileges, BOOL access_granted)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectPrivilegeAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, HANDLE token, DWORD desired,
+                                              PPRIVILEGE_SET privileges, BOOL access_granted)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectCloseAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, BOOL generate)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectCloseAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, BOOL generate)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectDeleteAuditAlarmW(LPCWSTR subsystem, LPVOID handle_id, BOOL generate)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI ObjectDeleteAuditAlarmA(LPCSTR subsystem, LPVOID handle_id, BOOL generate)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI PrivilegedServiceAuditAlarmW(LPCWSTR subsystem, LPCWSTR service, HANDLE token,
+                                                PPRIVILEGE_SET privileges, BOOL access_granted)
+{
+    return not_held();
+}
+
+ADVAPI BOOL WINAPI PrivilegedServiceAuditAlarmA(LPCSTR subsystem, LPCSTR service, HANDLE token,
+                                                PPRIVILEGE_SET privileges, BOOL access_granted)
+{
+    return not_held();
+}

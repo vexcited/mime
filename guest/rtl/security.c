@@ -80,8 +80,10 @@ NTSTATUS NTAPI RtlInitializeSid(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, U
     return STATUS_SUCCESS;
 }
 
-NTSTATUS RtlInitializeSidEx(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, UCHAR count, ...)
+/* the count is a byte, but a variadic call may not name a parameter that is promoted. */
+NTSTATUS RtlInitializeSidEx(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, ULONG count_argument, ...)
 {
+    UCHAR count = (UCHAR)count_argument;
     if (count > SID_MAX_SUB_AUTHORITIES)
         return STATUS_INVALID_PARAMETER;
     SID *s = sid;
@@ -89,7 +91,7 @@ NTSTATUS RtlInitializeSidEx(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, UCHAR
     s->SubAuthorityCount = count;
     s->IdentifierAuthority = *authority;
     va_list ap;
-    va_start(ap, count);
+    va_start(ap, count_argument);
     for (UCHAR i = 0; i < count; i++)
         s->SubAuthority[i] = va_arg(ap, ULONG);
     va_end(ap);
@@ -503,6 +505,16 @@ BOOLEAN NTAPI RtlOwnerAcesPresent(PACL acl)
             return TRUE;
     }
     return FALSE;
+}
+
+BOOLEAN NTAPI RtlAreAllAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired)
+{
+    return (desired & ~granted) == 0;
+}
+
+BOOLEAN NTAPI RtlAreAnyAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired)
+{
+    return (granted & desired) != 0;
 }
 
 VOID NTAPI RtlMapGenericMask(PACCESS_MASK mask, const GENERIC_MAPPING *mapping)

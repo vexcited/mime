@@ -541,6 +541,29 @@ NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR relativ
                                                     PULONG sacl_size, PSID owner, PULONG owner_size, PSID group,
                                                     PULONG group_size);
 NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relative, PULONG size);
+NTSYSAPI BOOLEAN NTAPI RtlAreAllAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired);
+NTSYSAPI BOOLEAN NTAPI RtlAreAnyAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired);
+NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
+                                             PSECURITY_DESCRIPTOR *object, BOOLEAN container, HANDLE token,
+                                             PGENERIC_MAPPING mapping);
+NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObjectEx(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
+                                               PSECURITY_DESCRIPTOR *object, const GUID *type, BOOLEAN container,
+                                               ULONG flags, HANDLE token, PGENERIC_MAPPING mapping);
+NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObjectWithMultipleInheritance(
+    PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *object, const GUID **types,
+    ULONG type_count, BOOLEAN container, ULONG flags, HANDLE token, PGENERIC_MAPPING mapping);
+NTSYSAPI NTSTATUS NTAPI RtlDeleteSecurityObject(PSECURITY_DESCRIPTOR *object);
+NTSYSAPI NTSTATUS NTAPI RtlQuerySecurityObject(PSECURITY_DESCRIPTOR object, SECURITY_INFORMATION information,
+                                               PSECURITY_DESCRIPTOR result, ULONG length, PULONG needed);
+NTSYSAPI NTSTATUS NTAPI RtlSetSecurityObject(SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR modification,
+                                             PSECURITY_DESCRIPTOR *object, PGENERIC_MAPPING mapping, HANDLE token);
+NTSYSAPI NTSTATUS NTAPI RtlSetSecurityObjectEx(SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR modification,
+                                               PSECURITY_DESCRIPTOR *object, ULONG flags, PGENERIC_MAPPING mapping,
+                                               HANDLE token);
+NTSYSAPI NTSTATUS NTAPI RtlConvertToAutoInheritSecurityObject(PSECURITY_DESCRIPTOR parent,
+                                                              PSECURITY_DESCRIPTOR current,
+                                                              PSECURITY_DESCRIPTOR *result, const GUID *type,
+                                                              BOOLEAN container, PGENERIC_MAPPING mapping);
 
 /* ---------------------------------------------------------------- helpers */
 
