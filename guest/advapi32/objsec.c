@@ -431,7 +431,8 @@ static BOOL obj_is_container(OBJ *o)
     IO_STATUS_BLOCK io;
     if (!NT_SUCCESS(NtQueryInformationFile(o->Handle, &io, &basic, sizeof(basic), FileBasicInformation)))
         return FALSE;
-    return (basic.Attributes & FILE_ATTRIBUTE_DIRECTORY_) != 0;
+    /* a link to a directory is a leaf: what it points to is not the business of a walk over this tree. */
+    return (basic.Attributes & FILE_ATTRIBUTE_DIRECTORY_) && !(basic.Attributes & 0x400 /* FILE_ATTRIBUTE_REPARSE_POINT */);
 }
 
 /* ---------------------------------------------------------------- parents and children */
