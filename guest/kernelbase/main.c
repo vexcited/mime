@@ -13,6 +13,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         KbInitializeDebug();
         KbThreadAttach();
         KbInitializeApc();
+        KbInitializeLongPaths();
         break;
     case DLL_THREAD_ATTACH:
         KbThreadAttach();

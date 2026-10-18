@@ -12,13 +12,46 @@ static ULONG next_char(PCWSTR text, ULONG count, ULONG *i)
     return c;
 }
 
-/* the surface rectangle covering a logical rectangle under the world transform. */
-static RECT transformed_bounds(DC *dc, LONG l, LONG t, LONG r, LONG b)
+/*
+ * the glyph matrix: the world transform and the page scale without its
+ * flips, so text stays upright in mapping modes where y goes up, like windows.
+ */
+static void glyph_matrix(DC *dc, XFORM *g)
+{
+    XFORM page = {1, 0, 0, 1, 0, 0};
+    if (dc->State.HasPage) {
+        LONG wx = dc->State.WindowExt.cx, wy = dc->State.WindowExt.cy;
+        LONG vx = dc->State.ViewportExt.cx, vy = dc->State.ViewportExt.cy;
+        page.eM11 = wx ? (float)vx / (float)wx : 1;
+        page.eM22 = wy ? (float)vy / (float)wy : 1;
+        if (page.eM11 < 0)
+            page.eM11 = -page.eM11;
+        if (page.eM22 < 0)
+            page.eM22 = -page.eM22;
+    }
+    const XFORM *w = &dc->State.World;
+    *g = (XFORM){w->eM11 * page.eM11, w->eM12 * page.eM22, w->eM21 * page.eM11, w->eM22 * page.eM22, 0, 0};
+}
+
+static LONG round_f(float v)
+{
+    return (LONG)(v >= 0 ? v + 0.5f : v - 0.5f);
+}
+
+/* a point at an offset in text space from a surface origin. */
+static void text_point(const XFORM *g, LONG ox, LONG oy, LONG dx, LONG dy, LONG *x, LONG *y)
+{
+    *x = ox + round_f((float)dx * g->eM11 + (float)dy * g->eM21);
+    *y = oy + round_f((float)dx * g->eM12 + (float)dy * g->eM22);
+}
+
+/* the surface rectangle covering a text space rectangle. */
+static RECT transformed_bounds(const XFORM *g, LONG ox, LONG oy, LONG l, LONG t, LONG r, LONG b)
 {
     LONG xs[4] = {l, r, l, r}, ys[4] = {t, t, b, b};
     RECT out = {0, 0, 0, 0};
     for (int i = 0; i < 4; i++) {
-        DcLogicalToSurface(dc, &xs[i], &ys[i]);
+        text_point(g, ox, oy, xs[i], ys[i], &xs[i], &ys[i]);
         if (!i || xs[i] < out.left)
             out.left = xs[i];
         if (!i || xs[i] > out.right)
@@ -32,14 +65,19 @@ static RECT transformed_bounds(DC *dc, LONG l, LONG t, LONG r, LONG b)
 }
 
 /*
- * text under a GM_ADVANCED world transform: the font keeps its logical size,
- * each glyph origin goes through the transform and the glyph is rendered
- * through it, so scaled and rotated text look like windows draws them.
+ * text under a transform: the font keeps its logical size, the reference
+ * point goes through the transform and the glyphs and their offsets through
+ * the glyph matrix, so scaled and rotated text look like windows draws them.
  */
 static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, LONG x, LONG y, UINT options,
                                 PCWSTR text, ULONG count, const INT *dx, LONG width)
 {
     DC_STATE *st = &dc->State;
+    XFORM gm;
+    glyph_matrix(dc, &gm);
+    LONG ox = x, oy = y;
+    DcLogicalToSurface(dc, &ox, &oy);
+    x = 0;
     UINT halign = st->TextAlign & (TA_LEFT | TA_RIGHT | TA_CENTER);
     if (halign == TA_RIGHT)
         x -= width;
@@ -48,16 +86,16 @@ static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, L
     LONG ascent = fi->Metrics.tmAscent, descent = fi->Metrics.tmDescent, baseline;
     switch (st->TextAlign & (TA_TOP | TA_BOTTOM | TA_BASELINE)) {
     case TA_BASELINE:
-        baseline = y;
+        baseline = 0;
         break;
     case TA_BOTTOM:
-        baseline = y - descent;
+        baseline = -descent;
         break;
     default:
-        baseline = y + ascent;
+        baseline = ascent;
         break;
     }
-    RECT dirty = transformed_bounds(dc, x, baseline - ascent, x + width, baseline + descent);
+    RECT dirty = transformed_bounds(&gm, ox, oy, x, baseline - ascent, x + width, baseline + descent);
     if (st->BkMode == OPAQUE && !(options & ETO_OPAQUE))
         DrawFillRect(dc->Surface, clip, &dirty, ColorToPixel(st->BkColor));
     ULONG pixel = ColorToPixel(st->TextColor);
@@ -67,13 +105,13 @@ static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, L
         ULONG start = i;
         USHORT glyph = (options & ETO_GLYPH_INDEX) ? text[i++] : FontGlyphIndex(fi, next_char(text, count, &i));
         const GLYPH *g = FontGetGlyphIndex(fi, glyph);
-        LONG ox = pen, oy = baseline;
-        DcLogicalToSurface(dc, &ox, &oy);
+        LONG gx, gy;
+        text_point(&gm, ox, oy, pen, baseline, &gx, &gy);
         LONG left, top, w, h;
-        UCHAR *cov = FontRenderTransformed(fi, glyph, &st->World, &left, &top, &w, &h);
+        UCHAR *cov = FontRenderTransformed(fi, glyph, &gm, &left, &top, &w, &h);
         if (cov) {
-            DrawCoverage(dc->Surface, clip, ox + left, oy + top, cov, w, h, w, pixel);
-            RECT r = {ox + left, oy + top, ox + left + w, oy + top + h};
+            DrawCoverage(dc->Surface, clip, gx + left, gy + top, cov, w, h, w, pixel);
+            RECT r = {gx + left, gy + top, gx + left + w, gy + top + h};
             RectUnion(&dirty, &dirty, &r);
             W32Free(cov);
         }
@@ -85,12 +123,12 @@ static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, L
         }
     }
     if (fi->Underline) {
-        RECT u = transformed_bounds(dc, x, baseline + fi->UnderlinePos, pen,
+        RECT u = transformed_bounds(&gm, ox, oy, x, baseline + fi->UnderlinePos, pen,
                                     baseline + fi->UnderlinePos + fi->UnderlineSize);
         DrawFillRect(dc->Surface, clip, &u, pixel);
     }
     if (fi->StrikeOut) {
-        RECT u = transformed_bounds(dc, x, baseline - fi->StrikeoutPos, pen,
+        RECT u = transformed_bounds(&gm, ox, oy, x, baseline - fi->StrikeoutPos, pen,
                                     baseline - fi->StrikeoutPos + fi->UnderlineSize);
         DrawFillRect(dc->Surface, clip, &u, pixel);
     }
@@ -144,7 +182,7 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
     } else {
         width = FontTextWidth(fi, text, count, st->TextCharExtra);
     }
-    if (st->HasXform) {
+    if (st->HasXform || st->HasPage) {
         TextDrawTransformed(dc, fi, &clip, x, y, options, text, count, dx, width);
         RgnFree(&clip);
         return;

@@ -1,0 +1,12 @@
+; the exports of windows' 32-bit riched20.dll, with their ordinals.
+LIBRARY riched20.dll
+EXPORTS
+    IID_IRichEditOle @2 DATA
+    IID_IRichEditOleCallback @3 DATA
+    CreateTextServices=_CreateTextServices@12 @4
+    IID_ITextServices @5 DATA
+    IID_ITextHost @6 DATA
+    IID_ITextHost2 @7 DATA
+    REExtendedRegisterClass=_REExtendedRegisterClass@0 @8
+    RichEdit10ANSIWndProc=_RichEdit10ANSIWndProc@16 @9
+    RichEditANSIWndProc=_RichEditANSIWndProc@16 @10

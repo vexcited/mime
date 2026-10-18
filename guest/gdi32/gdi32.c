@@ -7,6 +7,9 @@
 #include <mime/win32/d3dkmthk.h>
 #include <mime/stub.h>
 
+/* the linker's marker of floating point use, which the metafile code has. */
+int _fltused = 0x9875;
+
 static UCHAR handle_type(HGDIOBJ h)
 {
     return (UCHAR)(((ULONG_PTR)h >> 16) & 0xFF);
@@ -23,9 +26,17 @@ WINGDIAPI HGDIOBJ WINAPI GetStockObject(int index)
 
 WINGDIAPI DWORD WINAPI GetObjectType(HGDIOBJ h)
 {
+    DWORD meta = MfObjectType(h);
+    if (!meta)
+        meta = WmfObjectType(h);
+    if (meta)
+        return meta;
     switch (handle_type(h)) {
-    case 0x01:
-        return OBJ_DC;
+    case 0x01: {
+        /* a deleted dc has no type, as windows checks its handle table. */
+        DWORD v;
+        return NtGdiGetDCDword(h, MIME_DCDW_MAPMODE, &v) ? OBJ_DC : 0;
+    }
     case 0x04:
         return OBJ_REGION;
     case 0x05:
@@ -38,18 +49,28 @@ WINGDIAPI DWORD WINAPI GetObjectType(HGDIOBJ h)
         return OBJ_BRUSH;
     case 0x30:
         return OBJ_PEN;
+    case 0x50:
+        return OBJ_EXTPEN;
     }
     return 0;
 }
 
 WINGDIAPI HGDIOBJ WINAPI SelectObject(HDC dc, HGDIOBJ h)
 {
+    if (MfActive(dc)) {
+        HGDIOBJ previous = nullptr;
+        if (!MfSelectObject(dc, h, &previous))
+            return nullptr;
+        if (MfIsWmfDc(dc))
+            return handle_type(h) == 0x04 ? (HGDIOBJ)(LONG_PTR)SIMPLEREGION : previous;
+    }
     switch (handle_type(h)) {
     case 0x05:
         return NtGdiSelectBitmap(dc, h);
     case 0x10:
         return NtGdiSelectBrush(dc, h);
     case 0x30:
+    case 0x50:
         return NtGdiSelectPen(dc, h);
     case 0x0A:
         return NtGdiSelectFont(dc, h);
@@ -61,6 +82,8 @@ WINGDIAPI HGDIOBJ WINAPI SelectObject(HDC dc, HGDIOBJ h)
 
 WINGDIAPI BOOL WINAPI DeleteObject(HGDIOBJ h)
 {
+    if (h && MfDcCount)
+        MfDeleteObject(h);
     if (handle_type(h) == 0x08)
         return PalDelete(h);
     return h ? NtGdiDeleteObjectApp(h) : FALSE;
@@ -123,22 +146,32 @@ WINGDIAPI HDC WINAPI CreateICW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, c
 
 WINGDIAPI BOOL WINAPI DeleteDC(HDC dc)
 {
+    if (MfActive(dc))
+        return MfDeleteDC(dc);
     PalForgetDC(dc);
     return NtGdiDeleteObjectApp(dc);
 }
 
 WINGDIAPI int WINAPI SaveDC(HDC dc)
 {
+    MF_RECORD(dc, MfRecordEmpty(dc, EMR_SAVEDC, META_SAVEDC), 0, 1);
     return NtGdiSaveDC(dc);
 }
 
 WINGDIAPI BOOL WINAPI RestoreDC(HDC dc, int saved)
 {
+    MF_RECORD(dc, MfRestoreDC(dc, saved), FALSE, TRUE);
     return NtGdiRestoreDC(dc, saved);
 }
 
 WINGDIAPI int WINAPI GetDeviceCaps(HDC dc, int index)
 {
+    if (MfDcCount) {
+        BOOL handled;
+        int value = MfGetDeviceCaps(dc, index, &handled);
+        if (handled)
+            return value;
+    }
     return NtGdiGetDeviceCaps(dc, index);
 }
 
@@ -156,6 +189,7 @@ static DWORD get_dword(HDC dc, UINT index, DWORD fail)
 
 WINGDIAPI COLORREF WINAPI SetTextColor(HDC dc, COLORREF color)
 {
+    MF_RECORD(dc, MfSetColor(dc, EMR_SETTEXTCOLOR, META_SETTEXTCOLOR, color), CLR_INVALID, TRUE);
     return set_dword(dc, MIME_DCDW_TEXTCOLOR, color, CLR_INVALID);
 }
 
@@ -166,6 +200,7 @@ WINGDIAPI COLORREF WINAPI GetTextColor(HDC dc)
 
 WINGDIAPI COLORREF WINAPI SetBkColor(HDC dc, COLORREF color)
 {
+    MF_RECORD(dc, MfSetColor(dc, EMR_SETBKCOLOR, META_SETBKCOLOR, color), CLR_INVALID, TRUE);
     return set_dword(dc, MIME_DCDW_BKCOLOR, color, CLR_INVALID);
 }
 
@@ -176,6 +211,7 @@ WINGDIAPI COLORREF WINAPI GetBkColor(HDC dc)
 
 WINGDIAPI int WINAPI SetBkMode(HDC dc, int mode)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETBKMODE, META_SETBKMODE, (DWORD)mode), 0, TRUE);
     return (int)set_dword(dc, MIME_DCDW_BKMODE, (DWORD)mode, 0);
 }
 
@@ -186,6 +222,7 @@ WINGDIAPI int WINAPI GetBkMode(HDC dc)
 
 WINGDIAPI UINT WINAPI SetTextAlign(HDC dc, UINT align)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETTEXTALIGN, META_SETTEXTALIGN, align), GDI_ERROR, TRUE);
     return set_dword(dc, MIME_DCDW_TEXTALIGN, align, GDI_ERROR);
 }
 
@@ -216,6 +253,7 @@ WINGDIAPI COLORREF WINAPI GetDCPenColor(HDC dc)
 
 WINGDIAPI int WINAPI SetROP2(HDC dc, int rop)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETROP2, META_SETROP2, (DWORD)rop), 0, TRUE);
     return (int)set_dword(dc, MIME_DCDW_ROP2, (DWORD)rop, 0);
 }
 
@@ -226,6 +264,7 @@ WINGDIAPI int WINAPI GetROP2(HDC dc)
 
 WINGDIAPI int WINAPI SetStretchBltMode(HDC dc, int mode)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETSTRETCHBLTMODE, META_SETSTRETCHBLTMODE, (DWORD)mode), 0, TRUE);
     return (int)set_dword(dc, MIME_DCDW_STRETCHMODE, (DWORD)mode, 0);
 }
 
@@ -246,6 +285,7 @@ WINGDIAPI int WINAPI GetGraphicsMode(HDC dc)
 
 WINGDIAPI int WINAPI SetMapMode(HDC dc, int mode)
 {
+    MF_RECORD(dc, MfSetMapMode(dc, mode), 0, TRUE);
     return (int)set_dword(dc, MIME_DCDW_MAPMODE, (DWORD)mode, 0);
 }
 
@@ -256,6 +296,7 @@ WINGDIAPI int WINAPI GetMapMode(HDC dc)
 
 WINGDIAPI DWORD WINAPI SetLayout(HDC dc, DWORD layout)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETLAYOUT, META_SETLAYOUT, layout), GDI_ERROR, TRUE);
     return set_dword(dc, MIME_DCDW_LAYOUT, layout, GDI_ERROR);
 }
 
@@ -266,6 +307,7 @@ WINGDIAPI DWORD WINAPI GetLayout(HDC dc)
 
 WINGDIAPI int WINAPI SetPolyFillMode(HDC dc, int mode)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETPOLYFILLMODE, META_SETPOLYFILLMODE, (DWORD)mode), 0, TRUE);
     return (int)set_dword(dc, MIME_DCDW_POLYFILLMODE, (DWORD)mode, 0);
 }
 
@@ -286,6 +328,7 @@ WINGDIAPI int WINAPI GetArcDirection(HDC dc)
 
 WINGDIAPI int WINAPI SetTextCharacterExtra(HDC dc, int extra)
 {
+    MF_RECORD(dc, MfSetValue(dc, 0, META_SETTEXTCHAREXTRA, (DWORD)extra), 0x80000000u, TRUE);
     return (int)set_dword(dc, MIME_DCDW_TEXTCHAREXTRA, (DWORD)extra, 0x80000000u);
 }
 
@@ -296,6 +339,8 @@ WINGDIAPI int WINAPI GetTextCharacterExtra(HDC dc)
 
 WINGDIAPI BOOL WINAPI SetBrushOrgEx(HDC dc, int x, int y, LPPOINT old)
 {
+    if (MfActive(dc) && !MfIsWmfDc(dc) && !MfSetPoint(dc, EMR_SETBRUSHORGEX, 0, x, y))
+        return FALSE;
     if (old)
         *old = (POINT){0, 0};
     return TRUE;
@@ -315,6 +360,7 @@ WINGDIAPI DWORD WINAPI GdiSetBatchLimit(DWORD limit)
 
 WINGDIAPI BOOL WINAPI SetViewportOrgEx(HDC dc, int x, int y, LPPOINT old)
 {
+    MF_RECORD(dc, MfSetPoint(dc, EMR_SETVIEWPORTORGEX, META_SETVIEWPORTORG, x, y), FALSE, TRUE);
     return NtGdiSetViewportOrgEx(dc, x, y, old);
 }
 
@@ -325,6 +371,7 @@ WINGDIAPI BOOL WINAPI GetViewportOrgEx(HDC dc, LPPOINT p)
 
 WINGDIAPI BOOL WINAPI SetWindowOrgEx(HDC dc, int x, int y, LPPOINT old)
 {
+    MF_RECORD(dc, MfSetPoint(dc, EMR_SETWINDOWORGEX, META_SETWINDOWORG, x, y), FALSE, TRUE);
     return NtGdiSetWindowOrgEx(dc, x, y, old);
 }
 
@@ -335,6 +382,7 @@ WINGDIAPI BOOL WINAPI GetWindowOrgEx(HDC dc, LPPOINT p)
 
 WINGDIAPI BOOL WINAPI OffsetViewportOrgEx(HDC dc, int x, int y, LPPOINT old)
 {
+    MF_RECORD(dc, MfOffsetOrg(dc, TRUE, x, y), FALSE, TRUE);
     POINT p;
     if (!NtGdiGetDCPoint(dc, MIME_DCPT_VIEWPORTORG, &p))
         return FALSE;
@@ -345,6 +393,7 @@ WINGDIAPI BOOL WINAPI OffsetViewportOrgEx(HDC dc, int x, int y, LPPOINT old)
 
 WINGDIAPI BOOL WINAPI OffsetWindowOrgEx(HDC dc, int x, int y, LPPOINT old)
 {
+    MF_RECORD(dc, MfOffsetOrg(dc, FALSE, x, y), FALSE, TRUE);
     POINT p;
     if (!NtGdiGetDCPoint(dc, MIME_DCPT_WINDOWORG, &p))
         return FALSE;
@@ -373,18 +422,17 @@ WINGDIAPI BOOL WINAPI DPtoLP(HDC dc, LPPOINT points, int count)
     return NtGdiTransformPoints(dc, points, points, count, 0);
 }
 
+/* the extents only change in the isotropic and anisotropic modes; zero fails there. */
 WINGDIAPI BOOL WINAPI SetViewportExtEx(HDC dc, int x, int y, LPSIZE old)
 {
-    if (old)
-        *old = (SIZE){1, 1};
-    return TRUE;
+    MF_RECORD(dc, MfSetPoint(dc, EMR_SETVIEWPORTEXTEX, META_SETVIEWPORTEXT, x, y), FALSE, TRUE);
+    return NtGdiMimeSetExtent(dc, MIME_EXTENT_VIEWPORT, x, y, old);
 }
 
 WINGDIAPI BOOL WINAPI SetWindowExtEx(HDC dc, int x, int y, LPSIZE old)
 {
-    if (old)
-        *old = (SIZE){1, 1};
-    return TRUE;
+    MF_RECORD(dc, MfSetPoint(dc, EMR_SETWINDOWEXTEX, META_SETWINDOWEXT, x, y), FALSE, TRUE);
+    return NtGdiMimeSetExtent(dc, MIME_EXTENT_WINDOW, x, y, old);
 }
 
 static BOOL dc_valid(HDC dc)
@@ -396,52 +444,67 @@ static BOOL dc_valid(HDC dc)
     return FALSE;
 }
 
-/* win32k maps MM_TEXT only, so both extents stay one to one. */
-static BOOL unit_extent(HDC dc, LPSIZE size)
+static BOOL get_extent(HDC dc, UINT which, LPSIZE size)
 {
-    if (!dc_valid(dc))
+    POINT p;
+    if (!NtGdiGetDCPoint(dc, which, &p)) {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
     if (size)
-        *size = (SIZE){1, 1};
+        *size = (SIZE){p.x, p.y};
     return TRUE;
 }
 
 WINGDIAPI BOOL WINAPI GetWindowExtEx(HDC dc, LPSIZE size)
 {
-    return unit_extent(dc, size);
+    return get_extent(dc, MIME_DCPT_WINDOWEXT, size);
 }
 
 WINGDIAPI BOOL WINAPI GetViewportExtEx(HDC dc, LPSIZE size)
 {
-    return unit_extent(dc, size);
+    return get_extent(dc, MIME_DCPT_VIEWPORTEXT, size);
+}
+
+/* scales an extent; the fixed modes keep theirs. */
+static BOOL scale_extent(HDC dc, BOOL viewport, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old)
+{
+    if (!x_num || !x_denom || !y_num || !y_denom) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    MF_RECORD(dc, MfScaleExt(dc, viewport, x_num, x_denom, y_num, y_denom), FALSE, TRUE);
+    SIZE ext;
+    if (!get_extent(dc, viewport ? MIME_DCPT_VIEWPORTEXT : MIME_DCPT_WINDOWEXT, &ext))
+        return FALSE;
+    if (old)
+        *old = ext;
+    if (GetMapMode(dc) < MM_ISOTROPIC)
+        return TRUE;
+    return NtGdiMimeSetExtent(dc, viewport ? MIME_EXTENT_VIEWPORT : MIME_EXTENT_WINDOW,
+                              MulDiv(ext.cx, x_num, x_denom), MulDiv(ext.cy, y_num, y_denom), nullptr);
 }
 
 WINGDIAPI BOOL WINAPI ScaleViewportExtEx(HDC dc, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old)
 {
-    if (!x_num || !x_denom || !y_num || !y_denom) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    return unit_extent(dc, old);
+    return scale_extent(dc, TRUE, x_num, x_denom, y_num, y_denom, old);
 }
 
 WINGDIAPI BOOL WINAPI ScaleWindowExtEx(HDC dc, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old)
 {
-    if (!x_num || !x_denom || !y_num || !y_denom) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    return unit_extent(dc, old);
+    return scale_extent(dc, FALSE, x_num, x_denom, y_num, y_denom, old);
 }
 
 /* text justification, font mapper flags, color adjustment and bounds accumulation have no effect yet. */
 WINGDIAPI BOOL WINAPI SetTextJustification(HDC dc, int extra, int breaks)
 {
+    MF_RECORD(dc, MfSetPoint(dc, EMR_SETTEXTJUSTIFICATION, META_SETTEXTJUSTIFICATION, extra, breaks), FALSE, TRUE);
     return dc_valid(dc);
 }
 
 WINGDIAPI DWORD WINAPI SetMapperFlags(HDC dc, DWORD flags)
 {
+    MF_RECORD(dc, MfSetValue(dc, EMR_SETMAPPERFLAGS, META_SETMAPPERFLAGS, flags), GDI_ERROR, TRUE);
     return dc_valid(dc) ? 0 : GDI_ERROR;
 }
 
@@ -456,11 +519,94 @@ WINGDIAPI BOOL WINAPI SetColorAdjustment(HDC dc, const COLORADJUSTMENT *adjustme
 
 WINGDIAPI UINT WINAPI GetBoundsRect(HDC dc, LPRECT rect, UINT flags)
 {
+    UINT result;
+    if (MfDcCount && MfGetBounds(dc, rect, flags, &result))
+        return result;
     if (!dc_valid(dc))
         return 0;
     if (rect)
         *rect = (RECT){0, 0, 0, 0};
     return DCB_RESET;
+}
+
+/* metafile dcs accumulate the bounds of what they record; other dcs accumulate nothing. */
+WINGDIAPI UINT WINAPI SetBoundsRect(HDC dc, const RECT *rect, UINT flags)
+{
+    RECT old;
+    UINT result;
+    if (MfDcCount && MfGetBounds(dc, &old, 0, &result)) {
+        struct EMF_DC *emf = EmfDc(dc);
+        MfSetBounds(emf, rect, flags);
+        return result;
+    }
+    if (!dc_valid(dc))
+        return 0;
+    return DCB_RESET | DCB_DISABLE;
+}
+
+/* stops a metafile playback on the dc; nothing else is ever pending. */
+WINGDIAPI BOOL WINAPI CancelDC(HDC dc)
+{
+    if (MfIsWmfDc(dc))
+        return FALSE;
+    EmfCancelPlay(dc);
+    DWORD v;
+    return MfActive(dc) || NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v);
+}
+
+/*
+ * the color profile of a dc: without one associated, windows reports the
+ * srgb profile of the color directory for devices of more than 256 colors.
+ */
+WINGDIAPI BOOL WINAPI GetICMProfileW(HDC dc, LPDWORD size, LPWSTR file)
+{
+    DWORD v;
+    if (!size || !NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR path[MAX_PATH];
+    UINT n = GetSystemDirectoryW(path, MAX_PATH);
+    static const WCHAR tail[] = L"\\spool\\drivers\\color\\sRGB Color Space Profile.icm";
+    if (!n || n + sizeof(tail) / sizeof(WCHAR) > MAX_PATH) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    memcpy(path + n, tail, sizeof(tail));
+    DWORD need = n + sizeof(tail) / sizeof(WCHAR);
+    if (*size < need) {
+        *size = need;
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    if (!file) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    memcpy(file, path, need * sizeof(WCHAR));
+    *size = need;
+    return TRUE;
+}
+
+WINGDIAPI BOOL WINAPI GetICMProfileA(HDC dc, LPDWORD size, LPSTR file)
+{
+    if (!size) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR path[MAX_PATH];
+    DWORD chars = MAX_PATH;
+    if (!GetICMProfileW(dc, &chars, path))
+        return FALSE;
+    int need = WideCharToMultiByte(CP_ACP, 0, path, (int)chars, nullptr, 0, nullptr, nullptr);
+    if (!file || *size < (DWORD)need) {
+        *size = (DWORD)need;
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    WideCharToMultiByte(CP_ACP, 0, path, (int)chars, file, need, nullptr, nullptr);
+    *size = (DWORD)need;
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ bitmaps */
@@ -557,7 +703,7 @@ WINGDIAPI HBITMAP WINAPI CreateDIBSection(HDC dc, const BITMAPINFO *info, UINT u
                                  bits ? bits : &dummy);
 }
 
-static UINT dib_bits_size(const BITMAPINFOHEADER *h)
+DWORD GdiDibBitsSize(const BITMAPINFOHEADER *h)
 {
     UINT stride = (UINT)(((h->biWidth < 0 ? -h->biWidth : h->biWidth) * h->biBitCount + 31) / 32 * 4);
     return stride * (UINT)(h->biHeight < 0 ? -h->biHeight : h->biHeight);
@@ -566,22 +712,31 @@ static UINT dib_bits_size(const BITMAPINFOHEADER *h)
 WINGDIAPI int WINAPI SetDIBitsToDevice(HDC dc, int x, int y, DWORD width, DWORD height, int src_x, int src_y,
                                        UINT start, UINT lines, const void *bits, const BITMAPINFO *info, UINT usage)
 {
+    if (MfActive(dc))
+        return MfSetDIBitsToDevice(dc, x, y, width, height, src_x, src_y, start, lines, bits, info, usage) ? (int)lines
+                                                                                                           : 0;
     return NtGdiSetDIBitsToDeviceInternal(dc, x, y, width, height, src_x, src_y, start, lines, bits, info, usage,
-                                          dib_bits_size(&info->bmiHeader), info->bmiHeader.biSize + 256 * 4, TRUE,
+                                          GdiDibBitsSize(&info->bmiHeader), info->bmiHeader.biSize + 256 * 4, TRUE,
                                           nullptr);
 }
 
 WINGDIAPI int WINAPI StretchDIBits(HDC dc, int x, int y, int width, int height, int src_x, int src_y, int src_width,
                                    int src_height, const void *bits, const BITMAPINFO *info, UINT usage, DWORD rop)
 {
+    if (MfActive(dc)) {
+        if (!MfStretchDIBits(dc, x, y, width, height, src_x, src_y, src_width, src_height, bits, info, usage, rop))
+            return 0;
+        LONG h = info ? info->bmiHeader.biHeight : height;
+        return h < 0 ? -h : h ? h : 1;
+    }
     return NtGdiStretchDIBitsInternal(dc, x, y, width, height, src_x, src_y, src_width, src_height, bits, info, usage,
-                                      rop, info->bmiHeader.biSize + 256 * 4, dib_bits_size(&info->bmiHeader), nullptr);
+                                      rop, info->bmiHeader.biSize + 256 * 4, GdiDibBitsSize(&info->bmiHeader), nullptr);
 }
 
 WINGDIAPI int WINAPI GetDIBits(HDC dc, HBITMAP bitmap, UINT start, UINT lines, LPVOID bits, LPBITMAPINFO info,
                                UINT usage)
 {
-    return NtGdiGetDIBitsInternal(dc, bitmap, start, lines, bits, info, usage, bits ? dib_bits_size(&info->bmiHeader) : 0,
+    return NtGdiGetDIBitsInternal(dc, bitmap, start, lines, bits, info, usage, bits ? GdiDibBitsSize(&info->bmiHeader) : 0,
                                   info->bmiHeader.biSize + 256 * 4);
 }
 
@@ -680,23 +835,34 @@ WINGDIAPI BOOL WINAPI SetBitmapDimensionEx(HBITMAP bitmap, int width, int height
 
 WINGDIAPI BOOL WINAPI BitBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y, DWORD rop)
 {
+    if (MfActive(dst))
+        return MfBitBlt(dst, x, y, width, height, src, src_x, src_y, width, height, rop, EMR_BITBLT);
     return NtGdiBitBlt(dst, x, y, width, height, src, src_x, src_y, rop, 0, 0);
 }
 
 WINGDIAPI BOOL WINAPI StretchBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
                                  int src_width, int src_height, DWORD rop)
 {
+    if (MfActive(dst))
+        return MfBitBlt(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, rop, EMR_STRETCHBLT);
     return NtGdiStretchBlt(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, rop, 0);
 }
 
 WINGDIAPI BOOL WINAPI PatBlt(HDC dc, int x, int y, int width, int height, DWORD rop)
 {
+    if (MfActive(dc))
+        return MfBitBlt(dc, x, y, width, height, nullptr, 0, 0, 0, 0, rop, EMR_BITBLT);
     return NtGdiPatBlt(dc, x, y, width, height, rop);
 }
 
 WINGDIAPI BOOL WINAPI GdiAlphaBlend(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
                                     int src_width, int src_height, BLENDFUNCTION blend)
 {
+    if (MfActive(dst)) {
+        DWORD rop;
+        memcpy(&rop, &blend, sizeof(rop));
+        return MfBitBlt(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, rop, EMR_ALPHABLEND);
+    }
     return NtGdiAlphaBlend(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, blend, nullptr);
 }
 
@@ -721,7 +887,7 @@ WINGDIAPI HBRUSH WINAPI CreateHatchBrush(int hatch, COLORREF color)
 
 #define PATTERN_SAMPLE 8
 
-static DWORD dib_table_size(const BITMAPINFOHEADER *h, UINT usage)
+DWORD GdiDibTableSize(const BITMAPINFOHEADER *h, UINT usage)
 {
     DWORD colors = h->biClrUsed;
     if (!colors && h->biBitCount <= 8)
@@ -767,7 +933,7 @@ static BOOL average_pattern(HBITMAP bitmap, const BITMAPINFO *info, UINT usage, 
                 DeleteDC(src);
         } else {
             const BITMAPINFOHEADER *h = &info->bmiHeader;
-            const BYTE *bits = (const BYTE *)info + h->biSize + dib_table_size(h, usage);
+            const BYTE *bits = (const BYTE *)info + h->biSize + GdiDibTableSize(h, usage);
             ok = StretchDIBits(mem, 0, 0, PATTERN_SAMPLE, PATTERN_SAMPLE, 0, 0, h->biWidth,
                                h->biHeight < 0 ? -h->biHeight : h->biHeight, bits, info, usage, SRCCOPY) != 0;
         }
@@ -828,9 +994,14 @@ WINGDIAPI HPEN WINAPI CreatePenIndirect(const LOGPEN *lp)
     return NtGdiCreatePen((int)lp->lopnStyle, lp->lopnWidth.x, lp->lopnColor, nullptr);
 }
 
+/* the pen keeps its type, end cap and join; brush patterns become their color. */
 WINGDIAPI HPEN WINAPI ExtCreatePen(DWORD style, DWORD width, const LOGBRUSH *lb, DWORD count, const DWORD *styles)
 {
-    return NtGdiCreatePen((int)(style & PS_STYLE_MASK), (int)width, lb ? lb->lbColor : 0, nullptr);
+    if (!lb || ((style & PS_STYLE_MASK) == PS_USERSTYLE) != (count != 0) || (count && !styles) || count > 16) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return NtGdiExtCreatePen(style, width, lb->lbStyle, lb->lbColor, lb->lbHatch, count, styles);
 }
 
 /* ------------------------------------------------------------------ fonts and text */
@@ -886,11 +1057,15 @@ WINGDIAPI HFONT WINAPI CreateFontA(int height, int width, int escapement, int or
 WINGDIAPI BOOL WINAPI ExtTextOutW(HDC dc, int x, int y, UINT options, const RECT *rect, LPCWSTR text, UINT count,
                                   const INT *dx)
 {
+    if (MfActive(dc))
+        return MfTextOut(dc, x, y, options, rect, text, count, dx);
     return NtGdiExtTextOutW(dc, x, y, options, rect, text, (int)count, dx, 0);
 }
 
 WINGDIAPI BOOL WINAPI TextOutW(HDC dc, int x, int y, LPCWSTR text, int count)
 {
+    if (MfActive(dc))
+        return count >= 0 && MfTextOut(dc, x, y, 0, nullptr, text, (UINT)count, nullptr);
     return NtGdiExtTextOutW(dc, x, y, 0, nullptr, text, count, nullptr, 0);
 }
 
@@ -919,6 +1094,8 @@ static void free_wide(LPWSTR w)
 WINGDIAPI BOOL WINAPI ExtTextOutA(HDC dc, int x, int y, UINT options, const RECT *rect, LPCSTR text, UINT count,
                                   const INT *dx)
 {
+    if (MfActive(dc))
+        return MfTextOutA(dc, x, y, options, rect, text, count, dx);
     int n;
     LPWSTR w = to_wide(text, (int)count, &n);
     if (!w)
@@ -1065,58 +1242,73 @@ WINGDIAPI LONG WINAPI GdiGetCharDimensions(HDC dc, LPTEXTMETRICW tm, LONG *heigh
 
 WINGDIAPI BOOL WINAPI MoveToEx(HDC dc, int x, int y, LPPOINT old)
 {
+    MF_RECORD(dc, MfMoveTo(dc, x, y), FALSE, TRUE);
     return NtGdiMoveTo(dc, x, y, old);
 }
 
 WINGDIAPI BOOL WINAPI LineTo(HDC dc, int x, int y)
 {
+    MF_RECORD(dc, MfLineTo(dc, x, y), FALSE, TRUE);
     return NtGdiLineTo(dc, x, y);
 }
 
 WINGDIAPI BOOL WINAPI Rectangle(HDC dc, int left, int top, int right, int bottom)
 {
+    MF_RECORD(dc, MfBox(dc, EMR_RECTANGLE, META_RECTANGLE, left, top, right, bottom), FALSE, TRUE);
     return NtGdiRectangle(dc, left, top, right, bottom);
 }
 
 WINGDIAPI BOOL WINAPI RoundRect(HDC dc, int left, int top, int right, int bottom, int width, int height)
 {
+    MF_RECORD(dc, MfRoundRect(dc, left, top, right, bottom, width, height), FALSE, TRUE);
     return NtGdiRoundRect(dc, left, top, right, bottom, width, height);
 }
 
 WINGDIAPI BOOL WINAPI Ellipse(HDC dc, int left, int top, int right, int bottom)
 {
+    MF_RECORD(dc, MfBox(dc, EMR_ELLIPSE, META_ELLIPSE, left, top, right, bottom), FALSE, TRUE);
     return NtGdiEllipse(dc, left, top, right, bottom);
 }
 
 WINGDIAPI BOOL WINAPI Polyline(HDC dc, const POINT *points, int count)
 {
+    MF_RECORD(dc, count > 0 && points && MfPoly(dc, EMR_POLYLINE, META_POLYLINE, points, (DWORD)count), FALSE, TRUE);
     ULONG n = (ULONG)count;
     return count > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, &n, 1, MIME_POLY_POLYLINE);
 }
 
 WINGDIAPI BOOL WINAPI Polygon(HDC dc, const POINT *points, int count)
 {
+    MF_RECORD(dc, count > 0 && points && MfPoly(dc, EMR_POLYGON, META_POLYGON, points, (DWORD)count), FALSE, TRUE);
     ULONG n = (ULONG)count;
     return count > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, &n, 1, MIME_POLY_POLYGON);
 }
 
 WINGDIAPI BOOL WINAPI PolyPolygon(HDC dc, const POINT *points, const INT *counts, int polygons)
 {
+    MF_RECORD(dc, polygons > 0 && MfPolyPoly(dc, EMR_POLYPOLYGON, META_POLYPOLYGON, points, (const DWORD *)counts,
+                                              (DWORD)polygons),
+              FALSE, TRUE);
     return polygons > 0 && NtGdiPolyPolyDraw(dc, (POINT *)points, (ULONG *)counts, (ULONG)polygons, MIME_POLY_POLYGON);
 }
 
 WINGDIAPI BOOL WINAPI PolyPolyline(HDC dc, const POINT *points, const DWORD *counts, DWORD lines)
 {
+    MF_RECORD(dc, lines && MfPolyPoly(dc, EMR_POLYPOLYLINE, 0, points, counts, lines), FALSE, TRUE);
     return lines && NtGdiPolyPolyDraw(dc, (POINT *)points, (ULONG *)counts, lines, MIME_POLY_POLYLINE);
 }
 
 WINGDIAPI COLORREF WINAPI SetPixel(HDC dc, int x, int y, COLORREF color)
 {
+    if (MfActive(dc))
+        return MfSetPixel(dc, x, y, color) ? color : CLR_INVALID;
     return NtGdiSetPixel(dc, x, y, color);
 }
 
 WINGDIAPI BOOL WINAPI SetPixelV(HDC dc, int x, int y, COLORREF color)
 {
+    if (MfActive(dc))
+        return MfSetPixel(dc, x, y, color);
     return NtGdiSetPixel(dc, x, y, color) != CLR_INVALID;
 }
 
@@ -1125,9 +1317,11 @@ WINGDIAPI COLORREF WINAPI GetPixel(HDC dc, int x, int y)
     return NtGdiGetPixel(dc, x, y);
 }
 
-/* win32k offers no flood fill. */
+/* win32k offers no flood fill; metafiles record it. */
 WINGDIAPI BOOL WINAPI ExtFloodFill(HDC dc, int x, int y, COLORREF color, UINT type)
 {
+    if (MfActive(dc))
+        return MfExtFloodFill(dc, x, y, color, type);
     MIME_STUB("gdi32");
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
@@ -1198,31 +1392,41 @@ WINGDIAPI DWORD WINAPI GetRegionData(HRGN region, DWORD size, LPRGNDATA data)
 
 WINGDIAPI BOOL WINAPI FillRgn(HDC dc, HRGN region, HBRUSH brush)
 {
+    if (MfActive(dc))
+        return MfRegion(dc, EMR_FILLRGN, META_FILLREGION, region, brush, 0, 0);
     return NtGdiFillRgn(dc, region, brush);
 }
 
 WINGDIAPI BOOL WINAPI FrameRgn(HDC dc, HRGN region, HBRUSH brush, int width, int height)
 {
+    if (MfActive(dc))
+        return MfRegion(dc, EMR_FRAMERGN, META_FRAMEREGION, region, brush, width, height);
     return NtGdiFrameRgn(dc, region, brush, width, height);
 }
 
 WINGDIAPI BOOL WINAPI InvertRgn(HDC dc, HRGN region)
 {
+    if (MfActive(dc))
+        return MfRegion(dc, EMR_INVERTRGN, META_INVERTREGION, region, nullptr, 0, 0);
     return NtGdiInvertRgn(dc, region);
 }
 
 WINGDIAPI BOOL WINAPI PaintRgn(HDC dc, HRGN region)
 {
+    if (MfActive(dc))
+        return MfRegion(dc, EMR_PAINTRGN, META_PAINTREGION, region, nullptr, 0, 0);
     return NtGdiFillRgn(dc, region, NtGdiGetDCObject(dc, OBJ_BRUSH));
 }
 
 WINGDIAPI int WINAPI ExtSelectClipRgn(HDC dc, HRGN region, int mode)
 {
+    MF_RECORD(dc, MfSelectClipRgn(dc, region, mode), ERROR, SIMPLEREGION);
     return NtGdiExtSelectClipRgn(dc, region, mode);
 }
 
 WINGDIAPI int WINAPI SelectClipRgn(HDC dc, HRGN region)
 {
+    MF_RECORD(dc, MfSelectClipRgn(dc, region, RGN_COPY), ERROR, SIMPLEREGION);
     return NtGdiExtSelectClipRgn(dc, region, RGN_COPY);
 }
 
@@ -1244,13 +1448,30 @@ WINGDIAPI int WINAPI GetRandomRgn(HDC dc, HRGN region, INT which)
     return NtGdiGetRandomRgn(dc, region, which);
 }
 
+/* the clip region joins the meta region, which later clip regions cannot leave. */
+WINGDIAPI int WINAPI SetMetaRgn(HDC dc)
+{
+    MF_RECORD(dc, MfRecordEmpty(dc, EMR_SETMETARGN, 0), ERROR, ERROR);
+    return NtGdiSetMetaRgn(dc);
+}
+
+/* METARGN */
+WINGDIAPI int WINAPI GetMetaRgn(HDC dc, HRGN region)
+{
+    return NtGdiGetRandomRgn(dc, region, 2);
+}
+
 WINGDIAPI int WINAPI IntersectClipRect(HDC dc, int left, int top, int right, int bottom)
 {
+    MF_RECORD(dc, MfClipRect(dc, EMR_INTERSECTCLIPRECT, META_INTERSECTCLIPRECT, left, top, right, bottom), ERROR,
+              SIMPLEREGION);
     return NtGdiIntersectClipRect(dc, left, top, right, bottom);
 }
 
 WINGDIAPI int WINAPI ExcludeClipRect(HDC dc, int left, int top, int right, int bottom)
 {
+    MF_RECORD(dc, MfClipRect(dc, EMR_EXCLUDECLIPRECT, META_EXCLUDECLIPRECT, left, top, right, bottom), ERROR,
+              SIMPLEREGION);
     return NtGdiExcludeClipRect(dc, left, top, right, bottom);
 }
 
@@ -1267,6 +1488,7 @@ static HRGN clip_region(HDC dc)
 
 WINGDIAPI int WINAPI OffsetClipRgn(HDC dc, int x, int y)
 {
+    MF_RECORD(dc, MfSetPoint(dc, EMR_OFFSETCLIPRGN, META_OFFSETCLIPRGN, x, y), ERROR, SIMPLEREGION);
     if (!dc_valid(dc))
         return ERROR;
     HRGN region = clip_region(dc);

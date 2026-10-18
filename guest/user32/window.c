@@ -99,7 +99,16 @@ WINUSERAPI BOOL WINAPI GetClassInfoW(HINSTANCE instance, LPCWSTR name, LPWNDCLAS
     WNDCLASSEXW ex;
     if (!GetClassInfoExW(instance, name, &ex))
         return FALSE;
-    memcpy(wc, &ex.style, sizeof(*wc));
+    wc->style = ex.style;
+    wc->lpfnWndProc = ex.lpfnWndProc;
+    wc->cbClsExtra = ex.cbClsExtra;
+    wc->cbWndExtra = ex.cbWndExtra;
+    wc->hInstance = ex.hInstance;
+    wc->hIcon = ex.hIcon;
+    wc->hCursor = ex.hCursor;
+    wc->hbrBackground = ex.hbrBackground;
+    wc->lpszMenuName = ex.lpszMenuName;
+    wc->lpszClassName = ex.lpszClassName;
     return TRUE;
 }
 
@@ -393,9 +402,10 @@ WINUSERAPI BOOL WINAPI IsZoomed(HWND hwnd)
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISZOOMED);
 }
 
+/* whether the window procedure takes unicode messages, which follows how the window or its class was made. */
 WINUSERAPI BOOL WINAPI IsWindowUnicode(HWND hwnd)
 {
-    return TRUE;
+    return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISUNICODE);
 }
 
 WINUSERAPI HWND WINAPI GetParent(HWND hwnd)
@@ -617,14 +627,23 @@ WINUSERAPI LONG WINAPI GetWindowLongA(HWND hwnd, int index)
     return (LONG)GetWindowLongPtrW(hwnd, index);
 }
 
+/* a 32-bit pointer is a long, so 32-bit programs write four bytes of window extra. */
 WINUSERAPI LONG_PTR WINAPI SetWindowLongPtrW(HWND hwnd, int index, LONG_PTR value)
 {
+#ifdef _WIN64
     return NtUserSetWindowLongPtr(hwnd, index, value, FALSE);
+#else
+    return NtUserSetWindowLong(hwnd, index, (LONG)value, FALSE);
+#endif
 }
 
 WINUSERAPI LONG_PTR WINAPI SetWindowLongPtrA(HWND hwnd, int index, LONG_PTR value)
 {
+#ifdef _WIN64
     return NtUserSetWindowLongPtr(hwnd, index, value, TRUE);
+#else
+    return NtUserSetWindowLong(hwnd, index, (LONG)value, TRUE);
+#endif
 }
 
 WINUSERAPI LONG WINAPI SetWindowLongW(HWND hwnd, int index, LONG value)
@@ -824,11 +843,12 @@ WINUSERAPI SHORT WINAPI GetAsyncKeyState(int key)
 
 WINUSERAPI BOOL WINAPI GetKeyboardState(PBYTE state)
 {
-    for (int i = 0; i < 256; i++) {
-        SHORT s = NtUserGetKeyState(i);
-        state[i] = (BYTE)(((s & 0x8000) ? 0x80 : 0) | (s & 1));
-    }
-    return TRUE;
+    return NtUserGetKeyboardState(state);
+}
+
+WINUSERAPI BOOL WINAPI SetKeyboardState(PBYTE state)
+{
+    return NtUserSetKeyboardState(state);
 }
 
 WINUSERAPI BOOL WINAPI GetCursorPos(LPPOINT point)
@@ -871,27 +891,43 @@ UINT UserWindowDpi(HWND hwnd)
 
 WINUSERAPI BOOL WINAPI SetProcessDPIAware(void)
 {
+    if (!UserDpiAwareness) {
+        UserDpiAwareness = 1;
+        NtUserCallOneParam(1, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
+    }
     return TRUE;
 }
 
 WINUSERAPI BOOL WINAPI IsProcessDPIAware(void)
 {
-    return TRUE;
+    return UserDpiAwareness != 0;
 }
 
+/* the awareness a manifest set cannot change, as windows refuses with access denied. */
 WINUSERAPI BOOL WINAPI SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
 {
+    LONG_PTR value = (LONG_PTR)context;
+    if (value > -1 || value < -4) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (UserDpiAwarenessLocked) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    UserDpiAwareness = (ULONG)(-value - 1);
+    NtUserCallOneParam(UserDpiAwareness, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
     return TRUE;
 }
 
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void)
 {
-    return (DPI_AWARENESS_CONTEXT)(LONG_PTR)-2; /* DPI_AWARENESS_CONTEXT_SYSTEM_AWARE */
+    return UserDpiAwarenessContext();
 }
 
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
 {
-    return (DPI_AWARENESS_CONTEXT)(LONG_PTR)-2;
+    return UserDpiAwarenessContext();
 }
 
 WINUSERAPI int WINAPI GetSystemMetrics(int index)

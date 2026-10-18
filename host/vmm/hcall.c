@@ -380,6 +380,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_NET_RESOLVE:
     case MIME_HC_NET_ANSWER:
     case MIME_HC_NET_INTERFACES:
+    case MIME_HC_NET_CONFIG:
         status = mime_net_hcall(vm, nr, regs);
         value = regs[1];
         break;

@@ -74,19 +74,19 @@ void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 
 /*
  * programs without a compatibility manifest are told they run on windows
- * 8, version 6.2.9200, like windows does; manifests are not parsed yet, so every
- * program gets that answer. RtlGetVersion keeps reporting the truth.
+ * 8, version 6.2.9200, like windows does, and the windows 8.1 or 10 ids of
+ * their manifest earn them more: KbReportedVersion decides it.
+ * RtlGetVersion keeps reporting the truth.
  */
-#define COMPAT_MAJOR 6
-#define COMPAT_MINOR 2
-#define COMPAT_BUILD 9200
 
 /* the handle count of 16-bit windows: there is no limit to raise. */
 UINT WINAPI SetHandleCount(UINT count) { return count; }
 
 DWORD WINAPI GetVersion(void)
 {
-    return ((DWORD)COMPAT_BUILD << 16) | ((DWORD)COMPAT_MINOR << 8) | COMPAT_MAJOR;
+    ULONG major, minor, build;
+    KbReportedVersion(&major, &minor, &build);
+    return ((DWORD)build << 16) | ((DWORD)minor << 8) | major;
 }
 
 BOOL WINAPI GetVersionExW(LPOSVERSIONINFOW info)
@@ -96,9 +96,11 @@ BOOL WINAPI GetVersionExW(LPOSVERSIONINFOW info)
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
         return FALSE;
     }
-    info->dwMajorVersion = COMPAT_MAJOR;
-    info->dwMinorVersion = COMPAT_MINOR;
-    info->dwBuildNumber = COMPAT_BUILD;
+    ULONG major, minor, build;
+    KbReportedVersion(&major, &minor, &build);
+    info->dwMajorVersion = major;
+    info->dwMinorVersion = minor;
+    info->dwBuildNumber = build;
     info->dwPlatformId = VER_PLATFORM_WIN32_NT;
     info->szCSDVersion[0] = 0;
     if (info->dwOSVersionInfoSize == sizeof(OSVERSIONINFOEXW)) {
@@ -170,9 +172,11 @@ BOOL WINAPI VerifyVersionInfoW(LPOSVERSIONINFOEXW info, DWORD type, DWORDLONG co
         KbSetError(ERROR_BAD_ARGUMENTS);
         return FALSE;
     }
+    /* the version compared is the one GetVersionEx reports, as RtlSwitchedVVI does it on windows. */
     RTL_OSVERSIONINFOEXW cur;
     cur.dwOSVersionInfoSize = sizeof(cur);
     RtlGetVersion(&cur);
+    KbReportedVersion(&cur.dwMajorVersion, &cur.dwMinorVersion, &cur.dwBuildNumber);
     BOOL ok = TRUE;
     if (type & VER_BUILDNUMBER)
         ok = ok && compare_values(cur.dwBuildNumber, info->dwBuildNumber, condition_of(condition, VER_BUILDNUMBER));

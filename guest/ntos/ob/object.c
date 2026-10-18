@@ -490,7 +490,8 @@ void ObInitialize(void)
 
     static const PCWSTR dirs[] = {
         L"\\Device", L"\\Driver", L"\\FileSystem", L"\\GLOBAL??", L"\\KnownDlls", L"\\BaseNamedObjects",
-        L"\\Sessions", L"\\Sessions\\1", L"\\Sessions\\1\\BaseNamedObjects", L"\\Windows", L"\\ObjectTypes",
+        L"\\Sessions", L"\\Sessions\\1", L"\\Sessions\\1\\BaseNamedObjects", L"\\Windows", L"\\Windows\\WindowStations",
+        L"\\Sessions\\1\\Windows", L"\\Sessions\\1\\Windows\\WindowStations", L"\\ObjectTypes",
         L"\\Callback", L"\\KernelObjects", L"\\RPC Control",
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(dirs); i++)

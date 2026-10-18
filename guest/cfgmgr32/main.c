@@ -631,3 +631,131 @@ CMAPI DWORD WINAPI CM_MapCrToWin32Err(CONFIGRET cr, DWORD fallback)
         return fallback;
     }
 }
+
+/* ------------------------------------------------------------------ device id lists */
+
+#define CM_GETIDLIST_FILTER_NONE 0x0
+#define CM_GETIDLIST_FILTER_ENUMERATOR 0x1
+#define CM_GETIDLIST_FILTER_SERVICE 0x2
+#define CM_GETIDLIST_FILTER_EJECTRELATIONS 0x4
+#define CM_GETIDLIST_FILTER_REMOVALRELATIONS 0x8
+#define CM_GETIDLIST_FILTER_POWERRELATIONS 0x10
+#define CM_GETIDLIST_FILTER_BUSRELATIONS 0x20
+#define CM_GETIDLIST_DONOTGENERATE 0x10000040
+#define CM_GETIDLIST_FILTER_TRANSPORTRELATIONS 0x80
+#define CM_GETIDLIST_FILTER_PRESENT 0x100
+#define CM_GETIDLIST_FILTER_CLASS 0x200
+#define CM_GETIDLIST_FILTER_BITS 0x100003FF
+
+static BOOL value_is(PCWSTR id, PCWSTR name, PCWSTR wanted)
+{
+    HKEY key = open_enum(id, KEY_QUERY_VALUE);
+    if (!key)
+        return FALSE;
+    WCHAR value[128];
+    DWORD size = sizeof(value) - sizeof(WCHAR), type;
+    BOOL match = !RegQueryValueExW(key, name, nullptr, &type, (BYTE *)value, &size) && type == REG_SZ &&
+                 (value[size / sizeof(WCHAR)] = 0, !lstrcmpiW(value, wanted));
+    RegCloseKey(key);
+    return match;
+}
+
+static BOOL id_wanted(PCWSTR id, PCWSTR filter, ULONG flags)
+{
+    if (flags & CM_GETIDLIST_FILTER_ENUMERATOR) {
+        int n = lstrlenW(filter);
+        /* a bare enumerator matches its devices, a device id itself and its instances. */
+        if (_wcsnicmp(id, filter, n) || (id[n] && id[n] != L'\\'))
+            return FALSE;
+    }
+    if ((flags & CM_GETIDLIST_FILTER_SERVICE) && !value_is(id, L"Service", filter))
+        return FALSE;
+    if ((flags & CM_GETIDLIST_FILTER_CLASS) && !value_is(id, L"ClassGUID", filter))
+        return FALSE;
+    return TRUE;
+}
+
+/* the matching device ids as a list of strings, the root first when nothing filters it out. */
+static CONFIGRET id_list(PCWSTR filter, ULONG flags, PWSTR buffer, ULONG *length)
+{
+    if (flags & ~CM_GETIDLIST_FILTER_BITS)
+        return CR_INVALID_FLAG;
+    ULONG relations = flags & (CM_GETIDLIST_FILTER_EJECTRELATIONS | CM_GETIDLIST_FILTER_REMOVALRELATIONS |
+                               CM_GETIDLIST_FILTER_POWERRELATIONS | CM_GETIDLIST_FILTER_BUSRELATIONS |
+                               CM_GETIDLIST_FILTER_TRANSPORTRELATIONS);
+    if ((flags & (CM_GETIDLIST_FILTER_ENUMERATOR | CM_GETIDLIST_FILTER_SERVICE | CM_GETIDLIST_FILTER_CLASS)) ||
+        relations) {
+        if (!filter || !filter[0])
+            return CR_INVALID_POINTER;
+    }
+    MIME_PNP_REQUEST *r;
+    if (!NT_SUCCESS(request(MIME_PNP_LIST_DEVICES, 0, nullptr, nullptr, &r)))
+        return CR_FAILURE;
+    ULONG used = 0, room = buffer ? *length : 0;
+    CONFIGRET cr = CR_SUCCESS;
+    BOOL with_root = !(flags & (CM_GETIDLIST_FILTER_SERVICE | CM_GETIDLIST_FILTER_CLASS)) && !relations &&
+                     (!(flags & CM_GETIDLIST_FILTER_ENUMERATOR) || !lstrcmpiW(filter, L"HTREE"));
+    static const WCHAR root[] = ROOT_ID;
+    for (PCWSTR p = with_root ? root : r->Out; *p;) {
+        BOOL wanted = p == root || (relations ? FALSE : id_wanted(p, filter, flags));
+        if (wanted) {
+            ULONG n = (ULONG)lstrlenW(p) + 1;
+            if (buffer && used + n < room)
+                memcpy(buffer + used, p, n * sizeof(WCHAR));
+            else if (buffer)
+                cr = CR_BUFFER_SMALL;
+            used += n;
+        }
+        p = p == root ? r->Out : p + lstrlenW(p) + 1;
+    }
+    HeapFree(GetProcessHeap(), 0, r);
+    if (buffer) {
+        if (used < room)
+            buffer[used] = 0;
+        else
+            cr = CR_BUFFER_SMALL;
+    }
+    *length = used + 1;
+    return cr;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Device_ID_List_SizeW(PULONG length, PCWSTR filter, ULONG flags)
+{
+    if (!length)
+        return CR_INVALID_POINTER;
+    return id_list(filter, flags, nullptr, length);
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Device_ID_ListW(PCWSTR filter, PWCHAR buffer, ULONG length, ULONG flags)
+{
+    if (!buffer || !length)
+        return CR_INVALID_POINTER;
+    ULONG n = length;
+    return id_list(filter, flags, buffer, &n);
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Device_ID_List_SizeA(PULONG length, PCSTR filter, ULONG flags)
+{
+    WCHAR w[MAX_DEVICE_ID_LEN];
+    if (filter)
+        MultiByteToWideChar(CP_ACP, 0, filter, -1, w, MAX_DEVICE_ID_LEN);
+    return CM_Get_Device_ID_List_SizeW(length, filter ? w : nullptr, flags);
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Device_ID_ListA(PCSTR filter, PCHAR buffer, ULONG length, ULONG flags)
+{
+    if (!buffer || !length)
+        return CR_INVALID_POINTER;
+    WCHAR w[MAX_DEVICE_ID_LEN];
+    if (filter)
+        MultiByteToWideChar(CP_ACP, 0, filter, -1, w, MAX_DEVICE_ID_LEN);
+    PWSTR wide = HeapAlloc(GetProcessHeap(), 0, length * sizeof(WCHAR));
+    if (!wide)
+        return CR_OUT_OF_MEMORY;
+    ULONG n = length;
+    CONFIGRET cr = id_list(filter ? w : nullptr, flags, wide, &n);
+    if (!cr)
+        WideCharToMultiByte(CP_ACP, 0, wide, (int)n, buffer, (int)length, nullptr, nullptr);
+    HeapFree(GetProcessHeap(), 0, wide);
+    return cr;
+}

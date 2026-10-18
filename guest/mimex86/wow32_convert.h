@@ -1,0 +1,85 @@
+/* what the conversions of 32-bit system calls share. */
+#ifndef MIME_WOW32_CONVERT_H
+#define MIME_WOW32_CONVERT_H
+
+#include <mime/wow32.h>
+
+static inline PVOID pointer32(ULONG value)
+{
+    return (PVOID)(ULONG_PTR)value;
+}
+
+static inline HANDLE handle32(ULONG value)
+{
+    return (HANDLE)(LONG_PTR)(LONG)value;
+}
+
+/* a size or count that does not fit 32 bits reads as the largest one, as windows' wow64 narrows them. */
+static inline ULONG saturate32(ULONG64 value)
+{
+    return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : (ULONG)value;
+}
+
+static inline void store32(ULONG address, ULONG_PTR value)
+{
+    if (address)
+        *(PULONG)pointer32(address) = (ULONG)value;
+}
+
+static inline void store_iosb32(ULONG address, const IO_STATUS_BLOCK *io)
+{
+    if (address) {
+        MIME_IO_STATUS32 *out = pointer32(address);
+        out->Status = io->Status;
+        out->Information = (ULONG)io->Information;
+    }
+}
+
+static inline UNICODE_STRING string32(ULONG address)
+{
+    const MIME_STRING32 *s = pointer32(address);
+    return (UNICODE_STRING){s->Length, s->MaximumLength, pointer32(s->Buffer)};
+}
+
+static inline OBJECT_ATTRIBUTES attributes32(ULONG address, UNICODE_STRING *name)
+{
+    const MIME_OBJECT_ATTRIBUTES32 *a = pointer32(address);
+    OBJECT_ATTRIBUTES out = {sizeof(out)};
+    if (!a)
+        return out;
+    out.RootDirectory = handle32(a->RootDirectory);
+    out.Attributes = a->Attributes;
+    if (a->ObjectName) {
+        *name = string32(a->ObjectName);
+        out.ObjectName = name;
+    }
+    out.SecurityDescriptor = pointer32(a->SecurityDescriptor);
+    out.SecurityQualityOfService = pointer32(a->SecurityQualityOfService);
+    return out;
+}
+
+/* native memory for what a call returns before it is narrowed, anywhere in the address space. */
+PVOID Mx32Scratch(SIZE_T size);
+void Mx32FreeScratch(PVOID base);
+
+PVOID MxCurrentPeb32(void);
+PVOID MxCurrentTeb32(void);
+
+/* the 32-bit teb of a thread whose native teb and process are known, 0 when it has none. */
+ULONG Mx32TebOf(HANDLE process, PVOID teb);
+
+/* the information classes, wow32_query.c. each takes the 32-bit arguments of its service. */
+NTSTATUS Mx32QueryInformationProcess(const ULONG *a);
+NTSTATUS Mx32SetInformationProcess(const ULONG *a);
+NTSTATUS Mx32QueryInformationThread(const ULONG *a);
+NTSTATUS Mx32SetInformationThread(const ULONG *a);
+NTSTATUS Mx32QuerySystemInformation(const ULONG *a);
+NTSTATUS Mx32QueryObject(const ULONG *a);
+NTSTATUS Mx32SetInformationObject(const ULONG *a);
+NTSTATUS Mx32QuerySection(const ULONG *a);
+NTSTATUS Mx32QueryInformationJobObject(const ULONG *a);
+NTSTATUS Mx32SetInformationJobObject(const ULONG *a);
+NTSTATUS Mx32QueryInformationToken(const ULONG *a);
+NTSTATUS Mx32QueryVirtualMemory(const ULONG *a);
+
+#endif

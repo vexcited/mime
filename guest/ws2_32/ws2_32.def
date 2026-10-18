@@ -80,3 +80,20 @@ EXPORTS
     getnameinfo @193
     inet_ntop @194
     inet_pton @195
+    FreeAddrInfoEx @24
+    FreeAddrInfoExW @25
+    GetAddrInfoExA @27
+    GetAddrInfoExCancel @28
+    GetAddrInfoExOverlappedResult @29
+    GetAddrInfoExW @30
+    WSAEnumNameSpaceProvidersA @60
+    WSAEnumNameSpaceProvidersW @63
+    WSALookupServiceBeginA @80
+    WSALookupServiceBeginW @81
+    WSALookupServiceEnd @82
+    WSALookupServiceNextA @83
+    WSALookupServiceNextW @84
+    WSASetServiceA @117
+    WSASetServiceW @118
+    WSCEnumProtocols @133
+    WSCGetProviderPath @140

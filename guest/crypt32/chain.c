@@ -2,9 +2,10 @@
  * certificate chains: chain engines, chain building, the chain policies
  * and CertFindChainInStore.
  *
- * there are no trusted roots yet, so a chain that reaches a self signed
- * certificate ends with CERT_TRUST_IS_UNTRUSTED_ROOT unless the engine
- * names that root in its exclusive root store.
+ * a chain that reaches a self signed certificate is trusted when the
+ * engine's Root store holds it: the logical Root store of the current user
+ * or the local machine, with the roots the host's bundle seeds into the
+ * machine's AuthRoot store, or the engine's exclusive or restricted roots.
  */
 #include "crypt32_private.h"
 
@@ -13,9 +14,14 @@
 
 typedef struct {
     DWORD magic;
+    LONG refs;
     HCERTSTORE world;
     HCERTSTORE roots;
+    HCERTSTORE system_roots;
+    HCERTSTORE disallowed;
     DWORD flags;
+    LONG generation;
+    ULONGLONG checked;
 } cr_engine;
 
 typedef struct {
@@ -69,6 +75,111 @@ BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage)
 
 /* ------------------------------------------------------------------ engines */
 
+/*
+ * an engine searches its world for issuers and trusts the roots of its
+ * location's Root store, or only its exclusive or restricted root store
+ * when it has one. the Disallowed store marks certificates distrusted.
+ * the default engines of the current user and the local machine are built
+ * once and rebuilt when the registry under their stores changes.
+ */
+static HCERTSTORE open_system(DWORD location, PCWSTR name)
+{
+    return CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0,
+                         location | CERT_STORE_READONLY_FLAG | CERT_STORE_OPEN_EXISTING_FLAG, name);
+}
+
+static void add_to_world(cr_engine *engine, HCERTSTORE store)
+{
+    if (store)
+        CertAddStoreToCollection(engine->world, store, 0, 0);
+}
+
+static cr_engine *new_engine(DWORD flags)
+{
+    cr_engine *engine = CrAllocZero(sizeof(cr_engine));
+    if (!engine) {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return nullptr;
+    }
+    engine->magic = ENGINE_MAGIC;
+    engine->refs = 1;
+    engine->flags = flags;
+    engine->world = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0, 0, nullptr);
+    if (!engine->world) {
+        CrFree(engine);
+        return nullptr;
+    }
+    return engine;
+}
+
+/* the system stores of a location: its roots, the intermediate authorities, the user's own and trusted ones. */
+static void add_system_stores(cr_engine *engine, DWORD location)
+{
+    engine->generation = CrRegGeneration;
+    engine->checked = GetTickCount64();
+    engine->disallowed = open_system(location, L"Disallowed");
+    engine->system_roots = open_system(location, L"Root");
+    add_to_world(engine, engine->system_roots);
+    static const PCWSTR others[] = {L"CA", L"My", L"Trust"};
+    for (DWORD i = 0; i < RTL_NUMBER_OF(others); i++) {
+        HCERTSTORE store = open_system(location, others[i]);
+        add_to_world(engine, store);
+        if (store)
+            CertCloseStore(store, 0);
+    }
+}
+
+static void release_engine(cr_engine *engine)
+{
+    if (!engine || InterlockedDecrement(&engine->refs))
+        return;
+    engine->magic = 0;
+    CertCloseStore(engine->world, 0);
+    CertCloseStore(engine->roots, 0);
+    CertCloseStore(engine->system_roots, 0);
+    CertCloseStore(engine->disallowed, 0);
+    CrFree(engine);
+}
+
+static SRWLOCK default_lock = SRWLOCK_INIT;
+static cr_engine *defaults[2];
+
+/* whether a default engine's stores are older than the registry, looked at once a second at most. */
+static BOOL engine_stale(cr_engine *engine)
+{
+    if (engine->generation != CrRegGeneration)
+        return TRUE;
+    ULONGLONG now = GetTickCount64();
+    if (now - engine->checked < 1000)
+        return FALSE;
+    engine->checked = now;
+    return CrStoreChanged(CrStore(engine->world)) ||
+           (engine->disallowed && CrStoreChanged(CrStore(engine->disallowed)));
+}
+
+/* the default engine of a location, referenced, built on first use and after its stores changed. */
+static cr_engine *default_engine(BOOL machine, BOOL rebuild)
+{
+    AcquireSRWLockExclusive(&default_lock);
+    cr_engine *engine = defaults[machine];
+    if (engine && (rebuild || engine_stale(engine))) {
+        defaults[machine] = nullptr;
+        release_engine(engine);
+        engine = nullptr;
+    }
+    if (!engine) {
+        engine = new_engine(machine ? CERT_CHAIN_USE_LOCAL_MACHINE_STORE : 0);
+        if (engine) {
+            add_system_stores(engine, machine ? CERT_SYSTEM_STORE_LOCAL_MACHINE : CERT_SYSTEM_STORE_CURRENT_USER);
+            defaults[machine] = engine;
+        }
+    }
+    if (engine)
+        InterlockedIncrement(&engine->refs);
+    ReleaseSRWLockExclusive(&default_lock);
+    return engine;
+}
+
 BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, HCERTCHAINENGINE *phChainEngine)
 {
     /* the layouts before windows 7, of windows 7 without dwExclusiveFlags, and of windows 8. */
@@ -77,56 +188,75 @@ BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, 
          pConfig->cbSize != FIELD_OFFSET(CERT_CHAIN_ENGINE_CONFIG, dwExclusiveFlags) &&
          pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG)))
         return CrFail(E_INVALIDARG);
-    cr_engine *engine = CrAllocZero(sizeof(cr_engine));
+    cr_engine *engine = new_engine(pConfig->dwFlags);
     if (!engine)
-        return CrFail(ERROR_OUTOFMEMORY);
-    engine->magic = ENGINE_MAGIC;
-    engine->flags = pConfig->dwFlags;
-    engine->world = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0, 0, nullptr);
-    if (!engine->world) {
-        CrFree(engine);
         return FALSE;
-    }
-    if (pConfig->hRestrictedOther)
-        CertAddStoreToCollection(engine->world, pConfig->hRestrictedOther, 0, 0);
-    if (pConfig->hRestrictedTrust)
-        CertAddStoreToCollection(engine->world, pConfig->hRestrictedTrust, 0, 0);
+    add_to_world(engine, pConfig->hRestrictedOther);
+    add_to_world(engine, pConfig->hRestrictedTrust);
     for (DWORD i = 0; i < pConfig->cAdditionalStore; i++)
-        if (pConfig->rghAdditionalStore && pConfig->rghAdditionalStore[i])
-            CertAddStoreToCollection(engine->world, pConfig->rghAdditionalStore[i], 0, 0);
+        if (pConfig->rghAdditionalStore)
+            add_to_world(engine, pConfig->rghAdditionalStore[i]);
     HCERTSTORE roots = pConfig->hRestrictedRoot;
     if (pConfig->cbSize > FIELD_OFFSET(CERT_CHAIN_ENGINE_CONFIG, hExclusiveRoot) && pConfig->hExclusiveRoot)
         roots = pConfig->hExclusiveRoot;
     if (roots) {
         engine->roots = CertDuplicateStore(roots);
-        CertAddStoreToCollection(engine->world, roots, 0, 0);
+        add_to_world(engine, roots);
+    }
+    /* restricted stores keep the engine to what they hold; otherwise it shares the default engine's stores. */
+    if (!pConfig->hRestrictedOther && !pConfig->hRestrictedTrust) {
+        cr_engine *system = default_engine((pConfig->dwFlags & CERT_CHAIN_USE_LOCAL_MACHINE_STORE) != 0, FALSE);
+        if (system) {
+            add_to_world(engine, system->world);
+            if (!roots && system->system_roots)
+                engine->system_roots = CertDuplicateStore(system->system_roots);
+            if (system->disallowed)
+                engine->disallowed = CertDuplicateStore(system->disallowed);
+            release_engine(system);
+        }
     }
     *phChainEngine = (HCERTCHAINENGINE)engine;
     return TRUE;
 }
 
+static BOOL is_default(HCERTCHAINENGINE handle)
+{
+    return handle == HCCE_CURRENT_USER || handle == HCCE_LOCAL_MACHINE || handle == HCCE_SERIAL_LOCAL_MACHINE;
+}
+
+/* the engine of a handle, referenced; null for a handle that is not one. */
 static cr_engine *engine_of(HCERTCHAINENGINE handle)
 {
-    if (handle == HCCE_CURRENT_USER || handle == HCCE_LOCAL_MACHINE || handle == HCCE_SERIAL_LOCAL_MACHINE)
-        return nullptr;
+    if (is_default(handle))
+        return default_engine(handle != HCCE_CURRENT_USER, FALSE);
     cr_engine *engine = (cr_engine *)handle;
-    return engine->magic == ENGINE_MAGIC ? engine : nullptr;
+    if (engine->magic != ENGINE_MAGIC)
+        return nullptr;
+    InterlockedIncrement(&engine->refs);
+    return engine;
 }
 
 void WINAPI CertFreeCertificateChainEngine(HCERTCHAINENGINE hChainEngine)
 {
-    cr_engine *engine = engine_of(hChainEngine);
-    if (!engine)
+    if (is_default(hChainEngine))
         return;
-    engine->magic = 0;
-    CertCloseStore(engine->world, 0);
-    if (engine->roots)
-        CertCloseStore(engine->roots, 0);
-    CrFree(engine);
+    cr_engine *engine = (cr_engine *)hChainEngine;
+    if (engine->magic == ENGINE_MAGIC)
+        release_engine(engine);
 }
 
 BOOL WINAPI CertResyncCertificateChainEngine(HCERTCHAINENGINE hChainEngine)
 {
+    if (is_default(hChainEngine)) {
+        release_engine(default_engine(hChainEngine != HCCE_CURRENT_USER, TRUE));
+        return TRUE;
+    }
+    cr_engine *engine = (cr_engine *)hChainEngine;
+    if (engine->magic != ENGINE_MAGIC)
+        return CrFail(E_INVALIDARG);
+    CrResyncStore(CrStore(engine->world));
+    if (engine->disallowed)
+        CrResyncStore(CrStore(engine->disallowed));
     return TRUE;
 }
 
@@ -174,9 +304,27 @@ static BOOL in_chain(PCCERT_CONTEXT *certs, DWORD count, PCCERT_CONTEXT cert)
     return FALSE;
 }
 
-/* picks the best issuer of subject in a store: a matching key identifier, a valid signature, a valid time. */
-static PCCERT_CONTEXT find_issuer(HCERTSTORE store, PCCERT_CONTEXT subject, PCCERT_CONTEXT *certs, DWORD count,
-                                  const FILETIME *time, int *best_score, PCCERT_CONTEXT best, DWORD *info_status)
+static BOOL store_has(HCERTSTORE store, PCCERT_CONTEXT cert)
+{
+    if (!store)
+        return FALSE;
+    PCCERT_CONTEXT found = CertFindCertificateInStore(store, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, cert, nullptr);
+    if (!found)
+        return FALSE;
+    CertFreeCertificateContext(found);
+    return TRUE;
+}
+
+/* the engine's own roots replace those of its location. */
+static BOOL is_trusted_root(cr_engine *engine, PCCERT_CONTEXT root)
+{
+    return engine && store_has(engine->roots ? engine->roots : engine->system_roots, root);
+}
+
+/* picks the best issuer of subject in a store: a trusted root, a valid signature, a matching key id, a valid time. */
+static PCCERT_CONTEXT find_issuer(HCERTSTORE store, cr_engine *engine, PCCERT_CONTEXT subject, PCCERT_CONTEXT *certs,
+                                  DWORD count, const FILETIME *time, int *best_score, PCCERT_CONTEXT best,
+                                  DWORD *info_status)
 {
     if (!store)
         return best;
@@ -202,6 +350,9 @@ static PCCERT_CONTEXT find_issuer(HCERTSTORE store, PCCERT_CONTEXT subject, PCCE
             score += 8;
         if (!CertVerifyTimeValidity((LPFILETIME)time, candidate->pCertInfo))
             score += 2;
+        /* a path ending in a trusted root wins over a cross certificate the server sent. */
+        if (CrIsSelfIssued(candidate) && is_trusted_root(engine, candidate))
+            score += 16;
         if (score > *best_score) {
             if (best)
                 CertFreeCertificateContext(best);
@@ -211,18 +362,6 @@ static PCCERT_CONTEXT find_issuer(HCERTSTORE store, PCCERT_CONTEXT subject, PCCE
         }
     }
     return best;
-}
-
-static BOOL is_trusted_root(cr_engine *engine, PCCERT_CONTEXT root)
-{
-    if (!engine || !engine->roots)
-        return FALSE;
-    PCCERT_CONTEXT found = CertFindCertificateInStore(engine->roots, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, root,
-                                                      nullptr);
-    if (!found)
-        return FALSE;
-    CertFreeCertificateContext(found);
-    return TRUE;
 }
 
 static DWORD constraint_errors(PCCERT_CONTEXT cert, DWORD position, DWORD ca_below)
@@ -255,7 +394,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
                                                                                                RequestedIssuancePolicy))
         return CrFail(E_INVALIDARG);
     cr_engine *engine = engine_of(hChainEngine);
-    if (hChainEngine && hChainEngine != HCCE_LOCAL_MACHINE && hChainEngine != HCCE_SERIAL_LOCAL_MACHINE && !engine)
+    if (!engine && !is_default(hChainEngine))
         return CrFail(E_INVALIDARG);
     FILETIME now;
     if (!pTime) {
@@ -263,8 +402,10 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         pTime = &now;
     }
     chain_block *block = CrAllocZero(sizeof(chain_block));
-    if (!block)
+    if (!block) {
+        release_engine(engine);
         return CrFail(ERROR_OUTOFMEMORY);
+    }
     PCCERT_CONTEXT certs[MAX_CHAIN];
     DWORD errors[MAX_CHAIN] = {}, infos[MAX_CHAIN] = {}, chain_error = 0;
     DWORD count = 0;
@@ -288,11 +429,12 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         }
         int score = 0;
         DWORD status = 0;
-        PCCERT_CONTEXT issuer = find_issuer(hAdditionalStore, cur, certs, count, pTime, &score, nullptr, &status);
-        if (score < 15)
-            issuer = find_issuer(cur->hCertStore, cur, certs, count, pTime, &score, issuer, &status);
-        if (score < 15 && engine)
-            issuer = find_issuer(engine->world, cur, certs, count, pTime, &score, issuer, &status);
+        PCCERT_CONTEXT issuer = find_issuer(hAdditionalStore, engine, cur, certs, count, pTime, &score, nullptr,
+                                            &status);
+        if (score < 31)
+            issuer = find_issuer(cur->hCertStore, engine, cur, certs, count, pTime, &score, issuer, &status);
+        if (score < 31 && engine)
+            issuer = find_issuer(engine->world, engine, cur, certs, count, pTime, &score, issuer, &status);
         if (!issuer) {
             chain_error |= CERT_TRUST_IS_PARTIAL_CHAIN;
             break;
@@ -313,6 +455,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
             ca_below++;
         if (!CrUsageAllowed(certs[i], &pChainPara->RequestedUsage))
             errors[i] |= CERT_TRUST_IS_NOT_VALID_FOR_USAGE;
+        if (engine && store_has(engine->disallowed, certs[i]))
+            errors[i] |= CERT_TRUST_IS_EXPLICIT_DISTRUST;
         BOOL is_root = i + 1 == count && (infos[i] & CERT_TRUST_IS_SELF_SIGNED);
         if (revocation && (i == 0 || (dwFlags & CERT_CHAIN_REVOCATION_CHECK_CHAIN) ||
                            ((dwFlags & CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT) && !is_root)))
@@ -342,6 +486,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
     block->context.rgpChain = block->chains;
     block->context.dwCreateFlags = dwFlags;
     *ppChainContext = &block->context;
+    release_engine(engine);
     return TRUE;
 }
 
@@ -395,6 +540,7 @@ static DWORD base_policy(PCCERT_CHAIN_CONTEXT chain, DWORD flags, LONG *chain_in
         DWORD error;
     } checks[] = {
         {CERT_TRUST_IS_NOT_SIGNATURE_VALID, 0, TRUST_E_CERT_SIGNATURE},
+        {CERT_TRUST_IS_EXPLICIT_DISTRUST, 0, CRYPT_E_REVOKED},
         {CERT_TRUST_IS_REVOKED, 0, CRYPT_E_REVOKED},
         {CERT_TRUST_IS_UNTRUSTED_ROOT, CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG, CERT_E_UNTRUSTEDROOT},
         {CERT_TRUST_IS_PARTIAL_CHAIN, CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG, CERT_E_CHAINING},
@@ -492,7 +638,7 @@ BOOL WINAPI CertVerifyCertificateChainPolicy(LPCSTR pszPolicyOID, PCCERT_CHAIN_C
     } else {
         error = base_policy(pChainContext, flags, &chain_index, &element_index);
         if (!error && policy == 7) {
-            /* no root is a microsoft root, as no root is trusted. */
+            /* the microsoft root keys are not known, so no root passes as one. */
             error = CERT_E_UNTRUSTEDROOT;
             chain_index = 0;
             element_index = pChainContext->cChain ? (LONG)pChainContext->rgpChain[0]->cElement - 1 : 0;

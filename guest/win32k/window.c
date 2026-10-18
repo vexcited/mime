@@ -1058,6 +1058,30 @@ done:
     UserDereference(&w->Header);
 }
 
+/* the windows of a process, top level and children, counted as its user objects. */
+static ULONG count_tree(WND *w, W32PROCESS *p)
+{
+    ULONG n = 0;
+    for (WND *c = w->FirstChild; c; c = c->Next)
+        n += (c->Thread && c->Thread->Process == p) + count_tree(c, p);
+    return n;
+}
+
+ULONG WndCountProcessObjects(W32PROCESS *p)
+{
+    return g_desktop ? count_tree(g_desktop, p) : 0;
+}
+
+BOOL WndThreadHasWindows(W32THREAD *t)
+{
+    if (!g_desktop)
+        return FALSE;
+    for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+        if (c->Thread == t && !(c->Flags & WNDF_DESTROYING))
+            return TRUE;
+    return FALSE;
+}
+
 void WndDestroyThreadWindows(W32THREAD *t)
 {
     if (!g_desktop)
@@ -1970,6 +1994,9 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
             break;
         case MIME_HWND_MONITOR:
             r = 0x00010001;
+            break;
+        case MIME_HWND_ISUNICODE:
+            r = !w->Ansi;
             break;
         }
     }

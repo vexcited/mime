@@ -709,3 +709,72 @@ WINSETUPAPI BOOL WINAPI SetupDiCallClassInstaller(DI_FUNCTION function, HDEVINFO
         return FALSE;
     return TRUE;
 }
+
+/*
+ * adds the interface of a symbolic link to a set, with its device, or
+ * finds it there already. the path compares without regard to case.
+ */
+WINSETUPAPI BOOL WINAPI SetupDiOpenDeviceInterfaceW(HDEVINFO set, PCWSTR path, DWORD flags,
+                                                    PSP_DEVICE_INTERFACE_DATA data)
+{
+    DEVICE_SET *s = set_of(set);
+    if (!s)
+        return FALSE;
+    if (!path || (flags & ~DIODI_NO_ADD)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (data && data->cbSize != sizeof(*data)) {
+        SetLastError(ERROR_INVALID_USER_BUFFER);
+        return FALSE;
+    }
+    BYTE query[sizeof(MIME_PNP_REQUEST) + MAX_DEVICE_ID_LEN * sizeof(WCHAR)] = {};
+    MIME_PNP_REQUEST *q = (MIME_PNP_REQUEST *)query;
+    lstrcpynW(q->Instance, path, RTL_NUMBER_OF(q->Instance));
+    if (!NT_SUCCESS(NtPlugPlayControl(MIME_PNP_INTERFACE_DEVICE, q, sizeof(query)))) {
+        SetLastError(ERROR_NO_SUCH_DEVICE_INTERFACE);
+        return FALSE;
+    }
+    if (s->HasClass && !same_guid(&s->Class, &q->Class)) {
+        SetLastError(ERROR_CLASS_MISMATCH);
+        return FALSE;
+    }
+    DWORD index = ~0u;
+    for (DWORD i = 0; i < s->IfaceCount; i++)
+        if (!lstrcmpiW(s->Ifaces[i].Path, path))
+            index = i;
+    if (index == ~0u) {
+        DEVPROPTYPE type;
+        WCHAR id[MAX_DEVICE_ID_LEN];
+        ULONG size = sizeof(id);
+        if (CM_Get_Device_Interface_PropertyW(path, &DEVPKEY_Device_InstanceId, &type, (PBYTE)id, &size, 0)) {
+            SetLastError(ERROR_NO_SUCH_DEVICE_INTERFACE);
+            return FALSE;
+        }
+        DWORD device = add_device(s, id);
+        if (device == ~0u || !grow((void **)&s->Ifaces, &s->IfaceCapacity, s->IfaceCount, sizeof(IFACE))) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        index = s->IfaceCount++;
+        IFACE *f = &s->Ifaces[index];
+        lstrcpynW(f->Path, path, MAX_PATH_CHARS);
+        f->Device = device;
+        f->Class = q->Class;
+    }
+    if (data) {
+        data->InterfaceClassGuid = s->Ifaces[index].Class;
+        data->Flags = SPINT_ACTIVE;
+        data->Reserved = index + 1;
+    }
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiOpenDeviceInterfaceA(HDEVINFO set, PCSTR path, DWORD flags,
+                                                    PSP_DEVICE_INTERFACE_DATA data)
+{
+    WCHAR w[MAX_PATH_CHARS];
+    if (path)
+        MultiByteToWideChar(CP_ACP, 0, path, -1, w, MAX_PATH_CHARS);
+    return SetupDiOpenDeviceInterfaceW(set, path ? w : nullptr, flags, data);
+}

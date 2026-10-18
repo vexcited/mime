@@ -53,6 +53,12 @@ void DcResetState(DC *dc)
     s->World = (XFORM){1, 0, 0, 1, 0, 0};
     s->PolyFillMode = ALTERNATE;
     s->ArcDirection = AD_COUNTERCLOCKWISE;
+    s->WindowExt = (SIZE){1, 1};
+    s->ViewportExt = (SIZE){1, 1};
+    s->HasPage = FALSE;
+    RgnClear(&s->MetaRgn);
+    s->HasMeta = FALSE;
+    s->MiterLimit = 10.0f;
 }
 
 void DcSelectDefaults(DC *dc)
@@ -78,6 +84,7 @@ DC *DcCreate(ULONG flags)
     dc->Dpi = W32SystemDpi();
     RgnInit(&dc->VisRgn);
     RgnInit(&dc->State.ClipRgn);
+    RgnInit(&dc->State.MetaRgn);
     DcResetState(dc);
     DcSelectDefaults(dc);
     if (!GdiCreateHandle(&dc->Header, GDI_TYPE_DC)) {
@@ -111,6 +118,7 @@ static void free_saved(DC *dc)
         select_unref(&sv->State.Pen->Header);
         select_unref(&sv->State.Font->Header);
         RgnFree(&sv->State.ClipRgn);
+        RgnFree(&sv->State.MetaRgn);
         W32Free(sv);
     }
     dc->SaveLevel = 0;
@@ -128,6 +136,7 @@ void DcFree(DC *dc)
         SurfaceDestroy(dc->DefaultBitmap);
     RgnFree(&dc->VisRgn);
     RgnFree(&dc->State.ClipRgn);
+    RgnFree(&dc->State.MetaRgn);
     PathFree(&dc->Path);
     GdiFreeHandle(&dc->Header);
     W32Free(dc);
@@ -146,6 +155,14 @@ BOOLEAN DcGetClip(DC *dc, REGION *out)
         RgnOffset(&app, dc->Origin.x, dc->Origin.y);
         RgnCombine(out, out, &app, RGN_AND);
         RgnFree(&app);
+    }
+    if (dc->State.HasMeta) {
+        REGION meta;
+        RgnInit(&meta);
+        RgnCopy(&meta, &dc->State.MetaRgn);
+        RgnOffset(&meta, dc->Origin.x, dc->Origin.y);
+        RgnCombine(out, out, &meta, RGN_AND);
+        RgnFree(&meta);
     }
     RECT bounds = {0, 0, dc->Surface->Width, dc->Surface->Height};
     RgnCombineRect(out, out, &bounds, RGN_AND);
@@ -168,11 +185,78 @@ void DcTransformPoint(DC *dc, LONG *x, LONG *y)
     *y = round_xf(fx * m->eM12 + fy * m->eM22 + m->eDy);
 }
 
+static LONG round_double(double v)
+{
+    if (v > 2147483647.0)
+        return 0x7FFFFFFF;
+    if (v < -2147483648.0)
+        return (LONG)0x80000000;
+    return (LONG)(v >= 0 ? v + 0.5 : v - 0.5);
+}
+
+/* the page transform: window to viewport extents and origins. */
+static void page_scale(DC *dc, double *sx, double *sy)
+{
+    const DC_STATE *s = &dc->State;
+    *sx = s->WindowExt.cx ? (double)s->ViewportExt.cx / s->WindowExt.cx : 1.0;
+    *sy = s->WindowExt.cy ? (double)s->ViewportExt.cy / s->WindowExt.cy : 1.0;
+}
+
+void DcGetXform(DC *dc, XFORM *out)
+{
+    const DC_STATE *s = &dc->State;
+    double sx, sy;
+    page_scale(dc, &sx, &sy);
+    const XFORM *w = &s->World;
+    out->eM11 = (float)(w->eM11 * sx);
+    out->eM12 = (float)(w->eM12 * sy);
+    out->eM21 = (float)(w->eM21 * sx);
+    out->eM22 = (float)(w->eM22 * sy);
+    out->eDx = (float)((w->eDx - s->WindowOrg.x) * sx + s->ViewportOrg.x);
+    out->eDy = (float)((w->eDy - s->WindowOrg.y) * sy + s->ViewportOrg.y);
+}
+
+BOOLEAN DcIsScaled(DC *dc)
+{
+    const XFORM *w = &dc->State.World;
+    return dc->State.HasPage || (dc->State.HasXform && (w->eM11 != 1 || w->eM22 != 1 || w->eM12 || w->eM21));
+}
+
 void DcLogicalToDevice(DC *dc, LONG *x, LONG *y)
 {
-    DcTransformPoint(dc, x, y);
-    *x = *x - dc->State.WindowOrg.x + dc->State.ViewportOrg.x;
-    *y = *y - dc->State.WindowOrg.y + dc->State.ViewportOrg.y;
+    if (!dc->State.HasPage) {
+        DcTransformPoint(dc, x, y);
+        *x = *x - dc->State.WindowOrg.x + dc->State.ViewportOrg.x;
+        *y = *y - dc->State.WindowOrg.y + dc->State.ViewportOrg.y;
+        return;
+    }
+    const DC_STATE *s = &dc->State;
+    const XFORM *w = &s->World;
+    double sx, sy;
+    page_scale(dc, &sx, &sy);
+    double fx = *x, fy = *y;
+    double wx = fx * w->eM11 + fy * w->eM21 + w->eDx, wy = fx * w->eM12 + fy * w->eM22 + w->eDy;
+    *x = round_double((wx - s->WindowOrg.x) * sx + s->ViewportOrg.x);
+    *y = round_double((wy - s->WindowOrg.y) * sy + s->ViewportOrg.y);
+}
+
+void DcDeviceToLogical(DC *dc, LONG *x, LONG *y)
+{
+    const DC_STATE *s = &dc->State;
+    double sx, sy;
+    page_scale(dc, &sx, &sy);
+    double px = (*x - s->ViewportOrg.x) / sx + s->WindowOrg.x, py = (*y - s->ViewportOrg.y) / sy + s->WindowOrg.y;
+    if (s->HasXform) {
+        const XFORM *m = &s->World;
+        double det = (double)m->eM11 * m->eM22 - (double)m->eM12 * m->eM21;
+        if (det != 0) {
+            double fx = px - m->eDx, fy = py - m->eDy;
+            px = (fx * m->eM22 - fy * m->eM21) / det;
+            py = (fy * m->eM11 - fx * m->eM12) / det;
+        }
+    }
+    *x = round_double(px);
+    *y = round_double(py);
 }
 
 void DcLogicalToSurface(DC *dc, LONG *x, LONG *y)
@@ -182,9 +266,33 @@ void DcLogicalToSurface(DC *dc, LONG *x, LONG *y)
     *y += dc->Origin.y;
 }
 
+/* a length through the transform, scaled by the square root of its determinant. */
 LONG DcScaleToDevice(DC *dc, LONG v)
 {
-    return v; /* MM_TEXT only for now */
+    if (!DcIsScaled(dc))
+        return v;
+    XFORM m;
+    DcGetXform(dc, &m);
+    double det = (double)m.eM11 * m.eM22 - (double)m.eM12 * m.eM21;
+    if (det < 0)
+        det = -det;
+    double s = 1.0, r = det;
+    /* newton steps for the square root, without the c library. */
+    if (r > 0) {
+        s = r > 1 ? r : 1;
+        for (int i = 0; i < 40; i++)
+            s = (s + r / s) / 2;
+    }
+    return round_double(v * s);
+}
+
+LONG DcPenWidth(DC *dc)
+{
+    const PEN *p = dc->State.Pen;
+    if (p->Width <= 1 || ((p->Style & PS_TYPE_MASK) == PS_COSMETIC && p->Header.Type == GDI_TYPE_EXTPEN))
+        return 1;
+    LONG w = DcScaleToDevice(dc, p->Width);
+    return w > 1 ? w : 1;
 }
 
 FONT_INSTANCE *DcGetFont(DC *dc)
@@ -215,6 +323,27 @@ HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
         } else {
             DcFree(dc);
         }
+    }
+    UserLeave();
+    return result;
+}
+
+/*
+ * the win32k half of an enhanced metafile dc: the state of a dc of the
+ * reference device without a surface, so drawing only moves the current
+ * position and builds paths while gdi32 records.
+ */
+HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
+{
+    UserEnter();
+    DC *ref = DcLookup(hdc);
+    DC *dc = ref ? DcCreate(DC_METAFILE) : nullptr;
+    HDC result = nullptr;
+    if (dc) {
+        dc->Dpi = ref->Dpi;
+        RECT all = {0, 0, W32Display.Width, W32Display.Height};
+        RgnSetRect(&dc->VisRgn, &all);
+        result = (HDC)dc->Header.Handle;
     }
     UserLeave();
     return result;
@@ -320,6 +449,172 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
     return v;
 }
 
+/* ------------------------------------------------------------------ mapping modes */
+
+static void update_page(DC_STATE *s)
+{
+    s->HasPage = s->WindowExt.cx != s->ViewportExt.cx || s->WindowExt.cy != s->ViewportExt.cy;
+}
+
+/* the isotropic mode keeps units square: the larger viewport extent shrinks to the smaller scale. */
+static void isotropic_adjust(DC_STATE *s)
+{
+    LONG wx = s->WindowExt.cx < 0 ? -s->WindowExt.cx : s->WindowExt.cx;
+    LONG wy = s->WindowExt.cy < 0 ? -s->WindowExt.cy : s->WindowExt.cy;
+    LONG vx = s->ViewportExt.cx < 0 ? -s->ViewportExt.cx : s->ViewportExt.cx;
+    LONG vy = s->ViewportExt.cy < 0 ? -s->ViewportExt.cy : s->ViewportExt.cy;
+    if (!wx || !wy || !vx || !vy)
+        return;
+    LONG64 ax = (LONG64)vx * wy, ay = (LONG64)vy * wx;
+    if (ax < ay) {
+        LONG n = W32MulDiv(vx, wy, wx);
+        s->ViewportExt.cy = s->ViewportExt.cy < 0 ? -n : n;
+    } else if (ax > ay) {
+        LONG n = W32MulDiv(vy, wx, wy);
+        s->ViewportExt.cx = s->ViewportExt.cx < 0 ? -n : n;
+    }
+}
+
+/*
+ * the extents windows gives each mapping mode: the viewport is the device
+ * in pixels, y up, and the window its physical size in the mode's units,
+ * from the virtual resolution when one is set.
+ */
+static BOOL set_map_mode(DC *dc, int mode, DWORD *old)
+{
+    DC_STATE *s = &dc->State;
+    *old = (DWORD)s->MapMode;
+    if (mode < MM_TEXT || mode > MM_ANISOTROPIC)
+        return FALSE;
+    if (mode == s->MapMode && mode != MM_ISOTROPIC)
+        return TRUE;
+    s->MapMode = mode;
+    if (mode == MM_TEXT) {
+        s->WindowExt = s->ViewportExt = (SIZE){1, 1};
+    } else if (mode != MM_ANISOTROPIC) {
+        LONG px, py, mx, my;
+        BOOLEAN virt = dc->VirtualPixels.cx != 0;
+        if (virt) {
+            px = dc->VirtualPixels.cx;
+            py = dc->VirtualPixels.cy;
+            mx = dc->VirtualMm.cx;
+            my = dc->VirtualMm.cy;
+        } else {
+            px = W32Display.Width;
+            py = W32Display.Height;
+            /* the physical size in micrometers. */
+            mx = W32MulDiv(px, 25400, (LONG)dc->Dpi);
+            my = W32MulDiv(py, 25400, (LONG)dc->Dpi);
+        }
+        LONG wx, wy;
+        switch (mode) {
+        case MM_HIMETRIC:
+            wx = virt ? mx * 100 : (mx + 5) / 10;
+            wy = virt ? my * 100 : (my + 5) / 10;
+            break;
+        case MM_LOENGLISH:
+            wx = virt ? W32MulDiv(mx, 1000, 254) : (mx + 127) / 254;
+            wy = virt ? W32MulDiv(my, 1000, 254) : (my + 127) / 254;
+            break;
+        case MM_HIENGLISH:
+            wx = W32MulDiv(mx, virt ? 10000 : 10, 254);
+            wy = W32MulDiv(my, virt ? 10000 : 10, 254);
+            break;
+        case MM_TWIPS:
+            wx = virt ? W32MulDiv(mx, 14400, 254) : W32MulDiv(mx, 144, 2540);
+            wy = virt ? W32MulDiv(my, 14400, 254) : W32MulDiv(my, 144, 2540);
+            break;
+        default: /* MM_LOMETRIC and MM_ISOTROPIC */
+            wx = virt ? mx * 10 : (mx + 50) / 100;
+            wy = virt ? my * 10 : (my + 50) / 100;
+            break;
+        }
+        s->WindowExt = (SIZE){wx ? wx : 1, wy ? wy : 1};
+        s->ViewportExt = (SIZE){px ? px : 1, py ? -py : -1};
+        if (mode == MM_ISOTROPIC)
+            isotropic_adjust(s);
+    }
+    update_page(s);
+    return TRUE;
+}
+
+/* private: sets the window or the viewport extent; fixed modes ignore it, like windows. */
+BOOL NTAPI NtGdiMimeSetExtent(HDC hdc, UINT which, int x, int y, LPSIZE old)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    SIZE prev = {0, 0};
+    BOOL ok = dc != nullptr;
+    if (dc) {
+        DC_STATE *s = &dc->State;
+        SIZE *ext = which == MIME_EXTENT_VIEWPORT ? &s->ViewportExt : &s->WindowExt;
+        prev = *ext;
+        if (s->MapMode >= MM_ISOTROPIC) {
+            if (!x || !y) {
+                ok = FALSE;
+            } else {
+                *ext = (SIZE){x, y};
+                if (s->MapMode == MM_ISOTROPIC)
+                    isotropic_adjust(s);
+                update_page(s);
+            }
+        }
+    }
+    UserLeave();
+    if (ok && old)
+        ok = NT_SUCCESS(MimeCopyToUser(old, &prev, sizeof(prev)));
+    return ok;
+}
+
+BOOL NTAPI NtGdiSetVirtualResolution(HDC hdc, int px, int py, int mx, int my)
+{
+    /* all four set it, all four zero clear it. */
+    if (px ? (!py || !mx || !my) : (py || mx || my))
+        return FALSE;
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    if (dc) {
+        dc->VirtualPixels = (SIZE){px, py};
+        dc->VirtualMm = (SIZE){mx, my};
+    }
+    UserLeave();
+    return dc != nullptr;
+}
+
+BOOL NTAPI NtGdiSetMiterLimit(HDC hdc, DWORD limit, DWORD *old)
+{
+    float value, prev = 0;
+    memcpy(&value, &limit, sizeof(value));
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL ok = dc && value >= 1.0f;
+    if (dc)
+        prev = dc->State.MiterLimit;
+    if (ok)
+        dc->State.MiterLimit = value;
+    UserLeave();
+    if (!dc)
+        W32SetLastError(ERROR_INVALID_HANDLE);
+    else if (!ok)
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    if (ok && old)
+        ok = NT_SUCCESS(MimeCopyToUser(old, &prev, sizeof(prev)));
+    return ok;
+}
+
+BOOL NTAPI NtGdiGetMiterLimit(HDC hdc, DWORD *limit)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    float value = dc ? dc->State.MiterLimit : 0;
+    UserLeave();
+    if (!dc) {
+        W32SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    return limit && NT_SUCCESS(MimeCopyToUser(limit, &value, sizeof(value)));
+}
+
 /* ------------------------------------------------------------------ attributes */
 
 BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result)
@@ -392,8 +687,9 @@ BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result
                 ok = FALSE, old = 0;
             break;
         case MIME_DCDW_MAPMODE:
-            old = (DWORD)s->MapMode;
-            s->MapMode = (int)value;
+            ok = set_map_mode(dc, (int)value, &old);
+            if (!ok)
+                old = 0;
             break;
         case MIME_DCDW_TEXTCHAREXTRA:
             old = (DWORD)s->TextCharExtra;
@@ -495,6 +791,12 @@ BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
         case MIME_DCPT_CURRENTPOSITION:
             p = dc->State.CurrentPos;
             break;
+        case MIME_DCPT_WINDOWEXT:
+            p = (POINT){dc->State.WindowExt.cx, dc->State.WindowExt.cy};
+            break;
+        case MIME_DCPT_VIEWPORTEXT:
+            p = (POINT){dc->State.ViewportExt.cx, dc->State.ViewportExt.cy};
+            break;
         case MIME_DCPT_DCORG:
             p = dc->Origin;
             if (dc->Window && dc->Surface && dc->Surface->Window) {
@@ -527,21 +829,10 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
     BOOL ok = dc != nullptr;
     if (dc) {
         for (int i = 0; i < count; i++) {
-            if (mode == 1) { /* logical to device */
+            if (mode == 1) /* logical to device */
                 DcLogicalToDevice(dc, &pts[i].x, &pts[i].y);
-            } else {
-                pts[i].x = pts[i].x - dc->State.ViewportOrg.x + dc->State.WindowOrg.x;
-                pts[i].y = pts[i].y - dc->State.ViewportOrg.y + dc->State.WindowOrg.y;
-                if (dc->State.HasXform) {
-                    const XFORM *m = &dc->State.World;
-                    float det = m->eM11 * m->eM22 - m->eM12 * m->eM21;
-                    float fx = (float)pts[i].x - m->eDx, fy = (float)pts[i].y - m->eDy;
-                    if (det != 0) {
-                        pts[i].x = round_xf((fx * m->eM22 - fy * m->eM21) / det);
-                        pts[i].y = round_xf((fy * m->eM11 - fx * m->eM12) / det);
-                    }
-                }
-            }
+            else
+                DcDeviceToLogical(dc, &pts[i].x, &pts[i].y);
         }
     }
     UserLeave();
@@ -673,6 +964,8 @@ HPEN NTAPI NtGdiSelectPen(HDC hdc, HPEN pen)
     UserEnter();
     DC *dc = DcLookup(hdc);
     PEN *p = (PEN *)GdiLookup(pen, GDI_TYPE_PEN);
+    if (!p)
+        p = (PEN *)GdiLookup(pen, GDI_TYPE_EXTPEN);
     HPEN old = nullptr;
     if (dc && p) {
         old = (HPEN)dc->State.Pen->Header.Handle;
@@ -713,6 +1006,8 @@ int NTAPI NtGdiSaveDC(HDC hdc)
             sv->State = dc->State;
             RgnInit(&sv->State.ClipRgn);
             RgnCopy(&sv->State.ClipRgn, &dc->State.ClipRgn);
+            RgnInit(&sv->State.MetaRgn);
+            RgnCopy(&sv->State.MetaRgn, &dc->State.MetaRgn);
             sv->Surface = dc->Surface;
             select_ref(&sv->State.Brush->Header);
             select_ref(&sv->State.Pen->Header);
@@ -743,6 +1038,7 @@ BOOL NTAPI NtGdiRestoreDC(HDC hdc, int saved)
                     select_unref(&dc->State.Pen->Header);
                     select_unref(&dc->State.Font->Header);
                     RgnFree(&dc->State.ClipRgn);
+                    RgnFree(&dc->State.MetaRgn);
                     dc->State = sv->State;
                     if (dc->Flags & DC_MEMORY)
                         DcSetSurface(dc, sv->Surface);
@@ -751,6 +1047,7 @@ BOOL NTAPI NtGdiRestoreDC(HDC hdc, int saved)
                     select_unref(&sv->State.Pen->Header);
                     select_unref(&sv->State.Font->Header);
                     RgnFree(&sv->State.ClipRgn);
+                    RgnFree(&sv->State.MetaRgn);
                 }
                 W32Free(sv);
             }
@@ -799,6 +1096,16 @@ int NTAPI NtGdiExtSelectClipRgn(HDC hdc, HRGN region, int mode)
     return result;
 }
 
+/* a metafile dc has no surface: its visible region is the reference device. */
+static void metafile_clip(DC *dc, REGION *out)
+{
+    RgnCopy(out, &dc->VisRgn);
+    if (dc->State.HasClip)
+        RgnCombine(out, out, &dc->State.ClipRgn, RGN_AND);
+    if (dc->State.HasMeta)
+        RgnCombine(out, out, &dc->State.MetaRgn, RGN_AND);
+}
+
 int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
 {
     UserEnter();
@@ -808,13 +1115,29 @@ int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
     if (dc) {
         REGION clip;
         RgnInit(&clip);
-        DcGetClip(dc, &clip);
+        if (dc->Flags & DC_METAFILE)
+            metafile_clip(dc, &clip);
+        else
+            DcGetClip(dc, &clip);
         box = clip.Extents;
         result = RgnComplexity(&clip);
         RgnFree(&clip);
-        /* surface to logical coordinates. */
-        RectOffset(&box, -dc->Origin.x - dc->State.ViewportOrg.x + dc->State.WindowOrg.x,
-                   -dc->Origin.y - dc->State.ViewportOrg.y + dc->State.WindowOrg.y);
+        /* surface to logical coordinates, the corners through the inverse transform. */
+        RectOffset(&box, -dc->Origin.x, -dc->Origin.y);
+        if (result != NULLREGION) {
+            LONG xs[4] = {box.left, box.right, box.left, box.right}, ys[4] = {box.top, box.top, box.bottom, box.bottom};
+            for (int i = 0; i < 4; i++) {
+                DcDeviceToLogical(dc, &xs[i], &ys[i]);
+                if (!i || xs[i] < box.left)
+                    box.left = xs[i];
+                if (!i || xs[i] > box.right)
+                    box.right = xs[i];
+                if (!i || ys[i] < box.top)
+                    box.top = ys[i];
+                if (!i || ys[i] > box.bottom)
+                    box.bottom = ys[i];
+            }
+        }
     }
     UserLeave();
     if (result != ERROR && !NT_SUCCESS(MimeCopyToUser(rect, &box, sizeof(box))))
@@ -832,6 +1155,18 @@ int NTAPI NtGdiGetRandomRgn(HDC hdc, HRGN region, int which)
         if (which == 1) { /* CLIPRGN */
             result = dc->State.HasClip ? 1 : 0;
             if (result)
+                RgnCopy(&r->Region, &dc->State.ClipRgn);
+        } else if (which == 2) { /* METARGN */
+            result = dc->State.HasMeta ? 1 : 0;
+            if (result)
+                RgnCopy(&r->Region, &dc->State.MetaRgn);
+        } else if (which == 3) { /* APIRGN, the meta and clip regions together */
+            result = dc->State.HasMeta || dc->State.HasClip ? 1 : 0;
+            if (dc->State.HasMeta && dc->State.HasClip)
+                RgnCombine(&r->Region, &dc->State.MetaRgn, &dc->State.ClipRgn, RGN_AND);
+            else if (dc->State.HasMeta)
+                RgnCopy(&r->Region, &dc->State.MetaRgn);
+            else if (dc->State.HasClip)
                 RgnCopy(&r->Region, &dc->State.ClipRgn);
         } else if (which == 4) { /* SYSRGN, in screen coordinates */
             RgnCopy(&r->Region, &dc->VisRgn);
@@ -876,6 +1211,29 @@ int NTAPI NtGdiIntersectClipRect(HDC hdc, int left, int top, int right, int bott
 int NTAPI NtGdiExcludeClipRect(HDC hdc, int left, int top, int right, int bottom)
 {
     return clip_rect_op(hdc, left, top, right, bottom, RGN_DIFF);
+}
+
+/* the clip region joins the meta region and the dc has no clip region left. */
+int NTAPI NtGdiSetMetaRgn(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int result = ERROR;
+    if (dc) {
+        DC_STATE *s = &dc->State;
+        if (s->HasClip) {
+            if (s->HasMeta)
+                RgnCombine(&s->MetaRgn, &s->MetaRgn, &s->ClipRgn, RGN_AND);
+            else
+                RgnCopy(&s->MetaRgn, &s->ClipRgn);
+            s->HasMeta = TRUE;
+            RgnClear(&s->ClipRgn);
+            s->HasClip = FALSE;
+        }
+        result = s->HasMeta ? RgnComplexity(&s->MetaRgn) : SIMPLEREGION;
+    }
+    UserLeave();
+    return result;
 }
 
 BOOL NTAPI NtGdiFlush(void)
@@ -947,11 +1305,46 @@ BOOL NTAPI NtGdiGetTransform(HDC hdc, DWORD which, XFORM *user_xform)
 {
     UserEnter();
     DC *dc = DcLookup(hdc);
-    XFORM xf = dc ? dc->State.World : (XFORM){1, 0, 0, 1, 0, 0};
+    XFORM xf = {1, 0, 0, 1, 0, 0};
+    BOOL ok = dc != nullptr;
+    if (dc) {
+        switch (which) {
+        case MIME_XFORM_WORLD:
+            xf = dc->State.World;
+            break;
+        case MIME_XFORM_WORLD_TO_DEVICE:
+            DcGetXform(dc, &xf);
+            break;
+        case MIME_XFORM_PAGE_TO_DEVICE: {
+            double sx, sy;
+            page_scale(dc, &sx, &sy);
+            xf = (XFORM){(float)sx, 0, 0, (float)sy, (float)(dc->State.ViewportOrg.x - dc->State.WindowOrg.x * sx),
+                         (float)(dc->State.ViewportOrg.y - dc->State.WindowOrg.y * sy)};
+            break;
+        }
+        case MIME_XFORM_DEVICE_TO_WORLD: {
+            XFORM m;
+            DcGetXform(dc, &m);
+            double det = (double)m.eM11 * m.eM22 - (double)m.eM12 * m.eM21;
+            if (det == 0) {
+                ok = FALSE;
+                break;
+            }
+            xf.eM11 = (float)(m.eM22 / det);
+            xf.eM12 = (float)(-m.eM12 / det);
+            xf.eM21 = (float)(-m.eM21 / det);
+            xf.eM22 = (float)(m.eM11 / det);
+            xf.eDx = (float)(((double)m.eM21 * m.eDy - (double)m.eM22 * m.eDx) / det);
+            xf.eDy = (float)(((double)m.eM12 * m.eDx - (double)m.eM11 * m.eDy) / det);
+            break;
+        }
+        default:
+            ok = FALSE;
+            break;
+        }
+    }
     UserLeave();
-    if (!dc || which != MIME_XFORM_WORLD)
-        return FALSE;
-    return NT_SUCCESS(MimeCopyToUser(user_xform, &xf, sizeof(xf)));
+    return ok && NT_SUCCESS(MimeCopyToUser(user_xform, &xf, sizeof(xf)));
 }
 
 /* ------------------------------------------------------------------ pixel formats */

@@ -1,125 +1,12 @@
 /*
- * rsa signature verification for certificates: a small big number library
- * with montgomery multiplication and the pkcs #1 v1.5 padding check.
+ * signature verification for certificates: rsa with the pkcs #1 v1.5
+ * padding check, rsa pss and ecdsa on the named curves, over the shared
+ * crypto library.
  */
 #include "crypt32_private.h"
+#include <crypto/crypto.h>
 
-#define MAX_LIMBS 520
-
-typedef struct {
-    DWORD n;
-    DWORD d[MAX_LIMBS + 2];
-} big;
-
-static void big_from_be(big *b, const BYTE *p, DWORD size)
-{
-    while (size && !*p) {
-        p++;
-        size--;
-    }
-    memset(b, 0, sizeof(*b));
-    b->n = (size + 3) / 4;
-    for (DWORD i = 0; i < size; i++)
-        b->d[i / 4] |= (DWORD)p[size - 1 - i] << (8 * (i % 4));
-}
-
-static int big_cmp(const DWORD *a, const DWORD *b, DWORD n)
-{
-    for (DWORD i = n; i; i--)
-        if (a[i - 1] != b[i - 1])
-            return a[i - 1] < b[i - 1] ? -1 : 1;
-    return 0;
-}
-
-static void big_sub(DWORD *a, const DWORD *b, DWORD n)
-{
-    ULONG64 borrow = 0;
-    for (DWORD i = 0; i < n; i++) {
-        ULONG64 v = (ULONG64)a[i] - b[i] - borrow;
-        a[i] = (DWORD)v;
-        borrow = (v >> 32) & 1;
-    }
-}
-
-/* t = a * b * r^-1 mod m, all k limbs; t has room for k + 2 limbs. */
-static void mont_mul(DWORD *out, const DWORD *a, const DWORD *b, const DWORD *m, DWORD k, DWORD m0inv, DWORD *t)
-{
-    memset(t, 0, (k + 2) * sizeof(DWORD));
-    for (DWORD i = 0; i < k; i++) {
-        ULONG64 c = 0;
-        for (DWORD j = 0; j < k; j++) {
-            ULONG64 v = (ULONG64)a[j] * b[i] + t[j] + c;
-            t[j] = (DWORD)v;
-            c = v >> 32;
-        }
-        ULONG64 v = (ULONG64)t[k] + c;
-        t[k] = (DWORD)v;
-        t[k + 1] = (DWORD)(v >> 32);
-        DWORD q = t[0] * m0inv;
-        v = (ULONG64)q * m[0] + t[0];
-        c = v >> 32;
-        for (DWORD j = 1; j < k; j++) {
-            v = (ULONG64)q * m[j] + t[j] + c;
-            t[j - 1] = (DWORD)v;
-            c = v >> 32;
-        }
-        v = (ULONG64)t[k] + c;
-        t[k - 1] = (DWORD)v;
-        t[k] = t[k + 1] + (DWORD)(v >> 32);
-    }
-    if (t[k] || big_cmp(t, m, k) >= 0)
-        big_sub(t, m, k);
-    memcpy(out, t, k * sizeof(DWORD));
-}
-
-/* computes base^exp mod m into out (k limbs); m must be odd. */
-static BOOL mod_exp(DWORD *out, const big *base, const BYTE *exp, DWORD exp_size, const big *m)
-{
-    DWORD k = m->n;
-    if (!k || !(m->d[0] & 1) || base->n > k || (base->n == k && big_cmp(base->d, m->d, k) >= 0))
-        return FALSE;
-    DWORD *buffer = CrAllocZero((6 * (k + 2)) * sizeof(DWORD));
-    if (!buffer)
-        return FALSE;
-    DWORD *r2 = buffer, *x = r2 + k + 2, *acc = x + k + 2, *t = acc + k + 2, *one = t + k + 2, *tmp = one + k + 2;
-    /* -m^-1 mod 2^32 by newton iteration. */
-    DWORD inv = 1;
-    for (int i = 0; i < 5; i++)
-        inv *= 2 - m->d[0] * inv;
-    DWORD m0inv = (DWORD)-inv;
-    /* r^2 mod m by doubling 1 2 * 32 * k times. */
-    memset(r2, 0, (k + 1) * sizeof(DWORD));
-    r2[0] = 1;
-    for (DWORD i = 0; i < 64 * k; i++) {
-        DWORD carry = 0;
-        for (DWORD j = 0; j < k; j++) {
-            DWORD next = r2[j] >> 31;
-            r2[j] = (r2[j] << 1) | carry;
-            carry = next;
-        }
-        if (carry || big_cmp(r2, m->d, k) >= 0)
-            big_sub(r2, m->d, k);
-    }
-    memset(one, 0, k * sizeof(DWORD));
-    one[0] = 1;
-    memset(tmp, 0, k * sizeof(DWORD));
-    memcpy(tmp, base->d, base->n * sizeof(DWORD));
-    mont_mul(x, tmp, r2, m->d, k, m0inv, t);
-    mont_mul(acc, one, r2, m->d, k, m0inv, t);
-    BOOL started = FALSE;
-    for (DWORD i = 0; i < exp_size; i++)
-        for (int bit = 7; bit >= 0; bit--) {
-            if (started)
-                mont_mul(acc, acc, acc, m->d, k, m0inv, t);
-            if (exp[i] & (1 << bit)) {
-                mont_mul(acc, acc, x, m->d, k, m0inv, t);
-                started = TRUE;
-            }
-        }
-    mont_mul(out, acc, one, m->d, k, m0inv, t);
-    CrFree(buffer);
-    return TRUE;
-}
+#define MAX_LIMBS MIME_BN_LIMBS
 
 /* ------------------------------------------------------------------ keys */
 
@@ -210,6 +97,181 @@ static DWORD check_padding(const BYTE *em, DWORD k, ALG_ID hash_alg, LPCSTR hash
     return 0;
 }
 
+/* ------------------------------------------------------------------ ecdsa and rsa pss */
+
+static const MimeHashAlg *mime_hash_of(ALG_ID alg)
+{
+    switch (alg) {
+    case CALG_SHA1:
+        return &mime_sha1;
+    case CALG_SHA_256:
+        return &mime_sha256;
+    case CALG_SHA_384:
+        return &mime_sha384;
+    case CALG_SHA_512:
+        return &mime_sha512;
+    }
+    return nullptr;
+}
+
+/* a der INTEGER into a big endian field of size bytes. */
+static bool fixed_integer(der_reader *r, BYTE *out, DWORD size)
+{
+    der_item item;
+    if (DerExpect(r, ASN_INTEGER, &item))
+        return false;
+    const BYTE *p = item.content;
+    DWORD n = item.length;
+    while (n && !*p) {
+        p++;
+        n--;
+    }
+    if (n > size)
+        return false;
+    memset(out, 0, size - n);
+    memcpy(out + size - n, p, n);
+    return true;
+}
+
+/* rfc 5480 keys and rfc 5758 signatures: the Ecdsa-Sig-Value of r and s. */
+static DWORD verify_ecdsa(const CERT_PUBLIC_KEY_INFO *key, ALG_ID hash, const BYTE *data, DWORD data_size,
+                          const BYTE *sig, DWORD sig_size)
+{
+    static const BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+    static const BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+    static const BYTE p521[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23};
+    if (!key->Algorithm.pszObjId || strcmp(key->Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY))
+        return NTE_BAD_ALGID;
+    const CRYPT_OBJID_BLOB *params = &key->Algorithm.Parameters;
+    MimeEcKey ec = {};
+    if (params->cbData == sizeof(p256) && !memcmp(params->pbData, p256, sizeof(p256)))
+        ec.curve = &mime_p256;
+    else if (params->cbData == sizeof(p384) && !memcmp(params->pbData, p384, sizeof(p384)))
+        ec.curve = &mime_p384;
+    else if (params->cbData == sizeof(p521) && !memcmp(params->pbData, p521, sizeof(p521)))
+        ec.curve = &mime_p521;
+    else
+        return NTE_BAD_ALGID;
+    DWORD n = mime_ec_size(ec.curve);
+    const CRYPT_BIT_BLOB *point = &key->PublicKey;
+    if (point->cbData != 1 + 2 * n || point->pbData[0] != 4)
+        return NTE_BAD_DATA;
+    memcpy(ec.x, point->pbData + 1, n);
+    memcpy(ec.y, point->pbData + 1 + n, n);
+    der_reader r = {sig, sig_size}, rs;
+    der_item seq;
+    BYTE raw[132], digest[CR_MAX_HASH];
+    if (DerExpect(&r, ASN_SEQUENCE, &seq) || r.n)
+        return NTE_BAD_SIGNATURE;
+    DerOpen(&rs, &seq);
+    if (!fixed_integer(&rs, raw, n) || !fixed_integer(&rs, raw + n, n) || rs.n)
+        return NTE_BAD_SIGNATURE;
+    CrHash(hash, data, data_size, digest);
+    return mime_ecdsa_verify(&ec, digest, CrHashSize(hash), raw, 2 * n) ? NTE_BAD_SIGNATURE : 0;
+}
+
+/* the hash of an AlgorithmIdentifier. */
+static ALG_ID hash_algorithm(const der_item *identifier)
+{
+    der_reader r;
+    der_item oid;
+    char text[64];
+    DerOpen(&r, identifier);
+    if (DerExpect(&r, ASN_OID, &oid) || DerParseOid(&oid, text, sizeof(text)))
+        return 0;
+    if (!strcmp(text, szOID_OIWSEC_sha1))
+        return CALG_SHA1;
+    if (!strcmp(text, szOID_NIST_sha256))
+        return CALG_SHA_256;
+    if (!strcmp(text, szOID_NIST_sha384))
+        return CALG_SHA_384;
+    if (!strcmp(text, szOID_NIST_sha512))
+        return CALG_SHA_512;
+    return 0;
+}
+
+/* RSASSA-PSS-params of rfc 4055: the hash, mgf1 over the same hash, the salt and trailer 1, sha-1 and 20 by default. */
+static DWORD pss_params(der_reader *a, ALG_ID *hash, DWORD *salt)
+{
+    *hash = CALG_SHA1;
+    *salt = 20;
+    der_item seq, field, inner;
+    if (DerExpect(a, ASN_SEQUENCE, &seq))
+        return CRYPT_E_ASN1_CORRUPT;
+    der_reader r;
+    DerOpen(&r, &seq);
+    ALG_ID mgf_hash = CALG_SHA1;
+    if (DerPeek(&r, ASN_CONSTRUCTED_CONTEXT(0))) {
+        der_reader f;
+        if (DerExpect(&r, ASN_CONSTRUCTED_CONTEXT(0), &field))
+            return CRYPT_E_ASN1_CORRUPT;
+        DerOpen(&f, &field);
+        if (DerExpect(&f, ASN_SEQUENCE, &inner) || !(*hash = hash_algorithm(&inner)))
+            return NTE_BAD_ALGID;
+    }
+    if (DerPeek(&r, ASN_CONSTRUCTED_CONTEXT(1))) {
+        der_reader f, m;
+        der_item oid, params;
+        char text[64];
+        if (DerExpect(&r, ASN_CONSTRUCTED_CONTEXT(1), &field))
+            return CRYPT_E_ASN1_CORRUPT;
+        DerOpen(&f, &field);
+        if (DerExpect(&f, ASN_SEQUENCE, &inner))
+            return CRYPT_E_ASN1_CORRUPT;
+        DerOpen(&m, &inner);
+        if (DerExpect(&m, ASN_OID, &oid) || DerParseOid(&oid, text, sizeof(text)) ||
+            strcmp(text, "1.2.840.113549.1.1.8") || DerExpect(&m, ASN_SEQUENCE, &params) ||
+            !(mgf_hash = hash_algorithm(&params)))
+            return NTE_BAD_ALGID;
+    }
+    if (DerPeek(&r, ASN_CONSTRUCTED_CONTEXT(2))) {
+        der_reader f;
+        int value;
+        if (DerExpect(&r, ASN_CONSTRUCTED_CONTEXT(2), &field))
+            return CRYPT_E_ASN1_CORRUPT;
+        DerOpen(&f, &field);
+        if (DerExpect(&f, ASN_INTEGER, &inner) || DerParseInt(&inner, &value) || value < 0)
+            return CRYPT_E_ASN1_CORRUPT;
+        *salt = (DWORD)value;
+    }
+    if (DerPeek(&r, ASN_CONSTRUCTED_CONTEXT(3))) {
+        der_reader f;
+        int value;
+        if (DerExpect(&r, ASN_CONSTRUCTED_CONTEXT(3), &field))
+            return CRYPT_E_ASN1_CORRUPT;
+        DerOpen(&f, &field);
+        if (DerExpect(&f, ASN_INTEGER, &inner) || DerParseInt(&inner, &value) || value != 1)
+            return NTE_BAD_ALGID;
+    }
+    /* the crypto library masks with the message hash. */
+    return mgf_hash == *hash ? 0 : NTE_BAD_ALGID;
+}
+
+static DWORD verify_pss(const CERT_PUBLIC_KEY_INFO *key, der_reader *a, const BYTE *data, DWORD data_size,
+                        const BYTE *sig, DWORD sig_size)
+{
+    ALG_ID hash;
+    DWORD salt;
+    DWORD error = pss_params(a, &hash, &salt);
+    if (error)
+        return error;
+    rsa_key parsed;
+    if ((error = parse_rsa_key(key, &parsed)))
+        return error;
+    MimeRsa *rsa = mime_rsa_new();
+    if (!rsa)
+        return ERROR_OUTOFMEMORY;
+    BYTE digest[CR_MAX_HASH];
+    error = NTE_BAD_SIGNATURE;
+    if (mime_bn_from_bytes(&rsa->n, parsed.modulus, parsed.modulus_size) &&
+        mime_bn_from_bytes(&rsa->e, parsed.exponent, parsed.exponent_size) && !mime_rsa_check(rsa) &&
+        CrHash(hash, data, data_size, digest) &&
+        !mime_rsa_pss_verify(rsa, mime_hash_of(hash), digest, CrHashSize(hash), salt, sig, sig_size))
+        error = 0;
+    mime_rsa_free(rsa);
+    return error;
+}
+
 DWORD CrVerifySignedBlob(const BYTE *encoded, DWORD size, const CERT_PUBLIC_KEY_INFO *key)
 {
     der_reader r = {encoded, size};
@@ -225,6 +287,18 @@ DWORD CrVerifySignedBlob(const BYTE *encoded, DWORD size, const CERT_PUBLIC_KEY_
     char text[128];
     if (DerExpect(&a, ASN_OID, &oid) || DerParseOid(&oid, text, sizeof(text)))
         return CRYPT_E_ASN1_CORRUPT;
+    static const struct {
+        LPCSTR oid;
+        ALG_ID hash;
+    } ecdsa_algs[] = {{szOID_ECDSA_SHA1, CALG_SHA1},
+                      {szOID_ECDSA_SHA256, CALG_SHA_256},
+                      {szOID_ECDSA_SHA384, CALG_SHA_384},
+                      {szOID_ECDSA_SHA512, CALG_SHA_512}};
+    for (DWORD i = 0; i < RTL_NUMBER_OF(ecdsa_algs); i++)
+        if (!strcmp(ecdsa_algs[i].oid, text))
+            return verify_ecdsa(key, ecdsa_algs[i].hash, tbs.start, tbs.total, sig.content + 1, sig.length - 1);
+    if (!strcmp(text, szOID_RSA_SSA_PSS))
+        return verify_pss(key, &a, tbs.start, tbs.total, sig.content + 1, sig.length - 1);
     DWORD index = RTL_NUMBER_OF(sign_algs);
     for (DWORD i = 0; i < RTL_NUMBER_OF(sign_algs); i++)
         if (!strcmp(sign_algs[i].sign, text))
@@ -237,25 +311,21 @@ DWORD CrVerifySignedBlob(const BYTE *encoded, DWORD size, const CERT_PUBLIC_KEY_
         return error;
     BYTE digest[CR_MAX_HASH];
     CrHash(sign_algs[index].hash, tbs.start, tbs.total, digest);
-    big *buffers = CrAlloc(2 * sizeof(big));
+    MimeBn *buffers = CrAlloc(3 * sizeof(MimeBn));
     if (!buffers)
         return ERROR_OUTOFMEMORY;
-    big *modulus = &buffers[0], *s = &buffers[1];
-    big_from_be(modulus, rsa.modulus, rsa.modulus_size);
-    big_from_be(s, sig.content + 1, sig.length - 1);
-    DWORD k = modulus->n;
-    DWORD *m = CrAlloc(k * sizeof(DWORD));
+    MimeBn *modulus = &buffers[0], *s = &buffers[1], *e = &buffers[2];
     BYTE *em = CrAlloc(rsa.modulus_size);
     error = NTE_BAD_SIGNATURE;
-    if (m && em && sig.length - 1 <= rsa.modulus_size + 1 &&
-        mod_exp(m, s, rsa.exponent, rsa.exponent_size, modulus)) {
-        for (DWORD i = 0; i < rsa.modulus_size; i++)
-            em[rsa.modulus_size - 1 - i] = (BYTE)(m[i / 4] >> (8 * (i % 4)));
+    if (em && sig.length - 1 <= rsa.modulus_size + 1 && mime_bn_from_bytes(modulus, rsa.modulus, rsa.modulus_size) &&
+        mime_bn_from_bytes(s, sig.content + 1, sig.length - 1) &&
+        mime_bn_from_bytes(e, rsa.exponent, rsa.exponent_size) && (modulus->n && (modulus->d[0] & 1)) &&
+        mime_bn_cmp(s, modulus) < 0 && !mime_bn_mod_exp(s, s, e, modulus, false) &&
+        mime_bn_to_bytes(s, em, rsa.modulus_size)) {
         error = check_padding(em, rsa.modulus_size, sign_algs[index].hash, sign_algs[index].hash_oid, digest);
-    } else if (!m || !em) {
+    } else if (!em) {
         error = ERROR_OUTOFMEMORY;
     }
-    CrFree(m);
     CrFree(em);
     CrFree(buffers);
     return error;

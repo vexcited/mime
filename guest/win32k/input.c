@@ -69,6 +69,38 @@ SHORT NTAPI NtUserGetKeyState(int key)
     return r;
 }
 
+/* the 256 state bytes of the calling thread: bit 7 down, bit 0 toggled. */
+BOOL NTAPI NtUserGetKeyboardState(PBYTE state)
+{
+    UCHAR copy[256];
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    for (int i = 0; i < 256; i++)
+        copy[i] = t ? (UCHAR)(t->KeyState[i] & 0x81) : 0;
+    UserLeave();
+    if (!NT_SUCCESS(MimeCopyToUser(state, copy, sizeof(copy)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL NTAPI NtUserSetKeyboardState(PBYTE state)
+{
+    UCHAR copy[256];
+    if (!NT_SUCCESS(MimeCopyFromUser(copy, state, sizeof(copy)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t)
+        for (int i = 0; i < 256; i++)
+            t->KeyState[i] = copy[i] & 0x81;
+    UserLeave();
+    return TRUE;
+}
+
 SHORT NTAPI NtUserGetAsyncKeyState(int key)
 {
     if (key < 0 || key >= 256)
@@ -240,9 +272,12 @@ static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG
 static BOOLEAN g_chars_follow_key;
 static BOOLEAN g_key_dropped;
 
+DWORD InputLastTime;
+
 static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR extra)
 {
     W32THREAD *t = nullptr;
+    InputLastTime = W32TickCount();
     MimeInputEvent copy = *in;
     const MimeInputEvent *ev = &copy;
     switch (copy.type) {

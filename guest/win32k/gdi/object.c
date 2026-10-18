@@ -107,6 +107,17 @@ void GdiDeleteObject(GDI_OBJECT *o)
     destroy_object(o);
 }
 
+ULONG GdiCountProcessObjects(HANDLE pid)
+{
+    ULONG n = 0;
+    for (ULONG i = 1; g_table && i < GDI_MAX_HANDLES; i++) {
+        GDI_OBJECT *o = g_table[i].Object;
+        if (o && o->OwnerPid == pid && !(o->Flags & (GDI_FLAG_STOCK | GDI_FLAG_SYSTEM)))
+            n++;
+    }
+    return n;
+}
+
 void GdiReleaseProcessObjects(HANDLE pid)
 {
     if (!g_table)
@@ -153,7 +164,7 @@ BRUSH *GdiCreateSystemBrush(COLORREF color, int sys_color)
     return b;
 }
 
-static PEN *new_pen(UINT style, LONG width, COLORREF color)
+static PEN *new_pen(UINT style, LONG width, COLORREF color, UCHAR type)
 {
     PEN *p = W32Alloc(sizeof(PEN));
     if (!p)
@@ -161,7 +172,8 @@ static PEN *new_pen(UINT style, LONG width, COLORREF color)
     p->Style = style;
     p->Width = width;
     p->Color = color & 0xFFFFFF;
-    if (!GdiCreateHandle(&p->Header, GDI_TYPE_PEN)) {
+    p->BrushStyle = style == PS_NULL ? BS_NULL : BS_SOLID;
+    if (!GdiCreateHandle(&p->Header, type)) {
         W32Free(p);
         return nullptr;
     }
@@ -224,11 +236,11 @@ void GdiInitializeStockObjects(void)
     make_stock(DKGRAY_BRUSH, &new_brush(BS_SOLID, RGB(64, 64, 64), 0)->Header);
     make_stock(BLACK_BRUSH, &new_brush(BS_SOLID, RGB(0, 0, 0), 0)->Header);
     make_stock(NULL_BRUSH, &new_brush(BS_NULL, 0, 0)->Header);
-    make_stock(WHITE_PEN, &new_pen(PS_SOLID, 0, RGB(255, 255, 255))->Header);
-    make_stock(BLACK_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0))->Header);
-    make_stock(NULL_PEN, &new_pen(PS_NULL, 0, 0)->Header);
+    make_stock(WHITE_PEN, &new_pen(PS_SOLID, 0, RGB(255, 255, 255), GDI_TYPE_PEN)->Header);
+    make_stock(BLACK_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
+    make_stock(NULL_PEN, &new_pen(PS_NULL, 0, 0, GDI_TYPE_PEN)->Header);
     make_stock(DC_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
-    make_stock(DC_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0))->Header);
+    make_stock(DC_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
     UINT dpi = W32SystemDpi();
     /* bitmap fonts are not supported: the legacy stock fonts map to outline faces. */
     /* the System face is a bitmap font with a 16 pixel cell at 96 dpi. */
@@ -292,7 +304,27 @@ HBRUSH NTAPI NtGdiCreateSolidBrush(COLORREF color, HBRUSH reuse)
 HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH reuse)
 {
     UserEnter();
-    PEN *p = new_pen((UINT)style & PS_STYLE_MASK, width < 0 ? 0 : width, color);
+    PEN *p = new_pen((UINT)style & PS_STYLE_MASK, width < 0 ? 0 : width, color, GDI_TYPE_PEN);
+    UserLeave();
+    return p ? (HPEN)p->Header.Handle : nullptr;
+}
+
+/* pens of ExtCreatePen keep their type, end cap and join; custom dashes are not kept. */
+HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG color, ULONG_PTR hatch, ULONG count,
+                             const DWORD *styles)
+{
+    if ((style & PS_TYPE_MASK) == PS_COSMETIC && width != 1) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    UserEnter();
+    PEN *p = new_pen(style, (LONG)width, brush_style == BS_NULL ? 0 : color, GDI_TYPE_EXTPEN);
+    if (p) {
+        p->BrushStyle = brush_style;
+        p->Hatch = hatch;
+        if (brush_style == BS_NULL)
+            p->Style = (p->Style & ~(UINT)PS_STYLE_MASK) | PS_NULL;
+    }
     UserLeave();
     return p ? (HPEN)p->Header.Handle : nullptr;
 }
@@ -315,6 +347,7 @@ int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
     union {
         LOGBRUSH brush;
         LOGPEN pen;
+        EXTLOGPEN extpen;
         LOGFONTW font;
         DIBSECTION dib;
     } out;
@@ -336,6 +369,16 @@ int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
             out.pen.lopnWidth.x = p->Width;
             out.pen.lopnColor = p->Color;
             needed = sizeof(LOGPEN);
+            break;
+        }
+        case GDI_TYPE_EXTPEN: {
+            PEN *p = (PEN *)o;
+            out.extpen.elpPenStyle = p->Style;
+            out.extpen.elpWidth = (DWORD)p->Width;
+            out.extpen.elpBrushStyle = p->BrushStyle;
+            out.extpen.elpColor = p->Color;
+            out.extpen.elpHatch = p->Hatch;
+            needed = (int)offsetof(EXTLOGPEN, elpStyleEntry);
             break;
         }
         case GDI_TYPE_FONT:
@@ -410,6 +453,10 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
         return nullptr;
     if (header.nCount > 100000 || size < sizeof(header) + header.nCount * sizeof(RECT))
         return nullptr;
+    XFORM xf;
+    BOOLEAN have_xform = xform && NT_SUCCESS(MimeCopyFromUser(&xf, xform, sizeof(xf)));
+    if (have_xform && xf.eM11 == 1 && xf.eM22 == 1 && !xf.eM12 && !xf.eM21 && !xf.eDx && !xf.eDy)
+        have_xform = FALSE;
     RECT *rects = W32Alloc(header.nCount * sizeof(RECT) + 1);
     if (!rects)
         return nullptr;
@@ -418,7 +465,10 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
         UserEnter();
         GDI_REGION *r = GdiCreateRegion();
         if (r) {
-            RgnFromRects(&r->Region, rects, header.nCount);
+            if (have_xform)
+                RgnTransform(&r->Region, rects, header.nCount, &xf);
+            else
+                RgnFromRects(&r->Region, rects, header.nCount);
             result = (HRGN)r->Header.Handle;
         }
         UserLeave();

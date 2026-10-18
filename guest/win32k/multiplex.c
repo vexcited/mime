@@ -41,6 +41,9 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
         r = (ULONG_PTR)MAKELONG(W32MulDiv(8, (LONG)dpi, 96), W32MulDiv(16, (LONG)dpi, 96));
         break;
     }
+    case MIME_NOPARAM_GETLASTINPUTTIME:
+        r = InputLastTime;
+        break;
     }
     UserLeave();
     return r;

@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png msstyles compound audio dinput xinput)
+    foreach(lib privdata dxbc dxil png msstyles compound audio dinput xinput richedit crypto)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -107,6 +107,9 @@ function(mime_dll name arch)
             if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.def)
                 set(own_def guest/${name}/${name}.def)
             endif()
+            if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/x86/${name}.def)
+                list(APPEND own_def guest/${name}/x86/${name}.def)
+            endif()
             add_custom_command(OUTPUT ${def} ${imports_def}
                 COMMAND Python3::Interpreter tools/genx86exports.py ${library} ${MIME_GEN}/x86/${name} ${reference}
                     ${object_files}
@@ -154,7 +157,7 @@ function(mime_sources out name arch)
     set(${out} ${files} PARENT_SCOPE)
 endfunction()
 
-set(nt_export_code "^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$|^LdrInitializeThunk$|^VerSetConditionMask$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)")
+set(nt_export_code "^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer|MimeSxs)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$|^LdrInitializeThunk$|^VerSetConditionMask$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)")
 set(MIME_SYSCALLS_arm64 ${MIME_GEN}/ntdll_syscalls.S)
 set(MIME_SYSCALLS_x64 ${MIME_GEN}/ntdll_syscalls_x64.S)
 set(MIME_WIN32K_SYSCALLS_arm64 ${MIME_GEN}/win32u_syscalls.S)
@@ -249,7 +252,14 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     d3d9:0x7FF3D0000000 cfgmgr32:0x7FF2F0000000 setupapi:0x7FF3C0000000 d3d10core:0x7FF3B0000000 d3d10_1core:0x7FF3A0000000
     d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000 dsound:0x7FF320000000
     ddraw:0x7FF310000000 dinput:0x7FF300000000 hid:0x7FF2E0000000 xinput1_4:0x7FF2D0000000
-    xinput1_3:0x7FF2C0000000 xinput1_2:0x7FF2B0000000 xinput1_1:0x7FF2A0000000 xinput9_1_0:0x7FF290000000)
+    xinput1_3:0x7FF2C0000000 xinput1_2:0x7FF2B0000000 xinput1_1:0x7FF2A0000000 xinput9_1_0:0x7FF290000000
+    winhttp:0x7FF240000000
+    propsys:0x7FF230000000 shcore:0x7FF220000000 powrprof:0x7FF210000000 bcryptprimitives:0x7FF200000000
+    pdh:0x7FF1F0000000 wevtapi:0x7FF1E0000000 tbs:0x7FF1D0000000 ncrypt:0x7FF1C0000000 credui:0x7FF1B0000000
+    cryptui:0x7FF1A0000000 ndfapi:0x7FF190000000 winusb:0x7FF180000000 bthprops:0x7FF170000000
+    dhcpcsvc:0x7FF160000000 esent:0x7FF150000000 uiautomationcore:0x7FF140000000
+    riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
+    mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
@@ -265,6 +275,30 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         set(libs_${xinput} ${MIME_LIB_${arch}}/setupapi.lib)
     endforeach()
     set(objects_gdiplus ${arch}-lib-png)
+    # the cryptographic primitives: whole in bcrypt, crypt32 and secur32's tls, the hashes and chacha20 in advapi32.
+    set(objects_bcrypt ${arch}-lib-crypto)
+    set(objects_crypt32 ${arch}-lib-crypto)
+    set(objects_secur32 ${arch}-lib-crypto)
+    set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c)
+    foreach(crypto bcrypt crypt32 secur32 advapi32)
+        set(includes_${crypto} guest/lib)
+    endforeach()
+    # riched20 and msftedit are one rich edit engine; riched32 wraps riched20 as windows' does.
+    set(objects_riched20 ${arch}-lib-richedit)
+    set(objects_msftedit ${arch}-lib-richedit)
+    set(includes_riched20 guest/lib)
+    set(includes_msftedit guest/lib)
+    set(libs_riched32 ${MIME_LIB_${arch}}/riched20.lib)
+    # winhttp inflates gzip and deflate bodies with the png decoder's inflate.
+    set(objects_winhttp ${arch}-lib-png:guest/lib/png/inflate.c)
+    set(includes_winhttp guest/lib)
+    set(libs_winhttp ${MIME_LIB_${arch}}/ws2_32.lib)
+    # wininet too, and reaches servers through winsock.
+    set(objects_wininet ${arch}-lib-png:guest/lib/png/inflate.c)
+    set(includes_wininet guest/lib)
+    set(libs_wininet ${MIME_LIB_${arch}}/ws2_32.lib)
+    # urlmon downloads through wininet, as windows' does, and hands out com streams and strings.
+    set(libs_urlmon ${MIME_LIB_${arch}}/wininet.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(objects_dxgi ${arch}-lib-privdata)
     set(objects_d3d11 ${arch}-lib-privdata ${arch}-lib-dxbc)
     # d3d12 compiles dxbc as d3d11 does, dxil too, and shares its table of formats.
@@ -280,6 +314,13 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib)
+    set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
+    # media foundation: mfplat's objects keep their values in ole32's property variants, mfreadwrite builds on mfplat.
+    set(libs_mfplat ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_mfreadwrite ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/ole32.lib)
+    # comctl32 draws through uxtheme, as windows' imports it.
+    set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
@@ -290,6 +331,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         set(file ${name}.dll)
         if(name STREQUAL "winspool")
             set(file winspool.drv)
+        elseif(name STREQUAL "bthprops")
+            set(file bthprops.cpl)
         endif()
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}
@@ -363,10 +406,12 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
 
     # wow64, 32-bit programs on x64: wow64.dll and wow64win.dll share the conversions of the translator, and
     # wow64cpu.dll sits below 4 GiB, where 32-bit code can jump back to it.
-    mime_objects(x64-wow32 x64 SOURCES guest/mimex86/wow32.c guest/mimex86/wow32_win32k.c guest/mimex86/wow32_callback.c
+    mime_objects(x64-wow32 x64 SOURCES guest/mimex86/wow32.c guest/mimex86/wow32_query.c guest/mimex86/wow32_win32k.c
+        guest/mimex86/wow32_callback.c
         OPTIONS -fno-math-errno INCLUDES guest/mimex86 DEPENDS mime-gen-win32k-calls)
     mime_sources(sources wow64 x64)
-    mime_dll(wow64 x64 BASE 0x7FF420000000 SOURCES ${sources} OBJECTS x64-chkstk x64-wow32:guest/mimex86/wow32.c
+    mime_dll(wow64 x64 BASE 0x7FF420000000 SOURCES ${sources}
+        OBJECTS x64-chkstk x64-wow32:guest/mimex86/wow32.c x64-wow32:guest/mimex86/wow32_query.c
         INCLUDES guest/mimex86 IMPORTS ntdll)
     mime_sources(sources wow64win x64)
     mime_dll(wow64win x64 BASE 0x7FF410000000 SOURCES ${sources}

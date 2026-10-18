@@ -422,6 +422,290 @@ BOOLEAN RgnFromPolygons(REGION *out, const POINT *pts, const ULONG *counts, ULON
     return TRUE;
 }
 
+/* ------------------------------------------------------------------ region transforms */
+
+static LONG round_d(double v)
+{
+    return (LONG)(v >= 0 ? v + 0.5 : v - 0.5);
+}
+
+BOOLEAN RgnTransform(REGION *out, const RECT *rects, ULONG count, const XFORM *m)
+{
+    if (!m->eM12 && !m->eM21) {
+        RECT *t = W32Alloc((SIZE_T)count * sizeof(RECT) + 1);
+        if (!t)
+            return FALSE;
+        for (ULONG i = 0; i < count; i++) {
+            LONG x0 = round_d((double)rects[i].left * m->eM11 + m->eDx);
+            LONG x1 = round_d((double)rects[i].right * m->eM11 + m->eDx);
+            LONG y0 = round_d((double)rects[i].top * m->eM22 + m->eDy);
+            LONG y1 = round_d((double)rects[i].bottom * m->eM22 + m->eDy);
+            t[i] = (RECT){W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
+        }
+        BOOLEAN ok = RgnFromRects(out, t, count);
+        W32Free(t);
+        return ok;
+    }
+    POINT *pts = W32Alloc((SIZE_T)count * 4 * sizeof(POINT) + 1);
+    ULONG *counts = W32Alloc((SIZE_T)count * sizeof(ULONG) + 1);
+    BOOLEAN ok = FALSE;
+    if (pts && counts) {
+        for (ULONG i = 0; i < count; i++) {
+            LONG xs[4] = {rects[i].left, rects[i].right, rects[i].right, rects[i].left};
+            LONG ys[4] = {rects[i].top, rects[i].top, rects[i].bottom, rects[i].bottom};
+            for (int k = 0; k < 4; k++)
+                pts[i * 4 + k] = (POINT){round_d((double)xs[k] * m->eM11 + (double)ys[k] * m->eM21 + m->eDx),
+                                         round_d((double)xs[k] * m->eM12 + (double)ys[k] * m->eM22 + m->eDy)};
+            counts[i] = 4;
+        }
+        ok = RgnFromPolygons(out, pts, counts, count, WINDING);
+    }
+    W32Free(pts);
+    W32Free(counts);
+    return ok;
+}
+
+/* ------------------------------------------------------------------ widening */
+
+static double sqrt_d(double v)
+{
+    if (v <= 0)
+        return 0;
+    double r = v > 1 ? v : 1;
+    for (int i = 0; i < 64; i++) {
+        double n = (r + v / r) / 2;
+        if (n == r)
+            break;
+        r = n;
+    }
+    return r;
+}
+
+typedef struct OUTLINE_BUILDER {
+    GDI_PATH *Path;
+    BOOLEAN Open; /* a figure was started */
+    BOOLEAN Ok;
+} OUTLINE_BUILDER;
+
+typedef struct WIDEN_PEN {
+    double Half;
+    UINT Cap;
+    UINT Join;
+    double Miter;
+} WIDEN_PEN;
+
+static void out_point(OUTLINE_BUILDER *b, double x, double y)
+{
+    if (b->Ok)
+        b->Ok = path_add(b->Path, round_d(x), round_d(y), b->Open ? PT_LINETO : PT_MOVETO);
+    b->Open = TRUE;
+}
+
+static void out_close(OUTLINE_BUILDER *b)
+{
+    if (b->Ok && b->Open && b->Path->Count)
+        b->Path->Types[b->Path->Count - 1] |= PT_CLOSEFIGURE;
+    b->Open = FALSE;
+}
+
+/*
+ * an arc of at most half a turn around a center, from radius vector v to e,
+ * after the point at v: halved until the chords are short. turn is the
+ * rotation sign, which picks the middle of a half turn.
+ */
+static void out_arc(OUTLINE_BUILDER *b, double cx, double cy, double vx, double vy, double ex, double ey, double h,
+                    int turn, int depth)
+{
+    double cx2 = ex - vx, cy2 = ey - vy;
+    if (depth >= 8 || cx2 * cx2 + cy2 * cy2 <= 2.25) {
+        out_point(b, cx + ex, cy + ey);
+        return;
+    }
+    double mx = vx + ex, my = vy + ey, ml = sqrt_d(mx * mx + my * my);
+    if (ml < h * 1e-6) {
+        mx = turn > 0 ? -vy : vy;
+        my = turn > 0 ? vx : -vx;
+    } else {
+        mx = mx / ml * h;
+        my = my / ml * h;
+    }
+    out_arc(b, cx, cy, vx, vy, mx, my, h, turn, depth + 1);
+    out_arc(b, cx, cy, mx, my, ex, ey, h, turn, depth + 1);
+}
+
+/*
+ * the points of one side at a vertex where direction d1 turns into d2; n1
+ * and n2 are their normals on this side. the outer side gets the join, the
+ * inner side goes through the vertex so the winding stays whole.
+ */
+static void out_join(OUTLINE_BUILDER *b, const WIDEN_PEN *pen, double px, double py, double n1x, double n1y,
+                     double n2x, double n2y, double d1x, double d1y, double d2x, double d2y)
+{
+    double h = pen->Half;
+    double cross = d1x * d2y - d1y * d2x, dot = d1x * d2x + d1y * d2y;
+    double ax = px + n1x * h, ay = py + n1y * h, bx = px + n2x * h, by = py + n2y * h;
+    if (cross > -1e-9 && cross < 1e-9 && dot > 0) {
+        out_point(b, ax, ay);
+        return;
+    }
+    if (n1x * d2x + n1y * d2y >= 0) {
+        out_point(b, ax, ay);
+        out_point(b, px, py);
+        out_point(b, bx, by);
+        return;
+    }
+    out_point(b, ax, ay);
+    switch (pen->Join) {
+    case PS_JOIN_MITER: {
+        double cosine = n1x * n2x + n1y * n2y;
+        /* the miter length over the half width is one over the cosine of half the angle between the normals. */
+        if (1 + cosine > 1e-9 && 2 / (1 + cosine) <= pen->Miter * pen->Miter) {
+            double mx = n1x + n2x, my = n1y + n2y, ml = sqrt_d(mx * mx + my * my);
+            double len = h * sqrt_d(2 / (1 + cosine));
+            out_point(b, px + mx / ml * len, py + my / ml * len);
+        }
+        out_point(b, bx, by);
+        break;
+    }
+    case PS_JOIN_BEVEL:
+        out_point(b, bx, by);
+        break;
+    default:
+        out_arc(b, px, py, n1x * h, n1y * h, n2x * h, n2y * h, h, cross > 0 ? 1 : -1, 0);
+        break;
+    }
+}
+
+/* the cap at an end, d pointing out of the figure: from the side of normal n to the other. */
+static void out_cap(OUTLINE_BUILDER *b, const WIDEN_PEN *pen, double px, double py, double dx, double dy)
+{
+    double h = pen->Half, nx = dy, ny = -dx;
+    switch (pen->Cap) {
+    case PS_ENDCAP_FLAT:
+        out_point(b, px + nx * h, py + ny * h);
+        out_point(b, px - nx * h, py - ny * h);
+        break;
+    case PS_ENDCAP_SQUARE:
+        out_point(b, px + (nx + dx) * h, py + (ny + dy) * h);
+        out_point(b, px + (dx - nx) * h, py + (dy - ny) * h);
+        break;
+    default:
+        out_point(b, px + nx * h, py + ny * h);
+        out_arc(b, px, py, nx * h, ny * h, -nx * h, -ny * h, h, 1, 0);
+        break;
+    }
+}
+
+/* the outline of one flattened figure; the normal of a direction dx, dy is dy, -dx. */
+static void widen_figure(OUTLINE_BUILDER *b, const WIDEN_PEN *pen, const POINT *src, ULONG count, BOOLEAN closed)
+{
+    POINT *pts = W32Alloc((SIZE_T)count * sizeof(POINT) + sizeof(POINT));
+    if (!pts) {
+        b->Ok = FALSE;
+        return;
+    }
+    ULONG n = 0;
+    for (ULONG i = 0; i < count; i++)
+        if (!n || pts[n - 1].x != src[i].x || pts[n - 1].y != src[i].y)
+            pts[n++] = src[i];
+    if (closed && n > 2 && pts[0].x == pts[n - 1].x && pts[0].y == pts[n - 1].y)
+        n--;
+    if (closed && n == 2)
+        closed = FALSE;
+    double h = pen->Half;
+    if (n == 1) {
+        /* a dot: round and square caps still mark it. */
+        double x = pts[0].x, y = pts[0].y;
+        if (pen->Cap == PS_ENDCAP_SQUARE) {
+            out_point(b, x - h, y - h);
+            out_point(b, x + h, y - h);
+            out_point(b, x + h, y + h);
+            out_point(b, x - h, y + h);
+            out_close(b);
+        } else if (pen->Cap != PS_ENDCAP_FLAT) {
+            out_point(b, x + h, y);
+            out_arc(b, x, y, h, 0, -h, 0, h, 1, 0);
+            out_arc(b, x, y, -h, 0, h, 0, h, 1, 0);
+            out_close(b);
+        }
+    }
+    ULONG segs = closed ? n : n - 1;
+    double *d = n >= 2 ? W32Alloc((SIZE_T)segs * 2 * sizeof(double)) : nullptr;
+    if (n >= 2 && !d)
+        b->Ok = FALSE;
+    if (d) {
+        for (ULONG i = 0; i < segs; i++) {
+            double ex = pts[(i + 1) % n].x - pts[i].x, ey = pts[(i + 1) % n].y - pts[i].y;
+            double l = sqrt_d(ex * ex + ey * ey);
+            d[2 * i] = ex / l;
+            d[2 * i + 1] = ey / l;
+        }
+#define DX(i) d[2 * (i)]
+#define DY(i) d[2 * (i) + 1]
+        if (closed) {
+            for (ULONG i = 0; i < n; i++) {
+                ULONG in = (i + n - 1) % n;
+                out_join(b, pen, pts[i].x, pts[i].y, DY(in), -DX(in), DY(i), -DX(i), DX(in), DY(in), DX(i), DY(i));
+            }
+            out_close(b);
+            for (ULONG k = 0; k < n; k++) {
+                ULONG i = (n - k) % n, prev = (i + n - 1) % n;
+                out_join(b, pen, pts[i].x, pts[i].y, -DY(i), DX(i), -DY(prev), DX(prev), -DX(i), -DY(i), -DX(prev),
+                         -DY(prev));
+            }
+            out_close(b);
+        } else {
+            /* along one side, around the end, back along the other side and around the start. */
+            out_point(b, pts[0].x + DY(0) * h, pts[0].y - DX(0) * h);
+            for (ULONG i = 1; i + 1 < n; i++)
+                out_join(b, pen, pts[i].x, pts[i].y, DY(i - 1), -DX(i - 1), DY(i), -DX(i), DX(i - 1), DY(i - 1), DX(i),
+                         DY(i));
+            out_cap(b, pen, pts[n - 1].x, pts[n - 1].y, DX(segs - 1), DY(segs - 1));
+            for (ULONG i = n - 2; i >= 1; i--)
+                out_join(b, pen, pts[i].x, pts[i].y, -DY(i), DX(i), -DY(i - 1), DX(i - 1), -DX(i), -DY(i), -DX(i - 1),
+                         -DY(i - 1));
+            out_cap(b, pen, pts[0].x, pts[0].y, -DX(0), -DY(0));
+            out_close(b);
+        }
+#undef DX
+#undef DY
+        W32Free(d);
+    }
+    W32Free(pts);
+}
+
+static void widen_pen(DC *dc, WIDEN_PEN *pen)
+{
+    const PEN *p = dc->State.Pen;
+    pen->Half = DcPenWidth(dc) / 2.0;
+    BOOLEAN ext = p->Header.Type == GDI_TYPE_EXTPEN;
+    /* pens of CreatePen are round at the ends and joins. */
+    pen->Cap = ext ? p->Style & PS_ENDCAP_MASK : PS_ENDCAP_ROUND;
+    pen->Join = ext ? p->Style & PS_JOIN_MASK : PS_JOIN_ROUND;
+    pen->Miter = dc->State.MiterLimit;
+}
+
+/* the outline the pen of the dc would stroke along the path. */
+static BOOLEAN widen(DC *dc, GDI_PATH *out)
+{
+    POLYGONS pg;
+    if (!flatten(&dc->Path, &pg))
+        return FALSE;
+    WIDEN_PEN pen;
+    widen_pen(dc, &pen);
+    memset(out, 0, sizeof(*out));
+    OUTLINE_BUILDER b = {out, FALSE, TRUE};
+    ULONG base = 0;
+    for (ULONG i = 0; i < pg.PolygonCount && b.Ok; i++) {
+        widen_figure(&b, &pen, pg.Points + base, pg.Counts[i], pg.Closed[i]);
+        base += pg.Counts[i];
+    }
+    poly_free(&pg);
+    if (!b.Ok)
+        PathFree(out);
+    return b.Ok;
+}
+
 /* ------------------------------------------------------------------ path operations */
 
 static BOOLEAN path_region(DC *dc, REGION *out)
@@ -461,6 +745,31 @@ static void fill_path(DC *dc, REGION *clip, RECT *dirty)
 
 static void stroke_path(DC *dc, REGION *clip, RECT *dirty)
 {
+    /* geometric pens fill their outline. */
+    if (DcPenWidth(dc) > 1 && PenStyle(dc->State.Pen) != PS_NULL) {
+        GDI_PATH outline;
+        if (!widen(dc, &outline))
+            return;
+        POLYGONS pg;
+        if (flatten(&outline, &pg)) {
+            REGION area;
+            RgnInit(&area);
+            if (RgnFromPolygons(&area, pg.Points, pg.Counts, pg.PolygonCount, WINDING)) {
+                RgnOffset(&area, dc->Origin.x, dc->Origin.y);
+                RgnCombine(&area, &area, clip, RGN_AND);
+                if (!RgnIsEmpty(&area)) {
+                    const PEN *p = dc->State.Pen;
+                    ULONG pixel = ColorToPixel(p->Header.Handle == GdiStockHandle(DC_PEN) ? dc->State.PenColor : p->Color);
+                    DrawFillRectRop(dc->Surface, &area, &area.Extents, pixel, dc->State.Rop2);
+                    RectUnion(dirty, dirty, &area.Extents);
+                }
+            }
+            RgnFree(&area);
+            poly_free(&pg);
+        }
+        PathFree(&outline);
+        return;
+    }
     POLYGONS pg;
     if (!flatten(&dc->Path, &pg))
         return;
@@ -657,6 +966,23 @@ BOOL NTAPI NtGdiSelectClipPath(HDC hdc, int mode)
 
 GDI_REGION *GdiCreateRegion(void);
 
+BOOL NTAPI NtGdiWidenPath(HDC hdc)
+{
+    UserEnter();
+    DC *dc = closed_path_dc(hdc);
+    BOOL ok = FALSE;
+    if (dc) {
+        GDI_PATH outline;
+        ok = widen(dc, &outline);
+        if (ok) {
+            PathFree(&dc->Path);
+            dc->Path = outline;
+        }
+    }
+    UserLeave();
+    return ok;
+}
+
 HRGN NTAPI NtGdiPathToRegion(HDC hdc)
 {
     UserEnter();
@@ -672,26 +998,6 @@ HRGN NTAPI NtGdiPathToRegion(HDC hdc)
     }
     UserLeave();
     return h;
-}
-
-/* device points back to logical ones through the inverse of the mapping. */
-static void device_to_logical(DC *dc, LONG *x, LONG *y)
-{
-    LONG px = *x - dc->State.ViewportOrg.x + dc->State.WindowOrg.x;
-    LONG py = *y - dc->State.ViewportOrg.y + dc->State.WindowOrg.y;
-    if (dc->State.HasXform) {
-        const XFORM *m = &dc->State.World;
-        float det = m->eM11 * m->eM22 - m->eM12 * m->eM21;
-        if (det != 0) {
-            float fx = (float)px - m->eDx, fy = (float)py - m->eDy;
-            float lx = (fx * m->eM22 - fy * m->eM21) / det;
-            float ly = (fy * m->eM11 - fx * m->eM12) / det;
-            px = (LONG)(lx >= 0 ? lx + 0.5f : lx - 0.5f);
-            py = (LONG)(ly >= 0 ? ly + 0.5f : ly - 0.5f);
-        }
-    }
-    *x = px;
-    *y = py;
 }
 
 int NTAPI NtGdiGetPath(HDC hdc, POINT *user_points, BYTE *user_types, int count)
@@ -713,7 +1019,7 @@ int NTAPI NtGdiGetPath(HDC hdc, POINT *user_points, BYTE *user_types, int count)
             if (pts && types) {
                 for (int i = 0; i < n; i++) {
                     pts[i] = dc->Path.Points[i];
-                    device_to_logical(dc, &pts[i].x, &pts[i].y);
+                    DcDeviceToLogical(dc, &pts[i].x, &pts[i].y);
                 }
                 memcpy(types, dc->Path.Types, (SIZE_T)n);
                 result = n;

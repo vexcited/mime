@@ -475,3 +475,62 @@ LONG WINAPI GetApplicationUserModelId(HANDLE process, UINT32 *length, PWSTR id)
         return ERROR_INVALID_PARAMETER;
     return APPMODEL_ERROR_NO_APPLICATION;
 }
+
+/* the argument checks of the package lookup; no package is installed, so nothing matches. */
+DECLSPEC_EXPORT LONG WINAPI GetPackagesByPackageFamily(PCWSTR family, UINT32 *count, PWSTR *full_names,
+                                                       UINT32 *buffer_length, WCHAR *buffer)
+{
+    if (!family || !count)
+        return ERROR_INVALID_PARAMETER;
+    if ((*count && !full_names) || (full_names && !buffer))
+        return ERROR_INVALID_PARAMETER;
+    if (!buffer_length || (*buffer_length && !buffer))
+        return ERROR_INVALID_PARAMETER;
+    *count = 0;
+    *buffer_length = 0;
+    return ERROR_SUCCESS;
+}
+
+DECLSPEC_EXPORT LONG WINAPI FindPackagesByPackageFamily(PCWSTR family, UINT32 filter, UINT32 *count,
+                                                        PWSTR *full_names, UINT32 *buffer_length, WCHAR *buffer,
+                                                        UINT32 *properties)
+{
+    if (!filter)
+        return ERROR_INVALID_PARAMETER;
+    return GetPackagesByPackageFamily(family, count, full_names, buffer_length, buffer);
+}
+
+/* no package is installed: the lookup of any name finds nothing, a guess of the error. */
+DECLSPEC_EXPORT LONG WINAPI GetPackagePathByFullName(PCWSTR full_name, UINT32 *length, PWSTR path)
+{
+    if (!full_name || !length || (*length && !path))
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_NOT_FOUND;
+}
+
+DECLSPEC_EXPORT LONG WINAPI GetPackagePath(const void *id, const UINT32 reserved, UINT32 *length, PWSTR path)
+{
+    if (!id || !length || (*length && !path))
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_NOT_FOUND;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI Wow64GetThreadContext(HANDLE thread, PVOID context)
+{
+#ifdef _WIN64
+    NTSTATUS status = RtlWow64GetThreadContext(thread, context);
+#else
+    NTSTATUS status = STATUS_NOT_SUPPORTED;
+#endif
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI Wow64SetThreadContext(HANDLE thread, const void *context)
+{
+#ifdef _WIN64
+    NTSTATUS status = RtlWow64SetThreadContext(thread, context);
+#else
+    NTSTATUS status = STATUS_NOT_SUPPORTED;
+#endif
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}

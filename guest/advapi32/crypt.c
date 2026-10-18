@@ -7,6 +7,7 @@
  * opening one always finds it, empty.
  */
 #include "advapi32_private.h"
+#include <crypto/crypto.h>
 
 typedef ULONG_PTR HCRYPTKEY;
 
@@ -298,40 +299,33 @@ typedef ULONG_PTR HCRYPTHASH;
 
 #define HASH_MAGIC 0x48534148 /* "HASH" */
 
-/*
- * the data is kept until the value is asked for, then hashed in one pass by
- * crypt32, which implements the algorithms. this costs memory for long
- * inputs but keeps one implementation of each algorithm.
- */
+/* the hashes run as the data comes, on the shared crypto library. */
 typedef struct HASH {
     DWORD Magic;
     PROVIDER *Provider;
     DWORD Algorithm;
     DWORD Size;
-    BYTE *Data;
-    DWORD Length;
-    DWORD Capacity;
+    const MimeHashAlg *Hash;
+    MimeHashCtx Context;
     BOOL Finished;
     BYTE Value[64];
 } HASH;
 
-typedef BOOL (WINAPI *HASH_FUNCTION)(HCRYPTPROV, DWORD, DWORD, const BYTE *, DWORD, BYTE *, DWORD *);
-
-static DWORD hash_size(DWORD algorithm)
+static const MimeHashAlg *hash_algorithm(DWORD algorithm)
 {
     switch (algorithm) {
     case CALG_MD5:
-        return 16;
+        return &mime_md5;
     case CALG_SHA1:
-        return 20;
+        return &mime_sha1;
     case CALG_SHA_256:
-        return 32;
+        return &mime_sha256;
     case CALG_SHA_384:
-        return 48;
+        return &mime_sha384;
     case CALG_SHA_512:
-        return 64;
+        return &mime_sha512;
     }
-    return 0;
+    return nullptr;
 }
 
 static HASH *hash_object(HCRYPTHASH handle)
@@ -358,8 +352,8 @@ ADVAPI BOOL WINAPI CryptCreateHash(HCRYPTPROV handle, DWORD algorithm, HCRYPTKEY
         return FALSE;
     }
     /* keyed hashes need a cipher implementation, which the provider lacks. */
-    DWORD size = hash_size(algorithm);
-    if (!size || key) {
+    const MimeHashAlg *alg = hash_algorithm(algorithm);
+    if (!alg || key) {
         AdvSetError(key ? NTE_BAD_KEY : NTE_BAD_ALGID);
         return FALSE;
     }
@@ -372,7 +366,9 @@ ADVAPI BOOL WINAPI CryptCreateHash(HCRYPTPROV handle, DWORD algorithm, HCRYPTKEY
     h->Magic = HASH_MAGIC;
     h->Provider = p;
     h->Algorithm = algorithm;
-    h->Size = size;
+    h->Size = alg->digest_size;
+    h->Hash = alg;
+    alg->init(&h->Context);
     InterlockedIncrement(&p->References);
     *result = (HCRYPTHASH)h;
     return TRUE;
@@ -391,51 +387,18 @@ ADVAPI BOOL WINAPI CryptHashData(HCRYPTHASH handle, const BYTE *data, DWORD leng
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (length > h->Capacity - h->Length) {
-        if (length > 0x7FFFFFFF - h->Length) {
-            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
-        DWORD capacity = h->Capacity ? h->Capacity : 256;
-        while (capacity - h->Length < length)
-            capacity = capacity <= 0x3FFFFFFF ? capacity * 2 : 0x7FFFFFFF;
-        BYTE *grown = AdvAlloc(capacity);
-        if (!grown) {
-            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
-        if (h->Length)
-            memcpy(grown, h->Data, h->Length);
-        AdvFree(h->Data);
-        h->Data = grown;
-        h->Capacity = capacity;
-    }
     if (length)
-        memcpy(h->Data + h->Length, data, length);
-    h->Length += length;
+        h->Hash->update(&h->Context, data, length);
     return TRUE;
 }
 
 static BOOL finish_hash(HASH *h)
 {
-    if (h->Finished)
-        return TRUE;
-    HMODULE crypt32 = LoadLibraryW(L"crypt32.dll");
-    HASH_FUNCTION hash = crypt32 ? (HASH_FUNCTION)(void *)GetProcAddress(crypt32, "CryptHashCertificate") : nullptr;
-    DWORD size = sizeof(h->Value);
-    BOOL ok = hash && hash(0, h->Algorithm, 0, h->Data, h->Length, h->Value, &size) && size == h->Size;
-    if (crypt32)
-        FreeLibrary(crypt32);
-    if (!ok) {
-        AdvSetError(NTE_BAD_ALGID);
-        return FALSE;
+    if (!h->Finished) {
+        h->Hash->final(&h->Context, h->Value);
+        SecureZeroMemory(&h->Context, sizeof(h->Context));
+        h->Finished = TRUE;
     }
-    if (h->Data)
-        SecureZeroMemory(h->Data, h->Length);
-    AdvFree(h->Data);
-    h->Data = nullptr;
-    h->Length = h->Capacity = 0;
-    h->Finished = TRUE;
     return TRUE;
 }
 
@@ -490,9 +453,6 @@ ADVAPI BOOL WINAPI CryptDestroyHash(HCRYPTHASH handle)
     if (!h)
         return FALSE;
     h->Magic = 0;
-    if (h->Data)
-        SecureZeroMemory(h->Data, h->Length);
-    AdvFree(h->Data);
     CryptReleaseContext((HCRYPTPROV)h->Provider, 0);
     SecureZeroMemory(h, sizeof(*h));
     AdvFree(h);
@@ -771,11 +731,7 @@ ADVAPI BOOL WINAPI CryptSetHashParam(HCRYPTHASH handle, DWORD param, const BYTE 
         return FALSE;
     }
     memcpy(h->Value, data, h->Size);
-    if (h->Data)
-        SecureZeroMemory(h->Data, h->Length);
-    AdvFree(h->Data);
-    h->Data = nullptr;
-    h->Length = h->Capacity = 0;
+    SecureZeroMemory(&h->Context, sizeof(h->Context));
     h->Finished = TRUE;
     return TRUE;
 }

@@ -5,7 +5,7 @@
  * upper half identifies the credential. credentials live in a list under a
  * lock, so a stale or forged handle is rejected instead of dereferenced.
  */
-#include "secur32_private.h"
+#include "schannel.h"
 
 typedef struct SEC_CREDENTIAL {
     struct SEC_CREDENTIAL *Next;
@@ -13,6 +13,8 @@ typedef struct SEC_CREDENTIAL {
     ULONG Use;
     /* domain\user of the supplied identity, or NULL for the logged on user. */
     PWSTR Name;
+    /* the protocols and flags of a schannel credential. */
+    SCH_CONFIG Schannel;
 } SEC_CREDENTIAL;
 
 static RTL_CRITICAL_SECTION g_lock = RTL_CRITICAL_SECTION_INIT;
@@ -47,6 +49,17 @@ bool SecLookupCredential(PCredHandle handle, const SEC_PACKAGE **package, ULONG 
     }
     RtlLeaveCriticalSection(&g_lock);
     return c != nullptr;
+}
+
+bool SecSchannelConfig(PCredHandle handle, SCH_CONFIG *config)
+{
+    RtlEnterCriticalSection(&g_lock);
+    SEC_CREDENTIAL *c = find(handle);
+    bool ok = c && c->Package->Kind == SEC_KIND_SCHANNEL;
+    if (ok)
+        *config = c->Schannel;
+    RtlLeaveCriticalSection(&g_lock);
+    return ok;
 }
 
 /* packages that take a SEC_WINNT_AUTH_IDENTITY as authentication data. */
@@ -144,6 +157,8 @@ static SECURITY_STATUS acquire(const SEC_PACKAGE *package, ULONG use, void *auth
     c->Package = package;
     c->Use = use;
     c->Name = auth_data && takes_identity(package) ? identity_name(auth_data, ansi) : nullptr;
+    if (package->Kind == SEC_KIND_SCHANNEL)
+        SchParseCredentials(auth_data, &c->Schannel);
     RtlEnterCriticalSection(&g_lock);
     c->Next = g_credentials;
     g_credentials = c;

@@ -1139,3 +1139,14 @@ BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console)
 {
     return check_output(console);
 }
+
+/* a console window is never full screen; without a console the server call fails. */
+DECLSPEC_EXPORT BOOL WINAPI GetConsoleDisplayMode(LPDWORD flags)
+{
+    if (!attached_now()) {
+        KbSetError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    *flags = 0;
+    return TRUE;
+}

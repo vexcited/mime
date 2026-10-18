@@ -111,3 +111,60 @@ DECLSPEC_EXPORT BOOL WINAPI K32EnumProcesses(DWORD *ids, DWORD size, DWORD *need
     *needed = count * sizeof(DWORD);
     return TRUE;
 }
+
+DECLSPEC_EXPORT BOOL WINAPI K32QueryWorkingSetEx(HANDLE process, PVOID info, DWORD size)
+{
+    NTSTATUS status = NtQueryVirtualMemory(process, nullptr, MemoryWorkingSetExInformation, info, size, nullptr);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI K32QueryWorkingSet(HANDLE process, PVOID info, DWORD size)
+{
+    NTSTATUS status = NtQueryVirtualMemory(process, nullptr, MemoryWorkingSetInformation, info, size, nullptr);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+/* the nt path of the file mapped at an address, cut to the buffer with ERROR_INSUFFICIENT_BUFFER. */
+DECLSPEC_EXPORT DWORD WINAPI K32GetMappedFileNameW(HANDLE process, LPVOID address, LPWSTR name, DWORD size)
+{
+    if (!size) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    struct {
+        UNICODE_STRING Name;
+        WCHAR Buffer[MAX_PATH + 1];
+    } info;
+    SIZE_T returned = 0;
+    NTSTATUS status = NtQueryVirtualMemory(process, address, MemoryMappedFilenameInformation, &info, sizeof(info),
+                                           &returned);
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return 0;
+    }
+    DWORD n = info.Name.Length / sizeof(WCHAR), copy = n;
+    if (size < n + 1)
+        copy = size - 1;
+    SetLastError(size < n + 1 ? ERROR_INSUFFICIENT_BUFFER : ERROR_SUCCESS);
+    memcpy(name, info.Name.Buffer, copy * sizeof(WCHAR));
+    name[copy] = 0;
+    return size < n + 1 ? size : n;
+}
+
+DECLSPEC_EXPORT DWORD WINAPI K32GetMappedFileNameA(HANDLE process, LPVOID address, LPSTR name, DWORD size)
+{
+    WCHAR wide[MAX_PATH + 1];
+    DWORD n = K32GetMappedFileNameW(process, address, wide, RTL_NUMBER_OF(wide));
+    if (!n)
+        return 0;
+    if (!size) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    int bytes = WideCharToMultiByte(CP_ACP, 0, wide, (int)n, nullptr, 0, nullptr, nullptr);
+    DWORD copy = (DWORD)bytes < size ? (DWORD)bytes : size - 1;
+    WideCharToMultiByte(CP_ACP, 0, wide, (int)n, name, (int)copy, nullptr, nullptr);
+    name[copy] = 0;
+    SetLastError((DWORD)bytes < size ? ERROR_SUCCESS : ERROR_INSUFFICIENT_BUFFER);
+    return (DWORD)bytes < size ? (DWORD)bytes : size;
+}

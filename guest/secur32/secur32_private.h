@@ -18,7 +18,7 @@
 #define STATUS_NONE_MAPPED ((NTSTATUS)0xC0000073L)
 #endif
 
-/* what every attempt to establish a security context answers, see docs/secur32.md. */
+/* what every attempt to establish a context of a package other than schannel answers, see docs/secur32.md. */
 #define SEC_ESTABLISH_FAILURE SEC_E_NO_AUTHENTICATING_AUTHORITY
 
 /* the expiry windows packages report for credentials that never expire. */
@@ -63,7 +63,7 @@ SECURITY_STATUS SecCopyPackageInfoA(const SEC_PACKAGE *package, PSecPkgInfoA *in
 
 /* the package and use of a live credential handle, false for any other handle. */
 bool SecLookupCredential(PCredHandle handle, const SEC_PACKAGE **package, ULONG *use);
-/* no security context is ever established, so no context handle exists. */
+/* whether a context handle names a live context; only schannel establishes them. */
 bool SecContextExists(PCtxtHandle handle);
 
 /* ------------------------------------------------------------------ helpers */

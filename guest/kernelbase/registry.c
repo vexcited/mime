@@ -1096,3 +1096,65 @@ LSTATUS WINAPI RegNotifyChangeKeyValue(HKEY key, BOOL subtree, DWORD filter, HAN
         status = STATUS_SUCCESS;
     return to_error(status);
 }
+
+/* a hive file loaded under a key of HKLM or HKU; the kernel decides by the caller's privilege. */
+DECLSPEC_EXPORT LSTATUS WINAPI RegLoadKeyW(HKEY key, LPCWSTR subkey, LPCWSTR file)
+{
+    if (key == HKEY_PERFORMANCE_DATA)
+        return ERROR_INVALID_HANDLE;
+    HANDLE root;
+    LONG error = resolve_key(key, &root);
+    if (error)
+        return error;
+    UNICODE_STRING name, path;
+    NTSTATUS status = RtlInitUnicodeStringEx(&name, subkey);
+    if (NT_SUCCESS(status))
+        status = RtlInitUnicodeStringEx(&path, file);
+    if (!NT_SUCCESS(status))
+        return to_error(status);
+    UNICODE_STRING nt_path;
+    if (!RtlDosPathNameToNtPathName_U(file, &nt_path, nullptr, nullptr))
+        return ERROR_PATH_NOT_FOUND;
+    OBJECT_ATTRIBUTES target, source;
+    InitializeObjectAttributes(&target, &name, OBJ_CASE_INSENSITIVE, root, nullptr);
+    InitializeObjectAttributes(&source, &nt_path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    status = NtLoadKey(&target, &source);
+    RtlFreeUnicodeString(&nt_path);
+    return to_error(status);
+}
+
+DECLSPEC_EXPORT LSTATUS WINAPI RegLoadKeyA(HKEY key, LPCSTR subkey, LPCSTR file)
+{
+    PWSTR s = KbAnsiToWideCp(CP_ACP, subkey), f = KbAnsiToWideCp(CP_ACP, file);
+    LONG error = (subkey && !s) || (file && !f) ? ERROR_NOT_ENOUGH_MEMORY : RegLoadKeyW(key, s, f);
+    KbFree(s);
+    KbFree(f);
+    return error;
+}
+
+DECLSPEC_EXPORT LSTATUS WINAPI RegUnLoadKeyW(HKEY key, LPCWSTR subkey)
+{
+    if (key == HKEY_PERFORMANCE_DATA)
+        return ERROR_INVALID_HANDLE;
+    HANDLE root;
+    LONG error = resolve_key(key, &root);
+    if (error)
+        return error;
+    UNICODE_STRING name;
+    NTSTATUS status = RtlInitUnicodeStringEx(&name, subkey);
+    if (!NT_SUCCESS(status))
+        return to_error(status);
+    if (name.Length && !name.Buffer)
+        return ERROR_INVALID_PARAMETER;
+    OBJECT_ATTRIBUTES target;
+    InitializeObjectAttributes(&target, &name, OBJ_CASE_INSENSITIVE, root, nullptr);
+    return to_error(NtUnloadKey(&target));
+}
+
+DECLSPEC_EXPORT LSTATUS WINAPI RegUnLoadKeyA(HKEY key, LPCSTR subkey)
+{
+    PWSTR s = KbAnsiToWideCp(CP_ACP, subkey);
+    LONG error = subkey && !s ? ERROR_NOT_ENOUGH_MEMORY : RegUnLoadKeyW(key, s);
+    KbFree(s);
+    return error;
+}

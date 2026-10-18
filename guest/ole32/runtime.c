@@ -2,12 +2,6 @@
 #include "ole32_private.h"
 #include <mime/win32/objidl.h>
 
-WINOLEAPI HRESULT WINAPI CoCreateFreeThreadedMarshaler(IUnknown *outer, IUnknown **result)
-{
-    if (!result) return E_POINTER;
-    *result = nullptr;
-    return E_NOTIMPL;
-}
 WINOLEAPI HRESULT WINAPI CoGetContextToken(ULONG_PTR *token)
 {
     if (!token) return E_POINTER;
@@ -31,28 +25,6 @@ WINOLEAPI HRESULT WINAPI CoRegisterInitializeSpy(IUnknown *spy, ULARGE_INTEGER *
 WINOLEAPI HRESULT WINAPI CoRevokeInitializeSpy(ULARGE_INTEGER cookie)
 {
     return E_INVALIDARG;
-}
-WINOLEAPI HRESULT WINAPI CoMarshalInterface(IStream *stream, REFIID iid, IUnknown *object,
-    DWORD destination, void *context, DWORD flags)
-{
-    return E_NOTIMPL;
-}
-WINOLEAPI HRESULT WINAPI CoUnmarshalInterface(IStream *stream, REFIID iid, void **result)
-{
-    if (!result) return E_POINTER;
-    *result = nullptr;
-    return E_NOTIMPL;
-}
-WINOLEAPI HRESULT WINAPI CoGetMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *object,
-    DWORD destination, void *context, DWORD flags)
-{
-    if (!size) return E_POINTER;
-    *size = 0;
-    return E_NOTIMPL;
-}
-WINOLEAPI HRESULT WINAPI CoReleaseMarshalData(IStream *stream)
-{
-    return E_NOTIMPL;
 }
 WINOLEAPI HRESULT WINAPI CoWaitForMultipleHandles(DWORD flags, DWORD timeout, ULONG count,
     const HANDLE *handles, DWORD *index)

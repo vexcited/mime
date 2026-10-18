@@ -208,6 +208,10 @@ NTSYSAPI ULONG DbgPrint(PCSTR format, ...);
 NTSYSAPI void NTAPI DbgBreakPoint(void);
 NTSYSAPI void NTAPI DbgUserBreakPoint(void);
 NTSYSAPI NTSTATUS NTAPI RtlGetVersion(RTL_OSVERSIONINFOEXW *info);
+#ifdef _WIN64
+NTSYSAPI NTSTATUS NTAPI RtlWow64GetThreadContext(HANDLE thread, I386_CONTEXT *context);
+NTSYSAPI NTSTATUS NTAPI RtlWow64SetThreadContext(HANDLE thread, const I386_CONTEXT *context);
+#endif
 NTSYSAPI NTSTATUS NTAPI RtlQuerySystemTime(PLARGE_INTEGER time);
 NTSYSAPI ULONGLONG NTAPI VerSetConditionMask(ULONGLONG mask, ULONG type, UCHAR condition);
 NTSYSAPI void NTAPI RtlGetNtVersionNumbers(PULONG major, PULONG minor, PULONG build);

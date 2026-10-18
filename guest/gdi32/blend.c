@@ -61,6 +61,9 @@ static DWORD key_mask(HDC src)
 WINGDIAPI BOOL WINAPI GdiTransparentBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
                                         int src_width, int src_height, UINT transparent)
 {
+    if (MfActive(dst))
+        return MfBitBlt(dst, x, y, width, height, src, src_x, src_y, src_width, src_height, transparent,
+                        EMR_TRANSPARENTBLT);
     if (width < 0 || height < 0 || src_width < 0 || src_height < 0) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -223,6 +226,8 @@ static BOOL gradient_triangle(HDC dc, const TRIVERTEX *v0, const TRIVERTEX *v1, 
 WINGDIAPI BOOL WINAPI GdiGradientFill(HDC dc, PTRIVERTEX vertices, ULONG vertex_count, PVOID mesh, ULONG mesh_count,
                                       ULONG mode)
 {
+    if (MfActive(dc))
+        return vertices && mesh && MfGradientFill(dc, vertices, vertex_count, mesh, mesh_count, mode);
     if (!vertices || !vertex_count || !mesh || !mesh_count || mode > GRADIENT_FILL_TRIANGLE) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;

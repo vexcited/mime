@@ -5,3 +5,4 @@ EXPORTS
     EXTDEVICEMODE=ExtDeviceMode
     DEVICEMODE=DeviceMode
     ADVANCEDSETUPDIALOG=AdvancedSetupDialog
+    GetDefaultPrinterW @203

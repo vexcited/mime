@@ -465,27 +465,6 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
     return 1;
 }
 
-/* ------------------------------------------------------------------ dde parameters */
-
-/* the packed lparam carries the low and high words. */
-WINUSERAPI BOOL WINAPI UnpackDDElParam(UINT msg, LPARAM lparam, UINT_PTR *lo, UINT_PTR *hi)
-{
-    (void)msg;
-    if (lo)
-        *lo = LOWORD(lparam);
-    if (hi)
-        *hi = HIWORD(lparam);
-    return TRUE;
-}
-
-WINUSERAPI LPARAM WINAPI ReuseDDElParam(LPARAM lparam, UINT msg_in, UINT msg_out, UINT_PTR lo, UINT_PTR hi)
-{
-    (void)lparam;
-    (void)msg_in;
-    (void)msg_out;
-    return (LPARAM)(DWORD)MAKELONG(lo, hi);
-}
-
 /* ------------------------------------------------------------------ services with nothing to do yet */
 
 /* there is no help engine, like windows without WinHlp32. */
@@ -499,14 +478,6 @@ WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR
     return FALSE;
 }
 
-/* no accessibility clients listen for events. */
-WINUSERAPI void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object, LONG child)
-{
-    (void)event;
-    (void)hwnd;
-    (void)object;
-    (void)child;
-}
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread)
 {
@@ -537,21 +508,6 @@ WINUSERAPI BOOL WINAPI FlashWindow(HWND hwnd, BOOL invert)
 WINUSERAPI BOOL WINAPI FlashWindowEx(PFLASHWINFO info)
 {
     return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI GetUserObjectInformationW(HANDLE object, int index, PVOID info, DWORD length, LPDWORD needed)
-{
-    return FALSE;
-}
-
-WINUSERAPI HWINSTA WINAPI GetProcessWindowStation(void)
-{
-    return (HWINSTA)(ULONG_PTR)0x10;
-}
-
-WINUSERAPI HDESK WINAPI GetThreadDesktop(DWORD thread)
-{
-    return (HDESK)(ULONG_PTR)0x14;
 }
 
 WINUSERAPI BOOL WINAPI RegisterHotKey(HWND hwnd, int id, UINT modifiers, UINT vk)

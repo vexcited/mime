@@ -1,0 +1,28 @@
+; the exports of windows' 32-bit msftedit.dll, with their ordinals; DisableOleinitCheck keeps its decoration there.
+LIBRARY msftedit.dll
+EXPORTS
+    IID_IRichEditOle @2 DATA
+    IID_IRichEditOleCallback @3 DATA
+    CreateTextServices=_CreateTextServices@12 @4
+    IID_ITextServices @5 DATA
+    IID_ITextHost @6 DATA
+    IID_ITextHost2 @7 DATA
+    _DisableOleinitCheck@0=_DisableOleinitCheck@0 @8
+    RichEditANSIWndProc=_RichEditANSIWndProc@16 @9
+    RichEdit10ANSIWndProc=_RichEdit10ANSIWndProc@16 @10
+    SetCustomTextOutHandlerEx=_SetCustomTextOutHandlerEx@8 @11
+    DllGetVersion=_DllGetVersion@4 @12
+    RichEditWndProc=_RichEditWndProc@16 @13
+    MathBuildUp=_MathBuildUp@12 @17
+    MathBuildDown=_MathBuildDown@12 @18
+    MathTranslate=_MathTranslate@8 @19
+    GetMathAlphanumericCode=_GetMathAlphanumericCode@8 @21
+    GetMathAlphanumeric=_GetMathAlphanumeric@8 @22
+    IID_ITextDocument2 @24 DATA
+    IID_ITextServices2 @25 DATA
+    DllGetActivationFactory=_DllGetActivationFactory@8 @26
+    IID_IRicheditWindowlessAccessibility @32 DATA
+    IID_IRicheditUiaOverrides @33 DATA
+    ShutdownTextServices=_ShutdownTextServices@4 @35
+    SetTextServicesDpiCalculationOverride=_SetTextServicesDpiCalculationOverride@8 @36
+    IID_IRicheditUiaNotificationOverrides @37 DATA

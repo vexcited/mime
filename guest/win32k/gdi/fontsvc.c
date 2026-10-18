@@ -765,9 +765,15 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
         UserLeave();
         return GDI_ERROR;
     }
-    if (dc->State.HasXform) {
-        /* the font is realized through the world transform, y up here: the matrix applies first. */
-        const XFORM *w = &dc->State.World;
+    if (dc->State.HasXform || dc->State.HasPage) {
+        /* the font is realized through the world transform and the page scale, y up here: the matrix applies first. */
+        XFORM full;
+        DcGetXform(dc, &full);
+        if (full.eM11 < 0 && !dc->State.World.eM12 && !dc->State.World.eM21 && dc->State.World.eM11 > 0)
+            full.eM11 = -full.eM11;
+        if (full.eM22 < 0 && !dc->State.World.eM12 && !dc->State.World.eM21 && dc->State.World.eM22 > 0)
+            full.eM22 = -full.eM22;
+        const XFORM *w = &full;
         float w11 = w->eM11, w12 = -w->eM12, w21 = -w->eM21, w22 = w->eM22;
         float c11 = m11 * w11 + m12 * w21, c12 = m11 * w12 + m12 * w22;
         float c21 = m21 * w11 + m22 * w21, c22 = m21 * w12 + m22 * w22;

@@ -1,0 +1,26 @@
+LIBRARY msftedit.dll
+EXPORTS
+    IID_IRichEditOle @2 DATA
+    IID_IRichEditOleCallback @3 DATA
+    CreateTextServices@12 @4
+    IID_ITextServices @5 DATA
+    IID_ITextHost @6 DATA
+    IID_ITextHost2 @7 DATA
+    RichEditANSIWndProc@16 @9
+    RichEdit10ANSIWndProc@16 @10
+    SetCustomTextOutHandlerEx@8 @11
+    DllGetVersion@4 @12
+    RichEditWndProc@16 @13
+    MathBuildUp@12 @17
+    MathBuildDown@12 @18
+    MathTranslate@8 @19
+    GetMathAlphanumericCode@8 @21
+    GetMathAlphanumeric@8 @22
+    IID_ITextDocument2 @24 DATA
+    IID_ITextServices2 @25 DATA
+    DllGetActivationFactory@8 @26
+    IID_IRicheditWindowlessAccessibility @32 DATA
+    IID_IRicheditUiaOverrides @33 DATA
+    ShutdownTextServices@4 @35
+    SetTextServicesDpiCalculationOverride@8 @36
+    IID_IRicheditUiaNotificationOverrides @37 DATA

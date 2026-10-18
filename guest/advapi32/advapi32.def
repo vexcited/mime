@@ -26,6 +26,8 @@ EXPORTS
     RegFlushKey=kernelbase.RegFlushKey
     RegGetValueA=kernelbase.RegGetValueA
     RegGetValueW=kernelbase.RegGetValueW
+    RegLoadKeyA=kernelbase.RegLoadKeyA
+    RegLoadKeyW=kernelbase.RegLoadKeyW
     RegNotifyChangeKeyValue=kernelbase.RegNotifyChangeKeyValue
     RegOpenCurrentUser=kernelbase.RegOpenCurrentUser
     RegOpenKeyA=kernelbase.RegOpenKeyA
@@ -41,3 +43,5 @@ EXPORTS
     RegSetKeyValueW=kernelbase.RegSetKeyValueW
     RegSetValueExA=kernelbase.RegSetValueExA
     RegSetValueExW=kernelbase.RegSetValueExW
+    RegUnLoadKeyA=kernelbase.RegUnLoadKeyA
+    RegUnLoadKeyW=kernelbase.RegUnLoadKeyW

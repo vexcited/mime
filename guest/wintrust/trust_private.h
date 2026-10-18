@@ -8,7 +8,7 @@ typedef struct { const BYTE *data; DWORD size; } WT_BYTES;
 typedef struct { WT_BYTES encoded, value; BYTE tag; } WT_DER;
 BOOL WtTake(WT_BYTES *input, BYTE tag, WT_DER *item);
 BOOL WtOid(WT_DER item, const BYTE *value, DWORD size);
-LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options);
+LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD checksum, DWORD directory,
-                       DWORD certificate, const WINTRUST_DATA *options);
+                       DWORD certificate, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 #endif

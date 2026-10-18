@@ -176,20 +176,30 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, nullptr, (sa && sa->bInheritHandle) ? OBJ_INHERIT : 0, nullptr,
                                sa ? sa->lpSecurityDescriptor : nullptr);
+    /* the thread starts suspended when it must first inherit its creator's activation context. */
+    PACTIVATION_CONTEXT context;
+    BOOL inherit = KbInheritActivationContext(process, &context);
     HANDLE handle;
     NTSTATUS status = NtCreateThreadEx(&handle, THREAD_ALL_ACCESS, &oa, process, (PVOID)start, parameter,
-                                       (flags & CREATE_SUSPENDED) ? THREAD_CREATE_FLAGS_CREATE_SUSPENDED : 0, 0, commit,
-                                       reserve, nullptr);
+                                       ((flags & CREATE_SUSPENDED) || inherit) ? THREAD_CREATE_FLAGS_CREATE_SUSPENDED : 0,
+                                       0, commit, reserve, nullptr);
     if (!NT_SUCCESS(status)) {
+        if (inherit)
+            RtlReleaseActivationContext(context);
         KbSetStatus(status);
         return nullptr;
     }
-    if (id) {
-        THREAD_BASIC_INFORMATION info;
-        *id = NT_SUCCESS(NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), nullptr))
-                  ? (DWORD)(ULONG_PTR)info.ClientId.UniqueThread
-                  : 0;
+    THREAD_BASIC_INFORMATION info;
+    BOOL known = NT_SUCCESS(NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), nullptr));
+    if (inherit) {
+        if (known)
+            MimeSxsInheritActivationContext(info.ClientId.UniqueThread, context);
+        RtlReleaseActivationContext(context);
+        if (!(flags & CREATE_SUSPENDED))
+            NtResumeThread(handle, nullptr);
     }
+    if (id)
+        *id = known ? (DWORD)(ULONG_PTR)info.ClientId.UniqueThread : 0;
     return handle;
 }
 
@@ -889,8 +899,8 @@ BOOL KbRunPendingApcs(void)
         return FALSE;
     PVOID *counter = &NtCurrentTeb()->TlsSlots[g_apc_slot];
     ULONG_PTR before = (ULONG_PTR)*counter;
-    NtTestAlert();
-    return (ULONG_PTR)*(volatile PVOID *)counter != before;
+    NTSTATUS status = NtTestAlert();
+    return status == STATUS_USER_APC || (ULONG_PTR)*(volatile PVOID *)counter != before;
 }
 
 static void NTAPI user_apc(PVOID function, PVOID data, PVOID unused)
@@ -911,25 +921,41 @@ DWORD WINAPI QueueUserAPC(PAPCFUNC apc, HANDLE thread, ULONG_PTR data)
 
 /* ------------------------------------------------------------------ wow64 and machine */
 
+/* a 32-bit process on a 64-bit machine has a 32-bit peb, which the kernel reports. */
+static NTSTATUS wow64_peb(HANDLE process, ULONG_PTR *peb)
+{
+    *peb = 0;
+    return NtQueryInformationProcess(process, ProcessWow64Information, peb, sizeof(*peb), nullptr);
+}
+
 BOOL WINAPI IsWow64Process(HANDLE process, PBOOL wow64)
 {
     if (!wow64) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *wow64 = FALSE;
+    ULONG_PTR peb;
+    NTSTATUS status = wow64_peb(process, &peb);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *wow64 = peb != 0;
     return TRUE;
 }
 
+/* the machine of a process when it runs translated, unknown when native, and the machine itself. */
 BOOL WINAPI IsWow64Process2(HANDLE process, USHORT *process_machine, USHORT *native_machine)
 {
     if (!process_machine) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *process_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+    ULONG_PTR peb;
+    NTSTATUS status = wow64_peb(process, &peb);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *process_machine = peb ? IMAGE_FILE_MACHINE_I386 : IMAGE_FILE_MACHINE_UNKNOWN;
     if (native_machine)
-        *native_machine = IMAGE_FILE_MACHINE_ARM64;
+        *native_machine = USER_SHARED_DATA->ImageNumberHigh;
     return TRUE;
 }
 

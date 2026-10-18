@@ -159,6 +159,14 @@ WINGDIAPI HPALETTE WINAPI CreatePalette(const LOGPALETTE *logical)
 
 WINGDIAPI HPALETTE WINAPI SelectPalette(HDC dc, HPALETTE palette, BOOL background)
 {
+    if (MfActive(dc)) {
+        if (MfIsWmfDc(dc)) {
+            HGDIOBJ previous = nullptr;
+            return WmfSelectObject(dc, palette, &previous) ? previous : nullptr;
+        }
+        if (!PalIsPalette(palette) || !MfSelectPalette(dc, palette))
+            return nullptr;
+    }
     if (!dc_valid(dc) || !PalIsPalette(palette)) {
         SetLastError(ERROR_INVALID_HANDLE);
         return nullptr;
@@ -190,6 +198,7 @@ WINGDIAPI HPALETTE WINAPI SelectPalette(HDC dc, HPALETTE palette, BOOL backgroun
 /* a true color device has no hardware palette to map entries into. */
 WINGDIAPI UINT WINAPI RealizePalette(HDC dc)
 {
+    MF_RECORD(dc, MfRecordEmpty(dc, EMR_REALIZEPALETTE, META_REALIZEPALETTE), GDI_ERROR, 0);
     if (!dc_valid(dc)) {
         SetLastError(ERROR_INVALID_HANDLE);
         return GDI_ERROR;

@@ -531,18 +531,6 @@ NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG 
 
 /* ------------------------------------------------------------------ ob */
 
-typedef struct _OBJECT_TYPE_INITIALIZER {
-    ULONG PoolType;
-    ACCESS_MASK ValidAccessMask;
-    ULONG DefaultObjectSize;
-    BOOLEAN Waitable; /* the object starts with a DISPATCHER_HEADER */
-    void (*CloseProcedure)(PEPROCESS process, PVOID object, ULONG handle_count);
-    void (*DeleteProcedure)(PVOID object);
-    NTSTATUS (*ParseProcedure)(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete_name,
-                               PUNICODE_STRING remaining, PVOID context, PVOID *found);
-    PVOID (*WaitObject)(PVOID object); /* dispatcher object to wait on, if not the body itself */
-} OBJECT_TYPE_INITIALIZER;
-
 typedef struct _OBJECT_TYPE {
     UNICODE_STRING Name;
     WCHAR NameBuffer[32];
@@ -605,21 +593,11 @@ extern POBJECT_TYPE ObTypeType;
 extern POBJECT_DIRECTORY ObRootDirectory;
 
 void ObInitialize(void);
-POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init);
-NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ULONG body_size,
-                        PVOID *object);
-NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
-NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, KPROCESSOR_MODE mode,
-                             PHANDLE handle);
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
 NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child);
 NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode);
-NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
-                           ACCESS_MASK *granted);
 NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
                             KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object);
-NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
-                            ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
 NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_STRING name);
 NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out);
 NTSTATUS ObCreateSymbolicLink(PCWSTR link, PCWSTR target);
@@ -628,12 +606,8 @@ void ObKillProcessHandles(PEPROCESS process);
 NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS target_process, PHANDLE target,
                            ACCESS_MASK access, ULONG attributes, ULONG options);
 PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
-NTSTATUS ObCaptureObjectAttributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name);
-NTSTATUS ObStoreHandle(PHANDLE user_handle, HANDLE handle);
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
 void ObMakeTemporaryObject(PVOID object);
-POBJECT_TYPE ObGetObjectType(PVOID object);
-NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars);
 
 /* ------------------------------------------------------------------ ps */
 

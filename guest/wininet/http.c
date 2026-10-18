@@ -1,79 +1,203 @@
 /*
- * http requests: the request header list, which is real, and sending, which needs the network.
+ * http headers: the request header list of HttpAddRequestHeaders, and HttpQueryInfo over the request and the
+ * response. wininet keeps both lists in the ansi code page, so the A functions are the real ones.
  */
 #include "wininet_private.h"
-#include <mime/stub.h>
 
-static SRWLOCK HeaderLock = SRWLOCK_INIT;
+/* the header of each HttpQueryInfo level and the modifier flags it accepts. */
+typedef struct {
+    const char *Name;
+    DWORD Allowed;
+} INET_LEVEL;
 
-static BOOL IsSpace(WCHAR c)
+#define REQ HTTP_QUERY_FLAG_REQUEST_HEADERS
+#define TIME (REQ | HTTP_QUERY_FLAG_SYSTEMTIME)
+
+static const INET_LEVEL Levels[HTTP_QUERY_MAX + 1] = {
+    {"Mime-Version", REQ},
+    {"Content-Type", REQ},
+    {"Content-Transfer-Encoding", REQ},
+    {"Content-Id", REQ},
+    {"Content-Description", REQ},
+    {"Content-Length", REQ | HTTP_QUERY_FLAG_NUMBER | HTTP_QUERY_FLAG_NUMBER64},
+    {"Content-Language", REQ},
+    {"Allow", REQ},
+    {"Public", REQ},
+    {"Date", TIME},
+    {"Expires", REQ},
+    {"Last-Modified", TIME},
+    {"Message-id", REQ},
+    {"Uri", REQ},
+    {"Derived-From", REQ},
+    {"Cost", REQ},
+    {"Link", REQ},
+    {"Pragma", REQ},
+    {nullptr, REQ},
+    {nullptr, HTTP_QUERY_FLAG_NUMBER},
+    {nullptr, 0},
+    {nullptr, REQ},
+    {nullptr, REQ},
+    {"Connection", REQ},
+    {"Accept", REQ},
+    {"Accept-Charset", REQ},
+    {"Accept-Encoding", REQ},
+    {"Accept-Language", REQ},
+    {"Authorization", REQ},
+    {"Content-Encoding", REQ},
+    {"Forwarded", REQ},
+    {"From", REQ},
+    {"If-Modified-Since", TIME},
+    {"Location", REQ},
+    {"Orig-Uri", REQ},
+    {"Referer", REQ},
+    {"Retry-After", TIME},
+    {"Server", REQ},
+    {"Title", REQ},
+    {"User-Agent", REQ},
+    {"WWW-Authenticate", REQ},
+    {"Proxy-Authenticate", REQ},
+    {"Accept-Ranges", REQ},
+    {"Set-Cookie", REQ},
+    {"Cookie", REQ},
+    {nullptr, REQ},
+    {"Refresh", 0},
+    {"Content-Disposition", REQ},
+    {"Age", REQ},
+    {"Cache-Control", REQ},
+    {"Content-Base", REQ},
+    {"Content-Location", REQ},
+    {"Content-Md5", REQ},
+    {"Content-Range", REQ},
+    {"Etag", REQ},
+    {"Host", REQ},
+    {"If-Match", REQ},
+    {"If-None-Match", REQ},
+    {"If-Range", REQ},
+    {"If-Unmodified-Since", TIME},
+    {"Max-Forwards", REQ},
+    {"Proxy-Authorization", REQ},
+    {"Range", REQ},
+    {"Transfer-Encoding", REQ},
+    {"Upgrade", REQ},
+    {"Vary", REQ},
+    {"Via", REQ},
+    {"Warning", REQ},
+    {"Expect", TIME},
+    {"Proxy-Connection", REQ},
+    {"Unless-Modified-Since", REQ},
+    {"Ms-Echo-Request", 0},
+    {"Ms-Echo-Reply", REQ},
+    {nullptr, REQ},
+    {nullptr, REQ},
+    {"Proxy-Support", REQ},
+    {"Authentication-Info", REQ},
+    {"PassportURLs", REQ},
+    {"PassportConfig", REQ},
+    {"X-Content-Type-Options", REQ},
+    {"P3P", REQ},
+    {"X-P2P-PeerDist", REQ},
+    {"Translate", REQ},
+    {"X-UA-Compatible", REQ},
+    {"Default-Style", REQ},
+    {"X-Frame-Options", REQ},
+    {"X-XSS-Protection", REQ},
+    {"Set-Cookie2", REQ},
+    {"DNT", REQ},
+    {"Keep-Alive", REQ},
+    {"HTTP2-Settings", REQ},
+    {"Strict-Transport-Security", REQ},
+    {"Sec-Token-Binding", REQ},
+    {"Include-Referred-Token-Binding-ID", REQ},
+    {"Public-Key-Pins", REQ},
+    {"Public-Key-Pins-Report-Only", REQ},
+};
+
+const char *InetLevelName(DWORD level)
 {
-    return c == L' ' || c == L'\t';
+    return level <= HTTP_QUERY_MAX ? Levels[level].Name : nullptr;
 }
 
-static PWSTR CopyRange(LPCWSTR text, DWORD length)
+/* ------------------------------------------------------------------ header lists */
+
+void InetHeadersClear(INET_HEADERS *headers)
 {
-    PWSTR copy = HeapAlloc(GetProcessHeap(), 0, ((SIZE_T)length + 1) * sizeof(WCHAR));
-    if (copy) {
-        memcpy(copy, text, length * sizeof(WCHAR));
-        copy[length] = 0;
+    for (DWORD i = 0; i < headers->Count; i++) {
+        InetFree(headers->Items[i].Name);
+        InetFree(headers->Items[i].Value);
     }
-    return copy;
+    InetFree(headers->Items);
+    headers->Items = nullptr;
+    headers->Count = headers->Capacity = 0;
 }
 
-static BOOL NameIs(LPCWSTR name, LPCWSTR other, DWORD other_length)
+BOOL InetHeadersAppend(INET_HEADERS *headers, const char *name, DWORD name_length, const char *value,
+                       DWORD value_length)
 {
-    return CompareStringOrdinal(name, -1, other, (int)other_length, TRUE) == CSTR_EQUAL;
+    if (headers->Count == headers->Capacity) {
+        DWORD capacity = headers->Capacity ? headers->Capacity * 2 : 16;
+        INET_HEADER *items = InetRealloc(headers->Items, capacity * sizeof(*items));
+        if (!items)
+            return FALSE;
+        headers->Items = items;
+        headers->Capacity = capacity;
+    }
+    char *name_copy = InetDuplicateA(name, name_length), *value_copy = InetDuplicateA(value, value_length);
+    if (!name_copy || !value_copy) {
+        InetFree(name_copy);
+        InetFree(value_copy);
+        return FALSE;
+    }
+    headers->Items[headers->Count].Name = name_copy;
+    headers->Items[headers->Count].Value = value_copy;
+    headers->Count++;
+    return TRUE;
 }
 
-/* the index of the nth header with this name, or UINT32_MAX. */
-static DWORD FindHeader(INET_OBJECT *request, LPCWSTR name, DWORD name_length, DWORD nth)
+static BOOL NameIs(const char *name, const char *other, DWORD other_length)
 {
-    for (DWORD i = 0; i < request->HeaderCount; i++)
-        if (NameIs(request->Headers[i].Name, name, name_length) && !nth--)
+    return strlen(name) == other_length && !_strnicmp(name, other, other_length);
+}
+
+/* the position of the nth header with this name, or UINT32_MAX. */
+static DWORD FindHeader(const INET_HEADERS *headers, const char *name, DWORD name_length, DWORD nth)
+{
+    for (DWORD i = 0; i < headers->Count; i++)
+        if (NameIs(headers->Items[i].Name, name, name_length) && !nth--)
             return i;
     return UINT32_MAX;
 }
 
-static void RemoveHeader(INET_OBJECT *request, DWORD index)
+const char *InetHeadersFind(const INET_HEADERS *headers, const char *name, DWORD index)
 {
-    InetFree(request->Headers[index].Name);
-    InetFree(request->Headers[index].Value);
-    request->HeaderCount--;
-    for (DWORD i = index; i < request->HeaderCount; i++)
-        request->Headers[i] = request->Headers[i + 1];
+    DWORD at = FindHeader(headers, name, (DWORD)strlen(name), index);
+    return at == UINT32_MAX ? nullptr : headers->Items[at].Value;
 }
 
-static DWORD AppendHeader(INET_OBJECT *request, LPCWSTR name, DWORD name_length, LPCWSTR value, DWORD value_length)
+static void RemoveAt(INET_HEADERS *headers, DWORD index)
 {
-    if (request->HeaderCount == request->HeaderCapacity) {
-        DWORD capacity = request->HeaderCapacity ? request->HeaderCapacity * 2 : 8;
-        INET_HEADER *headers = HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*headers));
-        if (!headers)
-            return ERROR_NOT_ENOUGH_MEMORY;
-        if (request->HeaderCount)
-            memcpy(headers, request->Headers, request->HeaderCount * sizeof(*headers));
-        InetFree(request->Headers);
-        request->Headers = headers;
-        request->HeaderCapacity = capacity;
-    }
-    PWSTR name_copy = CopyRange(name, name_length), value_copy = CopyRange(value, value_length);
-    if (!name_copy || !value_copy) {
-        InetFree(name_copy);
-        InetFree(value_copy);
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-    request->Headers[request->HeaderCount].Name = name_copy;
-    request->Headers[request->HeaderCount].Value = value_copy;
-    request->HeaderCount++;
-    return ERROR_SUCCESS;
+    InetFree(headers->Items[index].Name);
+    InetFree(headers->Items[index].Value);
+    headers->Count--;
+    memmove(headers->Items + index, headers->Items + index + 1, (headers->Count - index) * sizeof(INET_HEADER));
+}
+
+void InetHeadersRemove(INET_HEADERS *headers, const char *name)
+{
+    DWORD at;
+    while ((at = FindHeader(headers, name, (DWORD)strlen(name), 0)) != UINT32_MAX)
+        RemoveAt(headers, at);
+}
+
+static BOOL IsSpace(char c)
+{
+    return c == ' ' || c == '\t';
 }
 
 /* applies one "Name: value" line with the HttpAddRequestHeaders modifiers. */
-static DWORD ProcessHeader(INET_OBJECT *request, LPCWSTR line, DWORD length, DWORD modifiers)
+static DWORD ProcessHeader(INET_HEADERS *headers, const char *line, DWORD length, DWORD modifiers)
 {
     DWORD colon = 0;
-    while (colon < length && line[colon] != L':')
+    while (colon < length && line[colon] != ':')
         colon++;
     DWORD name_length = colon;
     while (name_length && IsSpace(line[name_length - 1]))
@@ -85,41 +209,64 @@ static DWORD ProcessHeader(INET_OBJECT *request, LPCWSTR line, DWORD length, DWO
         start++;
     while (end > start && IsSpace(line[end - 1]))
         end--;
-    LPCWSTR value = line + start;
+    const char *value = line + start;
     DWORD value_length = end - start;
-    DWORD index = FindHeader(request, line, name_length, 0);
+    DWORD index = FindHeader(headers, line, name_length, 0);
     DWORD coalesce = modifiers & (HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA | HTTP_ADDREQ_FLAG_COALESCE_WITH_SEMICOLON);
     if (index == UINT32_MAX) {
         /* replacing a missing header with an empty value removes nothing. */
         if ((modifiers & HTTP_ADDREQ_FLAG_REPLACE) && !value_length)
             return ERROR_SUCCESS;
-        return AppendHeader(request, line, name_length, value, value_length);
+        return InetHeadersAppend(headers, line, name_length, value, value_length) ? ERROR_SUCCESS
+                                                                                  : ERROR_NOT_ENOUGH_MEMORY;
     }
     if (modifiers & HTTP_ADDREQ_FLAG_ADD_IF_NEW)
         return ERROR_HTTP_HEADER_ALREADY_EXISTS;
     if (modifiers & HTTP_ADDREQ_FLAG_REPLACE) {
-        RemoveHeader(request, index);
-        return value_length ? AppendHeader(request, line, name_length, value, value_length) : ERROR_SUCCESS;
+        RemoveAt(headers, index);
+        if (!value_length)
+            return ERROR_SUCCESS;
+        return InetHeadersAppend(headers, line, name_length, value, value_length) ? ERROR_SUCCESS
+                                                                                  : ERROR_NOT_ENOUGH_MEMORY;
     }
     if (coalesce) {
-        PWSTR old = request->Headers[index].Value;
-        DWORD old_length = lstrlenW(old);
-        PWSTR merged = HeapAlloc(GetProcessHeap(), 0, ((SIZE_T)old_length + value_length + 3) * sizeof(WCHAR));
+        char *old = headers->Items[index].Value;
+        DWORD old_length = (DWORD)strlen(old);
+        char *merged = InetAlloc((SIZE_T)old_length + value_length + 3);
         if (!merged)
             return ERROR_NOT_ENOUGH_MEMORY;
-        memcpy(merged, old, old_length * sizeof(WCHAR));
-        merged[old_length] = coalesce & HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA ? L',' : L';';
-        merged[old_length + 1] = L' ';
-        memcpy(merged + old_length + 2, value, value_length * sizeof(WCHAR));
+        memcpy(merged, old, old_length);
+        merged[old_length] = coalesce & HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA ? ',' : ';';
+        merged[old_length + 1] = ' ';
+        memcpy(merged + old_length + 2, value, value_length);
         merged[old_length + 2 + value_length] = 0;
-        request->Headers[index].Value = merged;
+        headers->Items[index].Value = merged;
         InetFree(old);
         return ERROR_SUCCESS;
     }
-    return AppendHeader(request, line, name_length, value, value_length);
+    return InetHeadersAppend(headers, line, name_length, value, value_length) ? ERROR_SUCCESS
+                                                                              : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-DECLSPEC_EXPORT BOOL WINAPI HttpAddRequestHeadersW(HINTERNET request, LPCWSTR headers, DWORD length, DWORD modifiers)
+DWORD InetAddRequestHeaders(INET_OBJECT *request, const char *text, DWORD length, DWORD modifiers)
+{
+    DWORD error = ERROR_SUCCESS;
+    AcquireSRWLockExclusive(&request->Lock);
+    for (DWORD at = 0; at < length && !error;) {
+        DWORD end = at;
+        while (end < length && text[end] != '\r' && text[end] != '\n' && text[end])
+            end++;
+        if (end > at)
+            error = ProcessHeader(&request->Request, text + at, end - at, modifiers);
+        if (end < length && !text[end])
+            break;
+        at = end + 1;
+    }
+    ReleaseSRWLockExclusive(&request->Lock);
+    return error;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpAddRequestHeadersA(HINTERNET request, LPCSTR headers, DWORD length, DWORD modifiers)
 {
     INET_OBJECT *object = InetReferenceType(request, INTERNET_HANDLE_TYPE_HTTP_REQUEST);
     if (!object)
@@ -129,167 +276,373 @@ DECLSPEC_EXPORT BOOL WINAPI HttpAddRequestHeadersW(HINTERNET request, LPCWSTR he
         return InetFail(ERROR_INVALID_PARAMETER);
     }
     if (length == (DWORD)-1)
-        length = lstrlenW(headers);
-    DWORD error = ERROR_SUCCESS;
-    AcquireSRWLockExclusive(&HeaderLock);
-    for (DWORD at = 0; at < length && !error;) {
-        DWORD end = at;
-        while (end < length && headers[end] != L'\r' && headers[end] != L'\n' && headers[end])
-            end++;
-        if (end > at)
-            error = ProcessHeader(object, headers + at, end - at, modifiers);
-        if (end < length && !headers[end])
-            break;
-        at = end + 1;
-    }
-    ReleaseSRWLockExclusive(&HeaderLock);
+        length = (DWORD)strlen(headers);
+    DWORD error = InetAddRequestHeaders(object, headers, length, modifiers);
     InetRelease(object);
     return error ? InetFail(error) : TRUE;
 }
 
-static LPCWSTR LevelName(DWORD level)
+DECLSPEC_EXPORT BOOL WINAPI HttpAddRequestHeadersW(HINTERNET request, LPCWSTR headers, DWORD length, DWORD modifiers)
 {
-    switch (level) {
-    case HTTP_QUERY_CONTENT_TYPE:
-        return L"Content-Type";
-    case HTTP_QUERY_CONTENT_LENGTH:
-        return L"Content-Length";
-    case HTTP_QUERY_ACCEPT:
-        return L"Accept";
-    case HTTP_QUERY_REFERER:
-        return L"Referer";
-    case HTTP_QUERY_USER_AGENT:
-        return L"User-Agent";
-    case HTTP_QUERY_HOST:
-        return L"Host";
-    }
-    return nullptr;
+    INET_OBJECT *object = InetReferenceType(request, INTERNET_HANDLE_TYPE_HTTP_REQUEST);
+    if (!object)
+        return FALSE;
+    InetRelease(object);
+    if (!headers || !length)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    if (length == (DWORD)-1)
+        length = (DWORD)lstrlenW(headers);
+    char *narrow = InetNarrow(headers, (int)length);
+    if (!narrow)
+        return InetFail(ERROR_NOT_ENOUGH_MEMORY);
+    BOOL ok = HttpAddRequestHeadersA(request, narrow, (DWORD)strlen(narrow), modifiers);
+    InetFree(narrow);
+    return ok;
 }
 
-/* copies a string result, the length in bytes with the terminator when too small and without it after. */
-static DWORD ReturnString(LPCWSTR text, DWORD chars, LPVOID buffer, LPDWORD length)
+/* ------------------------------------------------------------------ queries */
+
+/* copies text out, the length without the terminator after and with it when too small. */
+static DWORD ReturnText(const char *text, DWORD length, LPVOID buffer, LPDWORD size)
 {
-    DWORD bytes = (chars + 1) * sizeof(WCHAR);
-    if (!buffer || *length < bytes) {
-        *length = bytes;
+    if (!buffer || *size < length + 1) {
+        *size = length + 1;
         return ERROR_INSUFFICIENT_BUFFER;
     }
-    memcpy(buffer, text, chars * sizeof(WCHAR));
-    ((WCHAR *)buffer)[chars] = 0;
-    *length = chars * sizeof(WCHAR);
+    memcpy(buffer, text, length);
+    ((char *)buffer)[length] = 0;
+    *size = length;
     return ERROR_SUCCESS;
 }
 
-/* the request line and headers as sent, each line ended by a crlf and the block by an empty line. */
-static DWORD RawRequestHeaders(INET_OBJECT *request, LPVOID buffer, LPDWORD length)
+/* the start line and the headers, each line ended by a crlf or a nul, crlf blocks ended by an empty line. */
+static DWORD RawHeaders(const char *first, const INET_HEADERS *headers, BOOL crlf, LPVOID buffer, LPDWORD size)
 {
-    SIZE_T chars = lstrlenW(request->Verb) + 1 + lstrlenW(request->Object) + 1 + lstrlenW(request->Version) + 2 + 2;
-    for (DWORD i = 0; i < request->HeaderCount; i++)
-        chars += lstrlenW(request->Headers[i].Name) + 2 + lstrlenW(request->Headers[i].Value) + 2;
-    PWSTR text = HeapAlloc(GetProcessHeap(), 0, (chars + 1) * sizeof(WCHAR));
-    if (!text)
-        return ERROR_NOT_ENOUGH_MEMORY;
-    text[0] = 0;
-    lstrcatW(text, request->Verb);
-    lstrcatW(text, L" ");
-    lstrcatW(text, request->Object);
-    lstrcatW(text, L" ");
-    lstrcatW(text, request->Version);
-    lstrcatW(text, L"\r\n");
-    for (DWORD i = 0; i < request->HeaderCount; i++) {
-        lstrcatW(text, request->Headers[i].Name);
-        lstrcatW(text, L": ");
-        lstrcatW(text, request->Headers[i].Value);
-        lstrcatW(text, L"\r\n");
+    DWORD separator = crlf ? 2 : 1;
+    DWORD length = (DWORD)strlen(first) + separator;
+    for (DWORD i = 0; i < headers->Count; i++)
+        length += (DWORD)strlen(headers->Items[i].Name) + 2 + (DWORD)strlen(headers->Items[i].Value) + separator;
+    if (crlf)
+        length += 2;
+    if (!buffer || *size <= length) {
+        *size = length + 1;
+        return ERROR_INSUFFICIENT_BUFFER;
     }
-    lstrcatW(text, L"\r\n");
-    DWORD error = ReturnString(text, (DWORD)chars, buffer, length);
-    InetFree(text);
-    return error;
+    char *p = buffer;
+    const char *end = crlf ? "\r\n" : "";
+    p += wsprintfA(p, "%s", first);
+    memcpy(p, end, separator);
+    p += separator;
+    for (DWORD i = 0; i < headers->Count; i++) {
+        p += wsprintfA(p, "%s: %s", headers->Items[i].Name, headers->Items[i].Value);
+        memcpy(p, end, separator);
+        p += separator;
+    }
+    if (crlf) {
+        memcpy(p, "\r\n", 2);
+        p += 2;
+    }
+    *p = 0;
+    *size = length;
+    return ERROR_SUCCESS;
 }
 
-static DWORD QueryRequestHeader(INET_OBJECT *request, DWORD level, LPVOID buffer, LPDWORD length, LPDWORD index)
+/* the leading digits of a header value as wininet reads numbers. */
+static DWORD ParseNumber(const char *value, ULONGLONG *number, BOOL wide)
 {
-    DWORD field = level & HTTP_QUERY_HEADER_MASK;
-    if (field == HTTP_QUERY_RAW_HEADERS_CRLF)
-        return RawRequestHeaders(request, buffer, length);
-    LPCWSTR name = field == HTTP_QUERY_CUSTOM ? buffer : LevelName(field);
-    if (!name)
-        return ERROR_HTTP_HEADER_NOT_FOUND;
-    DWORD at = FindHeader(request, name, (DWORD)lstrlenW(name), index ? *index : 0);
-    if (at == UINT32_MAX)
-        return ERROR_HTTP_HEADER_NOT_FOUND;
-    LPCWSTR value = request->Headers[at].Value;
-    DWORD error;
-    if (level & HTTP_QUERY_FLAG_NUMBER) {
-        DWORD number = 0;
-        for (LPCWSTR p = value; *p >= L'0' && *p <= L'9'; p++)
-            number = number * 10 + (*p - L'0');
-        if (!buffer || *length < sizeof(DWORD)) {
-            *length = sizeof(DWORD);
+    ULONGLONG v = 0;
+    const char *p = value;
+    for (; *p >= '0' && *p <= '9'; p++) {
+        if (v > (~0ull - (ULONGLONG)(*p - '0')) / 10)
+            return ERROR_ARITHMETIC_OVERFLOW;
+        v = v * 10 + (ULONGLONG)(*p - '0');
+    }
+    if (p == value)
+        return ERROR_HTTP_INVALID_QUERY_REQUEST;
+    if (!wide && v > 0xFFFFFFFF)
+        return ERROR_HTTP_INVALID_HEADER;
+    *number = v;
+    return ERROR_SUCCESS;
+}
+
+/* a header value in the form the modifiers ask for. */
+static DWORD FormatValue(const char *value, DWORD level, LPVOID buffer, LPDWORD size)
+{
+    if (level & HTTP_QUERY_FLAG_SYSTEMTIME) {
+        SYSTEMTIME time;
+        if (strlen(value) >= 128)
+            return ERROR_INTERNET_INTERNAL_ERROR;
+        if (!InetParseTime(value, &time))
+            return ERROR_HTTP_INVALID_QUERY_REQUEST;
+        if (!buffer || *size < sizeof(time)) {
+            *size = sizeof(time);
             return ERROR_INSUFFICIENT_BUFFER;
         }
-        *(DWORD *)buffer = number;
-        *length = sizeof(DWORD);
-        error = ERROR_SUCCESS;
-    } else {
-        error = ReturnString(value, lstrlenW(value), buffer, length);
+        memcpy(buffer, &time, sizeof(time));
+        *size = sizeof(time);
+        return ERROR_SUCCESS;
     }
-    if (!error && index)
+    if (level & (HTTP_QUERY_FLAG_NUMBER | HTTP_QUERY_FLAG_NUMBER64)) {
+        BOOL wide = (level & HTTP_QUERY_FLAG_NUMBER64) != 0;
+        ULONGLONG number;
+        DWORD error = ParseNumber(value, &number, wide);
+        if (error)
+            return error;
+        DWORD bytes = wide ? 8 : 4;
+        if (!buffer || *size < bytes) {
+            *size = bytes;
+            return ERROR_INSUFFICIENT_BUFFER;
+        }
+        if (wide)
+            memcpy(buffer, &number, 8);
+        else
+            *(DWORD *)buffer = (DWORD)number;
+        *size = bytes;
+        return ERROR_SUCCESS;
+    }
+    return ReturnText(value, (DWORD)strlen(value), buffer, size);
+}
+
+static DWORD QueryHeader(const INET_HEADERS *headers, const char *name, DWORD name_length, DWORD level,
+                         LPVOID buffer, LPDWORD size, LPDWORD index)
+{
+    if (level & HTTP_QUERY_FLAG_COALESCE_WITH_COMMA) {
+        /* every value of the header joined by commas. */
+        SIZE_T length = 0;
+        DWORD count = 0;
+        for (DWORD i = 0; i < headers->Count; i++)
+            if (NameIs(headers->Items[i].Name, name, name_length)) {
+                length += strlen(headers->Items[i].Value) + 2;
+                count++;
+            }
+        if (!count)
+            return ERROR_HTTP_HEADER_NOT_FOUND;
+        char *joined = InetAlloc(length + 1);
+        if (!joined)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        joined[0] = 0;
+        for (DWORD i = 0; i < headers->Count; i++)
+            if (NameIs(headers->Items[i].Name, name, name_length)) {
+                if (joined[0])
+                    lstrcatA(joined, ", ");
+                lstrcatA(joined, headers->Items[i].Value);
+            }
+        DWORD error = FormatValue(joined, level, buffer, size);
+        InetFree(joined);
+        return error;
+    }
+    DWORD at = FindHeader(headers, name, name_length, *index);
+    if (at == UINT32_MAX)
+        return ERROR_HTTP_HEADER_NOT_FOUND;
+    DWORD error = FormatValue(headers->Items[at].Value, level, buffer, size);
+    if (!error)
         ++*index;
     return error;
 }
 
-DECLSPEC_EXPORT BOOL WINAPI HttpQueryInfoW(HINTERNET request, DWORD level, LPVOID buffer, LPDWORD length,
+static DWORD QueryRequest(INET_OBJECT *request, DWORD level, const char *name, DWORD name_length, LPVOID buffer,
+                          LPDWORD size, LPDWORD index)
+{
+    DWORD field = level & 0x3FFFFFF;
+    if (field == HTTP_QUERY_RAW_HEADERS || field == HTTP_QUERY_RAW_HEADERS_CRLF ||
+        field == HTTP_QUERY_ECHO_HEADERS || field == HTTP_QUERY_ECHO_HEADERS_CRLF) {
+        char *verb = InetNarrow(request->Verb, -1), *object = InetNarrow(request->Object, -1);
+        char *version = InetNarrow(request->Version, -1);
+        char *line = verb && object && version ? InetAlloc(strlen(verb) + strlen(object) + strlen(version) + 3)
+                                               : nullptr;
+        DWORD error = ERROR_NOT_ENOUGH_MEMORY;
+        if (line) {
+            wsprintfA(line, "%s %s %s", verb, object, version);
+            error = RawHeaders(line, &request->Request,
+                               field == HTTP_QUERY_RAW_HEADERS_CRLF || field == HTTP_QUERY_ECHO_HEADERS_CRLF, buffer,
+                               size);
+        }
+        InetFree(line);
+        InetFree(verb);
+        InetFree(object);
+        InetFree(version);
+        return error;
+    }
+    if (field == HTTP_QUERY_VERSION) {
+        char *version = InetNarrow(request->Version, -1);
+        DWORD error = version ? ReturnText(version, (DWORD)strlen(version), buffer, size) : ERROR_NOT_ENOUGH_MEMORY;
+        InetFree(version);
+        return error;
+    }
+    if (field == HTTP_QUERY_STATUS_CODE || field == HTTP_QUERY_STATUS_TEXT)
+        return ERROR_HTTP_INVALID_QUERY_REQUEST;
+    return QueryHeader(&request->Request, name, name_length, level, buffer, size, index);
+}
+
+static DWORD QueryResponse(INET_OBJECT *request, DWORD level, const char *name, DWORD name_length, LPVOID buffer,
+                           LPDWORD size, LPDWORD index)
+{
+    DWORD field = level & 0x3FFFFFF;
+    switch (field) {
+    case HTTP_QUERY_RAW_HEADERS:
+    case HTTP_QUERY_RAW_HEADERS_CRLF:
+        return RawHeaders(request->StatusLine ? request->StatusLine : "", &request->Response,
+                          field == HTTP_QUERY_RAW_HEADERS_CRLF, buffer, size);
+    case HTTP_QUERY_VERSION:
+        if (!request->VersionText)
+            return ERROR_HTTP_HEADER_NOT_FOUND;
+        return ReturnText(request->VersionText, (DWORD)strlen(request->VersionText), buffer, size);
+    case HTTP_QUERY_STATUS_CODE:
+        if (level & HTTP_QUERY_FLAG_NUMBER) {
+            if (!buffer || *size < sizeof(DWORD)) {
+                *size = sizeof(DWORD);
+                return ERROR_INSUFFICIENT_BUFFER;
+            }
+            *(DWORD *)buffer = request->StatusCode;
+            *size = sizeof(DWORD);
+            return ERROR_SUCCESS;
+        } else {
+            char code[12];
+            wsprintfA(code, "%u", request->StatusCode);
+            return ReturnText(code, (DWORD)strlen(code), buffer, size);
+        }
+    case HTTP_QUERY_STATUS_TEXT:
+        if (!request->StatusText)
+            return ERROR_HTTP_HEADER_NOT_FOUND;
+        return ReturnText(request->StatusText, (DWORD)strlen(request->StatusText), buffer, size);
+    case HTTP_QUERY_ECHO_HEADERS:
+    case HTTP_QUERY_ECHO_HEADERS_CRLF:
+        return ERROR_HTTP_INVALID_QUERY_REQUEST;
+    }
+    return QueryHeader(&request->Response, name, name_length, level, buffer, size, index);
+}
+
+/* modifier combinations windows rejects as invalid parameters. */
+static BOOL BadModifiers(DWORD level)
+{
+    static const DWORD pairs[] = {
+        HTTP_QUERY_FLAG_NUMBER | HTTP_QUERY_FLAG_NUMBER64,
+        HTTP_QUERY_FLAG_SYSTEMTIME | HTTP_QUERY_FLAG_NUMBER64,
+        HTTP_QUERY_FLAG_SYSTEMTIME | HTTP_QUERY_FLAG_NUMBER,
+        HTTP_QUERY_FLAG_NUMBER | HTTP_QUERY_FLAG_COALESCE_WITH_COMMA,
+        HTTP_QUERY_FLAG_NUMBER64 | HTTP_QUERY_FLAG_COALESCE_WITH_COMMA,
+        HTTP_QUERY_FLAG_REQUEST_HEADERS | HTTP_QUERY_FLAG_COALESCE_WITH_COMMA,
+        HTTP_QUERY_FLAG_SYSTEMTIME | HTTP_QUERY_FLAG_COALESCE_WITH_COMMA,
+    };
+    for (DWORD i = 0; i < ARRAYSIZE(pairs); i++)
+        if ((level & pairs[i]) == pairs[i])
+            return TRUE;
+    return FALSE;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpQueryInfoA(HINTERNET request, DWORD level, LPVOID buffer, LPDWORD length,
                                           LPDWORD index)
 {
     INET_OBJECT *object = InetReferenceType(request, INTERNET_HANDLE_TYPE_HTTP_REQUEST);
     if (!object)
         return FALSE;
-    DWORD error;
-    if (!length)
+    DWORD field = level & 0x3FFFFFF, error = ERROR_SUCCESS, zero = 0;
+    LPDWORD at = index ? index : &zero;
+    const char *name = nullptr;
+    DWORD name_length = 0;
+    if (!length || (field > HTTP_QUERY_MAX && field != HTTP_QUERY_CUSTOM) || BadModifiers(level)) {
         error = ERROR_INVALID_PARAMETER;
-    else if (level & HTTP_QUERY_FLAG_SYSTEMTIME)
+    } else if (*at && (level & HTTP_QUERY_FLAG_COALESCE_WITH_COMMA ||
+                       (field >= HTTP_QUERY_VERSION && field <= HTTP_QUERY_RAW_HEADERS_CRLF))) {
         error = ERROR_HTTP_HEADER_NOT_FOUND;
-    else if (level & HTTP_QUERY_FLAG_REQUEST_HEADERS) {
-        AcquireSRWLockShared(&HeaderLock);
-        error = QueryRequestHeader(object, level, buffer, length, index);
-        ReleaseSRWLockShared(&HeaderLock);
+    } else if (field == HTTP_QUERY_CUSTOM) {
+        /* the name ends at a colon or a line break, and spaces or control characters make it invalid. */
+        name = buffer;
+        if (!name) {
+            error = ERROR_INVALID_PARAMETER;
+        } else {
+            while (name[name_length] && name[name_length] != ':' && name[name_length] != '\r' &&
+                   name[name_length] != '\n') {
+                BYTE c = (BYTE)name[name_length];
+                if (c < 0x80 && (c <= ' ' || c == 0x7F))
+                    error = ERROR_INVALID_PARAMETER;
+                name_length++;
+            }
+        }
+    } else if (level & ~Levels[field].Allowed & 0xF8000000) {
+        error = ERROR_HTTP_INVALID_QUERY_REQUEST;
     } else {
-        /* response headers only exist once a request was sent, which needs the network. */
-        error = ERROR_INTERNET_INCORRECT_HANDLE_STATE;
+        name = Levels[field].Name;
+        name_length = name ? (DWORD)strlen(name) : 0;
+        if (!buffer)
+            *length = 0;
+    }
+    if (!error) {
+        char *custom = nullptr;
+        /* a custom name lives in the buffer the answer overwrites. */
+        if (field == HTTP_QUERY_CUSTOM && !(custom = InetDuplicateA(name, name_length)))
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        if (custom)
+            name = custom;
+        AcquireSRWLockShared(&object->Lock);
+        if (error) {
+        } else if (field == HTTP_QUERY_REQUEST_METHOD) {
+            char *verb = InetNarrow(object->Verb, -1);
+            error = verb ? ReturnText(verb, (DWORD)strlen(verb), buffer, length) : ERROR_NOT_ENOUGH_MEMORY;
+            InetFree(verb);
+        } else if (level & HTTP_QUERY_FLAG_REQUEST_HEADERS) {
+            error = QueryRequest(object, level, name, name_length, buffer, length, at);
+        } else if (object->State != INET_RECEIVED) {
+            error = ERROR_INTERNET_INCORRECT_HANDLE_STATE;
+        } else {
+            error = QueryResponse(object, level, name, name_length, buffer, length, at);
+        }
+        ReleaseSRWLockShared(&object->Lock);
+        InetFree(custom);
     }
     InetRelease(object);
-    return error ? InetFail(error) : TRUE;
+    SetLastError(error);
+    return !error;
 }
 
-/* the request handle is checked first so a bad handle reports ERROR_INVALID_HANDLE as windows does. */
-static BOOL FailRequest(HINTERNET request, DWORD error)
+/*
+ * windows forwards to HttpQueryInfoA: numbers and times pass through, text is widened in place, its length
+ * then counted in bytes, without the terminator after and with it when the buffer was too small.
+ */
+DECLSPEC_EXPORT BOOL WINAPI HttpQueryInfoW(HINTERNET request, DWORD level, LPVOID buffer, LPDWORD length,
+                                          LPDWORD index)
 {
-    INET_OBJECT *object = InetReferenceType(request, INTERNET_HANDLE_TYPE_HTTP_REQUEST);
-    if (!object)
-        return FALSE;
-    InetRelease(object);
-    return InetFail(error);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI HttpSendRequestW(HINTERNET request, LPCWSTR headers, DWORD headers_length,
-                                            LPVOID optional, DWORD optional_length)
-{
-    MIME_STUB("wininet");
-    return FailRequest(request, ERROR_INTERNET_CANNOT_CONNECT);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI HttpSendRequestExW(HINTERNET request, LPINTERNET_BUFFERSW buffers_in,
-                                              LPINTERNET_BUFFERSW buffers_out, DWORD flags, DWORD_PTR context)
-{
-    MIME_STUB("wininet");
-    return FailRequest(request, ERROR_INTERNET_CANNOT_CONNECT);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI HttpEndRequestW(HINTERNET request, LPINTERNET_BUFFERSW buffers_out, DWORD flags,
-                                           DWORD_PTR context)
-{
-    MIME_STUB("wininet");
-    return FailRequest(request, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
+    if (!length || (*length && !buffer))
+        return InetFail(ERROR_INVALID_PARAMETER);
+    BOOL binary = (level & (HTTP_QUERY_FLAG_SYSTEMTIME | HTTP_QUERY_FLAG_NUMBER | HTTP_QUERY_FLAG_NUMBER64)) != 0;
+    DWORD capacity = *length;
+    char *narrow = nullptr;
+    DWORD narrow_capacity = capacity;
+    if ((level & 0x3FFFFFF) == HTTP_QUERY_CUSTOM) {
+        if (!buffer)
+            return InetFail(ERROR_INVALID_PARAMETER);
+        DWORD needed = (DWORD)WideCharToMultiByte(CP_ACP, 0, buffer, -1, nullptr, 0, nullptr, nullptr);
+        narrow_capacity = max(capacity, needed);
+        narrow = InetAlloc(narrow_capacity);
+        if (!narrow)
+            return InetFail(ERROR_NOT_ENOUGH_MEMORY);
+        WideCharToMultiByte(CP_ACP, 0, buffer, -1, narrow, (int)narrow_capacity, nullptr, nullptr);
+    } else {
+        narrow = InetAlloc(capacity);
+        if (!narrow)
+            return InetFail(ERROR_NOT_ENOUGH_MEMORY);
+    }
+    DWORD got = capacity;
+    BOOL ok = HttpQueryInfoA(request, level, buffer ? narrow : nullptr, &got, index);
+    DWORD error = ok ? ERROR_SUCCESS : GetLastError();
+    if (binary) {
+        if (ok)
+            memcpy(buffer, narrow, got);
+        *length = got;
+    } else if (ok) {
+        DWORD chars = (DWORD)MultiByteToWideChar(CP_ACP, 0, narrow, (int)got + 1, nullptr, 0);
+        *length = chars * sizeof(WCHAR);
+        if (*length > capacity) {
+            ok = FALSE;
+            error = ERROR_INSUFFICIENT_BUFFER;
+        } else {
+            MultiByteToWideChar(CP_ACP, 0, narrow, (int)got + 1, buffer, (int)chars);
+            *length -= sizeof(WCHAR);
+        }
+    } else if (error == ERROR_INSUFFICIENT_BUFFER) {
+        *length = got * sizeof(WCHAR);
+    }
+    InetFree(narrow);
+    SetLastError(error);
+    return ok;
 }

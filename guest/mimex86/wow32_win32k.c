@@ -21,6 +21,24 @@ static UNICODE_STRING str32(ULONG value)
     return s ? (UNICODE_STRING){s->Length, s->MaximumLength, ptr32(s->Buffer)} : (UNICODE_STRING){0};
 }
 
+/* object attributes of x86 code, with the name they point at. */
+static OBJECT_ATTRIBUTES oa32(ULONG value, UNICODE_STRING *name)
+{
+    const MIME_OBJECT_ATTRIBUTES32 *a = ptr32(value);
+    OBJECT_ATTRIBUTES out = {sizeof(out)};
+    if (!a)
+        return out;
+    out.RootDirectory = (HANDLE)(LONG_PTR)(LONG)a->RootDirectory;
+    out.Attributes = a->Attributes;
+    if (a->ObjectName) {
+        *name = str32(a->ObjectName);
+        out.ObjectName = name;
+    }
+    out.SecurityDescriptor = ptr32(a->SecurityDescriptor);
+    out.SecurityQualityOfService = ptr32(a->SecurityQualityOfService);
+    return out;
+}
+
 typedef struct MSG32 {
     ULONG Hwnd, Message, Wparam, Lparam, Time;
     POINT Point;
@@ -228,6 +246,22 @@ static ULONG get_object32(const ULONG *a)
         ULONG out[3] = {native.lbStyle, native.lbColor, (ULONG)native.lbHatch};
         memcpy(ptr32(a[2]), out, sizeof(out));
         return 12;
+    }
+    if (type == 0x50) {
+        /* EXTLOGPEN narrows its hatch, the style entries move up. */
+        EXTLOGPEN native;
+        v[1] = sizeof(native);
+        v[2] = (ULONG_PTR)&native;
+        if (!MxCallService(MIME_SVC_NtGdiExtGetObjectW, v))
+            return 0;
+        if (!a[2])
+            return 24;
+        if (a[1] < 24)
+            return 0;
+        ULONG out[6] = {native.elpPenStyle, native.elpWidth, native.elpBrushStyle, native.elpColor,
+                        (ULONG)native.elpHatch, 0};
+        memcpy(ptr32(a[2]), out, sizeof(out));
+        return 24;
     }
     return (ULONG)MxCallService(MIME_SVC_NtGdiExtGetObjectW, v);
 }
@@ -858,6 +892,31 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtUserGetRawInputDeviceInfo:
         /* the names and RID_DEVICE_INFO are the same in both. */
         for (ULONG i = 0; i < 4; i++)
+            v[i] = a[i];
+        return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtUserCreateWindowStation:
+    case MIME_SVC_NtUserCreateWindowStationEx:
+    case MIME_SVC_NtUserOpenWindowStation:
+    case MIME_SVC_NtUserCreateDesktopEx:
+    case MIME_SVC_NtUserOpenDesktop: {
+        /* the window station and desktop calls take object attributes first, then scalars. */
+        UNICODE_STRING name, device;
+        OBJECT_ATTRIBUTES oa = oa32(a[0], &name);
+        v[0] = a[0] ? (ULONG_PTR)&oa : 0;
+        for (ULONG i = 1; i < 7; i++)
+            v[i] = a[i];
+        if (number == MIME_SVC_NtUserCreateDesktopEx && a[1]) {
+            device = str32(a[1]);
+            v[1] = (ULONG_PTR)&device;
+        }
+        return (ULONG)MxCallService(number, v);
+    }
+    case MIME_SVC_NtUserGetObjectInformation:
+    case MIME_SVC_NtUserSetObjectInformation:
+    case MIME_SVC_NtUserBuildNameList:
+        /* object information and name lists hold no pointers. */
+        v[0] = (LONG64)(LONG)a[0];
+        for (ULONG i = 1; i < 5; i++)
             v[i] = a[i];
         return (ULONG)MxCallService(number, v);
     default:

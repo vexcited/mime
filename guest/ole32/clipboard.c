@@ -12,13 +12,6 @@ typedef DWORD(WINAPI *GET_SEQUENCE)(void);
 typedef UINT(WINAPI *ENUM_FORMATS)(UINT format);
 typedef BOOL(WINAPI *DELETE_GDI_HANDLE)(HANDLE handle);
 
-typedef struct _METAFILEPICT {
-    LONG mm;
-    LONG xExt;
-    LONG yExt;
-    HANDLE hMF;
-} METAFILEPICT;
-
 static SRWLOCK g_clip_lock = SRWLOCK_INIT;
 /* the data object of the last OleSetClipboard and the clipboard sequence number after it. */
 static IDataObject *g_clip_object;

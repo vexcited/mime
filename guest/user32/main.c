@@ -428,6 +428,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     if (reason == DLL_PROCESS_ATTACH) {
         User32Instance = instance;
         initialize_process();
+        UserInitializeDpiAwareness();
     }
     return TRUE;
 }

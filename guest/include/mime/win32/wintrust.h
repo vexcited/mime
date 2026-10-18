@@ -54,6 +54,81 @@ typedef struct _WINTRUST_DATA {
     PVOID pSignatureSettings;
 } WINTRUST_DATA, *PWINTRUST_DATA;
 
+typedef struct _CRYPT_PROVIDER_CERT {
+    DWORD cbStruct;
+    PCCERT_CONTEXT pCert;
+    BOOL fCommercial;
+    BOOL fTrustedRoot;
+    BOOL fSelfSigned;
+    BOOL fTestCert;
+    DWORD dwRevokedReason;
+    DWORD dwConfidence;
+    DWORD dwError;
+    PVOID pTrustListContext;
+    BOOL fTrustListSignerCert;
+    PVOID pCtlContext;
+    DWORD dwCtlError;
+    BOOL fIsCyclic;
+    PCERT_CHAIN_ELEMENT pChainElement;
+} CRYPT_PROVIDER_CERT, *PCRYPT_PROVIDER_CERT;
+
+typedef struct _CRYPT_PROVIDER_SGNR {
+    DWORD cbStruct;
+    FILETIME sftVerifyAsOf;
+    DWORD csCertChain;
+    CRYPT_PROVIDER_CERT *pasCertChain;
+    DWORD dwSignerType;
+    PVOID psSigner;
+    DWORD dwError;
+    DWORD csCounterSigners;
+    struct _CRYPT_PROVIDER_SGNR *pasCounterSigners;
+    PCCERT_CHAIN_CONTEXT pChainContext;
+} CRYPT_PROVIDER_SGNR, *PCRYPT_PROVIDER_SGNR;
+
+typedef struct _CRYPT_PROVIDER_DATA {
+    DWORD cbStruct;
+    WINTRUST_DATA *pWintrustData;
+    BOOL fOpenedFile;
+    HWND hWndParent;
+    GUID *pgActionID;
+    ULONG_PTR hProv;
+    DWORD dwError;
+    DWORD dwRegSecuritySettings;
+    DWORD dwRegPolicySettings;
+    PVOID psPfns;
+    DWORD cdwTrustStepErrors;
+    DWORD *padwTrustStepErrors;
+    DWORD chStores;
+    HCERTSTORE *pahStores;
+    DWORD dwEncoding;
+    HCRYPTMSG hMsg;
+    DWORD csSigners;
+    CRYPT_PROVIDER_SGNR *pasSigners;
+    DWORD csProvPrivData;
+    PVOID pasProvPrivData;
+    DWORD dwSubjectChoice;
+    PVOID pPDSip;
+    char *pszUsageOID;
+    BOOL fRecallWithState;
+    FILETIME sftSystemTime;
+    char *pszCTLSignerUsageOID;
+    DWORD dwProvFlags;
+    DWORD dwFinalError;
+    PCERT_USAGE_MATCH pRequestUsage;
+    DWORD dwTrustPubSettings;
+    DWORD dwUIStateFlags;
+    PVOID pSigState;
+    PVOID pSigSettings;
+} CRYPT_PROVIDER_DATA, *PCRYPT_PROVIDER_DATA;
+
+typedef HANDLE HCATADMIN;
+typedef HANDLE HCATINFO;
+
+typedef struct CATALOG_INFO_ {
+    DWORD cbStruct;
+    WCHAR wszCatalogFile[MAX_PATH];
+} CATALOG_INFO;
+
 #ifdef MIME_BUILD_WINTRUST
 #define WINTRUSTAPI DECLSPEC_EXPORT
 #else

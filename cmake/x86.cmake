@@ -54,14 +54,27 @@ set(MIME_X86_DLLS
     advapi32:0x6d000000:all_five ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
     netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:all_five oleaut32:0x64000000:all_five
-    rpcrt4:0x63000000:all_five imm32:0x62000000:all_five comctl32:0x61000000:all_five comdlg32:0x60000000:all_five
+    rpcrt4:0x63000000:all_five imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:all_five
     msi:0x5f000000:user mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
-    gdiplus:0x5b000000:user_gdi wininet:0x5a000000:user urlmon:0x59000000:user msimg32:0x58000000:gdi
+    gdiplus:0x5b000000:user_gdi wininet:0x5a000000:http urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:user oledlg:0x56000000:user combase:0x54000000:user usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
-    xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base)
+    xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base
+    winhttp:0x2C000000:http
+    propsys:0x2B000000:propsys_imports shcore:0x2A000000:shcore_imports powrprof:0x29000000:all_five
+    bcryptprimitives:0x28000000:all_five pdh:0x27000000:all_five wevtapi:0x26000000:all_five tbs:0x25000000:all_five
+    ncrypt:0x24000000:all_five credui:0x23000000:all_five cryptui:0x22000000:all_five ndfapi:0x21000000:all_five
+    winusb:0x20000000:all_five dhcpcsvc:0x1E000000:all_five esent:0x1D000000:all_five
+    uiautomationcore:0x1C000000:all_five iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
+    mfplat:0x12400000:mfplat_imports mf:0x12200000:base mfreadwrite:0x12000000:mfreadwrite_imports
+    schannel:0x19000000:base)
 set(base ntdll kernel32)
+set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
+set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
+set(comctl ntdll kernel32 user32 gdi32 win32u uxtheme)
+set(mfplat_imports ntdll kernel32 ole32)
+set(mfreadwrite_imports ntdll kernel32 mfplat ole32)
 set(user ntdll kernel32 user32)
 set(gdi ntdll kernel32 gdi32)
 set(user_gdi ntdll kernel32 user32 gdi32)
@@ -71,6 +84,8 @@ set(acm ntdll kernel32 user32 gdi32 winmm)
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(setup ntdll kernel32 cfgmgr32)
 set(xinput ntdll kernel32 user32 setupapi)
+set(http ntdll kernel32 user32 ws2_32)
+set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
 set(objects_msi x86-lib-compound)
 set(objects_winmm x86-lib-audio)
 set(objects_dsound x86-lib-audio)
@@ -80,6 +95,17 @@ foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
     set(objects_${xinput} x86-lib-xinput)
 endforeach()
 set(objects_gdiplus x86-lib-png)
+set(objects_bcrypt x86-lib-crypto)
+set(objects_crypt32 x86-lib-crypto)
+set(objects_secur32 x86-lib-crypto)
+set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c)
+foreach(crypto bcrypt crypt32 secur32 advapi32)
+    set(includes_${crypto} guest/lib)
+endforeach()
+set(objects_winhttp x86-lib-png:guest/lib/png/inflate.c)
+set(includes_winhttp guest/lib)
+set(objects_wininet x86-lib-png:guest/lib/png/inflate.c)
+set(includes_wininet guest/lib)
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
     # vulkan-1, dxgi and direct3d for 32-bit programs on the linux host: the same sources with 32-bit
@@ -121,10 +147,28 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
         IMPORTS ntdll kernel32 user32 gdi32 d3d9)
 endif()
 
+# the rich edit control: riched20 and msftedit share one engine and list their exports by hand, with the
+# ordinals and data exports windows' have; riched32 registers its class over riched20's procedure.
+foreach(entry riched20:0x18000000 msftedit:0x17000000)
+    string(REPLACE ":" ";" entry ${entry})
+    list(GET entry 0 name)
+    list(GET entry 1 base)
+    mime_sources(sources ${name} x86)
+    mime_dll(${name} x86 BASE ${base} SOURCES ${sources} OBJECTS x86-chkstk x86-lib-richedit INCLUDES guest/lib
+        DEF ${CMAKE_SOURCE_DIR}/guest/${name}/x86/${name}.def
+        IMPORTS_DEF ${CMAKE_SOURCE_DIR}/guest/${name}/x86/${name}.imports.def IMPORTS ntdll kernel32 user32 gdi32 win32u)
+endforeach()
+mime_sources(sources riched32 x86)
+mime_dll(riched32 x86 BASE 0x16000000 SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 riched20)
+
 # winspool is a driver file.
 mime_glob(sources guest/winspool/*.c)
 mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources} OBJECTS x86-chkstk
     IMPORTS ntdll kernel32 user32 gdi32)
+
+# bthprops is a control panel file.
+mime_sources(sources bthprops x86)
+mime_dll(bthprops x86 BASE 0x1F000000 FILE bthprops.cpl SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ${all_five})
 
 # msvcrt keeps its own definitions: the x64 list where x86 defines the same, the helpers only x86 has, and what
 # the native build exports through dllexport.

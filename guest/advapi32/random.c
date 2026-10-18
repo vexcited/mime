@@ -13,155 +13,31 @@
  * pool, and reseeded with fresh timings as the process runs.
  */
 #include "advapi32_private.h"
+#include <crypto/crypto.h>
 
-/* ---------------------------------------------------------------- sha-256 */
+/* ---------------------------------------------------------------- sha-256 and chacha20 */
 
-typedef struct SHA256 {
-    DWORD State[8];
-    ULONG64 Length;
-    BYTE Block[64];
-    DWORD Used;
-} SHA256;
-
-static constexpr DWORD g_sha_k[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-};
-
-static inline DWORD ror32(DWORD v, int n)
-{
-    return v >> n | v << (32 - n);
-}
-
-static void sha256_block(SHA256 *c, const BYTE *p)
-{
-    DWORD w[64];
-    for (int i = 0; i < 16; i++)
-        w[i] = (DWORD)p[4 * i] << 24 | (DWORD)p[4 * i + 1] << 16 | (DWORD)p[4 * i + 2] << 8 | p[4 * i + 3];
-    for (int i = 16; i < 64; i++) {
-        DWORD s0 = ror32(w[i - 15], 7) ^ ror32(w[i - 15], 18) ^ w[i - 15] >> 3;
-        DWORD s1 = ror32(w[i - 2], 17) ^ ror32(w[i - 2], 19) ^ w[i - 2] >> 10;
-        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-    }
-    DWORD a = c->State[0], b = c->State[1], cc = c->State[2], d = c->State[3];
-    DWORD e = c->State[4], f = c->State[5], g = c->State[6], h = c->State[7];
-    for (int i = 0; i < 64; i++) {
-        DWORD t1 = h + (ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25)) + ((e & f) ^ (~e & g)) + g_sha_k[i] + w[i];
-        DWORD t2 = (ror32(a, 2) ^ ror32(a, 13) ^ ror32(a, 22)) + ((a & b) ^ (a & cc) ^ (b & cc));
-        h = g;
-        g = f;
-        f = e;
-        e = d + t1;
-        d = cc;
-        cc = b;
-        b = a;
-        a = t1 + t2;
-    }
-    c->State[0] += a;
-    c->State[1] += b;
-    c->State[2] += cc;
-    c->State[3] += d;
-    c->State[4] += e;
-    c->State[5] += f;
-    c->State[6] += g;
-    c->State[7] += h;
-}
+typedef MimeHashCtx SHA256;
 
 static void sha256_init(SHA256 *c)
 {
-    static const DWORD initial[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                                     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-    memcpy(c->State, initial, sizeof(initial));
-    c->Length = 0;
-    c->Used = 0;
+    mime_sha256.init(c);
 }
 
 static void sha256_update(SHA256 *c, const void *data, SIZE_T size)
 {
-    const BYTE *p = data;
-    c->Length += size;
-    while (size) {
-        DWORD n = 64 - c->Used < size ? 64 - c->Used : (DWORD)size;
-        memcpy(c->Block + c->Used, p, n);
-        c->Used += n;
-        p += n;
-        size -= n;
-        if (c->Used == 64) {
-            sha256_block(c, c->Block);
-            c->Used = 0;
-        }
-    }
+    mime_sha256.update(c, data, size);
 }
 
 static void sha256_final(SHA256 *c, BYTE out[32])
 {
-    ULONG64 bits = c->Length * 8;
-    BYTE pad = 0x80;
-    sha256_update(c, &pad, 1);
-    pad = 0;
-    while (c->Used != 56)
-        sha256_update(c, &pad, 1);
-    BYTE length[8];
-    for (int i = 0; i < 8; i++)
-        length[i] = (BYTE)(bits >> (56 - 8 * i));
-    sha256_update(c, length, 8);
-    for (int i = 0; i < 8; i++) {
-        out[4 * i] = (BYTE)(c->State[i] >> 24);
-        out[4 * i + 1] = (BYTE)(c->State[i] >> 16);
-        out[4 * i + 2] = (BYTE)(c->State[i] >> 8);
-        out[4 * i + 3] = (BYTE)c->State[i];
-    }
+    mime_sha256.final(c, out);
     SecureZeroMemory(c, sizeof(*c));
 }
 
-/* ---------------------------------------------------------------- chacha20 */
-
-static inline DWORD rol32(DWORD v, int n)
-{
-    return v << n | v >> (32 - n);
-}
-
-#define QUARTER(a, b, c, d)                                                                                       \
-    a += b, d = rol32(d ^ a, 16), c += d, b = rol32(b ^ c, 12), a += b, d = rol32(d ^ a, 8), c += d,               \
-    b = rol32(b ^ c, 7)
-
 static void chacha20_block(const BYTE key[32], DWORD counter, const DWORD nonce[3], BYTE out[64])
 {
-    DWORD in[16] = {0x61707865, 0x3320646e, 0x79622d32, 0x6b206574};
-    for (int i = 0; i < 8; i++)
-        in[4 + i] = (DWORD)key[4 * i] | (DWORD)key[4 * i + 1] << 8 | (DWORD)key[4 * i + 2] << 16 |
-                    (DWORD)key[4 * i + 3] << 24;
-    in[12] = counter;
-    in[13] = nonce[0];
-    in[14] = nonce[1];
-    in[15] = nonce[2];
-    DWORD x[16];
-    memcpy(x, in, sizeof(x));
-    for (int i = 0; i < 10; i++) {
-        QUARTER(x[0], x[4], x[8], x[12]);
-        QUARTER(x[1], x[5], x[9], x[13]);
-        QUARTER(x[2], x[6], x[10], x[14]);
-        QUARTER(x[3], x[7], x[11], x[15]);
-        QUARTER(x[0], x[5], x[10], x[15]);
-        QUARTER(x[1], x[6], x[11], x[12]);
-        QUARTER(x[2], x[7], x[8], x[13]);
-        QUARTER(x[3], x[4], x[9], x[14]);
-    }
-    for (int i = 0; i < 16; i++) {
-        DWORD v = x[i] + in[i];
-        out[4 * i] = (BYTE)v;
-        out[4 * i + 1] = (BYTE)(v >> 8);
-        out[4 * i + 2] = (BYTE)(v >> 16);
-        out[4 * i + 3] = (BYTE)(v >> 24);
-    }
-    SecureZeroMemory(x, sizeof(x));
-    SecureZeroMemory(in, sizeof(in));
+    mime_chacha20_block(key, counter, (const uint8_t *)nonce, out);
 }
 
 /* ---------------------------------------------------------------- entropy */

@@ -240,6 +240,15 @@ W32PROCESS *W32GetProcess(void)
             chars = RTL_NUMBER_OF(p->ImagePath) - 1;
         if (NT_SUCCESS(MimeCopyFromUser(p->ImagePath, image.Buffer, chars * sizeof(WCHAR))))
             p->ImageChars = chars;
+        UNICODE_STRING desktop;
+        if (NT_SUCCESS(MimeCopyFromUser(&desktop, &params->DesktopInfo, sizeof(desktop)))) {
+            chars = desktop.Length / sizeof(WCHAR);
+            if (chars >= RTL_NUMBER_OF(p->DesktopInfo))
+                chars = 0;
+            if (chars && !NT_SUCCESS(MimeCopyFromUser(p->DesktopInfo, desktop.Buffer, chars * sizeof(WCHAR))))
+                chars = 0;
+            p->DesktopInfo[chars] = 0;
+        }
     }
     InitializeListHead(&p->Classes);
     /* every process is treated as system dpi aware until dpi virtualization exists. */
@@ -323,6 +332,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     }
     if (InputForeground && InputForeground->Thread == t)
         InputForeground = nullptr;
+    WinStaFreeThread(t);
     RemoveEntryList(&t->Links);
     PsSetThreadWin32Thread(thread, nullptr, t);
     UserLeave();
@@ -350,6 +360,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
         RawFreeProcess(p);
         MenuFreeProcess(p);
         ClassFreeProcess(p);
+        WinStaFreeProcess(p);
         RemoveEntryList(&p->Links);
         PsSetProcessWin32Process(process, nullptr, p);
     }

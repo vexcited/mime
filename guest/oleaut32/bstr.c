@@ -7,6 +7,9 @@
 #include "oleaut32_private.h"
 
 #define BSTR_HEADER 8
+#define VARCMP_LT 0
+#define VARCMP_EQ 1
+#define VARCMP_GT 2
 /* lengths above this cannot be represented with the header and terminator. */
 #define BSTR_MAX_BYTES 0x7FFFFFF0u
 
@@ -89,4 +92,46 @@ WINOLEAUTAPI INT WINAPI SysReAllocString(BSTR *bstr, const OLECHAR *string)
         return TRUE;
     }
     return SysReAllocStringLen(bstr, string, (UINT)wcslen(string));
+}
+
+/* byte lengths are joined, so an odd byte of either string is kept. */
+WINOLEAUTAPI HRESULT WINAPI VarBstrCat(BSTR left, BSTR right, BSTR *result)
+{
+    if (!result)
+        return E_INVALIDARG;
+    UINT a = left ? SysStringByteLen(left) : 0, b = right ? SysStringByteLen(right) : 0;
+    if (~b < a)
+        return DISP_E_OVERFLOW;
+    BSTR joined = SysAllocStringByteLen(nullptr, a + b);
+    *result = joined;
+    if (!joined)
+        return E_OUTOFMEMORY;
+    memcpy(joined, left, a);
+    memcpy((BYTE *)joined + a, right, b);
+    return S_OK;
+}
+
+/*
+ * locale 0 compares the bytes; any other locale compares characters with
+ * CompareStringW, locale 1 meaning the user's. an empty side compares by
+ * length alone.
+ */
+WINOLEAUTAPI HRESULT WINAPI VarBstrCmp(BSTR left, BSTR right, LCID lcid, ULONG flags)
+{
+    UINT a = left ? SysStringByteLen(left) : 0, b = right ? SysStringByteLen(right) : 0;
+    UINT shortest = a < b ? a : b;
+    if (!lcid) {
+        if (shortest) {
+            int c = memcmp(left, right, shortest);
+            if (c)
+                return c < 0 ? VARCMP_LT : VARCMP_GT;
+        }
+        return a < b ? VARCMP_LT : a == b ? VARCMP_EQ : VARCMP_GT;
+    }
+    a /= sizeof(WCHAR);
+    b /= sizeof(WCHAR);
+    if (!shortest)
+        return a < b ? VARCMP_LT : a == b ? VARCMP_EQ : VARCMP_GT;
+    int c = CompareStringW(lcid == 1 ? LOCALE_USER_DEFAULT : lcid, flags, left, (int)a, right, (int)b);
+    return c ? c - 1 : E_INVALIDARG;
 }

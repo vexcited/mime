@@ -161,7 +161,10 @@
 #define POLYGONALCAPS 32
 #define TEXTCAPS 34
 #define CLIPCAPS 36
+#define DT_PLOTTER 0
 #define DT_RASDISPLAY 1
+#define DT_RASPRINTER 2
+#define DT_METAFILE 5
 #define RC_BITBLT 1
 #define RC_STRETCHBLT 0x0800
 #define RC_DI_BITMAP 0x0080
@@ -231,9 +234,20 @@
 #define PS_DASHDOTDOT 4
 #define PS_NULL 5
 #define PS_INSIDEFRAME 6
+#define PS_USERSTYLE 7
+#define PS_ALTERNATE 8
 #define PS_STYLE_MASK 0x0000000F
+#define PS_ENDCAP_ROUND 0x00000000
+#define PS_ENDCAP_SQUARE 0x00000100
+#define PS_ENDCAP_FLAT 0x00000200
+#define PS_ENDCAP_MASK 0x00000F00
+#define PS_JOIN_ROUND 0x00000000
+#define PS_JOIN_BEVEL 0x00001000
+#define PS_JOIN_MITER 0x00002000
+#define PS_JOIN_MASK 0x0000F000
 #define PS_GEOMETRIC 0x00010000
 #define PS_COSMETIC 0x00000000
+#define PS_TYPE_MASK 0x000F0000
 
 /* bitmaps. */
 #define BI_RGB 0
@@ -252,8 +266,13 @@
 #define GM_COMPATIBLE 1
 #define GM_ADVANCED 2
 #define MM_TEXT 1
-#define MM_ANISOTROPIC 8
+#define MM_LOMETRIC 2
+#define MM_HIMETRIC 3
+#define MM_LOENGLISH 4
+#define MM_HIENGLISH 5
+#define MM_TWIPS 6
 #define MM_ISOTROPIC 7
+#define MM_ANISOTROPIC 8
 
 #define STRETCH_ANDSCANS 1
 #define STRETCH_ORSCANS 2
@@ -422,6 +441,16 @@ typedef struct tagLOGPEN {
     COLORREF lopnColor;
 } LOGPEN, *PLOGPEN, *LPLOGPEN;
 
+typedef struct tagEXTLOGPEN {
+    DWORD elpPenStyle;
+    DWORD elpWidth;
+    UINT elpBrushStyle;
+    COLORREF elpColor;
+    ULONG_PTR elpHatch;
+    DWORD elpNumEntries;
+    DWORD elpStyleEntry[1];
+} EXTLOGPEN, *PEXTLOGPEN, *LPEXTLOGPEN;
+
 typedef struct _BLENDFUNCTION {
     BYTE BlendOp;
     BYTE BlendFlags;
@@ -482,6 +511,8 @@ WINGDIAPI HBITMAP WINAPI CreateDIBSection(HDC dc, const BITMAPINFO *info, UINT u
 WINGDIAPI HBITMAP WINAPI CreateDIBitmap(HDC dc, const BITMAPINFOHEADER *header, DWORD init, const void *bits,
                                         const BITMAPINFO *info, UINT usage);
 WINGDIAPI int WINAPI GetDIBits(HDC dc, HBITMAP bitmap, UINT start, UINT lines, LPVOID bits, LPBITMAPINFO info,
+                               UINT usage);
+WINGDIAPI int WINAPI SetDIBits(HDC dc, HBITMAP bitmap, UINT start, UINT lines, const void *bits, const BITMAPINFO *info,
                                UINT usage);
 WINGDIAPI int WINAPI SetDIBitsToDevice(HDC dc, int x, int y, DWORD width, DWORD height, int src_x, int src_y,
                                        UINT start, UINT lines, const void *bits, const BITMAPINFO *info, UINT usage);
@@ -1149,27 +1180,6 @@ WINGDIAPI UINT WINAPI GetSystemPaletteEntries(HDC dc, UINT start, UINT count, LP
 WINGDIAPI UINT WINAPI SetDIBColorTable(HDC dc, UINT start, UINT count, const RGBQUAD *colors);
 WINGDIAPI COLORREF WINAPI GetNearestColor(HDC dc, COLORREF color);
 
-/* ------------------------------------------------------------------ metafiles */
-
-typedef struct tagMETARECORD {
-    DWORD rdSize;
-    WORD rdFunction;
-    WORD rdParm[1];
-} METARECORD, *PMETARECORD, *LPMETARECORD;
-
-typedef struct tagHANDLETABLE {
-    HGDIOBJ objectHandle[1];
-} HANDLETABLE, *PHANDLETABLE, *LPHANDLETABLE;
-
-typedef int(CALLBACK *MFENUMPROC)(HDC dc, HANDLETABLE *table, METARECORD *record, int objects, LPARAM param);
-
-WINGDIAPI HDC WINAPI CreateMetaFileW(LPCWSTR file);
-WINGDIAPI HMETAFILE WINAPI CloseMetaFile(HDC dc);
-WINGDIAPI BOOL WINAPI DeleteMetaFile(HMETAFILE metafile);
-WINGDIAPI BOOL WINAPI PlayMetaFile(HDC dc, HMETAFILE metafile);
-WINGDIAPI BOOL WINAPI PlayMetaFileRecord(HDC dc, LPHANDLETABLE table, LPMETARECORD record, UINT handles);
-WINGDIAPI BOOL WINAPI EnumMetaFile(HDC dc, HMETAFILE metafile, MFENUMPROC proc, LPARAM param);
-WINGDIAPI HMETAFILE WINAPI CopyMetaFileW(HMETAFILE metafile, LPCWSTR file);
 
 /* ------------------------------------------------------------------ gradients and blending */
 
@@ -1218,6 +1228,751 @@ MSIMG32API BOOL WINAPI TransparentBlt(HDC dst, int x, int y, int width, int heig
                                       int src_width, int src_height, UINT transparent);
 MSIMG32API BOOL WINAPI GradientFill(HDC dc, PTRIVERTEX vertices, ULONG vertex_count, PVOID mesh, ULONG mesh_count,
                                     ULONG mode);
+
+/* ------------------------------------------------------------------ metafiles */
+
+typedef struct tagMETARECORD {
+    DWORD rdSize;
+    WORD rdFunction;
+    WORD rdParm[1];
+} METARECORD, *PMETARECORD, *LPMETARECORD;
+
+#pragma pack(push, 2)
+typedef struct tagMETAHEADER {
+    WORD mtType;
+    WORD mtHeaderSize;
+    WORD mtVersion;
+    DWORD mtSize;
+    WORD mtNoObjects;
+    DWORD mtMaxRecord;
+    WORD mtNoParameters;
+} METAHEADER, *PMETAHEADER, *LPMETAHEADER;
+#pragma pack(pop)
+
+typedef struct tagMETAFILEPICT {
+    LONG mm;
+    LONG xExt;
+    LONG yExt;
+    HMETAFILE hMF;
+} METAFILEPICT, *LPMETAFILEPICT;
+
+typedef struct tagHANDLETABLE {
+    HGDIOBJ objectHandle[1];
+} HANDLETABLE, *PHANDLETABLE, *LPHANDLETABLE;
+
+typedef int(CALLBACK *MFENUMPROC)(HDC dc, HANDLETABLE *table, METARECORD *record, int objects, LPARAM param);
+
+#define MFCOMMENT 15
+
+/* windows metafile record functions. */
+#define META_SETBKCOLOR 0x0201
+#define META_SETBKMODE 0x0102
+#define META_SETMAPMODE 0x0103
+#define META_SETROP2 0x0104
+#define META_SETRELABS 0x0105
+#define META_SETPOLYFILLMODE 0x0106
+#define META_SETSTRETCHBLTMODE 0x0107
+#define META_SETTEXTCHAREXTRA 0x0108
+#define META_SETTEXTCOLOR 0x0209
+#define META_SETTEXTJUSTIFICATION 0x020A
+#define META_SETWINDOWORG 0x020B
+#define META_SETWINDOWEXT 0x020C
+#define META_SETVIEWPORTORG 0x020D
+#define META_SETVIEWPORTEXT 0x020E
+#define META_OFFSETWINDOWORG 0x020F
+#define META_SCALEWINDOWEXT 0x0410
+#define META_OFFSETVIEWPORTORG 0x0211
+#define META_SCALEVIEWPORTEXT 0x0412
+#define META_LINETO 0x0213
+#define META_MOVETO 0x0214
+#define META_EXCLUDECLIPRECT 0x0415
+#define META_INTERSECTCLIPRECT 0x0416
+#define META_ARC 0x0817
+#define META_ELLIPSE 0x0418
+#define META_FLOODFILL 0x0419
+#define META_PIE 0x081A
+#define META_RECTANGLE 0x041B
+#define META_ROUNDRECT 0x061C
+#define META_PATBLT 0x061D
+#define META_SAVEDC 0x001E
+#define META_SETPIXEL 0x041F
+#define META_OFFSETCLIPRGN 0x0220
+#define META_TEXTOUT 0x0521
+#define META_BITBLT 0x0922
+#define META_STRETCHBLT 0x0B23
+#define META_POLYGON 0x0324
+#define META_POLYLINE 0x0325
+#define META_ESCAPE 0x0626
+#define META_RESTOREDC 0x0127
+#define META_FILLREGION 0x0228
+#define META_FRAMEREGION 0x0429
+#define META_INVERTREGION 0x012A
+#define META_PAINTREGION 0x012B
+#define META_SELECTCLIPREGION 0x012C
+#define META_SELECTOBJECT 0x012D
+#define META_SETTEXTALIGN 0x012E
+#define META_CHORD 0x0830
+#define META_SETMAPPERFLAGS 0x0231
+#define META_EXTTEXTOUT 0x0A32
+#define META_SETDIBTODEV 0x0D33
+#define META_SELECTPALETTE 0x0234
+#define META_REALIZEPALETTE 0x0035
+#define META_ANIMATEPALETTE 0x0436
+#define META_SETPALENTRIES 0x0037
+#define META_POLYPOLYGON 0x0538
+#define META_RESIZEPALETTE 0x0139
+#define META_DIBBITBLT 0x0940
+#define META_DIBSTRETCHBLT 0x0B41
+#define META_DIBCREATEPATTERNBRUSH 0x0142
+#define META_STRETCHDIB 0x0F43
+#define META_EXTFLOODFILL 0x0548
+#define META_SETLAYOUT 0x0149
+#define META_DELETEOBJECT 0x01F0
+#define META_CREATEPALETTE 0x00F7
+#define META_CREATEPATTERNBRUSH 0x01F9
+#define META_CREATEPENINDIRECT 0x02FA
+#define META_CREATEFONTINDIRECT 0x02FB
+#define META_CREATEBRUSHINDIRECT 0x02FC
+#define META_CREATEREGION 0x06FF
+
+/* enhanced metafiles. */
+#define ENHMETA_SIGNATURE 0x464D4520
+#define ENHMETA_STOCK_OBJECT 0x80000000
+
+#define GDICOMMENT_IDENTIFIER 0x43494447
+#define GDICOMMENT_WINDOWS_METAFILE 0x80000001
+#define GDICOMMENT_BEGINGROUP 0x00000002
+#define GDICOMMENT_ENDGROUP 0x00000003
+#define GDICOMMENT_MULTIFORMATS 0x40000004
+#define EPS_SIGNATURE 0x46535045
+#define GDICOMMENT_UNICODE_STRING 0x00000040
+#define GDICOMMENT_UNICODE_END 0x00000080
+
+#define EMR_HEADER 1
+#define EMR_POLYBEZIER 2
+#define EMR_POLYGON 3
+#define EMR_POLYLINE 4
+#define EMR_POLYBEZIERTO 5
+#define EMR_POLYLINETO 6
+#define EMR_POLYPOLYLINE 7
+#define EMR_POLYPOLYGON 8
+#define EMR_SETWINDOWEXTEX 9
+#define EMR_SETWINDOWORGEX 10
+#define EMR_SETVIEWPORTEXTEX 11
+#define EMR_SETVIEWPORTORGEX 12
+#define EMR_SETBRUSHORGEX 13
+#define EMR_EOF 14
+#define EMR_SETPIXELV 15
+#define EMR_SETMAPPERFLAGS 16
+#define EMR_SETMAPMODE 17
+#define EMR_SETBKMODE 18
+#define EMR_SETPOLYFILLMODE 19
+#define EMR_SETROP2 20
+#define EMR_SETSTRETCHBLTMODE 21
+#define EMR_SETTEXTALIGN 22
+#define EMR_SETCOLORADJUSTMENT 23
+#define EMR_SETTEXTCOLOR 24
+#define EMR_SETBKCOLOR 25
+#define EMR_OFFSETCLIPRGN 26
+#define EMR_MOVETOEX 27
+#define EMR_SETMETARGN 28
+#define EMR_EXCLUDECLIPRECT 29
+#define EMR_INTERSECTCLIPRECT 30
+#define EMR_SCALEVIEWPORTEXTEX 31
+#define EMR_SCALEWINDOWEXTEX 32
+#define EMR_SAVEDC 33
+#define EMR_RESTOREDC 34
+#define EMR_SETWORLDTRANSFORM 35
+#define EMR_MODIFYWORLDTRANSFORM 36
+#define EMR_SELECTOBJECT 37
+#define EMR_CREATEPEN 38
+#define EMR_CREATEBRUSHINDIRECT 39
+#define EMR_DELETEOBJECT 40
+#define EMR_ANGLEARC 41
+#define EMR_ELLIPSE 42
+#define EMR_RECTANGLE 43
+#define EMR_ROUNDRECT 44
+#define EMR_ARC 45
+#define EMR_CHORD 46
+#define EMR_PIE 47
+#define EMR_SELECTPALETTE 48
+#define EMR_CREATEPALETTE 49
+#define EMR_SETPALETTEENTRIES 50
+#define EMR_RESIZEPALETTE 51
+#define EMR_REALIZEPALETTE 52
+#define EMR_EXTFLOODFILL 53
+#define EMR_LINETO 54
+#define EMR_ARCTO 55
+#define EMR_POLYDRAW 56
+#define EMR_SETARCDIRECTION 57
+#define EMR_SETMITERLIMIT 58
+#define EMR_BEGINPATH 59
+#define EMR_ENDPATH 60
+#define EMR_CLOSEFIGURE 61
+#define EMR_FILLPATH 62
+#define EMR_STROKEANDFILLPATH 63
+#define EMR_STROKEPATH 64
+#define EMR_FLATTENPATH 65
+#define EMR_WIDENPATH 66
+#define EMR_SELECTCLIPPATH 67
+#define EMR_ABORTPATH 68
+#define EMR_GDICOMMENT 70
+#define EMR_FILLRGN 71
+#define EMR_FRAMERGN 72
+#define EMR_INVERTRGN 73
+#define EMR_PAINTRGN 74
+#define EMR_EXTSELECTCLIPRGN 75
+#define EMR_BITBLT 76
+#define EMR_STRETCHBLT 77
+#define EMR_MASKBLT 78
+#define EMR_PLGBLT 79
+#define EMR_SETDIBITSTODEVICE 80
+#define EMR_STRETCHDIBITS 81
+#define EMR_EXTCREATEFONTINDIRECTW 82
+#define EMR_EXTTEXTOUTA 83
+#define EMR_EXTTEXTOUTW 84
+#define EMR_POLYBEZIER16 85
+#define EMR_POLYGON16 86
+#define EMR_POLYLINE16 87
+#define EMR_POLYBEZIERTO16 88
+#define EMR_POLYLINETO16 89
+#define EMR_POLYPOLYLINE16 90
+#define EMR_POLYPOLYGON16 91
+#define EMR_POLYDRAW16 92
+#define EMR_CREATEMONOBRUSH 93
+#define EMR_CREATEDIBPATTERNBRUSHPT 94
+#define EMR_EXTCREATEPEN 95
+#define EMR_POLYTEXTOUTA 96
+#define EMR_POLYTEXTOUTW 97
+#define EMR_SETICMMODE 98
+#define EMR_CREATECOLORSPACE 99
+#define EMR_SETCOLORSPACE 100
+#define EMR_DELETECOLORSPACE 101
+#define EMR_GLSRECORD 102
+#define EMR_GLSBOUNDEDRECORD 103
+#define EMR_PIXELFORMAT 104
+#define EMR_DRAWESCAPE 105
+#define EMR_EXTESCAPE 106
+#define EMR_SMALLTEXTOUT 108
+#define EMR_FORCEUFIMAPPING 109
+#define EMR_NAMEDESCAPE 110
+#define EMR_COLORCORRECTPALETTE 111
+#define EMR_SETICMPROFILEA 112
+#define EMR_SETICMPROFILEW 113
+#define EMR_ALPHABLEND 114
+#define EMR_SETLAYOUT 115
+#define EMR_TRANSPARENTBLT 116
+#define EMR_GRADIENTFILL 118
+#define EMR_SETLINKEDUFIS 119
+#define EMR_SETTEXTJUSTIFICATION 120
+#define EMR_COLORMATCHTOTARGETW 121
+#define EMR_CREATECOLORSPACEW 122
+#define EMR_MIN 1
+#define EMR_MAX 122
+
+typedef struct tagENHMETAHEADER {
+    DWORD iType;
+    DWORD nSize;
+    RECTL rclBounds;
+    RECTL rclFrame;
+    DWORD dSignature;
+    DWORD nVersion;
+    DWORD nBytes;
+    DWORD nRecords;
+    WORD nHandles;
+    WORD sReserved;
+    DWORD nDescription;
+    DWORD offDescription;
+    DWORD nPalEntries;
+    SIZEL szlDevice;
+    SIZEL szlMillimeters;
+    DWORD cbPixelFormat;
+    DWORD offPixelFormat;
+    DWORD bOpenGL;
+    SIZEL szlMicrometers;
+} ENHMETAHEADER, *PENHMETAHEADER, *LPENHMETAHEADER;
+
+typedef struct tagENHMETARECORD {
+    DWORD iType;
+    DWORD nSize;
+    DWORD dParm[1];
+} ENHMETARECORD, *PENHMETARECORD, *LPENHMETARECORD;
+
+typedef int(CALLBACK *ENHMFENUMPROC)(HDC dc, HANDLETABLE *table, const ENHMETARECORD *record, int objects,
+                                     LPARAM param);
+
+typedef struct tagEMR {
+    DWORD iType;
+    DWORD nSize;
+} EMR, *PEMR;
+
+typedef struct tagEMRTEXT {
+    POINTL ptlReference;
+    DWORD nChars;
+    DWORD offString;
+    DWORD fOptions;
+    RECTL rcl;
+    DWORD offDx;
+} EMRTEXT, *PEMRTEXT;
+
+typedef struct tagEMREXTTEXTOUTW {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD iGraphicsMode;
+    FLOAT exScale;
+    FLOAT eyScale;
+    EMRTEXT emrtext;
+} EMREXTTEXTOUTW, *PEMREXTTEXTOUTW, EMREXTTEXTOUTA, *PEMREXTTEXTOUTA;
+
+typedef struct tagEMRPOLYTEXTOUTW {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD iGraphicsMode;
+    FLOAT exScale;
+    FLOAT eyScale;
+    LONG cStrings;
+    EMRTEXT aemrtext[1];
+} EMRPOLYTEXTOUTW, *PEMRPOLYTEXTOUTW, EMRPOLYTEXTOUTA, *PEMRPOLYTEXTOUTA;
+
+typedef struct tagEMRBITBLT {
+    EMR emr;
+    RECTL rclBounds;
+    LONG xDest;
+    LONG yDest;
+    LONG cxDest;
+    LONG cyDest;
+    DWORD dwRop;
+    LONG xSrc;
+    LONG ySrc;
+    XFORM xformSrc;
+    COLORREF crBkColorSrc;
+    DWORD iUsageSrc;
+    DWORD offBmiSrc;
+    DWORD cbBmiSrc;
+    DWORD offBitsSrc;
+    DWORD cbBitsSrc;
+} EMRBITBLT, *PEMRBITBLT;
+
+typedef struct tagEMRSTRETCHBLT {
+    EMR emr;
+    RECTL rclBounds;
+    LONG xDest;
+    LONG yDest;
+    LONG cxDest;
+    LONG cyDest;
+    DWORD dwRop;
+    LONG xSrc;
+    LONG ySrc;
+    XFORM xformSrc;
+    COLORREF crBkColorSrc;
+    DWORD iUsageSrc;
+    DWORD offBmiSrc;
+    DWORD cbBmiSrc;
+    DWORD offBitsSrc;
+    DWORD cbBitsSrc;
+    LONG cxSrc;
+    LONG cySrc;
+} EMRSTRETCHBLT, *PEMRSTRETCHBLT, EMRALPHABLEND, *PEMRALPHABLEND, EMRTRANSPARENTBLT, *PEMRTRANSPARENTBLT;
+
+typedef struct tagEMRSTRETCHDIBITS {
+    EMR emr;
+    RECTL rclBounds;
+    LONG xDest;
+    LONG yDest;
+    LONG xSrc;
+    LONG ySrc;
+    LONG cxSrc;
+    LONG cySrc;
+    DWORD offBmiSrc;
+    DWORD cbBmiSrc;
+    DWORD offBitsSrc;
+    DWORD cbBitsSrc;
+    DWORD iUsageSrc;
+    DWORD dwRop;
+    LONG cxDest;
+    LONG cyDest;
+} EMRSTRETCHDIBITS, *PEMRSTRETCHDIBITS;
+
+typedef struct tagEMRSETDIBITSTODEVICE {
+    EMR emr;
+    RECTL rclBounds;
+    LONG xDest;
+    LONG yDest;
+    LONG xSrc;
+    LONG ySrc;
+    LONG cxSrc;
+    LONG cySrc;
+    DWORD offBmiSrc;
+    DWORD cbBmiSrc;
+    DWORD offBitsSrc;
+    DWORD cbBitsSrc;
+    DWORD iUsageSrc;
+    DWORD iStartScan;
+    DWORD cScans;
+} EMRSETDIBITSTODEVICE, *PEMRSETDIBITSTODEVICE;
+
+typedef struct tagEMRPOLYLINE {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cptl;
+    POINTL aptl[1];
+} EMRPOLYLINE, *PEMRPOLYLINE, EMRPOLYBEZIER, *PEMRPOLYBEZIER, EMRPOLYGON, *PEMRPOLYGON, EMRPOLYBEZIERTO,
+    *PEMRPOLYBEZIERTO, EMRPOLYLINETO, *PEMRPOLYLINETO;
+
+typedef struct tagEMRPOLYLINE16 {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cpts;
+    POINTS apts[1];
+} EMRPOLYLINE16, *PEMRPOLYLINE16, EMRPOLYBEZIER16, *PEMRPOLYBEZIER16, EMRPOLYGON16, *PEMRPOLYGON16,
+    EMRPOLYBEZIERTO16, *PEMRPOLYBEZIERTO16, EMRPOLYLINETO16, *PEMRPOLYLINETO16;
+
+typedef struct tagEMRPOLYPOLYLINE {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD nPolys;
+    DWORD cptl;
+    DWORD aPolyCounts[1];
+    POINTL aptl[1];
+} EMRPOLYPOLYLINE, *PEMRPOLYPOLYLINE, EMRPOLYPOLYGON, *PEMRPOLYPOLYGON;
+
+typedef struct tagEMRPOLYPOLYLINE16 {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD nPolys;
+    DWORD cpts;
+    DWORD aPolyCounts[1];
+    POINTS apts[1];
+} EMRPOLYPOLYLINE16, *PEMRPOLYPOLYLINE16, EMRPOLYPOLYGON16, *PEMRPOLYPOLYGON16;
+
+typedef struct tagEMRPOLYDRAW {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cptl;
+    POINTL aptl[1];
+    BYTE abTypes[1];
+} EMRPOLYDRAW, *PEMRPOLYDRAW;
+
+typedef struct tagEMRPOLYDRAW16 {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cpts;
+    POINTS apts[1];
+    BYTE abTypes[1];
+} EMRPOLYDRAW16, *PEMRPOLYDRAW16;
+
+typedef struct tagEMRCREATEPEN {
+    EMR emr;
+    DWORD ihPen;
+    LOGPEN lopn;
+} EMRCREATEPEN, *PEMRCREATEPEN;
+
+typedef struct tagEXTLOGPEN32 {
+    DWORD elpPenStyle;
+    DWORD elpWidth;
+    UINT elpBrushStyle;
+    COLORREF elpColor;
+    ULONG elpHatch;
+    DWORD elpNumEntries;
+    DWORD elpStyleEntry[1];
+} EXTLOGPEN32, *PEXTLOGPEN32;
+
+typedef struct tagEMREXTCREATEPEN {
+    EMR emr;
+    DWORD ihPen;
+    DWORD offBmi;
+    DWORD cbBmi;
+    DWORD offBits;
+    DWORD cbBits;
+    EXTLOGPEN32 elp;
+} EMREXTCREATEPEN, *PEMREXTCREATEPEN;
+
+typedef struct tagLOGBRUSH32 {
+    UINT lbStyle;
+    COLORREF lbColor;
+    ULONG lbHatch;
+} LOGBRUSH32, *PLOGBRUSH32;
+
+typedef struct tagEMRCREATEBRUSHINDIRECT {
+    EMR emr;
+    DWORD ihBrush;
+    LOGBRUSH32 lb;
+} EMRCREATEBRUSHINDIRECT, *PEMRCREATEBRUSHINDIRECT;
+
+typedef struct tagEMRCREATEDIBPATTERNBRUSHPT {
+    EMR emr;
+    DWORD ihBrush;
+    DWORD iUsage;
+    DWORD offBmi;
+    DWORD cbBmi;
+    DWORD offBits;
+    DWORD cbBits;
+} EMRCREATEDIBPATTERNBRUSHPT, *PEMRCREATEDIBPATTERNBRUSHPT, EMRCREATEMONOBRUSH, *PEMRCREATEMONOBRUSH;
+
+typedef struct tagEMREXTCREATEFONTINDIRECTW {
+    EMR emr;
+    DWORD ihFont;
+    LOGFONTW elfw; /* followed by the rest of an ENUMLOGFONTEXDVW when the record is longer */
+} EMREXTCREATEFONTINDIRECTW, *PEMREXTCREATEFONTINDIRECTW;
+
+typedef struct tagEMRCREATEPALETTE {
+    EMR emr;
+    DWORD ihPal;
+    LOGPALETTE lgpl;
+} EMRCREATEPALETTE, *PEMRCREATEPALETTE;
+
+typedef struct tagEMRSELECTOBJECT {
+    EMR emr;
+    DWORD ihObject;
+} EMRSELECTOBJECT, *PEMRSELECTOBJECT, EMRDELETEOBJECT, *PEMRDELETEOBJECT, EMRSELECTPALETTE, *PEMRSELECTPALETTE;
+
+typedef struct tagEMRSETTEXTCOLOR {
+    EMR emr;
+    COLORREF crColor;
+} EMRSETTEXTCOLOR, *PEMRSETTEXTCOLOR, EMRSETBKCOLOR, *PEMRSETBKCOLOR;
+
+typedef struct tagEMRSETMAPMODE {
+    EMR emr;
+    DWORD iMode;
+} EMRSETMAPMODE, *PEMRSETMAPMODE, EMRSETBKMODE, *PEMRSETBKMODE, EMRSETPOLYFILLMODE, *PEMRSETPOLYFILLMODE,
+    EMRSETROP2, *PEMRSETROP2, EMRSETSTRETCHBLTMODE, *PEMRSETSTRETCHBLTMODE, EMRSETTEXTALIGN, *PEMRSETTEXTALIGN,
+    EMRSETICMMODE, *PEMRSETICMMODE, EMRSELECTCLIPPATH, *PEMRSELECTCLIPPATH, EMRSETLAYOUT, *PEMRSETLAYOUT;
+
+typedef struct tagEMRSETMAPPERFLAGS {
+    EMR emr;
+    DWORD dwFlags;
+} EMRSETMAPPERFLAGS, *PEMRSETMAPPERFLAGS;
+
+typedef struct tagEMRSETARCDIRECTION {
+    EMR emr;
+    DWORD iArcDirection;
+} EMRSETARCDIRECTION, *PEMRSETARCDIRECTION;
+
+typedef struct tagEMRSETMITERLIMIT {
+    EMR emr;
+    FLOAT eMiterLimit;
+} EMRSETMITERLIMIT, *PEMRSETMITERLIMIT;
+
+typedef struct tagEMRSETVIEWPORTORGEX {
+    EMR emr;
+    POINTL ptlOrigin;
+} EMRSETVIEWPORTORGEX, *PEMRSETVIEWPORTORGEX, EMRSETWINDOWORGEX, *PEMRSETWINDOWORGEX, EMRSETBRUSHORGEX,
+    *PEMRSETBRUSHORGEX;
+
+typedef struct tagEMRSETVIEWPORTEXTEX {
+    EMR emr;
+    SIZEL szlExtent;
+} EMRSETVIEWPORTEXTEX, *PEMRSETVIEWPORTEXTEX, EMRSETWINDOWEXTEX, *PEMRSETWINDOWEXTEX;
+
+typedef struct tagEMRSCALEVIEWPORTEXTEX {
+    EMR emr;
+    LONG xNum;
+    LONG xDenom;
+    LONG yNum;
+    LONG yDenom;
+} EMRSCALEVIEWPORTEXTEX, *PEMRSCALEVIEWPORTEXTEX, EMRSCALEWINDOWEXTEX, *PEMRSCALEWINDOWEXTEX;
+
+typedef struct tagEMRSETWORLDTRANSFORM {
+    EMR emr;
+    XFORM xform;
+} EMRSETWORLDTRANSFORM, *PEMRSETWORLDTRANSFORM;
+
+typedef struct tagEMRMODIFYWORLDTRANSFORM {
+    EMR emr;
+    XFORM xform;
+    DWORD iMode;
+} EMRMODIFYWORLDTRANSFORM, *PEMRMODIFYWORLDTRANSFORM;
+
+typedef struct tagEMRLINETO {
+    EMR emr;
+    POINTL ptl;
+} EMRLINETO, *PEMRLINETO, EMRMOVETOEX, *PEMRMOVETOEX;
+
+typedef struct tagEMRELLIPSE {
+    EMR emr;
+    RECTL rclBox;
+} EMRELLIPSE, *PEMRELLIPSE, EMRRECTANGLE, *PEMRRECTANGLE;
+
+typedef struct tagEMRROUNDRECT {
+    EMR emr;
+    RECTL rclBox;
+    SIZEL szlCorner;
+} EMRROUNDRECT, *PEMRROUNDRECT;
+
+typedef struct tagEMRARC {
+    EMR emr;
+    RECTL rclBox;
+    POINTL ptlStart;
+    POINTL ptlEnd;
+} EMRARC, *PEMRARC, EMRARCTO, *PEMRARCTO, EMRCHORD, *PEMRCHORD, EMRPIE, *PEMRPIE;
+
+typedef struct tagEMRANGLEARC {
+    EMR emr;
+    POINTL ptlCenter;
+    DWORD nRadius;
+    FLOAT eStartAngle;
+    FLOAT eSweepAngle;
+} EMRANGLEARC, *PEMRANGLEARC;
+
+typedef struct tagEMRSETPIXELV {
+    EMR emr;
+    POINTL ptlPixel;
+    COLORREF crColor;
+} EMRSETPIXELV, *PEMRSETPIXELV;
+
+typedef struct tagEMREXCLUDECLIPRECT {
+    EMR emr;
+    RECTL rclClip;
+} EMREXCLUDECLIPRECT, *PEMREXCLUDECLIPRECT, EMRINTERSECTCLIPRECT, *PEMRINTERSECTCLIPRECT;
+
+typedef struct tagEMROFFSETCLIPRGN {
+    EMR emr;
+    POINTL ptlOffset;
+} EMROFFSETCLIPRGN, *PEMROFFSETCLIPRGN;
+
+typedef struct tagEMREXTSELECTCLIPRGN {
+    EMR emr;
+    DWORD cbRgnData;
+    DWORD iMode;
+    BYTE RgnData[1];
+} EMREXTSELECTCLIPRGN, *PEMREXTSELECTCLIPRGN;
+
+typedef struct tagEMRFILLRGN {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cbRgnData;
+    DWORD ihBrush;
+    BYTE RgnData[1];
+} EMRFILLRGN, *PEMRFILLRGN;
+
+typedef struct tagEMRFRAMERGN {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cbRgnData;
+    DWORD ihBrush;
+    SIZEL szlStroke;
+    BYTE RgnData[1];
+} EMRFRAMERGN, *PEMRFRAMERGN;
+
+typedef struct tagEMRINVERTRGN {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD cbRgnData;
+    BYTE RgnData[1];
+} EMRINVERTRGN, *PEMRINVERTRGN, EMRPAINTRGN, *PEMRPAINTRGN;
+
+typedef struct tagEMRSAVEDC {
+    EMR emr;
+} EMRSAVEDC, *PEMRSAVEDC, EMRREALIZEPALETTE, *PEMRREALIZEPALETTE, EMRSETMETARGN, *PEMRSETMETARGN, EMRBEGINPATH,
+    *PEMRBEGINPATH, EMRENDPATH, *PEMRENDPATH, EMRCLOSEFIGURE, *PEMRCLOSEFIGURE, EMRFLATTENPATH, *PEMRFLATTENPATH,
+    EMRWIDENPATH, *PEMRWIDENPATH, EMRABORTPATH, *PEMRABORTPATH;
+
+typedef struct tagEMRRESTOREDC {
+    EMR emr;
+    LONG iRelative;
+} EMRRESTOREDC, *PEMRRESTOREDC;
+
+typedef struct tagEMRFILLPATH {
+    EMR emr;
+    RECTL rclBounds;
+} EMRFILLPATH, *PEMRFILLPATH, EMRSTROKEANDFILLPATH, *PEMRSTROKEANDFILLPATH, EMRSTROKEPATH, *PEMRSTROKEPATH;
+
+typedef struct tagEMRGDICOMMENT {
+    EMR emr;
+    DWORD cbData;
+    BYTE Data[1];
+} EMRGDICOMMENT, *PEMRGDICOMMENT;
+
+typedef struct tagEMREOF {
+    EMR emr;
+    DWORD nPalEntries;
+    DWORD offPalEntries;
+    DWORD nSizeLast;
+} EMREOF, *PEMREOF;
+
+typedef struct tagEMRGRADIENTFILL {
+    EMR emr;
+    RECTL rclBounds;
+    DWORD nVer;
+    DWORD nTri;
+    ULONG ulMode;
+    TRIVERTEX Ver[1];
+} EMRGRADIENTFILL, *PEMRGRADIENTFILL;
+
+typedef struct tagEMRPIXELFORMAT {
+    EMR emr;
+    PIXELFORMATDESCRIPTOR pfd;
+} EMRPIXELFORMAT, *PEMRPIXELFORMAT;
+
+WINGDIAPI HDC WINAPI CreateMetaFileW(LPCWSTR file);
+WINGDIAPI HDC WINAPI CreateMetaFileA(LPCSTR file);
+WINGDIAPI HMETAFILE WINAPI CloseMetaFile(HDC dc);
+WINGDIAPI BOOL WINAPI DeleteMetaFile(HMETAFILE metafile);
+WINGDIAPI BOOL WINAPI PlayMetaFile(HDC dc, HMETAFILE metafile);
+WINGDIAPI BOOL WINAPI PlayMetaFileRecord(HDC dc, LPHANDLETABLE table, LPMETARECORD record, UINT handles);
+WINGDIAPI BOOL WINAPI EnumMetaFile(HDC dc, HMETAFILE metafile, MFENUMPROC proc, LPARAM param);
+WINGDIAPI HMETAFILE WINAPI CopyMetaFileW(HMETAFILE metafile, LPCWSTR file);
+WINGDIAPI HMETAFILE WINAPI CopyMetaFileA(HMETAFILE metafile, LPCSTR file);
+WINGDIAPI HMETAFILE WINAPI GetMetaFileW(LPCWSTR file);
+WINGDIAPI HMETAFILE WINAPI GetMetaFileA(LPCSTR file);
+WINGDIAPI UINT WINAPI GetMetaFileBitsEx(HMETAFILE metafile, UINT size, LPVOID data);
+WINGDIAPI HMETAFILE WINAPI SetMetaFileBitsEx(UINT size, const BYTE *data);
+WINGDIAPI HDC WINAPI CreateEnhMetaFileW(HDC ref, LPCWSTR file, const RECT *frame, LPCWSTR description);
+WINGDIAPI HDC WINAPI CreateEnhMetaFileA(HDC ref, LPCSTR file, const RECT *frame, LPCSTR description);
+WINGDIAPI HENHMETAFILE WINAPI CloseEnhMetaFile(HDC dc);
+WINGDIAPI BOOL WINAPI DeleteEnhMetaFile(HENHMETAFILE metafile);
+WINGDIAPI BOOL WINAPI PlayEnhMetaFile(HDC dc, HENHMETAFILE metafile, const RECT *rect);
+WINGDIAPI BOOL WINAPI PlayEnhMetaFileRecord(HDC dc, LPHANDLETABLE table, const ENHMETARECORD *record, UINT handles);
+WINGDIAPI BOOL WINAPI EnumEnhMetaFile(HDC dc, HENHMETAFILE metafile, ENHMFENUMPROC proc, LPVOID param,
+                                      const RECT *rect);
+WINGDIAPI UINT WINAPI GetEnhMetaFileBits(HENHMETAFILE metafile, UINT size, LPBYTE data);
+WINGDIAPI HENHMETAFILE WINAPI SetEnhMetaFileBits(UINT size, const BYTE *data);
+WINGDIAPI UINT WINAPI GetEnhMetaFileHeader(HENHMETAFILE metafile, UINT size, LPENHMETAHEADER header);
+WINGDIAPI UINT WINAPI GetEnhMetaFileDescriptionW(HENHMETAFILE metafile, UINT count, LPWSTR description);
+WINGDIAPI UINT WINAPI GetEnhMetaFileDescriptionA(HENHMETAFILE metafile, UINT count, LPSTR description);
+WINGDIAPI UINT WINAPI GetEnhMetaFilePaletteEntries(HENHMETAFILE metafile, UINT count, LPPALETTEENTRY entries);
+WINGDIAPI HENHMETAFILE WINAPI CopyEnhMetaFileW(HENHMETAFILE metafile, LPCWSTR file);
+WINGDIAPI HENHMETAFILE WINAPI CopyEnhMetaFileA(HENHMETAFILE metafile, LPCSTR file);
+WINGDIAPI HENHMETAFILE WINAPI GetEnhMetaFileW(LPCWSTR file);
+WINGDIAPI HENHMETAFILE WINAPI GetEnhMetaFileA(LPCSTR file);
+WINGDIAPI BOOL WINAPI GdiComment(HDC dc, UINT size, const BYTE *data);
+WINGDIAPI UINT WINAPI GetWinMetaFileBits(HENHMETAFILE metafile, UINT size, LPBYTE data, INT map_mode, HDC ref);
+WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT size, const BYTE *data, HDC ref, const METAFILEPICT *picture);
+
+/* ------------------------------------------------------------------ more drawing and state */
+
+WINGDIAPI BOOL WINAPI SetWindowExtEx(HDC dc, int x, int y, LPSIZE old);
+WINGDIAPI BOOL WINAPI PolyPolygon(HDC dc, const POINT *points, const INT *counts, int polygons);
+WINGDIAPI BOOL WINAPI PolyPolyline(HDC dc, const POINT *points, const DWORD *counts, DWORD lines);
+WINGDIAPI BOOL WINAPI ExtTextOutA(HDC dc, int x, int y, UINT options, const RECT *rect, LPCSTR text, UINT count,
+                                  const INT *dx);
+WINGDIAPI BOOL WINAPI InvertRgn(HDC dc, HRGN region);
+WINGDIAPI BOOL WINAPI SetBrushOrgEx(HDC dc, int x, int y, LPPOINT old);
+WINGDIAPI BOOL WINAPI SetPixelV(HDC dc, int x, int y, COLORREF color);
+WINGDIAPI HBRUSH WINAPI CreateHatchBrush(int hatch, COLORREF color);
+WINGDIAPI int WINAPI SetArcDirection(HDC dc, int direction);
+WINGDIAPI int WINAPI GetGraphicsMode(HDC dc);
+WINGDIAPI int WINAPI SetTextCharacterExtra(HDC dc, int extra);
+WINGDIAPI BOOL WINAPI OffsetWindowOrgEx(HDC dc, int x, int y, LPPOINT old);
+WINGDIAPI BOOL WINAPI OffsetViewportOrgEx(HDC dc, int x, int y, LPPOINT old);
+WINGDIAPI BOOL WINAPI TextOutA(HDC dc, int x, int y, LPCSTR text, int count);
+WINGDIAPI HFONT WINAPI CreateFontIndirectA(const LOGFONTA *font);
+WINGDIAPI BOOL WINAPI SetViewportExtEx(HDC dc, int x, int y, LPSIZE old);
+WINGDIAPI HPEN WINAPI ExtCreatePen(DWORD style, DWORD width, const LOGBRUSH *brush, DWORD count, const DWORD *styles);
+WINGDIAPI BOOL WINAPI WidenPath(HDC dc);
+WINGDIAPI BOOL WINAPI SetMiterLimit(HDC dc, FLOAT limit, PFLOAT old);
+WINGDIAPI BOOL WINAPI GetMiterLimit(HDC dc, PFLOAT limit);
+WINGDIAPI BOOL WINAPI CancelDC(HDC dc);
+WINGDIAPI BOOL WINAPI GetICMProfileW(HDC dc, LPDWORD size, LPWSTR file);
+WINGDIAPI BOOL WINAPI GetICMProfileA(HDC dc, LPDWORD size, LPSTR file);
+WINGDIAPI int WINAPI SetMetaRgn(HDC dc);
+WINGDIAPI int WINAPI GetMetaRgn(HDC dc, HRGN region);
+WINGDIAPI int WINAPI GetRandomRgn(HDC dc, HRGN region, INT which);
+WINGDIAPI UINT WINAPI SetBoundsRect(HDC dc, const RECT *rect, UINT flags);
+WINGDIAPI BOOL WINAPI Arc(HDC dc, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2);
+WINGDIAPI BOOL WINAPI Chord(HDC dc, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2);
+WINGDIAPI BOOL WINAPI Pie(HDC dc, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2);
+WINGDIAPI BOOL WINAPI AngleArc(HDC dc, int x, int y, DWORD radius, FLOAT start, FLOAT sweep);
 
 /* ------------------------------------------------------------------ mapping, clipping and miscellany */
 

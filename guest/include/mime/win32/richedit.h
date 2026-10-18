@@ -1,0 +1,735 @@
+/*
+ * the rich edit control of riched20.dll, msftedit.dll and riched32.dll:
+ * its classes, messages, notifications and structures, packed to four
+ * bytes as windows packs them.
+ */
+#ifndef MIME_WIN32_RICHEDIT_H
+#define MIME_WIN32_RICHEDIT_H
+
+#include <mime/win32/winuser.h>
+#include <mime/win32/wingdi.h>
+
+#pragma pack(push, 4)
+
+#define RICHEDIT_CLASS10A "RICHEDIT"
+#define RICHEDIT_CLASSA "RichEdit20A"
+#define RICHEDIT_CLASSW L"RichEdit20W"
+#define MSFTEDIT_CLASS L"RICHEDIT50W"
+#define RICHEDIT60_CLASS L"RICHEDIT60W"
+
+#define cchTextLimitDefault 32767
+
+/* messages beyond the edit control's. */
+#define EM_CANPASTE (WM_USER + 50)
+#define EM_DISPLAYBAND (WM_USER + 51)
+#define EM_EXGETSEL (WM_USER + 52)
+#define EM_EXLIMITTEXT (WM_USER + 53)
+#define EM_EXLINEFROMCHAR (WM_USER + 54)
+#define EM_EXSETSEL (WM_USER + 55)
+#define EM_FINDTEXT (WM_USER + 56)
+#define EM_FORMATRANGE (WM_USER + 57)
+#define EM_GETCHARFORMAT (WM_USER + 58)
+#define EM_GETEVENTMASK (WM_USER + 59)
+#define EM_GETOLEINTERFACE (WM_USER + 60)
+#define EM_GETPARAFORMAT (WM_USER + 61)
+#define EM_GETSELTEXT (WM_USER + 62)
+#define EM_HIDESELECTION (WM_USER + 63)
+#define EM_PASTESPECIAL (WM_USER + 64)
+#define EM_REQUESTRESIZE (WM_USER + 65)
+#define EM_SELECTIONTYPE (WM_USER + 66)
+#define EM_SETBKGNDCOLOR (WM_USER + 67)
+#define EM_SETCHARFORMAT (WM_USER + 68)
+#define EM_SETEVENTMASK (WM_USER + 69)
+#define EM_SETOLECALLBACK (WM_USER + 70)
+#define EM_SETPARAFORMAT (WM_USER + 71)
+#define EM_SETTARGETDEVICE (WM_USER + 72)
+#define EM_STREAMIN (WM_USER + 73)
+#define EM_STREAMOUT (WM_USER + 74)
+#define EM_GETTEXTRANGE (WM_USER + 75)
+#define EM_FINDWORDBREAK (WM_USER + 76)
+#define EM_SETOPTIONS (WM_USER + 77)
+#define EM_GETOPTIONS (WM_USER + 78)
+#define EM_FINDTEXTEX (WM_USER + 79)
+#define EM_GETWORDBREAKPROCEX (WM_USER + 80)
+#define EM_SETWORDBREAKPROCEX (WM_USER + 81)
+#define EM_SETUNDOLIMIT (WM_USER + 82)
+#define EM_REDO (WM_USER + 84)
+#define EM_CANREDO (WM_USER + 85)
+#define EM_GETUNDONAME (WM_USER + 86)
+#define EM_GETREDONAME (WM_USER + 87)
+#define EM_STOPGROUPTYPING (WM_USER + 88)
+#define EM_SETTEXTMODE (WM_USER + 89)
+#define EM_GETTEXTMODE (WM_USER + 90)
+#define EM_AUTOURLDETECT (WM_USER + 91)
+#define EM_GETAUTOURLDETECT (WM_USER + 92)
+#define EM_SETPALETTE (WM_USER + 93)
+#define EM_GETTEXTEX (WM_USER + 94)
+#define EM_GETTEXTLENGTHEX (WM_USER + 95)
+#define EM_SHOWSCROLLBAR (WM_USER + 96)
+#define EM_SETTEXTEX (WM_USER + 97)
+#define EM_SETPUNCTUATION (WM_USER + 100)
+#define EM_GETPUNCTUATION (WM_USER + 101)
+#define EM_SETWORDWRAPMODE (WM_USER + 102)
+#define EM_GETWORDWRAPMODE (WM_USER + 103)
+#define EM_SETIMECOLOR (WM_USER + 104)
+#define EM_GETIMECOLOR (WM_USER + 105)
+#define EM_SETIMEOPTIONS (WM_USER + 106)
+#define EM_GETIMEOPTIONS (WM_USER + 107)
+#define EM_CONVPOSITION (WM_USER + 108)
+#define EM_SETLANGOPTIONS (WM_USER + 120)
+#define EM_GETLANGOPTIONS (WM_USER + 121)
+#define EM_GETIMECOMPMODE (WM_USER + 122)
+#define EM_FINDTEXTW (WM_USER + 123)
+#define EM_FINDTEXTEXW (WM_USER + 124)
+#define EM_RECONVERSION (WM_USER + 125)
+#define EM_SETIMEMODEBIAS (WM_USER + 126)
+#define EM_GETIMEMODEBIAS (WM_USER + 127)
+#define EM_SETBIDIOPTIONS (WM_USER + 200)
+#define EM_GETBIDIOPTIONS (WM_USER + 201)
+#define EM_SETTYPOGRAPHYOPTIONS (WM_USER + 202)
+#define EM_GETTYPOGRAPHYOPTIONS (WM_USER + 203)
+#define EM_SETEDITSTYLE (WM_USER + 204)
+#define EM_GETEDITSTYLE (WM_USER + 205)
+#define EM_OUTLINE (WM_USER + 220)
+#define EM_GETSCROLLPOS (WM_USER + 221)
+#define EM_SETSCROLLPOS (WM_USER + 222)
+#define EM_SETFONTSIZE (WM_USER + 223)
+#define EM_GETZOOM (WM_USER + 224)
+#define EM_SETZOOM (WM_USER + 225)
+#define EM_GETVIEWKIND (WM_USER + 226)
+#define EM_SETVIEWKIND (WM_USER + 227)
+#define EM_GETPAGE (WM_USER + 228)
+#define EM_SETPAGE (WM_USER + 229)
+#define EM_GETHYPHENATEINFO (WM_USER + 230)
+#define EM_SETHYPHENATEINFO (WM_USER + 231)
+#define EM_GETPAGEROTATE (WM_USER + 235)
+#define EM_SETPAGEROTATE (WM_USER + 236)
+#define EM_GETCTFMODEBIAS (WM_USER + 237)
+#define EM_SETCTFMODEBIAS (WM_USER + 238)
+#define EM_GETCTFOPENSTATUS (WM_USER + 240)
+#define EM_SETCTFOPENSTATUS (WM_USER + 241)
+#define EM_GETIMECOMPTEXT (WM_USER + 242)
+#define EM_ISIME (WM_USER + 243)
+#define EM_GETIMEPROPERTY (WM_USER + 244)
+#define EM_GETQUERYRTFOBJ (WM_USER + 269)
+#define EM_SETQUERYRTFOBJ (WM_USER + 270)
+
+/* notifications. */
+#define EN_MSGFILTER 0x0700
+#define EN_REQUESTRESIZE 0x0701
+#define EN_SELCHANGE 0x0702
+#define EN_DROPFILES 0x0703
+#define EN_PROTECTED 0x0704
+#define EN_CORRECTTEXT 0x0705
+#define EN_STOPNOUNDO 0x0706
+#define EN_IMECHANGE 0x0707
+#define EN_SAVECLIPBOARD 0x0708
+#define EN_OLEOPFAILED 0x0709
+#define EN_OBJECTPOSITIONS 0x070A
+#define EN_LINK 0x070B
+#define EN_DRAGDROPDONE 0x070C
+#define EN_PARAGRAPHEXPANDED 0x070D
+#define EN_PAGECHANGE 0x070E
+#define EN_LOWFIRTF 0x070F
+#define EN_ALIGNLTR 0x0710
+#define EN_ALIGNRTL 0x0711
+
+/* the event mask. */
+#define ENM_NONE 0x00000000
+#define ENM_CHANGE 0x00000001
+#define ENM_UPDATE 0x00000002
+#define ENM_SCROLL 0x00000004
+#define ENM_SCROLLEVENTS 0x00000008
+#define ENM_DRAGDROPDONE 0x00000010
+#define ENM_PARAGRAPHEXPANDED 0x00000020
+#define ENM_PAGECHANGE 0x00000040
+#define ENM_KEYEVENTS 0x00010000
+#define ENM_MOUSEEVENTS 0x00020000
+#define ENM_REQUESTRESIZE 0x00040000
+#define ENM_SELCHANGE 0x00080000
+#define ENM_DROPFILES 0x00100000
+#define ENM_PROTECTED 0x00200000
+#define ENM_CORRECTTEXT 0x00400000
+#define ENM_IMECHANGE 0x00800000
+#define ENM_LANGCHANGE 0x01000000
+#define ENM_OBJECTPOSITIONS 0x02000000
+#define ENM_LINK 0x04000000
+#define ENM_LOWFIRTF 0x08000000
+
+/* the styles of their own. */
+#define ES_SAVESEL 0x00008000
+#define ES_SUNKEN 0x00004000
+#define ES_DISABLENOSCROLL 0x00002000
+#define ES_SELECTIONBAR 0x01000000
+#define ES_NOOLEDRAGDROP 0x00000008
+#define ES_EX_NOCALLOLEINIT 0x00000000
+#define ES_VERTICAL 0x00400000
+#define ES_NOIME 0x00080000
+#define ES_SELFIME 0x00040000
+
+/* EM_SETOPTIONS. */
+#define ECO_AUTOWORDSELECTION 0x00000001
+#define ECO_AUTOVSCROLL 0x00000040
+#define ECO_AUTOHSCROLL 0x00000080
+#define ECO_NOHIDESEL 0x00000100
+#define ECO_READONLY 0x00000800
+#define ECO_WANTRETURN 0x00001000
+#define ECO_SAVESEL 0x00008000
+#define ECO_SELECTIONBAR 0x01000000
+#define ECO_VERTICAL 0x00400000
+#define ECOOP_SET 0x0001
+#define ECOOP_OR 0x0002
+#define ECOOP_AND 0x0003
+#define ECOOP_XOR 0x0004
+
+/* EM_SETEDITSTYLE. */
+#define SES_EMULATESYSEDIT 1
+#define SES_BEEPONMAXTEXT 2
+#define SES_EXTENDBACKCOLOR 4
+#define SES_MAPCPS 8
+#define SES_EMULATE10 16
+#define SES_USECRLF 32
+#define SES_NOXLTSYMBOLRANGE 32
+#define SES_USEAIMM 64
+#define SES_NOIME 128
+#define SES_ALLOWBEEPS 256
+#define SES_UPPERCASE 512
+#define SES_LOWERCASE 1024
+#define SES_NOINPUTSEQUENCECHK 2048
+#define SES_BIDI 4096
+#define SES_SCROLLONKILLFOCUS 8192
+#define SES_XLTCRCRLFTOCR 16384
+#define SES_DRAFTMODE 32768
+
+/* EM_SETCHARFORMAT and EM_GETCHARFORMAT. */
+#define SCF_DEFAULT 0x0000
+#define SCF_SELECTION 0x0001
+#define SCF_WORD 0x0002
+#define SCF_ALL 0x0004
+#define SCF_USEUIRULES 0x0008
+#define SCF_ASSOCIATEFONT 0x0010
+#define SCF_NOKBUPDATE 0x0020
+#define SCF_ASSOCIATEFONT2 0x0040
+
+#define CFM_BOLD 0x00000001
+#define CFM_ITALIC 0x00000002
+#define CFM_UNDERLINE 0x00000004
+#define CFM_STRIKEOUT 0x00000008
+#define CFM_PROTECTED 0x00000010
+#define CFM_LINK 0x00000020
+#define CFM_SMALLCAPS 0x00000040
+#define CFM_ALLCAPS 0x00000080
+#define CFM_HIDDEN 0x00000100
+#define CFM_OUTLINE 0x00000200
+#define CFM_SHADOW 0x00000400
+#define CFM_EMBOSS 0x00000800
+#define CFM_IMPRINT 0x00001000
+#define CFM_DISABLED 0x00002000
+#define CFM_REVISED 0x00004000
+#define CFM_REVAUTHOR 0x00008000
+#define CFM_SUBSCRIPT 0x00030000
+#define CFM_SUPERSCRIPT CFM_SUBSCRIPT
+#define CFM_ANIMATION 0x00040000
+#define CFM_STYLE 0x00080000
+#define CFM_KERNING 0x00100000
+#define CFM_SPACING 0x00200000
+#define CFM_WEIGHT 0x00400000
+#define CFM_UNDERLINETYPE 0x00800000
+#define CFM_COOKIE 0x01000000
+#define CFM_LCID 0x02000000
+#define CFM_BACKCOLOR 0x04000000
+#define CFM_CHARSET 0x08000000
+#define CFM_OFFSET 0x10000000
+#define CFM_FACE 0x20000000
+#define CFM_COLOR 0x40000000
+#define CFM_SIZE 0x80000000
+#define CFM_EFFECTS (CFM_BOLD | CFM_ITALIC | CFM_UNDERLINE | CFM_COLOR | CFM_STRIKEOUT | CFM_PROTECTED | CFM_LINK)
+#define CFM_ALL (CFM_EFFECTS | CFM_SIZE | CFM_FACE | CFM_OFFSET | CFM_CHARSET)
+#define CFM_EFFECTS2 (CFM_EFFECTS | CFM_DISABLED | CFM_SMALLCAPS | CFM_ALLCAPS | CFM_HIDDEN | CFM_OUTLINE | \
+                      CFM_SHADOW | CFM_EMBOSS | CFM_IMPRINT | CFM_REVISED | CFM_SUBSCRIPT | CFM_SUPERSCRIPT | \
+                      CFM_BACKCOLOR)
+#define CFM_ALL2 (CFM_ALL | CFM_EFFECTS2 | CFM_BACKCOLOR | CFM_LCID | CFM_UNDERLINETYPE | CFM_WEIGHT | \
+                  CFM_REVAUTHOR | CFM_SPACING | CFM_KERNING | CFM_STYLE | CFM_ANIMATION)
+
+#define CFE_BOLD 0x00000001
+#define CFE_ITALIC 0x00000002
+#define CFE_UNDERLINE 0x00000004
+#define CFE_STRIKEOUT 0x00000008
+#define CFE_PROTECTED 0x00000010
+#define CFE_LINK 0x00000020
+#define CFE_SMALLCAPS CFM_SMALLCAPS
+#define CFE_ALLCAPS CFM_ALLCAPS
+#define CFE_HIDDEN CFM_HIDDEN
+#define CFE_OUTLINE CFM_OUTLINE
+#define CFE_SHADOW CFM_SHADOW
+#define CFE_EMBOSS CFM_EMBOSS
+#define CFE_IMPRINT CFM_IMPRINT
+#define CFE_DISABLED CFM_DISABLED
+#define CFE_REVISED CFM_REVISED
+#define CFE_SUBSCRIPT 0x00010000
+#define CFE_SUPERSCRIPT 0x00020000
+#define CFE_AUTOBACKCOLOR CFM_BACKCOLOR
+#define CFE_AUTOCOLOR 0x40000000
+
+#define CFU_UNDERLINENONE 0
+#define CFU_UNDERLINE 1
+#define CFU_UNDERLINEWORD 2
+#define CFU_UNDERLINEDOUBLE 3
+#define CFU_UNDERLINEDOTTED 4
+#define CFU_UNDERLINEDASH 5
+#define CFU_UNDERLINEDASHDOT 6
+#define CFU_UNDERLINEDASHDOTDOT 7
+#define CFU_UNDERLINEWAVE 8
+#define CFU_UNDERLINETHICK 9
+#define CFU_UNDERLINEHAIRLINE 10
+
+#define yHeightCharPtsMost 1638
+
+typedef struct _charformat {
+    UINT cbSize;
+    DWORD dwMask;
+    DWORD dwEffects;
+    LONG yHeight;
+    LONG yOffset;
+    COLORREF crTextColor;
+    BYTE bCharSet;
+    BYTE bPitchAndFamily;
+    char szFaceName[LF_FACESIZE];
+} CHARFORMATA;
+
+typedef struct _charformatw {
+    UINT cbSize;
+    DWORD dwMask;
+    DWORD dwEffects;
+    LONG yHeight;
+    LONG yOffset;
+    COLORREF crTextColor;
+    BYTE bCharSet;
+    BYTE bPitchAndFamily;
+    WCHAR szFaceName[LF_FACESIZE];
+} CHARFORMATW;
+
+typedef struct _charformat2a {
+    UINT cbSize;
+    DWORD dwMask;
+    DWORD dwEffects;
+    LONG yHeight;
+    LONG yOffset;
+    COLORREF crTextColor;
+    BYTE bCharSet;
+    BYTE bPitchAndFamily;
+    char szFaceName[LF_FACESIZE];
+    WORD wWeight;
+    SHORT sSpacing;
+    COLORREF crBackColor;
+    LCID lcid;
+    DWORD dwReserved;
+    SHORT sStyle;
+    WORD wKerning;
+    BYTE bUnderlineType;
+    BYTE bAnimation;
+    BYTE bRevAuthor;
+    BYTE bUnderlineColor;
+} CHARFORMAT2A;
+
+typedef struct _charformat2w {
+    UINT cbSize;
+    DWORD dwMask;
+    DWORD dwEffects;
+    LONG yHeight;
+    LONG yOffset;
+    COLORREF crTextColor;
+    BYTE bCharSet;
+    BYTE bPitchAndFamily;
+    WCHAR szFaceName[LF_FACESIZE];
+    WORD wWeight;
+    SHORT sSpacing;
+    COLORREF crBackColor;
+    LCID lcid;
+    DWORD dwReserved;
+    SHORT sStyle;
+    WORD wKerning;
+    BYTE bUnderlineType;
+    BYTE bAnimation;
+    BYTE bRevAuthor;
+    BYTE bUnderlineColor;
+} CHARFORMAT2W;
+
+/* EM_SETPARAFORMAT and EM_GETPARAFORMAT. */
+#define MAX_TAB_STOPS 32
+#define lDefaultTab 720
+
+#define PFM_STARTINDENT 0x00000001
+#define PFM_RIGHTINDENT 0x00000002
+#define PFM_OFFSET 0x00000004
+#define PFM_ALIGNMENT 0x00000008
+#define PFM_TABSTOPS 0x00000010
+#define PFM_NUMBERING 0x00000020
+#define PFM_OFFSETINDENT 0x80000000
+#define PFM_SPACEBEFORE 0x00000040
+#define PFM_SPACEAFTER 0x00000080
+#define PFM_LINESPACING 0x00000100
+#define PFM_STYLE 0x00000400
+#define PFM_BORDER 0x00000800
+#define PFM_SHADING 0x00001000
+#define PFM_NUMBERINGSTYLE 0x00002000
+#define PFM_NUMBERINGTAB 0x00004000
+#define PFM_NUMBERINGSTART 0x00008000
+#define PFM_RTLPARA 0x00010000
+#define PFM_KEEP 0x00020000
+#define PFM_KEEPNEXT 0x00040000
+#define PFM_PAGEBREAKBEFORE 0x00080000
+#define PFM_NOLINENUMBER 0x00100000
+#define PFM_NOWIDOWCONTROL 0x00200000
+#define PFM_DONOTHYPHEN 0x00400000
+#define PFM_SIDEBYSIDE 0x00800000
+#define PFM_COLLAPSED 0x01000000
+#define PFM_OUTLINELEVEL 0x02000000
+#define PFM_BOX 0x04000000
+#define PFM_RESERVED2 0x08000000
+#define PFM_TABLEROWDELIMITER 0x10000000
+#define PFM_TEXTWRAPPINGBREAK 0x20000000
+#define PFM_TABLE 0x40000000
+#define PFM_ALL (PFM_STARTINDENT | PFM_RIGHTINDENT | PFM_OFFSET | PFM_ALIGNMENT | PFM_TABSTOPS | PFM_NUMBERING | \
+                 PFM_OFFSETINDENT | PFM_RTLPARA)
+#define PFM_EFFECTS (PFM_RTLPARA | PFM_KEEP | PFM_KEEPNEXT | PFM_TABLE | PFM_PAGEBREAKBEFORE | PFM_NOLINENUMBER | \
+                     PFM_NOWIDOWCONTROL | PFM_DONOTHYPHEN | PFM_SIDEBYSIDE | PFM_TABLEROWDELIMITER)
+#define PFM_ALL2 (PFM_ALL | PFM_EFFECTS | PFM_SPACEBEFORE | PFM_SPACEAFTER | PFM_LINESPACING | PFM_STYLE | \
+                  PFM_SHADING | PFM_BORDER | PFM_NUMBERINGTAB | PFM_NUMBERINGSTART | PFM_NUMBERINGSTYLE)
+
+#define PFE_RTLPARA (PFM_RTLPARA >> 16)
+#define PFE_KEEP (PFM_KEEP >> 16)
+#define PFE_KEEPNEXT (PFM_KEEPNEXT >> 16)
+#define PFE_PAGEBREAKBEFORE (PFM_PAGEBREAKBEFORE >> 16)
+#define PFE_NOLINENUMBER (PFM_NOLINENUMBER >> 16)
+#define PFE_NOWIDOWCONTROL (PFM_NOWIDOWCONTROL >> 16)
+#define PFE_DONOTHYPHEN (PFM_DONOTHYPHEN >> 16)
+#define PFE_SIDEBYSIDE (PFM_SIDEBYSIDE >> 16)
+#define PFE_TEXTWRAPPINGBREAK (PFM_TEXTWRAPPINGBREAK >> 16)
+#define PFE_COLLAPSED (PFM_COLLAPSED >> 16)
+#define PFE_BOX (PFM_BOX >> 16)
+#define PFE_TABLE (PFM_TABLE >> 16)
+#define PFE_TABLEROWDELIMITER (PFM_TABLEROWDELIMITER >> 16)
+
+#define PFN_BULLET 1
+#define PFN_ARABIC 2
+#define PFN_LCLETTER 3
+#define PFN_UCLETTER 4
+#define PFN_LCROMAN 5
+#define PFN_UCROMAN 6
+
+#define PFNS_PAREN 0x0000
+#define PFNS_PARENS 0x0100
+#define PFNS_PERIOD 0x0200
+#define PFNS_PLAIN 0x0300
+#define PFNS_NONUMBER 0x0400
+#define PFNS_NEWNUMBER 0x8000
+
+#define PFA_LEFT 1
+#define PFA_RIGHT 2
+#define PFA_CENTER 3
+#define PFA_JUSTIFY 4
+#define PFA_FULL_INTERWORD 4
+
+#define SPF_DONTSETDEFAULT 0x0002
+#define SPF_SETDEFAULT 0x0004
+
+typedef struct _paraformat {
+    UINT cbSize;
+    DWORD dwMask;
+    WORD wNumbering;
+    WORD wEffects;
+    LONG dxStartIndent;
+    LONG dxRightIndent;
+    LONG dxOffset;
+    WORD wAlignment;
+    SHORT cTabCount;
+    LONG rgxTabs[MAX_TAB_STOPS];
+} PARAFORMAT;
+
+typedef struct _paraformat2 {
+    UINT cbSize;
+    DWORD dwMask;
+    WORD wNumbering;
+    WORD wEffects;
+    LONG dxStartIndent;
+    LONG dxRightIndent;
+    LONG dxOffset;
+    WORD wAlignment;
+    SHORT cTabCount;
+    LONG rgxTabs[MAX_TAB_STOPS];
+    LONG dySpaceBefore;
+    LONG dySpaceAfter;
+    LONG dyLineSpacing;
+    SHORT sStyle;
+    BYTE bLineSpacingRule;
+    BYTE bOutlineLevel;
+    WORD wShadingWeight;
+    WORD wShadingStyle;
+    WORD wNumberingStart;
+    WORD wNumberingStyle;
+    WORD wNumberingTab;
+    WORD wBorderSpace;
+    WORD wBorderWidth;
+    WORD wBorders;
+} PARAFORMAT2;
+
+typedef struct _charrange {
+    LONG cpMin;
+    LONG cpMax;
+} CHARRANGE;
+
+typedef struct _textrange {
+    CHARRANGE chrg;
+    LPSTR lpstrText;
+} TEXTRANGEA;
+
+typedef struct _textrangew {
+    CHARRANGE chrg;
+    LPWSTR lpstrText;
+} TEXTRANGEW;
+
+typedef DWORD(CALLBACK *EDITSTREAMCALLBACK)(DWORD_PTR cookie, LPBYTE buffer, LONG cb, LONG *pcb);
+
+typedef struct _editstream {
+    DWORD_PTR dwCookie;
+    DWORD dwError;
+    EDITSTREAMCALLBACK pfnCallback;
+} EDITSTREAM;
+
+#define SF_TEXT 0x0001
+#define SF_RTF 0x0002
+#define SF_RTFNOOBJS 0x0003
+#define SF_TEXTIZED 0x0004
+#define SF_UNICODE 0x0010
+#define SF_USECODEPAGE 0x0020
+#define SF_NCRFORNONASCII 0x0040
+#define SFF_WRITEXTRAPAR 0x0080
+#define SFF_SELECTION 0x8000
+#define SFF_PLAINRTF 0x4000
+#define SFF_PERSISTVIEWSCALE 0x2000
+#define SFF_KEEPDOCINFO 0x1000
+#define SFF_PWD 0x0800
+#define SF_RTFVAL 0x0700
+
+typedef struct _findtext {
+    CHARRANGE chrg;
+    LPCSTR lpstrText;
+} FINDTEXTA;
+
+typedef struct _findtextw {
+    CHARRANGE chrg;
+    LPCWSTR lpstrText;
+} FINDTEXTW;
+
+typedef struct _findtextexa {
+    CHARRANGE chrg;
+    LPCSTR lpstrText;
+    CHARRANGE chrgText;
+} FINDTEXTEXA;
+
+typedef struct _findtextexw {
+    CHARRANGE chrg;
+    LPCWSTR lpstrText;
+    CHARRANGE chrgText;
+} FINDTEXTEXW;
+
+#ifndef FR_DOWN
+#define FR_DOWN 0x00000001
+#define FR_WHOLEWORD 0x00000002
+#define FR_MATCHCASE 0x00000004
+#endif
+#define FR_MATCHDIAC 0x20000000
+#define FR_MATCHKASHIDA 0x40000000
+#define FR_MATCHALEFHAMZA 0x80000000
+
+typedef struct _formatrange {
+    HDC hdc;
+    HDC hdcTarget;
+    RECT rc;
+    RECT rcPage;
+    CHARRANGE chrg;
+} FORMATRANGE;
+
+/* EM_FINDWORDBREAK. */
+#define WB_CLASSIFY 3
+#define WB_MOVEWORDLEFT 4
+#define WB_MOVEWORDRIGHT 5
+#define WB_LEFTBREAK 6
+#define WB_RIGHTBREAK 7
+#define WB_MOVEWORDPREV 4
+#define WB_MOVEWORDNEXT 5
+#define WB_PREVBREAK 6
+#define WB_NEXTBREAK 7
+
+#define WBF_WORDWRAP 0x010
+#define WBF_WORDBREAK 0x020
+#define WBF_OVERFLOW 0x040
+#define WBF_LEVEL1 0x080
+#define WBF_LEVEL2 0x100
+#define WBF_CUSTOM 0x200
+#define WBF_CLASS ((BYTE)0x0F)
+#define WBF_ISWHITE ((BYTE)0x10)
+#define WBF_BREAKLINE ((BYTE)0x20)
+#define WBF_BREAKAFTER ((BYTE)0x40)
+
+typedef LONG(CALLBACK *EDITWORDBREAKPROCEX)(char *text, LONG cch, BYTE charset, INT code);
+
+/* EM_SELECTIONTYPE and EN_SELCHANGE. */
+#define SEL_EMPTY 0x0000
+#define SEL_TEXT 0x0001
+#define SEL_OBJECT 0x0002
+#define SEL_MULTICHAR 0x0004
+#define SEL_MULTIOBJECT 0x0008
+
+/* EM_SETTEXTMODE. */
+#define TM_PLAINTEXT 1
+#define TM_RICHTEXT 2
+#define TM_SINGLELEVELUNDO 4
+#define TM_MULTILEVELUNDO 8
+#define TM_SINGLECODEPAGE 16
+#define TM_MULTICODEPAGE 32
+
+/* EM_GETTEXTEX, EM_GETTEXTLENGTHEX and EM_SETTEXTEX. */
+#define GT_DEFAULT 0
+#define GT_USECRLF 1
+#define GT_SELECTION 2
+#define GT_RAWTEXT 4
+#define GT_NOHIDDENTEXT 8
+
+typedef struct _gettextex {
+    DWORD cb;
+    DWORD flags;
+    UINT codepage;
+    LPCSTR lpDefaultChar;
+    LPBOOL lpUsedDefChar;
+} GETTEXTEX;
+
+#define GTL_DEFAULT 0
+#define GTL_USECRLF 1
+#define GTL_PRECISE 2
+#define GTL_CLOSE 4
+#define GTL_NUMCHARS 8
+#define GTL_NUMBYTES 16
+
+typedef struct _gettextlengthex {
+    DWORD flags;
+    UINT codepage;
+} GETTEXTLENGTHEX;
+
+#define ST_DEFAULT 0
+#define ST_KEEPUNDO 1
+#define ST_SELECTION 2
+#define ST_NEWCHARS 4
+#define ST_UNICODE 8
+
+typedef struct _settextex {
+    DWORD flags;
+    UINT codepage;
+} SETTEXTEX;
+
+/* EM_SETLANGOPTIONS. */
+#define IMF_AUTOKEYBOARD 0x0001
+#define IMF_AUTOFONT 0x0002
+#define IMF_IMECANCELCOMPLETE 0x0004
+#define IMF_IMEALWAYSSENDNOTIFY 0x0008
+#define IMF_AUTOFONTSIZEADJUST 0x0010
+#define IMF_UIFONTS 0x0020
+#define IMF_DUALFONT 0x0080
+
+/* EM_SETTYPOGRAPHYOPTIONS. */
+#define TO_ADVANCEDTYPOGRAPHY 1
+#define TO_SIMPLELINEBREAK 2
+
+/* notification structures. */
+typedef struct _msgfilter {
+    NMHDR nmhdr;
+    UINT msg;
+    WPARAM wParam;
+    LPARAM lParam;
+} MSGFILTER;
+
+typedef struct _reqresize {
+    NMHDR nmhdr;
+    RECT rc;
+} REQRESIZE;
+
+typedef struct _selchange {
+    NMHDR nmhdr;
+    CHARRANGE chrg;
+    WORD seltyp;
+} SELCHANGE;
+
+typedef struct _endropfiles {
+    NMHDR nmhdr;
+    HANDLE hDrop;
+    LONG cp;
+    BOOL fProtected;
+} ENDROPFILES;
+
+typedef struct _enprotected {
+    NMHDR nmhdr;
+    UINT msg;
+    WPARAM wParam;
+    LPARAM lParam;
+    CHARRANGE chrg;
+} ENPROTECTED;
+
+typedef struct _ensaveclipboard {
+    NMHDR nmhdr;
+    LONG cObjectCount;
+    LONG cch;
+} ENSAVECLIPBOARD;
+
+typedef struct _enoleopfailed {
+    NMHDR nmhdr;
+    LONG iob;
+    LONG lOper;
+    HRESULT hr;
+} ENOLEOPFAILED;
+
+typedef struct _objectpositions {
+    NMHDR nmhdr;
+    LONG cObjectCount;
+    LONG *pcpPositions;
+} OBJECTPOSITIONS;
+
+typedef struct _enlink {
+    NMHDR nmhdr;
+    UINT msg;
+    WPARAM wParam;
+    LPARAM lParam;
+    CHARRANGE chrg;
+} ENLINK;
+
+typedef struct _encorrecttext {
+    NMHDR nmhdr;
+    CHARRANGE chrg;
+    WORD seltyp;
+} ENCORRECTTEXT;
+
+typedef struct _punctuation {
+    UINT iSize;
+    LPSTR szPunctuation;
+} PUNCTUATION;
+
+typedef struct _compcolor {
+    COLORREF crText;
+    COLORREF crBackground;
+    DWORD dwEffects;
+} COMPCOLOR;
+
+typedef struct _repastespecial {
+    DWORD dwAspect;
+    DWORD_PTR dwParam;
+} REPASTESPECIAL;
+
+#define CF_RTF TEXT("Rich Text Format")
+#define CF_RTFNOOBJS TEXT("Rich Text Format Without Objects")
+#define CF_RETEXTOBJ TEXT("RichEdit Text and Objects")
+
+#define WCH_EMBEDDING ((WCHAR)0xFFFC)
+
+#pragma pack(pop)
+
+#endif

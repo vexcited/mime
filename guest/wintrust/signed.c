@@ -134,7 +134,8 @@ static LONG signature(WT_DER attributes, WT_DER encrypted, ALG_ID alg, PCCERT_CO
     return error;
 }
 
-static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE store, const WINTRUST_DATA *options)
+static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE store, const WINTRUST_DATA *options,
+                   PCCERT_CHAIN_CONTEXT *kept)
 {
     WT_BYTES input = encoded.value;
     WT_DER version, sid, issuer, serial, digest_alg, attributes, sign_alg, encrypted, tail;
@@ -217,7 +218,11 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
                 result = TRUST_E_SUBJECT_NOT_TRUSTED;
             else
                 result = status.dwError;
-            CertFreeCertificateChain(chain);
+            /* the state of a verification keeps the chain, whatever the policy said. */
+            if (kept)
+                *kept = chain;
+            else
+                CertFreeCertificateChain(chain);
         }
     }
     CertFreeCertificateContext(cert);
@@ -225,7 +230,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
 }
 
 LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD checksum, DWORD directory,
-                       DWORD certificate, const WINTRUST_DATA *options)
+                       DWORD certificate, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
 {
     WT_DER envelope, wrapper, data, version, algorithms, content_info, content_wrapper, content, certs, signers, one;
     if (!WtTake(&encoded, 0x30, &envelope))
@@ -269,7 +274,7 @@ LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD c
         }
     }
     if (!result)
-        result = signer(one, content, declared, store, options);
+        result = signer(one, content, declared, store, options, chain);
     CertCloseStore(store, 0);
     return result;
 }

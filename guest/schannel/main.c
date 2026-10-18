@@ -4,9 +4,9 @@
  * the security support provider interface of schannel is forwarded to
  * secur32 by schannel.def. what remains are the lsa package entry points,
  * which only lsa calls and mime has no lsa to host, and the Ssl helpers.
- * tls itself is not implemented, so the helpers that need certificates or
- * the session cache fail; the ClientHello parsers and the constant answers
- * are real.
+ * the tls client lives in secur32 with the interface; the helpers that need
+ * certificates or the session cache fail, while the ClientHello parsers,
+ * the random bits and the constant answers are real.
  */
 #include <mime/win32/sspi.h>
 #include <mime/win32/winnls.h>
@@ -142,14 +142,26 @@ __declspec(dllexport) DWORD WINAPI SslGetMaximumKeySize(DWORD reserved)
     return 2048;
 }
 
-/* mime has no system random generator yet: a generator seeded from the performance counter, not for keys. */
+typedef BOOLEAN(WINAPI *RTL_GEN_RANDOM)(PVOID, ULONG);
+
+/* advapi32's generator, which reads the kernel's cng device, as schannel's comes from bcryptprimitives. */
 __declspec(dllexport) void WINAPI SslGenerateRandomBits(PUCHAR data, LONG size)
 {
+    static RTL_GEN_RANDOM gen_random;
+    if (!data || size <= 0)
+        return;
+    if (!gen_random) {
+        HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
+        gen_random = advapi32 ? (RTL_GEN_RANDOM)(void *)GetProcAddress(advapi32, "SystemFunction036") : nullptr;
+    }
+    if (gen_random && gen_random(data, (ULONG)size))
+        return;
+    /* without it, a generator seeded from the performance counter, not fit for keys. */
     static ULONG seed;
     LARGE_INTEGER counter;
     NtQueryPerformanceCounter(&counter, nullptr);
     ULONG s = seed ^ counter.LowPart ^ (ULONG)(ULONG_PTR)&counter;
-    for (LONG i = 0; data && i < size; i++)
+    for (LONG i = 0; i < size; i++)
         data[i] = (UCHAR)(RtlRandomEx(&s) >> 7);
     seed = s;
 }
@@ -339,12 +351,238 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslGetExtensions(const BYTE *hello,
     return SEC_E_OK;
 }
 
-/* copying extensions sits behind a feature switch of schannel and needs its tls engine. */
-__declspec(dllexport) SECURITY_STATUS WINAPI SslCopyTlsExtensions(const BYTE *hello, DWORD size, PVOID extensions,
-                                                                  BYTE count, DWORD *missing, DWORD options)
+/* ------------------------------------------------------------------ SslCopyTlsExtensions */
+
+/* SCH_COPY_EXTS_DATA as schannel fills it: whether the extension came, its size, then the caller's buffer. */
+typedef struct _SCH_COPY_EXTS_DATA {
+    WORD ExtensionType;
+    BYTE Found;
+    BYTE Reserved;
+    WORD ExtensionSize;
+    WORD BufferSize;
+    PBYTE Buffer;
+} SCH_COPY_EXTS_DATA;
+
+/* schannel's defaults for MessageLimitServer and MessageLimitServerClientAuth. */
+#define MESSAGE_LIMIT_SERVER 0x4000
+#define MESSAGE_LIMIT_SERVER_CLIENT_AUTH 0x8000
+
+/* reads a handshake message across the records that carry it, like schannel's TlsRecordParser. */
+typedef struct RECORDS {
+    const BYTE *Data;
+    DWORD Left;
+    DWORD Count;
+    WORD RecordLeft;
+    bool Multiple;
+    DWORD Missing;
+} RECORDS;
+
+static SECURITY_STATUS next_record(RECORDS *r)
 {
-    if (!hello || !extensions || !count || !missing || (options & ~SCH_NO_RECORD_HEADER))
-        return SEC_E_INVALID_PARAMETER;
-    *missing = 0;
-    return SEC_E_UNSUPPORTED_FUNCTION;
+    if (r->Left < 5) {
+        r->Missing = 5 - r->Left;
+        return SEC_E_INCOMPLETE_MESSAGE;
+    }
+    const BYTE *h = r->Data;
+    if (h[0] < 20 || h[0] > 23)
+        return SEC_E_ILLEGAL_MESSAGE;
+    WORD version = (WORD)(h[1] << 8 | h[2]);
+    if (version == 0xFEFD || version == 0xFEFF)
+        return SEC_E_ILLEGAL_MESSAGE;
+    WORD length = (WORD)(h[3] << 8 | h[4]);
+    if (length + 5u > r->Left) {
+        r->Missing = length + 5 - r->Left;
+        return SEC_E_INCOMPLETE_MESSAGE;
+    }
+    if (h[0] != TLS_HANDSHAKE || !length || (++r->Count > 1 && !r->Multiple))
+        return SEC_E_ILLEGAL_MESSAGE;
+    r->Data += 5;
+    r->Left -= 5;
+    r->RecordLeft = length;
+    return SEC_E_OK;
+}
+
+/* size bytes of the message into out, or skipped without out. */
+static SECURITY_STATUS read_field(RECORDS *r, BYTE *out, DWORD size)
+{
+    while (size) {
+        if (!r->RecordLeft) {
+            SECURITY_STATUS status = next_record(r);
+            if (status)
+                return status;
+            continue;
+        }
+        DWORD n = size < r->RecordLeft ? size : r->RecordLeft;
+        if (n > r->Left) {
+            r->Missing = n - r->Left;
+            return SEC_E_INCOMPLETE_MESSAGE;
+        }
+        if (out) {
+            memcpy(out, r->Data, n);
+            out += n;
+        }
+        r->Data += n;
+        r->Left -= n;
+        r->RecordLeft -= (WORD)n;
+        size -= n;
+    }
+    return SEC_E_OK;
+}
+
+static SECURITY_STATUS read_number(RECORDS *r, DWORD width, DWORD *value)
+{
+    BYTE bytes[3];
+    SECURITY_STATUS status = read_field(r, bytes, width);
+    *value = 0;
+    for (DWORD i = 0; !status && i < width; i++)
+        *value = *value << 8 | bytes[i];
+    return status;
+}
+
+/* the extension types schannel knows, which a ClientHello may carry once each; -1 for the others. */
+static int known_extension(WORD type)
+{
+    static const WORD known[] = {0,  1,  2,  3,  4,  5,  6,  10, 11, 13, 14, 16,     23,
+                                 24, 35, 41, 43, 44, 45, 47, 49, 51, 57, 0xFF01, 0xFFA5};
+    for (int i = 0; i < (int)RTL_NUMBER_OF(known); i++)
+        if (known[i] == type)
+            return i;
+    return -1;
+}
+
+static SECURITY_STATUS copy_extensions(RECORDS *r, SCH_COPY_EXTS_DATA *wanted, BYTE count, DWORD total)
+{
+    bool too_small = false;
+    DWORD seen = 0;
+    while (total) {
+        DWORD type, length;
+        SECURITY_STATUS status;
+        if (total < 4)
+            return SEC_E_ILLEGAL_MESSAGE;
+        total -= 4;
+        if ((status = read_number(r, 2, &type)))
+            return status;
+        int bit = known_extension((WORD)type);
+        if (bit >= 0) {
+            if (seen & (1u << bit))
+                return SEC_E_ILLEGAL_MESSAGE;
+            seen |= 1u << bit;
+        }
+        if ((status = read_number(r, 2, &length)))
+            return status;
+        if (total < length)
+            return SEC_E_ILLEGAL_MESSAGE;
+        total -= length;
+        BYTE *target = nullptr;
+        for (BYTE i = 0; i < count; i++) {
+            if (wanted[i].ExtensionType != type)
+                continue;
+            if (wanted[i].BufferSize >= length)
+                target = wanted[i].Buffer;
+            else
+                too_small = true;
+            wanted[i].ExtensionSize = (WORD)length;
+            wanted[i].Found = 1;
+            break;
+        }
+        if ((status = read_field(r, target, length)))
+            return status;
+    }
+    return too_small ? SEC_E_BUFFER_TOO_SMALL : SEC_E_OK;
+}
+
+/* a vector with a length of width bytes, skipped; its size must lie in [low, high] and within left. */
+static SECURITY_STATUS skip_vector(RECORDS *r, DWORD *left, DWORD width, DWORD low, DWORD high, bool even)
+{
+    DWORD n;
+    SECURITY_STATUS status;
+    if (*left < width)
+        return SEC_E_ILLEGAL_MESSAGE;
+    if ((status = read_number(r, width, &n)))
+        return status;
+    *left -= width;
+    if (n > *left || n < low || n > high || (even && (n & 1)))
+        return SEC_E_ILLEGAL_MESSAGE;
+    *left -= n;
+    return read_field(r, nullptr, n);
+}
+
+/* a message other than a ClientHello has no extensions to copy; one that ends before its extensions neither. */
+static SECURITY_STATUS copy_from_hello(RECORDS *r, SCH_COPY_EXTS_DATA *wanted, BYTE count, DWORD limit)
+{
+    DWORD type, left, value;
+    SECURITY_STATUS status;
+    if ((status = read_number(r, 1, &type)))
+        return status;
+    if (type != TLS_CLIENT_HELLO)
+        return SEC_E_OK;
+    if ((status = read_number(r, 3, &left)))
+        return status;
+    if (limit && left > limit)
+        return SEC_E_ILLEGAL_MESSAGE;
+    /* the version, below the dtls ones, and the random. */
+    if (left < 2 + 32)
+        return SEC_E_ILLEGAL_MESSAGE;
+    if ((status = read_number(r, 2, &value)))
+        return status;
+    if ((WORD)(value - 0x300) > 0xFBFC)
+        return SEC_E_ILLEGAL_MESSAGE;
+    if ((status = read_field(r, nullptr, 32)))
+        return status;
+    left -= 2 + 32;
+    /* the session id, the cipher suites and the compression methods. */
+    if ((status = skip_vector(r, &left, 1, 0, 32, false)) || (status = skip_vector(r, &left, 2, 2, 0xFFFF, true)) ||
+        (status = skip_vector(r, &left, 1, 1, 0xFF, false)))
+        return status;
+    if (left < 2)
+        return SEC_E_OK;
+    if ((status = read_number(r, 2, &value)))
+        return status;
+    if (left - 2 < value)
+        return SEC_E_OK;
+    return copy_extensions(r, wanted, count, value);
+}
+
+/*
+ * copies the requested extensions of a ClientHello, which may span records,
+ * into the caller's buffers. schannel runs this behind a servicing feature
+ * switch, taken as enabled.
+ */
+__declspec(dllexport) SECURITY_STATUS WINAPI SslCopyTlsExtensions(const BYTE *hello, DWORD size,
+                                                                  SCH_COPY_EXTS_DATA *wanted, BYTE count,
+                                                                  DWORD *missing, DWORD options)
+{
+    SECURITY_STATUS status = SEC_E_INVALID_PARAMETER;
+    if (hello && wanted && count && missing && !(options & ~1u)) {
+        *missing = 0;
+        bool duplicate = false;
+        for (BYTE i = 0; i < count; i++) {
+            wanted[i].Found = 0;
+            for (BYTE j = 0; j < count; j++)
+                if (i != j && wanted[i].ExtensionType == wanted[j].ExtensionType)
+                    duplicate = true;
+        }
+        if (!duplicate) {
+            /* option 1 is a server that asks for a client certificate, which allows the larger limit. */
+            DWORD limit = MESSAGE_LIMIT_SERVER;
+            if ((options & 1) && limit <= MESSAGE_LIMIT_SERVER_CLIENT_AUTH)
+                limit = MESSAGE_LIMIT_SERVER_CLIENT_AUTH;
+            RECORDS records = {hello, size, 0, 0, limit != 0, 0};
+            status = copy_from_hello(&records, wanted, count, limit);
+            if (status)
+                *missing = records.Missing;
+        }
+    }
+    if (!wanted)
+        return status;
+    /* what was not found, or everything after a failure, comes back empty. */
+    for (BYTE i = 0; i < count; i++) {
+        if (wanted[i].Found && (!status || status == SEC_E_BUFFER_TOO_SMALL))
+            continue;
+        if (wanted[i].Buffer && wanted[i].BufferSize)
+            memset(wanted[i].Buffer, 0, wanted[i].BufferSize);
+        wanted[i].ExtensionSize = 0;
+        wanted[i].Found = 0;
+    }
+    return status;
 }

@@ -32,6 +32,8 @@
 #define IOCTL_AFD_RESOLVE MIME_AFD_IOCTL(0x80E)       /* in MIME_AFD_RESOLVE, out MIME_AFD_ADDRESS list */
 #define IOCTL_AFD_INTERFACES MIME_AFD_IOCTL(0x80F)    /* out MIME_AFD_INTERFACE list */
 #define IOCTL_AFD_COMPLETE MIME_AFD_IOCTL(0x810)      /* in ULONG64 information, completes at once like a request */
+#define IOCTL_AFD_CONFIG MIME_AFD_IOCTL(0x811)        /* out MIME_AFD_CONFIG and its arrays */
+#define IOCTL_AFD_SOCKETS MIME_AFD_IOCTL(0x812)       /* out MIME_AFD_SOCKET_INFO list of every open socket */
 
 /* a windows sockaddr_in or sockaddr_in6, the host's MimeNetAddr. */
 typedef struct MIME_AFD_ADDRESS {
@@ -177,6 +179,84 @@ typedef struct MIME_AFD_INTERFACE {
 #define MIME_AFD_IF_BROADCAST 0x4
 #define MIME_AFD_IF_MULTICAST 0x8
 #define MIME_AFD_IF_POINTTOPOINT 0x10
+#define MIME_AFD_IF_RUNNING 0x20
+#define MIME_AFD_IF_VIRTUAL 0x40
+
+/* the host's MimeNetConfig: links, addresses, routes through a gateway and the resolver. */
+#define MIME_AFD_LINK_OTHER 0
+#define MIME_AFD_LINK_ETHERNET 1
+#define MIME_AFD_LINK_WIRELESS 2
+#define MIME_AFD_LINK_LOOPBACK 3
+#define MIME_AFD_LINK_TUNNEL 4
+#define MIME_AFD_LINK_PPP 5
+
+typedef struct MIME_AFD_LINK {
+    CHAR Name[16];
+    ULONG Index;
+    ULONG Flags; /* MIME_AFD_IF_* */
+    ULONG Mtu;
+    ULONG Type;
+    ULONG64 Speed; /* bits per second, 0 when unknown */
+    UCHAR MacLength;
+    UCHAR Mac[8];
+    UCHAR Pad[7];
+} MIME_AFD_LINK;
+
+#define MIME_AFD_ADDR_DYNAMIC 0x1
+#define MIME_AFD_ADDR_TEMPORARY 0x2
+#define MIME_AFD_ADDR_DEPRECATED 0x4
+#define MIME_AFD_ADDR_TENTATIVE 0x8
+
+typedef struct MIME_AFD_LINK_ADDRESS {
+    ULONG Index;
+    ULONG Flags;
+    ULONG Valid; /* seconds, 0xFFFFFFFF for ever */
+    ULONG Preferred;
+    UCHAR Prefix;
+    UCHAR Pad[3];
+    MIME_AFD_ADDRESS Address;
+} MIME_AFD_LINK_ADDRESS;
+
+#define MIME_AFD_ROUTE_STATIC 0
+#define MIME_AFD_ROUTE_DHCP 1
+#define MIME_AFD_ROUTE_RA 2
+
+typedef struct MIME_AFD_ROUTE {
+    ULONG Index;
+    ULONG Metric;
+    UCHAR Prefix;
+    UCHAR Origin;
+    UCHAR Pad[2];
+    MIME_AFD_ADDRESS Destination;
+    MIME_AFD_ADDRESS Gateway;
+} MIME_AFD_ROUTE;
+
+#define MIME_AFD_MAX_DNS 8
+
+typedef struct MIME_AFD_CONFIG {
+    ULONG Size; /* bytes of the whole answer, more than returned when the buffer was too small */
+    ULONG Links;
+    ULONG Addresses;
+    ULONG Routes;
+    ULONG Servers;
+    ULONG Pad;
+    CHAR Domain[256];
+    CHAR Search[256]; /* separated by spaces */
+    MIME_AFD_ADDRESS Server[MIME_AFD_MAX_DNS];
+} MIME_AFD_CONFIG;
+
+/* an open socket of any process, for the tcp and udp tables. */
+typedef struct MIME_AFD_SOCKET_INFO {
+    ULONG ProcessId;
+    ULONG Family;
+    ULONG Type;
+    ULONG State; /* MIME_AFD_STATE_* */
+    ULONG Bound;
+    ULONG Flags; /* 1 the peer ended the stream, 2 our side shut sends */
+    ULONG64 ConnectTime;
+    MIME_AFD_ADDRESS Local;
+    MIME_AFD_ADDRESS Remote; /* family 0 unless connected */
+} MIME_AFD_SOCKET_INFO;
 
 /* the statuses of socket errors, with their win32 meaning where windows has one. */
 #define STATUS_AFD_LOCAL_DISCONNECT ((NTSTATUS)0xC000013BL)

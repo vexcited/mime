@@ -830,6 +830,35 @@ NTKERNELAPI LONG_PTR FASTCALL ObfDereferenceObject(PVOID object);
 #define ObReferenceObject(o) ObfReferenceObject(o)
 #define ObDereferenceObject(o) ObfDereferenceObject(o)
 NTKERNELAPI void NTAPI ObDereferenceObjectDeferDelete(PVOID object);
+
+/* mime's object manager, for drivers that define object types of their own. */
+typedef struct _OBJECT_TYPE_INITIALIZER {
+    ULONG PoolType;
+    ACCESS_MASK ValidAccessMask;
+    ULONG DefaultObjectSize;
+    BOOLEAN Waitable; /* the object starts with a DISPATCHER_HEADER */
+    void (*CloseProcedure)(PEPROCESS process, PVOID object, ULONG handle_count);
+    void (*DeleteProcedure)(PVOID object);
+    NTSTATUS (*ParseProcedure)(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete_name,
+                               PUNICODE_STRING remaining, PVOID context, PVOID *found);
+    PVOID (*WaitObject)(PVOID object); /* dispatcher object to wait on, if not the body itself */
+} OBJECT_TYPE_INITIALIZER;
+
+NTKERNELAPI POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init);
+NTKERNELAPI NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ULONG body_size,
+                        PVOID *object);
+NTKERNELAPI NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+NTKERNELAPI NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, KPROCESSOR_MODE mode,
+                             PHANDLE handle);
+NTKERNELAPI NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
+                           ACCESS_MASK *granted);
+NTKERNELAPI NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                            ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
+NTKERNELAPI NTSTATUS ObCaptureObjectAttributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name);
+NTKERNELAPI NTSTATUS ObStoreHandle(PHANDLE user_handle, HANDLE handle);
+NTKERNELAPI POBJECT_TYPE ObGetObjectType(PVOID object);
+NTKERNELAPI NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars);
+
 NTKERNELAPI NTSTATUS NTAPI ObOpenObjectByPointer(PVOID object, ULONG attributes, PVOID access_state,
                                                  ACCESS_MASK access, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                                                  PHANDLE handle);

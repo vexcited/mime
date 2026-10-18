@@ -2,7 +2,7 @@
  * the image loader: process and thread initialization, dll mapping,
  * import binding, thread local storage and dll notifications.
  */
-#include "ntdll_private.h"
+#include "sxs.h"
 
 #define LDRP_DONT_CALL_FOR_THREADS 0x00040000
 #define LDRP_LOAD_IN_PROGRESS 0x00001000
@@ -199,6 +199,7 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
 
 static void destroy_entry(PLDR_DATA_TABLE_ENTRY e)
 {
+    RtlReleaseActivationContext(e->EntryPointActivationContext);
     RemoveEntryList(&e->InLoadOrderLinks);
     RemoveEntryList(&e->InMemoryOrderLinks);
     if (!IsListEmpty(&e->InInitializationOrderLinks))
@@ -224,6 +225,17 @@ static PLDR_DATA_TABLE_ENTRY find_by_name(PCWSTR name)
     for (PLIST_ENTRY l = g_ldr.InLoadOrderModuleList.Flink; l != &g_ldr.InLoadOrderModuleList; l = l->Flink) {
         PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
         if (name_matches(&e->BaseDllName, name))
+            return e;
+    }
+    return nullptr;
+}
+
+static PLDR_DATA_TABLE_ENTRY find_by_path(PCWSTR path)
+{
+    SIZE_T chars = wcslen(path);
+    for (PLIST_ENTRY l = g_ldr.InLoadOrderModuleList.Flink; l != &g_ldr.InLoadOrderModuleList; l = l->Flink) {
+        PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        if (e->FullDllName.Length == chars * sizeof(WCHAR) && !_wcsnicmp(e->FullDllName.Buffer, path, chars))
             return e;
     }
     return nullptr;
@@ -295,7 +307,7 @@ typedef struct API_SET_RULE {
 
 static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-crt-", L"ucrtbase.dll"},
-    {L"api-ms-win-core-winrt-", L"ole32.dll"},
+    {L"api-ms-win-core-winrt-", L"combase.dll"},
     {L"api-ms-win-core-synch-", L"kernelbase.dll"},
     {L"api-ms-win-core-rtlsupport-", L"ntdll.dll"},
     {L"api-ms-win-core-", L"kernelbase.dll"},
@@ -303,6 +315,7 @@ static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-security-base-", L"kernelbase.dll"},
     {L"api-ms-win-security-", L"advapi32.dll"},
     {L"api-ms-win-shcore-", L"shcore.dll"},
+    {L"api-ms-win-power-", L"powrprof.dll"},
     {L"api-ms-win-ntuser-", L"user32.dll"},
     {L"api-ms-win-rtcore-ntuser-", L"user32.dll"},
     {L"api-ms-win-gdi-", L"gdi32.dll"},
@@ -720,15 +733,20 @@ static void call_tls_callbacks(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
 
 /* ------------------------------------------------------------------ dll entry points */
 
+/* tls callbacks and DllMain run with the module's activation context active, the process default when it has none. */
 static BOOLEAN call_entry(PLDR_DATA_TABLE_ENTRY e, ULONG reason, PVOID reserved)
 {
+    LDRP_SXS_FRAME frame;
+    LdrpSxsActivate(&frame, e->EntryPointActivationContext);
     call_tls_callbacks(e, reason);
-    if (!e->EntryPoint || !(e->Flags & LDRP_IMAGE_DLL))
-        return TRUE;
-    PVOID saved = g_ldr.EntryInProgress;
-    g_ldr.EntryInProgress = e;
-    BOOLEAN ok = ((PDLL_INIT_ROUTINE)e->EntryPoint)(e->DllBase, reason, reserved);
-    g_ldr.EntryInProgress = saved;
+    BOOLEAN ok = TRUE;
+    if (e->EntryPoint && (e->Flags & LDRP_IMAGE_DLL)) {
+        PVOID saved = g_ldr.EntryInProgress;
+        g_ldr.EntryInProgress = e;
+        ok = ((PDLL_INIT_ROUTINE)e->EntryPoint)(e->DllBase, reason, reserved);
+        g_ldr.EntryInProgress = saved;
+    }
+    LdrpSxsDeactivate(&frame);
     return ok;
 }
 
@@ -760,15 +778,17 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
     PCWSTR base_name = name + wcslen(name);
     while (base_name > name && base_name[-1] != '\\' && base_name[-1] != '/')
         base_name--;
-    PLDR_DATA_TABLE_ENTRY e = find_by_name(base_name);
+    /* the active activation context may redirect a plain name before any search. */
+    WCHAR path[MAX_PATH];
+    BOOLEAN redirected = NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path)));
+    PLDR_DATA_TABLE_ENTRY e = redirected ? find_by_path(path) : find_by_name(base_name);
     if (e) {
         e->ReferenceCount++;
         e->ObsoleteLoadCount++;
         *out = e;
         return STATUS_SUCCESS;
     }
-    WCHAR path[MAX_PATH];
-    NTSTATUS status = find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path));
+    NTSTATUS status = redirected ? STATUS_SUCCESS : find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path));
     if (!NT_SUCCESS(status))
         return status;
     HANDLE file;
@@ -786,7 +806,15 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
         return STATUS_NO_MEMORY;
     }
     e->Flags |= LDRP_LOAD_IN_PROGRESS | (ctx->Static ? LDRP_STATIC_LINK : 0);
-    status = snap_imports(e, ctx);
+    /* a dll's own manifest is its context, active while its imports resolve. */
+    if (!(e->Flags & LDRP_COR_ILONLY))
+        status = LdrpSxsProbeDll(base, path, (PACTIVATION_CONTEXT *)&e->EntryPointActivationContext);
+    if (NT_SUCCESS(status)) {
+        LDRP_SXS_FRAME frame;
+        LdrpSxsActivate(&frame, e->EntryPointActivationContext);
+        status = snap_imports(e, ctx);
+        LdrpSxsDeactivate(&frame);
+    }
     if (!NT_SUCCESS(status)) {
         destroy_entry(e);
         NtUnmapViewOfSection(NtCurrentProcess(), base);
@@ -882,6 +910,7 @@ static void initialize_process(PCONTEXT context)
     PLDR_DATA_TABLE_ENTRY ntdll = create_entry(LdrpNtdllBase, ntdll_path);
     if (!exe || !ntdll)
         fatal("cannot create loader entries", STATUS_NO_MEMORY);
+    LdrpSxsInitializeThread();
     ntdll->Flags |= LDRP_ENTRY_PROCESSED | LDRP_PROCESS_ATTACH_CALLED;
     InsertTailList(&g_ldr.InInitializationOrderModuleList, &ntdll->InInitializationOrderLinks);
 
@@ -902,6 +931,10 @@ static void initialize_process(PCONTEXT context)
         return;
     }
 #endif
+    /* the process default activation context, built from the program's manifest as csrss does on windows. */
+    status = LdrpSxsInitializeProcess(peb->ImageBaseAddress, peb->ProcessParameters->ImagePathName.Buffer);
+    if (!NT_SUCCESS(status))
+        fatal("the program's side by side configuration is incorrect", status);
     /* every win32 process gets kernel32, imported or not. */
     if (peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI || peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
         PLDR_DATA_TABLE_ENTRY k32;
@@ -930,6 +963,7 @@ static void initialize_process(PCONTEXT context)
 
 static void initialize_thread(void)
 {
+    LdrpSxsInitializeThread();
     RtlEnterCriticalSection(&LdrpLoaderLock);
     allocate_thread_tls();
     for (PLIST_ENTRY l = g_ldr.InInitializationOrderModuleList.Flink; l != &g_ldr.InInitializationOrderModuleList;
@@ -970,6 +1004,7 @@ NTDLL_EXPORT void NTAPI LdrShutdownThread(void)
     }
     free_thread_tls();
     RtlLeaveCriticalSection(&LdrpLoaderLock);
+    RtlFreeThreadActivationContextStack();
 }
 
 NTDLL_EXPORT void NTAPI LdrShutdownProcess(void)
@@ -1050,8 +1085,10 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllHandleEx(ULONG flags, PCWSTR path, PULONG c
     PCWSTR file = resolved + wcslen(resolved);
     while (file > resolved && file[-1] != '\\' && file[-1] != '/')
         file--;
+    WCHAR redirected[MAX_PATH];
+    BOOLEAN is_redirected = NT_SUCCESS(LdrpSxsRedirectDll(resolved, redirected, RTL_NUMBER_OF(redirected)));
     RtlEnterCriticalSection(&LdrpLoaderLock);
-    PLDR_DATA_TABLE_ENTRY e = find_by_name(file);
+    PLDR_DATA_TABLE_ENTRY e = is_redirected ? find_by_path(redirected) : find_by_name(file);
     if (e && !(flags & 2)) /* LDR_GET_DLL_HANDLE_EX_UNCHANGED_REFCOUNT */
         e->ReferenceCount++;
     RtlLeaveCriticalSection(&LdrpLoaderLock);

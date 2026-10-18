@@ -1,5 +1,5 @@
 /*
- * wininet entry point, connection state, response info, cookies and the error dialog.
+ * wininet entry point, connection state, response info and the error dialog.
  */
 #include "wininet_private.h"
 #include <mime/stub.h>
@@ -27,22 +27,6 @@ DECLSPEC_EXPORT BOOL WINAPI InternetGetLastResponseInfoW(LPDWORD error, LPWSTR b
         buffer[0] = 0;
     *length = 0;
     return TRUE;
-}
-
-DECLSPEC_EXPORT BOOL WINAPI InternetGetCookieW(LPCWSTR url, LPCWSTR name, LPWSTR data, LPDWORD size)
-{
-    MIME_STUB("wininet");
-    if (!url || !*url || !size)
-        return InetFail(ERROR_INVALID_PARAMETER);
-    return InetFail(ERROR_NO_MORE_ITEMS);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI InternetSetCookieW(LPCWSTR url, LPCWSTR name, LPCWSTR data)
-{
-    MIME_STUB("wininet");
-    if (!url || !*url || !data)
-        return InetFail(ERROR_INVALID_PARAMETER);
-    return InetFail(ERROR_INTERNET_CANNOT_CONNECT);
 }
 
 DECLSPEC_EXPORT DWORD WINAPI InternetErrorDlg(HWND window, HINTERNET request, DWORD error, DWORD flags, LPVOID *data)

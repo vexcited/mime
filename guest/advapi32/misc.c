@@ -128,6 +128,12 @@ ADVAPI BOOL WINAPI ReportEventA(HANDLE h, WORD type, WORD category, DWORD id, PS
     return ok;
 }
 
+/* the cache of HKEY_CURRENT_USER is never kept apart from the user, so there is nothing to drop. */
+ADVAPI LSTATUS WINAPI RegDisablePredefinedCache(void)
+{
+    return ERROR_SUCCESS;
+}
+
 /* ---------------------------------------------------------------- service control manager */
 
 typedef HANDLE SC_HANDLE;
@@ -170,6 +176,174 @@ ADVAPI BOOL WINAPI CloseServiceHandle(SC_HANDLE handle)
 {
     AdvSetError(ERROR_INVALID_HANDLE);
     return FALSE;
+}
+
+#define ERROR_SERVICE_ALREADY_RUNNING 1056L
+#define ERROR_FAILED_SERVICE_CONTROLLER_CONNECT 1063L
+#define ERROR_SERVICE_NOT_IN_EXE 1083L
+
+typedef struct SERVICE_TABLE_ENTRYW {
+    LPWSTR lpServiceName;
+    PVOID lpServiceProc;
+} SERVICE_TABLE_ENTRYW;
+
+typedef struct SERVICE_TABLE_ENTRYA {
+    LPSTR lpServiceName;
+    PVOID lpServiceProc;
+} SERVICE_TABLE_ENTRYA;
+
+static LONG g_dispatcher_started;
+
+/*
+ * a process the manager did not start cannot reach it: windows fails the
+ * connection with ERROR_FAILED_SERVICE_CONTROLLER_CONNECT, and with no
+ * manager here every process is one of those. a second call is refused
+ * before the table is looked at.
+ */
+static BOOL start_dispatcher(BOOL empty)
+{
+    if (InterlockedExchange(&g_dispatcher_started, 1) == 1) {
+        AdvSetError(ERROR_SERVICE_ALREADY_RUNNING);
+        return FALSE;
+    }
+    AdvSetError(empty ? ERROR_INVALID_PARAMETER : ERROR_FAILED_SERVICE_CONTROLLER_CONNECT);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI StartServiceCtrlDispatcherW(const SERVICE_TABLE_ENTRYW *table)
+{
+    return start_dispatcher(!table->lpServiceName);
+}
+
+ADVAPI BOOL WINAPI StartServiceCtrlDispatcherA(const SERVICE_TABLE_ENTRYA *table)
+{
+    return start_dispatcher(!table->lpServiceName);
+}
+
+/* the service must be one of the dispatcher's table, which never ran. */
+static HANDLE no_dispatch_entry(void)
+{
+    AdvSetError(ERROR_SERVICE_NOT_IN_EXE);
+    return nullptr;
+}
+
+ADVAPI HANDLE WINAPI RegisterServiceCtrlHandlerW(LPCWSTR name, PVOID handler)
+{
+    return no_dispatch_entry();
+}
+
+ADVAPI HANDLE WINAPI RegisterServiceCtrlHandlerA(LPCSTR name, PVOID handler)
+{
+    return no_dispatch_entry();
+}
+
+ADVAPI HANDLE WINAPI RegisterServiceCtrlHandlerExW(LPCWSTR name, PVOID handler, LPVOID context)
+{
+    return no_dispatch_entry();
+}
+
+ADVAPI HANDLE WINAPI RegisterServiceCtrlHandlerExA(LPCSTR name, PVOID handler, LPVOID context)
+{
+    return no_dispatch_entry();
+}
+
+static BOOL bad_handle(void)
+{
+    AdvSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI SetServiceStatus(HANDLE status, PVOID info)
+{
+    return bad_handle();
+}
+
+ADVAPI SC_HANDLE WINAPI CreateServiceW(SC_HANDLE manager, LPCWSTR name, LPCWSTR display, DWORD access, DWORD type,
+                                       DWORD start, DWORD error_control, LPCWSTR binary, LPCWSTR group,
+                                       LPDWORD tag, LPCWSTR dependencies, LPCWSTR user, LPCWSTR password)
+{
+    bad_handle();
+    return nullptr;
+}
+
+ADVAPI SC_HANDLE WINAPI CreateServiceA(SC_HANDLE manager, LPCSTR name, LPCSTR display, DWORD access, DWORD type,
+                                       DWORD start, DWORD error_control, LPCSTR binary, LPCSTR group, LPDWORD tag,
+                                       LPCSTR dependencies, LPCSTR user, LPCSTR password)
+{
+    bad_handle();
+    return nullptr;
+}
+
+ADVAPI BOOL WINAPI DeleteService(SC_HANDLE service)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI ChangeServiceConfigW(SC_HANDLE service, DWORD type, DWORD start, DWORD error_control,
+                                        LPCWSTR binary, LPCWSTR group, LPDWORD tag, LPCWSTR dependencies,
+                                        LPCWSTR user, LPCWSTR password, LPCWSTR display)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI ChangeServiceConfigA(SC_HANDLE service, DWORD type, DWORD start, DWORD error_control,
+                                        LPCSTR binary, LPCSTR group, LPDWORD tag, LPCSTR dependencies, LPCSTR user,
+                                        LPCSTR password, LPCSTR display)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI ChangeServiceConfig2W(SC_HANDLE service, DWORD level, LPVOID info)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI ChangeServiceConfig2A(SC_HANDLE service, DWORD level, LPVOID info)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI QueryServiceConfigW(SC_HANDLE service, PVOID config, DWORD size, LPDWORD needed)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI QueryServiceConfigA(SC_HANDLE service, PVOID config, DWORD size, LPDWORD needed)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI QueryServiceConfig2W(SC_HANDLE service, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI QueryServiceConfig2A(SC_HANDLE service, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI QueryServiceStatusEx(SC_HANDLE service, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI ControlService(SC_HANDLE service, DWORD control, PVOID status)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI EnumServicesStatusExW(SC_HANDLE manager, DWORD level, DWORD type, DWORD state, LPBYTE services,
+                                         DWORD size, LPDWORD needed, LPDWORD returned, LPDWORD resume,
+                                         LPCWSTR group)
+{
+    return bad_handle();
+}
+
+ADVAPI BOOL WINAPI EnumServicesStatusExA(SC_HANDLE manager, DWORD level, DWORD type, DWORD state, LPBYTE services,
+                                         DWORD size, LPDWORD needed, LPDWORD returned, LPDWORD resume, LPCSTR group)
+{
+    return bad_handle();
 }
 
 /* ---------------------------------------------------------------- hardware profiles */
@@ -386,4 +560,103 @@ ADVAPI LSTATUS WINAPI RegQueryValueA(HKEY key, LPCSTR subkey, LPSTR data, PLONG 
     AdvFree(w);
     AdvFree(s);
     return error;
+}
+
+/* ---------------------------------------------------------------- text detection */
+
+#define IS_TEXT_UNICODE_ASCII16 0x0001
+#define IS_TEXT_UNICODE_STATISTICS 0x0002
+#define IS_TEXT_UNICODE_CONTROLS 0x0004
+#define IS_TEXT_UNICODE_SIGNATURE 0x0008
+#define IS_TEXT_UNICODE_REVERSE_ASCII16 0x0010
+#define IS_TEXT_UNICODE_REVERSE_STATISTICS 0x0020
+#define IS_TEXT_UNICODE_REVERSE_CONTROLS 0x0040
+#define IS_TEXT_UNICODE_REVERSE_SIGNATURE 0x0080
+#define IS_TEXT_UNICODE_ILLEGAL_CHARS 0x0100
+#define IS_TEXT_UNICODE_ODD_LENGTH 0x0200
+#define IS_TEXT_UNICODE_NULL_BYTES 0x1000
+#define IS_TEXT_UNICODE_UNICODE_MASK 0x000F
+#define IS_TEXT_UNICODE_REVERSE_MASK 0x00F0
+#define IS_TEXT_UNICODE_NOT_UNICODE_MASK 0x0F00
+#define IS_TEXT_UNICODE_NOT_ASCII_MASK 0xF000
+
+static BOOL is_control(WCHAR c)
+{
+    return c == L'\r' || c == L'\n' || c == L'\t' || c == L' ' || c == 0x3000;
+}
+
+/*
+ * runs the tests the caller asks for, all when it gives no result
+ * pointer, and reports each that held. the text counts as utf-16 when a
+ * utf-16 test holds and no test against it does.
+ */
+ADVAPI BOOL WINAPI IsTextUnicode(const void *buffer, int size, LPINT result)
+{
+    const BYTE *bytes = buffer;
+    const WCHAR *text = buffer;
+    int wanted = result ? *result : 0xFFFF, found = 0, n = size / 2;
+    if (!buffer || size < 2) {
+        if (result)
+            *result = 0;
+        return FALSE;
+    }
+    if (size & 1)
+        found |= IS_TEXT_UNICODE_ODD_LENGTH;
+    if (text[0] == 0xFEFF)
+        found |= IS_TEXT_UNICODE_SIGNATURE;
+    if (text[0] == 0xFFFE)
+        found |= IS_TEXT_UNICODE_REVERSE_SIGNATURE;
+    BOOL ascii = TRUE, reverse_ascii = TRUE, controls = FALSE, reverse_controls = FALSE, illegal = FALSE;
+    int high_low = 0, low_high = 0;
+    for (int i = 0; i < n; i++) {
+        WCHAR c = text[i], r = (WCHAR)(c >> 8 | c << 8);
+        if (c >= 0x100)
+            ascii = FALSE;
+        if (r >= 0x100)
+            reverse_ascii = FALSE;
+        if (is_control(c))
+            controls = TRUE;
+        if (is_control(r))
+            reverse_controls = TRUE;
+        if (c == 0xFFFF || c == 0xFFFE)
+            illegal = TRUE;
+        if (!(c & 0xFF00) && (c & 0xFF))
+            low_high++;
+        if (!(c & 0xFF) && (c & 0xFF00))
+            high_low++;
+    }
+    if (ascii)
+        found |= IS_TEXT_UNICODE_ASCII16;
+    if (reverse_ascii && !ascii)
+        found |= IS_TEXT_UNICODE_REVERSE_ASCII16;
+    if (controls)
+        found |= IS_TEXT_UNICODE_CONTROLS;
+    if (reverse_controls && !controls)
+        found |= IS_TEXT_UNICODE_REVERSE_CONTROLS;
+    if (illegal)
+        found |= IS_TEXT_UNICODE_ILLEGAL_CHARS;
+    /* statistics: most characters of utf-16 western text have a zero high byte. */
+    if (low_high * 2 > n)
+        found |= IS_TEXT_UNICODE_STATISTICS;
+    else if (high_low * 2 > n)
+        found |= IS_TEXT_UNICODE_REVERSE_STATISTICS;
+    for (int i = 0; i < size; i++) {
+        if (!bytes[i]) {
+            found |= IS_TEXT_UNICODE_NULL_BYTES;
+            break;
+        }
+    }
+    found &= wanted;
+    if (result)
+        *result = found;
+    if (found & (IS_TEXT_UNICODE_NOT_UNICODE_MASK | IS_TEXT_UNICODE_REVERSE_MASK))
+        return FALSE;
+    return (found & IS_TEXT_UNICODE_UNICODE_MASK) != 0;
+}
+
+/* ---------------------------------------------------------------- local security authority */
+
+ADVAPI ULONG WINAPI LsaNtStatusToWinError(NTSTATUS status)
+{
+    return RtlNtStatusToDosError(status);
 }

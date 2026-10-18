@@ -1,0 +1,6 @@
+LIBRARY mf.dll
+EXPORTS
+    MFCreateDeviceSource
+    MFEnumDeviceSources
+    MFGetService
+    MFShutdownObject

@@ -3,3 +3,6 @@ EXPORTS
     ILFree @155
     IsUserAnAdmin @680
     SHCreateDirectory @165
+    SHChangeNotifyRegister @2
+    SHChangeNotifyDeregister @4
+    ILCreateFromPathW @190

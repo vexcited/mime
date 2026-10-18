@@ -361,3 +361,133 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
     }
     return TRUE;
 }
+
+/* ------------------------------------------------------------------ asynchronous activation */
+
+typedef struct IActivateAudioInterfaceAsyncOperation IActivateAudioInterfaceAsyncOperation;
+typedef struct IActivateAudioInterfaceCompletionHandler IActivateAudioInterfaceCompletionHandler;
+
+typedef struct IActivateAudioInterfaceCompletionHandlerVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IActivateAudioInterfaceCompletionHandler *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IActivateAudioInterfaceCompletionHandler *);
+    ULONG(STDMETHODCALLTYPE *Release)(IActivateAudioInterfaceCompletionHandler *);
+    HRESULT(STDMETHODCALLTYPE *ActivateCompleted)(IActivateAudioInterfaceCompletionHandler *,
+                                                  IActivateAudioInterfaceAsyncOperation *);
+} IActivateAudioInterfaceCompletionHandlerVtbl;
+
+struct IActivateAudioInterfaceCompletionHandler {
+    const IActivateAudioInterfaceCompletionHandlerVtbl *lpVtbl;
+};
+
+typedef struct ACTIVATE_OPERATION {
+    const struct ACTIVATE_OPERATION_VTBL *lpVtbl;
+    LONG Refs;
+    HRESULT Result;
+    IUnknown *Interface;
+    IActivateAudioInterfaceCompletionHandler *Handler;
+} ACTIVATE_OPERATION;
+
+typedef struct ACTIVATE_OPERATION_VTBL {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(ACTIVATE_OPERATION *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *AddRef)(ACTIVATE_OPERATION *);
+    ULONG(STDMETHODCALLTYPE *Release)(ACTIVATE_OPERATION *);
+    HRESULT(STDMETHODCALLTYPE *GetActivateResult)(ACTIVATE_OPERATION *, HRESULT *, IUnknown **);
+} ACTIVATE_OPERATION_VTBL;
+
+static const IID IID_IActivateAudioInterfaceAsyncOperation = {
+    0x72a22d78, 0xcde4, 0x431d, {0xb8, 0xcc, 0x84, 0x3a, 0x71, 0x19, 0x9b, 0x6d}};
+static const IID IID_IAgileObject = {0x94ea2b94, 0xe9cc, 0x49e0, {0xc0, 0xff, 0xee, 0x64, 0xca, 0x8f, 0x5b, 0x90}};
+
+static HRESULT STDMETHODCALLTYPE operation_query(ACTIVATE_OPERATION *self, REFIID riid, void **object)
+{
+    if (!object)
+        return E_POINTER;
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IActivateAudioInterfaceAsyncOperation) ||
+        IsEqualGUID(riid, &IID_IAgileObject)) {
+        *object = self;
+        self->lpVtbl->AddRef(self);
+        return S_OK;
+    }
+    *object = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE operation_add_ref(ACTIVATE_OPERATION *self)
+{
+    return InterlockedIncrement(&self->Refs);
+}
+
+static ULONG STDMETHODCALLTYPE operation_release(ACTIVATE_OPERATION *self)
+{
+    ULONG refs = InterlockedDecrement(&self->Refs);
+    if (!refs) {
+        if (self->Interface)
+            self->Interface->lpVtbl->Release(self->Interface);
+        if (self->Handler)
+            self->Handler->lpVtbl->Release(self->Handler);
+        HeapFree(GetProcessHeap(), 0, self);
+    }
+    return refs;
+}
+
+/* the activated interface is handed out once, with its reference. */
+static HRESULT STDMETHODCALLTYPE operation_result(ACTIVATE_OPERATION *self, HRESULT *result, IUnknown **object)
+{
+    if (!result || !object)
+        return E_POINTER;
+    *result = self->Result;
+    *object = self->Interface;
+    if (self->Interface)
+        self->Interface->lpVtbl->AddRef(self->Interface);
+    return S_OK;
+}
+
+static const ACTIVATE_OPERATION_VTBL operation_vtbl = {operation_query, operation_add_ref, operation_release,
+                                                       operation_result};
+
+static DWORD WINAPI activate_completion(void *parameter)
+{
+    ACTIVATE_OPERATION *op = parameter;
+    op->Handler->lpVtbl->ActivateCompleted(op->Handler, (IActivateAudioInterfaceAsyncOperation *)op);
+    operation_release(op);
+    return 0;
+}
+
+/*
+ * the device path names an endpoint by id, or the default endpoint of a
+ * direction by its device interface class. the activation itself runs on
+ * the calling thread; the handler hears of it on another, as windows calls
+ * it from a worker.
+ */
+DECLSPEC_EXPORT HRESULT WINAPI ActivateAudioInterfaceAsync(LPCWSTR path, REFIID riid, PROPVARIANT *params,
+                                                           IActivateAudioInterfaceCompletionHandler *handler,
+                                                           IActivateAudioInterfaceAsyncOperation **operation)
+{
+    static const WCHAR render[] = L"{E6327CAD-DCEC-4949-AE8A-991E976A79D2}";
+    static const WCHAR capture[] = L"{2EEF81BE-33FA-4800-9670-1CD474972C3F}";
+    if (!path || !riid || !handler || !operation)
+        return E_INVALIDARG;
+    *operation = nullptr;
+    ACTIVATE_OPERATION *op = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*op));
+    if (!op)
+        return E_OUTOFMEMORY;
+    op->lpVtbl = &operation_vtbl;
+    op->Refs = 2;
+    op->Handler = handler;
+    handler->lpVtbl->AddRef(handler);
+    if (!_wcsicmp(path, render) || !_wcsicmp(path, DEVICE_ID))
+        op->Result = device_activate(&g_device, riid, CLSCTX_ALL, params, (void **)&op->Interface);
+    else if (!_wcsicmp(path, capture))
+        op->Result = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    else
+        op->Result = E_NOTIMPL;
+    HANDLE thread = CreateThread(nullptr, 0, activate_completion, op, 0, nullptr);
+    if (!thread) {
+        operation_release(op);
+        operation_release(op);
+        return E_OUTOFMEMORY;
+    }
+    CloseHandle(thread);
+    *operation = (IActivateAudioInterfaceAsyncOperation *)op;
+    return S_OK;
+}

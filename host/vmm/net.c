@@ -864,6 +864,8 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
                 e->flags |= MIME_NET_IF_MULTICAST;
             if (ifa->ifa_flags & IFF_POINTOPOINT)
                 e->flags |= MIME_NET_IF_POINTTOPOINT;
+            if (ifa->ifa_flags & IFF_RUNNING)
+                e->flags |= MIME_NET_IF_RUNNING;
             e->prefix = prefix_bits(ifa->ifa_netmask);
             from_host(ifa->ifa_addr, &e->addr);
             /* the link entry of the same interface has the mtu and the hardware address. */
@@ -911,6 +913,12 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t value = 0, status = MIME_HC_STATUS_OK;
+    /* reading the configuration may take a while and touches no socket, so it runs without the lock. */
+    if (nr == MIME_HC_NET_CONFIG) {
+        status = mime_net_config(vm, regs[1], regs[2], &value);
+        regs[1] = value;
+        return status;
+    }
     pthread_mutex_lock(&g_lock);
     NetSocket *s = nullptr;
     if (nr >= MIME_HC_NET_CLOSE && nr <= MIME_HC_NET_OPTION) {

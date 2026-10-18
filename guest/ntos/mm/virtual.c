@@ -653,6 +653,35 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
     return status;
 }
 
+/*
+ * the attributes of each page of a caller's list. committed pages count as
+ * resident, at the normal priority 5, shared when not private memory.
+ */
+static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T length)
+{
+    if (length < 16)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    PUCHAR entry = info;
+    for (SIZE_T i = 0; i < length / 16; i++, entry += 16) {
+        ULONG_PTR va;
+        NTSTATUS status = KiCopyFromUser(&va, entry, sizeof(va));
+        if (!NT_SUCCESS(status))
+            return status;
+        MEMORY_BASIC_INFORMATION mbi;
+        ULONG64 attributes = 0;
+        if (va <= MM_HIGHEST_USER_ADDRESS && NT_SUCCESS(MiQueryVirtual(process, (PVOID)va, &mbi)) &&
+            mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+            attributes = 1 | (ULONG64)(mbi.Protect & 0x7FF) << 4 | 5ull << 24;
+            if (mbi.Type != MEM_PRIVATE)
+                attributes |= 1ull << 1 | 1ull << 15;
+        }
+        status = KiCopyToUser(entry + 8, &attributes, sizeof(attributes));
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_INFORMATION_CLASS klass, PVOID info,
                                     SIZE_T length, PSIZE_T returned)
 {
@@ -697,6 +726,8 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
                     KiCopyToUser(returned, &n, sizeof(n));
             }
         }
+    } else if (klass == MemoryWorkingSetExInformation) {
+        status = query_working_set_ex(process, info, length);
     } else if (klass == MemoryMappedFilenameInformation) {
         PMMADDRESS_SPACE as = &process->AddressSpace;
         ExAcquireFastMutex(&as->Lock);

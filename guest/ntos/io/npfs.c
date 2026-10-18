@@ -34,6 +34,7 @@
 #define FSCTL_PIPE_LISTEN 0x00110008
 #define FSCTL_PIPE_PEEK 0x0011400C
 #define FSCTL_PIPE_WAIT 0x00110018
+#define FSCTL_PIPE_TRANSCEIVE 0x0011C017
 #define FSCTL_PIPE_GET_PIPE_ATTRIBUTE 0x00110028
 #define FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE 0x00110030
 
@@ -890,6 +891,44 @@ static NTSTATUS peek(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID ou
     return immediate(r, status, sizeof(head) + done);
 }
 
+/*
+ * writes a message and reads the answer as one request. the end must read
+ * messages and have nothing left to read, a guess of windows' checks.
+ */
+static NTSTATUS transceive(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID input, ULONG in_len)
+{
+    BOOLEAN server = file->FsContext2 == END_SERVER;
+    if (in->ReadMode[end_index(file)] != FILE_PIPE_MESSAGE_MODE)
+        return immediate(r, STATUS_INVALID_PIPE_STATE, 0);
+    if (in->State != FILE_PIPE_CONNECTED_STATE || (server ? !in->ClientOpen : !in->ServerOpen))
+        return immediate(r, STATUS_PIPE_DISCONNECTED, 0);
+    NP_QUEUE *rq = read_queue(in, file);
+    if (!IsListEmpty(&rq->Data))
+        return immediate(r, STATUS_PIPE_BUSY, 0);
+    NP_DATA *d = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NP_DATA) + in_len, KI_TAG('N', 'p', 'D', 't'));
+    if (!d)
+        return immediate(r, STATUS_INSUFFICIENT_RESOURCES, 0);
+    NTSTATUS status = KiCopyFromUser(d->Data, input, in_len);
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(d);
+        return immediate(r, status, 0);
+    }
+    d->Length = in_len;
+    d->Offset = 0;
+    NP_QUEUE *wq = write_queue(in, file);
+    InsertTailList(&wq->Data, &d->Links);
+    wq->Bytes += in_len;
+    wq->Messages++;
+    serve_readers(in, wq, reader_mode(in, wq));
+    if (!IsListEmpty(&rq->Data)) {
+        ULONG moved;
+        status = take_data(rq, FILE_PIPE_MESSAGE_MODE, r->Process, r->Buffer, r->Length, &moved);
+        return immediate(r, status, moved);
+    }
+    InsertTailList(&rq->Readers, &r->Links);
+    return pending(r);
+}
+
 /* waits for a listening instance of a pipe, polling, for at most the timeout. */
 static NTSTATUS wait_pipe(const FILE_PIPE_WAIT_FOR_BUFFER *w, ULONG in_len)
 {
@@ -987,6 +1026,10 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         return immediate(r, status, 0);
     case FSCTL_PIPE_PEEK:
         status = peek(r, in, file, output, out_len);
+        unlock();
+        return status;
+    case FSCTL_PIPE_TRANSCEIVE:
+        status = transceive(r, in, file, input, in_len);
         unlock();
         return status;
     case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:

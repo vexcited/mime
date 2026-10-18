@@ -57,3 +57,5 @@ EXPORTS
     VarBstrFromDec @232
     VarDecFromStr @197
     VarUI4FromStr @277
+    VarBstrCat @313
+    VarBstrCmp @314

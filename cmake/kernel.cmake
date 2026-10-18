@@ -10,8 +10,9 @@ else()
 endif()
 mime_glob(ntos_asm guest/ntos/arch/${MIME_GUEST_ARCH}/*.S)
 
-mime_objects(kernel-ntos kernel SOURCES ${MIME_NTOS_SOURCES} ${ntos_asm} OPTIONS ${ntos_options}
-    INCLUDES guest/ntos)
+# the hashes of the crypto library name the host's roots in the registry, see guest/ntos/cm/certs.c.
+mime_objects(kernel-ntos kernel SOURCES ${MIME_NTOS_SOURCES} ${ntos_asm} guest/lib/crypto/hash.c
+    OPTIONS ${ntos_options} INCLUDES guest/ntos guest/lib)
 mime_objects(kernel-rtl kernel SOURCES ${rtl_sources} OPTIONS ${ntos_options} INCLUDES guest/ntos)
 mime_objects(kernel-crt kernel SOURCES ${crt_sources} ${crt_kernel_asm} OPTIONS -fno-builtin)
 mime_objects(kernel-services kernel SOURCES ${MIME_GEN}/ntos_services.c OPTIONS ${ntos_options} -Wno-unused-function

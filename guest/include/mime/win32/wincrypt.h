@@ -22,6 +22,21 @@
 #define NTE_BAD_KEYSET ((HRESULT)0x80090016L)
 #define NTE_NO_MEMORY ((HRESULT)0x8009000EL)
 #define NTE_NOT_SUPPORTED ((HRESULT)0x80090029L)
+#ifndef NTE_BAD_KEY_STATE
+#define NTE_BAD_KEY_STATE ((HRESULT)0x8009000BL)
+#endif
+#ifndef NTE_BAD_PROV_TYPE
+#define NTE_BAD_PROV_TYPE ((HRESULT)0x80090014L)
+#endif
+#ifndef NTE_BAD_PUBLIC_KEY
+#define NTE_BAD_PUBLIC_KEY ((HRESULT)0x80090015L)
+#endif
+#ifndef NTE_FAIL
+#define NTE_FAIL ((HRESULT)0x80090020L)
+#endif
+#ifndef NTE_PROVIDER_DLL_FAIL
+#define NTE_PROVIDER_DLL_FAIL ((HRESULT)0x8009001DL)
+#endif
 #define CRYPT_E_MSG_ERROR ((HRESULT)0x80091001L)
 #define CRYPT_E_UNKNOWN_ALGO ((HRESULT)0x80091002L)
 #define CRYPT_E_INVALID_MSG_TYPE ((HRESULT)0x80091004L)
@@ -602,6 +617,10 @@ typedef const CRYPT_OID_INFO *PCCRYPT_OID_INFO;
 #define CERT_MD5_HASH_PROP_ID 4
 #define CERT_HASH_PROP_ID CERT_SHA1_HASH_PROP_ID
 #define CERT_KEY_CONTEXT_PROP_ID 5
+#define CERT_NCRYPT_KEY_HANDLE_PROP_ID 78
+#define CERT_NCRYPT_KEY_SPEC 0xFFFFFFFF
+#define CERT_SET_KEY_PROV_HANDLE_PROP_ID 0x00000001
+#define CERT_SET_KEY_CONTEXT_PROP_ID 0x00000001
 #define CERT_KEY_SPEC_PROP_ID 6
 #define CERT_IE30_RESERVED_PROP_ID 7
 #define CERT_PUBKEY_HASH_RESERVED_PROP_ID 8
@@ -720,7 +739,55 @@ typedef const CRYPT_OID_INFO *PCCRYPT_OID_INFO;
 #define CERT_STORE_CTL_CONTEXT 3
 
 #define CERT_PHYSICAL_STORE_ADD_ENABLE_FLAG 0x1
+#define CERT_PHYSICAL_STORE_OPEN_DISABLE_FLAG 0x2
+#define CERT_PHYSICAL_STORE_REMOTE_OPEN_DISABLE_FLAG 0x4
+#define CERT_PHYSICAL_STORE_INSERT_COMPUTER_NAME_ENABLE_FLAG 0x8
+#define CERT_PHYSICAL_STORE_PREDEFINED_ENUM_FLAG 0x1
 
+#define CERT_SYSTEM_STORE_RELOCATE_FLAG 0x80000000
+#define CERT_SYSTEM_STORE_UNPROTECTED_FLAG 0x40000000
+#define CERT_SYSTEM_STORE_DEFER_READ_FLAG 0x20000000
+#define CERT_SYSTEM_STORE_MASK 0xFFFF0000
+
+#define CERT_STORE_CTRL_RESYNC 1
+#define CERT_STORE_CTRL_NOTIFY_CHANGE 2
+#define CERT_STORE_CTRL_COMMIT 3
+#define CERT_STORE_CTRL_AUTO_RESYNC 4
+#define CERT_STORE_CTRL_CANCEL_NOTIFY 5
+
+typedef struct _CERT_SYSTEM_STORE_RELOCATE_PARA {
+    union {
+        HKEY hKeyBase;
+        void *pvBase;
+    };
+    union {
+        const void *pvSystemStore;
+        LPCSTR pszSystemStore;
+        LPCWSTR pwszSystemStore;
+    };
+} CERT_SYSTEM_STORE_RELOCATE_PARA, *PCERT_SYSTEM_STORE_RELOCATE_PARA;
+
+typedef struct _CERT_SYSTEM_STORE_INFO {
+    DWORD cbSize;
+} CERT_SYSTEM_STORE_INFO, *PCERT_SYSTEM_STORE_INFO;
+
+typedef struct _CERT_PHYSICAL_STORE_INFO {
+    DWORD cbSize;
+    LPSTR pszOpenStoreProvider;
+    DWORD dwOpenEncodingType;
+    DWORD dwOpenFlags;
+    CRYPT_DATA_BLOB OpenParameters;
+    DWORD dwFlags;
+    DWORD dwPriority;
+} CERT_PHYSICAL_STORE_INFO, *PCERT_PHYSICAL_STORE_INFO;
+
+typedef BOOL(WINAPI *PFN_CERT_ENUM_SYSTEM_STORE_LOCATION)(LPCWSTR pwszStoreLocation, DWORD dwFlags,
+                                                          void *pvReserved, void *pvArg);
+typedef BOOL(WINAPI *PFN_CERT_ENUM_SYSTEM_STORE)(const void *pvSystemStore, DWORD dwFlags,
+                                                 PCERT_SYSTEM_STORE_INFO pStoreInfo, void *pvReserved, void *pvArg);
+typedef BOOL(WINAPI *PFN_CERT_ENUM_PHYSICAL_STORE)(const void *pvSystemStore, DWORD dwFlags, LPCWSTR pwszStoreName,
+                                                   PCERT_PHYSICAL_STORE_INFO pStoreInfo, void *pvReserved,
+                                                   void *pvArg);
 /* find types. */
 #define CERT_COMPARE_SHIFT 16
 #define CERT_COMPARE_ANY 0
@@ -1129,6 +1196,17 @@ WINCRYPT32API HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dw
                                               HCRYPTPROV_LEGACY hCryptProv, DWORD dwFlags, const void *pvPara);
 WINCRYPT32API HCERTSTORE WINAPI CertOpenSystemStoreA(HCRYPTPROV_LEGACY hProv, LPCSTR szSubsystemProtocol);
 WINCRYPT32API HCERTSTORE WINAPI CertOpenSystemStoreW(HCRYPTPROV_LEGACY hProv, LPCWSTR szSubsystemProtocol);
+WINCRYPT32API BOOL WINAPI CertAddEncodedCertificateToSystemStoreA(LPCSTR szCertStoreName, const BYTE *pbCertEncoded,
+                                                                  DWORD cbCertEncoded);
+WINCRYPT32API BOOL WINAPI CertAddEncodedCertificateToSystemStoreW(LPCWSTR szCertStoreName, const BYTE *pbCertEncoded,
+                                                                  DWORD cbCertEncoded);
+WINCRYPT32API BOOL WINAPI CertRegisterSystemStore(const void *pvSystemStore, DWORD dwFlags,
+                                                  PCERT_SYSTEM_STORE_INFO pStoreInfo, void *pvReserved);
+WINCRYPT32API BOOL WINAPI CertUnregisterSystemStore(const void *pvSystemStore, DWORD dwFlags);
+WINCRYPT32API BOOL WINAPI CertEnumSystemStore(DWORD dwFlags, void *pvSystemStoreLocationPara, void *pvArg,
+                                              PFN_CERT_ENUM_SYSTEM_STORE pfnEnum);
+WINCRYPT32API BOOL WINAPI CertEnumPhysicalStore(const void *pvSystemStore, DWORD dwFlags, void *pvArg,
+                                                PFN_CERT_ENUM_PHYSICAL_STORE pfnEnum);
 WINCRYPT32API HCERTSTORE WINAPI CertDuplicateStore(HCERTSTORE hCertStore);
 WINCRYPT32API BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags);
 WINCRYPT32API PCCERT_CONTEXT WINAPI CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrevCertContext);
@@ -1251,5 +1329,23 @@ WINCRYPT32API BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object
     HCERTSTORE *store, HCRYPTMSG *message, const void **context);
 WINCRYPT32API BOOL WINAPI CryptMsgGetParam(HCRYPTMSG message, DWORD type, DWORD index, void *data, DWORD *size);
 WINCRYPT32API BOOL WINAPI CryptMsgClose(HCRYPTMSG message);
+
+/* CryptAcquireCertificatePrivateKey. */
+#define CRYPT_ACQUIRE_CACHE_FLAG 0x00000001
+#define CRYPT_ACQUIRE_USE_PROV_INFO_FLAG 0x00000002
+#define CRYPT_ACQUIRE_COMPARE_KEY_FLAG 0x00000004
+#define CRYPT_ACQUIRE_NO_HEALING 0x00000008
+#define CRYPT_ACQUIRE_SILENT_FLAG 0x00000040
+#define CRYPT_ACQUIRE_WINDOW_HANDLE_FLAG 0x00000080
+#define CRYPT_ACQUIRE_NCRYPT_KEY_FLAGS_MASK 0x00070000
+#define CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG 0x00010000
+#define CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG 0x00020000
+#define CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG 0x00040000
+
+WINCRYPT32API BOOL WINAPI CryptAcquireCertificatePrivateKey(PCCERT_CONTEXT pCert, DWORD dwFlags, void *pvParameters,
+                                                            HCRYPTPROV_OR_NCRYPT_KEY_HANDLE *phCryptProvOrNCryptKey,
+                                                            DWORD *pdwKeySpec, BOOL *pfCallerFreeProvOrNCryptKey);
+
+#include <mime/win32/dpapi.h>
 
 #endif

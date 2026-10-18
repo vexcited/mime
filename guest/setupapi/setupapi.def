@@ -22,6 +22,8 @@ EXPORTS
     SetupDiOpenDevRegKey
     SetupDiOpenDeviceInfoA
     SetupDiOpenDeviceInfoW
+    SetupDiOpenDeviceInterfaceA
+    SetupDiOpenDeviceInterfaceW
     SetupDiOpenDeviceInterfaceRegKey
     SetupDiSetDeviceRegistryPropertyW
     CM_Locate_DevNodeW=cfgmgr32.CM_Locate_DevNodeW

@@ -45,6 +45,13 @@ static inline int UserMulDiv(int a, int b, int c)
 }
 
 extern HINSTANCE User32Instance;
+
+/* the process dpi awareness: 0 unaware, 1 system, 2 per monitor, 3 per monitor v2. */
+extern ULONG UserDpiAwareness;
+extern BOOL UserDpiAwarenessLocked;
+extern BOOL UserGdiScaling;
+void UserInitializeDpiAwareness(void);
+DPI_AWARENESS_CONTEXT UserDpiAwarenessContext(void);
 extern MIME_CLIENT_INFO User32Client;
 
 /* memory from the process heap. */

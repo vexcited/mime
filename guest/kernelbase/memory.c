@@ -129,6 +129,56 @@ BOOL WINAPI PrefetchVirtualMemory(HANDLE process, ULONG_PTR count, PWIN32_MEMORY
     return TRUE;
 }
 
+/*
+ * the range must be committed read write memory of one region. windows
+ * zeroes the pages in the working set and resets the range; mime's pages
+ * all count as resident, so all of them read as zero after.
+ */
+DECLSPEC_EXPORT DWORD WINAPI DiscardVirtualMemory(PVOID base, SIZE_T size)
+{
+    SYSTEM_BASIC_INFORMATION sbi;
+    NtQuerySystemInformation(SystemBasicInformation, &sbi, sizeof(sbi), nullptr);
+    ULONG page = sbi.PageSize;
+    if (!base || (ULONG_PTR)base % page || !size || size % page)
+        return ERROR_INVALID_PARAMETER;
+    MEMORY_BASIC_INFORMATION mbi;
+    NTSTATUS status = NtQueryVirtualMemory(NtCurrentProcess(), base, MemoryBasicInformation, &mbi, sizeof(mbi), nullptr);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    if (mbi.RegionSize < size || mbi.State != MEM_COMMIT || mbi.Protect != PAGE_READWRITE)
+        return RtlNtStatusToDosError(STATUS_INVALID_PAGE_PROTECTION);
+    if ((ULONG_PTR)base < sbi.MinimumUserModeAddress)
+        return ERROR_INVALID_PARAMETER;
+    memset(base, 0, size);
+    PVOID b = base;
+    SIZE_T s = size;
+    status = NtAllocateVirtualMemory(NtCurrentProcess(), &b, 0, &s, MEM_RESET, PAGE_READWRITE);
+    return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
+}
+
+/* offered pages keep their contents in mime, so reclaiming always finds them intact. */
+DECLSPEC_EXPORT DWORD WINAPI OfferVirtualMemory(PVOID base, SIZE_T size, DWORD priority)
+{
+    if (priority - 1 > 3)
+        return ERROR_INVALID_PARAMETER;
+    if (!base || !size)
+        return ERROR_INVALID_PARAMETER;
+    MEMORY_BASIC_INFORMATION mbi;
+    NTSTATUS status = NtQueryVirtualMemory(NtCurrentProcess(), base, MemoryBasicInformation, &mbi, sizeof(mbi), nullptr);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_PRIVATE)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_SUCCESS;
+}
+
+DECLSPEC_EXPORT DWORD WINAPI ReclaimVirtualMemory(const void *base, SIZE_T size)
+{
+    if (!base || !size)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_SUCCESS;
+}
+
 UINT WINAPI GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addresses, ULONG_PTR *count,
                           LPDWORD granularity)
 {

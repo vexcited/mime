@@ -274,6 +274,7 @@ enum {
     MIME_HC_POINTER = 0x44,     /* (MIME_POINTER_*, window_id, left, top, right, bottom) screen rectangle */
     MIME_HC_PAD_RUMBLE = 0x45,  /* (pad, low frequency motor, high frequency motor) from 0 to 65535 */
     MIME_HC_GAMMA = 0x46,       /* (pa of three channels of 256 values, red first, or 0 for the identity) */
+    MIME_HC_NET_CONFIG = 0x47,  /* (MimeNetConfig pa, size) -> bytes written, as many entries as fit */
 };
 
 /* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */
@@ -353,6 +354,8 @@ enum {
     MIME_NET_IF_BROADCAST = 1u << 2,
     MIME_NET_IF_MULTICAST = 1u << 3,
     MIME_NET_IF_POINTTOPOINT = 1u << 4,
+    MIME_NET_IF_RUNNING = 1u << 5, /* the link is up: a carrier, or a virtual link that is ready */
+    MIME_NET_IF_VIRTUAL = 1u << 6, /* no hardware behind it, such as a bridge, a tunnel or a veth */
 };
 
 typedef struct MimeNetInterface {
@@ -366,6 +369,80 @@ typedef struct MimeNetInterface {
     uint8_t pad[2];
     MimeNetAddr addr;
 } MimeNetInterface;
+
+/*
+ * the host's network configuration as windows adapters show it: the links,
+ * their addresses, the routes through a gateway and the resolver's servers
+ * and search domains. the arrays follow the header in this order.
+ */
+enum {
+    MIME_NET_LINK_OTHER = 0,
+    MIME_NET_LINK_ETHERNET = 1,
+    MIME_NET_LINK_WIRELESS = 2,
+    MIME_NET_LINK_LOOPBACK = 3,
+    MIME_NET_LINK_TUNNEL = 4, /* an ip tunnel without link layer, such as wireguard or a tun device */
+    MIME_NET_LINK_PPP = 5,
+};
+
+typedef struct MimeNetLink {
+    char name[16];
+    uint32_t index;
+    uint32_t flags; /* MIME_NET_IF_* */
+    uint32_t mtu;
+    uint32_t type;  /* MIME_NET_LINK_* */
+    uint64_t speed; /* bits per second, 0 when unknown */
+    uint8_t mac_length;
+    uint8_t mac[8];
+    uint8_t pad[7];
+} MimeNetLink;
+
+enum {
+    MIME_NET_ADDR_DYNAMIC = 1u << 0,   /* leased by dhcp or configured from router advertisements */
+    MIME_NET_ADDR_TEMPORARY = 1u << 1, /* an ipv6 privacy address */
+    MIME_NET_ADDR_DEPRECATED = 1u << 2,
+    MIME_NET_ADDR_TENTATIVE = 1u << 3,
+};
+
+typedef struct MimeNetAddress {
+    uint32_t index; /* of the link */
+    uint32_t flags; /* MIME_NET_ADDR_* */
+    uint32_t valid; /* seconds left, UINT32_MAX for ever */
+    uint32_t preferred;
+    uint8_t prefix;
+    uint8_t pad[3];
+    MimeNetAddr addr;
+} MimeNetAddress;
+
+enum {
+    MIME_NET_ROUTE_STATIC = 0,
+    MIME_NET_ROUTE_DHCP = 1,
+    MIME_NET_ROUTE_RA = 2, /* learned from router advertisements */
+};
+
+typedef struct MimeNetRoute {
+    uint32_t index;  /* of the link */
+    uint32_t metric; /* the host's, 0 when it has none */
+    uint8_t prefix;  /* 0 for a default route */
+    uint8_t origin;  /* MIME_NET_ROUTE_* */
+    uint8_t pad[2];
+    MimeNetAddr destination;
+    MimeNetAddr gateway;
+} MimeNetRoute;
+
+#define MIME_NET_MAX_DNS 8
+
+typedef struct MimeNetConfig {
+    uint32_t size; /* bytes written, this header and the arrays */
+    uint32_t links;
+    uint32_t addresses;
+    uint32_t routes;
+    uint32_t servers;
+    uint32_t pad;
+    char domain[256]; /* utf-8, the resolver's domain */
+    char search[256]; /* the search domains, separated by spaces */
+    MimeNetAddr server[MIME_NET_MAX_DNS];
+    /* MimeNetLink link[links], MimeNetAddress address[addresses], MimeNetRoute route[routes] */
+} MimeNetConfig;
 
 /*
  * control channel. the host queues messages and raises MIME_IRQ_CTRL, the

@@ -1225,6 +1225,12 @@ static void prefix_mask(int family, int bits, BYTE *mask)
         mask[i] = bits >= 8 ? 0xFF : (BYTE)(0xFF << (8 - bits));
 }
 
+/* an address of an interface that is up with its link up, as the ip helper lists them. */
+static BOOL interface_ready(const MIME_AFD_INTERFACE *e)
+{
+    return (e->Flags & (MIME_AFD_IF_UP | MIME_AFD_IF_RUNNING)) == (MIME_AFD_IF_UP | MIME_AFD_IF_RUNNING);
+}
+
 /* SIO_GET_INTERFACE_LIST: the ipv4 interfaces of the host. */
 static int interface_list(LPVOID out, DWORD out_size, LPDWORD returned)
 {
@@ -1234,14 +1240,14 @@ static int interface_list(LPVOID out, DWORD out_size, LPDWORD returned)
         return -n;
     DWORD count = 0;
     for (int i = 0; i < n; i++)
-        count += list[i].Address.Family == AF_INET && (list[i].Flags & MIME_AFD_IF_UP);
+        count += list[i].Address.Family == AF_INET && interface_ready(&list[i]);
     *returned = count * sizeof(INTERFACE_INFO);
     if (out_size < *returned || !out)
         return WSAEFAULT;
     INTERFACE_INFO *info = out;
     for (int i = 0; i < n; i++) {
         const MIME_AFD_INTERFACE *e = &list[i];
-        if (e->Address.Family != AF_INET || !(e->Flags & MIME_AFD_IF_UP))
+        if (e->Address.Family != AF_INET || !interface_ready(e))
             continue;
         memset(info, 0, sizeof(*info));
         info->iiFlags = IFF_UP;
@@ -1273,7 +1279,7 @@ static int address_list(const WS_SOCKET *sock, LPVOID out, DWORD out_size, LPDWO
         return -n;
     int count = 0;
     for (int i = 0; i < n; i++) {
-        if (list[i].Address.Family == sock->family && (list[i].Flags & MIME_AFD_IF_UP) &&
+        if (list[i].Address.Family == sock->family && interface_ready(&list[i]) &&
             !(list[i].Flags & MIME_AFD_IF_LOOPBACK))
             count++;
     }
@@ -1287,7 +1293,7 @@ static int address_list(const WS_SOCKET *sock, LPVOID out, DWORD out_size, LPDWO
     l->iAddressCount = count;
     int k = 0;
     for (int i = 0; i < n; i++) {
-        if (list[i].Address.Family != sock->family || !(list[i].Flags & MIME_AFD_IF_UP) ||
+        if (list[i].Address.Family != sock->family || !interface_ready(&list[i]) ||
             (list[i].Flags & MIME_AFD_IF_LOOPBACK))
             continue;
         memcpy(data, &list[i].Address, size);
@@ -1440,7 +1446,7 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
         break;
     case SIO_ADDRESS_LIST_CHANGE:
     case SIO_ROUTING_INTERFACE_CHANGE:
-        /* the addresses never change under a guest; an overlapped watch simply never completes. */
+        /* winsock does not watch the host's addresses yet, iphlpapi does: an overlapped watch never completes. */
         if (overlapped) {
             overlapped->Internal = (ULONG_PTR)STATUS_PENDING;
             release(sock);

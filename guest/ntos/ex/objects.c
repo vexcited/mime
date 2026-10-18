@@ -17,6 +17,12 @@ void MiInitializeSections(void);
 typedef struct ETIMER {
     KTIMER Timer;
     KDPC Dpc;
+    /* the completion routine of the thread that set the timer, as a user apc. */
+    KAPC Apc;
+    PETHREAD ApcThread; /* referenced */
+    PVOID ApcRoutine;
+    PVOID ApcContext;
+    KSPIN_LOCK ApcLock;
 } ETIMER;
 
 static void init_shared_data(void)
@@ -61,9 +67,56 @@ static void init_shared_data(void)
     k->Cookie = (ULONG)(HalReadCounter() * 0x9E3779B97F4A7C15ull >> 32);
 }
 
+static void drop_apc_thread(ETIMER *t)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&t->ApcLock, &irql);
+    PETHREAD thread = t->ApcThread;
+    t->ApcThread = nullptr;
+    t->ApcRoutine = nullptr;
+    KeReleaseSpinLock(&t->ApcLock, irql);
+    if (thread)
+        ObDereferenceObject(thread);
+}
+
 static void timer_delete(PVOID object)
 {
     KeCancelTimer(&((ETIMER *)object)->Timer);
+    drop_apc_thread(object);
+}
+
+/* the user part runs the routine; the timer stays referenced until then. */
+static void NTAPI timer_apc_kernel(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, PVOID *a1, PVOID *a2)
+{
+    ObDereferenceObject(CONTAINING_RECORD(apc, ETIMER, Apc));
+}
+
+static void NTAPI timer_apc_rundown(PKAPC apc)
+{
+    ObDereferenceObject(CONTAINING_RECORD(apc, ETIMER, Apc));
+}
+
+/*
+ * on expiry, the routine is queued to the thread that set the timer with
+ * the expiry time in its two arguments; an apc still queued is not queued
+ * twice, so a periodic timer of a thread that does not wait alertably
+ * delivers once.
+ */
+static void NTAPI timer_dpc(PKDPC dpc, PVOID context, PVOID arg1, PVOID arg2)
+{
+    ETIMER *t = context;
+    KIRQL irql;
+    KeAcquireSpinLock(&t->ApcLock, &irql);
+    if (t->ApcThread && t->ApcRoutine && !t->Apc.Inserted) {
+        KeInitializeApc(&t->Apc, &t->ApcThread->Tcb, OriginalApcEnvironment, timer_apc_kernel, timer_apc_rundown,
+                        (PKNORMAL_ROUTINE)t->ApcRoutine, UserMode, t->ApcContext);
+        ObReferenceObject(t);
+        LARGE_INTEGER now;
+        KeQuerySystemTime(&now);
+        if (!KeInsertQueueApc(&t->Apc, (PVOID)(ULONG_PTR)now.LowPart, (PVOID)(ULONG_PTR)(ULONG)now.HighPart, 0))
+            ObDereferenceObject(t);
+    }
+    KeReleaseSpinLock(&t->ApcLock, irql);
 }
 
 void ExInitialize(void)
@@ -144,7 +197,9 @@ static void init_semaphore(PVOID o, ULONG_PTR count, ULONG_PTR limit)
 
 static void init_timer(PVOID o, ULONG_PTR type, ULONG_PTR unused)
 {
+    memset(o, 0, sizeof(ETIMER));
     KeInitializeTimerEx(&((ETIMER *)o)->Timer, (TIMER_TYPE)type);
+    KeInitializeSpinLock(&((ETIMER *)o)->ApcLock);
 }
 
 NTSTATUS NTAPI NtCreateEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, EVENT_TYPE type,
@@ -293,7 +348,20 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
-    KeSetTimerEx(&t->Timer, d, period, nullptr);
+    KeCancelTimer(&t->Timer);
+    drop_apc_thread(t);
+    if (apc) {
+        PETHREAD thread = PsCurrentThread();
+        ObReferenceObject(thread);
+        KIRQL irql;
+        KeAcquireSpinLock(&t->ApcLock, &irql);
+        t->ApcThread = thread;
+        t->ApcRoutine = apc;
+        t->ApcContext = apc_context;
+        KeReleaseSpinLock(&t->ApcLock, irql);
+        KeInitializeDpc(&t->Dpc, timer_dpc, t);
+    }
+    KeSetTimerEx(&t->Timer, d, period, apc ? &t->Dpc : nullptr);
     ObDereferenceObject(t);
     if (previous)
         KiCopyToUser(previous, &state, sizeof(state));
@@ -308,6 +376,7 @@ NTSTATUS NTAPI NtCancelTimer(HANDLE handle, PBOOLEAN current)
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
     KeCancelTimer(&t->Timer);
+    drop_apc_thread(t);
     ObDereferenceObject(t);
     if (current)
         KiCopyToUser(current, &state, sizeof(state));

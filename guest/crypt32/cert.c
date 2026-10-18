@@ -365,6 +365,9 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
     return return_data(hash, size, pvData, pcbData);
 }
 
+static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData);
+
+/* a certificate of a registry store keeps its properties there too, all but the hash and the process handles. */
 BOOL WINAPI CertSetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD dwPropId, DWORD dwFlags,
                                               const void *pvData)
 {
@@ -372,6 +375,20 @@ BOOL WINAPI CertSetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
         (dwPropId >= CERT_CERT_PROP_ID && dwPropId <= CERT_CTL_PROP_ID))
         return CrFail(E_INVALIDARG);
     cr_cert *cert = CrCert(pCertContext);
+    cr_store *store = cert->store;
+    BOOL persist = store && store->reg && !cert->deleted && !(dwFlags & CERT_SET_PROPERTY_INHIBIT_PERSIST_FLAG) &&
+                   dwPropId != CERT_SHA1_HASH_PROP_ID && dwPropId != CERT_KEY_CONTEXT_PROP_ID &&
+                   dwPropId != CERT_KEY_PROV_HANDLE_PROP_ID && dwPropId != CERT_NCRYPT_KEY_HANDLE_PROP_ID;
+    BOOL strict = !(dwFlags & CERT_SET_PROPERTY_IGNORE_PERSIST_ERROR_FLAG);
+    if (persist && strict && !CrRegCanWrite(store))
+        return CrFail(E_ACCESSDENIED);
+    if (!set_prop(cert, dwPropId, pvData))
+        return FALSE;
+    return !persist || CrRegWriteCert(store, pCertContext) || !strict;
+}
+
+static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData)
+{
     if (!pvData) {
         CrLock();
         remove_prop(cert, dwPropId);
@@ -407,6 +424,8 @@ BOOL WINAPI CertSetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
     }
     case CERT_KEY_PROV_HANDLE_PROP_ID:
         return store_prop(cert, dwPropId, pvData, sizeof(HCRYPTPROV));
+    case CERT_NCRYPT_KEY_HANDLE_PROP_ID:
+        return store_prop(cert, dwPropId, pvData, sizeof(NCRYPT_KEY_HANDLE));
     case CERT_KEY_SPEC_PROP_ID:
         return store_prop(cert, dwPropId, pvData, sizeof(DWORD));
     case CERT_DATE_STAMP_PROP_ID:

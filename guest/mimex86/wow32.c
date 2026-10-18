@@ -3,64 +3,16 @@
 #define NTSYSCALLAPI
 #include <mime/ntrtl.h>
 #include <mime/wow32.h>
-#include <mime/condrv.h>
+#include <mime/afd.h>
 #include "mime_svc_nt.h"
 #include "x86.h"
+#include "wow32_convert.h"
 
-#define FILE_DEVICE_KEYBOARD 0x0B
-#define FILE_DEVICE_BATTERY 0x29
-
-/* advapi32_private.h declares it for the dlls that use it. */
+/* advapi32_private.h declares them for the dlls that use them. */
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor, ULONG length,
                                                   PULONG needed);
-
-static PVOID pointer32(ULONG value)
-{
-    return (PVOID)(ULONG_PTR)value;
-}
-
-static HANDLE handle32(ULONG value)
-{
-    return (HANDLE)(LONG_PTR)(LONG)value;
-}
-
-static UNICODE_STRING string32(ULONG address)
-{
-    const MIME_STRING32 *s = pointer32(address);
-    return (UNICODE_STRING){s->Length, s->MaximumLength, pointer32(s->Buffer)};
-}
-
-static OBJECT_ATTRIBUTES attributes32(ULONG address, UNICODE_STRING *name)
-{
-    const MIME_OBJECT_ATTRIBUTES32 *a = pointer32(address);
-    OBJECT_ATTRIBUTES out = {sizeof(out)};
-    if (!a)
-        return out;
-    out.RootDirectory = handle32(a->RootDirectory);
-    out.Attributes = a->Attributes;
-    if (a->ObjectName) {
-        *name = string32(a->ObjectName);
-        out.ObjectName = name;
-    }
-    out.SecurityDescriptor = pointer32(a->SecurityDescriptor);
-    out.SecurityQualityOfService = pointer32(a->SecurityQualityOfService);
-    return out;
-}
-
-static void store32(ULONG address, ULONG_PTR value)
-{
-    if (address)
-        *(PULONG)pointer32(address) = (ULONG)value;
-}
-
-static void store_iosb32(ULONG address, const IO_STATUS_BLOCK *io)
-{
-    if (address) {
-        MIME_IO_STATUS32 *out = pointer32(address);
-        out->Status = io->Status;
-        out->Information = (ULONG)io->Information;
-    }
-}
+NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disable_all, PVOID state, ULONG length,
+                                                    PVOID previous, PULONG returned);
 
 static PVOID allocate32(SIZE_T size)
 {
@@ -169,117 +121,8 @@ PVOID MxCreateTeb32(PVOID peb)
     return teb;
 }
 
-PVOID MxCurrentPeb32(void);
-PVOID MxCurrentTeb32(void);
-
 ULONG Mx32Win32kCall(ULONG number, const ULONG *arguments);
 
-typedef struct {
-    LARGE_INTEGER KernelTime, UserTime, CreateTime;
-    ULONG WaitTime, StartAddress, UniqueProcess, UniqueThread;
-    LONG Priority, BasePriority;
-    ULONG ContextSwitches, ThreadState, WaitReason;
-} THREAD_INFORMATION32;
-
-typedef struct {
-    ULONG NextEntryOffset, NumberOfThreads;
-    LARGE_INTEGER WorkingSetPrivateSize;
-    ULONG HardFaultCount, NumberOfThreadsHighWatermark;
-    ULONGLONG CycleTime;
-    LARGE_INTEGER CreateTime, UserTime, KernelTime;
-    MIME_STRING32 ImageName;
-    LONG BasePriority;
-    ULONG UniqueProcessId, InheritedFromUniqueProcessId, HandleCount, SessionId, UniqueProcessKey;
-    ULONG PeakVirtualSize, VirtualSize, PageFaultCount, PeakWorkingSetSize, WorkingSetSize;
-    ULONG QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage, QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage;
-    ULONG PagefileUsage, PeakPagefileUsage, PrivatePageCount;
-    LARGE_INTEGER IoCounters[6];
-} PROCESS_INFORMATION32;
-
-static_assert(sizeof(THREAD_INFORMATION32) == 0x40, "x86 thread record");
-static_assert(sizeof(PROCESS_INFORMATION32) == 0xB8, "x86 process record");
-
-/* converts the native process list into the x86 layout, threads and names included. */
-static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
-{
-    SIZE_T size = 0x10000;
-    PVOID native;
-    NTSTATUS status;
-    for (;;) {
-        native = nullptr;
-        SIZE_T alloc = size;
-        status = NtAllocateVirtualMemory(NtCurrentProcess(), &native, 0, &alloc, MEM_RESERVE | MEM_COMMIT,
-                                         PAGE_READWRITE);
-        if (!NT_SUCCESS(status))
-            return status;
-        ULONG need = 0;
-        status = NtQuerySystemInformation(SystemProcessInformation, native, (ULONG)size, &need);
-        if (status != STATUS_INFO_LENGTH_MISMATCH || size >= 0x1000000)
-            break;
-        SIZE_T release = 0;
-        NtFreeVirtualMemory(NtCurrentProcess(), &native, &release, MEM_RELEASE);
-        size = need > size ? need + 0x1000 : size * 2;
-    }
-    ULONG total = 0;
-    if (NT_SUCCESS(status)) {
-        /* first pass sizes, second pass writes when the caller's buffer holds everything. */
-        for (int pass = 0; pass < 2 && NT_SUCCESS(status); pass++) {
-            ULONG used = 0;
-            PROCESS_INFORMATION32 *last = nullptr;
-            for (SYSTEM_PROCESS_INFORMATION *p = native;;
-                 p = (SYSTEM_PROCESS_INFORMATION *)((PUCHAR)p + p->NextEntryOffset)) {
-                ULONG name = p->ImageName.Length ? p->ImageName.Length + sizeof(WCHAR) : 0;
-                ULONG record = (sizeof(PROCESS_INFORMATION32) + p->NumberOfThreads * sizeof(THREAD_INFORMATION32) +
-                                name + 7) & ~7u;
-                if (pass) {
-                    PROCESS_INFORMATION32 *q = pointer32(out + used);
-                    memset(q, 0, record);
-                    q->NumberOfThreads = p->NumberOfThreads;
-                    q->NumberOfThreadsHighWatermark = p->NumberOfThreadsHighWatermark;
-                    q->CreateTime = p->CreateTime;
-                    q->BasePriority = p->BasePriority;
-                    q->UniqueProcessId = (ULONG)(ULONG_PTR)p->UniqueProcessId;
-                    q->InheritedFromUniqueProcessId = (ULONG)(ULONG_PTR)p->InheritedFromUniqueProcessId;
-                    q->HandleCount = p->HandleCount;
-                    q->SessionId = p->SessionId;
-                    q->UniqueProcessKey = (ULONG)p->UniqueProcessKey;
-                    SYSTEM_THREAD_INFORMATION *t = (SYSTEM_THREAD_INFORMATION *)(p + 1);
-                    THREAD_INFORMATION32 *u = (THREAD_INFORMATION32 *)(q + 1);
-                    for (ULONG i = 0; i < p->NumberOfThreads; i++, t++, u++) {
-                        u->CreateTime = t->CreateTime;
-                        u->StartAddress = (ULONG)(ULONG_PTR)t->StartAddress;
-                        u->UniqueProcess = (ULONG)(ULONG_PTR)t->ClientId.UniqueProcess;
-                        u->UniqueThread = (ULONG)(ULONG_PTR)t->ClientId.UniqueThread;
-                        u->Priority = t->Priority;
-                        u->BasePriority = t->BasePriority;
-                        u->ThreadState = t->ThreadState;
-                        u->WaitReason = t->WaitReason;
-                    }
-                    if (name) {
-                        memcpy(u, p->ImageName.Buffer, p->ImageName.Length);
-                        q->ImageName.Length = p->ImageName.Length;
-                        q->ImageName.MaximumLength = (USHORT)name;
-                        q->ImageName.Buffer = out + used + (ULONG)((PUCHAR)u - (PUCHAR)q);
-                    }
-                    if (last)
-                        last->NextEntryOffset = (ULONG)((PUCHAR)q - (PUCHAR)last);
-                    last = q;
-                }
-                used += record;
-                if (!p->NextEntryOffset)
-                    break;
-            }
-            total = used;
-            if (!pass && total > length)
-                status = STATUS_INFO_LENGTH_MISMATCH;
-        }
-    }
-    SIZE_T release = 0;
-    NtFreeVirtualMemory(NtCurrentProcess(), &native, &release, MEM_RELEASE);
-    if (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH)
-        store32(returned, total);
-    return status;
-}
 
 /* how this cpu runs a 32-bit apc routine(context, ...): the native routine and its first argument. */
 void Mx32ApcRoutine(ULONG routine, ULONG context, PVOID *native, PVOID *argument);
@@ -294,91 +137,318 @@ static PVOID io_apc32(ULONG routine, ULONG context, PVOID *apc_context)
     return (PVOID)((ULONG_PTR)native | 1);
 }
 
-static BOOLEAN synchronous_file(HANDLE file)
+/* the handle a call made, narrowed into the caller's variable when it succeeded. */
+static NTSTATUS handle_out(NTSTATUS status, ULONG address, HANDLE handle)
 {
-    IO_STATUS_BLOCK io;
-    ULONG mode = 0;
-    return NT_SUCCESS(NtQueryInformationFile(file, &io, &mode, sizeof(mode), FileModeInformation)) &&
-           (mode & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
+    if (NT_SUCCESS(status))
+        store32(address, (ULONG_PTR)handle);
+    return status;
 }
 
-/* NtQueryVirtualMemory with the 32-bit layouts of what it returns; memory above the 32-bit space is not the caller's. */
-static NTSTATUS query_memory32(const ULONG *a)
+/* ------------------------------------------------------------ processes and threads */
+
+/* a string of 32-bit process parameters, at an offset from them when they are not normalized. */
+static UNICODE_STRING parameter_string(const MIME_STRING32 *s, ULONG base)
 {
-    PVOID base = pointer32(a[1]);
-    ULONG length = a[4];
-    PVOID out = pointer32(a[3]);
-    NTSTATUS status;
-    switch (a[2]) {
-    case MemoryBasicInformation: {
-        if (length < 28)
-            return STATUS_INFO_LENGTH_MISMATCH;
-        MEMORY_BASIC_INFORMATION m;
-        status = NtQueryVirtualMemory(handle32(a[0]), base, MemoryBasicInformation, &m, sizeof(m), nullptr);
-        if (!NT_SUCCESS(status))
-            return status;
-        ULONG_PTR end = (ULONG_PTR)m.BaseAddress + m.RegionSize;
-        if ((ULONG_PTR)m.BaseAddress >= 0x100000000ull)
-            return STATUS_INVALID_PARAMETER;
-        if (end > 0x100000000ull)
-            end = 0x100000000ull;
-        ULONG *o = out;
-        o[0] = (ULONG)(ULONG_PTR)m.BaseAddress;
-        o[1] = (ULONG)(ULONG_PTR)m.AllocationBase;
-        o[2] = m.AllocationProtect;
-        o[3] = (ULONG)(end - (ULONG_PTR)m.BaseAddress);
-        o[4] = m.State;
-        o[5] = m.Protect;
-        o[6] = m.Type;
-        store32(a[5], 28);
-        return STATUS_SUCCESS;
-    }
-    case MemoryImageInformation: {
-        if (length < 16)
-            return STATUS_INFO_LENGTH_MISMATCH;
-        MEMORY_IMAGE_INFORMATION m;
-        status = NtQueryVirtualMemory(handle32(a[0]), base, MemoryImageInformation, &m, sizeof(m), nullptr);
-        if (!NT_SUCCESS(status))
-            return status;
-        ULONG *o = out;
-        o[0] = (ULONG)(ULONG_PTR)m.ImageBase;
-        o[1] = (ULONG)m.SizeOfImage;
-        o[2] = m.ImageFlags;
-        o[3] = m.Reserved;
-        store32(a[5], 16);
-        return STATUS_SUCCESS;
-    }
-    case MemoryMappedFilenameInformation: {
-        /* the native string follows its header; the 32-bit one is 8 bytes shorter. */
-        SIZE_T size = (SIZE_T)length + 8;
-        PVOID native = nullptr;
-        status = NtAllocateVirtualMemory(NtCurrentProcess(), &native, 0, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        if (!NT_SUCCESS(status))
-            return status;
-        SIZE_T needed = 0;
-        status = NtQueryVirtualMemory(handle32(a[0]), base, MemoryMappedFilenameInformation, native, length + 8, &needed);
-        if (NT_SUCCESS(status)) {
-            UNICODE_STRING *name = native;
-            if (sizeof(MIME_STRING32) + name->MaximumLength > length) {
-                status = STATUS_BUFFER_OVERFLOW;
-            } else {
-                MIME_STRING32 *o = out;
-                PWSTR text = (PWSTR)(o + 1);
-                memmove(text, name->Buffer, name->MaximumLength);
-                *o = (MIME_STRING32){name->Length, name->MaximumLength, (ULONG)(ULONG_PTR)text};
-                store32(a[5], sizeof(*o) + name->MaximumLength);
-            }
-        } else if (status == STATUS_BUFFER_OVERFLOW || status == STATUS_INFO_LENGTH_MISMATCH) {
-            store32(a[5], needed > 8 ? needed - 8 : needed);
-        }
-        SIZE_T release = 0;
-        NtFreeVirtualMemory(NtCurrentProcess(), &native, &release, MEM_RELEASE);
-        return status;
-    }
-    default:
-        return STATUS_INVALID_INFO_CLASS;
+    PWSTR text = s->Buffer ? pointer32(s->Buffer + base) : nullptr;
+    return (UNICODE_STRING){s->Length, s->MaximumLength, text};
+}
+
+static void parameters64(const MIME_PARAMETERS32 *p, RTL_USER_PROCESS_PARAMETERS *pp)
+{
+    ULONG base = p->Flags & RTL_USER_PROC_PARAMS_NORMALIZED ? 0 : (ULONG)(ULONG_PTR)p;
+    memset(pp, 0, sizeof(*pp));
+    pp->MaximumLength = pp->Length = sizeof(*pp);
+    pp->Flags = p->Flags | RTL_USER_PROC_PARAMS_NORMALIZED;
+    pp->DebugFlags = p->DebugFlags;
+    pp->ConsoleHandle = handle32(p->ConsoleHandle);
+    pp->ConsoleFlags = p->ConsoleFlags;
+    pp->StandardInput = handle32(p->StandardInput);
+    pp->StandardOutput = handle32(p->StandardOutput);
+    pp->StandardError = handle32(p->StandardError);
+    pp->CurrentDirectory.DosPath = parameter_string(&p->CurrentDirectory, base);
+    pp->CurrentDirectory.Handle = handle32(p->CurrentDirectoryHandle);
+    pp->DllPath = parameter_string(&p->DllPath, base);
+    pp->ImagePathName = parameter_string(&p->ImagePathName, base);
+    pp->CommandLine = parameter_string(&p->CommandLine, base);
+    pp->Environment = pointer32(p->Environment);
+    pp->StartingX = p->StartingX;
+    pp->StartingY = p->StartingY;
+    pp->CountX = p->CountX;
+    pp->CountY = p->CountY;
+    pp->CountCharsX = p->CountCharsX;
+    pp->CountCharsY = p->CountCharsY;
+    pp->FillAttribute = p->FillAttribute;
+    pp->WindowFlags = p->WindowFlags;
+    pp->ShowWindowFlags = p->ShowWindowFlags;
+    pp->WindowTitle = parameter_string(&p->WindowTitle, base);
+    pp->DesktopInfo = parameter_string(&p->DesktopInfo, base);
+    pp->ShellInfo = parameter_string(&p->ShellInfo, base);
+    pp->RuntimeData = parameter_string(&p->RuntimeData, base);
+    if (p->Length >= offsetof(MIME_PARAMETERS32, EnvironmentVersion)) {
+        pp->EnvironmentSize = p->EnvironmentSize;
+        pp->EnvironmentVersion = p->EnvironmentVersion;
     }
 }
+
+/* PS_ATTRIBUTE in a list after its total length, 16 bytes in a 32-bit program. */
+typedef struct {
+    ULONG_PTR Attribute;
+    SIZE_T Size;
+    ULONG_PTR Value;
+    PSIZE_T ReturnLength;
+} PS_ATTRIBUTE64;
+
+#define PS_ATTRIBUTE_CLIENT_ID 0x10003
+#define PS_ATTRIBUTE_TEB_ADDRESS 0x10004
+#define PS_ATTRIBUTE_MAXIMUM 32
+
+/*
+ * NtCreateThreadEx with its attribute list widened. the thread's client id
+ * and teb are given back in the 32-bit layout; the values of the other
+ * attributes are handles or the addresses of what they describe.
+ */
+static NTSTATUS create_thread32(const ULONG *a)
+{
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa = attributes32(a[2], &name);
+    struct {
+        SIZE_T TotalLength;
+        PS_ATTRIBUTE64 Attributes[PS_ATTRIBUTE_MAXIMUM];
+    } list;
+    const ULONG *in = pointer32(a[10]);
+    ULONG count = 0;
+    ULONG client = 0, teb = 0, client_length = 0, teb_length = 0;
+    if (in) {
+        if (in[0] < 20 || (in[0] - 4) % 16)
+            return STATUS_INVALID_PARAMETER;
+        count = (in[0] - 4) / 16;
+        if (count > PS_ATTRIBUTE_MAXIMUM)
+            return STATUS_INVALID_PARAMETER;
+        for (ULONG i = 0; i < count; i++) {
+            const ULONG *e = in + 1 + 4 * i;
+            PS_ATTRIBUTE64 *o = &list.Attributes[i];
+            /* the parent process, debug object and token are handles, sign extended; the rest addresses. */
+            BOOLEAN handle = e[0] >= 0x60000 && e[0] <= 0x60002;
+            *o = (PS_ATTRIBUTE64){e[0], e[1], handle ? (ULONG_PTR)(LONG_PTR)(LONG)e[2] : e[2], nullptr};
+            if (e[0] == PS_ATTRIBUTE_CLIENT_ID) {
+                client = e[2];
+                client_length = e[3];
+                o->Value = 0;
+            } else if (e[0] == PS_ATTRIBUTE_TEB_ADDRESS) {
+                teb = e[2];
+                teb_length = e[3];
+                o->Value = 0;
+            }
+        }
+        list.TotalLength = sizeof(SIZE_T) + count * sizeof(PS_ATTRIBUTE64);
+    }
+    HANDLE thread = nullptr;
+    NTSTATUS status = NtCreateThreadEx(&thread, a[1], a[2] ? &oa : nullptr, handle32(a[3]), pointer32(a[4]),
+                                       pointer32(a[5]), a[6], a[7], a[8], a[9], in ? &list : nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    store32(a[0], (ULONG_PTR)thread);
+    if (client || teb) {
+        THREAD_BASIC_INFORMATION info = {};
+        NtQueryInformationThread(thread, ThreadBasicInformation, &info, sizeof(info), nullptr);
+        if (client) {
+            PULONG id = pointer32(client);
+            id[0] = (ULONG)(ULONG_PTR)info.ClientId.UniqueProcess;
+            id[1] = (ULONG)(ULONG_PTR)info.ClientId.UniqueThread;
+            store32(client_length, 8);
+        }
+        if (teb) {
+            store32(teb, Mx32TebOf(handle32(a[3]), info.TebBaseAddress));
+            store32(teb_length, 4);
+        }
+    }
+    return status;
+}
+
+static NTSTATUS virtual_memory_io32(BOOLEAN write, const ULONG *a)
+{
+    SIZE_T done = 0;
+    NTSTATUS status = write ? NtWriteVirtualMemory(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), a[3], &done)
+                            : NtReadVirtualMemory(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), a[3], &done);
+    store32(a[4], saturate32(done));
+    return status;
+}
+
+/* MEMORY_RANGE_ENTRY: an address and a size, 8 bytes in a 32-bit program. */
+static NTSTATUS set_virtual_memory32(const ULONG *a)
+{
+    ULONG count = a[2];
+    if (!count || count > 0x10000)
+        return STATUS_INVALID_PARAMETER;
+    const ULONG *in = pointer32(a[3]);
+    ULONG_PTR *entries = Mx32Scratch((SIZE_T)count * 2 * sizeof(ULONG_PTR));
+    if (!entries)
+        return STATUS_NO_MEMORY;
+    for (ULONG i = 0; i < 2 * count; i++)
+        entries[i] = in[i];
+    NTSTATUS status = NtSetInformationVirtualMemory(handle32(a[0]), a[1], count, entries, pointer32(a[4]), a[5]);
+    Mx32FreeScratch(entries);
+    return status;
+}
+
+/* ------------------------------------------------------------ files */
+
+/*
+ * FILE_RENAME_INFORMATION and FILE_LINK_INFORMATION, with or without
+ * flags: a word of flags or a boolean, the root directory, then the
+ * name's length and characters.
+ */
+static NTSTATUS set_rename32(const ULONG *a)
+{
+    const ULONG *p = pointer32(a[2]);
+    if (!p || a[3] < 12 || (p[2] & 1) || p[2] > a[3] - 12 || p[2] > 65534)
+        return STATUS_INVALID_PARAMETER;
+    struct RENAME {
+        ULONG Flags;
+        HANDLE Root;
+        ULONG Length;
+        WCHAR Name[1];
+    };
+    SIZE_T size = offsetof(struct RENAME, Name) + p[2];
+    struct RENAME *info = Mx32Scratch(size);
+    if (!info)
+        return STATUS_NO_MEMORY;
+    info->Flags = p[0];
+    info->Root = handle32(p[1]);
+    info->Length = p[2];
+    memcpy(info->Name, p + 3, p[2]);
+    IO_STATUS_BLOCK io = {};
+    NTSTATUS status = NtSetInformationFile(handle32(a[0]), &io, info, (ULONG)size, a[4]);
+    Mx32FreeScratch(info);
+    store_iosb32(a[1], &io);
+    return status;
+}
+
+/* the classes whose records are the same in both, a large integer at most. */
+static BOOLEAN same_set_class(ULONG klass)
+{
+    switch (klass) {
+    case FileBasicInformation:
+    case FileDispositionInformation:
+    case FilePositionInformation:
+    case FileModeInformation:
+    case FileAllocationInformation:
+    case FileEndOfFileInformation:
+    case FilePipeInformation:
+    case 39: /* FileValidDataLengthInformation */
+    case 40: /* FileShortNameInformation */
+    case FileIoCompletionNotificationInformation:
+    case 43: /* FileIoPriorityHintInformation */
+    case 44: /* FileSfioReserveInformation */
+    case FileDispositionInformationEx:
+    case 67:
+    case 71: /* FileCaseSensitiveInformation */
+    case 74:
+    case 76:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static NTSTATUS set_file32(const ULONG *a)
+{
+    IO_STATUS_BLOCK io = {};
+    NTSTATUS status;
+    switch (a[4]) {
+    case FileRenameInformation:
+    case 11: /* FileLinkInformation */
+    case 65: /* FileRenameInformationEx */
+    case 72: /* FileLinkInformationEx */
+        return set_rename32(a);
+    case FileCompletionInformation:
+    case 61: { /* FileReplaceCompletionInformation */
+        /* the port, then the key. */
+        const ULONG *p = pointer32(a[2]);
+        if (a[3] < 8)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        PVOID info[2] = {p ? handle32(p[0]) : nullptr, p ? pointer32(p[1]) : nullptr};
+        status = NtSetInformationFile(handle32(a[0]), &io, p ? info : nullptr, sizeof(info), a[4]);
+        break;
+    }
+    default:
+        if (!same_set_class(a[4]))
+            return STATUS_INVALID_INFO_CLASS;
+        status = NtSetInformationFile(handle32(a[0]), &io, pointer32(a[2]), a[3], a[4]);
+        break;
+    }
+    store_iosb32(a[1], &io);
+    return status;
+}
+
+/* WSABUF: a length then the data, 8 bytes in a 32-bit program, each widened for the socket driver. */
+static NTSTATUS socket_transfer32(const ULONG *a, HANDLE file, HANDLE event, PVOID apc, PVOID context)
+{
+    if (a[7] != sizeof(MIME_AFD_TRANSFER) || !a[6])
+        return STATUS_INVALID_PARAMETER;
+    MIME_AFD_TRANSFER t;
+    memcpy(&t, pointer32(a[6]), sizeof(t));
+    if (t.BufferCount > 1024)
+        return STATUS_INVALID_PARAMETER;
+    MIME_AFD_BUFFER small[16];
+    MIME_AFD_BUFFER *buffers = small;
+    if (t.BufferCount > RTL_NUMBER_OF(small) && !(buffers = Mx32Scratch(t.BufferCount * sizeof(*buffers))))
+        return STATUS_NO_MEMORY;
+    const ULONG *in = pointer32((ULONG)t.Buffers);
+    for (ULONG i = 0; i < t.BufferCount; i++)
+        buffers[i] = (MIME_AFD_BUFFER){in[2 * i], 0, in[2 * i + 1]};
+    t.Buffers = (ULONG64)(ULONG_PTR)buffers;
+    /* the driver takes the buffers when the request starts, so they may go once it returns. */
+    NTSTATUS status = NtDeviceIoControlFile(file, event, apc, context, pointer32(a[4]), a[5], &t, sizeof(t),
+                                            pointer32(a[8]), a[9]);
+    if (buffers != small)
+        Mx32FreeScratch(buffers);
+    return status;
+}
+
+/* ------------------------------------------------------------ completion ports */
+
+static NTSTATUS remove_completion32(const ULONG *a)
+{
+    PVOID key = a[1] ? pointer32(*(PULONG)pointer32(a[1])) : nullptr;
+    PVOID context = a[2] ? pointer32(*(PULONG)pointer32(a[2])) : nullptr;
+    IO_STATUS_BLOCK io = {};
+    NTSTATUS status = NtRemoveIoCompletion(handle32(a[0]), &key, &context, &io, pointer32(a[4]));
+    if (status == STATUS_SUCCESS) {
+        store32(a[1], (ULONG_PTR)key);
+        store32(a[2], (ULONG_PTR)context);
+        store_iosb32(a[3], &io);
+    }
+    return status;
+}
+
+typedef struct {
+    PVOID KeyContext;
+    PVOID ApcContext;
+    IO_STATUS_BLOCK IoStatusBlock;
+} COMPLETION64;
+
+/* FILE_IO_COMPLETION_INFORMATION: a key, a context and a status block, 16 bytes in a 32-bit program. */
+static NTSTATUS remove_completions32(const ULONG *a)
+{
+    COMPLETION64 native[64];
+    ULONG count = a[2] < RTL_NUMBER_OF(native) ? a[2] : RTL_NUMBER_OF(native), removed = 0;
+    if (!count || !a[1])
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = NtRemoveIoCompletionEx(handle32(a[0]), native, count, &removed, pointer32(a[4]), (BOOLEAN)a[5]);
+    PULONG out = pointer32(a[1]);
+    for (ULONG i = 0; i < removed; i++) {
+        out[4 * i] = (ULONG)(ULONG_PTR)native[i].KeyContext;
+        out[4 * i + 1] = (ULONG)(ULONG_PTR)native[i].ApcContext;
+        out[4 * i + 2] = (ULONG)native[i].IoStatusBlock.Status;
+        out[4 * i + 3] = (ULONG)native[i].IoStatusBlock.Information;
+    }
+    store32(a[3], removed);
+    return status;
+}
+
+/* ------------------------------------------------------------ the call */
 
 NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
@@ -402,12 +472,9 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtQueryDirectoryObject: {
         /* the 64-bit entries are twice as large, so what they hold always fits the caller's buffer once packed. */
         ULONG length = a[2];
-        PUCHAR wide = nullptr;
-        SIZE_T size = length ? length : 1;
-        status = NtAllocateVirtualMemory(NtCurrentProcess(), (PVOID *)&wide, 0, &size, MEM_COMMIT | MEM_RESERVE,
-                                         PAGE_READWRITE);
-        if (!NT_SUCCESS(status))
-            return status;
+        PUCHAR wide = Mx32Scratch(length);
+        if (!wide)
+            return STATUS_NO_MEMORY;
         ULONG returned = 0;
         status = NtQueryDirectoryObject(handle32(a[0]), wide, length, (BOOLEAN)a[3], (BOOLEAN)a[4], pointer32(a[5]),
                                         &returned);
@@ -431,8 +498,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         if (a[6] && (NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL))
             store32(a[6], returned);
-        SIZE_T zero = 0;
-        NtFreeVirtualMemory(NtCurrentProcess(), (PVOID *)&wide, &zero, MEM_RELEASE);
+        Mx32FreeScratch(wide);
         return status;
     }
     case MIME_SVC_NtDuplicateObject: {
@@ -448,6 +514,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtDisplayString:
         name = string32(a[0]);
         return NtDisplayString(&name);
+
+    /* virtual memory: addresses and sizes zero extended, given back narrowed, inside the 32-bit space. */
     case MIME_SVC_NtAllocateVirtualMemory: {
         PVOID base = pointer32(*(PULONG)pointer32(a[1]));
         SIZE_T size = *(PULONG)pointer32(a[3]);
@@ -486,19 +554,30 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return status;
     }
     case MIME_SVC_NtQueryVirtualMemory:
-        return query_memory32(a);
+        return Mx32QueryVirtualMemory(a);
+    case MIME_SVC_NtReadVirtualMemory:
+    case MIME_SVC_NtWriteVirtualMemory:
+        return virtual_memory_io32(number == MIME_SVC_NtWriteVirtualMemory, a);
+    case MIME_SVC_NtFlushInstructionCache:
+        return NtFlushInstructionCache(handle32(a[0]), pointer32(a[1]), a[2]);
+    case MIME_SVC_NtFlushProcessWriteBuffers:
+        return NtFlushProcessWriteBuffers();
+    case MIME_SVC_NtSetInformationVirtualMemory:
+        return set_virtual_memory32(a);
+
+    /* processes and threads. */
     case MIME_SVC_NtCreateUserProcess: {
-        if (a[4] || a[5] || a[9] || a[10])
-            return STATUS_NOT_SUPPORTED;
-        MIME_PARAMETERS32 *p = pointer32(a[8]);
-        RTL_USER_PROCESS_PARAMETERS pp = {};
-        pp.MaximumLength = pp.Length = sizeof(pp);
-        pp.Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
-        pp.ImagePathName = string32((ULONG)(ULONG_PTR)&p->ImagePathName);
-        pp.CommandLine = string32((ULONG)(ULONG_PTR)&p->CommandLine);
-        pp.CurrentDirectory.DosPath = string32((ULONG)(ULONG_PTR)&p->CurrentDirectory);
+        /* an image's creation information and attribute lists, which the kernel refuses too. */
+        if (a[9] || a[10] || !a[8])
+            return a[8] ? STATUS_NOT_SUPPORTED : STATUS_INVALID_PARAMETER;
+        RTL_USER_PROCESS_PARAMETERS pp;
+        parameters64(pointer32(a[8]), &pp);
+        UNICODE_STRING process_name, thread_name;
+        OBJECT_ATTRIBUTES process_oa = attributes32(a[4], &process_name);
+        OBJECT_ATTRIBUTES thread_oa = attributes32(a[5], &thread_name);
         HANDLE process = nullptr, thread = nullptr;
-        status = NtCreateUserProcess(&process, &thread, a[2], a[3], nullptr, nullptr, a[6], a[7], &pp, nullptr, nullptr);
+        status = NtCreateUserProcess(&process, &thread, a[2], a[3], a[4] ? &process_oa : nullptr,
+                                     a[5] ? &thread_oa : nullptr, a[6], a[7], &pp, nullptr, nullptr);
         if (NT_SUCCESS(status)) {
             store32(a[0], (ULONG_PTR)process);
             store32(a[1], (ULONG_PTR)thread);
@@ -506,42 +585,15 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return status;
     }
     case MIME_SVC_NtCreateThreadEx:
-        if (a[10])
-            return STATUS_NOT_SUPPORTED;
-        oa = attributes32(a[2], &name);
-        status = NtCreateThreadEx(&handle, a[1], a[2] ? &oa : nullptr, handle32(a[3]), pointer32(a[4]),
-                                  pointer32(a[5]), a[6], a[7], a[8], a[9], nullptr);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+        return create_thread32(a);
     case MIME_SVC_NtQueueApcThread:
         return NtQueueApcThread(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), pointer32(a[3]), pointer32(a[4]));
     case MIME_SVC_NtResumeThread:
         return NtResumeThread(handle32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtSuspendThread:
         return NtSuspendThread(handle32(a[0]), pointer32(a[1]));
-    case MIME_SVC_NtCreateEvent:
-        oa = attributes32(a[2], &name);
-        status = NtCreateEvent(&handle, a[1], a[2] ? &oa : nullptr, a[3], a[4]);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
-    case MIME_SVC_NtOpenEvent:
-    case MIME_SVC_NtOpenSemaphore:
-    case MIME_SVC_NtOpenTimer:
-    case MIME_SVC_NtOpenSection:
-        oa = attributes32(a[2], &name);
-        if (number == MIME_SVC_NtOpenEvent)
-            status = NtOpenEvent(&handle, a[1], &oa);
-        else if (number == MIME_SVC_NtOpenSemaphore)
-            status = NtOpenSemaphore(&handle, a[1], &oa);
-        else if (number == MIME_SVC_NtOpenTimer)
-            status = NtOpenTimer(&handle, a[1], &oa);
-        else
-            status = NtOpenSection(&handle, a[1], &oa);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+    case MIME_SVC_NtAlertThread:
+        return NtAlertThread(handle32(a[0]));
     case MIME_SVC_NtOpenProcess: {
         /* the 32-bit client id holds two zero extended ids. */
         const ULONG *source = pointer32(a[3]);
@@ -552,10 +604,59 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         oa = attributes32(a[2], &name);
         status = NtOpenProcess(&handle, a[1], a[2] ? &oa : nullptr, source ? &cid : nullptr);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+        return handle_out(status, a[0], handle);
     }
+    case MIME_SVC_NtQueryInformationProcess:
+        return Mx32QueryInformationProcess(a);
+    case MIME_SVC_NtSetInformationProcess:
+        return Mx32SetInformationProcess(a);
+    case MIME_SVC_NtQueryInformationThread:
+        return Mx32QueryInformationThread(a);
+    case MIME_SVC_NtSetInformationThread:
+        return Mx32SetInformationThread(a);
+
+    /* jobs. */
+    case MIME_SVC_NtCreateJobObject:
+    case MIME_SVC_NtOpenJobObject:
+        oa = attributes32(a[2], &name);
+        if (number == MIME_SVC_NtCreateJobObject)
+            status = NtCreateJobObject(&handle, a[1], a[2] ? &oa : nullptr);
+        else
+            status = NtOpenJobObject(&handle, a[1], &oa);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtAssignProcessToJobObject:
+        return NtAssignProcessToJobObject(handle32(a[0]), handle32(a[1]));
+    case MIME_SVC_NtIsProcessInJob:
+        return NtIsProcessInJob(handle32(a[0]), handle32(a[1]));
+    case MIME_SVC_NtTerminateJobObject:
+        return NtTerminateJobObject(handle32(a[0]), a[1]);
+    case MIME_SVC_NtQueryInformationJobObject:
+        return Mx32QueryInformationJobObject(a);
+    case MIME_SVC_NtSetInformationJobObject:
+        return Mx32SetInformationJobObject(a);
+
+    /* synchronization objects. */
+    case MIME_SVC_NtCreateEvent:
+        oa = attributes32(a[2], &name);
+        status = NtCreateEvent(&handle, a[1], a[2] ? &oa : nullptr, a[3], a[4]);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtOpenEvent:
+    case MIME_SVC_NtOpenSemaphore:
+    case MIME_SVC_NtOpenTimer:
+    case MIME_SVC_NtOpenSection:
+    case MIME_SVC_NtOpenIoCompletion:
+        oa = attributes32(a[2], &name);
+        if (number == MIME_SVC_NtOpenEvent)
+            status = NtOpenEvent(&handle, a[1], &oa);
+        else if (number == MIME_SVC_NtOpenSemaphore)
+            status = NtOpenSemaphore(&handle, a[1], &oa);
+        else if (number == MIME_SVC_NtOpenTimer)
+            status = NtOpenTimer(&handle, a[1], &oa);
+        else if (number == MIME_SVC_NtOpenSection)
+            status = NtOpenSection(&handle, a[1], &oa);
+        else
+            status = NtOpenIoCompletion(&handle, a[1], &oa);
+        return handle_out(status, a[0], handle);
     case MIME_SVC_NtClearEvent:
         return NtClearEvent(handle32(a[0]));
     case MIME_SVC_NtPulseEvent:
@@ -563,23 +664,26 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtCreateSemaphore:
         oa = attributes32(a[2], &name);
         status = NtCreateSemaphore(&handle, a[1], a[2] ? &oa : nullptr, a[3], a[4]);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+        return handle_out(status, a[0], handle);
     case MIME_SVC_NtReleaseSemaphore:
         return NtReleaseSemaphore(handle32(a[0]), a[1], pointer32(a[2]));
     case MIME_SVC_NtCreateTimer:
         oa = attributes32(a[2], &name);
         status = NtCreateTimer(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
-    case MIME_SVC_NtSetTimer:
-        /* the apc routine runs as x86 code. */
-        return NtSetTimer(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), pointer32(a[3]), (BOOLEAN)a[4], a[5],
-                          pointer32(a[6]));
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtSetTimer: {
+        /* the apc routine, which takes the context and the time, is 32-bit code. */
+        PVOID routine = nullptr, context = pointer32(a[3]);
+        if (a[2])
+            Mx32ApcRoutine(a[2], a[3], &routine, &context);
+        return NtSetTimer(handle32(a[0]), pointer32(a[1]), routine, context, (BOOLEAN)a[4], a[5], pointer32(a[6]));
+    }
     case MIME_SVC_NtCancelTimer:
         return NtCancelTimer(handle32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtQueryTimerResolution:
+        return NtQueryTimerResolution(pointer32(a[0]), pointer32(a[1]), pointer32(a[2]));
+    case MIME_SVC_NtSetTimerResolution:
+        return NtSetTimerResolution(a[0], (BOOLEAN)a[1], pointer32(a[2]));
     case MIME_SVC_NtSignalAndWaitForSingleObject:
         return NtSignalAndWaitForSingleObject(handle32(a[0]), handle32(a[1]), (BOOLEAN)a[2], pointer32(a[3]));
     case MIME_SVC_NtCreateMutant:
@@ -589,9 +693,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             status = NtCreateMutant(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
         else
             status = NtOpenMutant(&handle, a[1], a[2] ? &oa : nullptr);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+        return handle_out(status, a[0], handle);
     case MIME_SVC_NtReleaseMutant:
         return NtReleaseMutant(handle32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtSetEvent:
@@ -600,9 +702,6 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtResetEvent(handle32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtYieldExecution:
         return NtYieldExecution();
-    case MIME_SVC_NtQuerySecurityObject:
-        /* a self relative descriptor has no pointers, so the buffer passes through. */
-        return NtQuerySecurityObject(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
     case MIME_SVC_NtWaitForSingleObject:
         return NtWaitForSingleObject(handle32(a[0]), a[1], pointer32(a[2]));
     case MIME_SVC_NtWaitForMultipleObjects: {
@@ -615,14 +714,72 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             handles[i] = handle32(source[i]);
         return NtWaitForMultipleObjects(a[0], handles, a[2], (BOOLEAN)a[3], pointer32(a[4]));
     }
-    case MIME_SVC_NtDeviceIoControlFile: {
-        /* the console's, hid's and xusb's buffers hold no pointers, so they need no conversion. */
-        ULONG type = a[5] >> 16;
-        BOOLEAN console = a[5] >= IOCTL_CONDRV_STATE && a[5] <= IOCTL_CONDRV_SYNC_EVENT && !(a[5] & 3);
-        if (!console && type != FILE_DEVICE_KEYBOARD && type != 0x8000 && type != FILE_DEVICE_BATTERY)
-            return STATUS_NOT_SUPPORTED;
+    /* the waits of locks: an address only names the wait, and a thread id is a number, zero extended. */
+    case MIME_SVC_NtWaitForAlertByThreadId:
+        return NtWaitForAlertByThreadId(pointer32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtAlertThreadByThreadId:
+        return NtAlertThreadByThreadId((HANDLE)(ULONG_PTR)a[0]);
+    case MIME_SVC_NtDelayExecution:
+        return NtDelayExecution(a[0], pointer32(a[1]));
+
+    /* completion ports: keys and contexts are pointer sized, zero extended and narrowed back. */
+    case MIME_SVC_NtCreateIoCompletion:
+        oa = attributes32(a[2], &name);
+        status = NtCreateIoCompletion(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtSetIoCompletion:
+        return NtSetIoCompletion(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), a[3], a[4]);
+    case MIME_SVC_NtSetIoCompletionEx:
+        return NtSetIoCompletionEx(handle32(a[0]), handle32(a[1]), pointer32(a[2]), pointer32(a[3]), a[4], a[5]);
+    case MIME_SVC_NtRemoveIoCompletion:
+        return remove_completion32(a);
+    case MIME_SVC_NtRemoveIoCompletionEx:
+        return remove_completions32(a);
+    case MIME_SVC_NtQueryIoCompletion:
+        /* IO_COMPLETION_BASIC_INFORMATION is a count. */
+        return NtQueryIoCompletion(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
+
+    /* files and devices. */
+    case MIME_SVC_NtOpenFile:
+    case MIME_SVC_NtCreateFile:
+        oa = attributes32(a[2], &name);
+        if (number == MIME_SVC_NtOpenFile)
+            status = NtOpenFile(&handle, a[1], &oa, &io, a[4], a[5]);
+        else
+            status = NtCreateFile(&handle, a[1], &oa, &io, pointer32(a[4]), a[5], a[6], a[7], a[8], pointer32(a[9]), a[10]);
+        store_iosb32(a[3], &io);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtCreateNamedPipeFile:
+        oa = attributes32(a[2], &name);
+        status = NtCreateNamedPipeFile(&handle, a[1], &oa, &io, a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11],
+                                       a[12], pointer32(a[13]));
+        store_iosb32(a[3], &io);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtReadFile:
+    case MIME_SVC_NtWriteFile: {
         PVOID context;
         PVOID apc = io_apc32(a[2], a[3], &context);
+        if (number == MIME_SVC_NtReadFile)
+            return NtReadFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
+                              pointer32(a[7]), pointer32(a[8]));
+        return NtWriteFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
+                           pointer32(a[7]), pointer32(a[8]));
+    }
+    case MIME_SVC_NtDeviceIoControlFile:
+    case MIME_SVC_NtFsControlFile: {
+        /*
+         * the buffers of every control mime's drivers answer hold numbers or
+         * fixed width addresses, so they pass through: the console's, the
+         * named pipes', hid's, xusb's, the system buttons' and the socket
+         * driver's, whose transfers only point at narrower WSABUF arrays.
+         */
+        PVOID context;
+        PVOID apc = io_apc32(a[2], a[3], &context);
+        if (number == MIME_SVC_NtFsControlFile)
+            return NtFsControlFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), a[5],
+                                   pointer32(a[6]), a[7], pointer32(a[8]), a[9]);
+        if (a[5] == IOCTL_AFD_SEND || a[5] == IOCTL_AFD_RECV)
+            return socket_transfer32(a, handle32(a[0]), handle32(a[1]), apc, context);
         return NtDeviceIoControlFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), a[5],
                                      pointer32(a[6]), a[7], pointer32(a[8]), a[9]);
     }
@@ -635,222 +792,33 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         status = NtCancelIoFileEx(handle32(a[0]), pointer32(a[1]), &io);
         store_iosb32(a[2], &io);
         return status;
-    case MIME_SVC_NtReadFile:
-    case MIME_SVC_NtWriteFile: {
-        PVOID context;
-        PVOID apc = io_apc32(a[2], a[3], &context);
-        if (number == MIME_SVC_NtReadFile)
-            return NtReadFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
-                              pointer32(a[7]), pointer32(a[8]));
-        return NtWriteFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
-                           pointer32(a[7]), pointer32(a[8]));
-    }
     case MIME_SVC_NtQueryDirectoryFile:
     case MIME_SVC_NtQueryDirectoryFileEx:
-        if (a[2] || !synchronous_file(handle32(a[0])))
+        /*
+         * the kernel answers before returning, for an asynchronous handle too,
+         * whose event is then set. it would not run an apc routine.
+         */
+        if (a[2])
             return STATUS_NOT_SUPPORTED;
         name = a[9] ? string32(a[9]) : (UNICODE_STRING){0};
         if (number == MIME_SVC_NtQueryDirectoryFile)
-            status = NtQueryDirectoryFile(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
-                                           pointer32(a[5]), a[6], a[7], a[8], a[9] ? &name : nullptr, a[10]);
+            status = NtQueryDirectoryFile(handle32(a[0]), nullptr, nullptr, pointer32(a[3]), &io, pointer32(a[5]),
+                                          a[6], a[7], a[8], a[9] ? &name : nullptr, a[10]);
         else
-            status = NtQueryDirectoryFileEx(handle32(a[0]), handle32(a[1]), nullptr, pointer32(a[3]), &io,
-                                             pointer32(a[5]), a[6], a[7], a[8], a[9] ? &name : nullptr);
+            status = NtQueryDirectoryFileEx(handle32(a[0]), nullptr, nullptr, pointer32(a[3]), &io, pointer32(a[5]),
+                                            a[6], a[7], a[8], a[9] ? &name : nullptr);
         store_iosb32(a[4], &io);
+        if (a[1] && status != STATUS_PENDING)
+            NtSetEvent(handle32(a[1]), nullptr);
         return status;
-    case MIME_SVC_NtQueryDefaultLocale:
-        return NtQueryDefaultLocale(a[0], pointer32(a[1]));
-    case MIME_SVC_NtQueryDefaultUILanguage:
-        return NtQueryDefaultUILanguage(pointer32(a[0]));
-    case MIME_SVC_NtOpenKey:
-    case MIME_SVC_NtOpenKeyEx:
-    case MIME_SVC_NtCreateKey: {
-        oa = attributes32(a[2], &name);
-        if (number == MIME_SVC_NtCreateKey) {
-            UNICODE_STRING klass = a[4] ? string32(a[4]) : (UNICODE_STRING){0};
-            status = NtCreateKey(&handle, a[1], &oa, a[3], a[4] ? &klass : nullptr, a[5], pointer32(a[6]));
-        } else if (number == MIME_SVC_NtOpenKeyEx) {
-            status = NtOpenKeyEx(&handle, a[1], &oa, a[3]);
-        } else {
-            status = NtOpenKey(&handle, a[1], &oa);
-        }
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
-    }
-    case MIME_SVC_NtQueryKey:
-        return NtQueryKey(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
-    case MIME_SVC_NtQueryValueKey:
-        name = string32(a[1]);
-        return NtQueryValueKey(handle32(a[0]), &name, a[2], pointer32(a[3]), a[4], pointer32(a[5]));
-    case MIME_SVC_NtEnumerateKey:
-        return NtEnumerateKey(handle32(a[0]), a[1], a[2], pointer32(a[3]), a[4], pointer32(a[5]));
-    case MIME_SVC_NtEnumerateValueKey:
-        return NtEnumerateValueKey(handle32(a[0]), a[1], a[2], pointer32(a[3]), a[4], pointer32(a[5]));
-    case MIME_SVC_NtSetValueKey:
-        name = string32(a[1]);
-        return NtSetValueKey(handle32(a[0]), &name, a[2], a[3], pointer32(a[4]), a[5]);
-    case MIME_SVC_NtDeleteKey:
-        return NtDeleteKey(handle32(a[0]));
-    case MIME_SVC_NtDeleteValueKey:
-        name = string32(a[1]);
-        return NtDeleteValueKey(handle32(a[0]), &name);
     case MIME_SVC_NtFlushBuffersFile:
         status = NtFlushBuffersFile(handle32(a[0]), &io);
         store_iosb32(a[1], &io);
         return status;
-    case MIME_SVC_NtFlushKey:
-        return NtFlushKey(handle32(a[0]));
-    case MIME_SVC_NtOpenProcessToken:
-    case MIME_SVC_NtOpenProcessTokenEx:
-        if (number == MIME_SVC_NtOpenProcessToken)
-            status = NtOpenProcessToken(handle32(a[0]), a[1], &handle);
-        else
-            status = NtOpenProcessTokenEx(handle32(a[0]), a[1], a[2], &handle);
-        if (NT_SUCCESS(status))
-            store32(a[number == MIME_SVC_NtOpenProcessToken ? 2 : 3], (ULONG_PTR)handle);
-        return status;
-    case MIME_SVC_NtOpenThreadToken:
-    case MIME_SVC_NtOpenThreadTokenEx:
-        if (number == MIME_SVC_NtOpenThreadToken)
-            status = NtOpenThreadToken(handle32(a[0]), a[1], (BOOLEAN)a[2], &handle);
-        else
-            status = NtOpenThreadTokenEx(handle32(a[0]), a[1], (BOOLEAN)a[2], a[3], &handle);
-        if (NT_SUCCESS(status))
-            store32(a[number == MIME_SVC_NtOpenThreadToken ? 3 : 4], (ULONG_PTR)handle);
-        return status;
-    case MIME_SVC_NtQueryInformationToken: {
-        /* token user, owner, primary group and integrity label contain a sid pointer. */
-        if (a[1] == 1 || a[1] == 4 || a[1] == 5 || a[1] == 25) {
-            ULONG64 buffer[128];
-            ULONG length = 0;
-            status = NtQueryInformationToken(handle32(a[0]), a[1], buffer, sizeof(buffer), &length);
-            if (!NT_SUCCESS(status))
-                return status;
-            PVOID sid = *(PVOID *)buffer;
-            ULONG bytes = 8 + 4 * ((PUCHAR)sid)[1];
-            ULONG header = a[1] == 1 || a[1] == 25 ? 8 : 4;
-            store32(a[4], header + bytes);
-            if (a[3] < header + bytes)
-                return STATUS_BUFFER_TOO_SMALL;
-            PULONG out = pointer32(a[2]);
-            out[0] = a[2] + header;
-            if (header == 8)
-                out[1] = ((PULONG)buffer)[2];
-            memcpy((PUCHAR)out + header, sid, bytes);
-            return STATUS_SUCCESS;
-        }
-        /* groups, restricted sids and the logon sid: a count, sid pointers with attributes, then the sids. */
-        if (a[1] == 2 || a[1] == 11 || a[1] == 28) {
-            ULONG64 buffer[1024];
-            ULONG length = 0;
-            status = NtQueryInformationToken(handle32(a[0]), a[1], buffer, sizeof(buffer), &length);
-            if (!NT_SUCCESS(status))
-                return status;
-            const ULONG count = *(PULONG)buffer;
-            const struct {
-                PVOID Sid;
-                ULONG Attributes;
-            } *groups = (const void *)((PUCHAR)buffer + sizeof(PVOID));
-            ULONG need = 4 + 8 * count;
-            for (ULONG i = 0; i < count; i++)
-                need += 8 + 4 * ((PUCHAR)groups[i].Sid)[1];
-            store32(a[4], need);
-            if (a[3] < need)
-                return STATUS_BUFFER_TOO_SMALL;
-            PULONG out = pointer32(a[2]);
-            ULONG at = 4 + 8 * count;
-            out[0] = count;
-            for (ULONG i = 0; i < count; i++) {
-                ULONG bytes = 8 + 4 * ((PUCHAR)groups[i].Sid)[1];
-                out[1 + 2 * i] = a[2] + at;
-                out[2 + 2 * i] = groups[i].Attributes;
-                memcpy((PUCHAR)out + at, groups[i].Sid, bytes);
-                at += bytes;
-            }
-            return STATUS_SUCCESS;
-        }
-        /* pointer-free token classes supported by the native token provider. */
-        if (a[1] == 3 || a[1] == 7 || a[1] == 8 || a[1] == 10 || a[1] == 12 ||
-            a[1] == 18 || a[1] == 20 || a[1] == 29)
-            return NtQueryInformationToken(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
-        return STATUS_NOT_IMPLEMENTED;
-    }
-    case MIME_SVC_NtOpenDirectoryObject:
-        oa = attributes32(a[2], &name);
-        status = NtOpenDirectoryObject(&handle, a[1], &oa);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
-    case MIME_SVC_NtOpenSymbolicLinkObject:
-        oa = attributes32(a[2], &name);
-        status = NtOpenSymbolicLinkObject(&handle, a[1], &oa);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
-    case MIME_SVC_NtCreateSymbolicLinkObject: {
-        oa = attributes32(a[2], &name);
-        UNICODE_STRING target = {};
-        if (a[3])
-            target = string32(a[3]);
-        status = NtCreateSymbolicLinkObject(&handle, a[1], &oa, a[3] ? &target : nullptr);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
-    }
-    case MIME_SVC_NtMakeTemporaryObject:
-        return NtMakeTemporaryObject(handle32(a[0]));
-    case MIME_SVC_NtQuerySymbolicLinkObject: {
-        name = string32(a[1]);
-        status = NtQuerySymbolicLinkObject(handle32(a[0]), &name, pointer32(a[2]));
-        ((MIME_STRING32 *)pointer32(a[1]))->Length = name.Length;
-        return status;
-    }
     case MIME_SVC_NtSetInformationFile:
-        switch (a[4]) {
-        case FileRenameInformation: {
-            const ULONG *p = pointer32(a[2]);
-            if (!p || a[3] < 12 || (p[2] & 1) || p[2] > a[3] - 12 || p[2] > 65534)
-                return STATUS_INVALID_PARAMETER;
-            struct RENAME {
-                BOOLEAN Replace;
-                HANDLE Root;
-                ULONG Length;
-                WCHAR Name[1];
-            };
-            SIZE_T size = offsetof(struct RENAME, Name) + p[2];
-            PVOID memory = nullptr;
-            SIZE_T allocation = size;
-            status = NtAllocateVirtualMemory(NtCurrentProcess(), &memory, 0, &allocation,
-                                              MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-            if (!NT_SUCCESS(status))
-                return status;
-            struct RENAME *info = memory;
-            info->Replace = *(BYTE *)p;
-            info->Root = handle32(p[1]);
-            info->Length = p[2];
-            memcpy(info->Name, p + 3, p[2]);
-            status = NtSetInformationFile(handle32(a[0]), &io, info, (ULONG)size, a[4]);
-            allocation = 0;
-            NtFreeVirtualMemory(NtCurrentProcess(), &memory, &allocation, MEM_RELEASE);
-            store_iosb32(a[1], &io);
-            return status;
-        }
-        case FileBasicInformation:
-        case FileDispositionInformation:
-        case FilePositionInformation:
-        case FileModeInformation:
-        case FileAllocationInformation:
-        case FileEndOfFileInformation:
-        case FilePipeInformation:
-        case FileDispositionInformationEx:
-            status = NtSetInformationFile(handle32(a[0]), &io, pointer32(a[2]), a[3], a[4]);
-            store_iosb32(a[1], &io);
-            return status;
-        default:
-            return STATUS_NOT_IMPLEMENTED;
-        }
+        return set_file32(a);
     case MIME_SVC_NtQueryInformationFile:
+        /* the classes mime's file systems answer hold no pointers. */
         status = NtQueryInformationFile(handle32(a[0]), &io, pointer32(a[2]), a[3], a[4]);
         store_iosb32(a[1], &io);
         return status;
@@ -864,23 +832,12 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtQueryFullAttributesFile:
         oa = attributes32(a[0], &name);
         return NtQueryFullAttributesFile(&oa, pointer32(a[1]));
-    case MIME_SVC_NtOpenFile:
-    case MIME_SVC_NtCreateFile:
-        oa = attributes32(a[2], &name);
-        if (number == MIME_SVC_NtOpenFile)
-            status = NtOpenFile(&handle, a[1], &oa, &io, a[4], a[5]);
-        else
-            status = NtCreateFile(&handle, a[1], &oa, &io, pointer32(a[4]), a[5], a[6], a[7], a[8], pointer32(a[9]), a[10]);
-        store_iosb32(a[3], &io);
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+
+    /* sections. */
     case MIME_SVC_NtCreateSection:
         oa = attributes32(a[2], &name);
         status = NtCreateSection(&handle, a[1], a[2] ? &oa : nullptr, pointer32(a[3]), a[4], a[5], handle32(a[6]));
-        if (NT_SUCCESS(status))
-            store32(a[0], (ULONG_PTR)handle);
-        return status;
+        return handle_out(status, a[0], handle);
     case MIME_SVC_NtMapViewOfSection: {
         PVOID base = pointer32(*(PULONG)pointer32(a[2]));
         SIZE_T size = *(PULONG)pointer32(a[6]);
@@ -900,99 +857,148 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     }
     case MIME_SVC_NtUnmapViewOfSection:
         return NtUnmapViewOfSection(handle32(a[0]), pointer32(a[1]));
-    case MIME_SVC_NtFlushInstructionCache:
-        return NtFlushInstructionCache(handle32(a[0]), pointer32(a[1]), a[2]);
-    case MIME_SVC_NtSetInformationThread:
-        /* classes with a pointer sized value are widened, the others have the same layout. */
-        if (a[1] == 4 /* ThreadAffinityMask */ || a[1] == 9 /* ThreadQuerySetWin32StartAddress */) {
-            if (a[3] != 4)
-                return STATUS_INFO_LENGTH_MISMATCH;
-            ULONG_PTR value = *(const ULONG *)pointer32(a[2]);
-            return NtSetInformationThread(handle32(a[0]), a[1], &value, sizeof(value));
+    case MIME_SVC_NtUnmapViewOfSectionEx:
+        return NtUnmapViewOfSectionEx(handle32(a[0]), pointer32(a[1]), a[2]);
+    case MIME_SVC_NtQuerySection:
+        return Mx32QuerySection(a);
+
+    /* the object namespace. */
+    case MIME_SVC_NtQuerySecurityObject:
+        /* a self relative descriptor has no pointers, so the buffer passes through. */
+        return NtQuerySecurityObject(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
+    case MIME_SVC_NtQueryObject:
+        return Mx32QueryObject(a);
+    case MIME_SVC_NtSetInformationObject:
+        return Mx32SetInformationObject(a);
+    case MIME_SVC_NtOpenDirectoryObject:
+    case MIME_SVC_NtCreateDirectoryObject:
+        oa = attributes32(a[2], &name);
+        if (number == MIME_SVC_NtOpenDirectoryObject)
+            status = NtOpenDirectoryObject(&handle, a[1], &oa);
+        else
+            status = NtCreateDirectoryObject(&handle, a[1], a[2] ? &oa : nullptr);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtOpenSymbolicLinkObject:
+        oa = attributes32(a[2], &name);
+        status = NtOpenSymbolicLinkObject(&handle, a[1], &oa);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtCreateSymbolicLinkObject: {
+        oa = attributes32(a[2], &name);
+        UNICODE_STRING target = {};
+        if (a[3])
+            target = string32(a[3]);
+        status = NtCreateSymbolicLinkObject(&handle, a[1], &oa, a[3] ? &target : nullptr);
+        return handle_out(status, a[0], handle);
+    }
+    case MIME_SVC_NtMakeTemporaryObject:
+        return NtMakeTemporaryObject(handle32(a[0]));
+    case MIME_SVC_NtQuerySymbolicLinkObject: {
+        name = string32(a[1]);
+        status = NtQuerySymbolicLinkObject(handle32(a[0]), &name, pointer32(a[2]));
+        ((MIME_STRING32 *)pointer32(a[1]))->Length = name.Length;
+        return status;
+    }
+
+    /* the registry: key and value records hold no pointers. */
+    case MIME_SVC_NtOpenKey:
+    case MIME_SVC_NtOpenKeyEx:
+    case MIME_SVC_NtCreateKey: {
+        oa = attributes32(a[2], &name);
+        if (number == MIME_SVC_NtCreateKey) {
+            UNICODE_STRING klass = a[4] ? string32(a[4]) : (UNICODE_STRING){0};
+            status = NtCreateKey(&handle, a[1], &oa, a[3], a[4] ? &klass : nullptr, a[5], pointer32(a[6]));
+        } else if (number == MIME_SVC_NtOpenKeyEx) {
+            status = NtOpenKeyEx(&handle, a[1], &oa, a[3]);
+        } else {
+            status = NtOpenKey(&handle, a[1], &oa);
         }
-        if (a[1] == 38 /* ThreadNameInformation */) {
-            if (a[3] != sizeof(MIME_STRING32))
-                return STATUS_INFO_LENGTH_MISMATCH;
-            name = string32(a[2]);
-            return NtSetInformationThread(handle32(a[0]), a[1], &name, sizeof(name));
-        }
-        return NtSetInformationThread(handle32(a[0]), a[1], pointer32(a[2]), a[3]);
-    case MIME_SVC_NtQueryInformationThread:
-        if (a[1] == ThreadBasicInformation) {
-            if (a[3] < 28)
-                return STATUS_INFO_LENGTH_MISMATCH;
-            THREAD_BASIC_INFORMATION info;
-            status = NtQueryInformationThread(handle32(a[0]), a[1], &info, sizeof(info), nullptr);
-            if (NT_SUCCESS(status)) {
-                ULONG out[7] = {(ULONG)info.ExitStatus,
-                    a[0] == (ULONG)-2 ? (ULONG)(ULONG_PTR)MxCurrentTeb32() : 0,
-                    (ULONG)(ULONG_PTR)info.ClientId.UniqueProcess, (ULONG)(ULONG_PTR)info.ClientId.UniqueThread,
-                    (ULONG)info.AffinityMask, (ULONG)info.Priority, (ULONG)info.BasePriority};
-                memcpy(pointer32(a[2]), out, sizeof(out));
-                store32(a[4], sizeof(out));
-            }
-            return status;
-        }
-        if (a[1] == ThreadAmILastThread)
-            return NtQueryInformationThread(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
-        return STATUS_NOT_IMPLEMENTED;
-    case MIME_SVC_NtQueryInformationProcess:
-        if (a[1] == ProcessBasicInformation) {
-            if (a[3] < 24)
-                return STATUS_INFO_LENGTH_MISMATCH;
-            PROCESS_BASIC_INFORMATION info;
-            status = NtQueryInformationProcess(handle32(a[0]), a[1], &info, sizeof(info), nullptr);
-            if (NT_SUCCESS(status)) {
-                ULONG out[6] = {(ULONG)info.ExitStatus,
-                    a[0] == (ULONG)-1 ? (ULONG)(ULONG_PTR)MxCurrentPeb32() : 0,
-                    (ULONG)info.AffinityMask, (ULONG)info.BasePriority,
-                    (ULONG)info.UniqueProcessId, (ULONG)info.InheritedFromUniqueProcessId};
-                memcpy(pointer32(a[2]), out, sizeof(out));
-                store32(a[4], sizeof(out));
-            }
-            return status;
-        }
-        if (a[1] == 36)
-            return NtQueryInformationProcess(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
-        return STATUS_NOT_IMPLEMENTED;
+        return handle_out(status, a[0], handle);
+    }
+    case MIME_SVC_NtQueryKey:
+        return NtQueryKey(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
+    case MIME_SVC_NtQueryValueKey:
+        name = string32(a[1]);
+        return NtQueryValueKey(handle32(a[0]), &name, a[2], pointer32(a[3]), a[4], pointer32(a[5]));
+    case MIME_SVC_NtEnumerateKey:
+        return NtEnumerateKey(handle32(a[0]), a[1], a[2], pointer32(a[3]), a[4], pointer32(a[5]));
+    case MIME_SVC_NtEnumerateValueKey:
+        return NtEnumerateValueKey(handle32(a[0]), a[1], a[2], pointer32(a[3]), a[4], pointer32(a[5]));
+    case MIME_SVC_NtSetValueKey:
+        name = string32(a[1]);
+        return NtSetValueKey(handle32(a[0]), &name, a[2], a[3], pointer32(a[4]), a[5]);
+    case MIME_SVC_NtDeleteKey:
+        return NtDeleteKey(handle32(a[0]));
+    case MIME_SVC_NtDeleteValueKey:
+        name = string32(a[1]);
+        return NtDeleteValueKey(handle32(a[0]), &name);
+    case MIME_SVC_NtFlushKey:
+        return NtFlushKey(handle32(a[0]));
+
+    /* tokens. */
+    case MIME_SVC_NtOpenProcessToken:
+    case MIME_SVC_NtOpenProcessTokenEx:
+        if (number == MIME_SVC_NtOpenProcessToken)
+            status = NtOpenProcessToken(handle32(a[0]), a[1], &handle);
+        else
+            status = NtOpenProcessTokenEx(handle32(a[0]), a[1], a[2], &handle);
+        return handle_out(status, a[number == MIME_SVC_NtOpenProcessToken ? 2 : 3], handle);
+    case MIME_SVC_NtOpenThreadToken:
+    case MIME_SVC_NtOpenThreadTokenEx:
+        if (number == MIME_SVC_NtOpenThreadToken)
+            status = NtOpenThreadToken(handle32(a[0]), a[1], (BOOLEAN)a[2], &handle);
+        else
+            status = NtOpenThreadTokenEx(handle32(a[0]), a[1], (BOOLEAN)a[2], a[3], &handle);
+        return handle_out(status, a[number == MIME_SVC_NtOpenThreadToken ? 3 : 4], handle);
+    case MIME_SVC_NtQueryInformationToken:
+        return Mx32QueryInformationToken(a);
+    case MIME_SVC_NtAdjustPrivilegesToken:
+        /* TOKEN_PRIVILEGES holds identifiers and attributes only. */
+        return NtAdjustPrivilegesToken(handle32(a[0]), (BOOLEAN)a[1], pointer32(a[2]), a[3], pointer32(a[4]),
+                                       pointer32(a[5]));
+
+    /* the system. */
     case MIME_SVC_NtQuerySystemInformation:
-        if (a[0] == SystemBasicInformation) {
-            store32(a[3], 44);
-            if (a[2] < 44)
-                return STATUS_INFO_LENGTH_MISMATCH;
-            SYSTEM_BASIC_INFORMATION info;
-            status = NtQuerySystemInformation(a[0], &info, sizeof(info), nullptr);
-            if (NT_SUCCESS(status)) {
-                ULONG out[11] = {info.Reserved, info.TimerResolution, info.PageSize, info.NumberOfPhysicalPages,
-                    info.LowestPhysicalPageNumber, info.HighestPhysicalPageNumber, info.AllocationGranularity,
-                    0x10000, 0x7FFEFFFF, (ULONG)info.ActiveProcessorsAffinityMask, (UCHAR)info.NumberOfProcessors};
-                memcpy(pointer32(a[1]), out, sizeof(out));
-            }
-            return status;
-        }
-        if (a[0] == SystemProcessInformation)
-            return query_processes32(a[1], a[2], a[3]);
-        if (a[0] == SystemProcessorInformation || a[0] == SystemTimeOfDayInformation)
-            return NtQuerySystemInformation(a[0], pointer32(a[1]), a[2], pointer32(a[3]));
-        return STATUS_NOT_IMPLEMENTED;
+        return Mx32QuerySystemInformation(a);
     case MIME_SVC_NtQueryPerformanceCounter:
         return NtQueryPerformanceCounter(pointer32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtQuerySystemTime:
         return NtQuerySystemTime(pointer32(a[0]));
-    case MIME_SVC_NtDelayExecution:
-        return NtDelayExecution(a[0], pointer32(a[1]));
+    case MIME_SVC_NtGetCurrentProcessorNumber:
+        return (NTSTATUS)NtGetCurrentProcessorNumber();
+    case MIME_SVC_NtQueryDefaultLocale:
+        return NtQueryDefaultLocale(a[0], pointer32(a[1]));
+    case MIME_SVC_NtQueryDefaultUILanguage:
+        return NtQueryDefaultUILanguage(pointer32(a[0]));
+    case MIME_SVC_NtQueryInstallUILanguage:
+        return NtQueryInstallUILanguage(pointer32(a[0]));
+    case MIME_SVC_NtQueryDebugFilterState:
+        return NtQueryDebugFilterState(a[0], a[1]);
+    case MIME_SVC_NtQueryLicenseValue:
+        name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
+        return NtQueryLicenseValue(a[0] ? &name : nullptr, pointer32(a[1]), pointer32(a[2]), a[3], pointer32(a[4]));
+    case MIME_SVC_NtTraceEvent:
+        /* the high bit of the flags tells the event's records are 32-bit ones. */
+        return NtTraceEvent(handle32(a[0]), a[1] | 0x80000000u, a[2], pointer32(a[3]));
+    case MIME_SVC_NtTraceControl:
+        return NtTraceControl(a[0], pointer32(a[1]), a[2], pointer32(a[3]), a[4], pointer32(a[5]));
+    case MIME_SVC_NtApphelpCacheControl:
+        /* the kernel keeps no application compatibility cache, whatever the request holds. */
+        return NtApphelpCacheControl(a[0], pointer32(a[1]));
+
     /* atoms: a name of 16-bit characters and its length in bytes, the atom 16 bits. */
     case MIME_SVC_NtAddAtom:
         return NtAddAtom(pointer32(a[0]), a[1], pointer32(a[2]));
+    case MIME_SVC_NtAddAtomEx:
+        return NtAddAtomEx(pointer32(a[0]), a[1], pointer32(a[2]), a[3]);
     case MIME_SVC_NtFindAtom:
         return NtFindAtom(pointer32(a[0]), a[1], pointer32(a[2]));
     case MIME_SVC_NtDeleteAtom:
         return NtDeleteAtom((USHORT)a[0]);
-    /* the waits of locks: an address only names the wait, and a thread id is a number, zero extended. */
-    case MIME_SVC_NtWaitForAlertByThreadId:
-        return NtWaitForAlertByThreadId(pointer32(a[0]), pointer32(a[1]));
-    case MIME_SVC_NtAlertThreadByThreadId:
-        return NtAlertThreadByThreadId((HANDLE)(ULONG_PTR)a[0]);
+    case MIME_SVC_NtQueryInformationAtom:
+        /* the basic record and the table are counts, flags and characters. */
+        if (a[1] > 1)
+            return STATUS_INVALID_INFO_CLASS;
+        return NtQueryInformationAtom((USHORT)a[0], a[1], pointer32(a[2]), a[3], pointer32(a[4]));
     default:
         return STATUS_NOT_IMPLEMENTED;
     }

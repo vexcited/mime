@@ -144,6 +144,7 @@ enum {
     MIME_NOPARAM_GETMESSAGEEXTRAINFO,
     MIME_NOPARAM_GETDPIFORSYSTEM,
     MIME_NOPARAM_GETDIALOGBASEUNITS,
+    MIME_NOPARAM_GETLASTINPUTTIME,
 };
 
 enum {
@@ -177,6 +178,7 @@ enum {
     MIME_HWND_ISICONIC,
     MIME_HWND_ISZOOMED,
     MIME_HWND_MONITOR,
+    MIME_HWND_ISUNICODE,
 };
 
 enum {
@@ -277,8 +279,15 @@ enum {
     MIME_POLY_BEZIERTO = 5,
 };
 
-/* NtGdiGetTransform selector of the world transform, as on windows. */
+/* NtGdiGetTransform selectors, as on windows. */
 #define MIME_XFORM_WORLD 0x203
+#define MIME_XFORM_WORLD_TO_DEVICE 0x204
+#define MIME_XFORM_PAGE_TO_DEVICE 0x304
+#define MIME_XFORM_DEVICE_TO_WORLD 0x402
+
+/* NtGdiMimeSetExtent targets. */
+#define MIME_EXTENT_WINDOW 0
+#define MIME_EXTENT_VIEWPORT 1
 
 /*
  * NtGdiEnumFonts output: one record per face that matches the request,
@@ -298,6 +307,8 @@ enum {
     MIME_DCPT_WINDOWORG,
     MIME_DCPT_CURRENTPOSITION,
     MIME_DCPT_DCORG,
+    MIME_DCPT_WINDOWEXT,
+    MIME_DCPT_VIEWPORTEXT,
 };
 
 /*
@@ -376,6 +387,26 @@ W32KAPI BOOL NTAPI NtUserDefSetText(HWND hwnd, PUNICODE_STRING text);
 W32KAPI int NTAPI NtUserInternalGetWindowText(HWND hwnd, LPWSTR buffer, int count);
 W32KAPI HWND NTAPI NtUserFindWindowEx(HWND parent, HWND after, PUNICODE_STRING class_name, PUNICODE_STRING name,
                                       DWORD type);
+W32KAPI BOOL NTAPI NtUserGetKeyboardState(PBYTE state);
+W32KAPI DWORD NTAPI NtUserGetGuiResources(HANDLE process, DWORD flags);
+W32KAPI BOOL NTAPI NtUserSetKeyboardState(PBYTE state);
+W32KAPI HWINSTA NTAPI NtUserCreateWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, HANDLE keyboard,
+                                                DWORD offset, PVOID table, PUNICODE_STRING klid, DWORD flags);
+W32KAPI HWINSTA NTAPI NtUserOpenWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MASK access);
+W32KAPI HDESK NTAPI NtUserCreateDesktopEx(POBJECT_ATTRIBUTES attributes, PUNICODE_STRING device, PVOID devmode,
+                                          DWORD flags, ACCESS_MASK access, ULONG heap_kb);
+W32KAPI HDESK NTAPI NtUserOpenDesktop(POBJECT_ATTRIBUTES attributes, DWORD flags, ACCESS_MASK access);
+W32KAPI HDESK NTAPI NtUserOpenInputDesktop(DWORD flags, BOOL inherit, ACCESS_MASK access);
+W32KAPI HWINSTA NTAPI NtUserGetProcessWindowStation(void);
+W32KAPI BOOL NTAPI NtUserSetProcessWindowStation(HWINSTA handle);
+W32KAPI HDESK NTAPI NtUserGetThreadDesktop(DWORD tid, HDESK console);
+W32KAPI BOOL NTAPI NtUserSetThreadDesktop(HDESK handle);
+W32KAPI BOOL NTAPI NtUserCloseWindowStation(HWINSTA handle);
+W32KAPI BOOL NTAPI NtUserCloseDesktop(HDESK handle);
+W32KAPI BOOL NTAPI NtUserSwitchDesktop(HDESK handle, DWORD flags, DWORD fade);
+W32KAPI BOOL NTAPI NtUserGetObjectInformation(HANDLE handle, DWORD index, PVOID info, DWORD length, PDWORD needed);
+W32KAPI BOOL NTAPI NtUserSetObjectInformation(HANDLE handle, DWORD index, PVOID info, DWORD length);
+W32KAPI NTSTATUS NTAPI NtUserBuildNameList(HWINSTA handle, ULONG length, PVOID buffer, PULONG needed);
 W32KAPI NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent, BOOL children, ULONG thread, ULONG max,
                                            HWND *list, ULONG *count);
 W32KAPI BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *placement);
@@ -665,5 +696,14 @@ W32KAPI int NTAPI NtGdiGetAppClipBox(HDC dc, LPRECT rect);
 W32KAPI int NTAPI NtGdiGetRandomRgn(HDC dc, HRGN region, int which);
 W32KAPI int NTAPI NtGdiIntersectClipRect(HDC dc, int left, int top, int right, int bottom);
 W32KAPI int NTAPI NtGdiExcludeClipRect(HDC dc, int left, int top, int right, int bottom);
+W32KAPI int NTAPI NtGdiSetMetaRgn(HDC dc);
+W32KAPI HDC NTAPI NtGdiCreateMetafileDC(HDC ref);
+W32KAPI BOOL NTAPI NtGdiMimeSetExtent(HDC dc, UINT which, int x, int y, LPSIZE old);
+W32KAPI BOOL NTAPI NtGdiSetVirtualResolution(HDC dc, int px, int py, int mx, int my);
+W32KAPI BOOL NTAPI NtGdiSetMiterLimit(HDC dc, DWORD limit, DWORD *old);
+W32KAPI BOOL NTAPI NtGdiGetMiterLimit(HDC dc, DWORD *limit);
+W32KAPI BOOL NTAPI NtGdiWidenPath(HDC dc);
+W32KAPI HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG color, ULONG_PTR hatch,
+                                     ULONG count, const DWORD *styles);
 
 #endif

@@ -2367,7 +2367,114 @@ WINBASEAPI LSTATUS WINAPI RegSetKeyValueA(HKEY key, LPCSTR subkey, LPCSTR value,
 WINBASEAPI LSTATUS WINAPI RegDeleteKeyValueW(HKEY key, LPCWSTR subkey, LPCWSTR value);
 WINBASEAPI LSTATUS WINAPI RegDeleteKeyValueA(HKEY key, LPCSTR subkey, LPCSTR value);
 
+/* serial ports. */
+typedef struct _DCB {
+    DWORD DCBlength;
+    DWORD BaudRate;
+    DWORD fBinary : 1;
+    DWORD fParity : 1;
+    DWORD fOutxCtsFlow : 1;
+    DWORD fOutxDsrFlow : 1;
+    DWORD fDtrControl : 2;
+    DWORD fDsrSensitivity : 1;
+    DWORD fTXContinueOnXoff : 1;
+    DWORD fOutX : 1;
+    DWORD fInX : 1;
+    DWORD fErrorChar : 1;
+    DWORD fNull : 1;
+    DWORD fRtsControl : 2;
+    DWORD fAbortOnError : 1;
+    DWORD fDummy2 : 17;
+    WORD wReserved;
+    WORD XonLim;
+    WORD XoffLim;
+    BYTE ByteSize;
+    BYTE Parity;
+    BYTE StopBits;
+    char XonChar;
+    char XoffChar;
+    char ErrorChar;
+    char EofChar;
+    char EvtChar;
+    WORD wReserved1;
+} DCB, *LPDCB;
+
+typedef struct _COMMTIMEOUTS {
+    DWORD ReadIntervalTimeout;
+    DWORD ReadTotalTimeoutMultiplier;
+    DWORD ReadTotalTimeoutConstant;
+    DWORD WriteTotalTimeoutMultiplier;
+    DWORD WriteTotalTimeoutConstant;
+} COMMTIMEOUTS, *LPCOMMTIMEOUTS;
+
+typedef struct _COMSTAT {
+    DWORD fCtsHold : 1;
+    DWORD fDsrHold : 1;
+    DWORD fRlsdHold : 1;
+    DWORD fXoffHold : 1;
+    DWORD fXoffSent : 1;
+    DWORD fEof : 1;
+    DWORD fTxim : 1;
+    DWORD fReserved : 25;
+    DWORD cbInQue;
+    DWORD cbOutQue;
+} COMSTAT, *LPCOMSTAT;
+
+typedef struct _COMMPROP {
+    WORD wPacketLength;
+    WORD wPacketVersion;
+    DWORD dwServiceMask;
+    DWORD dwReserved1;
+    DWORD dwMaxTxQueue;
+    DWORD dwMaxRxQueue;
+    DWORD dwMaxBaud;
+    DWORD dwProvSubType;
+    DWORD dwProvCapabilities;
+    DWORD dwSettableParams;
+    DWORD dwSettableBaud;
+    WORD wSettableData;
+    WORD wSettableStopParity;
+    DWORD dwCurrentTxQueue;
+    DWORD dwCurrentRxQueue;
+    DWORD dwProvSpec1;
+    DWORD dwProvSpec2;
+    WCHAR wcProvChar[1];
+} COMMPROP, *LPCOMMPROP;
+
+#define DTR_CONTROL_DISABLE 0
+#define DTR_CONTROL_ENABLE 1
+#define DTR_CONTROL_HANDSHAKE 2
+#define RTS_CONTROL_DISABLE 0
+#define RTS_CONTROL_ENABLE 1
+#define RTS_CONTROL_HANDSHAKE 2
+#define RTS_CONTROL_TOGGLE 3
+#define CE_RXOVER 0x0001
+#define CE_OVERRUN 0x0002
+#define CE_RXPARITY 0x0004
+#define CE_FRAME 0x0008
+#define CE_BREAK 0x0010
+
+WINBASEAPI BOOL WINAPI GetCommState(HANDLE file, LPDCB dcb);
+WINBASEAPI BOOL WINAPI SetCommState(HANDLE file, LPDCB dcb);
+WINBASEAPI BOOL WINAPI GetCommTimeouts(HANDLE file, LPCOMMTIMEOUTS timeouts);
+WINBASEAPI BOOL WINAPI SetCommTimeouts(HANDLE file, LPCOMMTIMEOUTS timeouts);
+WINBASEAPI BOOL WINAPI ClearCommError(HANDLE file, LPDWORD errors, LPCOMSTAT stat);
+WINBASEAPI BOOL WINAPI EscapeCommFunction(HANDLE file, DWORD function);
+WINBASEAPI BOOL WINAPI SetCommBreak(HANDLE file);
+WINBASEAPI BOOL WINAPI ClearCommBreak(HANDLE file);
+WINBASEAPI BOOL WINAPI GetCommModemStatus(HANDLE file, LPDWORD status);
+WINBASEAPI BOOL WINAPI PurgeComm(HANDLE file, DWORD flags);
+WINBASEAPI BOOL WINAPI SetupComm(HANDLE file, DWORD in_queue, DWORD out_queue);
+WINBASEAPI BOOL WINAPI GetCommMask(HANDLE file, LPDWORD mask);
+WINBASEAPI BOOL WINAPI SetCommMask(HANDLE file, DWORD mask);
+WINBASEAPI BOOL WINAPI TransmitCommChar(HANDLE file, char c);
+WINBASEAPI BOOL WINAPI GetCommProperties(HANDLE file, LPCOMMPROP prop);
+WINBASEAPI BOOL WINAPI WaitCommEvent(HANDLE file, LPDWORD mask, LPOVERLAPPED overlapped);
+WINBASEAPI BOOL WINAPI TransactNamedPipe(HANDLE pipe, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
+                                         LPDWORD read, LPOVERLAPPED overlapped);
+
 #include <mime/win32/winnls.h>
+#include <mime/win32/winactctx.h>
 
 WINBASEAPI DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fallback, LPWSTR out,
                                                  DWORD size, LPCWSTR filename);

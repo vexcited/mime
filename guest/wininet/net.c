@@ -1,6 +1,6 @@
 /*
- * the operations that need a server: opening urls, file transfers, ftp and gopher. mime's guest has no
- * internet transport yet, so each validates its handle and fails cleanly.
+ * opening urls, and ftp and gopher, which mime has no client for: each of those validates its handle and fails
+ * cleanly.
  */
 #include "wininet_private.h"
 #include <mime/stub.h>
@@ -17,61 +17,100 @@ static BOOL FailHandle(HINTERNET handle, DWORD type, DWORD error)
     return InetFail(error);
 }
 
+/*
+ * http and https urls become a hidden connection and a GET request, sent with the given headers. the request
+ * handle comes back, or with INTERNET_FLAG_ASYNC goes to INTERNET_STATUS_REQUEST_COMPLETE.
+ */
 DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url, LPCWSTR headers,
                                                  DWORD headers_length, DWORD flags, DWORD_PTR context)
 {
-    MIME_STUB("wininet");
-    INET_OBJECT *object = InetReferenceType(session, INTERNET_HANDLE_TYPE_INTERNET);
-    if (!object)
+    INET_OBJECT *parent = InetReferenceType(session, INTERNET_HANDLE_TYPE_INTERNET);
+    if (!parent)
         return nullptr;
-    InetRelease(object);
-    URL_COMPONENTSW components = {sizeof(components)};
-    components.dwSchemeLength = 1;
-    if (!url || !*url) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-    } else if (!InternetCrackUrlW(url, 0, 0, &components)) {
-        /* the crack error stands. */
-    } else if (components.nScheme != INTERNET_SCHEME_HTTP && components.nScheme != INTERNET_SCHEME_HTTPS &&
-               components.nScheme != INTERNET_SCHEME_FTP) {
-        SetLastError(ERROR_INTERNET_UNRECOGNIZED_SCHEME);
-    } else {
-        SetLastError(ERROR_INTERNET_CANNOT_CONNECT);
+    URL_COMPONENTSW parts = {sizeof(parts)};
+    parts.dwSchemeLength = parts.dwHostNameLength = parts.dwUserNameLength = parts.dwPasswordLength = 1;
+    parts.dwUrlPathLength = parts.dwExtraInfoLength = 1;
+    DWORD error = ERROR_SUCCESS;
+    if (!url || !*url)
+        error = ERROR_INVALID_PARAMETER;
+    else if (!InternetCrackUrlW(url, 0, 0, &parts))
+        error = GetLastError();
+    else if (parts.nScheme == INTERNET_SCHEME_FTP)
+        error = ERROR_INTERNET_CANNOT_CONNECT;
+    else if (parts.nScheme != INTERNET_SCHEME_HTTP && parts.nScheme != INTERNET_SCHEME_HTTPS)
+        error = ERROR_INTERNET_UNRECOGNIZED_SCHEME;
+    else if (!parts.dwHostNameLength)
+        error = ERROR_INTERNET_INVALID_URL;
+    if (error) {
+        InetRelease(parent);
+        SetLastError(error);
+        return nullptr;
     }
-    return nullptr;
-}
-
-/* only InternetOpenUrl, FtpOpenFile and sent requests make readable handles, and none succeeds yet. */
-DECLSPEC_EXPORT BOOL WINAPI InternetReadFile(HINTERNET file, LPVOID buffer, DWORD length, LPDWORD read)
-{
-    MIME_STUB("wininet");
-    if (read)
-        *read = 0;
-    return FailHandle(file, INTERNET_HANDLE_TYPE_HTTP_REQUEST, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI InternetWriteFile(HINTERNET file, LPCVOID buffer, DWORD length, LPDWORD written)
-{
-    MIME_STUB("wininet");
-    if (written)
-        *written = 0;
-    return FailHandle(file, INTERNET_HANDLE_TYPE_HTTP_REQUEST, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
-}
-
-DECLSPEC_EXPORT BOOL WINAPI InternetQueryDataAvailable(HINTERNET file, LPDWORD available, DWORD flags,
-                                                      DWORD_PTR context)
-{
-    MIME_STUB("wininet");
-    if (available)
-        *available = 0;
-    return FailHandle(file, INTERNET_HANDLE_TYPE_HTTP_REQUEST, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
-}
-
-DECLSPEC_EXPORT DWORD WINAPI InternetSetFilePointer(HINTERNET file, LONG distance, PVOID distance_high, DWORD method,
-                                                   DWORD_PTR context)
-{
-    MIME_STUB("wininet");
-    FailHandle(file, INTERNET_HANDLE_TYPE_HTTP_REQUEST, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
-    return INVALID_SET_FILE_POINTER;
+    PWSTR host = InetDuplicateN(parts.lpszHostName, parts.dwHostNameLength);
+    PWSTR user = parts.dwUserNameLength ? InetDuplicateN(parts.lpszUserName, parts.dwUserNameLength) : nullptr;
+    PWSTR password = parts.dwPasswordLength ? InetDuplicateN(parts.lpszPassword, parts.dwPasswordLength) : nullptr;
+    /* the object is the path and query; the fragment stays with the client. */
+    DWORD extra = parts.dwExtraInfoLength;
+    for (DWORD i = 0; i < extra; i++)
+        if (parts.lpszExtraInfo[i] == '#')
+            extra = i;
+    PWSTR object = InetAlloc(((SIZE_T)parts.dwUrlPathLength + extra + 2) * sizeof(WCHAR));
+    if (object) {
+        DWORD length = parts.dwUrlPathLength;
+        memcpy(object, parts.lpszUrlPath, length * sizeof(WCHAR));
+        if (!length)
+            object[length++] = '/';
+        memcpy(object + length, parts.lpszExtraInfo, extra * sizeof(WCHAR));
+        object[length + extra] = 0;
+    }
+    if (flags & INTERNET_FLAG_EXISTING_CONNECT)
+        flags |= INTERNET_FLAG_KEEP_CONNECTION;
+    if (parts.nScheme == INTERNET_SCHEME_HTTPS)
+        flags |= INTERNET_FLAG_SECURE;
+    HINTERNET request = nullptr;
+    if (!host || !object || (parts.dwUserNameLength && !user) || (parts.dwPasswordLength && !password)) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    } else {
+        HINTERNET connect = InetConnect(parent, host, parts.nPort, user, password, INTERNET_SERVICE_HTTP,
+                                        flags & ~INTERNET_FLAG_EXISTING_CONNECT, 0);
+        INET_OBJECT *connection = connect ? InetReference(connect) : nullptr;
+        if (connection) {
+            connection->Context = context;
+            request = InetOpenRequest(connection, nullptr, object, nullptr, nullptr, nullptr, flags, context);
+            /* the connection lives on through its request only. */
+            InetDetach(connection);
+            InetRelease(connection);
+        }
+    }
+    InetFree(host);
+    InetFree(user);
+    InetFree(password);
+    InetFree(object);
+    InetRelease(parent);
+    if (!request)
+        return nullptr;
+    INET_OBJECT *object_request = InetReference(request);
+    if (!object_request)
+        return nullptr;
+    error = InetPrepareSend(object_request, headers, headers_length, nullptr, 0, 0, FALSE);
+    BOOL ok = FALSE;
+    if (!error) {
+        INET_OP op = {INET_OP_OPEN_URL, context};
+        ok = InetStart(object_request, &op);
+        error = ok ? ERROR_SUCCESS : GetLastError();
+    }
+    InetRelease(object_request);
+    if (error == ERROR_IO_PENDING) {
+        SetLastError(ERROR_IO_PENDING);
+        return nullptr;
+    }
+    if (error) {
+        InternetCloseHandle(request);
+        SetLastError(error);
+        return nullptr;
+    }
+    SetLastError(ERROR_SUCCESS);
+    return request;
 }
 
 /* find handles come from FtpFindFirstFile and GopherFindFirstFile, which never succeed. */
@@ -189,4 +228,18 @@ DECLSPEC_EXPORT BOOL WINAPI GopherGetAttributeW(HINTERNET connect, LPCWSTR locat
 {
     MIME_STUB("wininet");
     return InetFail(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
+}
+
+/* mime keeps no url cache, so no url has an entry. */
+DECLSPEC_EXPORT BOOL WINAPI GetUrlCacheEntryInfoExW(LPCWSTR url, LPVOID info, LPDWORD size, LPWSTR redirect,
+                                                   LPDWORD redirect_size, LPVOID reserved, DWORD flags)
+{
+    if (!url || !*url || redirect || redirect_size || reserved)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    return InetFail(ERROR_FILE_NOT_FOUND);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GetUrlCacheEntryInfoW(LPCWSTR url, LPVOID info, LPDWORD size)
+{
+    return GetUrlCacheEntryInfoExW(url, info, size, nullptr, nullptr, nullptr, 0);
 }

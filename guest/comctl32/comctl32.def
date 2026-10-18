@@ -1,9 +1,107 @@
 LIBRARY comctl32.dll
 EXPORTS
+    GetEffectiveClientRect @4
+    DrawStatusTextA @5
+    CreateStatusWindowA @6
+    CreateToolbar @7
+    CreateUpDownControl @16
     InitCommonControls @17
-    DllGetVersion @24
-    InitCommonControlsEx @83
-    _TrackMouseEvent @91
+    CreateStatusWindow=CreateStatusWindowA @23
+    CreateStatusWindowW @24
+    CreateToolbarEx @25
+    DllGetVersion @27
+    DrawShadowText @29
+    DrawStatusText=DrawStatusTextA @30
+    DrawStatusTextW @31
+    GetMUILanguage @43
+    HIMAGELIST_QueryInterface @44
+    ImageList_Add @45
+    ImageList_AddIcon=CcImageListAddIcon @46
+    ImageList_AddMasked @47
+    ImageList_BeginDrag @48
+    ImageList_CoCreateInstance @49
+    ImageList_Copy @50
+    ImageList_Create @51
+    ImageList_Destroy @52
+    ImageList_DestroyShared @53
+    ImageList_DragEnter @54
+    ImageList_DragLeave @55
+    ImageList_DragMove @56
+    ImageList_DragShowNolock @57
+    ImageList_Draw @58
+    ImageList_DrawEx @59
+    ImageList_DrawIndirect @60
+    ImageList_Duplicate @61
+    ImageList_EndDrag @62
+    ImageList_GetBkColor @63
+    ImageList_GetDragImage @64
+    ImageList_GetFlags @65
+    ImageList_GetIcon @66
+    ImageList_GetIconSize @67
+    ImageList_GetImageCount @68
+    ImageList_GetImageInfo @69
+    ImageList_GetImageRect @70
+    ImageList_LoadImage=ImageList_LoadImageA @75
+    ImageList_LoadImageA @76
+    ImageList_LoadImageW @77
+    ImageList_Merge @78
+    ImageList_Read @79
+    ImageList_ReadEx @80
+    ImageList_Remove @81
+    ImageList_Replace @82
+    ImageList_ReplaceIcon @83
+    ImageList_Resize @84
+    ImageList_SetBkColor @85
+    ImageList_SetDragCursorImage @86
+    ImageList_SetFilter @87
+    ImageList_SetFlags @88
+    ImageList_SetIconSize @89
+    ImageList_SetImageCount @90
+    ImageList_SetOverlayImage @91
+    ImageList_Write @92
+    ImageList_WriteEx @93
+    InitCommonControlsEx @94
+    InitMUILanguage @95
+    RegisterClassNameW @100
+    _TrackMouseEvent @102
+    Str_GetPtrA @233 NONAME
+    Str_SetPtrA @234 NONAME
+    Str_GetPtrW @235 NONAME
+    Str_SetPtrW @236
+    DSA_Create @320
+    DSA_Destroy @321
+    DSA_GetItem @322
+    DSA_GetItemPtr @323
+    DSA_InsertItem @324
+    DSA_SetItem @325
+    DSA_DeleteItem @326
+    DSA_DeleteAllItems @327
+    DPA_Create @328
+    DPA_Destroy @329
+    DPA_Grow @330
+    DPA_Clone @331
+    DPA_GetPtr @332
+    DPA_GetPtrIndex @333
+    DPA_InsertPtr @334
+    DPA_SetPtr @335
+    DPA_DeletePtr @336
+    DPA_DeleteAllPtrs @337
+    DPA_Sort @338
+    DPA_Search @339
+    DPA_CreateEx @340
+    DSA_Clone @343
+    TaskDialog @344
+    TaskDialogIndirect @345
+    DSA_Sort @346
+    DPA_GetSize @347
+    DSA_GetSize @348
+    LoadIconMetric @380
+    LoadIconWithScaleDown @381
+    DPA_EnumCallback @385
+    DPA_DestroyCallback @386
+    DSA_EnumCallback @387
+    DSA_DestroyCallback @388
+    ImageList_SetColorTable @390 NONAME
     SetWindowSubclass @410
     GetWindowSubclass @411
     RemoveWindowSubclass @412

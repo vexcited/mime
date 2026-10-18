@@ -407,3 +407,39 @@ WINBASEAPI BOOL WINAPI CreatePipe(PHANDLE read_pipe, PHANDLE write_pipe, LPSECUR
     *write_pipe = writer;
     return TRUE;
 }
+
+/* writes a message and reads the answer in one request, FSCTL_PIPE_TRANSCEIVE. */
+WINBASEAPI BOOL WINAPI TransactNamedPipe(HANDLE pipe, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
+                                         LPDWORD read, LPOVERLAPPED overlapped)
+{
+    NTSTATUS status;
+    if (overlapped) {
+        overlapped->Internal = STATUS_PENDING;
+        HANDLE event = overlapped->hEvent;
+        status = NtFsControlFile(pipe, event, nullptr, ((ULONG_PTR)event & 1) ? nullptr : overlapped,
+                                 (PIO_STATUS_BLOCK)overlapped, 0x11C017, in, in_size, out, out_size);
+        if (NT_SUCCESS(status) && status != STATUS_PENDING) {
+            if (read)
+                *read = (DWORD)overlapped->InternalHigh;
+            return TRUE;
+        }
+        if ((status & 0xC0000000) == 0x80000000 && read)
+            *read = (DWORD)overlapped->InternalHigh;
+        return KbSetStatus(status);
+    }
+    IO_STATUS_BLOCK iosb = {};
+    status = NtFsControlFile(pipe, nullptr, nullptr, nullptr, &iosb, 0x11C017, in, in_size, out, out_size);
+    if (status == STATUS_PENDING) {
+        status = NtWaitForSingleObject(pipe, FALSE, nullptr);
+        if (NT_SUCCESS(status))
+            status = iosb.Status;
+    }
+    if (!NT_SUCCESS(status)) {
+        /* a message longer than the buffer still reports what was read. */
+        if ((status & 0xC0000000) == 0x80000000)
+            *read = (DWORD)iosb.Information;
+        return KbSetStatus(status);
+    }
+    *read = (DWORD)iosb.Information;
+    return TRUE;
+}

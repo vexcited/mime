@@ -681,6 +681,7 @@ typedef enum _MEMORY_INFORMATION_CLASS {
     MemoryWorkingSetInformation = 1,
     MemoryMappedFilenameInformation = 2,
     MemoryRegionInformation = 3,
+    MemoryWorkingSetExInformation = 4,
     MemoryImageInformation = 6,
 } MEMORY_INFORMATION_CLASS;
 
@@ -1595,9 +1596,12 @@ typedef struct _TEB {
     ULONG UserReserved[5];
     PVOID WOW32Reserved;
     LCID CurrentLocale;
-    UCHAR Reserved0[0x1A4 - 0xC8];
+    UCHAR Reserved0[0x184 - 0xC8];
+    UCHAR ActivationStack[0x18];
+    UCHAR WorkingOnBehalfTicket[8];
     NTSTATUS ExceptionCode;
-    UCHAR Reserved1[0x1D4 - 0x1A8];
+    PVOID ActivationContextStackPointer;
+    UCHAR Reserved1[0x1D4 - 0x1AC];
     GDI_TEB_BATCH GdiTebBatch;
     CLIENT_ID RealClientId;
     HANDLE GdiCachedProcessHandle;
@@ -1640,6 +1644,9 @@ MIME_FIELD_AT(TEB, ThreadLocalStoragePointer, 0x2C);
 MIME_FIELD_AT(TEB, ProcessEnvironmentBlock, 0x30);
 MIME_FIELD_AT(TEB, LastErrorValue, 0x34);
 MIME_FIELD_AT(TEB, CurrentLocale, 0xC4);
+MIME_FIELD_AT(TEB, ActivationStack, 0x184);
+MIME_FIELD_AT(TEB, ExceptionCode, 0x1A4);
+MIME_FIELD_AT(TEB, ActivationContextStackPointer, 0x1A8);
 MIME_FIELD_AT(TEB, GdiTebBatch, 0x1D4);
 MIME_FIELD_AT(TEB, Win32ClientInfo, 0x6CC);
 MIME_FIELD_AT(TEB, LastStatusValue, 0xBF4);
@@ -1768,7 +1775,9 @@ MIME_FIELD_AT(TEB, ProcessEnvironmentBlock, 0x60);
 MIME_FIELD_AT(TEB, LastErrorValue, 0x68);
 MIME_FIELD_AT(TEB, Win32ThreadInfo, 0x78);
 MIME_FIELD_AT(TEB, CurrentLocale, 0x108);
+MIME_FIELD_AT(TEB, ActivationStack, 0x290);
 MIME_FIELD_AT(TEB, ExceptionCode, 0x2C0);
+MIME_FIELD_AT(TEB, ActivationContextStackPointer, 0x2C8);
 MIME_FIELD_AT(TEB, GdiTebBatch, 0x2F0);
 MIME_FIELD_AT(TEB, RealClientId, 0x7D8);
 MIME_FIELD_AT(TEB, Win32ClientInfo, 0x800);

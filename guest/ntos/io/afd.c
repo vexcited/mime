@@ -19,6 +19,7 @@
 #define AFD_EVENTS_BATCH 256
 #define AFD_MAX_ANSWERS 64
 #define AFD_MAX_INTERFACES 64
+#define AFD_CONFIG_SIZE 65536
 
 #define WSAEWOULDBLOCK 10035
 #define WSAEALREADY 10037
@@ -58,6 +59,14 @@ MIME_STATIC_ASSERT(MIME_AFD_OPT_ATMARK == MIME_NET_OPT_ATMARK && MIME_AFD_OPT_ER
                    "afd options are the host's");
 MIME_STATIC_ASSERT(sizeof(MIME_AFD_ADDRESS) == sizeof(MimeNetAddr), "afd addresses are the host's");
 MIME_STATIC_ASSERT(sizeof(MIME_AFD_INTERFACE) == sizeof(MimeNetInterface), "afd interfaces are the host's");
+MIME_STATIC_ASSERT(sizeof(MIME_AFD_CONFIG) == sizeof(MimeNetConfig) && sizeof(MIME_AFD_LINK) == sizeof(MimeNetLink) &&
+                       sizeof(MIME_AFD_LINK_ADDRESS) == sizeof(MimeNetAddress) &&
+                       sizeof(MIME_AFD_ROUTE) == sizeof(MimeNetRoute) && MIME_AFD_MAX_DNS == MIME_NET_MAX_DNS,
+                   "the afd configuration is the host's");
+MIME_STATIC_ASSERT(MIME_AFD_IF_RUNNING == MIME_NET_IF_RUNNING && MIME_AFD_IF_VIRTUAL == MIME_NET_IF_VIRTUAL &&
+                       MIME_AFD_LINK_PPP == MIME_NET_LINK_PPP && MIME_AFD_ADDR_TENTATIVE == MIME_NET_ADDR_TENTATIVE &&
+                       MIME_AFD_ROUTE_RA == MIME_NET_ROUTE_RA,
+                   "afd flags are the host's");
 
 enum { AFD_RECV, AFD_SEND, AFD_CONNECT, AFD_ACCEPT };
 enum { AFD_BLOCKED, AFD_DONE, AFD_MOVED };
@@ -92,6 +101,7 @@ typedef struct AFD_REQUEST {
 typedef struct AFD_SOCKET {
     LIST_ENTRY Links;
     ULONG Host; /* the host socket, 0 before IOCTL_AFD_CREATE */
+    ULONG ProcessId; /* of the process that opened it */
     ULONG Family;
     ULONG Type;
     ULONG Protocol;
@@ -1181,6 +1191,72 @@ static NTSTATUS do_interfaces(PVOID output, ULONG out_len, ULONG_PTR *informatio
     return status;
 }
 
+/* the host's links, addresses, gateways and resolver, as the ip helper shows them. */
+static NTSTATUS do_config(PVOID output, ULONG out_len, ULONG_PTR *information)
+{
+    PUCHAR config = ExAllocatePool2(POOL_FLAG_NON_PAGED, AFD_CONFIG_SIZE, KI_TAG('A', 'f', 'd', 'C'));
+    if (!config)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    /* the host reads its configuration on its own, so the sockets need not wait. */
+    ULONG64 size = 0;
+    LONG e = host(MIME_HC_NET_CONFIG, pa(config), AFD_CONFIG_SIZE, 0, 0, 0, &size);
+    NTSTATUS status = MimeAfdStatus(e);
+    if (!e) {
+        ULONG bytes = size < out_len ? (ULONG)size : out_len;
+        if (out_len < sizeof(MIME_AFD_CONFIG)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+        } else {
+            status = KiCopyToUser(output, config, bytes);
+            if (NT_SUCCESS(status) && bytes < size)
+                status = (NTSTATUS)0x80000005L; /* STATUS_BUFFER_OVERFLOW */
+            *information = bytes;
+        }
+    }
+    ExFreePool(config);
+    return status;
+}
+
+/* every open socket with its addresses, for the tcp and udp tables. */
+static NTSTATUS do_sockets(PVOID output, ULONG out_len, ULONG_PTR *information)
+{
+    ULONG max = out_len / sizeof(MIME_AFD_SOCKET_INFO);
+    MIME_AFD_SOCKET_INFO *list =
+        max ? ExAllocatePool2(POOL_FLAG_NON_PAGED, max * sizeof(*list), KI_TAG('A', 'f', 'd', 'L')) : nullptr;
+    if (max && !list)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG count = 0, total = 0;
+    lock();
+    for (PLIST_ENTRY e = g_sockets.Flink; e != &g_sockets; e = e->Flink) {
+        AFD_SOCKET *s = CONTAINING_RECORD(e, AFD_SOCKET, Links);
+        if (!s->Host || s->Closed)
+            continue;
+        total++;
+        if (count >= max)
+            continue;
+        MIME_AFD_SOCKET_INFO *info = &list[count++];
+        memset(info, 0, sizeof(*info));
+        info->ProcessId = s->ProcessId;
+        info->Family = s->Family;
+        info->Type = s->Type;
+        info->State = s->State;
+        info->Bound = s->Bound;
+        info->Flags = (s->Hup ? 1 : 0) | (s->ShutWrite ? 2 : 0);
+        info->ConnectTime = s->ConnectTime;
+        if (!host(MIME_HC_NET_NAME, s->Host, 0, pa(&g_addr), 0, 0, nullptr))
+            info->Local = g_addr;
+        if (s->State == MIME_AFD_STATE_CONNECTED && !host(MIME_HC_NET_NAME, s->Host, 1, pa(&g_addr), 0, 0, nullptr))
+            info->Remote = g_addr;
+    }
+    unlock();
+    NTSTATUS status = count ? KiCopyToUser(output, list, count * sizeof(*list)) : STATUS_SUCCESS;
+    if (NT_SUCCESS(status) && count < total)
+        status = (NTSTATUS)0x80000005L; /* STATUS_BUFFER_OVERFLOW */
+    *information = count * sizeof(*list);
+    if (list)
+        ExFreePool(list);
+    return status;
+}
+
 /* the requests that answer at once, under the lock. */
 static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len,
                         ULONG_PTR *information)
@@ -1420,6 +1496,12 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
     case IOCTL_AFD_INTERFACES:
         status = do_interfaces(output, out_len, &information);
         break;
+    case IOCTL_AFD_CONFIG:
+        status = do_config(output, out_len, &information);
+        break;
+    case IOCTL_AFD_SOCKETS:
+        status = do_sockets(output, out_len, &information);
+        break;
     case IOCTL_AFD_COMPLETE: {
         ULONG64 value = 0;
         status = capture(&value, input, sizeof(value), in_len);
@@ -1531,6 +1613,7 @@ static NTSTATUS NTAPI afd_create(PDEVICE_OBJECT device, PIRP irp)
     InitializeListHead(&s->Connects);
     InitializeListHead(&s->Accepters);
     s->Enabled = FD_ALL;
+    s->ProcessId = (ULONG)(ULONG_PTR)PsGetCurrentProcessId();
     lock();
     InsertTailList(&g_sockets, &s->Links);
     unlock();

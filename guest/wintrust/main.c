@@ -1,46 +1,103 @@
 #include "trust_private.h"
 
-static SRWLOCK state_lock;
-static struct { USHORT generation; BOOL active; } states[256];
-
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
     return TRUE;
 }
 
-static LONG state_open(WINTRUST_DATA *data)
+/*
+ * the state of a verification is its provider data, as on windows, where
+ * the handle is the CRYPT_PROVIDER_DATA itself: one signer with the
+ * certificates of its chain, from the signing certificate to the root.
+ */
+#define STATE_MAGIC 0x54535457 /* "WTST" */
+
+typedef struct WT_STATE {
+    CRYPT_PROVIDER_DATA Data;
+    CRYPT_PROVIDER_SGNR Signer;
+    DWORD Magic;
+    PCCERT_CHAIN_CONTEXT Chain;
+    CRYPT_PROVIDER_CERT Certs[];
+} WT_STATE;
+
+static WT_STATE *state_open(WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT chain, LONG result)
 {
-    AcquireSRWLockExclusive(&state_lock);
-    for (DWORD i = 0; i < RTL_NUMBER_OF(states); i++) {
-        if (states[i].active || states[i].generation == 0xffff)
-            continue;
-        states[i].active = TRUE;
-        states[i].generation++;
-        data->hWVTStateData = (HANDLE)(ULONG_PTR)(0x57000000u | (DWORD)states[i].generation << 8 | i);
-        ReleaseSRWLockExclusive(&state_lock);
-        return 0;
+    DWORD count = chain && chain->cChain ? chain->rgpChain[0]->cElement : 0;
+    WT_STATE *state = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, sizeof(*state) + count * sizeof(CRYPT_PROVIDER_CERT));
+    if (!state)
+        return nullptr;
+    static GUID generic = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    state->Magic = STATE_MAGIC;
+    state->Chain = chain;
+    state->Data.cbStruct = sizeof(state->Data);
+    state->Data.pWintrustData = data;
+    state->Data.pgActionID = &generic;
+    state->Data.dwEncoding = X509_ASN_ENCODING | PKCS_7_ASN_ENCODING;
+    state->Data.dwSubjectChoice = data->dwUnionChoice;
+    state->Data.dwProvFlags = data->dwProvFlags;
+    state->Data.dwFinalError = (DWORD)result;
+    GetSystemTimeAsFileTime(&state->Data.sftSystemTime);
+    if (chain) {
+        state->Data.csSigners = 1;
+        state->Data.pasSigners = &state->Signer;
+        state->Signer.cbStruct = sizeof(state->Signer);
+        state->Signer.sftVerifyAsOf = state->Data.sftSystemTime;
+        state->Signer.csCertChain = count;
+        state->Signer.pasCertChain = state->Certs;
+        state->Signer.pChainContext = chain;
+        state->Signer.dwError = (DWORD)result;
+        for (DWORD i = 0; i < count; i++) {
+            PCERT_CHAIN_ELEMENT element = chain->rgpChain[0]->rgpElement[i];
+            CRYPT_PROVIDER_CERT *cert = &state->Certs[i];
+            cert->cbStruct = sizeof(*cert);
+            cert->pCert = element->pCertContext;
+            cert->pChainElement = element;
+            cert->fSelfSigned = (element->TrustStatus.dwInfoStatus & CERT_TRUST_IS_SELF_SIGNED) != 0;
+            cert->fTrustedRoot = cert->fSelfSigned && !(element->TrustStatus.dwErrorStatus & CERT_TRUST_IS_UNTRUSTED_ROOT);
+            cert->fCommercial = TRUE;
+        }
     }
-    ReleaseSRWLockExclusive(&state_lock);
-    return E_OUTOFMEMORY;
+    data->hWVTStateData = state;
+    return state;
 }
 
 static LONG state_close(WINTRUST_DATA *data)
 {
-    if (!data->hWVTStateData)
+    WT_STATE *state = data->hWVTStateData;
+    if (!state)
         return 0;
-    ULONG_PTR token = (ULONG_PTR)data->hWVTStateData;
-    DWORD i = token & 255, generation = (token >> 8) & 0xffff;
-    AcquireSRWLockExclusive(&state_lock);
-    BOOL valid = (token >> 24) == 0x57 && states[i].active && states[i].generation == generation;
-    if (valid) {
-        states[i].active = FALSE;
-        data->hWVTStateData = nullptr;
-    }
-    ReleaseSRWLockExclusive(&state_lock);
-    return valid ? 0 : E_INVALIDARG;
+    if (state->Magic != STATE_MAGIC)
+        return E_INVALIDARG;
+    state->Magic = 0;
+    if (state->Chain)
+        CertFreeCertificateChain(state->Chain);
+    LocalFree(state);
+    data->hWVTStateData = nullptr;
+    return 0;
 }
 
-static LONG verify_file(const WINTRUST_DATA *data)
+WINTRUSTAPI CRYPT_PROVIDER_DATA *WINAPI WTHelperProvDataFromStateData(HANDLE state)
+{
+    return state;
+}
+
+WINTRUSTAPI CRYPT_PROVIDER_SGNR *WINAPI WTHelperGetProvSignerFromChain(CRYPT_PROVIDER_DATA *data, DWORD signer,
+                                                                    BOOL counter, DWORD counter_index)
+{
+    if (!data || signer >= data->csSigners)
+        return nullptr;
+    CRYPT_PROVIDER_SGNR *s = &data->pasSigners[signer];
+    if (!counter)
+        return s;
+    return counter_index < s->csCounterSigners ? &s->pasCounterSigners[counter_index] : nullptr;
+}
+
+WINTRUSTAPI CRYPT_PROVIDER_CERT *WINAPI WTHelperGetProvCertFromChain(CRYPT_PROVIDER_SGNR *signer, DWORD index)
+{
+    return signer && index < signer->csCertChain ? &signer->pasCertChain[index] : nullptr;
+}
+
+static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
 {
     WINTRUST_FILE_INFO *info = data->pFile;
     if (!info || info->cbStruct != sizeof(*info) || info->pgKnownSubject ||
@@ -77,7 +134,7 @@ static LONG verify_file(const WINTRUST_DATA *data)
     if (owned)
         CloseHandle(file);
     if (!result)
-        result = WtVerifyPe(bytes, (DWORD)size.QuadPart, data);
+        result = WtVerifyPe(bytes, (DWORD)size.QuadPart, data, chain);
     LocalFree(bytes);
     return result;
 }
@@ -99,14 +156,18 @@ LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
         return E_INVALIDARG;
     if (data->dwUnionChoice != WTD_CHOICE_FILE)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
-    if (data->dwStateAction == WTD_STATEACTION_VERIFY) {
-        if (data->hWVTStateData)
-            return E_INVALIDARG;
-        LONG error = state_open(data);
-        if (error)
-            return error;
+    if (data->dwStateAction != WTD_STATEACTION_VERIFY)
+        return verify_file(data, nullptr);
+    if (data->hWVTStateData)
+        return E_INVALIDARG;
+    PCCERT_CHAIN_CONTEXT chain = nullptr;
+    LONG result = verify_file(data, &chain);
+    if (!state_open(data, chain, result)) {
+        if (chain)
+            CertFreeCertificateChain(chain);
+        return E_OUTOFMEMORY;
     }
-    return verify_file(data);
+    return result;
 }
 
 HRESULT WINAPI WinVerifyTrustEx(HWND window, GUID *action, WINTRUST_DATA *data)

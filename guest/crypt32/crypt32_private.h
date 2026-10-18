@@ -177,6 +177,13 @@ typedef struct cr_cert {
 
 #define CR_STORE_MAGIC 0x53524543
 
+/* the registry key behind a system registry store, see sysstore.c. */
+typedef struct cr_reg {
+    HKEY key;
+    BOOL loading;
+    ULONGLONG stamp;
+} cr_reg;
+
 struct cr_store {
     DWORD magic;
     LONG refs;
@@ -191,6 +198,7 @@ struct cr_store {
     DWORD *child_priorities;
     DWORD child_count;
     WCHAR *localized_name;
+    cr_reg *reg;
 };
 
 void CrInitLock(void);
@@ -210,6 +218,28 @@ HCERTSTORE CrOpenMemoryStore(DWORD flags);
 BOOL CrAddEncoded(HCERTSTORE store, const BYTE *data, DWORD size);
 BOOL CrLoadSerialized(HCERTSTORE store, const BYTE *data, DWORD size);
 BOOL CrLoadPkcs7(HCERTSTORE store, const BYTE *data, DWORD size);
+/* adds the elements of a serialized store; with no store, *last receives the last certificate read. */
+DWORD CrAddElements(HCERTSTORE store, const BYTE *data, DWORD size, DWORD disposition, PCCERT_CONTEXT *last);
+/* writes a certificate and its properties as serialized store elements. */
+void CrSerializeCert(der_writer *w, PCCERT_CONTEXT cert);
+/* drops the certificates a store holds, keeping those the program still references alive. */
+BOOL CrEmptyStore(cr_store *store);
+
+/* ------------------------------------------------------------------ system stores (sysstore.c) */
+
+/* the system, system registry and physical providers of CertOpenStore. */
+HCERTSTORE CrOpenSystemStore(ULONG_PTR provider, DWORD flags, const void *para);
+/* the registry side of the changes made to a system registry store. */
+BOOL CrRegWriteCert(cr_store *store, PCCERT_CONTEXT cert);
+BOOL CrRegDeleteCert(cr_store *store, PCCERT_CONTEXT cert);
+BOOL CrRegCanWrite(cr_store *store);
+void CrRegClose(cr_store *store);
+/* rereads registry stores, recursing into collections. */
+BOOL CrResyncStore(cr_store *store);
+/* whether the registry under a store changed since it was read. */
+BOOL CrStoreChanged(cr_store *store);
+/* bumped by every write this process makes to a registry store. */
+extern LONG CrRegGeneration;
 
 /* ------------------------------------------------------------------ chains (chain.c) */
 

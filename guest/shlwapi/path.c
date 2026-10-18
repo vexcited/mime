@@ -1,84 +1,419 @@
 /*
- * path helpers. like windows they work on MAX_PATH buffers and fail
- * rather than overflow them; both separators are accepted where windows
- * accepts them.
+ * the path functions shlwapi keeps for itself: searching, compacting, folders and the user's
+ * environment, over the ones kernelbase hosts.
  */
 #include "shlwapi_private.h"
 
-static BOOL is_separator(WCHAR c)
-{
-    return c == L'\\' || c == L'/';
-}
-
-static BOOL is_drive(LPCWSTR path)
-{
-    WCHAR c = path[0] | 0x20;
-    return c >= L'a' && c <= L'z' && path[1] == L':';
-}
-
-/* converts an ansi path to a heap allocated wide string. */
-static LPWSTR widen(LPCSTR path)
-{
-    if (!path)
-        return nullptr;
-    int n = MultiByteToWideChar(CP_ACP, 0, path, -1, nullptr, 0);
-    LPWSTR wide = n > 0 ? HeapAlloc(GetProcessHeap(), 0, n * sizeof(WCHAR)) : nullptr;
-    if (wide)
-        MultiByteToWideChar(CP_ACP, 0, path, -1, wide, n);
-    return wide;
-}
-
 /* ------------------------------------------------------------------ existence */
 
-LWSTDAPI BOOL WINAPI PathFileExistsW(LPCWSTR path)
+BOOL WINAPI PathFileExistsAndAttributesW(LPCWSTR path, DWORD *attributes)
+{
+    if (attributes)
+        *attributes = INVALID_FILE_ATTRIBUTES;
+    if (!path)
+        return FALSE;
+    UINT mode = SetErrorMode(SEM_FAILCRITICALERRORS);
+    DWORD found = GetFileAttributesW(path);
+    SetErrorMode(mode);
+    if (attributes)
+        *attributes = found;
+    return found != INVALID_FILE_ATTRIBUTES;
+}
+
+BOOL WINAPI PathFileExistsAndAttributesA(LPCSTR path, DWORD *attributes)
+{
+    if (attributes)
+        *attributes = INVALID_FILE_ATTRIBUTES;
+    LPWSTR w = ShlWide(path);
+    BOOL result = w && PathFileExistsAndAttributesW(w, attributes);
+    ShlFree(w);
+    return result;
+}
+
+/* the extensions tried in WHICH_* order, the bare name last for WHICH_OPTIONAL. */
+static const struct {
+    DWORD which;
+    PCWSTR extension;
+} which_extensions[] = {{WHICH_PIF, L".pif"}, {WHICH_COM, L".com"}, {WHICH_EXE, L".exe"},
+                        {WHICH_BAT, L".bat"}, {WHICH_LNK, L".lnk"}, {WHICH_CMD, L".cmd"}};
+
+BOOL WINAPI PathFileExistsDefExtAndAttributesW(LPWSTR path, DWORD which, DWORD *attributes);
+BOOL WINAPI PathFileExistsDefExtAndAttributesW(LPWSTR path, DWORD which, DWORD *attributes)
+{
+    if (attributes)
+        *attributes = INVALID_FILE_ATTRIBUTES;
+    if (!path)
+        return FALSE;
+    if (!which || *PathFindExtensionW(path))
+        return PathFileExistsAndAttributesW(path, attributes);
+    SIZE_T length = wcslen(path);
+    if (length + 5 > MAX_PATH)
+        return FALSE;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(which_extensions); i++) {
+        if (!(which & which_extensions[i].which))
+            continue;
+        wcscpy(path + length, which_extensions[i].extension);
+        if (PathFileExistsAndAttributesW(path, attributes))
+            return TRUE;
+    }
+    path[length] = 0;
+    if (which & WHICH_OPTIONAL)
+        return PathFileExistsAndAttributesW(path, attributes);
+    return FALSE;
+}
+
+BOOL WINAPI PathFileExistsDefExtW(LPWSTR path, DWORD which)
+{
+    return PathFileExistsDefExtAndAttributesW(path, which, nullptr);
+}
+
+BOOL WINAPI PathFileExistsDefExtA(LPSTR path, DWORD which)
+{
+    WCHAR wide[MAX_PATH];
+    if (!path || !MultiByteToWideChar(CP_ACP, 0, path, -1, wide, MAX_PATH))
+        return FALSE;
+    if (!PathFileExistsDefExtW(wide, which))
+        return FALSE;
+    WideCharToMultiByte(CP_ACP, 0, wide, -1, path, MAX_PATH, nullptr, nullptr);
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ searching */
+
+/* the next element of a ";" list, unquoted and trimmed, and where the one after starts; NULL at
+   the end. */
+LPCWSTR WINAPI NextPathW(LPCWSTR list, LPWSTR out, int size);
+LPCWSTR WINAPI NextPathW(LPCWSTR list, LPWSTR out, int size)
+{
+    if (!list || !out || size <= 0)
+        return nullptr;
+    while (*list == L';' || *list == L' ')
+        list++;
+    if (!*list)
+        return nullptr;
+    int n = 0;
+    BOOL quoted = FALSE;
+    for (; *list && (quoted || *list != L';'); list++) {
+        if (*list == L'"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (n < size - 1)
+            out[n++] = *list;
+    }
+    while (n && out[n - 1] == L' ')
+        n--;
+    out[n] = 0;
+    return list;
+}
+
+LPCSTR WINAPI NextPathA(LPCSTR list, LPSTR out, int size);
+LPCSTR WINAPI NextPathA(LPCSTR list, LPSTR out, int size)
+{
+    if (!list || !out || size <= 0)
+        return nullptr;
+    while (*list == ';' || *list == ' ')
+        list++;
+    if (!*list)
+        return nullptr;
+    int n = 0;
+    BOOL quoted = FALSE;
+    for (; *list && (quoted || *list != ';'); list++) {
+        if (*list == '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (n < size - 1)
+            out[n++] = *list;
+    }
+    while (n && out[n - 1] == ' ')
+        n--;
+    out[n] = 0;
+    return list;
+}
+
+static BOOL try_directory(LPWSTR file, LPCWSTR directory, DWORD which)
+{
+    WCHAR candidate[MAX_PATH];
+    if (!PathCombineW(candidate, directory, file))
+        return FALSE;
+    if (!PathFileExistsDefExtW(candidate, which))
+        return FALSE;
+    wcscpy(file, candidate);
+    return TRUE;
+}
+
+/* the directories given, the system and windows directories, then those of PATH. */
+BOOL WINAPI PathFindOnPathExW(LPWSTR file, LPCWSTR *directories, DWORD which)
+{
+    if (!file || !*file || !PathIsFileSpecW(file))
+        return FALSE;
+    which |= WHICH_OPTIONAL;
+    for (LPCWSTR *d = directories; d && *d; d++)
+        if (**d && try_directory(file, *d, which))
+            return TRUE;
+    WCHAR directory[MAX_PATH];
+    if (GetSystemDirectoryW(directory, MAX_PATH) && try_directory(file, directory, which))
+        return TRUE;
+    if (GetWindowsDirectoryW(directory, MAX_PATH) && try_directory(file, directory, which))
+        return TRUE;
+    DWORD length = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    if (!length)
+        return FALSE;
+    LPWSTR path = ShlAlloc((SIZE_T)length * sizeof(WCHAR));
+    if (!path)
+        return FALSE;
+    GetEnvironmentVariableW(L"PATH", path, length);
+    BOOL found = FALSE;
+    for (LPCWSTR next = path; !found && (next = NextPathW(next, directory, MAX_PATH));)
+        if (*directory)
+            found = try_directory(file, directory, which);
+    ShlFree(path);
+    return found;
+}
+
+BOOL WINAPI PathFindOnPathW(LPWSTR file, LPCWSTR *directories)
+{
+    return PathFindOnPathExW(file, directories, 0);
+}
+
+BOOL WINAPI PathFindOnPathExA(LPSTR file, LPCSTR *directories, DWORD which)
+{
+    WCHAR wide[MAX_PATH];
+    if (!file || !MultiByteToWideChar(CP_ACP, 0, file, -1, wide, MAX_PATH))
+        return FALSE;
+    LPWSTR *dirs = nullptr;
+    int count = 0;
+    while (directories && directories[count])
+        count++;
+    if (count) {
+        dirs = ShlAlloc(((SIZE_T)count + 1) * sizeof(LPWSTR));
+        if (!dirs)
+            return FALSE;
+        for (int i = 0; i < count; i++)
+            dirs[i] = ShlWide(directories[i]);
+        dirs[count] = nullptr;
+    }
+    BOOL found = PathFindOnPathExW(wide, (LPCWSTR *)dirs, which);
+    if (found)
+        WideCharToMultiByte(CP_ACP, 0, wide, -1, file, MAX_PATH, nullptr, nullptr);
+    for (int i = 0; i < count; i++)
+        ShlFree(dirs[i]);
+    ShlFree(dirs);
+    return found;
+}
+
+BOOL WINAPI PathFindOnPathA(LPSTR file, LPCSTR *directories)
+{
+    return PathFindOnPathExA(file, directories, 0);
+}
+
+/* the first suffix the path ends with, compared case sensitively. */
+LPCWSTR WINAPI PathFindSuffixArrayW(LPCWSTR path, const LPCWSTR *suffixes, int count)
+{
+    if (!path || !suffixes || count <= 0)
+        return nullptr;
+    SIZE_T length = wcslen(path);
+    for (int i = 0; i < count; i++) {
+        SIZE_T n = suffixes[i] ? wcslen(suffixes[i]) : 0;
+        if (n && n <= length && !wcscmp(path + length - n, suffixes[i]))
+            return suffixes[i];
+    }
+    return nullptr;
+}
+
+LPCSTR WINAPI PathFindSuffixArrayA(LPCSTR path, const LPCSTR *suffixes, int count)
+{
+    if (!path || !suffixes || count <= 0)
+        return nullptr;
+    SIZE_T length = strlen(path);
+    for (int i = 0; i < count; i++) {
+        SIZE_T n = suffixes[i] ? strlen(suffixes[i]) : 0;
+        if (n && n <= length && !strcmp(path + length - n, suffixes[i]))
+            return suffixes[i];
+    }
+    return nullptr;
+}
+
+/* ------------------------------------------------------------------ small edits */
+
+LPCSTR WINAPI PathSkipLeadingSlashesA(LPCSTR path);
+LPCSTR WINAPI PathSkipLeadingSlashesA(LPCSTR path)
+{
+    if (path && (path[0] == '\\' || path[0] == '/') && (path[1] == '\\' || path[1] == '/'))
+        path += 2;
+    return path;
+}
+
+/* slashes become backslashes. */
+void WINAPI FixSlashesAndColonW(LPWSTR path);
+void WINAPI FixSlashesAndColonW(LPWSTR path)
+{
+    for (; path && *path; path++)
+        if (*path == L'/')
+            *path = L'\\';
+}
+
+void WINAPI FixSlashesAndColonA(LPSTR path);
+void WINAPI FixSlashesAndColonA(LPSTR path)
+{
+    for (; path && *path; path++)
+        if (*path == '/')
+            *path = '\\';
+}
+
+LPWSTR WINAPI PathBuildRootW(LPWSTR root, int drive)
+{
+    if (root && drive >= 0 && drive < 26) {
+        root[0] = (WCHAR)(L'A' + drive);
+        root[1] = L':';
+        root[2] = L'\\';
+        root[3] = 0;
+    }
+    return root;
+}
+
+LPSTR WINAPI PathBuildRootA(LPSTR root, int drive)
+{
+    if (root && drive >= 0 && drive < 26) {
+        root[0] = (char)('A' + drive);
+        root[1] = ':';
+        root[2] = '\\';
+        root[3] = 0;
+    }
+    return root;
+}
+
+/* arguments after the program and the space before them go. */
+void WINAPI PathRemoveArgsW(LPWSTR path)
+{
+    if (!path)
+        return;
+    LPWSTR args = PathGetArgsW(path);
+    if (*args) {
+        LPWSTR end = args;
+        if (end > path && end[-1] == L' ')
+            end--;
+        *end = 0;
+    } else {
+        SIZE_T length = wcslen(path);
+        if (length && path[length - 1] == L' ')
+            path[length - 1] = 0;
+    }
+}
+
+void WINAPI PathRemoveArgsA(LPSTR path)
+{
+    if (!path)
+        return;
+    LPSTR args = PathGetArgsA(path);
+    if (*args) {
+        LPSTR end = args;
+        if (end > path && end[-1] == ' ')
+            end--;
+        *end = 0;
+    } else {
+        SIZE_T length = strlen(path);
+        if (length && path[length - 1] == ' ')
+            path[length - 1] = 0;
+    }
+}
+
+/* "name[12].ext" back to "name.ext", what the download cache decorates with. */
+void WINAPI PathUndecorateW(LPWSTR path)
+{
+    if (!path)
+        return;
+    LPWSTR extension = PathFindExtensionW(path), p = extension;
+    if (p <= path || p[-1] != L']')
+        return;
+    p--;
+    LPWSTR close = p;
+    while (p > path && p[-1] >= L'0' && p[-1] <= L'9')
+        p--;
+    if (p == close || p <= path || p[-1] != L'[')
+        return;
+    p--;
+    if (p > path && (p[-1] == L'\\' || p[-1] == L'/'))
+        return;
+    memmove(p, extension, (wcslen(extension) + 1) * sizeof(WCHAR));
+}
+
+void WINAPI PathUndecorateA(LPSTR path)
+{
+    if (!path)
+        return;
+    LPSTR extension = PathFindExtensionA(path), p = extension;
+    if (p <= path || p[-1] != ']')
+        return;
+    p--;
+    LPSTR close = p;
+    while (p > path && p[-1] >= '0' && p[-1] <= '9')
+        p--;
+    if (p == close || p <= path || p[-1] != '[')
+        return;
+    p--;
+    if (p > path && (p[-1] == '\\' || p[-1] == '/'))
+        return;
+    memmove(p, extension, strlen(extension) + 1);
+}
+
+/* a path all in capitals goes to lower case with a capital first letter. */
+BOOL WINAPI PathMakePrettyW(LPWSTR path)
+{
+    if (!path || !*path)
+        return FALSE;
+    for (LPWSTR p = path; *p; p++)
+        if (IsCharLowerW(*p))
+            return FALSE;
+    CharLowerW(path);
+    LPWSTR first = path;
+    while (*first && !IsCharAlphaW(*first))
+        first++;
+    if (*first)
+        *first = (WCHAR)(ULONG_PTR)CharUpperW((LPWSTR)(ULONG_PTR)*first);
+    return TRUE;
+}
+
+BOOL WINAPI PathMakePrettyA(LPSTR path)
+{
+    WCHAR wide[MAX_PATH];
+    if (!path || !*path || !MultiByteToWideChar(CP_ACP, 0, path, -1, wide, MAX_PATH))
+        return FALSE;
+    if (!PathMakePrettyW(wide))
+        return FALSE;
+    WideCharToMultiByte(CP_ACP, 0, wide, -1, path, (int)strlen(path) + 1, nullptr, nullptr);
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ folders */
+
+/* the attribute value itself, FILE_ATTRIBUTE_DIRECTORY, not just TRUE. */
+BOOL WINAPI PathIsDirectoryW(LPCWSTR path)
 {
     if (!path)
         return FALSE;
     UINT mode = SetErrorMode(SEM_FAILCRITICALERRORS);
     DWORD attributes = GetFileAttributesW(path);
     SetErrorMode(mode);
-    return attributes != INVALID_FILE_ATTRIBUTES;
-}
-
-LWSTDAPI BOOL WINAPI PathFileExistsA(LPCSTR path)
-{
-    LPWSTR wide = widen(path);
-    BOOL result = wide && PathFileExistsW(wide);
-    HeapFree(GetProcessHeap(), 0, wide);
-    return result;
-}
-
-/* returns FILE_ATTRIBUTE_DIRECTORY rather than TRUE, as documented. */
-LWSTDAPI BOOL WINAPI PathIsDirectoryW(LPCWSTR path)
-{
-    if (!path)
-        return FALSE;
-    DWORD attributes = GetFileAttributesW(path);
     if (attributes == INVALID_FILE_ATTRIBUTES)
         return FALSE;
-    return (BOOL)(attributes & FILE_ATTRIBUTE_DIRECTORY);
+    return attributes & FILE_ATTRIBUTE_DIRECTORY;
 }
 
-LWSTDAPI BOOL WINAPI PathIsDirectoryA(LPCSTR path)
+BOOL WINAPI PathIsDirectoryA(LPCSTR path)
 {
-    LPWSTR wide = widen(path);
-    BOOL result = wide ? PathIsDirectoryW(wide) : FALSE;
-    HeapFree(GetProcessHeap(), 0, wide);
+    LPWSTR w = ShlWide(path);
+    BOOL result = w ? PathIsDirectoryW(w) : FALSE;
+    ShlFree(w);
     return result;
 }
 
-LWSTDAPI BOOL WINAPI PathIsDirectoryEmptyW(LPCWSTR path)
+BOOL WINAPI PathIsDirectoryEmptyW(LPCWSTR path)
 {
-    if (!path)
-        return FALSE;
-    SIZE_T length = wcslen(path);
-    if (length + 5 > MAX_PATH)
-        return FALSE;
     WCHAR pattern[MAX_PATH];
-    wcscpy(pattern, path);
-    if (length && !is_separator(pattern[length - 1]))
-        pattern[length++] = L'\\';
-    wcscpy(pattern + length, L"*.*");
+    if (!path || !PathCombineW(pattern, path, L"*.*"))
+        return FALSE;
     WIN32_FIND_DATAW data;
     HANDLE find = FindFirstFileW(pattern, &data);
     if (find == INVALID_HANDLE_VALUE)
@@ -94,410 +429,336 @@ LWSTDAPI BOOL WINAPI PathIsDirectoryEmptyW(LPCWSTR path)
     return empty;
 }
 
-LWSTDAPI BOOL WINAPI PathIsDirectoryEmptyA(LPCSTR path)
+BOOL WINAPI PathIsDirectoryEmptyA(LPCSTR path)
 {
-    LPWSTR wide = widen(path);
-    BOOL result = wide && PathIsDirectoryEmptyW(wide);
-    HeapFree(GetProcessHeap(), 0, wide);
+    LPWSTR w = ShlWide(path);
+    BOOL result = w && PathIsDirectoryEmptyW(w);
+    ShlFree(w);
     return result;
 }
 
-/* ------------------------------------------------------------------ components */
-
-LWSTDAPI LPWSTR WINAPI PathFindFileNameW(LPCWSTR path)
+/* a directory marked read only or system, the way desktop.ini folders are. */
+BOOL WINAPI PathIsSystemFolderW(LPCWSTR path, DWORD attributes)
 {
-    if (!path)
-        return nullptr;
-    LPCWSTR name = path;
-    for (LPCWSTR p = path; *p; p++)
-        if ((is_separator(*p) || *p == L':') && p[1] && !is_separator(p[1]))
-            name = p + 1;
-    return (LPWSTR)name;
-}
-
-LWSTDAPI LPSTR WINAPI PathFindFileNameA(LPCSTR path)
-{
-    if (!path)
-        return nullptr;
-    LPCSTR name = path;
-    for (LPCSTR p = path; *p; p++)
-        if ((*p == '\\' || *p == '/' || *p == ':') && p[1] && p[1] != '\\' && p[1] != '/')
-            name = p + 1;
-    return (LPSTR)name;
-}
-
-LWSTDAPI LPWSTR WINAPI PathFindExtensionW(LPCWSTR path)
-{
-    if (!path)
-        return nullptr;
-    LPCWSTR dot = nullptr, p = path;
-    for (; *p; p++) {
-        if (is_separator(*p) || *p == L' ')
-            dot = nullptr;
-        else if (*p == L'.')
-            dot = p;
-    }
-    return (LPWSTR)(dot ? dot : p);
-}
-
-LWSTDAPI LPSTR WINAPI PathFindExtensionA(LPCSTR path)
-{
-    if (!path)
-        return nullptr;
-    LPCSTR dot = nullptr, p = path;
-    for (; *p; p++) {
-        if (*p == '\\' || *p == '/' || *p == ' ')
-            dot = nullptr;
-        else if (*p == '.')
-            dot = p;
-    }
-    return (LPSTR)(dot ? dot : p);
-}
-
-LWSTDAPI LPWSTR WINAPI PathAddBackslashW(LPWSTR path)
-{
-    if (!path)
-        return nullptr;
-    SIZE_T length = wcslen(path);
-    if (length && path[length - 1] != L'\\') {
-        if (length + 1 >= MAX_PATH)
-            return nullptr;
-        path[length++] = L'\\';
-        path[length] = 0;
-    }
-    return path + length;
-}
-
-/* the length of the root: "\", "x:", "x:\" or "\\server\share\". */
-static SIZE_T root_length(LPCWSTR path)
-{
-    if (is_drive(path))
-        return is_separator(path[2]) ? 3 : 2;
-    if (is_separator(path[0]) && is_separator(path[1])) {
-        LPCWSTR p = path + 2;
-        for (int parts = 0; *p && parts < 2; parts++) {
-            while (*p && !is_separator(*p))
-                p++;
-            if (*p)
-                p++;
-        }
-        return (SIZE_T)(p - path);
-    }
-    return is_separator(path[0]) ? 1 : 0;
-}
-
-LWSTDAPI LPWSTR WINAPI PathRemoveBackslashW(LPWSTR path)
-{
-    if (!path)
-        return nullptr;
-    SIZE_T length = wcslen(path);
-    if (!length)
-        return path;
-    LPWSTR last = path + length - 1;
-    if (*last == L'\\' && length > root_length(path)) {
-        *last = 0;
-        return last;
-    }
-    return last;
-}
-
-LWSTDAPI BOOL WINAPI PathRemoveFileSpecW(LPWSTR path)
-{
-    if (!path || !path[0])
+    if (path && *path)
+        attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
         return FALSE;
-    SIZE_T root = root_length(path), length = wcslen(path);
-    LPWSTR cut = nullptr;
-    for (LPWSTR p = path + root; *p; p++)
-        if (is_separator(*p))
-            cut = p;
-    if (cut) {
-        *cut = 0;
+    return (attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM)) != 0;
+}
+
+BOOL WINAPI PathIsSystemFolderA(LPCSTR path, DWORD attributes)
+{
+    LPWSTR w = ShlWide(path);
+    BOOL result = PathIsSystemFolderW(w, attributes);
+    ShlFree(w);
+    return result;
+}
+
+BOOL WINAPI PathMakeSystemFolderW(LPCWSTR path)
+{
+    if (!path || !*path)
+        return FALSE;
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return FALSE;
+    attributes &= ~(FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DIRECTORY);
+    return SetFileAttributesW(path, attributes | FILE_ATTRIBUTE_READONLY);
+}
+
+BOOL WINAPI PathMakeSystemFolderA(LPCSTR path)
+{
+    LPWSTR w = ShlWide(path);
+    BOOL result = w && PathMakeSystemFolderW(w);
+    ShlFree(w);
+    return result;
+}
+
+BOOL WINAPI PathUnmakeSystemFolderW(LPCWSTR path)
+{
+    if (!path || !*path)
+        return FALSE;
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return FALSE;
+    attributes &= ~(FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_DIRECTORY);
+    return SetFileAttributesW(path, attributes ? attributes : FILE_ATTRIBUTE_NORMAL);
+}
+
+BOOL WINAPI PathUnmakeSystemFolderA(LPCSTR path)
+{
+    LPWSTR w = ShlWide(path);
+    BOOL result = w && PathUnmakeSystemFolderW(w);
+    ShlFree(w);
+    return result;
+}
+
+BOOL WINAPI PathIsNetworkPathW(LPCWSTR path)
+{
+    if (!path)
+        return FALSE;
+    if (PathIsUNCW(path))
+        return TRUE;
+    int drive = PathGetDriveNumberW(path);
+    if (drive < 0)
+        return FALSE;
+    WCHAR root[4];
+    return GetDriveTypeW(PathBuildRootW(root, drive)) == DRIVE_REMOTE;
+}
+
+BOOL WINAPI PathIsNetworkPathA(LPCSTR path)
+{
+    LPWSTR w = ShlWide(path);
+    BOOL result = w && PathIsNetworkPathW(w);
+    ShlFree(w);
+    return result;
+}
+
+/* the content type the extension's association gives, compared without case. */
+BOOL WINAPI PathIsContentTypeW(LPCWSTR path, LPCWSTR type)
+{
+    if (!path || !type)
+        return FALSE;
+    LPCWSTR extension = PathFindExtensionW(path);
+    if (!*extension)
+        return FALSE;
+    WCHAR found[MAX_PATH];
+    DWORD size = MAX_PATH;
+    if (FAILED(AssocQueryStringW(0, ASSOCSTR_CONTENTTYPE, extension, nullptr, found, &size)))
+        return FALSE;
+    return !lstrcmpiW(found, type);
+}
+
+BOOL WINAPI PathIsContentTypeA(LPCSTR path, LPCSTR type)
+{
+    LPWSTR p = ShlWide(path), t = ShlWide(type);
+    BOOL result = p && t && PathIsContentTypeW(p, t);
+    ShlFree(p);
+    ShlFree(t);
+    return result;
+}
+
+/* ------------------------------------------------------------------ compacting */
+
+/* a path shortened to max characters with the terminator: "..." replaces what comes before the
+   last component, and the component itself loses its end when it alone is too long. */
+BOOL WINAPI PathCompactPathExW(LPWSTR out, LPCWSTR path, UINT max, DWORD flags)
+{
+    if (!out || !path || !max)
+        return FALSE;
+    SIZE_T length = wcslen(path);
+    if (length + 1 <= max) {
+        wcscpy(out, path);
         return TRUE;
     }
-    if (length > root) {
-        path[root] = 0;
+    LPCWSTR file = PathFindFileNameW(path);
+    WCHAR separator = L'\\';
+    if (file > path && (file[-1] == L'\\' || file[-1] == L'/')) {
+        separator = file[-1];
+    } else {
+        LPCWSTR slash = wcschr(path, L'/');
+        if (slash && !wcschr(path, L'\\'))
+            separator = L'/';
+    }
+    SIZE_T file_length = wcslen(file), room = max - 1;
+    if (room <= 3) {
+        for (SIZE_T i = 0; i < room; i++)
+            out[i] = L'.';
+        out[room] = 0;
         return TRUE;
     }
-    return FALSE;
-}
-
-LWSTDAPI void WINAPI PathRemoveExtensionW(LPWSTR path)
-{
-    if (path)
-        *PathFindExtensionW(path) = 0;
-}
-
-LWSTDAPI BOOL WINAPI PathRenameExtensionW(LPWSTR path, LPCWSTR extension)
-{
-    if (!path || !extension)
-        return FALSE;
-    LPWSTR dot = PathFindExtensionW(path);
-    if ((SIZE_T)(dot - path) + wcslen(extension) >= MAX_PATH)
-        return FALSE;
-    wcscpy(dot, extension);
+    if (file_length + 4 > room) {
+        /* only part of the last component fits. */
+        SIZE_T keep = room - 3;
+        memcpy(out, file, keep * sizeof(WCHAR));
+        wcscpy(out + keep, L"...");
+        return TRUE;
+    }
+    SIZE_T prefix = room - 4 - file_length;
+    memcpy(out, path, prefix * sizeof(WCHAR));
+    out[prefix] = L'.';
+    out[prefix + 1] = L'.';
+    out[prefix + 2] = L'.';
+    out[prefix + 3] = separator;
+    wcscpy(out + prefix + 4, file);
     return TRUE;
 }
 
-LWSTDAPI void WINAPI PathStripPathW(LPWSTR path)
+BOOL WINAPI PathCompactPathExA(LPSTR out, LPCSTR path, UINT max, DWORD flags)
 {
-    if (!path)
-        return;
-    LPWSTR name = PathFindFileNameW(path);
-    if (name != path)
-        memmove(path, name, (wcslen(name) + 1) * sizeof(WCHAR));
-}
-
-LWSTDAPI LPWSTR WINAPI PathSkipRootW(LPCWSTR path)
-{
-    if (!path)
-        return nullptr;
-    SIZE_T root = root_length(path);
-    if (!root || (is_drive(path) && root == 2))
-        return nullptr;
-    return (LPWSTR)path + root;
-}
-
-LWSTDAPI BOOL WINAPI PathStripToRootW(LPWSTR path)
-{
-    if (!path)
+    if (!out || !path || !max)
         return FALSE;
-    SIZE_T root = root_length(path);
-    if (root && is_separator(path[0]) && is_separator(path[1]) && is_separator(path[root - 1]))
-        root--;
-    path[root] = 0;
-    return root != 0;
-}
-
-LWSTDAPI BOOL WINAPI PathIsRelativeW(LPCWSTR path)
-{
-    if (!path || !path[0])
-        return TRUE;
-    return !is_separator(path[0]) && path[1] != L':';
-}
-
-LWSTDAPI BOOL WINAPI PathIsUNCW(LPCWSTR path)
-{
-    if (!path || path[0] != L'\\' || path[1] != L'\\')
+    WCHAR wide[MAX_PATH * 4], result[MAX_PATH * 4];
+    if (!MultiByteToWideChar(CP_ACP, 0, path, -1, wide, RTL_NUMBER_OF(wide)))
         return FALSE;
-    if (path[2] == L'?')
-        return !_wcsnicmp(path, L"\\\\?\\UNC\\", 8);
+    if (max > RTL_NUMBER_OF(result))
+        max = RTL_NUMBER_OF(result);
+    if (!PathCompactPathExW(result, wide, max, flags))
+        return FALSE;
+    SHUnicodeToAnsiCP(CP_ACP, result, out, (int)max);
     return TRUE;
 }
 
-LWSTDAPI BOOL WINAPI PathIsRootW(LPCWSTR path)
+static UINT text_width(HDC dc, LPCWSTR text, int length)
 {
-    if (!path || !path[0])
-        return FALSE;
-    if (is_separator(path[0]) && !path[1])
-        return TRUE;
-    if (is_drive(path))
-        return is_separator(path[2]) && !path[3];
-    if (is_separator(path[0]) && is_separator(path[1])) {
-        /* "\\server" and "\\server\share" with an optional final separator. */
-        LPCWSTR p = path + 2;
-        int separators = 0;
-        for (; *p; p++)
-            if (is_separator(*p) && p[1])
-                separators++;
-        return separators <= 1;
-    }
-    return FALSE;
+    SIZE size = {0, 0};
+    GetTextExtentPoint32W(dc, text, length, &size);
+    return (UINT)size.cx;
 }
 
-LWSTDAPI int WINAPI PathGetDriveNumberW(LPCWSTR path)
+/* the path shortened in place until it fits width pixels in the device context's font. */
+BOOL WINAPI PathCompactPathW(HDC dc, LPWSTR path, UINT width)
 {
     if (!path)
-        return -1;
-    if (!wcsncmp(path, L"\\\\?\\", 4))
-        path += 4;
-    if (!is_drive(path))
-        return -1;
-    return (path[0] | 0x20) - L'a';
-}
-
-/* ------------------------------------------------------------------ combining */
-
-/* resolves "." and ".." segments of a path in place. */
-static void canonicalize(LPWSTR path)
-{
-    SIZE_T root = root_length(path);
-    LPWSTR out = path + root, in = path + root;
-    while (*in) {
-        LPWSTR end = in;
-        while (*end && !is_separator(*end))
-            end++;
-        SIZE_T n = (SIZE_T)(end - in);
-        if (n == 1 && in[0] == L'.') {
-            /* nothing. */
-        } else if (n == 2 && in[0] == L'.' && in[1] == L'.') {
-            if (out > path + root) {
-                out--;
-                while (out > path + root && !is_separator(out[-1]))
-                    out--;
+        return FALSE;
+    HDC own = dc ? nullptr : GetDC(nullptr);
+    if (own)
+        dc = own;
+    BOOL result = TRUE;
+    int length = (int)wcslen(path);
+    if (text_width(dc, path, length) > width) {
+        LPWSTR file = PathFindFileNameW(path);
+        int file_length = (int)wcslen(file);
+        WCHAR buffer[MAX_PATH * 2];
+        int prefix = (int)(file - path);
+        if (prefix > 0)
+            prefix--;
+        BOOL done = FALSE;
+        for (; prefix >= 0 && !done; prefix--) {
+            if (prefix + 4 + file_length >= (int)RTL_NUMBER_OF(buffer))
+                continue;
+            memcpy(buffer, path, (SIZE_T)prefix * sizeof(WCHAR));
+            wcscpy(buffer + prefix, L"...\\");
+            wcscpy(buffer + prefix + 4, file);
+            if (text_width(dc, buffer, (int)wcslen(buffer)) <= width) {
+                wcscpy(path, buffer);
+                done = TRUE;
             }
-        } else {
-            memmove(out, in, n * sizeof(WCHAR));
-            out += n;
-            if (*end)
-                *out++ = L'\\';
         }
-        in = *end ? end + 1 : end;
+        if (!done) {
+            /* the name alone with dots, as many of its characters as fit. */
+            int keep = file_length;
+            for (; keep >= 0; keep--) {
+                memcpy(buffer, file, (SIZE_T)keep * sizeof(WCHAR));
+                wcscpy(buffer + keep, L"...");
+                if (text_width(dc, buffer, keep + 3) <= width)
+                    break;
+            }
+            if (keep < 0) {
+                buffer[0] = 0;
+                result = FALSE;
+            }
+            wcscpy(path, buffer);
+        }
     }
-    *out = 0;
+    if (own)
+        ReleaseDC(nullptr, own);
+    return result;
 }
 
-LWSTDAPI LPWSTR WINAPI PathCombineW(LPWSTR out, LPCWSTR directory, LPCWSTR file)
+BOOL WINAPI PathCompactPathA(HDC dc, LPSTR path, UINT width)
+{
+    WCHAR wide[MAX_PATH * 2];
+    if (!path || !MultiByteToWideChar(CP_ACP, 0, path, -1, wide, RTL_NUMBER_OF(wide)))
+        return FALSE;
+    BOOL result = PathCompactPathW(dc, wide, width);
+    WideCharToMultiByte(CP_ACP, 0, wide, -1, path, MAX_PATH, nullptr, nullptr);
+    return result;
+}
+
+/* the path compacted to the control's width in its font. */
+void WINAPI PathSetDlgItemPathW(HWND dialog, int id, LPCWSTR path)
+{
+    HWND item = GetDlgItem(dialog, id);
+    if (!item)
+        return;
+    WCHAR text[MAX_PATH * 2];
+    lstrcpynW(text, path ? path : L"", RTL_NUMBER_OF(text));
+    RECT rect;
+    GetClientRect(item, &rect);
+    HDC dc = GetDC(item);
+    HFONT font = (HFONT)SendMessageW(item, WM_GETFONT, 0, 0);
+    HGDIOBJ old = font ? SelectObject(dc, font) : nullptr;
+    PathCompactPathW(dc, text, (UINT)(rect.right - rect.left));
+    if (old)
+        SelectObject(dc, old);
+    ReleaseDC(item, dc);
+    SetWindowTextW(item, text);
+}
+
+void WINAPI PathSetDlgItemPathA(HWND dialog, int id, LPCSTR path)
+{
+    LPWSTR w = ShlWide(path);
+    PathSetDlgItemPathW(dialog, id, w);
+    ShlFree(w);
+}
+
+/* ------------------------------------------------------------------ the environment */
+
+DWORD WINAPI SHExpandEnvironmentStringsForUserW(HANDLE token, LPCWSTR source, LPWSTR out, DWORD size);
+DWORD WINAPI SHExpandEnvironmentStringsForUserW(HANDLE token, LPCWSTR source, LPWSTR out, DWORD size)
+{
+    if (token) {
+        BOOL(WINAPI * expand)(HANDLE, LPCWSTR, LPWSTR, DWORD) =
+            (BOOL(WINAPI *)(HANDLE, LPCWSTR, LPWSTR, DWORD))ShlProc(L"userenv.dll", "ExpandEnvironmentStringsForUserW");
+        if (expand)
+            return expand(token, source, out, size) ? (DWORD)wcslen(out) + 1 : 0;
+    }
+    return ExpandEnvironmentStringsW(source, out, size);
+}
+
+DWORD WINAPI SHExpandEnvironmentStringsForUserA(HANDLE token, LPCSTR source, LPSTR out, DWORD size);
+DWORD WINAPI SHExpandEnvironmentStringsForUserA(HANDLE token, LPCSTR source, LPSTR out, DWORD size)
+{
+    if (!token)
+        return ExpandEnvironmentStringsA(source, out, size);
+    LPWSTR w = ShlWide(source);
+    LPWSTR result = ShlAlloc((SIZE_T)(size ? size : 1) * sizeof(WCHAR));
+    DWORD n = 0;
+    if (w && result) {
+        n = SHExpandEnvironmentStringsForUserW(token, w, result, size);
+        if (n && n <= size)
+            SHUnicodeToAnsiCP(CP_ACP, result, out, (int)size);
+    }
+    ShlFree(w);
+    ShlFree(result);
+    return n;
+}
+
+/* an expanded copy in task memory. */
+HRESULT WINAPI SHExpandEnvironmentStringsAlloc(LPCWSTR source, LPWSTR *out);
+HRESULT WINAPI SHExpandEnvironmentStringsAlloc(LPCWSTR source, LPWSTR *out)
 {
     if (!out)
-        return nullptr;
-    if (!directory && !file) {
-        out[0] = 0;
-        return nullptr;
-    }
-    WCHAR buffer[MAX_PATH * 2];
-    if (!file || !file[0]) {
-        if (wcslen(directory) >= MAX_PATH)
-            goto fail;
-        wcscpy(buffer, directory);
-    } else if (!directory || !directory[0] || is_drive(file) || (is_separator(file[0]) && is_separator(file[1]))) {
-        if (wcslen(file) >= MAX_PATH)
-            goto fail;
-        wcscpy(buffer, file);
-    } else {
-        SIZE_T length = wcslen(directory);
-        if (length >= MAX_PATH || wcslen(file) >= MAX_PATH)
-            goto fail;
-        wcscpy(buffer, directory);
-        if (is_separator(file[0])) {
-            /* relative to the root of the directory. */
-            SIZE_T root = root_length(buffer);
-            if (root && is_separator(buffer[root - 1]))
-                root--;
-            length = root;
-        } else if (length && !is_separator(buffer[length - 1])) {
-            buffer[length++] = L'\\';
-        }
-        wcscpy(buffer + length, file);
-    }
-    canonicalize(buffer);
-    if (wcslen(buffer) >= MAX_PATH)
-        goto fail;
-    wcscpy(out, buffer);
-    return out;
-fail:
-    out[0] = 0;
-    return nullptr;
+        return E_INVALIDARG;
+    *out = nullptr;
+    if (!source)
+        return E_INVALIDARG;
+    DWORD n = ExpandEnvironmentStringsW(source, nullptr, 0);
+    if (!n)
+        return HRESULT_FROM_WIN32(GetLastError());
+    *out = ShlTaskAlloc((SIZE_T)n * sizeof(WCHAR));
+    if (!*out)
+        return E_OUTOFMEMORY;
+    ExpandEnvironmentStringsW(source, *out, n);
+    return S_OK;
 }
 
-LWSTDAPI BOOL WINAPI PathAppendW(LPWSTR path, LPCWSTR more)
+/* another user's profile is out of reach, so the current one's variables are used. */
+BOOL WINAPI PathUnExpandEnvStringsForUserW(HANDLE token, LPCWSTR path, LPWSTR out, UINT size);
+BOOL WINAPI PathUnExpandEnvStringsForUserW(HANDLE token, LPCWSTR path, LPWSTR out, UINT size)
 {
-    if (!path || !more)
-        return FALSE;
-    if (!(is_separator(more[0]) && is_separator(more[1])) && !is_drive(more))
-        while (is_separator(*more))
-            more++;
-    return PathCombineW(path, path, more) != nullptr;
+    return PathUnExpandEnvStringsW(path, out, size);
 }
 
-/* ------------------------------------------------------------------ command lines and quoting */
-
-LWSTDAPI LPWSTR WINAPI PathGetArgsW(LPCWSTR path)
+BOOL WINAPI PathUnExpandEnvStringsForUserA(HANDLE token, LPCSTR path, LPSTR out, UINT size);
+BOOL WINAPI PathUnExpandEnvStringsForUserA(HANDLE token, LPCSTR path, LPSTR out, UINT size)
 {
-    if (!path)
-        return nullptr;
-    BOOL quoted = FALSE;
-    for (; *path; path++) {
-        if (*path == L'"')
-            quoted = !quoted;
-        else if (*path == L' ' && !quoted)
-            return (LPWSTR)path + 1;
-    }
-    return (LPWSTR)path;
+    return PathUnExpandEnvStringsA(path, out, size);
 }
 
-LWSTDAPI BOOL WINAPI PathQuoteSpacesW(LPWSTR path)
+BOOL WINAPI PathUnExpandSystemEnvStringsW(LPCWSTR path, LPWSTR out, UINT size);
+BOOL WINAPI PathUnExpandSystemEnvStringsW(LPCWSTR path, LPWSTR out, UINT size)
 {
-    if (!path || !wcschr(path, L' ') || path[0] == L'"')
-        return FALSE;
-    SIZE_T length = wcslen(path);
-    if (length + 3 > MAX_PATH)
-        return FALSE;
-    memmove(path + 1, path, (length + 1) * sizeof(WCHAR));
-    path[0] = L'"';
-    path[length + 1] = L'"';
-    path[length + 2] = 0;
-    return TRUE;
-}
-
-LWSTDAPI void WINAPI PathUnquoteSpacesW(LPWSTR path)
-{
-    if (!path || path[0] != L'"')
-        return;
-    SIZE_T length = wcslen(path);
-    if (length < 2 || path[length - 1] != L'"')
-        return;
-    memmove(path, path + 1, (length - 2) * sizeof(WCHAR));
-    path[length - 2] = 0;
-}
-
-LWSTDAPI void WINAPI PathRemoveBlanksW(LPWSTR path)
-{
-    if (!path)
-        return;
-    LPWSTR start = path;
-    while (*start == L' ')
-        start++;
-    SIZE_T length = wcslen(start);
-    while (length && start[length - 1] == L' ')
-        length--;
-    memmove(path, start, length * sizeof(WCHAR));
-    path[length] = 0;
-}
-
-/* matches one pattern with * and ?, case insensitively. */
-static BOOL match_one(LPCWSTR name, LPCWSTR spec, LPCWSTR spec_end)
-{
-    while (spec < spec_end) {
-        if (*spec == L'*') {
-            spec++;
-            while (spec < spec_end && *spec == L'*')
-                spec++;
-            if (spec == spec_end)
-                return TRUE;
-            for (; *name; name++)
-                if (match_one(name, spec, spec_end))
-                    return TRUE;
-            return FALSE;
-        }
-        if (!*name)
-            return FALSE;
-        if (*spec != L'?' && towupper(*spec) != towupper(*name))
-            return FALSE;
-        spec++;
-        name++;
-    }
-    return !*name;
-}
-
-LWSTDAPI BOOL WINAPI PathMatchSpecW(LPCWSTR path, LPCWSTR spec)
-{
-    if (!path || !spec)
-        return FALSE;
-    if (!wcscmp(spec, L"*.*"))
-        return TRUE;
-    LPCWSTR name = PathFindFileNameW(path);
-    while (*spec) {
-        while (*spec == L' ')
-            spec++;
-        LPCWSTR end = spec;
-        while (*end && *end != L';')
-            end++;
-        LPCWSTR trimmed = end;
-        while (trimmed > spec && trimmed[-1] == L' ')
-            trimmed--;
-        if (trimmed > spec && match_one(name, spec, trimmed))
-            return TRUE;
-        spec = *end ? end + 1 : end;
-    }
-    return FALSE;
+    return PathUnExpandEnvStringsW(path, out, size);
 }

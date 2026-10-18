@@ -465,6 +465,17 @@ static RECT logical_rect_to_surface(DC *dc, LONG left, LONG top, LONG right, LON
     return r;
 }
 
+/* rectangles, ellipses and round rectangles include their right and bottom edges in the advanced mode. */
+static RECT shape_rect(DC *dc, LONG left, LONG top, LONG right, LONG bottom)
+{
+    RECT r = logical_rect_to_surface(dc, left, top, right, bottom);
+    if (dc->State.GraphicsMode == GM_ADVANCED) {
+        r.right++;
+        r.bottom++;
+    }
+    return r;
+}
+
 static ULONG pen_pixel(DC *dc)
 {
     PEN *p = dc->State.Pen;
@@ -493,15 +504,30 @@ BOOL NTAPI NtGdiPatBlt(HDC hdc, int x, int y, int width, int height, DWORD rop)
     return ok;
 }
 
+static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
+                        int src_width, int src_height, DWORD rop);
+
+/* a scaling transform on either dc stretches. */
+static BOOLEAN blt_scales(HDC hdst, HDC hsrc)
+{
+    UserEnter();
+    DC *d = DcLookup(hdst), *s = hsrc ? DcLookup(hsrc) : nullptr;
+    BOOLEAN scaled = (d && DcIsScaled(d)) || (s && DcIsScaled(s));
+    UserLeave();
+    return scaled;
+}
+
 BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y, DWORD rop,
                        DWORD bk_color, ULONG flags)
 {
+    UCHAR code = (UCHAR)(rop >> 16);
+    BOOLEAN uses_src = ((code >> 2) & 0x33) != (code & 0x33);
+    if (uses_src && blt_scales(hdst, hsrc))
+        return stretch_blt(hdst, x, y, width, height, hsrc, src_x, src_y, width, height, rop);
     UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT r = {0, 0, 0, 0};
-    UCHAR code = (UCHAR)(rop >> 16);
-    BOOLEAN uses_src = ((code >> 2) & 0x33) != (code & 0x33);
     DC *src = hsrc ? DcLookup(hsrc) : nullptr;
     if (begin_draw(hdst, &ctx)) {
         if (!uses_src) {
@@ -535,8 +561,14 @@ BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, 
 BOOL NTAPI NtGdiStretchBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
                            int src_width, int src_height, DWORD rop, DWORD bk_color)
 {
-    if (width == src_width && height == src_height)
+    if (width == src_width && height == src_height && !blt_scales(hdst, hsrc))
         return NtGdiBitBlt(hdst, x, y, width, height, hsrc, src_x, src_y, rop, bk_color, 0);
+    return stretch_blt(hdst, x, y, width, height, hsrc, src_x, src_y, src_width, src_height, rop);
+}
+
+static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
+                        int src_width, int src_height, DWORD rop)
+{
     UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
@@ -592,18 +624,18 @@ BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hs
 void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty)
 {
     PEN *pen = dc->State.Pen;
-    if (pen->Style == PS_NULL)
+    if (PenStyle(pen) == PS_NULL)
         return;
     ULONG px = pen_pixel(dc);
-    LONG width = pen->Width > 1 ? pen->Width : 1;
+    LONG width = DcPenWidth(dc);
     LONG dx = x1 > x0 ? x1 - x0 : x0 - x1, dy = y1 > y0 ? y0 - y1 : y1 - y0;
     LONG sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx + dy;
     LONG step = 0;
     while (x0 != x1 || y0 != y1) {
         BOOLEAN on = TRUE;
-        if (pen->Style == PS_DOT)
+        if (PenStyle(pen) == PS_DOT)
             on = (step & 1) == 0;
-        else if (pen->Style == PS_DASH)
+        else if (PenStyle(pen) == PS_DASH)
             on = (step % 24) < 18;
         if (on) {
             RECT r = {x0 - (width - 1) / 2, y0 - (width - 1) / 2, x0 - (width - 1) / 2 + width, y0 - (width - 1) / 2 + width};
@@ -659,9 +691,9 @@ BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
 static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirty)
 {
     PEN *pen = dc->State.Pen;
-    if (pen->Style == PS_NULL)
+    if (PenStyle(pen) == PS_NULL)
         return;
-    LONG w = pen->Width > 1 ? pen->Width : 1;
+    LONG w = DcPenWidth(dc);
     ULONG px = pen_pixel(dc);
     RECT edges[4] = {
         {r->left, r->top, r->right, r->top + w},
@@ -687,8 +719,8 @@ BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = FALSE;
     if (begin_draw(hdc, &ctx)) {
-        RECT r = logical_rect_to_surface(ctx.Dc, left, top, right, bottom);
-        LONG inset = ctx.Dc->State.Pen->Style == PS_NULL ? 0 : 1;
+        RECT r = shape_rect(ctx.Dc, left, top, right, bottom);
+        LONG inset = PenStyle(ctx.Dc->State.Pen) == PS_NULL ? 0 : 1;
         /* with a null pen the rectangle shrinks by one pixel at the right and bottom. */
         RECT inner = r;
         if (!inset) {
@@ -721,12 +753,12 @@ BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = FALSE;
     if (begin_draw(hdc, &ctx)) {
-        RECT r = logical_rect_to_surface(ctx.Dc, left, top, right, bottom);
+        RECT r = shape_rect(ctx.Dc, left, top, right, bottom);
         BRUSH *b = ctx.Dc->State.Brush;
         ULONG fill = b->Style == BS_NULL ? 0 : brush_pixel(ctx.Dc, b, 0, 0);
         PEN *p = ctx.Dc->State.Pen;
-        LONG bw = p->Style == PS_NULL ? 0 : (p->Width > 1 ? p->Width : 1);
-        LONG radius = W32Min(width, height) / 2;
+        LONG bw = PenStyle(p) == PS_NULL ? 0 : DcPenWidth(ctx.Dc);
+        LONG radius = W32Min(DcScaleToDevice(ctx.Dc, width), DcScaleToDevice(ctx.Dc, height)) / 2;
         if (b->Style == BS_NULL) {
             /* frame only: draw the border ring over the existing pixels. */
             REGION ring;
@@ -989,9 +1021,22 @@ static BOOL fill_region(HDC hdc, HRGN region, HBRUSH hbrush, int frame_w, int fr
             RgnFree(&inner);
             RgnFree(&shifted);
         }
-        LONG ox = 0, oy = 0;
-        DcLogicalToSurface(ctx.Dc, &ox, &oy);
-        RgnOffset(&area, ox, oy);
+        if (DcIsScaled(ctx.Dc)) {
+            /* the region is logical: its rectangles go through the transform. */
+            XFORM m;
+            DcGetXform(ctx.Dc, &m);
+            m.eDx += (float)ctx.Dc->Origin.x;
+            m.eDy += (float)ctx.Dc->Origin.y;
+            REGION copy;
+            RgnInit(&copy);
+            RgnCopy(&copy, &area);
+            RgnTransform(&area, copy.Rects, copy.Count, &m);
+            RgnFree(&copy);
+        } else {
+            LONG ox = 0, oy = 0;
+            DcLogicalToSurface(ctx.Dc, &ox, &oy);
+            RgnOffset(&area, ox, oy);
+        }
         RgnCombine(&ctx.Clip, &ctx.Clip, &area, RGN_AND);
         if (invert)
             DrawFillRectRop(ctx.Dc->Surface, &ctx.Clip, &area.Extents, 0, R2_NOT);

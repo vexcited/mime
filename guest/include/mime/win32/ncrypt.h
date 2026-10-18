@@ -1,0 +1,106 @@
+/* the cng key storage router, ncrypt.h. */
+#ifndef MIME_WIN32_NCRYPT_H
+#define MIME_WIN32_NCRYPT_H
+
+#include <mime/win32/wincrypt.h>
+
+#ifndef NCRYPTAPI
+#define NCRYPTAPI DECLSPEC_IMPORT
+#endif
+
+typedef LONG SECURITY_STATUS;
+typedef ULONG_PTR NCRYPT_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_KEY_HANDLE, NCRYPT_SECRET_HANDLE;
+
+#ifndef NTE_BAD_FLAGS
+#define NTE_BAD_FLAGS ((SECURITY_STATUS)0x80090009L)
+#endif
+#ifndef NTE_NO_MEMORY
+#define NTE_NO_MEMORY ((SECURITY_STATUS)0x8009000EL)
+#endif
+#ifndef NTE_EXISTS
+#define NTE_EXISTS ((SECURITY_STATUS)0x8009000FL)
+#endif
+#ifndef NTE_PERM
+#define NTE_PERM ((SECURITY_STATUS)0x80090010L)
+#endif
+#ifndef NTE_NOT_FOUND
+#define NTE_NOT_FOUND ((SECURITY_STATUS)0x80090011L)
+#endif
+#ifndef NTE_BAD_KEYSET
+#define NTE_BAD_KEYSET ((SECURITY_STATUS)0x80090016L)
+#endif
+#ifndef NTE_BAD_KEY_STATE
+#define NTE_BAD_KEY_STATE ((SECURITY_STATUS)0x8009000BL)
+#endif
+#ifndef NTE_INVALID_HANDLE
+#define NTE_INVALID_HANDLE ((SECURITY_STATUS)0x80090026L)
+#endif
+#ifndef NTE_INVALID_PARAMETER
+#define NTE_INVALID_PARAMETER ((SECURITY_STATUS)0x80090027L)
+#endif
+#ifndef NTE_BUFFER_TOO_SMALL
+#define NTE_BUFFER_TOO_SMALL ((SECURITY_STATUS)0x80090028L)
+#endif
+#ifndef NTE_NOT_SUPPORTED
+#define NTE_NOT_SUPPORTED ((SECURITY_STATUS)0x80090029L)
+#endif
+#ifndef NTE_NO_MORE_ITEMS
+#define NTE_NO_MORE_ITEMS ((SECURITY_STATUS)0x8009002AL)
+#endif
+
+#define MS_KEY_STORAGE_PROVIDER L"Microsoft Software Key Storage Provider"
+#define MS_SMART_CARD_KEY_STORAGE_PROVIDER L"Microsoft Smart Card Key Storage Provider"
+#define MS_PLATFORM_CRYPTO_PROVIDER L"Microsoft Platform Crypto Provider"
+
+#define NCRYPT_RSA_ALGORITHM L"RSA"
+#define NCRYPT_ECDSA_P256_ALGORITHM L"ECDSA_P256"
+#define NCRYPT_ECDSA_P384_ALGORITHM L"ECDSA_P384"
+
+#define NCRYPT_NAME_PROPERTY L"Name"
+#define NCRYPT_UNIQUE_NAME_PROPERTY L"Unique Name"
+#define NCRYPT_ALGORITHM_PROPERTY L"Algorithm Name"
+#define NCRYPT_ALGORITHM_GROUP_PROPERTY L"Algorithm Group"
+#define NCRYPT_LENGTH_PROPERTY L"Length"
+#define NCRYPT_EXPORT_POLICY_PROPERTY L"Export Policy"
+#define NCRYPT_KEY_USAGE_PROPERTY L"Key Usage"
+#define NCRYPT_KEY_TYPE_PROPERTY L"Key Type"
+#define NCRYPT_IMPL_TYPE_PROPERTY L"Impl Type"
+#define NCRYPT_PROVIDER_HANDLE_PROPERTY L"Provider Handle"
+
+#define NCRYPT_ALLOW_EXPORT_FLAG 0x00000001
+#define NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG 0x00000002
+#define NCRYPT_IMPL_SOFTWARE_FLAG 0x00000002
+#define NCRYPT_MACHINE_KEY_FLAG 0x00000020
+#define NCRYPT_SILENT_FLAG 0x00000040
+#define NCRYPT_OVERWRITE_KEY_FLAG 0x00000080
+
+typedef struct NCryptProviderName {
+    LPWSTR pszName;
+    LPWSTR pszComment;
+} NCryptProviderName;
+
+typedef struct NCryptKeyName {
+    LPWSTR pszName;
+    LPWSTR pszAlgid;
+    DWORD dwLegacyKeySpec;
+    DWORD dwFlags;
+} NCryptKeyName;
+
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptOpenStorageProvider(NCRYPT_PROV_HANDLE *provider, LPCWSTR name, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptFreeObject(NCRYPT_HANDLE object);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptFreeBuffer(PVOID buffer);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptIsAlgSupported(NCRYPT_PROV_HANDLE provider, LPCWSTR algorithm, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_HANDLE *key,
+                                                          LPCWSTR algorithm, LPCWSTR name, DWORD spec, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptOpenKey(NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_HANDLE *key, LPCWSTR name,
+                                               DWORD spec, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE key, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptDeleteKey(NCRYPT_KEY_HANDLE key, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptGetProperty(NCRYPT_HANDLE object, LPCWSTR property, PBYTE output, DWORD size,
+                                                   DWORD *result, DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptSetProperty(NCRYPT_HANDLE object, LPCWSTR property, PBYTE input, DWORD size,
+                                                   DWORD flags);
+NCRYPTAPI SECURITY_STATUS WINAPI NCryptEnumStorageProviders(DWORD *count, NCryptProviderName **list, DWORD flags);
+NCRYPTAPI BOOL WINAPI NCryptIsKeyHandle(NCRYPT_KEY_HANDLE key);
+
+#endif

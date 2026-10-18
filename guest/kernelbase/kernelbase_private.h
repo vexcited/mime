@@ -130,6 +130,11 @@ WCHAR KbDowncase(WCHAR c);
 /* resource lookup helper used by FormatMessage and LoadString like code. */
 BOOL KbFindMessage(HMODULE module, DWORD id, DWORD lang, LPWSTR *text, BOOL *allocated);
 
+/* activation contexts: the version the program's manifest earns it, long paths, thread inheritance. */
+void KbReportedVersion(PULONG major, PULONG minor, PULONG build);
+void KbInitializeLongPaths(void);
+BOOL KbInheritActivationContext(HANDLE process, PACTIVATION_CONTEXT *context);
+
 /* time conversion helpers. */
 void KbFileTimeToSystemTime(LONGLONG t, LPSYSTEMTIME st);
 BOOL KbSystemTimeToFileTime(const SYSTEMTIME *st, LONGLONG *t);

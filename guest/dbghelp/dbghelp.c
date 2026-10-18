@@ -636,3 +636,279 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
         return FALSE;
     return TRUE;
 }
+
+/* ------------------------------------------------------------------ module information */
+
+#define SymExport 4
+#define IMAGE_DEBUG_TYPE_CODEVIEW 2
+#define CV_SIGNATURE_RSDS 0x53445352
+
+typedef struct DEBUG_DIRECTORY {
+    DWORD Characteristics;
+    DWORD TimeDateStamp;
+    WORD MajorVersion;
+    WORD MinorVersion;
+    DWORD Type;
+    DWORD SizeOfData;
+    DWORD AddressOfRawData;
+    DWORD PointerToRawData;
+} DEBUG_DIRECTORY;
+
+typedef struct CV_INFO_PDB70 {
+    DWORD CvSignature;
+    GUID Signature;
+    DWORD Age;
+    char PdbFileName[1];
+} CV_INFO_PDB70;
+
+typedef struct IMAGEHLP_MODULEW64 {
+    DWORD SizeOfStruct;
+    DWORD64 BaseOfImage;
+    DWORD ImageSize;
+    DWORD TimeDateStamp;
+    DWORD CheckSum;
+    DWORD NumSyms;
+    DWORD SymType;
+    WCHAR ModuleName[32];
+    WCHAR ImageName[256];
+    WCHAR LoadedImageName[256];
+    WCHAR LoadedPdbName[256];
+    DWORD CVSig;
+    WCHAR CVData[MAX_PATH * 3];
+    DWORD PdbSig;
+    GUID PdbSig70;
+    DWORD PdbAge;
+    BOOL PdbUnmatched;
+    BOOL DbgUnmatched;
+    BOOL LineNumbers;
+    BOOL GlobalSymbols;
+    BOOL TypeInfo;
+    BOOL SourceIndexed;
+    BOOL Publics;
+    DWORD MachineType;
+    DWORD Reserved;
+} IMAGEHLP_MODULEW64;
+
+typedef struct IMAGEHLP_MODULE64 {
+    DWORD SizeOfStruct;
+    DWORD64 BaseOfImage;
+    DWORD ImageSize;
+    DWORD TimeDateStamp;
+    DWORD CheckSum;
+    DWORD NumSyms;
+    DWORD SymType;
+    CHAR ModuleName[32];
+    CHAR ImageName[256];
+    CHAR LoadedImageName[256];
+    CHAR LoadedPdbName[256];
+    DWORD CVSig;
+    CHAR CVData[MAX_PATH * 3];
+    DWORD PdbSig;
+    GUID PdbSig70;
+    DWORD PdbAge;
+    BOOL PdbUnmatched;
+    BOOL DbgUnmatched;
+    BOOL LineNumbers;
+    BOOL GlobalSymbols;
+    BOOL TypeInfo;
+    BOOL SourceIndexed;
+    BOOL Publics;
+    DWORD MachineType;
+    DWORD Reserved;
+} IMAGEHLP_MODULE64;
+
+/* the codeview record of an image's debug directory, mapped or as a file. */
+static const CV_INFO_PDB70 *codeview(BYTE *base, BOOL mapped, DWORD *size)
+{
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+    IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
+    if (!dir->VirtualAddress || !dir->Size || !mapped)
+        return nullptr;
+    DEBUG_DIRECTORY *entries = (DEBUG_DIRECTORY *)(base + dir->VirtualAddress);
+    for (DWORD i = 0; i < dir->Size / sizeof(*entries); i++) {
+        if (entries[i].Type != IMAGE_DEBUG_TYPE_CODEVIEW || !entries[i].AddressOfRawData)
+            continue;
+        const CV_INFO_PDB70 *cv = (const CV_INFO_PDB70 *)(base + entries[i].AddressOfRawData);
+        if (entries[i].SizeOfData < sizeof(*cv) || cv->CvSignature != CV_SIGNATURE_RSDS)
+            continue;
+        *size = entries[i].SizeOfData;
+        return cv;
+    }
+    return nullptr;
+}
+
+/*
+ * the module of the calling process holding an address. without symbol
+ * files a module has its exports, reported as SymExport like windows does
+ * when no pdb is found.
+ */
+DBGHELP BOOL WINAPI SymGetModuleInfoW64(HANDLE process, DWORD64 address, IMAGEHLP_MODULEW64 *info)
+{
+    if (!info || info->SizeOfStruct < offsetof(IMAGEHLP_MODULEW64, LoadedPdbName)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD64 module = SymGetModuleBase64(process, address);
+    if (!module) {
+        SetLastError(ERROR_MOD_NOT_FOUND);
+        return FALSE;
+    }
+    BYTE *base = (BYTE *)(ULONG_PTR)module;
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+    DWORD size = info->SizeOfStruct > sizeof(*info) ? sizeof(*info) : info->SizeOfStruct;
+    memset((BYTE *)info + sizeof(DWORD), 0, size - sizeof(DWORD));
+    info->BaseOfImage = module;
+    info->ImageSize = nt->OptionalHeader.SizeOfImage;
+    info->TimeDateStamp = nt->FileHeader.TimeDateStamp;
+    info->CheckSum = nt->OptionalHeader.CheckSum;
+    info->SymType = SymExport;
+    WCHAR path[MAX_PATH];
+    if (GetModuleFileNameW((HMODULE)base, path, MAX_PATH)) {
+        lstrcpynW(info->ImageName, path, 256);
+        lstrcpynW(info->LoadedImageName, path, 256);
+        PCWSTR name = wcsrchr(path, L'\\') ? wcsrchr(path, L'\\') + 1 : path;
+        lstrcpynW(info->ModuleName, name, 32);
+        PWSTR dot = wcsrchr(info->ModuleName, L'.');
+        if (dot)
+            *dot = 0;
+    }
+    IMAGE_DATA_DIRECTORY *exports = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (exports->VirtualAddress && exports->Size)
+        info->NumSyms = ((IMAGE_EXPORT_DIRECTORY *)(base + exports->VirtualAddress))->NumberOfNames;
+    if (size < offsetof(IMAGEHLP_MODULEW64, CVSig))
+        return TRUE;
+    DWORD cv_size;
+    const CV_INFO_PDB70 *cv = codeview(base, TRUE, &cv_size);
+    if (cv) {
+        info->CVSig = cv->CvSignature;
+        MultiByteToWideChar(CP_UTF8, 0, cv->PdbFileName, -1, info->CVData, RTL_NUMBER_OF(info->CVData));
+        if (size >= offsetof(IMAGEHLP_MODULEW64, PdbUnmatched)) {
+            info->PdbSig70 = cv->Signature;
+            info->PdbAge = cv->Age;
+        }
+    }
+    if (size >= offsetof(IMAGEHLP_MODULEW64, Reserved)) {
+        info->Publics = info->NumSyms != 0;
+        info->MachineType = nt->FileHeader.Machine;
+    }
+    return TRUE;
+}
+
+DBGHELP BOOL WINAPI SymGetModuleInfo64(HANDLE process, DWORD64 address, IMAGEHLP_MODULE64 *info)
+{
+    if (!info || info->SizeOfStruct < offsetof(IMAGEHLP_MODULE64, LoadedPdbName)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    IMAGEHLP_MODULEW64 wide = {.SizeOfStruct = sizeof(wide)};
+    if (!SymGetModuleInfoW64(process, address, &wide))
+        return FALSE;
+    DWORD size = info->SizeOfStruct > sizeof(*info) ? sizeof(*info) : info->SizeOfStruct;
+    memset((BYTE *)info + sizeof(DWORD), 0, size - sizeof(DWORD));
+    info->BaseOfImage = wide.BaseOfImage;
+    info->ImageSize = wide.ImageSize;
+    info->TimeDateStamp = wide.TimeDateStamp;
+    info->CheckSum = wide.CheckSum;
+    info->NumSyms = wide.NumSyms;
+    info->SymType = wide.SymType;
+    WideCharToMultiByte(CP_ACP, 0, wide.ModuleName, -1, info->ModuleName, 32, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, wide.ImageName, -1, info->ImageName, 256, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, wide.LoadedImageName, -1, info->LoadedImageName, 256, nullptr, nullptr);
+    if (size >= offsetof(IMAGEHLP_MODULE64, PdbSig)) {
+        info->CVSig = wide.CVSig;
+        WideCharToMultiByte(CP_ACP, 0, wide.CVData, -1, info->CVData, sizeof(info->CVData), nullptr, nullptr);
+    }
+    if (size >= offsetof(IMAGEHLP_MODULE64, PdbUnmatched)) {
+        info->PdbSig70 = wide.PdbSig70;
+        info->PdbAge = wide.PdbAge;
+    }
+    if (size >= offsetof(IMAGEHLP_MODULE64, Reserved)) {
+        info->Publics = wide.Publics;
+        info->MachineType = wide.MachineType;
+    }
+    return TRUE;
+}
+
+typedef struct SYMSRV_INDEX_INFOW {
+    DWORD sizeofstruct;
+    WCHAR file[MAX_PATH + 1];
+    BOOL stripped;
+    DWORD timestamp;
+    DWORD size;
+    WCHAR dbgfile[MAX_PATH + 1];
+    WCHAR pdbfile[MAX_PATH + 1];
+    GUID guid;
+    DWORD sig;
+    DWORD age;
+} SYMSRV_INDEX_INFOW;
+
+typedef struct SYMSRV_INDEX_INFO {
+    DWORD sizeofstruct;
+    CHAR file[MAX_PATH + 1];
+    BOOL stripped;
+    DWORD timestamp;
+    DWORD size;
+    CHAR dbgfile[MAX_PATH + 1];
+    CHAR pdbfile[MAX_PATH + 1];
+    GUID guid;
+    DWORD sig;
+    DWORD age;
+} SYMSRV_INDEX_INFO;
+
+/* the symbol server index of an image file: its stamp and size, and the pdb its codeview record names. */
+DBGHELP BOOL WINAPI SymSrvGetFileIndexInfoW(PCWSTR file, SYMSRV_INDEX_INFOW *info, DWORD flags)
+{
+    if (!file || !info || info->sizeofstruct != sizeof(*info)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    HMODULE image = LoadLibraryExW(file, nullptr, LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!image)
+        return FALSE;
+    BYTE *base = (BYTE *)((ULONG_PTR)image & ~(ULONG_PTR)3);
+    IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)base;
+    BOOL ok = dos->e_magic == IMAGE_DOS_SIGNATURE;
+    if (ok) {
+        IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+        memset((BYTE *)info + sizeof(DWORD), 0, sizeof(*info) - sizeof(DWORD));
+        PCWSTR name = wcsrchr(file, L'\\') ? wcsrchr(file, L'\\') + 1 : file;
+        lstrcpynW(info->file, name, MAX_PATH + 1);
+        info->timestamp = nt->FileHeader.TimeDateStamp;
+        info->size = nt->OptionalHeader.SizeOfImage;
+        info->stripped = (nt->FileHeader.Characteristics & 0x0200) != 0;
+        DWORD cv_size;
+        const CV_INFO_PDB70 *cv = codeview(base, TRUE, &cv_size);
+        if (cv) {
+            const char *pdb = strrchr(cv->PdbFileName, '\\') ? strrchr(cv->PdbFileName, '\\') + 1 : cv->PdbFileName;
+            MultiByteToWideChar(CP_UTF8, 0, pdb, -1, info->pdbfile, MAX_PATH + 1);
+            info->guid = cv->Signature;
+            info->age = cv->Age;
+        }
+    } else {
+        SetLastError(ERROR_BAD_EXE_FORMAT);
+    }
+    FreeLibrary(image);
+    return ok;
+}
+
+DBGHELP BOOL WINAPI SymSrvGetFileIndexInfo(PCSTR file, SYMSRV_INDEX_INFO *info, DWORD flags)
+{
+    if (!file || !info || info->sizeofstruct != sizeof(*info)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR path[MAX_PATH];
+    MultiByteToWideChar(CP_ACP, 0, file, -1, path, MAX_PATH);
+    SYMSRV_INDEX_INFOW wide = {.sizeofstruct = sizeof(wide)};
+    if (!SymSrvGetFileIndexInfoW(path, &wide, flags))
+        return FALSE;
+    memset((BYTE *)info + sizeof(DWORD), 0, sizeof(*info) - sizeof(DWORD));
+    WideCharToMultiByte(CP_ACP, 0, wide.file, -1, info->file, MAX_PATH + 1, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, wide.pdbfile, -1, info->pdbfile, MAX_PATH + 1, nullptr, nullptr);
+    info->stripped = wide.stripped;
+    info->timestamp = wide.timestamp;
+    info->size = wide.size;
+    info->guid = wide.guid;
+    info->age = wide.age;
+    return TRUE;
+}

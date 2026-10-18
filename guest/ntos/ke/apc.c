@@ -179,13 +179,15 @@ NTSTATUS NTAPI NtTestAlert(void)
             return status;
     }
     PspCheckForSuspendApc(thread);
-    if (!IsListEmpty(&thread->ApcListHead[UserMode]))
+    BOOLEAN apcs = !IsListEmpty(&thread->ApcListHead[UserMode]);
+    if (apcs)
         thread->UserApcPending = TRUE;
     if (thread->Alerted[UserMode]) {
         thread->Alerted[UserMode] = FALSE;
         return STATUS_ALERTED;
     }
-    return STATUS_SUCCESS;
+    /* the caller learns that apcs ran, as the status survives their delivery. */
+    return apcs ? STATUS_USER_APC : STATUS_SUCCESS;
 }
 
 /* first chance: hand the exception to ntdll!KiUserExceptionDispatcher. */

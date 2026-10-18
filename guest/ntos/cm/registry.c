@@ -1134,7 +1134,43 @@ void CmInitSystem1(void)
     ExReleaseFastMutex(&CmpLock);
 
     CmpSpecialize();
+    CmpImportHostRoots();
     ExAcquireFastMutex(&CmpLock);
     CmpJournalEnable();
     ExReleaseFastMutex(&CmpLock);
+}
+
+/*
+ * loading and unloading hives needs SeRestorePrivilege, which no token of
+ * the session holds, so a caller gets what windows gives a user without it.
+ */
+NTSTATUS NTAPI NtLoadKey(POBJECT_ATTRIBUTES target, POBJECT_ATTRIBUTES source)
+{
+    return STATUS_PRIVILEGE_NOT_HELD;
+}
+
+NTSTATUS NTAPI NtLoadKey2(POBJECT_ATTRIBUTES target, POBJECT_ATTRIBUTES source, ULONG flags)
+{
+    return STATUS_PRIVILEGE_NOT_HELD;
+}
+
+NTSTATUS NTAPI NtLoadKeyEx(POBJECT_ATTRIBUTES target, POBJECT_ATTRIBUTES source, ULONG flags, HANDLE trust_key,
+                           HANDLE event, ACCESS_MASK access, PHANDLE root, PVOID reserved)
+{
+    return STATUS_PRIVILEGE_NOT_HELD;
+}
+
+NTSTATUS NTAPI NtUnloadKey(POBJECT_ATTRIBUTES target)
+{
+    return STATUS_PRIVILEGE_NOT_HELD;
+}
+
+NTSTATUS NTAPI NtUnloadKey2(POBJECT_ATTRIBUTES target, ULONG flags)
+{
+    return STATUS_PRIVILEGE_NOT_HELD;
+}
+
+NTSTATUS NTAPI NtUnloadKeyEx(POBJECT_ATTRIBUTES target, HANDLE event)
+{
+    return STATUS_PRIVILEGE_NOT_HELD;
 }

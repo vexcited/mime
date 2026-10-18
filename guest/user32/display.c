@@ -126,14 +126,164 @@ WINUSERAPI LONG WINAPI DisplayConfigGetDeviceInfo(void *info)
     return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
 }
 
+#define WDA_NONE 0x0
+#define WDA_MONITOR 0x1
+#define WDA_EXCLUDEFROMCAPTURE 0x11
+
+/*
+ * the affinity is kept on the window; nothing captures the screen inside
+ * the guest, so every affinity is honored trivially. only a window of the
+ * calling process may be changed.
+ */
 WINUSERAPI BOOL WINAPI SetWindowDisplayAffinity(HWND window, DWORD affinity)
+{
+    DWORD process = 0;
+    if (!IsWindow(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (affinity != WDA_NONE && affinity != WDA_MONITOR && affinity != WDA_EXCLUDEFROMCAPTURE) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    GetWindowThreadProcessId(window, &process);
+    if (process != GetCurrentProcessId()) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    if (affinity)
+        SetPropW(window, L"MimeDisplayAffinity", (HANDLE)(ULONG_PTR)affinity);
+    else
+        RemovePropW(window, L"MimeDisplayAffinity");
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI GetWindowDisplayAffinity(HWND window, DWORD *affinity)
 {
     if (!IsWindow(window)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return FALSE;
     }
-    if (!affinity)
-        return TRUE;
-    SetLastError(ERROR_NOT_SUPPORTED);
+    if (!affinity) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *affinity = (DWORD)(ULONG_PTR)GetPropW(window, L"MimeDisplayAffinity");
+    return TRUE;
+}
+
+/* there is no snap layout, so no window is ever arranged. */
+WINUSERAPI BOOL WINAPI IsWindowArranged(HWND window)
+{
     return FALSE;
+}
+
+#define PW_CLIENTONLY 0x1
+
+/*
+ * windows has the window render into a redirection surface; mime keeps
+ * the pixels of every window in its top level surface, so the copy is
+ * what the window last drew, the frame included unless asked otherwise.
+ */
+WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags)
+{
+    if (!IsWindow(window) || !dc) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    RECT r;
+    HDC source;
+    if (flags & PW_CLIENTONLY) {
+        GetClientRect(window, &r);
+        source = GetDC(window);
+    } else {
+        GetWindowRect(window, &r);
+        OffsetRect(&r, -r.left, -r.top);
+        source = GetWindowDC(window);
+    }
+    if (!source)
+        return FALSE;
+    BOOL ok = BitBlt(dc, 0, 0, r.right - r.left, r.bottom - r.top, source, 0, 0, SRCCOPY);
+    ReleaseDC(window, source);
+    return ok;
+}
+
+/* ------------------------------------------------------------------ pointers and power */
+
+#define PT_MOUSE 4
+#define MOUSE_POINTER_ID 1
+
+/* the machine has a mouse and no touch screen or pen. */
+WINUSERAPI BOOL WINAPI GetPointerType(UINT32 id, int *type)
+{
+    if (!type || id != MOUSE_POINTER_ID) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *type = PT_MOUSE;
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI GetPointerDevices(UINT32 *count, void *devices)
+{
+    if (!count) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *count = 0;
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI GetPointerDevice(HANDLE device, void *info)
+{
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+WINUSERAPI BOOL WINAPI GetPointerPenInfo(UINT32 id, void *info)
+{
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+WINUSERAPI BOOL WINAPI GetPointerTouchInfo(UINT32 id, void *info)
+{
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+WINUSERAPI BOOL WINAPI RegisterPointerDeviceNotifications(HWND window, BOOL range)
+{
+    if (!IsWindow(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+#ifndef DEVICE_NOTIFY_CALLBACK
+#define DEVICE_NOTIFY_CALLBACK 0x2
+#endif
+
+/* the machine never sleeps, so the registration stands but nothing is ever sent. */
+WINUSERAPI HANDLE WINAPI RegisterSuspendResumeNotification(HANDLE recipient, DWORD flags)
+{
+    if (!recipient || (flags != DEVICE_NOTIFY_WINDOW_HANDLE && flags != DEVICE_NOTIFY_CALLBACK)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    HANDLE *registration = HeapAlloc(GetProcessHeap(), 0, sizeof(HANDLE));
+    if (registration)
+        *registration = recipient;
+    return registration;
+}
+
+WINUSERAPI BOOL WINAPI UnregisterSuspendResumeNotification(HANDLE registration)
+{
+    if (!registration) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    HeapFree(GetProcessHeap(), 0, registration);
+    return TRUE;
 }

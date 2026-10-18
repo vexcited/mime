@@ -120,6 +120,7 @@ enum {
     GDI_TYPE_FONT = 0x0A,
     GDI_TYPE_BRUSH = 0x10,
     GDI_TYPE_PEN = 0x30,
+    GDI_TYPE_EXTPEN = 0x50,
 };
 
 #define GDI_FLAG_STOCK 0x01
@@ -186,12 +187,20 @@ typedef struct BRUSH {
     int SysColor; /* system color brushes follow color changes, -1 otherwise */
 } BRUSH;
 
+/* pens of ExtCreatePen keep the full style with type, end cap and join. */
 typedef struct PEN {
     GDI_OBJECT Header;
     UINT Style;
     LONG Width;
     COLORREF Color;
+    UINT BrushStyle;
+    ULONG_PTR Hatch;
 } PEN;
+
+static inline UINT PenStyle(const PEN *p)
+{
+    return p->Style & PS_STYLE_MASK;
+}
 
 struct FONT_FACE;
 struct FONT_INSTANCE;
@@ -232,6 +241,12 @@ typedef struct DC_STATE {
     int PolyFillMode;
     int ArcDirection;
     XFORM World;      /* world to page, GM_ADVANCED */
+    SIZE WindowExt;
+    SIZE ViewportExt;
+    BOOLEAN HasPage;  /* the extents scale or flip */
+    BOOLEAN HasMeta;
+    REGION MetaRgn;   /* SetMetaRgn, device coordinates like the clip region */
+    float MiterLimit;
 } DC_STATE;
 
 /* a path in logical coordinates with GetPath point types. */
@@ -260,6 +275,7 @@ typedef struct DC_SAVED {
 #define DC_CACHE 0x04   /* returned to the cache by ReleaseDC */
 #define DC_PAINT 0x08   /* BeginPaint dc */
 #define DC_INFO 0x10
+#define DC_METAFILE 0x20 /* the win32k half of an enhanced metafile dc, without a surface */
 
 typedef struct DC {
     GDI_OBJECT Header;
@@ -279,6 +295,8 @@ typedef struct DC {
     ULONG PathState;
     GDI_PATH Path;
     int PixelFormat; /* memory dcs; window dcs use the window's */
+    SIZE VirtualPixels; /* SetVirtualResolution, zero when unset */
+    SIZE VirtualMm;
 } DC;
 
 DC *DcLookup(HDC dc);
@@ -293,6 +311,11 @@ void DcLogicalToDevice(DC *dc, LONG *x, LONG *y);
 void DcLogicalToSurface(DC *dc, LONG *x, LONG *y);
 LONG DcScaleToDevice(DC *dc, LONG v);
 void DcTransformPoint(DC *dc, LONG *x, LONG *y); /* world transform only */
+/* world to device without the dc origin, and whether it scales, flips or rotates. */
+void DcGetXform(DC *dc, XFORM *out);
+BOOLEAN DcIsScaled(DC *dc);
+void DcDeviceToLogical(DC *dc, LONG *x, LONG *y);
+LONG DcPenWidth(DC *dc); /* the selected pen's width in device pixels, at least 1 */
 BOOLEAN DcIsPathOpen(DC *dc);
 /* path recording, logical coordinates; used by the drawing services while a path is open. */
 BOOLEAN PathMoveTo(DC *dc, LONG x, LONG y);
@@ -304,6 +327,8 @@ BOOLEAN PathEllipse(DC *dc, LONG left, LONG top, LONG right, LONG bottom);
 void PathFree(GDI_PATH *p);
 /* scan converts closed polygons in surface coordinates into a region. */
 BOOLEAN RgnFromPolygons(REGION *out, const POINT *pts, const ULONG *counts, ULONG polygons, int fill_mode);
+/* rectangles through a transform; rotations go through the polygon scan converter. */
+BOOLEAN RgnTransform(REGION *out, const RECT *rects, ULONG count, const XFORM *m);
 void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty);
 struct FONT_INSTANCE *DcGetFont(DC *dc);
 
@@ -432,6 +457,9 @@ typedef struct W32PROCESS {
     struct W32RAW *Raw;     /* rawinput.c */
     ULONG ImageChars;
     WCHAR ImagePath[512];
+    WCHAR DesktopInfo[128];      /* the winsta\desktop it was started on, winsta.c */
+    struct W32WINSTA *WinSta;    /* referenced */
+    HANDLE WinStaHandle;
 } W32PROCESS;
 
 typedef struct QUEUED_MESSAGE {
@@ -499,10 +527,16 @@ typedef struct W32THREAD {
     BOOLEAN Destroying;
     HCURSOR Cursor;
     LONG CursorShowCount;
+    struct W32DESKTOP *Desktop;  /* referenced, winsta.c */
+    HANDLE DesktopHandle;
 } W32THREAD;
 
 W32THREAD *W32GetThread(void);  /* current thread, created on demand */
 W32PROCESS *W32GetProcess(void);
+/* winsta.c: dropping the window station and desktop of a process or thread that goes. */
+void WinStaFreeProcess(W32PROCESS *p);
+void WinStaFreeThread(W32THREAD *t);
+BOOL WndThreadHasWindows(W32THREAD *t);
 extern LIST_ENTRY W32Processes;
 W32THREAD *W32LookupThread(HANDLE tid);
 void QueueWake(W32THREAD *t, ULONG bits);
@@ -510,6 +544,10 @@ BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement);
 void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state);
 DWORD W32TickCount(void);
+/* the tick count of the last input event, of the host or injected. */
+extern DWORD InputLastTime;
+ULONG GdiCountProcessObjects(HANDLE pid);
+ULONG WndCountProcessObjects(W32PROCESS *p);
 
 /* ------------------------------------------------------------------ classes and windows */
 

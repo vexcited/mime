@@ -9,6 +9,8 @@
 #include <mime/ntrtl.h>
 #include <mime/win32/winbase.h>
 #include <mime/win32/dwmapi.h>
+#include <mime/win32/wingdi.h>
+#include <mime/win32/winuser.h>
 
 WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data);
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name);
@@ -220,5 +222,73 @@ DWMAPI DwmGetColorizationColor(DWORD *color, BOOL *opaque_blend)
 
 DWMAPI DwmEnableMMCSS(BOOL enable)
 {
+    return S_OK;
+}
+
+/*
+ * the timing of the composition: the refresh rate of the display, the
+ * last vblank on the performance counter, and frame counters that windows
+ * itself only advances by one each call since composition went to dwm's
+ * own statistics. only the desktop is accepted.
+ */
+#pragma pack(push, 1)
+typedef struct DWM_TIMING_INFO_RAW {
+    UINT32 cbSize;
+    UINT32 RateNumerator, RateDenominator;
+    ULONGLONG RefreshPeriod;
+    UINT32 ComposeNumerator, ComposeDenominator;
+    ULONGLONG VBlank, Refresh;
+    UINT32 DXRefresh;
+    ULONGLONG Compose, Frame;
+    UINT32 DXPresent;
+    ULONGLONG RefreshFrame, FrameSubmitted;
+    UINT32 DXPresentSubmitted;
+    ULONGLONG FrameConfirmed;
+    UINT32 DXPresentConfirmed;
+    ULONGLONG RefreshConfirmed;
+    UINT32 DXRefreshConfirmed;
+    ULONGLONG FramesLate;
+    UINT32 FramesOutstanding;
+    BYTE Rest[292 - 124];
+} DWM_TIMING_INFO_RAW;
+#pragma pack(pop)
+
+static LONG64 g_frames = 1;
+static LONG g_dx_frames = 1;
+
+DWMAPI DwmGetCompositionTimingInfo(HWND hwnd, void *info)
+{
+    DWM_TIMING_INFO_RAW *t = info;
+    if (!t)
+        return E_INVALIDARG;
+    if (t->cbSize != sizeof(*t))
+        return (HRESULT)0x88980290;
+    if (hwnd)
+        return E_INVALIDARG;
+    HDC screen = GetDC(nullptr);
+    int refresh = screen ? GetDeviceCaps(screen, VREFRESH) : 0;
+    if (screen)
+        ReleaseDC(nullptr, screen);
+    DWORD rate = refresh > 1 ? (DWORD)refresh : 60;
+    LARGE_INTEGER frequency, now;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&now);
+    ULONGLONG period = (ULONGLONG)frequency.QuadPart / rate;
+    LONG64 frame = InterlockedIncrement64(&g_frames);
+    LONG dx = InterlockedIncrement(&g_dx_frames);
+    memset((BYTE *)t + sizeof(UINT32), 0, sizeof(*t) - sizeof(UINT32));
+    t->RateNumerator = t->ComposeNumerator = rate;
+    t->RateDenominator = t->ComposeDenominator = 1;
+    t->RefreshPeriod = period;
+    t->VBlank = t->Compose = (ULONGLONG)now.QuadPart - (ULONGLONG)now.QuadPart % period;
+    t->Refresh = (ULONGLONG)frame;
+    t->DXRefresh = (UINT32)dx;
+    t->Frame = (ULONGLONG)frame - 1;
+    t->DXPresent = (UINT32)dx - 1;
+    t->RefreshFrame = t->FrameSubmitted = (ULONGLONG)frame - 1;
+    t->DXPresentSubmitted = (UINT32)dx - 1;
+    t->FrameConfirmed = t->RefreshConfirmed = (ULONGLONG)frame - 2;
+    t->DXPresentConfirmed = (UINT32)dx - 2;
+    t->FramesOutstanding = 1;
     return S_OK;
 }

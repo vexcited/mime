@@ -3,9 +3,10 @@
  *
  * windows' secur32 forwards the security support provider interface to
  * sspicli.dll, which talks to lsa. mime has neither, so secur32 implements
- * the interface itself: the package table, credential handles and the
- * user name queries are real, while establishing a security context fails
- * because there is no network, kerberos, ntlm or tls implementation.
+ * the interface itself: the package table, credential handles, the user
+ * name queries and the schannel tls client are real, while the other
+ * packages fail to establish a context: there is no kerberos, ntlm or
+ * digest implementation.
  */
 #include "secur32_private.h"
 

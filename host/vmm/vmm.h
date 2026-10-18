@@ -202,6 +202,7 @@ void mime_window_unmap_all(MimeVm *vm);
 
 /* net.c */
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
+uint64_t mime_net_config(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *value);
 void mime_net_close_all(void);
 
 /* lazy.c */

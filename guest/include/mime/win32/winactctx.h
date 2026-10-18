@@ -1,0 +1,118 @@
+/*
+ * activation context functions of kernel32.dll and kernelbase.dll.
+ */
+#ifndef MIME_WIN32_WINACTCTX_H
+#define MIME_WIN32_WINACTCTX_H
+
+#include <mime/ntactctx.h>
+
+#define ACTCTX_FLAG_PROCESSOR_ARCHITECTURE_VALID 0x00000001
+#define ACTCTX_FLAG_LANGID_VALID 0x00000002
+#define ACTCTX_FLAG_ASSEMBLY_DIRECTORY_VALID 0x00000004
+#define ACTCTX_FLAG_RESOURCE_NAME_VALID 0x00000008
+#define ACTCTX_FLAG_SET_PROCESS_DEFAULT 0x00000010
+#define ACTCTX_FLAG_APPLICATION_NAME_VALID 0x00000020
+#define ACTCTX_FLAG_SOURCE_IS_ASSEMBLYREF 0x00000040
+#define ACTCTX_FLAG_HMODULE_VALID 0x00000080
+
+#define DEACTIVATE_ACTCTX_FLAG_FORCE_EARLY_DEACTIVATION 0x00000001
+
+#define FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX 0x00000001
+#define FIND_ACTCTX_SECTION_KEY_RETURN_FLAGS 0x00000002
+#define FIND_ACTCTX_SECTION_KEY_RETURN_ASSEMBLY_METADATA 0x00000004
+
+#define QUERY_ACTCTX_FLAG_USE_ACTIVE_ACTCTX 0x00000004
+#define QUERY_ACTCTX_FLAG_ACTCTX_IS_HMODULE 0x00000008
+#define QUERY_ACTCTX_FLAG_ACTCTX_IS_ADDRESS 0x00000010
+#define QUERY_ACTCTX_FLAG_NO_ADDREF 0x80000000
+
+#ifndef ERROR_SXS_SECTION_NOT_FOUND
+#define ERROR_SXS_SECTION_NOT_FOUND 14000L
+#define ERROR_SXS_CANT_GEN_ACTCTX 14001L
+#define ERROR_SXS_INVALID_ACTCTXDATA_FORMAT 14002L
+#define ERROR_SXS_ASSEMBLY_NOT_FOUND 14003L
+#define ERROR_SXS_MANIFEST_FORMAT_ERROR 14004L
+#define ERROR_SXS_MANIFEST_PARSE_ERROR 14005L
+#define ERROR_SXS_PROCESS_DEFAULT_ALREADY_SET 14011L
+#define ERROR_SXS_EARLY_DEACTIVATION 14084L
+#define ERROR_SXS_INVALID_DEACTIVATION 14085L
+#endif
+
+#ifndef PROCESSOR_ARCHITECTURE_IA32_ON_WIN64
+#define PROCESSOR_ARCHITECTURE_IA32_ON_WIN64 10
+#endif
+
+#define CREATEPROCESS_MANIFEST_RESOURCE_ID ((LPCWSTR)1)
+#define ISOLATIONAWARE_MANIFEST_RESOURCE_ID ((LPCWSTR)2)
+#define ISOLATIONAWARE_NOSTATICIMPORT_MANIFEST_RESOURCE_ID ((LPCWSTR)3)
+
+typedef struct tagACTCTXA {
+    ULONG cbSize;
+    DWORD dwFlags;
+    LPCSTR lpSource;
+    USHORT wProcessorArchitecture;
+    LANGID wLangId;
+    LPCSTR lpAssemblyDirectory;
+    LPCSTR lpResourceName;
+    LPCSTR lpApplicationName;
+    HMODULE hModule;
+} ACTCTXA, *PACTCTXA;
+typedef const ACTCTXA *PCACTCTXA;
+
+typedef struct tagACTCTXW {
+    ULONG cbSize;
+    DWORD dwFlags;
+    LPCWSTR lpSource;
+    USHORT wProcessorArchitecture;
+    LANGID wLangId;
+    LPCWSTR lpAssemblyDirectory;
+    LPCWSTR lpResourceName;
+    LPCWSTR lpApplicationName;
+    HMODULE hModule;
+} ACTCTXW, *PACTCTXW;
+typedef const ACTCTXW *PCACTCTXW;
+
+typedef struct tagACTCTX_SECTION_KEYED_DATA_ASSEMBLY_METADATA {
+    PVOID lpInformation;
+    PVOID lpSectionBase;
+    ULONG ulSectionLength;
+    PVOID lpSectionGlobalDataBase;
+    ULONG ulSectionGlobalDataLength;
+} ACTCTX_SECTION_KEYED_DATA_ASSEMBLY_METADATA, *PACTCTX_SECTION_KEYED_DATA_ASSEMBLY_METADATA;
+
+typedef struct tagACTCTX_SECTION_KEYED_DATA {
+    ULONG cbSize;
+    ULONG ulDataFormatVersion;
+    PVOID lpData;
+    ULONG ulLength;
+    PVOID lpSectionGlobalData;
+    ULONG ulSectionGlobalDataLength;
+    PVOID lpSectionBase;
+    ULONG ulSectionTotalLength;
+    HANDLE hActCtx;
+    ULONG ulAssemblyRosterIndex;
+    ULONG ulFlags;
+    ACTCTX_SECTION_KEYED_DATA_ASSEMBLY_METADATA AssemblyMetadata;
+} ACTCTX_SECTION_KEYED_DATA, *PACTCTX_SECTION_KEYED_DATA;
+typedef const ACTCTX_SECTION_KEYED_DATA *PCACTCTX_SECTION_KEYED_DATA;
+
+WINBASEAPI HANDLE WINAPI CreateActCtxA(PCACTCTXA actctx);
+WINBASEAPI HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx);
+WINBASEAPI void WINAPI AddRefActCtx(HANDLE actctx);
+WINBASEAPI void WINAPI ReleaseActCtx(HANDLE actctx);
+WINBASEAPI BOOL WINAPI ZombifyActCtx(HANDLE actctx);
+WINBASEAPI BOOL WINAPI ActivateActCtx(HANDLE actctx, ULONG_PTR *cookie);
+WINBASEAPI BOOL WINAPI DeactivateActCtx(DWORD flags, ULONG_PTR cookie);
+WINBASEAPI BOOL WINAPI GetCurrentActCtx(HANDLE *actctx);
+WINBASEAPI BOOL WINAPI FindActCtxSectionStringA(DWORD flags, const GUID *extension, ULONG section, LPCSTR key,
+                                                PACTCTX_SECTION_KEYED_DATA data);
+WINBASEAPI BOOL WINAPI FindActCtxSectionStringW(DWORD flags, const GUID *extension, ULONG section, LPCWSTR key,
+                                                PACTCTX_SECTION_KEYED_DATA data);
+WINBASEAPI BOOL WINAPI FindActCtxSectionGuid(DWORD flags, const GUID *extension, ULONG section, const GUID *key,
+                                             PACTCTX_SECTION_KEYED_DATA data);
+WINBASEAPI BOOL WINAPI QueryActCtxW(DWORD flags, HANDLE actctx, PVOID subinstance, ULONG info_class, PVOID buffer,
+                                    SIZE_T size, SIZE_T *written);
+WINBASEAPI BOOL WINAPI QueryActCtxSettingsW(DWORD flags, HANDLE actctx, PCWSTR ns, PCWSTR name, PWSTR buffer,
+                                            SIZE_T size, SIZE_T *written);
+
+#endif

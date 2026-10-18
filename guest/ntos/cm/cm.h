@@ -119,4 +119,9 @@ NTSTATUS CmpJournalFlush(CM_NODE *node);
 
 void CmpSpecialize(void);
 
+/* ------------------------------------------------------------------ certs.c */
+
+/* writes the roots of the host's certificate bundle into the machine's AuthRoot store, unjournaled. */
+void CmpImportHostRoots(void);
+
 #endif

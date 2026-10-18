@@ -10,7 +10,7 @@ static DWORD dword(const BYTE *p)
     return word(p) | (DWORD)word(p + 2) << 16;
 }
 
-LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options)
+LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
 {
     if (size < 64 || word(bytes) != 0x5a4d)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
@@ -71,5 +71,5 @@ LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options)
         if (bytes[certificate + i])
             return TRUST_E_SUBJECT_NOT_TRUSTED;
     return WtVerifySignedData((WT_BYTES){bytes + certificate + 8, length - 8}, bytes, size,
-                              optional + 64, directory, certificate, options);
+                              optional + 64, directory, certificate, options, chain);
 }

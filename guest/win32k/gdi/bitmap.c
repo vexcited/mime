@@ -596,10 +596,10 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
                 memcpy(dst->Colors, s->Colors, sizeof(s->Colors));
                 dst->ColorCount = s->ColorCount ? s->ColorCount : (USHORT)(1u << d.Bpp);
             }
-            /* scan `start` counts from the bottom of the bitmap. */
+            /* scan `start` counts from the bottom; a bottom up buffer starts with it, a top down one ends with it. */
             for (UINT i = 0; i < lines; i++) {
                 LONG src_y = s->Height - 1 - (LONG)(start + i);
-                LONG dst_y = d.TopDown ? (LONG)i : (LONG)(lines - 1 - i);
+                LONG dst_y = d.TopDown ? (LONG)(lines - 1 - i) : (LONG)i;
                 for (LONG x = 0; x < d.Width; x++)
                     SurfacePutPixel(dst, x, dst_y, SurfaceGetPixel(s, x, src_y));
             }
