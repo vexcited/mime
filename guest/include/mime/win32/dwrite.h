@@ -304,6 +304,23 @@ typedef struct IDWriteRenderingParams1 IDWriteRenderingParams1;
 typedef struct IDWriteRenderingParams2 IDWriteRenderingParams2;
 typedef struct IDWriteFactory1 IDWriteFactory1;
 typedef struct IDWriteFactory2 IDWriteFactory2;
+typedef struct IDWriteFactory3 IDWriteFactory3;
+typedef struct IDWriteFontSet IDWriteFontSet;
+typedef struct IDWriteFontSetBuilder IDWriteFontSetBuilder;
+typedef struct IDWriteFontCollection1 IDWriteFontCollection1;
+typedef struct IDWriteFontFaceReference IDWriteFontFaceReference;
+typedef struct IDWriteRenderingParams3 IDWriteRenderingParams3;
+typedef struct IDWriteFontDownloadQueue IDWriteFontDownloadQueue;
+typedef enum DWRITE_RENDERING_MODE1 {
+    DWRITE_RENDERING_MODE1_DEFAULT = 0,
+    DWRITE_RENDERING_MODE1_ALIASED = 1,
+    DWRITE_RENDERING_MODE1_GDI_CLASSIC = 2,
+    DWRITE_RENDERING_MODE1_GDI_NATURAL = 3,
+    DWRITE_RENDERING_MODE1_NATURAL = 4,
+    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC = 5,
+    DWRITE_RENDERING_MODE1_OUTLINE = 6,
+    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED = 7
+} DWRITE_RENDERING_MODE1;
 typedef struct IDWriteFont1 IDWriteFont1;
 typedef struct IDWriteFontFace1 IDWriteFontFace1;
 typedef struct IDWriteFontFace2 IDWriteFontFace2;
@@ -685,11 +702,43 @@ MIME_COM_INTERFACE(IDWriteFactory1)
                                                         FLOAT origin_y, IDWriteGlyphRunAnalysis **analysis);
 MIME_COM_INTERFACE(IDWriteFactory2)
 
+#define IDWriteFactory3_METHODS(T)                                                                                     \
+    IDWriteFactory2_METHODS(T)                                                                                         \
+    HRESULT(STDMETHODCALLTYPE *CreateGlyphRunAnalysis3)(T * This, const DWRITE_GLYPH_RUN *run,                         \
+                                                        const DWRITE_MATRIX *transform,                                \
+                                                        DWRITE_RENDERING_MODE1 mode, DWRITE_MEASURING_MODE measuring,  \
+                                                        DWRITE_GRID_FIT_MODE grid_fit,                                 \
+                                                        DWRITE_TEXT_ANTIALIAS_MODE antialias, FLOAT origin_x,          \
+                                                        FLOAT origin_y, IDWriteGlyphRunAnalysis **analysis);           \
+    HRESULT(STDMETHODCALLTYPE *CreateCustomRenderingParams3)(T * This, FLOAT gamma, FLOAT contrast,                    \
+                                                             FLOAT grayscale_contrast, FLOAT cleartype_level,          \
+                                                             DWRITE_PIXEL_GEOMETRY geometry,                           \
+                                                             DWRITE_RENDERING_MODE1 mode,                              \
+                                                             DWRITE_GRID_FIT_MODE grid_fit,                            \
+                                                             IDWriteRenderingParams3 **params);                        \
+    HRESULT(STDMETHODCALLTYPE *CreateFontFaceReference)(T * This, IDWriteFontFile * file, UINT32 index,                \
+                                                        DWRITE_FONT_SIMULATIONS simulations,                           \
+                                                        IDWriteFontFaceReference **reference);                         \
+    HRESULT(STDMETHODCALLTYPE *CreateFontFaceReferenceFromPath)(T * This, const WCHAR *path,                           \
+                                                                const FILETIME *write_time, UINT32 index,              \
+                                                                DWRITE_FONT_SIMULATIONS simulations,                   \
+                                                                IDWriteFontFaceReference **reference);                 \
+    HRESULT(STDMETHODCALLTYPE *GetSystemFontSet)(T * This, IDWriteFontSet * *set);                                     \
+    HRESULT(STDMETHODCALLTYPE *CreateFontSetBuilder)(T * This, IDWriteFontSetBuilder * *builder);                      \
+    HRESULT(STDMETHODCALLTYPE *CreateFontCollectionFromFontSet)(T * This, IDWriteFontSet * set,                        \
+                                                                IDWriteFontCollection1 **collection);                  \
+    HRESULT(STDMETHODCALLTYPE *GetSystemFontCollection3)(T * This, BOOL include_downloadable,                          \
+                                                         IDWriteFontCollection1 **collection,                          \
+                                                         BOOL check_for_updates);                                      \
+    HRESULT(STDMETHODCALLTYPE *GetFontDownloadQueue)(T * This, IDWriteFontDownloadQueue * *queue);
+MIME_COM_INTERFACE(IDWriteFactory3)
+
 /* ------------------------------------------------------------------ interface ids */
 
 MIME_DEFINE_GUID(IID_IDWriteFactory, 0xb859ee5a, 0xd838, 0x4b5b, 0xa2, 0xe8, 0x1a, 0xdc, 0x7d, 0x93, 0xdb, 0x48);
 MIME_DEFINE_GUID(IID_IDWriteFactory1, 0x30572f99, 0xdac6, 0x41db, 0xa1, 0x6e, 0x04, 0x86, 0x30, 0x7e, 0x60, 0x6a);
 MIME_DEFINE_GUID(IID_IDWriteFactory2, 0x0439fc60, 0xca44, 0x4994, 0x8d, 0xee, 0x3a, 0x9a, 0xf7, 0xb7, 0x32, 0xec);
+MIME_DEFINE_GUID(IID_IDWriteFactory3, 0x9a1b41c3, 0xd3bb, 0x466a, 0x87, 0xfc, 0xfe, 0x67, 0x55, 0x6a, 0x3b, 0x65);
 MIME_DEFINE_GUID(IID_IDWriteFontCollection, 0xa84cee02, 0x3eea, 0x4eee, 0xa8, 0x27, 0x87, 0xc1, 0xa0, 0x2a, 0x0f,
                  0xcc);
 MIME_DEFINE_GUID(IID_IDWriteFontList, 0x1a0d8438, 0x1d97, 0x4ec1, 0xae, 0xf9, 0xa2, 0xfb, 0x86, 0xed, 0x6a, 0xcb);

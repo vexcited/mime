@@ -6,17 +6,63 @@
 
 static DwFactory *g_shared;
 
+/* the interface asked for, to the debug output: a program that wants a newer factory says so by failing. */
+static void log_missing(const char *what, REFIID riid, void *caller)
+{
+    /* once for each interface: a program that probes for newer ones does so at every font. */
+    static GUID seen[16];
+    static LONG seen_count;
+    LONG count = seen_count;
+    for (LONG i = 0; i < count && i < 16; i++)
+        if (IsEqualGUID(&seen[i], riid))
+            return;
+    LONG slot = InterlockedIncrement(&seen_count) - 1;
+    if (slot < 16)
+        seen[slot] = *riid;
+
+    static const char hex[] = "0123456789abcdef";
+    char text[96] = "dwrite: no interface {";
+    int n = (int)strlen(text);
+    const unsigned char *b = (const unsigned char *)riid;
+    /* the guid as it is written: three fields of the machine's order, then eight bytes. */
+    static const char order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+    for (int i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            text[n++] = '-';
+        text[n++] = hex[b[(int)order[i]] >> 4];
+        text[n++] = hex[b[(int)order[i]] & 15];
+    }
+    text[n++] = '}';
+    for (const char *w = what; *w && n < (int)sizeof(text) - 3; w++)
+        text[n++] = *w;
+    /* who asked, as the offset in its module. */
+    HMODULE module = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, caller,
+                           &module) && module && n < (int)sizeof(text) - 20) {
+        unsigned long long off = (unsigned long long)((char *)caller - (char *)module);
+        text[n++] = ' ';
+        text[n++] = '+';
+        for (int shift = 36; shift >= 0; shift -= 4)
+            text[n++] = hex[(off >> shift) & 15];
+    }
+    text[n++] = '\n';
+    text[n] = 0;
+    OutputDebugStringA(text);
+}
+
 static HRESULT WINAPI factory_query(IDWriteFactory2 *This, REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFactory) ||
-        IsEqualGUID(riid, &IID_IDWriteFactory1) || IsEqualGUID(riid, &IID_IDWriteFactory2)) {
+        IsEqualGUID(riid, &IID_IDWriteFactory1) || IsEqualGUID(riid, &IID_IDWriteFactory2) ||
+        IsEqualGUID(riid, &IID_IDWriteFactory3)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
     }
     *out = nullptr;
+    log_missing(" of the factory", riid, __builtin_return_address(0));
     return E_NOINTERFACE;
 }
 
@@ -415,7 +461,88 @@ static HRESULT WINAPI factory_analysis2(IDWriteFactory2 *This, const DWRITE_GLYP
     return DwGlyphRunAnalysisCreate(run, 1.0f, transform, mode, measuring, origin_x, origin_y, analysis);
 }
 
-static const IDWriteFactory2Vtbl g_factory_vtbl = {
+static HRESULT WINAPI factory3_missing(const char *name)
+{
+    static const char *seen[16];
+    static LONG seen_count;
+    LONG count = seen_count;
+    for (LONG i = 0; i < count && i < 16; i++)
+        if (seen[i] == name)
+            return E_NOTIMPL;
+    LONG slot = InterlockedIncrement(&seen_count) - 1;
+    if (slot < 16)
+        seen[slot] = name;
+    OutputDebugStringA("dwrite: factory3 ");
+    OutputDebugStringA(name);
+    OutputDebugStringA("\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI factory3_analysis(IDWriteFactory3 *This, const DWRITE_GLYPH_RUN *run, const DWRITE_MATRIX *transform,
+                                        DWRITE_RENDERING_MODE1 mode, DWRITE_MEASURING_MODE measuring,
+                                        DWRITE_GRID_FIT_MODE grid_fit, DWRITE_TEXT_ANTIALIAS_MODE antialias, FLOAT x,
+                                        FLOAT y, IDWriteGlyphRunAnalysis **analysis)
+{
+    /* the old rendering modes, which the new one extends: outline and the downsampled one are natural to the rasterizer. */
+    DWRITE_RENDERING_MODE old = mode == DWRITE_RENDERING_MODE1_OUTLINE ? DWRITE_RENDERING_MODE_OUTLINE
+                                : mode == DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED
+                                    ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
+                                    : (DWRITE_RENDERING_MODE)mode;
+    return factory_analysis2((IDWriteFactory2 *)This, run, transform, old, measuring, grid_fit, antialias, x, y, analysis);
+}
+
+static HRESULT WINAPI factory3_params(IDWriteFactory3 *This, FLOAT gamma, FLOAT contrast, FLOAT grayscale,
+                                      FLOAT cleartype, DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE1 mode,
+                                      DWRITE_GRID_FIT_MODE grid_fit, IDWriteRenderingParams3 **params)
+{
+    return factory3_missing("CreateCustomRenderingParams3");
+}
+
+static HRESULT WINAPI factory3_face_reference(IDWriteFactory3 *This, IDWriteFontFile *file, UINT32 index,
+                                              DWRITE_FONT_SIMULATIONS simulations, IDWriteFontFaceReference **reference)
+{
+    return factory3_missing("CreateFontFaceReference");
+}
+
+static HRESULT WINAPI factory3_face_reference_path(IDWriteFactory3 *This, const WCHAR *path, const FILETIME *time,
+                                                   UINT32 index, DWRITE_FONT_SIMULATIONS simulations,
+                                                   IDWriteFontFaceReference **reference)
+{
+    return factory3_missing("CreateFontFaceReference(path)");
+}
+
+static HRESULT WINAPI factory3_system_set(IDWriteFactory3 *This, IDWriteFontSet **set)
+{
+    return factory3_missing("GetSystemFontSet");
+}
+
+static HRESULT WINAPI factory3_set_builder(IDWriteFactory3 *This, IDWriteFontSetBuilder **builder)
+{
+    return factory3_missing("CreateFontSetBuilder");
+}
+
+static HRESULT WINAPI factory3_collection_from_set(IDWriteFactory3 *This, IDWriteFontSet *set,
+                                                   IDWriteFontCollection1 **collection)
+{
+    return factory3_missing("CreateFontCollectionFromFontSet");
+}
+
+static HRESULT WINAPI factory3_system_collection(IDWriteFactory3 *This, BOOL downloadable,
+                                                 IDWriteFontCollection1 **collection, BOOL check)
+{
+    return factory3_missing("GetSystemFontCollection(1)");
+}
+
+static HRESULT WINAPI factory3_download_queue(IDWriteFactory3 *This, IDWriteFontDownloadQueue **queue)
+{
+    return factory3_missing("GetFontDownloadQueue");
+}
+
+/* the table of the second factory with the nine methods of the third after it: both are one object. */
+static const struct {
+    IDWriteFactory2Vtbl base;
+    void *third[9];
+} g_factory_vtbl = {{
     factory_query,
     factory_addref,
     factory_release,
@@ -447,14 +574,24 @@ static const IDWriteFactory2Vtbl g_factory_vtbl = {
     factory_translate_color,
     factory_custom_params2,
     factory_analysis2,
-};
+}, {
+    (void *)factory3_analysis,
+    (void *)factory3_params,
+    (void *)factory3_face_reference,
+    (void *)factory3_face_reference_path,
+    (void *)factory3_system_set,
+    (void *)factory3_set_builder,
+    (void *)factory3_collection_from_set,
+    (void *)factory3_system_collection,
+    (void *)factory3_download_queue,
+}};
 
 DwFactory *DwFactoryNew(BOOL shared)
 {
     DwFactory *f = DwAllocZero(sizeof(*f));
     if (!f)
         return nullptr;
-    f->lpVtbl = &g_factory_vtbl;
+    f->lpVtbl = &g_factory_vtbl.base;
     f->refs = 1;
     f->shared = shared;
     InitializeSRWLock(&f->lock);
