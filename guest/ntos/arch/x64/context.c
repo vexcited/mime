@@ -68,10 +68,11 @@ void KiIdleWait(void)
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
     pcr->IdleSleeping = 1;
-    __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
+    if (!(KiOptions & KI_OPT_NO_IDLE_SPIN))
+        __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
     KiReleaseKernelLock();
     __asm__ volatile("sti" ::: "memory");
-    ULONG64 end = HalReadCounter() + KI_IDLE_SPIN_TICKS;
+    ULONG64 end = HalReadCounter() + ((KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : KI_IDLE_SPIN_TICKS);
     /* no pause instruction: the host takes a processor that executes them in a loop for one that waits for a lock. */
     while (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending && HalReadCounter() < end)
         ;

@@ -11,6 +11,7 @@ PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
 ULONG KeNumberProcessors = 1;
 volatile ULONG KiKernelLock[4] = {0, ~0u, 0, 0};
 ULONG64 KiKernelLockPhys;
+ULONG KiOptions;
 /* acquisitions, those that had to wait, ticks waited, the longest wait: a row of eight for each processor, see entry.S */
 ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 

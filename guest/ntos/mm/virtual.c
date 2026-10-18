@@ -1274,7 +1274,7 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
     if (!(v & MM_SWPTE_COMMITTED) || (protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))
         return FALSE;
     if (v & MM_SWPTE_SECTION)
-        return vad->Section && fast_section_fault(as, vad, page, pte, v, protect);
+        return vad->Section && !(KiOptions & KI_OPT_NO_SECTION_FAULT) && fast_section_fault(as, vad, page, pte, v, protect);
 
     BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
     ULONG stream = (ULONG)-1;
@@ -1350,7 +1350,7 @@ MM_FAULT_STATS MmFaultStats[MAXIMUM_PROCESSORS];
 
 BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 {
-    if (va > MM_HIGHEST_USER_ADDRESS)
+    if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
         return FALSE;
     /* a thread that was preempted inside the gate would keep a writer waiting on the processor it holds. */
     ULONG64 state = KiDisableInterrupts();

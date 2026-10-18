@@ -302,6 +302,13 @@ FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
     KiRestoreInterrupts(state);
 }
 
+/* kernel options from MIME_KERNEL_ARGS that turn the lock free paths off, to tell what a failure depends on. */
+#define KI_OPT_NO_FAST_FAULT 0x1
+#define KI_OPT_NO_SECTION_FAULT 0x2
+#define KI_OPT_NO_IDLE_SPIN 0x4
+#define KI_OPT_EAGER_TIMER 0x8
+extern ULONG KiOptions;
+
 void KiInitializeKernel(MimeBootInfo *boot);
 void KiInitializeProcessor(PKPCR pcr);
 void KiStartProcessors(void);

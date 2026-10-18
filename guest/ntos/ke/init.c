@@ -169,6 +169,11 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiLogPrintf("Mime NT kernel %u.%u build %u (%s), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
                 MIME_NT_MINOR_VERSION, MIME_NT_BUILD_NUMBER, MIME_ARCH_NAME, boot->ram_size >> 20);
 
+    KiOptions = (strstr(boot->cmdline, "nofastfault") ? KI_OPT_NO_FAST_FAULT : 0) |
+                (strstr(boot->cmdline, "nosectionfault") ? KI_OPT_NO_SECTION_FAULT : 0) |
+                (strstr(boot->cmdline, "noidlespin") ? KI_OPT_NO_IDLE_SPIN : 0) |
+                (strstr(boot->cmdline, "eagertimer") ? KI_OPT_EAGER_TIMER : 0);
+
     extern BOOLEAN KiTraceUserExceptions;
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
     extern char KiTraceSyscallImage[16];

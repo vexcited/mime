@@ -118,15 +118,20 @@ void KiProgramNextTimer(void)
      * an earlier one is left to fire: its interrupt finds nothing to do, or this deadline not come, and
      * arms the next. there is no disarming either, the interrupt does that.
      */
-    if (deadline == ~0ull)
+    if (deadline == ~0ull) {
+        if (KiOptions & KI_OPT_EAGER_TIMER) {
+            HalDisarmTimer();
+            prcb->TimerArmed = 0;
+        }
         return;
+    }
     {
         ULONG64 now = KiQueryInterruptTime();
         if (deadline > now + 2000)
             deadline = now + (deadline - now) / 8 * 7;
     }
     ULONG64 target = g_boot_counter + HalHnsToCounter(deadline);
-    if (prcb->TimerArmed && prcb->TimerArmed <= target)
+    if (prcb->TimerArmed && prcb->TimerArmed <= target && !(KiOptions & KI_OPT_EAGER_TIMER))
         return;
     prcb->TimerArmed = target;
     HalArmTimer(target);
