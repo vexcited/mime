@@ -111,6 +111,26 @@ void KiProgramNextTimer(void)
                 deadline = first->DueTime.QuadPart;
         }
     }
+#ifdef __x86_64__
+    /*
+     * the timer fires once. writing it exits to the host, and a thread that waits and wakes in a few
+     * microseconds would do it twice each time, so a timer that is armed already for the same time or
+     * an earlier one is left to fire: its interrupt finds nothing to do, or this deadline not come, and
+     * arms the next. there is no disarming either, the interrupt does that.
+     */
+    if (deadline == ~0ull)
+        return;
+    {
+        ULONG64 now = KiQueryInterruptTime();
+        if (deadline > now + 2000)
+            deadline = now + (deadline - now) / 8 * 7;
+    }
+    ULONG64 target = g_boot_counter + HalHnsToCounter(deadline);
+    if (prcb->TimerArmed && prcb->TimerArmed <= target)
+        return;
+    prcb->TimerArmed = target;
+    HalArmTimer(target);
+#else
     if (deadline == ~0ull) {
         HalDisarmTimer();
         return;
@@ -123,6 +143,7 @@ void KiProgramNextTimer(void)
     if (deadline > now + 2000)
         deadline = now + (deadline - now) / 8 * 7;
     HalArmTimer(g_boot_counter + HalHnsToCounter(deadline));
+#endif
 }
 
 /* dispatcher lock held. */
@@ -281,6 +302,7 @@ void KiChargeServiceTime(PKPRCB prcb, ULONG64 start_counter, BOOLEAN dpc)
 /* interrupts masked, dispatcher database owned. */
 void KiClockInterrupt(PKTRAP_FRAME frame)
 {
+    KeGetCurrentPrcb()->TimerArmed = 0;
     ULONG64 counter = HalReadCounter();
     ULONG64 now = HalCounterToHns(counter - g_boot_counter);
     PKPRCB prcb = KeGetCurrentPrcb();

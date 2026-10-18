@@ -84,6 +84,10 @@ void KiRequestDispatch(ULONG number)
     PKPRCB prcb = KiProcessorBlock[number];
     prcb->DispatchPending = TRUE;
     if (prcb != KeGetCurrentPrcb()) {
+        /* a processor that spins while idle sees the request by itself; one that stops spinning looks again. */
+        KiMemoryBarrierFull();
+        if (prcb->IdleState == KI_IDLE_POLLING)
+            return;
         prcb->IpiSent++;
         HalSendIpi(number);
     }

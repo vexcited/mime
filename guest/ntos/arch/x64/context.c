@@ -52,16 +52,37 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
 }
 
 /*
- * hlt only ends on an interrupt taken with interrupts enabled. the entry
- * of an interrupt that finds IdleSleeping takes the lock back before
- * handling it, so interrupts still run with the lock held.
+ * an idle processor lets go of the kernel lock and, for a short while, spins on the flags that tell it
+ * there is work. whoever makes a thread ready for it sees that (KiRequestDispatch) and does not
+ * interrupt it, which costs the sender and the receiver an exit to the host each, and a halted
+ * processor a wake up besides. only then does it halt, and a processor that halted is interrupted.
+ *
+ * hlt only ends on an interrupt taken with interrupts enabled. the entry of an interrupt that finds
+ * IdleSleeping takes the lock back before handling it, so interrupts still run with the lock held, and
+ * when the processor comes back from one it holds the lock.
  */
+#define KI_IDLE_SPIN_TICKS 40000
+
 void KiIdleWait(void)
 {
     PKPCR pcr = KeGetPcr();
+    PKPRCB prcb = pcr->CurrentPrcb;
     pcr->IdleSleeping = 1;
+    __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
     KiReleaseKernelLock();
-    __asm__ volatile("sti; hlt; cli" ::: "memory");
+    __asm__ volatile("sti" ::: "memory");
+    ULONG64 end = HalReadCounter() + KI_IDLE_SPIN_TICKS;
+    /* no pause instruction: the host takes a processor that executes them in a loop for one that waits for a lock. */
+    while (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending && HalReadCounter() < end)
+        ;
+    __asm__ volatile("cli" ::: "memory");
+    if (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending) {
+        /* published before looking again, so that a request that came meanwhile is seen or sends the interrupt. */
+        __atomic_store_n(&prcb->IdleState, KI_IDLE_HALTED, __ATOMIC_SEQ_CST);
+        if (!prcb->DispatchPending && !prcb->DpcPending)
+            __asm__ volatile("sti; hlt; cli" ::: "memory");
+    }
+    __atomic_store_n(&prcb->IdleState, KI_IDLE_RUNNING, __ATOMIC_SEQ_CST);
     if (pcr->IdleSleeping) {
         pcr->IdleSleeping = 0;
         KiAcquireKernelLock();

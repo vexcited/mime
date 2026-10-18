@@ -12,6 +12,11 @@ FORCEINLINE void KiMemoryBarrier(void)
     __asm__ volatile("" ::: "memory");
 }
 
+FORCEINLINE void KiMemoryBarrierFull(void)
+{
+    __asm__ volatile("mfence" ::: "memory");
+}
+
 FORCEINLINE void KiDataSyncBarrier(void)
 {
     __asm__ volatile("mfence" ::: "memory");

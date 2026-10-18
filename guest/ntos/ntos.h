@@ -178,6 +178,11 @@ typedef struct _KPROCESS {
 
 #define MAXIMUM_PROCESSORS 64
 
+/* what an idle processor does between work: runs a thread or leaves, spins on its flags, or is halted. */
+#define KI_IDLE_RUNNING 0
+#define KI_IDLE_POLLING 1
+#define KI_IDLE_HALTED 2
+
 typedef struct _KPRCB {
     ULONG Number;
     ULONG Pad;
@@ -187,6 +192,7 @@ typedef struct _KPRCB {
     ULONG64 TickTime; /* interrupt time of the last clock tick charged on this processor */
     volatile BOOLEAN DispatchPending;
     volatile BOOLEAN DpcPending;
+    volatile UCHAR IdleState; /* KI_IDLE_*: whether an idle processor looks for work by itself or has to be interrupted */
     BOOLEAN InDpc;
     BOOLEAN Pad2;
     SINGLE_LIST_ENTRY DpcHead;
@@ -199,6 +205,7 @@ typedef struct _KPRCB {
     ULONG64 InterruptTime, DpcTime; /* spent in interrupt handlers and dpcs, part of KernelTime */
     ULONG64 IpiSent, IpiReceived;
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not */
+    ULONG64 TimerArmed;   /* counter value the processor's timer is set to, 0 when it is not (x64: it fires once) */
 } KPRCB, *PKPRCB;
 
 #ifdef __x86_64__

@@ -12,6 +12,11 @@ FORCEINLINE void KiMemoryBarrier(void)
     __asm__ volatile("dmb ish" ::: "memory");
 }
 
+FORCEINLINE void KiMemoryBarrierFull(void)
+{
+    __asm__ volatile("dmb ish" ::: "memory");
+}
+
 FORCEINLINE void KiDataSyncBarrier(void)
 {
     __asm__ volatile("dsb ish" ::: "memory");
