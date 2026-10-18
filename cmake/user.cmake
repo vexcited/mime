@@ -320,6 +320,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib)
     set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
+    # the common dialogs are built from common controls, shell items and shlwapi's path helpers.
+    set(libs_comdlg32 ${MIME_LIB_${arch}}/comctl32.lib ${MIME_LIB_${arch}}/shell32.lib
+        ${MIME_LIB_${arch}}/shlwapi.lib ${MIME_LIB_${arch}}/ole32.lib)
     # windows.storage makes shell item lists with shell32, keeps properties in propsys and loads strings with shlwapi.
     set(libs_windows_storage ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/shell32.lib
         ${MIME_LIB_${arch}}/shlwapi.lib ${MIME_LIB_${arch}}/propsys.lib)
