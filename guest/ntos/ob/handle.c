@@ -235,10 +235,23 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
             ObDereferenceObject(object);
             return status;
         }
-        if (slash) {
+        if (slash == 1) {
             ObDereferenceObject(parent);
             ObDereferenceObject(object);
             return STATUS_OBJECT_NAME_INVALID;
+        }
+        if (slash) {
+            /* a path below the root directory, through symbolic links such as Global. */
+            UNICODE_STRING dir = {(USHORT)((slash - 1) * 2), (USHORT)((slash - 1) * 2), name.Buffer};
+            ObDereferenceObject(parent);
+            status = ObLookupObjectName(&dir, attributes->RootDirectory, 0, ObDirectoryType, mode, nullptr,
+                                        (PVOID *)&parent);
+            if (!NT_SUCCESS(status)) {
+                ObDereferenceObject(object);
+                return status == STATUS_OBJECT_NAME_NOT_FOUND ? STATUS_OBJECT_PATH_NOT_FOUND : status;
+            }
+            leaf.Buffer = name.Buffer + slash;
+            leaf.Length = leaf.MaximumLength = (USHORT)((len - slash) * 2);
         }
     } else {
         if (slash == 0) {

@@ -495,7 +495,8 @@ void ObInitialize(void)
 
     static const PCWSTR dirs[] = {
         L"\\Device", L"\\Driver", L"\\FileSystem", L"\\GLOBAL??", L"\\KnownDlls", L"\\BaseNamedObjects",
-        L"\\Sessions", L"\\Sessions\\1", L"\\Sessions\\1\\BaseNamedObjects", L"\\Windows", L"\\Windows\\WindowStations",
+        L"\\Sessions", L"\\Sessions\\BNOLINKS", L"\\Sessions\\1", L"\\Sessions\\1\\BaseNamedObjects", L"\\Windows",
+        L"\\Windows\\WindowStations",
         L"\\Sessions\\1\\Windows", L"\\Sessions\\1\\Windows\\WindowStations", L"\\ObjectTypes",
         L"\\Callback", L"\\KernelObjects", L"\\RPC Control",
     };
@@ -506,6 +507,11 @@ void ObInitialize(void)
     ObCreateSymbolicLink(L"\\SystemRoot", L"\\GLOBAL??\\C:\\Windows");
     ObCreateSymbolicLink(L"\\GLOBAL??\\Global", L"\\GLOBAL??");
     ObCreateSymbolicLink(L"\\Sessions\\1\\BaseNamedObjects\\Global", L"\\BaseNamedObjects");
+    /* Session\<n>\ names reach the objects of a session from any other. */
+    ObCreateSymbolicLink(L"\\Sessions\\1\\BaseNamedObjects\\Session", L"\\Sessions\\BNOLINKS");
+    ObCreateSymbolicLink(L"\\Sessions\\BNOLINKS\\1", L"\\Sessions\\1\\BaseNamedObjects");
+    ObCreateSymbolicLink(L"\\BaseNamedObjects\\Global", L"\\BaseNamedObjects");
+    ObCreateSymbolicLink(L"\\BaseNamedObjects\\Session", L"\\Sessions\\BNOLINKS");
 }
 
 /* ------------------------------------------------------------------ listing a directory */
