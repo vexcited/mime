@@ -78,4 +78,10 @@ BYTE *LkBuild(LINK *link, SIZE_T *size);
 BOOL LkInfoPath(const BYTE *info, DWORD size, LPWSTR path, ULONG chars);
 BYTE *LkInfoCreate(LPCWSTR path, DWORD *size);
 
+/* dest.c: jump lists and the collections that hold their items. */
+HRESULT DestinationListCreate(IUnknown *outer, REFIID riid, void **object);
+HRESULT ObjectCollectionCreate(IUnknown *outer, REFIID riid, void **object);
+HRESULT ApplicationDestinationsCreate(IUnknown *outer, REFIID riid, void **object);
+HRESULT ApplicationDocumentListsCreate(IUnknown *outer, REFIID riid, void **object);
+
 #endif

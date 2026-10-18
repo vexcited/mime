@@ -61,7 +61,7 @@ set(MIME_X86_DLLS
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
     xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base
-    winhttp:0x2C000000:http windows_storage:0x15000000:storage_imports
+    winhttp:0x2C000000:http windows_storage:0x15000000:storage_imports explorerframe:0x14000000:all_five
     propsys:0x2B000000:propsys_imports shcore:0x2A000000:shcore_imports powrprof:0x29000000:all_five
     bcryptprimitives:0x28000000:all_five pdh:0x27000000:all_five wevtapi:0x26000000:all_five tbs:0x25000000:all_five
     ncrypt:0x24000000:all_five credui:0x23000000:all_five cryptui:0x22000000:all_five ndfapi:0x21000000:all_five

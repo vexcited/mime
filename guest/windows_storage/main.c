@@ -3,6 +3,7 @@
  * shell is registered to this dll, as it is on windows.
  */
 #include "windows_storage_private.h"
+#include <mime/win32/shobjidl_ui.h>
 
 #ifndef CLASS_E_CLASSNOTAVAILABLE
 #define CLASS_E_CLASSNOTAVAILABLE ((HRESULT)0x80040111L)
@@ -30,10 +31,20 @@ static ULONG STDMETHODCALLTYPE factory_release(IClassFactory *This)
     return 1;
 }
 
+/* the classes of this dll, each made by a function of its own. */
+typedef struct _CLASS_FACTORY {
+    IClassFactory Interface;
+    const GUID *Clsid;
+    HRESULT (*Create)(IUnknown *outer, REFIID riid, void **object);
+} CLASS_FACTORY;
+
 static HRESULT STDMETHODCALLTYPE factory_create_instance(IClassFactory *This, IUnknown *outer, REFIID riid,
                                                          void **object)
 {
-    return LinkCreate(outer, riid, object);
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    return ((CLASS_FACTORY *)This)->Create(outer, riid, object);
 }
 
 static HRESULT STDMETHODCALLTYPE factory_lock_server(IClassFactory *This, BOOL lock)
@@ -44,7 +55,14 @@ static HRESULT STDMETHODCALLTYPE factory_lock_server(IClassFactory *This, BOOL l
 static const IClassFactoryVtbl g_factory_vtbl = {
     factory_query_interface, factory_add_ref, factory_release, factory_create_instance, factory_lock_server,
 };
-static IClassFactory g_factory = {&g_factory_vtbl};
+
+static CLASS_FACTORY g_factories[] = {
+    {{&g_factory_vtbl}, &CLSID_ShellLink, LinkCreate},
+    {{&g_factory_vtbl}, &CLSID_DestinationList, DestinationListCreate},
+    {{&g_factory_vtbl}, &CLSID_EnumerableObjectCollection, ObjectCollectionCreate},
+    {{&g_factory_vtbl}, &CLSID_ApplicationDestinations, ApplicationDestinationsCreate},
+    {{&g_factory_vtbl}, &CLSID_ApplicationDocumentLists, ApplicationDocumentListsCreate},
+};
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
@@ -58,9 +76,10 @@ DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, vo
     *object = nullptr;
     if (!clsid || !riid)
         return E_INVALIDARG;
-    if (!IsEqualCLSID(clsid, &CLSID_ShellLink))
-        return CLASS_E_CLASSNOTAVAILABLE;
-    return g_factory.lpVtbl->QueryInterface(&g_factory, riid, object);
+    for (SIZE_T i = 0; i < sizeof(g_factories) / sizeof(g_factories[0]); i++)
+        if (IsEqualCLSID(clsid, g_factories[i].Clsid))
+            return g_factories[i].Interface.lpVtbl->QueryInterface(&g_factories[i].Interface, riid, object);
+    return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 DECLSPEC_EXPORT HRESULT WINAPI DllCanUnloadNow(void)
