@@ -1181,6 +1181,74 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
 }
 
 /*
+ * the first touch of a page of a view, without the kernel lock, for the pages that are shared: the
+ * prototype page of the section is built if need be (it is published with a compare and swap, so two
+ * processors building it do no harm), and the pages around it that have a prototype already are mapped
+ * with it, a window of 16 pages as the processors of other processes did before. a page of an image
+ * that the program may write is private from the start and gets its copy here, alone.
+ */
+#define SECTION_FAULT_WINDOW (16 * PAGE_SIZE)
+
+static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG64 v,
+                                  ULONG protect)
+{
+    PSECTION section = vad->Section;
+    ULONG64 index = (vad->SectionOffset + (page - vad->StartVa)) >> PAGE_SHIFT;
+    ULONG64 pa = index < section->PageCount ? MiSectionPage(section, (ULONG)index) : 0;
+    if (!pa)
+        return FALSE;
+    BOOLEAN shared = TRUE;
+    ULONG64 copy = 0;
+    if ((section->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
+        copy = MmAllocatePageNoZero();
+        if (!copy)
+            return FALSE;
+        memcpy(HalPhysmap(copy), HalPhysmap(pa), PAGE_SIZE);
+        pa = copy;
+        shared = FALSE;
+    }
+    ULONG64 entry = pa | MiSectionPteAttrs(protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
+    if (!__atomic_compare_exchange_n(pte, &v, entry, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+        /* another processor mapped the page first. */
+        if (copy)
+            MmFreePagesQuiet(&copy, 1);
+        return TRUE;
+    }
+    if (copy) {
+        SIZE_T now = __atomic_add_fetch(&as->CommittedPages, 1, __ATOMIC_RELAXED);
+        SIZE_T peak = __atomic_load_n(&as->PeakCommittedPages, __ATOMIC_RELAXED);
+        while (now > peak && !__atomic_compare_exchange_n(&as->PeakCommittedPages, &peak, now, FALSE,
+                                                          __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            ;
+    }
+    __atomic_add_fetch(&as->PageFaults, 1, __ATOMIC_RELAXED);
+
+    /* the neighbours that need no work: a prototype page there already, and no copy to make. */
+    ULONG_PTR start = page & ~(ULONG_PTR)(SECTION_FAULT_WINDOW - 1), end = start + SECTION_FAULT_WINDOW;
+    if (start < vad->StartVa)
+        start = vad->StartVa;
+    if (end > vad->EndVa)
+        end = vad->EndVa;
+    ULONG64 *first = pte - ((page - start) >> PAGE_SHIFT);
+    for (ULONG_PTR va = start; va < end; va += PAGE_SIZE) {
+        ULONG64 *p = first + ((va - start) >> PAGE_SHIFT), w = __atomic_load_n(p, __ATOMIC_RELAXED);
+        ULONG wp = (ULONG)((w & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+        if (va == page || (w & MM_PTE_VALID) || !(w & MM_SWPTE_COMMITTED) || !(w & MM_SWPTE_SECTION) ||
+            (wp & 0xFF) == PAGE_NOACCESS || (wp & PAGE_GUARD))
+            continue;
+        if ((section->Flags & SEC_IMAGE) && (wp & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+            continue;
+        ULONG64 n = (vad->SectionOffset + (va - vad->StartVa)) >> PAGE_SHIFT;
+        ULONG64 prototype = n < section->PageCount ? __atomic_load_n(&section->Pages[n], __ATOMIC_ACQUIRE) : 0;
+        if (!prototype)
+            continue;
+        ULONG64 neighbour = prototype | MiSectionPteAttrs(wp, prototype, TRUE) | MM_PTE_VALID | MM_PTE_PAGE;
+        __atomic_compare_exchange_n(p, &w, neighbour, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+    }
+    return TRUE;
+}
+
+/*
  * the demand zero fault of a committed private page, without the kernel lock. it runs with interrupts
  * off from the first instructions of the trap, as a reader of the gate of the address space: the
  * holder of the lock sets the writer bit and waits for the readers to leave before it changes a vad or
@@ -1203,9 +1271,10 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
         return MI_PTE_IS_USER(v) && (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v));
     }
     ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
-    if (!(v & MM_SWPTE_COMMITTED) || (v & MM_SWPTE_SECTION) || (protect & 0xFF) == PAGE_NOACCESS ||
-        (protect & PAGE_GUARD))
+    if (!(v & MM_SWPTE_COMMITTED) || (protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))
         return FALSE;
+    if (v & MM_SWPTE_SECTION)
+        return vad->Section && fast_section_fault(as, vad, page, pte, v, protect);
 
     BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
     ULONG stream = (ULONG)-1;
