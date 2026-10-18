@@ -57,6 +57,25 @@ void MiFlushTlbPage(ULONG_PTR va, USHORT asid, BOOLEAN global)
     KiInstructionBarrier();
 }
 
+void MiFlushTlbRange(ULONG_PTR va, SIZE_T pages, USHORT asid)
+{
+    if (pages > 64) {
+        MiFlushTlbAsid(asid);
+        return;
+    }
+    BOOLEAN global = va >= 0xFFFF000000000000ull;
+    KiDataSyncBarrier();
+    for (SIZE_T i = 0; i < pages; i++) {
+        ULONG64 arg = (((va >> 12) + i) & 0xFFFFFFFFFFFull) | ((ULONG64)asid << 48);
+        if (global)
+            __asm__ volatile("tlbi vaae1is, %0" ::"r"(arg) : "memory");
+        else
+            __asm__ volatile("tlbi vae1is, %0" ::"r"(arg) : "memory");
+    }
+    KiDataSyncBarrier();
+    KiInstructionBarrier();
+}
+
 void MiFlushTlbAsid(USHORT asid)
 {
     ULONG64 arg = (ULONG64)asid << 48;
@@ -126,6 +145,49 @@ ULONG64 MiUnmapPage(ULONG64 *root, ULONG_PTR va, USHORT asid)
     if (old & MM_PTE_VALID)
         MiFlushTlbPage(va, asid, va >= 0xFFFF000000000000ull);
     return old;
+}
+
+/* break-before-make for a run of ptes: the valid ones are cleared and invalidated together, then all are stored. */
+void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *values, USHORT asid)
+{
+    SIZE_T first = count, last = 0;
+    for (SIZE_T i = 0; i < count; i++) {
+        if (pte[i] & MM_PTE_VALID) {
+            if (first == count)
+                first = i;
+            last = i;
+            pte[i] = 0;
+        }
+    }
+    if (first != count)
+        MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
+    KiDataSyncBarrier();
+    BOOLEAN valid = FALSE;
+    for (SIZE_T i = 0; i < count; i++) {
+        pte[i] = values[i];
+        valid |= (values[i] & MM_PTE_VALID) != 0;
+    }
+    KiDataSyncBarrier();
+    if (valid)
+        KiInstructionBarrier();
+}
+
+/* clears a run of ptes, handing back the old entries once the translations are gone. */
+void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 *old)
+{
+    SIZE_T first = count, last = 0;
+    for (SIZE_T i = 0; i < count; i++) {
+        ULONG64 e = pte[i];
+        old[i] = e;
+        if (e & MM_PTE_VALID) {
+            if (first == count)
+                first = i;
+            last = i;
+        }
+        pte[i] = 0;
+    }
+    if (first != count)
+        MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
 }
 
 /* windows page protection to a user or kernel page descriptor. */

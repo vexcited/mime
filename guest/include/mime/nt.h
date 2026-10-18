@@ -246,6 +246,16 @@ typedef struct _GUID {
 #define STATUS_INVALID_PARAMETER_2 ((NTSTATUS)0xC00000F0L)
 #define STATUS_INVALID_PARAMETER_3 ((NTSTATUS)0xC00000F1L)
 #define STATUS_INVALID_PARAMETER_4 ((NTSTATUS)0xC00000F2L)
+#ifndef STATUS_INVALID_PARAMETER_5
+#define STATUS_INVALID_PARAMETER_5 ((NTSTATUS)0xC00000F3L)
+#endif
+#ifndef STATUS_INVALID_PARAMETER_6
+#define STATUS_INVALID_PARAMETER_6 ((NTSTATUS)0xC00000F4L)
+#endif
+#define STATUS_INVALID_PARAMETER_7 ((NTSTATUS)0xC00000F5L)
+#define STATUS_COMMITMENT_LIMIT ((NTSTATUS)0xC000012DL)
+#define STATUS_UNABLE_TO_DELETE_SECTION ((NTSTATUS)0xC000001BL)
+#define STATUS_INTEGER_OVERFLOW ((NTSTATUS)0xC0000095L)
 #define STATUS_INVALID_FILE_FOR_SECTION ((NTSTATUS)0xC0000020L)
 
 /* doubly linked lists. */
@@ -654,6 +664,8 @@ typedef struct _FILE_FS_DEVICE_INFORMATION {
 #define PAGE_GUARD 0x100
 #define PAGE_NOCACHE 0x200
 #define PAGE_WRITECOMBINE 0x400
+#define PAGE_TARGETS_NO_UPDATE 0x40000000
+#define PAGE_TARGETS_INVALID 0x40000000
 
 #define MEM_COMMIT 0x00001000
 #define MEM_RESERVE 0x00002000
@@ -662,13 +674,77 @@ typedef struct _FILE_FS_DEVICE_INFORMATION {
 #define MEM_FREE 0x00010000
 #define MEM_PRIVATE 0x00020000
 #define MEM_MAPPED 0x00040000
+#define MEM_REPLACE_PLACEHOLDER 0x00004000 /* with MEM_RESERVE, or MEM_MAPPED views */
+#define MEM_RESERVE_PLACEHOLDER 0x00040000
 #define MEM_RESET 0x00080000
 #define MEM_TOP_DOWN 0x00100000
 #define MEM_WRITE_WATCH 0x00200000
 #define MEM_PHYSICAL 0x00400000
+#define MEM_ROTATE 0x00800000
 #define MEM_RESET_UNDO 0x01000000
 #define MEM_LARGE_PAGES 0x20000000
 #define MEM_IMAGE 0x01000000
+#define MEM_COALESCE_PLACEHOLDERS 0x00000001 /* freeing, with MEM_RELEASE */
+#define MEM_PRESERVE_PLACEHOLDER 0x00000002  /* freeing, with MEM_RELEASE */
+#define UNMAP_WITH_TRANSIENT_BOOST 0x00000001
+#define UNMAP_PRESERVE_PLACEHOLDER 0x00000002
+#define UNMAP_NONE 0x00000000
+
+typedef enum _MEM_EXTENDED_PARAMETER_TYPE {
+    MemExtendedParameterInvalidType = 0,
+    MemExtendedParameterAddressRequirements = 1,
+    MemExtendedParameterNumaNode = 2,
+    MemExtendedParameterPartitionHandle = 3,
+    MemExtendedParameterUserPhysicalHandle = 4,
+    MemExtendedParameterAttributeFlags = 5,
+    MemExtendedParameterImageMachine = 6,
+    MemExtendedParameterMax = 7
+} MEM_EXTENDED_PARAMETER_TYPE;
+
+#define MEM_EXTENDED_PARAMETER_GRAPHICS 0x1
+#define MEM_EXTENDED_PARAMETER_NONPAGED 0x2
+#define MEM_EXTENDED_PARAMETER_ZERO_PAGES_OPTIONAL 0x4
+#define MEM_EXTENDED_PARAMETER_NONPAGED_LARGE 0x8
+#define MEM_EXTENDED_PARAMETER_NONPAGED_HUGE 0x10
+#define MEM_EXTENDED_PARAMETER_SOFT_FAULT_PAGES 0x20
+#define MEM_EXTENDED_PARAMETER_EC_CODE 0x40
+
+typedef struct DECLSPEC_ALIGN(8) _MEM_EXTENDED_PARAMETER {
+    struct {
+        ULONG64 Type : 8;
+        ULONG64 Reserved : 56;
+    };
+    union {
+        ULONG64 ULong64;
+        PVOID Pointer;
+        SIZE_T Size;
+        HANDLE Handle;
+        ULONG ULong;
+    };
+} MEM_EXTENDED_PARAMETER, *PMEM_EXTENDED_PARAMETER;
+
+typedef struct _MEM_ADDRESS_REQUIREMENTS {
+    PVOID LowestStartingAddress;
+    PVOID HighestEndingAddress;
+    SIZE_T Alignment;
+} MEM_ADDRESS_REQUIREMENTS, *PMEM_ADDRESS_REQUIREMENTS;
+
+typedef struct _MEMORY_RANGE_ENTRY {
+    PVOID VirtualAddress;
+    SIZE_T NumberOfBytes;
+} MEMORY_RANGE_ENTRY, *PMEMORY_RANGE_ENTRY;
+
+typedef enum _VIRTUAL_MEMORY_INFORMATION_CLASS {
+    VmPrefetchInformation = 0,
+    VmPagePriorityInformation = 1,
+    VmCfgCallTargetInformation = 2,
+    VmPageDirtyStateInformation = 3,
+    VmImageHotPatchInformation = 4,
+    VmPhysicalContiguityInformation = 5,
+    VmVirtualMachinePrepopulateInformation = 6,
+    VmRemoveFromWorkingSetInformation = 7,
+    VmInformationClassMax
+} VIRTUAL_MEMORY_INFORMATION_CLASS;
 
 #define SEC_FILE 0x00800000
 #define SEC_IMAGE 0x01000000
@@ -2136,6 +2212,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessBasicInformation = 0,
     ProcessQuotaLimits = 1,
     ProcessIoCounters = 2,
+    ProcessVmCounters = 3,
     ProcessTimes = 4,
     ProcessDebugPort = 7,
     ProcessAccessToken = 9,

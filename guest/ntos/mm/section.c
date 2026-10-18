@@ -566,11 +566,23 @@ static void apply_relocations(PSECTION s, ULONG64 *pages, ULONG_PTR base)
     }
 }
 
-NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
-                            ULONG protect, ULONG allocation_type)
+NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
+                              ULONG protect, ULONG allocation_type, ULONG_PTR zero_bits, const MI_EXTENDED *ext)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
+    MI_EXTENDED none = {};
+    if (!ext)
+        ext = &none;
     BOOLEAN image = (s->Flags & SEC_IMAGE) != 0;
+    BOOLEAN replace = (allocation_type & MEM_REPLACE_PLACEHOLDER) != 0;
+    if (replace && (image || !*base))
+        return image ? STATUS_INVALID_PARAMETER : STATUS_CONFLICTING_ADDRESSES;
+    if (zero_bits && !*base) {
+        ULONG_PTR probe = ~0ull;
+        NTSTATUS status = MiZeroBitsHighest(zero_bits, &probe);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     ULONG64 first_page = image ? 0 : offset >> PAGE_SHIFT;
     if (first_page >= s->PageCount)
         return STATUS_INVALID_VIEW_SIZE;
@@ -587,6 +599,7 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
     ULONG_PTR va = (ULONG_PTR)*base;
     BOOLEAN relocated = FALSE;
     NTSTATUS status = STATUS_SUCCESS;
+    PMMVAD placeholder = nullptr;
     if (image) {
         if (!va)
             va = s->Image.ImageBase;
@@ -599,12 +612,28 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
             relocated = TRUE;
         }
         relocated = relocated || va != s->Image.ImageBase;
+    } else if (replace) {
+        va &= ~(ULONG_PTR)(PAGE_SIZE - 1);
+        PMMVAD vad = MiFindVad(as, va);
+        if (vad && (vad->Flags & MM_VAD_PLACEHOLDER) && vad->StartVa == va && vad->EndVa == va + bytes)
+            placeholder = vad;
+        else
+            status = STATUS_CONFLICTING_ADDRESSES;
     } else if (va) {
         va &= ~(ULONG_PTR)(PAGE_SIZE - 1);
         if (!MiRangeIsFree(as, va, va + bytes))
             status = STATUS_CONFLICTING_ADDRESSES;
     } else {
-        status = MiFindFreeRange(as, bytes, 0x10000, (allocation_type & MEM_TOP_DOWN) != 0, &va);
+        ULONG_PTR highest = ext->Highest;
+        if (zero_bits) {
+            ULONG_PTR limit = as->AllocationLimit ? as->AllocationLimit - 1 : 0x7FFFFFFEFFFFull;
+            status = MiZeroBitsHighest(zero_bits, &limit);
+            if (NT_SUCCESS(status) && (!highest || highest > limit))
+                highest = limit;
+        }
+        if (NT_SUCCESS(status))
+            status = MiFindFreeRangeEx(as, bytes, ext->Alignment, ext->Lowest, highest,
+                                       (allocation_type & MEM_TOP_DOWN) != 0, &va);
     }
     if (!NT_SUCCESS(status)) {
         ExReleaseFastMutex(&as->Lock);
@@ -626,8 +655,22 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
     vad->InitialProtect = image ? PAGE_EXECUTE_WRITECOPY : protect;
     vad->Section = s;
     vad->SectionOffset = first_page << PAGE_SHIFT;
+    vad->Flags = replace ? MM_VAD_REPLACED : 0;
     ObReferenceObject(s);
-    MiInsertVad(as, vad);
+    if (placeholder) {
+        MiSwapVad(as, placeholder, vad);
+        ExFreePool(placeholder);
+    } else {
+        status = MiInsertVad(as, vad);
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(s);
+            ExFreePool(vad);
+            if (private_pages)
+                ExFreePool(private_pages);
+            ExReleaseFastMutex(&as->Lock);
+            return status;
+        }
+    }
 
     if (image && relocated) {
         for (SIZE_T i = 0; i < pages; i++) {
@@ -664,6 +707,8 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
         if (!MiMapPage(as->Root, pva, pa, attrs))
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
+    if (relocated)
+        as->CommittedPages += pages;
     if (private_pages)
         ExFreePool(private_pages);
     if (!NT_SUCCESS(status)) {
@@ -677,33 +722,52 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
     return relocated ? STATUS_IMAGE_NOT_AT_BASE : STATUS_SUCCESS;
 }
 
-NTSTATUS MiUnmapViewOfSection(PEPROCESS process, PVOID base)
+NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
+                            ULONG protect, ULONG allocation_type)
+{
+    return MiMapViewOfSectionEx(s, process, base, offset, view_size, protect, allocation_type, 0, nullptr);
+}
+
+/*
+ * unmaps the view holding an address. with preserve the range stays
+ * reserved as a placeholder, which only a view made in one can do.
+ */
+NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
+    BOOLEAN preserve = (flags & UNMAP_PRESERVE_PLACEHOLDER) != 0;
     ExAcquireFastMutex(&as->Lock);
     PMMVAD vad = MiFindVad(as, (ULONG_PTR)base);
     if (!vad || (vad->Type != MiVadImage && vad->Type != MiVadMapped)) {
         ExReleaseFastMutex(&as->Lock);
         return STATUS_NOT_MAPPED_VIEW;
     }
-    for (ULONG_PTR va = vad->StartVa; va < vad->EndVa; va += PAGE_SIZE) {
-        ULONG64 *pte = MiWalk(as->Root, va, FALSE, 3);
-        if (!pte || !*pte)
-            continue;
-        ULONG64 old = *pte;
-        *pte = 0;
-        if (old & MM_PTE_VALID) {
-            MiFlushTlbPage(va, as->Asid, FALSE);
-            if (!(old & MM_PTE_SW_SHARED))
-                MmFreePage(old & MM_PTE_ADDR_MASK);
-        }
+    if (preserve && ((ULONG_PTR)base != vad->StartVa || !(vad->Flags & MM_VAD_REPLACED))) {
+        ExReleaseFastMutex(&as->Lock);
+        return STATUS_CONFLICTING_ADDRESSES;
     }
-    MiRemoveVad(as, vad);
+    MiReleasePages(as, vad->StartVa, vad->EndVa);
+    PSECTION section = vad->Section;
+    if (preserve) {
+        vad->Section = nullptr;
+        vad->SectionOffset = 0;
+        vad->Type = MiVadPrivate;
+        vad->InitialProtect = PAGE_NOACCESS;
+        vad->Flags = MM_VAD_PLACEHOLDER;
+    } else {
+        MiRemoveVad(as, vad);
+    }
     ExReleaseFastMutex(&as->Lock);
-    if (vad->Section)
-        ObDereferenceObject(vad->Section);
-    ExFreePool(vad);
+    if (section)
+        ObDereferenceObject(section);
+    if (!preserve)
+        ExFreePool(vad);
     return STATUS_SUCCESS;
+}
+
+NTSTATUS MiUnmapViewOfSection(PEPROCESS process, PVOID base)
+{
+    return MiUnmapViewOfSectionEx(process, base, 0);
 }
 
 /* ------------------------------------------------ kernel shared sections */
@@ -867,11 +931,67 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
         !(section->Flags & SEC_IMAGE) && PsDynamicCodeBlocked(process))
         status = (NTSTATUS)0xC0000604L; /* STATUS_DYNAMIC_CODE_BLOCKED */
     else
-        status = MiMapViewOfSection(section, process, &b, (ULONG64)off.QuadPart, &vs, protect, allocation_type);
+        status = MiMapViewOfSectionEx(section, process, &b, (ULONG64)off.QuadPart, &vs, protect, allocation_type,
+                                      zero_bits, nullptr);
     if (NT_SUCCESS(status)) {
         KiCopyToUser(base, &b, sizeof(b));
         if (view_size)
             KiCopyToUser(view_size, &vs, sizeof(vs));
+    }
+    ObDereferenceObject(process);
+    ObDereferenceObject(section);
+    return status;
+}
+
+/*
+ * the view services with extended parameters. the section's protection
+ * limits come from the access of its handle in windows; mime checks the
+ * allocation type and the protection only.
+ */
+NTSTATUS NTAPI NtMapViewOfSectionEx(HANDLE section_handle, HANDLE process_handle, PVOID *base, PLARGE_INTEGER offset,
+                                    PSIZE_T view_size, ULONG allocation_type, ULONG protect,
+                                    PMEM_EXTENDED_PARAMETER parameters, ULONG count)
+{
+    PVOID b;
+    SIZE_T vs;
+    LARGE_INTEGER off = {};
+    if (!NT_SUCCESS(KiCopyFromUser(&b, base, sizeof(b))) || !NT_SUCCESS(KiCopyFromUser(&vs, view_size, sizeof(vs))) ||
+        (offset && !NT_SUCCESS(KiCopyFromUser(&off, offset, sizeof(off)))))
+        return STATUS_ACCESS_VIOLATION;
+    if (!MiProtectionIsValid(protect & ~(ULONG)PAGE_TARGETS_INVALID))
+        return STATUS_INVALID_PAGE_PROTECTION;
+    if ((ULONG_PTR)b > 0x7FFFFFFEFFFFull || vs > 0x7FFFFFFF0000ull - (ULONG_PTR)b)
+        return STATUS_INVALID_PARAMETER;
+    PSECTION section;
+    NTSTATUS status = ObReferenceHandle(section_handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&section, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    PEPROCESS process;
+    status = PsReferenceProcessHandle(process_handle, PROCESS_VM_OPERATION, &process);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(section);
+        return status;
+    }
+    MI_EXTENDED ext;
+    status = MiCaptureExtendedParameters(parameters, count, 0x66, KeGetPreviousMode() == UserMode, &ext);
+    if (NT_SUCCESS(status) && ((ext.Attributes & ~0x260ull) || ext.Node > 1 || (allocation_type & ~(ULONG)0x20906000)))
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status) && (allocation_type & MEM_REPLACE_PLACEHOLDER) &&
+        (ext.Lowest || ext.Highest || ext.Alignment))
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status) && ext.Alignment &&
+        (ext.Alignment < 0x10000 || (ext.Alignment & (ext.Alignment - 1)) || ext.Alignment >= 0x7FFFFFFF0000ull))
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status) && b && (ext.Lowest || ext.Highest || ext.Alignment))
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status) && (allocation_type & (MEM_LARGE_PAGES | MEM_ROTATE)))
+        status = STATUS_NOT_SUPPORTED;
+    if (NT_SUCCESS(status))
+        status = MiMapViewOfSectionEx(section, process, &b, (ULONG64)off.QuadPart, &vs,
+                                      protect & ~(ULONG)PAGE_TARGETS_INVALID, allocation_type, 0, &ext);
+    if (NT_SUCCESS(status)) {
+        KiCopyToUser(base, &b, sizeof(b));
+        KiCopyToUser(view_size, &vs, sizeof(vs));
     }
     ObDereferenceObject(process);
     ObDereferenceObject(section);
@@ -912,7 +1032,19 @@ NTSTATUS NTAPI NtUnmapViewOfSection(HANDLE process_handle, PVOID base)
 
 NTSTATUS NTAPI NtUnmapViewOfSectionEx(HANDLE process_handle, PVOID base, ULONG flags)
 {
-    return NtUnmapViewOfSection(process_handle, base);
+    if (flags & ~(ULONG)(UNMAP_WITH_TRANSIENT_BOOST | UNMAP_PRESERVE_PLACEHOLDER))
+        return STATUS_INVALID_PARAMETER_3;
+    if (KeGetPreviousMode() == UserMode && (ULONG_PTR)base > 0x7FFFFFFEFFFFull)
+        return STATUS_NOT_MAPPED_VIEW;
+    if ((flags & UNMAP_PRESERVE_PLACEHOLDER) && ((ULONG_PTR)base & (PAGE_SIZE - 1)))
+        return STATUS_INVALID_PARAMETER_2;
+    PEPROCESS process;
+    NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_VM_OPERATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = MiUnmapViewOfSectionEx(process, base, flags);
+    ObDereferenceObject(process);
+    return status;
 }
 
 NTSTATUS NTAPI ZwUnmapViewOfSection(HANDLE process, PVOID base)

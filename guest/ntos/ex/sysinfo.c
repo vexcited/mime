@@ -575,11 +575,11 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     case SystemPerformanceInformation: {
         UCHAR perf[0x158] = {};
         /* no paging file: the host swaps guest memory, so the limit is ram plus the host's swap. */
-        ULONG64 total = MmGetTotalPages(), free = MmGetFreePages();
-        *(PULONG)(perf + 0x4C) = (ULONG)free;                                            /* AvailablePages */
-        *(PULONG)(perf + 0x50) = (ULONG)(total - free);                                  /* CommittedPages */
-        *(PULONG)(perf + 0x54) = (ULONG)(total + (HalBootInfo->swap_size >> PAGE_SHIFT)); /* CommitLimit */
-        *(PULONG)(perf + 0x58) = (ULONG)(total - free);                                  /* PeakCommitment */
+        ULONG64 free = MmGetFreePages();
+        *(PULONG)(perf + 0x4C) = (ULONG)free;                       /* AvailablePages */
+        *(PULONG)(perf + 0x50) = (ULONG)MmGetCommittedPages();      /* CommittedPages */
+        *(PULONG)(perf + 0x54) = (ULONG)MmGetCommitLimitPages();    /* CommitLimit */
+        *(PULONG)(perf + 0x58) = (ULONG)MmGetPeakCommittedPages();  /* PeakCommitment */
         return copy_info(info, perf, sizeof(perf), length, returned);
     }
     case SystemKernelDebuggerInformation: {
@@ -685,12 +685,6 @@ NTSTATUS NTAPI NtTraceEvent(HANDLE handle, ULONG flags, ULONG length, PVOID data
 NTSTATUS NTAPI NtTraceControl(ULONG code, PVOID in, ULONG in_len, PVOID out, ULONG out_len, PULONG returned)
 {
     return STATUS_NOT_SUPPORTED;
-}
-
-NTSTATUS NTAPI NtSetInformationVirtualMemory(HANDLE process, ULONG klass, ULONG_PTR count, PVOID entries, PVOID info,
-                                             ULONG length)
-{
-    return STATUS_SUCCESS;
 }
 
 NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data, ULONG length, PULONG returned)

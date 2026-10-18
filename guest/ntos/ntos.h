@@ -406,24 +406,47 @@ typedef enum _MI_VAD_TYPE {
 
 struct _SECTION;
 
+/* MMVAD.Flags */
+#define MM_VAD_PLACEHOLDER 0x1 /* a reservation that holds nothing, to be replaced by an allocation or a view */
+#define MM_VAD_REPLACED 0x2    /* made by replacing a placeholder, so it can become one again */
+
 typedef struct _MMVAD {
-    LIST_ENTRY Links;
     ULONG_PTR StartVa;
     ULONG_PTR EndVa; /* exclusive */
     ULONG Type;
     ULONG InitialProtect;
     struct _SECTION *Section;
     ULONG64 SectionOffset;
+    ULONG Flags;
 } MMVAD, *PMMVAD;
 
+typedef struct _MMVAD_SPAN {
+    ULONG_PTR Start;
+    ULONG_PTR End;
+} MMVAD_SPAN;
+
+/*
+ * the vads of a process sorted by address: two parallel arrays, so that a
+ * lookup is a binary search and looking for free space scans a dense array
+ * of ranges. inserting moves the tail, which is cheap next to the hundreds
+ * or thousands of vads a browser makes.
+ */
 typedef struct _MMADDRESS_SPACE {
-    LIST_ENTRY VadList;
+    MMVAD_SPAN *Spans;
+    PMMVAD *Vads;
+    ULONG VadCount;
+    ULONG VadCapacity;
     PMMVAD Hint;
     FAST_MUTEX Lock;
     ULONG64 *Root; /* physmap pointer to the l0 table */
     ULONG64 RootPhys;
     USHORT Asid;
-    SIZE_T CommittedPages;
+    SIZE_T CommittedPages;       /* private pages backed by memory, the working set */
+    SIZE_T PeakCommittedPages;
+    SIZE_T CommitCharge;         /* private pages committed, backed or not */
+    SIZE_T PeakCommitCharge;
+    SIZE_T PeakVirtualSize;
+    SIZE_T PageFaults;
     ULONG_PTR AllocationLimit;
     ULONG_PTR LastFaultEnd; /* end of the last demand zero window, to spot sequential touching */
 } MMADDRESS_SPACE, *PMMADDRESS_SPACE;
@@ -489,6 +512,9 @@ ULONG64 MiUnmapPage(ULONG64 *root, ULONG_PTR va, USHORT asid);
 ULONG64 MiReadPte(ULONG64 *root, ULONG_PTR va);
 void MiWritePte(ULONG64 *root, ULONG_PTR va, ULONG64 pte, USHORT asid);
 void MiFlushTlbPage(ULONG_PTR va, USHORT asid, BOOLEAN global);
+void MiFlushTlbRange(ULONG_PTR va, SIZE_T pages, USHORT asid);
+void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *values, USHORT asid);
+void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 *old);
 void MiFlushTlbAsid(USHORT asid);
 void MiFlushTlbAll(void);
 ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user);
@@ -513,8 +539,32 @@ PMMVAD MiFindVad(PMMADDRESS_SPACE as, ULONG_PTR va);
 NTSTATUS MiInsertVad(PMMADDRESS_SPACE as, PMMVAD vad);
 NTSTATUS MiFindFreeRange(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, BOOLEAN top_down,
                          ULONG_PTR *out);
+NTSTATUS MiFindFreeRangeEx(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, ULONG_PTR lowest,
+                           ULONG_PTR highest, BOOLEAN top_down, ULONG_PTR *out);
 BOOLEAN MiRangeIsFree(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end);
 void MiRemoveVad(PMMADDRESS_SPACE as, PMMVAD vad);
+/* what the extended parameters of an allocation or a view ask for. */
+typedef struct _MI_EXTENDED {
+    ULONG_PTR Lowest;
+    ULONG_PTR Highest;
+    ULONG_PTR Alignment;
+    ULONG Node; /* the preferred node plus one, or 0 */
+    ULONG Present; /* a bit for each type that was given */
+    ULONG64 Attributes;
+    HANDLE Partition;
+    HANDLE PhysicalHandle;
+    USHORT Machine;
+} MI_EXTENDED;
+
+BOOLEAN MiProtectionIsValid(ULONG protect);
+NTSTATUS MiCaptureExtendedParameters(const MEM_EXTENDED_PARAMETER *parameters, ULONG count, ULONG allowed,
+                                     BOOLEAN user, MI_EXTENDED *out);
+NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect,
+                             ULONG_PTR zero_bits, const MI_EXTENDED *extended);
+ULONG MmQueryVmCounters(PEPROCESS process, PVOID out, ULONG length);
+SIZE_T MmGetCommittedPages(void);
+SIZE_T MmGetPeakCommittedPages(void);
+SIZE_T MmGetCommitLimitPages(void);
 NTSTATUS MiAllocateVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect);
 NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type);
 NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG protect, PULONG old);
@@ -524,7 +574,13 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out);
 NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULONG flags, PSECTION *out);
 NTSTATUS MiMapViewOfSection(PSECTION section, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
                             ULONG protect, ULONG allocation_type);
+NTSTATUS MiMapViewOfSectionEx(PSECTION section, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
+                              ULONG protect, ULONG allocation_type, ULONG_PTR zero_bits, const MI_EXTENDED *ext);
 NTSTATUS MiUnmapViewOfSection(PEPROCESS process, PVOID base);
+NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags);
+SIZE_T MiReleasePages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end);
+void MiSwapVad(PMMADDRESS_SPACE as, PMMVAD old, PMMVAD fresh);
+NTSTATUS MiZeroBitsHighest(ULONG_PTR zero_bits, ULONG_PTR *highest);
 NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *info);
 NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base, SIZE_T *size, PVOID *entry);
 PVOID MiFindKernelExport(PVOID image_base, const char *name);

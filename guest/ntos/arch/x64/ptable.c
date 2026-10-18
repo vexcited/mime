@@ -120,6 +120,18 @@ void MiFlushTlbPage(ULONG_PTR va, USHORT asid, BOOLEAN global)
     shootdown(global);
 }
 
+/* a run of pages: a few invalidations, or all of the process's translations for a long one. */
+void MiFlushTlbRange(ULONG_PTR va, SIZE_T pages, USHORT asid)
+{
+    if (pages > 32) {
+        flush_local_all(FALSE);
+    } else {
+        for (SIZE_T i = 0; i < pages; i++)
+            __asm__ volatile("invlpg (%0)" ::"r"(va + (i << PAGE_SHIFT)) : "memory");
+    }
+    shootdown(FALSE);
+}
+
 void MiFlushTlbAsid(USHORT asid)
 {
     flush_local_all(FALSE);
@@ -180,6 +192,40 @@ ULONG64 MiUnmapPage(ULONG64 *root, ULONG_PTR va, USHORT asid)
     if (old & MM_PTE_VALID)
         MiFlushTlbPage(va, asid, va >= 0xFFFF800000000000ull);
     return old;
+}
+
+/* stores the new entries of a run of ptes, and invalidates once what the old ones translated. */
+void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *values, USHORT asid)
+{
+    SIZE_T first = count, last = 0;
+    for (SIZE_T i = 0; i < count; i++) {
+        if (pte[i] & MM_PTE_VALID) {
+            if (first == count)
+                first = i;
+            last = i;
+        }
+        pte[i] = values[i];
+    }
+    if (first != count)
+        MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
+}
+
+/* clears a run of ptes, handing back the old entries once the translations are gone. */
+void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 *old)
+{
+    SIZE_T first = count, last = 0;
+    for (SIZE_T i = 0; i < count; i++) {
+        ULONG64 e = pte[i];
+        old[i] = e;
+        if (e & MM_PTE_VALID) {
+            if (first == count)
+                first = i;
+            last = i;
+        }
+        pte[i] = 0;
+    }
+    if (first != count)
+        MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
 }
 
 /* windows page protection to a user or kernel page table entry. */

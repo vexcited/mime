@@ -397,6 +397,18 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         process_times(process, out.times);
         size = sizeof(out.times);
         break;
+    case ProcessQuotaLimits: {
+        /* the default working set limits; they bind nothing in mime. */
+        ULONG64 *quota = (ULONG64 *)out.bytes;
+        quota[2] = 200 * PAGE_SIZE;
+        quota[3] = 1345 * PAGE_SIZE;
+        *(PULONG)(out.bytes + 0x50) = 0xA;
+        size = length >= 0x58 ? 0x58 : 0x30;
+        break;
+    }
+    case ProcessVmCounters:
+        size = MmQueryVmCounters(process, out.bytes, length);
+        break;
     case ProcessDebugPort:
         size = sizeof(ULONG_PTR);
         break;
