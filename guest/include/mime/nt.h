@@ -2217,10 +2217,14 @@ typedef enum _PROCESSINFOCLASS {
     ProcessIoCounters = 2,
     ProcessVmCounters = 3,
     ProcessTimes = 4,
+    ProcessBasePriority = 5,
     ProcessDebugPort = 7,
     ProcessAccessToken = 9,
     ProcessDefaultHardErrorMode = 12,
+    ProcessPriorityClass = 18,
     ProcessHandleCount = 20,
+    ProcessAffinityMask = 21,
+    ProcessPriorityBoost = 22,
     ProcessSessionInformation = 24,
     ProcessWow64Information = 26,
     ProcessImageFileName = 27,
@@ -2233,6 +2237,24 @@ typedef enum _PROCESSINFOCLASS {
     ProcessHandleTable = 58,
     ProcessProtectionInformation = 61,
 } PROCESSINFOCLASS;
+
+/* ProcessPriorityClass, and the class that sets a class and the foreground flag by what a flag word names. */
+#define MX_PROCESS_PRIORITY_CLASS_EX 108
+#define PROCESS_PRIORITY_CLASS_EX_FOREGROUND 1
+#define PROCESS_PRIORITY_CLASS_EX_CLASS 2
+enum {
+    PROCESS_PRIORITY_CLASS_UNKNOWN = 0,
+    PROCESS_PRIORITY_CLASS_IDLE = 1,
+    PROCESS_PRIORITY_CLASS_NORMAL = 2,
+    PROCESS_PRIORITY_CLASS_HIGH = 3,
+    PROCESS_PRIORITY_CLASS_REALTIME = 4,
+    PROCESS_PRIORITY_CLASS_BELOW_NORMAL = 5,
+    PROCESS_PRIORITY_CLASS_ABOVE_NORMAL = 6,
+};
+typedef struct _PROCESS_PRIORITY_CLASS {
+    BOOLEAN Foreground;
+    UCHAR PriorityClass;
+} PROCESS_PRIORITY_CLASS, *PPROCESS_PRIORITY_CLASS;
 
 typedef struct _PROCESS_BASIC_INFORMATION {
     NTSTATUS ExitStatus;
@@ -2271,8 +2293,11 @@ typedef enum _THREADINFOCLASS {
     ThreadQuerySetWin32StartAddress = 9,
     ThreadZeroTlsCell = 10,
     ThreadAmILastThread = 12,
+    ThreadIdealProcessor = 13,
+    ThreadPriorityBoost = 14,
     ThreadIsTerminated = 20,
     ThreadHideFromDebugger = 17,
+    ThreadIdealProcessorEx = 33,
     ThreadDescription = 38,
     ThreadDynamicCodePolicyInfo = 42,
 } THREADINFOCLASS;

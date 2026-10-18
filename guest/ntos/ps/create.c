@@ -138,7 +138,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     peb->ImageSubsystem = img->Image.Subsystem;
     peb->ImageSubsystemMajorVersion = img->Image.SubsystemMajor;
     peb->ImageSubsystemMinorVersion = img->Image.SubsystemMinor;
-    peb->ActiveProcessAffinityMask = 1;
+    peb->ActiveProcessAffinityMask = KiProcessAffinity(&process->Pcb);
     peb->CriticalSectionTimeout.QuadPart = -2592000ll * 10000000; /* 30 days */
     peb->HeapSegmentReserve = 0x100000;
     peb->HeapSegmentCommit = 0x2000;

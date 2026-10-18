@@ -46,6 +46,18 @@ void KiInitializeScheduler(void)
     KiProcessorBlock[0] = prcb;
 }
 
+/* the processors of the machine as an affinity mask. */
+ULONG64 KiAllProcessors(void)
+{
+    return KeNumberProcessors >= 64 ? ~0ull : (1ull << (KeNumberProcessors ? KeNumberProcessors : 1)) - 1;
+}
+
+/* the processors a process is limited to, all of them when it was never limited. */
+ULONG64 KiProcessAffinity(PKPROCESS process)
+{
+    return process->Affinity ? process->Affinity : KiAllProcessors();
+}
+
 void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVOID stack_limit,
                         PKSTART_ROUTINE routine, PVOID context)
 {
@@ -64,8 +76,10 @@ void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVO
     KeInitializeSemaphore(&thread->SuspendSemaphore, 0, 2);
     KeInitializeEvent(&thread->SuspendEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&thread->AlertByIdEvent, SynchronizationEvent, FALSE);
-    thread->Priority = 8;
-    thread->BasePriority = 8;
+    thread->Priority = process->BasePriority ? process->BasePriority : 8;
+    thread->BasePriority = thread->Priority;
+    thread->Affinity = KiProcessAffinity(process);
+    thread->IdealProcessor = (UCHAR)((ULONG)process->ActiveThreads % (KeNumberProcessors ? KeNumberProcessors : 1));
     thread->Quantum = KI_DEFAULT_QUANTUM_HNS;
     thread->State = Initialized;
     thread->PreviousMode = KernelMode;
@@ -158,6 +172,99 @@ void KiReadyThread(PKTHREAD thread)
     PKPRCB target = pick_processor(thread);
     if (target)
         KiRequestDispatch(target->Number);
+}
+
+/*
+ * moves a thread to another priority. a queued thread changes queue and a
+ * running one that dropped below a waiting thread gives its processor up.
+ * dispatcher lock held.
+ */
+static void set_priority(PKTHREAD thread, int priority)
+{
+    int old = thread->Priority;
+    if (old == priority)
+        return;
+    if (thread->State == Ready && !thread->IdleThread) {
+        RemoveEntryList(&thread->ReadyListEntry);
+        if (IsListEmpty(&KiReadyListHead[old])) {
+            KiReadySummary &= ~(1u << old);
+            if (SharedUserData)
+                SharedUserData->MimeReadyThreads = KiReadySummary;
+        }
+        thread->Priority = (SCHAR)priority;
+        KiReadyThread(thread);
+        return;
+    }
+    thread->Priority = (SCHAR)priority;
+    if (thread->State == Running && priority < old && (KiReadySummary >> priority) > 1)
+        KiRequestDispatch(thread->Processor);
+}
+
+/*
+ * the base priority of a thread of a process with a base priority, for an
+ * increment that is a step or, at 16 and beyond, a limit. the dynamic
+ * range is 1 to 15 and the real time one 16 to 31.
+ */
+static SCHAR base_for(SCHAR process_base, LONG increment, SCHAR *saturation)
+{
+    LONG magnitude = increment < 0 ? -increment : increment;
+    *saturation = magnitude >= 16 ? (increment > 0 ? 1 : -1) : 0;
+    LONG base = process_base + increment;
+    if (process_base >= LOW_REALTIME_PRIORITY) {
+        if (base < LOW_REALTIME_PRIORITY)
+            base = LOW_REALTIME_PRIORITY;
+        if (base > HIGH_PRIORITY)
+            base = HIGH_PRIORITY;
+    } else {
+        if (base >= LOW_REALTIME_PRIORITY)
+            base = LOW_REALTIME_PRIORITY - 1;
+        if (base < 1)
+            base = 1;
+    }
+    return (SCHAR)base;
+}
+
+/* the increment of a thread over its process, what GetThreadPriority reports. */
+LONG KiQueryBasePriorityThread(PKTHREAD thread)
+{
+    PKPROCESS process = thread->Process;
+    return thread->Saturation ? 16 * thread->Saturation : thread->BasePriority - process->BasePriority;
+}
+
+void KiSetBasePriorityThread(PKTHREAD thread, LONG increment)
+{
+    ULONG64 s = KiAcquireDispatcherLock();
+    SCHAR base = base_for(thread->Process->BasePriority, increment, &thread->Saturation);
+    thread->BasePriority = base;
+    set_priority(thread, base);
+    KiReleaseDispatcherLock(s);
+}
+
+/* an absolute priority, which also ends a saturation. */
+void KiSetPriorityThread(PKTHREAD thread, int priority)
+{
+    ULONG64 s = KiAcquireDispatcherLock();
+    thread->Saturation = 0;
+    thread->BasePriority = (SCHAR)priority;
+    set_priority(thread, priority);
+    KiReleaseDispatcherLock(s);
+}
+
+/* a new base priority of a process, which its threads keep their increment over. */
+void KiSetBasePriorityProcess(PKPROCESS process, int base)
+{
+    ULONG64 s = KiAcquireDispatcherLock();
+    SCHAR old = process->BasePriority;
+    process->BasePriority = (SCHAR)base;
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
+        PKTHREAD thread = CONTAINING_RECORD(e, KTHREAD, ThreadListEntry);
+        LONG increment = thread->Saturation ? 16 * thread->Saturation : thread->BasePriority - old;
+        SCHAR saturation;
+        thread->BasePriority = base_for((SCHAR)base, increment, &saturation);
+        thread->Saturation = saturation;
+        set_priority(thread, thread->BasePriority);
+    }
+    KiReleaseDispatcherLock(s);
 }
 
 void KiStartThread(PKTHREAD thread)

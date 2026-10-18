@@ -14,7 +14,6 @@
 /* the classes nt.h does not name. */
 enum {
     ProcessExceptionPort = 8,
-    ProcessAffinityMask = 21,
     ProcessDeviceMap = 23,
     ThreadSetTlsArrayAddress = 15,
     ThreadGroupInformation = 30,
@@ -33,7 +32,7 @@ enum {
 /* query classes whose 32-bit records are the native ones. */
 static const UCHAR process_same[] = {2,  4,  10, 12, 18, 19, 20, 22, 24, 28, 29, 31, 32, 33, 34, 36, 39, 45,
                                      46, 47, 50, 52, 54, 58, 59, 61, 64, 66, 67, 70, 71, 77, 82, 85, 88, 97, 110, 111};
-static const UCHAR thread_same[] = {1, 12, 14, 16, 17, 18, 20, 22, 24, 25, 27, 28, 32, 34, 35, 39, 42, 44, 54, 55, 59};
+static const UCHAR thread_same[] = {1, 12, 14, 16, 17, 18, 20, 22, 24, 25, 27, 28, 32, 33, 34, 35, 39, 42, 44, 54, 55, 59};
 
 static BOOLEAN listed(const UCHAR *list, SIZE_T count, ULONG klass)
 {

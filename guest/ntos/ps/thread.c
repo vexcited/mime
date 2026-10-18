@@ -2,6 +2,7 @@
  * threads: creation, user mode entry, termination and reaping.
  */
 #include "../ntos.h"
+#include "../se/se.h"
 #include <mime/mx64.h>
 #include <mime/wow32.h>
 
@@ -687,8 +688,24 @@ NTSTATUS NTAPI NtResumeProcess(HANDLE handle)
 NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length,
                                         PULONG returned)
 {
+    /* what anyone who can see a thread may know of it, with either the full or the limited right. */
+    ACCESS_MASK rights = THREAD_QUERY_INFORMATION;
+    switch (klass) {
+    case ThreadBasicInformation:
+    case ThreadTimes:
+    case ThreadPriority:
+    case ThreadPriorityBoost:
+    case ThreadIdealProcessorEx:
+    case ThreadIsTerminated:
+        rights = THREAD_QUERY_LIMITED_INFORMATION;
+        break;
+    default:
+        break;
+    }
     PETHREAD thread;
-    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_QUERY_INFORMATION, &thread);
+    NTSTATUS status = PsReferenceThreadHandle(handle, rights, &thread);
+    if (status == STATUS_ACCESS_DENIED && rights != THREAD_QUERY_INFORMATION)
+        status = PsReferenceThreadHandle(handle, THREAD_QUERY_INFORMATION, &thread);
     if (!NT_SUCCESS(status))
         return status;
     union {
@@ -704,9 +721,9 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
         out.basic.ExitStatus = thread->HasTerminated ? thread->ExitStatus : STATUS_PENDING;
         out.basic.TebBaseAddress = thread->Tcb.Teb;
         out.basic.ClientId = thread->Cid;
-        out.basic.AffinityMask = 1;
+        out.basic.AffinityMask = thread->Tcb.Affinity;
         out.basic.Priority = thread->Tcb.Priority;
-        out.basic.BasePriority = thread->Tcb.BasePriority;
+        out.basic.BasePriority = KiQueryBasePriorityThread(&thread->Tcb);
         size = sizeof(out.basic);
         break;
     case ThreadTimes:
@@ -719,6 +736,19 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     case ThreadQuerySetWin32StartAddress:
         out.ptr = thread->Win32StartAddress;
         size = sizeof(PVOID);
+        break;
+    case ThreadPriority:
+        out.u32 = (ULONG)thread->Tcb.BasePriority;
+        size = sizeof(ULONG);
+        break;
+    case ThreadPriorityBoost:
+        out.u32 = thread->Tcb.DisableBoost;
+        size = sizeof(ULONG);
+        break;
+    case ThreadIdealProcessorEx:
+        /* a processor number: the group, the processor and a reserved byte. */
+        out.u32 = (ULONG)thread->Tcb.IdealProcessor << 16;
+        size = sizeof(ULONG);
         break;
     case ThreadIsTerminated:
         out.u32 = thread->HasTerminated;
@@ -754,8 +784,36 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
 {
     if (klass == ThreadImpersonationToken)
         return SepSetThreadToken(handle, info, length);
+    /* the scheduling classes need a length and a value, then a handle that may set them. */
+    ACCESS_MASK rights = THREAD_SET_INFORMATION;
+    ULONG want = 0;
+    switch (klass) {
+    case ThreadPriority:
+    case ThreadBasePriority:
+    case ThreadPriorityBoost:
+    case ThreadIdealProcessor:
+    case ThreadIdealProcessorEx:
+        want = sizeof(ULONG);
+        break;
+    case ThreadAffinityMask:
+        want = sizeof(ULONG64);
+        break;
+    default:
+        break;
+    }
+    if (klass != ThreadIdealProcessor && klass != ThreadIdealProcessorEx && want)
+        rights = THREAD_SET_LIMITED_INFORMATION;
+    ULONG64 value = 0;
+    if (want) {
+        if (length != want)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!NT_SUCCESS(KiCopyFromUser(&value, info, want)))
+            return STATUS_ACCESS_VIOLATION;
+    }
     PETHREAD thread;
-    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SET_INFORMATION, &thread);
+    NTSTATUS status = PsReferenceThreadHandle(handle, rights, &thread);
+    if (status == STATUS_ACCESS_DENIED && rights != THREAD_SET_INFORMATION)
+        status = PsReferenceThreadHandle(handle, THREAD_SET_INFORMATION, &thread);
     if (!NT_SUCCESS(status))
         return status;
     if ((ULONG)klass == MX_THREAD_SUSPEND_GATE) {
@@ -784,14 +842,50 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
             status = STATUS_INFO_LENGTH_MISMATCH;
         else
             thread->HideFromDebugger = TRUE;
-    } else if (klass == ThreadPriority && length >= sizeof(LONG)) {
-        LONG prio;
-        if (NT_SUCCESS(KiCopyFromUser(&prio, info, sizeof(prio))) && prio > 0 && prio < 32)
-            thread->Tcb.Priority = thread->Tcb.BasePriority = (SCHAR)prio;
-    } else if (klass == ThreadBasePriority && length >= sizeof(LONG)) {
-        LONG inc;
-        if (NT_SUCCESS(KiCopyFromUser(&inc, info, sizeof(inc))) && inc >= -2 && inc <= 2)
-            thread->Tcb.Priority = thread->Tcb.BasePriority = (SCHAR)(8 + inc);
+    } else if (klass == ThreadPriority) {
+        LONG priority = (LONG)(ULONG)value;
+        if (priority < 1 || priority > 31)
+            status = STATUS_INVALID_PARAMETER;
+        else if (priority >= 16 && !SepSinglePrivilegeCheck(SE_INC_BASE_PRIORITY_PRIVILEGE, KeGetPreviousMode()))
+            status = STATUS_PRIVILEGE_NOT_HELD;
+        else
+            KiSetPriorityThread(&thread->Tcb, priority);
+    } else if (klass == ThreadBasePriority) {
+        /* a step of two either way, or a limit, are what anyone may ask for. */
+        LONG increment = (LONG)(ULONG)value;
+        if ((increment < -2 || increment > 2) && increment != 16 && increment != -16)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            KiSetBasePriorityThread(&thread->Tcb, increment);
+    } else if (klass == ThreadPriorityBoost) {
+        thread->Tcb.DisableBoost = (ULONG)value != 0;
+    } else if (klass == ThreadAffinityMask) {
+        PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
+        if (!value || (value & ~KiProcessAffinity(&process->Pcb)))
+            status = STATUS_INVALID_PARAMETER;
+        else
+            thread->Tcb.Affinity = value;
+    } else if (klass == ThreadIdealProcessor) {
+        /* the previous one is the status, and a processor that does not exist leaves it alone. */
+        ULONG ideal = (ULONG)value;
+        if (ideal > 64) {
+            status = STATUS_INVALID_PARAMETER;
+        } else {
+            status = (NTSTATUS)thread->Tcb.IdealProcessor;
+            if (ideal < KeNumberProcessors)
+                thread->Tcb.IdealProcessor = (UCHAR)ideal;
+        }
+    } else if (klass == ThreadIdealProcessorEx) {
+        /* a processor number goes in, the previous one comes back in its place. */
+        USHORT group = (USHORT)value;
+        UCHAR number = (UCHAR)(value >> 16);
+        if (group || number >= KeNumberProcessors) {
+            status = STATUS_INVALID_PARAMETER;
+        } else {
+            ULONG previous = (ULONG)thread->Tcb.IdealProcessor << 16;
+            thread->Tcb.IdealProcessor = number;
+            status = KiCopyToUser(info, &previous, sizeof(previous));
+        }
     }
     ObDereferenceObject(thread);
     return status;

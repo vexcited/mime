@@ -10,6 +10,9 @@
 #define TOKEN_ALL_ACCESS 0xF01FF
 #endif
 
+NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE token, BOOLEAN disable_all, PVOID state, ULONG length,
+                                                    PVOID previous, PULONG returned);
+
 #define THREAD_CREATE_FLAGS_CREATE_SUSPENDED 0x00000001
 #define DEFAULT_STACK_RESERVE (1024 * 1024)
 
@@ -281,34 +284,20 @@ int WINAPI GetThreadPriority(HANDLE thread)
     THREAD_BASIC_INFORMATION info;
     if (!query_thread(thread, &info))
         return THREAD_PRIORITY_ERROR_RETURN;
-    LONG base = info.BasePriority;
-    if (base >= 15)
+    /* the kernel reports the step over the process, and 16 either way for the limits. */
+    if (info.BasePriority == 16)
         return THREAD_PRIORITY_TIME_CRITICAL;
-    if (base <= 1)
+    if (info.BasePriority == -16)
         return THREAD_PRIORITY_IDLE;
-    LONG delta = base - 8;
-    if (delta > THREAD_PRIORITY_HIGHEST)
-        delta = THREAD_PRIORITY_HIGHEST;
-    if (delta < THREAD_PRIORITY_LOWEST)
-        delta = THREAD_PRIORITY_LOWEST;
-    return (int)delta;
+    return (int)info.BasePriority;
 }
 
 BOOL WINAPI SetThreadPriority(HANDLE thread, int priority)
 {
     if (priority == THREAD_MODE_BACKGROUND_BEGIN || priority == THREAD_MODE_BACKGROUND_END)
         return TRUE;
-    NTSTATUS status;
-    if (priority == THREAD_PRIORITY_TIME_CRITICAL || priority == THREAD_PRIORITY_IDLE) {
-        LONG absolute = priority == THREAD_PRIORITY_TIME_CRITICAL ? 15 : 1;
-        status = NtSetInformationThread(thread, ThreadPriority, &absolute, sizeof(absolute));
-    } else if (priority >= THREAD_PRIORITY_LOWEST && priority <= THREAD_PRIORITY_HIGHEST) {
-        LONG increment = priority;
-        status = NtSetInformationThread(thread, ThreadBasePriority, &increment, sizeof(increment));
-    } else {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
+    LONG increment = priority == THREAD_PRIORITY_TIME_CRITICAL ? 16 : priority == THREAD_PRIORITY_IDLE ? -16 : priority;
+    NTSTATUS status = NtSetInformationThread(thread, ThreadBasePriority, &increment, sizeof(increment));
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
@@ -316,62 +305,126 @@ BOOL WINAPI SetThreadPriority(HANDLE thread, int priority)
 
 BOOL WINAPI GetThreadPriorityBoost(HANDLE thread, PBOOL disabled)
 {
-    if (!disabled) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    *disabled = FALSE;
+    ULONG value = 0;
+    NTSTATUS status = NtQueryInformationThread(thread, ThreadPriorityBoost, &value, sizeof(value), nullptr);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *disabled = value != 0;
     return TRUE;
 }
 
 BOOL WINAPI SetThreadPriorityBoost(HANDLE thread, BOOL disable)
 {
-    return TRUE;
+    ULONG value = disable;
+    NTSTATUS status = NtSetInformationThread(thread, ThreadPriorityBoost, &value, sizeof(value));
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
-
-static DWORD g_priority_class = NORMAL_PRIORITY_CLASS;
 
 DWORD WINAPI GetPriorityClass(HANDLE process)
 {
-    PROCESS_BASIC_INFORMATION info;
-    if (!query_process(process, &info))
+    PROCESS_PRIORITY_CLASS value = {};
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessPriorityClass, &value, sizeof(value), nullptr);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
         return 0;
-    return info.UniqueProcessId == GetCurrentProcessId() ? g_priority_class : NORMAL_PRIORITY_CLASS;
+    }
+    switch (value.PriorityClass) {
+    case PROCESS_PRIORITY_CLASS_IDLE:
+        return IDLE_PRIORITY_CLASS;
+    case PROCESS_PRIORITY_CLASS_HIGH:
+        return HIGH_PRIORITY_CLASS;
+    case PROCESS_PRIORITY_CLASS_REALTIME:
+        return REALTIME_PRIORITY_CLASS;
+    case PROCESS_PRIORITY_CLASS_BELOW_NORMAL:
+        return BELOW_NORMAL_PRIORITY_CLASS;
+    case PROCESS_PRIORITY_CLASS_ABOVE_NORMAL:
+        return ABOVE_NORMAL_PRIORITY_CLASS;
+    default:
+        return NORMAL_PRIORITY_CLASS;
+    }
 }
 
-BOOL WINAPI SetPriorityClass(HANDLE process, DWORD klass)
+/* the class a priority class flag names, 0 for none. */
+static UCHAR class_of_flag(DWORD flag)
 {
-    switch (klass) {
-    case IDLE_PRIORITY_CLASS:
-    case BELOW_NORMAL_PRIORITY_CLASS:
-    case NORMAL_PRIORITY_CLASS:
-    case ABOVE_NORMAL_PRIORITY_CLASS:
-    case HIGH_PRIORITY_CLASS:
-    case REALTIME_PRIORITY_CLASS:
-        g_priority_class = klass;
+    if (flag & IDLE_PRIORITY_CLASS)
+        return PROCESS_PRIORITY_CLASS_IDLE;
+    if (flag & BELOW_NORMAL_PRIORITY_CLASS)
+        return PROCESS_PRIORITY_CLASS_BELOW_NORMAL;
+    if (flag & NORMAL_PRIORITY_CLASS)
+        return PROCESS_PRIORITY_CLASS_NORMAL;
+    if (flag & ABOVE_NORMAL_PRIORITY_CLASS)
+        return PROCESS_PRIORITY_CLASS_ABOVE_NORMAL;
+    if (flag & HIGH_PRIORITY_CLASS)
+        return PROCESS_PRIORITY_CLASS_HIGH;
+    if (flag & REALTIME_PRIORITY_CLASS)
+        return PROCESS_PRIORITY_CLASS_REALTIME;
+    return 0;
+}
+
+/* sets the class of a process, and the real time one only with the privilege of raising priorities. */
+static NTSTATUS set_class(HANDLE process, UCHAR klass)
+{
+    ULONG value = PROCESS_PRIORITY_CLASS_EX_CLASS | ((ULONG)klass << 16);
+    NTSTATUS status = NtSetInformationProcess(process, (PROCESSINFOCLASS)MX_PROCESS_PRIORITY_CLASS_EX, &value, sizeof(value));
+    if (status != STATUS_PRIVILEGE_NOT_HELD || klass != PROCESS_PRIORITY_CLASS_REALTIME)
+        return status;
+    /* the privilege is there to be enabled for the call, as the user of a limited token has none. */
+    struct {
+        ULONG Count;
+        ULONG Low;
+        LONG High;
+        ULONG Attributes;
+    } enable = {1, 14, 0, 2 /* SE_PRIVILEGE_ENABLED. */}, before = {};
+    HANDLE token = nullptr;
+    ULONG returned = 0;
+    NTSTATUS adjusted = NtOpenProcessToken(NtCurrentProcess(), 0x20 /* TOKEN_ADJUST_PRIVILEGES. */ | TOKEN_QUERY, &token);
+    if (NT_SUCCESS(adjusted)) {
+        adjusted = NtAdjustPrivilegesToken(token, FALSE, &enable, sizeof(enable),
+                                           &before, &returned);
+    }
+    if (adjusted == STATUS_SUCCESS) {
+        value = PROCESS_PRIORITY_CLASS_EX_CLASS | ((ULONG)PROCESS_PRIORITY_CLASS_REALTIME << 16);
+        status = NtSetInformationProcess(process, (PROCESSINFOCLASS)MX_PROCESS_PRIORITY_CLASS_EX, &value, sizeof(value));
+        if (before.Count)
+            NtAdjustPrivilegesToken(token, FALSE, &before, sizeof(before), nullptr, &returned);
+    } else {
+        value = PROCESS_PRIORITY_CLASS_EX_CLASS | ((ULONG)PROCESS_PRIORITY_CLASS_HIGH << 16);
+        status = NtSetInformationProcess(process, (PROCESSINFOCLASS)MX_PROCESS_PRIORITY_CLASS_EX, &value, sizeof(value));
+    }
+    if (token)
+        NtClose(token);
+    return status;
+}
+
+BOOL WINAPI SetPriorityClass(HANDLE process, DWORD flag)
+{
+    if (flag == PROCESS_MODE_BACKGROUND_BEGIN || flag == PROCESS_MODE_BACKGROUND_END)
         return TRUE;
-    case PROCESS_MODE_BACKGROUND_BEGIN:
-    case PROCESS_MODE_BACKGROUND_END:
-        return TRUE;
-    default:
+    UCHAR klass = class_of_flag(flag);
+    if (!klass) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    NTSTATUS status = set_class(process, klass);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 BOOL WINAPI GetProcessPriorityBoost(HANDLE process, PBOOL disabled)
 {
-    if (!disabled) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    *disabled = FALSE;
+    ULONG value = 0;
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessPriorityBoost, &value, sizeof(value), nullptr);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *disabled = value != 0;
     return TRUE;
 }
 
 BOOL WINAPI SetProcessPriorityBoost(HANDLE process, BOOL disable)
 {
-    return TRUE;
+    ULONG value = disable;
+    NTSTATUS status = NtSetInformationProcess(process, ProcessPriorityBoost, &value, sizeof(value));
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 /* ------------------------------------------------------------------ affinity */
@@ -390,7 +443,7 @@ BOOL WINAPI GetProcessAffinityMask(HANDLE process, PDWORD_PTR process_mask, PDWO
     if (!query_process(process, &info))
         return FALSE;
     if (process_mask)
-        *process_mask = system_affinity();
+        *process_mask = info.AffinityMask;
     if (system_mask)
         *system_mask = system_affinity();
     return TRUE;
@@ -398,42 +451,47 @@ BOOL WINAPI GetProcessAffinityMask(HANDLE process, PDWORD_PTR process_mask, PDWO
 
 BOOL WINAPI SetProcessAffinityMask(HANDLE process, DWORD_PTR mask)
 {
-    if (!mask || (mask & ~system_affinity())) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    return TRUE;
+    ULONG_PTR value = mask;
+    NTSTATUS status = NtSetInformationProcess(process, ProcessAffinityMask, &value, sizeof(value));
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 DWORD_PTR WINAPI SetThreadAffinityMask(HANDLE thread, DWORD_PTR mask)
 {
-    if (!mask || (mask & ~system_affinity())) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return 0;
-    }
     THREAD_BASIC_INFORMATION info;
     if (!query_thread(thread, &info))
         return 0;
-    return system_affinity();
+    ULONG_PTR value = mask;
+    NTSTATUS status = NtSetInformationThread(thread, ThreadAffinityMask, &value, sizeof(value));
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return 0;
+    }
+    return info.AffinityMask;
 }
 
 DWORD WINAPI SetThreadIdealProcessor(HANDLE thread, DWORD processor)
 {
-    if (processor != 64 /* MAXIMUM_PROCESSORS. */ && processor >= USER_SHARED_DATA->ActiveProcessorCount) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return (DWORD)-1;
-    }
-    return 0;
+    /* the status of the call is the processor that was the ideal before. */
+    NTSTATUS status = NtSetInformationThread(thread, ThreadIdealProcessor, &processor, sizeof(processor));
+    if (NT_SUCCESS(status))
+        return (DWORD)status;
+    KbSetStatus(status);
+    return (DWORD)-1;
 }
 
 BOOL WINAPI SetThreadIdealProcessorEx(HANDLE thread, PPROCESSOR_NUMBER ideal, PPROCESSOR_NUMBER previous)
 {
-    if (!ideal || ideal->Group || ideal->Number >= USER_SHARED_DATA->ActiveProcessorCount) {
+    if (!ideal) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    PROCESSOR_NUMBER number = *ideal;
+    NTSTATUS status = NtSetInformationThread(thread, ThreadIdealProcessorEx, &number, sizeof(number));
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
     if (previous)
-        memset(previous, 0, sizeof(*previous));
+        *previous = number;
     return TRUE;
 }
 
@@ -443,8 +501,8 @@ BOOL WINAPI GetThreadIdealProcessorEx(HANDLE thread, PPROCESSOR_NUMBER ideal)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    memset(ideal, 0, sizeof(*ideal));
-    return TRUE;
+    NTSTATUS status = NtQueryInformationThread(thread, ThreadIdealProcessorEx, ideal, sizeof(*ideal), nullptr);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 BOOL WINAPI GetThreadGroupAffinity(HANDLE thread, PGROUP_AFFINITY affinity)
@@ -453,20 +511,30 @@ BOOL WINAPI GetThreadGroupAffinity(HANDLE thread, PGROUP_AFFINITY affinity)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    THREAD_BASIC_INFORMATION info;
+    if (!query_thread(thread, &info))
+        return FALSE;
     memset(affinity, 0, sizeof(*affinity));
-    affinity->Mask = system_affinity();
+    affinity->Mask = info.AffinityMask;
     return TRUE;
 }
 
 BOOL WINAPI SetThreadGroupAffinity(HANDLE thread, const GROUP_AFFINITY *affinity, PGROUP_AFFINITY previous)
 {
-    if (!affinity || affinity->Group || !affinity->Mask || (affinity->Mask & ~system_affinity())) {
+    if (!affinity || affinity->Group) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    THREAD_BASIC_INFORMATION info;
+    if (!query_thread(thread, &info))
+        return FALSE;
+    ULONG_PTR value = affinity->Mask;
+    NTSTATUS status = NtSetInformationThread(thread, ThreadAffinityMask, &value, sizeof(value));
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
     if (previous) {
         memset(previous, 0, sizeof(*previous));
-        previous->Mask = system_affinity();
+        previous->Mask = info.AffinityMask;
     }
     return TRUE;
 }
@@ -963,7 +1031,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
     InitializeObjectAttributes(&thread_oa, nullptr, 0, nullptr, thread_sa ? thread_sa->lpSecurityDescriptor : nullptr);
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
                                            process_oa.SecurityDescriptor ? &process_oa : nullptr,
-                                           thread_oa.SecurityDescriptor ? &thread_oa : nullptr, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, nullptr,
+                                           thread_oa.SecurityDescriptor ? &thread_oa : nullptr, process_flags, (flags & CREATE_SUSPENDED) || class_of_flag(flags) ? 1 : 0, &pp, nullptr,
                                            attributes.Count ? (PS_ATTRIBUTE_LIST *)&attributes : nullptr);
     if (container)
         NtClose(container);
@@ -974,6 +1042,13 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         SetHandleInformation(info->hProcess, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
     if (thread_sa && thread_sa->bInheritHandle)
         SetHandleInformation(info->hThread, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    /* the class a creation flag names is set before the program has run for long. */
+    UCHAR klass = class_of_flag(flags);
+    if (klass) {
+        set_class(info->hProcess, klass);
+        if (!(flags & CREATE_SUSPENDED))
+            NtResumeThread(info->hThread, nullptr);
+    }
     info->dwProcessId = GetProcessId(info->hProcess);
     info->dwThreadId = GetThreadId(info->hThread);
     return TRUE;

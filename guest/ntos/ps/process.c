@@ -2,6 +2,7 @@
  * processes: object type, system process, client ids and termination.
  */
 #include "../ntos.h"
+#include "../se/se.h"
 
 POBJECT_TYPE PsProcessTypeObject;
 POBJECT_TYPE PsThreadTypeObject;
@@ -182,6 +183,9 @@ void PspNotifyProcess(PEPROCESS process, BOOLEAN create)
             g_process_notify[i](process->InheritedFromUniqueProcessId, process->UniqueProcessId, create);
 }
 
+/* the base priority a class of priority gives its threads. */
+static const SCHAR g_class_base[] = {8, 4, 8, 13, 24, 6, 10};
+
 static void process_delete(PVOID object)
 {
     PEPROCESS process = object;
@@ -212,6 +216,7 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
     InitializeListHead(&process->Pcb.ThreadListHead);
     InitializeListHead(&process->ThreadListHead);
     process->Pcb.BasePriority = 8;
+    process->PriorityClass = PROCESS_PRIORITY_CLASS_NORMAL;
     KeInitializeEvent(&process->ExitEvent, NotificationEvent, FALSE);
 
     status = ObInitializeHandleTable(&process->HandleTable);
@@ -226,6 +231,15 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(process);
         return status;
+    }
+    /* a child keeps the processors of its parent and a low priority class. */
+    if (parent) {
+        process->Pcb.Affinity = parent->Pcb.Affinity;
+        if (parent->PriorityClass == PROCESS_PRIORITY_CLASS_IDLE ||
+            parent->PriorityClass == PROCESS_PRIORITY_CLASS_BELOW_NORMAL) {
+            process->PriorityClass = parent->PriorityClass;
+            process->Pcb.BasePriority = g_class_base[process->PriorityClass];
+        }
     }
     process->Pcb.Asid = process->AddressSpace.Asid;
     process->Pcb.PageDirectory = process->AddressSpace.Root;
@@ -314,6 +328,8 @@ static ACCESS_MASK query_rights(PROCESSINFOCLASS klass)
     switch ((ULONG)klass) {
     case ProcessBasicInformation:
     case ProcessTimes:
+    case ProcessPriorityClass:
+    case ProcessPriorityBoost:
     case ProcessImageFileName:
     case ProcessImageFileNameWin32:
     case ProcessHandleCount:
@@ -396,14 +412,23 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     case ProcessBasicInformation:
         out.basic.ExitStatus = process->Exited ? process->ExitStatus : STATUS_PENDING;
         out.basic.PebBaseAddress = process->Peb;
-        out.basic.AffinityMask = 1;
-        out.basic.BasePriority = 8;
+        out.basic.AffinityMask = KiProcessAffinity(&process->Pcb);
+        out.basic.BasePriority = process->Pcb.BasePriority;
         out.basic.UniqueProcessId = (ULONG_PTR)process->UniqueProcessId;
         out.basic.InheritedFromUniqueProcessId = (ULONG_PTR)process->InheritedFromUniqueProcessId;
         size = sizeof(out.basic);
         break;
     case ProcessIoCounters:
         size = 48;
+        break;
+    case ProcessPriorityClass:
+        out.bytes[0] = process->Foreground;
+        out.bytes[1] = process->PriorityClass;
+        size = sizeof(PROCESS_PRIORITY_CLASS);
+        break;
+    case ProcessPriorityBoost:
+        out.u32[0] = process->DisableBoost;
+        size = sizeof(ULONG);
         break;
     case ProcessTimes:
         process_times(process, out.times);
@@ -500,16 +525,106 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     return status;
 }
 
+/* the class a process has and a realtime one needs the privilege of raising priorities. */
+static NTSTATUS set_priority_class(PEPROCESS process, UCHAR klass)
+{
+    if (klass >= RTL_NUMBER_OF(g_class_base))
+        return STATUS_INVALID_PARAMETER;
+    if (klass == PROCESS_PRIORITY_CLASS_REALTIME && process->PriorityClass != klass &&
+        !SepSinglePrivilegeCheck(SE_INC_BASE_PRIORITY_PRIVILEGE, KeGetPreviousMode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    process->PriorityClass = klass;
+    KiSetBasePriorityProcess(&process->Pcb, g_class_base[klass]);
+    return STATUS_SUCCESS;
+}
+
+/* a process limits its threads to the processors it is given, and a thread with none of them gets all of them. */
+static void set_process_affinity(PEPROCESS process, ULONG64 mask)
+{
+    ULONG64 s = KiAcquireDispatcherLock();
+    process->Pcb.Affinity = mask;
+    for (PLIST_ENTRY e = process->Pcb.ThreadListHead.Flink; e != &process->Pcb.ThreadListHead; e = e->Flink) {
+        PKTHREAD t = CONTAINING_RECORD(e, KTHREAD, ThreadListEntry);
+        t->Affinity = (t->Affinity & mask) ? (t->Affinity & mask) : mask;
+    }
+    KiReleaseDispatcherLock(s);
+    if (process->Peb && process == PsCurrentProcess())
+        process->Peb->ActiveProcessAffinityMask = mask;
+}
+
 NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length)
 {
     if (klass == ProcessAccessToken)
         return SepSetProcessAccessToken(handle, info, length);
     if (klass == ProcessMitigationPolicy)
         return PspSetMitigationPolicy(handle, info, length);
+    ULONG expected = 0;
+    switch ((ULONG)klass) {
+    case ProcessBasePriority:
+    case ProcessPriorityBoost:
+    case MX_PROCESS_PRIORITY_CLASS_EX:
+        expected = sizeof(ULONG);
+        break;
+    case ProcessPriorityClass:
+        expected = sizeof(PROCESS_PRIORITY_CLASS);
+        break;
+    case ProcessAffinityMask:
+        expected = sizeof(ULONG64);
+        break;
+    default:
+        break;
+    }
+    ULONG64 value = 0;
+    if (expected) {
+        if (length != expected)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!NT_SUCCESS(KiCopyFromUser(&value, info, expected)))
+            return STATUS_ACCESS_VIOLATION;
+    }
     PEPROCESS process;
     NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
-    if (NT_SUCCESS(status))
-        ObDereferenceObject(process);
+    if (!NT_SUCCESS(status))
+        return status;
+    switch ((ULONG)klass) {
+    case ProcessBasePriority: {
+        /* the top bit asks for a bigger working set, which means nothing here. */
+        LONG base = (LONG)(ULONG)value & 0x7FFFFFFF;
+        if (base < 1 || base > 31)
+            status = STATUS_INVALID_PARAMETER;
+        else if (base > process->Pcb.BasePriority && !SepSinglePrivilegeCheck(SE_INC_BASE_PRIORITY_PRIVILEGE, KeGetPreviousMode()))
+            status = STATUS_PRIVILEGE_NOT_HELD;
+        else
+            KiSetBasePriorityProcess(&process->Pcb, base);
+        break;
+    }
+    case ProcessPriorityClass:
+        status = set_priority_class(process, (UCHAR)(value >> 8));
+        break;
+    case MX_PROCESS_PRIORITY_CLASS_EX: {
+        ULONG flags = (ULONG)value & 0xFFFF;
+        if (!flags || (flags & ~(ULONG)(PROCESS_PRIORITY_CLASS_EX_FOREGROUND | PROCESS_PRIORITY_CLASS_EX_CLASS)))
+            status = STATUS_INVALID_PARAMETER;
+        else if (flags & PROCESS_PRIORITY_CLASS_EX_CLASS)
+            status = set_priority_class(process, (UCHAR)(value >> 16));
+        if (NT_SUCCESS(status) && (flags & PROCESS_PRIORITY_CLASS_EX_FOREGROUND))
+            process->Foreground = (UCHAR)(value >> 24) != 0;
+        break;
+    }
+    case ProcessAffinityMask: {
+        ULONG64 mask = value;
+        if (!mask || (mask & ~KiAllProcessors()))
+            status = STATUS_INVALID_PARAMETER;
+        else
+            set_process_affinity(process, mask);
+        break;
+    }
+    case ProcessPriorityBoost:
+        process->DisableBoost = (ULONG)value != 0;
+        break;
+    default:
+        break;
+    }
+    ObDereferenceObject(process);
     return status;
 }
 
@@ -659,6 +774,8 @@ void PsInitialize(void)
     InitializeListHead(&system->ThreadListHead);
     ObInitializeHandleTable(&system->HandleTable);
     system->SystemProcess = TRUE;
+    system->Pcb.BasePriority = 8;
+    system->PriorityClass = PROCESS_PRIORITY_CLASS_NORMAL;
     system->UniqueProcessId = (HANDLE)4;
     g_cid_table[1] = system;
     memcpy(system->ImageFileName, "System", 7);

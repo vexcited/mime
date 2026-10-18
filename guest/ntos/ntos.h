@@ -137,6 +137,11 @@ typedef struct _KTHREAD {
     volatile BOOLEAN Terminating;
     SCHAR Priority;
     SCHAR BasePriority;
+    SCHAR Saturation;      /* the sign of a base priority asked as a limit, -1 idle, 1 time critical */
+    BOOLEAN DisableBoost;  /* recorded, nothing boosts */
+    UCHAR IdealProcessor;  /* recorded, nothing honours it */
+    UCHAR Pad2;
+    ULONG64 Affinity;      /* the processors it may run on, recorded and not enforced */
     UCHAR WaitReason;
     BOOLEAN WaitIrqlRaised;
     UCHAR Processor; /* the processor it runs or last ran on */
@@ -179,6 +184,7 @@ typedef struct _KPROCESS {
     USHORT Asid;
     SCHAR BasePriority;
     UCHAR Pad;
+    ULONG64 Affinity;
     LIST_ENTRY ThreadListHead;
     volatile LONG ActiveThreads;
 } KPROCESS;
@@ -325,6 +331,12 @@ void KiInitializeScheduler(void);
 void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVOID stack_limit,
                         PKSTART_ROUTINE routine, PVOID context);
 void KiReadyThread(PKTHREAD thread);
+ULONG64 KiAllProcessors(void);
+ULONG64 KiProcessAffinity(PKPROCESS process);
+LONG KiQueryBasePriorityThread(PKTHREAD thread);
+void KiSetBasePriorityThread(PKTHREAD thread, LONG increment);
+void KiSetPriorityThread(PKTHREAD thread, int priority);
+void KiSetBasePriorityProcess(PKPROCESS process, int base);
 void KiInsertReadyThread(PKTHREAD thread);
 void KiInterruptThread(PKTHREAD thread);
 void KiStartThread(PKTHREAD thread);
@@ -916,6 +928,9 @@ typedef struct _EPROCESS {
     ULONG ConsoleGroup;            /* process group of GenerateConsoleCtrlEvent */
     PKEVENT ConsoleInputEvent;     /* kernelbase's, set while console input waits */
     ULONG TimerResolution; /* what NtSetTimerResolution asked for, 0 when nothing, ex/sysinfo.c */
+    UCHAR PriorityClass;   /* PROCESS_PRIORITY_CLASS_*, ps/priority.c */
+    BOOLEAN Foreground;
+    BOOLEAN DisableBoost;
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
