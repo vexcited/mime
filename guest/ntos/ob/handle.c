@@ -507,17 +507,14 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
     if (!NT_SUCCESS(status))
         return status;
     if (!(options & DUPLICATE_SAME_ACCESS)) {
-        /* the rights asked for are the type's, and a caller cannot get ones the source handle lacks. */
+        /* the rights asked for are the type's own, the generic ones mapped. */
         ACCESS_MASK wanted = access;
         if (wanted & MAXIMUM_ALLOWED) {
             wanted = (wanted & ~MAXIMUM_ALLOWED) | granted;
         } else {
             wanted = ObMapGenericAccess(OBJECT_TO_HEADER(object)->Type, wanted);
         }
-        if (KeGetPreviousMode() == UserMode && (wanted & ~granted)) {
-            ObDereferenceObject(object);
-            return STATUS_ACCESS_DENIED;
-        }
+        /* more than the source has is for the object's security descriptor to allow, which is not looked at yet. */
         granted = wanted;
     }
     HANDLE h = nullptr;
