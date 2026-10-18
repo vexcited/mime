@@ -127,6 +127,7 @@ void KiUserExceptionHandler(PKTRAP_FRAME frame)
                     (PVOID)frame->Pc, PsCurrentProcess()->ImageFileName,
                     MiReadPte(PsCurrentProcess()->AddressSpace.Root, frame->Far & ~0xFFFull));
         KiDumpTrapFrame("user context", frame);
+        KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
     }
     if (!KiDispatchUserException(&record, frame)) {
         PEPROCESS process = PsCurrentProcess();

@@ -62,6 +62,7 @@ ULONG64 HalCounterToHns(ULONG64 counter_delta);
 ULONG64 HalHnsToCounter(ULONG64 hns);
 
 void KiLogPrintf(const char *fmt, ...);
+void KiTraceUserStack(ULONG64 pc, ULONG64 sp);
 #define KdPrint(args) KiLogPrintf args
 #define MIME_TRACE(...) KiLogPrintf(__VA_ARGS__)
 

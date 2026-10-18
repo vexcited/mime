@@ -167,6 +167,7 @@ static void user_exception(PKTRAP_FRAME frame)
         KiLogPrintf("first chance exception %08x at %p in %s", record.ExceptionCode, (PVOID)frame->Rip,
                     PsCurrentProcess()->ImageFileName);
         KiDumpTrapFrame("user context", frame);
+        KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
     }
     if (!KiDispatchUserException(&record, frame)) {
         PEPROCESS process = PsCurrentProcess();

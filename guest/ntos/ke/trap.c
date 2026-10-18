@@ -6,6 +6,50 @@
 
 BOOLEAN KiTraceUserExceptions;
 
+/* the image and offset of a user address in the current process, as "name+0xoffset". */
+static BOOLEAN describe_user_address(ULONG_PTR va, char *out, ULONG size)
+{
+    PMMADDRESS_SPACE as = &PsCurrentProcess()->AddressSpace;
+    if (va > MIME_USER_ADDRESS_LIMIT)
+        return FALSE;
+    ExAcquireFastMutex(&as->Lock);
+    PMMVAD vad = MiFindVad(as, va);
+    BOOLEAN found = vad && vad->Type == MiVadImage && vad->Section && vad->Section->FileName.Length;
+    if (found) {
+        PCWSTR name = vad->Section->FileName.Buffer;
+        ULONG count = vad->Section->FileName.Length / sizeof(WCHAR), first = 0;
+        for (ULONG i = 0; i < count; i++) {
+            if (name[i] == '\\')
+                first = i + 1;
+        }
+        ULONG n = 0;
+        for (ULONG i = first; i < count && n + 24 < size; i++)
+            out[n++] = name[i] < 0x80 ? (char)name[i] : '?';
+        out[n] = 0;
+        mime_format(out + n, size - n, "+0x%llx", (ULONG64)(va - vad->StartVa));
+    }
+    ExReleaseFastMutex(&as->Lock);
+    return found;
+}
+
+/* the images of the instruction pointer and of the words on top of the stack that point into one. */
+void KiTraceUserStack(ULONG64 pc, ULONG64 sp)
+{
+    char text[96];
+    if (describe_user_address(pc, text, sizeof(text)))
+        KiLogPrintf("  at %s", text);
+    ULONG shown = 0;
+    for (ULONG i = 0; i < 512 && shown < 24 && sp && !(sp & 7); i++, sp += 8) {
+        ULONG64 word;
+        if (!MmIsAddressValid((PVOID)sp) || !NT_SUCCESS(KiCopyFromUser(&word, (PVOID)sp, sizeof(word))))
+            break;
+        if (describe_user_address(word, text, sizeof(text))) {
+            KiLogPrintf("  stack +0x%x: %s", i * 8, text);
+            shown++;
+        }
+    }
+}
+
 /*
  * final processing before returning to user mode: kernel apcs, thread
  * termination, user apcs and preemption. returns with interrupts masked.
