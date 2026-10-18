@@ -295,7 +295,11 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     }
     }
     if (ev->type == MIME_INPUT_CLIPBOARD) {
-        ClipboardHostChanged(ev->x != 0);
+        ClipboardHostChanged((ULONG)ev->x, (ULONG)ev->y);
+        return;
+    }
+    if (ev->type == MIME_INPUT_CLIP_REQUEST) {
+        ClipboardHostRequest((ULONG)ev->x, ev->button);
         return;
     }
     if (ev->type == MIME_INPUT_DISPLAY) {

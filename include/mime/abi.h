@@ -277,6 +277,11 @@ enum {
     MIME_HC_PAD_RUMBLE = 0x45,  /* (pad, low frequency motor, high frequency motor) from 0 to 65535 */
     MIME_HC_GAMMA = 0x46,       /* (pa of three channels of 256 values, red first, or 0 for the identity) */
     MIME_HC_NET_CONFIG = 0x47,  /* (MimeNetConfig pa, size) -> bytes written, as many entries as fit */
+
+    /* the clipboard in every format the host and the guest can exchange, see MIME_CLIP_*. */
+    MIME_HC_CLIP_OFFER = 0x48,   /* (MIME_CLIP_* mask) the guest owns the clipboard and can render these, none to withdraw */
+    MIME_HC_CLIP_FETCH = 0x49,   /* (MIME_CLIP_* kind, pa, capacity, offset, generation) -> total size of the host's data */
+    MIME_HC_CLIP_PROVIDE = 0x4A, /* (request, pa, length, offset, total) answers MIME_INPUT_CLIP_REQUEST in chunks */
 };
 
 /* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */
@@ -690,13 +695,14 @@ enum {
     MIME_INPUT_WINDOW_FOCUS = 9,   /* x = 1 gained, 0 lost */
     MIME_INPUT_WINDOW_CLOSE = 10,  /* close requested by the host (cmd+w, dock) */
     MIME_INPUT_MOUSE_LEAVE = 11,
-    MIME_INPUT_CLIPBOARD = 12,     /* another host application changed the clipboard */
+    MIME_INPUT_CLIPBOARD = 12,     /* another host application changed the clipboard: x is the MIME_CLIP_* kinds it holds, y its generation */
     MIME_INPUT_WINDOW_STATE = 13,  /* x is a windows show command. */
     MIME_INPUT_WINDOW_FULLSCREEN = 14, /* flags is 1 on entry, 0 on exit. */
     MIME_INPUT_DISPLAY = 15,       /* the boot information display changed: width and height. */
     MIME_INPUT_PAD_ADDED = 16,     /* a game controller: pad, pad_vid, pad_pid */
     MIME_INPUT_PAD_REMOVED = 17,   /* pad */
     MIME_INPUT_PAD_STATE = 18,     /* pad, pad_buttons, pad_axes */
+    MIME_INPUT_CLIP_REQUEST = 19,  /* another host program pastes: x is the MIME_CLIP_* kind, button the request id */
 };
 
 /*
@@ -707,6 +713,26 @@ enum {
 enum {
     MIME_PAD_LX, MIME_PAD_LY, MIME_PAD_RX, MIME_PAD_RY, MIME_PAD_LT, MIME_PAD_RT, MIME_PAD_AXES,
 };
+
+/*
+ * the formats the clipboard shares with the host, each a bit of a mask. the guest names them by what windows
+ * programs use: MIME_CLIP_TEXT is utf-16le text with windows line ends and no nul, MIME_CLIP_DIB and
+ * MIME_CLIP_DIBV5 are the bytes of CF_DIB and CF_DIBV5, MIME_CLIP_PNG a png file, MIME_CLIP_HTML the bytes of
+ * "HTML Format" with its header, MIME_CLIP_HDROP a DROPFILES block of guest paths and MIME_CLIP_URL the text of
+ * "UniformResourceLocatorW". the host converts to and from what other host programs use.
+ */
+enum {
+    MIME_CLIP_TEXT = 1u << 0,
+    MIME_CLIP_DIB = 1u << 1,
+    MIME_CLIP_DIBV5 = 1u << 2,
+    MIME_CLIP_PNG = 1u << 3,
+    MIME_CLIP_HTML = 1u << 4,
+    MIME_CLIP_HDROP = 1u << 5,
+    MIME_CLIP_URL = 1u << 6,
+};
+
+/* MIME_HC_CLIP_PROVIDE's total when the guest has nothing to give for the request. */
+#define MIME_CLIP_NONE UINT64_MAX
 
 enum {
     MIME_MOUSE_LEFT = 1,

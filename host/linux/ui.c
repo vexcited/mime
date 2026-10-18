@@ -10,6 +10,7 @@
  */
 #include "display.h"
 #include "gamma.h"
+#include "ui_internal.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -73,11 +74,6 @@ static bool g_stop;
 static pthread_mutex_t g_stop_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_stop_cond = PTHREAD_COND_INITIALIZER;
 
-static pthread_mutex_t g_clip_lock = PTHREAD_MUTEX_INITIALIZER;
-static uint16_t *g_clip_text;
-static size_t g_clip_chars;
-static bool g_clip_stale;
-
 static uint64_t now_ms(void)
 {
     struct timespec ts;
@@ -90,6 +86,16 @@ static void emit(MimeInputEvent *ev)
     ev->time_ms = now_ms();
     if (g_sink)
         g_sink(g_sink_ctx, ev);
+}
+
+void mime_ui_emit(MimeInputEvent *ev)
+{
+    emit(ev);
+}
+
+bool mime_ui_has_video(void)
+{
+    return g_video;
 }
 
 /* runs fn on the main thread, at once when already there. */
@@ -107,6 +113,14 @@ static void on_main(void (*fn)(void *), void *arg)
     ev.user.data1 = (void *)fn;
     ev.user.data2 = arg;
     SDL_PushEvent(&ev);
+}
+
+bool mime_ui_call_main(void (*fn)(void *), void *arg)
+{
+    if (!g_video)
+        return false;
+    on_main(fn, arg);
+    return true;
 }
 
 static UiWindow *find_window(uint32_t id)
@@ -1307,130 +1321,6 @@ void mime_ui_beep(uint32_t type)
 {
 }
 
-/* ------------------------------------------------------------------ clipboard */
-
-/*
- * a change of the host clipboard only tells the guest whether there is
- * text: the text itself is read when a guest program asks for it.
- */
-static void clip_changed(void)
-{
-    bool text = SDL_HasClipboardText();
-    pthread_mutex_lock(&g_clip_lock);
-    free(g_clip_text);
-    g_clip_text = nullptr;
-    g_clip_chars = 0;
-    g_clip_stale = text;
-    pthread_mutex_unlock(&g_clip_lock);
-    MimeInputEvent ev = {};
-    ev.type = MIME_INPUT_CLIPBOARD;
-    ev.x = text;
-    emit(&ev);
-}
-
-typedef struct ClipRead {
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    bool done;
-} ClipRead;
-
-/* the host text with windows line ends, read on the main thread. */
-static void clip_read_main(void *arg)
-{
-    ClipRead *r = arg;
-    char *utf8 = SDL_GetClipboardText();
-    size_t len = utf8 ? strlen(utf8) : 0;
-    uint16_t *raw = len ? malloc((len + 1) * sizeof(uint16_t)) : nullptr;
-    uint16_t *text = len ? malloc((len + 1) * 2 * sizeof(uint16_t)) : nullptr;
-    size_t chars = 0;
-    if (raw && text) {
-        size_t n = mime_utf8_to_utf16(raw, len + 1, utf8);
-        for (size_t i = 0; i < n; i++) {
-            if (raw[i] == '\n' && (i == 0 || raw[i - 1] != '\r'))
-                text[chars++] = '\r';
-            text[chars++] = raw[i];
-        }
-    } else {
-        free(text);
-        text = nullptr;
-    }
-    free(raw);
-    SDL_free(utf8);
-    pthread_mutex_lock(&g_clip_lock);
-    free(g_clip_text);
-    g_clip_text = text;
-    g_clip_chars = chars;
-    g_clip_stale = false;
-    pthread_mutex_unlock(&g_clip_lock);
-    pthread_mutex_lock(&r->lock);
-    r->done = true;
-    pthread_cond_signal(&r->cond);
-    pthread_mutex_unlock(&r->lock);
-}
-
-static void clip_set_main(void *arg)
-{
-    char *utf8 = arg;
-    SDL_SetClipboardText(utf8);
-    free(utf8);
-    /* the guest already holds this text: the update event it raises is not offered back. */
-    pthread_mutex_lock(&g_clip_lock);
-    g_clip_stale = false;
-    pthread_mutex_unlock(&g_clip_lock);
-}
-
-void mime_ui_clipboard_set(const uint16_t *text, size_t chars)
-{
-    uint16_t *copy = malloc((chars + 1) * sizeof(uint16_t));
-    uint16_t *keep = malloc((chars ? chars : 1) * sizeof(uint16_t));
-    char *utf8 = malloc(chars * 3 + 1);
-    if (!copy || !keep || !utf8) {
-        free(copy);
-        free(keep);
-        free(utf8);
-        return;
-    }
-    size_t n = 0;
-    for (size_t i = 0; i < chars; i++)
-        if (!(text[i] == '\r' && i + 1 < chars && text[i + 1] == '\n'))
-            copy[n++] = text[i];
-    mime_utf16_to_utf8(utf8, chars * 3 + 1, copy, n);
-    free(copy);
-    memcpy(keep, text, chars * sizeof(uint16_t));
-    pthread_mutex_lock(&g_clip_lock);
-    free(g_clip_text);
-    g_clip_text = keep;
-    g_clip_chars = chars;
-    g_clip_stale = false;
-    pthread_mutex_unlock(&g_clip_lock);
-    if (g_video)
-        on_main(clip_set_main, utf8);
-    else
-        free(utf8);
-}
-
-size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
-{
-    pthread_mutex_lock(&g_clip_lock);
-    bool stale = g_clip_stale && g_video;
-    pthread_mutex_unlock(&g_clip_lock);
-    /* the main thread never waits for a vcpu, so this cannot deadlock. */
-    if (stale) {
-        ClipRead r = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false};
-        on_main(clip_read_main, &r);
-        pthread_mutex_lock(&r.lock);
-        while (!r.done)
-            pthread_cond_wait(&r.cond, &r.lock);
-        pthread_mutex_unlock(&r.lock);
-    }
-    pthread_mutex_lock(&g_clip_lock);
-    size_t total = g_clip_chars;
-    if (dst && offset < total && count)
-        memcpy(dst, g_clip_text + offset, MIME_MIN(count, total - offset) * sizeof(uint16_t));
-    pthread_mutex_unlock(&g_clip_lock);
-    return total;
-}
-
 /* ------------------------------------------------------------------ main loop */
 
 void mime_ui_init(MimeUiInputSink sink, void *ctx)
@@ -1674,8 +1564,7 @@ static void handle_event(const SDL_Event *e)
         break;
     }
     case SDL_EVENT_CLIPBOARD_UPDATE:
-        if (!e->clipboard.owner)
-            clip_changed();
+        mime_clipboard_event(&e->clipboard);
         break;
     case SDL_EVENT_DISPLAY_ORIENTATION:
     case SDL_EVENT_DISPLAY_ADDED:

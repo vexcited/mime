@@ -47,4 +47,19 @@ void mime_ui_metal_layer_destroy(void *layer);
 void mime_ui_clipboard_set(const uint16_t *text, size_t chars);
 size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count);
 
+/*
+ * the clipboard beyond text, see MIME_CLIP_* in abi.h. each returns a MIME_HC_STATUS_*; the macos display has none
+ * of this and answers unsupported, so the guest keeps to text there.
+ *
+ * offer: the guest owns the clipboard and renders these kinds when asked, none to withdraw. fetch: the bytes of
+ * what the host clipboard holds in a kind, from offset, up to capacity; total is its whole size, 0 when there is
+ * none, and the generation says which host contents the guest means. provide: a chunk of the answer to a request
+ * the host made through MIME_INPUT_CLIP_REQUEST, MIME_CLIP_NONE as total for no data.
+ */
+uint64_t mime_ui_clipboard_offer(uint32_t mask);
+uint64_t mime_ui_clipboard_fetch(uint32_t kind, uint32_t generation, void *dst, uint64_t capacity, uint64_t offset,
+                                 uint64_t *total);
+uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t length, uint64_t offset,
+                                   uint64_t total);
+
 #endif

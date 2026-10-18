@@ -44,6 +44,12 @@ typedef struct PendingRun {
 
 static MimeVm g_vm;
 static const MimePaths *g_paths;
+
+const MimePaths *mime_daemon_paths(void)
+{
+    return g_paths;
+}
+
 static int g_listen_fd = -1;
 static uint64_t g_start_ns;
 static uint64_t g_next_request = 1;
@@ -188,27 +194,6 @@ void mime_daemon_guest_halted(MimeVm *vm, int exit_code)
     mime_ui_stop();
 }
 
-/* maps a host path to the guest: drive_c becomes C:, everything else Z:. */
-static void host_to_guest_path(const char *host, char *out, size_t size)
-{
-    size_t c_len = strlen(g_paths->drive_c);
-    const char *rest;
-    char drive;
-    if (strncmp(host, g_paths->drive_c, c_len) == 0 && (host[c_len] == '/' || host[c_len] == 0)) {
-        drive = 'C';
-        rest = host + c_len;
-    } else {
-        drive = 'Z';
-        rest = host;
-    }
-    size_t n = (size_t)snprintf(out, size, "%c:", drive);
-    if (!*rest)
-        rest = "/";
-    for (const char *p = rest; *p && n + 1 < size; p++)
-        out[n++] = *p == '/' ? '\\' : *p;
-    out[n] = 0;
-}
-
 static bool is_windows_path(const char *p)
 {
     return ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':';
@@ -262,7 +247,7 @@ static uint64_t handle_run(int fd, char *payload, uint32_t size)
     if (is_windows_path(args[0])) {
         mime_strlcpy(image, args[0], sizeof(image));
         mime_strlcpy(guest_cwd, "C:\\Windows\\System32", sizeof(guest_cwd));
-        host_to_guest_path(cwd, guest_cwd, sizeof(guest_cwd));
+        mime_paths_to_guest(g_paths, cwd, guest_cwd, sizeof(guest_cwd));
     } else {
         char joined[MIME_PATH_MAX], resolved[PATH_MAX];
         if (args[0][0] == '/')
@@ -276,8 +261,8 @@ static uint64_t handle_run(int fd, char *payload, uint32_t size)
             close(fd);
             return 0;
         }
-        host_to_guest_path(resolved, image, sizeof(image));
-        host_to_guest_path(cwd, guest_cwd, sizeof(guest_cwd));
+        mime_paths_to_guest(g_paths, resolved, image, sizeof(image));
+        mime_paths_to_guest(g_paths, cwd, guest_cwd, sizeof(guest_cwd));
     }
 
     char cmdline[8192] = {};

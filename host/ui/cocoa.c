@@ -2049,6 +2049,25 @@ size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
     return total;
 }
 
+/* the pasteboard is shared as text only: the other kinds are not there to offer or fetch. */
+uint64_t mime_ui_clipboard_offer(uint32_t mask)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_clipboard_fetch(uint32_t kind, uint32_t generation, void *dst, uint64_t capacity, uint64_t offset,
+                                 uint64_t *total)
+{
+    *total = 0;
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t length, uint64_t offset,
+                                   uint64_t total)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
 /* ---------------------------------------------------------------- metal layers */
 
 /*

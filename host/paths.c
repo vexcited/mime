@@ -121,3 +121,66 @@ bool mime_paths_ensure(const MimePaths *paths)
     }
     return true;
 }
+
+void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, size_t size)
+{
+    size_t c_len = strlen(paths->drive_c);
+    const char *rest;
+    char drive;
+    if (strncmp(host, paths->drive_c, c_len) == 0 && (host[c_len] == '/' || host[c_len] == 0)) {
+        drive = 'C';
+        rest = host + c_len;
+    } else {
+        drive = 'Z';
+        rest = host;
+    }
+    size_t n = (size_t)snprintf(out, size, "%c:", drive);
+    if (!*rest)
+        rest = "/";
+    for (const char *p = rest; *p && n + 1 < size; p++)
+        out[n++] = *p == '/' ? '\\' : *p;
+    out[n] = 0;
+}
+
+bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, size_t size)
+{
+    char drive = guest[0] >= 'a' && guest[0] <= 'z' ? (char)(guest[0] - 32) : guest[0];
+    if ((drive != 'C' && drive != 'Z') || guest[1] != ':')
+        return false;
+    const char *root = drive == 'C' ? paths->drive_c : "";
+    /* the components after the drive, with dots resolved so the path stays below the root. */
+    char copy[MIME_PATH_MAX * 2];
+    mime_strlcpy(copy, guest + 2, sizeof(copy));
+    char *components[256];
+    int depth = 0;
+    char *save = nullptr;
+    for (char *p = copy; *p; p++)
+        if (*p == '\\')
+            *p = '/';
+    for (char *c = strtok_r(copy, "/", &save); c; c = strtok_r(nullptr, "/", &save)) {
+        if (!strcmp(c, ".") || !*c)
+            continue;
+        if (!strcmp(c, "..")) {
+            if (depth)
+                depth--;
+            continue;
+        }
+        if (depth == 256)
+            return false;
+        components[depth++] = c;
+    }
+    size_t n = (size_t)snprintf(out, size, "%s", root);
+    if (n >= size)
+        return false;
+    for (int i = 0; i < depth; i++) {
+        int w = snprintf(out + n, size - n, "/%s", components[i]);
+        if (w < 0 || (size_t)w >= size - n)
+            return false;
+        n += (size_t)w;
+    }
+    if (!depth && n + 2 <= size) {
+        out[n++] = '/';
+        out[n] = 0;
+    }
+    return n < size;
+}

@@ -884,7 +884,8 @@ void MenuRefreshWindowState(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardDisown(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
-void ClipboardHostChanged(BOOLEAN has_text); /* has_text: the host clipboard holds text */
+void ClipboardHostChanged(ULONG mask, ULONG generation); /* the MIME_CLIP_* kinds the host clipboard holds */
+void ClipboardHostRequest(ULONG kind, ULONG id);         /* another host program pastes a kind of the session's */
 void GpuFreeProcess(W32PROCESS *p);
 void VkFreeProcess(W32PROCESS *p);
 void AudioFreeProcess(W32PROCESS *p);

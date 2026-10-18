@@ -144,6 +144,31 @@ static uint64_t clip_get(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t of
     return MIME_HC_STATUS_OK;
 }
 
+#define CLIP_CHUNK_MAX (1u << 20)
+
+static uint64_t clip_fetch(MimeVm *vm, uint64_t kind, uint64_t pa, uint64_t capacity, uint64_t offset,
+                           uint64_t generation, uint64_t *total)
+{
+    *total = 0;
+    if (capacity > CLIP_CHUNK_MAX)
+        return MIME_HC_STATUS_INVALID;
+    void *dst = capacity ? mime_vm_phys(vm, pa, capacity) : nullptr;
+    if (capacity && !dst)
+        return MIME_HC_STATUS_INVALID;
+    return mime_ui_clipboard_fetch((uint32_t)kind, (uint32_t)generation, dst, capacity, offset, total);
+}
+
+static uint64_t clip_provide(MimeVm *vm, uint64_t request, uint64_t pa, uint64_t length, uint64_t offset,
+                             uint64_t total)
+{
+    if (length > CLIP_CHUNK_MAX)
+        return MIME_HC_STATUS_INVALID;
+    const void *src = length ? mime_vm_phys(vm, pa, length) : nullptr;
+    if (length && !src)
+        return MIME_HC_STATUS_INVALID;
+    return mime_ui_clipboard_provide((uint32_t)request, src, length, offset, total);
+}
+
 void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
 {
     MimeVm *vm = vcpu->vm;
@@ -335,6 +360,15 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     case MIME_HC_CLIP_GET:
         status = clip_get(vm, regs[1], regs[2], regs[3], &value);
+        break;
+    case MIME_HC_CLIP_OFFER:
+        status = mime_ui_clipboard_offer((uint32_t)regs[1]);
+        break;
+    case MIME_HC_CLIP_FETCH:
+        status = clip_fetch(vm, regs[1], regs[2], regs[3], regs[4], regs[5], &value);
+        break;
+    case MIME_HC_CLIP_PROVIDE:
+        status = clip_provide(vm, regs[1], regs[2], regs[3], regs[4], regs[5]);
         break;
     case MIME_HC_GPU_OPEN:
         status = mime_gpu_open(vm, regs[1], regs[2], &value);

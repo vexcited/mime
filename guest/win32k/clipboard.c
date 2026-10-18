@@ -4,10 +4,12 @@
  * of their bytes so any process can read them; gdi formats keep their
  * handle.
  *
- * the text is shared with the host clipboard: closing the clipboard after a
- * change sends its text to the host, and text another host application
- * copies replaces the contents with an ownerless CF_UNICODETEXT, read from
- * the host only when a program asks for it.
+ * the contents are shared with the host clipboard, text, images, html,
+ * files and links, see MIME_CLIP_* in abi.h. closing the clipboard after a
+ * change offers the kinds it can give, and the host asks for the data of one
+ * only when another host program pastes; what another host application
+ * copies replaces the contents with ownerless formats whose data is read
+ * from the host only when a program asks for it.
  */
 #include "win32k.h"
 
@@ -16,7 +18,7 @@ typedef struct CLIP_FORMAT {
     BOOLEAN Gdi;
     BOOLEAN Delayed;  /* rendered on demand by the owner with WM_RENDERFORMAT */
     BOOLEAN Synthesized;
-    BOOLEAN Host;     /* the host's text, fetched on demand */
+    ULONG HostKind;   /* a MIME_CLIP_* kind of the host's clipboard, fetched on demand; 0 for the session's own */
     HANDLE Handle;    /* gdi formats */
     PUCHAR Data;
     SIZE_T Size;
@@ -37,7 +39,12 @@ static DWORD g_sequence = 1;
 static BOOLEAN g_changed;    /* the clipboard changed while open */
 static BOOLEAN g_rendering;  /* the owner is answering WM_RENDERFORMAT */
 static BOOLEAN g_host_pending; /* the host clipboard changed while the clipboard was open */
-static BOOLEAN g_host_has_text;
+static ULONG g_host_mask;      /* the kinds the host clipboard holds */
+static ULONG g_host_generation;
+static BOOLEAN g_host_fetch_failed; /* the host answered unsupported to a fetch: it only shares text */
+static BOOLEAN g_offer_unsupported; /* the host takes text only, in one piece */
+static ULONG g_offer_sequence;      /* the clipboard sequence number the host was offered */
+static ATOM g_format_png, g_format_html, g_format_url;
 
 static BOOLEAN is_gdi_format(UINT format)
 {
@@ -135,9 +142,9 @@ static void synthesize_formats(void)
 
 /* ------------------------------------------------------------------ host clipboard */
 
-#define HOST_CHUNK 4096
+#define HOST_CHUNK 65536
 
-static PUCHAR g_host_page; /* hypercall bounce page, used under the user lock */
+static PUCHAR g_host_page; /* hypercall bounce buffer, used under the user lock */
 
 static BOOLEAN host_page(void)
 {
@@ -148,85 +155,319 @@ static BOOLEAN host_page(void)
 
 static void render_format(CLIP_FORMAT *f);
 
-/* sends the text of the clipboard to the host, an empty text when it has none. */
-static void push_to_host(void)
+/* the numbers of the registered formats the host kinds map to. */
+static void register_formats(void)
+{
+    if (!g_format_png) {
+        g_format_png = AtomAdd(L"PNG");
+        g_format_html = AtomAdd(L"HTML Format");
+        g_format_url = AtomAdd(L"UniformResourceLocatorW");
+    }
+}
+
+/* a format a program stored, as opposed to one the system derives or the host owns. */
+static CLIP_FORMAT *own_format(UINT format)
+{
+    CLIP_FORMAT *f = format ? find_format(format) : nullptr;
+    return f && !f->Synthesized && !f->HostKind ? f : nullptr;
+}
+
+/* the kinds the formats of the session's own programs can give the host. */
+static ULONG offerable_kinds(void)
+{
+    register_formats();
+    ULONG mask = 0;
+    if (own_format(CF_UNICODETEXT) || own_format(CF_TEXT) || own_format(CF_OEMTEXT))
+        mask |= MIME_CLIP_TEXT;
+    if (own_format(CF_DIB) || own_format(CF_BITMAP))
+        mask |= MIME_CLIP_DIB;
+    if (own_format(CF_DIBV5))
+        mask |= MIME_CLIP_DIBV5;
+    if (own_format(g_format_png))
+        mask |= MIME_CLIP_PNG;
+    if (own_format(g_format_html))
+        mask |= MIME_CLIP_HTML;
+    if (own_format(CF_HDROP))
+        mask |= MIME_CLIP_HDROP;
+    if (own_format(g_format_url))
+        mask |= MIME_CLIP_URL;
+    return mask;
+}
+
+/* a 32 bit dib of a bitmap, bottom row first. */
+static PUCHAR bitmap_to_dib(HANDLE bitmap, SIZE_T *size)
+{
+    SURFACE *s = SurfaceLookup((HBITMAP)bitmap);
+    if (!s || s->Width <= 0 || s->Height <= 0 || s->Width > 32768 || s->Height > 32768)
+        return nullptr;
+    SIZE_T stride = (SIZE_T)s->Width * 4, total = sizeof(BITMAPINFOHEADER) + stride * (SIZE_T)s->Height;
+    PUCHAR dib = W32Alloc(total);
+    if (!dib)
+        return nullptr;
+    BITMAPINFOHEADER *h = (BITMAPINFOHEADER *)dib;
+    h->biSize = sizeof(*h);
+    h->biWidth = s->Width;
+    h->biHeight = s->Height;
+    h->biPlanes = 1;
+    h->biBitCount = 32;
+    h->biCompression = BI_RGB;
+    h->biSizeImage = (DWORD)(stride * (SIZE_T)s->Height);
+    for (LONG row = 0; row < s->Height; row++) {
+        PULONG out = (PULONG)(dib + sizeof(*h) + stride * (SIZE_T)row);
+        for (LONG x = 0; x < s->Width; x++)
+            out[x] = SurfaceGetPixel(s, x, s->Height - 1 - row) & 0x00FFFFFF;
+    }
+    *size = total;
+    return dib;
+}
+
+/*
+ * a copy of the bytes of a kind, rendering a delayed format first, which gives up the user lock while the owner
+ * answers. text is utf-16 without its terminator, the other kinds are the bytes of the format.
+ */
+static PUCHAR gather(ULONG kind, SIZE_T *size)
+{
+    UINT candidates[3] = {0, 0, 0};
+    switch (kind) {
+    case MIME_CLIP_TEXT:
+        candidates[0] = CF_UNICODETEXT;
+        candidates[1] = CF_TEXT;
+        candidates[2] = CF_OEMTEXT;
+        break;
+    case MIME_CLIP_DIB:
+        candidates[0] = CF_DIB;
+        candidates[1] = CF_BITMAP;
+        break;
+    case MIME_CLIP_DIBV5:
+        candidates[0] = CF_DIBV5;
+        break;
+    case MIME_CLIP_PNG:
+        candidates[0] = g_format_png;
+        break;
+    case MIME_CLIP_HTML:
+        candidates[0] = g_format_html;
+        break;
+    case MIME_CLIP_HDROP:
+        candidates[0] = CF_HDROP;
+        break;
+    case MIME_CLIP_URL:
+        candidates[0] = g_format_url;
+        break;
+    }
+    for (ULONG i = 0; i < RTL_NUMBER_OF(candidates); i++) {
+        UINT id = candidates[i];
+        CLIP_FORMAT *f = own_format(id);
+        if (!f)
+            continue;
+        if (f->Delayed) {
+            render_format(f);
+            f = own_format(id);
+            if (!f || f->Delayed)
+                continue;
+        }
+        if (f->Gdi) {
+            PUCHAR dib = bitmap_to_dib(f->Handle, size);
+            if (dib)
+                return dib;
+            continue;
+        }
+        if (!f->Data)
+            continue;
+        if (kind != MIME_CLIP_TEXT) {
+            PUCHAR copy = W32Alloc(f->Size ? f->Size : 1);
+            if (copy)
+                memcpy(copy, f->Data, f->Size);
+            *size = f->Size;
+            return copy;
+        }
+        SIZE_T chars = 0;
+        if (id == CF_UNICODETEXT) {
+            const WCHAR *w = (const WCHAR *)f->Data;
+            SIZE_T max = f->Size / sizeof(WCHAR);
+            while (chars < max && w[chars])
+                chars++;
+            PUCHAR copy = W32Alloc(chars * sizeof(WCHAR) + 2);
+            if (copy)
+                memcpy(copy, w, chars * sizeof(WCHAR));
+            *size = chars * sizeof(WCHAR);
+            return copy;
+        }
+        /* ansi and oem text widened as latin 1, which covers ascii. */
+        while (chars < f->Size && f->Data[chars])
+            chars++;
+        PWCHAR wide = W32Alloc(chars * sizeof(WCHAR) + 2);
+        if (!wide)
+            return nullptr;
+        for (SIZE_T k = 0; k < chars; k++)
+            wide[k] = f->Data[k];
+        *size = chars * sizeof(WCHAR);
+        return (PUCHAR)wide;
+    }
+    return nullptr;
+}
+
+/* sends chunks of a request's answer, or says there is none. runs without the user lock. */
+static void provide(ULONG request, const UCHAR *data, SIZE_T size)
+{
+    if (!data || !size) {
+        HalMimeHypercall(MIME_HC_CLIP_PROVIDE, request, 0, 0, 0, MIME_CLIP_NONE, 0, nullptr);
+        return;
+    }
+    PUCHAR page = MmAllocateContiguousPages(HOST_CHUNK);
+    if (!page) {
+        HalMimeHypercall(MIME_HC_CLIP_PROVIDE, request, 0, 0, 0, MIME_CLIP_NONE, 0, nullptr);
+        return;
+    }
+    ULONG64 pa = (ULONG64)MmGetPhysicalAddress(page).QuadPart;
+    for (SIZE_T offset = 0; offset < size;) {
+        SIZE_T n = size - offset < HOST_CHUNK ? size - offset : HOST_CHUNK;
+        memcpy(page, data + offset, n);
+        if (HalMimeHypercall(MIME_HC_CLIP_PROVIDE, request, pa, n, offset, size, 0, nullptr) != MIME_HC_STATUS_OK)
+            break;
+        offset += n;
+    }
+    MmFreeContiguousPages(page, HOST_CHUNK);
+}
+
+typedef struct CLIP_REQUEST {
+    ULONG Kind;
+    ULONG Id;
+    ULONG Sequence;
+} CLIP_REQUEST;
+
+/* answers one paste of a host program. its own thread, as the owner of a delayed format may take long to answer. */
+static void NTAPI request_thread(PVOID context)
+{
+    CLIP_REQUEST *r = context;
+    PUCHAR data = nullptr;
+    SIZE_T size = 0;
+    UserEnter();
+    if (r->Sequence == g_sequence) {
+        data = gather(r->Kind, &size);
+        /* the owner rendered while we waited: something else may have taken the clipboard over. */
+        if (r->Sequence != g_sequence) {
+            W32Free(data);
+            data = nullptr;
+        }
+    }
+    UserLeave();
+    provide(r->Id, data, size);
+    W32Free(data);
+    W32Free(r);
+    PsTerminateSystemThread(STATUS_SUCCESS);
+}
+
+/* the host asks for a kind of what the session offered. */
+void ClipboardHostRequest(ULONG kind, ULONG id)
+{
+    CLIP_REQUEST *r = W32Alloc(sizeof(*r));
+    HANDLE thread;
+    if (r) {
+        *r = (CLIP_REQUEST){kind, id, g_offer_sequence};
+        if (NT_SUCCESS(PsCreateSystemThread(&thread, 0, nullptr, nullptr, nullptr, request_thread, r))) {
+            ZwClose(thread);
+            return;
+        }
+        W32Free(r);
+    }
+    HalMimeHypercall(MIME_HC_CLIP_PROVIDE, id, 0, 0, 0, MIME_CLIP_NONE, 0, nullptr);
+}
+
+/* sends the text of the clipboard to a host that only takes text, an empty text when it has none. */
+static void push_text_to_host(void)
 {
     if (!host_page())
         return;
-    CLIP_FORMAT *f = find_format(CF_UNICODETEXT);
-    if (f && f->Host)
-        return; /* the host's own text, unchanged */
-    if (f && f->Delayed) {
-        render_format(f);
-        f = find_format(CF_UNICODETEXT);
-    }
-    WCHAR *text = nullptr;
-    SIZE_T chars = 0;
-    BOOLEAN widened = FALSE;
-    if (f && f->Data && !f->Delayed) {
-        const WCHAR *src = (const WCHAR *)f->Data;
-        SIZE_T max = f->Size / sizeof(WCHAR);
-        while (chars < max && src[chars])
-            chars++;
-        text = (WCHAR *)src;
-    } else if ((f = find_format(CF_TEXT)) && f->Data && !f->Delayed) {
-        /* ansi text only: widen it as latin 1, which covers ascii. */
-        SIZE_T n = 0;
-        while (n < f->Size && f->Data[n])
-            n++;
-        text = W32Alloc((n ? n : 1) * sizeof(WCHAR));
-        if (!text)
-            return;
-        for (SIZE_T i = 0; i < n; i++)
-            text[i] = f->Data[i];
-        chars = n;
-        widened = TRUE;
-    }
-    ULONG64 total = (ULONG64)chars * sizeof(WCHAR);
+    SIZE_T size = 0;
+    PUCHAR text = gather(MIME_CLIP_TEXT, &size);
+    ULONG64 total = size;
     ULONG64 offset = 0;
     do {
         ULONG64 n = total - offset < HOST_CHUNK ? total - offset : HOST_CHUNK;
         if (n)
-            memcpy(g_host_page, (PUCHAR)text + offset, (SIZE_T)n);
+            memcpy(g_host_page, text + offset, (SIZE_T)n);
         if (HalMimeHypercall(MIME_HC_CLIP_SET, (ULONG64)MmGetPhysicalAddress(g_host_page).QuadPart, n, offset, total, 0,
                              0, nullptr) != MIME_HC_STATUS_OK)
             break;
         offset += n;
     } while (offset < total);
-    if (widened)
-        W32Free(text);
+    W32Free(text);
 }
 
-/* reads the host text into a host format; leaves it without data when the host has none. */
-static void fetch_host_text(CLIP_FORMAT *f)
+/* tells the host what the clipboard holds now, so it can ask for the data of a kind when it is pasted. */
+static void offer_to_host(void)
+{
+    if (g_offer_unsupported) {
+        push_text_to_host();
+        return;
+    }
+    /* contents the host gave us and nobody changed are the host's still. */
+    ULONG mask = offerable_kinds();
+    g_offer_sequence = g_sequence;
+    if (HalMimeHypercall(MIME_HC_CLIP_OFFER, mask, 0, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_UNSUPPORTED) {
+        g_offer_unsupported = TRUE;
+        push_text_to_host();
+    }
+}
+
+/* reads the host's data of a kind into a host format; leaves it without data when the host has none. */
+static void fetch_host(CLIP_FORMAT *f)
 {
     f->Delayed = FALSE;
     if (!host_page())
         return;
     ULONG64 pa = (ULONG64)MmGetPhysicalAddress(g_host_page).QuadPart;
-    ULONG64 total = 0;
-    if (HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total) != MIME_HC_STATUS_OK || !total)
+    ULONG64 total = 0, status;
+    if (g_host_fetch_failed) {
+        status = f->HostKind == MIME_CLIP_TEXT ? HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total)
+                                               : MIME_HC_STATUS_UNSUPPORTED;
+    } else {
+        status = HalMimeHypercall(MIME_HC_CLIP_FETCH, f->HostKind, pa, 0, 0, g_host_generation, 0, &total);
+        /* a host that shares text only answers unsupported: its text comes through the older call. */
+        if (status == MIME_HC_STATUS_UNSUPPORTED) {
+            g_host_fetch_failed = TRUE;
+            status = f->HostKind == MIME_CLIP_TEXT ? HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total)
+                                                   : MIME_HC_STATUS_UNSUPPORTED;
+        }
+    }
+    if (status != MIME_HC_STATUS_OK || !total || total > (256u << 20))
         return;
-    PUCHAR text = W32Alloc((SIZE_T)total + sizeof(WCHAR));
-    if (!text)
+    PUCHAR data = W32Alloc((SIZE_T)total + sizeof(WCHAR));
+    if (!data)
         return;
     ULONG64 offset = 0;
     while (offset < total) {
         ULONG64 n = total - offset < HOST_CHUNK ? total - offset : HOST_CHUNK;
         ULONG64 now = 0;
-        if (HalMimeHypercall(MIME_HC_CLIP_GET, pa, n, offset, 0, 0, 0, &now) != MIME_HC_STATUS_OK || now != total) {
-            /* the host text changed meanwhile: a new notification follows. */
-            W32Free(text);
+        if (g_host_fetch_failed)
+            status = HalMimeHypercall(MIME_HC_CLIP_GET, pa, n, offset, 0, 0, 0, &now);
+        else
+            status = HalMimeHypercall(MIME_HC_CLIP_FETCH, f->HostKind, pa, n, offset, g_host_generation, 0, &now);
+        if (status != MIME_HC_STATUS_OK || now != total) {
+            /* the host contents changed meanwhile: a new notification follows. */
+            W32Free(data);
             return;
         }
-        memcpy(text + offset, g_host_page, (SIZE_T)n);
+        memcpy(data + offset, g_host_page, (SIZE_T)n);
         offset += n;
     }
-    f->Data = text;
-    f->Size = (SIZE_T)total + sizeof(WCHAR);
+    f->Data = data;
+    /* text carries its terminator, which the host leaves out. */
+    f->Size = (SIZE_T)total + (f->HostKind == MIME_CLIP_TEXT ? sizeof(WCHAR) : 0);
 }
 
-/* another host application copied text: the contents become that text, not read yet. */
+static void add_host_format(UINT format, ULONG kind)
+{
+    if (!format || g_format_count >= MAX_CLIP_FORMATS)
+        return;
+    CLIP_FORMAT *f = &g_formats[g_format_count++];
+    memset(f, 0, sizeof(*f));
+    f->Format = format;
+    f->Delayed = TRUE;
+    f->HostKind = kind;
+}
+
+/* another host application copied: the contents become what it holds, not read yet. */
 static void pull_from_host(void)
 {
     WND *old = g_owner ? WndLookup(g_owner) : nullptr;
@@ -235,15 +476,25 @@ static void pull_from_host(void)
     empty_formats();
     g_owner = nullptr;
     g_owner_thread = nullptr;
-    if (g_host_has_text) {
-        CLIP_FORMAT *f = &g_formats[g_format_count++];
-        memset(f, 0, sizeof(*f));
-        f->Format = CF_UNICODETEXT;
-        f->Delayed = TRUE;
-        f->Host = TRUE;
-        synthesize_formats();
-    }
+    register_formats();
+    if (g_host_mask & MIME_CLIP_TEXT)
+        add_host_format(CF_UNICODETEXT, MIME_CLIP_TEXT);
+    if (g_host_mask & MIME_CLIP_PNG)
+        add_host_format(g_format_png, MIME_CLIP_PNG);
+    if (g_host_mask & MIME_CLIP_DIBV5)
+        add_host_format(CF_DIBV5, MIME_CLIP_DIBV5);
+    if (g_host_mask & MIME_CLIP_DIB)
+        add_host_format(CF_DIB, MIME_CLIP_DIB);
+    if (g_host_mask & MIME_CLIP_HTML)
+        add_host_format(g_format_html, MIME_CLIP_HTML);
+    if (g_host_mask & MIME_CLIP_HDROP)
+        add_host_format(CF_HDROP, MIME_CLIP_HDROP);
+    if (g_host_mask & MIME_CLIP_URL)
+        add_host_format(g_format_url, MIME_CLIP_URL);
+    synthesize_formats();
     g_sequence++;
+    /* what the guest offered the host is gone from it. */
+    g_offer_sequence = g_sequence;
     /* posted rather than sent: this runs on the input thread. */
     for (ULONG i = 0; i < MAX_LISTENERS; i++) {
         WND *w = g_listeners[i] ? WndLookup(g_listeners[i]) : nullptr;
@@ -257,9 +508,10 @@ static void pull_from_host(void)
         QueuePost(v->Thread, g_viewer, WM_DRAWCLIPBOARD, 0, 0);
 }
 
-void ClipboardHostChanged(BOOLEAN has_text)
+void ClipboardHostChanged(ULONG mask, ULONG generation)
 {
-    g_host_has_text = has_text;
+    g_host_mask = mask;
+    g_host_generation = generation;
     if (g_open_thread)
         g_host_pending = TRUE;
     else
@@ -279,7 +531,7 @@ void ClipboardDisown(WND *w)
         return;
     BOOLEAN delayed = FALSE;
     for (ULONG i = 0; i < g_format_count; i++)
-        if (g_formats[i].Delayed && !g_formats[i].Host)
+        if (g_formats[i].Delayed && !g_formats[i].HostKind)
             delayed = TRUE;
     if (!delayed)
         return;
@@ -288,7 +540,7 @@ void ClipboardDisown(WND *w)
     g_rendering = FALSE;
     ULONG kept = 0;
     for (ULONG i = 0; i < g_format_count; i++) {
-        if (g_formats[i].Delayed && !g_formats[i].Host)
+        if (g_formats[i].Delayed && !g_formats[i].HostKind)
             continue;
         g_formats[kept++] = g_formats[i];
     }
@@ -296,6 +548,7 @@ void ClipboardDisown(WND *w)
         g_format_count = kept;
         g_sequence++;
         synthesize_formats();
+        offer_to_host();
         notify_listeners();
     }
 }
@@ -313,9 +566,14 @@ void ClipboardWindowDestroyed(WND *w)
                 continue;
             g_formats[kept++] = g_formats[i];
         }
+        BOOLEAN dropped = kept != g_format_count;
         g_format_count = kept;
         g_owner = nullptr;
         g_owner_thread = nullptr;
+        if (dropped) {
+            g_sequence++;
+            offer_to_host();
+        }
     }
     if (g_viewer == h)
         g_viewer = nullptr;
@@ -380,7 +638,7 @@ BOOL NTAPI NtUserCloseClipboard(void)
             g_host_pending = FALSE;
             synthesize_formats();
             g_sequence++;
-            push_to_host();
+            offer_to_host();
             notify_listeners();
         } else if (g_host_pending) {
             g_host_pending = FALSE;
@@ -453,7 +711,7 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
         if (f) {
             free_format(f);
             f->Synthesized = FALSE;
-            f->Host = FALSE;
+            f->HostKind = 0;
             f->Gdi = is_gdi_format(format) && !d.Data;
             f->Delayed = !d.Data && !handle;
             f->Handle = f->Gdi ? handle : nullptr;
@@ -484,8 +742,8 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
 /* asks the owner to render a delayed format; returns with the lock held. */
 static void render_format(CLIP_FORMAT *f)
 {
-    if (f->Host) {
-        fetch_host_text(f);
+    if (f->HostKind) {
+        fetch_host(f);
         return;
     }
     WND *owner = g_owner ? WndLookup(g_owner) : nullptr;

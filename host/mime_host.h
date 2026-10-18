@@ -63,6 +63,12 @@ typedef struct MimePaths {
 
 bool mime_paths_init(MimePaths *paths);
 bool mime_paths_ensure(const MimePaths *paths);
+/* maps a host path to the guest: drive_c becomes C:, everything else Z:. */
+void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, size_t size);
+/* the reverse, for C: and Z: paths with either separator; the result never leaves the drive. */
+bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, size_t size);
+/* the paths of the running machine process. */
+const MimePaths *mime_daemon_paths(void);
 
 /* util.c */
 bool mime_mkdir_p(const char *path, unsigned mode);
