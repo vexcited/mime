@@ -1101,16 +1101,17 @@ LSTATUS WINAPI RegFlushKey(HKEY key)
 
 LSTATUS WINAPI RegNotifyChangeKeyValue(HKEY key, BOOL subtree, DWORD filter, HANDLE event, BOOL async)
 {
+    if (key == HKEY_PERFORMANCE_DATA)
+        return ERROR_INVALID_HANDLE;
     if (async && !event)
         return ERROR_INVALID_PARAMETER;
     HANDLE h;
     LONG error = resolve_key(key, &h);
     if (error)
         return error;
-    IO_STATUS_BLOCK iosb;
+    /* every request names the same status block, as in windows: the call returns before the answer comes. */
+    static IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtNotifyChangeKey(h, event, nullptr, nullptr, &iosb, filter, (BOOLEAN)subtree, nullptr, 0, (BOOLEAN)async);
-    if (status == STATUS_PENDING)
-        status = STATUS_SUCCESS;
     return to_error(status);
 }
 

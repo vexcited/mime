@@ -388,6 +388,7 @@ void PspExitThread(NTSTATUS status)
     thread->Tcb.Terminating = TRUE;
     if (thread->Tcb.Win32Thread)
         PsWin32ThreadCallout(thread, FALSE);
+    CmNotifyRunDown(thread);
 
     /* abandon owned mutants. */
     while (!IsListEmpty(&thread->Tcb.MutantListHead)) {

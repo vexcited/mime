@@ -1049,6 +1049,8 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
 /* cm, the configuration manager. */
 extern POBJECT_TYPE CmKeyType;
 void CmInitSystem1(void);
+/* the thread ends: what it waits for in the registry is answered with the clean up status. */
+void CmNotifyRunDown(PETHREAD thread);
 /* makes the registry journal durable, as the machine powers off. */
 void CmpJournalShutdown(void);
 NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);

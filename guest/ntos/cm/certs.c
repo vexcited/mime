@@ -178,7 +178,7 @@ void CmpImportHostRoots(void)
         }
         p = stop + sizeof(end_line) - 1;
     }
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     if (der)
         ExFreePool(der);
     ExFreePool(bundle);

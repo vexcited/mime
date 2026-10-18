@@ -173,6 +173,10 @@ NTSYSCALLAPI NTSTATUS NTAPI NtUnloadKey(POBJECT_ATTRIBUTES target);
 NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeKey(HANDLE key, HANDLE event, PVOID apc_routine, PVOID apc_context,
                                               PIO_STATUS_BLOCK iosb, ULONG filter, BOOLEAN subtree, PVOID buffer,
                                               ULONG length, BOOLEAN async);
+NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeMultipleKeys(HANDLE key, ULONG count, POBJECT_ATTRIBUTES subordinate,
+                                                       HANDLE event, PVOID apc_routine, PVOID apc_context,
+                                                       PIO_STATUS_BLOCK iosb, ULONG filter, BOOLEAN subtree,
+                                                       PVOID buffer, ULONG buffer_length, BOOLEAN async);
 NTSYSCALLAPI NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom);
 NTSYSCALLAPI NTSTATUS NTAPI NtAddAtomEx(PWSTR name, ULONG length, PUSHORT atom, ULONG flags);
 NTSYSCALLAPI NTSTATUS NTAPI NtFindAtom(PWSTR name, ULONG length, PUSHORT atom);

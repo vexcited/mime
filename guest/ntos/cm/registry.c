@@ -14,10 +14,6 @@ FAST_MUTEX CmpLock;
 CM_NODE *CmpRoot;
 POBJECT_TYPE CmKeyType;
 
-typedef struct CM_KEY_BODY {
-    CM_NODE *Node;
-} CM_KEY_BODY;
-
 typedef struct CM_PARSE_CONTEXT {
     BOOLEAN Create;
     BOOLEAN Kernel; /* boot time creation: children of volatile keys become volatile */
@@ -220,6 +216,7 @@ static NTSTATUS create_child(CM_NODE *node, const WCHAR *name, ULONG chars, ULON
     }
     link_child(node, n);
     node->LastWrite = n->LastWrite;
+    CmpNotifyChange(node, REG_NOTIFY_CHANGE_NAME);
     *out = n;
     return STATUS_SUCCESS;
 }
@@ -264,6 +261,11 @@ NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, 
     if (length)
         memcpy(copy, data, length);
     CM_VALUE *v = CmpFindValue(node, name, chars);
+    /* the same type and data again changes nothing: no record, no new time, nobody told. */
+    if (v && v->Type == type && v->DataLength == length && (!length || !memcmp(v->Data, data, length))) {
+        ExFreePool(copy);
+        return STATUS_SUCCESS;
+    }
     BOOLEAN created = v == nullptr;
     if (!v) {
         v = new_value(name, chars);
@@ -292,6 +294,7 @@ NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, 
     v->Data = copy;
     v->DataLength = length;
     node->LastWrite = changed;
+    CmpNotifyChange(node, REG_NOTIFY_CHANGE_LAST_SET);
     return STATUS_SUCCESS;
 }
 
@@ -311,6 +314,7 @@ NTSTATUS CmpDeleteValue(CM_NODE *node, const WCHAR *name, ULONG chars)
             ExFreePool(v->Data);
             ExFreePool(v);
             node->LastWrite = changed;
+            CmpNotifyChange(node, REG_NOTIFY_CHANGE_LAST_SET);
             return STATUS_SUCCESS;
         }
     }
@@ -380,6 +384,7 @@ static NTSTATUS store_sd(CM_NODE *node, SD_BLOB *sd)
     node->Sd = SeSdReference(sd);
     node->LastWrite = changed;
     SeSdDereference(old);
+    CmpNotifyChange(node, REG_NOTIFY_CHANGE_ATTRIBUTES | REG_NOTIFY_CHANGE_SECURITY);
     return STATUS_SUCCESS;
 }
 
@@ -504,6 +509,7 @@ static NTSTATUS new_body(CM_NODE *node, PVOID *out)
     NTSTATUS status = ObCreateObject(CmKeyType, nullptr, KernelMode, sizeof(*body), (PVOID *)&body);
     if (NT_SUCCESS(status)) {
         body->Node = node;
+        body->Notify = nullptr;
         *out = body;
     }
     return status;
@@ -524,10 +530,42 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     CM_NODE *node;
     ExAcquireFastMutex(&CmpLock);
     NTSTATUS status = walk(((CM_KEY_BODY *)object)->Node, path, len, attributes, context, &node);
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     ExFreePool(path);
     if (NT_SUCCESS(status))
         status = new_body(node, found);
+    return status;
+}
+
+/* the last handle of a key ends what waits for it to change. */
+static void key_close(PEPROCESS process, PVOID object, ULONG handle_count)
+{
+    if (handle_count <= 1)
+        CmpNotifyClose(object);
+}
+
+static void key_delete_body(PVOID object)
+{
+    CmpNotifyDelete(object);
+}
+
+NTSTATUS CmpReferenceKeyByName(POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ACCESS_MASK access,
+                               CM_KEY_BODY **body)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = ObCaptureObjectAttributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    oa.Attributes |= OBJ_KERNEL_HANDLE;
+    CM_PARSE_CONTEXT ctx = {FALSE, FALSE, 0, 0};
+    HANDLE h;
+    status = ObOpenObjectByName(&oa, CmKeyType, mode, access, &ctx, &h);
+    KiFreeCapturedString(&name);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandle(h, CmKeyType, KernelMode, (PVOID *)body, nullptr);
+    ObCloseHandle(h, KernelMode);
     return status;
 }
 
@@ -536,7 +574,7 @@ static NTSTATUS key_get_security(PVOID object, PVOID *blob)
     CM_NODE *node = ((CM_KEY_BODY *)object)->Node;
     ExAcquireFastMutex(&CmpLock);
     NTSTATUS status = (node->Flags & CM_NODE_DELETED) ? STATUS_KEY_DELETED : effective_sd(node, (SD_BLOB **)blob);
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     return status;
 }
 
@@ -545,7 +583,7 @@ static NTSTATUS key_put_security(PVOID object, PVOID blob)
     CM_NODE *node = ((CM_KEY_BODY *)object)->Node;
     ExAcquireFastMutex(&CmpLock);
     NTSTATUS status = (node->Flags & CM_NODE_DELETED) ? STATUS_KEY_DELETED : store_sd(node, blob);
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     return status;
 }
 
@@ -558,7 +596,7 @@ static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
     ExAcquireFastMutex(&CmpLock);
     *node = (*body)->Node;
     if ((*node)->Flags & CM_NODE_DELETED) {
-        ExReleaseFastMutex(&CmpLock);
+        CmpUnlock();
         ObDereferenceObject(*body);
         return STATUS_KEY_DELETED;
     }
@@ -567,7 +605,7 @@ static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
 
 static void unlock_key(CM_KEY_BODY *body)
 {
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     ObDereferenceObject(body);
 }
 
@@ -965,6 +1003,8 @@ static NTSTATUS delete_key(CM_NODE *node)
         *link = node->Next;
         node->Flags |= CM_NODE_DELETED;
         node->Parent->LastWrite = changed;
+        CmpNotifyChange(node->Parent, REG_NOTIFY_CHANGE_NAME);
+        CmpNotifyKeyDeleted(node);
     }
     return status;
 }
@@ -1138,7 +1178,7 @@ NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PUL
             memcpy(data, v->Data, v->DataLength);
         *length = v->DataLength;
     }
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     return status;
 }
 
@@ -1147,7 +1187,7 @@ NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, 
     ExAcquireFastMutex(&CmpLock);
     CM_NODE *node = CmpOpenPath(key_path, TRUE);
     NTSTATUS status = node ? CmpSetValue(node, name, (ULONG)wcslen(name), type, data, length) : STATUS_OBJECT_NAME_NOT_FOUND;
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     return status;
 }
 
@@ -1162,7 +1202,7 @@ NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, U
         for (CM_VALUE *v = node->Values; v; v = v->Next)
             fn(ctx, v->Name, v->NameLength, v->Type, v->Data, v->DataLength);
     }
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     return node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
 }
 
@@ -1192,10 +1232,13 @@ void CmInitSystem1(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;
+    init.CloseProcedure = key_close;
+    init.DeleteProcedure = key_delete_body;
     ObSetGenericMapping(&init, 0x20019, 0x20006, 0x20019, 0xF003F);
     init.GetSecurity = key_get_security;
     init.PutSecurity = key_put_security;
     CmKeyType = ObCreateObjectType(L"Key", &init);
+    CmpNotifyInitialize();
 
     static const WCHAR registry[] = L"REGISTRY";
     CmpRoot = new_node(nullptr, registry, RTL_NUMBER_OF(registry) - 1);
@@ -1241,13 +1284,13 @@ void CmInitSystem1(void)
     link_key(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet", target);
     link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");
 
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
 
     CmpSpecialize();
     CmpImportHostRoots();
     ExAcquireFastMutex(&CmpLock);
     CmpJournalEnable();
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
     CmpJournalStart();
 }
 

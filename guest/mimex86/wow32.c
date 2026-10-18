@@ -1229,6 +1229,21 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtDeleteValueKey(handle32(a[0]), &name);
     case MIME_SVC_NtFlushKey:
         return NtFlushKey(handle32(a[0]));
+    case MIME_SVC_NtNotifyChangeKey:
+    case MIME_SVC_NtNotifyChangeMultipleKeys: {
+        /* answers come later, to the 32-bit status block the kernel is told of through the apc routine. */
+        PVOID context;
+        if (number == MIME_SVC_NtNotifyChangeKey) {
+            PVOID apc = io_apc32(a[2], a[3], &context);
+            return NtNotifyChangeKey(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), a[5], (BOOLEAN)a[6],
+                                     pointer32(a[7]), a[8], (BOOLEAN)a[9]);
+        }
+        PVOID apc = io_apc32(a[4], a[5], &context);
+        if (a[1] == 1)
+            oa = attributes32(a[2], &name);
+        return NtNotifyChangeMultipleKeys(handle32(a[0]), a[1], a[1] == 1 ? &oa : nullptr, handle32(a[3]), apc, context,
+                                          pointer32(a[6]), a[7], (BOOLEAN)a[8], pointer32(a[9]), a[10], (BOOLEAN)a[11]);
+    }
 
     /* tokens. */
     case MIME_SVC_NtOpenProcessToken:

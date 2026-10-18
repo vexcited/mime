@@ -263,5 +263,5 @@ void CmpSpecialize(void)
     machine_guid();
     hardware();
     processor_environment();
-    ExReleaseFastMutex(&CmpLock);
+    CmpUnlock();
 }

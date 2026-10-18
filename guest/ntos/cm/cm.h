@@ -27,6 +27,13 @@
 #define STATUS_CHILD_MUST_BE_VOLATILE ((NTSTATUS)0xC0000181L)
 #define STATUS_CANNOT_DELETE ((NTSTATUS)0xC0000121L)
 #define STATUS_REGISTRY_CORRUPT ((NTSTATUS)0xC000014CL)
+#define STATUS_NOTIFY_CLEANUP ((NTSTATUS)0x0000010BL)
+#define STATUS_NOTIFY_ENUM_DIR ((NTSTATUS)0x0000010CL)
+
+#define REG_NOTIFY_CHANGE_NAME 0x00000001
+#define REG_NOTIFY_CHANGE_ATTRIBUTES 0x00000002
+#define REG_NOTIFY_CHANGE_LAST_SET 0x00000004
+#define REG_NOTIFY_CHANGE_SECURITY 0x00000008
 
 /* ------------------------------------------------------------------ hive.c */
 
@@ -97,6 +104,24 @@ typedef struct CM_NODE {
 
 extern FAST_MUTEX CmpLock;
 extern CM_NODE *CmpRoot;
+extern POBJECT_TYPE CmKeyType;
+
+/* what an open key handle refers to: the node, and the block of the change notification asked on the handle. */
+typedef struct CM_NOTIFY CM_NOTIFY;
+typedef struct CM_KEY_BODY {
+    CM_NODE *Node;
+    CM_NOTIFY *Notify;
+} CM_KEY_BODY;
+
+/* answers of change notifications are written once the lock is out, so it is released with this. */
+extern volatile LONG CmpNotifyReady;
+void CmpNotifyFinish(void);
+static inline void CmpUnlock(void)
+{
+    ExReleaseFastMutex(&CmpLock);
+    if (CmpNotifyReady)
+        CmpNotifyFinish();
+}
 
 /* lock held for all of these. */
 CM_NODE *CmpFindChild(CM_NODE *node, const WCHAR *name, ULONG chars);
@@ -110,6 +135,20 @@ NTSTATUS CmpLoadValues(CM_NODE *node);
 NTSTATUS CmpLoadChildren(CM_NODE *node);
 ULONG CmpFullPath(CM_NODE *node, PWCHAR out, ULONG capacity);
 NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload);
+/* a referenced body for a key named by the caller, as a handle opened with that access would refer to. */
+NTSTATUS CmpReferenceKeyByName(POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ACCESS_MASK access,
+                               CM_KEY_BODY **body);
+
+/* ------------------------------------------------------------------ notify.c */
+
+void CmpNotifyInitialize(void);
+/* lock held: a key's names, values, attributes or security changed. */
+void CmpNotifyChange(CM_NODE *node, ULONG filter);
+/* lock held: the key was deleted. */
+void CmpNotifyKeyDeleted(CM_NODE *node);
+/* the last handle of a key closed, or the body is deleted, lock not held. */
+void CmpNotifyClose(CM_KEY_BODY *body);
+void CmpNotifyDelete(CM_KEY_BODY *body);
 
 /* ------------------------------------------------------------------ journal.c */
 
