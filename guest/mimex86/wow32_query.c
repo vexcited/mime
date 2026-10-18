@@ -412,6 +412,54 @@ typedef struct {
 static_assert(sizeof(THREAD_INFORMATION32) == 0x40, "x86 thread record");
 static_assert(sizeof(PROCESS_INFORMATION32) == 0xB8, "x86 process record");
 
+/*
+ * the handles of the system in the x86 layout: a count and records of 16 bytes, or two words and records of 28.
+ * as many fit the caller's buffer as it holds, the native answer has the room for the same number.
+ */
+static NTSTATUS query_handles32(BOOLEAN extended, const ULONG *a)
+{
+    ULONG length = a[2];
+    ULONG header32 = extended ? 8 : 4, entry32 = extended ? 28 : 16;
+    ULONG header64 = extended ? 16 : 8, entry64 = extended ? 40 : 24;
+    if (length < header32) {
+        store32(a[3], header32);
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+    ULONG fit = (length - header32) / entry32;
+    SIZE_T size = (SIZE_T)header64 + (SIZE_T)fit * entry64;
+    PUCHAR native = Mx32Scratch(size);
+    if (!native)
+        return STATUS_NO_MEMORY;
+    ULONG needed = 0;
+    NTSTATUS status = NtQuerySystemInformation(extended ? SystemExtendedHandleInformation : SystemHandleInformation,
+                                               native, (ULONG)size, &needed);
+    if (NT_SUCCESS(status)) {
+        ULONG count = extended ? (ULONG)*(PULONG_PTR)native : *(PULONG)native;
+        PUCHAR out = pointer32(a[1]);
+        memset(out, 0, header32);
+        *(PULONG)out = count;
+        for (ULONG i = 0; i < count; i++) {
+            const UCHAR *in = native + header64 + (SIZE_T)i * entry64;
+            PUCHAR o = out + header32 + (SIZE_T)i * entry32;
+            if (extended) {
+                *(PULONG)(o + 0) = (ULONG)*(PULONG_PTR)(in + 0);
+                *(PULONG)(o + 4) = (ULONG)*(PULONG_PTR)(in + 8);
+                *(PULONG)(o + 8) = (ULONG)*(PULONG_PTR)(in + 16);
+                memcpy(o + 12, in + 24, 16);
+            } else {
+                memcpy(o, in, 8);
+                *(PULONG)(o + 8) = (ULONG)*(PULONG_PTR)(in + 8);
+                *(PULONG)(o + 12) = *(PULONG)(in + 16);
+            }
+        }
+        store32(a[3], header32 + count * entry32);
+    } else if (status == STATUS_INFO_LENGTH_MISMATCH && needed > header64) {
+        store32(a[3], header32 + (needed - header64) / entry64 * entry32);
+    }
+    Mx32FreeScratch(native);
+    return status;
+}
+
 /* converts the native process list into the x86 layout, threads and names included. */
 static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
 {
@@ -530,6 +578,9 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
     }
     case SystemProcessInformation:
         return query_processes32(a[1], length, a[3]);
+    case SystemHandleInformation:
+    case SystemExtendedHandleInformation:
+        return query_handles32(klass == SystemExtendedHandleInformation, a);
     case SystemRangeStartInformation:
         /* user addresses of a 32-bit program end at 2 gib. */
         store32(a[3], sizeof(ULONG));

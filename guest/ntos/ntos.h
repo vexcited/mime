@@ -594,6 +594,8 @@ extern POBJECT_TYPE ObTypeType;
 extern POBJECT_DIRECTORY ObRootDirectory;
 
 void ObInitialize(void);
+void ObpInitializeSecurity(void);
+void ObpFreeSecurity(PVOID header);
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
 NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child);
 NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG count);

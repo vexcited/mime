@@ -250,3 +250,110 @@ WINUSERAPI DWORD WINAPI GetGuiResources(HANDLE process, DWORD flags)
 {
     return NtUserGetGuiResources(process, flags);
 }
+
+/* ------------------------------------------------------------------ security */
+
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor, ULONG length, PULONG needed);
+
+/* the descriptor of a window station or desktop, kept by the kernel once a program has set one. */
+WINUSERAPI BOOL WINAPI SetUserObjectSecurity(HANDLE object, PVOID information, PVOID descriptor)
+{
+    if (!information || !descriptor) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    NTSTATUS status = NtSetSecurityObject(object, *(PULONG)information, descriptor);
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * what a window station or desktop of the user has before a program sets a descriptor: the user is the owner
+ * and group, the user and the system may do anything, in a self relative descriptor of the parts asked for.
+ */
+static BOOL default_security(HANDLE object, ULONG information, PVOID descriptor, DWORD length, LPDWORD needed)
+{
+    BYTE user[sizeof(PVOID) + 8 + 4 * 15 + 64];
+    HANDLE token;
+    ULONG size = 0;
+    NTSTATUS status = NtOpenProcessToken(NtCurrentProcess(), 0x8 /* TOKEN_QUERY */, &token);
+    if (NT_SUCCESS(status)) {
+        status = NtQueryInformationToken(token, 1 /* TokenUser */, user, sizeof(user), &size);
+        NtClose(token);
+    }
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    const BYTE *sid = *(BYTE **)user;
+    DWORD sid_size = 8 + 4 * (DWORD)sid[1];
+    WCHAR type[16] = {};
+    DWORD got;
+    GetUserObjectInformationW(object, UOI_TYPE, type, sizeof(type), &got);
+    ACCESS_MASK all = type[0] == 'W' ? 0xF037F : 0xF01FF;
+    static const BYTE system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
+    DWORD dacl_size = 8 + (8 + sid_size) + (8 + sizeof(system_sid));
+    DWORD o = information & 1 ? (sid_size + 3) & ~3u : 0, g = information & 2 ? (sid_size + 3) & ~3u : 0;
+    DWORD d = information & 4 ? (dacl_size + 3) & ~3u : 0;
+    DWORD total = 20 + o + g + d;
+    *needed = total;
+    if (total > length) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    BYTE *out = descriptor;
+    memset(out, 0, total);
+    out[0] = 1;
+    *(WORD *)(out + 2) = 0x8000 | (d ? 0x0004 : 0);
+    DWORD at = 20;
+    if (o) {
+        *(DWORD *)(out + 4) = at;
+        memcpy(out + at, sid, sid_size);
+        at += o;
+    }
+    if (g) {
+        *(DWORD *)(out + 8) = at;
+        memcpy(out + at, sid, sid_size);
+        at += g;
+    }
+    if (d) {
+        BYTE *acl = out + at;
+        *(DWORD *)(out + 16) = at;
+        acl[0] = 2;
+        *(WORD *)(acl + 2) = (WORD)dacl_size;
+        *(WORD *)(acl + 4) = 2;
+        BYTE *ace = acl + 8;
+        ace[0] = 0;
+        *(WORD *)(ace + 2) = (WORD)(8 + sid_size);
+        *(DWORD *)(ace + 4) = all;
+        memcpy(ace + 8, sid, sid_size);
+        ace += 8 + sid_size;
+        ace[0] = 0;
+        *(WORD *)(ace + 2) = (WORD)(8 + sizeof(system_sid));
+        *(DWORD *)(ace + 4) = all;
+        memcpy(ace + 8, system_sid, sizeof(system_sid));
+    }
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI GetUserObjectSecurity(HANDLE object, PVOID information, PVOID descriptor, DWORD length,
+                                             LPDWORD needed)
+{
+    if (!information || !needed) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ULONG size = 0;
+    NTSTATUS status = NtQuerySecurityObject(object, *(PULONG)information, descriptor, length, &size);
+    if (status == STATUS_NOT_IMPLEMENTED)
+        return default_security(object, *(PULONG)information, descriptor, length, needed);
+    *needed = size;
+    if (!NT_SUCCESS(status)) {
+        SetLastError(status == STATUS_BUFFER_TOO_SMALL ? ERROR_INSUFFICIENT_BUFFER : RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    return TRUE;
+}

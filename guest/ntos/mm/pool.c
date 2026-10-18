@@ -105,7 +105,7 @@ static void pool_free(PVOID p)
         ULONG64 pa = HalPhysicalOf(p);
         PMMPFN pfn = MiGetPfn(pa);
         if (!pfn || pfn->ShareCount != POOL_LARGE_MARK)
-            KeBugCheckEx(0x000000C2, 7, (ULONG_PTR)p, 0, 0); /* BAD_POOL_CALLER */
+            KeBugCheckEx(0x000000C2, 7, (ULONG_PTR)p, (ULONG_PTR)__builtin_return_address(0), 0); /* BAD_POOL_CALLER, with the caller */
         SIZE_T pages = (SIZE_T)(ULONG_PTR)pfn->ListEntry.Flink;
         pfn->ShareCount = 0;
         ULONG64 state = KiDisableInterrupts();

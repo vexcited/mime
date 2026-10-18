@@ -325,11 +325,28 @@ static void free_name(UNICODE_STRING *name)
         ExFreePool(name->Buffer);
 }
 
+/* generic rights as the rights of a window station or a desktop, in windows' mappings. */
+static ACCESS_MASK map_access(PVOID object, ACCESS_MASK access)
+{
+    BOOLEAN station = ObGetObjectType(object) == g_winsta_type;
+    ACCESS_MASK all = station ? WINSTA_ALL_ACCESS : DESKTOP_ALL_ACCESS;
+    if (access & (MAXIMUM_ALLOWED | GENERIC_ALL))
+        return all | 0xF0000;
+    ACCESS_MASK mapped = access & (all | 0x1F0000);
+    if (access & GENERIC_READ)
+        mapped |= 0x20000 | (station ? 0x1 | 0x2 | 0x100 | 0x200 : 0x1 | 0x40);
+    if (access & GENERIC_WRITE)
+        mapped |= 0x20000 | (station ? 0x4 | 0x8 | 0x10 : 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x80);
+    if (access & GENERIC_EXECUTE)
+        mapped |= 0x20000 | (station ? 0x20 | 0x40 : 0x100);
+    return mapped;
+}
+
 static HANDLE insert(PVOID object, ACCESS_MASK access, ULONG attributes)
 {
     HANDLE h = nullptr;
     ObReferenceObject(object);
-    NTSTATUS status = ObInsertObject(object, access, attributes & OBJ_INHERIT, &h);
+    NTSTATUS status = ObInsertObject(object, map_access(object, access), attributes & OBJ_INHERIT, &h);
     if (!NT_SUCCESS(status)) {
         W32SetLastError(status_error(status));
         return nullptr;

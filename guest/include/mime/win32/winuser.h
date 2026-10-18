@@ -3116,6 +3116,8 @@ WINUSERAPI BOOL WINAPI SwitchDesktop(HDESK handle);
 WINUSERAPI BOOL WINAPI GetUserObjectInformationW(HANDLE object, int index, PVOID info, DWORD length,
                                                  LPDWORD needed);
 WINUSERAPI BOOL WINAPI SetUserObjectInformationW(HANDLE object, int index, PVOID info, DWORD length);
+WINUSERAPI BOOL WINAPI SetUserObjectSecurity(HANDLE object, PVOID information, PVOID descriptor);
+WINUSERAPI BOOL WINAPI GetUserObjectSecurity(HANDLE object, PVOID information, PVOID descriptor, DWORD length, LPDWORD needed);
 WINUSERAPI BOOL WINAPI EnumWindowStationsW(WINSTAENUMPROCW proc, LPARAM param);
 WINUSERAPI BOOL WINAPI EnumDesktopsW(HWINSTA winsta, DESKTOPENUMPROCW proc, LPARAM param);
 

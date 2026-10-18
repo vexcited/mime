@@ -74,6 +74,7 @@ static void delete_object(OBJECT_HEADER *h)
         h->Type->Init.DeleteProcedure(body);
     if (h->Name.Buffer)
         ExFreePool(h->Name.Buffer);
+    ObpFreeSecurity(h);
     __atomic_sub_fetch(&h->Type->TotalObjects, 1, __ATOMIC_RELAXED);
     ExFreePool(h);
 }
@@ -476,6 +477,7 @@ static void symlink_delete(PVOID object)
 
 void ObInitialize(void)
 {
+    ObpInitializeSecurity();
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = DIRECTORY_ALL_ACCESS;
     ObTypeType = ObCreateObjectType(L"Type", &init);

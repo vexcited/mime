@@ -452,6 +452,44 @@ static NTSTATUS remove_completions32(const ULONG *a)
 
 /* ------------------------------------------------------------ the call */
 
+/*
+ * a descriptor with pointers of 32 bits made self relative, the form the kernel keeps: the header, then
+ * the owner, group, sacl and dacl where they are asked for. a self relative one passes through.
+ */
+static NTSTATUS set_security32(const ULONG *a)
+{
+    const UCHAR *sd = pointer32(a[2]);
+    if (!sd || (*(const USHORT *)(sd + 2) & 0x8000))
+        return NtSetSecurityObject(handle32(a[0]), a[1], (PVOID)sd);
+    const UCHAR *parts[4];
+    ULONG lengths[4], total = 20;
+    for (int i = 0; i < 4; i++) {
+        parts[i] = pointer32(*(const ULONG *)(sd + 4 + 4 * i));
+        lengths[i] = 0;
+        if (!parts[i])
+            continue;
+        lengths[i] = i < 2 ? 8 + 4 * (ULONG)parts[i][1] : *(const USHORT *)(parts[i] + 2);
+        total += (lengths[i] + 3) & ~3u;
+    }
+    UCHAR *relative = Mx32Scratch(total);
+    if (!relative)
+        return STATUS_NO_MEMORY;
+    memset(relative, 0, 20);
+    relative[0] = sd[0];
+    *(USHORT *)(relative + 2) = *(const USHORT *)(sd + 2) | 0x8000;
+    ULONG at = 20;
+    for (int i = 0; i < 4; i++) {
+        if (!lengths[i])
+            continue;
+        *(ULONG *)(relative + 4 + 4 * i) = at;
+        memcpy(relative + at, parts[i], lengths[i]);
+        at += (lengths[i] + 3) & ~3u;
+    }
+    NTSTATUS status = NtSetSecurityObject(handle32(a[0]), a[1], relative);
+    Mx32FreeScratch(relative);
+    return status;
+}
+
 NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
     UNICODE_STRING name;
@@ -955,6 +993,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtQuerySecurityObject:
         /* a self relative descriptor has no pointers, so the buffer passes through. */
         return NtQuerySecurityObject(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
+    case MIME_SVC_NtSetSecurityObject:
+        return set_security32(a);
     case MIME_SVC_NtQueryObject:
         return Mx32QueryObject(a);
     case MIME_SVC_NtSetInformationObject:

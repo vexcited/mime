@@ -411,9 +411,95 @@ static NTSTATUS query_processes(PVOID info, ULONG length, PULONG returned)
     return status;
 }
 
+/* ------------------------------------------------------------------ handles */
+
+#define SYSTEM_HANDLE_PROCESSES_MAX 1024
+#define OBJ_PROTECT_CLOSE_ATTRIBUTE 0x1
+
+/*
+ * SystemHandleInformation and SystemExtendedHandleInformation: every open handle of every process. the
+ * short form has the identifiers in 16 bits, as the first one did.
+ */
+static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG returned)
+{
+    PEPROCESS processes[SYSTEM_HANDLE_PROCESSES_MAX];
+    ULONG n = 0;
+    ULONG64 lock = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead && n < SYSTEM_HANDLE_PROCESSES_MAX; e = e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (p->Exited)
+            continue;
+        ObReferenceObject(p);
+        processes[n++] = p;
+    }
+    KiReleaseDispatcherLock(lock);
+
+    ULONG entry_size = extended ? 40 : 24, header = extended ? 16 : 8;
+    ULONG total = 0;
+    for (ULONG i = 0; i < n; i++)
+        total += (ULONG)processes[i]->HandleTable.Count;
+    /* the handles that came while this counted fit as far as the room goes. */
+    SIZE_T room = (SIZE_T)total + 64;
+    PUCHAR buffer = ExAllocatePool2(POOL_FLAG_PAGED, header + room * entry_size, KI_TAG('S', 'y', 'H', 'd'));
+    if (!buffer) {
+        for (ULONG i = 0; i < n; i++)
+            ObDereferenceObject(processes[i]);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    SIZE_T count = 0;
+    for (ULONG i = 0; i < n; i++) {
+        PHANDLE_TABLE table = &processes[i]->HandleTable;
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        for (ULONG h = 0; h < table->Capacity && count < room; h++) {
+            HANDLE_TABLE_ENTRY *entry = &table->Entries[h];
+            if (!entry->Object)
+                continue;
+            POBJECT_TYPE type = OBJECT_TO_HEADER(entry->Object)->Type;
+            ULONG attributes = (entry->Attributes & OBJ_PROTECT_CLOSE_ATTRIBUTE ? 1 : 0) | (entry->Attributes & OBJ_INHERIT ? 2 : 0);
+            PUCHAR out = buffer + header + count * entry_size;
+            ULONG_PTR pid = (ULONG_PTR)processes[i]->UniqueProcessId, value = (ULONG_PTR)(h + 1) * 4;
+            if (extended) {
+                *(PVOID *)(out + 0) = entry->Object;
+                *(ULONG_PTR *)(out + 8) = pid;
+                *(ULONG_PTR *)(out + 16) = value;
+                *(PULONG)(out + 24) = entry->GrantedAccess;
+                *(PUSHORT)(out + 28) = 0;
+                *(PUSHORT)(out + 30) = (USHORT)(type->Index + 2);
+                *(PULONG)(out + 32) = attributes;
+                *(PULONG)(out + 36) = 0;
+            } else {
+                *(PUSHORT)(out + 0) = (USHORT)pid;
+                *(PUSHORT)(out + 2) = 0;
+                out[4] = (UCHAR)(type->Index + 2);
+                out[5] = (UCHAR)attributes;
+                *(PUSHORT)(out + 6) = (USHORT)value;
+                *(PVOID *)(out + 8) = entry->Object;
+                *(PULONG)(out + 16) = entry->GrantedAccess;
+                *(PULONG)(out + 20) = 0;
+            }
+            count++;
+        }
+        KeReleaseSpinLock(&table->Lock, irql);
+    }
+    for (ULONG i = 0; i < n; i++)
+        ObDereferenceObject(processes[i]);
+    memset(buffer, 0, header);
+    if (extended)
+        *(PULONG_PTR)buffer = count;
+    else
+        *(PULONG)buffer = (ULONG)count;
+    NTSTATUS status = copy_info(info, buffer, (ULONG)(header + count * entry_size), length, returned);
+    ExFreePool(buffer);
+    return status;
+}
+
 NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
-    switch (klass) {
+    switch ((ULONG)klass) {
+    case SystemHandleInformation:
+        return query_handles(FALSE, info, length, returned);
+    case SystemExtendedHandleInformation:
+        return query_handles(TRUE, info, length, returned);
     case SystemProcessInformation:
         return query_processes(info, length, returned);
     case SystemBasicInformation:
