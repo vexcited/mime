@@ -246,6 +246,7 @@ NTSYSAPI NTSTATUS NTAPI RtlAddMandatoryAce(PACL acl, ULONG revision, ULONG flags
                                            ACCESS_MASK mask);
 NTSYSAPI NTSTATUS NTAPI RtlAddCompoundAce(PACL acl, ULONG revision, UCHAR type, ACCESS_MASK mask, PSID server,
                                           PSID client);
+NTSYSAPI NTSTATUS NTAPI RtlAddResourceAttributeAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid, PVOID information, PULONG length);
 NTSYSAPI NTSTATUS NTAPI RtlAddScopedPolicyIDAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid);
 NTSYSAPI NTSTATUS NTAPI RtlAddProcessTrustLabelAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
                                                    ACCESS_MASK mask);

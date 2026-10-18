@@ -512,6 +512,7 @@ NTSYSAPI NTSTATUS NTAPI RtlAddAuditAccessObjectAce(PACL acl, ULONG revision, ULO
                                                    BOOLEAN success, BOOLEAN failure);
 NTSYSAPI NTSTATUS NTAPI RtlAddMandatoryAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
                                            ACCESS_MASK mask);
+NTSYSAPI NTSTATUS NTAPI RtlAddResourceAttributeAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid, PVOID information, PULONG length);
 NTSYSAPI NTSTATUS NTAPI RtlAddScopedPolicyIDAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid);
 NTSYSAPI NTSTATUS NTAPI RtlAddProcessTrustLabelAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
                                                    ACCESS_MASK mask);

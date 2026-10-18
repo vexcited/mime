@@ -5,8 +5,8 @@
  * order of the fields, the same errors. conditional aces keep their condition in the binary form of the
  * "artx" token stream, compiled by the parser here and written back by the printer.
  *
- * resource attribute aces are not supported, and the trailing data of audit and label aces of kinds the tables
- * do not know is not either.
+ * resource attribute aces hold one attribute in its relative form. the trailing data of audit and label aces
+ * of kinds the tables do not know is not supported.
  */
 #include "advapi32_private.h"
 
@@ -1307,6 +1307,361 @@ static BOOL has_condition(BYTE type)
     return type == 9 || type == 10 || type == 11 || type == 13 || type == 18 || type == 21;
 }
 
+/*
+ * a resource attribute ace carries one attribute in its relative form after the sid: the offset of the name, the
+ * type, the flags, the number of values, the offset of each value, then the name and the values one after the other.
+ * as text it is ("name",type,0xflags,value,...) with the types TI, TU, TS, TD, TX and TB.
+ */
+#define RA_INT64 1
+#define RA_UINT64 2
+#define RA_STRING 3
+#define RA_SID 5
+#define RA_BOOLEAN 6
+#define RA_OCTETS 0x10
+
+static const struct {
+    PCWSTR Name;
+    WORD Type;
+} g_attribute_types[] = {{L"TI", RA_INT64}, {L"TU", RA_UINT64}, {L"TS", RA_STRING},
+                         {L"TD", RA_SID},   {L"TX", RA_OCTETS}, {L"TB", RA_BOOLEAN}};
+
+typedef struct RA_VALUES {
+    BYTE *Data;
+    DWORD Size, Capacity, Count;
+    DWORD *Offsets;
+    DWORD OffsetsCapacity;
+} RA_VALUES;
+
+/* appends bytes to the values and notes where they began. */
+static BOOL ra_add(RA_VALUES *v, const void *data, DWORD size, DWORD prefix_length)
+{
+    DWORD total = size + (prefix_length ? 4 : 0);
+    if (v->Count == v->OffsetsCapacity) {
+        DWORD capacity = v->OffsetsCapacity ? v->OffsetsCapacity * 2 : 8;
+        DWORD *grown = AdvAlloc(capacity * sizeof(DWORD));
+        if (!grown)
+            return FALSE;
+        if (v->Offsets)
+            memcpy(grown, v->Offsets, v->Count * sizeof(DWORD));
+        AdvFree(v->Offsets);
+        v->Offsets = grown;
+        v->OffsetsCapacity = capacity;
+    }
+    if (v->Size + total < v->Size)
+        return FALSE;
+    if (v->Size + total > v->Capacity) {
+        DWORD capacity = v->Capacity ? v->Capacity * 2 : 64;
+        while (capacity < v->Size + total)
+            capacity *= 2;
+        BYTE *grown = AdvAlloc(capacity);
+        if (!grown)
+            return FALSE;
+        if (v->Data)
+            memcpy(grown, v->Data, v->Size);
+        AdvFree(v->Data);
+        v->Data = grown;
+        v->Capacity = capacity;
+    }
+    v->Offsets[v->Count++] = v->Size;
+    if (prefix_length) {
+        DWORD length = size;
+        memcpy(v->Data + v->Size, &length, 4);
+        v->Size += 4;
+    }
+    if (size)
+        memcpy(v->Data + v->Size, data, size);
+    v->Size += size;
+    return TRUE;
+}
+
+static BOOL ra_digit(WCHAR c, BYTE *value)
+{
+    int v = hex_value(c);
+    if (c == L'#')
+        v = 0;
+    if (v < 0)
+        return FALSE;
+    *value = (BYTE)v;
+    return TRUE;
+}
+
+/* the attribute of the text standing at its opening parenthesis, as the relative form in a new block. */
+static DWORD parse_resource_attribute(PCWSTR p, const SDDL_CONTEXT *context, PVOID *result, DWORD *size, PCWSTR *end)
+{
+    RA_VALUES values = {};
+    PWSTR name = nullptr;
+    BYTE *out = nullptr;
+    DWORD error = ERROR_INVALID_ACL, name_length = 0, flags = 0;
+    WORD type = 0;
+    if (*p != L'(')
+        goto done;
+    p++;
+    while (is_space(*p))
+        p++;
+    if (*p != L'"')
+        goto done;
+    p++;
+    DWORD run = 0;
+    while (at_name_char(p[run]))
+        run++;
+    if (!run || p[run] != L'"')
+        goto done;
+    name = AdvAlloc((run + 1) * sizeof(WCHAR));
+    if (!name) {
+        error = ERROR_NOT_ENOUGH_MEMORY;
+        goto done;
+    }
+    for (DWORD i = 0; i < run;) {
+        WCHAR ch = p[i];
+        if (ch == L'%') {
+            int v0, v1, v2, v3;
+            if (i + 4 >= run || (v0 = hex_value(p[i + 1])) < 0 || (v1 = hex_value(p[i + 2])) < 0 ||
+                (v2 = hex_value(p[i + 3])) < 0 || (v3 = hex_value(p[i + 4])) < 0)
+                goto done;
+            ch = (WCHAR)(v0 << 12 | v1 << 8 | v2 << 4 | v3);
+            if (!needs_encoding(ch))
+                goto done;
+            i += 5;
+        } else {
+            i++;
+        }
+        name[name_length++] = ch;
+    }
+    name[name_length] = 0;
+    p += run + 1;
+    while (is_space(*p))
+        p++;
+    if (*p++ != L',')
+        goto done;
+    while (is_space(*p))
+        p++;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_attribute_types) && !type; i++)
+        if (starts_with(p, g_attribute_types[i].Name, 2))
+            type = g_attribute_types[i].Type;
+    if (!type)
+        goto done;
+    p += 2;
+    while (is_space(*p))
+        p++;
+    if (*p++ != L',')
+        goto done;
+    while (is_space(*p))
+        p++;
+    {
+        ULONGLONG value;
+        BOOL overflow;
+        PCWSTR after = scan_number(p, 0xFFFFFFFFull, &value, &overflow, TRUE);
+        if (overflow) {
+            error = ERROR_ARITHMETIC_OVERFLOW;
+            goto done;
+        }
+        if (!after || after == p || (value & 0xFFC0))
+            goto done;
+        flags = (DWORD)value;
+        p = after;
+    }
+    while (is_space(*p))
+        p++;
+    if (*p++ != L',')
+        goto done;
+    for (;;) {
+        while (is_space(*p))
+            p++;
+        if (!*p)
+            goto done;
+        BOOL added = FALSE;
+        if (type == RA_INT64 || type == RA_UINT64 || type == RA_BOOLEAN) {
+            BOOL negative = type == RA_INT64 && *p == L'-';
+            ULONGLONG value;
+            BOOL overflow;
+            PCWSTR after = scan_number(negative || (type == RA_INT64 && *p == L'+') ? p + 1 : p,
+                                       negative ? 0x8000000000000000ull : (type == RA_INT64 ? 0x7FFFFFFFFFFFFFFFull : ~0ull),
+                                       &value, &overflow, TRUE);
+            if (overflow) {
+                error = ERROR_ARITHMETIC_OVERFLOW;
+                goto done;
+            }
+            if (!after || after == p || (type == RA_BOOLEAN && value > 1))
+                goto done;
+            LONGLONG stored = negative ? (LONGLONG)(0 - value) : (LONGLONG)value;
+            added = ra_add(&values, &stored, 8, 0);
+            p = after;
+        } else if (type == RA_STRING) {
+            if (*p != L'"')
+                goto done;
+            PCWSTR close = p + 1;
+            while (*close && *close != L'"')
+                close++;
+            if (*close != L'"')
+                goto done;
+            DWORD chars = (DWORD)(close - (p + 1));
+            PWSTR copy = AdvAlloc((chars + 1) * sizeof(WCHAR));
+            if (!copy) {
+                error = ERROR_NOT_ENOUGH_MEMORY;
+                goto done;
+            }
+            memcpy(copy, p + 1, chars * sizeof(WCHAR));
+            copy[chars] = 0;
+            added = ra_add(&values, copy, (chars + 1) * sizeof(WCHAR), 0);
+            AdvFree(copy);
+            p = close + 1;
+        } else if (type == RA_SID) {
+            BYTE sid[SECURITY_MAX_SID_SIZE];
+            PCWSTR after;
+            DWORD sid_error = AdvParseSidString(p, context, sid, &after);
+            if (sid_error) {
+                error = sid_error;
+                goto done;
+            }
+            added = ra_add(&values, sid, AdvSidLength((const SID *)sid), 4);
+            p = after;
+        } else {
+            DWORD digits = 0;
+            BYTE d;
+            while (ra_digit(p[digits], &d))
+                digits++;
+            DWORD bytes = (digits + 1) / 2;
+            BYTE *raw = bytes ? AdvAlloc(bytes) : nullptr;
+            if (bytes && !raw) {
+                error = ERROR_NOT_ENOUGH_MEMORY;
+                goto done;
+            }
+            /* the digits are taken from the right, so a lone first digit is the low half of the first byte. */
+            for (DWORD i = 0; i < bytes; i++) {
+                BYTE low = 0, high = 0;
+                LONG at = (LONG)digits - 1 - 2 * (LONG)(bytes - 1 - i);
+                ra_digit(p[at], &low);
+                if (at > 0)
+                    ra_digit(p[at - 1], &high);
+                raw[i] = (BYTE)(low | high << 4);
+            }
+            added = ra_add(&values, raw, bytes, 4);
+            AdvFree(raw);
+            p += digits;
+        }
+        if (!added) {
+            error = ERROR_NOT_ENOUGH_MEMORY;
+            goto done;
+        }
+        while (is_space(*p))
+            p++;
+        if (*p == L',') {
+            p++;
+            continue;
+        }
+        break;
+    }
+    if (*p != L')' || !values.Count)
+        goto done;
+    p++;
+    {
+        DWORD header = 16 + 4 * values.Count, name_bytes = (name_length + 1) * sizeof(WCHAR);
+        DWORD total = (header + name_bytes + values.Size + 3) & ~3u;
+        out = AdvAllocZero(total);
+        if (!out) {
+            error = ERROR_NOT_ENOUGH_MEMORY;
+            goto done;
+        }
+        *(DWORD *)out = header;
+        *(WORD *)(out + 4) = type;
+        *(DWORD *)(out + 8) = flags;
+        *(DWORD *)(out + 12) = values.Count;
+        for (DWORD i = 0; i < values.Count; i++)
+            *(DWORD *)(out + 16 + 4 * i) = header + name_bytes + values.Offsets[i];
+        memcpy(out + header, name, name_bytes);
+        memcpy(out + header + name_bytes, values.Data, values.Size);
+        *result = out;
+        *size = total;
+        *end = p;
+        error = ERROR_SUCCESS;
+    }
+done:
+    AdvFree(name);
+    AdvFree(values.Data);
+    AdvFree(values.Offsets);
+    return error;
+}
+
+/* the text of a relative attribute, which is checked as it is read. */
+static DWORD print_resource_attribute(const BYTE *d, DWORD n, const SDDL_CONTEXT *context, SB *sb)
+{
+    if (n < 20)
+        return ERROR_INVALID_ACL;
+    DWORD name_offset = *(const DWORD *)d, flags = *(const DWORD *)(d + 8), count = *(const DWORD *)(d + 12);
+    WORD type = *(const WORD *)(d + 4);
+    if (!count || n - 16 < 4 * (ULONGLONG)count || name_offset >= n || n - name_offset < 4)
+        return ERROR_INVALID_ACL;
+    DWORD room = (n - name_offset) / sizeof(WCHAR), name_length = 0;
+    const WCHAR *name = (const WCHAR *)(d + name_offset);
+    while (name_length < room && name[name_length])
+        name_length++;
+    if (name_length == room || !name_length)
+        return ERROR_INVALID_ACL;
+    PCWSTR type_name = nullptr;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_attribute_types); i++)
+        if (g_attribute_types[i].Type == type)
+            type_name = g_attribute_types[i].Name;
+    if (!type_name)
+        return ERROR_INVALID_ACL;
+    sb_text(sb, L"(\"");
+    for (DWORD i = 0; i < name_length; i++) {
+        if (needs_encoding(name[i])) {
+            sb_char(sb, L'%');
+            sb_hex(sb, name[i], 4, FALSE);
+        } else {
+            sb_char(sb, name[i]);
+        }
+    }
+    sb_text(sb, L"\",");
+    sb_text(sb, type_name);
+    sb_text(sb, L",0x");
+    sb_hex(sb, flags, 1, FALSE);
+    for (DWORD i = 0; i < count; i++) {
+        DWORD at = *(const DWORD *)(d + 16 + 4 * i);
+        sb_char(sb, L',');
+        if (type == RA_INT64 || type == RA_UINT64 || type == RA_BOOLEAN) {
+            if (at > n || n - at < 8)
+                return ERROR_INVALID_ACL;
+            ULONGLONG value;
+            memcpy(&value, d + at, 8);
+            if (type == RA_INT64 && (LONGLONG)value < 0) {
+                sb_char(sb, L'-');
+                value = 0 - value;
+            }
+            sb_decimal(sb, value);
+        } else if (type == RA_STRING) {
+            if (at > n || n - at < 2)
+                return ERROR_INVALID_ACL;
+            DWORD chars = 0, left = (n - at) / sizeof(WCHAR);
+            const WCHAR *text = (const WCHAR *)(d + at);
+            while (chars < left && text[chars])
+                chars++;
+            if (chars == left)
+                return ERROR_INVALID_ACL;
+            sb_char(sb, L'"');
+            sb_chars(sb, text, chars);
+            sb_char(sb, L'"');
+        } else {
+            if (at > n || n - at < 4)
+                return ERROR_INVALID_ACL;
+            DWORD length = *(const DWORD *)(d + at);
+            if (n - at - 4 < length)
+                return ERROR_INVALID_ACL;
+            const BYTE *bytes = d + at + 4;
+            if (type == RA_SID) {
+                if (length < 8 || !RtlValidSid((PSID)bytes) || AdvSidLength((const SID *)bytes) > length)
+                    return ERROR_INVALID_ACL;
+                sb_sid(sb, (const SID *)bytes, context);
+            } else {
+                for (DWORD b = 0; b < length; b++)
+                    sb_hex(sb, bytes[b], 2, FALSE);
+            }
+        }
+    }
+    sb_char(sb, L')');
+    return ERROR_SUCCESS;
+}
+
 static DWORD add_ace_text(ACL *acl, BYTE type, BYTE flags, ACCESS_MASK mask, const GUID *object, const GUID *inherited,
                           const SID *sid, PVOID condition, DWORD condition_size)
 {
@@ -1367,6 +1722,23 @@ static DWORD add_ace_text(ACL *acl, BYTE type, BYTE flags, ACCESS_MASK mask, con
         memcpy(at, sid, sid_size);
         memcpy(at + sid_size, condition, condition_size);
         status = RtlAddAce(a, objects ? 4 : 2, 0xFFFFFFFF, ace, size);
+        LocalFree(ace);
+        break;
+    }
+    case SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE: {
+        DWORD sid_size = RtlLengthSid((PSID)sid), size = 8 + sid_size + condition_size;
+        if (size >= 0xFFFF)
+            return ERROR_INVALID_PARAMETER;
+        BYTE *ace = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, size);
+        if (!ace)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        ace[0] = type;
+        ace[1] = flags;
+        *(WORD *)(ace + 2) = (WORD)size;
+        *(DWORD *)(ace + 4) = mask;
+        memcpy(ace + 8, sid, sid_size);
+        memcpy(ace + 8 + sid_size, condition, condition_size);
+        status = RtlAddAce(a, 2, 0xFFFFFFFF, ace, size);
         LocalFree(ace);
         break;
     }
@@ -1494,11 +1866,11 @@ static DWORD parse_ace(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL *
         p++;
         while (*p == L' ')
             p++;
-        if (type == SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE)
-            return ERROR_NOT_SUPPORTED;
         if (*p != L'(')
             return ERROR_INVALID_ACL;
-        error = condition_compile(p, context, &condition, &condition_size, &end);
+        error = type == SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE
+                    ? parse_resource_attribute(p, context, &condition, &condition_size, &end)
+                    : condition_compile(p, context, &condition, &condition_size, &end);
         if (error)
             return error;
         p = end;
@@ -1511,8 +1883,12 @@ static DWORD parse_ace(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL *
         p++;
         error = add_ace_text(acl, type, flags, mask, given[0], given[1], (SID *)sid, condition, condition_size);
     }
-    if (condition)
-        LocalFree(condition);
+    if (condition) {
+        if (type == SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE)
+            AdvFree(condition);
+        else
+            LocalFree(condition);
+    }
     *pp = p;
     return error;
 }
@@ -1663,9 +2039,14 @@ static DWORD sb_ace(SB *sb, const BYTE *ace, BYTE kind, const SDDL_CONTEXT *cont
     sb_sid(sb, (const SID *)sid, context);
     if (has_condition(type)) {
         DWORD data = size - (DWORD)(sid - ace) - AdvSidLength((const SID *)sid);
-        if (type == SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE)
-            return data ? ERROR_NOT_SUPPORTED : ERROR_SUCCESS;
-        if (data) {
+        if (type == SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE) {
+            if (data) {
+                sb_char(sb, L';');
+                DWORD error = print_resource_attribute(sid + AdvSidLength((const SID *)sid), data, context, sb);
+                if (error)
+                    return error;
+            }
+        } else if (data) {
             PWSTR text;
             DWORD error = condition_text(sid + AdvSidLength((const SID *)sid), data, context, &text);
             if (error)

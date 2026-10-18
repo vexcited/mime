@@ -15,6 +15,7 @@
 
 #define ACE_LONG_ALIGNED(size) (((size) & 3) == 0)
 
+static const UCHAR g_world_authority[6] = {0, 0, 0, 0, 0, 1};
 static const UCHAR g_label_authority[6] = {0, 0, 0, 0, 0, 16};
 static const UCHAR g_policy_authority[6] = {0, 0, 0, 0, 0, 17};
 static const UCHAR g_trust_authority[6] = {0, 0, 0, 0, 0, 19};
@@ -754,6 +755,211 @@ NTSTATUS NTAPI RtlAddScopedPolicyIDAce(PACL acl, ULONG revision, ULONG flags, AC
         return status;
     put_header(slot, SYSTEM_SCOPED_POLICY_ID_ACE_TYPE, flags, size, 0);
     memmove(slot + 8, sid, size - 8);
+    acl->AceCount++;
+    acl->AclRevision = new_revision;
+    return STATUS_SUCCESS;
+}
+
+/*
+ * the attribute of a resource attribute ace, checked, and its size once it is written after the sid in the relative
+ * form: offsets of the name and of each value up front, the name, then the values one after the other.
+ */
+typedef struct {
+    PWSTR Name;
+    USHORT Type;
+    USHORT Reserved;
+    ULONG Flags;
+    ULONG Count;
+    PVOID Values;
+} ATTRIBUTE_V1;
+
+typedef struct {
+    PVOID Value;
+    ULONG Length;
+} ATTRIBUTE_OCTETS;
+
+#ifndef STATUS_INTEGER_OVERFLOW
+#define STATUS_INTEGER_OVERFLOW ((NTSTATUS)0xC0000095L)
+#endif
+
+#define ATTRIBUTE_INT64 1
+#define ATTRIBUTE_UINT64 2
+#define ATTRIBUTE_STRING 3
+#define ATTRIBUTE_SID 5
+#define ATTRIBUTE_BOOLEAN 6
+#define ATTRIBUTE_OCTET_STRING 0x10
+
+static ULONG string_chars(PCWSTR s, ULONG limit)
+{
+    ULONG n = 0;
+    while (n < limit && s[n])
+        n++;
+    return n < limit ? n : limit;
+}
+
+static BOOLEAN attribute_valid(const ATTRIBUTE_V1 *a)
+{
+    if (!a || !a->Name || a->Reserved || (a->Flags & 0xFFC0) || !a->Count || !a->Values)
+        return FALSE;
+    ULONG n = string_chars(a->Name, 0x8000);
+    if (!n || n == 0x8000)
+        return FALSE;
+    switch (a->Type) {
+    case ATTRIBUTE_INT64:
+    case ATTRIBUTE_UINT64:
+        return TRUE;
+    case ATTRIBUTE_STRING:
+        for (ULONG i = 0; i < a->Count; i++)
+            if (!((PWSTR *)a->Values)[i])
+                return FALSE;
+        return TRUE;
+    case ATTRIBUTE_SID:
+        for (ULONG i = 0; i < a->Count; i++)
+            if (!((ATTRIBUTE_OCTETS *)a->Values)[i].Value || !((ATTRIBUTE_OCTETS *)a->Values)[i].Length)
+                return FALSE;
+        return TRUE;
+    case ATTRIBUTE_BOOLEAN:
+        for (ULONG i = 0; i < a->Count; i++)
+            if (((ULONG64 *)a->Values)[i] >= 2)
+                return FALSE;
+        return TRUE;
+    case ATTRIBUTE_OCTET_STRING:
+        for (ULONG i = 0; i < a->Count; i++) {
+            const ATTRIBUTE_OCTETS *o = &((ATTRIBUTE_OCTETS *)a->Values)[i];
+            if (o->Value ? !o->Length : o->Length)
+                return FALSE;
+        }
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+/* the bytes of the relative form, or the status that says why it does not exist. dst is NULL to only measure. */
+static NTSTATUS attribute_relative(const ATTRIBUTE_V1 *a, UCHAR *dst, ULONG *size)
+{
+    ULONG64 total = 16 + 4 * (ULONG64)a->Count;
+    ULONG name_bytes = (string_chars(a->Name, 0x8000) + 1) * sizeof(WCHAR);
+    ULONG64 at = total + name_bytes;
+    total = at;
+    for (ULONG i = 0; i < a->Count; i++) {
+        ULONG64 bytes = 0;
+        switch (a->Type) {
+        case ATTRIBUTE_INT64:
+        case ATTRIBUTE_UINT64:
+        case ATTRIBUTE_BOOLEAN:
+            bytes = 8;
+            break;
+        case ATTRIBUTE_STRING: {
+            ULONG n = string_chars(((PWSTR *)a->Values)[i], 0x8000);
+            if (n == 0x8000)
+                return STATUS_INVALID_PARAMETER;
+            bytes = (n + 1) * sizeof(WCHAR);
+            break;
+        }
+        default:
+            bytes = 4 + (ULONG64)((ATTRIBUTE_OCTETS *)a->Values)[i].Length;
+            break;
+        }
+        if (dst) {
+            *(ULONG *)(dst + 16 + 4 * i) = (ULONG)at;
+            switch (a->Type) {
+            case ATTRIBUTE_STRING:
+                memcpy(dst + at, ((PWSTR *)a->Values)[i], bytes);
+                break;
+            case ATTRIBUTE_SID:
+            case ATTRIBUTE_OCTET_STRING: {
+                const ATTRIBUTE_OCTETS *o = &((ATTRIBUTE_OCTETS *)a->Values)[i];
+                memcpy(dst + at, &o->Length, 4);
+                if (o->Length)
+                    memcpy(dst + at + 4, o->Value, o->Length);
+                break;
+            }
+            default:
+                memcpy(dst + at, &((ULONG64 *)a->Values)[i], 8);
+                break;
+            }
+        }
+        at += bytes;
+        total = at;
+    }
+    if (total > 0xFFFFFFF0ull)
+        return STATUS_INTEGER_OVERFLOW;
+    *size = (ULONG)((total + 3) & ~3ull);
+    if (dst) {
+        memset(dst + total, 0, *size - total);
+        *(ULONG *)dst = 16 + 4 * a->Count;
+        *(USHORT *)(dst + 4) = a->Type;
+        *(USHORT *)(dst + 6) = 0;
+        *(ULONG *)(dst + 8) = a->Flags;
+        *(ULONG *)(dst + 12) = a->Count;
+        memcpy(dst + 16 + 4 * a->Count, a->Name, name_bytes);
+    }
+    return STATUS_SUCCESS;
+}
+
+/*
+ * adds a resource attribute ace, which holds one attribute after the sid of everyone. the length that comes back is
+ * the bytes the list uses with the new ace, and when the list is too small the bytes it needs.
+ */
+NTSTATUS NTAPI RtlAddResourceAttributeAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid,
+                                          PVOID information, PULONG length)
+{
+    typedef struct {
+        USHORT Version;
+        USHORT Reserved;
+        ULONG Count;
+        ATTRIBUTE_V1 *Attributes;
+    } INFORMATION;
+    const INFORMATION *info = information;
+    if (!length)
+        return STATUS_INVALID_PARAMETER;
+    *length = 0;
+    if (!acl)
+        return STATUS_INVALID_ACL;
+    if (!RtlValidSid(sid))
+        return STATUS_INVALID_SID;
+    const SID *everyone = sid;
+    if (!authority_is(everyone, g_world_authority) || everyone->SubAuthorityCount != 1 || everyone->SubAuthority[0])
+        return STATUS_INVALID_PARAMETER;
+    UCHAR new_revision;
+    NTSTATUS status = revision_of(acl, revision, &new_revision);
+    if (!NT_SUCCESS(status))
+        return status;
+    if ((flags & ~VALID_INHERIT_FLAGS) || mask || !info || info->Version != 1 || info->Reserved || !info->Count)
+        return STATUS_INVALID_PARAMETER;
+    for (ULONG i = 0; i < info->Count; i++)
+        if (!attribute_valid(&info->Attributes[i]))
+            return STATUS_INVALID_PARAMETER;
+    if (info->Count != 1)
+        return STATUS_INVALID_PARAMETER;
+    ULONG data;
+    status = attribute_relative(info->Attributes, nullptr, &data);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (!RtlValidAcl(acl))
+        return STATUS_INVALID_ACL;
+    BOOLEAN ok;
+    UCHAR *free = first_free(acl, &ok);
+    if (!ok)
+        return STATUS_INVALID_ACL;
+    ULONG ace_size = 16 + 4 * (ULONG)everyone->SubAuthorityCount + data;
+    if (ace_size > 0xFFFF)
+        return STATUS_INTEGER_OVERFLOW;
+    ULONG used = sizeof(ACL);
+    const UCHAR *ace = (const UCHAR *)(acl + 1);
+    for (ULONG i = 0; i < acl->AceCount; i++) {
+        used += *(const USHORT *)(ace + 2);
+        ace += *(const USHORT *)(ace + 2);
+    }
+    *length = used + ace_size;
+    if (!free || free + ace_size > (UCHAR *)acl + acl->AclSize) {
+        *length = (used + ace_size + 3) & ~3u;
+        return STATUS_ALLOTTED_SPACE_EXCEEDED;
+    }
+    put_header(free, SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE, flags, ace_size, 0);
+    RtlCopySid(RtlLengthSid(sid), free + 8, sid);
+    attribute_relative(info->Attributes, free + 16 + 4 * everyone->SubAuthorityCount, &data);
     acl->AceCount++;
     acl->AclRevision = new_revision;
     return STATUS_SUCCESS;

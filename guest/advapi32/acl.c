@@ -126,6 +126,18 @@ ADVAPI BOOL WINAPI AddMandatoryAce(PACL acl, DWORD revision, DWORD flags, DWORD 
     return result(RtlAddMandatoryAce(acl, revision, flags, label, SYSTEM_MANDATORY_LABEL_ACE_TYPE, policy));
 }
 
+ADVAPI BOOL WINAPI AddScopedPolicyIDAce(PACL acl, DWORD revision, DWORD flags, DWORD mask, PSID policy)
+{
+    return result(RtlAddScopedPolicyIDAce(acl, revision, flags, mask, policy));
+}
+
+/* the attribute is added to the end of the list, and the length is what the list uses, or needs when it is too small. */
+ADVAPI BOOL WINAPI AddResourceAttributeAce(PACL acl, DWORD revision, DWORD flags, DWORD mask, PSID sid, PVOID attribute,
+                                           PDWORD length)
+{
+    return result(RtlAddResourceAttributeAce(acl, revision, flags, mask, sid, attribute, length));
+}
+
 /*
  * a conditional ace: the condition text is compiled to the binary form, the ace is built after the sid with the
  * condition padded to four bytes, and added at the end. the length that comes back is the bytes the list uses, or
