@@ -63,6 +63,7 @@ ULONG64 HalHnsToCounter(ULONG64 hns);
 
 void KiLogPrintf(const char *fmt, ...);
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp);
+BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size);
 #define KdPrint(args) KiLogPrintf args
 #define MIME_TRACE(...) KiLogPrintf(__VA_ARGS__)
 
@@ -604,6 +605,8 @@ typedef struct _OBJECT_TYPE {
     volatile LONG TotalObjects;
     volatile LONG TotalHandles;
 } OBJECT_TYPE;
+
+NTSTATUS ObQueryAllTypesInformation(PVOID info, ULONG length, PULONG returned);
 
 typedef struct _OBJECT_HEADER {
     volatile LONG_PTR PointerCount;

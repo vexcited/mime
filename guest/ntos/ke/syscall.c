@@ -130,10 +130,17 @@ void KiSystemService(PKTRAP_FRAME frame)
             stack = 16 - KI_SERVICE_REGISTER_ARGS;
         BOOLEAN trace = KiTraceSyscallImage[0] &&
                         (KiTraceSyscallImage[0] == '*' || !strcmp(PsCurrentProcess()->ImageFileName, KiTraceSyscallImage));
-        if (trace)
-            KiLogPrintf("svc %u.%u %s(%llx, %llx, %llx, %llx)", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+        if (trace) {
+            /* the first return address on the stack names the caller of the system call stub. */
+            char caller[96] = "";
+            ULONG64 ret = 0;
+            if (!NT_SUCCESS(KiCopyFromUser(&ret, (PVOID)KI_TRAP_SP(frame), sizeof(ret))) ||
+                !KiDescribeUserAddress((ULONG_PTR)ret, caller, sizeof(caller)))
+                caller[0] = 0;
+            KiLogPrintf("svc %u.%u %s(%llx, %llx, %llx, %llx) %s", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), args[0],
-                        args[1], args[2], args[3]);
+                        args[1], args[2], args[3], caller);
+        }
         if (stack && !NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS], (PVOID)KI_SERVICE_STACK_ARGS(frame),
                                                 stack * sizeof(ULONG64))))
             result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;

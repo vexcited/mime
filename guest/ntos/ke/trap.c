@@ -7,7 +7,7 @@
 BOOLEAN KiTraceUserExceptions;
 
 /* the image and offset of a user address in the current process, as "name+0xoffset". */
-static BOOLEAN describe_user_address(ULONG_PTR va, char *out, ULONG size)
+BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size)
 {
     PMMADDRESS_SPACE as = &PsCurrentProcess()->AddressSpace;
     if (va > MIME_USER_ADDRESS_LIMIT)
@@ -36,14 +36,14 @@ static BOOLEAN describe_user_address(ULONG_PTR va, char *out, ULONG size)
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp)
 {
     char text[96];
-    if (describe_user_address(pc, text, sizeof(text)))
+    if (KiDescribeUserAddress(pc, text, sizeof(text)))
         KiLogPrintf("  at %s", text);
     ULONG shown = 0;
     for (ULONG i = 0; i < 512 && shown < 24 && sp && !(sp & 7); i++, sp += 8) {
         ULONG64 word;
         if (!MmIsAddressValid((PVOID)sp) || !NT_SUCCESS(KiCopyFromUser(&word, (PVOID)sp, sizeof(word))))
             break;
-        if (describe_user_address(word, text, sizeof(text))) {
+        if (KiDescribeUserAddress(word, text, sizeof(text))) {
             KiLogPrintf("  stack +0x%x: %s", i * 8, text);
             shown++;
         }

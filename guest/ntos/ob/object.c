@@ -3,6 +3,7 @@
  * object namespace.
  */
 #include "../ntos.h"
+#include <mime/ntrtlsec.h>
 
 POBJECT_TYPE ObTypeType;
 POBJECT_TYPE ObDirectoryType;
@@ -29,6 +30,106 @@ POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init
     if (g_type_count < RTL_NUMBER_OF(g_types))
         g_types[g_type_count++] = type;
     return type;
+}
+
+/* what NtQueryObject says of a type, in windows' layout. */
+typedef struct OB_TYPE_INFORMATION {
+    UNICODE_STRING TypeName;
+    ULONG TotalNumberOfObjects, TotalNumberOfHandles;
+    ULONG TotalPagedPoolUsage, TotalNonPagedPoolUsage, TotalNamePoolUsage, TotalHandleTableUsage;
+    ULONG HighWaterNumberOfObjects, HighWaterNumberOfHandles;
+    ULONG HighWaterPagedPoolUsage, HighWaterNonPagedPoolUsage, HighWaterNamePoolUsage, HighWaterHandleTableUsage;
+    ULONG InvalidAttributes;
+    GENERIC_MAPPING GenericMapping;
+    ULONG ValidAccessMask;
+    BOOLEAN SecurityRequired, MaintainHandleCount;
+    UCHAR TypeIndex;
+    CHAR ReservedByte;
+    ULONG PoolType;
+    ULONG DefaultPagedPoolCharge, DefaultNonPagedPoolCharge;
+} OB_TYPE_INFORMATION;
+MIME_STATIC_ASSERT(sizeof(OB_TYPE_INFORMATION) == 0x68, "OB_TYPE_INFORMATION");
+
+/* the generic rights of the types programs open most, the others map them all to nothing. */
+static GENERIC_MAPPING type_mapping(PCWSTR name, ACCESS_MASK all)
+{
+    static const struct {
+        PCWSTR name;
+        GENERIC_MAPPING mapping;
+    } known[] = {
+        {L"File", {0x120089, 0x120116, 0x1200A0, 0x1F01FF}},
+        {L"Event", {0x120001, 0x120002, 0x120000, 0x1F0003}},
+        {L"Mutant", {0x120001, 0x120002, 0x120000, 0x1F0001}},
+        {L"Semaphore", {0x120001, 0x120002, 0x120000, 0x1F0003}},
+        {L"Timer", {0x120001, 0x120002, 0x120000, 0x1F0003}},
+        {L"Section", {0x20001, 0x20002, 0x20000, 0xF001F}},
+        {L"Process", {0x20400, 0x20BEA, 0x121001, 0x1FFFFF}},
+        {L"Thread", {0x20048, 0x20437, 0x121A00, 0x1FFFFF}},
+        {L"Key", {0x20019, 0x20006, 0x20019, 0xF003F}},
+        {L"Token", {0x20008, 0x200E0, 0x20000, 0xF01FF}},
+        {L"Job", {0x120004, 0x20064, 0x120000, 0x1F001F}},
+        {L"IoCompletion", {0x120001, 0x120002, 0x120000, 0x1F0003}},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(known); i++) {
+        if (!_wcsicmp(known[i].name, name))
+            return known[i].mapping;
+    }
+    return (GENERIC_MAPPING){0, 0, 0, all};
+}
+
+/* the size a type's information takes with its name after it, padded to eight. */
+static ULONG type_information_size(POBJECT_TYPE type)
+{
+    return (ULONG)(sizeof(OB_TYPE_INFORMATION) + ((type->Name.Length + sizeof(WCHAR) + 7) & ~7u));
+}
+
+/* builds it for a buffer that will be at user_base in the caller. */
+static void build_type_information(POBJECT_TYPE type, PUCHAR out, PUCHAR user_base)
+{
+    OB_TYPE_INFORMATION *info = (OB_TYPE_INFORMATION *)out;
+    memset(out, 0, type_information_size(type));
+    memcpy(out + sizeof(*info), type->Name.Buffer, type->Name.Length);
+    info->TypeName.Length = type->Name.Length;
+    info->TypeName.MaximumLength = (USHORT)(type->Name.Length + sizeof(WCHAR));
+    info->TypeName.Buffer = (PWSTR)(user_base + sizeof(*info));
+    info->TotalNumberOfObjects = info->HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
+    info->TotalNumberOfHandles = info->HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
+    info->GenericMapping = type_mapping(type->Name.Buffer, type->Init.ValidAccessMask);
+    info->ValidAccessMask = type->Init.ValidAccessMask;
+    info->SecurityRequired = TRUE;
+    info->TypeIndex = (UCHAR)(type->Index + 2);
+    info->PoolType = type->Init.PoolType;
+    info->DefaultNonPagedPoolCharge = type->Init.DefaultObjectSize;
+}
+
+static NTSTATUS return_answer(const void *answer, ULONG need, PVOID info, ULONG length, PULONG returned)
+{
+    if (returned)
+        KiCopyToUser(returned, &need, sizeof(need));
+    if (length < need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    return KiCopyToUser(info, answer, need);
+}
+
+/* ObjectTypesInformation: the count, then every type's information, each starting on eight bytes. */
+NTSTATUS ObQueryAllTypesInformation(PVOID info, ULONG length, PULONG returned)
+{
+    ULONG need = 8;
+    for (ULONG i = 0; i < g_type_count; i++)
+        need += type_information_size(g_types[i]);
+    PUCHAR answer = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('O', 'b', 'Q', 't'));
+    if (!answer)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(answer, 0, 8);
+    *(PULONG)answer = g_type_count;
+    ULONG offset = 8;
+    for (ULONG i = 0; i < g_type_count; i++) {
+        build_type_information(g_types[i], answer + offset, (PUCHAR)info + offset);
+        offset += type_information_size(g_types[i]);
+    }
+    NTSTATUS status = return_answer(answer, need, info, length, returned);
+    ExFreePool(answer);
+    return status;
 }
 
 POBJECT_TYPE ObGetObjectType(PVOID object)

@@ -727,6 +727,9 @@ NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, 
 NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOID info, ULONG length,
                              PULONG returned)
 {
+    /* the table of all types needs no handle. */
+    if ((ULONG)klass == 3 /* ObjectTypesInformation */)
+        return ObQueryAllTypesInformation(info, length, returned);
     PVOID object;
     NTSTATUS status = ObReferenceHandle(handle, nullptr, KeGetPreviousMode(), &object, nullptr);
     if (!NT_SUCCESS(status))

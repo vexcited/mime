@@ -349,7 +349,11 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         return status;
     }
     PspNotifyProcess(process, TRUE);
-    KiLogPrintf("created process %u (%wZ)", (ULONG)(ULONG_PTR)process->UniqueProcessId, image);
+    /* the arguments help to tell the processes of one program apart. */
+    UNICODE_STRING shown = p->CommandLine;
+    if (shown.Length > 300 * sizeof(WCHAR))
+        shown.Length = 300 * sizeof(WCHAR);
+    KiLogPrintf("created process %u (%wZ) %wZ", (ULONG)(ULONG_PTR)process->UniqueProcessId, image, &shown);
     if (initial_thread)
         *initial_thread = thread;
     else
