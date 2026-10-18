@@ -253,7 +253,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000 dsound:0x7FF320000000
     ddraw:0x7FF310000000 dinput:0x7FF300000000 hid:0x7FF2E0000000 xinput1_4:0x7FF2D0000000
     xinput1_3:0x7FF2C0000000 xinput1_2:0x7FF2B0000000 xinput1_1:0x7FF2A0000000 xinput9_1_0:0x7FF290000000
-    winhttp:0x7FF240000000
+    winhttp:0x7FF240000000 windows_storage:0x7FF130000000
     propsys:0x7FF230000000 shcore:0x7FF220000000 powrprof:0x7FF210000000 bcryptprimitives:0x7FF200000000
     pdh:0x7FF1F0000000 wevtapi:0x7FF1E0000000 tbs:0x7FF1D0000000 ncrypt:0x7FF1C0000000 credui:0x7FF1B0000000
     cryptui:0x7FF1A0000000 ndfapi:0x7FF190000000 winusb:0x7FF180000000 bthprops:0x7FF170000000
@@ -320,6 +320,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib)
     set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
+    # windows.storage makes shell item lists with shell32, keeps properties in propsys and loads strings with shlwapi.
+    set(libs_windows_storage ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/shell32.lib
+        ${MIME_LIB_${arch}}/shlwapi.lib ${MIME_LIB_${arch}}/propsys.lib)
     # media foundation: mfplat's objects keep their values in ole32's property variants, mfreadwrite builds on mfplat.
     set(libs_mfplat ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_mfreadwrite ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/ole32.lib)
@@ -340,6 +343,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             set(file winspool.drv)
         elseif(name STREQUAL "bthprops")
             set(file bthprops.cpl)
+        elseif(name STREQUAL "windows_storage")
+            set(file windows.storage.dll)
         endif()
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}

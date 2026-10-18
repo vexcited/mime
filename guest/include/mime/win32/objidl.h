@@ -81,6 +81,10 @@ MIME_DEFINE_GUID(IID_ISequentialStream, 0x0c733a30, 0x2a1c, 0x11ce, 0xad, 0xe5, 
 #define STATFLAG_DEFAULT 0
 #define STATFLAG_NONAME 1
 
+#define STREAM_SEEK_SET 0
+#define STREAM_SEEK_CUR 1
+#define STREAM_SEEK_END 2
+
 #define STGTY_STORAGE 1
 #define STGTY_STREAM 2
 #define STGTY_LOCKBYTES 3

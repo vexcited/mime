@@ -5,14 +5,11 @@
  * of the user's hive when it is set, else from the folder's default under
  * the profile. common folders read the same key of HKLM.
  *
- * mime's item id lists are its own: an absolute file system list is one
- * item holding the full path, the desktop is the empty list, and a virtual
- * folder is one item holding the folder's index. only shell32 reads them.
+ * the item id lists are in pidl.c: the desktop is the empty list, a file
+ * system object the items of its path below "This PC", and a virtual folder
+ * one item naming its class.
  */
 #include "shell32_private.h"
-
-#define PIDL_PATH_SIGNATURE 0x454D494Du    /* "MIME" */
-#define PIDL_VIRTUAL_SIGNATURE 0x564D494Du /* "MIMV" */
 
 typedef struct _SH_FOLDER {
     int Csidl;
@@ -54,6 +51,10 @@ static const SH_FOLDER g_folders[] = {
     {CSIDL_APPDATA, &FOLDERID_RoamingAppData, L"AppData", FALSE, L"%USERPROFILE%\\AppData\\Roaming"},
     {CSIDL_LOCAL_APPDATA, &FOLDERID_LocalAppData, L"Local AppData", FALSE, L"%USERPROFILE%\\AppData\\Local"},
     {NO_CSIDL, &FOLDERID_LocalAppDataLow, nullptr, FALSE, L"%USERPROFILE%\\AppData\\LocalLow"},
+    {NO_CSIDL, &FOLDERID_QuickLaunch, nullptr, FALSE,
+     L"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch"},
+    {NO_CSIDL, &FOLDERID_ImplicitAppShortcuts, nullptr, FALSE,
+     L"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\ImplicitAppShortcuts"},
     {CSIDL_INTERNET_CACHE, &FOLDERID_InternetCache, L"Cache", FALSE,
      L"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\INetCache"},
     {CSIDL_COOKIES, &FOLDERID_Cookies, L"Cookies", FALSE,
@@ -285,93 +286,30 @@ SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathA(HWND hwnd, LPSTR path, int csidl, B
 
 /* ------------------------------------------------------------------ item id lists */
 
-static PIDLIST_ABSOLUTE make_list(DWORD signature, const void *data, SIZE_T bytes)
-{
-    SIZE_T item = sizeof(USHORT) + sizeof(DWORD) + bytes;
-    if (item > 0xFFFF)
-        return nullptr;
-    BYTE *list = ShAllocZero(item + sizeof(USHORT));
-    if (!list)
-        return nullptr;
-    *(USHORT *)list = (USHORT)item;
-    memcpy(list + sizeof(USHORT), &signature, sizeof(signature));
-    memcpy(list + sizeof(USHORT) + sizeof(DWORD), data, bytes);
-    return (PIDLIST_ABSOLUTE)list;
-}
-
-PIDLIST_ABSOLUTE ShIdListFromPath(LPCWSTR path)
-{
-    return make_list(PIDL_PATH_SIGNATURE, path, (wcslen(path) + 1) * sizeof(WCHAR));
-}
+/* the class ids of the folders that have no path, as windows' lists name them. */
+static const struct {
+    const GUID *Id;
+    BYTE Sort;
+    GUID Class;
+} g_virtual[] = {
+    {&FOLDERID_ComputerFolder, 0x50, {0x20D04FE0, 0x3AEA, 0x1069, {0xA2, 0xD8, 0x08, 0x00, 0x2B, 0x30, 0x30, 0x9D}}},
+    {&FOLDERID_NetworkFolder, 0x58, {0xF02C1A0D, 0xBE21, 0x4350, {0x88, 0xB0, 0x73, 0x67, 0xFC, 0x96, 0xEF, 0x3C}}},
+    {&FOLDERID_ControlPanelFolder, 0x70, {0x5399E694, 0x6CE5, 0x4D6C, {0x8F, 0xCE, 0x1D, 0x88, 0x70, 0xFD, 0xCB, 0xA0}}},
+    {&FOLDERID_PrintersFolder, 0x70, {0x2227A280, 0x3AEA, 0x1069, {0xA2, 0xDE, 0x08, 0x00, 0x2B, 0x30, 0x30, 0x9D}}},
+    {&FOLDERID_RecycleBinFolder, 0x78, {0x645FF040, 0x5081, 0x101B, {0x9F, 0x08, 0x00, 0xAA, 0x00, 0x2F, 0x95, 0x4E}}},
+};
 
 static PIDLIST_ABSOLUTE virtual_list(const SH_FOLDER *folder)
 {
-    DWORD index = (DWORD)(folder - g_folders);
-    return make_list(PIDL_VIRTUAL_SIGNATURE, &index, sizeof(index));
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_virtual); i++)
+        if (IsEqualGUID(g_virtual[i].Id, folder->Id))
+            return ShClassList(g_virtual[i].Sort, &g_virtual[i].Class);
+    return nullptr;
 }
 
 static PIDLIST_ABSOLUTE desktop_list(void)
 {
     return ShAllocZero(sizeof(USHORT));
-}
-
-static DWORD list_signature(PCUIDLIST_ABSOLUTE pidl)
-{
-    DWORD signature = 0;
-    if (pidl->mkid.cb >= sizeof(USHORT) + sizeof(DWORD))
-        memcpy(&signature, pidl->mkid.abID, sizeof(signature));
-    return signature;
-}
-
-BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars)
-{
-    if (!path || !chars)
-        return FALSE;
-    path[0] = 0;
-    if (!pidl)
-        return FALSE;
-    WCHAR buffer[MAX_PATH];
-    LPCWSTR source;
-    if (!pidl->mkid.cb) {
-        if (FAILED(resolve(folder_by_csidl(CSIDL_DESKTOPDIRECTORY), KF_FLAG_DONT_VERIFY, nullptr, buffer)))
-            return FALSE;
-        source = buffer;
-    } else if (list_signature(pidl) == PIDL_PATH_SIGNATURE) {
-        source = (LPCWSTR)(pidl->mkid.abID + sizeof(DWORD));
-    } else {
-        return FALSE;
-    }
-    SIZE_T length = wcslen(source);
-    if (length >= chars)
-        return FALSE;
-    memcpy(path, source, (length + 1) * sizeof(WCHAR));
-    return TRUE;
-}
-
-SHSTDAPI UINT WINAPI ILGetSize(PCUIDLIST_RELATIVE pidl)
-{
-    if (!pidl)
-        return 0;
-    UINT size = sizeof(USHORT);
-    for (const BYTE *p = (const BYTE *)pidl; *(const USHORT *)p; p += *(const USHORT *)p)
-        size += *(const USHORT *)p;
-    return size;
-}
-
-SHSTDAPI PIDLIST_RELATIVE WINAPI ILClone(PCUIDLIST_RELATIVE pidl)
-{
-    if (!pidl)
-        return nullptr;
-    UINT size = ILGetSize(pidl);
-    PIDLIST_RELATIVE copy = ShAlloc(size);
-    if (copy)
-        memcpy(copy, pidl, size);
-    return copy;
-}
-
-SHSTDAPI void WINAPI ILFree(PIDLIST_RELATIVE pidl)
-{
-    ShFree(pidl);
 }
 
 SHSTDAPI BOOL WINAPI SHGetPathFromIDListEx(PCIDLIST_ABSOLUTE pidl, PWSTR path, DWORD chars, int options)
@@ -407,21 +345,11 @@ SHSTDAPI HRESULT WINAPI SHParseDisplayName(PCWSTR name, IBindCtx *context, PIDLI
     *pidl = nullptr;
     if (out)
         *out = 0;
-    if (!name)
-        return E_INVALIDARG;
-    WCHAR full[MAX_PATH];
-    DWORD n = GetFullPathNameW(name, MAX_PATH, full, nullptr);
-    if (!n || n >= MAX_PATH)
-        return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
-    DWORD attributes = GetFileAttributesW(full);
-    if (attributes == INVALID_FILE_ATTRIBUTES)
-        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-    *pidl = ShIdListFromPath(full);
-    if (!*pidl)
-        return E_OUTOFMEMORY;
-    if (out)
+    DWORD attributes;
+    HRESULT hr = ShParseName(name, context, pidl, &attributes);
+    if (SUCCEEDED(hr) && out)
         *out = ShAttributesFromFile(attributes) & in;
-    return S_OK;
+    return hr;
 }
 
 SHSTDAPI PIDLIST_ABSOLUTE WINAPI ILCreateFromPathW(PCWSTR path)

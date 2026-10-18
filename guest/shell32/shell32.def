@@ -6,3 +6,24 @@ EXPORTS
     SHChangeNotifyRegister @2
     SHChangeNotifyDeregister @4
     ILCreateFromPathW @190
+    ILFindLastID @16
+    ILRemoveLastID @17
+    ILClone @18
+    ILCloneFirst @19
+    ILIsEqual @21
+    ILIsParent @23
+    ILFindChild @24
+    ILCombine @25
+    ILSaveToStream @27
+    ILGetSize @152
+    ILGetNext @153
+    ILAppendID @154
+    ILCreateFromPathA @189
+    ILLoadFromStreamEx @846
+    SHCreateItemWithParent @346
+    SHCreateShellItemArray @351
+    SHCreateShellItemArrayFromIDLists @353
+    SHCreateShellItemArrayFromShellItem @354
+    SHGetIDListFromObject @507
+    SHGetKnownFolderItem @514
+    SHSimpleIDListFromPath @162

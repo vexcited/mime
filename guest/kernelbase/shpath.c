@@ -902,8 +902,9 @@ LWSTDAPI BOOL WINAPI PathRelativePathToW(LPWSTR path, LPCWSTR from, DWORD from_a
             }
         }
     }
-    if (SUCCEEDED(hr) && to_dir[common]) {
-        int at = to_dir[common] == L'\\' ? common : common - 1;
+    /* what the destination has past the common folders, a file's name included. */
+    if (SUCCEEDED(hr) && to[common]) {
+        int at = to[common] == L'\\' ? common : common - 1;
         hr = KbShCopy(path + wcslen(path), MAX_PATH - wcslen(path), to + at);
     }
     if (FAILED(hr)) {
