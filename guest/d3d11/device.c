@@ -1519,11 +1519,21 @@ static HRESULT STDMETHODCALLTYPE presenter_create_swap_chain(IMimeDXGIPresenter 
     return D3dCreateSwapChain(presenter_impl(iface), factory, window, desc, fullscreen, swapchain);
 }
 
+static HRESULT STDMETHODCALLTYPE presenter_create_composition_swap_chain(IMimeDXGIPresenter *iface,
+                                                                         IDXGIFactory *factory, HANDLE surface,
+                                                                         const DXGI_SWAP_CHAIN_DESC1 *desc,
+                                                                         IDXGIOutput *restrict_to,
+                                                                         IDXGISwapChain1 **swapchain)
+{
+    return D3dCreateCompositionSwapChain(presenter_impl(iface), factory, surface, desc, swapchain);
+}
+
 static const IMimeDXGIPresenterVtbl presenter_vtbl = {
     presenter_query,
     presenter_add_ref,
     presenter_release,
     presenter_create_swap_chain,
+    presenter_create_composition_swap_chain,
 };
 
 /* ------------------------------------------------------------------ IMimeD3D11Device */

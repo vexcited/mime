@@ -395,6 +395,33 @@ typedef struct DXGI_MATRIX_3X2_F {
     float _11, _12, _21, _22, _31, _32;
 } DXGI_MATRIX_3X2_F;
 
+typedef struct DXGI_DECODE_SWAP_CHAIN_DESC {
+    UINT Flags;
+} DXGI_DECODE_SWAP_CHAIN_DESC;
+
+typedef enum DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAGS {
+    DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAG_NOMINAL_RANGE = 0x1,
+    DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAG_BT709 = 0x2,
+    DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAG_xvYCC = 0x4
+} DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAGS;
+
+typedef enum DXGI_FRAME_PRESENTATION_MODE {
+    DXGI_FRAME_PRESENTATION_MODE_COMPOSED = 0,
+    DXGI_FRAME_PRESENTATION_MODE_OVERLAY = 1,
+    DXGI_FRAME_PRESENTATION_MODE_NONE = 2,
+    DXGI_FRAME_PRESENTATION_MODE_COMPOSITION_FAILURE = 3
+} DXGI_FRAME_PRESENTATION_MODE;
+
+typedef struct DXGI_FRAME_STATISTICS_MEDIA {
+    UINT PresentCount;
+    UINT PresentRefreshCount;
+    UINT SyncRefreshCount;
+    LARGE_INTEGER SyncQPCTime;
+    LARGE_INTEGER SyncGPUTime;
+    DXGI_FRAME_PRESENTATION_MODE CompositionMode;
+    UINT ApprovedPresentDuration;
+} DXGI_FRAME_STATISTICS_MEDIA;
+
 typedef enum DXGI_OFFER_RESOURCE_PRIORITY {
     DXGI_OFFER_RESOURCE_PRIORITY_LOW = 1,
     DXGI_OFFER_RESOURCE_PRIORITY_NORMAL = 2,
@@ -468,6 +495,9 @@ typedef struct IDXGIFactory4 IDXGIFactory4;
 typedef struct IDXGIFactory5 IDXGIFactory5;
 typedef struct IDXGIFactory6 IDXGIFactory6;
 typedef struct IDXGIFactory7 IDXGIFactory7;
+typedef struct IDXGIFactoryMedia IDXGIFactoryMedia;
+typedef struct IDXGIDecodeSwapChain IDXGIDecodeSwapChain;
+typedef struct IDXGISwapChainMedia IDXGISwapChainMedia;
 typedef struct IDXGIDevice IDXGIDevice;
 typedef struct IDXGIDevice1 IDXGIDevice1;
 typedef struct IDXGIDevice2 IDXGIDevice2;
@@ -708,6 +738,34 @@ typedef struct IDXGIDevice4 IDXGIDevice4;
     HRESULT(STDMETHODCALLTYPE *RegisterAdaptersChangedEvent)(T * This, HANDLE event, DWORD * cookie);                  \
     HRESULT(STDMETHODCALLTYPE *UnregisterAdaptersChangedEvent)(T * This, DWORD cookie);
 
+#define IDXGIDecodeSwapChain_METHODS(T)                                                                                \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *PresentBuffer)(T * This, UINT buffer, UINT interval, UINT flags);                       \
+    HRESULT(STDMETHODCALLTYPE *SetSourceRect)(T * This, const RECT *rect);                                             \
+    HRESULT(STDMETHODCALLTYPE *SetTargetRect)(T * This, const RECT *rect);                                             \
+    HRESULT(STDMETHODCALLTYPE *SetDestSize)(T * This, UINT width, UINT height);                                        \
+    HRESULT(STDMETHODCALLTYPE *GetSourceRect)(T * This, RECT * rect);                                                  \
+    HRESULT(STDMETHODCALLTYPE *GetTargetRect)(T * This, RECT * rect);                                                  \
+    HRESULT(STDMETHODCALLTYPE *GetDestSize)(T * This, UINT * width, UINT * height);                                    \
+    HRESULT(STDMETHODCALLTYPE *SetColorSpace)(T * This, DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAGS space);                    \
+    DXGI_MULTIPLANE_OVERLAY_YCbCr_FLAGS(STDMETHODCALLTYPE *GetColorSpace)(T * This);
+
+#define IDXGISwapChainMedia_METHODS(T)                                                                                 \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetFrameStatisticsMedia)(T * This, DXGI_FRAME_STATISTICS_MEDIA * stats);                \
+    HRESULT(STDMETHODCALLTYPE *SetPresentDuration)(T * This, UINT duration);                                           \
+    HRESULT(STDMETHODCALLTYPE *CheckPresentDurationSupport)(T * This, UINT desired, UINT * closest_smaller,            \
+                                                            UINT * closest_larger);
+
+#define IDXGIFactoryMedia_METHODS(T)                                                                                   \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *CreateSwapChainForCompositionSurfaceHandle)(                                            \
+        T * This, IUnknown * device, HANDLE surface, const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGIOutput *restrict_to,      \
+        IDXGISwapChain1 **swapchain);                                                                                  \
+    HRESULT(STDMETHODCALLTYPE *CreateDecodeSwapChainForCompositionSurfaceHandle)(                                      \
+        T * This, IUnknown * device, HANDLE surface, DXGI_DECODE_SWAP_CHAIN_DESC *desc, IDXGIResource *yuv_buffers,    \
+        IDXGIOutput *restrict_to, IDXGIDecodeSwapChain **swapchain);
+
 #define IDXGIDevice_METHODS(T)                                                                                         \
     IDXGIObject_METHODS(T)                                                                                             \
     HRESULT(STDMETHODCALLTYPE *GetAdapter)(T * This, IDXGIAdapter * *adapter);                                         \
@@ -775,6 +833,9 @@ MIME_COM_INTERFACE(IDXGIFactory4)
 MIME_COM_INTERFACE(IDXGIFactory5)
 MIME_COM_INTERFACE(IDXGIFactory6)
 MIME_COM_INTERFACE(IDXGIFactory7)
+MIME_COM_INTERFACE(IDXGIFactoryMedia)
+MIME_COM_INTERFACE(IDXGIDecodeSwapChain)
+MIME_COM_INTERFACE(IDXGISwapChainMedia)
 MIME_COM_INTERFACE(IDXGIDevice)
 MIME_COM_INTERFACE(IDXGIDevice1)
 MIME_COM_INTERFACE(IDXGIDevice2)
@@ -820,6 +881,9 @@ MIME_DEFINE_GUID(IID_IDXGIAdapter4, 0x3C8D99D1, 0x4FBF, 0x4181, 0xA8, 0x2C, 0xAF
 MIME_DEFINE_GUID(IID_IDXGIOutput6, 0x068346E8, 0xAAEC, 0x4B84, 0xAD, 0xD7, 0x13, 0x7F, 0x51, 0x3F, 0x77, 0xA1);
 MIME_DEFINE_GUID(IID_IDXGIFactory6, 0xC1B6694F, 0xFF09, 0x44A9, 0xB0, 0x3C, 0x77, 0x90, 0x0A, 0x0A, 0x1D, 0x17);
 MIME_DEFINE_GUID(IID_IDXGIFactory7, 0xA4966EED, 0x76DB, 0x44DA, 0x84, 0xC1, 0xEE, 0x9A, 0x7A, 0xFB, 0x20, 0xA8);
+MIME_DEFINE_GUID(IID_IDXGIFactoryMedia, 0x41E7D1F2, 0xA591, 0x4F7B, 0xA2, 0xE5, 0xFA, 0x9C, 0x84, 0x3E, 0x1C, 0x12);
+MIME_DEFINE_GUID(IID_IDXGIDecodeSwapChain, 0x2633066B, 0x4514, 0x4C7A, 0x8F, 0xD8, 0x12, 0xEA, 0x98, 0x05, 0x9D, 0x18);
+MIME_DEFINE_GUID(IID_IDXGISwapChainMedia, 0xDD95B90B, 0xF05F, 0x4F6A, 0xBD, 0x65, 0x25, 0xBF, 0xB2, 0x64, 0xBD, 0x84);
 
 #ifndef MIME_BUILD_DXGI
 #define DXGIAPI DECLSPEC_IMPORT

@@ -918,6 +918,7 @@ void D3dCtxClearDepthStencilRects(D3dContext *c, ID3D11DepthStencilView *iface, 
                                   UINT8 stencil, const D3D11_RECT *rects, UINT count);
 void D3dCtxBlit(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, const RECT *dst_rect, ID3D11Resource *src,
                 UINT src_sub, const RECT *src_rect, BOOL linear);
+void D3dCtxCopyResource(D3dContext *c, ID3D11Resource *dst, ID3D11Resource *src);
 D3dBlendState *D3dBlendFrom(ID3D11BlendState *iface);
 D3dRasterizerState *D3dRasterizerFrom(ID3D11RasterizerState *iface);
 D3dDepthStencilState *D3dDepthStencilFrom(ID3D11DepthStencilState *iface);
@@ -955,6 +956,8 @@ void *D3d10AsyncInterface(D3dQuery *query, REFIID riid);
 /* swapchain.c. */
 HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,
                            const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen, IDXGISwapChain1 **out);
+HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, HANDLE surface,
+                                     const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGISwapChain1 **out);
 
 /* the debug output of the dll, to the kernel debugger log. */
 void D3dLog(const char *format, ...);

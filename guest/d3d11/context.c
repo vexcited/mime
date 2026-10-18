@@ -23,7 +23,6 @@ D3dContext *D3dContextFrom(ID3D11DeviceContext *iface)
 /* the copies, clears and maps of context_copy.c. */
 void D3dCtxCopySubresourceRegion(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, UINT x, UINT y, UINT z,
                                  ID3D11Resource *src, UINT src_sub, const D3D11_BOX *box, UINT flags);
-void D3dCtxCopyResource(D3dContext *c, ID3D11Resource *dst, ID3D11Resource *src);
 void D3dCtxUpdateSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, const D3D11_BOX *box,
                              const void *data, UINT row_pitch, UINT depth_pitch, UINT flags);
 void D3dCtxCopyStructureCount(D3dContext *c, ID3D11Buffer *dst, UINT offset, ID3D11UnorderedAccessView *src);

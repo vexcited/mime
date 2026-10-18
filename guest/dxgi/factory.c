@@ -5,6 +5,7 @@
 #include "dxgi_private.h"
 
 static DxgiFactory *impl(IDXGIFactory7 *iface) { return CONTAINING_RECORD(iface, DxgiFactory, iface); }
+static DxgiFactory *media_impl(IDXGIFactoryMedia *iface) { return CONTAINING_RECORD(iface, DxgiFactory, media); }
 
 static const GUID *const FACTORY_IIDS[] = {
     &IID_IUnknown,      &IID_IDXGIObject,   &IID_IDXGIFactory,  &IID_IDXGIFactory1, &IID_IDXGIFactory2,
@@ -21,6 +22,11 @@ static HRESULT STDMETHODCALLTYPE factory_query(IDXGIFactory7 *iface, REFIID riid
             *out = iface;
             return S_OK;
         }
+    if (IsEqualGUID(riid, &IID_IDXGIFactoryMedia)) {
+        iface->lpVtbl->AddRef(iface);
+        *out = &impl(iface)->media;
+        return S_OK;
+    }
     *out = nullptr;
     return E_NOINTERFACE;
 }
@@ -202,15 +208,82 @@ static HRESULT STDMETHODCALLTYPE factory_register_event(IDXGIFactory7 *iface, HA
 
 static void STDMETHODCALLTYPE factory_unregister(IDXGIFactory7 *iface, DWORD cookie) {}
 
+/* a swap chain with no window: the device makes it, for a visual of dcomp.dll to show. */
+static HRESULT create_composition(IDXGIFactory7 *iface, IUnknown *device, HANDLE surface,
+                                  const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGIOutput *restrict_to,
+                                  IDXGISwapChain1 **swapchain)
+{
+    if (!swapchain)
+        return DXGI_ERROR_INVALID_CALL;
+    *swapchain = nullptr;
+    if (!device || !desc)
+        return DXGI_ERROR_INVALID_CALL;
+    IMimeDXGIPresenter *presenter = nullptr;
+    if (FAILED(device->lpVtbl->QueryInterface(device, &IID_IMimeDXGIPresenter, (void **)&presenter)))
+        return DXGI_ERROR_INVALID_CALL;
+    HRESULT hr = presenter->lpVtbl->CreateCompositionSwapChain(presenter, (IDXGIFactory *)iface, surface, desc,
+                                                               restrict_to, swapchain);
+    presenter->lpVtbl->Release(presenter);
+    return hr;
+}
+
 static HRESULT STDMETHODCALLTYPE factory_create_swap_chain_for_composition(IDXGIFactory7 *iface, IUnknown *device,
                                                                            const DXGI_SWAP_CHAIN_DESC1 *desc,
                                                                            IDXGIOutput *restrict_to,
                                                                            IDXGISwapChain1 **swapchain)
 {
+    return create_composition(iface, device, nullptr, desc, restrict_to, swapchain);
+}
+
+/* ------------------------------------------------------------------ IDXGIFactoryMedia */
+
+static HRESULT STDMETHODCALLTYPE media_query(IDXGIFactoryMedia *iface, REFIID riid, void **out)
+{
+    return factory_query(&media_impl(iface)->iface, riid, out);
+}
+
+static ULONG STDMETHODCALLTYPE media_add_ref(IDXGIFactoryMedia *iface)
+{
+    return factory_add_ref(&media_impl(iface)->iface);
+}
+
+static ULONG STDMETHODCALLTYPE media_release(IDXGIFactoryMedia *iface)
+{
+    return factory_release(&media_impl(iface)->iface);
+}
+
+/* the swap chain stands for the composition surface a handle names, which a visual shows by that handle. */
+static HRESULT STDMETHODCALLTYPE media_create_swap_chain_for_composition_surface_handle(
+    IDXGIFactoryMedia *iface, IUnknown *device, HANDLE surface, const DXGI_SWAP_CHAIN_DESC1 *desc,
+    IDXGIOutput *restrict_to, IDXGISwapChain1 **swapchain)
+{
+    if (!surface || surface == INVALID_HANDLE_VALUE) {
+        if (swapchain)
+            *swapchain = nullptr;
+        return DXGI_ERROR_INVALID_CALL;
+    }
+    return create_composition(&media_impl(iface)->iface, device, surface, desc, restrict_to, swapchain);
+}
+
+/* decoding video takes a decoder device, and there is none. */
+static HRESULT STDMETHODCALLTYPE media_create_decode_swap_chain_for_composition_surface_handle(
+    IDXGIFactoryMedia *iface, IUnknown *device, HANDLE surface, DXGI_DECODE_SWAP_CHAIN_DESC *desc,
+    IDXGIResource *yuv_buffers, IDXGIOutput *restrict_to, IDXGIDecodeSwapChain **swapchain)
+{
     if (swapchain)
         *swapchain = nullptr;
+    if (!swapchain || !device || !desc || !yuv_buffers || !surface)
+        return DXGI_ERROR_INVALID_CALL;
     return DXGI_ERROR_UNSUPPORTED;
 }
+
+static const IDXGIFactoryMediaVtbl media_vtbl = {
+    media_query,
+    media_add_ref,
+    media_release,
+    media_create_swap_chain_for_composition_surface_handle,
+    media_create_decode_swap_chain_for_composition_surface_handle,
+};
 
 static UINT STDMETHODCALLTYPE factory_get_creation_flags(IDXGIFactory7 *iface) { return impl(iface)->flags; }
 
@@ -320,6 +393,7 @@ HRESULT DxgiCreateFactory(UINT flags, REFIID riid, void **out)
     if (!factory)
         return E_OUTOFMEMORY;
     factory->iface.lpVtbl = &factory_vtbl;
+    factory->media.lpVtbl = &media_vtbl;
     factory->refs = 1;
     factory->flags = flags;
     HRESULT hr = factory_query(&factory->iface, riid, out);

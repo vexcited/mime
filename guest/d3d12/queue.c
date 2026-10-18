@@ -646,11 +646,22 @@ static HRESULT STDMETHODCALLTYPE presenter_create_swap_chain(IMimeDXGIPresenter 
     return D12CreateSwapChain(queue, factory, window, desc, fullscreen, swapchain);
 }
 
+/* direct3d 12 swap chains present to windows only. */
+static HRESULT STDMETHODCALLTYPE presenter_create_composition_swap_chain(IMimeDXGIPresenter *iface,
+                                                                         IDXGIFactory *factory, HANDLE surface,
+                                                                         const DXGI_SWAP_CHAIN_DESC1 *desc,
+                                                                         IDXGIOutput *restrict_to,
+                                                                         IDXGISwapChain1 **swapchain)
+{
+    return DXGI_ERROR_UNSUPPORTED;
+}
+
 static const struct IMimeDXGIPresenterVtbl g_presenter_vtbl = {
     presenter_query,
     presenter_add_ref,
     presenter_release,
     presenter_create_swap_chain,
+    presenter_create_composition_swap_chain,
 };
 
 HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, D12Queue **out)

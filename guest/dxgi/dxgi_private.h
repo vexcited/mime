@@ -44,6 +44,7 @@ const DxgiVulkan *DxgiGetVulkan(void);
 
 struct DxgiFactory {
     IDXGIFactory7 iface;
+    IDXGIFactoryMedia media;
     LONG refs;
     UINT flags;
     HWND association;
