@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -518,7 +519,7 @@ static void create_instance(MvkCall *call)
  * the memory types a device can import host memory into, which the guest
  * may map: a device of its own answers, created for the question.
  */
-static uint32_t importable_types(MvkConnection *c, VkPhysicalDevice physical)
+static uint32_t probe_importable_types(MvkConnection *c, VkPhysicalDevice physical)
 {
     uint32_t count = 0;
     c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
@@ -547,6 +548,45 @@ static uint32_t importable_types(MvkConnection *c, VkPhysicalDevice physical)
         bits = out.memoryTypeBits;
     free(probe);
     destroy(device, nullptr);
+    return bits;
+}
+
+/*
+ * the answer is the same for every connection to a device, and a device made only to ask takes 70 ms, so it is
+ * kept for the life of the process, by what names the device and its driver.
+ */
+static struct {
+    uint32_t vendor, device, driver;
+    char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    uint32_t bits;
+} g_importable[8];
+static uint32_t g_importable_count;
+static pthread_mutex_t g_importable_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static uint32_t importable_types(MvkConnection *c, VkPhysicalDevice physical)
+{
+    VkPhysicalDeviceProperties props;
+    c->fn.vkGetPhysicalDeviceProperties(physical, &props);
+    pthread_mutex_lock(&g_importable_lock);
+    for (uint32_t i = 0; i < g_importable_count; i++) {
+        if (g_importable[i].vendor == props.vendorID && g_importable[i].device == props.deviceID &&
+            g_importable[i].driver == props.driverVersion && !strcmp(g_importable[i].name, props.deviceName)) {
+            uint32_t bits = g_importable[i].bits;
+            pthread_mutex_unlock(&g_importable_lock);
+            return bits;
+        }
+    }
+    pthread_mutex_unlock(&g_importable_lock);
+    uint32_t bits = probe_importable_types(c, physical);
+    pthread_mutex_lock(&g_importable_lock);
+    if (g_importable_count < sizeof(g_importable) / sizeof(g_importable[0])) {
+        g_importable[g_importable_count].vendor = props.vendorID;
+        g_importable[g_importable_count].device = props.deviceID;
+        g_importable[g_importable_count].driver = props.driverVersion;
+        snprintf(g_importable[g_importable_count].name, sizeof(g_importable[0].name), "%s", props.deviceName);
+        g_importable[g_importable_count++].bits = bits;
+    }
+    pthread_mutex_unlock(&g_importable_lock);
     return bits;
 }
 
@@ -1918,6 +1958,7 @@ static void run_call(MvkCall *call)
 {
     uint32_t op = call->header.op;
     MvkConnection *c = call->conn;
+    uint64_t began = mime_now_ns();
     if (c->jobs) {
         uint32_t finished = __atomic_load_n(&c->jobs_finished, __ATOMIC_ACQUIRE);
         if (finished != c->jobs_seen) {
@@ -1939,6 +1980,10 @@ static void run_call(MvkCall *call)
         mime_warn("vulkan: unknown call %#x", op);
     if (call->in.error)
         mime_warn("vulkan: malformed call %#x", op);
+    /* what the driver was slow at, for MIME_DEBUG. */
+    uint64_t took = mime_now_ns() - began;
+    if (took > 5000000)
+        mime_debug("vulkan: connection %u call %#x took %llu us", c->index, op, (unsigned long long)(took / 1000));
 }
 
 static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *stream, size_t size)
@@ -2214,4 +2259,33 @@ void mime_vk_close_all(void)
 {
     for (uint64_t i = 0; i < MAX_CONNECTIONS; i++)
         mime_vk_close(i);
+}
+
+/*
+ * the first connection of a guest loads the loader and the driver, 120 ms, and makes a device to learn which
+ * memory it can import, 70 ms more. A thread does both while the guest boots, so they are done when its first
+ * program asks, and keeps an instance for good, as the loader would unload the driver with the last one that closed.
+ */
+static void *warm_main(void *arg)
+{
+    mime_set_thread_name("mime-vk-warm");
+    uint64_t began = mime_now_ns();
+    MvkConnection warm = {};
+    if (!mvk_internal_instance(&warm, VK_API_VERSION_1_1))
+        return nullptr;
+    VkPhysicalDevice devices[MAX_PHYSICAL_DEVICES];
+    uint32_t count = MAX_PHYSICAL_DEVICES;
+    if (warm.fn.vkEnumeratePhysicalDevices(warm.instance, &count, devices) >= 0)
+        for (uint32_t i = 0; i < count; i++)
+            importable_types(&warm, devices[i]);
+    /* the instance stays: the loader unloads the driver when the last one goes, and loads it again. */
+    mime_debug("vulkan: the driver is warm after %llu ms", (unsigned long long)((mime_now_ns() - began) / 1000000));
+    return nullptr;
+}
+
+void mime_vk_warm_up(void)
+{
+    pthread_t thread;
+    if (pthread_create(&thread, nullptr, warm_main, nullptr) == 0)
+        pthread_detach(thread);
 }

@@ -7,6 +7,9 @@
 #include "mime_cli.h"
 #include "ui/ui.h"
 #include "vmm/vmm.h"
+#ifdef __linux__
+#include "gpu/gpu.h"
+#endif
 
 #include <errno.h>
 #include <execinfo.h>
@@ -720,6 +723,9 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         return 1;
     if (!mime_vm_start(&g_vm))
         return 1;
+#ifdef __linux__
+    mime_vk_warm_up();
+#endif
 
     pthread_t t;
     pthread_create(&t, nullptr, accept_thread, nullptr);
