@@ -283,7 +283,12 @@ BOOL WINAPI GlobalMemoryStatusEx(LPMEMORYSTATUSEX status)
     status->ullTotalPageFile = limit;
     status->ullAvailPageFile = limit - committed;
     status->ullTotalVirtual = basic.MaximumUserModeAddress - basic.MinimumUserModeAddress + 1;
-    status->ullAvailVirtual = status->ullTotalVirtual - (total - available);
+    /* what is left of the address space is what the process has not reserved. */
+    SIZE_T counters[sizeof(void *) == 8 ? 14 : 12] = {};
+    ULONGLONG reserved = total - available;
+    if (NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), ProcessVmCounters, counters, sizeof(counters), nullptr)))
+        reserved = counters[1];
+    status->ullAvailVirtual = reserved < status->ullTotalVirtual ? status->ullTotalVirtual - reserved : 0;
     status->ullAvailExtendedVirtual = 0;
     return TRUE;
 }
