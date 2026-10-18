@@ -245,6 +245,7 @@ void PspProcessExit(PEPROCESS process)
     KiLogPrintf("process %u (%s) exited with status %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
                 process->ImageFileName, process->ExitStatus);
     PspJobProcessExit(process);
+    ExReleaseTimerResolution(process);
     PsWin32ProcessCallout(process, FALSE);
     PspNotifyProcess(process, FALSE);
     ObKillProcessHandles(process);

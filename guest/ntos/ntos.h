@@ -915,6 +915,7 @@ typedef struct _EPROCESS {
     PVOID ConsoleCtrlRoutine;      /* kernelbase's, started on a new thread for each ctrl event */
     ULONG ConsoleGroup;            /* process group of GenerateConsoleCtrlEvent */
     PKEVENT ConsoleInputEvent;     /* kernelbase's, set while console input waits */
+    ULONG TimerResolution; /* what NtSetTimerResolution asked for, 0 when nothing, ex/sysinfo.c */
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
@@ -932,6 +933,7 @@ typedef struct _EPROCESS {
 } EPROCESS;
 
 extern LIST_ENTRY PsActiveProcessHead;
+void ExReleaseTimerResolution(PEPROCESS process);
 extern PEPROCESS PsIdleProcess;
 extern POBJECT_TYPE PsProcessTypeObject;
 extern POBJECT_TYPE PsThreadTypeObject;

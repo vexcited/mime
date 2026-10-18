@@ -20,9 +20,37 @@ NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PLARGE_INTEGER 
     return status;
 }
 
+/*
+ * the clock is tick driven but timers are programmed to the exact deadline, so
+ * a resolution request only has to be remembered. the system resolution is the
+ * finest one any live process asked for, and the default when none did.
+ */
+enum {
+    TIMER_RESOLUTION_COARSEST = 156250,
+    TIMER_RESOLUTION_FINEST = 5000,
+};
+
+static ULONG current_resolution(void)
+{
+    ULONG best = KI_CLOCK_TICK_HNS;
+    ULONG64 s = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (p->TimerResolution && p->TimerResolution < best)
+            best = p->TimerResolution;
+    }
+    KiReleaseDispatcherLock(s);
+    return best;
+}
+
+void ExReleaseTimerResolution(PEPROCESS process)
+{
+    process->TimerResolution = 0;
+}
+
 NTSTATUS NTAPI NtQueryTimerResolution(PULONG maximum, PULONG minimum, PULONG current)
 {
-    ULONG max = 156250, min = 5000, cur = KI_CLOCK_TICK_HNS;
+    ULONG max = TIMER_RESOLUTION_COARSEST, min = TIMER_RESOLUTION_FINEST, cur = current_resolution();
     KiCopyToUser(maximum, &max, sizeof(max));
     KiCopyToUser(minimum, &min, sizeof(min));
     return KiCopyToUser(current, &cur, sizeof(cur));
@@ -30,8 +58,19 @@ NTSTATUS NTAPI NtQueryTimerResolution(PULONG maximum, PULONG minimum, PULONG cur
 
 NTSTATUS NTAPI NtSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current)
 {
-    /* timers are already programmed precisely; report what was asked for. */
-    ULONG cur = set ? desired : KI_CLOCK_TICK_HNS;
+    PEPROCESS process = PsCurrentProcess();
+    if (set) {
+        if (desired > TIMER_RESOLUTION_COARSEST)
+            desired = TIMER_RESOLUTION_COARSEST;
+        if (desired < TIMER_RESOLUTION_FINEST)
+            desired = TIMER_RESOLUTION_FINEST;
+        process->TimerResolution = desired;
+    } else if (!process->TimerResolution) {
+        return STATUS_TIMER_RESOLUTION_NOT_SET;
+    } else {
+        process->TimerResolution = 0;
+    }
+    ULONG cur = current_resolution();
     return KiCopyToUser(current, &cur, sizeof(cur));
 }
 
