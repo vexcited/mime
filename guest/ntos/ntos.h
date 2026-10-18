@@ -440,6 +440,8 @@ struct _SECTION;
 #define MM_VAD_PLACEHOLDER 0x1 /* a reservation that holds nothing, to be replaced by an allocation or a view */
 #define MM_VAD_REPLACED 0x2    /* made by replacing a placeholder, so it can become one again */
 #define MM_VAD_WRITE_WATCH 0x4 /* the pages written since they were last reset are tracked */
+#define MM_VAD_RELOCATED 0x8        /* a view of an image away from its base: its pages are relocated as they are first touched */
+#define MM_VAD_RELOCATED_SHARED 0x10 /* the relocated pages of the view are the section's, shared by the views at the same base */
 
 typedef struct _MMVAD {
     ULONG_PTR StartVa;
@@ -449,6 +451,7 @@ typedef struct _MMVAD {
     struct _SECTION *Section;
     ULONG64 SectionOffset;
     ULONG Flags;
+    LONG64 RelocDelta; /* MM_VAD_RELOCATED: how far the view is from the preferred base */
 } MMVAD, *PMMVAD;
 
 typedef struct _MMVAD_SPAN {
@@ -555,9 +558,22 @@ typedef struct _SECTION {
     ULONG64 SourcePa;   /* read only file data the pages are built from: rom or host window */
     ULONG64 SourceSize; /* file bytes at SourcePa */
     PVOID SourceRef;    /* the window reference, see IoGetFileWindow */
+    /*
+     * images: for each page the offset of the base relocation block that fixes it, with a flag when the block
+     * of the page before reaches into it; built when the first view away from the base is made.
+     */
+    ULONG *RelocIndex;
+    ULONG RelocIndexState; /* 0 not tried, 1 built, 2 the table is not one the index can describe */
+    ULONG_PTR RelocBase;   /* where the first view away from the preferred base was made, and where the next ones are */
+    ULONG64 *RelocPages;   /* the relocated pages of the views at RelocBase, built as they are touched */
+    ULONG ImageSlot;       /* images of files: one more than the place in the table of the images that processes share */
 } SECTION, *PSECTION;
 
 ULONG64 MiSectionPage(PSECTION s, ULONG index);
+/* what the first touch of a page of a view maps; shared tells that the page belongs to the section. */
+BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *pa, BOOLEAN *shared);
+/* the page a view would map for a page without building or copying anything, or 0. */
+ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect);
 ULONG64 MiSectionSwPte(ULONG protect);
 ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared);
 

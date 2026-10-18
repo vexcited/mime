@@ -19,9 +19,12 @@
 POBJECT_TYPE MmSectionType;
 POBJECT_TYPE *MmSectionObjectType = &MmSectionType;
 
+static void forget_file_image(PSECTION s);
+
 static void section_delete(PVOID object)
 {
     PSECTION s = object;
+    forget_file_image(s);
     if (s->SystemVa) {
         for (ULONG i = 0; i < s->PageCount; i++)
             MiUnmapPage(MiKernelRoot(), (ULONG_PTR)s->SystemVa + (ULONG_PTR)i * PAGE_SIZE, 0);
@@ -34,6 +37,14 @@ static void section_delete(PVOID object)
                 MmFreePage(s->Pages[i]);
         ExFreePool(s->Pages);
     }
+    if (s->RelocPages) {
+        for (ULONG i = 0; i < s->PageCount; i++)
+            if (s->RelocPages[i])
+                MmFreePage(s->RelocPages[i]);
+        ExFreePool(s->RelocPages);
+    }
+    if (s->RelocIndex)
+        ExFreePool(s->RelocIndex);
     if (s->PageProtect)
         ExFreePool(s->PageProtect);
     IoReleaseFileWindow(s->SourceRef);
@@ -136,6 +147,244 @@ ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared)
     if (!MiGetPfn(pa) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
         attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
     return attrs;
+}
+
+/*
+ * relocating a view of an image away from its base. windows relocates the pages that the base relocation
+ * table touches and leaves the others shared with the file. so does mime, but when a page is first
+ * touched and not when the view is made, which for a browser's image of hundreds of megabytes is the
+ * difference between a few thousand pages and every one. the pages relocated for the base the first view
+ * was made at belong to the section, and views at that base share them; a view elsewhere gets private ones.
+ */
+#define RELOC_NO_BLOCK 0x7FFFFFFFu
+#define RELOC_BLOCK_MASK 0x7FFFFFFFu
+#define RELOC_STRADDLED 0x80000000u /* a fixup of the page before reaches into this page */
+
+/* bytes of the image as the file has it, from the prototype pages. */
+static BOOLEAN read_prototype(PSECTION s, ULONG64 rva, void *out, ULONG length)
+{
+    PUCHAR bytes = out;
+    while (length) {
+        ULONG64 index = rva >> PAGE_SHIFT;
+        ULONG64 pa = index < s->PageCount ? MiSectionPage(s, (ULONG)index) : 0;
+        if (!pa)
+            return FALSE;
+        ULONG in = (ULONG)(rva & (PAGE_SIZE - 1));
+        ULONG n = PAGE_SIZE - in < length ? PAGE_SIZE - in : length;
+        memcpy(bytes, (PUCHAR)HalPhysmap(pa) + in, n);
+        bytes += n;
+        rva += n;
+        length -= n;
+    }
+    return TRUE;
+}
+
+static ULONG fixup_width(USHORT entry)
+{
+    ULONG type = entry >> 12;
+    return type == IMAGE_REL_BASED_DIR64 ? 8 : type == IMAGE_REL_BASED_HIGHLOW ? 4 : 0;
+}
+
+/* the largest block of the relocation table: one page of 16 bit entries and the header. */
+#define RELOC_BLOCK_ENTRIES 2048
+
+/* reads a block of the table. false when it is not one that fits a page, or reaches past the table. */
+static BOOLEAN read_reloc_block(PSECTION s, ULONG offset, IMAGE_BASE_RELOCATION *block, USHORT *entries, ULONG *count)
+{
+    if (offset + sizeof(*block) > s->RelocSize || !read_prototype(s, (ULONG64)s->RelocRva + offset, block, sizeof(*block)))
+        return FALSE;
+    if (block->SizeOfBlock < sizeof(*block) || offset + block->SizeOfBlock > s->RelocSize)
+        return FALSE;
+    ULONG n = (block->SizeOfBlock - sizeof(*block)) / 2;
+    if (n > RELOC_BLOCK_ENTRIES)
+        return FALSE;
+    *count = n;
+    return !n || read_prototype(s, (ULONG64)s->RelocRva + offset + sizeof(*block), entries, n * 2);
+}
+
+/* the index of the table, or null when it is not one the index can describe. */
+static ULONG *reloc_index(PSECTION s)
+{
+    ULONG state = __atomic_load_n(&s->RelocIndexState, __ATOMIC_ACQUIRE);
+    if (state == 1)
+        return s->RelocIndex;
+    if (state == 2 || !s->RelocSize || s->RelocSize >= RELOC_BLOCK_MASK)
+        return nullptr;
+    ULONG *index = ExAllocatePool2(POOL_FLAG_NON_PAGED | POOL_FLAG_UNINITIALIZED, ((SIZE_T)s->PageCount + 1) * sizeof(ULONG),
+                                   KI_TAG('M', 'm', 'R', 'x'));
+    if (!index)
+        return nullptr;
+    for (ULONG i = 0; i <= s->PageCount; i++)
+        index[i] = RELOC_NO_BLOCK;
+    USHORT entries[RELOC_BLOCK_ENTRIES];
+    BOOLEAN ok = TRUE;
+    ULONG offset = 0;
+    while (ok && offset + sizeof(IMAGE_BASE_RELOCATION) <= s->RelocSize) {
+        IMAGE_BASE_RELOCATION block;
+        ULONG count;
+        if (!read_reloc_block(s, offset, &block, entries, &count) || (block.VirtualAddress & (PAGE_SIZE - 1))) {
+            ok = FALSE;
+            break;
+        }
+        ULONG page = block.VirtualAddress >> PAGE_SHIFT;
+        if (page < s->PageCount) {
+            if ((index[page] & RELOC_BLOCK_MASK) != RELOC_NO_BLOCK) {
+                ok = FALSE; /* two blocks for a page */
+                break;
+            }
+            index[page] = (index[page] & RELOC_STRADDLED) | offset;
+            for (ULONG i = 0; i < count; i++) {
+                ULONG width = fixup_width(entries[i]);
+                if (width && (entries[i] & 0xFFF) + width > PAGE_SIZE && page + 1 < s->PageCount)
+                    index[page + 1] |= RELOC_STRADDLED;
+            }
+        }
+        offset += block.SizeOfBlock;
+    }
+    if (!ok) {
+        ExFreePool(index);
+        __atomic_store_n(&s->RelocIndexState, 2, __ATOMIC_RELEASE);
+        return nullptr;
+    }
+    s->RelocIndex = index;
+    __atomic_store_n(&s->RelocIndexState, 1, __ATOMIC_RELEASE);
+    return index;
+}
+
+static BOOLEAN page_needs_relocation(PSECTION s, ULONG64 index)
+{
+    ULONG entry = s->RelocIndex[index];
+    return (entry & RELOC_BLOCK_MASK) != RELOC_NO_BLOCK || (entry & RELOC_STRADDLED);
+}
+
+/*
+ * fixes up one page of the image in out, a copy of the file's page. the entries of the page's own block that
+ * start in it change its bytes, and the ones of the block before that start in the page before and end in
+ * this one change the first of them: the part of the new value that falls in this page is written.
+ */
+static BOOLEAN relocate_block(PSECTION s, ULONG offset, ULONG block_page, ULONG page, LONG64 delta, PUCHAR out)
+{
+    USHORT entries[RELOC_BLOCK_ENTRIES];
+    IMAGE_BASE_RELOCATION block;
+    ULONG count;
+    if (!read_reloc_block(s, offset, &block, entries, &count))
+        return FALSE;
+    for (ULONG i = 0; i < count; i++) {
+        ULONG width = fixup_width(entries[i]);
+        if (!width)
+            continue;
+        ULONG in = entries[i] & 0xFFF;
+        ULONG64 rva = ((ULONG64)block_page << PAGE_SHIFT) + in;
+        if (rva + width > s->Size)
+            continue;
+        BOOLEAN straddles = in + width > PAGE_SIZE;
+        if (block_page != page && !straddles)
+            continue;
+        UCHAR bytes[8];
+        if (!straddles) {
+            memcpy(bytes, out + in, width);
+        } else if (!read_prototype(s, rva, bytes, width)) {
+            return FALSE;
+        }
+        ULONG64 v = 0;
+        memcpy(&v, bytes, width);
+        v += (ULONG64)delta;
+        memcpy(bytes, &v, width);
+        for (ULONG b = 0; b < width; b++)
+            if (((rva + b) >> PAGE_SHIFT) == page)
+                out[(rva + b) & (PAGE_SIZE - 1)] = bytes[b];
+    }
+    return TRUE;
+}
+
+static BOOLEAN build_relocated_page(PSECTION s, ULONG page, LONG64 delta, PUCHAR out)
+{
+    ULONG64 prototype = MiSectionPage(s, page);
+    if (!prototype)
+        return FALSE;
+    memcpy(out, HalPhysmap(prototype), PAGE_SIZE);
+    ULONG entry = s->RelocIndex[page];
+    if ((entry & RELOC_BLOCK_MASK) != RELOC_NO_BLOCK && !relocate_block(s, entry & RELOC_BLOCK_MASK, page, page, delta, out))
+        return FALSE;
+    if ((entry & RELOC_STRADDLED) && page > 0) {
+        ULONG before = s->RelocIndex[page - 1] & RELOC_BLOCK_MASK;
+        if (before != RELOC_NO_BLOCK && !relocate_block(s, before, page - 1, page, delta, out))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* the relocated page the section keeps for its base, built if it is not there yet; 0 when out of memory. */
+static ULONG64 shared_relocated_page(PSECTION s, ULONG page, LONG64 delta)
+{
+    ULONG64 pa = __atomic_load_n(&s->RelocPages[page], __ATOMIC_ACQUIRE);
+    if (pa)
+        return pa;
+    pa = MmAllocatePageNoZero();
+    if (!pa)
+        return 0;
+    if (!build_relocated_page(s, page, delta, HalPhysmap(pa))) {
+        MmFreePage(pa);
+        return 0;
+    }
+    ULONG64 expected = 0;
+    if (!__atomic_compare_exchange_n(&s->RelocPages[page], &expected, pa, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        MmFreePage(pa);
+        return expected;
+    }
+    return pa;
+}
+
+BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *pa, BOOLEAN *shared)
+{
+    PSECTION s = vad->Section;
+    ULONG64 index = (vad->SectionOffset + (page - vad->StartVa)) >> PAGE_SHIFT;
+    if (index >= s->PageCount)
+        return FALSE;
+    ULONG64 source = MiSectionPage(s, (ULONG)index);
+    if (!source)
+        return FALSE;
+    if ((vad->Flags & MM_VAD_RELOCATED) && page_needs_relocation(s, index)) {
+        if (vad->Flags & MM_VAD_RELOCATED_SHARED) {
+            source = shared_relocated_page(s, (ULONG)index, vad->RelocDelta);
+            if (!source)
+                return FALSE;
+        } else {
+            ULONG64 own = MmAllocatePageNoZero();
+            if (!own)
+                return FALSE;
+            if (!build_relocated_page(s, (ULONG)index, vad->RelocDelta, HalPhysmap(own))) {
+                MmFreePage(own);
+                return FALSE;
+            }
+            *pa = own;
+            *shared = FALSE;
+            return TRUE;
+        }
+    }
+    if ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
+        ULONG64 copy = MmAllocatePageNoZero();
+        if (!copy)
+            return FALSE;
+        memcpy(HalPhysmap(copy), HalPhysmap(source), PAGE_SIZE);
+        *pa = copy;
+        *shared = FALSE;
+        return TRUE;
+    }
+    *pa = source;
+    *shared = TRUE;
+    return TRUE;
+}
+
+ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect)
+{
+    PSECTION s = vad->Section;
+    if (index >= s->PageCount || ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))))
+        return 0;
+    ULONG64 source = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
+    if (source && (vad->Flags & MM_VAD_RELOCATED) && page_needs_relocation(s, index))
+        source = (vad->Flags & MM_VAD_RELOCATED_SHARED) ? __atomic_load_n(&s->RelocPages[index], __ATOMIC_ACQUIRE) : 0;
+    return source;
 }
 
 /* builds every page, for mappings that cannot fault such as system space views. */
@@ -387,6 +636,39 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
 
 static PSECTION g_rom_images[64];
 
+/*
+ * the image sections of files, weakly: a section leaves the table when it is deleted. the window of the
+ * file stays mapped as long as a section holds it, so the same address and size mean the same bytes.
+ */
+static PSECTION g_file_images[128];
+
+static PSECTION find_file_image(ULONG64 pa, ULONG64 size)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_file_images); i++) {
+        PSECTION s = g_file_images[i];
+        if (s && s->SourcePa == pa && s->SourceSize == size)
+            return s;
+    }
+    return nullptr;
+}
+
+static void remember_file_image(PSECTION s)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_file_images); i++) {
+        if (!g_file_images[i]) {
+            g_file_images[i] = s;
+            s->ImageSlot = i + 1;
+            return;
+        }
+    }
+}
+
+static void forget_file_image(PSECTION s)
+{
+    if (s->ImageSlot && g_file_images[s->ImageSlot - 1] == s)
+        g_file_images[s->ImageSlot - 1] = nullptr;
+}
+
 NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
 {
     ULONG64 pa, size;
@@ -402,6 +684,14 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
         }
     }
     if (IoGetFileWindow(file, &pa, &size, &ref)) {
+        /* the processes that run an image share its section: the pages built and relocated for one serve the rest. */
+        PSECTION shared = index >= RTL_NUMBER_OF(g_rom_images) ? find_file_image(pa, size) : nullptr;
+        if (shared) {
+            IoReleaseFileWindow(ref);
+            ObReferenceObject(shared);
+            *out = shared;
+            return STATUS_SUCCESS;
+        }
         NTSTATUS status = create_source_image(file, pa, size, ref, out);
         if (NT_SUCCESS(status) && index < RTL_NUMBER_OF(g_rom_images)) {
             PSECTION expected = nullptr;
@@ -409,6 +699,8 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
             if (!__atomic_compare_exchange_n(&g_rom_images[index], &expected, *out, FALSE, __ATOMIC_ACQ_REL,
                                              __ATOMIC_ACQUIRE))
                 ObDereferenceObject(*out);
+        } else if (NT_SUCCESS(status)) {
+            remember_file_image(*out);
         }
         return status;
     }
@@ -616,7 +908,11 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
                 MiUnlockAddressSpace(as);
                 return STATUS_CONFLICTING_ADDRESSES;
             }
-            status = MiFindFreeRange(as, bytes, 0x10000, TRUE, &va);
+            /* the views of an image away from its base share relocated pages when they are all at one base. */
+            if (s->RelocBase && MiRangeIsFree(as, s->RelocBase, s->RelocBase + bytes))
+                va = s->RelocBase;
+            else
+                status = MiFindFreeRange(as, bytes, 0x10000, TRUE, &va);
             relocated = TRUE;
         }
         relocated = relocated || va != s->Image.ImageBase;
@@ -650,9 +946,11 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
 
     PMMVAD vad = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MMVAD), KI_TAG('M', 'm', 'V', 'd'));
     ULONG64 *private_pages = nullptr;
-    if (vad && image && relocated)
+    /* a table the index cannot describe is relocated whole, now, in pages of the view's own. */
+    BOOLEAN lazy = vad && image && relocated && reloc_index(s) != nullptr;
+    if (vad && image && relocated && !lazy)
         private_pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, pages * sizeof(ULONG64), KI_TAG('M', 'm', 'R', 'p'));
-    if (!vad || (image && relocated && !private_pages)) {
+    if (!vad || (image && relocated && !lazy && !private_pages)) {
         ExFreePool(vad);
         MiUnlockAddressSpace(as);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -664,6 +962,19 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     vad->Section = s;
     vad->SectionOffset = first_page << PAGE_SHIFT;
     vad->Flags = replace ? MM_VAD_REPLACED : 0;
+    vad->RelocDelta = 0;
+    if (lazy) {
+        vad->Flags |= MM_VAD_RELOCATED;
+        vad->RelocDelta = (LONG64)(va - s->Image.ImageBase);
+        if (!s->RelocBase) {
+            s->RelocPages = ExAllocatePool2(POOL_FLAG_NON_PAGED, ((SIZE_T)s->PageCount + 1) * sizeof(ULONG64),
+                                            KI_TAG('M', 'm', 'R', 's'));
+            if (s->RelocPages)
+                s->RelocBase = va;
+        }
+        if (s->RelocBase == va)
+            vad->Flags |= MM_VAD_RELOCATED_SHARED;
+    }
     ObReferenceObject(s);
     if (placeholder) {
         MiSwapVad(as, placeholder, vad);
@@ -680,7 +991,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         }
     }
 
-    if (image && relocated) {
+    if (image && relocated && !lazy) {
         for (SIZE_T i = 0; i < pages; i++) {
             ULONG64 src = MiSectionPage(s, (ULONG)i);
             private_pages[i] = src ? MmAllocatePageNoZero() : 0;
@@ -702,6 +1013,21 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         ULONG_PTR pva = va + (i << PAGE_SHIFT);
         ULONG prot = image ? s->PageProtect[i] : protect;
         BOOLEAN writable = (prot & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0;
+        if (lazy) {
+            /* the pages that are ready and shared are mapped, the others come with the first touch. */
+            ULONG64 ready = MiSectionReadyPage(vad, i, prot);
+            if (ready) {
+                if (!MiMapPage(as->Root, pva, ready, MiSectionPteAttrs(prot, ready, TRUE)))
+                    status = STATUS_INSUFFICIENT_RESOURCES;
+            } else {
+                ULONG64 *pte = MiWalk(as->Root, pva, TRUE, 3);
+                if (!pte)
+                    status = STATUS_INSUFFICIENT_RESOURCES;
+                else
+                    *pte = MiSectionSwPte(prot);
+            }
+            continue;
+        }
         ULONG64 pa = relocated ? private_pages[i] : __atomic_load_n(&s->Pages[first_page + i], __ATOMIC_ACQUIRE);
         if (!pa || (image && !relocated && writable)) {
             ULONG64 *pte = MiWalk(as->Root, pva, TRUE, 3);
@@ -715,7 +1041,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         if (!MiMapPage(as->Root, pva, pa, attrs))
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
-    if (relocated)
+    if (relocated && !lazy)
         as->CommittedPages += pages;
     if (private_pages)
         ExFreePool(private_pages);

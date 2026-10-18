@@ -1094,24 +1094,15 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     return STATUS_SUCCESS;
 }
 
-/* maps the first touched page of a section view: the prototype page, or a private copy of a writable image page. */
+/* maps the first touched page of a section view: the prototype page, a relocated one, or a private copy. */
 static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG protect)
 {
-    PSECTION s = vad->Section;
-    ULONG64 index = (vad->SectionOffset + (page - vad->StartVa)) >> PAGE_SHIFT;
-    ULONG64 pa = index < s->PageCount ? MiSectionPage(s, (ULONG)index) : 0;
-    if (!pa)
+    ULONG64 pa;
+    BOOLEAN shared;
+    if (!MiSectionFaultPage(vad, page, protect, &pa, &shared))
         return FALSE;
-    BOOLEAN shared = TRUE;
-    if ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
-        ULONG64 copy = MmAllocatePageNoZero();
-        if (!copy)
-            return FALSE;
-        memcpy(HalPhysmap(copy), HalPhysmap(pa), PAGE_SIZE);
-        pa = copy;
-        shared = FALSE;
+    if (!shared)
         as->CommittedPages++;
-    }
     *pte = pa | MiSectionPteAttrs(protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
     KiDataSyncBarrier();
     KiInstructionBarrier();
@@ -1193,28 +1184,18 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
                                   ULONG protect)
 {
     PSECTION section = vad->Section;
-    ULONG64 index = (vad->SectionOffset + (page - vad->StartVa)) >> PAGE_SHIFT;
-    ULONG64 pa = index < section->PageCount ? MiSectionPage(section, (ULONG)index) : 0;
-    if (!pa)
+    ULONG64 pa;
+    BOOLEAN shared;
+    if (!MiSectionFaultPage(vad, page, protect, &pa, &shared))
         return FALSE;
-    BOOLEAN shared = TRUE;
-    ULONG64 copy = 0;
-    if ((section->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
-        copy = MmAllocatePageNoZero();
-        if (!copy)
-            return FALSE;
-        memcpy(HalPhysmap(copy), HalPhysmap(pa), PAGE_SIZE);
-        pa = copy;
-        shared = FALSE;
-    }
     ULONG64 entry = pa | MiSectionPteAttrs(protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
     if (!__atomic_compare_exchange_n(pte, &v, entry, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         /* another processor mapped the page first. */
-        if (copy)
-            MmFreePagesQuiet(&copy, 1);
+        if (!shared)
+            MmFreePagesQuiet(&pa, 1);
         return TRUE;
     }
-    if (copy) {
+    if (!shared) {
         SIZE_T now = __atomic_add_fetch(&as->CommittedPages, 1, __ATOMIC_RELAXED);
         SIZE_T peak = __atomic_load_n(&as->PeakCommittedPages, __ATOMIC_RELAXED);
         while (now > peak && !__atomic_compare_exchange_n(&as->PeakCommittedPages, &peak, now, FALSE,
@@ -1223,7 +1204,7 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
     }
     __atomic_add_fetch(&as->PageFaults, 1, __ATOMIC_RELAXED);
 
-    /* the neighbours that need no work: a prototype page there already, and no copy to make. */
+    /* the neighbours that need no work: a page ready for them already. */
     ULONG_PTR start = page & ~(ULONG_PTR)(SECTION_FAULT_WINDOW - 1), end = start + SECTION_FAULT_WINDOW;
     if (start < vad->StartVa)
         start = vad->StartVa;
@@ -1236,15 +1217,13 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
         if (va == page || (w & MM_PTE_VALID) || !(w & MM_SWPTE_COMMITTED) || !(w & MM_SWPTE_SECTION) ||
             (wp & 0xFF) == PAGE_NOACCESS || (wp & PAGE_GUARD))
             continue;
-        if ((section->Flags & SEC_IMAGE) && (wp & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        ULONG64 ready = MiSectionReadyPage(vad, (vad->SectionOffset + (va - vad->StartVa)) >> PAGE_SHIFT, wp);
+        if (!ready)
             continue;
-        ULONG64 n = (vad->SectionOffset + (va - vad->StartVa)) >> PAGE_SHIFT;
-        ULONG64 prototype = n < section->PageCount ? __atomic_load_n(&section->Pages[n], __ATOMIC_ACQUIRE) : 0;
-        if (!prototype)
-            continue;
-        ULONG64 neighbour = prototype | MiSectionPteAttrs(wp, prototype, TRUE) | MM_PTE_VALID | MM_PTE_PAGE;
+        ULONG64 neighbour = ready | MiSectionPteAttrs(wp, ready, TRUE) | MM_PTE_VALID | MM_PTE_PAGE;
         __atomic_compare_exchange_n(p, &w, neighbour, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
     }
+    (void)section;
     return TRUE;
 }
 
