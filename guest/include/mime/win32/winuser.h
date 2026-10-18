@@ -1338,6 +1338,122 @@ typedef struct {
 #define DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED ((DPI_AWARENESS_CONTEXT)-5)
 #define USER_DEFAULT_SCREEN_DPI 96
 
+typedef enum DPI_AWARENESS {
+    DPI_AWARENESS_INVALID = -1,
+    DPI_AWARENESS_UNAWARE = 0,
+    DPI_AWARENESS_SYSTEM_AWARE = 1,
+    DPI_AWARENESS_PER_MONITOR_AWARE = 2
+} DPI_AWARENESS;
+
+WINUSERAPI BOOL WINAPI IsValidDpiAwarenessContext(DPI_AWARENESS_CONTEXT context);
+WINUSERAPI BOOL WINAPI AreDpiAwarenessContextsEqual(DPI_AWARENESS_CONTEXT a, DPI_AWARENESS_CONTEXT b);
+WINUSERAPI DPI_AWARENESS WINAPI GetAwarenessFromDpiAwarenessContext(DPI_AWARENESS_CONTEXT context);
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND hwnd);
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void);
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT context);
+WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd);
+WINUSERAPI BOOL WINAPI LogicalToPhysicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point);
+WINUSERAPI BOOL WINAPI PhysicalToLogicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point);
+
+/* ------------------------------------------------------------------ pointer input */
+
+typedef enum tagPOINTER_INPUT_TYPE {
+    PT_POINTER = 1,
+    PT_TOUCH = 2,
+    PT_PEN = 3,
+    PT_MOUSE = 4,
+    PT_TOUCHPAD = 5
+} POINTER_INPUT_TYPE;
+
+#define POINTER_FLAG_NEW 0x00000001
+#define POINTER_FLAG_INRANGE 0x00000002
+#define POINTER_FLAG_INCONTACT 0x00000004
+#define POINTER_FLAG_FIRSTBUTTON 0x00000010
+#define POINTER_FLAG_SECONDBUTTON 0x00000020
+#define POINTER_FLAG_THIRDBUTTON 0x00000040
+#define POINTER_FLAG_PRIMARY 0x00002000
+#define POINTER_FLAG_CONFIDENCE 0x00004000
+
+typedef struct tagPOINTER_INFO {
+    POINTER_INPUT_TYPE pointerType;
+    UINT pointerId;
+    UINT frameId;
+    UINT pointerFlags;
+    HANDLE sourceDevice;
+    HWND hwndTarget;
+    POINT ptPixelLocation;
+    POINT ptHimetricLocation;
+    POINT ptPixelLocationRaw;
+    POINT ptHimetricLocationRaw;
+    DWORD dwTime;
+    UINT historyCount;
+    INT InputData;
+    DWORD dwKeyStates;
+    UINT64 PerformanceCount;
+    UINT ButtonChangeType;
+} POINTER_INFO;
+
+typedef struct tagINPUT_TRANSFORM {
+    float m[4][4];
+} INPUT_TRANSFORM;
+
+typedef enum tagINPUT_MESSAGE_DEVICE_TYPE {
+    IMDT_UNAVAILABLE = 0,
+    IMDT_KEYBOARD = 1,
+    IMDT_MOUSE = 2,
+    IMDT_TOUCH = 4,
+    IMDT_PEN = 8,
+    IMDT_TOUCHPAD = 16
+} INPUT_MESSAGE_DEVICE_TYPE;
+
+typedef enum tagINPUT_MESSAGE_ORIGIN_ID {
+    IMO_UNAVAILABLE = 0,
+    IMO_HARDWARE = 1,
+    IMO_INJECTED = 2,
+    IMO_SYSTEM = 4
+} INPUT_MESSAGE_ORIGIN_ID;
+
+typedef struct tagINPUT_MESSAGE_SOURCE {
+    INPUT_MESSAGE_DEVICE_TYPE deviceType;
+    INPUT_MESSAGE_ORIGIN_ID originId;
+} INPUT_MESSAGE_SOURCE;
+
+WINUSERAPI BOOL WINAPI EnableMouseInPointer(BOOL enable);
+WINUSERAPI BOOL WINAPI IsMouseInPointerEnabled(void);
+WINUSERAPI BOOL WINAPI GetPointerInfo(UINT id, POINTER_INFO *info);
+WINUSERAPI BOOL WINAPI GetPointerFrameInfo(UINT id, UINT *count, POINTER_INFO *info);
+WINUSERAPI BOOL WINAPI GetPointerInputTransform(UINT id, UINT count, INPUT_TRANSFORM *transform);
+WINUSERAPI BOOL WINAPI SkipPointerFrameMessages(UINT id);
+WINUSERAPI BOOL WINAPI GetCurrentInputMessageSource(INPUT_MESSAGE_SOURCE *source);
+WINUSERAPI DWORD WINAPI GetUnpredictedMessagePos(void);
+
+/* ------------------------------------------------------------------ desktop helpers */
+
+#define ISMEX_NOSEND 0x00000000
+#define ISMEX_SEND 0x00000001
+#define ISMEX_NOTIFY 0x00000002
+#define ISMEX_CALLBACK 0x00000004
+#define ISMEX_REPLIED 0x00000008
+
+#define AW_HOR_POSITIVE 0x00000001
+#define AW_HOR_NEGATIVE 0x00000002
+#define AW_VER_POSITIVE 0x00000004
+#define AW_VER_NEGATIVE 0x00000008
+#define AW_CENTER 0x00000010
+#define AW_HIDE 0x00010000
+#define AW_ACTIVATE 0x00020000
+#define AW_SLIDE 0x00040000
+#define AW_BLEND 0x00080000
+
+WINUSERAPI BOOL WINAPI DragDetect(HWND hwnd, POINT point);
+WINUSERAPI BOOL WINAPI InSendMessage(void);
+WINUSERAPI DWORD WINAPI InSendMessageEx(LPVOID reserved);
+WINUSERAPI BOOL WINAPI ReplyMessage(LRESULT result);
+WINUSERAPI void WINAPI SwitchToThisWindow(HWND hwnd, BOOL alt_tab);
+WINUSERAPI BOOL WINAPI AnimateWindow(HWND hwnd, DWORD time, DWORD flags);
+WINUSERAPI BOOL WINAPI BlockInput(BOOL block);
+WINUSERAPI BOOL WINAPI GetUpdatedClipboardFormats(PUINT formats, UINT count, PUINT out);
+
 /* ------------------------------------------------------------------ hooks */
 
 #define WH_MSGFILTER (-1)

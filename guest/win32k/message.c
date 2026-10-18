@@ -175,7 +175,11 @@ void MsgProcessSent(W32THREAD *t)
     while (!IsListEmpty(&t->Sent)) {
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
         SENT_MESSAGE *prev = t->Receiving;
+        BOOLEAN prev_replied = t->Replied;
+        ULONG prev_kind = t->ReceivingKind;
         t->Receiving = sm;
+        t->Replied = FALSE;
+        t->ReceivingKind = sm->Notify ? 2 : 1;
         LRESULT r = 0;
         if (sm->Hook) {
             HOOK *h = HookLookup(sm->Hook);
@@ -187,7 +191,12 @@ void MsgProcessSent(W32THREAD *t)
                 r = call_sent(w, sm->Msg, sm->Wparam, sm->Lparam, sm->LparamKind, sm->LparamSize, FALSE);
         }
         t->Receiving = prev;
-        complete_sent(sm, r);
+        /* an answered message has no waiting sender any more, which owns it now. */
+        BOOLEAN replied = t->Replied;
+        t->Replied = prev_replied;
+        t->ReceivingKind = prev_kind;
+        if (!replied)
+            complete_sent(sm, r);
     }
 }
 
@@ -615,6 +624,34 @@ scan_posted:
             return TRUE;
         }
     }
+}
+
+/*
+ * what InSendMessageEx reports: a message another thread sent and waits for, one it did not wait for, one a callback
+ * is called back for, and whether it was answered already.
+ */
+ULONG MsgInSendFlags(W32THREAD *t)
+{
+    if (!t || !t->ReceivingKind)
+        return 0;
+    return t->ReceivingKind | (t->Replied ? 8 : 0);
+}
+
+/*
+ * ReplyMessage: the sender gets the result now and the procedure goes on. only a message with a plain parameter can
+ * be answered early, since one with data copies it back when the procedure returns; for the others the answer comes
+ * then, and the call still succeeds.
+ */
+BOOLEAN MsgReply(W32THREAD *t, LRESULT result)
+{
+    SENT_MESSAGE *sm = t ? t->Receiving : nullptr;
+    if (!sm || t->ReceivingKind != 1 || t->Replied)
+        return FALSE;
+    if (sm->LparamKind == MIME_LPARAM_VALUE && !sm->Hook) {
+        t->Replied = TRUE;
+        complete_sent(sm, result);
+    }
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ message services */

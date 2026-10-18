@@ -35,6 +35,9 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
     case MIME_NOPARAM_GETDPIFORSYSTEM:
         r = W32SystemDpi();
         break;
+    case MIME_NOPARAM_INSENDMESSAGE:
+        r = MsgInSendFlags(t);
+        break;
     case MIME_NOPARAM_GETDIALOGBASEUNITS: {
         /* averages of the system font, 8 by 16 at 96 dpi. */
         UINT dpi = W32SystemDpi();
@@ -111,6 +114,9 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
         break;
     case MIME_ONEPARAM_GETPROCESSDPIAWARENESS:
         r = t ? t->Process->DpiAwareness : 0;
+        break;
+    case MIME_ONEPARAM_REPLYMESSAGE:
+        r = MsgReply(t, (LRESULT)param);
         break;
     }
     UserLeave();

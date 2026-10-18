@@ -508,6 +508,8 @@ typedef struct W32THREAD {
     LIST_ENTRY Input;
     LIST_ENTRY Sent;        /* messages sent to this thread by others */
     SENT_MESSAGE *Receiving; /* sent message being processed */
+    BOOLEAN Replied;         /* the message being processed was answered before its procedure returned */
+    ULONG ReceivingKind;     /* 1 for a sent message being processed, 2 when its sender does not wait, else 0 */
     ULONG WakeBits;
     ULONG ChangeBits;
     BOOLEAN QuitPosted;
@@ -730,6 +732,8 @@ LRESULT DefWindowProcKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam); /* 
 LRESULT DefWindowProcUser(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);   /* user lparam pointers */
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait);
 void MsgProcessSent(W32THREAD *t);
+ULONG MsgInSendFlags(W32THREAD *t);
+BOOLEAN MsgReply(W32THREAD *t, LRESULT result);
 BOOLEAN MsgFilterMatches(HWND hwnd, UINT msg, HWND filter, UINT min, UINT max);
 void TimerProcessExpired(W32THREAD *t, LONG64 *next_due);
 void TimerRemoveWindow(WND *w);

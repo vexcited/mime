@@ -145,6 +145,7 @@ enum {
     MIME_NOPARAM_GETDPIFORSYSTEM,
     MIME_NOPARAM_GETDIALOGBASEUNITS,
     MIME_NOPARAM_GETLASTINPUTTIME,
+    MIME_NOPARAM_INSENDMESSAGE,
 };
 
 enum {
@@ -156,6 +157,7 @@ enum {
     MIME_ONEPARAM_SHOWCURSOR,
     MIME_ONEPARAM_SETPROCESSDPIAWARENESS,
     MIME_ONEPARAM_GETPROCESSDPIAWARENESS,
+    MIME_ONEPARAM_REPLYMESSAGE,
 };
 
 enum {
@@ -532,6 +534,7 @@ W32KAPI BOOL NTAPI NtUserEmptyClipboard(void);
 W32KAPI HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_DATA *data);
 W32KAPI HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *data);
 W32KAPI BOOL NTAPI NtUserIsClipboardFormatAvailable(UINT format);
+W32KAPI BOOL NTAPI NtUserGetUpdatedClipboardFormats(UINT *formats, UINT count, UINT *out);
 W32KAPI int NTAPI NtUserCountClipboardFormats(void);
 W32KAPI UINT NTAPI NtUserEnumClipboardFormats(UINT format);
 W32KAPI int NTAPI NtUserGetClipboardFormatName(UINT format, LPWSTR name, int max);

@@ -564,6 +564,33 @@ BOOL NTAPI NtUserIsClipboardFormatAvailable(UINT format)
     return r;
 }
 
+/* the formats on the clipboard, synthesized ones too, without opening it: the count, even when there is room for fewer. */
+BOOL NTAPI NtUserGetUpdatedClipboardFormats(UINT *user_formats, UINT count, UINT *user_out)
+{
+    if (!user_out) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UINT formats[MAX_CLIP_FORMATS], n;
+    UserEnter();
+    n = g_format_count;
+    for (UINT i = 0; i < n; i++)
+        formats[i] = g_formats[i].Format;
+    UserLeave();
+    BOOL ok = n <= count && (!n || user_formats);
+    if (ok && n && !NT_SUCCESS(MimeCopyToUser(user_formats, formats, n * sizeof(UINT)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    if (!NT_SUCCESS(MimeCopyToUser(user_out, &n, sizeof(n)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    if (!ok)
+        W32SetLastError(ERROR_INSUFFICIENT_BUFFER);
+    return ok;
+}
+
 int NTAPI NtUserCountClipboardFormats(void)
 {
     UserEnter();

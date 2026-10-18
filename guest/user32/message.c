@@ -155,11 +155,6 @@ WINUSERAPI LPARAM WINAPI GetMessageExtraInfo(void)
     return (LPARAM)NtUserCallNoParam(MIME_NOPARAM_GETMESSAGEEXTRAINFO);
 }
 
-WINUSERAPI BOOL WINAPI InSendMessage(void)
-{
-    return FALSE;
-}
-
 WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask,
                                                     DWORD flags)
 {
