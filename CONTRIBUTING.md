@@ -28,6 +28,7 @@ makes the arm64 guest only. `cmake --preset arm64` builds the arm64 guest on any
 | `cmake --build build --target examples` | `build/examples/x64/*.exe`, one program per file in `examples/`, and arm64 ones on macOS. |
 | `cmake --build build --target tests`    | `build/tests/<processor>/*.exe`, the test programs.                                       |
 | `cmake --build build --target test-x86` | Builds and runs the 32-bit suite, `tools/runtime32/run.py`.                               |
+| `cmake --build build --target test-console` | Runs the x64 tests that need standard streams (`stdio`, on a pipe) and a terminal (`coninput`, on a pseudo terminal), `tools/runtime32/run_console.py`. |
 | `cmake --build build --target clean`    | Removes what the build made.                                                              |
 
 `build/compile_commands.json` gives editors the flags of every file.

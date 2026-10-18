@@ -136,7 +136,7 @@ static BOOLEAN class_matches(WND_CLASS *c, PCWSTR name, ATOM atom)
     return c->Name && !_wcsicmp(c->Name, name);
 }
 
-/* search order of windows: local classes, global classes, then system classes. */
+/* search order of windows: local classes, global classes of the process, then system classes. */
 WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
 {
     if (p) {
@@ -152,9 +152,10 @@ WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
                 return c;
         }
     }
+    /* a global class is global to the modules of the process that made it, no other process sees it. */
     for (PLIST_ENTRY e = g_global_classes.Flink; e != &g_global_classes; e = e->Flink) {
         WND_CLASS *c = CONTAINING_RECORD(e, WND_CLASS, Links);
-        if (class_matches(c, name, atom))
+        if (class_matches(c, name, atom) && (!p || c->Process == p))
             return c;
     }
     for (PLIST_ENTRY e = g_system_classes.Flink; e != &g_system_classes; e = e->Flink) {
@@ -178,6 +179,12 @@ void ClassFreeProcess(W32PROCESS *p)
 {
     while (!IsListEmpty(&p->Classes))
         free_class(CONTAINING_RECORD(p->Classes.Flink, WND_CLASS, Links));
+    for (PLIST_ENTRY e = g_global_classes.Flink; e != &g_global_classes;) {
+        WND_CLASS *c = CONTAINING_RECORD(e, WND_CLASS, Links);
+        e = e->Flink;
+        if (c->Process == p)
+            free_class(c);
+    }
 }
 
 ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING user_name, PUNICODE_STRING user_menu,
@@ -311,8 +318,10 @@ BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING user_name, L
     }
     UserLeave();
     W32Free(name);
-    if (!c)
+    if (!c) {
+        W32SetLastError(ERROR_CLASS_DOES_NOT_EXIST);
         return FALSE;
+    }
     return NT_SUCCESS(MimeCopyToUser(user_wc, &wc, sizeof(wc))) ? c->Atom : FALSE;
 }
 

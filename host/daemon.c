@@ -19,6 +19,10 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#include <ucontext.h>
+#endif
 
 #define MAX_RUNS 256
 
@@ -605,13 +609,53 @@ static bool listen_socket(const MimePaths *paths)
     return true;
 }
 
-/* a crash of the machine process logs where it happened, for llvm-symbolizer, then dies as it would have. */
-static void on_fatal_signal(int sig)
+/*
+ * a crash of the machine process logs where it happened, for llvm-symbolizer, then dies as it would have: the
+ * handler's own backtrace stops at the signal frame, so the instruction and the frames of the thread that
+ * faulted are taken from its context.
+ */
+static void on_fatal_signal(int sig, siginfo_t *info, void *context)
 {
     static const char head[] = "mime-vmm: fatal signal, backtrace:\n";
     write(STDERR_FILENO, head, sizeof(head) - 1);
+#ifdef __linux__
+    char thread[32] = "thread ";
+    prctl(PR_GET_NAME, thread + 7, 0, 0, 0);
+    size_t length = strlen(thread);
+    thread[length++] = '\n';
+    write(STDERR_FILENO, thread, length);
+#endif
     void *frames[64];
-    backtrace_symbols_fd(frames, backtrace(frames, 64), STDERR_FILENO);
+    int count = 0;
+#if defined(__linux__) && defined(__x86_64__)
+    const ucontext_t *uc = context;
+    frames[count++] = (void *)uc->uc_mcontext.gregs[REG_RIP];
+    void **frame = (void **)uc->uc_mcontext.gregs[REG_RBP];
+    uintptr_t floor = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+    /* no frame pointers in this build: the words on the stack include the return addresses. */
+    for (int i = 0; i < 60 && count < 62; i++)
+        frames[count++] = ((void **)floor)[i];
+    while (count < 64 && frame && ((uintptr_t)frame & 7) == 0 && (uintptr_t)frame >= floor &&
+           (uintptr_t)frame - floor < (16u << 20)) {
+        frames[count++] = frame[1];
+        floor = (uintptr_t)frame + 8;
+        frame = (void **)frame[0];
+    }
+#elif defined(__linux__) && defined(__aarch64__)
+    const ucontext_t *uc = context;
+    frames[count++] = (void *)uc->uc_mcontext.pc;
+    void **frame = (void **)uc->uc_mcontext.regs[29];
+    uintptr_t floor = (uintptr_t)uc->uc_mcontext.sp;
+    while (count < 64 && frame && ((uintptr_t)frame & 7) == 0 && (uintptr_t)frame >= floor &&
+           (uintptr_t)frame - floor < (16u << 20)) {
+        frames[count++] = frame[1];
+        floor = (uintptr_t)frame + 8;
+        frame = (void **)frame[0];
+    }
+#else
+    count = backtrace(frames, 64);
+#endif
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
     signal(sig, SIG_DFL);
     raise(sig);
 }
@@ -635,8 +679,12 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         backtrace(&frame, 1);
     }
     static constexpr int fatal[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
-    for (size_t i = 0; i < sizeof(fatal) / sizeof(fatal[0]); i++)
-        signal(fatal[i], on_fatal_signal);
+    for (size_t i = 0; i < sizeof(fatal) / sizeof(fatal[0]); i++) {
+        struct sigaction action = {};
+        action.sa_sigaction = on_fatal_signal;
+        action.sa_flags = SA_SIGINFO;
+        sigaction(fatal[i], &action, nullptr);
+    }
     /* every guest file handle and file window holds a descriptor. */
     struct rlimit files;
     if (getrlimit(RLIMIT_NOFILE, &files) == 0) {
