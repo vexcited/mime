@@ -1049,6 +1049,8 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
 /* cm, the configuration manager. */
 extern POBJECT_TYPE CmKeyType;
 void CmInitSystem1(void);
+/* makes the registry journal durable, as the machine powers off. */
+void CmpJournalShutdown(void);
 NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);
 NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length);
 NTSTATUS CmEnumerateValues(PCWSTR key_path,

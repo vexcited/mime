@@ -1046,11 +1046,11 @@ NTSTATUS NTAPI NtFlushKey(HANDLE key)
     CM_KEY_BODY *body;
     CM_NODE *node;
     NTSTATUS status = lock_key(key, &body, &node);
-    if (NT_SUCCESS(status)) {
-        status = CmpJournalFlush(node);
-        unlock_key(body);
-    }
-    return status;
+    if (!NT_SUCCESS(status))
+        return status;
+    BOOLEAN is_volatile = (node->Flags & CM_NODE_VOLATILE) != 0;
+    unlock_key(body);
+    return CmpJournalFlush(is_volatile);
 }
 
 #define ZW_WRAP(call)                                                                                             \
@@ -1248,6 +1248,7 @@ void CmInitSystem1(void)
     ExAcquireFastMutex(&CmpLock);
     CmpJournalEnable();
     ExReleaseFastMutex(&CmpLock);
+    CmpJournalStart();
 }
 
 /*

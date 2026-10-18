@@ -7,6 +7,17 @@ static ULONG64 CmpJournalSequence = 1;
 static NTSTATUS CmpJournalStatus;
 static BOOLEAN CmpJournalReady;
 
+/*
+ * a record is written to the host file as soon as it is appended, which is enough to survive the end of the
+ * program. making it durable on the host disk is a flush costing milliseconds, so a worker does it, once for
+ * all the records appended since the last flush, while appends go on.
+ */
+static ULONG64 CmpJournalDurable;
+static KMUTEX CmpJournalSyncLock;
+static KEVENT CmpJournalWake;
+static volatile LONG CmpJournalPending;
+static BOOLEAN CmpJournalWorker;
+
 /* operations met during replay that this build does not know, each named once in the log. */
 static ULONG CmpJournalSkipped[8];
 static ULONG CmpJournalSkippedCount;
@@ -28,6 +39,7 @@ static NTSTATUS flush(void)
 
 static NTSTATUS truncate_tail(void)
 {
+    /* the flush that follows makes the whole file durable up to the new end. */
     FILE_END_OF_FILE_INFORMATION end;
     end.EndOfFile.QuadPart = (LONGLONG)CmpJournalOffset;
     IO_STACK_LOCATION params = {};
@@ -35,7 +47,11 @@ static NTSTATUS truncate_tail(void)
     params.Parameters.SetFile.FileInformationClass = FileEndOfFileInformation;
     NTSTATUS status = IopSynchronousRequest(CmpJournalFile, IRP_MJ_SET_INFORMATION, 0, &end, sizeof(end),
                                             &params, nullptr);
-    return NT_SUCCESS(status) ? flush() : status;
+    if (NT_SUCCESS(status))
+        status = flush();
+    if (NT_SUCCESS(status))
+        CmpJournalDurable = CmpJournalOffset;
+    return status;
 }
 
 /*
@@ -74,6 +90,40 @@ static NTSTATUS read_bytes(void *data, ULONG bytes, ULONG64 offset)
     return got == bytes ? STATUS_SUCCESS : STATUS_REGISTRY_CORRUPT;
 }
 
+/* the longest unwritten tail taken for a torn flush, the stretch of records one flush covers is far shorter. */
+#define TORN_TAIL_MAX (1u << 20)
+
+static BOOLEAN tail_is_zero(ULONG64 offset, ULONG64 length)
+{
+    if (length - offset > TORN_TAIL_MAX)
+        return FALSE;
+    PUCHAR chunk = ExAllocatePool2(POOL_FLAG_NON_PAGED, 4096, KI_TAG('C', 'm', 'J', 'z'));
+    if (!chunk)
+        return FALSE;
+    BOOLEAN zero = TRUE;
+    while (zero && offset < length) {
+        ULONG bytes = length - offset < 4096 ? (ULONG)(length - offset) : 4096;
+        if (!NT_SUCCESS(read_bytes(chunk, bytes, offset)))
+            zero = FALSE;
+        for (ULONG i = 0; zero && i < bytes; i++)
+            zero = chunk[i] == 0;
+        offset += bytes;
+    }
+    ExFreePool(chunk);
+    return zero;
+}
+
+/*
+ * a crash between a write and its flush can leave the end of the file unwritten or half written, in any
+ * order the host filesystem pleases. what is left of the last record, or zeros to the end, is such a tail
+ * and goes. damage with valid data after it is real corruption.
+ */
+static NTSTATUS drop_torn_tail(const char *why)
+{
+    KiLogPrintf("registry: journal drops a torn %s at offset %llu", why, CmpJournalOffset);
+    return truncate_tail();
+}
+
 static NTSTATUS replay(void)
 {
     ULONG64 length;
@@ -92,7 +142,7 @@ static NTSTATUS replay(void)
             return status;
         CmJournalRecord record;
         if (!cm_journal_decode(header, sizeof(header), &record))
-            return STATUS_REGISTRY_CORRUPT;
+            return tail_is_zero(CmpJournalOffset, length) ? drop_torn_tail("run of zeros") : STATUS_REGISTRY_CORRUPT;
         ULONG size = cm_journal_size(&record);
         if (size > length - CmpJournalOffset)
             return truncate_tail();
@@ -101,15 +151,19 @@ static NTSTATUS replay(void)
             return STATUS_INSUFFICIENT_RESOURCES;
         memcpy(bytes, header, sizeof(header));
         status = read_bytes(bytes + sizeof(header), size - sizeof(header), CmpJournalOffset + sizeof(header));
+        BOOLEAN torn = FALSE;
         if (NT_SUCCESS(status)) {
-            if (!cm_journal_validate(bytes, size, CmpJournalSequence))
+            if (!cm_journal_validate(bytes, size, CmpJournalSequence)) {
+                torn = size == length - CmpJournalOffset;
                 status = STATUS_REGISTRY_CORRUPT;
-            else if (!cm_journal_known(record.operation))
+            } else if (!cm_journal_known(record.operation))
                 note_unknown(record.operation, CmpJournalOffset);
             else
                 status = CmpRestoreJournal(&record, bytes + sizeof(header));
         }
         ExFreePool(bytes);
+        if (torn)
+            return drop_torn_tail("record");
         if (!NT_SUCCESS(status))
             return status;
         CmpJournalOffset += size;
@@ -142,6 +196,8 @@ void CmpJournalInitialize(void)
             ExFreePool(CmpReplayBlock);
         CmpReplayBlock = nullptr;
     }
+    if (NT_SUCCESS(CmpJournalStatus))
+        CmpJournalDurable = CmpJournalOffset;
     if (!NT_SUCCESS(CmpJournalStatus))
         KiLogPrintf("registry: journal unavailable at offset %llu: %08x", CmpJournalOffset, CmpJournalStatus);
 }
@@ -149,6 +205,54 @@ void CmpJournalInitialize(void)
 void CmpJournalEnable(void)
 {
     CmpJournalReady = TRUE;
+}
+
+/* makes everything appended so far durable; one flush covers every record written before it began. */
+static NTSTATUS make_durable(void)
+{
+    KeWaitForSingleObject(&CmpJournalSyncLock, Executive, KernelMode, FALSE, nullptr);
+    ULONG64 target = CmpJournalOffset;
+    NTSTATUS status = NT_SUCCESS(CmpJournalStatus) ? STATUS_SUCCESS : CmpJournalStatus;
+    if (NT_SUCCESS(status) && CmpJournalDurable < target) {
+        status = flush();
+        if (NT_SUCCESS(status)) {
+            CmpJournalDurable = target;
+        } else {
+            /* records the callers were told were saved may not be, so nothing more is added after them. */
+            CmpJournalStatus = status;
+            KiLogPrintf("registry: journal flush failed at offset %llu: %08x", target, status);
+        }
+    }
+    KeReleaseMutex(&CmpJournalSyncLock, FALSE);
+    return status;
+}
+
+static void NTAPI journal_worker(PVOID)
+{
+    for (;;) {
+        KeWaitForSingleObject(&CmpJournalWake, Executive, KernelMode, FALSE, nullptr);
+        __atomic_store_n(&CmpJournalPending, 0, __ATOMIC_SEQ_CST);
+        make_durable();
+    }
+}
+
+void CmpJournalStart(void)
+{
+    KeInitializeMutex(&CmpJournalSyncLock, 0);
+    KeInitializeEvent(&CmpJournalWake, SynchronizationEvent, FALSE);
+    if (!NT_SUCCESS(CmpJournalStatus))
+        return;
+    NTSTATUS status = PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, journal_worker, nullptr);
+    if (NT_SUCCESS(status))
+        CmpJournalWorker = TRUE;
+    else
+        KiLogPrintf("registry: journal has no flush worker: %08x", status);
+}
+
+void CmpJournalShutdown(void)
+{
+    if (CmpJournalFile && CmpJournalReady)
+        make_durable();
 }
 
 NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHAR *name, ULONG chars,
@@ -190,7 +294,8 @@ NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHA
     ExFreePool(bytes);
     if (NT_SUCCESS(status) && io.Information != size)
         status = STATUS_DISK_FULL;
-    if (NT_SUCCESS(status))
+    /* without the worker each record is flushed before it counts as saved. */
+    if (NT_SUCCESS(status) && !CmpJournalWorker)
         status = flush();
     if (!NT_SUCCESS(status)) {
         NTSTATUS rollback = truncate_tail();
@@ -201,14 +306,20 @@ NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHA
     }
     CmpJournalOffset += size;
     CmpJournalSequence++;
+    if (!CmpJournalWorker)
+        CmpJournalDurable = CmpJournalOffset;
+    else if (!__atomic_exchange_n(&CmpJournalPending, 1, __ATOMIC_SEQ_CST))
+        KeSetEvent(&CmpJournalWake, 0, FALSE);
     return STATUS_SUCCESS;
 }
 
-NTSTATUS CmpJournalFlush(CM_NODE *node)
+NTSTATUS CmpJournalFlush(BOOLEAN volatile_key)
 {
-    if (node->Flags & CM_NODE_VOLATILE)
+    if (volatile_key)
         return STATUS_SUCCESS;
     if (!NT_SUCCESS(CmpJournalStatus))
         return CmpJournalStatus;
-    return CmpJournalFile ? flush() : STATUS_UNSUCCESSFUL;
+    if (!CmpJournalFile)
+        return STATUS_UNSUCCESSFUL;
+    return make_durable();
 }

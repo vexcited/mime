@@ -582,8 +582,16 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_INVALID;
             break;
         }
-        status = flush_fd(fh->fd);
-        break;
+        /* the flush takes milliseconds and the other files must not wait for it, so it runs on a duplicate. */
+        int fd = dup(fh->fd);
+        if (fd < 0) {
+            status = errno_status(errno);
+            break;
+        }
+        pthread_mutex_unlock(&vm->fs_lock);
+        status = flush_fd(fd);
+        close(fd);
+        return status;
     }
     case MIME_HC_FS_READ:
     case MIME_HC_FS_WRITE: {

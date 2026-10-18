@@ -117,7 +117,10 @@ void CmpJournalInitialize(void);
 void CmpJournalEnable(void);
 NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHAR *name, ULONG chars,
                          const void *data, ULONG length, LARGE_INTEGER last_write);
-NTSTATUS CmpJournalFlush(CM_NODE *node);
+/* starts the worker making appended records durable, once the system can run threads. */
+void CmpJournalStart(void);
+/* what RegFlushKey asks for: every record appended before the call is on the host disk when it succeeds. */
+NTSTATUS CmpJournalFlush(BOOLEAN volatile_key);
 
 /* ------------------------------------------------------------------ boot.c */
 

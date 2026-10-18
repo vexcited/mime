@@ -163,6 +163,7 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
         if (!p->SystemProcess && !p->Terminating)
             PspTerminateProcess(p, STATUS_SYSTEM_SHUTDOWN);
     }
+    CmpJournalShutdown();
     HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, nullptr);
     for (;;)
         KiPause();
