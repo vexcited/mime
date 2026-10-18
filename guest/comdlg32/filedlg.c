@@ -2549,6 +2549,140 @@ static void layout(FILEDLG *dialog)
     MoveWindow(dialog->CancelButton, w - m - button_w, y_type, button_w, row, TRUE);
 }
 
+
+/* ------------------------------------------------------------------ a new folder */
+
+typedef struct _PROMPT {
+    WCHAR Text[MAX_PATH];
+    HFONT Font;
+} PROMPT;
+
+/* a small dialog that asks for a name. */
+static INT_PTR CALLBACK prompt_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    PROMPT *prompt = (PROMPT *)GetWindowLongPtrW(hwnd, DWLP_USER);
+    switch (message) {
+    case WM_INITDIALOG: {
+        prompt = (PROMPT *)lparam;
+        SetWindowLongPtrW(hwnd, DWLP_USER, (LONG_PTR)prompt);
+        RECT unit = {0, 0, 4, 8};
+        MapDialogRect(hwnd, &unit);
+        int ux = unit.right ? unit.right : 6, uy = unit.bottom ? unit.bottom : 13;
+        HFONT font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
+        SetWindowTextW(hwnd, L"New folder");
+        HWND label = CreateWindowExW(0, L"Static", L"Folder &name:", WS_CHILD | WS_VISIBLE | SS_LEFT, MulDiv(7, ux, 4),
+                                     MulDiv(9, uy, 8), MulDiv(150, ux, 4), MulDiv(9, uy, 8), hwnd, (HMENU)-1, nullptr, nullptr);
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"Edit", prompt->Text,
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, MulDiv(7, ux, 4), MulDiv(20, uy, 8),
+                                    MulDiv(176, ux, 4), MulDiv(14, uy, 8), hwnd, (HMENU)101, nullptr, nullptr);
+        HWND ok = CreateWindowExW(0, L"Button", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                  MulDiv(75, ux, 4), MulDiv(42, uy, 8), MulDiv(50, ux, 4), MulDiv(14, uy, 8), hwnd,
+                                  (HMENU)IDOK, nullptr, nullptr);
+        HWND cancel = CreateWindowExW(0, L"Button", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                      MulDiv(133, ux, 4), MulDiv(42, uy, 8), MulDiv(50, ux, 4), MulDiv(14, uy, 8), hwnd,
+                                      (HMENU)IDCANCEL, nullptr, nullptr);
+        HWND all[4] = {label, edit, ok, cancel};
+        for (int i = 0; i < 4; i++)
+            SendMessageW(all[i], WM_SETFONT, (WPARAM)font, FALSE);
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SetFocus(edit);
+        return FALSE;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wparam) == IDOK) {
+            GetWindowTextW(GetDlgItem(hwnd, 101), prompt->Text, MAX_PATH);
+            EndDialog(hwnd, IDOK);
+            return TRUE;
+        }
+        if (LOWORD(wparam) == IDCANCEL) {
+            EndDialog(hwnd, IDCANCEL);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* asks for a name and makes the folder, which is then the one selected. */
+static void new_folder(FILEDLG *dialog)
+{
+    if (dialog->AtComputer)
+        return;
+    static const WORD tmpl[] = {0, 0, 0, 0, 0, 0, 0, 190, 62, 0, 0, 0, 9, 'S', 'e', 'g', 'o', 'e', ' ', 'U', 'I', 0};
+    WORD *copy = HeapAlloc(GetProcessHeap(), 0, sizeof(tmpl));
+    PROMPT prompt;
+    if (!copy)
+        return;
+    memcpy(copy, tmpl, sizeof(tmpl));
+    DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_SETFONT | DS_CENTER | WS_VISIBLE;
+    copy[0] = LOWORD(style);
+    copy[1] = HIWORD(style);
+    /* the first name that is free. */
+    WCHAR path[MAX_PATH];
+    for (int i = 1; i < 1000; i++) {
+        if (i == 1)
+            wcscpy(prompt.Text, L"New folder");
+        else
+            wsprintfW(prompt.Text, L"New folder (%d)", i);
+        if (wcslen(dialog->Folder) + wcslen(prompt.Text) + 2 >= MAX_PATH)
+            break;
+        wcscpy(path, dialog->Folder);
+        PathAddBackslashW(path);
+        wcscat(path, prompt.Text);
+        if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+            break;
+    }
+    INT_PTR answer = DialogBoxIndirectParamW(g_comdlg32, (LPCDLGTEMPLATEW)copy, dialog->Hwnd, prompt_proc, (LPARAM)&prompt);
+    HeapFree(GetProcessHeap(), 0, copy);
+    if (answer != IDOK || !prompt.Text[0])
+        return;
+    if (!valid_name(prompt.Text) || has_wildcard(prompt.Text) || wcslen(dialog->Folder) + wcslen(prompt.Text) + 2 >= MAX_PATH) {
+        message_with_name(dialog, prompt.Text, L"The folder name is not valid.\nCheck the name and try again.");
+        return;
+    }
+    wcscpy(path, dialog->Folder);
+    PathAddBackslashW(path);
+    wcscat(path, prompt.Text);
+    if (!CreateDirectoryW(path, nullptr)) {
+        DWORD error = GetLastError();
+        message_with_name(dialog, prompt.Text,
+                          error == ERROR_ALREADY_EXISTS ? L"A file or folder with this name already exists."
+                                                        : L"The folder could not be created.");
+        return;
+    }
+    refresh(dialog);
+    dialog->Busy++;
+    int rows = (int)SendMessageW(dialog->List, LVM_GETITEMCOUNT, 0, 0);
+    for (int row = 0; row < rows; row++) {
+        const FD_ENTRY *entry = row_entry(dialog, row);
+        if (entry && !_wcsicmp(entry->Name, prompt.Text)) {
+            LVITEMW item;
+            memset(&item, 0, sizeof(item));
+            item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+            item.state = LVIS_SELECTED | LVIS_FOCUSED;
+            SendMessageW(dialog->List, LVM_SETITEMSTATE, row, (LPARAM)&item);
+            SendMessageW(dialog->List, LVM_ENSUREVISIBLE, row, FALSE);
+            break;
+        }
+    }
+    dialog->Busy--;
+    /* a node of the tree for it, if its parent shows its folders. */
+    HTREEITEM selected = (HTREEITEM)SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_CARET, 0);
+    FD_NODE *node = selected ? tree_node(dialog, selected) : nullptr;
+    if (node && node->Filled && node->Kind == 2 && !_wcsicmp(node->Path, dialog->Folder)) {
+        node->Filled = FALSE;
+        while (SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)selected))
+            SendMessageW(dialog->Tree, TVM_DELETEITEM, 0,
+                         SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)selected));
+        TVITEMW tv;
+        memset(&tv, 0, sizeof(tv));
+        tv.mask = TVIF_CHILDREN;
+        tv.hItem = selected;
+        tv.cChildren = 1;
+        SendMessageW(dialog->Tree, TVM_SETITEMW, 0, (LPARAM)&tv);
+    }
+}
+
 /* ------------------------------------------------------------------ the dialog procedure */
 
 static FILEDLG *dialog_of(HWND hwnd)
@@ -2850,10 +2984,14 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         load_images(dialog);
         make_glyphs(dialog);
         create_controls(dialog);
+        /* laid out before it has text, since a box holding text when it grows keeps the text scrolled. */
+        dialog->Showing = TRUE;
+        layout(dialog);
         fill_types(dialog);
         tree_build(dialog);
         SendMessageW(hwnd, DM_SETDEFID, IDOK, 0);
         WCHAR start[MAX_PATH];
+        dialog->Showing = FALSE;
         if (!starting_folder(dialog, start))
             start[0] = 0;
         dialog->Showing = TRUE;
@@ -2901,6 +3039,7 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             go_up(dialog);
             return TRUE;
         case IDC_NEWFOLDER:
+            new_folder(dialog);
             return TRUE;
         case IDC_TYPE:
             if (code == CBN_SELCHANGE)
