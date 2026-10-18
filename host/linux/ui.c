@@ -454,6 +454,16 @@ static void update_pixel_size(UiWindow *w)
 
 static void destroy_subsurface(UiWindow *w);
 
+/* whether a popup of the window is up. */
+static bool has_open_popup(const UiWindow *w)
+{
+    for (int i = 0; i < MAX_WINDOWS; i++)
+        if (g_windows[i].used && g_windows[i].popup && g_windows[i].window && g_windows[i].shown &&
+            g_windows[i].owner == w->id)
+            return true;
+    return false;
+}
+
 static void destroy_host_window(UiWindow *w)
 {
     if (w->vk) {
@@ -491,7 +501,9 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
         MimeRect oh = host_part(&owner->config);
         int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / g_scale);
         int y = (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / g_scale);
-        w->window = SDL_CreatePopupWindow(owner->window, x, y, width, height, flags | SDL_WINDOW_POPUP_MENU);
+        /* a tooltip does not grab the keyboard and the pointer, and takes no input; a menu does. */
+        SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
+        w->window = SDL_CreatePopupWindow(owner->window, x, y, width, height, flags | kind);
     } else {
         SDL_PropertiesID props = SDL_CreateProperties();
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
@@ -627,8 +639,12 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     /* a popup sits on its owner from its creation: another owner or kind makes a new window. */
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     bool want_popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
-    if (w->window && (want_popup != w->popup || (w->popup && w->owner != cfg->owner_id)))
+    if (w->window && (want_popup != w->popup || (w->popup && w->owner != cfg->owner_id))) {
         destroy_host_window(w);
+        /* the new host window is not shown yet. */
+        w->shown = false;
+        w->fullscreen = false;
+    }
     bool size_changed = !w->configured || host_part(&w->config).right - host_part(&w->config).left !=
                                                   host_part(cfg).right - host_part(cfg).left ||
                         host_part(&w->config).bottom - host_part(&w->config).top !=
@@ -1427,6 +1443,7 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     }
     g_call_event = SDL_RegisterEvents(1);
     g_video = g_call_event != 0;
+    mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
         mime_info("no game controllers (%s)", SDL_GetError());
     if (g_video)
@@ -1590,6 +1607,9 @@ static void handle_event(const SDL_Event *e)
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST: {
         UiWindow *w = find_by_sdl(e->window.windowID);
+        /* a popup that grabs the keyboard takes it from its owner without the guest's window losing the activation. */
+        if (w && (w->popup || (e->type == SDL_EVENT_WINDOW_FOCUS_LOST && has_open_popup(w))))
+            break;
         if (w) {
             MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FOCUS, .window_id = w->id,
                                  .x = e->type == SDL_EVENT_WINDOW_FOCUS_GAINED};
@@ -1606,9 +1626,11 @@ static void handle_event(const SDL_Event *e)
         break;
     }
     case SDL_EVENT_WINDOW_MOVED: {
-        /* x11 reports where a window went; wayland keeps top level positions to itself. */
+        /* x11 reports where a window went; wayland keeps top level positions to itself, and the event it sends
+           anyway when a window first shows carries no position. */
         UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w && !w->popup && !w->fullscreen && w->configured) {
+        const char *driver = SDL_GetCurrentVideoDriver();
+        if (w && !w->popup && !w->fullscreen && w->configured && !(driver && !strcmp(driver, "wayland"))) {
             MimeRect host = host_part(&w->config);
             int32_t x = (int32_t)lround(e->window.data1 * g_scale) - host.left;
             int32_t y = (int32_t)lround(e->window.data2 * g_scale) - host.top;

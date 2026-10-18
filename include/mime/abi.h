@@ -610,6 +610,7 @@ enum {
     MIME_WIN_MINIMIZABLE = 1u << 10,
     MIME_WIN_MAXIMIZABLE = 1u << 11,
     MIME_WIN_ACTIVE = 1u << 12, /* the frame is drawn active */
+    MIME_WIN_NOINPUT = 1u << 13, /* takes no mouse input: a transparent window, such as a tooltip */
 };
 
 typedef struct MimeWinConfig {

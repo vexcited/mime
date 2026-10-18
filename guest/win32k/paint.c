@@ -163,6 +163,8 @@ void HostConfigure(WND *w, BOOLEAN activate)
         if (!FrameHasCaption(w->Style, w->ExStyle))
             c->flags |= MIME_WIN_TOOL;
     }
+    if (w->ExStyle & WS_EX_TRANSPARENT)
+        c->flags |= MIME_WIN_NOINPUT;
     c->rect = mime_rect(&w->WindowRect);
     RECT vis;
     FrameGetVisibleRect(w, &vis);
