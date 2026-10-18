@@ -70,8 +70,13 @@ KiAcquireKernelLock:
     movl    %eax, %r9d
     shrl    $16, %r9d               /* our ticket */
     movzwl  %ax, %eax
+    xorl    %r11d, %r11d            /* the time it began to wait, none while the lock was free */
     cmpl    %r9d, %eax
     je      4f
+    rdtsc
+    shlq    $32, %rdx
+    orq     %rdx, %rax
+    movq    %rax, %r11
 1:  movl    $LOCK_SPINS, %r10d
 2:  pause
     movzwl  (%r8), %eax
@@ -100,6 +105,23 @@ KiAcquireKernelLock:
     jne     1b
 4:  movl    %gs:KPCR_NUMBER, %eax
     movl    %eax, LOCK_OWNER(%r8)
+    /* what the lock cost this processor: KiLockStats, a row of eight counters for each. */
+    shll    $6, %eax
+    leaq    KiLockStats(%rip), %rcx
+    addq    %rax, %rcx
+    incq    (%rcx)
+    testq   %r11, %r11
+    jz      7f
+    rdtsc
+    shlq    $32, %rdx
+    orq     %rdx, %rax
+    subq    %r11, %rax
+    incq    8(%rcx)
+    addq    %rax, 16(%rcx)
+    cmpq    24(%rcx), %rax
+    jbe     7f
+    movq    %rax, 24(%rcx)
+7:
     /* kernel translations another processor changed while this one was away. */
     testb   $KPCR_FLUSH_GLOBAL, %gs:KPCR_FLUSH_PENDING
     jz      6f
@@ -321,7 +343,26 @@ KiTrapCommon:
     subq    $0x20, %rsp
     testb   $RPL_USER, KTRAP_CS(%rbx)
     jz      2f
-    movb    $0, %gs:KPCR_USER_MODE
+    /*
+     * a page that is not there is tried without the kernel lock and without leaving user mode as
+     * far as the other processors can tell: UserMode stays set, so one that changes the address space
+     * interrupts this processor, and the interrupt is taken when the fault returns.
+     */
+    cmpq    $14, KTRAP_VECTOR(%rbx)
+    jne     5f
+    testb   $1, KTRAP_ERROR(%rbx)
+    jnz     5f
+    movq    %rbx, %rcx
+    call    KiFastPageFault
+    testb   %al, %al
+    jz      5f
+    movq    %rbx, %rsp
+    RESTORE_XMM
+    RESTORE_GPRS
+    addq    $KTRAP_RIP, %rsp
+    swapgs
+    iretq
+5:  movb    $0, %gs:KPCR_USER_MODE
     call    KiAcquireKernelLock
     jmp     3f
     /* an idle processor halted without the lock takes it back before handling anything. */

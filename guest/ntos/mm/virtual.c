@@ -414,15 +414,19 @@ static SIZE_T release_pages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
         if (!any)
             continue;
         MiClearPtes(pte, va, count, as->Asid, old);
+        ULONG64 freed[512];
+        ULONG n = 0;
         for (SIZE_T i = 0; i < count; i++) {
             ULONG64 e = old[i];
             committed += pte_committed(e);
             if ((e & MM_PTE_VALID) && !(e & MM_PTE_SW_SHARED)) {
-                MmFreePage(e & MM_PTE_ADDR_MASK);
+                freed[n++] = e & MM_PTE_ADDR_MASK;
                 if (as->CommittedPages)
                     as->CommittedPages--;
             }
         }
+        if (n)
+            MmFreePages(freed, n);
     }
     return committed;
 }
@@ -519,13 +523,17 @@ static void reset_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
         if (!any)
             continue;
         MiRewritePtes(pte, va, count, values, as->Asid);
+        ULONG64 freed[512];
+        ULONG n = 0;
         for (SIZE_T i = 0; i < count; i++) {
             if ((old[i] & MM_PTE_VALID) && !(old[i] & MM_PTE_SW_SHARED)) {
-                MmFreePage(old[i] & MM_PTE_ADDR_MASK);
+                freed[n++] = old[i] & MM_PTE_ADDR_MASK;
                 if (as->CommittedPages)
                     as->CommittedPages--;
             }
         }
+        if (n)
+            MmFreePages(freed, n);
     }
 }
 
@@ -871,7 +879,7 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
         return STATUS_INVALID_HANDLE;
 
     NTSTATUS status = STATUS_SUCCESS;
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     if (reserve) {
         BOOLEAN commit = (type & MEM_COMMIT) != 0;
         BOOLEAN placeholder = (type & MEM_RESERVE_PLACEHOLDER) != 0;
@@ -920,7 +928,7 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
         else if (type & MEM_COMMIT)
             status = commit_range(as, vad, start, end, protect);
     }
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     if (NT_SUCCESS(status)) {
         *base_io = (PVOID)start;
         *size_io = end - start;
@@ -962,7 +970,7 @@ NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type)
     ULONG_PTR start = (ULONG_PTR)*base & ~(ULONG_PTR)(PAGE_SIZE - 1);
     ULONG_PTR end = *size ? (((ULONG_PTR)*base + *size - 1) | (PAGE_SIZE - 1)) + 1 : 0;
     NTSTATUS status;
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     PMMVAD vad = coalesce ? nullptr : MiFindVad(as, start);
     if (coalesce) {
         status = coalesce_placeholders(as, start, end);
@@ -978,7 +986,7 @@ NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type)
             end = vad->EndVa;
         status = free_in_vad(as, vad, start, end, type, preserve);
     }
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     if (NT_SUCCESS(status)) {
         *base = (PVOID)start;
         *size = end - start;
@@ -995,15 +1003,15 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
         return STATUS_INVALID_PAGE_PROTECTION;
     ULONG_PTR start = (ULONG_PTR)*base & ~(ULONG_PTR)(PAGE_SIZE - 1);
     ULONG_PTR end = ROUND_TO_PAGES((ULONG_PTR)*base + *size);
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     PMMVAD vad = MiFindVad(as, start);
     if (!vad || end > vad->EndVa) {
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return STATUS_CONFLICTING_ADDRESSES;
     }
     if (vad->Flags & MM_VAD_PLACEHOLDER) {
         /* a placeholder holds no pages, so only the protection it has can be asked for. */
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         if (protect != PAGE_NOACCESS)
             return STATUS_CONFLICTING_ADDRESSES;
         if (old)
@@ -1014,12 +1022,12 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
     }
     /* every page has to be committed before the first one is changed. */
     if (count_committed(as, start, end) != (end - start) >> PAGE_SHIFT) {
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return STATUS_NOT_COMMITTED;
     }
     ULONG first_old = MiPteToProtect(MiReadPte(as->Root, start));
     apply_protection(as, vad, start, end, protect);
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     if (old)
         *old = first_old;
     *base = (PVOID)start;
@@ -1036,7 +1044,7 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     if (va > MM_HIGHEST_USER_ADDRESS)
         return STATUS_INVALID_PARAMETER;
     memset(info, 0, sizeof(*info));
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     PMMVAD vad = MiFindVad(as, va);
     if (!vad) {
         ULONG i = vad_lower_bound(as, va);
@@ -1045,7 +1053,7 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
         info->RegionSize = next - va;
         info->State = MEM_FREE;
         info->Protect = PAGE_NOACCESS;
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return STATUS_SUCCESS;
     }
     ULONG64 pte = MiReadPte(as->Root, va);
@@ -1082,7 +1090,7 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     info->State = committed ? MEM_COMMIT : MEM_RESERVE;
     info->Protect = prot;
     info->Type = vad->Type == MiVadImage ? MEM_IMAGE : vad->Type == MiVadPrivate ? MEM_PRIVATE : MEM_MAPPED;
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     return STATUS_SUCCESS;
 }
 
@@ -1172,6 +1180,133 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
     return TRUE;
 }
 
+/*
+ * the demand zero fault of a committed private page, without the kernel lock. it runs with interrupts
+ * off from the first instructions of the trap, as a reader of the gate of the address space: the
+ * holder of the lock sets the writer bit and waits for the readers to leave before it changes a vad or
+ * a table, and a reader that finds the bit set gives up, so the fault is taken the long way. a page
+ * that is not there yet changes to one that is with a compare and swap, which is all that threads
+ * faulting at the same time on the same table need from each other, and nothing waits but for the
+ * allocator's lock. FALSE leaves the fault to MmAccessFault, whatever the reason.
+ */
+static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BOOLEAN execute)
+{
+    PMMVAD vad = MiFindVad(as, page);
+    if (!vad || (vad->Flags & MM_VAD_PLACEHOLDER))
+        return FALSE;
+    ULONG64 *pte = MiWalk(as->Root, page, FALSE, 3);
+    if (!pte)
+        return FALSE;
+    ULONG64 v = __atomic_load_n(pte, __ATOMIC_RELAXED);
+    if (v & MM_PTE_VALID) {
+        /* another processor fixed the page while this one was on its way. */
+        return MI_PTE_IS_USER(v) && (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v));
+    }
+    ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+    if (!(v & MM_SWPTE_COMMITTED) || (v & MM_SWPTE_SECTION) || (protect & 0xFF) == PAGE_NOACCESS ||
+        (protect & PAGE_GUARD))
+        return FALSE;
+
+    BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
+    ULONG stream = (ULONG)-1;
+    for (ULONG i = 0; i < 8; i++) {
+        ULONG_PTR end = as->LastFaultEnd[i];
+        if (end && page >= end && page < end + FAULT_WINDOW)
+            stream = i;
+    }
+    ULONG_PTR size = stream != (ULONG)-1 ? FAULT_WINDOW_SEQUENTIAL : FAULT_WINDOW;
+    ULONG_PTR start = page & ~(size - 1), end = start + size;
+    if (start < vad->StartVa)
+        start = vad->StartVa;
+    if (end > vad->EndVa)
+        end = vad->EndVa;
+
+    /* the pages to map, the faulting one first. */
+    ULONG64 *first = pte - ((page - start) >> PAGE_SHIFT);
+    ULONG64 *slot[MM_BATCH_PAGES], old[MM_BATCH_PAGES];
+    ULONG count = 1;
+    slot[0] = pte;
+    old[0] = v;
+    for (ULONG_PTR va = start; va < end && count < MM_BATCH_PAGES; va += PAGE_SIZE) {
+        ULONG64 *p = first + ((va - start) >> PAGE_SHIFT), w = __atomic_load_n(p, __ATOMIC_RELAXED);
+        ULONG wp = (ULONG)((w & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+        if (va == page || (w & MM_PTE_VALID) || !(w & MM_SWPTE_COMMITTED) || (w & MM_SWPTE_SECTION) ||
+            (wp & 0xFF) == PAGE_NOACCESS || (wp & PAGE_GUARD))
+            continue;
+        slot[count] = p;
+        old[count] = w;
+        count++;
+    }
+    ULONG64 pages[MM_BATCH_PAGES];
+    ULONG got = MmAllocateZeroedPages(count, pages);
+    if (!got)
+        return FALSE;
+
+    ULONG mapped = 0, unused = 0;
+    ULONG64 spare[MM_BATCH_PAGES];
+    for (ULONG i = 0; i < got; i++) {
+        ULONG p = (ULONG)((old[i] & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
+        ULONG64 attrs = MiProtectToPte(p, TRUE) & ~MM_PTE_SW_COW;
+        if (p & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
+            attrs = MI_PTE_SET_RW(attrs);
+        /* a page of a write watched allocation that nothing wrote yet is read only until it is. */
+        if (watch && (i || !write) && (p & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+            attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
+        ULONG64 expected = old[i];
+        if (__atomic_compare_exchange_n(slot[i], &expected, pages[i] | attrs | MM_PTE_VALID | MM_PTE_PAGE, FALSE,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+            mapped++;
+        else
+            spare[unused++] = pages[i];
+    }
+    if (unused)
+        MmFreeZeroedPagesQuiet(spare, unused);
+
+    if (mapped) {
+        SIZE_T now = __atomic_add_fetch(&as->CommittedPages, mapped, __ATOMIC_RELAXED);
+        SIZE_T peak = __atomic_load_n(&as->PeakCommittedPages, __ATOMIC_RELAXED);
+        while (now > peak && !__atomic_compare_exchange_n(&as->PeakCommittedPages, &peak, now, FALSE,
+                                                          __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            ;
+    }
+    __atomic_add_fetch(&as->PageFaults, 1, __ATOMIC_RELAXED);
+    if (stream == (ULONG)-1)
+        stream = __atomic_fetch_add(&as->NextFaultStream, 1, __ATOMIC_RELAXED) & 7;
+    as->LastFaultEnd[stream] = end;
+    return TRUE;
+}
+
+/* counted for the thread dump, a row for each processor so that counting shares nothing. */
+MM_FAULT_STATS MmFaultStats[MAXIMUM_PROCESSORS];
+
+BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
+{
+    if (va > MM_HIGHEST_USER_ADDRESS)
+        return FALSE;
+    /* a thread that was preempted inside the gate would keep a writer waiting on the processor it holds. */
+    ULONG64 state = KiDisableInterrupts();
+    PMMADDRESS_SPACE as = &((PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
+    if (!as->Root) {
+        KiRestoreInterrupts(state);
+        return FALSE;
+    }
+    ULONG gate = __atomic_load_n(&as->FaultGate, __ATOMIC_RELAXED);
+    do {
+        if (gate & MI_GATE_WRITER) {
+            MmFaultStats[KeGetCurrentPrcb()->Number].Gated++;
+            KiRestoreInterrupts(state);
+            return FALSE;
+        }
+    } while (!__atomic_compare_exchange_n(&as->FaultGate, &gate, gate + MI_GATE_READER, TRUE, __ATOMIC_ACQUIRE,
+                                          __ATOMIC_RELAXED));
+    BOOLEAN handled = fast_fault(as, va & ~(ULONG_PTR)(PAGE_SIZE - 1), write, execute);
+    __atomic_fetch_sub(&as->FaultGate, MI_GATE_READER, __ATOMIC_RELEASE);
+    MmFaultStats[KeGetCurrentPrcb()->Number].Fast += handled;
+    MmFaultStats[KeGetCurrentPrcb()->Number].Rejected += !handled;
+    KiRestoreInterrupts(state);
+    return handled;
+}
+
 /* resolves demand zero, section and copy on write faults. returns FALSE for real access violations. */
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {
@@ -1182,7 +1317,11 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     if (!as->Root)
         return FALSE;
     ULONG_PTR page = va & ~(ULONG_PTR)(PAGE_SIZE - 1);
-    ExAcquireFastMutex(&as->Lock);
+    /* a page that is not there yet needs no more than the gate, and taking the lock would shut it on the others. */
+    if (MmFastFault(va, write, execute))
+        return TRUE;
+    MmFaultStats[KeGetCurrentPrcb()->Number].Slow++;
+    MiLockAddressSpace(as);
     BOOLEAN handled = FALSE;
     as->PageFaults++;
     PMMVAD vad = MiFindVad(as, page);
@@ -1224,7 +1363,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
             handled = TRUE;
         }
     }
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     return handled;
 }
 
@@ -1336,14 +1475,14 @@ NTSTATUS NTAPI NtGetWriteWatch(HANDLE process_handle, ULONG flags, PVOID base, S
     ULONG_PTR start = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1), end = ROUND_TO_PAGES((ULONG_PTR)base + size);
     ULONG_PTR chunk[256], resume = start, done = 0;
     do {
-        ExAcquireFastMutex(&as->Lock);
+        MiLockAddressSpace(as);
         SIZE_T room = requested - done < 256 ? requested - done : 256;
         SIZE_T n = 0;
         if (!watched_vad(as, start, end))
             status = STATUS_INVALID_PARAMETER;
         else
             n = gather_written(as, &resume, end, (flags & WRITE_WATCH_FLAG_RESET) != 0, chunk, room);
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         if (!NT_SUCCESS(status))
             break;
         if (n)
@@ -1372,14 +1511,14 @@ NTSTATUS NTAPI NtResetWriteWatch(HANDLE process_handle, PVOID base, SIZE_T size)
     PMMADDRESS_SPACE as = &process->AddressSpace;
     ULONG_PTR start = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1), end = ROUND_TO_PAGES((ULONG_PTR)base + size);
     ULONG_PTR chunk[256], resume = start;
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     if (!watched_vad(as, start, end))
         status = STATUS_INVALID_PARAMETER;
     else
         do
             gather_written(as, &resume, end, TRUE, chunk, 256);
         while (resume);
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     ObDereferenceObject(process);
     return status;
 }
@@ -1520,10 +1659,10 @@ NTSTATUS NTAPI ZwFreeVirtualMemory(HANDLE process, PVOID *base, PSIZE_T size, UL
 static BOOLEAN region_is_image(PEPROCESS process, PVOID base)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     PMMVAD vad = (ULONG_PTR)base <= MM_HIGHEST_USER_ADDRESS ? MiFindVad(as, (ULONG_PTR)base) : nullptr;
     BOOLEAN image = vad && vad->Type == MiVadImage;
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     return image;
 }
 
@@ -1588,7 +1727,7 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
             return status;
         ULONG64 attributes = 0;
         if (va <= MM_HIGHEST_USER_ADDRESS) {
-            ExAcquireFastMutex(&as->Lock);
+            MiLockAddressSpace(as);
             PMMVAD vad = MiFindVad(as, va);
             if (vad && !(vad->Flags & MM_VAD_PLACEHOLDER)) {
                 ULONG64 pte = MiReadPte(as->Root, va & ~(ULONG_PTR)(PAGE_SIZE - 1));
@@ -1599,7 +1738,7 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
                         attributes |= 1ull << 1 | 1ull << 15;
                 }
             }
-            ExReleaseFastMutex(&as->Lock);
+            MiUnlockAddressSpace(as);
         }
         status = KiCopyToUser(entry + 8, &attributes, sizeof(attributes));
         if (!NT_SUCCESS(status))
@@ -1674,11 +1813,11 @@ static NTSTATUS query_working_set(PEPROCESS process, PVOID info, SIZE_T length)
         return STATUS_INFO_LENGTH_MISMATCH;
     SIZE_T capacity = (length - sizeof(ULONG_PTR)) / sizeof(ULONG_PTR), total = 0;
     ULONG_PTR chunk[256], resume = 0;
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     do
         total += gather_working_set(as, &resume, chunk, 256);
     while (resume);
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     NTSTATUS status = KiCopyToUser(info, &total, sizeof(total));
     if (!NT_SUCCESS(status))
         return status;
@@ -1687,9 +1826,9 @@ static NTSTATUS query_working_set(PEPROCESS process, PVOID info, SIZE_T length)
     SIZE_T written = 0;
     resume = 0;
     do {
-        ExAcquireFastMutex(&as->Lock);
+        MiLockAddressSpace(as);
         SIZE_T n = gather_working_set(as, &resume, chunk, capacity - written < 256 ? capacity - written : 256);
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         if (n) {
             status = KiCopyToUser((PULONG_PTR)info + 1 + written, chunk, n * sizeof(ULONG_PTR));
             if (!NT_SUCCESS(status))
@@ -1708,14 +1847,14 @@ ULONG MmQueryVmCounters(PEPROCESS process, PVOID out, ULONG length)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
     SIZE_T v[14] = {};
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     SIZE_T virtual_size = 0;
     for (ULONG i = 0; i < as->VadCount; i++)
         virtual_size += as->Spans[i].End - as->Spans[i].Start;
     SIZE_T working = as->CommittedPages * PAGE_SIZE, peak_working = as->PeakCommittedPages * PAGE_SIZE;
     SIZE_T charge = as->CommitCharge * PAGE_SIZE, peak_charge = as->PeakCommitCharge * PAGE_SIZE;
     SIZE_T faults = as->PageFaults;
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     if (virtual_size > as->PeakVirtualSize)
         as->PeakVirtualSize = virtual_size;
     if (peak_working < working)
@@ -1760,7 +1899,7 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         if (length < sizeof(mi)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
         } else {
-            ExAcquireFastMutex(&as->Lock);
+            MiLockAddressSpace(as);
             PMMVAD vad = (ULONG_PTR)base <= MM_HIGHEST_USER_ADDRESS ? MiFindVad(as, (ULONG_PTR)base) : nullptr;
             if (!vad) {
                 status = STATUS_INVALID_ADDRESS;
@@ -1770,7 +1909,7 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
                 if (vad->SectionOffset + (vad->EndVa - vad->StartVa) < vad->Section->Size)
                     mi.ImageFlags |= MEMORY_IMAGE_PARTIAL_MAP;
             }
-            ExReleaseFastMutex(&as->Lock);
+            MiUnlockAddressSpace(as);
             if (NT_SUCCESS(status)) {
                 status = KiCopyToUser(info, &mi, sizeof(mi));
                 SIZE_T n = sizeof(mi);
@@ -1784,12 +1923,12 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         status = query_working_set(process, info, length);
     } else if (klass == MemoryMappedFilenameInformation) {
         PMMADDRESS_SPACE as = &process->AddressSpace;
-        ExAcquireFastMutex(&as->Lock);
+        MiLockAddressSpace(as);
         PMMVAD vad = MiFindVad(as, (ULONG_PTR)base);
         PSECTION section = vad ? vad->Section : nullptr;
         if (section)
             ObReferenceObject(section);
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         if (!section || !section->FileName.Buffer) {
             status = STATUS_INVALID_ADDRESS;
         } else {

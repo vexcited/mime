@@ -18,6 +18,8 @@ static KI_SERVICE_TABLE g_tables[2] = {{g_nt_services, MIME_NT_SERVICES_COUNT}, 
 static UCHAR g_reported[2][4096 / 8];
 /* calls of each service, for the thread dump; racy counts are good enough for that. */
 static ULONG64 g_calls[2][4096];
+/* the ticks the kernel lock was held by each service, not counting the time its thread waited, and the longest call */
+static ULONG64 g_ticks[2][4096], g_longest[2][4096];
 
 typedef struct _WIN32_CALLOUTS {
     NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
@@ -108,6 +110,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG table = number >> 12;
     ULONG index = number & 0xFFF;
     ULONG64 result;
+    ULONG64 started = HalReadCounter(), blocked = thread->BlockedTicks;
     if (table < 2)
         g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
@@ -160,6 +163,18 @@ void KiSystemService(PKTRAP_FRAME frame)
         if (trace)
             KiLogPrintf("svc %u.%u %s = %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), result);
+    }
+    if (table < 2) {
+        ULONG64 held = HalReadCounter() - started - (thread->BlockedTicks - blocked);
+        g_ticks[table][index] += held;
+        if (held > g_longest[table][index])
+            g_longest[table][index] = held;
+    }
+    /* the level belongs to the processor, so a service that leaves it raised would break the next thread to wait here. */
+    PKPCR pcr = KeGetPcr();
+    if (pcr->Irql != PASSIVE_LEVEL) {
+        KiLogPrintf("service %s returned at irql %u", service_name(table, index), (ULONG)pcr->Irql);
+        pcr->Irql = PASSIVE_LEVEL;
     }
     KI_SERVICE_RESULT(frame) = result;
     KiExitToUserMode(frame);
@@ -285,17 +300,44 @@ void NTAPI ProbeForWrite(PVOID address, SIZE_T length, ULONG alignment)
 /* the services called most since the last dump, then the counts start over. */
 void KiDumpServiceCalls(void)
 {
+    MM_FAULT_STATS total = {};
+    for (ULONG i = 0; i < MAXIMUM_PROCESSORS; i++) {
+        total.Fast += MmFaultStats[i].Fast;
+        total.Gated += MmFaultStats[i].Gated;
+        total.Rejected += MmFaultStats[i].Rejected;
+        total.Slow += MmFaultStats[i].Slow;
+    }
+    KiLogPrintf("faults: %llu without the kernel lock, %llu turned away at the gate, %llu not demand zero, %llu with it",
+                total.Fast, total.Gated, total.Rejected, total.Slow);
+    ULONG64 acquires = 0, contended = 0, waited = 0, longest = 0;
+    for (ULONG i = 0; i < MAXIMUM_PROCESSORS; i++) {
+        acquires += KiLockStats[i][0];
+        contended += KiLockStats[i][1];
+        waited += KiLockStats[i][2];
+        if (KiLockStats[i][3] > longest)
+            longest = KiLockStats[i][3];
+    }
+    KiLogPrintf("kernel lock: %llu taken, %llu after waiting, %llu us waited in all, longest wait %llu us", acquires,
+                contended, HalCounterToHns(waited) / 10, HalCounterToHns(longest) / 10);
+    /* the services that held the lock longest, with how often and how long at most. */
     for (int round = 0; round < 12; round++) {
         ULONG64 best = 0;
         ULONG bt = 0, bi = 0;
         for (ULONG t = 0; t < 2; t++)
             for (ULONG i = 0; i < 4096; i++)
-                if (g_calls[t][i] > best)
-                    best = g_calls[t][i], bt = t, bi = i;
+                if (g_ticks[t][i] > best)
+                    best = g_ticks[t][i], bt = t, bi = i;
         if (!best)
             break;
-        KiLogPrintf("calls %s: %llu", service_name(bt, bi), best);
-        g_calls[bt][bi] = 0;
+        ULONG64 calls = g_calls[bt][bi];
+        KiLogPrintf("calls %s: %llu, held %llu us in all, %llu ns each, longest %llu us", service_name(bt, bi), calls,
+                    HalCounterToHns(best) / 10, calls ? HalCounterToHns(best) * 100 / calls : 0,
+                    HalCounterToHns(g_longest[bt][bi]) / 10);
+        g_ticks[bt][bi] = 0;
     }
     memset(g_calls, 0, sizeof(g_calls));
+    memset(g_ticks, 0, sizeof(g_ticks));
+    memset(g_longest, 0, sizeof(g_longest));
+    memset(KiLockStats, 0, sizeof(KiLockStats));
+    memset(MmFaultStats, 0, sizeof(MmFaultStats));
 }

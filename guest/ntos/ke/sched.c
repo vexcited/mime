@@ -11,6 +11,8 @@ PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
 ULONG KeNumberProcessors = 1;
 volatile ULONG KiKernelLock[4] = {0, ~0u, 0, 0};
 ULONG64 KiKernelLockPhys;
+/* acquisitions, those that had to wait, ticks waited, the longest wait: a row of eight for each processor, see entry.S */
+ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 
 void KiInitializeScheduler(void)
 {
@@ -184,7 +186,9 @@ void KiSwapThread(void)
     }
     if (next->ApcStateProcess != old->ApcStateProcess && next->ApcStateProcess->DirectoryTableBase)
         KiSwitchAddressSpace(next->ApcStateProcess);
+    ULONG64 switched_out = HalReadCounter();
     KiSwapContext(old, next);
+    old->BlockedTicks += HalReadCounter() - switched_out;
 }
 
 /* moves a still running thread back to the ready queue and dispatches, unless it keeps the processor. */

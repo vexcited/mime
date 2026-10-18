@@ -259,6 +259,12 @@ static void interrupt(PKTRAP_FRAME frame)
     }
 }
 
+/* the first try at a page fault of user mode on a page that is not there, before the kernel lock, see entry.S. */
+BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
+{
+    return MmFastFault(frame->Cr2, (frame->ErrorCode & 0x2) != 0, (frame->ErrorCode & 0x10) != 0);
+}
+
 void KiTrapDispatch(PKTRAP_FRAME frame)
 {
     /* int 2e, the system call of ntdll's stubs when SharedUserData says syscall is unavailable. */

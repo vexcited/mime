@@ -595,7 +595,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     }
     SIZE_T bytes = pages << PAGE_SHIFT;
 
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     ULONG_PTR va = (ULONG_PTR)*base;
     BOOLEAN relocated = FALSE;
     NTSTATUS status = STATUS_SUCCESS;
@@ -605,7 +605,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
             va = s->Image.ImageBase;
         if (!MiRangeIsFree(as, va, va + bytes)) {
             if (*base || !s->Image.Relocatable) {
-                ExReleaseFastMutex(&as->Lock);
+                MiUnlockAddressSpace(as);
                 return STATUS_CONFLICTING_ADDRESSES;
             }
             status = MiFindFreeRange(as, bytes, 0x10000, TRUE, &va);
@@ -636,7 +636,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
                                        (allocation_type & MEM_TOP_DOWN) != 0, &va);
     }
     if (!NT_SUCCESS(status)) {
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return status;
     }
 
@@ -646,7 +646,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         private_pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, pages * sizeof(ULONG64), KI_TAG('M', 'm', 'R', 'p'));
     if (!vad || (image && relocated && !private_pages)) {
         ExFreePool(vad);
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     vad->StartVa = va;
@@ -667,7 +667,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
             ExFreePool(vad);
             if (private_pages)
                 ExFreePool(private_pages);
-            ExReleaseFastMutex(&as->Lock);
+            MiUnlockAddressSpace(as);
             return status;
         }
     }
@@ -712,11 +712,11 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     if (private_pages)
         ExFreePool(private_pages);
     if (!NT_SUCCESS(status)) {
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         MiUnmapViewOfSection(process, (PVOID)va);
         return status;
     }
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     *base = (PVOID)va;
     *view_size = bytes;
     return relocated ? STATUS_IMAGE_NOT_AT_BASE : STATUS_SUCCESS;
@@ -736,14 +736,14 @@ NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
     BOOLEAN preserve = (flags & UNMAP_PRESERVE_PLACEHOLDER) != 0;
-    ExAcquireFastMutex(&as->Lock);
+    MiLockAddressSpace(as);
     PMMVAD vad = MiFindVad(as, (ULONG_PTR)base);
     if (!vad || (vad->Type != MiVadImage && vad->Type != MiVadMapped)) {
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return STATUS_NOT_MAPPED_VIEW;
     }
     if (preserve && ((ULONG_PTR)base != vad->StartVa || !(vad->Flags & MM_VAD_REPLACED))) {
-        ExReleaseFastMutex(&as->Lock);
+        MiUnlockAddressSpace(as);
         return STATUS_CONFLICTING_ADDRESSES;
     }
     MiReleasePages(as, vad->StartVa, vad->EndVa);
@@ -757,7 +757,7 @@ NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags)
     } else {
         MiRemoveVad(as, vad);
     }
-    ExReleaseFastMutex(&as->Lock);
+    MiUnlockAddressSpace(as);
     if (section)
         ObDereferenceObject(section);
     if (!preserve)

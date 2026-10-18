@@ -151,6 +151,7 @@ typedef struct _KTHREAD {
     PVOID Win32Thread;
     KJUMP_BUFFER *FaultRecovery;
     ULONG64 ContextSwitches;
+    ULONG64 BlockedTicks; /* counter ticks spent switched out, to tell a service's work from its waiting */
     ULONG64 KernelTime;
     ULONG64 UserTime;
     ULONG SuspendCount;
@@ -280,6 +281,7 @@ extern volatile ULONG KiKernelLock[4]; /* ticket lock, owning processor, sleeper
             KeBugCheckEx(0xDEAD10C, KiKernelLock[1], KeGetCurrentPrcb()->Number, __LINE__, 0);                    \
     } while (0)
 extern ULONG64 KiKernelLockPhys;
+extern ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 void KiAcquireKernelLock(void);
 void KiReleaseKernelLock(void);
 
@@ -458,7 +460,42 @@ typedef struct _MMADDRESS_SPACE {
     ULONG_PTR AllocationLimit;
     ULONG_PTR LastFaultEnd[8]; /* ends of the last demand zero windows, to spot sequential touching by several threads */
     ULONG NextFaultStream;
+    /* faults that run without the kernel lock count in; the holder of Lock sets the writer bit and waits for them to leave. */
+    volatile ULONG FaultGate;
 } MMADDRESS_SPACE, *PMMADDRESS_SPACE;
+
+#define MI_GATE_WRITER 0x80000000u
+#define MI_GATE_READER 1u
+
+/*
+ * the lock of an address space. every change to its vads and translation tables happens inside it, and
+ * so does every fault that is not the plain demand zero one, which MmFastFault resolves without the
+ * kernel lock but only while the writer bit of the gate is clear.
+ */
+FORCEINLINE void MiLockAddressSpace(PMMADDRESS_SPACE as)
+{
+    ExAcquireFastMutex(&as->Lock);
+    __atomic_fetch_or(&as->FaultGate, MI_GATE_WRITER, __ATOMIC_SEQ_CST);
+    while (__atomic_load_n(&as->FaultGate, __ATOMIC_ACQUIRE) & ~MI_GATE_WRITER)
+        KiPause();
+}
+
+FORCEINLINE void MiUnlockAddressSpace(PMMADDRESS_SPACE as)
+{
+    __atomic_fetch_and(&as->FaultGate, ~MI_GATE_WRITER, __ATOMIC_RELEASE);
+    ExReleaseFastMutex(&as->Lock);
+}
+
+BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute);
+
+/* faults of user mode by how they were resolved, for the thread dump. */
+typedef struct DECLSPEC_ALIGN(64) _MM_FAULT_STATS {
+    ULONG64 Fast;     /* demand zero, without the kernel lock */
+    ULONG64 Gated;    /* turned away because a change of the address space was under way */
+    ULONG64 Rejected; /* not a plain demand zero fault */
+    ULONG64 Slow;     /* resolved or refused by MmAccessFault */
+} MM_FAULT_STATS;
+extern MM_FAULT_STATS MmFaultStats[MAXIMUM_PROCESSORS];
 
 typedef struct _MI_IMAGE_INFO {
     ULONG_PTR ImageBase; /* preferred */
@@ -508,6 +545,11 @@ void MmInitializePhase1(void);
 ULONG64 MmAllocatePage(void);           /* zeroed, returns physical address, 0 on failure */
 ULONG64 MmAllocatePageNoZero(void);
 void MmFreePage(ULONG64 pa);
+void MmFreePages(const ULONG64 *pages, ULONG count);
+void MmFreePagesQuiet(const ULONG64 *pages, ULONG count);
+void MmFreeZeroedPagesQuiet(const ULONG64 *pages, ULONG count);
+#define MM_BATCH_PAGES 16
+ULONG MmAllocateZeroedPages(ULONG count, ULONG64 *pages); /* up to MM_BATCH_PAGES, returns how many */
 ULONG64 MmAllocateContiguous(SIZE_T pages); /* zeroed run */
 void MmFreeContiguous(ULONG64 pa, SIZE_T pages);
 PMMPFN MiGetPfn(ULONG64 pa);
