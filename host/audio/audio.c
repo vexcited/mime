@@ -73,6 +73,9 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     if (!base)
         return MIME_HC_STATUS_INVALID;
     MimeAudioHeader h = *(MimeAudioHeader *)base;
+    /* there is no input stream on this host yet. */
+    if (h.capture)
+        return MIME_HC_STATUS_UNSUPPORTED;
     bool valid_bits = h.is_float ? h.bits == 32 : h.bits == 16 || h.bits == 24 || h.bits == 32;
     if (!valid_bits || h.channels < 1 || h.channels > 8 || h.rate < 8000 || h.rate > 192000)
         return MIME_HC_STATUS_UNSUPPORTED;

@@ -1,10 +1,12 @@
 /*
- * audio clients of the render endpoint. a client owns one host stream
+ * audio clients of the render and capture endpoints. a client owns one host stream
  * (mime/audio.h): GetBuffer hands out the ring in place and ReleaseBuffer
  * publishes the frames by advancing written, while the host's output
  * callback advances played. a request that would wrap around the end of the
  * ring goes through a bounce buffer instead. event driven clients get their
- * event set once per engine period while they run.
+ * event set once per engine period while they run. a capture client has the
+ * stream turned around: the host publishes the frames it captured by
+ * advancing written, and the program hands packets back by advancing played.
  */
 #include "mmdevapi_private.h"
 
@@ -17,6 +19,7 @@
 typedef struct CLIENT {
     const IAudioClient3Vtbl *client;
     const IAudioRenderClientVtbl *render;
+    const IAudioCaptureClientVtbl *capture_client;
     const IAudioClockVtbl *clock;
     const ISimpleAudioVolumeVtbl *simple;
     const IAudioStreamVolumeVtbl *stream;
@@ -34,6 +37,8 @@ typedef struct CLIENT {
     UINT32 pending; /* frames handed out by GetBuffer */
     BYTE *scratch;
     BOOL bounced;
+    BOOL capture;
+    UINT64 dropped; /* the host's dropped frames the program has been told of */
     float master, channel[8];
     BOOL mute;
 } CLIENT;
@@ -157,6 +162,7 @@ static HRESULT initialize(CLIENT *c, AUDCLNT_SHAREMODE mode, DWORD flags, REFERE
         h->is_float = f.is_float;
         h->frames = ring_frames;
         h->volume = 65536;
+        h->capture = c->capture;
         status = NtGdiMimeAudioControl(slot, MIME_AUDIO_OPEN);
         if (!NT_SUCCESS(status))
             NtGdiMimeAudioControl(slot, MIME_AUDIO_CLOSE);
@@ -167,6 +173,8 @@ static HRESULT initialize(CLIENT *c, AUDCLNT_SHAREMODE mode, DWORD flags, REFERE
     }
     if (!NT_SUCCESS(status)) {
         ReleaseSRWLockExclusive(&c->lock);
+        if (c->capture)
+            return AUDCLNT_E_DEVICE_INVALIDATED;
         return status == STATUS_NOT_SUPPORTED ? AUDCLNT_E_UNSUPPORTED_FORMAT : AUDCLNT_E_SERVICE_NOT_RUNNING;
     }
     c->slot = slot;
@@ -339,6 +347,8 @@ static HRESULT STDMETHODCALLTYPE client_reset(void *This)
         hr = AUDCLNT_E_NOT_STOPPED;
     else if (c->pending)
         hr = ((HRESULT)0x8889000B); /* AUDCLNT_E_BUFFER_OPERATION_PENDING */
+    else if (c->capture)
+        __atomic_store_n(&c->hdr->played, __atomic_load_n(&c->hdr->written, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
     else
         __atomic_store_n(&c->hdr->written, __atomic_load_n(&c->hdr->played, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
     ReleaseSRWLockExclusive(&c->lock);
@@ -367,7 +377,9 @@ static HRESULT STDMETHODCALLTYPE client_get_service(void *This, REFIID iid, void
     if (!c->initialized)
         return AUDCLNT_E_NOT_INITIALIZED;
     if (IsEqualGUID(iid, &IID_IAudioRenderClient))
-        *object = &c->render;
+        *object = c->capture ? nullptr : &c->render;
+    else if (IsEqualGUID(iid, &IID_IAudioCaptureClient))
+        *object = c->capture ? &c->capture_client : nullptr;
     else if (IsEqualGUID(iid, &IID_IAudioClock))
         *object = &c->clock;
     else if (IsEqualGUID(iid, &IID_ISimpleAudioVolume))
@@ -376,6 +388,8 @@ static HRESULT STDMETHODCALLTYPE client_get_service(void *This, REFIID iid, void
         *object = &c->stream;
     else
         return E_NOINTERFACE;
+    if (!*object)
+        return AUDCLNT_E_WRONG_ENDPOINT_TYPE;
     client_add_ref(This);
     return S_OK;
 }
@@ -524,6 +538,109 @@ static const IAudioRenderClientVtbl render_vtbl = {
     render_query, render_add_ref, render_release, render_get_buffer, render_release_buffer,
 };
 
+/* ------------------------------------------------------------------ IAudioCaptureClient */
+
+static HRESULT STDMETHODCALLTYPE capture_query(void *This, REFIID riid, void **object)
+{
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IAudioCaptureClient)) {
+        *object = This;
+        client_add_ref(&FROM(capture_client, This)->client);
+        return S_OK;
+    }
+    *object = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE capture_add_ref(void *This) { return client_add_ref(&FROM(capture_client, This)->client); }
+static ULONG STDMETHODCALLTYPE capture_release(void *This) { return client_release(&FROM(capture_client, This)->client); }
+
+/* a packet is one engine period: nothing is offered until that many frames have come. */
+static UINT32 packet_frames(CLIENT *c)
+{
+    return (UINT32)((UINT64)c->rate * PERIOD / 10000000);
+}
+
+static UINT32 waiting(CLIENT *c)
+{
+    UINT64 queued = __atomic_load_n(&c->hdr->written, __ATOMIC_ACQUIRE) - c->hdr->played;
+    return queued > c->ring_frames ? c->ring_frames : (UINT32)queued;
+}
+
+static HRESULT STDMETHODCALLTYPE capture_get_buffer(void *This, BYTE **data, UINT32 *frames, DWORD *flags,
+                                                    UINT64 *device_position, UINT64 *qpc_position)
+{
+    CLIENT *c = FROM(capture_client, This);
+    if (!data || !frames || !flags)
+        return E_POINTER;
+    *data = nullptr;
+    *frames = 0;
+    *flags = 0;
+    if (c->pending)
+        return AUDCLNT_E_OUT_OF_ORDER;
+    UINT32 packet = packet_frames(c);
+    if (waiting(c) < packet)
+        return AUDCLNT_S_BUFFER_EMPTY;
+    UINT64 played = c->hdr->played;
+    UINT32 start = (UINT32)(played % c->ring_frames);
+    c->bounced = start + packet > c->ring_frames;
+    if (c->bounced) {
+        if (!c->scratch)
+            c->scratch = HeapAlloc(heap(), 0, (SIZE_T)packet * c->frame_bytes);
+        if (!c->scratch)
+            return E_OUTOFMEMORY;
+        UINT32 first = c->ring_frames - start;
+        memcpy(c->scratch, c->ring + (SIZE_T)start * c->frame_bytes, (SIZE_T)first * c->frame_bytes);
+        memcpy(c->scratch + (SIZE_T)first * c->frame_bytes, c->ring, (SIZE_T)(packet - first) * c->frame_bytes);
+        *data = c->scratch;
+    } else {
+        *data = c->ring + (SIZE_T)start * c->frame_bytes;
+    }
+    /* frames the host had to drop come as a discontinuity once. */
+    UINT64 dropped = __atomic_load_n(&c->hdr->underruns, __ATOMIC_RELAXED);
+    if (dropped != c->dropped) {
+        c->dropped = dropped;
+        *flags |= AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY;
+    }
+    *frames = packet;
+    if (device_position)
+        *device_position = played;
+    if (qpc_position) {
+        LARGE_INTEGER now, frequency;
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&frequency);
+        *qpc_position = (UINT64)((double)now.QuadPart * 10000000.0 / (double)frequency.QuadPart);
+    }
+    c->pending = packet;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE capture_release_buffer(void *This, UINT32 frames)
+{
+    CLIENT *c = FROM(capture_client, This);
+    if (!c->pending)
+        return frames ? AUDCLNT_E_OUT_OF_ORDER : S_OK;
+    if (frames && frames != c->pending)
+        return AUDCLNT_E_INVALID_SIZE;
+    if (frames)
+        __atomic_store_n(&c->hdr->played, c->hdr->played + frames, __ATOMIC_RELEASE);
+    c->pending = 0;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE capture_next_packet(void *This, UINT32 *frames)
+{
+    CLIENT *c = FROM(capture_client, This);
+    if (!frames)
+        return E_POINTER;
+    UINT32 packet = packet_frames(c);
+    *frames = waiting(c) >= packet ? packet : 0;
+    return S_OK;
+}
+
+static const IAudioCaptureClientVtbl capture_vtbl = {
+    capture_query, capture_add_ref, capture_release, capture_get_buffer, capture_release_buffer, capture_next_packet,
+};
+
 /* ------------------------------------------------------------------ IAudioClock */
 
 static HRESULT STDMETHODCALLTYPE clock_query(void *This, REFIID riid, void **object)
@@ -554,7 +671,7 @@ static HRESULT STDMETHODCALLTYPE clock_position(void *This, UINT64 *position, UI
     CLIENT *c = FROM(clock, This);
     if (!position)
         return E_POINTER;
-    *position = __atomic_load_n(&c->hdr->played, __ATOMIC_ACQUIRE);
+    *position = __atomic_load_n(c->capture ? &c->hdr->written : &c->hdr->played, __ATOMIC_ACQUIRE);
     if (qpc) {
         LARGE_INTEGER now, frequency;
         QueryPerformanceCounter(&now);
@@ -719,13 +836,15 @@ static HRESULT STDMETHODCALLTYPE client_query(void *This, REFIID riid, void **ob
     return E_NOINTERFACE;
 }
 
-HRESULT MmCreateAudioClient(void **object)
+HRESULT MmCreateAudioClient(BOOL capture, void **object)
 {
     CLIENT *c = HeapAlloc(heap(), HEAP_ZERO_MEMORY, sizeof(CLIENT));
     if (!c)
         return E_OUTOFMEMORY;
     c->client = &client_vtbl;
     c->render = &render_vtbl;
+    c->capture_client = &capture_vtbl;
+    c->capture = capture != FALSE;
     c->clock = &clock_vtbl;
     c->simple = &simple_vtbl;
     c->stream = &stream_vtbl;

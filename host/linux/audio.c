@@ -24,6 +24,7 @@ typedef struct Stream {
     bool packed24; /* 24 bit samples, which sdl takes widened to 32 bits */
     uint32_t volume;
     bool running;
+    bool capture;
 } Stream;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -80,6 +81,56 @@ static void SDLCALL render(void *ref, SDL_AudioStream *stream, int additional, i
     }
 }
 
+/*
+ * the input device delivered frames: they go to the ring after the ones already there, narrowing 24 bit samples back to
+ * three bytes, and the frames that do not fit are dropped and counted.
+ */
+static void SDLCALL capture_render(void *ref, SDL_AudioStream *stream, int additional, int total)
+{
+    Stream *s = ref;
+    MimeAudioHeader *h = s->hdr;
+    uint8_t chunk[CHUNK_BYTES];
+    uint32_t volume = __atomic_load_n(&h->volume, __ATOMIC_RELAXED);
+    if (volume != s->volume) {
+        s->volume = volume;
+        SDL_SetAudioStreamGain(stream, volume > 65536 ? 1.0f : volume / 65536.0f);
+    }
+    while (additional > 0) {
+        int want = (int)(MIME_MIN((size_t)additional, sizeof(chunk)) / s->out_frame_bytes * s->out_frame_bytes);
+        if (want <= 0)
+            break;
+        int got = SDL_GetAudioStreamData(stream, chunk, want);
+        if (got <= 0)
+            break;
+        uint32_t frames = (uint32_t)got / s->out_frame_bytes;
+        uint64_t written = __atomic_load_n(&h->written, __ATOMIC_RELAXED);
+        uint64_t used = written - __atomic_load_n(&h->played, __ATOMIC_ACQUIRE);
+        uint64_t room = used >= s->frames ? 0 : s->frames - used;
+        uint32_t n = frames < room ? frames : (uint32_t)room;
+        uint32_t at = (uint32_t)(written % s->frames);
+        uint32_t first = s->frames - at < n ? s->frames - at : n;
+        for (int part = 0; part < 2; part++) {
+            uint32_t count = part ? n - first : first;
+            const uint8_t *in = chunk + (part ? (size_t)first * s->out_frame_bytes : 0);
+            uint8_t *out = s->ring + (part ? 0 : (size_t)at * s->frame_bytes);
+            if (!s->packed24) {
+                memcpy(out, in, (size_t)count * s->frame_bytes);
+            } else {
+                uint32_t samples = count * s->hdr->channels;
+                for (uint32_t i = 0; i < samples; i++, in += 4, out += 3) {
+                    out[0] = in[1];
+                    out[1] = in[2];
+                    out[2] = in[3];
+                }
+            }
+        }
+        if (n < frames)
+            __atomic_fetch_add(&h->underruns, frames - n, __ATOMIC_RELAXED);
+        __atomic_store_n(&h->written, written + n, __ATOMIC_RELEASE);
+        additional -= got;
+    }
+}
+
 static void destroy(Stream *s)
 {
     /* destroying waits for a callback in progress, after which the guest may reuse the memory. */
@@ -108,7 +159,7 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
         g_audio = SDL_InitSubSystem(SDL_INIT_AUDIO);
     pthread_mutex_unlock(&g_lock);
     if (!g_audio) {
-        mime_warn("audio: no output device (%s)", SDL_GetError());
+        mime_warn("audio: no audio (%s)", SDL_GetError());
         return MIME_HC_STATUS_UNSUPPORTED;
     }
 
@@ -120,15 +171,17 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     s->packed24 = h.bits == 24;
     s->out_frame_bytes = s->packed24 ? h.channels * 4 : frame_bytes;
     s->volume = 65536;
+    s->capture = h.capture != 0;
     SDL_AudioSpec spec = {
         .format = h.is_float ? SDL_AUDIO_F32 : h.bits == 16 ? SDL_AUDIO_S16 : SDL_AUDIO_S32,
         .channels = (int)h.channels,
         .freq = (int)h.rate,
     };
-    s->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, render, s);
+    s->stream = s->capture ? SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, capture_render, s)
+                           : SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, render, s);
     if (!s->stream) {
-        mime_warn("audio: cannot open a %u Hz, %u channel, %u bit stream (%s)", h.rate, h.channels, h.bits,
-                  SDL_GetError());
+        mime_warn("audio: cannot open a %u Hz, %u channel, %u bit %s stream (%s)", h.rate, h.channels, h.bits,
+                  s->capture ? "input" : "output", SDL_GetError());
         destroy(s);
         return MIME_HC_STATUS_UNSUPPORTED;
     }
