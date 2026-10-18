@@ -514,7 +514,15 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
         } else {
             wanted = ObMapGenericAccess(OBJECT_TO_HEADER(object)->Type, wanted);
         }
-        /* more than the source has is for the object's security descriptor to allow, which is not looked at yet. */
+        /* bits the type has no right for drop out, as the sandbox's synchronization rights on a mutex do. */
+        ULONG valid = OBJECT_TO_HEADER(object)->Type->Init.ValidAccessMask;
+        if (valid)
+            wanted &= valid | 0x01000000 /* ACCESS_SYSTEM_SECURITY */;
+        /* a handle never becomes more powerful than its source, so a read only section cannot become writable. */
+        if (KeGetPreviousMode() == UserMode && (wanted & ~granted)) {
+            ObDereferenceObject(object);
+            return STATUS_ACCESS_DENIED;
+        }
         granted = wanted;
     }
     HANDLE h = nullptr;
