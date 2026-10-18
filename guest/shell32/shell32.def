@@ -27,3 +27,7 @@ EXPORTS
     SHGetIDListFromObject @507
     SHGetKnownFolderItem @514
     SHSimpleIDListFromPath @162
+    DllGetClassObject @280
+    DllCanUnloadNow @278
+    SHDoDragDrop @88
+    SHCreateStdEnumFmtEtc @74

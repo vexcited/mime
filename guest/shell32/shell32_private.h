@@ -12,6 +12,9 @@
 
 /* user32 exports that winuser.h does not declare yet. */
 WINUSERAPI HICON WINAPI CopyIcon(HICON icon);
+typedef BOOL(CALLBACK *PROPENUMPROCEXW)(HWND, LPWSTR, HANDLE, ULONG_PTR);
+WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags);
+WINUSERAPI int WINAPI EnumPropsExW(HWND window, PROPENUMPROCEXW proc, LPARAM parameter);
 
 /*
  * shell32 allocates what callers free with CoTaskMemFree or ILFree from the
