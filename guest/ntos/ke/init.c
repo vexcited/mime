@@ -171,6 +171,13 @@ void KiInitializeKernel(MimeBootInfo *boot)
 
     extern BOOLEAN KiTraceUserExceptions;
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
+    extern char KiTraceSyscallImage[16];
+    const char *trace = strstr(boot->cmdline, "trace-syscalls=");
+    if (trace) {
+        trace += 15;
+        for (ULONG i = 0; i < sizeof(KiTraceSyscallImage) - 1 && trace[i] && trace[i] != ' '; i++)
+            KiTraceSyscallImage[i] = trace[i];
+    }
 
     MmInitialize(boot);
     ExInitializePool();

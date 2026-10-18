@@ -83,6 +83,9 @@ void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args)
     }
 }
 
+/* the image name whose system calls are logged, from the kernel option trace-syscalls=<name>, or * for all. */
+char KiTraceSyscallImage[16];
+
 static const char *service_name(ULONG table, ULONG index)
 {
     if (table == 0 && index < MIME_NT_SERVICES_COUNT && MIME_NT_SERVICES_NAMES[index])
@@ -125,11 +128,20 @@ void KiSystemService(PKTRAP_FRAME frame)
         ULONG stack = t->Table[index].StackArgs;
         if (stack > 16 - KI_SERVICE_REGISTER_ARGS)
             stack = 16 - KI_SERVICE_REGISTER_ARGS;
+        BOOLEAN trace = KiTraceSyscallImage[0] &&
+                        (KiTraceSyscallImage[0] == '*' || !strcmp(PsCurrentProcess()->ImageFileName, KiTraceSyscallImage));
+        if (trace)
+            KiLogPrintf("svc %u.%u %s(%llx, %llx, %llx, %llx)", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+                        (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), args[0],
+                        args[1], args[2], args[3]);
         if (stack && !NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS], (PVOID)KI_SERVICE_STACK_ARGS(frame),
                                                 stack * sizeof(ULONG64))))
             result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
         else
             result = KiCallService(t->Table[index].Routine, args, stack);
+        if (trace)
+            KiLogPrintf("svc %u.%u %s = %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+                        (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), result);
     }
     KI_SERVICE_RESULT(frame) = result;
     KiExitToUserMode(frame);
