@@ -226,35 +226,57 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
 
 static void sd_memory_forget(const struct stat *st);
 
+/*
+ * vm->fs_lock guards the table of handles, the windows and the stored descriptors, and is held for a lookup or
+ * an update. Calls that can take the host long (opens, reads, flushes) run without it, as each one is a
+ * guest thread waiting, and a flush that lasts 13 ms must not hold up every other file call of the machine.
+ * A handle is used by one guest request at a time and closed after the last one ends.
+ */
 static MimeFsHandle *get_handle(MimeVm *vm, uint64_t h)
 {
     if (h == 0 || h > MIME_VMM_MAX_FS_HANDLES)
         return nullptr;
-    return vm->fs_handles[h - 1];
+    pthread_mutex_lock(&vm->fs_lock);
+    MimeFsHandle *fh = vm->fs_handles[h - 1];
+    pthread_mutex_unlock(&vm->fs_lock);
+    return fh;
 }
 
 static uint64_t alloc_handle(MimeVm *vm, MimeFsHandle *fh)
 {
+    uint64_t h = 0;
+    pthread_mutex_lock(&vm->fs_lock);
     for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
         if (!vm->fs_handles[i]) {
             vm->fs_handles[i] = fh;
-            return i + 1;
+            h = i + 1;
+            break;
         }
     }
-    return 0;
+    pthread_mutex_unlock(&vm->fs_lock);
+    return h;
 }
 
 static void free_handle(MimeVm *vm, uint64_t h)
 {
-    MimeFsHandle *fh = get_handle(vm, h);
+    MimeFsHandle *fh = nullptr;
+    if (h && h <= MIME_VMM_MAX_FS_HANDLES) {
+        pthread_mutex_lock(&vm->fs_lock);
+        fh = vm->fs_handles[h - 1];
+        vm->fs_handles[h - 1] = nullptr;
+        pthread_mutex_unlock(&vm->fs_lock);
+    }
     if (!fh)
         return;
     if (fh->fd >= 0)
         close(fh->fd);
     if (fh->delete_on_close && fh->host_path) {
         struct stat gone;
-        if (stat(fh->host_path, &gone) == 0)
+        if (stat(fh->host_path, &gone) == 0) {
+            pthread_mutex_lock(&vm->fs_lock);
             sd_memory_forget(&gone);
+            pthread_mutex_unlock(&vm->fs_lock);
+        }
         if (fh->is_dir)
             rmdir(fh->host_path);
         else
@@ -263,7 +285,6 @@ static void free_handle(MimeVm *vm, uint64_t h)
     free(fh->host_path);
     free(fh->dir_entries);
     free(fh);
-    vm->fs_handles[h - 1] = nullptr;
 }
 
 static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
@@ -563,7 +584,6 @@ static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t le
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t status = MIME_HC_STATUS_OK;
-    pthread_mutex_lock(&vm->fs_lock);
     uint64_t a[8]; /* arguments, regs[1] doubles as the result */
     memcpy(a, regs, sizeof(a));
     regs[1] = 0;
@@ -678,12 +698,16 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_GET_SD: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
+        pthread_mutex_lock(&vm->fs_lock);
         status = fh ? fs_get_sd(vm, fh, a[2], a[3], a[4], &regs[1]) : MIME_HC_STATUS_INVALID;
+        pthread_mutex_unlock(&vm->fs_lock);
         break;
     }
     case MIME_HC_FS_SET_SD: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
+        pthread_mutex_lock(&vm->fs_lock);
         status = fh ? fs_set_sd(vm, fh, a[2], a[3]) : MIME_HC_STATUS_INVALID;
+        pthread_mutex_unlock(&vm->fs_lock);
         break;
     }
     case MIME_HC_FS_DELETE: {
@@ -696,29 +720,33 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
+        pthread_mutex_lock(&vm->fs_lock);
         status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, &regs[1]) : MIME_HC_STATUS_INVALID;
+        pthread_mutex_unlock(&vm->fs_lock);
         break;
     }
     case MIME_HC_FS_UNMAP:
+        pthread_mutex_lock(&vm->fs_lock);
         status = mime_window_unmap(vm, a[1]);
+        pthread_mutex_unlock(&vm->fs_lock);
         break;
     default:
         status = MIME_HC_STATUS_UNSUPPORTED;
         break;
     }
-    pthread_mutex_unlock(&vm->fs_lock);
     return status;
 }
 
 void mime_fs_close_all(MimeVm *vm)
 {
-    pthread_mutex_lock(&vm->fs_lock);
     for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
-        if (vm->fs_handles[i]) {
-            vm->fs_handles[i]->delete_on_close = false;
+        MimeFsHandle *fh = get_handle(vm, i + 1);
+        if (fh) {
+            fh->delete_on_close = false;
             free_handle(vm, i + 1);
         }
     }
+    pthread_mutex_lock(&vm->fs_lock);
     mime_window_unmap_all(vm);
     pthread_mutex_unlock(&vm->fs_lock);
 }

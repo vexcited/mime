@@ -247,9 +247,10 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
     KPROCESSOR_MODE saved_mode = thread->PreviousMode;
     thread->CallbackDepth++;
     /* the time in user mode is not time the service held the lock, which the statistics of the services want to know. */
-    ULONG64 left = HalReadCounter();
+    ULONG64 left = HalReadCounter(), blocked = thread->BlockedTicks;
     NTSTATUS status = KiCallUserMode(&thread->CallbackSp, &frame);
-    thread->BlockedTicks += HalReadCounter() - left;
+    /* waits meanwhile were counted already. */
+    thread->BlockedTicks += HalReadCounter() - left - (thread->BlockedTicks - blocked);
     thread->CallbackDepth--;
     thread->TrapFrame = saved_trap;
     thread->PreviousMode = saved_mode;
