@@ -1,16 +1,17 @@
 /*
- * job objects: a set of processes, their limits and the completion port
- * that hears about them. a process belongs to the job of the process that
- * created it unless it breaks away, and leaves it when it exits. closing
- * the last handle of a job with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ends
- * every process in it, as programs that run children in a job expect.
+ * job objects: a set of processes, their limits and the completion port that hears about them. a process
+ * belongs to the job of the process that created it unless it breaks away, and leaves it when it exits.
+ * closing the last handle of a job with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ends every process in it, as
+ * programs that run children in a job expect.
  *
- * nested jobs are flattened: a process assigned to a second job moves to
- * it. limits are recorded and reported; enforced are the kill on close,
- * the breakaway flags and the limit of active processes. a process that
- * would be one too many is not created, or not assigned, with
- * STATUS_QUOTA_EXCEEDED, and the port is told as windows does: the limit
- * was hit, and the process that was refused left.
+ * jobs nest, as on windows 8 and later: a process that is in a job and is assigned to another one makes the
+ * second a child of the first (when it has no parent, no process and no child of its own), and goes on being
+ * in the first. a process is in its job and every job above it: each job counts the processes of the jobs
+ * below, hears of them on its port, ends them with its own end and keeps the limit of active processes over
+ * all of them. limits are recorded and reported; enforced are the kill on close, the breakaway flags and the
+ * limit of active processes. a process that would be one too many is not created, or not assigned, with
+ * STATUS_QUOTA_EXCEEDED, and the port is told as windows does: the limit was hit, and the process that was
+ * refused left.
  */
 #include "../ntos.h"
 
@@ -74,9 +75,11 @@ typedef struct JOB_COMPLETION_PORT {
 
 typedef struct EJOB {
     KEVENT Event; /* waitable, as on windows; signaled only by end of job time, which never comes */
-    KSPIN_LOCK Lock;
-    LIST_ENTRY Processes;
-    ULONG Active, Total, Terminated;
+    LIST_ENTRY Processes;   /* the processes whose own job this is, not those of the jobs below */
+    LIST_ENTRY Children;    /* the jobs below */
+    LIST_ENTRY Siblings;    /* in the parent's Children */
+    struct EJOB *Parent;    /* referenced */
+    ULONG Active, Total, Terminated; /* of this job and the ones below it */
     JOB_EXTENDED_LIMIT Limits;
     ULONG UiRestrictions;
     PVOID Port; /* referenced io completion object */
@@ -84,6 +87,9 @@ typedef struct EJOB {
 } EJOB;
 
 POBJECT_TYPE PsJobType;
+
+/* one lock for the shape of the jobs, their lists and their counts: they change rarely. */
+static KSPIN_LOCK g_lock;
 
 NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
 
@@ -106,18 +112,36 @@ static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
     return status;
 }
 
-/* every process of the job, referenced. */
+#define JOB_CHAIN_MAX 16
+
+/* the jobs from this one up to the root, at most JOB_CHAIN_MAX; call with the lock. */
+static ULONG chain_of(EJOB *job, EJOB **chain)
+{
+    ULONG n = 0;
+    for (; job && n < JOB_CHAIN_MAX; job = job->Parent)
+        chain[n++] = job;
+    return n;
+}
+
+/* every process of the job and the jobs below it, referenced; call with the lock. */
+static void collect(EJOB *job, PEPROCESS *out, ULONG *n, ULONG max)
+{
+    for (PLIST_ENTRY e = job->Processes.Flink; e != &job->Processes && *n < max; e = e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, JobLinks);
+        ObReferenceObject(p);
+        out[(*n)++] = p;
+    }
+    for (PLIST_ENTRY e = job->Children.Flink; e != &job->Children; e = e->Flink)
+        collect(CONTAINING_RECORD(e, EJOB, Siblings), out, n, max);
+}
+
 static ULONG snapshot(EJOB *job, PEPROCESS *out, ULONG max)
 {
     ULONG n = 0;
     KIRQL irql;
-    KeAcquireSpinLock(&job->Lock, &irql);
-    for (PLIST_ENTRY e = job->Processes.Flink; e != &job->Processes && n < max; e = e->Flink) {
-        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, JobLinks);
-        ObReferenceObject(p);
-        out[n++] = p;
-    }
-    KeReleaseSpinLock(&job->Lock, irql);
+    KeAcquireSpinLock(&g_lock, &irql);
+    collect(job, out, &n, max);
+    KeReleaseSpinLock(&g_lock, irql);
     return n;
 }
 
@@ -144,12 +168,20 @@ static void job_close(PEPROCESS process, PVOID object, ULONG handle_count)
 static void job_delete(PVOID object)
 {
     EJOB *job = object;
+    if (job->Parent) {
+        KIRQL irql;
+        KeAcquireSpinLock(&g_lock, &irql);
+        RemoveEntryList(&job->Siblings);
+        KeReleaseSpinLock(&g_lock, irql);
+        ObDereferenceObject(job->Parent);
+    }
     if (job->Port)
         ObDereferenceObject(job->Port);
 }
 
 void PspInitializeJobs(void)
 {
+    KeInitializeSpinLock(&g_lock);
     OBJECT_TYPE_INITIALIZER init = {};
     init.Waitable = TRUE;
     init.ValidAccessMask = JOB_OBJECT_ALL_ACCESS;
@@ -159,38 +191,74 @@ void PspInitializeJobs(void)
 }
 
 /*
- * puts a process in a job, leaving the one it was in. the same job twice is refused, and so is a
- * job that holds as many processes as it may.
+ * puts a process in a job. one that is in a job goes down into a job below its own, or a job that has nothing
+ * yet hangs from its own; any other job is refused with STATUS_ACCESS_DENIED, so is the same job twice. the jobs
+ * the process newly enters, from the job up to but not including the one it was in, each count it, so a job
+ * at its limit of processes refuses it.
  */
 static NTSTATUS join(EJOB *job, PEPROCESS process)
 {
-    EJOB *old = process->Job;
-    if (old == job)
-        return STATUS_ACCESS_DENIED;
+    EJOB *chain[JOB_CHAIN_MAX];
+    ULONG entered = 0;
+    BOOLEAN adopted = FALSE;
+    NTSTATUS status = STATUS_SUCCESS;
+    EJOB *refused = nullptr;
     KIRQL irql;
-    KeAcquireSpinLock(&job->Lock, &irql);
-    if ((job->Limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS) &&
-        job->Active >= job->Limits.BasicLimitInformation.ActiveProcessLimit) {
-        KeReleaseSpinLock(&job->Lock, irql);
-        post(job, JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, nullptr);
-        return STATUS_QUOTA_EXCEEDED;
+    KeAcquireSpinLock(&g_lock, &irql);
+    EJOB *old = process->Job;
+    if (old == job) {
+        status = STATUS_ACCESS_DENIED;
+    } else {
+        ULONG all = chain_of(job, chain);
+        if (old) {
+            ULONG at = 0;
+            while (at < all && chain[at] != old)
+                at++;
+            if (at < all) {
+                entered = at;
+            } else if (!job->Parent && !job->Active && IsListEmpty(&job->Children) && all == 1) {
+                /* the job comes under the one the process is in. */
+                entered = 1;
+                adopted = TRUE;
+            } else {
+                status = STATUS_ACCESS_DENIED;
+            }
+        } else {
+            entered = all;
+        }
+        for (ULONG i = 0; NT_SUCCESS(status) && i < entered; i++) {
+            if ((chain[i]->Limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS) &&
+                chain[i]->Active >= chain[i]->Limits.BasicLimitInformation.ActiveProcessLimit) {
+                status = STATUS_QUOTA_EXCEEDED;
+                refused = chain[i];
+            }
+        }
+        if (NT_SUCCESS(status)) {
+            if (adopted) {
+                ObReferenceObject(old);
+                job->Parent = old;
+                InsertTailList(&old->Children, &job->Siblings);
+            }
+            for (ULONG i = 0; i < entered; i++) {
+                chain[i]->Active++;
+                chain[i]->Total++;
+            }
+            ObReferenceObject(job);
+            if (old)
+                RemoveEntryList(&process->JobLinks);
+            InsertTailList(&job->Processes, &process->JobLinks);
+            process->Job = job;
+        }
     }
-    job->Active++;
-    job->Total++;
-    KeReleaseSpinLock(&job->Lock, irql);
-    ObReferenceObject(job);
-    if (old) {
-        KeAcquireSpinLock(&old->Lock, &irql);
-        RemoveEntryList(&process->JobLinks);
-        old->Active--;
-        KeReleaseSpinLock(&old->Lock, irql);
+    KeReleaseSpinLock(&g_lock, irql);
+    if (refused)
+        post(refused, JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (old)
         ObDereferenceObject(old);
-    }
-    KeAcquireSpinLock(&job->Lock, &irql);
-    InsertTailList(&job->Processes, &process->JobLinks);
-    KeReleaseSpinLock(&job->Lock, irql);
-    process->Job = job;
-    post(job, JOB_OBJECT_MSG_NEW_PROCESS, process);
+    for (ULONG i = 0; i < entered; i++)
+        post(chain[i], JOB_OBJECT_MSG_NEW_PROCESS, process);
     return STATUS_SUCCESS;
 }
 
@@ -239,31 +307,40 @@ NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process)
     return status;
 }
 
-/* the last thread of a process left: the job counts it out. */
+/* the last thread of a process left: its job and every one above count it out. */
 void PspJobProcessExit(PEPROCESS process)
 {
-    EJOB *job = process->Job;
-    if (!job)
-        return;
+    EJOB *chain[JOB_CHAIN_MAX];
+    BOOLEAN emptied[JOB_CHAIN_MAX];
+    ULONG n = 0;
     KIRQL irql;
-    KeAcquireSpinLock(&job->Lock, &irql);
-    RemoveEntryList(&process->JobLinks);
-    BOOLEAN last = --job->Active == 0;
-    process->Job = nullptr;
-    KeReleaseSpinLock(&job->Lock, irql);
+    KeAcquireSpinLock(&g_lock, &irql);
+    EJOB *leaf = process->Job;
+    if (leaf) {
+        n = chain_of(leaf, chain);
+        for (ULONG i = 0; i < n; i++)
+            emptied[i] = --chain[i]->Active == 0;
+        RemoveEntryList(&process->JobLinks);
+        process->Job = nullptr;
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    if (!leaf)
+        return;
     BOOLEAN abnormal = ((ULONG)process->ExitStatus & 0xC0000000u) == 0xC0000000u;
-    post(job, abnormal ? JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS : JOB_OBJECT_MSG_EXIT_PROCESS, process);
-    if (last)
-        post(job, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, nullptr);
-    ObDereferenceObject(job);
+    for (ULONG i = 0; i < n; i++) {
+        post(chain[i], abnormal ? JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS : JOB_OBJECT_MSG_EXIT_PROCESS, process);
+        if (emptied[i])
+            post(chain[i], JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, nullptr);
+    }
+    ObDereferenceObject(leaf);
 }
 
 static void init_job(EJOB *job)
 {
     memset(job, 0, sizeof(*job));
     KeInitializeEvent(&job->Event, NotificationEvent, FALSE);
-    KeInitializeSpinLock(&job->Lock);
     InitializeListHead(&job->Processes);
+    InitializeListHead(&job->Children);
 }
 
 NTSTATUS NTAPI NtCreateJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
@@ -331,9 +408,18 @@ NTSTATUS NTAPI NtIsProcessInJob(HANDLE process_handle, HANDLE job_handle)
         return status;
     EJOB *job = nullptr;
     if (job_handle)
-        status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
-    if (NT_SUCCESS(status))
-        status = process->Job && (!job || process->Job == job) ? STATUS_PROCESS_IN_JOB : STATUS_PROCESS_NOT_IN_JOB;
+        status = reference_job(job_handle, JOB_OBJECT_QUERY, &job);
+    if (NT_SUCCESS(status)) {
+        /* in the job when it is the process's own or one above it. */
+        BOOLEAN in = FALSE;
+        KIRQL irql;
+        KeAcquireSpinLock(&g_lock, &irql);
+        for (EJOB *j = process->Job; j; j = j->Parent)
+            if (!job || j == job)
+                in = TRUE;
+        KeReleaseSpinLock(&g_lock, irql);
+        status = in ? STATUS_PROCESS_IN_JOB : STATUS_PROCESS_NOT_IN_JOB;
+    }
     if (job)
         ObDereferenceObject(job);
     ObDereferenceObject(process);

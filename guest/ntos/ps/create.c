@@ -764,10 +764,14 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if (NT_SUCCESS(status) && (creator->MitigationPolicy[MIME_POLICY_CHILD_PROCESS] & MIME_CHILD_PROCESS_NO_CREATION) &&
         !(attrs.HasChildPolicy && (attrs.ChildPolicy & MIME_CHILD_PROCESS_OVERRIDE)))
         status = STATUS_CHILD_PROCESS_BLOCKED;
+    BOOLEAN parent_referenced = FALSE;
     if (NT_SUCCESS(status) && attrs.Parent) {
-        status = PsReferenceProcessHandle(attrs.Parent, PROCESS_CREATE_PROCESS, &parent);
-    } else if (parent) {
-        ObReferenceObject(parent);
+        PEPROCESS named;
+        status = PsReferenceProcessHandle(attrs.Parent, PROCESS_CREATE_PROCESS, &named);
+        if (NT_SUCCESS(status)) {
+            parent = named;
+            parent_referenced = TRUE;
+        }
     }
     struct _TOKEN *token = nullptr;
     if (NT_SUCCESS(status) && attrs.Token)
@@ -794,8 +798,11 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         if (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)
             status = attrs.HasHandleList ? ObInheritHandleList(parent, process, attrs.HandleList, attrs.HandleCount)
                                          : ObInheritHandles(parent, process);
+        /* the job of the creator first, and a job of the list below it. */
         if (NT_SUCCESS(status))
-            status = job ? PspAssignNewProcessToJob(job, process) : PspInheritJob(process, parent, process_flags);
+            status = PspInheritJob(process, parent, process_flags);
+        if (NT_SUCCESS(status) && job)
+            status = PspAssignNewProcessToJob(job, process);
         if (!NT_SUCCESS(status)) {
             PspTerminateProcess(process, status);
             ObDereferenceObject(thread);
@@ -805,7 +812,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if (job)
         ObDereferenceObject(job);
     if (!NT_SUCCESS(status)) {
-        if (parent)
+        if (parent_referenced)
             ObDereferenceObject(parent);
         free_attributes(&attrs);
         return status;
@@ -840,7 +847,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     }
     ObDereferenceObject(thread);
     ObDereferenceObject(process);
-    if (parent)
+    if (parent_referenced)
         ObDereferenceObject(parent);
     free_attributes(&attrs);
     return status;
