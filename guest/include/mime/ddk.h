@@ -851,6 +851,8 @@ typedef struct _OBJECT_TYPE_INITIALIZER {
      */
     NTSTATUS (*GetSecurity)(PVOID object, PVOID *blob);
     NTSTATUS (*PutSecurity)(PVOID object, PVOID blob);
+    /* the rights a new handle really gets, after those the type implies are added, NULL for none. */
+    ACCESS_MASK (*ImplyAccess)(ACCESS_MASK granted);
 } OBJECT_TYPE_INITIALIZER;
 
 static inline void ObSetGenericMapping(OBJECT_TYPE_INITIALIZER *init, ULONG read, ULONG write, ULONG execute, ULONG all)

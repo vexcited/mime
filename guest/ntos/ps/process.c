@@ -325,6 +325,17 @@ static ACCESS_MASK query_rights(PROCESSINFOCLASS klass)
     }
 }
 
+/* a handle that can query or change a process can also do what the limited rights allow. */
+static ACCESS_MASK imply_process_access(ACCESS_MASK granted)
+{
+    if ((granted & PROCESS_QUERY_INFORMATION) || (granted & (PROCESS_VM_OPERATION | PROCESS_VM_WRITE)) ==
+                                                     (PROCESS_VM_OPERATION | PROCESS_VM_WRITE))
+        granted |= PROCESS_QUERY_LIMITED_INFORMATION;
+    if (granted & PROCESS_SET_INFORMATION)
+        granted |= PROCESS_SET_LIMITED_INFORMATION;
+    return granted;
+}
+
 /* the handle values of a process, ProcessHandleTable: an array of 32-bit values. */
 static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, ULONG *size)
 {
@@ -625,9 +636,11 @@ void PsInitialize(void)
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = PROCESS_ALL_ACCESS;
     init.DeleteProcedure = process_delete;
+    init.ImplyAccess = imply_process_access;
     init.WaitObject = process_wait_object;
     ObSetGenericMapping(&init, 0x20410, 0x20BEA, 0x121001, 0x1FFFFF);
     PsProcessTypeObject = ObCreateObjectType(L"Process", &init);
+    init.ImplyAccess = nullptr;
     init.ValidAccessMask = THREAD_ALL_ACCESS;
     init.DeleteProcedure = PspThreadDelete;
     init.WaitObject = thread_wait_object;

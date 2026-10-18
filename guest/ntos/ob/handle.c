@@ -34,6 +34,8 @@ static PHANDLE_TABLE table_for(HANDLE handle, KPROCESSOR_MODE mode, PEPROCESS *o
 
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
+    if (OBJECT_TO_HEADER(object)->Type->Init.ImplyAccess)
+        access = OBJECT_TO_HEADER(object)->Type->Init.ImplyAccess(access);
     PHANDLE_TABLE table = &process->HandleTable;
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
     ULONG index = table->FirstFree;
