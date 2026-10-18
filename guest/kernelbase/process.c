@@ -1274,6 +1274,19 @@ BOOL WINAPI GetProcessWorkingSetSize(HANDLE process, PSIZE_T minimum, PSIZE_T ma
     return TRUE;
 }
 
+/* the working set limits bind nothing, the flags of a process that has no hard limits. */
+DECLSPEC_EXPORT BOOL WINAPI GetProcessWorkingSetSizeEx(HANDLE process, PSIZE_T minimum, PSIZE_T maximum, PDWORD flags)
+{
+    if (!minimum || !maximum || !flags) {
+        KbSetError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    *minimum = g_ws_min;
+    *maximum = g_ws_max;
+    *flags = 0xA;
+    return TRUE;
+}
+
 BOOL WINAPI SetProcessWorkingSetSizeEx(HANDLE process, SIZE_T minimum, SIZE_T maximum, DWORD flags)
 {
     if (minimum == (SIZE_T)-1 && maximum == (SIZE_T)-1)

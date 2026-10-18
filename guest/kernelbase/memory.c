@@ -274,6 +274,69 @@ SIZE_T WINAPI GetLargePageMinimum(void)
     return USER_SHARED_DATA->LargePageMinimum;
 }
 
+/*
+ * the forms for store apps take no executable memory. a program of mime's
+ * is not restricted by them, but a call that asks for it fails as there.
+ */
+static BOOL executable_protection(DWORD protect)
+{
+    return (protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
+DECLSPEC_EXPORT LPVOID WINAPI VirtualAllocFromApp(LPVOID address, SIZE_T size, DWORD type, DWORD protect)
+{
+    if (executable_protection(protect)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return VirtualAlloc(address, size, type, protect);
+}
+
+DECLSPEC_EXPORT LPVOID WINAPI VirtualAlloc2FromApp(HANDLE process, PVOID address, SIZE_T size, ULONG type, ULONG protect,
+                                                  MEM_EXTENDED_PARAMETER *parameters, ULONG count)
+{
+    if (executable_protection(protect)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return VirtualAlloc2(process, address, size, type, protect, parameters, count);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI VirtualProtectFromApp(LPVOID address, SIZE_T size, ULONG protect, PULONG old)
+{
+    if (executable_protection(protect)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return VirtualProtect(address, size, protect, old);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI VirtualUnlockEx(HANDLE process, LPVOID address, SIZE_T size)
+{
+    return TRUE;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GetMemoryErrorHandlingCapabilities(PULONG capabilities)
+{
+    if (!capabilities) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *capabilities = 0;
+    return TRUE;
+}
+
+/* the working set never needs trimming, as nothing is ever paged. */
+DECLSPEC_EXPORT BOOL WINAPI K32EmptyWorkingSet(HANDLE process)
+{
+    return TRUE;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI EmptyWorkingSet(HANDLE process)
+{
+    return TRUE;
+}
+
 /* ------------------------------------------------------------------ pointer validation */
 
 static BOOL readable_protection(ULONG protect)
@@ -1062,6 +1125,78 @@ DECLSPEC_EXPORT BOOL WINAPI UnmapViewOfFile2(HANDLE process, PVOID base, ULONG f
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
+}
+
+/* the node of an allocation or a view: the one node there is, or none preferred. */
+static BOOL node_available(DWORD node)
+{
+    if (node == 0 || node == 0xFFFFFFFFu)
+        return TRUE;
+    KbSetError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+DECLSPEC_EXPORT PVOID WINAPI MapViewOfFile3FromApp(HANDLE section, HANDLE process, PVOID address, ULONG64 offset,
+                                                   SIZE_T size, ULONG type, ULONG protect,
+                                                   MEM_EXTENDED_PARAMETER *parameters, ULONG count)
+{
+    if (executable_protection(protect)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return MapViewOfFile3(section, process, address, offset, size, type, protect, parameters, count);
+}
+
+DECLSPEC_EXPORT PVOID WINAPI MapViewOfFileNuma2(HANDLE section, HANDLE process, ULONG64 offset, PVOID address,
+                                                SIZE_T size, ULONG type, ULONG protect, ULONG node)
+{
+    if (!node_available(node))
+        return nullptr;
+    return MapViewOfFile3(section, process, address, offset, size, type, protect, nullptr, 0);
+}
+
+DECLSPEC_EXPORT LPVOID WINAPI MapViewOfFileExNuma(HANDLE mapping, DWORD access, DWORD offset_high, DWORD offset_low,
+                                                  SIZE_T size, LPVOID base, DWORD node)
+{
+    if (!node_available(node))
+        return nullptr;
+    return MapViewOfFileEx(mapping, access, offset_high, offset_low, size, base);
+}
+
+DECLSPEC_EXPORT LPVOID WINAPI MapViewOfFileFromApp(HANDLE mapping, ULONG access, ULONG64 offset, SIZE_T size)
+{
+    if (access & FILE_MAP_EXECUTE) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return MapViewOfFile(mapping, access, (DWORD)(offset >> 32), (DWORD)offset, size);
+}
+
+DECLSPEC_EXPORT HANDLE WINAPI CreateFileMappingNumaW(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect,
+                                                     DWORD size_high, DWORD size_low, LPCWSTR name, DWORD node)
+{
+    if (!node_available(node))
+        return nullptr;
+    return CreateFileMappingW(file, sa, protect, size_high, size_low, name);
+}
+
+DECLSPEC_EXPORT HANDLE WINAPI CreateFileMappingFromApp(HANDLE file, PSECURITY_ATTRIBUTES sa, ULONG protect,
+                                                       ULONG64 size, LPCWSTR name)
+{
+    if (executable_protection(protect)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return CreateFileMappingW(file, sa, protect, (DWORD)(size >> 32), (DWORD)size, name);
+}
+
+DECLSPEC_EXPORT HANDLE WINAPI OpenFileMappingFromApp(ULONG access, BOOL inherit, LPCWSTR name)
+{
+    if (access & FILE_MAP_EXECUTE) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return OpenFileMappingW(access, inherit, name);
 }
 
 BOOL WINAPI FlushViewOfFile(LPCVOID base, SIZE_T size)

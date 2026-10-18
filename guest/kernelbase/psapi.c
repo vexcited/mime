@@ -130,10 +130,25 @@ DECLSPEC_EXPORT BOOL WINAPI K32QueryWorkingSetEx(HANDLE process, PVOID info, DWO
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
+DECLSPEC_EXPORT BOOL WINAPI QueryWorkingSetEx(HANDLE process, PVOID info, DWORD size)
+{
+    return K32QueryWorkingSetEx(process, info, size);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GetProcessMemoryInfo(HANDLE process, PROCESS_MEMORY_COUNTERS_EX2 *info, DWORD size)
+{
+    return K32GetProcessMemoryInfo(process, info, size);
+}
+
 DECLSPEC_EXPORT BOOL WINAPI K32QueryWorkingSet(HANDLE process, PVOID info, DWORD size)
 {
     NTSTATUS status = NtQueryVirtualMemory(process, nullptr, MemoryWorkingSetInformation, info, size, nullptr);
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI QueryWorkingSet(HANDLE process, PVOID info, DWORD size)
+{
+    return K32QueryWorkingSet(process, info, size);
 }
 
 /* the nt path of the file mapped at an address, cut to the buffer with ERROR_INSUFFICIENT_BUFFER. */
