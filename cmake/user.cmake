@@ -331,6 +331,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_mfreadwrite ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/ole32.lib)
     # comctl32 draws through uxtheme, as windows' imports it.
     set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
+    # oleacc marshals its objects through ole32 and speaks in oleaut32's strings and variants.
+    set(libs_oleacc ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)

@@ -57,7 +57,7 @@ set(MIME_X86_DLLS
     rpcrt4:0x63000000:all_five imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:user mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:user_gdi wininet:0x5a000000:http urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
-    oleacc:0x57000000:user oledlg:0x56000000:user combase:0x54000000:user usp10:0x51000000:gdi
+    oleacc:0x57000000:oleacc_imports oledlg:0x56000000:user combase:0x54000000:user usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
     xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base
@@ -78,6 +78,7 @@ set(comctl ntdll kernel32 user32 gdi32 win32u uxtheme)
 set(mfplat_imports ntdll kernel32 ole32)
 set(mfreadwrite_imports ntdll kernel32 mfplat ole32)
 set(user ntdll kernel32 user32)
+set(oleacc_imports ntdll kernel32 user32 ole32 oleaut32)
 set(gdi ntdll kernel32 gdi32)
 set(user_gdi ntdll kernel32 user32 gdi32)
 set(crypt ntdll kernel32 crypt32)
