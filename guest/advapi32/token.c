@@ -302,6 +302,19 @@ ADVAPI BOOL WINAPI AdjustTokenPrivileges(HANDLE token, BOOL disable_all, PTOKEN_
     return TRUE;
 }
 
+ADVAPI BOOL WINAPI AdjustTokenGroups(HANDLE token, BOOL reset_to_default, PTOKEN_GROUPS state, DWORD length,
+                                     PTOKEN_GROUPS previous, PDWORD returned)
+{
+    ULONG n = 0;
+    NTSTATUS status = NtAdjustGroupsToken(token, (BOOLEAN)reset_to_default, state, length, previous, &n);
+    if (returned)
+        *returned = n;
+    if (!NT_SUCCESS(status))
+        return AdvSetStatus(status);
+    AdvSetError(status == 0x00000106L ? ERROR_NOT_ALL_ASSIGNED : ERROR_SUCCESS);
+    return TRUE;
+}
+
 /* a token is a member of its user and of its enabled groups that are not for deny only, and of what restricts it. */
 ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
 {
@@ -464,5 +477,108 @@ ADVAPI BOOL WINAPI LookupPrivilegeNameA(LPCSTR system, PLUID luid, LPSTR name, L
     for (DWORD i = 0; i <= n; i++)
         name[i] = (CHAR)wide[i];
     *size = n;
+    return TRUE;
+}
+
+/* the english text of each privilege, as the privilege translations of windows have it, by the luid of the privilege. */
+static const PCWSTR g_privilege_text[] = {
+    nullptr,
+    nullptr,
+    L"Create a token object",
+    L"Replace a process level token",
+    L"Lock pages in memory",
+    L"Adjust memory quotas for a process",
+    L"Add workstations to domain",
+    L"Act as part of the operating system",
+    L"Manage auditing and security log",
+    L"Take ownership of files or other objects",
+    L"Load and unload device drivers",
+    L"Profile system performance",
+    L"Change the system time",
+    L"Profile single process",
+    L"Increase scheduling priority",
+    L"Create a pagefile",
+    L"Create permanent shared objects",
+    L"Back up files and directories",
+    L"Restore files and directories",
+    L"Shut down the system",
+    L"Debug programs",
+    L"Generate security audits",
+    L"Modify firmware environment values",
+    L"Bypass traverse checking",
+    L"Force shutdown from a remote system",
+    L"Remove computer from docking station",
+    L"Synchronize directory service data",
+    L"Enable computer and user accounts to be trusted for delegation",
+    L"Perform volume maintenance tasks",
+    L"Impersonate a client after authentication",
+    L"Create global objects",
+    L"Access Credential Manager as a trusted caller",
+    L"Modify an object label",
+    L"Increase a process working set",
+    L"Change the time zone",
+    L"Create symbolic links",
+    L"Obtain an impersonation token for another user in the same session",
+};
+
+/* the text of a privilege by its name, the size counted as for the name of a privilege, and the language of the text. */
+ADVAPI BOOL WINAPI LookupPrivilegeDisplayNameW(LPCWSTR system, LPCWSTR name, LPWSTR display, LPDWORD size, LPDWORD language)
+{
+    if (!name || !size) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!AdvIsLocalSystem(system)) {
+        AdvSetError(RPC_S_SERVER_UNAVAILABLE);
+        return FALSE;
+    }
+    PCWSTR text = nullptr;
+    for (DWORD i = 0; i < RTL_NUMBER_OF(g_privileges) && !text; i++)
+        if (g_privileges[i] && !_wcsicmp(name, g_privileges[i]))
+            text = g_privilege_text[i];
+    if (!text) {
+        AdvSetError(ERROR_NO_SUCH_PRIVILEGE);
+        return FALSE;
+    }
+    DWORD n = (DWORD)wcslen(text);
+    if (!display || *size <= n) {
+        *size = n + 1;
+        AdvSetError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    memcpy(display, text, (n + 1) * sizeof(WCHAR));
+    *size = n;
+    if (language)
+        *language = 0x409;
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI LookupPrivilegeDisplayNameA(LPCSTR system, LPCSTR name, LPSTR display, LPDWORD size, LPDWORD language)
+{
+    if (!name || !size) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR s = AdvAnsiToWide(system), n = AdvAnsiToWide(name);
+    WCHAR wide[96];
+    DWORD length = RTL_NUMBER_OF(wide);
+    BOOL ok = (!system || s) && n && LookupPrivilegeDisplayNameW(s, n, wide, &length, language);
+    AdvFree(s);
+    AdvFree(n);
+    if (!ok && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        return FALSE;
+    if (!ok) {
+        /* the longest text is not in the stack buffer: the size it needs is the one reported. */
+        *size = length;
+        return FALSE;
+    }
+    if (!display || *size <= length) {
+        *size = length + 1;
+        AdvSetError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    for (DWORD i = 0; i <= length; i++)
+        display[i] = (CHAR)wide[i];
+    *size = length;
     return TRUE;
 }

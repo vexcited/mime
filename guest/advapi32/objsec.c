@@ -764,15 +764,18 @@ typedef struct TREE {
     PROGRESS_FN Progress; /* NULL for a plain change */
     DWORD Setting;
     PVOID Args;
-    BOOL Reset;     /* children keep only what their parent hands down */
+    BOOL Reset;    /* the children lose their own entries, and their protection */
+    BOOL Unprotect; /* the children lose their protection */
     BOOL Cancelled;
-    DWORD Failed;   /* the first error of a child, reported by the tree functions */
+    DWORD Failed;  /* the first error of a child, which the tree functions report */
+    DWORD Owners;  /* owner and group, which a tree operation gives to every object in it */
+    PSID Owner, Group;
 } TREE;
 
 /* tells the progress routine about one object, and says whether it asked to try the object again. */
 static BOOL report(TREE *t, PCWSTR name, DWORD error, BOOL set)
 {
-    if (!t || !t->Progress || t->Setting == PROGRESS_INVOKE_NEVER)
+    if (!t || !t->Progress || t->Cancelled || t->Setting == PROGRESS_INVOKE_NEVER)
         return FALSE;
     if (t->Setting == PROGRESS_INVOKE_ON_ERROR && !error)
         return FALSE;
@@ -786,16 +789,30 @@ static BOOL report(TREE *t, PCWSTR name, DWORD error, BOOL set)
 
 static void update_children(OBJ *dir, DWORD info, const void *new_parent, TREE *tree);
 
+/* a descriptor of only the parts a tree gives to everything in it. */
+static DWORD owners_only(TREE *tree, SECURITY_DESCRIPTOR *sd)
+{
+    RtlCreateSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);
+    if (tree->Owners & OWNER_SECURITY_INFORMATION)
+        RtlSetOwnerSecurityDescriptor(sd, tree->Owner, FALSE);
+    if (tree->Owners & GROUP_SECURITY_INFORMATION)
+        RtlSetGroupSecurityDescriptor(sd, tree->Group, FALSE);
+    return tree->Owners;
+}
+
 /*
  * one child: its lists are made again from the new ones of its parent, keeping its own explicit aces, set when
  * they are different, and handed on into what the child holds. A child that protects its lists is left alone
- * with all that is below it. Owner and group are not the business of the children.
+ * with all that is below it. Owner and group are not the business of the children, unless a tree operation
+ * gives them to every object.
  */
 static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_parent, TREE *tree)
 {
-    DWORD change = info & ~(DWORD)(OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION);
-    DWORD read_info = (change & LIST_PARTS) | OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION;
-    DWORD access = desired_access(dir->Type, MODIFY_ACCESS, TRUE, read_info) | desired_access(dir->Type, WRITE_ACCESS, FALSE, change);
+    DWORD change = info & LIST_PARTS;
+    DWORD owners = tree ? tree->Owners : 0;
+    DWORD read_info = change | OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION;
+    DWORD access = desired_access(dir->Type, MODIFY_ACCESS, TRUE, read_info) |
+                   desired_access(dir->Type, WRITE_ACCESS, FALSE, change | owners);
     for (;;) {
         OBJ *child = nullptr;
         DWORD error = obj_open_child(dir, name, access, &child);
@@ -805,10 +822,12 @@ static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_pare
             error = obj_get(child, read_info, &current);
             if (!error) {
                 WORD control = control_of(current);
-                BOOL open_dacl = (change & DACL_SECURITY_INFORMATION) && !(control & SE_DACL_PROTECTED);
-                BOOL open_sacl = (change & SACL_SECURITY_INFORMATION) && !(control & SE_SACL_PROTECTED);
-                if (open_dacl || open_sacl || (change & (LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION))) {
-                    BOOL container = obj_is_container(child);
+                BOOL ignore = tree && tree->Unprotect;
+                DWORD apply = ((change & DACL_SECURITY_INFORMATION) && (ignore || !(control & SE_DACL_PROTECTED)) ? DACL_SECURITY_INFORMATION : 0) |
+                              ((change & SACL_PARTS) && (ignore || !(control & SE_SACL_PROTECTED)) ? change & SACL_PARTS : 0);
+                BOOL container = obj_is_container(child);
+                MADE made = nullptr;
+                if (new_parent && apply) {
                     SECURITY_DESCRIPTOR stripped;
                     BYTE empty[8];
                     PVOID creator = current;
@@ -822,37 +841,51 @@ static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_pare
                         RtlSetOwnerSecurityDescriptor(&stripped, owner, FALSE);
                         RtlSetGroupSecurityDescriptor(&stripped, group, FALSE);
                         RtlCreateAcl((PACL)empty, sizeof(empty), ACL_REVISION);
-                        if (change & DACL_SECURITY_INFORMATION)
+                        if (apply & DACL_SECURITY_INFORMATION)
                             RtlSetDaclSecurityDescriptor(&stripped, TRUE, (PACL)empty, FALSE);
-                        if (change & SACL_PARTS)
+                        if (apply & SACL_PARTS)
                             RtlSetSaclSecurityDescriptor(&stripped, TRUE, (PACL)empty, FALSE);
                         creator = &stripped;
+                    } else if (ignore) {
+                        /* the protection is dropped from what the child has now. */
+                        ((SECURITY_DESCRIPTOR_RELATIVE *)current)->Control &= ~(SE_DACL_PROTECTED | SE_SACL_PROTECTED);
                     }
-                    MADE made;
                     error = derive(new_parent, creator, container, tree ? tree->Token : nullptr,
                                    tree && tree->Mapping ? tree->Mapping : mapping_of(dir->Type), &made);
-                    if (!error) {
-                        if (container)
-                            update_children(child, info, made, tree);
-                        if (!unchanged(current, made, change)) {
-                            add_control(made, ((change & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ : 0) |
-                                                  ((change & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ : 0));
-                            error = obj_set(child, change, made);
-                            set = !error;
-                        }
-                        made_free(made);
-                    }
                 }
+                if (!error && container && ((new_parent && apply) || owners))
+                    update_children(child, (apply ? change : 0) | owners, made, tree);
+                BOOL force = ignore && (control & (SE_DACL_PROTECTED | SE_SACL_PROTECTED));
+                if (!error && made && (force || !unchanged(current, made, apply))) {
+                    add_control(made, ((apply & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ : 0) |
+                                          ((apply & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ : 0));
+                    DWORD flags = ignore ? ((apply & DACL_SECURITY_INFORMATION ? UNPROTECTED_DACL_SECURITY_INFORMATION : 0) |
+                                            (apply & SACL_PARTS ? UNPROTECTED_SACL_SECURITY_INFORMATION : 0))
+                                         : 0;
+                    error = obj_set(child, apply | flags, made);
+                    set = !error;
+                }
+                if (!error && owners) {
+                    SECURITY_DESCRIPTOR given;
+                    error = obj_set(child, owners_only(tree, &given), &given);
+                    set = set || !error;
+                }
+                made_free(made);
             }
             if (current)
                 LocalFree(current);
+            if (error && tree && !tree->Failed)
+                tree->Failed = error;
+            BOOL retry = report(tree, child->Name ? child->Name : name, error, set);
             obj_close(child);
+            if (!retry || tree->Cancelled)
+                break;
+        } else {
+            if (tree && !tree->Failed)
+                tree->Failed = error;
+            if (!report(tree, name, error, FALSE) || tree->Cancelled)
+                break;
         }
-        if (error && tree && !tree->Failed)
-            tree->Failed = error;
-        BOOL retry = report(tree, name, error, set);
-        if (!retry || (tree && tree->Cancelled))
-            break;
     }
 }
 
@@ -872,7 +905,10 @@ static void update_children(OBJ *dir, DWORD info, const void *new_parent, TREE *
  */
 static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_protection, TREE *tree)
 {
+    DWORD parts = info & 0xFFFF;
     if (!propagates(o->Type) || !(info & LIST_PARTS)) {
+        if (tree && tree->Owners && propagates(o->Type) && obj_is_container(o))
+            update_children(o, tree->Owners, nullptr, tree);
         /* no generic mapping is known here: the kernel maps what is generic, and the lists are marked as processed. */
         add_control(sd, ((info & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ | SE_DACL_AUTO_INHERITED : 0) |
                             ((info & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED : 0));
@@ -887,11 +923,10 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
     WORD control = control_of(sd);
     /* what the parent hands down, when any of the lists is to inherit. */
     if (((info & DACL_SECURITY_INFORMATION) && !(control & SE_DACL_PROTECTED)) ||
-        ((info & SACL_SECURITY_INFORMATION) && !(control & SE_SACL_PROTECTED)) ||
-        (info & (LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION))) {
-        error = obj_parent(o, info & LIST_PARTS, &parent);
+        ((parts & SACL_PARTS) && !(control & SE_SACL_PROTECTED))) {
+        error = obj_parent(o, parts & LIST_PARTS, &parent);
         if (!error && parent) {
-            error = obj_get(parent, info & LIST_PARTS, &parent_sd);
+            error = obj_get(parent, parts & LIST_PARTS, &parent_sd);
             if (!error)
                 add_control(parent_sd, ((info & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ : 0) |
                                            ((info & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ : 0));
@@ -904,7 +939,7 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
     RtlGetOwnerSecurityDescriptor(sd, &owner, &defaulted);
     RtlGetGroupSecurityDescriptor(sd, &group, &defaulted);
     if (!error) {
-        DWORD read = info | (owner ? 0 : OWNER_SECURITY_INFORMATION) | (group ? 0 : GROUP_SECURITY_INFORMATION);
+        DWORD read = parts | (owner ? 0 : OWNER_SECURITY_INFORMATION) | (group ? 0 : GROUP_SECURITY_INFORMATION);
         error = obj_get(o, read, &current);
     }
     if (!error) {
@@ -919,7 +954,7 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
         if (keep_protection) {
             if ((info & (DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION)) == DACL_SECURITY_INFORMATION)
                 add_control(sd, control_of(current) & SE_DACL_PROTECTED);
-            if ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)))
+            if ((parts & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)))
                 add_control(sd, control_of(current) & SE_SACL_PROTECTED);
         }
         error = derive(parent_sd, sd, container, token, mapping_of(o->Type), &made);
@@ -1302,4 +1337,310 @@ ADVAPI LSTATUS WINAPI RegGetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSE
         return ERROR_INSUFFICIENT_BUFFER_;
     }
     return RtlNtStatusToDosError(status);
+}
+
+/* ---------------------------------------------------------------- whole trees */
+
+#define TREE_SEC_INFO_SET 1
+#define TREE_SEC_INFO_RESET 2
+#define TREE_SEC_INFO_RESET_KEEP_EXPLICIT 3
+
+static DWORD tree_operation(PWSTR name, SE_OBJECT_TYPE type, DWORD info, PSID owner, PSID group, PACL dacl, PACL sacl,
+                            DWORD action, PROGRESS_FN progress, DWORD setting, PVOID args)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    /* the trees of files and keys are the ones this system has. */
+    if (type != SE_FILE_OBJECT && !is_registry(type))
+        return ERROR_INVALID_PARAMETER;
+    if (action < TREE_SEC_INFO_SET || action > TREE_SEC_INFO_RESET_KEEP_EXPLICIT)
+        return ERROR_INVALID_PARAMETER;
+    if (progress && (setting < PROGRESS_INVOKE_NEVER || setting > PROGRESS_INVOKE_PRE_POST_ERROR))
+        return ERROR_INVALID_PARAMETER;
+    SECURITY_DESCRIPTOR sd;
+    DWORD error = build_absolute(&sd, info, owner, group, dacl, sacl);
+    if (error)
+        return error;
+    BOOL keep = ((info & DACL_SECURITY_INFORMATION) && !(info & (PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION))) ||
+                ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)));
+    OBJ *o = nullptr;
+    DWORD access = desired_access(type, MODIFY_ACCESS, TRUE, info & 0xFFFF);
+    error = obj_open_name(type, name, access, &o);
+    if (error && error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+        access = desired_access(type, MODIFY_ACCESS, FALSE, info & 0xFFFF);
+        error = obj_open_name(type, name, access, &o);
+    }
+    if (error)
+        return error;
+    TREE tree = {};
+    tree.Progress = progress;
+    tree.Setting = setting;
+    tree.Args = args;
+    tree.Reset = action == TREE_SEC_INFO_RESET;
+    tree.Unprotect = action != TREE_SEC_INFO_SET;
+    tree.Owners = info & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION);
+    tree.Owner = owner;
+    tree.Group = group;
+    do {
+        tree.Failed = 0;
+        error = set_object(o, info, &sd, keep, &tree);
+    } while (report(&tree, name, error, !error) && !tree.Cancelled);
+    obj_close(o);
+    return error ? error : tree.Failed;
+}
+
+ADVAPI DWORD WINAPI TreeSetNamedSecurityInfoW(LPWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                              PSID group, PACL dacl, PACL sacl, DWORD action, PROGRESS_FN progress,
+                                              DWORD setting, PVOID args)
+{
+    return tree_operation(name, type, info, owner, group, dacl, sacl, action, progress, setting, args);
+}
+
+ADVAPI DWORD WINAPI TreeResetNamedSecurityInfoW(LPWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                                PSID group, PACL dacl, PACL sacl, BOOL keep_explicit,
+                                                PROGRESS_FN progress, DWORD setting, PVOID args)
+{
+    return tree_operation(name, type, info, owner, group, dacl, sacl,
+                          keep_explicit ? TREE_SEC_INFO_RESET_KEEP_EXPLICIT : TREE_SEC_INFO_RESET, progress, setting, args);
+}
+
+/* the callback of the ansi functions is handed names in ansi too. */
+typedef VOID(CALLBACK *PROGRESS_FN_A)(PSTR name, DWORD status, PDWORD setting, PVOID args, BOOL set);
+
+typedef struct ANSI_PROGRESS {
+    PROGRESS_FN_A Progress;
+    PVOID Args;
+} ANSI_PROGRESS;
+
+static VOID CALLBACK ansi_progress(PWSTR name, DWORD status, PDWORD setting, PVOID args, BOOL set)
+{
+    ANSI_PROGRESS *a = args;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, name, -1, nullptr, 0, nullptr, nullptr);
+    PSTR narrow = bytes > 0 ? AdvAlloc(bytes) : nullptr;
+    if (!narrow)
+        return;
+    WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, bytes, nullptr, nullptr);
+    a->Progress(narrow, status, setting, a->Args, set);
+    AdvFree(narrow);
+}
+
+ADVAPI DWORD WINAPI TreeSetNamedSecurityInfoA(LPSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                              PSID group, PACL dacl, PACL sacl, DWORD action, PROGRESS_FN_A progress,
+                                              DWORD setting, PVOID args)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    ANSI_PROGRESS a = {progress, args};
+    DWORD error = tree_operation(wide, type, info, owner, group, dacl, sacl, action, progress ? ansi_progress : nullptr,
+                                 setting, &a);
+    AdvFree(wide);
+    return error;
+}
+
+ADVAPI DWORD WINAPI TreeResetNamedSecurityInfoA(LPSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                                PSID group, PACL dacl, PACL sacl, BOOL keep_explicit,
+                                                PROGRESS_FN_A progress, DWORD setting, PVOID args)
+{
+    return TreeSetNamedSecurityInfoA(name, type, info, owner, group, dacl, sacl,
+                                     keep_explicit ? TREE_SEC_INFO_RESET_KEEP_EXPLICIT : TREE_SEC_INFO_RESET, progress,
+                                     setting, args);
+}
+
+/* ---------------------------------------------------------------- where inherited entries come from */
+
+typedef struct INHERITED_FROMW {
+    LONG GenerationGap;
+    PWSTR AncestorName;
+} INHERITED_FROMW;
+
+typedef struct INHERITED_FROMA {
+    LONG GenerationGap;
+    PSTR AncestorName;
+} INHERITED_FROMA;
+
+/* the sid of an entry, wherever its type puts it. NULL for the types that have none. */
+static PSID ace_sid(const ACE_HEADER *ace)
+{
+    if (ace->AceType <= SYSTEM_ALARM_ACE_TYPE || (ace->AceType >= ACCESS_ALLOWED_CALLBACK_ACE_TYPE && ace->AceType <= ACCESS_DENIED_CALLBACK_ACE_TYPE) ||
+        ace->AceType == SYSTEM_AUDIT_CALLBACK_ACE_TYPE || ace->AceType == SYSTEM_ALARM_CALLBACK_ACE_TYPE ||
+        (ace->AceType >= SYSTEM_MANDATORY_LABEL_ACE_TYPE && ace->AceType <= SYSTEM_ACCESS_FILTER_ACE_TYPE))
+        return (PSID)((BYTE *)ace + 8);
+    if (ace->AceType == ACCESS_ALLOWED_OBJECT_ACE_TYPE || ace->AceType == ACCESS_DENIED_OBJECT_ACE_TYPE ||
+        ace->AceType == SYSTEM_AUDIT_OBJECT_ACE_TYPE || ace->AceType == SYSTEM_ALARM_OBJECT_ACE_TYPE ||
+        ace->AceType == ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE || ace->AceType == ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE ||
+        ace->AceType == SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE || ace->AceType == SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE) {
+        DWORD flags = *(DWORD *)((BYTE *)ace + 8);
+        return (PSID)((BYTE *)ace + 12 + ((flags & ACE_OBJECT_TYPE_PRESENT) ? 16 : 0) +
+                      ((flags & ACE_INHERITED_OBJECT_TYPE_PRESENT) ? 16 : 0));
+    }
+    return nullptr;
+}
+
+static BOOL same_entry(const ACE_HEADER *a, ACCESS_MASK a_mask, const ACE_HEADER *b, ACCESS_MASK b_mask)
+{
+    PSID sa = ace_sid(a), sb = ace_sid(b);
+    return a->AceType == b->AceType && a_mask == b_mask && sa && sb && RtlEqualSid(sa, sb);
+}
+
+static DWORD get_inheritance_source(PWSTR name, SE_OBJECT_TYPE type, DWORD info, BOOL container, PACL acl,
+                                    PGENERIC_MAPPING mapping, INHERITED_FROMW *out)
+{
+    if (!name || !acl || !out)
+        return ERROR_INVALID_PARAMETER;
+    if ((info & (DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION)) != DACL_SECURITY_INFORMATION &&
+        (info & (DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION)) != SACL_SECURITY_INFORMATION)
+        return ERROR_INVALID_PARAMETER;
+    if (type != SE_FILE_OBJECT && !is_registry(type))
+        return ERROR_INVALID_PARAMETER;
+    if (!RtlValidAcl(acl))
+        return ERROR_INVALID_ACL;
+    DWORD count = acl->AceCount, pending = 0;
+    BYTE *matched = AdvAllocZero(count ? count : 1);
+    if (!matched)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    for (DWORD i = 0; i < count; i++) {
+        PACE_HEADER ace;
+        RtlGetAce(acl, i, (PVOID *)&ace);
+        out[i].GenerationGap = 0;
+        out[i].AncestorName = nullptr;
+        if (ace->AceFlags & INHERITED_ACE)
+            pending++;
+        else
+            matched[i] = 1;
+    }
+    const GENERIC_MAPPING *generic = mapping ? mapping : mapping_of(type);
+    PWSTR current = AdvAlloc((wcslen(name) + 1) * sizeof(WCHAR));
+    if (!current) {
+        AdvFree(matched);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    wcscpy(current, name);
+    DWORD error = ERROR_SUCCESS;
+    for (LONG level = 1; pending && !error; level++) {
+        PWSTR up = parent_name(current, is_registry(type));
+        AdvFree(current);
+        current = up;
+        if (!current)
+            break;
+        OBJ *ancestor;
+        DWORD wanted = info & (DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION);
+        if (obj_open_name(type, current, desired_access(type, READ_ACCESS, FALSE, wanted), &ancestor))
+            break;
+        BYTE *sd;
+        DWORD got = obj_get(ancestor, wanted, &sd);
+        obj_close(ancestor);
+        if (got)
+            break;
+        SECURITY_DESCRIPTOR_RELATIVE *r = (SECURITY_DESCRIPTOR_RELATIVE *)sd;
+        DWORD offset = (info & DACL_SECURITY_INFORMATION) ? r->Dacl : r->Sacl;
+        ACL *list = offset ? (ACL *)(sd + offset) : nullptr;
+        for (DWORD a = 0; list && a < list->AceCount && pending; a++) {
+            PACE_HEADER source;
+            RtlGetAce(list, a, (PVOID *)&source);
+            BYTE flags = source->AceFlags;
+            if (flags & INHERITED_ACE)
+                continue;
+            /* what reaches an object this far down: not past a no propagate, and for a leaf only what is for leaves. */
+            if (!(flags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)) || (level > 1 && (flags & NO_PROPAGATE_INHERIT_ACE)))
+                continue;
+            if (level == 1 && !container && !(flags & OBJECT_INHERIT_ACE))
+                continue;
+            ACCESS_MASK mask = ((ACCESS_ALLOWED_ACE *)source)->Mask;
+            ACCESS_MASK mapped = mask;
+            RtlMapGenericMask(&mapped, generic);
+            for (DWORD i = 0; i < count; i++) {
+                if (matched[i])
+                    continue;
+                PACE_HEADER ace;
+                RtlGetAce(acl, i, (PVOID *)&ace);
+                ACCESS_MASK own = ((ACCESS_ALLOWED_ACE *)ace)->Mask;
+                if (!same_entry(ace, own, source, mapped) && !same_entry(ace, own, source, mask))
+                    continue;
+                PWSTR copy = LocalAlloc(LMEM_FIXED, (wcslen(current) + 1) * sizeof(WCHAR));
+                if (!copy) {
+                    error = ERROR_NOT_ENOUGH_MEMORY;
+                    break;
+                }
+                wcscpy(copy, current);
+                out[i].GenerationGap = level;
+                out[i].AncestorName = copy;
+                matched[i] = 1;
+                pending--;
+                break;
+            }
+        }
+        LocalFree(sd);
+    }
+    /* an entry no ancestor explains has no source to name. */
+    for (DWORD i = 0; i < count; i++)
+        if (!matched[i])
+            out[i].GenerationGap = -1;
+    AdvFree(current);
+    AdvFree(matched);
+    if (error) {
+        for (DWORD i = 0; i < count; i++) {
+            if (out[i].AncestorName)
+                LocalFree(out[i].AncestorName);
+            out[i].AncestorName = nullptr;
+        }
+    }
+    return error;
+}
+
+ADVAPI DWORD WINAPI GetInheritanceSourceW(LPWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, BOOL container,
+                                          GUID **guids, DWORD guid_count, PACL acl, PVOID functions,
+                                          PGENERIC_MAPPING mapping, INHERITED_FROMW *array)
+{
+    return get_inheritance_source(name, type, info, container, acl, mapping, array);
+}
+
+ADVAPI DWORD WINAPI GetInheritanceSourceA(LPSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, BOOL container,
+                                          GUID **guids, DWORD guid_count, PACL acl, PVOID functions,
+                                          PGENERIC_MAPPING mapping, INHERITED_FROMA *array)
+{
+    if (!name || !acl || !array)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    INHERITED_FROMW *list = AdvAllocZero((acl->AceCount ? acl->AceCount : 1) * sizeof(*list));
+    if (!list) {
+        AdvFree(wide);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    DWORD error = get_inheritance_source(wide, type, info, container, acl, mapping, list);
+    for (DWORD i = 0; !error && i < acl->AceCount; i++) {
+        array[i].GenerationGap = list[i].GenerationGap;
+        array[i].AncestorName = nullptr;
+        if (list[i].AncestorName) {
+            int bytes = WideCharToMultiByte(CP_ACP, 0, list[i].AncestorName, -1, nullptr, 0, nullptr, nullptr);
+            PSTR narrow = bytes > 0 ? LocalAlloc(LMEM_FIXED, bytes) : nullptr;
+            if (narrow)
+                WideCharToMultiByte(CP_ACP, 0, list[i].AncestorName, -1, narrow, bytes, nullptr, nullptr);
+            else
+                error = ERROR_NOT_ENOUGH_MEMORY;
+            array[i].AncestorName = narrow;
+        }
+    }
+    for (DWORD i = 0; i < acl->AceCount; i++)
+        if (list[i].AncestorName)
+            LocalFree(list[i].AncestorName);
+    AdvFree(list);
+    AdvFree(wide);
+    return error;
+}
+
+ADVAPI DWORD WINAPI FreeInheritedFromArray(INHERITED_FROMW *array, USHORT count, PVOID functions)
+{
+    if (!array)
+        return ERROR_SUCCESS;
+    for (USHORT i = 0; i < count; i++) {
+        if (array[i].AncestorName)
+            LocalFree(array[i].AncestorName);
+        array[i].AncestorName = nullptr;
+    }
+    return ERROR_SUCCESS;
 }
