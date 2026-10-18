@@ -2346,6 +2346,7 @@ WINBASEAPI LONG WINAPI GetApplicationUserModelId(HANDLE process, UINT32 *length,
 #define RRF_ZEROONFAILURE 0x20000000
 
 WINBASEAPI LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM access, HKEY *result);
+WINBASEAPI LSTATUS WINAPI RegDuplicateHKey(HKEY key, HKEY *result);
 WINBASEAPI LSTATUS WINAPI RegOpenKeyExA(HKEY key, LPCSTR subkey, DWORD options, REGSAM access, HKEY *result);
 WINBASEAPI LSTATUS WINAPI RegOpenKeyW(HKEY key, LPCWSTR subkey, HKEY *result);
 WINBASEAPI LSTATUS WINAPI RegOpenKeyA(HKEY key, LPCSTR subkey, HKEY *result);

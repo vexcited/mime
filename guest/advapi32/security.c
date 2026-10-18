@@ -860,7 +860,13 @@ ADVAPI LSTATUS WINAPI RegGetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSE
     if (info & SACL_SECURITY_INFORMATION)
         return ERROR_PRIVILEGE_NOT_HELD;
     BYTE *copy = nullptr;
-    error = query_object(key, info, &copy);
+    /* a predefined key is no handle, so the kernel is asked through one opened on it. */
+    HKEY opened;
+    error = RegDuplicateHKey(key, &opened);
+    if (error)
+        return error;
+    error = query_object(opened, info, &copy);
+    RegCloseKey(opened);
     if (error == ERROR_CALL_NOT_IMPLEMENTED)
         error = synthesize(&copy, info, KEY_ALL_ACCESS, KEY_READ, CONTAINER_INHERIT_ACE | INHERITED_ACE, FALSE);
     if (error)

@@ -172,6 +172,23 @@ LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM acc
     return ERROR_SUCCESS;
 }
 
+/* a handle of its own to a key, a predefined one included, with the access of the key. */
+LSTATUS WINAPI RegDuplicateHKey(HKEY key, HKEY *result)
+{
+    if (!result)
+        return ERROR_INVALID_PARAMETER;
+    *result = nullptr;
+    HANDLE source, copy;
+    LONG error = resolve_key(key, &source);
+    if (error)
+        return error;
+    NTSTATUS status = NtDuplicateObject(NtCurrentProcess(), source, NtCurrentProcess(), &copy, 0, 0, DUPLICATE_SAME_ACCESS);
+    if (!NT_SUCCESS(status))
+        return to_error(status);
+    *result = (HKEY)copy;
+    return ERROR_SUCCESS;
+}
+
 LSTATUS WINAPI RegOpenKeyExA(HKEY key, LPCSTR subkey, DWORD options, REGSAM access, HKEY *result)
 {
     PWSTR w = KbAnsiToWideCp(CP_ACP, subkey);

@@ -338,17 +338,19 @@ NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor
     if (!NT_SUCCESS(status))
         return status;
     ACCESS_MASK needed = rights_to_read(info);
-    if (KeGetPreviousMode() == UserMode && handle != NtCurrentProcess() && handle != NtCurrentThread() &&
-        (granted & needed) != needed) {
-        ObDereferenceObject(object);
-        return STATUS_ACCESS_DENIED;
-    }
     lock();
     OB_SD *sd = stored(object);
+    /* an object with no descriptor stored answers before the rights are looked at, advapi32 makes one up. */
     if (!sd) {
         unlock();
         ObDereferenceObject(object);
         return STATUS_NOT_IMPLEMENTED;
+    }
+    if (KeGetPreviousMode() == UserMode && handle != NtCurrentProcess() && handle != NtCurrentThread() &&
+        (granted & needed) != needed) {
+        unlock();
+        ObDereferenceObject(object);
+        return STATUS_ACCESS_DENIED;
     }
     OB_SD_PARTS p = {};
     parse_descriptor(sd->Data, sd->Length, &p);
