@@ -203,7 +203,7 @@ void GpuFreeProcess(W32PROCESS *p)
     W32GPU *g = p->Gpu;
     if (!g)
         return;
-    HalMimeHypercall(MIME_HC_GPU_CLOSE, g->Channel, 0, 0, 0, 0, 0, nullptr);
+    HalMimeHypercallUnlocked(MIME_HC_GPU_CLOSE, g->Channel, 0, 0, 0, 0, 0, nullptr);
     for (ULONG i = 0; i < g->BlockCount; i++)
         free_block(&g->Blocks[i]);
     p->Gpu = nullptr;

@@ -49,7 +49,7 @@ static NTSTATUS alloc_slot(AUDIO_SLOT *s)
 static void close_stream(AUDIO_SLOT *s)
 {
     if (s->Stream)
-        HalMimeHypercall(MIME_HC_AUDIO_CLOSE, s->Stream, 0, 0, 0, 0, 0, nullptr);
+        HalMimeHypercallUnlocked(MIME_HC_AUDIO_CLOSE, s->Stream, 0, 0, 0, 0, 0, nullptr);
     s->Stream = 0;
 }
 

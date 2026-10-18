@@ -17,6 +17,12 @@ ULONG64 NTAPI HalMimeHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, U
     return HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
 }
 
+ULONG64 NTAPI HalMimeHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5,
+                                       ULONG64 a6, PULONG64 value)
+{
+    return HalHypercallUnlocked(nr, a1, a2, a3, a4, a5, a6, value);
+}
+
 const void *NTAPI HalMimeGetBootInfo(void)
 {
     return HalBootInfo;

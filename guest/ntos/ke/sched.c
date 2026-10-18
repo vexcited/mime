@@ -9,7 +9,9 @@ LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
 ULONG KiReadySummary;
 PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
 ULONG KeNumberProcessors = 1;
-volatile ULONG KiKernelLock[4] = {0, ~0u, 0, 0};
+volatile ULONG KiKernelLock[8] __attribute__((aligned(64))) = {0, ~0u, 0, 0};
+/* a hold of the lock longer than this many ticks is counted by what held it, see KiNoteLongHold. */
+ULONG64 KiLongHoldTicks = ~0ull;
 ULONG64 KiKernelLockPhys;
 ULONG KiOptions;
 /* acquisitions, those that had to wait, ticks waited, the longest wait: a row of eight for each processor, see entry.S */

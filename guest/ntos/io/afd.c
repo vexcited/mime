@@ -129,6 +129,8 @@ typedef struct AFD_SOCKET {
     ULONG Enabled;
     ULONG Recorded;
     LONG Errors[10];
+    ULONG64 Polls; /* host polls since the last statistics dump */
+    ULONG PollEvents, PollRevents; /* the last one */
 } AFD_SOCKET;
 
 /* a thread in select or WSAPoll, woken whenever the worker ran. */
@@ -171,7 +173,7 @@ static void unlock(void)
 static LONG host(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 *value)
 {
     ULONG64 v = 0;
-    ULONG64 hs = HalHypercall(nr, a1, a2, a3, a4, a5, 0, &v);
+    ULONG64 hs = HalHypercallUnlocked(nr, a1, a2, a3, a4, a5, 0, &v);
     if (value)
         *value = v;
     if (hs == MIME_HC_STATUS_OK)
@@ -449,6 +451,24 @@ static void signal_select(AFD_SOCKET *s, ULONG revents)
     KeSetEvent(s->SelectEvent, IO_NO_INCREMENT, FALSE);
 }
 
+/* what the host polls found, by socket type and the events asked and found, for the statistics. */
+static struct {
+    ULONG Key;
+    ULONG64 Count;
+} g_poll_kinds[16];
+
+static void count_poll(ULONG type, ULONG events, BOOLEAN arm, ULONG revents)
+{
+    ULONG key = 1 | type << 1 | (events & 7) << 4 | (arm ? 1u << 8 : 0) | (revents & 31) << 9;
+    for (int i = 0; i < 16; i++) {
+        if (g_poll_kinds[i].Key == key || !g_poll_kinds[i].Key) {
+            g_poll_kinds[i].Key = key;
+            g_poll_kinds[i].Count++;
+            return;
+        }
+    }
+}
+
 /* asks the host what the socket is ready for; arm also watches the events asked. */
 static ULONG poll_socket(AFD_SOCKET *s, ULONG events, BOOLEAN arm)
 {
@@ -460,9 +480,49 @@ static ULONG poll_socket(AFD_SOCKET *s, ULONG events, BOOLEAN arm)
     if (host(MIME_HC_NET_POLL, pa(&g_poll), 1, arm, 0, 0, &ready))
         return MIME_NET_INVALID;
     ULONG revents = g_poll.revents;
+    s->Polls++;
+    count_poll(s->Type, events, arm, revents);
+    s->PollEvents = events | (arm ? 0x100 : 0);
+    s->PollRevents = revents;
     observe(s, revents, g_poll.error);
     signal_select(s, revents);
     return revents;
+}
+
+/* the sockets polled most since the last dump, with what they asked and were told, for the lock statistics. */
+void AfdDumpStats(void)
+{
+    LARGE_INTEGER none = {};
+    if (KeWaitForSingleObject(&g_lock, Executive, KernelMode, FALSE, &none) != STATUS_SUCCESS)
+        return;
+    for (int round = 0; round < 4; round++) {
+        AFD_SOCKET *best = nullptr;
+        for (PLIST_ENTRY e = g_sockets.Flink; e != &g_sockets; e = e->Flink) {
+            AFD_SOCKET *s = CONTAINING_RECORD(e, AFD_SOCKET, Links);
+            if (s->Polls > (best ? best->Polls : 100))
+                best = s;
+        }
+        if (!best)
+            break;
+        KiLogPrintf("afd socket %u of process %u (type %u state %u): %llu polls, last asked %x got %x, requests %c%c%c%c, "
+                    "hup %u broken %u closed %u select %x enabled %x",
+                    best->Host, best->ProcessId, best->Type, best->State, best->Polls, best->PollEvents, best->PollRevents,
+                    IsListEmpty(&best->Receivers) ? '-' : 'R', IsListEmpty(&best->Senders) ? '-' : 'S',
+                    IsListEmpty(&best->Connects) ? '-' : 'C', IsListEmpty(&best->Accepters) ? '-' : 'A', best->Hup,
+                    best->Broken, best->Closed, best->SelectMask, best->Enabled);
+        best->Polls = 0;
+    }
+    for (PLIST_ENTRY e = g_sockets.Flink; e != &g_sockets; e = e->Flink)
+        CONTAINING_RECORD(e, AFD_SOCKET, Links)->Polls = 0;
+    for (int i = 0; i < 16; i++) {
+        ULONG k = g_poll_kinds[i].Key;
+        if (g_poll_kinds[i].Count > 100)
+            KiLogPrintf("afd polls: %llu of type %u asking %x%s found %x", g_poll_kinds[i].Count, (k >> 1) & 7,
+                        (k >> 4) & 7, (k >> 8) & 1 ? " arming" : "", (k >> 9) & 31);
+        g_poll_kinds[i].Key = 0;
+        g_poll_kinds[i].Count = 0;
+    }
+    unlock();
 }
 
 /* ------------------------------------------------------------ operations */
@@ -642,8 +702,12 @@ static ULONG wants(AFD_SOCKET *s)
     BOOLEAN ended = s->Hup || s->Broken;
     if ((sel & (FD_READ | FD_OOB | FD_ACCEPT)) && !ended)
         w |= MIME_NET_READ;
+    /*
+     * the end of the stream is told once the data is read, so a socket with data left has nothing to watch for:
+     * a watch on it would fire at once, again and again, until the program reads. reading starts the service.
+     */
     if ((sel & FD_CLOSE) && !s->CloseReported && s->Type == SOCK_STREAM && s->State == MIME_AFD_STATE_CONNECTED &&
-        !ended)
+        !ended && !(s->PollRevents & MIME_NET_READ))
         w |= MIME_NET_READ;
     if ((sel & FD_WRITE) && (s->State == MIME_AFD_STATE_CONNECTED || s->Type == SOCK_DGRAM))
         w |= MIME_NET_WRITE;

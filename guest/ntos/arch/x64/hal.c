@@ -12,10 +12,22 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
     register ULONG64 r8 __asm__("r8") = a5;
     register ULONG64 r9 __asm__("r9") = a6;
     ULONG64 rdx = a3;
+    ULONG64 number = nr;
+    ULONG64 start = HalReadCounter();
     __asm__ volatile("outb %%al, %[port]"
                      : "+a"(nr), "+d"(rdx)
                      : [port] "i"(MIME_HC_PORT), "D"(a1), "S"(a2), "r"(r10), "r"(r8), "r"(r9)
                      : "memory");
+    if (number < 64) {
+        /* the counters are racy when the lock is not held, which is good enough for statistics. */
+        ULONG64 took = HalReadCounter() - start;
+        HalHypercallCalls[number]++;
+        HalHypercallTicks[number] += took;
+        if (KiKernelLock[1] == KeGetCurrentPrcb()->Number)
+            HalHypercallLockedTicks[number] += took;
+        if (took > HalHypercallLongest[number])
+            HalHypercallLongest[number] = took;
+    }
     if (value)
         *value = rdx;
     return nr;

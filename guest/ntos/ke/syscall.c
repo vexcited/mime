@@ -21,6 +21,27 @@ static ULONG64 g_calls[2][4096];
 /* the ticks the kernel lock was held by each service, not counting the time its thread waited, and the longest call */
 static ULONG64 g_ticks[2][4096], g_longest[2][4096];
 
+/* holds of the kernel lock that lasted long, by the service or vector that held it, see KiNoteLongHold. */
+#define KI_HOLD_REASONS (0x2001 + 256)
+static ULONG64 g_long_ticks[KI_HOLD_REASONS], g_long_max[KI_HOLD_REASONS], g_long_calls[KI_HOLD_REASONS];
+static ULONG64 g_long_total;
+void AfdDumpStats(void);
+/* calls of each hypercall, the time they took, and how much of it with the kernel lock held; the x64 hal counts them. */
+ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], HalHypercallLockedTicks[64];
+
+/* called as the lock is released after being held for longer than KiLongHoldTicks, with the lock still held. */
+void KiNoteLongHold(ULONG64 held)
+{
+    ULONG reason = KiKernelLock[3];
+    if (reason >= KI_HOLD_REASONS)
+        reason = 0;
+    g_long_ticks[reason] += held;
+    g_long_calls[reason]++;
+    g_long_total++;
+    if (held > g_long_max[reason])
+        g_long_max[reason] = held;
+}
+
 typedef struct _WIN32_CALLOUTS {
     NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
     NTSTATUS(NTAPI *ThreadCallout)(PETHREAD thread, BOOLEAN initialize);
@@ -113,6 +134,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG index = number & 0xFFF;
     ULONG64 result;
     ULONG64 started = HalReadCounter(), blocked = thread->BlockedTicks;
+    KiKernelLock[3] = (table << 12 | index) + 1;
     if (table < 2)
         g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
@@ -349,6 +371,45 @@ void KiDumpServiceCalls(void)
                     HalCounterToHns(g_longest[bt][bi]) / 10);
         g_ticks[bt][bi] = 0;
     }
+    /* the lock as a whole: the time it was held, and what held it for a long time. */
+    KiLogPrintf("kernel lock: held %llu us in all, %llu holds over %llu us", HalCounterToHns(KiKernelLock[6] | (ULONG64)KiKernelLock[7] << 32) / 10,
+                g_long_total, HalCounterToHns(KiLongHoldTicks) / 10);
+    for (int round = 0; round < 10; round++) {
+        ULONG64 best = 0;
+        ULONG bi = 0;
+        for (ULONG i = 0; i < KI_HOLD_REASONS; i++)
+            if (g_long_ticks[i] > best)
+                best = g_long_ticks[i], bi = i;
+        if (!best)
+            break;
+        const char *name = bi < 0x2001 && bi ? service_name((bi - 1) >> 12, (bi - 1) & 0xFFF) : "trap";
+        KiLogPrintf("long holds by %s %u: %llu, %llu us in all, at most %llu us", name,
+                    bi < 0x2001 ? 0 : bi - 0x2001, g_long_calls[bi], HalCounterToHns(best) / 10,
+                    HalCounterToHns(g_long_max[bi]) / 10);
+        g_long_ticks[bi] = 0;
+    }
+    /* the hypercalls made with the lock held, the host's work that every other processor waited for. */
+    for (int round = 0; round < 8; round++) {
+        ULONG64 best = 0;
+        ULONG bi = 0;
+        for (ULONG i = 0; i < 64; i++)
+            if (HalHypercallTicks[i] > best)
+                best = HalHypercallTicks[i], bi = i;
+        if (!best)
+            break;
+        KiLogPrintf("hypercall 0x%02x: %llu, %llu us in all, %llu us of it with the lock, at most %llu us", bi,
+                    HalHypercallCalls[bi], HalCounterToHns(best) / 10, HalCounterToHns(HalHypercallLockedTicks[bi]) / 10,
+                    HalCounterToHns(HalHypercallLongest[bi]) / 10);
+        HalHypercallTicks[bi] = 0;
+    }
+    AfdDumpStats();
+    memset(HalHypercallCalls, 0, sizeof(HalHypercallCalls));
+    memset(HalHypercallLockedTicks, 0, sizeof(HalHypercallLockedTicks));
+    memset(HalHypercallLongest, 0, sizeof(HalHypercallLongest));
+    memset(g_long_calls, 0, sizeof(g_long_calls));
+    memset(g_long_max, 0, sizeof(g_long_max));
+    g_long_total = 0;
+    KiKernelLock[6] = KiKernelLock[7] = 0;
     memset(g_calls, 0, sizeof(g_calls));
     memset(g_ticks, 0, sizeof(g_ticks));
     memset(g_longest, 0, sizeof(g_longest));

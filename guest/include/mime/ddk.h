@@ -956,6 +956,9 @@ NTKERNELAPI NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS kla
  */
 NTKERNELAPI ULONG64 NTAPI HalMimeHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
                                            ULONG64 a5, ULONG64 a6, PULONG64 value);
+/* the same without the kernel lock held meanwhile, for calls that take the host long and need nothing of the kernel. */
+NTKERNELAPI ULONG64 NTAPI HalMimeHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
+                                                   ULONG64 a5, ULONG64 a6, PULONG64 value);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetInputEvent(void);
 /* game controllers, from the host's input events: their hid and xusb devices (io/hid.c). */
 struct MimeInputEvent;

@@ -164,6 +164,8 @@ void KiInitializeKernel(MimeBootInfo *boot)
 
     HalInitialize(boot);
     KiKernelLockPhys = HalPhysicalOf((const void *)KiKernelLock);
+    /* a hold of the lock over 100 microseconds is worth telling by what held it. */
+    KiLongHoldTicks = HalHnsToCounter(1000);
     if (boot->magic != MIME_BOOT_MAGIC || boot->version != MIME_ABI_VERSION)
         HalPanic("boot information mismatch between the vmm and the kernel");
     KiLogPrintf("Mime NT kernel %u.%u build %u (%s), %llu MiB of memory", MIME_NT_MAJOR_VERSION,

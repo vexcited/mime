@@ -217,7 +217,7 @@ void VkFreeProcess(W32PROCESS *p)
     W32VK *v = p->Vk;
     if (!v)
         return;
-    HalMimeHypercall(MIME_HC_VK_CLOSE, v->Connection, 0, 0, 0, 0, 0, nullptr);
+    HalMimeHypercallUnlocked(MIME_HC_VK_CLOSE, v->Connection, 0, 0, 0, 0, 0, nullptr);
     while (v->Blocks) {
         VK_BLOCK *b = v->Blocks;
         v->Blocks = b->Next;

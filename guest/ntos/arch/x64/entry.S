@@ -57,6 +57,9 @@ KiSecondaryStartup:
  */
 #define LOCK_OWNER 4
 #define LOCK_SLEEPERS 8
+#define LOCK_REASON 12
+#define LOCK_SINCE 16
+#define LOCK_HELD 24
 #define LOCK_SPINS 2048
 #define HC_LOCK_WAIT 0x0A
 #define HC_LOCK_WAKE 0x0B
@@ -103,7 +106,11 @@ KiAcquireKernelLock:
     movzwl  (%r8), %eax
     cmpl    %r9d, %eax
     jne     1b
-4:  movl    %gs:KPCR_NUMBER, %eax
+4:  rdtsc
+    shlq    $32, %rdx
+    orq     %rdx, %rax
+    movq    %rax, LOCK_SINCE(%r8)
+    movl    %gs:KPCR_NUMBER, %eax
     movl    %eax, LOCK_OWNER(%r8)
     /* what the lock cost this processor: KiLockStats, a row of eight counters for each. */
     shll    $6, %eax
@@ -141,7 +148,21 @@ KiReleaseKernelLock:
     cmpl    %gs:KPCR_NUMBER, %eax
     je      1f
     ud2
-1:  movl    $-1, LOCK_OWNER(%r8)
+1:  /* how long it was held, counted in all and by what held it when it was long. */
+    rdtsc
+    shlq    $32, %rdx
+    orq     %rdx, %rax
+    subq    LOCK_SINCE(%r8), %rax
+    addq    %rax, LOCK_HELD(%r8)
+    cmpq    KiLongHoldTicks(%rip), %rax
+    jb      3f
+    subq    $40, %rsp
+    movq    %rax, %rcx
+    call    KiNoteLongHold
+    addq    $40, %rsp
+    leaq    KiKernelLock(%rip), %r8
+3:  movl    $0, LOCK_REASON(%r8)
+    movl    $-1, LOCK_OWNER(%r8)
     lock incw (%r8)
     cmpl    $0, LOCK_SLEEPERS(%r8)
     je      2f

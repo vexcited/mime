@@ -294,7 +294,10 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
  * code keeps the single processor rules: masking interrupts excludes every
  * other kernel path.
  */
-extern volatile ULONG KiKernelLock[4]; /* ticket lock, owning processor, sleepers in the host */
+extern volatile ULONG KiKernelLock[8]; /* ticket lock, owning processor, sleepers in the host, what holds it, when it was taken, ticks held */
+extern ULONG64 KiLongHoldTicks;
+void KiNoteLongHold(ULONG64 held);
+extern ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], HalHypercallLockedTicks[64];
 #define KI_ASSERT_KERNEL_LOCK()                                                                                   \
     do {                                                                                                          \
         if (KiKernelLock[1] != KeGetCurrentPrcb()->Number)                                                        \
