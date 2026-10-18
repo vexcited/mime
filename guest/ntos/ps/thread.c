@@ -320,6 +320,24 @@ void NTAPI KeUnstackDetachProcess(PVOID state)
 
 void PspProcessExit(PEPROCESS process);
 
+/*
+ * the stacks and the teb of a thread that ends. the program cannot free
+ * them, as it runs on one until it is gone, so the kernel does, from the
+ * thread's own process while it is still whole.
+ */
+static void release_user_memory(PEPROCESS process, PETHREAD thread)
+{
+    PVOID regions[] = {thread->UserStackAllocation, thread->NativeStackAllocation, thread->Tcb.Teb};
+    for (ULONG i = 0; i < sizeof(regions) / sizeof(regions[0]); i++) {
+        PVOID base = regions[i];
+        SIZE_T size = 0;
+        if (base)
+            MiFreeVirtual(process, &base, &size, MEM_RELEASE);
+    }
+    thread->UserStackAllocation = nullptr;
+    thread->NativeStackAllocation = nullptr;
+}
+
 /* terminates the current thread; the last thread also ends its process. */
 void PspExitThread(NTSTATUS status)
 {
@@ -338,6 +356,9 @@ void PspExitThread(NTSTATUS status)
         PKMUTANT m = CONTAINING_RECORD(thread->Tcb.MutantListHead.Flink, KMUTANT, MutantListEntry);
         KeReleaseMutant(m, 0, TRUE, FALSE);
     }
+
+    if (!process->SystemProcess)
+        release_user_memory(process, thread);
 
     ULONG64 s = KiAcquireDispatcherLock();
     RemoveEntryList(&thread->ThreadListEntry);
