@@ -362,6 +362,8 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
         munmap(raw, (size_t)(vm->ram - raw));
     munmap(vm->ram + ram_size, (size_t)(raw + align - vm->ram));
     vm->huge_pages = madvise(vm->ram, ram_size, MADV_HUGEPAGE) == 0;
+    /* guest memory stays out of core dumps, a crash would otherwise write gigabytes. */
+    madvise(vm->ram, ram_size, MADV_DONTDUMP);
     if (!set_slot(vm, SLOT_RAM, MIME_RAM_BASE, ram_size, vm->ram, false))
         return false;
 
