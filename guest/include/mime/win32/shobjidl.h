@@ -572,6 +572,10 @@ SHSTDAPI HRESULT WINAPI SHCreateShellItemArrayFromShellItem(IShellItem *item, RE
 SHSTDAPI HRESULT WINAPI ILSaveToStream(IStream *stream, PCUIDLIST_RELATIVE pidl);
 SHSTDAPI HRESULT WINAPI ILLoadFromStreamEx(IStream *stream, PIDLIST_RELATIVE *pidl);
 SHSTDAPI HRESULT WINAPI SHGetIDListFromObject(IUnknown *object, PIDLIST_ABSOLUTE *pidl);
+SHSTDAPI HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID folder, DWORD flags, PCWSTR name, REFIID riid,
+                                                  void **object);
+SHSTDAPI HRESULT WINAPI SHCreateItemWithParent(PCIDLIST_ABSOLUTE parent_list, void *parent_folder,
+                                               PCUITEMID_CHILD child, REFIID riid, void **object);
 SHSTDAPI HRESULT WINAPI SHGetKnownFolderItem(REFKNOWNFOLDERID id, DWORD flags, HANDLE token, REFIID riid,
                                              void **object);
 
