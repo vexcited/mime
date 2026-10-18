@@ -16,6 +16,7 @@
 #define CACHE_BUCKETS 256
 #define CACHE_IDLE_MAX 256 /* unreferenced entries kept for reopening */
 #define CACHE_SMALL_READ 0x10000 /* smaller reads of an unmapped file go to the host directly */
+#define CACHE_SMALL_READS 32     /* ... until a file has been read so often, and then it is mapped */
 
 struct _MIMEFS_CACHE {
     struct _MIMEFS_CACHE *Next; /* hash chain */
@@ -26,6 +27,7 @@ struct _MIMEFS_CACHE {
     ULONG64 Size;
     ULONG64 WriteTime;
     ULONG64 Window; /* guest physical address, 0 until mapped */
+    ULONG SmallReads; /* reads that went to the host for want of a window */
 };
 
 #define DETACHED (~0ull)
@@ -175,7 +177,8 @@ static BOOLEAN map_window(MIMEFS_CACHE *c, ULONG64 host_handle)
 BOOLEAN FsCacheRead(MIMEFS_CACHE *c, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done)
 {
     *done = 0;
-    if (length < CACHE_SMALL_READ && !__atomic_load_n(&c->Window, __ATOMIC_ACQUIRE))
+    if (length < CACHE_SMALL_READ && !__atomic_load_n(&c->Window, __ATOMIC_ACQUIRE) &&
+        __atomic_add_fetch(&c->SmallReads, 1, __ATOMIC_RELAXED) < CACHE_SMALL_READS)
         return FALSE;
     ExAcquireFastMutex(&g_lock);
     BOOLEAN ok = map_window(c, host_handle);

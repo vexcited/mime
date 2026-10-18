@@ -24,9 +24,36 @@ static NTSTATUS truncate_tail(void)
     return NT_SUCCESS(status) ? flush() : status;
 }
 
+/*
+ * the log is read in pieces of a record, tens of thousands of them, each of which is a call to the host:
+ * replaying reads it a block at a time instead and takes the records out of that.
+ */
+#define CM_REPLAY_BLOCK (16 * 1024)
+static PUCHAR CmpReplayBlock;
+static ULONG64 CmpReplayBlockOffset;
+static ULONG CmpReplayBlockLength;
+static ULONG64 CmpReplayFileLength;
+
 static NTSTATUS read_bytes(void *data, ULONG bytes, ULONG64 offset)
 {
     ULONG got = 0;
+    if (CmpReplayBlock && bytes <= CM_REPLAY_BLOCK && offset + bytes <= CmpReplayFileLength) {
+        if (offset < CmpReplayBlockOffset || offset + bytes > CmpReplayBlockOffset + CmpReplayBlockLength) {
+            ULONG64 room = CmpReplayFileLength - offset;
+            ULONG want = room < CM_REPLAY_BLOCK ? (ULONG)room : CM_REPLAY_BLOCK;
+            NTSTATUS status = IoReadFileObject(CmpJournalFile, CmpReplayBlock, want, offset, &got);
+            if (!NT_SUCCESS(status))
+                return status;
+            if (got != want)
+                return STATUS_REGISTRY_CORRUPT;
+            CmpReplayBlockOffset = offset;
+            CmpReplayBlockLength = got;
+        }
+        if (offset + bytes > CmpReplayBlockOffset + CmpReplayBlockLength)
+            return STATUS_REGISTRY_CORRUPT;
+        memcpy(data, CmpReplayBlock + (offset - CmpReplayBlockOffset), bytes);
+        return STATUS_SUCCESS;
+    }
     NTSTATUS status = IoReadFileObject(CmpJournalFile, data, bytes, offset, &got);
     if (!NT_SUCCESS(status))
         return status;
@@ -41,6 +68,7 @@ static NTSTATUS replay(void)
         return status;
     if (length > CM_JOURNAL_MAX_FILE)
         return STATUS_REGISTRY_CORRUPT;
+    CmpReplayFileLength = length;
     while (CmpJournalOffset < length) {
         if (length - CmpJournalOffset < CM_JOURNAL_HEADER)
             return truncate_tail();
@@ -89,8 +117,14 @@ void CmpJournalInitialize(void)
                                               (PVOID *)&CmpJournalFile, nullptr);
         ZwClose(handle);
     }
-    if (NT_SUCCESS(CmpJournalStatus))
+    if (NT_SUCCESS(CmpJournalStatus)) {
+        CmpReplayBlock = ExAllocatePool2(POOL_FLAG_NON_PAGED, CM_REPLAY_BLOCK, KI_TAG('C', 'm', 'J', 'b'));
+        CmpReplayBlockLength = 0;
         CmpJournalStatus = replay();
+        if (CmpReplayBlock)
+            ExFreePool(CmpReplayBlock);
+        CmpReplayBlock = nullptr;
+    }
     if (!NT_SUCCESS(CmpJournalStatus))
         KiLogPrintf("registry: journal unavailable at offset %llu: %08x", CmpJournalOffset, CmpJournalStatus);
 }
