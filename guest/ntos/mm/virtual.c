@@ -1458,6 +1458,98 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
     return STATUS_SUCCESS;
 }
 
+/* the protection field of a working set entry: the memory manager's own numbering of the protections. */
+static ULONG working_set_protection(ULONG protect)
+{
+    ULONG mask;
+    switch (protect & 0xFF) {
+    case PAGE_READONLY: mask = 1; break;
+    case PAGE_EXECUTE: mask = 2; break;
+    case PAGE_EXECUTE_READ: mask = 3; break;
+    case PAGE_READWRITE: mask = 4; break;
+    case PAGE_WRITECOPY: mask = 5; break;
+    case PAGE_EXECUTE_READWRITE: mask = 6; break;
+    case PAGE_EXECUTE_WRITECOPY: mask = 7; break;
+    default: mask = 0; break;
+    }
+    if (protect & PAGE_NOCACHE)
+        mask |= 8;
+    if (protect & PAGE_GUARD)
+        mask |= 0x10;
+    return mask;
+}
+
+/* the resident pages from an address on, up to a number of them; resume says where to go on, 0 once it is the end. */
+static SIZE_T gather_working_set(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_PTR *out, SIZE_T maximum)
+{
+    SIZE_T n = 0;
+    if (!maximum)
+        return 0;
+    for (ULONG i = vad_lower_bound(as, *resume); i < as->VadCount; i++) {
+        PMMVAD vad = as->Vads[i];
+        if (vad->Flags & MM_VAD_PLACEHOLDER)
+            continue;
+        PTE_CURSOR c = {as->Root, vad->StartVa > *resume ? vad->StartVa : *resume, vad->EndVa};
+        SIZE_T count;
+        ULONG_PTR va;
+        for (ULONG64 *pte; (pte = cursor_next(&c, &va, &count));)
+            for (SIZE_T k = 0; k < count; k++) {
+                if (!(pte[k] & MM_PTE_VALID))
+                    continue;
+                ULONG_PTR flags = working_set_protection(MiPteToProtect(pte[k])) | 1u << 5;
+                if (vad->Type != MiVadPrivate)
+                    flags |= 1u << 8;
+                out[n++] = (va + (k << PAGE_SHIFT)) | flags;
+                if (n == maximum) {
+                    *resume = va + ((k + 1) << PAGE_SHIFT);
+                    return n;
+                }
+            }
+    }
+    *resume = 0;
+    return n;
+}
+
+/*
+ * every page of the working set: a count, then for each page its address
+ * with the protection, the share count and a shared bit in the low bits.
+ * a buffer that is too small gets the count, so the caller can ask again.
+ * the pages are gathered a few at a time and copied out with the lock
+ * released, as the copy can fault.
+ */
+static NTSTATUS query_working_set(PEPROCESS process, PVOID info, SIZE_T length)
+{
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    if (length < sizeof(ULONG_PTR))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    SIZE_T capacity = (length - sizeof(ULONG_PTR)) / sizeof(ULONG_PTR), total = 0;
+    ULONG_PTR chunk[256], resume = 0;
+    ExAcquireFastMutex(&as->Lock);
+    do
+        total += gather_working_set(as, &resume, chunk, 256);
+    while (resume);
+    ExReleaseFastMutex(&as->Lock);
+    NTSTATUS status = KiCopyToUser(info, &total, sizeof(total));
+    if (!NT_SUCCESS(status))
+        return status;
+    if (total > capacity)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    SIZE_T written = 0;
+    resume = 0;
+    do {
+        ExAcquireFastMutex(&as->Lock);
+        SIZE_T n = gather_working_set(as, &resume, chunk, capacity - written < 256 ? capacity - written : 256);
+        ExReleaseFastMutex(&as->Lock);
+        if (n) {
+            status = KiCopyToUser((PULONG_PTR)info + 1 + written, chunk, n * sizeof(ULONG_PTR));
+            if (!NT_SUCCESS(status))
+                return status;
+        }
+        written += n;
+    } while (resume && written < capacity);
+    return STATUS_SUCCESS;
+}
+
 /*
  * the counters of ProcessVmCounters in the three sizes windows has: the
  * plain ones, with the private bytes, and with the private working set.
@@ -1538,6 +1630,8 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         }
     } else if (klass == MemoryWorkingSetExInformation) {
         status = query_working_set_ex(process, info, length);
+    } else if (klass == MemoryWorkingSetInformation) {
+        status = query_working_set(process, info, length);
     } else if (klass == MemoryMappedFilenameInformation) {
         PMMADDRESS_SPACE as = &process->AddressSpace;
         ExAcquireFastMutex(&as->Lock);

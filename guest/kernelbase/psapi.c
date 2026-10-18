@@ -12,14 +12,16 @@ typedef struct {
     DWORD cb, PageFaultCount;
     SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage;
     SIZE_T QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage, PrivateUsage;
-} PROCESS_MEMORY_COUNTERS_EX;
+    ULONGLONG PrivateWorkingSetSize, SharedCommitUsage;
+} PROCESS_MEMORY_COUNTERS_EX2;
 
 typedef struct {
     SIZE_T PeakVirtualSize, VirtualSize;
     ULONG PageFaultCount;
     SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage;
     SIZE_T QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage, PrivateUsage;
-} VM_COUNTERS_EX;
+    ULONGLONG PrivateWorkingSetSize, SharedCommitUsage;
+} VM_COUNTERS_EX2;
 
 DECLSPEC_EXPORT BOOL WINAPI K32GetPerformanceInfo(PERFORMANCE_INFORMATION *info, DWORD size)
 {
@@ -50,25 +52,35 @@ DECLSPEC_EXPORT BOOL WINAPI K32GetPerformanceInfo(PERFORMANCE_INFORMATION *info,
     return TRUE;
 }
 
-DECLSPEC_EXPORT BOOL WINAPI K32GetProcessMemoryInfo(HANDLE process, PROCESS_MEMORY_COUNTERS_EX *info, DWORD size)
+/* the counters in the plain size, with the private bytes, or with the private working set and shared commit too. */
+DECLSPEC_EXPORT BOOL WINAPI K32GetProcessMemoryInfo(HANDLE process, PROCESS_MEMORY_COUNTERS_EX2 *info, DWORD size)
 {
-    SIZE_T minimum = __builtin_offsetof(PROCESS_MEMORY_COUNTERS_EX, PrivateUsage);
+    SIZE_T minimum = __builtin_offsetof(PROCESS_MEMORY_COUNTERS_EX2, PrivateUsage);
     if (!info || size < minimum) {
         SetLastError(ERROR_BAD_LENGTH);
         return FALSE;
     }
-    VM_COUNTERS_EX counters;
+    VM_COUNTERS_EX2 counters;
     NTSTATUS status = NtQueryInformationProcess(process, (PROCESSINFOCLASS)3, &counters, sizeof(counters), nullptr);
     if (!NT_SUCCESS(status)) {
         SetLastError(RtlNtStatusToDosError(status));
         return FALSE;
     }
-    memset(info, 0, size >= sizeof(*info) ? sizeof(*info) : minimum);
-    info->cb = size >= sizeof(*info) ? sizeof(*info) : (DWORD)minimum;
+    DWORD filled = (DWORD)minimum;
+    if (size >= sizeof(*info))
+        filled = sizeof(*info);
+    else if (size >= minimum + sizeof(SIZE_T))
+        filled = (DWORD)(minimum + sizeof(SIZE_T));
+    memset(info, 0, filled);
+    info->cb = filled;
     info->PageFaultCount = counters.PageFaultCount;
     memcpy(&info->PeakWorkingSetSize, &counters.PeakWorkingSetSize, 8 * sizeof(SIZE_T));
-    if (size >= sizeof(*info))
+    if (filled > minimum)
         info->PrivateUsage = counters.PrivateUsage;
+    if (filled == sizeof(*info)) {
+        info->PrivateWorkingSetSize = counters.PrivateWorkingSetSize;
+        info->SharedCommitUsage = counters.SharedCommitUsage;
+    }
     return TRUE;
 }
 

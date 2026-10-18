@@ -211,15 +211,19 @@ NTSTATUS Mx32QueryInformationProcess(const ULONG *a)
         store32(a[4], sizeof(ULONG));
         return STATUS_SUCCESS;
     case ProcessVmCounters: {
-        /* the sizes are 32 bits wide: eleven counters, and the private bytes after them. */
-        if (length != 44 && length != 48)
+        /* the sizes are 32 bits wide: eleven counters, the private bytes, and two 64-bit counters after them. */
+        if (length != 44 && length != 48 && length != 64)
             return STATUS_INFO_LENGTH_MISMATCH;
         SIZE_T v[14] = {};
-        status = NtQueryInformationProcess(process, klass, v, 96, nullptr);
+        status = NtQueryInformationProcess(process, klass, v, 112, nullptr);
         if (!NT_SUCCESS(status))
             return status;
-        for (ULONG i = 0; i < length / 4; i++)
+        for (ULONG i = 0; i < 12 && i < length / 4; i++)
             out[i] = saturate32(v[i]);
+        if (length == 64) {
+            memcpy(out + 12, &v[12], 8);
+            memcpy(out + 14, &v[13], 8);
+        }
         store32(a[4], length);
         return STATUS_SUCCESS;
     }
@@ -1272,6 +1276,29 @@ NTSTATUS Mx32QueryVirtualMemory(const ULONG *a)
         o[6] = m.Type;
         store32(a[5], 28);
         return STATUS_SUCCESS;
+    }
+    case MemoryWorkingSetInformation: {
+        /* a count and entries of a page and its flags, 4 bytes wide here; pages above the 32-bit space are not the program's. */
+        if (length < 4)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        ULONG capacity = (length - 4) / 4;
+        SIZE_T bytes = 8 + (SIZE_T)capacity * 8;
+        ULONG_PTR *native = Mx32Scratch(bytes);
+        if (!native)
+            return STATUS_NO_MEMORY;
+        status = NtQueryVirtualMemory(handle32(a[0]), nullptr, MemoryWorkingSetInformation, native, bytes, nullptr);
+        ULONG *entries = out;
+        if (NT_SUCCESS(status)) {
+            ULONG kept = 0;
+            for (ULONG_PTR i = 0; i < native[0]; i++)
+                if (native[1 + i] < 0x100000000ull)
+                    entries[1 + kept++] = (ULONG)native[1 + i];
+            entries[0] = kept;
+        } else if (status == STATUS_INFO_LENGTH_MISMATCH) {
+            entries[0] = (ULONG)native[0];
+        }
+        Mx32FreeScratch(native);
+        return status;
     }
     case MemoryWorkingSetExInformation: {
         /* entries of an address and its attributes, 8 bytes here and 16 bytes natively. */
