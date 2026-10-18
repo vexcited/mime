@@ -875,7 +875,8 @@ static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_INVALID_HANDLE, 0);
     if (fcb->Rom)
         return complete(irp, STATUS_SUCCESS, 0);
-    ULONG64 hs = HalHypercall(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
+    /* the host writes the file out, which takes milliseconds; nothing else here waits for it. */
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
     return complete(irp, host_status(hs, FALSE), 0);
 }
 

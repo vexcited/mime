@@ -15,6 +15,21 @@ ULONG KiOptions;
 /* acquisitions, those that had to wait, ticks waited, the longest wait: a row of eight for each processor, see entry.S */
 ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 
+ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
+                             PULONG64 value)
+{
+    /* interrupts stay off: an interrupt taken meanwhile would run without the lock. */
+    ULONG64 state = KiDisableInterrupts();
+    BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[1] == KeGetCurrentPrcb()->Number;
+    if (held)
+        KiReleaseKernelLock();
+    ULONG64 status = HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
+    if (held)
+        KiAcquireKernelLock();
+    KiRestoreInterrupts(state);
+    return status;
+}
+
 void KiInitializeScheduler(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();

@@ -35,6 +35,13 @@ extern MimeSharedPage *HalSharedPage;
 
 ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
                      PULONG64 value);
+/*
+ * a call to the host that can take milliseconds, as flushing a file does, made with the kernel lock let
+ * go so that the other processors go on meanwhile. the caller holds no spin lock, is below
+ * DISPATCH_LEVEL and relies on nothing that only the kernel lock guards until the call is back.
+ */
+ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
+                             PULONG64 value);
 void HalInitialize(MimeBootInfo *boot);
 void HalLog(const char *text, SIZE_T length);
 DECLSPEC_NORETURN void HalPanic(const char *text);
