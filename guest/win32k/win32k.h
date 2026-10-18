@@ -808,6 +808,7 @@ void MenuWindowDestroyed(WND *w);
 BOOLEAN MenuCommandEnabled(WND *w, UINT command);
 void MenuRefreshWindowState(WND *w);
 void ClipboardWindowDestroyed(WND *w);
+void ClipboardDisown(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
 void ClipboardHostChanged(BOOLEAN has_text); /* has_text: the host clipboard holds text */
 void GpuFreeProcess(W32PROCESS *p);

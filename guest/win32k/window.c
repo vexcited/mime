@@ -1023,6 +1023,7 @@ static void destroy_tree(WND *w)
 {
     w->Flags |= WNDF_DESTROYING;
     UserReference(&w->Header);
+    ClipboardDisown(w);
     MsgSend(w, WM_DESTROY, 0, 0);
     WND *c;
     while ((c = first_live_child(w)))

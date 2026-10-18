@@ -95,33 +95,41 @@ static void notify_listeners(void)
         g_viewer = nullptr;
 }
 
-/* text formats the system provides from another text format, like windows. */
-static void synthesize_text(void)
+static void add_synthesized(UINT format)
 {
-    static const UINT text[] = {CF_UNICODETEXT, CF_TEXT, CF_OEMTEXT};
-    BOOLEAN have = FALSE;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(text); i++)
-        if (find_format(text[i]))
-            have = TRUE;
-    if (!have)
+    if (find_format(format) || g_format_count >= MAX_CLIP_FORMATS)
         return;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(text); i++) {
-        if (find_format(text[i]) || g_format_count >= MAX_CLIP_FORMATS)
-            continue;
-        CLIP_FORMAT *f = &g_formats[g_format_count++];
-        memset(f, 0, sizeof(*f));
-        f->Format = text[i];
-        f->Synthesized = TRUE;
-    }
-    if (!find_format(CF_LOCALE) && g_format_count < MAX_CLIP_FORMATS) {
-        CLIP_FORMAT *f = &g_formats[g_format_count++];
-        memset(f, 0, sizeof(*f));
-        f->Format = CF_LOCALE;
-        f->Data = W32Alloc(sizeof(DWORD));
-        if (f->Data) {
-            *(DWORD *)f->Data = 0x0409; /* en-US, the locale of the session */
-            f->Size = sizeof(DWORD);
+    CLIP_FORMAT *f = &g_formats[g_format_count++];
+    memset(f, 0, sizeof(*f));
+    f->Format = format;
+    f->Synthesized = TRUE;
+}
+
+/*
+ * the formats the system provides from the ones a program set, in the order windows lists them: the locale
+ * and the other text formats, then the other image formats. user32 converts their data when asked.
+ */
+static void synthesize_formats(void)
+{
+    if (find_format(CF_TEXT) || find_format(CF_OEMTEXT) || find_format(CF_UNICODETEXT)) {
+        if (!find_format(CF_LOCALE) && g_format_count < MAX_CLIP_FORMATS) {
+            CLIP_FORMAT *f = &g_formats[g_format_count++];
+            memset(f, 0, sizeof(*f));
+            f->Format = CF_LOCALE;
+            f->Data = W32Alloc(sizeof(DWORD));
+            if (f->Data) {
+                *(DWORD *)f->Data = 0x0409; /* en-US, the locale of the session */
+                f->Size = sizeof(DWORD);
+            }
         }
+        add_synthesized(CF_TEXT);
+        add_synthesized(CF_OEMTEXT);
+        add_synthesized(CF_UNICODETEXT);
+    }
+    if (find_format(CF_BITMAP) || find_format(CF_DIB) || find_format(CF_DIBV5)) {
+        add_synthesized(CF_BITMAP);
+        add_synthesized(CF_DIB);
+        add_synthesized(CF_DIBV5);
     }
 }
 
@@ -233,7 +241,7 @@ static void pull_from_host(void)
         f->Format = CF_UNICODETEXT;
         f->Delayed = TRUE;
         f->Host = TRUE;
-        synthesize_text();
+        synthesize_formats();
     }
     g_sequence++;
     /* posted rather than sent: this runs on the input thread. */
@@ -259,6 +267,38 @@ void ClipboardHostChanged(BOOLEAN has_text)
 }
 
 /* ------------------------------------------------------------------ cleanup */
+
+/*
+ * the owner is destroyed: it renders every delayed format first, from WM_RENDERALLFORMATS, before it gets
+ * WM_DESTROY. what it leaves unrendered is dropped, which counts as a change.
+ */
+void ClipboardDisown(WND *w)
+{
+    HWND h = WndHandle(w);
+    if (g_owner != h)
+        return;
+    BOOLEAN delayed = FALSE;
+    for (ULONG i = 0; i < g_format_count; i++)
+        if (g_formats[i].Delayed && !g_formats[i].Host)
+            delayed = TRUE;
+    if (!delayed)
+        return;
+    g_rendering = TRUE;
+    MsgSendKernel(w, WM_RENDERALLFORMATS, 0, 0, MIME_LPARAM_VALUE, 0);
+    g_rendering = FALSE;
+    ULONG kept = 0;
+    for (ULONG i = 0; i < g_format_count; i++) {
+        if (g_formats[i].Delayed && !g_formats[i].Host)
+            continue;
+        g_formats[kept++] = g_formats[i];
+    }
+    if (kept != g_format_count) {
+        g_format_count = kept;
+        g_sequence++;
+        synthesize_formats();
+        notify_listeners();
+    }
+}
 
 void ClipboardWindowDestroyed(WND *w)
 {
@@ -338,7 +378,7 @@ BOOL NTAPI NtUserCloseClipboard(void)
         if (changed) {
             /* contents written after the host change are newer than it. */
             g_host_pending = FALSE;
-            synthesize_text();
+            synthesize_formats();
             g_sequence++;
             push_to_host();
             notify_listeners();

@@ -9,6 +9,7 @@
 typedef struct CLIP_CACHE {
     UINT Format;
     HGLOBAL Handle;
+    BOOL Gdi;       /* the handle is a bitmap */
     DWORD Sequence; /* clipboard sequence number the data belongs to */
 } CLIP_CACHE;
 
@@ -23,9 +24,12 @@ static BOOL is_gdi_format(UINT format)
 
 static void cache_drop(CLIP_CACHE *c)
 {
-    if (c->Handle)
+    if (c->Handle && c->Gdi)
+        DeleteObject((HGDIOBJ)c->Handle);
+    else if (c->Handle)
         GlobalFree(c->Handle);
     c->Handle = nullptr;
+    c->Gdi = FALSE;
     c->Format = 0;
     c->Sequence = 0;
 }
@@ -38,7 +42,14 @@ static CLIP_CACHE *cache_find(UINT format)
     return nullptr;
 }
 
+static void cache_store_kind(UINT format, HGLOBAL handle, DWORD sequence, BOOL gdi);
+
 static void cache_store(UINT format, HGLOBAL handle, DWORD sequence)
+{
+    cache_store_kind(format, handle, sequence, FALSE);
+}
+
+static void cache_store_kind(UINT format, HGLOBAL handle, DWORD sequence, BOOL gdi)
 {
     CLIP_CACHE *c = cache_find(format);
     if (c && c->Handle != handle)
@@ -55,6 +66,7 @@ static void cache_store(UINT format, HGLOBAL handle, DWORD sequence)
     }
     c->Format = format;
     c->Handle = handle;
+    c->Gdi = gdi;
     c->Sequence = sequence;
 }
 
@@ -222,6 +234,273 @@ static HANDLE synthesize_text(UINT format)
     return nullptr;
 }
 
+/* ------------------------------------------------------------------ image formats */
+
+#define BI_ALPHABITFIELDS 6
+
+/* the header of a version 5 dib. */
+typedef struct DIBV5 {
+    DWORD bV5Size;
+    LONG bV5Width;
+    LONG bV5Height;
+    WORD bV5Planes;
+    WORD bV5BitCount;
+    DWORD bV5Compression;
+    DWORD bV5SizeImage;
+    LONG bV5XPelsPerMeter;
+    LONG bV5YPelsPerMeter;
+    DWORD bV5ClrUsed;
+    DWORD bV5ClrImportant;
+    DWORD bV5RedMask;
+    DWORD bV5GreenMask;
+    DWORD bV5BlueMask;
+    DWORD bV5AlphaMask;
+    DWORD bV5CSType;
+    LONG bV5Endpoints[9];
+    DWORD bV5GammaRed;
+    DWORD bV5GammaGreen;
+    DWORD bV5GammaBlue;
+    DWORD bV5Intent;
+    DWORD bV5ProfileData;
+    DWORD bV5ProfileSize;
+    DWORD bV5Reserved;
+} DIBV5;
+
+/* the bytes of the color table of a device independent bitmap, which include the masks of 16 and 32 bit ones. */
+static SIZE_T dib_table_size(const BITMAPINFOHEADER *h, SIZE_T available)
+{
+    if (h->biBitCount <= 8) {
+        DWORD colors = h->biClrUsed ? h->biClrUsed : 1u << h->biBitCount;
+        return (SIZE_T)colors * 4;
+    }
+    if (h->biSize == sizeof(BITMAPINFOHEADER) && (h->biBitCount == 16 || h->biBitCount == 32)) {
+        if (h->biCompression == BI_BITFIELDS)
+            return 12;
+        if (h->biCompression == BI_ALPHABITFIELDS)
+            return available >= h->biSize + 16 ? 16 : 12;
+    }
+    return h->biClrUsed ? (SIZE_T)h->biClrUsed * 4 : 0;
+}
+
+/* the size of the pixels, the bytes the header says or its rows. */
+static SIZE_T dib_pixel_size(const BITMAPINFOHEADER *h)
+{
+    if (h->biSizeImage && h->biCompression != BI_RGB && h->biCompression != BI_BITFIELDS)
+        return h->biSizeImage;
+    SIZE_T stride = (((SIZE_T)h->biWidth * h->biBitCount + 31) / 32) * 4;
+    LONG height = h->biHeight < 0 ? -h->biHeight : h->biHeight;
+    return stride * (SIZE_T)height;
+}
+
+/* a version 5 dib as a plain one: the header shrinks, the masks of a bit field dib follow it. */
+static HGLOBAL v5_to_dib(const BYTE *in, SIZE_T size)
+{
+    const DIBV5 *v5 = (const DIBV5 *)in;
+    if (size < sizeof(DIBV5) || v5->bV5Size < sizeof(DIBV5))
+        return nullptr;
+    BITMAPINFOHEADER h;
+    memcpy(&h, in, sizeof(h));
+    h.biSize = sizeof(BITMAPINFOHEADER);
+    BOOL masks = (h.biBitCount == 16 || h.biBitCount == 32) && (h.biCompression == BI_BITFIELDS || h.biCompression == BI_ALPHABITFIELDS);
+    if (masks)
+        h.biCompression = BI_BITFIELDS;
+    SIZE_T palette = h.biBitCount <= 8 ? (h.biClrUsed ? h.biClrUsed : 1u << h.biBitCount) * 4 : 0;
+    SIZE_T pixels = dib_pixel_size(&h);
+    SIZE_T source = v5->bV5Size + palette;
+    if (size < source)
+        return nullptr;
+    if (pixels > size - source)
+        pixels = size - source;
+    SIZE_T table = masks ? 12 : palette;
+    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, sizeof(h) + table + pixels);
+    BYTE *out = g ? GlobalLock(g) : nullptr;
+    if (!out) {
+        if (g)
+            GlobalFree(g);
+        return nullptr;
+    }
+    memcpy(out, &h, sizeof(h));
+    if (masks) {
+        DWORD m[3] = {v5->bV5RedMask, v5->bV5GreenMask, v5->bV5BlueMask};
+        memcpy(out + sizeof(h), m, sizeof(m));
+    } else if (palette) {
+        memcpy(out + sizeof(h), in + v5->bV5Size, palette);
+    }
+    memcpy(out + sizeof(h) + table, in + source, pixels);
+    GlobalUnlock(g);
+    return g;
+}
+
+/* a plain dib as a version 5 one, in the srgb color space, with the masks in the header. */
+static HGLOBAL dib_to_v5(const BYTE *in, SIZE_T size)
+{
+    const BITMAPINFOHEADER *h = (const BITMAPINFOHEADER *)in;
+    if (size < sizeof(*h) || h->biSize != sizeof(BITMAPINFOHEADER))
+        return nullptr;
+    SIZE_T table = dib_table_size(h, size);
+    if (size < sizeof(*h) + table)
+        return nullptr;
+    SIZE_T rest = size - sizeof(*h) - table;
+    DIBV5 v5;
+    memset(&v5, 0, sizeof(v5));
+    memcpy(&v5, h, sizeof(*h));
+    v5.bV5Size = sizeof(v5);
+    v5.bV5CSType = 0x73524742; /* LCS_sRGB */
+    v5.bV5Intent = 4;          /* LCS_GM_IMAGES */
+    BOOL masks = h->biCompression == BI_BITFIELDS && (h->biBitCount == 16 || h->biBitCount == 32);
+    if (masks) {
+        const DWORD *m = (const DWORD *)(in + sizeof(*h));
+        v5.bV5RedMask = m[0];
+        v5.bV5GreenMask = m[1];
+        v5.bV5BlueMask = m[2];
+    }
+    SIZE_T palette = masks ? 0 : table;
+    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, sizeof(v5) + palette + rest);
+    BYTE *out = g ? GlobalLock(g) : nullptr;
+    if (!out) {
+        if (g)
+            GlobalFree(g);
+        return nullptr;
+    }
+    memcpy(out, &v5, sizeof(v5));
+    memcpy(out + sizeof(v5), in + sizeof(*h), palette);
+    memcpy(out + sizeof(v5) + palette, in + sizeof(*h) + table, rest);
+    GlobalUnlock(g);
+    return g;
+}
+
+/* a device dependent bitmap of the display's format from a dib. */
+static HBITMAP dib_to_bitmap(const BYTE *in, SIZE_T size)
+{
+    const BITMAPINFOHEADER *h = (const BITMAPINFOHEADER *)in;
+    if (size < sizeof(*h) || h->biSize != sizeof(BITMAPINFOHEADER))
+        return nullptr;
+    SIZE_T table = dib_table_size(h, size);
+    if (size < sizeof(*h) + table)
+        return nullptr;
+    HDC dc = GetDC(nullptr);
+    HBITMAP bitmap = CreateDIBitmap(dc, h, CBM_INIT, in + sizeof(*h) + table, (const BITMAPINFO *)in, DIB_RGB_COLORS);
+    ReleaseDC(nullptr, dc);
+    return bitmap;
+}
+
+/* a dib of a bitmap: the depth of the bitmap, up to 32 bits, with masks for the 16 and 32 bit ones. */
+static HGLOBAL bitmap_to_dib(HBITMAP bitmap)
+{
+    BITMAP info;
+    if (!GetObjectW(bitmap, sizeof(info), &info) || info.bmWidth <= 0 || info.bmHeight <= 0)
+        return nullptr;
+    UINT depth = (UINT)info.bmPlanes * info.bmBitsPixel;
+    WORD bits = depth <= 1 ? 1 : depth <= 4 ? 4 : depth <= 8 ? 8 : depth <= 16 ? 16 : depth <= 24 ? 24 : 32;
+    BOOL masks = bits == 16 || bits == 32;
+    SIZE_T table = bits <= 8 ? (SIZE_T)4 << bits : masks ? 12 : 0;
+    SIZE_T stride = (((SIZE_T)info.bmWidth * bits + 31) / 32) * 4;
+    SIZE_T pixels = stride * (SIZE_T)info.bmHeight;
+    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + table + pixels);
+    BYTE *out = g ? GlobalLock(g) : nullptr;
+    if (!out) {
+        if (g)
+            GlobalFree(g);
+        return nullptr;
+    }
+    memset(out, 0, sizeof(BITMAPINFOHEADER) + table);
+    BITMAPINFOHEADER *h = (BITMAPINFOHEADER *)out;
+    h->biSize = sizeof(*h);
+    h->biWidth = info.bmWidth;
+    h->biHeight = info.bmHeight;
+    h->biPlanes = 1;
+    h->biBitCount = bits;
+    h->biCompression = masks ? BI_BITFIELDS : BI_RGB;
+    HDC dc = GetDC(nullptr);
+    /* the masks need the header first: the bits of a 16 or 32 bit dib are read with the header's own compression. */
+    BYTE *bits_at = out + sizeof(*h) + table;
+    int lines = GetDIBits(dc, bitmap, 0, (UINT)info.bmHeight, bits_at, (BITMAPINFO *)out, DIB_RGB_COLORS);
+    ReleaseDC(nullptr, dc);
+    if (lines != info.bmHeight) {
+        GlobalUnlock(g);
+        GlobalFree(g);
+        return nullptr;
+    }
+    h->biCompression = masks ? BI_BITFIELDS : BI_RGB;
+    h->biSizeImage = (DWORD)pixels;
+    if (bits == 32) {
+        DWORD m[3] = {0x00FF0000, 0x0000FF00, 0x000000FF};
+        memcpy(out + sizeof(*h), m, sizeof(m));
+    } else if (bits == 16) {
+        DWORD m[3] = {0xF800, 0x07E0, 0x001F};
+        memcpy(out + sizeof(*h), m, sizeof(m));
+    }
+    GlobalUnlock(g);
+    return g;
+}
+
+/* an image format built from another one the clipboard holds. */
+static HANDLE synthesize_image(UINT format)
+{
+    /* the first source is the one that needs the least conversion. */
+    UINT preferred[2];
+    if (format == CF_DIB) {
+        preferred[0] = CF_DIBV5;
+        preferred[1] = CF_BITMAP;
+    } else if (format == CF_DIBV5) {
+        preferred[0] = CF_DIB;
+        preferred[1] = CF_BITMAP;
+    } else {
+        preferred[0] = CF_DIBV5;
+        preferred[1] = CF_DIB;
+    }
+    for (int i = 0; i < 2; i++) {
+        UINT from = preferred[i];
+        HANDLE result = nullptr;
+        DWORD sequence = 0;
+        if (from == CF_BITMAP) {
+            MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
+            HANDLE bitmap = NtUserGetClipboardData(CF_BITMAP, &d);
+            if (!bitmap || !d.Gdi)
+                continue;
+            sequence = d.Sequence;
+            HGLOBAL dib = bitmap_to_dib((HBITMAP)bitmap);
+            if (!dib)
+                continue;
+            if (format == CF_DIB) {
+                result = dib;
+            } else {
+                const BYTE *p = GlobalLock(dib);
+                result = p ? dib_to_v5(p, GlobalSize(dib)) : nullptr;
+                GlobalUnlock(dib);
+                GlobalFree(dib);
+            }
+        } else {
+            HGLOBAL src = fetch_memory(from, &sequence);
+            if (!src)
+                continue;
+            const BYTE *p = GlobalLock(src);
+            SIZE_T size = GlobalSize(src);
+            if (!p)
+                continue;
+            if (from == CF_DIBV5 && format == CF_DIB)
+                result = v5_to_dib(p, size);
+            else if (from == CF_DIB && format == CF_DIBV5)
+                result = dib_to_v5(p, size);
+            else if (format == CF_BITMAP) {
+                HGLOBAL plain = from == CF_DIBV5 ? v5_to_dib(p, size) : nullptr;
+                const BYTE *q = plain ? GlobalLock(plain) : p;
+                result = q ? (HANDLE)dib_to_bitmap(q, plain ? GlobalSize(plain) : size) : nullptr;
+                if (plain) {
+                    GlobalUnlock(plain);
+                    GlobalFree(plain);
+                }
+            }
+            GlobalUnlock(src);
+        }
+        if (result) {
+            cache_store_kind(format, result, sequence, format == CF_BITMAP);
+            return result;
+        }
+    }
+    return nullptr;
+}
+
 WINUSERAPI HANDLE WINAPI GetClipboardData(UINT format)
 {
     MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
@@ -238,6 +517,12 @@ WINUSERAPI HANDLE WINAPI GetClipboardData(UINT format)
         if (c && c->Sequence == NtUserGetClipboardSequenceNumber())
             return c->Handle;
         return synthesize_text(format);
+    }
+    if ((format == CF_BITMAP || format == CF_DIB || format == CF_DIBV5) && NtUserIsClipboardFormatAvailable(format)) {
+        CLIP_CACHE *c = cache_find(format);
+        if (c && c->Sequence == NtUserGetClipboardSequenceNumber())
+            return c->Handle;
+        return synthesize_image(format);
     }
     return nullptr;
 }
