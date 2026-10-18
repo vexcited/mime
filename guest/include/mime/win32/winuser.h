@@ -1740,6 +1740,7 @@ WINUSERAPI LPWSTR WINAPI CharLowerW(LPWSTR s);
 WINUSERAPI LPWSTR WINAPI CharNextW(LPCWSTR s);
 WINUSERAPI HMONITOR WINAPI MonitorFromWindow(HWND hwnd, DWORD flags);
 WINUSERAPI HMONITOR WINAPI MonitorFromPoint(POINT point, DWORD flags);
+WINUSERAPI HMONITOR WINAPI MonitorFromRect(LPCRECT rect, DWORD flags);
 
 #define ENUM_CURRENT_SETTINGS ((DWORD)-1)
 #define ENUM_REGISTRY_SETTINGS ((DWORD)-2)
@@ -1780,6 +1781,8 @@ WINUSERAPI LONG WINAPI ChangeDisplaySettingsExW(LPCWSTR device, struct _devicemo
 WINUSERAPI LONG WINAPI ChangeDisplaySettingsExA(LPCSTR device, struct _devicemodeA *mode, HWND window, DWORD flags,
                                                 LPVOID param);
 WINUSERAPI BOOL WINAPI GetMonitorInfoW(HMONITOR monitor, LPMONITORINFO info);
+typedef BOOL(CALLBACK *MONITORENUMPROC)(HMONITOR, HDC, LPRECT, LPARAM);
+WINUSERAPI BOOL WINAPI EnumDisplayMonitors(HDC dc, LPCRECT clip, MONITORENUMPROC proc, LPARAM param);
 
 /* GetDCEx flags. */
 #define DCX_WINDOW 0x00000001

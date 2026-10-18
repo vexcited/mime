@@ -1034,19 +1034,52 @@ WINUSERAPI BOOL WINAPI AdjustWindowRectExForDpi(LPRECT rect, DWORD style, BOOL m
 
 #define PRIMARY_MONITOR ((HMONITOR)(ULONG_PTR)0x00010001)
 
+/* the only monitor is the answer when the rectangle touches it, else what the flags ask for. */
+static HMONITOR monitor_for(const RECT *rect, DWORD flags)
+{
+    if (flags > MONITOR_DEFAULTTONEAREST) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    MONITORINFO mi = {sizeof(mi)};
+    if (rect && GetMonitorInfoW(PRIMARY_MONITOR, &mi)) {
+        RECT overlap;
+        /* a point is an empty rectangle that still counts inside. */
+        BOOL inside = IntersectRect(&overlap, rect, &mi.rcMonitor) ||
+                      (rect->left == rect->right && rect->top == rect->bottom && rect->left >= mi.rcMonitor.left &&
+                       rect->left < mi.rcMonitor.right && rect->top >= mi.rcMonitor.top && rect->top < mi.rcMonitor.bottom);
+        if (inside)
+            return PRIMARY_MONITOR;
+    }
+    return flags == MONITOR_DEFAULTTONULL ? nullptr : PRIMARY_MONITOR;
+}
+
 WINUSERAPI HMONITOR WINAPI MonitorFromWindow(HWND hwnd, DWORD flags)
 {
-    return PRIMARY_MONITOR;
+    if (flags > MONITOR_DEFAULTTONEAREST) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    RECT rect;
+    if (!IsWindow(hwnd) || !GetWindowRect(hwnd, &rect))
+        return flags == MONITOR_DEFAULTTONULL ? nullptr : PRIMARY_MONITOR;
+    if (IsIconic(hwnd)) {
+        WINDOWPLACEMENT wp = {sizeof(wp)};
+        if (GetWindowPlacement(hwnd, &wp))
+            rect = wp.rcNormalPosition;
+    }
+    return monitor_for(&rect, flags);
 }
 
 WINUSERAPI HMONITOR WINAPI MonitorFromPoint(POINT point, DWORD flags)
 {
-    return PRIMARY_MONITOR;
+    RECT rect = {point.x, point.y, point.x, point.y};
+    return monitor_for(&rect, flags);
 }
 
 WINUSERAPI HMONITOR WINAPI MonitorFromRect(LPCRECT rect, DWORD flags)
 {
-    return PRIMARY_MONITOR;
+    return monitor_for(rect, flags);
 }
 
 WINUSERAPI BOOL WINAPI GetMonitorInfoW(HMONITOR monitor, LPMONITORINFO info)
@@ -1067,8 +1100,6 @@ WINUSERAPI BOOL WINAPI GetMonitorInfoA(HMONITOR monitor, LPMONITORINFO info)
     WideCharToMultiByte(CP_ACP, 0, w.szDevice, -1, (LPSTR)(info + 1), CCHDEVICENAME, nullptr, nullptr);
     return TRUE;
 }
-
-typedef BOOL(CALLBACK *MONITORENUMPROC)(HMONITOR, HDC, LPRECT, LPARAM);
 
 WINUSERAPI BOOL WINAPI EnumDisplayMonitors(HDC dc, LPCRECT clip, MONITORENUMPROC proc, LPARAM param)
 {
