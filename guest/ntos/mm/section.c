@@ -528,6 +528,14 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
     return STATUS_SUCCESS;
 }
 
+/* bytes of the image from its private pages, which are not next to each other in memory. */
+static void read_private(const ULONG64 *pages, ULONG64 rva, void *out, ULONG length)
+{
+    PUCHAR bytes = out;
+    for (ULONG i = 0; i < length; i++, rva++)
+        bytes[i] = *((PUCHAR)HalPhysmap(pages[rva >> PAGE_SHIFT]) + (rva & (PAGE_SIZE - 1)));
+}
+
 static void apply_relocations(PSECTION s, ULONG64 *pages, ULONG_PTR base)
 {
     LONG64 delta = (LONG64)(base - s->Image.ImageBase);
@@ -537,13 +545,13 @@ static void apply_relocations(PSECTION s, ULONG64 *pages, ULONG_PTR base)
         ULONG64 rva = s->RelocRva + off;
         if (rva + sizeof(block) > s->Size)
             return;
-        memcpy(&block, (PUCHAR)HalPhysmap(pages[rva >> PAGE_SHIFT]) + (rva & (PAGE_SIZE - 1)), sizeof(block));
+        read_private(pages, rva, &block, sizeof(block));
         if (block.SizeOfBlock < sizeof(block) || off + block.SizeOfBlock > s->RelocSize)
             return;
         for (ULONG i = sizeof(block); i + 2 <= block.SizeOfBlock; i += 2) {
             ULONG64 erva = s->RelocRva + off + i;
             USHORT entry;
-            memcpy(&entry, (PUCHAR)HalPhysmap(pages[erva >> PAGE_SHIFT]) + (erva & (PAGE_SIZE - 1)), 2);
+            read_private(pages, erva, &entry, sizeof(entry));
             ULONG type = entry >> 12;
             int width = type == IMAGE_REL_BASED_DIR64 ? 8 : type == IMAGE_REL_BASED_HIGHLOW ? 4 : 0;
             if (!width)
