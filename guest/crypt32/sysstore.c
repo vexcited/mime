@@ -377,10 +377,15 @@ BOOL CrRegCanWrite(cr_store *store)
     return !(store->flags & CERT_STORE_READONLY_FLAG);
 }
 
+static void free_change(cr_reg *reg);
+
 void CrRegClose(cr_store *store)
 {
     if (!store->reg)
         return;
+    free_change(store->reg);
+    if (store->reg->internal)
+        CloseHandle(store->reg->internal);
     RegCloseKey(store->reg->key);
     CrFree(store->reg);
     store->reg = nullptr;
@@ -504,6 +509,255 @@ BOOL CrResyncStore(cr_store *store)
     for (DWORD i = 0; store->collection && i < store->child_count; i++)
         CrResyncStore(store->children[i]);
     return TRUE;
+}
+
+/* ------------------------------------------------------------------ change notification */
+
+typedef struct TP_WAIT *PTP_WAIT;
+typedef struct TP_CALLBACK_INSTANCE *PTP_CALLBACK_INSTANCE;
+typedef void(WINAPI *PTP_WAIT_CALLBACK)(PTP_CALLBACK_INSTANCE instance, void *context, PTP_WAIT wait, ULONG result);
+WINBASEAPI PTP_WAIT WINAPI CreateThreadpoolWait(PTP_WAIT_CALLBACK callback, void *context, void *environment);
+WINBASEAPI void WINAPI SetThreadpoolWait(PTP_WAIT wait, HANDLE handle, FILETIME *timeout);
+WINBASEAPI void WINAPI WaitForThreadpoolWaitCallbacks(PTP_WAIT wait, BOOL cancel_pending);
+WINBASEAPI void WINAPI CloseThreadpoolWait(PTP_WAIT wait);
+
+#define CANCEL_REQUEST 0x80000000
+/* thread agnostic, the whole subtree, names and values, as crypt32 watches a store's key. */
+#define WATCH_FILTER 0x10000005
+
+/* a program's event waiting for the next change, and the handle it is signaled through. */
+typedef struct {
+    HANDLE event;
+    HANDLE copy;
+} cr_listener;
+
+struct cr_change {
+    SRWLOCK lock;
+    HANDLE event;
+    PTP_WAIT wait;
+    cr_listener *listeners;
+    DWORD count;
+};
+
+static BOOL watch_key(HKEY key, HANDLE event)
+{
+    LSTATUS error = RegNotifyChangeKeyValue(key, TRUE, WATCH_FILTER, event, TRUE);
+    if (error && error != ERROR_KEY_DELETED) {
+        SetLastError(error);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void signal_listeners(cr_listener *list, DWORD count)
+{
+    while (count--) {
+        if (list[count].copy) {
+            SetEvent(list[count].copy);
+            CloseHandle(list[count].copy);
+        } else {
+            SetEvent(list[count].event);
+        }
+    }
+    CrFree(list);
+}
+
+/* the registry changed: it is watched again first, then every event waiting is signaled, once. */
+static void WINAPI change_callback(PTP_CALLBACK_INSTANCE instance, void *context, PTP_WAIT wait, ULONG result)
+{
+    cr_reg *reg = context;
+    cr_change *change = reg->change;
+    BOOL armed = watch_key(reg->key, change->event);
+    AcquireSRWLockExclusive(&change->lock);
+    cr_listener *list = change->listeners;
+    DWORD count = change->count;
+    change->listeners = nullptr;
+    change->count = 0;
+    ReleaseSRWLockExclusive(&change->lock);
+    signal_listeners(list, count);
+    if (armed)
+        SetThreadpoolWait(wait, change->event, nullptr);
+}
+
+static void free_change(cr_reg *reg)
+{
+    cr_change *change = reg->change;
+    if (!change)
+        return;
+    reg->change = nullptr;
+    if (change->wait) {
+        WaitForThreadpoolWaitCallbacks(change->wait, TRUE);
+        CloseThreadpoolWait(change->wait);
+    }
+    if (change->event)
+        CloseHandle(change->event);
+    /* closing the store tells those still waiting. */
+    signal_listeners(change->listeners, change->count);
+    CrFree(change);
+}
+
+static cr_change *start_change(cr_reg *reg)
+{
+    if (reg->change)
+        return reg->change;
+    cr_change *change = CrAllocZero(sizeof(*change));
+    if (!change) {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return nullptr;
+    }
+    InitializeSRWLock(&change->lock);
+    change->event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    reg->change = change;
+    if (change->event && watch_key(reg->key, change->event)) {
+        change->wait = CreateThreadpoolWait(change_callback, reg, nullptr);
+        if (change->wait) {
+            SetThreadpoolWait(change->wait, change->event, nullptr);
+            return change;
+        }
+    }
+    DWORD error = GetLastError();
+    free_change(reg);
+    SetLastError(error);
+    return nullptr;
+}
+
+/* an event to be signaled by the next change of the registry, or no longer. */
+static BOOL listen(cr_reg *reg, HANDLE event, DWORD flags)
+{
+    cr_change *change = start_change(reg);
+    if (!change)
+        return FALSE;
+    AcquireSRWLockExclusive(&change->lock);
+    for (DWORD i = 0; i < change->count; i++) {
+        if (change->listeners[i].event != event)
+            continue;
+        if (flags & CANCEL_REQUEST) {
+            if (change->listeners[i].copy)
+                CloseHandle(change->listeners[i].copy);
+            memmove(&change->listeners[i], &change->listeners[i + 1], (change->count - i - 1) * sizeof(cr_listener));
+            change->count--;
+        }
+        ReleaseSRWLockExclusive(&change->lock);
+        return TRUE;
+    }
+    BOOL ok = TRUE;
+    if (!(flags & CANCEL_REQUEST)) {
+        HANDLE copy = nullptr;
+        cr_listener *list = nullptr;
+        if (!(flags & CERT_STORE_CTRL_INHIBIT_DUPLICATE_HANDLE_FLAG) &&
+            !DuplicateHandle(GetCurrentProcess(), event, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            ok = FALSE;
+        if (ok && change->count < 0x100000) {
+            list = CrAlloc((change->count + 1) * sizeof(cr_listener));
+            ok = list != nullptr;
+            if (!ok)
+                SetLastError(ERROR_OUTOFMEMORY);
+        } else if (ok) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            ok = FALSE;
+        }
+        if (ok) {
+            memcpy(list, change->listeners, change->count * sizeof(cr_listener));
+            CrFree(change->listeners);
+            change->listeners = list;
+            list[change->count].event = event;
+            list[change->count].copy = copy;
+            change->count++;
+        } else if (copy) {
+            DWORD error = GetLastError();
+            CloseHandle(copy);
+            SetLastError(error);
+        }
+    }
+    ReleaseSRWLockExclusive(&change->lock);
+    return ok;
+}
+
+/* CERT_STORE_CTRL_RESYNC: the event, if there is one, is listed again, and the store is read if the registry changed. */
+static BOOL resync_registry(cr_store *store, HANDLE event, DWORD flags)
+{
+    cr_reg *reg = store->reg;
+    if (event && !listen(reg, event, flags))
+        return FALSE;
+    if (reg->internal) {
+        if (WaitForSingleObject(reg->internal, 0) == WAIT_TIMEOUT)
+            return TRUE;
+        if (!listen(reg, reg->internal, CERT_STORE_CTRL_INHIBIT_DUPLICATE_HANDLE_FLAG))
+            return FALSE;
+    }
+    CrEmptyStore(store);
+    load_registry(store);
+    return TRUE;
+}
+
+/* CERT_STORE_CTRL_NOTIFY_CHANGE and CERT_STORE_CTRL_CANCEL_NOTIFY. */
+static BOOL notify_change(cr_store *store, HANDLE event, DWORD flags)
+{
+    cr_reg *reg = store->reg;
+    BOOL created = FALSE;
+    if (!reg->internal) {
+        HANDLE internal = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!internal)
+            return FALSE;
+        if (!resync_registry(store, internal, CERT_STORE_CTRL_INHIBIT_DUPLICATE_HANDLE_FLAG)) {
+            DWORD error = GetLastError();
+            listen(reg, internal, CANCEL_REQUEST);
+            CloseHandle(internal);
+            SetLastError(error);
+            return FALSE;
+        }
+        reg->internal = internal;
+        created = TRUE;
+    }
+    if (!event)
+        return TRUE;
+    if (!created && !(flags & CANCEL_REQUEST))
+        return resync_registry(store, event, flags);
+    return listen(reg, event, flags);
+}
+
+BOOL CrControlStore(cr_store *store, DWORD flags, DWORD type, HANDLE *event)
+{
+    if (!store->reg) {
+        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+        return FALSE;
+    }
+    HANDLE handle = event ? *event : nullptr;
+    BOOL ok;
+    CrLock();
+    switch (type) {
+    case CERT_STORE_CTRL_RESYNC:
+        ok = resync_registry(store, handle, flags);
+        break;
+    case CERT_STORE_CTRL_NOTIFY_CHANGE:
+        ok = notify_change(store, handle, flags);
+        break;
+    case CERT_STORE_CTRL_COMMIT:
+        ok = TRUE;
+        break;
+    case CERT_STORE_CTRL_CANCEL_NOTIFY:
+        ok = handle ? notify_change(store, handle, CANCEL_REQUEST) : TRUE;
+        break;
+    default:
+        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+        ok = FALSE;
+        break;
+    }
+    CrUnlock();
+    return ok;
+}
+
+void CrAutoResync(cr_store *store)
+{
+    if (store->auto_event) {
+        if (WaitForSingleObject(store->auto_event, 0) == WAIT_OBJECT_0) {
+            HANDLE event = store->auto_event;
+            CertControlStore(store, CERT_STORE_CTRL_INHIBIT_DUPLICATE_HANDLE_FLAG, CERT_STORE_CTRL_RESYNC, &event);
+        }
+        return;
+    }
+    for (DWORD i = 0; store->collection && i < store->child_count; i++)
+        CrAutoResync(store->children[i]);
 }
 
 BOOL CrStoreChanged(cr_store *store)

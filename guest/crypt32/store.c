@@ -32,6 +32,12 @@ void CrReleaseStore(cr_store *store)
 {
     if (InterlockedDecrement(&store->refs))
         return;
+    if (store->auto_event) {
+        HANDLE event = store->auto_event;
+        CertControlStore(store, 0, CERT_STORE_CTRL_CANCEL_NOTIFY, &event);
+        store->auto_event = nullptr;
+        CloseHandle(event);
+    }
     for (DWORD i = 0; i < store->child_count; i++)
         CertCloseStore(store->children[i], 0);
     CrFree(store->children);
@@ -292,6 +298,8 @@ PCCERT_CONTEXT WINAPI CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_
         SetLastError(E_INVALIDARG);
         return nullptr;
     }
+    if (!pPrevCertContext)
+        CrAutoResync(store);
     cr_cert *found = enum_store(store, pPrevCertContext ? CrCert(pPrevCertContext) : nullptr);
     if (pPrevCertContext)
         CertFreeCertificateContext(pPrevCertContext);
@@ -1084,20 +1092,65 @@ void WINAPI CertRemoveStoreFromCollection(HCERTSTORE hCollectionStore, HCERTSTOR
 }
 
 
+/* a store is read again, before it is used, when the registry under it changed. */
+static BOOL enable_auto_resync(cr_store *store)
+{
+    HANDLE event = nullptr;
+    CrLock();
+    if (!store->auto_event) {
+        event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        store->auto_event = event;
+    }
+    CrUnlock();
+    if (!event)
+        return store->auto_event != nullptr;
+    if (!CertControlStore(store, CERT_STORE_CTRL_INHIBIT_DUPLICATE_HANDLE_FLAG, CERT_STORE_CTRL_NOTIFY_CHANGE, &event)) {
+        DWORD error = GetLastError();
+        CertControlStore(store, 0, CERT_STORE_CTRL_CANCEL_NOTIFY, &event);
+        CrLock();
+        store->auto_event = nullptr;
+        CrUnlock();
+        CloseHandle(event);
+        SetLastError(error);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* errors of a member that has no such control, or no registry, count for nothing if another member took it. */
+static BOOL benign(DWORD error)
+{
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_CALL_NOT_IMPLEMENTED;
+}
+
 BOOL WINAPI CertControlStore(HCERTSTORE hCertStore, DWORD dwFlags, DWORD dwCtrlType, void const *pvCtrlPara)
 {
     cr_store *store = CrStore(hCertStore);
     if (!store)
         return CrFail(E_INVALIDARG);
-    switch (dwCtrlType) {
-    case CERT_STORE_CTRL_RESYNC:
-        return CrResyncStore(store);
-    case CERT_STORE_CTRL_COMMIT:
-    case CERT_STORE_CTRL_AUTO_RESYNC:
-        /* registry stores write through, so there is nothing left to commit. */
-        return TRUE;
+    if (dwCtrlType == CERT_STORE_CTRL_AUTO_RESYNC)
+        return enable_auto_resync(store);
+    if (!store->collection)
+        return CrControlStore(store, dwFlags, dwCtrlType, (HANDLE *)pvCtrlPara);
+    /* a collection asks each member. */
+    BOOL ok = TRUE, took = FALSE;
+    DWORD recorded = ERROR_CALL_NOT_IMPLEMENTED;
+    CrLock();
+    for (DWORD i = 0; i < store->child_count; i++) {
+        if (CertControlStore(store->children[i], dwFlags, dwCtrlType, pvCtrlPara)) {
+            took = TRUE;
+            if (!ok && benign(recorded))
+                ok = TRUE;
+        } else if (benign(recorded)) {
+            recorded = GetLastError();
+            if (!took || !benign(recorded))
+                ok = FALSE;
+        }
     }
-    return CrFail(ERROR_CALL_NOT_IMPLEMENTED);
+    CrUnlock();
+    if (!ok)
+        SetLastError(recorded);
+    return ok;
 }
 
 BOOL WINAPI CertGetStoreProperty(HCERTSTORE hCertStore, DWORD dwPropId, void *pvData, DWORD *pcbData)

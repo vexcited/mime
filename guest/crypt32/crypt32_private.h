@@ -178,10 +178,13 @@ typedef struct cr_cert {
 #define CR_STORE_MAGIC 0x53524543
 
 /* the registry key behind a system registry store, see sysstore.c. */
+typedef struct cr_change cr_change;
 typedef struct cr_reg {
     HKEY key;
     BOOL loading;
     ULONGLONG stamp;
+    cr_change *change;  /* the registry watched for the events programs asked to hear of changes with */
+    HANDLE internal;    /* auto reset, set when the registry changed since the store was read */
 } cr_reg;
 
 struct cr_store {
@@ -199,6 +202,7 @@ struct cr_store {
     DWORD child_count;
     WCHAR *localized_name;
     cr_reg *reg;
+    HANDLE auto_event; /* CERT_STORE_CTRL_AUTO_RESYNC: set when a store is to be read again before it is used */
 };
 
 void CrInitLock(void);
@@ -236,6 +240,10 @@ BOOL CrRegCanWrite(cr_store *store);
 void CrRegClose(cr_store *store);
 /* rereads registry stores, recursing into collections. */
 BOOL CrResyncStore(cr_store *store);
+/* CertControlStore of a store with no members: false with ERROR_CALL_NOT_IMPLEMENTED unless a registry store. */
+BOOL CrControlStore(cr_store *store, DWORD flags, DWORD type, HANDLE *event);
+/* the store is read again if its auto resync event says the registry changed, see CertControlStore. */
+void CrAutoResync(cr_store *store);
 /* whether the registry under a store changed since it was read. */
 BOOL CrStoreChanged(cr_store *store);
 /* bumped by every write this process makes to a registry store. */
