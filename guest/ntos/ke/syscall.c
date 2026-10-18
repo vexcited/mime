@@ -85,6 +85,8 @@ void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args)
 
 /* the image name whose system calls are logged, from the kernel option trace-syscalls=<name>, or * for all. */
 char KiTraceSyscallImage[16];
+/* the service whose callers are walked too, from the kernel option trace-stack=<service name>. */
+char KiTraceStackService[40];
 
 static const char *service_name(ULONG table, ULONG index)
 {
@@ -119,6 +121,8 @@ void KiSystemService(PKTRAP_FRAME frame)
             g_reported[table][index / 8] |= (UCHAR)(1u << (index % 8));
             KiLogPrintf("unimplemented system service %s (0x%04x) called by %s", service_name(table, index), number,
                         PsCurrentProcess()->ImageFileName);
+            /* who calls it, for the first call. */
+            KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }
         result = table == 1 ? 0 : (ULONG64)(LONG64)STATUS_NOT_IMPLEMENTED;
     } else {
@@ -146,6 +150,8 @@ void KiSystemService(PKTRAP_FRAME frame)
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), args[0],
                         args[1], args[2], args[3], shown > 4 ? args[4] : 0, shown > 5 ? args[5] : 0,
                         shown > 6 ? args[6] : 0, caller);
+            if (KiTraceStackService[0] && !strcmp(service_name(table, index), KiTraceStackService))
+                KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }
         if (!copied)
             result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;

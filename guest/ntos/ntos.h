@@ -64,6 +64,7 @@ ULONG64 HalHnsToCounter(ULONG64 hns);
 void KiLogPrintf(const char *fmt, ...);
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp);
 BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size);
+void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size);
 #define KdPrint(args) KiLogPrintf args
 #define MIME_TRACE(...) KiLogPrintf(__VA_ARGS__)
 

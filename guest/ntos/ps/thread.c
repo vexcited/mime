@@ -927,6 +927,8 @@ void PsDumpThreads(void)
         PVOID object = k->State == Waiting && k->WaitBlockList ? k->WaitBlockList->Object : nullptr;
         PKTRAP_FRAME frame = k->TrapFrame;
         ULONG64 pc = 0, sp = 0, top = 0;
+        char chain[512];
+        chain[0] = 0;
         if (frame && KI_TRAP_FROM_USER(frame) && !process->SystemProcess) {
             pc = KI_TRAP_PC(frame);
             sp = KI_TRAP_SP(frame);
@@ -934,12 +936,15 @@ void PsDumpThreads(void)
             KeStackAttachProcess(&process->Pcb, &saved);
             if (!NT_SUCCESS(KiCopyFromUser(&top, (PVOID)sp, sizeof(top))))
                 top = 0;
+            KiFormatUserStack(process, sp, chain, sizeof(chain));
             KeUnstackDetachProcess(&saved);
         }
         KiLogPrintf("%s %u thread %u %s reason %u object %p type %d pc %p sp %p return %p", process->ImageFileName,
                     (ULONG)(ULONG_PTR)process->UniqueProcessId, (ULONG)(ULONG_PTR)threads[i]->Cid.UniqueThread, state,
                     k->WaitReason, object, object ? ((DISPATCHER_HEADER *)object)->Type : -1, (PVOID)pc, (PVOID)sp,
                     (PVOID)top);
+        if (chain[0])
+            KiLogPrintf("  calls%s", chain);
         ObDereferenceObject(threads[i]);
     }
 }

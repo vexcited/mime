@@ -173,6 +173,13 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
     extern char KiTraceSyscallImage[16];
     const char *trace = strstr(boot->cmdline, "trace-syscalls=");
+    extern char KiTraceStackService[40];
+    const char *stack = strstr(boot->cmdline, "trace-stack=");
+    if (stack) {
+        stack += 12;
+        for (ULONG i = 0; i < sizeof(KiTraceStackService) - 1 && stack[i] && stack[i] != ' '; i++)
+            KiTraceStackService[i] = stack[i];
+    }
     if (trace) {
         trace += 15;
         for (ULONG i = 0; i < sizeof(KiTraceSyscallImage) - 1 && trace[i] && trace[i] != ' '; i++)

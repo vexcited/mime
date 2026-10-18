@@ -7,9 +7,9 @@
 BOOLEAN KiTraceUserExceptions;
 
 /* the image and offset of a user address in the current process, as "name+0xoffset". */
-BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size)
+static BOOLEAN describe_in(PEPROCESS process, ULONG_PTR va, char *out, ULONG size)
 {
-    PMMADDRESS_SPACE as = &PsCurrentProcess()->AddressSpace;
+    PMMADDRESS_SPACE as = &process->AddressSpace;
     if (va > MIME_USER_ADDRESS_LIMIT)
         return FALSE;
     ExAcquireFastMutex(&as->Lock);
@@ -30,6 +30,36 @@ BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size)
     }
     ExReleaseFastMutex(&as->Lock);
     return found;
+}
+
+BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size)
+{
+    return describe_in(PsCurrentProcess(), va, out, size);
+}
+
+/*
+ * one line with the code addresses of a thread's stack that point into images, innermost first, for the thread
+ * dump. the caller is attached to the process, which owns the address.
+ */
+void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size)
+{
+    ULONG n = 0;
+    out[0] = 0;
+    char text[96];
+    for (ULONG i = 0, shown = 0; i < 1024 && shown < 14 && sp && !(sp & 7); i++, sp += 8) {
+        ULONG64 word;
+        if (!MmIsAddressValid((PVOID)sp) || !NT_SUCCESS(KiCopyFromUser(&word, (PVOID)sp, sizeof(word))))
+            break;
+        if (describe_in(process, word, text, sizeof(text))) {
+            ULONG length = (ULONG)strlen(text);
+            if (n + length + 2 >= size)
+                break;
+            out[n++] = ' ';
+            memcpy(out + n, text, length + 1);
+            n += length;
+            shown++;
+        }
+    }
 }
 
 /* the images of the instruction pointer and of the words on top of the stack that point into one. */
