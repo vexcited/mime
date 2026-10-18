@@ -752,10 +752,34 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
     if (!NT_SUCCESS(status))
         return status;
     if (klass == ObjectNameInformation) {
-        WCHAR buf[512];
         UNICODE_STRING name = {};
-        if (OBJECT_TO_HEADER(object)->Directory)
-            ObQueryNameString(object, &name, buf, RTL_NUMBER_OF(buf));
+        PWSTR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, 1024 * sizeof(WCHAR), KI_TAG('O', 'b', 'N', 'm'));
+        if (!buf) {
+            ObDereferenceObject(object);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        if (OBJECT_TO_HEADER(object)->Type == IoFileObjectTypeObject) {
+            /* a file's name is its device's and its path on it: \Device\HarddiskVolume1\Users\... */
+            PFILE_OBJECT file = object;
+            UNICODE_STRING device = {};
+            if (file->DeviceObject && OBJECT_TO_HEADER(file->DeviceObject)->Directory)
+                ObQueryNameString(file->DeviceObject, &device, buf, 512);
+            ULONG chars = device.Length / sizeof(WCHAR);
+            ULONG path = file->FileName.Length / sizeof(WCHAR);
+            if (path > 1024 - 2 - chars)
+                path = 1024 - 2 - chars;
+            if (path && file->FileName.Buffer[0] != '\\' && chars)
+                buf[chars++] = '\\';
+            if (path) {
+                memcpy(buf + chars, file->FileName.Buffer, path * sizeof(WCHAR));
+                chars += path;
+            }
+            buf[chars] = 0;
+            name.Buffer = buf;
+            name.Length = (USHORT)(chars * sizeof(WCHAR));
+        } else if (OBJECT_TO_HEADER(object)->Directory) {
+            ObQueryNameString(object, &name, buf, 512);
+        }
         ULONG need = sizeof(OBJECT_NAME_INFORMATION) + name.Length + sizeof(WCHAR);
         if (returned)
             KiCopyToUser(returned, &need, sizeof(need));
@@ -770,6 +794,7 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             if (NT_SUCCESS(status) && name.Length)
                 status = KiCopyToUser(oni.Name.Buffer, name.Buffer, name.Length + sizeof(WCHAR));
         }
+        ExFreePool(buf);
     } else if (klass == ObjectHandleFlagInformation || klass == ObjectBasicInformation) {
         OBJECT_HANDLE_FLAGS flags;
         ACCESS_MASK granted = 0;
