@@ -5,7 +5,7 @@ set(gen86 ${MIME_GEN}/x86)
 # ntdll and its system call stubs.
 mime_objects(x86-ntsyscalls x86 SOURCES ${gen86}/ntdll_syscalls.S)
 mime_glob(sources guest/ntdll/*.c guest/ntdll/x86/*.c guest/ntdll/x86/*.S)
-mime_objects(x86-ntdll x86 SOURCES ${sources} INCLUDES guest/ntdll)
+mime_objects(x86-ntdll x86 SOURCES ${sources} guest/lib/crypto/hash.c INCLUDES guest/ntdll guest/lib)
 set(objects x86-ntdll x86-ntsyscalls ${MIME_RUNTIME_x86})
 mime_object_list(files ${objects})
 mime_object_targets(targets ${objects})

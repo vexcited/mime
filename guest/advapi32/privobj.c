@@ -132,6 +132,73 @@ ADVAPI BOOL WINAPI GetKernelObjectSecurity(HANDLE handle, SECURITY_INFORMATION i
     return finish(NtQuerySecurityObject(handle, information, sd, length, needed));
 }
 
+/* ---------------------------------------------------------------- privileges */
+
+#define PRIVILEGE_SET_ALL_NECESSARY 1
+#define SE_PRIVILEGE_USED_FOR_ACCESS 0x80000000L
+#ifndef ERROR_BAD_IMPERSONATION_LEVEL
+#define ERROR_BAD_IMPERSONATION_LEVEL 1346L
+#endif
+
+/*
+ * whether a token may stand for a client in a check: it has to be an impersonation token, and one that
+ * says who the client is. returns the error to report, or zero.
+ */
+DWORD AdvImpersonationError(HANDLE token)
+{
+    if (!token)
+        return ERROR_INVALID_HANDLE;
+    DWORD type = 0, level = 0, returned;
+    NTSTATUS status = NtQueryInformationToken(token, TokenType, &type, sizeof(type), &returned);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    if (type != 2)
+        return ERROR_NO_IMPERSONATION_TOKEN;
+    status = NtQueryInformationToken(token, TokenImpersonationLevel, &level, sizeof(level), &returned);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    return level < 1 ? ERROR_BAD_IMPERSONATION_LEVEL : ERROR_SUCCESS;
+}
+
+/*
+ * the privileges of the set the token holds enabled are marked as used, and the result says whether it holds
+ * all of them or, unless the set asks for all, any.
+ */
+ADVAPI BOOL WINAPI PrivilegeCheck(HANDLE token, PPRIVILEGE_SET required, LPBOOL result)
+{
+    if (!required || !result) {
+        AdvSetError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    DWORD error = AdvImpersonationError(token);
+    if (error) {
+        /* the check has no word for a token that is not an impersonation one. */
+        AdvSetError(error == ERROR_NO_IMPERSONATION_TOKEN ? ERROR_BAD_IMPERSONATION_LEVEL : error);
+        return FALSE;
+    }
+    TOKEN_PRIVILEGES *held = AdvQueryToken(token, TokenPrivileges);
+    if (!held) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    DWORD found = 0;
+    for (DWORD i = 0; i < required->PrivilegeCount; i++) {
+        for (DWORD j = 0; j < held->PrivilegeCount; j++) {
+            if (held->Privileges[j].Luid.LowPart == required->Privilege[i].Luid.LowPart &&
+                held->Privileges[j].Luid.HighPart == required->Privilege[i].Luid.HighPart) {
+                if (held->Privileges[j].Attributes & SE_PRIVILEGE_ENABLED) {
+                    required->Privilege[i].Attributes |= SE_PRIVILEGE_USED_FOR_ACCESS;
+                    found++;
+                }
+                break;
+            }
+        }
+    }
+    AdvFree(held);
+    *result = (required->Control & PRIVILEGE_SET_ALL_NECESSARY) ? found == required->PrivilegeCount : found != 0;
+    return TRUE;
+}
+
 /* ---------------------------------------------------------------- audit alarms */
 
 /*

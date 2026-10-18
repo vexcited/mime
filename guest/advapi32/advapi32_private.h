@@ -565,6 +565,9 @@ NTSYSAPI NTSTATUS NTAPI RtlConvertToAutoInheritSecurityObject(PSECURITY_DESCRIPT
                                                               PSECURITY_DESCRIPTOR *result, const GUID *type,
                                                               BOOLEAN container, PGENERIC_MAPPING mapping);
 
+/* privobj.c: whether a token may stand for a client in a check, the error if not. */
+DWORD AdvImpersonationError(HANDLE token);
+
 /* ---------------------------------------------------------------- helpers */
 
 FORCEINLINE void AdvSetError(DWORD error)

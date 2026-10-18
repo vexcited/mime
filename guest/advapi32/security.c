@@ -311,6 +311,11 @@ ADVAPI BOOL WINAPI AccessCheck(PSECURITY_DESCRIPTOR sd, HANDLE token, DWORD desi
             AdvSetStatus(access_status);
         return TRUE;
     }
+    DWORD token_error = AdvImpersonationError(token);
+    if (token_error) {
+        AdvSetError(token_error);
+        return FALSE;
+    }
     SD_PARTS p;
     if (!check_arguments(sd, desired, mapping, privileges, privileges_length, nullptr, 0, &p))
         return FALSE;
@@ -329,6 +334,11 @@ ADVAPI BOOL WINAPI AccessCheckByType(PSECURITY_DESCRIPTOR sd, PSID self, HANDLE 
 {
     if (!mapping || !privileges_length || !granted || !status) {
         AdvSetError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    DWORD token_error = AdvImpersonationError(token);
+    if (token_error) {
+        AdvSetError(token_error);
         return FALSE;
     }
     SD_PARTS p;
@@ -368,6 +378,11 @@ ADVAPI BOOL WINAPI AccessCheckByTypeResultList(PSECURITY_DESCRIPTOR sd, PSID sel
 {
     if (!mapping || !privileges_length || !granted || !statuses || !count) {
         AdvSetError(count ? ERROR_NOACCESS : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD token_error = AdvImpersonationError(token);
+    if (token_error) {
+        AdvSetError(token_error);
         return FALSE;
     }
     SD_PARTS p;

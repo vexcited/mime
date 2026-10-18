@@ -327,4 +327,39 @@ NTSYSAPI NTSTATUS NTAPI RtlConvertToAutoInheritSecurityObject(PSECURITY_DESCRIPT
                                                               PSECURITY_DESCRIPTOR *result, const GUID *type,
                                                               BOOLEAN container, const GENERIC_MAPPING *mapping);
 
+/* app containers, sid hashes, descriptor forms and ace tables. */
+#define STATUS_NOT_APPCONTAINER ((NTSTATUS)0xC000A200L)
+
+typedef struct _SID_AND_ATTRIBUTES_HASH {
+    ULONG SidCount;
+    PSID_AND_ATTRIBUTES SidAttr;
+    ULONG_PTR Hash[32];
+} SID_AND_ATTRIBUTES_HASH, *PSID_AND_ATTRIBUTES_HASH;
+
+typedef struct _RTL_ACE_DATA {
+    UCHAR AceType;
+    UCHAR InheritFlags;
+    UCHAR AceFlags;
+    ACCESS_MASK Mask;
+    PSID *Sid;
+} RTL_ACE_DATA, *PRTL_ACE_DATA;
+
+NTSYSAPI BOOLEAN NTAPI RtlIsPackageSid(PSID sid);
+NTSYSAPI BOOLEAN NTAPI RtlIsCapabilitySid(PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlGetAppContainerSidType(PSID sid, PULONG type);
+NTSYSAPI NTSTATUS NTAPI RtlGetAppContainerParent(PSID sid, PSID *parent);
+NTSYSAPI NTSTATUS NTAPI RtlSidHashInitialize(PSID_AND_ATTRIBUTES sids, ULONG count, PSID_AND_ATTRIBUTES_HASH hash);
+NTSYSAPI PSID_AND_ATTRIBUTES NTAPI RtlSidHashLookup(PSID_AND_ATTRIBUTES_HASH hash, PSID sid);
+NTSYSAPI BOOLEAN NTAPI RtlTestProtectedAccess(UCHAR source, UCHAR target);
+NTSYSAPI NTSTATUS NTAPI RtlMapSecurityErrorToNtStatus(ULONG error);
+NTSYSAPI NTSTATUS NTAPI RtlCopySecurityDescriptor(PSECURITY_DESCRIPTOR source, PSECURITY_DESCRIPTOR *copy);
+NTSYSAPI NTSTATUS NTAPI RtlSetAttributesSecurityDescriptor(PSECURITY_DESCRIPTOR sd,
+                                                           SECURITY_DESCRIPTOR_CONTROL control, PULONG revision);
+NTSYSAPI NTSTATUS NTAPI RtlReplaceSidInSd(PSECURITY_DESCRIPTOR sd, PSID old, PSID replacement, PULONG changed);
+NTSYSAPI BOOLEAN NTAPI RtlNormalizeSecurityDescriptor(PSECURITY_DESCRIPTOR *sd, ULONG length,
+                                                      PSECURITY_DESCRIPTOR *normal, PULONG normal_length,
+                                                      BOOLEAN check_only);
+NTSYSAPI NTSTATUS NTAPI RtlCreateAndSetSD(PRTL_ACE_DATA table, ULONG count, PSID owner, PSID group,
+                                          PSECURITY_DESCRIPTOR *result);
+
 #endif

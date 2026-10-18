@@ -181,7 +181,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     else()
         mime_glob(ntdll_sources guest/ntdll/*.c guest/ntdll/*.S)
     endif()
-    mime_objects(${arch}-ntdll ${arch} SOURCES ${ntdll_sources} INCLUDES guest/ntdll)
+    mime_objects(${arch}-ntdll ${arch} SOURCES ${ntdll_sources} guest/lib/crypto/hash.c INCLUDES guest/ntdll guest/lib)
     set(ntdll_objects ${arch}-ntdll ${arch}-ntsyscalls ${MIME_RUNTIME_${arch}})
     mime_object_list(ntdll_files ${ntdll_objects})
     add_custom_command(OUTPUT ${MIME_GEN}/${arch}/ntdll.def
