@@ -726,5 +726,6 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     pthread_detach(t);
 
     mime_ui_run();
+    mime_vm_shutdown(&g_vm);
     return g_vm.exit_code;
 }

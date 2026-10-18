@@ -208,6 +208,8 @@ bool mime_vm_start(MimeVm *vm)
     return true;
 }
 
+void mime_vm_shutdown(MimeVm *vm) {}
+
 void mime_vm_destroy(MimeVm *vm)
 {
     for (uint32_t i = 0; i < vm->vcpu_count; i++) {

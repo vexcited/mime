@@ -8,6 +8,8 @@
 #include "../vmm/vmm.h"
 
 #include "../rom.h"
+#include "../audio/audio.h"
+#include "../gpu/gpu.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -414,6 +416,17 @@ void mime_vm_raise_irq(MimeVm *vm, uint32_t bits)
     uint64_t one = 1;
     if (write(vm->irq_fd, &one, sizeof(one)) < 0 && errno != EAGAIN)
         mime_error("cannot raise the guest interrupt: %s", strerror(errno));
+}
+
+void mime_vm_shutdown(MimeVm *vm)
+{
+    /*
+     * the guest never closed these, as it powered off with its processes running. the driver's threads
+     * would still wait on the gpu when the process exits, and crash in the driver's own destructors.
+     */
+    mime_audio_close_all();
+    mime_vk_close_all();
+    mime_gpu_close_all();
 }
 
 void mime_vm_destroy(MimeVm *vm)
@@ -881,22 +894,77 @@ static int compare_samples(const void *a, const void *b)
     return x < y ? 1 : x > y ? -1 : 0;
 }
 
+/* the processors' tables folded into one list of distinct addresses, sorted by count. */
+#define PROFILE_MERGED (PROFILE_SLOTS * 4)
+
+static size_t profile_merge(ProfileSample *all, uint64_t *total)
+{
+    ProfileSample *hash = calloc(PROFILE_MERGED, sizeof(*hash));
+    size_t count = 0;
+    *total = 0;
+    if (!hash)
+        return 0;
+    for (uint32_t v = 0; v < PROFILE_VCPUS; v++)
+        for (uint32_t i = 0; g_samples[v] && i < PROFILE_SLOTS; i++) {
+            ProfileSample *e = &g_samples[v][i];
+            if (!e->count)
+                continue;
+            *total += e->count;
+            uint64_t h = (e->rip * 0x9E3779B97F4A7C15ull) ^ e->cr3;
+            for (uint32_t k = (uint32_t)(h >> 40) & (PROFILE_MERGED - 1), n = 0; n < PROFILE_MERGED;
+                 k = (k + 1) & (PROFILE_MERGED - 1), n++) {
+                if (!hash[k].count) {
+                    hash[k] = *e;
+                    break;
+                }
+                if (hash[k].rip == e->rip && hash[k].cr3 == e->cr3) {
+                    hash[k].count += e->count;
+                    break;
+                }
+            }
+        }
+    for (size_t k = 0; k < PROFILE_MERGED; k++)
+        if (hash[k].count)
+            all[count++] = hash[k];
+    free(hash);
+    qsort(all, count, sizeof(*all), compare_samples);
+    return count;
+}
+
 static void profile_report(MimeVm *vm)
 {
-    size_t count = 0;
-    uint64_t total = 0;
-    ProfileSample *all = calloc((size_t)PROFILE_VCPUS * PROFILE_SLOTS, sizeof(*all));
+    uint64_t total;
+    ProfileSample *all = calloc(PROFILE_MERGED, sizeof(*all));
     if (!all)
         return;
-    for (uint32_t v = 0; v < PROFILE_VCPUS; v++)
-        for (uint32_t i = 0; g_samples[v] && i < PROFILE_SLOTS; i++)
-            if (g_samples[v][i].count) {
-                all[count++] = g_samples[v][i];
-                total += g_samples[v][i].count;
-            }
-    qsort(all, count, sizeof(*all), compare_samples);
+    size_t count = profile_merge(all, &total);
     mime_error("profile: %llu samples", (unsigned long long)total);
-    for (size_t i = 0; i < count && i < 400; i++) {
+    /* where the time went by module, kernel addresses together under the kernel. */
+    struct {
+        char name[40];
+        uint64_t count;
+    } modules[64] = {};
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) {
+        char name[64];
+        uint64_t base;
+        const char *who = "kernel";
+        if (all[i].cr3)
+            who = find_module(vm, all[i].cr3, all[i].rip, name, sizeof(name), &base) ? name : "user, no module";
+        size_t m = 0;
+        while (m < used && strcmp(modules[m].name, who) != 0)
+            m++;
+        if (m == used && used < 64) {
+            snprintf(modules[used].name, sizeof(modules[used].name), "%s", who);
+            used++;
+        }
+        if (m < used)
+            modules[m].count += all[i].count;
+    }
+    for (size_t m = 0; m < used; m++)
+        if (modules[m].count * 1000 >= total)
+            mime_error("profile module %5.2f%% %s", 100.0 * modules[m].count / (double)total, modules[m].name);
+    for (size_t i = 0; i < count && i < 600; i++) {
         char name[64];
         uint64_t base;
         if (all[i].cr3 && find_module(vm, all[i].cr3, all[i].rip, name, sizeof(name), &base))

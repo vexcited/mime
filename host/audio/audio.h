@@ -7,5 +7,6 @@
 uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *stream);
 uint64_t mime_audio_start(uint64_t stream, uint64_t running);
 void mime_audio_close(uint64_t stream);
+void mime_audio_close_all(void);
 
 #endif

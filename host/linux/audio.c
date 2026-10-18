@@ -225,3 +225,9 @@ void mime_audio_close(uint64_t stream)
     if (s)
         destroy(s);
 }
+
+void mime_audio_close_all(void)
+{
+    for (uint64_t i = 0; i < MAX_STREAMS; i++)
+        mime_audio_close(i);
+}

@@ -3211,6 +3211,12 @@ void mime_gpu_kick(uint64_t channel)
     pthread_mutex_unlock(&c->lock);
 }
 
+void mime_gpu_close_all(void)
+{
+    for (uint64_t i = 0; i < MAX_CHANNELS; i++)
+        mime_gpu_close(i);
+}
+
 void mime_gpu_close(uint64_t channel)
 {
     pthread_mutex_lock(&g_lock);

@@ -170,6 +170,8 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size);
 bool mime_vm_start(MimeVm *vm);
 void mime_vm_request_stop(MimeVm *vm, int exit_code);
 void mime_vm_destroy(MimeVm *vm);
+/* the machine has stopped and the process ends: what the host runs for the guest lets go of its memory. */
+void mime_vm_shutdown(MimeVm *vm);
 void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len);
 void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len);
 void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice);

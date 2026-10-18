@@ -8,10 +8,13 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
 uint64_t mime_gpu_add_block(MimeVm *vm, uint64_t channel, uint64_t index, uint64_t pa, uint64_t size);
 void mime_gpu_kick(uint64_t channel);
 void mime_gpu_close(uint64_t channel);
+/* at the machine's end, whose processes never closed theirs: the host stops using the guest memory before it is unmapped. */
+void mime_gpu_close_all(void);
 
 /* hypercalls of the vulkan connections, see mime/mvk_wire.h. */
 uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *connection);
 void mime_vk_kick(uint64_t connection);
 void mime_vk_close(uint64_t connection);
+void mime_vk_close_all(void);
 
 #endif

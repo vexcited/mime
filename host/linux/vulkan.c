@@ -2209,3 +2209,9 @@ void mime_vk_close(uint64_t index)
     free(c->arena);
     free(c);
 }
+
+void mime_vk_close_all(void)
+{
+    for (uint64_t i = 0; i < MAX_CONNECTIONS; i++)
+        mime_vk_close(i);
+}
