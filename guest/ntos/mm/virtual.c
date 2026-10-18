@@ -1127,8 +1127,12 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
 {
     if (!map_zero_page(as, pte, v))
         return FALSE;
-    ULONG_PTR size = page >= as->LastFaultEnd && page < as->LastFaultEnd + FAULT_WINDOW ? FAULT_WINDOW_SEQUENTIAL
-                                                                                          : FAULT_WINDOW;
+    /* a touch that goes on where one of the recent windows ended continues a sequence. */
+    ULONG stream = (ULONG)-1;
+    for (ULONG i = 0; i < 8; i++)
+        if (as->LastFaultEnd[i] && page >= as->LastFaultEnd[i] && page < as->LastFaultEnd[i] + FAULT_WINDOW)
+            stream = i;
+    ULONG_PTR size = stream != (ULONG)-1 ? FAULT_WINDOW_SEQUENTIAL : FAULT_WINDOW;
     ULONG_PTR start = page & ~(size - 1), end = start + size;
     if (start < vad->StartVa)
         start = vad->StartVa;
@@ -1145,7 +1149,9 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
         if (!map_zero_page(as, p, w))
             break;
     }
-    as->LastFaultEnd = end;
+    if (stream == (ULONG)-1)
+        stream = as->NextFaultStream++ & 7;
+    as->LastFaultEnd[stream] = end;
     KiDataSyncBarrier();
     KiInstructionBarrier();
     return TRUE;
@@ -1885,9 +1891,10 @@ NTSTATUS NTAPI NtFlushProcessWriteBuffers(void)
         PKPCR pcr = CONTAINING_RECORD(p, KPCR, Prcb);
         if (p != KeGetCurrentPrcb() && pcr->UserMode && p->CurrentThread->Process == process) {
             targets |= 1ull << i;
-            HalSendIpi(i);
         }
     }
+    if (targets)
+        HalSendIpiMask(targets);
     while (targets) {
         ULONG i = (ULONG)__builtin_ctzll(targets);
         PKPCR pcr = CONTAINING_RECORD(KiProcessorBlock[i], KPCR, Prcb);

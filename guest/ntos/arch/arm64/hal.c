@@ -173,6 +173,18 @@ void HalSendIpi(ULONG processor)
     KiInstructionBarrier();
 }
 
+/* the same interrupt to a set of processors, a target list for each cluster. */
+void HalSendIpiMask(ULONG64 mask)
+{
+    KiDataSyncBarrier();
+    for (ULONG cluster = 0; mask; cluster++, mask >>= 16) {
+        ULONG64 bits = mask & 0xFFFF;
+        if (bits)
+            KI_WRITE_ICC(ICC_SGI1R_EL1, ((ULONG64)HAL_IPI_INTID << 24) | ((ULONG64)cluster << 16) | bits);
+    }
+    KiInstructionBarrier();
+}
+
 static void initialize_gic(void)
 {
     g_gicd = HalPhysmap(HalBootInfo->gic_dist_phys);

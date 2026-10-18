@@ -130,6 +130,37 @@ KiReleaseKernelLock:
     popq    %rdi
 2:  ret
 
+/*
+ * the interrupt that asks for the user translations to be flushed. it
+ * touches nothing the kernel lock guards, so it is handled where it lands:
+ * flush, say so by clearing the request, and go back. a flush that waited
+ * for the lock would queue every processor of a process behind the one that
+ * asked, one lock handoff each.
+ */
+    .globl  KiFlushIpi
+    .p2align 4
+KiFlushIpi:
+    pushq   %rax
+    pushq   %rcx
+    pushq   %rdx
+    testb   $RPL_USER, 32(%rsp)         /* the interrupted code segment, above three registers and rip */
+    jz      1f
+    swapgs
+1:  movq    %cr3, %rax
+    movq    %rax, %cr3                  /* the translations of the address space, not the global ones */
+    lock andb $0xFE, %gs:KPCR_FLUSH_PENDING
+    xorl    %eax, %eax
+    xorl    %edx, %edx
+    movl    $0x80B, %ecx                /* the end of the interrupt, MSR_X2APIC_EOI */
+    wrmsr
+    testb   $RPL_USER, 32(%rsp)
+    jz      2f
+    swapgs
+2:  popq    %rdx
+    popq    %rcx
+    popq    %rax
+    iretq
+
 .macro SAVE_GPRS
     movq    %rax, KTRAP_RAX(%rsp)
     movq    %rcx, KTRAP_RCX(%rsp)

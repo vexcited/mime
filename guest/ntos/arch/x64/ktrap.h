@@ -83,6 +83,7 @@
 #define KI_VECTOR_HOST 0x81    /* the host's interrupt, see MimeSharedPage */
 #define KI_VECTOR_CLOCK 0xD1   /* the local apic timer */
 #define KI_VECTOR_IPI 0xE1     /* reschedule and leave user mode */
+#define KI_VECTOR_FLUSH 0xE2   /* flush the translations, handled without the kernel lock */
 #define KI_VECTOR_SPURIOUS 0xFF
 
 /* the hypercall port: rax = number, rdi, rsi, rdx, r10, r8, r9 = arguments. */

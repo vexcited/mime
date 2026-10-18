@@ -101,13 +101,16 @@ static void shootdown(BOOLEAN global)
         if (!global && __atomic_load_n(&pcr->UserMode, __ATOMIC_SEQ_CST) &&
             p->CurrentThread->ApcStateProcess == process) {
             targets |= 1ull << i;
-            HalSendIpi(i);
         }
     }
+    if (targets)
+        HalSendFlushIpi(targets);
+    /* a processor has answered when it has left user mode, or flushed and cleared the request. */
     while (targets) {
         ULONG i = (ULONG)__builtin_ctzll(targets);
         PKPCR pcr = CONTAINING_RECORD(KiProcessorBlock[i], KPCR, Prcb);
-        if (!__atomic_load_n(&pcr->UserMode, __ATOMIC_SEQ_CST))
+        if (!__atomic_load_n(&pcr->UserMode, __ATOMIC_SEQ_CST) ||
+            !(__atomic_load_n(&pcr->FlushPending, __ATOMIC_SEQ_CST) & KPCR_FLUSH_USER))
             targets &= targets - 1;
         else
             KiPause();

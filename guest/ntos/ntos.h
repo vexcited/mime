@@ -52,6 +52,10 @@ void HalEndOfInterrupt(ULONG intid);
 void HalInitializeArch(void);
 void HalInitializeProcessor(void);
 void HalSendIpi(ULONG processor);
+void HalSendIpiMask(ULONG64 mask);
+#ifdef __x86_64__
+void HalSendFlushIpi(ULONG64 mask);
+#endif
 void HalDisarmTimer(void);
 #define HAL_IPI_INTID 1 /* the sgi asking a processor to reschedule */
 ULONG64 HalCounterToHns(ULONG64 counter_delta);
@@ -448,7 +452,8 @@ typedef struct _MMADDRESS_SPACE {
     SIZE_T PeakVirtualSize;
     SIZE_T PageFaults;
     ULONG_PTR AllocationLimit;
-    ULONG_PTR LastFaultEnd; /* end of the last demand zero window, to spot sequential touching */
+    ULONG_PTR LastFaultEnd[8]; /* ends of the last demand zero windows, to spot sequential touching by several threads */
+    ULONG NextFaultStream;
 } MMADDRESS_SPACE, *PMMADDRESS_SPACE;
 
 typedef struct _MI_IMAGE_INFO {

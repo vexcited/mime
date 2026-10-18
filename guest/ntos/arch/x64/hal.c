@@ -66,6 +66,31 @@ void HalSendIpi(ULONG processor)
     KiWriteMsr(MSR_X2APIC_ICR, (ULONG64)processor << 32 | KI_VECTOR_IPI);
 }
 
+/*
+ * one interrupt to a set of processors: logical destination mode reaches the
+ * sixteen processors of a cluster with a single write, where a write for
+ * each would cost the sender an exit to the host for each.
+ */
+static void send_mask(ULONG64 mask, ULONG vector)
+{
+    for (ULONG cluster = 0; mask; cluster++, mask >>= 16) {
+        ULONG bits = (ULONG)(mask & 0xFFFF);
+        if (bits)
+            KiWriteMsr(MSR_X2APIC_ICR, (ULONG64)(cluster << 16 | bits) << 32 | (1u << 11) | vector);
+    }
+}
+
+void HalSendIpiMask(ULONG64 mask)
+{
+    send_mask(mask, KI_VECTOR_IPI);
+}
+
+/* the request that processors flush their user translations, see KiFlushIpi. */
+void HalSendFlushIpi(ULONG64 mask)
+{
+    send_mask(mask, KI_VECTOR_FLUSH);
+}
+
 void HalEndOfInterrupt(ULONG vector)
 {
     KiWriteMsr(MSR_X2APIC_EOI, 0);

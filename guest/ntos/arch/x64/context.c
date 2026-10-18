@@ -9,6 +9,7 @@ void KiSwapContextInternal(ULONG64 *old_sp, ULONG64 new_sp, PVOID old_xsave, PVO
 void KiSystemCall64(void);
 void KiSystemCall32(void);
 extern UCHAR KiIsrBase[];
+extern UCHAR KiFlushIpi[];
 
 ULONG KiXsaveSize;
 ULONG64 KiXsaveMask;
@@ -89,6 +90,7 @@ static void initialize_idt(void)
             dpl = 3;
         set_gate(v, KiIsrBase + v * 16, dpl, v == 8 || v == 2 || v == 18 ? 1 : 0);
     }
+    set_gate(KI_VECTOR_FLUSH, KiFlushIpi, 0, 0);
 }
 
 static ULONG64 segment(ULONG64 access, ULONG64 flags)
