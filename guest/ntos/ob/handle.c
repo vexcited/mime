@@ -506,8 +506,20 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
     }
     if (!NT_SUCCESS(status))
         return status;
-    if (!(options & DUPLICATE_SAME_ACCESS))
-        granted = access;
+    if (!(options & DUPLICATE_SAME_ACCESS)) {
+        /* the rights asked for are the type's, and a caller cannot get ones the source handle lacks. */
+        ACCESS_MASK wanted = access;
+        if (wanted & MAXIMUM_ALLOWED) {
+            wanted = (wanted & ~MAXIMUM_ALLOWED) | granted;
+        } else {
+            wanted = ObMapGenericAccess(OBJECT_TO_HEADER(object)->Type, wanted);
+        }
+        if (KeGetPreviousMode() == UserMode && (wanted & ~granted)) {
+            ObDereferenceObject(object);
+            return STATUS_ACCESS_DENIED;
+        }
+        granted = wanted;
+    }
     HANDLE h = nullptr;
     if (target_process && target) {
         status = ObCreateHandle(target_process, object, granted, attributes, &h);

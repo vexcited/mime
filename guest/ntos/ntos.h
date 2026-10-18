@@ -606,6 +606,8 @@ typedef struct _OBJECT_TYPE {
     volatile LONG TotalHandles;
 } OBJECT_TYPE;
 
+/* the rights a type means by the generic ones in a mask, replacing them. */
+ACCESS_MASK ObMapGenericAccess(POBJECT_TYPE type, ACCESS_MASK mask);
 NTSTATUS ObQueryAllTypesInformation(PVOID info, ULONG length, PULONG returned);
 
 typedef struct _OBJECT_HEADER {

@@ -51,30 +51,36 @@ typedef struct OB_TYPE_INFORMATION {
 MIME_STATIC_ASSERT(sizeof(OB_TYPE_INFORMATION) == 0x68, "OB_TYPE_INFORMATION");
 
 /* the generic rights of the types programs open most, the others map them all to nothing. */
-static GENERIC_MAPPING type_mapping(PCWSTR name, ACCESS_MASK all)
+static GENERIC_MAPPING mapping_of(PCWSTR name, ACCESS_MASK all)
 {
     static const struct {
         PCWSTR name;
         GENERIC_MAPPING mapping;
     } known[] = {
         {L"File", {0x120089, 0x120116, 0x1200A0, 0x1F01FF}},
-        {L"Event", {0x120001, 0x120002, 0x120000, 0x1F0003}},
-        {L"Mutant", {0x120001, 0x120002, 0x120000, 0x1F0001}},
-        {L"Semaphore", {0x120001, 0x120002, 0x120000, 0x1F0003}},
-        {L"Timer", {0x120001, 0x120002, 0x120000, 0x1F0003}},
+        {L"Event", {0x20001, 0x20002, 0x120000, 0x1F0003}},
+        {L"Mutant", {0x20001, 0x20000, 0x120000, 0x1F0001}},
+        {L"Semaphore", {0x20001, 0x20002, 0x120000, 0x1F0003}},
+        {L"Timer", {0x20001, 0x20002, 0x120000, 0x1F0003}},
+        {L"IoCompletion", {0x20001, 0x20002, 0x120000, 0x1F0003}},
         {L"Section", {0x20001, 0x20002, 0x20000, 0xF001F}},
-        {L"Process", {0x20400, 0x20BEA, 0x121001, 0x1FFFFF}},
+        {L"Process", {0x20410, 0x20BEA, 0x121001, 0x1FFFFF}},
         {L"Thread", {0x20048, 0x20437, 0x121A00, 0x1FFFFF}},
         {L"Key", {0x20019, 0x20006, 0x20019, 0xF003F}},
         {L"Token", {0x20008, 0x200E0, 0x20000, 0xF01FF}},
-        {L"Job", {0x120004, 0x20064, 0x120000, 0x1F001F}},
-        {L"IoCompletion", {0x120001, 0x120002, 0x120000, 0x1F0003}},
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(known); i++) {
         if (!_wcsicmp(known[i].name, name))
             return known[i].mapping;
     }
     return (GENERIC_MAPPING){0, 0, 0, all};
+}
+
+ACCESS_MASK ObMapGenericAccess(POBJECT_TYPE type, ACCESS_MASK mask)
+{
+    GENERIC_MAPPING mapping = mapping_of(type->Name.Buffer, type->Init.ValidAccessMask);
+    RtlMapGenericMask(&mask, &mapping);
+    return mask;
 }
 
 /* the size a type's information takes with its name after it, padded to eight. */
@@ -94,7 +100,7 @@ static void build_type_information(POBJECT_TYPE type, PUCHAR out, PUCHAR user_ba
     info->TypeName.Buffer = (PWSTR)(user_base + sizeof(*info));
     info->TotalNumberOfObjects = info->HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
     info->TotalNumberOfHandles = info->HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
-    info->GenericMapping = type_mapping(type->Name.Buffer, type->Init.ValidAccessMask);
+    info->GenericMapping = mapping_of(type->Name.Buffer, type->Init.ValidAccessMask);
     info->ValidAccessMask = type->Init.ValidAccessMask;
     info->SecurityRequired = TRUE;
     info->TypeIndex = (UCHAR)(type->Index + 2);
