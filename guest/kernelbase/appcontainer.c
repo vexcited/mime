@@ -160,3 +160,46 @@ DECLSPEC_EXPORT BOOL WINAPI GetAppContainerNamedObjectPath(HANDLE token, PSID si
     memcpy(path, name, chars * sizeof(WCHAR));
     return TRUE;
 }
+
+NTSYSAPI NTSTATUS NTAPI RtlDeriveCapabilitySidsFromName(PCUNICODE_STRING name, PSID group, PSID capability);
+
+/*
+ * the group sid and the capability sid of a capability name, each in an array of one, the arrays and the sids
+ * in blocks of local memory.
+ */
+DECLSPEC_EXPORT BOOL WINAPI DeriveCapabilitySidsFromName(PCWSTR name, PSID **groups, DWORD *group_count, PSID **capabilities,
+                                                         DWORD *capability_count)
+{
+    if (!name || !groups || !group_count || !capabilities || !capability_count) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UNICODE_STRING text;
+    RtlInitUnicodeString(&text, name);
+    PSID capability = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, 48);
+    if (!capability)
+        return FALSE;
+    PSID group = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, 44);
+    PSID *group_array = nullptr, *capability_array = nullptr;
+    if (group) {
+        NTSTATUS status = RtlDeriveCapabilitySidsFromName(&text, group, capability);
+        if (!NT_SUCCESS(status)) {
+            KbSetStatus(status);
+        } else if ((group_array = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, sizeof(PSID))) &&
+                   (capability_array = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, sizeof(PSID)))) {
+            *group_array = group;
+            *capability_array = capability;
+            *group_count = 1;
+            *capability_count = 1;
+            *groups = group_array;
+            *capabilities = capability_array;
+            return TRUE;
+        }
+    }
+    LocalFree(capability);
+    if (group)
+        LocalFree(group);
+    if (group_array)
+        LocalFree(group_array);
+    return FALSE;
+}

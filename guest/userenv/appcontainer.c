@@ -10,6 +10,8 @@
 #include <mime/win32/wincrypt.h>
 
 #define USERENV DECLSPEC_EXPORT
+
+NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PVOID sid, BOOLEAN allocate);
 #define APP_CONTAINER_NAME_MAX 64
 
 typedef BOOL(WINAPI *HASH_CERTIFICATE)(HCRYPTPROV_LEGACY, ALG_ID, DWORD, const BYTE *, DWORD, BYTE *, DWORD *);
@@ -261,4 +263,43 @@ USERENV HRESULT WINAPI GetAppContainerFolderPath(PCWSTR sid_text, PWSTR *path)
     memcpy(copy, folder, bytes);
     *path = copy;
     return S_OK;
+}
+
+/* the storage key of the app container the calling thread runs in, under the user's registry. */
+USERENV HRESULT WINAPI GetAppContainerRegistryLocation(REGSAM access, HKEY *key)
+{
+    if (!key)
+        return E_INVALIDARG;
+    HANDLE token = nullptr;
+    if (!NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), 8 /* TOKEN_QUERY */, TRUE, &token)) &&
+        !NT_SUCCESS(NtOpenProcessToken(NtCurrentProcess(), 8, &token)))
+        return E_FAIL;
+    ULONG is_container = 0, returned;
+    BYTE user[8 + 4 * 15 + 16], container[8 + 4 * 15 + 16];
+    HRESULT result = 0x8000FFFF; /* E_UNEXPECTED, for a caller that is not in an app container */
+    if (NT_SUCCESS(NtQueryInformationToken(token, 29 /* TokenIsAppContainer */, &is_container, sizeof(is_container), &returned)) &&
+        is_container &&
+        NT_SUCCESS(NtQueryInformationToken(token, 1 /* TokenUser */, user, sizeof(user), &returned)) &&
+        NT_SUCCESS(NtQueryInformationToken(token, 31 /* TokenAppContainerSid */, container, sizeof(container), &returned))) {
+        UNICODE_STRING user_text, container_text;
+        if (NT_SUCCESS(RtlConvertSidToUnicodeString(&user_text, *(PSID *)user, TRUE))) {
+            if (NT_SUCCESS(RtlConvertSidToUnicodeString(&container_text, *(PSID *)container, TRUE))) {
+                WCHAR path[512];
+                _snwprintf(path, RTL_NUMBER_OF(path),
+                           L"%ls\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppContainer\\Storage\\%ls",
+                           user_text.Buffer, container_text.Buffer);
+                path[RTL_NUMBER_OF(path) - 1] = 0;
+                LONG error = RegOpenKeyExW(HKEY_USERS, path, 0, access, key);
+                result = error ? HRESULT_FROM_WIN32(error) : S_OK;
+                RtlFreeUnicodeString(&container_text);
+            } else {
+                result = E_OUTOFMEMORY;
+            }
+            RtlFreeUnicodeString(&user_text);
+        } else {
+            result = E_OUTOFMEMORY;
+        }
+    }
+    NtClose(token);
+    return result;
 }
