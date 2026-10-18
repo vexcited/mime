@@ -1071,10 +1071,16 @@ void PsDumpThreads(void)
             KiFormatUserStack(process, sp, chain, sizeof(chain));
             KeUnstackDetachProcess(&saved);
         }
-        KiLogPrintf("%s %u thread %u %s reason %u object %p type %d pc %p sp %p return %p", process->ImageFileName,
+        /* a wait that ends by itself says when, which tells a thread stuck for good from one that sleeps. */
+        char due[32] = "";
+        if (k->State == Waiting && k->Timer.TimerListEntry.Flink) {
+            LONG64 left = (LONG64)(k->Timer.DueTime.QuadPart - KeQueryInterruptTime()) / 10000;
+            _snprintf(due, sizeof(due), " timeout in %lld ms", (long long)left);
+        }
+        KiLogPrintf("%s %u thread %u %s reason %u object %p type %d pc %p sp %p return %p%s", process->ImageFileName,
                     (ULONG)(ULONG_PTR)process->UniqueProcessId, (ULONG)(ULONG_PTR)threads[i]->Cid.UniqueThread, state,
                     k->WaitReason, object, object ? ((DISPATCHER_HEADER *)object)->Type : -1, (PVOID)pc, (PVOID)sp,
-                    (PVOID)top);
+                    (PVOID)top, due);
         if (chain[0])
             KiLogPrintf("  calls%s", chain);
         ObDereferenceObject(threads[i]);
