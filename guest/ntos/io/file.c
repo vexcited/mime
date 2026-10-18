@@ -99,6 +99,32 @@ NTSTATUS NTAPI ZwOpenFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES
     ZW_WRAP(NtOpenFile(handle, access, attributes, iosb, share, options));
 }
 
+/*
+ * a file opened for synchronous i/o is used by one request at a time, as on windows: the position that the
+ * requests share and the state of an enumeration would not survive two at once. the requests wait for the
+ * file in turn. a request waits and the kernel lock goes to the others while it talks to the host, so
+ * without this a second request on the same handle could start in the middle of the first.
+ */
+static void lock_file(PFILE_OBJECT file)
+{
+    if (!(file->Flags & FO_SYNCHRONOUS_IO))
+        return;
+    while (__atomic_exchange_n(&file->Busy, 1, __ATOMIC_ACQUIRE)) {
+        __atomic_add_fetch(&file->Waiters, 1, __ATOMIC_RELAXED);
+        KeWaitForSingleObject(&file->Lock, Executive, KernelMode, FALSE, nullptr);
+        __atomic_sub_fetch(&file->Waiters, 1, __ATOMIC_RELAXED);
+    }
+}
+
+static void unlock_file(PFILE_OBJECT file)
+{
+    if (!(file->Flags & FO_SYNCHRONOUS_IO))
+        return;
+    __atomic_store_n(&file->Busy, 0, __ATOMIC_RELEASE);
+    if (__atomic_load_n(&file->Waiters, __ATOMIC_RELAXED))
+        KeSetEvent(&file->Lock, IO_NO_INCREMENT, FALSE);
+}
+
 static NTSTATUS reference_file(HANDLE handle, PFILE_OBJECT *file)
 {
     return ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)file, nullptr);
@@ -140,6 +166,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         }
     }
     BOOLEAN use_position = offset.QuadPart == -1 || (offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1);
+    lock_file(file);
     if (use_position)
         offset = file->CurrentByteOffset;
 
@@ -147,6 +174,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
     if (mode == UserMode && length) {
         bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < IO_BOUNCE_SIZE ? length : IO_BOUNCE_SIZE, KI_TAG('I', 'o', 'B', 'n'));
         if (!bounce) {
+            unlock_file(file);
             ObDereferenceObject(file);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
@@ -186,6 +214,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         status = STATUS_SUCCESS;
     if (NT_SUCCESS(status) && (use_position || (file->Flags & FO_SYNCHRONOUS_IO)))
         file->CurrentByteOffset.QuadPart = offset.QuadPart + done;
+    unlock_file(file);
     io.Status = status;
     io.Information = done;
     store_iosb(iosb, &io);
@@ -465,7 +494,9 @@ NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
     params.Parameters.QueryDirectory.FileName = pattern ? &pat : nullptr;
     params.Parameters.QueryDirectory.FileInformationClass = klass;
     IO_STATUS_BLOCK io;
+    lock_file(file);
     status = IopSynchronousRequest(file, IRP_MJ_DIRECTORY_CONTROL, IRP_MN_QUERY_DIRECTORY, buf, length, &params, &io);
+    unlock_file(file);
     if (NT_SUCCESS(status) || status == STATUS_BUFFER_OVERFLOW) {
         NTSTATUS st = KeGetPreviousMode() == UserMode ? KiCopyToUser(info, buf, (ULONG)io.Information)
                                                       : (memcpy(info, buf, io.Information), STATUS_SUCCESS);

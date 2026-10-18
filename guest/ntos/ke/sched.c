@@ -21,11 +21,16 @@ ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULO
     /* interrupts stay off: an interrupt taken meanwhile would run without the lock. */
     ULONG64 state = KiDisableInterrupts();
     BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[1] == KeGetCurrentPrcb()->Number;
-    if (held)
-        KiReleaseKernelLock();
+    if (!held) {
+        KiRestoreInterrupts(state);
+        return HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
+    }
+    ULONG64 start = HalReadCounter();
+    KiReleaseKernelLock();
     ULONG64 status = HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
-    if (held)
-        KiAcquireKernelLock();
+    KiAcquireKernelLock();
+    /* the time away is not time the lock was held, which the statistics of the services want to know. */
+    KiCurrentThread()->BlockedTicks += HalReadCounter() - start;
     KiRestoreInterrupts(state);
     return status;
 }

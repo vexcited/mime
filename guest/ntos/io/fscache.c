@@ -156,7 +156,7 @@ static BOOLEAN map_window(MIMEFS_CACHE *c, ULONG64 host_handle)
         return FALSE;
     for (int attempt = 0; attempt < 2; attempt++) {
         ULONG64 pa = 0;
-        ULONG64 hs = HalHypercall(MIME_HC_FS_MAP, host_handle, 0, 0, 0, 0, 0, &pa);
+        ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_MAP, host_handle, 0, 0, 0, 0, 0, &pa);
         if (hs == MIME_HC_STATUS_OK) {
             c->Window = pa;
             return TRUE;

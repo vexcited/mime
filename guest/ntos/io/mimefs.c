@@ -171,7 +171,7 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         rom_info(fcb->Rom, info);
         return STATUS_SUCCESS;
     }
-    return host_status(HalHypercall(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
+    return host_status(HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
 }
 
 static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
@@ -226,7 +226,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     case FILE_OVERWRITE_IF: req->disposition = MIME_FS_DISP_OVERWRITE_IF; break;
     default: req->disposition = MIME_FS_DISP_OPEN; break;
     }
-    ULONG64 hs = HalHypercall(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
         ExFreePool(req);
@@ -242,10 +242,10 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (!info || !fcb) {
         ExFreePool(info);
         ExFreePool(fcb);
-        HalHypercall(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+        HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     }
-    HalHypercall(MIME_HC_FS_QUERY, host, HalPhysicalOf(info), 0, 0, 0, 0, nullptr);
+    HalHypercallUnlocked(MIME_HC_FS_QUERY, host, HalPhysicalOf(info), 0, 0, 0, 0, nullptr);
     fcb->HostHandle = host;
     fcb->Volume = vol->HostVolume;
     fcb->FileId = info->file_id;
@@ -265,8 +265,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
                                               context ? context->SecurityDescriptor : nullptr, KeGetPreviousMode());
         if (!NT_SUCCESS(status)) {
             /* a file the creator may not make that way is not left behind. */
-            HalHypercall(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
-            HalHypercall(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+            HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
             if (fcb->Cache)
                 FsCacheClose(fcb->Cache);
@@ -298,8 +298,8 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
         if (fcb->DeleteOnClose)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         if (fcb->DeleteOnClose)
-            HalHypercall(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr);
-        HalHypercall(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
+            HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr);
+        HalHypercallUnlocked(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
         ExFreePool(fcb);
         file->FsContext = nullptr;
     }
@@ -345,7 +345,7 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
         if (write)
             memcpy(bounce, user + done, n);
         ULONG64 got = 0;
-        ULONG64 hs = HalHypercall(write ? MIME_HC_FS_WRITE : MIME_HC_FS_READ, fcb->HostHandle, offset + done, bounce_pa,
+        ULONG64 hs = HalHypercallUnlocked(write ? MIME_HC_FS_WRITE : MIME_HC_FS_READ, fcb->HostHandle, offset + done, bounce_pa,
                                   n, 0, 0, &got);
         if (hs != MIME_HC_STATUS_OK) {
             status = host_status(hs, FALSE);
@@ -529,7 +529,7 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         if (stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation)
             return complete(irp, STATUS_SUCCESS, 0);
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
-        ULONG64 hs = HalHypercall(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);
+        ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);
         return complete(irp, host_status(hs, FALSE), 0);
     }
     case FileDispositionInformation:
@@ -692,13 +692,13 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
         ULONG index;
         if (!fcb->DotsDone) {
             MimeFsInfo *self = &de->info;
-            HalHypercall(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(self), 0, 0, 0, 0, nullptr);
+            HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(self), 0, 0, 0, 0, nullptr);
             name = dot;
             name_chars = fcb->DotIndex + 1;
             index = fcb->DirIndex;
         } else if (!fcb->HostDone) {
             ULONG64 more = 0;
-            ULONG64 hs = HalHypercall(MIME_HC_FS_READDIR, fcb->HostHandle, fcb->DirIndex, HalPhysicalOf(de), 0, 0, 0, &more);
+            ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_READDIR, fcb->HostHandle, fcb->DirIndex, HalPhysicalOf(de), 0, 0, 0, &more);
             if (hs != MIME_HC_STATUS_OK || !more) {
                 fcb->HostDone = TRUE;
                 continue;
