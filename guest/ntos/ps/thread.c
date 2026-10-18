@@ -497,7 +497,7 @@ NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTR
 NTSTATUS NTAPI NtResumeThread(HANDLE handle, PULONG previous)
 {
     PETHREAD thread;
-    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SUSPEND_RESUME, &thread);
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_RESUME, &thread);
     if (!NT_SUCCESS(status))
         return status;
     if (previous) {

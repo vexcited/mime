@@ -353,6 +353,18 @@ static ACCESS_MASK imply_process_access(ACCESS_MASK granted)
     return granted;
 }
 
+/* the same for a thread: the limited query and set rights, and the right to resume that suspending comes with. */
+static ACCESS_MASK imply_thread_access(ACCESS_MASK granted)
+{
+    if (granted & THREAD_QUERY_INFORMATION)
+        granted |= THREAD_QUERY_LIMITED_INFORMATION;
+    if (granted & THREAD_SET_INFORMATION)
+        granted |= THREAD_SET_LIMITED_INFORMATION;
+    if (granted & THREAD_SUSPEND_RESUME)
+        granted |= THREAD_RESUME;
+    return granted;
+}
+
 /* the handle values of a process, ProcessHandleTable: an array of 32-bit values. */
 static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, ULONG *size)
 {
@@ -756,7 +768,7 @@ void PsInitialize(void)
     init.WaitObject = process_wait_object;
     ObSetGenericMapping(&init, 0x20410, 0x20BEA, 0x121001, 0x1FFFFF);
     PsProcessTypeObject = ObCreateObjectType(L"Process", &init);
-    init.ImplyAccess = nullptr;
+    init.ImplyAccess = imply_thread_access;
     init.ValidAccessMask = THREAD_ALL_ACCESS;
     init.DeleteProcedure = PspThreadDelete;
     init.WaitObject = thread_wait_object;
