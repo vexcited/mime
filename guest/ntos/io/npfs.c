@@ -34,6 +34,7 @@
 #define FSCTL_PIPE_LISTEN 0x00110008
 #define FSCTL_PIPE_PEEK 0x0011400C
 #define FSCTL_PIPE_WAIT 0x00110018
+#define FSCTL_PIPE_IMPERSONATE 0x0011001C
 #define FSCTL_PIPE_TRANSCEIVE 0x0011C017
 #define FSCTL_PIPE_GET_PIPE_ATTRIBUTE 0x00110028
 #define FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE 0x00110030
@@ -68,6 +69,7 @@ typedef struct NP_QUEUE {
     ULONG Bytes;
     ULONG Messages;
     LIST_ENTRY Readers;
+    BOOLEAN Consumed; /* something was read from it since the instance was connected */
 } NP_QUEUE;
 
 typedef struct NP_PIPE {
@@ -95,6 +97,10 @@ typedef struct NP_INSTANCE {
     ULONG ReadMode[2];       /* by end: server, client */
     ULONG CompletionMode[2];
     ULONG ProcessId[2];      /* of the process that opened each end */
+    struct _TOKEN *ClientToken; /* the identity the client's end acts with, referenced */
+    ULONG ClientLevel;          /* the impersonation level the client opened with */
+    BOOLEAN ClientEffectiveOnly;
+    BOOLEAN ClientImpersonating; /* ClientToken is a thread's, not the process's */
 } NP_INSTANCE;
 
 /* a pending request of a caller. */
@@ -300,6 +306,8 @@ static NTSTATUS take_data(NP_QUEUE *q, ULONG mode, PEPROCESS process, PUCHAR buf
 {
     ULONG done = 0;
     NTSTATUS status = STATUS_SUCCESS;
+    if (!IsListEmpty(&q->Data))
+        q->Consumed = TRUE;
     while (!IsListEmpty(&q->Data) && done < length) {
         NP_DATA *d = CONTAINING_RECORD(q->Data.Flink, NP_DATA, Links);
         ULONG n = d->Length - d->Offset;
@@ -380,6 +388,8 @@ static void release_instance(NP_INSTANCE *in)
         return;
     flush_queue(&in->ToServer);
     flush_queue(&in->ToClient);
+    if (in->ClientToken)
+        ObDereferenceObject(in->ClientToken);
     NP_PIPE *p = in->Pipe;
     RemoveEntryList(&in->Links);
     ExFreePool(in);
@@ -485,6 +495,12 @@ static NTSTATUS open_client(PFILE_OBJECT file)
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[1] = FILE_PIPE_QUEUE_OPERATION;
     in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    /* a server impersonates the identity the client opened with, at the level it allowed. */
+    PETHREAD client = PsCurrentThread();
+    in->ClientToken = SepReferenceEffectiveToken(client);
+    in->ClientImpersonating = client->ImpersonationToken != nullptr;
+    in->ClientLevel = client->CreateQos ? client->CreateQos - 1u : 2u; /* impersonation unless the client said */
+    in->ClientEffectiveOnly = client->CreateQos && client->CreateQosEffective;
     file->FsContext = in;
     file->FsContext2 = END_CLIENT;
     while (!IsListEmpty(&in->Listeners))
@@ -788,6 +804,14 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
                 ExFreePool(copy);
             return immediate(r, st, 0);
         }
+        /* a client that impersonates, or stopped, is the identity its next data carries. */
+        if (!server && (PsCurrentThread()->ImpersonationToken || in->ClientImpersonating)) {
+            struct _TOKEN *now = SepReferenceEffectiveToken(PsCurrentThread());
+            if (in->ClientToken)
+                ObDereferenceObject(in->ClientToken);
+            in->ClientToken = now;
+            in->ClientImpersonating = PsCurrentThread()->ImpersonationToken != nullptr;
+        }
         NP_QUEUE *q = write_queue(in, file);
         /* byte streams without readers skip empty writes; messages keep them. */
         if (length || in->Pipe->Type == FILE_PIPE_MESSAGE_TYPE) {
@@ -1013,6 +1037,11 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
             fail_all(&in->ToServer.Readers, STATUS_PIPE_DISCONNECTED);
             flush_queue(&in->ToClient);
             flush_queue(&in->ToServer);
+            in->ToServer.Consumed = FALSE;
+            if (in->ClientToken) {
+                ObDereferenceObject(in->ClientToken);
+                in->ClientToken = nullptr;
+            }
             if (in->Client) {
                 /* the client end stays open but no longer belongs to the instance. */
                 in->Client->FsContext = nullptr;
@@ -1024,6 +1053,24 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         }
         unlock();
         return immediate(r, status, 0);
+    case FSCTL_PIPE_IMPERSONATE: {
+        /* the server's thread takes the identity of the client of the data it read. */
+        struct _TOKEN *client = in->ClientToken;
+        if (file->FsContext2 != END_SERVER) {
+            status = STATUS_ILLEGAL_FUNCTION;
+        } else if (!in->ToServer.Consumed || !client) {
+            status = STATUS_CANNOT_IMPERSONATE;
+        } else {
+            ULONG level = in->ClientLevel;
+            struct _TOKEN *copy = SepDuplicateForPipe(client, level, in->ClientEffectiveOnly);
+            status = copy ? SepImpersonateClient(PsCurrentThread(), copy, FALSE, in->ClientEffectiveOnly, level)
+                          : STATUS_INSUFFICIENT_RESOURCES;
+            if (copy)
+                ObDereferenceObject(copy);
+        }
+        unlock();
+        return immediate(r, status, 0);
+    }
     case FSCTL_PIPE_PEEK:
         status = peek(r, in, file, output, out_len);
         unlock();

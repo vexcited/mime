@@ -1441,6 +1441,22 @@ WINBASEAPI BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, 
 WINBASEAPI BOOL WINAPI CreateProcessA(LPCSTR application, LPSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
                                       LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
                                       LPCSTR directory, LPSTARTUPINFOA startup, LPPROCESS_INFORMATION info);
+WINBASEAPI BOOL WINAPI CreateProcessAsUserW(HANDLE token, LPCWSTR application, LPWSTR command_line,
+                                            LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa,
+                                            BOOL inherit, DWORD flags, LPVOID environment, LPCWSTR directory,
+                                            LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info);
+WINBASEAPI BOOL WINAPI CreateProcessAsUserA(HANDLE token, LPCSTR application, LPSTR command_line,
+                                            LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa,
+                                            BOOL inherit, DWORD flags, LPVOID environment, LPCSTR directory,
+                                            LPSTARTUPINFOA startup, LPPROCESS_INFORMATION info);
+WINBASEAPI BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR command_line,
+                                              LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa,
+                                              BOOL inherit, DWORD flags, LPVOID environment, LPCWSTR directory,
+                                              LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info, PHANDLE new_token);
+WINBASEAPI BOOL WINAPI CreateProcessInternalA(HANDLE token, LPCSTR application, LPSTR command_line,
+                                              LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa,
+                                              BOOL inherit, DWORD flags, LPVOID environment, LPCSTR directory,
+                                              LPSTARTUPINFOA startup, LPPROCESS_INFORMATION info, PHANDLE new_token);
 WINBASEAPI UINT WINAPI WinExec(LPCSTR command_line, UINT show);
 WINBASEAPI BOOL WINAPI GetProcessTimes(HANDLE process, LPFILETIME creation, LPFILETIME exit, LPFILETIME kernel,
                                        LPFILETIME user);

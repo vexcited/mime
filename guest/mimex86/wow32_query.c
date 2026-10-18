@@ -795,79 +795,344 @@ static ULONG sid_bytes(const void *sid)
     return 8 + 4 * ((const UCHAR *)sid)[1];
 }
 
-/* the classes of the kernel's tokens: sids behind pointers narrowed, the others the same on both. */
-NTSTATUS Mx32QueryInformationToken(const ULONG *a)
+/* a token record of the kernel, in memory that stays until the caller frees it. */
+typedef struct NATIVE_TOKEN_INFO {
+    PUCHAR Data;
+    ULONG Length;
+    PVOID Scratch;
+    UCHAR Local[2048];
+} NATIVE_TOKEN_INFO;
+
+static NTSTATUS query_native(HANDLE token, ULONG klass, NATIVE_TOKEN_INFO *n)
 {
-    HANDLE token = handle32(a[0]);
-    ULONG klass = a[1];
-    NTSTATUS status;
+    ULONG needed = 0;
+    n->Scratch = nullptr;
+    n->Data = n->Local;
+    NTSTATUS status = NtQueryInformationToken(token, klass, n->Local, sizeof(n->Local), &needed);
+    if (status == STATUS_BUFFER_TOO_SMALL && needed > sizeof(n->Local)) {
+        n->Scratch = n->Data = Mx32Scratch(needed);
+        if (!n->Data)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        status = NtQueryInformationToken(token, klass, n->Data, needed, &needed);
+    }
+    n->Length = needed;
+    return status;
+}
+
+/* the 32-bit form of a record, written where the caller said when it fits; its size is always reported. */
+typedef struct OUT32 {
+    ULONG Address;  /* of the caller's buffer */
+    ULONG Capacity;
+    ULONG Size;
+    PUCHAR Data;    /* NULL while measuring */
+} OUT32;
+
+static ULONG out32_alloc(OUT32 *o, ULONG bytes)
+{
+    ULONG at = o->Size;
+    o->Size += bytes;
+    return at;
+}
+
+static void out32_write(OUT32 *o, ULONG at, const void *source, ULONG bytes)
+{
+    if (o->Data)
+        memcpy(o->Data + at, source, bytes);
+}
+
+static void out32_ulong(OUT32 *o, ULONG at, ULONG value)
+{
+    out32_write(o, at, &value, sizeof(value));
+}
+
+/* a sid with its entry at the given offset: pointer, attributes. */
+static void out32_sid_entry(OUT32 *o, ULONG entry, const void *sid, ULONG attributes)
+{
+    ULONG bytes = sid_bytes(sid);
+    ULONG at = out32_alloc(o, bytes);
+    out32_write(o, at, sid, bytes);
+    out32_ulong(o, entry, o->Address + at);
+    out32_ulong(o, entry + 4, attributes);
+}
+
+typedef struct NATIVE_ENTRY {
+    PVOID Sid;
+    ULONG Attributes;
+} NATIVE_ENTRY;
+
+/* TOKEN_GROUPS: a count, then entries. */
+static void out32_groups(OUT32 *o, const UCHAR *native)
+{
+    ULONG count = *(const ULONG *)native;
+    const NATIVE_ENTRY *e = (const void *)(native + 8);
+    ULONG head = out32_alloc(o, 4 + 8 * count);
+    out32_ulong(o, head, count);
+    for (ULONG i = 0; i < count; i++)
+        out32_sid_entry(o, head + 4 + 8 * i, e[i].Sid, e[i].Attributes);
+}
+
+static void out32_sid_pointer(OUT32 *o, PVOID sid)
+{
+    ULONG head = out32_alloc(o, 4);
+    if (sid) {
+        ULONG bytes = sid_bytes(sid);
+        ULONG at = out32_alloc(o, bytes);
+        out32_write(o, at, sid, bytes);
+        out32_ulong(o, head, o->Address + at);
+    }
+}
+
+/* the answers of the kernel whose records hold pointers or handles, narrowed. */
+static NTSTATUS narrow_token_record(ULONG klass, const NATIVE_TOKEN_INFO *n, OUT32 *o)
+{
+    const UCHAR *d = n->Data;
     switch (klass) {
     case 1:  /* TokenUser */
+    case 25: /* TokenIntegrityLevel */ {
+        const NATIVE_ENTRY *e = (const void *)d;
+        ULONG head = out32_alloc(o, 8);
+        out32_sid_entry(o, head, e->Sid, e->Attributes);
+        return STATUS_SUCCESS;
+    }
     case 4:  /* TokenOwner */
     case 5:  /* TokenPrimaryGroup */
-    case 25: /* TokenIntegrityLevel */ {
-        ULONG64 buffer[128];
-        ULONG length = 0;
-        status = NtQueryInformationToken(token, klass, buffer, sizeof(buffer), &length);
-        if (!NT_SUCCESS(status))
-            return status;
-        PVOID sid = *(PVOID *)buffer;
-        ULONG bytes = sid_bytes(sid);
-        ULONG header = klass == 1 || klass == 25 ? 8 : 4;
-        store32(a[4], header + bytes);
-        if (a[3] < header + bytes)
-            return STATUS_BUFFER_TOO_SMALL;
-        PULONG out = pointer32(a[2]);
-        out[0] = a[2] + header;
-        if (header == 8)
-            out[1] = ((PULONG)buffer)[2];
-        memcpy((PUCHAR)out + header, sid, bytes);
+    case 31: /* TokenAppContainerSid */
+        out32_sid_pointer(o, *(PVOID const *)d);
+        return STATUS_SUCCESS;
+    case 6: { /* TokenDefaultDacl */
+        ULONG head = out32_alloc(o, 4);
+        const UCHAR *acl = *(const UCHAR *const *)d;
+        if (acl) {
+            ULONG size = *(const USHORT *)(acl + 2);
+            ULONG at = out32_alloc(o, size);
+            out32_write(o, at, acl, size);
+            out32_ulong(o, head, o->Address + at);
+        }
         return STATUS_SUCCESS;
     }
     case 2:  /* TokenGroups */
     case 11: /* TokenRestrictedSids */
-    case 28: /* TokenLogonSid */ {
-        /* a count, sid pointers with attributes, then the sids. */
-        ULONG64 buffer[1024];
-        ULONG length = 0;
-        status = NtQueryInformationToken(token, klass, buffer, sizeof(buffer), &length);
-        if (!NT_SUCCESS(status))
-            return status;
-        const ULONG count = *(PULONG)buffer;
+    case 28: /* TokenLogonSid */
+    case 30: /* TokenCapabilities */
+        out32_groups(o, d);
+        return STATUS_SUCCESS;
+    case 13: { /* TokenGroupsAndPrivileges */
         const struct {
-            PVOID Sid;
-            ULONG Attributes;
-        } *groups = (const void *)((PUCHAR)buffer + sizeof(PVOID));
-        ULONG need = 4 + 8 * count;
-        for (ULONG i = 0; i < count; i++)
-            need += sid_bytes(groups[i].Sid);
-        store32(a[4], need);
-        if (a[3] < need)
-            return STATUS_BUFFER_TOO_SMALL;
-        PULONG out = pointer32(a[2]);
-        ULONG at = 4 + 8 * count;
-        out[0] = count;
-        for (ULONG i = 0; i < count; i++) {
-            ULONG bytes = sid_bytes(groups[i].Sid);
-            out[1 + 2 * i] = a[2] + at;
-            out[2 + 2 * i] = groups[i].Attributes;
-            memcpy((PUCHAR)out + at, groups[i].Sid, bytes);
-            at += bytes;
-        }
+            ULONG SidCount, SidLength;
+            const NATIVE_ENTRY *Sids;
+            ULONG RestrictedCount, RestrictedLength;
+            const NATIVE_ENTRY *Restricted;
+            ULONG PrivilegeCount, PrivilegeLength;
+            const ULONG *Privileges;
+            ULONG64 AuthenticationId;
+        } *g = (const void *)d;
+        ULONG head = out32_alloc(o, 44);
+        ULONG sids = out32_alloc(o, 8 * g->SidCount);
+        ULONG restricted = out32_alloc(o, 8 * g->RestrictedCount);
+        ULONG privileges = out32_alloc(o, 12 * g->PrivilegeCount);
+        out32_ulong(o, head, g->SidCount);
+        out32_ulong(o, head + 4, 8 * g->SidCount);
+        out32_ulong(o, head + 8, o->Address + sids);
+        out32_ulong(o, head + 12, g->RestrictedCount);
+        out32_ulong(o, head + 16, 8 * g->RestrictedCount);
+        out32_ulong(o, head + 20, g->RestrictedCount ? o->Address + restricted : 0);
+        out32_ulong(o, head + 24, g->PrivilegeCount);
+        out32_ulong(o, head + 28, 12 * g->PrivilegeCount);
+        out32_ulong(o, head + 32, o->Address + privileges);
+        out32_write(o, head + 36, &g->AuthenticationId, 8);
+        for (ULONG i = 0; i < g->SidCount; i++)
+            out32_sid_entry(o, sids + 8 * i, g->Sids[i].Sid, g->Sids[i].Attributes);
+        for (ULONG i = 0; i < g->RestrictedCount; i++)
+            out32_sid_entry(o, restricted + 8 * i, g->Restricted[i].Sid, g->Restricted[i].Attributes);
+        out32_write(o, privileges, g->Privileges, 12 * g->PrivilegeCount);
         return STATUS_SUCCESS;
     }
-    case 3:  /* TokenPrivileges */
-    case 7:  /* TokenSource */
-    case 8:  /* TokenType */
-    case 10: /* TokenStatistics */
-    case 12: /* TokenSessionId */
-    case 18: /* TokenElevationType */
-    case 20: /* TokenElevation */
-    case 29: /* TokenIsAppContainer */
-        return NtQueryInformationToken(token, klass, pointer32(a[2]), a[3], pointer32(a[4]));
+    case 19: { /* TokenLinkedToken */
+        ULONG at = out32_alloc(o, 4);
+        out32_ulong(o, at, (ULONG)(ULONG_PTR)*(const HANDLE *)d);
+        return STATUS_SUCCESS;
+    }
+    case 33: /* the claims */
+    case 34:
+    case 39: {
+        ULONG at = out32_alloc(o, 12);
+        out32_ulong(o, at, 1);
+        return STATUS_SUCCESS;
+    }
+    case 37: /* TokenDeviceGroups */
+        out32_alloc(o, 12);
+        return STATUS_SUCCESS;
+    case 41: /* TokenProcessTrustLevel */
+        out32_alloc(o, 4);
+        return STATUS_SUCCESS;
+    case 44: /* TokenBnoIsolation */
+        out32_alloc(o, 8);
+        return STATUS_SUCCESS;
     default:
         return STATUS_INVALID_INFO_CLASS;
     }
+}
+
+/* the classes whose records are the same in both. */
+static BOOLEAN token_same(ULONG klass)
+{
+    static const UCHAR same[] = {3, 7, 8, 9, 10, 12, 15, 16, 17, 18, 20, 21, 23, 24, 26, 27, 29, 32, 40, 47, 48};
+    return listed(same, sizeof(same), klass);
+}
+
+NTSTATUS Mx32QueryInformationToken(const ULONG *a)
+{
+    HANDLE token = handle32(a[0]);
+    ULONG klass = a[1];
+    if (!a[4])
+        return STATUS_ACCESS_VIOLATION;
+    if (token_same(klass))
+        return NtQueryInformationToken(token, klass, pointer32(a[2]), a[3], pointer32(a[4]));
+    /* the answer is asked in native form and narrowed. */
+    NATIVE_TOKEN_INFO *n = Mx32Scratch(sizeof(*n));
+    if (!n)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    NTSTATUS status = query_native(token, klass, n);
+    if (NT_SUCCESS(status)) {
+        OUT32 measure = {a[2], a[3], 0, nullptr};
+        status = narrow_token_record(klass, n, &measure);
+        if (NT_SUCCESS(status)) {
+            store32(a[4], measure.Size);
+            if (a[3] < measure.Size) {
+                status = STATUS_BUFFER_TOO_SMALL;
+            } else {
+                OUT32 fill = {a[2], a[3], 0, pointer32(a[2])};
+                narrow_token_record(klass, n, &fill);
+            }
+        }
+    } else if (status == STATUS_BUFFER_TOO_SMALL || status == STATUS_INFO_LENGTH_MISMATCH) {
+        store32(a[4], n->Length);
+    }
+    Mx32FreeScratch(n->Scratch);
+    Mx32FreeScratch(n);
+    return status;
+}
+
+/* TOKEN_GROUPS of a 32-bit program as the kernel reads them; freed with Mx32FreeScratch. */
+static NTSTATUS widen_groups(ULONG address, PVOID *native)
+{
+    *native = nullptr;
+    const ULONG *in = pointer32(address);
+    if (!in)
+        return STATUS_SUCCESS;
+    ULONG count = in[0];
+    if (count > 0x1000)
+        return STATUS_INVALID_PARAMETER;
+    PULONG64 out = Mx32Scratch(8 + 16 * (SIZE_T)count);
+    if (!out)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    *(PULONG)out = count;
+    for (ULONG i = 0; i < count; i++) {
+        out[1 + 2 * i] = in[1 + 2 * i];
+        out[2 + 2 * i] = in[2 + 2 * i];
+    }
+    *native = out;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS Mx32SetInformationToken(const ULONG *a)
+{
+    HANDLE token = handle32(a[0]);
+    ULONG klass = a[1], length = a[3];
+    const ULONG *in = pointer32(a[2]);
+    switch (klass) {
+    case 4: /* TokenOwner */
+    case 5: /* TokenPrimaryGroup */
+    case 6: { /* TokenDefaultDacl */
+        if (length < sizeof(ULONG))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!in)
+            return STATUS_ACCESS_VIOLATION;
+        PVOID pointer = pointer32(in[0]);
+        return NtSetInformationToken(token, klass, &pointer, sizeof(pointer));
+    }
+    case 25: { /* TokenIntegrityLevel */
+        if (length < 8)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!in)
+            return STATUS_ACCESS_VIOLATION;
+        struct {
+            PVOID Sid;
+            ULONG Attributes, Pad;
+        } label = {pointer32(in[0]), in[1], 0};
+        return NtSetInformationToken(token, klass, &label, sizeof(label));
+    }
+    case 19: { /* TokenLinkedToken */
+        if (length != sizeof(ULONG))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!in)
+            return STATUS_ACCESS_VIOLATION;
+        HANDLE linked = handle32(in[0]);
+        return NtSetInformationToken(token, klass, &linked, sizeof(linked));
+    }
+    default:
+        return NtSetInformationToken(token, klass, (PVOID)in, length);
+    }
+}
+
+NTSTATUS Mx32FilterToken(const ULONG *a)
+{
+    PVOID disable = nullptr, restricted = nullptr;
+    NTSTATUS status = widen_groups(a[2], &disable);
+    if (NT_SUCCESS(status))
+        status = widen_groups(a[4], &restricted);
+    if (NT_SUCCESS(status)) {
+        HANDLE created = nullptr;
+        status = NtFilterToken(handle32(a[0]), a[1], disable, pointer32(a[3]), restricted, &created);
+        if (NT_SUCCESS(status))
+            store32(a[5], (ULONG_PTR)created);
+    }
+    Mx32FreeScratch(disable);
+    Mx32FreeScratch(restricted);
+    return status;
+}
+
+NTSTATUS Mx32AdjustGroupsToken(const ULONG *a)
+{
+    PVOID state;
+    NTSTATUS status = widen_groups(a[2], &state);
+    if (!NT_SUCCESS(status))
+        return status;
+    PVOID previous_native = nullptr;
+    ULONG native_length = 0;
+    if (a[4]) {
+        /* the previous groups come back in the kernel's form and are narrowed. */
+        native_length = a[3] * 2 + 64;
+        previous_native = Mx32Scratch(native_length);
+        if (!previous_native) {
+            Mx32FreeScratch(state);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+    }
+    ULONG needed = 0;
+    status = NtAdjustGroupsToken(handle32(a[0]), (BOOLEAN)a[1], state, native_length, previous_native, &needed);
+    if (a[4] && (NT_SUCCESS(status) || status == STATUS_NOT_ALL_ASSIGNED)) {
+        NATIVE_TOKEN_INFO *n = Mx32Scratch(sizeof(*n));
+        OUT32 measure = {a[4], a[3], 0, nullptr};
+        if (n) {
+            n->Data = previous_native;
+            narrow_token_record(2, n, &measure);
+            if (a[5])
+                store32(a[5], measure.Size);
+            if (a[3] < measure.Size) {
+                status = STATUS_BUFFER_TOO_SMALL;
+            } else {
+                OUT32 fill = {a[4], a[3], 0, pointer32(a[4])};
+                narrow_token_record(2, n, &fill);
+            }
+            Mx32FreeScratch(n);
+        }
+    } else if (a[5]) {
+        store32(a[5], needed);
+    }
+    Mx32FreeScratch(previous_native);
+    Mx32FreeScratch(state);
+    return status;
 }
 
 /* ------------------------------------------------------------ memory */

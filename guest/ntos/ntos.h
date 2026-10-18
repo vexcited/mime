@@ -633,6 +633,8 @@ typedef struct _ETHREAD {
     UCHAR ImpersonationLevel;
     BOOLEAN CopyOnOpen;
     BOOLEAN EffectiveOnly;
+    UCHAR CreateQos;            /* impersonation level asked by the file being created plus one, 0 for none */
+    BOOLEAN CreateQosEffective;
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260

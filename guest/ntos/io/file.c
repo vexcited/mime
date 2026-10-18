@@ -37,7 +37,21 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     }
     IO_STATUS_BLOCK local = {};
     HANDLE h = nullptr;
+    /* the security quality of service asked of the file, which a named pipe's server impersonates by. */
+    PETHREAD thread = PsCurrentThread();
+    thread->CreateQos = 0;
+    if (oa.SecurityQualityOfService) {
+        ULONG qos[3];
+        if (mode == UserMode ? NT_SUCCESS(KiCopyFromUser(qos, oa.SecurityQualityOfService, sizeof(qos)))
+                             : (memcpy(qos, oa.SecurityQualityOfService, sizeof(qos)), TRUE)) {
+            if (qos[0] == sizeof(qos) && qos[1] <= 3) {
+                thread->CreateQos = (UCHAR)(qos[1] + 1);
+                thread->CreateQosEffective = ((PUCHAR)&qos[2])[1] != 0;
+            }
+        }
+    }
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
+    thread->CreateQos = 0;
     KiFreeCapturedString(&name);
     if (!NT_SUCCESS(status)) {
         local.Status = status;

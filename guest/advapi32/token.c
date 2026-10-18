@@ -110,38 +110,195 @@ ADVAPI BOOL WINAPI GetTokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS kla
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/*
- * NtDuplicateToken when the kernel has it. without it, the new handle refers
- * to the same token object: the kernel's tokens are immutable descriptions of
- * the session's user, so a copy would describe the same identity anyway.
- */
+/* the security quality of service of every copy a thread makes: dynamic tracking, the whole identity. */
+typedef struct TOKEN_QOS {
+    DWORD Length;
+    SECURITY_IMPERSONATION_LEVEL ImpersonationLevel;
+    BOOLEAN ContextTrackingMode;
+    BOOLEAN EffectiveOnly;
+} TOKEN_QOS;
+
 ADVAPI BOOL WINAPI DuplicateTokenEx(HANDLE token, DWORD access, LPSECURITY_ATTRIBUTES sa,
                                     SECURITY_IMPERSONATION_LEVEL level, TOKEN_TYPE type, PHANDLE result)
 {
-    if (!result || (type != TokenPrimary && type != TokenImpersonation) || (DWORD)level > SecurityDelegation) {
-        AdvSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    struct {
-        DWORD Length;
-        SECURITY_IMPERSONATION_LEVEL ImpersonationLevel;
-        BOOLEAN ContextTrackingMode;
-        BOOLEAN EffectiveOnly;
-    } qos = {sizeof(qos), level, TRUE, FALSE}; /* dynamic tracking, as kernelbase asks */
+    TOKEN_QOS qos = {sizeof(qos), level, TRUE, FALSE};
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, nullptr, sa && sa->bInheritHandle ? OBJ_INHERIT : 0, nullptr,
                                sa ? sa->lpSecurityDescriptor : nullptr);
     oa.SecurityQualityOfService = &qos;
     NTSTATUS status = NtDuplicateToken(token, access, &oa, FALSE, type, result);
-    if (status == STATUS_NOT_IMPLEMENTED)
-        status = NtDuplicateObject(NtCurrentProcess(), token, NtCurrentProcess(), result, 0,
-                                   sa && sa->bInheritHandle ? OBJ_INHERIT : 0, DUPLICATE_SAME_ACCESS);
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
 ADVAPI BOOL WINAPI DuplicateToken(HANDLE token, SECURITY_IMPERSONATION_LEVEL level, PHANDLE result)
 {
     return DuplicateTokenEx(token, TOKEN_IMPERSONATE | TOKEN_QUERY, nullptr, level, TokenImpersonation, result);
+}
+
+ADVAPI BOOL WINAPI SetTokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS klass, LPVOID info, DWORD length)
+{
+    NTSTATUS status = NtSetInformationToken(token, klass, info, length);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI AllocateLocallyUniqueId(PLUID luid)
+{
+    NTSTATUS status = NtAllocateLocallyUniqueId(luid);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+/* the arrays of a restricted token are copied behind their counts, in the layout the kernel reads. */
+ADVAPI BOOL WINAPI CreateRestrictedToken(HANDLE token, DWORD flags, DWORD disable_count, PSID_AND_ATTRIBUTES disable,
+                                         DWORD delete_count, PLUID_AND_ATTRIBUTES delete_privileges,
+                                         DWORD restrict_count, PSID_AND_ATTRIBUTES restrict_sids, PHANDLE result)
+{
+    TOKEN_GROUPS *disabled = nullptr, *restricted = nullptr;
+    TOKEN_PRIVILEGES *deleted = nullptr;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (disable_count) {
+        if (!disable) {
+            status = STATUS_INVALID_PARAMETER;
+        } else if ((ULONG64)disable_count * sizeof(SID_AND_ATTRIBUTES) > 0xFFFFFFE0) {
+            status = (NTSTATUS)0xC0000095L; /* STATUS_INTEGER_OVERFLOW */
+        } else {
+            disabled = AdvAlloc(8 + (SIZE_T)disable_count * sizeof(SID_AND_ATTRIBUTES));
+            if (!disabled) {
+                status = STATUS_INSUFFICIENT_RESOURCES;
+            } else {
+                disabled->GroupCount = disable_count;
+                memcpy(disabled->Groups, disable, (SIZE_T)disable_count * sizeof(SID_AND_ATTRIBUTES));
+            }
+        }
+    }
+    if (NT_SUCCESS(status) && delete_count) {
+        if (!delete_privileges) {
+            status = STATUS_INVALID_PARAMETER;
+        } else if ((ULONG64)delete_count * sizeof(LUID_AND_ATTRIBUTES) > 0xFFFFFFE0) {
+            status = (NTSTATUS)0xC0000095L;
+        } else {
+            deleted = AdvAlloc(4 + (SIZE_T)delete_count * sizeof(LUID_AND_ATTRIBUTES));
+            if (!deleted) {
+                status = STATUS_INSUFFICIENT_RESOURCES;
+            } else {
+                deleted->PrivilegeCount = delete_count;
+                memcpy(deleted->Privileges, delete_privileges, (SIZE_T)delete_count * sizeof(LUID_AND_ATTRIBUTES));
+            }
+        }
+    }
+    if (NT_SUCCESS(status) && restrict_count) {
+        if (!restrict_sids) {
+            status = STATUS_INVALID_PARAMETER;
+        } else if ((ULONG64)restrict_count * sizeof(SID_AND_ATTRIBUTES) > 0xFFFFFFE0) {
+            status = (NTSTATUS)0xC0000095L;
+        } else {
+            restricted = AdvAlloc(8 + (SIZE_T)restrict_count * sizeof(SID_AND_ATTRIBUTES));
+            if (!restricted) {
+                status = STATUS_INSUFFICIENT_RESOURCES;
+            } else {
+                restricted->GroupCount = restrict_count;
+                memcpy(restricted->Groups, restrict_sids, (SIZE_T)restrict_count * sizeof(SID_AND_ATTRIBUTES));
+            }
+        }
+    }
+    if (NT_SUCCESS(status))
+        status = NtFilterToken(token, flags, disabled, deleted, restricted, result);
+    AdvFree(disabled);
+    AdvFree(deleted);
+    AdvFree(restricted);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+/* a token has restrictions when it has sids to restrict with. */
+ADVAPI BOOL WINAPI IsTokenRestricted(HANDLE token)
+{
+    ULONG needed = 0;
+    NTSTATUS status = NtQueryInformationToken(token, TokenRestrictedSids, nullptr, 0, &needed);
+    if (status != STATUS_BUFFER_TOO_SMALL)
+        return AdvSetStatus(status);
+    TOKEN_GROUPS *groups = AdvAlloc(needed);
+    if (!groups) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    status = NtQueryInformationToken(token, TokenRestrictedSids, groups, needed, &needed);
+    BOOL restricted = NT_SUCCESS(status) && groups->GroupCount != 0;
+    AdvFree(groups);
+    if (!NT_SUCCESS(status))
+        return AdvSetStatus(status);
+    return restricted;
+}
+
+/* ---------------------------------------------------------------- identities of threads */
+
+ADVAPI BOOL WINAPI SetThreadToken(PHANDLE thread, HANDLE token)
+{
+    HANDLE info = token;
+    NTSTATUS status = NtSetInformationThread(thread ? *thread : NtCurrentThread(), ThreadImpersonationToken, &info,
+                                             sizeof(info));
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI RevertToSelf(void)
+{
+    HANDLE none = nullptr;
+    NTSTATUS status = NtSetInformationThread(NtCurrentThread(), ThreadImpersonationToken, &none, sizeof(none));
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI ImpersonateSelf(SECURITY_IMPERSONATION_LEVEL level)
+{
+    NTSTATUS status = RtlImpersonateSelf(level);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+/* an impersonation token is used as it is, a primary one through a copy that can impersonate. */
+ADVAPI BOOL WINAPI ImpersonateLoggedOnUser(HANDLE token)
+{
+    ULONG type = 0, returned;
+    NTSTATUS status = NtQueryInformationToken(token, TokenType, &type, sizeof(type), &returned);
+    if (NT_SUCCESS(status)) {
+        HANDLE copy = token;
+        if (type == TokenPrimary) {
+            TOKEN_QOS qos = {sizeof(qos), SecurityImpersonation, TRUE, FALSE};
+            OBJECT_ATTRIBUTES oa;
+            InitializeObjectAttributes(&oa, nullptr, 0, nullptr, nullptr);
+            oa.SecurityQualityOfService = &qos;
+            status = NtDuplicateToken(token, TOKEN_QUERY | TOKEN_IMPERSONATE, &oa, FALSE, TokenImpersonation, &copy);
+        }
+        if (NT_SUCCESS(status)) {
+            status = NtSetInformationThread(NtCurrentThread(), ThreadImpersonationToken, &copy, sizeof(copy));
+            if (type == TokenPrimary)
+                NtClose(copy);
+        }
+    }
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI ImpersonateAnonymousToken(HANDLE thread)
+{
+    NTSTATUS status = NtImpersonateAnonymousToken(thread);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+/* the server end of a pipe takes the identity of its client: FSCTL_PIPE_IMPERSONATE, waited for when pending. */
+ADVAPI BOOL WINAPI ImpersonateNamedPipeClient(HANDLE pipe)
+{
+    HANDLE event = nullptr;
+    OBJECT_ATTRIBUTES oa;
+    IO_STATUS_BLOCK iosb = {};
+    InitializeObjectAttributes(&oa, nullptr, 0, nullptr, nullptr);
+    NTSTATUS status = NtCreateEvent(&event, EVENT_ALL_ACCESS, &oa, NotificationEvent, FALSE);
+    if (NT_SUCCESS(status)) {
+        status = NtFsControlFile(pipe, event, nullptr, nullptr, &iosb, 0x0011001C /* FSCTL_PIPE_IMPERSONATE */, nullptr,
+                                 0, nullptr, 0);
+        if (status == STATUS_PENDING) {
+            status = NtWaitForSingleObject(event, FALSE, nullptr);
+            if (NT_SUCCESS(status))
+                status = iosb.Status;
+        }
+        NtClose(event);
+    }
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
 ADVAPI BOOL WINAPI AdjustTokenPrivileges(HANDLE token, BOOL disable_all, PTOKEN_PRIVILEGES state, DWORD length,

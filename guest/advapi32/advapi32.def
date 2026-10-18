@@ -45,3 +45,6 @@ EXPORTS
     RegSetValueExW=kernelbase.RegSetValueExW
     RegUnLoadKeyA=kernelbase.RegUnLoadKeyA
     RegUnLoadKeyW=kernelbase.RegUnLoadKeyW
+    ; processes started with a token, as kernelbase has them.
+    CreateProcessAsUserA=kernelbase.CreateProcessAsUserA
+    CreateProcessAsUserW=kernelbase.CreateProcessAsUserW

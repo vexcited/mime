@@ -13,6 +13,8 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVO
                                                   PULONG needed);
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disable_all, PVOID state, ULONG length,
                                                     PVOID previous, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateToken(HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                             BOOLEAN effective_only, ULONG type, PHANDLE result);
 
 static PVOID allocate32(SIZE_T size)
 {
@@ -567,9 +569,31 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 
     /* processes and threads. */
     case MIME_SVC_NtCreateUserProcess: {
-        /* an image's creation information and attribute lists, which the kernel refuses too. */
-        if (a[9] || a[10] || !a[8])
+        /* an image's creation information, which the kernel refuses too, and the attribute list. */
+        if (a[9] || !a[8])
             return a[8] ? STATUS_NOT_SUPPORTED : STATUS_INVALID_PARAMETER;
+        PS_ATTRIBUTE_LIST *native_list = nullptr;
+        UCHAR list_storage[sizeof(SIZE_T) + 16 * sizeof(PS_ATTRIBUTE)];
+        if (a[10]) {
+            /* the 32-bit list: a size, then attributes of four words. */
+            const ULONG *in = pointer32(a[10]);
+            ULONG total = in[0];
+            if (total < sizeof(ULONG) || (total - sizeof(ULONG)) % 16 || (total - sizeof(ULONG)) / 16 > 16)
+                return STATUS_INVALID_PARAMETER;
+            ULONG count = (total - sizeof(ULONG)) / 16;
+            native_list = (PS_ATTRIBUTE_LIST *)list_storage;
+            native_list->TotalLength = sizeof(SIZE_T) + count * sizeof(PS_ATTRIBUTE);
+            for (ULONG i = 0; i < count; i++) {
+                const ULONG *e = in + 1 + 4 * i;
+                PS_ATTRIBUTE *n = &native_list->Attributes[i];
+                n->Attribute = e[0];
+                n->Size = e[1];
+                n->Value = e[0] == PS_ATTRIBUTE_TOKEN ? (ULONG_PTR)handle32(e[2]) : e[2];
+                n->ReturnLength = nullptr;
+                if (e[0] == PS_ATTRIBUTE_TOKEN && e[1] == sizeof(ULONG))
+                    n->Size = sizeof(HANDLE);
+            }
+        }
         RTL_USER_PROCESS_PARAMETERS pp;
         parameters64(pointer32(a[8]), &pp);
         UNICODE_STRING process_name, thread_name;
@@ -577,7 +601,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         OBJECT_ATTRIBUTES thread_oa = attributes32(a[5], &thread_name);
         HANDLE process = nullptr, thread = nullptr;
         status = NtCreateUserProcess(&process, &thread, a[2], a[3], a[4] ? &process_oa : nullptr,
-                                     a[5] ? &thread_oa : nullptr, a[6], a[7], &pp, nullptr, nullptr);
+                                     a[5] ? &thread_oa : nullptr, a[6], a[7], &pp, nullptr, native_list);
         if (NT_SUCCESS(status)) {
             store32(a[0], (ULONG_PTR)process);
             store32(a[1], (ULONG_PTR)thread);
@@ -951,6 +975,20 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return handle_out(status, a[number == MIME_SVC_NtOpenThreadToken ? 3 : 4], handle);
     case MIME_SVC_NtQueryInformationToken:
         return Mx32QueryInformationToken(a);
+    case MIME_SVC_NtDuplicateToken:
+        oa = attributes32(a[2], &name);
+        status = NtDuplicateToken(handle32(a[0]), a[1], a[2] ? &oa : nullptr, (BOOLEAN)a[3], a[4], &handle);
+        return handle_out(status, a[5], handle);
+    case MIME_SVC_NtFilterToken:
+        return Mx32FilterToken(a);
+    case MIME_SVC_NtSetInformationToken:
+        return Mx32SetInformationToken(a);
+    case MIME_SVC_NtAdjustGroupsToken:
+        return Mx32AdjustGroupsToken(a);
+    case MIME_SVC_NtAllocateLocallyUniqueId:
+        return NtAllocateLocallyUniqueId(pointer32(a[0]));
+    case MIME_SVC_NtImpersonateAnonymousToken:
+        return NtImpersonateAnonymousToken(handle32(a[0]));
     case MIME_SVC_NtAdjustPrivilegesToken:
         /* TOKEN_PRIVILEGES holds identifiers and attributes only. */
         return NtAdjustPrivilegesToken(handle32(a[0]), (BOOLEAN)a[1], pointer32(a[2]), a[3], pointer32(a[4]),

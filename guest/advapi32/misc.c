@@ -461,19 +461,6 @@ ADVAPI BOOL WINAPI StartServiceA(SC_HANDLE service, DWORD count, LPCSTR *argumen
     return FALSE;
 }
 
-/* ---------------------------------------------------------------- secondary logon */
-
-/* the secondary logon service, which starts programs as another user, does not exist. */
-ADVAPI BOOL WINAPI CreateProcessWithLogonW(LPCWSTR user, LPCWSTR domain, LPCWSTR password, DWORD flags,
-                                           LPCWSTR application, LPWSTR command_line, DWORD creation_flags,
-                                           LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
-                                           LPPROCESS_INFORMATION information)
-{
-    MIME_STUB("advapi32");
-    AdvSetError(1058); /* ERROR_SERVICE_DISABLED */
-    return FALSE;
-}
-
 /* ---------------------------------------------------------------- windows 3.1 registry values */
 
 /* the default value of a subkey, always a string, as the 16-bit registry stored it. */

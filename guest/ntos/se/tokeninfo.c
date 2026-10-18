@@ -1296,8 +1296,9 @@ static BOOLEAN token_assignable(PTOKEN token)
     if (pt) {
         ExAcquireFastMutex(&SeLock);
         /* a child or a sibling of the caller's token, which is not more trusted than it. */
-        if (SepIntegrityRid(pt) >= SepIntegrityRid(token) && token->ParentTokenId &&
-            (token->ParentTokenId == pt->TokenId || token->ParentTokenId == pt->ParentTokenId))
+        if (SepIntegrityRid(pt) >= SepIntegrityRid(token) &&
+            (token->ParentTokenId == pt->TokenId ||
+             (token->ParentTokenId == pt->ParentTokenId && token->AuthenticationId == pt->AuthenticationId)))
             free = TRUE;
         ExReleaseFastMutex(&SeLock);
         ObDereferenceObject(pt);

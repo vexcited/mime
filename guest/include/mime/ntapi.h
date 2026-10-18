@@ -70,6 +70,12 @@ NTSYSCALLAPI NTSTATUS NTAPI NtOpenKey(PHANDLE handle, ACCESS_MASK access, POBJEC
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG options);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenMutant(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid);
+/* access tokens: copies, filters, identities of threads. NtDuplicateToken and NtAdjustPrivilegesToken are advapi32's. */
+NTSYSCALLAPI NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE token, BOOLEAN reset_to_default, PVOID state, ULONG length, PVOID previous, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtAllocateLocallyUniqueId(PLUID luid);
+NTSYSCALLAPI NTSTATUS NTAPI NtFilterToken(HANDLE token, ULONG flags, PVOID sids_to_disable, PVOID privileges_to_delete, PVOID restricted_sids, PHANDLE new_token);
+NTSYSCALLAPI NTSTATUS NTAPI NtImpersonateAnonymousToken(HANDLE thread);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetInformationToken(HANDLE token, ULONG klass, PVOID info, ULONG length);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenProcessToken(HANDLE process, ACCESS_MASK access, PHANDLE token);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenProcessTokenEx(HANDLE process, ACCESS_MASK access, ULONG attributes, PHANDLE token);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);

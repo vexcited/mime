@@ -612,10 +612,13 @@ static SIZE_T environment_bytes(PCWSTR env)
  * priority classes and the attribute list of an extended startup
  * information are accepted and not applied.
  */
-BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
-                           LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
-                           LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info)
+BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR command_line,
+                                   LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit,
+                                   DWORD flags, LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
+                                   LPPROCESS_INFORMATION info, PHANDLE new_token)
 {
+    if (new_token)
+        *new_token = nullptr;
     if (!startup || !info || (!application && !command_line)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -724,9 +727,14 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
 
     ULONG process_flags = ((flags & CREATE_BREAKAWAY_FROM_JOB) ? PROCESS_CREATE_FLAGS_BREAKAWAY : 0) |
                           (inherit ? PROCESS_CREATE_FLAGS_INHERIT_HANDLES : 0);
+    /* the token of CreateProcessAsUser is an attribute of the process to make. */
+    PS_ATTRIBUTE_LIST attributes = {.TotalLength = sizeof(SIZE_T) + sizeof(PS_ATTRIBUTE),
+                                    .Attributes = {{.Attribute = PS_ATTRIBUTE_TOKEN,
+                                                    .Size = sizeof(HANDLE),
+                                                    .Value = (ULONG_PTR)token}}};
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
                                            nullptr, nullptr, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, nullptr,
-                                           nullptr);
+                                           token ? &attributes : nullptr);
     KbFree(converted);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
@@ -739,10 +747,30 @@ BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_
     return TRUE;
 }
 
-BOOL WINAPI CreateProcessA(LPCSTR application, LPSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
+BOOL WINAPI CreateProcessW(LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
                            LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
-                           LPCSTR directory, LPSTARTUPINFOA startup, LPPROCESS_INFORMATION info)
+                           LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info)
 {
+    return CreateProcessInternalW(nullptr, application, command_line, process_sa, thread_sa, inherit, flags,
+                                  environment, directory, startup, info, nullptr);
+}
+
+BOOL WINAPI CreateProcessAsUserW(HANDLE token, LPCWSTR application, LPWSTR command_line,
+                                 LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit,
+                                 DWORD flags, LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
+                                 LPPROCESS_INFORMATION info)
+{
+    return CreateProcessInternalW(token, application, command_line, process_sa, thread_sa, inherit, flags,
+                                  environment, directory, startup, info, nullptr);
+}
+
+BOOL WINAPI CreateProcessInternalA(HANDLE token, LPCSTR application, LPSTR command_line,
+                                   LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit,
+                                   DWORD flags, LPVOID environment, LPCSTR directory, LPSTARTUPINFOA startup,
+                                   LPPROCESS_INFORMATION info, PHANDLE new_token)
+{
+    if (new_token)
+        *new_token = nullptr;
     if (!startup || !info || (!application && !command_line)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -755,13 +783,31 @@ BOOL WINAPI CreateProcessA(LPCSTR application, LPSTR command_line, LPSECURITY_AT
     sw.lpDesktop = KbAnsiToWideCp(CP_ACP, startup->lpDesktop);
     sw.lpTitle = KbAnsiToWideCp(CP_ACP, startup->lpTitle);
     sw.lpReserved = nullptr;
-    BOOL ok = CreateProcessW(app, cmd, process_sa, thread_sa, inherit, flags, environment, dir, &sw, info);
+    BOOL ok = CreateProcessInternalW(token, app, cmd, process_sa, thread_sa, inherit, flags, environment, dir, &sw, info,
+                                     nullptr);
     KbFree(app);
     KbFree(cmd);
     KbFree(dir);
     KbFree(sw.lpDesktop);
     KbFree(sw.lpTitle);
     return ok;
+}
+
+BOOL WINAPI CreateProcessA(LPCSTR application, LPSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
+                           LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
+                           LPCSTR directory, LPSTARTUPINFOA startup, LPPROCESS_INFORMATION info)
+{
+    return CreateProcessInternalA(nullptr, application, command_line, process_sa, thread_sa, inherit, flags,
+                                  environment, directory, startup, info, nullptr);
+}
+
+BOOL WINAPI CreateProcessAsUserA(HANDLE token, LPCSTR application, LPSTR command_line,
+                                 LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit,
+                                 DWORD flags, LPVOID environment, LPCSTR directory, LPSTARTUPINFOA startup,
+                                 LPPROCESS_INFORMATION info)
+{
+    return CreateProcessInternalA(token, application, command_line, process_sa, thread_sa, inherit, flags,
+                                  environment, directory, startup, info, nullptr);
 }
 
 UINT WINAPI WinExec(LPCSTR command_line, UINT show)

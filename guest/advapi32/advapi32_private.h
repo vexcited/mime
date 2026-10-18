@@ -80,6 +80,28 @@ typedef enum _TOKEN_INFORMATION_CLASS {
     TokenType,
     TokenImpersonationLevel,
     TokenStatistics,
+    TokenRestrictedSids,
+    TokenSessionId,
+    TokenGroupsAndPrivileges,
+    TokenSessionReference,
+    TokenSandBoxInert,
+    TokenAuditPolicy,
+    TokenOrigin,
+    TokenElevationType,
+    TokenLinkedToken,
+    TokenElevation,
+    TokenHasRestrictions,
+    TokenAccessInformation,
+    TokenVirtualizationAllowed,
+    TokenVirtualizationEnabled,
+    TokenIntegrityLevel,
+    TokenUIAccess,
+    TokenMandatoryPolicy,
+    TokenLogonSid,
+    TokenIsAppContainer,
+    TokenCapabilities,
+    TokenAppContainerSid,
+    TokenAppContainerNumber,
 } TOKEN_INFORMATION_CLASS;
 
 typedef enum _SECURITY_IMPERSONATION_LEVEL {
@@ -98,7 +120,12 @@ typedef enum _TOKEN_TYPE {
 #define TOKEN_DUPLICATE 0x0002
 #define TOKEN_IMPERSONATE 0x0004
 #define TOKEN_QUERY 0x0008
+#define TOKEN_QUERY_SOURCE 0x0010
 #define TOKEN_ADJUST_PRIVILEGES 0x0020
+#define TOKEN_ADJUST_GROUPS 0x0040
+#define TOKEN_ADJUST_DEFAULT 0x0080
+#define TOKEN_ADJUST_SESSIONID 0x0100
+#define TOKEN_ALL_ACCESS 0xF01FF
 
 #define SE_GROUP_MANDATORY 0x00000001
 #define SE_GROUP_ENABLED_BY_DEFAULT 0x00000002
@@ -306,6 +333,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, SECURITY_INFORM
                                                   PSECURITY_DESCRIPTOR sd, ULONG length, PULONG needed);
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE token, BOOLEAN disable_all, PTOKEN_PRIVILEGES state,
                                                     ULONG length, PTOKEN_PRIVILEGES previous, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI RtlImpersonateSelf(ULONG level);
 
 /* ---------------------------------------------------------------- helpers */
 
