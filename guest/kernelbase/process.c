@@ -2100,33 +2100,3 @@ BOOL WINAPI GetProcessIoCounters(HANDLE process, PIO_COUNTERS counters)
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
-typedef struct WORK_ITEM {
-    LPTHREAD_START_ROUTINE Function;
-    PVOID Context;
-} WORK_ITEM;
-
-static DWORD WINAPI run_work_item(LPVOID arg)
-{
-    WORK_ITEM item = *(WORK_ITEM *)arg;
-    KbFree(arg);
-    return item.Function(item.Context);
-}
-
-/* each item runs on a thread of its own, which every WT_EXECUTE flag allows. */
-BOOL WINAPI QueueUserWorkItem(LPTHREAD_START_ROUTINE function, PVOID context, ULONG flags)
-{
-    WORK_ITEM *item = KbAlloc(sizeof(*item));
-    if (!item) {
-        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return FALSE;
-    }
-    item->Function = function;
-    item->Context = context;
-    HANDLE thread = CreateThread(nullptr, 0, run_work_item, item, 0, nullptr);
-    if (!thread) {
-        KbFree(item);
-        return FALSE;
-    }
-    CloseHandle(thread);
-    return TRUE;
-}
