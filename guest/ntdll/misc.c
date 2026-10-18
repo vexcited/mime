@@ -152,6 +152,9 @@ NTDLL_EXPORT ULONG NTAPI RtlNtStatusToDosErrorNoTeb(NTSTATUS status)
     /* facility win32 statuses carry the error code directly. */
     if (((ULONG)status & 0xFFFF0000) == 0x80070000 || ((ULONG)status & 0xFFFF0000) == 0xC0070000)
         return (ULONG)status & 0xFFFF;
+    ULONG token_error = RtlpTokenStatusToDosError(status);
+    if (token_error)
+        return token_error;
     return 317; /* ERROR_MR_MID_NOT_FOUND */
 }
 

@@ -531,8 +531,6 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
         out_bytes_ulong(o, (t->Flags & TOKEN_SANDBOX_INERT) != 0);
         return STATUS_SUCCESS;
     case TokenAuditPolicy:
-        if (!SepSinglePrivilegeCheck(SE_SECURITY_PRIVILEGE, KeGetPreviousMode()))
-            return STATUS_PRIVILEGE_NOT_HELD;
         out_alloc(o, 31, 1);
         return STATUS_SUCCESS;
     case TokenOrigin:
@@ -661,6 +659,10 @@ NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, U
     NTSTATUS status = SepReferenceTokenByHandle(handle, query_access(klass), &token, nullptr);
     if (!NT_SUCCESS(status))
         return status;
+    if (klass == TokenAuditPolicy && !SepSinglePrivilegeCheck(SE_SECURITY_PRIVILEGE, KeGetPreviousMode())) {
+        ObDereferenceObject(token);
+        return STATUS_PRIVILEGE_NOT_HELD;
+    }
     if (klass == TokenElevation && length != 4) {
         ObDereferenceObject(token);
         write_length(returned, 4);
@@ -908,12 +910,14 @@ NTSTATUS NTAPI NtSetInformationToken(HANDLE handle, ULONG klass, PVOID info, ULO
             break;
         }
         ULONG rid = sid_rid_of(sid);
+        /* asked before the lock, which the check takes too. */
+        BOOLEAN trusted = SepSinglePrivilegeCheck(SE_TCB_PRIVILEGE, mode);
         ExAcquireFastMutex(&SeLock);
         if (t->IntegrityIndex < 0) {
             status = STATUS_INVALID_LABEL;
         } else {
             ULONG current = sid_rid_of(t->Groups[t->IntegrityIndex].Sid);
-            if (rid > current && !SepSinglePrivilegeCheck(SE_TCB_PRIVILEGE, mode)) {
+            if (rid > current && !trusted) {
                 status = STATUS_PRIVILEGE_NOT_HELD;
             } else if (rid > current && t->InUse) {
                 status = STATUS_TOKEN_ALREADY_IN_USE;

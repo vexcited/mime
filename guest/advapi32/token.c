@@ -1,28 +1,15 @@
 /*
  * access tokens: opening, querying, duplicating and privileges.
  *
- * the kernel describes every token of the session; what it does not
- * implement yet (NtDuplicateToken) is approximated here, see DuplicateTokenEx.
+ * tokens are kernel objects; this file is the win32 side of their services.
  */
 #include "advapi32_private.h"
 
+/* the kernel knows the pseudo handles of the process, thread and effective tokens. */
 NTSTATUS AdvResolveToken(HANDLE token, ACCESS_MASK access, HANDLE *real, HANDLE *opened)
 {
     *opened = nullptr;
     *real = token;
-    if (token == ADV_CURRENT_THREAD_TOKEN || token == ADV_CURRENT_THREAD_EFFECTIVE_TOKEN) {
-        NTSTATUS status = NtOpenThreadToken(NtCurrentThread(), access, TRUE, opened);
-        if (NT_SUCCESS(status) || token == ADV_CURRENT_THREAD_TOKEN) {
-            *real = *opened;
-            return status;
-        }
-        token = ADV_CURRENT_PROCESS_TOKEN;
-    }
-    if (token == ADV_CURRENT_PROCESS_TOKEN) {
-        NTSTATUS status = NtOpenProcessToken(NtCurrentProcess(), access, opened);
-        *real = *opened;
-        return status;
-    }
     return STATUS_SUCCESS;
 }
 
@@ -33,7 +20,7 @@ static PVOID query_token(HANDLE token, TOKEN_INFORMATION_CLASS klass, NTSTATUS *
     NTSTATUS status = AdvResolveToken(token ? token : ADV_CURRENT_THREAD_EFFECTIVE_TOKEN, TOKEN_QUERY, &real, &opened);
     PVOID buffer = nullptr;
     ULONG size = 256;
-    while (NT_SUCCESS(status)) {
+    while (NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL) {
         AdvFree(buffer);
         buffer = AdvAlloc(size);
         if (!buffer) {
@@ -315,7 +302,7 @@ ADVAPI BOOL WINAPI AdjustTokenPrivileges(HANDLE token, BOOL disable_all, PTOKEN_
     return TRUE;
 }
 
-/* a token is a member of its user and of its enabled groups that are not for deny only. */
+/* a token is a member of its user and of its enabled groups that are not for deny only, and of what restricts it. */
 ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
 {
     if (!member || !AdvSidValid(sid)) {
@@ -336,6 +323,20 @@ ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
         DWORD a = groups->Groups[i].Attributes;
         if ((a & SE_GROUP_ENABLED) && !(a & SE_GROUP_USE_FOR_DENY_ONLY) && AdvSidEqual(groups->Groups[i].Sid, sid))
             *member = TRUE;
+    }
+    /* a restricted token also has to hold the sid among the ones that restrict it. */
+    if (*member) {
+        TOKEN_GROUPS *restricted = query_token(token, TokenRestrictedSids, &status);
+        if (restricted && restricted->GroupCount) {
+            *member = FALSE;
+            for (DWORD i = 0; i < restricted->GroupCount && !*member; i++) {
+                DWORD a = restricted->Groups[i].Attributes;
+                if ((a & SE_GROUP_ENABLED) && !(a & SE_GROUP_USE_FOR_DENY_ONLY) &&
+                    AdvSidEqual(restricted->Groups[i].Sid, sid))
+                    *member = TRUE;
+            }
+        }
+        AdvFree(restricted);
     }
     AdvFree(user);
     AdvFree(groups);

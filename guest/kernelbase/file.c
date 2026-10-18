@@ -155,6 +155,13 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
     if (sa && sa->bInheritHandle)
         attributes |= OBJ_INHERIT;
     InitializeObjectAttributes(&oa, &nt, attributes, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
+    /* the impersonation a server of a named pipe may do of this client, when the program said. */
+    struct {
+        ULONG Length, ImpersonationLevel;
+        UCHAR ContextTrackingMode, EffectiveOnly;
+    } qos = {12, (flags >> 16) & 3, (flags & 0x00040000) != 0, (flags & 0x00080000) != 0};
+    if (flags & 0x00100000) /* SECURITY_SQOS_PRESENT */
+        oa.SecurityQualityOfService = &qos;
     IO_STATUS_BLOCK iosb = {};
     HANDLE handle;
     NTSTATUS status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, nullptr,

@@ -737,6 +737,12 @@ BOOLEAN SepCanImpersonate(PTOKEN pt, PTOKEN target, ULONG level)
 {
     if (level < SecurityImpersonation || !pt)
         return TRUE;
+    /* anyone may become the anonymous logon, but a process of an app container. */
+    if (target->AuthenticationId == ANONYMOUS_LUID) {
+        if (!(pt->Flags & TOKEN_LOWBOX))
+            return TRUE;
+        return (target->Flags & TOKEN_LOWBOX) && SepSidEqual(pt->AppContainerSid, target->AppContainerSid);
+    }
     if (pt->Present & pt->Enabled & privilege_bit(SE_IMPERSONATE_PRIVILEGE))
         return TRUE;
     if (SepIntegrityRid(pt) < SepIntegrityRid(target))

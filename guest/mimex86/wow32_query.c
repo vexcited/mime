@@ -808,7 +808,8 @@ static NTSTATUS query_native(HANDLE token, ULONG klass, NATIVE_TOKEN_INFO *n)
     ULONG needed = 0;
     n->Scratch = nullptr;
     n->Data = n->Local;
-    NTSTATUS status = NtQueryInformationToken(token, klass, n->Local, sizeof(n->Local), &needed);
+    /* a linked token is asked for with the length of its handle, exactly. */
+    NTSTATUS status = NtQueryInformationToken(token, klass, n->Local, klass == 19 ? 8 : sizeof(n->Local), &needed);
     if (status == STATUS_BUFFER_TOO_SMALL && needed > sizeof(n->Local)) {
         n->Scratch = n->Data = Mx32Scratch(needed);
         if (!n->Data)

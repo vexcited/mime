@@ -30,6 +30,7 @@ FORCEINLINE HANDLE NtCurrentThreadId(void)
 }
 
 void LdrpInitializeProcessHeap(void);
+ULONG RtlpTokenStatusToDosError(NTSTATUS status);
 PVOID LdrpImageDirectory(PVOID base, USHORT index, PULONG size);
 PIMAGE_NT_HEADERS LdrpNtHeaders(PVOID base);
 void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context);
