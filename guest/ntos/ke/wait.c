@@ -152,8 +152,8 @@ static BOOLEAN is_signaled(PDISPATCHER_HEADER h, PKTHREAD thread)
     return h->SignalState > 0;
 }
 
-/* consumes the signal of a satisfied wait. */
-static void acquire_object(PDISPATCHER_HEADER h, PKTHREAD thread)
+/* consumes the signal of a satisfied wait. returns whether it took a mutant its owner ended without releasing. */
+static BOOLEAN acquire_object(PDISPATCHER_HEADER h, PKTHREAD thread)
 {
     switch (h->Type) {
     case EventSynchronizationObject:
@@ -171,11 +171,15 @@ static void acquire_object(PDISPATCHER_HEADER h, PKTHREAD thread)
             thread->KernelApcDisable -= m->ApcDisable;
             InsertHeadList(&thread->MutantListHead, &m->MutantListEntry);
         }
-        break;
+        /* the abandoned state is told once, to the wait that takes the mutant. */
+        BOOLEAN abandoned = m->Abandoned;
+        m->Abandoned = FALSE;
+        return abandoned;
     }
     default:
         break;
     }
+    return FALSE;
 }
 
 static BOOLEAN thread_all_signaled(PKTHREAD thread)
@@ -217,14 +221,16 @@ void KiSignalWaiters(PDISPATCHER_HEADER object, KPRIORITY increment)
         if (thread->State != Waiting)
             continue;
         if (b->WaitType == WaitAny) {
-            if (b->WaitKey != STATUS_TIMEOUT)
-                acquire_object(object, thread);
-            KiUnwaitThread(thread, b->WaitKey);
+            LONG_PTR status = b->WaitKey;
+            if (b->WaitKey != STATUS_TIMEOUT && acquire_object(object, thread))
+                status += STATUS_ABANDONED;
+            KiUnwaitThread(thread, status);
         } else if (thread_all_signaled(thread)) {
+            LONG_PTR status = STATUS_WAIT_0;
             for (PKWAIT_BLOCK w = thread->WaitBlockList; w; w = w->NextWaitBlock)
-                if (w->WaitKey != STATUS_TIMEOUT)
-                    acquire_object(w->Object, thread);
-            KiUnwaitThread(thread, STATUS_WAIT_0);
+                if (w->WaitKey != STATUS_TIMEOUT && acquire_object(w->Object, thread))
+                    status = STATUS_ABANDONED;
+            KiUnwaitThread(thread, status);
         }
     }
 }
@@ -256,7 +262,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
         if (timeout->QuadPart < 0)
             due = KiQueryInterruptTime() + (ULONG64)(-timeout->QuadPart);
         else
-            due = (ULONG64)timeout->QuadPart > KeBootFiletime ? (ULONG64)timeout->QuadPart - KeBootFiletime : 0;
+            due = (ULONG64)timeout->QuadPart > KeBootFiletime ? (ULONG64)timeout->QuadPart - KeBootFiletime : 1;
     }
 
     for (;;) {
@@ -273,8 +279,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
             for (ULONG i = 0; i < count; i++) {
                 PDISPATCHER_HEADER h = objects[i];
                 if (is_signaled(h, thread)) {
-                    acquire_object(h, thread);
-                    BOOLEAN abandoned = h->Type == MutantObject && ((PKMUTANT)h)->Abandoned;
+                    BOOLEAN abandoned = acquire_object(h, thread);
                     KiReleaseDispatcherLock(s);
                     return (abandoned ? STATUS_ABANDONED : STATUS_WAIT_0) + (NTSTATUS)i;
                 }
@@ -284,10 +289,11 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
             for (ULONG i = 0; i < count && all; i++)
                 all = is_signaled(objects[i], thread);
             if (all) {
+                BOOLEAN abandoned = FALSE;
                 for (ULONG i = 0; i < count; i++)
-                    acquire_object(objects[i], thread);
+                    abandoned |= acquire_object(objects[i], thread);
                 KiReleaseDispatcherLock(s);
-                return STATUS_WAIT_0;
+                return abandoned ? STATUS_ABANDONED : STATUS_WAIT_0;
             }
         }
 
@@ -353,11 +359,6 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
 
         if (status == STATUS_KERNEL_APC)
             continue;
-        if (status >= 0 && status < (LONG_PTR)count) {
-            PDISPATCHER_HEADER h = objects[status];
-            if (h->Type == MutantObject && ((PKMUTANT)h)->Abandoned)
-                return STATUS_ABANDONED + (NTSTATUS)status;
-        }
         return (NTSTATUS)status;
     }
 }

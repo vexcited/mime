@@ -320,6 +320,38 @@ void NTAPI KeUnstackDetachProcess(PVOID state)
 
 void PspProcessExit(PEPROCESS process);
 
+/* a list link of the program: eight bytes, or four for a wow64 program. */
+static ULONG64 link_get(const UCHAR *raw, ULONG width)
+{
+    return width == 4 ? *(const ULONG *)raw : *(const ULONG64 *)raw;
+}
+
+static void link_put(ULONG64 user, ULONG64 value, ULONG width)
+{
+    ULONG narrow = (ULONG)value;
+    KiCopyToUser((PVOID)(ULONG_PTR)user, width == 4 ? (PVOID)&narrow : (PVOID)&value, width);
+}
+
+/*
+ * kernelbase keeps the tebs of a process in a list through TlsLinks. a thread
+ * that is terminated ends without leaving it, and the next thread to join
+ * would write through its teb, freed below.
+ */
+static void unlink_tls_links(PVOID links, ULONG width)
+{
+    UCHAR raw[16];
+    if (!links || !NT_SUCCESS(KiCopyFromUser(raw, links, 2 * width)))
+        return;
+    ULONG64 self = (ULONG64)(ULONG_PTR)links, next = link_get(raw, width), previous = link_get(raw + width, width);
+    if (!next || !previous || next == self || !KiIsUserRange((PVOID)(ULONG_PTR)previous, 2 * width) ||
+        !KiIsUserRange((PVOID)(ULONG_PTR)next, 2 * width))
+        return;
+    link_put(previous, next, width);
+    link_put(next + width, previous, width);
+    link_put(self, self, width);
+    link_put(self + width, self, width);
+}
+
 /*
  * the stacks and the teb of a thread that ends. the program cannot free
  * them, as it runs on one until it is gone, so the kernel does, from the
@@ -327,6 +359,11 @@ void PspProcessExit(PEPROCESS process);
  */
 static void release_user_memory(PEPROCESS process, PETHREAD thread)
 {
+    if (thread->Tcb.Teb) {
+        unlink_tls_links(&((PTEB)thread->Tcb.Teb)->TlsLinks, sizeof(ULONG64));
+        if (thread->Tcb.Teb32)
+            unlink_tls_links((PUCHAR)thread->Tcb.Teb32 + MIME_TEB32_TLS_LINKS, sizeof(ULONG));
+    }
     PVOID regions[] = {thread->UserStackAllocation, thread->NativeStackAllocation, thread->Tcb.Teb};
     for (ULONG i = 0; i < sizeof(regions) / sizeof(regions[0]); i++) {
         PVOID base = regions[i];
