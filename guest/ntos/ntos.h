@@ -413,6 +413,7 @@ struct _SECTION;
 /* MMVAD.Flags */
 #define MM_VAD_PLACEHOLDER 0x1 /* a reservation that holds nothing, to be replaced by an allocation or a view */
 #define MM_VAD_REPLACED 0x2    /* made by replacing a placeholder, so it can become one again */
+#define MM_VAD_WRITE_WATCH 0x4 /* the pages written since they were last reset are tracked */
 
 typedef struct _MMVAD {
     ULONG_PTR StartVa;
@@ -520,6 +521,7 @@ void MiFlushTlbPage(ULONG_PTR va, USHORT asid, BOOLEAN global);
 void MiFlushTlbRange(ULONG_PTR va, SIZE_T pages, USHORT asid);
 void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *values, USHORT asid);
 void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 *old);
+void MiUpgradePte(ULONG64 *root, ULONG_PTR va, ULONG64 value, USHORT asid);
 void MiFlushTlbAsid(USHORT asid);
 void MiFlushTlbAll(void);
 ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user);

@@ -133,6 +133,7 @@ typedef struct _KJUMP_BUFFER {
 #define MM_PTE_SW_COW (1ull << 55)
 #define MM_PTE_SW_SHARED (1ull << 56) /* page belongs to a section, never freed by the pte */
 #define MM_PTE_SW_GUARD (1ull << 57)  /* a guard page, kept from user mode until first touched */
+#define MM_PTE_SW_WATCH (1ull << 58)  /* a writable page of a write watched allocation, mapped read only until it is written */
 #define MM_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
 
 /* invalid ptes with this bit describe committed but not yet present pages. */

@@ -263,7 +263,7 @@ ULONG MiPteToProtect(ULONG64 pte)
             return (ULONG)((pte & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
         return 0;
     }
-    BOOLEAN ro = !(pte & MM_PTE_RW);
+    BOOLEAN ro = !(pte & (MM_PTE_RW | MM_PTE_SW_WATCH));
     BOOLEAN exec = !(pte & MM_PTE_NX);
     ULONG protect;
     if (pte & MM_PTE_SW_COW)
@@ -275,6 +275,16 @@ ULONG MiPteToProtect(ULONG64 pte)
     if (!(pte & MM_PTE_USER))
         return (pte & MM_PTE_SW_GUARD) ? protect | PAGE_GUARD : PAGE_NOACCESS;
     return protect;
+}
+
+/* gives a present page more access than it had: another processor that still has the old entry faults, which flushes it. */
+void MiUpgradePte(ULONG64 *root, ULONG_PTR va, ULONG64 value, USHORT asid)
+{
+    ULONG64 *pte = MiWalk(root, va, FALSE, 3);
+    if (!pte)
+        return;
+    *pte = value;
+    __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
 }
 
 BOOLEAN NTAPI MmIsAddressValid(PVOID va)

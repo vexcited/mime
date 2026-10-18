@@ -247,17 +247,26 @@ DECLSPEC_EXPORT BOOL WINAPI SetProcessValidCallTargets(HANDLE process, PVOID bas
     return TRUE;
 }
 
+/* the pages of an allocation made with MEM_WRITE_WATCH that were written since it was made or last reset. */
 UINT WINAPI GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addresses, ULONG_PTR *count,
                           LPDWORD granularity)
 {
-    KbSetError(ERROR_INVALID_PARAMETER);
-    return (UINT)-1;
+    NTSTATUS status = NtGetWriteWatch(NtCurrentProcess(), flags, base, size, addresses, count, granularity);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return (UINT)-1;
+    }
+    return 0;
 }
 
 UINT WINAPI ResetWriteWatch(LPVOID base, SIZE_T size)
 {
-    KbSetError(ERROR_INVALID_PARAMETER);
-    return (UINT)-1;
+    NTSTATUS status = NtResetWriteWatch(NtCurrentProcess(), base, size);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return (UINT)-1;
+    }
+    return 0;
 }
 
 SIZE_T WINAPI GetLargePageMinimum(void)

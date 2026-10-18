@@ -685,6 +685,26 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtReadVirtualMemory:
     case MIME_SVC_NtWriteVirtualMemory:
         return virtual_memory_io32(number == MIME_SVC_NtWriteVirtualMemory, a);
+    case MIME_SVC_NtGetWriteWatch: {
+        /* the addresses come back 32 bits wide, and the count is a 32-bit value. */
+        ULONG_PTR requested = *(PULONG)pointer32(a[5]);
+        PULONG out = pointer32(a[4]);
+        if (!requested || !out || requested > 0x100000)
+            return STATUS_INVALID_PARAMETER_5;
+        PVOID *native = Mx32Scratch(requested * sizeof(PVOID));
+        if (!native)
+            return STATUS_NO_MEMORY;
+        status = NtGetWriteWatch(handle32(a[0]), a[1], pointer32(a[2]), a[3], native, &requested, pointer32(a[6]));
+        if (NT_SUCCESS(status)) {
+            for (ULONG_PTR i = 0; i < requested; i++)
+                out[i] = (ULONG)(ULONG_PTR)native[i];
+            store32(a[5], requested);
+        }
+        Mx32FreeScratch(native);
+        return status;
+    }
+    case MIME_SVC_NtResetWriteWatch:
+        return NtResetWriteWatch(handle32(a[0]), pointer32(a[1]), a[2]);
     case MIME_SVC_NtFlushInstructionCache:
         return NtFlushInstructionCache(handle32(a[0]), pointer32(a[1]), a[2]);
     case MIME_SVC_NtFlushProcessWriteBuffers:

@@ -233,7 +233,7 @@ ULONG MiPteToProtect(ULONG64 pte)
         return 0;
     }
     BOOLEAN user = (pte & MM_PTE_AP_EL0) != 0;
-    BOOLEAN ro = (pte & MM_PTE_AP_RO) != 0;
+    BOOLEAN ro = (pte & MM_PTE_AP_RO) != 0 && !(pte & MM_PTE_SW_WATCH);
     /* a user page out of reach of user mode keeps its user execute permission. */
     BOOLEAN exec = (user || (pte & MM_PTE_NG)) ? !(pte & MM_PTE_UXN) : !(pte & MM_PTE_PXN);
     ULONG protect;
@@ -246,6 +246,12 @@ ULONG MiPteToProtect(ULONG64 pte)
     if (!user && (pte & MM_PTE_NG))
         return (pte & MM_PTE_SW_GUARD) ? protect | PAGE_GUARD : PAGE_NOACCESS;
     return protect;
+}
+
+/* gives a present page more access than it had. */
+void MiUpgradePte(ULONG64 *root, ULONG_PTR va, ULONG64 value, USHORT asid)
+{
+    MiWritePte(root, va, value, asid);
 }
 
 BOOLEAN NTAPI MmIsAddressValid(PVOID va)

@@ -177,6 +177,7 @@ extern ULONG64 KiXsaveMask;
 #define MM_PTE_GLOBAL (1ull << 8)
 #define MM_PTE_SW_COW (1ull << 9)
 #define MM_PTE_SW_SHARED (1ull << 10) /* page belongs to a section, never freed by the pte */
+#define MM_PTE_SW_WATCH (1ull << 11)  /* a writable page of a write watched allocation, mapped read only until it is written */
 #define MM_PTE_SW_GUARD (1ull << 52)  /* a guard page, kept from user mode until first touched */
 #define MM_PTE_NX (1ull << 63)
 #define MM_PTE_ADDR_MASK 0x000FFFFFFFFFF000ull

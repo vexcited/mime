@@ -446,29 +446,39 @@ SIZE_T MiReleasePages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
     return release_pages(as, start, end);
 }
 
-/* the pte of a page with a new protection, keeping what the page holds. */
-static ULONG64 reprotect_pte(ULONG64 v, ULONG protect)
+/*
+ * the pte of a page with a new protection, keeping what the page holds. a
+ * page of a write watched allocation stays read only while it is clean and
+ * keeps being writable once it has been written.
+ */
+static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch)
 {
     if (v & MM_PTE_VALID) {
         ULONG64 attrs = MiProtectToPte(protect, TRUE) | (v & MM_PTE_SW_SHARED);
         /* shared pages become copy on write when they are made writable. */
         if ((v & MM_PTE_SW_SHARED) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
             attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
+        if (watch && !(v & MM_PTE_SW_SHARED) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
+            BOOLEAN written = !(v & MM_PTE_SW_WATCH) && (MiPteToProtect(v) & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE));
+            if (!written)
+                attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
+        }
         return (v & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE;
     }
     return sw_pte(protect) | (v & MM_SWPTE_SECTION);
 }
 
 /* commits and gives a protection to a range whose tables exist. */
-static void apply_protection(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end, ULONG protect)
+static void apply_protection(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, ULONG_PTR end, ULONG protect)
 {
     ULONG64 values[512];
+    BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
     PTE_CURSOR c = {as->Root, start, end};
     SIZE_T count;
     ULONG_PTR va;
     for (ULONG64 *pte; (pte = cursor_next(&c, &va, &count));) {
         for (SIZE_T i = 0; i < count; i++)
-            values[i] = reprotect_pte(pte[i], protect);
+            values[i] = reprotect_pte(pte[i], protect, watch);
         MiRewritePtes(pte, va, count, values, as->Asid);
     }
 }
@@ -486,7 +496,7 @@ static NTSTATUS commit_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, U
         return_commit(as, fresh);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    apply_protection(as, start, end, protect);
+    apply_protection(as, vad, start, end, protect);
     return STATUS_SUCCESS;
 }
 
@@ -879,7 +889,8 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
         PMMVAD vad = nullptr;
         if (NT_SUCCESS(status)) {
             vad = vad_create(start, end, MiVadPrivate, placeholder ? PAGE_NOACCESS : protect,
-                             (placeholder ? MM_VAD_PLACEHOLDER : 0) | (replace ? MM_VAD_REPLACED : 0));
+                             (placeholder ? MM_VAD_PLACEHOLDER : 0) | (replace ? MM_VAD_REPLACED : 0) |
+                                 ((type & MEM_WRITE_WATCH) ? MM_VAD_WRITE_WATCH : 0));
             if (!vad)
                 status = STATUS_INSUFFICIENT_RESOURCES;
         }
@@ -1007,7 +1018,7 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
         return STATUS_NOT_COMMITTED;
     }
     ULONG first_old = MiPteToProtect(MiReadPte(as->Root, start));
-    apply_protection(as, start, end, protect);
+    apply_protection(as, vad, start, end, protect);
     ExReleaseFastMutex(&as->Lock);
     if (old)
         *old = first_old;
@@ -1099,7 +1110,7 @@ static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, UL
     return TRUE;
 }
 
-static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v)
+static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v, BOOLEAN clean)
 {
     ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
     ULONG64 pa = MmAllocatePage();
@@ -1108,6 +1119,9 @@ static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v)
     ULONG64 attrs = MiProtectToPte(protect, TRUE) & ~MM_PTE_SW_COW;
     if (protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
         attrs = MI_PTE_SET_RW(attrs);
+    /* a page of a write watched allocation that nothing wrote yet is read only until it is. */
+    if (clean && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
     *pte = pa | attrs | MM_PTE_VALID | MM_PTE_PAGE;
     if (++as->CommittedPages > as->PeakCommittedPages)
         as->PeakCommittedPages = as->CommittedPages;
@@ -1123,9 +1137,10 @@ static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v)
 #define FAULT_WINDOW (16 * 1024)
 #define FAULT_WINDOW_SEQUENTIAL (64 * 1024)
 
-static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG64 v)
+static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG64 v, BOOLEAN write)
 {
-    if (!map_zero_page(as, pte, v))
+    BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
+    if (!map_zero_page(as, pte, v, watch && !write))
         return FALSE;
     /* a touch that goes on where one of the recent windows ended continues a sequence. */
     ULONG stream = (ULONG)-1;
@@ -1146,7 +1161,7 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
         if (va == page || (w & MM_PTE_VALID) || !(w & MM_SWPTE_COMMITTED) || (w & MM_SWPTE_SECTION) ||
             (protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))
             continue;
-        if (!map_zero_page(as, p, w))
+        if (!map_zero_page(as, p, w, watch))
             break;
     }
     if (stream == (ULONG)-1)
@@ -1181,7 +1196,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
         } else if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_COMMITTED)) {
             ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
             if ((protect & 0xFF) != PAGE_NOACCESS && !(protect & PAGE_GUARD)) {
-                handled = demand_zero(as, vad, page, pte, v);
+                handled = demand_zero(as, vad, page, pte, v, write);
             } else if (protect & PAGE_GUARD) {
                 *pte = sw_pte(protect & ~PAGE_GUARD) | (v & MM_SWPTE_SECTION);
                 handled = FALSE;
@@ -1195,6 +1210,10 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                 as->CommittedPages++;
                 handled = TRUE;
             }
+        } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_WATCH)) {
+            /* the first write to a watched page since it was reset: it is written from now on. */
+            MiUpgradePte(as->Root, page, MI_PTE_SET_RW(v & ~MM_PTE_SW_WATCH), as->Asid);
+            handled = TRUE;
         } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && MI_PTE_IS_GUARD(v)) {
             /* a guard page: the first touch faults and takes the guard away, like windows. */
             MiWritePte(as->Root, page, MI_PTE_CLEAR_GUARD(v), as->Asid);
@@ -1238,6 +1257,131 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
 static NTSTATUS reference_process(HANDLE handle, ACCESS_MASK access, PEPROCESS *process)
 {
     return PsReferenceProcessHandle(handle, access, process);
+}
+
+/* -------------------------------------------------------- write watching */
+
+#define MI_WATCH_WRITABLE (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)
+
+static inline BOOLEAN page_is_written(ULONG64 pte)
+{
+    return (pte & MM_PTE_VALID) && !(pte & (MM_PTE_SW_WATCH | MM_PTE_SW_SHARED)) &&
+           (MiPteToProtect(pte) & MI_WATCH_WRITABLE);
+}
+
+/*
+ * the pages of [*resume, end) that were written, up to a number of them,
+ * made clean again when asked; resume says where to go on, 0 at the end.
+ * only the pages reported are reset.
+ */
+static SIZE_T gather_written(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_PTR end, BOOLEAN reset, ULONG_PTR *out,
+                             SIZE_T maximum)
+{
+    ULONG64 values[512];
+    SIZE_T n = 0, count;
+    ULONG_PTR va;
+    PTE_CURSOR c = {as->Root, *resume, end};
+    *resume = 0;
+    for (ULONG64 *pte; n < maximum && (pte = cursor_next(&c, &va, &count));) {
+        BOOLEAN any = FALSE;
+        SIZE_T taken = count;
+        for (SIZE_T i = 0; i < count; i++) {
+            values[i] = pte[i];
+            if (n < maximum && page_is_written(pte[i])) {
+                out[n++] = va + (i << PAGE_SHIFT);
+                values[i] = MI_PTE_SET_RO(pte[i]) | MM_PTE_SW_WATCH;
+                any = TRUE;
+                if (n == maximum) {
+                    taken = i + 1;
+                    *resume = va + (taken << PAGE_SHIFT);
+                    break;
+                }
+            }
+        }
+        if (reset && any)
+            MiRewritePtes(pte, va, taken, values, as->Asid);
+        if (*resume)
+            break;
+    }
+    if (*resume >= end)
+        *resume = 0;
+    return n;
+}
+
+/* the vad of a write watched range, or null when the range is not all in one. */
+static PMMVAD watched_vad(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
+{
+    PMMVAD vad = MiFindVad(as, start);
+    return vad && (vad->Flags & MM_VAD_WRITE_WATCH) && end <= vad->EndVa ? vad : nullptr;
+}
+
+NTSTATUS NTAPI NtGetWriteWatch(HANDLE process_handle, ULONG flags, PVOID base, SIZE_T size, PVOID *addresses,
+                               PULONG_PTR count, PULONG granularity)
+{
+    if (flags & ~(ULONG)WRITE_WATCH_FLAG_RESET)
+        return STATUS_INVALID_PARAMETER_2;
+    ULONG_PTR requested;
+    if (!NT_SUCCESS(KiCopyFromUser(&requested, count, sizeof(requested))))
+        return STATUS_ACCESS_VIOLATION;
+    ULONG_PTR last = (ULONG_PTR)base + size - 1;
+    if (!size || last < (ULONG_PTR)base || last > MM_HIGHEST_USER_ADDRESS)
+        return STATUS_INVALID_PARAMETER_4;
+    if (!requested || !addresses)
+        return STATUS_INVALID_PARAMETER_5;
+    PEPROCESS process;
+    NTSTATUS status = reference_process(process_handle, PROCESS_VM_OPERATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG_PTR start = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1), end = ROUND_TO_PAGES((ULONG_PTR)base + size);
+    ULONG_PTR chunk[256], resume = start, done = 0;
+    do {
+        ExAcquireFastMutex(&as->Lock);
+        SIZE_T room = requested - done < 256 ? requested - done : 256;
+        SIZE_T n = 0;
+        if (!watched_vad(as, start, end))
+            status = STATUS_INVALID_PARAMETER;
+        else
+            n = gather_written(as, &resume, end, (flags & WRITE_WATCH_FLAG_RESET) != 0, chunk, room);
+        ExReleaseFastMutex(&as->Lock);
+        if (!NT_SUCCESS(status))
+            break;
+        if (n)
+            status = KiCopyToUser(addresses + done, chunk, n * sizeof(ULONG_PTR));
+        done += n;
+    } while (NT_SUCCESS(status) && resume && done < requested);
+    ObDereferenceObject(process);
+    if (NT_SUCCESS(status)) {
+        ULONG page = PAGE_SIZE;
+        KiCopyToUser(count, &done, sizeof(done));
+        if (granularity)
+            KiCopyToUser(granularity, &page, sizeof(page));
+    }
+    return status;
+}
+
+NTSTATUS NTAPI NtResetWriteWatch(HANDLE process_handle, PVOID base, SIZE_T size)
+{
+    ULONG_PTR last = (ULONG_PTR)base + size - 1;
+    if (!size || last < (ULONG_PTR)base || last > MM_HIGHEST_USER_ADDRESS)
+        return STATUS_INVALID_PARAMETER_3;
+    PEPROCESS process;
+    NTSTATUS status = reference_process(process_handle, PROCESS_VM_OPERATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG_PTR start = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1), end = ROUND_TO_PAGES((ULONG_PTR)base + size);
+    ULONG_PTR chunk[256], resume = start;
+    ExAcquireFastMutex(&as->Lock);
+    if (!watched_vad(as, start, end))
+        status = STATUS_INVALID_PARAMETER;
+    else
+        do
+            gather_written(as, &resume, end, TRUE, chunk, 256);
+        while (resume);
+    ExReleaseFastMutex(&as->Lock);
+    ObDereferenceObject(process);
+    return status;
 }
 
 NTSTATUS NTAPI NtAllocateVirtualMemory(HANDLE process_handle, PVOID *base, ULONG_PTR zero_bits, PSIZE_T size,
