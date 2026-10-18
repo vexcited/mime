@@ -172,14 +172,47 @@ typedef struct _ACCESS_ALLOWED_ACE {
 #define ACCESS_ALLOWED_ACE_TYPE 0x0
 #define ACCESS_DENIED_ACE_TYPE 0x1
 #define SYSTEM_AUDIT_ACE_TYPE 0x2
+#define SYSTEM_ALARM_ACE_TYPE 0x3
+#define ACCESS_ALLOWED_COMPOUND_ACE_TYPE 0x4
+#define ACCESS_ALLOWED_OBJECT_ACE_TYPE 0x5
+#define ACCESS_DENIED_OBJECT_ACE_TYPE 0x6
+#define SYSTEM_AUDIT_OBJECT_ACE_TYPE 0x7
+#define SYSTEM_ALARM_OBJECT_ACE_TYPE 0x8
+#define ACCESS_ALLOWED_CALLBACK_ACE_TYPE 0x9
+#define ACCESS_DENIED_CALLBACK_ACE_TYPE 0xA
+#define ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE 0xB
+#define ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE 0xC
+#define SYSTEM_AUDIT_CALLBACK_ACE_TYPE 0xD
+#define SYSTEM_ALARM_CALLBACK_ACE_TYPE 0xE
+#define SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE 0xF
+#define SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE 0x10
 #define SYSTEM_MANDATORY_LABEL_ACE_TYPE 0x11
+#define SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE 0x12
+#define SYSTEM_SCOPED_POLICY_ID_ACE_TYPE 0x13
+#define SYSTEM_PROCESS_TRUST_LABEL_ACE_TYPE 0x14
+#define SYSTEM_ACCESS_FILTER_ACE_TYPE 0x15
 #define NO_PROPAGATE_INHERIT_ACE 0x04
+#define CRITICAL_ACE_FLAG 0x20
 #define SUCCESSFUL_ACCESS_ACE_FLAG 0x40
 #define FAILED_ACCESS_ACE_FLAG 0x80
 #define OBJECT_INHERIT_ACE 0x01
 #define CONTAINER_INHERIT_ACE 0x02
 #define INHERIT_ONLY_ACE 0x08
 #define INHERITED_ACE 0x10
+#define ACE_OBJECT_TYPE_PRESENT 0x1
+#define ACE_INHERITED_OBJECT_TYPE_PRESENT 0x2
+#define SYSTEM_MANDATORY_LABEL_NO_WRITE_UP 0x1
+#define SYSTEM_MANDATORY_LABEL_NO_READ_UP 0x2
+#define SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP 0x4
+#define COMPOUND_ACE_IMPERSONATION 1
+
+/* the object aces carry flags and up to two guids before the sid. */
+typedef struct _ACCESS_ALLOWED_OBJECT_ACE {
+    ACE_HEADER Header;
+    ACCESS_MASK Mask;
+    DWORD Flags;
+    DWORD Guids[1];
+} ACCESS_ALLOWED_OBJECT_ACE, *PACCESS_ALLOWED_OBJECT_ACE;
 
 typedef enum _ACL_INFORMATION_CLASS {
     AclRevisionInformation = 1,
@@ -268,8 +301,102 @@ typedef enum _SE_OBJECT_TYPE {
     SE_REGISTRY_WOW64_64KEY,
 } SE_OBJECT_TYPE;
 
+/* ---------------------------------------------------------------- trustees and explicit access */
+
+typedef enum _MULTIPLE_TRUSTEE_OPERATION {
+    NO_MULTIPLE_TRUSTEE,
+    TRUSTEE_IS_IMPERSONATE,
+} MULTIPLE_TRUSTEE_OPERATION;
+
+typedef enum _TRUSTEE_FORM {
+    TRUSTEE_IS_SID,
+    TRUSTEE_IS_NAME,
+    TRUSTEE_BAD_FORM,
+    TRUSTEE_IS_OBJECTS_AND_SID,
+    TRUSTEE_IS_OBJECTS_AND_NAME,
+} TRUSTEE_FORM;
+
+typedef enum _TRUSTEE_TYPE {
+    TRUSTEE_IS_UNKNOWN,
+    TRUSTEE_IS_USER,
+    TRUSTEE_IS_GROUP,
+    TRUSTEE_IS_DOMAIN,
+    TRUSTEE_IS_ALIAS,
+    TRUSTEE_IS_WELL_KNOWN_GROUP,
+    TRUSTEE_IS_DELETED,
+    TRUSTEE_IS_INVALID,
+    TRUSTEE_IS_COMPUTER,
+} TRUSTEE_TYPE;
+
+/* the name of a trustee is a wide string, or an ansi one in the A structures that otherwise look alike. */
+typedef struct _TRUSTEE_W {
+    struct _TRUSTEE_W *pMultipleTrustee;
+    MULTIPLE_TRUSTEE_OPERATION MultipleTrusteeOperation;
+    TRUSTEE_FORM TrusteeForm;
+    TRUSTEE_TYPE TrusteeType;
+    LPWSTR ptstrName;
+} TRUSTEE_W, *PTRUSTEE_W;
+
+typedef struct _OBJECTS_AND_SID {
+    DWORD ObjectsPresent;
+    GUID ObjectTypeGuid;
+    GUID InheritedObjectTypeGuid;
+    SID *pSid;
+} OBJECTS_AND_SID, *POBJECTS_AND_SID;
+
+typedef struct _OBJECTS_AND_NAME_W {
+    DWORD ObjectsPresent;
+    SE_OBJECT_TYPE ObjectType;
+    LPWSTR ObjectTypeName;
+    LPWSTR InheritedObjectTypeName;
+    LPWSTR ptstrName;
+} OBJECTS_AND_NAME_W, *POBJECTS_AND_NAME_W;
+
+typedef enum _ACCESS_MODE {
+    NOT_USED_ACCESS,
+    GRANT_ACCESS,
+    SET_ACCESS,
+    DENY_ACCESS,
+    REVOKE_ACCESS,
+    SET_AUDIT_SUCCESS,
+    SET_AUDIT_FAILURE,
+} ACCESS_MODE;
+
+typedef struct _EXPLICIT_ACCESS_W {
+    DWORD grfAccessPermissions;
+    ACCESS_MODE grfAccessMode;
+    DWORD grfInheritance;
+    TRUSTEE_W Trustee;
+} EXPLICIT_ACCESS_W, *PEXPLICIT_ACCESS_W;
+
+#define VALID_INHERIT_FLAGS 0x1F
+
 /* ---------------------------------------------------------------- errors missing from winerror.h */
 
+#ifndef ERROR_BAD_INHERITANCE_ACL
+#define ERROR_BAD_INHERITANCE_ACL 1340L
+#endif
+#ifndef ERROR_NON_ACCOUNT_SID
+#define ERROR_NON_ACCOUNT_SID 1257L
+#endif
+#ifndef ERROR_NON_DOMAIN_SID
+#define ERROR_NON_DOMAIN_SID 1258L
+#endif
+#ifndef ERROR_REVISION_MISMATCH
+#define ERROR_REVISION_MISMATCH 1306L
+#endif
+#ifndef ERROR_INVALID_OWNER
+#define ERROR_INVALID_OWNER 1307L
+#endif
+#ifndef ERROR_BAD_DESCRIPTOR_FORMAT
+#define ERROR_BAD_DESCRIPTOR_FORMAT 1361L
+#endif
+#ifndef ERROR_ARITHMETIC_OVERFLOW
+#define ERROR_ARITHMETIC_OVERFLOW 534L
+#endif
+#ifndef ERROR_INVALID_DATA
+#define ERROR_INVALID_DATA 13L
+#endif
 #ifndef ERROR_NONE_MAPPED
 #define ERROR_NONE_MAPPED 1332L
 #endif
@@ -335,6 +462,86 @@ NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE token, BOOLEAN disabl
                                                     ULONG length, PTOKEN_PRIVILEGES previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI RtlImpersonateSelf(ULONG level);
 
+/* the rtl routines of ntdll on sids, lists and descriptors, which the functions of this dll wrap. */
+NTSYSAPI BOOLEAN NTAPI RtlValidSid(PSID sid);
+NTSYSAPI ULONG NTAPI RtlLengthSid(PSID sid);
+NTSYSAPI ULONG NTAPI RtlLengthRequiredSid(ULONG count);
+NTSYSAPI BOOLEAN NTAPI RtlEqualSid(PSID a, PSID b);
+NTSYSAPI BOOLEAN NTAPI RtlEqualPrefixSid(PSID a, PSID b);
+NTSYSAPI NTSTATUS NTAPI RtlCopySid(ULONG length, PSID dst, PSID src);
+NTSYSAPI NTSTATUS NTAPI RtlInitializeSid(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, UCHAR count);
+NTSYSAPI NTSTATUS NTAPI RtlAllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY authority, UCHAR count, ULONG s0,
+                                                    ULONG s1, ULONG s2, ULONG s3, ULONG s4, ULONG s5, ULONG s6,
+                                                    ULONG s7, PSID *sid);
+NTSYSAPI PVOID NTAPI RtlFreeSid(PSID sid);
+NTSYSAPI PSID_IDENTIFIER_AUTHORITY NTAPI RtlIdentifierAuthoritySid(PSID sid);
+NTSYSAPI PULONG NTAPI RtlSubAuthoritySid(PSID sid, ULONG index);
+NTSYSAPI PUCHAR NTAPI RtlSubAuthorityCountSid(PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING string, PSID sid, BOOLEAN allocate);
+NTSYSAPI NTSTATUS NTAPI RtlCreateAcl(PACL acl, ULONG length, ULONG revision);
+NTSYSAPI BOOLEAN NTAPI RtlValidAcl(PACL acl);
+NTSYSAPI NTSTATUS NTAPI RtlGetAce(PACL acl, ULONG index, PVOID *ace);
+NTSYSAPI NTSTATUS NTAPI RtlAddAce(PACL acl, ULONG revision, ULONG index, PVOID list, ULONG length);
+NTSYSAPI NTSTATUS NTAPI RtlDeleteAce(PACL acl, ULONG index);
+NTSYSAPI BOOLEAN NTAPI RtlFirstFreeAce(PACL acl, PVOID *ace);
+NTSYSAPI NTSTATUS NTAPI RtlQueryInformationAcl(PACL acl, PVOID info, ULONG length, ACL_INFORMATION_CLASS klass);
+NTSYSAPI NTSTATUS NTAPI RtlSetInformationAcl(PACL acl, PVOID info, ULONG length, ACL_INFORMATION_CLASS klass);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessAllowedAce(PACL acl, ULONG revision, ACCESS_MASK mask, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessAllowedAceEx(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessDeniedAce(PACL acl, ULONG revision, ACCESS_MASK mask, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessDeniedAceEx(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddAuditAccessAce(PACL acl, ULONG revision, ACCESS_MASK mask, PSID sid, BOOLEAN success,
+                                             BOOLEAN failure);
+NTSYSAPI NTSTATUS NTAPI RtlAddAuditAccessAceEx(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid,
+                                               BOOLEAN success, BOOLEAN failure);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessAllowedObjectAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask,
+                                                     const GUID *object, const GUID *inherited, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessDeniedObjectAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask,
+                                                    const GUID *object, const GUID *inherited, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddAuditAccessObjectAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask,
+                                                   const GUID *object, const GUID *inherited, PSID sid,
+                                                   BOOLEAN success, BOOLEAN failure);
+NTSYSAPI NTSTATUS NTAPI RtlAddMandatoryAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
+                                           ACCESS_MASK mask);
+NTSYSAPI NTSTATUS NTAPI RtlAddScopedPolicyIDAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid);
+NTSYSAPI NTSTATUS NTAPI RtlAddProcessTrustLabelAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
+                                                   ACCESS_MASK mask);
+NTSYSAPI NTSTATUS NTAPI RtlAddAccessFilterAce(PACL acl, ULONG revision, ULONG flags, PSID sid, UCHAR type,
+                                              ACCESS_MASK mask, PVOID condition, USHORT condition_length);
+NTSYSAPI VOID NTAPI RtlMapGenericMask(PACCESS_MASK mask, const GENERIC_MAPPING *mapping);
+NTSYSAPI NTSTATUS NTAPI RtlCreateSecurityDescriptor(PSECURITY_DESCRIPTOR sd, ULONG revision);
+NTSYSAPI BOOLEAN NTAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR sd);
+NTSYSAPI BOOLEAN NTAPI RtlValidRelativeSecurityDescriptor(PSECURITY_DESCRIPTOR sd, ULONG length,
+                                                          SECURITY_INFORMATION required);
+NTSYSAPI ULONG NTAPI RtlLengthSecurityDescriptor(PSECURITY_DESCRIPTOR sd);
+NTSYSAPI NTSTATUS NTAPI RtlGetOwnerSecurityDescriptor(PSECURITY_DESCRIPTOR sd, PSID *owner, PBOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlSetOwnerSecurityDescriptor(PSECURITY_DESCRIPTOR sd, PSID owner, BOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlGetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR sd, PSID *group, PBOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlSetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR sd, PSID group, BOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlGetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR sd, PBOOLEAN present, PACL *dacl,
+                                                     PBOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlSetDaclSecurityDescriptor(PSECURITY_DESCRIPTOR sd, BOOLEAN present, PACL dacl,
+                                                     BOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlGetSaclSecurityDescriptor(PSECURITY_DESCRIPTOR sd, PBOOLEAN present, PACL *sacl,
+                                                     PBOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlSetSaclSecurityDescriptor(PSECURITY_DESCRIPTOR sd, BOOLEAN present, PACL sacl,
+                                                     BOOLEAN defaulted);
+NTSYSAPI NTSTATUS NTAPI RtlGetControlSecurityDescriptor(PSECURITY_DESCRIPTOR sd,
+                                                        PSECURITY_DESCRIPTOR_CONTROL control, PULONG revision);
+NTSYSAPI NTSTATUS NTAPI RtlSetControlSecurityDescriptor(PSECURITY_DESCRIPTOR sd, SECURITY_DESCRIPTOR_CONTROL mask,
+                                                        SECURITY_DESCRIPTOR_CONTROL bits);
+NTSYSAPI BOOLEAN NTAPI RtlGetSecurityDescriptorRMControl(PSECURITY_DESCRIPTOR sd, PUCHAR control);
+NTSYSAPI VOID NTAPI RtlSetSecurityDescriptorRMControl(PSECURITY_DESCRIPTOR sd, PUCHAR control);
+NTSYSAPI NTSTATUS NTAPI RtlMakeSelfRelativeSD(PSECURITY_DESCRIPTOR absolute, PSECURITY_DESCRIPTOR relative,
+                                              PULONG length);
+NTSYSAPI NTSTATUS NTAPI RtlAbsoluteToSelfRelativeSD(PSECURITY_DESCRIPTOR absolute, PSECURITY_DESCRIPTOR relative,
+                                                    PULONG length);
+NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR relative, PSECURITY_DESCRIPTOR absolute,
+                                                    PULONG absolute_size, PACL dacl, PULONG dacl_size, PACL sacl,
+                                                    PULONG sacl_size, PSID owner, PULONG owner_size, PSID group,
+                                                    PULONG group_size);
+NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relative, PULONG size);
+
 /* ---------------------------------------------------------------- helpers */
 
 FORCEINLINE void AdvSetError(DWORD error)
@@ -375,8 +582,16 @@ BOOL AdvSidValid(const SID *sid);
 BOOL AdvSidEqual(const SID *a, const SID *b);
 /* builds a sid in storage, which holds SECURITY_MAX_SID_SIZE bytes. */
 PSID AdvMakeSid(void *storage, BYTE authority, int count, ...);
-/* parses an sddl sid string, an alias or the S-1- form, into storage of SECURITY_MAX_SID_SIZE bytes. */
-BOOL AdvParseSidString(PCWSTR string, void *storage);
+/*
+ * parses a sid as sddl writes it: S-1-..., or an alias of two letters. the aliases that name a sid inside a domain
+ * resolve with the domains of the context, a null context knows this machine's. without an end the text must be
+ * the sid alone, else the parse stops after the sid and stores where. returns a win32 error.
+ */
+typedef struct SDDL_CONTEXT {
+    const SID *Domain;
+    const SID *Root;
+} SDDL_CONTEXT;
+DWORD AdvParseSidString(PCWSTR string, const SDDL_CONTEXT *context, void *storage, PCWSTR *end);
 
 /* token.c: the user and groups of a token, the process token for NULL; free with AdvFree. */
 TOKEN_USER *AdvQueryTokenUser(HANDLE token);
@@ -387,6 +602,12 @@ BOOL AdvCurrentUserSid(void *storage);
 /* resolves the pseudo token handles to a real handle, opening one into *opened when needed. */
 NTSTATUS AdvResolveToken(HANDLE token, ACCESS_MASK access, HANDLE *real, HANDLE *opened);
 
+/* the sid of this machine's account domain, S-1-5-21-a-b-c, into storage of SECURITY_MAX_SID_SIZE bytes. */
+BOOL AdvMachineSid(void *storage);
+
+/* sddl.c: compiles the text of a condition to the binary token stream, LocalAlloc'd, as AddConditionalAce stores it. */
+DWORD AdvConditionFromString(PCWSTR text, PVOID *binary, DWORD *size);
+
 /* account.c: account names of sids, and whether a server name designates this machine. */
 BOOL AdvIsLocalSystem(LPCWSTR system);
 BOOL AdvLookupSid(const SID *sid, PWSTR name, DWORD name_size, PWSTR domain, DWORD domain_size, SID_NAME_USE *use);
@@ -394,6 +615,18 @@ BOOL AdvLookupSid(const SID *sid, PWSTR name, DWORD name_size, PWSTR domain, DWO
 /* exports used across files. */
 ADVAPI BOOL WINAPI ConvertSidToStringSidW(PSID sid, LPWSTR *result);
 ADVAPI BOOL WINAPI ConvertStringSidToSidW(LPCWSTR string, PSID *result);
+ADVAPI void WINAPI MapGenericMask(PDWORD mask, PGENERIC_MAPPING mapping);
+ADVAPI BOOL WINAPI InitializeSecurityDescriptor(PSECURITY_DESCRIPTOR sd, DWORD revision);
+ADVAPI BOOL WINAPI SetSecurityDescriptorOwner(PSECURITY_DESCRIPTOR sd, PSID owner, BOOL defaulted);
+ADVAPI BOOL WINAPI SetSecurityDescriptorGroup(PSECURITY_DESCRIPTOR sd, PSID group, BOOL defaulted);
+ADVAPI BOOL WINAPI SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR sd, BOOL present, PACL dacl, BOOL defaulted);
+ADVAPI BOOL WINAPI SetSecurityDescriptorSacl(PSECURITY_DESCRIPTOR sd, BOOL present, PACL sacl, BOOL defaulted);
+ADVAPI BOOL WINAPI MakeSelfRelativeSD(PSECURITY_DESCRIPTOR absolute, PSECURITY_DESCRIPTOR relative, LPDWORD length);
+ADVAPI void WINAPI BuildTrusteeWithSidW(PTRUSTEE_W trustee, PSID sid);
+ADVAPI void WINAPI BuildImpersonateTrusteeW(PTRUSTEE_W trustee, PTRUSTEE_W impersonate);
+ADVAPI void WINAPI BuildTrusteeWithObjectsAndSidW(PTRUSTEE_W trustee, POBJECTS_AND_SID objects, GUID *object,
+                                                  GUID *inherited, PSID sid);
+ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PACL old, PACL *result);
 ADVAPI BOOL WINAPI LookupAccountNameW(LPCWSTR system, LPCWSTR account, PSID sid, LPDWORD sid_size, LPWSTR domain,
                                       LPDWORD domain_size, PSID_NAME_USE use);
 

@@ -110,8 +110,9 @@ static BOOL is_machine_domain(const SID *sid)
 }
 
 /* the sid of this machine's domain, S-1-5-21-a-b-c, taken from the user's sid or a registered profile. */
-static BOOL machine_sid(SID *out)
+BOOL AdvMachineSid(void *storage)
 {
+    SID *out = storage;
     BYTE user[SECURITY_MAX_SID_SIZE];
     if (AdvCurrentUserSid(user) && is_machine_domain((SID *)user) && ((SID *)user)->SubAuthorityCount == 5) {
         memcpy(out, user, AdvSidLength((SID *)user));
@@ -205,7 +206,7 @@ BOOL AdvLookupSid(const SID *sid, PWSTR name, DWORD name_size, PWSTR domain, DWO
         }
     }
     BYTE machine[SECURITY_MAX_SID_SIZE];
-    if (!is_machine_domain(sid) || !machine_sid((SID *)machine) ||
+    if (!is_machine_domain(sid) || !AdvMachineSid((SID *)machine) ||
         memcmp(((SID *)machine)->SubAuthority, sid->SubAuthority, 16))
         return FALSE;
     if (!computer_name(domain, domain_size))
@@ -328,7 +329,7 @@ static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_siz
         return copy_name(domain, domain_size, a->Domain);
     }
     WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1];
-    if (!machine_sid(sid) || !computer_name(computer, RTL_NUMBER_OF(computer)))
+    if (!AdvMachineSid(sid) || !computer_name(computer, RTL_NUMBER_OF(computer)))
         return FALSE;
     if (slash && _wcsicmp(wanted_domain, computer) && _wcsicmp(wanted_domain, L"."))
         return FALSE;

@@ -1,60 +1,19 @@
 /*
- * security identifiers and the current user's registry key.
+ * sids as text and the current user's registry key. the sid, acl and descriptor routines are in rtl/security.c.
  */
 #include "ntdll_private.h"
-
-typedef struct NTDLL_SID {
-    UCHAR Revision;
-    UCHAR SubAuthorityCount;
-    UCHAR IdentifierAuthority[6];
-    ULONG SubAuthority[];
-} NTDLL_SID;
-
-NTDLL_EXPORT BOOLEAN NTAPI RtlValidSid(PVOID sid)
-{
-    const NTDLL_SID *s = sid;
-    return s && s->Revision == 1 && s->SubAuthorityCount <= 15;
-}
-
-NTDLL_EXPORT ULONG NTAPI RtlLengthSid(PVOID sid)
-{
-    return 8 + 4 * ((const NTDLL_SID *)sid)->SubAuthorityCount;
-}
-
-NTDLL_EXPORT BOOLEAN NTAPI RtlEqualSid(PVOID a, PVOID b)
-{
-    return RtlLengthSid(a) == RtlLengthSid(b) && memcmp(a, b, RtlLengthSid(a)) == 0;
-}
-
-NTDLL_EXPORT NTSTATUS NTAPI RtlCopySid(ULONG length, PVOID dst, PVOID src)
-{
-    ULONG n = RtlLengthSid(src);
-    if (length < n)
-        return STATUS_BUFFER_TOO_SMALL;
-    memcpy(dst, src, n);
-    return STATUS_SUCCESS;
-}
-
-NTDLL_EXPORT PULONG NTAPI RtlSubAuthoritySid(PVOID sid, ULONG index)
-{
-    return &((NTDLL_SID *)sid)->SubAuthority[index];
-}
-
-NTDLL_EXPORT PUCHAR NTAPI RtlSubAuthorityCountSid(PVOID sid)
-{
-    return &((NTDLL_SID *)sid)->SubAuthorityCount;
-}
+#include <mime/ntrtlsec.h>
 
 /* S-1-5-21-..., the authority in decimal below 2^32, else in hex like windows. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PVOID sid, BOOLEAN allocate)
 {
-    const NTDLL_SID *s = sid;
-    if (!RtlValidSid(sid))
-        return (NTSTATUS)0xC0000078L; /* STATUS_INVALID_SID */
+    const SID *s = sid;
+    if (!RtlValidSid(sid) || s->Revision != SID_REVISION)
+        return STATUS_INVALID_SID;
     WCHAR text[256];
     ULONG64 authority = 0;
     for (int i = 0; i < 6; i++)
-        authority = authority << 8 | s->IdentifierAuthority[i];
+        authority = authority << 8 | s->IdentifierAuthority.Value[i];
     int n = authority >> 32 ? _snwprintf(text, 255, L"S-1-0x%llX", authority)
                             : _snwprintf(text, 255, L"S-1-%llu", authority);
     for (UCHAR i = 0; i < s->SubAuthorityCount; i++)
@@ -71,6 +30,16 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PV
     memcpy(out->Buffer, text, bytes);
     out->Buffer[n] = 0;
     out->Length = bytes;
+    return STATUS_SUCCESS;
+}
+
+/* the buffer a text sid needs, in bytes without the terminator, for the longest number of each part. */
+NTDLL_EXPORT NTSTATUS NTAPI RtlLengthSidAsUnicodeString(PVOID sid, PULONG length)
+{
+    const SID *s = sid;
+    if (!RtlValidSid(sid))
+        return STATUS_INVALID_SID;
+    *length = (s->IdentifierAuthority.Value[0] || s->IdentifierAuthority.Value[1] ? 36 : 28) + 22 * s->SubAuthorityCount;
     return STATUS_SUCCESS;
 }
 
