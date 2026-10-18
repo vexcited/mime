@@ -82,14 +82,42 @@ NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULO
     return STATUS_SUCCESS;
 }
 
-/* the inheritable handles of a parent, at the same values in its new child's empty table, as windows does. */
-NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child)
+static BOOLEAN handle_listed(const HANDLE *list, ULONG count, ULONG_PTR index)
+{
+    ULONG low = 0, high = count;
+    while (low < high) {
+        ULONG mid = (low + high) / 2;
+        ULONG_PTR at = HANDLE_TO_INDEX(list[mid]);
+        if (at == index)
+            return TRUE;
+        if (at < index)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    return FALSE;
+}
+
+/*
+ * the inheritable handles of a parent, at the same values in its new child's empty table, as windows does.
+ * with a list, those it names, sorted: each must be a handle of the parent that may be inherited.
+ */
+static NTSTATUS inherit_handles(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG list_count)
 {
     PHANDLE_TABLE from = &parent->HandleTable, to = &child->HandleTable;
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&from->Lock);
+    for (ULONG i = 0; i < list_count; i++) {
+        ULONG_PTR index = HANDLE_TO_INDEX(list[i]);
+        if (((ULONG_PTR)list[i] & 3) || index >= from->Capacity || !from->Entries[index].Object ||
+            !(from->Entries[index].Attributes & OBJ_INHERIT)) {
+            KeReleaseSpinLock(&from->Lock, irql);
+            return STATUS_INVALID_PARAMETER;
+        }
+    }
     ULONG end = 0;
     for (ULONG i = 0; i < from->Capacity; i++)
-        if (from->Entries[i].Object && (from->Entries[i].Attributes & OBJ_INHERIT))
+        if (from->Entries[i].Object && (from->Entries[i].Attributes & OBJ_INHERIT) &&
+            (!list || handle_listed(list, list_count, i)))
             end = i + 1;
     KeReleaseSpinLock(&from->Lock, irql);
     if (!end)
@@ -106,7 +134,7 @@ NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child)
     irql = KeAcquireSpinLockRaiseToDpc(&from->Lock);
     for (ULONG i = 0; i < from->Capacity && i < capacity; i++) {
         HANDLE_TABLE_ENTRY *e = &from->Entries[i];
-        if (!e->Object || !(e->Attributes & OBJ_INHERIT))
+        if (!e->Object || !(e->Attributes & OBJ_INHERIT) || (list && !handle_listed(list, list_count, i)))
             continue;
         OBJECT_HEADER *h = OBJECT_TO_HEADER(e->Object);
         ObReferenceObject(e->Object);
@@ -125,6 +153,16 @@ NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child)
     KeReleaseSpinLock(&to->Lock, irql);
     ExFreePool(old);
     return STATUS_SUCCESS;
+}
+
+NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child)
+{
+    return inherit_handles(parent, child, nullptr, 0);
+}
+
+NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG count)
+{
+    return inherit_handles(parent, child, list, count);
 }
 
 /* consumes the caller's pointer reference to object. */
@@ -684,6 +722,40 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             KiCopyToUser(returned, &need, sizeof(need));
         if (NT_SUCCESS(status))
             status = length < need ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, out, need);
+    } else if (klass == ObjectTypeInformation) {
+        POBJECT_TYPE type = OBJECT_TO_HEADER(object)->Type;
+        struct {
+            UNICODE_STRING TypeName;
+            ULONG TotalNumberOfObjects, TotalNumberOfHandles, TotalPagedPoolUsage, TotalNonPagedPoolUsage;
+            ULONG TotalNamePoolUsage, TotalHandleTableUsage, HighWaterNumberOfObjects, HighWaterNumberOfHandles;
+            ULONG HighWaterPagedPoolUsage, HighWaterNonPagedPoolUsage, HighWaterNamePoolUsage;
+            ULONG HighWaterHandleTableUsage, InvalidAttributes;
+            ULONG GenericMapping[4];
+            ULONG ValidAccessMask;
+            BOOLEAN SecurityRequired, MaintainHandleCount;
+            UCHAR TypeIndex;
+            CHAR ReservedByte;
+            ULONG PoolType, DefaultPagedPoolCharge, DefaultNonPagedPoolCharge;
+        } t = {};
+        ULONG need = sizeof(t) + type->Name.Length + sizeof(WCHAR);
+        t.TypeName.Length = type->Name.Length;
+        t.TypeName.MaximumLength = (USHORT)(type->Name.Length + sizeof(WCHAR));
+        t.TypeName.Buffer = (PWSTR)((PUCHAR)info + sizeof(t));
+        t.TotalNumberOfObjects = t.HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
+        t.TotalNumberOfHandles = t.HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
+        t.InvalidAttributes = 0xB0;
+        t.ValidAccessMask = type->Init.ValidAccessMask;
+        t.TypeIndex = (UCHAR)(type->Index + 2);
+        t.PoolType = 0x200;
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
+        if (length < need) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        } else {
+            status = KiCopyToUser(info, &t, sizeof(t));
+            if (NT_SUCCESS(status))
+                status = KiCopyToUser(t.TypeName.Buffer, type->Name.Buffer, type->Name.Length + sizeof(WCHAR));
+        }
     } else {
         status = STATUS_INVALID_INFO_CLASS;
     }

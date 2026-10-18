@@ -79,14 +79,34 @@ NTSTATUS NTAPI PsLookupThreadByThreadId(HANDLE id, PETHREAD *thread)
     return *thread ? STATUS_SUCCESS : STATUS_INVALID_CID;
 }
 
+/*
+ * a process or thread by handle. a caller in user mode needs the rights it asks for in the handle, the pseudo
+ * handles of the caller have them all.
+ */
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process)
 {
-    return ObReferenceHandle(handle, PsProcessTypeObject, KeGetPreviousMode(), (PVOID *)process, nullptr);
+    ACCESS_MASK granted = 0;
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    NTSTATUS status = ObReferenceHandle(handle, PsProcessTypeObject, mode, (PVOID *)process, &granted);
+    if (NT_SUCCESS(status) && mode == UserMode && (granted & access) != access) {
+        ObDereferenceObject(*process);
+        *process = nullptr;
+        status = STATUS_ACCESS_DENIED;
+    }
+    return status;
 }
 
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread)
 {
-    return ObReferenceHandle(handle, PsThreadTypeObject, KeGetPreviousMode(), (PVOID *)thread, nullptr);
+    ACCESS_MASK granted = 0;
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    NTSTATUS status = ObReferenceHandle(handle, PsThreadTypeObject, mode, (PVOID *)thread, &granted);
+    if (NT_SUCCESS(status) && mode == UserMode && (granted & access) != access) {
+        ObDereferenceObject(*thread);
+        *thread = nullptr;
+        status = STATUS_ACCESS_DENIED;
+    }
+    return status;
 }
 
 PEPROCESS NTAPI PsGetCurrentProcess(void)
@@ -287,22 +307,80 @@ NTSTATUS NTAPI NtTerminateProcess(HANDLE handle, NTSTATUS exit_status)
     return STATUS_SUCCESS;
 }
 
+/* the rights a class of NtQueryInformationProcess needs: the limited ones are for what anyone may see. */
+static ACCESS_MASK query_rights(PROCESSINFOCLASS klass)
+{
+    switch ((ULONG)klass) {
+    case ProcessBasicInformation:
+    case ProcessTimes:
+    case ProcessImageFileName:
+    case ProcessImageFileNameWin32:
+    case ProcessHandleCount:
+    case ProcessWow64Information:
+    case ProcessSessionInformation:
+    case ProcessProtectionInformation:
+        return PROCESS_QUERY_LIMITED_INFORMATION;
+    default:
+        return PROCESS_QUERY_INFORMATION;
+    }
+}
+
+/* the handle values of a process, ProcessHandleTable: an array of 32-bit values. */
+static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, ULONG *size)
+{
+    PHANDLE_TABLE table = &process->HandleTable;
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG capacity = table->Capacity;
+    KeReleaseSpinLock(&table->Lock, irql);
+    PULONG values = ExAllocatePool2(POOL_FLAG_PAGED, (SIZE_T)(capacity ? capacity : 1) * sizeof(ULONG), KI_TAG('P', 's', 'H', 'T'));
+    if (!values)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG count = 0;
+    irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    for (ULONG i = 0; i < table->Capacity && i < capacity; i++)
+        if (table->Entries[i].Object)
+            values[count++] = (i + 1) * 4;
+    KeReleaseSpinLock(&table->Lock, irql);
+    *size = count * sizeof(ULONG);
+    NTSTATUS status = length < *size ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, values, *size);
+    ExFreePool(values);
+    return status;
+}
+
+/* the kernel and user time of a process: the sum of its threads. */
+static void process_times(PEPROCESS process, ULONG64 *times)
+{
+    ULONG64 kernel = 0, user = 0;
+    ULONG64 s = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
+        PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        kernel += t->Tcb.KernelTime;
+        user += t->Tcb.UserTime;
+    }
+    KiReleaseDispatcherLock(s);
+    times[0] = process->CreateTime;
+    times[1] = process->Exited ? process->ExitTime : 0;
+    times[2] = kernel;
+    times[3] = user;
+}
+
 NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length,
                                          PULONG returned)
 {
     PEPROCESS process;
-    NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_QUERY_INFORMATION, &process);
+    NTSTATUS status = PsReferenceProcessHandle(handle, query_rights(klass), &process);
     if (!NT_SUCCESS(status))
         return status;
     union {
         PROCESS_BASIC_INFORMATION basic;
         ULONG_PTR ptr;
-        ULONG u32;
+        ULONG u32[2];
+        ULONG64 times[4];
         UCHAR bytes[1040];
     } out;
     ULONG size = 0;
     memset(&out, 0, sizeof(out));
-    switch (klass) {
+    switch ((ULONG)klass) {
     case ProcessBasicInformation:
         out.basic.ExitStatus = process->Exited ? process->ExitStatus : STATUS_PENDING;
         out.basic.PebBaseAddress = process->Peb;
@@ -312,8 +390,20 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         out.basic.InheritedFromUniqueProcessId = (ULONG_PTR)process->InheritedFromUniqueProcessId;
         size = sizeof(out.basic);
         break;
+    case ProcessIoCounters:
+        size = 48;
+        break;
+    case ProcessTimes:
+        process_times(process, out.times);
+        size = sizeof(out.times);
+        break;
     case ProcessDebugPort:
         size = sizeof(ULONG_PTR);
+        break;
+    case ProcessHandleCount:
+        /* the handles now and the most there were. */
+        out.u32[0] = out.u32[1] = (ULONG)process->HandleTable.Count;
+        size = 8;
         break;
     case ProcessWow64Information:
         /* the 32-bit peb of a wow64 process, 0 for any other. */
@@ -321,21 +411,38 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG_PTR);
         break;
     case ProcessDebugFlags:
-        out.u32 = 1;
+        out.u32[0] = 1;
         size = sizeof(ULONG);
         break;
     case ProcessDefaultHardErrorMode:
-    case ProcessExecuteFlags:
         size = sizeof(ULONG);
         break;
+    case ProcessExecuteFlags:
+        /* execution disabled for data, permanently, with the dispatch and sehop defaults of a 64-bit process. */
+        out.u32[0] = 0x39;
+        size = sizeof(ULONG);
+        break;
+    case ProcessProtectionInformation:
+        size = 1;
+        break;
     case ProcessSessionInformation:
-        out.u32 = 1;
+        out.u32[0] = 1;
         size = sizeof(ULONG);
         break;
     case ProcessCookie:
-        out.u32 = SharedUserData->Cookie ^ (ULONG)(ULONG_PTR)process->UniqueProcessId * 0x9E3779B1u;
+        out.u32[0] = SharedUserData->Cookie ^ (ULONG)(ULONG_PTR)process->UniqueProcessId * 0x9E3779B1u;
         size = sizeof(ULONG);
         break;
+    case ProcessMitigationPolicy:
+        status = PspQueryMitigationPolicy(process, info, length, returned);
+        ObDereferenceObject(process);
+        return status;
+    case ProcessHandleTable:
+        status = query_handle_table(process, info, length, &size);
+        if (returned)
+            KiCopyToUser(returned, &size, sizeof(size));
+        ObDereferenceObject(process);
+        return status;
     case ProcessImageFileName:
     case ProcessImageFileNameWin32: {
         UNICODE_STRING *us = (UNICODE_STRING *)out.bytes;
@@ -373,19 +480,113 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
 {
     if (klass == ProcessAccessToken)
         return SepSetProcessAccessToken(handle, info, length);
+    if (klass == ProcessMitigationPolicy)
+        return PspSetMitigationPolicy(handle, info, length);
+    PEPROCESS process;
+    NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+    if (NT_SUCCESS(status))
+        ObDereferenceObject(process);
+    return status;
+}
+
+/* generic rights as the rights of a process. */
+static ACCESS_MASK map_process_access(ACCESS_MASK access)
+{
+    if (access & (MAXIMUM_ALLOWED | GENERIC_ALL))
+        return PROCESS_ALL_ACCESS;
+    ACCESS_MASK mapped = access & PROCESS_ALL_ACCESS;
+    if (access & GENERIC_READ)
+        mapped |= READ_CONTROL | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION;
+    if (access & GENERIC_WRITE)
+        mapped |= READ_CONTROL | PROCESS_CREATE_PROCESS | PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION |
+                  PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_TERMINATE | PROCESS_SET_QUOTA |
+                  PROCESS_SET_INFORMATION | PROCESS_SUSPEND_RESUME;
+    if (access & GENERIC_EXECUTE)
+        mapped |= READ_CONTROL | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE;
+    return mapped;
+}
+
+static ACCESS_MASK map_thread_access(ACCESS_MASK access)
+{
+    if (access & (MAXIMUM_ALLOWED | GENERIC_ALL))
+        return THREAD_ALL_ACCESS;
+    ACCESS_MASK mapped = access & THREAD_ALL_ACCESS;
+    if (access & GENERIC_READ)
+        mapped |= READ_CONTROL | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION;
+    if (access & GENERIC_WRITE)
+        mapped |= READ_CONTROL | THREAD_SUSPEND_RESUME | THREAD_SET_CONTEXT | THREAD_SET_INFORMATION |
+                  THREAD_SET_LIMITED_INFORMATION | THREAD_SET_THREAD_TOKEN | THREAD_TERMINATE;
+    if (access & GENERIC_EXECUTE)
+        mapped |= READ_CONTROL | SYNCHRONIZE | THREAD_QUERY_LIMITED_INFORMATION | THREAD_TERMINATE;
+    return mapped;
+}
+
+/* the client id and the attributes that matter of an open: whether the handle is inherited. */
+static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, CLIENT_ID *id, ULONG *handle_attributes)
+{
+    OBJECT_ATTRIBUTES oa;
+    *handle_attributes = 0;
+    if (attributes) {
+        if (!NT_SUCCESS(KiCopyFromUser(&oa, attributes, sizeof(oa))))
+            return STATUS_ACCESS_VIOLATION;
+        if (oa.Length != sizeof(oa))
+            return STATUS_INVALID_PARAMETER;
+        /* processes and threads are found by their ids, not by name. */
+        if (oa.ObjectName)
+            return STATUS_INVALID_PARAMETER_MIX;
+        *handle_attributes = oa.Attributes & OBJ_INHERIT;
+    }
+    if (!cid || !NT_SUCCESS(KiCopyFromUser(id, cid, sizeof(*id))))
+        return STATUS_INVALID_PARAMETER_MIX;
     return STATUS_SUCCESS;
 }
 
 NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid)
 {
     CLIENT_ID id;
-    if (!cid || !NT_SUCCESS(KiCopyFromUser(&id, cid, sizeof(id))))
-        return STATUS_INVALID_PARAMETER;
+    ULONG handle_attributes;
+    NTSTATUS status = open_attributes(attributes, cid, &id, &handle_attributes);
+    if (!NT_SUCCESS(status))
+        return status;
     PEPROCESS process = PspLookupProcess(id.UniqueProcess);
     if (!process)
         return STATUS_INVALID_CID;
+    if (id.UniqueThread && (HANDLE)(ULONG_PTR)id.UniqueThread != nullptr) {
+        /* a thread id names the process of that thread, which must be this one. */
+        PETHREAD thread = PspLookupThread(id.UniqueThread);
+        if (!thread || (PEPROCESS)thread->Tcb.Process != process) {
+            if (thread)
+                ObDereferenceObject(thread);
+            ObDereferenceObject(process);
+            return STATUS_INVALID_CID;
+        }
+        ObDereferenceObject(thread);
+    }
     HANDLE h;
-    NTSTATUS status = ObInsertObject(process, access, 0, &h);
+    status = ObInsertObject(process, map_process_access(access), handle_attributes, &h);
+    if (NT_SUCCESS(status))
+        status = ObStoreHandle(handle, h);
+    return status;
+}
+
+NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid)
+{
+    CLIENT_ID id;
+    ULONG handle_attributes;
+    NTSTATUS status = open_attributes(attributes, cid, &id, &handle_attributes);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (!id.UniqueThread)
+        return STATUS_INVALID_CID;
+    PETHREAD thread = PspLookupThread(id.UniqueThread);
+    if (!thread)
+        return STATUS_INVALID_CID;
+    if (id.UniqueProcess && (HANDLE)(ULONG_PTR)id.UniqueProcess != ((PEPROCESS)thread->Tcb.Process)->UniqueProcessId) {
+        ObDereferenceObject(thread);
+        return STATUS_INVALID_CID;
+    }
+    HANDLE h;
+    status = ObInsertObject(thread, map_thread_access(access), handle_attributes, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     return status;

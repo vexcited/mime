@@ -6,8 +6,11 @@
  * every process in it, as programs that run children in a job expect.
  *
  * nested jobs are flattened: a process assigned to a second job moves to
- * it. limits are recorded and reported but not enforced, except the kill
- * on close and the breakaway flags.
+ * it. limits are recorded and reported; enforced are the kill on close,
+ * the breakaway flags and the limit of active processes. a process that
+ * would be one too many is not created, or not assigned, with
+ * STATUS_QUOTA_EXCEEDED, and the port is told as windows does: the limit
+ * was hit, and the process that was refused left.
  */
 #include "../ntos.h"
 
@@ -17,10 +20,13 @@
 #define JOB_OBJECT_TERMINATE 0x0008
 #define JOB_OBJECT_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x3F)
 
+#define JOB_OBJECT_LIMIT_ACTIVE_PROCESS 0x00000008
+#define JOB_OBJECT_LIMIT_VALID 0x00007FFF
 #define JOB_OBJECT_LIMIT_BREAKAWAY_OK 0x00000800
 #define JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK 0x00001000
 #define JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE 0x00002000
 
+#define JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT 3
 #define JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO 4
 #define JOB_OBJECT_MSG_NEW_PROCESS 6
 #define JOB_OBJECT_MSG_EXIT_PROCESS 7
@@ -87,6 +93,19 @@ static void post(EJOB *job, ULONG message, PEPROCESS process)
         IopQueueCompletion(job->Port, job->Key, process ? process->UniqueProcessId : nullptr, STATUS_SUCCESS, message);
 }
 
+/* a job by handle, which must grant the rights asked of a caller in user mode. */
+static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
+{
+    ACCESS_MASK granted = 0;
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    NTSTATUS status = ObReferenceHandle(handle, PsJobType, mode, (PVOID *)job, &granted);
+    if (NT_SUCCESS(status) && mode == UserMode && (granted & access) != access) {
+        ObDereferenceObject(*job);
+        status = STATUS_ACCESS_DENIED;
+    }
+    return status;
+}
+
 /* every process of the job, referenced. */
 static ULONG snapshot(EJOB *job, PEPROCESS *out, ULONG max)
 {
@@ -109,6 +128,8 @@ static void terminate_all(EJOB *job, NTSTATUS status)
     for (ULONG i = 0; i < n; i++) {
         if (processes[i] != PsCurrentProcess())
             PspTerminateProcess(processes[i], status);
+        /* only the processes the job ended are counted, not those that ended by themselves. */
+        __atomic_add_fetch(&job->Terminated, 1, __ATOMIC_RELAXED);
         ObDereferenceObject(processes[i]);
     }
 }
@@ -137,13 +158,27 @@ void PspInitializeJobs(void)
     PsJobType = ObCreateObjectType(L"Job", &init);
 }
 
-/* puts a process in a job, leaving the one it was in. */
-static void join(EJOB *job, PEPROCESS process)
+/*
+ * puts a process in a job, leaving the one it was in. the same job twice is refused, and so is a
+ * job that holds as many processes as it may.
+ */
+static NTSTATUS join(EJOB *job, PEPROCESS process)
 {
     EJOB *old = process->Job;
     if (old == job)
-        return;
+        return STATUS_ACCESS_DENIED;
     KIRQL irql;
+    KeAcquireSpinLock(&job->Lock, &irql);
+    if ((job->Limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS) &&
+        job->Active >= job->Limits.BasicLimitInformation.ActiveProcessLimit) {
+        KeReleaseSpinLock(&job->Lock, irql);
+        post(job, JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, nullptr);
+        return STATUS_QUOTA_EXCEEDED;
+    }
+    job->Active++;
+    job->Total++;
+    KeReleaseSpinLock(&job->Lock, irql);
+    ObReferenceObject(job);
     if (old) {
         KeAcquireSpinLock(&old->Lock, &irql);
         RemoveEntryList(&process->JobLinks);
@@ -151,28 +186,57 @@ static void join(EJOB *job, PEPROCESS process)
         KeReleaseSpinLock(&old->Lock, irql);
         ObDereferenceObject(old);
     }
-    ObReferenceObject(job);
     KeAcquireSpinLock(&job->Lock, &irql);
     InsertTailList(&job->Processes, &process->JobLinks);
-    job->Active++;
-    job->Total++;
-    process->Job = job;
     KeReleaseSpinLock(&job->Lock, irql);
+    process->Job = job;
     post(job, JOB_OBJECT_MSG_NEW_PROCESS, process);
+    return STATUS_SUCCESS;
 }
 
-/* a new process joins its creator's job, unless it may break away and asked to, or must. */
-void PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
+/*
+ * a new process joins its creator's job, unless it may break away and asked to, or must. a job at its
+ * limit refuses it, and then it has left again as far as the port is concerned.
+ */
+NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
 {
     EJOB *job = parent ? parent->Job : nullptr;
     if (!job)
-        return;
+        return STATUS_SUCCESS;
     ULONG limits = job->Limits.BasicLimitInformation.LimitFlags;
     if (limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
-        return;
+        return STATUS_SUCCESS;
     if ((flags & PROCESS_CREATE_FLAGS_BREAKAWAY) && (limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK))
-        return;
-    join(job, process);
+        return STATUS_SUCCESS;
+    NTSTATUS status = join(job, process);
+    if (!NT_SUCCESS(status))
+        post(job, JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS, process);
+    return status;
+}
+
+/* the job a list of handles puts a new process in, which is the last, and every one must take it. */
+NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB **out)
+{
+    EJOB *job = nullptr;
+    for (ULONG i = 0; i < count; i++) {
+        EJOB *next;
+        NTSTATUS status = reference_job(list[i], JOB_OBJECT_ASSIGN_PROCESS, &next);
+        if (job)
+            ObDereferenceObject(job);
+        if (!NT_SUCCESS(status))
+            return status;
+        job = next;
+    }
+    *out = (struct EJOB *)job;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process)
+{
+    NTSTATUS status = join((EJOB *)job, process);
+    if (!NT_SUCCESS(status))
+        post((EJOB *)job, JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS, process);
+    return status;
 }
 
 /* the last thread of a process left: the job counts it out. */
@@ -185,7 +249,6 @@ void PspJobProcessExit(PEPROCESS process)
     KeAcquireSpinLock(&job->Lock, &irql);
     RemoveEntryList(&process->JobLinks);
     BOOLEAN last = --job->Active == 0;
-    job->Terminated++;
     process->Job = nullptr;
     KeReleaseSpinLock(&job->Lock, irql);
     BOOLEAN abnormal = ((ULONG)process->ExitStatus & 0xC0000000u) == 0xC0000000u;
@@ -244,7 +307,7 @@ NTSTATUS NTAPI NtOpenJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
 NTSTATUS NTAPI NtAssignProcessToJobObject(HANDLE job_handle, HANDLE process_handle)
 {
     EJOB *job;
-    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
+    NTSTATUS status = reference_job(job_handle, JOB_OBJECT_ASSIGN_PROCESS, &job);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS process;
@@ -253,7 +316,7 @@ NTSTATUS NTAPI NtAssignProcessToJobObject(HANDLE job_handle, HANDLE process_hand
         if (process->Terminating || process->SystemProcess)
             status = STATUS_PROCESS_IS_TERMINATING;
         else
-            join(job, process);
+            status = join(job, process);
         ObDereferenceObject(process);
     }
     ObDereferenceObject(job);
@@ -280,7 +343,7 @@ NTSTATUS NTAPI NtIsProcessInJob(HANDLE process_handle, HANDLE job_handle)
 NTSTATUS NTAPI NtTerminateJobObject(HANDLE job_handle, NTSTATUS exit_status)
 {
     EJOB *job;
-    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
+    NTSTATUS status = reference_job(job_handle, JOB_OBJECT_TERMINATE, &job);
     if (!NT_SUCCESS(status))
         return status;
     terminate_all(job, exit_status);
@@ -296,7 +359,7 @@ NTSTATUS NTAPI NtTerminateJobObject(HANDLE job_handle, NTSTATUS exit_status)
 NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID info, ULONG length)
 {
     EJOB *job;
-    NTSTATUS status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
+    NTSTATUS status = reference_job(job_handle, JOB_OBJECT_SET_ATTRIBUTES, &job);
     if (!NT_SUCCESS(status))
         return status;
     union {
@@ -323,9 +386,16 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
     if (NT_SUCCESS(status)) {
         switch (klass) {
         case JobObjectBasicLimitInformation:
-            job->Limits.BasicLimitInformation = in.basic;
+            if (in.basic.LimitFlags & ~JOB_OBJECT_LIMIT_VALID)
+                status = STATUS_INVALID_PARAMETER;
+            else
+                job->Limits.BasicLimitInformation = in.basic;
             break;
         case JobObjectExtendedLimitInformation:
+            if (in.extended.BasicLimitInformation.LimitFlags & ~JOB_OBJECT_LIMIT_VALID) {
+                status = STATUS_INVALID_PARAMETER;
+                break;
+            }
             job->Limits.BasicLimitInformation = in.extended.BasicLimitInformation;
             job->Limits.ProcessMemoryLimit = in.extended.ProcessMemoryLimit;
             job->Limits.JobMemoryLimit = in.extended.JobMemoryLimit;
@@ -366,7 +436,7 @@ NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job_handle, ULONG klass, PVOID
     EJOB *job = nullptr;
     NTSTATUS status;
     if (job_handle) {
-        status = ObReferenceHandle(job_handle, PsJobType, KeGetPreviousMode(), (PVOID *)&job, nullptr);
+        status = reference_job(job_handle, JOB_OBJECT_QUERY, &job);
     } else {
         /* no handle asks about the job of the calling process. */
         job = PsCurrentProcess()->Job;

@@ -862,7 +862,12 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
         ObDereferenceObject(section);
         return status;
     }
-    status = MiMapViewOfSection(section, process, &b, (ULONG64)off.QuadPart, &vs, protect, allocation_type);
+    /* data mapped as code is dynamic code. */
+    if ((protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
+        !(section->Flags & SEC_IMAGE) && PsDynamicCodeBlocked(process))
+        status = (NTSTATUS)0xC0000604L; /* STATUS_DYNAMIC_CODE_BLOCKED */
+    else
+        status = MiMapViewOfSection(section, process, &b, (ULONG64)off.QuadPart, &vs, protect, allocation_type);
     if (NT_SUCCESS(status)) {
         KiCopyToUser(base, &b, sizeof(b));
         if (view_size)

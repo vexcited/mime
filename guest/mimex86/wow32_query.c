@@ -572,6 +572,26 @@ NTSTATUS Mx32QueryObject(const ULONG *a)
     }
     case ObjectNameInformation:
         return query_string32(query_object_string, a);
+    case ObjectTypeInformation: {
+        /* the name's header is 8 bytes shorter, the 88 bytes of counts and masks after it are the same. */
+        if (length > 0xFFFF0000u)
+            return STATUS_INVALID_PARAMETER;
+        PUCHAR native = Mx32Scratch((SIZE_T)length + 8);
+        if (!native)
+            return STATUS_NO_MEMORY;
+        ULONG needed = 0;
+        NTSTATUS status = NtQueryObject(handle, klass, native, length + 8, &needed);
+        if (NT_SUCCESS(status)) {
+            const UNICODE_STRING *name = (const UNICODE_STRING *)native;
+            PUCHAR out = pointer32(a[2]);
+            *(MIME_STRING32 *)out = (MIME_STRING32){name->Length, name->MaximumLength, (ULONG)(ULONG_PTR)(out + 0x60)};
+            memcpy(out + 8, native + 16, 88);
+            memcpy(out + 0x60, native + 0x68, name->MaximumLength);
+        }
+        store32(a[4], needed > 8 ? needed - 8 : needed);
+        Mx32FreeScratch(native);
+        return status;
+    }
     case ObjectHandleFlagInformation:
         return NtQueryObject(handle, klass, pointer32(a[2]), length, pointer32(a[4]));
     default:

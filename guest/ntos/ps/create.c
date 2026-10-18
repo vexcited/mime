@@ -238,7 +238,7 @@ static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
 }
 
 static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG64 request_id, MIME_CONSOLE *console,
-                               BOOLEAN suspended, PEPROCESS *out, PETHREAD *initial_thread)
+                               BOOLEAN suspended, PEPROCESS parent, PEPROCESS *out, PETHREAD *initial_thread)
 {
     PCUNICODE_STRING image = &p->Image;
     UNICODE_STRING nt_path;
@@ -266,7 +266,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     }
 
     PEPROCESS process;
-    status = PspCreateProcessObject(PsCurrentProcess(), &process);
+    status = PspCreateProcessObject(parent, &process);
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(section);
         return status;
@@ -275,7 +275,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     if (token) {
         SepSetProcessToken(process, token);
     } else {
-        status = SepAssignProcessToken(process, PsCurrentProcess());
+        status = SepAssignProcessToken(process, parent);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(section);
             PspTerminateProcess(process, status);
@@ -320,8 +320,19 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         }
         process->NtdllBase = ntdll;
     }
+    /* a 32-bit program has the 32-bit ntdll beside the native one, at its base. */
+    PVOID ntdll32 = nullptr;
+    if (NT_SUCCESS(status) && PspIsWow64Process(process) && PspWow64NtdllSection) {
+        SIZE_T ntdll32_view = 0;
+        status = MiMapViewOfSection(PspWow64NtdllSection, process, &ntdll32, 0, &ntdll32_view, PAGE_EXECUTE_WRITECOPY, 0);
+        if (status == STATUS_IMAGE_NOT_AT_BASE)
+            status = STATUS_SUCCESS;
+    }
     if (NT_SUCCESS(status))
         status = setup_peb(process, p);
+    /* where it is is told in a spare pointer of the peb, for wow64.dll. */
+    if (NT_SUCCESS(status) && ntdll32)
+        process->Peb->SparePointers[0] = ntdll32;
     if (NT_SUCCESS(status) && PspIsWow64Process(process))
         status = setup_wow64_peb(process);
     KiAttachProcess(saved);
@@ -353,7 +364,7 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
     PSP_PARAMS p = {.Image = *image, .CommandLine = *cmdline, .CurrentDirectory = cwd ? *cwd : default_cwd,
                     .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
-    return create_process(&p, nullptr, request_id, console, FALSE, out, nullptr);
+    return create_process(&p, nullptr, request_id, console, FALSE, PsCurrentProcess(), out, nullptr);
 }
 
 static void free_params(PSP_PARAMS *p)
@@ -367,6 +378,24 @@ static void free_params(PSP_PARAMS *p)
         ExFreePool(p->RuntimeData);
     if (p->Environment)
         ExFreePool(p->Environment);
+}
+
+/* the image of an attribute instead of the parameters', an nt path without its prefix. */
+static NTSTATUS replace_image(PSP_PARAMS *p, PCUNICODE_STRING image)
+{
+    SIZE_T chars = image->Length / sizeof(WCHAR), skip = 0;
+    if (chars >= 4 && !memcmp(image->Buffer, L"\\??\\", 4 * sizeof(WCHAR)))
+        skip = 4;
+    PWSTR copy = ExAllocatePool2(POOL_FLAG_PAGED, (chars - skip + 1) * sizeof(WCHAR), KI_TAG('C', 'a', 'p', 'S'));
+    if (!copy)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memcpy(copy, image->Buffer + skip, (chars - skip) * sizeof(WCHAR));
+    copy[chars - skip] = 0;
+    KiFreeCapturedString(&p->Image);
+    p->Image.Buffer = copy;
+    p->Image.Length = (USHORT)((chars - skip) * sizeof(WCHAR));
+    p->Image.MaximumLength = (USHORT)(p->Image.Length + sizeof(WCHAR));
+    return STATUS_SUCCESS;
 }
 
 /* the creator's parameters, read once from its memory. */
@@ -425,31 +454,292 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
     return status;
 }
 
-/* the attributes of the list that mime knows: the primary token of the new process, as a handle. */
-static NTSTATUS capture_attributes(const PS_ATTRIBUTE_LIST *user, HANDLE *token)
+/*
+ * the attribute list of NtCreateUserProcess. an attribute is a number, a size, a value and an optional
+ * place for a length. an input attribute whose number has the additive bit carries its value, the
+ * others point at it. what mime does with each:
+ *   token, parent process, handle list, job list, mitigation options, child process policy,
+ *   win32k filter, the policies of app containers, client id and teb address (out)  taken.
+ *   image name  replaces the image of the parameters.
+ *   the rest of the attributes windows knows: checked for their size and ignored.
+ */
+#define PS_ATTRIBUTE_PARENT_PROCESS 0x00060000u
+#define PS_ATTRIBUTE_DEBUG_PORT 0x00060001u
+#define PS_ATTRIBUTE_CLIENT_ID 0x00010003u
+#define PS_ATTRIBUTE_TEB_ADDRESS 0x00010004u
+#define PS_ATTRIBUTE_IMAGE_NAME 0x00020005u
+#define PS_ATTRIBUTE_IMAGE_INFO 0x00000006u
+#define PS_ATTRIBUTE_MEMORY_RESERVE 0x00020007u
+#define PS_ATTRIBUTE_PRIORITY_CLASS 0x00020008u
+#define PS_ATTRIBUTE_ERROR_MODE 0x00020009u
+#define PS_ATTRIBUTE_STD_HANDLE_INFO 0x0002000Au
+#define PS_ATTRIBUTE_HANDLE_LIST 0x0002000Bu
+#define PS_ATTRIBUTE_GROUP_AFFINITY 0x0003000Cu
+#define PS_ATTRIBUTE_PREFERRED_NODE 0x0002000Du
+#define PS_ATTRIBUTE_IDEAL_PROCESSOR 0x0003000Eu
+#define PS_ATTRIBUTE_MITIGATION_OPTIONS 0x00020010u
+#define PS_ATTRIBUTE_PROTECTION_LEVEL 0x00060011u
+#define PS_ATTRIBUTE_JOB_LIST 0x00020013u
+#define PS_ATTRIBUTE_CHILD_PROCESS_POLICY 0x00020014u
+#define PS_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY 0x00020015u
+#define PS_ATTRIBUTE_WIN32K_FILTER 0x00020016u
+#define PS_ATTRIBUTE_SAFE_OPEN_PROMPT_ORIGIN_CLAIM 0x00020017u
+#define PS_ATTRIBUTE_BNO_ISOLATION 0x00020018u
+#define PS_ATTRIBUTE_DESKTOP_APP_POLICY 0x00020019u
+#define PS_ATTRIBUTE_CHPE 0x0006001Au
+#define PS_ATTRIBUTE_MITIGATION_AUDIT_OPTIONS 0x0002001Bu
+#define PS_ATTRIBUTE_MACHINE_TYPE 0x0006001Cu
+#define PS_ATTRIBUTE_COMPONENT_FILTER 0x0002001Du
+#define PS_ATTRIBUTE_ENABLE_OPTIONAL_XSTATE_FEATURES 0x0003001Eu
+
+#define PS_ATTRIBUTE_MAX_COUNT 32
+#define PS_HANDLES_MAX 0x10000
+
+typedef struct PSP_ATTRIBUTES {
+    HANDLE Token;
+    HANDLE Parent;
+    PHANDLE HandleList; /* kernel copies, sorted */
+    ULONG HandleCount;
+    BOOLEAN HasHandleList;
+    PHANDLE JobList;
+    ULONG JobCount;
+    BOOLEAN HasMitigation;
+    ULONG64 Mitigation[3];
+    BOOLEAN HasChildPolicy;
+    ULONG ChildPolicy;
+    ULONG Win32kFilter[2];
+    ULONG AllApplicationPackages, DesktopApp, ComponentFilter;
+    UNICODE_STRING Image;    /* the image name, captured */
+    PVOID ClientId;          /* where the process and thread ids go, and where their length */
+    PSIZE_T ClientIdLength;
+    PVOID TebAddress;
+    PSIZE_T TebAddressLength;
+} PSP_ATTRIBUTES;
+
+static void free_attributes(PSP_ATTRIBUTES *a)
+{
+    if (a->HandleList)
+        ExFreePool(a->HandleList);
+    if (a->JobList)
+        ExFreePool(a->JobList);
+    KiFreeCapturedString(&a->Image);
+}
+
+/* a list of handles of eight bytes each, copied to the kernel. */
+static NTSTATUS capture_handles(const PS_ATTRIBUTE *attribute, PHANDLE *list, ULONG *count)
+{
+    SIZE_T size = attribute->Size;
+    if (!size || (size & 7) || size > PS_HANDLES_MAX * sizeof(HANDLE))
+        return STATUS_INVALID_PARAMETER;
+    PHANDLE copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('P', 's', 'H', 'l'));
+    if (!copy)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    NTSTATUS status = KiCopyFromUser(copy, attribute->ValuePtr, size);
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(copy);
+        return status;
+    }
+    *list = copy;
+    *count = (ULONG)(size / sizeof(HANDLE));
+    return STATUS_SUCCESS;
+}
+
+/* ordered by the low word of the handle, the way the inheritance looks for them. */
+static void sort_handles(PHANDLE list, ULONG count)
+{
+    for (ULONG gap = count / 2; gap; gap /= 2) {
+        for (ULONG i = gap; i < count; i++) {
+            HANDLE value = list[i];
+            ULONG j = i;
+            for (; j >= gap && (ULONG)(ULONG_PTR)list[j - gap] > (ULONG)(ULONG_PTR)value; j -= gap)
+                list[j] = list[j - gap];
+            list[j] = value;
+        }
+    }
+}
+
+static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
+{
+    ULONG number = (ULONG)attribute->Attribute;
+    SIZE_T size = attribute->Size;
+    ULONG word = 0;
+    NTSTATUS status;
+    /* a pointer to a value of a given size, read now. */
+#define VALUE(length, destination) \
+    if (size != (length)) return STATUS_INVALID_PARAMETER; \
+    status = KiCopyFromUser((destination), attribute->ValuePtr, (length)); \
+    if (!NT_SUCCESS(status)) return status
+    switch (number) {
+    case PS_ATTRIBUTE_PARENT_PROCESS:
+        if (size != sizeof(HANDLE))
+            return STATUS_INVALID_PARAMETER;
+        a->Parent = attribute->ValuePtr;
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_DEBUG_PORT:
+        return STATUS_NOT_SUPPORTED;
+    case PS_ATTRIBUTE_TOKEN:
+        if (size != sizeof(HANDLE))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        a->Token = attribute->ValuePtr;
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_CLIENT_ID:
+        if (size != 16)
+            return STATUS_INVALID_PARAMETER;
+        a->ClientId = attribute->ValuePtr;
+        a->ClientIdLength = attribute->ReturnLength;
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_TEB_ADDRESS:
+        if (size != sizeof(PVOID))
+            return STATUS_INVALID_PARAMETER;
+        a->TebAddress = attribute->ValuePtr;
+        a->TebAddressLength = attribute->ReturnLength;
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_IMAGE_NAME:
+        if (!size || (size & 1) || size > 0xFFFE)
+            return STATUS_INVALID_PARAMETER;
+        a->Image.Buffer = ExAllocatePool2(POOL_FLAG_PAGED, size + sizeof(WCHAR), KI_TAG('P', 's', 'I', 'm'));
+        if (!a->Image.Buffer)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        a->Image.Length = (USHORT)size;
+        a->Image.MaximumLength = (USHORT)(size + sizeof(WCHAR));
+        status = KiCopyFromUser(a->Image.Buffer, attribute->ValuePtr, size);
+        a->Image.Buffer[size / sizeof(WCHAR)] = 0;
+        return status;
+    case PS_ATTRIBUTE_HANDLE_LIST:
+        a->HasHandleList = TRUE;
+        return capture_handles(attribute, &a->HandleList, &a->HandleCount);
+    case PS_ATTRIBUTE_JOB_LIST:
+        return capture_handles(attribute, &a->JobList, &a->JobCount);
+    case PS_ATTRIBUTE_MITIGATION_OPTIONS:
+        if (size != 8 && size != 16 && size != 24)
+            return STATUS_INVALID_PARAMETER;
+        status = KiCopyFromUser(a->Mitigation, attribute->ValuePtr, size);
+        a->HasMitigation = TRUE;
+        return status;
+    case PS_ATTRIBUTE_CHILD_PROCESS_POLICY:
+        VALUE(4, &word);
+        if (word & ~7u)
+            return STATUS_INVALID_PARAMETER;
+        a->ChildPolicy = word;
+        a->HasChildPolicy = TRUE;
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY:
+        VALUE(4, &a->AllApplicationPackages);
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_DESKTOP_APP_POLICY:
+        VALUE(4, &a->DesktopApp);
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_COMPONENT_FILTER:
+        VALUE(4, &a->ComponentFilter);
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_WIN32K_FILTER:
+        VALUE(8, a->Win32kFilter);
+        return STATUS_SUCCESS;
+    /* known, sized, and not acted on. */
+    case PS_ATTRIBUTE_PRIORITY_CLASS:
+    case PS_ATTRIBUTE_PROTECTION_LEVEL:
+        return size == 1 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_ERROR_MODE:
+    case PS_ATTRIBUTE_CHPE:
+        return STATUS_SUCCESS;
+    case PS_ATTRIBUTE_PREFERRED_NODE:
+    case PS_ATTRIBUTE_MACHINE_TYPE:
+        return size == 2 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_IDEAL_PROCESSOR:
+        return size == 4 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_GROUP_AFFINITY:
+        return size == 16 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_MEMORY_RESERVE:
+        return size == 16 || size == 24 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_STD_HANDLE_INFO:
+        return size == 16 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_ENABLE_OPTIONAL_XSTATE_FEATURES:
+        return size == 8 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_BNO_ISOLATION:
+        return size == 40 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_SAFE_OPEN_PROMPT_ORIGIN_CLAIM:
+        return size == 524 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_MITIGATION_AUDIT_OPTIONS:
+        return size == 8 || size == 16 || size == 24 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_IMAGE_INFO:
+        return STATUS_NOT_SUPPORTED;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+#undef VALUE
+}
+
+/*
+ * the list: its length in bytes is the size of a length plus a whole number of attributes, at most
+ * PS_ATTRIBUTE_MAX_COUNT of them, none twice, and an input attribute has no place for a length.
+ */
+static NTSTATUS capture_attributes(const PS_ATTRIBUTE_LIST *user, PSP_ATTRIBUTES *a)
 {
     SIZE_T total;
-    *token = nullptr;
     NTSTATUS status = KiCopyFromUser(&total, user, sizeof(total));
     if (!NT_SUCCESS(status))
         return status;
-    if (total < sizeof(SIZE_T) || (total - sizeof(SIZE_T)) % sizeof(PS_ATTRIBUTE))
+    if (total < sizeof(SIZE_T) + sizeof(PS_ATTRIBUTE) || (total - sizeof(SIZE_T)) % sizeof(PS_ATTRIBUTE))
         return STATUS_INVALID_PARAMETER;
     SIZE_T count = (total - sizeof(SIZE_T)) / sizeof(PS_ATTRIBUTE);
-    if (count > 16)
+    if (count > PS_ATTRIBUTE_MAX_COUNT)
         return STATUS_INVALID_PARAMETER;
-    for (SIZE_T i = 0; i < count; i++) {
+    ULONG64 seen = 0;
+    for (SIZE_T i = 0; i < count && NT_SUCCESS(status); i++) {
         PS_ATTRIBUTE attribute;
         status = KiCopyFromUser(&attribute, &user->Attributes[i], sizeof(attribute));
         if (!NT_SUCCESS(status))
-            return status;
-        if ((ULONG)attribute.Attribute != PS_ATTRIBUTE_TOKEN)
-            return STATUS_NOT_SUPPORTED;
-        if (attribute.Size != sizeof(HANDLE))
-            return STATUS_INFO_LENGTH_MISMATCH;
-        *token = attribute.ValuePtr;
+            break;
+        ULONG number = (ULONG)attribute.Attribute;
+        ULONG64 bit = 1ull << (number & 0x3F);
+        if (((number & 0x20000) && attribute.ReturnLength) || (seen & bit))
+            return STATUS_INVALID_PARAMETER;
+        seen |= bit;
+        status = capture_one(&attribute, a);
     }
-    return STATUS_SUCCESS;
+    if (NT_SUCCESS(status) && a->HasHandleList) {
+        sort_handles(a->HandleList, a->HandleCount);
+        /* a negative handle, a pseudo handle among them, is no handle of the creator. */
+        if ((LONG)(ULONG_PTR)a->HandleList[0] < 0)
+            status = STATUS_INVALID_PARAMETER;
+    }
+    return status;
+}
+
+/* the places the process and thread ids and the thread's teb are given back to. */
+static void return_attributes(const PSP_ATTRIBUTES *a, PEPROCESS process, PETHREAD thread)
+{
+    if (a->ClientId) {
+        CLIENT_ID id = {process->UniqueProcessId, thread->Cid.UniqueThread};
+        KiCopyToUser(a->ClientId, &id, sizeof(id));
+        if (a->ClientIdLength) {
+            SIZE_T n = sizeof(id);
+            KiCopyToUser(a->ClientIdLength, &n, sizeof(n));
+        }
+    }
+    if (a->TebAddress) {
+        PVOID teb = thread->Tcb.Teb;
+        KiCopyToUser(a->TebAddress, &teb, sizeof(teb));
+        if (a->TebAddressLength) {
+            SIZE_T n = sizeof(teb);
+            KiCopyToUser(a->TebAddressLength, &n, sizeof(n));
+        }
+    }
+}
+
+/* the policies of the attributes, recorded in the new process. */
+static void apply_attributes(PEPROCESS process, PEPROCESS parent, const PSP_ATTRIBUTES *a)
+{
+    ULONG64 requested[3] = {};
+    if (a->HasMitigation)
+        memcpy(requested, a->Mitigation, sizeof(requested));
+    PspApplyMitigationOptions(process, parent, requested);
+    if (a->HasChildPolicy)
+        PspApplyChildProcessPolicy(process, a->ChildPolicy);
+    memcpy(process->Win32kFilter, a->Win32kFilter, sizeof(process->Win32kFilter));
+    process->AllApplicationPackagesPolicy = a->AllApplicationPackages;
+    process->DesktopAppPolicy = a->DesktopApp;
+    process->ComponentFilter = a->ComponentFilter;
 }
 
 NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle, ACCESS_MASK process_access,
@@ -463,41 +753,71 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         (process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
         (thread_flags & ~1u) || create_info)
         return STATUS_NOT_SUPPORTED;
-    HANDLE token_handle = nullptr;
+    PSP_ATTRIBUTES attrs;
+    memset(&attrs, 0, sizeof(attrs));
+    NTSTATUS status = attributes ? capture_attributes(attributes, &attrs) : STATUS_SUCCESS;
+    PEPROCESS creator = PsCurrentProcess(), parent = creator;
+    /* a list of handles to inherit is for a creation that inherits. */
+    if (NT_SUCCESS(status) && attrs.HasHandleList && !(process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES))
+        status = STATUS_INVALID_PARAMETER;
+    /* a process that may not create processes, unless the new one is let to override that. */
+    if (NT_SUCCESS(status) && (creator->MitigationPolicy[MIME_POLICY_CHILD_PROCESS] & MIME_CHILD_PROCESS_NO_CREATION) &&
+        !(attrs.HasChildPolicy && (attrs.ChildPolicy & MIME_CHILD_PROCESS_OVERRIDE)))
+        status = STATUS_CHILD_PROCESS_BLOCKED;
+    if (NT_SUCCESS(status) && attrs.Parent) {
+        status = PsReferenceProcessHandle(attrs.Parent, PROCESS_CREATE_PROCESS, &parent);
+    } else if (parent) {
+        ObReferenceObject(parent);
+    }
     struct _TOKEN *token = nullptr;
-    NTSTATUS status = attributes ? capture_attributes(attributes, &token_handle) : STATUS_SUCCESS;
-    if (NT_SUCCESS(status) && token_handle)
-        status = SepReferenceTokenForNewProcess(token_handle, &token);
-    if (!NT_SUCCESS(status))
-        return status;
+    if (NT_SUCCESS(status) && attrs.Token)
+        status = SepReferenceTokenForNewProcess(attrs.Token, &token);
+    /* the jobs it is put in at birth, which must accept it. */
+    struct EJOB *job = nullptr;
+    if (NT_SUCCESS(status) && attrs.JobCount)
+        status = PspReferenceJobForCreation(attrs.JobList, attrs.JobCount, &job);
     PSP_PARAMS params;
     memset(&params, 0, sizeof(params));
-    status = capture_params(parameters, &params);
+    if (NT_SUCCESS(status))
+        status = capture_params(parameters, &params);
+    if (NT_SUCCESS(status) && attrs.Image.Length)
+        status = replace_image(&params, &attrs.Image);
     PEPROCESS process = nullptr;
     PETHREAD thread = nullptr;
     if (NT_SUCCESS(status))
-        status = create_process(&params, token, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
+        status = create_process(&params, token, 0, creator->Console, TRUE, parent, &process, &thread);
     free_params(&params);
     if (token)
         ObDereferenceObject(token);
-    if (NT_SUCCESS(status) && (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) {
-        status = ObInheritHandles(PsCurrentProcess(), process);
+    if (NT_SUCCESS(status)) {
+        apply_attributes(process, parent, &attrs);
+        if (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)
+            status = attrs.HasHandleList ? ObInheritHandleList(parent, process, attrs.HandleList, attrs.HandleCount)
+                                         : ObInheritHandles(parent, process);
+        if (NT_SUCCESS(status))
+            status = job ? PspAssignNewProcessToJob(job, process) : PspInheritJob(process, parent, process_flags);
         if (!NT_SUCCESS(status)) {
             PspTerminateProcess(process, status);
             ObDereferenceObject(thread);
             ObDereferenceObject(process);
         }
     }
-    if (!NT_SUCCESS(status))
+    if (job)
+        ObDereferenceObject(job);
+    if (!NT_SUCCESS(status)) {
+        if (parent)
+            ObDereferenceObject(parent);
+        free_attributes(&attrs);
         return status;
+    }
     HANDLE ph = nullptr, th = nullptr;
     ObReferenceObject(process);
-    status = ObCreateHandle(PsCurrentProcess(), process, process_access, 0, &ph);
+    status = ObCreateHandle(creator, process, process_access, 0, &ph);
     if (!NT_SUCCESS(status))
         ObDereferenceObject(process);
     if (NT_SUCCESS(status)) {
         ObReferenceObject(thread);
-        status = ObCreateHandle(PsCurrentProcess(), thread, thread_access, 0, &th);
+        status = ObCreateHandle(creator, thread, thread_access, 0, &th);
         if (!NT_SUCCESS(status))
             ObDereferenceObject(thread);
     }
@@ -506,7 +826,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if (NT_SUCCESS(status))
         status = KiCopyToUser(thread_handle, &th, sizeof(th));
     if (NT_SUCCESS(status)) {
-        PspInheritJob(process, PsCurrentProcess(), process_flags);
+        return_attributes(&attrs, process, thread);
         if (!(thread_flags & 1)) {
             thread->Tcb.SuspendCount = 0;
             KiStartThread(&thread->Tcb);
@@ -520,5 +840,8 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     }
     ObDereferenceObject(thread);
     ObDereferenceObject(process);
+    if (parent)
+        ObDereferenceObject(parent);
+    free_attributes(&attrs);
     return status;
 }

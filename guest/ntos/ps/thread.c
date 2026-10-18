@@ -596,6 +596,10 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
         out.u32 = thread->HasTerminated;
         size = sizeof(ULONG);
         break;
+    case ThreadHideFromDebugger:
+        out.u32 = thread->HideFromDebugger;
+        size = 1;
+        break;
     case ThreadAmILastThread: {
         PEPROCESS process = (PEPROCESS)KiCurrentThread()->Process;
         out.u32 = process->ThreadCount <= 1;
@@ -644,6 +648,14 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
             if (NT_SUCCESS(status))
                 thread->Tcb.UserSuspendGate = gate;
         }
+    } else if (klass == ThreadDynamicCodePolicyInfo) {
+        status = PspSetThreadDynamicCodePolicy(thread, info, length);
+    } else if (klass == ThreadHideFromDebugger) {
+        /* the call carries nothing, and there is no debugger here to hide from. */
+        if (length)
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        else
+            thread->HideFromDebugger = TRUE;
     } else if (klass == ThreadPriority && length >= sizeof(LONG)) {
         LONG prio;
         if (NT_SUCCESS(KiCopyFromUser(&prio, info, sizeof(prio))) && prio > 0 && prio < 32)

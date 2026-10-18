@@ -573,14 +573,15 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (a[9] || !a[8])
             return a[8] ? STATUS_NOT_SUPPORTED : STATUS_INVALID_PARAMETER;
         PS_ATTRIBUTE_LIST *native_list = nullptr;
-        UCHAR list_storage[sizeof(SIZE_T) + 16 * sizeof(PS_ATTRIBUTE)];
+        UCHAR list_storage[sizeof(SIZE_T) + 32 * sizeof(PS_ATTRIBUTE)];
+        PVOID handle_arrays[2] = {};
         if (a[10]) {
             /* the 32-bit list: a size, then attributes of four words. */
             const ULONG *in = pointer32(a[10]);
             ULONG total = in[0];
-            if (total < sizeof(ULONG) || (total - sizeof(ULONG)) % 16 || (total - sizeof(ULONG)) / 16 > 16)
+            if (total < sizeof(ULONG) || (total - sizeof(ULONG)) % 16 || (total - sizeof(ULONG)) / 16 > 32)
                 return STATUS_INVALID_PARAMETER;
-            ULONG count = (total - sizeof(ULONG)) / 16;
+            ULONG count = (total - sizeof(ULONG)) / 16, arrays = 0;
             native_list = (PS_ATTRIBUTE_LIST *)list_storage;
             native_list->TotalLength = sizeof(SIZE_T) + count * sizeof(PS_ATTRIBUTE);
             for (ULONG i = 0; i < count; i++) {
@@ -588,10 +589,27 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
                 PS_ATTRIBUTE *n = &native_list->Attributes[i];
                 n->Attribute = e[0];
                 n->Size = e[1];
-                n->Value = e[0] == PS_ATTRIBUTE_TOKEN ? (ULONG_PTR)handle32(e[2]) : e[2];
+                /* the handle of an additive attribute is the value itself, the others point at it. */
+                n->Value = e[0] == PS_ATTRIBUTE_TOKEN || e[0] == 0x60000 ? (ULONG_PTR)handle32(e[2]) : e[2];
                 n->ReturnLength = nullptr;
-                if (e[0] == PS_ATTRIBUTE_TOKEN && e[1] == sizeof(ULONG))
+                if ((e[0] == PS_ATTRIBUTE_TOKEN || e[0] == 0x60000) && e[1] == sizeof(ULONG))
                     n->Size = sizeof(HANDLE);
+                /* lists of handles are widened. */
+                if ((e[0] == 0x2000B || e[0] == 0x20013) && e[1] && !(e[1] & 3) && e[1] <= 0x40000 && arrays < 2) {
+                    ULONG handles = e[1] / sizeof(ULONG);
+                    HANDLE *wide = Mx32Scratch((SIZE_T)handles * sizeof(HANDLE));
+                    if (!wide) {
+                        for (ULONG k = 0; k < arrays; k++)
+                            Mx32FreeScratch(handle_arrays[k]);
+                        return STATUS_NO_MEMORY;
+                    }
+                    const ULONG *narrow = pointer32(e[2]);
+                    for (ULONG k = 0; k < handles; k++)
+                        wide[k] = handle32(narrow[k]);
+                    handle_arrays[arrays++] = wide;
+                    n->Size = (SIZE_T)handles * sizeof(HANDLE);
+                    n->Value = (ULONG_PTR)wide;
+                }
             }
         }
         RTL_USER_PROCESS_PARAMETERS pp;
@@ -602,6 +620,9 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         HANDLE process = nullptr, thread = nullptr;
         status = NtCreateUserProcess(&process, &thread, a[2], a[3], a[4] ? &process_oa : nullptr,
                                      a[5] ? &thread_oa : nullptr, a[6], a[7], &pp, nullptr, native_list);
+        for (ULONG k = 0; k < 2; k++)
+            if (handle_arrays[k])
+                Mx32FreeScratch(handle_arrays[k]);
         if (NT_SUCCESS(status)) {
             store32(a[0], (ULONG_PTR)process);
             store32(a[1], (ULONG_PTR)thread);
@@ -628,6 +649,50 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         oa = attributes32(a[2], &name);
         status = NtOpenProcess(&handle, a[1], a[2] ? &oa : nullptr, source ? &cid : nullptr);
+        return handle_out(status, a[0], handle);
+    }
+    case MIME_SVC_NtOpenThread: {
+        const ULONG *source = pointer32(a[3]);
+        CLIENT_ID cid = {};
+        if (source) {
+            cid.UniqueProcess = (HANDLE)(ULONG_PTR)source[0];
+            cid.UniqueThread = (HANDLE)(ULONG_PTR)source[1];
+        }
+        oa = attributes32(a[2], &name);
+        status = NtOpenThread(&handle, a[1], a[2] ? &oa : nullptr, source ? &cid : nullptr);
+        return handle_out(status, a[0], handle);
+    }
+    case MIME_SVC_NtCreateLowBoxToken: {
+        /* the capabilities are sid and attribute pairs, the handles are 32-bit values. */
+        ULONG capability_count = a[5], handle_count = a[7];
+        if (capability_count > 0x1000 || handle_count > 0x10)
+            return STATUS_INVALID_PARAMETER;
+        const ULONG *capabilities32 = pointer32(a[6]);
+        const ULONG *handles32 = pointer32(a[8]);
+        struct {
+            PVOID Sid;
+            ULONG Attributes, Pad;
+        } *capabilities = nullptr;
+        HANDLE handles[0x10];
+        if (capability_count && capabilities32) {
+            capabilities = Mx32Scratch((SIZE_T)capability_count * sizeof(*capabilities));
+            if (!capabilities)
+                return STATUS_NO_MEMORY;
+            for (ULONG i = 0; i < capability_count; i++) {
+                capabilities[i].Sid = pointer32(capabilities32[2 * i]);
+                capabilities[i].Attributes = capabilities32[2 * i + 1];
+                capabilities[i].Pad = 0;
+            }
+        }
+        if (handles32)
+            for (ULONG i = 0; i < handle_count; i++)
+                handles[i] = handle32(handles32[i]);
+        oa = attributes32(a[3], &name);
+        status = NtCreateLowBoxToken(&handle, handle32(a[1]), a[2], a[3] ? &oa : nullptr, pointer32(a[4]),
+                                     capability_count, capabilities32 ? (PVOID)capabilities : nullptr, handle_count,
+                                     handles32 ? handles : nullptr);
+        if (capabilities)
+            Mx32FreeScratch(capabilities);
         return handle_out(status, a[0], handle);
     }
     case MIME_SVC_NtQueryInformationProcess:

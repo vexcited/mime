@@ -522,31 +522,36 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
 
 /* ------------------------------------------------------------ start */
 
-/* the 32-bit ntdll, mapped, with the entry points wow64 calls and its gate pointed at wow64cpu's. */
+/*
+ * the 32-bit ntdll, with the entry points wow64 calls and its gate pointed at wow64cpu's. the kernel mapped
+ * it with the process and left its base in a spare pointer of the peb; a process made without it maps it here.
+ */
 static void map_ntdll32(ULONG transition)
 {
-    UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\SysWOW64\\ntdll.dll");
-    OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
-    IO_STATUS_BLOCK io;
-    HANDLE file, section;
-    NTSTATUS status = NtOpenFile(&file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &io, FILE_SHARE_READ,
-                                 FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
-    if (!NT_SUCCESS(status))
-        fatal("cannot open the 32-bit ntdll.dll", status);
-    status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
-                             PAGE_EXECUTE_READ, SEC_IMAGE, file);
-    NtClose(file);
-    if (!NT_SUCCESS(status))
-        fatal("invalid 32-bit ntdll.dll", status);
-    PVOID base = nullptr;
-    SIZE_T size = 0;
-    status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0,
-                                PAGE_EXECUTE_WRITECOPY);
-    NtClose(section);
-    /* elsewhere than its base, the kernel relocated it. */
-    if (!NT_SUCCESS(status))
-        fatal("cannot map the 32-bit ntdll.dll", status);
+    PVOID base = NtCurrentPeb()->SparePointers[0];
+    if (!base) {
+        UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\SysWOW64\\ntdll.dll");
+        OBJECT_ATTRIBUTES oa;
+        InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+        IO_STATUS_BLOCK io;
+        HANDLE file, section;
+        NTSTATUS status = NtOpenFile(&file, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, &oa, &io, FILE_SHARE_READ,
+                                     FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
+        if (!NT_SUCCESS(status))
+            fatal("cannot open the 32-bit ntdll.dll", status);
+        status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
+                                 PAGE_EXECUTE_READ, SEC_IMAGE, file);
+        NtClose(file);
+        if (!NT_SUCCESS(status))
+            fatal("invalid 32-bit ntdll.dll", status);
+        SIZE_T size = 0;
+        status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0,
+                                    PAGE_EXECUTE_WRITECOPY);
+        NtClose(section);
+        /* elsewhere than its base, the kernel relocated it. */
+        if (!NT_SUCCESS(status))
+            fatal("cannot map the 32-bit ntdll.dll", status);
+    }
     g.Ntdll32 = base;
     g.LdrInitializeThunk = (ULONG)image_export(base, "LdrInitializeThunk");
     g.UserThreadStart = (ULONG)image_export(base, "RtlUserThreadStart");

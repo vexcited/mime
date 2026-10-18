@@ -176,7 +176,7 @@ static NTSTATUS capture_privileges(const void *user, ULONG **luids, ULONG **attr
 NTSTATUS NTAPI NtOpenProcessTokenEx(HANDLE process_handle, ACCESS_MASK access, ULONG attributes, PHANDLE token_handle)
 {
     PEPROCESS process;
-    NTSTATUS status = ObReferenceHandle(process_handle, PsProcessTypeObject, KeGetPreviousMode(), (PVOID *)&process, nullptr);
+    NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_QUERY_LIMITED_INFORMATION, &process);
     if (!NT_SUCCESS(status))
         return status;
     PTOKEN t = SepReferencePrimaryToken(process);
@@ -290,6 +290,130 @@ NTSTATUS NTAPI NtDuplicateToken(HANDLE token_handle, ACCESS_MASK access, POBJECT
     if (!dup)
         return status;
     return SepInsertToken(dup, access ? access : granted, oa.Attributes & OBJ_INHERIT, new_token);
+}
+
+/* ------------------------------------------------------------------ app containers */
+
+#define SEP_LOWBOX_MAX 256
+
+static UCHAR g_lowbox_sids[SEP_LOWBOX_MAX][SEP_SID_MAX];
+static ULONG g_lowbox_count;
+
+/* the number of an app container, the same for every token with its package sid; zero when the table is full. */
+static ULONG lowbox_number(const UCHAR *package)
+{
+    for (ULONG i = 0; i < g_lowbox_count; i++)
+        if (SepSidEqual(g_lowbox_sids[i], package))
+            return i + 1;
+    if (g_lowbox_count == SEP_LOWBOX_MAX)
+        return 0;
+    memcpy(g_lowbox_sids[g_lowbox_count], package, SepSidLength(package));
+    return ++g_lowbox_count;
+}
+
+/* S-1-15-2 and eight sub authorities, or twelve for a child of a package; S-1-15-3 for a capability. */
+static BOOLEAN sid_is_package(const UCHAR *sid)
+{
+    return sid[7] == 15 && !sid[2] && !sid[3] && !sid[4] && !sid[5] && !sid[6] && (sid[1] == 8 || sid[1] == 12) &&
+           ((const ULONG *)(sid + 8))[0] == 2;
+}
+
+static BOOLEAN sid_is_capability(const UCHAR *sid)
+{
+    return sid[7] == 15 && !sid[2] && !sid[3] && !sid[4] && !sid[5] && !sid[6] && sid[1] >= 2 &&
+           ((const ULONG *)(sid + 8))[0] == 3;
+}
+
+/*
+ * a copy of a token that acts inside an app container: for the package, with the capabilities. the handles are
+ * of the directories windows keeps the container's names in, which mime does not have; they are read and left
+ * alone.
+ */
+NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token_handle, ACCESS_MASK access,
+                                   POBJECT_ATTRIBUTES attributes, PVOID package_sid, ULONG capability_count,
+                                   PVOID capabilities, ULONG handle_count, PHANDLE handles)
+{
+    if (!package_sid)
+        return STATUS_INVALID_PARAMETER;
+    if ((handle_count != 0) != (handles != nullptr) || (capability_count != 0) != (capabilities != nullptr))
+        return STATUS_INVALID_PARAMETER_MIX;
+    if (capability_count > SEP_MAX_GROUPS || handle_count > 0x10)
+        return STATUS_INVALID_PARAMETER;
+    OBJECT_ATTRIBUTES oa = {};
+    NTSTATUS status = attributes ? read_caller(&oa, attributes, sizeof(oa)) : STATUS_SUCCESS;
+    if (!NT_SUCCESS(status))
+        return status;
+    HANDLE copies[0x10];
+    if (handle_count) {
+        status = read_caller(copies, handles, handle_count * sizeof(HANDLE));
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    PTOKEN source;
+    ACCESS_MASK granted;
+    status = SepReferenceTokenByHandle(token_handle, TOKEN_DUPLICATE, &source, &granted);
+    if (!NT_SUCCESS(status))
+        return status;
+    UCHAR package[SEP_SID_MAX];
+    SEP_GROUP *caps = nullptr;
+    status = capture_sid(package_sid, package);
+    if (NT_SUCCESS(status) && !sid_is_package(package))
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status) && source->Type != TokenPrimary && source->ImpersonationLevel < SecurityImpersonation)
+        status = STATUS_BAD_IMPERSONATION_LEVEL;
+    if (NT_SUCCESS(status) && capability_count) {
+        caps = ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)capability_count * sizeof(SEP_GROUP), KI_TAG('S', 'e', 'C', 'p'));
+        if (!caps)
+            status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+    for (ULONG i = 0; NT_SUCCESS(status) && i < capability_count; i++) {
+        struct {
+            const void *Sid;
+            ULONG Attributes;
+        } entry;
+        status = read_caller(&entry, (const UCHAR *)capabilities + 16 * (SIZE_T)i, sizeof(entry));
+        if (NT_SUCCESS(status))
+            status = capture_sid(entry.Sid, caps[i].Sid);
+        if (NT_SUCCESS(status) && (!sid_is_capability(caps[i].Sid) || (entry.Attributes & SE_GROUP_INVALID_BITS)))
+            status = STATUS_INVALID_PARAMETER;
+        /* none twice. */
+        for (ULONG j = 0; NT_SUCCESS(status) && j < i; j++)
+            if (SepSidEqual(caps[i].Sid, caps[j].Sid))
+                status = STATUS_INVALID_PARAMETER;
+        caps[i].Attributes = entry.Attributes;
+    }
+    PTOKEN t = nullptr;
+    if (NT_SUCCESS(status)) {
+        ExAcquireFastMutex(&SeLock);
+        t = SepDuplicate(source, source->Type, source->ImpersonationLevel, FALSE, &status);
+        if (t) {
+            ULONG number = lowbox_number(package);
+            if (!number) {
+                status = STATUS_INSUFFICIENT_RESOURCES;
+            } else {
+                t->Flags |= TOKEN_LOWBOX;
+                t->LowboxNumber = number;
+                memcpy(t->AppContainerSid, package, SepSidLength(package));
+                if (t->Capabilities)
+                    ExFreePool(t->Capabilities);
+                t->Capabilities = caps;
+                t->CapabilityCount = capability_count;
+                caps = nullptr;
+                t->ParentTokenId = source->TokenId;
+            }
+        }
+        ExReleaseFastMutex(&SeLock);
+    }
+    if (caps)
+        ExFreePool(caps);
+    ObDereferenceObject(source);
+    if (t && !NT_SUCCESS(status)) {
+        ObDereferenceObject(t);
+        t = nullptr;
+    }
+    if (!t)
+        return status;
+    return SepInsertToken(t, access ? access : granted, oa.Attributes & OBJ_INHERIT, new_token);
 }
 
 NTSTATUS NTAPI NtFilterToken(HANDLE token_handle, ULONG flags, PVOID sids_to_disable, PVOID privileges_to_delete,

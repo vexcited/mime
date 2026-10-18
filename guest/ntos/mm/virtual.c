@@ -30,6 +30,9 @@ static inline BOOLEAN pte_committed(ULONG64 pte)
     return (pte & MM_PTE_VALID) || (pte & MM_SWPTE_COMMITTED);
 }
 
+#define EXECUTABLE_PROTECTION (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)
+#define STATUS_DYNAMIC_CODE_BLOCKED ((NTSTATUS)0xC0000604L)
+
 static BOOLEAN valid_protect(ULONG protect)
 {
     switch (protect & 0xFF) {
@@ -575,7 +578,11 @@ NTSTATUS NTAPI NtAllocateVirtualMemory(HANDLE process_handle, PVOID *base, ULONG
     NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_VM_OPERATION, &process);
     if (!NT_SUCCESS(status))
         return status;
-    status = MiAllocateVirtual(process, &b, &s, type, protect);
+    /* new executable memory is dynamic code. */
+    if ((type & (MEM_COMMIT | MEM_RESERVE)) && (protect & EXECUTABLE_PROTECTION) && PsDynamicCodeBlocked(process))
+        status = STATUS_DYNAMIC_CODE_BLOCKED;
+    else
+        status = MiAllocateVirtual(process, &b, &s, type, protect);
     ObDereferenceObject(process);
     if (NT_SUCCESS(status)) {
         KiCopyToUser(base, &b, sizeof(b));
@@ -626,6 +633,16 @@ NTSTATUS NTAPI ZwFreeVirtualMemory(HANDLE process, PVOID *base, PSIZE_T size, UL
     return status;
 }
 
+static BOOLEAN region_is_image(PEPROCESS process, PVOID base)
+{
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ExAcquireFastMutex(&as->Lock);
+    PMMVAD vad = (ULONG_PTR)base <= MM_HIGHEST_USER_ADDRESS ? MiFindVad(as, (ULONG_PTR)base) : nullptr;
+    BOOLEAN image = vad && vad->Type == MiVadImage;
+    ExReleaseFastMutex(&as->Lock);
+    return image;
+}
+
 NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG protect, PULONG old)
 {
     PVOID b;
@@ -636,6 +653,12 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
     NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_VM_OPERATION, &process);
     if (!NT_SUCCESS(status))
         return status;
+    /* code may be made data and code that already was code may stay, nothing else becomes code. */
+    if ((protect & EXECUTABLE_PROTECTION) && PsDynamicCodeBlocked(process) &&
+        ((protect & (PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) || !region_is_image(process, b))) {
+        ObDereferenceObject(process);
+        return STATUS_DYNAMIC_CODE_BLOCKED;
+    }
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     if (&process->Pcb != saved)
         KiAttachProcess(&process->Pcb);
@@ -805,32 +828,68 @@ NTSTATUS NTAPI NtWriteVirtualMemory(HANDLE process_handle, PVOID base, PVOID buf
     return status;
 }
 
-/* copies between address spaces through a kernel bounce buffer. */
+#define MM_COPY_CHUNK 0x10000
+
+/*
+ * copies between address spaces through a kernel bounce buffer. memory that is not there ends the copy short
+ * with STATUS_PARTIAL_COPY, memory that is there and cannot be written is an access violation.
+ */
 NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS to_process, PVOID to, SIZE_T size,
                                    KPROCESSOR_MODE mode, PSIZE_T copied)
 {
-    PUCHAR tmp = ExAllocatePool2(POOL_FLAG_PAGED, 4096, KI_TAG('M', 'm', 'C', 'v'));
+    if (!size) {
+        if (copied)
+            *copied = 0;
+        return STATUS_SUCCESS;
+    }
+    PUCHAR tmp = ExAllocatePool2(POOL_FLAG_PAGED, size < MM_COPY_CHUNK ? size : MM_COPY_CHUNK, KI_TAG('M', 'm', 'C', 'v'));
     if (!tmp)
         return STATUS_INSUFFICIENT_RESOURCES;
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     NTSTATUS status = STATUS_SUCCESS;
+    BOOLEAN target_failed = FALSE, by_page = FALSE;
     SIZE_T done = 0;
     while (done < size) {
-        SIZE_T n = size - done < 4096 ? size - done : 4096;
+        SIZE_T n = size - done < MM_COPY_CHUNK ? size - done : MM_COPY_CHUNK;
+        if (by_page) {
+            /* what failed is told apart by the page: the bytes before it are copied. */
+            SIZE_T source_room = PAGE_SIZE - (((ULONG_PTR)from + done) & (PAGE_SIZE - 1));
+            SIZE_T target_room = PAGE_SIZE - (((ULONG_PTR)to + done) & (PAGE_SIZE - 1));
+            if (n > source_room)
+                n = source_room;
+            if (n > target_room)
+                n = target_room;
+        }
         KiAttachProcess(&from_process->Pcb);
         status = KiCopyFromUser(tmp, (PUCHAR)from + done, n);
         KiAttachProcess(&to_process->Pcb);
-        if (NT_SUCCESS(status))
+        target_failed = FALSE;
+        if (NT_SUCCESS(status)) {
             status = KiCopyToUser((PUCHAR)to + done, tmp, n);
-        if (!NT_SUCCESS(status))
+            target_failed = !NT_SUCCESS(status);
+        }
+        if (!NT_SUCCESS(status)) {
+            if (!by_page && n > 1) {
+                by_page = TRUE;
+                continue;
+            }
             break;
+        }
         done += n;
     }
     KiAttachProcess(saved);
     ExFreePool(tmp);
     if (copied)
         *copied = done;
-    return status == STATUS_ACCESS_VIOLATION ? (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY */ : status;
+    if (status != STATUS_ACCESS_VIOLATION)
+        return status;
+    /* the page the write stopped at: there, but not writable. */
+    MEMORY_BASIC_INFORMATION mbi;
+    if (target_failed && NT_SUCCESS(MiQueryVirtual(to_process, (PUCHAR)to + done, &mbi)) && mbi.State == MEM_COMMIT &&
+        !(mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
+        !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        return STATUS_ACCESS_VIOLATION;
+    return (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY */;
 }
 
 NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size)

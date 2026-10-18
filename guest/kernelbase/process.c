@@ -2,6 +2,13 @@
  * processes and threads.
  */
 #include "kernelbase_private.h"
+#include <mime/mitigation.h>
+
+#ifndef TOKEN_DUPLICATE
+#define TOKEN_DUPLICATE 0x0002
+#define TOKEN_QUERY 0x0008
+#define TOKEN_ALL_ACCESS 0xF01FF
+#endif
 
 #define THREAD_CREATE_FLAGS_CREATE_SUSPENDED 0x00000001
 #define DEFAULT_STACK_RESERVE (1024 * 1024)
@@ -102,18 +109,15 @@ HANDLE WINAPI OpenProcess(DWORD access, BOOL inherit, DWORD id)
     return handle;
 }
 
-/* the kernel has no NtOpenThread yet: only the calling thread can be opened. */
 HANDLE WINAPI OpenThread(DWORD access, BOOL inherit, DWORD id)
 {
-    if (id != GetCurrentThreadId()) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return nullptr;
-    }
+    CLIENT_ID cid = {nullptr, (HANDLE)(ULONG_PTR)id};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, nullptr, inherit ? OBJ_INHERIT : 0, nullptr, nullptr);
     HANDLE handle;
-    NTSTATUS status = NtDuplicateObject(NtCurrentProcess(), NtCurrentThread(), NtCurrentProcess(), &handle, access,
-                                        inherit ? OBJ_INHERIT : 0, 0);
+    NTSTATUS status = NtOpenThread(&handle, access, &oa, &cid);
     if (!NT_SUCCESS(status)) {
-        KbSetStatus(status);
+        KbSetError(status == STATUS_INVALID_CID ? ERROR_INVALID_PARAMETER : RtlNtStatusToDosError(status));
         return nullptr;
     }
     return handle;
@@ -605,6 +609,206 @@ static SIZE_T environment_bytes(PCWSTR env)
 #define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
 
 /*
+ * the list has windows' layout: how many attributes it holds, how many it has, which numbers they are,
+ * the slot of the extended flags, then attributes of 24 bytes. a value stays with the caller, only the
+ * extended flags are kept in the list.
+ */
+typedef struct KB_ATTRIBUTE {
+    DWORD_PTR Attribute;
+    SIZE_T Size;
+    PVOID Value;
+} KB_ATTRIBUTE;
+
+struct _PROC_THREAD_ATTRIBUTE_LIST {
+    DWORD Mask;
+    DWORD Capacity;
+    DWORD Used;
+    DWORD MaskHigh;
+    KB_ATTRIBUTE *Extended;
+    KB_ATTRIBUTE Attributes[1];
+};
+
+#define KB_ATTRIBUTE_MAX 0x25
+#define KB_ATTRIBUTE_ADDITIVE 0x40000
+#define KB_ATTRIBUTE_INPUT 0x20000
+
+/* ------------------------------------------------------------------ the attributes of a new process */
+
+#define KB_PS_PARENT_PROCESS 0x00060000u
+#define KB_PS_TOKEN 0x00060002u
+#define KB_PS_HANDLE_LIST 0x0002000Bu
+#define KB_PS_GROUP_AFFINITY 0x0003000Cu
+#define KB_PS_PREFERRED_NODE 0x0002000Du
+#define KB_PS_IDEAL_PROCESSOR 0x0003000Eu
+#define KB_PS_MITIGATION_OPTIONS 0x00020010u
+#define KB_PS_PROTECTION_LEVEL 0x00060011u
+#define KB_PS_JOB_LIST 0x00020013u
+#define KB_PS_CHILD_PROCESS_POLICY 0x00020014u
+#define KB_PS_ALL_APPLICATION_PACKAGES_POLICY 0x00020015u
+#define KB_PS_WIN32K_FILTER 0x00020016u
+#define KB_PS_DESKTOP_APP_POLICY 0x00020019u
+#define KB_PS_MACHINE_TYPE 0x0006001Cu
+#define KB_PS_COMPONENT_FILTER 0x0002001Du
+#define KB_PS_ENABLE_OPTIONAL_XSTATE_FEATURES 0x0003001Eu
+
+typedef struct KB_SID_ATTRIBUTES {
+    PVOID Sid;
+    DWORD Attributes;
+} KB_SID_ATTRIBUTES;
+
+typedef struct KB_SECURITY_CAPABILITIES {
+    PVOID AppContainerSid;
+    KB_SID_ATTRIBUTES *Capabilities;
+    DWORD CapabilityCount, Reserved;
+} KB_SECURITY_CAPABILITIES;
+
+typedef struct KB_PROCESS_ATTRIBUTES {
+    SIZE_T TotalLength;
+    PS_ATTRIBUTE Attributes[24];
+    ULONG Count;
+    ULONG64 Mitigation[3];
+    DWORD Win32k[2];
+    UCHAR Protection;
+    const KB_SECURITY_CAPABILITIES *Capabilities;
+} KB_PROCESS_ATTRIBUTES;
+
+/* the creation flags of a program as the three words the kernel takes, or an error. */
+static BOOL pack_mitigation(const KB_ATTRIBUTE *a, ULONG64 packed[3])
+{
+    static const MIME_MITIGATION_FIELD fields[] = {MIME_MITIGATION_FIELDS};
+    ULONG64 w[2] = {};
+    memcpy(w, a->Value, a->Size == 4 ? 4 : a->Size);
+    if ((w[0] & MIME_MITIGATION_INVALID0) || (w[1] & MIME_MITIGATION_INVALID1))
+        return FALSE;
+    ULONG dep = (ULONG)w[0] & 3;
+    packed[0] = (dep == 1 ? 1 : dep == 3 ? 3 : 2) | ((w[0] & 4) ? 0x10 : 0x30);
+    packed[1] = packed[2] = 0;
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(fields); i++) {
+        const MIME_MITIGATION_FIELD *f = &fields[i];
+        ULONG64 value = (w[f->Word] >> f->Shift) & 3;
+        if (value == 3 && !f->AllowThree)
+            return FALSE;
+        packed[f->KernelWord] |= value << f->KernelShift;
+    }
+    return TRUE;
+}
+
+static BOOL add_ps(KB_PROCESS_ATTRIBUTES *out, ULONG number, SIZE_T size, ULONG_PTR value)
+{
+    if (out->Count >= RTL_NUMBER_OF(out->Attributes))
+        return FALSE;
+    PS_ATTRIBUTE *a = &out->Attributes[out->Count++];
+    a->Attribute = number;
+    a->Size = size;
+    a->Value = value;
+    a->ReturnLength = nullptr;
+    return TRUE;
+}
+
+/* the PS_ATTRIBUTE_PROTECTION values of the levels of PROCESS_CREATION_PROTECTION. */
+static BOOL protection_value(DWORD level, UCHAR *value)
+{
+    static const UCHAR values[] = {0x61, 0x52, 0x51, 0x31, 0x41, 0x62, 0x21, 0x12, 0x81};
+    if (level == 0xFFFFFFFFu) {
+        *value = 0;
+        return NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)61, value, 1, nullptr));
+    }
+    if (level >= RTL_NUMBER_OF(values))
+        return FALSE;
+    *value = values[level];
+    return TRUE;
+}
+
+/*
+ * what the attribute list of an extended startup information asks of the new process, as the attributes
+ * the kernel takes. a handle list needs a creation that inherits handles.
+ */
+static DWORD convert_attributes(LPPROC_THREAD_ATTRIBUTE_LIST list, BOOL inherit, KB_PROCESS_ATTRIBUTES *out)
+{
+    for (DWORD i = 0; i < list->Used; i++) {
+        const KB_ATTRIBUTE *a = &list->Attributes[i];
+        switch (a->Attribute) {
+        case PROC_THREAD_ATTRIBUTE_PARENT_PROCESS:
+            if (!add_ps(out, KB_PS_PARENT_PROCESS, sizeof(HANDLE), (ULONG_PTR)*(HANDLE *)a->Value))
+                return ERROR_INVALID_PARAMETER;
+            break;
+        case PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
+            if (!inherit || !add_ps(out, KB_PS_HANDLE_LIST, a->Size, (ULONG_PTR)a->Value))
+                return ERROR_INVALID_PARAMETER;
+            break;
+        case PROC_THREAD_ATTRIBUTE_PREFERRED_NODE:
+            add_ps(out, KB_PS_PREFERRED_NODE, a->Size, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY:
+            if (!pack_mitigation(a, out->Mitigation) ||
+                !add_ps(out, KB_PS_MITIGATION_OPTIONS, sizeof(out->Mitigation), (ULONG_PTR)out->Mitigation))
+                return ERROR_INVALID_PARAMETER;
+            break;
+        case PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES:
+            out->Capabilities = a->Value;
+            break;
+        case PROC_THREAD_ATTRIBUTE_PROTECTION_LEVEL:
+            if (!protection_value(*(DWORD *)a->Value, &out->Protection) ||
+                !add_ps(out, KB_PS_PROTECTION_LEVEL, 1, out->Protection))
+                return ERROR_INVALID_PARAMETER;
+            break;
+        case PROC_THREAD_ATTRIBUTE_JOB_LIST:
+            if (!add_ps(out, KB_PS_JOB_LIST, a->Size, (ULONG_PTR)a->Value))
+                return ERROR_INVALID_PARAMETER;
+            break;
+        case PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY:
+            add_ps(out, KB_PS_CHILD_PROCESS_POLICY, 4, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY:
+            add_ps(out, KB_PS_ALL_APPLICATION_PACKAGES_POLICY, 4, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_WIN32K_FILTER:
+            add_ps(out, KB_PS_WIN32K_FILTER, 8, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY:
+            add_ps(out, KB_PS_DESKTOP_APP_POLICY, 4, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_COMPONENT_FILTER:
+            add_ps(out, KB_PS_COMPONENT_FILTER, 4, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_MACHINE_TYPE:
+            add_ps(out, KB_PS_MACHINE_TYPE, 2, *(USHORT *)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_GROUP_AFFINITY:
+            add_ps(out, KB_PS_GROUP_AFFINITY, 16, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_IDEAL_PROCESSOR:
+            add_ps(out, KB_PS_IDEAL_PROCESSOR, 4, (ULONG_PTR)a->Value);
+            break;
+        case PROC_THREAD_ATTRIBUTE_ENABLE_OPTIONAL_XSTATE_FEATURES:
+            add_ps(out, KB_PS_ENABLE_OPTIONAL_XSTATE_FEATURES, 8, (ULONG_PTR)a->Value);
+            break;
+        default:
+            /* the pseudo console and the rest do nothing here. */
+            break;
+        }
+    }
+    return 0;
+}
+
+/* a token for an app container, made from the process token or the one of CreateProcessAsUser. */
+static NTSTATUS create_container_token(HANDLE base, const KB_SECURITY_CAPABILITIES *c, PHANDLE out)
+{
+    HANDLE own = nullptr, source = base;
+    if (!source) {
+        NTSTATUS status = NtOpenProcessToken(NtCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY, &own);
+        if (!NT_SUCCESS(status))
+            return status;
+        source = own;
+    }
+    NTSTATUS status = NtCreateLowBoxToken(out, source, TOKEN_ALL_ACCESS, nullptr, c->AppContainerSid, c->CapabilityCount,
+                                          c->Capabilities, 0, nullptr);
+    if (own)
+        NtClose(own);
+    return status;
+}
+
+/*
  * the program, then its parameters as kernelbase hands them to the kernel:
  * environment, standard handles, window and console choices, title,
  * desktop and the c library's runtime data. there is no console window to
@@ -727,14 +931,37 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
 
     ULONG process_flags = ((flags & CREATE_BREAKAWAY_FROM_JOB) ? PROCESS_CREATE_FLAGS_BREAKAWAY : 0) |
                           (inherit ? PROCESS_CREATE_FLAGS_INHERIT_HANDLES : 0);
-    /* the token of CreateProcessAsUser is an attribute of the process to make. */
-    PS_ATTRIBUTE_LIST attributes = {.TotalLength = sizeof(SIZE_T) + sizeof(PS_ATTRIBUTE),
-                                    .Attributes = {{.Attribute = PS_ATTRIBUTE_TOKEN,
-                                                    .Size = sizeof(HANDLE),
-                                                    .Value = (ULONG_PTR)token}}};
+    /* the token of CreateProcessAsUser is an attribute of the process to make, so are those of the extended startup information. */
+    KB_PROCESS_ATTRIBUTES attributes = {};
+    HANDLE container = nullptr;
+    if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
+        ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
+        DWORD error = convert_attributes(((LPSTARTUPINFOEXW)startup)->lpAttributeList, inherit, &attributes);
+        if (error) {
+            KbFree(converted);
+            KbSetError(error);
+            return FALSE;
+        }
+        if (attributes.Capabilities) {
+            NTSTATUS made = create_container_token(token, attributes.Capabilities, &container);
+            if (!NT_SUCCESS(made)) {
+                KbFree(converted);
+                return KbSetStatus(made);
+            }
+            token = container;
+        }
+    }
+    if (token && !add_ps(&attributes, PS_ATTRIBUTE_TOKEN, sizeof(HANDLE), (ULONG_PTR)token)) {
+        KbFree(converted);
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    attributes.TotalLength = sizeof(SIZE_T) + attributes.Count * sizeof(PS_ATTRIBUTE);
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
                                            nullptr, nullptr, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, nullptr,
-                                           token ? &attributes : nullptr);
+                                           attributes.Count ? (PS_ATTRIBUTE_LIST *)&attributes : nullptr);
+    if (container)
+        NtClose(container);
     KbFree(converted);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
@@ -777,19 +1004,22 @@ BOOL WINAPI CreateProcessInternalA(HANDLE token, LPCSTR application, LPSTR comma
     }
     PWSTR app = KbAnsiToWideCp(CP_ACP, application), cmd = KbAnsiToWideCp(CP_ACP, command_line);
     PWSTR dir = KbAnsiToWideCp(CP_ACP, directory);
-    STARTUPINFOW sw;
-    memcpy(&sw, startup, sizeof(sw));
-    sw.cb = sizeof(sw);
-    sw.lpDesktop = KbAnsiToWideCp(CP_ACP, startup->lpDesktop);
-    sw.lpTitle = KbAnsiToWideCp(CP_ACP, startup->lpTitle);
-    sw.lpReserved = nullptr;
-    BOOL ok = CreateProcessInternalW(token, app, cmd, process_sa, thread_sa, inherit, flags, environment, dir, &sw, info,
+    STARTUPINFOEXW sx = {};
+    STARTUPINFOW *sw = &sx.StartupInfo;
+    memcpy(sw, startup, sizeof(*sw));
+    sw->cb = sizeof(sx);
+    sw->lpDesktop = KbAnsiToWideCp(CP_ACP, startup->lpDesktop);
+    sw->lpTitle = KbAnsiToWideCp(CP_ACP, startup->lpTitle);
+    sw->lpReserved = nullptr;
+    if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXA))
+        sx.lpAttributeList = ((LPSTARTUPINFOEXA)startup)->lpAttributeList;
+    BOOL ok = CreateProcessInternalW(token, app, cmd, process_sa, thread_sa, inherit, flags, environment, dir, sw, info,
                                      nullptr);
     KbFree(app);
     KbFree(cmd);
     KbFree(dir);
-    KbFree(sw.lpDesktop);
-    KbFree(sw.lpTitle);
+    KbFree(sw->lpDesktop);
+    KbFree(sw->lpTitle);
     return ok;
 }
 
@@ -1013,7 +1243,11 @@ BOOL WINAPI GetProcessHandleCount(HANDLE process, PDWORD count)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *count = 32;
+    DWORD counts[2];
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessHandleCount, counts, sizeof(counts), nullptr);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *count = counts[0];
     return TRUE;
 }
 
@@ -1163,6 +1397,14 @@ BOOL WINAPI SetThreadInformation(HANDLE thread, THREAD_INFORMATION_CLASS klass, 
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    if (klass == ThreadDynamicCodePolicy) {
+        if (size != sizeof(DWORD)) {
+            KbSetError(ERROR_BAD_LENGTH);
+            return FALSE;
+        }
+        NTSTATUS status = NtSetInformationThread(thread, ThreadDynamicCodePolicyInfo, info, size);
+        return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+    }
     return TRUE;
 }
 
@@ -1273,52 +1515,147 @@ BOOL WINAPI GetThreadIOPendingFlag(HANDLE thread, PBOOL pending)
 
 /* ------------------------------------------------------------------ attribute lists */
 
-typedef struct KB_ATTRIBUTE {
-    DWORD_PTR Attribute;
-    SIZE_T Size;
-    PVOID Value;
-} KB_ATTRIBUTE;
-
-struct _PROC_THREAD_ATTRIBUTE_LIST {
-    DWORD Mask;
-    DWORD Size;
-    DWORD Count;
-    DWORD Pad;
-    KB_ATTRIBUTE Attributes[1];
-};
-
 BOOL WINAPI InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST list, DWORD count, DWORD flags,
                                               PSIZE_T size)
 {
-    if (flags || !size) {
+    if (flags || count > KB_ATTRIBUTE_MAX || !size) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    SIZE_T need = offsetof(struct _PROC_THREAD_ATTRIBUTE_LIST, Attributes) + (count ? count : 1) * sizeof(KB_ATTRIBUTE);
-    if (!list || *size < need) {
-        *size = need;
+    SIZE_T need = offsetof(struct _PROC_THREAD_ATTRIBUTE_LIST, Attributes) + (SIZE_T)count * sizeof(KB_ATTRIBUTE);
+    BOOL ok = list && *size >= need;
+    if (ok) {
+        list->Mask = list->MaskHigh = list->Used = 0;
+        list->Extended = nullptr;
+        list->Capacity = count;
+    } else {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
-        return FALSE;
     }
-    list->Mask = 0;
-    list->Size = count;
-    list->Count = 0;
-    list->Pad = 0;
-    return TRUE;
+    *size = need;
+    return ok;
+}
+
+/* the size an attribute's value must have, 0 for one that has no fixed size; or an error. */
+static DWORD attribute_size_error(DWORD_PTR attribute, PVOID value, SIZE_T size)
+{
+    switch (attribute) {
+    case PROC_THREAD_ATTRIBUTE_GROUP_AFFINITY:
+        return size == sizeof(GROUP_AFFINITY) ? 0 : ERROR_BAD_LENGTH;
+    case PROC_THREAD_ATTRIBUTE_PARENT_PROCESS:
+    case 0x2000A:
+    case 0x2000C:
+    case 0x20015:
+    case PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE:
+    case 0x20023:
+        return size == sizeof(PVOID) ? 0 : ERROR_BAD_LENGTH;
+    case PROC_THREAD_ATTRIBUTE_WIN32K_FILTER:
+    case PROC_THREAD_ATTRIBUTE_ENABLE_OPTIONAL_XSTATE_FEATURES:
+        return size == 8 ? 0 : ERROR_BAD_LENGTH;
+    case PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
+    case PROC_THREAD_ATTRIBUTE_JOB_LIST:
+        return size && !(size & (sizeof(HANDLE) - 1)) ? 0 : ERROR_BAD_LENGTH;
+    case PROC_THREAD_ATTRIBUTE_PREFERRED_NODE:
+    case PROC_THREAD_ATTRIBUTE_MACHINE_TYPE:
+        return size == 2 ? 0 : ERROR_BAD_LENGTH;
+    case PROC_THREAD_ATTRIBUTE_IDEAL_PROCESSOR:
+        return size == 4 ? 0 : ERROR_BAD_LENGTH;
+    case PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY:
+    case 0x20018:
+        return (size == 4 || size == 8 || size == 16) ? 0 : ERROR_BAD_LENGTH;
+    case 0x20008:
+    case 0x20014:
+        return !size || (size & 1) || size >= 0xFFFF ? ERROR_INVALID_PARAMETER : 0;
+    case PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES:
+        return size == sizeof(KB_SECURITY_CAPABILITIES) && !((KB_SECURITY_CAPABILITIES *)value)->Reserved
+                   ? 0
+                   : ERROR_INVALID_PARAMETER;
+    case PROC_THREAD_ATTRIBUTE_PROTECTION_LEVEL:
+    case PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY:
+    case PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY:
+    case PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY:
+    case PROC_THREAD_ATTRIBUTE_COMPONENT_FILTER:
+    case 0x2001C:
+        return size == 4 ? 0 : ERROR_BAD_LENGTH;
+    case 0x20011:
+        return size == 524 ? 0 : ERROR_BAD_LENGTH;
+    case 0x20013:
+        return size == 276 ? 0 : ERROR_BAD_LENGTH;
+    case 0x20017:
+        return size == 56 ? 0 : ERROR_BAD_LENGTH;
+    case 0x2001D:
+        return size ? 0 : ERROR_BAD_LENGTH;
+    default:
+        return ERROR_NOT_SUPPORTED;
+    }
 }
 
 BOOL WINAPI UpdateProcThreadAttribute(LPPROC_THREAD_ATTRIBUTE_LIST list, DWORD flags, DWORD_PTR attribute,
                                       PVOID value, SIZE_T size, PVOID previous, PSIZE_T returned)
 {
-    if (!list || flags || list->Count >= list->Size) {
-        KbSetError(list && list->Count >= list->Size ? ERROR_GEN_FAILURE : ERROR_INVALID_PARAMETER);
+    if (flags & ~(DWORD)PROC_THREAD_ATTRIBUTE_REPLACE_VALUE) {
+        KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    KB_ATTRIBUTE *a = &list->Attributes[list->Count++];
-    a->Attribute = attribute;
-    a->Size = size;
-    a->Value = value;
-    list->Mask |= 1u << (attribute & 0x1F);
+    ULONG64 bit = 1ull << (attribute & 63);
+    DWORD error;
+    if (!(attribute & KB_ATTRIBUTE_ADDITIVE)) {
+        if (list->Used == list->Capacity) {
+            error = ERROR_GEN_FAILURE;
+        } else if ((list->Mask | (ULONG64)list->MaskHigh << 32) & bit) {
+            error = ERROR_OBJECT_NAME_EXISTS;
+        } else if (previous || (flags & PROC_THREAD_ATTRIBUTE_REPLACE_VALUE)) {
+            error = ERROR_INVALID_PARAMETER;
+        } else {
+            error = 0;
+        }
+        if (error) {
+            KbSetError(error);
+            return FALSE;
+        }
+    }
+    if ((attribute & KB_ATTRIBUTE_INPUT) && returned) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KB_ATTRIBUTE *slot = &list->Attributes[list->Used];
+    if (attribute == PROC_THREAD_ATTRIBUTE_EXTENDED_FLAGS) {
+        /* the one attribute that adds up: its bits are kept in the list, in a slot of its own. */
+        if (size != 4) {
+            KbSetError(ERROR_BAD_LENGTH);
+            return FALSE;
+        }
+        DWORD old = 0, bits = *(DWORD *)value;
+        if (list->Extended) {
+            slot = list->Extended;
+            bit = 0;
+            old = (DWORD)(ULONG_PTR)slot->Value;
+        } else {
+            list->Extended = slot;
+        }
+        if (bits & ~7u) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        if (!(flags & PROC_THREAD_ATTRIBUTE_REPLACE_VALUE))
+            bits |= old;
+        if (previous)
+            *(DWORD *)previous = old;
+        slot->Value = (PVOID)(ULONG_PTR)bits;
+    } else {
+        error = attribute_size_error(attribute, value, size);
+        if (error) {
+            KbSetError(error);
+            return FALSE;
+        }
+        slot->Value = value;
+    }
+    if (bit) {
+        slot->Attribute = attribute;
+        slot->Size = size;
+        list->Mask |= (DWORD)bit;
+        list->MaskHigh |= (DWORD)(bit >> 32);
+        list->Used++;
+    }
     return TRUE;
 }
 
@@ -1354,24 +1691,134 @@ DEP_SYSTEM_POLICY_TYPE WINAPI GetSystemDEPPolicy(void)
     return DEPPolicyAlwaysOn;
 }
 
+#define KB_PROCESS_MITIGATION_POLICY_INFORMATION 52
+
+typedef struct KB_MITIGATION_REQUEST {
+    DWORD Policy, Flags;
+} KB_MITIGATION_REQUEST;
+
 BOOL WINAPI SetProcessMitigationPolicy(PROCESS_MITIGATION_POLICY policy, PVOID buffer, SIZE_T length)
 {
-    if (!buffer) {
+    /* DEP is set by SetProcessDEPPolicy; the filters and payload restrictions only by creation. */
+    switch ((int)policy) {
+    case ProcessDEPPolicy:
+        KbSetError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    case ProcessASLRPolicy:
+    case ProcessDynamicCodePolicy:
+    case ProcessStrictHandleCheckPolicy:
+    case ProcessSystemCallDisablePolicy:
+    case ProcessExtensionPointDisablePolicy:
+    case ProcessControlFlowGuardPolicy:
+    case ProcessSignaturePolicy:
+    case ProcessFontDisablePolicy:
+    case ProcessImageLoadPolicy:
+    case ProcessChildProcessPolicy:
+    case ProcessSideChannelIsolationPolicy:
+    case ProcessUserShadowStackPolicy:
+    case ProcessRedirectionTrustPolicy:
+        break;
+    default:
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return TRUE;
+    if (length != 4) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KB_MITIGATION_REQUEST request = {(DWORD)policy, *(DWORD *)buffer};
+    NTSTATUS status = NtSetInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)KB_PROCESS_MITIGATION_POLICY_INFORMATION,
+                                              &request, sizeof(request));
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+/*
+ * the mask of the options a program can ask for: the same two words as the creation flags, a field set
+ * to 3 where windows takes it. the words are made here, not by the kernel.
+ */
+static void mitigation_options_mask(ULONG64 *mask, SIZE_T length)
+{
+    static const ULONG64 template[2] = {0x3333333333333307ull, 0x0333333333333330ull};
+    memset(mask, 0, length);
+    SIZE_T fields = length * 8 / 4;
+    for (SIZE_T i = 0; i < fields; i++) {
+        SIZE_T word = i * 4 / 64, shift = i * 4 % 64;
+        if (word < 2 && ((template[word] >> shift) & 3))
+            mask[word] |= (ULONG64)(i < 40 ? 3 : 0) << shift;
+    }
 }
 
 BOOL WINAPI GetProcessMitigationPolicy(HANDLE process, PROCESS_MITIGATION_POLICY policy, PVOID buffer, SIZE_T length)
 {
-    if (!buffer || length < sizeof(DWORD)) {
+    int klass = (int)policy;
+    if (klass == ProcessMitigationOptionsMask) {
+        if (length < 8) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        mitigation_options_mask(buffer, length);
+        return TRUE;
+    }
+    if (klass == ProcessDEPPolicy) {
+        DWORD execute = 0;
+        if (length != 8) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        NTSTATUS status = NtQueryInformationProcess(process, ProcessExecuteFlags, &execute, sizeof(execute), nullptr);
+        if (!NT_SUCCESS(status))
+            return KbSetStatus(status);
+        DWORD flags = 0;
+        if (!(execute & 2))
+            flags = (execute & 4) ? 3 : 1;
+        *(DWORD *)buffer = flags;
+        ((BYTE *)buffer)[4] = (execute & 8) != 0;
+        return TRUE;
+    }
+    if (klass == ProcessSEHOPPolicy) {
+        DWORD execute = 0;
+        if (length != 4) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        NTSTATUS status = NtQueryInformationProcess(process, ProcessExecuteFlags, &execute, sizeof(execute), nullptr);
+        if (!NT_SUCCESS(status))
+            return KbSetStatus(status);
+        *(DWORD *)buffer = !(execute & 0x40);
+        return TRUE;
+    }
+    switch (klass) {
+    case ProcessASLRPolicy:
+    case ProcessDynamicCodePolicy:
+    case ProcessStrictHandleCheckPolicy:
+    case ProcessSystemCallDisablePolicy:
+    case ProcessExtensionPointDisablePolicy:
+    case ProcessControlFlowGuardPolicy:
+    case ProcessSignaturePolicy:
+    case ProcessFontDisablePolicy:
+    case ProcessImageLoadPolicy:
+    case ProcessSystemCallFilterPolicy:
+    case ProcessPayloadRestrictionPolicy:
+    case ProcessChildProcessPolicy:
+    case ProcessSideChannelIsolationPolicy:
+    case ProcessUserShadowStackPolicy:
+    case ProcessRedirectionTrustPolicy:
+    case ProcessUserPointerAuthPolicy:
+        break;
+    default:
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    memset(buffer, 0, length);
-    if (policy == ProcessDEPPolicy)
-        *(PDWORD)buffer = 3; /* the enable and permanent flags. */
+    if (length != 4) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KB_MITIGATION_REQUEST request = {(DWORD)klass, 0};
+    NTSTATUS status = NtQueryInformationProcess(process, (PROCESSINFOCLASS)KB_PROCESS_MITIGATION_POLICY_INFORMATION,
+                                                &request, sizeof(request), nullptr);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *(DWORD *)buffer = request.Flags;
     return TRUE;
 }
 

@@ -8,6 +8,7 @@
 #include <mime/abi.h>
 #include <mime/ddk.h>
 #include <mime/ntapi.h>
+#include <mime/mitigation.h>
 
 #include "../rtl/rtl.h"
 
@@ -595,6 +596,7 @@ extern POBJECT_DIRECTORY ObRootDirectory;
 void ObInitialize(void);
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
 NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child);
+NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG count);
 NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode);
 NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
                             KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object);
@@ -635,6 +637,8 @@ typedef struct _ETHREAD {
     BOOLEAN EffectiveOnly;
     UCHAR CreateQos;            /* impersonation level asked by the file being created plus one, 0 for none */
     BOOLEAN CreateQosEffective;
+    BOOLEAN DynamicCodeAllowed; /* ThreadDynamicCodePolicyInfo: this thread may opt out of a ban on dynamic code */
+    BOOLEAN HideFromDebugger;
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
@@ -692,6 +696,13 @@ typedef struct _EPROCESS {
     LIST_ENTRY JobLinks;
     struct _TOKEN *Token; /* the primary token, referenced */
     BOOLEAN TokenFrozen;  /* the first thread has run, the token is for good */
+    /* ps/mitigation.c */
+    ULONG64 MitigationMap[3];                     /* the options it was created with, in the kernel's layout */
+    ULONG64 MitigationFlags[2];                   /* PROCESS_CREATION_MITIGATION_POLICY and POLICY2 of them */
+    ULONG MitigationPolicy[MIME_POLICY_COUNT];    /* the flag word of each PROCESS_MITIGATION_POLICY class */
+    ULONG ChildProcessPolicy;                     /* PROCESS_CREATION_CHILD_PROCESS_* */
+    ULONG Win32kFilter[2];
+    ULONG AllApplicationPackagesPolicy, DesktopAppPolicy, ComponentFilter;
 } EPROCESS;
 
 extern LIST_ENTRY PsActiveProcessHead;
@@ -728,9 +739,18 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING c
                              PEPROCESS *out);
 DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
+/* ps/mitigation.c */
+void PspApplyMitigationOptions(PEPROCESS process, PEPROCESS parent, const ULONG64 requested[3]);
+void PspApplyChildProcessPolicy(PEPROCESS process, ULONG policy);
+NTSTATUS PspSetMitigationPolicy(HANDLE handle, PVOID info, ULONG length);
+NTSTATUS PspQueryMitigationPolicy(PEPROCESS process, PVOID info, ULONG length, PULONG returned);
+NTSTATUS PspSetThreadDynamicCodePolicy(PETHREAD thread, PVOID info, ULONG length);
+BOOLEAN PsDynamicCodeBlocked(PEPROCESS target);
 #define PROCESS_CREATE_FLAGS_BREAKAWAY 0x00000001
 void PspInitializeJobs(void);
-void PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags);
+NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags);
+NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB **job);
+NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process);
 void PspJobProcessExit(PEPROCESS process);
 void PsDumpThreads(void);
 void KiDumpServiceCalls(void);
@@ -746,6 +766,7 @@ extern PSP_SYSTEM_DLL PspNativeSystemDll;
 extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
+extern PSECTION PspWow64NtdllSection;
 
 /* ------------------------------------------------------------------ se */
 

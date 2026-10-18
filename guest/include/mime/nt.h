@@ -201,6 +201,8 @@ typedef struct _GUID {
 #define STATUS_INSUFFICIENT_RESOURCES ((NTSTATUS)0xC000009AL)
 #define STATUS_FILE_IS_A_DIRECTORY ((NTSTATUS)0xC00000BAL)
 #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
+#define STATUS_CHILD_PROCESS_BLOCKED ((NTSTATUS)0xC000049DL)
+#define STATUS_QUOTA_EXCEEDED ((NTSTATUS)0xC0000044L)
 #define STATUS_INTERNAL_ERROR ((NTSTATUS)0xC00000E5L)
 #define STATUS_DIRECTORY_NOT_EMPTY ((NTSTATUS)0xC0000101L)
 #define STATUS_NAME_TOO_LONG ((NTSTATUS)0xC0000106L)
@@ -731,7 +733,9 @@ typedef struct _MEMORY_IMAGE_INFORMATION {
 #define PROCESS_SET_QUOTA 0x0100
 #define PROCESS_SET_INFORMATION 0x0200
 #define PROCESS_QUERY_INFORMATION 0x0400
+#define PROCESS_SUSPEND_RESUME 0x0800
 #define PROCESS_QUERY_LIMITED_INFORMATION 0x1000
+#define PROCESS_SET_LIMITED_INFORMATION 0x2000
 #define PROCESS_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF)
 #define THREAD_TERMINATE 0x0001
 #define THREAD_SUSPEND_RESUME 0x0002
@@ -739,6 +743,12 @@ typedef struct _MEMORY_IMAGE_INFORMATION {
 #define THREAD_SET_CONTEXT 0x0010
 #define THREAD_QUERY_INFORMATION 0x0040
 #define THREAD_SET_INFORMATION 0x0020
+#define THREAD_SET_THREAD_TOKEN 0x0080
+#define THREAD_IMPERSONATE 0x0100
+#define THREAD_DIRECT_IMPERSONATION 0x0200
+#define THREAD_SET_LIMITED_INFORMATION 0x0400
+#define THREAD_QUERY_LIMITED_INFORMATION 0x0800
+#define THREAD_RESUME 0x1000
 #define THREAD_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF)
 #define EVENT_QUERY_STATE 0x0001
 #define EVENT_MODIFY_STATE 0x0002
@@ -2128,14 +2138,18 @@ typedef enum _PROCESSINFOCLASS {
     ProcessDebugPort = 7,
     ProcessAccessToken = 9,
     ProcessDefaultHardErrorMode = 12,
+    ProcessHandleCount = 20,
     ProcessSessionInformation = 24,
     ProcessWow64Information = 26,
     ProcessImageFileName = 27,
+    ProcessDebugFlags = 31,
     ProcessExecuteFlags = 34,
     ProcessCookie = 36,
     ProcessImageInformation = 37,
     ProcessImageFileNameWin32 = 43,
-    ProcessDebugFlags = 31,
+    ProcessMitigationPolicy = 52,
+    ProcessHandleTable = 58,
+    ProcessProtectionInformation = 61,
 } PROCESSINFOCLASS;
 
 typedef struct _PROCESS_BASIC_INFORMATION {
@@ -2178,6 +2192,7 @@ typedef enum _THREADINFOCLASS {
     ThreadIsTerminated = 20,
     ThreadHideFromDebugger = 17,
     ThreadDescription = 38,
+    ThreadDynamicCodePolicyInfo = 42,
 } THREADINFOCLASS;
 
 typedef struct _THREAD_BASIC_INFORMATION {

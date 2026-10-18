@@ -70,6 +70,8 @@ NTSYSCALLAPI NTSTATUS NTAPI NtOpenKey(PHANDLE handle, ACCESS_MASK access, POBJEC
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG options);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenMutant(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid);
+NTSYSCALLAPI NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid);
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PVOID package_sid, ULONG capability_count, PVOID capabilities, ULONG handle_count, PHANDLE handles);
 /* access tokens: copies, filters, identities of threads. NtDuplicateToken and NtAdjustPrivilegesToken are advapi32's. */
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE token, BOOLEAN reset_to_default, PVOID state, ULONG length, PVOID previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtAllocateLocallyUniqueId(PLUID luid);
