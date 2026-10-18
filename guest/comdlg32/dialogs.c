@@ -85,20 +85,6 @@ CDAPI short WINAPI GetFileTitleA(LPCSTR file, LPSTR title, WORD chars)
     return 0;
 }
 
-CDAPI BOOL WINAPI ChooseColorW(LPCHOOSECOLORW cc)
-{
-    if (!check(cc, sizeof(*cc), 0))
-        return FALSE;
-    return cancelled();
-}
-
-CDAPI BOOL WINAPI ChooseFontW(LPCHOOSEFONTW cf)
-{
-    if (!check(cf, sizeof(*cf), 0))
-        return FALSE;
-    return cancelled();
-}
-
 CDAPI BOOL WINAPI PrintDlgW(LPPRINTDLGW pd)
 {
     if (!check(pd, sizeof(*pd), 0))

@@ -6,6 +6,7 @@
 
 #include <mime/win32/objbase.h>
 #include <mime/win32/winuser.h>
+#include <mime/win32/winspool.h>
 
 #ifdef __i386__
 #pragma pack(push, 1)
@@ -48,6 +49,8 @@ typedef struct _PSP *HPROPSHEETPAGE;
 #define PDERR_INITFAILURE 0x1006
 #define PDERR_NODEVICES 0x1007
 #define PDERR_NODEFAULTPRN 0x1008
+#define CFERR_NOFONTS 0x2001
+#define CFERR_MAXLESSTHANMIN 0x2002
 #define FNERR_SUBCLASSFAILURE 0x3001
 #define FNERR_INVALIDFILENAME 0x3002
 #define FNERR_BUFFERTOOSMALL 0x3003
@@ -168,6 +171,23 @@ typedef struct _OFNOTIFYW {
 
 /* ------------------------------------------------------------------ color and font dialogs */
 
+#define CC_RGBINIT 0x00000001
+#define CC_FULLOPEN 0x00000002
+#define CC_PREVENTFULLOPEN 0x00000004
+#define CC_SHOWHELP 0x00000008
+#define CC_ENABLEHOOK 0x00000010
+#define CC_ENABLETEMPLATE 0x00000020
+#define CC_ENABLETEMPLATEHANDLE 0x00000040
+#define CC_SOLIDCOLOR 0x00000080
+#define CC_ANYCOLOR 0x00000100
+
+#define COLOROKSTRINGW L"commdlg_ColorOK"
+#define SETRGBSTRINGW L"commdlg_SetRGBColor"
+#define HELPMSGSTRINGW L"commdlg_help"
+#define COLOROKSTRINGA "commdlg_ColorOK"
+#define SETRGBSTRINGA "commdlg_SetRGBColor"
+#define HELPMSGSTRINGA "commdlg_help"
+
 typedef struct tagCHOOSECOLORW {
     DWORD lStructSize;
     HWND hwndOwner;
@@ -180,6 +200,18 @@ typedef struct tagCHOOSECOLORW {
     LPCWSTR lpTemplateName;
 } CHOOSECOLORW, *LPCHOOSECOLORW;
 MIME_STATIC_ASSERT(sizeof(CHOOSECOLORW) == (sizeof(void *) == 4 ? 36 : 72), "CHOOSECOLORW size");
+
+typedef struct tagCHOOSECOLORA {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HWND hInstance;
+    COLORREF rgbResult;
+    COLORREF *lpCustColors;
+    DWORD Flags;
+    LPARAM lCustData;
+    LPCCHOOKPROC lpfnHook;
+    LPCSTR lpTemplateName;
+} CHOOSECOLORA, *LPCHOOSECOLORA;
 
 typedef struct tagCHOOSEFONTW {
     DWORD lStructSize;
@@ -201,14 +233,139 @@ typedef struct tagCHOOSEFONTW {
 } CHOOSEFONTW, *LPCHOOSEFONTW;
 MIME_STATIC_ASSERT(sizeof(CHOOSEFONTW) == (sizeof(void *) == 4 ? 60 : 104), "CHOOSEFONTW size");
 
+typedef struct tagCHOOSEFONTA {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HDC hDC;
+    LOGFONTA *lpLogFont;
+    INT iPointSize;
+    DWORD Flags;
+    COLORREF rgbColors;
+    LPARAM lCustData;
+    LPCFHOOKPROC lpfnHook;
+    LPCSTR lpTemplateName;
+    HINSTANCE hInstance;
+    LPSTR lpszStyle;
+    WORD nFontType;
+    WORD Alignment;
+    INT nSizeMin;
+    INT nSizeMax;
+} CHOOSEFONTA, *LPCHOOSEFONTA;
+
+#define CF_SCREENFONTS 0x00000001
+#define CF_PRINTERFONTS 0x00000002
+#define CF_BOTH (CF_SCREENFONTS | CF_PRINTERFONTS)
+#define CF_SHOWHELP 0x00000004
+#define CF_ENABLEHOOK 0x00000008
+#define CF_ENABLETEMPLATE 0x00000010
+#define CF_ENABLETEMPLATEHANDLE 0x00000020
+#define CF_INITTOLOGFONTSTRUCT 0x00000040
+#define CF_USESTYLE 0x00000080
+#define CF_EFFECTS 0x00000100
+#define CF_APPLY 0x00000200
+#define CF_ANSIONLY 0x00000400
+#define CF_SCRIPTSONLY CF_ANSIONLY
+#define CF_NOVECTORFONTS 0x00000800
+#define CF_NOOEMFONTS CF_NOVECTORFONTS
+#define CF_NOSIMULATIONS 0x00001000
+#define CF_LIMITSIZE 0x00002000
+#define CF_FIXEDPITCHONLY 0x00004000
+#define CF_WYSIWYG 0x00008000
+#define CF_FORCEFONTEXIST 0x00010000
+#define CF_SCALABLEONLY 0x00020000
+#define CF_TTONLY 0x00040000
+#define CF_NOFACESEL 0x00080000
+#define CF_NOSTYLESEL 0x00100000
+#define CF_NOSIZESEL 0x00200000
+#define CF_SELECTSCRIPT 0x00400000
+#define CF_NOSCRIPTSEL 0x00800000
+#define CF_NOVERTFONTS 0x01000000
+#define CF_INACTIVEFONTS 0x02000000
+
+#define SIMULATED_FONTTYPE 0x8000
+#define PRINTER_FONTTYPE 0x4000
+#define SCREEN_FONTTYPE 0x2000
+#define BOLD_FONTTYPE 0x0100
+#define ITALIC_FONTTYPE 0x0200
+#define REGULAR_FONTTYPE 0x0400
+
+#define WM_CHOOSEFONT_GETLOGFONT (WM_USER + 1)
+#define WM_CHOOSEFONT_SETLOGFONT (WM_USER + 101)
+#define WM_CHOOSEFONT_SETFLAGS (WM_USER + 102)
+
+
 /* ------------------------------------------------------------------ print dialogs */
 
+#define PD_ALLPAGES 0x00000000
+#define PD_SELECTION 0x00000001
+#define PD_PAGENUMS 0x00000002
+#define PD_NOSELECTION 0x00000004
+#define PD_NOPAGENUMS 0x00000008
+#define PD_COLLATE 0x00000010
+#define PD_PRINTTOFILE 0x00000020
+#define PD_PRINTSETUP 0x00000040
+#define PD_NOWARNING 0x00000080
+#define PD_RETURNDC 0x00000100
+#define PD_RETURNIC 0x00000200
 #define PD_RETURNDEFAULT 0x00000400
-#define PSD_RETURNDEFAULT 0x00000400
+#define PD_SHOWHELP 0x00000800
+#define PD_ENABLEPRINTHOOK 0x00001000
+#define PD_ENABLESETUPHOOK 0x00002000
+#define PD_ENABLEPRINTTEMPLATE 0x00004000
+#define PD_ENABLESETUPTEMPLATE 0x00008000
+#define PD_ENABLEPRINTTEMPLATEHANDLE 0x00010000
+#define PD_ENABLESETUPTEMPLATEHANDLE 0x00020000
+#define PD_USEDEVMODECOPIES 0x00040000
+#define PD_USEDEVMODECOPIESANDCOLLATE 0x00040000
+#define PD_DISABLEPRINTTOFILE 0x00080000
+#define PD_HIDEPRINTTOFILE 0x00100000
+#define PD_NONETWORKBUTTON 0x00200000
+#define PD_CURRENTPAGE 0x00400000
+#define PD_NOCURRENTPAGE 0x00800000
+#define PD_EXCLUSIONFLAGS 0x01000000
+#define PD_USELARGETEMPLATE 0x10000000
 
 #define PD_RESULT_CANCEL 0
 #define PD_RESULT_PRINT 1
 #define PD_RESULT_APPLY 2
+#define START_PAGE_GENERAL 0xFFFFFFFF
+#define PD_EXCL_COPIESANDCOLLATE (DM_COPIES | DM_COLLATE)
+
+#define PSD_DEFAULTMINMARGINS 0x00000000
+#define PSD_INWININIINTLMEASURE 0x00000000
+#define PSD_MINMARGINS 0x00000001
+#define PSD_MARGINS 0x00000002
+#define PSD_INTHOUSANDTHSOFINCHES 0x00000004
+#define PSD_INHUNDREDTHSOFMILLIMETERS 0x00000008
+#define PSD_DISABLEMARGINS 0x00000010
+#define PSD_DISABLEPRINTER 0x00000020
+#define PSD_NOWARNING 0x00000080
+#define PSD_DISABLEORIENTATION 0x00000100
+#define PSD_RETURNDEFAULT 0x00000400
+#define PSD_DISABLEPAPER 0x00000200
+#define PSD_SHOWHELP 0x00000800
+#define PSD_ENABLEPAGESETUPHOOK 0x00002000
+#define PSD_ENABLEPAGESETUPTEMPLATE 0x00008000
+#define PSD_ENABLEPAGESETUPTEMPLATEHANDLE 0x00020000
+#define PSD_ENABLEPAGEPAINTHOOK 0x00040000
+#define PSD_DISABLEPAGEPAINTING 0x00080000
+#define PSD_NONETWORKBUTTON 0x00200000
+
+#define WM_PSD_PAGESETUPDLG (WM_USER)
+#define WM_PSD_FULLPAGERECT (WM_USER + 1)
+#define WM_PSD_MINMARGINRECT (WM_USER + 2)
+#define WM_PSD_MARGINRECT (WM_USER + 3)
+#define WM_PSD_GREEKTEXTRECT (WM_USER + 4)
+#define WM_PSD_ENVSTAMPRECT (WM_USER + 5)
+#define WM_PSD_YAFULLPAGERECT (WM_USER + 6)
+
+typedef struct tagDEVNAMES {
+    WORD wDriverOffset;
+    WORD wDeviceOffset;
+    WORD wOutputOffset;
+    WORD wDefault;
+} DEVNAMES, *LPDEVNAMES;
+#define DN_DEFAULTPRN 0x0001
 
 typedef struct tagPRINTDLGW {
     DWORD lStructSize;
@@ -232,6 +389,28 @@ typedef struct tagPRINTDLGW {
     HGLOBAL hSetupTemplate;
 } PRINTDLGW, *LPPRINTDLGW;
 MIME_STATIC_ASSERT(sizeof(PRINTDLGW) == (sizeof(void *) == 4 ? 66 : 120), "PRINTDLGW size");
+
+typedef struct tagPRINTDLGA {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HGLOBAL hDevMode;
+    HGLOBAL hDevNames;
+    HDC hDC;
+    DWORD Flags;
+    WORD nFromPage;
+    WORD nToPage;
+    WORD nMinPage;
+    WORD nMaxPage;
+    WORD nCopies;
+    HINSTANCE hInstance;
+    LPARAM lCustData;
+    LPPRINTHOOKPROC lpfnPrintHook;
+    LPSETUPHOOKPROC lpfnSetupHook;
+    LPCSTR lpPrintTemplateName;
+    LPCSTR lpSetupTemplateName;
+    HGLOBAL hPrintTemplate;
+    HGLOBAL hSetupTemplate;
+} PRINTDLGA, *LPPRINTDLGA;
 
 typedef struct tagPRINTPAGERANGE {
     DWORD nFromPage;
@@ -263,6 +442,30 @@ typedef struct tagPDEXW {
 } PRINTDLGEXW, *LPPRINTDLGEXW;
 MIME_STATIC_ASSERT(sizeof(PRINTDLGEXW) == (sizeof(void *) == 4 ? 84 : 136), "PRINTDLGEXW size");
 
+typedef struct tagPDEXA {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HGLOBAL hDevMode;
+    HGLOBAL hDevNames;
+    HDC hDC;
+    DWORD Flags;
+    DWORD Flags2;
+    DWORD ExclusionFlags;
+    DWORD nPageRanges;
+    DWORD nMaxPageRanges;
+    LPPRINTPAGERANGE lpPageRanges;
+    DWORD nMinPage;
+    DWORD nMaxPage;
+    DWORD nCopies;
+    HINSTANCE hInstance;
+    LPCSTR lpPrintTemplateName;
+    LPUNKNOWN lpCallback;
+    DWORD nPropertyPages;
+    HPROPSHEETPAGE *lphPropertyPages;
+    DWORD nStartPage;
+    DWORD dwResultAction;
+} PRINTDLGEXA, *LPPRINTDLGEXA;
+
 typedef struct tagPSDW {
     DWORD lStructSize;
     HWND hwndOwner;
@@ -281,6 +484,52 @@ typedef struct tagPSDW {
 } PAGESETUPDLGW, *LPPAGESETUPDLGW;
 MIME_STATIC_ASSERT(sizeof(PAGESETUPDLGW) == (sizeof(void *) == 4 ? 84 : 128), "PAGESETUPDLGW size");
 
+typedef struct tagPSDA {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HGLOBAL hDevMode;
+    HGLOBAL hDevNames;
+    DWORD Flags;
+    POINT ptPaperSize;
+    RECT rtMinMargin;
+    RECT rtMargin;
+    HINSTANCE hInstance;
+    LPARAM lCustData;
+    LPPAGESETUPHOOK lpfnPageSetupHook;
+    LPPAGEPAINTHOOK lpfnPagePaintHook;
+    LPCSTR lpPageSetupTemplateName;
+    HGLOBAL hPageSetupTemplate;
+} PAGESETUPDLGA, *LPPAGESETUPDLGA;
+
+/* the callback of the extended print dialog. */
+typedef struct IPrintDialogCallback IPrintDialogCallback;
+typedef struct IPrintDialogServices IPrintDialogServices;
+
+typedef struct IPrintDialogCallbackVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IPrintDialogCallback *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IPrintDialogCallback *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IPrintDialogCallback *This);
+    HRESULT(STDMETHODCALLTYPE *InitDone)(IPrintDialogCallback *This);
+    HRESULT(STDMETHODCALLTYPE *SelectionChange)(IPrintDialogCallback *This);
+    HRESULT(STDMETHODCALLTYPE *HandleMessage)(IPrintDialogCallback *This, HWND dialog, UINT message, WPARAM wparam,
+                                              LPARAM lparam, LRESULT *result);
+} IPrintDialogCallbackVtbl;
+struct IPrintDialogCallback {
+    const IPrintDialogCallbackVtbl *lpVtbl;
+};
+
+typedef struct IPrintDialogServicesVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IPrintDialogServices *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IPrintDialogServices *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IPrintDialogServices *This);
+    HRESULT(STDMETHODCALLTYPE *GetCurrentDevMode)(IPrintDialogServices *This, DEVMODEW *devmode, UINT *size);
+    HRESULT(STDMETHODCALLTYPE *GetCurrentPrinterName)(IPrintDialogServices *This, LPWSTR name, UINT *size);
+    HRESULT(STDMETHODCALLTYPE *GetCurrentPortName)(IPrintDialogServices *This, LPWSTR name, UINT *size);
+} IPrintDialogServicesVtbl;
+struct IPrintDialogServices {
+    const IPrintDialogServicesVtbl *lpVtbl;
+};
+
 /* ------------------------------------------------------------------ comdlg32 functions */
 
 CDAPI DWORD WINAPI CommDlgExtendedError(void);
@@ -291,10 +540,15 @@ CDAPI BOOL WINAPI GetSaveFileNameA(LPOPENFILENAMEA ofn);
 CDAPI short WINAPI GetFileTitleW(LPCWSTR file, LPWSTR title, WORD chars);
 CDAPI short WINAPI GetFileTitleA(LPCSTR file, LPSTR title, WORD chars);
 CDAPI BOOL WINAPI ChooseColorW(LPCHOOSECOLORW cc);
+CDAPI BOOL WINAPI ChooseColorA(LPCHOOSECOLORA cc);
 CDAPI BOOL WINAPI ChooseFontW(LPCHOOSEFONTW cf);
+CDAPI BOOL WINAPI ChooseFontA(LPCHOOSEFONTA cf);
 CDAPI BOOL WINAPI PrintDlgW(LPPRINTDLGW pd);
+CDAPI BOOL WINAPI PrintDlgA(LPPRINTDLGA pd);
 CDAPI HRESULT WINAPI PrintDlgExW(LPPRINTDLGEXW pd);
+CDAPI HRESULT WINAPI PrintDlgExA(LPPRINTDLGEXA pd);
 CDAPI BOOL WINAPI PageSetupDlgW(LPPAGESETUPDLGW psd);
+CDAPI BOOL WINAPI PageSetupDlgA(LPPAGESETUPDLGA psd);
 
 #ifdef __i386__
 #pragma pack(pop)
