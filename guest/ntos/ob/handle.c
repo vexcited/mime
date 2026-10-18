@@ -175,6 +175,20 @@ NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHAN
         ObDereferenceObject(object);
         return STATUS_PRIVILEGE_NOT_HELD;
     }
+    /* generic rights become the type's own, and the maximum is everything the type has, as nothing is withheld. */
+    const ULONG *mapping = OBJECT_TO_HEADER(object)->Type->Init.GenericMapping;
+    if (mapping[3] && (access & (GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED))) {
+        ACCESS_MASK mapped = access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED);
+        if (access & (GENERIC_ALL | MAXIMUM_ALLOWED))
+            mapped |= mapping[3];
+        if (access & GENERIC_READ)
+            mapped |= mapping[0];
+        if (access & GENERIC_WRITE)
+            mapped |= mapping[1];
+        if (access & GENERIC_EXECUTE)
+            mapped |= mapping[2];
+        access = mapped;
+    }
     if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_SD_PENDING) {
         NTSTATUS status = ObAssignSecurity(object, nullptr, nullptr, KernelMode);
         if (!NT_SUCCESS(status)) {

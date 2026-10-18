@@ -725,6 +725,10 @@ NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd);
 NTSTATUS MimeFsAssignNewFile(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, SD_BLOB *creator,
                              KPROCESSOR_MODE mode);
 
+/* the descriptor a new object of a type would get, made before the object so a refusal makes nothing. */
+NTSTATUS ObComputeSecurity(POBJECT_TYPE type, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode,
+                           SD_BLOB **sd);
+void ObAttachSecurity(PVOID object, SD_BLOB *sd);
 /* stores the descriptor of a new object, from the attributes of its creation and the directory it joins. */
 NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode);
 /* the descriptor of an object, whole, in a blob of its own (the object's or its file system's). */

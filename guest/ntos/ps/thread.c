@@ -426,12 +426,28 @@ NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTR
     NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_CREATE_THREAD, &process);
     if (!NT_SUCCESS(status))
         return status;
+    /* the descriptor a creator asks for is worked out first, so a refused one starts no thread. */
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    SD_BLOB *sd = nullptr;
+    status = ObCaptureObjectAttributes(attributes, &oa, &name);
+    if (NT_SUCCESS(status))
+        status = ObComputeSecurity(PsThreadTypeObject, attributes ? &oa : nullptr, nullptr, KeGetPreviousMode(), &sd);
+    KiFreeCapturedString(&name);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(process);
+        return status;
+    }
     PETHREAD thread;
     status = PspCreateUserThread(process, start, parameter, (flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED) != 0,
                                  max_stack_size, stack_size, &thread);
     ObDereferenceObject(process);
-    if (!NT_SUCCESS(status))
+    if (!NT_SUCCESS(status)) {
+        if (sd)
+            SeSdDereference(sd);
         return status;
+    }
+    ObAttachSecurity(thread, sd);
     HANDLE h;
     status = ObInsertObject(thread, access ? access : THREAD_ALL_ACCESS, 0, &h);
     if (NT_SUCCESS(status))

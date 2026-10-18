@@ -1,0 +1,1305 @@
+/*
+ * the security of objects by name and by handle: GetNamedSecurityInfo, SetSecurityInfo and the functions around
+ * them. Windows does this in ntmarta.dll, which the access provider interface of advapi32 loads; here it is one
+ * file. An object of a kind is opened with the access its parts need, its descriptor read or set through the
+ * kernel (GetKernelObjectSecurity and its set, RegGetKeySecurity, GetUserObjectSecurity), and for a file or a
+ * key a change of the lists is also handed down to what is below it, the way ntmarta does and the kernel does
+ * not: the lists of every child that does not protect its own are made again from the new ones of its parent.
+ *
+ * The behaviour was read from ntmarta.dll of build 26100 and is written from it, not copied.
+ */
+#include "advapi32_private.h"
+
+#ifndef ACCESS_SYSTEM_SECURITY
+#define ACCESS_SYSTEM_SECURITY 0x01000000L
+#endif
+#define READ_CONTROL_ 0x00020000L
+#define WRITE_DAC_ 0x00040000L
+#define WRITE_OWNER_ 0x00080000L
+
+#define SACL_PARTS 0x1F8 /* the sacl, label, attribute, scope, trust label and access filter */
+#define LIST_PARTS 0x1FC /* and the dacl */
+
+/* what the lists of a new object are made with: auto inheritance, and no check of the caller's rights. */
+#define INHERIT_FLAGS 0x101B
+
+#define FILE_OPEN_FOR_BACKUP_INTENT_ 0x00004000
+#define FILE_OPEN_REPARSE_POINT_ 0x00200000
+#define FILE_ATTRIBUTE_DIRECTORY_ 0x10
+#define FILE_ATTRIBUTE_RECALL_ON_OPEN_ 0x40000
+WINBASEAPI HANDLE WINAPI OpenJobObjectW(DWORD access, BOOL inherit, LPCWSTR name);
+
+#define ERROR_INSUFFICIENT_BUFFER_ 122L
+#define ERROR_INVALID_NAME_ 123L
+#define ERROR_NO_MORE_ITEMS_ 259L
+#define STATUS_INVALID_PARAMETER_ ((NTSTATUS)0xC000000DL)
+#define STATUS_NO_MORE_FILES_ ((NTSTATUS)0x80000006L)
+
+typedef enum { READ_ACCESS, WRITE_ACCESS, MODIFY_ACCESS } OPEN_TYPE;
+
+typedef struct OBJ {
+    SE_OBJECT_TYPE Type;
+    HANDLE Handle;
+    BOOL Owned;  /* closed with the object */
+    BOOL Window; /* a window station, not a kernel handle */
+    PWSTR Name;  /* the dos path of a file, the registry path of a key: for parents and children */
+} OBJ;
+
+/* a descriptor in its own block of the process heap, made by the rtl. */
+typedef PVOID MADE;
+
+static void made_free(MADE sd)
+{
+    if (sd)
+        RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, sd);
+}
+
+/* the generic rights of what is propagated to, as ntmarta has them. */
+static const GENERIC_MAPPING g_file_mapping = {0x120089, 0x120116, 0x1200A0, 0x1F01FF};
+static const GENERIC_MAPPING g_key_mapping = {0x20019, 0x20006, 0x20039, 0xF003F};
+
+static BOOL is_registry(SE_OBJECT_TYPE type)
+{
+    return type == SE_REGISTRY_KEY || type == SE_REGISTRY_WOW64_32KEY || type == SE_REGISTRY_WOW64_64KEY;
+}
+
+/* the kinds whose lists are propagated to their children by the client. */
+static BOOL propagates(SE_OBJECT_TYPE type)
+{
+    return type == SE_FILE_OBJECT || is_registry(type);
+}
+
+static const GENERIC_MAPPING *mapping_of(SE_OBJECT_TYPE type)
+{
+    return is_registry(type) ? &g_key_mapping : &g_file_mapping;
+}
+
+/* ---------------------------------------------------------------- the access an operation needs */
+
+/*
+ * the handle access the parts need: what reading, writing or both takes, and for files and keys also what lets
+ * the children be listed and a file's attributes known. The system access right comes with the sacl parts.
+ */
+static DWORD desired_access(SE_OBJECT_TYPE type, OPEN_TYPE open, BOOL extras, DWORD info)
+{
+    static const DWORD owner_rights[3] = {READ_CONTROL_, WRITE_OWNER_, READ_CONTROL_ | WRITE_OWNER_};
+    static const DWORD dacl_rights[3] = {READ_CONTROL_, WRITE_DAC_, READ_CONTROL_ | WRITE_DAC_};
+    static const DWORD scope_rights[3] = {READ_CONTROL_, ACCESS_SYSTEM_SECURITY,
+                                          READ_CONTROL_ | ACCESS_SYSTEM_SECURITY};
+    DWORD mask = 0;
+    if (info & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION))
+        mask |= owner_rights[open];
+    if (info & (DACL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | PROCESS_TRUST_LABEL_SECURITY_INFORMATION |
+                ACCESS_FILTER_SECURITY_INFORMATION))
+        mask |= dacl_rights[open];
+    if (info & SCOPE_SECURITY_INFORMATION)
+        mask |= scope_rights[open];
+    DWORD system = propagates(type) ? ACCESS_SYSTEM_SECURITY | READ_CONTROL_ : ACCESS_SYSTEM_SECURITY;
+    if (info & SACL_SECURITY_INFORMATION)
+        mask |= system;
+    if ((info & SACL_PARTS) && (info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)))
+        mask |= system;
+    if (extras) {
+        if (type == SE_FILE_OBJECT)
+            mask |= READ_CONTROL_ | 0x80; /* and FILE_READ_ATTRIBUTES */
+        else if (is_registry(type))
+            mask |= 9; /* KEY_QUERY_VALUE and KEY_ENUMERATE_SUB_KEYS */
+    }
+    return mask;
+}
+
+/* ---------------------------------------------------------------- objects */
+
+static void obj_close(OBJ *o)
+{
+    if (!o)
+        return;
+    if (o->Owned && o->Handle) {
+        if (o->Window) {
+            HMODULE user32 = GetModuleHandleW(L"user32.dll");
+            BOOL(WINAPI * close_station)(HANDLE) = user32 ? (BOOL(WINAPI *)(HANDLE))GetProcAddress(user32, "CloseWindowStation") : nullptr;
+            if (close_station)
+                close_station(o->Handle);
+        } else if (is_registry(o->Type)) {
+            RegCloseKey(o->Handle);
+        } else {
+            CloseHandle(o->Handle);
+        }
+    }
+    AdvFree(o->Name);
+    AdvFree(o);
+}
+
+static OBJ *obj_new(SE_OBJECT_TYPE type, HANDLE handle, BOOL owned, PCWSTR name)
+{
+    OBJ *o = AdvAllocZero(sizeof(*o));
+    if (!o)
+        return nullptr;
+    o->Type = type;
+    o->Handle = handle;
+    o->Owned = owned;
+    if (name) {
+        SIZE_T bytes = (wcslen(name) + 1) * sizeof(WCHAR);
+        o->Name = AdvAlloc(bytes);
+        if (!o->Name) {
+            AdvFree(o);
+            return nullptr;
+        }
+        memcpy(o->Name, name, bytes);
+    }
+    return o;
+}
+
+/* a file by its dos name, opened as a reparse point and with backup intent, as ntmarta does. */
+static DWORD open_file_name(PCWSTR name, DWORD access, OBJ **out)
+{
+    UNICODE_STRING nt;
+    if (!name || !RtlDosPathNameToNtPathName_U(name, &nt, nullptr, nullptr))
+        return ERROR_INVALID_NAME_;
+    PWSTR buffer = nt.Buffer;
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &nt, 0x40 /* OBJ_CASE_INSENSITIVE */, nullptr, nullptr);
+    IO_STATUS_BLOCK io = {};
+    HANDLE handle = nullptr;
+    NTSTATUS status = NtOpenFile(&handle, access, &oa, &io, 7, FILE_OPEN_FOR_BACKUP_INTENT_ | FILE_OPEN_REPARSE_POINT_);
+    if (status == STATUS_INVALID_PARAMETER_)
+        status = NtOpenFile(&handle, access, &oa, &io, 7, FILE_OPEN_FOR_BACKUP_INTENT_);
+    RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, buffer);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    OBJ *o = obj_new(SE_FILE_OBJECT, handle, TRUE, name);
+    if (!o) {
+        CloseHandle(handle);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    *out = o;
+    return ERROR_SUCCESS;
+}
+
+/* the root key a registry name starts with, and the rest of the name. */
+static DWORD split_key_name(PCWSTR name, HKEY *root, PCWSTR *rest)
+{
+    static const struct {
+        PCWSTR Name;
+        HKEY Key;
+    } roots[] = {
+        {L"MACHINE", HKEY_LOCAL_MACHINE},     {L"USERS", HKEY_USERS},           {L"USER", HKEY_USERS},
+        {L"CLASSES_ROOT", HKEY_CLASSES_ROOT}, {L"CURRENT_USER", HKEY_CURRENT_USER}, {L"CONFIG", HKEY_CURRENT_CONFIG},
+    };
+    /* a name of another machine's registry is the registry service's, which this system has none of. */
+    if (!name || (name[0] == '\\' && name[1] == '\\'))
+        return ERROR_INVALID_PARAMETER;
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(roots); i++) {
+        SIZE_T n = wcslen(roots[i].Name);
+        if (_wcsnicmp(name, roots[i].Name, n) || (name[n] && name[n] != '\\'))
+            continue;
+        *root = roots[i].Key;
+        const WCHAR *r = name + n;
+        while (*r == '\\')
+            r++;
+        *rest = r;
+        return ERROR_SUCCESS;
+    }
+    return ERROR_INVALID_PARAMETER;
+}
+
+static DWORD open_key_name(SE_OBJECT_TYPE type, PCWSTR name, DWORD access, OBJ **out)
+{
+    HKEY root;
+    PCWSTR rest;
+    DWORD error = split_key_name(name, &root, &rest);
+    if (error)
+        return error;
+    if (type == SE_REGISTRY_WOW64_32KEY)
+        access |= KEY_WOW64_32KEY;
+    else if (type == SE_REGISTRY_WOW64_64KEY)
+        access |= KEY_WOW64_64KEY;
+    HKEY key = nullptr;
+    error = RegOpenKeyExW(root, rest, 0, access, &key);
+    if (error)
+        return error;
+    OBJ *o = obj_new(type, key, TRUE, name);
+    if (!o) {
+        RegCloseKey(key);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    *out = o;
+    return ERROR_SUCCESS;
+}
+
+/* a named kernel object is whichever of six kinds has the name; a name of another kind is a bad handle. */
+static DWORD open_kernel_name(PCWSTR name, DWORD access, OBJ **out)
+{
+    HANDLE h = OpenMutexW(access, FALSE, name);
+    DWORD error = h ? 0 : GetLastError();
+    if (!h && error == ERROR_INVALID_HANDLE) {
+        h = OpenEventW(access, FALSE, name);
+        error = h ? 0 : GetLastError();
+    }
+    if (!h && error == ERROR_INVALID_HANDLE) {
+        h = OpenSemaphoreW(access, FALSE, name);
+        error = h ? 0 : GetLastError();
+    }
+    if (!h && error == ERROR_INVALID_HANDLE) {
+        h = OpenFileMappingW(access, FALSE, name);
+        error = h ? 0 : GetLastError();
+    }
+    if (!h && error == ERROR_INVALID_HANDLE) {
+        h = OpenJobObjectW(access, FALSE, name);
+        error = h ? 0 : GetLastError();
+    }
+    if (!h && error == ERROR_INVALID_HANDLE) {
+        h = OpenWaitableTimerW(access, FALSE, name);
+        error = h ? 0 : GetLastError();
+    }
+    if (!h)
+        return error ? error : ERROR_INTERNAL_ERROR;
+    OBJ *o = obj_new(SE_KERNEL_OBJECT, h, TRUE, nullptr);
+    if (!o) {
+        CloseHandle(h);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    *out = o;
+    return ERROR_SUCCESS;
+}
+
+/* window stations by name; user32 is loaded when it is wanted. */
+static DWORD open_window_name(PCWSTR name, DWORD access, OBJ **out)
+{
+    HMODULE user32 = LoadLibraryW(L"user32.dll");
+    HANDLE(WINAPI * open_station)(PCWSTR, BOOL, DWORD) =
+        user32 ? (HANDLE(WINAPI *)(PCWSTR, BOOL, DWORD))GetProcAddress(user32, "OpenWindowStationW") : nullptr;
+    if (!open_station)
+        return 50 /* ERROR_NOT_SUPPORTED */;
+    HANDLE h = open_station(name, FALSE, access);
+    if (!h)
+        return GetLastError();
+    OBJ *o = obj_new(SE_WINDOW_OBJECT, h, TRUE, nullptr);
+    if (!o)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    o->Window = TRUE;
+    *out = o;
+    return ERROR_SUCCESS;
+}
+
+/* services belong to the service control manager, which this system has none of: what the manager says is the answer. */
+static DWORD open_service_name(PCWSTR name, DWORD access, OBJ **out)
+{
+    HMODULE self = GetModuleHandleW(L"advapi32.dll");
+    HANDLE(WINAPI * open_manager)(PCWSTR, PCWSTR, DWORD) =
+        self ? (HANDLE(WINAPI *)(PCWSTR, PCWSTR, DWORD))GetProcAddress(self, "OpenSCManagerW") : nullptr;
+    if (!open_manager)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    HANDLE manager = open_manager(nullptr, nullptr, 1 /* SC_MANAGER_CONNECT */);
+    if (!manager)
+        return GetLastError();
+    return ERROR_SERVICE_DOES_NOT_EXIST;
+}
+
+static DWORD obj_open_name(SE_OBJECT_TYPE type, PCWSTR name, DWORD access, OBJ **out)
+{
+    switch (type) {
+    case SE_FILE_OBJECT:
+        return open_file_name(name, access, out);
+    case SE_REGISTRY_KEY:
+    case SE_REGISTRY_WOW64_32KEY:
+    case SE_REGISTRY_WOW64_64KEY:
+        return open_key_name(type, name, access, out);
+    case SE_KERNEL_OBJECT:
+        return open_kernel_name(name, access, out);
+    case SE_WINDOW_OBJECT:
+        return open_window_name(name, access, out);
+    case SE_SERVICE:
+        return open_service_name(name, access, out);
+    case SE_PRINTER:
+        return 1801 /* ERROR_INVALID_PRINTER_NAME */;
+    case SE_LMSHARE:
+        return 2310 /* NERR_NetNameNotFound */;
+    case SE_DS_OBJECT:
+    case SE_DS_OBJECT_ALL:
+        return 8453 /* ERROR_DS_UNAVAILABLE, there is no directory service */;
+    case SE_WMIGUID_OBJECT:
+        return ERROR_FILE_NOT_FOUND;
+    default:
+        return ERROR_INVALID_PARAMETER;
+    }
+}
+
+/* a handle is used as it is, with the rights it has; only a predefined key is no handle, and is opened. */
+static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, OBJ **out)
+{
+    HANDLE use = handle;
+    BOOL owned = FALSE;
+    if (is_registry(type) && ((ULONG_PTR)handle & 0xFFFFFFFF80000000ull) == 0xFFFFFFFF80000000ull) {
+        HKEY key;
+        if (handle == HKEY_PERFORMANCE_DATA)
+            return ERROR_INVALID_HANDLE;
+        DWORD error = RegDuplicateHKey(handle, &key);
+        if (error)
+            return error;
+        use = key;
+        owned = TRUE;
+    }
+    /* a file keeps its name for the parent and the children its lists are handed to. */
+    WCHAR path[1024];
+    DWORD chars = type == SE_FILE_OBJECT ? GetFinalPathNameByHandleW(handle, path, RTL_NUMBER_OF(path), 0) : 0;
+    BOOL named = chars && chars < RTL_NUMBER_OF(path);
+    OBJ *o = obj_new(type, use, owned, named ? path : nullptr);
+    if (!o) {
+        if (owned)
+            RegCloseKey(use);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    o->Window = type == SE_WINDOW_OBJECT;
+    *out = o;
+    return ERROR_SUCCESS;
+}
+
+/* ---------------------------------------------------------------- reading and writing descriptors */
+
+/* a descriptor of the object, self relative, in a LocalAlloc block. */
+static DWORD obj_get(OBJ *o, DWORD info, BYTE **sd)
+{
+    *sd = nullptr;
+    DWORD needed = 0, error;
+    if (o->Window) {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        BOOL(WINAPI * get)(HANDLE, PVOID, PVOID, DWORD, LPDWORD) =
+            user32 ? (BOOL(WINAPI *)(HANDLE, PVOID, PVOID, DWORD, LPDWORD))GetProcAddress(user32, "GetUserObjectSecurity") : nullptr;
+        if (!get)
+            return 50;
+        if (get(o->Handle, &info, nullptr, 0, &needed) || !needed)
+            return GetLastError();
+        BYTE *block = LocalAlloc(LMEM_FIXED, needed);
+        if (!block)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        if (!get(o->Handle, &info, block, needed, &needed)) {
+            error = GetLastError();
+            LocalFree(block);
+            return error;
+        }
+        *sd = block;
+        return ERROR_SUCCESS;
+    }
+    /* a file, a key or a kernel object: through the kernel, with room for most descriptors at the first try. */
+    ULONG room = 1024;
+    BYTE *block = LocalAlloc(LMEM_FIXED, room);
+    if (!block)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    NTSTATUS status = NtQuerySecurityObject(o->Handle, info, block, room, &room);
+    if (status == STATUS_BUFFER_TOO_SMALL) {
+        LocalFree(block);
+        block = LocalAlloc(LMEM_FIXED, room);
+        if (!block)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        status = NtQuerySecurityObject(o->Handle, info, block, room, &room);
+    }
+    if (!NT_SUCCESS(status)) {
+        LocalFree(block);
+        return RtlNtStatusToDosError(status);
+    }
+    *sd = block;
+    return ERROR_SUCCESS;
+}
+
+static DWORD obj_set(OBJ *o, DWORD info, PVOID sd)
+{
+    if (o->Window) {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        BOOL(WINAPI * set)(HANDLE, PVOID, PVOID) =
+            user32 ? (BOOL(WINAPI *)(HANDLE, PVOID, PVOID))GetProcAddress(user32, "SetUserObjectSecurity") : nullptr;
+        if (!set)
+            return 50;
+        return set(o->Handle, &info, sd) ? ERROR_SUCCESS : GetLastError();
+    }
+    NTSTATUS status = NtSetSecurityObject(o->Handle, info, sd);
+    return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
+}
+
+/* whether the object can have things in it: a directory, a key. */
+static BOOL obj_is_container(OBJ *o)
+{
+    if (is_registry(o->Type))
+        return TRUE;
+    if (o->Type != SE_FILE_OBJECT)
+        return FALSE;
+    struct {
+        LARGE_INTEGER Times[4];
+        ULONG Attributes;
+        ULONG Pad;
+    } basic = {};
+    IO_STATUS_BLOCK io;
+    if (!NT_SUCCESS(NtQueryInformationFile(o->Handle, &io, &basic, sizeof(basic), FileBasicInformation)))
+        return TRUE;
+    return (basic.Attributes & FILE_ATTRIBUTE_DIRECTORY_) != 0;
+}
+
+/* ---------------------------------------------------------------- parents and children */
+
+/* the name of the parent of an object, in a new block, or NULL for a root. */
+static PWSTR parent_name(PCWSTR name, BOOL registry)
+{
+    if (!name)
+        return nullptr;
+    SIZE_T length = wcslen(name);
+    while (length > 1 && name[length - 1] == '\\')
+        length--;
+    if (registry) {
+        SIZE_T cut = length;
+        while (cut && name[cut - 1] != '\\')
+            cut--;
+        if (!cut)
+            return nullptr; /* a root key */
+        cut--;
+        while (cut && name[cut - 1] == '\\')
+            cut--;
+        PWSTR parent = AdvAlloc((cut + 1) * sizeof(WCHAR));
+        if (parent) {
+            memcpy(parent, name, cut * sizeof(WCHAR));
+            parent[cut] = 0;
+        }
+        return parent;
+    }
+    /* a file: past a drive "C:", a device prefix "\\?\" or a share "\\server\share", the root of the volume is left. */
+    SIZE_T root = 0;
+    if (length >= 4 && name[0] == '\\' && name[1] == '\\' && (name[2] == '?' || name[2] == '.') && name[3] == '\\')
+        root = 4;
+    if (length >= root + 2 && name[root + 1] == ':') {
+        root += 2;
+    } else if (!root && length >= 2 && name[0] == '\\' && name[1] == '\\') {
+        SIZE_T slashes = 0;
+        root = 2;
+        while (root < length) {
+            if (name[root] == '\\' && ++slashes == 2)
+                break;
+            root++;
+        }
+    }
+    SIZE_T cut = length;
+    while (cut > root + 1 && name[cut - 1] != '\\')
+        cut--;
+    if (cut <= root + 1)
+        return nullptr; /* the root directory itself, or what hangs off a bare drive */
+    SIZE_T keep = cut - 1;
+    if (keep <= root)
+        keep = root + 1; /* "C:\" keeps its slash */
+    PWSTR parent = AdvAlloc((keep + 1) * sizeof(WCHAR));
+    if (parent) {
+        memcpy(parent, name, keep * sizeof(WCHAR));
+        parent[keep] = 0;
+    }
+    return parent;
+}
+
+/* the parent of an object, opened to read the parts. NULL without an error when it has none. */
+static DWORD obj_parent(OBJ *o, DWORD info, OBJ **parent)
+{
+    *parent = nullptr;
+    PWSTR name = parent_name(o->Name, is_registry(o->Type));
+    if (!name)
+        return ERROR_SUCCESS;
+    DWORD error = obj_open_name(o->Type, name, desired_access(o->Type, READ_ACCESS, FALSE, info), parent);
+    AdvFree(name);
+    return error;
+}
+
+typedef struct NAMES {
+    PWSTR *Item;
+    DWORD Count, Capacity;
+} NAMES;
+
+static BOOL names_add(NAMES *n, PCWSTR name, SIZE_T chars)
+{
+    if (n->Count == n->Capacity) {
+        DWORD capacity = n->Capacity ? n->Capacity * 2 : 32;
+        PWSTR *grown = AdvAlloc(capacity * sizeof(PWSTR));
+        if (!grown)
+            return FALSE;
+        if (n->Item)
+            memcpy(grown, n->Item, n->Count * sizeof(PWSTR));
+        AdvFree(n->Item);
+        n->Item = grown;
+        n->Capacity = capacity;
+    }
+    PWSTR copy = AdvAlloc((chars + 1) * sizeof(WCHAR));
+    if (!copy)
+        return FALSE;
+    memcpy(copy, name, chars * sizeof(WCHAR));
+    copy[chars] = 0;
+    n->Item[n->Count++] = copy;
+    return TRUE;
+}
+
+static void names_free(NAMES *n)
+{
+    for (DWORD i = 0; i < n->Count; i++)
+        AdvFree(n->Item[i]);
+    AdvFree(n->Item);
+    memset(n, 0, sizeof(*n));
+}
+
+/* the names of what is directly in a container. */
+static DWORD obj_children(OBJ *dir, NAMES *names)
+{
+    memset(names, 0, sizeof(*names));
+    if (is_registry(dir->Type)) {
+        DWORD count = 0, longest = 0;
+        DWORD error = RegQueryInfoKeyW(dir->Handle, nullptr, nullptr, nullptr, &count, &longest, nullptr, nullptr,
+                                       nullptr, nullptr, nullptr, nullptr);
+        if (error)
+            return error;
+        PWSTR buffer = AdvAlloc((longest + 2) * sizeof(WCHAR));
+        if (!buffer)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        for (DWORD i = 0; i < count && !error; i++) {
+            DWORD chars = longest + 1;
+            error = RegEnumKeyExW(dir->Handle, i, buffer, &chars, nullptr, nullptr, nullptr, nullptr);
+            if (error == ERROR_NO_MORE_ITEMS_) {
+                error = 0;
+                break;
+            }
+            if (!error && !names_add(names, buffer, chars))
+                error = ERROR_NOT_ENOUGH_MEMORY;
+        }
+        AdvFree(buffer);
+        if (error)
+            names_free(names);
+        return error;
+    }
+    /* a directory is listed through a handle of its own. */
+    OBJ *listing;
+    DWORD error = open_file_name(dir->Name, 0x100001 /* SYNCHRONIZE | FILE_LIST_DIRECTORY */, &listing);
+    if (error)
+        return error;
+    BYTE *buffer = AdvAlloc(0x8000);
+    if (!buffer) {
+        obj_close(listing);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    BOOLEAN first = TRUE;
+    for (;;) {
+        IO_STATUS_BLOCK io = {};
+        NTSTATUS status = NtQueryDirectoryFile(listing->Handle, nullptr, nullptr, nullptr, &io, buffer, 0x8000,
+                                               FileDirectoryInformation, FALSE, nullptr, first);
+        first = FALSE;
+        if (!NT_SUCCESS(status)) {
+            error = status == STATUS_NO_MORE_FILES_ || status == STATUS_NO_MORE_FILES ? 0 : RtlNtStatusToDosError(status);
+            break;
+        }
+        for (BYTE *e = buffer;;) {
+            /* the next entry, an index, four times, two sizes, the attributes and the length of the name. */
+            ULONG next = *(ULONG *)e, attributes = *(ULONG *)(e + 56), bytes = *(ULONG *)(e + 60);
+            PCWSTR entry = (PCWSTR)(e + 64);
+            BOOL dots = (bytes == 2 && entry[0] == '.') || (bytes == 4 && entry[0] == '.' && entry[1] == '.');
+            if (!dots && !(attributes & FILE_ATTRIBUTE_RECALL_ON_OPEN_) && !names_add(names, entry, bytes / 2)) {
+                error = ERROR_NOT_ENOUGH_MEMORY;
+                break;
+            }
+            if (!next)
+                break;
+            e += next;
+        }
+        if (error)
+            break;
+    }
+    AdvFree(buffer);
+    obj_close(listing);
+    if (error)
+        names_free(names);
+    return error;
+}
+
+/* one child by a name obj_children gave. */
+static DWORD obj_open_child(OBJ *dir, PCWSTR name, DWORD access, OBJ **child)
+{
+    /* a key reached through a handle has no name to build on: its children are known by the handle alone. */
+    PWSTR joined = nullptr;
+    if (dir->Name) {
+        SIZE_T length = wcslen(dir->Name);
+        joined = AdvAlloc((length + 1 + wcslen(name) + 1) * sizeof(WCHAR));
+        if (!joined)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        memcpy(joined, dir->Name, length * sizeof(WCHAR));
+        if (!length || joined[length - 1] != '\\')
+            joined[length++] = '\\';
+        wcscpy(joined + length, name);
+    }
+    DWORD error;
+    if (is_registry(dir->Type)) {
+        DWORD wow = dir->Type == SE_REGISTRY_WOW64_32KEY ? KEY_WOW64_32KEY
+                    : dir->Type == SE_REGISTRY_WOW64_64KEY ? KEY_WOW64_64KEY : 0;
+        HKEY key;
+        error = RegOpenKeyExW(dir->Handle, name, 0, access | wow, &key);
+        if (!error) {
+            *child = obj_new(dir->Type, key, TRUE, joined);
+            if (!*child) {
+                RegCloseKey(key);
+                error = ERROR_NOT_ENOUGH_MEMORY;
+            }
+        }
+    } else {
+        error = joined ? open_file_name(joined, access, child) : ERROR_INVALID_NAME_;
+    }
+    AdvFree(joined);
+    return error;
+}
+
+/* ---------------------------------------------------------------- descriptors made again */
+
+static HANDLE open_token(void)
+{
+    HANDLE token = nullptr;
+    if (!NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), TOKEN_QUERY, TRUE, &token)) &&
+        !NT_SUCCESS(NtOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY, &token)))
+        return nullptr;
+    return token;
+}
+
+static WORD control_of(const void *sd)
+{
+    return ((const SECURITY_DESCRIPTOR *)sd)->Control;
+}
+
+static void add_control(void *sd, WORD bits)
+{
+    ((SECURITY_DESCRIPTOR *)sd)->Control |= bits;
+}
+
+/* a descriptor from the parts the caller gave, absolute, the way SetNamedSecurityInfo builds it. */
+static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSID group, PACL dacl, PACL sacl)
+{
+    RtlCreateSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);
+    if (info & OWNER_SECURITY_INFORMATION) {
+        if (!owner || !RtlValidSid(owner))
+            return ERROR_INVALID_PARAMETER;
+        RtlSetOwnerSecurityDescriptor(sd, owner, FALSE);
+    }
+    if (info & GROUP_SECURITY_INFORMATION) {
+        if (!group || !RtlValidSid(group))
+            return ERROR_INVALID_PARAMETER;
+        RtlSetGroupSecurityDescriptor(sd, group, FALSE);
+    }
+    if (info & DACL_SECURITY_INFORMATION) {
+        /* a list not given is a null one, which nothing can be inherited into: it is protected from the start. */
+        if (dacl) {
+            RtlSetDaclSecurityDescriptor(sd, TRUE, dacl, FALSE);
+            if (info & PROTECTED_DACL_SECURITY_INFORMATION)
+                add_control(sd, SE_DACL_PROTECTED);
+        } else {
+            add_control(sd, SE_DACL_PROTECTED);
+        }
+    }
+    if (info & SACL_PARTS) {
+        if (sacl)
+            RtlSetSaclSecurityDescriptor(sd, TRUE, sacl, FALSE);
+        if (!sacl || (info & PROTECTED_SACL_SECURITY_INFORMATION))
+            add_control(sd, SE_SACL_PROTECTED);
+    }
+    return ERROR_SUCCESS;
+}
+
+/* a new descriptor for an object, from the creator's parts and what the parent hands down. */
+static DWORD derive(const void *parent, const void *creator, BOOL container, HANDLE token, const GENERIC_MAPPING *mapping,
+                    MADE *out)
+{
+    *out = nullptr;
+    NTSTATUS status = RtlNewSecurityObjectEx((PSECURITY_DESCRIPTOR)parent, (PSECURITY_DESCRIPTOR)creator,
+                                             (PSECURITY_DESCRIPTOR *)out, nullptr, container, INHERIT_FLAGS, token,
+                                             (PGENERIC_MAPPING)mapping);
+    return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
+}
+
+static BOOL list_equal(const ACL *a, const ACL *b)
+{
+    if (!a || !b)
+        return a == b;
+    return a->AclSize == b->AclSize && a->AceCount == b->AceCount &&
+           !memcmp(a + 1, b + 1, a->AclSize - sizeof(ACL));
+}
+
+/* whether a new descriptor says what the current one already does, for the parts named. */
+static BOOL unchanged(const void *current, const void *replacement, DWORD info)
+{
+    BOOLEAN defaulted, cp, np;
+    PSID co = nullptr, cg = nullptr, no = nullptr, ng = nullptr;
+    PACL cd = nullptr, cs = nullptr, nd = nullptr, ns = nullptr;
+    RtlGetOwnerSecurityDescriptor((PSECURITY_DESCRIPTOR)current, &co, &defaulted);
+    RtlGetOwnerSecurityDescriptor((PSECURITY_DESCRIPTOR)replacement, &no, &defaulted);
+    RtlGetGroupSecurityDescriptor((PSECURITY_DESCRIPTOR)current, &cg, &defaulted);
+    RtlGetGroupSecurityDescriptor((PSECURITY_DESCRIPTOR)replacement, &ng, &defaulted);
+    WORD cc = control_of(current), nc = control_of(replacement);
+    if ((info & OWNER_SECURITY_INFORMATION) && !((!co && !no) || (co && no && RtlEqualSid(co, no))))
+        return FALSE;
+    if ((info & GROUP_SECURITY_INFORMATION) && !((!cg && !ng) || (cg && ng && RtlEqualSid(cg, ng))))
+        return FALSE;
+    if (info & DACL_SECURITY_INFORMATION) {
+        RtlGetDaclSecurityDescriptor((PSECURITY_DESCRIPTOR)current, &cp, &cd, &defaulted);
+        RtlGetDaclSecurityDescriptor((PSECURITY_DESCRIPTOR)replacement, &np, &nd, &defaulted);
+        if (cp != np || !list_equal(cd, nd) || ((cc ^ nc) & (SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED)))
+            return FALSE;
+    }
+    if (info & SACL_PARTS) {
+        RtlGetSaclSecurityDescriptor((PSECURITY_DESCRIPTOR)current, &cp, &cs, &defaulted);
+        RtlGetSaclSecurityDescriptor((PSECURITY_DESCRIPTOR)replacement, &np, &ns, &defaulted);
+        if (cp != np || !list_equal(cs, ns) || ((cc ^ nc) & (SE_SACL_PROTECTED | SE_SACL_AUTO_INHERITED)))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* ---------------------------------------------------------------- handing lists down */
+
+#define PROGRESS_INVOKE_NEVER 1
+#define PROGRESS_INVOKE_EVERY_OBJECT 2
+#define PROGRESS_INVOKE_ON_ERROR 3
+#define PROGRESS_CANCEL_OPERATION 4
+#define PROGRESS_RETRY_OPERATION 5
+#define PROGRESS_INVOKE_PRE_POST_ERROR 6
+
+typedef VOID(CALLBACK *PROGRESS_FN)(PWSTR name, DWORD status, PDWORD setting, PVOID args, BOOL set);
+
+typedef struct TREE {
+    HANDLE Token;
+    const GENERIC_MAPPING *Mapping;
+    PROGRESS_FN Progress; /* NULL for a plain change */
+    DWORD Setting;
+    PVOID Args;
+    BOOL Reset;     /* children keep only what their parent hands down */
+    BOOL Cancelled;
+    DWORD Failed;   /* the first error of a child, reported by the tree functions */
+} TREE;
+
+/* tells the progress routine about one object, and says whether it asked to try the object again. */
+static BOOL report(TREE *t, PCWSTR name, DWORD error, BOOL set)
+{
+    if (!t || !t->Progress || t->Setting == PROGRESS_INVOKE_NEVER)
+        return FALSE;
+    if (t->Setting == PROGRESS_INVOKE_ON_ERROR && !error)
+        return FALSE;
+    DWORD setting = t->Setting;
+    t->Progress((PWSTR)name, error, &setting, t->Args, set);
+    t->Setting = setting;
+    if (setting == PROGRESS_CANCEL_OPERATION)
+        t->Cancelled = TRUE;
+    return setting == PROGRESS_RETRY_OPERATION;
+}
+
+static void update_children(OBJ *dir, DWORD info, const void *new_parent, TREE *tree);
+
+/*
+ * one child: its lists are made again from the new ones of its parent, keeping its own explicit aces, set when
+ * they are different, and handed on into what the child holds. A child that protects its lists is left alone
+ * with all that is below it. Owner and group are not the business of the children.
+ */
+static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_parent, TREE *tree)
+{
+    DWORD change = info & ~(DWORD)(OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION);
+    DWORD read_info = (change & LIST_PARTS) | OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION;
+    DWORD access = desired_access(dir->Type, MODIFY_ACCESS, TRUE, read_info) | desired_access(dir->Type, WRITE_ACCESS, FALSE, change);
+    for (;;) {
+        OBJ *child = nullptr;
+        DWORD error = obj_open_child(dir, name, access, &child);
+        BOOL set = FALSE;
+        if (!error) {
+            BYTE *current = nullptr;
+            error = obj_get(child, read_info, &current);
+            if (!error) {
+                WORD control = control_of(current);
+                BOOL open_dacl = (change & DACL_SECURITY_INFORMATION) && !(control & SE_DACL_PROTECTED);
+                BOOL open_sacl = (change & SACL_SECURITY_INFORMATION) && !(control & SE_SACL_PROTECTED);
+                if (open_dacl || open_sacl || (change & (LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION))) {
+                    BOOL container = obj_is_container(child);
+                    SECURITY_DESCRIPTOR stripped;
+                    BYTE empty[8];
+                    PVOID creator = current;
+                    if (tree && tree->Reset) {
+                        /* nothing explicit of its own: owner and group stay, the lists are empty. */
+                        PSID owner = nullptr, group = nullptr;
+                        BOOLEAN defaulted;
+                        RtlCreateSecurityDescriptor(&stripped, SECURITY_DESCRIPTOR_REVISION);
+                        RtlGetOwnerSecurityDescriptor(current, &owner, &defaulted);
+                        RtlGetGroupSecurityDescriptor(current, &group, &defaulted);
+                        RtlSetOwnerSecurityDescriptor(&stripped, owner, FALSE);
+                        RtlSetGroupSecurityDescriptor(&stripped, group, FALSE);
+                        RtlCreateAcl((PACL)empty, sizeof(empty), ACL_REVISION);
+                        if (change & DACL_SECURITY_INFORMATION)
+                            RtlSetDaclSecurityDescriptor(&stripped, TRUE, (PACL)empty, FALSE);
+                        if (change & SACL_PARTS)
+                            RtlSetSaclSecurityDescriptor(&stripped, TRUE, (PACL)empty, FALSE);
+                        creator = &stripped;
+                    }
+                    MADE made;
+                    error = derive(new_parent, creator, container, tree ? tree->Token : nullptr,
+                                   tree && tree->Mapping ? tree->Mapping : mapping_of(dir->Type), &made);
+                    if (!error) {
+                        if (container)
+                            update_children(child, info, made, tree);
+                        if (!unchanged(current, made, change)) {
+                            add_control(made, ((change & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ : 0) |
+                                                  ((change & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ : 0));
+                            error = obj_set(child, change, made);
+                            set = !error;
+                        }
+                        made_free(made);
+                    }
+                }
+            }
+            if (current)
+                LocalFree(current);
+            obj_close(child);
+        }
+        if (error && tree && !tree->Failed)
+            tree->Failed = error;
+        BOOL retry = report(tree, name, error, set);
+        if (!retry || (tree && tree->Cancelled))
+            break;
+    }
+}
+
+static void update_children(OBJ *dir, DWORD info, const void *new_parent, TREE *tree)
+{
+    NAMES names;
+    if (obj_children(dir, &names))
+        return;
+    for (DWORD i = 0; i < names.Count && !(tree && tree->Cancelled); i++)
+        update_child(dir, names.Item[i], info, new_parent, tree);
+    names_free(&names);
+}
+
+/*
+ * sets the parts of an object, and for a file or a key whose lists change makes the lists of what is below it
+ * again. sd is absolute, with the parts and the protection the caller chose.
+ */
+static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_protection, TREE *tree)
+{
+    if (!propagates(o->Type) || !(info & LIST_PARTS)) {
+        /* no generic mapping is known here: the kernel maps what is generic, and the lists are marked as processed. */
+        add_control(sd, ((info & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ | SE_DACL_AUTO_INHERITED : 0) |
+                            ((info & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED : 0));
+        return obj_set(o, info, sd);
+    }
+    BOOL container = obj_is_container(o);
+    HANDLE token = open_token();
+    DWORD error = ERROR_SUCCESS;
+    OBJ *parent = nullptr;
+    BYTE *parent_sd = nullptr, *current = nullptr;
+    MADE made = nullptr;
+    WORD control = control_of(sd);
+    /* what the parent hands down, when any of the lists is to inherit. */
+    if (((info & DACL_SECURITY_INFORMATION) && !(control & SE_DACL_PROTECTED)) ||
+        ((info & SACL_SECURITY_INFORMATION) && !(control & SE_SACL_PROTECTED)) ||
+        (info & (LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION))) {
+        error = obj_parent(o, info & LIST_PARTS, &parent);
+        if (!error && parent) {
+            error = obj_get(parent, info & LIST_PARTS, &parent_sd);
+            if (!error)
+                add_control(parent_sd, ((info & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ : 0) |
+                                           ((info & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ : 0));
+            obj_close(parent);
+        }
+    }
+    /* the owner, the group and the protection the object has now, for what the caller did not say. */
+    PSID owner = nullptr, group = nullptr;
+    BOOLEAN defaulted;
+    RtlGetOwnerSecurityDescriptor(sd, &owner, &defaulted);
+    RtlGetGroupSecurityDescriptor(sd, &group, &defaulted);
+    if (!error) {
+        DWORD read = info | (owner ? 0 : OWNER_SECURITY_INFORMATION) | (group ? 0 : GROUP_SECURITY_INFORMATION);
+        error = obj_get(o, read, &current);
+    }
+    if (!error) {
+        if (!owner) {
+            RtlGetOwnerSecurityDescriptor(current, &owner, &defaulted);
+            RtlSetOwnerSecurityDescriptor(sd, owner, FALSE);
+        }
+        if (!group) {
+            RtlGetGroupSecurityDescriptor(current, &group, &defaulted);
+            RtlSetGroupSecurityDescriptor(sd, group, FALSE);
+        }
+        if (keep_protection) {
+            if ((info & (DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION)) == DACL_SECURITY_INFORMATION)
+                add_control(sd, control_of(current) & SE_DACL_PROTECTED);
+            if ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)))
+                add_control(sd, control_of(current) & SE_SACL_PROTECTED);
+        }
+        error = derive(parent_sd, sd, container, token, mapping_of(o->Type), &made);
+    }
+    if (!error) {
+        if (container) {
+            TREE local = {token, mapping_of(o->Type)};
+            TREE *use = tree ? tree : &local;
+            use->Token = token;
+            use->Mapping = mapping_of(o->Type);
+            update_children(o, info, made, use);
+        }
+        add_control(made, ((info & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ : 0) |
+                              ((info & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ : 0));
+        error = obj_set(o, info, made);
+    }
+    made_free(made);
+    if (current)
+        LocalFree(current);
+    if (parent_sd)
+        LocalFree(parent_sd);
+    if (token)
+        CloseHandle(token);
+    return error;
+}
+
+/* ---------------------------------------------------------------- reading the parts */
+
+/* the object and the pointers of a descriptor, as GetNamedSecurityInfo gives them back. */
+static DWORD give_parts(BYTE *sd, DWORD info, PSID *owner, PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *result)
+{
+    SECURITY_DESCRIPTOR_RELATIVE *r = (SECURITY_DESCRIPTOR_RELATIVE *)sd;
+    if ((info & OWNER_SECURITY_INFORMATION) && owner)
+        *owner = r->Owner ? (PSID)(sd + r->Owner) : nullptr;
+    if ((info & GROUP_SECURITY_INFORMATION) && group)
+        *group = r->Group ? (PSID)(sd + r->Group) : nullptr;
+    if ((info & DACL_SECURITY_INFORMATION) && dacl)
+        *dacl = (r->Control & SE_DACL_PRESENT) && r->Dacl ? (PACL)(sd + r->Dacl) : nullptr;
+    if ((info & SACL_PARTS) && sacl)
+        *sacl = (r->Control & SE_SACL_PRESENT) && r->Sacl ? (PACL)(sd + r->Sacl) : nullptr;
+    if (result)
+        *result = sd;
+    else
+        LocalFree(sd);
+    return ERROR_SUCCESS;
+}
+
+/* the arguments of the two readers, checked and cleared in the order ntmarta does. */
+static DWORD prepare_output(DWORD info, PSID *owner, PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *result)
+{
+    if (info & OWNER_SECURITY_INFORMATION) {
+        if (owner)
+            *owner = nullptr;
+        else if (!result)
+            return ERROR_INVALID_PARAMETER;
+    }
+    if (info & GROUP_SECURITY_INFORMATION) {
+        if (group)
+            *group = nullptr;
+        else if (!result)
+            return ERROR_INVALID_PARAMETER;
+    }
+    if (info & DACL_SECURITY_INFORMATION) {
+        if (dacl)
+            *dacl = nullptr;
+        else if (!result)
+            return ERROR_INVALID_PARAMETER;
+    }
+    if (info & SACL_PARTS) {
+        if (sacl)
+            *sacl = nullptr;
+        else if (!result)
+            return ERROR_INVALID_PARAMETER;
+    }
+    if (result)
+        *result = nullptr;
+    return ERROR_SUCCESS;
+}
+
+static BOOL valid_name_type(SE_OBJECT_TYPE type)
+{
+    return (type >= SE_FILE_OBJECT && type <= SE_DS_OBJECT_ALL) || (type >= SE_WMIGUID_OBJECT && type <= SE_REGISTRY_WOW64_64KEY);
+}
+
+static BOOL valid_handle_type(SE_OBJECT_TYPE type)
+{
+    return (type >= SE_FILE_OBJECT && type <= SE_WINDOW_OBJECT) || type == SE_WMIGUID_OBJECT;
+}
+
+/* opens the object with the access the parts need, with the extras first: the access may be one it will not give. */
+static DWORD open_to_read(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, OBJ **o)
+{
+    DWORD error;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        DWORD access = desired_access(type, READ_ACCESS, attempt == 0, info);
+        error = name ? obj_open_name(type, name, access, o) : obj_open_handle(type, handle, access, o);
+        if (!error)
+            return ERROR_SUCCESS;
+        /* a name that is not there will not be there without the extras either. */
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_INVALID_NAME_)
+            break;
+    }
+    return error;
+}
+
+static DWORD get_security(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, PSID *owner, PSID *group, PACL *dacl,
+                          PACL *sacl, PSECURITY_DESCRIPTOR *result)
+{
+    DWORD error = prepare_output(info, owner, group, dacl, sacl, result);
+    if (error)
+        return error;
+    info &= 0xFFFFFFF;
+    OBJ *o = nullptr;
+    error = open_to_read(type, name, handle, info, &o);
+    if (error)
+        return error;
+    BYTE *sd = nullptr;
+    error = obj_get(o, info, &sd);
+    obj_close(o);
+    if (error)
+        return error;
+    if (!sd)
+        return ERROR_INTERNAL_ERROR;
+    return give_parts(sd, info, owner, group, dacl, sacl, result);
+}
+
+ADVAPI DWORD WINAPI GetNamedSecurityInfoW(LPCWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID *owner,
+                                          PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *sd)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    DWORD error = prepare_output(info, owner, group, dacl, sacl, sd);
+    if (error)
+        return error;
+    if (!valid_name_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return get_security(type, name, nullptr, info, owner, group, dacl, sacl, sd);
+}
+
+ADVAPI DWORD WINAPI GetNamedSecurityInfoA(LPCSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID *owner,
+                                          PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *sd)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD error = GetNamedSecurityInfoW(wide, type, info, owner, group, dacl, sacl, sd);
+    AdvFree(wide);
+    return error;
+}
+
+ADVAPI DWORD WINAPI GetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID *owner,
+                                    PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *sd)
+{
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
+    DWORD error = prepare_output(info, owner, group, dacl, sacl, sd);
+    if (error)
+        return error;
+    if (!valid_handle_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return get_security(type, nullptr, handle, info, owner, group, dacl, sacl, sd);
+}
+
+/* ---------------------------------------------------------------- setting the parts */
+
+/* the parts of a change to a named object or a handle: the user's, checked and put in a descriptor. */
+static DWORD set_security(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, PSID owner, PSID group, PACL dacl,
+                          PACL sacl)
+{
+    SECURITY_DESCRIPTOR sd;
+    DWORD error = build_absolute(&sd, info, owner, group, dacl, sacl);
+    if (error)
+        return error;
+    /* the protection of a list nobody said anything about is kept. */
+    BOOL keep = ((info & DACL_SECURITY_INFORMATION) && !(info & (PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION))) ||
+                ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)));
+    OBJ *o = nullptr;
+    DWORD access = desired_access(type, propagates(type) && (info & LIST_PARTS) ? MODIFY_ACCESS : WRITE_ACCESS, TRUE, info);
+    if (!propagates(type) || !(info & LIST_PARTS))
+        access = desired_access(type, WRITE_ACCESS, FALSE, info);
+    error = name ? obj_open_name(type, name, access, &o) : obj_open_handle(type, handle, access, &o);
+    /* the extras are only a convenience: without them the object may still open. */
+    if (error && propagates(type) && (info & LIST_PARTS) && error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+        access = desired_access(type, MODIFY_ACCESS, FALSE, info);
+        error = name ? obj_open_name(type, name, access, &o) : obj_open_handle(type, handle, access, &o);
+    }
+    if (error)
+        return error;
+    error = set_object(o, info, &sd, keep, nullptr);
+    obj_close(o);
+    return error;
+}
+
+ADVAPI DWORD WINAPI SetNamedSecurityInfoW(LPWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                          PSID group, PACL dacl, PACL sacl)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    if (!valid_name_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return set_security(type, name, nullptr, info, owner, group, dacl, sacl);
+}
+
+ADVAPI DWORD WINAPI SetNamedSecurityInfoA(LPSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner,
+                                          PSID group, PACL dacl, PACL sacl)
+{
+    if (!name)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD error = SetNamedSecurityInfoW(wide, type, info, owner, group, dacl, sacl);
+    AdvFree(wide);
+    return error;
+}
+
+ADVAPI DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, PSID owner, PSID group,
+                                    PACL dacl, PACL sacl)
+{
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
+    if (!valid_handle_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return set_security(type, nullptr, handle, info, owner, group, dacl, sacl);
+}
+
+/* ---------------------------------------------------------------- the older, direct functions */
+
+/* the handle access of a plain read or write of the parts, as GetFileSecurity and RegGetKeySecurity ask for it. */
+static DWORD plain_access(DWORD info, BOOL write)
+{
+    DWORD mask = 0;
+    if (info & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION))
+        mask |= write ? WRITE_OWNER_ : READ_CONTROL_;
+    if (info & (DACL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | PROCESS_TRUST_LABEL_SECURITY_INFORMATION |
+                ACCESS_FILTER_SECURITY_INFORMATION))
+        mask |= write ? WRITE_DAC_ : READ_CONTROL_;
+    if (info & (SACL_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION))
+        mask |= ACCESS_SYSTEM_SECURITY;
+    if ((info & SACL_PARTS) && (info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)))
+        mask |= ACCESS_SYSTEM_SECURITY;
+    return mask;
+}
+
+static HANDLE open_plain_file(PCWSTR name, DWORD access, DWORD *error)
+{
+    OBJ *o = nullptr;
+    *error = open_file_name(name, access, &o);
+    if (*error)
+        return nullptr;
+    HANDLE h = o->Handle;
+    o->Owned = FALSE;
+    obj_close(o);
+    return h;
+}
+
+ADVAPI BOOL WINAPI GetFileSecurityW(LPCWSTR name, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd, DWORD length,
+                                    LPDWORD needed)
+{
+    if (!name || !needed) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD error;
+    HANDLE h = open_plain_file(name, plain_access(info, FALSE), &error);
+    if (!h) {
+        AdvSetError(error);
+        return FALSE;
+    }
+    NTSTATUS status = NtQuerySecurityObject(h, info, sd, length, needed);
+    NtClose(h);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI GetFileSecurityA(LPCSTR name, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd, DWORD length,
+                                    LPDWORD needed)
+{
+    if (!name) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    BOOL ok = GetFileSecurityW(wide, info, sd, length, needed);
+    DWORD error = GetLastError();
+    AdvFree(wide);
+    if (!ok)
+        AdvSetError(error);
+    return ok;
+}
+
+ADVAPI BOOL WINAPI SetFileSecurityW(LPCWSTR name, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    if (!name) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD error;
+    HANDLE h = open_plain_file(name, plain_access(info, TRUE), &error);
+    if (!h) {
+        AdvSetError(error);
+        return FALSE;
+    }
+    NTSTATUS status = NtSetSecurityObject(h, info, sd);
+    NtClose(h);
+    return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
+}
+
+ADVAPI BOOL WINAPI SetFileSecurityA(LPCSTR name, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    if (!name) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide = AdvAnsiToWide(name);
+    if (!wide) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    BOOL ok = SetFileSecurityW(wide, info, sd);
+    DWORD error = GetLastError();
+    AdvFree(wide);
+    if (!ok)
+        AdvSetError(error);
+    return ok;
+}
+
+/* a predefined key stands for a handle the registry keeps; the security of it is read through one opened on it. */
+static LONG key_for_security(HKEY key, DWORD access, HKEY *real, BOOL *opened)
+{
+    *opened = FALSE;
+    if (((ULONG_PTR)key & 0xFFFFFFFF80000000ull) != 0xFFFFFFFF80000000ull) {
+        *real = key;
+        return ERROR_SUCCESS;
+    }
+    if (key == HKEY_PERFORMANCE_DATA)
+        return ERROR_INVALID_HANDLE;
+    LONG error = RegDuplicateHKey(key, real);
+    *opened = error == ERROR_SUCCESS;
+    return error;
+}
+
+ADVAPI LSTATUS WINAPI RegSetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd)
+{
+    if (!sd || !RtlValidSecurityDescriptor(sd))
+        return ERROR_INVALID_PARAMETER;
+    HKEY real;
+    BOOL opened;
+    LONG error = key_for_security(key, plain_access(info, TRUE), &real, &opened);
+    if (error)
+        return error;
+    NTSTATUS status = NtSetSecurityObject(real, info, sd);
+    if (opened)
+        RegCloseKey(real);
+    return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
+}
+
+ADVAPI LSTATUS WINAPI RegGetKeySecurity(HKEY key, SECURITY_INFORMATION info, PSECURITY_DESCRIPTOR sd, LPDWORD size)
+{
+    if (!size)
+        return ERROR_INVALID_PARAMETER;
+    HKEY real;
+    BOOL opened;
+    LONG error = key_for_security(key, plain_access(info, FALSE), &real, &opened);
+    if (error)
+        return error;
+    ULONG needed = 0;
+    NTSTATUS status = NtQuerySecurityObject(real, info, sd, *size, &needed);
+    if (opened)
+        RegCloseKey(real);
+    if (NT_SUCCESS(status))
+        return ERROR_SUCCESS;
+    if (status == STATUS_BUFFER_TOO_SMALL) {
+        *size = needed;
+        return ERROR_INSUFFICIENT_BUFFER_;
+    }
+    return RtlNtStatusToDosError(status);
+}

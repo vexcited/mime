@@ -510,7 +510,10 @@ NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR crea
     BOOLEAN protect = in.auto_inherit && (creator_control & SE_DACL_PROTECTED);
     status = build_list(&in, creator_dacl, creator_has_dacl, creator_default, protect, parent_dacl, &dacl,
                         &dacl_present);
-    if (NT_SUCCESS(status) && !dacl_present) {
+    if (NT_SUCCESS(status) && !dacl_present && protect && !creator_has_dacl) {
+        /* a list that is protected and was not given has nothing to inherit and nothing to default to: everyone. */
+        dacl_present = TRUE;
+    } else if (NT_SUCCESS(status) && !dacl_present) {
         /* the default is what the creator offered as one, else the token's. */
         PACL source = nullptr;
         if (creator_has_dacl && creator_default) {

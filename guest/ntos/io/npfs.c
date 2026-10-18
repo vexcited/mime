@@ -82,6 +82,7 @@ typedef struct NP_PIPE {
     ULONG OutQuota;
     LONGLONG DefaultTimeout;
     LIST_ENTRY InstanceList;
+    SD_BLOB *Sd; /* the descriptor of the pipe, shared by its instances */
 } NP_PIPE;
 
 typedef struct NP_INSTANCE {
@@ -395,6 +396,7 @@ static void release_instance(NP_INSTANCE *in)
     ExFreePool(in);
     if (--p->Instances == 0) {
         RemoveEntryList(&p->Links);
+        SeSdDereference(p->Sd);
         ExFreePool(p->Name.Buffer);
         ExFreePool(p);
     }
@@ -411,7 +413,7 @@ static void pipe_name(PFILE_OBJECT file, PUNICODE_STRING name)
     }
 }
 
-static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c)
+static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *creator)
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
@@ -437,6 +439,17 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c)
             ExFreePool(p);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
+        /* the creator's descriptor, else the token's own. */
+        SD_BLOB *sd;
+        SD_MAPPING mapping = IoFileObjectTypeObject->Init.GenericMapping;
+        NTSTATUS status = creator ? SeSdAssign(nullptr, creator, mapping, FALSE, KeGetPreviousMode(), &sd)
+                                  : SeSdDefault(mapping, FALSE, &sd);
+        if (!NT_SUCCESS(status) && status != STATUS_NO_TOKEN) {
+            ExFreePool(p->Name.Buffer);
+            ExFreePool(p);
+            return status;
+        }
+        p->Sd = NT_SUCCESS(status) ? sd : nullptr;
         memcpy(p->Name.Buffer, name.Buffer, name.Length);
         p->Name.Length = name.Length;
         p->Name.MaximumLength = name.Length + sizeof(WCHAR);
@@ -452,6 +465,7 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c)
     if (!in) {
         if (!p->Instances) {
             RemoveEntryList(&p->Links);
+            SeSdDereference(p->Sd);
             ExFreePool(p->Name.Buffer);
             ExFreePool(p);
         }
@@ -525,11 +539,39 @@ static NTSTATUS NTAPI np_create(PDEVICE_OBJECT device, PIRP irp)
     lock();
     NTSTATUS status;
     if (g_create_owner == KiCurrentThread() && g_create_owner_params)
-        status = create_server(file, g_create_owner_params);
+        status = create_server(file, g_create_owner_params,
+                               stack->Parameters.Create.SecurityContext ? stack->Parameters.Create.SecurityContext->SecurityDescriptor : nullptr);
     else
         status = open_client(file);
     unlock();
     return complete_irp(irp, status, NT_SUCCESS(status) ? FILE_OPENED : 0);
+}
+
+/* the descriptor of a pipe is the pipe's, not the end's, and its root has none. */
+static NTSTATUS NTAPI np_query_security(PDEVICE_OBJECT device, PIRP irp)
+{
+    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    NP_INSTANCE *in = file->FsContext;
+    if (!in || file->FsContext2 == END_ROOT)
+        return complete_irp(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    lock();
+    SD_BLOB *sd = in->Pipe->Sd ? SeSdReference(in->Pipe->Sd) : nullptr;
+    unlock();
+    return complete_irp(irp, STATUS_SUCCESS, (ULONG_PTR)sd);
+}
+
+static NTSTATUS NTAPI np_set_security(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    NP_INSTANCE *in = stack->FileObject->FsContext;
+    if (!in || stack->FileObject->FsContext2 == END_ROOT)
+        return complete_irp(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    lock();
+    SD_BLOB *old = in->Pipe->Sd;
+    in->Pipe->Sd = SeSdReference(stack->Parameters.Others.Argument1);
+    unlock();
+    SeSdDereference(old);
+    return complete_irp(irp, STATUS_SUCCESS, 0);
 }
 
 static NTSTATUS NTAPI np_cleanup(PDEVICE_OBJECT device, PIRP irp)
@@ -688,6 +730,8 @@ static NTSTATUS NTAPI NpfsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING reg
     driver->MajorFunction[IRP_MJ_CLOSE] = np_close;
     driver->MajorFunction[IRP_MJ_QUERY_INFORMATION] = np_query;
     driver->MajorFunction[IRP_MJ_SET_INFORMATION] = np_set;
+    driver->MajorFunction[IRP_MJ_QUERY_SECURITY] = np_query_security;
+    driver->MajorFunction[IRP_MJ_SET_SECURITY] = np_set_security;
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\NamedPipe");
     return IoCreateDevice(driver, 0, &name, FILE_DEVICE_NAMED_PIPE, 0, FALSE, &g_device);
 }

@@ -103,13 +103,11 @@ static BOOLEAN hands_down(const SD_BLOB *sd)
     return FALSE;
 }
 
-NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode)
+NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *attributes, PVOID parent,
+                           KPROCESSOR_MODE mode, SD_BLOB **result)
 {
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    const OBJECT_TYPE *type = h->Type;
-    if (!(h->Flags & OB_SD_PENDING))
-        return STATUS_SUCCESS;
-    h->Flags &= ~OB_SD_PENDING;
+    const OBJECT_TYPE *type = type_object;
+    *result = nullptr;
     /* a file system or the registry makes the descriptors of its own, and a type with no rights has none. */
     if (type->Init.GetSecurity || !type->Init.GenericMapping[3])
         return STATUS_SUCCESS;
@@ -139,7 +137,31 @@ NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVO
         return STATUS_SUCCESS;
     if (!NT_SUCCESS(status))
         return status;
-    h->Reserved = (ULONG_PTR)sd;
+    *result = sd;
+    return STATUS_SUCCESS;
+}
+
+/* gives a descriptor to an object made for it by ObComputeSecurity, which is the object's from now on. */
+void ObAttachSecurity(PVOID object, SD_BLOB *sd)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    h->Flags &= ~OB_SD_PENDING;
+    if (sd)
+        h->Reserved = (ULONG_PTR)sd;
+}
+
+NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    if (!(h->Flags & OB_SD_PENDING))
+        return STATUS_SUCCESS;
+    SD_BLOB *sd;
+    NTSTATUS status = ObComputeSecurity(h->Type, attributes, parent, mode, &sd);
+    if (!NT_SUCCESS(status)) {
+        h->Flags &= ~OB_SD_PENDING;
+        return status;
+    }
+    ObAttachSecurity(object, sd);
     return STATUS_SUCCESS;
 }
 

@@ -749,10 +749,34 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
 {
     if (!process_handle || !thread_handle || !parameters)
         return STATUS_INVALID_PARAMETER;
-    if (process_attributes || thread_attributes ||
-        (process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
+    if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
         (thread_flags & ~1u) || create_info)
         return STATUS_NOT_SUPPORTED;
+    /* the attributes of the new objects may give them a descriptor, nothing else. */
+    OBJECT_ATTRIBUTES process_oa, thread_oa;
+    UNICODE_STRING process_name, thread_name;
+    NTSTATUS attribute_status = ObCaptureObjectAttributes(process_attributes, &process_oa, &process_name);
+    if (NT_SUCCESS(attribute_status))
+        attribute_status = ObCaptureObjectAttributes(thread_attributes, &thread_oa, &thread_name);
+    if (NT_SUCCESS(attribute_status) &&
+        (process_oa.ObjectName || process_oa.RootDirectory || thread_oa.ObjectName || thread_oa.RootDirectory))
+        attribute_status = STATUS_INVALID_PARAMETER;
+    KiFreeCapturedString(&process_name);
+    KiFreeCapturedString(&thread_name);
+    if (!NT_SUCCESS(attribute_status))
+        return attribute_status;
+    /* and what they get is worked out first, so a refused descriptor starts nothing. */
+    SD_BLOB *process_sd = nullptr, *thread_sd = nullptr;
+    attribute_status = ObComputeSecurity(PsProcessTypeObject, process_attributes ? &process_oa : nullptr, nullptr,
+                                         KeGetPreviousMode(), &process_sd);
+    if (NT_SUCCESS(attribute_status))
+        attribute_status = ObComputeSecurity(PsThreadTypeObject, thread_attributes ? &thread_oa : nullptr, nullptr,
+                                             KeGetPreviousMode(), &thread_sd);
+    if (!NT_SUCCESS(attribute_status)) {
+        if (process_sd)
+            SeSdDereference(process_sd);
+        return attribute_status;
+    }
     PSP_ATTRIBUTES attrs;
     memset(&attrs, 0, sizeof(attrs));
     NTSTATUS status = attributes ? capture_attributes(attributes, &attrs) : STATUS_SUCCESS;
@@ -794,6 +818,9 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if (token)
         ObDereferenceObject(token);
     if (NT_SUCCESS(status)) {
+        ObAttachSecurity(process, process_sd);
+        ObAttachSecurity(thread, thread_sd);
+        process_sd = thread_sd = nullptr;
         apply_attributes(process, parent, &attrs);
         if (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)
             status = attrs.HasHandleList ? ObInheritHandleList(parent, process, attrs.HandleList, attrs.HandleCount)
@@ -811,6 +838,10 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     }
     if (job)
         ObDereferenceObject(job);
+    if (process_sd)
+        SeSdDereference(process_sd);
+    if (thread_sd)
+        SeSdDereference(thread_sd);
     if (!NT_SUCCESS(status)) {
         if (parent_referenced)
             ObDereferenceObject(parent);

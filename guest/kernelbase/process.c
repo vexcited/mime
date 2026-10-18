@@ -957,8 +957,13 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         return FALSE;
     }
     attributes.TotalLength = sizeof(SIZE_T) + attributes.Count * sizeof(PS_ATTRIBUTE);
+    /* the descriptors of the security attributes are the new objects' own. */
+    OBJECT_ATTRIBUTES process_oa, thread_oa;
+    InitializeObjectAttributes(&process_oa, nullptr, 0, nullptr, process_sa ? process_sa->lpSecurityDescriptor : nullptr);
+    InitializeObjectAttributes(&thread_oa, nullptr, 0, nullptr, thread_sa ? thread_sa->lpSecurityDescriptor : nullptr);
     NTSTATUS status = NtCreateUserProcess(&info->hProcess, &info->hThread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
-                                           nullptr, nullptr, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, nullptr,
+                                           process_oa.SecurityDescriptor ? &process_oa : nullptr,
+                                           thread_oa.SecurityDescriptor ? &thread_oa : nullptr, process_flags, (flags & CREATE_SUSPENDED) ? 1 : 0, &pp, nullptr,
                                            attributes.Count ? (PS_ATTRIBUTE_LIST *)&attributes : nullptr);
     if (container)
         NtClose(container);
