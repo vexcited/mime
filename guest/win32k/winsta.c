@@ -515,7 +515,7 @@ HWINSTA NTAPI NtUserGetProcessWindowStation(void)
     W32PROCESS *p = W32GetProcess();
     W32WINSTA *w = p ? process_winsta(p) : nullptr;
     if (w && !p->WinStaHandle)
-        p->WinStaHandle = insert(w, WINSTA_ALL_ACCESS, 0);
+        p->WinStaHandle = insert(w, 0xF0000 | WINSTA_ALL_ACCESS, 0);
     HANDLE h = p ? p->WinStaHandle : nullptr;
     UserLeave();
     return (HWINSTA)h;
@@ -551,7 +551,7 @@ HDESK NTAPI NtUserGetThreadDesktop(DWORD tid, HDESK console)
     } else {
         W32DESKTOP *d = thread_desktop(t);
         if (d && !t->DesktopHandle)
-            t->DesktopHandle = insert(d, DESKTOP_ALL_ACCESS, 0);
+            t->DesktopHandle = insert(d, 0xF0000 | DESKTOP_ALL_ACCESS, 0);
         h = t->DesktopHandle;
     }
     UserLeave();
