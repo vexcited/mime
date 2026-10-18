@@ -17,6 +17,8 @@
 typedef void(NTAPI *PPS_APC_ROUTINE)(PVOID arg1, PVOID arg2, PVOID arg3);
 
 NTSYSCALLAPI NTSTATUS NTAPI NtAlertThread(HANDLE handle);
+NTSYSCALLAPI NTSTATUS NTAPI NtAllocateVirtualMemoryEx(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG type, ULONG protect, PMEM_EXTENDED_PARAMETER parameters, ULONG count);
+NTSYSCALLAPI NTSTATUS NTAPI NtMapViewOfSectionEx(HANDLE section, HANDLE process, PVOID *base, PLARGE_INTEGER offset, PSIZE_T view_size, ULONG allocation_type, ULONG protect, PMEM_EXTENDED_PARAMETER parameters, ULONG count);
 NTSYSCALLAPI NTSTATUS NTAPI NtAllocateVirtualMemory(HANDLE process_handle, PVOID *base, ULONG_PTR zero_bits, PSIZE_T size, ULONG type, ULONG protect);
 NTSYSCALLAPI NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data);
 NTSYSCALLAPI NTSTATUS NTAPI NtCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);

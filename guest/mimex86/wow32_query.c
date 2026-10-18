@@ -210,6 +210,39 @@ NTSTATUS Mx32QueryInformationProcess(const ULONG *a)
         }
         store32(a[4], sizeof(ULONG));
         return STATUS_SUCCESS;
+    case ProcessVmCounters: {
+        /* the sizes are 32 bits wide: eleven counters, and the private bytes after them. */
+        if (length != 44 && length != 48)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        SIZE_T v[14] = {};
+        status = NtQueryInformationProcess(process, klass, v, 96, nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+        for (ULONG i = 0; i < length / 4; i++)
+            out[i] = saturate32(v[i]);
+        store32(a[4], length);
+        return STATUS_SUCCESS;
+    }
+    case ProcessQuotaLimits: {
+        /* QUOTA_LIMITS and QUOTA_LIMITS_EX: five sizes, a time, then four sizes, flags and a rate. */
+        if (length != 32 && length != 56)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        ULONG64 q[11] = {};
+        status = NtQueryInformationProcess(process, klass, q, 88, nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+        memset(out, 0, length);
+        for (ULONG i = 0; i < 5; i++)
+            out[i] = saturate32(q[i]);
+        memcpy(out + 6, &q[5], 8);
+        if (length == 56) {
+            for (ULONG i = 0; i < 4; i++)
+                out[8 + i] = saturate32(q[6 + i]);
+            memcpy(out + 12, &q[10], 8);
+        }
+        store32(a[4], length);
+        return STATUS_SUCCESS;
+    }
     case ProcessImageFileName:
     case ProcessImageFileNameWin32:
         return query_string32(query_process_string, a);
@@ -1239,6 +1272,27 @@ NTSTATUS Mx32QueryVirtualMemory(const ULONG *a)
         o[6] = m.Type;
         store32(a[5], 28);
         return STATUS_SUCCESS;
+    }
+    case MemoryWorkingSetExInformation: {
+        /* entries of an address and its attributes, 8 bytes here and 16 bytes natively. */
+        ULONG count = length / 8;
+        if (!count)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        ULONG *entries = out;
+        ULONG_PTR *native = Mx32Scratch((SIZE_T)count * 16);
+        if (!native)
+            return STATUS_NO_MEMORY;
+        for (ULONG i = 0; i < count; i++) {
+            native[i * 2] = entries[i * 2];
+            native[i * 2 + 1] = 0;
+        }
+        status = NtQueryVirtualMemory(handle32(a[0]), nullptr, MemoryWorkingSetExInformation, native,
+                                      (SIZE_T)count * 16, nullptr);
+        if (NT_SUCCESS(status))
+            for (ULONG i = 0; i < count; i++)
+                entries[i * 2 + 1] = (ULONG)native[i * 2 + 1];
+        Mx32FreeScratch(native);
+        return status;
     }
     case MemoryImageInformation: {
         if (length < 16)

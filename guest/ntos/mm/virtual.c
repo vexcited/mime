@@ -902,6 +902,8 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
         if (!vad || end > vad->EndVa || (vad->Flags & MM_VAD_PLACEHOLDER) || vad->Type == MiVadShared ||
             vad->Type == MiVadImage)
             status = STATUS_CONFLICTING_ADDRESSES;
+        else if ((type & (MEM_RESET | MEM_RESET_UNDO)) && vad->Type != MiVadPrivate)
+            status = STATUS_SECTION_PROTECTION;
         else if (type & MEM_RESET)
             reset_range(as, start, end);
         else if (type & MEM_COMMIT)

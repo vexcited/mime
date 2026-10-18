@@ -19,7 +19,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateToken(HANDLE token, ACCESS_MASK access, P
 static PVOID allocate32(SIZE_T size)
 {
     PVOID base = nullptr;
-    NTSTATUS status = NtAllocateVirtualMemory(NtCurrentProcess(), &base, 32, &size,
+    NTSTATUS status = NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &size,
                                               MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!NT_SUCCESS(status))
         return nullptr;
@@ -277,6 +277,51 @@ static NTSTATUS virtual_memory_io32(BOOLEAN write, const ULONG *a)
     return status;
 }
 
+/*
+ * the extended parameters of an allocation or a view: each is 16 bytes in a
+ * 32-bit program as well, with a 32-bit pointer or handle in the union, and
+ * the address requirements are three 32-bit values. the native array and the
+ * requirements it points to are made in one block of scratch memory.
+ */
+static NTSTATUS extended32(ULONG address, ULONG count, PMEM_EXTENDED_PARAMETER *out, PVOID *block)
+{
+    *out = nullptr;
+    *block = nullptr;
+    if (!count)
+        return address ? STATUS_INVALID_PARAMETER : STATUS_SUCCESS;
+    if (!address || count > 16)
+        return STATUS_INVALID_PARAMETER;
+    SIZE_T bytes = (SIZE_T)count * (sizeof(MEM_EXTENDED_PARAMETER) + sizeof(MEM_ADDRESS_REQUIREMENTS));
+    PMEM_EXTENDED_PARAMETER native = Mx32Scratch(bytes);
+    if (!native)
+        return STATUS_NO_MEMORY;
+    PMEM_ADDRESS_REQUIREMENTS requirements = (PMEM_ADDRESS_REQUIREMENTS)(native + count);
+    const ULONG *in = pointer32(address);
+    for (ULONG i = 0; i < count; i++) {
+        ULONG64 header = in[i * 4] | (ULONG64)in[i * 4 + 1] << 32;
+        ULONG type = (ULONG)(header & 0xFF);
+        memcpy(&native[i], &header, sizeof(header));
+        native[i].ULong64 = in[i * 4 + 2] | (ULONG64)in[i * 4 + 3] << 32;
+        if (header < 0x100 && type == MemExtendedParameterAddressRequirements) {
+            const ULONG *r = pointer32(in[i * 4 + 2]);
+            if (!r) {
+                native[i].Pointer = nullptr;
+            } else {
+                requirements[i].LowestStartingAddress = pointer32(r[0]);
+                requirements[i].HighestEndingAddress = pointer32(r[1]);
+                requirements[i].Alignment = r[2];
+                native[i].Pointer = &requirements[i];
+            }
+        } else if (header < 0x100 && (type == MemExtendedParameterPartitionHandle ||
+                                      type == MemExtendedParameterUserPhysicalHandle)) {
+            native[i].Handle = handle32((ULONG)native[i].ULong64);
+        }
+    }
+    *out = native;
+    *block = native;
+    return STATUS_SUCCESS;
+}
+
 /* MEMORY_RANGE_ENTRY: an address and a size, 8 bytes in a 32-bit program. */
 static NTSTATUS set_virtual_memory32(const ULONG *a)
 {
@@ -289,7 +334,24 @@ static NTSTATUS set_virtual_memory32(const ULONG *a)
         return STATUS_NO_MEMORY;
     for (ULONG i = 0; i < 2 * count; i++)
         entries[i] = in[i];
-    NTSTATUS status = NtSetInformationVirtualMemory(handle32(a[0]), a[1], count, entries, pointer32(a[4]), a[5]);
+    NTSTATUS status;
+    if (a[1] == VmCfgCallTargetInformation) {
+        /* call targets: a count, the count processed, the targets, a section and an offset, 32 bytes here. */
+        const ULONG *info = pointer32(a[4]);
+        if (a[5] != 32 || !info) {
+            Mx32FreeScratch(entries);
+            return a[5] != 32 ? STATUS_INVALID_PARAMETER_6 : STATUS_INVALID_PARAMETER_5;
+        }
+        struct {
+            ULONG Entries, Reserved;
+            PVOID Processed, Targets, Section;
+            ULONG64 Offset;
+        } native = {info[0], info[1], pointer32(info[2]), pointer32(info[3]), pointer32(info[4]), 0};
+        memcpy(&native.Offset, info + 6, sizeof(native.Offset));
+        status = NtSetInformationVirtualMemory(handle32(a[0]), a[1], count, entries, &native, sizeof(native));
+    } else {
+        status = NtSetInformationVirtualMemory(handle32(a[0]), a[1], count, entries, pointer32(a[4]), a[5]);
+    }
     Mx32FreeScratch(entries);
     return status;
 }
@@ -561,7 +623,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         SIZE_T size = *(PULONG)pointer32(a[3]);
         if ((ULONG_PTR)base + size > 0x7FFF0000ull)
             return STATUS_NO_MEMORY;
-        status = NtAllocateVirtualMemory(handle32(a[0]), &base, 32, &size, a[4], a[5]);
+        status = NtAllocateVirtualMemory(handle32(a[0]), &base, a[2], &size, a[4], a[5]);
         if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
             SIZE_T release = 0;
             NtFreeVirtualMemory(handle32(a[0]), &base, &release, MEM_RELEASE);
@@ -570,6 +632,31 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (NT_SUCCESS(status)) {
             store32(a[1], (ULONG_PTR)base);
             store32(a[3], size);
+        }
+        return status;
+    }
+    case MIME_SVC_NtAllocateVirtualMemoryEx: {
+        PVOID base = pointer32(*(PULONG)pointer32(a[1]));
+        SIZE_T size = *(PULONG)pointer32(a[2]);
+        PMEM_EXTENDED_PARAMETER ext;
+        PVOID block;
+        status = extended32(a[5], a[6], &ext, &block);
+        if (!NT_SUCCESS(status))
+            return status;
+        if ((ULONG_PTR)base + size > 0x7FFF0000ull) {
+            Mx32FreeScratch(block);
+            return STATUS_NO_MEMORY;
+        }
+        status = NtAllocateVirtualMemoryEx(handle32(a[0]), &base, &size, a[3], a[4], ext, a[6]);
+        Mx32FreeScratch(block);
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
+            SIZE_T release = 0;
+            NtFreeVirtualMemory(handle32(a[0]), &base, &release, MEM_RELEASE);
+            return STATUS_NO_MEMORY;
+        }
+        if (NT_SUCCESS(status)) {
+            store32(a[1], (ULONG_PTR)base);
+            store32(a[2], size);
         }
         return status;
     }
@@ -974,7 +1061,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         SIZE_T size = *(PULONG)pointer32(a[6]);
         if ((ULONG_PTR)base + size > 0x7FFF0000ull)
             return STATUS_NO_MEMORY;
-        status = NtMapViewOfSection(handle32(a[0]), handle32(a[1]), &base, 32, a[4], pointer32(a[5]), &size,
+        status = NtMapViewOfSection(handle32(a[0]), handle32(a[1]), &base, a[3], a[4], pointer32(a[5]), &size,
                                     a[7], a[8], a[9]);
         if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
             NtUnmapViewOfSection(handle32(a[1]), base);
@@ -983,6 +1070,31 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (NT_SUCCESS(status)) {
             store32(a[2], (ULONG_PTR)base);
             store32(a[6], size);
+        }
+        return status;
+    }
+    case MIME_SVC_NtMapViewOfSectionEx: {
+        PVOID base = pointer32(*(PULONG)pointer32(a[2]));
+        SIZE_T size = *(PULONG)pointer32(a[4]);
+        PMEM_EXTENDED_PARAMETER ext;
+        PVOID block;
+        status = extended32(a[7], a[8], &ext, &block);
+        if (!NT_SUCCESS(status))
+            return status;
+        if ((ULONG_PTR)base + size > 0x7FFF0000ull) {
+            Mx32FreeScratch(block);
+            return STATUS_NO_MEMORY;
+        }
+        status = NtMapViewOfSectionEx(handle32(a[0]), handle32(a[1]), &base, pointer32(a[3]), &size, a[5], a[6], ext,
+                                      a[8]);
+        Mx32FreeScratch(block);
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
+            NtUnmapViewOfSection(handle32(a[1]), base);
+            return STATUS_NO_MEMORY;
+        }
+        if (NT_SUCCESS(status)) {
+            store32(a[2], (ULONG_PTR)base);
+            store32(a[4], size);
         }
         return status;
     }

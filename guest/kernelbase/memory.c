@@ -6,11 +6,19 @@
 
 /* ------------------------------------------------------------------ virtual memory */
 
+/* what the lowest address a program may ask for is: the first 64 KiB are never available. */
+#define KB_MINIMUM_ADDRESS 0x10000
+
 LPVOID WINAPI VirtualAllocEx(HANDLE process, LPVOID address, SIZE_T size, DWORD type, DWORD protect)
 {
+    if (address && (ULONG_PTR)address < KB_MINIMUM_ADDRESS) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
     PVOID base = address;
     SIZE_T length = size;
-    NTSTATUS status = NtAllocateVirtualMemory(process, &base, 0, &length, type, protect);
+    /* the low bits of the type belong to the node of an allocation made for one. */
+    NTSTATUS status = NtAllocateVirtualMemory(process, &base, 0, &length, type & 0xFFFFFFC0, protect);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
         return nullptr;
@@ -23,9 +31,37 @@ LPVOID WINAPI VirtualAlloc(LPVOID address, SIZE_T size, DWORD type, DWORD protec
     return VirtualAllocEx(NtCurrentProcess(), address, size, type, protect);
 }
 
+/*
+ * allocates with extended parameters: an address range and alignment, a
+ * node, attributes. a placeholder is reserved with MEM_RESERVE_PLACEHOLDER
+ * and later replaced, for all of it or a part split off, with MEM_RESERVE
+ * and MEM_REPLACE_PLACEHOLDER.
+ */
+DECLSPEC_EXPORT LPVOID WINAPI VirtualAlloc2(HANDLE process, PVOID address, SIZE_T size, ULONG type, ULONG protect,
+                                           MEM_EXTENDED_PARAMETER *parameters, ULONG count)
+{
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+    BOOL valid = TRUE;
+    if (parameters)
+        for (ULONG i = 0; i < count; i++)
+            if ((ULONG)(UCHAR)parameters[i].Type - 1 > 4)
+                valid = FALSE;
+    if (valid) {
+        PVOID base = address;
+        SIZE_T length = size;
+        status = NtAllocateVirtualMemoryEx(process ? process : NtCurrentProcess(), &base, &length, type, protect,
+                                           parameters, count);
+        if (NT_SUCCESS(status))
+            return base;
+    }
+    KbSetStatus(status);
+    return nullptr;
+}
+
 BOOL WINAPI VirtualFreeEx(HANDLE process, LPVOID address, SIZE_T size, DWORD type)
 {
-    if ((type & MEM_RELEASE) && size) {
+    /* a plain release takes no size, one that keeps or merges placeholders takes the range. */
+    if ((type & 0xFFFF3FFC) || ((type & 0x8003) == 0x8000 && size)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -126,13 +162,17 @@ void WINAPI FlushProcessWriteBuffers(void)
 
 BOOL WINAPI PrefetchVirtualMemory(HANDLE process, ULONG_PTR count, PWIN32_MEMORY_RANGE_ENTRY entries, ULONG flags)
 {
+    NTSTATUS status = NtSetInformationVirtualMemory(process, VmPrefetchInformation, count, entries, &flags, sizeof(flags));
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
     return TRUE;
 }
 
 /*
- * the range must be committed read write memory of one region. windows
- * zeroes the pages in the working set and resets the range; mime's pages
- * all count as resident, so all of them read as zero after.
+ * the range must be committed read write memory of one region. the pages
+ * go back to demand zero, so they read as zero after and cost nothing
+ * while untouched. windows writes the zeroes itself into the pages in the
+ * working set first, which would only touch the pages here.
  */
 DECLSPEC_EXPORT DWORD WINAPI DiscardVirtualMemory(PVOID base, SIZE_T size)
 {
@@ -147,9 +187,8 @@ DECLSPEC_EXPORT DWORD WINAPI DiscardVirtualMemory(PVOID base, SIZE_T size)
         return RtlNtStatusToDosError(status);
     if (mbi.RegionSize < size || mbi.State != MEM_COMMIT || mbi.Protect != PAGE_READWRITE)
         return RtlNtStatusToDosError(STATUS_INVALID_PAGE_PROTECTION);
-    if ((ULONG_PTR)base < sbi.MinimumUserModeAddress)
+    if ((ULONG_PTR)base < KB_MINIMUM_ADDRESS)
         return ERROR_INVALID_PARAMETER;
-    memset(base, 0, size);
     PVOID b = base;
     SIZE_T s = size;
     status = NtAllocateVirtualMemory(NtCurrentProcess(), &b, 0, &s, MEM_RESET, PAGE_READWRITE);
@@ -177,6 +216,35 @@ DECLSPEC_EXPORT DWORD WINAPI ReclaimVirtualMemory(const void *base, SIZE_T size)
     if (!base || !size)
         return ERROR_INVALID_PARAMETER;
     return ERROR_SUCCESS;
+}
+
+typedef struct KB_CFG_CALL_TARGET_INFO {
+    ULONG_PTR Offset;
+    ULONG_PTR Flags;
+} KB_CFG_CALL_TARGET_INFO;
+
+/*
+ * marks the valid call targets of control flow guard, offsets in a range.
+ * mime keeps no bitmap, so an image's checks always pass, and this only
+ * reports the targets as set.
+ */
+DECLSPEC_EXPORT BOOL WINAPI SetProcessValidCallTargets(HANDLE process, PVOID base, SIZE_T size, ULONG count,
+                                                      KB_CFG_CALL_TARGET_INFO *targets)
+{
+    ULONG processed = 0;
+    MEMORY_RANGE_ENTRY range = {base, size};
+    struct {
+        ULONG Entries, Reserved;
+        PULONG Processed;
+        PVOID Targets, Section;
+        ULONG64 Offset;
+    } info = {count, 0, &processed, targets, nullptr, 0};
+    NTSTATUS status = NtSetInformationVirtualMemory(process, VmCfgCallTargetInformation, 1, &range, &info, sizeof(info));
+    for (ULONG i = 0; i < processed && i < count; i++)
+        targets[i].Flags |= 2;
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    return TRUE;
 }
 
 UINT WINAPI GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addresses, ULONG_PTR *count,
@@ -943,6 +1011,45 @@ BOOL WINAPI UnmapViewOfFile(LPCVOID base)
 BOOL WINAPI UnmapViewOfFileEx(PVOID base, ULONG flags)
 {
     NTSTATUS status = NtUnmapViewOfSectionEx(NtCurrentProcess(), base, flags);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    return TRUE;
+}
+
+/*
+ * maps a view of a section into a process, into a placeholder when the
+ * type says so. the protection is a page protection, not a file map access.
+ */
+DECLSPEC_EXPORT PVOID WINAPI MapViewOfFile3(HANDLE section, HANDLE process, PVOID address, ULONG64 offset,
+                                            SIZE_T size, ULONG type, ULONG protect,
+                                            MEM_EXTENDED_PARAMETER *parameters, ULONG count)
+{
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+    BOOL valid = (type & 0xDF6F9FFF) == 0;
+    if (valid && parameters)
+        for (ULONG i = 0; i < count; i++)
+            if ((ULONG)(UCHAR)parameters[i].Type - 1 > 1)
+                valid = FALSE;
+    if (valid) {
+        LARGE_INTEGER position;
+        position.QuadPart = (LONGLONG)offset;
+        PVOID base = address;
+        SIZE_T length = size;
+        status = NtMapViewOfSectionEx(section, process ? process : NtCurrentProcess(), &base, &position, &length, type,
+                                      protect, parameters, count);
+        if (NT_SUCCESS(status))
+            return base;
+    }
+    KbSetStatus(status);
+    return nullptr;
+}
+
+/* unmaps a view, which stays reserved as a placeholder with MEM_PRESERVE_PLACEHOLDER. */
+DECLSPEC_EXPORT BOOL WINAPI UnmapViewOfFile2(HANDLE process, PVOID base, ULONG flags)
+{
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+    if (!(flags & 0xFFFFFFFC))
+        status = NtUnmapViewOfSectionEx(process ? process : NtCurrentProcess(), base, flags);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;
