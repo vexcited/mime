@@ -54,6 +54,8 @@ typedef struct CM_HIVE_KEY {
 #define CM_HIVE_NAME_ASCII 0x0020
 
 NTSTATUS CmpOpenHive(PCWSTR path, CM_HIVE **out);
+/* the security descriptor the hive keeps for a key node, whole, in a blob. */
+NTSTATUS CmpReadSecurity(CM_HIVE *hive, ULONG cell, SD_BLOB **out);
 NTSTATUS CmpReadKey(CM_HIVE *hive, ULONG cell, CM_HIVE_KEY *key);
 /* calls back for each subkey cell of a key node, in the hive's sorted order. */
 NTSTATUS CmpForEachSubKey(CM_HIVE *hive, const CM_HIVE_KEY *key, NTSTATUS (*fn)(PVOID ctx, ULONG cell), PVOID ctx);
@@ -77,6 +79,7 @@ typedef struct CM_VALUE {
 #define CM_NODE_VOLATILE 0x04
 #define CM_NODE_DELETED 0x08
 #define CM_NODE_LINK 0x10
+#define CM_NODE_SD_UNREADABLE 0x20 /* the hive has no usable descriptor for the key */
 
 typedef struct CM_NODE {
     struct CM_NODE *Parent;
@@ -86,6 +89,7 @@ typedef struct CM_NODE {
     ULONG Cell;
     ULONG Flags;
     CM_VALUE *Values;
+    SD_BLOB *Sd; /* the descriptor of the key: one a program set, or the hive's own once read */
     LARGE_INTEGER LastWrite;
     USHORT NameLength;
     WCHAR Name[];

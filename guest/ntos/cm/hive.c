@@ -102,6 +102,33 @@ NTSTATUS CmpReadKey(CM_HIVE *hive, ULONG cell, CM_HIVE_KEY *key)
     return STATUS_SUCCESS;
 }
 
+/* the security cell of a key node: a signature, two links, a count of the nodes sharing it, a size, the descriptor. */
+NTSTATUS CmpReadSecurity(CM_HIVE *hive, ULONG cell, SD_BLOB **out)
+{
+    ULONG security;
+    NTSTATUS status = read_cell(hive, cell, 0x2C, &security, 4);
+    if (!NT_SUCCESS(status))
+        return status;
+    UCHAR head[0x14];
+    if (security == 0xFFFFFFFF)
+        return STATUS_NOT_FOUND;
+    status = read_cell(hive, security, 0, head, sizeof(head));
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG size;
+    memcpy(&size, head + 0x10, 4);
+    if (head[0] != 's' || head[1] != 'k' || size < 20 || size > SD_MAX_LENGTH)
+        return STATUS_REGISTRY_CORRUPT;
+    PUCHAR bytes = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('C', 'm', 'S', 'k'));
+    if (!bytes)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    status = read_cell(hive, security, sizeof(head), bytes, size);
+    if (NT_SUCCESS(status))
+        status = SeSdFromBytes(bytes, size, out) == STATUS_SUCCESS ? STATUS_SUCCESS : STATUS_REGISTRY_CORRUPT;
+    ExFreePool(bytes);
+    return status;
+}
+
 /* walks an lf, lh, li or ri index list. */
 static NTSTATUS walk_list(CM_HIVE *hive, ULONG cell, int depth, NTSTATUS (*fn)(PVOID, ULONG), PVOID ctx)
 {

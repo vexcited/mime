@@ -142,12 +142,18 @@ NTSTATUS SeSdCapture(const void *descriptor, KPROCESSOR_MODE mode, SD_BLOB **out
         *out = sd;
         return STATUS_SUCCESS;
     }
-    /* absolute: the owner, group, sacl and dacl are pointers after the header. */
-    status = copy_in(mode, head, descriptor, sizeof(head));
+    /*
+     * absolute: the owner, group, sacl and dacl are pointers after the header. A 32-bit program's descriptor
+     * keeps them where the offsets of a relative one are, as 32-bit addresses.
+     */
+    BOOLEAN narrow = mode == UserMode && PspIsWow64Process(PsCurrentProcess());
+    status = copy_in(mode, head, descriptor, narrow ? 20 : sizeof(head));
     if (!NT_SUCCESS(status))
         return status;
-    const UCHAR *pointers[4] = {(const UCHAR *)*(ULONG_PTR *)(head + 8), (const UCHAR *)*(ULONG_PTR *)(head + 16),
-                                (const UCHAR *)*(ULONG_PTR *)(head + 24), (const UCHAR *)*(ULONG_PTR *)(head + 32)};
+    const UCHAR *pointers[4];
+    for (int i = 0; i < 4; i++)
+        pointers[i] = narrow ? (const UCHAR *)(ULONG_PTR) * (ULONG *)(head + 4 + 4 * i)
+                             : (const UCHAR *)*(ULONG_PTR *)(head + 8 + 8 * i);
     ULONG lengths[4] = {};
     ULONG total = 20;
     for (int i = 0; i < 4; i++) {
@@ -357,11 +363,16 @@ static BOOLEAN privilege_held(const TOKEN *t, ULONG luid)
 
 /* ---------------------------------------------------------------- new objects */
 
+/* with a token given, that one is the whole subject, else it is the calling thread. */
 static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
-                       KPROCESSOR_MODE mode, SD_BLOB **out)
+                       KPROCESSOR_MODE mode, PTOKEN fixed, SD_BLOB **out)
 {
-    PTOKEN effective = SepReferenceEffectiveToken(PsCurrentThread());
-    PTOKEN primary = SepReferencePrimaryToken(PsCurrentProcess());
+    PTOKEN effective = fixed ? fixed : SepReferenceEffectiveToken(PsCurrentThread());
+    PTOKEN primary = fixed ? fixed : SepReferencePrimaryToken(PsCurrentProcess());
+    if (fixed) {
+        ObReferenceObject(effective);
+        ObReferenceObject(primary);
+    }
     if (!effective || !primary) {
         if (effective)
             ObDereferenceObject(effective);
@@ -456,7 +467,35 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
 NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                     KPROCESSOR_MODE mode, SD_BLOB **out)
 {
-    return assign(parent, creator, mapping, container, mode, out);
+    return assign(parent, creator, mapping, container, mode, nullptr, out);
+}
+
+NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
+{
+    PTOKEN session = SepReferenceSessionToken();
+    NTSTATUS status = assign(parent, nullptr, mapping, container, KernelMode, session, out);
+    ObDereferenceObject(session);
+    return status;
+}
+
+BOOLEAN SeSdSubjectIsDefault(void)
+{
+    PTOKEN t = SepReferenceEffectiveToken(PsCurrentThread());
+    PTOKEN session = SepReferenceSessionToken();
+    BOOLEAN same = FALSE;
+    if (t) {
+        ExAcquireFastMutex(&SeLock);
+        same = t->Groups[t->OwnerIndex].Sid[1] == session->Groups[session->OwnerIndex].Sid[1] &&
+               SepSidEqual(t->Groups[t->OwnerIndex].Sid, session->Groups[session->OwnerIndex].Sid) &&
+               SepSidEqual(t->PrimaryGroup, session->PrimaryGroup) &&
+               t->DefaultDaclSize == session->DefaultDaclSize &&
+               (!t->DefaultDaclSize || !memcmp(t->DefaultDacl, session->DefaultDacl, t->DefaultDaclSize)) &&
+               SepIntegrityRid(t) >= 0x2000;
+        ExReleaseFastMutex(&SeLock);
+        ObDereferenceObject(t);
+    }
+    ObDereferenceObject(session);
+    return same;
 }
 
 /*
@@ -495,7 +534,7 @@ NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
     }
     ExReleaseFastMutex(&g_default_lock);
     SD_BLOB *sd;
-    NTSTATUS status = assign(nullptr, nullptr, mapping, container, KernelMode, &sd);
+    NTSTATUS status = assign(nullptr, nullptr, mapping, container, KernelMode, nullptr, &sd);
     if (!NT_SUCCESS(status))
         return status;
     ExAcquireFastMutex(&g_default_lock);

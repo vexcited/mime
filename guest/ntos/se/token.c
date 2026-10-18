@@ -837,6 +837,13 @@ void SepFreeThreadToken(PETHREAD thread)
         ObDereferenceObject(t);
 }
 
+/* the token of the user the machine runs for, whose defaults files and keys show that nobody made otherwise. */
+PTOKEN SepReferenceSessionToken(void)
+{
+    ObReferenceObject(g_session_token);
+    return g_session_token;
+}
+
 PTOKEN SepAnonymousToken(void)
 {
     return g_anonymous_token;

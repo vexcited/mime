@@ -132,6 +132,11 @@ ADVAPI BOOL WINAPI GetKernelObjectSecurity(HANDLE handle, SECURITY_INFORMATION i
     return finish(NtQuerySecurityObject(handle, information, sd, length, needed));
 }
 
+ADVAPI BOOL WINAPI SetKernelObjectSecurity(HANDLE handle, SECURITY_INFORMATION information, PSECURITY_DESCRIPTOR sd)
+{
+    return finish(NtSetSecurityObject(handle, information, sd));
+}
+
 /* ---------------------------------------------------------------- privileges */
 
 #define PRIVILEGE_SET_ALL_NECESSARY 1

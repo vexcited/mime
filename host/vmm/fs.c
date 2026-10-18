@@ -12,6 +12,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #ifdef __APPLE__
 #include <sys/mount.h>
 #define ST_BIRTH(st) ((st)->st_birthtimespec)
@@ -223,6 +224,8 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
     return true;
 }
 
+static void sd_memory_forget(const struct stat *st);
+
 static MimeFsHandle *get_handle(MimeVm *vm, uint64_t h)
 {
     if (h == 0 || h > MIME_VMM_MAX_FS_HANDLES)
@@ -249,6 +252,9 @@ static void free_handle(MimeVm *vm, uint64_t h)
     if (fh->fd >= 0)
         close(fh->fd);
     if (fh->delete_on_close && fh->host_path) {
+        struct stat gone;
+        if (stat(fh->host_path, &gone) == 0)
+            sd_memory_forget(&gone);
         if (fh->is_dir)
             rmdir(fh->host_path);
         else
@@ -338,6 +344,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
     MimeFsHandle *fh = mime_xcalloc(1, sizeof(*fh));
     fh->fd = fd;
     fh->is_dir = S_ISDIR(st.st_mode);
+    fh->volume = req->volume;
     fh->host_path = mime_xstrdup(path);
     uint64_t h = alloc_handle(vm, fh);
     if (!h) {
@@ -397,6 +404,160 @@ static void load_dir(MimeFsHandle *fh)
     qsort(entries, count, sizeof(MimeFsDirEntry), dirent_cmp);
     fh->dir_entries = entries;
     fh->dir_count = count;
+}
+
+
+/*
+ * security descriptors of files. They are the guest's, kept with the file in an extended attribute so they
+ * follow it and survive a restart. A file system that refuses attributes, and the host's own files that the
+ * machine has no business marking, keep theirs in memory for the session, by device and inode.
+ */
+#ifdef __APPLE__
+#define SD_ATTRIBUTE "mime.security"
+#define sd_get_attribute(path, buf, size) getxattr((path), SD_ATTRIBUTE, (buf), (size), 0, 0)
+#define sd_set_attribute(path, buf, size) setxattr((path), SD_ATTRIBUTE, (buf), (size), 0, 0)
+#define sd_remove_attribute(path) removexattr((path), SD_ATTRIBUTE, 0)
+#else
+#define SD_ATTRIBUTE "user.mime.security"
+#define sd_get_attribute(path, buf, size) getxattr((path), SD_ATTRIBUTE, (buf), (size))
+#define sd_set_attribute(path, buf, size) setxattr((path), SD_ATTRIBUTE, (buf), (size), 0)
+#define sd_remove_attribute(path) removexattr((path), SD_ATTRIBUTE)
+#endif
+
+#define SD_MAX_BYTES (64u << 10)
+
+typedef struct SdMemory {
+    dev_t dev;
+    ino_t ino;
+    uint32_t length;
+    uint8_t *data;
+} SdMemory;
+
+static SdMemory *g_sd_memory;
+static size_t g_sd_memory_count;
+
+static SdMemory *sd_memory_find(const struct stat *st)
+{
+    for (size_t i = 0; i < g_sd_memory_count; i++)
+        if (g_sd_memory[i].dev == st->st_dev && g_sd_memory[i].ino == st->st_ino)
+            return &g_sd_memory[i];
+    return NULL;
+}
+
+static void sd_memory_forget(const struct stat *st)
+{
+    SdMemory *m = sd_memory_find(st);
+    if (!m)
+        return;
+    free(m->data);
+    *m = g_sd_memory[--g_sd_memory_count];
+}
+
+static void sd_memory_set(const struct stat *st, const void *data, uint32_t length)
+{
+    SdMemory *m = sd_memory_find(st);
+    if (!length) {
+        sd_memory_forget(st);
+        return;
+    }
+    if (!m) {
+        g_sd_memory = mime_xrealloc(g_sd_memory, (g_sd_memory_count + 1) * sizeof(*g_sd_memory));
+        m = &g_sd_memory[g_sd_memory_count++];
+        m->dev = st->st_dev;
+        m->ino = st->st_ino;
+        m->data = NULL;
+    }
+    m->data = mime_xrealloc(m->data, length);
+    memcpy(m->data, data, length);
+    m->length = length;
+}
+
+/* the descriptor stored for one path: its length, 0 for none, and the bytes when they fit. */
+static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_t capacity)
+{
+    if (!memory_only) {
+        ssize_t n = sd_get_attribute(path, buf, capacity);
+        if (n >= 0)
+            return n;
+        if (errno == ERANGE) {
+            n = sd_get_attribute(path, NULL, 0);
+            if (n >= 0)
+                return n;
+        }
+    }
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return 0;
+    SdMemory *m = sd_memory_find(&st);
+    if (!m)
+        return 0;
+    if (m->length <= capacity)
+        memcpy(buf, m->data, m->length);
+    return m->length;
+}
+
+/*
+ * the nearest descriptor from a file up: the file's own, else its parent's and so on to the volume root. The
+ * answer is the distance in levels in the upper half and the length in the lower, 0 length for none.
+ */
+static uint64_t fs_get_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t capacity, uint64_t up, uint64_t *result)
+{
+    bool system = fh->volume == MIME_FS_VOLUME_SYSTEM;
+    void *buf = capacity ? mime_vm_phys(vm, pa, capacity) : NULL;
+    if (capacity && !buf)
+        return MIME_HC_STATUS_INVALID;
+    char path[MIME_PATH_MAX];
+    mime_strlcpy(path, fh->host_path, sizeof(path));
+    size_t root = system ? strlen(vm->paths->drive_c) : 0;
+    uint64_t distance = 0;
+    for (uint64_t i = 0; i < up; i++) {
+        char *slash = strrchr(path, '/');
+        if (!slash || (size_t)(slash - path) < root || !system)
+            return MIME_HC_STATUS_NOT_FOUND;
+        *slash = 0;
+        if (!path[0])
+            return MIME_HC_STATUS_NOT_FOUND;
+    }
+    uint8_t scratch[16];
+    for (;;) {
+        ssize_t n = sd_read_path(path, !system, buf ? buf : scratch, buf ? capacity : 0);
+        if (n > 0) {
+            *result = (distance << 32) | (uint64_t)n;
+            return (uint64_t)n > capacity ? MIME_HC_STATUS_NO_MEMORY : MIME_HC_STATUS_OK;
+        }
+        if (!system || strlen(path) <= root)
+            break;
+        char *slash = strrchr(path, '/');
+        if (!slash || (size_t)(slash - path) < root)
+            break;
+        *slash = 0;
+        distance++;
+    }
+    *result = 0;
+    return MIME_HC_STATUS_OK;
+}
+
+static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t length)
+{
+    const void *buf = length ? mime_vm_phys(vm, pa, length) : NULL;
+    if (length > SD_MAX_BYTES || (length && !buf))
+        return MIME_HC_STATUS_INVALID;
+    struct stat st;
+    if (stat(fh->host_path, &st) != 0)
+        return errno_status(errno);
+    if (fh->volume == MIME_FS_VOLUME_SYSTEM) {
+        if (!length) {
+            sd_remove_attribute(fh->host_path);
+            sd_memory_forget(&st);
+            return MIME_HC_STATUS_OK;
+        }
+        if (sd_set_attribute(fh->host_path, buf, length) == 0) {
+            sd_memory_forget(&st);
+            return MIME_HC_STATUS_OK;
+        }
+    }
+    sd_memory_set(&st, buf, (uint32_t)length);
+    return MIME_HC_STATUS_OK;
 }
 
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
@@ -505,6 +666,16 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_INVALID;
         else if (ftruncate(fh->fd, (off_t)a[2]) != 0)
             status = errno_status(errno);
+        break;
+    }
+    case MIME_HC_FS_GET_SD: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh ? fs_get_sd(vm, fh, a[2], a[3], a[4], &regs[1]) : MIME_HC_STATUS_INVALID;
+        break;
+    }
+    case MIME_HC_FS_SET_SD: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh ? fs_set_sd(vm, fh, a[2], a[3]) : MIME_HC_STATUS_INVALID;
         break;
     }
     case MIME_HC_FS_DELETE: {

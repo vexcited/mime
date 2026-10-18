@@ -146,6 +146,7 @@ ACCESS_MASK SepMapTokenAccess(ACCESS_MASK access);
 BOOLEAN SepCanImpersonate(PTOKEN process_token, PTOKEN token, ULONG level);
 NTSTATUS SepReferenceTokenByHandle(HANDLE handle, ACCESS_MASK required, PTOKEN *token, ACCESS_MASK *granted);
 PTOKEN SepAnonymousToken(void);
+PTOKEN SepReferenceSessionToken(void);
 PTOKEN SepReferencePrimaryToken(PEPROCESS process);
 PTOKEN SepReferenceEffectiveToken(PETHREAD thread);
 BOOLEAN SepSinglePrivilegeCheck(ULONG luid, KPROCESSOR_MODE mode);

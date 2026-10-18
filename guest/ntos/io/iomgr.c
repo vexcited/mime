@@ -20,6 +20,7 @@ typedef struct _OPEN_PACKET {
     PFILE_OBJECT RelatedFile;
     IO_STATUS_BLOCK Iosb;
     BOOLEAN QueryOnly;
+    SD_BLOB *Creator; /* the descriptor the creator offered, a file made by the open gets it */
 } OPEN_PACKET, *POPEN_PACKET;
 
 #define OPEN_PACKET_MAGIC 0x4F50454Eu
@@ -315,6 +316,7 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
 
     IO_SECURITY_CONTEXT security = {};
     security.DesiredAccess = op->DesiredAccess;
+    security.SecurityDescriptor = op->Creator;
     IO_STACK_LOCATION params;
     memset(&params, 0, sizeof(params));
     params.Parameters.Create.SecurityContext = &security;
@@ -354,12 +356,43 @@ static PVOID file_wait_object(PVOID object)
     return &((PFILE_OBJECT)object)->Event;
 }
 
-NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
-                       ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode)
+/*
+ * the descriptor of a file is its file system's: a query returns it whole as a reference in the information
+ * of the status block, a set takes the whole new one in the first argument. A device that does not answer
+ * has none, and the object manager keeps the descriptor with the file object itself.
+ */
+static NTSTATUS file_get_security(PVOID object, PVOID *blob)
+{
+    PFILE_OBJECT file = object;
+    *blob = nullptr;
+    if (!file->DeviceObject)
+        return STATUS_INVALID_DEVICE_REQUEST;
+    IO_STATUS_BLOCK io = {};
+    NTSTATUS status = IopSynchronousRequest(file, IRP_MJ_QUERY_SECURITY, 0, nullptr, 0, nullptr, &io);
+    if (NT_SUCCESS(status))
+        *blob = (PVOID)io.Information;
+    return status;
+}
+
+static NTSTATUS file_put_security(PVOID object, PVOID blob)
+{
+    PFILE_OBJECT file = object;
+    if (!file->DeviceObject)
+        return STATUS_INVALID_DEVICE_REQUEST;
+    IO_STACK_LOCATION params;
+    memset(&params, 0, sizeof(params));
+    params.Parameters.Others.Argument1 = blob;
+    return IopSynchronousRequest(file, IRP_MJ_SET_SECURITY, 0, nullptr, 0, &params, nullptr);
+}
+
+static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                            ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
+                            SD_BLOB *creator)
 {
     OPEN_PACKET op;
     memset(&op, 0, sizeof(op));
     op.Magic = OPEN_PACKET_MAGIC;
+    op.Creator = creator;
     op.DesiredAccess = access;
     op.Disposition = disposition;
     op.Options = options;
@@ -417,6 +450,22 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
     if (mode == UserMode)
         attrs &= ~OBJ_KERNEL_HANDLE;
     return ObInsertObject(found, access, attrs, handle);
+}
+
+NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                       ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode)
+{
+    SD_BLOB *creator = nullptr;
+    if (attributes->SecurityDescriptor) {
+        NTSTATUS status = SeSdCapture(attributes->SecurityDescriptor, mode, &creator);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    NTSTATUS status = create_file(handle, access, attributes, iosb, file_attributes, share, disposition, options, mode,
+                                  creator);
+    if (creator)
+        SeSdDereference(creator);
+    return status;
 }
 
 NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG options, PFILE_OBJECT *out)
@@ -527,6 +576,8 @@ void IoInitialize(void)
     init.DeleteProcedure = file_delete;
     init.WaitObject = file_wait_object;
     ObSetGenericMapping(&init, 0x120089, 0x120116, 0x1200A0, 0x1F01FF);
+    init.GetSecurity = file_get_security;
+    init.PutSecurity = file_put_security;
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
     IopInitializeCompletion();
     IopInitializeNamedPipes();

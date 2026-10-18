@@ -259,6 +259,21 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     fcb->IsRoot = chars == 0 || (chars == 1 && file->FileName.Buffer[0] == '\\');
     fcb->DeleteOnClose = (file->Flags & FO_DELETE_ON_CLOSE) != 0;
     ExFreePool(info);
+    if (action == FILE_CREATED) {
+        PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
+        NTSTATUS status = MimeFsAssignNewFile(vol->HostVolume, host, &file->FileName, fcb->Directory,
+                                              context ? context->SecurityDescriptor : nullptr, KeGetPreviousMode());
+        if (!NT_SUCCESS(status)) {
+            /* a file the creator may not make that way is not left behind. */
+            HalHypercall(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
+            HalHypercall(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+            FsCacheInvalidate(fcb->Volume, fcb->FileId);
+            if (fcb->Cache)
+                FsCacheClose(fcb->Cache);
+            ExFreePool(fcb);
+            return complete(irp, status, 0);
+        }
+    }
     if (fcb->Directory)
         file->Flags |= FO_DIRECTORY_FILE;
     file->FsContext = fcb;
@@ -825,6 +840,33 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
     }
 }
 
+/* the whole descriptor of a file, a reference in the information; see IopGetFileSecurity. */
+static NTSTATUS NTAPI mimefs_query_security(PDEVICE_OBJECT device, PIRP irp)
+{
+    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    MIMEFS_FCB *fcb = file->FsContext;
+    MIMEFS_VOLUME *vol = device->DeviceExtension;
+    if (!fcb)
+        return complete(irp, STATUS_INVALID_HANDLE, 0);
+    SD_BLOB *sd;
+    NTSTATUS status = fcb->Rom ? MimeFsRomSecurity(&sd)
+                               : MimeFsEffectiveSecurity(vol->HostVolume, fcb->HostHandle, &file->FileName, 0,
+                                                         fcb->Directory, &sd);
+    return complete(irp, status, NT_SUCCESS(status) ? (ULONG_PTR)sd : 0);
+}
+
+static NTSTATUS NTAPI mimefs_set_security(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    MIMEFS_FCB *fcb = stack->FileObject->FsContext;
+    if (!fcb)
+        return complete(irp, STATUS_INVALID_HANDLE, 0);
+    /* the files the machine ships are read only. */
+    if (fcb->Rom)
+        return complete(irp, STATUS_ACCESS_DENIED, 0);
+    return complete(irp, MimeFsStoreSecurity(fcb->HostHandle, stack->Parameters.Others.Argument1), 0);
+}
+
 static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -868,6 +910,8 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     driver->MajorFunction[IRP_MJ_DIRECTORY_CONTROL] = mimefs_directory;
     driver->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] = mimefs_query_volume;
     driver->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = mimefs_flush;
+    driver->MajorFunction[IRP_MJ_QUERY_SECURITY] = mimefs_query_security;
+    driver->MajorFunction[IRP_MJ_SET_SECURITY] = mimefs_set_security;
     /* C: has no label, like a fresh install; Z: shows the name of the host volume. */
     ULONG serial = HalBootInfo->volume_serial;
     NTSTATUS status = create_volume(driver, L"\\Device\\HarddiskVolume1", MIME_FS_VOLUME_SYSTEM, "", serial);

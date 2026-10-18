@@ -14,6 +14,8 @@
 #define CM_JOURNAL_SET_VALUE 2u
 #define CM_JOURNAL_DELETE_VALUE 3u
 #define CM_JOURNAL_DELETE_KEY 4u
+#define CM_JOURNAL_SET_SECURITY 5u
+#define CM_JOURNAL_MAX_SECURITY (64u << 10)
 #define CM_JOURNAL_LINK 1u
 
 typedef struct CmJournalRecord {
@@ -116,6 +118,8 @@ static inline bool cm_journal_decode(const uint8_t *p, size_t size, CmJournalRec
         return !r->type && !r->data_bytes;
     case CM_JOURNAL_DELETE_KEY:
         return !r->type && !r->name_bytes && !r->data_bytes;
+    case CM_JOURNAL_SET_SECURITY:
+        return !r->type && !r->name_bytes && r->data_bytes >= 20 && r->data_bytes <= CM_JOURNAL_MAX_SECURITY;
     default:
         return false;
     }

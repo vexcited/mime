@@ -24,6 +24,8 @@ typedef struct CM_PARSE_CONTEXT {
     ULONG Options;
     ULONG Disposition;
     BOOLEAN Replay;
+    KPROCESSOR_MODE Mode; /* of the program creating a key */
+    SD_BLOB *Creator;     /* the descriptor it offered for the new key */
 } CM_PARSE_CONTEXT;
 
 static WCHAR upcase(WCHAR c)
@@ -330,6 +332,57 @@ static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
     return TRUE;
 }
 
+/* ------------------------------------------------------------------ security */
+
+static SD_MAPPING key_mapping(void)
+{
+    return CmKeyType->Init.GenericMapping;
+}
+
+/*
+ * the descriptor of a key, a reference: the one set on it, or what the hive keeps for it, else what its parent
+ * hands down to a key of the user's. lock held.
+ */
+static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
+{
+    if (node->Sd) {
+        *out = SeSdReference(node->Sd);
+        return STATUS_SUCCESS;
+    }
+    if (node->Hive && !(node->Flags & CM_NODE_SD_UNREADABLE)) {
+        SD_BLOB *sd;
+        if (NT_SUCCESS(CmpReadSecurity(node->Hive, node->Cell, &sd))) {
+            node->Sd = sd;
+            *out = SeSdReference(sd);
+            return STATUS_SUCCESS;
+        }
+        node->Flags |= CM_NODE_SD_UNREADABLE;
+    }
+    if (!node->Parent)
+        return SeSdSystemDefault(key_mapping(), TRUE, out);
+    SD_BLOB *parent;
+    NTSTATUS status = effective_sd(node->Parent, &parent);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = SeSdDerive(parent, key_mapping(), TRUE, out);
+    SeSdDereference(parent);
+    return status;
+}
+
+/* keeps a descriptor with a key, in the journal first. lock held. */
+static NTSTATUS store_sd(CM_NODE *node, SD_BLOB *sd)
+{
+    LARGE_INTEGER changed = now();
+    NTSTATUS status = CmpJournalAppend(node, CM_JOURNAL_SET_SECURITY, 0, nullptr, 0, sd->Data, sd->Length, changed);
+    if (!NT_SUCCESS(status))
+        return status;
+    SD_BLOB *old = node->Sd;
+    node->Sd = SeSdReference(sd);
+    node->LastWrite = changed;
+    SeSdDereference(old);
+    return STATUS_SUCCESS;
+}
+
 /*
  * walks path below start, following links. path is a writable buffer of
  * MAX_PATH_CHARS characters. lock held.
@@ -375,7 +428,23 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                 return STATUS_CHILD_MUST_BE_VOLATILE;
             if (last && (create->Options & REG_OPTION_CREATE_LINK))
                 flags |= CM_NODE_LINK;
+            /* the descriptor of a key a program makes, worked out first so a refused one makes nothing. */
+            SD_BLOB *sd = nullptr;
+            if (last && !create->Replay && !create->Kernel && (create->Creator || !SeSdSubjectIsDefault())) {
+                SD_BLOB *parent_sd;
+                status = effective_sd(node, &parent_sd);
+                if (NT_SUCCESS(status)) {
+                    status = SeSdAssign(parent_sd, create->Creator, key_mapping(), TRUE, create->Mode, &sd);
+                    SeSdDereference(parent_sd);
+                }
+                if (!NT_SUCCESS(status))
+                    return status;
+            }
             status = create_child(node, path + begin, chars, flags, &child);
+            if (NT_SUCCESS(status) && sd)
+                status = store_sd(child, sd);
+            if (sd)
+                SeSdDereference(sd);
             if (!NT_SUCCESS(status))
                 return status;
             if (last)
@@ -459,6 +528,24 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     ExFreePool(path);
     if (NT_SUCCESS(status))
         status = new_body(node, found);
+    return status;
+}
+
+static NTSTATUS key_get_security(PVOID object, PVOID *blob)
+{
+    CM_NODE *node = ((CM_KEY_BODY *)object)->Node;
+    ExAcquireFastMutex(&CmpLock);
+    NTSTATUS status = (node->Flags & CM_NODE_DELETED) ? STATUS_KEY_DELETED : effective_sd(node, (SD_BLOB **)blob);
+    ExReleaseFastMutex(&CmpLock);
+    return status;
+}
+
+static NTSTATUS key_put_security(PVOID object, PVOID blob)
+{
+    CM_NODE *node = ((CM_KEY_BODY *)object)->Node;
+    ExAcquireFastMutex(&CmpLock);
+    NTSTATUS status = (node->Flags & CM_NODE_DELETED) ? STATUS_KEY_DELETED : store_sd(node, blob);
+    ExReleaseFastMutex(&CmpLock);
     return status;
 }
 
@@ -698,8 +785,18 @@ NTSTATUS NTAPI NtCreateKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     if (!NT_SUCCESS(status))
         return status;
     CM_PARSE_CONTEXT ctx = {TRUE, FALSE, options, 0};
+    ctx.Mode = KeGetPreviousMode();
+    if (oa.SecurityDescriptor) {
+        status = SeSdCapture(oa.SecurityDescriptor, ctx.Mode, &ctx.Creator);
+        if (!NT_SUCCESS(status)) {
+            KiFreeCapturedString(&name);
+            return status;
+        }
+    }
     HANDLE h;
     status = ObOpenObjectByName(&oa, CmKeyType, KeGetPreviousMode(), access, &ctx, &h);
+    if (ctx.Creator)
+        SeSdDereference(ctx.Creator);
     KiFreeCapturedString(&name);
     if (NT_SUCCESS(status)) {
         status = ObStoreHandle(handle, h);
@@ -883,7 +980,8 @@ NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
     CM_PARSE_CONTEXT create = {TRUE, TRUE, 0, 0, TRUE};
     if (record->operation == CM_JOURNAL_CREATE_KEY && (record->type & CM_JOURNAL_LINK))
         create.Options = REG_OPTION_CREATE_LINK;
-    BOOLEAN deleting = record->operation == CM_JOURNAL_DELETE_KEY || record->operation == CM_JOURNAL_DELETE_VALUE;
+    BOOLEAN deleting = record->operation == CM_JOURNAL_DELETE_KEY || record->operation == CM_JOURNAL_DELETE_VALUE ||
+                       record->operation == CM_JOURNAL_SET_SECURITY;
     CM_NODE *node;
     NTSTATUS status = walk(CmpRoot, path, chars, OBJ_OPENLINK, deleting ? nullptr : &create, &node);
     ExFreePool(path);
@@ -911,6 +1009,15 @@ NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
     case CM_JOURNAL_DELETE_KEY:
         status = delete_key(node);
         break;
+    case CM_JOURNAL_SET_SECURITY: {
+        SD_BLOB *sd;
+        status = SeSdFromBytes(data, record->data_bytes, &sd);
+        if (!NT_SUCCESS(status))
+            return STATUS_REGISTRY_CORRUPT;
+        SeSdDereference(node->Sd);
+        node->Sd = sd;
+        break;
+    }
     default:
         return STATUS_REGISTRY_CORRUPT;
     }
@@ -1086,6 +1193,8 @@ void CmInitSystem1(void)
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;
     ObSetGenericMapping(&init, 0x20019, 0x20006, 0x20019, 0xF003F);
+    init.GetSecurity = key_get_security;
+    init.PutSecurity = key_put_security;
     CmKeyType = ObCreateObjectType(L"Key", &init);
 
     static const WCHAR registry[] = L"REGISTRY";

@@ -60,6 +60,7 @@ typedef struct MimeCtrlNode {
 
 typedef struct MimeFsHandle {
     int fd;
+    uint32_t volume;
     bool is_dir;
     bool delete_on_close;
     char *host_path;

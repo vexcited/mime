@@ -229,6 +229,8 @@ enum {
     MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
     MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
+    MIME_HC_FS_GET_SD = 0x1E,   /* (handle, pa, capacity, up) -> distance << 32 | length of the nearest stored descriptor */
+    MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
     MIME_HC_WIN_DESTROY = 0x21, /* (window_id) */

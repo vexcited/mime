@@ -51,8 +51,11 @@ NTSTATUS ObReferenceSecurity(PVOID object, SD_BLOB **sd)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
     *sd = nullptr;
-    if (h->Type->Init.GetSecurity)
-        return h->Type->Init.GetSecurity(object, (PVOID *)sd);
+    if (h->Type->Init.GetSecurity) {
+        NTSTATUS status = h->Type->Init.GetSecurity(object, (PVOID *)sd);
+        if (status != STATUS_INVALID_DEVICE_REQUEST)
+            return status;
+    }
     ExAcquireFastMutex(&g_lock);
     SD_BLOB *kept = (SD_BLOB *)(ULONG_PTR)h->Reserved;
     if (kept)
@@ -64,8 +67,11 @@ NTSTATUS ObReferenceSecurity(PVOID object, SD_BLOB **sd)
 NTSTATUS ObStoreSecurity(PVOID object, SD_BLOB *sd)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    if (h->Type->Init.PutSecurity)
-        return h->Type->Init.PutSecurity(object, sd);
+    if (h->Type->Init.PutSecurity) {
+        NTSTATUS status = h->Type->Init.PutSecurity(object, sd);
+        if (status != STATUS_INVALID_DEVICE_REQUEST)
+            return status;
+    }
     ExAcquireFastMutex(&g_lock);
     SD_BLOB *old = (SD_BLOB *)(ULONG_PTR)h->Reserved;
     h->Reserved = (ULONG_PTR)SeSdReference(sd);

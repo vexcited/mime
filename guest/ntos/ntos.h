@@ -687,6 +687,10 @@ NTSTATUS SeSdFromBytes(const void *descriptor, ULONG length, SD_BLOB **out);
 /* what a new object of the calling thread gets from its parent and its creator, both optional. */
 NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                     KPROCESSOR_MODE mode, SD_BLOB **out);
+/* a child of a parent as the user of the machine would have made it, which is how an untouched file or key shows. */
+NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
+/* whether the calling thread makes things the way the user of the machine does, with nothing to record. */
+BOOLEAN SeSdSubjectIsDefault(void);
 /* the same with nothing from the creator or the parent, for a thread acting as one token: cached. */
 NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
 /* what an object nobody gave a descriptor gets: the system and the administrators own it. */
@@ -712,6 +716,14 @@ NTSTATUS SeSdBuild(const UCHAR *owner, const UCHAR *group, USHORT control, const
 extern const UCHAR SeSidSystem[12], SeSidAdministrators[16], SeSidUsers[16], SeSidEveryone[12],
     SeSidAuthenticatedUsers[12], SeSidCreatorOwner[12], SeSidTrustedInstaller[32], SeSidAllAppPackages[16],
     SeSidRestrictedPackages[16];
+
+/* the descriptors of the files of mimefs, io/mimefs_sec.c. */
+NTSTATUS MimeFsRomSecurity(SD_BLOB **out);
+NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
+                                 SD_BLOB **out);
+NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd);
+NTSTATUS MimeFsAssignNewFile(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, SD_BLOB *creator,
+                             KPROCESSOR_MODE mode);
 
 /* stores the descriptor of a new object, from the attributes of its creation and the directory it joins. */
 NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode);
