@@ -37,7 +37,7 @@ static HRESULT source_type(IMFAttributes *attributes, BOOL *video)
     return S_OK;
 }
 
-/* there is no camera, and mmdevapi has no capture endpoint: both lists are empty. */
+/* no capture source is implemented, a camera or a microphone: both lists are empty. */
 HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sources, UINT32 *count)
 {
     if (!attributes)
@@ -56,7 +56,7 @@ HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sou
 /*
  * a camera needs its symbolic link, which names no device here. a
  * microphone may name its endpoint, or a role for the default one, but not
- * both; mmdevapi finds neither.
+ * both; the endpoint exists in mmdevapi but has no media source here.
  */
 HRESULT WINAPI MFCreateDeviceSource(IMFAttributes *attributes, IMFMediaSource **source)
 {
