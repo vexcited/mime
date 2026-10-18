@@ -62,6 +62,13 @@ typedef struct MimeTtfRenderParams {
     float shift_x, shift_y; /* sub-pixel shift in bitmap space, y down. */
     float oblique; /* horizontal shear per unit of height, 0.2 is a typical synthetic italic. */
     float embolden; /* extra horizontal stroke width in pixels, 0 for none. */
+    /*
+     * with use_matrix the font units map to bitmap space by a general matrix, y down:
+     * x = xx * fx + xy * fy + shift_x, y = yx * fx + yy * fy + shift_y, and the scale and
+     * oblique fields are not used.
+     */
+    bool use_matrix;
+    float xx, xy, yx, yy;
 } MimeTtfRenderParams;
 
 /* number of faces in a font file, 1 for a plain ttf, 0 if unrecognized. */

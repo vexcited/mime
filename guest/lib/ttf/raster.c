@@ -14,8 +14,8 @@
 typedef struct Path Path;
 
 struct Path {
-    /* font units to pixels: X = sx * x + sx * shear * y + tx, Y = ty - sy * y. */
-    float sx, sy, shear, tx, ty;
+    /* font units to pixels: X = xx * x + xy * y + tx, Y = yx * x + yy * y + ty. */
+    float xx, xy, yx, yy, tx, ty;
     void (*line)(Path *p, float x0, float y0, float x1, float y1);
 
     /* contour state. */
@@ -83,8 +83,8 @@ static void emit_quad(Path *p, float x0, float y0, float cx, float cy, float x1,
 static void path_point(void *ctx, float fx, float fy, bool on)
 {
     Path *p = ctx;
-    float x = clampf(p->sx * (fx + p->shear * fy) + p->tx);
-    float y = clampf(p->ty - p->sy * fy);
+    float x = clampf(p->xx * fx + p->xy * fy + p->tx);
+    float y = clampf(p->yx * fx + p->yy * fy + p->ty);
 
     if (p->count++ == 0) {
         if (on) {
@@ -254,12 +254,17 @@ static void raster_line(Path *p, float x0, float y0, float x1, float y1)
 static bool params_ok(const MimeTtfRenderParams *r)
 {
     /* the negated comparisons also reject nan. */
-    if (!(r->scale_x > 0) || !(r->scale_y > 0) || !(r->embolden >= 0))
+    if (!(r->embolden >= 0) || !(r->embolden < 1e4f))
         return false;
-    if (!(r->scale_x < 1e4f) || !(r->scale_y < 1e4f) || !(r->embolden < 1e4f))
-        return false;
-    if (!(r->oblique > -16 && r->oblique < 16))
-        return false;
+    if (r->use_matrix) {
+        if (!(absf(r->xx) < 1e4f) || !(absf(r->xy) < 1e4f) || !(absf(r->yx) < 1e4f) || !(absf(r->yy) < 1e4f))
+            return false;
+    } else {
+        if (!(r->scale_x > 0) || !(r->scale_y > 0) || !(r->scale_x < 1e4f) || !(r->scale_y < 1e4f))
+            return false;
+        if (!(r->oblique > -16 && r->oblique < 16))
+            return false;
+    }
     if (!(absf(r->shift_x) < 1e6f) || !(absf(r->shift_y) < 1e6f))
         return false;
     return true;
@@ -268,9 +273,17 @@ static bool params_ok(const MimeTtfRenderParams *r)
 static void path_init(Path *p, const MimeTtfRenderParams *r, float tx, float ty)
 {
     __builtin_memset(p, 0, sizeof(*p));
-    p->sx = r->scale_x;
-    p->sy = r->scale_y;
-    p->shear = r->oblique;
+    if (r->use_matrix) {
+        p->xx = r->xx;
+        p->xy = r->xy;
+        p->yx = r->yx;
+        p->yy = r->yy;
+    } else {
+        p->xx = r->scale_x;
+        p->xy = r->scale_x * r->oblique;
+        p->yx = 0;
+        p->yy = -r->scale_y;
+    }
     p->tx = tx;
     p->ty = ty;
 }
