@@ -607,16 +607,6 @@ NTSTATUS NTAPI NtSetInformationVirtualMemory(HANDLE process, ULONG klass, ULONG_
     return STATUS_SUCCESS;
 }
 
-NTSTATUS NTAPI NtOpenThreadToken(HANDLE thread, ACCESS_MASK access, BOOLEAN self, PHANDLE token)
-{
-    return STATUS_NO_TOKEN;
-}
-
-NTSTATUS NTAPI NtOpenThreadTokenEx(HANDLE thread, ACCESS_MASK access, BOOLEAN self, ULONG attributes, PHANDLE token)
-{
-    return STATUS_NO_TOKEN;
-}
-
 NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data, ULONG length, PULONG returned)
 {
     return STATUS_OBJECT_NAME_NOT_FOUND;

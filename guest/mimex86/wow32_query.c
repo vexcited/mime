@@ -14,7 +14,6 @@
 /* the classes nt.h does not name. */
 enum {
     ProcessExceptionPort = 8,
-    ProcessAccessToken = 9,
     ProcessAffinityMask = 21,
     ProcessDeviceMap = 23,
     ThreadSetTlsArrayAddress = 15,

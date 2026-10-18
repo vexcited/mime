@@ -178,6 +178,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     ObInitialize();
     ExInitialize();
     PsInitialize();
+    SepInitialize();
     KiInitializeSystemServices();
     KiInitializeTimers();
 

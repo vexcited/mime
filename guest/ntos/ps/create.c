@@ -237,8 +237,8 @@ static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS create_process(const PSP_PARAMS *p, ULONG64 request_id, MIME_CONSOLE *console, BOOLEAN suspended,
-                               PEPROCESS *out, PETHREAD *initial_thread)
+static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG64 request_id, MIME_CONSOLE *console,
+                               BOOLEAN suspended, PEPROCESS *out, PETHREAD *initial_thread)
 {
     PCUNICODE_STRING image = &p->Image;
     UNICODE_STRING nt_path;
@@ -270,6 +270,18 @@ static NTSTATUS create_process(const PSP_PARAMS *p, ULONG64 request_id, MIME_CON
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(section);
         return status;
+    }
+    /* the creator's token, or the one it was given for the new process. */
+    if (token) {
+        SepSetProcessToken(process, token);
+    } else {
+        status = SepAssignProcessToken(process, PsCurrentProcess());
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(section);
+            PspTerminateProcess(process, status);
+            ObDereferenceObject(process);
+            return status;
+        }
     }
     process->ImageSection = section;
     process->SystemDll = system_dll;
@@ -341,7 +353,7 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
     PSP_PARAMS p = {.Image = *image, .CommandLine = *cmdline, .CurrentDirectory = cwd ? *cwd : default_cwd,
                     .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
-    return create_process(&p, request_id, console, FALSE, out, nullptr);
+    return create_process(&p, nullptr, request_id, console, FALSE, out, nullptr);
 }
 
 static void free_params(PSP_PARAMS *p)
@@ -413,6 +425,33 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
     return status;
 }
 
+/* the attributes of the list that mime knows: the primary token of the new process, as a handle. */
+static NTSTATUS capture_attributes(const PS_ATTRIBUTE_LIST *user, HANDLE *token)
+{
+    SIZE_T total;
+    *token = nullptr;
+    NTSTATUS status = KiCopyFromUser(&total, user, sizeof(total));
+    if (!NT_SUCCESS(status))
+        return status;
+    if (total < sizeof(SIZE_T) || (total - sizeof(SIZE_T)) % sizeof(PS_ATTRIBUTE))
+        return STATUS_INVALID_PARAMETER;
+    SIZE_T count = (total - sizeof(SIZE_T)) / sizeof(PS_ATTRIBUTE);
+    if (count > 16)
+        return STATUS_INVALID_PARAMETER;
+    for (SIZE_T i = 0; i < count; i++) {
+        PS_ATTRIBUTE attribute;
+        status = KiCopyFromUser(&attribute, &user->Attributes[i], sizeof(attribute));
+        if (!NT_SUCCESS(status))
+            return status;
+        if ((ULONG)attribute.Attribute != PS_ATTRIBUTE_TOKEN)
+            return STATUS_NOT_SUPPORTED;
+        if (attribute.Size != sizeof(HANDLE))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        *token = attribute.ValuePtr;
+    }
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle, ACCESS_MASK process_access,
     ACCESS_MASK thread_access, POBJECT_ATTRIBUTES process_attributes, POBJECT_ATTRIBUTES thread_attributes,
     ULONG process_flags, ULONG thread_flags, PRTL_USER_PROCESS_PARAMETERS parameters, PVOID create_info,
@@ -422,16 +461,25 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         return STATUS_INVALID_PARAMETER;
     if (process_attributes || thread_attributes ||
         (process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
-        (thread_flags & ~1u) || create_info || attributes)
+        (thread_flags & ~1u) || create_info)
         return STATUS_NOT_SUPPORTED;
+    HANDLE token_handle = nullptr;
+    struct _TOKEN *token = nullptr;
+    NTSTATUS status = attributes ? capture_attributes(attributes, &token_handle) : STATUS_SUCCESS;
+    if (NT_SUCCESS(status) && token_handle)
+        status = SepReferenceTokenForNewProcess(token_handle, &token);
+    if (!NT_SUCCESS(status))
+        return status;
     PSP_PARAMS params;
     memset(&params, 0, sizeof(params));
-    NTSTATUS status = capture_params(parameters, &params);
+    status = capture_params(parameters, &params);
     PEPROCESS process = nullptr;
     PETHREAD thread = nullptr;
     if (NT_SUCCESS(status))
-        status = create_process(&params, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
+        status = create_process(&params, token, 0, PsCurrentProcess()->Console, TRUE, &process, &thread);
     free_params(&params);
+    if (token)
+        ObDereferenceObject(token);
     if (NT_SUCCESS(status) && (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) {
         status = ObInheritHandles(PsCurrentProcess(), process);
         if (!NT_SUCCESS(status)) {

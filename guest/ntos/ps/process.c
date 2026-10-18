@@ -171,6 +171,7 @@ static void process_delete(PVOID object)
         ObDereferenceObject(process->ImageSection);
     if (process->UniqueProcessId)
         PspFreeId(process->UniqueProcessId);
+    SepFreeProcessToken(process);
     ULONG64 s = KiAcquireDispatcherLock();
     if (process->ActiveProcessLinks.Flink)
         RemoveEntryList(&process->ActiveProcessLinks);
@@ -370,6 +371,8 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
 
 NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length)
 {
+    if (klass == ProcessAccessToken)
+        return SepSetProcessAccessToken(handle, info, length);
     return STATUS_SUCCESS;
 }
 

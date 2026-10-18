@@ -629,6 +629,10 @@ typedef struct _ETHREAD {
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     LONG_PTR SameThreadApcFlags;
+    struct _TOKEN *ImpersonationToken; /* referenced, NULL when the thread acts as its process */
+    UCHAR ImpersonationLevel;
+    BOOLEAN CopyOnOpen;
+    BOOLEAN EffectiveOnly;
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
@@ -684,6 +688,8 @@ typedef struct _EPROCESS {
     KEVENT ExitEvent;
     struct EJOB *Job; /* ps/job.c */
     LIST_ENTRY JobLinks;
+    struct _TOKEN *Token; /* the primary token, referenced */
+    BOOLEAN TokenFrozen;  /* the first thread has run, the token is for good */
 } EPROCESS;
 
 extern LIST_ENTRY PsActiveProcessHead;
@@ -738,6 +744,22 @@ extern PSP_SYSTEM_DLL PspNativeSystemDll;
 extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
+
+/* ------------------------------------------------------------------ se */
+
+/* tokens, se/token.c: the primary token of a process and the identity of a thread. */
+void SepInitialize(void);
+NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent);
+void SepSetProcessToken(PEPROCESS process, struct _TOKEN *token);
+void SepFreeProcessToken(PEPROCESS process);
+void SepFreeThreadToken(PETHREAD thread);
+struct _TOKEN *SepReferenceEffectiveToken(PETHREAD thread);
+NTSTATUS SepImpersonateClient(PETHREAD thread, struct _TOKEN *token, BOOLEAN copy_on_open, BOOLEAN effective_only,
+                              ULONG level);
+NTSTATUS SepSetThreadToken(HANDLE thread_handle, PVOID info, ULONG length);
+NTSTATUS SepSetProcessAccessToken(HANDLE process_handle, PVOID info, ULONG length);
+NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, struct _TOKEN **out);
+struct _TOKEN *SepDuplicateForPipe(struct _TOKEN *token, ULONG level, BOOLEAN effective_only);
 
 /* ------------------------------------------------------------------ io */
 

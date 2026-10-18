@@ -68,6 +68,7 @@ void PspThreadDelete(PVOID object)
         MmFreeKernelStack(thread->Tcb.StackAllocation, thread->Tcb.StackAllocationSize);
     if (thread->Cid.UniqueThread)
         PspFreeId(thread->Cid.UniqueThread);
+    SepFreeThreadToken(thread);
     if (thread->Tcb.Process)
         ObDereferenceObject(thread->Tcb.Process);
 }
@@ -152,6 +153,7 @@ static void user_thread_startup(PVOID context)
 {
     PKTHREAD thread = KiCurrentThread();
     PKTRAP_FRAME frame = thread->TrapFrame;
+    ((PEPROCESS)thread->Process)->TokenFrozen = TRUE;
     thread->PreviousMode = UserMode;
     KiExitToUserMode(frame);
     KiEnterUserMode(frame);
@@ -618,6 +620,8 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
 
 NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length)
 {
+    if (klass == ThreadImpersonationToken)
+        return SepSetThreadToken(handle, info, length);
     PETHREAD thread;
     NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SET_INFORMATION, &thread);
     if (!NT_SUCCESS(status))
