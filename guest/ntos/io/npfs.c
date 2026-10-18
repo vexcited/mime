@@ -283,10 +283,13 @@ static NTSTATUS immediate(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
     return status;
 }
 
-/* called with the lock released: sleeps for a synchronous caller, or reports pending. */
+/* called with the lock held, releases it: sleeps for a synchronous caller, or reports pending. the request
+   may complete and go away as soon as the lock is released. */
 static NTSTATUS pending(NP_REQUEST *r)
 {
-    if (!r->Waiter)
+    BOOLEAN waiter = r->Waiter;
+    unlock();
+    if (!waiter)
         return STATUS_PENDING;
     KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
     NTSTATUS status = r->Status;
@@ -675,6 +678,25 @@ static NTSTATUS NTAPI np_query(PDEVICE_OBJECT device, PIRP irp)
             info = sizeof(*p);
         }
         break;
+    case FileNameInformation: {
+        /* the name inside the pipe volume: a backslash and the pipe name, which is what a root handle has alone. */
+        if (length < offsetof(FILE_NAME_INFORMATION, FileName)) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        FILE_NAME_INFORMATION *n = buf;
+        ULONG name_len = sizeof(WCHAR) + (in && file->FsContext2 != END_ROOT ? in->Pipe->Name.Length : 0);
+        ULONG room = length - (ULONG)offsetof(FILE_NAME_INFORMATION, FileName);
+        ULONG copy = name_len < room ? name_len : room;
+        n->FileNameLength = name_len;
+        if (copy >= sizeof(WCHAR))
+            n->FileName[0] = '\\';
+        if (copy > sizeof(WCHAR))
+            memcpy(&n->FileName[1], in->Pipe->Name.Buffer, copy - sizeof(WCHAR));
+        info = offsetof(FILE_NAME_INFORMATION, FileName) + copy;
+        status = copy < name_len ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
+        break;
+    }
     case FileStandardInformation:
         if (length < sizeof(FILE_STANDARD_INFORMATION)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
@@ -898,7 +920,6 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
         return immediate(r, st, 0);
     }
     InsertTailList(&q->Readers, &r->Links);
-    unlock();
     return pending(r);
 }
 
@@ -961,9 +982,11 @@ static NTSTATUS peek(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID ou
 
 /*
  * writes a message and reads the answer as one request. the end must read
- * messages and have nothing left to read, a guess of windows' checks.
+ * messages and have nothing left to read, a guess of windows' checks. the lock
+ * is held, and released when the request goes pending.
  */
-static NTSTATUS transceive(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID input, ULONG in_len)
+static NTSTATUS transceive(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID input, ULONG in_len,
+                           BOOLEAN *released)
 {
     BOOLEAN server = file->FsContext2 == END_SERVER;
     if (in->ReadMode[end_index(file)] != FILE_PIPE_MESSAGE_MODE)
@@ -994,6 +1017,7 @@ static NTSTATUS transceive(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PV
         return immediate(r, status, moved);
     }
     InsertTailList(&rq->Readers, &r->Links);
+    *released = TRUE;
     return pending(r);
 }
 
@@ -1067,7 +1091,6 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         else {
             in->State = FILE_PIPE_LISTENING_STATE;
             InsertTailList(&in->Listeners, &r->Links);
-            unlock();
             return pending(r);
         }
         unlock();
@@ -1120,9 +1143,13 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         unlock();
         return status;
     case FSCTL_PIPE_TRANSCEIVE:
-        status = transceive(r, in, file, input, in_len);
-        unlock();
-        return status;
+        {
+            BOOLEAN released = FALSE;
+            status = transceive(r, in, file, input, in_len, &released);
+            if (!released)
+                unlock();
+            return status;
+        }
     case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:
     case FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE: {
         /* the processes and sessions of the two ends, asked by name. */
