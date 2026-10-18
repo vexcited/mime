@@ -179,7 +179,15 @@ static HRESULT create_device(IUnknown *unknown, D3D_FEATURE_LEVEL level, REFIID 
 D3D12API HRESULT WINAPI D3D12CreateDevice(IUnknown *adapter, D3D_FEATURE_LEVEL level, REFIID riid,
                                                        void **out)
 {
-    return create_device(adapter, level, riid, out);
+    ULONGLONG began = GetTickCount64();
+    HRESULT hr = create_device(adapter, level, riid, out);
+    ULONGLONG took = GetTickCount64() - began;
+    if (took >= 20) {
+        char text[64];
+        _snprintf(text, sizeof(text), "d3d12: a device took %lu ms\n", (unsigned long)took);
+        OutputDebugStringA(text);
+    }
+    return hr;
 }
 
 /* ------------------------------------------------------------------ the debug layer */

@@ -18,5 +18,7 @@ void mime_vk_close(uint64_t connection);
 void mime_vk_close_all(void);
 /* loads the host's vulkan driver in the background, so the first connection of the guest does not wait for it. */
 void mime_vk_warm_up(void);
+/* what the host spent on the guest's calls since the last time, to the log. */
+void mime_vk_dump_stats(void);
 
 #endif

@@ -64,7 +64,7 @@ macOS 15 or later for the framework's virtual interrupt controller.
   are what to watch when working on speed: an idle machine makes none. On
   Linux the process is named `mime`: `kill -USR1 $(pgrep -f '^mime-vmm')`.
   The guest then also logs every thread of every process: its state, the
-  object it waits for, where its user code called the kernel and the return
+  object it waits for (and in how many milliseconds a timed wait ends), where its user code called the kernel and the return
   address on its stack, which `llvm-symbolizer` turns into the call that
   blocks.
 - On Linux, `kill -PROF $(pgrep -f '^mime-vmm')` starts sampling where the

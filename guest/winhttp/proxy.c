@@ -478,6 +478,17 @@ static DWORD ParseAnswer(LPCWSTR answer, WINHTTP_PROXY_RESULT *result)
     return ERROR_SUCCESS;
 }
 
+/* a step of the proxy resolution that took long, to the debug output: a browser's first request waits for it. */
+static void TraceSlow(const char *what, ULONGLONG began, DWORD error)
+{
+    ULONGLONG took = GetTickCount64() - began;
+    if (took < 100)
+        return;
+    char text[96];
+    wsprintfA(text, "winhttp: %s took %lu ms, error %lu\n", what, (DWORD)took, error);
+    OutputDebugStringA(text);
+}
+
 static DWORD DetectUrl(DWORD flags, PWSTR *url)
 {
     *url = nullptr;
@@ -486,8 +497,12 @@ static DWORD DetectUrl(DWORD flags, PWSTR *url)
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     /* dhcp option 252 does not exist under mime, so only the dns name of wpad is tried. */
-    if (!(flags & WINHTTP_AUTO_DETECT_TYPE_DNS_A) || GetAddrInfoW(L"wpad", L"80", &hints, &addresses) || !addresses)
+    ULONGLONG began = GetTickCount64();
+    if (!(flags & WINHTTP_AUTO_DETECT_TYPE_DNS_A) || GetAddrInfoW(L"wpad", L"80", &hints, &addresses) || !addresses) {
+        TraceSlow("the lookup of wpad", began, ERROR_WINHTTP_AUTODETECTION_FAILED);
         return ERROR_WINHTTP_AUTODETECTION_FAILED;
+    }
+    TraceSlow("the lookup of wpad", began, 0);
     FreeAddrInfoW(addresses);
     *url = WhDupW(L"http://wpad/wpad.dat");
     return *url ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
@@ -509,7 +524,9 @@ static DWORD Resolve(LPCWSTR url, const WINHTTP_AUTOPROXY_OPTIONS *options, WINH
         return error;
     char *script;
     DWORD length;
+    ULONGLONG began = GetTickCount64();
     error = Download(script_url, &script, &length);
+    TraceSlow("the download of the proxy script", began, error);
     WhFree(script_url);
     if (error)
         return error;

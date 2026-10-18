@@ -631,6 +631,8 @@ static void *vcpu_main(void *arg)
                     profile_sample(vcpu);
                 if (g_dump_requested) {
                     dump_state(vcpu, "state dump requested");
+                    if (vcpu->index == 0)
+                        mime_vk_dump_stats();
                     if (vcpu->index + 1 == vm->vcpu_count)
                         g_dump_requested = false;
                 }

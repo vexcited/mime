@@ -1954,6 +1954,10 @@ static void run_hand(MvkCall *call)
     }
 }
 
+static struct {
+    uint64_t calls, ns, replies;
+} g_op_stats[MVK_OP_GENERATED_COUNT + 256];
+
 static void run_call(MvkCall *call)
 {
     uint32_t op = call->header.op;
@@ -1980,10 +1984,48 @@ static void run_call(MvkCall *call)
         mime_warn("vulkan: unknown call %#x", op);
     if (call->in.error)
         mime_warn("vulkan: malformed call %#x", op);
-    /* what the driver was slow at, for MIME_DEBUG. */
     uint64_t took = mime_now_ns() - began;
+    /* what the host spent on each call, for the dump of the machine: a call that waits for its reply costs the guest a trip. */
+    uint32_t slot = op >= MVK_OP_HAND ? MVK_OP_GENERATED_COUNT + (op - MVK_OP_HAND) : op;
+    if (slot < sizeof(g_op_stats) / sizeof(g_op_stats[0])) {
+        __atomic_fetch_add(&g_op_stats[slot].calls, 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_op_stats[slot].ns, took, __ATOMIC_RELAXED);
+        if (call->header.reply != MVK_NO_REPLY)
+            __atomic_fetch_add(&g_op_stats[slot].replies, 1, __ATOMIC_RELAXED);
+    }
+    /* what the driver was slow at, for MIME_DEBUG. */
     if (took > 5000000)
         mime_debug("vulkan: connection %u call %#x took %llu us", c->index, op, (unsigned long long)(took / 1000));
+}
+
+/* the calls the host ran most and longest since the last dump, then the counts start again. */
+void mime_vk_dump_stats(void)
+{
+    uint64_t total_calls = 0, total_ns = 0, total_replies = 0;
+    for (size_t i = 0; i < sizeof(g_op_stats) / sizeof(g_op_stats[0]); i++) {
+        total_calls += g_op_stats[i].calls;
+        total_ns += g_op_stats[i].ns;
+        total_replies += g_op_stats[i].replies;
+    }
+    if (!total_calls)
+        return;
+    mime_info("vulkan: %llu calls, %llu of them waited for by the guest, %llu ms in the host", (unsigned long long)total_calls,
+              (unsigned long long)total_replies, (unsigned long long)(total_ns / 1000000));
+    for (int round = 0; round < 8; round++) {
+        size_t best = 0;
+        uint64_t most = 0;
+        for (size_t i = 0; i < sizeof(g_op_stats) / sizeof(g_op_stats[0]); i++)
+            if (g_op_stats[i].ns > most)
+                most = g_op_stats[i].ns, best = i;
+        if (!most)
+            break;
+        const char *name = best < MVK_OP_GENERATED_COUNT ? mvk_generated_names[best] : "hand-written";
+        mime_info("vulkan: %s (%zu): %llu calls, %llu with a reply, %llu ms", name ? name : "?", best,
+                  (unsigned long long)g_op_stats[best].calls, (unsigned long long)g_op_stats[best].replies,
+                  (unsigned long long)(g_op_stats[best].ns / 1000000));
+        g_op_stats[best].ns = 0;
+    }
+    memset(g_op_stats, 0, sizeof(g_op_stats));
 }
 
 static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *stream, size_t size)

@@ -48,8 +48,12 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
     else if (FAILED(hr = first_adapter(&adapter)))
         return hr;
     D3dDevice *object;
+    ULONGLONG began = GetTickCount64();
     hr = D3dCreateDevice(adapter, flags, levels, count, &object);
     adapter->lpVtbl->Release(adapter);
+    /* a device is a connection to the host's driver, and a browser makes several before its first frame. */
+    if (GetTickCount64() - began >= 20)
+        D3dLog("d3d11: a device took %lu ms", (unsigned long)(GetTickCount64() - began));
     if (FAILED(hr))
         return hr;
     if (level)
