@@ -1149,12 +1149,20 @@ NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE handle, BOOLEAN reset_to_default, PVOI
     SEP_GROUP *old = nullptr;
     ULONG changes = 0;
     BOOLEAN missing = FALSE;
+    PUCHAR found = ExAllocatePool2(POOL_FLAG_NON_PAGED, count ? count : 1, KI_TAG('S', 'e', 'G', 'f'));
+    if (!found) {
+        ObDereferenceObject(t);
+        if (wanted)
+            ExFreePool(wanted);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
     ExAcquireFastMutex(&SeLock);
     /* the groups as they will be, kept apart until the whole request is known to work. */
     SEP_GROUP *next = ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)t->GroupCount * sizeof(SEP_GROUP) * 2, KI_TAG('S', 'e', 'G', 'a'));
     if (!next) {
         ExReleaseFastMutex(&SeLock);
         ObDereferenceObject(t);
+        ExFreePool(found);
         if (wanted)
             ExFreePool(wanted);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -1178,7 +1186,7 @@ NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE handle, BOOLEAN reset_to_default, PVOI
                     status = STATUS_CANT_DISABLE_MANDATORY;
                 else
                     attributes &= ~SE_GROUP_ENABLED;
-                wanted[j].Attributes |= 0x80000000; /* found */
+                found[j] = TRUE;
             }
         }
         if (attributes != g->Attributes) {
@@ -1188,7 +1196,7 @@ NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE handle, BOOLEAN reset_to_default, PVOI
         }
     }
     for (ULONG j = 0; j < count; j++)
-        if (!(wanted[j].Attributes & 0x80000000))
+        if (!found[j])
             missing = TRUE;
     ULONG needed = 8 + 16 * changes;
     for (ULONG i = 0; i < changes; i++)
@@ -1202,6 +1210,7 @@ NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE handle, BOOLEAN reset_to_default, PVOI
     }
     ExReleaseFastMutex(&SeLock);
     ObDereferenceObject(t);
+    ExFreePool(found);
     if (wanted)
         ExFreePool(wanted);
     if (NT_SUCCESS(status) && previous) {
