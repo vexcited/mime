@@ -160,9 +160,12 @@ NTSTATUS PspSetMitigationPolicy(HANDLE handle, PVOID info, ULONG length)
     if (!NT_SUCCESS(status))
         return status;
     ULONG current = process->MitigationPolicy[policy];
-    if (policy == MIME_POLICY_DYNAMIC_CODE && process != PsCurrentProcess() &&
-        !(current & MIME_DYNAMIC_CODE_REMOTE_DOWNGRADE)) {
-        status = STATUS_ACCESS_DENIED;
+    if (policy == MIME_POLICY_DYNAMIC_CODE && process != PsCurrentProcess()) {
+        /* another process only lets its ban be lifted, and only if it said so. */
+        if ((current & MIME_DYNAMIC_CODE_REMOTE_DOWNGRADE) && !(flags & MIME_DYNAMIC_CODE_PROHIBIT))
+            process->MitigationPolicy[policy] = current & MIME_DYNAMIC_CODE_REMOTE_DOWNGRADE;
+        else
+            status = STATUS_ACCESS_DENIED;
     } else if (current & ~flags) {
         /* nothing a policy turned on is turned off. */
         status = STATUS_ACCESS_DENIED;

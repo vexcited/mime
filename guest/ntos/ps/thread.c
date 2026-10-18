@@ -556,6 +556,60 @@ NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous)
     return status;
 }
 
+/* every thread of a process suspended or resumed once more, as the debuggers' calls do. */
+static NTSTATUS suspend_or_resume_process(HANDLE handle, BOOLEAN suspend)
+{
+    PEPROCESS process;
+    NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SUSPEND_RESUME, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (process->SystemProcess) {
+        ObDereferenceObject(process);
+        return STATUS_ACCESS_DENIED;
+    }
+    if (process->Terminating) {
+        ObDereferenceObject(process);
+        return STATUS_PROCESS_IS_TERMINATING;
+    }
+    ULONG64 state = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
+        PETHREAD thread = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (thread->Tcb.Terminating || thread->SystemThread)
+            continue;
+        ULONG old = thread->Tcb.SuspendCount;
+        if (suspend) {
+            if (old >= 127)
+                continue;
+            thread->Tcb.SuspendCount++;
+            if (!old)
+                KeClearEvent(&thread->Tcb.SuspendEvent);
+            PspCheckForSuspendApc(&thread->Tcb);
+        } else if (old) {
+            thread->Tcb.SuspendCount--;
+            if (old == 1) {
+                KeSetEvent(&thread->Tcb.SuspendEvent, 0, FALSE);
+                if (thread->Tcb.State == Initialized)
+                    KiReadyThread(&thread->Tcb);
+                else if (thread->Tcb.Suspended)
+                    KeReleaseSemaphore(&thread->Tcb.SuspendSemaphore, 0, 1, FALSE);
+            }
+        }
+    }
+    KiReleaseDispatcherLock(state);
+    ObDereferenceObject(process);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI NtSuspendProcess(HANDLE handle)
+{
+    return suspend_or_resume_process(handle, TRUE);
+}
+
+NTSTATUS NTAPI NtResumeProcess(HANDLE handle)
+{
+    return suspend_or_resume_process(handle, FALSE);
+}
+
 NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length,
                                         PULONG returned)
 {

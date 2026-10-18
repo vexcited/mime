@@ -689,6 +689,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         status = NtOpenProcess(&handle, a[1], a[2] ? &oa : nullptr, source ? &cid : nullptr);
         return handle_out(status, a[0], handle);
     }
+    case MIME_SVC_NtSuspendProcess:
+        return NtSuspendProcess(handle32(a[0]));
+    case MIME_SVC_NtResumeProcess:
+        return NtResumeProcess(handle32(a[0]));
     case MIME_SVC_NtOpenThread: {
         const ULONG *source = pointer32(a[3]);
         CLIENT_ID cid = {};
