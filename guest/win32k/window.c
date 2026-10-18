@@ -942,20 +942,23 @@ WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
     return nullptr;
 }
 
-/* deepest window under pt, starting at a top level window. */
+/*
+ * deepest window under pt, starting at a top level window. a disabled top
+ * level window is the answer itself, children included; a disabled child is
+ * not hit at all, the window below it or its parent is, so mouse input
+ * passes through the child windows another process keeps over a window.
+ */
 WND *WndFromPoint(WND *top, POINT pt)
 {
     WND *w = top;
     if (!w)
         return nullptr;
     for (;;) {
-        if (!RectContains(&w->ClientRect, pt.x, pt.y) || (w->Style & WS_MINIMIZE))
+        if (!RectContains(&w->ClientRect, pt.x, pt.y) || (w->Style & WS_MINIMIZE) || (w == top && (w->Style & WS_DISABLED) && WndIsTopLevel(w)))
             return w;
-        WND *c = WndChildFromPoint(w, pt, FALSE);
+        WND *c = WndChildFromPoint(w, pt, TRUE);
         if (!c)
             return w;
-        if (c->Style & WS_DISABLED)
-            return c;
         /* static controls and group boxes are transparent to the mouse via WM_NCHITTEST HTTRANSPARENT, handled by the caller. */
         w = c;
     }

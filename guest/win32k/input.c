@@ -579,7 +579,7 @@ static WND *hit_test(WND *top, POINT pt, LONG *hit)
         /* look for a sibling below the transparent window before falling back to the parent. */
         WND *next = nullptr;
         for (WND *s = w->Next; s; s = s->Next)
-            if ((s->Style & WS_VISIBLE) && RectContains(&s->WindowRect, pt.x, pt.y)) {
+            if ((s->Style & WS_VISIBLE) && !(s->Style & WS_DISABLED) && RectContains(&s->WindowRect, pt.x, pt.y)) {
                 next = s;
                 break;
             }
