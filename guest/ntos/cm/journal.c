@@ -7,6 +7,20 @@ static ULONG64 CmpJournalSequence = 1;
 static NTSTATUS CmpJournalStatus;
 static BOOLEAN CmpJournalReady;
 
+/* operations met during replay that this build does not know, each named once in the log. */
+static ULONG CmpJournalSkipped[8];
+static ULONG CmpJournalSkippedCount;
+
+static void note_unknown(ULONG operation, ULONG64 offset)
+{
+    for (ULONG i = 0; i < CmpJournalSkippedCount; i++)
+        if (CmpJournalSkipped[i] == operation)
+            return;
+    if (CmpJournalSkippedCount < RTL_NUMBER_OF(CmpJournalSkipped))
+        CmpJournalSkipped[CmpJournalSkippedCount++] = operation;
+    KiLogPrintf("registry: journal skips records of unknown operation %u, first at offset %llu", operation, offset);
+}
+
 static NTSTATUS flush(void)
 {
     return IopSynchronousRequest(CmpJournalFile, IRP_MJ_FLUSH_BUFFERS, 0, nullptr, 0, nullptr, nullptr);
@@ -90,6 +104,8 @@ static NTSTATUS replay(void)
         if (NT_SUCCESS(status)) {
             if (!cm_journal_validate(bytes, size, CmpJournalSequence))
                 status = STATUS_REGISTRY_CORRUPT;
+            else if (!cm_journal_known(record.operation))
+                note_unknown(record.operation, CmpJournalOffset);
             else
                 status = CmpRestoreJournal(&record, bytes + sizeof(header));
         }
@@ -104,6 +120,7 @@ static NTSTATUS replay(void)
 
 void CmpJournalInitialize(void)
 {
+    CmpJournalSkippedCount = 0;
     UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\??\\C:\\Windows\\System32\\config\\mime-registry.log");
     OBJECT_ATTRIBUTES attributes;
     InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);

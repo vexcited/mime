@@ -50,6 +50,12 @@ static inline void cm_journal_put64(uint8_t *p, uint64_t n)
     cm_journal_put32(p + 4, (uint32_t)(n >> 32));
 }
 
+/* the operations this build applies, any other record is framed, checked and skipped. */
+static inline bool cm_journal_known(uint32_t operation)
+{
+    return operation >= CM_JOURNAL_CREATE_KEY && operation <= CM_JOURNAL_SET_SECURITY;
+}
+
 static inline uint32_t cm_journal_size(const CmJournalRecord *r)
 {
     return CM_JOURNAL_HEADER + r->path_bytes + r->name_bytes + r->data_bytes;
@@ -95,8 +101,7 @@ static inline void cm_journal_seal(uint8_t *p, size_t size)
 
 static inline bool cm_journal_decode(const uint8_t *p, size_t size, CmJournalRecord *r)
 {
-    if (size < CM_JOURNAL_HEADER || cm_journal_get32(p) != 0x314a4d43u ||
-        cm_journal_get32(p + 36) || cm_journal_get32(p + 52))
+    if (size < CM_JOURNAL_HEADER || cm_journal_get32(p) != 0x314a4d43u)
         return false;
     r->sequence = cm_journal_get64(p + 8);
     r->operation = cm_journal_get32(p + 16);
@@ -105,9 +110,14 @@ static inline bool cm_journal_decode(const uint8_t *p, size_t size, CmJournalRec
     r->name_bytes = cm_journal_get32(p + 28);
     r->data_bytes = cm_journal_get32(p + 32);
     r->last_write = cm_journal_get64(p + 40);
-    if (!r->sequence || r->path_bytes < 22 || r->path_bytes > CM_JOURNAL_MAX_PATH ||
-        r->name_bytes > CM_JOURNAL_MAX_NAME || r->data_bytes > CM_JOURNAL_MAX_DATA ||
-        (r->path_bytes & 1) || (r->name_bytes & 1) || cm_journal_get32(p + 4) != cm_journal_size(r))
+    /* the framing holds for every record, so a later build can add operations a reader steps over. */
+    if (!r->sequence || r->path_bytes > CM_JOURNAL_MAX_PATH || r->name_bytes > CM_JOURNAL_MAX_NAME ||
+        r->data_bytes > CM_JOURNAL_MAX_DATA || cm_journal_get32(p + 4) != cm_journal_size(r))
+        return false;
+    if (!cm_journal_known(r->operation))
+        return true;
+    if (cm_journal_get32(p + 36) || cm_journal_get32(p + 52) || r->path_bytes < 22 || (r->path_bytes & 1) ||
+        (r->name_bytes & 1))
         return false;
     switch (r->operation) {
     case CM_JOURNAL_CREATE_KEY:
@@ -118,10 +128,8 @@ static inline bool cm_journal_decode(const uint8_t *p, size_t size, CmJournalRec
         return !r->type && !r->data_bytes;
     case CM_JOURNAL_DELETE_KEY:
         return !r->type && !r->name_bytes && !r->data_bytes;
-    case CM_JOURNAL_SET_SECURITY:
-        return !r->type && !r->name_bytes && r->data_bytes >= 20 && r->data_bytes <= CM_JOURNAL_MAX_SECURITY;
     default:
-        return false;
+        return !r->type && !r->name_bytes && r->data_bytes >= 20 && r->data_bytes <= CM_JOURNAL_MAX_SECURITY;
     }
 }
 
@@ -131,6 +139,8 @@ static inline bool cm_journal_validate(const uint8_t *p, size_t size, uint64_t s
     if (!cm_journal_decode(p, size, &r) || r.sequence != sequence || size != cm_journal_size(&r) ||
         cm_journal_get32(p + 48) != cm_journal_crc(p, size))
         return false;
+    if (!cm_journal_known(r.operation))
+        return true;
     static const char prefix[] = "\\REGISTRY\\";
     const uint8_t *path = p + CM_JOURNAL_HEADER;
     for (size_t i = 0; i < sizeof(prefix) - 1; i++)
