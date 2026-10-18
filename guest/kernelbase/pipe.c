@@ -2,6 +2,7 @@
  * named and anonymous pipes over the \Device\NamedPipe file system.
  */
 #include "kernelbase_private.h"
+#include <mime/ntrtlsec.h>
 
 #ifndef ACCESS_SYSTEM_SECURITY
 #define ACCESS_SYSTEM_SECURITY 0x01000000
@@ -118,9 +119,18 @@ WINBASEAPI HANDLE WINAPI CreateNamedPipeW(LPCWSTR name, DWORD open_mode, DWORD p
     UNICODE_STRING nt;
     if (!KbDosPathToNt(name, &nt))
         return INVALID_HANDLE_VALUE;
+    /* a pipe made without a descriptor gets the one that lets everyone read and only the owner and the system write. */
+    PVOID descriptor = sa ? sa->lpSecurityDescriptor : nullptr;
+    SECURITY_DESCRIPTOR default_sd;
+    PACL default_acl = nullptr;
+    if (!descriptor && NT_SUCCESS(RtlDefaultNpAcl(&default_acl))) {
+        RtlCreateSecurityDescriptor(&default_sd, SECURITY_DESCRIPTOR_REVISION);
+        RtlSetDaclSecurityDescriptor(&default_sd, TRUE, default_acl, FALSE);
+        descriptor = &default_sd;
+    }
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE | (sa && sa->bInheritHandle ? OBJ_INHERIT : 0), nullptr,
-                               sa ? sa->lpSecurityDescriptor : nullptr);
+                               descriptor);
     LARGE_INTEGER default_timeout;
     default_timeout.QuadPart = timeout ? -(LONGLONG)timeout * 10000 : -500000;
     IO_STATUS_BLOCK iosb = {};
@@ -130,6 +140,8 @@ WINBASEAPI HANDLE WINAPI CreateNamedPipeW(LPCWSTR name, DWORD open_mode, DWORD p
         (pipe_mode & PIPE_READMODE_MESSAGE) ? 1 : 0, (pipe_mode & PIPE_NOWAIT) ? 1 : 0,
         max_instances == PIPE_UNLIMITED_INSTANCES ? 0xFFFFFFFF : max_instances, in_size, out_size, &default_timeout);
     RtlFreeUnicodeString(&nt);
+    if (default_acl)
+        KbFree(default_acl);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;

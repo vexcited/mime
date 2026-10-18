@@ -325,6 +325,7 @@ NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR crea
 NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
                                              PSECURITY_DESCRIPTOR *object, BOOLEAN container, HANDLE token,
                                              const GENERIC_MAPPING *mapping);
+NTSYSAPI NTSTATUS NTAPI RtlDefaultNpAcl(PACL *acl);
 NTSYSAPI NTSTATUS NTAPI RtlNewSecurityObjectEx(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
                                                PSECURITY_DESCRIPTOR *object, const GUID *type, BOOLEAN container,
                                                ULONG flags, HANDLE token, const GENERIC_MAPPING *mapping);
