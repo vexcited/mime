@@ -193,7 +193,8 @@ static BOOL ensure_output(DcTarget *t, DcGpu *gpu, UINT width, UINT height)
         desc.BufferCount = 2;
         desc.Scaling = DXGI_SCALING_STRETCH;
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+        /* the tree has per pixel alpha and the window shows what is behind it, so the host must too. */
+        desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
         if (FAILED(gpu->factory->lpVtbl->CreateSwapChainForHwnd(gpu->factory, (IUnknown *)gpu->device, t->hwnd, &desc,
                                                                 nullptr, nullptr, &o->swapchain)))
             return FALSE;

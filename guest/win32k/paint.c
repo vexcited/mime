@@ -211,6 +211,9 @@ void HostConfigure(WND *w, BOOLEAN activate)
 
 void HostPresent(WND *w, const RECT *dirty)
 {
+    /* a window without a redirection bitmap shows what the program composes in it, never its gdi surface. */
+    if (w->ExStyle & WS_EX_NOREDIRECTIONBITMAP)
+        return;
     SURFACE *s = LayerPrepare(w, dirty);
     if (!s || !host_buffers())
         return;

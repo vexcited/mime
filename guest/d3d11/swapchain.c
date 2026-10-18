@@ -177,7 +177,8 @@ static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    info.compositeAlpha = sc->desc.AlphaMode == DXGI_ALPHA_MODE_PREMULTIPLIED ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+                                                                               : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.presentMode = chosen;
     info.clipped = TRUE;
     info.oldSwapchain = sc->swapchain;

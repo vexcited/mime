@@ -70,6 +70,7 @@ typedef struct Swapchain {
     bool pending[MAX_IMAGES];
     uint32_t queued[MAX_IMAGES]; /* presents of the image the presenting thread did not submit yet */
     bool flip; /* rows bottom first, as gl keeps them */
+    bool premultiplied; /* the alpha of the images shows what is behind the window */
 } Swapchain;
 
 typedef struct Frame {
@@ -122,6 +123,8 @@ struct Presenter {
     VkSwapchainKHR swapchain;
     VkFormat format;
     bool srgb;
+    bool premultiplied; /* the swapchain composes with alpha */
+    bool premultiplied_wanted; /* what the last swapchain asked for, which the surface may not offer */
     VkExtent2D extent;
     VkPresentModeKHR wanted_mode;
     bool stale;
@@ -348,11 +351,13 @@ void mvk_wsi_create_swapchain(MvkCall *call)
         if (i < MAX_IMAGES)
             ids[i] = image;
     }
+    VkCompositeAlphaFlagBitsKHR composite = (VkCompositeAlphaFlagBitsKHR)mvk_get_u32(d);
     MvkEncoder *e = mvk_reply_begin(call);
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     Swapchain *s = calloc(1, sizeof(*s));
     if (!d->error && c->device && s && count && count <= MAX_IMAGES && family_count <= 16 && view_count <= 16) {
-        *s = (Swapchain){.id = id, .format = format, .extent = extent, .mode = mode, .count = count};
+        *s = (Swapchain){.id = id, .format = format, .extent = extent, .mode = mode, .count = count,
+                         .premultiplied = composite == VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR};
         /* a mutable swapchain's views may differ in format; otherwise only usage the format allows. */
         bool mutable = (flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0;
         VkFormatProperties fp;
@@ -652,7 +657,7 @@ static VkPresentModeKHR pick_mode(MvkConnection *c, Presenter *p, VkPresentModeK
 }
 
 static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExtent2D want, bool srgb,
-                           VkPresentModeKHR mode)
+                           VkPresentModeKHR mode, bool premultiplied)
 {
     MvkWsi *w = c->wsi;
     VkSurfaceCapabilitiesKHR caps;
@@ -672,6 +677,10 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     if (count > MAX_HOST_IMAGES)
         count = MAX_HOST_IMAGES;
     VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (premultiplied && (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR))
+        alpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+    else
+        premultiplied = false;
     if (!(caps.supportedCompositeAlpha & alpha))
         alpha = (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);
     VkSwapchainCreateInfoKHR info = {
@@ -711,6 +720,7 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
         p->done[i] = new_semaphore(c);
     p->format = format.format;
     p->srgb = srgb;
+    p->premultiplied = premultiplied;
     p->extent = extent;
     p->wanted_mode = mode;
     p->stale = false;
@@ -1463,9 +1473,11 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
     bool srgb = is_srgb(s->format);
     for (int attempt = 0; attempt < 2; attempt++) {
         if (!p->swapchain || p->stale || p->srgb != srgb || p->wanted_mode != s->mode ||
-            p->extent.width != want.width || p->extent.height != want.height) {
+            p->extent.width != want.width || p->extent.height != want.height ||
+            p->premultiplied_wanted != s->premultiplied) {
             wait_frames(c, p);
-            if (!make_swapchain(c, p, queue, want, srgb, s->mode))
+            p->premultiplied_wanted = s->premultiplied;
+            if (!make_swapchain(c, p, queue, want, srgb, s->mode, s->premultiplied))
                 return false;
         }
         Frame *f = &p->frames[p->frame];

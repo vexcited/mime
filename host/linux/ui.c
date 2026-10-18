@@ -546,6 +546,12 @@ static void draw(UiWindow *w)
     w->present_queued = false;
     if (!w->pixels || w->vk_whole) {
         pthread_mutex_unlock(&w->lock);
+        /* a window the guest draws nothing in, such as a popup its gpu process fills, is clear, not black. */
+        if (w->renderer && !w->pixels) {
+            SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, 0);
+            SDL_RenderClear(w->renderer);
+            SDL_RenderPresent(w->renderer);
+        }
         return;
     }
     if (!w->texture || w->texture_width != w->width || w->texture_height != w->height) {
