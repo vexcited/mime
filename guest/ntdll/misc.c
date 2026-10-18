@@ -187,6 +187,54 @@ NTDLL_EXPORT void NTAPI RtlGetNtVersionNumbers(PULONG major, PULONG minor, PULON
         *build = 0xF0000000u | peb->OSBuildNumber;
 }
 
+/* a REG_DWORD of a key of the machine, false when the value is not there. */
+static BOOLEAN read_machine_ulong(PCWSTR path, PCWSTR value_name, ULONG *value)
+{
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, path);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    HANDLE key;
+    if (!NT_SUCCESS(NtOpenKey(&key, 1 /* KEY_QUERY_VALUE */, &oa)))
+        return FALSE;
+    UNICODE_STRING value_unicode;
+    RtlInitUnicodeString(&value_unicode, value_name);
+    struct {
+        ULONG TitleIndex, Type, DataLength;
+        ULONG Data[2];
+    } info;
+    ULONG returned;
+    BOOLEAN found = NT_SUCCESS(NtQueryValueKey(key, &value_unicode, 2 /* KeyValuePartialInformation */, &info,
+                                               sizeof(info), &returned)) &&
+                    info.Type == 4 /* REG_DWORD */ && info.DataLength == 4;
+    if (found)
+        *value = info.Data[0];
+    NtClose(key);
+    return found;
+}
+
+/*
+ * the build as one 64 bit number, major, minor, build and the update revision in 16 bits each, the
+ * device family, 3 for a desktop, and the form the oem key names, 0 when unspecified.
+ */
+NTDLL_EXPORT void NTAPI RtlGetDeviceFamilyInfoEnum(ULONGLONG *version, ULONG *family, ULONG *form)
+{
+    static const WCHAR current_version[] = L"\\Registry\\Machine\\Software\\Microsoft\\Windows NT\\CurrentVersion";
+    if (version) {
+        ULONG revision = 0;
+        read_machine_ulong(current_version, L"UBR", &revision);
+        PPEB peb = NtCurrentPeb();
+        *version = ((ULONGLONG)peb->OSMajorVersion << 48) | ((ULONGLONG)peb->OSMinorVersion << 32) |
+                   ((ULONGLONG)(peb->OSBuildNumber & 0xFFFF) << 16) | (revision & 0xFFFF);
+    }
+    if (family)
+        *family = 3; /* DEVICEFAMILYINFOENUM_DESKTOP */
+    if (form) {
+        *form = 0;
+        read_machine_ulong(L"\\Registry\\Machine\\Software\\Microsoft\\Windows NT\\CurrentVersion\\OEM", L"DeviceForm", form);
+    }
+}
+
 NTDLL_EXPORT BOOLEAN NTAPI RtlGetNtProductType(ULONG *type)
 {
     *type = 1; /* NtProductWinNt */
