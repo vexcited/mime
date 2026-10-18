@@ -666,6 +666,9 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
 ADVAPI BOOL WINAPI LookupAccountNameW(LPCWSTR system, LPCWSTR account, PSID sid, LPDWORD sid_size, LPWSTR domain,
                                       LPDWORD domain_size, PSID_NAME_USE use);
 
+ADVAPI BOOL WINAPI LookupAccountSidW(LPCWSTR system, PSID sid, LPWSTR name, LPDWORD name_size, LPWSTR domain,
+                                     LPDWORD domain_size, PSID_NAME_USE use);
+
 /* random.c: fills a buffer from the process random generator. */
 BOOL AdvGenRandom(PVOID buffer, SIZE_T length);
 

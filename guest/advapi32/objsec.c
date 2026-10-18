@@ -330,7 +330,7 @@ static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, O
 {
     HANDLE use = handle;
     BOOL owned = FALSE;
-    if (is_registry(type) && ((ULONG_PTR)handle & 0xFFFFFFFF80000000ull) == 0xFFFFFFFF80000000ull) {
+    if (is_registry(type) && (LONG_PTR)handle < 0) {
         HKEY key;
         if (handle == HKEY_PERFORMANCE_DATA)
             return ERROR_INVALID_HANDLE;
@@ -665,23 +665,32 @@ static void add_control(void *sd, WORD bits)
     ((SECURITY_DESCRIPTOR *)sd)->Control |= bits;
 }
 
-/* a descriptor from the parts the caller gave, absolute, the way SetNamedSecurityInfo builds it. */
+/*
+ * a descriptor from the parts the caller gave, absolute, the way SetNamedSecurityInfo builds it. A part that is not
+ * well formed is refused with the error of its kind before anything is touched.
+ */
 static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSID group, PACL dacl, PACL sacl)
 {
     RtlCreateSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);
     if (info & OWNER_SECURITY_INFORMATION) {
-        if (!owner || !RtlValidSid(owner))
+        if (!owner)
             return ERROR_INVALID_PARAMETER;
+        if (!RtlValidSid(owner))
+            return ERROR_INVALID_OWNER;
         RtlSetOwnerSecurityDescriptor(sd, owner, FALSE);
     }
     if (info & GROUP_SECURITY_INFORMATION) {
-        if (!group || !RtlValidSid(group))
+        if (!group)
             return ERROR_INVALID_PARAMETER;
+        if (!RtlValidSid(group))
+            return 1308 /* ERROR_INVALID_PRIMARY_GROUP */;
         RtlSetGroupSecurityDescriptor(sd, group, FALSE);
     }
     if (info & DACL_SECURITY_INFORMATION) {
         /* a list not given is a null one, which nothing can be inherited into: it is protected from the start. */
         if (dacl) {
+            if (!RtlValidAcl(dacl))
+                return ERROR_INVALID_ACL;
             RtlSetDaclSecurityDescriptor(sd, TRUE, dacl, FALSE);
             if (info & PROTECTED_DACL_SECURITY_INFORMATION)
                 add_control(sd, SE_DACL_PROTECTED);
@@ -690,8 +699,11 @@ static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSI
         }
     }
     if (info & SACL_PARTS) {
-        if (sacl)
+        if (sacl) {
+            if (!RtlValidAcl(sacl))
+                return ERROR_INVALID_ACL;
             RtlSetSaclSecurityDescriptor(sd, TRUE, sacl, FALSE);
+        }
         if (!sacl || (info & PROTECTED_SACL_SECURITY_INFORMATION))
             add_control(sd, SE_SACL_PROTECTED);
     }
@@ -1291,7 +1303,7 @@ ADVAPI BOOL WINAPI SetFileSecurityA(LPCSTR name, SECURITY_INFORMATION info, PSEC
 static LONG key_for_security(HKEY key, DWORD access, HKEY *real, BOOL *opened)
 {
     *opened = FALSE;
-    if (((ULONG_PTR)key & 0xFFFFFFFF80000000ull) != 0xFFFFFFFF80000000ull) {
+    if ((LONG_PTR)key >= 0) {
         *real = key;
         return ERROR_SUCCESS;
     }
@@ -1643,4 +1655,283 @@ ADVAPI DWORD WINAPI FreeInheritedFromArray(INHERITED_FROMW *array, USHORT count,
         array[i].AncestorName = nullptr;
     }
     return ERROR_SUCCESS;
+}
+
+/* ---------------------------------------------------------------- the lists as entries */
+
+#define ACTRL_ACCESS_ALLOWED 0x00000001
+#define ACTRL_ACCESS_DENIED 0x00000002
+#define ACTRL_AUDIT_SUCCESS 0x00000004
+#define ACTRL_AUDIT_FAILURE 0x00000008
+
+typedef struct ACTRL_ENTRY {
+    TRUSTEE_W Trustee;
+    ULONG Flags;
+    ULONG Access;
+    ULONG ProvSpecificAccess;
+    ULONG Inheritance;
+    PWSTR InheritProperty;
+} ACTRL_ENTRY;
+
+typedef struct ACTRL_LIST {
+    ULONG Count;
+    ACTRL_ENTRY *Entries;
+} ACTRL_LIST;
+
+typedef struct ACTRL_PROPERTY {
+    PWSTR Property;
+    ACTRL_LIST *List;
+    ULONG Flags;
+} ACTRL_PROPERTY;
+
+typedef struct ACTRL {
+    ULONG Count;
+    ACTRL_PROPERTY *Properties;
+} ACTRL;
+
+/* the entries of a list, in one block of local memory: each names its trustee by the sid. */
+static DWORD entries_from_acl(const ACL *acl, BOOL audit, ACTRL **out)
+{
+    *out = nullptr;
+    if (!acl)
+        return ERROR_SUCCESS;
+    DWORD count = 0, sid_bytes = 0;
+    const BYTE *ace = (const BYTE *)(acl + 1);
+    for (DWORD i = 0; i < acl->AceCount; i++, ace += *(const WORD *)(ace + 2)) {
+        PSID sid = ace_sid((const ACE_HEADER *)ace);
+        BOOL wanted = audit ? ace[0] == SYSTEM_AUDIT_ACE_TYPE : ace[0] <= ACCESS_DENIED_ACE_TYPE;
+        if (wanted && sid) {
+            count++;
+            sid_bytes += (RtlLengthSid(sid) + 7) & ~7u;
+        }
+    }
+    SIZE_T size = sizeof(ACTRL) + sizeof(ACTRL_PROPERTY) + sizeof(ACTRL_LIST) + count * sizeof(ACTRL_ENTRY) + sid_bytes;
+    BYTE *block = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, size);
+    if (!block)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    ACTRL *list = (ACTRL *)block;
+    ACTRL_PROPERTY *property = (ACTRL_PROPERTY *)(list + 1);
+    ACTRL_LIST *entries = (ACTRL_LIST *)(property + 1);
+    ACTRL_ENTRY *entry = (ACTRL_ENTRY *)(entries + 1);
+    BYTE *sids = (BYTE *)(entry + count);
+    list->Count = 1;
+    list->Properties = property;
+    property->List = entries;
+    entries->Count = count;
+    entries->Entries = entry;
+    ace = (const BYTE *)(acl + 1);
+    for (DWORD i = 0; i < acl->AceCount; i++, ace += *(const WORD *)(ace + 2)) {
+        PSID sid = ace_sid((const ACE_HEADER *)ace);
+        BOOL wanted = audit ? ace[0] == SYSTEM_AUDIT_ACE_TYPE : ace[0] <= ACCESS_DENIED_ACE_TYPE;
+        if (!wanted || !sid)
+            continue;
+        DWORD length = RtlLengthSid(sid);
+        memcpy(sids, sid, length);
+        entry->Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        entry->Trustee.ptstrName = (PWSTR)sids;
+        sids += (length + 7) & ~7u;
+        entry->Flags = audit ? ((ace[1] & SUCCESSFUL_ACCESS_ACE_FLAG ? ACTRL_AUDIT_SUCCESS : 0) |
+                                (ace[1] & FAILED_ACCESS_ACE_FLAG ? ACTRL_AUDIT_FAILURE : 0))
+                             : (ace[0] == ACCESS_DENIED_ACE_TYPE ? ACTRL_ACCESS_DENIED : ACTRL_ACCESS_ALLOWED);
+        entry->Access = ((const ACCESS_ALLOWED_ACE *)ace)->Mask;
+        entry->Inheritance = ace[1] & 0x1F;
+        entry++;
+    }
+    *out = list;
+    return ERROR_SUCCESS;
+}
+
+/* the account of a sid as DOMAIN\name, else the sid in text, in local memory. */
+static PWSTR account_text(PSID sid)
+{
+    WCHAR name[256], domain[256];
+    DWORD name_size = RTL_NUMBER_OF(name), domain_size = RTL_NUMBER_OF(domain);
+    SID_NAME_USE use;
+    WCHAR text[600];
+    if (LookupAccountSidW(nullptr, sid, name, &name_size, domain, &domain_size, &use))
+        _snwprintf(text, RTL_NUMBER_OF(text), domain[0] ? L"%ls\\%ls" : L"%ls", domain[0] ? domain : name, name);
+    else {
+        UNICODE_STRING us;
+        if (!sid || !NT_SUCCESS(RtlConvertSidToUnicodeString(&us, sid, TRUE)))
+            return nullptr;
+        _snwprintf(text, RTL_NUMBER_OF(text), L"%ls", us.Buffer);
+        RtlFreeUnicodeString(&us);
+    }
+    text[RTL_NUMBER_OF(text) - 1] = 0;
+    PWSTR copy = LocalAlloc(LMEM_FIXED, (wcslen(text) + 1) * sizeof(WCHAR));
+    if (copy)
+        wcscpy(copy, text);
+    return copy;
+}
+
+static DWORD get_security_ex(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, ACTRL **access, ACTRL **audit,
+                             PWSTR *owner_name, PWSTR *group_name)
+{
+    PSID owner = nullptr, group = nullptr;
+    PACL dacl = nullptr, sacl = nullptr;
+    PVOID sd = nullptr;
+    info &= OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
+    DWORD error = get_security(type, name, handle, info, &owner, &group, &dacl, &sacl, &sd);
+    if (error)
+        return error;
+    if (access)
+        *access = nullptr;
+    if (audit)
+        *audit = nullptr;
+    if (owner_name)
+        *owner_name = nullptr;
+    if (group_name)
+        *group_name = nullptr;
+    if ((info & DACL_SECURITY_INFORMATION) && access)
+        error = entries_from_acl(dacl, FALSE, access);
+    if (!error && (info & SACL_SECURITY_INFORMATION) && audit)
+        error = entries_from_acl(sacl, TRUE, audit);
+    if (!error && (info & OWNER_SECURITY_INFORMATION) && owner_name && owner)
+        error = (*owner_name = account_text(owner)) ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
+    if (!error && (info & GROUP_SECURITY_INFORMATION) && group_name && group)
+        error = (*group_name = account_text(group)) ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
+    LocalFree(sd);
+    if (error) {
+        if (access && *access)
+            LocalFree(*access);
+        if (audit && *audit)
+            LocalFree(*audit);
+        if (owner_name && *owner_name)
+            LocalFree(*owner_name);
+        if (group_name && *group_name)
+            LocalFree(*group_name);
+        if (access)
+            *access = nullptr;
+        if (audit)
+            *audit = nullptr;
+        if (owner_name)
+            *owner_name = nullptr;
+        if (group_name)
+            *group_name = nullptr;
+    }
+    return error;
+}
+
+/* a list from entries, through the merging of explicit access, the grants and denials before the audits. */
+static DWORD acl_from_entries(const ACTRL *list, BOOL audit, PACL *acl)
+{
+    *acl = nullptr;
+    if (!list)
+        return ERROR_SUCCESS;
+    DWORD count = 0;
+    for (ULONG p = 0; p < list->Count; p++)
+        if (!list->Properties[p].Property && list->Properties[p].List)
+            count += list->Properties[p].List->Count * 2;
+    EXPLICIT_ACCESS_W *explicit_entries = count ? AdvAllocZero(count * sizeof(EXPLICIT_ACCESS_W)) : nullptr;
+    if (count && !explicit_entries)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD used = 0;
+    for (ULONG p = 0; p < list->Count; p++) {
+        const ACTRL_LIST *entries = list->Properties[p].Property ? nullptr : list->Properties[p].List;
+        for (ULONG i = 0; entries && i < entries->Count; i++) {
+            const ACTRL_ENTRY *e = &entries->Entries[i];
+            DWORD modes[2], modes_used = 0;
+            if (audit) {
+                if (e->Flags & ACTRL_AUDIT_SUCCESS)
+                    modes[modes_used++] = SET_AUDIT_SUCCESS;
+                if (e->Flags & ACTRL_AUDIT_FAILURE)
+                    modes[modes_used++] = SET_AUDIT_FAILURE;
+            } else if (e->Flags & ACTRL_ACCESS_DENIED) {
+                modes[modes_used++] = DENY_ACCESS;
+            } else if (e->Flags & ACTRL_ACCESS_ALLOWED) {
+                modes[modes_used++] = GRANT_ACCESS;
+            }
+            for (DWORD m = 0; m < modes_used; m++, used++) {
+                explicit_entries[used].grfAccessPermissions = e->Access | e->ProvSpecificAccess;
+                explicit_entries[used].grfAccessMode = modes[m];
+                explicit_entries[used].grfInheritance = e->Inheritance;
+                explicit_entries[used].Trustee = e->Trustee;
+            }
+        }
+    }
+    DWORD error = SetEntriesInAclW(used, explicit_entries, nullptr, acl);
+    AdvFree(explicit_entries);
+    return error;
+}
+
+static DWORD account_sid(PCWSTR name, PSID *sid, BYTE *storage)
+{
+    *sid = nullptr;
+    if (!name)
+        return ERROR_SUCCESS;
+    WCHAR domain[256];
+    DWORD sid_size = SECURITY_MAX_SID_SIZE, domain_size = RTL_NUMBER_OF(domain);
+    SID_NAME_USE use;
+    if (!LookupAccountNameW(nullptr, name, storage, &sid_size, domain, &domain_size, &use))
+        return GetLastError();
+    *sid = storage;
+    return ERROR_SUCCESS;
+}
+
+static DWORD set_security_ex(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, const ACTRL *access,
+                             const ACTRL *audit, PCWSTR owner_name, PCWSTR group_name)
+{
+    BYTE owner_storage[SECURITY_MAX_SID_SIZE], group_storage[SECURITY_MAX_SID_SIZE];
+    PSID owner, group;
+    PACL dacl = nullptr, sacl = nullptr;
+    DWORD error = ERROR_SUCCESS;
+    if (info & OWNER_SECURITY_INFORMATION)
+        error = account_sid(owner_name, &owner, owner_storage);
+    if (!error && (info & GROUP_SECURITY_INFORMATION))
+        error = account_sid(group_name, &group, group_storage);
+    if (!error && (info & DACL_SECURITY_INFORMATION))
+        error = acl_from_entries(access, FALSE, &dacl);
+    if (!error && (info & SACL_SECURITY_INFORMATION))
+        error = acl_from_entries(audit, TRUE, &sacl);
+    if (!error) {
+        info &= OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION |
+                SACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION |
+                PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION;
+        if (!(info & OWNER_SECURITY_INFORMATION))
+            owner = nullptr;
+        if (!(info & GROUP_SECURITY_INFORMATION))
+            group = nullptr;
+        error = set_security(type, name, handle, info, owner, group, dacl, sacl);
+    }
+    if (dacl)
+        LocalFree(dacl);
+    if (sacl)
+        LocalFree(sacl);
+    return error;
+}
+
+ADVAPI DWORD WINAPI GetNamedSecurityInfoExW(LPCWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, LPCWSTR provider,
+                                            LPCWSTR property, ACTRL **access, ACTRL **audit, LPWSTR *owner, LPWSTR *group)
+{
+    if (!name || !valid_name_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return get_security_ex(type, name, nullptr, info, access, audit, owner, group);
+}
+
+ADVAPI DWORD WINAPI GetSecurityInfoExW(HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, LPCWSTR provider,
+                                       LPCWSTR property, ACTRL **access, ACTRL **audit, LPWSTR *owner, LPWSTR *group)
+{
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
+    if (!valid_handle_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return get_security_ex(type, nullptr, handle, info, access, audit, owner, group);
+}
+
+ADVAPI DWORD WINAPI SetNamedSecurityInfoExW(LPCWSTR name, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, LPCWSTR provider,
+                                            ACTRL *access, ACTRL *audit, LPWSTR owner, LPWSTR group, ACTRL *old_list)
+{
+    if (!name || !valid_name_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return set_security_ex(type, name, nullptr, info, access, audit, owner, group);
+}
+
+ADVAPI DWORD WINAPI SetSecurityInfoExW(HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFORMATION info, LPCWSTR provider,
+                                       ACTRL *access, ACTRL *audit, LPWSTR owner, LPWSTR group, ACTRL *old_list)
+{
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
+    if (!valid_handle_type(type))
+        return ERROR_INVALID_PARAMETER;
+    return set_security_ex(type, nullptr, handle, info, access, audit, owner, group);
 }

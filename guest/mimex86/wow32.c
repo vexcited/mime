@@ -11,6 +11,8 @@
 /* advapi32_private.h declares them for the dlls that use them. */
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor, ULONG length,
                                                   PULONG needed);
+NTSYSCALLAPI NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token, ACCESS_MASK desired, PVOID mapping, PVOID privileges,
+                                          PULONG privileges_length, PACCESS_MASK granted, PNTSTATUS status);
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disable_all, PVOID state, ULONG length,
                                                     PVOID previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateToken(HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
@@ -516,13 +518,15 @@ static NTSTATUS remove_completions32(const ULONG *a)
 
 /*
  * a descriptor with pointers of 32 bits made self relative, the form the kernel keeps: the header, then
- * the owner, group, sacl and dacl where they are asked for. a self relative one passes through.
+ * the owner, group, sacl and dacl where they are asked for. a self relative one passes through, and so does
+ * none. the copy comes from the scratch space of the call and is given back with Mx32FreeScratch.
  */
-static NTSTATUS set_security32(const ULONG *a)
+static const UCHAR *relative_descriptor32(ULONG pointer, UCHAR **scratch)
 {
-    const UCHAR *sd = pointer32(a[2]);
+    const UCHAR *sd = pointer32(pointer);
+    *scratch = nullptr;
     if (!sd || (*(const USHORT *)(sd + 2) & 0x8000))
-        return NtSetSecurityObject(handle32(a[0]), a[1], (PVOID)sd);
+        return sd;
     const UCHAR *parts[4];
     ULONG lengths[4], total = 20;
     for (int i = 0; i < 4; i++) {
@@ -535,7 +539,7 @@ static NTSTATUS set_security32(const ULONG *a)
     }
     UCHAR *relative = Mx32Scratch(total);
     if (!relative)
-        return STATUS_NO_MEMORY;
+        return nullptr;
     memset(relative, 0, 20);
     relative[0] = sd[0];
     *(USHORT *)(relative + 2) = *(const USHORT *)(sd + 2) | 0x8000;
@@ -547,8 +551,33 @@ static NTSTATUS set_security32(const ULONG *a)
         memcpy(relative + at, parts[i], lengths[i]);
         at += (lengths[i] + 3) & ~3u;
     }
-    NTSTATUS status = NtSetSecurityObject(handle32(a[0]), a[1], relative);
-    Mx32FreeScratch(relative);
+    *scratch = relative;
+    return relative;
+}
+
+static NTSTATUS set_security32(const ULONG *a)
+{
+    UCHAR *scratch;
+    const UCHAR *sd = relative_descriptor32(a[2], &scratch);
+    if (a[2] && !sd)
+        return STATUS_NO_MEMORY;
+    NTSTATUS status = NtSetSecurityObject(handle32(a[0]), a[1], (PVOID)sd);
+    if (scratch)
+        Mx32FreeScratch(scratch);
+    return status;
+}
+
+/* the structures of an access check are the same in both widths, only the descriptor has pointers. */
+static NTSTATUS access_check32(const ULONG *a)
+{
+    UCHAR *scratch;
+    const UCHAR *sd = relative_descriptor32(a[0], &scratch);
+    if (a[0] && !sd)
+        return STATUS_NO_MEMORY;
+    NTSTATUS status = NtAccessCheck((PVOID)sd, handle32(a[1]), a[2], pointer32(a[3]), pointer32(a[4]), pointer32(a[5]),
+                                    pointer32(a[6]), pointer32(a[7]));
+    if (scratch)
+        Mx32FreeScratch(scratch);
     return status;
 }
 
@@ -1131,6 +1160,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtQuerySecurityObject(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
     case MIME_SVC_NtSetSecurityObject:
         return set_security32(a);
+    case MIME_SVC_NtAccessCheck:
+        return access_check32(a);
     case MIME_SVC_NtQueryObject:
         return Mx32QueryObject(a);
     case MIME_SVC_NtSetInformationObject:
