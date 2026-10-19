@@ -23,6 +23,8 @@ typedef struct D3dFormat {
 #define D3D_FORMAT_STENCIL 0x08
 #define D3D_FORMAT_INT 0x10
 #define D3D_FORMAT_BGRX 0x20
+/* video formats: a luma plane, then one of interleaved chroma at half the size each way. */
+#define D3D_FORMAT_PLANAR 0x40
 
 const D3dFormat *D3dGetFormat(DXGI_FORMAT format);
 BOOL D3dPackClear(VkFormat format, const UINT *uints, const FLOAT *floats, BYTE out[16], UINT *size);

@@ -14,6 +14,7 @@
 #define S D3D_FORMAT_SRGB
 #define I D3D_FORMAT_INT
 #define X D3D_FORMAT_BGRX
+#define PL D3D_FORMAT_PLANAR
 #define DEPTH (VK_IMAGE_ASPECT_DEPTH_BIT)
 #define DS (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
 #define DF D3D_FORMAT_DEPTH
@@ -116,6 +117,10 @@ static D3dFormat g_formats[DXGI_FORMAT_A4B4G4R4_UNORM + 1] = {
     BC(BC7_UNORM, BC7_UNORM_BLOCK, 16, 0),
     BC(BC7_UNORM_SRGB, BC7_SRGB_BLOCK, 16, S),
     F(B4G4R4A4_UNORM, A4R4G4B4_UNORM_PACK16, 2, 0),
+    [DXGI_FORMAT_NV12] = {VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_FORMAT_UNDEFINED, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, PL},
+    [DXGI_FORMAT_P010] = {VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, VK_FORMAT_UNDEFINED,
+                          VK_IMAGE_ASPECT_COLOR_BIT, 2, 1, PL},
+    [DXGI_FORMAT_P016] = {VK_FORMAT_G16_B16R16_2PLANE_420_UNORM, VK_FORMAT_UNDEFINED, VK_IMAGE_ASPECT_COLOR_BIT, 2, 1, PL},
 };
 
 static const D3dFormat g_unknown = {VK_FORMAT_UNDEFINED};
@@ -147,6 +152,9 @@ VkImageUsageFlags D3dImageUsage(UINT bind, UINT misc, D3D11_USAGE usage)
         flags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if (bind & D3D11_BIND_UNORDERED_ACCESS)
         flags |= VK_IMAGE_USAGE_STORAGE_BIT;
+    /* the decoder writes a picture and reads it as a reference. */
+    if (bind & D3D11_BIND_DECODER)
+        flags |= VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
     return flags;
 }
 
@@ -158,6 +166,17 @@ UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
         *support2 = 0;
     if (f->vk == VK_FORMAT_UNDEFINED)
         return 0;
+    if (f->flags & D3D_FORMAT_PLANAR) {
+        /* planes are read through views of their own formats, copied and decoded into whole. */
+        UINT depth = format == DXGI_FORMAT_NV12 ? D3D_VIDEO_8BIT : format == DXGI_FORMAT_P010 ? D3D_VIDEO_10BIT : 0;
+        UINT planar = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_SHADER_LOAD |
+                      D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_CPU_LOCKABLE;
+        if (device->video_depths & depth)
+            planar |= D3D11_FORMAT_SUPPORT_DECODER_OUTPUT;
+        if (support2)
+            *support2 = D3D11_FORMAT_SUPPORT2_SHAREABLE;
+        return planar;
+    }
     VkFormatProperties p;
     VkFormat vk = (f->flags & (D3D_FORMAT_DEPTH | D3D_FORMAT_STENCIL)) && f->depth ? f->depth : f->vk;
     device->vk.vkGetPhysicalDeviceFormatProperties(device->vk.physical, vk, &p);

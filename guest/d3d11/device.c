@@ -93,9 +93,20 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     signals[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     if (signal)
         signals[1] = *signal;
+    /* pictures decoded since the last submission are what this one may read. */
+    VkSemaphoreSubmitInfo waits[2];
+    UINT wait_count = 0;
+    if (wait)
+        waits[wait_count++] = *wait;
+    if (device->video_value > device->video_waited) {
+        waits[wait_count++] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr,
+                                                      device->video_timeline, device->video_value,
+                                                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
+        device->video_waited = device->video_value;
+    }
     VkSubmitInfo2 submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    submit.waitSemaphoreInfoCount = wait ? 1 : 0;
-    submit.pWaitSemaphoreInfos = wait;
+    submit.waitSemaphoreInfoCount = wait_count;
+    submit.pWaitSemaphoreInfos = waits;
     submit.commandBufferInfoCount = count;
     submit.pCommandBufferInfos = buffers;
     submit.signalSemaphoreInfoCount = signal ? 2 : 1;
@@ -190,6 +201,7 @@ typedef struct D3dSharedVk {
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
+    BOOL has_video;
     SRWLOCK queue_lock;
 } D3dSharedVk;
 
@@ -218,6 +230,7 @@ static void use_shared(D3dDevice *device, D3dSharedVk *shared)
     COPY(has_depth_bounds);
     COPY(has_geometry);
     COPY(has_tessellation);
+    COPY(has_video);
 #undef COPY
 }
 
@@ -264,6 +277,7 @@ static HRESULT acquire_vulkan_device(D3dDevice *device)
         COPY(has_depth_bounds);
         COPY(has_geometry);
         COPY(has_tessellation);
+        COPY(has_video);
 #undef COPY
         device->queue_lock = &s->queue_lock;
         device->shared = s;
@@ -329,6 +343,7 @@ static HRESULT create_vulkan_device(D3dDevice *device)
     WANT(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, device->has_transform_feedback = TRUE)
     WANT(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME, device->has_conditional = TRUE)
     WANT(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, device->has_divisor = TRUE)
+    WANT(MVK_VIDEO_DECODE_EXTENSION, device->has_video = TRUE)
     WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, (void)0)
     WANT(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, (void)0)
 #undef WANT
@@ -448,6 +463,14 @@ static HRESULT create_vulkan_device(D3dDevice *device)
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
+    if (device->has_video) {
+        vk->vkMimeVideoGetCaps = (PFN_vkMimeVideoGetCaps)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoGetCaps");
+        vk->vkMimeVideoCreateSession =
+            (PFN_vkMimeVideoCreateSession)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoCreateSession");
+        vk->vkMimeVideoDestroySession =
+            (PFN_vkMimeVideoDestroySession)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoDestroySession");
+        vk->vkMimeVideoDecode = (PFN_vkMimeVideoDecode)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoDecode");
+    }
     vk->vkGetDeviceQueue(vk->device, device->queue_family, 0, &device->queue);
     return S_OK;
 }
@@ -504,6 +527,7 @@ static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
     if (device->has_transform_feedback &&
         FAILED(hr = D3dAllocBuffer(device, D3D_MEMORY_DEVICE, 16, 16, &device->so_dummy)))
         return hr;
+    D3dVideoDeviceInit(device);
     return D3dCreateContext(device, D3D11_DEVICE_CONTEXT_IMMEDIATE, &device->immediate);
 }
 
@@ -516,6 +540,7 @@ static void destroy_device(D3dDevice *device)
         if (device->immediate)
             D3dContextDestroy(device->immediate);
         D3dCollectGarbage(device);
+        D3dVideoDeviceDestroy(device);
         D3dQueryPoolsDestroy(device);
         if (device->so_dummy.buffer)
             D3dFree(device, &device->so_dummy);
@@ -564,6 +589,8 @@ static HRESULT STDMETHODCALLTYPE device_query(ID3D11Device5 *iface, REFIID riid,
         *out = &device->mime;
     else if (IsEqualGUID(riid, &IID_ID3D11Multithread))
         *out = &device->multithread;
+    else if ((*out = D3dVideoDeviceInterface(device, riid)) != nullptr)
+        ;
     else
         *out = D3d10DeviceInterface(device, riid);
     if (!*out) {

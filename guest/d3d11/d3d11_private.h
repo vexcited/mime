@@ -17,6 +17,7 @@
 #include <mime/d3d11_mime.h>
 #include "../lib/privdata/privdata.h"
 #include "../lib/dxbc/dxbc.h"
+#include <mime/mvk_video.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR 1
 #include <vulkan/vulkan_core.h>
@@ -170,6 +171,14 @@
     X(vkCmdEndTransformFeedbackEXT)                                                                                    \
     X(vkCmdDrawIndirectByteCountEXT)
 
+/* video decoding, the private commands of mime's vulkan-1.dll, see include/mime/mvk_video.h. */
+typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoGetCaps)(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity);
+typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoCreateSession)(VkDevice device, const MvkVideoSessionInfo *info,
+                                                          uint64_t *session);
+typedef void(VKAPI_PTR *PFN_vkMimeVideoDestroySession)(VkDevice device, uint64_t session);
+typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoDecode)(VkDevice device, const MvkVideoDecodeInfo *info,
+                                                   uint64_t picture_image, uint32_t picture_layer);
+
 typedef struct D3dVk {
     VkInstance instance;
     VkPhysicalDevice physical;
@@ -179,11 +188,20 @@ typedef struct D3dVk {
     D3D_VK_INSTANCE_FUNCS(X)
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
+    /* null where the host does not decode video. */
+    PFN_vkMimeVideoGetCaps vkMimeVideoGetCaps;
+    PFN_vkMimeVideoCreateSession vkMimeVideoCreateSession;
+    PFN_vkMimeVideoDestroySession vkMimeVideoDestroySession;
+    PFN_vkMimeVideoDecode vkMimeVideoDecode;
 } D3dVk;
 
 /* ------------------------------------------------------------------ formats */
 
 #include "format.h"
+
+/* the bit depths the gpu decodes video in, as the pictures' formats say. */
+#define D3D_VIDEO_8BIT 1
+#define D3D_VIDEO_10BIT 2
 
 /* ------------------------------------------------------------------ memory */
 
@@ -573,6 +591,7 @@ struct D3dDevice {
     IMimeDXGIPresenter presenter;
     IMimeD3D11Device mime;
     ID3D11Multithread multithread;
+    ID3D11VideoDevice1 video;
     /* ID3D10Device1, for devices d3d10.dll and d3d10_1.dll make. */
     D3d10Iface d3d10;
     LONG refs;
@@ -593,6 +612,7 @@ struct D3dDevice {
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
+    BOOL has_video;
 
     /* the queue is shared by the process's devices on the adapter, submissions from contexts and swap chains alike. */
     SRWLOCK *queue_lock;
@@ -602,6 +622,18 @@ struct D3dDevice {
     volatile UINT64 completed;
     /* ranges dynamic buffers took new since the last submission. */
     UINT renames;
+
+    /*
+     * video decoding: what the host's decode queue can do, asked once, and the timeline it signals as pictures
+     * are decoded, which the next submission waits for.
+     */
+    SRWLOCK video_lock;
+    BOOL video_probed;
+    UINT video_count;
+    MvkVideoCaps video_caps[8];
+    UINT video_depths;
+    VkSemaphore video_timeline;
+    UINT64 video_value, video_waited;
 
     /* memory. */
     SRWLOCK memory_lock;
@@ -746,6 +778,7 @@ struct D3dContext {
     ID3D11DeviceContext4 iface;
     ID3DUserDefinedAnnotation annotation;
     ID3D11Multithread multithread;
+    ID3D11VideoContext1 video;
     D3dChild child;
     D3D11_DEVICE_CONTEXT_TYPE type;
     CRITICAL_SECTION lock;
@@ -959,6 +992,14 @@ HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window
                            const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen, IDXGISwapChain1 **out);
 HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, HANDLE surface,
                                      const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGISwapChain1 **out);
+
+/* video.c: direct3d 11 video over the host's decode queue. */
+void D3dVideoProbe(D3dDevice *device);
+void *D3dVideoDeviceInterface(D3dDevice *device, REFIID riid);
+void *D3dVideoContextInterface(D3dContext *context, REFIID riid);
+void D3dVideoDeviceInit(D3dDevice *device);
+void D3dVideoContextInit(D3dContext *context);
+void D3dVideoDeviceDestroy(D3dDevice *device);
 
 /* the debug output of the dll, to the kernel debugger log. */
 void D3dLog(const char *format, ...);

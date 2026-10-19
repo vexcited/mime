@@ -56,6 +56,7 @@ struct MvkConnection {
         uint32_t family;
     } queues[64];
     struct MvkWsi *wsi; /* vkwsi.c */
+    struct MvkVideo *video; /* video.c */
     VkDeviceSize import_alignment;
 
     /* pipelines being created aside, in the order of their calls, see vulkan.c. */

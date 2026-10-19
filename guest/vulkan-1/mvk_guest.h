@@ -113,6 +113,8 @@ typedef struct MvkProc {
     PFN_vkVoidFunction fn;
 } MvkProc;
 extern const MvkProc mvk_procs[];
+/* video.c: private commands. */
+extern const MvkProc mvk_video_procs[];
 
 /* the generated entry points the hand written ones extend. */
 VKAPI_ATTR void VKAPI_CALL mvk_raw_vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physical,

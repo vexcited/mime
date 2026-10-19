@@ -2333,6 +2333,8 @@ static HRESULT STDMETHODCALLTYPE context_query(ID3D11DeviceContext4 *iface, REFI
         *out = &c->annotation;
     else if (IsEqualGUID(riid, &IID_ID3D11Multithread))
         *out = &c->multithread;
+    else
+        *out = D3dVideoContextInterface(c, riid);
     if (!*out)
         return E_NOINTERFACE;
     iface->lpVtbl->AddRef(iface);
@@ -2619,6 +2621,7 @@ HRESULT D3dCreateContext(D3dDevice *device, D3D11_DEVICE_CONTEXT_TYPE type, D3dC
     c->iface.lpVtbl = &context_vtbl;
     c->annotation.lpVtbl = &annotation_vtbl;
     c->multithread.lpVtbl = &mt_vtbl;
+    D3dVideoContextInit(c);
     c->type = type;
     /* the immediate context holds no reference on its device; deferred ones do. */
     c->child.device = device;

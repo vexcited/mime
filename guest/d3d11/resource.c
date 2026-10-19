@@ -693,6 +693,9 @@ static BOOL layout_staging(D3dResource *r, VkDeviceSize *total)
         VkExtent3D e = D3dMipExtent(r, mip);
         UINT row = (e.width + f->block - 1) / f->block * f->block_bytes;
         UINT rows = (e.height + f->block - 1) / f->block;
+        /* a video picture holds its chroma plane, half as tall, after the luma plane. */
+        if (f->flags & D3D_FORMAT_PLANAR)
+            rows = rows * 3 / 2;
         offset = D3D_ALIGN(offset, align);
         r->tex.sub_offset[i] = (UINT)offset;
         r->tex.sub_row_pitch[i] = row;
@@ -724,6 +727,26 @@ static VkBufferImageCopy staging_region(const D3dResource *r, UINT index, VkDevi
 void D3dImageCopyRegions(const D3dResource *r, UINT index, VkDeviceSize base, VkBufferImageCopy *regions,
                          UINT *count)
 {
+    if (r->tex.fmt->flags & D3D_FORMAT_PLANAR) {
+        /* the luma plane, then the chroma plane whose texels are two samples, below it in the packed bytes. */
+        UINT mip, layer;
+        D3dSubresourceDecompose(r, index, &mip, &layer);
+        UINT row = r->tex.sub_row_pitch[index], sample = r->tex.fmt->block_bytes;
+        VkBufferImageCopy luma = {};
+        luma.bufferOffset = base + r->tex.sub_offset[index];
+        luma.bufferRowLength = row / sample;
+        luma.imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_PLANE_0_BIT, mip, layer, 1};
+        luma.imageExtent = (VkExtent3D){r->tex.width, r->tex.height, 1};
+        VkBufferImageCopy chroma = luma;
+        chroma.bufferOffset += (VkDeviceSize)row * r->tex.height;
+        chroma.bufferRowLength = row / (2 * sample);
+        chroma.imageSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
+        chroma.imageExtent = (VkExtent3D){(r->tex.width + 1) / 2, (r->tex.height + 1) / 2, 1};
+        regions[0] = luma;
+        regions[1] = chroma;
+        *count = 2;
+        return;
+    }
     regions[0] = staging_region(r, index, base);
     *count = 1;
     if (r->tex.aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
@@ -754,6 +777,25 @@ static HRESULT upload_texture(D3dDevice *device, D3dResource *r, const D3D11_SUB
                            (const BYTE *)data[i].pSysMem + (SIZE_T)z * data[i].SysMemSlicePitch +
                                (SIZE_T)y * data[i].SysMemPitch,
                            row);
+            continue;
+        }
+        if (f->flags & D3D_FORMAT_PLANAR) {
+            /* the planes in one packed block, copied to the image a plane each. */
+            D3dRingSlice packed;
+            VkDeviceSize total = (VkDeviceSize)row * (rows + rows / 2);
+            if (!D3dRingAlloc(device, total, 16, &packed))
+                return E_OUTOFMEMORY;
+            for (UINT y = 0; y < rows + rows / 2; y++)
+                memcpy(packed.mapped + (SIZE_T)y * row, (const BYTE *)data[i].pSysMem + (SIZE_T)y * data[i].SysMemPitch, row);
+            VkBufferImageCopy luma = {packed.offset, row / f->block_bytes, 0, {VK_IMAGE_ASPECT_PLANE_0_BIT, mip, layer, 1},
+                                      {0, 0, 0}, {e.width, e.height, 1}};
+            VkBufferImageCopy chroma = {packed.offset + (VkDeviceSize)row * rows, row / (2 * f->block_bytes), 0,
+                                        {VK_IMAGE_ASPECT_PLANE_1_BIT, mip, layer, 1}, {0, 0, 0},
+                                        {(e.width + 1) / 2, (e.height + 1) / 2, 1}};
+            VkBufferImageCopy copies[2] = {luma, chroma};
+            VkCommandBuffer cmd = D3dInitCommands(device);
+            device->vk.vkCmdCopyBufferToImage(cmd, packed.buffer, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, 2, copies);
+            D3dInitDone(device);
             continue;
         }
         VkDeviceSize size = (VkDeviceSize)row * rows * e.depth;
@@ -902,7 +944,7 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
         info.usage = D3dImageUsage(bind, misc, usage);
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if ((f->flags & D3D_FORMAT_TYPELESS) || (f->flags & D3D_FORMAT_SRGB) || (bind & D3D11_BIND_RENDER_TARGET))
+        if ((f->flags & (D3D_FORMAT_TYPELESS | D3D_FORMAT_SRGB | D3D_FORMAT_PLANAR)) || (bind & D3D11_BIND_RENDER_TARGET))
             info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
         if ((misc & D3D11_RESOURCE_MISC_TEXTURECUBE) && layers >= 6)
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
@@ -935,7 +977,7 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
             VkImageSubresourceRange range = barrier.subresourceRange;
             if (r->tex.aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
                 VkClearColorValue zero = {{0}};
-                if (f->block == 1)
+                if (f->block == 1 && !(f->flags & D3D_FORMAT_PLANAR))
                     device->vk.vkCmdClearColorImage(cmd, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
             } else {
                 VkClearDepthStencilValue zero = {0, 0};

@@ -8,6 +8,7 @@
  * guest ends them.
  */
 #include "mvk_host.h"
+#include "video.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -636,10 +637,16 @@ static void device_extensions(MvkCall *call)
     for (uint32_t i = 0; i < count; i++)
         if (protocol_has(list[i].extensionName) || mvk_wsi_device_extension(list[i].extensionName))
             n++;
-    mvk_put_u32(e, n);
+    /* video decoding is one extension to the guest: what it needs of the device and the host's side of it are the host's. */
+    bool video = mvk_video_offered(c, physical);
+    mvk_put_u32(e, n + (video ? 1 : 0));
     for (uint32_t i = 0; i < count; i++)
         if (protocol_has(list[i].extensionName) || mvk_wsi_device_extension(list[i].extensionName))
             mvk_put_bytes(e, &list[i], sizeof(list[i]));
+    if (video) {
+        VkExtensionProperties decode = {MVK_VIDEO_DECODE_EXTENSION, 1};
+        mvk_put_bytes(e, &decode, sizeof(decode));
+    }
     free(list);
     mvk_reply_end(call);
 }
@@ -686,11 +693,57 @@ static void create_device(MvkCall *call)
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
-        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 4));
+        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 16));
         uint32_t n = 0;
-        for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
-            if (host_has(list, count, info.ppEnabledExtensionNames[i]))
+        bool video = false;
+        for (uint32_t i = 0; i < info.enabledExtensionCount; i++) {
+            if (!strcmp(info.ppEnabledExtensionNames[i], MVK_VIDEO_DECODE_EXTENSION))
+                video = true;
+            else if (host_has(list, count, info.ppEnabledExtensionNames[i]))
                 names[n++] = info.ppEnabledExtensionNames[i];
+        }
+        /* the extensions decoding needs, and the layouts of images decoding keeps. */
+        VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_features = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR};
+        VkPhysicalDeviceVideoMaintenance1FeaturesKHR maintenance_features = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_1_FEATURES_KHR, &unified_features};
+        VkPhysicalDeviceVideoDecodeVP9FeaturesKHR vp9_features = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_DECODE_VP9_FEATURES_KHR, &maintenance_features};
+        bool independent = false;
+        video = video && mvk_video_offered(c, physical);
+        bool unified = false;
+        /* the decode queue, which the guest did not ask for. */
+        float queue_priority = 1.0f;
+        if (video) {
+            uint32_t family = mvk_video_queue_family(c, physical);
+            bool has_family = family == ~0u;
+            for (uint32_t i = 0; i < info.queueCreateInfoCount; i++)
+                has_family |= info.pQueueCreateInfos[i].queueFamilyIndex == family;
+            if (family == ~0u) {
+                video = false;
+            } else if (!has_family) {
+                VkDeviceQueueCreateInfo *queue_list = mvk_alloc(d, sizeof(*queue_list) * (info.queueCreateInfoCount + 1));
+                memcpy(queue_list, info.pQueueCreateInfos, sizeof(*queue_list) * info.queueCreateInfoCount);
+                queue_list[info.queueCreateInfoCount] = (VkDeviceQueueCreateInfo){
+                    VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0, family, 1, &queue_priority};
+                info.pQueueCreateInfos = queue_list;
+                info.queueCreateInfoCount++;
+            }
+        }
+        if (video) {
+            const char *const *video_names;
+            size_t video_count = mvk_video_extensions(&video_names);
+            for (size_t i = 0; i < video_count; i++)
+                names[n++] = video_names[i];
+            if (host_has(list, count, VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME)) {
+                names[n++] = VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME;
+                unified = true;
+            }
+            if (host_has(list, count, VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME)) {
+                names[n++] = VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME;
+                independent = true;
+            }
+        }
         c->host_import = host_has(list, count, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
         if (c->host_import)
             names[n++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
@@ -723,6 +776,22 @@ static void create_device(MvkCall *call)
             timeline.pNext = (void *)info.pNext;
             info.pNext = &timeline;
         }
+        if (video) {
+            VkPhysicalDeviceFeatures2 supported = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &vp9_features};
+            c->fn.vkGetPhysicalDeviceFeatures2(physical, &supported);
+            unified = unified && unified_features.unifiedImageLayouts && unified_features.unifiedImageLayoutsVideo;
+            independent = independent && maintenance_features.videoMaintenance1;
+            for (uint32_t i = 0; i < n; i++)
+                if ((!unified && !strcmp(names[i], VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME)) ||
+                    (!independent && !strcmp(names[i], VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME)))
+                    names[i--] = names[--n];
+            /* the chain keeps what the gpu has: its features as it reported them, the rest left out. */
+            unified_features.pNext = (void *)info.pNext;
+            maintenance_features.pNext = unified ? (void *)&unified_features : (void *)info.pNext;
+            vp9_features.pNext = independent ? (void *)&maintenance_features : maintenance_features.pNext;
+            info.pNext = &vp9_features;
+            info.enabledExtensionCount = n;
+        }
         result = c->fn.vkCreateDevice(physical, &info, nullptr, &c->device);
         if (result == VK_SUCCESS) {
             c->physical_device = physical;
@@ -733,6 +802,8 @@ static void create_device(MvkCall *call)
                 g_create_buffer = c->fn.vkCreateBuffer;
                 c->fn.vkCreateBuffer = create_importable_buffer;
             }
+            if (video)
+                mvk_video_device_created(c, gdpa, unified, independent);
             bind(c, id, (uint64_t)(uintptr_t)c->device);
             VkPhysicalDeviceExternalMemoryHostPropertiesEXT host = {
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -767,6 +838,7 @@ static void destroy_device(MvkCall *call)
     mvk_wsi_close(c);
     stop_watcher(c);
     c->fn.vkDeviceWaitIdle(c->device);
+    mvk_video_close(c);
     destroy_leftovers(c);
     c->fn.vkDestroyDevice(c->device, nullptr);
     bind(c, id, 0);
@@ -1948,6 +2020,10 @@ static void run_hand(MvkCall *call)
     case MVK_OP_GET_DESCRIPTOR: get_descriptor(call); break;
     case MVK_OP_WATCH_SEMAPHORES: watch_semaphores(call); break;
     case MVK_OP_MIRROR_SEMAPHORE: mirror_semaphore(call); break;
+    case MVK_OP_VIDEO_CAPS: mvk_video_caps(call); break;
+    case MVK_OP_VIDEO_CREATE: mvk_video_create(call); break;
+    case MVK_OP_VIDEO_DESTROY: mvk_video_destroy(call); break;
+    case MVK_OP_VIDEO_DECODE: mvk_video_decode(call); break;
     default:
         mime_warn("vulkan: unknown call %#x", call->header.op);
         break;
@@ -1963,6 +2039,7 @@ static void run_call(MvkCall *call)
     uint32_t op = call->header.op;
     MvkConnection *c = call->conn;
     uint64_t began = mime_now_ns();
+    mvk_video_enter(c);
     if (c->jobs) {
         uint32_t finished = __atomic_load_n(&c->jobs_finished, __ATOMIC_ACQUIRE);
         if (finished != c->jobs_seen) {
@@ -2283,6 +2360,7 @@ void mime_vk_close(uint64_t index)
         stop_watcher(c);
     if (c->device) {
         c->fn.vkDeviceWaitIdle(c->device);
+        mvk_video_close(c);
         destroy_leftovers(c);
         c->fn.vkDestroyDevice(c->device, nullptr);
     }

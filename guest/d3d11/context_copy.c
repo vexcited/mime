@@ -294,9 +294,60 @@ static VkBufferImageCopy staging_copy(const D3dResource *staging, UINT sub, VkOf
     return c;
 }
 
+/* a video picture, whole, plane by plane: images copy their planes, staging copies are the planes packed. */
+static void copy_planar(D3dContext *c, D3dResource *dst, UINT dst_sub, D3dResource *src, UINT src_sub)
+{
+    D3dVk *vk = &c->child.device->vk;
+    if (dst->tex.format != src->tex.format || dst_sub >= D3dSubresourceCount(dst) ||
+        src_sub >= D3dSubresourceCount(src))
+        return;
+    VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
+    if (!cmd)
+        return;
+    UINT dst_mip, dst_layer, src_mip, src_layer;
+    D3dSubresourceDecompose(dst, dst_sub, &dst_mip, &dst_layer);
+    D3dSubresourceDecompose(src, src_sub, &src_mip, &src_layer);
+    VkBufferImageCopy regions[2];
+    UINT count;
+    if (src->tex.image && dst->tex.image) {
+        VkImageCopy copies[2];
+        for (UINT p = 0; p < 2; p++) {
+            VkImageAspectFlags plane = p ? VK_IMAGE_ASPECT_PLANE_1_BIT : VK_IMAGE_ASPECT_PLANE_0_BIT;
+            UINT w = p ? (src->tex.width + 1) / 2 : src->tex.width, h = p ? (src->tex.height + 1) / 2 : src->tex.height;
+            copies[p] = (VkImageCopy){{plane, src_mip, src_layer, 1}, {0, 0, 0}, {plane, dst_mip, dst_layer, 1}, {0, 0, 0},
+                                      {D3D_MIN(w, dst->tex.width), D3D_MIN(h, dst->tex.height), 1}};
+        }
+        vk->vkCmdCopyImage(cmd, src->tex.image, VK_IMAGE_LAYOUT_GENERAL, dst->tex.image, VK_IMAGE_LAYOUT_GENERAL, 2,
+                           copies);
+    } else if (src->tex.image) {
+        D3dImageCopyRegions(dst, dst_sub, dst->tex.staging.offset, regions, &count);
+        for (UINT p = 0; p < count; p++)
+            regions[p].imageSubresource.baseArrayLayer = src_layer;
+        vk->vkCmdCopyImageToBuffer(cmd, src->tex.image, VK_IMAGE_LAYOUT_GENERAL, dst->tex.staging.buffer, count, regions);
+    } else if (dst->tex.image) {
+        D3dImageCopyRegions(src, src_sub, src->tex.staging.offset, regions, &count);
+        for (UINT p = 0; p < count; p++)
+            regions[p].imageSubresource.baseArrayLayer = dst_layer;
+        vk->vkCmdCopyBufferToImage(cmd, src->tex.staging.buffer, dst->tex.image, VK_IMAGE_LAYOUT_GENERAL, count, regions);
+    } else {
+        VkBufferCopy copy = {src->tex.staging.offset + src->tex.sub_offset[src_sub],
+                             dst->tex.staging.offset + dst->tex.sub_offset[dst_sub],
+                             D3D_MIN(src->tex.sub_slice_pitch[src_sub], dst->tex.sub_slice_pitch[dst_sub])};
+        vk->vkCmdCopyBuffer(cmd, src->tex.staging.buffer, dst->tex.staging.buffer, 1, &copy);
+    }
+    c->pending_barrier = TRUE;
+    D3dContextUse(c, src);
+    D3dContextUse(c, dst);
+}
+
 static void copy_texture(D3dContext *c, D3dResource *dst, UINT dst_sub, UINT x, UINT y, UINT z, D3dResource *src,
                          UINT src_sub, const D3D11_BOX *box)
 {
+    if ((src->tex.fmt->flags | dst->tex.fmt->flags) & D3D_FORMAT_PLANAR) {
+        if (!x && !y && !z && !box)
+            copy_planar(c, dst, dst_sub, src, src_sub);
+        return;
+    }
     D3dDevice *device = c->child.device;
     D3dVk *vk = &device->vk;
     if (dst_sub >= D3dSubresourceCount(dst) || src_sub >= D3dSubresourceCount(src))

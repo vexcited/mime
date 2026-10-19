@@ -132,6 +132,10 @@ enum {
     MVK_OP_GET_DESCRIPTOR,
     MVK_OP_WATCH_SEMAPHORES,        /* timeline values whose reaching counts in events */
     MVK_OP_MIRROR_SEMAPHORE,        /* a timeline semaphore whose value the host keeps in a header slot */
+    MVK_OP_VIDEO_CAPS,              /* the decoding profiles of the gpu, see mvk_video.h */
+    MVK_OP_VIDEO_CREATE,            /* a decoder session */
+    MVK_OP_VIDEO_DESTROY,
+    MVK_OP_VIDEO_DECODE,            /* a picture, from dxva buffers */
     MVK_OP_HAND_END,
 };
 
