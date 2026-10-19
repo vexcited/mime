@@ -365,17 +365,58 @@ void DrawCoverage(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *c
 }
 
 /*
- * anti-aliased rounded rectangle used by the frame renderer: an optional
- * border of border_width pixels inside the rectangle and a fill. coverage
- * comes from 4x4 supersampling of the corner arcs.
+ * whether a point is inside the ellipse with the semi axes a and b around the origin, all in the same unit. the
+ * squares are scaled down for the products to fit in 64 bits when the axes are large.
  */
-void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG radius, ULONG fill, ULONG border,
-                     LONG border_width)
+typedef struct ELLIPSE_TEST {
+    ULONG64 A2, B2, Limit;
+    UINT Shift;
+} ELLIPSE_TEST;
+
+static void ellipse_test_init(ELLIPSE_TEST *e, LONG a, LONG b)
+{
+    ULONG64 big = (ULONG64)(a > b ? a : b);
+    UINT shift = 0;
+    /* with the axes under 40000 the sum of two such products fits in 64 bits. */
+    while ((big >> shift) > 40000)
+        shift++;
+    e->Shift = shift;
+    ULONG64 sa = (ULONG64)a >> shift, sb = (ULONG64)b >> shift;
+    e->A2 = sa * sa;
+    e->B2 = sb * sb;
+    e->Limit = e->A2 * e->B2;
+}
+
+/* the function that grows with the distance from the center, compared with Limit. */
+static ULONG64 ellipse_value(const ELLIPSE_TEST *e, LONG px, LONG py)
+{
+    ULONG64 x = (ULONG64)(px < 0 ? -px : px) >> e->Shift, y = (ULONG64)(py < 0 ? -py : py) >> e->Shift;
+    return x * x * e->B2 + y * y * e->A2;
+}
+
+/*
+ * anti-aliased rectangle with rounded corners, which are quarters of an ellipse with the semi axes rx and ry, so
+ * that an ellipse is the rectangle of its box with the corners as large as it allows. an optional border of
+ * border_width pixels inside the rectangle and a fill. coverage comes from 4x4 supersampling, which is only done
+ * for the pixels the edge crosses.
+ */
+void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG rx, LONG ry, BOOLEAN filled, ULONG fill,
+                     ULONG border, LONG border_width)
 {
     LONG w = rect->right - rect->left, h = rect->bottom - rect->top;
     if (w <= 0 || h <= 0)
         return;
-    radius = W32Min(radius, W32Min(w, h) / 2);
+    rx = W32Min(rx, w / 2);
+    ry = W32Min(ry, h / 2);
+    BOOLEAN corners = rx > 0 && ry > 0;
+    ELLIPSE_TEST outer_test, inner_test;
+    LONG rin_x = rx - border_width, rin_y = ry - border_width;
+    BOOLEAN has_inner = rin_x > 0 && rin_y > 0;
+    if (corners) {
+        ellipse_test_init(&outer_test, rx * 8, ry * 8);
+        if (has_inner)
+            ellipse_test_init(&inner_test, rin_x * 8, rin_y * 8);
+    }
     for (ULONG i = 0; i < clip->Count; i++) {
         RECT r;
         if (!RectIntersect(&r, &clip->Rects[i], rect))
@@ -383,26 +424,39 @@ void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG radi
         for (LONG y = r.top; y < r.bottom; y++) {
             for (LONG x = r.left; x < r.right; x++) {
                 LONG lx = x - rect->left, ly = y - rect->top;
-                /* distance to the nearest corner center, if inside a corner square. */
-                LONG cx = lx < radius ? radius : lx >= w - radius ? w - radius : -1;
-                LONG cy = ly < radius ? radius : ly >= h - radius ? h - radius : -1;
+                /* the center of the corner the pixel is in, if it is in one. */
+                LONG cx = lx < rx ? rx : lx >= w - rx ? w - rx : -1;
+                LONG cy = ly < ry ? ry : ly >= h - ry ? h - ry : -1;
                 ULONG outer = 16, inner = 16;
-                if (cx >= 0 && cy >= 0 && radius > 0) {
-                    outer = inner = 0;
-                    LONG rin = radius - border_width;
-                    for (int sy = 0; sy < 4; sy++) {
-                        for (int sx = 0; sx < 4; sx++) {
-                            /* sample position relative to the corner center in 1/8 pixels. */
-                            LONG px = (lx * 8 + sx * 2 + 1) - cx * 8, py = (ly * 8 + sy * 2 + 1) - cy * 8;
-                            LONG64 d2 = (LONG64)px * px + (LONG64)py * py;
-                            if (d2 <= (LONG64)radius * radius * 64)
-                                outer++;
-                            if (rin > 0 && d2 <= (LONG64)rin * rin * 64)
-                                inner++;
-                        }
+                if (cx >= 0 && cy >= 0 && corners) {
+                    /* the pixel's nearest and farthest corners from the center, in 1/8 pixels. */
+                    LONG near_x = (lx < cx ? cx - lx - 1 : lx - cx) * 8, far_x = near_x + 8;
+                    LONG near_y = (ly < cy ? cy - ly - 1 : ly - cy) * 8, far_y = near_y + 8;
+                    ULONG outer_hits = 16, inner_hits = 16;
+                    if (ellipse_value(&outer_test, near_x, near_y) >= outer_test.Limit) {
+                        outer_hits = 0;
+                    } else if (ellipse_value(&outer_test, far_x, far_y) > outer_test.Limit) {
+                        outer_hits = 0;
+                        for (int sy = 0; sy < 4; sy++)
+                            for (int sx = 0; sx < 4; sx++) {
+                                LONG px = (lx * 8 + sx * 2 + 1) - cx * 8, py = (ly * 8 + sy * 2 + 1) - cy * 8;
+                                if (ellipse_value(&outer_test, px, py) <= outer_test.Limit)
+                                    outer_hits++;
+                            }
                     }
-                    if (rin <= 0)
-                        inner = 0;
+                    if (!has_inner || ellipse_value(&inner_test, near_x, near_y) >= inner_test.Limit) {
+                        inner_hits = 0;
+                    } else if (ellipse_value(&inner_test, far_x, far_y) > inner_test.Limit) {
+                        inner_hits = 0;
+                        for (int sy = 0; sy < 4; sy++)
+                            for (int sx = 0; sx < 4; sx++) {
+                                LONG px = (lx * 8 + sx * 2 + 1) - cx * 8, py = (ly * 8 + sy * 2 + 1) - cy * 8;
+                                if (ellipse_value(&inner_test, px, py) <= inner_test.Limit)
+                                    inner_hits++;
+                            }
+                    }
+                    outer = outer_hits;
+                    inner = inner_hits;
                 } else if (border_width > 0) {
                     BOOLEAN on_edge = lx < border_width || ly < border_width || lx >= w - border_width ||
                                       ly >= h - border_width;
@@ -414,7 +468,7 @@ void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG radi
                     continue;
                 ULONG d = SurfaceGetPixel(s, x, y);
                 /* inner area takes the fill, the ring between takes the border. */
-                ULONG fa = inner * 255 / 16, ba = (outer - inner) * 255 / 16;
+                ULONG fa = filled ? inner * 255 / 16 : 0, ba = (outer - inner) * 255 / 16;
                 ULONG out_px = d;
                 if (ba) {
                     ULONG inv = 255 - ba;
@@ -739,6 +793,47 @@ BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
     return ok;
 }
 
+/* a rectangle with corners of an ellipse of the given size, or the ellipse of the box. */
+static BOOL draw_round_rect(HDC hdc, int left, int top, int right, int bottom, int width, int height, BOOLEAN ellipse)
+{
+    DRAW_CONTEXT ctx;
+    RECT dirty = {0, 0, 0, 0};
+    BOOL ok = FALSE;
+    UserEnter();
+    if (begin_draw(hdc, &ctx)) {
+        RECT r = shape_rect(ctx.Dc, left, top, right, bottom);
+        BRUSH *b = ctx.Dc->State.Brush;
+        ULONG fill = b->Style == BS_NULL ? 0 : brush_pixel(ctx.Dc, b, 0, 0);
+        PEN *p = ctx.Dc->State.Pen;
+        LONG bw = PenStyle(p) == PS_NULL ? 0 : DcPenWidth(ctx.Dc);
+        LONG rx, ry;
+        if (ellipse) {
+            rx = (r.right - r.left) / 2;
+            ry = (r.bottom - r.top) / 2;
+        } else {
+            rx = DcScaleToDevice(ctx.Dc, width < 0 ? -width : width) / 2;
+            ry = DcScaleToDevice(ctx.Dc, height < 0 ? -height : height) / 2;
+        }
+        if (b->Style == BS_NULL) {
+            /* frame only: draw the border ring over the existing pixels. */
+            REGION ring;
+            RgnInit(&ring);
+            RgnCopy(&ring, &ctx.Clip);
+            DrawRoundRectAA(ctx.Dc->Surface, &ring, &r, rx, ry, FALSE, 0, pen_pixel(ctx.Dc), bw);
+            RgnFree(&ring);
+        } else {
+            DrawRoundRectAA(ctx.Dc->Surface, &ctx.Clip, &r, rx, ry, TRUE, fill, bw ? pen_pixel(ctx.Dc) : fill, bw);
+        }
+        dirty = r;
+        ok = TRUE;
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
 BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int width, int height)
 {
     UserEnter();
@@ -749,34 +844,8 @@ BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int
         UserLeave();
         return recorded;
     }
-    DRAW_CONTEXT ctx;
-    RECT dirty = {0, 0, 0, 0};
-    BOOL ok = FALSE;
-    if (begin_draw(hdc, &ctx)) {
-        RECT r = shape_rect(ctx.Dc, left, top, right, bottom);
-        BRUSH *b = ctx.Dc->State.Brush;
-        ULONG fill = b->Style == BS_NULL ? 0 : brush_pixel(ctx.Dc, b, 0, 0);
-        PEN *p = ctx.Dc->State.Pen;
-        LONG bw = PenStyle(p) == PS_NULL ? 0 : DcPenWidth(ctx.Dc);
-        LONG radius = W32Min(DcScaleToDevice(ctx.Dc, width), DcScaleToDevice(ctx.Dc, height)) / 2;
-        if (b->Style == BS_NULL) {
-            /* frame only: draw the border ring over the existing pixels. */
-            REGION ring;
-            RgnInit(&ring);
-            RgnCopy(&ring, &ctx.Clip);
-            DrawRoundRectAA(ctx.Dc->Surface, &ring, &r, radius, 0, pen_pixel(ctx.Dc), bw);
-            RgnFree(&ring);
-        } else {
-            DrawRoundRectAA(ctx.Dc->Surface, &ctx.Clip, &r, radius, fill, bw ? pen_pixel(ctx.Dc) : fill, bw);
-        }
-        dirty = r;
-        ok = TRUE;
-    } else if (ctx.Dc) {
-        ok = TRUE;
-    }
-    end_draw(&ctx, &dirty);
     UserLeave();
-    return ok;
+    return draw_round_rect(hdc, left, top, right, bottom, width, height, FALSE);
 }
 
 BOOL NTAPI NtGdiEllipse(HDC hdc, int left, int top, int right, int bottom)
@@ -789,8 +858,7 @@ BOOL NTAPI NtGdiEllipse(HDC hdc, int left, int top, int right, int bottom)
         return recorded;
     }
     UserLeave();
-    int w = right - left, h = bottom - top;
-    return NtGdiRoundRect(hdc, left, top, right, bottom, w < 0 ? -w : w, h < 0 ? -h : h);
+    return draw_round_rect(hdc, left, top, right, bottom, 0, 0, TRUE);
 }
 
 /* flattens one cubic bezier from p0 into 16 line segments in surface coordinates. */

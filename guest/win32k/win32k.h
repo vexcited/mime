@@ -356,8 +356,8 @@ ULONG SurfaceGetPixel(SURFACE *s, LONG x, LONG y);
 void SurfacePutPixel(SURFACE *s, LONG x, LONG y, ULONG pixel);
 void DrawCoverage(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *coverage, LONG width, LONG height,
                   LONG stride, ULONG pixel);
-void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG radius, ULONG fill, ULONG border,
-                     LONG border_width);
+void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG rx, LONG ry, BOOLEAN filled, ULONG fill,
+                     ULONG border, LONG border_width);
 BOOLEAN BltSurface(SURFACE *dst, const REGION *clip, LONG dx, LONG dy, LONG width, LONG height, SURFACE *src,
                    LONG sx, LONG sy, DWORD rop, DC *dst_dc);
 BOOLEAN StretchSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect, SURFACE *src, const RECT *src_rect,
