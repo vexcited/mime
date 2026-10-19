@@ -547,11 +547,28 @@ static void dump_timeline(void)
     g_timeline_used = 0;
 }
 
+/* the counters of the dump, started over. */
+static void reset_dump_counters(void)
+{
+    memset(HalHypercallCalls, 0, sizeof(HalHypercallCalls));
+    memset(HalHypercallTicks, 0, sizeof(HalHypercallTicks));
+    memset(HalHypercallLockedTicks, 0, sizeof(HalHypercallLockedTicks));
+    memset(HalHypercallLongest, 0, sizeof(HalHypercallLongest));
+    memset(g_long_ticks, 0, sizeof(g_long_ticks));
+    memset(g_long_calls, 0, sizeof(g_long_calls));
+    memset(g_long_max, 0, sizeof(g_long_max));
+    g_long_total = 0;
+    KiKernelLock[6] = KiKernelLock[7] = 0;
+    memset(g_calls, 0, sizeof(g_calls));
+    memset(g_ticks, 0, sizeof(g_ticks));
+    memset(g_longest, 0, sizeof(g_longest));
+    memset(KiLockStats, 0, sizeof(KiLockStats));
+    memset(MmFaultStats, 0, sizeof(MmFaultStats));
+}
+
 /* the services called most since the last dump, then the counts start over. */
 void KiDumpServiceCalls(void)
 {
-    if (g_timeline)
-        dump_timeline();
     MM_FAULT_STATS total = {};
     for (ULONG i = 0; i < MAXIMUM_PROCESSORS; i++) {
         total.Fast += MmFaultStats[i].Fast;
@@ -619,16 +636,10 @@ void KiDumpServiceCalls(void)
         HalHypercallTicks[bi] = 0;
     }
     AfdDumpStats();
-    memset(HalHypercallCalls, 0, sizeof(HalHypercallCalls));
-    memset(HalHypercallLockedTicks, 0, sizeof(HalHypercallLockedTicks));
-    memset(HalHypercallLongest, 0, sizeof(HalHypercallLongest));
-    memset(g_long_calls, 0, sizeof(g_long_calls));
-    memset(g_long_max, 0, sizeof(g_long_max));
-    g_long_total = 0;
-    KiKernelLock[6] = KiKernelLock[7] = 0;
-    memset(g_calls, 0, sizeof(g_calls));
-    memset(g_ticks, 0, sizeof(g_ticks));
-    memset(g_longest, 0, sizeof(g_longest));
-    memset(KiLockStats, 0, sizeof(KiLockStats));
-    memset(MmFaultStats, 0, sizeof(MmFaultStats));
+    reset_dump_counters();
+    /* the timeline is long, and the lock is held while it is written: its own cost is no part of the counters above. */
+    if (g_timeline) {
+        dump_timeline();
+        reset_dump_counters();
+    }
 }
