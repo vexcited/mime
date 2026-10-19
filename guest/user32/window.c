@@ -673,30 +673,47 @@ WINUSERAPI BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text)
     return (BOOL)SendMessageA(hwnd, WM_SETTEXT, 0, (LPARAM)text);
 }
 
+/*
+ * a window of another process never gets WM_GETTEXT, which its owner might be too busy to answer: the default
+ * procedure reads the text the system keeps for the window, so a control that holds its own text, as an edit does,
+ * shows only its title. windows of the calling process ask their procedure.
+ */
+static LRESULT window_text_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi)
+{
+    DWORD pid;
+    if (!GetWindowThreadProcessId(hwnd, &pid)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return 0;
+    }
+    if (pid == GetCurrentProcessId())
+        return ansi ? SendMessageA(hwnd, msg, wparam, lparam) : SendMessageW(hwnd, msg, wparam, lparam);
+    return ansi ? DefWindowProcA(hwnd, msg, wparam, lparam) : DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
 WINUSERAPI int WINAPI GetWindowTextW(HWND hwnd, LPWSTR buffer, int count)
 {
-    if (!buffer || count <= 0)
+    if (!buffer || count == 0)
         return 0;
     buffer[0] = 0;
-    return (int)SendMessageW(hwnd, WM_GETTEXT, (WPARAM)count, (LPARAM)buffer);
+    return (int)window_text_message(hwnd, WM_GETTEXT, (WPARAM)(LONG_PTR)count, (LPARAM)buffer, FALSE);
 }
 
 WINUSERAPI int WINAPI GetWindowTextA(HWND hwnd, LPSTR buffer, int count)
 {
-    if (!buffer || count <= 0)
+    if (!buffer || count == 0)
         return 0;
     buffer[0] = 0;
-    return (int)SendMessageA(hwnd, WM_GETTEXT, (WPARAM)count, (LPARAM)buffer);
+    return (int)window_text_message(hwnd, WM_GETTEXT, (WPARAM)(LONG_PTR)count, (LPARAM)buffer, TRUE);
 }
 
 WINUSERAPI int WINAPI GetWindowTextLengthW(HWND hwnd)
 {
-    return (int)SendMessageW(hwnd, WM_GETTEXTLENGTH, 0, 0);
+    return (int)window_text_message(hwnd, WM_GETTEXTLENGTH, 0, 0, FALSE);
 }
 
 WINUSERAPI int WINAPI GetWindowTextLengthA(HWND hwnd)
 {
-    return (int)SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
+    return (int)window_text_message(hwnd, WM_GETTEXTLENGTH, 0, 0, TRUE);
 }
 
 WINUSERAPI int WINAPI InternalGetWindowText(HWND hwnd, LPWSTR buffer, int count)

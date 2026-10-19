@@ -1270,7 +1270,8 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_GETTEXT: {
         if (!wparam || !lparam)
             return 0;
-        ULONG n = W32Min((LONG)w->TextLength, (LONG)wparam - 1);
+        /* the size is unsigned, so a negative count of GetWindowText takes the whole text. */
+        ULONG n = (ULONG)wparam - 1 < w->TextLength ? (ULONG)wparam - 1 : w->TextLength;
         WCHAR zero = 0;
         if (n && !write_lparam(lparam, w->Text, n * sizeof(WCHAR), user))
             return 0;

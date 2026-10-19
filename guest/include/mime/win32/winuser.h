@@ -2153,6 +2153,7 @@ WINUSERAPI BOOL WINAPI GetWindowInfo(HWND hwnd, PWINDOWINFO info);
 WINUSERAPI int WINAPI LoadStringA(HINSTANCE instance, UINT id, LPSTR buffer, int max);
 WINUSERAPI BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text);
 WINUSERAPI int WINAPI GetWindowTextA(HWND hwnd, LPSTR buffer, int count);
+WINUSERAPI int WINAPI GetWindowTextLengthA(HWND hwnd);
 WINUSERAPI HWND WINAPI FindWindowW(LPCWSTR class_name, LPCWSTR name);
 WINUSERAPI BOOL WINAPI EnumWindows(WNDENUMPROC proc, LPARAM param);
 WINUSERAPI BOOL WINAPI EnumChildWindows(HWND parent, WNDENUMPROC proc, LPARAM param);
