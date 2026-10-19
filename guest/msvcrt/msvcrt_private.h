@@ -394,6 +394,16 @@ double MsvcrtWcstod(const wchar_t *s, wchar_t **end, int *range_error);
 #define _PLOSS 6
 double MsvcrtMathError(int type, const char *name, double arg1, double arg2, double retval);
 
+/* the exception flags of fpu.c, named as _statusfp does. */
+#define MSVCRT_FE_INEXACT 0x01
+#define MSVCRT_FE_UNDERFLOW 0x02
+#define MSVCRT_FE_OVERFLOW 0x04
+#define MSVCRT_FE_DIVBYZERO 0x08
+#define MSVCRT_FE_INVALID 0x10
+unsigned MsvcrtFpGetStatus(void);
+void MsvcrtFpSetStatus(unsigned flags);
+void MsvcrtFpRaise(unsigned flags);
+
 /* ctype. */
 #define _UPPER 0x1
 #define _LOWER 0x2

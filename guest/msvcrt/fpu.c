@@ -134,6 +134,26 @@ static void clear_status(void)
     __asm__ __volatile__("fnclex");
 }
 
+/* the sse status flags become the ones of a status word, the x87 ones are cleared. */
+static void set_status(unsigned sw)
+{
+    unsigned m = get_mxcsr() & ~0x3fu;
+    if (sw & _SW_INVALID)
+        m |= 0x01;
+    if (sw & _SW_DENORMAL)
+        m |= 0x02;
+    if (sw & _SW_ZERODIVIDE)
+        m |= 0x04;
+    if (sw & _SW_OVERFLOW)
+        m |= 0x08;
+    if (sw & _SW_UNDERFLOW)
+        m |= 0x10;
+    if (sw & _SW_INEXACT)
+        m |= 0x20;
+    set_mxcsr(m);
+    __asm__ __volatile__("fnclex");
+}
+
 #ifdef __x86_64__
 static unsigned read_control(void) { return sse_read_control(); }
 static void write_control(unsigned cw) { sse_write_control(cw); }
@@ -311,6 +331,24 @@ static void clear_status(void)
     set_fpsr(get_fpsr() & ~0x9full);
 }
 
+static void set_status(unsigned sw)
+{
+    uint64_t s = get_fpsr() & ~0x9full;
+    if (sw & _SW_INVALID)
+        s |= 0x01;
+    if (sw & _SW_ZERODIVIDE)
+        s |= 0x02;
+    if (sw & _SW_OVERFLOW)
+        s |= 0x04;
+    if (sw & _SW_UNDERFLOW)
+        s |= 0x08;
+    if (sw & _SW_INEXACT)
+        s |= 0x10;
+    if (sw & _SW_DENORMAL)
+        s |= 0x80;
+    set_fpsr(s);
+}
+
 #endif
 
 unsigned int __cdecl _control87(unsigned int value, unsigned int mask)
@@ -382,4 +420,111 @@ void __cdecl _fpreset(void)
 #endif
     clear_status();
     write_control(_CW_DEFAULT);
+}
+
+/* ------------------------------------------------------------------ fenv.h */
+
+#define FE_ALL_EXCEPT 0x1f
+#define FE_ROUND_MASK 0x300
+
+typedef struct {
+    unsigned long Control;
+    unsigned long Status;
+} FENV;
+
+/* the exception flags of fenv.h are the ones of _statusfp, the denormal one left out. */
+unsigned MsvcrtFpGetStatus(void)
+{
+    return read_status();
+}
+
+void MsvcrtFpSetStatus(unsigned flags)
+{
+    set_status(flags);
+}
+
+/* does the arithmetic that sets the flags, so a trap that is unmasked is taken as it would be. */
+void MsvcrtFpRaise(unsigned flags)
+{
+    volatile double zero = 0, one = 1, three = 3, big = DBL_MAX, small = DBL_MIN;
+    volatile double sink;
+    if (flags & _SW_INVALID)
+        sink = zero / zero;
+    if (flags & _SW_ZERODIVIDE)
+        sink = one / zero;
+    if (flags & _SW_OVERFLOW)
+        sink = big * big;
+    if (flags & _SW_UNDERFLOW)
+        sink = small * small;
+    if (flags & _SW_INEXACT)
+        sink = one / three;
+    (void)sink;
+}
+
+DECLSPEC_EXPORT int __cdecl feclearexcept(int flags)
+{
+    flags &= FE_ALL_EXCEPT;
+    if (!flags)
+        return 0;
+    set_status(read_status() & ~(unsigned)flags);
+    return (read_status() & flags) != 0;
+}
+
+DECLSPEC_EXPORT int __cdecl fetestexcept(int flags)
+{
+    return (int)(read_status() & (unsigned)flags & FE_ALL_EXCEPT);
+}
+
+DECLSPEC_EXPORT int __cdecl fegetexceptflag(unsigned long *saved, int flags)
+{
+    *saved = read_status() & (unsigned)flags & FE_ALL_EXCEPT;
+    return 0;
+}
+
+DECLSPEC_EXPORT int __cdecl fesetexceptflag(const unsigned long *saved, int flags)
+{
+    flags &= FE_ALL_EXCEPT;
+    if (!flags)
+        return 0;
+    unsigned wanted = *saved & (unsigned)flags;
+    set_status((read_status() & ~(unsigned)flags) | wanted);
+    return (read_status() & (unsigned)flags) != wanted;
+}
+
+DECLSPEC_EXPORT int __cdecl fegetround(void)
+{
+    return (int)(read_control() & _MCW_RC);
+}
+
+/* anything but one of the four modes is refused. */
+DECLSPEC_EXPORT int __cdecl fesetround(int mode)
+{
+    if ((mode & FE_ROUND_MASK) != mode)
+        return 1;
+    write_control((read_control() & ~(unsigned)_MCW_RC) | (unsigned)mode);
+    return fegetround() != mode;
+}
+
+/* the layout of the structure is the control word and the status of this runtime, its own. */
+DECLSPEC_EXPORT int __cdecl fegetenv(FENV *env)
+{
+    env->Control = read_control();
+    env->Status = read_status();
+    return 0;
+}
+
+DECLSPEC_EXPORT int __cdecl fesetenv(const FENV *env)
+{
+    write_control(env->Control);
+    set_status(env->Status);
+    return read_control() != env->Control || read_status() != env->Status;
+}
+
+/* saves the environment, clears the flags and masks every exception. */
+DECLSPEC_EXPORT int __cdecl feholdexcept(FENV *env)
+{
+    fegetenv(env);
+    clear_status();
+    write_control(read_control() | (unsigned)_MCW_EM);
+    return 0;
 }
