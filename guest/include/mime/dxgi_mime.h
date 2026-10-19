@@ -45,7 +45,18 @@ typedef struct IMimeDXGIAdapter IMimeDXGIAdapter;
     /* takes a reference on the shared device; with no creation info and no device yet, S_FALSE. */                    \
     HRESULT(STDMETHODCALLTYPE *AcquireSharedVulkan)(T * This, const void *create_info, const void *profile,           \
                                                     UINT profile_size, MIME_DXGI_SHARED_VK **shared);                  \
-    void(STDMETHODCALLTYPE *ReleaseSharedVulkan)(T * This, MIME_DXGI_SHARED_VK * shared);
+    void(STDMETHODCALLTYPE *ReleaseSharedVulkan)(T * This, MIME_DXGI_SHARED_VK * shared);                              \
+    /*                                                                                                                 \
+     * semaphores of fences shared by id that the devices of this process hold together: a device that opens a        \
+     * shared fence the process made takes the semaphore instead of importing the payload. Published once the fence  \
+     * is exported; the entry counts the fences that hold it and destroys the semaphore with the last.                \
+     */                                                                                                                \
+    HRESULT(STDMETHODCALLTYPE *PublishSemaphore)(T * This, MIME_DXGI_SHARED_VK * shared, UINT64 id,                    \
+                                                 void *semaphore, void **entry);                                       \
+    /* the semaphore published under the id, a reference taken on its entry; S_FALSE when there is none. */           \
+    HRESULT(STDMETHODCALLTYPE *OpenSemaphore)(T * This, MIME_DXGI_SHARED_VK * shared, UINT64 id, void **semaphore,    \
+                                              void **entry);                                                           \
+    void(STDMETHODCALLTYPE *ReleaseSemaphore)(T * This, MIME_DXGI_SHARED_VK * shared, void *entry);
 MIME_COM_INTERFACE(IMimeDXGIAdapter)
 MIME_DEFINE_GUID(IID_IMimeDXGIAdapter, 0xE784F4ED, 0x16A6, 0x44A9, 0x85, 0x73, 0xB1, 0x88, 0xB5, 0x5D, 0x49, 0x25);
 

@@ -269,8 +269,27 @@ static void STDMETHODCALLTYPE mime_release_shared(IMimeDXGIAdapter *iface, MIME_
     DxgiReleaseShared(shared);
 }
 
-static const IMimeDXGIAdapterVtbl mime_vtbl = {mime_query,   mime_add_ref,        mime_release,
-                                               mime_get_vulkan, mime_acquire_shared, mime_release_shared};
+static HRESULT STDMETHODCALLTYPE mime_publish_semaphore(IMimeDXGIAdapter *iface, MIME_DXGI_SHARED_VK *shared, UINT64 id,
+                                                        void *semaphore, void **entry)
+{
+    return DxgiPublishSemaphore(shared, id, semaphore, entry);
+}
+
+static HRESULT STDMETHODCALLTYPE mime_open_semaphore(IMimeDXGIAdapter *iface, MIME_DXGI_SHARED_VK *shared, UINT64 id,
+                                                     void **semaphore, void **entry)
+{
+    return DxgiOpenSemaphore(shared, id, semaphore, entry);
+}
+
+static void STDMETHODCALLTYPE mime_release_semaphore(IMimeDXGIAdapter *iface, MIME_DXGI_SHARED_VK *shared, void *entry)
+{
+    DxgiReleaseSemaphore(shared, entry);
+}
+
+static const IMimeDXGIAdapterVtbl mime_vtbl = {
+    mime_query,           mime_add_ref,        mime_release,           mime_get_vulkan,
+    mime_acquire_shared,  mime_release_shared, mime_publish_semaphore, mime_open_semaphore,
+    mime_release_semaphore};
 
 HRESULT DxgiCreateAdapter(DxgiFactory *factory, const DxgiGpu *gpu, REFIID riid, void **out)
 {

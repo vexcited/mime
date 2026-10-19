@@ -366,10 +366,17 @@ typedef struct D3dFence {
     D3dChild child;
     D3D11_FENCE_FLAG flags;
     VkSemaphore semaphore;
+    /*
+     * The process's table entry that holds the semaphore, once it was shared by id or taken from another fence of the
+     * process that did: the semaphore goes with the last fence that holds it. None while the fence owns its own.
+     */
+    void *entry;
     SRWLOCK lock;
     MimeShare share;
     /* the highest value a wait saw reached: the mirror of the host's value may be behind a moment. */
     volatile UINT64 observed;
+    /* the last submission that signals or waits for it: the fence goes once the gpu is done with that. */
+    volatile UINT64 last_use;
 } D3dFence;
 
 static D3dFence *fence_impl(ID3D11Fence *iface) { return CONTAINING_RECORD(iface, D3dFence, iface); }
@@ -400,8 +407,15 @@ static ULONG STDMETHODCALLTYPE fence_release(ID3D11Fence *iface)
     if (!refs) {
         D3dDevice *device = f->child.device;
         /* work submitted may still wait on or signal it. */
-        D3dWaitSerial(device, device->next_serial - 1);
-        device->vk.vkDestroySemaphore(device->vk.device, f->semaphore, nullptr);
+        if (f->last_use > D3dCompleted(device)) {
+            /* a wait the program asked for is submitted with the next batch, which this one is. */
+            D3dSubmit(device, VK_NULL_HANDLE, nullptr, nullptr);
+            D3dWaitSerial(device, device->next_serial - 1);
+        }
+        if (f->entry)
+            device->shared.adapter->lpVtbl->ReleaseSemaphore(device->shared.adapter, device->shared.vk, f->entry);
+        else
+            device->vk.vkDestroySemaphore(device->vk.device, f->semaphore, nullptr);
         MimeShareClose(&f->share);
         D3dChildRelease(&f->child);
         HeapFree(GetProcessHeap(), 0, f);
@@ -531,6 +545,10 @@ static HRESULT STDMETHODCALLTYPE fence_create_shared_handle(ID3D11Fence *iface, 
             device->vk.vkMimeShareExportSemaphore(device->vk.device, f->semaphore, f->share.id) != VK_SUCCESS) {
             MimeShareClose(&f->share);
             hr = E_FAIL;
+        } else if (SUCCEEDED(hr)) {
+            /* the other devices of the process open this fence without importing it. */
+            device->shared.adapter->lpVtbl->PublishSemaphore(device->shared.adapter, device->shared.vk, f->share.id,
+                                                             (void *)f->semaphore, &f->entry);
         }
     } else if (name) {
         hr = DXGI_ERROR_NAME_ALREADY_EXISTS;
@@ -554,14 +572,24 @@ static const ID3D11FenceVtbl fence_vtbl = {
     fence_set_event_on_completion,
 };
 
-static HRESULT create_fence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG flags, D3dFence **out)
+static D3dFence *alloc_fence(D3dDevice *device, D3D11_FENCE_FLAG flags)
 {
     D3dFence *f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
     if (!f)
-        return E_OUTOFMEMORY;
+        return nullptr;
     f->iface.lpVtbl = &fence_vtbl;
     f->flags = flags;
     InitializeSRWLock(&f->lock);
+    D3dChildInit(&f->child, device);
+    return f;
+}
+
+/* a fence with a semaphore of its own, exportable when it is made to be shared. */
+static HRESULT create_fence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG flags, D3dFence **out)
+{
+    D3dFence *f = alloc_fence(device, flags);
+    if (!f)
+        return E_OUTOFMEMORY;
     VkExportSemaphoreCreateInfo export = {VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO, nullptr,
                                           VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT};
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
@@ -571,10 +599,10 @@ static HRESULT create_fence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG fl
         type.pNext = &export;
     VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
     if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &f->semaphore) != VK_SUCCESS) {
+        D3dChildRelease(&f->child);
         HeapFree(GetProcessHeap(), 0, f);
         return E_OUTOFMEMORY;
     }
-    D3dChildInit(&f->child, device);
     *out = f;
     return S_OK;
 }
@@ -619,16 +647,32 @@ HRESULT D3dOpenSharedFence(D3dDevice *device, HANDLE handle, REFIID riid, void *
         MimeShareClose(&own);
         return E_INVALIDARG;
     }
-    D3dFence *f;
-    hr = create_fence(device, 0, (D3D11_FENCE_FLAG)(blob.fence_flags | D3D11_FENCE_FLAG_SHARED), &f);
-    if (FAILED(hr)) {
+    D3D11_FENCE_FLAG flags = (D3D11_FENCE_FLAG)(blob.fence_flags | D3D11_FENCE_FLAG_SHARED);
+    D3dFence *f = alloc_fence(device, flags);
+    if (!f) {
         MimeShareClose(&own);
-        return hr;
+        return E_OUTOFMEMORY;
     }
-    if (device->vk.vkMimeShareImportSemaphore(device->vk.device, f->semaphore, own.id) != VK_SUCCESS) {
-        MimeShareClose(&own);
-        f->iface.lpVtbl->Release(&f->iface);
-        return E_FAIL;
+    void *semaphore = nullptr;
+    if (device->shared.adapter->lpVtbl->OpenSemaphore(device->shared.adapter, device->shared.vk, own.id, &semaphore,
+                                                      &f->entry) == S_OK) {
+        /* a fence of this process made it: the devices share its semaphore. */
+        f->semaphore = (VkSemaphore)semaphore;
+    } else {
+        /* another process's: a semaphore here takes the payload, which nothing has to export again. */
+        VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+        if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &f->semaphore) != VK_SUCCESS ||
+            device->vk.vkMimeShareImportSemaphore(device->vk.device, f->semaphore, own.id) != VK_SUCCESS) {
+            if (f->semaphore)
+                device->vk.vkDestroySemaphore(device->vk.device, f->semaphore, nullptr);
+            f->semaphore = VK_NULL_HANDLE;
+            MimeShareClose(&own);
+            D3dChildRelease(&f->child);
+            HeapFree(GetProcessHeap(), 0, f);
+            return E_FAIL;
+        }
     }
     f->share = own;
     hr = f->iface.lpVtbl->QueryInterface(&f->iface, riid, out);
@@ -650,7 +694,9 @@ HRESULT D3dFenceSignal(D3dContext *c, ID3D11Fence *iface, UINT64 value)
     signal.value = value;
     signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     BOOL raises = value > fence_value(f);
-    D3dContextSubmit(c, nullptr, raises ? &signal : nullptr);
+    UINT64 serial = D3dContextSubmit(c, nullptr, raises ? &signal : nullptr);
+    if (serial > f->last_use)
+        f->last_use = serial;
     return S_OK;
 }
 
@@ -665,5 +711,8 @@ HRESULT D3dFenceWait(D3dContext *c, ID3D11Fence *iface, UINT64 value)
         return E_INVALIDARG;
     D3dContextFlush(c);
     D3dQueueWait(device, f->semaphore, value);
+    /* the next submission carries the wait, or an earlier one if the waits overflowed. */
+    if (device->next_serial > f->last_use)
+        f->last_use = device->next_serial;
     return S_OK;
 }

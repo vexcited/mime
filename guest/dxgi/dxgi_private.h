@@ -68,6 +68,9 @@ DxgiAdapter *DxgiAdapterFrom(IUnknown *unknown);
 HRESULT DxgiAcquireShared(const DxgiGpu *gpu, const void *create_info, const void *profile, UINT profile_size,
                           MIME_DXGI_SHARED_VK **out);
 void DxgiReleaseShared(MIME_DXGI_SHARED_VK *shared);
+HRESULT DxgiPublishSemaphore(MIME_DXGI_SHARED_VK *shared, UINT64 id, void *semaphore, void **entry);
+HRESULT DxgiOpenSemaphore(MIME_DXGI_SHARED_VK *shared, UINT64 id, void **semaphore, void **entry);
+void DxgiReleaseSemaphore(MIME_DXGI_SHARED_VK *shared, void *entry);
 BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number);
 /* duplication.c: v1 is DuplicateOutput1, whose arguments are checked and whose process needs per monitor dpi. */
 HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR monitor, IUnknown *device, BOOL v1,

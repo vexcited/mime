@@ -644,6 +644,8 @@ typedef struct D12Fence {
     struct D12Fence *next_waiting;
     /* the kernel object of a shared fence, once it has a handle or was opened from one. */
     MimeShare share;
+    /* the process's table entry that holds the semaphore when it is shared with other fences, see d3d11's share.c. */
+    void *entry;
 } D12Fence;
 
 HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags, D12Fence **out);
