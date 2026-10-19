@@ -296,14 +296,18 @@ NTDLL_EXPORT PVOID NTAPI RtlPcToFileHeader(PVOID pc, PVOID *base)
 /* ------------------------------------------------------------------ api sets */
 
 /*
- * api set contracts resolve to their host dll. this static table covers
- * the families the system dlls implement; apisetschema.dll parsing will
- * replace it.
+ * api set contracts resolve to the dll that hosts them. the exact table is windows' own schema, keyed by
+ * the name up to the last hyphen so that every version matches, and keeps the contracts whose host Mime has.
+ * the prefix rules below it catch the rest of a family and name the dll that implements it here.
  */
 typedef struct API_SET_RULE {
     PCWSTR Prefix;
     PCWSTR Host;
 } API_SET_RULE;
+
+static const API_SET_RULE g_api_set_hosts[] = {
+#include "apiset.h"
+};
 
 static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-crt-", L"ucrtbase.dll"},
@@ -339,10 +343,42 @@ static const API_SET_RULE g_api_sets[] = {
     {L"ext-ms-win-", L"kernelbase.dll"},
 };
 
+/* the host of a contract in the schema table, or null; a name is the contract, a hyphen and a version, and .dll. */
+static PCWSTR find_api_set_host(PCWSTR name)
+{
+    WCHAR key[96];
+    SIZE_T length = wcslen(name);
+    if (length > 4 && !_wcsicmp(name + length - 4, L".dll"))
+        length -= 4;
+    SIZE_T cut = length;
+    while (cut && name[cut - 1] >= '0' && name[cut - 1] <= '9')
+        cut--;
+    if (cut == length || cut < 2 || name[cut - 1] != '-' || cut - 1 >= RTL_NUMBER_OF(key))
+        return nullptr;
+    for (SIZE_T i = 0; i < cut - 1; i++)
+        key[i] = name[i] >= 'A' && name[i] <= 'Z' ? name[i] + 32 : name[i];
+    key[cut - 1] = 0;
+    SIZE_T low = 0, high = RTL_NUMBER_OF(g_api_set_hosts);
+    while (low < high) {
+        SIZE_T middle = (low + high) / 2;
+        int order = wcscmp(key, g_api_set_hosts[middle].Prefix);
+        if (!order)
+            return g_api_set_hosts[middle].Host;
+        if (order < 0)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    return nullptr;
+}
+
 static PCWSTR resolve_api_set(PCWSTR name)
 {
     if (_wcsnicmp(name, L"api-", 4) && _wcsnicmp(name, L"ext-", 4))
         return name;
+    PCWSTR host = find_api_set_host(name);
+    if (host)
+        return host;
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_api_sets); i++) {
         SIZE_T n = wcslen(g_api_sets[i].Prefix);
         if (!_wcsnicmp(name, g_api_sets[i].Prefix, n))
