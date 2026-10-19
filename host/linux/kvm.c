@@ -309,6 +309,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     pthread_mutex_init(&vm->lock, nullptr);
     pthread_cond_init(&vm->vcpu_cond, nullptr);
     pthread_mutex_init(&vm->fs_lock, nullptr);
+    pthread_mutex_init(&vm->window_lock, nullptr);
 
     vm->kvm_fd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
     if (vm->kvm_fd < 0) {
@@ -715,9 +716,38 @@ bool mime_vcpu_start(MimeVcpu *vcpu)
 static void *profile_thread(void *arg);
 static sem_t g_profile_sem;
 
+/*
+ * a processor that never runs, to ask kvm to map guest memory into its tables before the guest touches it: a
+ * page of a file window that the guest reads for the first time costs an exit and a lookup in the host's page
+ * cache, 3 to 4 microseconds, and Helium's start reads 30 thousand of them. The ioctl is the processor's, and
+ * the processors that run hold theirs while they do.
+ */
+static int g_prefault_fd = -1;
+
+void mime_kvm_prefault_open(MimeVm *vm)
+{
+    if (ioctl(vm->vm_fd, KVM_CHECK_EXTENSION, KVM_CAP_PRE_FAULT_MEMORY) <= 0)
+        return;
+    g_prefault_fd = ioctl(vm->vm_fd, KVM_CREATE_VCPU, (unsigned long)vm->vcpu_count);
+}
+
+/* maps [gpa, gpa + size) into the tables of the guest. false when kvm cannot. */
+bool mime_kvm_prefault(MimeVm *vm, uint64_t gpa, uint64_t size)
+{
+    if (g_prefault_fd < 0)
+        return false;
+    struct kvm_pre_fault_memory range = {.gpa = gpa, .size = size};
+    while (range.size) {
+        if (ioctl(g_prefault_fd, KVM_PRE_FAULT_MEMORY, &range) != 0 && errno != EINTR && errno != EAGAIN)
+            return false;
+    }
+    return true;
+}
+
 bool mime_vm_start(MimeVm *vm)
 {
     pthread_t profiler;
+    mime_kvm_prefault_open(vm);
     sem_init(&g_profile_sem, 0, 0);
     if (pthread_create(&profiler, nullptr, profile_thread, vm) == 0)
         pthread_detach(profiler);

@@ -254,6 +254,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_GET_SD:
     case MIME_HC_FS_SET_SD:
     case MIME_HC_FS_RENAME:
+    case MIME_HC_FS_WARM:
         status = mime_fs_hcall(vm, nr, regs);
         value = regs[1];
         break;

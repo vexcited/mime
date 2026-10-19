@@ -303,6 +303,7 @@ enum {
     MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
     MIME_HC_FS_GET_SD = 0x1E,   /* (handle, pa, capacity, up) -> distance << 32 | length of the nearest stored descriptor */
     MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
+    MIME_HC_FS_WARM = 0x51,     /* (pa) maps a file window into the guest's tables ahead of its first reads, without waiting for it */
     MIME_HC_FS_RENAME = 0x50,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */

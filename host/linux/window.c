@@ -16,6 +16,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+bool mime_kvm_prefault(MimeVm *vm, uint64_t gpa, uint64_t size);
 uint32_t mime_kvm_alloc_slot(MimeVm *vm);
 bool mime_kvm_set_slot(MimeVm *vm, uint32_t slot, uint64_t ipa, uint64_t size, void *host, bool readonly);
 
@@ -106,6 +107,60 @@ void mime_window_unmap_all(MimeVm *vm)
 {
     while (vm->window_count)
         unmap_at(vm, vm->window_count - 1);
+}
+
+/*
+ * a window's pages are mapped into the guest's tables by kvm as the guest first reads them, an exit each. The
+ * windows asked to be warm are mapped by a thread meanwhile, in the order they come.
+ */
+#define WARM_QUEUE 64
+static struct {
+    MimeVm *vm;
+    uint64_t ipa, size;
+} g_warm[WARM_QUEUE];
+static uint32_t g_warm_head, g_warm_tail;
+static pthread_mutex_t g_warm_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_warm_cond = PTHREAD_COND_INITIALIZER;
+static bool g_warm_thread;
+
+static void *warm_main(void *arg)
+{
+    mime_set_thread_name("mime-fs-warm");
+    pthread_mutex_lock(&g_warm_lock);
+    for (;;) {
+        while (g_warm_head == g_warm_tail)
+            pthread_cond_wait(&g_warm_cond, &g_warm_lock);
+        uint32_t at = g_warm_head++ % WARM_QUEUE;
+        MimeVm *vm = g_warm[at].vm;
+        uint64_t ipa = g_warm[at].ipa, size = g_warm[at].size;
+        pthread_mutex_unlock(&g_warm_lock);
+        mime_kvm_prefault(vm, ipa, size);
+        pthread_mutex_lock(&g_warm_lock);
+    }
+    return nullptr;
+}
+
+/* asks for the window at this address to be warm; one that does not fit the queue is left to be read as it comes. */
+void mime_window_warm(MimeVm *vm, uint64_t ipa)
+{
+    uint64_t size = 0;
+    for (uint32_t i = 0; i < vm->window_count; i++)
+        if (vm->windows[i].ipa == ipa)
+            size = vm->windows[i].size;
+    if (!size)
+        return;
+    pthread_mutex_lock(&g_warm_lock);
+    if (g_warm_tail - g_warm_head < WARM_QUEUE) {
+        g_warm[g_warm_tail++ % WARM_QUEUE] = (typeof(g_warm[0])){vm, ipa, size};
+        if (!g_warm_thread) {
+            pthread_t thread;
+            g_warm_thread = pthread_create(&thread, nullptr, warm_main, nullptr) == 0;
+            if (g_warm_thread)
+                pthread_detach(thread);
+        }
+        pthread_cond_signal(&g_warm_cond);
+    }
+    pthread_mutex_unlock(&g_warm_lock);
 }
 
 /* kvm maps every window as it is created, so a fault there is never a lazy fill. */

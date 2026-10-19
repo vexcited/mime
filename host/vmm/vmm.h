@@ -205,6 +205,9 @@ bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa);
 uint64_t mime_window_map(MimeVm *vm, int fd, uint64_t *ipa_out);
 uint64_t mime_window_unmap(MimeVm *vm, uint64_t ipa);
 void mime_window_unmap_all(MimeVm *vm);
+#ifdef __linux__
+void mime_window_warm(MimeVm *vm, uint64_t ipa);
+#endif
 
 /* net.c */
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);

@@ -28,6 +28,7 @@ struct _MIMEFS_CACHE {
     ULONG64 WriteTime;
     ULONG64 Window; /* guest physical address, 0 until mapped */
     ULONG SmallReads; /* reads that went to the host for want of a window */
+    BOOLEAN Warmed;   /* the host was asked to map the window into the guest's tables */
 };
 
 #define DETACHED (~0ull)
@@ -205,6 +206,11 @@ BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *c, ULONG64 host_handle, PULONG64 pa, PULO
         c->References++;
         *pa = c->Window;
         *size = c->Size;
+        /* a section reads pages of it as the program runs: the host maps them meanwhile, not at the first read of each. */
+        if (!c->Warmed) {
+            c->Warmed = TRUE;
+            HalHypercallUnlocked(MIME_HC_FS_WARM, c->Window, 0, 0, 0, 0, 0, nullptr);
+        }
     }
     ExReleaseFastMutex(&g_lock);
     return ok;
