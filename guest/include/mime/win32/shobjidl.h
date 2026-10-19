@@ -22,6 +22,7 @@ MIME_DEFINE_GUID(CLSID_ShellLink, 0x00021401, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 
 MIME_DEFINE_GUID(CLSID_ShellItem, 0x9AC9FBE1, 0xE0A2, 0x4AD6, 0xB4, 0xEE, 0xE2, 0x12, 0x01, 0x3E, 0xA9, 0x17);
 MIME_DEFINE_GUID(CLSID_FileOpenDialog, 0xDC1C5A9C, 0xE88A, 0x4DDE, 0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7);
 MIME_DEFINE_GUID(CLSID_FileSaveDialog, 0xC0B4E2F3, 0xBA21, 0x4773, 0x8D, 0xBA, 0x33, 0x5E, 0xC9, 0x46, 0xEB, 0x8B);
+MIME_DEFINE_GUID(CLSID_FileOperation, 0x3AD05575, 0x8857, 0x4850, 0x92, 0x77, 0x11, 0xB8, 0x5B, 0xDB, 0x8E, 0x09);
 MIME_DEFINE_GUID(CLSID_MyComputer, 0x20D04FE0, 0x3AEA, 0x1069, 0xA2, 0xD8, 0x08, 0x00, 0x2B, 0x30, 0x30, 0x9D);
 
 MIME_DEFINE_GUID(IID_IPersistFile, 0x0000010B, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
@@ -47,6 +48,9 @@ MIME_DEFINE_GUID(IID_IFileDialogEvents, 0x973510DB, 0x7D7F, 0x452B, 0x89, 0x75, 
 MIME_DEFINE_GUID(IID_IFileDialogControlEvents, 0x36116642, 0xD713, 0x4B97, 0x9B, 0x83, 0x74, 0x84, 0xA9, 0xD0, 0x04,
                  0x33);
 MIME_DEFINE_GUID(IID_IFileDialogCustomize, 0xE6FDD21A, 0x163F, 0x4975, 0x9C, 0x8C, 0xA6, 0x9F, 0x1B, 0xA3, 0x70, 0x34);
+MIME_DEFINE_GUID(IID_IFileOperation, 0x947AAB5F, 0x0A5C, 0x4C13, 0xB4, 0xD6, 0x4B, 0xF7, 0x83, 0x6F, 0xC9, 0xF8);
+MIME_DEFINE_GUID(IID_IFileOperationProgressSink, 0x04B0F1A7, 0x9490, 0x44BC, 0x96, 0xE1, 0x42, 0x96, 0xA3, 0x12, 0x52,
+                 0xE2);
 MIME_DEFINE_GUID(IID_IFileSystemBindData, 0x01E18D10, 0x4D8B, 0x11D2, 0x85, 0x5D, 0x00, 0x60, 0x08, 0x05, 0x93, 0x67);
 MIME_DEFINE_GUID(IID_IFileSystemBindData2, 0x3ACF075F, 0x71DB, 0x4AFA, 0x81, 0xF0, 0x3F, 0xC4, 0xFD, 0xF2, 0xA5, 0xB8);
 MIME_DEFINE_GUID(BHID_EnumItems, 0x94F60519, 0x2850, 0x4924, 0xAA, 0x5A, 0xD1, 0x5E, 0x84, 0x86, 0x80, 0x39);
@@ -489,6 +493,116 @@ struct IFileOpenDialog {
 };
 
 typedef struct IFileOperationProgressSink IFileOperationProgressSink;
+
+/* what IFileOperation::SetOperationFlags takes besides the FOF flags of shellapi.h. */
+#define FOF_NO_UI (FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR)
+#define FOFX_NOSKIPJUNCTIONS 0x00010000
+#define FOFX_PREFERHARDLINK 0x00020000
+#define FOFX_SHOWELEVATIONPROMPT 0x00040000
+#define FOFX_EARLYFAILURE 0x00100000
+#define FOFX_PRESERVEFILEEXTENSIONS 0x00200000
+#define FOFX_KEEPNEWERFILE 0x00400000
+#define FOFX_NOCOPYHOOKS 0x00800000
+#define FOFX_NOMINIMIZEBOX 0x01000000
+#define FOFX_MOVEACLSACROSSVOLUMES 0x02000000
+#define FOFX_DONTDISPLAYSOURCEPATH 0x04000000
+#define FOFX_DONTDISPLAYDESTPATH 0x08000000
+#define FOFX_REQUIREELEVATION 0x10000000
+#define FOFX_ADDUNDORECORD 0x20000000
+#define FOFX_COPYASDOWNLOAD 0x40000000
+#define FOFX_DONTDISPLAYLOCATIONS 0x80000000
+
+/* the flags the progress sink's Pre and Post calls get. */
+#define TSF_NORMAL 0
+#define TSF_FAIL_EXIST 0
+#define TSF_RENAME_EXIST 0x1
+#define TSF_OVERWRITE_EXIST 0x2
+#define TSF_ALLOW_DECRYPTION 0x4
+#define TSF_NO_SECURITY 0x8
+#define TSF_COPY_CREATION_TIME 0x10
+#define TSF_COPY_WRITE_TIME 0x20
+#define TSF_USE_FULL_ACCESS 0x40
+#define TSF_DELETE_RECYCLE_IF_POSSIBLE 0x80
+#define TSF_COPY_HARD_LINK 0x100
+#define TSF_COPY_LOCALIZED_NAME 0x200
+#define TSF_MOVE_AS_COPY_DELETE 0x400
+#define TSF_SUSPEND_SHELLEVENTS 0x800
+
+/* success codes of the copy engine, which a sink may receive in a Post call. */
+#define COPYENGINE_S_DONT_PROCESS_CHILDREN ((HRESULT)0x00270008L)
+#define COPYENGINE_E_USER_CANCELLED ((HRESULT)0x80270000L)
+
+typedef struct IFileOperationProgressSinkVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IFileOperationProgressSink *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IFileOperationProgressSink *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IFileOperationProgressSink *This);
+    HRESULT(STDMETHODCALLTYPE *StartOperations)(IFileOperationProgressSink *This);
+    HRESULT(STDMETHODCALLTYPE *FinishOperations)(IFileOperationProgressSink *This, HRESULT result);
+    HRESULT(STDMETHODCALLTYPE *PreRenameItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                              LPCWSTR new_name);
+    HRESULT(STDMETHODCALLTYPE *PostRenameItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                               LPCWSTR new_name, HRESULT result, IShellItem *created);
+    HRESULT(STDMETHODCALLTYPE *PreMoveItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                            IShellItem *folder, LPCWSTR new_name);
+    HRESULT(STDMETHODCALLTYPE *PostMoveItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                             IShellItem *folder, LPCWSTR new_name, HRESULT result, IShellItem *created);
+    HRESULT(STDMETHODCALLTYPE *PreCopyItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                            IShellItem *folder, LPCWSTR new_name);
+    HRESULT(STDMETHODCALLTYPE *PostCopyItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                             IShellItem *folder, LPCWSTR new_name, HRESULT result, IShellItem *created);
+    HRESULT(STDMETHODCALLTYPE *PreDeleteItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item);
+    HRESULT(STDMETHODCALLTYPE *PostDeleteItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *item,
+                                               HRESULT result, IShellItem *created);
+    HRESULT(STDMETHODCALLTYPE *PreNewItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *folder,
+                                           LPCWSTR new_name);
+    HRESULT(STDMETHODCALLTYPE *PostNewItem)(IFileOperationProgressSink *This, DWORD flags, IShellItem *folder,
+                                            LPCWSTR new_name, LPCWSTR template_name, DWORD attributes, HRESULT result,
+                                            IShellItem *item);
+    HRESULT(STDMETHODCALLTYPE *UpdateProgress)(IFileOperationProgressSink *This, UINT total, UINT so_far);
+    HRESULT(STDMETHODCALLTYPE *ResetTimer)(IFileOperationProgressSink *This);
+    HRESULT(STDMETHODCALLTYPE *PauseTimer)(IFileOperationProgressSink *This);
+    HRESULT(STDMETHODCALLTYPE *ResumeTimer)(IFileOperationProgressSink *This);
+} IFileOperationProgressSinkVtbl;
+struct IFileOperationProgressSink {
+    const IFileOperationProgressSinkVtbl *lpVtbl;
+};
+
+typedef struct IOperationsProgressDialog IOperationsProgressDialog;
+typedef struct IPropertyChangeArray IPropertyChangeArray;
+typedef struct IFileOperation IFileOperation;
+typedef struct IFileOperationVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IFileOperation *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IFileOperation *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IFileOperation *This);
+    HRESULT(STDMETHODCALLTYPE *Advise)(IFileOperation *This, IFileOperationProgressSink *sink, DWORD *cookie);
+    HRESULT(STDMETHODCALLTYPE *Unadvise)(IFileOperation *This, DWORD cookie);
+    HRESULT(STDMETHODCALLTYPE *SetOperationFlags)(IFileOperation *This, DWORD flags);
+    HRESULT(STDMETHODCALLTYPE *SetProgressMessage)(IFileOperation *This, LPCWSTR message);
+    HRESULT(STDMETHODCALLTYPE *SetProgressDialog)(IFileOperation *This, IOperationsProgressDialog *dialog);
+    HRESULT(STDMETHODCALLTYPE *SetProperties)(IFileOperation *This, IPropertyChangeArray *properties);
+    HRESULT(STDMETHODCALLTYPE *SetOwnerWindow)(IFileOperation *This, HWND owner);
+    HRESULT(STDMETHODCALLTYPE *ApplyPropertiesToItem)(IFileOperation *This, IShellItem *item);
+    HRESULT(STDMETHODCALLTYPE *ApplyPropertiesToItems)(IFileOperation *This, IUnknown *items);
+    HRESULT(STDMETHODCALLTYPE *RenameItem)(IFileOperation *This, IShellItem *item, LPCWSTR new_name,
+                                           IFileOperationProgressSink *sink);
+    HRESULT(STDMETHODCALLTYPE *RenameItems)(IFileOperation *This, IUnknown *items, LPCWSTR new_name);
+    HRESULT(STDMETHODCALLTYPE *MoveItem)(IFileOperation *This, IShellItem *item, IShellItem *folder, LPCWSTR new_name,
+                                         IFileOperationProgressSink *sink);
+    HRESULT(STDMETHODCALLTYPE *MoveItems)(IFileOperation *This, IUnknown *items, IShellItem *folder);
+    HRESULT(STDMETHODCALLTYPE *CopyItem)(IFileOperation *This, IShellItem *item, IShellItem *folder, LPCWSTR copy_name,
+                                         IFileOperationProgressSink *sink);
+    HRESULT(STDMETHODCALLTYPE *CopyItems)(IFileOperation *This, IUnknown *items, IShellItem *folder);
+    HRESULT(STDMETHODCALLTYPE *DeleteItem)(IFileOperation *This, IShellItem *item, IFileOperationProgressSink *sink);
+    HRESULT(STDMETHODCALLTYPE *DeleteItems)(IFileOperation *This, IUnknown *items);
+    HRESULT(STDMETHODCALLTYPE *NewItem)(IFileOperation *This, IShellItem *folder, DWORD attributes, LPCWSTR name,
+                                        LPCWSTR template_name, IFileOperationProgressSink *sink);
+    HRESULT(STDMETHODCALLTYPE *PerformOperations)(IFileOperation *This);
+    HRESULT(STDMETHODCALLTYPE *GetAnyOperationsAborted)(IFileOperation *This, BOOL *aborted);
+} IFileOperationVtbl;
+struct IFileOperation {
+    const IFileOperationVtbl *lpVtbl;
+};
+
 typedef struct IPropertyDescriptionList IPropertyDescriptionList;
 typedef struct IFileSaveDialog IFileSaveDialog;
 typedef struct IFileSaveDialogVtbl {

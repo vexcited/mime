@@ -62,6 +62,7 @@ static CLASS_FACTORY g_factories[] = {
     {{&g_factory_vtbl}, &CLSID_EnumerableObjectCollection, ObjectCollectionCreate},
     {{&g_factory_vtbl}, &CLSID_ApplicationDestinations, ApplicationDestinationsCreate},
     {{&g_factory_vtbl}, &CLSID_ApplicationDocumentLists, ApplicationDocumentListsCreate},
+    {{&g_factory_vtbl}, &CLSID_FileOperation, FileOperationCreate},
 };
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

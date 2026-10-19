@@ -84,4 +84,7 @@ HRESULT ObjectCollectionCreate(IUnknown *outer, REFIID riid, void **object);
 HRESULT ApplicationDestinationsCreate(IUnknown *outer, REFIID riid, void **object);
 HRESULT ApplicationDocumentListsCreate(IUnknown *outer, REFIID riid, void **object);
 
+/* fileoperation.c */
+HRESULT FileOperationCreate(IUnknown *outer, REFIID riid, void **object);
+
 #endif
