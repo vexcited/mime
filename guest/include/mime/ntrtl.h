@@ -170,6 +170,7 @@ NTSYSAPI BOOLEAN NTAPI RtlLockHeap(PVOID handle);
 NTSYSAPI BOOLEAN NTAPI RtlUnlockHeap(PVOID handle);
 NTSYSAPI BOOLEAN NTAPI RtlValidateHeap(PVOID handle, ULONG flags, PVOID p);
 NTSYSAPI SIZE_T NTAPI RtlCompactHeap(PVOID handle, ULONG flags);
+NTSYSAPI NTSTATUS NTAPI RtlWalkHeap(PVOID handle, PVOID entry);
 NTSYSAPI ULONG NTAPI RtlGetProcessHeaps(ULONG count, PVOID *heaps);
 NTSYSAPI NTSTATUS NTAPI RtlSetHeapInformation(PVOID heap, ULONG klass, PVOID info, SIZE_T length);
 NTSYSAPI NTSTATUS NTAPI RtlQueryHeapInformation(PVOID heap, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned);

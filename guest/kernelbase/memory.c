@@ -501,10 +501,66 @@ BOOL WINAPI HeapUnlock(HANDLE heap)
     return RtlUnlockHeap(heap);
 }
 
+/* the walk of ntdll in its own entry, which has a wide size and its own flags. */
+typedef struct {
+    PVOID DataAddress;
+    SIZE_T DataSize;
+    UCHAR OverheadBytes;
+    UCHAR SegmentIndex;
+    USHORT Flags;
+    union {
+        struct {
+            SIZE_T Settable;
+            USHORT TagIndex;
+            USHORT AllocatorBackTraceIndex;
+            ULONG Reserved[2];
+        } Block;
+        struct {
+            ULONG CommittedSize;
+            ULONG UnCommittedSize;
+            PVOID FirstEntry;
+            PVOID LastEntry;
+        } Segment;
+    };
+} KB_WALK_ENTRY;
+
+#define KB_WALK_BUSY 0x0001
+#define KB_WALK_SEGMENT 0x0002
+
+/*
+ * the next block of the heap, or the next region: the entry the caller got last says where it was. A region has the
+ * flag PROCESS_HEAP_REGION and its address is the start of the region, a block's address is its data.
+ */
 BOOL WINAPI HeapWalk(HANDLE heap, LPPROCESS_HEAP_ENTRY entry)
 {
-    KbSetError(ERROR_NO_MORE_ITEMS);
-    return FALSE;
+    if (!entry) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KB_WALK_ENTRY walk = {};
+    walk.DataAddress = entry->lpData;
+    if (entry->lpData)
+        walk.Flags = (entry->wFlags & PROCESS_HEAP_REGION) ? KB_WALK_SEGMENT : KB_WALK_BUSY;
+    NTSTATUS status = RtlWalkHeap(heap, &walk);
+    if (!NT_SUCCESS(status)) {
+        KbSetError(status == STATUS_NO_MORE_ENTRIES ? ERROR_NO_MORE_ITEMS : RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    memset(entry, 0, sizeof(*entry));
+    entry->lpData = walk.DataAddress;
+    entry->cbData = (DWORD)walk.DataSize;
+    entry->cbOverhead = walk.OverheadBytes;
+    entry->iRegionIndex = walk.SegmentIndex;
+    if (walk.Flags & KB_WALK_SEGMENT) {
+        entry->wFlags = PROCESS_HEAP_REGION;
+        entry->Region.dwCommittedSize = walk.Segment.CommittedSize;
+        entry->Region.dwUnCommittedSize = walk.Segment.UnCommittedSize;
+        entry->Region.lpFirstBlock = walk.Segment.FirstEntry;
+        entry->Region.lpLastBlock = walk.Segment.LastEntry;
+    } else if (walk.Flags & KB_WALK_BUSY) {
+        entry->wFlags = PROCESS_HEAP_ENTRY_BUSY;
+    }
+    return TRUE;
 }
 
 BOOL WINAPI HeapSummary(HANDLE heap, DWORD flags, LPHEAP_SUMMARY summary)

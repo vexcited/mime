@@ -477,6 +477,145 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlUnlockHeap(PVOID handle)
     return TRUE;
 }
 
+/*
+ * the walk: every segment of the heap with its blocks, free ones included, then the blocks that have a region of their
+ * own. The entry says where the walk is, by the address and flags of the entry it was given last. A segment is an entry
+ * with RTL_HEAP_SEGMENT whose address is its start, a block one whose address is its data.
+ */
+#define WALK_BUSY 0x0001
+#define WALK_SEGMENT 0x0002
+
+typedef struct {
+    PVOID DataAddress;
+    SIZE_T DataSize;
+    UCHAR OverheadBytes;
+    UCHAR SegmentIndex;
+    USHORT Flags;
+    union {
+        struct {
+            SIZE_T Settable;
+            USHORT TagIndex;
+            USHORT AllocatorBackTraceIndex;
+            ULONG Reserved[2];
+        } Block;
+        struct {
+            ULONG CommittedSize;
+            ULONG UnCommittedSize;
+            PVOID FirstEntry;
+            PVOID LastEntry;
+        } Segment;
+    };
+} HEAP_WALK_ENTRY;
+
+static void walk_segment(PHEAP heap, HEAP_SEGMENT *seg, HEAP_WALK_ENTRY *entry)
+{
+    ULONG index = 0;
+    for (PLIST_ENTRY e = heap->Segments.Flink; e != &heap->Segments && e != &seg->Links; e = e->Flink)
+        index++;
+    memset(entry, 0, sizeof(*entry));
+    entry->DataAddress = seg;
+    entry->DataSize = seg->Size;
+    entry->OverheadBytes = sizeof(HEAP_SEGMENT);
+    entry->SegmentIndex = (UCHAR)index;
+    entry->Flags = WALK_SEGMENT;
+    entry->Segment.CommittedSize = (ULONG)seg->Size;
+    entry->Segment.FirstEntry = seg + 1;
+    entry->Segment.LastEntry = (PUCHAR)seg + seg->Size;
+}
+
+static void walk_block(PHEAP heap, HEAP_SEGMENT *seg, HEAP_BLOCK *b, HEAP_WALK_ENTRY *entry)
+{
+    ULONG index = 0;
+    if (seg)
+        for (PLIST_ENTRY e = heap->Segments.Flink; e != &heap->Segments && e != &seg->Links; e = e->Flink)
+            index++;
+    memset(entry, 0, sizeof(*entry));
+    entry->DataAddress = b + 1;
+    entry->OverheadBytes = sizeof(HEAP_BLOCK);
+    entry->SegmentIndex = (UCHAR)index;
+    if (b->Flags & BLOCK_BUSY) {
+        entry->Flags = WALK_BUSY;
+        entry->DataSize = usable_size(b);
+        entry->OverheadBytes += (UCHAR)(b->Unused < 0x40 ? b->Unused : 0x40);
+    } else {
+        entry->DataSize = (SIZE_T)b->Size * HEAP_GRANULE - sizeof(HEAP_BLOCK);
+    }
+}
+
+static HEAP_SEGMENT *segment_of(PHEAP heap, PVOID address)
+{
+    for (PLIST_ENTRY e = heap->Segments.Flink; e != &heap->Segments; e = e->Flink) {
+        HEAP_SEGMENT *seg = CONTAINING_RECORD(e, HEAP_SEGMENT, Links);
+        if ((PUCHAR)address > (PUCHAR)seg && (PUCHAR)address < (PUCHAR)seg + seg->Size)
+            return seg;
+    }
+    return nullptr;
+}
+
+/* the first entry after the segment, or the first of the large blocks. */
+static NTSTATUS walk_from_segment_end(PHEAP heap, PLIST_ENTRY next_segment, HEAP_WALK_ENTRY *entry)
+{
+    if (next_segment != &heap->Segments) {
+        walk_segment(heap, CONTAINING_RECORD(next_segment, HEAP_SEGMENT, Links), entry);
+        return STATUS_SUCCESS;
+    }
+    if (!IsListEmpty(&heap->LargeBlocks)) {
+        HEAP_LARGE *large = CONTAINING_RECORD(heap->LargeBlocks.Flink, HEAP_LARGE, Links);
+        walk_block(heap, nullptr, (HEAP_BLOCK *)(large + 1), entry);
+        return STATUS_SUCCESS;
+    }
+    return STATUS_NO_MORE_ENTRIES;
+}
+
+NTDLL_EXPORT NTSTATUS NTAPI RtlWalkHeap(PVOID handle, PVOID walk)
+{
+    PHEAP heap = handle;
+    HEAP_WALK_ENTRY *entry = walk;
+    if (!heap || heap->Signature != HEAP_SIGNATURE || !entry)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = STATUS_SUCCESS;
+    lock_heap(heap, 0);
+    if (!entry->DataAddress) {
+        if (!IsListEmpty(&heap->Segments))
+            walk_segment(heap, CONTAINING_RECORD(heap->Segments.Flink, HEAP_SEGMENT, Links), entry);
+        else
+            status = walk_from_segment_end(heap, &heap->Segments, entry);
+    } else if (entry->Flags & WALK_SEGMENT) {
+        HEAP_SEGMENT *seg = entry->DataAddress;
+        PLIST_ENTRY e = heap->Segments.Flink;
+        while (e != &heap->Segments && e != &seg->Links)
+            e = e->Flink;
+        if (e == &heap->Segments) {
+            status = STATUS_INVALID_PARAMETER;
+        } else {
+            walk_block(heap, seg, (HEAP_BLOCK *)(seg + 1), entry);
+        }
+    } else {
+        HEAP_BLOCK *b = (HEAP_BLOCK *)entry->DataAddress - 1;
+        if (((ULONG_PTR)entry->DataAddress & (HEAP_GRANULE - 1)) || b->Magic != BLOCK_MAGIC) {
+            status = STATUS_INVALID_PARAMETER;
+        } else if (b->Flags & BLOCK_LARGE) {
+            HEAP_LARGE *large = (HEAP_LARGE *)b - 1;
+            if (large->Links.Flink == &heap->LargeBlocks)
+                status = STATUS_NO_MORE_ENTRIES;
+            else
+                walk_block(heap, nullptr, (HEAP_BLOCK *)(CONTAINING_RECORD(large->Links.Flink, HEAP_LARGE, Links) + 1),
+                           entry);
+        } else {
+            HEAP_SEGMENT *seg = segment_of(heap, b);
+            HEAP_BLOCK *n = next_block(b);
+            if (!seg)
+                status = STATUS_INVALID_PARAMETER;
+            else if (n)
+                walk_block(heap, seg, n, entry);
+            else
+                status = walk_from_segment_end(heap, seg->Links.Flink, entry);
+        }
+    }
+    unlock_heap(heap, 0);
+    return status;
+}
+
 NTDLL_EXPORT BOOLEAN NTAPI RtlValidateHeap(PVOID handle, ULONG flags, PVOID p)
 {
     PHEAP heap = handle;
