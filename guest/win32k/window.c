@@ -1003,6 +1003,7 @@ void WndActivate(WND *w, BOOLEAN click)
     InputSetForeground(w);
     if (w->Thread)
         w->Thread->Active = WndHandle(w);
+    ImeFocusChanged();
     if (WndIsTopLevel(w)) {
         WND *parent = w->Parent;
         unlink_window(w);
@@ -1039,6 +1040,7 @@ void WndSetFocus(WND *w)
     }
     WND *old = WndLookup(old_h);
     t->Focus = WndHandle(w);
+    ImeFocusChanged();
     if (old)
         MsgSend(old, WM_KILLFOCUS, (WPARAM)WndHandle(w), 0);
     if (w && alive(w) && t->Focus == WndHandle(w))

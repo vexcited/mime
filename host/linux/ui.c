@@ -244,25 +244,69 @@ static uint32_t modifiers_of(SDL_Keymod mod)
     return m;
 }
 
+/* where the guest enters text, in the pixels of the screen; the host window that has the keyboard shows it. */
+static struct {
+    bool valid;
+    uint32_t window;
+    MimeRect screen;
+    int32_t cursor;
+} g_text_area;
+
+/* puts the area in the host window that has the keyboard, else the one it was set for. main thread. */
+static void apply_text_area(void)
+{
+    if (!g_text_area.valid)
+        return;
+    UiWindow *w = nullptr;
+    SDL_Window *focus = SDL_GetKeyboardFocus();
+    if (focus)
+        w = find_by_sdl(SDL_GetWindowID(focus));
+    if (!w || !w->window)
+        w = find_window(g_text_area.window);
+    if (!w || !w->window)
+        return;
+    MimeRect host = host_part(&w->config);
+    Fit fit = window_fit(w);
+    int32_t left = w->config.rect.left + host.left, top = w->config.rect.top + host.top;
+    MimeRect r = g_text_area.screen;
+    SDL_Rect rect = {(int)lround(fit.x + (r.left - left) * fit.scale), (int)lround(fit.y + (r.top - top) * fit.scale),
+                     MIME_MAX(1, (int)lround((r.right - r.left) * fit.scale)),
+                     MIME_MAX(1, (int)lround((r.bottom - r.top) * fit.scale))};
+    /* the caret is an offset from the left of the area. */
+    SDL_SetTextInputArea(w->window, &rect, (int)lround((g_text_area.cursor - r.left) * fit.scale));
+}
+
+/* the area is relative to the window it was made for, which may not be the one the keyboard is in. */
 void mime_ui_set_text_area(uint32_t id, MimeRect r, int32_t cursor)
 {
     UiWindow *w = find_window(id);
     if (!w || !w->window)
         return;
-    MimeRect host = host_part(&w->config);
-    Fit fit = window_fit(w);
-    SDL_Rect rect = {(int)lround(fit.x + (r.left - host.left) * fit.scale),
-                     (int)lround(fit.y + (r.top - host.top) * fit.scale),
-                     MIME_MAX(1, (int)lround((r.right - r.left) * fit.scale)),
-                     MIME_MAX(1, (int)lround((r.bottom - r.top) * fit.scale))};
-    SDL_SetTextInputArea(w->window, &rect, (int)lround(cursor * fit.scale));
+    g_text_area.window = id;
+    g_text_area.screen = (MimeRect){r.left + w->config.rect.left, r.top + w->config.rect.top,
+                                    r.right + w->config.rect.left, r.bottom + w->config.rect.top};
+    g_text_area.cursor = cursor + w->config.rect.left;
+    g_text_area.valid = true;
+    apply_text_area();
 }
 
+/*
+ * the composition of a window is dropped. wayland has no call for it in sdl, so the text input is turned off and on
+ * again, which the protocol says resets what the input method holds.
+ */
 void mime_ui_clear_composition(uint32_t id)
 {
     UiWindow *w = find_window(id);
-    if (w && w->window)
-        SDL_ClearComposition(w->window);
+    SDL_Window *focus = SDL_GetKeyboardFocus();
+    SDL_Window *window = focus ? focus : (w ? w->window : nullptr);
+    if (!window)
+        return;
+    if (g_wayland && SDL_TextInputActive(window)) {
+        SDL_StopTextInput(window);
+        SDL_StartTextInput(window);
+    } else {
+        SDL_ClearComposition(window);
+    }
 }
 
 uint32_t mime_ui_modifiers(void)
@@ -824,8 +868,14 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
         MimeRect oh = host_part(&owner->config);
         int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale);
         int y = (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / scale);
-        /* a tooltip does not grab the keyboard and the pointer, and takes no input; a menu does. */
         SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
+        /*
+         * sdl hands the keyboard to a popup menu on its own account, though the compositor does not (sdl asks for
+         * no grab), so the text input of the owner would go off with it and the keys would carry the popup's
+         * window. the keyboard stays where the compositor has it.
+         */
+        if (g_wayland)
+            kind |= SDL_WINDOW_NOT_FOCUSABLE;
         w->window = SDL_CreatePopupWindow(owner->window, x, y, width, height, flags | kind);
     } else {
         SDL_PropertiesID props = SDL_CreateProperties();
@@ -854,7 +904,9 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     SDL_SetRenderVSync(w->renderer, 0);
     update_pixel_size(w);
     SDL_SetWindowHitTest(w->window, hit_test, (void *)(uintptr_t)w->id);
-    SDL_StartTextInput(w->window);
+    /* the owner of a popup is where the keyboard and its text input are, see above. */
+    if (!(popup && g_wayland))
+        SDL_StartTextInput(w->window);
     if (owner && owner->window && !popup)
         SDL_SetWindowParent(w->window, owner->window);
     return true;
@@ -2022,6 +2074,9 @@ static void handle_event(const SDL_Event *e)
             MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FOCUS, .window_id = w->id,
                                  .x = e->type == SDL_EVENT_WINDOW_FOCUS_GAINED};
             emit(&ev);
+            /* the input method of the window that has the keyboard needs to know where text is entered. */
+            if (ev.x)
+                apply_text_area();
         }
         break;
     }

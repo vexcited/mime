@@ -976,6 +976,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
             UserReference(&w->Header);
             InputSetForeground(nullptr);
             t->Active = nullptr;
+            ImeFocusChanged();
             MsgSend(w, WM_NCACTIVATE, FALSE, 0);
             if (!w->Header.Destroyed)
                 MsgSend(w, WM_ACTIVATE, WA_INACTIVE, 0);

@@ -912,6 +912,7 @@ ULONG ClipboardKindOfFormat(UINT format);
 /* ime.c */
 void ImeHostEvent(const MimeInputEvent *ev);
 void ImeWindowDestroyed(WND *w);
+void ImeFocusChanged(void);
 LRESULT ImeDefaultCompositionChars(WND *w);
 
 /* dnd.c */

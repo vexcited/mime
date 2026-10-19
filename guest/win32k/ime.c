@@ -227,6 +227,9 @@ void ImeWindowDestroyed(WND *w)
     if (w->Thread && w->Thread->TsfSink == WndHandle(w))
         w->Thread->TsfSink = nullptr;
     if (g_ime.Window == WndHandle(w)) {
+        if (g_ime.Composing)
+            HalMimeHypercall(MIME_HC_IME_CONTROL, MIME_IME_CANCEL, (ULONG64)(ULONG_PTR)g_ime.Window, 0, 0, 0, 0,
+                             nullptr);
         g_ime.Composing = FALSE;
         g_ime.CompLength = 0;
         g_ime.Window = nullptr;
@@ -248,6 +251,44 @@ LRESULT ImeDefaultCompositionChars(WND *w)
         MsgSend(w, WM_IME_CHAR, result[i], 1);
     }
     return 0;
+}
+
+/* ends the composition of the program: its text is the result when completed, else dropped; the host forgets it. */
+static void finish_composition(BOOLEAN complete)
+{
+    HalMimeHypercall(MIME_HC_IME_CONTROL, MIME_IME_CANCEL, (ULONG64)(ULONG_PTR)g_ime.Window, 0, 0, 0, 0, nullptr);
+    if (complete && g_ime.CompLength) {
+        memcpy(g_ime.Result, g_ime.Comp, g_ime.CompLength * sizeof(WCHAR));
+        g_ime.ResultLength = g_ime.CompLength;
+        g_ime.CompLength = 0;
+        send(g_ime.Window, WM_IME_COMPOSITION, g_ime.Result[0], GCS_RESULTSTR | GCS_RESULTREADSTR | GCS_RESULTCLAUSE);
+    } else {
+        g_ime.CompLength = 0;
+        send(g_ime.Window, WM_IME_COMPOSITION, 0, 0);
+    }
+    end_composition();
+}
+
+/*
+ * a composition belongs to the window that has the focus: when the focus moves to another window, or to none, it is
+ * completed where it was (guess: an input method of windows completes it when its context is deactivated).
+ */
+void ImeFocusChanged(void)
+{
+    if (!g_ime.Composing)
+        return;
+    WND *w = WndLookup(g_ime.Window);
+    if (w && target_window() == w)
+        return;
+    if (!w) {
+        g_ime.Composing = FALSE;
+        g_ime.CompLength = 0;
+        g_ime.Window = nullptr;
+        return;
+    }
+    UserReference(&w->Header);
+    finish_composition(TRUE);
+    UserDereference(&w->Header);
 }
 
 /* tells the host where text is entered: client coordinates of a window of this thread. */
@@ -325,19 +366,7 @@ ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULO
         if (g_ime.Composing) {
             WND *w = WndLookup(g_ime.Window);
             if (w && w->Thread == t) {
-                HalMimeHypercall(MIME_HC_IME_CONTROL, MIME_IME_CANCEL, (ULONG64)(ULONG_PTR)g_ime.Window, 0, 0, 0, 0,
-                                 nullptr);
-                if (a == CPS_COMPLETE && g_ime.CompLength) {
-                    memcpy(g_ime.Result, g_ime.Comp, g_ime.CompLength * sizeof(WCHAR));
-                    g_ime.ResultLength = g_ime.CompLength;
-                    g_ime.CompLength = 0;
-                    send(g_ime.Window, WM_IME_COMPOSITION, g_ime.Result[0],
-                         GCS_RESULTSTR | GCS_RESULTREADSTR | GCS_RESULTCLAUSE);
-                } else {
-                    g_ime.CompLength = 0;
-                    send(g_ime.Window, WM_IME_COMPOSITION, 0, 0);
-                }
-                end_composition();
+                finish_composition(a == CPS_COMPLETE);
                 result = 1;
             }
         }

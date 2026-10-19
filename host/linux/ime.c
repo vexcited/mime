@@ -185,10 +185,13 @@ uint64_t mime_ui_ime_area(uint32_t window, const MimeRect *area, int32_t cursor)
 static void cancel_main(void *arg)
 {
     uint32_t window = (uint32_t)(uintptr_t)arg;
+    bool composing = g_composing || g_clear_held;
     drop_texts();
     g_composing = false;
     g_clear_held = false;
-    mime_ui_clear_composition(window);
+    /* an input method holds nothing for a program that was not composing, so there is nothing to reset. */
+    if (composing)
+        mime_ui_clear_composition(window);
 }
 
 uint64_t mime_ui_ime_control(uint32_t op, uint32_t window, uint64_t *value)
