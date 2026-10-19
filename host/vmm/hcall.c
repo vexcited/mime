@@ -409,6 +409,9 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_IME_CONTROL:
         status = mime_ui_ime_control((uint32_t)regs[1], (uint32_t)regs[2], &value);
         break;
+    case MIME_HC_WIN_MOVESIZE:
+        status = mime_ui_window_movesize((uint32_t)regs[1], (uint32_t)regs[2]);
+        break;
     case MIME_HC_MONITORS: {
         uint64_t capacity = regs[2] < MIME_MAX_MONITORS ? regs[2] : MIME_MAX_MONITORS;
         MimeMonitor *dst = capacity ? mime_vm_phys(vm, regs[1], capacity * sizeof(MimeMonitor)) : nullptr;

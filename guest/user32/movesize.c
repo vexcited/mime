@@ -5,6 +5,11 @@
  * sees WM_ENTERSIZEMOVE, WM_SIZING or WM_MOVING at each step and
  * WM_EXITSIZEMOVE at the end; Escape puts the window back. started from the
  * keyboard, the arrows move or size by 8 pixels and Enter ends.
+ *
+ * a host that moves windows itself (the compositor of a Wayland desktop) is
+ * asked to take over once the pointer has dragged past the drag distance, and
+ * then does the moving or sizing under the pointer; the loop ends with the
+ * button, which win32k lets go of for the guest.
  */
 #include "user32_private.h"
 
@@ -19,6 +24,9 @@ typedef struct MOVESIZE {
     POINT Origin;
     POINT Offset; /* keyboard steps */
     BOOL Tracked; /* the pointer moved during the loop */
+    BOOL Mouse; /* a press started it */
+    BOOL Host; /* the host moves or sizes the window */
+    BOOL HostRefused;
     BOOL Maximized;
     BOOL RestoredMaximized;
     WINDOWPLACEMENT Placement;
@@ -76,9 +84,33 @@ static void set_cursor(const MOVESIZE *ms)
     SetCursor(LoadCursorW(nullptr, id));
 }
 
+/*
+ * hands the window to the host: a size at once, as the edge was pressed, a move once the pointer has dragged, so a
+ * click or a double click on a caption stays the program's. true when it took over.
+ */
+static BOOL host_takes_over(MOVESIZE *ms, POINT pt)
+{
+    if (!ms->Mouse || ms->Parent || (ms->Size && !ms->Edge))
+        return FALSE;
+    if (!ms->Size) {
+        LONG threshold = GetSystemMetrics(SM_CXDRAG);
+        LONG dx = pt.x - ms->Origin.x, dy = pt.y - ms->Origin.y;
+        if (dx > -threshold && dx < threshold && dy > -threshold && dy < threshold)
+            return FALSE;
+    }
+    if (NtUserCallTwoParam((ULONG_PTR)ms->Window, ms->Size ? ms->Edge : 0, MIME_TWOPARAM_HOSTMOVESIZE)) {
+        ms->Host = TRUE;
+        return TRUE;
+    }
+    ms->HostRefused = TRUE;
+    return FALSE;
+}
+
 /* places the window for the mouse at pt, in screen coordinates. */
 static void track(MOVESIZE *ms, POINT pt)
 {
+    if (ms->Host || (!ms->HostRefused && host_takes_over(ms, pt)))
+        return;
     LONG dx = pt.x - ms->Origin.x + ms->Offset.x, dy = pt.y - ms->Origin.y + ms->Offset.y;
     if (ms->Maximized) {
         LONG threshold = GetSystemMetrics(SM_CXDRAG);
@@ -215,10 +247,13 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
         ms.Limits.ptMaxTrackSize.y = ms.Limits.ptMinTrackSize.y;
     /* a press on the frame names the edge or the caption; a menu or keyboard command does not. */
     BOOL mouse = (command & 0xF) != 0;
+    ms.Mouse = mouse;
 
     SetCapture(hwnd);
     set_cursor(&ms);
     SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+    if (size)
+        host_takes_over(&ms, ms.Origin);
     BOOL cancel = FALSE;
     for (;;) {
         if (GetCapture() != hwnd)

@@ -658,6 +658,7 @@ typedef struct WND {
     HICON Icon;
     HICON IconSmall;
     UINT Dpi;
+    POINT MinTrack, MaxTrack; /* from the last WM_GETMINMAXINFO, 0 until there was one */
     HICON HostIcon;
     ULONG HostStateRequest;
     SURFACE *Surface; /* top level windows */
@@ -938,6 +939,9 @@ HMONITOR MonitorHandle(ULONG index);
 LONG MonitorIndexOfHandle(HMONITOR monitor);
 ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine);
 void WndHostDisplay(WND *w, ULONG monitor);
+void WndHostSize(WND *w, LONG width, LONG height);
+BOOLEAN HostMoveSize(WND *w, ULONG edge);
+void HostPart(WND *w, RECT *part);
 void WndCheckMonitorDpi(WND *w);
 UINT WndHostDpi(WND *w);
 int MetricsGet(int index, UINT dpi);

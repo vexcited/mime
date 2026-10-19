@@ -14,6 +14,11 @@ typedef void (*MimeUiInputSink)(void *ctx, const MimeInputEvent *ev);
 void mime_ui_init(MimeUiInputSink sink, void *ctx);
 void mime_ui_run(void);
 void mime_ui_get_display(MimeDisplayInfo *info);
+/*
+ * the compositor moves (edge 0) or sizes (a WMSZ_* edge) a window with the pointer, whose button of a press is
+ * still held: MIME_HC_STATUS_OK when it took over, unsupported where windows are moved by the guest.
+ */
+uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge);
 /* the monitors, the primary first, at most capacity of them: how many there are. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity);
 

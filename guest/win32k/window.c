@@ -459,6 +459,8 @@ void WndGetMinMaxInfo(WND *w, MINMAXINFO *mmi)
         send_kernel(w, WM_GETMINMAXINFO, 0, mmi, MIME_LPARAM_INOUT, sizeof(*mmi));
     mmi->ptMaxTrackSize.x = W32Max(mmi->ptMaxTrackSize.x, mmi->ptMinTrackSize.x);
     mmi->ptMaxTrackSize.y = W32Max(mmi->ptMaxTrackSize.y, mmi->ptMinTrackSize.y);
+    w->MinTrack = mmi->ptMinTrackSize;
+    w->MaxTrack = mmi->ptMaxTrackSize;
 }
 
 /* computes the client rectangle for a window rectangle given in parent coordinates. */
@@ -763,6 +765,24 @@ void WndHostDisplay(WND *w, ULONG monitor)
         WndSetPos(w, nullptr, max.left, max.top, max.right - max.left, max.bottom - max.top,
                   SWP_NOZORDER | SWP_NOACTIVATE);
     }
+}
+
+/*
+ * the compositor sized a window, by a drag of its border, a tiling or a maximize: its host window is width by height
+ * guest pixels, and the rectangle is that and what the window has around the part the host window covers.
+ */
+void WndHostSize(WND *w, LONG width, LONG height)
+{
+    if (!w || !WndIsTopLevel(w) || (w->Style & WS_MINIMIZE) || (w->Flags & (WNDF_DESTROYING | WNDF_FULLSCREEN)) ||
+        width < 1 || height < 1)
+        return;
+    RECT part;
+    HostPart(w, &part);
+    LONG cx = width + (w->WindowRect.right - w->WindowRect.left) - (part.right - part.left);
+    LONG cy = height + (w->WindowRect.bottom - w->WindowRect.top) - (part.bottom - part.top);
+    if (cx == w->WindowRect.right - w->WindowRect.left && cy == w->WindowRect.bottom - w->WindowRect.top)
+        return;
+    WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 static void deactivate_minimized(WND *w)

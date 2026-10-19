@@ -137,6 +137,11 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         InputCursorMoved();
         r = 1;
         break;
+    case MIME_TWOPARAM_HOSTMOVESIZE: {
+        WND *w = WndLookup((HWND)param1);
+        r = w && WndIsTopLevel(w) && HostMoveSize(w, (ULONG)param2);
+        break;
+    }
     case MIME_TWOPARAM_GETMONITORINFO:
     case MIME_TWOPARAM_GETMONITORS:
         r = MonitorCall(param1, param2, routine);

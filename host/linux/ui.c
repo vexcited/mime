@@ -45,6 +45,12 @@ typedef struct UiWindow {
     uint32_t state_request;
     int state_command;
     SDL_DisplayID display; /* the display last reported to the guest */
+    bool maximized;        /* the compositor has the window maximized */
+    int want_w, want_h;    /* the last size asked of the compositor, in sdl window coordinates */
+    uint64_t want_ms;      /* and when */
+    uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen */
+    uint64_t interactive_until; /* the compositor sizes the window under the pointer, as long as sizes come */
+    bool size_recheck;     /* a look at the size is due once the guest's request had its time */
     double wheel_x, wheel_y;
     double motion_x, motion_y; /* fractions of guest pixels moved, kept for the next motion */
 
@@ -69,6 +75,7 @@ static Uint32 g_call_event;   /* the event type of calls posted to the main thre
 static pthread_t g_main_thread;
 static double g_scale = 1.0;  /* guest pixels per sdl window coordinate of the primary display, the system's */
 static MimeDisplayInfo g_display;
+static bool g_wayland;        /* the video driver is wayland's */
 
 /* the displays of the host, the primary first, in the guest's virtual screen. */
 typedef struct HostMonitor {
@@ -570,6 +577,18 @@ static const KeyMap g_keymap[SDL_SCANCODE_COUNT] = {
     [SDL_SCANCODE_RALT] = {0xA5, 0x138}, [SDL_SCANCODE_RGUI] = {0x5C, 0x15C},
 };
 
+/* a character of Alt and a key that waits to be sent, unless the next event says the key typed text. */
+static MimeInputEvent g_alt_char;
+static bool g_alt_char_pending;
+
+static void alt_char_flush(void)
+{
+    if (g_alt_char_pending) {
+        g_alt_char_pending = false;
+        emit(&g_alt_char);
+    }
+}
+
 static void emit_key(const SDL_KeyboardEvent *key)
 {
     UiWindow *w = find_by_sdl(key->windowID);
@@ -588,6 +607,20 @@ static void emit_key(const SDL_KeyboardEvent *key)
     if (key->repeat)
         ev.flags = 2;
     emit(&ev);
+    /*
+     * the text of a key is typed text, which sdl does not make while Alt is held: a program hears of Alt and a key
+     * as WM_SYSCHAR, which opens the system menu on Alt+Space and menus on Alt and a letter. AltGr is Alt to sdl
+     * and types its text, so the character waits for the next event to see if text follows.
+     */
+    if (key->down && (key->mod & SDL_KMOD_ALT) && !(key->mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI))) {
+        SDL_Keycode code = SDL_GetKeyFromScancode(key->scancode, key->mod & SDL_KMOD_SHIFT, false);
+        if (code >= 0x20 && code < 0x7F) {
+            alt_char_flush();
+            g_alt_char = (MimeInputEvent){.type = MIME_INPUT_CHAR, .window_id = w->id, .ch = (uint32_t)code,
+                                          .modifiers = ev.modifiers, .scancode = ev.scancode};
+            g_alt_char_pending = true;
+        }
+    }
 }
 
 static void emit_text(const SDL_TextInputEvent *text)
@@ -708,6 +741,10 @@ static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, vo
     uint32_t id = (uint32_t)(uintptr_t)data;
     UiWindow *w = find_window(id);
     if (!w || (w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)))
+        return SDL_HITTEST_NORMAL;
+    /* on wayland the press reaches the guest, which asks the compositor to move or size the window once the
+       pointer drags, and a double click on a caption is its own. */
+    if (g_wayland)
         return SDL_HITTEST_NORMAL;
     MimeRect host = host_part(&w->config);
     double scale = config_scale(&w->config);
@@ -921,6 +958,12 @@ static void request_window_state(UiWindow *w, int command)
     emit(&ev);
 }
 
+/* a size limit of a window rectangle in guest pixels as one of the host window in sdl window coordinates, 0 for none. */
+static int limit_of(int32_t limit, int outside, double scale)
+{
+    return limit > 0 ? MIME_MAX(1, (int)lround((limit - outside) / scale)) : 0;
+}
+
 static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
 {
     if (w->state_pending) {
@@ -941,13 +984,20 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
                                                   host_part(cfg).right - host_part(cfg).left ||
                         host_part(&w->config).bottom - host_part(&w->config).top !=
                             host_part(cfg).bottom - host_part(cfg).top;
+    bool limits_changed = !w->configured || w->config.min_width != cfg->min_width ||
+                          w->config.min_height != cfg->min_height || w->config.max_width != cfg->max_width ||
+                          w->config.max_height != cfg->max_height || w->config.dpi != cfg->dpi ||
+                          ((w->config.flags ^ cfg->flags) & MIME_WIN_RESIZABLE) ||
+                          host_part(&w->config).right - host_part(&w->config).left != host_part(cfg).right - host_part(cfg).left ||
+                          host_part(&w->config).bottom - host_part(&w->config).top != host_part(cfg).bottom - host_part(cfg).top;
     pthread_mutex_lock(&w->lock);
     w->config = *cfg;
     pthread_mutex_unlock(&w->lock);
     w->configured = true;
     if (!w->window && !(cfg->flags & MIME_WIN_VISIBLE))
         return;
-    if (!w->window && !create_host_window(w, cfg))
+    bool fresh = !w->window;
+    if (fresh && !create_host_window(w, cfg))
         return;
 
     char title[1024];
@@ -955,9 +1005,23 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     SDL_SetWindowTitle(w->window, title);
     MimeRect host = host_part(cfg);
     double scale = config_scale(cfg);
-    if (size_changed)
-        SDL_SetWindowSize(w->window, MIME_MAX(1, (int)lround((host.right - host.left) / scale)),
-                          MIME_MAX(1, (int)lround((host.bottom - host.top) / scale)));
+    /* a window the compositor is sizing under the pointer is what it says, not what the guest last heard. */
+    if (size_changed && w->interactive_until <= now_ms()) {
+        w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
+        w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
+        w->want_ms = now_ms();
+        SDL_SetWindowSize(w->window, w->want_w, w->want_h);
+    }
+    if (!w->popup && (limits_changed || fresh)) {
+        /* the compositor sizes a window the guest lets be sized, within the limits of its program. */
+        SDL_SetWindowResizable(w->window, (cfg->flags & MIME_WIN_RESIZABLE) != 0);
+        int dw = (cfg->rect.right - cfg->rect.left) - (host.right - host.left);
+        int dh = (cfg->rect.bottom - cfg->rect.top) - (host.bottom - host.top);
+        int min_w = limit_of(cfg->min_width, dw, scale), min_h = limit_of(cfg->min_height, dh, scale);
+        int max_w = limit_of(cfg->max_width, dw, scale), max_h = limit_of(cfg->max_height, dh, scale);
+        SDL_SetWindowMinimumSize(w->window, min_w, min_h);
+        SDL_SetWindowMaximumSize(w->window, max_w, max_h);
+    }
     if (w->popup) {
         MimeRect oh = host_part(&owner->config);
         SDL_SetWindowPosition(w->window,
@@ -992,8 +1056,16 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         w->shown = false;
     }
     bool fullscreen = (cfg->flags & (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE)) == (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE);
+    /* the compositor maximizes a window the guest maximized, on its monitor, and gives it back when it is not. */
+    bool maximize = !fullscreen && !w->popup && (cfg->flags & (MIME_WIN_MAXIMIZED | MIME_WIN_VISIBLE)) ==
+                                                    (MIME_WIN_MAXIMIZED | MIME_WIN_VISIBLE);
+    if (maximize && !w->maximized)
+        SDL_MaximizeWindow(w->window);
+    else if (!maximize && w->maximized && !w->popup && !fullscreen)
+        SDL_RestoreWindow(w->window);
     if (fullscreen != w->fullscreen && !w->popup) {
         w->fullscreen = fullscreen;
+        w->fullscreen_ms = now_ms();
         if (fullscreen) {
             /* a window that covers a monitor goes fullscreen on that one. */
             SDL_DisplayID display = display_of_rect(&cfg->rect);
@@ -1318,6 +1390,84 @@ static bool make_subsurface(UiWindow *w, struct wl_surface *parent, MimeRect cli
     return true;
 }
 
+typedef struct MoveSize {
+    uint32_t window, edge;
+    uint64_t status;
+    bool done;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} MoveSize;
+
+/* the xdg_toplevel requests of the compositor's own move and size, by their opcodes. */
+enum { XDG_TOPLEVEL_MOVE = 5, XDG_TOPLEVEL_RESIZE = 6 };
+
+/* xdg_toplevel's resize edges for the guest's WMSZ_* ones. */
+static uint32_t xdg_edge(uint32_t edge)
+{
+    static const uint32_t edges[] = {0, 4, 8, 1, 5, 9, 2, 6, 10};
+    return edge < sizeof(edges) / sizeof(edges[0]) ? edges[edge] : 0;
+}
+
+static void movesize_main(void *arg)
+{
+    MoveSize *m = arg;
+    UiWindow *w = find_window(m->window);
+    void *seat;
+    uint32_t serial;
+    m->status = MIME_HC_STATUS_UNSUPPORTED;
+    if (g_wayland && w && w->window && w->shown && !w->popup && !w->fullscreen && m->edge <= 8 &&
+        mime_ui_pointer_press(&seat, &serial)) {
+        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+        struct wl_proxy *toplevel = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
+        struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+        if (toplevel && display) {
+            uint32_t version = wl_proxy_get_version(toplevel);
+            if (!m->edge) {
+                wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_MOVE, nullptr, version, 0, seat, serial);
+            } else {
+                wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_RESIZE, nullptr, version, 0, seat, serial,
+                                       xdg_edge(m->edge));
+                w->interactive_until = now_ms() + 3000;
+            }
+            wl_display_flush(display);
+            m->status = MIME_HC_STATUS_OK;
+        }
+    }
+    pthread_mutex_lock(&m->lock);
+    m->done = true;
+    pthread_cond_signal(&m->cond);
+    pthread_mutex_unlock(&m->lock);
+}
+
+uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge)
+{
+    if (!g_video || !g_wayland)
+        return MIME_HC_STATUS_UNSUPPORTED;
+    MoveSize *m = calloc(1, sizeof(*m));
+    if (!m)
+        return MIME_HC_STATUS_UNSUPPORTED;
+    m->window = window;
+    m->edge = edge;
+    pthread_mutex_init(&m->lock, nullptr);
+    pthread_cond_init(&m->cond, nullptr);
+    on_main(movesize_main, m);
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 2;
+    pthread_mutex_lock(&m->lock);
+    while (!m->done && pthread_cond_timedwait(&m->cond, &m->lock, &ts) == 0)
+        ;
+    bool done = m->done;
+    uint64_t status = m->status;
+    pthread_mutex_unlock(&m->lock);
+    if (done) {
+        pthread_mutex_destroy(&m->lock);
+        pthread_cond_destroy(&m->cond);
+        free(m);
+    }
+    return done ? status : MIME_HC_STATUS_UNSUPPORTED;
+}
+
 typedef struct VkAttach {
     uint32_t id;
     MimeRect client;
@@ -1620,6 +1770,7 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_call_event = SDL_RegisterEvents(1);
     g_video = g_call_event != 0;
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
+    g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
         mime_info("no game controllers (%s)", SDL_GetError());
     if (g_video) {
@@ -1735,6 +1886,58 @@ void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
     on_main(rumble_main, c);
 }
 
+static void report_size(UiWindow *w);
+
+static void size_recheck_main(void *arg)
+{
+    UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
+    if (w) {
+        w->size_recheck = false;
+        report_size(w);
+    }
+}
+
+static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval)
+{
+    on_main(size_recheck_main, data);
+    return 0;
+}
+
+/*
+ * the compositor gave a window a size the guest did not ask for: it maximized or tiled it, or sizes it under the
+ * pointer. what the guest asked for comes back as an event too, and is dropped.
+ */
+static void report_size(UiWindow *w)
+{
+    if (!w->window || w->popup || w->fullscreen || !w->configured || !w->shown)
+        return;
+    uint64_t now = now_ms();
+    int logical_w, logical_h;
+    SDL_GetWindowSize(w->window, &logical_w, &logical_h);
+    bool interactive = w->interactive_until > now;
+    if (!w->maximized && !interactive) {
+        if (logical_w == w->want_w && logical_h == w->want_h)
+            return;
+        /* the size may be one before the answer to the guest's: look again when that had its time. */
+        if (now - w->want_ms < 250) {
+            if (!w->size_recheck) {
+                w->size_recheck = true;
+                SDL_AddTimer(260, size_timer, (void *)(uintptr_t)w->id);
+            }
+            return;
+        }
+    }
+    if (interactive)
+        w->interactive_until = now + 500;
+    MimeRect host = host_part(&w->config);
+    double scale = config_scale(&w->config);
+    int32_t width = (int32_t)lround(logical_w * scale), height = (int32_t)lround(logical_h * scale);
+    if (abs(width - (host.right - host.left)) <= 1 && abs(height - (host.bottom - host.top)) <= 1)
+        return;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_SIZE, .window_id = w->id, .width = width, .height = height};
+    emit(&ev);
+}
+
 /* tells the guest which monitor a window is on, as the compositor shows it. */
 static void report_window_display(UiWindow *w, SDL_DisplayID display)
 {
@@ -1757,6 +1960,10 @@ static void handle_event(const SDL_Event *e)
     /* a composition that went empty and was followed by nothing else was cancelled. */
     if (e->type != SDL_EVENT_TEXT_INPUT && e->type != SDL_EVENT_TEXT_EDITING)
         mime_ime_flush();
+    if (e->type == SDL_EVENT_TEXT_INPUT)
+        g_alt_char_pending = false;
+    else
+        alt_char_flush();
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
@@ -1857,8 +2064,50 @@ static void handle_event(const SDL_Event *e)
     }
     case SDL_EVENT_WINDOW_RESTORED: {
         UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w && (w->config.flags & MIME_WIN_MINIMIZED))
+        if (w && (w->config.flags & MIME_WIN_MINIMIZED)) {
             request_window_state(w, 9);
+        } else if (w && w->maximized && !(SDL_GetWindowFlags(w->window) & SDL_WINDOW_MAXIMIZED)) {
+            /* the compositor took the window out of the maximized state, as it does when it is dragged. */
+            w->maximized = false;
+            if (w->config.flags & MIME_WIN_MAXIMIZED)
+                request_window_state(w, 9);
+        }
+        break;
+    }
+    case SDL_EVENT_WINDOW_MAXIMIZED: {
+        UiWindow *w = find_by_sdl(e->window.windowID);
+        if (w && !w->popup) {
+            w->maximized = true;
+            if (!(w->config.flags & MIME_WIN_MAXIMIZED) && !w->fullscreen)
+                request_window_state(w, 3);
+        }
+        break;
+    }
+    case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+    case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: {
+        UiWindow *w = find_by_sdl(e->window.windowID);
+        bool enter = e->type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN;
+        /* the compositor changed it, not the guest asking: the guest's own change comes back as an event too. */
+        if (w && !w->popup && w->fullscreen != enter && now_ms() - w->fullscreen_ms > 500) {
+            w->fullscreen = enter;
+            MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FULLSCREEN, .window_id = w->id, .flags = enter};
+            MimeRect rect = {0, 0, 0, 0};
+            if (enter) {
+                SDL_DisplayID display = SDL_GetDisplayForWindow(w->window);
+                pthread_mutex_lock(&g_monitor_lock);
+                for (uint32_t i = 0; i < g_monitor_count; i++)
+                    if (g_monitors[i].id == display)
+                        rect = g_monitors[i].info.rect;
+                pthread_mutex_unlock(&g_monitor_lock);
+                if (rect.right <= rect.left)
+                    rect = (MimeRect){0, 0, (int32_t)g_display.width, (int32_t)g_display.height};
+            }
+            ev.x = rect.left;
+            ev.y = rect.top;
+            ev.width = rect.right - rect.left;
+            ev.height = rect.bottom - rect.top;
+            emit(&ev);
+        }
         break;
     }
     case SDL_EVENT_WINDOW_EXPOSED:
@@ -1867,6 +2116,8 @@ static void handle_event(const SDL_Event *e)
         UiWindow *w = find_by_sdl(e->window.windowID);
         if (w)
             update_pixel_size(w);
+        if (w && e->type == SDL_EVENT_WINDOW_RESIZED)
+            report_size(w);
         if (w && w->shown)
             draw(w);
         break;
@@ -1927,12 +2178,15 @@ void mime_ui_run(void)
     }
     SDL_Event e;
     while (!g_stop) {
-        /* an input method's clear is held until the next event says whether text follows. */
-        if (mime_ime_pending()) {
-            if (SDL_WaitEventTimeout(&e, 30))
+        /* an input method's clear is held until the next event says whether text follows, and so is the character
+           of Alt and a key. */
+        if (mime_ime_pending() || g_alt_char_pending) {
+            if (SDL_WaitEventTimeout(&e, g_alt_char_pending ? 10 : 30))
                 handle_event(&e);
-            else
+            else {
                 mime_ime_flush();
+                alt_char_flush();
+            }
         } else if (SDL_WaitEvent(&e)) {
             handle_event(&e);
         } else {

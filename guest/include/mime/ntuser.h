@@ -189,6 +189,7 @@ enum {
     MIME_TWOPARAM_GETMONITORINFO,       /* monitor, MONITORINFO pointer */
     MIME_TWOPARAM_WINDOWFROMPOINT,      /* x, y */
     MIME_TWOPARAM_GETMONITORS,          /* MIME_MONITOR_INFO array, its capacity -> how many monitors there are */
+    MIME_TWOPARAM_HOSTMOVESIZE,         /* window, 0 or a WMSZ_* edge: the host moves or sizes it under the pointer -> TRUE when it does */
 };
 
 /* a monitor as NtUserCallTwoParam's MIME_TWOPARAM_GETMONITORS hands it out. */

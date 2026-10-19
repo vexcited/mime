@@ -1243,6 +1243,12 @@ void mime_ui_get_display(MimeDisplayInfo *info)
     g_display = *info;
 }
 
+/* windows are moved by macOS itself from the caption areas, and sized by the guest. */
+uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
 /* the screen the display describes is the only monitor here. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
 {

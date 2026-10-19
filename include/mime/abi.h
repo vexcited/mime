@@ -297,6 +297,9 @@ enum {
 
     /* the host's monitors. */
     MIME_HC_MONITORS = 0x53,     /* (pa, capacity) -> count: fills up to capacity MimeMonitor, the primary first */
+
+    /* the compositor moves or sizes a window with the pointer, the button of a press still held. */
+    MIME_HC_WIN_MOVESIZE = 0x54, /* (window_id, edge) edge 0 moves, 1 to 8 are the WMSZ_* sizing edges; OK when the compositor took over */
 };
 
 /* MIME_HC_IME_CONTROL: whether the host has an input method protocol at all (1 or 0), and ending a composition. */
@@ -672,6 +675,8 @@ typedef struct MimeWinConfig {
     uint32_t owner_id; /* keeps owned windows above their owner, 0 if none */
     uint32_t process_id;
     uint32_t dpi; /* of the pixels the window is drawn in: the host window is that many guest pixels per 96 of its size, 0 for the display's */
+    int32_t min_width, min_height; /* the smallest and largest size the window can be sized to, window rectangle in guest pixels, 0 for no limit */
+    int32_t max_width, max_height;
     uint32_t image_chars;
     uint16_t image_path[512];
     uint32_t title_chars;
@@ -764,6 +769,8 @@ enum {
     MIME_INPUT_IME = 26,
     /* the compositor shows a window on another monitor: x is its index in MIME_HC_MONITORS' list. */
     MIME_INPUT_WINDOW_DISPLAY = 27,
+    /* the compositor gave the window another size: width and height are those of the host window, the part of the window it covers, in guest pixels. */
+    MIME_INPUT_WINDOW_SIZE = 28,
 };
 
 enum {

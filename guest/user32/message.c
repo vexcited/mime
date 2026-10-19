@@ -350,7 +350,8 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
         GlobalUnlock(copy);
         return (LRESULT)copy;
     }
-    if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result) || UserDefScrollBars(hwnd, msg, wparam, lparam, &result))
+    if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result) || UserDefScrollBars(hwnd, msg, wparam, lparam, &result) ||
+        UserDefSystemMenu(hwnd, msg, wparam, lparam, &result))
         return result;
     if (msg == WM_SYSTIMER && UserCaretTimer(hwnd, wparam))
         return 0;

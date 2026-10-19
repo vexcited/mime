@@ -81,6 +81,7 @@ static inline void UserFreeConverted(const void *converted, const void *original
 
 /* the move and size loop of DefWindowProc, movesize.c. */
 BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+BOOL UserDefSystemMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 
 /* message translation between ansi and unicode, ansi.c. */
 typedef struct CONV {

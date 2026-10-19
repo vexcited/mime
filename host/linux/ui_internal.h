@@ -44,6 +44,9 @@ void mime_ui_clear_composition(uint32_t window);
 /* dnd.c: whether the compositor has the text input protocol. */
 bool mime_ui_has_text_input(void);
 
+/* dnd.c: the wl_seat and the serial of the last press of a pointer button, false before there was one. */
+bool mime_ui_pointer_press(void **seat, uint32_t *serial);
+
 /* dnd.c, called by the main loop once the display is up. */
 void mime_dnd_init(void);
 

@@ -114,6 +114,34 @@ static void host_icon(WND *w)
         w->HostIcon = icon;
 }
 
+/* the window relative part of a window that is drawn, and the part that takes the mouse. */
+static void host_rects(WND *w, const FRAME_METRICS *m, RECT *visible, RECT *input)
+{
+    FrameGetVisibleRect(w, visible);
+    *input = *visible;
+    /* a sizable frame takes the mouse over its invisible resize border, like the dwm's. */
+    if ((w->Style & WS_THICKFRAME) && !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) && m->VisibleInset)
+        *input = (RECT){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
+}
+
+/* the part of a window its host window covers: what is drawn and the resize border around it. */
+void HostPart(WND *w, RECT *part)
+{
+    FRAME_METRICS m;
+    RECT visible, input;
+    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    host_rects(w, &m, &visible, &input);
+    if (visible.right <= visible.left || visible.bottom <= visible.top)
+        visible = (RECT){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
+    *part = visible;
+    if (input.right > input.left && input.bottom > input.top) {
+        part->left = W32Min(part->left, input.left);
+        part->top = W32Min(part->top, input.top);
+        part->right = W32Max(part->right, input.right);
+        part->bottom = W32Max(part->bottom, input.bottom);
+    }
+}
+
 void HostConfigure(WND *w, BOOLEAN activate)
 {
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
@@ -165,15 +193,12 @@ void HostConfigure(WND *w, BOOLEAN activate)
     if (w->ExStyle & WS_EX_TRANSPARENT)
         c->flags |= MIME_WIN_NOINPUT;
     c->rect = mime_rect(&w->WindowRect);
-    RECT vis;
-    FrameGetVisibleRect(w, &vis);
-    c->visible = mime_rect(&vis);
-    c->input = c->visible;
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
-    /* a sizable frame takes the mouse over its invisible resize border, like the dwm's. */
-    if ((w->Style & WS_THICKFRAME) && !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) && m.VisibleInset)
-        c->input = (MimeRect){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
+    RECT vis, input;
+    host_rects(w, &m, &vis, &input);
+    c->visible = mime_rect(&vis);
+    c->input = mime_rect(&input);
     c->corner_radius = corner_radius(w, &m);
     if (w->Flags & WNDF_ACTIVE_FRAME)
         c->flags |= MIME_WIN_ACTIVE;
@@ -190,6 +215,16 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->drag[i] = mime_rect(&drag[i]);
     c->owner_id = w->Owner ? window_id(w->Owner) : 0;
     c->dpi = WndHostDpi(w);
+    /* the compositor keeps a window it sizes to what its program allows, the largest only when the program set one. */
+    if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MINIMIZE)) {
+        POINT min = w->MinTrack.x ? w->MinTrack : (POINT){MetricsGet(SM_CXMINTRACK, WndGetDpi(w)), MetricsGet(SM_CYMINTRACK, WndGetDpi(w))};
+        c->min_width = min.x;
+        c->min_height = min.y;
+        if (w->MaxTrack.x && w->MaxTrack.x < MetricsGet(SM_CXMAXTRACK, WndGetDpi(w)))
+            c->max_width = w->MaxTrack.x;
+        if (w->MaxTrack.y && w->MaxTrack.y < MetricsGet(SM_CYMAXTRACK, WndGetDpi(w)))
+            c->max_height = w->MaxTrack.y;
+    }
     if (w->Thread && w->Thread->Process) {
         W32PROCESS *process = w->Thread->Process;
         c->process_id = (ULONG)(ULONG_PTR)process->Pid;
@@ -207,6 +242,17 @@ void HostConfigure(WND *w, BOOLEAN activate)
         host_icon(w);
     else
         w->HostIcon = nullptr;
+}
+
+/* the compositor moves or sizes a window under the pointer. it takes the button with it, the guest sees it go up. */
+BOOLEAN HostMoveSize(WND *w, ULONG edge)
+{
+    if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
+        return FALSE;
+    if (HalMimeHypercall(MIME_HC_WIN_MOVESIZE, window_id(w), edge, 0, 0, 0, 0, nullptr) != MIME_HC_STATUS_OK)
+        return FALSE;
+    InputReleaseLeftButton();
+    return TRUE;
 }
 
 void HostPresent(WND *w, const RECT *dirty)

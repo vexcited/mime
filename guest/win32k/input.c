@@ -948,6 +948,9 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
     case MIME_INPUT_WINDOW_DISPLAY:
         WndHostDisplay(w, (ULONG)ev->x);
         break;
+    case MIME_INPUT_WINDOW_SIZE:
+        WndHostSize(w, ev->width, ev->height);
+        break;
     case MIME_INPUT_WINDOW_FOCUS:
         if (ev->x) {
             if (InputForeground != w && !(w->Style & WS_DISABLED))

@@ -800,6 +800,16 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
     }
 }
 
+/* the seat and the serial of the last press of a pointer button, for the compositor to move or size a window by. */
+bool mime_ui_pointer_press(void **seat, uint32_t *serial)
+{
+    if (!g_seat || !g_press_serial)
+        return false;
+    *seat = g_seat;
+    *serial = g_press_serial;
+    return true;
+}
+
 static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
 {
 }
