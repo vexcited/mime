@@ -162,8 +162,14 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, p->has_maintenance5 = TRUE)
     if (p->has_maintenance5)
         WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, p->has_dgc = TRUE)
-    /* acceleration structures and ray queries need all of these. */
-    BOOL rt_extensions = has_extension(available, count, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) &&
+    /*
+     * Acceleration structures and ray queries need all of these. They cost the host's driver 30 ms of the 80 a
+     * device takes, which a program that does not use direct3d 12 should not pay: they are on when direct3d 12 is
+     * loaded when the device is made, so a browser's direct3d 11 device, made before its WebGPU loads direct3d 12,
+     * is without ray tracing, which WebGPU has no use for.
+     */
+    BOOL rt_extensions = GetModuleHandleW(L"d3d12.dll") &&
+                         has_extension(available, count, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) &&
                          has_extension(available, count, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
                          has_extension(available, count, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
                          has_extension(available, count, VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
