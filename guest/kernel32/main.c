@@ -135,3 +135,9 @@ DECLSPEC_EXPORT UINT WINAPI timeEndPeriod(UINT period)
     RtlReleaseSRWLockExclusive(&g_time_lock);
     return result;
 }
+
+/* the older name of DnsHostnameToComputerNameExW, which only kernel32 has. */
+DECLSPEC_EXPORT BOOL WINAPI DnsHostnameToComputerNameW(LPCWSTR host, LPWSTR name, LPDWORD size)
+{
+    return DnsHostnameToComputerNameExW(host, name, size);
+}

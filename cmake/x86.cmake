@@ -21,15 +21,14 @@ mime_dll(kernelbase x86 BASE 0x76000000 SOURCES ${sources} OBJECTS x86-chkstk OP
     IMPORTS ntdll)
 
 # kernel32 forwards to kernelbase, but for what only x86's kernel32 exports itself, stdcall decorated.
-set(kernel32_own InterlockedIncrement@4 InterlockedDecrement@4 InterlockedExchange@8 InterlockedExchangeAdd@8
-    InterlockedCompareExchange@12 InterlockedCompareExchange64@20 timeGetTime@0 timeGetSystemTime@8
-    timeGetDevCaps@8 timeBeginPeriod@4 timeEndPeriod@4)
+set(kernel32_own timeGetTime@0 timeGetSystemTime@8
+    timeGetDevCaps@8 timeBeginPeriod@4 timeEndPeriod@4 DnsHostnameToComputerNameW@12)
 add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
     COMMAND Python3::Interpreter tools/gendef.py forward32 ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
         ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def ${kernel32_own}
     DEPENDS tools/gendef.py ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} VERBATIM)
-mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/x86/interlocked.S
+mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def DEPENDS ${gen86}/kernel32.imports.def)
 

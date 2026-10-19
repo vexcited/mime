@@ -511,6 +511,68 @@ static const GEO_DATA *find_geo(GEOID id)
     return nullptr;
 }
 
+static DWORD g_nls_updates;
+
+DWORD WINAPI NlsGetCacheUpdateCount(void)
+{
+    return g_nls_updates;
+}
+
+#define GEOCLASS_REGION_MASK 14
+#define GEOCLASS_NATION_MASK 16
+
+/* the nations of the data, or the regions that hold them, with the parent a caller names. */
+WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPROC proc)
+{
+    if (!proc) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (geo_class != 0 && geo_class != GEOCLASS_REGION_MASK && geo_class != GEOCLASS_NATION_MASK) {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+    if (geo_class == GEOCLASS_REGION_MASK)
+        return TRUE;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_geos); i++) {
+        if (parent && g_geos[i].Parent != parent)
+            continue;
+        if (!proc(g_geos[i].Id))
+            break;
+    }
+    return TRUE;
+}
+
+/* the nation of the user is kept in the international settings, by name and by number. */
+WINBASEAPI BOOL WINAPI SetUserGeoID(GEOID id)
+{
+    const GEO_DATA *g = find_geo(id);
+    if (!g) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    HKEY key;
+    LSTATUS status = RegCreateKeyExW(HKEY_CURRENT_USER, L"Control Panel\\International\\Geo", 0, nullptr, 0, KEY_SET_VALUE,
+                                     nullptr, &key, nullptr);
+    if (status) {
+        KbSetError((DWORD)status);
+        return FALSE;
+    }
+    WCHAR number[16];
+    KbFormat(number, RTL_NUMBER_OF(number), L"%d", g->Id);
+    status = RegSetValueExW(key, L"Nation", 0, REG_SZ, (const BYTE *)number, (DWORD)(wcslen(number) + 1) * sizeof(WCHAR));
+    if (!status)
+        status = RegSetValueExW(key, L"Name", 0, REG_SZ, (const BYTE *)g->Iso2,
+                                (DWORD)(wcslen(g->Iso2) + 1) * sizeof(WCHAR));
+    RegCloseKey(key);
+    if (status) {
+        KbSetError((DWORD)status);
+        return FALSE;
+    }
+    g_nls_updates++;
+    return TRUE;
+}
+
 WINBASEAPI int WINAPI GetGeoInfoW(GEOID id, GEOTYPE type, LPWSTR data, int length, LANGID language)
 {
     const GEO_DATA *g = find_geo(id);

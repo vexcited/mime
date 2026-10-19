@@ -520,6 +520,14 @@ typedef BOOL(CALLBACK *DATEFMT_ENUMPROCW)(LPWSTR format);
 typedef BOOL(CALLBACK *TIMEFMT_ENUMPROCW)(LPWSTR format);
 typedef BOOL(CALLBACK *CALINFO_ENUMPROCW)(LPWSTR info);
 typedef BOOL(CALLBACK *GEO_ENUMPROC)(GEOID id);
+typedef DWORD LGRPID;
+typedef BOOL(CALLBACK *LANGUAGEGROUP_ENUMPROCW)(LGRPID group, LPWSTR id_string, LPWSTR name, DWORD flags,
+                                                LONG_PTR param);
+typedef BOOL(CALLBACK *LANGGROUPLOCALE_ENUMPROCW)(LGRPID group, LCID locale, LPWSTR locale_string, LONG_PTR param);
+
+#define LGRPID_INSTALLED 0x00000001
+#define LGRPID_SUPPORTED 0x00000002
+#define LGRPID_WESTERN_EUROPE 0x0001
 
 /* ------------------------------------------------------------------ functions */
 
@@ -543,6 +551,15 @@ WINBASEAPI BOOL WINAPI IsValidLocale(LCID locale, DWORD flags);
 WINBASEAPI BOOL WINAPI IsValidLocaleName(LPCWSTR name);
 WINBASEAPI GEOID WINAPI GetUserGeoID(GEOTYPE geo_class);
 WINBASEAPI int WINAPI GetUserDefaultGeoName(LPWSTR name, int size);
+WINBASEAPI BOOL WINAPI SetUserGeoID(GEOID id);
+WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPROC proc);
+WINBASEAPI BOOL WINAPI IsValidLanguageGroup(LGRPID group, DWORD flags);
+WINBASEAPI BOOL WINAPI EnumSystemLanguageGroupsW(LANGUAGEGROUP_ENUMPROCW proc, DWORD flags, LONG_PTR param);
+WINBASEAPI BOOL WINAPI EnumLanguageGroupLocalesW(LANGGROUPLOCALE_ENUMPROCW proc, LGRPID group, DWORD flags,
+                                                 LONG_PTR param);
+WINBASEAPI BOOL WINAPI VerifyScripts(DWORD flags, LPCWSTR locale_scripts, int locale_length, LPCWSTR test_scripts,
+                                     int test_length);
+WINBASEAPI DWORD WINAPI NlsGetCacheUpdateCount(void);
 WINBASEAPI int WINAPI GetLocaleInfoW(LCID locale, LCTYPE type, LPWSTR data, int size);
 WINBASEAPI int WINAPI GetLocaleInfoA(LCID locale, LCTYPE type, LPSTR data, int size);
 WINBASEAPI int WINAPI GetLocaleInfoEx(LPCWSTR name, LCTYPE type, LPWSTR data, int size);

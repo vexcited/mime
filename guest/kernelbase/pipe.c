@@ -294,6 +294,22 @@ WINBASEAPI BOOL WINAPI GetNamedPipeClientProcessId(HANDLE pipe, PULONG id)
     return pipe_attribute(pipe, "ClientProcessId", id);
 }
 
+/* the name of the machine of the client of a pipe, which the pipe file system only has for clients over the network. */
+WINBASEAPI BOOL WINAPI GetNamedPipeClientComputerNameW(HANDLE pipe, LPWSTR name, ULONG length)
+{
+    IO_STATUS_BLOCK iosb;
+    static const char attribute[] = "ClientComputerName";
+    NTSTATUS status = NtFsControlFile(pipe, nullptr, nullptr, nullptr, &iosb, FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE,
+                                      (PVOID)attribute, sizeof(attribute), name, length);
+    if (NT_SUCCESS(status))
+        return TRUE;
+    KbSetStatus(status);
+    /* a client on this machine has no name to give. */
+    if (GetLastError() == ERROR_NOT_FOUND)
+        KbSetError(ERROR_PIPE_LOCAL);
+    return FALSE;
+}
+
 WINBASEAPI BOOL WINAPI GetNamedPipeServerProcessId(HANDLE pipe, PULONG id)
 {
     return pipe_attribute(pipe, "ServerProcessId", id);

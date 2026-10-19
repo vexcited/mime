@@ -733,3 +733,63 @@ USHORT WINAPI QueryDepthSList(PSLIST_HEADER head)
 {
     return RtlQueryDepthSList(head);
 }
+
+#ifdef __x86_64__
+/* the 32 bit form of this one is fastcall in windows and has no export here. */
+PSLIST_ENTRY WINAPI InterlockedPushListSList(PSLIST_HEADER head, PSLIST_ENTRY first, PSLIST_ENTRY last, ULONG count)
+{
+    return InterlockedPushListSListEx(head, first, last, count);
+}
+#endif
+
+/*
+ * the operations that compilers make inline are exports of kernelbase too. The functions get other names in source,
+ * as the inline ones of the header have these, and take the symbols of the exports as their labels.
+ */
+#ifdef __i386__
+#define EXPORT_LABEL(name, bytes) "_" name "@" #bytes
+#else
+#define EXPORT_LABEL(name, bytes) name
+#endif
+
+DECLSPEC_EXPORT LONG WINAPI KbInterlockedIncrement(LONG volatile *p) __asm__(EXPORT_LABEL("InterlockedIncrement", 4));
+DECLSPEC_EXPORT LONG WINAPI KbInterlockedDecrement(LONG volatile *p) __asm__(EXPORT_LABEL("InterlockedDecrement", 4));
+DECLSPEC_EXPORT LONG WINAPI KbInterlockedExchange(LONG volatile *p, LONG value)
+    __asm__(EXPORT_LABEL("InterlockedExchange", 8));
+DECLSPEC_EXPORT LONG WINAPI KbInterlockedExchangeAdd(LONG volatile *p, LONG value)
+    __asm__(EXPORT_LABEL("InterlockedExchangeAdd", 8));
+DECLSPEC_EXPORT LONG WINAPI KbInterlockedCompareExchange(LONG volatile *p, LONG exchange, LONG comparand)
+    __asm__(EXPORT_LABEL("InterlockedCompareExchange", 12));
+DECLSPEC_EXPORT LONG64 WINAPI KbInterlockedCompareExchange64(LONG64 volatile *p, LONG64 exchange, LONG64 comparand)
+    __asm__(EXPORT_LABEL("InterlockedCompareExchange64", 20));
+
+LONG WINAPI KbInterlockedIncrement(LONG volatile *p)
+{
+    return InterlockedIncrement(p);
+}
+
+LONG WINAPI KbInterlockedDecrement(LONG volatile *p)
+{
+    return InterlockedDecrement(p);
+}
+
+LONG WINAPI KbInterlockedExchange(LONG volatile *p, LONG value)
+{
+    return InterlockedExchange(p, value);
+}
+
+LONG WINAPI KbInterlockedExchangeAdd(LONG volatile *p, LONG value)
+{
+    return InterlockedExchangeAdd(p, value);
+}
+
+LONG WINAPI KbInterlockedCompareExchange(LONG volatile *p, LONG exchange, LONG comparand)
+{
+    return InterlockedCompareExchange(p, exchange, comparand);
+}
+
+LONG64 WINAPI KbInterlockedCompareExchange64(LONG64 volatile *p, LONG64 exchange, LONG64 comparand)
+{
+    __atomic_compare_exchange_n(p, &comparand, exchange, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return comparand;
+}

@@ -451,10 +451,32 @@ BOOL WINAPI IsValidLocaleName(LPCWSTR name)
     return lcid && find_locale(lcid);
 }
 
+/* the nation SetUserGeoID kept in the international settings, 0 when none was. */
+static GEOID stored_nation(void)
+{
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\International\\Geo", 0, KEY_QUERY_VALUE, &key))
+        return 0;
+    WCHAR text[16] = {};
+    DWORD size = sizeof(text) - sizeof(WCHAR), type = 0;
+    LSTATUS status = RegQueryValueExW(key, L"Nation", nullptr, &type, (LPBYTE)text, &size);
+    RegCloseKey(key);
+    if (status || type != REG_SZ)
+        return 0;
+    GEOID id = 0;
+    for (const WCHAR *c = text; *c >= '0' && *c <= '9'; c++)
+        id = id * 10 + (*c - '0');
+    return id;
+}
+
 GEOID WINAPI GetUserGeoID(GEOTYPE geo_class)
 {
-    if (geo_class == GEOCLASS_NATION)
+    if (geo_class == GEOCLASS_NATION) {
+        GEOID stored = stored_nation();
+        if (stored)
+            return stored;
         return find_locale(user_lcid()) ? find_locale(user_lcid())->GeoId : 244;
+    }
     if (geo_class == GEOCLASS_REGION)
         return 39070;
     return -1;
@@ -1749,4 +1771,102 @@ BOOL WINAPI GetFileMUIPath(DWORD flags, PCWSTR file, PWSTR language, PULONG lang
 {
     KbSetError(ERROR_FILE_NOT_FOUND);
     return FALSE;
+}
+
+/* ------------------------------------------------------------------ language groups */
+
+/*
+ * language groups 1 to 17 are valid. Only the first has locales here, all of those mime has data for, and it is
+ * both installed and supported.
+ */
+BOOL WINAPI IsValidLanguageGroup(LGRPID group, DWORD flags)
+{
+    return !(flags & ~(DWORD)(LGRPID_INSTALLED | LGRPID_SUPPORTED)) &&
+           (flags & (LGRPID_INSTALLED | LGRPID_SUPPORTED)) != (LGRPID_INSTALLED | LGRPID_SUPPORTED) && group - 1 <= 0x10;
+}
+
+BOOL WINAPI EnumSystemLanguageGroupsW(LANGUAGEGROUP_ENUMPROCW proc, DWORD flags, LONG_PTR param)
+{
+    if (!proc || (flags & ~(DWORD)(LGRPID_INSTALLED | LGRPID_SUPPORTED)) ||
+        (flags & (LGRPID_INSTALLED | LGRPID_SUPPORTED)) == (LGRPID_INSTALLED | LGRPID_SUPPORTED)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR id[16];
+    KbFormat(id, RTL_NUMBER_OF(id), L"%08x", LGRPID_WESTERN_EUROPE);
+    WCHAR name[] = L"Western Europe and United States";
+    proc(LGRPID_WESTERN_EUROPE, id, name, LGRPID_INSTALLED, param);
+    return TRUE;
+}
+
+BOOL WINAPI EnumLanguageGroupLocalesW(LANGGROUPLOCALE_ENUMPROCW proc, LGRPID group, DWORD flags, LONG_PTR param)
+{
+    if (!proc || flags || group - 1 > 0x10) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (group != LGRPID_WESTERN_EUROPE)
+        return TRUE;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_locales); i++) {
+        if (g_locales[i]->Lcid == LOCALE_INVARIANT)
+            continue;
+        WCHAR text[16];
+        KbFormat(text, RTL_NUMBER_OF(text), L"%08x", g_locales[i]->Lcid);
+        if (!proc(group, g_locales[i]->Lcid, text, param))
+            break;
+    }
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ script lists */
+
+static BOOL script_list_valid(PCWSTR s, int n)
+{
+    for (int i = 0; i + 5 <= n; i += 5) {
+        if (s[i] < 'A' || s[i] > 'Z' || s[i + 1] < 'a' || s[i + 1] > 'z' || s[i + 2] < 'a' || s[i + 2] > 'z' ||
+            s[i + 3] < 'a' || s[i + 3] > 'z' || s[i + 4] != ';')
+            return FALSE;
+    }
+    return n % 5 == 0;
+}
+
+/*
+ * whether the scripts of a text are all among those of a locale. Both are lists of four letter names, each followed
+ * by a semicolon. With the flag 1 the common script Latn is let through. FALSE with no error is a script that is not
+ * in the locale's list, with the error 87 for lists that are not in the form.
+ */
+BOOL WINAPI VerifyScripts(DWORD flags, LPCWSTR locale_scripts, int locale_length, LPCWSTR test_scripts, int test_length)
+{
+    if (flags > 1) {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+    if (!locale_scripts || locale_length < -1 || !test_scripts || test_length < -1) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (locale_length == -1)
+        locale_length = (int)wcslen(locale_scripts);
+    if (test_length == -1)
+        test_length = (int)wcslen(test_scripts);
+    if (locale_length > 0 && !locale_scripts[locale_length - 1])
+        locale_length--;
+    if (test_length > 0 && !test_scripts[test_length - 1])
+        test_length--;
+    if (!script_list_valid(locale_scripts, locale_length) || !script_list_valid(test_scripts, test_length)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (int i = 0; i < test_length; i += 5) {
+        if ((flags & 1) && !memcmp(test_scripts + i, L"Latn;", 5 * sizeof(WCHAR)))
+            continue;
+        BOOL found = FALSE;
+        for (int j = 0; j < locale_length && !found; j += 5)
+            found = !memcmp(test_scripts + i, locale_scripts + j, 5 * sizeof(WCHAR));
+        if (!found) {
+            KbSetError(ERROR_SUCCESS);
+            return FALSE;
+        }
+    }
+    return TRUE;
 }

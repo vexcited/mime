@@ -809,3 +809,91 @@ BOOL WINAPI Beep(DWORD frequency, DWORD duration)
 {
     return TRUE;
 }
+
+/* ------------------------------------------------------------------ safe mode and computer names */
+
+/* 0 for a normal start, 1 for safe mode, 2 for safe mode with a network: the option the loader recorded. */
+BOOL WINAPI GetOsSafeBootMode(PDWORD flags)
+{
+    if (!flags) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UNICODE_STRING path, value;
+    RtlInitUnicodeString(&path, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\SafeBoot\\Option");
+    RtlInitUnicodeString(&value, L"OptionValue");
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    *flags = 0;
+    HANDLE h;
+    NTSTATUS status = NtOpenKey(&h, KEY_QUERY_VALUE, &oa);
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND)
+        return TRUE;
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    ULONG buffer[8], length;
+    status = NtQueryValueKey(h, &value, 2 /* KeyValuePartialInformation */, buffer, sizeof(buffer), &length);
+    NtClose(h);
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND)
+        return TRUE;
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    if (buffer[1] == REG_DWORD && buffer[2] == sizeof(DWORD))
+        *flags = buffer[3];
+    return TRUE;
+}
+
+/* the name of the machine on the old networks from a dns host name: its first 15 characters in upper case. */
+BOOL WINAPI DnsHostnameToComputerNameExW(LPCWSTR host, LPWSTR name, LPDWORD size)
+{
+    if (!host || !size) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR first[16], upper[16];
+    DWORD length = 0;
+    while (length < 15 && host[length]) {
+        first[length] = host[length];
+        length++;
+    }
+    first[length] = 0;
+    if (length && LCMapStringEx(nullptr, LCMAP_UPPERCASE, first, (int)length + 1, upper, 16, nullptr, nullptr, 0))
+        memcpy(first, upper, (length + 1) * sizeof(WCHAR));
+    DWORD capacity = *size;
+    *size = length;
+    if (capacity < length) {
+        KbSetError(ERROR_MORE_DATA);
+        return FALSE;
+    }
+    if (capacity && name) {
+        DWORD n = capacity <= length ? capacity - 1 : length;
+        memcpy(name, first, n * sizeof(WCHAR));
+        name[n] = 0;
+    }
+    return TRUE;
+}
+
+/* changing the name needs the rights of an administrator, which a program here never has. */
+BOOL WINAPI SetComputerNameA(LPCSTR name)
+{
+    KbSetError(ERROR_ACCESS_DENIED);
+    return FALSE;
+}
+
+BOOL WINAPI SetComputerNameExA(COMPUTER_NAME_FORMAT format, LPCSTR name)
+{
+    KbSetError(ERROR_ACCESS_DENIED);
+    return FALSE;
+}
+
+BOOL WINAPI SetComputerNameExW(COMPUTER_NAME_FORMAT format, LPCWSTR name)
+{
+    KbSetError(ERROR_ACCESS_DENIED);
+    return FALSE;
+}
+
+BOOL WINAPI SetComputerNameEx2W(COMPUTER_NAME_FORMAT format, DWORD flags, LPCWSTR name)
+{
+    KbSetError(ERROR_ACCESS_DENIED);
+    return FALSE;
+}

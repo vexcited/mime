@@ -613,3 +613,50 @@ BOOL WINAPI SetSystemTimeAdjustment(DWORD adjustment, BOOL disabled)
     KbSetError(ERROR_PRIVILEGE_NOT_HELD);
     return FALSE;
 }
+
+/* ------------------------------------------------------------------ dynamic zones, years and the other way round */
+
+/* the first and the last year the rules of a zone are kept for, in the Dynamic DST key of the zone. */
+DWORD WINAPI GetDynamicTimeZoneInformationEffectiveYears(const DYNAMIC_TIME_ZONE_INFORMATION *info, LPDWORD first,
+                                                         LPDWORD last)
+{
+    if (!info || !first || !last)
+        return ERROR_INVALID_PARAMETER;
+    WCHAR path[256];
+    if (!info->TimeZoneKeyName[0] || wcslen(info->TimeZoneKeyName) + RTL_NUMBER_OF(TZ_ZONES) + 16 > RTL_NUMBER_OF(path))
+        return ERROR_FILE_NOT_FOUND;
+    wcscpy(path, TZ_ZONES);
+    wcscat(path, info->TimeZoneKeyName);
+    wcscat(path, L"\\Dynamic DST");
+    HKEY key;
+    LSTATUS status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &key);
+    if (status)
+        return (DWORD)status;
+    DWORD low = 0, high = 0, size = sizeof(DWORD), type = 0;
+    status = RegQueryValueExW(key, L"FirstEntry", nullptr, &type, (LPBYTE)&low, &size);
+    if (!status && type != REG_DWORD)
+        status = ERROR_FILE_NOT_FOUND;
+    if (!status) {
+        size = sizeof(DWORD);
+        status = RegQueryValueExW(key, L"LastEntry", nullptr, &type, (LPBYTE)&high, &size);
+        if (!status && type != REG_DWORD)
+            status = ERROR_FILE_NOT_FOUND;
+    }
+    RegCloseKey(key);
+    if (status)
+        return (DWORD)status;
+    *first = low;
+    *last = high;
+    return ERROR_SUCCESS;
+}
+
+BOOL WINAPI TzSpecificLocalTimeToSystemTimeEx(const DYNAMIC_TIME_ZONE_INFORMATION *tz, const SYSTEMTIME *local,
+                                              LPSYSTEMTIME universal)
+{
+    TIME_ZONE_INFORMATION info;
+    if (tz && local)
+        GetTimeZoneInformationForYear(local->wYear, (PDYNAMIC_TIME_ZONE_INFORMATION)tz, &info);
+    else if (tz)
+        memcpy(&info, tz, sizeof(info));
+    return TzSpecificLocalTimeToSystemTime(tz ? &info : nullptr, local, universal);
+}

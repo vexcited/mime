@@ -507,6 +507,100 @@ WINBASEAPI BOOL WINAPI FlushViewOfFile(LPCVOID base, SIZE_T size);
 #define COPY_FILE_COPY_SYMLINK 0x00000800
 #define COPY_FILE_NO_BUFFERING 0x00001000
 
+/* CopyFile2 */
+typedef enum COPYFILE2_MESSAGE_TYPE {
+    COPYFILE2_CALLBACK_NONE = 0,
+    COPYFILE2_CALLBACK_CHUNK_STARTED,
+    COPYFILE2_CALLBACK_CHUNK_FINISHED,
+    COPYFILE2_CALLBACK_STREAM_STARTED,
+    COPYFILE2_CALLBACK_STREAM_FINISHED,
+    COPYFILE2_CALLBACK_POLL_CONTINUE,
+    COPYFILE2_CALLBACK_ERROR,
+    COPYFILE2_CALLBACK_MAX
+} COPYFILE2_MESSAGE_TYPE;
+
+typedef enum COPYFILE2_MESSAGE_ACTION {
+    COPYFILE2_PROGRESS_CONTINUE = 0,
+    COPYFILE2_PROGRESS_CANCEL,
+    COPYFILE2_PROGRESS_STOP,
+    COPYFILE2_PROGRESS_QUIET,
+    COPYFILE2_PROGRESS_PAUSE
+} COPYFILE2_MESSAGE_ACTION;
+
+typedef struct COPYFILE2_MESSAGE {
+    COPYFILE2_MESSAGE_TYPE Type;
+    DWORD dwPadding;
+    union {
+        struct {
+            DWORD dwStreamNumber;
+            DWORD dwReserved;
+            HANDLE hSourceFile;
+            HANDLE hDestinationFile;
+            ULARGE_INTEGER uliChunkNumber;
+            ULARGE_INTEGER uliChunkSize;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliTotalFileSize;
+        } ChunkStarted;
+        struct {
+            DWORD dwStreamNumber;
+            DWORD dwFlags;
+            HANDLE hSourceFile;
+            HANDLE hDestinationFile;
+            ULARGE_INTEGER uliChunkNumber;
+            ULARGE_INTEGER uliChunkSize;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliStreamBytesTransferred;
+            ULARGE_INTEGER uliTotalFileSize;
+            ULARGE_INTEGER uliTotalBytesTransferred;
+        } ChunkFinished;
+        struct {
+            DWORD dwStreamNumber;
+            DWORD dwReserved;
+            HANDLE hSourceFile;
+            HANDLE hDestinationFile;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliTotalFileSize;
+        } StreamStarted;
+        struct {
+            DWORD dwStreamNumber;
+            DWORD dwReserved;
+            HANDLE hSourceFile;
+            HANDLE hDestinationFile;
+        } StreamFinished;
+        struct {
+            DWORD dwReserved;
+        } PollContinue;
+        struct {
+            DWORD CopyPhase;
+            DWORD dwStreamNumber;
+            HRESULT hrFailure;
+            DWORD dwReserved;
+            ULARGE_INTEGER uliChunkNumber;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliStreamBytesTransferred;
+            ULARGE_INTEGER uliTotalFileSize;
+            ULARGE_INTEGER uliTotalBytesTransferred;
+        } Error;
+    } Info;
+} COPYFILE2_MESSAGE;
+
+typedef COPYFILE2_MESSAGE_ACTION(CALLBACK *PCOPYFILE2_PROGRESS_ROUTINE)(const COPYFILE2_MESSAGE *message,
+                                                                        PVOID context);
+
+typedef struct COPYFILE2_EXTENDED_PARAMETERS {
+    DWORD dwSize;
+    DWORD dwCopyFlags;
+    BOOL *pfCancel;
+    PCOPYFILE2_PROGRESS_ROUTINE pProgressRoutine;
+    PVOID pvCallbackContext;
+} COPYFILE2_EXTENDED_PARAMETERS;
+
+WINBASEAPI HRESULT WINAPI CopyFile2(PCWSTR source, PCWSTR destination, COPYFILE2_EXTENDED_PARAMETERS *parameters);
+WINBASEAPI HANDLE WINAPI FindFirstFileNameW(LPCWSTR path, DWORD flags, LPDWORD length, PWSTR buffer);
+WINBASEAPI BOOL WINAPI FindNextFileNameW(HANDLE find, LPDWORD length, PWSTR buffer);
+WINBASEAPI DWORD WINAPI GetCompressedFileSizeW(LPCWSTR name, LPDWORD high);
+WINBASEAPI DWORD WINAPI GetCompressedFileSizeA(LPCSTR name, LPDWORD high);
+
 #define PROGRESS_CONTINUE 0
 #define PROGRESS_CANCEL 1
 #define PROGRESS_STOP 2
@@ -825,6 +919,7 @@ WINBASEAPI HANDLE WINAPI ReOpenFile(HANDLE original, DWORD access, DWORD share, 
 WINBASEAPI BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags);
 WINBASEAPI BOOL WINAPI GetProcessIoCounters(HANDLE process, PIO_COUNTERS counters);
 WINBASEAPI BOOL WINAPI GetNamedPipeClientProcessId(HANDLE pipe, PULONG id);
+WINBASEAPI BOOL WINAPI GetNamedPipeClientComputerNameW(HANDLE pipe, LPWSTR name, ULONG length);
 WINBASEAPI BOOL WINAPI GetNamedPipeServerProcessId(HANDLE pipe, PULONG id);
 WINBASEAPI BOOL WINAPI GetNamedPipeClientSessionId(HANDLE pipe, PULONG id);
 WINBASEAPI BOOL WINAPI GetNamedPipeServerSessionId(HANDLE pipe, PULONG id);
@@ -1815,6 +1910,8 @@ FORCEINLINE void YieldProcessor(void) { __asm__ volatile("yield"); }
 #endif
 
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushEntrySList(PSLIST_HEADER head, PSLIST_ENTRY entry);
+WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushListSList(PSLIST_HEADER head, PSLIST_ENTRY first, PSLIST_ENTRY last,
+                                                        ULONG count);
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushListSListEx(PSLIST_HEADER head, PSLIST_ENTRY first,
                                                           PSLIST_ENTRY last, ULONG count);
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPopEntrySList(PSLIST_HEADER head);
@@ -1851,6 +1948,10 @@ WINBASEAPI BOOL WINAPI SystemTimeToTzSpecificLocalTime(const TIME_ZONE_INFORMATI
                                                        LPSYSTEMTIME local);
 WINBASEAPI BOOL WINAPI TzSpecificLocalTimeToSystemTime(const TIME_ZONE_INFORMATION *tz, const SYSTEMTIME *local,
                                                        LPSYSTEMTIME universal);
+WINBASEAPI DWORD WINAPI GetDynamicTimeZoneInformationEffectiveYears(const DYNAMIC_TIME_ZONE_INFORMATION *info,
+                                                                    LPDWORD first, LPDWORD last);
+WINBASEAPI BOOL WINAPI TzSpecificLocalTimeToSystemTimeEx(const DYNAMIC_TIME_ZONE_INFORMATION *tz,
+                                                         const SYSTEMTIME *local, LPSYSTEMTIME universal);
 WINBASEAPI BOOL WINAPI SystemTimeToTzSpecificLocalTimeEx(const DYNAMIC_TIME_ZONE_INFORMATION *tz,
                                                          const SYSTEMTIME *universal, LPSYSTEMTIME local);
 WINBASEAPI BOOL WINAPI DosDateTimeToFileTime(WORD date, WORD time, LPFILETIME file_time);
@@ -2113,6 +2214,12 @@ WINBASEAPI BOOL WINAPI GetComputerNameA(LPSTR buffer, LPDWORD size);
 WINBASEAPI BOOL WINAPI GetComputerNameExW(COMPUTER_NAME_FORMAT format, LPWSTR buffer, LPDWORD size);
 WINBASEAPI BOOL WINAPI GetComputerNameExA(COMPUTER_NAME_FORMAT format, LPSTR buffer, LPDWORD size);
 WINBASEAPI BOOL WINAPI SetComputerNameW(LPCWSTR name);
+WINBASEAPI BOOL WINAPI SetComputerNameA(LPCSTR name);
+WINBASEAPI BOOL WINAPI SetComputerNameExA(COMPUTER_NAME_FORMAT format, LPCSTR name);
+WINBASEAPI BOOL WINAPI SetComputerNameExW(COMPUTER_NAME_FORMAT format, LPCWSTR name);
+WINBASEAPI BOOL WINAPI SetComputerNameEx2W(COMPUTER_NAME_FORMAT format, DWORD flags, LPCWSTR name);
+WINBASEAPI BOOL WINAPI GetOsSafeBootMode(PDWORD flags);
+WINBASEAPI BOOL WINAPI DnsHostnameToComputerNameExW(LPCWSTR host, LPWSTR name, LPDWORD size);
 WINBASEAPI BOOL WINAPI GetLogicalProcessorInformation(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer,
                                                       PDWORD length);
 WINBASEAPI BOOL WINAPI GetLogicalProcessorInformationEx(LOGICAL_PROCESSOR_RELATIONSHIP relationship,

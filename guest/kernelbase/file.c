@@ -1823,8 +1823,26 @@ BOOL WINAPI FindNextFileW(HANDLE find, LPWIN32_FIND_DATAW data)
     return e != nullptr;
 }
 
+#define NAME_FIND_MAGIC 0x4E444E46u /* "FNDN". */
+
+/* the handle FindFirstFileNameW gives: the names of the links of a file, one by one. */
+typedef struct NAME_FIND {
+    ULONG Magic;
+    ULONG Next;
+    ULONG Count;
+    PWSTR Names[1];
+} NAME_FIND;
+
 BOOL WINAPI FindClose(HANDLE find)
 {
+    NAME_FIND *names = find;
+    if (names && names != INVALID_HANDLE_VALUE && !((ULONG_PTR)names & 7) && names->Magic == NAME_FIND_MAGIC) {
+        names->Magic = 0;
+        for (ULONG i = 0; i < names->Count; i++)
+            KbFree(names->Names[i]);
+        KbFree(names);
+        return TRUE;
+    }
     FIND_STATE *f = find_state(find);
     if (!f)
         return FALSE;
@@ -2054,4 +2072,204 @@ BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags)
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtSetInformationFile(file, &iosb, &info, sizeof(info), FileIoCompletionNotificationInformation);
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+/* ------------------------------------------------------------------ names of links and compressed sizes */
+
+/* copies the next name into the caller's buffer, or says how long the buffer has to be. */
+static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
+{
+    PCWSTR name = f->Names[f->Next];
+    DWORD need = (DWORD)wcslen(name) + 1;
+    DWORD have = *length;
+    *length = need;
+    if (have < need) {
+        KbSetError(ERROR_MORE_DATA);
+        return FALSE;
+    }
+    memcpy(buffer, name, need * sizeof(WCHAR));
+    f->Next++;
+    return TRUE;
+}
+
+/*
+ * the file system tells of one name for a file here, the one it was opened by, so the enumeration holds one link: the
+ * path from the root of the volume.
+ */
+HANDLE WINAPI FindFirstFileNameW(LPCWSTR path, DWORD flags, LPDWORD length, PWSTR buffer)
+{
+    if (flags || !path || !length || (*length && !buffer)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return INVALID_HANDLE_VALUE;
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    WCHAR full[MAX_PATH];
+    DWORD full_length = GetFullPathNameW(path, MAX_PATH, full, nullptr);
+    if (!full_length || full_length >= MAX_PATH)
+        return INVALID_HANDLE_VALUE;
+    PCWSTR link = full;
+    if (full[0] && full[1] == ':')
+        link = full + 2;
+    NAME_FIND *f = KbAllocZero(sizeof(*f));
+    PWSTR copy = KbAlloc((wcslen(link) + 1) * sizeof(WCHAR));
+    if (!f || !copy) {
+        KbFree(f);
+        KbFree(copy);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return INVALID_HANDLE_VALUE;
+    }
+    wcscpy(copy, link);
+    f->Magic = NAME_FIND_MAGIC;
+    f->Count = 1;
+    f->Names[0] = copy;
+    if (!give_link_name(f, length, buffer)) {
+        FindClose(f);
+        return INVALID_HANDLE_VALUE;
+    }
+    return f;
+}
+
+BOOL WINAPI FindNextFileNameW(HANDLE find, LPDWORD length, PWSTR buffer)
+{
+    NAME_FIND *f = find;
+    if (!f || f == INVALID_HANDLE_VALUE || ((ULONG_PTR)f & 7) || f->Magic != NAME_FIND_MAGIC) {
+        KbSetError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    if (!length) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (f->Next >= f->Count) {
+        KbSetError(ERROR_HANDLE_EOF);
+        return FALSE;
+    }
+    return give_link_name(f, length, buffer);
+}
+
+#define FILE_COMPRESSION_INFORMATION_CLASS 28
+
+/* the size on the disk of a compressed or sparse file; the size of the file where the file system does not say. */
+DWORD WINAPI GetCompressedFileSizeW(LPCWSTR name, LPDWORD high)
+{
+    HANDLE file = CreateFileW(name, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return INVALID_FILE_SIZE;
+    IO_STATUS_BLOCK iosb;
+    LARGE_INTEGER compressed[2] = {};
+    if (!NT_SUCCESS(NtQueryInformationFile(file, &iosb, compressed, sizeof(compressed),
+                                           FILE_COMPRESSION_INFORMATION_CLASS))) {
+        DWORD size = GetFileSize(file, high);
+        DWORD error = GetLastError();
+        CloseHandle(file);
+        KbSetError(error);
+        return size;
+    }
+    CloseHandle(file);
+    if (high)
+        *high = (DWORD)compressed[0].HighPart;
+    if (compressed[0].LowPart == INVALID_FILE_SIZE)
+        KbSetError(ERROR_SUCCESS);
+    return compressed[0].LowPart;
+}
+
+DWORD WINAPI GetCompressedFileSizeA(LPCSTR name, LPDWORD high)
+{
+    PWSTR w = KbAnsiToWide(name);
+    if (!w) {
+        if (!name)
+            KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_FILE_SIZE;
+    }
+    DWORD size = GetCompressedFileSizeW(w, high);
+    DWORD error = GetLastError();
+    KbFree(w);
+    KbSetError(error);
+    return size;
+}
+
+/* ------------------------------------------------------------------ CopyFile2 */
+
+/*
+ * the progress of a copy for the routine of CopyFile2, which takes messages. The messages are the start of the
+ * stream and the end of each chunk, with the numbers of the copy so far.
+ */
+typedef struct COPY2_CONTEXT {
+    PCOPYFILE2_PROGRESS_ROUTINE Routine;
+    PVOID Context;
+    ULONGLONG Chunks;
+} COPY2_CONTEXT;
+
+static DWORD CALLBACK copy2_progress(LARGE_INTEGER total, LARGE_INTEGER transferred, LARGE_INTEGER stream_size,
+                                     LARGE_INTEGER stream_transferred, DWORD stream, DWORD reason, HANDLE source,
+                                     HANDLE destination, LPVOID data)
+{
+    COPY2_CONTEXT *c = data;
+    COPYFILE2_MESSAGE m = {};
+    if (reason == CALLBACK_STREAM_SWITCH) {
+        m.Type = COPYFILE2_CALLBACK_STREAM_STARTED;
+        m.Info.StreamStarted.dwStreamNumber = stream;
+        m.Info.StreamStarted.hSourceFile = source;
+        m.Info.StreamStarted.hDestinationFile = destination;
+        m.Info.StreamStarted.uliStreamSize.QuadPart = (ULONGLONG)stream_size.QuadPart;
+        m.Info.StreamStarted.uliTotalFileSize.QuadPart = (ULONGLONG)total.QuadPart;
+    } else {
+        m.Type = COPYFILE2_CALLBACK_CHUNK_FINISHED;
+        m.Info.ChunkFinished.dwStreamNumber = stream;
+        m.Info.ChunkFinished.hSourceFile = source;
+        m.Info.ChunkFinished.hDestinationFile = destination;
+        m.Info.ChunkFinished.uliChunkNumber.QuadPart = c->Chunks++;
+        m.Info.ChunkFinished.uliChunkSize.QuadPart = (ULONGLONG)transferred.QuadPart;
+        m.Info.ChunkFinished.uliStreamSize.QuadPart = (ULONGLONG)stream_size.QuadPart;
+        m.Info.ChunkFinished.uliStreamBytesTransferred.QuadPart = (ULONGLONG)stream_transferred.QuadPart;
+        m.Info.ChunkFinished.uliTotalFileSize.QuadPart = (ULONGLONG)total.QuadPart;
+        m.Info.ChunkFinished.uliTotalBytesTransferred.QuadPart = (ULONGLONG)transferred.QuadPart;
+    }
+    switch (c->Routine(&m, c->Context)) {
+    case COPYFILE2_PROGRESS_CANCEL:
+        return PROGRESS_CANCEL;
+    case COPYFILE2_PROGRESS_STOP:
+        return PROGRESS_STOP;
+    case COPYFILE2_PROGRESS_QUIET:
+        return PROGRESS_QUIET;
+    default:
+        return PROGRESS_CONTINUE;
+    }
+}
+
+HRESULT WINAPI CopyFile2(PCWSTR source, PCWSTR destination, COPYFILE2_EXTENDED_PARAMETERS *parameters)
+{
+    COPY2_CONTEXT context = {};
+    DWORD flags = 0;
+    BOOL *cancel = nullptr;
+    if (parameters) {
+        /* the larger form of the structure adds fields that only an all zero tail is valid for here. */
+        if (parameters->dwSize != sizeof(*parameters)) {
+            if (parameters->dwSize != 112)
+                return HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);
+            const ULONGLONG *tail = (const ULONGLONG *)((const BYTE *)parameters + 64);
+            for (int i = 0; i < 6; i++) {
+                if (tail[i])
+                    return HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);
+            }
+        }
+        flags = parameters->dwCopyFlags;
+        cancel = parameters->pfCancel;
+        context.Routine = parameters->pProgressRoutine;
+        context.Context = parameters->pvCallbackContext;
+    }
+    if ((flags & 0x40000000) || ((flags & 0x4002) && (flags & 0x08000000)))
+        return HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);
+    if (!CopyFileExW(source, destination, context.Routine ? copy2_progress : nullptr, &context, cancel, flags)) {
+        DWORD error = GetLastError();
+        return error ? (HRESULT)((error & 0xFFFF) | 0x80070000) : E_FAIL;
+    }
+    return S_OK;
 }
