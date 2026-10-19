@@ -133,9 +133,9 @@ static void name_camera(CAMERA *c)
 
 static void add_camera(CAMERA *c, const MimeCameraInfo *info)
 {
+    /* the files of a camera that was here before stay in the list: they hold a place in it until their handles close. */
     c->Info = *info;
     c->Used = TRUE;
-    InitializeListHead(&c->Files);
     name_camera(c);
 
     /* the camera's formats, as many as the host lists. */

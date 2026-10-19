@@ -52,6 +52,14 @@ static const CameraBackend *const g_backends[] = {
 #endif
 };
 
+static unsigned backend_index(const CameraBackend *b)
+{
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_backends); i++)
+        if (g_backends[i] == b)
+            return (unsigned)i;
+    return 0;
+}
+
 uint64_t camera_now_ns(void)
 {
     struct timespec ts;
@@ -106,16 +114,48 @@ static Stream *find_stream(uint64_t handle)
 
 /* ------------------------------------------------------------------ the cameras */
 
-/* looks at the host again. true when the set of cameras or their modes changed. */
-static bool rescan(void)
+/* what each backend found when it was last asked, so that one's change does not make the others look again. */
+static CameraList g_found[MIME_ARRAY_COUNT(g_backends)];
+
+/* a copy of every camera found, formats included. */
+static CameraList combine(void)
 {
     CameraList list = {};
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_backends); i++) {
-        uint32_t before = list.count;
-        g_backends[i]->scan(&list);
-        for (uint32_t k = before; k < list.count; k++)
-            list.source[k].backend = g_backends[i];
+        for (uint32_t k = 0; k < g_found[i].count; k++) {
+            CameraSource *s = camera_list_add(&list);
+            if (!s)
+                continue;
+            *s = g_found[i].source[k];
+            s->formats = malloc(s->format_count * sizeof(*s->formats) + 1);
+            if (s->formats)
+                memcpy(s->formats, g_found[i].source[k].formats, s->format_count * sizeof(*s->formats));
+            else
+                s->format_count = 0;
+        }
     }
+    return list;
+}
+
+/* looks at the host again, at the backends of the mask. true when the set of cameras or their modes changed. */
+static bool rescan(unsigned dirty)
+{
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_backends); i++) {
+        if (!(dirty & 1u << i))
+            continue;
+        CameraList fresh = {};
+        g_backends[i]->scan(&fresh);
+        for (uint32_t k = 0; k < fresh.count; k++)
+            fresh.source[k].backend = g_backends[i];
+        pthread_mutex_lock(&g_lock);
+        CameraList old = g_found[i];
+        g_found[i] = fresh;
+        pthread_mutex_unlock(&g_lock);
+        list_free(&old);
+    }
+    pthread_mutex_lock(&g_lock);
+    CameraList list = combine();
+    pthread_mutex_unlock(&g_lock);
     if (list.count > MIME_CAMERA_MAX)
         list.count = MIME_CAMERA_MAX;
     bool changed = false;
@@ -169,11 +209,13 @@ static bool rescan(void)
 static void *monitor(void *arg)
 {
     mime_set_thread_name("mime-camera");
-    rescan();
+    rescan((1u << MIME_ARRAY_COUNT(g_backends)) - 1);
+    uint64_t next_poll[MIME_ARRAY_COUNT(g_backends)] = {};
     for (;;) {
         struct pollfd fds[MIME_ARRAY_COUNT(g_backends)];
         const CameraBackend *owner[MIME_ARRAY_COUNT(g_backends)];
         int n = 0, timeout = -1;
+        uint64_t now = camera_now_ns();
         for (size_t i = 0; i < MIME_ARRAY_COUNT(g_backends); i++) {
             const CameraBackend *b = g_backends[i];
             int fd = b->watch_fd ? b->watch_fd() : -1;
@@ -181,28 +223,43 @@ static void *monitor(void *arg)
                 fds[n] = (struct pollfd){.fd = fd, .events = POLLIN};
                 owner[n++] = b;
             }
+            /* the backends that look on a timer have their own deadlines, which noise on the others does not move. */
             int period = b->poll_ms ? b->poll_ms() : 0;
-            if (period && (timeout < 0 || period < timeout))
-                timeout = period;
+            if (!period) {
+                next_poll[i] = 0;
+                continue;
+            }
+            if (!next_poll[i])
+                next_poll[i] = now + (uint64_t)period * 1000000ull;
+            int left = next_poll[i] > now ? (int)((next_poll[i] - now + 999999ull) / 1000000ull) : 0;
+            if (timeout < 0 || left < timeout)
+                timeout = left;
         }
         int ready = poll(fds, (nfds_t)n, timeout);
         if (ready < 0 && errno != EINTR)
             usleep(200000);
+        unsigned dirty = 0;
         bool woke = false;
         for (int i = 0; i < n; i++)
-            if (fds[i].revents) {
+            if (ready > 0 && fds[i].revents) {
                 woke = true;
-                if (owner[i]->watch_drain)
-                    owner[i]->watch_drain();
+                if (!owner[i]->watch_drain || owner[i]->watch_drain())
+                    dirty |= 1u << backend_index(owner[i]);
             }
         /* a device node is made before udev gives it its permissions: wait for the burst to be over. */
-        if (woke) {
+        if (woke && dirty) {
             usleep(150000);
             for (int i = 0; i < n; i++)
                 if (owner[i]->watch_drain)
                     owner[i]->watch_drain();
         }
-        if (rescan() && g_notify)
+        now = camera_now_ns();
+        for (size_t i = 0; i < MIME_ARRAY_COUNT(g_backends); i++)
+            if (next_poll[i] && now >= next_poll[i]) {
+                dirty |= 1u << i;
+                next_poll[i] = 0;
+            }
+        if (dirty && rescan(dirty) && g_notify)
             g_notify(MIME_CAMERA_EVENT_CHANGED, 0);
     }
     return nullptr;
@@ -224,12 +281,19 @@ void mime_camera_init(MimeCameraNotify notify)
         pthread_detach(t);
 }
 
-/* the guest asks before the first scan is over only if it boots faster than the host looks at its cameras. */
+/*
+ * the guest asks before the first scan is over only if it boots faster than the host looks at its cameras. a camera
+ * that hangs its driver must not hang the guest's boot: after a few seconds the list is what there is, and the cameras
+ * that turn up later arrive as changes.
+ */
 static void wait_for_scan(void)
 {
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += 5;
     pthread_mutex_lock(&g_lock);
-    while (g_started && !g_have_scan)
-        pthread_cond_wait(&g_scanned, &g_lock);
+    while (g_started && !g_have_scan && pthread_cond_timedwait(&g_scanned, &g_lock, &until) == 0)
+        ;
     pthread_mutex_unlock(&g_lock);
 }
 

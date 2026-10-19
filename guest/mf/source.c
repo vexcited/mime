@@ -576,8 +576,10 @@ static HRESULT STDMETHODCALLTYPE strm_request_sample(IMFMediaStream *iface, IUnk
         LeaveCriticalSection(&s->lock);
     }
     /* a frame may be waiting for the request. */
+    EnterCriticalSection(&s->source->lock);
     if (s->source->context)
         SetEvent(s->source->context->event);
+    LeaveCriticalSection(&s->source->lock);
     return S_OK;
 }
 

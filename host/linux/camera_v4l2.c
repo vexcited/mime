@@ -292,11 +292,22 @@ static int watch_fd(void)
     return g_inotify;
 }
 
-static void watch_drain(void)
+/* a node of video appeared, went or changed: what else is made or removed in /dev is not for this. */
+static bool watch_drain(void)
 {
-    char buffer[4096];
-    while (g_inotify >= 0 && read(g_inotify, buffer, sizeof(buffer)) > 0)
-        ;
+    char buffer[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+    bool relevant = false;
+    for (;;) {
+        ssize_t n = g_inotify >= 0 ? read(g_inotify, buffer, sizeof(buffer)) : -1;
+        if (n <= 0)
+            break;
+        for (char *p = buffer; p < buffer + n;) {
+            const struct inotify_event *e = (const struct inotify_event *)p;
+            relevant |= e->len && !strncmp(e->name, "video", 5);
+            p += sizeof(*e) + e->len;
+        }
+    }
+    return relevant;
 }
 
 /* ------------------------------------------------------------------ streams */

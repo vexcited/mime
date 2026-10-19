@@ -39,7 +39,8 @@ struct CameraBackend {
     void (*scan)(CameraList *list);
     /* a descriptor that becomes readable when the cameras may have changed, or -1. */
     int (*watch_fd)(void);
-    void (*watch_drain)(void);
+    /* reads what woke the descriptor; true when it concerns the cameras of this backend. */
+    bool (*watch_drain)(void);
     /* how often to look again when there is no descriptor to wait on, in milliseconds, or null. */
     int (*poll_ms)(void);
     /*
