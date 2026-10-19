@@ -54,8 +54,13 @@ static BOOLEAN refill(int cls)
     return TRUE;
 }
 
+/* the largest request that is tried: more than the address space holds, which a size added to a header would wrap. */
+#define POOL_MAX_REQUEST (1ull << 46)
+
 static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
 {
+    if (size > POOL_MAX_REQUEST)
+        return nullptr;
     if (size == 0)
         size = 1;
     SIZE_T total = size + sizeof(POOL_HEADER);

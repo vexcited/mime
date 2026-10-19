@@ -511,6 +511,9 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
     PKTHREAD t = KiCurrentThread();
     KPROCESSOR_MODE old = t->PreviousMode;
     oa.Attributes |= OBJ_KERNEL_HANDLE;
+    /* the open below runs as the kernel's, which would read a descriptor of the caller's as its own memory: nothing is created. */
+    oa.SecurityDescriptor = nullptr;
+    oa.SecurityQualityOfService = nullptr;
     t->PreviousMode = KernelMode;
     /* a name only asked about is not opened on the host: the open gives the attributes. */
     status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
