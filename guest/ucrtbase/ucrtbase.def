@@ -2578,3 +2578,5 @@ EXPORTS
     __control87_2=msvcrt.__control87_2
     _statusfp2=msvcrt._statusfp2
     _set_SSE2_enable=msvcrt._set_SSE2_enable
+    _snscanf_s=msvcrt._snscanf_s
+    _snwscanf_s=msvcrt._snwscanf_s

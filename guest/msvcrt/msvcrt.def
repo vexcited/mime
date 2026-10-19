@@ -1326,3 +1326,5 @@ EXPORTS
     _y0
     _y1
     _yn
+    _snscanf_s
+    _snwscanf_s

@@ -243,6 +243,32 @@ int __cdecl _snwscanf(const wchar_t *str, size_t len, const wchar_t *fmt, ...)
     return r;
 }
 
+int __cdecl _snscanf_s(const char *str, size_t len, const char *fmt, ...)
+{
+    if (!str || !fmt) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    int r = MsvcrtScanExA(nullptr, str, len, fmt, ap, 1);
+    va_end(ap);
+    return r;
+}
+
+int __cdecl _snwscanf_s(const wchar_t *str, size_t len, const wchar_t *fmt, ...)
+{
+    if (!str || !fmt) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    int r = MsvcrtScanExW(nullptr, str, len, fmt, ap, 1);
+    va_end(ap);
+    return r;
+}
+
 int __cdecl _sscanf_l(const char *str, const char *fmt, void *locale, ...)
 {
     va_list ap;
