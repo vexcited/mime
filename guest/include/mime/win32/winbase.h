@@ -2401,6 +2401,7 @@ WINBASEAPI LONG WINAPI GetApplicationUserModelId(HANDLE process, UINT32 *length,
 #define RRF_SUBKEY_WOW6464KEY 0x00010000
 #define RRF_SUBKEY_WOW6432KEY 0x00020000
 #define RRF_NOEXPAND 0x10000000
+#define REG_MUI_STRING_TRUNCATE 0x00000001
 #define RRF_ZEROONFAILURE 0x20000000
 
 WINBASEAPI LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM access, HKEY *result);
@@ -2427,6 +2428,10 @@ WINBASEAPI LSTATUS WINAPI RegSetValueExA(HKEY key, LPCSTR name, DWORD reserved, 
                                          DWORD size);
 WINBASEAPI LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags, LPDWORD type,
                                        PVOID data, LPDWORD size);
+WINBASEAPI LSTATUS WINAPI RegLoadMUIStringA(HKEY key, LPCSTR value, LPSTR out, DWORD out_size, LPDWORD needed, DWORD flags,
+                                            LPCSTR directory);
+WINBASEAPI LSTATUS WINAPI RegLoadMUIStringW(HKEY key, LPCWSTR value, LPWSTR out, DWORD out_size, LPDWORD needed,
+                                            DWORD flags, LPCWSTR directory);
 WINBASEAPI LSTATUS WINAPI RegGetValueA(HKEY key, LPCSTR subkey, LPCSTR value, DWORD flags, LPDWORD type, PVOID data,
                                        LPDWORD size);
 WINBASEAPI LSTATUS WINAPI RegEnumKeyExW(HKEY key, DWORD index, LPWSTR name, LPDWORD name_size, LPDWORD reserved,

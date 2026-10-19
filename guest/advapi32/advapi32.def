@@ -28,6 +28,8 @@ EXPORTS
     RegGetValueW=kernelbase.RegGetValueW
     RegLoadKeyA=kernelbase.RegLoadKeyA
     RegLoadKeyW=kernelbase.RegLoadKeyW
+    RegLoadMUIStringA=kernelbase.RegLoadMUIStringA
+    RegLoadMUIStringW=kernelbase.RegLoadMUIStringW
     RegNotifyChangeKeyValue=kernelbase.RegNotifyChangeKeyValue
     RegOpenCurrentUser=kernelbase.RegOpenCurrentUser
     RegOpenKeyA=kernelbase.RegOpenKeyA

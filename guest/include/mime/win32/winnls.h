@@ -599,6 +599,13 @@ WINBASEAPI BOOL WINAPI GetStringTypeExA(LCID locale, DWORD type, LPCSTR src, int
 WINBASEAPI int WINAPI GetStringScripts(DWORD flags, LPCWSTR string, int length, LPWSTR scripts, int size);
 WINBASEAPI BOOL WINAPI IsNormalizedString(NORM_FORM form, LPCWSTR src, int src_len);
 WINBASEAPI int WINAPI NormalizeString(NORM_FORM form, LPCWSTR src, int src_len, LPWSTR dst, int dst_len);
+#define IDN_ALLOW_UNASSIGNED 0x01
+#define IDN_USE_STD3_ASCII_RULES 0x02
+#define IDN_EMAIL_ADDRESS 0x04
+#define IDN_RAW_PUNYCODE 0x08
+WINBASEAPI int WINAPI IdnToAscii(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len);
+WINBASEAPI int WINAPI IdnToUnicode(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len);
+WINBASEAPI int WINAPI IdnToNameprepUnicode(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len);
 WINBASEAPI BOOL WINAPI GetNLSVersion(NLS_FUNCTION function, LCID locale, LPNLSVERSIONINFO info);
 WINBASEAPI BOOL WINAPI GetNLSVersionEx(NLS_FUNCTION function, LPCWSTR name, LPNLSVERSIONINFOEX info);
 WINBASEAPI BOOL WINAPI IsNLSDefinedString(NLS_FUNCTION function, DWORD flags, LPNLSVERSIONINFO info, LPCWSTR string,

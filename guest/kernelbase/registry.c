@@ -1176,3 +1176,102 @@ DECLSPEC_EXPORT LSTATUS WINAPI RegUnLoadKeyA(HKEY key, LPCSTR subkey)
     KbFree(s);
     return error;
 }
+
+/*
+ * RegLoadMUIStringW: a value that is a reference to a string in a resource file, "@file,-id", is loaded from there.
+ * The size of the string is told in pcbData, in bytes with the terminator. A buffer too small is ERROR_MORE_DATA, with
+ * REG_MUI_STRING_TRUNCATE the string is cut and terminated instead and no size is asked for. A value that is not a
+ * reference is ERROR_INVALID_DATA, as is one of another type. The directory with the files of the languages is not
+ * looked at, the string is read from the file itself. Strings of packaged apps ("@{...}") are not offered either.
+ */
+HRESULT WINAPI SHLoadIndirectString(LPCWSTR source, LPWSTR out, UINT size, void **reserved);
+
+LSTATUS WINAPI RegLoadMUIStringW(HKEY key, LPCWSTR value, LPWSTR out, DWORD out_size, LPDWORD needed, DWORD flags,
+                                 LPCWSTR directory)
+{
+    if ((out_size && (!out || (out_size & 1))) || (flags & ~REG_MUI_STRING_TRUNCATE))
+        return ERROR_INVALID_PARAMETER;
+    BOOL truncate = (flags & REG_MUI_STRING_TRUNCATE) != 0;
+    if (truncate == (needed != nullptr))
+        return ERROR_INVALID_PARAMETER;
+    WCHAR reference[1024];
+    DWORD bytes = sizeof(reference), type = 0;
+    LONG error = RegGetValueW(key, nullptr, value, RRF_RT_ANY | RRF_NOEXPAND, &type, reference, &bytes);
+    if (error)
+        return error;
+    if (type != REG_SZ && type != REG_EXPAND_SZ)
+        return ERROR_INVALID_DATA;
+    reference[RTL_NUMBER_OF(reference) - 1] = 0;
+    /* only the digits after the comma belong to the reference. */
+    WCHAR *comma = wcschr(reference, L',');
+    if (comma && comma[1]) {
+        WCHAR *digits = comma + 2;
+        while (*digits >= L'0' && *digits <= L'9')
+            digits++;
+        *digits = 0;
+    }
+    if (reference[0] != L'@')
+        return ERROR_INVALID_DATA;
+    WCHAR text[4096];
+    HRESULT hr = SHLoadIndirectString(reference, text, RTL_NUMBER_OF(text), nullptr);
+    if (FAILED(hr))
+        return HRESULT_FACILITY(hr) == FACILITY_WIN32 ? (LSTATUS)HRESULT_CODE(hr) : ERROR_INVALID_DATA;
+    DWORD length = (DWORD)wcslen(text), size = (length + 1) * sizeof(WCHAR);
+    if (needed)
+        *needed = size;
+    if (!out_size)
+        return needed ? ERROR_MORE_DATA : ERROR_SUCCESS;
+    if (size > out_size) {
+        if (!truncate)
+            return ERROR_MORE_DATA;
+        length = out_size / sizeof(WCHAR) - 1;
+    }
+    memcpy(out, text, length * sizeof(WCHAR));
+    out[length] = 0;
+    return ERROR_SUCCESS;
+}
+
+/*
+ * the narrow form converts the value name and the directory, asks for the wide string and converts it back. The size
+ * told is in bytes of the narrow string with its terminator; that it is the narrow size and not the wide one is a guess.
+ */
+LSTATUS WINAPI RegLoadMUIStringA(HKEY key, LPCSTR value, LPSTR out, DWORD out_size, LPDWORD needed, DWORD flags,
+                                 LPCSTR directory)
+{
+    if ((out_size && !out) || (flags & ~REG_MUI_STRING_TRUNCATE) || ((flags & REG_MUI_STRING_TRUNCATE) != 0) == (needed != nullptr))
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wvalue = value ? KbAnsiToWide(value) : nullptr;
+    PWSTR wdirectory = directory ? KbAnsiToWide(directory) : nullptr;
+    if ((value && !wvalue) || (directory && !wdirectory)) {
+        KbFree(wvalue);
+        KbFree(wdirectory);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    WCHAR text[4096];
+    DWORD wide_needed = 0;
+    LSTATUS error = RegLoadMUIStringW(key, wvalue, text, sizeof(text), &wide_needed,
+                                      0, wdirectory);
+    KbFree(wvalue);
+    KbFree(wdirectory);
+    if (error)
+        return error;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (needed)
+        *needed = (DWORD)bytes;
+    if (!out_size)
+        return needed ? ERROR_MORE_DATA : ERROR_SUCCESS;
+    if ((DWORD)bytes > out_size) {
+        if (!(flags & REG_MUI_STRING_TRUNCATE))
+            return ERROR_MORE_DATA;
+        char *wide_copy = KbAlloc((SIZE_T)bytes);
+        if (!wide_copy)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        WideCharToMultiByte(CP_ACP, 0, text, -1, wide_copy, bytes, nullptr, nullptr);
+        memcpy(out, wide_copy, out_size - 1);
+        out[out_size - 1] = 0;
+        KbFree(wide_copy);
+        return ERROR_SUCCESS;
+    }
+    WideCharToMultiByte(CP_ACP, 0, text, -1, out, (int)out_size, nullptr, nullptr);
+    return ERROR_SUCCESS;
+}
