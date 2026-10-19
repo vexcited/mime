@@ -301,6 +301,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_winspool guest/lib)
     set(includes_winhttp guest/lib)
     set(libs_winhttp ${MIME_LIB_${arch}}/ws2_32.lib)
+    # wsock32 reaches the sockets of ws2_32 for the calls it implements.
+    set(libs_wsock32 ${MIME_LIB_${arch}}/ws2_32.lib)
     # wininet too, and reaches servers through winsock.
     set(objects_wininet ${arch}-lib-png:guest/lib/png/inflate.c)
     set(includes_wininet guest/lib)

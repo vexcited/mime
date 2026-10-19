@@ -61,6 +61,13 @@ EXPORTS
     WSASendTo @99
     WSASetEvent @100
     WSAAsyncSelect @101
+    WSAAsyncGetHostByAddr @102
+    WSAAsyncGetHostByName @103
+    WSAAsyncGetProtoByNumber @104
+    WSAAsyncGetProtoByName @105
+    WSAAsyncGetServByPort @106
+    WSAAsyncGetServByName @107
+    WSACancelAsyncRequest @108
     WSASetBlockingHook @109
     WSAUnhookBlockingHook @110
     WSAGetLastError @111
@@ -97,3 +104,5 @@ EXPORTS
     WSASetServiceW @118
     WSCEnumProtocols @133
     WSCGetProviderPath @140
+    WSApSetPostRoutine @125
+    WEP @500

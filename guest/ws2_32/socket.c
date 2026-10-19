@@ -909,10 +909,129 @@ static BOOL WSAAPI disconnect_ex(SOCKET s, LPOVERLAPPED overlapped, DWORD flags,
     return TRUE;
 }
 
+/*
+ * TransmitFile: the head buffer, the bytes of the file from its place, the tail buffer, in order, on a stream socket.
+ * The work is done before the call returns. With an OVERLAPPED the file place is the one in it and the request is then
+ * completed with the total, as an operation that finished at once but is reported the way a pending one is, with
+ * WSA_IO_PENDING. TF_DISCONNECT ends the sending side after the data; TF_REUSE_SOCKET cannot be done, the socket is
+ * not given back, and the other flags are only hints.
+ */
+typedef struct {
+    PVOID Head;
+    DWORD HeadLength;
+    PVOID Tail;
+    DWORD TailLength;
+} WS_TRANSMIT_BUFFERS;
+
+static BOOL send_all(SOCKET s, const char *data, DWORD length)
+{
+    while (length) {
+        int n = send(s, data, (int)length, 0);
+        if (n == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK)
+                return FALSE;
+            fd_set writable;
+            FD_ZERO(&writable);
+            FD_SET(s, &writable);
+            if (select(0, nullptr, &writable, nullptr, nullptr) == SOCKET_ERROR)
+                return FALSE;
+            continue;
+        }
+        data += n;
+        length -= (DWORD)n;
+    }
+    return TRUE;
+}
+
+static BOOL WSAAPI transmit_file(SOCKET s, HANDLE file, DWORD count, DWORD per_send, LPOVERLAPPED overlapped,
+                                 WS_TRANSMIT_BUFFERS *buffers, DWORD flags)
+{
+    int error;
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock) {
+        SetLastError(error);
+        return FALSE;
+    }
+    BOOL stream = sock->type == SOCK_STREAM;
+    release(sock);
+    if (!stream) {
+        SetLastError(WSAEOPNOTSUPP);
+        return FALSE;
+    }
+    if (!per_send)
+        per_send = 0x10000;
+    ULONGLONG place = 0;
+    LARGE_INTEGER current = {};
+    if (file) {
+        if (overlapped)
+            place = overlapped->Offset | (ULONGLONG)overlapped->OffsetHigh << 32;
+        else if (SetFilePointerEx(file, current, &current, FILE_CURRENT))
+            place = (ULONGLONG)current.QuadPart;
+    }
+    char *chunk = file ? WsAlloc(per_send) : nullptr;
+    if (file && !chunk) {
+        SetLastError(WSAENOBUFS);
+        return FALSE;
+    }
+    ULONGLONG total = 0;
+    BOOL ok = TRUE;
+    if (buffers && buffers->Head && buffers->HeadLength) {
+        ok = send_all(s, buffers->Head, buffers->HeadLength);
+        total += buffers->HeadLength;
+    }
+    ULONGLONG left = count ? count : ~0ull;
+    while (ok && file && left) {
+        OVERLAPPED position = {};
+        position.Offset = (DWORD)place;
+        position.OffsetHigh = (DWORD)(place >> 32);
+        DWORD want = left < per_send ? (DWORD)left : per_send, got = 0;
+        BOOL read = ReadFile(file, chunk, want, &got, &position);
+        if (!read && GetLastError() == ERROR_IO_PENDING)
+            read = GetOverlappedResult(file, &position, &got, TRUE);
+        if (!read) {
+            DWORD why = GetLastError();
+            if (why == ERROR_HANDLE_EOF) {
+                break;
+            }
+            ok = FALSE;
+            SetLastError(why);
+            break;
+        }
+        if (!got)
+            break;
+        ok = send_all(s, chunk, got);
+        place += got;
+        total += got;
+        left -= got;
+    }
+    WsFree(chunk);
+    if (ok && buffers && buffers->Tail && buffers->TailLength) {
+        ok = send_all(s, buffers->Tail, buffers->TailLength);
+        total += buffers->TailLength;
+    }
+    if (ok && file && !overlapped) {
+        LARGE_INTEGER end = {.QuadPart = (LONGLONG)place};
+        SetFilePointerEx(file, end, nullptr, FILE_BEGIN);
+    }
+    if (ok && (flags & 1))
+        shutdown(s, SD_SEND);
+    if (!ok)
+        return FALSE;
+    if (overlapped) {
+        ULONG64 bytes = total;
+        error = afd_overlapped((HANDLE)s, IOCTL_AFD_COMPLETE, &bytes, sizeof(bytes), (LPWSAOVERLAPPED)overlapped, nullptr,
+                               nullptr);
+        SetLastError(error);
+        return !error;
+    }
+    return TRUE;
+}
+
 static const GUID guid_accept_ex = {0xB5367DF1, 0xCBAC, 0x11CF, {0x95, 0xCA, 0x00, 0x80, 0x5F, 0x48, 0xA1, 0x92}};
 static const GUID guid_connect_ex = {0x25A207B9, 0xDDF3, 0x4660, {0x8E, 0xE9, 0x76, 0xE5, 0x8C, 0x74, 0x06, 0x3E}};
 static const GUID guid_get_accept_ex_sockaddrs = {0xB5367DF2, 0xCBAC, 0x11CF,
                                                   {0x95, 0xCA, 0x00, 0x80, 0x5F, 0x48, 0xA1, 0x92}};
+static const GUID guid_transmit_file = {0xB5367DF0, 0xCBAC, 0x11CF, {0x95, 0xCA, 0x00, 0x80, 0x5F, 0x48, 0xA1, 0x92}};
 static const GUID guid_wsa_recv_msg = {0xF689D7C8, 0x6F1F, 0x436B, {0x8A, 0x53, 0xE5, 0x4F, 0xE3, 0x51, 0xC3, 0x22}};
 static const GUID guid_wsa_send_msg = {0xA441E712, 0x754F, 0x43CA, {0x84, 0xA7, 0x0D, 0xEE, 0x44, 0xCF, 0x60, 0x6D}};
 static const GUID guid_disconnect_ex = {0x7FDA2E11, 0x8630, 0x436F, {0xA0, 0x31, 0xF5, 0x36, 0xA6, 0xEE, 0xC1, 0x57}};
@@ -974,11 +1093,13 @@ static PVOID extension(const GUID *id)
         return (PVOID)get_accept_ex_sockaddrs;
     if (!memcmp(id, &guid_disconnect_ex, sizeof(GUID)))
         return (PVOID)disconnect_ex;
+    if (!memcmp(id, &guid_transmit_file, sizeof(GUID)))
+        return (PVOID)transmit_file;
     if (!memcmp(id, &guid_wsa_recv_msg, sizeof(GUID)))
         return (PVOID)wsa_recv_msg;
     if (!memcmp(id, &guid_wsa_send_msg, sizeof(GUID)))
         return (PVOID)wsa_send_msg;
-    /* TransmitFile and the others are absent; callers fall back to the plain functions. */
+    /* the other extensions are absent; callers fall back to the plain functions. */
     return nullptr;
 }
 

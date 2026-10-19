@@ -283,12 +283,17 @@ typedef struct hostent {
 } HOSTENT, *PHOSTENT, *LPHOSTENT;
 #define h_addr h_addr_list[0]
 
-/* the 64 bit layout puts s_proto before s_port. */
+/* the 64 bit layout puts s_proto before s_port, the 32 bit one has the port first. */
 typedef struct servent {
     char *s_name;
     char **s_aliases;
+#ifdef __i386__
+    short s_port;
+    char *s_proto;
+#else
     char *s_proto;
     short s_port;
+#endif
 } SERVENT, *PSERVENT, *LPSERVENT;
 
 typedef struct protoent {
@@ -943,6 +948,20 @@ WINSOCK_API_LINKAGE DWORD WSAAPI WSAWaitForMultipleEvents(DWORD count, const WSA
                                                           DWORD timeout, BOOL alertable);
 WINSOCK_API_LINKAGE int WSAAPI WSAEventSelect(SOCKET s, WSAEVENT event, long events);
 WINSOCK_API_LINKAGE int WSAAPI WSAAsyncSelect(SOCKET s, HWND hwnd, u_int msg, long events);
+
+/* the asynchronous database calls of winsock 1.1, answered with a window message. */
+#define MAXGETHOSTSTRUCT 1024
+WINSOCK_API_LINKAGE HANDLE WSAAPI WSAAsyncGetHostByName(HWND hwnd, u_int msg, const char *name, char *buffer, int length);
+WINSOCK_API_LINKAGE HANDLE WSAAPI WSAAsyncGetHostByAddr(HWND hwnd, u_int msg, const char *addr, int len, int type,
+                                                        char *buffer, int length);
+WINSOCK_API_LINKAGE HANDLE WSAAPI WSAAsyncGetProtoByName(HWND hwnd, u_int msg, const char *name, char *buffer,
+                                                         int length);
+WINSOCK_API_LINKAGE HANDLE WSAAPI WSAAsyncGetProtoByNumber(HWND hwnd, u_int msg, int number, char *buffer, int length);
+WINSOCK_API_LINKAGE HANDLE WSAAPI WSAAsyncGetServByName(HWND hwnd, u_int msg, const char *name, const char *proto,
+                                                        char *buffer, int length);
+WINSOCK_API_LINKAGE HANDLE WSAAPI WSAAsyncGetServByPort(HWND hwnd, u_int msg, int port, const char *proto, char *buffer,
+                                                        int length);
+WINSOCK_API_LINKAGE int WSAAPI WSACancelAsyncRequest(HANDLE task);
 WINSOCK_API_LINKAGE int WSAAPI WSAEnumNetworkEvents(SOCKET s, WSAEVENT event, LPWSANETWORKEVENTS events);
 
 #endif
