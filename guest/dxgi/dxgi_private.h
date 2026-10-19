@@ -64,6 +64,10 @@ HRESULT DxgiCreateFactory(UINT flags, REFIID riid, void **out);
 HRESULT DxgiCreateAdapter(DxgiFactory *factory, const DxgiGpu *gpu, REFIID riid, void **out);
 HRESULT DxgiCreateOutput(DxgiAdapter *adapter, HMONITOR monitor, IDXGIOutput **out);
 DxgiAdapter *DxgiAdapterFrom(IUnknown *unknown);
+/* shared.c: the vulkan device the direct3d devices of the process share. */
+HRESULT DxgiAcquireShared(const DxgiGpu *gpu, const void *create_info, const void *profile, UINT profile_size,
+                          MIME_DXGI_SHARED_VK **out);
+void DxgiReleaseShared(MIME_DXGI_SHARED_VK *shared);
 BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number);
 /* duplication.c: v1 is DuplicateOutput1, whose arguments are checked and whose process needs per monitor dpi. */
 HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR monitor, IUnknown *device, BOOL v1,

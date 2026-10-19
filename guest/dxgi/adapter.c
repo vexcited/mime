@@ -257,7 +257,20 @@ static HRESULT STDMETHODCALLTYPE mime_get_vulkan(IMimeDXGIAdapter *iface, MIME_D
     return S_OK;
 }
 
-static const IMimeDXGIAdapterVtbl mime_vtbl = {mime_query, mime_add_ref, mime_release, mime_get_vulkan};
+static HRESULT STDMETHODCALLTYPE mime_acquire_shared(IMimeDXGIAdapter *iface, const void *create_info,
+                                                     const void *profile, UINT profile_size,
+                                                     MIME_DXGI_SHARED_VK **shared)
+{
+    return DxgiAcquireShared(mime_impl(iface)->gpu, create_info, profile, profile_size, shared);
+}
+
+static void STDMETHODCALLTYPE mime_release_shared(IMimeDXGIAdapter *iface, MIME_DXGI_SHARED_VK *shared)
+{
+    DxgiReleaseShared(shared);
+}
+
+static const IMimeDXGIAdapterVtbl mime_vtbl = {mime_query,   mime_add_ref,        mime_release,
+                                               mime_get_vulkan, mime_acquire_shared, mime_release_shared};
 
 HRESULT DxgiCreateAdapter(DxgiFactory *factory, const DxgiGpu *gpu, REFIID riid, void **out)
 {

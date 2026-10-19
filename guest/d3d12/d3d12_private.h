@@ -21,6 +21,7 @@
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_win32.h>
 #include "../d3d11/format.h"
+#include "../d3d11/vkprofile.h"
 
 #define D12_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define D12_MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -862,7 +863,7 @@ struct D12Device {
     UINT family;
     UINT queue_count;
     VkQueue queues[16];
-    SRWLOCK queue_locks[16];
+    MimeVkShared shared;
     LONG next_queue;
 
     /* memory: the heaps committed resources come from, and gpu virtual addresses by heap. */

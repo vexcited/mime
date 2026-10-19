@@ -149,404 +149,75 @@ void D12Barrier(D12Device *device, VkCommandBuffer cmd)
 
 /* ------------------------------------------------------------------ creation */
 
-static BOOL has_extension(const VkExtensionProperties *list, UINT count, const char *name)
+/*
+ * the vulkan device is the one the direct3d devices of the process share, see vkprofile.h: it is made for both
+ * apis with the queues of its family, and the first of those queues is left to direct3d 11.
+ */
+static HRESULT create_vulkan_device(D12Device *device, IDXGIAdapter *adapter, const MIME_DXGI_VULKAN *v)
 {
-    for (UINT i = 0; i < count; i++)
-        if (!strcmp(list[i].extensionName, name))
-            return TRUE;
-    return FALSE;
-}
-
-static HRESULT create_vulkan_device(D12Device *device)
-{
+    MimeVkShared shared;
+    HRESULT hr = MimeVkAcquire(adapter, v, &shared);
+    if (FAILED(hr))
+        return hr;
+    const MimeVkProfile *p = shared.profile;
+    if (!p->d3d12) {
+        MimeVkRelease(&shared);
+        return DXGI_ERROR_UNSUPPORTED;
+    }
     D12Vk *vk = &device->vk;
-    UINT count = 0;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, nullptr);
-    VkExtensionProperties *available = HeapAlloc(GetProcessHeap(), 0, (count + 1) * sizeof(*available));
-    if (!available)
-        return E_OUTOFMEMORY;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, available);
-    static const char *const required[] = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
-        VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
-        VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME,
-    };
-    const char *extensions[32];
-    UINT n = 0;
-    for (UINT i = 0; i < RTL_NUMBER_OF(required); i++) {
-        if (!has_extension(available, count, required[i])) {
-            D12Log("d3d12: the gpu lacks %s", required[i]);
-            HeapFree(GetProcessHeap(), 0, available);
-            return DXGI_ERROR_UNSUPPORTED;
-        }
-        extensions[n++] = required[i];
-    }
-#define WANT(name, flag)                                                                                               \
-    if (has_extension(available, count, name)) {                                                                     \
-        extensions[n++] = name;                                                                                        \
-        flag;                                                                                                          \
-    }
-    WANT(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, device->has_depth_clip = TRUE)
-    WANT(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, device->has_custom_border = TRUE)
-    WANT(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, device->has_transform_feedback = TRUE)
-    WANT(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME, device->has_conditional = TRUE)
-    WANT(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, device->has_divisor = TRUE)
-    WANT(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME, device->has_conservative = TRUE)
-    WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME, device->has_patch_points = TRUE)
-    WANT(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, device->has_unused_attachments = TRUE)
-    WANT(VK_EXT_MESH_SHADER_EXTENSION_NAME, device->has_mesh = TRUE)
-    WANT(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, device->has_atomic64 = TRUE)
-    WANT(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, device->has_barycentrics = TRUE)
-    WANT(VK_KHR_MAINTENANCE_8_EXTENSION_NAME, device->has_maintenance8 = TRUE)
-    WANT(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, device->has_compute_derivatives = TRUE)
-    BOOL has_vrs = FALSE;
-    WANT(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, has_vrs = TRUE)
-    WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, device->has_maintenance5 = TRUE)
-    if (device->has_maintenance5)
-        WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, device->has_dgc = TRUE)
-    /* acceleration structures and ray queries need all of these. */
-    BOOL rt_extensions = has_extension(available, count, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) &&
-                         has_extension(available, count, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
-                         has_extension(available, count, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
-                         has_extension(available, count, VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
-    if (rt_extensions) {
-        extensions[n++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
-        extensions[n++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
-        extensions[n++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
-        extensions[n++] = VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME;
-        device->has_rt = TRUE;
-        /* pipelines, and their libraries keeping their groups' handles for AddToStateObject. */
-        if (has_extension(available, count, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
-            has_extension(available, count, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) &&
-            has_extension(available, count, VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME)) {
-            extensions[n++] = VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME;
-            extensions[n++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;
-            extensions[n++] = VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME;
-            device->has_rt_pipeline = TRUE;
-        }
-    }
-#undef WANT
-    HeapFree(GetProcessHeap(), 0, available);
-
-    VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT};
-    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
-                                                            device->has_dgc ? (void *)&dgc : nullptr};
-    VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT atomic64 = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT,
-        device->has_maintenance5 ? (void *)&maintenance5 : nullptr};
-    VkPhysicalDeviceMeshShaderFeaturesEXT mesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
-                                                  device->has_atomic64 ? (void *)&atomic64 : atomic64.pNext};
-    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT,
-        device->has_mesh ? (void *)&mesh : mesh.pNext};
-    VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unused = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
-        device->has_patch_points ? (void *)&eds2 : eds2.pNext};
-    VkPhysicalDeviceRobustness2FeaturesEXT robust = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
-                                                     device->has_unused_attachments ? (void *)&unused : unused.pNext};
-    VkPhysicalDeviceDescriptorBufferFeaturesEXT db = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
-                                                      &robust};
-    VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT mutable_type = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT, &db};
-    VkPhysicalDeviceDepthClipEnableFeaturesEXT clip = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT, &mutable_type};
-    VkPhysicalDeviceCustomBorderColorFeaturesEXT border = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT,
-        device->has_depth_clip ? (void *)&clip : (void *)&mutable_type};
-    VkPhysicalDeviceTransformFeedbackFeaturesEXT feedback = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT,
-        device->has_custom_border ? (void *)&border : border.pNext};
-    VkPhysicalDeviceConditionalRenderingFeaturesEXT conditional = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT,
-        device->has_transform_feedback ? (void *)&feedback : feedback.pNext};
-    VkPhysicalDeviceVertexAttributeDivisorFeaturesKHR divisor = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_KHR,
-        device->has_conditional ? (void *)&conditional : conditional.pNext};
-    VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-                                            device->has_divisor ? (void *)&divisor : divisor.pNext};
-    VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
-    VkPhysicalDeviceVulkan11Features f11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
-    VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT group_handles = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT, &f11};
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR, &group_handles};
-    VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR rt_maintenance = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR,
-        device->has_rt_pipeline ? (void *)&rt_pipeline : (void *)&f11};
-    VkPhysicalDeviceRayQueryFeaturesKHR ray_query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
-                                                     &rt_maintenance};
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR as = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &ray_query};
-    VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentric = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR,
-        device->has_rt ? (void *)&as : (void *)&f11};
-    VkPhysicalDeviceMaintenance8FeaturesKHR maintenance8 = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR,
-        device->has_barycentrics ? (void *)&barycentric : barycentric.pNext};
-    VkPhysicalDeviceFragmentShadingRateFeaturesKHR vrs = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR,
-        device->has_maintenance8 ? (void *)&maintenance8 : maintenance8.pNext};
-    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, has_vrs ? (void *)&vrs : vrs.pNext};
-    VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                          device->has_compute_derivatives ? (void *)&derivatives : derivatives.pNext};
-    vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
-
-    if (!robust.nullDescriptor || !db.descriptorBuffer || !mutable_type.mutableDescriptorType ||
-        !f13.dynamicRendering || !f13.synchronization2 || !f12.timelineSemaphore || !f12.hostQueryReset ||
-        !f12.bufferDeviceAddress || !f12.runtimeDescriptorArray || !f12.descriptorBindingPartiallyBound ||
-        !f12.shaderSampledImageArrayNonUniformIndexing || device->properties.limits.maxPushConstantsSize < D12_PUSH_SIZE) {
-        D12Log("d3d12: the gpu lacks features direct3d 12 needs");
-        return DXGI_ERROR_UNSUPPORTED;
-    }
-    VkPhysicalDeviceFeatures *f = &features.features;
-    const VkPhysicalDeviceFeatures supported = *f;
-    f->sparseBinding = f->sparseResidencyBuffer = f->sparseResidencyImage2D = f->sparseResidencyImage3D = FALSE;
-    f->sparseResidency2Samples = f->sparseResidency4Samples = f->sparseResidency8Samples = FALSE;
-    f->sparseResidency16Samples = f->sparseResidencyAliased = FALSE;
-    f->robustBufferAccess = TRUE;
-    f11.protectedMemory = FALSE;
-    f11.multiview = f11.multiviewGeometryShader = f11.multiviewTessellationShader = FALSE;
-    f11.samplerYcbcrConversion = FALSE;
-    f12.bufferDeviceAddressCaptureReplay = f12.bufferDeviceAddressMultiDevice = FALSE;
-    f13.privateData = FALSE;
-    f13.inlineUniformBlock = f13.descriptorBindingInlineUniformBlockUpdateAfterBind = FALSE;
-    f13.textureCompressionASTC_HDR = FALSE;
-    db.descriptorBufferCaptureReplay = db.descriptorBufferImageLayoutIgnored = FALSE;
-    db.descriptorBufferPushDescriptors = FALSE;
-    robust.robustBufferAccess2 = robust.robustBufferAccess2 && f->robustBufferAccess;
-    feedback.geometryStreams = feedback.geometryStreams && feedback.transformFeedback;
-    conditional.inheritedConditionalRendering = FALSE;
-    device->has_logic_op = f->logicOp;
-    device->has_msaa_storage = f->shaderStorageImageMultisample;
-    device->has_statistics = f->pipelineStatisticsQuery;
-    device->has_depth_bounds = f->depthBounds;
-    device->has_geometry = f->geometryShader;
-    device->has_tessellation = f->tessellationShader;
-    if (!clip.depthClipEnable)
-        device->has_depth_clip = FALSE;
-    if (!feedback.transformFeedback)
-        device->has_transform_feedback = FALSE;
-    if (!conditional.conditionalRendering)
-        device->has_conditional = FALSE;
-    if (!divisor.vertexAttributeInstanceRateDivisor)
-        device->has_divisor = FALSE;
-    device->has_zero_divisor = device->has_divisor && divisor.vertexAttributeInstanceRateZeroDivisor;
-    if (!border.customBorderColors)
-        device->has_custom_border = FALSE;
-    if (!eds2.extendedDynamicState2PatchControlPoints)
-        device->has_patch_points = FALSE;
-    eds2.extendedDynamicState2LogicOp = FALSE;
-    if (!unused.dynamicRenderingUnusedAttachments)
-        device->has_unused_attachments = FALSE;
-    f->alphaToOne = FALSE;
-    f->wideLines = FALSE;
-    device->has_native16 = f12.shaderFloat16 && f->shaderInt16;
-    /* mesh shaders of every limit direct3d's first tier has; views and rates they lack features for. */
-    BOOL mesh_rates = mesh.primitiveFragmentShadingRateMeshShader;
-    mesh.multiviewMeshShader = mesh.primitiveFragmentShadingRateMeshShader = FALSE;
-    if (!mesh.meshShader || !mesh.taskShader)
-        device->has_mesh = FALSE;
-    /* shaders go to pipelines without shader modules. */
-    if (!maintenance5.maintenance5)
-        device->has_maintenance5 = FALSE;
-    if (!dgc.deviceGeneratedCommands || !device->has_maintenance5)
-        device->has_dgc = FALSE;
-    /* 64-bit atomics of typed views need them of images, of buffers and 64-bit integers; sparse ones are not used. */
-    atomic64.sparseImageInt64Atomics = FALSE;
-    VkFormatProperties wide;
-    vk->vkGetPhysicalDeviceFormatProperties(vk->physical, VK_FORMAT_R64_UINT, &wide);
-    if (!atomic64.shaderImageInt64Atomics || !f12.shaderBufferInt64Atomics || !f->shaderInt64 ||
-        !(wide.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT))
-        device->has_atomic64 = FALSE;
-    device->has_shared_atomic64 = f12.shaderSharedInt64Atomics && f->shaderInt64;
-    if (!barycentric.fragmentShaderBarycentric)
-        device->has_barycentrics = FALSE;
-    /* direct3d's compute shaders take derivatives over quads of consecutive threads, vulkan's linear groups. */
-    derivatives.computeDerivativeGroupQuads = FALSE;
-    if (!derivatives.computeDerivativeGroupLinear)
-        device->has_compute_derivatives = FALSE;
-    /* copies between depth or stencil and color images. */
-    if (!maintenance8.maintenance8)
-        device->has_maintenance8 = FALSE;
-    /* builds on the gpu only, without capture and replay. */
-    as.accelerationStructureCaptureReplay = as.accelerationStructureHostCommands = FALSE;
-    as.accelerationStructureIndirectBuild = FALSE;
-    if (!as.accelerationStructure || !ray_query.rayQuery || !rt_maintenance.rayTracingMaintenance1)
-        device->has_rt = FALSE;
-    rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplay = FALSE;
-    rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplayMixed = FALSE;
-    /* direct3d's indirect rays arguments are vulkan's second indirect trace rays command. */
-    if (!device->has_rt || !rt_pipeline.rayTracingPipeline || !rt_pipeline.rayTraversalPrimitiveCulling ||
-        !group_handles.pipelineLibraryGroupHandles || !rt_maintenance.rayTracingPipelineTraceRaysIndirect2)
-        device->has_rt_pipeline = FALSE;
-    if (!device->has_rt_pipeline)
-        rt_maintenance.rayTracingPipelineTraceRaysIndirect2 = FALSE;
-
-    VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservative = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
-    VkPhysicalDeviceFragmentShadingRatePropertiesKHR vrs_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR,
-        device->has_conservative ? (void *)&conservative : nullptr};
-    VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgc_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT,
-        has_vrs ? (void *)&vrs_props : vrs_props.pNext};
-    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT,
-                                                          device->has_dgc ? (void *)&dgc_props : dgc_props.pNext};
-    VkPhysicalDeviceDescriptorBufferPropertiesEXT dbp = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
-        device->has_mesh ? (void *)&mesh_props : mesh_props.pNext};
-    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR, &dbp};
-    VkPhysicalDeviceAccelerationStructurePropertiesKHR as_props = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR,
-        device->has_rt_pipeline ? (void *)&rt_props : (void *)&dbp};
-    VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT, device->has_rt ? (void *)&as_props : (void *)&dbp};
-    VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-                                         device->has_transform_feedback ? (void *)&xfb : xfb.pNext};
-    vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
-    device->db = dbp;
-    device->db.pNext = nullptr;
-    /* direct3d aligns scratch memory to 256 bytes. */
-    if (as_props.minAccelerationStructureScratchOffsetAlignment > D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT)
-        device->has_rt = device->has_rt_pipeline = FALSE;
-    /* shader identifiers are group handles and shader tables vulkan's: their sizes and alignments must agree. */
-    if (rt_props.shaderGroupHandleSize != D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES ||
-        rt_props.shaderGroupHandleAlignment > D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT ||
-        rt_props.shaderGroupBaseAlignment > D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT ||
-        rt_props.maxShaderGroupStride < 4096 ||
-        rt_props.maxRayRecursionDepth < D3D12_RAYTRACING_MAX_DECLARABLE_TRACE_RECURSION_DEPTH)
-        device->has_rt_pipeline = FALSE;
-    /* direct3d's index buffer views, read as dxgi formats, and every stage of the lists' draws and dispatches. */
-    device->dgc_stages = dgc_props.supportedIndirectCommandsShaderStages;
-    if (!(dgc_props.supportedIndirectCommandsInputModes & VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT) ||
-        !(device->dgc_stages & VK_SHADER_STAGE_COMPUTE_BIT) || !(device->dgc_stages & VK_SHADER_STAGE_VERTEX_BIT))
-        device->has_dgc = FALSE;
-    if (mesh_props.maxMeshOutputVertices < 256 || mesh_props.maxMeshOutputPrimitives < 256 ||
-        mesh_props.maxMeshWorkGroupInvocations < 128 || mesh_props.maxTaskWorkGroupInvocations < 128 ||
-        mesh_props.maxTaskPayloadSize < 16384)
-        device->has_mesh = FALSE;
-    /*
-     * variable rate shading: a rate per draw at tier 1; at tier 2 also per
-     * primitive and from an image of square tiles of a size direct3d knows,
-     * combined in every way.
-     */
-    VkFormatProperties rate_format;
-    vk->vkGetPhysicalDeviceFormatProperties(vk->physical, VK_FORMAT_R8_UINT, &rate_format);
-    VkExtent2D tile_min = vrs_props.minFragmentShadingRateAttachmentTexelSize;
-    VkExtent2D tile_max = vrs_props.maxFragmentShadingRateAttachmentTexelSize;
-    for (UINT size = 8; size <= 32 && !device->vrs_tile; size *= 2)
-        if (size >= tile_min.width && size >= tile_min.height && size <= tile_max.width && size <= tile_max.height)
-            device->vrs_tile = size;
-    if (has_vrs && vrs.pipelineFragmentShadingRate) {
-        device->vrs_tier = D3D12_VARIABLE_SHADING_RATE_TIER_1;
-        if (vrs.primitiveFragmentShadingRate && vrs.attachmentFragmentShadingRate &&
-            vrs_props.fragmentShadingRateNonTrivialCombinerOps && vrs_props.fragmentShadingRateStrictMultiplyCombiner &&
-            device->vrs_tile &&
-            (rate_format.optimalTilingFeatures & VK_FORMAT_FEATURE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR))
-            device->vrs_tier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
-        device->vrs_more_rates = vrs_props.maxFragmentSize.width >= 4 && vrs_props.maxFragmentSize.height >= 4 &&
-                                 vrs_props.maxFragmentSizeAspectRatio >= 2;
-        device->vrs_viewports = vrs_props.primitiveFragmentShadingRateWithMultipleViewports;
-    }
-    if (device->vrs_tier < D3D12_VARIABLE_SHADING_RATE_TIER_2) {
-        vrs.primitiveFragmentShadingRate = vrs.attachmentFragmentShadingRate = FALSE;
-        device->vrs_tile = 0;
-    } else {
-        mesh.primitiveFragmentShadingRateMeshShader = device->has_mesh && mesh_rates;
-    }
-
-    /*
-     * conservative rasterization: tier 1 overestimates by half a pixel at
-     * most, tier 2 by 1/256 and keeps degenerate triangles, tier 3 also
-     * tells the pixel shader whether its pixel is fully covered.
-     */
-    if (device->has_conservative && conservative.primitiveOverestimationSize <= 0.5f) {
-        device->conservative_tier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_1;
-        if (conservative.primitiveOverestimationSize <= 1.0f / 256.0f && conservative.degenerateTrianglesRasterized) {
-            device->conservative_tier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_2;
-            if (conservative.fullyCoveredFragmentShaderInputVariable)
-                device->conservative_tier = D3D12_CONSERVATIVE_RASTERIZATION_TIER_3;
-        }
-    }
-
-    VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
-    VkPhysicalDeviceSubgroupProperties sub = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &p13};
-    VkPhysicalDeviceProperties2 sub_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sub};
-    vk->vkGetPhysicalDeviceProperties2(vk->physical, &sub_props);
-    /* the sizes of waves: the one the gpu runs, and the range shaders may ask for with subgroup size control. */
-    device->wave_size = device->wave_min = device->wave_max = sub.subgroupSize;
-    if (f13.subgroupSizeControl && p13.minSubgroupSize && p13.maxSubgroupSize >= p13.minSubgroupSize) {
-        device->wave_min = p13.minSubgroupSize;
-        device->wave_max = p13.maxSubgroupSize;
-        device->wave_stages = p13.requiredSubgroupSizeStages;
-    }
-    VkSubgroupFeatureFlags wave_ops = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
-                                      VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
-                                      VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT;
-    device->has_waves = (sub.supportedOperations & wave_ops) == wave_ops &&
-                        (sub.supportedStages & (VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT)) ==
-                            (VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT);
-    device->has_so_queries = device->has_transform_feedback && xfb.transformFeedbackQueries;
-
-    UINT families = 0;
-    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, nullptr);
-    VkQueueFamilyProperties qprops[16];
-    families = D12_MIN(families, 16);
-    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, qprops);
-    device->family = ~0u;
-    for (UINT i = 0; i < families && device->family == ~0u; i++)
-        if ((qprops[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
-            (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
-            device->family = i;
-    if (device->family == ~0u)
-        return DXGI_ERROR_UNSUPPORTED;
-    device->queue_count = D12_MIN(qprops[device->family].queueCount, 16u);
-
-    /*
-     * tiled resources: tier 1 binds buffers and 2D images of standard
-     * shapes, aliased; tier 2 also reads zero where nothing is mapped and
-     * tells shaders what is; tier 3 also tiles 3D images.
-     */
-    const VkPhysicalDeviceSparseProperties *sp = &device->properties.sparseProperties;
-    if ((qprops[device->family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) && supported.sparseBinding &&
-        supported.sparseResidencyBuffer && supported.sparseResidencyImage2D && supported.sparseResidencyAliased &&
-        sp->residencyStandard2DBlockShape) {
-        device->tiled_tier = D3D12_TILED_RESOURCES_TIER_1;
-        f->sparseBinding = f->sparseResidencyBuffer = f->sparseResidencyImage2D = f->sparseResidencyAliased = TRUE;
-        if (sp->residencyNonResidentStrict && supported.shaderResourceResidency && supported.shaderResourceMinLod) {
-            device->tiled_tier = D3D12_TILED_RESOURCES_TIER_2;
-            if (supported.sparseResidencyImage3D && sp->residencyStandard3DBlockShape) {
-                device->tiled_tier = D3D12_TILED_RESOURCES_TIER_3;
-                f->sparseResidencyImage3D = TRUE;
-            }
-        }
-    }
-
-    float priorities[16];
-    for (UINT i = 0; i < 16; i++)
-        priorities[i] = 1.0f;
-    VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    queue.queueFamilyIndex = device->family;
-    queue.queueCount = device->queue_count;
-    queue.pQueuePriorities = priorities;
-    VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &features};
-    info.queueCreateInfoCount = 1;
-    info.pQueueCreateInfos = &queue;
-    info.enabledExtensionCount = n;
-    info.ppEnabledExtensionNames = extensions;
-    if (vk->vkCreateDevice(vk->physical, &info, nullptr, &vk->device) != VK_SUCCESS)
-        return DXGI_ERROR_UNSUPPORTED;
+    device->shared = shared;
+    vk->device = (VkDevice)shared.vk->Device;
+    vk->vkGetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)shared.vk->GetDeviceProcAddr;
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D12_VK_DEVICE_FUNCS(X)
 #undef X
-    for (UINT i = 0; i < device->queue_count; i++) {
-        vk->vkGetDeviceQueue(vk->device, device->family, i, &device->queues[i]);
-        InitializeSRWLock(&device->queue_locks[i]);
-    }
+#define COPY(field) device->field = p->field
+    COPY(has_depth_clip);
+    COPY(has_custom_border);
+    COPY(has_transform_feedback);
+    COPY(has_conditional);
+    COPY(has_divisor);
+    COPY(has_zero_divisor);
+    COPY(has_logic_op);
+    COPY(has_depth_bounds);
+    COPY(has_geometry);
+    COPY(has_tessellation);
+    COPY(has_statistics);
+    COPY(has_so_queries);
+    COPY(has_conservative);
+    COPY(has_line_rasterization);
+    COPY(has_patch_points);
+    COPY(has_unused_attachments);
+    COPY(has_native16);
+    COPY(has_waves);
+    COPY(has_mesh);
+    COPY(has_atomic64);
+    COPY(has_shared_atomic64);
+    COPY(has_barycentrics);
+    COPY(has_maintenance5);
+    COPY(has_maintenance8);
+    COPY(has_compute_derivatives);
+    COPY(has_msaa_storage);
+    COPY(vrs_tier);
+    COPY(vrs_tile);
+    COPY(conservative_tier);
+    COPY(tiled_tier);
+    COPY(wave_size);
+    COPY(wave_min);
+    COPY(wave_max);
+    COPY(wave_stages);
+    COPY(vrs_more_rates);
+    COPY(vrs_viewports);
+    COPY(has_dgc);
+    COPY(dgc_stages);
+    COPY(has_rt);
+    COPY(has_rt_pipeline);
+    COPY(db);
+#undef COPY
+    device->family = shared.vk->QueueFamily;
+    device->queue_count = shared.vk->QueueCount;
+    for (UINT i = 0; i < device->queue_count; i++)
+        device->queues[i] = (VkQueue)shared.vk->Queues[i];
     return S_OK;
 }
 
@@ -573,7 +244,7 @@ static HRESULT init_device(D12Device *device, IDXGIAdapter *adapter)
     device->properties = props.properties;
     vk->vkGetPhysicalDeviceMemoryProperties(vk->physical, &device->memory);
 
-    HRESULT hr = create_vulkan_device(device);
+    HRESULT hr = create_vulkan_device(device, adapter, &v);
     if (FAILED(hr))
         return hr;
     for (UINT i = 0; i < D12_MEMORY_KINDS; i++)
@@ -635,7 +306,7 @@ static void destroy_device(D12Device *device)
         vk->vkDestroyCommandPool(vk->device, device->init_pool, nullptr);
         vk->vkDestroySemaphore(vk->device, device->init_timeline, nullptr);
         vk->vkDestroySemaphore(vk->device, device->waiter_wake, nullptr);
-        vk->vkDestroyDevice(vk->device, nullptr);
+        MimeVkRelease(&device->shared);
     }
     if (device->adapter)
         device->adapter->lpVtbl->Release(device->adapter);

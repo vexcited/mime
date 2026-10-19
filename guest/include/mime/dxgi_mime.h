@@ -7,6 +7,7 @@
 #ifndef MIME_DXGI_MIME_H
 #define MIME_DXGI_MIME_H
 
+#include <mime/win32/winbase.h>
 #include <mime/win32/dxgi.h>
 
 /* the vulkan objects of an adapter, as vulkan handles and vkGetInstanceProcAddr. */
@@ -17,10 +18,34 @@ typedef struct MIME_DXGI_VULKAN {
     UINT ApiVersion;
 } MIME_DXGI_VULKAN;
 
+#define MIME_VK_MAX_QUEUES 16
+#define MIME_VK_PROFILE_BYTES 1024
+
+/*
+ * the vulkan device of an adapter, which the direct3d 11 and 12 devices of a process share: the host serves a process
+ * one. The first to ask makes it with the queues of its family, and it goes with the last that released it.
+ */
+typedef struct MIME_DXGI_SHARED_VK {
+    void *Device;
+    void *GetDeviceProcAddr;
+    UINT QueueFamily;
+    UINT QueueCount;
+    void *Queues[MIME_VK_MAX_QUEUES];
+    /* a queue is used by one thread at a time, whichever device submits on it. */
+    SRWLOCK QueueLocks[MIME_VK_MAX_QUEUES];
+    /* what the device was made for, opaque to dxgi.dll. */
+    UINT ProfileSize;
+    BYTE Profile[MIME_VK_PROFILE_BYTES];
+} MIME_DXGI_SHARED_VK;
+
 typedef struct IMimeDXGIAdapter IMimeDXGIAdapter;
 #define IMimeDXGIAdapter_METHODS(T)                                                                                    \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
-    HRESULT(STDMETHODCALLTYPE *GetVulkan)(T * This, MIME_DXGI_VULKAN * vulkan);
+    HRESULT(STDMETHODCALLTYPE *GetVulkan)(T * This, MIME_DXGI_VULKAN * vulkan);                                        \
+    /* takes a reference on the shared device; with no creation info and no device yet, S_FALSE. */                    \
+    HRESULT(STDMETHODCALLTYPE *AcquireSharedVulkan)(T * This, const void *create_info, const void *profile,           \
+                                                    UINT profile_size, MIME_DXGI_SHARED_VK **shared);                  \
+    void(STDMETHODCALLTYPE *ReleaseSharedVulkan)(T * This, MIME_DXGI_SHARED_VK * shared);
 MIME_COM_INTERFACE(IMimeDXGIAdapter)
 MIME_DEFINE_GUID(IID_IMimeDXGIAdapter, 0xE784F4ED, 0x16A6, 0x44A9, 0x85, 0x73, 0xB1, 0x88, 0xB5, 0x5D, 0x49, 0x25);
 

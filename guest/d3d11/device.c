@@ -180,42 +180,33 @@ void D3dBarrier(VkCommandBuffer cmd, D3dDevice *device)
 
 /* ------------------------------------------------------------------ creation */
 
-static BOOL has_extension(const VkExtensionProperties *list, UINT count, const char *name)
-{
-    for (UINT i = 0; i < count; i++)
-        if (!strcmp(list[i].extensionName, name))
-            return TRUE;
-    return FALSE;
-}
-
 /*
- * the host serves one vulkan device to a process, so the devices a process makes on an adapter share it,
- * and its queue, which they take turns on. it goes with the last of them.
+ * the host serves one vulkan device to a process, so the direct3d 11 and 12 devices of a process share it with their
+ * queues, which they take turns on: the first to ask makes it, see vkprofile.h. It goes with the last of them.
  */
-typedef struct D3dSharedVk {
-    struct D3dSharedVk *next;
-    LONG refs;
-    D3dVk vk;
-    VkQueue queue;
-    UINT queue_family;
-    BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
-    BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
-    BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
-    BOOL has_video;
-    SRWLOCK queue_lock;
-} D3dSharedVk;
-
-static D3dSharedVk *g_shared_vk;
-static SRWLOCK g_shared_vk_lock = SRWLOCK_INIT;
-
-static void use_shared(D3dDevice *device, D3dSharedVk *shared)
+static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, const MIME_DXGI_VULKAN *v)
 {
-    device->vk = shared->vk;
-    device->queue = shared->queue;
-    device->queue_family = shared->queue_family;
-    device->queue_lock = &shared->queue_lock;
+    MimeVkShared shared;
+    HRESULT hr = MimeVkAcquire(adapter, v, &shared);
+    if (FAILED(hr))
+        return hr;
+    const MimeVkProfile *p = shared.profile;
+    if (!p->d3d11) {
+        MimeVkRelease(&shared);
+        return DXGI_ERROR_UNSUPPORTED;
+    }
+    D3dVk *vk = &device->vk;
     device->shared = shared;
-#define COPY(field) device->field = shared->field
+    vk->device = (VkDevice)shared.vk->Device;
+    vk->vkGetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)shared.vk->GetDeviceProcAddr;
+#define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
+    D3D_VK_DEVICE_FUNCS(X)
+#undef X
+    /* direct3d 11 submits on the first queue of the device, whose lock the other devices of the process take. */
+    device->queue = (VkQueue)shared.vk->Queues[0];
+    device->queue_lock = &shared.vk->QueueLocks[0];
+    device->queue_family = shared.vk->QueueFamily;
+#define COPY(field) device->field = p->field
     COPY(has_depth_clip);
     COPY(has_custom_border);
     COPY(has_transform_feedback);
@@ -227,242 +218,15 @@ static void use_shared(D3dDevice *device, D3dSharedVk *shared)
     COPY(has_precise_occlusion);
     COPY(has_so_queries);
     COPY(has_logic_op);
-    COPY(has_depth_bounds);
     COPY(has_geometry);
     COPY(has_tessellation);
     COPY(has_video);
+    COPY(has_vrs);
+    COPY(has_conservative);
+    COPY(has_mesh);
 #undef COPY
-}
-
-static HRESULT create_vulkan_device(D3dDevice *device);
-
-/* the shared device of the adapter's vulkan device, made on first use. */
-static HRESULT acquire_vulkan_device(D3dDevice *device)
-{
-    AcquireSRWLockExclusive(&g_shared_vk_lock);
-    for (D3dSharedVk *s = g_shared_vk; s; s = s->next) {
-        if (s->vk.instance == device->vk.instance && s->vk.physical == device->vk.physical) {
-            s->refs++;
-            use_shared(device, s);
-            ReleaseSRWLockExclusive(&g_shared_vk_lock);
-            return S_OK;
-        }
-    }
-    HRESULT hr = create_vulkan_device(device);
-    if (SUCCEEDED(hr)) {
-        D3dSharedVk *s = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*s));
-        if (!s) {
-            device->vk.vkDestroyDevice(device->vk.device, nullptr);
-            device->vk.device = VK_NULL_HANDLE;
-            ReleaseSRWLockExclusive(&g_shared_vk_lock);
-            return E_OUTOFMEMORY;
-        }
-        s->refs = 1;
-        s->vk = device->vk;
-        s->queue = device->queue;
-        s->queue_family = device->queue_family;
-        InitializeSRWLock(&s->queue_lock);
-#define COPY(field) s->field = device->field
-        COPY(has_depth_clip);
-        COPY(has_custom_border);
-        COPY(has_transform_feedback);
-        COPY(has_conditional);
-        COPY(has_line_rasterization);
-        COPY(has_divisor);
-        COPY(has_zero_divisor);
-        COPY(has_statistics);
-        COPY(has_precise_occlusion);
-        COPY(has_so_queries);
-        COPY(has_logic_op);
-        COPY(has_depth_bounds);
-        COPY(has_geometry);
-        COPY(has_tessellation);
-        COPY(has_video);
-#undef COPY
-        device->queue_lock = &s->queue_lock;
-        device->shared = s;
-        s->next = g_shared_vk;
-        g_shared_vk = s;
-    }
-    ReleaseSRWLockExclusive(&g_shared_vk_lock);
-    return hr;
-}
-
-/* drops a device's hold, destroying the vulkan device when it is the last. */
-static void release_vulkan_device(D3dDevice *device)
-{
-    D3dSharedVk *shared = device->shared;
-    if (!shared)
-        return;
-    AcquireSRWLockExclusive(&g_shared_vk_lock);
-    BOOL last = --shared->refs == 0;
-    if (last) {
-        for (D3dSharedVk **p = &g_shared_vk; *p; p = &(*p)->next) {
-            if (*p == shared) {
-                *p = shared->next;
-                break;
-            }
-        }
-    }
-    ReleaseSRWLockExclusive(&g_shared_vk_lock);
-    if (last) {
-        device->vk.vkDestroyDevice(device->vk.device, nullptr);
-        HeapFree(GetProcessHeap(), 0, shared);
-    }
-    device->shared = nullptr;
-}
-
-static HRESULT create_vulkan_device(D3dDevice *device)
-{
-    D3dVk *vk = &device->vk;
-    UINT count = 0;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, nullptr);
-    VkExtensionProperties *available = HeapAlloc(GetProcessHeap(), 0, (count + 1) * sizeof(*available));
-    if (!available)
-        return E_OUTOFMEMORY;
-    vk->vkEnumerateDeviceExtensionProperties(vk->physical, nullptr, &count, available);
-    static const char *const required[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
-                                           VK_EXT_ROBUSTNESS_2_EXTENSION_NAME};
-    const char *extensions[16];
-    UINT n = 0;
-    for (UINT i = 0; i < RTL_NUMBER_OF(required); i++) {
-        if (!has_extension(available, count, required[i])) {
-            D3dLog("d3d11: the gpu lacks %s", required[i]);
-            HeapFree(GetProcessHeap(), 0, available);
-            return DXGI_ERROR_UNSUPPORTED;
-        }
-        extensions[n++] = required[i];
-    }
-#define WANT(name, flag)                                                                                           \
-    if (has_extension(available, count, name)) {                                                                     \
-        extensions[n++] = name;                                                                                        \
-        flag;                                                                                                          \
-    }
-    WANT(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, device->has_depth_clip = TRUE)
-    WANT(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, device->has_custom_border = TRUE)
-    WANT(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, device->has_transform_feedback = TRUE)
-    WANT(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME, device->has_conditional = TRUE)
-    WANT(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, device->has_divisor = TRUE)
-    WANT(MVK_VIDEO_DECODE_EXTENSION, device->has_video = TRUE)
-    WANT(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, (void)0)
-    WANT(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, (void)0)
-#undef WANT
-    HeapFree(GetProcessHeap(), 0, available);
-
-    /* what the gpu supports, the chain being what is then enabled, trimmed of what is not needed. */
-    VkPhysicalDeviceShaderObjectFeaturesEXT object = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT};
-    VkPhysicalDeviceRobustness2FeaturesEXT robust = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
-                                                     &object};
-    VkPhysicalDeviceDepthClipEnableFeaturesEXT clip = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT, &robust};
-    VkPhysicalDeviceCustomBorderColorFeaturesEXT border = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT, device->has_depth_clip ? (void *)&clip
-                                                                                                    : (void *)&robust};
-    VkPhysicalDeviceTransformFeedbackFeaturesEXT feedback = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT,
-        device->has_custom_border ? (void *)&border : border.pNext};
-    VkPhysicalDeviceConditionalRenderingFeaturesEXT conditional = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT,
-        device->has_transform_feedback ? (void *)&feedback : feedback.pNext};
-    VkPhysicalDeviceVertexAttributeDivisorFeaturesKHR divisor = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_KHR,
-        device->has_conditional ? (void *)&conditional : conditional.pNext};
-    VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-                                            device->has_divisor ? (void *)&divisor : divisor.pNext};
-    VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
-    VkPhysicalDeviceVulkan11Features f11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
-    VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f11};
-    vk->vkGetPhysicalDeviceFeatures2(vk->physical, &features);
-
-    if (!object.shaderObject || !robust.nullDescriptor || !f13.dynamicRendering || !f13.synchronization2 ||
-        !f12.timelineSemaphore || !f12.hostQueryReset || !f12.runtimeDescriptorArray || !f12.descriptorBindingPartiallyBound ||
-        !f12.descriptorBindingSampledImageUpdateAfterBind || !f12.descriptorBindingUniformBufferUpdateAfterBind) {
-        D3dLog("d3d11: the gpu lacks features direct3d 11 needs");
-        return DXGI_ERROR_UNSUPPORTED;
-    }
-    /* sparse residency and the like cost without serving direct3d 11. */
-    VkPhysicalDeviceFeatures *f = &features.features;
-    f->sparseBinding = f->sparseResidencyBuffer = f->sparseResidencyImage2D = f->sparseResidencyImage3D = FALSE;
-    f->sparseResidency2Samples = f->sparseResidency4Samples = f->sparseResidency8Samples = FALSE;
-    f->sparseResidency16Samples = f->sparseResidencyAliased = FALSE;
-    f->robustBufferAccess = TRUE;
-    f11.protectedMemory = FALSE;
-    f11.multiview = f11.multiviewGeometryShader = f11.multiviewTessellationShader = FALSE;
-    f11.variablePointers = f11.variablePointersStorageBuffer = FALSE;
-    f11.samplerYcbcrConversion = FALSE;
-    f12.bufferDeviceAddressCaptureReplay = f12.bufferDeviceAddressMultiDevice = FALSE;
-    f12.vulkanMemoryModel = f12.vulkanMemoryModelDeviceScope = f12.vulkanMemoryModelAvailabilityVisibilityChains =
-        FALSE;
-    f13.robustImageAccess = FALSE;
-    f13.privateData = FALSE;
-    f13.inlineUniformBlock = f13.descriptorBindingInlineUniformBlockUpdateAfterBind = FALSE;
-    f13.textureCompressionASTC_HDR = FALSE;
-    robust.robustBufferAccess2 = robust.robustBufferAccess2 && f->robustBufferAccess;
-    feedback.geometryStreams = feedback.geometryStreams && feedback.transformFeedback;
-    conditional.inheritedConditionalRendering = FALSE;
-    device->has_logic_op = f->logicOp;
-    device->has_statistics = f->pipelineStatisticsQuery;
-    device->has_precise_occlusion = f->occlusionQueryPrecise;
-    device->has_depth_bounds = f->depthBounds;
-    device->has_geometry = f->geometryShader;
-    device->has_tessellation = f->tessellationShader;
-    if (!clip.depthClipEnable)
-        device->has_depth_clip = FALSE;
-    if (!feedback.transformFeedback)
-        device->has_transform_feedback = FALSE;
-    if (device->has_transform_feedback) {
-        VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb = {
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT};
-        VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &xfb};
-        vk->vkGetPhysicalDeviceProperties2(vk->physical, &props);
-        device->has_so_queries = xfb.transformFeedbackQueries;
-    }
-    if (!conditional.conditionalRendering)
-        device->has_conditional = FALSE;
-    if (!divisor.vertexAttributeInstanceRateDivisor)
-        device->has_divisor = FALSE;
-    device->has_zero_divisor = device->has_divisor && divisor.vertexAttributeInstanceRateZeroDivisor;
-    if (!border.customBorderColors)
-        device->has_custom_border = FALSE;
-    /* features left enabled must have their dynamic state set by every draw: these are not used. */
-    f->alphaToOne = FALSE;
-    f->wideLines = FALSE;
-    f->depthBounds = FALSE;
+    /* direct3d 11 has no depth bounds, and the device may enable them for direct3d 12. */
     device->has_depth_bounds = FALSE;
-
-    UINT families = 0;
-    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, nullptr);
-    VkQueueFamilyProperties props[16];
-    families = D3D_MIN(families, 16);
-    vk->vkGetPhysicalDeviceQueueFamilyProperties(vk->physical, &families, props);
-    device->queue_family = ~0u;
-    for (UINT i = 0; i < families && device->queue_family == ~0u; i++)
-        if ((props[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
-            (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
-            device->queue_family = i;
-    if (device->queue_family == ~0u) {
-        D3dLog("d3d11: the gpu has no queue family for graphics and compute");
-        return DXGI_ERROR_UNSUPPORTED;
-    }
-
-    float priority = 1.0f;
-    VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    queue.queueFamilyIndex = device->queue_family;
-    queue.queueCount = 1;
-    queue.pQueuePriorities = &priority;
-    VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &features};
-    info.queueCreateInfoCount = 1;
-    info.pQueueCreateInfos = &queue;
-    info.enabledExtensionCount = n;
-    info.ppEnabledExtensionNames = extensions;
-    VkResult created = vk->vkCreateDevice(vk->physical, &info, nullptr, &vk->device);
-    if (created != VK_SUCCESS) {
-        D3dLog("d3d11: vkCreateDevice failed with %d", created);
-        return DXGI_ERROR_UNSUPPORTED;
-    }
-#define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
-    D3D_VK_DEVICE_FUNCS(X)
-#undef X
     if (device->has_video) {
         vk->vkMimeVideoGetCaps = (PFN_vkMimeVideoGetCaps)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoGetCaps");
         vk->vkMimeVideoCreateSession =
@@ -471,9 +235,11 @@ static HRESULT create_vulkan_device(D3dDevice *device)
             (PFN_vkMimeVideoDestroySession)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoDestroySession");
         vk->vkMimeVideoDecode = (PFN_vkMimeVideoDecode)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoDecode");
     }
-    vk->vkGetDeviceQueue(vk->device, device->queue_family, 0, &device->queue);
     return S_OK;
 }
+
+/* drops a device's hold, the vulkan device going with the last. */
+static void release_vulkan_device(D3dDevice *device) { MimeVkRelease(&device->shared); }
 
 static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
 {
@@ -500,7 +266,7 @@ static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
     device->properties = props.properties;
     vk->vkGetPhysicalDeviceMemoryProperties(vk->physical, &device->memory);
 
-    HRESULT hr = acquire_vulkan_device(device);
+    HRESULT hr = acquire_vulkan_device(device, adapter, &v);
     if (FAILED(hr))
         return hr;
 

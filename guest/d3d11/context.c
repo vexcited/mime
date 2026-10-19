@@ -1149,6 +1149,15 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
         vk->vkCmdSetLineWidth(cmd, 1.0f);
         if (device->has_tessellation)
             vk->vkCmdSetTessellationDomainOriginEXT(cmd, VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT);
+        /* features the device has for direct3d 12 that shader objects want the state of set. */
+        if (device->has_conservative)
+            vk->vkCmdSetConservativeRasterizationModeEXT(cmd, VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
+        if (device->has_vrs) {
+            const VkExtent2D one = {1, 1};
+            const VkFragmentShadingRateCombinerOpKHR keep[2] = {VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
+                                                                VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR};
+            vk->vkCmdSetFragmentShadingRateKHR(cmd, &one, keep);
+        }
     }
     VkPrimitiveTopology t = topology(c->topology);
     if (DYN_CHANGED(topology, (UINT)t))
@@ -1652,10 +1661,11 @@ static BOOL prepare_draw(D3dContext *c)
     if (gs_shader != c->bound_gs)
         c->shaders_dirty = TRUE;
     if (c->shaders_dirty || c->compute_bound) {
-        VkShaderStageFlagBits stages[5] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
+        VkShaderStageFlagBits stages[7] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
                                            VK_SHADER_STAGE_GEOMETRY_BIT, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
-                                           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT};
-        VkShaderEXT shaders[5] = {c->stages[D3D_VS].shader->shader,
+                                           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_TASK_BIT_EXT,
+                                           VK_SHADER_STAGE_MESH_BIT_EXT};
+        VkShaderEXT shaders[7] = {c->stages[D3D_VS].shader->shader,
                                   c->stages[D3D_PS].shader ? c->stages[D3D_PS].shader->shader : VK_NULL_HANDLE,
                                   gs_shader,
                                   c->stages[D3D_HS].shader ? c->stages[D3D_HS].shader->shader : VK_NULL_HANDLE,
@@ -1667,6 +1677,13 @@ static BOOL prepare_draw(D3dContext *c)
                 stages[3] = stages[4], shaders[3] = shaders[4];
             }
             count += 2;
+        }
+        /* a device made for mesh shaders wants those stages bound too, to nothing. */
+        if (device->has_mesh) {
+            stages[count] = VK_SHADER_STAGE_TASK_BIT_EXT;
+            shaders[count++] = VK_NULL_HANDLE;
+            stages[count] = VK_SHADER_STAGE_MESH_BIT_EXT;
+            shaders[count++] = VK_NULL_HANDLE;
         }
         vk->vkCmdBindShadersEXT(cmd, count, stages, shaders);
         c->bound_gs = gs_shader;

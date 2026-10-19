@@ -18,6 +18,7 @@
 #include "../lib/privdata/privdata.h"
 #include "../lib/dxbc/dxbc.h"
 #include <mime/mvk_video.h>
+#include "vkprofile.h"
 
 #define VK_USE_PLATFORM_WIN32_KHR 1
 #include <vulkan/vulkan_core.h>
@@ -157,6 +158,7 @@
     X(vkCmdSetTessellationDomainOriginEXT)                                                                             \
     X(vkCmdSetRasterizationStreamEXT)                                                                                  \
     X(vkCmdSetConservativeRasterizationModeEXT)                                                                        \
+    X(vkCmdSetFragmentShadingRateKHR)                                                                                  \
     X(vkCmdSetLineRasterizationModeEXT)                                                                                \
     X(vkCmdSetLineStippleEnableEXT)                                                                                    \
     X(vkCmdBeginQuery)                                                                                                 \
@@ -617,10 +619,12 @@ struct D3dDevice {
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
     BOOL has_video;
+    /* what the shared device enables for direct3d 12 that shader objects want state for before every draw. */
+    BOOL has_vrs, has_conservative, has_mesh;
 
     /* the queue is shared by the process's devices on the adapter, submissions from contexts and swap chains alike. */
     SRWLOCK *queue_lock;
-    struct D3dSharedVk *shared;
+    MimeVkShared shared;
     VkSemaphore timeline;
     UINT64 next_serial;
     volatile UINT64 completed;

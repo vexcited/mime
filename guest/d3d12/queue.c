@@ -678,9 +678,11 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
     if (!queue->desc.NodeMask)
         queue->desc.NodeMask = 1;
     /* the queues of a family in turn, so queues of the program run beside each other as far as there are. */
-    UINT index = (UINT)InterlockedIncrement(&device->next_queue) % device->queue_count;
+    /* the first queue is left to direct3d 11, which shares the device, unless it is the only one. */
+    UINT spare = device->queue_count > 1 ? device->queue_count - 1 : 1;
+    UINT index = (UINT)InterlockedIncrement(&device->next_queue) % spare + (device->queue_count > 1 ? 1 : 0);
     queue->queue = device->queues[index];
-    queue->queue_lock = &device->queue_locks[index];
+    queue->queue_lock = &device->shared.vk->QueueLocks[index];
     queue->family = device->family;
     queue->next_serial = 1;
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
