@@ -386,6 +386,25 @@ mime_link(${MIME_OUT_${services_arch}}/services.exe ${services_arch}
     RESOURCE services.exe GROUPS guest)
 mime_rom_file(${MIME_OUT_${services_arch}}/services.exe ${MIME_ROM_${services_arch}}/services.exe)
 
+# svchost.exe, the host of the services that live in DLLs: the processor of the machine in System32, and the 32-bit one
+# in SysWOW64 for the 32-bit dlls.
+mime_glob(svchost_sources guest/svchost/*.c)
+foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
+    if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
+        mime_objects(${arch}-svchost ${arch} SOURCES ${svchost_sources} INCLUDES guest/svchost)
+        set(svchost_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib
+            ${MIME_LIB_${arch}}/advapi32.lib)
+        set(svchost_flags /subsystem:console,10.0 /entry:entry /base:0x7FF6A9000000 /highentropyva /dynamicbase
+            /stack:0x100000,0x4000)
+        if(arch STREQUAL "x86")
+            set(svchost_flags /subsystem:console,6.0 /entry:entry /base:0x00400000 /dynamicbase /stack:0x100000,0x4000)
+        endif()
+        mime_link(${MIME_OUT_${arch}}/svchost.exe ${arch} OBJECTS ${arch}-svchost ${arch}-chkstk LIBS ${svchost_libs}
+            FLAGS ${svchost_flags} RESOURCE svchost.exe GROUPS guest)
+        mime_rom_file(${MIME_OUT_${arch}}/svchost.exe ${MIME_ROM_${arch}}/svchost.exe)
+    endif()
+endforeach()
+
 # the acm codecs windows registers in Drivers32, drivers in files of their own.
 set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000 msgsm32:0x7FF330000000
     l3codeca:0x7FF3F0000000)

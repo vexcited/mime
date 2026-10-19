@@ -663,6 +663,58 @@ static WCHAR *service_command(SERVICE *s, DWORD *error)
     return path;
 }
 
+/* whether the command line starts svchost.exe, whatever its directory. */
+static BOOL is_svchost(const WCHAR *command)
+{
+    const WCHAR *end = command;
+    if (*command == L'"') {
+        end = wcschr(command + 1, L'"');
+        end = end ? end : command + wcslen(command);
+    } else {
+        while (*end && *end != L' ' && *end != L'\t')
+            end++;
+    }
+    static const WCHAR name[] = L"svchost.exe";
+    SIZE_T n = RTL_NUMBER_OF(name) - 1;
+    if ((SIZE_T)(end - command) < n)
+        return FALSE;
+    const WCHAR *base = end - n;
+    return !_wcsnicmp(base, name, n) && (base == command || base[-1] == L'\\' || base[-1] == L'"' || base[-1] == L'/');
+}
+
+/*
+ * a service of svchost.exe lives in the dll its Parameters key names (or its own key, when it has no Parameters). the
+ * manager does not start the ones whose dll is not in the installation at the boot, as it does not start a program
+ * that is not there: the installation has hundreds of them, each of which would make a process to say it has no dll.
+ */
+static BOOL service_dll_present(SERVICE *s)
+{
+    HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
+    if (!key)
+        return FALSE;
+    HKEY parameters;
+    WCHAR path[MAX_PATH_ + 2];
+    BOOL there = FALSE;
+    HKEY source = key;
+    if (RegOpenKeyExW(key, L"Parameters", 0, KEY_READ, &parameters) == ERROR_SUCCESS)
+        source = parameters;
+    DWORD type = 0, size = sizeof(path) - 2 * sizeof(WCHAR);
+    if (RegQueryValueExW(source, L"ServiceDll", nullptr, &type, (BYTE *)path, &size) == ERROR_SUCCESS &&
+        type == REG_EXPAND_SZ && size >= sizeof(WCHAR)) {
+        WCHAR expanded[MAX_PATH_ + 2];
+        path[size / sizeof(WCHAR)] = 0;
+        DWORD n = ExpandEnvironmentStringsW(path, expanded, RTL_NUMBER_OF(expanded));
+        if (n && n <= RTL_NUMBER_OF(expanded)) {
+            DWORD a = GetFileAttributesW(expanded);
+            there = a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+        }
+    }
+    if (source != key)
+        RegCloseKey(parameters);
+    RegCloseKey(key);
+    return there;
+}
+
 /* whether the program of a service is there to be started. */
 BOOL RunImageExists(SERVICE *s)
 {
@@ -671,6 +723,8 @@ BOOL RunImageExists(SERVICE *s)
     if (!command)
         return FALSE;
     BOOL there = file_exists(command);
+    if (there && is_svchost(command) && !(s->Type & SERVICE_DRIVER))
+        there = service_dll_present(s);
     SvcFree(command);
     return there;
 }

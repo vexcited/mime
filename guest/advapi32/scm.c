@@ -2337,15 +2337,22 @@ ADVAPI BOOL WINAPI StartServiceCtrlDispatcherW(const SERVICE_TABLE_ENTRYW *table
         InterlockedExchange(&g_dispatcher_started, 1);
         return fail(ERROR_INVALID_PARAMETER);
     }
-    const WCHAR *names[64];
-    void *mains[64];
-    if (count > 64)
-        count = 64;
+    /* a group of services in svchost.exe has more than sixty. */
+    const WCHAR **names = AdvAlloc(count * sizeof(*names));
+    void **mains = AdvAlloc(count * sizeof(*mains));
+    if (!names || !mains) {
+        AdvFree(names);
+        AdvFree(mains);
+        return fail(ERROR_NOT_ENOUGH_MEMORY);
+    }
     for (DWORD i = 0; i < count; i++) {
         names[i] = table[i].lpServiceName;
         mains[i] = (void *)table[i].lpServiceProc;
     }
-    return start_dispatcher(names, mains, count, FALSE);
+    BOOL result = start_dispatcher(names, mains, count, FALSE);
+    AdvFree(names);
+    AdvFree(mains);
+    return result;
 }
 
 ADVAPI BOOL WINAPI StartServiceCtrlDispatcherA(const SERVICE_TABLE_ENTRYA *table)
@@ -2360,10 +2367,13 @@ ADVAPI BOOL WINAPI StartServiceCtrlDispatcherA(const SERVICE_TABLE_ENTRYA *table
         InterlockedExchange(&g_dispatcher_started, 1);
         return fail(ERROR_INVALID_PARAMETER);
     }
-    if (count > 64)
-        count = 64;
-    WCHAR *names[64] = {};
-    void *mains[64];
+    WCHAR **names = AdvAllocZero(count * sizeof(*names));
+    void **mains = AdvAlloc(count * sizeof(*mains));
+    if (!names || !mains) {
+        AdvFree(names);
+        AdvFree(mains);
+        return fail(ERROR_NOT_ENOUGH_MEMORY);
+    }
     BOOL ok = TRUE;
     for (DWORD i = 0; i < count; i++) {
         names[i] = AdvAnsiToWide(table[i].lpServiceName);
@@ -2373,6 +2383,8 @@ ADVAPI BOOL WINAPI StartServiceCtrlDispatcherA(const SERVICE_TABLE_ENTRYA *table
     BOOL result = ok && start_dispatcher((const WCHAR *const *)names, mains, count, TRUE);
     for (DWORD i = 0; i < count; i++)
         AdvFree(names[i]);
+    AdvFree(names);
+    AdvFree(mains);
     return result;
 }
 
