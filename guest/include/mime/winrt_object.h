@@ -10,7 +10,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/wgc.h>
 
-#define WRT_MAX_INTERFACES 4
+#define WRT_MAX_INTERFACES 8
 
 typedef struct WRT_OBJECT WRT_OBJECT;
 

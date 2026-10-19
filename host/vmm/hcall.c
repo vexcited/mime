@@ -435,6 +435,13 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         status = command ? mime_ui_tray(command) : MIME_HC_STATUS_INVALID;
         break;
     }
+    case MIME_HC_SHELL: {
+        void *command = regs[2] >= sizeof(uint32_t) && regs[2] <= sizeof(MimeShellToast) + sizeof(MimeShellWindow)
+                            ? mime_vm_phys(vm, regs[1], regs[2])
+                            : nullptr;
+        status = command ? mime_ui_shell(command, (size_t)regs[2], &value) : MIME_HC_STATUS_INVALID;
+        break;
+    }
     case MIME_HC_WIN_MOVESIZE:
         status = mime_ui_window_movesize((uint32_t)regs[1], (uint32_t)regs[2]);
         break;

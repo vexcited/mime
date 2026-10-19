@@ -391,6 +391,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
         AudioFreeProcess(p);
         GfxShareFreeProcess(p);
         RawFreeProcess(p);
+        ShellFreeProcess(p);
         MenuFreeProcess(p);
         ClassFreeProcess(p);
         WinStaFreeProcess(p);
@@ -565,6 +566,7 @@ ULONG Win32kServiceCount = 2048;
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     KeInitializeEvent(&g_lock_event, SynchronizationEvent, FALSE);
+    ShellInitialize();
     Win32kInitializeServices(g_services);
     if (!KeAddSystemServiceTable(g_services, nullptr, Win32kServiceCount, nullptr, 1)) {
         DbgPrint("win32k: cannot register the system service table\n");

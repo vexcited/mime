@@ -24,6 +24,12 @@ uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge);
  * queued, unsupported where the desktop has no bus to tell it to. what the desktop says back is MIME_INPUT_TRAY.
  */
 uint64_t mime_ui_tray(const MimeTrayCommand *command);
+/*
+ * the shell's commands to the desktop, see MimeShellToast and MimeShellWindow: MIME_HC_STATUS_OK once queued, the
+ * value is the answer of a probe or the length of a reply, unsupported where the desktop has no bus to tell it to.
+ * what the desktop says back is MIME_INPUT_SHELL. the command may be written to.
+ */
+uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value);
 /* the monitors, the primary first, at most capacity of them: how many there are. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity);
 

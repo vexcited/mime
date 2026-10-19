@@ -7,6 +7,7 @@
  * implements, looked up by name.
  */
 #include "combase_private.h"
+#include "xmldom.h"
 #include <mime/stub.h>
 
 /* the compiler references this symbol from code that uses floating point. */
@@ -57,6 +58,10 @@ static const struct {
     {CbCaptureItemClass, CbCaptureItemFactory},
     {CbCaptureSessionClass, CbCaptureSessionFactory},
     {CbCapturePoolClass, CbCapturePoolFactory},
+    {CbXmlDocumentClass, CbXmlDocumentFactory},
+    {CbPropertyValueClass, CbPropertyValueFactory},
+    {CbToastManagerClass, CbToastManagerFactory},
+    {CbToastClass, CbToastFactory},
 };
 
 ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory)

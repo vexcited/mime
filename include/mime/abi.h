@@ -158,6 +158,89 @@ enum {
     MIME_TRAY_EVENT_BALLOON_HIDDEN = 11,  /* taken away by the program */
 };
 
+/*
+ * MIME_HC_SHELL: what the guest's shell tells the desktop. the command is read at the address given and starts with one
+ * of these operations; MIME_HC_STATUS_UNSUPPORTED when the host has no desktop bus to tell it to.
+ */
+enum {
+    MIME_SHELL_TOAST_SHOW = 1,   /* MimeShellToast: show a toast, replacing the one with the same application, tag and group */
+    MIME_SHELL_TOAST_HIDE = 2,   /* MimeShellToast: take the toast id away */
+    MIME_SHELL_TOAST_REMOVE = 3, /* MimeShellToast: take away those of the application aumid, with the tag and group if given */
+    MIME_SHELL_TOAST_PROBE = 4,  /* MimeShellToast: whether toasts can be shown at all */
+    MIME_SHELL_TOAST_REPLY = 5,  /* MimeShellToast: the text of a reply to the toast id is written to body, its units are the value */
+    MIME_SHELL_WINDOW = 10,      /* MimeShellWindow: the identity of a window changes */
+    MIME_SHELL_LAUNCHER = 11,    /* MimeShellWindow: the progress, badge and attention of an application's entry in the launcher */
+};
+
+enum {
+    MIME_TOAST_SILENT = 1u << 0,
+    MIME_TOAST_URGENT = 1u << 1,   /* alarm, incoming call and urgent scenarios: critical, stays until dealt with */
+    MIME_TOAST_RESIDENT = 1u << 2, /* the reminder scenario: stays until dealt with */
+    MIME_TOAST_REPLY = 1u << 3,    /* the first action takes text, the placeholder is the hint */
+    MIME_TOAST_NO_POPUP = 1u << 4, /* the program wants it in the history only */
+};
+
+#define MIME_TOAST_ACTIONS 5
+
+typedef struct MimeToastAction {
+    uint32_t flags;
+    uint16_t label[64];
+} MimeToastAction;
+
+typedef struct MimeShellToast {
+    uint32_t op;
+    uint32_t id; /* assigned by the guest's kernel; the toast to hide */
+    uint32_t flags;
+    uint32_t process_id;
+    uint32_t timeout_ms; /* 0 for the server's own */
+    uint32_t action_count;
+    uint16_t aumid[128];
+    uint16_t app[64]; /* the name the application is known by */
+    uint16_t tag[64];
+    uint16_t group[64];
+    uint16_t title[256];
+    uint16_t body[1024];
+    uint16_t logo[260];    /* windows paths of pictures: the logo, the hero and the inline one */
+    uint16_t hero[260];
+    uint16_t picture[260];
+    uint16_t placeholder[64];
+    MimeToastAction actions[MIME_TOAST_ACTIONS];
+} MimeShellToast;
+
+/* MIME_SHELL_TOAST_PROBE answers in the value of the hypercall: 1 when notifications can be shown. */
+
+enum {
+    MIME_SHELL_EVENT_TOAST_ACTIVATED = 1, /* x is the action, -1 for the toast itself */
+    MIME_SHELL_EVENT_TOAST_REPLIED = 2,   /* x is the action, the text is fetched with MIME_SHELL_TOAST_REPLY */
+    MIME_SHELL_EVENT_TOAST_DISMISSED = 3, /* x is 0 for the person, 1 for the program, 2 for the time */
+    MIME_SHELL_EVENT_TOAST_FAILED = 4,    /* x is the error */
+};
+
+/* a window and an application of the launcher, by the application user model id the program gave. */
+enum {
+    MIME_SHELL_WINDOW_APPID = 1, /* the window belongs to the application aumid */
+};
+
+enum {
+    MIME_LAUNCHER_PROGRESS = 1u << 0, /* progress holds the fraction, 0 to 10000; progress_visible is whether it shows */
+    MIME_LAUNCHER_BADGE = 1u << 1,    /* count is the number on the badge, 0 for none */
+    MIME_LAUNCHER_ATTENTION = 1u << 2, /* urgent is whether the program wants attention */
+};
+
+typedef struct MimeShellWindow {
+    uint32_t op;
+    uint32_t window_id;
+    uint32_t kind; /* MIME_SHELL_WINDOW_* */
+    uint32_t process_id;
+    uint32_t changed; /* MIME_LAUNCHER_* */
+    uint32_t progress;
+    uint32_t progress_visible;
+    uint32_t indeterminate;
+    uint32_t count;
+    uint32_t urgent;
+    uint16_t aumid[128];
+} MimeShellWindow;
+
 /* passed to the kernel entry point in x0, as a physmap virtual address. */
 typedef struct MimeBootInfo {
     uint64_t magic;
@@ -392,6 +475,9 @@ enum {
 
     /* the notification area and notifications of the desktop. */
     MIME_HC_TRAY = 0x55,         /* (pa, size) a MimeTrayCommand */
+
+    /* the desktop's shell: toast notifications, application identity and the taskbar. see MimeShell*. */
+    MIME_HC_SHELL = 0x80,        /* (pa, size) a MimeShell* command, whose first word is MIME_SHELL_* */
 
     /* cameras, see mime/camera.h. */
     MIME_HC_CAMERA_LIST = 0x90,    /* (pa, capacity) -> count of the host's cameras, fills up to capacity MimeCameraInfo */
@@ -940,6 +1026,11 @@ enum {
      * MIME_CAMERA_EVENT_FRAME when the stream x has frames waiting.
      */
     MIME_INPUT_CAMERA = 30,
+    /*
+     * the desktop's shell answers a toast or a launcher entry: flags is the MIME_SHELL_EVENT_*, pad the toast as the
+     * command named it, x the action or the reason, y the number of units of reply text the host holds.
+     */
+    MIME_INPUT_SHELL = 40,
 };
 
 enum {

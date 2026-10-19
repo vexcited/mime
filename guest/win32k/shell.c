@@ -1,0 +1,319 @@
+/*
+ * the shell's way to the desktop of the host: toast notifications, the identity of a window and the entry of an
+ * application in the launcher. a program's shell libraries (combase for toasts, explorerframe for the taskbar list)
+ * hand their commands to NtUserMimeShell, which numbers the toasts, tells the host (MIME_HC_SHELL) and keeps who
+ * made each toast so that what the desktop says about it, MIME_INPUT_SHELL, is queued for that program. the program
+ * has a thread waiting in the kernel for its events, as a notification client waits for the platform's.
+ */
+#include "win32k.h"
+
+#define OWNER_MAX 1024
+#define EVENT_MAX 256
+
+typedef struct SHELL_OWNER {
+    ULONG Id;
+    ULONG Pid;
+} SHELL_OWNER;
+
+typedef struct SHELL_QUEUED {
+    BOOLEAN Used;
+    ULONG Pid;
+    MIME_SHELL_EVENT Event;
+} SHELL_QUEUED;
+
+typedef union SHELL_COMMAND {
+    ULONG Op;
+    MimeShellToast Toast;
+    MimeShellWindow Window;
+} SHELL_COMMAND;
+
+static KSPIN_LOCK g_lock;
+static KEVENT g_event;
+static BOOLEAN g_ready;
+static SHELL_OWNER g_owners[OWNER_MAX];
+static ULONG g_owner_next;
+static SHELL_QUEUED g_queue[EVENT_MAX];
+static ULONG g_next_id;
+static SHELL_COMMAND *g_command;
+
+void ShellInitialize(void)
+{
+    KeInitializeSpinLock(&g_lock);
+    KeInitializeEvent(&g_event, NotificationEvent, FALSE);
+    g_ready = TRUE;
+}
+
+static NTSTATUS from_host(ULONG64 status)
+{
+    switch (status) {
+    case MIME_HC_STATUS_OK:
+        return STATUS_SUCCESS;
+    case MIME_HC_STATUS_INVALID:
+        return STATUS_INVALID_PARAMETER;
+    case MIME_HC_STATUS_NOT_FOUND:
+        return STATUS_NOT_FOUND;
+    case MIME_HC_STATUS_NO_MEMORY:
+        return STATUS_INSUFFICIENT_RESOURCES;
+    case MIME_HC_STATUS_UNSUPPORTED:
+        return STATUS_NOT_SUPPORTED;
+    default:
+        return STATUS_IO_DEVICE_ERROR;
+    }
+}
+
+static ULONG current_pid(void)
+{
+    W32PROCESS *p = W32GetProcess();
+    return p ? (ULONG)(ULONG_PTR)p->Pid : 0;
+}
+
+static void owner_set(ULONG id, ULONG pid)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    /* the table is a ring: the oldest toast is the one forgotten when it is full. */
+    g_owners[g_owner_next % OWNER_MAX].Id = id;
+    g_owners[g_owner_next % OWNER_MAX].Pid = pid;
+    g_owner_next++;
+    KeReleaseSpinLock(&g_lock, irql);
+}
+
+static ULONG owner_of(ULONG id)
+{
+    ULONG pid = 0;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (ULONG i = 0; i < OWNER_MAX; i++)
+        if (g_owners[i].Id == id) {
+            pid = g_owners[i].Pid;
+            break;
+        }
+    KeReleaseSpinLock(&g_lock, irql);
+    return pid;
+}
+
+static void owner_forget(ULONG id)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (ULONG i = 0; i < OWNER_MAX; i++)
+        if (g_owners[i].Id == id)
+            g_owners[i].Id = 0;
+    KeReleaseSpinLock(&g_lock, irql);
+}
+
+/* the host's events of a toast go to the program that showed it. */
+void ShellHostEvent(const MimeInputEvent *ev)
+{
+    if (!g_ready)
+        return;
+    ULONG pid = owner_of(ev->pad);
+    if (!pid)
+        return;
+    MIME_SHELL_EVENT e = {};
+    e.Kind = ev->flags;
+    e.Id = ev->pad;
+    e.Arg = ev->x;
+    e.ReplyLength = (ULONG)ev->y;
+    if (e.Kind == MIME_SHELL_EVENT_TOAST_REPLIED && e.ReplyLength) {
+        /* the text waits on the host. */
+        PHYSICAL_ADDRESS highest;
+        highest.QuadPart = -1;
+        MimeShellToast *c = MmAllocateContiguousMemory(sizeof(*c), highest);
+        if (c) {
+            memset(c, 0, sizeof(*c));
+            c->op = MIME_SHELL_TOAST_REPLY;
+            c->id = e.Id;
+            ULONG64 got = 0;
+            if (HalMimeHypercall(MIME_HC_SHELL, (ULONG64)MmGetPhysicalAddress(c).QuadPart, sizeof(*c), 0, 0, 0, 0,
+                                 &got) == MIME_HC_STATUS_OK) {
+                ULONG n = (ULONG)got < RTL_NUMBER_OF(e.Reply) - 1 ? (ULONG)got : RTL_NUMBER_OF(e.Reply) - 1;
+                memcpy(e.Reply, c->body, n * sizeof(USHORT));
+                e.ReplyLength = n;
+            } else {
+                e.ReplyLength = 0;
+            }
+            MmFreeContiguousMemory(c);
+        } else {
+            e.ReplyLength = 0;
+        }
+    }
+    BOOLEAN done = e.Kind == MIME_SHELL_EVENT_TOAST_DISMISSED || e.Kind == MIME_SHELL_EVENT_TOAST_FAILED;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    SHELL_QUEUED *slot = nullptr;
+    for (ULONG i = 0; i < EVENT_MAX && !slot; i++)
+        if (!g_queue[i].Used)
+            slot = &g_queue[i];
+    if (slot) {
+        slot->Used = TRUE;
+        slot->Pid = pid;
+        slot->Event = e;
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    if (done)
+        owner_forget(ev->pad);
+    KeSetEvent(&g_event, IO_NO_INCREMENT, FALSE);
+}
+
+/* a program that is gone takes its toasts' events with it. */
+void ShellFreeProcess(W32PROCESS *p)
+{
+    if (!g_ready)
+        return;
+    ULONG pid = (ULONG)(ULONG_PTR)p->Pid;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (ULONG i = 0; i < OWNER_MAX; i++)
+        if (g_owners[i].Pid == pid)
+            g_owners[i].Id = 0;
+    for (ULONG i = 0; i < EVENT_MAX; i++)
+        if (g_queue[i].Used && g_queue[i].Pid == pid)
+            g_queue[i].Used = FALSE;
+    KeReleaseSpinLock(&g_lock, irql);
+}
+
+static LONG wait_event(ULONG timeout_ms, PUCHAR out)
+{
+    ULONG pid = current_pid();
+    ULONGLONG deadline = KeQueryInterruptTime() + (ULONGLONG)timeout_ms * 10000;
+    for (;;) {
+        MIME_SHELL_EVENT e;
+        BOOLEAN found = FALSE;
+        KIRQL irql;
+        KeClearEvent(&g_event);
+        KeAcquireSpinLock(&g_lock, &irql);
+        for (ULONG i = 0; i < EVENT_MAX && !found; i++)
+            if (g_queue[i].Used && g_queue[i].Pid == pid) {
+                e = g_queue[i].Event;
+                g_queue[i].Used = FALSE;
+                found = TRUE;
+            }
+        KeReleaseSpinLock(&g_lock, irql);
+        if (found)
+            return NT_SUCCESS(MimeCopyToUser(out, &e, sizeof(e))) ? 1 : (LONG)STATUS_ACCESS_VIOLATION;
+        LARGE_INTEGER t;
+        if (timeout_ms == 0xFFFFFFFF) {
+            t.QuadPart = -100000000; /* ten seconds, looking again for a thread that was alerted */
+        } else {
+            ULONGLONG now = KeQueryInterruptTime();
+            if (now >= deadline)
+                return 0;
+            t.QuadPart = -(LONGLONG)(deadline - now);
+        }
+        NTSTATUS s = KeWaitForSingleObject(&g_event, UserRequest, UserMode, TRUE, &t);
+        if (s == STATUS_USER_APC || s == STATUS_ALERTED)
+            return (LONG)s;
+    }
+}
+
+static void zero_end(USHORT *text, ULONG chars)
+{
+    text[chars - 1] = 0;
+}
+
+/* a command from a program: checked, completed with what only the kernel knows, and passed to the host. */
+static LONG run_command(PUCHAR request, ULONG size)
+{
+    ULONG op;
+    if (size < sizeof(op) || !NT_SUCCESS(MimeCopyFromUser(&op, request, sizeof(op))))
+        return STATUS_INVALID_PARAMETER;
+    ULONG want;
+    switch (op) {
+    case MIME_SHELL_TOAST_SHOW:
+    case MIME_SHELL_TOAST_HIDE:
+    case MIME_SHELL_TOAST_REMOVE:
+    case MIME_SHELL_TOAST_PROBE:
+        want = sizeof(MimeShellToast);
+        break;
+    case MIME_SHELL_WINDOW:
+    case MIME_SHELL_LAUNCHER:
+        want = sizeof(MimeShellWindow);
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (size != want)
+        return STATUS_INVALID_PARAMETER;
+    if (!g_command) {
+        PHYSICAL_ADDRESS highest;
+        highest.QuadPart = -1;
+        g_command = MmAllocateContiguousMemory(sizeof(*g_command), highest);
+        if (!g_command)
+            return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    LONG result = STATUS_SUCCESS;
+    UserEnter();
+    memset(g_command, 0, sizeof(*g_command));
+    if (!NT_SUCCESS(MimeCopyFromUser(g_command, request, size))) {
+        UserLeave();
+        return STATUS_ACCESS_VIOLATION;
+    }
+    ULONG pid = current_pid();
+    ULONG id = 0;
+    if (want == sizeof(MimeShellToast)) {
+        MimeShellToast *t = &g_command->Toast;
+        zero_end(t->aumid, RTL_NUMBER_OF(t->aumid));
+        zero_end(t->app, RTL_NUMBER_OF(t->app));
+        zero_end(t->tag, RTL_NUMBER_OF(t->tag));
+        zero_end(t->group, RTL_NUMBER_OF(t->group));
+        zero_end(t->title, RTL_NUMBER_OF(t->title));
+        zero_end(t->body, RTL_NUMBER_OF(t->body));
+        zero_end(t->logo, RTL_NUMBER_OF(t->logo));
+        zero_end(t->hero, RTL_NUMBER_OF(t->hero));
+        zero_end(t->picture, RTL_NUMBER_OF(t->picture));
+        zero_end(t->placeholder, RTL_NUMBER_OF(t->placeholder));
+        if (t->action_count > MIME_TOAST_ACTIONS)
+            t->action_count = MIME_TOAST_ACTIONS;
+        for (ULONG i = 0; i < MIME_TOAST_ACTIONS; i++)
+            zero_end(t->actions[i].label, RTL_NUMBER_OF(t->actions[i].label));
+        t->process_id = pid;
+        if (op == MIME_SHELL_TOAST_SHOW) {
+            id = ++g_next_id;
+            if (!id)
+                id = ++g_next_id;
+            t->id = id;
+            owner_set(id, pid);
+        } else if (op == MIME_SHELL_TOAST_HIDE && owner_of(t->id) != pid) {
+            UserLeave();
+            return STATUS_NOT_FOUND;
+        }
+    } else {
+        MimeShellWindow *w = &g_command->Window;
+        zero_end(w->aumid, RTL_NUMBER_OF(w->aumid));
+        w->process_id = pid;
+        WND *wnd = w->window_id ? WndLookup((HWND)(ULONG_PTR)w->window_id) : nullptr;
+        if (w->window_id && (!wnd || !wnd->Thread || !wnd->Thread->Process || wnd->Thread->Process->Pid != (HANDLE)(ULONG_PTR)pid)) {
+            UserLeave();
+            return STATUS_INVALID_HANDLE;
+        }
+    }
+    ULONG64 value = 0;
+    ULONG64 status = HalMimeHypercall(MIME_HC_SHELL, (ULONG64)MmGetPhysicalAddress(g_command).QuadPart, size, 0, 0, 0,
+                                      0, &value);
+    result = (LONG)from_host(status);
+    if (NT_SUCCESS(result)) {
+        if (op == MIME_SHELL_TOAST_SHOW)
+            result = (LONG)id;
+        else if (op == MIME_SHELL_TOAST_PROBE)
+            result = (LONG)value;
+    } else if (op == MIME_SHELL_TOAST_SHOW) {
+        owner_forget(id);
+    }
+    UserLeave();
+    return result;
+}
+
+LONG NTAPI NtUserMimeShell(ULONG op, ULONG id, PUCHAR request, ULONG size)
+{
+    switch (op) {
+    case MIME_SHELLOP_COMMAND:
+        return run_command(request, size);
+    case MIME_SHELLOP_WAIT:
+        if (size != sizeof(MIME_SHELL_EVENT))
+            return STATUS_INVALID_PARAMETER;
+        return wait_event(id, request);
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+}

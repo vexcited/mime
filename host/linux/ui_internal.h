@@ -33,6 +33,9 @@ void *mime_ui_window_surface(uint32_t window);
  */
 uint8_t *mime_ui_request_guest(uint32_t event, uint32_t kind, int timeout_ms, size_t *size);
 
+/* launcher.c: the identity of a window and the launcher entry of an application, a MimeShellWindow. */
+uint64_t mime_ui_shell_window(const void *command);
+
 /* ime.c, called by the main loop. */
 void mime_ime_editing(uint32_t window, const char *text, int start, int length);
 bool mime_ime_commit(uint32_t window, const char *text);

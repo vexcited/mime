@@ -882,6 +882,10 @@ void InputCursorShown(void);
 void InputForegroundChanged(void);
 BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected);
 void RawPadEvent(const MimeInputEvent *ev);
+/* shell.c: toast notifications and the launcher, the shell's way to the host's desktop. */
+void ShellInitialize(void);
+void ShellHostEvent(const MimeInputEvent *ev);
+void ShellFreeProcess(W32PROCESS *p);
 void RawFreeProcess(W32PROCESS *p);
 
 /* ------------------------------------------------------------------ painting and presentation */

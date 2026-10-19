@@ -706,7 +706,24 @@ typedef struct MIME_TRAY_REQUEST {
     WCHAR InfoTitle[64];
     WCHAR Info[256];
 } MIME_TRAY_REQUEST;
+
+/*
+ * NtUserMimeShell: MIME_SHELLOP_COMMAND passes a MimeShellToast or a MimeShellWindow of mime/abi.h as request, the size
+ * being its own, and gives the toast's number for a MIME_SHELL_TOAST_SHOW, 1 or 0 for MIME_SHELL_TOAST_PROBE, else
+ * 0 or a failing status. MIME_SHELLOP_WAIT waits for an event of the toasts the caller made, for id milliseconds
+ * (0xFFFFFFFF for as long as it takes), and gives 1 with the event in request, 0 for none, or the status that woke it.
+ */
+#define MIME_SHELLOP_COMMAND 1
+#define MIME_SHELLOP_WAIT 2
+typedef struct MIME_SHELL_EVENT {
+    ULONG Kind; /* MIME_SHELL_EVENT_* */
+    ULONG Id;
+    LONG Arg;
+    ULONG ReplyLength;
+    USHORT Reply[256];
+} MIME_SHELL_EVENT;
 W32KAPI ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR request, ULONG size);
+W32KAPI LONG NTAPI NtUserMimeShell(ULONG op, ULONG id, PUCHAR request, ULONG size);
 W32KAPI ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total);
 
 /*

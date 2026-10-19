@@ -320,6 +320,10 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         TrayHostEvent(ev);
         return;
     }
+    if (ev->type == MIME_INPUT_SHELL) {
+        ShellHostEvent(ev);
+        return;
+    }
     if (ev->type == MIME_INPUT_CAMERA) {
         MimeCameraEvent(ev);
         return;
