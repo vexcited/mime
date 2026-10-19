@@ -278,6 +278,126 @@ long long __cdecl _wtoi64_l(const wchar_t *s, void *locale)
     return _wtoi64(s);
 }
 
+/*
+ * the c99 names of the 64 bit conversions: long long and intmax_t are the 64 bit integer of _strtoi64, and the locale
+ * of the _l forms is not looked at.
+ */
+long long __cdecl strtoll(const char *s, char **end, int base)
+{
+    return _strtoi64(s, end, base);
+}
+
+unsigned long long __cdecl strtoull(const char *s, char **end, int base)
+{
+    return _strtoui64(s, end, base);
+}
+
+long long __cdecl strtoimax(const char *s, char **end, int base)
+{
+    return _strtoi64(s, end, base);
+}
+
+unsigned long long __cdecl strtoumax(const char *s, char **end, int base)
+{
+    return _strtoui64(s, end, base);
+}
+
+long long __cdecl _strtoll_l(const char *s, char **end, int base, void *locale)
+{
+    return _strtoi64(s, end, base);
+}
+
+unsigned long long __cdecl _strtoull_l(const char *s, char **end, int base, void *locale)
+{
+    return _strtoui64(s, end, base);
+}
+
+long long __cdecl _strtoimax_l(const char *s, char **end, int base, void *locale)
+{
+    return _strtoi64(s, end, base);
+}
+
+unsigned long long __cdecl _strtoumax_l(const char *s, char **end, int base, void *locale)
+{
+    return _strtoui64(s, end, base);
+}
+
+long long __cdecl wcstoll(const wchar_t *s, wchar_t **end, int base)
+{
+    return _wcstoi64(s, end, base);
+}
+
+unsigned long long __cdecl wcstoull(const wchar_t *s, wchar_t **end, int base)
+{
+    return _wcstoui64(s, end, base);
+}
+
+long long __cdecl wcstoimax(const wchar_t *s, wchar_t **end, int base)
+{
+    return _wcstoi64(s, end, base);
+}
+
+unsigned long long __cdecl wcstoumax(const wchar_t *s, wchar_t **end, int base)
+{
+    return _wcstoui64(s, end, base);
+}
+
+long long __cdecl _wcstoll_l(const wchar_t *s, wchar_t **end, int base, void *locale)
+{
+    return _wcstoi64(s, end, base);
+}
+
+unsigned long long __cdecl _wcstoull_l(const wchar_t *s, wchar_t **end, int base, void *locale)
+{
+    return _wcstoui64(s, end, base);
+}
+
+long long __cdecl _wcstoimax_l(const wchar_t *s, wchar_t **end, int base, void *locale)
+{
+    return _wcstoi64(s, end, base);
+}
+
+unsigned long long __cdecl _wcstoumax_l(const wchar_t *s, wchar_t **end, int base, void *locale)
+{
+    return _wcstoui64(s, end, base);
+}
+
+long long __cdecl atoll(const char *s)
+{
+    return _atoi64(s);
+}
+
+long long __cdecl _atoll_l(const char *s, void *locale)
+{
+    return _atoi64(s);
+}
+
+long long __cdecl _wtoll(const wchar_t *s)
+{
+    return _wtoi64(s);
+}
+
+long long __cdecl _wtoll_l(const wchar_t *s, void *locale)
+{
+    return _wtoi64(s);
+}
+
+long long __cdecl imaxabs(long long value)
+{
+    return value < 0 ? -value : value;
+}
+
+typedef struct {
+    long long quot;
+    long long rem;
+} IMAXDIV;
+
+IMAXDIV __cdecl imaxdiv(long long numerator, long long denominator)
+{
+    IMAXDIV r = {numerator / denominator, numerator % denominator};
+    return r;
+}
+
 /* ------------------------------------------------------------------ integer to string */
 
 /* writes value in radix, with a minus sign when neg, into buf of size characters. */
@@ -543,9 +663,4 @@ unsigned long __cdecl _byteswap_ulong(unsigned long v)
 unsigned long long __cdecl _byteswap_uint64(unsigned long long v)
 {
     return __builtin_bswap64(v);
-}
-
-DECLSPEC_EXPORT unsigned long long __cdecl strtoull(const char *text, char **end, int base)
-{
-    return _strtoui64(text, end, base);
 }

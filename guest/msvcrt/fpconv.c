@@ -665,26 +665,12 @@ static constexpr double g_pow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1
 
 #define MAX_SIG_DIGITS 800
 
-/* the double nearest to the decimal digits * 10^exp10; digits may end with a sticky 1. */
-static double decimal_to_double(const char *digits, int nd, int exp10, int *range)
+/*
+ * the decimal digits * 10^exp10 as a 64 bit mantissa with its top bit set, a power of two and a sticky flag for what is
+ * below the mantissa; digits may end with a sticky 1.
+ */
+static void decimal_mantissa(const char *digits, int nd, int exp10, uint64_t *mantissa, int *exponent, int *sticky_out)
 {
-    *range = 0;
-    /* exact when both the digits and the power of ten are exact doubles. */
-    if (nd <= 15 && exp10 >= -22 && exp10 <= 22) {
-        uint64_t v = 0;
-        for (int i = 0; i < nd; i++)
-            v = v * 10 + (digits[i] - '0');
-        double r = (double)v;
-        return exp10 >= 0 ? r * g_pow10[exp10] : r / g_pow10[-exp10];
-    }
-    if (nd + exp10 > 310) {
-        *range = 1;
-        return __builtin_inf();
-    }
-    if (nd + exp10 < -324) {
-        *range = 2;
-        return 0;
-    }
     BIGNUM num;
     bn_set(&num, 0);
     for (int i = 0; i < nd; i++) {
@@ -738,17 +724,128 @@ static double decimal_to_double(const char *digits, int nd, int exp10, int *rang
         }
         e2 = exp10 - s + len - 64;
     }
+    *mantissa = mant;
+    *exponent = e2;
+    *sticky_out = sticky;
+}
+
+/* the double nearest to the decimal digits * 10^exp10; digits may end with a sticky 1. */
+static double decimal_to_double(const char *digits, int nd, int exp10, int *range)
+{
+    *range = 0;
+    /* exact when both the digits and the power of ten are exact doubles. */
+    if (nd <= 15 && exp10 >= -22 && exp10 <= 22) {
+        uint64_t v = 0;
+        for (int i = 0; i < nd; i++)
+            v = v * 10 + (digits[i] - '0');
+        double r = (double)v;
+        return exp10 >= 0 ? r * g_pow10[exp10] : r / g_pow10[-exp10];
+    }
+    if (nd + exp10 > 310) {
+        *range = 1;
+        return __builtin_inf();
+    }
+    if (nd + exp10 < -324) {
+        *range = 2;
+        return 0;
+    }
+    uint64_t mant;
+    int e2, sticky;
+    decimal_mantissa(digits, nd, exp10, &mant, &e2, &sticky);
     return make_double(mant, e2, sticky, range);
 }
 
 /*
- * reads a decimal floating point number like msvcrt: optional sign,
- * digits with an optional point, and an exponent introduced by e, E, d
- * or D. no infinity, nan or hexadecimal forms. *range is 1 on overflow
- * and 2 when a nonzero number rounds to zero.
+ * the float nearest to mant * 2^e2, rounded once: going through a double would round twice and miss halfway cases.
+ * mant has its top bit set; *range is 1 on overflow and 2 on underflow to zero.
+ */
+static float make_float(uint64_t mant, int e2, int sticky, int *range)
+{
+    int lead = e2 + 63;
+    if (lead > 127) {
+        *range = 1;
+        return __builtin_inff();
+    }
+    int shift = 40;
+    if (lead < -126)
+        shift += -126 - lead;
+    uint32_t result;
+    if (shift >= 64) {
+        if (shift > 64 || !((mant << 1) || sticky)) {
+            *range = 2;
+            return 0;
+        }
+        result = 1;
+        float v;
+        memcpy(&v, &result, 4);
+        return v;
+    }
+    uint64_t kept = mant >> shift;
+    uint64_t rest = mant & ((1ull << shift) - 1);
+    uint64_t half = 1ull << (shift - 1);
+    if (rest > half || (rest == half && (sticky || (kept & 1))))
+        kept++;
+    if (lead < -126) {
+        if (!kept) {
+            *range = 2;
+            return 0;
+        }
+        result = (uint32_t)kept;
+    } else {
+        if (kept >> 24) {
+            kept >>= 1;
+            lead++;
+            if (lead > 127) {
+                *range = 1;
+                return __builtin_inff();
+            }
+        }
+        result = ((uint32_t)(lead + 127) << 23) | (uint32_t)(kept & 0x7fffff);
+    }
+    float v;
+    memcpy(&v, &result, 4);
+    return v;
+}
+
+static float decimal_to_float(const char *digits, int nd, int exp10, int *range)
+{
+    *range = 0;
+    if (nd + exp10 > 40) {
+        *range = 1;
+        return __builtin_inff();
+    }
+    if (nd + exp10 < -50) {
+        *range = 2;
+        return 0;
+    }
+    uint64_t mant;
+    int e2, sticky;
+    decimal_mantissa(digits, nd, exp10, &mant, &e2, &sticky);
+    return make_float(mant, e2, sticky, range);
+}
+
+/* the case folded letter of an ascii character, to compare words without the locale. */
+#define FOLD(c) ((c) >= 'A' && (c) <= 'Z' ? (c) + 32 : (c))
+
+static int hex_digit_value(unsigned c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+/*
+ * reads a floating point number as the universal crt does: optional sign, then decimal digits with an optional point
+ * and an exponent introduced by e, E, d or D, or 0x and hexadecimal digits with an optional point and a binary
+ * exponent introduced by p, or INF, INFINITY, NAN, NAN(IND) and NAN(SNAN) in any case. *range is 1 on overflow and 2
+ * when a nonzero number rounds to zero. With single the number is rounded to a float and given as a double.
  */
 #define PARSE_FLOAT(NAME, T)                                                                                      \
-    static double NAME(const T *s, const T **end, int *range)                                                     \
+    static double NAME(const T *s, const T **end, int *range, int single)                                        \
     {                                                                                                             \
         const T *p = s;                                                                                           \
         char digits[MAX_SIG_DIGITS + 2];                                                                          \
@@ -757,6 +854,95 @@ static double decimal_to_double(const char *digits, int nd, int exp10, int *rang
         *end = s;                                                                                                 \
         if (*p == '-' || *p == '+')                                                                               \
             neg = *p++ == '-';                                                                                    \
+        /* infinity and not a number. */                                                                          \
+        if (FOLD(p[0]) == 'i' && FOLD(p[1]) == 'n' && FOLD(p[2]) == 'f') {                                        \
+            const T *q = p + 3;                                                                                   \
+            if (FOLD(q[0]) == 'i' && FOLD(q[1]) == 'n' && FOLD(q[2]) == 'i' && FOLD(q[3]) == 't' &&               \
+                FOLD(q[4]) == 'y')                                                                                \
+                q += 5;                                                                                           \
+            *end = q;                                                                                             \
+            return neg ? -__builtin_inf() : __builtin_inf();                                                      \
+        }                                                                                                         \
+        if (FOLD(p[0]) == 'n' && FOLD(p[1]) == 'a' && FOLD(p[2]) == 'n') {                                        \
+            const T *q = p + 3;                                                                                   \
+            uint64_t bits = 0x7ff8000000000000ull;                                                                \
+            if (*q == '(') {                                                                                      \
+                const T *r = q + 1;                                                                               \
+                while ((*r >= '0' && *r <= '9') || (*r >= 'a' && *r <= 'z') || (*r >= 'A' && *r <= 'Z') ||        \
+                       *r == '_')                                                                                 \
+                    r++;                                                                                          \
+                if (*r == ')') {                                                                                  \
+                    if (FOLD(q[1]) == 'i' && FOLD(q[2]) == 'n' && FOLD(q[3]) == 'd' && r == q + 4)                \
+                        bits = 0xfff8000000000000ull;                                                             \
+                    else if (FOLD(q[1]) == 's' && FOLD(q[2]) == 'n' && FOLD(q[3]) == 'a' && FOLD(q[4]) == 'n' &&  \
+                             r == q + 5)                                                                          \
+                        bits = 0x7ff4000000000000ull;                                                             \
+                    q = r + 1;                                                                                    \
+                }                                                                                                 \
+            }                                                                                                     \
+            if (neg)                                                                                              \
+                bits |= 0x8000000000000000ull;                                                                    \
+            *end = q;                                                                                             \
+            double nan;                                                                                           \
+            memcpy(&nan, &bits, 8);                                                                               \
+            return nan;                                                                                           \
+        }                                                                                                         \
+        /* hexadecimal digits with a binary exponent. */                                                          \
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X') &&                                                        \
+            (hex_digit_value(p[2]) >= 0 || (p[2] == '.' && hex_digit_value(p[3]) >= 0))) {                        \
+            const T *q = p + 2;                                                                                   \
+            uint64_t mant = 0;                                                                                    \
+            int exp2 = 0, hsticky = 0, seen_point = 0;                                                            \
+            for (;; q++) {                                                                                        \
+                int d = hex_digit_value(*q);                                                                      \
+                if (d < 0) {                                                                                      \
+                    if (*q == '.' && !seen_point) {                                                               \
+                        seen_point = 1;                                                                           \
+                        continue;                                                                                 \
+                    }                                                                                             \
+                    break;                                                                                        \
+                }                                                                                                 \
+                if (!(mant >> 60)) {                                                                              \
+                    mant = mant << 4 | (uint64_t)d;                                                               \
+                    if (seen_point)                                                                               \
+                        exp2 -= 4;                                                                                \
+                } else {                                                                                          \
+                    if (d)                                                                                        \
+                        hsticky = 1;                                                                              \
+                    if (!seen_point)                                                                              \
+                        exp2 += 4;                                                                                \
+                }                                                                                                 \
+            }                                                                                                     \
+            if (*q == 'p' || *q == 'P') {                                                                         \
+                const T *r = q + 1;                                                                               \
+                int eneg = 0, x = 0;                                                                              \
+                if (*r == '-' || *r == '+')                                                                       \
+                    eneg = *r++ == '-';                                                                           \
+                if (*r >= '0' && *r <= '9') {                                                                     \
+                    while (*r >= '0' && *r <= '9') {                                                              \
+                        if (x < 100000)                                                                           \
+                            x = x * 10 + (*r - '0');                                                              \
+                        r++;                                                                                      \
+                    }                                                                                             \
+                    exp2 += eneg ? -x : x;                                                                        \
+                    q = r;                                                                                        \
+                }                                                                                                 \
+            }                                                                                                     \
+            *end = q;                                                                                             \
+            if (!mant)                                                                                            \
+                return neg ? -0.0 : 0.0;                                                                          \
+            int lz = __builtin_clzll(mant);                                                                       \
+            mant <<= lz;                                                                                          \
+            exp2 -= lz;                                                                                           \
+            double hv;                                                                                            \
+            if (single)                                                                                           \
+                hv = make_float(mant, exp2, hsticky, range);                                                      \
+            else                                                                                                  \
+                hv = make_double(mant, exp2, hsticky, range);                                                     \
+            if (*range == 2)                                                                                      \
+                return neg ? -0.0 : 0.0;                                                                          \
+            return neg ? -hv : hv;                                                                                \
+        }                                                                                                         \
         while (*p == '0') {                                                                                       \
             p++;                                                                                                  \
             any = 1;                                                                                              \
@@ -814,7 +1000,8 @@ static double decimal_to_double(const char *digits, int nd, int exp10, int *rang
         }                                                                                                         \
         if (!nd)                                                                                                  \
             return neg ? -0.0 : 0.0;                                                                              \
-        double v = decimal_to_double(digits, nd, dexp - nd, range);                                               \
+        double v = single ? (double)decimal_to_float(digits, nd, dexp - nd, range)                                \
+                          : decimal_to_double(digits, nd, dexp - nd, range);                                      \
         if (*range == 2)                                                                                          \
             return 0.0;                                                                                           \
         return neg ? -v : v;                                                                                      \
@@ -826,7 +1013,7 @@ PARSE_FLOAT(parse_float_w, wchar_t)
 double MsvcrtStrtod(const char *s, char **end, int *range_error)
 {
     const char *e;
-    double v = parse_float_a(s, &e, range_error);
+    double v = parse_float_a(s, &e, range_error, 0);
     if (end)
         *end = (char *)e;
     return v;
@@ -835,7 +1022,7 @@ double MsvcrtStrtod(const char *s, char **end, int *range_error)
 double MsvcrtWcstod(const wchar_t *s, wchar_t **end, int *range_error)
 {
     const wchar_t *e;
-    double v = parse_float_w(s, &e, range_error);
+    double v = parse_float_w(s, &e, range_error, 0);
     if (end)
         *end = (wchar_t *)e;
     return v;
@@ -905,6 +1092,86 @@ double __cdecl _wcstod_l(const wchar_t *s, wchar_t **end, void *locale)
     return wcstod(s, end);
 }
 
+/*
+ * the float forms round once to a float, which strtod and a cast would not; long double is double here, so strtold
+ * and wcstold are the double conversions.
+ */
+float __cdecl strtof(const char *s, char **end)
+{
+    if (end)
+        *end = (char *)s;
+    if (!s) {
+        MSVCRT_INVALID(EINVAL);
+        return 0;
+    }
+    const char *p = s, *e;
+    while (MSVCRT_CTYPE(*p) & _SPACE)
+        p++;
+    int range;
+    double v = parse_float_a(p, &e, &range, 1);
+    MsvcrtSetErrno(0);
+    if (e == p)
+        return 0;
+    if (end)
+        *end = (char *)e;
+    if (range)
+        MsvcrtSetErrno(ERANGE);
+    return (float)v;
+}
+
+float __cdecl wcstof(const wchar_t *s, wchar_t **end)
+{
+    if (end)
+        *end = (wchar_t *)s;
+    if (!s) {
+        MSVCRT_INVALID(EINVAL);
+        return 0;
+    }
+    const wchar_t *p = s, *e;
+    while (MsvcrtWctype(*p) & _SPACE)
+        p++;
+    int range;
+    double v = parse_float_w(p, &e, &range, 1);
+    MsvcrtSetErrno(0);
+    if (e == p)
+        return 0;
+    if (end)
+        *end = (wchar_t *)e;
+    if (range)
+        MsvcrtSetErrno(ERANGE);
+    return (float)v;
+}
+
+float __cdecl _strtof_l(const char *s, char **end, void *locale)
+{
+    return strtof(s, end);
+}
+
+float __cdecl _wcstof_l(const wchar_t *s, wchar_t **end, void *locale)
+{
+    return wcstof(s, end);
+}
+
+double __cdecl strtold(const char *s, char **end)
+{
+    return strtod(s, end);
+}
+
+double __cdecl _strtold_l(const char *s, char **end, void *locale)
+{
+    return strtod(s, end);
+}
+
+double __cdecl wcstold(const wchar_t *s, wchar_t **end)
+{
+    return wcstod(s, end);
+}
+
+double __cdecl _wcstold_l(const wchar_t *s, wchar_t **end, void *locale)
+{
+    return wcstod(s, end);
+}
+
 double __cdecl atof(const char *s)
 {
     if (!s) {
@@ -962,6 +1229,11 @@ int __cdecl _atodbl_l(_CRT_DOUBLE *out, char *s, void *locale)
 }
 
 int __cdecl _atoldbl(_LDOUBLE *out, char *s)
+{
+    return _atodbl((_CRT_DOUBLE *)out, s);
+}
+
+int __cdecl _atoldbl_l(_LDOUBLE *out, char *s, void *locale)
 {
     return _atodbl((_CRT_DOUBLE *)out, s);
 }

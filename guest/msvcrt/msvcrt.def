@@ -1025,3 +1025,34 @@ EXPORTS
     _set_new_handler=MsvcrtSetNewHandler
     _query_new_handler=MsvcrtQueryNewHandler
     _set_app_type=__set_app_type
+    strtoll
+    strtoull
+    strtoimax
+    strtoumax
+    _strtoll_l
+    _strtoull_l
+    _strtoimax_l
+    _strtoumax_l
+    wcstoll
+    wcstoull
+    wcstoimax
+    wcstoumax
+    _wcstoll_l
+    _wcstoull_l
+    _wcstoimax_l
+    _wcstoumax_l
+    atoll
+    _atoll_l
+    _wtoll
+    _wtoll_l
+    imaxabs
+    imaxdiv
+    strtof
+    wcstof
+    _strtof_l
+    _wcstof_l
+    strtold
+    _strtold_l
+    wcstold
+    _wcstold_l
+    _atoldbl_l
