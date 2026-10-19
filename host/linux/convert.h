@@ -43,17 +43,24 @@ char *mime_conv_url_to_uris(const void *text, size_t size, bool wide, size_t *ou
  * mime_conv_to_guest makes the layout of a kind from the bytes of that type.
  */
 uint32_t mime_conv_kinds(char *const *mimes, size_t count);
+/* the kinds of a clipboard: those of its types, and the drop effect where files come with a mark for a cut. */
+uint32_t mime_conv_clipboard_kinds(char *const *mimes, size_t count);
 const char *mime_conv_read_type(uint32_t kind, char *const *mimes, size_t count);
 uint8_t *mime_conv_to_guest(uint32_t kind, const void *raw, size_t size, size_t *out_size);
 
 /*
  * the types a guest offers for kinds, at most 16 and in the order to show them: the number put into types.
  * mime_conv_pick_kind is the kind to ask the guest for when a host program wants a type, 0 when it is none of the
- * offered ones, and mime_conv_from_guest turns the bytes of that kind into the type.
+ * offered ones, and mime_conv_from_guest turns the bytes of that kind into the type. the types of files say whether
+ * they are cut, which takes the DROPEFFECT_* of the files: mime_conv_needs_effect says if the type of a host program
+ * asks for it, and the effect is 0 when there is none.
  */
 size_t mime_conv_offer_types(uint32_t kinds, const char **types);
 uint32_t mime_conv_pick_kind(const char *mime, uint32_t offered);
-uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, size_t size, size_t *out_size);
+uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, size_t size, uint32_t effect,
+                              size_t *out_size);
+
+bool mime_conv_needs_effect(const char *mime);
 
 /* the percent decoded path of a file: uri on this machine, false for any other uri. */
 bool mime_conv_uri_to_path(const char *uri, size_t len, char *out, size_t size);

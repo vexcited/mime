@@ -1026,7 +1026,31 @@ static HRESULT STDMETHODCALLTYPE clip_get_canonical_format_etc(IDataObject *This
     return DATA_S_SAMEFORMATETC;
 }
 
-/* the owner takes what a program says about the clipboard, such as that a cut was pasted. */
+/* whether a format says that a cut was pasted: the target reports it to the source, which then deletes. */
+static BOOL says_moved(const FORMATETC *format, const STGMEDIUM *medium)
+{
+    static const WCHAR *names[] = {L"Performed DropEffect", L"Logical Performed DropEffect", L"Paste Succeeded"};
+    if (format->cfFormat < 0xC000 || medium->tymed != TYMED_HGLOBAL || !medium->hGlobal)
+        return FALSE;
+    WCHAR name[40];
+    if (!GetClipboardFormatNameW(format->cfFormat, name, RTL_NUMBER_OF(name)))
+        return FALSE;
+    BOOL named = FALSE;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
+        named = named || !_wcsicmp(name, names[i]);
+    const DWORD *effect = named && GlobalSize(medium->hGlobal) >= sizeof(DWORD) ? GlobalLock(medium->hGlobal) : nullptr;
+    BOOL moved = effect && (*effect & DROPEFFECT_MOVE);
+    if (effect)
+        GlobalUnlock(medium->hGlobal);
+    return moved;
+}
+
+/*
+ * the owner takes what a program says about the clipboard, such as that a cut was pasted (read: SetData forwards to
+ * the object of the owner, and fails without one). a cut that a host program made has no owner here, and a file
+ * manager clears the clipboard when it has pasted one, so the same report from a program of the guest empties it: the
+ * host's selection goes with it. that is not what Windows does, which fails the call.
+ */
 static HRESULT STDMETHODCALLTYPE clip_set_data(IDataObject *This, FORMATETC *format, STGMEDIUM *medium, BOOL release)
 {
     CLIP_OBJECT *c = (CLIP_OBJECT *)This;
@@ -1036,6 +1060,13 @@ static HRESULT STDMETHODCALLTYPE clip_set_data(IDataObject *This, FORMATETC *for
         return E_INVALIDARG;
     if (c->Local)
         return c->Local->lpVtbl->SetData(c->Local, format, medium, release);
+    if (!GetClipboardOwner() && says_moved(format, medium) && OpenClipboard(nullptr)) {
+        EmptyClipboard();
+        CloseClipboard();
+        if (release)
+            ReleaseStgMedium(medium);
+        return S_OK;
+    }
     return E_FAIL;
 }
 

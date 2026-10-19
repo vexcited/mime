@@ -44,7 +44,7 @@ static ULONG g_host_generation;
 static BOOLEAN g_host_fetch_failed; /* the host answered unsupported to a fetch: it only shares text */
 static BOOLEAN g_offer_unsupported; /* the host takes text only, in one piece */
 static ULONG g_offer_sequence;      /* the clipboard sequence number the host was offered */
-static ATOM g_format_png, g_format_html, g_format_url;
+static ATOM g_format_png, g_format_html, g_format_url, g_format_effect;
 
 static BOOLEAN is_gdi_format(UINT format)
 {
@@ -162,6 +162,7 @@ static void register_formats(void)
         g_format_png = AtomAdd(L"PNG");
         g_format_html = AtomAdd(L"HTML Format");
         g_format_url = AtomAdd(L"UniformResourceLocatorW");
+        g_format_effect = AtomAdd(L"Preferred DropEffect");
     }
 }
 
@@ -184,13 +185,15 @@ UINT ClipboardFormatOfKind(ULONG kind)
         return CF_HDROP;
     case MIME_CLIP_URL:
         return g_format_url;
+    case MIME_CLIP_DROPEFFECT:
+        return g_format_effect;
     }
     return 0;
 }
 
 ULONG ClipboardKindOfFormat(UINT format)
 {
-    for (ULONG kind = 1; kind <= MIME_CLIP_URL; kind <<= 1)
+    for (ULONG kind = 1; kind <= MIME_CLIP_DROPEFFECT; kind <<= 1)
         if (format && ClipboardFormatOfKind(kind) == format)
             return kind;
     return 0;
@@ -222,6 +225,9 @@ static ULONG offerable_kinds(void)
         mask |= MIME_CLIP_HDROP;
     if (own_format(g_format_url))
         mask |= MIME_CLIP_URL;
+    /* whether files are cut goes with them. */
+    if ((mask & MIME_CLIP_HDROP) && own_format(g_format_effect))
+        mask |= MIME_CLIP_DROPEFFECT;
     return mask;
 }
 
@@ -283,6 +289,9 @@ static PUCHAR gather(ULONG kind, SIZE_T *size)
         break;
     case MIME_CLIP_URL:
         candidates[0] = g_format_url;
+        break;
+    case MIME_CLIP_DROPEFFECT:
+        candidates[0] = g_format_effect;
         break;
     }
     for (ULONG i = 0; i < RTL_NUMBER_OF(candidates); i++) {
@@ -522,6 +531,8 @@ static void pull_from_host(void)
         add_host_format(CF_HDROP, MIME_CLIP_HDROP);
     if (g_host_mask & MIME_CLIP_URL)
         add_host_format(g_format_url, MIME_CLIP_URL);
+    if (g_host_mask & MIME_CLIP_DROPEFFECT)
+        add_host_format(g_format_effect, MIME_CLIP_DROPEFFECT);
     synthesize_formats();
     g_sequence++;
     /* what the guest offered the host is gone from it. */

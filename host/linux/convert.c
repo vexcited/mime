@@ -837,6 +837,7 @@ static const char *const k_bmp[] = {"image/bmp", "image/x-bmp", "image/x-ms-bmp"
 #define MIME_HTML "text/html"
 #define MIME_URIS "text/uri-list"
 #define MIME_GNOME_FILES "x-special/gnome-copied-files"
+#define MIME_KDE_CUT "application/x-kde-cutselection"
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static bool has_type(char *const *mimes, size_t count, const char *type)
@@ -870,9 +871,21 @@ uint32_t mime_conv_kinds(char *const *mimes, size_t count)
     return mask;
 }
 
+uint32_t mime_conv_clipboard_kinds(char *const *mimes, size_t count)
+{
+    uint32_t mask = mime_conv_kinds(mimes, count);
+    if (has_type(mimes, count, MIME_URIS) && (has_type(mimes, count, MIME_GNOME_FILES) || has_type(mimes, count, MIME_KDE_CUT)))
+        mask |= MIME_CLIP_DROPEFFECT;
+    return mask;
+}
+
 const char *mime_conv_read_type(uint32_t kind, char *const *mimes, size_t count)
 {
     switch (kind) {
+    case MIME_CLIP_DROPEFFECT:
+        return has_type(mimes, count, MIME_GNOME_FILES)  ? MIME_GNOME_FILES
+               : has_type(mimes, count, MIME_KDE_CUT) ? MIME_KDE_CUT
+                                                          : nullptr;
     case MIME_CLIP_TEXT:
         return find_type(mimes, count, k_text, COUNT(k_text));
     case MIME_CLIP_DIB:
@@ -890,9 +903,33 @@ const char *mime_conv_read_type(uint32_t kind, char *const *mimes, size_t count)
     return nullptr;
 }
 
+/*
+ * the drop effect a file manager's mark says. gnome's file managers write "copy", "cut" or "link" and then the uris,
+ * a line each; kde's write "1" for a cut and "0" for a copy next to the uri list.
+ */
+static uint8_t *effect_to_guest(const void *raw, size_t size, size_t *out_size)
+{
+    const char *text = raw;
+    uint32_t effect = 1; /* DROPEFFECT_COPY */
+    if (size >= 1 && (text[0] == '0' || text[0] == '1') && (size == 1 || text[1] == '\n' || text[1] == '\r'))
+        effect = text[0] == '1' ? 2 : 1;
+    else if (size >= 3 && !strncmp(text, "cut", 3))
+        effect = 2; /* DROPEFFECT_MOVE */
+    else if (size >= 4 && !strncmp(text, "link", 4))
+        effect = 4; /* DROPEFFECT_LINK */
+    uint8_t *out = malloc(4);
+    if (!out)
+        return nullptr;
+    wr32(out, effect);
+    *out_size = 4;
+    return out;
+}
+
 uint8_t *mime_conv_to_guest(uint32_t kind, const void *raw, size_t size, size_t *out_size)
 {
     switch (kind) {
+    case MIME_CLIP_DROPEFFECT:
+        return effect_to_guest(raw, size, out_size);
     case MIME_CLIP_TEXT:
         return mime_conv_text_to_guest(raw, size, out_size);
     case MIME_CLIP_DIB:
@@ -927,6 +964,8 @@ size_t mime_conv_offer_types(uint32_t kinds, const char **types)
         types[n++] = MIME_URIS;
     if (kinds & MIME_CLIP_HDROP)
         types[n++] = MIME_GNOME_FILES;
+    if ((kinds & MIME_CLIP_HDROP) && (kinds & MIME_CLIP_DROPEFFECT))
+        types[n++] = MIME_KDE_CUT;
     return n;
 }
 
@@ -945,14 +984,32 @@ uint32_t mime_conv_pick_kind(const char *mime, uint32_t offered)
         return offered & MIME_CLIP_HDROP ? MIME_CLIP_HDROP : offered & MIME_CLIP_URL;
     if (!strcmp(mime, MIME_GNOME_FILES))
         return offered & MIME_CLIP_HDROP;
+    if (!strcmp(mime, MIME_KDE_CUT))
+        return offered & MIME_CLIP_DROPEFFECT;
     return 0;
 }
 
-uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, size_t size, size_t *out_size)
+bool mime_conv_needs_effect(const char *mime)
+{
+    return !strcmp(mime, MIME_GNOME_FILES);
+}
+
+uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, size_t size, uint32_t effect,
+                              size_t *out_size)
 {
     bool png = !strcmp(mime, "image/png"), bmp = !strcmp(mime, "image/bmp");
     uint8_t *out = nullptr;
     switch (kind) {
+    case MIME_CLIP_DROPEFFECT: {
+        /* "1" for a cut, "0" otherwise. */
+        uint32_t value = size >= 4 ? rd32(raw) : 0;
+        out = malloc(1);
+        if (out) {
+            out[0] = (value & 2) ? '1' : '0';
+            *out_size = 1;
+        }
+        return out;
+    }
     case MIME_CLIP_TEXT:
         return (uint8_t *)mime_conv_text_from_guest(raw, size / 2, out_size);
     case MIME_CLIP_PNG:
@@ -982,11 +1039,11 @@ uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, 
     case MIME_CLIP_HDROP: {
         char *uris = mime_conv_hdrop_to_uris(mime_daemon_paths(), raw, size, out_size);
         if (uris && !strcmp(mime, MIME_GNOME_FILES)) {
-            /* "copy", then one uri on each line without a line end after the last. */
+            /* "copy" or "cut", then one uri on each line without a line end after the last. */
             uint8_t *gnome = malloc(*out_size + 8);
             if (gnome) {
-                memcpy(gnome, "copy\n", 5);
-                size_t n = 5;
+                size_t n = (effect & 2) ? 4 : 5;
+                memcpy(gnome, (effect & 2) ? "cut\n" : "copy\n", n);
                 for (size_t i = 0; i < *out_size; i++)
                     if (uris[i] != '\r')
                         gnome[n++] = (uint8_t)uris[i];

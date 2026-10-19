@@ -912,7 +912,10 @@ enum {
  * programs use: MIME_CLIP_TEXT is utf-16le text with windows line ends and no nul, MIME_CLIP_DIB and
  * MIME_CLIP_DIBV5 are the bytes of CF_DIB and CF_DIBV5, MIME_CLIP_PNG a png file, MIME_CLIP_HTML the bytes of
  * "HTML Format" with its header, MIME_CLIP_HDROP a DROPFILES block of guest paths and MIME_CLIP_URL the text of
- * "UniformResourceLocatorW". the host converts to and from what other host programs use.
+ * "UniformResourceLocatorW". MIME_CLIP_DROPEFFECT is the DWORD of "Preferred DropEffect" next to files: DROPEFFECT_MOVE
+ * for a cut and DROPEFFECT_COPY for a copy, which the host takes from x-special/gnome-copied-files or
+ * application/x-kde-cutselection and writes to them. it is a kind of the clipboard only, a drag has none. the host
+ * converts to and from what other host programs use.
  */
 enum {
     MIME_CLIP_TEXT = 1u << 0,
@@ -922,6 +925,7 @@ enum {
     MIME_CLIP_HTML = 1u << 4,
     MIME_CLIP_HDROP = 1u << 5,
     MIME_CLIP_URL = 1u << 6,
+    MIME_CLIP_DROPEFFECT = 1u << 7,
 };
 
 /* MIME_HC_CLIP_PROVIDE's total when the guest has nothing to give for the request. */

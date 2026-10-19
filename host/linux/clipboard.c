@@ -15,11 +15,11 @@
 #include <string.h>
 #include <time.h>
 
-#define KINDS 7
+#define KINDS 8
 #define MAX_BYTES (256u << 20)
 #define REQUEST_TIMEOUT_MS 5000
 
-/* the kinds as bits 0 to 6 of a mask. */
+/* the kinds as bits 0 to 7 of a mask. */
 static int kind_index(uint32_t kind)
 {
     for (int i = 0; i < KINDS; i++)
@@ -62,7 +62,7 @@ static struct {
 
 static uint32_t mask_of_locked(void)
 {
-    return mime_conv_kinds(g.mimes, g.mime_count);
+    return mime_conv_clipboard_kinds(g.mimes, g.mime_count);
 }
 
 static void free_cache_locked(void)
@@ -307,10 +307,20 @@ static const void *serve(void *userdata, const char *mime, size_t *size)
     if (!kind)
         return nullptr;
     size_t raw_size = 0, out_size = 0;
+    /* files are cut or copied, which a file manager reads from the type: the guest says which first. */
+    uint32_t effect = 0;
+    if ((offered & MIME_CLIP_DROPEFFECT) && mime_conv_needs_effect(mime)) {
+        size_t effect_size = 0;
+        uint8_t *bytes = mime_ui_request_guest(MIME_INPUT_CLIP_REQUEST, MIME_CLIP_DROPEFFECT, REQUEST_TIMEOUT_MS,
+                                               &effect_size);
+        if (bytes && effect_size >= 4)
+            memcpy(&effect, bytes, 4);
+        free(bytes);
+    }
     uint8_t *raw = mime_ui_request_guest(MIME_INPUT_CLIP_REQUEST, kind, REQUEST_TIMEOUT_MS, &raw_size);
     if (!raw)
         return nullptr;
-    uint8_t *out = mime_conv_from_guest(mime, kind, raw, raw_size, &out_size);
+    uint8_t *out = mime_conv_from_guest(mime, kind, raw, raw_size, effect, &out_size);
     free(raw);
     pthread_mutex_lock(&g.lock);
     free(g.served);
@@ -338,8 +348,26 @@ static void offer_main(void *arg)
     bool owned = g.owned;
     pthread_mutex_unlock(&g.lock);
     if (!n) {
-        if (owned)
+        /* the guest emptied the clipboard, which holds a host program's contents as well as its own. */
+        pthread_mutex_lock(&g.lock);
+        bool held = g.mask != 0;
+        g.mask = 0;
+        free_cache_locked();
+        pthread_mutex_unlock(&g.lock);
+        if (owned) {
             SDL_ClearClipboardData();
+        } else if (held) {
+            /*
+             * sdl can only clear a selection of its own, so the contents of another program are replaced by
+             * a selection of a type nobody reads, which a paste finds empty and which ends the other program's
+             * hold on it.
+             */
+            static const char *const nothing[] = {"application/x-mime-empty"};
+            bool ok = SDL_SetClipboardData(serve, serve_cleanup, nullptr, nothing, 1);
+            pthread_mutex_lock(&g.lock);
+            g.owned = ok;
+            pthread_mutex_unlock(&g.lock);
+        }
         return;
     }
     bool ok = SDL_SetClipboardData(serve, serve_cleanup, nullptr, mimes, n);

@@ -565,7 +565,7 @@ static void *send_thread(void *arg)
     uint32_t kind = mime_conv_pick_kind(s->mime, s->kinds);
     size_t raw_size = 0, size = 0;
     uint8_t *raw = kind ? mime_ui_request_guest(MIME_INPUT_DND_REQUEST, kind, REQUEST_TIMEOUT_MS, &raw_size) : nullptr;
-    uint8_t *data = raw ? mime_conv_from_guest(s->mime, kind, raw, raw_size, &size) : nullptr;
+    uint8_t *data = raw ? mime_conv_from_guest(s->mime, kind, raw, raw_size, 0, &size) : nullptr;
     free(raw);
     size_t done = 0;
     while (data && done < size) {
