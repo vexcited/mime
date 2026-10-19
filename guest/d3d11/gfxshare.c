@@ -111,7 +111,8 @@ HRESULT MimeShareOpen(HANDLE handle, UINT kind, MimeShare *share, void *data, UI
     share->id = a.Id;
     share->kind = a.Kind;
     share->flags = a.Flags;
-    share->legacy = a.Legacy;
+    /* the legacy handle belongs to the maker: closing an opened object does not take it away. */
+    share->legacy = 0;
     if (size)
         *size = a.Size;
     return S_OK;

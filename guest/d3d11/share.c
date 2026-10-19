@@ -142,7 +142,7 @@ HRESULT D3dShareHandle(D3dResource *r, BOOL nt, const SECURITY_ATTRIBUTES *attri
     if (FAILED(hr))
         return hr;
     if (!nt) {
-        *out = (HANDLE)(ULONG_PTR)r->share.legacy;
+        *out = MimeLegacyHandle(r->share.legacy);
         return r->share.legacy ? S_OK : E_INVALIDARG;
     }
     return MimeShareHandle(&r->share, 0, attributes, out);
@@ -197,11 +197,13 @@ HRESULT D3dShareOpen(D3dDevice *device, HANDLE handle, BOOL nt, REFIID riid, voi
     *out = nullptr;
     HANDLE own = nullptr;
     if (!nt) {
-        HRESULT hr = MimeShareOpenLegacy((UINT)(ULONG_PTR)handle, &own);
+        if (!((ULONG_PTR)handle & MIME_LEGACY_HANDLE_BIT))
+            return E_INVALIDARG;
+        HRESULT hr = MimeShareOpenLegacy(MimeLegacyNumber(handle), &own);
         if (FAILED(hr))
             return E_INVALIDARG;
         handle = own;
-    } else if (!handle || handle == INVALID_HANDLE_VALUE) {
+    } else if (!handle || handle == INVALID_HANDLE_VALUE || ((ULONG_PTR)handle & MIME_LEGACY_HANDLE_BIT)) {
         return E_INVALIDARG;
     }
     D3dImport import = {};

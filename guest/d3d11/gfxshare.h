@@ -92,6 +92,13 @@ HRESULT MimeShareOpen(HANDLE handle, UINT kind, MimeShare *share, void *data, UI
 /* what kind of object a handle names, MIME_GFXSHARE_RESOURCE or MIME_GFXSHARE_SYNC. */
 HRESULT MimeShareKind(HANDLE handle, UINT *kind);
 HRESULT MimeShareOpenName(LPCWSTR name, UINT kind, HANDLE *out);
+/*
+ * Legacy shared handles are not handles: a number of the object with bit 1 set, which no handle has, so the
+ * runtimes tell them apart. They open only while the resource that made them lives.
+ */
+#define MIME_LEGACY_HANDLE_BIT 2
+#define MimeLegacyHandle(number) ((HANDLE)(ULONG_PTR)(((ULONG_PTR)(number) << 2) | MIME_LEGACY_HANDLE_BIT))
+#define MimeLegacyNumber(handle) ((UINT)((ULONG_PTR)(handle) >> 2))
 /* a legacy shared handle: only the object of a process that still has its resource opens. */
 HRESULT MimeShareOpenLegacy(UINT legacy, HANDLE *out);
 /* the device lets go of the object. */

@@ -1272,6 +1272,16 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface
 {
     D12Device *device = impl(iface);
     UINT kind = 0;
+    /* a legacy shared handle has bit 1 set, which no nt handle does: it names a resource of direct3d 11. */
+    if ((ULONG_PTR)handle & MIME_LEGACY_HANDLE_BIT) {
+        HANDLE nt;
+        HRESULT opened = MimeShareOpenLegacy(MimeLegacyNumber(handle), &nt);
+        if (FAILED(opened))
+            return opened;
+        HRESULT hr = D12OpenSharedResource(device, nt, riid, out);
+        CloseHandle(nt);
+        return hr;
+    }
     HRESULT hr = MimeShareKind(handle, &kind);
     if (FAILED(hr))
         return hr;
@@ -1287,17 +1297,20 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface
     return D12OpenSharedResource(device, handle, riid, out);
 }
 
-/* only the access GENERIC_ALL opens more than a fence, as in D3D12Core.dll. */
+/*
+ * Any access but GENERIC_ALL is refused before anything is looked up, and a name is tried as a resource, then as a
+ * fence, as D3D12Core.dll tries it.
+ */
 static HRESULT STDMETHODCALLTYPE device_open_shared_handle_by_name(ID3D12Device14 *iface, LPCWSTR name, DWORD access,
                                                                    HANDLE *handle)
 {
     if (!handle)
         return E_INVALIDARG;
     *handle = nullptr;
-    HRESULT hr = E_INVALIDARG;
-    if (name && access == GENERIC_ALL)
-        hr = MimeShareOpenName(name, MIME_GFXSHARE_RESOURCE, handle);
-    if (name && FAILED(hr))
+    if (!name || access != GENERIC_ALL)
+        return E_INVALIDARG;
+    HRESULT hr = MimeShareOpenName(name, MIME_GFXSHARE_RESOURCE, handle);
+    if (FAILED(hr))
         hr = MimeShareOpenName(name, MIME_GFXSHARE_SYNC, handle);
     if (FAILED(hr))
         *handle = nullptr;

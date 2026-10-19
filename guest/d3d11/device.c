@@ -1162,8 +1162,9 @@ static HRESULT STDMETHODCALLTYPE device_create_device_context_state(ID3D11Device
 static HRESULT STDMETHODCALLTYPE device_open_shared_resource_by_name(ID3D11Device5 *iface, LPCWSTR name,
                                                                      DWORD access, REFIID riid, void **resource)
 {
-    if (resource)
-        *resource = nullptr;
+    if (!name || !resource)
+        return E_INVALIDARG;
+    *resource = nullptr;
     HANDLE handle;
     HRESULT hr = MimeShareOpenName(name, MIME_GFXSHARE_RESOURCE, &handle);
     if (FAILED(hr))
