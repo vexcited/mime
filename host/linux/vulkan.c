@@ -2436,5 +2436,10 @@ static void warm_wait(void)
     if (!g_warm_started)
         return;
     g_warm_started = false;
-    pthread_join(g_warm_thread, nullptr);
+    /* a driver that hangs must not hang the machine's end. */
+    struct timespec limit;
+    clock_gettime(CLOCK_REALTIME, &limit);
+    limit.tv_sec += 3;
+    if (pthread_timedjoin_np(g_warm_thread, nullptr, &limit) != 0)
+        mime_warn("vulkan: the warm up of the driver did not end in time");
 }
