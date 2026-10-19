@@ -202,6 +202,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
                 (strstr(boot->cmdline, "noidlespin") ? KI_OPT_NO_IDLE_SPIN : 0) |
                 (strstr(boot->cmdline, "eagertimer") ? KI_OPT_EAGER_TIMER : 0);
 
+    KiNoLockFlush = strstr(boot->cmdline, "nolockflush") != nullptr;
     extern BOOLEAN KiTraceUserExceptions;
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
     extern char KiTraceSyscallImage[16];

@@ -14,6 +14,8 @@ volatile ULONG KiKernelLock[8] __attribute__((aligned(64))) = {0, ~0u, 0, 0};
 ULONG64 KiLongHoldTicks = ~0ull;
 ULONG64 KiKernelLockPhys;
 ULONG KiOptions;
+/* the kernel option nolockflush: the lock no longer settles the user translations other processors changed. */
+UCHAR KiNoLockFlush;
 /* acquisitions, those that had to wait, ticks waited, the longest wait: a row of eight for each processor, see entry.S */
 ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 

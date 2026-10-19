@@ -326,6 +326,7 @@ FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
 #define KI_OPT_NO_IDLE_SPIN 0x4
 #define KI_OPT_EAGER_TIMER 0x8
 extern ULONG KiOptions;
+extern UCHAR KiNoLockFlush;
 
 void KiInitializeKernel(MimeBootInfo *boot);
 void KiInitializeProcessor(PKPCR pcr);

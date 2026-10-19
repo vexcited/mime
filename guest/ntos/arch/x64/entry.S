@@ -131,13 +131,25 @@ KiAcquireKernelLock:
 7:
     /* kernel translations another processor changed while this one was away. */
     testb   $KPCR_FLUSH_GLOBAL, %gs:KPCR_FLUSH_PENDING
-    jz      6f
+    jz      8f
     movb    $0, %gs:KPCR_FLUSH_PENDING
     movq    %cr4, %rax
     movq    %rax, %rcx
     andq    $~0x80, %rcx
     movq    %rcx, %cr4
     movq    %rax, %cr4
+    ret
+    /*
+     * user translations too: the kernel writes to the memory of the program from here on, and a stale
+     * entry of a page another thread freed and the allocator gave out again would take the write.
+     */
+8:  testb   $KPCR_FLUSH_USER, %gs:KPCR_FLUSH_PENDING
+    jz      6f
+    cmpb    $0, KiNoLockFlush(%rip)
+    jne     6f
+    movb    $0, %gs:KPCR_FLUSH_PENDING
+    movq    %cr3, %rax
+    movq    %rax, %cr3
 6:  ret
 
     .globl  KiReleaseKernelLock
