@@ -202,6 +202,23 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
+/* fswatch.c: changes of the host's programs to the directories the guest watches (linux), see there. */
+enum {
+    MIME_FSWATCH_CREATE,
+    MIME_FSWATCH_REMOVE,
+    MIME_FSWATCH_MOVE_FROM,
+    MIME_FSWATCH_MOVE_TO,
+    MIME_FSWATCH_MODIFY,
+    MIME_FSWATCH_UNDO_CREATE,
+    MIME_FSWATCH_UNDO_REMOVE,
+    MIME_FSWATCH_UNDO_MOVE,
+};
+uint64_t mime_fswatch_add(MimeVm *vm, const char *path, uint32_t id, uint32_t filter, bool tree);
+void mime_fswatch_remove(uint32_t id);
+uint64_t mime_fswatch_fetch(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t *bytes);
+/* the host is about to change an entry for the guest: the events that follow are the guest's own and told already. */
+void mime_fswatch_self(const char *path, int kind);
+void mime_fswatch_stop(void);
 /* dirnames.c: whether two names are the same but for case, as windows compares them, and the spelling a directory has
    for a name that differs only in case. *known is false when the directory could not be asked and must be read. */
 bool mime_names_same(const char *a, const char *b);

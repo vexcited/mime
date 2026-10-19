@@ -1,8 +1,10 @@
 /*
  * directory change notifications of the host backed volumes: a request on the handle of a directory waits for a file
  * of it, or of the tree below it, to be made, removed, renamed or changed, and is answered with the names and what
- * happened to them. the changes are the ones the guest makes through mimefs, which reports each as it happens; what the
- * host's own programs do to the files is not seen.
+ * happened to them. the changes the guest makes through mimefs are reported as they happen. what the host's own programs
+ * do to the files is told by the host (MIME_HC_FS_WATCH, on Linux through inotify): a directory is watched there while a
+ * handle of it has made a request, and the changes come as records the host has queued, fetched when it raises
+ * MIME_IRQ_FS by a thread of the kernel, and added to the watch like the guest's own.
  *
  * a handle keeps what happened between its requests, up to the size of the buffer of the last one, as windows does, and
  * answers the next request with it; past that it only knows something happened and the answer is STATUS_NOTIFY_ENUM_DIR
@@ -40,14 +42,21 @@ typedef struct FS_WATCH {
     PUCHAR Saved;       /* whole records, the last one's NextEntryOffset 0 */
     ULONG SavedLength, SavedCapacity;
     ULONG Limit; /* the length of the last request's buffer */
+    ULONG HostId;     /* the host's name for the watch, 0 when the host does not watch it */
+    ULONG HostFilter; /* what the host watches it for */
+    BOOLEAN HostTree;
 } FS_WATCH;
 
 static KMUTEX g_lock;
 static LIST_ENTRY g_watches;
+static KEVENT g_host_event;
+static BOOLEAN g_host_thread, g_host_unsupported;
+static ULONG g_host_ids;
 
 void FsNotifyInitialize(void)
 {
     KeInitializeMutex(&g_lock, 0);
+    KeInitializeEvent(&g_host_event, SynchronizationEvent, FALSE);
     InitializeListHead(&g_watches);
 }
 
@@ -78,6 +87,8 @@ static FS_WATCH *find(PFILE_OBJECT file)
 
 static void free_watch(FS_WATCH *w)
 {
+    if (w->HostId)
+        HalHypercallUnlocked(MIME_HC_FS_UNWATCH, w->HostId, 0, 0, 0, 0, 0, nullptr);
     RemoveEntryList(&w->Links);
     ExFreePool(w->Path);
     ExFreePool(w->Saved);
@@ -327,6 +338,82 @@ NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
     return found ? STATUS_SUCCESS : STATUS_NOT_FOUND;
 }
 
+/* ------------------------------------------------------------ the host's changes */
+
+#define HOST_BUFFER 0x8000
+
+/* the records the host queued for the watches, told as the guest's own changes are. */
+static void host_records(const UCHAR *buffer, ULONG length)
+{
+    lock();
+    for (ULONG at = 0; at + sizeof(MimeFsChange) <= length;) {
+        const MimeFsChange *r = (const MimeFsChange *)(buffer + at);
+        if (r->size < sizeof(*r) || at + r->size > length || r->name_chars > (r->size - sizeof(*r)) / sizeof(WCHAR))
+            break;
+        at += r->size;
+        FS_WATCH *w = nullptr;
+        for (PLIST_ENTRY e = g_watches.Flink; e != &g_watches; e = e->Flink) {
+            FS_WATCH *candidate = CONTAINING_RECORD(e, FS_WATCH, Links);
+            if (candidate->HostId == r->watch) {
+                w = candidate;
+                break;
+            }
+        }
+        if (!w)
+            continue;
+        if (r->action == MIME_FS_CHANGE_OVERFLOW)
+            w->Overflow = TRUE;
+        else if (r->name_chars)
+            append(w, r->action, (const WCHAR *)r->name, r->name_chars);
+    }
+    flush_all();
+    unlock();
+}
+
+static void NTAPI host_worker(PVOID context)
+{
+    PUCHAR buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, HOST_BUFFER, KI_TAG('F', 's', 'N', 'h'));
+    for (;;) {
+        KeWaitForSingleObject(&g_host_event, Executive, KernelMode, FALSE, nullptr);
+        for (;buffer;) {
+            ULONG64 bytes = 0;
+            if (HalHypercallUnlocked(MIME_HC_FS_CHANGES, HalPhysicalOf(buffer), HOST_BUFFER, 0, 0, 0, 0, &bytes) != MIME_HC_STATUS_OK ||
+                !bytes)
+                break;
+            host_records(buffer, (ULONG)bytes);
+        }
+    }
+}
+
+/* at interrupt level of the session: the thread that fetches does the rest. */
+void FsNotifyHostInterrupt(void)
+{
+    KeSetEvent(&g_host_event, IO_NO_INCREMENT, FALSE);
+}
+
+/* has the host watch the directory for this request's filter, with the lock held; a host that cannot leaves the guest's own. */
+static void host_watch(FS_WATCH *w, ULONG64 host_handle)
+{
+    if (g_host_unsupported || !host_handle)
+        return;
+    if (w->HostId && w->HostFilter == w->Filter && w->HostTree == w->Tree)
+        return;
+    ULONG id = w->HostId ? w->HostId : ++g_host_ids;
+    ULONG64 status = HalHypercallUnlocked(MIME_HC_FS_WATCH, host_handle, id, w->Filter, w->Tree, 0, 0, nullptr);
+    if (status == MIME_HC_STATUS_OK) {
+        w->HostId = id;
+        w->HostFilter = w->Filter;
+        w->HostTree = w->Tree;
+        if (!g_host_thread) {
+            g_host_thread = TRUE;
+            if (!NT_SUCCESS(PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, host_worker, nullptr)))
+                g_host_thread = FALSE;
+        }
+    } else if (status == MIME_HC_STATUS_UNSUPPORTED) {
+        g_host_unsupported = TRUE;
+    }
+}
+
 static NTSTATUS notify_change(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                               PVOID buffer, ULONG length, ULONG filter, BOOLEAN tree)
 {
@@ -345,7 +432,8 @@ static NTSTATUS notify_change(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, 
         return STATUS_ACCESS_DENIED;
     }
     ULONG volume;
-    status = MimeFsDirectoryVolume(file, &volume);
+    ULONG64 host_handle = 0;
+    status = MimeFsDirectoryVolume(file, &volume, &host_handle);
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(file);
         return status;
@@ -385,6 +473,7 @@ static NTSTATUS notify_change(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, 
     w->Filter = filter;
     w->Tree = tree != 0;
     w->Limit = length > SAVED_LIMIT ? SAVED_LIMIT : length;
+    host_watch(w, host_handle);
     /* what the handle kept since its last request is the answer, with nothing waiting for it. */
     ULONG_PTR information;
     if (IsListEmpty(&w->Pending) && deliver(w, r, &status, &information)) {

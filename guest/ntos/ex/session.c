@@ -104,6 +104,8 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         KeSetEvent(&MimeGpuEvent, 1, FALSE);
     if (bits & MIME_IRQ_NET)
         AfdInterrupt();
+    if (bits & MIME_IRQ_FS)
+        FsNotifyHostInterrupt();
     /* the dump reads user stacks, which the session thread does at passive level. */
     if (bits & MIME_IRQ_DUMP) {
         __atomic_store_n(&g_dump_pending, 1, __ATOMIC_RELEASE);

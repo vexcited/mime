@@ -186,7 +186,7 @@ BOOLEAN IopIsMimeFs(PFILE_OBJECT file)
 }
 
 /* the volume of the directory a notification request is made on. */
-NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume)
+NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle)
 {
     if (!IopIsMimeFs(file) || !file->FsContext)
         return STATUS_INVALID_DEVICE_REQUEST;
@@ -194,6 +194,8 @@ NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume)
     if (fcb->Rom || !fcb->Directory)
         return STATUS_INVALID_PARAMETER;
     *volume = fcb->Volume;
+    if (host_handle)
+        *host_handle = fcb->HostHandle;
     return STATUS_SUCCESS;
 }
 

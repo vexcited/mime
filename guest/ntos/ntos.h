@@ -1197,10 +1197,12 @@ void FsNotifyInitialize(void);
 void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter);
 void FsNotifyRename(ULONG volume, PCUNICODE_STRING from, PCUNICODE_STRING to, BOOLEAN directory);
 void FsNotifyCleanup(PFILE_OBJECT file);
+/* the host has changes of files in watched directories to fetch. */
+void FsNotifyHostInterrupt(void);
 NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 /* mimefs.c: whether a file object is of the host backed volumes, and the volume of an open directory. */
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
-NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume);
+NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
 
 /* hid.c: game controllers' hid and xusb devices, answering their files' requests. */
 BOOLEAN IopIsPad(PFILE_OBJECT file);

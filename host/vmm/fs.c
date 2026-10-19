@@ -306,10 +306,9 @@ static void free_handle(MimeVm *vm, uint64_t h)
             sd_memory_forget(&gone);
             pthread_mutex_unlock(&vm->fs_lock);
         }
-        if (fh->is_dir)
-            rmdir(fh->host_path);
-        else
-            unlink(fh->host_path);
+        mime_fswatch_self(fh->host_path, MIME_FSWATCH_REMOVE);
+        if (fh->is_dir ? rmdir(fh->host_path) != 0 : unlink(fh->host_path) != 0)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_UNDO_REMOVE);
     }
     free(fh->host_path);
     free(fh->dir_entries);
@@ -372,6 +371,8 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
                 flags = O_RDWR | O_TRUNC;
                 action = req->disposition == MIME_FS_DISP_SUPERSEDE ? FILE_SUPERSEDED : FILE_OVERWRITTEN;
             }
+            if (flags & O_TRUNC)
+                mime_fswatch_self(path, MIME_FSWATCH_MODIFY);
             fd = open_quiet(path, flags | private_flags, 0);
             if (fd < 0 && errno == EACCES && !write)
                 fd = open_quiet(path, O_RDONLY | private_flags, 0);
@@ -386,12 +387,18 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
             req->action_out = mime_dir_exists(parent) ? 0 : 1; /* 1 means a parent directory is missing */
             return MIME_HC_STATUS_NOT_FOUND;
         }
+        /* the event of the making is the guest's own, noted before it can come. */
+        mime_fswatch_self(path, MIME_FSWATCH_CREATE);
         if (want_dir) {
-            if (mkdir(path, 0755) != 0)
+            if (mkdir(path, 0755) != 0) {
+                mime_fswatch_self(path, MIME_FSWATCH_UNDO_CREATE);
                 return errno_status(errno);
+            }
             fd = open_quiet(path, O_RDONLY | O_DIRECTORY, 0);
         } else {
             fd = open(path, O_RDWR | O_CREAT | O_EXCL | private_flags, private_registry ? 0600 : 0644);
+            if (fd < 0)
+                mime_fswatch_self(path, MIME_FSWATCH_UNDO_CREATE);
         }
         action = FILE_CREATED;
     }
@@ -694,8 +701,13 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     size_t from_length = strlen(src->host_path);
     if (S_ISDIR(from.st_mode) && !strncmp(target, src->host_path, from_length) && target[from_length] == '/')
         return MIME_HC_STATUS_INVALID;
-    if (rename(src->host_path, target) != 0)
+    mime_fswatch_self(src->host_path, MIME_FSWATCH_MOVE_FROM);
+    mime_fswatch_self(target, MIME_FSWATCH_MOVE_TO);
+    if (rename(src->host_path, target) != 0) {
+        mime_fswatch_self(src->host_path, MIME_FSWATCH_UNDO_MOVE);
+        mime_fswatch_self(target, MIME_FSWATCH_UNDO_MOVE);
         return errno_status(errno);
+    }
     /* the journal takes its place for good only when the directory says so. */
     if (src->volume == MIME_FS_VOLUME_SYSTEM && is_private_registry(vm, target))
         flush_parent(target);
@@ -765,8 +777,12 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_IS_DIRECTORY;
             break;
         }
+        if (nr == MIME_HC_FS_WRITE)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         ssize_t n = nr == MIME_HC_FS_READ ? pread(fh->fd, buf, (size_t)a[4], (off_t)a[2])
                                           : pwrite(fh->fd, buf, (size_t)a[4], (off_t)a[2]);
+        if (nr == MIME_HC_FS_WRITE)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         if (n < 0)
             status = errno_status(errno);
         else
@@ -836,10 +852,26 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         MimeFsHandle *fh = get_handle(vm, a[1]);
         if (!fh || fh->is_dir)
             status = MIME_HC_STATUS_INVALID;
-        else if (ftruncate(fh->fd, (off_t)a[2]) != 0)
-            status = errno_status(errno);
+        else {
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+            if (ftruncate(fh->fd, (off_t)a[2]) != 0)
+                status = errno_status(errno);
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        }
         break;
     }
+    case MIME_HC_FS_WATCH: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh && fh->is_dir && fh->host_path ? mime_fswatch_add(vm, fh->host_path, (uint32_t)a[2], (uint32_t)a[3], a[4] != 0)
+                                                    : MIME_HC_STATUS_INVALID;
+        break;
+    }
+    case MIME_HC_FS_UNWATCH:
+        mime_fswatch_remove((uint32_t)a[1]);
+        break;
+    case MIME_HC_FS_CHANGES:
+        status = mime_fswatch_fetch(vm, a[1], a[2], &regs[1]);
+        break;
     case MIME_HC_FS_GET_SD: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         pthread_mutex_lock(&vm->fs_lock);
@@ -850,7 +882,11 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_SET_SD: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         pthread_mutex_lock(&vm->fs_lock);
+        if (fh)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         status = fh ? fs_set_sd(vm, fh, a[2], a[3]) : MIME_HC_STATUS_INVALID;
+        if (fh)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         pthread_mutex_unlock(&vm->fs_lock);
         break;
     }
@@ -908,6 +944,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 
 void mime_fs_close_all(MimeVm *vm)
 {
+    mime_fswatch_stop();
     for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
         MimeFsHandle *fh = get_handle(vm, i + 1);
         if (fh) {

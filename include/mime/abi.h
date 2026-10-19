@@ -276,6 +276,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_GPU (1u << 3)
 #define MIME_IRQ_NET (1u << 4)
 #define MIME_IRQ_DUMP (1u << 5) /* log the guest's threads, on the host's SIGUSR1 */
+#define MIME_IRQ_FS (1u << 6)   /* the host changed files in a directory the guest watches: MIME_HC_FS_CHANGES */
 
 typedef struct MimeSharedPage {
     volatile uint32_t irq_pending;
@@ -309,6 +310,9 @@ enum {
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
     MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
+    MIME_HC_FS_WATCH = 0x63,    /* (directory handle, id, filter, tree) watches the changes the host makes below a directory, UNSUPPORTED where it cannot */
+    MIME_HC_FS_UNWATCH = 0x64,  /* (id) */
+    MIME_HC_FS_CHANGES = 0x65,  /* (pa, capacity) -> bytes of MimeFsChange records, 0 once the queue is empty */
     MIME_HC_FS_SYNC = 0x62,     /* () writes the host files of the drive out to the disk, for a shutdown */
     MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
     MIME_HC_FS_GET_SD = 0x1E,   /* (handle, pa, capacity, up) -> distance << 32 | length of the nearest stored descriptor */
@@ -702,6 +706,25 @@ enum {
     MIME_FS_DISP_OVERWRITE_IF = 4,
     MIME_FS_DISP_SUPERSEDE = 5,
 };
+
+/* what MIME_HC_FS_CHANGES gives, the actions as FILE_ACTION_* and one more. a record that is MIME_FS_CHANGE_OVERFLOW says the
+   watch lost changes, and has no name. */
+enum {
+    MIME_FS_CHANGE_ADDED = 1,
+    MIME_FS_CHANGE_REMOVED = 2,
+    MIME_FS_CHANGE_MODIFIED = 3,
+    MIME_FS_CHANGE_RENAMED_OLD = 4,
+    MIME_FS_CHANGE_RENAMED_NEW = 5,
+    MIME_FS_CHANGE_OVERFLOW = 0x100,
+};
+
+typedef struct MimeFsChange {
+    uint32_t size; /* of the record, a multiple of 4 */
+    uint32_t watch;
+    uint32_t action;
+    uint32_t name_chars;
+    uint16_t name[]; /* below the watched directory, with backslashes */
+} MimeFsChange;
 
 /* MIME_HC_FS_RENAME flags. */
 #define MIME_FS_RENAME_REPLACE 1u /* an existing file of the new name is replaced, a directory never is */
