@@ -61,6 +61,31 @@ static bool create_profile(const MimePaths *paths)
     return true;
 }
 
+/*
+ * the folder of the name files, which every installation has: programs read the hosts file for the names it gives
+ * and some watch its folder for changes, as a browser does to keep its resolver's configuration current, and one that
+ * cannot find the folder has no resolver of its own. the file made is empty of names, as the one of a new Windows is.
+ */
+static void create_name_files(const MimePaths *paths)
+{
+    char dir[MIME_PATH_MAX], path[MIME_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s/Windows/System32/drivers/etc", paths->drive_c);
+    if (!mime_mkdir_p(dir, 0755))
+        return;
+    mime_path_join(path, sizeof(path), dir, "hosts");
+    if (mime_file_exists(path))
+        return;
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return;
+    fputs("# the names of machines and the addresses they have, one to a line, an address first and then its names.\r\n"
+          "# a line that begins with a number sign is a comment. the name localhost is known without a line here.\r\n"
+          "#\r\n"
+          "#     102.54.94.97     rhino.example.com\r\n",
+          f);
+    fclose(f);
+}
+
 bool mime_prepare_drive(const MimePaths *paths)
 {
     char dir[MIME_PATH_MAX];
@@ -82,5 +107,6 @@ bool mime_prepare_drive(const MimePaths *paths)
         mime_error("the registry hives are missing, run `mime setup` again");
         return false;
     }
+    create_name_files(paths);
     return create_profile(paths);
 }

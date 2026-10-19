@@ -627,14 +627,3 @@ WINBASEAPI BOOL WINAPI DeviceIoControl(HANDLE device, DWORD code, LPVOID in, DWO
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
-/* directory change notifications need NtNotifyChangeDirectoryFile, which the file systems do not support yet. */
-WINBASEAPI BOOL WINAPI ReadDirectoryChangesW(HANDLE directory, LPVOID buffer, DWORD length, BOOL subtree, DWORD filter,
-                                  LPDWORD returned, LPOVERLAPPED overlapped, LPOVERLAPPED_COMPLETION_ROUTINE routine)
-{
-    if (!buffer || !length) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    KbSetError(ERROR_INVALID_FUNCTION);
-    return FALSE;
-}

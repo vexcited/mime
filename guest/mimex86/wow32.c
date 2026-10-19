@@ -1032,6 +1032,16 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtWriteFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
                            pointer32(a[7]), pointer32(a[8]));
     }
+    case MIME_SVC_NtNotifyChangeDirectoryFile:
+    case MIME_SVC_NtNotifyChangeDirectoryFileEx: {
+        PVOID context;
+        PVOID apc = io_apc32(a[2], a[3], &context);
+        if (number == MIME_SVC_NtNotifyChangeDirectoryFile)
+            return NtNotifyChangeDirectoryFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]),
+                                               pointer32(a[5]), a[6], a[7], (BOOLEAN)a[8]);
+        return NtNotifyChangeDirectoryFileEx(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]),
+                                             pointer32(a[5]), a[6], a[7], (BOOLEAN)a[8], a[9]);
+    }
     case MIME_SVC_NtDeviceIoControlFile:
     case MIME_SVC_NtFsControlFile: {
         /*

@@ -749,6 +749,8 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         AfdCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsPad(file))
         PadCancel(file, PsCurrentThread(), nullptr);
+    else if (IopIsMimeFs(file))
+        FsNotifyCancel(file, PsCurrentThread(), nullptr);
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {};
     store_iosb(iosb, &io);
@@ -768,6 +770,8 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         status = AfdCancel(file, nullptr, request);
     else if (IopIsPad(file))
         status = PadCancel(file, nullptr, request);
+    else if (IopIsMimeFs(file))
+        status = FsNotifyCancel(file, nullptr, request);
     else
         status = STATUS_NOT_FOUND;
     ObDereferenceObject(file);

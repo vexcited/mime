@@ -102,6 +102,8 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryDefaultLocale(BOOLEAN user, LCID *locale);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryDefaultUILanguage(LANGID *lang);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass, BOOLEAN single, PUNICODE_STRING pattern, BOOLEAN restart);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryDirectoryFileEx(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass, ULONG flags, PUNICODE_STRING pattern);
+NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, ULONG filter, BOOLEAN watch_tree);
+NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeDirectoryFileEx(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, ULONG filter, BOOLEAN watch_tree, ULONG information_class);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryFullAttributesFile(POBJECT_ATTRIBUTES attributes, PFILE_NETWORK_OPEN_INFORMATION info);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job, ULONG klass, PVOID info, ULONG length, PULONG returned);

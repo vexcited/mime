@@ -1768,33 +1768,153 @@ BOOL WINAPI FindNextFileA(HANDLE find, LPWIN32_FIND_DATAA data)
     return TRUE;
 }
 
-/* the kernel cannot watch directories yet: the notification handle never signals. */
+/* ------------------------------------------------------------------ directory change notifications */
+
+#define FILE_NOTIFY_VALID_MASK 0x00000FFF
+
+/*
+ * the request of a change notification handle, which FindNextChangeNotification makes again: the filter and the tree
+ * flag the handle was given, kept by the handle.
+ */
+typedef struct _CHANGE_HANDLE {
+    struct _CHANGE_HANDLE *Next;
+    HANDLE Directory;
+    DWORD Filter;
+    BOOL Subtree;
+} CHANGE_HANDLE;
+
+static SRWLOCK g_change_lock = SRWLOCK_INIT;
+static CHANGE_HANDLE *g_changes;
+
+/* a directory opened to be watched: for listing only, shared with everyone, not synchronous so a request waits apart. */
 HANDLE WINAPI FindFirstChangeNotificationW(LPCWSTR path, BOOL subtree, DWORD filter)
 {
-    DWORD attributes = GetFileAttributesW(path);
-    if (attributes == INVALID_FILE_ATTRIBUTES)
-        return INVALID_HANDLE_VALUE;
-    if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
-        KbSetError(ERROR_DIRECTORY);
+    if (!path || !filter || (filter & ~FILE_NOTIFY_VALID_MASK)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
         return INVALID_HANDLE_VALUE;
     }
-    HANDLE event;
-    NTSTATUS status = NtCreateEvent(&event, EVENT_ALL_ACCESS, nullptr, NotificationEvent, FALSE);
-    if (!NT_SUCCESS(status)) {
+    HANDLE directory = CreateFileW(path, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+    if (directory == INVALID_HANDLE_VALUE)
+        return INVALID_HANDLE_VALUE;
+    CHANGE_HANDLE *c = HeapAlloc(GetProcessHeap(), 0, sizeof(*c));
+    if (!c) {
+        CloseHandle(directory);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return INVALID_HANDLE_VALUE;
+    }
+    c->Directory = directory;
+    c->Filter = filter;
+    c->Subtree = subtree != 0;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtNotifyChangeDirectoryFile(directory, nullptr, nullptr, nullptr, &iosb, nullptr, 0, filter,
+                                                  c->Subtree);
+    if (NT_ERROR(status)) {
+        HeapFree(GetProcessHeap(), 0, c);
+        CloseHandle(directory);
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;
     }
-    return event;
+    AcquireSRWLockExclusive(&g_change_lock);
+    c->Next = g_changes;
+    g_changes = c;
+    ReleaseSRWLockExclusive(&g_change_lock);
+    return directory;
 }
 
+HANDLE WINAPI FindFirstChangeNotificationA(LPCSTR path, BOOL subtree, DWORD filter)
+{
+    WCHAR wide[MAX_PATH];
+    if (!path || !MultiByteToWideChar(CP_ACP, 0, path, -1, wide, MAX_PATH)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    return FindFirstChangeNotificationW(wide, subtree, filter);
+}
+
+/* the next change, with what happened since the handle last signalled kept for it. */
 BOOL WINAPI FindNextChangeNotification(HANDLE handle)
 {
-    return TRUE;
+    CHANGE_HANDLE c = {};
+    BOOL found = FALSE;
+    AcquireSRWLockShared(&g_change_lock);
+    for (CHANGE_HANDLE *p = g_changes; p; p = p->Next)
+        if (p->Directory == handle) {
+            c = *p;
+            found = TRUE;
+            break;
+        }
+    ReleaseSRWLockShared(&g_change_lock);
+    if (!found) {
+        KbSetError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtNotifyChangeDirectoryFile(handle, nullptr, nullptr, nullptr, &iosb, nullptr, 0, c.Filter, c.Subtree);
+    return NT_ERROR(status) ? KbSetStatus(status) : TRUE;
 }
 
 BOOL WINAPI FindCloseChangeNotification(HANDLE handle)
 {
+    AcquireSRWLockExclusive(&g_change_lock);
+    for (CHANGE_HANDLE **link = &g_changes; *link; link = &(*link)->Next)
+        if ((*link)->Directory == handle) {
+            CHANGE_HANDLE *dead = *link;
+            *link = dead->Next;
+            HeapFree(GetProcessHeap(), 0, dead);
+            break;
+        }
+    ReleaseSRWLockExclusive(&g_change_lock);
     return CloseHandle(handle);
+}
+
+/*
+ * what happened in a directory, as records of FILE_NOTIFY_INFORMATION in the buffer. an overlapped request finishes
+ * through its event, completion port or routine, and the call itself succeeds once the request is made; with no bytes
+ * returned the buffer was too small to say what, and the caller reads the directory again.
+ */
+BOOL WINAPI ReadDirectoryChangesW(HANDLE directory, LPVOID buffer, DWORD length, BOOL subtree, DWORD filter,
+                                  LPDWORD returned, LPOVERLAPPED overlapped, LPOVERLAPPED_COMPLETION_ROUTINE routine)
+{
+    if (returned)
+        *returned = 0;
+    if (!buffer || !length || !filter || (filter & ~FILE_NOTIFY_VALID_MASK)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (overlapped) {
+        PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
+        iosb->Status = STATUS_PENDING;
+        iosb->Information = 0;
+        NTSTATUS status;
+        if (routine)
+            status = NtNotifyChangeDirectoryFile(directory, nullptr, (PIO_APC_ROUTINE)completion_apc, (PVOID)routine, iosb,
+                                                 buffer, length, filter, subtree != 0);
+        else
+            status = NtNotifyChangeDirectoryFile(directory, overlapped_event(overlapped), nullptr,
+                                                 overlapped_port_context(overlapped), iosb, buffer, length, filter,
+                                                 subtree != 0);
+        /* unlike a read, a request that was started is a success, and the call says so whether it is done or not. */
+        if (NT_ERROR(status)) {
+            iosb->Status = status;
+            return KbSetStatus(status);
+        }
+        if (status != STATUS_PENDING && returned && !routine)
+            *returned = (DWORD)iosb->Information;
+        return TRUE;
+    }
+    IO_STATUS_BLOCK local;
+    NTSTATUS status = NtNotifyChangeDirectoryFile(directory, nullptr, nullptr, nullptr, &local, buffer, length, filter,
+                                                  subtree != 0);
+    if (status == STATUS_PENDING) {
+        NtWaitForSingleObject(directory, FALSE, nullptr);
+        status = local.Status;
+    }
+    if (NT_ERROR(status))
+        return KbSetStatus(status);
+    if (returned)
+        *returned = (DWORD)local.Information;
+    return TRUE;
 }
 
 /* a new handle to the file of another, through its path. */

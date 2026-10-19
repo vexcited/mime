@@ -165,6 +165,23 @@ void IoReleaseFileWindow(PVOID ref)
         FsCacheClose(ref);
 }
 
+BOOLEAN IopIsMimeFs(PFILE_OBJECT file)
+{
+    return file->DeviceObject && file->DeviceObject->DriverObject == g_driver;
+}
+
+/* the volume of the directory a notification request is made on. */
+NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume)
+{
+    if (!IopIsMimeFs(file) || !file->FsContext)
+        return STATUS_INVALID_DEVICE_REQUEST;
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (fcb->Rom || !fcb->Directory)
+        return STATUS_INVALID_PARAMETER;
+    *volume = fcb->Volume;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
 {
     if (fcb->Rom) {
@@ -277,11 +294,21 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (fcb->Directory)
         file->Flags |= FO_DIRECTORY_FILE;
     file->FsContext = fcb;
+    if (action == FILE_CREATED)
+        FsNotifyReport(vol->HostVolume, &file->FileName, FILE_ACTION_ADDED,
+                       fcb->Directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);
+    else if (action == FILE_OVERWRITTEN || action == FILE_SUPERSEDED)
+        FsNotifyReport(vol->HostVolume, &file->FileName, FILE_ACTION_MODIFIED,
+                       FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
     return complete(irp, STATUS_SUCCESS, action);
 }
 
 static NTSTATUS NTAPI mimefs_cleanup(PDEVICE_OBJECT device, PIRP irp)
 {
+    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (fcb && !fcb->Rom && fcb->Directory)
+        FsNotifyCleanup(file);
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
@@ -297,8 +324,12 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
             FsCacheClose(fcb->Cache);
         if (fcb->DeleteOnClose)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
-        if (fcb->DeleteOnClose)
-            HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr);
+        if (fcb->DeleteOnClose) {
+            ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr);
+            if (hs == MIME_HC_STATUS_OK)
+                FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_REMOVED,
+                               fcb->Directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);
+        }
         HalHypercallUnlocked(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
         ExFreePool(fcb);
         file->FsContext = nullptr;
@@ -360,6 +391,9 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
     ExFreePool(bounce);
     if (NT_SUCCESS(status) && !write && done == 0)
         status = STATUS_END_OF_FILE;
+    if (write && done)
+        FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
+                       FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
     return complete(irp, status, done);
 }
 
@@ -584,6 +618,9 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, STATUS_SUCCESS, 0);
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
         ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);
+        if (hs == MIME_HC_STATUS_OK)
+            FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
+                           FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
         return complete(irp, host_status(hs, FALSE), 0);
     }
     case FileDispositionInformation:
@@ -597,8 +634,19 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         fcb->DeleteOnClose = (*(PULONG)in & 1) != 0;
         return complete(irp, STATUS_SUCCESS, 0);
     case FileRenameInformation:
-    case FileRenameInformationEx:
-        return complete(irp, rename_in_directory(device, stack->FileObject, fcb, stack, in, length), 0);
+    case FileRenameInformationEx: {
+        PFILE_OBJECT file = stack->FileObject;
+        UNICODE_STRING from = {};
+        if (file->FileName.Length && (from.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, file->FileName.Length, KI_TAG('M', 'f', 'N', 'm')))) {
+            memcpy(from.Buffer, file->FileName.Buffer, file->FileName.Length);
+            from.Length = from.MaximumLength = file->FileName.Length;
+        }
+        NTSTATUS status = rename_in_directory(device, file, fcb, stack, in, length);
+        if (NT_SUCCESS(status) && from.Buffer)
+            FsNotifyRename(fcb->Volume, &from, &file->FileName, fcb->Directory);
+        ExFreePool(from.Buffer);
+        return complete(irp, status, 0);
+    }
     case FileBasicInformation:
         return complete(irp, STATUS_SUCCESS, 0);
     default:
@@ -958,6 +1006,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     g_driver = driver;
     FsCacheInitialize();
+    FsNotifyInitialize();
     driver->MajorFunction[IRP_MJ_CREATE] = mimefs_create;
     driver->MajorFunction[IRP_MJ_CLEANUP] = mimefs_cleanup;
     driver->MajorFunction[IRP_MJ_CLOSE] = mimefs_close;

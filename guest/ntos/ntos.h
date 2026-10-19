@@ -1134,6 +1134,30 @@ NTSTATUS IopCopyToRequester(IO_USER_REQUEST *r, PVOID dst, const void *src, SIZE
 void IopCompleteUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR information);
 NTSTATUS IopImmediateUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR information);
 NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r);
+/* fsnotify.c: the changes of the files of a volume that the directories being watched are told of. */
+#define FILE_NOTIFY_CHANGE_FILE_NAME 0x00000001
+#define FILE_NOTIFY_CHANGE_DIR_NAME 0x00000002
+#define FILE_NOTIFY_CHANGE_ATTRIBUTES 0x00000004
+#define FILE_NOTIFY_CHANGE_SIZE 0x00000008
+#define FILE_NOTIFY_CHANGE_LAST_WRITE 0x00000010
+#define FILE_NOTIFY_CHANGE_LAST_ACCESS 0x00000020
+#define FILE_NOTIFY_CHANGE_CREATION 0x00000040
+#define FILE_NOTIFY_CHANGE_SECURITY 0x00000100
+#define FILE_NOTIFY_VALID_MASK 0x00000FFF
+#define FILE_ACTION_ADDED 0x00000001
+#define FILE_ACTION_REMOVED 0x00000002
+#define FILE_ACTION_MODIFIED 0x00000003
+#define FILE_ACTION_RENAMED_OLD_NAME 0x00000004
+#define FILE_ACTION_RENAMED_NEW_NAME 0x00000005
+void FsNotifyInitialize(void);
+void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter);
+void FsNotifyRename(ULONG volume, PCUNICODE_STRING from, PCUNICODE_STRING to, BOOLEAN directory);
+void FsNotifyCleanup(PFILE_OBJECT file);
+NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+/* mimefs.c: whether a file object is of the host backed volumes, and the volume of an open directory. */
+BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
+NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume);
+
 /* hid.c: game controllers' hid and xusb devices, answering their files' requests. */
 BOOLEAN IopIsPad(PFILE_OBJECT file);
 NTSTATUS PadReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
