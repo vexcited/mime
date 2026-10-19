@@ -973,6 +973,8 @@ typedef struct MIME_PAD_HID {
     UCHAR Report[15];
 } MIME_PAD_HID;
 NTKERNELAPI BOOLEAN NTAPI MimePadHidInfo(ULONG host, MIME_PAD_HID *info);
+/* the host's cameras: arrivals and removals, and the frames of its streams (io/camera.c). */
+NTKERNELAPI void NTAPI MimeCameraEvent(const struct MimeInputEvent *ev);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetGpuEvent(void);
 /* copies that treat the pointer as user memory and recover from faults, for drivers. */
 NTKERNELAPI NTSTATUS NTAPI MimeCopyFromUser(void *dst, const void *user_src, SIZE_T length);

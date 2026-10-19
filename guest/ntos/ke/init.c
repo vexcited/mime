@@ -268,6 +268,7 @@ static void KiPhase1Initialization(PVOID context)
     KiBootStamp("io");
     CmInitSystem1();
     KiBootStamp("registry");
+    IopStartCameras();
     NTSTATUS status = PspInitializeSystemDll();
     KiBootStamp("system dll");
     if (!NT_SUCCESS(status))

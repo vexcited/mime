@@ -1159,6 +1159,9 @@ typedef struct HIDP_PARSE {
 NTSTATUS HidpParseDescriptor(const UCHAR *descriptor, ULONG length, HIDP_PARSE *out);
 void HidpFreeParse(HIDP_PARSE *parse);
 void IopInitializePads(void);
+/* camera.c: the host's cameras, their devices and streams. */
+void IopInitializeCameras(void);
+void IopStartCameras(void);
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                        ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
 void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information, BOOLEAN synchronous);

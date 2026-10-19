@@ -12,6 +12,7 @@
 
 #define INSTANCE_CHARS 200
 #define LINK_CHARS 260
+#define REFERENCE_CHARS 32
 
 typedef struct DEVNODE {
     LIST_ENTRY Links;
@@ -24,11 +25,24 @@ typedef struct DEVINTERFACE {
     LIST_ENTRY Links;
     GUID Class;
     WCHAR Link[LINK_CHARS]; /* the name in \GLOBAL?? */
+    WCHAR Reference[REFERENCE_CHARS]; /* the reference string, which the path of the interface ends with */
 } DEVINTERFACE;
+
+/*
+ * what changes in the tree is announced with a generation: it goes up at every change, and a program waits for a
+ * generation other than the one it saw. each generation has its own event, signaled when the next one begins, so a
+ * change between a program's look and its wait is never lost.
+ */
+typedef struct PNP_EPOCH {
+    KEVENT Event;
+    LONG Refs;
+} PNP_EPOCH;
 
 static LIST_ENTRY g_devnodes = {&g_devnodes, &g_devnodes};
 static KGUARDED_MUTEX g_lock;
 static BOOLEAN g_ready;
+static ULONG g_generation = 1;
+static PNP_EPOCH *g_epoch;
 
 static void lock(void)
 {
@@ -42,6 +56,24 @@ static void lock(void)
 static void unlock(void)
 {
     KeReleaseGuardedMutex(&g_lock);
+}
+
+static void epoch_release(PNP_EPOCH *e)
+{
+    if (__atomic_sub_fetch(&e->Refs, 1, __ATOMIC_ACQ_REL) == 0)
+        ExFreePool(e);
+}
+
+/* a change was made, with the lock held: the programs waiting for one wake. */
+static void changed(void)
+{
+    g_generation++;
+    PNP_EPOCH *old = g_epoch;
+    g_epoch = nullptr;
+    if (old) {
+        KeSetEvent(&old->Event, IO_NO_INCREMENT, FALSE);
+        epoch_release(old);
+    }
 }
 
 static BOOLEAN same(PCWSTR a, PCWSTR b)
@@ -111,6 +143,7 @@ NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVIC
     lock();
     d->Parent = parent ? find(parent) : nullptr;
     InsertTailList(&g_devnodes, &d->Links);
+    changed();
     unlock();
     return STATUS_SUCCESS;
 }
@@ -142,16 +175,20 @@ void NTAPI MimePnpRemoveDevice(PCWSTR instance)
             remove_interface(CONTAINING_RECORD(d->Interfaces.Flink, DEVINTERFACE, Links));
         RemoveEntryList(&d->Links);
         ExFreePool(d);
+        changed();
     }
     unlock();
 }
 
 /*
  * windows' name for an interface: the instance id with # for \, then
- * the class in braces, lowercase as device paths show it.
+ * the class in braces, lowercase as device paths show it. a reference string follows the path after a
+ * backslash and is not part of the link, it is the name the device is opened with.
  */
-NTSTATUS NTAPI MimePnpAddInterface(PCWSTR instance, const GUID *klass, PCWSTR device)
+NTSTATUS NTAPI MimePnpAddInterfaceRef(PCWSTR instance, const GUID *klass, PCWSTR device, PCWSTR reference)
 {
+    if (reference && wcslen(reference) >= REFERENCE_CHARS)
+        return STATUS_NAME_TOO_LONG;
     lock();
     DEVNODE *d = find(instance);
     if (!d) {
@@ -165,6 +202,8 @@ NTSTATUS NTAPI MimePnpAddInterface(PCWSTR instance, const GUID *klass, PCWSTR de
     }
     memset(i, 0, sizeof(*i));
     i->Class = *klass;
+    if (reference)
+        wcscpy(i->Reference, reference);
     SIZE_T n = 0;
     for (PCWSTR p = instance; *p && n < LINK_CHARS - 40; p++)
         i->Link[n++] = *p == L'\\' ? L'#' : (WCHAR)towlower(*p);
@@ -177,12 +216,19 @@ NTSTATUS NTAPI MimePnpAddInterface(PCWSTR instance, const GUID *klass, PCWSTR de
     RtlInitUnicodeString(&link, path);
     RtlInitUnicodeString(&target, device);
     NTSTATUS status = IoCreateSymbolicLink(&link, &target);
-    if (NT_SUCCESS(status))
+    if (NT_SUCCESS(status)) {
         InsertTailList(&d->Interfaces, &i->Links);
-    else
+        changed();
+    } else {
         ExFreePool(i);
+    }
     unlock();
     return status;
+}
+
+NTSTATUS NTAPI MimePnpAddInterface(PCWSTR instance, const GUID *klass, PCWSTR device)
+{
+    return MimePnpAddInterfaceRef(instance, klass, device, nullptr);
 }
 
 /* ------------------------------------------------------------------ NtPlugPlayControl */
@@ -199,6 +245,33 @@ static void append(MIME_PNP_REQUEST *r, ULONG capacity, ULONG *at, PCWSTR prefix
     *at += (ULONG)(p + n + 1);
 }
 
+/* the path of an interface, \\?\ and its link, and the reference string after a backslash. */
+static void append_path(MIME_PNP_REQUEST *r, ULONG capacity, ULONG *at, const DEVINTERFACE *i)
+{
+    SIZE_T prefix = 4, n = wcslen(i->Link), ref = i->Reference[0] ? wcslen(i->Reference) + 1 : 0;
+    if (*at + prefix + n + ref + 1 < capacity) {
+        memcpy(r->Out + *at, L"\\\\?\\", prefix * sizeof(WCHAR));
+        memcpy(r->Out + *at + prefix, i->Link, n * sizeof(WCHAR));
+        if (ref) {
+            r->Out[*at + prefix + n] = L'\\';
+            memcpy(r->Out + *at + prefix + n + 1, i->Reference, (ref - 1) * sizeof(WCHAR));
+        }
+        r->Out[*at + prefix + n + ref] = 0;
+    }
+    *at += (ULONG)(prefix + n + ref + 1);
+}
+
+/* whether a path, without its \\?\ prefix, names the interface. */
+static BOOLEAN path_matches(const DEVINTERFACE *i, PCWSTR path)
+{
+    SIZE_T n = wcslen(i->Link);
+    if (_wcsnicmp(path, i->Link, n))
+        return FALSE;
+    if (!i->Reference[0])
+        return path[n] == 0;
+    return path[n] == L'\\' && same(path + n + 1, i->Reference);
+}
+
 static NTSTATUS answer(MIME_PNP_REQUEST *r, ULONG capacity, MIME_PNP_CLASS klass)
 {
     ULONG at = 0;
@@ -212,7 +285,7 @@ static NTSTATUS answer(MIME_PNP_REQUEST *r, ULONG capacity, MIME_PNP_CLASS klass
             for (LIST_ENTRY *f = d->Interfaces.Flink; f != &d->Interfaces; f = f->Flink) {
                 DEVINTERFACE *i = CONTAINING_RECORD(f, DEVINTERFACE, Links);
                 if (r->Flags || !memcmp(&i->Class, &r->Class, sizeof(GUID)))
-                    append(r, capacity, &at, L"\\\\?\\", i->Link);
+                    append_path(r, capacity, &at, i);
             }
         }
         break;
@@ -229,7 +302,7 @@ static NTSTATUS answer(MIME_PNP_REQUEST *r, ULONG capacity, MIME_PNP_CLASS klass
             DEVNODE *d = CONTAINING_RECORD(e, DEVNODE, Links);
             for (LIST_ENTRY *f = d->Interfaces.Flink; f != &d->Interfaces; f = f->Flink) {
                 DEVINTERFACE *i = CONTAINING_RECORD(f, DEVINTERFACE, Links);
-                if (same(i->Link, path)) {
+                if (path_matches(i, path)) {
                     r->Class = i->Class;
                     append(r, capacity, &at, nullptr, d->Instance);
                     goto done;
@@ -277,6 +350,35 @@ done:
     return STATUS_SUCCESS;
 }
 
+/* waits for a generation other than the one asked about, with no lock held while it sleeps. */
+static NTSTATUS wait_change(MIME_PNP_REQUEST *r)
+{
+    for (;;) {
+        lock();
+        if (g_generation != r->Flags) {
+            r->Flags = g_generation;
+            unlock();
+            return STATUS_SUCCESS;
+        }
+        if (!g_epoch) {
+            g_epoch = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*g_epoch), KI_TAG('P', 'n', 'p', 'E'));
+            if (!g_epoch) {
+                unlock();
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            KeInitializeEvent(&g_epoch->Event, NotificationEvent, FALSE);
+            g_epoch->Refs = 1;
+        }
+        PNP_EPOCH *e = g_epoch;
+        __atomic_add_fetch(&e->Refs, 1, __ATOMIC_ACQ_REL);
+        unlock();
+        NTSTATUS status = KeWaitForSingleObject(&e->Event, UserRequest, UserMode, TRUE, nullptr);
+        epoch_release(e);
+        if (status != STATUS_WAIT_0)
+            return status;
+    }
+}
+
 NTSTATUS NTAPI NtPlugPlayControl(ULONG klass, PVOID user_buffer, ULONG length)
 {
     if (length < sizeof(MIME_PNP_REQUEST) || length > 0x40000)
@@ -288,9 +390,14 @@ NTSTATUS NTAPI NtPlugPlayControl(ULONG klass, PVOID user_buffer, ULONG length)
     if (NT_SUCCESS(status)) {
         r->Instance[RTL_NUMBER_OF(r->Instance) - 1] = 0;
         ULONG capacity = (length - (ULONG)sizeof(MIME_PNP_REQUEST)) / sizeof(WCHAR);
-        lock();
-        status = answer(r, capacity, (MIME_PNP_CLASS)klass);
-        unlock();
+        if (klass == MIME_PNP_WAIT_CHANGE) {
+            status = wait_change(r);
+            r->OutChars = 0;
+        } else {
+            lock();
+            status = answer(r, capacity, (MIME_PNP_CLASS)klass);
+            unlock();
+        }
         ULONG back = status == STATUS_BUFFER_TOO_SMALL ? (ULONG)sizeof(MIME_PNP_REQUEST)
                                                         : (ULONG)sizeof(MIME_PNP_REQUEST) + r->OutChars * sizeof(WCHAR);
         if (NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL) {
