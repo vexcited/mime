@@ -56,8 +56,13 @@ static void add_camera(CameraList *list, int index, const char *name)
     if (!s)
         return;
     snprintf(s->info.name, sizeof(s->info.name), "%s", name);
-    snprintf(s->info.location, sizeof(s->info.location), "fake-%d", index);
-    snprintf(s->key, sizeof(s->key), "fake:%d:%s", index, name);
+    /* a camera is the same one for as long as its name is in the file, wherever its line moves to. */
+    int same = 0;
+    for (uint32_t i = 0; i + 1 < list->count; i++)
+        if (!strcmp(list->source[i].info.name, name))
+            same++;
+    snprintf(s->info.location, sizeof(s->info.location), "fake-%s-%d", name, same);
+    snprintf(s->key, sizeof(s->key), "fake:%s:%d", name, same);
     snprintf(s->path, sizeof(s->path), "%d", index);
     s->info.flags = MIME_CAMERA_FLAG_FAKE | MIME_CAMERA_FLAG_USB;
     s->info.vendor = 0x1D6B;

@@ -4,6 +4,8 @@
  */
 #include "user32_private.h"
 
+#include <mime/pnp.h>
+
 /* ------------------------------------------------------------------ rectangles */
 
 WINUSERAPI BOOL WINAPI SetRect(LPRECT r, int left, int top, int right, int bottom)
@@ -741,20 +743,198 @@ WINUSERAPI BOOL WINAPI CloseTouchInputHandle(HTOUCHINPUT input)
 /* ------------------------------------------------------------------ device and power notifications */
 
 /*
- * the registrations are kept so they can be unregistered, but no device
- * arrival or power setting event exists to deliver yet.
+ * the registrations of this process. a device interface registration is delivered as windows' service manager does
+ * it: from a thread of the process that waits for the plug and play tree to change, compares the interfaces with
+ * those it saw, and sends WM_DEVICECHANGE to the window of each registration whose class came or went. every top
+ * level window of the process hears DBT_DEVNODES_CHANGED when anything did. power setting events are never sent, as
+ * there are none.
  */
 typedef struct NOTIFY_REGISTRATION {
     struct NOTIFY_REGISTRATION *Next;
     HANDLE Recipient;
     DWORD Flags;
     BOOL Power;
+    BOOL AllClasses;
+    GUID Class;
 } NOTIFY_REGISTRATION;
+
+/* an interface the watcher knows: its class and path. */
+typedef struct SEEN_INTERFACE {
+    GUID Class;
+    WCHAR Path[MAX_PATH];
+} SEEN_INTERFACE;
 
 static NOTIFY_REGISTRATION *g_notifications;
 static RTL_CRITICAL_SECTION g_notify_lock = RTL_CRITICAL_SECTION_INIT;
+static BOOL g_watching;
 
-static PVOID register_notification(HANDLE recipient, DWORD flags, BOOL power)
+#define DBT_DEVNODES_CHANGED 0x0007
+#define WATCH_MAX_INTERFACES 256
+
+static NTSTATUS pnp_request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCWSTR in, MIME_PNP_REQUEST **out)
+{
+    ULONG chars = 2048;
+    for (;;) {
+        ULONG size = (ULONG)sizeof(MIME_PNP_REQUEST) + chars * sizeof(WCHAR);
+        MIME_PNP_REQUEST *r = UserAlloc(size);
+        if (!r)
+            return STATUS_NO_MEMORY;
+        r->Flags = flags;
+        if (guid)
+            r->Class = *guid;
+        if (in && wcslen(in) < RTL_NUMBER_OF(r->Instance))
+            wcscpy(r->Instance, in);
+        NTSTATUS status = NtPlugPlayControl(klass, r, size);
+        if (status == STATUS_BUFFER_TOO_SMALL && r->OutChars > chars) {
+            chars = r->OutChars;
+            UserFree(r);
+            continue;
+        }
+        if (!NT_SUCCESS(status)) {
+            UserFree(r);
+            return status;
+        }
+        *out = r;
+        return status;
+    }
+}
+
+/* every interface of the tree with its class, or false when the tree cannot be read. */
+static BOOL read_interfaces(SEEN_INTERFACE *list, ULONG *count)
+{
+    MIME_PNP_REQUEST *r;
+    *count = 0;
+    if (!NT_SUCCESS(pnp_request(MIME_PNP_LIST_INTERFACES, 1, nullptr, nullptr, &r)))
+        return FALSE;
+    for (PCWSTR p = r->Out; *p && *count < WATCH_MAX_INTERFACES; p += wcslen(p) + 1) {
+        MIME_PNP_REQUEST *q;
+        if (!NT_SUCCESS(pnp_request(MIME_PNP_INTERFACE_DEVICE, 0, nullptr, p, &q)))
+            continue;
+        list[*count].Class = q->Class;
+        if (wcslen(p) >= MAX_PATH) {
+            UserFree(q);
+            continue;
+        }
+        wcscpy(list[*count].Path, p);
+        (*count)++;
+        UserFree(q);
+    }
+    UserFree(r);
+    return TRUE;
+}
+
+static BOOL interface_in(const SEEN_INTERFACE *list, ULONG count, const SEEN_INTERFACE *x)
+{
+    for (ULONG i = 0; i < count; i++)
+        if (!memcmp(&list[i].Class, &x->Class, sizeof(GUID)) && !_wcsicmp(list[i].Path, x->Path))
+            return TRUE;
+    return FALSE;
+}
+
+typedef struct DEVNODES_CHANGE {
+    DWORD Process;
+} DEVNODES_CHANGE;
+
+static BOOL CALLBACK send_devnodes_changed(HWND hwnd, LPARAM param)
+{
+    DWORD process = 0;
+    GetWindowThreadProcessId(hwnd, &process);
+    /* win32k keeps message only windows among the top level ones, so they hear of it too, which windows' do not. */
+    if (process == (DWORD)param)
+        SendMessageTimeoutW(hwnd, WM_DEVICECHANGE, DBT_DEVNODES_CHANGED, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
+    return TRUE;
+}
+
+/* one interface came or went: the registrations of its class hear of it. */
+static void send_interface_event(WPARAM event, const SEEN_INTERFACE *x)
+{
+    ULONG length = (ULONG)(wcslen(x->Path) + 1) * sizeof(WCHAR);
+    DEV_BROADCAST_DEVICEINTERFACE_W *data = UserAlloc(sizeof(*data) + length);
+    if (!data)
+        return;
+    data->dbcc_size = (DWORD)(FIELD_OFFSET(DEV_BROADCAST_DEVICEINTERFACE_W, dbcc_name) + length);
+    data->dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    data->dbcc_classguid = x->Class;
+    memcpy(data->dbcc_name, x->Path, length);
+    /* the recipients are listed under the lock and sent to outside it: a window procedure may register another. */
+    HANDLE recipients[32];
+    DWORD flags[32];
+    ULONG n = 0;
+    RtlEnterCriticalSection(&g_notify_lock);
+    for (NOTIFY_REGISTRATION *r = g_notifications; r && n < 32; r = r->Next) {
+        if (r->Power || (!r->AllClasses && memcmp(&r->Class, &x->Class, sizeof(GUID))))
+            continue;
+        if (r->Flags & (DEVICE_NOTIFY_SERVICE_HANDLE | DEVICE_NOTIFY_CALLBACK))
+            continue;
+        recipients[n] = r->Recipient;
+        flags[n++] = r->Flags;
+    }
+    RtlLeaveCriticalSection(&g_notify_lock);
+    for (ULONG i = 0; i < n; i++)
+        if (IsWindow((HWND)recipients[i]))
+            SendMessageTimeoutW((HWND)recipients[i], WM_DEVICECHANGE, event, (LPARAM)data, SMTO_ABORTIFHUNG, 2000, nullptr);
+    UserFree(data);
+}
+
+static DWORD WINAPI watch_interfaces(void *param)
+{
+    SEEN_INTERFACE *seen = UserAlloc(sizeof(SEEN_INTERFACE) * WATCH_MAX_INTERFACES);
+    SEEN_INTERFACE *now = UserAlloc(sizeof(SEEN_INTERFACE) * WATCH_MAX_INTERFACES);
+    if (!seen || !now)
+        return 0;
+    ULONG seen_count = 0, now_count = 0;
+    ULONG generation = 0xFFFFFFFF;
+    BOOL known = FALSE;
+    for (;;) {
+        MIME_PNP_REQUEST *r;
+        /* a first look at what there is, then every change after it. */
+        NTSTATUS status = pnp_request(MIME_PNP_WAIT_CHANGE, generation, nullptr, nullptr, &r);
+        if (!NT_SUCCESS(status)) {
+            if (status == STATUS_ALERTED || status == STATUS_USER_APC)
+                continue;
+            break;
+        }
+        generation = r->Flags;
+        UserFree(r);
+        if (!read_interfaces(now, &now_count))
+            continue;
+        BOOL changed = FALSE;
+        if (known) {
+            for (ULONG i = 0; i < seen_count; i++)
+                if (!interface_in(now, now_count, &seen[i])) {
+                    send_interface_event(DBT_DEVICEREMOVECOMPLETE, &seen[i]);
+                    changed = TRUE;
+                }
+            for (ULONG i = 0; i < now_count; i++)
+                if (!interface_in(seen, seen_count, &now[i])) {
+                    send_interface_event(DBT_DEVICEARRIVAL, &now[i]);
+                    changed = TRUE;
+                }
+        }
+        if (changed)
+            EnumWindows(send_devnodes_changed, (LPARAM)GetCurrentProcessId());
+        memcpy(seen, now, now_count * sizeof(SEEN_INTERFACE));
+        seen_count = now_count;
+        known = TRUE;
+    }
+    return 0;
+}
+
+/* the first registration of a device interface starts the watcher. */
+static void start_watching(void)
+{
+    RtlEnterCriticalSection(&g_notify_lock);
+    BOOL start = !g_watching;
+    g_watching = TRUE;
+    RtlLeaveCriticalSection(&g_notify_lock);
+    if (!start)
+        return;
+    HANDLE thread = CreateThread(nullptr, 0, watch_interfaces, nullptr, 0, nullptr);
+    if (thread)
+        CloseHandle(thread);
+}
+
+static PVOID register_notification(HANDLE recipient, DWORD flags, BOOL power, const GUID *klass)
 {
     if (!recipient) {
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -772,10 +952,15 @@ static PVOID register_notification(HANDLE recipient, DWORD flags, BOOL power)
     r->Recipient = recipient;
     r->Flags = flags;
     r->Power = power;
+    r->AllClasses = !klass;
+    if (klass)
+        r->Class = *klass;
     RtlEnterCriticalSection(&g_notify_lock);
     r->Next = g_notifications;
     g_notifications = r;
     RtlLeaveCriticalSection(&g_notify_lock);
+    if (!power)
+        start_watching();
     return r;
 }
 
@@ -798,13 +983,29 @@ static BOOL unregister_notification(PVOID handle, BOOL power)
     return found;
 }
 
+/*
+ * the filter says which interfaces: a class, or all of them with DEVICE_NOTIFY_ALL_INTERFACE_CLASSES. a filter of
+ * the other kinds of device notification, a handle of a file, is accepted and never sent to as no handle's device
+ * is removed. the device type 0x80000001 is refused with ERROR_INVALID_DATA by windows' user32 before the service
+ * hears of it.
+ */
 WINUSERAPI HDEVNOTIFY WINAPI RegisterDeviceNotificationW(HANDLE recipient, LPVOID filter, DWORD flags)
 {
     if (!filter && !(flags & DEVICE_NOTIFY_ALL_INTERFACE_CLASSES)) {
         SetLastError(ERROR_INVALID_DATA);
         return nullptr;
     }
-    return register_notification(recipient, flags, FALSE);
+    const GUID *klass = nullptr;
+    if (filter) {
+        const DEV_BROADCAST_DEVICEINTERFACE_W *f = filter;
+        if (f->dbcc_devicetype == 0x80000001u) {
+            SetLastError(ERROR_INVALID_DATA);
+            return nullptr;
+        }
+        if (f->dbcc_devicetype == DBT_DEVTYP_DEVICEINTERFACE && !(flags & DEVICE_NOTIFY_ALL_INTERFACE_CLASSES))
+            klass = &f->dbcc_classguid;
+    }
+    return register_notification(recipient, flags, FALSE, klass);
 }
 
 WINUSERAPI HDEVNOTIFY WINAPI RegisterDeviceNotificationA(HANDLE recipient, LPVOID filter, DWORD flags)
@@ -823,7 +1024,7 @@ WINUSERAPI HPOWERNOTIFY WINAPI RegisterPowerSettingNotification(HANDLE recipient
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    return register_notification(recipient, flags, TRUE);
+    return register_notification(recipient, flags, TRUE, nullptr);
 }
 
 WINUSERAPI BOOL WINAPI UnregisterPowerSettingNotification(HPOWERNOTIFY handle)

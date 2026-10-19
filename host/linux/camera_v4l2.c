@@ -256,6 +256,10 @@ static int by_node(const void *a, const void *b)
 
 static void scan(CameraList *list)
 {
+    /* MIME_CAMERA_REAL=0 hides the host's own cameras, for tests that count them. */
+    const char *real = getenv("MIME_CAMERA_REAL");
+    if (real && !strcmp(real, "0"))
+        return;
     DIR *dir = opendir("/dev");
     if (!dir)
         return;
