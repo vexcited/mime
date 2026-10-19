@@ -713,18 +713,11 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 
     if (!mime_paths_ensure(paths) || !listen_socket(paths))
         return 1;
-#ifdef __linux__
-    /* the driver takes 200 ms to load and make a device, which the boot and the first program's start overlap. */
-    mime_vk_warm_up();
-#endif
     char pid[32];
     int n = snprintf(pid, sizeof(pid), "%d\n", (int)getpid());
     mime_write_file(paths->pidfile, pid, (size_t)n);
     mime_instance_publish(lock_fd, paths);
     atexit(cleanup_files);
-
-    mime_ui_init(on_input, nullptr);
-    uint64_t ui_ns = mime_now_ns();
 
     uint64_t ram = mime_vm_default_ram();
     const char *ram_env = getenv("MIME_RAM_MB");
@@ -733,9 +726,6 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     if (!mime_vm_create(&g_vm, paths, ram))
         return 1;
     uint64_t created_ns = mime_now_ns();
-    mime_ui_get_display(&g_vm.boot->display);
-    mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
-              g_vm.boot->display.dpi);
 
     if (!mime_vm_load_kernel(&g_vm))
         return 1;
@@ -743,9 +733,29 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_camera_init(on_camera);
     if (!mime_vm_start(&g_vm))
         return 1;
-    mime_info("startup: display %llu us, machine %llu us, kernel and processors %llu us",
-              (unsigned long long)((ui_ns - g_start_ns) / 1000), (unsigned long long)((created_ns - ui_ns) / 1000),
-              (unsigned long long)((mime_now_ns() - created_ns) / 1000));
+    uint64_t started_ns = mime_now_ns();
+
+    /*
+     * the guest boots while this thread connects to the desktop, which takes as long: its window manager
+     * waits for the display at the end of its start.
+     */
+    mime_ui_init(on_input, nullptr);
+    uint64_t ui_ns = mime_now_ns();
+#ifdef __linux__
+    /*
+     * the driver takes 200 ms to load and make a device, which the boot and the first program's start overlap.
+     * It starts once the desktop's libraries are loaded: the loader takes a lock for each library, and the
+     * driver's holds it for 15 ms.
+     */
+    mime_vk_warm_up();
+#endif
+    mime_ui_get_display(&g_vm.boot->display);
+    __atomic_store_n(&g_vm.boot->display_ready, 1, __ATOMIC_RELEASE);
+    mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
+              g_vm.boot->display.dpi);
+    mime_info("startup: machine %llu us, kernel and processors %llu us, display %llu us while the guest boots",
+              (unsigned long long)((created_ns - g_start_ns) / 1000), (unsigned long long)((started_ns - created_ns) / 1000),
+              (unsigned long long)((ui_ns - started_ns) / 1000));
 
     pthread_t t;
     pthread_create(&t, nullptr, accept_thread, nullptr);

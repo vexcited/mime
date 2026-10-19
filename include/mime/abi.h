@@ -237,6 +237,12 @@ typedef struct MimeBootInfo {
     /* the host's time zone: its IANA id, and the key of the Windows zone it is under Time Zones, empty when unknown. */
     char timezone_name[64];
     char timezone_key[64];
+    /*
+     * the host connects to the desktop while the guest boots, and sets this to 1 once display is filled in. the
+     * window manager waits for it before it reads the display, so a start does not wait for the desktop.
+     */
+    uint32_t display_ready;
+    uint32_t pad2;
 } MimeBootInfo;
 
 /*

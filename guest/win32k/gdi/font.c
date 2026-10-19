@@ -13,6 +13,9 @@
 
 static FONT_FACE *g_faces;
 static ULONG g_face_count;
+/* the faces of the fonts directory are read by a thread of the kernel, and set when it is done. */
+static KEVENT g_scanned;
+static BOOLEAN g_scanning;
 static LIST_ENTRY g_instances = {&g_instances, &g_instances};
 LOGFONTW W32SystemFont;
 
@@ -317,8 +320,15 @@ static void register_source(FONT_FILE *file, const FONT_SOURCE *src)
     }
 }
 
+/* waits for the directory's faces, which a start of the machine does not wait for. */
+static void wait_scanned(void)
+{
+    if (g_scanning)
+        KeWaitForSingleObject(&g_scanned, Executive, KernelMode, FALSE, nullptr);
+}
+
 /* registers the faces of a font file; returns the number of faces added. */
-ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
+static ULONG register_file(PCWSTR path, HANDLE owner, BOOLEAN hidden)
 {
     if (!g_faces || wcslen(path) >= MAX_PATH)
         return 0;
@@ -342,10 +352,17 @@ ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
     return added;
 }
 
+ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
+{
+    wait_scanned();
+    return register_file(path, owner, hidden);
+}
+
 /* registers fonts held in memory, copied into the kernel. */
 ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **out)
 {
     *out = nullptr;
+    wait_scanned();
     if (!g_faces || !size)
         return 0;
     FONT_FILE *file = W32Alloc(sizeof(FONT_FILE));
@@ -374,11 +391,13 @@ ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **out)
 
 ULONG FontFaceCount(void)
 {
+    wait_scanned();
     return g_face_count;
 }
 
 FONT_FACE *FontFaceAt(ULONG index)
 {
+    wait_scanned();
     return index < g_face_count ? &g_faces[index] : nullptr;
 }
 
@@ -392,6 +411,9 @@ BOOLEAN FontFaceVisible(FONT_FACE *f)
 /* private fonts die with their process; realized instances keep the data alive. */
 void FontReleaseProcess(HANDLE pid)
 {
+    /* the faces of the directory have no owner, and no process has added its own before they are read. */
+    if (g_scanning && !KeReadStateEvent(&g_scanned))
+        return;
     for (ULONG i = 0; i < g_face_count; i++) {
         FONT_FILE *f = g_faces[i].File;
         if (f->OwnerPid == pid)
@@ -405,11 +427,8 @@ static BOOLEAN has_suffix(PCWSTR name, ULONG chars, PCWSTR suffix)
     return chars >= n && !_wcsnicmp(name + chars - n, suffix, n);
 }
 
-void FontInitialize(void)
+static void scan_fonts(void)
 {
-    g_faces = W32Alloc(MAX_FACES * sizeof(FONT_FACE));
-    if (!g_faces)
-        return;
     UNICODE_STRING dir_name = RTL_CONSTANT_STRING(L"\\SystemRoot\\Fonts");
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, &dir_name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
@@ -441,7 +460,7 @@ void FontInitialize(void)
                 if (base + chars < MAX_PATH) {
                     memcpy(path + base, info->FileName, chars * sizeof(WCHAR));
                     path[base + chars] = 0;
-                    FontRegisterFile(path, nullptr, FALSE);
+                    register_file(path, nullptr, FALSE);
                 }
             }
             if (!info->NextEntryOffset)
@@ -452,6 +471,33 @@ void FontInitialize(void)
     W32Free(buffer);
     ZwClose(dir);
     W32Trace("win32k: %u font faces registered\n", g_face_count);
+}
+
+static void NTAPI scan_thread(PVOID context)
+{
+    scan_fonts();
+    KeSetEvent(&g_scanned, IO_NO_INCREMENT, FALSE);
+    PsTerminateSystemThread(STATUS_SUCCESS);
+}
+
+/*
+ * reading the faces of the fonts directory takes 20 milliseconds, a fifth of the start of the machine, and
+ * nothing needs them before a window is drawn: a thread does it while the start goes on.
+ */
+void FontInitialize(void)
+{
+    g_faces = W32Alloc(MAX_FACES * sizeof(FONT_FACE));
+    if (!g_faces)
+        return;
+    KeInitializeEvent(&g_scanned, NotificationEvent, FALSE);
+    HANDLE thread;
+    g_scanning = TRUE;
+    if (NT_SUCCESS(PsCreateSystemThread(&thread, 0, nullptr, nullptr, nullptr, scan_thread, nullptr))) {
+        ZwClose(thread);
+        return;
+    }
+    g_scanning = FALSE;
+    scan_fonts();
 }
 
 /* ------------------------------------------------------------------ table access */
@@ -547,6 +593,7 @@ static PCWSTR substitute(PCWSTR name)
 
 FONT_FACE *FontMatchFace(const LOGFONTW *lf)
 {
+    wait_scanned();
     PCWSTR wanted = lf->lfFaceName[0] ? substitute(lf->lfFaceName) : nullptr;
     LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL;
     FONT_FACE *best = nullptr;

@@ -67,6 +67,22 @@ static void read_display(void)
 void MetricsInitialize(void)
 {
     const MimeBootInfo *boot = HalMimeGetBootInfo();
+    /* the host connects to the desktop while the guest boots, which takes about as long. */
+    LARGE_INTEGER began;
+    KeQuerySystemTime(&began);
+    while (!__atomic_load_n(&boot->display_ready, __ATOMIC_ACQUIRE)) {
+        LARGE_INTEGER now;
+        KeQuerySystemTime(&now);
+        if (now.QuadPart - began.QuadPart > 10 * 10000000ll) {
+            DbgPrint("win32k: the host did not report its display\n");
+            break;
+        }
+#ifdef __x86_64__
+        __asm__ volatile("pause");
+#else
+        __asm__ volatile("yield");
+#endif
+    }
     read_display();
     MonitorsTakeChanged();
     W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;

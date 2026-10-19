@@ -125,7 +125,7 @@ static NTSTATUS drop_torn_tail(const char *why)
 }
 
 /* a journal this long is read for what in it no longer counts, see compact.c. */
-#define CM_COMPACT_MIN_BYTES (8u << 20)
+#define CM_COMPACT_MIN_BYTES (2u << 20)
 
 static NTSTATUS replay(PVOID *compact)
 {
