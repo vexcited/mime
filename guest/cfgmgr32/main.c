@@ -9,8 +9,9 @@
 #include <mime/ntapi.h>
 #include <mime/pnp.h>
 #include <mime/win32/cfgmgr32.h>
+#include "cfgmgr32_private.h"
 
-#define ROOT_ID L"HTREE\\ROOT\\0"
+/* ROOT_ID is in cfgmgr32_private.h */
 #define MAX_NODES 1024
 
 static WCHAR *g_nodes[MAX_NODES];
@@ -25,7 +26,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
 }
 
 /* the handle of an instance id, made the first time it is met. */
-static DEVINST node_of(PCWSTR id)
+DEVINST node_of(PCWSTR id)
 {
     RtlEnterCriticalSection(&g_lock);
     DEVINST found = 0;
@@ -45,7 +46,7 @@ static DEVINST node_of(PCWSTR id)
     return found;
 }
 
-static PCWSTR id_of(DEVINST devinst)
+PCWSTR id_of(DEVINST devinst)
 {
     if (!g_count)
         node_of(ROOT_ID);
@@ -55,13 +56,13 @@ static PCWSTR id_of(DEVINST devinst)
     return id;
 }
 
-static BOOL is_root(PCWSTR id)
+BOOL is_root(PCWSTR id)
 {
     return !lstrcmpiW(id, ROOT_ID);
 }
 
 /* a request of the kernel; *out holds the answer, to be freed. */
-static NTSTATUS request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCWSTR in, MIME_PNP_REQUEST **out)
+NTSTATUS request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCWSTR in, MIME_PNP_REQUEST **out)
 {
     ULONG chars = 1024;
     for (;;) {
@@ -89,7 +90,7 @@ static NTSTATUS request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCW
     }
 }
 
-static BOOL present(PCWSTR id)
+BOOL present(PCWSTR id)
 {
     if (is_root(id))
         return TRUE;
@@ -100,7 +101,7 @@ static BOOL present(PCWSTR id)
     return TRUE;
 }
 
-static HKEY open_enum(PCWSTR id, REGSAM access)
+HKEY open_enum(PCWSTR id, REGSAM access)
 {
     WCHAR path[MAX_DEVICE_ID_LEN + 64] = L"SYSTEM\\CurrentControlSet\\Enum\\";
     lstrcatW(path, id);
@@ -246,7 +247,8 @@ CMAPI CONFIGRET WINAPI CM_Get_DevNode_Status(PULONG status, PULONG problem, DEVI
         return CR_INVALID_DEVNODE;
     if (!present(id))
         return CR_NO_SUCH_DEVINST;
-    *status = DN_DRIVER_LOADED | DN_STARTED | DN_DISABLEABLE | DN_NT_ENUMERATOR | DN_NT_DRIVER;
+    /* the devices are the ones the drivers of Mime keep, which cannot be disabled. */
+    *status = DN_DRIVER_LOADED | DN_STARTED | DN_NT_ENUMERATOR | DN_NT_DRIVER;
     *problem = 0;
     return CR_SUCCESS;
 }
@@ -373,19 +375,25 @@ CMAPI CONFIGRET WINAPI CM_Open_DevNode_Key(DEVINST devinst, REGSAM access, ULONG
     WCHAR path[MAX_DEVICE_ID_LEN + 96] = L"SYSTEM\\CurrentControlSet\\Enum\\";
     lstrcatW(path, id);
     lstrcatW(path, L"\\Device Parameters");
-    LSTATUS error = disposition ? RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, nullptr, 0, access, nullptr, out, nullptr)
-                                : RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, access, out);
+    /* RegDisposition_OpenAlways is 0 and makes the key if it is not there, RegDisposition_OpenExisting is 1. */
+    if (disposition > RegDisposition_OpenExisting)
+        return CR_INVALID_FLAG;
+    LSTATUS error = disposition == RegDisposition_OpenAlways
+                        ? RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, nullptr, 0, access, nullptr, out, nullptr)
+                        : RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, access, out);
+    if (error == ERROR_ACCESS_DENIED)
+        return CR_ACCESS_DENIED;
     return error ? CR_NO_SUCH_REGISTRY_KEY : CR_SUCCESS;
 }
 
 /* ------------------------------------------------------------------ DEVPKEY properties */
 
-static BOOL key_is(const DEVPROPKEY *a, const DEVPROPKEY *b)
+BOOL key_is(const DEVPROPKEY *a, const DEVPROPKEY *b)
 {
     return a->pid == b->pid && !memcmp(&a->fmtid, &b->fmtid, sizeof(GUID));
 }
 
-static CONFIGRET put(DEVPROPTYPE kind, const void *data, ULONG size, DEVPROPTYPE *type, PBYTE buffer, PULONG length)
+CONFIGRET put(DEVPROPTYPE kind, const void *data, ULONG size, DEVPROPTYPE *type, PBYTE buffer, PULONG length)
 {
     *type = kind;
     if (!buffer || *length < size) {
@@ -409,7 +417,7 @@ static int hex(WCHAR c)
 }
 
 /* {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx} */
-static BOOL parse_guid(PCWSTR text, GUID *out)
+BOOL parse_guid(PCWSTR text, GUID *out)
 {
     static const BYTE DIGITS[] = {8, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2};
     ULONG v[11];
@@ -594,6 +602,10 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_PropertyW(PCWSTR path, const DEVP
 {
     if (!path || !key || !type || !size)
         return CR_INVALID_POINTER;
+    BOOL handled;
+    CONFIGRET own = InterfaceOwnProperty(path, key, type, buffer, size, &handled);
+    if (handled)
+        return own;
     MIME_PNP_REQUEST *r;
     if (!NT_SUCCESS(request(MIME_PNP_INTERFACE_DEVICE, 0, nullptr, path, &r)))
         return CR_NO_SUCH_DEVICE_INTERFACE;
