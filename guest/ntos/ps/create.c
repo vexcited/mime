@@ -145,7 +145,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     peb->HeapDeCommitTotalFreeThreshold = 0x10000;
     peb->HeapDeCommitFreeBlockThreshold = 0x1000;
     peb->MaximumNumberOfHeaps = 16;
-    peb->SessionId = 1;
+    peb->SessionId = process->SessionId;
     peb->ActiveCodePage = 1252;
     peb->OemCodePage = 437;
 
@@ -283,6 +283,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
             return status;
         }
     }
+    process->SessionId = SepTokenSessionId(process);
     process->ImageSection = section;
     process->SystemDll = system_dll;
     process->Machine = section->Image.Machine;
@@ -359,6 +360,31 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     else
         ObDereferenceObject(thread);
     *out = process;
+    return STATUS_SUCCESS;
+}
+
+/*
+ * the service control manager starts with the machine, in session 0 with a token of the system. a machine without
+ * the file goes on without services.
+ */
+NTSTATUS PsStartServiceController(void)
+{
+    UNICODE_STRING image = RTL_CONSTANT_STRING(L"C:\\Windows\\System32\\services.exe");
+    UNICODE_STRING cmdline = RTL_CONSTANT_STRING(L"C:\\Windows\\system32\\services.exe");
+    UNICODE_STRING cwd = RTL_CONSTANT_STRING(L"C:\\Windows\\system32");
+    PSP_PARAMS p = {.Image = image, .CommandLine = cmdline, .CurrentDirectory = cwd, .Detached = TRUE};
+    struct _TOKEN *token = SepCreateServiceControllerToken();
+    if (!token)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    PEPROCESS process;
+    NTSTATUS status = create_process(&p, token, 0, nullptr, FALSE, PsCurrentProcess(), &process, nullptr);
+    ObDereferenceObject(token);
+    if (!NT_SUCCESS(status)) {
+        KiLogPrintf("cannot start the service control manager: %08x", status);
+        return status;
+    }
+    process->ServiceController = TRUE;
+    ObDereferenceObject(process);
     return STATUS_SUCCESS;
 }
 

@@ -188,6 +188,8 @@ void MiSessionInitialize(void)
     HalSharedPage->guest_ready = 1;
     send_message(&ready, sizeof(ready));
     KiLogPrintf("session ready");
+    /* the machine answers the host first; the services start alongside the first requests. */
+    PsStartServiceController();
 
     for (;;) {
         for (;;) {

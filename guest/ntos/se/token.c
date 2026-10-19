@@ -663,11 +663,34 @@ NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent)
     PTOKEN t = SepDuplicate(source, TokenPrimary, 0, FALSE, &status);
     if (t) {
         t->InUse = TRUE;
-        t->SessionId = 1;
         child->Token = t;
     }
     ExReleaseFastMutex(&SeLock);
     return status;
+}
+
+/*
+ * the token of the service control manager: a copy of the system's own, in session 0 where the services live.
+ * referenced, to be given to SepSetProcessToken.
+ */
+PTOKEN SepCreateServiceControllerToken(void)
+{
+    ExAcquireFastMutex(&SeLock);
+    PTOKEN t = SepDuplicate(g_system_token, TokenPrimary, 0, FALSE, nullptr);
+    if (t)
+        t->SessionId = 0;
+    ExReleaseFastMutex(&SeLock);
+    return t;
+}
+
+/* the session a process runs in, which is its token's. */
+ULONG SepTokenSessionId(PEPROCESS process)
+{
+    ExAcquireFastMutex(&SeLock);
+    PTOKEN t = process->Token;
+    ULONG session = t ? t->SessionId : 1;
+    ExReleaseFastMutex(&SeLock);
+    return session;
 }
 
 /* an explicit token for a new process, which shares it with whoever else holds it. */

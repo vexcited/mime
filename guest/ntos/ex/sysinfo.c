@@ -396,7 +396,7 @@ static ULONG fill_processes(PUCHAR buffer, ULONG capacity, PUCHAR user_base)
             info->UniqueProcessId = p->UniqueProcessId;
             info->InheritedFromUniqueProcessId = p->InheritedFromUniqueProcessId;
             info->HandleCount = p->HandleTable.Count;
-            info->SessionId = p->SystemProcess ? 0 : 1;
+            info->SessionId = p->SessionId;
             info->UniqueProcessKey = (ULONG_PTR)p->UniqueProcessId;
             SYSTEM_THREAD_INFORMATION *t = (SYSTEM_THREAD_INFORMATION *)(info + 1);
             for (PLIST_ENTRY te = p->ThreadListHead.Flink; te != &p->ThreadListHead; te = te->Flink) {

@@ -2266,6 +2266,11 @@ typedef struct _PROCESS_PRIORITY_CLASS {
 #define MX_PROCESS_SHUTDOWN_PARAMETERS 109
 #define MX_SHUTDOWN_LEVEL_DEFAULT 0x280
 #define MX_SHUTDOWN_NORETRY 1
+/* the level of services.exe and the one of the processes it starts, below the programs' and in that order. */
+#define MX_SHUTDOWN_LEVEL_SERVICES 0x1FF
+#define MX_SHUTDOWN_LEVEL_SERVICE_PROCESS 0x100
+/* what the shutdown gives services.exe beside WaitToKillServiceTimeout, for the preshutdown controls (a guess). */
+#define MX_SHUTDOWN_PRESHUTDOWN_MS 30000
 /* what csrss answers to flags other than SHUTDOWN_NORETRY, which the status table maps to error 641. */
 #define MX_STATUS_BAD_SHUTDOWN_FLAGS ((NTSTATUS)0xC00002EBL)
 typedef struct _MX_SHUTDOWN_PARAMETERS {

@@ -493,7 +493,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = 1;
         break;
     case ProcessSessionInformation:
-        out.u32[0] = 1;
+        out.u32[0] = process->SessionId;
         size = sizeof(ULONG);
         break;
     case ProcessCookie:

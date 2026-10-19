@@ -26,6 +26,7 @@ typedef struct SHUTDOWN_SETTINGS {
     ULONG WaitToKillTimeout;
     ULONG QuickTimeout;
     ULONG TerminateTimeout;
+    ULONG ServiceTimeout; /* WaitToKillServiceTimeout, what the services have to stop */
     BOOLEAN AutoEndTasks;
     BOOLEAN AllowBlocking;
 } SHUTDOWN_SETTINGS;
@@ -112,6 +113,10 @@ static void load_settings(SHUTDOWN_SETTINGS *s)
         s->QuickTimeout = 500;
     s->TerminateTimeout =
         read_number(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control", L"ProcessTerminateTimeout", 500);
+    s->ServiceTimeout =
+        read_number(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control", L"WaitToKillServiceTimeout", 20000);
+    if (s->ServiceTimeout > 30000)
+        s->ServiceTimeout = 30000;
     s->AllowBlocking = read_number(L"\\REGISTRY\\MACHINE\\Software\\Policies\\Microsoft\\Windows\\System",
                                    L"AllowBlockingAppsAtShutdown", 0) != 0;
 }
@@ -167,13 +172,20 @@ static void ctrl_shutdown(PEPROCESS process)
     ULONG event = (g.Flags & MX_EWX_MACHINE) ? CTRL_SHUTDOWN_EVENT : CTRL_LOGOFF_EVENT;
     PETHREAD thread = nullptr;
     PVOID routine = process->ConsoleCtrlRoutine;
-    if (!routine || !NT_SUCCESS(PspCreateUserThread(process, routine, (PVOID)(ULONG_PTR)event, FALSE, 0, 0, &thread))) {
+    NTSTATUS created = routine ? PspCreateUserThread(process, routine, (PVOID)(ULONG_PTR)event, FALSE, 0, 0, &thread)
+                               : STATUS_NOT_FOUND;
+    if (!NT_SUCCESS(created)) {
+        KiLogPrintf("shutdown: process %u (%s) takes no console event: %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
+                    process->ImageFileName, created);
         kill_process(process, STATUS_CONTROL_C_EXIT);
         return;
     }
     ULONG64 wait = g.Settings.WaitToKillTimeout;
     if ((g.Flags & EWX_QUICKRESOLVE) && wait > g.Settings.QuickTimeout)
         wait = g.Settings.QuickTimeout;
+    /* the services are given the time they ask the manager for: the preshutdown controls, then the shutdown ones. */
+    if (process->ServiceController)
+        wait = (ULONG64)g.Settings.ServiceTimeout + MX_SHUTDOWN_PRESHUTDOWN_MS;
     PVOID objects[4] = {&process->Pcb, &thread->Tcb, &g.Cancel, &g.Expire};
     NTSTATUS status = wait_objects(objects, 4, allowed(wait));
     if (status == STATUS_WAIT_0 || status == (NTSTATUS)2) {
@@ -233,6 +245,12 @@ static void NTAPI process_worker(PVOID context)
 
 /* ------------------------------------------------------------------ levels */
 
+/* the processes of session 0, the services, are not asked at a logoff: only a shutdown of the machine reaches them. */
+static BOOLEAN takes_part(PEPROCESS p)
+{
+    return p->SessionId != 0 || (g.Flags & MX_EWX_MACHINE);
+}
+
 /* the processes of the highest level not yet taken, marked as taken. */
 static ULONG take_batch(PEPROCESS *out)
 {
@@ -240,7 +258,7 @@ static ULONG take_batch(PEPROCESS *out)
     ULONG64 s = KiAcquireDispatcherLock();
     for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
         PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
-        if (p->SystemProcess || p->Terminating || p->Exited || p->ShutdownState)
+        if (p->SystemProcess || p->Terminating || p->Exited || p->ShutdownState || !takes_part(p))
             continue;
         if (!count || p->ShutdownLevel > level)
             level = p->ShutdownLevel;
@@ -249,7 +267,8 @@ static ULONG take_batch(PEPROCESS *out)
     count = 0;
     for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead && count < MAX_BATCH; e = e->Flink) {
         PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
-        if (p->SystemProcess || p->Terminating || p->Exited || p->ShutdownState || p->ShutdownLevel != level)
+        if (p->SystemProcess || p->Terminating || p->Exited || p->ShutdownState || p->ShutdownLevel != level ||
+            !takes_part(p))
             continue;
         p->ShutdownState = PS_SHUTDOWN_TAKEN;
         ObReferenceObject(p);

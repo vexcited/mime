@@ -463,6 +463,182 @@ NTSTATUS NTAPI NtFilterToken(HANDLE token_handle, ULONG flags, PVOID sids_to_dis
     return SepInsertToken(filtered, TOKEN_ALL_ACCESS, 0, new_token);
 }
 
+/*
+ * NtCreateToken: the one call that makes a token from nothing, for the service control manager and what logs
+ * users on. it needs SeCreateTokenPrivilege enabled. the user comes first, the groups after it, and a group that
+ * carries SE_GROUP_INTEGRITY is the label. the owner has to be the user or a group that may own, the primary group
+ * one of the sids of the token.
+ */
+NTSTATUS NTAPI NtCreateToken(PHANDLE token_handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG type,
+                             PLUID authentication_id, PLARGE_INTEGER expiration, PVOID user, PVOID groups,
+                             PVOID privileges, PVOID owner, PVOID primary_group, PVOID default_dacl, PVOID source)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    if (type != TokenPrimary && type != TokenImpersonation)
+        return STATUS_BAD_TOKEN_TYPE;
+    if (!user || !groups || !privileges || !primary_group || !source || !authentication_id)
+        return STATUS_INVALID_PARAMETER;
+    if (!SepSinglePrivilegeCheck(SE_CREATE_TOKEN_PRIVILEGE, mode))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    OBJECT_ATTRIBUTES oa = {};
+    ULONG level = SecurityImpersonation;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (attributes) {
+        status = read_caller(&oa, attributes, sizeof(oa));
+        if (NT_SUCCESS(status) && oa.SecurityQualityOfService) {
+            struct {
+                ULONG Length, Level;
+                UCHAR Tracking, Effective;
+            } qos;
+            status = read_caller(&qos, oa.SecurityQualityOfService, sizeof(qos));
+            if (NT_SUCCESS(status) && qos.Level > SecurityDelegation)
+                status = STATUS_BAD_IMPERSONATION_LEVEL;
+            level = qos.Level;
+        }
+    }
+    UCHAR source_copy[16], primary[SEP_SID_MAX], owner_sid[SEP_SID_MAX];
+    LUID luid = {};
+    LARGE_INTEGER expires = {.QuadPart = 0x7FFFFFFFFFFFFFFFll};
+    SEP_GROUP user_group = {}, *group_list = nullptr;
+    ULONG group_count = 0, *luids = nullptr, *privilege_attributes = nullptr, privilege_count = 0;
+    BOOLEAN has_owner = FALSE;
+    PUCHAR dacl = nullptr;
+    ULONG dacl_size = 0;
+    if (NT_SUCCESS(status))
+        status = read_caller(source_copy, source, sizeof(source_copy));
+    if (NT_SUCCESS(status))
+        status = read_caller(&luid, authentication_id, sizeof(luid));
+    if (NT_SUCCESS(status) && expiration)
+        status = read_caller(&expires, expiration, sizeof(expires));
+    if (NT_SUCCESS(status)) {
+        struct {
+            const void *Sid;
+            ULONG Attributes;
+        } entry;
+        status = read_caller(&entry, user, sizeof(entry));
+        if (NT_SUCCESS(status))
+            status = capture_sid(entry.Sid, user_group.Sid);
+    }
+    if (NT_SUCCESS(status))
+        status = capture_groups(groups, &group_list, &group_count);
+    if (NT_SUCCESS(status))
+        status = capture_privileges(privileges, &luids, &privilege_attributes, &privilege_count);
+    if (NT_SUCCESS(status)) {
+        const void *sid;
+        status = read_caller(&sid, primary_group, sizeof(sid));
+        if (NT_SUCCESS(status))
+            status = capture_sid(sid, primary);
+        if (status == STATUS_INVALID_SID)
+            status = STATUS_INVALID_PRIMARY_GROUP;
+    }
+    if (NT_SUCCESS(status) && owner) {
+        const void *sid;
+        status = read_caller(&sid, owner, sizeof(sid));
+        if (NT_SUCCESS(status) && sid) {
+            status = capture_sid(sid, owner_sid);
+            has_owner = NT_SUCCESS(status);
+            if (status == STATUS_INVALID_SID)
+                status = STATUS_INVALID_OWNER;
+        }
+    }
+    if (NT_SUCCESS(status) && default_dacl) {
+        const UCHAR *acl;
+        status = read_caller(&acl, default_dacl, sizeof(acl));
+        if (NT_SUCCESS(status) && acl) {
+            USHORT size;
+            status = read_caller(&size, acl + 2, sizeof(size));
+            if (NT_SUCCESS(status) && (size < 8 || size > 0x8000))
+                status = STATUS_INVALID_PARAMETER;
+            if (NT_SUCCESS(status)) {
+                dacl = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('S', 'e', 'A', 'c'));
+                status = dacl ? read_caller(dacl, acl, size) : STATUS_INSUFFICIENT_RESOURCES;
+                dacl_size = size;
+            }
+        }
+    }
+    for (ULONG i = 0; NT_SUCCESS(status) && i < privilege_count; i++)
+        if (luids[i] < SEP_PRIVILEGE_FIRST || luids[i] > SEP_PRIVILEGE_LAST || (privilege_attributes[i] & ~SE_PRIVILEGE_VALID))
+            status = STATUS_INVALID_PARAMETER;
+    PTOKEN t = nullptr;
+    if (NT_SUCCESS(status)) {
+        status = ObCreateObject(SeTokenObjectType, nullptr, KernelMode, sizeof(TOKEN), (PVOID *)&t);
+        if (!NT_SUCCESS(status))
+            t = nullptr;
+    }
+    if (t) {
+        memset(t, 0, sizeof(*t));
+        t->TokenId = SepAllocateLuid();
+        t->ModifiedId = SepAllocateLuid();
+        t->ExpirationTime = expires;
+        t->IntegrityIndex = -1;
+        t->DynamicCharged = 500;
+        memcpy(t->Source, source_copy, sizeof(t->Source));
+        t->AuthenticationId = ((ULONG64)(ULONG)luid.HighPart << 32) | luid.LowPart;
+        t->Type = type;
+        t->ImpersonationLevel = type == TokenImpersonation ? level : 0;
+        t->ElevationType = SEP_ELEVATION_DEFAULT;
+        t->MandatoryPolicy = 1;
+        t->Flags = TOKEN_VIRTUALIZE_ALLOWED | TOKEN_NOT_LOW;
+        t->Groups = ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)(group_count + 1) * sizeof(SEP_GROUP), KI_TAG('S', 'e', 'G', 'p'));
+        if (!t->Groups)
+            status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+    if (NT_SUCCESS(status)) {
+        t->GroupCount = group_count + 1;
+        t->Groups[0] = user_group;
+        if (group_count)
+            memcpy(&t->Groups[1], group_list, (SIZE_T)group_count * sizeof(SEP_GROUP));
+        t->OwnerIndex = 0;
+        for (ULONG i = 1; i < t->GroupCount; i++) {
+            if (t->Groups[i].Attributes & SE_GROUP_INTEGRITY) {
+                t->IntegrityIndex = (LONG)i;
+                if (!(t->Groups[i].Attributes & SE_GROUP_INTEGRITY_ENABLED))
+                    t->Groups[i].Attributes |= SE_GROUP_INTEGRITY_ENABLED;
+            }
+        }
+        if (has_owner) {
+            ULONG i;
+            for (i = 0; i < t->GroupCount; i++)
+                if (SepSidEqual(owner_sid, t->Groups[i].Sid))
+                    break;
+            if (i < t->GroupCount && (i == 0 || (t->Groups[i].Attributes & SE_GROUP_OWNER)))
+                t->OwnerIndex = i;
+            else
+                status = STATUS_INVALID_OWNER;
+        }
+        ULONG i;
+        for (i = 0; i < t->GroupCount; i++)
+            if (SepSidEqual(primary, t->Groups[i].Sid))
+                break;
+        if (i == t->GroupCount)
+            status = STATUS_INVALID_PRIMARY_GROUP;
+        memcpy(t->PrimaryGroup, primary, SepSidLength(primary));
+        for (i = 0; i < privilege_count; i++) {
+            ULONG64 bit = 1ull << luids[i];
+            t->Present |= bit;
+            if (privilege_attributes[i] & SE_PRIVILEGE_ENABLED)
+                t->Enabled |= bit;
+            if (privilege_attributes[i] & SE_PRIVILEGE_ENABLED_BY_DEFAULT)
+                t->EnabledByDefault |= bit;
+        }
+        t->DefaultDacl = dacl;
+        t->DefaultDaclSize = dacl_size;
+        dacl = nullptr;
+    }
+    if (group_list)
+        ExFreePool(group_list);
+    if (luids)
+        ExFreePool(luids);
+    if (dacl)
+        ExFreePool(dacl);
+    if (!NT_SUCCESS(status)) {
+        if (t)
+            ObDereferenceObject(t);
+        return status;
+    }
+    return SepInsertToken(t, access ? access : TOKEN_ALL_ACCESS, oa.Attributes & OBJ_INHERIT, token_handle);
+}
+
 /* ------------------------------------------------------------------ querying */
 
 typedef struct OUTPUT {
