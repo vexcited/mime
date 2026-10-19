@@ -303,6 +303,7 @@ enum {
     MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
     MIME_HC_FS_GET_SD = 0x1E,   /* (handle, pa, capacity, up) -> distance << 32 | length of the nearest stored descriptor */
     MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
+    MIME_HC_FS_RENAME = 0x50,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
     MIME_HC_WIN_DESTROY = 0x21, /* (window_id) */
@@ -650,6 +651,9 @@ enum {
     MIME_FS_DISP_OVERWRITE_IF = 4,
     MIME_FS_DISP_SUPERSEDE = 5,
 };
+
+/* MIME_HC_FS_RENAME flags. */
+#define MIME_FS_RENAME_REPLACE 1u /* an existing file of the new name is replaced, a directory never is */
 
 typedef struct MimeFsOpen {
     uint32_t volume;

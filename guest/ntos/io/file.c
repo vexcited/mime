@@ -365,6 +365,64 @@ NTSTATUS NTAPI ZwQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOI
     ZW_WRAP(NtQueryInformationFile(handle, iosb, info, length, klass));
 }
 
+/*
+ * a rename names the new place of a file, and the file system is given the directory it is in, opened here:
+ * the new name up to its last backslash is that directory, and the rest is the name in it. the names are
+ * those of a handle of the same file system, a full path, as nothing but ntdll's callers set them.
+ */
+static NTSTATUS rename_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_INFORMATION_CLASS klass)
+{
+    const ULONG name_offset = 20;
+    if (length < name_offset)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    ULONG name_length = *(PULONG)(buf + 16);
+    if ((name_length & 1) || name_length > length - name_offset)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    if (*(HANDLE *)(buf + 8))
+        return STATUS_NOT_IMPLEMENTED;
+    BOOLEAN replace = klass == FileRenameInformationEx ? (*(PULONG)buf & 1) != 0 : buf[0] != 0;
+    PWCHAR name = (PWCHAR)(buf + name_offset);
+    ULONG chars = name_length / sizeof(WCHAR), slash = chars;
+    while (slash && name[slash - 1] != '\\')
+        slash--;
+    /* a name with no directory part, or one that ends in a backslash, names nothing. */
+    if (slash < 2 || slash == chars)
+        return STATUS_OBJECT_NAME_INVALID;
+    UNICODE_STRING parent = {(USHORT)((slash - 1) * sizeof(WCHAR)), (USHORT)((slash - 1) * sizeof(WCHAR)), name};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &parent, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
+    HANDLE h;
+    IO_STATUS_BLOCK io;
+    PKTHREAD t = KiCurrentThread();
+    KPROCESSOR_MODE old = t->PreviousMode;
+    t->PreviousMode = KernelMode;
+    NTSTATUS status = IopCreateFile(&h, FILE_TRAVERSE | SYNCHRONIZE, &oa, &io, 0,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, KernelMode);
+    t->PreviousMode = old;
+    if (!NT_SUCCESS(status))
+        return status == STATUS_OBJECT_NAME_NOT_FOUND ? STATUS_OBJECT_PATH_NOT_FOUND : status;
+    PFILE_OBJECT directory;
+    status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&directory, nullptr);
+    if (NT_SUCCESS(status)) {
+        if (directory->DeviceObject != file->DeviceObject) {
+            status = STATUS_NOT_SAME_DEVICE;
+        } else {
+            IO_STACK_LOCATION params;
+            memset(&params, 0, sizeof(params));
+            params.Parameters.SetFile.Length = length;
+            params.Parameters.SetFile.FileInformationClass = klass;
+            params.Parameters.SetFile.FileObject = directory;
+            params.Parameters.SetFile.ReplaceIfExists = replace;
+            IO_STATUS_BLOCK ignored = {};
+            status = IopSynchronousRequest(file, IRP_MJ_SET_INFORMATION, 0, buf, length, &params, &ignored);
+        }
+        ObDereferenceObject(directory);
+    }
+    ObCloseHandle(h, KernelMode);
+    return status;
+}
+
 NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length,
                                     FILE_INFORMATION_CLASS klass)
 {
@@ -398,6 +456,9 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
             /* port and key, handled by the i/o manager itself. */
             status = length >= 2 * sizeof(PVOID) ? IopSetCompletion(file, ((HANDLE *)buf)[0], ((PVOID *)buf)[1])
                                                  : STATUS_INFO_LENGTH_MISMATCH;
+        } else if ((klass == FileRenameInformation || klass == FileRenameInformationEx) && file->DeviceObject &&
+                   file->DeviceObject->DeviceType == FILE_DEVICE_DISK_FILE_SYSTEM) {
+            status = rename_file(file, buf, length, klass);
         } else {
             IO_STACK_LOCATION params;
             memset(&params, 0, sizeof(params));

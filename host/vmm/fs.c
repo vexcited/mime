@@ -592,6 +592,90 @@ static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t le
     return MIME_HC_STATUS_OK;
 }
 
+/*
+ * moves the file or directory of a handle to a name in the directory of another. the names of windows
+ * ignore case, so an entry of the directory that differs from the new name by case only is the name taken
+ * when the file replaces it, and the name asked for when it is the file itself, a rename that changes case.
+ * the paths of the handles open on the moved file, or below a moved directory, follow it.
+ */
+static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
+{
+    MimeFsHandle *src = get_handle(vm, a[1]), *dir = get_handle(vm, a[2]);
+    if (!src || !dir || !dir->is_dir || src->volume != dir->volume || !src->host_path || !dir->host_path)
+        return MIME_HC_STATUS_INVALID;
+    const uint16_t *wide = a[4] && a[4] < 256 ? mime_vm_phys(vm, a[3], a[4] * 2) : nullptr;
+    if (!wide)
+        return MIME_HC_STATUS_INVALID;
+    char leaf[1024];
+    mime_utf16_to_utf8(leaf, sizeof(leaf), wide, a[4]);
+    if (!leaf[0] || strchr(leaf, '/') || !strcmp(leaf, ".") || !strcmp(leaf, ".."))
+        return MIME_HC_STATUS_INVALID;
+    bool replace = (a[5] & MIME_FS_RENAME_REPLACE) != 0;
+
+    struct stat from;
+    if (lstat(src->host_path, &from) != 0)
+        return errno_status(errno);
+    char target[MIME_PATH_MAX], found[1024] = "";
+    mime_path_join(target, sizeof(target), dir->host_path, leaf);
+    struct stat there;
+    bool exists = lstat(target, &there) == 0;
+    if (!exists) {
+        DIR *d = opendir(dir->host_path);
+        struct dirent *e;
+        while (d && (e = readdir(d))) {
+            if (strlen(e->d_name) == strlen(leaf) && same_name(e->d_name, leaf)) {
+                mime_strlcpy(found, e->d_name, sizeof(found));
+                break;
+            }
+        }
+        if (d)
+            closedir(d);
+        if (found[0]) {
+            char twin[MIME_PATH_MAX];
+            mime_path_join(twin, sizeof(twin), dir->host_path, found);
+            exists = lstat(twin, &there) == 0;
+            if (exists && !(there.st_dev == from.st_dev && there.st_ino == from.st_ino))
+                mime_strlcpy(target, twin, sizeof(target));
+        }
+    }
+    bool same = exists && there.st_dev == from.st_dev && there.st_ino == from.st_ino;
+    if (exists && !same) {
+        if (!replace)
+            return MIME_HC_STATUS_EXISTS;
+        /* a directory is never replaced, and neither is a file by a directory. */
+        if (S_ISDIR(there.st_mode) || S_ISDIR(from.st_mode))
+            return MIME_HC_STATUS_ACCESS_DENIED;
+    }
+    if (!strcmp(src->host_path, target))
+        return MIME_HC_STATUS_OK;
+    size_t from_length = strlen(src->host_path);
+    if (S_ISDIR(from.st_mode) && !strncmp(target, src->host_path, from_length) && target[from_length] == '/')
+        return MIME_HC_STATUS_INVALID;
+    if (rename(src->host_path, target) != 0)
+        return errno_status(errno);
+
+    char *old = mime_xstrdup(src->host_path);
+    pthread_mutex_lock(&vm->fs_lock);
+    for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
+        MimeFsHandle *fh = vm->fs_handles[i];
+        if (!fh || !fh->host_path)
+            continue;
+        if (exists && !same && !strcmp(fh->host_path, target)) {
+            /* the file that was replaced has no name any more, so closing it must not delete the new one. */
+            fh->delete_on_close = false;
+        } else if (!strncmp(fh->host_path, old, from_length) &&
+                   (fh->host_path[from_length] == '/' || !fh->host_path[from_length])) {
+            char moved[MIME_PATH_MAX];
+            snprintf(moved, sizeof(moved), "%s%s", target, fh->host_path + from_length);
+            free(fh->host_path);
+            fh->host_path = mime_xstrdup(moved);
+        }
+    }
+    pthread_mutex_unlock(&vm->fs_lock);
+    free(old);
+    return MIME_HC_STATUS_OK;
+}
+
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t status = MIME_HC_STATUS_OK;
@@ -728,6 +812,9 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             fh->delete_on_close = a[2] != 0;
         break;
     }
+    case MIME_HC_FS_RENAME:
+        status = fs_rename(vm, a);
+        break;
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         pthread_mutex_lock(WINDOW_LOCK(vm));

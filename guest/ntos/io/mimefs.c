@@ -508,6 +508,60 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, status, written);
 }
 
+/*
+ * moves the file to the name in the directory the i/o manager opened for it. the leaf is the part of the new
+ * name after its last backslash, and the file object takes the name it has in the directory now.
+ */
+static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MIMEFS_FCB *fcb, PIO_STACK_LOCATION stack,
+                                    const UCHAR *in, ULONG length)
+{
+    PFILE_OBJECT dir = stack->Parameters.SetFile.FileObject;
+    MIMEFS_FCB *dfcb = dir ? dir->FsContext : nullptr;
+    if (!dfcb || dir->DeviceObject != device)
+        return STATUS_NOT_SAME_DEVICE;
+    if (dfcb->Rom || !dfcb->Directory)
+        return STATUS_NOT_A_DIRECTORY;
+    const WCHAR *name = (const WCHAR *)(in + 20);
+    ULONG chars = *(PULONG)(in + 16) / sizeof(WCHAR), start = chars;
+    while (start && name[start - 1] != '\\')
+        start--;
+    ULONG leaf = chars - start;
+    if (!leaf || leaf > 255)
+        return STATUS_OBJECT_NAME_INVALID;
+    for (ULONG i = 0; i < leaf; i++) {
+        WCHAR c = name[start + i];
+        if (c < ' ' || c == '*' || c == '?' || c == '<' || c == '>' || c == '|' || c == '"' || c == ':')
+            return STATUS_OBJECT_NAME_INVALID;
+    }
+    PWCHAR text = ExAllocatePool2(POOL_FLAG_NON_PAGED, leaf * sizeof(WCHAR), KI_TAG('M', 'f', 'R', 'n'));
+    if (!text)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memcpy(text, name + start, leaf * sizeof(WCHAR));
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_RENAME, fcb->HostHandle, dfcb->HostHandle, HalPhysicalOf(text), leaf,
+                                      stack->Parameters.SetFile.ReplaceIfExists ? MIME_FS_RENAME_REPLACE : 0, 0, nullptr);
+    NTSTATUS status = host_status(hs, FALSE);
+    if (NT_SUCCESS(status)) {
+        /* the name below the volume: the directory's, a backslash and the leaf. */
+        ULONG base = dir->FileName.Length / sizeof(WCHAR);
+        while (base && dir->FileName.Buffer[base - 1] == '\\')
+            base--;
+        PWCHAR full = ExAllocatePool2(POOL_FLAG_NON_PAGED, (base + 1 + leaf + 1) * sizeof(WCHAR), KI_TAG('I', 'o', 'F', 'n'));
+        if (full) {
+            memcpy(full, dir->FileName.Buffer, base * sizeof(WCHAR));
+            full[base] = '\\';
+            memcpy(full + base + 1, text, leaf * sizeof(WCHAR));
+            full[base + 1 + leaf] = 0;
+            if (file->FileName.Buffer)
+                ExFreePool(file->FileName.Buffer);
+            file->FileName.Buffer = full;
+            file->FileName.Length = (USHORT)((base + 1 + leaf) * sizeof(WCHAR));
+            file->FileName.MaximumLength = (USHORT)(file->FileName.Length + sizeof(WCHAR));
+        }
+    }
+    ExFreePool(text);
+    return status;
+}
+
 static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -542,6 +596,9 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
         fcb->DeleteOnClose = (*(PULONG)in & 1) != 0;
         return complete(irp, STATUS_SUCCESS, 0);
+    case FileRenameInformation:
+    case FileRenameInformationEx:
+        return complete(irp, rename_in_directory(device, stack->FileObject, fcb, stack, in, length), 0);
     case FileBasicInformation:
         return complete(irp, STATUS_SUCCESS, 0);
     default:

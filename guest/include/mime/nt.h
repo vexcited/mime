@@ -207,6 +207,7 @@ typedef struct _GUID {
 #define STATUS_DIRECTORY_NOT_EMPTY ((NTSTATUS)0xC0000101L)
 #define STATUS_NAME_TOO_LONG ((NTSTATUS)0xC0000106L)
 #define STATUS_NOT_A_DIRECTORY ((NTSTATUS)0xC0000103L)
+#define STATUS_NOT_SAME_DEVICE ((NTSTATUS)0xC00000D4L)
 #define STATUS_PROCESS_IS_TERMINATING ((NTSTATUS)0xC000010AL)
 #define STATUS_TIMER_RESOLUTION_NOT_SET ((NTSTATUS)0xC0000245L)
 #define STATUS_INVALID_IMAGE_NOT_MZ ((NTSTATUS)0xC000012FL)
@@ -507,6 +508,7 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileIdFullDirectoryInformation = 38,
     FileIoCompletionNotificationInformation = 41,
     FileDispositionInformationEx = 64,
+    FileRenameInformationEx = 65,
     FileMaximumInformation
 } FILE_INFORMATION_CLASS;
 
