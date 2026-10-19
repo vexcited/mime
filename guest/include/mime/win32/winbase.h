@@ -2547,7 +2547,36 @@ WINBASEAPI DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, L
                                                  DWORD size, LPCWSTR filename);
 WINBASEAPI UINT WINAPI GetPrivateProfileIntW(LPCWSTR section, LPCWSTR key, INT fallback, LPCWSTR filename);
 WINBASEAPI BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value, LPCWSTR filename);
+WINBASEAPI BOOL WINAPI QuirkIsEnabled(UINT quirk);
+WINBASEAPI HRESULT WINAPI QuirkIsEnabledForProcess(HANDLE process, UINT quirk, PBOOL enabled);
+WINBASEAPI BOOL WINAPI IsApiSetImplemented(PCSTR contract);
+WINBASEAPI FARPROC WINAPI GetProcAddressForCaller(HMODULE module, LPCSTR name, PVOID caller);
+WINBASEAPI void WINAPI TerminateProcessOnMemoryExhaustion(SIZE_T failed_size);
+WINBASEAPI DWORD WINAPI GetTempPath2A(DWORD size, LPSTR buffer);
+WINBASEAPI BOOL WINAPI NeedCurrentDirectoryForExePathA(LPCSTR name);
+WINBASEAPI UINT WINAPI GetSystemWow64Directory2W(LPWSTR buffer, UINT size, WORD machine);
 WINBASEAPI DWORD WINAPI GetProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fallback, LPWSTR out, DWORD size);
+WINBASEAPI DWORD WINAPI GetPrivateProfileStringA(LPCSTR section, LPCSTR key, LPCSTR fallback, LPSTR out, DWORD size,
+                                                 LPCSTR filename);
+WINBASEAPI UINT WINAPI GetPrivateProfileIntA(LPCSTR section, LPCSTR key, INT fallback, LPCSTR filename);
+WINBASEAPI BOOL WINAPI WritePrivateProfileStringA(LPCSTR section, LPCSTR key, LPCSTR value, LPCSTR filename);
+WINBASEAPI DWORD WINAPI GetPrivateProfileSectionA(LPCSTR section, LPSTR out, DWORD size, LPCSTR filename);
+WINBASEAPI DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, LPCWSTR filename);
+WINBASEAPI DWORD WINAPI GetPrivateProfileSectionNamesA(LPSTR out, DWORD size, LPCSTR filename);
+WINBASEAPI DWORD WINAPI GetPrivateProfileSectionNamesW(LPWSTR out, DWORD size, LPCWSTR filename);
+WINBASEAPI BOOL WINAPI WritePrivateProfileSectionA(LPCSTR section, LPCSTR lines, LPCSTR filename);
+WINBASEAPI BOOL WINAPI WritePrivateProfileSectionW(LPCWSTR section, LPCWSTR lines, LPCWSTR filename);
+WINBASEAPI BOOL WINAPI GetPrivateProfileStructA(LPCSTR section, LPCSTR key, LPVOID structure, UINT size, LPCSTR filename);
+WINBASEAPI BOOL WINAPI GetPrivateProfileStructW(LPCWSTR section, LPCWSTR key, LPVOID structure, UINT size, LPCWSTR filename);
+WINBASEAPI BOOL WINAPI WritePrivateProfileStructA(LPCSTR section, LPCSTR key, LPVOID structure, UINT size, LPCSTR filename);
+WINBASEAPI BOOL WINAPI WritePrivateProfileStructW(LPCWSTR section, LPCWSTR key, LPVOID structure, UINT size, LPCWSTR filename);
+WINBASEAPI DWORD WINAPI GetProfileStringA(LPCSTR section, LPCSTR key, LPCSTR fallback, LPSTR out, DWORD size);
+WINBASEAPI UINT WINAPI GetProfileIntA(LPCSTR section, LPCSTR key, INT fallback);
+WINBASEAPI BOOL WINAPI WriteProfileStringA(LPCSTR section, LPCSTR key, LPCSTR value);
+WINBASEAPI DWORD WINAPI GetProfileSectionA(LPCSTR section, LPSTR out, DWORD size);
+WINBASEAPI DWORD WINAPI GetProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size);
+WINBASEAPI BOOL WINAPI WriteProfileSectionA(LPCSTR section, LPCSTR lines);
+WINBASEAPI BOOL WINAPI WriteProfileSectionW(LPCWSTR section, LPCWSTR lines);
 WINBASEAPI UINT WINAPI GetProfileIntW(LPCWSTR section, LPCWSTR key, INT fallback);
 WINBASEAPI BOOL WINAPI WriteProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value);
 
