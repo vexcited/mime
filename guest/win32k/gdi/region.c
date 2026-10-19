@@ -156,11 +156,18 @@ BOOLEAN RgnEqual(const REGION *a, const REGION *b)
 
 /* ------------------------------------------------------------------ combination */
 
-/* x spans of one region within the band [y0, y1); returns the number of spans. */
-static ULONG band_spans(const REGION *r, LONG y0, LONG y1, LONG *spans, ULONG max_pairs)
+/*
+ * x spans of one region within the band [y0, y1); returns the number of spans. the bands come in ascending order, so the
+ * rectangles that end above this one can never be in a later one: *first skips them for good, which makes a combination
+ * linear in the rectangles instead of the square of them (two regions of 9000 rectangles took more than a minute, with
+ * the kernel lock held).
+ */
+static ULONG band_spans(const REGION *r, ULONG *first, LONG y0, LONG y1, LONG *spans, ULONG max_pairs)
 {
     ULONG n = 0;
-    for (ULONG i = 0; i < r->Count; i++) {
+    while (*first < r->Count && r->Rects[*first].bottom <= y0)
+        (*first)++;
+    for (ULONG i = *first; i < r->Count; i++) {
         const RECT *rc = &r->Rects[i];
         if (rc->top >= y1)
             break;
@@ -225,23 +232,33 @@ static ULONG combine_spans(const LONG *a, ULONG na, const LONG *b, ULONG nb, int
     return n;
 }
 
-static int compare_long(const void *a, const void *b)
+static void sift_down(LONG *v, ULONG root, ULONG n)
 {
-    LONG x = *(const LONG *)a, y = *(const LONG *)b;
-    return x < y ? -1 : x > y;
+    for (;;) {
+        ULONG child = 2 * root + 1;
+        if (child >= n)
+            return;
+        if (child + 1 < n && v[child + 1] > v[child])
+            child++;
+        if (v[root] >= v[child])
+            return;
+        LONG t = v[root];
+        v[root] = v[child];
+        v[child] = t;
+        root = child;
+    }
 }
 
+/* heap sort: in place, n log n for any input, and the edges of a region can be many thousands. */
 static void sort_longs(LONG *v, ULONG n)
 {
-    /* insertion sort: region edge counts stay small. */
-    for (ULONG i = 1; i < n; i++) {
-        LONG key = v[i];
-        ULONG j = i;
-        while (j > 0 && compare_long(&v[j - 1], &key) > 0) {
-            v[j] = v[j - 1];
-            j--;
-        }
-        v[j] = key;
+    for (ULONG i = n / 2; i-- > 0;)
+        sift_down(v, i, n);
+    for (ULONG end = n; end-- > 1;) {
+        LONG t = v[0];
+        v[0] = v[end];
+        v[end] = t;
+        sift_down(v, 0, end);
     }
 }
 
@@ -300,10 +317,11 @@ BOOLEAN RgnCombine(REGION *dst, const REGION *a, const REGION *b, int mode)
     RgnInit(&out);
     BOOLEAN ok = TRUE;
     ULONG prev_band_start = 0, prev_band_count = 0;
+    ULONG first_a = 0, first_b = 0;
     for (ULONG i = 0; i + 1 < unique && ok; i++) {
         LONG y0 = ys[i], y1 = ys[i + 1];
-        ULONG na = band_spans(a, y0, y1, sa, max_spans);
-        ULONG nb = band_spans(b, y0, y1, sb, max_spans);
+        ULONG na = band_spans(a, &first_a, y0, y1, sa, max_spans);
+        ULONG nb = band_spans(b, &first_b, y0, y1, sb, max_spans);
         ULONG no = combine_spans(sa, na, sb, nb, mode, so);
         if (!no)
             continue;
