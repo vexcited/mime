@@ -155,7 +155,12 @@ static void user_exception(PKTRAP_FRAME frame)
     if (frame->Vector == 14 && !(frame->ErrorCode & 0x8)) {
         BOOLEAN write = (frame->ErrorCode & 0x2) != 0;
         BOOLEAN exec = (frame->ErrorCode & 0x10) != 0;
-        if (MmAccessFault(frame->Cr2, write, exec, UserMode)) {
+        extern char KiTimelineImage[16];
+        ULONG64 started = KiTimelineImage[0] ? HalReadCounter() : 0;
+        BOOLEAN resolved = MmAccessFault(frame->Cr2, write, exec, UserMode);
+        if (started)
+            KiTimelineFault(started, 1, (ULONG)(frame->Cr2 >> 12));
+        if (resolved) {
             KiExitToUserMode(frame);
             return;
         }
@@ -262,7 +267,12 @@ static void interrupt(PKTRAP_FRAME frame)
 /* the first try at a page fault of user mode on a page that is not there, before the kernel lock, see entry.S. */
 BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 {
-    return MmFastFault(frame->Cr2, (frame->ErrorCode & 0x2) != 0, (frame->ErrorCode & 0x10) != 0);
+    extern char KiTimelineImage[16];
+    ULONG64 started = KiTimelineImage[0] ? HalReadCounter() : 0;
+    BOOLEAN done = MmFastFault(frame->Cr2, (frame->ErrorCode & 0x2) != 0, (frame->ErrorCode & 0x10) != 0);
+    if (started)
+        KiTimelineFault(started, done ? 0 : 2, (ULONG)(frame->Cr2 >> 12));
+    return done;
 }
 
 void KiTrapDispatch(PKTRAP_FRAME frame)

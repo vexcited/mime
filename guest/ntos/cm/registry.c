@@ -1268,7 +1268,9 @@ void CmInitSystem1(void)
              HalBootInfo->user_sid[2]);
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:\\Users\\%hs\\NTUSER.DAT", HalBootInfo->user_name);
     mount(user, sid, path);
+    KiBootStamp("hives");
     CmpJournalInitialize();
+    KiBootStamp("journal");
 
     /* the current control set, chosen from the restored select key. */
     ULONG current = 1;
@@ -1286,8 +1288,11 @@ void CmInitSystem1(void)
 
     CmpUnlock();
 
+    KiBootStamp("control set");
     CmpSpecialize();
+    KiBootStamp("specialized");
     CmpImportHostRoots();
+    KiBootStamp("host roots");
     ExAcquireFastMutex(&CmpLock);
     CmpJournalEnable();
     CmpUnlock();

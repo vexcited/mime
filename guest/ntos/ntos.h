@@ -69,6 +69,8 @@ ULONG64 HalCounterToHns(ULONG64 counter_delta);
 ULONG64 HalHnsToCounter(ULONG64 hns);
 
 void KiLogPrintf(const char *fmt, ...);
+void KiBootStamp(const char *what);
+void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page);
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp);
 BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size);
 void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size);

@@ -113,8 +113,67 @@ char KiTraceStackService[40];
 /* a part of a service name the traced calls must have, from the kernel option trace-filter=<text>. */
 char KiTraceFilter[40];
 
+/*
+ * the kernel option svc-timeline=<image name> records every system call of that image's processes with when it
+ * began, how long it took and how much of that the thread was switched out, to be logged at the next dump.
+ */
+typedef struct KI_TIMELINE_ENTRY {
+    ULONG64 Start, End, Blocked;
+    ULONG Process, Thread, Service, Status;
+    char Path[32];
+} KI_TIMELINE_ENTRY;
+#define KI_TIMELINE_ENTRIES (1u << 20)
+char KiTimelineImage[16];
+static KI_TIMELINE_ENTRY *g_timeline;
+static volatile LONG g_timeline_used;
+
+/* the end of the name an OBJECT_ATTRIBUTES points to, as ascii, for the timeline. */
+static void timeline_path(ULONG64 attributes, char out[32])
+{
+    out[0] = 0;
+    ULONG64 attrs[3];
+    if (!attributes || !NT_SUCCESS(KiCopyFromUser(attrs, (PVOID)attributes, sizeof(attrs))) || !attrs[2])
+        return;
+    struct {
+        USHORT Length, Maximum;
+        ULONG Pad;
+        ULONG64 Buffer;
+    } name;
+    if (!NT_SUCCESS(KiCopyFromUser(&name, (PVOID)attrs[2], sizeof(name))) || !name.Length || !name.Buffer)
+        return;
+    ULONG chars = name.Length / 2, skip = chars > 31 ? chars - 31 : 0, n = chars - skip;
+    WCHAR wide[32];
+    if (!NT_SUCCESS(KiCopyFromUser(wide, (PVOID)(name.Buffer + skip * 2), n * 2)))
+        return;
+    for (ULONG i = 0; i < n; i++)
+        out[i] = wide[i] < 0x80 && wide[i] >= 0x20 && wide[i] != ' ' ? (char)wide[i] : '?';
+    out[n] = 0;
+}
+
+/* records a page fault of the traced image as a call to the pseudo service 0x2000 + kind. */
+void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page)
+{
+    PKTHREAD thread = KiCurrentThread();
+    if (!g_timeline || !thread || strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage))
+        return;
+    LONG slot = __atomic_fetch_add(&g_timeline_used, 1, __ATOMIC_RELAXED);
+    if ((ULONG)slot >= KI_TIMELINE_ENTRIES)
+        return;
+    KI_TIMELINE_ENTRY *e = &g_timeline[slot];
+    e->Start = started;
+    e->End = HalReadCounter();
+    e->Blocked = 0;
+    e->Process = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    e->Thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
+    e->Service = 0x2000 + kind;
+    e->Status = address_page;
+    e->Path[0] = 0;
+}
+
 static const char *service_name(ULONG table, ULONG index)
 {
+    if (table == 2)
+        return index == 0 ? "fault-fast" : index == 1 ? "fault-slow" : index == 2 ? "fault-fast-miss" : "fault";
     if (table == 0 && index < MIME_NT_SERVICES_COUNT && MIME_NT_SERVICES_NAMES[index])
         return MIME_NT_SERVICES_NAMES[index];
     if (table == 1 && index < MIME_WIN32K_SERVICES_COUNT && MIME_WIN32K_SERVICES_NAMES[index])
@@ -135,6 +194,9 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG64 result;
     ULONG64 started = HalReadCounter(), blocked = thread->BlockedTicks;
     KiKernelLock[3] = (table << 12 | index) + 1;
+    BOOLEAN timeline = g_timeline && table < 2 && !strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage);
+    char tpath[32];
+    tpath[0] = 0;
     if (table < 2)
         g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
@@ -165,6 +227,15 @@ void KiSystemService(PKTRAP_FRAME frame)
         BOOLEAN copied = !stack || NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS],
                                                              (PVOID)KI_SERVICE_STACK_ARGS(frame),
                                                              stack * sizeof(ULONG64)));
+        if (timeline) {
+            const char *name = service_name(table, index);
+            if (!strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
+                !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey"))
+                timeline_path(args[2], tpath);
+            else if (!strcmp(name, "NtQueryAttributesFile") || !strcmp(name, "NtQueryFullAttributesFile") ||
+                     !strcmp(name, "NtDeleteFile"))
+                timeline_path(args[0], tpath);
+        }
         if (trace) {
             /* the first return address on the stack names the caller of the system call stub. */
             char caller[96] = "";
@@ -198,6 +269,20 @@ void KiSystemService(PKTRAP_FRAME frame)
                                 (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, msg[0], msg[1] & 0xFFFFFFFF,
                                 msg[2], msg[3]);
             }
+        }
+    }
+    if (timeline) {
+        LONG slot = __atomic_fetch_add(&g_timeline_used, 1, __ATOMIC_RELAXED);
+        if ((ULONG)slot < KI_TIMELINE_ENTRIES) {
+            KI_TIMELINE_ENTRY *e = &g_timeline[slot];
+            e->Start = started;
+            e->End = HalReadCounter();
+            e->Blocked = thread->BlockedTicks - blocked;
+            e->Process = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+            e->Thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
+            e->Service = table << 12 | index;
+            e->Status = (ULONG)result;
+            memcpy(e->Path, tpath, sizeof(tpath));
         }
     }
     if (table < 2) {
@@ -333,9 +418,37 @@ void NTAPI ProbeForWrite(PVOID address, SIZE_T length, ULONG alignment)
     ProbeForRead(address, length, alignment);
 }
 
+void KiEnableTimeline(void)
+{
+    g_timeline = ExAllocatePool2(POOL_FLAG_NON_PAGED, KI_TIMELINE_ENTRIES * sizeof(KI_TIMELINE_ENTRY), KI_TAG('T', 'l', 'i', 'n'));
+}
+
+/* one line per call, several to a log write: pid tid start duration blocked status service, times in microseconds. */
+static void dump_timeline(void)
+{
+    ULONG used = (ULONG)g_timeline_used;
+    if (used > KI_TIMELINE_ENTRIES)
+        used = KI_TIMELINE_ENTRIES;
+    char buf[1024];
+    int n = 0;
+    for (ULONG i = 0; i < used; i++) {
+        KI_TIMELINE_ENTRY *e = &g_timeline[i];
+        n += mime_format(buf + n, sizeof(buf) - n, "tl %u %u %llu %llu %llu %x %s %s\n", e->Process, e->Thread,
+                         HalCounterToHns(e->Start) / 10, HalCounterToHns(e->End - e->Start) / 10,
+                         HalCounterToHns(e->Blocked) / 10, e->Status, service_name(e->Service >> 12, e->Service & 0xFFF), e->Path);
+        if (n > (int)sizeof(buf) - 160 || i + 1 == used) {
+            HalLog(buf, (SIZE_T)n);
+            n = 0;
+        }
+    }
+    g_timeline_used = 0;
+}
+
 /* the services called most since the last dump, then the counts start over. */
 void KiDumpServiceCalls(void)
 {
+    if (g_timeline)
+        dump_timeline();
     MM_FAULT_STATS total = {};
     for (ULONG i = 0; i < MAXIMUM_PROCESSORS; i++) {
         total.Fast += MmFaultStats[i].Fast;

@@ -88,6 +88,31 @@ void KiAssertFailed(const char *expr, const char *file, int line)
 
 static void KiPhase1Initialization(PVOID context);
 
+/* the phases of the boot with the time each began, logged in one line when the session is ready. */
+static struct {
+    const char *Name;
+    ULONG64 Ticks;
+} g_boot_stamps[16];
+static ULONG g_boot_stamp_count;
+
+void KiBootStamp(const char *what)
+{
+    if (g_boot_stamp_count < RTL_NUMBER_OF(g_boot_stamps)) {
+        g_boot_stamps[g_boot_stamp_count].Name = what;
+        g_boot_stamps[g_boot_stamp_count++].Ticks = HalReadCounter();
+    }
+}
+
+static void KiBootReport(void)
+{
+    char line[400];
+    int n = mime_format(line, sizeof(line), "boot:");
+    for (ULONG i = 1; i < g_boot_stamp_count && n < (int)sizeof(line) - 40; i++)
+        n += mime_format(line + n, sizeof(line) - n, "%s %s %llu us", i > 1 ? "," : "", g_boot_stamps[i].Name,
+                         HalCounterToHns(g_boot_stamps[i].Ticks - g_boot_stamps[i - 1].Ticks) / 10);
+    KiLogPrintf("%s", line);
+}
+
 /*
  * every processor ends here, holding the kernel lock. it lets go only
  * while sleeping in KiIdleWait, so an interrupt is always taken with the
@@ -163,6 +188,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiAcquireKernelLock();
 
     HalInitialize(boot);
+    KiBootStamp("hal");
     KiKernelLockPhys = HalPhysicalOf((const void *)KiKernelLock);
     /* a hold of the lock over 100 microseconds is worth telling by what held it. */
     KiLongHoldTicks = HalHnsToCounter(1000);
@@ -194,6 +220,13 @@ void KiInitializeKernel(MimeBootInfo *boot)
         for (ULONG i = 0; i < sizeof(KiTraceFilter) - 1 && filter[i] && filter[i] != ' '; i++)
             KiTraceFilter[i] = filter[i];
     }
+    extern char KiTimelineImage[16];
+    const char *timeline = strstr(boot->cmdline, "svc-timeline=");
+    if (timeline) {
+        timeline += 13;
+        for (ULONG i = 0; i < sizeof(KiTimelineImage) - 1 && timeline[i] && timeline[i] != ' '; i++)
+            KiTimelineImage[i] = timeline[i];
+    }
     if (trace) {
         trace += 15;
         for (ULONG i = 0; i < sizeof(KiTraceSyscallImage) - 1 && trace[i] && trace[i] != ' '; i++)
@@ -201,6 +234,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     }
 
     MmInitialize(boot);
+    KiBootStamp("mm");
     ExInitializePool();
     KiInitializeScheduler();
     ObInitialize();
@@ -209,6 +243,11 @@ void KiInitializeKernel(MimeBootInfo *boot)
     SepInitialize();
     KiInitializeSystemServices();
     KiInitializeTimers();
+    if (KiTimelineImage[0]) {
+        extern void KiEnableTimeline(void);
+        KiEnableTimeline();
+    }
+    KiBootStamp("executive");
 
     PETHREAD phase1;
     NTSTATUS status = PspCreateThread(PsInitialSystemProcess, TRUE, KiPhase1Initialization, nullptr, &phase1);
@@ -224,9 +263,13 @@ void KiInitializeKernel(MimeBootInfo *boot)
 
 static void KiPhase1Initialization(PVOID context)
 {
+    KiBootStamp("phase1");
     IoInitialize();
+    KiBootStamp("io");
     CmInitSystem1();
+    KiBootStamp("registry");
     NTSTATUS status = PspInitializeSystemDll();
+    KiBootStamp("system dll");
     if (!NT_SUCCESS(status))
         KeBugCheckEx(0x0000006B, status, 0, 0, 0); /* PROCESS1_INITIALIZATION_FAILED */
 
@@ -243,5 +286,7 @@ static void KiPhase1Initialization(PVOID context)
         KiLogPrintf("cannot load win32k.sys: %08x", status);
     }
 
+    KiBootStamp("win32k");
+    KiBootReport();
     MiSessionInitialize();
 }
