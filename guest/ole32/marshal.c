@@ -600,3 +600,64 @@ WINOLEAPI HRESULT WINAPI CoAllowSetForegroundWindow(IUnknown *object, void *rese
         return E_INVALIDARG;
     return E_NOINTERFACE;
 }
+
+/* ------------------------------------------------------------------ proxy and stub classes */
+
+/*
+ * the class that marshals an interface. A class registered by CoRegisterPSClsid in this process comes first, then
+ * the ProxyStubClsid32 of the interface in the registry. Nothing is marshaled by a proxy and a stub here, so the
+ * answer only serves programs that ask. An interface nothing is registered for is REGDB_E_IIDNOTREG.
+ */
+#define PS_MAX 128
+
+static struct {
+    IID Interface;
+    CLSID Class;
+} g_ps_table[PS_MAX];
+static ULONG g_ps_count;
+static SRWLOCK g_ps_lock = SRWLOCK_INIT;
+
+WINOLEAPI HRESULT WINAPI CoRegisterPSClsid(REFIID iid, REFCLSID clsid)
+{
+    if (!iid || !clsid)
+        return E_INVALIDARG;
+    HRESULT hr = S_OK;
+    AcquireSRWLockExclusive(&g_ps_lock);
+    ULONG i;
+    for (i = 0; i < g_ps_count; i++)
+        if (IsEqualIID(&g_ps_table[i].Interface, iid))
+            break;
+    if (i == g_ps_count && g_ps_count == PS_MAX) {
+        hr = E_OUTOFMEMORY;
+    } else {
+        g_ps_table[i].Interface = *iid;
+        g_ps_table[i].Class = *clsid;
+        if (i == g_ps_count)
+            g_ps_count++;
+    }
+    ReleaseSRWLockExclusive(&g_ps_lock);
+    return hr;
+}
+
+WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid)
+{
+    if (!iid || !clsid)
+        return E_INVALIDARG;
+    AcquireSRWLockShared(&g_ps_lock);
+    for (ULONG i = 0; i < g_ps_count; i++) {
+        if (IsEqualIID(&g_ps_table[i].Interface, iid)) {
+            *clsid = g_ps_table[i].Class;
+            ReleaseSRWLockShared(&g_ps_lock);
+            return S_OK;
+        }
+    }
+    ReleaseSRWLockShared(&g_ps_lock);
+    WCHAR path[96], text[64];
+    wcscpy(path, L"Interface\\");
+    OleFormatGuid(iid, path + 10);
+    wcscat(path, L"\\ProxyStubClsid32");
+    DWORD size = sizeof(text);
+    if (RegGetValueW(HKEY_CLASSES_ROOT, path, nullptr, RRF_RT_REG_SZ, nullptr, text, &size))
+        return REGDB_E_IIDNOTREG;
+    return OleParseGuid(text, clsid) ? S_OK : REGDB_E_IIDNOTREG;
+}

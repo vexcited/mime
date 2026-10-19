@@ -390,6 +390,15 @@ WINOLEAPI HRESULT WINAPI StgOpenStorageOnILockBytes(ILockBytes *bytes, IStorage 
 WINOLEAPI HRESULT WINAPI ReadClassStg(IStorage *storage, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI WriteClassStg(IStorage *storage, REFCLSID clsid);
 WINOLEAPI HRESULT WINAPI WriteClassStm(IStream *stream, REFCLSID clsid);
+WINOLEAPI HRESULT WINAPI ReadClassStm(IStream *stream, CLSID *clsid);
+WINOLEAPI HRESULT WINAPI GetClassFile(LPCOLESTR name, CLSID *clsid);
+WINOLEAPI HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *bytes);
+WINOLEAPI HRESULT WINAPI StgSetTimes(LPCOLESTR name, const FILETIME *created, const FILETIME *accessed,
+                                     const FILETIME *modified);
+WINOLEAPI HRESULT WINAPI StgCreateStorageEx(LPCOLESTR name, DWORD mode, DWORD format, DWORD attributes, void *options,
+                                            void *reserved, REFIID iid, void **result);
+WINOLEAPI HRESULT WINAPI StgOpenStorageEx(LPCOLESTR name, DWORD mode, DWORD format, DWORD attributes, void *options,
+                                          void *reserved, REFIID iid, void **result);
 WINOLEAPI HRESULT WINAPI ReadFmtUserTypeStg(IStorage *storage, CLIPFORMAT *format, LPOLESTR *user_type);
 WINOLEAPI HRESULT WINAPI WriteFmtUserTypeStg(IStorage *storage, CLIPFORMAT format, LPOLESTR user_type);
 WINOLEAPI HRESULT WINAPI SetConvertStg(IStorage *storage, BOOL convert);

@@ -584,6 +584,61 @@ LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key
     return RegOpenKeyExW(HKEY_CLASSES_ROOT, path, 0, access, key);
 }
 
+/*
+ * the class a class converts to on its own: HKCR\CLSID\{clsid}\AutoConvertTo. A class without the key gets
+ * itself back with REGDB_E_KEYMISSING, one that is not registered REGDB_E_CLASSNOTREG.
+ */
+WINOLEAPI HRESULT WINAPI OleGetAutoConvert(REFCLSID old_clsid, LPCLSID new_clsid)
+{
+    if (!old_clsid || !new_clsid)
+        return E_INVALIDARG;
+    *new_clsid = *old_clsid;
+    HKEY class_key;
+    if (OleOpenClassKey(old_clsid, nullptr, KEY_READ, &class_key))
+        return REGDB_E_CLASSNOTREG;
+    RegCloseKey(class_key);
+    WCHAR subkey[64], value[64];
+    wcscpy(subkey, L"CLSID\\");
+    OleFormatGuid(old_clsid, subkey + 6);
+    wcscat(subkey, L"\\AutoConvertTo");
+    CLSID target;
+    if (!read_class_string(subkey, nullptr, value, RTL_NUMBER_OF(value)))
+        return REGDB_E_KEYMISSING;
+    if (!OleParseGuid(value, &target))
+        return REGDB_E_INVALIDVALUE;
+    *new_clsid = target;
+    return S_OK;
+}
+
+/* sets the class a class converts to, or removes the key for CLSID_NULL. */
+WINOLEAPI HRESULT WINAPI OleSetAutoConvert(REFCLSID old_clsid, REFCLSID new_clsid)
+{
+    if (!old_clsid || !new_clsid)
+        return E_INVALIDARG;
+    HKEY key;
+    if (OleOpenClassKey(old_clsid, nullptr, KEY_READ | KEY_WRITE, &key))
+        return REGDB_E_CLASSNOTREG;
+    HRESULT hr = S_OK;
+    if (IsEqualCLSID(new_clsid, &CLSID_NULL)) {
+        LSTATUS status = RegDeleteKeyExW(key, L"AutoConvertTo", 0, 0);
+        if (status && status != ERROR_FILE_NOT_FOUND)
+            hr = REGDB_E_WRITEREGDB;
+    } else {
+        WCHAR value[39];
+        OleFormatGuid(new_clsid, value);
+        HKEY convert;
+        if (RegCreateKeyExW(key, L"AutoConvertTo", 0, nullptr, 0, KEY_WRITE, nullptr, &convert, nullptr))
+            hr = REGDB_E_WRITEREGDB;
+        else {
+            if (RegSetValueExW(convert, nullptr, 0, REG_SZ, (const BYTE *)value, sizeof(value)))
+                hr = REGDB_E_WRITEREGDB;
+            RegCloseKey(convert);
+        }
+    }
+    RegCloseKey(key);
+    return hr;
+}
+
 /* the class named by HKCR\CLSID\{clsid}\TreatAs. */
 static BOOL get_treat_as(REFCLSID clsid, CLSID *treat)
 {

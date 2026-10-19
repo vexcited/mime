@@ -71,6 +71,15 @@ FORCEINLINE BOOL IsEqualGUID(REFGUID a, REFGUID b)
 #ifndef CO_E_OBJISREG
 #define CO_E_OBJISREG ((HRESULT)0x800401FCL)
 #endif
+#ifndef REGDB_E_KEYMISSING
+#define REGDB_E_KEYMISSING ((HRESULT)0x80040152L)
+#endif
+#ifndef REGDB_E_INVALIDVALUE
+#define REGDB_E_INVALIDVALUE ((HRESULT)0x80040153L)
+#endif
+#ifndef MK_E_INVALIDEXTENSION
+#define MK_E_INVALIDEXTENSION ((HRESULT)0x800401E6L)
+#endif
 #ifndef REGDB_E_WRITEREGDB
 #define REGDB_E_WRITEREGDB ((HRESULT)0x80040151L)
 #endif
@@ -237,6 +246,10 @@ WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object,
                                                DWORD *cookie);
 WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie);
 WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid);
+WINOLEAPI HRESULT WINAPI OleGetAutoConvert(REFCLSID old_clsid, LPCLSID new_clsid);
+WINOLEAPI HRESULT WINAPI OleSetAutoConvert(REFCLSID old_clsid, REFCLSID new_clsid);
+WINOLEAPI HRESULT WINAPI CoRegisterPSClsid(REFIID iid, REFCLSID clsid);
+WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessageFilter **previous);
 WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved);
 
