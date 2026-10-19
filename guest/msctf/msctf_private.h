@@ -200,6 +200,7 @@ void RngDetachAll(CTX *ctx);
 
 /* property.c */
 HRESULT PropsGetProperty(CTX *ctx, REFGUID guid, ITfProperty **property);
+HRESULT PropsTrack(CTX *ctx, const GUID **guids, ULONG count, ITfReadOnlyProperty **property);
 void PropsAdjust(CTX *ctx, LONG start, LONG old_end, LONG new_end);
 void PropsFree(CTX *ctx);
 void PropsSet(CTX *ctx, REFGUID guid, LONG start, LONG end, const VARIANT *value);

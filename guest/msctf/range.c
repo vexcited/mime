@@ -11,6 +11,7 @@ static HRESULT STDMETHODCALLTYPE rng_query(ITfRangeACP *This, REFIID riid, void 
         InterlockedIncrement(&((RNG *)This)->Refs);
         return S_OK;
     }
+    CTF_TRACE("msctf: range query %08lx-%04x-%04x refused\n", riid->Data1, riid->Data2, riid->Data3);
     *object = nullptr;
     return E_NOINTERFACE;
 }

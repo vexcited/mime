@@ -20,6 +20,7 @@ static HRESULT STDMETHODCALLTYPE enum_query(IEnumTfContexts *This, REFIID riid, 
         InterlockedIncrement(&e->Refs);
         return S_OK;
     }
+    CTF_TRACE("msctf: enumerator query %08lx-%04x-%04x refused\n", riid->Data1, riid->Data2, riid->Data3);
     *object = nullptr;
     return E_NOINTERFACE;
 }

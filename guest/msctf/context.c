@@ -90,6 +90,7 @@ HRESULT CtxStoreGetSelection(CTX *ctx, LONG *start, LONG *end)
     if (!ctx->Store)
         return E_FAIL;
     HRESULT hr = ctx->Store->lpVtbl->GetSelection(ctx->Store, TS_DEFAULT_SELECTION, 1, &selection, &fetched);
+    CTF_TRACE("msctf: store GetSelection -> %lx %lu %ld %ld\n", hr, fetched, selection.acpStart, selection.acpEnd);
     if (FAILED(hr))
         return hr;
     if (!fetched)
@@ -113,7 +114,10 @@ HRESULT CtxStoreTextExt(CTX *ctx, LONG start, LONG end, RECT *rect)
     HRESULT hr = ctx->Store->lpVtbl->GetActiveView(ctx->Store, &view);
     if (FAILED(hr))
         return hr;
-    return ctx->Store->lpVtbl->GetTextExt(ctx->Store, view, start, end, rect, &clipped);
+    hr = ctx->Store->lpVtbl->GetTextExt(ctx->Store, view, start, end, rect, &clipped);
+    CTF_TRACE("msctf: store GetTextExt %ld %ld -> %lx %ld %ld %ld %ld\n", start, end, hr, rect->left, rect->top,
+              rect->right, rect->bottom);
+    return hr;
 }
 
 BOOL CtxStoreWindow(CTX *ctx, HWND *hwnd)
@@ -129,7 +133,10 @@ HRESULT CtxStoreSetText(CTX *ctx, DWORD flags, LONG start, LONG end, const WCHAR
 {
     if (!ctx->Store)
         return E_FAIL;
-    return ctx->Store->lpVtbl->SetText(ctx->Store, flags, start, end, text, (ULONG)cch, change);
+    HRESULT hr = ctx->Store->lpVtbl->SetText(ctx->Store, flags, start, end, text, (ULONG)cch, change);
+    CTF_TRACE("msctf: store SetText %lx %ld %ld cch %ld -> %lx change %ld %ld %ld\n", flags, start, end, cch, hr,
+              change->acpStart, change->acpOldEnd, change->acpNewEnd);
+    return hr;
 }
 
 HRESULT CtxStoreGetText(CTX *ctx, LONG start, LONG end, WCHAR *buffer, ULONG max, ULONG *got)
@@ -139,7 +146,9 @@ HRESULT CtxStoreGetText(CTX *ctx, LONG start, LONG end, WCHAR *buffer, ULONG max
     LONG next = 0;
     if (!ctx->Store)
         return E_FAIL;
-    return ctx->Store->lpVtbl->GetText(ctx->Store, start, end, buffer, max, got, runs, 2, &run_count, &next);
+    HRESULT hr = ctx->Store->lpVtbl->GetText(ctx->Store, start, end, buffer, max, got, runs, 2, &run_count, &next);
+    CTF_TRACE("msctf: store GetText %ld %ld -> %lx\n", start, end, hr);
+    return hr;
 }
 
 HRESULT CtxStoreSetSelection(CTX *ctx, LONG start, LONG end, TsActiveSelEnd ase)
@@ -199,13 +208,16 @@ static void notify_end_edit(CTX *ctx, TfEditCookie cookie)
     ITfEditRecord *record = ctx->Record;
     if (!record)
         return;
+    CTF_TRACE("msctf: end of edit, changed %d\n", EditRecordChanged(record));
     if (EditRecordChanged(record)) {
         IUnknown **sinks;
         ULONG n = SinksSnapshot(&ctx->Sinks, &IID_ITfTextEditSink, &sinks);
+        CTF_TRACE("msctf: %lu edit sinks\n", n);
         ctx->InNotify = TRUE;
         for (ULONG i = 0; i < n; i++) {
             ITfTextEditSink *sink = (ITfTextEditSink *)sinks[i];
-            sink->lpVtbl->OnEndEdit(sink, &ctx->Context, cookie, record);
+            HRESULT hr = sink->lpVtbl->OnEndEdit(sink, &ctx->Context, cookie, record);
+            CTF_TRACE("msctf: OnEndEdit -> %lx\n", hr);
         }
         ctx->InNotify = FALSE;
         SinksSnapshotFree(sinks, n);
@@ -640,6 +652,7 @@ static HRESULT STDMETHODCALLTYPE c_set_selection(ITfContext *This, TfEditCookie 
     }
     if (SUCCEEDED(hr))
         hr = ctx->Store->lpVtbl->SetSelection(ctx->Store, count, acp);
+    CTF_TRACE("msctf: store SetSelection %ld %ld -> %lx\n", acp[0].acpStart, acp[0].acpEnd, hr);
     CtfFree(acp);
     if (SUCCEEDED(hr) && ctx->Record)
         EditRecordSelection(ctx->Record);
@@ -717,10 +730,8 @@ static HRESULT STDMETHODCALLTYPE c_get_app_property(ITfContext *This, REFGUID gu
 static HRESULT STDMETHODCALLTYPE c_track(ITfContext *This, const GUID **props, ULONG count, const GUID **app_props,
                                          ULONG app_count, ITfReadOnlyProperty **property)
 {
-    if (!property)
-        return E_INVALIDARG;
-    *property = nullptr;
-    return E_NOTIMPL;
+    /* the properties of the program itself are not kept: only the framework's are tracked. */
+    return PropsTrack(CTF_OBJ(CTX, Context, This), props, count, property);
 }
 
 static HRESULT STDMETHODCALLTYPE c_enum_properties(ITfContext *This, IEnumTfProperties **out)
@@ -894,6 +905,7 @@ static HRESULT STDMETHODCALLTYPE ins_text(ITfInsertAtSelection *This, TfEditCook
     TS_TEXTCHANGE change = {};
     DWORD ts_flags = (query ? TS_IAS_QUERYONLY : 0) | (flags & TF_IAS_NOQUERY ? TS_IAS_NOQUERY : 0);
     HRESULT hr = ctx->Store->lpVtbl->InsertTextAtSelection(ctx->Store, ts_flags, text, (ULONG)cch, &start, &end, &change);
+    CTF_TRACE("msctf: store InsertTextAtSelection %lx cch %ld -> %lx %ld %ld\n", ts_flags, cch, hr, start, end);
     if (FAILED(hr))
         return hr;
     if (!query) {

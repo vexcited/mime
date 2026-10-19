@@ -1201,6 +1201,20 @@ typedef struct ITfPropertyStoreVtbl {
 struct ITfPropertyStore {
     const ITfPropertyStoreVtbl *lpVtbl;
 };
+typedef struct IEnumTfPropertyValue IEnumTfPropertyValue;
+typedef struct IEnumTfPropertyValueVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IEnumTfPropertyValue *This, REFIID riid, void **ppvObject);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IEnumTfPropertyValue *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IEnumTfPropertyValue *This);
+    HRESULT(STDMETHODCALLTYPE *Clone)(IEnumTfPropertyValue *This, IEnumTfPropertyValue **ppEnum);
+    HRESULT(STDMETHODCALLTYPE *Next)(IEnumTfPropertyValue *This, ULONG count, TF_PROPERTYVAL *values, ULONG *fetched);
+    HRESULT(STDMETHODCALLTYPE *Reset)(IEnumTfPropertyValue *This);
+    HRESULT(STDMETHODCALLTYPE *Skip)(IEnumTfPropertyValue *This, ULONG count);
+} IEnumTfPropertyValueVtbl;
+struct IEnumTfPropertyValue {
+    const IEnumTfPropertyValueVtbl *lpVtbl;
+};
+
 /* the owner of a context that has no text store of its own, which the thread manager asks about its window. */
 typedef struct ITfContextOwner ITfContextOwner;
 typedef struct ITfContextOwnerVtbl {
