@@ -441,6 +441,18 @@ LRESULT UserConvEnd(CONV *c, LRESULT result)
 
 LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR info, DWORD type, BOOL ansi)
 {
+    if (msg == WM_COPYGLOBALDATA && type == MIME_MSGCALL_SEND) {
+        /* the memory behind a handle is what is copied; the handle is spent with the message. */
+        if (!wparam)
+            return 0;
+        void *memory = GlobalLock((HGLOBAL)lparam);
+        if (!memory)
+            return 0;
+        LRESULT copy = NtUserMessageCall(hwnd, msg, wparam, (LPARAM)memory, info, type, FALSE);
+        GlobalUnlock((HGLOBAL)lparam);
+        GlobalFree((HGLOBAL)lparam);
+        return copy;
+    }
     if (!ansi)
         return NtUserMessageCall(hwnd, msg, wparam, lparam, info, type, FALSE);
     CONV c;

@@ -1208,9 +1208,15 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
         r = deliver(w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0, type, &local);
     } else {
         LONG hint = -1;
-        if (rule.Class == MC_ITEM_OUT)
+        if (rule.Class == MC_ITEM_OUT) {
+            /* the control is asked how long the text is, which may let its window go. */
+            HWND handle = WndHandle(w);
             hint = (LONG)send_to_window(w, msg == LB_GETTEXT ? LB_GETTEXTLEN : CB_GETLBTEXTLEN, wparam, 0,
                                         MIME_LPARAM_VALUE, 0, nullptr);
+            w = WndLookup(handle);
+            if (!w)
+                return 0;
+        }
         MSG_CAPTURE c;
         if (!MsgCapture(&c, w, msg, wparam, lparam, rule, hint)) {
             LRESULT refused = c.Refused;

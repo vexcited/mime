@@ -331,6 +331,20 @@ WINUSERAPI UINT WINAPI RegisterWindowMessageA(LPCSTR name)
 WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     LRESULT result;
+    /* a copy of memory of another process, which the message brought, as a global handle of this one. */
+    if (msg == WM_COPYGLOBALDATA) {
+        if (!wparam || !lparam)
+            return 0;
+        HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, wparam);
+        void *data = copy ? GlobalLock(copy) : nullptr;
+        if (!data) {
+            GlobalFree(copy);
+            return 0;
+        }
+        memcpy(data, (const void *)lparam, wparam);
+        GlobalUnlock(copy);
+        return (LRESULT)copy;
+    }
     if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result) || UserDefScrollBars(hwnd, msg, wparam, lparam, &result))
         return result;
     if (msg == WM_SYSTIMER && UserCaretTimer(hwnd, wparam))

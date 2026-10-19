@@ -593,14 +593,18 @@ void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
     case MC_ITEM_OUT: {
         LRESULT n = *result;
         if (c->ItemData) {
-            user_write(c->UserLparam, c->Buffer, sizeof(DWORD));
-            *result = sizeof(DWORD);
+            /* an item without text answers with its data, as many bytes as the control says it is. */
+            if (n > 0)
+                user_write(c->UserLparam, c->Buffer, (SIZE_T)n < sizeof(ULONG_PTR) ? (SIZE_T)n : sizeof(ULONG_PTR));
             return;
         }
         if (n < 0)
             return;
-        ULONG got = text_chars(c->Buffer, c->Capacity);
+        /* the text and its end fit the room the sender was asked to have, whatever the receiver wrote. */
+        ULONG got = text_chars(c->Buffer, c->Capacity - 1);
         user_write(c->UserLparam, c->Buffer, ((SIZE_T)got + 1) * sizeof(WCHAR));
+        if ((ULONG_PTR)n > got)
+            *result = got;
         return;
     }
     case MC_STRUCT_INOUT:
