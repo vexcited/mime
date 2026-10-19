@@ -302,6 +302,10 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     file->ReadAccess = (op->DesiredAccess & (FILE_READ_DATA | GENERIC_READ | GENERIC_ALL | MAXIMUM_ALLOWED)) != 0;
     file->WriteAccess = (op->DesiredAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA | GENERIC_WRITE | GENERIC_ALL)) != 0;
     file->DeleteAccess = (op->DesiredAccess & DELETE) != 0;
+    /* a handle that may only append writes at the end of the file, whatever offset the write names. */
+    if ((op->DesiredAccess & FILE_APPEND_DATA) &&
+        !(op->DesiredAccess & (FILE_WRITE_DATA | GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED)))
+        file->Flags |= FO_APPEND_ONLY;
     if (remaining->Length) {
         file->FileName.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, remaining->Length + sizeof(WCHAR), KI_TAG('I', 'o', 'F', 'n'));
         if (!file->FileName.Buffer) {

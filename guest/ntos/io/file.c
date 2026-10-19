@@ -166,9 +166,17 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         }
     }
     BOOLEAN use_position = offset.QuadPart == -1 || (offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1);
+    /* a write goes to the end of the file when the handle only appends, or when it names the offset of the end. */
+    BOOLEAN to_end = write && ((file->Flags & FO_APPEND_ONLY) ||
+                               (byte_offset && offset.LowPart == FILE_WRITE_TO_END_OF_FILE && offset.HighPart == -1));
     lock_file(file);
-    if (use_position)
+    if (to_end) {
+        ULONG64 size = 0;
+        /* a device that has no size is written where it is. */
+        offset.QuadPart = NT_SUCCESS(IoQueryFileSize(file, &size)) ? (LONGLONG)size : file->CurrentByteOffset.QuadPart;
+    } else if (use_position) {
         offset = file->CurrentByteOffset;
+    }
 
     PUCHAR bounce = nullptr;
     if (mode == UserMode && length) {
