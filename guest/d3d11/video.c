@@ -37,6 +37,11 @@ static const Profile PROFILES[] = {
      DXGI_FORMAT_NV12, 1, 10},
     {{0xA4C749EF, 0x6ECF, 0x48AA, {0x84, 0x48, 0x50, 0xA7, 0xA1, 0x16, 0x5F, 0xF7}}, MVK_VIDEO_CODEC_VP9, 2, 10,
      DXGI_FORMAT_P010, 1, 10},
+    /* av1 profile 0 decodes 8 bits into nv12 and 10 bits into p010: one guid, two entries. */
+    {{0xB8BE4CCB, 0xCF53, 0x46BA, {0x8D, 0x59, 0xD6, 0xB8, 0xA6, 0xDA, 0x5D, 0x2A}}, MVK_VIDEO_CODEC_AV1, 0, 8,
+     DXGI_FORMAT_NV12, 1, 12},
+    {{0xB8BE4CCB, 0xCF53, 0x46BA, {0x8D, 0x59, 0xD6, 0xB8, 0xA6, 0xDA, 0x5D, 0x2A}}, MVK_VIDEO_CODEC_AV1, 0, 10,
+     DXGI_FORMAT_P010, 1, 12},
 };
 
 /* the picture buffers a decoder hands out, by D3D11_VIDEO_DECODER_BUFFER_TYPE. */
@@ -59,18 +64,33 @@ static const MvkVideoCaps *capability(D3dDevice *device, const Profile *p)
     return nullptr;
 }
 
+/* whether the entry is the first the host decodes of its guid, a profile with two formats having two entries. */
+static BOOL first_of_guid(D3dDevice *device, UINT i)
+{
+    if (!capability(device, &PROFILES[i]))
+        return FALSE;
+    for (UINT j = 0; j < i; j++)
+        if (IsEqualGUID(&PROFILES[j].guid, &PROFILES[i].guid) && capability(device, &PROFILES[j]))
+            return FALSE;
+    return TRUE;
+}
+
+/* the profiles by index, each guid once. */
 static const Profile *profile_at(D3dDevice *device, UINT index)
 {
     for (UINT i = 0; i < RTL_NUMBER_OF(PROFILES); i++)
-        if (capability(device, &PROFILES[i]) && index-- == 0)
+        if (first_of_guid(device, i) && index-- == 0)
             return &PROFILES[i];
     return nullptr;
 }
 
-static const Profile *profile_of(D3dDevice *device, const GUID *guid)
+/* the entry of a guid for a format, or for any of its formats. */
+#define ANY_FORMAT ((DXGI_FORMAT)~0u)
+static const Profile *profile_of(D3dDevice *device, const GUID *guid, DXGI_FORMAT format)
 {
     for (UINT i = 0; i < RTL_NUMBER_OF(PROFILES); i++)
-        if (IsEqualGUID(guid, &PROFILES[i].guid) && capability(device, &PROFILES[i]))
+        if (IsEqualGUID(guid, &PROFILES[i].guid) && capability(device, &PROFILES[i]) &&
+            (format == ANY_FORMAT || format == PROFILES[i].format))
             return &PROFILES[i];
     return nullptr;
 }
@@ -110,6 +130,14 @@ typedef struct SliceEntry {
     USHORT chopping;
 } __attribute__((packed)) SliceEntry;
 
+/* an entry of the tile control buffer of av1: where the tile's data is, then which tile it is. */
+typedef struct TileEntry {
+    UINT location;
+    UINT bytes;
+    USHORT row, column, reserved16;
+    BYTE anchor, reserved8;
+} __attribute__((packed)) TileEntry;
+
 typedef struct VideoDecoder {
     ID3D11VideoDecoder iface;
     D3dChild child;
@@ -129,8 +157,9 @@ typedef struct VideoDecoder {
     UINT params_size, params_capacity;
     BYTE *qmatrix;
     UINT qmatrix_size, qmatrix_capacity;
-    SliceEntry *slices;
-    UINT slice_count, slice_capacity;
+    /* the slice or tile entries as submitted, with the locations in the joined bitstream: slice_size bytes each. */
+    BYTE *slices;
+    UINT slice_count, slice_capacity, slice_size;
     BYTE *bits;
     UINT bits_size, bits_capacity;
 } VideoDecoder;
@@ -344,7 +373,7 @@ static UINT STDMETHODCALLTYPE vd_GetVideoDecoderProfileCount(ID3D11VideoDevice1 
     D3dVideoProbe(device);
     UINT n = 0;
     for (UINT i = 0; i < RTL_NUMBER_OF(PROFILES); i++)
-        n += capability(device, &PROFILES[i]) != nullptr;
+        n += first_of_guid(device, i);
     return n;
 }
 
@@ -368,10 +397,10 @@ static HRESULT STDMETHODCALLTYPE vd_CheckVideoDecoderFormat(ID3D11VideoDevice1 *
     if (!supported || !guid)
         return E_INVALIDARG;
     D3dVideoProbe(device);
-    const Profile *p = profile_of(device, guid);
+    const Profile *p = profile_of(device, guid, ANY_FORMAT);
     if (!p)
         return E_INVALIDARG;
-    *supported = format == p->format;
+    *supported = profile_of(device, guid, format) != nullptr;
     return S_OK;
 }
 
@@ -380,10 +409,11 @@ static HRESULT validate_desc(D3dDevice *device, const D3D11_VIDEO_DECODER_DESC *
 {
     BOOL supported = FALSE;
     D3dVideoProbe(device);
-    *profile = profile_of(device, &desc->Guid);
-    if (!*profile)
+    /* a guid that is none of a decoder the host has is not a profile: its format is wrong only when it is. */
+    if (!profile_of(device, &desc->Guid, ANY_FORMAT))
         return E_INVALIDARG;
-    supported = desc->OutputFormat == (*profile)->format;
+    *profile = profile_of(device, &desc->Guid, desc->OutputFormat);
+    supported = *profile != nullptr;
     if (!supported || !desc->SampleWidth || !desc->SampleHeight)
         return E_INVALIDARG;
     return S_OK;
@@ -446,7 +476,7 @@ static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderCaps(ID3D11VideoDevice1 *ifac
     if (!guid || !caps || !rate)
         return E_INVALIDARG;
     D3dVideoProbe(device);
-    const Profile *p = profile_of(device, guid);
+    const Profile *p = profile_of(device, guid, ANY_FORMAT);
     if (!p || !width || !height)
         return E_INVALIDARG;
     /* a protected decoder is not offered, a size the gpu does not decode is no decoder at all. */
@@ -540,8 +570,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoDecoderOutputView(ID3D11VideoDevi
     if (r->dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D || !(r->bind & D3D11_BIND_DECODER))
         return E_INVALIDARG;
     D3dVideoProbe(device);
-    const Profile *p = profile_of(device, &desc->DecodeProfile);
-    if (!p || r->tex.format != p->format)
+    if (!profile_of(device, &desc->DecodeProfile, r->tex.format))
         return E_INVALIDARG;
     if (desc->ViewDimension != D3D11_VDOV_DIMENSION_TEXTURE2D || desc->Texture2D.ArraySlice >= r->tex.layers)
         return E_INVALIDARG;
@@ -732,7 +761,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderBeginFrame(ID3D11VideoContext1 *iface
         d->view->iface.lpVtbl->Release(&d->view->iface);
     d->view = v;
     v->iface.lpVtbl->AddRef(&v->iface);
-    d->params_size = d->qmatrix_size = d->slice_count = d->bits_size = 0;
+    d->params_size = d->qmatrix_size = d->slice_count = d->bits_size = d->slice_size = 0;
     d->in_frame = TRUE;
     return S_OK;
 }
@@ -805,33 +834,44 @@ static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *if
         case BUFFER_QMATRIX:
             hr = keep(&d->qmatrix, &d->qmatrix_size, &d->qmatrix_capacity, data, size);
             break;
-        case BUFFER_SLICES:
+        case BUFFER_SLICES: {
             if (!has_bits)
                 return E_INVALIDARG;
-            for (UINT at = 0; at + sizeof(SliceEntry) <= size; at += sizeof(SliceEntry)) {
-                SliceEntry e;
-                memcpy(&e, data + at, sizeof(e));
-                if (e.location < offset || e.location - offset > ~0u - base)
+            UINT entry = d->profile->codec == MVK_VIDEO_CODEC_AV1 ? sizeof(TileEntry) : sizeof(SliceEntry);
+            if (d->slice_size && d->slice_size != entry)
+                return E_INVALIDARG;
+            d->slice_size = entry;
+            for (UINT at = 0; at + entry <= size; at += entry) {
+                BYTE raw[sizeof(TileEntry)];
+                memcpy(raw, data + at, entry);
+                /* both begin with where the data is and how much of it this buffer holds. */
+                UINT location, bytes;
+                memcpy(&location, raw, 4);
+                memcpy(&bytes, raw + 4, 4);
+                if (location < offset || location - offset > ~0u - base)
                     return E_INVALIDARG;
-                e.location = e.location - offset + base;
+                location = location - offset + base;
+                memcpy(raw, &location, 4);
                 /* the rest of a slice cut between buffers, which sits right behind its start in what was joined. */
-                if ((e.chopping & 2) && d->slice_count) {
-                    d->slices[d->slice_count - 1].bytes += e.bytes;
-                    d->slices[d->slice_count - 1].chopping = e.chopping & 1;
-                    continue;
+                if (entry == sizeof(SliceEntry)) {
+                    SliceEntry *e = (SliceEntry *)raw;
+                    if ((e->chopping & 2) && d->slice_count) {
+                        SliceEntry *last = (SliceEntry *)(d->slices + (SIZE_T)(d->slice_count - 1) * entry);
+                        last->bytes += bytes;
+                        last->chopping = e->chopping & 1;
+                        continue;
+                    }
                 }
                 if (d->slice_count == d->slice_capacity) {
-                    UINT bytes = d->slice_capacity * sizeof(SliceEntry);
-                    UINT capacity = bytes;
-                    BYTE *list = (BYTE *)d->slices;
-                    if (!grow(&list, &capacity, bytes + 16 * sizeof(SliceEntry)))
+                    UINT capacity = d->slice_capacity * entry;
+                    if (!grow(&d->slices, &capacity, (d->slice_capacity + 16) * entry))
                         return E_OUTOFMEMORY;
-                    d->slices = (SliceEntry *)list;
-                    d->slice_capacity = capacity / sizeof(SliceEntry);
+                    d->slice_capacity = capacity / entry;
                 }
-                d->slices[d->slice_count++] = e;
+                memcpy(d->slices + (SIZE_T)d->slice_count++ * entry, raw, entry);
             }
             break;
+        }
         default:
             break;
         }
@@ -879,7 +919,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderEndFrame(ID3D11VideoContext1 *iface, 
             info.qmatrix = d->qmatrix_size ? d->qmatrix : nullptr;
             info.qmatrix_size = d->qmatrix_size;
             info.slices = d->slices;
-            info.slices_size = d->slice_count * sizeof(SliceEntry);
+            info.slices_size = d->slice_count * d->slice_size;
             info.slice_count = d->slice_count;
             info.bitstream = d->bits;
             info.bitstream_size = d->bits_size;

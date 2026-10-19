@@ -233,10 +233,33 @@ static void update_texture(D3dContext *c, D3dResource *r, UINT sub, const D3D11_
         wait_idle(c, r, 0);
         BYTE *dst = r->tex.staging.mapped + r->tex.sub_offset[sub] + (SIZE_T)b.front * r->tex.sub_slice_pitch[sub] +
                     (SIZE_T)(b.top / f->block) * r->tex.sub_row_pitch[sub] + (SIZE_T)(b.left / f->block) * f->block_bytes;
+        UINT stored = f->flags & D3D_FORMAT_PLANAR ? rows * 3 / 2 : rows;
         for (UINT z = 0; z < depth; z++)
-            for (UINT y = 0; y < rows; y++)
+            for (UINT y = 0; y < stored; y++)
                 memcpy(dst + (SIZE_T)z * r->tex.sub_slice_pitch[sub] + (SIZE_T)y * r->tex.sub_row_pitch[sub],
                        (const BYTE *)data + (SIZE_T)z * depth_pitch + (SIZE_T)y * row_pitch, row);
+        return;
+    }
+    if (f->flags & D3D_FORMAT_PLANAR) {
+        /* a video picture is updated whole: its planes follow each other in the data, the chroma half as tall. */
+        if (b.left || b.top || width != e.width || height != e.height)
+            return;
+        UINT total_rows = rows + (rows + 1) / 2;
+        D3dRingSlice packed;
+        if (!D3dContextRingAlloc(c, (VkDeviceSize)row * total_rows, 16, &packed))
+            return;
+        for (UINT y = 0; y < total_rows; y++)
+            memcpy(packed.mapped + (SIZE_T)y * row, (const BYTE *)data + (SIZE_T)y * row_pitch, row);
+        VkBufferImageCopy copies[2] = {
+            {packed.offset, row / f->block_bytes, 0, {VK_IMAGE_ASPECT_PLANE_0_BIT, mip, layer, 1}, {0, 0, 0}, {width, height, 1}},
+            {packed.offset + (VkDeviceSize)row * rows, row / (2 * f->block_bytes), 0,
+             {VK_IMAGE_ASPECT_PLANE_1_BIT, mip, layer, 1}, {0, 0, 0}, {(width + 1) / 2, (height + 1) / 2, 1}}};
+        VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
+        if (!cmd)
+            return;
+        device->vk.vkCmdCopyBufferToImage(cmd, packed.buffer, r->tex.image, VK_IMAGE_LAYOUT_GENERAL, 2, copies);
+        c->pending_barrier = TRUE;
+        D3dContextUse(c, r);
         return;
     }
     D3dRingSlice slice;
