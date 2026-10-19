@@ -228,6 +228,71 @@ static void machine_guid(void)
     set_sz(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Cryptography", L"MachineGuid", REG_SZ, text);
 }
 
+/* the year of a file time, in the proleptic Gregorian calendar. */
+static ULONG year_of(ULONG64 filetime)
+{
+    LONG64 days = (LONG64)(filetime / 864000000000ull) - 134774 + 719468; /* days since 0000-03-01 */
+    LONG64 era = days / 146097;
+    LONG64 day_of_era = days - era * 146097;
+    LONG64 year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    LONG64 day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    LONG64 month = (5 * day_of_year + 2) / 153;
+    return (ULONG)(year_of_era + era * 400 + (month >= 10 ? 1 : 0));
+}
+
+/*
+ * the zone of the machine, which setup asks for and the control panel changes: the rules of the Windows zone the host
+ * is in, copied from the zone's key of the template into the key the system reads, as windows keeps them.
+ */
+static void time_zone(void)
+{
+    if (!HalBootInfo->timezone_key[0])
+        return;
+    WCHAR key[64], path[220] = {};
+    widen(key, RTL_NUMBER_OF(key), HalBootInfo->timezone_key);
+    _snwprintf(path, RTL_NUMBER_OF(path) - 1, NT_CURRENT_VERSION L"\\Time Zones\\%ls", key);
+    CM_NODE *zone = CmpOpenPath(path, FALSE);
+    if (!zone || !NT_SUCCESS(CmpLoadValues(zone)))
+        return;
+    /*
+     * the rules in force this year. the zone's own TZI holds the oldest rules of a zone that changed them, the years
+     * with rules of their own are values of its Dynamic DST subkey, and the last of them goes for every year after.
+     */
+    CM_VALUE *tzi = CmpFindValue(zone, L"TZI", 3);
+    CM_NODE *dynamic = CmpFindChild(zone, L"Dynamic DST", 11);
+    if (dynamic && NT_SUCCESS(CmpLoadValues(dynamic))) {
+        CM_VALUE *first = CmpFindValue(dynamic, L"FirstEntry", 10), *last = CmpFindValue(dynamic, L"LastEntry", 9);
+        if (first && last && first->Type == REG_DWORD && last->Type == REG_DWORD && first->DataLength >= 4 &&
+            last->DataLength >= 4) {
+            ULONG year = year_of(HalBootInfo->boot_filetime), low = *(ULONG *)first->Data, high = *(ULONG *)last->Data;
+            year = year < low ? low : year > high ? high : year;
+            WCHAR name[8] = {};
+            _snwprintf(name, RTL_NUMBER_OF(name) - 1, L"%u", year);
+            CM_VALUE *yearly = CmpFindValue(dynamic, name, (ULONG)wcslen(name));
+            if (yearly && yearly->Type == REG_BINARY && yearly->DataLength >= 44)
+                tzi = yearly;
+        }
+    }
+    if (!tzi || tzi->DataLength < 44)
+        return;
+    static const PCWSTR info = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation";
+    const LONG *rules = (const LONG *)tzi->Data;
+    CM_VALUE *standard = CmpFindValue(zone, L"Std", 3), *daylight = CmpFindValue(zone, L"Dlt", 3);
+    set_dword(info, L"Bias", (ULONG)rules[0]);
+    set_dword(info, L"StandardBias", (ULONG)rules[1]);
+    set_dword(info, L"DaylightBias", (ULONG)rules[2]);
+    set(info, L"StandardStart", REG_BINARY, (const UCHAR *)tzi->Data + 12, 16);
+    set(info, L"DaylightStart", REG_BINARY, (const UCHAR *)tzi->Data + 28, 16);
+    if (standard && standard->Type == REG_SZ)
+        set(info, L"StandardName", REG_SZ, standard->Data, standard->DataLength);
+    if (daylight && daylight->Type == REG_SZ)
+        set(info, L"DaylightName", REG_SZ, daylight->Data, daylight->DataLength);
+    set_sz(info, L"TimeZoneKeyName", REG_SZ, key);
+    set_dword(info, L"DynamicDaylightTimeDisabled", 0);
+    /* what the host's offset is now: the bias of the zone and its standard or daylight bias. */
+    set_dword(info, L"ActiveTimeBias", (ULONG)HalBootInfo->timezone_bias);
+}
+
 /* the processor variables the session manager writes at boot. */
 static void processor_environment(void)
 {
@@ -261,6 +326,7 @@ void CmpSpecialize(void)
     volatile_environment(computer, user, sid);
     firmware();
     machine_guid();
+    time_zone();
     hardware();
     processor_environment();
     CmpUnlock();

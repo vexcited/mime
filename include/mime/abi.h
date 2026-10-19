@@ -234,6 +234,9 @@ typedef struct MimeBootInfo {
     char cmdline[256];
     /* the host's swap: the guest has no paging file and reports ram plus this as its commit limit. */
     uint64_t swap_size;
+    /* the host's time zone: its IANA id, and the key of the Windows zone it is under Time Zones, empty when unknown. */
+    char timezone_name[64];
+    char timezone_key[64];
 } MimeBootInfo;
 
 /*

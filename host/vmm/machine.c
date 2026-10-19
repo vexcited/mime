@@ -103,6 +103,11 @@ void mime_vm_init_boot(MimeVm *vm)
     struct tm tm;
     localtime_r(&now.tv_sec, &tm);
     boot->timezone_bias = (int32_t)(-tm.tm_gmtoff / 60);
+    if (mime_host_time_zone(boot->timezone_name, sizeof(boot->timezone_name))) {
+        const char *key = mime_windows_time_zone(boot->timezone_name);
+        if (key)
+            mime_strlcpy(boot->timezone_key, key, sizeof(boot->timezone_key));
+    }
     vm->boot_stack_top = MIME_KVA_PHYSMAP + boot->boot_stack_phys + MIME_LAYOUT_BOOT_STACK_SIZE;
     fill_identity(vm);
 }

@@ -271,14 +271,95 @@ LONG WINAPI CompareFileTime(const FILETIME *a, const FILETIME *b)
 
 /* ------------------------------------------------------------------ time zones */
 
-static void fill_time_zone(LPTIME_ZONE_INFORMATION info)
+#define TZ_CONTROL L"SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation"
+#define TZ_ZONES L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones\\"
+
+/* the rules of a time zone key of the registry, a TZI value: the bias, the standard and daylight biases and the dates. */
+typedef struct _TZI {
+    LONG Bias, StandardBias, DaylightBias;
+    SYSTEMTIME StandardDate, DaylightDate;
+} TZI;
+
+static BOOL query_binary(HKEY key, LPCWSTR name, void *out, DWORD size)
+{
+    DWORD type = 0, got = size;
+    return !RegQueryValueExW(key, name, nullptr, &type, (LPBYTE)out, &got) && type == REG_BINARY && got == size;
+}
+
+static BOOL query_string(HKEY key, LPCWSTR name, WCHAR *out, DWORD chars)
+{
+    DWORD type = 0, got = (chars - 1) * sizeof(WCHAR);
+    out[0] = 0;
+    if (RegQueryValueExW(key, name, nullptr, &type, (LPBYTE)out, &got) || (type != REG_SZ && type != REG_EXPAND_SZ))
+        return FALSE;
+    out[got / sizeof(WCHAR)] = 0;
+    return out[0] != 0;
+}
+
+/* a string copied up to a number of characters, always ended. */
+static void copy_chars(WCHAR *dst, LPCWSTR src, SIZE_T chars)
+{
+    SIZE_T n = 0;
+    for (; n + 1 < chars && src[n]; n++)
+        dst[n] = src[n];
+    dst[n] = 0;
+}
+
+static void zone_from_rules(LPTIME_ZONE_INFORMATION info, const TZI *rules)
+{
+    info->Bias = rules->Bias;
+    info->StandardBias = rules->StandardBias;
+    info->DaylightBias = rules->DaylightBias;
+    info->StandardDate = rules->StandardDate;
+    info->DaylightDate = rules->DaylightDate;
+}
+
+/*
+ * the zone the machine is set to, from the registry as windows keeps it: the bias, the names, the rules and the name of
+ * the zone's key. a machine whose registry has no zone has the offset of its clock.
+ */
+static void current_zone(LPTIME_ZONE_INFORMATION info, WCHAR *key_name, DWORD key_chars, BOOL *dynamic_disabled)
 {
     memset(info, 0, sizeof(*info));
+    if (key_name)
+        key_name[0] = 0;
+    if (dynamic_disabled)
+        *dynamic_disabled = FALSE;
+    HKEY key;
+    if (!RegOpenKeyExW(HKEY_LOCAL_MACHINE, TZ_CONTROL, 0, KEY_QUERY_VALUE, &key)) {
+        DWORD value, size = sizeof(value), type = 0;
+        BOOL found = !RegQueryValueExW(key, L"Bias", nullptr, &type, (LPBYTE)&value, &size) && type == REG_DWORD;
+        if (found) {
+            info->Bias = (LONG)value;
+            size = sizeof(value);
+            if (!RegQueryValueExW(key, L"StandardBias", nullptr, &type, (LPBYTE)&value, &size) && type == REG_DWORD)
+                info->StandardBias = (LONG)value;
+            size = sizeof(value);
+            if (!RegQueryValueExW(key, L"DaylightBias", nullptr, &type, (LPBYTE)&value, &size) && type == REG_DWORD)
+                info->DaylightBias = (LONG)value;
+            query_binary(key, L"StandardStart", &info->StandardDate, sizeof(SYSTEMTIME));
+            query_binary(key, L"DaylightStart", &info->DaylightDate, sizeof(SYSTEMTIME));
+            query_string(key, L"StandardName", info->StandardName, RTL_NUMBER_OF(info->StandardName));
+            query_string(key, L"DaylightName", info->DaylightName, RTL_NUMBER_OF(info->DaylightName));
+            if (key_name)
+                query_string(key, L"TimeZoneKeyName", key_name, key_chars);
+            size = sizeof(value);
+            if (dynamic_disabled && !RegQueryValueExW(key, L"DynamicDaylightTimeDisabled", nullptr, &type,
+                                                      (LPBYTE)&value, &size) && type == REG_DWORD)
+                *dynamic_disabled = value != 0;
+            RegCloseKey(key);
+            return;
+        }
+        RegCloseKey(key);
+    }
+    /* nothing set: the offset of the clock, with no daylight time. */
     LONG bias = KbTimeZoneBiasMinutes();
     info->Bias = bias;
     if (!bias) {
         wcscpy(info->StandardName, L"Coordinated Universal Time");
         wcscpy(info->DaylightName, L"Coordinated Universal Time");
+        if (key_name)
+            copy_chars(key_name, L"UTC", key_chars);
     } else {
         LONG offset = -bias;
         WCHAR sign = offset < 0 ? '-' : '+';
@@ -290,6 +371,22 @@ static void fill_time_zone(LPTIME_ZONE_INFORMATION info)
     }
 }
 
+static void fill_time_zone(LPTIME_ZONE_INFORMATION info)
+{
+    current_zone(info, nullptr, 0, nullptr);
+}
+
+static BOOL in_daylight(const TIME_ZONE_INFORMATION *tz, LONGLONG t, BOOL is_utc);
+
+/* what windows returns besides the zone: whether it is daylight time now, when the zone has daylight time. */
+static DWORD zone_state(const TIME_ZONE_INFORMATION *tz)
+{
+    if (!tz->StandardDate.wMonth || !tz->DaylightDate.wMonth)
+        return TIME_ZONE_ID_UNKNOWN;
+    ULONGLONG now = read_system_time(&USER_SHARED_DATA->SystemTime);
+    return in_daylight(tz, (LONGLONG)now, TRUE) ? TIME_ZONE_ID_DAYLIGHT : TIME_ZONE_ID_STANDARD;
+}
+
 DWORD WINAPI GetTimeZoneInformation(LPTIME_ZONE_INFORMATION info)
 {
     if (!info) {
@@ -297,7 +394,7 @@ DWORD WINAPI GetTimeZoneInformation(LPTIME_ZONE_INFORMATION info)
         return TIME_ZONE_ID_INVALID;
     }
     fill_time_zone(info);
-    return TIME_ZONE_ID_UNKNOWN;
+    return zone_state(info);
 }
 
 BOOL WINAPI SetTimeZoneInformation(const TIME_ZONE_INFORMATION *info)
@@ -313,15 +410,49 @@ DWORD WINAPI GetDynamicTimeZoneInformation(PDYNAMIC_TIME_ZONE_INFORMATION info)
         return TIME_ZONE_ID_INVALID;
     }
     TIME_ZONE_INFORMATION tz;
-    fill_time_zone(&tz);
+    WCHAR key[128];
+    BOOL disabled;
+    current_zone(&tz, key, RTL_NUMBER_OF(key), &disabled);
     memset(info, 0, sizeof(*info));
     memcpy(info, &tz, sizeof(tz));
-    if (!tz.Bias)
-        wcscpy(info->TimeZoneKeyName, L"UTC");
-    else
-        wcscpy(info->TimeZoneKeyName, tz.StandardName);
-    info->DynamicDaylightTimeDisabled = FALSE;
-    return TIME_ZONE_ID_UNKNOWN;
+    copy_chars(info->TimeZoneKeyName, key[0] ? key : tz.StandardName, RTL_NUMBER_OF(info->TimeZoneKeyName));
+    info->DynamicDaylightTimeDisabled = disabled;
+    return zone_state(&tz);
+}
+
+/*
+ * the rules of a zone for a year: the zone's key holds the rules in force now and its Dynamic DST subkey the rules of
+ * the years that had others, a value each between FirstEntry and LastEntry; years outside take the nearest of them.
+ */
+static BOOL rules_for_year(LPCWSTR key_name, USHORT year, TZI *rules)
+{
+    WCHAR path[256];
+    if (!key_name[0] || wcslen(key_name) + RTL_NUMBER_OF(TZ_ZONES) + 16 > RTL_NUMBER_OF(path))
+        return FALSE;
+    wcscpy(path, TZ_ZONES);
+    wcscat(path, key_name);
+    HKEY zone;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &zone))
+        return FALSE;
+    BOOL found = FALSE;
+    HKEY dynamic;
+    if (!RegOpenKeyExW(zone, L"Dynamic DST", 0, KEY_QUERY_VALUE, &dynamic)) {
+        DWORD first = 0, last = 0, size = sizeof(DWORD), type = 0;
+        if (!RegQueryValueExW(dynamic, L"FirstEntry", nullptr, &type, (LPBYTE)&first, &size) && type == REG_DWORD) {
+            size = sizeof(DWORD);
+            if (!RegQueryValueExW(dynamic, L"LastEntry", nullptr, &type, (LPBYTE)&last, &size) && type == REG_DWORD) {
+                DWORD use = year < first ? first : year > last ? last : year;
+                WCHAR name[8];
+                KbFormat(name, RTL_NUMBER_OF(name), L"%lu", use);
+                found = query_binary(dynamic, name, rules, sizeof(*rules));
+            }
+        }
+        RegCloseKey(dynamic);
+    }
+    if (!found)
+        found = query_binary(zone, L"TZI", rules, sizeof(*rules));
+    RegCloseKey(zone);
+    return found;
 }
 
 BOOL WINAPI GetTimeZoneInformationForYear(USHORT year, PDYNAMIC_TIME_ZONE_INFORMATION dtzi, LPTIME_ZONE_INFORMATION info)
@@ -330,10 +461,16 @@ BOOL WINAPI GetTimeZoneInformationForYear(USHORT year, PDYNAMIC_TIME_ZONE_INFORM
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (dtzi)
+    WCHAR key[128];
+    if (dtzi) {
         memcpy(info, dtzi, sizeof(*info));
-    else
-        fill_time_zone(info);
+        copy_chars(key, dtzi->TimeZoneKeyName, RTL_NUMBER_OF(key));
+    } else {
+        current_zone(info, key, RTL_NUMBER_OF(key), nullptr);
+    }
+    TZI rules;
+    if (!(dtzi && dtzi->DynamicDaylightTimeDisabled) && rules_for_year(key, year, &rules))
+        zone_from_rules(info, &rules);
     return TRUE;
 }
 
@@ -401,7 +538,9 @@ BOOL WINAPI SystemTimeToTzSpecificLocalTimeEx(const DYNAMIC_TIME_ZONE_INFORMATIO
                                               LPSYSTEMTIME local)
 {
     TIME_ZONE_INFORMATION info;
-    if (tz)
+    if (tz && universal)
+        GetTimeZoneInformationForYear(universal->wYear, (PDYNAMIC_TIME_ZONE_INFORMATION)tz, &info);
+    else if (tz)
         memcpy(&info, tz, sizeof(info));
     return SystemTimeToTzSpecificLocalTime(tz ? &info : nullptr, universal, local);
 }

@@ -23,6 +23,10 @@
 
 typedef struct MimeVm MimeVm;
 
+/* timezone.c: the host's zone and the Windows zone it is. */
+bool mime_host_time_zone(char *out, size_t size);
+const char *mime_windows_time_zone(const char *iana);
+
 typedef struct MimeVcpu {
     MimeVm *vm;
     uint32_t index;
