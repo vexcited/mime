@@ -321,6 +321,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib)
+    # shell32 appends to paths with the path functions of kernelbase.
+    set(libs_shell32 ${MIME_LIB_${arch}}/kernelbase.lib)
     set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
     # the common dialogs are built from common controls, shell items and shlwapi's path helpers, and ask the registry

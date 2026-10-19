@@ -219,3 +219,45 @@ SHSTDAPI int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW operation)
     }
     return (int)error;
 }
+
+/* a double null terminated list of ANSI names as wide ones, null for no list. */
+static LPWSTR widen_list(LPCSTR list)
+{
+    if (!list)
+        return nullptr;
+    int length = 0;
+    while (list[length] || list[length + 1])
+        length++;
+    length += 2;
+    LPWSTR wide = LocalAlloc(LMEM_ZEROINIT, ((SIZE_T)length + 1) * sizeof(WCHAR));
+    if (wide && !MultiByteToWideChar(CP_ACP, 0, list, length, wide, length)) {
+        LocalFree(wide);
+        wide = nullptr;
+    }
+    return wide;
+}
+
+/* the ANSI form widens the lists and the title and calls the wide one. */
+SHSTDAPI int WINAPI SHFileOperationA(LPSHFILEOPSTRUCTA operation)
+{
+    if (!operation)
+        return ERROR_INVALID_PARAMETER;
+    SHFILEOPSTRUCTW wide = {operation->hwnd, operation->wFunc, nullptr, nullptr, operation->fFlags, FALSE, nullptr, nullptr};
+    LPWSTR from = widen_list(operation->pFrom), to = widen_list(operation->pTo), title = nullptr;
+    int result = ERROR_NOT_ENOUGH_MEMORY;
+    if ((!operation->pFrom || from) && (!operation->pTo || to)) {
+        wide.pFrom = from;
+        wide.pTo = to;
+        if ((operation->fFlags & FOF_SIMPLEPROGRESS) && operation->lpszProgressTitle) {
+            title = ShWiden(operation->lpszProgressTitle);
+            wide.lpszProgressTitle = title;
+        }
+        result = SHFileOperationW(&wide);
+        operation->fAnyOperationsAborted = wide.fAnyOperationsAborted;
+        operation->hNameMappings = wide.hNameMappings;
+    }
+    ShFree(title);
+    LocalFree(from);
+    LocalFree(to);
+    return result;
+}

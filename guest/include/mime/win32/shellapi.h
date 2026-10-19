@@ -12,6 +12,11 @@
 #define SHSTDAPI DECLSPEC_IMPORT
 #endif
 
+/* the structures of this header are packed on 32 bit windows. */
+#ifdef __i386__
+#pragma pack(push, 1)
+#endif
+
 DECLARE_HANDLE(HDROP);
 
 /* ------------------------------------------------------------------ ShellExecute */
@@ -160,6 +165,19 @@ typedef struct _SHSTOCKICONINFO {
 typedef WORD FILEOP_FLAGS;
 typedef const WCHAR *PCZZWSTR;
 
+typedef const CHAR *PCZZSTR;
+
+typedef struct _SHFILEOPSTRUCTA {
+    HWND hwnd;
+    UINT wFunc;
+    PCZZSTR pFrom;
+    PCZZSTR pTo;
+    FILEOP_FLAGS fFlags;
+    BOOL fAnyOperationsAborted;
+    LPVOID hNameMappings;
+    PCSTR lpszProgressTitle;
+} SHFILEOPSTRUCTA, *LPSHFILEOPSTRUCTA;
+
 typedef struct _SHFILEOPSTRUCTW {
     HWND hwnd;
     UINT wFunc;
@@ -293,8 +311,13 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
 SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoA(LPCSTR path, DWORD attributes, SHFILEINFOA *info, UINT size, UINT flags);
 SHSTDAPI HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCKICONINFO *info);
 SHSTDAPI int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW operation);
+SHSTDAPI int WINAPI SHFileOperationA(LPSHFILEOPSTRUCTA operation);
 SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data);
 SHSTDAPI HRESULT WINAPI Shell_NotifyIconGetRect(const NOTIFYICONIDENTIFIER *identifier, RECT *rect);
 SHSTDAPI UINT_PTR WINAPI SHAppBarMessage(DWORD message, PAPPBARDATA data);
+
+#ifdef __i386__
+#pragma pack(pop)
+#endif
 
 #endif

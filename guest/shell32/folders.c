@@ -274,6 +274,55 @@ SHSTDAPI HRESULT WINAPI SHGetFolderPathA(HWND hwnd, int csidl, HANDLE token, DWO
     return hr;
 }
 
+WINBASEAPI HRESULT WINAPI PathCchAppend(LPWSTR path, SIZE_T size, LPCWSTR more);
+
+/*
+ * a folder with a subdirectory under it. The folder must resolve with S_OK. With CSIDL_FLAG_CREATE the whole
+ * path is created, which an existing one passes. With CSIDL_FLAG_DONT_VERIFY it is not looked at. Otherwise it
+ * must exist as a directory: ERROR_PATH_NOT_FOUND when absent, ERROR_FILE_EXISTS when it is a file. Whatever
+ * fails leaves an empty path. An empty or absent subdirectory is the folder alone.
+ */
+SHSTDAPI HRESULT WINAPI SHGetFolderPathAndSubDirW(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPCWSTR subdir,
+                                                  LPWSTR path)
+{
+    HRESULT hr = SHGetFolderPathW(nullptr, csidl, token, flags, path);
+    if (hr != S_OK || !subdir || !subdir[0])
+        return hr;
+    if (FAILED(PathCchAppend(path, MAX_PATH, subdir))) {
+        hr = HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+    } else if (csidl & CSIDL_FLAG_CREATE) {
+        int error = SHCreateDirectoryExW(nullptr, path, nullptr);
+        hr = error == ERROR_ALREADY_EXISTS || !error ? S_OK : HRESULT_FROM_WIN32(error);
+    } else if (csidl & CSIDL_FLAG_DONT_VERIFY) {
+        return hr;
+    } else {
+        DWORD attributes = GetFileAttributesW(path);
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+            hr = HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
+        else if (attributes & FILE_ATTRIBUTE_DIRECTORY)
+            return hr;
+        else
+            hr = HRESULT_FROM_WIN32(ERROR_FILE_EXISTS);
+    }
+    if (hr != S_OK)
+        path[0] = 0;
+    return hr;
+}
+
+SHSTDAPI HRESULT WINAPI SHGetFolderPathAndSubDirA(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPCSTR subdir,
+                                                  LPSTR path)
+{
+    if (!path)
+        return E_INVALIDARG;
+    WCHAR wide_subdir[MAX_PATH] = L"", wide_path[MAX_PATH];
+    if (subdir)
+        MultiByteToWideChar(CP_ACP, 0, subdir, -1, wide_subdir, MAX_PATH);
+    HRESULT hr = SHGetFolderPathAndSubDirW(hwnd, csidl, token, flags, wide_subdir, wide_path);
+    if (!WideCharToMultiByte(CP_ACP, 0, wide_path, -1, path, MAX_PATH, nullptr, nullptr))
+        path[0] = 0;
+    return hr;
+}
+
 SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathW(HWND hwnd, LPWSTR path, int csidl, BOOL create)
 {
     return SUCCEEDED(SHGetFolderPathW(hwnd, csidl | (create ? CSIDL_FLAG_CREATE : 0), nullptr, SHGFP_TYPE_CURRENT, path));

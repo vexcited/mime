@@ -265,6 +265,12 @@ typedef struct _browseinfoW {
 
 SHSTDAPI HRESULT WINAPI SHGetFolderPathW(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPWSTR path);
 SHSTDAPI HRESULT WINAPI SHGetFolderPathA(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPSTR path);
+SHSTDAPI int WINAPI SHCreateDirectoryExW(HWND hwnd, LPCWSTR path, const SECURITY_ATTRIBUTES *attributes);
+SHSTDAPI int WINAPI SHCreateDirectoryExA(HWND hwnd, LPCSTR path, const SECURITY_ATTRIBUTES *attributes);
+SHSTDAPI HRESULT WINAPI SHGetFolderPathAndSubDirW(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPCWSTR subdir,
+                                                  LPWSTR path);
+SHSTDAPI HRESULT WINAPI SHGetFolderPathAndSubDirA(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPCSTR subdir,
+                                                  LPSTR path);
 SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathW(HWND hwnd, LPWSTR path, int csidl, BOOL create);
 SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathA(HWND hwnd, LPSTR path, int csidl, BOOL create);
 SHSTDAPI HRESULT WINAPI SHGetKnownFolderPath(REFKNOWNFOLDERID id, DWORD flags, HANDLE token, PWSTR *path);
