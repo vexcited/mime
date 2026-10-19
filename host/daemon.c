@@ -2,6 +2,7 @@
  * the background machine process: owns the virtual
  * machine, the cocoa run loop and the control socket.
  */
+#include "camera/camera.h"
 #include "instance.h"
 #include "ipc.h"
 #include "mime_cli.h"
@@ -483,6 +484,13 @@ static void on_input(void *ctx, const MimeInputEvent *ev)
     mime_vm_queue_input(&g_vm, ev);
 }
 
+/* cameras came or went, or a camera stream has frames: the guest hears of it as input. */
+static void on_camera(uint32_t kind, uint32_t stream)
+{
+    MimeInputEvent ev = {.type = MIME_INPUT_CAMERA, .flags = kind, .x = (int32_t)stream};
+    mime_vm_queue_input(&g_vm, &ev);
+}
+
 static void on_signal(int sig)
 {
     cleanup_files();
@@ -727,6 +735,8 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 
     if (!mime_vm_load_kernel(&g_vm))
         return 1;
+    /* the cameras are looked at while the guest boots, which asks for them. */
+    mime_camera_init(on_camera);
     if (!mime_vm_start(&g_vm))
         return 1;
     mime_info("startup: display %llu us, machine %llu us, kernel and processors %llu us",

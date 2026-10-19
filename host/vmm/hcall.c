@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 
 #include "../audio/audio.h"
+#include "../camera/camera.h"
 #include "../gpu/gpu.h"
 #include "../ui/ui.h"
 
@@ -459,6 +460,24 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     case MIME_HC_AUDIO_CLOSE:
         mime_audio_close(regs[1]);
+        break;
+    case MIME_HC_CAMERA_LIST:
+        status = mime_camera_list(vm, regs[1], regs[2], &value);
+        break;
+    case MIME_HC_CAMERA_FORMATS:
+        status = mime_camera_formats(vm, regs[1], regs[2], regs[3], &value);
+        break;
+    case MIME_HC_CAMERA_OPEN:
+        status = mime_camera_open(vm, regs[1], regs[2], regs[3], &value);
+        break;
+    case MIME_HC_CAMERA_START:
+        status = mime_camera_start(regs[1], regs[2]);
+        break;
+    case MIME_HC_CAMERA_CLOSE:
+        mime_camera_close(regs[1]);
+        break;
+    case MIME_HC_CAMERA_CONTROL:
+        status = mime_camera_control(vm, regs[1]);
         break;
     case MIME_HC_NET_SOCKET:
     case MIME_HC_NET_CLOSE:

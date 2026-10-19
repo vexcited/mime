@@ -9,6 +9,7 @@
 
 #include "../rom.h"
 #include "../audio/audio.h"
+#include "../camera/camera.h"
 #include "../gpu/gpu.h"
 
 #include <errno.h>
@@ -426,6 +427,7 @@ void mime_vm_shutdown(MimeVm *vm)
      * would still wait on the gpu when the process exits, and crash in the driver's own destructors.
      */
     mime_audio_close_all();
+    mime_camera_close_all();
     mime_vk_close_all();
     mime_gpu_close_all();
 }

@@ -46,7 +46,7 @@ target_include_directories(shaderc PRIVATE third_party/glslang third_party/glsla
 set_target_properties(shaderc PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
 if(APPLE)
-    mime_glob(host_sources host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c)
+    mime_glob(host_sources host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c host/camera/*.c)
 
     add_executable(mime ${host_sources} ${MIME_GEN}/rom.S $<TARGET_OBJECTS:shaderc>)
     set_source_files_properties(host/gpu/gpu.c host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
@@ -65,7 +65,7 @@ else()
     # the desktop bus for the notification area and notifications; without it the guest's icons and balloons are not shown.
     pkg_check_modules(HOST_SDBUS IMPORTED_TARGET libsystemd)
     find_package(Threads REQUIRED)
-    mime_glob(host_sources host/*.c host/setup/*.c host/linux/*.c host/vmm/*.c)
+    mime_glob(host_sources host/*.c host/setup/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
     list(APPEND host_sources host/gpu/shader.c)
 

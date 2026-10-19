@@ -378,6 +378,14 @@ enum {
 
     /* the notification area and notifications of the desktop. */
     MIME_HC_TRAY = 0x55,         /* (pa, size) a MimeTrayCommand */
+
+    /* cameras, see mime/camera.h. */
+    MIME_HC_CAMERA_LIST = 0x90,    /* (pa, capacity) -> count of the host's cameras, fills up to capacity MimeCameraInfo */
+    MIME_HC_CAMERA_FORMATS = 0x91, /* (camera, pa, capacity) -> count of the camera's formats, fills up to capacity MimeCameraFormat */
+    MIME_HC_CAMERA_OPEN = 0x92,    /* (camera, pa, size) -> stream, runs the mode the MimeCameraHeader at pa asks for */
+    MIME_HC_CAMERA_START = 0x93,   /* (stream, running) */
+    MIME_HC_CAMERA_CLOSE = 0x94,   /* (stream) returns once the host no longer uses the memory */
+    MIME_HC_CAMERA_CONTROL = 0x95, /* (pa) a MimeCameraControl, answered in place */
 };
 
 /* MIME_HC_IME_CONTROL: whether the host has an input method protocol at all (1 or 0), and ending a composition. */
@@ -872,6 +880,16 @@ enum {
      * or the wheel step, whichever the kind has.
      */
     MIME_INPUT_TRAY = 29,
+    /*
+     * a camera: flags is MIME_CAMERA_EVENT_CHANGED when cameras came or went, so that the guest lists them again, or
+     * MIME_CAMERA_EVENT_FRAME when the stream x has frames waiting.
+     */
+    MIME_INPUT_CAMERA = 30,
+};
+
+enum {
+    MIME_CAMERA_EVENT_CHANGED = 1,
+    MIME_CAMERA_EVENT_FRAME = 2,
 };
 
 enum {
