@@ -412,7 +412,7 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
 
 /*
  * the dc of one monitor, the device \\.\DISPLAYn: the screen's surface seen through the monitor, whose top left
- * corner is the dc's 0, 0 (read: win32kbase GetMonitorDC with an origin of the monitor's corner).
+ * corner is the dc's 0, 0, as win32kbase GetMonitorDC sets the origin of a device dc.
  */
 HDC PaintGetMonitorDC(ULONG index)
 {

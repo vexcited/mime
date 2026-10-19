@@ -614,9 +614,9 @@ static ULONG kinds_of(IDataObject *data)
 /* ------------------------------------------------------------------ the image of a drag */
 
 /*
- * the drag image the source's helper put into the data object (see shell32's dragdrop.c: "DragContext" says it is
- * there and "DragImageBits" holds it, bottom row first), as the MimeDragIcon the host shows with the drag. an image
- * over 512 pixels is taken down by whole pixels to fit. null when the object has none; the buffer is the caller's.
+ * the drag image the source's helper put into the data object, as the MimeDragIcon the host shows with the drag.
+ * shell32's dragdrop.c has the formats: "DragContext" says the image is there and "DragImageBits" holds it, bottom
+ * row first. an image over 512 pixels is taken down by whole pixels to fit. null when the object has none; the buffer is the caller's.
  */
 static MimeDragIcon *make_icon(IDataObject *data, ULONG *bytes)
 {

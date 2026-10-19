@@ -5,7 +5,7 @@
  * of the data object on it without data: the window renders a format with GetData of the object when WM_RENDERFORMAT
  * says a program, in the process or not, or the host asks for it. OleFlushClipboard renders them all and lets go
  * of the object. OleGetClipboard gives a data object over the clipboard that talks to the owner's data object
- * directly while the owner is a window of this process. read from ole32.dll of build 26300 (clipapi.cpp).
+ * directly while the owner is a window of this process. read from ole32.dll of build 26300, clipapi.cpp.
  */
 #include "ole32_private.h"
 
@@ -213,8 +213,8 @@ static void init_formats(void)
 }
 
 /*
- * the list of formats of an owner, as "OlePrivateData" holds it on the clipboard and the window keeps a copy
- * (read: SetClipboardFormats). 48 bytes for each format, a target device behind the list.
+ * the list of formats of an owner, as "OlePrivateData" holds it on the clipboard and the window keeps a copy,
+ * read in SetClipboardFormats. 48 bytes for each format, a target device behind the list.
  */
 typedef struct _CLIP_ENTRY {
     WORD Format;
@@ -302,7 +302,7 @@ static HRESULT stream_to_global(IStream *source, HGLOBAL *global)
 }
 
 /*
- * the stream form of a format as an HGLOBAL (read: GetDataFromStream): the object fills a memory stream with
+ * the stream form of a format as an HGLOBAL, as GetDataFromStream reads it. the object fills a memory stream with
  * GetDataHere, else gives a stream of its own that is copied.
  */
 static HRESULT data_from_stream(IDataObject *object, FORMATETC *format, HGLOBAL *global)
@@ -342,7 +342,7 @@ static HRESULT data_from_stream(IDataObject *object, FORMATETC *format, HGLOBAL 
 }
 
 /*
- * the storage form as an HGLOBAL holding a compound file (read: GetDataFromStorage): the object fills a storage
+ * the storage form as an HGLOBAL holding a compound file, as GetDataFromStorage reads it. the object fills a storage
  * over memory with GetDataHere, else gives a storage of its own that is copied.
  */
 static HRESULT data_from_storage(IDataObject *object, FORMATETC *format, HGLOBAL *global)
@@ -387,7 +387,7 @@ static HRESULT data_from_storage(IDataObject *object, FORMATETC *format, HGLOBAL
 }
 
 /*
- * the handle form of a format (read: HandleFromHandle): what the object gives is taken over when it is the
+ * the handle form of a format, as HandleFromHandle reads it. what the object gives is taken over when it is the
  * clipboard's to keep, copied when the medium belongs to the object.
  */
 static HRESULT data_from_handle(IDataObject *object, FORMATETC *format, STGMEDIUM *medium)
@@ -415,7 +415,7 @@ static HRESULT data_from_handle(IDataObject *object, FORMATETC *format, STGMEDIU
     return S_OK;
 }
 
-/* the clipboard handle for a format of the owner (read: RenderCurrentFormat). */
+/* the clipboard handle for a format of the owner, as RenderCurrentFormat makes it. */
 static HRESULT render_current(HWND hwnd, UINT cf, HANDLE *handle, IDataObject *object)
 {
     const CLIP_ARRAY *array = window_array(hwnd);
@@ -454,7 +454,7 @@ static HRESULT render_current(HWND hwnd, UINT cf, HANDLE *handle, IDataObject *o
     return hr;
 }
 
-/* WM_RENDERFORMAT: asks the object for the format and puts the answer on the clipboard (read: RenderFormat). */
+/* WM_RENDERFORMAT: asks the object for the format and puts the answer on the clipboard, as RenderFormat does. */
 static void render_format(HWND hwnd, UINT cf)
 {
     IDataObject *object = (IDataObject *)GetPropW(hwnd, kPropObject);
@@ -479,8 +479,8 @@ static void render_format(HWND hwnd, UINT cf)
 /*
  * lets go of the object of the window. 1: also resets the "DataObject" format that points to it; 2: the system
  * emptied the clipboard; 4: the references stay, the window is going away: an object is not released from a window
- * that is destroyed, since its apartment may be gone, so one that is not flushed or replaced is left referenced
- * (read: RemoveClipboardDataObject).
+ * that is destroyed, since its apartment may be gone, so one that is not flushed or replaced is left referenced.
+ * this is RemoveClipboardDataObject.
  */
 static void remove_object(HWND hwnd, DWORD flags)
 {
@@ -540,14 +540,14 @@ static HWND clip_window(BOOL create)
     return t->ClipWindow;
 }
 
-/* the window of this thread when it owns the clipboard (read: VerifyCallerIsClipboardOwner). */
+/* the window of this thread when it owns the clipboard, as VerifyCallerIsClipboardOwner says. */
 static HWND owner_window(void)
 {
     HWND hwnd = clip_window(FALSE);
     return hwnd && hwnd == GetClipboardOwner() ? hwnd : nullptr;
 }
 
-/* opens the clipboard for a window, trying a second time when another thread has it (read: OleClipboardLock). */
+/* opens the clipboard for a window, trying a second time when another thread has it, as OleClipboardLock does. */
 static HRESULT lock_clipboard(HWND hwnd)
 {
     if (OpenClipboard(hwnd))
@@ -596,7 +596,7 @@ static BOOL set_format_global(UINT format, const void *data, SIZE_T size)
 
 /*
  * the formats of the object on the open clipboard, each without data for the owner to render, and the list
- * "OlePrivateData" with how each can be read (read: SetClipboardFormats). formats in the range of gdi objects are
+ * "OlePrivateData" with how each can be read, as SetClipboardFormats does. formats in the range of gdi objects are
  * left out, a format the clipboard has already is not set again, and an index of 0 is made -1.
  */
 static HRESULT set_clipboard_formats(HWND hwnd, IDataObject *object)
@@ -833,7 +833,7 @@ static HRESULT clipboard_handle(UINT cf, HANDLE *copy)
     return hr;
 }
 
-/* the bytes of a format of the clipboard written into a stream or memory the caller gave (read: GetDataHereImpl). */
+/* the bytes of a format of the clipboard written into a stream or memory the caller gave, as GetDataHereImpl does. */
 static HRESULT clipboard_data_here(UINT cf, STGMEDIUM *medium)
 {
     HANDLE copy = nullptr;
@@ -1046,8 +1046,8 @@ static BOOL says_moved(const FORMATETC *format, const STGMEDIUM *medium)
 }
 
 /*
- * the owner takes what a program says about the clipboard, such as that a cut was pasted (read: SetData forwards to
- * the object of the owner, and fails without one). a cut that a host program made has no owner here, and a file
+ * the owner takes what a program says about the clipboard, such as that a cut was pasted. SetData forwards to
+ * the object of the owner, and fails without one. a cut that a host program made has no owner here, and a file
  * manager clears the clipboard when it has pasted one, so the same report from a program of the guest empties it: the
  * host's selection goes with it. that is not what Windows does, which fails the call.
  */
@@ -1277,7 +1277,7 @@ WINOLEAPI HRESULT WINAPI OleIsCurrentClipboard(IDataObject *data)
 }
 
 /*
- * renders every format ole put on the clipboard without data (read: FlushViaUser32Render) and lets go of the object.
+ * renders every format ole put on the clipboard without data, as FlushViaUser32Render does, and lets go of the object.
  * what a program that asks for "OleClipboardPersistOnFlush" gets, the object itself saved with the clipboard so
  * that another process can bring it back, is not made: its formats are rendered like the others.
  */

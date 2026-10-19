@@ -390,7 +390,7 @@ enum {
 
 /*
  * the image of a drag the host shows as the drag icon, at the physical address MIME_HC_DND_START is given: the size,
- * the hot spot (the pixel that sits under the pointer) and then width * height pixels, top row first, 32 bits each
+ * the hot spot, the pixel that sits under the pointer, and then width * height pixels, top row first, 32 bits each
  * with premultiplied alpha, as a Wayland buffer in the format ARGB8888 has them.
  */
 typedef struct MimeDragIcon {

@@ -876,8 +876,8 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
         int y = (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / scale);
         SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
         /*
-         * sdl hands the keyboard to a popup menu on its own account, though the compositor does not (sdl asks for
-         * no grab), so the text input of the owner would go off with it and the keys would carry the popup's
+         * sdl hands the keyboard to a popup menu on its own account, though the compositor does not, since sdl asks
+         * for no grab. the text input of the owner would go off with it and the keys would carry the popup's
          * window. the keyboard stays where the compositor has it.
          */
         if (g_wayland)

@@ -6,7 +6,7 @@
  * a header of the size, the hot spot, a bitmap handle and the color key, then the rows of 32 bit pixels bottom row
  * first with premultiplied alpha, and "DragContext", 16 bytes of which the second word says the bits are there. the
  * helper of a target takes them out of the data object, and shows them in a layered window that follows the pointer.
- * read from shell32.dll of build 26300 (CDragDropHelper). when the host takes a drag over, ole32 reads the same two
+ * read from shell32.dll of build 26300, CDragDropHelper. when the host takes a drag over, ole32 reads the same two
  * formats to give the compositor the image of the drag.
  */
 #include "shell32_private.h"
@@ -109,8 +109,8 @@ static void set_dword(IDataObject *data, UINT format, DWORD value)
 }
 
 /*
- * the pixels of a bitmap as the helper keeps them (read: _ApplyAlphaToDragBitmap). a pixel with no alpha and some
- * color gets full alpha; pixels near the color key (each channel within 5) go clear; an image over 300 pixels
+ * the pixels of a bitmap as the helper keeps them, read in _ApplyAlphaToDragBitmap. a pixel with no alpha and some
+ * color gets full alpha; pixels near the color key, each channel within 5, go clear; an image over 300 pixels
  * either way fades from its hot spot to its far edges; then the alpha is cut to three quarters and the colors
  * premultiplied. the fade and the three quarters are the default of Windows as read; the guesses are the rounding.
  */
@@ -459,9 +459,9 @@ static UINT drag_image_message(void)
 
 /*
  * the image of a window is what it asks the window for with ShellGetDragImage, its SHDRAGIMAGE filled in. a window
- * that gives none gets a picture of itself (guess: Windows draws the icons and names of the items of the data object
- * instead, and has no picture of the window), kept to 400 pixels each way so a window as big as the screen is no
- * drag image.
+ * that gives none gets a picture of itself, kept to 400 pixels each way so a window as big as the screen is no
+ * drag image. that is a guess: Windows draws the icons and names of the items of the data object instead, and has
+ * no picture of the window.
  */
 static HRESULT STDMETHODCALLTYPE src_from_window(IDragSourceHelper2 *This, HWND window, POINT *point, IDataObject *data)
 {
@@ -600,7 +600,7 @@ static HRESULT STDMETHODCALLTYPE tgt_drag_over(IDropTargetHelper *This, POINT *p
     return S_OK;
 }
 
-/* a drop ends the image like a leave does (read: Drop is DragLeave). */
+/* a drop ends the image like a leave does, Drop being DragLeave in Windows. */
 static HRESULT STDMETHODCALLTYPE tgt_drop(IDropTargetHelper *This, IDataObject *data, POINT *point, DWORD effect)
 {
     return tgt_drag_leave(This);

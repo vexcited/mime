@@ -5,8 +5,8 @@
  * that is composed when something reads it: the desktop's background
  * color on each monitor, black where no monitor is, then the visible top
  * level windows from the bottom of the z order up, each window's surface
- * at its place (layered and shaped ones blended through their composed
- * copy), and over a window's client area the last image presented to it
+ * at its place, layered and shaped ones blended through their composed
+ * copy, and over a window's client area the last image presented to it
  * through vulkan, which the host keeps.
  *
  * the surface starts at the top left of the virtual screen, which is
@@ -187,7 +187,7 @@ void ScreenCompose(const RECT *area)
     RECT bounds = {0, 0, screen->Width, screen->Height}, r;
     if (!RectIntersect(&r, area ? area : &bounds, &bounds))
         return;
-    /* what is not on a monitor is black (guess), the monitors show the desktop's color. */
+    /* what is not on a monitor is black, a guess, and the monitors show the desktop's color. */
     for (LONG y = r.top; y < r.bottom; y++)
         memset(screen->Bits + (LONG_PTR)y * screen->Stride + (LONG_PTR)r.left * 4, 0, (SIZE_T)(r.right - r.left) * 4);
     ULONG background = ColorToPixel(MetricsSysColor(COLOR_BACKGROUND)) | 0xFF000000;

@@ -130,7 +130,7 @@ WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC dc)
 }
 
 /*
- * the display a name asks for (read: gdi32full bCreateDCA). a device argument that starts with \\.\DISPLAY wins,
+ * the display a name asks for, as gdi32full bCreateDCA reads it. a device argument that starts with \\.\DISPLAY wins,
  * then the driver DISPLAY, which is the whole screen, then a driver that starts with \\.\DISPLAY. anything else is
  * no display, and CreateDC then fails.
  */

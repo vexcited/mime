@@ -271,7 +271,7 @@ static void finish_composition(BOOLEAN complete)
 
 /*
  * a composition belongs to the window that has the focus: when the focus moves to another window, or to none, it is
- * completed where it was (guess: an input method of windows completes it when its context is deactivated).
+ * completed where it was. a guess: an input method of windows completes it when its context is deactivated.
  */
 void ImeFocusChanged(void)
 {
