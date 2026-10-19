@@ -755,3 +755,110 @@ ADVAPI BOOL WINAPI CryptSignHashA(HCRYPTHASH handle, DWORD spec, LPCSTR descript
 {
     return CryptSignHashW(handle, spec, nullptr, flags, signature, length);
 }
+
+/* ---------------------------------------------------------------- signatures */
+
+void *mime_crypto_alloc(size_t size)
+{
+    return AdvAlloc(size);
+}
+
+void mime_crypto_free(void *p)
+{
+    AdvFree(p);
+}
+
+bool mime_crypto_random(void *out, size_t size)
+{
+    return AdvGenRandom(out, size);
+}
+
+#define NTE_BAD_SIGNATURE ((DWORD)0x80090006L)
+#define CRYPT_NOHASHOID 0x00000001
+
+/* the public part of an RSA key blob: the exponent, then the modulus as little endian bytes. */
+static MimeRsa *rsa_from_blob(const KEY *k)
+{
+    const BLOBHEADER *h = (const BLOBHEADER *)k->Blob;
+    if ((h->aiKeyAlg != CALG_RSA_KEYX && h->aiKeyAlg != CALG_RSA_SIGN) || k->Size < sizeof(*h) + 12)
+        return nullptr;
+    DWORD bits = *(const DWORD *)(k->Blob + sizeof(*h) + 4), exponent = *(const DWORD *)(k->Blob + sizeof(*h) + 8);
+    DWORD size = (bits + 7) / 8;
+    if (bits < 256 || bits > 16384 || sizeof(*h) + 12 + size > k->Size)
+        return nullptr;
+    BYTE *big = AdvAlloc(size);
+    MimeRsa *rsa = mime_rsa_new();
+    if (big && rsa) {
+        const BYTE *little = k->Blob + sizeof(*h) + 12;
+        for (DWORD i = 0; i < size; i++)
+            big[i] = little[size - 1 - i];
+        mime_bn_set(&rsa->e, exponent);
+        if (mime_bn_from_bytes(&rsa->n, big, size) && mime_rsa_check(rsa) == MIME_CRYPTO_OK) {
+            AdvFree(big);
+            return rsa;
+        }
+    }
+    AdvFree(big);
+    if (rsa)
+        mime_rsa_free(rsa);
+    return nullptr;
+}
+
+/*
+ * checks a signature made over the value of a hash with an RSA key, as PKCS#1 version 1.5 with the object
+ * identifier of the hash unless CRYPT_NOHASHOID is given. The signature is little endian. Reading the value ends
+ * the hash. A signature of another length than the modulus, or one that does not verify, is NTE_BAD_SIGNATURE.
+ * Guess: CRYPT_TYPE2_FORMAT and CRYPT_X931_FORMAT are not offered and give NTE_BAD_FLAGS.
+ */
+ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signature, DWORD length, HCRYPTKEY public_key,
+                                         LPCWSTR description, DWORD flags)
+{
+    HASH *h = hash_object(handle);
+    if (!h)
+        return FALSE;
+    KEY *k = (KEY *)public_key;
+    if (!k || k->Magic != KEY_MAGIC) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    if (!signature) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags & ~CRYPT_NOHASHOID) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    MimeRsa *rsa = rsa_from_blob(k);
+    if (!rsa) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    DWORD size = (rsa->bits + 7) / 8;
+    BYTE *big = AdvAlloc(size);
+    BOOL ok = FALSE;
+    if (!big) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+    } else if (length != size) {
+        AdvSetError(NTE_BAD_SIGNATURE);
+    } else {
+        finish_hash(h);
+        for (DWORD i = 0; i < size; i++)
+            big[i] = signature[size - 1 - i];
+        const MimeHashAlg *alg = (flags & CRYPT_NOHASHOID) ? nullptr : h->Hash;
+        int status = alg ? mime_rsa_pkcs1_verify(rsa, alg, h->Value, h->Size, big, size)
+                         : mime_rsa_pkcs1_verify_prefix(rsa, nullptr, 0, h->Value, h->Size, big, size);
+        ok = status == MIME_CRYPTO_OK;
+        if (!ok)
+            AdvSetError(NTE_BAD_SIGNATURE);
+    }
+    AdvFree(big);
+    mime_rsa_free(rsa);
+    return ok;
+}
+
+ADVAPI BOOL WINAPI CryptVerifySignatureA(HCRYPTHASH handle, const BYTE *signature, DWORD length, HCRYPTKEY public_key,
+                                         LPCSTR description, DWORD flags)
+{
+    return CryptVerifySignatureW(handle, signature, length, public_key, nullptr, flags);
+}

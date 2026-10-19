@@ -400,3 +400,59 @@ ADVAPI ULONG WINAPI LsaNtStatusToWinError(NTSTATUS status)
 {
     return RtlNtStatusToDosError(status);
 }
+
+/* ---------------------------------------------------------------- remote registry */
+
+/*
+ * a key of the registry of this machine, as a handle of its own for the keys that have one. Flags are only looked
+ * at for a named machine: bits above 7 and the two bits 1 and 4 together are ERROR_INVALID_PARAMETER. A machine
+ * other than this one cannot be reached, as the remote registry service has no peer: ERROR_BAD_NETPATH, which is
+ * what Windows gives when no transport finds the machine. Guess: "." and "localhost" name this machine as well as
+ * the computer name does.
+ */
+ADVAPI LSTATUS WINAPI RegConnectRegistryExW(LPCWSTR machine, HKEY key, ULONG flags, HKEY *result)
+{
+    if (machine && *machine) {
+        if ((flags & 0xFFFFFFF8) || (flags & 5) == 5)
+            return ERROR_INVALID_PARAMETER;
+        if (!AdvIsLocalSystem(machine))
+            return ERROR_BAD_NETPATH;
+    }
+    if (!result)
+        return ERROR_INVALID_PARAMETER;
+    switch ((ULONG)(ULONG_PTR)key) {
+    case 0x80000000: /* HKEY_CLASSES_ROOT */
+    case 0x80000001: /* HKEY_CURRENT_USER */
+    case 0x80000002: /* HKEY_LOCAL_MACHINE */
+    case 0x80000003: /* HKEY_USERS */
+        return RegDuplicateHKey(key, result);
+    case 0x80000004: /* HKEY_PERFORMANCE_DATA */
+    case 0x80000005: /* HKEY_CURRENT_CONFIG */
+    case 0x80000006: /* HKEY_DYN_DATA */
+    case 0x80000050: /* HKEY_PERFORMANCE_TEXT */
+    case 0x80000060: /* HKEY_PERFORMANCE_NLSTEXT */
+        *result = key;
+        return ERROR_SUCCESS;
+    }
+    return ERROR_INVALID_HANDLE;
+}
+
+ADVAPI LSTATUS WINAPI RegConnectRegistryW(LPCWSTR machine, HKEY key, HKEY *result)
+{
+    return RegConnectRegistryExW(machine, key, 0, result);
+}
+
+ADVAPI LSTATUS WINAPI RegConnectRegistryExA(LPCSTR machine, HKEY key, ULONG flags, HKEY *result)
+{
+    PWSTR wide = AdvAnsiToWide(machine);
+    if (machine && !wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    LSTATUS status = RegConnectRegistryExW(wide, key, flags, result);
+    AdvFree(wide);
+    return status;
+}
+
+ADVAPI LSTATUS WINAPI RegConnectRegistryA(LPCSTR machine, HKEY key, HKEY *result)
+{
+    return RegConnectRegistryExA(machine, key, 0, result);
+}

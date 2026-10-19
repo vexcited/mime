@@ -225,6 +225,7 @@ WINBASEAPI DWORD WINAPI K32GetModuleBaseNameA(HANDLE process, HMODULE module, LP
 WINBASEAPI DWORD WINAPI K32GetModuleFileNameExW(HANDLE process, HMODULE module, LPWSTR name, DWORD size);
 WINBASEAPI DWORD WINAPI K32GetModuleFileNameExA(HANDLE process, HMODULE module, LPSTR name, DWORD size);
 WINBASEAPI DWORD WINAPI K32GetProcessImageFileNameW(HANDLE process, LPWSTR name, DWORD size);
+WINBASEAPI DWORD WINAPI K32GetProcessImageFileNameA(HANDLE process, LPSTR name, DWORD size);
 WINBASEAPI BOOL WINAPI QueryFullProcessImageNameW(HANDLE process, DWORD flags, LPWSTR name, PDWORD size);
 WINBASEAPI BOOL WINAPI QueryFullProcessImageNameA(HANDLE process, DWORD flags, LPSTR name, PDWORD size);
 

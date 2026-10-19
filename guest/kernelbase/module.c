@@ -718,6 +718,19 @@ DWORD WINAPI K32GetProcessImageFileNameW(HANDLE process, LPWSTR name, DWORD size
     return chars;
 }
 
+/* the name in the active code page, without best fit characters. The terminator is not counted. */
+DWORD WINAPI K32GetProcessImageFileNameA(HANDLE process, LPSTR name, DWORD size)
+{
+    WCHAR wide[MAX_PATH * 4];
+    DWORD chars = RTL_NUMBER_OF(wide);
+    if (!process_image_name(process, wide, &chars))
+        return 0;
+    DWORD got = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, wide, (int)chars, name, (int)size, nullptr, nullptr);
+    if (got && got < size)
+        name[got] = 0;
+    return got;
+}
+
 BOOL WINAPI QueryFullProcessImageNameW(HANDLE process, DWORD flags, LPWSTR name, PDWORD size)
 {
     if (!name || !size) {
