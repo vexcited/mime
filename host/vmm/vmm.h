@@ -202,6 +202,10 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
+/* dirnames.c: whether two names are the same but for case, as windows compares them, and the spelling a directory has
+   for a name that differs only in case. *known is false when the directory could not be asked and must be read. */
+bool mime_names_same(const char *a, const char *b);
+bool mime_dir_spelling(const char *dir, const char *component, char *spelling, bool *known);
 void mime_fs_close_all(MimeVm *vm);
 bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa);
 
