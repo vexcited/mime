@@ -86,6 +86,25 @@ static void create_name_files(const MimePaths *paths)
     fclose(f);
 }
 
+/*
+ * the folders of the shared profile and the start menu of every user, which an installation has: a program that makes
+ * a shortcut asks for the folders of the machine as well as the user's, and one that cannot find them gives the
+ * shortcut up.
+ */
+static void create_shared_folders(const MimePaths *paths)
+{
+    static const char *const folders[] = {
+        "Users/Public/Desktop",   "Users/Public/Documents", "Users/Public/Downloads", "Users/Public/Music",
+        "Users/Public/Pictures",  "Users/Public/Videos",    "ProgramData/Microsoft/Windows/Start Menu/Programs",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Startup"};
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(folders); i++) {
+        char dir[MIME_PATH_MAX];
+        mime_path_join(dir, sizeof(dir), paths->drive_c, folders[i]);
+        if (!mime_dir_exists(dir))
+            mime_mkdir_p(dir, 0755);
+    }
+}
+
 bool mime_prepare_drive(const MimePaths *paths)
 {
     char dir[MIME_PATH_MAX];
@@ -108,5 +127,6 @@ bool mime_prepare_drive(const MimePaths *paths)
         return false;
     }
     create_name_files(paths);
+    create_shared_folders(paths);
     return create_profile(paths);
 }
