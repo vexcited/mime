@@ -27,6 +27,8 @@
 #define ST_MTIME(st) ((st)->st_mtim)
 #define ST_CTIME(st) ((st)->st_ctim)
 #endif
+#include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 
 #define FILE_SUPERSEDED 0
@@ -170,6 +172,155 @@ static bool same_name(const char *a, const char *b)
 }
 
 /*
+ * the names of a directory, kept for the lookups of a spelling that miss: a browser asks for hundreds of names that
+ * are not there in directories of hundreds of files, each a scan of the directory through the host's file
+ * system (170 microseconds against 3 for a search of the names kept). The names are used while the directory
+ * has the same inode and times; one changed in the last 100 milliseconds is not trusted, as the times of the host's
+ * file system advance in steps of milliseconds and a second change could fall in the same step.
+ */
+#define DIR_NAMES_SLOTS 16
+#define DIR_NAMES_MAX_BYTES (1u << 20)
+#define DIR_NAMES_SETTLE_NS 100000000ll
+
+typedef struct DirNames {
+    char *path;
+    dev_t dev;
+    ino_t ino;
+    struct timespec mtime, ctime;
+    char *names; /* each name with its length before it, one byte more than the name */
+    size_t used;
+    uint64_t stamp; /* of the last use, the oldest slot is replaced */
+} DirNames;
+
+static DirNames g_dir_names[DIR_NAMES_SLOTS];
+static pthread_mutex_t g_dir_names_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_dir_names_clock;
+
+static bool same_time(struct timespec a, struct timespec b)
+{
+    return a.tv_sec == b.tv_sec && a.tv_nsec == b.tv_nsec;
+}
+
+/* whether the directory was left alone for long enough to trust a listing taken of it. */
+static bool directory_settled(const struct stat *st)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    int64_t nanoseconds = (int64_t)now.tv_sec * 1000000000ll + now.tv_nsec;
+    int64_t changed = MIME_MAX((int64_t)ST_MTIME(st).tv_sec * 1000000000ll + ST_MTIME(st).tv_nsec,
+                               (int64_t)ST_CTIME(st).tv_sec * 1000000000ll + ST_CTIME(st).tv_nsec);
+    return nanoseconds - changed > DIR_NAMES_SETTLE_NS;
+}
+
+static void free_dir_names(DirNames *d)
+{
+    free(d->path);
+    free(d->names);
+    memset(d, 0, sizeof(*d));
+}
+
+/* the entry of the listing whose name is the component's but for its case; the listing is the caller's. */
+static bool find_in_names(const DirNames *d, const char *component, char *spelling)
+{
+    size_t want = strlen(component);
+    for (size_t at = 0; at < d->used;) {
+        size_t length = (unsigned char)d->names[at];
+        const char *name = d->names + at + 1;
+        if (length == want && same_name(name, component)) {
+            memcpy(spelling, name, want + 1);
+            return true;
+        }
+        at += 2 + length;
+    }
+    return false;
+}
+
+/*
+ * looks for the spelling of component in dir through the names kept, listing the directory when they are not there
+ * or no longer the directory's. *known is false when the answer could not come this way (the directory changed a
+ * moment ago, it is too large, a name is too long) and the caller reads the directory itself.
+ */
+static bool spelling_in_directory(const char *dir, const char *component, char *spelling, bool *known)
+{
+    *known = false;
+    struct stat st;
+    if (stat(dir, &st) != 0 || !directory_settled(&st))
+        return false;
+    pthread_mutex_lock(&g_dir_names_lock);
+    for (int i = 0; i < DIR_NAMES_SLOTS; i++) {
+        DirNames *d = &g_dir_names[i];
+        if (d->path && d->dev == st.st_dev && d->ino == st.st_ino && same_time(d->mtime, ST_MTIME(&st)) &&
+            same_time(d->ctime, ST_CTIME(&st)) && !strcmp(d->path, dir)) {
+            d->stamp = ++g_dir_names_clock;
+            bool found = find_in_names(d, component, spelling);
+            pthread_mutex_unlock(&g_dir_names_lock);
+            *known = true;
+            return found;
+        }
+    }
+    pthread_mutex_unlock(&g_dir_names_lock);
+
+    DIR *handle = opendir_quiet(dir);
+    if (!handle)
+        return false;
+    DirNames fresh = {.dev = st.st_dev, .ino = st.st_ino, .mtime = ST_MTIME(&st), .ctime = ST_CTIME(&st)};
+    size_t capacity = 8192;
+    fresh.names = malloc(capacity);
+    bool complete = fresh.names != nullptr;
+    struct dirent *e;
+    while (complete && (e = readdir(handle))) {
+        size_t length = strlen(e->d_name);
+        if (length > 255 || fresh.used + length + 2 > DIR_NAMES_MAX_BYTES) {
+            complete = false;
+            break;
+        }
+        if (fresh.used + length + 2 > capacity) {
+            capacity *= 2;
+            char *grown = realloc(fresh.names, capacity);
+            if (!grown) {
+                complete = false;
+                break;
+            }
+            fresh.names = grown;
+        }
+        fresh.names[fresh.used] = (char)length;
+        memcpy(fresh.names + fresh.used + 1, e->d_name, length + 1);
+        fresh.used += length + 2;
+    }
+    closedir(handle);
+    /* the directory must not have changed while it was read. */
+    struct stat after;
+    if (!complete || stat(dir, &after) != 0 || after.st_ino != st.st_ino || !same_time(ST_MTIME(&after), ST_MTIME(&st)) ||
+        !same_time(ST_CTIME(&after), ST_CTIME(&st))) {
+        free(fresh.names);
+        return false;
+    }
+    *known = true;
+    bool found = find_in_names(&fresh, component, spelling);
+    fresh.path = strdup(dir);
+    if (!fresh.path) {
+        free(fresh.names);
+        return found;
+    }
+    pthread_mutex_lock(&g_dir_names_lock);
+    DirNames *slot = &g_dir_names[0];
+    for (int i = 0; i < DIR_NAMES_SLOTS; i++) {
+        DirNames *d = &g_dir_names[i];
+        if (!d->path || !strcmp(d->path, dir)) {
+            slot = d;
+            break;
+        }
+        if (d->stamp < slot->stamp)
+            slot = d;
+    }
+    free_dir_names(slot);
+    *slot = fresh;
+    slot->stamp = ++g_dir_names_clock;
+    pthread_mutex_unlock(&g_dir_names_lock);
+    return found;
+}
+
+/*
  * windows names ignore case and host ones do not: when the path is missing
  * as written, each component after the volume root that is missing takes
  * the spelling of an entry of its directory that differs only in case. the
@@ -191,18 +342,26 @@ static void match_case(char *path, size_t root_length)
         if (!found) {
             char *dir_end = component - 1;
             *dir_end = 0;
-            DIR *dir = opendir_quiet(dir_end == path ? "/" : path);
-            *dir_end = '/';
-            struct dirent *e;
-            while (dir && (e = readdir(dir))) {
-                if (strlen(e->d_name) == strlen(component) && same_name(e->d_name, component)) {
-                    memcpy(component, e->d_name, strlen(component));
-                    found = true;
-                    break;
+            const char *dir_path = dir_end == path ? "/" : path;
+            char spelling[256];
+            bool known;
+            found = strlen(component) < sizeof(spelling) && spelling_in_directory(dir_path, component, spelling, &known);
+            if (found) {
+                memcpy(component, spelling, strlen(component));
+            } else if (!known || strlen(component) >= sizeof(spelling)) {
+                DIR *dir = opendir_quiet(dir_path);
+                struct dirent *e;
+                while (dir && (e = readdir(dir))) {
+                    if (strlen(e->d_name) == strlen(component) && same_name(e->d_name, component)) {
+                        memcpy(component, e->d_name, strlen(component));
+                        found = true;
+                        break;
+                    }
                 }
+                if (dir)
+                    closedir(dir);
             }
-            if (dir)
-                closedir(dir);
+            *dir_end = '/';
         }
         if (end)
             *end = '/';
@@ -351,6 +510,28 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
 
     struct stat st;
     bool exists = stat(path, &st) == 0;
+    if (req->flags & MIME_FS_OPEN_STAT_ONLY) {
+        /* the attributes of a name, for a query that has no use for a handle. */
+        if (!exists) {
+            char parent[MIME_PATH_MAX];
+            mime_strlcpy(parent, path, sizeof(parent));
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent)
+                *slash = 0;
+            req->action_out = mime_dir_exists(parent) ? 0 : 1;
+            return MIME_HC_STATUS_NOT_FOUND;
+        }
+        bool is_dir = S_ISDIR(st.st_mode);
+        if ((req->flags & MIME_FS_OPEN_DIRECTORY) && !is_dir)
+            return MIME_HC_STATUS_NOT_DIRECTORY;
+        if ((req->flags & MIME_FS_OPEN_NON_DIRECTORY) && is_dir)
+            return MIME_HC_STATUS_IS_DIRECTORY;
+        const char *leaf = strrchr(path, '/');
+        fill_info(&st, leaf ? leaf + 1 : path, &req->info_out);
+        req->handle_out = 0;
+        req->action_out = FILE_OPENED;
+        return MIME_HC_STATUS_OK;
+    }
     bool want_dir = req->flags & MIME_FS_OPEN_DIRECTORY;
     bool want_file = req->flags & MIME_FS_OPEN_NON_DIRECTORY;
     bool write = req->flags & MIME_FS_OPEN_WRITE;
@@ -427,6 +608,8 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         free(fh);
         return MIME_HC_STATUS_NO_MEMORY;
     }
+    const char *leaf = strrchr(path, '/');
+    fill_info(&st, leaf ? leaf + 1 : path, &req->info_out);
     req->handle_out = h;
     req->action_out = action;
     return MIME_HC_STATUS_OK;
@@ -810,7 +993,9 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_READDIR: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
-        MimeFsDirEntry *de = mime_vm_phys(vm, a[3], sizeof(MimeFsDirEntry));
+        /* a guest that asks for several entries at once pays one exit for them, a directory of hundreds one for each otherwise. */
+        uint64_t want = a[4] ? MIME_MIN(a[4], 64u) : 1;
+        MimeFsDirEntry *de = mime_vm_phys(vm, a[3], want * sizeof(MimeFsDirEntry));
         if (!fh || !de || !fh->is_dir) {
             status = MIME_HC_STATUS_INVALID;
             break;
@@ -821,10 +1006,12 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             fh->dir_count = 0;
             load_dir(fh);
         }
-        if (a[2] < fh->dir_count) {
-            *de = ((MimeFsDirEntry *)fh->dir_entries)[a[2]];
-            regs[1] = 1;
+        uint64_t n = 0;
+        while (n < want && a[2] + n < fh->dir_count) {
+            de[n] = ((MimeFsDirEntry *)fh->dir_entries)[a[2] + n];
+            n++;
         }
+        regs[1] = n;
         break;
     }
     case MIME_HC_FS_SET_SIZE: {

@@ -301,7 +301,7 @@ enum {
     MIME_HC_FS_READ = 0x12,     /* (handle, offset, pa, len) -> bytes */
     MIME_HC_FS_WRITE = 0x13,    /* (handle, offset, pa, len) -> bytes */
     MIME_HC_FS_QUERY = 0x14,    /* (handle, MimeFsInfo pa) */
-    MIME_HC_FS_READDIR = 0x15,  /* (handle, index, MimeFsDirEntry pa) -> 1 or 0 at end */
+    MIME_HC_FS_READDIR = 0x15,  /* (handle, index, MimeFsDirEntry pa, count) -> entries written, 0 at end; no count is a count of one */
     MIME_HC_FS_SET_SIZE = 0x16, /* (handle, size) */
     MIME_HC_FS_DELETE = 0x17,   /* (handle) delete on close */
     MIME_HC_FS_MAP = 0x18,      /* (handle) -> guest physical address of the whole file, read only, filled on touch */
@@ -690,6 +690,7 @@ enum {
     MIME_FS_OPEN_WRITE = 1u << 1,
     MIME_FS_OPEN_DIRECTORY = 1u << 2,     /* must be a directory */
     MIME_FS_OPEN_NON_DIRECTORY = 1u << 3, /* must not be a directory */
+    MIME_FS_OPEN_STAT_ONLY = 1u << 4,     /* only info_out is wanted, no handle is made (and none needs to be closed) */
 };
 
 enum {
@@ -704,17 +705,6 @@ enum {
 /* MIME_HC_FS_RENAME flags. */
 #define MIME_FS_RENAME_REPLACE 1u /* an existing file of the new name is replaced, a directory never is */
 
-typedef struct MimeFsOpen {
-    uint32_t volume;
-    uint32_t flags;
-    uint32_t disposition;
-    uint32_t path_chars;
-    uint64_t handle_out;
-    uint32_t action_out; /* FILE_OPENED, FILE_CREATED... */
-    uint32_t pad;
-    uint16_t path[520];
-} MimeFsOpen;
-
 typedef struct MimeFsInfo {
     uint64_t size;
     uint64_t allocation_size;
@@ -726,6 +716,18 @@ typedef struct MimeFsInfo {
     uint32_t attributes; /* FILE_ATTRIBUTE_* */
     uint32_t links;
 } MimeFsInfo;
+
+typedef struct MimeFsOpen {
+    uint32_t volume;
+    uint32_t flags;
+    uint32_t disposition;
+    uint32_t path_chars;
+    uint64_t handle_out;
+    uint32_t action_out; /* FILE_OPENED, FILE_CREATED... */
+    uint32_t pad;
+    MimeFsInfo info_out; /* what MIME_HC_FS_QUERY gives for the file just opened, so that an open is one exit */
+    uint16_t path[520];
+} MimeFsOpen;
 
 typedef struct MimeFsVolumeInfo {
     uint64_t total_units;

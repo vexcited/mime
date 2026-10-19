@@ -21,6 +21,8 @@ typedef struct MIMEFS_FCB {
     ULONG Volume;
     ULONG64 FileId;
     ULONG64 HostHandle;
+    BOOLEAN StatOnly;    /* made to answer one query by name: no host handle, the info of the open is the answer */
+    MimeFsInfo OpenInfo; /* what the host told when the file was opened */
     BOOLEAN Directory;
     BOOLEAN DeleteOnClose;
     BOOLEAN DotsDone;
@@ -29,6 +31,9 @@ typedef struct MIMEFS_FCB {
     ULONG DirIndex;
     ULONG RomIndex;
     BOOLEAN IsRoot;
+    MimeFsDirEntry *Batch; /* entries of the host's listing fetched together, from index BatchFirst */
+    ULONG BatchFirst;
+    ULONG BatchCount;
     UNICODE_STRING Pattern;
     WCHAR PatternBuffer[260];
 } MIMEFS_FCB;
@@ -188,6 +193,10 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         rom_info(fcb->Rom, info);
         return STATUS_SUCCESS;
     }
+    if (fcb->StatOnly) {
+        *info = fcb->OpenInfo;
+        return STATUS_SUCCESS;
+    }
     return host_status(HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
 }
 
@@ -235,6 +244,11 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         req->flags |= MIME_FS_OPEN_DIRECTORY;
     if (options & FILE_NON_DIRECTORY_FILE)
         req->flags |= MIME_FS_OPEN_NON_DIRECTORY;
+    /* a query by name needs the attributes and nothing else: the host answers them without making a handle. */
+    BOOLEAN stat_only = (stack->Flags & SL_OPEN_STAT_ONLY) != 0 && disposition == FILE_OPEN &&
+                        !(req->flags & MIME_FS_OPEN_WRITE) && !(file->Flags & FO_DELETE_ON_CLOSE);
+    if (stat_only)
+        req->flags |= MIME_FS_OPEN_STAT_ONLY;
     switch (disposition) {
     case FILE_SUPERSEDE: req->disposition = MIME_FS_DISP_SUPERSEDE; break;
     case FILE_CREATE: req->disposition = MIME_FS_DISP_CREATE; break;
@@ -252,30 +266,29 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     ULONG64 host = req->handle_out;
     ULONG action = req->action_out;
     ULONG req_flags = req->flags;
+    MimeFsInfo opened = req->info_out;
     ExFreePool(req);
 
-    MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MimeFsInfo), KI_TAG('M', 'f', 'I', 'n'));
     MIMEFS_FCB *fcb = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MIMEFS_FCB), KI_TAG('M', 'f', 'F', 'c'));
-    if (!info || !fcb) {
-        ExFreePool(info);
-        ExFreePool(fcb);
-        HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+    if (!fcb) {
+        if (host)
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     }
-    HalHypercallUnlocked(MIME_HC_FS_QUERY, host, HalPhysicalOf(info), 0, 0, 0, 0, nullptr);
     fcb->HostHandle = host;
+    fcb->StatOnly = (req_flags & MIME_FS_OPEN_STAT_ONLY) != 0;
+    fcb->OpenInfo = opened;
     fcb->Volume = vol->HostVolume;
-    fcb->FileId = info->file_id;
-    fcb->Directory = (info->attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    if (!fcb->Directory) {
+    fcb->FileId = opened.file_id;
+    fcb->Directory = (opened.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (!fcb->Directory && !fcb->StatOnly) {
         if (req_flags & MIME_FS_OPEN_WRITE || action != FILE_OPENED)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         else
-            fcb->Cache = FsCacheOpen(fcb->Volume, info);
+            fcb->Cache = FsCacheOpen(fcb->Volume, &opened);
     }
     fcb->IsRoot = chars == 0 || (chars == 1 && file->FileName.Buffer[0] == '\\');
     fcb->DeleteOnClose = (file->Flags & FO_DELETE_ON_CLOSE) != 0;
-    ExFreePool(info);
     if (action == FILE_CREATED) {
         PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
         NTSTATUS status = MimeFsAssignNewFile(vol->HostVolume, host, &file->FileName, fcb->Directory,
@@ -330,7 +343,10 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
                 FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_REMOVED,
                                fcb->Directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);
         }
-        HalHypercallUnlocked(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
+        if (fcb->HostHandle)
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
+        if (fcb->Batch)
+            ExFreePool(fcb->Batch);
         ExFreePool(fcb);
         file->FsContext = nullptr;
     }
@@ -745,6 +761,32 @@ static void write_entry(PUCHAR out, FILE_INFORMATION_CLASS klass, const MimeFsIn
     }
 }
 
+/* the entries of a directory come from the host several to a call: a listing costs a call for each one otherwise. */
+#define DIR_BATCH 16
+
+static BOOLEAN host_dir_entry(MIMEFS_FCB *fcb, ULONG index, MimeFsDirEntry *out)
+{
+    if (!fcb->Batch)
+        fcb->Batch = ExAllocatePool2(POOL_FLAG_NON_PAGED, DIR_BATCH * sizeof(MimeFsDirEntry), KI_TAG('M', 'f', 'D', 'b'));
+    if (!fcb->Batch) {
+        ULONG64 more = 0;
+        ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_READDIR, fcb->HostHandle, index, HalPhysicalOf(out), 0, 0, 0, &more);
+        return hs == MIME_HC_STATUS_OK && more;
+    }
+    if (index < fcb->BatchFirst || index - fcb->BatchFirst >= fcb->BatchCount) {
+        ULONG64 got = 0;
+        ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_READDIR, fcb->HostHandle, index, HalPhysicalOf(fcb->Batch), DIR_BATCH, 0, 0,
+                                          &got);
+        fcb->BatchCount = 0;
+        if (hs != MIME_HC_STATUS_OK || !got || got > DIR_BATCH)
+            return FALSE;
+        fcb->BatchFirst = index;
+        fcb->BatchCount = (ULONG)got;
+    }
+    *out = fcb->Batch[index - fcb->BatchFirst];
+    return TRUE;
+}
+
 static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -760,6 +802,7 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
     BOOLEAN first_query = fcb->Pattern.Buffer == nullptr;
     if ((stack->Flags & SL_RESTART_SCAN) || first_query) {
         fcb->DirIndex = 0;
+        fcb->BatchCount = 0; /* the host lists the directory again for index 0 */
         fcb->RomIndex = 0;
         fcb->HostDone = FALSE;
         fcb->DotIndex = 0;
@@ -802,9 +845,7 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
             name_chars = fcb->DotIndex + 1;
             index = fcb->DirIndex;
         } else if (!fcb->HostDone) {
-            ULONG64 more = 0;
-            ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_READDIR, fcb->HostHandle, fcb->DirIndex, HalPhysicalOf(de), 0, 0, 0, &more);
-            if (hs != MIME_HC_STATUS_OK || !more) {
+            if (!host_dir_entry(fcb, fcb->DirIndex, de)) {
                 fcb->HostDone = TRUE;
                 continue;
             }

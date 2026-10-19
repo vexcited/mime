@@ -19,7 +19,7 @@ typedef struct _OPEN_PACKET {
     ULONG ShareAccess;
     PFILE_OBJECT RelatedFile;
     IO_STATUS_BLOCK Iosb;
-    BOOLEAN QueryOnly;
+    BOOLEAN StatOnly; /* only the attributes of the name are wanted, see SL_OPEN_STAT_ONLY */
     SD_BLOB *Creator; /* the descriptor the creator offered, a file made by the open gets it */
 } OPEN_PACKET, *POPEN_PACKET;
 
@@ -327,6 +327,8 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     params.Parameters.Create.Options = (op->Disposition << 24) | (op->Options & 0x00FFFFFF);
     params.Parameters.Create.FileAttributes = (USHORT)op->FileAttributes;
     params.Parameters.Create.ShareAccess = (USHORT)op->ShareAccess;
+    if (op->StatOnly)
+        params.Flags |= SL_OPEN_STAT_ONLY;
     status = IopSynchronousRequest(file, IRP_MJ_CREATE, 0, nullptr, 0, &params, &op->Iosb);
     if (!NT_SUCCESS(status)) {
         file->DeviceObject = nullptr; /* never opened, no close irp */
@@ -391,11 +393,12 @@ static NTSTATUS file_put_security(PVOID object, PVOID blob)
 
 static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                             ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
-                            SD_BLOB *creator)
+                            SD_BLOB *creator, BOOLEAN stat_only)
 {
     OPEN_PACKET op;
     memset(&op, 0, sizeof(op));
     op.Magic = OPEN_PACKET_MAGIC;
+    op.StatOnly = stat_only;
     op.Creator = creator;
     op.DesiredAccess = access;
     op.Disposition = disposition;
@@ -456,8 +459,9 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     return ObInsertObject(found, access, attrs, handle);
 }
 
-NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
-                       ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode)
+NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                         ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
+                         BOOLEAN stat_only)
 {
     SD_BLOB *creator = nullptr;
     if (attributes->SecurityDescriptor) {
@@ -466,10 +470,16 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
             return status;
     }
     NTSTATUS status = create_file(handle, access, attributes, iosb, file_attributes, share, disposition, options, mode,
-                                  creator);
+                                  creator, stat_only);
     if (creator)
         SeSdDereference(creator);
     return status;
+}
+
+NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                       ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode)
+{
+    return IopCreateFileEx(handle, access, attributes, iosb, file_attributes, share, disposition, options, mode, FALSE);
 }
 
 NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG options, PFILE_OBJECT *out)

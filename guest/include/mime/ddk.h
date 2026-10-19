@@ -299,6 +299,8 @@ typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
 #define SL_RETURN_SINGLE_ENTRY 0x02
 #define SL_INDEX_SPECIFIED 0x04
 #define SL_CASE_SENSITIVE 0x80
+/* of mime: a create that only wants the attributes of the name, which the file system may answer without a handle. */
+#define SL_OPEN_STAT_ONLY 0x10
 
 #define SL_PENDING_RETURNED 0x01
 #define SL_INVOKE_ON_CANCEL 0x20

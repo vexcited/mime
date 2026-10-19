@@ -512,9 +512,10 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
     KPROCESSOR_MODE old = t->PreviousMode;
     oa.Attributes |= OBJ_KERNEL_HANDLE;
     t->PreviousMode = KernelMode;
-    status = IopCreateFile(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT,
-                           KernelMode);
+    /* a name only asked about is not opened on the host: the open gives the attributes. */
+    status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                             FILE_SYNCHRONOUS_IO_NONALERT, KernelMode, TRUE);
     if (NT_SUCCESS(status)) {
         PFILE_OBJECT file;
         status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&file, nullptr);
