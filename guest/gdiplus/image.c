@@ -77,6 +77,8 @@ GpStatus gp_bitmap_create(INT width, INT height, PixelFormat format, GpBitmap **
     b->Stride = stride;
     b->Bits = bits;
     b->Owned = bits;
+    b->DpiX = b->DpiY = 96.0f;
+    b->RawFormat = gp_format_memory_bmp;
     *bitmap = b;
     return Ok;
 }
@@ -239,6 +241,8 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateBitmapFromScan0(INT width, INT height,
     b->Format = format;
     b->Stride = stride;
     b->Bits = scan0;
+    b->DpiX = b->DpiY = 96.0f;
+    b->RawFormat = gp_format_memory_bmp;
     *bitmap = b;
     return Ok;
 }
@@ -425,18 +429,50 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipGetImagePalette(GpImage *image, ColorPalette
     return Ok;
 }
 
+/* the pixels, the resolution, the format they came from and the properties are copied. */
+GpStatus gp_bitmap_copy(const GpBitmap *b, GpBitmap **copy)
+{
+    GpBitmap *c;
+    GpStatus status = gp_bitmap_create(b->Width, b->Height, b->Format, &c);
+    if (status != Ok)
+        return status;
+    gp_convert(c->Bits, c->Stride, c->Format, b->Bits, b->Stride, b->Format, b->Width, b->Height);
+    c->DpiX = b->DpiX;
+    c->DpiY = b->DpiY;
+    c->RawFormat = b->RawFormat;
+    c->Decoded = b->Decoded;
+    if (b->PropertyCount) {
+        c->Properties = gp_alloc_zero(sizeof(GpProperty) * b->PropertyCount);
+        if (!c->Properties) {
+            GdipDisposeImage(&c->Image);
+            return OutOfMemory;
+        }
+        for (UINT i = 0; i < b->PropertyCount; i++) {
+            GpProperty *to = &c->Properties[c->PropertyCount];
+            *to = b->Properties[i];
+            to->Value = gp_alloc(to->Length);
+            if (!to->Value) {
+                GdipDisposeImage(&c->Image);
+                return OutOfMemory;
+            }
+            memcpy(to->Value, b->Properties[i].Value, to->Length);
+            c->PropertyCount++;
+        }
+    }
+    *copy = c;
+    return Ok;
+}
+
 DECLSPEC_EXPORT GpStatus WINAPI GdipCloneImage(GpImage *image, GpImage **clone)
 {
     GpBitmap *b = gp_bitmap_cast(image);
     if (!b || !clone)
         return InvalidParameter;
     GpBitmap *copy;
-    GpStatus status = gp_bitmap_create(b->Width, b->Height, b->Format, &copy);
-    if (status != Ok)
-        return status;
-    gp_convert(copy->Bits, copy->Stride, copy->Format, b->Bits, b->Stride, b->Format, b->Width, b->Height);
-    *clone = &copy->Image;
-    return Ok;
+    GpStatus status = gp_bitmap_copy(b, &copy);
+    if (status == Ok)
+        *clone = &copy->Image;
+    return status;
 }
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipDisposeImage(GpImage *image)
@@ -445,6 +481,9 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipDisposeImage(GpImage *image)
     if (!b)
         return InvalidParameter;
     b->Image.Magic = 0;
+    for (UINT i = 0; i < b->PropertyCount; i++)
+        gp_free(b->Properties[i].Value);
+    gp_free(b->Properties);
     gp_free(b->LockBuffer);
     gp_free(b->Owned);
     gp_free(b);

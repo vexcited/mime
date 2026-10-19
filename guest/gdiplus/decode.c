@@ -326,13 +326,60 @@ static GpStatus unsupported(LONG volatile *once, const char *what)
     return UnknownImageFormat;
 }
 
+/* the dots per inch a pixels per meter value stands for. */
+static float dpi_of(UINT per_meter)
+{
+    return per_meter ? (float)per_meter * 0.0254f : 96.0f;
+}
+
+/* the pHYs chunk of a png, in pixels per meter when the unit is the meter. */
+static void png_resolution(const BYTE *data, SIZE_T size, GpBitmap *b)
+{
+    SIZE_T at = 8;
+    while (at + 12 <= size) {
+        UINT length = (UINT)data[at] << 24 | (UINT)data[at + 1] << 16 | (UINT)data[at + 2] << 8 | data[at + 3];
+        if (length > size - at - 12)
+            return;
+        const BYTE *type = data + at + 4;
+        if (!memcmp(type, "pHYs", 4) && length == 9 && type[12] == 1) {
+            const BYTE *p = type + 4;
+            UINT x = (UINT)p[0] << 24 | (UINT)p[1] << 16 | (UINT)p[2] << 8 | p[3];
+            UINT y = (UINT)p[4] << 24 | (UINT)p[5] << 16 | (UINT)p[6] << 8 | p[7];
+            b->DpiX = dpi_of(x);
+            b->DpiY = dpi_of(y);
+            return;
+        }
+        if (!memcmp(type, "IDAT", 4) || !memcmp(type, "IEND", 4))
+            return;
+        at += 12 + length;
+    }
+}
+
 GpStatus gp_decode(const BYTE *data, SIZE_T size, GpBitmap **bitmap)
 {
     static LONG volatile jpeg_once, gif_once, tiff_once, icon_once, metafile_once;
-    if (mime_png_is_png(data, size))
-        return decode_png(data, size, bitmap);
-    if (size >= 2 && data[0] == 'B' && data[1] == 'M')
-        return decode_bmp(data, size, bitmap);
+    GpStatus status;
+    if (mime_png_is_png(data, size)) {
+        status = decode_png(data, size, bitmap);
+        if (status == Ok) {
+            png_resolution(data, size, *bitmap);
+            (*bitmap)->RawFormat = gp_format_png;
+            (*bitmap)->Decoded = TRUE;
+        }
+        return status;
+    }
+    if (size >= 2 && data[0] == 'B' && data[1] == 'M') {
+        status = decode_bmp(data, size, bitmap);
+        if (status == Ok) {
+            if (size >= 14 + 40 && read32(data + 14) >= 40) {
+                (*bitmap)->DpiX = dpi_of(read32(data + 14 + 24));
+                (*bitmap)->DpiY = dpi_of(read32(data + 14 + 28));
+            }
+            (*bitmap)->RawFormat = gp_format_bmp;
+            (*bitmap)->Decoded = TRUE;
+        }
+        return status;
+    }
     if (size >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff)
         return unsupported(&jpeg_once, "jpeg decoder");
     if (size >= 6 && !memcmp(data, "GIF8", 4))

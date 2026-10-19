@@ -5,6 +5,9 @@
  */
 #include "gdiplus_private.h"
 
+/* the marker the compiler asks of a module that uses floating point. */
+int _fltused = 0x9875;
+
 /* encoded images larger than this fail with OutOfMemory. */
 #define GP_MAX_ENCODED 0x10000000u
 
