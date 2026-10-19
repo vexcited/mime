@@ -1275,3 +1275,308 @@ LSTATUS WINAPI RegLoadMUIStringA(HKEY key, LPCSTR value, LPSTR out, DWORD out_si
     WideCharToMultiByte(CP_ACP, 0, text, -1, out, (int)out_size, nullptr, nullptr);
     return ERROR_SUCCESS;
 }
+
+/* ------------------------------------------------------------------ copying and the files of hives */
+
+/* the values of one key put into another one, the class of the source kept when the key is made. */
+static LSTATUS copy_values(HKEY from, HKEY to)
+{
+    DWORD values, name_max, data_max;
+    LSTATUS error = RegQueryInfoKeyW(from, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &values, &name_max,
+                                     &data_max, nullptr, nullptr);
+    if (error)
+        return error;
+    WCHAR *name = KbAlloc((name_max + 1) * sizeof(WCHAR));
+    BYTE *data = KbAlloc(data_max ? data_max : 1);
+    if (!name || !data) {
+        KbFree(name);
+        KbFree(data);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    for (DWORD i = 0; i < values && !error; i++) {
+        DWORD name_size = name_max + 1, data_size = data_max, type;
+        error = RegEnumValueW(from, i, name, &name_size, nullptr, &type, data, &data_size);
+        if (!error)
+            error = RegSetValueExW(to, name, 0, type, data, data_size);
+    }
+    KbFree(name);
+    KbFree(data);
+    return error;
+}
+
+/* a key with the class of the key it copies, and its values. */
+static LSTATUS copy_key(HKEY from, HKEY to_parent, LPCWSTR name, HKEY *copy_from, HKEY *copy_to, int depth)
+{
+    HKEY source = from, target = to_parent;
+    LSTATUS error = ERROR_SUCCESS;
+    if (name) {
+        error = RegOpenKeyExW(from, name, 0, KEY_READ, &source);
+        if (error)
+            return error;
+        WCHAR klass[256];
+        DWORD class_size = RTL_NUMBER_OF(klass);
+        klass[0] = 0;
+        if (RegQueryInfoKeyW(source, klass, &class_size, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                             nullptr, nullptr))
+            klass[0] = 0;
+        error = RegCreateKeyExW(to_parent, name, 0, klass, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, nullptr, &target,
+                                nullptr);
+        if (error) {
+            RegCloseKey(source);
+            return error;
+        }
+    }
+    error = copy_values(source, target);
+    if (!error && depth < 512) {
+        DWORD subkeys, name_max;
+        error = RegQueryInfoKeyW(source, nullptr, nullptr, nullptr, &subkeys, &name_max, nullptr, nullptr, nullptr, nullptr,
+                                 nullptr, nullptr);
+        WCHAR *child = error ? nullptr : KbAlloc((name_max + 1) * sizeof(WCHAR));
+        if (!error && !child)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        for (DWORD i = 0; !error && i < subkeys; i++) {
+            DWORD size = name_max + 1;
+            error = RegEnumKeyExW(source, i, child, &size, nullptr, nullptr, nullptr, nullptr);
+            if (!error)
+                error = copy_key(source, target, child, nullptr, nullptr, depth + 1);
+        }
+        KbFree(child);
+    } else if (!error) {
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (name) {
+        RegCloseKey(source);
+        RegCloseKey(target);
+    }
+    return error;
+}
+
+/*
+ * RegCopyTree: the values and subkeys of the key, or of one of its subkeys, written into another key, each subkey made
+ * with the class of the one it copies. Security descriptors are not copied and nothing of the destination is deleted.
+ */
+LSTATUS WINAPI RegCopyTreeW(HKEY source, LPCWSTR subkey, HKEY destination)
+{
+    HKEY from = source;
+    LSTATUS error = ERROR_SUCCESS;
+    if (subkey && *subkey) {
+        error = RegOpenKeyExW(source, subkey, 0, KEY_READ, &from);
+        if (error)
+            return error;
+    }
+    error = copy_key(from, destination, nullptr, nullptr, nullptr, 0);
+    if (from != source)
+        RegCloseKey(from);
+    return error;
+}
+
+LSTATUS WINAPI RegCopyTreeA(HKEY source, LPCSTR subkey, HKEY destination)
+{
+    PWSTR wide = subkey ? KbAnsiToWide(subkey) : nullptr;
+    if (subkey && !wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    LSTATUS error = RegCopyTreeW(source, wide, destination);
+    KbFree(wide);
+    return error;
+}
+
+/*
+ * RegQueryMultipleValues: the values named in the list read in one call. The data are put one after another in the
+ * buffer, each entry gets its length, type and the place of its data; the total length is stored. A buffer too small
+ * is ERROR_MORE_DATA with the length it needs, a name that is not there ERROR_FILE_NOT_FOUND.
+ */
+LSTATUS WINAPI RegQueryMultipleValuesW(HKEY key, VALENTW *list, DWORD count, LPWSTR buffer, LPDWORD total)
+{
+    if ((count && !list) || count > 0xFFFF)
+        return ERROR_INVALID_PARAMETER;
+    DWORD room = total ? *total : 0, needed = 0;
+    BOOL fits = buffer != nullptr;
+    if (!buffer)
+        room = 0;
+    for (DWORD i = 0; i < count; i++) {
+        DWORD size = 0, type;
+        LSTATUS error = RegQueryValueExW(key, list[i].ve_valuename, nullptr, &type, nullptr, &size);
+        if (error)
+            return error;
+        list[i].ve_type = type;
+        list[i].ve_valuelen = size;
+        needed += size;
+    }
+    if (total)
+        *total = needed;
+    if (!fits || needed > room)
+        return count ? ERROR_MORE_DATA : ERROR_SUCCESS;
+    BYTE *at = (BYTE *)buffer;
+    for (DWORD i = 0; i < count; i++) {
+        DWORD size = list[i].ve_valuelen, type;
+        LSTATUS error = RegQueryValueExW(key, list[i].ve_valuename, nullptr, &type, at, &size);
+        if (error)
+            return error;
+        list[i].ve_type = type;
+        list[i].ve_valuelen = size;
+        list[i].ve_valueptr = (DWORD_PTR)at;
+        at += size;
+    }
+    return ERROR_SUCCESS;
+}
+
+LSTATUS WINAPI RegQueryMultipleValuesA(HKEY key, VALENTA *list, DWORD count, LPSTR buffer, LPDWORD total)
+{
+    if ((count && !list) || count > 0xFFFF)
+        return ERROR_INVALID_PARAMETER;
+    DWORD room = buffer && total ? *total : 0, needed = 0;
+    for (DWORD i = 0; i < count; i++) {
+        DWORD size = 0, type;
+        LSTATUS error = RegQueryValueExA(key, list[i].ve_valuename, nullptr, &type, nullptr, &size);
+        if (error)
+            return error;
+        list[i].ve_type = type;
+        list[i].ve_valuelen = size;
+        needed += size;
+    }
+    if (total)
+        *total = needed;
+    if (!buffer || needed > room)
+        return count ? ERROR_MORE_DATA : ERROR_SUCCESS;
+    BYTE *at = (BYTE *)buffer;
+    for (DWORD i = 0; i < count; i++) {
+        DWORD size = list[i].ve_valuelen, type;
+        LSTATUS error = RegQueryValueExA(key, list[i].ve_valuename, nullptr, &type, at, &size);
+        if (error)
+            return error;
+        list[i].ve_type = type;
+        list[i].ve_valuelen = size;
+        list[i].ve_valueptr = (DWORD_PTR)at;
+        at += size;
+    }
+    return ERROR_SUCCESS;
+}
+
+/*
+ * the classes of a user: the hive that Windows loads as <sid>_Classes. There is none here, the classes of the user
+ * live under Software\Classes of the user's own key, which is opened instead when the hive is not found.
+ */
+NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PVOID sid, BOOLEAN allocate);
+
+LSTATUS WINAPI RegOpenUserClassesRoot(HANDLE token, DWORD options, REGSAM access, HKEY *result)
+{
+    if (!result || !token || options)
+        return ERROR_INVALID_PARAMETER;
+    /* the user is the first field of the token user record, a pointer to the sid. */
+    UCHAR buffer[256];
+    ULONG length = 0;
+    NTSTATUS status = NtQueryInformationToken(token, 1, buffer, sizeof(buffer), &length);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    UNICODE_STRING sid;
+    status = RtlConvertSidToUnicodeString(&sid, *(PVOID *)buffer, TRUE);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    WCHAR path[200];
+    KbFormat(path, RTL_NUMBER_OF(path), L"\\Registry\\User\\%wZ_Classes", &sid);
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, path);
+    OBJECT_ATTRIBUTES attributes;
+    InitializeObjectAttributes(&attributes, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    HANDLE handle;
+    status = NtOpenKey(&handle, access, &attributes);
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) {
+        KbFormat(path, RTL_NUMBER_OF(path), L"\\Registry\\User\\%wZ\\Software\\Classes", &sid);
+        RtlInitUnicodeString(&name, path);
+        status = NtOpenKey(&handle, access, &attributes);
+    }
+    RtlFreeUnicodeString(&sid);
+    if (!NT_SUCCESS(status))
+        return RtlNtStatusToDosError(status);
+    *result = (HKEY)handle;
+    return ERROR_SUCCESS;
+}
+
+/*
+ * saving, restoring and replacing the files of hives, and loading an application's hive, take hive files, which this
+ * registry has not got. Saving, restoring and replacing need a privilege that no token here holds and say so; loading
+ * a hive of an application, which needs none, fails for the file that is not there and says that it is not supported
+ * for a file that is.
+ */
+static LSTATUS hive_privilege(HKEY key, LPCWSTR file)
+{
+    if (key == HKEY_PERFORMANCE_DATA)
+        return ERROR_INVALID_HANDLE;
+    if (!file)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_PRIVILEGE_NOT_HELD;
+}
+
+LSTATUS WINAPI RegSaveKeyExW(HKEY key, LPCWSTR file, LPSECURITY_ATTRIBUTES attributes, DWORD flags)
+{
+    if (flags > 4)
+        return ERROR_INVALID_PARAMETER;
+    return hive_privilege(key, file);
+}
+
+LSTATUS WINAPI RegSaveKeyW(HKEY key, LPCWSTR file, LPSECURITY_ATTRIBUTES attributes)
+{
+    return hive_privilege(key, file);
+}
+
+LSTATUS WINAPI RegRestoreKeyW(HKEY key, LPCWSTR file, DWORD flags)
+{
+    return hive_privilege(key, file);
+}
+
+LSTATUS WINAPI RegReplaceKeyW(HKEY key, LPCWSTR subkey, LPCWSTR new_file, LPCWSTR old_file)
+{
+    return hive_privilege(key, new_file ? old_file : nullptr);
+}
+
+LSTATUS WINAPI RegSaveKeyExA(HKEY key, LPCSTR file, LPSECURITY_ATTRIBUTES attributes, DWORD flags)
+{
+    PWSTR wide = file ? KbAnsiToWide(file) : nullptr;
+    LSTATUS error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : RegSaveKeyExW(key, wide, attributes, flags);
+    KbFree(wide);
+    return error;
+}
+
+LSTATUS WINAPI RegSaveKeyA(HKEY key, LPCSTR file, LPSECURITY_ATTRIBUTES attributes)
+{
+    return RegSaveKeyExA(key, file, attributes, 1);
+}
+
+LSTATUS WINAPI RegRestoreKeyA(HKEY key, LPCSTR file, DWORD flags)
+{
+    PWSTR wide = file ? KbAnsiToWide(file) : nullptr;
+    LSTATUS error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : RegRestoreKeyW(key, wide, flags);
+    KbFree(wide);
+    return error;
+}
+
+LSTATUS WINAPI RegReplaceKeyA(HKEY key, LPCSTR subkey, LPCSTR new_file, LPCSTR old_file)
+{
+    PWSTR sub = subkey ? KbAnsiToWide(subkey) : nullptr, new_wide = new_file ? KbAnsiToWide(new_file) : nullptr,
+          old_wide = old_file ? KbAnsiToWide(old_file) : nullptr;
+    LSTATUS error = ERROR_NOT_ENOUGH_MEMORY;
+    if ((!subkey || sub) && (!new_file || new_wide) && (!old_file || old_wide))
+        error = RegReplaceKeyW(key, sub, new_wide, old_wide);
+    KbFree(sub);
+    KbFree(new_wide);
+    KbFree(old_wide);
+    return error;
+}
+
+LSTATUS WINAPI RegLoadAppKeyW(LPCWSTR file, HKEY *result, REGSAM access, DWORD options, DWORD reserved)
+{
+    if (reserved || (options & ~3u) || !result || !file)
+        return ERROR_INVALID_PARAMETER;
+    DWORD attributes = GetFileAttributesW(file);
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return GetLastError();
+    return ERROR_NOT_SUPPORTED;
+}
+
+LSTATUS WINAPI RegLoadAppKeyA(LPCSTR file, HKEY *result, REGSAM access, DWORD options, DWORD reserved)
+{
+    PWSTR wide = file ? KbAnsiToWide(file) : nullptr;
+    LSTATUS error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : RegLoadAppKeyW(wide, result, access, options, reserved);
+    KbFree(wide);
+    return error;
+}

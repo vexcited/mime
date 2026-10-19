@@ -2426,6 +2426,33 @@ WINBASEAPI LSTATUS WINAPI RegSetValueExW(HKEY key, LPCWSTR name, DWORD reserved,
                                          DWORD size);
 WINBASEAPI LSTATUS WINAPI RegSetValueExA(HKEY key, LPCSTR name, DWORD reserved, DWORD type, const BYTE *data,
                                          DWORD size);
+typedef struct _VALENTW {
+    LPWSTR ve_valuename;
+    DWORD ve_valuelen;
+    DWORD_PTR ve_valueptr;
+    DWORD ve_type;
+} VALENTW, *PVALENTW;
+typedef struct _VALENTA {
+    LPSTR ve_valuename;
+    DWORD ve_valuelen;
+    DWORD_PTR ve_valueptr;
+    DWORD ve_type;
+} VALENTA, *PVALENTA;
+WINBASEAPI LSTATUS WINAPI RegQueryMultipleValuesW(HKEY key, PVALENTW list, DWORD count, LPWSTR buffer, LPDWORD total);
+WINBASEAPI LSTATUS WINAPI RegQueryMultipleValuesA(HKEY key, PVALENTA list, DWORD count, LPSTR buffer, LPDWORD total);
+WINBASEAPI LSTATUS WINAPI RegCopyTreeW(HKEY source, LPCWSTR subkey, HKEY destination);
+WINBASEAPI LSTATUS WINAPI RegCopyTreeA(HKEY source, LPCSTR subkey, HKEY destination);
+WINBASEAPI LSTATUS WINAPI RegOpenUserClassesRoot(HANDLE token, DWORD options, REGSAM access, HKEY *result);
+WINBASEAPI LSTATUS WINAPI RegSaveKeyW(HKEY key, LPCWSTR file, LPSECURITY_ATTRIBUTES attributes);
+WINBASEAPI LSTATUS WINAPI RegSaveKeyA(HKEY key, LPCSTR file, LPSECURITY_ATTRIBUTES attributes);
+WINBASEAPI LSTATUS WINAPI RegSaveKeyExW(HKEY key, LPCWSTR file, LPSECURITY_ATTRIBUTES attributes, DWORD flags);
+WINBASEAPI LSTATUS WINAPI RegSaveKeyExA(HKEY key, LPCSTR file, LPSECURITY_ATTRIBUTES attributes, DWORD flags);
+WINBASEAPI LSTATUS WINAPI RegRestoreKeyW(HKEY key, LPCWSTR file, DWORD flags);
+WINBASEAPI LSTATUS WINAPI RegRestoreKeyA(HKEY key, LPCSTR file, DWORD flags);
+WINBASEAPI LSTATUS WINAPI RegReplaceKeyW(HKEY key, LPCWSTR subkey, LPCWSTR new_file, LPCWSTR old_file);
+WINBASEAPI LSTATUS WINAPI RegReplaceKeyA(HKEY key, LPCSTR subkey, LPCSTR new_file, LPCSTR old_file);
+WINBASEAPI LSTATUS WINAPI RegLoadAppKeyW(LPCWSTR file, HKEY *result, REGSAM access, DWORD options, DWORD reserved);
+WINBASEAPI LSTATUS WINAPI RegLoadAppKeyA(LPCSTR file, HKEY *result, REGSAM access, DWORD options, DWORD reserved);
 WINBASEAPI LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags, LPDWORD type,
                                        PVOID data, LPDWORD size);
 WINBASEAPI LSTATUS WINAPI RegLoadMUIStringA(HKEY key, LPCSTR value, LPSTR out, DWORD out_size, LPDWORD needed, DWORD flags,
