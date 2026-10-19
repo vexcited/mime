@@ -83,6 +83,31 @@ static uint64_t flush_parent(const char *path)
     return status;
 }
 
+/*
+ * opens without recording the access. reading a file or listing a directory would update its access time, a
+ * change of the host's disk that waits when a flush is committing the journal: Helium's start was stopped for
+ * 4 to 16 ms, with dozens of file calls of all its processes at once, by a flush of one database. Only the
+ * owner of a file may do it, and others get the plain open.
+ */
+static int open_quiet(const char *path, int flags, mode_t mode)
+{
+#ifdef O_NOATIME
+    int fd = open(path, flags | O_NOATIME, mode);
+    if (fd >= 0 || errno != EPERM)
+        return fd;
+#endif
+    return open(path, flags, mode);
+}
+
+static DIR *opendir_quiet(const char *path)
+{
+    int fd = open_quiet(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
+    DIR *dir = fd < 0 ? nullptr : fdopendir(fd);
+    if (fd >= 0 && !dir)
+        close(fd);
+    return dir;
+}
+
 static uint64_t ts_to_filetime(struct timespec ts)
 {
     return ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)ts.tv_nsec / 100;
@@ -155,7 +180,7 @@ static void match_case(char *path, size_t root_length)
         if (!found) {
             char *dir_end = component - 1;
             *dir_end = 0;
-            DIR *dir = opendir(dir_end == path ? "/" : path);
+            DIR *dir = opendir_quiet(dir_end == path ? "/" : path);
             *dir_end = '/';
             struct dirent *e;
             while (dir && (e = readdir(dir))) {
@@ -332,7 +357,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         if (want_file && is_dir)
             return MIME_HC_STATUS_IS_DIRECTORY;
         if (is_dir) {
-            fd = open(path, O_RDONLY | O_DIRECTORY);
+            fd = open_quiet(path, O_RDONLY | O_DIRECTORY, 0);
         } else {
             int flags = write ? O_RDWR : O_RDONLY;
             if (req->disposition == MIME_FS_DISP_OVERWRITE || req->disposition == MIME_FS_DISP_OVERWRITE_IF ||
@@ -340,9 +365,9 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
                 flags = O_RDWR | O_TRUNC;
                 action = req->disposition == MIME_FS_DISP_SUPERSEDE ? FILE_SUPERSEDED : FILE_OVERWRITTEN;
             }
-            fd = open(path, flags | private_flags);
+            fd = open_quiet(path, flags | private_flags, 0);
             if (fd < 0 && errno == EACCES && !write)
-                fd = open(path, O_RDONLY | private_flags);
+                fd = open_quiet(path, O_RDONLY | private_flags, 0);
         }
     } else {
         if (req->disposition == MIME_FS_DISP_OPEN || req->disposition == MIME_FS_DISP_OVERWRITE) {
@@ -357,7 +382,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         if (want_dir) {
             if (mkdir(path, 0755) != 0)
                 return errno_status(errno);
-            fd = open(path, O_RDONLY | O_DIRECTORY);
+            fd = open_quiet(path, O_RDONLY | O_DIRECTORY, 0);
         } else {
             fd = open(path, O_RDWR | O_CREAT | O_EXCL | private_flags, private_registry ? 0600 : 0644);
         }
@@ -414,7 +439,7 @@ static int dirent_cmp(const void *a, const void *b)
 
 static void load_dir(MimeFsHandle *fh)
 {
-    DIR *dir = opendir(fh->host_path);
+    DIR *dir = opendir_quiet(fh->host_path);
     if (!dir)
         return;
     uint32_t capacity = 64;
@@ -626,7 +651,7 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     struct stat there;
     bool exists = lstat(target, &there) == 0;
     if (!exists) {
-        DIR *d = opendir(dir->host_path);
+        DIR *d = opendir_quiet(dir->host_path);
         struct dirent *e;
         while (d && (e = readdir(d))) {
             if (strlen(e->d_name) == strlen(leaf) && same_name(e->d_name, leaf)) {

@@ -12,6 +12,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <execinfo.h>
 #include <limits.h>
 #include <signal.h>
@@ -682,6 +683,15 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         files.rlim_cur = files.rlim_max;
 #endif
         setrlimit(RLIMIT_NOFILE, &files);
+        /*
+         * the table of descriptors grows when a new one is past its end, and a process with threads waits a
+         * grace period of rcu for the old table to go, several milliseconds in which no thread can open or close
+         * anything: Helium's start did it five times, and stopped all its file calls at once. One process with
+         * a single thread does not wait, so the table is made as long as it will be before the threads.
+         */
+        int wide = fcntl(STDIN_FILENO, F_DUPFD_CLOEXEC, (int)MIME_MIN(files.rlim_cur - 1, (rlim_t)65535));
+        if (wide >= 0)
+            close(wide);
     }
 
     if (!mime_paths_ensure(paths) || !listen_socket(paths))
