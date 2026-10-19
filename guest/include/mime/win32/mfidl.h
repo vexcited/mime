@@ -20,6 +20,7 @@ typedef struct IMFPresentationDescriptor IMFPresentationDescriptor;
 typedef struct IMFMediaSource IMFMediaSource;
 typedef struct IMFMediaStream IMFMediaStream;
 typedef struct IMFGetService IMFGetService;
+typedef struct IMFMediaSourceEx IMFMediaSourceEx;
 
 #define IMFMediaTypeHandler_METHODS(T)                                                                                 \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
@@ -65,6 +66,12 @@ typedef struct IMFGetService IMFGetService;
     HRESULT(STDMETHODCALLTYPE *GetStreamDescriptor)(T * This, IMFStreamDescriptor **descriptor);                       \
     HRESULT(STDMETHODCALLTYPE *RequestSample)(T * This, IUnknown *token);
 
+#define IMFMediaSourceEx_METHODS(T)                                                                                    \
+    IMFMediaSource_METHODS(T)                                                                                          \
+    HRESULT(STDMETHODCALLTYPE *GetSourceAttributes)(T * This, IMFAttributes **attributes);                             \
+    HRESULT(STDMETHODCALLTYPE *GetStreamAttributes)(T * This, DWORD stream, IMFAttributes **attributes);               \
+    HRESULT(STDMETHODCALLTYPE *SetD3DManager)(T * This, IUnknown *manager);
+
 #define IMFGetService_METHODS(T)                                                                                       \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *GetService)(T * This, REFGUID service, REFIID riid, void **object);
@@ -74,6 +81,7 @@ MIME_COM_INTERFACE(IMFStreamDescriptor)
 MIME_COM_INTERFACE(IMFPresentationDescriptor)
 MIME_COM_INTERFACE(IMFMediaSource)
 MIME_COM_INTERFACE(IMFMediaStream)
+MIME_COM_INTERFACE(IMFMediaSourceEx)
 MIME_COM_INTERFACE(IMFGetService)
 
 MIME_DEFINE_GUID(IID_IMFMediaTypeHandler, 0xE93DCF6C, 0x4B07, 0x4E1E, 0x81, 0x23, 0xAA, 0x16, 0xED, 0x6E, 0xAD, 0xF5);
@@ -82,6 +90,7 @@ MIME_DEFINE_GUID(IID_IMFPresentationDescriptor, 0x03CB2711, 0x24D7, 0x4DB6, 0xA1
                  0x36);
 MIME_DEFINE_GUID(IID_IMFMediaSource, 0x279A808D, 0xAEC7, 0x40C8, 0x9C, 0x6B, 0xA6, 0xB4, 0x92, 0xC7, 0x8A, 0x66);
 MIME_DEFINE_GUID(IID_IMFMediaStream, 0xD182108F, 0x4EC6, 0x443F, 0xAA, 0x42, 0xA7, 0x11, 0x06, 0xEC, 0x82, 0x5F);
+MIME_DEFINE_GUID(IID_IMFMediaSourceEx, 0x3C9B2EB9, 0x86D5, 0x4514, 0xA3, 0x94, 0xF5, 0x66, 0x64, 0xF9, 0xF0, 0xD8);
 MIME_DEFINE_GUID(IID_IMFGetService, 0xFA993888, 0x4383, 0x415A, 0xA9, 0x30, 0xDD, 0x47, 0x2A, 0x8C, 0xF6, 0xF7);
 
 MIME_DEFINE_GUID(MF_PD_DURATION, 0x6C990D33, 0xBB8E, 0x477A, 0x85, 0x98, 0x0D, 0x5D, 0x96, 0xFC, 0xD8, 0x8A);
@@ -101,11 +110,16 @@ MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, 0x58F0
                  0xC4, 0x97, 0x8C, 0x6E, 0x2F);
 MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_ENDPOINT_ID, 0x30DA9258, 0xFEB9, 0x47A7, 0xA4, 0x53, 0x76,
                  0x3A, 0x7A, 0x8E, 0x1C, 0x5F);
+MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_CATEGORY, 0x77F0AE69, 0xC3BD, 0x4509, 0x94, 0x1D, 0x46,
+                 0x7E, 0x4D, 0x24, 0x89, 0x9E);
+MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_MEDIA_TYPE, 0x56A819CA, 0x0C78, 0x4DE4, 0xA0, 0xA7, 0x3D, 0xDA, 0xBA, 0x0F,
+                 0x24, 0xD4);
 MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, 0x60D0E559, 0x52F8, 0x4FA2, 0xBB, 0xCE, 0xAC, 0xDB, 0x34, 0xA8,
                  0xEC, 0x01);
 
 MFIDLAPI HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sources, UINT32 *count);
 MFIDLAPI HRESULT WINAPI MFCreateDeviceSource(IMFAttributes *attributes, IMFMediaSource **source);
+MFIDLAPI HRESULT WINAPI MFCreateDeviceSourceActivate(IMFAttributes *attributes, IMFActivate **activate);
 MFIDLAPI HRESULT WINAPI MFGetService(IUnknown *object, REFGUID service, REFIID riid, void **result);
 MFIDLAPI HRESULT WINAPI MFShutdownObject(IUnknown *object);
 

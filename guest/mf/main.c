@@ -1,20 +1,12 @@
 /*
- * mf.dll, the media foundation pipeline: here only what programs ask of it
- * on a machine without capture devices, the enumeration of cameras and
- * microphones and the creation of their sources. see docs/mfplat.md.
+ * mf.dll, the media foundation pipeline: here the capture devices programs ask of it, the cameras of the host
+ * (see source.c) and, for microphones, the lists that are empty because their endpoints have no media source on top
+ * of them. see docs/mfplat.md and docs/camera.md.
  */
-#define MIME_BUILD_MF
-#include <mime/nt.h>
-#include <mime/win32/winbase.h>
-#include <mime/win32/mfidl.h>
+#include "camera.h"
 
-typedef struct IMFShutdown IMFShutdown;
-#define IMFShutdown_METHODS(T)                                                                                         \
-    MIME_IUNKNOWN_METHODS(T)                                                                                           \
-    HRESULT(STDMETHODCALLTYPE *Shutdown)(T * This);                                                                    \
-    HRESULT(STDMETHODCALLTYPE *GetShutdownStatus)(T * This, DWORD *status);
-MIME_COM_INTERFACE(IMFShutdown)
-MIME_DEFINE_GUID(IID_IMFShutdown, 0x97EC2EA4, 0x0E42, 0x4937, 0x97, 0xAC, 0x9D, 0x6D, 0x32, 0x88, 0x24, 0xE1);
+/* the compiler references it from code using floating point, without a crt to define it. */
+int _fltused = 0x9875;
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
 {
@@ -37,7 +29,31 @@ static HRESULT source_type(IMFAttributes *attributes, BOOL *video)
     return S_OK;
 }
 
-/* no capture source is implemented, a camera or a microphone: both lists are empty. */
+/* the activation object of one camera: its name, its symbolic link and the kind of source it makes. */
+static HRESULT activate_camera(PCWSTR link, IMFActivate **out)
+{
+    WCHAR name[128];
+    HRESULT hr = CamFriendlyName(link, name, RTL_NUMBER_OF(name));
+    if (FAILED(hr))
+        return hr;
+    IMFAttributes *attributes;
+    hr = MFCreateAttributes(&attributes, 3);
+    if (FAILED(hr))
+        return hr;
+    attributes->lpVtbl->SetGUID(attributes, &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+    attributes->lpVtbl->SetString(attributes, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, name);
+    attributes->lpVtbl->SetString(attributes, &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, link);
+    hr = CamCreateActivate(attributes, out);
+    attributes->lpVtbl->Release(attributes);
+    return hr;
+}
+
+/*
+ * the cameras of the host, as windows lists the interfaces of the camera category: one activation object each. the
+ * category attribute names another interface class to list instead, such as the sensor cameras, which are none here.
+ * microphones have no media source, so their list is empty.
+ */
 HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sources, UINT32 *count)
 {
     if (!attributes)
@@ -50,13 +66,40 @@ HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sou
         return hr;
     *sources = nullptr;
     *count = 0;
+    if (!video)
+        return S_OK;
+    GUID category = KSCATEGORY_VIDEO_CAMERA;
+    attributes->lpVtbl->GetGUID(attributes, &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_CATEGORY, &category);
+    WCHAR *paths = nullptr;
+    hr = CamEnumeratePaths(&category, &paths);
+    if (FAILED(hr) || !paths)
+        return hr;
+    UINT32 n = 0;
+    for (WCHAR *p = paths; *p; p += lstrlenW(p) + 1)
+        n++;
+    IMFActivate **list = CoTaskMemAlloc(n * sizeof(*list));
+    if (!list) {
+        CamFree(paths);
+        return E_OUTOFMEMORY;
+    }
+    UINT32 made = 0;
+    for (WCHAR *p = paths; *p; p += lstrlenW(p) + 1)
+        if (SUCCEEDED(activate_camera(p, &list[made])))
+            made++;
+    CamFree(paths);
+    if (!made) {
+        CoTaskMemFree(list);
+        return S_OK;
+    }
+    *sources = list;
+    *count = made;
     return S_OK;
 }
 
 /*
- * a camera needs its symbolic link, which names no device here. a
- * microphone may name its endpoint, or a role for the default one, but not
- * both; the endpoint exists in mmdevapi but has no media source here.
+ * a camera needs its symbolic link; one that names no camera fails with the error of opening it. a microphone may
+ * name its endpoint, or a role for the default one, but not both; the endpoint exists in mmdevapi but has no media
+ * source here.
  */
 HRESULT WINAPI MFCreateDeviceSource(IMFAttributes *attributes, IMFMediaSource **source)
 {
@@ -69,13 +112,34 @@ HRESULT WINAPI MFCreateDeviceSource(IMFAttributes *attributes, IMFMediaSource **
     HRESULT hr = source_type(attributes, &video);
     if (FAILED(hr))
         return hr;
-    if (video) {
-        UINT32 length;
-        hr = attributes->lpVtbl->GetStringLength(attributes, &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
-                                                 &length);
-        return FAILED(hr) ? hr : HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-    }
+    if (video)
+        return CamCreateSource(attributes, source);
     return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+}
+
+/* an activation object over a copy of the attributes, that makes the source when it is asked to. */
+HRESULT WINAPI MFCreateDeviceSourceActivate(IMFAttributes *attributes, IMFActivate **activate)
+{
+    if (!attributes)
+        return E_INVALIDARG;
+    if (!activate)
+        return E_POINTER;
+    *activate = nullptr;
+    BOOL video;
+    HRESULT hr = source_type(attributes, &video);
+    if (FAILED(hr))
+        return hr;
+    IMFAttributes *copy;
+    UINT32 count = 0;
+    attributes->lpVtbl->GetCount(attributes, &count);
+    hr = MFCreateAttributes(&copy, count);
+    if (SUCCEEDED(hr))
+        hr = attributes->lpVtbl->CopyAllItems(attributes, copy);
+    if (SUCCEEDED(hr))
+        hr = CamCreateActivate(copy, activate);
+    if (copy)
+        copy->lpVtbl->Release(copy);
+    return hr;
 }
 
 HRESULT WINAPI MFGetService(IUnknown *object, REFGUID service, REFIID riid, void **result)

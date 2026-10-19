@@ -333,6 +333,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     # media foundation: mfplat's objects keep their values in ole32's property variants, mfreadwrite builds on mfplat.
     set(libs_mfplat ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_mfreadwrite ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/ole32.lib)
+    # the capture devices of mf make attributes, events and samples with mfplat, find cameras with cfgmgr32 and hand
+    # out task memory.
+    set(libs_mf ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/ole32.lib)
     # comctl32 draws through uxtheme, as windows' imports it.
     set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
     # msctf hands out task memory and bstrs and keeps values in variants.
