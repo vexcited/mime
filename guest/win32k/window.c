@@ -1380,7 +1380,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     w->Thread = t;
     w->Class = cls;
     cls->Windows++;
-    w->Proc = cls->Proc;
+    w->Proc = ClassProc(cls, t->Process);
     w->Ansi = cls->Ansi;
     w->Instance = instance;
     w->Owner = owner;
@@ -2222,7 +2222,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
             break;
         switch ((int)param) {
         case GCLP_WNDPROC:
-            r = (ULONG_PTR)c->Proc;
+            r = (ULONG_PTR)ClassProc(c, W32GetProcess());
             break;
         case GCLP_HBRBACKGROUND:
             r = (ULONG_PTR)c->Background;

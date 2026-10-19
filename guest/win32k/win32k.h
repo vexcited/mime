@@ -1016,6 +1016,7 @@ BOOLEAN WinStaOnInputDesktop(void);
 
 /* callbacks into user32 for the system classes. */
 WNDPROC W32ClientProc(W32PROCESS *p, ULONG fnid);
+WNDPROC ClassProc(const WND_CLASS *c, W32PROCESS *p);
 WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance);
 void ClassInitialize(void);
 void ClassFreeProcess(W32PROCESS *p);
