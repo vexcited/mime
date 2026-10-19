@@ -85,8 +85,54 @@ static WCHAR fold(WCHAR c)
     return c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c;
 }
 
+/* the files of the rom by the case folded hash of their names, for the lookup every open of the system drive makes. */
+#define ROM_HASH_SLOTS 4096 /* a power of two, more than twice the files */
+static USHORT g_rom_hash[ROM_HASH_SLOTS]; /* the index of an entry plus one */
+static BOOLEAN g_rom_hashed;
+
+static ULONG rom_hash(const WCHAR *text, ULONG chars)
+{
+    ULONG h = 2166136261u;
+    for (ULONG i = 0; i < chars; i++)
+        h = (h ^ fold(text[i])) * 16777619u;
+    return h;
+}
+
+static void rom_index(void)
+{
+    g_rom_hashed = FALSE;
+    if (g_rom->count * 2 > ROM_HASH_SLOTS)
+        return;
+    for (ULONG i = 0; i < g_rom->count; i++) {
+        const char *p = g_rom->entries[i].path;
+        WCHAR wide[sizeof(g_rom->entries[i].path)];
+        ULONG n = 0;
+        while (n < sizeof(wide) && p[n]) {
+            wide[n] = (WCHAR)(UCHAR)p[n];
+            n++;
+        }
+        ULONG slot = rom_hash(wide, n) & (ROM_HASH_SLOTS - 1);
+        while (g_rom_hash[slot])
+            slot = (slot + 1) & (ROM_HASH_SLOTS - 1);
+        g_rom_hash[slot] = (USHORT)(i + 1);
+    }
+    g_rom_hashed = TRUE;
+}
+
 const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars)
 {
+    if (g_rom_hashed) {
+        for (ULONG slot = rom_hash(path, chars) & (ROM_HASH_SLOTS - 1); g_rom_hash[slot];
+             slot = (slot + 1) & (ROM_HASH_SLOTS - 1)) {
+            const MimeRomEntry *e = &g_rom->entries[g_rom_hash[slot] - 1];
+            ULONG n = 0;
+            while (n < chars && n < sizeof(e->path) && e->path[n] && fold((WCHAR)(UCHAR)e->path[n]) == fold(path[n]))
+                n++;
+            if (n == chars && (n == sizeof(e->path) || !e->path[n]))
+                return e;
+        }
+        return nullptr;
+    }
     for (ULONG i = 0; i < g_rom->count; i++) {
         const char *p = g_rom->entries[i].path;
         ULONG n = 0;
@@ -118,6 +164,7 @@ void HalInitialize(MimeBootInfo *boot)
     HalBootInfo = boot;
     HalSharedPage = (MimeSharedPage *)HalPhysmap(boot->shared_phys);
     g_rom = (const MimeRomHeader *)HalPhysmap(boot->rom_phys);
+    rom_index();
     g_freq = boot->timer_frequency;
     HalInitializeArch();
 }

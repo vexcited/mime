@@ -559,32 +559,116 @@ static uint32_t probe_importable_types(MvkConnection *c, VkPhysicalDevice physic
 static struct {
     uint32_t vendor, device, driver;
     char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    char uuids[2 * VK_UUID_SIZE * 2 + 1]; /* the device's and the driver's, in hex */
     uint32_t bits;
 } g_importable[8];
 static uint32_t g_importable_count;
 static pthread_mutex_t g_importable_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/*
+ * the answer is also kept on disk, so that a machine does not make that device again each time it starts: 70 ms
+ * of the driver's work, on a thread that the first program's own calls then wait behind. It is for the very device
+ * and driver build that gave it, the name, the version and the uuids of both, and a driver update makes a new line
+ * that no old one matches; a line that does not parse is not used, and the file is only ever added to.
+ */
+#define IMPORT_CACHE_NAME "vulkan-import-cache"
+#define IMPORT_CACHE_HEADER "mime vulkan import cache 1"
+
+static void import_cache_path(char *out, size_t size)
+{
+    const MimePaths *paths = mime_daemon_paths();
+    snprintf(out, size, "%s/%s", paths ? paths->cache : "", IMPORT_CACHE_NAME);
+}
+
+static void import_uuids(MvkConnection *c, VkPhysicalDevice physical, char out[2 * VK_UUID_SIZE * 2 + 1])
+{
+    out[0] = 0;
+    if (!c->fn.vkGetPhysicalDeviceProperties2)
+        return;
+    VkPhysicalDeviceIDProperties id = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+    VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id};
+    c->fn.vkGetPhysicalDeviceProperties2(physical, &props);
+    for (uint32_t i = 0; i < VK_UUID_SIZE; i++)
+        snprintf(out + i * 2, 3, "%02x", id.deviceUUID[i]);
+    for (uint32_t i = 0; i < VK_UUID_SIZE; i++)
+        snprintf(out + (VK_UUID_SIZE + i) * 2, 3, "%02x", id.driverUUID[i]);
+}
+
+/* the lines of the file that name this device, with the lock held. */
+static bool import_cache_find(const VkPhysicalDeviceProperties *props, const char *uuids, uint32_t *bits)
+{
+    char path[MIME_PATH_MAX];
+    import_cache_path(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return false;
+    char line[512];
+    bool found = false, valid = fgets(line, sizeof(line), f) && !strncmp(line, IMPORT_CACHE_HEADER, strlen(IMPORT_CACHE_HEADER));
+    while (valid && fgets(line, sizeof(line), f)) {
+        unsigned vendor, device, driver, mask;
+        char uuid_text[2 * VK_UUID_SIZE * 2 + 8];
+        int name_at = 0;
+        if (sscanf(line, "%x %x %x %64s %x %n", &vendor, &device, &driver, uuid_text, &mask, &name_at) < 5 || !name_at)
+            continue;
+        char *name = line + name_at;
+        name[strcspn(name, "\n")] = 0;
+        if (vendor == props->vendorID && device == props->deviceID && driver == props->driverVersion &&
+            !strcmp(uuid_text, uuids[0] ? uuids : "-") && !strcmp(name, props->deviceName)) {
+            *bits = mask;
+            found = true;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+static void import_cache_add(const VkPhysicalDeviceProperties *props, const char *uuids, uint32_t bits)
+{
+    char path[MIME_PATH_MAX];
+    import_cache_path(path, sizeof(path));
+    bool fresh = access(path, F_OK) != 0;
+    FILE *f = fopen(path, "a");
+    if (!f)
+        return;
+    if (fresh)
+        fprintf(f, "%s\n", IMPORT_CACHE_HEADER);
+    fprintf(f, "%x %x %x %s %x %s\n", props->vendorID, props->deviceID, props->driverVersion, uuids[0] ? uuids : "-", bits,
+            props->deviceName);
+    fclose(f);
+}
+
 static uint32_t importable_types(MvkConnection *c, VkPhysicalDevice physical)
 {
     VkPhysicalDeviceProperties props;
     c->fn.vkGetPhysicalDeviceProperties(physical, &props);
+    char uuids[2 * VK_UUID_SIZE * 2 + 1];
+    import_uuids(c, physical, uuids);
     pthread_mutex_lock(&g_importable_lock);
     for (uint32_t i = 0; i < g_importable_count; i++) {
         if (g_importable[i].vendor == props.vendorID && g_importable[i].device == props.deviceID &&
-            g_importable[i].driver == props.driverVersion && !strcmp(g_importable[i].name, props.deviceName)) {
+            g_importable[i].driver == props.driverVersion && !strcmp(g_importable[i].name, props.deviceName) &&
+            !strcmp(g_importable[i].uuids, uuids)) {
             uint32_t bits = g_importable[i].bits;
             pthread_mutex_unlock(&g_importable_lock);
             return bits;
         }
     }
+    uint32_t bits = 0;
+    bool known = import_cache_find(&props, uuids, &bits);
     pthread_mutex_unlock(&g_importable_lock);
-    uint32_t bits = probe_importable_types(c, physical);
-    pthread_mutex_lock(&g_importable_lock);
+    if (!known) {
+        bits = probe_importable_types(c, physical);
+        pthread_mutex_lock(&g_importable_lock);
+        import_cache_add(&props, uuids, bits);
+    } else {
+        pthread_mutex_lock(&g_importable_lock);
+    }
     if (g_importable_count < sizeof(g_importable) / sizeof(g_importable[0])) {
         g_importable[g_importable_count].vendor = props.vendorID;
         g_importable[g_importable_count].device = props.deviceID;
         g_importable[g_importable_count].driver = props.driverVersion;
         snprintf(g_importable[g_importable_count].name, sizeof(g_importable[0].name), "%s", props.deviceName);
+        snprintf(g_importable[g_importable_count].uuids, sizeof(g_importable[0].uuids), "%s", uuids);
         g_importable[g_importable_count++].bits = bits;
     }
     pthread_mutex_unlock(&g_importable_lock);
@@ -1525,12 +1609,13 @@ static void query_pool_results(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* ------------------------------------------------------------------ pipelines created aside */
+/* ------------------------------------------------------------------ pipelines and shaders created aside */
 
 /*
  * a pipeline compiles for milliseconds, and the guest never waits for its
  * creation: run in ring order it would hold every later call, a frame's
- * submits included. the connection thread decodes it, so every handle is
+ * submits included. shader objects are the same, 1 to 2 milliseconds each and a few dozen
+ * when a browser starts its graphics, so the first frame waited 70 ms for the ones behind it. the connection thread decodes it, so every handle is
  * looked up there, and a pool of threads runs the driver's call; the ids
  * are bound once it is done, and a lookup of one not bound yet waits for
  * its creation alone. destructions of what a creation may still use wait
@@ -1546,17 +1631,76 @@ typedef struct MvkJob {
     uint32_t count;
     void *infos;
     uint64_t *ids;
-    VkPipeline *pipelines;
+    VkPipeline *pipelines; /* the shaders of a shader creation, the same size of handle */
     bool libraries; /* links pipeline libraries, which a destruction must not take away */
     VkResult result;
     volatile int done;
+    int users;    /* recording threads waiting for it, with job_lock held to change; it is freed after the last */
+    bool retired; /* finished and unlinked, to be freed by the last of its users */
     uint8_t *memory; /* the call's copy, then the arena it decodes into */
 } MvkJob;
+
+/* what the pool's threads spent in the driver since the last dump: shaders, graphics pipelines, compute pipelines. */
+static struct {
+    uint64_t creations, ns;
+} g_job_stats[3];
 
 static pthread_mutex_t g_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_pool_work = PTHREAD_COND_INITIALIZER;
 static MvkJob *g_pool_first, *g_pool_last;
 static uint32_t g_pool_threads;
+
+/* the driver's call of a creation, by the pool's thread or by one that needs the result before the pool has begun. */
+static void run_job(MvkJob *job)
+{
+    {
+        const MvkDispatch *fn = &job->conn->fn;
+        uint64_t began = mime_now_ns();
+        if (job->op == MVK_OP_vkCreateShadersEXT)
+            job->result = fn->vkCreateShadersEXT(job->device, job->count, job->infos, nullptr, (VkShaderEXT *)job->pipelines);
+        else if (job->op == MVK_OP_vkCreateGraphicsPipelines)
+            job->result = fn->vkCreateGraphicsPipelines(job->device, job->cache, job->count, job->infos, nullptr,
+                                                        job->pipelines);
+        else
+            job->result = fn->vkCreateComputePipelines(job->device, job->cache, job->count, job->infos, nullptr,
+                                                       job->pipelines);
+        MvkConnection *c = job->conn;
+        uint64_t took = mime_now_ns() - began;
+        int kind = job->op == MVK_OP_vkCreateShadersEXT ? 0 : job->op == MVK_OP_vkCreateGraphicsPipelines ? 1 : 2;
+        __atomic_fetch_add(&g_job_stats[kind].creations, job->count, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_job_stats[kind].ns, took, __ATOMIC_RELAXED);
+        if (took > 2000000)
+            mime_debug("vulkan: connection %u: %s of %u took %llu us", c->index, mvk_generated_names[job->op], job->count,
+                       (unsigned long long)(took / 1000));
+        pthread_mutex_lock(&c->job_lock);
+        __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&c->jobs_finished, 1, __ATOMIC_RELEASE);
+        pthread_cond_broadcast(&c->job_done);
+        pthread_mutex_unlock(&c->job_lock);
+    }
+}
+
+/* takes a creation the pool has not begun out of its queue, so that the thread that needs it runs it now. */
+static bool take_job(MvkJob *job)
+{
+    bool found = false;
+    pthread_mutex_lock(&g_pool_lock);
+    MvkJob *previous = nullptr;
+    for (MvkJob *j = g_pool_first; j; previous = j, j = j->queued) {
+        if (j != job)
+            continue;
+        if (previous)
+            previous->queued = j->queued;
+        else
+            g_pool_first = j->queued;
+        if (g_pool_last == j)
+            g_pool_last = previous;
+        found = true;
+        break;
+    }
+    pthread_mutex_unlock(&g_pool_lock);
+    return found;
+}
 
 static void *pool_main(void *arg)
 {
@@ -1571,18 +1715,7 @@ static void *pool_main(void *arg)
         if (!g_pool_first)
             g_pool_last = nullptr;
         pthread_mutex_unlock(&g_pool_lock);
-        const MvkDispatch *fn = &job->conn->fn;
-        job->result = job->op == MVK_OP_vkCreateGraphicsPipelines
-                          ? fn->vkCreateGraphicsPipelines(job->device, job->cache, job->count, job->infos, nullptr,
-                                                          job->pipelines)
-                          : fn->vkCreateComputePipelines(job->device, job->cache, job->count, job->infos, nullptr,
-                                                         job->pipelines);
-        MvkConnection *c = job->conn;
-        pthread_mutex_lock(&c->job_lock);
-        __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
-        __atomic_add_fetch(&c->jobs_finished, 1, __ATOMIC_RELEASE);
-        pthread_cond_broadcast(&c->job_done);
-        pthread_mutex_unlock(&c->job_lock);
+        run_job(job);
     }
     return nullptr;
 }
@@ -1615,7 +1748,7 @@ static void finish_job(MvkConnection *c, MvkJob *job)
     /* bound before it leaves the list, so a recording thread finds one or the other. */
     for (uint32_t i = 0; i < job->count; i++) {
         bind(c, job->ids[i], (uint64_t)job->pipelines[i]);
-        mvk_track(c, (uint64_t)job->pipelines[i], MVK_KIND_VkPipeline);
+        mvk_track(c, (uint64_t)job->pipelines[i], job->op == MVK_OP_vkCreateShadersEXT ? MVK_KIND_VkShaderEXT : MVK_KIND_VkPipeline);
     }
     pthread_mutex_lock(&c->job_lock);
     if (job->prev)
@@ -1626,15 +1759,21 @@ static void finish_job(MvkConnection *c, MvkJob *job)
         job->next->prev = job->prev;
     else
         c->last_job = job->prev;
+    bool in_use = job->users > 0;
+    job->retired = in_use;
     pthread_mutex_unlock(&c->job_lock);
     if (job->result != VK_SUCCESS)
         mime_warn("vulkan: %s failed: %d", mvk_generated_names[job->op], job->result);
-    free(job->memory);
-    free(job);
+    if (!in_use) {
+        free(job->memory);
+        free(job);
+    }
 }
 
 static void wait_job(MvkConnection *c, MvkJob *job)
 {
+    if (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE) && take_job(job))
+        run_job(job);
     pthread_mutex_lock(&c->job_lock);
     while (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE))
         pthread_cond_wait(&c->job_done, &c->job_lock);
@@ -1677,9 +1816,24 @@ static uint64_t await_id_aside(MvkConnection *c, uint64_t id)
     for (MvkJob *job = c->jobs; job && !handle; job = job->next)
         for (uint32_t i = 0; i < job->count; i++)
             if (job->ids[i] == id) {
+                job->users++;
+                if (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE)) {
+                    /* the pool has not begun it: it is run here, with the lock its threads report to let go. */
+                    pthread_mutex_unlock(&c->job_lock);
+                    if (take_job(job))
+                        run_job(job);
+                    pthread_mutex_lock(&c->job_lock);
+                }
                 while (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE))
                     pthread_cond_wait(&c->job_done, &c->job_lock);
                 handle = (uint64_t)job->pipelines[i];
+                if (--job->users == 0 && job->retired) {
+                    /* the connection finished it while this thread used it, and left the freeing to the last user. */
+                    pthread_mutex_unlock(&c->job_lock);
+                    free(job->memory);
+                    free(job);
+                    return handle ? handle : table_get(c, id);
+                }
                 break;
             }
     pthread_mutex_unlock(&c->job_lock);
@@ -1694,12 +1848,12 @@ static bool links_libraries(const void *next)
     return false;
 }
 
-/* vkCreateGraphicsPipelines and vkCreateComputePipelines, decoded here and run by the pool. */
+/* vkCreateGraphicsPipelines, vkCreateComputePipelines and vkCreateShadersEXT, decoded here and run by the pool. */
 static void create_pipelines_aside(MvkCall *call)
 {
     MvkConnection *c = call->conn;
     uint32_t op = call->header.op;
-    bool graphics = op == MVK_OP_vkCreateGraphicsPipelines;
+    bool graphics = op == MVK_OP_vkCreateGraphicsPipelines, shaders = op == MVK_OP_vkCreateShadersEXT;
     size_t size = (size_t)(call->in.end - call->in.start), arena = size * 8 + 65536;
     MvkJob *job = calloc(1, sizeof(*job));
     uint8_t *memory = job ? malloc(size + arena) : nullptr;
@@ -1714,13 +1868,17 @@ static void create_pipelines_aside(MvkCall *call)
     job->op = op;
     job->memory = memory;
     job->device = (VkDevice)mvk_get_handle(&d, 1);
-    job->cache = (VkPipelineCache)mvk_get_handle(&d, 0);
+    if (!shaders)
+        job->cache = (VkPipelineCache)mvk_get_handle(&d, 0);
     job->count = mvk_get_u32(&d);
-    size_t info_size = graphics ? sizeof(VkGraphicsPipelineCreateInfo) : sizeof(VkComputePipelineCreateInfo);
+    size_t info_size = shaders ? sizeof(VkShaderCreateInfoEXT)
+                       : graphics ? sizeof(VkGraphicsPipelineCreateInfo) : sizeof(VkComputePipelineCreateInfo);
     if (mvk_get_u32(&d)) {
         job->infos = mvk_alloc(&d, (size_t)job->count * info_size);
         for (uint32_t i = 0; job->infos && i < job->count; i++) {
-            if (graphics) {
+            if (shaders) {
+                mvk_get_VkShaderCreateInfoEXT(&d, &((VkShaderCreateInfoEXT *)job->infos)[i]);
+            } else if (graphics) {
                 VkGraphicsPipelineCreateInfo *info = &((VkGraphicsPipelineCreateInfo *)job->infos)[i];
                 mvk_get_VkGraphicsPipelineCreateInfo(&d, info);
                 job->libraries |= links_libraries(info->pNext);
@@ -1739,7 +1897,7 @@ static void create_pipelines_aside(MvkCall *call)
         free(job);
         return;
     }
-    if (graphics ? !c->fn.vkCreateGraphicsPipelines : !c->fn.vkCreateComputePipelines) {
+    if (shaders ? !c->fn.vkCreateShadersEXT : graphics ? !c->fn.vkCreateGraphicsPipelines : !c->fn.vkCreateComputePipelines) {
         mvk_unsupported(call, mvk_generated_names[op]);
         free(memory);
         free(job);
@@ -2088,7 +2246,12 @@ static void run_call(MvkCall *call)
     }
     if (c->records && records_waited_for(op))
         drain_records(c);
-    if (op == MVK_OP_vkCreateGraphicsPipelines || op == MVK_OP_vkCreateComputePipelines)
+    /* MIME_VK_SYNC_SHADERS=1 creates shader objects in the order of the calls, to measure what running them aside is worth. */
+    static int sync_shaders = -1;
+    if (sync_shaders < 0)
+        sync_shaders = getenv("MIME_VK_SYNC_SHADERS") != nullptr;
+    if (op == MVK_OP_vkCreateGraphicsPipelines || op == MVK_OP_vkCreateComputePipelines ||
+        (op == MVK_OP_vkCreateShadersEXT && !sync_shaders))
         create_pipelines_aside(call);
     else if (op > MVK_OP_NONE && op < MVK_OP_GENERATED_COUNT && mvk_generated_commands[op])
         mvk_generated_commands[op](call);
@@ -2108,13 +2271,20 @@ static void run_call(MvkCall *call)
             __atomic_fetch_add(&g_op_stats[slot].replies, 1, __ATOMIC_RELAXED);
     }
     /* what the driver was slow at, for MIME_DEBUG. */
-    if (took > 5000000)
+    if (took > 2000000)
         mime_debug("vulkan: connection %u call %#x took %llu us", c->index, op, (unsigned long long)(took / 1000));
 }
 
 /* the calls the host ran most and longest since the last dump, then the counts start again. */
 void mime_vk_dump_stats(void)
 {
+    static const char *const job_names[3] = {"shader objects", "graphics pipelines", "compute pipelines"};
+    for (int i = 0; i < 3; i++) {
+        if (g_job_stats[i].creations)
+            mime_info("vulkan: %llu %s made aside, %llu ms in the driver", (unsigned long long)g_job_stats[i].creations,
+                      job_names[i], (unsigned long long)(g_job_stats[i].ns / 1000000));
+        g_job_stats[i].creations = g_job_stats[i].ns = 0;
+    }
     uint64_t total_calls = 0, total_ns = 0, total_replies = 0;
     for (size_t i = 0; i < sizeof(g_op_stats) / sizeof(g_op_stats[0]); i++) {
         total_calls += g_op_stats[i].calls;
@@ -2125,7 +2295,7 @@ void mime_vk_dump_stats(void)
         return;
     mime_info("vulkan: %llu calls, %llu of them waited for by the guest, %llu ms in the host", (unsigned long long)total_calls,
               (unsigned long long)total_replies, (unsigned long long)(total_ns / 1000000));
-    for (int round = 0; round < 8; round++) {
+    for (int round = 0; round < 40; round++) {
         size_t best = 0;
         uint64_t most = 0;
         for (size_t i = 0; i < sizeof(g_op_stats) / sizeof(g_op_stats[0]); i++)
