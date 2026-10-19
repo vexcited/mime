@@ -913,7 +913,56 @@ static const GUID guid_accept_ex = {0xB5367DF1, 0xCBAC, 0x11CF, {0x95, 0xCA, 0x0
 static const GUID guid_connect_ex = {0x25A207B9, 0xDDF3, 0x4660, {0x8E, 0xE9, 0x76, 0xE5, 0x8C, 0x74, 0x06, 0x3E}};
 static const GUID guid_get_accept_ex_sockaddrs = {0xB5367DF2, 0xCBAC, 0x11CF,
                                                   {0x95, 0xCA, 0x00, 0x80, 0x5F, 0x48, 0xA1, 0x92}};
+static const GUID guid_wsa_recv_msg = {0xF689D7C8, 0x6F1F, 0x436B, {0x8A, 0x53, 0xE5, 0x4F, 0xE3, 0x51, 0xC3, 0x22}};
+static const GUID guid_wsa_send_msg = {0xA441E712, 0x754F, 0x43CA, {0x84, 0xA7, 0x0D, 0xEE, 0x44, 0xCF, 0x60, 0x6D}};
 static const GUID guid_disconnect_ex = {0x7FDA2E11, 0x8630, 0x436F, {0xA0, 0x31, 0xF5, 0x36, 0xA6, 0xEE, 0xC1, 0x57}};
+
+/*
+ * WSARecvMsg and WSASendMsg of datagram sockets: the receive or send with an address, the control data besides. there
+ * is none to give or take here: no control message comes back, as from a socket that asked for none, and the ones a
+ * send carries (the type of service) are ignored.
+ */
+static int WSAAPI wsa_recv_msg(SOCKET s, LPWSAMSG msg, LPDWORD received, LPWSAOVERLAPPED overlapped,
+                               LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+{
+    int error;
+    if (!msg) {
+        SetLastError(WSAEFAULT);
+        return SOCKET_ERROR;
+    }
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock)
+        return WsFail(error);
+    BOOL stream = sock->type == SOCK_STREAM;
+    release(sock);
+    if (stream)
+        return WsFail(WSAEOPNOTSUPP);
+    DWORD flags = msg->dwFlags;
+    int r = transfer(s, FALSE, msg->lpBuffers, msg->dwBufferCount, received, &flags, nullptr, 0, msg->name,
+                     msg->name ? &msg->namelen : nullptr, overlapped, routine);
+    msg->Control.len = 0;
+    msg->dwFlags = 0;
+    return r;
+}
+
+static int WSAAPI wsa_send_msg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent, LPWSAOVERLAPPED overlapped,
+                               LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+{
+    int error;
+    if (!msg) {
+        SetLastError(WSAEFAULT);
+        return SOCKET_ERROR;
+    }
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock)
+        return WsFail(error);
+    BOOL stream = sock->type == SOCK_STREAM;
+    release(sock);
+    if (stream)
+        return WsFail(WSAEOPNOTSUPP);
+    return transfer(s, TRUE, msg->lpBuffers, msg->dwBufferCount, sent, &flags, msg->name, msg->namelen, nullptr, nullptr,
+                    overlapped, routine);
+}
 
 static PVOID extension(const GUID *id)
 {
@@ -925,7 +974,11 @@ static PVOID extension(const GUID *id)
         return (PVOID)get_accept_ex_sockaddrs;
     if (!memcmp(id, &guid_disconnect_ex, sizeof(GUID)))
         return (PVOID)disconnect_ex;
-    /* WSARecvMsg and the others are absent; callers fall back to the plain functions. */
+    if (!memcmp(id, &guid_wsa_recv_msg, sizeof(GUID)))
+        return (PVOID)wsa_recv_msg;
+    if (!memcmp(id, &guid_wsa_send_msg, sizeof(GUID)))
+        return (PVOID)wsa_send_msg;
+    /* TransmitFile and the others are absent; callers fall back to the plain functions. */
     return nullptr;
 }
 
