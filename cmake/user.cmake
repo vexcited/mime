@@ -371,6 +371,19 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     endforeach()
 endforeach()
 
+# services.exe, the service control manager: a program of the system, started at the boot of the machine from the
+# native System32. it reads the services database of the registry and serves advapi32's service functions.
+mime_glob(services_sources guest/services/*.c)
+set(services_arch ${MIME_GUEST_ARCH})
+mime_objects(${services_arch}-services ${services_arch} SOURCES ${services_sources} INCLUDES guest/services guest/lib)
+mime_link(${MIME_OUT_${services_arch}}/services.exe ${services_arch}
+    OBJECTS ${services_arch}-services ${services_arch}-chkstk ${services_arch}-lib-crypto:guest/lib/crypto/hash.c
+    LIBS ${MIME_LIB_${services_arch}}/ntdll.lib ${MIME_LIB_${services_arch}}/kernel32.lib
+        ${MIME_LIB_${services_arch}}/advapi32.lib
+    FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A8000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
+    RESOURCE services.exe GROUPS guest)
+mime_rom_file(${MIME_OUT_${services_arch}}/services.exe ${MIME_ROM_${services_arch}}/services.exe)
+
 # the acm codecs windows registers in Drivers32, drivers in files of their own.
 set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000 msgsm32:0x7FF330000000
     l3codeca:0x7FF3F0000000)

@@ -1,0 +1,447 @@
+/*
+ * the service control manager api of advapi32.dll: the client side that opens, creates, starts and controls
+ * services, and the service side that runs in the process the manager started.
+ */
+#ifndef MIME_WIN32_WINSVC_H
+#define MIME_WIN32_WINSVC_H
+
+#include <mime/win32/winbase.h>
+
+#undef WINADVAPI
+#ifdef MIME_BUILD_ADVAPI32
+#define WINADVAPI DECLSPEC_EXPORT
+#else
+#define WINADVAPI DECLSPEC_IMPORT
+#endif
+
+typedef HANDLE SC_HANDLE;
+typedef SC_HANDLE *LPSC_HANDLE;
+typedef HANDLE SERVICE_STATUS_HANDLE;
+typedef PVOID SC_LOCK;
+
+/* the access rights of the manager and of a service. */
+#define SC_MANAGER_CONNECT 0x0001
+#define SC_MANAGER_CREATE_SERVICE 0x0002
+#define SC_MANAGER_ENUMERATE_SERVICE 0x0004
+#define SC_MANAGER_LOCK 0x0008
+#define SC_MANAGER_QUERY_LOCK_STATUS 0x0010
+#define SC_MANAGER_MODIFY_BOOT_CONFIG 0x0020
+#define SC_MANAGER_ALL_ACCESS 0xF003F
+
+#define SERVICE_QUERY_CONFIG 0x0001
+#define SERVICE_CHANGE_CONFIG 0x0002
+#define SERVICE_QUERY_STATUS 0x0004
+#define SERVICE_ENUMERATE_DEPENDENTS 0x0008
+#define SERVICE_START 0x0010
+#define SERVICE_STOP 0x0020
+#define SERVICE_PAUSE_CONTINUE 0x0040
+#define SERVICE_INTERROGATE 0x0080
+#define SERVICE_USER_DEFINED_CONTROL 0x0100
+#define SERVICE_ALL_ACCESS 0xF01FF
+
+#ifndef DELETE
+#define DELETE 0x00010000
+#endif
+#ifndef ACCESS_SYSTEM_SECURITY
+#define ACCESS_SYSTEM_SECURITY 0x01000000
+#endif
+#ifndef READ_CONTROL
+#define READ_CONTROL 0x00020000
+#define WRITE_DAC 0x00040000
+#define WRITE_OWNER 0x00080000
+#define SYNCHRONIZE 0x00100000
+#define ACCESS_SYSTEM_SECURITY 0x01000000
+#define STANDARD_RIGHTS_REQUIRED 0x000F0000
+#endif
+
+/* types, states, controls. */
+#define SERVICE_KERNEL_DRIVER 0x00000001
+#define SERVICE_FILE_SYSTEM_DRIVER 0x00000002
+#define SERVICE_ADAPTER 0x00000004
+#define SERVICE_RECOGNIZER_DRIVER 0x00000008
+#define SERVICE_DRIVER (SERVICE_KERNEL_DRIVER | SERVICE_FILE_SYSTEM_DRIVER | SERVICE_RECOGNIZER_DRIVER)
+#define SERVICE_WIN32_OWN_PROCESS 0x00000010
+#define SERVICE_WIN32_SHARE_PROCESS 0x00000020
+#define SERVICE_WIN32 (SERVICE_WIN32_OWN_PROCESS | SERVICE_WIN32_SHARE_PROCESS)
+#define SERVICE_USER_SERVICE 0x00000040
+#define SERVICE_USERSERVICE_INSTANCE 0x00000080
+#define SERVICE_USER_SHARE_PROCESS (SERVICE_USER_SERVICE | SERVICE_WIN32_SHARE_PROCESS)
+#define SERVICE_USER_OWN_PROCESS (SERVICE_USER_SERVICE | SERVICE_WIN32_OWN_PROCESS)
+#define SERVICE_INTERACTIVE_PROCESS 0x00000100
+#define SERVICE_PKG_SERVICE 0x00000200
+#define SERVICE_TYPE_ALL (SERVICE_WIN32 | SERVICE_ADAPTER | SERVICE_DRIVER | SERVICE_INTERACTIVE_PROCESS | \
+                          SERVICE_USER_SERVICE | SERVICE_USERSERVICE_INSTANCE | SERVICE_PKG_SERVICE)
+
+#define SERVICE_BOOT_START 0x00000000
+#define SERVICE_SYSTEM_START 0x00000001
+#define SERVICE_AUTO_START 0x00000002
+#define SERVICE_DEMAND_START 0x00000003
+#define SERVICE_DISABLED 0x00000004
+
+#define SERVICE_ERROR_IGNORE 0x00000000
+#define SERVICE_ERROR_NORMAL 0x00000001
+#define SERVICE_ERROR_SEVERE 0x00000002
+#define SERVICE_ERROR_CRITICAL 0x00000003
+
+#define SERVICE_CONTROL_STOP 0x00000001
+#define SERVICE_CONTROL_PAUSE 0x00000002
+#define SERVICE_CONTROL_CONTINUE 0x00000003
+#define SERVICE_CONTROL_INTERROGATE 0x00000004
+#define SERVICE_CONTROL_SHUTDOWN 0x00000005
+#define SERVICE_CONTROL_PARAMCHANGE 0x00000006
+#define SERVICE_CONTROL_NETBINDADD 0x00000007
+#define SERVICE_CONTROL_NETBINDREMOVE 0x00000008
+#define SERVICE_CONTROL_NETBINDENABLE 0x00000009
+#define SERVICE_CONTROL_NETBINDDISABLE 0x0000000A
+#define SERVICE_CONTROL_DEVICEEVENT 0x0000000B
+#define SERVICE_CONTROL_HARDWAREPROFILECHANGE 0x0000000C
+#define SERVICE_CONTROL_POWEREVENT 0x0000000D
+#define SERVICE_CONTROL_SESSIONCHANGE 0x0000000E
+#define SERVICE_CONTROL_PRESHUTDOWN 0x0000000F
+#define SERVICE_CONTROL_TIMECHANGE 0x00000010
+#define SERVICE_CONTROL_TRIGGEREVENT 0x00000020
+
+#define SERVICE_STOPPED 0x00000001
+#define SERVICE_START_PENDING 0x00000002
+#define SERVICE_STOP_PENDING 0x00000003
+#define SERVICE_RUNNING 0x00000004
+#define SERVICE_CONTINUE_PENDING 0x00000005
+#define SERVICE_PAUSE_PENDING 0x00000006
+#define SERVICE_PAUSED 0x00000007
+
+#define SERVICE_ACCEPT_STOP 0x00000001
+#define SERVICE_ACCEPT_PAUSE_CONTINUE 0x00000002
+#define SERVICE_ACCEPT_SHUTDOWN 0x00000004
+#define SERVICE_ACCEPT_PARAMCHANGE 0x00000008
+#define SERVICE_ACCEPT_NETBINDCHANGE 0x00000010
+#define SERVICE_ACCEPT_HARDWAREPROFILECHANGE 0x00000020
+#define SERVICE_ACCEPT_POWEREVENT 0x00000040
+#define SERVICE_ACCEPT_SESSIONCHANGE 0x00000080
+#define SERVICE_ACCEPT_PRESHUTDOWN 0x00000100
+#define SERVICE_ACCEPT_TIMECHANGE 0x00000200
+#define SERVICE_ACCEPT_TRIGGEREVENT 0x00000400
+
+#define SERVICE_ACTIVE 0x00000001
+#define SERVICE_INACTIVE 0x00000002
+#define SERVICE_STATE_ALL (SERVICE_ACTIVE | SERVICE_INACTIVE)
+
+#define SERVICE_NO_CHANGE 0xFFFFFFFF
+#define SERVICE_CONFIG_DESCRIPTION 1
+#define SERVICE_CONFIG_FAILURE_ACTIONS 2
+#define SERVICE_CONFIG_DELAYED_AUTO_START_INFO 3
+#define SERVICE_CONFIG_FAILURE_ACTIONS_FLAG 4
+#define SERVICE_CONFIG_SERVICE_SID_INFO 5
+#define SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO 6
+#define SERVICE_CONFIG_PRESHUTDOWN_INFO 7
+#define SERVICE_CONFIG_TRIGGER_INFO 8
+#define SERVICE_CONFIG_PREFERRED_NODE 9
+#define SERVICE_CONFIG_LAUNCH_PROTECTED 12
+
+#define SERVICE_SID_TYPE_NONE 0x00000000
+#define SERVICE_SID_TYPE_UNRESTRICTED 0x00000001
+#define SERVICE_SID_TYPE_RESTRICTED 0x00000003
+
+#define SERVICE_RUNS_IN_SYSTEM_PROCESS 0x00000001
+#define SC_GROUP_IDENTIFIERW L'+'
+#define SC_GROUP_IDENTIFIERA '+'
+
+#define SERVICE_NOTIFY_STATUS_CHANGE_1 1
+#define SERVICE_NOTIFY_STATUS_CHANGE_2 2
+#define SERVICE_NOTIFY_STATUS_CHANGE SERVICE_NOTIFY_STATUS_CHANGE_2
+#define SERVICE_NOTIFY_STOPPED 0x00000001
+#define SERVICE_NOTIFY_START_PENDING 0x00000002
+#define SERVICE_NOTIFY_STOP_PENDING 0x00000004
+#define SERVICE_NOTIFY_RUNNING 0x00000008
+#define SERVICE_NOTIFY_CONTINUE_PENDING 0x00000010
+#define SERVICE_NOTIFY_PAUSE_PENDING 0x00000020
+#define SERVICE_NOTIFY_PAUSED 0x00000040
+#define SERVICE_NOTIFY_CREATED 0x00000080
+#define SERVICE_NOTIFY_DELETED 0x00000100
+#define SERVICE_NOTIFY_DELETE_PENDING 0x00000200
+
+typedef struct _SERVICE_STATUS {
+    DWORD dwServiceType;
+    DWORD dwCurrentState;
+    DWORD dwControlsAccepted;
+    DWORD dwWin32ExitCode;
+    DWORD dwServiceSpecificExitCode;
+    DWORD dwCheckPoint;
+    DWORD dwWaitHint;
+} SERVICE_STATUS, *LPSERVICE_STATUS;
+
+typedef struct _SERVICE_STATUS_PROCESS {
+    DWORD dwServiceType;
+    DWORD dwCurrentState;
+    DWORD dwControlsAccepted;
+    DWORD dwWin32ExitCode;
+    DWORD dwServiceSpecificExitCode;
+    DWORD dwCheckPoint;
+    DWORD dwWaitHint;
+    DWORD dwProcessId;
+    DWORD dwServiceFlags;
+} SERVICE_STATUS_PROCESS, *LPSERVICE_STATUS_PROCESS;
+
+typedef enum _SC_STATUS_TYPE {
+    SC_STATUS_PROCESS_INFO = 0
+} SC_STATUS_TYPE;
+
+typedef enum _SC_ENUM_TYPE {
+    SC_ENUM_PROCESS_INFO = 0
+} SC_ENUM_TYPE;
+
+typedef struct _ENUM_SERVICE_STATUSA {
+    LPSTR lpServiceName;
+    LPSTR lpDisplayName;
+    SERVICE_STATUS ServiceStatus;
+} ENUM_SERVICE_STATUSA, *LPENUM_SERVICE_STATUSA;
+
+typedef struct _ENUM_SERVICE_STATUSW {
+    LPWSTR lpServiceName;
+    LPWSTR lpDisplayName;
+    SERVICE_STATUS ServiceStatus;
+} ENUM_SERVICE_STATUSW, *LPENUM_SERVICE_STATUSW;
+
+typedef struct _ENUM_SERVICE_STATUS_PROCESSA {
+    LPSTR lpServiceName;
+    LPSTR lpDisplayName;
+    SERVICE_STATUS_PROCESS ServiceStatusProcess;
+} ENUM_SERVICE_STATUS_PROCESSA, *LPENUM_SERVICE_STATUS_PROCESSA;
+
+typedef struct _ENUM_SERVICE_STATUS_PROCESSW {
+    LPWSTR lpServiceName;
+    LPWSTR lpDisplayName;
+    SERVICE_STATUS_PROCESS ServiceStatusProcess;
+} ENUM_SERVICE_STATUS_PROCESSW, *LPENUM_SERVICE_STATUS_PROCESSW;
+
+typedef struct _QUERY_SERVICE_CONFIGA {
+    DWORD dwServiceType;
+    DWORD dwStartType;
+    DWORD dwErrorControl;
+    LPSTR lpBinaryPathName;
+    LPSTR lpLoadOrderGroup;
+    DWORD dwTagId;
+    LPSTR lpDependencies;
+    LPSTR lpServiceStartName;
+    LPSTR lpDisplayName;
+} QUERY_SERVICE_CONFIGA, *LPQUERY_SERVICE_CONFIGA;
+
+typedef struct _QUERY_SERVICE_CONFIGW {
+    DWORD dwServiceType;
+    DWORD dwStartType;
+    DWORD dwErrorControl;
+    LPWSTR lpBinaryPathName;
+    LPWSTR lpLoadOrderGroup;
+    DWORD dwTagId;
+    LPWSTR lpDependencies;
+    LPWSTR lpServiceStartName;
+    LPWSTR lpDisplayName;
+} QUERY_SERVICE_CONFIGW, *LPQUERY_SERVICE_CONFIGW;
+
+typedef struct _QUERY_SERVICE_LOCK_STATUSA {
+    DWORD fIsLocked;
+    LPSTR lpLockOwner;
+    DWORD dwLockDuration;
+} QUERY_SERVICE_LOCK_STATUSA, *LPQUERY_SERVICE_LOCK_STATUSA;
+
+typedef struct _QUERY_SERVICE_LOCK_STATUSW {
+    DWORD fIsLocked;
+    LPWSTR lpLockOwner;
+    DWORD dwLockDuration;
+} QUERY_SERVICE_LOCK_STATUSW, *LPQUERY_SERVICE_LOCK_STATUSW;
+
+typedef struct _SERVICE_DESCRIPTIONA {
+    LPSTR lpDescription;
+} SERVICE_DESCRIPTIONA, *LPSERVICE_DESCRIPTIONA;
+
+typedef struct _SERVICE_DESCRIPTIONW {
+    LPWSTR lpDescription;
+} SERVICE_DESCRIPTIONW, *LPSERVICE_DESCRIPTIONW;
+
+typedef enum _SC_ACTION_TYPE {
+    SC_ACTION_NONE = 0,
+    SC_ACTION_RESTART = 1,
+    SC_ACTION_REBOOT = 2,
+    SC_ACTION_RUN_COMMAND = 3,
+    SC_ACTION_OWN_RESTART = 4
+} SC_ACTION_TYPE;
+
+typedef struct _SC_ACTION {
+    SC_ACTION_TYPE Type;
+    DWORD Delay;
+} SC_ACTION, *LPSC_ACTION;
+
+typedef struct _SERVICE_FAILURE_ACTIONSA {
+    DWORD dwResetPeriod;
+    LPSTR lpRebootMsg;
+    LPSTR lpCommand;
+    DWORD cActions;
+    SC_ACTION *lpsaActions;
+} SERVICE_FAILURE_ACTIONSA, *LPSERVICE_FAILURE_ACTIONSA;
+
+typedef struct _SERVICE_FAILURE_ACTIONSW {
+    DWORD dwResetPeriod;
+    LPWSTR lpRebootMsg;
+    LPWSTR lpCommand;
+    DWORD cActions;
+    SC_ACTION *lpsaActions;
+} SERVICE_FAILURE_ACTIONSW, *LPSERVICE_FAILURE_ACTIONSW;
+
+typedef struct _SERVICE_DELAYED_AUTO_START_INFO {
+    BOOL fDelayedAutostart;
+} SERVICE_DELAYED_AUTO_START_INFO, *LPSERVICE_DELAYED_AUTO_START_INFO;
+
+typedef struct _SERVICE_FAILURE_ACTIONS_FLAG {
+    BOOL fFailureActionsOnNonCrashFailures;
+} SERVICE_FAILURE_ACTIONS_FLAG, *LPSERVICE_FAILURE_ACTIONS_FLAG;
+
+typedef struct _SERVICE_SID_INFO {
+    DWORD dwServiceSidType;
+} SERVICE_SID_INFO, *LPSERVICE_SID_INFO;
+
+typedef struct _SERVICE_REQUIRED_PRIVILEGES_INFOA {
+    LPSTR pmszRequiredPrivileges;
+} SERVICE_REQUIRED_PRIVILEGES_INFOA, *LPSERVICE_REQUIRED_PRIVILEGES_INFOA;
+
+typedef struct _SERVICE_REQUIRED_PRIVILEGES_INFOW {
+    LPWSTR pmszRequiredPrivileges;
+} SERVICE_REQUIRED_PRIVILEGES_INFOW, *LPSERVICE_REQUIRED_PRIVILEGES_INFOW;
+
+typedef struct _SERVICE_PRESHUTDOWN_INFO {
+    DWORD dwPreshutdownTimeout;
+} SERVICE_PRESHUTDOWN_INFO, *LPSERVICE_PRESHUTDOWN_INFO;
+
+typedef struct _SERVICE_LAUNCH_PROTECTED_INFO {
+    DWORD dwLaunchProtected;
+} SERVICE_LAUNCH_PROTECTED_INFO, *PSERVICE_LAUNCH_PROTECTED_INFO;
+
+typedef VOID(CALLBACK *PFN_SC_NOTIFY_CALLBACK)(PVOID parameter);
+
+typedef struct _SERVICE_NOTIFY_1 {
+    DWORD dwVersion;
+    PFN_SC_NOTIFY_CALLBACK pfnNotifyCallback;
+    PVOID pContext;
+    DWORD dwNotificationStatus;
+    SERVICE_STATUS_PROCESS ServiceStatus;
+} SERVICE_NOTIFY_1, *PSERVICE_NOTIFY_1;
+
+typedef struct _SERVICE_NOTIFY_2A {
+    DWORD dwVersion;
+    PFN_SC_NOTIFY_CALLBACK pfnNotifyCallback;
+    PVOID pContext;
+    DWORD dwNotificationStatus;
+    SERVICE_STATUS_PROCESS ServiceStatus;
+    DWORD dwNotificationTriggered;
+    LPSTR pszServiceNames;
+} SERVICE_NOTIFY_2A, *PSERVICE_NOTIFY_2A;
+
+typedef struct _SERVICE_NOTIFY_2W {
+    DWORD dwVersion;
+    PFN_SC_NOTIFY_CALLBACK pfnNotifyCallback;
+    PVOID pContext;
+    DWORD dwNotificationStatus;
+    SERVICE_STATUS_PROCESS ServiceStatus;
+    DWORD dwNotificationTriggered;
+    LPWSTR pszServiceNames;
+} SERVICE_NOTIFY_2W, *PSERVICE_NOTIFY_2W;
+
+typedef SERVICE_NOTIFY_2A SERVICE_NOTIFYA, *PSERVICE_NOTIFYA;
+typedef SERVICE_NOTIFY_2W SERVICE_NOTIFYW, *PSERVICE_NOTIFYW;
+
+/* the service side. */
+typedef VOID(WINAPI *LPSERVICE_MAIN_FUNCTIONW)(DWORD argc, LPWSTR *argv);
+typedef VOID(WINAPI *LPSERVICE_MAIN_FUNCTIONA)(DWORD argc, LPSTR *argv);
+typedef VOID(WINAPI *LPHANDLER_FUNCTION)(DWORD control);
+typedef DWORD(WINAPI *LPHANDLER_FUNCTION_EX)(DWORD control, DWORD event_type, LPVOID event_data, LPVOID context);
+
+typedef struct _SERVICE_TABLE_ENTRYA {
+    LPSTR lpServiceName;
+    LPSERVICE_MAIN_FUNCTIONA lpServiceProc;
+} SERVICE_TABLE_ENTRYA, *LPSERVICE_TABLE_ENTRYA;
+
+typedef struct _SERVICE_TABLE_ENTRYW {
+    LPWSTR lpServiceName;
+    LPSERVICE_MAIN_FUNCTIONW lpServiceProc;
+} SERVICE_TABLE_ENTRYW, *LPSERVICE_TABLE_ENTRYW;
+
+WINADVAPI SC_HANDLE WINAPI OpenSCManagerA(LPCSTR machine, LPCSTR database, DWORD access);
+WINADVAPI SC_HANDLE WINAPI OpenSCManagerW(LPCWSTR machine, LPCWSTR database, DWORD access);
+WINADVAPI SC_HANDLE WINAPI OpenServiceA(SC_HANDLE manager, LPCSTR name, DWORD access);
+WINADVAPI SC_HANDLE WINAPI OpenServiceW(SC_HANDLE manager, LPCWSTR name, DWORD access);
+WINADVAPI BOOL WINAPI CloseServiceHandle(SC_HANDLE handle);
+WINADVAPI SC_HANDLE WINAPI CreateServiceA(SC_HANDLE manager, LPCSTR name, LPCSTR display, DWORD access, DWORD type,
+                                          DWORD start, DWORD error_control, LPCSTR path, LPCSTR group, LPDWORD tag,
+                                          LPCSTR dependencies, LPCSTR account, LPCSTR password);
+WINADVAPI SC_HANDLE WINAPI CreateServiceW(SC_HANDLE manager, LPCWSTR name, LPCWSTR display, DWORD access, DWORD type,
+                                          DWORD start, DWORD error_control, LPCWSTR path, LPCWSTR group, LPDWORD tag,
+                                          LPCWSTR dependencies, LPCWSTR account, LPCWSTR password);
+WINADVAPI BOOL WINAPI DeleteService(SC_HANDLE service);
+WINADVAPI BOOL WINAPI ChangeServiceConfigA(SC_HANDLE service, DWORD type, DWORD start, DWORD error_control,
+                                           LPCSTR path, LPCSTR group, LPDWORD tag, LPCSTR dependencies,
+                                           LPCSTR account, LPCSTR password, LPCSTR display);
+WINADVAPI BOOL WINAPI ChangeServiceConfigW(SC_HANDLE service, DWORD type, DWORD start, DWORD error_control,
+                                           LPCWSTR path, LPCWSTR group, LPDWORD tag, LPCWSTR dependencies,
+                                           LPCWSTR account, LPCWSTR password, LPCWSTR display);
+WINADVAPI BOOL WINAPI ChangeServiceConfig2A(SC_HANDLE service, DWORD level, LPVOID info);
+WINADVAPI BOOL WINAPI ChangeServiceConfig2W(SC_HANDLE service, DWORD level, LPVOID info);
+WINADVAPI BOOL WINAPI QueryServiceConfigA(SC_HANDLE service, LPQUERY_SERVICE_CONFIGA config, DWORD size, LPDWORD needed);
+WINADVAPI BOOL WINAPI QueryServiceConfigW(SC_HANDLE service, LPQUERY_SERVICE_CONFIGW config, DWORD size, LPDWORD needed);
+WINADVAPI BOOL WINAPI QueryServiceConfig2A(SC_HANDLE service, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed);
+WINADVAPI BOOL WINAPI QueryServiceConfig2W(SC_HANDLE service, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed);
+WINADVAPI BOOL WINAPI QueryServiceStatus(SC_HANDLE service, LPSERVICE_STATUS status);
+WINADVAPI BOOL WINAPI QueryServiceStatusEx(SC_HANDLE service, SC_STATUS_TYPE level, LPBYTE buffer, DWORD size,
+                                           LPDWORD needed);
+WINADVAPI BOOL WINAPI EnumServicesStatusA(SC_HANDLE manager, DWORD type, DWORD state, LPENUM_SERVICE_STATUSA services,
+                                          DWORD size, LPDWORD needed, LPDWORD count, LPDWORD resume);
+WINADVAPI BOOL WINAPI EnumServicesStatusW(SC_HANDLE manager, DWORD type, DWORD state, LPENUM_SERVICE_STATUSW services,
+                                          DWORD size, LPDWORD needed, LPDWORD count, LPDWORD resume);
+WINADVAPI BOOL WINAPI EnumServicesStatusExA(SC_HANDLE manager, SC_ENUM_TYPE level, DWORD type, DWORD state,
+                                            LPBYTE services, DWORD size, LPDWORD needed, LPDWORD count, LPDWORD resume,
+                                            LPCSTR group);
+WINADVAPI BOOL WINAPI EnumServicesStatusExW(SC_HANDLE manager, SC_ENUM_TYPE level, DWORD type, DWORD state,
+                                            LPBYTE services, DWORD size, LPDWORD needed, LPDWORD count, LPDWORD resume,
+                                            LPCWSTR group);
+WINADVAPI BOOL WINAPI EnumDependentServicesA(SC_HANDLE service, DWORD state, LPENUM_SERVICE_STATUSA services,
+                                             DWORD size, LPDWORD needed, LPDWORD count);
+WINADVAPI BOOL WINAPI EnumDependentServicesW(SC_HANDLE service, DWORD state, LPENUM_SERVICE_STATUSW services,
+                                             DWORD size, LPDWORD needed, LPDWORD count);
+WINADVAPI BOOL WINAPI StartServiceA(SC_HANDLE service, DWORD count, LPCSTR *arguments);
+WINADVAPI BOOL WINAPI StartServiceW(SC_HANDLE service, DWORD count, LPCWSTR *arguments);
+WINADVAPI BOOL WINAPI ControlService(SC_HANDLE service, DWORD control, LPSERVICE_STATUS status);
+WINADVAPI BOOL WINAPI ControlServiceExA(SC_HANDLE service, DWORD control, DWORD level, PVOID info);
+WINADVAPI BOOL WINAPI ControlServiceExW(SC_HANDLE service, DWORD control, DWORD level, PVOID info);
+WINADVAPI DWORD WINAPI NotifyServiceStatusChangeA(SC_HANDLE service, DWORD mask, PSERVICE_NOTIFYA notify);
+WINADVAPI DWORD WINAPI NotifyServiceStatusChangeW(SC_HANDLE service, DWORD mask, PSERVICE_NOTIFYW notify);
+WINADVAPI BOOL WINAPI QueryServiceObjectSecurity(SC_HANDLE service, DWORD information, PSECURITY_DESCRIPTOR descriptor,
+                                                 DWORD size, LPDWORD needed);
+WINADVAPI BOOL WINAPI SetServiceObjectSecurity(SC_HANDLE service, DWORD information, PSECURITY_DESCRIPTOR descriptor);
+WINADVAPI SC_LOCK WINAPI LockServiceDatabase(SC_HANDLE manager);
+WINADVAPI BOOL WINAPI UnlockServiceDatabase(SC_LOCK lock);
+WINADVAPI BOOL WINAPI QueryServiceLockStatusA(SC_HANDLE manager, LPQUERY_SERVICE_LOCK_STATUSA status, DWORD size,
+                                              LPDWORD needed);
+WINADVAPI BOOL WINAPI QueryServiceLockStatusW(SC_HANDLE manager, LPQUERY_SERVICE_LOCK_STATUSW status, DWORD size,
+                                              LPDWORD needed);
+WINADVAPI BOOL WINAPI GetServiceDisplayNameA(SC_HANDLE manager, LPCSTR name, LPSTR display, LPDWORD size);
+WINADVAPI BOOL WINAPI GetServiceDisplayNameW(SC_HANDLE manager, LPCWSTR name, LPWSTR display, LPDWORD size);
+WINADVAPI BOOL WINAPI GetServiceKeyNameA(SC_HANDLE manager, LPCSTR display, LPSTR name, LPDWORD size);
+WINADVAPI BOOL WINAPI GetServiceKeyNameW(SC_HANDLE manager, LPCWSTR display, LPWSTR name, LPDWORD size);
+WINADVAPI BOOL WINAPI NotifyBootConfigStatus(BOOL boot_acceptable);
+WINADVAPI BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE status, DWORD bits, BOOL set, BOOL update);
+WINADVAPI BOOL WINAPI StartServiceCtrlDispatcherA(const SERVICE_TABLE_ENTRYA *table);
+WINADVAPI BOOL WINAPI StartServiceCtrlDispatcherW(const SERVICE_TABLE_ENTRYW *table);
+WINADVAPI SERVICE_STATUS_HANDLE WINAPI RegisterServiceCtrlHandlerA(LPCSTR name, LPHANDLER_FUNCTION handler);
+WINADVAPI SERVICE_STATUS_HANDLE WINAPI RegisterServiceCtrlHandlerW(LPCWSTR name, LPHANDLER_FUNCTION handler);
+WINADVAPI SERVICE_STATUS_HANDLE WINAPI RegisterServiceCtrlHandlerExA(LPCSTR name, LPHANDLER_FUNCTION_EX handler,
+                                                                     LPVOID context);
+WINADVAPI SERVICE_STATUS_HANDLE WINAPI RegisterServiceCtrlHandlerExW(LPCWSTR name, LPHANDLER_FUNCTION_EX handler,
+                                                                     LPVOID context);
+WINADVAPI BOOL WINAPI SetServiceStatus(SERVICE_STATUS_HANDLE status, LPSERVICE_STATUS service_status);
+
+#ifdef UNICODE
+#define OpenSCManager OpenSCManagerW
+#define OpenService OpenServiceW
+#define CreateService CreateServiceW
+#define QueryServiceConfig QueryServiceConfigW
+#define StartService StartServiceW
+#endif
+
+#endif
