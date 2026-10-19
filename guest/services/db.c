@@ -517,10 +517,13 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
         return ERROR_INVALID_PARAMETER;
     }
     SERVICE *existing = DbFind(name);
-    if (existing) {
-        DbLoadRecord(existing);
-        return existing->Flags & SVF_DELETE_PENDING ? ERROR_SERVICE_MARKED_FOR_DELETE : ERROR_SERVICE_EXISTS;
+    if (existing && !DbLoadRecord(existing)) {
+        /* a key with no service in it, left by a create or a delete that did not end: OpenService does not find it, so it is not one. */
+        DbRemove(existing);
+        existing = nullptr;
     }
+    if (existing)
+        return existing->Flags & SVF_DELETE_PENDING ? ERROR_SERVICE_MARKED_FOR_DELETE : ERROR_SERVICE_EXISTS;
     if (display && *display) {
         if (wcsnlen(display, SVC_NAME_MAX + 1) > SVC_NAME_MAX)
             return ERROR_INVALID_NAME;
