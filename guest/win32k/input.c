@@ -300,6 +300,10 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         ClipboardHostChanged((ULONG)ev->x, (ULONG)ev->y);
         return;
     }
+    if (ev->type == MIME_INPUT_IME) {
+        ImeHostEvent(ev);
+        return;
+    }
     if (ev->type >= MIME_INPUT_DND_ENTER && ev->type <= MIME_INPUT_DND_END) {
         DndHostEvent(ev);
         return;

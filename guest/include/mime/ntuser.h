@@ -596,6 +596,20 @@ W32KAPI ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG
 W32KAPI ULONG NTAPI NtUserMimeDndData(ULONG session, ULONG format, PUCHAR buffer, ULONG capacity, ULONG offset,
                                       PULONG total);
 /* a chunk of the data the host asked the source for; total is 0xFFFFFFFF for none. */
+/*
+ * the input method of the host (win32k ime.c). a composition is the session's, for the window with the focus of
+ * the foreground thread. MIME_IME_GET gives a part of it as ImmGetCompositionString does, MIME_IME_AREA tells
+ * the host where text is entered in a window (buffer: left, top, right, bottom and the caret's x, client
+ * coordinates of the window a), MIME_IME_NOTIFY ends the composition (a: CPS_COMPLETE or CPS_CANCEL),
+ * MIME_IME_AVAILABLE says whether the host has an input method at all.
+ */
+enum {
+    MIME_IME_GET = 1,
+    MIME_IME_AREA,
+    MIME_IME_NOTIFY,
+    MIME_IME_AVAILABLE,
+};
+W32KAPI ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULONG size);
 W32KAPI ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total);
 
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);

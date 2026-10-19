@@ -1,12 +1,15 @@
 /*
- * imm32: input contexts for a keyboard layout without an input method
- * editor. contexts exist and keep their windows, positions, fonts and
- * status like windows, but nothing ever composes: composition strings are
- * empty, notifications to the ime fail and there is no ime window.
+ * imm32: input contexts. they keep their windows, positions, fonts and
+ * status like windows. the input method is the host's: when the desktop
+ * has one, win32k sends the composition messages to the window with the
+ * focus and the composition strings come from it; without one nothing
+ * composes. there is no ime window and no candidate list, the host's input
+ * method draws its own, near the place the program says text is entered.
  */
 #define MIME_BUILD_IMM32
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
+#include <mime/ntuser.h>
 #include <mime/win32/winbase.h>
 #include <mime/win32/imm.h>
 
@@ -14,9 +17,23 @@ WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data);
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name);
 WINUSERAPI HANDLE WINAPI RemovePropW(HWND hwnd, LPCWSTR name);
 WINUSERAPI DWORD WINAPI GetWindowThreadProcessId(HWND hwnd, LPDWORD pid);
+WINUSERAPI HWND WINAPI GetFocus(void);
 
-/* the window property holding the associated context; 1 stands for an explicit NULL association. */
-#define IMM_PROP L"MimeImmContext"
+WINUSERAPI UINT WINAPI RegisterWindowMessageW(LPCWSTR name);
+
+/*
+ * the window property holding the associated context; 1 stands for an explicit NULL association. its name is a
+ * registered atom, which win32k looks up by name to know which windows took no part in input methods.
+ */
+#define IMM_PROP_NAME L"MimeImmContext"
+static LPCWSTR imm_prop(void)
+{
+    static UINT atom;
+    if (!atom)
+        atom = RegisterWindowMessageW(IMM_PROP_NAME);
+    return MAKEINTATOM(atom);
+}
+#define IMM_PROP imm_prop()
 #define IMM_NULL_CONTEXT ((HANDLE)(ULONG_PTR)1)
 
 typedef struct IMM_CONTEXT {
@@ -228,15 +245,38 @@ IMMAPI BOOL WINAPI ImmAssociateContextEx(HWND hwnd, HIMC himc, DWORD flags)
     return ok;
 }
 
-/* nothing is ever being composed: every composition string is empty. */
+/* whether the calling thread owns the context. */
+static BOOL own_context(HIMC himc)
+{
+    lock();
+    BOOL ok = owned_by_thread(himc);
+    unlock();
+    return ok;
+}
+
 IMMAPI LONG WINAPI ImmGetCompositionStringW(HIMC himc, DWORD index, LPVOID buffer, DWORD size)
 {
-    return 0;
+    if (!own_context(himc))
+        return 0;
+    return (LONG)NtUserMimeIme(MIME_IME_GET, index, 0, buffer, size);
 }
 
 IMMAPI LONG WINAPI ImmGetCompositionStringA(HIMC himc, DWORD index, LPVOID buffer, DWORD size)
 {
-    return 0;
+    if (!own_context(himc))
+        return 0;
+    if (index != GCS_COMPSTR && index != GCS_COMPREADSTR && index != GCS_RESULTSTR && index != GCS_RESULTREADSTR)
+        return (LONG)NtUserMimeIme(MIME_IME_GET, index, 0, buffer, size);
+    /* the text in the ansi code page; clause and attribute counts are the same for single byte characters. */
+    WCHAR wide[512];
+    LONG bytes = (LONG)NtUserMimeIme(MIME_IME_GET, index, 0, (PUCHAR)wide, sizeof(wide));
+    int chars = bytes / (int)sizeof(WCHAR);
+    int needed = chars ? WideCharToMultiByte(CP_ACP, 0, wide, chars, nullptr, 0, nullptr, nullptr) : 0;
+    if (!buffer || !size)
+        return needed;
+    char *out = buffer;
+    int n = needed ? WideCharToMultiByte(CP_ACP, 0, wide, chars, out, (int)size, nullptr, nullptr) : 0;
+    return n;
 }
 
 IMMAPI BOOL WINAPI ImmSetCompositionStringW(HIMC himc, DWORD index, LPVOID comp, DWORD comp_size, LPVOID read,
@@ -257,6 +297,22 @@ IMMAPI BOOL WINAPI ImmGetCompositionWindow(HIMC himc, LPCOMPOSITIONFORM form)
     return c != nullptr;
 }
 
+/* tells the host where text is entered, in client coordinates of the window with the focus. */
+static void report_area(const POINT *at, const RECT *exclude, LONG height)
+{
+    HWND focus = GetFocus();
+    if (!focus)
+        return;
+    LONG area[5] = {at->x, at->y, at->x + 1, at->y + (height > 0 ? height : 16), at->x};
+    if (exclude) {
+        area[0] = exclude->left;
+        area[1] = exclude->top;
+        area[2] = exclude->right;
+        area[3] = exclude->bottom;
+    }
+    NtUserMimeIme(MIME_IME_AREA, (ULONG_PTR)focus, 0, (PUCHAR)area, sizeof(area));
+}
+
 IMMAPI BOOL WINAPI ImmSetCompositionWindow(HIMC himc, LPCOMPOSITIONFORM form)
 {
     if (!form)
@@ -264,9 +320,14 @@ IMMAPI BOOL WINAPI ImmSetCompositionWindow(HIMC himc, LPCOMPOSITIONFORM form)
     lock();
     IMM_CONTEXT *c = from_handle(himc);
     BOOL ok = c && c->Thread == GetCurrentThreadId();
-    if (ok)
+    LONG height = 0;
+    if (ok) {
         c->Composition = *form;
+        height = c->HasFont ? (c->Font.lfHeight < 0 ? -c->Font.lfHeight : c->Font.lfHeight) : 0;
+    }
     unlock();
+    if (ok && form->dwStyle != CFS_DEFAULT)
+        report_area(&form->ptCurrentPos, (form->dwStyle & CFS_RECT) ? &form->rcArea : nullptr, height);
     return ok;
 }
 
@@ -290,9 +351,15 @@ IMMAPI BOOL WINAPI ImmSetCandidateWindow(HIMC himc, LPCANDIDATEFORM form)
     lock();
     IMM_CONTEXT *c = from_handle(himc);
     BOOL ok = c && c->Thread == GetCurrentThreadId();
-    if (ok)
+    LONG height = 0;
+    if (ok) {
         c->Candidates[form->dwIndex] = *form;
+        height = c->HasFont ? (c->Font.lfHeight < 0 ? -c->Font.lfHeight : c->Font.lfHeight) : 0;
+    }
     unlock();
+    /* a candidate window beside a spot is where the text is; one that excludes an area stays out of it. */
+    if (ok && (form->dwStyle & (CFS_CANDIDATEPOS | CFS_EXCLUDE | CFS_POINT)))
+        report_area(&form->ptCurrentPos, (form->dwStyle & CFS_EXCLUDE) ? &form->rcArea : nullptr, height);
     return ok;
 }
 
@@ -371,10 +438,12 @@ IMMAPI BOOL WINAPI ImmSetConversionStatus(HIMC himc, DWORD conversion, DWORD sen
     return ok;
 }
 
-/* the keyboard layout has no ime to notify. */
+/* completing or cancelling the composition is what the host's input method can be told. */
 IMMAPI BOOL WINAPI ImmNotifyIME(HIMC himc, DWORD action, DWORD index, DWORD value)
 {
-    return FALSE;
+    if (action != NI_COMPOSITIONSTR || (index != CPS_COMPLETE && index != CPS_CANCEL) || !own_context(himc))
+        return FALSE;
+    return NtUserMimeIme(MIME_IME_NOTIFY, index, 0, nullptr, 0) != 0;
 }
 
 /* no ime processed the key, which windows reports as VK_PROCESSKEY. */
@@ -389,9 +458,10 @@ IMMAPI HWND WINAPI ImmGetDefaultIMEWnd(HWND hwnd)
     return nullptr;
 }
 
+/* the layout has an input method when the desktop does. */
 IMMAPI BOOL WINAPI ImmIsIME(HKL hkl)
 {
-    return FALSE;
+    return NtUserMimeIme(MIME_IME_AVAILABLE, 0, 0, nullptr, 0) != 0;
 }
 
 IMMAPI DWORD WINAPI ImmGetProperty(HKL hkl, DWORD index)

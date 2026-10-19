@@ -892,6 +892,11 @@ void ClipboardHostRequest(ULONG kind, ULONG id);
 UINT ClipboardFormatOfKind(ULONG kind);
 ULONG ClipboardKindOfFormat(UINT format);
 
+/* ime.c */
+void ImeHostEvent(const MimeInputEvent *ev);
+void ImeWindowDestroyed(WND *w);
+LRESULT ImeDefaultCompositionChars(WND *w);
+
 /* dnd.c */
 void DndHostEvent(const MimeInputEvent *ev);
 void DndThreadDestroyed(W32THREAD *t);

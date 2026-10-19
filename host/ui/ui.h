@@ -63,6 +63,15 @@ uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t l
                                    uint64_t total);
 
 /*
+ * the input method of the desktop, see MIME_INPUT_IME: the oldest queued text (utf-16, at most count units, the
+ * return value is its length), where text is entered in a window (window relative guest pixels), and ending a
+ * composition or asking whether the host has an input method protocol. each returns a MIME_HC_STATUS_*.
+ */
+uint64_t mime_ui_ime_text(uint16_t *dst, size_t capacity, uint64_t *length);
+uint64_t mime_ui_ime_area(uint32_t window, const MimeRect *area, int32_t cursor);
+uint64_t mime_ui_ime_control(uint32_t op, uint32_t window, uint64_t *value);
+
+/*
  * drag and drop with the host's programs, see MIME_INPUT_DND_*; each returns a MIME_HC_STATUS_*, unsupported on
  * the macos display. effect and finish answer a host drag over a guest window; fetch reads its data in a kind
  * (the answer to MIME_HC_DND_FETCH is like the clipboard's). start begins a host drag of the guest's own, with the

@@ -392,6 +392,23 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_DND_STOP:
         status = mime_ui_dnd_stop((uint32_t)regs[1]);
         break;
+    case MIME_HC_IME_TEXT: {
+        uint16_t *dst = regs[2] && regs[2] <= CLIP_CHUNK_MAX ? mime_vm_phys(vm, regs[1], regs[2]) : nullptr;
+        if (regs[2] && !dst) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        status = mime_ui_ime_text(dst, (size_t)regs[2] / 2, &value);
+        break;
+    }
+    case MIME_HC_IME_AREA: {
+        MimeRect area = {(int32_t)regs[2], (int32_t)regs[3], (int32_t)regs[4], (int32_t)regs[5]};
+        status = mime_ui_ime_area((uint32_t)regs[1], &area, (int32_t)regs[6]);
+        break;
+    }
+    case MIME_HC_IME_CONTROL:
+        status = mime_ui_ime_control((uint32_t)regs[1], (uint32_t)regs[2], &value);
+        break;
     case MIME_HC_GPU_OPEN:
         status = mime_gpu_open(vm, regs[1], regs[2], &value);
         break;

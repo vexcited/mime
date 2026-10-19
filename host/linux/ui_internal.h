@@ -33,6 +33,17 @@ void *mime_ui_window_surface(uint32_t window);
  */
 uint8_t *mime_ui_request_guest(uint32_t event, uint32_t kind, int timeout_ms, size_t *size);
 
+/* ime.c, called by the main loop. */
+void mime_ime_editing(uint32_t window, const char *text, int start, int length);
+bool mime_ime_commit(uint32_t window, const char *text);
+void mime_ime_flush(void);
+bool mime_ime_pending(void);
+/* ui.c: where text is entered in a window, window relative guest pixels, for the input method's popups. */
+void mime_ui_set_text_area(uint32_t window, MimeRect area, int32_t cursor);
+void mime_ui_clear_composition(uint32_t window);
+/* dnd.c: whether the compositor has the text input protocol. */
+bool mime_ui_has_text_input(void);
+
 /* dnd.c, called by the main loop once the display is up. */
 void mime_dnd_init(void);
 

@@ -2068,6 +2068,24 @@ uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t l
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
+/* typed text arrives as characters here; no composition is shown. */
+uint64_t mime_ui_ime_text(uint16_t *dst, size_t capacity, uint64_t *length)
+{
+    *length = 0;
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_ime_area(uint32_t window, const MimeRect *area, int32_t cursor)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_ime_control(uint32_t op, uint32_t window, uint64_t *value)
+{
+    *value = 0;
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
 /* drags go no further than the guest's own windows here. */
 uint64_t mime_ui_dnd_effect(uint32_t session, uint32_t effect)
 {

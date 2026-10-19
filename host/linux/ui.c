@@ -219,6 +219,27 @@ static uint32_t modifiers_of(SDL_Keymod mod)
     return m;
 }
 
+void mime_ui_set_text_area(uint32_t id, MimeRect r, int32_t cursor)
+{
+    UiWindow *w = find_window(id);
+    if (!w || !w->window)
+        return;
+    MimeRect host = host_part(&w->config);
+    Fit fit = window_fit(w);
+    SDL_Rect rect = {(int)lround(fit.x + (r.left - host.left) * fit.scale),
+                     (int)lround(fit.y + (r.top - host.top) * fit.scale),
+                     MIME_MAX(1, (int)lround((r.right - r.left) * fit.scale)),
+                     MIME_MAX(1, (int)lround((r.bottom - r.top) * fit.scale))};
+    SDL_SetTextInputArea(w->window, &rect, (int)lround(cursor * fit.scale));
+}
+
+void mime_ui_clear_composition(uint32_t id)
+{
+    UiWindow *w = find_window(id);
+    if (w && w->window)
+        SDL_ClearComposition(w->window);
+}
+
 uint32_t mime_ui_modifiers(void)
 {
     return modifiers_of(SDL_GetModState());
@@ -1508,14 +1529,26 @@ static void handle_event(const SDL_Event *e)
         ((void (*)(void *))e->user.data1)(e->user.data2);
         return;
     }
+    /* a composition that went empty and was followed by nothing else was cancelled. */
+    if (e->type != SDL_EVENT_TEXT_INPUT && e->type != SDL_EVENT_TEXT_EDITING)
+        mime_ime_flush();
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
         emit_key(&e->key);
         break;
-    case SDL_EVENT_TEXT_INPUT:
-        emit_text(&e->text);
+    case SDL_EVENT_TEXT_INPUT: {
+        UiWindow *w = find_by_sdl(e->text.windowID);
+        if (!w || !mime_ime_commit(w->id, e->text.text))
+            emit_text(&e->text);
         break;
+    }
+    case SDL_EVENT_TEXT_EDITING: {
+        UiWindow *w = find_by_sdl(e->edit.windowID);
+        if (w)
+            mime_ime_editing(w->id, e->edit.text, e->edit.start, e->edit.length);
+        break;
+    }
     case SDL_EVENT_MOUSE_MOTION:
         emit_motion(&e->motion);
         break;
@@ -1645,8 +1678,19 @@ void mime_ui_run(void)
         return;
     }
     SDL_Event e;
-    while (!g_stop && SDL_WaitEvent(&e))
-        handle_event(&e);
+    while (!g_stop) {
+        /* an input method's clear is held until the next event says whether text follows. */
+        if (mime_ime_pending()) {
+            if (SDL_WaitEventTimeout(&e, 30))
+                handle_event(&e);
+            else
+                mime_ime_flush();
+        } else if (SDL_WaitEvent(&e)) {
+            handle_event(&e);
+        } else {
+            break;
+        }
+    }
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used)
             destroy_host_window(&g_windows[i]);

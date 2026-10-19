@@ -851,9 +851,18 @@ static void seat_name(void *data, struct wl_seat *seat, const char *name)
 
 static const struct wl_seat_listener seat_listener = {seat_capabilities, seat_name};
 
+static bool g_text_input;
+
+bool mime_ui_has_text_input(void)
+{
+    return g_text_input;
+}
+
 static void registry_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                             uint32_t version)
 {
+    if (!strcmp(interface, "zwp_text_input_manager_v3"))
+        g_text_input = true;
     if (!strcmp(interface, wl_seat_interface.name) && !g_seat)
         g_seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
     else if (!strcmp(interface, wl_data_device_manager_interface.name))

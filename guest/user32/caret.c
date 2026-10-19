@@ -156,6 +156,13 @@ WINUSERAPI BOOL WINAPI HideCaret(HWND hwnd)
     return TRUE;
 }
 
+/* an input method puts its popups at the caret, until the program says elsewhere. */
+static void follow(const CARET *c)
+{
+    LONG area[5] = {c->x, c->y, c->x + (c->width > 0 ? c->width : 1), c->y + c->height, c->x};
+    NtUserMimeIme(MIME_IME_AREA, (ULONG_PTR)c->hwnd, 0, (PUCHAR)area, sizeof(area));
+}
+
 WINUSERAPI BOOL WINAPI SetCaretPos(int x, int y)
 {
     CARET *c = owned();
@@ -169,6 +176,7 @@ WINUSERAPI BOOL WINAPI SetCaretPos(int x, int y)
     c->y = y;
     if (!c->hidden)
         show_now(c);
+    follow(c);
     return TRUE;
 }
 

@@ -289,6 +289,17 @@ enum {
     MIME_HC_DND_FINISH = 0x4D,   /* (session, DROPEFFECT_*) the drop has been handled, with its effect */
     MIME_HC_DND_START = 0x4E,    /* (MIME_CLIP_* kinds, DROPEFFECT_* allowed, window) -> session: a drag of the guest leaves its windows */
     MIME_HC_DND_STOP = 0x4F,     /* (session) the guest ends the drag it started */
+
+    /* input methods, see MIME_INPUT_IME. */
+    MIME_HC_IME_TEXT = 0x50,     /* (pa, capacity) -> utf-16 units of the oldest queued preedit or commit text, copied to pa and dropped */
+    MIME_HC_IME_AREA = 0x51,     /* (window, left, top, right, bottom, cursor x) where text is entered, window relative, for the input method's popups */
+    MIME_HC_IME_CONTROL = 0x52,  /* (MIME_IME_*, window) */
+};
+
+/* MIME_HC_IME_CONTROL: whether the host has an input method protocol at all (1 or 0), and ending a composition. */
+enum {
+    MIME_IME_QUERY = 1,
+    MIME_IME_CANCEL = 2,
 };
 
 /* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */
@@ -721,6 +732,19 @@ enum {
     MIME_INPUT_DND_DROP = 23,
     MIME_INPUT_DND_REQUEST = 24,   /* a host program reads the data of the guest's drag: x is the kind, button the request id */
     MIME_INPUT_DND_END = 25,       /* the guest's drag ended: pad is the session, flags the DROPEFFECT_*, x is 1 for a drop */
+    /*
+     * the input method of the desktop composes text for a window: flags says what, MIME_IME_PREEDIT with x and y the
+     * selected part of the text, in utf-16 units, -1 for none, or MIME_IME_COMMIT, both with the text to take with
+     * MIME_HC_IME_TEXT, or MIME_IME_CANCELLED for a composition dropped. a text typed with no composition is
+     * MIME_INPUT_CHAR.
+     */
+    MIME_INPUT_IME = 26,
+};
+
+enum {
+    MIME_IME_PREEDIT = 1,
+    MIME_IME_COMMIT = 2,
+    MIME_IME_CANCELLED = 3,
 };
 
 /*

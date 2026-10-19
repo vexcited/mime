@@ -63,6 +63,14 @@ typedef struct tagCANDIDATELIST {
 #define IMM_ERROR_NODATA (-1)
 #define IMM_ERROR_GENERAL (-2)
 
+/* attributes of the characters of a composition string. */
+#define ATTR_INPUT 0x00
+#define ATTR_TARGET_CONVERTED 0x01
+#define ATTR_CONVERTED 0x02
+#define ATTR_TARGET_NOTCONVERTED 0x03
+#define ATTR_INPUT_ERROR 0x04
+#define ATTR_FIXEDCONVERTED 0x05
+
 /* ImmNotifyIME actions and indexes. */
 #define NI_OPENCANDIDATE 0x0010
 #define NI_CLOSECANDIDATE 0x0011

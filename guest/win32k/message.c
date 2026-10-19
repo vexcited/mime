@@ -1818,6 +1818,17 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         return (LRESULT)old;
     }
 
+    /* a result the input method committed becomes characters for a window that did not take it itself. */
+    case WM_IME_COMPOSITION:
+        if (lparam & 0x0800) /* GCS_RESULTSTR */
+            return ImeDefaultCompositionChars(w);
+        return 0;
+
+    case WM_IME_CHAR:
+        if (w->Thread)
+            QueuePost(w->Thread, WndHandle(w), WM_CHAR, wparam, lparam);
+        return 0;
+
     case WM_QUERYENDSESSION:
     case WM_QUERYOPEN:
         return TRUE;
