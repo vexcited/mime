@@ -164,6 +164,7 @@ typedef struct _KTHREAD {
     PVOID CallbackResult;
     PVOID Win32Thread;
     KJUMP_BUFFER *FaultRecovery;
+    NTSTATUS InPageStatus; /* set when the fault that was not resolved is an in page error: the status of the read that failed */
     ULONG64 ContextSwitches;
     ULONG64 BlockedTicks; /* counter ticks spent switched out, to tell a service's work from its waiting */
     ULONG64 KernelTime;
@@ -422,6 +423,9 @@ ULONG64 KiProcessorSmbiosId(void);
 #define KI_TRY_USER(buf) (KiCurrentThread()->FaultRecovery = &(buf), KiSetJump(&(buf)) == 0)
 #define KI_END_TRY_USER() (KiCurrentThread()->FaultRecovery = NULL)
 NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length);
+/* what a copy that took a fault returns: the in page error when the page was one a file lost, an access violation if not. */
+NTSTATUS KiFaultResult(void);
+void KiMakeInPageError(PEXCEPTION_RECORD record);
 NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length);
 BOOLEAN KiIsUserRange(const void *address, SIZE_T length);
 NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING kernel_copy, PCUNICODE_STRING user_string);
@@ -598,6 +602,16 @@ BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *p
 /* the page a view would map for a page without building or copying anything, or 0. */
 ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect);
 ULONG64 MiSectionSwPte(ULONG protect);
+
+/* winlost.c: pages of file windows the host took away. */
+extern volatile ULONG MmWindowDamaged;
+BOOLEAN MmWindowPageLostSlow(ULONG64 pa);
+#define MmWindowPageLost(pa) (__atomic_load_n(&MmWindowDamaged, __ATOMIC_ACQUIRE) && MmWindowPageLostSlow(pa))
+void MmWindowLostInitialize(void);
+void MmWindowLostInterrupt(void);
+void MmWindowLostFault(void);
+void MmWindowForget(ULONG64 window);
+void FsCacheWindowLost(ULONG64 ipa, ULONG64 end);
 ULONG64 MiSectionPteAttrs(PSECTION s, ULONG protect, ULONG64 pa, BOOLEAN shared);
 
 void MmInitialize(MimeBootInfo *boot);

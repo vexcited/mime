@@ -346,6 +346,11 @@ BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *p
     ULONG64 source = MiSectionPage(s, (ULONG)index);
     if (!source)
         return FALSE;
+    /* a page the host took away is an error for the thread that touches it, however many times it does. */
+    if (MmWindowPageLost(source)) {
+        MmWindowLostFault();
+        return FALSE;
+    }
     if ((vad->Flags & MM_VAD_RELOCATED) && page_needs_relocation(s, index)) {
         if (vad->Flags & MM_VAD_RELOCATED_SHARED) {
             source = shared_relocated_page(s, (ULONG)index, vad->RelocDelta);
@@ -384,6 +389,8 @@ ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect)
     if (index >= s->PageCount || ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))))
         return 0;
     ULONG64 source = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
+    if (source && MmWindowPageLost(source))
+        return 0;
     if (source && (vad->Flags & MM_VAD_RELOCATED) && page_needs_relocation(s, index))
         source = (vad->Flags & MM_VAD_RELOCATED_SHARED) ? __atomic_load_n(&s->RelocPages[index], __ATOMIC_ACQUIRE) : 0;
     return source;

@@ -622,6 +622,11 @@ static bool listen_socket(const MimePaths *paths)
  */
 static void on_fatal_signal(int sig, siginfo_t *info, void *context)
 {
+#ifdef __linux__
+    /* a file of a window was shortened under a page this thread touched: the page is replaced by zeros. */
+    if (sig == SIGBUS && info && mime_window_bus_fault(info->si_addr))
+        return;
+#endif
     static const char head[] = "mime-vmm: fatal signal, backtrace:\n";
     write(STDERR_FILENO, head, sizeof(head) - 1);
 #ifdef __linux__

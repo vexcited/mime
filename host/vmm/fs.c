@@ -916,6 +916,13 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         pthread_mutex_unlock(WINDOW_LOCK(vm));
 #endif
         break;
+    case MIME_HC_FS_WINDOW_LOST:
+#ifdef __linux__
+        status = mime_window_lost(vm, a[1]);
+#else
+        status = MIME_HC_STATUS_UNSUPPORTED;
+#endif
+        break;
     case MIME_HC_FS_UNMAP:
         pthread_mutex_lock(WINDOW_LOCK(vm));
         status = mime_window_unmap(vm, a[1]);

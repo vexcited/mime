@@ -1399,6 +1399,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     if (MmFastFault(va, write, execute))
         return TRUE;
     MmFaultStats[KeGetCurrentPrcb()->Number].Slow++;
+    KiCurrentThread()->InPageStatus = 0;
     MiLockAddressSpace(as);
     BOOLEAN handled = FALSE;
     as->PageFaults++;

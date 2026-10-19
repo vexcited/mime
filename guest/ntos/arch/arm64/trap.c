@@ -116,6 +116,7 @@ void KiUserExceptionHandler(PKTRAP_FRAME frame)
         record.NumberParameters = 2;
         record.ExceptionInformation[0] = ec == 0x20 ? 8 : ((frame->Esr & (1u << 6)) ? 1 : 0);
         record.ExceptionInformation[1] = frame->Far;
+        KiMakeInPageError(&record);
     }
     if (record.ExceptionCode == STATUS_BREAKPOINT) {
         /* brk does not advance the pc; windows reports the brk address and resumes after it. */

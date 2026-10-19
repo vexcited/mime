@@ -62,6 +62,22 @@ void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size)
     }
 }
 
+/*
+ * a fault that could not be resolved because the page is one a file lost is not an access violation: windows raises
+ * STATUS_IN_PAGE_ERROR with the kind of access and the address as for an access violation, and the status of the read
+ * that failed, as the third parameter. the record is changed in place.
+ */
+void KiMakeInPageError(PEXCEPTION_RECORD record)
+{
+    PKTHREAD thread = KiCurrentThread();
+    if (!thread->InPageStatus || record->ExceptionCode != STATUS_ACCESS_VIOLATION || record->NumberParameters < 2)
+        return;
+    record->ExceptionCode = STATUS_IN_PAGE_ERROR;
+    record->NumberParameters = 3;
+    record->ExceptionInformation[2] = (ULONG)thread->InPageStatus;
+    thread->InPageStatus = 0;
+}
+
 /* the images of the instruction pointer and of the words on top of the stack that point into one. */
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp)
 {

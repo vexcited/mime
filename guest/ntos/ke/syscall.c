@@ -415,6 +415,15 @@ BOOLEAN KiIsUserRange(const void *address, SIZE_T length)
     return a + length >= a && a + length <= MIME_USER_ADDRESS_LIMIT + 1;
 }
 
+NTSTATUS KiFaultResult(void)
+{
+    PKTHREAD thread = KiCurrentThread();
+    if (!thread->InPageStatus)
+        return STATUS_ACCESS_VIOLATION;
+    thread->InPageStatus = 0;
+    return STATUS_IN_PAGE_ERROR;
+}
+
 /* copies from caller memory; kernel mode callers (Zw* services) pass kernel buffers. */
 NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length)
 {
@@ -432,7 +441,7 @@ NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length)
         KI_END_TRY_USER();
         return STATUS_SUCCESS;
     }
-    return STATUS_ACCESS_VIOLATION;
+    return KiFaultResult();
 }
 
 NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length)
@@ -451,7 +460,7 @@ NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length)
         KI_END_TRY_USER();
         return STATUS_SUCCESS;
     }
-    return STATUS_ACCESS_VIOLATION;
+    return KiFaultResult();
 }
 
 /* driver facing copies that always treat the pointer as user memory, with fault recovery. */

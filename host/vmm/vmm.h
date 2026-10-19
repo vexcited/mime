@@ -104,6 +104,9 @@ typedef struct MimeLazyRegion {
 typedef struct MimeFileWindow {
     uint64_t ipa;
     uint64_t size;
+    int fd;            /* a duplicate of the file's descriptor, to see it shortened, -1 when there is none */
+    int watch;         /* its inotify watch */
+    uint64_t lost_from; /* bytes from the start of the window whose pages were given up, size when none were */
 } MimeFileWindow;
 #endif
 
@@ -232,6 +235,10 @@ uint64_t mime_window_unmap(MimeVm *vm, uint64_t ipa);
 void mime_window_unmap_all(MimeVm *vm);
 #ifdef __linux__
 void mime_window_warm(MimeVm *vm, uint64_t ipa);
+/* the pages of windows that the host's own changes to files took away, told to the guest before they are given up. */
+uint64_t mime_window_lost(MimeVm *vm, uint64_t pa);
+/* the fatal signal handler, for a bus error on a window: the page is replaced by zeros and true is returned. */
+bool mime_window_bus_fault(void *address);
 #endif
 
 /* net.c */

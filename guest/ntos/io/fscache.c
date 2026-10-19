@@ -68,8 +68,10 @@ static void unhash(MIMEFS_CACHE *c)
 
 static void release(MIMEFS_CACHE *c)
 {
-    if (c->Window)
+    if (c->Window) {
         HalHypercallUnlocked(MIME_HC_FS_UNMAP, c->Window, 0, 0, 0, 0, 0, nullptr);
+        MmWindowForget(c->Window);
+    }
     RemoveEntryList(&c->Lru);
     g_entries--;
     ExFreePool(c);
@@ -238,4 +240,19 @@ BOOLEAN FsCacheMapPrivate(ULONG64 host_handle, BOOLEAN writable, PULONG64 pa)
 void FsCacheUnmapPrivate(ULONG64 pa)
 {
     HalHypercallUnlocked(MIME_HC_FS_UNMAP, pa, 0, 0, 0, 0, 0, nullptr);
+    MmWindowForget(pa);
+}
+
+/* the host took pages of windows away: the entries that have them are dropped, and read the file through the host from now on. */
+void FsCacheWindowLost(ULONG64 begin, ULONG64 end)
+{
+    ExAcquireFastMutex(&g_lock);
+    for (ULONG b = 0; b < CACHE_BUCKETS; b++) {
+        for (MIMEFS_CACHE *c = g_buckets[b], *next; c; c = next) {
+            next = c->Next;
+            if (c->Window && c->Window < end && c->Window + ROUND_TO_PAGES(c->Size) > begin)
+                detach(c);
+        }
+    }
+    ExReleaseFastMutex(&g_lock);
 }

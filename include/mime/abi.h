@@ -385,6 +385,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_NET (1u << 4)
 #define MIME_IRQ_DUMP (1u << 5) /* log the guest's threads, on the host's SIGUSR1 */
 #define MIME_IRQ_FS (1u << 6)   /* the host changed files in a directory the guest watches: MIME_HC_FS_CHANGES */
+#define MIME_IRQ_WINDOW (1u << 7) /* pages of a file window are gone, the file was shortened: MIME_HC_FS_WINDOW_LOST */
 
 typedef struct MimeSharedPage {
     volatile uint32_t irq_pending;
@@ -427,6 +428,7 @@ enum {
     MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
     MIME_HC_FS_WARM = 0x61,     /* (pa) maps a file window into the guest's tables ahead of its first reads, without waiting for it */
     MIME_HC_FS_RENAME = 0x60,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
+    MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
     MIME_HC_WIN_DESTROY = 0x21, /* (window_id) */
@@ -836,6 +838,19 @@ typedef struct MimeFsChange {
     uint32_t name_chars;
     uint16_t name[]; /* below the watched directory, with backslashes */
 } MimeFsChange;
+
+/*
+ * pages of a window can go when the host shortens the file behind it. the host tells the guest before it gives the
+ * pages up, so that the guest takes its mappings of them away first and its programs get an error where they would read
+ * zeros: it fills the record with the next range, deals with it, and asks again with the serial of the one it dealt with.
+ */
+typedef struct MimeWindowLost {
+    uint64_t acked;  /* in: the serial of the range dealt with, 0 for none */
+    uint64_t serial; /* out: of the range below, 0 when there is none */
+    uint64_t ipa;    /* out: guest physical address of its first page */
+    uint64_t size;   /* out: bytes, a whole number of pages */
+    uint64_t window; /* out: where the window the range is in starts */
+} MimeWindowLost;
 
 /* MIME_HC_FS_MAP flags. a writable window needs a handle opened for writing, and is UNSUPPORTED where the host fills windows itself. */
 #define MIME_FS_MAP_WRITABLE 1u
