@@ -1771,8 +1771,6 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_video = g_call_event != 0;
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
-    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
-        mime_info("no game controllers (%s)", SDL_GetError());
     if (g_video) {
         update_display();
         mime_dnd_init();
@@ -2169,6 +2167,14 @@ static void handle_event(const SDL_Event *e)
 
 void mime_ui_run(void)
 {
+    /*
+     * the game controllers are looked for here and not in mime_ui_init: it takes 80 ms, which the machine boots
+     * in meanwhile. the controllers that are there are announced as events once it is done.
+     */
+    uint64_t began = mime_now_ns();
+    if (g_video && !SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+        mime_info("no game controllers (%s)", SDL_GetError());
+    mime_info("game controllers %llu us", (unsigned long long)((mime_now_ns() - began) / 1000));
     if (!g_video) {
         pthread_mutex_lock(&g_stop_lock);
         while (!g_stop)

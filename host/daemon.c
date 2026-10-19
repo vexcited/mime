@@ -693,6 +693,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     atexit(cleanup_files);
 
     mime_ui_init(on_input, nullptr);
+    uint64_t ui_ns = mime_now_ns();
 
     uint64_t ram = mime_vm_default_ram();
     const char *ram_env = getenv("MIME_RAM_MB");
@@ -700,6 +701,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         ram = MIME_MIN((uint64_t)atoi(ram_env) << 20, MIME_VMM_MAX_RAM);
     if (!mime_vm_create(&g_vm, paths, ram))
         return 1;
+    uint64_t created_ns = mime_now_ns();
     mime_ui_get_display(&g_vm.boot->display);
     mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
               g_vm.boot->display.dpi);
@@ -708,6 +710,9 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         return 1;
     if (!mime_vm_start(&g_vm))
         return 1;
+    mime_info("startup: display %llu us, machine %llu us, kernel and processors %llu us",
+              (unsigned long long)((ui_ns - g_start_ns) / 1000), (unsigned long long)((created_ns - ui_ns) / 1000),
+              (unsigned long long)((mime_now_ns() - created_ns) / 1000));
 #ifdef __linux__
     mime_vk_warm_up();
 #endif

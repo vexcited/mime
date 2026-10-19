@@ -87,7 +87,7 @@ static int wait_ready(const MimePaths *paths, pid_t pid, bool quiet)
                 printf("Mime machine is up (pid %u).\n", status.pid);
             return 0;
         }
-        usleep(20000);
+        usleep(2000);
     }
     mime_error("timed out waiting for the machine to boot");
     print_log_tail(paths);
@@ -193,7 +193,7 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
     close(fd);
     uint64_t deadline = mime_now_ns() + 10ull * 1000000000ull;
     while (pid > 0 && kill(pid, 0) == 0 && mime_now_ns() < deadline)
-        usleep(20000);
+        usleep(2000);
     if (pid > 0 && kill(pid, 0) == 0)
         kill(pid, SIGKILL);
     printf("Mime machine stopped.\n");
