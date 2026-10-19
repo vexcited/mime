@@ -8,6 +8,7 @@ typedef struct MX_CALLBACK32 {
     PVOID Native;
     PVOID Guest;
     ULONG Length;
+    PVOID External;  /* a block made for a large lparam, released with the result */
 } MX_CALLBACK32;
 
 /* copies the arguments below *stack, the 32-bit stack pointer, which moves past them. */

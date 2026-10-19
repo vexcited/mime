@@ -5,6 +5,7 @@
 #include <mime/wow32.h>
 #include <mime/win32/d3dkmthk.h>
 #include "mime_svc_win32k.h"
+#include "wow32_layout.h"
 
 void Mx32Unsupported(ULONG number);
 
@@ -665,27 +666,76 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtUserMessageCall: {
         for (ULONG i = 0; i < 7; i++)
             v[i] = a[i];
-        WINDOWPOS pos;
-        ULONG *p = ptr32(a[3]);
-        BOOLEAN windowpos = p && (a[1] == WM_WINDOWPOSCHANGING || a[1] == WM_WINDOWPOSCHANGED);
-        if (windowpos) {
-            pos = (WINDOWPOS){ptr32(p[0]), (HWND)(LONG_PTR)(LONG)p[1], (int)p[2], (int)p[3], (int)p[4], (int)p[5], p[6]};
-            v[3] = (ULONG_PTR)&pos;
+        /* the window and both parameters are sign extended, as a pointer below 2 GiB is not changed by it and
+           a number like -16 stays itself. */
+        v[0] = (LONG64)(LONG)a[0];
+        v[2] = (LONG64)(LONG)a[2];
+        v[3] = (LONG64)(LONG)a[3];
+        UINT msg = a[1];
+        /* the structures of the message the 32-bit program points to are made over in the layout of win32k. */
+        UCHAR copy[160];
+        PVOID user = ptr32(a[3]);
+        ULONG fixed = a[5] <= MIME_MSGCALL_SENDCALLBACK && user ? lay_size32(msg) : 0;
+        WINDOWPOS32_LAYOUT *pos32 = nullptr;
+        BOOLEAN calc = a[5] <= MIME_MSGCALL_SENDCALLBACK && user && msg == WM_NCCALCSIZE && a[2];
+        if (fixed) {
+            lay_to64(msg, user, copy);
+            v[3] = (ULONG_PTR)copy;
+        } else if (calc) {
+            /* three rectangles and the position they come with, which the program points to. */
+            NCCALCSIZE_PARAMS *params = (void *)copy;
+            memset(copy, 0, sizeof(copy));
+            memcpy(params->rgrc, user, sizeof(params->rgrc));
+            pos32 = ptr32(*(ULONG *)((PUCHAR)user + sizeof(params->rgrc)));
+            if (pos32) {
+                params->lppos = (WINDOWPOS *)(copy + sizeof(*params));
+                lay_to64(WM_WINDOWPOSCHANGING, pos32, params->lppos);
+            }
+            v[3] = (ULONG_PTR)copy;
+        } else if (a[5] <= MIME_MSGCALL_SENDCALLBACK && user && msg == WM_COPYDATA) {
+            const ULONG *cd = user;
+            *(COPYDATASTRUCT *)copy = (COPYDATASTRUCT){cd[0], cd[1], ptr32(cd[2])};
+            v[3] = (ULONG_PTR)copy;
+        } else if (a[5] <= MIME_MSGCALL_SENDCALLBACK && user && msg == WM_MDICREATE) {
+            const ULONG *m = user;
+            *(MDICREATESTRUCTW *)copy = (MDICREATESTRUCTW){ptr32(m[0]), ptr32(m[1]), lay_handle(m[2]), (int)m[3], (int)m[4],
+                                                           (int)m[5], (int)m[6], m[7], (LONG_PTR)(LONG)m[8]};
+            v[3] = (ULONG_PTR)copy;
         }
         MIME_SEND_TIMEOUT timeout;
+        MIME_SEND_CALLBACK callback;
+        MIME_BROADCAST broadcast;
         if (a[5] == MIME_MSGCALL_SENDTIMEOUT && a[4]) {
             const ULONG *p = ptr32(a[4]);
             timeout = (MIME_SEND_TIMEOUT){p[0], p[1], p[2]};
             v[4] = (ULONG_PTR)&timeout;
+        } else if (a[5] == MIME_MSGCALL_SENDCALLBACK && a[4]) {
+            const ULONG *p = ptr32(a[4]);
+            callback = (MIME_SEND_CALLBACK){ptr32(p[0]), p[1]};
+            v[4] = (ULONG_PTR)&callback;
+        } else if (a[5] == MIME_MSGCALL_BROADCAST && a[4]) {
+            const ULONG *p = ptr32(a[4]);
+            broadcast = (MIME_BROADCAST){p[0], p[1], lay_handle(p[2]), lay_handle(p[3])};
+            v[4] = (ULONG_PTR)&broadcast;
         }
         ULONG result = (ULONG)MxCallService(number, v);
-        if (windowpos) {
-            p[0] = (ULONG)(ULONG_PTR)pos.hwnd;
-            p[1] = (ULONG)(ULONG_PTR)pos.hwndInsertAfter;
-            p[2] = pos.x; p[3] = pos.y; p[4] = pos.cx; p[5] = pos.cy; p[6] = pos.flags;
+        if (fixed && lay_writes(msg)) {
+            lay_to32(msg, copy, user);
+        } else if (calc && pos32) {
+            const NCCALCSIZE_PARAMS *params = (const void *)copy;
+            memcpy(user, params->rgrc, sizeof(params->rgrc));
+            lay_to32(WM_WINDOWPOSCHANGING, params->lppos, pos32);
+        } else if (calc) {
+            memcpy(user, copy, 3 * sizeof(RECT));
         }
         if (a[5] == MIME_MSGCALL_SENDTIMEOUT && a[4])
             ((ULONG *)ptr32(a[4]))[2] = (ULONG)timeout.Result;
+        else if (a[5] == MIME_MSGCALL_BROADCAST && a[4]) {
+            ULONG *p = ptr32(a[4]);
+            p[0] = broadcast.Recipients;
+            p[2] = lay_narrow(broadcast.Hwnd);
+            p[3] = lay_narrow(broadcast.Desktop);
+        }
         return result;
     }
     case MIME_SVC_NtUserSystemParametersInfo:
