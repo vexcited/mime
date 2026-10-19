@@ -127,13 +127,44 @@ static LPWSTR build_command(LPCWSTR template, LPCWSTR file, LPCWSTR parameters)
     return command;
 }
 
-static BOOL run(LPCWSTR application, LPWSTR command, LPCWSTR directory, int show, SHELLEXECUTEINFOW *info)
+/*
+ * a process with the rights of an administrator is made by the broker (services.exe, through advapi32), which asks
+ * nobody here: the machine has no consent interface and its policy is to approve (see docs/services.md).
+ */
+typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
+                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
+
+static BOOL run_elevated(LPCWSTR application, LPWSTR command, LPCWSTR directory, STARTUPINFOW *startup,
+                         PROCESS_INFORMATION *process)
+{
+    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
+    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)GetProcAddress(advapi32, "MimeLaunchElevated") : nullptr;
+    if (!launch) {
+        SetLastError(ERROR_ELEVATION_REQUIRED);
+        return FALSE;
+    }
+    DWORD error = launch(application, command, directory, 0, startup, process, nullptr);
+    if (error)
+        SetLastError(error);
+    return !error;
+}
+
+/*
+ * starts a program: with the token of this process, or elevated when the verb is runas. a program whose manifest
+ * needs more than the token has is refused by CreateProcess with ERROR_ELEVATION_REQUIRED, and starts through the
+ * broker, as it does when the shell is asked to open it on windows.
+ */
+static BOOL run(LPCWSTR application, LPWSTR command, LPCWSTR directory, int show, SHELLEXECUTEINFOW *info, BOOL elevate)
 {
     STARTUPINFOW startup = {sizeof(startup)};
     PROCESS_INFORMATION process;
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = (WORD)show;
-    if (!CreateProcessW(application, command, nullptr, nullptr, FALSE, 0, nullptr, directory, &startup, &process))
+    BOOL started = !elevate && CreateProcessW(application, command, nullptr, nullptr, FALSE, 0, nullptr, directory,
+                                              &startup, &process);
+    if (!started && (elevate || GetLastError() == ERROR_ELEVATION_REQUIRED))
+        started = run_elevated(application, command, directory, &startup, &process);
+    if (!started)
         return FALSE;
     CloseHandle(process.hThread);
     if (info->fMask & SEE_MASK_NOCLOSEPROCESS)
@@ -159,7 +190,7 @@ static BOOL run_association(SHELLEXECUTEINFOW *info, LPCWSTR type, LPCWSTR verb,
     LPWSTR command = build_command(template, target, parameters);
     if (!command)
         return fail(info, ERROR_OUTOFMEMORY);
-    BOOL ok = run(nullptr, command, info->lpDirectory, info->nShow, info);
+    BOOL ok = run(nullptr, command, info->lpDirectory, info->nShow, info, !_wcsicmp(verb, L"runas"));
     DWORD error = GetLastError();
     ShFree(command);
     if (!ok)
@@ -233,7 +264,7 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
             return fail(info, ERROR_OUTOFMEMORY);
         _snwprintf(command, size, parameters[0] ? L"\"%ls\" %ls" : L"\"%ls\"", path, parameters);
         command[size - 1] = 0;
-        BOOL ok = run(path, command, info->lpDirectory, info->nShow, info);
+        BOOL ok = run(path, command, info->lpDirectory, info->nShow, info, !_wcsicmp(verb, L"runas"));
         DWORD error = GetLastError();
         ShFree(command);
         if (!ok)

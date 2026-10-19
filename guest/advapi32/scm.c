@@ -2490,3 +2490,48 @@ ADVAPI BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE handle, DWORD bits, BOOL
     DWORD error = call_simple(&w);
     return error ? fail(error) : TRUE;
 }
+
+/* ------------------------------------------------------------------ elevation */
+
+/*
+ * a process with the rights of an administrator: services.exe, which stands for the appinfo service of windows, makes
+ * it with the linked token of the caller and the caller as its parent, and gives back handles in this process. the
+ * startup information is what ShellExecute has to give: the window, the desktop and the title. an error of 0 is a
+ * process, ERROR_CANCELLED a request the policy of the machine (or a token with no administrator behind it) refused.
+ */
+ADVAPI DWORD WINAPI MimeLaunchElevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
+                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
+{
+    if (!command_line || !info)
+        return ERROR_INVALID_PARAMETER;
+    memset(info, 0, sizeof(*info));
+    DWORD error = wait_ready();
+    if (error)
+        return error;
+    SCM_WRITER w;
+    ScmWriterInit(&w, SCM_OP_LAUNCH_ELEVATED);
+    ScmPutString(&w, application);
+    ScmPutString(&w, command_line);
+    ScmPutString(&w, directory);
+    ScmPutString(&w, startup ? startup->lpDesktop : nullptr);
+    ScmPutString(&w, startup ? startup->lpTitle : nullptr);
+    ScmPutU32(&w, creation_flags);
+    ScmPutU32(&w, startup ? startup->dwFlags : 0);
+    ScmPutU32(&w, startup ? startup->wShowWindow : 1);
+    SC_REPLY reply;
+    error = call(&w, &reply);
+    if (!error) {
+        info->dwProcessId = ScmGetU32(&reply.R);
+        info->dwThreadId = ScmGetU32(&reply.R);
+        DWORD kind = ScmGetU32(&reply.R);
+        info->hProcess = (HANDLE)(ULONG_PTR)ScmGetU64(&reply.R);
+        info->hThread = (HANDLE)(ULONG_PTR)ScmGetU64(&reply.R);
+        if (reply.R.Failed)
+            error = ERROR_INVALID_DATA;
+        else if (elevation)
+            *elevation = kind;
+    }
+    reply_free(&reply);
+    AdvSetError(error);
+    return error;
+}

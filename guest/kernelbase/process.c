@@ -939,6 +939,12 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
             KbSetError(ERROR_FILENAME_EXCED_RANGE);
         return FALSE;
     }
+    /* a program that asks for rights the token lacks does not start; ShellExecute starts it through the broker. */
+    DWORD elevation = KbCheckElevation(token, full);
+    if (elevation) {
+        KbSetError(elevation);
+        return FALSE;
+    }
     WCHAR default_command[MAX_PATH + 3];
     if (!command_line) {
         default_command[0] = L'"';

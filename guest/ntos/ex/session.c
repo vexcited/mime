@@ -175,6 +175,29 @@ static void handle_shutdown(const MimeCtrlShutdown *request, ULONG size)
         KiLogPrintf("shutdown request: %08x", status);
 }
 
+/*
+ * the policy of user account control, which user mode reads from the shared page: whether programs that ask for
+ * elevation are elevated at all, whether files and keys are virtualized and whether installers are told by their name.
+ * a policy that is not set is on, as it is on a machine that was not changed.
+ */
+static void load_elevation_policy(void)
+{
+    static const WCHAR key[] = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System";
+    static const struct {
+        PCWSTR Name;
+        ULONG Bit;
+    } policies[] = {{L"EnableLUA", 2}, {L"EnableVirtualization", 4}, {L"EnableInstallerDetection", 8}};
+    ULONG flags = 0;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(policies); i++) {
+        ULONG type = 0, length = sizeof(ULONG), value = 1;
+        if (!NT_SUCCESS(CmQueryValue(key, policies[i].Name, &type, &value, &length)) || type != 4 /* REG_DWORD */ || length < sizeof(ULONG))
+            value = 1;
+        if (value)
+            flags |= policies[i].Bit;
+    }
+    SharedUserData->SharedDataFlags = (SharedUserData->SharedDataFlags & ~0xEu) | flags;
+}
+
 /* runs on the phase 1 system thread and never returns. */
 void MiSessionInitialize(void)
 {
@@ -188,6 +211,7 @@ void MiSessionInitialize(void)
     HalSharedPage->guest_ready = 1;
     send_message(&ready, sizeof(ready));
     KiLogPrintf("session ready");
+    load_elevation_policy();
     /* the machine answers the host first; the services start alongside the first requests. */
     PsStartServiceController();
 

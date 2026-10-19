@@ -38,6 +38,9 @@ FORCEINLINE void KbSetError(DWORD error)
     NtCurrentTeb()->LastErrorValue = error;
 }
 
+/* elevation.c: ERROR_ELEVATION_REQUIRED when the manifest of the program asks for more than the token has. */
+DWORD KbCheckElevation(HANDLE token, PCWSTR path);
+
 /* translates a status into the thread's last error; returns FALSE for convenience. */
 BOOL KbSetStatus(NTSTATUS status);
 

@@ -567,6 +567,14 @@ NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const 
         t->Flags |= TOKEN_IS_RESTRICTED | TOKEN_IS_FILTERED;
     if (flags & WRITE_RESTRICTED)
         t->Flags |= TOKEN_WRITE_RESTRICTED | TOKEN_IS_RESTRICTED;
+    /* a whole token cut down is not whole any more: it is the limited half of a pair with the one it came from. */
+    if (t->ElevationType == SEP_ELEVATION_FULL && !SepElevated(t)) {
+        t->ElevationType = SEP_ELEVATION_LIMITED;
+        if (t->Linked)
+            ObDereferenceObject(t->Linked);
+        ObReferenceObject(source);
+        t->Linked = source;
+    }
     *out = t;
     return STATUS_SUCCESS;
 }

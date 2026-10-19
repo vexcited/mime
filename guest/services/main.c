@@ -1003,6 +1003,46 @@ static DWORD op_control(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     return error;
 }
 
+/*
+ * a process that asks for the rights of an administrator (SCM_OP_LAUNCH_ELEVATED): the program, its command line and the
+ * parts of the startup information that matter, then the ids and the handles of the process in the client's.
+ */
+static DWORD op_launch_elevated(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
+{
+    (void)cl;
+    BOOL present;
+    WCHAR *application = get_string(r, &present);
+    WCHAR *command_line = get_string(r, &present);
+    WCHAR *directory = get_string(r, &present);
+    WCHAR *desktop = get_string(r, &present);
+    WCHAR *title = get_string(r, &present);
+    ELEVATE_REQUEST q = {application, command_line, directory, desktop, title};
+    q.CreationFlags = ScmGetU32(r);
+    q.StartupFlags = ScmGetU32(r);
+    q.Show = ScmGetU32(r);
+    DWORD error = ERROR_INVALID_PARAMETER;
+    if (!r->Failed && command_line && *command_line) {
+        ELEVATE_RESULT out = {};
+        /* the launch takes its time, and needs nothing of the database. */
+        LeaveCriticalSection(&g_lock);
+        error = g_shutdown ? ERROR_SHUTDOWN_IN_PROGRESS : ElevateLaunch(c->Pipe, c->Pid, &q, &out);
+        EnterCriticalSection(&g_lock);
+        if (!error) {
+            ScmPutU32(w, out.ProcessId);
+            ScmPutU32(w, out.ThreadId);
+            ScmPutU32(w, out.Elevation);
+            ScmPutU64(w, out.Process);
+            ScmPutU64(w, out.Thread);
+        }
+    }
+    SvcFree(application);
+    SvcFree(command_line);
+    SvcFree(directory);
+    SvcFree(desktop);
+    SvcFree(title);
+    return error;
+}
+
 static DWORD op_set_status(CONN *c, SCM_READER *r)
 {
     UINT64 id = ScmGetU64(r);
@@ -1310,6 +1350,9 @@ static DWORD handle_request(CONN *c, DWORD op, SCM_READER *r, SCM_WRITER *w, KEE
             break;
         case SCM_OP_SET_BITS:
             error = ERROR_SUCCESS;
+            break;
+        case SCM_OP_LAUNCH_ELEVATED:
+            error = op_launch_elevated(c, cl, r, w);
             break;
         case SCM_OP_NOTIFY_ATTACH:
             error = ERROR_SUCCESS;

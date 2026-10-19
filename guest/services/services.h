@@ -335,6 +335,20 @@ DWORD AccessSetSd(PSECURITY_DESCRIPTOR *sd, DWORD information, PSECURITY_DESCRIP
 HANDLE AccessServiceToken(SERVICE *s, DWORD *error);
 void AccessEnablePrivilege(const WCHAR *name);
 
+/* elevate.c: the broker for processes that ask for the rights of an administrator. */
+typedef struct ELEVATE_REQUEST {
+    WCHAR *Application, *CommandLine, *Directory, *Desktop, *Title;
+    DWORD CreationFlags, StartupFlags, Show;
+    void *Environment; /* the caller's own, used when the user's cannot be made */
+} ELEVATE_REQUEST;
+
+typedef struct ELEVATE_RESULT {
+    DWORD ProcessId, ThreadId, Elevation;
+    UINT64 Process, Thread; /* handles in the process of the client */
+} ELEVATE_RESULT;
+
+DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
+
 /* boot.c */
 void BootStart(void);
 void ShutdownInit(void);

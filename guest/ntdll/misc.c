@@ -241,6 +241,15 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlGetNtProductType(ULONG *type)
     return TRUE;
 }
 
+/* the policy of account control the kernel read at the start: elevation, virtualization and installer detection, one bit each. */
+NTDLL_EXPORT NTSTATUS NTAPI RtlQueryElevationFlags(PULONG flags)
+{
+    if (!flags)
+        return STATUS_ACCESS_VIOLATION;
+    *flags = (USER_SHARED_DATA->SharedDataFlags >> 1) & 7;
+    return STATUS_SUCCESS;
+}
+
 NTDLL_EXPORT PCWSTR NTAPI RtlGetNtSystemRoot(void)
 {
     return (PCWSTR)USER_SHARED_DATA->NtSystemRoot;

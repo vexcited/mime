@@ -840,7 +840,10 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
         out_bytes_ulong(o, t->ElevationType);
         return STATUS_SUCCESS;
     case TokenElevation:
-        out_bytes_ulong(o, SepElevated(t));
+        /* a token of a pair is as its type says; one that is alone is elevated by what it holds. */
+        out_bytes_ulong(o, t->ElevationType == SEP_ELEVATION_FULL      ? 1
+                           : t->ElevationType == SEP_ELEVATION_LIMITED ? 0
+                                                                       : SepElevated(t));
         return STATUS_SUCCESS;
     case TokenHasRestrictions:
         at = out_alloc(o, 1, 1);
