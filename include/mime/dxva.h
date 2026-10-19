@@ -121,7 +121,7 @@ typedef struct DxvaSegmentationVP9 {
     uint8_t pred_probs[3];
     int16_t feature_data[8][4];
     uint8_t feature_mask[8];
-} DxvaSegmentationVP9;
+} __attribute__((packed)) DxvaSegmentationVP9;
 
 typedef struct DxvaPicParamsVP9 {
     DxvaPicEntry curr_pic;
@@ -180,8 +180,8 @@ typedef struct DxvaPicParamsVP9 {
     uint16_t reserved16;
     uint32_t reserved32;
     uint32_t status_report_feedback_number;
-} DxvaPicParamsVP9;
+} __attribute__((packed)) DxvaPicParamsVP9;
 
-_Static_assert(sizeof(DxvaPicParamsVP9) == 212, "DXVA_PicParams_VP9 is 212 bytes");
+_Static_assert(sizeof(DxvaPicParamsVP9) == 208, "DXVA_PicParams_VP9 is 208 bytes, packed by one as dxva.h is");
 
 #endif
