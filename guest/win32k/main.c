@@ -277,6 +277,7 @@ W32THREAD *W32GetThread(void)
     InitializeListHead(&t->Input);
     InitializeListHead(&t->Sent);
     t->CursorShowCount = 0;
+    t->LastRead = W32TickCount();
     InsertTailList(&g_threads, &t->Links);
     PsSetThreadWin32Thread(PsGetCurrentThread(), t, nullptr);
     return t;
@@ -317,16 +318,33 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     HookRemoveThread(t);
     free_message_list(&t->Posted);
     free_message_list(&t->Input);
+    /* a thread that ends inside a procedure called for a sent message never answers it. */
+    for (SENT_MESSAGE *sm = t->Receiving; sm;) {
+        SENT_MESSAGE *outer = sm->Outer;
+        if (sm->Notify) {
+            if (sm->Owned)
+                W32Free((PVOID)sm->Lparam);
+            W32Free(sm);
+        } else if (!sm->Completed) {
+            sm->Completed = TRUE;
+            sm->Aborted = TRUE;
+            sm->Result = 0;
+            KeSetEvent(&sm->Done, 0, FALSE);
+        }
+        sm = outer;
+    }
+    t->Receiving = nullptr;
     /* release senders waiting on this thread. */
     while (!IsListEmpty(&t->Sent)) {
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
         if (sm->Notify) {
-            if (sm->LparamKind != MIME_LPARAM_VALUE)
+            if (sm->Owned)
                 W32Free((PVOID)sm->Lparam);
             W32Free(sm);
             continue;
         }
         sm->Completed = TRUE;
+        sm->Aborted = TRUE;
         sm->Result = 0;
         KeSetEvent(&sm->Done, 0, FALSE);
     }
@@ -388,6 +406,7 @@ BOOL NTAPI NtUserInitializeClientPfnArrays(const MIME_CLIENT_INFO *user_info)
     if (p) {
         p->Client = info;
         p->ClientValid = TRUE;
+        p->Wow = (info.Flags & MIME_CLIENT_WOW) != 0;
     }
     UserLeave();
     return p != nullptr;

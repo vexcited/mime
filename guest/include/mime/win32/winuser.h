@@ -80,6 +80,7 @@ typedef void(CALLBACK *MSGBOXCALLBACK)(struct tagHELPINFO *info);
 #define WM_WINDOWPOSCHANGING 0x0046
 #define WM_WINDOWPOSCHANGED 0x0047
 #define WM_COPYDATA 0x004A
+#define WM_COPYGLOBALDATA 0x0049
 #define WM_CANCELJOURNAL 0x004B
 #define WM_NOTIFY 0x004E
 #define WM_INPUTLANGCHANGEREQUEST 0x0050
@@ -543,6 +544,8 @@ typedef void(CALLBACK *MSGBOXCALLBACK)(struct tagHELPINFO *info);
 #define SMTO_NORMAL 0x0000
 #define SMTO_BLOCK 0x0001
 #define SMTO_ABORTIFHUNG 0x0002
+#define SMTO_NOTIMEOUTIFNOTHUNG 0x0008
+#define SMTO_ERRORONEXIT 0x0020
 
 typedef struct tagMSG {
     HWND hwnd;
@@ -1603,6 +1606,151 @@ WINUSERAPI LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPA
 WINUSERAPI LRESULT WINAPI CallWindowProcW(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 WINUSERAPI LRESULT WINAPI SendMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 WINUSERAPI LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI LRESULT WINAPI SendMessageTimeoutA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags,
+                                              UINT timeout, ULONG_PTR *result);
+WINUSERAPI BOOL WINAPI SendNotifyMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI BOOL WINAPI SendNotifyMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI BOOL WINAPI SendMessageCallbackW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, SENDASYNCPROC proc,
+                                            ULONG_PTR data);
+WINUSERAPI BOOL WINAPI SendMessageCallbackA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, SENDASYNCPROC proc,
+                                            ULONG_PTR data);
+WINUSERAPI BOOL WINAPI PostMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI BOOL WINAPI PostThreadMessageA(DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI LRESULT WINAPI CallWindowProcA(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+
+typedef struct tagCOPYDATASTRUCT {
+    ULONG_PTR dwData;
+    DWORD cbData;
+    PVOID lpData;
+} COPYDATASTRUCT, *PCOPYDATASTRUCT;
+
+typedef struct tagMDICREATESTRUCTW {
+    LPCWSTR szClass;
+    LPCWSTR szTitle;
+    HANDLE hOwner;
+    int x;
+    int y;
+    int cx;
+    int cy;
+    DWORD style;
+    LPARAM lParam;
+} MDICREATESTRUCTW, *LPMDICREATESTRUCTW;
+
+typedef struct tagMDICREATESTRUCTA {
+    LPCSTR szClass;
+    LPCSTR szTitle;
+    HANDLE hOwner;
+    int x;
+    int y;
+    int cx;
+    int cy;
+    DWORD style;
+    LPARAM lParam;
+} MDICREATESTRUCTA, *LPMDICREATESTRUCTA;
+
+typedef struct tagSCROLLBARINFO {
+    DWORD cbSize;
+    RECT rcScrollBar;
+    int dxyLineButton;
+    int xyThumbTop;
+    int xyThumbBottom;
+    int reserved;
+    DWORD rgstate[6];
+} SCROLLBARINFO, *PSCROLLBARINFO, *LPSCROLLBARINFO;
+
+typedef struct tagTITLEBARINFOEX {
+    DWORD cbSize;
+    RECT rcTitleBar;
+    DWORD rgstate[6];
+    RECT rgrect[6];
+} TITLEBARINFOEX, *PTITLEBARINFOEX, *LPTITLEBARINFOEX;
+
+typedef struct tagMDINEXTMENU {
+    HMENU hmenuIn;
+    HMENU hmenuNext;
+    HWND hwndNext;
+} MDINEXTMENU, *PMDINEXTMENU, *LPMDINEXTMENU;
+
+typedef struct tagMENUGETOBJECTINFO {
+    DWORD dwFlags;
+    UINT uPos;
+    HMENU hmenu;
+    PVOID riid;
+    PVOID pvObj;
+} MENUGETOBJECTINFO, *PMENUGETOBJECTINFO;
+
+typedef struct tagDROPSTRUCT {
+    HWND hwndSource;
+    HWND hwndSink;
+    DWORD wFmt;
+    ULONG_PTR dwData;
+    POINT ptDrop;
+    DWORD dwControlData;
+} DROPSTRUCT, *PDROPSTRUCT, *LPDROPSTRUCT;
+
+#define WM_MENUGETOBJECT 0x0124
+#define WM_MDIGETACTIVE 0x0229
+#define WM_DROPOBJECT 0x022A
+
+#define DBT_DEVICEARRIVAL 0x8000
+#define DBT_DEVICEREMOVECOMPLETE 0x8004
+#define DBT_DEVTYP_DEVICEINTERFACE 0x00000005
+#define PBT_POWERSETTINGCHANGE 0x8013
+
+typedef struct _DEV_BROADCAST_HDR {
+    DWORD dbch_size;
+    DWORD dbch_devicetype;
+    DWORD dbch_reserved;
+} DEV_BROADCAST_HDR, *PDEV_BROADCAST_HDR;
+
+typedef struct _DEV_BROADCAST_DEVICEINTERFACE_W {
+    DWORD dbcc_size;
+    DWORD dbcc_devicetype;
+    DWORD dbcc_reserved;
+    GUID dbcc_classguid;
+    WCHAR dbcc_name[1];
+} DEV_BROADCAST_DEVICEINTERFACE_W, *PDEV_BROADCAST_DEVICEINTERFACE_W;
+
+typedef struct {
+    GUID PowerSetting;
+    DWORD DataLength;
+    UCHAR Data[1];
+} POWERBROADCAST_SETTING, *PPOWERBROADCAST_SETTING;
+
+#define BSM_ALLCOMPONENTS 0x00000000
+#define BSM_VXDS 0x00000001
+#define BSM_NETDRIVER 0x00000002
+#define BSM_INSTALLABLEDRIVERS 0x00000004
+#define BSM_APPLICATIONS 0x00000008
+#define BSM_ALLDESKTOPS 0x00000010
+#define BSF_QUERY 0x00000001
+#define BSF_IGNORECURRENTTASK 0x00000002
+#define BSF_FLUSHDISK 0x00000004
+#define BSF_NOHANG 0x00000008
+#define BSF_POSTMESSAGE 0x00000010
+#define BSF_FORCEIFHUNG 0x00000020
+#define BSF_NOTIMEOUTIFNOTHUNG 0x00000040
+#define BSF_ALLOWSFW 0x00000080
+#define BSF_SENDNOTIFYMESSAGE 0x00000100
+#define BSF_RETURNHDESK 0x00000200
+#define BSF_LUID 0x00000400
+#define BROADCAST_QUERY_DENY 0x424D5144
+
+typedef struct {
+    UINT cbSize;
+    HDESK hdesk;
+    HWND hwnd;
+    LUID luid;
+} BSMINFO, *PBSMINFO;
+
+WINUSERAPI long WINAPI BroadcastSystemMessageW(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                               LPARAM lparam);
+WINUSERAPI long WINAPI BroadcastSystemMessageA(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                               LPARAM lparam);
+WINUSERAPI long WINAPI BroadcastSystemMessageExW(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                                 LPARAM lparam, PBSMINFO info);
+WINUSERAPI long WINAPI BroadcastSystemMessageExA(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                                 LPARAM lparam, PBSMINFO info);
 WINUSERAPI UINT WINAPI RegisterWindowMessageW(LPCWSTR name);
 WINUSERAPI UINT WINAPI RegisterWindowMessageA(LPCSTR name);
 WINUSERAPI BOOL WINAPI PostMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

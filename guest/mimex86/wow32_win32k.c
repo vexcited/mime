@@ -383,7 +383,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         const ULONG *p = ptr32(a[0]);
         if (!p || p[0] != 12 + 4 * (MIME_FNID_COUNT + 1))
             return FALSE;
-        MIME_CLIENT_INFO info = {sizeof(info), 0, ptr32(p[2])};
+        MIME_CLIENT_INFO info = {sizeof(info), MIME_CLIENT_WOW, ptr32(p[2])};
         for (ULONG i = 0; i < MIME_FNID_COUNT; i++)
             info.Procs[i] = ptr32(p[i + 3]);
         info.DefWindowProcW = ptr32(p[3 + MIME_FNID_COUNT]);

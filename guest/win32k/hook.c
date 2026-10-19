@@ -138,6 +138,7 @@ static LRESULT send_hook(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG 
     sm->Lparam = size ? (LPARAM)copy : lparam;
     sm->LparamKind = size ? MIME_LPARAM_INOUT : MIME_LPARAM_VALUE;
     sm->LparamSize = size;
+    sm->Owned = size != 0;
     KeInitializeEvent(&sm->Done, NotificationEvent, FALSE);
     InsertTailList(&owner->Sent, &sm->Links);
     QueueWake(owner, QS_SENDMESSAGE);

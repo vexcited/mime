@@ -79,9 +79,24 @@ static inline void UserFreeConverted(const void *converted, const void *original
 /* the move and size loop of DefWindowProc, movesize.c. */
 BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 
-/* message translation between ansi and unicode window procedures. */
+/* message translation between ansi and unicode, ansi.c. */
+typedef struct CONV {
+    int kind;
+    UINT msg;
+    HWND hwnd;
+    WPARAM wparam, user_wparam;  /* what the call is given and what the caller gave */
+    LPARAM lparam, user_lparam;
+    void *block;                 /* memory of the conversion, released at its end */
+    int room;
+    BOOL refused;                /* nothing to send: refusal is the answer */
+    LRESULT refusal;
+} CONV;
+BOOL UserConvBegin(CONV *c, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT UserConvEnd(CONV *c, LRESULT result);
+LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR info, DWORD type, BOOL ansi);
 LRESULT UserCallProc(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi);
+WPARAM UserCharWparam(UINT msg, WPARAM wparam, BOOL to_wide);
 
 /* window procedures of the system classes. */
 LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

@@ -451,6 +451,7 @@ typedef struct W32PROCESS {
     ULONG DpiAwareness;
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
+    BOOLEAN Wow;        /* a 32-bit program, its structures are converted at its boundary */
     struct W32GPU *Gpu; /* gpu.c */
     struct W32VK *Vk;   /* vulkan.c */
     struct W32AUDIO *Audio; /* audio.c */
@@ -494,6 +495,14 @@ typedef struct SENT_MESSAGE {
     BOOLEAN Notify;       /* SendNotifyMessage: nobody waits, the receiver frees it */
     BOOLEAN SenderGone;
     BOOLEAN Ansi;
+    BOOLEAN Owned;        /* Lparam is pool memory that belongs to the message once its sender stops waiting */
+    BOOLEAN Aborted;      /* the window or its thread went before the procedure ran or finished */
+    BOOLEAN Callback;     /* SendMessageCallback: the sender gets the result later */
+    BOOLEAN ResultCall;   /* not a message: the result of a callback, to call in the sender's thread */
+    struct SENT_MESSAGE *Outer; /* the message the receiving thread was processing when this one came in */
+    HANDLE SenderTid;
+    SENDASYNCPROC AsyncProc;
+    ULONG_PTR AsyncData;
     HHOOK Hook;           /* a hook call instead of a message, Msg holds the hook code */
     KEVENT Done;
 } SENT_MESSAGE;
@@ -525,6 +534,8 @@ typedef struct W32THREAD {
     HWND MouseWindow;    /* window under the mouse for leave tracking */
     TRACKMOUSEEVENT Track;
     ULONG CallbackDepth;
+    ULONG LastRead;          /* tick of the last time the thread looked at its queue */
+    BOOLEAN InWait;          /* sleeping in a message wait or in a send, serving its queue */
     struct HOOK *CurrentHook; /* the hook procedure running, for CallNextHookEx */
     BOOLEAN Destroying;
     HCURSOR Cursor;
@@ -723,6 +734,65 @@ ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max); /* window relative capt
 LRESULT FrameMouse(WND *w, UINT msg, LONG hit, POINT pt);
 
 /* ------------------------------------------------------------------ messages and callbacks */
+
+/* thunk.c: how the parameters of a message are copied between processes. */
+typedef enum MSG_CLASS {
+    MC_VALUE,         /* both parameters are plain values */
+    MC_KERNEL,        /* only the window manager sends it */
+    MC_CREATE,        /* WM_CREATE and WM_NCCREATE */
+    MC_STRING_IN,     /* lparam is a string, or NULL */
+    MC_ITEM_LB,       /* the string of a list box command, or an item's data */
+    MC_ITEM_CB,       /* the same for a combo box */
+    MC_STRING_OUT,    /* wparam characters of room at lparam */
+    MC_LINE_OUT,      /* EM_GETLINE, the room is in the first word of the buffer */
+    MC_ITEM_OUT,      /* LB_GETTEXT, the room is as long as the text */
+    MC_FORMAT_OUT,    /* WM_ASKCBFORMATNAME */
+    MC_STRUCT_IN,
+    MC_STRUCT_INOUT,
+    MC_STRUCT_OUT,
+    MC_TITLEBAR,      /* a structure that must say how large it is */
+    MC_HELP,
+    MC_OPTMSG,        /* an optional MSG */
+    MC_COPYDATA,
+    MC_NCCALCSIZE,
+    MC_MDICREATE,
+    MC_PTR2,          /* wparam and lparam both optionally point at a DWORD to fill */
+    MC_WPTR,          /* wparam points at a DWORD to fill */
+    MC_UINTS_IN,
+    MC_UINTS_OUT,
+    MC_DEVCHANGE,
+    MC_POWER,
+    MC_WINHELP,
+    MC_COPYGLOBAL,
+} MSG_CLASS;
+
+typedef struct MSG_RULE {
+    UCHAR Class;
+    UCHAR Layout;  /* the structure holds a pointer or a handle, so a 32-bit program has another layout of it */
+    USHORT Size;   /* bytes of a structure of fixed size */
+} MSG_RULE;
+
+typedef struct MSG_CAPTURE {
+    PVOID Buffer;      /* the copy, pool memory, or NULL when the parameters pass as they are */
+    ULONG Size;
+    ULONG Kind;        /* how the callback gets it, MIME_LPARAM_* */
+    UINT Msg;
+    UCHAR Class;
+    BOOLEAN ItemData;
+    WPARAM Wparam;     /* what the procedure is given */
+    LPARAM Lparam;
+    WPARAM UserWparam; /* what the sender passed */
+    LPARAM UserLparam;
+    LPARAM UserPos;
+    ULONG Chars;       /* characters the copy has room for */
+    ULONG Capacity;    /* characters the sender's buffer has room for */
+    LRESULT Refused;   /* the result of a send that was refused */
+} MSG_CAPTURE;
+
+MSG_RULE MsgRuleFor(UINT msg);
+BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM lparam, MSG_RULE rule, LONG hint);
+void MsgCaptureFree(MSG_CAPTURE *c);
+void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed);
 
 LRESULT MsgSend(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lparam_kind, ULONG lparam_size);

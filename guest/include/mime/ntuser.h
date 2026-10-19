@@ -45,6 +45,7 @@ enum {
     MIME_CB_TIMERPROC = 1,   /* MIME_TIMERPROC_ARGS */
     MIME_CB_LOADSYSTEM = 2,  /* reserved */
     MIME_CB_HOOKPROC = 3,    /* MIME_HOOKPROC_ARGS -> LRESULT, output carries the updated lparam data */
+    MIME_CB_SENDASYNC = 4,   /* MIME_SENDASYNC_ARGS, the result of a SendMessageCallback */
     MIME_CB_COUNT = 8,
 };
 
@@ -53,8 +54,17 @@ enum {
     MIME_LPARAM_VALUE = 0,       /* passed through unchanged */
     MIME_LPARAM_IN = 1,          /* points to Data, read only */
     MIME_LPARAM_INOUT = 2,       /* points to Data, copied back to the kernel on return */
-    MIME_LPARAM_CREATESTRUCT = 3 /* CREATESTRUCTW followed by the name and class strings */
+    MIME_LPARAM_CREATESTRUCT = 3, /* CREATESTRUCTW followed by the name and class strings */
+    MIME_LPARAM_PTR2 = 4,         /* Data holds two DWORDs, wparam and lparam point at them */
+    MIME_LPARAM_WPTR = 5          /* Data holds one DWORD, wparam points at it and lparam passes through */
 };
+
+/*
+ * a block too large for the callback stack is not in Data: the kernel put it in memory of the receiver and Lparam
+ * points at it, DataSize being its size. the result carries no data then, the kernel reads the block itself.
+ */
+#define MIME_LPARAM_EXTERNAL 0x100
+#define MIME_LPARAM_KIND(kind) ((kind) & 0xFF)
 
 /*
  * in MIME_LPARAM_CREATESTRUCT data, lpszName and lpszClass hold byte offsets
@@ -90,6 +100,15 @@ typedef struct MIME_TIMERPROC_ARGS {
     DWORD Time;
 } MIME_TIMERPROC_ARGS;
 
+/* the result of a SendMessageCallback, called in the thread that sent the message. */
+typedef struct MIME_SENDASYNC_ARGS {
+    SENDASYNCPROC Proc;
+    HWND Hwnd;
+    UINT Msg;
+    ULONG_PTR Data;
+    LRESULT Result;
+} MIME_SENDASYNC_ARGS;
+
 /* a hook procedure call. with DataSize the lparam points to Data, a copy of the hook structure. */
 typedef struct MIME_HOOKPROC_ARGS {
     HOOKPROC Proc;
@@ -122,11 +141,14 @@ enum {
 
 typedef struct MIME_CLIENT_INFO {
     ULONG Size;
-    ULONG Pad;
+    ULONG Flags;  /* MIME_CLIENT_* */
     HINSTANCE User32;
     WNDPROC Procs[MIME_FNID_COUNT];
     WNDPROC DefWindowProcW;
 } MIME_CLIENT_INFO;
+
+/* the program is 32-bit: win32k hands it callbacks in the 64-bit layouts, converted by its wow64 layer. */
+#define MIME_CLIENT_WOW 0x1
 
 /* flags for NtUserRegisterClassExWOW. */
 #define MIME_CLASS_ANSI 0x1
@@ -218,7 +240,22 @@ enum {
     MIME_MSGCALL_DEFWINDOWPROC = 1,  /* default processing in win32k */
     MIME_MSGCALL_SENDNOTIFY = 2,     /* SendNotifyMessage */
     MIME_MSGCALL_SENDTIMEOUT = 3,    /* result_info points to a MIME_SEND_TIMEOUT */
+    MIME_MSGCALL_SENDCALLBACK = 4,   /* SendMessageCallback, result_info points to a MIME_SEND_CALLBACK */
+    MIME_MSGCALL_BROADCAST = 5,      /* BroadcastSystemMessage, result_info points to a MIME_BROADCAST */
 };
+
+typedef struct MIME_SEND_CALLBACK {
+    SENDASYNCPROC Proc;
+    ULONG_PTR Data;
+} MIME_SEND_CALLBACK;
+
+/* the arguments of BroadcastSystemMessageEx once checked by user32, and what it learns. */
+typedef struct MIME_BROADCAST {
+    ULONG Recipients;  /* BSM_*, in and out */
+    ULONG Flags;       /* BSF_* */
+    HWND Hwnd;         /* out: the window that denied a query */
+    HDESK Desktop;     /* out: its desktop */
+} MIME_BROADCAST;
 
 typedef struct MIME_SEND_TIMEOUT {
     UINT Flags;

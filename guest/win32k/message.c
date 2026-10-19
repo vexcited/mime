@@ -3,6 +3,7 @@
  * window procedure callbacks and the default window procedure.
  */
 #include "win32k.h"
+#include <mime/msgtable.h>
 
 /* ------------------------------------------------------------------ queues */
 
@@ -73,6 +74,9 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state)
 
 #define ALIGN16(x) (((x) + 15) & ~(SIZE_T)15)
 
+/* a block over this does not go on the stack of the receiver, it is put in memory of its own. */
+#define MSG_INLINE_MAX 0x8000
+
 LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM wparam, LPARAM lparam,
                           ULONG lparam_kind, ULONG lparam_size)
 {
@@ -83,20 +87,45 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
         return 0;
     if (lparam_kind == MIME_LPARAM_VALUE)
         lparam_size = 0;
-    SIZE_T size = sizeof(MIME_WINDOWPROC_ARGS) + ALIGN16(lparam_size);
+    /* a large block is put in memory of the receiver, below 4 GiB for a 32-bit one. */
+    PVOID external = nullptr;
+    SIZE_T external_size = 0;
+    if (lparam_size > MSG_INLINE_MAX) {
+        external_size = lparam_size;
+        NTSTATUS alloc = ZwAllocateVirtualMemory((HANDLE)-1, &external, 0, &external_size, MEM_COMMIT | MEM_RESERVE,
+                                                 PAGE_READWRITE);
+        if (!NT_SUCCESS(alloc) || (t->Process && t->Process->Wow && (ULONG_PTR)external + external_size > 0xFFFFFFFFull) ||
+            !NT_SUCCESS(MimeCopyToUser(external, (PVOID)lparam, lparam_size))) {
+            if (NT_SUCCESS(alloc)) {
+                external_size = 0;
+                ZwFreeVirtualMemory((HANDLE)-1, &external, &external_size, MEM_RELEASE);
+            }
+            return 0;
+        }
+    }
+    SIZE_T size = sizeof(MIME_WINDOWPROC_ARGS) + (external ? 0 : ALIGN16(lparam_size));
     UCHAR local[sizeof(MIME_WINDOWPROC_ARGS) + 256];
     MIME_WINDOWPROC_ARGS *args = size <= sizeof(local) ? (MIME_WINDOWPROC_ARGS *)local : W32Alloc(size);
-    if (!args)
+    if (!args) {
+        if (external) {
+            external_size = 0;
+            ZwFreeVirtualMemory((HANDLE)-1, &external, &external_size, MEM_RELEASE);
+        }
         return 0;
+    }
     args->Proc = proc;
     args->Hwnd = WndHandle(w);
     args->Msg = msg;
-    args->LparamKind = lparam_kind;
+    args->LparamKind = lparam_kind | (external ? MIME_LPARAM_EXTERNAL : 0);
     args->Wparam = wparam;
     args->Lparam = lparam_kind == MIME_LPARAM_VALUE ? lparam : 0;
+    if (lparam_kind == MIME_LPARAM_WPTR)
+        args->Lparam = *(LPARAM *)((PUCHAR)lparam + 8);
+    if (external)
+        args->Lparam = (LPARAM)external;
     args->Ansi = ansi;
     args->DataSize = lparam_size;
-    if (lparam_size)
+    if (lparam_size && !external)
         memcpy(args->Data, (PVOID)lparam, lparam_size);
 
     t->CallbackDepth++;
@@ -108,12 +137,16 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
     UserReenter(depth);
     t->CallbackDepth--;
 
+    BOOLEAN writes = lparam_kind == MIME_LPARAM_INOUT || lparam_kind == MIME_LPARAM_PTR2 ||
+                     lparam_kind == MIME_LPARAM_WPTR;
     LRESULT result = 0;
     if (NT_SUCCESS(status) && out && out_len >= sizeof(MIME_CALLBACK_RESULT)) {
         MIME_CALLBACK_RESULT hdr;
         if (NT_SUCCESS(MimeCopyFromUser(&hdr, out, sizeof(hdr)))) {
             result = hdr.Result;
-            if (lparam_kind == MIME_LPARAM_INOUT && lparam_size) {
+            if (writes && lparam_size && external) {
+                MimeCopyFromUser((PVOID)lparam, external, lparam_size);
+            } else if (writes && lparam_size) {
                 ULONG n = hdr.DataSize < lparam_size ? hdr.DataSize : lparam_size;
                 if (n && out_len >= sizeof(hdr) + n)
                     MimeCopyFromUser((PVOID)lparam, (PUCHAR)out + sizeof(hdr), n);
@@ -125,22 +158,92 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
     UserDereference(&w->Header);
     if ((PUCHAR)args != local)
         W32Free(args);
+    if (external) {
+        external_size = 0;
+        ZwFreeVirtualMemory((HANDLE)-1, &external, &external_size, MEM_RELEASE);
+    }
     return result;
 }
 
 /* ------------------------------------------------------------------ sending */
 
+static ULONG64 now_ms(void);
+
+/* what a send waits for and what it learns. */
+typedef struct SEND_OPTS {
+    ULONG Flags;            /* SMTO_* */
+    ULONG Timeout;          /* milliseconds, none when 0 */
+    BOOLEAN Owned;          /* the parameter block is pool memory the message takes over when the sender stops waiting */
+    SENDASYNCPROC AsyncProc; /* called in the sender's thread with the result, the sender not waiting */
+    ULONG_PTR AsyncData;
+    /* out */
+    BOOLEAN TimedOut;
+    BOOLEAN Aborted;        /* the window or its thread went away */
+    BOOLEAN Refused;        /* not sent, the thread of the window is hung */
+    BOOLEAN Taken;          /* the block belongs to the message now */
+} SEND_OPTS;
+
+/* a thread that has not looked at its queue for this long is not answering. */
+#define HUNG_MS 5000
+
+static BOOLEAN thread_hung(W32THREAD *t)
+{
+    return !t->InWait && (DWORD)(W32TickCount() - t->LastRead) > HUNG_MS;
+}
+
+static void free_sent(SENT_MESSAGE *sm)
+{
+    if (sm->Owned)
+        W32Free((PVOID)sm->Lparam);
+    W32Free(sm);
+}
+
+/* the sender of a callback is told the result when it next serves its queue. */
+static void queue_result_call(SENT_MESSAGE *sm, LRESULT result)
+{
+    W32THREAD *sender = W32LookupThread(sm->SenderTid);
+    if (!sender)
+        return;
+    SENT_MESSAGE *call = W32Alloc(sizeof(SENT_MESSAGE));
+    if (!call)
+        return;
+    call->ResultCall = TRUE;
+    call->Notify = TRUE;
+    call->Hwnd = sm->Hwnd;
+    call->Msg = sm->Msg;
+    call->AsyncProc = sm->AsyncProc;
+    call->AsyncData = sm->AsyncData;
+    call->Result = result;
+    InsertTailList(&sender->Sent, &call->Links);
+    QueueWake(sender, QS_SENDMESSAGE);
+}
+
 static void complete_sent(SENT_MESSAGE *sm, LRESULT result)
 {
     if (sm->Notify) {
-        if (sm->LparamKind != MIME_LPARAM_VALUE)
-            W32Free((PVOID)sm->Lparam);
-        W32Free(sm);
+        if (sm->Callback && !sm->Aborted)
+            queue_result_call(sm, result);
+        free_sent(sm);
         return;
     }
     sm->Result = result;
     sm->Completed = TRUE;
     KeSetEvent(&sm->Done, 0, FALSE);
+}
+
+/* the procedure of a SendMessageCallback gets the result in the thread that sent the message. */
+static void call_async(W32THREAD *t, SENDASYNCPROC proc, HWND hwnd, UINT msg, ULONG_PTR data, LRESULT result)
+{
+    MIME_SENDASYNC_ARGS args = {proc, hwnd, msg, data, result};
+    t->CallbackDepth++;
+    ULONG depth = UserLeaveAll();
+    PVOID out = nullptr;
+    ULONG out_len = 0;
+    NTSTATUS status = KeUserModeCallback(MIME_CB_SENDASYNC, &args, sizeof(args), &out, &out_len);
+    UserReenter(depth);
+    t->CallbackDepth--;
+    if (!NT_SUCCESS(status))
+        DbgPrint("win32k: send callback for message %x failed: %08x\n", msg, status);
 }
 
 /*
@@ -174,12 +277,18 @@ void MsgProcessSent(W32THREAD *t)
 {
     while (!IsListEmpty(&t->Sent)) {
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
+        if (sm->ResultCall) {
+            call_async(t, sm->AsyncProc, sm->Hwnd, sm->Msg, sm->AsyncData, sm->Result);
+            W32Free(sm);
+            continue;
+        }
         SENT_MESSAGE *prev = t->Receiving;
         BOOLEAN prev_replied = t->Replied;
         ULONG prev_kind = t->ReceivingKind;
+        sm->Outer = prev;
         t->Receiving = sm;
         t->Replied = FALSE;
-        t->ReceivingKind = sm->Notify ? 2 : 1;
+        t->ReceivingKind = sm->Callback ? 4 : sm->Notify ? 2 : 1;
         LRESULT r = 0;
         if (sm->Hook) {
             HOOK *h = HookLookup(sm->Hook);
@@ -189,6 +298,8 @@ void MsgProcessSent(W32THREAD *t)
             WND *w = WndLookup(sm->Hwnd);
             if (w && w->Thread == t)
                 r = call_sent(w, sm->Msg, sm->Wparam, sm->Lparam, sm->LparamKind, sm->LparamSize, FALSE);
+            else
+                sm->Aborted = TRUE;
         }
         t->Receiving = prev;
         /* an answered message has no waiting sender any more, which owns it now. */
@@ -201,9 +312,13 @@ void MsgProcessSent(W32THREAD *t)
 }
 
 static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind,
-                              ULONG size, BOOLEAN notify)
+                              ULONG size, BOOLEAN notify, SEND_OPTS *opts)
 {
     W32THREAD *self = W32GetThread();
+    if (opts && (opts->Flags & SMTO_ABORTIFHUNG) && thread_hung(target)) {
+        opts->Refused = TRUE;
+        return 0;
+    }
     SENT_MESSAGE *sm = W32Alloc(sizeof(SENT_MESSAGE));
     if (!sm)
         return 0;
@@ -215,7 +330,14 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
     sm->LparamKind = kind;
     sm->LparamSize = size;
     sm->Notify = notify;
-    if (notify && kind != MIME_LPARAM_VALUE && size) {
+    sm->Owned = opts && opts->Owned && kind != MIME_LPARAM_VALUE;
+    if (opts && opts->AsyncProc && self) {
+        sm->Callback = TRUE;
+        sm->SenderTid = self->Tid;
+        sm->AsyncProc = opts->AsyncProc;
+        sm->AsyncData = opts->AsyncData;
+    }
+    if (notify && kind != MIME_LPARAM_VALUE && size && !sm->Owned) {
         /* nobody waits, so the receiver gets its own copy. */
         PVOID copy = W32Alloc(size);
         if (!copy) {
@@ -224,36 +346,75 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
         }
         memcpy(copy, (PVOID)lparam, size);
         sm->Lparam = (LPARAM)copy;
+        sm->Owned = TRUE;
     }
     KeInitializeEvent(&sm->Done, NotificationEvent, FALSE);
     InsertTailList(&target->Sent, &sm->Links);
     QueueWake(target, QS_SENDMESSAGE);
-    if (notify)
+    if (notify) {
+        if (opts)
+            opts->Taken = opts->Owned;
         return 1;
+    }
     /* wait, while still serving messages sent to us so two threads sending to each other cannot deadlock. */
+    BOOLEAN block = opts && (opts->Flags & SMTO_BLOCK);
+    ULONG64 deadline = opts && opts->Timeout ? now_ms() + opts->Timeout : 0;
+    BOOLEAN timed_out = FALSE;
+    if (self)
+        self->InWait = TRUE;
     while (!sm->Completed) {
-        if (self && !IsListEmpty(&self->Sent)) {
+        if (self && !block && !IsListEmpty(&self->Sent)) {
             MsgProcessSent(self);
             continue;
         }
-        PVOID objects[2] = {&sm->Done, self ? (PVOID)&self->Event : (PVOID)&sm->Done};
-        ULONG depth = UserLeaveAll();
-        NTSTATUS status = KeWaitForMultipleObjects(self ? 2 : 1, objects, WaitAny, UserRequest, UserMode, FALSE,
-                                                   nullptr, nullptr);
-        UserReenter(depth);
-        if (status == STATUS_THREAD_IS_TERMINATING && !sm->Completed) {
-            /* the receiver will complete into a message nobody waits for. */
-            sm->Notify = TRUE;
-            sm->LparamKind = MIME_LPARAM_VALUE;
-            return 0;
+        LARGE_INTEGER timeout, *pt = nullptr;
+        if (deadline) {
+            LONG64 left = (LONG64)(deadline - now_ms());
+            if (left <= 0) {
+                if (opts->Flags & SMTO_NOTIMEOUTIFNOTHUNG && !thread_hung(target)) {
+                    deadline = now_ms() + opts->Timeout;
+                    continue;
+                }
+                timed_out = TRUE;
+                break;
+            }
+            timeout.QuadPart = -left * 10000;
+            pt = &timeout;
         }
+        BOOLEAN serve = self && !block;
+        PVOID objects[2] = {&sm->Done, serve ? (PVOID)&self->Event : (PVOID)&sm->Done};
+        ULONG depth = UserLeaveAll();
+        NTSTATUS status = KeWaitForMultipleObjects(serve ? 2 : 1, objects, WaitAny, UserRequest, UserMode, FALSE, pt,
+                                                   nullptr);
+        UserReenter(depth);
+        if (status == STATUS_THREAD_IS_TERMINATING && !sm->Completed)
+            break;
+    }
+    if (self)
+        self->InWait = FALSE;
+    if (!sm->Completed) {
+        /* the receiver will complete into a message nobody waits for. */
+        sm->Notify = TRUE;
+        sm->Sender = nullptr;
+        sm->Callback = FALSE;
+        if (!sm->Owned)
+            sm->LparamKind = MIME_LPARAM_VALUE;
+        if (opts) {
+            opts->TimedOut = timed_out;
+            opts->Taken = sm->Owned;
+        }
+        if (timed_out)
+            W32SetLastError(ERROR_TIMEOUT);
+        return 0;
     }
     LRESULT r = sm->Result;
+    if (opts)
+        opts->Aborted = sm->Aborted;
     W32Free(sm);
     return r;
 }
 
-LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lparam_kind, ULONG lparam_size)
+static LRESULT send_to_window(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind, ULONG size, SEND_OPTS *opts)
 {
     if (!w || w->Header.Destroyed)
         return 0;
@@ -261,10 +422,15 @@ LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lpar
     if (!target)
         return DefWindowProcKernel(w, msg, wparam, lparam);
     if (target == W32GetThread())
-        return call_sent(w, msg, wparam, lparam, lparam_kind, lparam_size, TRUE);
+        return call_sent(w, msg, wparam, lparam, kind, size, TRUE);
     if (target->Destroying)
         return 0;
-    return send_to_thread(target, w, msg, wparam, lparam, lparam_kind, lparam_size, FALSE);
+    return send_to_thread(target, w, msg, wparam, lparam, kind, size, FALSE, opts);
+}
+
+LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lparam_kind, ULONG lparam_size)
+{
+    return send_to_window(w, msg, wparam, lparam, lparam_kind, lparam_size, nullptr);
 }
 
 LRESULT MsgSend(WND *w, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -505,6 +671,7 @@ BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flag
 {
     BOOLEAN remove = (flags & PM_REMOVE) != 0;
     for (;;) {
+        t->LastRead = W32TickCount();
         MsgProcessSent(t);
         t->WakeBits = 0;
 
@@ -613,9 +780,12 @@ scan_posted:
             timeout.QuadPart = -delta * 10000;
             pt = &timeout;
         }
+        t->InWait = TRUE;
         ULONG depth = UserLeaveAll();
         NTSTATUS status = KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
         UserReenter(depth);
+        t->InWait = FALSE;
+        t->LastRead = W32TickCount();
         if (status == STATUS_THREAD_IS_TERMINATING) {
             out->hwnd = nullptr;
             out->message = WM_QUIT;
@@ -707,6 +877,7 @@ BOOL NTAPI NtUserWaitMessage(void)
     UserEnter();
     W32THREAD *t = W32GetThread();
     if (t) {
+        t->LastRead = W32TickCount();
         MsgProcessSent(t);
         if (!(t->ChangeBits & (QS_ALLINPUT))) {
             PaintFlushThread(t);
@@ -717,9 +888,12 @@ BOOL NTAPI NtUserWaitMessage(void)
                 timeout.QuadPart = -(delta < 0 ? 0 : delta) * 10000;
                 pt = &timeout;
             }
+            t->InWait = TRUE;
             ULONG depth = UserLeaveAll();
             KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
             UserReenter(depth);
+            t->InWait = FALSE;
+            t->LastRead = W32TickCount();
             MsgProcessSent(t);
         }
         t->ChangeBits = 0;
@@ -784,6 +958,7 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
     LONG64 deadline = timeout == WAIT_FOREVER ? -1 : (LONG64)now_ms() + timeout;
     DWORD result = WAIT_FAILED_VALUE;
     while (t) {
+        t->LastRead = W32TickCount();
         MsgProcessSent(t);
         ULONG ready = (flags & MWMO_INPUTAVAILABLE) ? pending_bits(t) | t->ChangeBits : t->ChangeBits;
         if (ready & mask) {
@@ -812,10 +987,13 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         if (count + 1 > 3 && !blocks)
             break;
         PaintFlushThread(t);
+        t->InWait = TRUE;
         ULONG depth = UserLeaveAll();
         NTSTATUS status = KeWaitForMultipleObjects(count + 1, objects, WaitAny, UserRequest, UserMode,
                                                    (flags & MWMO_ALERTABLE) != 0, pw, blocks);
         UserReenter(depth);
+        t->InWait = FALSE;
+        t->LastRead = W32TickCount();
         if (status == STATUS_USER_APC || status == STATUS_ALERTED) {
             result = WAIT_IO;
             break;
@@ -883,80 +1061,385 @@ BOOL NTAPI NtUserGetMessagePos(void)
     return (BOOL)pos;
 }
 
-static void broadcast(UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN post)
+static BOOLEAN is_broadcast(HWND hwnd)
+{
+    return hwnd == HWND_BROADCAST || hwnd == (HWND)(LONG_PTR)-1 || hwnd == (HWND)0xFFFFFFFFull;
+}
+
+/* the windows a broadcast reaches, copied as the windows can come and go while it is sent. */
+static HWND *top_level_windows(ULONG *count)
 {
     WND *d = WndDesktop();
-    if (!d)
-        return;
-    for (WND *c = d->FirstChild; c; c = c->Next) {
-        if (c->Flags & WNDF_DESTROYING)
+    ULONG n = 0;
+    for (WND *c = d ? d->FirstChild : nullptr; c; c = c->Next)
+        n++;
+    HWND *list = W32Alloc((n + 1) * sizeof(HWND));
+    *count = 0;
+    if (!list)
+        return nullptr;
+    for (WND *c = d ? d->FirstChild : nullptr; c && *count < n; c = c->Next) {
+        /* message only windows hear no broadcast. */
+        if ((c->Flags & WNDF_DESTROYING) || (c->ExStyle & 0x80000000u) || !c->Thread)
             continue;
-        if (post)
-            QueuePost(c->Thread, WndHandle(c), msg, wparam, lparam);
-        else
-            MsgSend(c, msg, wparam, lparam);
+        list[(*count)++] = WndHandle(c);
     }
+    return list;
+}
+
+/* the messages that may not cross to a window of another process at all. */
+static BOOLEAN refused_across(WND *w, UINT msg)
+{
+    if (msg == WM_INITDIALOG || msg == WM_NOTIFY)
+        return TRUE;
+    /* what a password edit keeps does not leave its process. */
+    return (msg == WM_GETTEXT || msg == EM_GETLINE || msg == EM_SETPASSWORDCHAR) && w->Class &&
+           w->Class->Fnid == MIME_FNID_EDIT && (w->Style & ES_PASSWORD);
+}
+
+/*
+ * a send between threads of one process runs on the sender's memory, but a program that sends a null
+ * pointer or a structure that cannot be right gets nothing done, as with a copy.
+ */
+static BOOLEAN readable(LPARAM user, SIZE_T size)
+{
+    UCHAR byte;
+    return size == 0 || (NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)user, 1)) &&
+                         NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)(user + size - 1), 1)));
+}
+
+static BOOLEAN pointers_fit(MSG_RULE rule, WPARAM wparam, LPARAM lparam)
+{
+    switch (rule.Class) {
+    case MC_STRUCT_IN:
+    case MC_STRUCT_INOUT:
+    case MC_STRUCT_OUT:
+        return lparam && readable(lparam, rule.Size);
+    case MC_TITLEBAR:
+    case MC_HELP: {
+        /* these say how large they are, and are refused if they do not say it right. */
+        DWORD size;
+        if (!lparam || !NT_SUCCESS(MimeCopyFromUser(&size, (PVOID)lparam, sizeof(size))))
+            return FALSE;
+        if (size != rule.Size) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        return readable(lparam, rule.Size);
+    }
+    case MC_COPYDATA: {
+        COPYDATASTRUCT cd;
+        if (!lparam || !NT_SUCCESS(MimeCopyFromUser(&cd, (PVOID)lparam, sizeof(cd))))
+            return FALSE;
+        return !cd.lpData || readable((LPARAM)cd.lpData, cd.cbData);
+    }
+    case MC_NCCALCSIZE:
+    case MC_MDICREATE:
+    case MC_LINE_OUT:
+    case MC_WINHELP:
+        return lparam != 0;
+    case MC_STRING_OUT:
+        return wparam <= 0x3FFFFFFF && (lparam || !wparam);
+    case MC_DEVCHANGE:
+        /* some device changes are nothing without what they tell of. */
+        if (!lparam && (wparam == 0x8000 || wparam == 0x8004 || (wparam >= 0x8007 && wparam <= 0x800A))) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        return TRUE;
+    default:
+        return TRUE;
+    }
+}
+
+static LRESULT deliver(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind, ULONG size, DWORD type,
+                       SEND_OPTS *opts)
+{
+    W32THREAD *self = W32GetThread();
+    W32THREAD *target = w->Thread;
+    BOOLEAN remote = target && target != self && !target->Destroying && !w->Header.Destroyed;
+    if (type == MIME_MSGCALL_SENDNOTIFY) {
+        if (remote)
+            return send_to_thread(target, w, msg, wparam, lparam, kind, size, TRUE, opts);
+        return send_to_window(w, msg, wparam, lparam, kind, size, nullptr);
+    }
+    if (type == MIME_MSGCALL_SENDCALLBACK) {
+        if (remote)
+            return send_to_thread(target, w, msg, wparam, lparam, kind, size, TRUE, opts);
+        LRESULT r = send_to_window(w, msg, wparam, lparam, kind, size, nullptr);
+        if (self && opts->AsyncProc)
+            call_async(self, opts->AsyncProc, WndHandle(w), msg, opts->AsyncData, r);
+        return 1;
+    }
+    return send_to_window(w, msg, wparam, lparam, kind, size, opts);
+}
+
+/*
+ * one message to one window for a program. the result of the form that waits is what the procedure returned, *ok
+ * tells whether SendMessageTimeout reports success.
+ */
+static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts, BOOLEAN *ok)
+{
+    W32THREAD *self = W32GetThread();
+    W32THREAD *target = w->Thread;
+    *ok = FALSE;
+    MSG_RULE rule = MsgRuleFor(msg);
+    if (rule.Class == MC_KERNEL) {
+        *ok = TRUE;
+        return 0;
+    }
+    BOOLEAN cross_thread = target && target != self;
+    BOOLEAN cross_process = cross_thread && (!self || target->Process != self->Process);
+    if (cross_thread && (rule.Class == MC_CREATE || (cross_process && refused_across(w, msg)))) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return 0;
+    }
+    BOOLEAN wow_layout = target && target->Process && target->Process->Wow && rule.Layout;
+    BOOLEAN notifies = type == MIME_MSGCALL_SENDNOTIFY || type == MIME_MSGCALL_SENDCALLBACK;
+    BOOLEAN marshal = rule.Class != MC_VALUE && rule.Class != MC_CREATE &&
+                      (cross_process || wow_layout || (notifies && cross_thread));
+    SEND_OPTS local = {};
+    if (opts)
+        local = *opts;
+    local.TimedOut = local.Aborted = local.Refused = local.Taken = FALSE;
+    LRESULT r;
+    if (!marshal) {
+        if (cross_thread && !pointers_fit(rule, wparam, lparam))
+            return 0;
+        r = deliver(w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0, type, &local);
+    } else {
+        LONG hint = -1;
+        if (rule.Class == MC_ITEM_OUT)
+            hint = (LONG)send_to_window(w, msg == LB_GETTEXT ? LB_GETTEXTLEN : CB_GETLBTEXTLEN, wparam, 0,
+                                        MIME_LPARAM_VALUE, 0, nullptr);
+        MSG_CAPTURE c;
+        if (!MsgCapture(&c, w, msg, wparam, lparam, rule, hint)) {
+            LRESULT refused = c.Refused;
+            MsgCaptureFree(&c);
+            return refused;
+        }
+        local.Owned = c.Buffer != nullptr;
+        ULONG kind = c.Buffer ? c.Kind : MIME_LPARAM_VALUE;
+        LPARAM lp = c.Buffer ? (LPARAM)c.Buffer : c.Lparam;
+        r = deliver(w, msg, c.Wparam, lp, kind, c.Size, type, &local);
+        BOOLEAN done = !notifies && !local.TimedOut && !local.Refused && !local.Aborted;
+        MsgCaptureFinish(&c, &r, done);
+        if (!local.Taken)
+            MsgCaptureFree(&c);
+    }
+    BOOLEAN failed = local.TimedOut || local.Refused;
+    if (local.Aborted && (local.Flags & SMTO_ERRORONEXIT)) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        failed = TRUE;
+    }
+    *ok = !failed;
+    if (opts) {
+        opts->TimedOut = local.TimedOut;
+        opts->Aborted = local.Aborted;
+        opts->Refused = local.Refused;
+    }
+    return failed ? 0 : r;
+}
+
+static LRESULT broadcast_send(UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts)
+{
+    /* messages of programs have no place in a broadcast, only the system's and the registered ones do. */
+    if (msg >= 0x400 && msg <= 0xBFFF) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return 1;
+    }
+    ULONG count;
+    HWND *list = top_level_windows(&count);
+    for (ULONG i = 0; i < count; i++) {
+        WND *w = WndLookup(list[i]);
+        BOOLEAN ok;
+        if (w && !(w->Flags & WNDF_DESTROYING) && w->Thread)
+            send_one(w, msg, wparam, lparam, type, opts, &ok);
+    }
+    W32Free(list);
+    return 1;
+}
+
+static LRESULT send_user(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, ULONG_PTR info)
+{
+    SEND_OPTS opts = {};
+    MIME_SEND_TIMEOUT st = {};
+    if (type == MIME_MSGCALL_SENDTIMEOUT) {
+        if (!info || !NT_SUCCESS(MimeCopyFromUser(&st, (PVOID)info, sizeof(st))))
+            return 0;
+        opts.Flags = st.Flags;
+        opts.Timeout = st.Timeout;
+    } else if (type == MIME_MSGCALL_SENDCALLBACK) {
+        MIME_SEND_CALLBACK cb;
+        if (!info || !NT_SUCCESS(MimeCopyFromUser(&cb, (PVOID)info, sizeof(cb))))
+            return 0;
+        opts.AsyncProc = cb.Proc;
+        opts.AsyncData = cb.Data;
+    }
+    /* a message with pointers cannot go to a window that is not waited for. */
+    if ((type == MIME_MSGCALL_SENDNOTIFY || type == MIME_MSGCALL_SENDCALLBACK) && MimeMsgIsSyncOnly(msg, wparam, FALSE)) {
+        W32SetLastError(ERROR_MESSAGE_SYNC_ONLY);
+        return 0;
+    }
+    LRESULT r = 0;
+    BOOLEAN ok = TRUE;
+    if (is_broadcast(hwnd)) {
+        r = broadcast_send(msg, wparam, lparam, type, &opts);
+        ok = TRUE;
+    } else {
+        WND *w = WndLookup(hwnd);
+        if (!w) {
+            W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+            ok = FALSE;
+        } else {
+            r = send_one(w, msg, wparam, lparam, type, &opts, &ok);
+        }
+    }
+    if (type == MIME_MSGCALL_SENDTIMEOUT) {
+        st.Result = ok ? (ULONG_PTR)r : 0;
+        MimeCopyToUser((PVOID)info, &st, sizeof(st));
+        return ok;
+    }
+    return r;
+}
+
+/* a form of BroadcastSystemMessage that posts, next to the ways to send. */
+#define BROADCAST_POST 100
+
+/* BroadcastSystemMessage: the recipients and the way to send were checked by user32. */
+static LRESULT broadcast_system(UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR info)
+{
+    MIME_BROADCAST b;
+    if (!info || !NT_SUCCESS(MimeCopyFromUser(&b, (PVOID)info, sizeof(b))))
+        return 0;
+    DWORD type = MIME_MSGCALL_SEND;
+    if (b.Flags & BSF_POSTMESSAGE)
+        type = BROADCAST_POST;
+    else if (b.Flags & BSF_SENDNOTIFYMESSAGE)
+        type = MIME_MSGCALL_SENDNOTIFY;
+    SEND_OPTS opts = {};
+    if (b.Flags & (BSF_NOHANG | BSF_FORCEIFHUNG))
+        opts.Flags |= SMTO_ABORTIFHUNG;
+    if (b.Flags & BSF_NOTIMEOUTIFNOTHUNG)
+        opts.Flags |= SMTO_NOTIMEOUTIFNOTHUNG | SMTO_ABORTIFHUNG;
+    if (opts.Flags)
+        opts.Timeout = 5000;
+    LRESULT result = 1;
+    ULONG count;
+    HWND *list = top_level_windows(&count);
+    W32THREAD *self = W32GetThread();
+    for (ULONG i = 0; i < count; i++) {
+        WND *w = WndLookup(list[i]);
+        if (!w || (w->Flags & WNDF_DESTROYING) || !w->Thread)
+            continue;
+        if ((b.Flags & BSF_IGNORECURRENTTASK) && w->Thread->Process == self->Process)
+            continue;
+        if (type == BROADCAST_POST) {
+            QueuePost(w->Thread, list[i], msg, wparam, lparam);
+            continue;
+        }
+        BOOLEAN ok;
+        SEND_OPTS each = opts;
+        LRESULT r = send_one(w, msg, wparam, lparam, type, &each, &ok);
+        if ((b.Flags & BSF_QUERY) && ok && r == BROADCAST_QUERY_DENY) {
+            b.Hwnd = list[i];
+            result = 0;
+            break;
+        }
+    }
+    W32Free(list);
+    MimeCopyToUser((PVOID)info, &b, sizeof(b));
+    return result;
 }
 
 LRESULT NTAPI NtUserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR result_info, DWORD type,
                                 BOOL ansi)
 {
+    if (msg & 0xFFFE0000u) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
     UserEnter();
     LRESULT r = 0;
-    if (hwnd == HWND_BROADCAST && type != MIME_MSGCALL_DEFWINDOWPROC) {
-        broadcast(msg, wparam, lparam, FALSE);
-        UserLeave();
-        return 0;
-    }
-    WND *w = WndLookup(hwnd);
-    if (!w) {
-        UserLeave();
-        return 0;
-    }
     switch (type) {
-    case MIME_MSGCALL_DEFWINDOWPROC:
-        r = DefWindowProcUser(w, msg, wparam, lparam);
+    case MIME_MSGCALL_DEFWINDOWPROC: {
+        WND *w = WndLookup(hwnd);
+        r = w ? DefWindowProcUser(w, msg, wparam, lparam) : 0;
+        break;
+    }
+    case MIME_MSGCALL_BROADCAST:
+        r = broadcast_system(msg, wparam, lparam, result_info);
         break;
     case MIME_MSGCALL_SEND:
-        r = MsgSend(w, msg, wparam, lparam);
-        break;
     case MIME_MSGCALL_SENDNOTIFY:
-        if (w->Thread && w->Thread != W32GetThread())
-            r = send_to_thread(w->Thread, w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0, TRUE);
-        else
-            r = MsgSend(w, msg, wparam, lparam);
+    case MIME_MSGCALL_SENDTIMEOUT:
+    case MIME_MSGCALL_SENDCALLBACK:
+        r = send_user(hwnd, msg, wparam, lparam, type, result_info);
         break;
-    case MIME_MSGCALL_SENDTIMEOUT: {
-        r = MsgSend(w, msg, wparam, lparam);
-        if (result_info) {
-            MIME_SEND_TIMEOUT st;
-            if (NT_SUCCESS(MimeCopyFromUser(&st, (PVOID)result_info, sizeof(st)))) {
-                st.Result = (ULONG_PTR)r;
-                MimeCopyToUser((PVOID)result_info, &st, sizeof(st));
-            }
-        }
-        r = 1;
-        break;
-    }
     }
     UserLeave();
     (void)ansi;
     return r;
 }
 
+/* a message with a pointer or a handle in it is not sent to a queue that reads it later. */
+static BOOLEAN post_allowed(UINT msg, WPARAM wparam)
+{
+    if (msg < 0x400 && MimeMsgIsPrivate(msg)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    if (MimeMsgIsSyncOnly(msg, wparam, TRUE)) {
+        W32SetLastError(ERROR_MESSAGE_SYNC_ONLY);
+        return FALSE;
+    }
+    return TRUE;
+}
+
 BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
+    if (msg & 0xFFFE0000u) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (msg < 0x400 && MimeMsgIsPrivate(msg)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     UserEnter();
     BOOL ok = FALSE;
-    if (hwnd == HWND_BROADCAST) {
-        broadcast(msg, wparam, lparam, TRUE);
-        ok = TRUE;
+    if (is_broadcast(hwnd)) {
+        if (!post_allowed(msg, wparam)) {
+            ok = FALSE;
+        } else if (msg >= 0x400 && msg <= 0xBFFF) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            ok = TRUE;
+        } else {
+            ULONG count;
+            HWND *list = top_level_windows(&count);
+            for (ULONG i = 0; i < count; i++) {
+                WND *w = WndLookup(list[i]);
+                if (w && w->Thread)
+                    QueuePost(w->Thread, list[i], msg, wparam, lparam);
+            }
+            W32Free(list);
+            ok = TRUE;
+        }
     } else if (!hwnd) {
-        ok = QueuePost(W32GetThread(), nullptr, msg, wparam, lparam);
+        ok = post_allowed(msg, wparam) && QueuePost(W32GetThread(), nullptr, msg, wparam, lparam);
     } else {
         WND *w = WndLookup(hwnd);
-        if (w && w->Thread)
-            ok = QueuePost(w->Thread, hwnd, msg, wparam, lparam);
+        if (!w || !w->Thread) {
+            W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        } else if (msg == 0x119 || msg == 0x11B || (msg >= 0x241 && msg <= 0x244)) {
+            /* gestures and pointer input come from the system. */
+            W32SetLastError(ERROR_SIGNAL_REFUSED);
+        } else if (post_allowed(msg, wparam)) {
+            W32THREAD *self = W32GetThread();
+            if (w->Thread->Process != (self ? self->Process : nullptr) && refused_across(w, msg))
+                W32SetLastError(ERROR_ACCESS_DENIED);
+            else
+                ok = QueuePost(w->Thread, hwnd, msg, wparam, lparam);
+        }
     }
     UserLeave();
     return ok;
@@ -964,9 +1447,19 @@ BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 BOOL NTAPI NtUserPostThreadMessage(DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam)
 {
+    if (msg & 0xFFFE0000u) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
     UserEnter();
-    W32THREAD *t = W32LookupThread((HANDLE)(ULONG_PTR)thread);
-    BOOL ok = t && QueuePost(t, nullptr, msg, wparam, lparam);
+    BOOL ok = FALSE;
+    if (post_allowed(msg, wparam)) {
+        W32THREAD *t = W32LookupThread((HANDLE)(ULONG_PTR)thread);
+        if (!t)
+            W32SetLastError(ERROR_INVALID_THREAD_ID);
+        else
+            ok = QueuePost(t, nullptr, msg, wparam, lparam);
+    }
     UserLeave();
     return ok;
 }

@@ -3,6 +3,7 @@
  * procedure, which win32k implements.
  */
 #include "user32_private.h"
+#include <mime/msgtable.h>
 
 WINUSERAPI LRESULT WINAPI SendMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
@@ -14,30 +15,88 @@ WINUSERAPI LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARA
     return UserSendMessage(hwnd, msg, wparam, lparam, TRUE);
 }
 
-WINUSERAPI LRESULT WINAPI SendMessageTimeoutW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags,
-                                              UINT timeout, ULONG_PTR *result)
+static LRESULT send_timeout(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags, UINT timeout,
+                            ULONG_PTR *result, BOOL ansi)
 {
+    /* what windows refuses here it refuses silently, without an error. */
+    if ((msg & 0xFFFE0000) || (flags & ~0x7Fu))
+        return 0;
+    if (result)
+        *result = 0;
     MIME_SEND_TIMEOUT st = {flags, timeout, 0};
-    LRESULT ok = NtUserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&st, MIME_MSGCALL_SENDTIMEOUT, FALSE);
+    LRESULT ok = UserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&st, MIME_MSGCALL_SENDTIMEOUT, ansi);
     if (result)
         *result = st.Result;
     return ok;
 }
 
+WINUSERAPI LRESULT WINAPI SendMessageTimeoutW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags,
+                                              UINT timeout, ULONG_PTR *result)
+{
+    return send_timeout(hwnd, msg, wparam, lparam, flags, timeout, result, FALSE);
+}
+
+WINUSERAPI LRESULT WINAPI SendMessageTimeoutA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags,
+                                              UINT timeout, ULONG_PTR *result)
+{
+    return send_timeout(hwnd, msg, wparam, lparam, flags, timeout, result, TRUE);
+}
+
 WINUSERAPI BOOL WINAPI SendNotifyMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_SENDNOTIFY, FALSE);
-    return TRUE;
+    return (BOOL)UserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_SENDNOTIFY, FALSE);
+}
+
+WINUSERAPI BOOL WINAPI SendNotifyMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return (BOOL)UserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_SENDNOTIFY, TRUE);
+}
+
+WINUSERAPI BOOL WINAPI SendMessageCallbackW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, SENDASYNCPROC proc,
+                                            ULONG_PTR data)
+{
+    MIME_SEND_CALLBACK cb = {proc, data};
+    return (BOOL)UserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&cb, MIME_MSGCALL_SENDCALLBACK, FALSE);
+}
+
+WINUSERAPI BOOL WINAPI SendMessageCallbackA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, SENDASYNCPROC proc,
+                                            ULONG_PTR data)
+{
+    MIME_SEND_CALLBACK cb = {proc, data};
+    return (BOOL)UserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&cb, MIME_MSGCALL_SENDCALLBACK, TRUE);
+}
+
+/* a directory listing posted to a list is filled in by the list when it gets there. */
+static WPARAM post_wparam(UINT msg, WPARAM wparam)
+{
+    return msg == CB_DIR || msg == LB_DIR ? wparam | DDL_POSTMSGS : wparam;
+}
+
+static BOOL post(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi)
+{
+    if (msg == WM_DROPFILES) {
+        /* the memory of a drop is the sender's: the window's process makes a copy that is its own. */
+        DWORD pid = 0;
+        if (hwnd && GetWindowThreadProcessId(hwnd, &pid) && pid != GetCurrentProcessId()) {
+            SIZE_T size = GlobalSize((HGLOBAL)wparam);
+            wparam = (WPARAM)SendMessageW(hwnd, WM_COPYGLOBALDATA, size, (LPARAM)wparam);
+            if (!wparam)
+                return FALSE;
+        }
+    }
+    if (ansi)
+        wparam = UserCharWparam(msg, wparam, TRUE);
+    return NtUserPostMessage(hwnd, msg, post_wparam(msg, wparam), lparam);
 }
 
 WINUSERAPI BOOL WINAPI PostMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    return NtUserPostMessage(hwnd, msg, wparam, lparam);
+    return post(hwnd, msg, wparam, lparam, FALSE);
 }
 
 WINUSERAPI BOOL WINAPI PostMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    return NtUserPostMessage(hwnd, msg, wparam, lparam);
+    return post(hwnd, msg, wparam, lparam, TRUE);
 }
 
 WINUSERAPI BOOL WINAPI PostThreadMessageW(DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -47,7 +106,79 @@ WINUSERAPI BOOL WINAPI PostThreadMessageW(DWORD thread, UINT msg, WPARAM wparam,
 
 WINUSERAPI BOOL WINAPI PostThreadMessageA(DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    return NtUserPostThreadMessage(thread, msg, wparam, lparam);
+    return NtUserPostThreadMessage(thread, msg, UserCharWparam(msg, wparam, TRUE), lparam);
+}
+
+/*
+ * BroadcastSystemMessage: the recipients and flags are checked here, then every top level window gets the message
+ * the way the flags say. it answers the number of recipients that took it, -1 if the message could not be sent,
+ * and 0 if a query was denied.
+ */
+static long broadcast_system(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam, LPARAM lparam, PBSMINFO info,
+                             BOOL ansi)
+{
+    if ((msg & 0xFFFE0000) || (flags & ~0x7FFu) || ((flags & (BSF_RETURNHDESK | BSF_LUID)) && !info) ||
+        (info && info->cbSize != sizeof(*info)) || (msg >= 0x400 && msg <= 0xBFFF)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (flags & BSF_FORCEIFHUNG)
+        flags |= BSF_NOHANG;
+    if (flags & BSF_QUERY)
+        flags &= ~(BSF_POSTMESSAGE | BSF_SENDNOTIFYMESSAGE);
+    if ((flags & (BSF_POSTMESSAGE | BSF_SENDNOTIFYMESSAGE)) && msg < 0x400 && MimeMsgIsSyncOnly(msg, wparam, TRUE)) {
+        SetLastError(ERROR_MESSAGE_SYNC_ONLY);
+        return 0;
+    }
+    DWORD who = recipients ? *recipients : 0;
+    if (!(who & 0xF))
+        who |= 0xF;
+    if (who & 0xFFFFFFE0u) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!(who & BSM_APPLICATIONS))
+        return -1;
+    MIME_BROADCAST b = {who, flags, nullptr, nullptr};
+    CONV c;
+    BOOL converted = ansi && !(flags & BSF_POSTMESSAGE);
+    if (converted)
+        UserConvBegin(&c, nullptr, msg, wparam, lparam);
+    LRESULT r = NtUserMessageCall(nullptr, msg, converted ? c.wparam : wparam, converted ? c.lparam : lparam,
+                                  (ULONG_PTR)&b, MIME_MSGCALL_BROADCAST, FALSE);
+    if (converted)
+        UserConvEnd(&c, 0);
+    if (recipients)
+        *recipients = b.Recipients;
+    if (!r && (flags & BSF_QUERY) && info) {
+        info->hwnd = b.Hwnd;
+        info->hdesk = b.Desktop;
+    }
+    return (long)r;
+}
+
+WINUSERAPI long WINAPI BroadcastSystemMessageW(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                               LPARAM lparam)
+{
+    return broadcast_system(flags, recipients, msg, wparam, lparam, nullptr, FALSE);
+}
+
+WINUSERAPI long WINAPI BroadcastSystemMessageA(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                               LPARAM lparam)
+{
+    return broadcast_system(flags, recipients, msg, wparam, lparam, nullptr, TRUE);
+}
+
+WINUSERAPI long WINAPI BroadcastSystemMessageExW(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                                 LPARAM lparam, PBSMINFO info)
+{
+    return broadcast_system(flags, recipients, msg, wparam, lparam, info, FALSE);
+}
+
+WINUSERAPI long WINAPI BroadcastSystemMessageExA(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
+                                                 LPARAM lparam, PBSMINFO info)
+{
+    return broadcast_system(flags, recipients, msg, wparam, lparam, info, TRUE);
 }
 
 WINUSERAPI void WINAPI PostQuitMessage(int code)
@@ -62,12 +193,7 @@ WINUSERAPI BOOL WINAPI GetMessageW(LPMSG msg, HWND hwnd, UINT min, UINT max)
 
 static void msg_to_ansi(LPMSG msg)
 {
-    if ((msg->message == WM_CHAR || msg->message == WM_SYSCHAR) && msg->wParam > 0x7F) {
-        WCHAR wc = (WCHAR)msg->wParam;
-        char c = '?';
-        WideCharToMultiByte(CP_ACP, 0, &wc, 1, &c, 1, nullptr, nullptr);
-        msg->wParam = (UCHAR)c;
-    }
+    msg->wParam = UserCharWparam(msg->message, msg->wParam, FALSE);
 }
 
 WINUSERAPI BOOL WINAPI GetMessageA(LPMSG msg, HWND hwnd, UINT min, UINT max)
@@ -116,12 +242,7 @@ WINUSERAPI LRESULT WINAPI DispatchMessageW(const MSG *msg)
 WINUSERAPI LRESULT WINAPI DispatchMessageA(const MSG *msg)
 {
     MSG m = *msg;
-    if ((m.message == WM_CHAR || m.message == WM_SYSCHAR) && m.wParam > 0x7F) {
-        char c = (char)m.wParam;
-        WCHAR wc;
-        MultiByteToWideChar(CP_ACP, 0, &c, 1, &wc, 1);
-        m.wParam = wc;
-    }
+    m.wParam = UserCharWparam(m.message, m.wParam, TRUE);
     return dispatch(&m);
 }
 
@@ -256,50 +377,10 @@ WINUSERAPI BOOL WINAPI TranslateMDISysAccel(HWND client, LPMSG msg)
 
 WINUSERAPI LRESULT WINAPI DefWindowProcA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    switch (msg) {
-    case WM_NCCREATE:
-    case WM_CREATE: {
-        CREATESTRUCTA *csa = (CREATESTRUCTA *)lparam;
-        CREATESTRUCTW csw;
-        memcpy(&csw, csa, sizeof(csw));
-        csw.lpszName = UserAtoW(csa->lpszName);
-        csw.lpszClass = UserAtoW(csa->lpszClass);
-        LRESULT r = DefWindowProcW(hwnd, msg, wparam, (LPARAM)&csw);
-        UserFreeConverted(csw.lpszName, csa->lpszName);
-        UserFreeConverted(csw.lpszClass, csa->lpszClass);
-        return r;
-    }
-    case WM_SETTEXT: {
-        LPWSTR w = UserAtoW((LPCSTR)lparam);
-        LRESULT r = DefWindowProcW(hwnd, msg, wparam, (LPARAM)w);
-        UserFreeConverted(w, (void *)lparam);
-        return r;
-    }
-    case WM_GETTEXT: {
-        if (!wparam || !lparam)
-            return 0;
-        LPWSTR w = UserAlloc(wparam * sizeof(WCHAR));
-        if (!w)
-            return 0;
-        LRESULT n = DefWindowProcW(hwnd, msg, wparam, (LPARAM)w);
-        int a = WideCharToMultiByte(CP_ACP, 0, w, (int)n, (LPSTR)lparam, (int)wparam - 1, nullptr, nullptr);
-        ((LPSTR)lparam)[a] = 0;
-        UserFree(w);
-        return a;
-    }
-    case WM_GETTEXTLENGTH: {
-        int n = (int)DefWindowProcW(hwnd, msg, wparam, lparam);
-        LPWSTR w = UserAlloc(((SIZE_T)n + 1) * sizeof(WCHAR));
-        if (!w)
-            return n;
-        DefWindowProcW(hwnd, WM_GETTEXT, (WPARAM)n + 1, (LPARAM)w);
-        int a = WideCharToMultiByte(CP_ACP, 0, w, n, nullptr, 0, nullptr, nullptr);
-        UserFree(w);
-        return a;
-    }
-    default:
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
-    }
+    CONV c;
+    if (!UserConvBegin(&c, hwnd, msg, wparam, lparam))
+        return c.refused ? c.refusal : 0;
+    return UserConvEnd(&c, DefWindowProcW(hwnd, msg, c.wparam, c.lparam));
 }
 
 WINUSERAPI LRESULT WINAPI CallWindowProcW(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -307,9 +388,27 @@ WINUSERAPI LRESULT WINAPI CallWindowProcW(WNDPROC proc, HWND hwnd, UINT msg, WPA
     return proc ? proc(hwnd, msg, wparam, lparam) : 0;
 }
 
+/* the procedures user32 has for its classes take unicode, even when an ansi program holds them. */
+static BOOL is_system_proc(WNDPROC proc)
+{
+    if (proc == DefWindowProcW || proc == DefDlgProcW)
+        return TRUE;
+    for (int i = 0; i < MIME_FNID_COUNT; i++)
+        if (User32Client.Procs[i] == proc)
+            return TRUE;
+    return FALSE;
+}
+
 WINUSERAPI LRESULT WINAPI CallWindowProcA(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    return proc ? proc(hwnd, msg, wparam, lparam) : 0;
+    if (!proc)
+        return 0;
+    if (!is_system_proc(proc))
+        return proc(hwnd, msg, wparam, lparam);
+    CONV c;
+    if (!UserConvBegin(&c, hwnd, msg, wparam, lparam))
+        return c.refused ? c.refusal : 0;
+    return UserConvEnd(&c, proc(hwnd, msg, c.wparam, c.lparam));
 }
 
 /* ------------------------------------------------------------------ timers */
