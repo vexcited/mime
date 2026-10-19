@@ -303,6 +303,7 @@ NTDLL_EXPORT PVOID NTAPI RtlPcToFileHeader(PVOID pc, PVOID *base)
 typedef struct API_SET_RULE {
     PCWSTR Prefix;
     PCWSTR Host;
+    ULONG Version;
 } API_SET_RULE;
 
 static const API_SET_RULE g_api_set_hosts[] = {
@@ -310,46 +311,46 @@ static const API_SET_RULE g_api_set_hosts[] = {
 };
 
 static const API_SET_RULE g_api_sets[] = {
-    {L"api-ms-win-crt-", L"ucrtbase.dll"},
-    {L"api-ms-win-core-winrt-", L"combase.dll"},
-    {L"api-ms-win-core-synch-", L"kernelbase.dll"},
-    {L"api-ms-win-core-rtlsupport-", L"ntdll.dll"},
-    {L"api-ms-win-core-", L"kernelbase.dll"},
-    {L"api-ms-win-eventing-consumer-", L"sechost.dll"},
-    {L"api-ms-win-eventing-controller-", L"sechost.dll"},
-    {L"api-ms-win-eventing-obsolete-", L"sechost.dll"},
-    {L"api-ms-win-eventing-", L"kernelbase.dll"},
-    {L"api-ms-win-security-base-", L"kernelbase.dll"},
-    {L"api-ms-win-security-lsalookup-l1-", L"sechost.dll"},
-    {L"api-ms-win-security-lsapolicy-", L"sechost.dll"},
-    {L"api-ms-win-security-credentials-", L"sechost.dll"},
-    {L"api-ms-win-security-audit-", L"sechost.dll"},
-    {L"api-ms-win-security-sddl-ansi-", L"advapi32.dll"},
-    {L"api-ms-win-security-sddl-", L"sechost.dll"},
-    {L"api-ms-win-security-sddlparsecond-", L"sechost.dll"},
-    {L"api-ms-win-security-accesshlpr-", L"sechost.dll"},
-    {L"api-ms-win-security-capability-", L"sechost.dll"},
-    {L"api-ms-win-security-isolation", L"sechost.dll"},
-    {L"api-ms-win-security-", L"advapi32.dll"},
-    {L"api-ms-win-service-", L"sechost.dll"},
-    {L"api-ms-win-shcore-", L"shcore.dll"},
-    {L"api-ms-win-power-", L"powrprof.dll"},
-    {L"api-ms-win-ntuser-", L"user32.dll"},
-    {L"api-ms-win-rtcore-ntuser-", L"user32.dll"},
-    {L"api-ms-win-gdi-", L"gdi32.dll"},
-    {L"api-ms-win-shell-", L"shell32.dll"},
-    {L"ext-ms-win-ntuser-", L"user32.dll"},
-    {L"ext-ms-win-gdi-", L"gdi32.dll"},
-    {L"ext-ms-win-", L"kernelbase.dll"},
+    {L"api-ms-win-crt-", L"ucrtbase.dll", 0},
+    {L"api-ms-win-core-winrt-", L"combase.dll", 0},
+    {L"api-ms-win-core-synch-", L"kernelbase.dll", 0},
+    {L"api-ms-win-core-rtlsupport-", L"ntdll.dll", 0},
+    {L"api-ms-win-core-", L"kernelbase.dll", 0},
+    {L"api-ms-win-eventing-consumer-", L"sechost.dll", 0},
+    {L"api-ms-win-eventing-controller-", L"sechost.dll", 0},
+    {L"api-ms-win-eventing-obsolete-", L"sechost.dll", 0},
+    {L"api-ms-win-eventing-", L"kernelbase.dll", 0},
+    {L"api-ms-win-security-base-", L"kernelbase.dll", 0},
+    {L"api-ms-win-security-lsalookup-l1-", L"sechost.dll", 0},
+    {L"api-ms-win-security-lsapolicy-", L"sechost.dll", 0},
+    {L"api-ms-win-security-credentials-", L"sechost.dll", 0},
+    {L"api-ms-win-security-audit-", L"sechost.dll", 0},
+    {L"api-ms-win-security-sddl-ansi-", L"advapi32.dll", 0},
+    {L"api-ms-win-security-sddl-", L"sechost.dll", 0},
+    {L"api-ms-win-security-sddlparsecond-", L"sechost.dll", 0},
+    {L"api-ms-win-security-accesshlpr-", L"sechost.dll", 0},
+    {L"api-ms-win-security-capability-", L"sechost.dll", 0},
+    {L"api-ms-win-security-isolation", L"sechost.dll", 0},
+    {L"api-ms-win-security-", L"advapi32.dll", 0},
+    {L"api-ms-win-service-", L"sechost.dll", 0},
+    {L"api-ms-win-shcore-", L"shcore.dll", 0},
+    {L"api-ms-win-power-", L"powrprof.dll", 0},
+    {L"api-ms-win-ntuser-", L"user32.dll", 0},
+    {L"api-ms-win-rtcore-ntuser-", L"user32.dll", 0},
+    {L"api-ms-win-gdi-", L"gdi32.dll", 0},
+    {L"api-ms-win-shell-", L"shell32.dll", 0},
+    {L"ext-ms-win-ntuser-", L"user32.dll", 0},
+    {L"ext-ms-win-gdi-", L"gdi32.dll", 0},
+    {L"ext-ms-win-", L"kernelbase.dll", 0},
 };
 
-/* the host of a contract in the schema table, or null; a name is the contract, a hyphen and a version, and .dll. */
-static PCWSTR find_api_set_host(PCWSTR name)
+/*
+ * the schema's rule for a contract name, which ends in a hyphen and a version, perhaps followed by the extension
+ * of the dll. The name's length without the extension is length, and version_at is where the version starts.
+ */
+static const API_SET_RULE *find_contract(PCWSTR name, SIZE_T length, SIZE_T *version_at)
 {
     WCHAR key[96];
-    SIZE_T length = wcslen(name);
-    if (length > 4 && !_wcsicmp(name + length - 4, L".dll"))
-        length -= 4;
     SIZE_T cut = length;
     while (cut && name[cut - 1] >= '0' && name[cut - 1] <= '9')
         cut--;
@@ -358,18 +359,30 @@ static PCWSTR find_api_set_host(PCWSTR name)
     for (SIZE_T i = 0; i < cut - 1; i++)
         key[i] = name[i] >= 'A' && name[i] <= 'Z' ? name[i] + 32 : name[i];
     key[cut - 1] = 0;
+    if (version_at)
+        *version_at = cut;
     SIZE_T low = 0, high = RTL_NUMBER_OF(g_api_set_hosts);
     while (low < high) {
         SIZE_T middle = (low + high) / 2;
         int order = wcscmp(key, g_api_set_hosts[middle].Prefix);
         if (!order)
-            return g_api_set_hosts[middle].Host;
+            return &g_api_set_hosts[middle];
         if (order < 0)
             high = middle;
         else
             low = middle + 1;
     }
     return nullptr;
+}
+
+/* the host of a contract in the schema table, or null; a name is the contract, a hyphen and a version, and .dll. */
+static PCWSTR find_api_set_host(PCWSTR name)
+{
+    SIZE_T length = wcslen(name);
+    if (length > 4 && !_wcsicmp(name + length - 4, L".dll"))
+        length -= 4;
+    const API_SET_RULE *rule = find_contract(name, length, nullptr);
+    return rule ? rule->Host : nullptr;
 }
 
 static PCWSTR resolve_api_set(PCWSTR name)
@@ -385,6 +398,70 @@ static PCWSTR resolve_api_set(PCWSTR name)
             return g_api_sets[i].Host;
     }
     return name;
+}
+
+/*
+ * whether a contract has a host: any version of it will do, and the name may have an extension. A name that is
+ * no contract is not present, and says so without an error.
+ */
+NTDLL_EXPORT NTSTATUS NTAPI ApiSetQueryApiSetPresence(PCUNICODE_STRING name, PBOOLEAN present)
+{
+    *present = FALSE;
+    if (name->Length < 4 * sizeof(WCHAR) || (_wcsnicmp(name->Buffer, L"api-", 4) && _wcsnicmp(name->Buffer, L"ext-", 4)))
+        return STATUS_SUCCESS;
+    SIZE_T length = name->Length / sizeof(WCHAR);
+    SIZE_T hyphen = length;
+    while (hyphen > 1 && name->Buffer[hyphen - 1] != '-')
+        hyphen--;
+    if (hyphen <= 1)
+        return STATUS_SUCCESS;
+    WCHAR key[96];
+    if (hyphen - 1 >= RTL_NUMBER_OF(key))
+        return STATUS_SUCCESS;
+    for (SIZE_T i = 0; i < hyphen - 1; i++)
+        key[i] = name->Buffer[i] >= 'A' && name->Buffer[i] <= 'Z' ? name->Buffer[i] + 32 : name->Buffer[i];
+    key[hyphen - 1] = 0;
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(g_api_set_hosts); i++)
+        if (!wcscmp(key, g_api_set_hosts[i].Prefix)) {
+            *present = TRUE;
+            break;
+        }
+    return STATUS_SUCCESS;
+}
+
+/*
+ * STATUS_SUCCESS when a contract of at least the version asked is implemented, STATUS_NOT_FOUND when it is not.
+ * The name has no extension; one that does not end in a number is an invalid parameter, as is a name that does
+ * not start like a contract.
+ */
+NTDLL_EXPORT NTSTATUS NTAPI RtlIsApiSetImplemented(PCSTR name)
+{
+    SIZE_T length = strlen(name);
+    if (length < 4 || length > 0xFFFF)
+        return STATUS_INVALID_PARAMETER;
+    WCHAR wide[96];
+    if (length >= RTL_NUMBER_OF(wide))
+        return STATUS_INVALID_PARAMETER;
+    for (SIZE_T i = 0; i < length; i++)
+        wide[i] = (UCHAR)name[i];
+    wide[length] = 0;
+    if (_wcsnicmp(wide, L"api-", 4) && _wcsnicmp(wide, L"ext-", 4))
+        return STATUS_INVALID_PARAMETER;
+    SIZE_T version_at;
+    const API_SET_RULE *rule = find_contract(wide, length, &version_at);
+    if (!rule) {
+        /* a name that ends in no version is not a name at all, one with a version nobody has is absent. */
+        return length && wide[length - 1] >= '0' && wide[length - 1] <= '9' ? STATUS_NOT_FOUND : STATUS_INVALID_PARAMETER;
+    }
+    ULONG version = 0;
+    for (SIZE_T i = version_at; i < length; i++)
+        version = version * 10 + (ULONG)(wide[i] - '0');
+    return version > rule->Version ? STATUS_NOT_FOUND : STATUS_SUCCESS;
+}
+
+NTDLL_EXPORT BOOLEAN NTAPI RtlDllShutdownInProgress(void)
+{
+    return g_process_detaching;
 }
 
 /* ------------------------------------------------------------------ mapping */
@@ -1196,6 +1273,126 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddress(PVOID base, PCANSI_STRING nam
     return LdrGetProcedureAddressEx(base, name, ordinal, address, 0);
 }
 
+/* ------------------------------------------------------------------ delay loads */
+
+/*
+ * what a failure hook is told: the delay load descriptor, the thunk, the name of the dll and what is imported,
+ * the module if it was loaded, and the error. Notifications: 3 for a dll that did not load, 4 for a procedure
+ * that was not found.
+ */
+typedef struct DELAYLOAD_INFO_ {
+    ULONG Size;
+    const IMAGE_DELAYLOAD_DESCRIPTOR *Descriptor;
+    PVOID *ThunkAddress;
+    PCSTR TargetDllName;
+    struct {
+        BOOLEAN ImportedByName;
+        union {
+            PCSTR Name;
+            ULONG Ordinal;
+        };
+    } TargetApi;
+    PVOID TargetModuleBase;
+    PVOID Unused;
+    ULONG LastError;
+} DELAYLOAD_INFO_;
+
+typedef PVOID(NTAPI *DELAYLOAD_DLL_HOOK)(ULONG reason, DELAYLOAD_INFO_ *info);
+typedef PVOID(NTAPI *DELAYLOAD_SYSTEM_HOOK)(PCSTR dll, PCSTR procedure);
+
+#define VCPP_LOAD_FAILED 0xC06D007E
+#define VCPP_PROC_FAILED 0xC06D007F
+
+/*
+ * the address that an import of a delay load descriptor stands for, loaded on the first use: the dll is
+ * loaded by the name in the descriptor and kept in its module slot, the export is found by name or ordinal
+ * from the import name table entry at the thunk's index, and the thunk of the import address table is
+ * replaced by it. A thunk that no longer points into the image is already resolved and gives what it holds.
+ * A dll or an export that is missing goes to the hook of the program, then to the system hook, and is
+ * raised as an exception when neither gives an address.
+ */
+NTDLL_EXPORT PVOID NTAPI LdrResolveDelayLoadedAPI(PVOID base, const IMAGE_DELAYLOAD_DESCRIPTOR *descriptor,
+                                                  DELAYLOAD_DLL_HOOK dll_hook, DELAYLOAD_SYSTEM_HOOK system_hook,
+                                                  PVOID *thunk, ULONG flags)
+{
+    if (!(descriptor->Attributes & 1) || !base)
+        return nullptr;
+    PLDR_DATA_TABLE_ENTRY owner;
+    if (!NT_SUCCESS(LdrFindEntryForAddress(base, &owner)) || owner->DllBase != base)
+        return nullptr;
+    if ((ULONG_PTR)*thunk - (ULONG_PTR)base >= owner->SizeOfImage)
+        return *thunk;
+    PUCHAR image = base;
+    PCSTR dll_name = (PCSTR)(image + descriptor->DllNameRVA);
+    ULONG index = (ULONG)(((PUCHAR)thunk - (image + descriptor->ImportAddressTableRVA)) / sizeof(PVOID));
+    ULONG_PTR entry = ((ULONG_PTR *)(image + descriptor->ImportNameTableRVA))[index];
+    BOOLEAN by_name = !(entry >> (sizeof(ULONG_PTR) * 8 - 1));
+    PCSTR procedure = by_name ? (PCSTR)(image + (entry & 0x7fffffff) + 2) : nullptr;
+    ULONG ordinal = by_name ? 0 : (ULONG)(entry & 0xffff);
+
+    DELAYLOAD_INFO_ info = {sizeof(info), descriptor, thunk, dll_name};
+    info.TargetApi.ImportedByName = by_name;
+    if (by_name)
+        info.TargetApi.Name = procedure;
+    else
+        info.TargetApi.Ordinal = ordinal;
+
+    PVOID *slot = (PVOID *)(image + descriptor->ModuleHandleRVA);
+    PVOID module = *slot;
+    PVOID address = nullptr;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (!module) {
+        WCHAR wide[MAX_PATH];
+        SIZE_T n = strlen(dll_name);
+        if (n >= RTL_NUMBER_OF(wide))
+            n = RTL_NUMBER_OF(wide) - 1;
+        for (SIZE_T i = 0; i < n; i++)
+            wide[i] = (UCHAR)dll_name[i];
+        wide[n] = 0;
+        UNICODE_STRING name;
+        RtlInitUnicodeString(&name, wide);
+        status = LdrLoadDll(nullptr, nullptr, &name, &module);
+        if (NT_SUCCESS(status)) {
+            /* another thread may have been first; its module is the one kept. */
+            PVOID raced = __atomic_exchange_n(slot, module, __ATOMIC_ACQ_REL);
+            (void)raced;
+        }
+    }
+    info.TargetModuleBase = NT_SUCCESS(status) ? module : nullptr;
+    ULONG notification = 3;
+    if (NT_SUCCESS(status)) {
+        ANSI_STRING ansi;
+        if (by_name)
+            RtlInitAnsiString(&ansi, procedure);
+        status = LdrGetProcedureAddress(module, by_name ? &ansi : nullptr, ordinal, &address);
+        notification = 4;
+    }
+    if (NT_SUCCESS(status)) {
+        PVOID target = thunk;
+        SIZE_T size = sizeof(PVOID);
+        ULONG old;
+        if (NT_SUCCESS(NtProtectVirtualMemory(NtCurrentProcess(), &target, &size, PAGE_READWRITE, &old))) {
+            *thunk = address;
+            NtProtectVirtualMemory(NtCurrentProcess(), &target, &size, old, &old);
+        }
+        return address;
+    }
+    info.LastError = RtlNtStatusToDosError(status);
+    PVOID substitute = nullptr;
+    if (dll_hook)
+        substitute = dll_hook(notification, &info);
+    if (!substitute && system_hook && (flags == 0 || flags == 8))
+        substitute = system_hook(dll_name, by_name ? procedure : (PCSTR)(ULONG_PTR)ordinal);
+    if (substitute)
+        return substitute;
+    EXCEPTION_RECORD record = {};
+    record.ExceptionCode = notification == 3 ? VCPP_LOAD_FAILED : VCPP_PROC_FAILED;
+    record.NumberParameters = 1;
+    record.ExceptionInformation[0] = (ULONG_PTR)&info;
+    RtlRaiseException(&record);
+    return nullptr;
+}
+
 NTDLL_EXPORT NTSTATUS NTAPI LdrDisableThreadCalloutsForDll(PVOID base)
 {
     RtlEnterCriticalSection(&LdrpLoaderLock);
@@ -1279,6 +1476,11 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlExitUserProcess(NTSTATUS status)
 NTDLL_EXPORT void NTAPI RtlAcquirePebLock(void)
 {
     RtlEnterCriticalSection(&g_peb_lock);
+}
+
+NTDLL_EXPORT BOOLEAN NTAPI RtlTryAcquirePebLock(void)
+{
+    return RtlTryEnterCriticalSection(&g_peb_lock);
 }
 
 NTDLL_EXPORT void NTAPI RtlReleasePebLock(void)

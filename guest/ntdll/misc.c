@@ -354,6 +354,46 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlTimeFieldsToTime(PTIME_FIELDS tf, PLARGE_INTEGER t
     return TRUE;
 }
 
+/*
+ * the time as the fields of the calendar. The weekday counts from Sunday; 1 January 1601 was a Monday. Times of
+ * the leap seconds Windows can keep in the process block are not told apart here.
+ */
+NTDLL_EXPORT void NTAPI RtlTimeToTimeFields(PLARGE_INTEGER time, PVOID fields)
+{
+    PTIME_FIELDS tf = fields;
+    ULONGLONG ticks = (ULONGLONG)time->QuadPart;
+    ULONGLONG milliseconds = ticks / 10000;
+    ULONGLONG days = milliseconds / 86400000;
+    ULONG rest = (ULONG)(milliseconds % 86400000);
+    tf->Weekday = (SHORT)((days + 1) % 7);
+    LONG year = 1601;
+    /* 146097 days are 400 years of the gregorian calendar, 36524 a century and 1461 four years. */
+    year += 400 * (LONG)(days / 146097);
+    days %= 146097;
+    LONG centuries = (LONG)(days / 36524);
+    if (centuries == 4)
+        centuries = 3;
+    year += 100 * centuries;
+    days -= (ULONGLONG)centuries * 36524;
+    year += 4 * (LONG)(days / 1461);
+    days %= 1461;
+    LONG single = (LONG)(days / 365);
+    if (single == 4)
+        single = 3;
+    year += single;
+    days -= (ULONGLONG)single * 365;
+    LONG month = 0;
+    while (days >= g_month_days[is_leap(year)][month])
+        days -= g_month_days[is_leap(year)][month++];
+    tf->Year = (SHORT)year;
+    tf->Month = (SHORT)(month + 1);
+    tf->Day = (SHORT)(days + 1);
+    tf->Hour = (SHORT)(rest / 3600000);
+    tf->Minute = (SHORT)(rest / 60000 % 60);
+    tf->Second = (SHORT)(rest / 1000 % 60);
+    tf->Milliseconds = (SHORT)(rest % 1000);
+}
+
 /* ------------------------------------------------------------------ pointer encoding */
 
 static ULONG process_cookie(void)

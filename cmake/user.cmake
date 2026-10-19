@@ -157,7 +157,7 @@ function(mime_sources out name arch)
     set(${out} ${files} PARENT_SCOPE)
 endfunction()
 
-set(nt_export_code "^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer|MimeSxs)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$|^LdrInitializeThunk$|^VerSetConditionMask$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)")
+set(nt_export_code "^(Rtl|Ldr|Dbg|vDbg|Etw|Tp|Nls|Csr|Wer|MimeSxs|ApiSet)[A-Z]|^KiUser(Exception|Apc|Callback)Dispatcher$|^LdrInitializeThunk$|^VerSetConditionMask$|^(_?str|_?wcs|mem|_vsn|_sn|sprintf|swprintf|to|tow|__chkstk|_i64tow|_itow|_ultow|_wtoi|atoi|_wcs|_str)")
 set(MIME_SYSCALLS_arm64 ${MIME_GEN}/ntdll_syscalls.S)
 set(MIME_SYSCALLS_x64 ${MIME_GEN}/ntdll_syscalls_x64.S)
 set(MIME_WIN32K_SYSCALLS_arm64 ${MIME_GEN}/win32u_syscalls.S)
