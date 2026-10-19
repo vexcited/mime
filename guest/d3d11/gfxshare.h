@@ -107,5 +107,7 @@ void MimeShareClose(MimeShare *share);
 /* the keyed mutex of a shared resource: the status is STATUS_SUCCESS, STATUS_TIMEOUT or STATUS_ABANDONED. */
 NTSTATUS MimeShareAcquire(HANDLE handle, UINT64 key, UINT timeout);
 NTSTATUS MimeShareRelease(HANDLE handle, UINT64 key);
+/* the device that holds the mutex goes: the next acquire gets WAIT_ABANDONED. */
+void MimeShareAbandon(HANDLE handle);
 
 #endif

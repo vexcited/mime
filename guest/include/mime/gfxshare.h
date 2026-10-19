@@ -28,6 +28,7 @@
 #define MIME_GFXSHARE_ACQUIRE 5    /* takes a keyed mutex with a key, waiting timeout milliseconds */
 #define MIME_GFXSHARE_RELEASE 6    /* releases it, leaving the key */
 #define MIME_GFXSHARE_RETIRE 7     /* the creator is gone: its legacy shared handle stops opening */
+#define MIME_GFXSHARE_ABANDON 8    /* the device that holds a keyed mutex is gone: the next acquire is told so */
 
 /* flags of an object. */
 #define MIME_GFXSHARE_INHERIT 0x1       /* create: the handle is inherited */

@@ -185,3 +185,10 @@ NTSTATUS MimeShareRelease(HANDLE handle, UINT64 key)
     a.Key = key;
     return call(MIME_GFXSHARE_RELEASE, &a);
 }
+
+void MimeShareAbandon(HANDLE handle)
+{
+    MimeGfxShare a = {};
+    a.Handle = (ULONG_PTR)handle;
+    call(MIME_GFXSHARE_ABANDON, &a);
+}

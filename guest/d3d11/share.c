@@ -152,6 +152,9 @@ HRESULT D3dShareHandle(D3dResource *r, BOOL nt, const SECURITY_ATTRIBUTES *attri
 
 void D3dShareDestroy(D3dResource *r)
 {
+    /* a texture that goes while it holds the keyed mutex abandons it. */
+    if (r->keyed_acquired && r->share.handle)
+        MimeShareAbandon(r->share.handle);
     MimeShareClose(&r->share);
     HeapFree(GetProcessHeap(), 0, r->share_blob);
     r->share_blob = nullptr;

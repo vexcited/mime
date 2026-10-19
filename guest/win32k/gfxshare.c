@@ -337,6 +337,26 @@ static NTSTATUS release(MimeGfxShare *a)
     return status;
 }
 
+/* the holder is gone without releasing: the mutex is free, with its key, and says it was abandoned. */
+static NTSTATUS abandon(MimeGfxShare *a)
+{
+    GFXSHARE *s;
+    NTSTATUS status = reference((HANDLE)(ULONG_PTR)a->Handle, MIME_GFXSHARE_RESOURCE, &s);
+    if (!NT_SUCCESS(status))
+        return status;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    if (s->Held && s->Holder == PsGetCurrentProcess()) {
+        s->Held = FALSE;
+        s->Holder = nullptr;
+        s->Abandoned = TRUE;
+        KeSetEvent(&s->Changed, 0, FALSE);
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    ObDereferenceObject(s);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI NtGdiMimeGfxShare(ULONG op, PVOID user)
 {
     MimeGfxShare a;
@@ -364,6 +384,9 @@ NTSTATUS NTAPI NtGdiMimeGfxShare(ULONG op, PVOID user)
         break;
     case MIME_GFXSHARE_RETIRE:
         status = retire(&a);
+        break;
+    case MIME_GFXSHARE_ABANDON:
+        status = abandon(&a);
         break;
     default:
         return STATUS_INVALID_PARAMETER;
