@@ -634,6 +634,7 @@ struct D3dDevice {
     UINT video_depths;
     VkSemaphore video_timeline;
     UINT64 video_value, video_waited;
+    void *video_processor;
 
     /* memory. */
     SRWLOCK memory_lock;
@@ -1000,6 +1001,17 @@ void *D3dVideoContextInterface(D3dContext *context, REFIID riid);
 void D3dVideoDeviceInit(D3dDevice *device);
 void D3dVideoContextInit(D3dContext *context);
 void D3dVideoDeviceDestroy(D3dDevice *device);
+void D3dVideoProcessorDestroy(D3dDevice *device);
+HRESULT D3dVideoCreateEnumerator(D3dDevice *device, const D3D11_VIDEO_PROCESSOR_CONTENT_DESC *desc,
+                                 ID3D11VideoProcessorEnumerator **out);
+HRESULT D3dVideoCreateProcessor(D3dDevice *device, ID3D11VideoProcessorEnumerator *enumerator, UINT rate_index,
+                                ID3D11VideoProcessor **out);
+HRESULT D3dVideoCreateInputView(D3dDevice *device, ID3D11Resource *resource, ID3D11VideoProcessorEnumerator *enumerator,
+                                const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *desc, ID3D11VideoProcessorInputView **out);
+HRESULT D3dVideoCreateOutputView(D3dDevice *device, ID3D11Resource *resource,
+                                 ID3D11VideoProcessorEnumerator *enumerator,
+                                 const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *desc,
+                                 ID3D11VideoProcessorOutputView **out);
 
 /* the debug output of the dll, to the kernel debugger log. */
 void D3dLog(const char *format, ...);

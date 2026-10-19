@@ -1355,10 +1355,14 @@ HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, 
         return DXGI_ERROR_INVALID_CALL;
     if (desc->Scaling != DXGI_SCALING_STRETCH || desc->Stereo)
         return DXGI_ERROR_INVALID_CALL;
-    const UINT flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_RESTRICTED_CONTENT |
-                       DXGI_SWAP_CHAIN_FLAG_RESTRICT_SHARED_RESOURCE_DRIVER |
-                       DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING |
-                       DXGI_SWAP_CHAIN_FLAG_RESTRICTED_TO_ALL_HOLOGRAPHIC_DISPLAYS | 0x2000;
+    UINT flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_RESTRICTED_CONTENT |
+                 DXGI_SWAP_CHAIN_FLAG_RESTRICT_SHARED_RESOURCE_DRIVER |
+                 DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING |
+                 DXGI_SWAP_CHAIN_FLAG_RESTRICTED_TO_ALL_HOLOGRAPHIC_DISPLAYS | 0x2000;
+    /* a chain made for a surface handle is a video chain, which says so in flags the other chains do not take. */
+    if (surface)
+        flags |= DXGI_SWAP_CHAIN_FLAG_DISPLAY_ONLY | DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO |
+                 DXGI_SWAP_CHAIN_FLAG_YUV_VIDEO | DXGI_SWAP_CHAIN_FLAG_HW_PROTECTED;
     if (desc->Flags & ~flags)
         return DXGI_ERROR_INVALID_CALL;
     D3dSwapChain *sc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*sc));

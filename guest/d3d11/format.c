@@ -170,7 +170,8 @@ UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
         /* planes are read through views of their own formats, copied and decoded into whole. */
         UINT depth = format == DXGI_FORMAT_NV12 ? D3D_VIDEO_8BIT : format == DXGI_FORMAT_P010 ? D3D_VIDEO_10BIT : 0;
         UINT planar = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_SHADER_LOAD |
-                      D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_CPU_LOCKABLE;
+                      D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_CPU_LOCKABLE |
+                      D3D11_FORMAT_SUPPORT_RENDER_TARGET | D3D11_FORMAT_SUPPORT_VIDEO_PROCESSOR_INPUT;
         if (device->video_depths & depth)
             planar |= D3D11_FORMAT_SUPPORT_DECODER_OUTPUT;
         if (support2)
@@ -230,6 +231,8 @@ UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
     case DXGI_FORMAT_R10G10B10A2_UNORM:
     case DXGI_FORMAT_R16G16B16A16_FLOAT:
         s |= D3D11_FORMAT_SUPPORT_DISPLAY | D3D11_FORMAT_SUPPORT_BACK_BUFFER_CAST;
+        /* the video processor reads and writes these. */
+        s |= D3D11_FORMAT_SUPPORT_VIDEO_PROCESSOR_INPUT | D3D11_FORMAT_SUPPORT_VIDEO_PROCESSOR_OUTPUT;
         break;
     default:
         break;

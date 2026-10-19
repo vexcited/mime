@@ -8,6 +8,7 @@
  * video processors, crypto sessions and authenticated channels do not exist: their methods fail or do nothing.
  */
 #include "d3d11_private.h"
+#include "video_dxbc.h"
 
 #define VTBL_FN(f) ((void *)(f))
 
@@ -316,6 +317,7 @@ static const ID3D11VideoDecoderOutputViewVtbl view_vtbl = {
 /* ------------------------------------------------------------------ the device */
 
 #include "video_stubs.inc"
+#include "video_processor.inc"
 
 
 static HRESULT STDMETHODCALLTYPE vd_QueryInterface(ID3D11VideoDevice1 *iface, REFIID riid, void **out)
@@ -569,6 +571,36 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoDecoderOutputView(ID3D11VideoDevi
     return S_OK;
 }
 
+static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessorEnumerator(ID3D11VideoDevice1 *iface,
+                                                                   const D3D11_VIDEO_PROCESSOR_CONTENT_DESC *desc,
+                                                                   ID3D11VideoProcessorEnumerator **out)
+{
+    return D3dVideoCreateEnumerator(device_of(iface), desc, out);
+}
+
+static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessor(ID3D11VideoDevice1 *iface,
+                                                         ID3D11VideoProcessorEnumerator *enumerator, UINT rate_index,
+                                                         ID3D11VideoProcessor **out)
+{
+    return D3dVideoCreateProcessor(device_of(iface), enumerator, rate_index, out);
+}
+
+static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessorInputView(ID3D11VideoDevice1 *iface, ID3D11Resource *resource,
+                                                                  ID3D11VideoProcessorEnumerator *enumerator,
+                                                                  const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *desc,
+                                                                  ID3D11VideoProcessorInputView **out)
+{
+    return D3dVideoCreateInputView(device_of(iface), resource, enumerator, desc, out);
+}
+
+static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessorOutputView(ID3D11VideoDevice1 *iface, ID3D11Resource *resource,
+                                                                   ID3D11VideoProcessorEnumerator *enumerator,
+                                                                   const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *desc,
+                                                                   ID3D11VideoProcessorOutputView **out)
+{
+    return D3dVideoCreateOutputView(device_of(iface), resource, enumerator, desc, out);
+}
+
 static const ID3D11VideoDevice1Vtbl video_device_vtbl = {
     .QueryInterface = vd_QueryInterface,
     .AddRef = vd_AddRef,
@@ -584,6 +616,7 @@ void D3dVideoDeviceInit(D3dDevice *device)
 
 void D3dVideoDeviceDestroy(D3dDevice *device)
 {
+    D3dVideoProcessorDestroy(device);
     if (device->video_timeline)
         device->vk.vkDestroySemaphore(device->vk.device, device->video_timeline, nullptr);
     device->video_timeline = VK_NULL_HANDLE;

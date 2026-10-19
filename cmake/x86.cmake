@@ -133,7 +133,9 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
     set(objects_d3d12 x86-lib-privdata x86-lib-dxbc x86-lib-dxil x86-d3d11:guest/d3d11/format.c)
     set(objects_d3d9 x86-lib-privdata x86-lib-dxbc:guest/lib/dxbc/container.c)
     set(includes_dxgi third_party/khronos)
-    set(includes_d3d11 third_party/khronos)
+    # the video processor's compute shader is assembled at build time.
+    set(includes_d3d11 third_party/khronos ${MIME_SHADERS_GEN})
+    set(depends_d3d11 mime-gen-shaders)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
     # dcomp draws with shaders assembled at build time.
     set(includes_dcomp ${MIME_SHADERS_GEN})

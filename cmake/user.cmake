@@ -345,7 +345,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     # oleacc marshals its objects through ole32 and speaks in oleaut32's strings and variants.
     set(libs_oleacc ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(includes_dxgi third_party/khronos)
-    set(includes_d3d11 third_party/khronos)
+    # the video processor's compute shader is assembled at build time.
+    set(includes_d3d11 third_party/khronos ${MIME_SHADERS_GEN})
+    set(depends_d3d11 mime-gen-shaders)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
     # dcomp draws with shaders assembled at build time.
     set(includes_dcomp ${MIME_SHADERS_GEN})

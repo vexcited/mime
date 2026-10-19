@@ -1054,12 +1054,20 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_resource(ID3D11Device5 *ifac
     return E_INVALIDARG;
 }
 
+/* the formats of video depend on what the host's gpu decodes, which is asked once. */
+static UINT D3dFormatSupportProbed(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
+{
+    if (D3dGetFormat(format)->flags & D3D_FORMAT_PLANAR)
+        D3dVideoProbe(device);
+    return D3dFormatSupport(device, format, support2);
+}
+
 static HRESULT STDMETHODCALLTYPE device_check_format_support(ID3D11Device5 *iface, DXGI_FORMAT format,
                                                              UINT *support)
 {
     if (!support)
         return E_INVALIDARG;
-    *support = D3dFormatSupport(impl(iface), format, nullptr);
+    *support = D3dFormatSupportProbed(impl(iface), format, nullptr);
     return *support ? S_OK : E_FAIL;
 }
 
@@ -1235,7 +1243,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D11Device5 *ifa
 #undef EXPECT
     if (feature == D3D11_FEATURE_FORMAT_SUPPORT2 && size == sizeof(D3D11_FEATURE_DATA_FORMAT_SUPPORT2)) {
         D3D11_FEATURE_DATA_FORMAT_SUPPORT2 *out = data;
-        D3dFormatSupport(device, out->InFormat, &out->OutFormatSupport2);
+        D3dFormatSupportProbed(device, out->InFormat, &out->OutFormatSupport2);
         return S_OK;
     }
     D3dLog("d3d11: CheckFeatureSupport %u is unknown", feature);
@@ -1250,7 +1258,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support_entry(ID3D11Device
         if (!data || size != sizeof(D3D11_FEATURE_DATA_FORMAT_SUPPORT))
             return E_INVALIDARG;
         D3D11_FEATURE_DATA_FORMAT_SUPPORT *out = data;
-        out->OutFormatSupport = D3dFormatSupport(impl(iface), out->InFormat, nullptr);
+        out->OutFormatSupport = D3dFormatSupportProbed(impl(iface), out->InFormat, nullptr);
         return S_OK;
     }
     return device_check_feature_support(iface, feature, data, size);

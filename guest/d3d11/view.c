@@ -389,12 +389,12 @@ static BOOL buffer_range(D3dView *view, DXGI_FORMAT format, UINT first, UINT cou
  * plane in two, as the format of NV12 or P010 is only a resource's and never a shader's. a plane slice that
  * says otherwise is refused.
  */
-static BOOL planar_view_format(const D3dResource *r, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *d, VkFormat *format,
-                               VkImageAspectFlags *aspect)
+static BOOL planar_plane_format(const D3dResource *r, DXGI_FORMAT view_format, UINT slice, VkFormat *format,
+                                VkImageAspectFlags *aspect)
 {
     BOOL eight = r->tex.format == DXGI_FORMAT_NV12;
     UINT plane;
-    switch (d->Format) {
+    switch (view_format) {
     case DXGI_FORMAT_R8_UNORM:
         plane = 0, *format = VK_FORMAT_R8_UNORM;
         break;
@@ -410,15 +410,21 @@ static BOOL planar_view_format(const D3dResource *r, const D3D11_SHADER_RESOURCE
     default:
         return FALSE;
     }
-    if ((d->Format == DXGI_FORMAT_R8_UNORM || d->Format == DXGI_FORMAT_R8G8_UNORM) != eight)
+    if ((view_format == DXGI_FORMAT_R8_UNORM || view_format == DXGI_FORMAT_R8G8_UNORM) != eight)
         return FALSE;
-    UINT slice = d->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D        ? d->Texture2D.PlaneSlice
-                 : d->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY ? d->Texture2DArray.PlaneSlice
-                                                                          : 0;
-    if (slice != plane && slice)
+    if (slice && slice != plane)
         return FALSE;
     *aspect = plane ? VK_IMAGE_ASPECT_PLANE_1_BIT : VK_IMAGE_ASPECT_PLANE_0_BIT;
     return TRUE;
+}
+
+static BOOL planar_view_format(const D3dResource *r, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *d, VkFormat *format,
+                               VkImageAspectFlags *aspect)
+{
+    UINT slice = d->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D        ? d->Texture2D.PlaneSlice
+                 : d->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY ? d->Texture2DArray.PlaneSlice
+                                                                          : 0;
+    return planar_plane_format(r, d->Format, slice, format, aspect);
 }
 
 static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *d, UINT swizzle)
@@ -542,9 +548,17 @@ static HRESULT init_rtv(D3dDevice *device, D3dView *view, const D3D11_RENDER_TAR
         return E_INVALIDARG;
     VkFormat format;
     VkImageAspectFlags aspect;
-    VkComponentMapping swizzle;
-    if (!view_format(r, d->Format, TRUE, &format, &aspect, &swizzle))
+    VkComponentMapping swizzle = {};
+    if (r->tex.fmt->flags & D3D_FORMAT_PLANAR) {
+        /* a video texture is drawn to a plane at a time, as the format of the view says. */
+        UINT slice = d->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2D        ? d->Texture2D.PlaneSlice
+                     : d->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2DARRAY ? d->Texture2DArray.PlaneSlice
+                                                                              : 0;
+        if (!planar_plane_format(r, d->Format, slice, &format, &aspect))
+            return E_INVALIDARG;
+    } else if (!view_format(r, d->Format, TRUE, &format, &aspect, &swizzle)) {
         return E_INVALIDARG;
+    }
     view->range.aspectMask = aspect;
     VkImageViewType type;
     HRESULT hr;
