@@ -7,7 +7,7 @@
  *
  * A keyed mutex is a lock with a key. It starts free with key 0; acquiring it waits until it is free and has the
  * key asked for, releasing it makes it free with the key given. A process that ends holding it abandons it: the
- * next acquire succeeds with a status saying so.
+ * next acquire says so and does not take it.
  */
 #include "win32k.h"
 
@@ -254,6 +254,21 @@ static NTSTATUS retire(MimeGfxShare *a)
     return STATUS_SUCCESS;
 }
 
+/*
+ * the free mutex with the key is taken, unless its last holder went without releasing it: that acquire only says so,
+ * and leaves the mutex free for the next, as the runtime treats it as no acquire at all.
+ */
+static NTSTATUS take(GFXSHARE *s)
+{
+    if (s->Abandoned) {
+        s->Abandoned = FALSE;
+        return STATUS_ABANDONED;
+    }
+    s->Held = TRUE;
+    s->Holder = PsGetCurrentProcess();
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS acquire(MimeGfxShare *a)
 {
     GFXSHARE *s;
@@ -273,10 +288,7 @@ static NTSTATUS acquire(MimeGfxShare *a)
         KIRQL irql;
         KeAcquireSpinLock(&g_lock, &irql);
         if (!s->Held && s->Key == a->Key) {
-            s->Held = TRUE;
-            s->Holder = PsGetCurrentProcess();
-            status = s->Abandoned ? STATUS_ABANDONED : STATUS_SUCCESS;
-            s->Abandoned = FALSE;
+            status = take(s);
             KeReleaseSpinLock(&g_lock, irql);
             break;
         }
@@ -300,10 +312,7 @@ static NTSTATUS acquire(MimeGfxShare *a)
                 continue;
             KeAcquireSpinLock(&g_lock, &irql);
             if (!s->Held && s->Key == a->Key) {
-                s->Held = TRUE;
-                s->Holder = PsGetCurrentProcess();
-                status = s->Abandoned ? STATUS_ABANDONED : STATUS_SUCCESS;
-                s->Abandoned = FALSE;
+                status = take(s);
             } else {
                 status = STATUS_TIMEOUT;
             }

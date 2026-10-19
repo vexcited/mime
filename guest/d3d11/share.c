@@ -312,12 +312,16 @@ static HRESULT STDMETHODCALLTYPE keyed_acquire_sync(IDXGIKeyedMutex *iface, UINT
     if (FAILED(hr))
         return hr;
     NTSTATUS status = MimeShareAcquire(r->share.handle, key, milliseconds);
-    if (status == STATUS_SUCCESS || status == STATUS_ABANDONED) {
+    if (status == STATUS_SUCCESS)
         r->keyed_acquired = TRUE;
-        return status == STATUS_ABANDONED ? (HRESULT)WAIT_ABANDONED : S_OK;
-    }
+    /*
+     * d3d11.dll turns the status of the kernel's acquire into an error as it turns every one, so a timeout is
+     * DXGI_ERROR_WAIT_TIMEOUT and an abandoned mutex DXGI_ERROR_ACCESS_LOST, and neither marks the resource as acquired.
+     */
     if (status == STATUS_TIMEOUT)
-        return (HRESULT)WAIT_TIMEOUT;
+        return DXGI_ERROR_WAIT_TIMEOUT;
+    if (status == STATUS_ABANDONED)
+        return DXGI_ERROR_ACCESS_LOST;
     return MimeShareHResult(status);
 }
 
