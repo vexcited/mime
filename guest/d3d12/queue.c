@@ -17,7 +17,8 @@ UINT64 D12FenceValue(D12Fence *fence)
 {
     D12Device *device = fence->child.device;
     UINT64 value = fence->completed;
-    if (device->vk.vkGetSemaphoreCounterValue(device->vk.device, fence->semaphore, &value) == VK_SUCCESS)
+    if (device->vk.vkGetSemaphoreCounterValue(device->vk.device, fence->semaphore, &value) == VK_SUCCESS &&
+        value > fence->completed)
         fence->completed = value;
     return fence->completed;
 }
@@ -41,6 +42,9 @@ static void fence_block(D12Fence *fence, UINT64 value)
 {
     ID3D12Fence *iface = (ID3D12Fence *)&fence->iface;
     fences_block(fence->child.device, 1, &iface, &value, FALSE);
+    /* the host's value reached it, which its mirror may not show yet. */
+    if (value > fence->completed)
+        fence->completed = value;
 }
 
 /*

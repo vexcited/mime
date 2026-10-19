@@ -179,5 +179,6 @@ void mvk_share_export_memory(MvkCall *call);
 void mvk_share_import_memory(MvkCall *call);
 void mvk_share_export_semaphore(MvkCall *call);
 void mvk_share_import_semaphore(MvkCall *call);
+void mvk_mirror_refresh(MvkConnection *c, VkSemaphore semaphore);
 
 #endif

@@ -218,6 +218,8 @@ void mvk_share_import_semaphore(MvkCall *call)
             result = fn.import_semaphore_fd(fn.device, &info);
             if (result != VK_SUCCESS)
                 close(fd);
+            else
+                mvk_mirror_refresh(c, semaphore);
         }
     }
     mvk_put_u32(e, (uint32_t)result);

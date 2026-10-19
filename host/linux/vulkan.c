@@ -1917,6 +1917,28 @@ static void mirror_semaphore(MvkCall *call)
     wake_watcher(c);
 }
 
+/*
+ * a semaphore took the payload of another device's: its value is not the one the mirror holds and the watch waits
+ * for, so both are read again.
+ */
+void mvk_mirror_refresh(MvkConnection *c, VkSemaphore semaphore)
+{
+    if (!c->watching)
+        return;
+    pthread_mutex_lock(&c->watch_lock);
+    uint64_t value = 0;
+    if (c->fn.vkGetSemaphoreCounterValue(c->device, semaphore, &value) == VK_SUCCESS) {
+        for (uint32_t i = 0; i < c->watch_count; i++) {
+            if (c->watches[i].semaphore == semaphore && c->watches[i].slot >= 0) {
+                __atomic_store_n(&c->header->mirror[c->watches[i].slot], value, __ATOMIC_RELEASE);
+                c->watches[i].value = value + 1;
+            }
+        }
+    }
+    pthread_mutex_unlock(&c->watch_lock);
+    wake_watcher(c);
+}
+
 static void watch_semaphores(MvkCall *call)
 {
     MvkConnection *c = call->conn;

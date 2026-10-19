@@ -364,6 +364,8 @@ typedef struct D3dFence {
     VkSemaphore semaphore;
     SRWLOCK lock;
     MimeShare share;
+    /* the highest value a wait saw reached: the mirror of the host's value may be behind a moment. */
+    volatile UINT64 observed;
 } D3dFence;
 
 static D3dFence *fence_impl(ID3D11Fence *iface) { return CONTAINING_RECORD(iface, D3dFence, iface); }
@@ -426,12 +428,23 @@ static HRESULT STDMETHODCALLTYPE fence_set_private_data_interface(ID3D11Fence *i
     return MimePrivateSetInterface(&fence_impl(iface)->child.data, guid, data);
 }
 
+static void fence_observe(D3dFence *f, UINT64 value)
+{
+    UINT64 seen = f->observed;
+    while (value > seen) {
+        UINT64 was = (UINT64)InterlockedCompareExchange64((volatile LONG64 *)&f->observed, (LONG64)value, (LONG64)seen);
+        if (was == seen)
+            break;
+        seen = was;
+    }
+}
+
 static UINT64 fence_value(D3dFence *f)
 {
     D3dDevice *device = f->child.device;
     UINT64 value = 0;
     device->vk.vkGetSemaphoreCounterValue(device->vk.device, f->semaphore, &value);
-    return value;
+    return value > f->observed ? value : f->observed;
 }
 
 static UINT64 STDMETHODCALLTYPE fence_get_completed_value(ID3D11Fence *iface) { return fence_value(fence_impl(iface)); }
@@ -451,7 +464,8 @@ static DWORD WINAPI fence_waiter(void *context)
     wait.semaphoreCount = 1;
     wait.pSemaphores = &w->fence->semaphore;
     wait.pValues = &w->value;
-    device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX);
+    if (device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX) == VK_SUCCESS)
+        fence_observe(w->fence, w->value);
     SetEvent(w->event);
     fence_release(&w->fence->iface);
     HeapFree(GetProcessHeap(), 0, w);
@@ -472,7 +486,8 @@ static HRESULT STDMETHODCALLTYPE fence_set_event_on_completion(ID3D11Fence *ifac
         wait.semaphoreCount = 1;
         wait.pSemaphores = &f->semaphore;
         wait.pValues = &value;
-        device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX);
+        if (device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX) == VK_SUCCESS)
+            fence_observe(f, value);
         return S_OK;
     }
     FenceWait *w = HeapAlloc(GetProcessHeap(), 0, sizeof(*w));
