@@ -1,6 +1,6 @@
 /*
  * what d3d11.dll and d3d12.dll do to share resources and fences between devices and processes: the kernel object
- * behind a shared nt handle (mime/gfxshare.h) and the bytes a creator describes its resource with, which the
+ * behind a shared nt handle, see mime/gfxshare.h, and the bytes a creator describes its resource with, which the
  * opening device builds its own object from. The code is the same in both dlls.
  */
 #ifndef MIME_GFXSHARE_LIB_H

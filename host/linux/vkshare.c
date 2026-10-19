@@ -4,7 +4,7 @@
  * Every process has a vulkan device of its own on the host, so memory and semaphores cross between processes as
  * opaque file descriptors. A process that shares a resource exports its memory under the id of the kernel object
  * the nt handle names; a process that opens the handle imports from that id. The descriptors stay here until the
- * kernel tells the object is gone (MIME_HC_GFX_SHARE_FREE), so a resource outlives the process that made it for as
+ * kernel tells the object is gone with MIME_HC_GFX_SHARE_FREE, so a resource outlives the process that made it for as
  * long as a handle does. The same device in one process shares through its objects, not through here.
  */
 #include "mvk_host.h"

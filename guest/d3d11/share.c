@@ -1,7 +1,7 @@
 /*
  * shared textures, keyed mutexes and fences. A texture made to be shared keeps memory of its own that other
  * devices import; the first nt handle, legacy handle or keyed mutex acquire gives it a kernel object, which carries
- * what the texture was described with and the id the host keeps the memory under (mime/gfxshare.h). A fence is a
+ * what the texture was described with and the id the host keeps the memory under, see mime/gfxshare.h. A fence is a
  * timeline semaphore that is shared the same way.
  */
 #include "d3d11_private.h"
@@ -18,7 +18,7 @@
 
 /*
  * What sharing allows. A texture made to be shared by nt handle is default usage and not multisampled, with the shared
- * or keyed mutex flag, and not a cube or clamped (all of those from the validator of d3d11.dll); the documentation of
+ * or keyed mutex flag, and not a cube or clamped, all of those from the validator of d3d11.dll. The documentation of
  * the flags adds that the texture is two dimensional. A shared texture of the legacy kind has the same, with
  * multisampling refused as a guess. Mip levels and array sizes pass, as at feature level 11 they do in d3d11.dll.
  */

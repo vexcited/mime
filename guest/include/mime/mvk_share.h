@@ -1,7 +1,7 @@
 /*
  * memory and semaphores shared between processes. Every process has a vulkan device of its own on the host, so
  * these private commands, which direct3d finds through vkGetDeviceProcAddr, export a device's memory or timeline
- * semaphore under the id of a shared object (mime/gfxshare.h) and import it into the device of another process.
+ * semaphore under the id of a shared object, see mime/gfxshare.h, and import it into the device of another process.
  */
 #ifndef MIME_MVK_SHARE_H
 #define MIME_MVK_SHARE_H

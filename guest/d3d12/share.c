@@ -1,7 +1,7 @@
 /*
  * committed textures that are shared: made with D3D12_HEAP_FLAG_SHARED they own memory that other devices import,
  * and CreateSharedHandle gives them a kernel object carrying what they were described with and the id the host
- * keeps the memory under (mime/gfxshare.h). A texture of direct3d 11 that was shared opens here as a committed
+ * keeps the memory under, see mime/gfxshare.h. A texture of direct3d 11 that was shared opens here as a committed
  * texture of the same memory.
  */
 #include "d3d12_private.h"

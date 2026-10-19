@@ -1,8 +1,8 @@
 /*
  * shared direct3d resources and fences: the kernel objects behind the nt handles CreateSharedHandle makes, and the
- * services that make, open and synchronize them (win32k gfxshare.c).
+ * services that make, open and synchronize them, in win32k gfxshare.c.
  *
- * an object is a shared resource (DxgkSharedResource) or a synchronization object (DxgkSharedSyncObject). It names
+ * an object is a shared resource, of the type DxgkSharedResource, or a synchronization object, DxgkSharedSyncObject. It names
  * the memory or semaphore the host keeps for the other processes by an id, and carries the bytes its creator
  * described the resource with, which an opening device builds its own object from. A resource can also be a keyed
  * mutex, a lock that is taken with a key and released with another.
