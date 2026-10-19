@@ -608,7 +608,9 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         } t = {};
         t.BootTime.QuadPart = (LONGLONG)KeBootFiletime;
         KeQuerySystemTime(&t.CurrentTime);
-        t.TimeZoneBias.QuadPart = (LONGLONG)HalBootInfo->timezone_bias * 60 * 10000000;
+        t.TimeZoneBias.QuadPart = (LONGLONG)SharedUserData->TimeZoneBias.LowPart |
+                                  (LONGLONG)SharedUserData->TimeZoneBias.High1Time << 32;
+        t.TimeZoneId = SharedUserData->TimeZoneId;
         return copy_info(info, &t, sizeof(t), length, returned);
     }
     case SystemPerformanceInformation: {

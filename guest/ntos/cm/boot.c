@@ -244,7 +244,7 @@ static ULONG year_of(ULONG64 filetime)
  * the zone of the machine, which setup asks for and the control panel changes: the rules of the Windows zone the host
  * is in, copied from the zone's key of the template into the key the system reads, as windows keeps them.
  */
-static void time_zone(void)
+static void time_zone_for_year(ULONG year)
 {
     if (!HalBootInfo->timezone_key[0])
         return;
@@ -264,7 +264,7 @@ static void time_zone(void)
         CM_VALUE *first = CmpFindValue(dynamic, L"FirstEntry", 10), *last = CmpFindValue(dynamic, L"LastEntry", 9);
         if (first && last && first->Type == REG_DWORD && last->Type == REG_DWORD && first->DataLength >= 4 &&
             last->DataLength >= 4) {
-            ULONG year = year_of(HalBootInfo->boot_filetime), low = *(ULONG *)first->Data, high = *(ULONG *)last->Data;
+            ULONG low = *(ULONG *)first->Data, high = *(ULONG *)last->Data;
             year = year < low ? low : year > high ? high : year;
             WCHAR name[8] = {};
             _snwprintf(name, RTL_NUMBER_OF(name) - 1, L"%u", year);
@@ -289,8 +289,22 @@ static void time_zone(void)
         set(info, L"DaylightName", REG_SZ, daylight->Data, daylight->DataLength);
     set_sz(info, L"TimeZoneKeyName", REG_SZ, key);
     set_dword(info, L"DynamicDaylightTimeDisabled", 0);
-    /* what the host's offset is now: the bias of the zone and its standard or daylight bias. */
+    /* what the host's offset is now: the bias of the zone and its standard or daylight bias. the kernel keeps it
+       up to date from here on, see ex/timezone.c. */
     set_dword(info, L"ActiveTimeBias", (ULONG)HalBootInfo->timezone_bias);
+}
+
+static void time_zone(void)
+{
+    time_zone_for_year(year_of(KeBootFiletime));
+}
+
+/* the rules of a year the clock has come to, which may be other than the year before: windows' zones that changed theirs keep each year's. */
+void CmRefreshTimeZoneRules(ULONG year)
+{
+    ExAcquireFastMutex(&CmpLock);
+    time_zone_for_year(year);
+    ExReleaseFastMutex(&CmpLock);
 }
 
 /* the processor variables the session manager writes at boot. */

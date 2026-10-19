@@ -54,6 +54,12 @@ NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize)
     return g_win32.ProcessCallout ? g_win32.ProcessCallout(process, initialize) : STATUS_SUCCESS;
 }
 
+void PsWin32TimeChange(void)
+{
+    if (g_win32.TimeChange)
+        g_win32.TimeChange();
+}
+
 ULONG PsWin32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context)
 {
     return g_win32.ShutdownProcess ? g_win32.ShutdownProcess(process, context) : MX_SHUTDOWN_PROCESS_PASS;

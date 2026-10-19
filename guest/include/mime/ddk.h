@@ -1015,6 +1015,7 @@ typedef struct _WIN32_CALLOUTS {
     NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
     NTSTATUS(NTAPI *ThreadCallout)(PETHREAD thread, BOOLEAN initialize);
     ULONG(NTAPI *ShutdownProcess)(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
+    void(NTAPI *TimeChange)(void); /* the offset of the clock changed with daylight time: windows hear WM_TIMECHANGE */
 } WIN32_CALLOUTS;
 NTKERNELAPI void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts);
 

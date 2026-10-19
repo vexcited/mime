@@ -1301,6 +1301,21 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     return failed ? 0 : r;
 }
 
+/* the kernel changed the offset of the clock at a change of daylight time; windows send WM_TIMECHANGE then, here it is posted. */
+void NTAPI W32TimeChange(void)
+{
+    UserEnter();
+    ULONG count;
+    HWND *list = top_level_windows(&count);
+    for (ULONG i = 0; i < count; i++) {
+        WND *w = WndLookup(list[i]);
+        if (w && !(w->Flags & WNDF_DESTROYING) && w->Thread)
+            QueuePost(w->Thread, list[i], WM_TIMECHANGE, 0, 0);
+    }
+    W32Free(list);
+    UserLeave();
+}
+
 static LRESULT broadcast_send(UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts)
 {
     /* messages of programs have no place in a broadcast, only the system's and the registered ones do. */

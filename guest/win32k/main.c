@@ -465,7 +465,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
         DbgPrint("win32k: cannot register the system service table\n");
         return STATUS_UNSUCCESSFUL;
     }
-    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess};
+    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange};
     PsEstablishWin32Callouts(&callouts);
 
     UserEnter();

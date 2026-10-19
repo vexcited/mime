@@ -1257,6 +1257,11 @@ extern POBJECT_TYPE ExTimerType;
 extern POBJECT_TYPE MmSectionType;
 extern KUSER_SHARED_DATA *SharedUserData;
 extern ULONG64 KeBootFiletime;
+/* ex/timezone.c: the offset of the clock follows the daylight time rules of the zone. */
+void ExInitializeTimeZone(void);
+void PsWin32TimeChange(void);
+/* cm/boot.c: copies the rules of the machine's zone for a year into the key the kernel reads. */
+void CmRefreshTimeZoneRules(ULONG year);
 
 void ExInitialize(void);
 void ExpInitializeAtoms(void);

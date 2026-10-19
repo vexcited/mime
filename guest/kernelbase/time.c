@@ -383,6 +383,10 @@ static DWORD zone_state(const TIME_ZONE_INFORMATION *tz)
 {
     if (!tz->StandardDate.wMonth || !tz->DaylightDate.wMonth)
         return TIME_ZONE_ID_UNKNOWN;
+    /* the kernel moves the period at the instant of the change, a tick ahead of the clock the page shows. */
+    DWORD id = USER_SHARED_DATA->TimeZoneId;
+    if (id == TIME_ZONE_ID_STANDARD || id == TIME_ZONE_ID_DAYLIGHT)
+        return id;
     ULONGLONG now = read_system_time(&USER_SHARED_DATA->SystemTime);
     return in_daylight(tz, (LONGLONG)now, TRUE) ? TIME_ZONE_ID_DAYLIGHT : TIME_ZONE_ID_STANDARD;
 }

@@ -361,6 +361,19 @@ void KiInitializeTimers(void)
     InitializeListHead(&g_timer_list);
     g_boot_counter = HalBootInfo->boot_counter;
     KeBootFiletime = HalBootInfo->boot_filetime;
+    /* time-offset=<seconds> in the kernel options puts the clock that many seconds from the host's, to be at a change of
+       daylight time when a test needs it. */
+    const char *offset = strstr(HalBootInfo->cmdline, "time-offset=");
+    if (offset) {
+        offset += 12;
+        BOOLEAN negative = *offset == '-';
+        if (*offset == '-' || *offset == '+')
+            offset++;
+        ULONG64 seconds = 0;
+        while (*offset >= '0' && *offset <= '9')
+            seconds = seconds * 10 + (ULONG64)(*offset++ - '0');
+        KeBootFiletime = negative ? KeBootFiletime - seconds * 10000000ull : KeBootFiletime + seconds * 10000000ull;
+    }
     ULONG64 counter = HalReadCounter();
     g_next_tick = HalCounterToHns(counter - g_boot_counter) + KI_CLOCK_TICK_HNS;
     update_shared_time(counter);

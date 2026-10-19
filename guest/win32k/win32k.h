@@ -571,6 +571,8 @@ extern LIST_ENTRY W32Processes;
 W32THREAD *W32LookupThread(HANDLE tid);
 void QueueWake(W32THREAD *t, ULONG bits);
 BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+/* the clock's offset changed: every top level window is told with WM_TIMECHANGE. */
+void NTAPI W32TimeChange(void);
 BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement);
 void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state);
 DWORD W32TickCount(void);
