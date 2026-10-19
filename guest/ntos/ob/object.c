@@ -301,6 +301,10 @@ static void remove_from_directory(OBJECT_HEADER *h)
 NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
                             KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object)
 {
+    /* object attributes with no name are an empty one: with a root directory that is the directory, without one a name nobody can parse. */
+    UNICODE_STRING nothing = {};
+    if (!name)
+        name = &nothing;
     WCHAR *path = ExAllocatePool2(POOL_FLAG_PAGED, 1024 * sizeof(WCHAR), KI_TAG('O', 'b', 'P', 't'));
     if (!path)
         return STATUS_INSUFFICIENT_RESOURCES;

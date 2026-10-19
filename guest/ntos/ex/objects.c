@@ -119,6 +119,17 @@ static void NTAPI timer_dpc(PKDPC dpc, PVOID context, PVOID arg1, PVOID arg2)
     KeReleaseSpinLock(&t->ApcLock, irql);
 }
 
+/*
+ * a mutant that is deleted while a thread owns it is abandoned, as windows does when the last handle of an owned mutant
+ * closes: it leaves the list of the owner's mutants, which a thread walks when it ends, and would otherwise hold freed memory.
+ */
+static void NTAPI mutant_delete(PVOID object)
+{
+    PKMUTANT m = object;
+    if (m->Header.SignalState != 1 && m->OwnerThread)
+        KeReleaseMutant(m, 0, TRUE, FALSE);
+}
+
 void ExInitialize(void)
 {
     init_shared_data();
@@ -133,7 +144,9 @@ void ExInitialize(void)
     ExEventType = ObCreateObjectType(L"Event", &init);
     init.ValidAccessMask = MUTANT_ALL_ACCESS;
     ObSetGenericMapping(&init, 0x20001, 0x20000, 0x120000, 0x1F0001);
+    init.DeleteProcedure = mutant_delete;
     ExMutantType = ObCreateObjectType(L"Mutant", &init);
+    init.DeleteProcedure = nullptr;
     init.ValidAccessMask = SEMAPHORE_ALL_ACCESS;
     ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     ExSemaphoreType = ObCreateObjectType(L"Semaphore", &init);

@@ -408,8 +408,12 @@ void PspExitThread(NTSTATUS status)
 
     /* abandon owned mutants. */
     while (!IsListEmpty(&thread->Tcb.MutantListHead)) {
-        PKMUTANT m = CONTAINING_RECORD(thread->Tcb.MutantListHead.Flink, KMUTANT, MutantListEntry);
+        PLIST_ENTRY first = thread->Tcb.MutantListHead.Flink;
+        PKMUTANT m = CONTAINING_RECORD(first, KMUTANT, MutantListEntry);
         KeReleaseMutant(m, 0, TRUE, FALSE);
+        /* an entry the release did not take away would keep the thread from ever ending. */
+        if (!IsListEmpty(&thread->Tcb.MutantListHead) && thread->Tcb.MutantListHead.Flink == first)
+            RemoveEntryList(first);
     }
 
     if (!process->SystemProcess)
