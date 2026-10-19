@@ -396,7 +396,8 @@ static void end_everything(void)
     }
     KiLogPrintf("shutting down, action %u", action);
     end_everything();
-    /* the registry journal first, so that the sync of the drive covers it too. */
+    /* what handles still keep for the host's files, then the registry journal, so that the sync of the drive covers both. */
+    FsWbFlushAll();
     CmpJournalShutdown();
     HalHypercall(MIME_HC_FS_SYNC, 0, 0, 0, 0, 0, 0, nullptr);
     HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, nullptr);

@@ -21,6 +21,8 @@ typedef struct MIMEFS_FCB {
     ULONG Volume;
     ULONG64 FileId;
     ULONG64 HostHandle;
+    FS_WB Wb;            /* small writes kept for the host, see io/fswrite.c */
+    BOOLEAN Buffered;    /* this open may keep them: not one that asked for write through or unbuffered i/o */
     BOOLEAN StatOnly;    /* made to answer one query by name: no host handle, the info of the open is the answer */
     MimeFsInfo OpenInfo; /* what the host told when the file was opened */
     BOOLEAN Directory;
@@ -52,6 +54,11 @@ static NTSTATUS host_status(ULONG64 hs, BOOLEAN path_missing)
     case MIME_HC_STATUS_INVALID: return STATUS_INVALID_PARAMETER;
     default: return STATUS_UNSUCCESSFUL;
     }
+}
+
+NTSTATUS MimeFsHostStatus(ULONG64 hs, BOOLEAN path_missing)
+{
+    return host_status(hs, path_missing);
 }
 
 static NTSTATUS complete(PIRP irp, NTSTATUS status, ULONG_PTR info)
@@ -158,7 +165,10 @@ BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *re
         *size = fcb->Rom->size;
         return TRUE;
     }
-    if (!fcb->Cache || !FsCacheGetWindow(fcb->Cache, fcb->HostHandle, pa, size))
+    if (!fcb->Cache)
+        return FALSE;
+    FsWbSync(&fcb->Wb);
+    if (!FsCacheGetWindow(fcb->Cache, fcb->HostHandle, pa, size))
         return FALSE;
     *ref = fcb->Cache;
     return TRUE;
@@ -197,7 +207,15 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         *info = fcb->OpenInfo;
         return STATUS_SUCCESS;
     }
-    return host_status(HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
+    /* what other handles keep for the file is written first, what this one keeps is counted in. */
+    FsWbSyncOthers(&fcb->Wb);
+    NTSTATUS status = host_status(HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
+    if (NT_SUCCESS(status) && fcb->Wb.Length && fcb->Wb.Start + fcb->Wb.Length > info->size) {
+        info->size = fcb->Wb.Start + fcb->Wb.Length;
+        if (info->allocation_size < info->size)
+            info->allocation_size = (info->size + 4095) & ~4095ull;
+    }
+    return status;
 }
 
 static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
@@ -257,6 +275,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     case FILE_OVERWRITE_IF: req->disposition = MIME_FS_DISP_OVERWRITE_IF; break;
     default: req->disposition = MIME_FS_DISP_OPEN; break;
     }
+    /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
+    FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
     ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
@@ -281,6 +301,9 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     fcb->Volume = vol->HostVolume;
     fcb->FileId = opened.file_id;
     fcb->Directory = (opened.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    fcb->Buffered = (req_flags & MIME_FS_OPEN_WRITE) && !(options & (FILE_WRITE_THROUGH | FILE_NO_INTERMEDIATE_BUFFERING));
+    if (!fcb->Directory && !fcb->StatOnly)
+        FsWbOpen(&fcb->Wb, vol->HostVolume, opened.file_id, host, &file->FileName);
     if (!fcb->Directory && !fcb->StatOnly) {
         if (req_flags & MIME_FS_OPEN_WRITE || action != FILE_OPENED)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
@@ -322,6 +345,9 @@ static NTSTATUS NTAPI mimefs_cleanup(PDEVICE_OBJECT device, PIRP irp)
     MIMEFS_FCB *fcb = file->FsContext;
     if (fcb && !fcb->Rom && fcb->Directory)
         FsNotifyCleanup(file);
+    /* the last handle is closing: what it kept goes to the host before anything can look at the file again. */
+    if (fcb && !fcb->Rom && !fcb->Directory)
+        FsWbClose(&fcb->Wb);
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
@@ -333,6 +359,7 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
         ExFreePool(fcb);
         file->FsContext = nullptr;
     } else if (fcb) {
+        FsWbClose(&fcb->Wb);
         if (fcb->Cache)
             FsCacheClose(fcb->Cache);
         if (fcb->DeleteOnClose)
@@ -376,8 +403,20 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
         memcpy(user, (PUCHAR)HalPhysmap(HalRomPhysical(fcb->Rom)) + offset, n);
         return complete(irp, STATUS_SUCCESS, n);
     }
-    if (write)
+    if (write) {
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
+        NTSTATUS kept;
+        if (fcb->Buffered && FsWbWrite(&fcb->Wb, offset, user, length, &kept)) {
+            if (NT_SUCCESS(kept))
+                FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
+                               FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
+            return complete(irp, kept, NT_SUCCESS(kept) ? length : 0);
+        }
+    }
+    /* the host reads and writes in order with what handles of the file kept for it. */
+    NTSTATUS synced = FsWbSync(&fcb->Wb);
+    if (!NT_SUCCESS(synced) && write)
+        return complete(irp, synced, 0);
     ULONG cached;
     if (!write && fcb->Cache && FsCacheRead(fcb->Cache, fcb->HostHandle, offset, user, length, &cached))
         return complete(irp, cached ? STATUS_SUCCESS : STATUS_END_OF_FILE, cached);
@@ -587,6 +626,11 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
     if (!text)
         return STATUS_INSUFFICIENT_RESOURCES;
     memcpy(text, name + start, leaf * sizeof(WCHAR));
+    /* what handles keep for the file, or for what is below a directory, is written before its name changes. */
+    if (fcb->Directory)
+        FsWbSyncPath(fcb->Volume, &file->FileName, TRUE);
+    else
+        FsWbSync(&fcb->Wb);
     ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_RENAME, fcb->HostHandle, dfcb->HostHandle, HalPhysicalOf(text), leaf,
                                       stack->Parameters.SetFile.ReplaceIfExists ? MIME_FS_RENAME_REPLACE : 0, 0, nullptr);
     NTSTATUS status = host_status(hs, FALSE);
@@ -601,11 +645,14 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
             full[base] = '\\';
             memcpy(full + base + 1, text, leaf * sizeof(WCHAR));
             full[base + 1 + leaf] = 0;
-            if (file->FileName.Buffer)
-                ExFreePool(file->FileName.Buffer);
+            PWCHAR old = file->FileName.Buffer;
+            FsWbNameLock();
             file->FileName.Buffer = full;
             file->FileName.Length = (USHORT)((base + 1 + leaf) * sizeof(WCHAR));
             file->FileName.MaximumLength = (USHORT)(file->FileName.Length + sizeof(WCHAR));
+            FsWbNameUnlock();
+            if (old)
+                ExFreePool(old);
         }
     }
     ExFreePool(text);
@@ -633,6 +680,7 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         if (stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation)
             return complete(irp, STATUS_SUCCESS, 0);
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
+        FsWbSync(&fcb->Wb);
         ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);
         if (hs == MIME_HC_STATUS_OK)
             FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
@@ -807,6 +855,8 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
         fcb->HostDone = FALSE;
         fcb->DotIndex = 0;
         fcb->DotsDone = fcb->IsRoot;
+        /* the sizes of the listing are the host's: what handles keep for files of this directory is written first. */
+        FsWbSyncPath(fcb->Volume, &stack->FileObject->FileName, TRUE);
     }
     PUNICODE_STRING pattern = stack->Parameters.QueryDirectory.FileName;
     if (pattern && pattern->Length) {
@@ -1021,6 +1071,9 @@ static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_INVALID_HANDLE, 0);
     if (fcb->Rom)
         return complete(irp, STATUS_SUCCESS, 0);
+    NTSTATUS kept = FsWbSync(&fcb->Wb);
+    if (!NT_SUCCESS(kept))
+        return complete(irp, kept, 0);
     /* the host writes the file out, which takes milliseconds; nothing else here waits for it. */
     ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
     return complete(irp, host_status(hs, FALSE), 0);
@@ -1047,6 +1100,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     g_driver = driver;
     FsCacheInitialize();
+    FsWbInitialize();
     FsNotifyInitialize();
     driver->MajorFunction[IRP_MJ_CREATE] = mimefs_create;
     driver->MajorFunction[IRP_MJ_CLEANUP] = mimefs_cleanup;

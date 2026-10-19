@@ -1095,6 +1095,38 @@ void FsCacheClose(MIMEFS_CACHE *cache);
 void FsCacheInvalidate(ULONG volume, ULONG64 file_id);
 BOOLEAN FsCacheRead(MIMEFS_CACHE *cache, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done);
 BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *cache, ULONG64 host_handle, PULONG64 pa, PULONG64 size);
+/* io/fswrite.c, the small writes of a host backed file kept in the guest and written to the host together. */
+typedef struct _FS_WB {
+    LIST_ENTRY Links;    /* of the kept buffers, while this one holds one */
+    PUCHAR Buffer;
+    ULONG64 Start;       /* the file offset of Buffer[0] */
+    ULONG Length;        /* bytes of the buffer the host does not have yet */
+    ULONG Idle;          /* ticks of the flusher that found it clean */
+    ULONG Volume;
+    ULONG64 FileId;
+    ULONG64 Host;        /* the host handle the flushes write to */
+    PCUNICODE_STRING Name;
+    NTSTATUS Error;      /* a flush that failed, told to the next write or flush of the handle */
+    BOOLEAN Kept;
+} FS_WB;
+NTSTATUS MimeFsHostStatus(ULONG64 host_status, BOOLEAN path_missing);
+void FsWbInitialize(void);
+void FsWbOpen(FS_WB *wb, ULONG volume, ULONG64 file_id, ULONG64 host, PCUNICODE_STRING name);
+/* takes a write into the buffer; FALSE when it must go to the host as it is. */
+BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTSTATUS *status);
+/* writes what this handle keeps, and what the other handles of the file keep, to the host. */
+NTSTATUS FsWbSync(FS_WB *wb);
+/* the same for the other handles of the file only. */
+void FsWbSyncOthers(FS_WB *wb);
+/* what handles keep for the file of this name, or for the files below it when it is a directory. */
+void FsWbSyncPath(ULONG volume, PCUNICODE_STRING path, BOOLEAN directory);
+/* held while a file object's name is replaced, which the matching by name reads. */
+void FsWbNameLock(void);
+void FsWbNameUnlock(void);
+/* writes the handle's buffer out and gives it back. */
+void FsWbClose(FS_WB *wb);
+/* everything kept, for the machine's shutdown. */
+void FsWbFlushAll(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 void IopInitializeCompletion(void);
 void IopInitializeNamedPipes(void);
