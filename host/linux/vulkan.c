@@ -730,11 +730,15 @@ static void create_device(MvkCall *call)
                 info.queueCreateInfoCount++;
             }
         }
+        uint32_t video_codecs = 0;
+        bool has_vp9 = false;
         if (video) {
-            const char *const *video_names;
-            size_t video_count = mvk_video_extensions(&video_names);
-            for (size_t i = 0; i < video_count; i++)
+            const char *video_names[8];
+            size_t video_count = mvk_video_extensions(c, physical, video_names, &video_codecs);
+            for (size_t i = 0; i < video_count; i++) {
                 names[n++] = video_names[i];
+                has_vp9 |= !strcmp(video_names[i], VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME);
+            }
             if (host_has(list, count, VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME)) {
                 names[n++] = VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME;
                 unified = true;
@@ -777,6 +781,7 @@ static void create_device(MvkCall *call)
             info.pNext = &timeline;
         }
         if (video) {
+            vp9_features.pNext = &maintenance_features;
             VkPhysicalDeviceFeatures2 supported = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &vp9_features};
             c->fn.vkGetPhysicalDeviceFeatures2(physical, &supported);
             unified = unified && unified_features.unifiedImageLayouts && unified_features.unifiedImageLayoutsVideo;
@@ -789,7 +794,7 @@ static void create_device(MvkCall *call)
             unified_features.pNext = (void *)info.pNext;
             maintenance_features.pNext = unified ? (void *)&unified_features : (void *)info.pNext;
             vp9_features.pNext = independent ? (void *)&maintenance_features : maintenance_features.pNext;
-            info.pNext = &vp9_features;
+            info.pNext = has_vp9 ? (void *)&vp9_features : vp9_features.pNext;
             info.enabledExtensionCount = n;
         }
         result = c->fn.vkCreateDevice(physical, &info, nullptr, &c->device);
@@ -803,7 +808,7 @@ static void create_device(MvkCall *call)
                 c->fn.vkCreateBuffer = create_importable_buffer;
             }
             if (video)
-                mvk_video_device_created(c, gdpa, unified, independent);
+                mvk_video_device_created(c, gdpa, unified, independent, video_codecs);
             bind(c, id, (uint64_t)(uintptr_t)c->device);
             VkPhysicalDeviceExternalMemoryHostPropertiesEXT host = {
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};

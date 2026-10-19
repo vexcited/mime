@@ -7,6 +7,7 @@
 #ifndef MIME_DXVA_H
 #define MIME_DXVA_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* a reference to a surface of the decoder: an index the program picks, 127 when none. */
@@ -183,5 +184,259 @@ typedef struct DxvaPicParamsVP9 {
 } __attribute__((packed)) DxvaPicParamsVP9;
 
 _Static_assert(sizeof(DxvaPicParamsVP9) == 208, "DXVA_PicParams_VP9 is 208 bytes, packed by one as dxva.h is");
+
+/* ------------------------------------------------------------------ av1 */
+
+/*
+ * the layouts follow the specification of dxva for av1, its picture entry, picture parameters and tile control,
+ * sections 3 to 5, with the sizes checked against the header of the same names in the mingw sdk. the values
+ * are the syntax elements of the av1 specification, resolved by the application: sizes of the frame, global
+ * motion, loop filter deltas, segmentation and film grain are the ones the frame uses, not the coded deltas. the sdk
+ * packs the header by one, so do these.
+ */
+
+/* a reference of the frame: where it is in the reference map, its size and the global motion toward it. */
+typedef struct DxvaPicEntryAV1 {
+    uint32_t width;
+    uint32_t height;
+    int32_t wmmat[6];
+    union {
+        struct {
+            uint8_t wminvalid : 1; /* an application sets it for the identity motion */
+            uint8_t wmtype : 2;    /* 0 identity, 1 translation, 2 rotation and zoom, 3 affine */
+            uint8_t reserved5 : 5;
+        };
+        uint8_t global_motion_flags;
+    };
+    uint8_t index; /* the slot of RefFrameMapTextureIndex, 255 when none */
+    uint16_t reserved16;
+} __attribute__((packed)) DxvaPicEntryAV1;
+
+_Static_assert(sizeof(DxvaPicEntryAV1) == 36, "DXVA_PicEntry_AV1 is 36 bytes");
+
+typedef struct DxvaTilesAV1 {
+    uint8_t cols;
+    uint8_t rows;
+    uint16_t context_update_id;
+    uint16_t widths[64];  /* in superblocks, the first cols are valid */
+    uint16_t heights[64]; /* the first rows are valid */
+} __attribute__((packed)) DxvaTilesAV1;
+
+typedef struct DxvaLoopFilterAV1 {
+    uint8_t filter_level[2];
+    uint8_t filter_level_u;
+    uint8_t filter_level_v;
+    uint8_t sharpness_level;
+    union {
+        struct {
+            uint8_t mode_ref_delta_enabled : 1;
+            uint8_t mode_ref_delta_update : 1;
+            uint8_t delta_lf_multi : 1;
+            uint8_t delta_lf_present : 1;
+            uint8_t reserved4 : 4;
+        };
+        uint8_t control_flags;
+    };
+    int8_t ref_deltas[8];
+    int8_t mode_deltas[2];
+    uint8_t delta_lf_res;
+    uint8_t frame_restoration_type[3]; /* 0 none, 1 wiener, 2 sgrproj, 3 switchable */
+    uint16_t log2_restoration_unit_size[3];
+    uint16_t reserved16;
+} __attribute__((packed)) DxvaLoopFilterAV1;
+
+typedef struct DxvaQuantizationAV1 {
+    union {
+        struct {
+            uint8_t delta_q_present : 1;
+            uint8_t delta_q_res : 2;
+            uint8_t reserved5 : 5;
+        };
+        uint8_t control_flags;
+    };
+    uint8_t base_qindex;
+    int8_t y_dc_delta_q;
+    int8_t u_dc_delta_q;
+    int8_t v_dc_delta_q;
+    int8_t u_ac_delta_q;
+    int8_t v_ac_delta_q;
+    uint8_t qm_y; /* 255 for all three when the frame has no quantizer matrix */
+    uint8_t qm_u;
+    uint8_t qm_v;
+    uint16_t reserved16;
+} __attribute__((packed)) DxvaQuantizationAV1;
+
+typedef union DxvaCdefStrengthAV1 {
+    struct {
+        uint8_t primary : 6;
+        uint8_t secondary : 2; /* as coded, 0 to 3 */
+    };
+    uint8_t combined;
+} DxvaCdefStrengthAV1;
+
+typedef struct DxvaCdefAV1 {
+    union {
+        struct {
+            uint8_t damping : 2; /* cdef_damping_minus_3 */
+            uint8_t bits : 2;
+            uint8_t reserved4 : 4;
+        };
+        uint8_t control_flags;
+    };
+    DxvaCdefStrengthAV1 y_strengths[8];
+    DxvaCdefStrengthAV1 uv_strengths[8];
+} __attribute__((packed)) DxvaCdefAV1;
+
+typedef struct DxvaSegmentationAV1 {
+    union {
+        struct {
+            uint8_t enabled : 1;
+            uint8_t update_map : 1;
+            uint8_t update_data : 1;
+            uint8_t temporal_update : 1;
+            uint8_t reserved4 : 4;
+        };
+        uint8_t control_flags;
+    };
+    uint8_t reserved24[3];
+    uint8_t feature_mask[8]; /* bit j of entry i is FeatureEnabled[i][j] */
+    int16_t feature_data[8][8];
+} __attribute__((packed)) DxvaSegmentationAV1;
+
+typedef struct DxvaFilmGrainAV1 {
+    union {
+        struct {
+            uint16_t apply_grain : 1;
+            uint16_t scaling_shift_minus8 : 2;
+            uint16_t chroma_scaling_from_luma : 1;
+            uint16_t ar_coeff_lag : 2;
+            uint16_t ar_coeff_shift_minus6 : 2;
+            uint16_t grain_scale_shift : 2;
+            uint16_t overlap_flag : 1;
+            uint16_t clip_to_restricted_range : 1;
+            uint16_t matrix_coeff_is_identity : 1;
+            uint16_t reserved3 : 3;
+        };
+        uint16_t control_flags;
+    };
+    uint16_t grain_seed;
+    uint8_t scaling_points_y[14][2]; /* value, scaling */
+    uint8_t num_y_points;
+    uint8_t scaling_points_cb[10][2];
+    uint8_t num_cb_points;
+    uint8_t scaling_points_cr[10][2];
+    uint8_t num_cr_points;
+    uint8_t ar_coeffs_y[24]; /* the coded values, the coefficient plus 128 */
+    uint8_t ar_coeffs_cb[25];
+    uint8_t ar_coeffs_cr[25];
+    uint8_t cb_mult;
+    uint8_t cb_luma_mult;
+    uint8_t cr_mult;
+    uint8_t cr_luma_mult;
+    uint8_t reserved8;
+    int16_t cb_offset;
+    int16_t cr_offset;
+} __attribute__((packed)) DxvaFilmGrainAV1;
+
+typedef struct DxvaPicParamsAV1 {
+    uint32_t width; /* the upscaled width when the frame uses superres */
+    uint32_t height;
+    uint32_t max_width; /* of the sequence */
+    uint32_t max_height;
+    uint8_t curr_pic_texture_index;
+    uint8_t superres_denom; /* 8 without superres */
+    uint8_t bitdepth;
+    uint8_t seq_profile;
+    DxvaTilesAV1 tiles;
+    union {
+        struct {
+            uint32_t use_128x128_superblock : 1;
+            uint32_t intra_edge_filter : 1;
+            uint32_t interintra_compound : 1;
+            uint32_t masked_compound : 1;
+            uint32_t warped_motion : 1; /* allow_warped_motion of the frame */
+            uint32_t dual_filter : 1;
+            uint32_t jnt_comp : 1;
+            uint32_t screen_content_tools : 1; /* allow_screen_content_tools of the frame */
+            uint32_t integer_mv : 1;           /* force_integer_mv */
+            uint32_t cdef : 1;                 /* enable_cdef of the sequence */
+            uint32_t restoration : 1;          /* enable_restoration of the sequence */
+            uint32_t film_grain : 1;           /* film_grain_params_present */
+            uint32_t intrabc : 1;
+            uint32_t high_precision_mv : 1;
+            uint32_t switchable_motion_mode : 1; /* is_motion_mode_switchable */
+            uint32_t filter_intra : 1;
+            uint32_t disable_frame_end_update_cdf : 1;
+            uint32_t disable_cdf_update : 1;
+            uint32_t reference_mode : 1; /* reference_select */
+            uint32_t skip_mode : 1;      /* skip_mode_present */
+            uint32_t reduced_tx_set : 1;
+            uint32_t superres : 1;
+            uint32_t tx_mode : 2; /* 0 only 4x4, 1 largest, 2 select */
+            uint32_t use_ref_frame_mvs : 1;
+            uint32_t enable_ref_frame_mvs : 1;
+            uint32_t reference_frame_update : 1;
+            uint32_t reserved5 : 5;
+        };
+        uint32_t flags;
+    } coding;
+    union {
+        struct {
+            uint8_t frame_type : 2; /* key, inter, intra only, switch */
+            uint8_t show_frame : 1;
+            uint8_t showable_frame : 1;
+            uint8_t subsampling_x : 1;
+            uint8_t subsampling_y : 1;
+            uint8_t mono_chrome : 1;
+            uint8_t reserved1 : 1;
+        };
+        uint8_t flags;
+    } format;
+    uint8_t primary_ref_frame; /* 7 when none */
+    uint8_t order_hint;
+    uint8_t order_hint_bits; /* 0 without order hints */
+    DxvaPicEntryAV1 frame_refs[7];
+    uint8_t ref_frame_map_texture_index[8]; /* 255 for an empty slot */
+    DxvaLoopFilterAV1 loop_filter;
+    DxvaQuantizationAV1 quantization;
+    DxvaCdefAV1 cdef;
+    uint8_t interp_filter; /* 0 to 3 as coded, 4 switchable */
+    DxvaSegmentationAV1 segmentation;
+    DxvaFilmGrainAV1 film_grain;
+    uint32_t reserved32;
+    uint32_t status_report_feedback_number;
+} __attribute__((packed)) DxvaPicParamsAV1;
+
+_Static_assert(sizeof(DxvaTilesAV1) == 260, "tiles of DXVA_PicParams_AV1");
+_Static_assert(sizeof(DxvaLoopFilterAV1) == 28, "loop filter of DXVA_PicParams_AV1");
+_Static_assert(sizeof(DxvaQuantizationAV1) == 12, "quantization of DXVA_PicParams_AV1");
+_Static_assert(sizeof(DxvaCdefAV1) == 17, "cdef of DXVA_PicParams_AV1");
+_Static_assert(sizeof(DxvaSegmentationAV1) == 140, "segmentation of DXVA_PicParams_AV1");
+_Static_assert(sizeof(DxvaFilmGrainAV1) == 158, "film grain of DXVA_PicParams_AV1");
+_Static_assert(offsetof(DxvaPicParamsAV1, tiles) == 20 && offsetof(DxvaPicParamsAV1, coding) == 280 &&
+                   offsetof(DxvaPicParamsAV1, format) == 284 && offsetof(DxvaPicParamsAV1, frame_refs) == 288 &&
+                   offsetof(DxvaPicParamsAV1, ref_frame_map_texture_index) == 540 &&
+                   offsetof(DxvaPicParamsAV1, loop_filter) == 548 && offsetof(DxvaPicParamsAV1, quantization) == 576 &&
+                   offsetof(DxvaPicParamsAV1, cdef) == 588 && offsetof(DxvaPicParamsAV1, interp_filter) == 605 &&
+                   offsetof(DxvaPicParamsAV1, segmentation) == 606 && offsetof(DxvaPicParamsAV1, film_grain) == 746 &&
+                   offsetof(DxvaPicParamsAV1, status_report_feedback_number) == 908,
+               "layout of DXVA_PicParams_AV1");
+_Static_assert(sizeof(DxvaPicParamsAV1) == 912, "DXVA_PicParams_AV1 is 912 bytes");
+
+/*
+ * one tile, or one list of tiles, of the tile control buffer: where its data is in the bitstream buffer, which
+ * is the data after tile_size_minus_1, where init_symbol starts.
+ */
+typedef struct DxvaTileAV1 {
+    uint32_t data_offset;
+    uint32_t data_size;
+    uint16_t row;
+    uint16_t column;
+    uint16_t reserved16;
+    uint8_t anchor_frame; /* 255 outside a tile list obu */
+    uint8_t reserved8;
+} __attribute__((packed)) DxvaTileAV1;
+
+_Static_assert(sizeof(DxvaTileAV1) == 16, "DXVA_Tile_AV1 is 16 bytes");
 
 #endif

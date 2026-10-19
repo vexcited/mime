@@ -25,6 +25,7 @@ typedef struct Profile {
     union {
         VkVideoDecodeH264ProfileInfoKHR h264;
         VkVideoDecodeVP9ProfileInfoKHR vp9;
+        VkVideoDecodeAV1ProfileInfoKHR av1;
     } u;
 } Profile;
 
@@ -35,6 +36,8 @@ static const struct {
     {MVK_VIDEO_CODEC_H264, MVK_VIDEO_H264_HIGH, 8},
     {MVK_VIDEO_CODEC_VP9, 0, 8},
     {MVK_VIDEO_CODEC_VP9, 2, 10},
+    {MVK_VIDEO_CODEC_AV1, 0, 8},
+    {MVK_VIDEO_CODEC_AV1, 0, 10},
 };
 #define PROFILE_COUNT (sizeof(g_profiles) / sizeof(g_profiles[0]))
 
@@ -61,7 +64,21 @@ static void make_profile(Profile *p, uint32_t codec, uint32_t profile, uint32_t 
                                                     (StdVideoVP9Profile)profile};
         p->info.pNext = &p->u.vp9;
         break;
+    case MVK_VIDEO_CODEC_AV1:
+        p->info.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
+        /* film grain is applied by the decoder: the guest's pictures are the output with the grain. */
+        p->u.av1 = (VkVideoDecodeAV1ProfileInfoKHR){VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PROFILE_INFO_KHR, &p->usage,
+                                                    (StdVideoAV1Profile)profile, VK_TRUE};
+        p->info.pNext = &p->u.av1;
+        break;
     }
+}
+
+static VkVideoCodecOperationFlagBitsKHR codec_operation(uint32_t codec)
+{
+    return codec == MVK_VIDEO_CODEC_H264  ? VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
+           : codec == MVK_VIDEO_CODEC_VP9 ? VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR
+                                          : VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
 }
 
 static VkFormat picture_format(uint32_t bit_depth)
@@ -70,15 +87,17 @@ static VkFormat picture_format(uint32_t bit_depth)
 }
 
 /* what the gpu says of a profile, false when it cannot decode it into the usual picture format. */
-static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint32_t bit_depth, VkVideoCapabilitiesKHR *caps)
+static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint32_t bit_depth, VkVideoCapabilitiesKHR *caps,
+                       VkVideoDecodeCapabilityFlagsKHR *flags)
 {
     MvkVideo *v = c->video;
     Profile p;
     make_profile(&p, codec, profile, bit_depth);
     VkVideoDecodeH264CapabilitiesKHR h264 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR};
     VkVideoDecodeVP9CapabilitiesKHR vp9 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR};
+    VkVideoDecodeAV1CapabilitiesKHR av1 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR};
     VkVideoDecodeCapabilitiesKHR decode = {VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR};
-    decode.pNext = codec == MVK_VIDEO_CODEC_H264 ? (void *)&h264 : (void *)&vp9;
+    decode.pNext = codec == MVK_VIDEO_CODEC_H264 ? (void *)&h264 : codec == MVK_VIDEO_CODEC_VP9 ? (void *)&vp9 : (void *)&av1;
     *caps = (VkVideoCapabilitiesKHR){VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR, &decode};
     if (v->fn.get_caps(c->physical_device, &p.info, caps) != VK_SUCCESS)
         return false;
@@ -86,6 +105,7 @@ static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint3
     /* the decoded pictures are the references: they must be one image, in the format the guest makes. */
     if (!(decode.flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR))
         return false;
+    *flags = decode.flags;
     VkVideoProfileListInfoKHR list = {VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, nullptr, 1, &p.info};
     VkPhysicalDeviceVideoFormatInfoKHR info = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR, &list,
                                                VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR |
@@ -119,20 +139,46 @@ static bool has_device_extension(MvkConnection *c, VkPhysicalDevice physical, co
     return found;
 }
 
-/* the extensions decoding needs, in the order the device enables them. */
-static const char *const g_extensions[] = {
+/* the extensions decoding needs of any gpu, and those of each codec, which a gpu may have of some only. */
+static const char *const g_core_extensions[] = {
     VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
     VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
-    VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
-    VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME,
+};
+
+static const struct {
+    uint32_t codec;
+    const char *name;
+} g_codec_extensions[] = {
+    {MVK_VIDEO_CODEC_H264, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME},
+    {MVK_VIDEO_CODEC_VP9, VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME},
+    {MVK_VIDEO_CODEC_AV1, VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME},
 };
 
 /* the queue family that decodes the codecs offered, ~0 when none. */
-static uint32_t decode_family(MvkConnection *c, VkPhysicalDevice physical, VkVideoCodecOperationFlagBitsKHR op);
+static uint32_t decode_family(MvkConnection *c, VkPhysicalDevice physical, VkVideoCodecOperationFlagsKHR ops);
+
+/* the codecs the gpu has the extensions for, as a mask of 1 << codec. */
+static uint32_t gpu_codecs(MvkConnection *c, VkPhysicalDevice physical)
+{
+    uint32_t codecs = 0;
+    for (size_t i = 0; i < sizeof(g_codec_extensions) / sizeof(g_codec_extensions[0]); i++)
+        if (has_device_extension(c, physical, g_codec_extensions[i].name))
+            codecs |= 1u << g_codec_extensions[i].codec;
+    return codecs;
+}
+
+static VkVideoCodecOperationFlagsKHR codec_operations(uint32_t codecs)
+{
+    VkVideoCodecOperationFlagsKHR ops = 0;
+    for (uint32_t codec = 0; codec < 32; codec++)
+        if (codecs & (1u << codec))
+            ops |= codec_operation(codec);
+    return ops;
+}
 
 uint32_t mvk_video_queue_family(MvkConnection *c, VkPhysicalDevice physical)
 {
-    return decode_family(c, physical, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+    return decode_family(c, physical, codec_operations(gpu_codecs(c, physical)));
 }
 
 /* whether the gpu decodes video, which the guest sees as one extension. */
@@ -140,22 +186,28 @@ bool mvk_video_offered(MvkConnection *c, VkPhysicalDevice physical)
 {
     if (!c->fn.vkEnumerateDeviceExtensionProperties)
         return false;
-    for (size_t i = 0; i < sizeof(g_extensions) / sizeof(g_extensions[0]); i++)
-        if (!has_device_extension(c, physical, g_extensions[i]))
+    for (size_t i = 0; i < sizeof(g_core_extensions) / sizeof(g_core_extensions[0]); i++)
+        if (!has_device_extension(c, physical, g_core_extensions[i]))
             return false;
-    return true;
+    return gpu_codecs(c, physical) != 0;
 }
 
-size_t mvk_video_extensions(const char *const **names)
+size_t mvk_video_extensions(MvkConnection *c, VkPhysicalDevice physical, const char **names, uint32_t *codecs)
 {
-    *names = g_extensions;
-    return sizeof(g_extensions) / sizeof(g_extensions[0]);
+    size_t n = 0;
+    for (size_t i = 0; i < sizeof(g_core_extensions) / sizeof(g_core_extensions[0]); i++)
+        names[n++] = g_core_extensions[i];
+    *codecs = gpu_codecs(c, physical);
+    for (size_t i = 0; i < sizeof(g_codec_extensions) / sizeof(g_codec_extensions[0]); i++)
+        if (*codecs & (1u << g_codec_extensions[i].codec))
+            names[n++] = g_codec_extensions[i].name;
+    return n;
 }
 
 #define LOAD(field, name) v->fn.field = (PFN_##name)gdpa(c->device, #name)
 
 /* the queue family that decodes a codec, ~0 when none. */
-static uint32_t decode_family(MvkConnection *c, VkPhysicalDevice physical, VkVideoCodecOperationFlagBitsKHR op)
+static uint32_t decode_family(MvkConnection *c, VkPhysicalDevice physical, VkVideoCodecOperationFlagsKHR ops)
 {
     PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get = (PFN_vkGetPhysicalDeviceQueueFamilyProperties2)c->gipa(
         c->instance, "vkGetPhysicalDeviceQueueFamilyProperties2");
@@ -174,13 +226,14 @@ static uint32_t decode_family(MvkConnection *c, VkPhysicalDevice physical, VkVid
     get(physical, &count, props);
     for (uint32_t i = 0; i < count; i++)
         if ((props[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) &&
-            (video[i].videoCodecOperations & op))
+            (video[i].videoCodecOperations & ops))
             return i;
     return ~0u;
 }
 
 /* called once the device exists with the video extensions: loads the commands, learns what is supported. */
-void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bool unified, bool independent)
+void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bool unified, bool independent,
+                              uint32_t codecs)
 {
     MvkVideo *v = calloc(1, sizeof(*v));
     if (!v)
@@ -201,6 +254,7 @@ void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bo
         c->instance, "vkGetPhysicalDeviceVideoFormatPropertiesKHR");
     v->unified = unified;
     v->independent = independent;
+    v->codecs = codecs;
     if (!v->fn.create_session || !v->fn.begin || !v->fn.decode || !v->fn.get_caps || !v->fn.get_formats) {
         free(v);
         return;
@@ -210,14 +264,16 @@ void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bo
     uint32_t n = 0;
     for (size_t i = 0; i < PROFILE_COUNT; i++) {
         VkVideoCapabilitiesKHR caps;
-        VkVideoCodecOperationFlagBitsKHR op = g_profiles[i].codec == MVK_VIDEO_CODEC_H264
-                                                  ? VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
-                                                  : VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
-        uint32_t family = decode_family(c, c->physical_device, op);
-        if (family == ~0u || !query_caps(c, g_profiles[i].codec, g_profiles[i].profile, g_profiles[i].bit_depth, &caps))
+        VkVideoDecodeCapabilityFlagsKHR flags = 0;
+        if (!(codecs & (1u << g_profiles[i].codec)))
+            continue;
+        uint32_t family = decode_family(c, c->physical_device, codec_operation(g_profiles[i].codec));
+        if (family == ~0u ||
+            !query_caps(c, g_profiles[i].codec, g_profiles[i].profile, g_profiles[i].bit_depth, &caps, &flags))
             continue;
         v->supported |= 1u << i;
         v->vk_caps[i] = caps;
+        v->decode_flags[i] = flags;
         v->caps[i] = (MvkVideoCaps){g_profiles[i].codec,
                                     g_profiles[i].profile,
                                     g_profiles[i].bit_depth,
@@ -261,9 +317,14 @@ static void free_job(MvkConnection *c, VideoJob *j)
     j->size = 0;
 }
 
+static void free_mirror(MvkConnection *c, VideoPicture *p);
+
 static void destroy_session(MvkConnection *c, VideoSession *s)
 {
     MvkVideo *v = c->video;
+    for (uint32_t i = 0; i < VIDEO_MAX_INDEX; i++)
+        if (s->pictures[i].mirror_image)
+            free_mirror(c, &s->pictures[i]);
     if (s->params)
         v->fn.destroy_parameters(c->device, s->params, nullptr);
     if (s->session)
@@ -281,6 +342,8 @@ void mvk_video_close(MvkConnection *c)
     if (!v)
         return;
     c->fn.vkDeviceWaitIdle(c->device);
+    if (v->decoded)
+        mime_info("video: %llu pictures decoded by the gpu", (unsigned long long)v->decoded);
     while (v->sessions) {
         VideoSession *s = v->sessions;
         v->sessions = s->next;
@@ -635,6 +698,74 @@ void video_picture_resource(const VideoPicture *p, VkVideoPictureResourceInfoKHR
     r->imageViewBinding = p->view;
 }
 
+static void free_mirror(MvkConnection *c, VideoPicture *p)
+{
+    if (p->mirror_view)
+        c->fn.vkDestroyImageView(c->device, p->mirror_view, nullptr);
+    if (p->mirror_image)
+        c->fn.vkDestroyImage(c->device, p->mirror_image, nullptr);
+    if (p->mirror_memory)
+        c->fn.vkFreeMemory(c->device, p->mirror_memory, nullptr);
+    p->mirror_view = VK_NULL_HANDLE;
+    p->mirror_image = VK_NULL_HANDLE;
+    p->mirror_memory = VK_NULL_HANDLE;
+    p->mirror_ready = false;
+}
+
+bool video_mirror(MvkConnection *c, VideoSession *s, VideoPicture *p)
+{
+    MvkVideo *v = c->video;
+    if (p->mirror_view && p->mirror_extent.width >= p->extent.width && p->mirror_extent.height >= p->extent.height)
+        return true;
+    if (p->mirror_view) {
+        /* the decodes in flight may read it. */
+        wait_decodes(c);
+        free_mirror(c, p);
+    }
+    Profile profile;
+    make_profile(&profile, s->codec, s->profile, s->bit_depth);
+    VkVideoProfileListInfoKHR list = {VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, nullptr, 1, &profile.info};
+    VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = s->format;
+    info.extent = (VkExtent3D){p->extent.width > s->width ? p->extent.width : s->width,
+                               p->extent.height > s->height ? p->extent.height : s->height, 1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (v->independent)
+        info.flags |= VK_IMAGE_CREATE_VIDEO_PROFILE_INDEPENDENT_BIT_KHR;
+    else
+        info.pNext = &list;
+    /* the decode queue's own: the picture is never seen by another. */
+    if (g_create_image(c->device, &info, nullptr, &p->mirror_image) != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements req;
+    c->fn.vkGetImageMemoryRequirements(c->device, p->mirror_image, &req);
+    uint32_t type = find_memory_type(&v->memory, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0);
+    VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, type};
+    VkImageViewCreateInfo view = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = p->mirror_image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = s->format;
+    view.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageViewUsageCreateInfo usage = {VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO, nullptr,
+                                        VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR};
+    view.pNext = &usage;
+    if (type == ~0u || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->mirror_memory) != VK_SUCCESS ||
+        c->fn.vkBindImageMemory(c->device, p->mirror_image, p->mirror_memory, 0) != VK_SUCCESS ||
+        c->fn.vkCreateImageView(c->device, &view, nullptr, &p->mirror_view) != VK_SUCCESS) {
+        free_mirror(c, p);
+        return false;
+    }
+    p->mirror_extent = (VkExtent2D){info.extent.width, info.extent.height};
+    return true;
+}
+
 bool video_set_parameters(MvkConnection *c, VideoSession *s, const void *key, uint32_t key_size,
                           const VkVideoSessionParametersCreateInfoKHR *info)
 {
@@ -720,22 +851,44 @@ static VideoJob *take_job(MvkConnection *c, const VideoSession *s, VkDeviceSize 
     return j;
 }
 
-/* the images a decode reads or writes, moved to the layouts decoding wants and back when the gpu keeps them apart. */
+/*
+ * the images a decode reads or writes, moved to the layouts decoding wants and back when the gpu keeps them
+ * apart. a mirror, which film grain pictures are reconstructed in, only ever holds the layout of a reference.
+ */
 static void layout_barriers(MvkConnection *c, VkCommandBuffer cmd, VideoFrame *f, bool before)
 {
-    VkImageMemoryBarrier2 barriers[VIDEO_MAX_DPB + 1];
+    MvkVideo *v = c->video;
+    VkImageMemoryBarrier2 barriers[2 * (VIDEO_MAX_DPB + 1)];
     uint32_t n = 0;
     for (uint32_t i = 0; i <= f->ref_count; i++) {
-        const VideoPicture *p = i == f->ref_count ? f->current : f->ref_pictures[i];
-        if (!p || !p->image)
+        VideoPicture *p = i == f->ref_count ? f->current : f->ref_pictures[i];
+        if (!p)
             continue;
+        bool is_current = i == f->ref_count;
+        if (p->mirrored && p->mirror_image && before) {
+            VkImageMemoryBarrier2 *b = &barriers[n++];
+            *b = (VkImageMemoryBarrier2){VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            b->srcStageMask = b->dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b->srcAccessMask = b->dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+            b->oldLayout = p->mirror_ready ? (v->unified ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR)
+                                           : VK_IMAGE_LAYOUT_UNDEFINED;
+            b->newLayout = v->unified ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+            b->srcQueueFamilyIndex = b->dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b->image = p->mirror_image;
+            b->subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            p->mirror_ready = true;
+        }
+        /* a reference in a mirror leaves the image of the guest alone. */
+        if (v->unified || !p->image || (p->mirrored && !is_current))
+            continue;
+        VkImageLayout busy = p->mirrored ? VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR : VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
         VkImageMemoryBarrier2 *b = &barriers[n++];
         *b = (VkImageMemoryBarrier2){VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
         b->srcStageMask = b->dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
         b->srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
         b->dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
-        b->oldLayout = before ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
-        b->newLayout = before ? VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR : VK_IMAGE_LAYOUT_GENERAL;
+        b->oldLayout = before ? VK_IMAGE_LAYOUT_GENERAL : busy;
+        b->newLayout = before ? busy : VK_IMAGE_LAYOUT_GENERAL;
         b->srcQueueFamilyIndex = b->dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b->image = p->image;
         b->subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, p->layer, 1};
@@ -783,8 +936,9 @@ void mvk_video_decode(MvkCall *call)
     VideoFrame *f = calloc(1, sizeof(*f));
     if (!f)
         return;
-    bool ok = s->codec == MVK_VIDEO_CODEC_H264 ? video_h264_prepare(c, s, &in, image, layer, f)
-                                               : video_vp9_prepare(c, s, &in, image, layer, f);
+    bool ok = s->codec == MVK_VIDEO_CODEC_H264  ? video_h264_prepare(c, s, &in, image, layer, f)
+              : s->codec == MVK_VIDEO_CODEC_VP9 ? video_vp9_prepare(c, s, &in, image, layer, f)
+                                                : video_av1_prepare(c, s, &in, image, layer, f);
     VideoJob *job = ok ? take_job(c, s, (in.bitstream_size + 255u) & ~255u) : nullptr;
     if (!job) {
         mime_warn("video: a picture was not decoded");
@@ -804,8 +958,7 @@ void mvk_video_decode(MvkCall *call)
     VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
                                       VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     c->fn.vkBeginCommandBuffer(cmd, &begin);
-    if (!v->unified)
-        layout_barriers(c, cmd, f, true);
+    layout_barriers(c, cmd, f, true);
     /* the scope names the references and the picture to set up, the latter in no slot yet. */
     VkVideoReferenceSlotInfoKHR slots[VIDEO_MAX_DPB + 1];
     memcpy(slots, f->refs, f->ref_count * sizeof(slots[0]));
@@ -823,8 +976,7 @@ void mvk_video_decode(MvkCall *call)
     v->fn.decode(cmd, &f->info);
     VkVideoEndCodingInfoKHR end = {VK_STRUCTURE_TYPE_VIDEO_END_CODING_INFO_KHR};
     v->fn.end(cmd, &end);
-    if (!v->unified)
-        layout_barriers(c, cmd, f, false);
+    layout_barriers(c, cmd, f, false);
     c->fn.vkEndCommandBuffer(cmd);
 
     VkSemaphoreSubmitInfo waits[1], signals[2];
@@ -853,6 +1005,7 @@ void mvk_video_decode(MvkCall *call)
     pthread_mutex_unlock(&c->queue_lock);
     mvk_check(call, result, "video decode submit");
     job->done = value;
+    v->decoded++;
     /* a reference from now on, if the codec says the picture is one. */
     f->current->active = f->is_reference;
     free(f);

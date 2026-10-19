@@ -10,6 +10,7 @@
 
 #include <mime/dxva.h>
 #include <mime/mvk_video.h>
+#include <vk_video/vulkan_video_codec_av1std_decode.h>
 #include <vk_video/vulkan_video_codec_h264std_decode.h>
 #include <vk_video/vulkan_video_codec_vp9std_decode.h>
 
@@ -45,6 +46,16 @@ typedef struct VideoPicture {
     int slot;
     bool active;
     VkExtent2D extent;
+    /*
+     * av1 film grain: the image of the guest holds the picture with the grain, the picture as the later frames
+     * refer to it has none and is kept apart, in an image only the decoder uses.
+     */
+    VkImage mirror_image;
+    VkDeviceMemory mirror_memory;
+    VkImageView mirror_view;
+    bool mirrored; /* the picture is a reference in the mirror, not in the image of the guest */
+    bool mirror_ready; /* the mirror has been moved out of its undefined layout */
+    VkExtent2D mirror_extent;
 } VideoPicture;
 
 /* the work of one picture in flight: a command buffer and the bitstream it reads. */
@@ -68,12 +79,15 @@ typedef struct MvkVideo {
     uint64_t value;
     VideoJob jobs[VIDEO_RING];
     uint32_t next_job;
+    uint64_t decoded; /* the pictures sent to the decode queue */
     bool unified; /* the gpu keeps images in the general layout through decoding */
     bool independent; /* images and buffers are made for any profile, not for the ones of a list */
+    uint32_t codecs; /* the codecs whose extensions are enabled, as bits of MVK_VIDEO_CODEC_ numbers */
     /* the profiles the gpu decodes, by index of the table in video.c, and what it said of them. */
     uint32_t supported;
     MvkVideoCaps caps[8];
     VkVideoCapabilitiesKHR vk_caps[8];
+    VkVideoDecodeCapabilityFlagsKHR decode_flags[8];
     VkPhysicalDeviceMemoryProperties memory;
     VideoSession *sessions;
 } MvkVideo;
@@ -100,6 +114,12 @@ struct VideoSession {
     struct {
         uint32_t last_width, last_height;
     } vp9;
+    struct {
+        /* what the picture last decoded into each dxva index is as a reference. */
+        StdVideoDecodeAV1ReferenceInfo refs[VIDEO_MAX_INDEX];
+        /* from the last frame with film grain, which is where dxva says it. */
+        bool matrix_identity;
+    } av1;
 };
 
 /* a picture as vulkan wants it, built by the codec's code. */
@@ -131,6 +151,22 @@ typedef struct VideoFrame {
             StdVideoVP9LoopFilter loop_filter;
             StdVideoVP9Segmentation segmentation;
         } vp9;
+        struct {
+            VkVideoDecodeAV1PictureInfoKHR picture;
+            StdVideoDecodeAV1PictureInfo std_picture;
+            StdVideoAV1TileInfo tile_info;
+            StdVideoAV1Quantization quantization;
+            StdVideoAV1Segmentation segmentation;
+            StdVideoAV1LoopFilter loop_filter;
+            StdVideoAV1CDEF cdef;
+            StdVideoAV1LoopRestoration loop_restoration;
+            StdVideoAV1GlobalMotion global_motion;
+            StdVideoAV1FilmGrain film_grain;
+            uint16_t mi_col_starts[64], mi_row_starts[64], width_in_sbs_minus_1[64], height_in_sbs_minus_1[64];
+            uint32_t tile_sizes[VIDEO_MAX_SLICES]; /* the offsets are in slice_offsets */
+            VkVideoDecodeAV1DpbSlotInfoKHR slots[VIDEO_MAX_DPB + 1];
+            StdVideoDecodeAV1ReferenceInfo std_refs[VIDEO_MAX_DPB + 1];
+        } av1;
     } u;
 } VideoFrame;
 
@@ -146,17 +182,27 @@ void video_picture_resource(const VideoPicture *p, VkVideoPictureResourceInfoKHR
 bool video_set_parameters(MvkConnection *c, VideoSession *s, const void *key, uint32_t key_size,
                           const VkVideoSessionParametersCreateInfoKHR *info);
 
+/*
+ * makes the image a picture is reconstructed in when the image of the guest gets the output with film grain:
+ * the size of the session's pictures, for decoding as a reference only. true when it is made or was.
+ */
+bool video_mirror(MvkConnection *c, VideoSession *s, VideoPicture *p);
+
 /* the codecs: fill the frame from the dxva buffers, false when they do not describe a picture to decode. */
 bool video_h264_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeInfo *in, uint64_t image, uint32_t layer,
                         VideoFrame *f);
 bool video_vp9_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeInfo *in, uint64_t image, uint32_t layer,
                        VideoFrame *f);
+bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeInfo *in, uint64_t image, uint32_t layer,
+                       VideoFrame *f);
 
 /* what vulkan.c calls. */
 bool mvk_video_offered(MvkConnection *c, VkPhysicalDevice physical);
 uint32_t mvk_video_queue_family(MvkConnection *c, VkPhysicalDevice physical);
-size_t mvk_video_extensions(const char *const **names);
-void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bool unified, bool independent);
+/* the extensions to enable: the decode queue and those of the codecs the gpu has, named in the mask returned. */
+size_t mvk_video_extensions(MvkConnection *c, VkPhysicalDevice physical, const char **names, uint32_t *codecs);
+void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bool unified, bool independent,
+                              uint32_t codecs);
 void mvk_video_close(MvkConnection *c);
 void mvk_video_enter(MvkConnection *c);
 VkResult mvk_video_create_image(VkDevice device, const VkImageCreateInfo *info, const VkAllocationCallbacks *allocator,
