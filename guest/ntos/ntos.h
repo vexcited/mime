@@ -1013,6 +1013,8 @@ NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB
 NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process);
 void PspJobProcessExit(PEPROCESS process);
 void PsDumpThreads(void);
+void KiTimelineNote(ULONG kind, const char *text, ULONG64 detail);
+extern BOOLEAN KiTimelineOn;
 void NpfsDumpState(void);
 PVOID KiSatisfiedWaitObject(PKTHREAD thread);
 void KiDumpServiceCalls(void);
@@ -1059,6 +1061,9 @@ void IoInitialize(void);
 NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *out);
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                        ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
+NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                         ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
+                         BOOLEAN stat_only);
 NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG options, PFILE_OBJECT *out);
 NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOID buffer, ULONG length,
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);

@@ -124,6 +124,8 @@ typedef struct KI_TIMELINE_ENTRY {
 } KI_TIMELINE_ENTRY;
 #define KI_TIMELINE_ENTRIES (1u << 20)
 char KiTimelineImage[16];
+/* set once the timeline records, so the hot paths ask a flag and not the image's name. */
+BOOLEAN KiTimelineOn;
 static KI_TIMELINE_ENTRY *g_timeline;
 static volatile LONG g_timeline_used;
 
@@ -217,10 +219,30 @@ static void timeline_thread_name(ULONG64 string, char out[32])
     out[n] = 0;
 }
 
+/* a mark of the kernel in the timeline, as a call of no length to the pseudo service 0x2000 + kind. */
+void KiTimelineNote(ULONG kind, const char *text, ULONG64 detail)
+{
+    PKTHREAD thread = KiCurrentThread();
+    if (!g_timeline || !thread || strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage))
+        return;
+    LONG slot = __atomic_fetch_add(&g_timeline_used, 1, __ATOMIC_RELAXED);
+    if ((ULONG)slot >= KI_TIMELINE_ENTRIES)
+        return;
+    KI_TIMELINE_ENTRY *e = &g_timeline[slot];
+    e->Start = e->End = HalReadCounter();
+    e->Blocked = 0;
+    e->Process = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    e->Thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
+    e->Service = 0x2000 + kind;
+    e->Status = (ULONG)detail;
+    mime_format(e->Path, sizeof(e->Path), "%s", text);
+}
+
 static const char *service_name(ULONG table, ULONG index)
 {
     if (table == 2)
-        return index == 0 ? "fault-fast" : index == 1 ? "fault-slow" : index == 2 ? "fault-fast-miss" : "fault";
+        return index == 0 ? "fault-fast" : index == 1 ? "fault-slow" : index == 2 ? "fault-fast-miss"
+               : index == 3 ? "ioc-post" : "fault";
     if (table == 0 && index < MIME_NT_SERVICES_COUNT && MIME_NT_SERVICES_NAMES[index])
         return MIME_NT_SERVICES_NAMES[index];
     if (table == 1 && index < MIME_WIN32K_SERVICES_COUNT && MIME_WIN32K_SERVICES_NAMES[index])
@@ -287,6 +309,26 @@ void KiSystemService(PKTRAP_FRAME frame)
                 }
             }
             timeline_timeout(name, args, tpath);
+            if (!strcmp(name, "NtRemoveIoCompletion") || !strcmp(name, "NtRemoveIoCompletionEx")) {
+                PVOID object;
+                if (NT_SUCCESS(ObReferenceHandle((HANDLE)args[0], nullptr, UserMode, &object, nullptr))) {
+                    char port[16];
+                    mime_format(port, sizeof(port), "port%llx", (ULONG64)(ULONG_PTR)object & 0xFFFFFFFFFFFull);
+                    size_t used = strlen(tpath);
+                    mime_format(tpath + used, sizeof(tpath) - used, "%s", port);
+                    ObDereferenceObject(object);
+                }
+            }
+            /* the end of a pipe a read or a write is on, to tell who talks to whom: the instance, the end, the length. */
+            if (!strcmp(name, "NtReadFile") || !strcmp(name, "NtWriteFile")) {
+                PFILE_OBJECT file;
+                if (NT_SUCCESS(ObReferenceHandle((HANDLE)args[0], IoFileObjectTypeObject, UserMode, (PVOID *)&file, nullptr))) {
+                    if (IopIsNamedPipe(file))
+                        mime_format(tpath, sizeof(tpath), "p%llx%c/%u", (ULONG64)(ULONG_PTR)file->FsContext & 0xFFFFFFFFull,
+                                    file->FsContext2 == (PVOID)1 ? 's' : 'c', (ULONG)args[6]);
+                    ObDereferenceObject(file);
+                }
+            }
             if (!strcmp(name, "NtSetInformationThread") && args[1] == 38)
                 timeline_thread_name(args[2], tpath);
             if (!strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
@@ -481,6 +523,7 @@ void NTAPI ProbeForWrite(PVOID address, SIZE_T length, ULONG alignment)
 void KiEnableTimeline(void)
 {
     g_timeline = ExAllocatePool2(POOL_FLAG_NON_PAGED, KI_TIMELINE_ENTRIES * sizeof(KI_TIMELINE_ENTRY), KI_TAG('T', 'l', 'i', 'n'));
+    KiTimelineOn = g_timeline != nullptr;
 }
 
 /* one line per call, several to a log write: pid tid start duration blocked status service, times in microseconds. */

@@ -68,6 +68,11 @@ static NTSTATUS queue_packet(IO_COMPLETION *port, PVOID key, PVOID apc_context, 
     port->Count++;
     KeReleaseSpinLock(&port->Lock, irql);
     KeReleaseSemaphore(&port->Packets, IO_NO_INCREMENT, 1, FALSE);
+    if (KiTimelineOn) {
+        char text[24];
+        mime_format(text, sizeof(text), "port%llx", (ULONG64)(ULONG_PTR)port & 0xFFFFFFFFFFFull);
+        KiTimelineNote(3, text, (ULONG64)(ULONG_PTR)apc_context);
+    }
     return STATUS_SUCCESS;
 }
 
