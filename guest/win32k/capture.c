@@ -371,6 +371,8 @@ static LONG op_open_window(MIME_CAPTURE_OPEN *o)
     slot->ClientOnly = client;
     slot->Prev = prev;
     slot->Now = now;
+    DbgPrint("win32k: capture: process %u captures window %p, %dx%d\n", (ULONG)(ULONG_PTR)slot->Process->Pid, slot->Window,
+             width, height);
     o->Handle = slot->Handle;
     o->Width = (ULONG)width;
     o->Height = (ULONG)height;
@@ -413,6 +415,8 @@ static LONG op_open(MIME_CAPTURE_OPEN *o)
     free_slot->Monitor = o->Monitor;
     free_slot->Rect = m.Rect;
     free_slot->Prev = prev;
+    DbgPrint("win32k: capture: process %u duplicates monitor %u, %dx%d\n", (ULONG)(ULONG_PTR)free_slot->Process->Pid,
+             o->Monitor + 1, width, height);
     o->Handle = free_slot->Handle;
     o->Width = (ULONG)width;
     o->Height = (ULONG)height;

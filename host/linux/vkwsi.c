@@ -161,6 +161,12 @@ struct Presenter {
     /* counts the images kept, and the one the readback buffer holds. */
     uint64_t last_serial;
     uint64_t readback_serial;
+    /* what a capture asks before it asks for pixels, under a lock of its own: a present holds the window's for a frame. */
+    pthread_mutex_t info_lock;
+    bool info_valid;
+    uint32_t info_width, info_height;
+    MimeRect info_client;
+    uint64_t info_serial;
     VkQueue last_queue;
     VkBuffer readback;
     VkDeviceMemory readback_memory;
@@ -517,6 +523,7 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
     bool attached = p->attached;
     pthread_mutex_unlock(&p->lock);
     pthread_mutex_destroy(&p->lock);
+    pthread_mutex_destroy(&p->info_lock);
     if (attached)
         mime_ui_vk_detach(p->window);
     free(p->shadow);
@@ -542,6 +549,7 @@ static Presenter *presenter_get(MvkConnection *c, uint32_t window)
         p->checked_family = UINT32_MAX;
         p->pool_family = UINT32_MAX;
         pthread_mutex_init(&p->lock, nullptr);
+        pthread_mutex_init(&p->info_lock, nullptr);
         *slot = p;
     }
     if (p)
@@ -833,6 +841,9 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
     p->last_memory = VK_NULL_HANDLE;
     p->last_valid = false;
     p->readback_serial = 0;
+    pthread_mutex_lock(&p->info_lock);
+    p->info_valid = false;
+    pthread_mutex_unlock(&p->info_lock);
     VkImageCreateInfo ii = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -1389,6 +1400,13 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
         p->last_valid = true;
         p->last_client = client;
         p->last_serial++;
+        pthread_mutex_lock(&p->info_lock);
+        p->info_valid = true;
+        p->info_width = p->last_extent.width;
+        p->info_height = p->last_extent.height;
+        p->info_client = client;
+        p->info_serial = p->last_serial;
+        pthread_mutex_unlock(&p->info_lock);
     }
     barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -1953,6 +1971,20 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
         return false;
     MvkConnection *c = p->conn;
     bool ok = false;
+    if (!pixels) {
+        /* the size and the serial, without waiting for a present to be done. */
+        pthread_mutex_lock(&p->info_lock);
+        ok = p->info_valid;
+        if (ok) {
+            *width = p->info_width;
+            *height = p->info_height;
+            *client = p->info_client;
+            *serial = p->info_serial;
+        }
+        pthread_mutex_unlock(&p->info_lock);
+        presenter_put(c, p);
+        return ok;
+    }
     pthread_mutex_lock(&p->lock);
     if (!p->last_valid || !p->pool || !p->last_queue)
         goto out;

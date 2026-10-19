@@ -53,6 +53,7 @@ static const struct {
     HRESULT (*Factory)(REFIID riid, void **factory);
 } g_classes[] = {
     {CbUISettingsClass, CbUISettingsFactory},
+    {CbApiInformationClass, CbApiInformationFactory},
     {CbCaptureItemClass, CbCaptureItemFactory},
     {CbCaptureSessionClass, CbCaptureSessionFactory},
     {CbCapturePoolClass, CbCapturePoolFactory},
