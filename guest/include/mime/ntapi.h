@@ -181,6 +181,60 @@ NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeMultipleKeys(HANDLE key, ULONG count, 
                                                        HANDLE event, PVOID apc_routine, PVOID apc_context,
                                                        PIO_STATUS_BLOCK iosb, ULONG filter, BOOLEAN subtree,
                                                        PVOID buffer, ULONG buffer_length, BOOLEAN async);
+/* ------------------------------------------------------------------ windows notification facility */
+
+typedef struct _WNF_STATE_NAME {
+    ULONG Data[2];
+} WNF_STATE_NAME, *PWNF_STATE_NAME;
+typedef const WNF_STATE_NAME *PCWNF_STATE_NAME;
+typedef GUID WNF_TYPE_ID, *PWNF_TYPE_ID;
+typedef const WNF_TYPE_ID *PCWNF_TYPE_ID;
+typedef ULONG WNF_CHANGE_STAMP, *PWNF_CHANGE_STAMP;
+typedef enum _WNF_STATE_NAME_LIFETIME {
+    WnfWellKnownStateName = 0,
+    WnfPermanentStateName = 1,
+    WnfPersistentStateName = 2,
+    WnfTemporaryStateName = 3,
+} WNF_STATE_NAME_LIFETIME;
+typedef enum _WNF_DATA_SCOPE {
+    WnfDataScopeSystem = 0,
+    WnfDataScopeSession = 1,
+    WnfDataScopeUser = 2,
+    WnfDataScopeProcess = 3,
+    WnfDataScopeMachine = 4,
+    WnfDataScopePhysicalMachine = 5,
+} WNF_DATA_SCOPE;
+typedef enum _WNF_STATE_NAME_INFORMATION {
+    WnfInfoStateNameExist = 0,
+    WnfInfoSubscribersPresent = 1,
+    WnfInfoIsQuiescent = 2,
+} WNF_STATE_NAME_INFORMATION;
+#define WNF_MAX_STATE_SIZE 4096
+
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateWnfStateName(PWNF_STATE_NAME state_name, WNF_STATE_NAME_LIFETIME lifetime,
+                                                 WNF_DATA_SCOPE scope, BOOLEAN persistent, PCWNF_TYPE_ID type_id,
+                                                 ULONG maximum_size, PVOID descriptor);
+NTSYSCALLAPI NTSTATUS NTAPI NtDeleteWnfStateName(PCWNF_STATE_NAME state_name);
+NTSYSCALLAPI NTSTATUS NTAPI NtUpdateWnfStateData(PCWNF_STATE_NAME state_name, const VOID *buffer, ULONG length,
+                                                 PCWNF_TYPE_ID type_id, const VOID *explicit_scope,
+                                                 WNF_CHANGE_STAMP matching_stamp, ULONG check_stamp);
+NTSYSCALLAPI NTSTATUS NTAPI NtDeleteWnfStateData(PCWNF_STATE_NAME state_name, const VOID *explicit_scope);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryWnfStateData(PCWNF_STATE_NAME state_name, PCWNF_TYPE_ID type_id,
+                                                const VOID *explicit_scope, PWNF_CHANGE_STAMP change_stamp,
+                                                PVOID buffer, PULONG buffer_size);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryWnfStateNameInformation(PCWNF_STATE_NAME state_name,
+                                                           WNF_STATE_NAME_INFORMATION information_class,
+                                                           const VOID *explicit_scope, PVOID information,
+                                                           ULONG information_size);
+NTSYSCALLAPI NTSTATUS NTAPI NtSubscribeWnfStateChange(PCWNF_STATE_NAME state_name, WNF_CHANGE_STAMP change_stamp,
+                                                      ULONG event_mask, PULONG64 subscription_id);
+NTSYSCALLAPI NTSTATUS NTAPI NtUnsubscribeWnfStateChange(PCWNF_STATE_NAME state_name);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetWnfProcessNotificationEvent(HANDLE event);
+NTSYSCALLAPI NTSTATUS NTAPI NtGetCompleteWnfStateSubscription(PWNF_STATE_NAME old_state_name,
+                                                              PULONG64 old_subscription_id,
+                                                              ULONG old_event_mask, ULONG old_status,
+                                                              PVOID new_delivery_descriptor, ULONG descriptor_size);
+
 NTSYSCALLAPI NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom);
 NTSYSCALLAPI NTSTATUS NTAPI NtAddAtomEx(PWSTR name, ULONG length, PUSHORT atom, ULONG flags);
 NTSYSCALLAPI NTSTATUS NTAPI NtFindAtom(PWSTR name, ULONG length, PUSHORT atom);

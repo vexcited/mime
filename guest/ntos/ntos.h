@@ -1275,6 +1275,7 @@ void CmRefreshTimeZoneRules(ULONG year);
 
 void ExInitialize(void);
 void ExpInitializeAtoms(void);
+void ExpInitializeWnf(void);
 void ExUpdateSystemTime(void);
 NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
                        PLARGE_INTEGER timeout, KPROCESSOR_MODE mode);

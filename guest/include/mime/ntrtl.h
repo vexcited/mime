@@ -293,4 +293,26 @@ NTSYSAPI PSLIST_ENTRY NTAPI RtlInterlockedFlushSList(PSLIST_HEADER head);
 NTSYSAPI USHORT NTAPI RtlQueryDepthSList(PSLIST_HEADER head);
 NTSYSAPI PSLIST_ENTRY NTAPI RtlFirstEntrySList(const SLIST_HEADER *head);
 
+/* the windows notification facility */
+typedef NTSTATUS(NTAPI *PWNF_USER_CALLBACK)(WNF_STATE_NAME state_name, WNF_CHANGE_STAMP change_stamp,
+                                            PWNF_TYPE_ID type_id, PVOID context, const VOID *buffer, ULONG size);
+NTSYSAPI NTSTATUS NTAPI RtlQueryWnfStateData(PWNF_CHANGE_STAMP change_stamp, WNF_STATE_NAME state_name,
+                                             PWNF_USER_CALLBACK callback, PVOID context, PCWNF_TYPE_ID type_id);
+NTSYSAPI NTSTATUS NTAPI RtlQueryWnfStateDataWithExplicitScope(PWNF_CHANGE_STAMP change_stamp, WNF_STATE_NAME state_name,
+                                                              const VOID *explicit_scope, PWNF_USER_CALLBACK callback,
+                                                              PVOID context, PCWNF_TYPE_ID type_id);
+NTSYSAPI NTSTATUS NTAPI RtlPublishWnfStateData(WNF_STATE_NAME state_name, PCWNF_TYPE_ID type_id, const VOID *buffer,
+                                               ULONG length, const VOID *explicit_scope);
+NTSYSAPI NTSTATUS NTAPI RtlTestAndPublishWnfStateData(WNF_STATE_NAME state_name, PCWNF_TYPE_ID type_id,
+                                                      const VOID *buffer, ULONG length, const VOID *explicit_scope,
+                                                      WNF_CHANGE_STAMP matching_stamp);
+NTSYSAPI NTSTATUS NTAPI RtlSubscribeWnfStateChangeNotification(PVOID *subscription, WNF_STATE_NAME state_name,
+                                                               WNF_CHANGE_STAMP change_stamp,
+                                                               PWNF_USER_CALLBACK callback, PVOID context,
+                                                               PCWNF_TYPE_ID type_id, ULONG serialization_group,
+                                                               ULONG unknown);
+NTSYSAPI NTSTATUS NTAPI RtlUnsubscribeWnfStateChangeNotification(PVOID subscription);
+NTSYSAPI NTSTATUS NTAPI RtlUnsubscribeWnfNotificationWaitForCompletion(PVOID subscription);
+NTSYSAPI BOOLEAN NTAPI RtlEqualWnfChangeStamps(WNF_CHANGE_STAMP first, WNF_CHANGE_STAMP second);
+
 #endif

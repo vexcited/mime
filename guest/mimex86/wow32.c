@@ -1339,6 +1339,28 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         if (a[1] > 1)
             return STATUS_INVALID_INFO_CLASS;
         return NtQueryInformationAtom((USHORT)a[0], a[1], pointer32(a[2]), a[3], pointer32(a[4]));
+    /* the windows notification facility: names, ids and data are laid out the same for both. */
+    case MIME_SVC_NtCreateWnfStateName:
+        return NtCreateWnfStateName(pointer32(a[0]), a[1], a[2], (BOOLEAN)a[3], pointer32(a[4]), a[5], pointer32(a[6]));
+    case MIME_SVC_NtDeleteWnfStateName:
+        return NtDeleteWnfStateName(pointer32(a[0]));
+    case MIME_SVC_NtUpdateWnfStateData:
+        return NtUpdateWnfStateData(pointer32(a[0]), pointer32(a[1]), a[2], pointer32(a[3]), pointer32(a[4]), a[5], a[6]);
+    case MIME_SVC_NtDeleteWnfStateData:
+        return NtDeleteWnfStateData(pointer32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtQueryWnfStateData:
+        return NtQueryWnfStateData(pointer32(a[0]), pointer32(a[1]), pointer32(a[2]), pointer32(a[3]), pointer32(a[4]),
+                                   pointer32(a[5]));
+    case MIME_SVC_NtQueryWnfStateNameInformation:
+        return NtQueryWnfStateNameInformation(pointer32(a[0]), a[1], pointer32(a[2]), pointer32(a[3]), a[4]);
+    case MIME_SVC_NtSubscribeWnfStateChange:
+        return NtSubscribeWnfStateChange(pointer32(a[0]), a[1], a[2], pointer32(a[3]));
+    case MIME_SVC_NtUnsubscribeWnfStateChange:
+        return NtUnsubscribeWnfStateChange(pointer32(a[0]));
+    case MIME_SVC_NtSetWnfProcessNotificationEvent:
+        return NtSetWnfProcessNotificationEvent(handle32(a[0]));
+    case MIME_SVC_NtGetCompleteWnfStateSubscription:
+        return NtGetCompleteWnfStateSubscription(pointer32(a[0]), pointer32(a[1]), a[2], a[3], pointer32(a[4]), a[5]);
     default:
         return STATUS_NOT_IMPLEMENTED;
     }
