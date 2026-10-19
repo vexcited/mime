@@ -1291,3 +1291,38 @@ EXPORTS
     _cgets_s
     _cgetws_s
     _cgetws
+    _stat32i64
+    _stat64i32
+    _wstat32i64
+    _wstat64i32
+    _fstat32i64
+    _fstat64i32
+    _findfirst32
+    _findnext32
+    _wfindfirst32
+    _wfindnext32
+    _findfirst32i64
+    _findnext32i64
+    _wfindfirst32i64
+    _wfindnext32i64
+    _findfirst64i32
+    _findnext64i32
+    _wfindfirst64i32
+    _wfindnext64i32
+    _set_purecall_handler
+    _get_purecall_handler
+    _set_thread_local_invalid_parameter_handler
+    _get_thread_local_invalid_parameter_handler
+    set_terminate=MsvcrtSetTerminate
+    set_unexpected=MsvcrtSetUnexpected
+    unexpected=MsvcrtUnexpected
+    _set_se_translator=MsvcrtSetSeTranslator
+    __uncaught_exceptions
+    __timezone
+    __tzname
+    _j0
+    _j1
+    _jn
+    _y0
+    _y1
+    _yn

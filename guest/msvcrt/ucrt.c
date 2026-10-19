@@ -548,3 +548,197 @@ DECLSPEC_EXPORT int __cdecl __conio_common_vcwscanf(ULONGLONG options, const wch
         return EOF;
     return MsvcrtScanExW(nullptr, line, n, format, args, (int)(options & 1));
 }
+
+/* ------------------------------------------------------------------ exit, environment and command line */
+
+int MsvcrtAppType(void);
+int __cdecl _controlfp_s(unsigned *current, unsigned new_control, unsigned mask);
+unsigned int __cdecl _controlfp(unsigned int new_control, unsigned int mask);
+int __cdecl _wputenv_s(const wchar_t *name, const wchar_t *value);
+
+/* ends the process at once, as _exit does: no handler of atexit runs and no stream is flushed. */
+DECLSPEC_EXPORT DECLSPEC_NORETURN void __cdecl _Exit(int code)
+{
+    _exit(code);
+}
+
+#define QUICK_EXIT_MAX 64
+static _PVFV g_quick_exit[QUICK_EXIT_MAX];
+static int g_quick_exit_count;
+
+DECLSPEC_EXPORT int __cdecl _crt_at_quick_exit(_PVFV function)
+{
+    int result = -1;
+    _lock(_EXIT_LOCK1);
+    if (function && g_quick_exit_count < QUICK_EXIT_MAX) {
+        g_quick_exit[g_quick_exit_count++] = function;
+        result = 0;
+    }
+    _unlock(_EXIT_LOCK1);
+    return result;
+}
+
+/* the handlers of at_quick_exit in reverse order, then the process ends without the ones of atexit. */
+DECLSPEC_EXPORT DECLSPEC_NORETURN void __cdecl quick_exit(int code)
+{
+    for (;;) {
+        _PVFV function = nullptr;
+        _lock(_EXIT_LOCK1);
+        if (g_quick_exit_count)
+            function = g_quick_exit[--g_quick_exit_count];
+        _unlock(_EXIT_LOCK1);
+        if (!function)
+            break;
+        function();
+    }
+    _exit(code);
+}
+
+DECLSPEC_EXPORT char **__cdecl _get_initial_narrow_environment(void)
+{
+    return MsvcrtEnviron;
+}
+
+DECLSPEC_EXPORT wchar_t **__cdecl _get_initial_wide_environment(void)
+{
+    MsvcrtWenvInit();
+    return MsvcrtWenviron;
+}
+
+DECLSPEC_EXPORT int __cdecl _initialize_wide_environment(void)
+{
+    MsvcrtWenvInit();
+    return MsvcrtWenviron ? 0 : -1;
+}
+
+DECLSPEC_EXPORT int __cdecl _configure_wide_argv(int mode)
+{
+    if (mode < 0 || mode > 2)
+        return EINVAL;
+    if (!mode)
+        return 0;
+    int argc, info = 0;
+    wchar_t **argv, **env;
+    int __cdecl __wgetmainargs(int *argc, wchar_t ***argv, wchar_t ***env, int wildcard, void *info);
+    return __wgetmainargs(&argc, &argv, &env, mode == 2, &info);
+}
+
+/* what is after the name of the program, which is the command line that winmain gets. */
+DECLSPEC_EXPORT char *__cdecl _get_narrow_winmain_command_line(void)
+{
+    char *line = GetCommandLineA();
+    if (*line == '"') {
+        line++;
+        while (*line && *line != '"')
+            line++;
+        if (*line)
+            line++;
+    } else {
+        while (*line && *line > ' ')
+            line++;
+    }
+    while (*line && *line <= ' ')
+        line++;
+    return line;
+}
+
+DECLSPEC_EXPORT wchar_t *__cdecl _get_wide_winmain_command_line(void)
+{
+    wchar_t *line = GetCommandLineW();
+    if (*line == L'"') {
+        line++;
+        while (*line && *line != L'"')
+            line++;
+        if (*line)
+            line++;
+    } else {
+        while (*line && *line > L' ')
+            line++;
+    }
+    while (*line && *line <= L' ')
+        line++;
+    return line;
+}
+
+/* the environment of the process as a block of strings that the caller frees. */
+DECLSPEC_EXPORT wchar_t *__cdecl __dcrt_get_wide_environment_from_os(void)
+{
+    wchar_t *block = GetEnvironmentStringsW();
+    if (!block)
+        return nullptr;
+    size_t length = 0;
+    while (block[length])
+        length += wcslen(block + length) + 1;
+    wchar_t *copy = malloc((length + 1) * sizeof(wchar_t));
+    if (copy)
+        memcpy(copy, block, (length + 1) * sizeof(wchar_t));
+    FreeEnvironmentStringsW(block);
+    return copy;
+}
+
+DECLSPEC_EXPORT char **__cdecl __dcrt_initial_narrow_environment(void)
+{
+    return MsvcrtEnviron;
+}
+
+DECLSPEC_EXPORT int __cdecl _query_app_type(void)
+{
+    return MsvcrtAppType();
+}
+
+DECLSPEC_EXPORT void __cdecl _crt_debugger_hook(int reserved)
+{
+}
+
+/* ------------------------------------------------------------------ floating point and libraries */
+
+/* the value of FLT_ROUNDS: 0 toward zero, 1 to nearest, 2 up and 3 down. */
+DECLSPEC_EXPORT int __cdecl __fpe_flt_rounds(void)
+{
+    switch (_controlfp(0, 0) & 0x300) {
+    case 0x300:
+        return 0;
+    case 0x200:
+        return 2;
+    case 0x100:
+        return 3;
+    default:
+        return 1;
+    }
+}
+
+/* nothing here uses the fused instructions, so the setting is only kept. */
+static int g_fma3 = -1;
+
+static int fma3_supported(void)
+{
+    return IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE) != 0;
+}
+
+DECLSPEC_EXPORT int __cdecl _set_FMA3_enable(int enable)
+{
+    g_fma3 = enable && fma3_supported();
+    return g_fma3;
+}
+
+DECLSPEC_EXPORT int __cdecl _get_FMA3_enable(void)
+{
+    return g_fma3 < 0 ? fma3_supported() : g_fma3;
+}
+
+DECLSPEC_EXPORT intptr_t __cdecl _loaddll(char *name)
+{
+    return (intptr_t)LoadLibraryA(name);
+}
+
+DECLSPEC_EXPORT int __cdecl _unloaddll(intptr_t module)
+{
+    return FreeLibrary((HMODULE)module) ? 0 : (int)GetLastError();
+}
+
+DECLSPEC_EXPORT int(__cdecl *__cdecl _getdllprocaddr(intptr_t module, char *name, intptr_t ordinal))(void)
+{
+    if (name)
+        return (int(__cdecl *)(void))GetProcAddress((HMODULE)module, name);
+    return (int(__cdecl *)(void))GetProcAddress((HMODULE)module, (LPCSTR)(ordinal & 0xffff));
+}

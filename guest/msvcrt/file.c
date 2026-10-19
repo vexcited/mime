@@ -1001,6 +1001,74 @@ int __cdecl _fstat32(int fd, struct _stat32 *st)
     return to_32(fstat_fd(fd, &s), &s, st);
 }
 
+/* the layouts that pair 32 bit times with a 64 bit size. */
+struct _stat32i64 {
+    _dev_t st_dev;
+    _ino_t st_ino;
+    unsigned short st_mode;
+    short st_nlink;
+    short st_uid;
+    short st_gid;
+    _dev_t st_rdev;
+    long long st_size;
+    __time32_t st_atime;
+    __time32_t st_mtime;
+    __time32_t st_ctime;
+};
+MIME_FIELD_AT(struct _stat32i64, st_size, 24);
+MIME_FIELD_AT(struct _stat32i64, st_atime, 32);
+
+static int to_32i64(int r, const struct _stat64 *s, struct _stat32i64 *d)
+{
+    if (r)
+        return r;
+    d->st_dev = s->st_dev;
+    d->st_ino = s->st_ino;
+    d->st_mode = s->st_mode;
+    d->st_nlink = s->st_nlink;
+    d->st_uid = s->st_uid;
+    d->st_gid = s->st_gid;
+    d->st_rdev = s->st_rdev;
+    d->st_size = s->st_size;
+    d->st_atime = (__time32_t)s->st_atime;
+    d->st_mtime = (__time32_t)s->st_mtime;
+    d->st_ctime = (__time32_t)s->st_ctime;
+    return 0;
+}
+
+int __cdecl _stat32i64(const char *path, struct _stat32i64 *st)
+{
+    struct _stat64 s;
+    return to_32i64(stat_a(path, &s), &s, st);
+}
+
+int __cdecl _wstat32i64(const wchar_t *path, struct _stat32i64 *st)
+{
+    struct _stat64 s;
+    return to_32i64(stat_w(path, &s), &s, st);
+}
+
+int __cdecl _fstat32i64(int fd, struct _stat32i64 *st)
+{
+    struct _stat64 s;
+    return to_32i64(fstat_fd(fd, &s), &s, st);
+}
+
+int __cdecl _stat64i32(const char *path, struct _stat64i32 *st)
+{
+    return _stat(path, st);
+}
+
+int __cdecl _wstat64i32(const wchar_t *path, struct _stat64i32 *st)
+{
+    return _wstat(path, st);
+}
+
+int __cdecl _fstat64i32(int fd, struct _stat64i32 *st)
+{
+    return _fstat(fd, st);
+}
+
 /* ------------------------------------------------------------------ find */
 
 struct _finddata64_t {
@@ -1280,6 +1348,161 @@ int __cdecl _wfindnext(intptr_t h, struct _wfinddata64i32_t *out)
         return -1;
     wfill64i32(&fd, out);
     return 0;
+}
+
+/* the layouts with 32 bit times, with a 32 bit size and with a 64 bit one. */
+struct _finddata32_t {
+    unsigned attrib;
+    __time32_t time_create;
+    __time32_t time_access;
+    __time32_t time_write;
+    unsigned long size;
+    char name[260];
+};
+
+struct _wfinddata32_t {
+    unsigned attrib;
+    __time32_t time_create;
+    __time32_t time_access;
+    __time32_t time_write;
+    unsigned long size;
+    wchar_t name[260];
+};
+
+struct _finddata32i64_t {
+    unsigned attrib;
+    __time32_t time_create;
+    __time32_t time_access;
+    __time32_t time_write;
+    long long size;
+    char name[260];
+};
+MIME_FIELD_AT(struct _finddata32i64_t, size, 16);
+MIME_FIELD_AT(struct _finddata32i64_t, name, 24);
+
+struct _wfinddata32i64_t {
+    unsigned attrib;
+    __time32_t time_create;
+    __time32_t time_access;
+    __time32_t time_write;
+    long long size;
+    wchar_t name[260];
+};
+
+static void find_common32(const WIN32_FIND_DATAW *fd, unsigned *attrib, __time32_t *create, __time32_t *access,
+                          __time32_t *write)
+{
+    __time64_t c, a, w;
+    find_common(fd, attrib, &c, &a, &w);
+    *create = (__time32_t)c;
+    *access = (__time32_t)a;
+    *write = (__time32_t)w;
+}
+
+static int fill32(const WIN32_FIND_DATAW *fd, struct _finddata32_t *out)
+{
+    find_common32(fd, &out->attrib, &out->time_create, &out->time_access, &out->time_write);
+    out->size = fd->nFileSizeLow;
+    return find_name_a(fd, out->name);
+}
+
+static int wfill32(const WIN32_FIND_DATAW *fd, struct _wfinddata32_t *out)
+{
+    find_common32(fd, &out->attrib, &out->time_create, &out->time_access, &out->time_write);
+    out->size = fd->nFileSizeLow;
+    wcscpy(out->name, fd->cFileName);
+    return 1;
+}
+
+static int fill32i64(const WIN32_FIND_DATAW *fd, struct _finddata32i64_t *out)
+{
+    find_common32(fd, &out->attrib, &out->time_create, &out->time_access, &out->time_write);
+    out->size = (long long)fd->nFileSizeHigh << 32 | fd->nFileSizeLow;
+    return find_name_a(fd, out->name);
+}
+
+static int wfill32i64(const WIN32_FIND_DATAW *fd, struct _wfinddata32i64_t *out)
+{
+    find_common32(fd, &out->attrib, &out->time_create, &out->time_access, &out->time_write);
+    out->size = (long long)fd->nFileSizeHigh << 32 | fd->nFileSizeLow;
+    wcscpy(out->name, fd->cFileName);
+    return 1;
+}
+
+#define FIND_VARIANT(first, next, wfirst, wnext, type, wtype, fill, wfill)                                           \
+    intptr_t __cdecl first(const char *spec, type *out)                                                              \
+    {                                                                                                                \
+        if (!out) {                                                                                                  \
+            MSVCRT_INVALID(EINVAL);                                                                                  \
+            return -1;                                                                                               \
+        }                                                                                                            \
+        WIN32_FIND_DATAW fd;                                                                                         \
+        intptr_t h = find_first_a(spec, &fd);                                                                        \
+        if (h != -1 && !fill(&fd, out)) {                                                                            \
+            FindClose((HANDLE)h);                                                                                    \
+            return -1;                                                                                               \
+        }                                                                                                            \
+        return h;                                                                                                    \
+    }                                                                                                                \
+    int __cdecl next(intptr_t h, type *out)                                                                          \
+    {                                                                                                                \
+        if (!out) {                                                                                                  \
+            MSVCRT_INVALID(EINVAL);                                                                                  \
+            return -1;                                                                                               \
+        }                                                                                                            \
+        WIN32_FIND_DATAW fd;                                                                                         \
+        if (find_next(h, &fd))                                                                                       \
+            return -1;                                                                                               \
+        return fill(&fd, out) ? 0 : -1;                                                                              \
+    }                                                                                                                \
+    intptr_t __cdecl wfirst(const wchar_t *spec, wtype *out)                                                         \
+    {                                                                                                                \
+        if (!spec || !out) {                                                                                         \
+            MSVCRT_INVALID(EINVAL);                                                                                  \
+            return -1;                                                                                               \
+        }                                                                                                            \
+        WIN32_FIND_DATAW fd;                                                                                         \
+        intptr_t h = find_first(spec, &fd);                                                                          \
+        if (h != -1)                                                                                                 \
+            wfill(&fd, out);                                                                                         \
+        return h;                                                                                                    \
+    }                                                                                                                \
+    int __cdecl wnext(intptr_t h, wtype *out)                                                                        \
+    {                                                                                                                \
+        if (!out) {                                                                                                  \
+            MSVCRT_INVALID(EINVAL);                                                                                  \
+            return -1;                                                                                               \
+        }                                                                                                            \
+        WIN32_FIND_DATAW fd;                                                                                         \
+        if (find_next(h, &fd))                                                                                       \
+            return -1;                                                                                               \
+        wfill(&fd, out);                                                                                             \
+        return 0;                                                                                                    \
+    }
+
+FIND_VARIANT(_findfirst32, _findnext32, _wfindfirst32, _wfindnext32, struct _finddata32_t, struct _wfinddata32_t,
+             fill32, wfill32)
+FIND_VARIANT(_findfirst32i64, _findnext32i64, _wfindfirst32i64, _wfindnext32i64, struct _finddata32i64_t,
+             struct _wfinddata32i64_t, fill32i64, wfill32i64)
+
+intptr_t __cdecl _findfirst64i32(const char *spec, struct _finddata64i32_t *out)
+{
+    return _findfirst(spec, out);
+}
+
+int __cdecl _findnext64i32(intptr_t h, struct _finddata64i32_t *out)
+{
+    return _findnext(h, out);
+}
+
+intptr_t __cdecl _wfindfirst64i32(const wchar_t *spec, struct _wfinddata64i32_t *out)
+{
+    return _wfindfirst(spec, out);
+}
+
+int __cdecl _wfindnext64i32(intptr_t h, struct _wfinddata64i32_t *out)
+{
+    return _wfindnext(h, out);
 }
 
 int __cdecl _findclose(intptr_t h)

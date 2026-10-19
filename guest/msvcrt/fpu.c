@@ -160,7 +160,7 @@ static void write_control(unsigned cw) { sse_write_control(cw); }
 static unsigned read_status(void) { return sse_read_status(); }
 #else
 /* the x87 masks, precision and rounding are msvcrt's control word; the sse unit follows them. */
-static unsigned read_control(void)
+static unsigned x87_read_control(void)
 {
     unsigned short x;
     __asm__ __volatile__("fnstcw %0" : "=m"(x));
@@ -180,10 +180,15 @@ static unsigned read_control(void)
     static const unsigned PRECISION[4] = {_PC_24, _PC_24, _PC_53, 0};
     static const unsigned ROUNDING[4] = {_RC_NEAR, _RC_DOWN, _RC_UP, _RC_CHOP};
     cw |= PRECISION[(x >> 8) & 3] | ROUNDING[(x >> 10) & 3];
-    return cw | (sse_read_control() & _DN_FLUSH);
+    return cw;
 }
 
-static void write_control(unsigned cw)
+static unsigned read_control(void)
+{
+    return x87_read_control() | (sse_read_control() & _DN_FLUSH);
+}
+
+static void x87_write_control(unsigned cw)
 {
     unsigned short x;
     __asm__ __volatile__("fnstcw %0" : "=m"(x));
@@ -193,14 +198,19 @@ static void write_control(unsigned cw)
     x |= (cw & _MCW_PC) == _PC_24 ? 0x000 : (cw & _MCW_PC) == _PC_53 ? 0x200 : 0x300;
     x |= (unsigned short)(((cw & _MCW_RC) == _RC_DOWN ? 1 : (cw & _MCW_RC) == _RC_UP ? 2 : (cw & _MCW_RC) == _RC_CHOP ? 3 : 0) << 10);
     __asm__ __volatile__("fldcw %0" : : "m"(x));
+}
+
+static void write_control(unsigned cw)
+{
+    x87_write_control(cw);
     sse_write_control(cw);
 }
 
-static unsigned read_status(void)
+static unsigned x87_read_status(void)
 {
     unsigned short x;
     __asm__ __volatile__("fnstsw %0" : "=m"(x));
-    unsigned sw = sse_read_status();
+    unsigned sw = 0;
     if (x & 0x01)
         sw |= _SW_INVALID;
     if (x & 0x02)
@@ -214,6 +224,47 @@ static unsigned read_status(void)
     if (x & 0x20)
         sw |= _SW_INEXACT;
     return sw;
+}
+
+static unsigned read_status(void)
+{
+    return x87_read_status() | sse_read_status();
+}
+
+/* the two units apart, for the code that has to tell the old unit from the new one. */
+DECLSPEC_EXPORT int __cdecl __control87_2(unsigned new_control, unsigned mask, unsigned *x87, unsigned *sse2)
+{
+    if (x87) {
+        unsigned old = x87_read_control();
+        unsigned wanted = (old & ~mask) | (new_control & mask);
+        if (wanted != old)
+            x87_write_control(wanted);
+        *x87 = x87_read_control();
+    }
+    if (sse2) {
+        unsigned old = sse_read_control();
+        unsigned wanted = (old & ~mask) | (new_control & mask);
+        if (wanted != old)
+            sse_write_control(wanted);
+        *sse2 = sse_read_control();
+    }
+    return 1;
+}
+
+DECLSPEC_EXPORT void __cdecl _statusfp2(unsigned *x87, unsigned *sse2)
+{
+    if (x87)
+        *x87 = x87_read_status();
+    if (sse2)
+        *sse2 = sse_read_status();
+}
+
+static int g_use_sse2_math = 1;
+
+DECLSPEC_EXPORT int __cdecl _set_SSE2_enable(int flag)
+{
+    g_use_sse2_math = flag != 0;
+    return g_use_sse2_math;
 }
 #endif
 

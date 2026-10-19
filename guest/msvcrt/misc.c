@@ -809,6 +809,18 @@ long *__cdecl __dstbias(void)
     return &_dstbias;
 }
 
+long *__cdecl __timezone(void)
+{
+    extern long _timezone;
+    return &_timezone;
+}
+
+char **__cdecl __tzname(void)
+{
+    extern char *_tzname[2];
+    return _tzname;
+}
+
 errno_t __cdecl _get_environ(char ***value)
 {
     if (!value) {

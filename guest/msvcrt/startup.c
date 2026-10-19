@@ -720,8 +720,29 @@ void __cdecl _NMSG_WRITE(int code)
     MsvcrtRuntimeError(code);
 }
 
+typedef void(__cdecl *_purecall_handler)(void);
+_purecall_handler __cdecl _get_purecall_handler(void);
+static PVOID g_purecall_handler;
+
 int __cdecl _purecall(void)
 {
+    _purecall_handler handler = g_purecall_handler ? (_purecall_handler)DecodePointer(g_purecall_handler) : nullptr;
+    if (handler) {
+        handler();
+        return 0;
+    }
     _amsg_exit(25);
     return 0;
+}
+
+_purecall_handler __cdecl _set_purecall_handler(_purecall_handler handler)
+{
+    _purecall_handler old = _get_purecall_handler();
+    g_purecall_handler = handler ? EncodePointer((PVOID)handler) : nullptr;
+    return old;
+}
+
+_purecall_handler __cdecl _get_purecall_handler(void)
+{
+    return g_purecall_handler ? (_purecall_handler)DecodePointer(g_purecall_handler) : nullptr;
 }

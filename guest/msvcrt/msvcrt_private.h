@@ -278,6 +278,8 @@ typedef struct {
     int fpecode;
     /* c++ exception handling, MSVCRT_EH_THREAD of cxx.h. */
     void *eh[48];
+    /* the encoded handler of invalid parameters of this thread, which comes before the one of the process. */
+    void *invalid_handler;
 } MSVCRT_THREAD_DATA;
 
 MSVCRT_THREAD_DATA *MsvcrtThreadData(void);

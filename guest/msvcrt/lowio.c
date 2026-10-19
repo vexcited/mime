@@ -468,6 +468,49 @@ errno_t __cdecl _sopen_s(int *pfd, const char *name, int oflag, int shflag, int 
     return *pfd < 0 ? *_errno() : 0;
 }
 
+/* the open that _sopen and _sopen_s share: the secure one checks the mode and reports through the result. */
+DECLSPEC_EXPORT errno_t __cdecl _sopen_dispatch(const char *name, int oflag, int shflag, int pmode, int *pfd,
+                                                int secure)
+{
+    if (secure && !pfd) {
+        MSVCRT_INVALID(EINVAL);
+        return EINVAL;
+    }
+    int local;
+    if (!pfd)
+        pfd = &local;
+    *pfd = -1;
+    if (!name || (secure && (pmode & ~(_S_IREAD | _S_IWRITE)))) {
+        MSVCRT_INVALID(EINVAL);
+        return EINVAL;
+    }
+    wchar_t *w = path_to_w(name);
+    if (!w)
+        return *_errno();
+    *pfd = MsvcrtOpenW(w, oflag, shflag, pmode, secure != 0);
+    free(w);
+    return *pfd < 0 ? *_errno() : 0;
+}
+
+DECLSPEC_EXPORT errno_t __cdecl _wsopen_dispatch(const wchar_t *name, int oflag, int shflag, int pmode, int *pfd,
+                                                 int secure)
+{
+    if (secure && !pfd) {
+        MSVCRT_INVALID(EINVAL);
+        return EINVAL;
+    }
+    int local;
+    if (!pfd)
+        pfd = &local;
+    *pfd = -1;
+    if (!name || (secure && (pmode & ~(_S_IREAD | _S_IWRITE)))) {
+        MSVCRT_INVALID(EINVAL);
+        return EINVAL;
+    }
+    *pfd = MsvcrtOpenW(name, oflag, shflag, pmode, secure != 0);
+    return *pfd < 0 ? *_errno() : 0;
+}
+
 int __cdecl _creat(const char *name, int pmode)
 {
     return _open(name, _O_CREAT | _O_TRUNC | _O_RDWR, pmode);

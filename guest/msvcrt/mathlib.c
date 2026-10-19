@@ -1412,3 +1412,4 @@ DECLSPEC_EXPORT float __cdecl atanhf(float x) { return (float)atanh(x); }
 DECLSPEC_EXPORT float __cdecl cbrtf(float x) { return (float)cbrt(x); }
 
 #include "mathc99.inc"
+#include "bessel.inc"

@@ -1063,6 +1063,82 @@ size_t __cdecl _wcsftime_l(wchar_t *buf, size_t size, const wchar_t *fmt, const 
     return wcsftime(buf, size, fmt, tm);
 }
 
+/* ------------------------------------------------------------------ the names of the time */
+
+/*
+ * the day and month names the way the c++ library asks for them: one string with a separator in front of each name,
+ * the short one and the long one of every day or month. Only the names of the c locale are known.
+ */
+static void *names_string(const char *const *names, int count, int wide)
+{
+    size_t total = 1;
+    for (int i = 0; i < count; i++)
+        total += 4 + strlen(names[i]) + 1;
+    char *a = malloc(total * (wide ? sizeof(wchar_t) : 1));
+    if (!a)
+        return nullptr;
+    char *out = a;
+    wchar_t *w = (wchar_t *)a;
+    size_t at = 0;
+    for (int i = 0; i < count; i++) {
+        char entry[64];
+        _snprintf(entry, sizeof(entry), ":%.3s:%s", names[i], names[i]);
+        for (char *c = entry; *c; c++) {
+            if (wide)
+                w[at++] = (unsigned char)*c;
+            else
+                out[at++] = *c;
+        }
+    }
+    if (wide)
+        w[at] = 0;
+    else
+        out[at] = 0;
+    return a;
+}
+
+DECLSPEC_EXPORT char *__cdecl _Getdays(void)
+{
+    return names_string(g_days, 7, 0);
+}
+
+DECLSPEC_EXPORT char *__cdecl _Getmonths(void)
+{
+    return names_string(g_months, 12, 0);
+}
+
+DECLSPEC_EXPORT wchar_t *__cdecl _W_Getdays(void)
+{
+    return names_string(g_days, 7, 1);
+}
+
+DECLSPEC_EXPORT wchar_t *__cdecl _W_Getmonths(void)
+{
+    return names_string(g_months, 12, 1);
+}
+
+/* an opaque block that _Strftime and _Wcsftime are given back, to be freed by the caller. */
+DECLSPEC_EXPORT void *__cdecl _Gettnames(void)
+{
+    return calloc(1, 256);
+}
+
+DECLSPEC_EXPORT void *__cdecl _W_Gettnames(void)
+{
+    return calloc(1, 256);
+}
+
+DECLSPEC_EXPORT size_t __cdecl _Strftime(char *buf, size_t size, const char *fmt, const struct tm *tm, void *names)
+{
+    return strftime(buf, size, fmt, tm);
+}
+
+DECLSPEC_EXPORT size_t __cdecl _Wcsftime(wchar_t *buf, size_t size, const wchar_t *fmt, const struct tm *tm,
+                                         void *names)
+{
+    return wcsftime(buf, size, fmt, tm);
+}
+
 errno_t __cdecl _ctime32_s(char *buf, size_t size, const __time32_t *t)
 {
     if (!t) {

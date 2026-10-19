@@ -272,6 +272,19 @@ se_translator_t __cdecl _set_se_translator(se_translator_t translator)
 }
 
 extern "C" int __cdecl __uncaught_exception(void) { return MsvcrtEhThread()->throws > 0; }
+extern "C" int __cdecl __uncaught_exceptions(void) { return MsvcrtEhThread()->throws; }
+
+/* the same functions under plain names, which the universal crt exports next to the c++ ones. */
+extern "C" terminate_function __cdecl MsvcrtSetTerminate(terminate_function handler) { return set_terminate(handler); }
+extern "C" terminate_function __cdecl MsvcrtSetUnexpected(terminate_function handler)
+{
+    return set_unexpected(handler);
+}
+extern "C" void __cdecl MsvcrtUnexpected(void) { unexpected(); }
+extern "C" se_translator_t __cdecl MsvcrtSetSeTranslator(se_translator_t translator)
+{
+    return _set_se_translator(translator);
+}
 
 /* whether an exception is a c++ one of the type given or a class derived from it. */
 int __cdecl _is_exception_typeof(const type_info &type, EXCEPTION_POINTERS *pointers)

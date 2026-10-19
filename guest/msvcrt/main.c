@@ -15,6 +15,14 @@ void MsvcrtStartupInit(void);
 void MsvcrtProcessDetach(void);
 void MsvcrtClockInit(void);
 
+/* the encoded callback of the program for its thread local destructors, run as a thread ends. */
+static PVOID g_exe_tls_callback;
+
+DECLSPEC_EXPORT void __cdecl _register_thread_local_exe_atexit_callback(void *callback)
+{
+    g_exe_tls_callback = callback ? EncodePointer(callback) : nullptr;
+}
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     switch (reason) {
@@ -31,6 +39,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         MsvcrtClockInit();
         break;
     case DLL_THREAD_DETACH:
+        if (g_exe_tls_callback)
+            ((void(__cdecl *)(PVOID, DWORD, PVOID))DecodePointer(g_exe_tls_callback))(instance, reason, reserved);
         MsvcrtFreeThreadData();
         break;
     case DLL_PROCESS_DETACH:
@@ -177,7 +187,9 @@ static _invalid_parameter_handler invalid_handler(void)
 void __cdecl _invalid_parameter(const wchar_t *expression, const wchar_t *function, const wchar_t *file,
                                 unsigned int line, uintptr_t reserved)
 {
-    _invalid_parameter_handler handler = invalid_handler();
+    MSVCRT_THREAD_DATA *ptd = MsvcrtThreadData();
+    _invalid_parameter_handler handler = ptd && ptd->invalid_handler ? (_invalid_parameter_handler)DecodePointer(ptd->invalid_handler)
+                                                                     : invalid_handler();
     if (handler) {
         handler(expression, function, file, line, reserved);
         return;
@@ -206,6 +218,23 @@ _invalid_parameter_handler __cdecl _set_invalid_parameter_handler(_invalid_param
 _invalid_parameter_handler __cdecl _get_invalid_parameter_handler(void)
 {
     return invalid_handler();
+}
+
+_invalid_parameter_handler __cdecl _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler handler)
+{
+    MSVCRT_THREAD_DATA *ptd = MsvcrtThreadData();
+    if (!ptd)
+        return nullptr;
+    _invalid_parameter_handler old = ptd->invalid_handler ? (_invalid_parameter_handler)DecodePointer(ptd->invalid_handler)
+                                                          : nullptr;
+    ptd->invalid_handler = handler ? EncodePointer((PVOID)handler) : nullptr;
+    return old;
+}
+
+_invalid_parameter_handler __cdecl _get_thread_local_invalid_parameter_handler(void)
+{
+    MSVCRT_THREAD_DATA *ptd = MsvcrtThreadData();
+    return ptd && ptd->invalid_handler ? (_invalid_parameter_handler)DecodePointer(ptd->invalid_handler) : nullptr;
 }
 
 void MsvcrtInvalidParameter(void)
