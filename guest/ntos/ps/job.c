@@ -119,6 +119,8 @@ static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
     NTSTATUS status = ObReferenceHandle(handle, PsJobType, mode, (PVOID *)job, &granted);
     if (NT_SUCCESS(status) && mode == UserMode && (granted & access) != access) {
         ObDereferenceObject(*job);
+        /* a caller that lets go of what it holds at its end must not find the job it was refused. */
+        *job = nullptr;
         status = STATUS_ACCESS_DENIED;
     }
     return status;
