@@ -26,6 +26,8 @@ EXPORTS
     MsiEnableLogW @169
     MsiProcessMessage @103
     MsiSetExternalUIRecord @281
+    MsiSetExternalUIA @136
+    MsiSetExternalUIW @137
     MsiSetInternalUI @141
     MsiEvaluateConditionW @47
     MsiDoActionW @34

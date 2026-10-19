@@ -304,7 +304,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     # wininet too, and reaches servers through winsock.
     set(objects_wininet ${arch}-lib-png:guest/lib/png/inflate.c)
     set(includes_wininet guest/lib)
-    set(libs_wininet ${MIME_LIB_${arch}}/ws2_32.lib)
+    set(libs_wininet ${MIME_LIB_${arch}}/ws2_32.lib ${MIME_LIB_${arch}}/kernelbase.lib)
     # urlmon downloads through wininet, as windows' does, and hands out com streams and strings.
     set(libs_urlmon ${MIME_LIB_${arch}}/wininet.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(objects_dxgi ${arch}-lib-privdata)

@@ -6,6 +6,11 @@ static HWND ui_window;
 static INSTALLUI_HANDLER_RECORD ui_handler;
 static DWORD ui_filter;
 static PVOID ui_context;
+/* the handler of MsiSetExternalUI, which is given the text of the message and not the record. */
+static INSTALLUI_HANDLERW text_handler;
+static BOOL text_handler_ansi;
+static DWORD text_filter;
+static PVOID text_context;
 static HANDLE log_file;
 static DWORD log_mode, log_attributes, log_lines;
 
@@ -49,6 +54,34 @@ UINT WINAPI MsiSetExternalUIRecord(INSTALLUI_HANDLER_RECORD handler, DWORD filte
     ui_context = context;
     ReleaseSRWLockExclusive(&MimeMsiLock);
     return ERROR_SUCCESS;
+}
+
+/* the filter takes the message kinds and nothing of the bits of the log modes that are not messages. */
+static BOOL set_text_handler(INSTALLUI_HANDLERW handler, DWORD filter, PVOID context, BOOL ansi,
+                             INSTALLUI_HANDLERW *previous)
+{
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    *previous = text_handler_ansi == ansi ? text_handler : nullptr;
+    text_handler = handler;
+    text_handler_ansi = ansi;
+    text_filter = filter;
+    text_context = context;
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    return TRUE;
+}
+
+INSTALLUI_HANDLERW WINAPI MsiSetExternalUIW(INSTALLUI_HANDLERW handler, DWORD filter, PVOID context)
+{
+    INSTALLUI_HANDLERW previous;
+    set_text_handler(handler, filter, context, FALSE, &previous);
+    return previous;
+}
+
+INSTALLUI_HANDLERA WINAPI MsiSetExternalUIA(INSTALLUI_HANDLERA handler, DWORD filter, PVOID context)
+{
+    INSTALLUI_HANDLERW previous;
+    set_text_handler((INSTALLUI_HANDLERW)handler, filter, context, TRUE, &previous);
+    return (INSTALLUI_HANDLERA)previous;
 }
 
 UINT WINAPI MsiEnableLogW(DWORD mode, LPCWSTR path, DWORD attributes)
@@ -170,8 +203,26 @@ int WINAPI MsiProcessMessage(MSIHANDLE install, INSTALLMESSAGE type, MSIHANDLE h
     PVOID context = ui_context;
     HWND window = ui_window;
     INSTALLUILEVEL level = ui_level;
+    /* the record handler wins over the one of the text. */
+    INSTALLUI_HANDLERW legacy = !handler && (text_filter & (1u << kind)) ? text_handler : nullptr;
+    BOOL legacy_ansi = text_handler_ansi;
+    PVOID legacy_context = text_context;
     ReleaseSRWLockExclusive(&MimeMsiLock);
-    int result = error ? -1 : handler ? handler(context, (UINT)type, handle) : 0;
+    int result = error ? -1 : 0;
+    if (!error && handler) {
+        result = handler(context, (UINT)type, handle);
+    } else if (!error && legacy) {
+        if (!legacy_ansi) {
+            result = legacy(legacy_context, (UINT)type, text);
+        } else {
+            int need = text ? WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr) : 0;
+            char *ansi = need ? MimeMsiAllocate(need) : nullptr;
+            if (ansi)
+                WideCharToMultiByte(CP_ACP, 0, text, -1, ansi, need, nullptr, nullptr);
+            result = ((INSTALLUI_HANDLERA)legacy)(legacy_context, (UINT)type, ansi ? ansi : "");
+            MimeMsiFree(ansi);
+        }
+    }
     if (!result && kind <= 3 && ((UINT)level & 0x1f) != INSTALLUILEVEL_NONE &&
         !(level & INSTALLUILEVEL_PROGRESSONLY))
         result = MessageBoxW(window, text, L"Windows Installer", (UINT)type & 0x00ffffff);
