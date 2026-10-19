@@ -7,6 +7,7 @@
 #define MIME_WIN32_TOAST_H
 
 #include <mime/win32/wgc.h>
+#include <mime/win32/notificationactivationcallback.h>
 
 typedef struct DateTime {
     INT64 UniversalTime; /* 100 nanosecond units since 1601 */
@@ -158,29 +159,10 @@ typedef struct IInspectableMap IInspectableMap;
     HRESULT(STDMETHODCALLTYPE *Clear)(T * This);
 MIME_COM_INTERFACE(IInspectableMap)
 
-/* the interface a toast activator, the COM server of an application, is called through. */
-typedef struct NOTIFICATION_USER_INPUT_DATA {
-    LPCWSTR Key;
-    LPCWSTR Value;
-} NOTIFICATION_USER_INPUT_DATA;
-
-typedef struct INotificationActivationCallback INotificationActivationCallback;
-typedef struct INotificationActivationCallbackVtbl {
-    MIME_IUNKNOWN_METHODS(INotificationActivationCallback)
-    HRESULT(STDMETHODCALLTYPE *Activate)(INotificationActivationCallback *This, LPCWSTR app_user_model_id,
-                                         LPCWSTR invoked_arguments, const NOTIFICATION_USER_INPUT_DATA *data,
-                                         ULONG count);
-} INotificationActivationCallbackVtbl;
-struct INotificationActivationCallback {
-    const INotificationActivationCallbackVtbl *lpVtbl;
-};
-
 MIME_DEFINE_GUID(IID_IInspectableMap, 0x1B0D3570, 0x0877, 0x5EC2, 0x8A, 0x2C, 0x3B, 0x95, 0x39, 0x50, 0x6A, 0xCA);
 MIME_DEFINE_GUID(IID_IPropertySet, 0x8A43ED9F, 0xF4E6, 0x4421, 0xAC, 0xF9, 0x1D, 0xAB, 0x29, 0x86, 0x82, 0x0C);
 MIME_DEFINE_GUID(IID_IToastActivatedEventArgs2, 0xAB7DA512, 0xCC61, 0x568E, 0x81, 0xBE, 0x30, 0x4A, 0xC3, 0x10, 0x38,
                  0xFA);
-MIME_DEFINE_GUID(IID_INotificationActivationCallback, 0x53E31837, 0x6600, 0x4A81, 0x93, 0x95, 0x75, 0xCF, 0xFE, 0x74,
-                 0x6F, 0x94);
 
 /* ------------------------------------------------------------------ Windows.Data.Xml.Dom */
 

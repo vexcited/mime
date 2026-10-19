@@ -76,8 +76,17 @@ FORCEINLINE void OleFree(void *p)
 /* com.c: braced upper case guids, 39 characters with the terminator. */
 void OleFormatGuid(REFGUID guid, WCHAR *out);
 BOOL OleParseGuid(LPCOLESTR string, GUID *guid);
+/* opens a key below the classes, the user's registrations before the machine's. */
+LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key);
 /* opens HKCR\CLSID\{clsid} or one of its subkeys. */
 LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key);
+
+/* localserver.c: classes served to other processes, and the proxy of one served by another. */
+void OleLocalServerPublish(REFCLSID clsid, IUnknown *factory, DWORD cookie);
+void OleLocalServerRevoke(DWORD cookie);
+HRESULT OleLocalServerGetClassObject(REFCLSID clsid, REFIID riid, void **object);
+/* com.c: the classes registered suspended are offered. */
+void OleLocalServersResume(void);
 
 /* clipboard.c */
 void OleClipboardUninitialize(void);

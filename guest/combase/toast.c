@@ -1155,6 +1155,64 @@ static void raise_failed(TOAST *t, HRESULT error)
     WrtRelease(&a->Base.Ifaces[0]);
 }
 
+/* ------------------------------------------------------------------ activation through the application's COM server */
+
+/* activate.c: the activator of an application, and its callback called. */
+BOOL CbActivateApplication(const WCHAR *aumid, const WCHAR *arguments, const WCHAR *key, const WCHAR *value);
+
+typedef struct ACTIVATION {
+    WCHAR *Aumid, *Arguments, *Key, *Value;
+} ACTIVATION;
+
+static void activation_free(ACTIVATION *a)
+{
+    CbFree(a->Aumid);
+    CbFree(a->Arguments);
+    CbFree(a->Key);
+    CbFree(a->Value);
+    CbFree(a);
+}
+
+/* a thread of its own, for the program that serves the activation may take a while to start. */
+static DWORD WINAPI activation_thread(void *param)
+{
+    ACTIVATION *a = param;
+    CbActivateApplication(a->Aumid, a->Arguments, a->Key, a->Value);
+    activation_free(a);
+    return 0;
+}
+
+/* the toast was acted on and its program has nothing registered to hear it: its COM server is called. */
+static void activate_through_server(TOAST *t, LONG action, const WCHAR *typed)
+{
+    ACTIVATION *a = CbAlloc(sizeof(*a));
+    if (!a)
+        return;
+    memset(a, 0, sizeof(*a));
+    BOOL action_ok = action >= 0 && (ULONG)action < t->ActionCount;
+    a->Aumid = copy_text(t->Aumid);
+    a->Arguments = copy_text(action_ok ? t->Actions[action].Arguments : t->Launch);
+    if (typed && action_ok && t->Actions[action].InputId) {
+        a->Key = copy_text(t->Actions[action].InputId);
+        a->Value = copy_text(typed);
+    }
+    HANDLE thread = a->Aumid && a->Arguments ? CreateThread(nullptr, 0, activation_thread, a, 0, nullptr) : nullptr;
+    if (thread)
+        CloseHandle(thread);
+    else
+        activation_free(a);
+}
+
+static BOOL has_handlers(HANDLERS *set, CRITICAL_SECTION *lock)
+{
+    BOOL any = FALSE;
+    EnterCriticalSection(lock);
+    for (UINT i = 0; i < HANDLERS_MAX; i++)
+        any |= set->Entries[i].Handler != nullptr;
+    LeaveCriticalSection(lock);
+    return any;
+}
+
 static void dispatch(const MIME_SHELL_EVENT *e)
 {
     TOAST *t = table_find(e->Id);
@@ -1165,7 +1223,10 @@ static void dispatch(const MIME_SHELL_EVENT *e)
         /* the desktop closes a notification that was answered, so the toast is done with. */
         if (table_remove(t))
             toast_unref(t);
-        raise_activated(t, e->Arg, nullptr);
+        if (has_handlers(&t->Activated, &t->Lock))
+            raise_activated(t, e->Arg, nullptr);
+        else
+            activate_through_server(t, e->Arg, nullptr);
         break;
     case MIME_SHELL_EVENT_TOAST_REPLIED: {
         WCHAR typed[sizeof(e->Reply) / sizeof(e->Reply[0])];
@@ -1174,7 +1235,10 @@ static void dispatch(const MIME_SHELL_EVENT *e)
         typed[e->ReplyLength < RTL_NUMBER_OF(typed) ? e->ReplyLength : RTL_NUMBER_OF(typed) - 1] = 0;
         if (table_remove(t))
             toast_unref(t);
-        raise_activated(t, e->Arg, typed);
+        if (has_handlers(&t->Activated, &t->Lock))
+            raise_activated(t, e->Arg, typed);
+        else
+            activate_through_server(t, e->Arg, typed);
         break;
     }
     case MIME_SHELL_EVENT_TOAST_DISMISSED:

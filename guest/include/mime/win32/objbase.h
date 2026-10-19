@@ -245,6 +245,7 @@ WINOLEAPI HRESULT WINAPI ProgIDFromCLSID(REFCLSID clsid, LPOLESTR *progid);
 WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object, DWORD context, DWORD flags,
                                                DWORD *cookie);
 WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie);
+WINOLEAPI HRESULT WINAPI CoResumeClassObjects(void);
 WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid);
 WINOLEAPI HRESULT WINAPI CoGetTreatAsClass(REFCLSID clsid, CLSID *treat);
 WINOLEAPI HRESULT WINAPI CoIncrementMTAUsage(void **cookie);

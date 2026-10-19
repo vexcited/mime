@@ -334,11 +334,29 @@ WINOLEAPI HRESULT WINAPI StringFromIID(REFIID iid, LPOLESTR *string)
     return StringFromCLSID(iid, string);
 }
 
+/*
+ * opens a key of the classes: the user's own registrations come first, as the merged view of HKCR gives them, then the
+ * machine's. a program that installs for one user, as a browser does, registers its servers below HKCU.
+ */
+LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key)
+{
+    if (!(access & (KEY_CREATE_SUB_KEY | KEY_SET_VALUE | DELETE))) {
+        WCHAR path[MAX_PATH + 32];
+        if (wcslen(subkey) + 18 < RTL_NUMBER_OF(path)) {
+            wcscpy(path, L"Software\\Classes\\");
+            wcscat(path, subkey);
+            if (!RegOpenKeyExW(HKEY_CURRENT_USER, path, 0, access, key))
+                return ERROR_SUCCESS;
+        }
+    }
+    return RegOpenKeyExW(HKEY_CLASSES_ROOT, subkey, 0, access, key);
+}
+
 /* reads a string value of HKCR\subkey, expanding REG_EXPAND_SZ. */
 static BOOL read_class_string(LPCWSTR subkey, LPCWSTR name, WCHAR *out, DWORD chars)
 {
     HKEY key;
-    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, subkey, 0, KEY_READ, &key))
+    if (OleOpenClassesKey(subkey, KEY_READ, &key))
         return FALSE;
     WCHAR raw[MAX_PATH];
     DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
@@ -501,6 +519,8 @@ typedef struct _CLASS_ENTRY {
     DWORD Cookie;
     /* a single use local server class already handed out. */
     BOOL Used;
+    /* offered to other processes: a local server class waits for CoResumeClassObjects when it was registered suspended. */
+    BOOL Local, Published;
 } CLASS_ENTRY;
 
 static SRWLOCK g_class_lock = SRWLOCK_INIT;
@@ -518,6 +538,7 @@ WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object,
     HRESULT hr = OleCheckApartment();
     if (FAILED(hr))
         return hr;
+    BOOL local = (context & CLSCTX_LOCAL_SERVER) != 0;
     /* a multiple use local server class also serves the process itself. */
     if ((flags & REGCLS_MULTIPLEUSE) && (context & CLSCTX_LOCAL_SERVER))
         context |= CLSCTX_INPROC_SERVER;
@@ -539,11 +560,16 @@ WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object,
     if (!++g_next_cookie)
         ++g_next_cookie;
     entry->Cookie = g_next_cookie;
+    entry->Local = local;
     object->lpVtbl->AddRef(object);
     entry->Next = g_classes;
     g_classes = entry;
     *cookie = entry->Cookie;
+    BOOL publish = local && !(flags & REGCLS_SUSPENDED);
+    entry->Published = publish;
     ReleaseSRWLockExclusive(&g_class_lock);
+    if (publish)
+        OleLocalServerPublish(clsid, object, entry->Cookie);
     return S_OK;
 }
 
@@ -561,6 +587,8 @@ WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie)
     ReleaseSRWLockExclusive(&g_class_lock);
     if (!entry)
         return E_INVALIDARG;
+    if (entry->Published)
+        OleLocalServerRevoke(entry->Cookie);
     entry->Object->lpVtbl->Release(entry->Object);
     OleFree(entry);
     return S_OK;
@@ -598,7 +626,7 @@ LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key
         wcscat(path, L"\\");
         wcscat(path, subkey);
     }
-    return RegOpenKeyExW(HKEY_CLASSES_ROOT, path, 0, access, key);
+    return OleOpenClassesKey(path, access, key);
 }
 
 /*
@@ -728,9 +756,33 @@ WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *s
         registered->lpVtbl->Release(registered);
         return hr;
     }
-    if (!(context & CLSCTX_INPROC))
+    if (context & CLSCTX_INPROC) {
+        hr = get_inproc_class_object(clsid, riid, object);
+        if (SUCCEEDED(hr) || !(context & CLSCTX_LOCAL_SERVER))
+            return hr;
+    }
+    if (!(context & CLSCTX_LOCAL_SERVER))
         return REGDB_E_CLASSNOTREG;
-    return get_inproc_class_object(clsid, riid, object);
+    return OleLocalServerGetClassObject(clsid, riid, object);
+}
+
+/* the classes registered suspended are offered to other processes. */
+void OleLocalServersResume(void)
+{
+    for (;;) {
+        CLASS_ENTRY *pending = nullptr;
+        AcquireSRWLockExclusive(&g_class_lock);
+        for (CLASS_ENTRY *e = g_classes; e; e = e->Next)
+            if (e->Local && !e->Published) {
+                e->Published = TRUE;
+                pending = e;
+                break;
+            }
+        ReleaseSRWLockExclusive(&g_class_lock);
+        if (!pending)
+            return;
+        OleLocalServerPublish(&pending->Clsid, pending->Object, pending->Cookie);
+    }
 }
 
 WINOLEAPI HRESULT WINAPI CoCreateInstance(REFCLSID clsid, IUnknown *outer, DWORD context, REFIID riid, void **object)

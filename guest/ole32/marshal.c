@@ -576,6 +576,7 @@ WINOLEAPI ULONG WINAPI CoReleaseServerProcess(void)
 
 WINOLEAPI HRESULT WINAPI CoResumeClassObjects(void)
 {
+    OleLocalServersResume();
     return S_OK;
 }
 
