@@ -38,12 +38,42 @@ static int user_type(HANDLE token)
     return elevated ? 0 : 2;
 }
 
-static BOOL read_at(HANDLE file, ULONGLONG offset, void *buffer, DWORD size)
+/* the file read in windows of a page, one at a time: the headers and the directories of the resources sit together. */
+typedef struct FILE_WINDOW {
+    HANDLE File;
+    ULONGLONG Base;
+    ULONG Size;
+    BYTE Data[4096];
+} FILE_WINDOW;
+
+static BOOL window_fill(FILE_WINDOW *w, ULONGLONG offset)
 {
+    IO_STATUS_BLOCK iosb;
     LARGE_INTEGER at;
-    at.QuadPart = (LONGLONG)offset;
-    DWORD got = 0;
-    return SetFilePointerEx(file, at, nullptr, FILE_BEGIN) && ReadFile(file, buffer, size, &got, nullptr) && got == size;
+    at.QuadPart = (LONGLONG)(offset & ~(ULONGLONG)4095);
+    w->Size = 0;
+    if (!NT_SUCCESS(NtReadFile(w->File, nullptr, nullptr, nullptr, &iosb, w->Data, sizeof(w->Data), &at, nullptr)))
+        return FALSE;
+    w->Base = (ULONGLONG)at.QuadPart;
+    w->Size = (ULONG)iosb.Information;
+    return TRUE;
+}
+
+static BOOL read_at(FILE_WINDOW *w, ULONGLONG offset, void *buffer, DWORD size)
+{
+    BYTE *out = buffer;
+    while (size) {
+        if (offset < w->Base || offset - w->Base >= w->Size) {
+            if (!window_fill(w, offset) || offset - w->Base >= w->Size)
+                return FALSE;
+        }
+        ULONG at = (ULONG)(offset - w->Base), n = w->Size - at < size ? w->Size - at : size;
+        memcpy(out, w->Data + at, n);
+        out += n;
+        offset += n;
+        size -= n;
+    }
+    return TRUE;
 }
 
 static USHORT u16(const BYTE *p)
@@ -76,7 +106,7 @@ static BOOL rva_to_offset(const IMAGE_LAYOUT *l, ULONG rva, ULONGLONG *offset)
 }
 
 /* the entry of a level of the resource tree: the one with the id, or the first one when the id is zero. */
-static BOOL resource_entry(HANDLE file, const IMAGE_LAYOUT *l, ULONG directory, ULONG id, ULONG *next, BOOL *branch)
+static BOOL resource_entry(FILE_WINDOW *file, const IMAGE_LAYOUT *l, ULONG directory, ULONG id, ULONG *next, BOOL *branch)
 {
     ULONGLONG at;
     BYTE header[16];
@@ -101,7 +131,7 @@ static BOOL resource_entry(HANDLE file, const IMAGE_LAYOUT *l, ULONG directory, 
 }
 
 /* the manifest resource of the process, in a block of the heap; null when the file has none. */
-static BYTE *read_manifest(HANDLE file, ULONG *size)
+static BYTE *read_manifest(FILE_WINDOW *file, ULONG *size)
 {
     BYTE dos[64];
     if (!read_at(file, 0, dos, sizeof(dos)) || u16(dos) != 0x5A4D)
@@ -218,7 +248,14 @@ DWORD KbCheckElevation(HANDLE token, PCWSTR path)
     if (file == INVALID_HANDLE_VALUE)
         return ERROR_SUCCESS;
     ULONG size = 0;
-    BYTE *manifest = read_manifest(file, &size);
+    FILE_WINDOW *window = KbAlloc(sizeof(*window));
+    BYTE *manifest = nullptr;
+    if (window) {
+        window->File = file;
+        window->Size = 0;
+        manifest = read_manifest(window, &size);
+        KbFree(window);
+    }
     CloseHandle(file);
     ULONG level = 0;
     if (manifest) {
