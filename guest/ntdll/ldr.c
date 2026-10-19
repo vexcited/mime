@@ -25,7 +25,7 @@ typedef struct LDR_COR_HEADER {
 extern IMAGE_DOS_HEADER __ImageBase;
 
 PVOID LdrpNtdllBase;
-RTL_CRITICAL_SECTION LdrpLoaderLock = {nullptr, -1, 0, nullptr, nullptr, 0};
+RTL_CRITICAL_SECTION LdrpLoaderLock = RTL_CRITICAL_SECTION_INIT;
 PVOID LdrpKernel32ThreadInitThunk;
 
 static PEB_LDR_DATA g_ldr;
@@ -39,7 +39,7 @@ static BOOLEAN g_process_initialized;
 static void(NTAPI *g_wow64_initialize)(PCONTEXT context);
 void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
 static BOOLEAN g_process_detaching;
-static RTL_CRITICAL_SECTION g_peb_lock = {nullptr, -1, 0, nullptr, nullptr, 0};
+static RTL_CRITICAL_SECTION g_peb_lock = RTL_CRITICAL_SECTION_INIT;
 
 #ifdef __i386__
 static constexpr WCHAR g_system32[] = L"C:\\Windows\\SysWOW64\\";
@@ -1184,6 +1184,57 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     return status;
 }
 
+/*
+ * the last 64 modules to be unloaded, which crash reporters ask for to say what had been loaded when a process fell: the
+ * entries windows keeps, in the layout of RtlGetUnloadEventTraceEx. an entry has its module's address and size, a serial
+ * number, the time stamp and checksum of its headers, the first 31 characters of its name and, where windows puts the
+ * version of the file, zeros. the first event takes the serial that follows the start value of windows, and the slot of
+ * its serial modulo the number of slots.
+ */
+typedef struct _RTL_UNLOAD_EVENT_TRACE_EX {
+    PVOID BaseAddress;
+    SIZE_T SizeOfImage;
+    ULONG Sequence;
+    ULONG TimeDateStamp;
+    ULONG CheckSum;
+    WCHAR ImageName[32];
+    ULONG Version[2];
+} RTL_UNLOAD_EVENT_TRACE_EX;
+
+#define UNLOAD_EVENT_SLOTS 64
+static RTL_UNLOAD_EVENT_TRACE_EX g_unload_events[UNLOAD_EVENT_SLOTS];
+static ULONG g_unload_event_size = sizeof(RTL_UNLOAD_EVENT_TRACE_EX);
+static ULONG g_unload_event_count = UNLOAD_EVENT_SLOTS;
+static ULONG g_unload_event_index = 0xFFFFFFFF;
+
+static void record_unload(PLDR_DATA_TABLE_ENTRY e)
+{
+    ULONG index = g_unload_event_index++;
+    RTL_UNLOAD_EVENT_TRACE_EX *event = &g_unload_events[(USHORT)(index % UNLOAD_EVENT_SLOTS)];
+    memset(event, 0, sizeof(*event));
+    event->Sequence = index;
+    event->BaseAddress = e->DllBase;
+    event->SizeOfImage = e->SizeOfImage;
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(e->DllBase);
+    if (nt) {
+        event->TimeDateStamp = nt->FileHeader.TimeDateStamp;
+        event->CheckSum = nt->OptionalHeader.CheckSum;
+    }
+    USHORT bytes = e->BaseDllName.Length > sizeof(event->ImageName) ? sizeof(event->ImageName) : e->BaseDllName.Length;
+    memcpy(event->ImageName, e->BaseDllName.Buffer, bytes);
+    if (bytes < sizeof(event->ImageName))
+        event->ImageName[bytes / sizeof(WCHAR)] = 0;
+}
+
+/* the sizes and the entries of the trace by address: the pointers stay valid for the life of the process. */
+NTDLL_EXPORT PVOID NTAPI RtlGetUnloadEventTraceEx(PULONG *element_size, PULONG *element_count, PVOID *trace)
+{
+    *element_size = &g_unload_event_size;
+    *element_count = &g_unload_event_count;
+    *trace = g_unload_events;
+    return g_unload_events;
+}
+
 NTDLL_EXPORT NTSTATUS NTAPI LdrUnloadDll(PVOID base)
 {
     RtlEnterCriticalSection(&LdrpLoaderLock);
@@ -1195,6 +1246,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrUnloadDll(PVOID base)
             if (e->Flags & LDRP_PROCESS_ATTACH_CALLED)
                 call_entry(e, DLL_PROCESS_DETACH, nullptr);
             /* dependencies keep their references; they stay loaded. */
+            record_unload(e);
             destroy_entry(e);
             NtUnmapViewOfSection(NtCurrentProcess(), base);
         }

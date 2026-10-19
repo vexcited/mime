@@ -60,8 +60,15 @@ typedef struct _RTL_CRITICAL_SECTION {
 } RTL_CRITICAL_SECTION, *PRTL_CRITICAL_SECTION;
 MIME_STATIC_ASSERT(sizeof(RTL_CRITICAL_SECTION) == (sizeof(void *) == 4 ? 24 : 40), "RTL_CRITICAL_SECTION");
 
-/* a free critical section, usable as a static initializer. */
-#define RTL_CRITICAL_SECTION_INIT {NULL, -1, 0, NULL, NULL, 0}
+/* a free critical section, usable as a static initializer. its debug information is the -1 windows gives one that has none. */
+#define RTL_CRITICAL_SECTION_INIT {(PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1, -1, 0, NULL, NULL, 0}
+
+/* the flags of RtlInitializeCriticalSectionEx, which windows keeps in the high bits of the spin count. */
+#define RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO 0x01000000
+#define RTL_CRITICAL_SECTION_FLAG_DYNAMIC_SPIN 0x02000000
+#define RTL_CRITICAL_SECTION_FLAG_STATIC_INIT 0x04000000
+#define RTL_CRITICAL_SECTION_FLAG_RESOURCE_TYPE 0x08000000
+#define RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO 0x10000000
 
 typedef struct _RTL_SRWLOCK {
     PVOID Ptr;

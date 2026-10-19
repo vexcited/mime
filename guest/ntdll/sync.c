@@ -31,43 +31,106 @@ static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
     return fresh;
 }
 
-NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSectionEx(PRTL_CRITICAL_SECTION cs, ULONG spin, ULONG flags)
+/*
+ * what windows keeps in a critical section, as it is on windows 11: the debug information is -1, there is none, unless the
+ * process asks for it with a flag or a global flag; a spin count is 24 bits and the flags of the section are the bits above
+ * them; a processor alone spins not at all, and more of them spin 2000 times when the section does not say. Crash
+ * reporters read the sections of the loader and of the PEB through the debug information when it is a pointer, and skip
+ * the -1: a null there, which these sections had, was an unreadable range at address 0 in every minidump.
+ */
+#define CS_DEFAULT_SPIN 0x20007D0
+#define CS_NOT_A_POINTER ((PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1)
+
+static LIST_ENTRY g_cs_list = {&g_cs_list, &g_cs_list};
+static RTL_SRWLOCK g_cs_list_lock;
+
+/* the debug information of a section that was asked to have it, linked in the list of the process; none when there is no memory. */
+static void add_debug_info(PRTL_CRITICAL_SECTION cs)
 {
-    cs->DebugInfo = nullptr;
+    PRTL_CRITICAL_SECTION_DEBUG debug = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, HEAP_ZERO_MEMORY, sizeof(*debug));
+    if (!debug) {
+        cs->SpinCount |= RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO;
+        return;
+    }
+    debug->Type = (cs->SpinCount & RTL_CRITICAL_SECTION_FLAG_RESOURCE_TYPE) ? 1 : 0;
+    debug->CriticalSection = cs;
+    debug->Identifier = 0x4353;
+    RtlAcquireSRWLockExclusive(&g_cs_list_lock);
+    InsertTailList(&g_cs_list, &debug->ProcessLocksList);
+    RtlReleaseSRWLockExclusive(&g_cs_list_lock);
+    cs->DebugInfo = debug;
+}
+
+static void initialize(PRTL_CRITICAL_SECTION cs, ULONG_PTR spin_count)
+{
     cs->LockCount = -1;
     cs->RecursionCount = 0;
     cs->OwningThread = nullptr;
     cs->LockSemaphore = nullptr;
-    cs->SpinCount = spin & 0x00FFFFFF;
+    cs->SpinCount = NtCurrentPeb()->NumberOfProcessors <= 1 ? (spin_count & 0xFF000000) : spin_count;
+    cs->DebugInfo = CS_NOT_A_POINTER;
+}
+
+NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSectionEx(PRTL_CRITICAL_SECTION cs, ULONG spin, ULONG flags)
+{
+    if ((flags & 0xE0000000) || (flags & (RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO | RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO)) ==
+                                    (RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO | RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO))
+        return STATUS_INVALID_PARAMETER_3;
+    if (spin & 0xFF000000)
+        return STATUS_INVALID_PARAMETER_2;
+    /* a section that is initialized by being all zeros is left as it is. */
+    if (flags & RTL_CRITICAL_SECTION_FLAG_STATIC_INIT)
+        return STATUS_SUCCESS;
+    ULONG_PTR count = (flags & RTL_CRITICAL_SECTION_FLAG_DYNAMIC_SPIN) || !spin ? CS_DEFAULT_SPIN : spin;
+    initialize(cs, count | (flags & (RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO | RTL_CRITICAL_SECTION_FLAG_RESOURCE_TYPE)));
+    if (flags & RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO)
+        add_debug_info(cs);
     return STATUS_SUCCESS;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSectionAndSpinCount(PRTL_CRITICAL_SECTION cs, ULONG spin)
 {
-    return RtlInitializeCriticalSectionEx(cs, spin, 0);
+    initialize(cs, (spin & 0x00FFFFFF) ? (spin & 0x00FFFFFF) : CS_DEFAULT_SPIN);
+    return STATUS_SUCCESS;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSection(PRTL_CRITICAL_SECTION cs)
 {
-    return RtlInitializeCriticalSectionEx(cs, 0, 0);
+    initialize(cs, CS_DEFAULT_SPIN);
+    return STATUS_SUCCESS;
 }
 
+/* the 24 bits of the count change and the flags above them stay; a processor alone keeps the flags only. */
 NTDLL_EXPORT ULONG NTAPI RtlSetCriticalSectionSpinCount(PRTL_CRITICAL_SECTION cs, ULONG spin)
 {
     ULONG old = (ULONG)cs->SpinCount;
-    cs->SpinCount = spin;
-    return old;
+    ULONG updated = old ^ ((spin ^ old) & 0x00FFFFFF);
+    cs->SpinCount = NtCurrentPeb()->NumberOfProcessors == 1 ? (updated & 0xFF000000) : updated;
+    return old & 0x00FFFFFF;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlDeleteCriticalSection(PRTL_CRITICAL_SECTION cs)
 {
-    if (cs->LockSemaphore)
-        NtClose(cs->LockSemaphore);
-    cs->LockSemaphore = nullptr;
-    cs->LockCount = -1;
+    NTSTATUS status = STATUS_SUCCESS;
+    if ((ULONG_PTR)cs->LockSemaphore - 1 <= (ULONG_PTR)-3)
+        status = NtClose(cs->LockSemaphore);
+    PRTL_CRITICAL_SECTION_DEBUG debug = cs->DebugInfo;
+    if ((ULONG_PTR)debug - 1 <= (ULONG_PTR)-3) {
+        RtlAcquireSRWLockExclusive(&g_cs_list_lock);
+        if (debug->ProcessLocksList.Flink)
+            RemoveEntryList(&debug->ProcessLocksList);
+        RtlReleaseSRWLockExclusive(&g_cs_list_lock);
+        /* a section that was never initialized has no heap block behind it. */
+        if (!(cs->SpinCount & RTL_CRITICAL_SECTION_FLAG_STATIC_INIT))
+            RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, debug);
+    }
+    cs->DebugInfo = nullptr;
+    cs->LockCount = 0;
     cs->RecursionCount = 0;
     cs->OwningThread = nullptr;
-    return STATUS_SUCCESS;
+    cs->LockSemaphore = nullptr;
+    cs->SpinCount = 0;
+    return status;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlEnterCriticalSection(PRTL_CRITICAL_SECTION cs)
@@ -77,8 +140,8 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlEnterCriticalSection(PRTL_CRITICAL_SECTION cs)
         cs->RecursionCount++;
         return STATUS_SUCCESS;
     }
-    ULONG spin = (ULONG)cs->SpinCount;
-    if (!spin && NtCurrentPeb()->NumberOfProcessors > 1)
+    ULONG spin = (ULONG)cs->SpinCount & 0x00FFFFFF;
+    if ((!spin || (cs->SpinCount & RTL_CRITICAL_SECTION_FLAG_DYNAMIC_SPIN)) && NtCurrentPeb()->NumberOfProcessors > 1)
         spin = DEFAULT_SPIN;
     for (; spin; spin--) {
         LONG expected = -1;
