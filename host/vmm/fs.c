@@ -619,7 +619,6 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = errno_status(errno);
             break;
         }
-        pthread_mutex_unlock(&vm->fs_lock);
         status = flush_fd(fd);
         close(fd);
         return status;
