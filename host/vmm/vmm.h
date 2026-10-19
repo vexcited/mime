@@ -104,6 +104,7 @@ typedef struct MimeLazyRegion {
 typedef struct MimeFileWindow {
     uint64_t ipa;
     uint64_t size;
+    uint64_t id;       /* told apart from the window another file has at the same address later */
     int fd;            /* a duplicate of the file's descriptor, to see it shortened, -1 when there is none */
     int watch;         /* its inotify watch */
     uint64_t lost_from; /* bytes from the start of the window whose pages were given up, size when none were */

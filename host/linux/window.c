@@ -49,7 +49,7 @@ static struct {
     pthread_mutex_t lock;
     pthread_cond_t acked;
     struct {
-        uint64_t serial, ipa, size, window;
+        uint64_t serial, ipa, size, id;
     } queue[LOST_QUEUE];
     uint32_t head, tail;
     uint64_t next_serial, acked_serial;
@@ -64,13 +64,13 @@ static struct {
 
 #define WINDOW_LOCK_OF(vm) (&(vm)->window_lock)
 
-/* replaces the pages of a window that are gone by zeros that can be written. */
-static void give_up(MimeVm *vm, uint64_t ipa, uint64_t size)
+/* replaces the pages of a window that are gone by zeros that can be written, if it is still the window they were told for. */
+static void give_up(MimeVm *vm, uint64_t id, uint64_t ipa, uint64_t size)
 {
     pthread_mutex_lock(WINDOW_LOCK_OF(vm));
     for (uint32_t i = 0; i < vm->window_count; i++) {
         MimeFileWindow *w = &vm->windows[i];
-        if (ipa >= w->ipa && ipa + size <= w->ipa + w->size) {
+        if (w->id == id && ipa >= w->ipa && ipa + size <= w->ipa + w->size) {
             mmap(vm->window_host + (ipa - MIME_WINDOW_BASE), size, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
             break;
@@ -80,14 +80,8 @@ static void give_up(MimeVm *vm, uint64_t ipa, uint64_t size)
 }
 
 /* tells the guest, and waits for it to answer or for the time to run out, then gives the pages up. */
-static void publish_lost(MimeVm *vm, uint64_t ipa, uint64_t size)
+static void publish_lost(MimeVm *vm, uint64_t id, uint64_t ipa, uint64_t size)
 {
-    uint64_t window = ipa;
-    pthread_mutex_lock(WINDOW_LOCK_OF(vm));
-    for (uint32_t i = 0; i < vm->window_count; i++)
-        if (ipa >= vm->windows[i].ipa && ipa < vm->windows[i].ipa + vm->windows[i].size)
-            window = vm->windows[i].ipa;
-    pthread_mutex_unlock(WINDOW_LOCK_OF(vm));
     pthread_mutex_lock(&g_lost.lock);
     if (g_lost.tail - g_lost.head == LOST_QUEUE)
         g_lost.head++; /* the oldest has waited long enough, it is replaced below by its own turn */
@@ -96,7 +90,7 @@ static void publish_lost(MimeVm *vm, uint64_t ipa, uint64_t size)
     g_lost.queue[at].serial = serial;
     g_lost.queue[at].ipa = ipa;
     g_lost.queue[at].size = size;
-    g_lost.queue[at].window = window;
+    g_lost.queue[at].id = id;
     pthread_mutex_unlock(&g_lost.lock);
     mime_warn("a host program shortened a file the guest maps: 0x%llx bytes at window address 0x%llx are gone",
               (unsigned long long)size, (unsigned long long)ipa);
@@ -110,7 +104,17 @@ static void publish_lost(MimeVm *vm, uint64_t ipa, uint64_t size)
     while (g_lost.acked_serial < serial && pthread_cond_timedwait(&g_lost.acked, &g_lost.lock, &until) == 0)
         ;
     pthread_mutex_unlock(&g_lost.lock);
-    give_up(vm, ipa, size);
+    give_up(vm, id, ipa, size);
+}
+
+/* a window is taken away: what was waiting to be told about it is not told, as its addresses go to another file. */
+static void cancel_lost(uint64_t id)
+{
+    pthread_mutex_lock(&g_lost.lock);
+    for (uint32_t i = g_lost.head; i != g_lost.tail; i++)
+        if (g_lost.queue[i % LOST_QUEUE].id == id)
+            g_lost.queue[i % LOST_QUEUE].size = 0;
+    pthread_mutex_unlock(&g_lost.lock);
 }
 
 /* the guest asks for the next range and says which one it dealt with. */
@@ -124,14 +128,14 @@ uint64_t mime_window_lost(MimeVm *vm, uint64_t pa)
         g_lost.acked_serial = io->acked;
         pthread_cond_broadcast(&g_lost.acked);
     }
-    while (g_lost.head != g_lost.tail && g_lost.queue[g_lost.head % LOST_QUEUE].serial <= g_lost.acked_serial)
+    while (g_lost.head != g_lost.tail && (g_lost.queue[g_lost.head % LOST_QUEUE].serial <= g_lost.acked_serial ||
+                                          !g_lost.queue[g_lost.head % LOST_QUEUE].size))
         g_lost.head++;
-    io->serial = io->ipa = io->size = io->window = 0;
+    io->serial = io->ipa = io->size = 0;
     if (g_lost.head != g_lost.tail) {
         io->serial = g_lost.queue[g_lost.head % LOST_QUEUE].serial;
         io->ipa = g_lost.queue[g_lost.head % LOST_QUEUE].ipa;
         io->size = g_lost.queue[g_lost.head % LOST_QUEUE].size;
-        io->window = g_lost.queue[g_lost.head % LOST_QUEUE].window;
     }
     pthread_mutex_unlock(&g_lost.lock);
     return MIME_HC_STATUS_OK;
@@ -141,7 +145,7 @@ uint64_t mime_window_lost(MimeVm *vm, uint64_t pa)
 static void check_windows(MimeVm *vm, const int *watches, int count)
 {
     for (;;) {
-        uint64_t ipa = 0, size = 0;
+        uint64_t ipa = 0, size = 0, id = 0;
         pthread_mutex_lock(WINDOW_LOCK_OF(vm));
         for (uint32_t i = 0; i < vm->window_count && !size; i++) {
             MimeFileWindow *w = &vm->windows[i];
@@ -155,13 +159,14 @@ static void check_windows(MimeVm *vm, const int *watches, int count)
             if (end < w->lost_from) {
                 ipa = w->ipa + end;
                 size = w->lost_from - end;
+                id = w->id;
                 w->lost_from = end;
             }
         }
         pthread_mutex_unlock(WINDOW_LOCK_OF(vm));
         if (!size)
             return;
-        publish_lost(vm, ipa, size);
+        publish_lost(vm, id, ipa, size);
     }
 }
 
@@ -186,7 +191,15 @@ static void *lost_main(void *arg)
                     break;
                 __atomic_store_n(&g_lost.bus_page[head % BUS_RING], 0, __ATOMIC_RELEASE);
                 g_lost.bus_head++;
-                publish_lost(vm, MIME_WINDOW_BASE + (page - 1), WINDOW_PAGE);
+                uint64_t ipa = MIME_WINDOW_BASE + (page - 1), id = 0;
+                pthread_mutex_lock(WINDOW_LOCK_OF(vm));
+                for (uint32_t i = 0; i < vm->window_count; i++)
+                    if (ipa >= vm->windows[i].ipa && ipa < vm->windows[i].ipa + vm->windows[i].size)
+                        id = vm->windows[i].id;
+                pthread_mutex_unlock(WINDOW_LOCK_OF(vm));
+                /* a page of a window that is gone already is nobody's to tell. */
+                if (id)
+                    publish_lost(vm, id, ipa, WINDOW_PAGE);
             }
         }
         if (fds[0].revents & POLLIN) {
@@ -317,7 +330,8 @@ uint64_t mime_window_map(MimeVm *vm, int file, bool writable, uint64_t *ipa_out)
     if (host == MAP_FAILED)
         return errno == ENOMEM ? MIME_HC_STATUS_NO_MEMORY : errno == EACCES ? MIME_HC_STATUS_ACCESS_DENIED : MIME_HC_STATUS_IO_ERROR;
     memmove(&vm->windows[at + 1], &vm->windows[at], (vm->window_count - at) * sizeof(MimeFileWindow));
-    vm->windows[at] = (MimeFileWindow){ipa, size, -1, -1, size};
+    static uint64_t next_id;
+    vm->windows[at] = (MimeFileWindow){ipa, size, ++next_id, -1, -1, size};
     start_watching(vm);
     if (g_lost.started) {
         /* the pages of a file that is shortened must not be touched unannounced, so it is watched from now on. */
@@ -325,7 +339,7 @@ uint64_t mime_window_map(MimeVm *vm, int file, bool writable, uint64_t *ipa_out)
         if (fd >= 0) {
             char name[64];
             snprintf(name, sizeof(name), "/proc/self/fd/%d", fd);
-            int watch = inotify_add_watch(g_lost.inotify, name, IN_MODIFY | IN_ATTRIB);
+            int watch = inotify_add_watch(g_lost.inotify, name, IN_MODIFY);
             vm->windows[at].fd = fd;
             vm->windows[at].watch = watch;
         }
@@ -338,6 +352,7 @@ uint64_t mime_window_map(MimeVm *vm, int file, bool writable, uint64_t *ipa_out)
 static void unmap_at(MimeVm *vm, uint32_t at)
 {
     MimeFileWindow *w = &vm->windows[at];
+    cancel_lost(w->id);
     clear(vm, w->ipa, w->size);
     if (w->fd >= 0) {
         bool shared = false;

@@ -5,76 +5,64 @@
  * access, the address and the status of the failed read as parameters, and keeps the rest of the program going.
  *
  * the host tells the guest before it gives the pages up (MIME_HC_FS_WINDOW_LOST, after MIME_IRQ_WINDOW). a thread of the
- * kernel records the range, drops the entries of the file cache over it and takes the pages out of the page tables of every
- * process that maps them, leaving the entries a view leaves for the first touch. the touch then goes to the section, which
- * refuses a page in a lost range, and the fault becomes the in page error: STATUS_IN_PAGE_ERROR with three parameters for
- * a program, and the status as the result of a system call that was reading or writing such a page for it.
+ * kernel marks every section on the window with the range that is gone, drops the cache entries of the window, and takes
+ * the pages out of the page tables of every process that maps them, leaving the entries a view leaves for the first touch.
+ * the touch goes to the section, which refuses a page in its range, and the fault becomes the in page error:
+ * STATUS_IN_PAGE_ERROR with three parameters for a program, and the status as the result of a system call that was reading
+ * or writing such a page for it. the range belongs to the section and not to the addresses: a window that is unmapped and
+ * placed again at the same addresses for another file has none of it.
  */
 #include "../ntos.h"
 
-#define MAX_LOST 64
 /* the status of the read that failed: the file is no longer what the view was made of. */
 #define STATUS_FILE_INVALID_VALUE ((NTSTATUS)0xC0000098L)
 #define BATCH 32
 
-typedef struct LOST_RANGE {
-    ULONG64 Window; /* where the window it belongs to starts, to forget the range with it */
-    ULONG64 Begin, End;
-} LOST_RANGE;
-
-static LOST_RANGE g_ranges[MAX_LOST];
-volatile ULONG MmWindowDamaged;
+static LIST_ENTRY g_sections = {&g_sections, &g_sections};
 static KEVENT g_event;
 static MimeWindowLost g_io;
 
-BOOLEAN MmWindowPageLostSlow(ULONG64 pa)
+/* sections on a window of the host, the ones a loss can reach. */
+void MmWindowSectionAttach(PSECTION s)
 {
-    ULONG n = __atomic_load_n(&MmWindowDamaged, __ATOMIC_ACQUIRE);
-    for (ULONG i = 0; i < n; i++)
-        if (pa >= g_ranges[i].Begin && pa < g_ranges[i].End)
-            return TRUE;
-    return FALSE;
-}
-
-/* a window goes away, and the addresses it had can be given to another file. */
-void MmWindowForget(ULONG64 window)
-{
-    if (!__atomic_load_n(&MmWindowDamaged, __ATOMIC_ACQUIRE))
+    if (!s->SourceRef)
         return;
-    ULONG64 s = KiAcquireDispatcherLock();
-    ULONG n = MmWindowDamaged;
-    for (ULONG i = 0; i < n;) {
-        if (g_ranges[i].Window == window) {
-            g_ranges[i] = g_ranges[--n];
-            __atomic_store_n(&MmWindowDamaged, n, __ATOMIC_RELEASE);
-        } else {
-            i++;
-        }
-    }
-    KiReleaseDispatcherLock(s);
+    ULONG64 state = KiAcquireDispatcherLock();
+    InsertTailList(&g_sections, &s->WindowLinks);
+    KiReleaseDispatcherLock(state);
 }
 
-static void record(ULONG64 window, ULONG64 begin, ULONG64 end)
+void MmWindowSectionDetach(PSECTION s)
 {
-    ULONG64 s = KiAcquireDispatcherLock();
-    ULONG n = MmWindowDamaged;
-    for (ULONG i = 0; i < n; i++) {
-        if (g_ranges[i].Window == window && begin <= g_ranges[i].End && end >= g_ranges[i].Begin) {
-            if (begin < g_ranges[i].Begin)
-                g_ranges[i].Begin = begin;
-            if (end > g_ranges[i].End)
-                g_ranges[i].End = end;
-            KiReleaseDispatcherLock(s);
-            return;
+    if (!s->WindowLinks.Flink)
+        return;
+    ULONG64 state = KiAcquireDispatcherLock();
+    RemoveEntryList(&s->WindowLinks);
+    s->WindowLinks.Flink = nullptr;
+    KiReleaseDispatcherLock(state);
+}
+
+/* what the lost range is for each section that has pages in it; the pages come in the order of the file, the loss is its end. */
+static void mark_sections(ULONG64 begin, ULONG64 end)
+{
+    ULONG64 state = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = g_sections.Flink; e != &g_sections; e = e->Flink) {
+        PSECTION s = CONTAINING_RECORD(e, SECTION, WindowLinks);
+        ULONG64 from = s->SourcePa, to = s->SourcePa + ROUND_TO_PAGES(s->SourceSize);
+        if (begin >= to || end <= from)
+            continue;
+        ULONG64 lo = begin > from ? begin : from, hi = end < to ? end : to;
+        ULONG64 old_begin = s->LostBegin, old_end = s->LostEnd;
+        if (old_end > old_begin) {
+            if (old_begin < lo)
+                lo = old_begin;
+            if (old_end > hi)
+                hi = old_end;
         }
+        __atomic_store_n(&s->LostBegin, lo, __ATOMIC_RELEASE);
+        __atomic_store_n(&s->LostEnd, hi, __ATOMIC_RELEASE);
     }
-    if (n < MAX_LOST) {
-        g_ranges[n] = (LOST_RANGE){window, begin, end};
-        __atomic_store_n(&MmWindowDamaged, n + 1, __ATOMIC_RELEASE);
-    } else {
-        KiLogPrintf("window: no room to record pages that are gone at %llx", begin);
-    }
-    KiReleaseDispatcherLock(s);
+    KiReleaseDispatcherLock(state);
 }
 
 /* the entries a view leaves for the first touch, in place of the pages of the lost range, in one address space. */
@@ -87,42 +75,30 @@ static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
     for (ULONG v = 0; as->Root && v < as->VadCount; v++) {
         PMMVAD vad = as->Vads[v];
         PSECTION s = vad->Section;
-        if (!s || !s->SourcePa)
+        if (!s || !s->SourceRef || s->LostEnd <= s->LostBegin)
             continue;
-        ULONG64 source_end = s->SourcePa + ROUND_TO_PAGES(s->SourceSize);
-        if (begin >= source_end || end <= s->SourcePa)
-            continue;
-        /* the pages of the view that the section's lost bytes are, as indexes of the section and then addresses. */
-        ULONG64 first = ((begin > s->SourcePa ? begin : s->SourcePa) - s->SourcePa) >> PAGE_SHIFT;
-        ULONG64 last = (((end < source_end ? end : source_end) - s->SourcePa) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+        /* the view's pages as indexes of the section, then the addresses of the view that hold a page of the range. */
         ULONG64 view_first = vad->SectionOffset >> PAGE_SHIFT;
         ULONG64 view_last = view_first + ((vad->EndVa - vad->StartVa) >> PAGE_SHIFT);
-        if (first < view_first)
-            first = view_first;
-        if (last > view_last)
-            last = view_last;
-        for (ULONG_PTR va = vad->StartVa + ((first - view_first) << PAGE_SHIFT);
-             first < last;) {
-            /* one table at a time: the entries up to the end of the 2 MiB the address is in. */
+        ULONG_PTR va = vad->StartVa;
+        for (ULONG64 index = view_first; index < view_last;) {
             ULONG_PTR table_end = (va & ~(ULONG_PTR)0x1FFFFF) + 0x200000;
-            ULONG count = 0;
-            ULONG64 *pte = MiWalk(as->Root, va, FALSE, 3);
+            ULONG64 *run = MiWalk(as->Root, va, FALSE, 3);
             ULONG64 values[512];
-            ULONG64 *run = pte;
+            ULONG count = 0;
             ULONG_PTR run_va = va;
             BOOLEAN changed = FALSE;
-            while (first < last && va < table_end) {
-                if (pte) {
-                    ULONG64 old = pte[count];
+            while (index < view_last && va < table_end) {
+                if (run) {
+                    ULONG64 old = run[count], pa = old & MM_PTE_ADDR_MASK;
                     values[count] = old;
-                    ULONG64 pa = old & MM_PTE_ADDR_MASK;
                     if ((old & MM_PTE_VALID) && pa >= begin && pa < end) {
                         values[count] = MiSectionSwPte(MiPteToProtect(old));
                         changed = TRUE;
                     }
                 }
                 count++;
-                first++;
+                index++;
                 va += PAGE_SIZE;
             }
             if (changed)
@@ -133,7 +109,7 @@ static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
     KiAttachProcess(saved);
 }
 
-/* every address space that maps pages of the range. */
+/* every address space that has a view of a section on the window. */
 static void take_out_everywhere(ULONG64 begin, ULONG64 end)
 {
     for (ULONG skipped = 0;;) {
@@ -173,7 +149,7 @@ static void worker(PVOID context)
                 break;
             ULONG64 begin = g_io.ipa, end = g_io.ipa + g_io.size;
             KiLogPrintf("window: the pages at %llx for %llx bytes are gone, the file was shortened", begin, g_io.size);
-            record(g_io.window, begin, end);
+            mark_sections(begin, end);
             FsCacheWindowLost(begin, end);
             take_out_everywhere(begin, end);
             acked = g_io.serial;

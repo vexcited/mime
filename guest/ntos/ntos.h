@@ -585,6 +585,8 @@ typedef struct _SECTION {
     ULONG64 SourcePa;   /* read only file data the pages are built from: rom or host window */
     ULONG64 SourceSize; /* file bytes at SourcePa */
     PVOID SourceRef;    /* the window reference, see IoGetFileWindow */
+    LIST_ENTRY WindowLinks; /* sections on a window of the host, see mm/winlost.c; empty links when not */
+    volatile ULONG64 LostBegin, LostEnd; /* the pages of the window the host took away, as guest physical addresses */
     /*
      * images: for each page the offset of the base relocation block that fixes it, with a flag when the block
      * of the page before reaches into it; built when the first view away from the base is made.
@@ -604,13 +606,12 @@ ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect);
 ULONG64 MiSectionSwPte(ULONG protect);
 
 /* winlost.c: pages of file windows the host took away. */
-extern volatile ULONG MmWindowDamaged;
-BOOLEAN MmWindowPageLostSlow(ULONG64 pa);
-#define MmWindowPageLost(pa) (__atomic_load_n(&MmWindowDamaged, __ATOMIC_ACQUIRE) && MmWindowPageLostSlow(pa))
+#define MmWindowPageLost(s, pa) ((pa) >= __atomic_load_n(&(s)->LostBegin, __ATOMIC_ACQUIRE) && (pa) < __atomic_load_n(&(s)->LostEnd, __ATOMIC_ACQUIRE))
+void MmWindowSectionAttach(PSECTION s);
+void MmWindowSectionDetach(PSECTION s);
 void MmWindowLostInitialize(void);
 void MmWindowLostInterrupt(void);
 void MmWindowLostFault(void);
-void MmWindowForget(ULONG64 window);
 void FsCacheWindowLost(ULONG64 ipa, ULONG64 end);
 ULONG64 MiSectionPteAttrs(PSECTION s, ULONG protect, ULONG64 pa, BOOLEAN shared);
 

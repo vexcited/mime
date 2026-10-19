@@ -849,7 +849,6 @@ typedef struct MimeWindowLost {
     uint64_t serial; /* out: of the range below, 0 when there is none */
     uint64_t ipa;    /* out: guest physical address of its first page */
     uint64_t size;   /* out: bytes, a whole number of pages */
-    uint64_t window; /* out: where the window the range is in starts */
 } MimeWindowLost;
 
 /* MIME_HC_FS_MAP flags. a writable window needs a handle opened for writing, and is UNSUPPORTED where the host fills windows itself. */

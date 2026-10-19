@@ -47,6 +47,7 @@ static void section_delete(PVOID object)
         ExFreePool(s->RelocIndex);
     if (s->PageProtect)
         ExFreePool(s->PageProtect);
+    MmWindowSectionDetach(s);
     IoReleaseFileWindow(s->SourceRef);
     if (s->File)
         ObDereferenceObject(s->File);
@@ -347,7 +348,7 @@ BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *p
     if (!source)
         return FALSE;
     /* a page the host took away is an error for the thread that touches it, however many times it does. */
-    if (MmWindowPageLost(source)) {
+    if (MmWindowPageLost(s, source)) {
         MmWindowLostFault();
         return FALSE;
     }
@@ -389,7 +390,7 @@ ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect)
     if (index >= s->PageCount || ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))))
         return 0;
     ULONG64 source = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
-    if (source && MmWindowPageLost(source))
+    if (source && MmWindowPageLost(s, source))
         return 0;
     if (source && (vad->Flags & MM_VAD_RELOCATED) && page_needs_relocation(s, index))
         source = (vad->Flags & MM_VAD_RELOCATED_SHARED) ? __atomic_load_n(&s->RelocPages[index], __ATOMIC_ACQUIRE) : 0;
@@ -630,6 +631,7 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
     s->SourcePa = pa;
     s->SourceSize = size;
     s->SourceRef = ref;
+    MmWindowSectionAttach(s);
     status = image_protections(s, nt);
     if (NT_SUCCESS(status))
         status = set_file_name(s, file);
@@ -813,11 +815,13 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
             s->SourcePa = pa;
             s->SourceSize = file_size;
             s->Flags |= MI_SECTION_WRITABLE_WINDOW;
+            MmWindowSectionAttach(s);
         } else if (!writable && IoGetFileWindow(file, &pa, &file_size, &s->SourceRef)) {
             /* views of a read only section share the file's pages. */
             s->SourcePa = pa;
             s->SourceSize = file_size;
             s->Flags |= MI_SECTION_SHARE_SOURCE;
+            MmWindowSectionAttach(s);
         } else {
             status = copy_file_into(s, file, 0, 0, size);
         }
