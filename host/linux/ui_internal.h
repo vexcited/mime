@@ -35,6 +35,37 @@ uint8_t *mime_ui_request_guest(uint32_t event, uint32_t kind, int timeout_ms, si
 
 /* launcher.c: the identity of a window and the launcher entry of an application, a MimeShellWindow. */
 uint64_t mime_ui_shell_window(const void *command);
+/* the application id of a program, "mime." and its user model id, "mime" for none: the name of its entry, too. */
+void mime_app_id_for(const char *aumid, char *out, size_t size);
+/* ui.c, ui.c calls launcher.c: a window was configured, was destroyed, and a process ended. */
+void mime_launcher_window_seen(uint32_t id, uint32_t process_id);
+void mime_launcher_window_gone(uint32_t id);
+void mime_launcher_process_gone(uint32_t process_id);
+/* launcher.c calls ui.c: the toplevel of a window gets this application id, or is flashed (0 stop, 1 a moment, 2 until in front). */
+void mime_ui_window_app_id(uint32_t window, const char *app_id);
+void mime_ui_window_flash(uint32_t window, uint32_t mode);
+
+/* the properties a launcher entry shows, as the bus has them; sent by shell.c. */
+typedef struct MimeLauncherUpdate {
+    char uri[256];
+    bool progress, progress_visible;
+    double progress_value;
+    bool count;
+    int64_t count_value;
+    bool urgent, urgent_value;
+} MimeLauncherUpdate;
+void mime_shell_launcher_update(const MimeLauncherUpdate *update);
+
+/* activation.c, on the main thread: the compositor is asked for attention for a surface, or to raise it with a token. */
+struct wl_display;
+struct wl_surface;
+bool mime_activation_attention(struct wl_display *display, struct wl_surface *surface, const char *app_id);
+bool mime_activation_activate(struct wl_display *display, struct wl_surface *surface, const char *token);
+/* the activation token of the last click on a notification, for the window that comes to the front because of it. */
+void mime_ui_set_activation_token(const char *token);
+
+/* desktop.c: the shortcuts of the guest as entries of the applications menu, when asked for. */
+void mime_desktop_jump_list(const MimeShellJumpList *list);
 
 /* ime.c, called by the main loop. */
 void mime_ime_editing(uint32_t window, const char *text, int start, int length);

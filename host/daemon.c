@@ -740,6 +740,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
      * waits for the display at the end of its start.
      */
     mime_ui_init(on_input, nullptr);
+    mime_ui_desktop_start(g_paths);
     uint64_t ui_ns = mime_now_ns();
 #ifdef __linux__
     /*

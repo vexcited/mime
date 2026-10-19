@@ -5,6 +5,7 @@
  * value from 0 to 65534, which a host that shows progress reads.
  */
 #include "explorerframe_private.h"
+#include <mime/shellclient.h>
 
 #define MAX_WINDOWS 128
 #define MAX_BUTTONS 7
@@ -118,6 +119,25 @@ static HRESULT STDMETHODCALLTYPE tl_mark_fullscreen(ITaskbarList3 *This, HWND wi
     return S_OK;
 }
 
+/*
+ * the progress of a window's button as the launcher of the desktop shows it: the fraction of its bar in tenths of a
+ * percent. a button with no progress has none, one that waits for something has an empty bar.
+ */
+static void send_progress(HWND window)
+{
+    ULONG_PTR state = (ULONG_PTR)GetPropW(window, L"MimeTaskbarProgress");
+    ULONG_PTR value = (ULONG_PTR)GetPropW(window, L"MimeTaskbarValue");
+    MimeShellWindow w;
+    MimeShellClear(&w, sizeof(w));
+    w.op = MIME_SHELL_LAUNCHER;
+    w.window_id = (uint32_t)(ULONG_PTR)window;
+    w.changed = MIME_LAUNCHER_PROGRESS;
+    w.progress_visible = (state & ~(ULONG_PTR)TBPF_INDETERMINATE) != 0 || (state & TBPF_INDETERMINATE) != 0;
+    w.indeterminate = (state & TBPF_INDETERMINATE) != 0;
+    w.progress = w.indeterminate ? 0 : (uint32_t)(value * 10000 / PROGRESS_MAX);
+    MimeShellWindowCommand(&w);
+}
+
 static HRESULT STDMETHODCALLTYPE tl_progress_value(ITaskbarList3 *This, HWND window, ULONGLONG completed,
                                                    ULONGLONG total)
 {
@@ -133,12 +153,14 @@ static HRESULT STDMETHODCALLTYPE tl_progress_value(ITaskbarList3 *This, HWND win
             return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
     }
     SetPropW(window, L"MimeTaskbarValue", (HANDLE)(ULONG_PTR)value);
+    send_progress(window);
     return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE tl_progress_state(ITaskbarList3 *This, HWND window, TBPFLAG flags)
 {
     SetPropW(window, L"MimeTaskbarProgress", (HANDLE)(ULONG_PTR)flags);
+    send_progress(window);
     return S_OK;
 }
 
@@ -215,6 +237,33 @@ static HRESULT STDMETHODCALLTYPE tl_button_images(ITaskbarList3 *This, HWND wind
     return S_OK;
 }
 
+/*
+ * an overlay icon is a small picture on the button, which the desktop's launchers have no place for; what they have is
+ * the count on a badge. a guess at the meaning: the first number of the description is the count, and an overlay with
+ * none counts as one.
+ */
+static void send_badge(HWND window, BOOL present, LPCWSTR description)
+{
+    ULONG count = 0;
+    if (present) {
+        count = 1;
+        for (LPCWSTR p = description; p && *p; p++)
+            if (*p >= L'0' && *p <= L'9') {
+                count = 0;
+                while (*p >= L'0' && *p <= L'9' && count < 100000)
+                    count = count * 10 + (ULONG)(*p++ - L'0');
+                break;
+            }
+    }
+    MimeShellWindow w;
+    MimeShellClear(&w, sizeof(w));
+    w.op = MIME_SHELL_LAUNCHER;
+    w.window_id = (uint32_t)(ULONG_PTR)window;
+    w.changed = MIME_LAUNCHER_BADGE;
+    w.count = count;
+    MimeShellWindowCommand(&w);
+}
+
 static HRESULT STDMETHODCALLTYPE tl_overlay(ITaskbarList3 *This, HWND window, HICON icon, LPCWSTR description)
 {
     AcquireSRWLockExclusive(&g_lock);
@@ -227,6 +276,7 @@ static HRESULT STDMETHODCALLTYPE tl_overlay(ITaskbarList3 *This, HWND window, HI
         copy_text(s->OverlayText, 260, icon ? description : nullptr);
     }
     ReleaseSRWLockExclusive(&g_lock);
+    send_badge(window, icon != nullptr, icon ? description : nullptr);
     return S_OK;
 }
 

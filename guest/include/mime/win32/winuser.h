@@ -2270,6 +2270,8 @@ WINUSERAPI BOOL WINAPI DlgDirSelectComboBoxExA(HWND dialog, LPSTR path, int coun
 #define FLASHW_CAPTION 1
 #define FLASHW_TRAY 2
 #define FLASHW_ALL 3
+#define FLASHW_TIMER 4
+#define FLASHW_TIMERNOFG 0xC
 typedef struct {
     UINT cbSize;
     HWND hwnd;
@@ -2277,6 +2279,8 @@ typedef struct {
     UINT uCount;
     DWORD dwTimeout;
 } FLASHWINFO, *PFLASHWINFO;
+WINUSERAPI BOOL WINAPI FlashWindow(HWND hwnd, BOOL invert);
+WINUSERAPI BOOL WINAPI FlashWindowEx(PFLASHWINFO info);
 
 typedef struct tagNONCLIENTMETRICSA {
     UINT cbSize;

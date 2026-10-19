@@ -976,6 +976,9 @@ void WndCenterOnOwner(WND *w)
 
 /* ------------------------------------------------------------------ activation and focus */
 
+/* the window the host's desktop has just given the focus: the host already has it in front, so it is not asked to. */
+BOOLEAN WndActivatedByHost;
+
 void WndActivate(WND *w, BOOLEAN click)
 {
     if (w)
@@ -1011,7 +1014,7 @@ void WndActivate(WND *w, BOOLEAN click)
         link_window(parent, w, HWND_TOP);
         raise_owned(w);
     }
-    WndUpdateHostConfig(w, TRUE);
+    WndUpdateHostConfig(w, !WndActivatedByHost);
     if (!old || !old->Thread || !w->Thread || old->Thread->Process != w->Thread->Process)
         MsgSend(w, WM_ACTIVATEAPP, TRUE, old && old->Thread ? (LPARAM)old->Thread->Tid : 0);
     MsgSend(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));

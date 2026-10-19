@@ -51,6 +51,8 @@ typedef struct UiWindow {
     uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen */
     uint64_t interactive_until; /* the compositor sizes the window under the pointer, as long as sizes come */
     bool size_recheck;     /* a look at the size is due once the guest's request had its time */
+    char want_app_id[200]; /* the application id of its program, and the one its toplevel has */
+    char set_app_id[200];
     double wheel_x, wheel_y;
     double motion_x, motion_y; /* fractions of guest pixels moved, kept for the next motion */
 
@@ -75,6 +77,7 @@ static Uint32 g_call_event;   /* the event type of calls posted to the main thre
 static pthread_t g_main_thread;
 static double g_scale = 1.0;  /* guest pixels per sdl window coordinate of the primary display, the system's */
 static MimeDisplayInfo g_display;
+static void raise_window(UiWindow *w);
 static bool g_wayland;        /* the video driver is wayland's */
 
 /* the displays of the host, the primary first, in the guest's virtual screen. */
@@ -1107,7 +1110,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         if (SDL_GetWindowFlags(w->window) & SDL_WINDOW_MINIMIZED)
             SDL_RestoreWindow(w->window);
         if (cfg->flags & MIME_WIN_ACTIVATE)
-            SDL_RaiseWindow(w->window);
+            raise_window(w);
         w->shown = true;
     } else if (w->shown) {
         SDL_HideWindow(w->window);
@@ -1137,6 +1140,117 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         draw(w);
 }
 
+/* the token of a notification's click, spent by the first window that comes to the front within a few seconds of it. */
+static char g_activation_token[128];
+static uint64_t g_activation_token_ms;
+static pthread_mutex_t g_token_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void mime_ui_set_activation_token(const char *token)
+{
+    pthread_mutex_lock(&g_token_lock);
+    mime_strlcpy(g_activation_token, token, sizeof(g_activation_token));
+    g_activation_token_ms = now_ms();
+    pthread_mutex_unlock(&g_token_lock);
+}
+
+static void raise_window(UiWindow *w)
+{
+    char token[128] = "";
+    pthread_mutex_lock(&g_token_lock);
+    if (g_activation_token[0] && now_ms() - g_activation_token_ms < 5000)
+        mime_strlcpy(token, g_activation_token, sizeof(token));
+    g_activation_token[0] = 0;
+    pthread_mutex_unlock(&g_token_lock);
+    if (token[0] && g_wayland) {
+        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+        struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+        struct wl_surface *surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+        if (mime_activation_activate(display, surface, token))
+            return;
+    }
+    SDL_RaiseWindow(w->window);
+}
+
+/* xdg_toplevel's set_app_id, by its opcode, for the toplevel to take the application id of its program. */
+enum { XDG_TOPLEVEL_SET_APP_ID = 3 };
+
+static void apply_app_id(UiWindow *w)
+{
+    if (!g_wayland || !w->window || !w->want_app_id[0] || !strcmp(w->want_app_id, w->set_app_id))
+        return;
+    SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+    struct wl_proxy *toplevel = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
+    struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+    if (!toplevel || !display)
+        return;
+    wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_SET_APP_ID, nullptr, wl_proxy_get_version(toplevel), 0, w->want_app_id);
+    wl_display_flush(display);
+    mime_strlcpy(w->set_app_id, w->want_app_id, sizeof(w->set_app_id));
+}
+
+typedef struct AppIdCall {
+    uint32_t window;
+    char app_id[200];
+} AppIdCall;
+
+static void app_id_main(void *arg)
+{
+    AppIdCall *call = arg;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(call->window);
+    if (w) {
+        mime_strlcpy(w->want_app_id, call->app_id, sizeof(w->want_app_id));
+        apply_app_id(w);
+    }
+    pthread_mutex_unlock(&g_windows_lock);
+    free(call);
+}
+
+void mime_ui_window_app_id(uint32_t window, const char *app_id)
+{
+    if (!g_video)
+        return;
+    AppIdCall *call = mime_xmalloc(sizeof(*call));
+    call->window = window;
+    mime_strlcpy(call->app_id, app_id, sizeof(call->app_id));
+    on_main(app_id_main, call);
+}
+
+typedef struct FlashCall {
+    uint32_t window, mode;
+} FlashCall;
+
+static void flash_main(void *arg)
+{
+    FlashCall *call = arg;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(call->window);
+    if (w && w->window) {
+        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+        struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+        struct wl_surface *surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+        if (call->mode == 0) {
+            SDL_FlashWindow(w->window, SDL_FLASH_CANCEL);
+        } else if (!g_wayland || !mime_activation_attention(display, surface, w->want_app_id)) {
+            /* sdl flashes the window of the x server; on wayland it would raise it, so only the protocol above does. */
+            if (!g_wayland)
+                SDL_FlashWindow(w->window, call->mode == 2 ? SDL_FLASH_UNTIL_FOCUSED : SDL_FLASH_BRIEFLY);
+        }
+    }
+    pthread_mutex_unlock(&g_windows_lock);
+    free(call);
+}
+
+void mime_ui_window_flash(uint32_t window, uint32_t mode)
+{
+    if (!g_video)
+        return;
+    FlashCall *call = mime_xmalloc(sizeof(*call));
+    call->window = window;
+    call->mode = mode;
+    on_main(flash_main, call);
+}
+
 static void config_main(void *arg)
 {
     uint32_t id = (uint32_t)(uintptr_t)arg;
@@ -1154,12 +1268,15 @@ static void config_main(void *arg)
         pthread_mutex_unlock(&w->lock);
     }
     pthread_mutex_unlock(&g_windows_lock);
-    if (have)
+    if (have) {
         apply_config(w, &cfg);
+        apply_app_id(w);
+    }
 }
 
 void mime_ui_window_config(const MimeWinConfig *cfg)
 {
+    mime_launcher_window_seen(cfg->window_id, cfg->process_id);
     bool queue = false;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(cfg->window_id);
@@ -1220,6 +1337,7 @@ static void destroy_main(void *arg)
 
 void mime_ui_window_destroy(uint32_t id)
 {
+    mime_launcher_window_gone(id);
     if (!g_video) {
         pthread_mutex_lock(&g_windows_lock);
         UiWindow *w = find_window(id);
@@ -1233,6 +1351,7 @@ void mime_ui_window_destroy(uint32_t id)
 
 void mime_ui_process_exit(uint32_t process_id)
 {
+    mime_launcher_process_gone(process_id);
 }
 
 typedef struct WindowIcon {

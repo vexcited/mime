@@ -6,6 +6,7 @@
  * process finds it too. an empty value removes the property and a null one is kept as a marker.
  */
 #include "shell32_private.h"
+#include <mime/shellclient.h>
 #include <mime/win32/propidl.h>
 
 /* ------------------------------------------------------------------ the app id */
@@ -38,6 +39,7 @@ SHSTDAPI HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(LPCWSTR id)
     memcpy(copy, id, size);
     params->WindowFlags = (params->WindowFlags & ~STARTF_TITLEISLINKNAME) | STARTF_TITLEISAPPID | STARTF_SHCORE_APPID;
     RtlInitUnicodeString(&params->WindowTitle, copy);
+    MimeShellProcessAppId(id);
     return S_OK;
 }
 
@@ -235,6 +237,14 @@ static HRESULT STDMETHODCALLTYPE store_get_value(IPropertyStore *This, REFPROPER
     return S_OK;
 }
 
+/* System.AppUserModel.ID, the id that groups a window's button with the program's others. */
+static void notify_window_id(HWND window, REFPROPERTYKEY key, const WCHAR *text)
+{
+    static const GUID format = {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}};
+    if (key->pid == 5 && IsEqualGUID(&key->fmtid, &format))
+        MimeShellWindowAppId(window, text);
+}
+
 static HRESULT STDMETHODCALLTYPE store_set_value(IPropertyStore *This, REFPROPERTYKEY key, const PROPVARIANT *value)
 {
     WINDOW_STORE *store = (WINDOW_STORE *)This;
@@ -252,8 +262,10 @@ static HRESULT STDMETHODCALLTYPE store_set_value(IPropertyStore *This, REFPROPER
     HANDLE old = RemovePropW(store->Window, name);
     if (old && old != NULL_MARKER && (ATOM)(ULONG_PTR)old)
         GlobalDeleteAtom((ATOM)(ULONG_PTR)old);
-    if (value->vt == VT_EMPTY)
+    if (value->vt == VT_EMPTY) {
+        notify_window_id(store->Window, key, nullptr);
         return S_OK;
+    }
     HANDLE data = NULL_MARKER;
     if (value->vt != VT_NULL) {
         ATOM atom = GlobalAddAtomW(text);
@@ -267,6 +279,7 @@ static HRESULT STDMETHODCALLTYPE store_set_value(IPropertyStore *This, REFPROPER
             GlobalDeleteAtom((ATOM)(ULONG_PTR)data);
         return hr;
     }
+    notify_window_id(store->Window, key, value->vt == VT_EMPTY || value->vt == VT_NULL ? nullptr : text);
     return S_OK;
 }
 

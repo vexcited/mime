@@ -25,6 +25,7 @@ typedef union SHELL_COMMAND {
     ULONG Op;
     MimeShellToast Toast;
     MimeShellWindow Window;
+    MimeShellJumpList Jump;
 } SHELL_COMMAND;
 
 static KSPIN_LOCK g_lock;
@@ -228,7 +229,11 @@ static LONG run_command(PUCHAR request, ULONG size)
         break;
     case MIME_SHELL_WINDOW:
     case MIME_SHELL_LAUNCHER:
+    case MIME_SHELL_FLASH:
         want = sizeof(MimeShellWindow);
+        break;
+    case MIME_SHELL_JUMPLIST:
+        want = sizeof(MimeShellJumpList);
         break;
     default:
         return STATUS_INVALID_PARAMETER;
@@ -278,6 +283,19 @@ static LONG run_command(PUCHAR request, ULONG size)
             UserLeave();
             return STATUS_NOT_FOUND;
         }
+    } else if (want == sizeof(MimeShellJumpList)) {
+        MimeShellJumpList *j = &g_command->Jump;
+        zero_end(j->aumid, RTL_NUMBER_OF(j->aumid));
+        if (j->task_count > MIME_JUMPLIST_TASKS)
+            j->task_count = MIME_JUMPLIST_TASKS;
+        for (ULONG i = 0; i < MIME_JUMPLIST_TASKS; i++) {
+            zero_end(j->tasks[i].title, RTL_NUMBER_OF(j->tasks[i].title));
+            zero_end(j->tasks[i].path, RTL_NUMBER_OF(j->tasks[i].path));
+            zero_end(j->tasks[i].arguments, RTL_NUMBER_OF(j->tasks[i].arguments));
+            zero_end(j->tasks[i].directory, RTL_NUMBER_OF(j->tasks[i].directory));
+            zero_end(j->tasks[i].icon, RTL_NUMBER_OF(j->tasks[i].icon));
+        }
+        j->process_id = pid;
     } else {
         MimeShellWindow *w = &g_command->Window;
         zero_end(w->aumid, RTL_NUMBER_OF(w->aumid));

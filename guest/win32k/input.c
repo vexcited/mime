@@ -965,8 +965,11 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         break;
     case MIME_INPUT_WINDOW_FOCUS:
         if (ev->x) {
-            if (InputForeground != w && !(w->Style & WS_DISABLED))
+            if (InputForeground != w && !(w->Style & WS_DISABLED)) {
+                WndActivatedByHost = TRUE;
                 WndActivate(w, TRUE);
+                WndActivatedByHost = FALSE;
+            }
             else if (InputForeground != w) {
                 /* a disabled owner: hand activation to its enabled popup. */
                 WND *desktop = WndDesktop();

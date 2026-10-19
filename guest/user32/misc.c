@@ -5,6 +5,7 @@
 #include "user32_private.h"
 
 #include <mime/pnp.h>
+#include <mime/shellclient.h>
 
 /* ------------------------------------------------------------------ rectangles */
 
@@ -507,8 +508,34 @@ WINUSERAPI BOOL WINAPI FlashWindow(HWND hwnd, BOOL invert)
     return TRUE;
 }
 
+/*
+ * a window that asks for attention has its button flash on the desktop, as the compositor does it. the caption's
+ * flashing is not a thing the host draws; what it can show is the button, so FLASHW_CAPTION alone does nothing.
+ * a guess at the rest: a flash that lasts until the window is in front (FLASHW_TIMERNOFG) is not made for the window
+ * in front.
+ */
 WINUSERAPI BOOL WINAPI FlashWindowEx(PFLASHWINFO info)
 {
+    if (!info || info->cbSize != sizeof(*info)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!IsWindow(info->hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    MimeShellWindow w = {};
+    w.op = MIME_SHELL_FLASH;
+    w.window_id = (uint32_t)(ULONG_PTR)info->hwnd;
+    if (info->dwFlags & FLASHW_TRAY) {
+        if ((info->dwFlags & FLASHW_TIMERNOFG) == FLASHW_TIMERNOFG)
+            w.urgent = GetForegroundWindow() == info->hwnd ? 0 : 2;
+        else if (info->dwFlags & FLASHW_TIMER)
+            w.urgent = 2;
+        else
+            w.urgent = info->uCount ? 1 : 0;
+    }
+    NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)&w, sizeof(w));
     return TRUE;
 }
 

@@ -168,8 +168,10 @@ enum {
     MIME_SHELL_TOAST_REMOVE = 3, /* MimeShellToast: take away those of the application aumid, with the tag and group if given */
     MIME_SHELL_TOAST_PROBE = 4,  /* MimeShellToast: whether toasts can be shown at all */
     MIME_SHELL_TOAST_REPLY = 5,  /* MimeShellToast: the text of a reply to the toast id is written to body, its units are the value */
-    MIME_SHELL_WINDOW = 10,      /* MimeShellWindow: the identity of a window changes */
-    MIME_SHELL_LAUNCHER = 11,    /* MimeShellWindow: the progress, badge and attention of an application's entry in the launcher */
+    MIME_SHELL_WINDOW = 10,      /* MimeShellWindow: the application user model id of a window or of a process */
+    MIME_SHELL_LAUNCHER = 11,    /* MimeShellWindow: the progress, badge and attention of a window's button in the launcher */
+    MIME_SHELL_FLASH = 12,       /* MimeShellWindow: a window asks for attention, or stops */
+    MIME_SHELL_JUMPLIST = 13,    /* MimeShellJumpList: the tasks of an application's jump list */
 };
 
 enum {
@@ -218,7 +220,8 @@ enum {
 
 /* a window and an application of the launcher, by the application user model id the program gave. */
 enum {
-    MIME_SHELL_WINDOW_APPID = 1, /* the window belongs to the application aumid */
+    MIME_SHELL_WINDOW_APPID = 1,         /* the window belongs to the application aumid; none to leave it to its process */
+    MIME_SHELL_PROCESS_APPID = 2,        /* the windows of the process, that have no id of their own, belong to the application aumid */
 };
 
 enum {
@@ -237,9 +240,31 @@ typedef struct MimeShellWindow {
     uint32_t progress_visible;
     uint32_t indeterminate;
     uint32_t count;
-    uint32_t urgent;
+    uint32_t urgent; /* for MIME_SHELL_FLASH: 0 stops, 1 flashes for a moment, 2 until the window is in front */
     uint16_t aumid[128];
 } MimeShellWindow;
+
+#define MIME_JUMPLIST_TASKS 16
+
+/* the task of a jump list: what is run and how it is shown. paths are windows paths of the guest. */
+typedef struct MimeJumpTask {
+    uint16_t title[64];
+    uint16_t path[260];
+    uint16_t arguments[260];
+    uint16_t directory[260];
+    uint16_t icon[260]; /* the file with the icon, and its index */
+    int32_t icon_index;
+    uint32_t pad;
+} MimeJumpTask;
+
+typedef struct MimeShellJumpList {
+    uint32_t op;
+    uint32_t process_id;
+    uint32_t task_count;
+    uint32_t pad;
+    uint16_t aumid[128];
+    MimeJumpTask tasks[MIME_JUMPLIST_TASKS];
+} MimeShellJumpList;
 
 /* passed to the kernel entry point in x0, as a physmap virtual address. */
 typedef struct MimeBootInfo {

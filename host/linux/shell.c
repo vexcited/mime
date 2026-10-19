@@ -6,14 +6,36 @@
  */
 #include "ui_internal.h"
 
-#ifndef MIME_HAVE_SDBUS
+/* what the guest's shell asks of the desktop: windows and the launcher here, toasts on the bus. */
+static uint64_t toast_command(void *command, size_t size, uint64_t *value);
 
 uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
 {
     uint32_t op = *(uint32_t *)command;
-    if (op == MIME_SHELL_WINDOW || op == MIME_SHELL_LAUNCHER)
+    switch (op) {
+    case MIME_SHELL_WINDOW:
+    case MIME_SHELL_LAUNCHER:
+    case MIME_SHELL_FLASH:
         return size >= sizeof(MimeShellWindow) ? mime_ui_shell_window(command) : MIME_HC_STATUS_INVALID;
+    case MIME_SHELL_JUMPLIST:
+        if (size < sizeof(MimeShellJumpList))
+            return MIME_HC_STATUS_INVALID;
+        mime_desktop_jump_list(command);
+        return MIME_HC_STATUS_OK;
+    default:
+        return toast_command(command, size, value);
+    }
+}
+
+#ifndef MIME_HAVE_SDBUS
+
+static uint64_t toast_command(void *command, size_t size, uint64_t *value)
+{
     return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+void mime_shell_launcher_update(const MimeLauncherUpdate *update)
+{
 }
 
 #else
@@ -53,7 +75,11 @@ static uint32_t g_reply_next;
 
 typedef struct Command {
     struct Command *next;
-    MimeShellToast toast;
+    bool launcher;
+    union {
+        MimeShellToast toast;
+        MimeLauncherUpdate update;
+    };
 } Command;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -166,6 +192,16 @@ static int closed_signal(sd_bus_message *m, void *userdata, sd_bus_error *error)
         emit(MIME_SHELL_EVENT_TOAST_DISMISSED, t->id, why, 0);
     }
     forget(t);
+    return 0;
+}
+
+/* the server hands a token before the action of a click, with which the program's window may come to the front. */
+static int token_signal(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    uint32_t id;
+    const char *token;
+    if (sd_bus_message_read(m, "us", &id, &token) >= 0 && find_server(id))
+        mime_ui_set_activation_token(token);
     return 0;
 }
 
@@ -417,6 +453,39 @@ static void remove_toasts(const MimeShellToast *c)
     }
 }
 
+/* the properties of a launcher entry, as the signal Plasma and the docks that follow Unity's launcher take them. */
+static void run_launcher(const MimeLauncherUpdate *u)
+{
+    sd_bus_message *m;
+    char path[96];
+    uint32_t h = 2166136261u;
+    for (const char *p = u->uri; *p; p++)
+        h = (h ^ (uint8_t)*p) * 16777619u;
+    snprintf(path, sizeof(path), "/com/canonical/unity/launcherentry/%u", h);
+    if (sd_bus_message_new_signal(g_bus, &m, path, "com.canonical.Unity.LauncherEntry", "Update") < 0)
+        return;
+    int r = sd_bus_message_append(m, "s", u->uri);
+    if (r >= 0)
+        r = sd_bus_message_open_container(m, 'a', "{sv}");
+    if (r >= 0 && u->progress) {
+        r = sd_bus_message_append(m, "{sv}", "progress-visible", "b", (int)u->progress_visible);
+        if (r >= 0)
+            r = sd_bus_message_append(m, "{sv}", "progress", "d", u->progress_value);
+    }
+    if (r >= 0 && u->count) {
+        r = sd_bus_message_append(m, "{sv}", "count-visible", "b", u->count_value != 0);
+        if (r >= 0)
+            r = sd_bus_message_append(m, "{sv}", "count", "x", u->count_value);
+    }
+    if (r >= 0 && u->urgent)
+        r = sd_bus_message_append(m, "{sv}", "urgent", "b", (int)u->urgent_value);
+    if (r >= 0)
+        r = sd_bus_message_close_container(m);
+    if (r >= 0)
+        sd_bus_send(g_bus, m, nullptr);
+    sd_bus_message_unref(m);
+}
+
 static void run_command(const MimeShellToast *c)
 {
     switch (c->op) {
@@ -443,6 +512,8 @@ static void *shell_thread(void *arg)
                             closed_signal, nullptr);
         sd_bus_match_signal(g_bus, nullptr, NOTIFICATIONS, NOTIFICATIONS_PATH, NOTIFICATIONS, "ActionInvoked",
                             action_signal, nullptr);
+        sd_bus_match_signal(g_bus, nullptr, NOTIFICATIONS, NOTIFICATIONS_PATH, NOTIFICATIONS, "ActivationToken",
+                            token_signal, nullptr);
         sd_bus_match_signal(g_bus, nullptr, NOTIFICATIONS, NOTIFICATIONS_PATH, NOTIFICATIONS, "NotificationReplied",
                             replied_signal, nullptr);
         sd_bus_add_match(g_bus, nullptr,
@@ -474,7 +545,10 @@ static void *shell_thread(void *arg)
             pthread_mutex_unlock(&g_lock);
             if (!c)
                 break;
-            run_command(&c->toast);
+            if (c->launcher)
+                run_launcher(&c->update);
+            else
+                run_command(&c->toast);
             free(c);
         }
         struct pollfd fds[2];
@@ -503,6 +577,8 @@ static void *shell_thread(void *arg)
     return nullptr;
 }
 
+static void enqueue(Command *c);
+
 static bool ensure_thread(void)
 {
     pthread_mutex_lock(&g_lock);
@@ -523,11 +599,9 @@ static bool ensure_thread(void)
     return running;
 }
 
-uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
+static uint64_t toast_command(void *command, size_t size, uint64_t *value)
 {
     uint32_t op = *(uint32_t *)command;
-    if (op == MIME_SHELL_WINDOW || op == MIME_SHELL_LAUNCHER)
-        return size >= sizeof(MimeShellWindow) ? mime_ui_shell_window(command) : MIME_HC_STATUS_INVALID;
     if (size < sizeof(MimeShellToast) || op < MIME_SHELL_TOAST_SHOW || op > MIME_SHELL_TOAST_REPLY)
         return MIME_HC_STATUS_INVALID;
     if (!ensure_thread())
@@ -559,7 +633,27 @@ uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
     if (!c)
         return MIME_HC_STATUS_NO_MEMORY;
     c->next = nullptr;
+    c->launcher = false;
     memcpy(&c->toast, toast, sizeof(*toast));
+    enqueue(c);
+    return MIME_HC_STATUS_OK;
+}
+
+void mime_shell_launcher_update(const MimeLauncherUpdate *update)
+{
+    if (!ensure_thread())
+        return;
+    Command *c = malloc(sizeof(*c));
+    if (!c)
+        return;
+    c->next = nullptr;
+    c->launcher = true;
+    c->update = *update;
+    enqueue(c);
+}
+
+static void enqueue(Command *c)
+{
     pthread_mutex_lock(&g_lock);
     if (g_queue_tail)
         g_queue_tail->next = c;
@@ -570,7 +664,6 @@ uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
     uint64_t one = 1;
     if (write(g_wake, &one, sizeof(one)) < 0)
         ;
-    return MIME_HC_STATUS_OK;
 }
 
 #endif

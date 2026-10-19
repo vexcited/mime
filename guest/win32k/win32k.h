@@ -731,6 +731,7 @@ void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surf
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
+extern BOOLEAN WndActivatedByHost;
 void WndSetFocus(WND *w);
 void WndCenterOnOwner(WND *w);
 UINT WndGetDpi(WND *w);

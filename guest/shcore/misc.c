@@ -1,5 +1,6 @@
 /* the rest of shcore: strings, thread references, IsOS, the process app id and COM helpers. */
 #include "shcore_private.h"
+#include <mime/shellclient.h>
 
 #define STARTF_TITLEISLINKNAME 0x00000800
 #define STARTF_TITLEISAPPID 0x00001000
@@ -164,6 +165,7 @@ HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(LPCWSTR id)
     memcpy(copy, id, size);
     params->WindowFlags = (params->WindowFlags & ~STARTF_TITLEISLINKNAME) | STARTF_TITLEISAPPID | STARTF_SHCORE_APPID;
     RtlInitUnicodeString(&params->WindowTitle, copy);
+    MimeShellProcessAppId(id);
     return S_OK;
 }
 

@@ -30,6 +30,8 @@ uint64_t mime_ui_tray(const MimeTrayCommand *command);
  * what the desktop says back is MIME_INPUT_SHELL. the command may be written to.
  */
 uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value);
+/* the guest's shortcuts as entries of the desktop's applications menu, if the user asked for it; any thread, once. */
+void mime_ui_desktop_start(const MimePaths *paths);
 /* the monitors, the primary first, at most capacity of them: how many there are. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity);
 

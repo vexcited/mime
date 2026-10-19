@@ -1260,6 +1260,10 @@ uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
+void mime_ui_desktop_start(const MimePaths *paths)
+{
+}
+
 /* the screen the display describes is the only monitor here. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
 {

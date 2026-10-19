@@ -7,6 +7,8 @@
  */
 #include "windows_storage_private.h"
 #include <mime/win32/shobjidl_ui.h>
+#include <mime/win32/propsys.h>
+#include <mime/shellclient.h>
 
 #define MAX_APPS 16
 #define DEFAULT_SLOTS 10
@@ -424,6 +426,64 @@ static void clear_app_list(APP_LIST *a)
     memset(a, 0, sizeof(*a));
 }
 
+/*
+ * the tasks of a committed list go to the host, which can show them in the menu of the launcher entry of the program:
+ * the title of a task is its System.Title, else its description, and what is run is the shortcut's target with its
+ * arguments. the categories of destinations (documents, frequent and recent) have no place in a desktop's menu.
+ */
+static void send_tasks(const WCHAR *id, IObjectArray *tasks)
+{
+    MimeShellJumpList *j = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*j));
+    if (!j)
+        return;
+    j->op = MIME_SHELL_JUMPLIST;
+    MimeShellCopyText(j->aumid, sizeof(j->aumid) / sizeof(j->aumid[0]), id);
+    UINT count = 0;
+    if (tasks)
+        tasks->lpVtbl->GetCount(tasks, &count);
+    for (UINT i = 0; i < count && j->task_count < MIME_JUMPLIST_TASKS; i++) {
+        IShellLinkW *link;
+        if (FAILED(tasks->lpVtbl->GetAt(tasks, i, &IID_IShellLinkW, (void **)&link)))
+            continue;
+        MimeJumpTask *t = &j->tasks[j->task_count];
+        WCHAR text[260];
+        text[0] = 0;
+        link->lpVtbl->GetPath(link, text, 260, nullptr, SLGP_RAWPATH);
+        MimeShellCopyText(t->path, 260, text);
+        text[0] = 0;
+        link->lpVtbl->GetArguments(link, text, 260);
+        MimeShellCopyText(t->arguments, 260, text);
+        text[0] = 0;
+        link->lpVtbl->GetWorkingDirectory(link, text, 260);
+        MimeShellCopyText(t->directory, 260, text);
+        int index = 0;
+        text[0] = 0;
+        link->lpVtbl->GetIconLocation(link, text, 260, &index);
+        MimeShellCopyText(t->icon, 260, text);
+        t->icon_index = index;
+        text[0] = 0;
+        IPropertyStore *store;
+        if (SUCCEEDED(link->lpVtbl->QueryInterface(link, &IID_IPropertyStore, (void **)&store))) {
+            PROPVARIANT title;
+            if (SUCCEEDED(store->lpVtbl->GetValue(store, &PKEY_Title, &title))) {
+                if (title.vt == VT_LPWSTR && title.pwszVal)
+                    MimeShellCopyText(t->title, 64, title.pwszVal);
+                PropVariantClear(&title);
+            }
+            store->lpVtbl->Release(store);
+        }
+        if (!t->title[0]) {
+            link->lpVtbl->GetDescription(link, text, 260);
+            MimeShellCopyText(t->title, 64, text);
+        }
+        link->lpVtbl->Release(link);
+        if (t->path[0] && t->title[0])
+            j->task_count++;
+    }
+    NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)j, sizeof(*j));
+    HeapFree(GetProcessHeap(), 0, j);
+}
+
 static HRESULT STDMETHODCALLTYPE dl_commit(ICustomDestinationList *This)
 {
     DESTINATION_LIST *l = list_of(This);
@@ -445,8 +505,15 @@ static HRESULT STDMETHODCALLTYPE dl_commit(ICustomDestinationList *This)
         l->CategoryCount = l->CategoryCapacity = 0;
         l->Tasks = nullptr;
     }
+    IObjectArray *tasks = a ? a->Tasks : nullptr;
+    if (tasks)
+        tasks->lpVtbl->AddRef(tasks);
     ReleaseSRWLockExclusive(&g_lists_lock);
     l->InList = FALSE;
+    if (SUCCEEDED(hr))
+        send_tasks(id, tasks);
+    if (tasks)
+        tasks->lpVtbl->Release(tasks);
     return hr;
 }
 
@@ -474,6 +541,7 @@ static HRESULT STDMETHODCALLTYPE dl_delete_list(ICustomDestinationList *This, LP
     if (a)
         clear_app_list(a);
     ReleaseSRWLockExclusive(&g_lists_lock);
+    send_tasks(id, nullptr);
     return S_OK;
 }
 
