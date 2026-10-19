@@ -92,7 +92,8 @@ static ULONG64 build_page(PSECTION s, ULONG index)
     if (!s->SourcePa || ((s->Flags & SEC_IMAGE) == 0 && off >= s->SourceSize))
         return MmAllocatePage();
     const UCHAR *src = HalPhysmap(s->SourcePa);
-    if (!(s->Flags & SEC_IMAGE) && (s->Flags & MI_SECTION_SHARE_SOURCE) && off + PAGE_SIZE <= source_pages)
+    if (!(s->Flags & SEC_IMAGE) && (s->Flags & (MI_SECTION_SHARE_SOURCE | MI_SECTION_WRITABLE_WINDOW)) &&
+        off + PAGE_SIZE <= source_pages)
         return s->SourcePa + off;
     ULONG64 pa = MmAllocatePageNoZero();
     if (!pa)
@@ -138,13 +139,14 @@ ULONG64 MiSectionSwPte(ULONG protect)
 }
 
 /*
- * the attributes of a view page. the rom and the windows are read only to
+ * the attributes of a view page. the rom and the read only windows are read only to
  * the guest, so writable views of their pages copy on write.
  */
-ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared)
+ULONG64 MiSectionPteAttrs(PSECTION s, ULONG protect, ULONG64 pa, BOOLEAN shared)
 {
     ULONG64 attrs = MiProtectToPte(protect, TRUE) | (shared ? MM_PTE_SW_SHARED : 0);
-    if (!MiGetPfn(pa) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+    /* the pages of a file's writable window are the file's, and what a view writes goes there. */
+    if (!MiGetPfn(pa) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) && !(s->Flags & MI_SECTION_WRITABLE_WINDOW))
         attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
     return attrs;
 }
@@ -798,12 +800,17 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
     s->Protect = protect;
     if (file) {
         ULONG64 pa, file_size;
-        if (IoGetFileWindow(file, &pa, &file_size, &s->SourceRef)) {
+        BOOLEAN writable = (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0;
+        if (writable && IoGetFileWindowEx(file, TRUE, size, &pa, &file_size, &s->SourceRef)) {
+            /* the views write the file's own pages, which a read or a write of the file sees as they are. */
             s->SourcePa = pa;
             s->SourceSize = file_size;
-            /* views of a read only section share the file's pages; writable ones get a copy. */
-            if (!(protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
-                s->Flags |= MI_SECTION_SHARE_SOURCE;
+            s->Flags |= MI_SECTION_WRITABLE_WINDOW;
+        } else if (!writable && IoGetFileWindow(file, &pa, &file_size, &s->SourceRef)) {
+            /* views of a read only section share the file's pages. */
+            s->SourcePa = pa;
+            s->SourceSize = file_size;
+            s->Flags |= MI_SECTION_SHARE_SOURCE;
         } else {
             status = copy_file_into(s, file, 0, 0, size);
         }
@@ -1017,7 +1024,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
             /* the pages that are ready and shared are mapped, the others come with the first touch. */
             ULONG64 ready = MiSectionReadyPage(vad, i, prot);
             if (ready) {
-                if (!MiMapPage(as->Root, pva, ready, MiSectionPteAttrs(prot, ready, TRUE)))
+                if (!MiMapPage(as->Root, pva, ready, MiSectionPteAttrs(s, prot, ready, TRUE)))
                     status = STATUS_INSUFFICIENT_RESOURCES;
             } else {
                 ULONG64 *pte = MiWalk(as->Root, pva, TRUE, 3);
@@ -1037,7 +1044,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
                 *pte = MiSectionSwPte(prot);
             continue;
         }
-        ULONG64 attrs = MiSectionPteAttrs(prot, pa, !relocated);
+        ULONG64 attrs = MiSectionPteAttrs(s, prot, pa, !relocated);
         if (!MiMapPage(as->Root, pva, pa, attrs))
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -1430,7 +1437,7 @@ NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T len
     SIZE_T size;
     memset(&out, 0, sizeof(out));
     if (klass == 0) {
-        out.basic.AllocationAttributes = s->Flags & ~(MI_SECTION_PHYSICAL | MI_SECTION_SHARE_SOURCE);
+        out.basic.AllocationAttributes = s->Flags & ~(MI_SECTION_PHYSICAL | MI_SECTION_SHARE_SOURCE | MI_SECTION_WRITABLE_WINDOW);
         out.basic.MaximumSize.QuadPart = (LONGLONG)s->Size;
         size = sizeof(out.basic);
     } else if (klass == 1 && (s->Flags & SEC_IMAGE)) {

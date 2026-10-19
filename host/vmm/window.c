@@ -13,8 +13,10 @@
 #define WINDOW_BUDGET (64ull << 20) /* filled window bytes kept before older windows are emptied */
 
 /* places a file read only at the first free window address, first fit. nothing is read yet. */
-uint64_t mime_window_map(MimeVm *vm, int file, uint64_t *ipa_out)
+uint64_t mime_window_map(MimeVm *vm, int file, bool writable, uint64_t *ipa_out)
 {
+    if (writable)
+        return MIME_HC_STATUS_UNSUPPORTED;
     struct stat st;
     if (fstat(file, &st) != 0 || st.st_size <= 0)
         return MIME_HC_STATUS_INVALID;

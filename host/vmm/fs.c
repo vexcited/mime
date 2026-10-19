@@ -904,7 +904,8 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         pthread_mutex_lock(WINDOW_LOCK(vm));
-        status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, &regs[1]) : MIME_HC_STATUS_INVALID;
+        status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, (a[2] & MIME_FS_MAP_WRITABLE) != 0, &regs[1])
+                                    : MIME_HC_STATUS_INVALID;
         pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
     }

@@ -227,7 +227,7 @@ void mime_fs_close_all(MimeVm *vm);
 bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa);
 
 /* window.c, with fs_lock held: host files mapped into the guest. */
-uint64_t mime_window_map(MimeVm *vm, int fd, uint64_t *ipa_out);
+uint64_t mime_window_map(MimeVm *vm, int fd, bool writable, uint64_t *ipa_out);
 uint64_t mime_window_unmap(MimeVm *vm, uint64_t ipa);
 void mime_window_unmap_all(MimeVm *vm);
 #ifdef __linux__

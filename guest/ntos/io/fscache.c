@@ -178,11 +178,14 @@ static BOOLEAN map_window(MIMEFS_CACHE *c, ULONG64 host_handle)
 BOOLEAN FsCacheRead(MIMEFS_CACHE *c, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done)
 {
     *done = 0;
+    /* the file was written since the window was placed, and may be longer or shorter than the window: the host answers. */
+    if (__atomic_load_n(&c->FileId, __ATOMIC_ACQUIRE) == DETACHED)
+        return FALSE;
     if (length < CACHE_SMALL_READ && !__atomic_load_n(&c->Window, __ATOMIC_ACQUIRE) &&
         __atomic_add_fetch(&c->SmallReads, 1, __ATOMIC_RELAXED) < CACHE_SMALL_READS)
         return FALSE;
     ExAcquireFastMutex(&g_lock);
-    BOOLEAN ok = map_window(c, host_handle);
+    BOOLEAN ok = c->FileId != DETACHED && map_window(c, host_handle);
     ULONG64 window = c->Window;
     ExReleaseFastMutex(&g_lock);
     if (!ok)
@@ -214,4 +217,25 @@ BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *c, ULONG64 host_handle, PULONG64 pa, PULO
     }
     ExReleaseFastMutex(&g_lock);
     return ok;
+}
+
+/* a window for one section of a file opened for writing: not shared, so that nothing that changes the file takes it away. */
+BOOLEAN FsCacheMapPrivate(ULONG64 host_handle, BOOLEAN writable, PULONG64 pa)
+{
+    for (int attempt = 0; attempt < 2; attempt++) {
+        ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_MAP, host_handle, writable ? MIME_FS_MAP_WRITABLE : 0, 0, 0, 0, 0, pa);
+        if (hs == MIME_HC_STATUS_OK)
+            return TRUE;
+        if (hs != MIME_HC_STATUS_NO_MEMORY)
+            return FALSE;
+        ExAcquireFastMutex(&g_lock);
+        trim(0); /* the window range is full, give back the idle ones */
+        ExReleaseFastMutex(&g_lock);
+    }
+    return FALSE;
+}
+
+void FsCacheUnmapPrivate(ULONG64 pa)
+{
+    HalHypercallUnlocked(MIME_HC_FS_UNMAP, pa, 0, 0, 0, 0, 0, nullptr);
 }

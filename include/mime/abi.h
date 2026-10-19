@@ -305,7 +305,7 @@ enum {
     MIME_HC_FS_READDIR = 0x15,  /* (handle, index, MimeFsDirEntry pa, count) -> entries written, 0 at end; no count is a count of one */
     MIME_HC_FS_SET_SIZE = 0x16, /* (handle, size) */
     MIME_HC_FS_DELETE = 0x17,   /* (handle) delete on close */
-    MIME_HC_FS_MAP = 0x18,      /* (handle) -> guest physical address of the whole file, read only, filled on touch */
+    MIME_HC_FS_MAP = 0x18,      /* handle and flags: the guest physical address of the whole file, filled on touch; read only, or with MIME_FS_MAP_WRITABLE shared and writable, so the guest's writes are the file's */
     MIME_HC_FS_UNMAP = 0x19,    /* (pa) */
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
     MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
@@ -725,6 +725,9 @@ typedef struct MimeFsChange {
     uint32_t name_chars;
     uint16_t name[]; /* below the watched directory, with backslashes */
 } MimeFsChange;
+
+/* MIME_HC_FS_MAP flags. a writable window needs a handle opened for writing, and is UNSUPPORTED where the host fills windows itself. */
+#define MIME_FS_MAP_WRITABLE 1u
 
 /* MIME_HC_FS_RENAME flags. */
 #define MIME_FS_RENAME_REPLACE 1u /* an existing file of the new name is replaced, a directory never is */

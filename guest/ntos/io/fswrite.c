@@ -27,6 +27,18 @@ static ULONG g_buffers;
 /* by file, the buffers with data the host has not got: read without the lock to see whether a file has any. */
 static volatile LONG g_pending[WB_BUCKETS];
 static volatile LONG g_dirty;
+/*
+ * the files with a section or a window in use, which keep no writes back and cannot be made shorter. a few at a time,
+ * so a table searched under the lock; the count is also kept alone, for the writes of files that have none.
+ */
+#define WB_MAPPED_FILES 256
+static struct {
+    ULONG Volume;
+    ULONG64 FileId;
+    LONG Count;
+} g_mapped_files[WB_MAPPED_FILES];
+static volatile LONG g_mapped_total;
+static LONG g_mapped_overflow; /* uses of files the table had no room for: every file counts as mapped meanwhile */
 static KEVENT g_wake;
 static volatile LONG g_worker;
 static BOOLEAN g_ready;
@@ -140,13 +152,69 @@ void FsWbOpen(FS_WB *wb, ULONG volume, ULONG64 file_id, ULONG64 host, PCUNICODE_
     wb->Name = name;
 }
 
+void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta)
+{
+    ExAcquireFastMutex(&g_lock);
+    LONG slot = -1, free_slot = -1;
+    for (LONG i = 0; i < WB_MAPPED_FILES; i++) {
+        if (g_mapped_files[i].Count && g_mapped_files[i].Volume == volume && g_mapped_files[i].FileId == file_id)
+            slot = i;
+        else if (!g_mapped_files[i].Count && free_slot < 0)
+            free_slot = i;
+    }
+    if (slot < 0 && delta > 0 && free_slot >= 0) {
+        g_mapped_files[free_slot].Volume = volume;
+        g_mapped_files[free_slot].FileId = file_id;
+        slot = free_slot;
+    }
+    if (slot >= 0)
+        g_mapped_files[slot].Count += delta;
+    else
+        g_mapped_overflow += delta;
+    __atomic_add_fetch(&g_mapped_total, delta, __ATOMIC_SEQ_CST);
+    ExReleaseFastMutex(&g_lock);
+}
+
+/* whether a section or a window of the file is in use. */
+BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id)
+{
+    if (!__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST))
+        return FALSE;
+    BOOLEAN mapped = FALSE;
+    ExAcquireFastMutex(&g_lock);
+    for (LONG i = 0; i < WB_MAPPED_FILES && !mapped; i++)
+        mapped = g_mapped_files[i].Count && g_mapped_files[i].Volume == volume && g_mapped_files[i].FileId == file_id;
+    ExReleaseFastMutex(&g_lock);
+    return mapped;
+}
+
+/* with the lock held. a file the table lost track of counts as mapped, which is the safe way to be wrong for a write. */
+static BOOLEAN mapped_locked(ULONG volume, ULONG64 file_id)
+{
+    if (g_mapped_overflow > 0)
+        return TRUE;
+    for (LONG i = 0; i < WB_MAPPED_FILES; i++)
+        if (g_mapped_files[i].Count && g_mapped_files[i].Volume == volume && g_mapped_files[i].FileId == file_id)
+            return TRUE;
+    return FALSE;
+}
+
 BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTSTATUS *status)
 {
     *status = STATUS_SUCCESS;
     if (!g_ready || !length || length > WB_MAX_WRITE || !wb->Host)
         return FALSE;
+    /* a view of the file, or a window, reads the host's pages and must see the write when it returns. what this handle
+       kept before the first one was made was written when it was made. */
+    if (__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST) > 0 && FsWbIsMapped(wb->Volume, wb->FileId))
+        return FALSE;
     BOOLEAN start_worker = FALSE;
     ExAcquireFastMutex(&g_lock);
+    /* a window made while this write came in is counted before it takes what is kept, which is this check's order. */
+    if (__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST) > 0 && mapped_locked(wb->Volume, wb->FileId)) {
+        ExReleaseFastMutex(&g_lock);
+        return FALSE;
+    }
     if (wb->Error) {
         /* a flush of what this handle wrote failed after its write returned: this is where it is told. */
         *status = wb->Error;

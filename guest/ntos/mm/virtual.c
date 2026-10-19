@@ -1103,7 +1103,7 @@ static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, UL
         return FALSE;
     if (!shared)
         as->CommittedPages++;
-    *pte = pa | MiSectionPteAttrs(protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
+    *pte = pa | MiSectionPteAttrs(vad->Section, protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
     KiDataSyncBarrier();
     KiInstructionBarrier();
     return TRUE;
@@ -1188,7 +1188,7 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
     BOOLEAN shared;
     if (!MiSectionFaultPage(vad, page, protect, &pa, &shared))
         return FALSE;
-    ULONG64 entry = pa | MiSectionPteAttrs(protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
+    ULONG64 entry = pa | MiSectionPteAttrs(section, protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
     if (!__atomic_compare_exchange_n(pte, &v, entry, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         /* another processor mapped the page first. */
         if (!shared)
@@ -1220,7 +1220,7 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
         ULONG64 ready = MiSectionReadyPage(vad, (vad->SectionOffset + (va - vad->StartVa)) >> PAGE_SHIFT, wp);
         if (!ready)
             continue;
-        ULONG64 neighbour = ready | MiSectionPteAttrs(wp, ready, TRUE) | MM_PTE_VALID | MM_PTE_PAGE;
+        ULONG64 neighbour = ready | MiSectionPteAttrs(section, wp, ready, TRUE) | MM_PTE_VALID | MM_PTE_PAGE;
         __atomic_compare_exchange_n(p, &w, neighbour, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
     }
     (void)section;
@@ -1372,7 +1372,9 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
     SIZE_T done = 0;
     while (done < length) {
         ULONG64 pte = MiReadPte(as->Root, (va + done) & ~(ULONG_PTR)(PAGE_SIZE - 1));
-        if (!(pte & MM_PTE_VALID) || !MI_PTE_IS_USER(pte) || MI_PTE_IS_RO(pte) || (pte & (MM_PTE_SW_COW | MM_PTE_SW_WATCH)))
+        /* a page of a file window is not memory of the kernel's to write through its map, whatever its protection. */
+        if (!(pte & MM_PTE_VALID) || !MI_PTE_IS_USER(pte) || MI_PTE_IS_RO(pte) || (pte & (MM_PTE_SW_COW | MM_PTE_SW_WATCH)) ||
+            !MiGetPfn(pte & MM_PTE_ADDR_MASK))
             break;
         SIZE_T offset = (va + done) & (PAGE_SIZE - 1), n = PAGE_SIZE - offset;
         if (n > length - done)

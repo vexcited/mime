@@ -8,6 +8,7 @@
 #include "../ntos.h"
 
 #define MIMEFS_CHUNK (128 * 1024)
+#define STATUS_USER_MAPPED_FILE ((NTSTATUS)0xC0000243L)
 
 typedef struct MIMEFS_VOLUME {
     ULONG HostVolume;
@@ -151,33 +152,99 @@ const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
 }
 
 /*
- * the read only pages holding a file's data, for sections: the rom, or the
- * file's host window. *ref is released with IoReleaseFileWindow.
+ * the pages holding a file's data, for sections: the rom, or a window of the host's page cache, the host's own pages of
+ * the file, so a view and a read or a write of the file see one another's data at once. The window of a file opened
+ * for reading is shared with the others that read it, and one for a handle opened for writing, or for a view that
+ * writes, is the section's own. A file with a window in use keeps no writes back, see io/fswrite.c, and what it kept is
+ * written before the window is made. *ref is released with IoReleaseFileWindow.
  */
-BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
+typedef struct MIMEFS_WINDOW_REF {
+    MIMEFS_CACHE *Cache; /* a shared window, which the entry keeps */
+    ULONG64 Private;     /* the guest address of a window of the section's own */
+    ULONG Volume;
+    ULONG64 FileId;
+} MIMEFS_WINDOW_REF;
+
+static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info);
+
+BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_size, PULONG64 pa, PULONG64 size, PVOID *ref)
 {
     *ref = nullptr;
     if (!file->DeviceObject || file->DeviceObject->DriverObject != g_driver || !file->FsContext)
         return FALSE;
     MIMEFS_FCB *fcb = file->FsContext;
     if (fcb->Rom) {
+        if (writable)
+            return FALSE;
         *pa = HalRomPhysical(fcb->Rom);
         *size = fcb->Rom->size;
         return TRUE;
     }
-    if (!fcb->Cache)
+    if (fcb->Directory || fcb->StatOnly || (writable && !file->WriteAccess))
         return FALSE;
+    MIMEFS_WINDOW_REF *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'W', 'r'));
+    if (!r)
+        return FALSE;
+    memset(r, 0, sizeof(*r));
+    r->Volume = fcb->Volume;
+    r->FileId = fcb->FileId;
+    /* counted first, so that a write that comes meanwhile goes to the host, and then what was kept is written. */
+    FsWbMapped(r->Volume, r->FileId, 1);
     FsWbSync(&fcb->Wb);
-    if (!FsCacheGetWindow(fcb->Cache, fcb->HostHandle, pa, size))
+    BOOLEAN done = FALSE;
+    if (!writable && fcb->Cache && FsCacheGetWindow(fcb->Cache, fcb->HostHandle, pa, size)) {
+        r->Cache = fcb->Cache;
+        done = TRUE;
+    }
+    if (!done) {
+        MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('M', 'f', 'I', 'n'));
+        if (info && NT_SUCCESS(query(fcb, info)) && (info->size || (writable && minimum_size))) {
+            ULONG64 length = info->size;
+            /* a section of more than the file makes the file longer. */
+            if (writable && minimum_size > length) {
+                FsCacheInvalidate(fcb->Volume, fcb->FileId);
+                if (HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, minimum_size, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_OK) {
+                    length = minimum_size;
+                    FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_MODIFIED,
+                                   FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
+                }
+            }
+            if (length >= minimum_size || !writable) {
+                done = FsCacheMapPrivate(fcb->HostHandle, writable, pa);
+                if (done) {
+                    r->Private = *pa;
+                    *size = length;
+                }
+            }
+        }
+        if (info)
+            ExFreePool(info);
+    }
+    if (!done) {
+        FsWbMapped(r->Volume, r->FileId, -1);
+        ExFreePool(r);
         return FALSE;
-    *ref = fcb->Cache;
+    }
+    *ref = r;
     return TRUE;
+}
+
+BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
+{
+    return IoGetFileWindowEx(file, FALSE, 0, pa, size, ref);
 }
 
 void IoReleaseFileWindow(PVOID ref)
 {
-    if (ref)
-        FsCacheClose(ref);
+    MIMEFS_WINDOW_REF *r = ref;
+    if (!r)
+        return;
+    if (r->Cache)
+        FsCacheClose(r->Cache);
+    if (r->Private)
+        FsCacheUnmapPrivate(r->Private);
+    FsWbMapped(r->Volume, r->FileId, -1);
+    ExFreePool(r);
 }
 
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file)
@@ -681,6 +748,16 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         ULONG64 size = (ULONG64)((PFILE_END_OF_FILE_INFORMATION)in)->EndOfFile.QuadPart;
         if (stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation)
             return complete(irp, STATUS_SUCCESS, 0);
+        /* a file with a section in use is not made shorter, as on windows: a view would read what is no longer there,
+           and where the pages are the host's that is a fault the host cannot take. */
+        if (FsWbIsMapped(fcb->Volume, fcb->FileId)) {
+            MimeFsInfo *current = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*current), KI_TAG('M', 'f', 'I', 'n'));
+            BOOLEAN shorter = current && NT_SUCCESS(query(fcb, current)) && size < current->size;
+            if (current)
+                ExFreePool(current);
+            if (shorter)
+                return complete(irp, STATUS_USER_MAPPED_FILE, 0);
+        }
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
         FsWbSync(&fcb->Wb);
         ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);

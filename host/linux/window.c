@@ -1,5 +1,7 @@
 /*
- * host files placed read only in the guest by MIME_HC_FS_MAP. the window
+ * host files placed in the guest by MIME_HC_FS_MAP, read only or, for a handle opened for writing and a guest that
+ * asks, shared and writable: the guest's writes go to the page cache, where reads and writes of the file see them at
+ * once. the window
  * range is reserved in the host process once, and the guest is given it
  * in a few large read only memory slots. a file is mapped over a part of
  * the reservation, from the host's page cache, and taken away by mapping
@@ -39,7 +41,8 @@ static bool register_to(MimeVm *vm, uint64_t end)
 {
     while (vm->window_registered < end) {
         uint64_t at = vm->window_registered;
-        if (!mime_kvm_set_slot(vm, mime_kvm_alloc_slot(vm), MIME_WINDOW_BASE + at, WINDOW_CHUNK, vm->window_host + at, true))
+        /* the slots can be written: what the host maps over a window decides, and the guest's tables keep it from the rest. */
+        if (!mime_kvm_set_slot(vm, mime_kvm_alloc_slot(vm), MIME_WINDOW_BASE + at, WINDOW_CHUNK, vm->window_host + at, false))
             return false;
         vm->window_registered += WINDOW_CHUNK;
     }
@@ -52,8 +55,8 @@ static void clear(MimeVm *vm, uint64_t ipa, uint64_t size)
          MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
 }
 
-/* places a file read only at the first free window address, first fit. */
-uint64_t mime_window_map(MimeVm *vm, int file, uint64_t *ipa_out)
+/* places a file at the first free window address, first fit. */
+uint64_t mime_window_map(MimeVm *vm, int file, bool writable, uint64_t *ipa_out)
 {
     struct stat st;
     if (fstat(file, &st) != 0 || st.st_size <= 0)
@@ -74,9 +77,10 @@ uint64_t mime_window_map(MimeVm *vm, int file, uint64_t *ipa_out)
     uint64_t end = MIME_ALIGN_UP(ipa + size - MIME_WINDOW_BASE, WINDOW_CHUNK);
     if (!register_to(vm, end))
         return MIME_HC_STATUS_NO_MEMORY;
-    void *host = mmap(vm->window_host + (ipa - MIME_WINDOW_BASE), size, PROT_READ, MAP_SHARED | MAP_FIXED, file, 0);
+    void *host = mmap(vm->window_host + (ipa - MIME_WINDOW_BASE), size, writable ? PROT_READ | PROT_WRITE : PROT_READ,
+                      MAP_SHARED | MAP_FIXED, file, 0);
     if (host == MAP_FAILED)
-        return errno == ENOMEM ? MIME_HC_STATUS_NO_MEMORY : MIME_HC_STATUS_IO_ERROR;
+        return errno == ENOMEM ? MIME_HC_STATUS_NO_MEMORY : errno == EACCES ? MIME_HC_STATUS_ACCESS_DENIED : MIME_HC_STATUS_IO_ERROR;
     memmove(&vm->windows[at + 1], &vm->windows[at], (vm->window_count - at) * sizeof(MimeFileWindow));
     vm->windows[at] = (MimeFileWindow){ipa, size};
     vm->window_count++;

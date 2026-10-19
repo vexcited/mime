@@ -561,6 +561,7 @@ typedef struct _MI_IMAGE_INFO {
 
 #define MI_SECTION_PHYSICAL 0x00000001 /* Flags: the pages belong to the creator */
 #define MI_SECTION_SHARE_SOURCE 0x00000002 /* Flags: read only data section, pages are the file's own */
+#define MI_SECTION_WRITABLE_WINDOW 0x00000004 /* Flags: the pages are the file's own and the views write them, see IoGetFileWindowEx */
 
 typedef struct _SECTION {
     ULONG Flags;   /* SEC_IMAGE, SEC_COMMIT, ... */
@@ -596,7 +597,7 @@ BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *p
 /* the page a view would map for a page without building or copying anything, or 0. */
 ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect);
 ULONG64 MiSectionSwPte(ULONG protect);
-ULONG64 MiSectionPteAttrs(ULONG protect, ULONG64 pa, BOOLEAN shared);
+ULONG64 MiSectionPteAttrs(PSECTION s, ULONG protect, ULONG64 pa, BOOLEAN shared);
 
 void MmInitialize(MimeBootInfo *boot);
 void MmInitializePhase1(void);
@@ -1070,6 +1071,9 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
 NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
 BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
+/* the same, for a section of a data file: a window that is the file's own pages in both directions. writable asks for one
+   the guest may write, which makes the file at least minimum_size long first, as windows does for a section. */
+BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_size, PULONG64 pa, PULONG64 size, PVOID *ref);
 void IoReleaseFileWindow(PVOID ref);
 
 NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
@@ -1095,6 +1099,9 @@ void FsCacheClose(MIMEFS_CACHE *cache);
 void FsCacheInvalidate(ULONG volume, ULONG64 file_id);
 BOOLEAN FsCacheRead(MIMEFS_CACHE *cache, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done);
 BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *cache, ULONG64 host_handle, PULONG64 pa, PULONG64 size);
+/* a window of a host handle that belongs to its user, shared with no one; unmapped by FsCacheUnmapPrivate. */
+BOOLEAN FsCacheMapPrivate(ULONG64 host_handle, BOOLEAN writable, PULONG64 pa);
+void FsCacheUnmapPrivate(ULONG64 pa);
 /* mm/virtual.c: how much of a copy into another process's memory was done through its present pages, see there. */
 SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T length);
 /* copies into the memory of a process, the current one or another, from any thread. */
@@ -1132,6 +1139,9 @@ void FsWbNameUnlock(void);
 void FsWbClose(FS_WB *wb);
 /* everything kept, for the machine's shutdown. */
 void FsWbFlushAll(void);
+/* a file with a section or a window of it in use keeps no writes back, see io/fswrite.c. */
+void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta);
+BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 void IopInitializeCompletion(void);
 void IopInitializeNamedPipes(void);
