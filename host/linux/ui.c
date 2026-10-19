@@ -277,6 +277,12 @@ static void apply_text_area(void)
 }
 
 /* the area is relative to the window it was made for, which may not be the one the keyboard is in. */
+/* the scale of a buffer the compositor shows as is: whole, since a drag icon has no fractional scale. */
+int mime_ui_buffer_scale(void)
+{
+    return g_scale >= 1.5 ? (int)lround(g_scale) : 1;
+}
+
 void mime_ui_set_text_area(uint32_t id, MimeRect r, int32_t cursor)
 {
     UiWindow *w = find_window(id);

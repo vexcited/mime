@@ -390,9 +390,23 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_DND_FINISH:
         status = mime_ui_dnd_finish((uint32_t)regs[1], (uint32_t)regs[2]);
         break;
-    case MIME_HC_DND_START:
-        status = mime_ui_dnd_start((uint32_t)regs[1], (uint32_t)regs[2], &value);
+    case MIME_HC_DND_START: {
+        /* the image of the drag, if the guest has one: copied by the host before the call returns. */
+        const MimeDragIcon *icon = nullptr;
+        uint64_t icon_bytes = regs[5];
+        if (regs[4]) {
+            icon = icon_bytes >= sizeof(MimeDragIcon) &&
+                           icon_bytes <= sizeof(MimeDragIcon) + (uint64_t)MIME_DRAG_ICON_MAX * MIME_DRAG_ICON_MAX * 4
+                       ? mime_vm_phys(vm, regs[4], icon_bytes)
+                       : nullptr;
+            if (!icon) {
+                status = MIME_HC_STATUS_INVALID;
+                break;
+            }
+        }
+        status = mime_ui_dnd_start((uint32_t)regs[1], (uint32_t)regs[2], icon, icon ? (size_t)icon_bytes : 0, &value);
         break;
+    }
     case MIME_HC_DND_STOP:
         status = mime_ui_dnd_stop((uint32_t)regs[1]);
         break;

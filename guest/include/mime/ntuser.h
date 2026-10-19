@@ -623,6 +623,7 @@ enum {
     MIME_DND_REPLY,        /* session, phase << 8 | effect: the target's answer */
     MIME_DND_STATE,        /* session, 0, out: ULONG[MIME_DND_STATE_SIZE]; returns 1 while the session is current */
     MIME_DND_START,        /* kinds, allowed effects, handler: this thread begins a host drag; returns its session */
+    MIME_DND_ICON,         /* bytes, 0, out: the MimeDragIcon the next MIME_DND_START of this thread shows; returns 1 */
     MIME_DND_STOP,         /* session */
     MIME_DND_REQUEST,      /* slot, 0, out: ULONG[2] kind and request of a data request for the source */
     MIME_DND_RESULT,       /* session: how the source's host drag ended */

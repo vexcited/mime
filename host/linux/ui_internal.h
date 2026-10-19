@@ -41,6 +41,8 @@ bool mime_ime_pending(void);
 /* ui.c: where text is entered in a window, window relative guest pixels, for the input method's popups. */
 void mime_ui_set_text_area(uint32_t window, MimeRect area, int32_t cursor);
 void mime_ui_clear_composition(uint32_t window);
+/* ui.c: the integer scale of a surface the host shows, such as the icon of a drag. */
+int mime_ui_buffer_scale(void);
 /* dnd.c: whether the compositor has the text input protocol. */
 bool mime_ui_has_text_input(void);
 

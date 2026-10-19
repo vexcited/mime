@@ -35,6 +35,8 @@ typedef struct DND {
     W32THREAD *SourceThread;
     ULONG_PTR SourceHandler;
     ULONG SourceResult;
+    PVOID Icon;       /* the image the next host drag shows, in memory the host can read */
+    ULONG IconBytes;
     struct {
         BOOLEAN Used;
         ULONG Kind, Id;
@@ -274,16 +276,46 @@ ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out)
                 result = 1;
         }
         break;
+    case MIME_DND_ICON: {
+        /* a drag image of up to 512 pixels each way, as MimeDragIcon has it. */
+        MimeDragIcon header;
+        if (g_dnd.Icon) {
+            MmFreeContiguousPages(g_dnd.Icon, g_dnd.IconBytes);
+            g_dnd.Icon = nullptr;
+        }
+        if (!out || a < sizeof(header) || a > sizeof(header) + (ULONG_PTR)MIME_DRAG_ICON_MAX * MIME_DRAG_ICON_MAX * 4 ||
+            !NT_SUCCESS(MimeCopyFromUser(&header, out, sizeof(header))) || !header.width || !header.height ||
+            header.width > MIME_DRAG_ICON_MAX || header.height > MIME_DRAG_ICON_MAX ||
+            a != sizeof(header) + (ULONG_PTR)header.width * header.height * 4)
+            break;
+        PVOID pages = MmAllocateContiguousPages((SIZE_T)a);
+        if (!pages)
+            break;
+        if (!NT_SUCCESS(MimeCopyFromUser(pages, out, (SIZE_T)a))) {
+            MmFreeContiguousPages(pages, (SIZE_T)a);
+            break;
+        }
+        g_dnd.Icon = pages;
+        g_dnd.IconBytes = (ULONG)a;
+        result = 1;
+        break;
+    }
     case MIME_DND_START: {
         ULONG64 session = 0;
+        ULONG64 icon = g_dnd.Icon ? (ULONG64)MmGetPhysicalAddress(g_dnd.Icon).QuadPart : 0;
         if (t && !g_dnd.SourceThread &&
-            HalMimeHypercall(MIME_HC_DND_START, a, b, 0, 0, 0, 0, &session) == MIME_HC_STATUS_OK && session) {
+            HalMimeHypercall(MIME_HC_DND_START, a, b, 0, icon, g_dnd.IconBytes, 0, &session) == MIME_HC_STATUS_OK && session) {
             g_dnd.SourceId = (ULONG)session;
             g_dnd.SourceThread = t;
             g_dnd.SourceHandler = (ULONG_PTR)out;
             g_dnd.SourceResult = NO_RESULT;
             memset(g_dnd.Requests, 0, sizeof(g_dnd.Requests));
             result = (ULONG_PTR)session;
+        }
+        /* the host copied the image, or this drag has none. */
+        if (g_dnd.Icon) {
+            MmFreeContiguousPages(g_dnd.Icon, g_dnd.IconBytes);
+            g_dnd.Icon = nullptr;
         }
         break;
     }

@@ -88,13 +88,15 @@ uint64_t mime_ui_ime_control(uint32_t op, uint32_t window, uint64_t *value);
  * the macos display. effect and finish answer a host drag over a guest window; fetch reads its data in a kind
  * (the answer to MIME_HC_DND_FETCH is like the clipboard's). start begins a host drag of the guest's own, with the
  * kinds the guest can render; the data is asked for with MIME_INPUT_DND_REQUEST and given to
- * mime_ui_clipboard_provide, and the end comes as MIME_INPUT_DND_END. stop ends it early.
+ * mime_ui_clipboard_provide, and the end comes as MIME_INPUT_DND_END. stop ends it early. the icon, a MimeDragIcon
+ * of icon_bytes bytes or null, is the drag's image, which the compositor shows beside the pointer; it is copied.
  */
 uint64_t mime_ui_dnd_effect(uint32_t session, uint32_t effect);
 uint64_t mime_ui_dnd_finish(uint32_t session, uint32_t effect);
 uint64_t mime_ui_dnd_fetch(uint32_t session, uint32_t kind, void *dst, uint64_t capacity, uint64_t offset,
                            uint64_t *total);
-uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, uint64_t *session);
+uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, const MimeDragIcon *icon, size_t icon_bytes,
+                           uint64_t *session);
 uint64_t mime_ui_dnd_stop(uint32_t session);
 
 #endif

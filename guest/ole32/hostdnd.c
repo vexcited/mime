@@ -611,6 +611,67 @@ static ULONG kinds_of(IDataObject *data)
     return kinds;
 }
 
+/* ------------------------------------------------------------------ the image of a drag */
+
+/*
+ * the drag image the source's helper put into the data object (see shell32's dragdrop.c: "DragContext" says it is
+ * there and "DragImageBits" holds it, bottom row first), as the MimeDragIcon the host shows with the drag. an image
+ * over 512 pixels is taken down by whole pixels to fit. null when the object has none; the buffer is the caller's.
+ */
+static MimeDragIcon *make_icon(IDataObject *data, ULONG *bytes)
+{
+    UINT context_cf = RegisterClipboardFormatW(L"DragContext"), bits_cf = RegisterClipboardFormatW(L"DragImageBits");
+    FORMATETC format = {(CLIPFORMAT)context_cf, nullptr, DVASPECT_CONTENT, -1, TYMED_ISTREAM};
+    STGMEDIUM medium = {};
+    if (FAILED(data->lpVtbl->GetData(data, &format, &medium)))
+        return nullptr;
+    DWORD context[4] = {};
+    BOOL has_bits = FALSE;
+    if (medium.tymed == TYMED_ISTREAM && medium.pstm) {
+        LARGE_INTEGER zero = {};
+        ULONG read = 0;
+        medium.pstm->lpVtbl->Seek(medium.pstm, zero, STREAM_SEEK_SET, nullptr);
+        has_bits = SUCCEEDED(medium.pstm->lpVtbl->Read(medium.pstm, context, sizeof(context), &read)) &&
+                   read == sizeof(context) && context[1];
+        medium.pstm->lpVtbl->Seek(medium.pstm, zero, STREAM_SEEK_SET, nullptr);
+    }
+    ReleaseStgMedium(&medium);
+    if (!has_bits)
+        return nullptr;
+    format.cfFormat = (CLIPFORMAT)bits_cf;
+    format.tymed = TYMED_HGLOBAL;
+    memset(&medium, 0, sizeof(medium));
+    if (FAILED(data->lpVtbl->GetData(data, &format, &medium)))
+        return nullptr;
+    MimeDragIcon *icon = nullptr;
+    SIZE_T size = medium.tymed == TYMED_HGLOBAL && medium.hGlobal ? GlobalSize(medium.hGlobal) : 0;
+    const LONG *header = size >= 24 ? GlobalLock(medium.hGlobal) : nullptr;
+    if (header && header[0] > 0 && header[1] > 0 && header[0] <= 16384 && header[1] <= 16384 &&
+        size >= 24 + (SIZE_T)header[0] * header[1] * 4) {
+        LONG width = header[0], height = header[1];
+        const DWORD *pixels = (const DWORD *)(header + 6);
+        LONG step = 1;
+        while (width / step > MIME_DRAG_ICON_MAX || height / step > MIME_DRAG_ICON_MAX)
+            step++;
+        LONG w = width / step, h = height / step;
+        icon = OleAlloc(sizeof(MimeDragIcon) + (SIZE_T)w * h * 4);
+        if (icon) {
+            icon->width = (uint32_t)w;
+            icon->height = (uint32_t)h;
+            icon->hot_x = header[2] / step;
+            icon->hot_y = header[3] / step;
+            for (LONG y = 0; y < h; y++)
+                for (LONG x = 0; x < w; x++)
+                    icon->pixels[(SIZE_T)y * w + x] = pixels[(SIZE_T)(height - 1 - y * step) * width + x * step];
+            *bytes = (ULONG)(sizeof(MimeDragIcon) + (SIZE_T)w * h * 4);
+        }
+    }
+    if (header)
+        GlobalUnlock(medium.hGlobal);
+    ReleaseStgMedium(&medium);
+    return icon;
+}
+
 /*
  * the drag of DoDragDrop has left the source's window: the host takes it over. false when it cannot, as without a
  * display or when nothing the data object has crosses over; the drag then goes on inside the guest.
@@ -622,6 +683,13 @@ bool OleHostDragBegin(IDataObject *data, DWORD allowed)
     ULONG kinds = kinds_of(data);
     if (!kinds)
         return false;
+    /* the image goes before the start, which hands it to the compositor as the icon of the drag. */
+    ULONG icon_bytes = 0;
+    MimeDragIcon *icon = make_icon(data, &icon_bytes);
+    if (icon) {
+        NtUserMimeDnd(MIME_DND_ICON, icon_bytes, 0, (PULONG)icon);
+        OleFree(icon);
+    }
     ULONG session = (ULONG)NtUserMimeDnd(MIME_DND_START, kinds, allowed & 7, (PULONG)(ULONG_PTR)OleHostDndHandler);
     if (!session)
         return false;

@@ -362,7 +362,7 @@ enum {
     MIME_HC_DND_EFFECT = 0x4B,   /* (session, DROPEFFECT_*) what the target under a host drag does with it */
     MIME_HC_DND_FETCH = 0x4C,    /* (session, MIME_CLIP_* kind, pa, capacity, offset) -> total size of a host drag's data */
     MIME_HC_DND_FINISH = 0x4D,   /* (session, DROPEFFECT_*) the drop has been handled, with its effect */
-    MIME_HC_DND_START = 0x4E,    /* (MIME_CLIP_* kinds, DROPEFFECT_* allowed, window) -> session: a drag of the guest leaves its windows */
+    MIME_HC_DND_START = 0x4E,    /* (MIME_CLIP_* kinds, DROPEFFECT_* allowed, 0, icon pa, icon bytes) -> session: a drag of the guest leaves its windows; the icon is a MimeDragIcon the host copies before returning, 0 for none */
     MIME_HC_DND_STOP = 0x4F,     /* (session) the guest ends the drag it started */
 
     /* input methods, see MIME_INPUT_IME. */
@@ -387,6 +387,18 @@ enum {
     MIME_HC_CAMERA_CLOSE = 0x94,   /* (stream) returns once the host no longer uses the memory */
     MIME_HC_CAMERA_CONTROL = 0x95, /* (pa) a MimeCameraControl, answered in place */
 };
+
+/*
+ * the image of a drag the host shows as the drag icon, at the physical address MIME_HC_DND_START is given: the size,
+ * the hot spot (the pixel that sits under the pointer) and then width * height pixels, top row first, 32 bits each
+ * with premultiplied alpha, as a Wayland buffer in the format ARGB8888 has them.
+ */
+typedef struct MimeDragIcon {
+    uint32_t width, height;
+    int32_t hot_x, hot_y;
+    uint32_t pixels[];
+} MimeDragIcon;
+#define MIME_DRAG_ICON_MAX 512 /* pixels each way */
 
 /* MIME_HC_IME_CONTROL: whether the host has an input method protocol at all (1 or 0), and ending a composition. */
 enum {

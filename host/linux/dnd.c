@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/mman.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -63,6 +64,8 @@ static struct wl_seat *g_seat;
 static struct wl_data_device_manager *g_manager;
 static struct wl_data_device *g_device;
 static struct wl_pointer *g_pointer;
+static struct wl_compositor *g_compositor;
+static struct wl_shm *g_shm;
 static uint32_t g_next_session;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -539,6 +542,8 @@ typedef struct Drag {
     bool ended;
     int pending;        /* host programs reading from the guest right now */
     int refs;           /* the drag itself, and each of those reads */
+    struct wl_surface *icon;       /* the image shown with the drag, if the guest gave one */
+    struct wl_buffer *icon_buffer;
 } Drag;
 
 static Drag *g_drag;
@@ -621,6 +626,67 @@ static void source_handle_send(void *data, struct wl_data_source *source, const 
     close(fd);
 }
 
+/* the surface and the buffer of the drag's image go; the main thread, as the compositor's objects are used there. */
+static void drop_icon(Drag *d)
+{
+    if (d->icon)
+        wl_surface_destroy(d->icon);
+    if (d->icon_buffer)
+        wl_buffer_destroy(d->icon_buffer);
+    d->icon = nullptr;
+    d->icon_buffer = nullptr;
+}
+
+static void drop_icon_main(void *arg)
+{
+    drop_icon(arg);
+    wl_display_flush(g_display);
+}
+
+/*
+ * the image of the drag as a surface of its own: pixels in shared memory as a buffer, premultiplied, the surface
+ * shown with the buffer's scale of the display. the compositor places it with the pointer, the hot spot of the
+ * image under it; that is the offset of the first attach.
+ */
+static void make_icon(Drag *d, const MimeDragIcon *icon, size_t bytes)
+{
+    if (!icon || !g_compositor || !g_shm || bytes < sizeof(*icon) || !icon->width || !icon->height ||
+        icon->width > MIME_DRAG_ICON_MAX || icon->height > MIME_DRAG_ICON_MAX ||
+        bytes != sizeof(*icon) + (size_t)icon->width * icon->height * 4)
+        return;
+    size_t stride = (size_t)icon->width * 4, size = stride * icon->height;
+    int fd = memfd_create("mime-drag-icon", MFD_CLOEXEC);
+    if (fd < 0)
+        return;
+    void *map = ftruncate(fd, (off_t)size) == 0 ? mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+                                                 : MAP_FAILED;
+    if (map == MAP_FAILED) {
+        close(fd);
+        return;
+    }
+    memcpy(map, icon->pixels, size);
+    munmap(map, size);
+    struct wl_shm_pool *pool = wl_shm_create_pool(g_shm, fd, (int32_t)size);
+    d->icon_buffer = wl_shm_pool_create_buffer(pool, 0, (int32_t)icon->width, (int32_t)icon->height, (int32_t)stride,
+                                               WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+    close(fd);
+    d->icon = wl_compositor_create_surface(g_compositor);
+}
+
+/* shows the image once the drag has started, which gives the surface its role. */
+static void show_icon(Drag *d, const MimeDragIcon *icon)
+{
+    if (!d->icon)
+        return;
+    int scale = mime_ui_buffer_scale();
+    wl_surface_set_buffer_scale(d->icon, scale);
+    wl_surface_attach(d->icon, d->icon_buffer, -icon->hot_x / scale, -icon->hot_y / scale);
+    wl_surface_damage_buffer(d->icon, 0, 0, (int32_t)icon->width, (int32_t)icon->height);
+    wl_surface_commit(d->icon);
+    mime_debug("drag icon %ux%u, hot spot %d,%d, scale %d", icon->width, icon->height, icon->hot_x, icon->hot_y, scale);
+}
+
 static void drag_end(Drag *d, bool dropped)
 {
     pthread_mutex_lock(&g_lock);
@@ -629,6 +695,8 @@ static void drag_end(Drag *d, bool dropped)
     pthread_mutex_unlock(&g_lock);
     if (!first)
         return;
+    if (d->icon)
+        mime_ui_call_main(drop_icon_main, d);
     MimeInputEvent ev = {.type = MIME_INPUT_DND_END, .pad = d->id, .x = dropped,
                          .flags = dropped ? effects_of_actions(d->action) : 0};
     mime_ui_emit(&ev);
@@ -695,6 +763,8 @@ static const struct wl_data_source_listener source_listener = {source_handle_tar
 
 typedef struct Start {
     uint32_t kinds, effects;
+    const MimeDragIcon *icon;
+    size_t icon_bytes;
     uint32_t session;
     bool ok;
     pthread_mutex_t lock;
@@ -708,6 +778,7 @@ static void start_main(void *arg)
     const char *types[16];
     size_t n = mime_conv_offer_types(s->kinds, types);
     if (g_drag && g_drag->ended) {
+        drop_icon(g_drag);
         wl_data_source_destroy(g_drag->source);
         drag_unref(g_drag);
         g_drag = nullptr;
@@ -724,7 +795,9 @@ static void start_main(void *arg)
                 wl_data_source_offer(d->source, types[i]);
             if (wl_data_source_get_version(d->source) >= WL_DATA_SOURCE_SET_ACTIONS_SINCE_VERSION)
                 wl_data_source_set_actions(d->source, actions_of_effects(s->effects));
-            wl_data_device_start_drag(g_device, d->source, g_press_surface, nullptr, g_press_serial);
+            make_icon(d, s->icon, s->icon_bytes);
+            wl_data_device_start_drag(g_device, d->source, g_press_surface, d->icon, g_press_serial);
+            show_icon(d, s->icon);
             wl_display_flush(g_display);
             g_drag = d;
             s->session = d->id;
@@ -737,12 +810,13 @@ static void start_main(void *arg)
     pthread_mutex_unlock(&s->lock);
 }
 
-uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, uint64_t *session)
+uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, const MimeDragIcon *icon, size_t icon_bytes,
+                           uint64_t *session)
 {
     *session = 0;
     if (!mime_ui_has_video() || !g_device)
         return MIME_HC_STATUS_UNSUPPORTED;
-    Start s = {.kinds = kinds, .effects = effects, .lock = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER};
+    Start s = {.kinds = kinds, .effects = effects, .icon = icon, .icon_bytes = icon_bytes, .lock = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER};
     if (!mime_ui_call_main(start_main, &s))
         return MIME_HC_STATUS_UNSUPPORTED;
     pthread_mutex_lock(&s.lock);
@@ -761,6 +835,7 @@ static void stop_main(void *arg)
         /* the source goes away and the compositor ends the drag. */
         g_drag = nullptr;
         d->ended = true;
+        drop_icon(d);
         wl_data_source_destroy(d->source);
         drag_unref(d);
     }
@@ -875,6 +950,10 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
         g_text_input = true;
     if (!strcmp(interface, wl_seat_interface.name) && !g_seat)
         g_seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+    else if (!strcmp(interface, wl_compositor_interface.name))
+        g_compositor = wl_registry_bind(registry, name, &wl_compositor_interface, MIME_MIN(version, 4u));
+    else if (!strcmp(interface, wl_shm_interface.name))
+        g_shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
     else if (!strcmp(interface, wl_data_device_manager_interface.name))
         g_manager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, MIME_MIN(version, 3u));
 }

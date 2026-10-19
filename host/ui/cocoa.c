@@ -2133,7 +2133,8 @@ uint64_t mime_ui_dnd_fetch(uint32_t session, uint32_t kind, void *dst, uint64_t 
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
-uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, uint64_t *session)
+uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, const MimeDragIcon *icon, size_t icon_bytes,
+                           uint64_t *session)
 {
     *session = 0;
     return MIME_HC_STATUS_UNSUPPORTED;
