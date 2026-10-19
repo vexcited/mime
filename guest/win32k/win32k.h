@@ -295,6 +295,8 @@ typedef struct DC {
     ULONG PathState;
     GDI_PATH Path;
     int PixelFormat; /* memory dcs; window dcs use the window's */
+    BOOLEAN OfMonitor; /* a dc of the device \\.\DISPLAYn, which is only that monitor */
+    ULONG Monitor;
     SIZE VirtualPixels; /* SetVirtualResolution, zero when unset */
     SIZE VirtualMm;
 } DC;
@@ -883,6 +885,7 @@ void RawFreeProcess(W32PROCESS *p);
 void PaintFlushThread(W32THREAD *t);
 void PaintPresent(WND *top);
 HDC PaintGetDC(WND *w, HRGN clip, ULONG flags);
+HDC PaintGetMonitorDC(ULONG index);
 void PaintReleaseDC(DC *dc);
 HDC PaintBegin(WND *w, PAINTSTRUCT *ps);
 void PaintEnd(WND *w, const PAINTSTRUCT *ps);
@@ -972,6 +975,9 @@ COLORREF MetricsSysColor(int index);
 
 /* screen.c: the surface screen and desktop dcs draw on, composed from the windows before reads. */
 SURFACE *ScreenSurface(void);
+POINT ScreenOrigin(void);
+BOOLEAN ScreenMonitorRect(ULONG index, RECT *out);
+void ScreenVisibleRegion(REGION *out);
 BOOLEAN ScreenIsSurface(const SURFACE *s);
 void ScreenCompose(const RECT *area);
 HBRUSH MetricsSysColorBrush(int index);

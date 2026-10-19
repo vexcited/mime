@@ -129,14 +129,35 @@ WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC dc)
     return NtGdiCreateCompatibleDC(dc);
 }
 
-/* a printer dc when the driver and device name a printer, else a display dc: the display ignores the arguments. */
+/*
+ * the display a name asks for (read: gdi32full bCreateDCA). a device argument that starts with \\.\DISPLAY wins,
+ * then the driver DISPLAY, which is the whole screen, then a driver that starts with \\.\DISPLAY. anything else is
+ * no display, and CreateDC then fails.
+ */
+static HDC open_display(LPCWSTR driver, LPCWSTR device)
+{
+    static const WCHAR prefix[] = L"\\\\.\\DISPLAY";
+    UNICODE_STRING name = {};
+    if (device && !_wcsnicmp(device, prefix, 11)) {
+        RtlInitUnicodeString(&name, device);
+    } else if (driver && !_wcsicmp(driver, L"DISPLAY")) {
+        name.Buffer = nullptr;
+    } else if (driver && !_wcsnicmp(driver, prefix, 11)) {
+        RtlInitUnicodeString(&name, driver);
+    } else {
+        return nullptr;
+    }
+    return NtGdiOpenDCW(name.Buffer ? &name : nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
+}
+
+/* a printer dc when the driver and device name a printer, else a display dc. */
 static HDC create_dc(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only)
 {
     BOOL handled;
     HDC printer = PrnCreateDC(driver, device, mode, info_only, &handled);
     if (handled)
         return printer;
-    return NtGdiOpenDCW(nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
+    return open_display(driver, device);
 }
 
 static HDC create_dc_a(LPCSTR driver, LPCSTR device, const void *mode, BOOL info_only)
@@ -145,7 +166,13 @@ static HDC create_dc_a(LPCSTR driver, LPCSTR device, const void *mode, BOOL info
     HDC printer = PrnCreateDCA(driver, device, mode, info_only, &handled);
     if (handled)
         return printer;
-    return NtGdiOpenDCW(nullptr, nullptr, nullptr, 0, TRUE, nullptr, nullptr, nullptr);
+    WCHAR wide_driver[64], wide_device[64];
+    LPCWSTR d = nullptr, n = nullptr;
+    if (driver && MultiByteToWideChar(CP_ACP, 0, driver, -1, wide_driver, ARRAYSIZE(wide_driver)))
+        d = wide_driver;
+    if (device && MultiByteToWideChar(CP_ACP, 0, device, -1, wide_device, ARRAYSIZE(wide_device)))
+        n = wide_device;
+    return open_display(d, n);
 }
 
 WINGDIAPI HDC WINAPI CreateDCW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, const void *mode)

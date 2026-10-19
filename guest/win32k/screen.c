@@ -1,33 +1,74 @@
 /*
  * the screen as programs read it. windows are not drawn on a shared
  * screen here, the host shows each top level window on its own, so the
- * screen and desktop dcs draw on a surface of the display's size that
- * is composed when something reads it: the desktop's background color,
- * then the visible top level windows from the bottom of the z order up,
- * each window's surface at its place (layered and shaped ones blended
- * through their composed copy), and over a window's client area the
- * last image presented to it through vulkan, which the host keeps.
+ * screen and desktop dcs draw on a surface of the virtual screen's size
+ * that is composed when something reads it: the desktop's background
+ * color on each monitor, black where no monitor is, then the visible top
+ * level windows from the bottom of the z order up, each window's surface
+ * at its place (layered and shaped ones blended through their composed
+ * copy), and over a window's client area the last image presented to it
+ * through vulkan, which the host keeps.
+ *
+ * the surface starts at the top left of the virtual screen, which is
+ * negative when a monitor is left of or above the primary one, while the
+ * coordinates of programs have the primary monitor's corner at 0, 0. a dc
+ * of the screen has the difference as its origin, and the area ScreenCompose
+ * gets is in surface pixels.
  */
 #include "win32k.h"
 
 static SURFACE *g_screen;
+static POINT g_screen_origin; /* the screen coordinates of the surface's top left pixel */
 static MimeWinReadback *g_readback;
 static PUCHAR g_pixels;
 static SIZE_T g_pixels_capacity;
 
-/* the surface screen dcs draw on, the display's size. */
+/* the surface screen dcs draw on, the virtual screen's size. */
 SURFACE *ScreenSurface(void)
 {
-    if (g_screen && (g_screen->Width != W32Display.Width || g_screen->Height != W32Display.Height)) {
+    RECT all = MonitorVirtualScreen();
+    LONG width = all.right - all.left, height = all.bottom - all.top;
+    if (g_screen && (g_screen->Width != width || g_screen->Height != height || g_screen_origin.x != all.left ||
+                     g_screen_origin.y != all.top)) {
         if (g_screen->Header.SelectCount)
             g_screen->Flags |= SURF_RETIRED;
         else
             SurfaceDestroy(g_screen);
         g_screen = nullptr;
     }
-    if (!g_screen)
-        g_screen = SurfaceCreate(W32Display.Width, W32Display.Height, 32, SURF_TOPDOWN);
+    if (!g_screen) {
+        g_screen = SurfaceCreate(width, height, 32, SURF_TOPDOWN);
+        g_screen_origin = (POINT){all.left, all.top};
+    }
     return g_screen;
+}
+
+/* where the surface's top left pixel is on the screen. */
+POINT ScreenOrigin(void)
+{
+    ScreenSurface();
+    return g_screen_origin;
+}
+
+/* a monitor's rectangle in surface pixels, false when there is no such monitor. */
+BOOLEAN ScreenMonitorRect(ULONG index, RECT *out)
+{
+    MIME_MONITOR_INFO m;
+    POINT origin = ScreenOrigin();
+    if (!MonitorGet(index, &m))
+        return FALSE;
+    *out = m.Rect;
+    RectOffset(out, -origin.x, -origin.y);
+    return TRUE;
+}
+
+/* the part of the surface that is on a monitor, which is all of it but for the holes between monitors. */
+void ScreenVisibleRegion(REGION *out)
+{
+    RgnClear(out);
+    RECT r;
+    for (ULONG i = 0; ScreenMonitorRect(i, &r); i++)
+        RgnCombineRect(out, out, &r, RGN_OR);
 }
 
 BOOLEAN ScreenIsSurface(const SURFACE *s) { return s && s == g_screen; }
@@ -91,9 +132,10 @@ static BOOLEAN read_presented(WND *w, ULONG *width, ULONG *height, RECT *client)
     return FALSE;
 }
 
-/* a window's surface over the screen at its place, within area. */
+/* a window's surface over the screen at its place, within area in screen coordinates. */
 static void compose_window(SURFACE *screen, const RECT *area, WND *w)
 {
+    POINT shift = g_screen_origin;
     SURFACE *s = w->Present ? w->Present : w->Surface;
     RECT r;
     if (!s || !RectIntersect(&r, area, &w->WindowRect))
@@ -106,12 +148,13 @@ static void compose_window(SURFACE *screen, const RECT *area, WND *w)
         if (sy < 0 || sy >= s->Height)
             continue;
         const ULONG *src = (const ULONG *)(s->Bits + (LONG_PTR)sy * s->Stride);
-        ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+        ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)(y - shift.y) * screen->Stride);
         for (LONG x = r.left; x < r.right; x++) {
             LONG sx = x - ox;
             if (sx < 0 || sx >= s->Width)
                 continue;
-            dst[x] = blend ? over(src[sx], dst[x]) : src[sx] | 0xFF000000;
+            ULONG *d = &dst[x - shift.x];
+            *d = blend ? over(src[sx], *d) : src[sx] | 0xFF000000;
         }
     }
 
@@ -126,14 +169,14 @@ static void compose_window(SURFACE *screen, const RECT *area, WND *w)
         return;
     for (LONG y = r.top; y < r.bottom; y++) {
         const ULONG *src = (const ULONG *)(g_pixels + (SIZE_T)((y - c.top) * (LONG)height / ch) * width * 4);
-        ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+        ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)(y - shift.y) * screen->Stride);
         for (LONG x = r.left; x < r.right; x++)
-            dst[x] = src[(x - c.left) * (LONG)width / cw] | 0xFF000000;
+            dst[x - shift.x] = src[(x - c.left) * (LONG)width / cw] | 0xFF000000;
     }
 }
 
 /*
- * composes the screen within area, in screen coordinates, before a read.
+ * composes the screen within area, in surface pixels, before a read.
  * pixels come out opaque: alpha 0xFF.
  */
 void ScreenCompose(const RECT *area)
@@ -144,13 +187,23 @@ void ScreenCompose(const RECT *area)
     RECT bounds = {0, 0, screen->Width, screen->Height}, r;
     if (!RectIntersect(&r, area ? area : &bounds, &bounds))
         return;
+    /* what is not on a monitor is black (guess), the monitors show the desktop's color. */
+    for (LONG y = r.top; y < r.bottom; y++)
+        memset(screen->Bits + (LONG_PTR)y * screen->Stride + (LONG_PTR)r.left * 4, 0, (SIZE_T)(r.right - r.left) * 4);
     ULONG background = ColorToPixel(MetricsSysColor(COLOR_BACKGROUND)) | 0xFF000000;
-    for (LONG y = r.top; y < r.bottom; y++) {
-        ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
-        for (LONG x = r.left; x < r.right; x++)
-            dst[x] = background;
+    for (ULONG i = 0; i < MonitorCount(); i++) {
+        RECT m, on;
+        if (!ScreenMonitorRect(i, &m) || !RectIntersect(&on, &r, &m))
+            continue;
+        for (LONG y = on.top; y < on.bottom; y++) {
+            ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+            for (LONG x = on.left; x < on.right; x++)
+                dst[x] = background;
+        }
     }
     /* the top level windows, top of the z order first: drawn from the last. */
+    RECT screen_area = r;
+    RectOffset(&screen_area, g_screen_origin.x, g_screen_origin.y);
     WND *list[1024];
     ULONG count = 0;
     for (WND *w = WndDesktop()->FirstChild; w && count < RTL_NUMBER_OF(list); w = w->Next)
@@ -159,6 +212,6 @@ void ScreenCompose(const RECT *area)
         WND *w = list[count];
         if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE))
             continue;
-        compose_window(screen, &r, w);
+        compose_window(screen, &screen_area, w);
     }
 }

@@ -352,10 +352,24 @@ HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
 HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port, ULONG type, BOOL display,
                        HANDLE pdev, PVOID driver_info, PVOID umpd)
 {
-    /* the display dc reads the screen as composed from the windows; what it draws is not shown. */
+    /*
+     * the display dc reads the screen as composed from the windows; what it draws is not shown. no name or DISPLAY
+     * is the whole virtual screen, \\.\DISPLAYn one monitor of it, and a monitor that is not there gives no dc.
+     */
+    PWSTR name = nullptr;
+    if (!NT_SUCCESS(W32CaptureString(device, &name, nullptr)))
+        return nullptr;
+    HDC h = nullptr;
     UserEnter();
-    HDC h = PaintGetDC(WndDesktop(), nullptr, DCX_WINDOW);
+    if (!name || !*name || !_wcsicmp(name, L"DISPLAY")) {
+        h = PaintGetDC(WndDesktop(), nullptr, DCX_WINDOW);
+    } else {
+        LONG monitor = MonitorFromDeviceName(name);
+        if (monitor >= 0)
+            h = PaintGetMonitorDC((ULONG)monitor);
+    }
     UserLeave();
+    W32Free(name);
     return h;
 }
 
@@ -371,6 +385,15 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
     DC *dc = DcLookup(hdc);
     int v = 0;
     UINT dpi = dc ? dc->Dpi : W32SystemDpi();
+    /* the size and refresh rate of the display the dc is of: its monitor, else the primary one. */
+    LONG width = W32Display.Width, height = W32Display.Height;
+    ULONG refresh = W32Display.RefreshHz;
+    MIME_MONITOR_INFO monitor;
+    if (dc && dc->OfMonitor && MonitorGet(dc->Monitor, &monitor)) {
+        width = monitor.Rect.right - monitor.Rect.left;
+        height = monitor.Rect.bottom - monitor.Rect.top;
+        refresh = monitor.RefreshHz;
+    }
     switch (index) {
     case DRIVERVERSION:
         v = 0x4001;
@@ -379,18 +402,18 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = DT_RASDISPLAY;
         break;
     case HORZSIZE:
-        v = W32MulDiv(W32Display.Width, 254, (LONG)dpi * 10);
+        v = W32MulDiv(width, 254, (LONG)dpi * 10);
         break;
     case VERTSIZE:
-        v = W32MulDiv(W32Display.Height, 254, (LONG)dpi * 10);
+        v = W32MulDiv(height, 254, (LONG)dpi * 10);
         break;
     case HORZRES:
     case DESKTOPHORZRES:
-        v = W32Display.Width;
+        v = width;
         break;
     case VERTRES:
     case DESKTOPVERTRES:
-        v = W32Display.Height;
+        v = height;
         break;
     case BITSPIXEL:
         v = dc && dc->Surface && (dc->Flags & DC_MEMORY) ? dc->Surface->Bpp : (int)W32Display.Bits;
@@ -427,7 +450,7 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = palette_display(dc) ? 18 : 24;
         break;
     case VREFRESH:
-        v = (int)W32Display.RefreshHz;
+        v = (int)refresh;
         break;
     case BLTALIGNMENT:
         v = 1;

@@ -358,14 +358,14 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
     WND *top = w ? WndTopLevel(w) : nullptr;
     SURFACE *s = top && top != WndDesktop() ? top->Surface : nullptr;
     if (!top || top == WndDesktop()) {
-        /* the screen and the desktop: the screen's surface, all of it, composed when read. */
+        /* the screen and the desktop: the virtual screen, composed when read, in the coordinates of programs. */
         SURFACE *screen = ScreenSurface();
         if (screen) {
+            POINT origin = ScreenOrigin();
             DcSetSurface(dc, screen);
             screen->Header.SelectCount++;
-            dc->Origin = (POINT){0, 0};
-            RECT all = {0, 0, screen->Width, screen->Height};
-            RgnSetRect(&dc->VisRgn, &all);
+            dc->Origin = (POINT){-origin.x, -origin.y};
+            ScreenVisibleRegion(&dc->VisRgn);
             return (HDC)dc->Header.Handle;
         }
     }
@@ -407,6 +407,31 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
         RgnCombine(&dc->VisRgn, &dc->VisRgn, &upd, RGN_AND);
         RgnFree(&upd);
     }
+    return (HDC)dc->Header.Handle;
+}
+
+/*
+ * the dc of one monitor, the device \\.\DISPLAYn: the screen's surface seen through the monitor, whose top left
+ * corner is the dc's 0, 0 (read: win32kbase GetMonitorDC with an origin of the monitor's corner).
+ */
+HDC PaintGetMonitorDC(ULONG index)
+{
+    MIME_MONITOR_INFO m;
+    SURFACE *screen = ScreenSurface();
+    RECT visible;
+    if (!screen || !MonitorGet(index, &m) || !ScreenMonitorRect(index, &visible))
+        return nullptr;
+    DC *dc = DcCreate(DC_WINDOW | DC_CACHE);
+    if (!dc)
+        return nullptr;
+    dc->Window = WndDesktop();
+    dc->Dpi = m.Dpi ? m.Dpi : 96;
+    dc->OfMonitor = TRUE;
+    dc->Monitor = index;
+    DcSetSurface(dc, screen);
+    screen->Header.SelectCount++;
+    dc->Origin = (POINT){visible.left, visible.top};
+    RgnSetRect(&dc->VisRgn, &visible);
     return (HDC)dc->Header.Handle;
 }
 
