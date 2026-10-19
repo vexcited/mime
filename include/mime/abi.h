@@ -808,7 +808,7 @@ typedef struct MimeWinPresent {
 } MimeWinPresent;
 
 /*
- * a window's last vulkan present, read back as bgra rows into pixels_phys
+ * a window's last vulkan present, read back as bgra rows with the alpha made opaque into pixels_phys
  * when it fits capacity; the host fills width, height and the client
  * rectangle it showed in, relative to the window, and the serial of the
  * image. MIME_HC_STATUS_NOT_FOUND when the window presents nothing.

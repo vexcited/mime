@@ -170,89 +170,142 @@ ULONG64 ScreenHostSerial(void)
     return mix;
 }
 
-/*
- * a window's surface over a canvas at its place, within area in screen coordinates. the canvas has the screen
- * coordinates origin at its first pixel.
- */
-static void compose_window(PUCHAR bits, LONG stride, POINT shift, const RECT *area, WND *w, BOOLEAN host_pixels)
+/* one rectangle of a window's surface over a canvas, which has the screen coordinates origin at its first pixel. */
+static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r, WND *w, SURFACE *s)
 {
-    SURFACE *s = w->Present ? w->Present : w->Surface;
-    RECT r;
-    if (!RectIntersect(&r, area, &w->WindowRect))
-        return;
     LONG ox = w->WindowRect.left, oy = w->WindowRect.top;
-    ULONG affinity = w->DisplayAffinity;
-    if (affinity == 0x11)
-        return;
-    if (affinity == 1) {
-        /* a window shown on the monitor alone is black in captures. */
-        for (LONG y = r.top; y < r.bottom; y++) {
-            ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (r.left - shift.x);
-            for (LONG x = r.left; x < r.right; x++)
-                *dst++ = 0xFF000000;
-        }
-        return;
+    /* plain windows are opaque whatever alpha gdi left; layered and shaped ones have theirs. */
+    BOOLEAN blend = w->Present || (w->LayerFlags & MIME_LAYER_UPDATE);
+    LONG x0 = W32Max(r->left, ox), x1 = W32Min(r->right, ox + s->Width);
+    for (LONG y = r->top; y < r->bottom; y++) {
+        LONG sy = y - oy;
+        if (sy < 0 || sy >= s->Height || x0 >= x1)
+            continue;
+        const ULONG *src = (const ULONG *)(s->Bits + (LONG_PTR)sy * s->Stride) + (x0 - ox);
+        ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (x0 - shift.x);
+        if (blend)
+            for (LONG x = x0; x < x1; x++, src++, dst++)
+                *dst = over(*src, *dst);
+        else
+            for (LONG x = x0; x < x1; x++)
+                *dst++ = *src++ | 0xFF000000;
     }
-    if (s) {
-        /* plain windows are opaque whatever alpha gdi left; layered and shaped ones have theirs. */
-        BOOLEAN blend = w->Present || (w->LayerFlags & MIME_LAYER_UPDATE);
-        LONG x0 = W32Max(r.left, ox), x1 = W32Min(r.right, ox + s->Width);
-        for (LONG y = r.top; y < r.bottom; y++) {
-            LONG sy = y - oy;
-            if (sy < 0 || sy >= s->Height || x0 >= x1)
-                continue;
-            const ULONG *src = (const ULONG *)(s->Bits + (LONG_PTR)sy * s->Stride) + (x0 - ox);
-            ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (x0 - shift.x);
-            if (blend)
-                for (LONG x = x0; x < x1; x++, src++, dst++)
-                    *dst = over(*src, *dst);
-            else
-                for (LONG x = x0; x < x1; x++)
-                    *dst++ = *src++ | 0xFF000000;
-        }
-    }
+}
 
-    /* the client area shows the last vulkan present, stretched as the host stretches it. */
-    ULONG width, height;
-    RECT client;
-    ULONG64 serial;
-    if (!host_pixels || !presents_through_host(w) || !read_presented(w, TRUE, &width, &height, &client, &serial))
+/* one rectangle of the image a window presented through the host, stretched as the host stretches it. */
+static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT *rect, const RECT *c, ULONG width,
+                              ULONG height)
+{
+    RECT r;
+    if (!RectIntersect(&r, rect, c))
         return;
-    RECT c = {ox + client.left, oy + client.top, ox + client.right, oy + client.bottom};
-    LONG cw = c.right - c.left, ch = c.bottom - c.top;
-    if (cw <= 0 || ch <= 0 || !RectIntersect(&r, &r, &c))
-        return;
+    LONG cw = c->right - c->left, ch = c->bottom - c->top;
     for (LONG y = r.top; y < r.bottom; y++) {
-        const ULONG *src = (const ULONG *)(g_pixels + (SIZE_T)((y - c.top) * (LONG)height / ch) * width * 4);
+        const ULONG *src = (const ULONG *)(g_pixels + (SIZE_T)((y - c->top) * (LONG)height / ch) * width * 4);
         ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride);
+        /* the host made the pixels opaque. */
         if ((ULONG)cw == width) {
-            for (LONG x = r.left; x < r.right; x++)
-                dst[x - shift.x] = src[x - c.left] | 0xFF000000;
+            memcpy(dst + (r.left - shift.x), src + (r.left - c->left), (SIZE_T)(r.right - r.left) * 4);
         } else {
             for (LONG x = r.left; x < r.right; x++)
-                dst[x - shift.x] = src[(x - c.left) * (LONG)width / cw] | 0xFF000000;
+                dst[x - shift.x] = src[(x - c->left) * (LONG)width / cw];
         }
     }
 }
 
 /*
- * the top level windows over a canvas, bottom of the z order first. the canvas holds the pixels of the rectangle
- * area, in screen coordinates, with its first pixel at shift.
+ * a window over a canvas, within the rectangles of vis in screen coordinates: its surface at its place, and over
+ * its client area the last vulkan image it presented. the image is read from the host once, whatever the rectangles.
  */
-static void compose_windows(PUCHAR bits, LONG stride, POINT shift, const RECT *area, WND *only, BOOLEAN host_pixels)
+static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *vis, WND *w, BOOLEAN host_pixels)
 {
-    WND *list[1024];
-    ULONG count = 0;
-    for (WND *w = WndDesktop()->FirstChild; w && count < RTL_NUMBER_OF(list); w = w->Next)
-        list[count++] = w;
-    while (count--) {
-        WND *w = list[count];
-        if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE))
-            continue;
-        if (only && w != only)
-            continue;
-        compose_window(bits, stride, shift, area, w, host_pixels);
+    SURFACE *s = w->Present ? w->Present : w->Surface;
+    ULONG affinity = w->DisplayAffinity;
+    if (affinity == 0x11)
+        return;
+    if (affinity == 1) {
+        /* a window shown on the monitor alone is black in captures. */
+        for (ULONG i = 0; i < vis->Count; i++)
+            for (LONG y = vis->Rects[i].top; y < vis->Rects[i].bottom; y++) {
+                ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (vis->Rects[i].left - shift.x);
+                for (LONG x = vis->Rects[i].left; x < vis->Rects[i].right; x++)
+                    *dst++ = 0xFF000000;
+            }
+        return;
     }
+    if (s)
+        for (ULONG i = 0; i < vis->Count; i++)
+            compose_surface(bits, stride, shift, &vis->Rects[i], w, s);
+
+    /* the client area shows the last vulkan present. */
+    ULONG width, height;
+    RECT client;
+    ULONG64 serial;
+    BOOLEAN got = host_pixels && presents_through_host(w) && read_presented(w, TRUE, &width, &height, &client, &serial);
+    if (!got)
+        return;
+    RECT c = {w->WindowRect.left + client.left, w->WindowRect.top + client.top, w->WindowRect.left + client.right,
+              w->WindowRect.top + client.bottom};
+    if (c.right <= c.left || c.bottom <= c.top)
+        return;
+    for (ULONG i = 0; i < vis->Count; i++)
+        compose_presented(bits, stride, shift, &vis->Rects[i], &c, width, height);
+}
+
+/* whether a window's pixels replace what is under them, and where: the part of its rectangle its surface covers. */
+static BOOLEAN window_covers(WND *w, RECT *out)
+{
+    if (w->DisplayAffinity == 0x11)
+        return FALSE;
+    if (w->DisplayAffinity == 1) {
+        *out = w->WindowRect;
+        return TRUE;
+    }
+    SURFACE *s = w->Present ? w->Present : w->Surface;
+    if (!s || w->Present || (w->LayerFlags & MIME_LAYER_UPDATE))
+        return FALSE;
+    RECT own = {w->WindowRect.left, w->WindowRect.top, w->WindowRect.left + s->Width, w->WindowRect.top + s->Height};
+    return RectIntersect(out, &w->WindowRect, &own);
+}
+
+#define PLAN_MAX 1024
+
+typedef struct PLAN {
+    WND *Window;
+    REGION Visible;
+} PLAN;
+
+/*
+ * the windows that show in area, top of the z order first, with the part of each that nothing opaque covers; what
+ * the windows cover together is covered. a window that is under others altogether is left out, and so is the part
+ * of each that is: nothing of it would ever be seen, and a screen of a few windows under a browser fills pixels that
+ * are overwritten at every frame.
+ */
+static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
+{
+    WND *list[PLAN_MAX];
+    ULONG count = 0, planned = 0;
+    for (WND *w = WndDesktop()->FirstChild; w && count < PLAN_MAX; w = w->Next)
+        list[count++] = w;
+    for (ULONG i = 0; i < count; i++) {
+        WND *w = list[i];
+        RECT r, cover;
+        if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE) || !RectIntersect(&r, area, &w->WindowRect))
+            continue;
+        PLAN *plan = &plans[planned];
+        RgnInit(&plan->Visible);
+        RgnSetRect(&plan->Visible, &r);
+        RgnCombine(&plan->Visible, &plan->Visible, covered, RGN_DIFF);
+        if (RgnIsEmpty(&plan->Visible)) {
+            RgnFree(&plan->Visible);
+            continue;
+        }
+        plan->Window = w;
+        planned++;
+        if (window_covers(w, &cover) && RectIntersect(&cover, &cover, area))
+            RgnCombineRect(covered, covered, &cover, RGN_OR);
+    }
+    return planned;
 }
 
 /*
@@ -267,23 +320,42 @@ void ScreenCompose(const RECT *area)
     RECT bounds = {0, 0, screen->Width, screen->Height}, r;
     if (!RectIntersect(&r, area ? area : &bounds, &bounds))
         return;
-    /* what is not on a monitor is black, a guess, and the monitors show the desktop's color. */
-    for (LONG y = r.top; y < r.bottom; y++)
-        memset(screen->Bits + (LONG_PTR)y * screen->Stride + (LONG_PTR)r.left * 4, 0, (SIZE_T)(r.right - r.left) * 4);
-    ULONG background = ColorToPixel(MetricsSysColor(COLOR_BACKGROUND)) | 0xFF000000;
-    for (ULONG i = 0; i < MonitorCount(); i++) {
-        RECT m, on;
-        if (!ScreenMonitorRect(i, &m) || !RectIntersect(&on, &r, &m))
-            continue;
-        for (LONG y = on.top; y < on.bottom; y++) {
-            ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
-            for (LONG x = on.left; x < on.right; x++)
-                dst[x] = background;
-        }
-    }
     RECT screen_area = r;
     RectOffset(&screen_area, g_screen_origin.x, g_screen_origin.y);
-    compose_windows(screen->Bits, screen->Stride, g_screen_origin, &screen_area, nullptr, TRUE);
+    PLAN *plans = W32Alloc(PLAN_MAX * sizeof(PLAN));
+    REGION covered, bare;
+    RgnInit(&covered);
+    RgnInit(&bare);
+    ULONG planned = plans ? plan_windows(plans, &screen_area, &covered) : 0;
+
+    /* what is not on a monitor is black, a guess, and the monitors show the desktop's color, where no window does. */
+    RgnOffset(&covered, -g_screen_origin.x, -g_screen_origin.y);
+    ULONG background = ColorToPixel(MetricsSysColor(COLOR_BACKGROUND)) | 0xFF000000;
+    RgnSetRect(&bare, &r);
+    RgnCombine(&bare, &bare, &covered, RGN_DIFF);
+    for (ULONG i = 0; i < bare.Count; i++) {
+        const RECT *b = &bare.Rects[i];
+        for (LONG y = b->top; y < b->bottom; y++)
+            memset(screen->Bits + (LONG_PTR)y * screen->Stride + (LONG_PTR)b->left * 4, 0, (SIZE_T)(b->right - b->left) * 4);
+        for (ULONG m = 0; m < MonitorCount(); m++) {
+            RECT mr, on;
+            if (!ScreenMonitorRect(m, &mr) || !RectIntersect(&on, b, &mr))
+                continue;
+            for (LONG y = on.top; y < on.bottom; y++) {
+                ULONG *dst = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+                for (LONG x = on.left; x < on.right; x++)
+                    dst[x] = background;
+            }
+        }
+    }
+    /* the windows from the bottom of the z order up, each where it shows. */
+    while (planned--) {
+        compose_window(screen->Bits, screen->Stride, g_screen_origin, &plans[planned].Visible, plans[planned].Window, TRUE);
+        RgnFree(&plans[planned].Visible);
+    }
+    W32Free(plans);
+    RgnFree(&covered);
+    RgnFree(&bare);
 }
 
 /*
@@ -304,7 +376,12 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUC
         memset(bits + (LONG_PTR)y * stride, 0, (SIZE_T)width * 4);
     /* a child has no surface of its own: it is cut out of its top level window's. */
     POINT shift = {area.left, area.top};
-    compose_windows(bits, stride, shift, &area, top, host_pixels);
+    REGION vis;
+    RgnInit(&vis);
+    RECT r;
+    if (RectIntersect(&r, &area, &top->WindowRect) && RgnSetRect(&vis, &r))
+        compose_window(bits, stride, shift, &vis, top, host_pixels);
+    RgnFree(&vis);
     for (LONG y = 0; y < height; y++) {
         ULONG *row = (ULONG *)(bits + (LONG_PTR)y * stride);
         for (LONG x = 0; x < width; x++)

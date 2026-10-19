@@ -172,6 +172,7 @@ struct Presenter {
     VkDeviceMemory readback_memory;
     uint8_t *readback_map;
     VkDeviceSize readback_size;
+    bool readback_coherent;
 
     /* semaphores a present may still wait for when the window went: freed once the device is idle. */
     VkSemaphore grave[MAX_GRAVE];
@@ -1950,6 +1951,17 @@ void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s)
 
 /* ------------------------------------------------------------------ readback */
 
+/* rows of 32 bit pixels with the alpha forced to opaque, which is what the guest composes them as. */
+static void copy_opaque(void *pixels, uint32_t stride, const uint8_t *from, uint32_t width, uint32_t height)
+{
+    for (uint32_t y = 0; y < height; y++) {
+        uint32_t *to = (uint32_t *)((uint8_t *)pixels + (size_t)y * stride);
+        const uint32_t *in = (const uint32_t *)(from + (size_t)y * width * 4);
+        for (uint32_t x = 0; x < width; x++)
+            to[x] = in[x] | 0xFF000000u;
+    }
+}
+
 /*
  * the last image presented to a window, copied as bgra rows into pixels
  * when it fits, with its size and the client rectangle it showed in,
@@ -1999,9 +2011,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
     VkDeviceSize size = (VkDeviceSize)p->last_extent.width * p->last_extent.height * 4;
     /* the buffer still holds this image: a capture of an idle window copies from it without the gpu. */
     if (p->readback_serial == p->last_serial && p->readback_size >= size) {
-        for (uint32_t y = 0; y < p->last_extent.height; y++)
-            memcpy((uint8_t *)pixels + (size_t)y * stride, p->readback_map + (size_t)y * p->last_extent.width * 4,
-                   (size_t)p->last_extent.width * 4);
+        copy_opaque(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height);
         ok = true;
         goto out;
     }
@@ -2020,8 +2030,16 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
             goto out;
         VkMemoryRequirements req;
         c->fn.vkGetBufferMemoryRequirements(c->device, p->readback, &req);
-        int32_t type = memory_type(c, req.memoryTypeBits,
-                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        /* cached memory, which reads at the speed of a copy: write combined memory reads at a few hundred megabytes a second. */
+        const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        int32_t type = memory_type(c, req.memoryTypeBits, host | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        p->readback_coherent = type >= 0;
+        if (type < 0)
+            type = memory_type(c, req.memoryTypeBits, host);
+        if (type < 0) {
+            type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            p->readback_coherent = true;
+        }
         VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
         if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->readback_memory) != VK_SUCCESS ||
             c->fn.vkBindBufferMemory(c->device, p->readback, p->readback_memory, 0) != VK_SUCCESS ||
@@ -2057,9 +2075,12 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &cmd, 0, nullptr};
     if (submit_locked(c, p->last_queue, &submit, fence) == VK_SUCCESS &&
         c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS) {
-        for (uint32_t y = 0; y < p->last_extent.height; y++)
-            memcpy((uint8_t *)pixels + (size_t)y * stride, p->readback_map + (size_t)y * p->last_extent.width * 4,
-                   (size_t)p->last_extent.width * 4);
+        if (!p->readback_coherent) {
+            VkMappedMemoryRange range = {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, nullptr, p->readback_memory, 0,
+                                         VK_WHOLE_SIZE};
+            c->fn.vkInvalidateMappedMemoryRanges(c->device, 1, &range);
+        }
+        copy_opaque(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height);
         p->readback_serial = p->last_serial;
         ok = true;
     }
