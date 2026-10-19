@@ -236,6 +236,8 @@ DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fall
                         begin++;
                         end--;
                     }
+                    if (end - begin >= size)
+                        error = ERROR_MORE_DATA;
                     used = copy_value(profile.Text + begin, end - begin, out, size);
                     found_value = TRUE;
                     break;
@@ -252,6 +254,7 @@ DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fall
                     out[size - 2] = out[size - 1] = 0;
                 }
                 used = size > 1 ? size - 2 : 0;
+                error = ERROR_MORE_DATA;
                 break;
             }
             memcpy(out + used, profile.Text + line.Name, length * sizeof(WCHAR));
@@ -429,6 +432,41 @@ static BOOL edit_profile(PCWSTR section, PCWSTR key, PCWSTR value, PCWSTR path)
     return result;
 }
 
+/* runs a writer on the file with the profile mutex held, the lock every writer of every process takes. */
+static BOOL write_locked(PCWSTR filename, BOOL (*writer)(const void *, PCWSTR), const void *arguments)
+{
+    PWSTR path = profile_path(filename);
+    if (!path)
+        return FALSE;
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\MimeIniFiles");
+    BOOL result = FALSE;
+    if (mutex) {
+        DWORD wait = WaitForSingleObject(mutex, INFINITE);
+        if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED_0) {
+            result = writer(arguments, path);
+            DWORD error = GetLastError();
+            ReleaseMutex(mutex);
+            KbSetError(error);
+        }
+    }
+    DWORD error = GetLastError();
+    if (mutex)
+        CloseHandle(mutex);
+    KbFree(path);
+    KbSetError(error);
+    return result;
+}
+
+typedef struct {
+    PCWSTR Section, Key, Value;
+} STRING_EDIT;
+
+static BOOL write_string(const void *arguments, PCWSTR path)
+{
+    const STRING_EDIT *edit = arguments;
+    return edit_profile(edit->Section, edit->Key, edit->Value, path);
+}
+
 BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value, LPCWSTR filename)
 {
     if (!section && !key && !value) {
@@ -445,25 +483,257 @@ BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR val
         KbSetError(ERROR_FILE_TOO_LARGE);
         return FALSE;
     }
+    STRING_EDIT edit = {section, key, value};
+    return write_locked(filename, write_string, &edit);
+}
+
+
+/* ------------------------------------------------------------------ sections */
+
+/*
+ * the keys of a section as a list of "key=value" strings ended by an empty one: the key without its trailing
+ * blanks, an equals sign and the value without its leading blanks, comments and blank lines left out. A line
+ * with no equals sign gives its text followed by an equals sign, a guess.
+ */
+DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, LPCWSTR filename)
+{
+    if (!section || !out) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!size)
+        return 0;
+    out[0] = 0;
+    if (size > 1)
+        out[1] = 0;
     PWSTR path = profile_path(filename);
-    if (!path)
-        return FALSE;
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\MimeIniFiles");
-    BOOL result = FALSE;
-    if (mutex) {
-        DWORD wait = WaitForSingleObject(mutex, INFINITE);
-        if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED_0) {
-            result = edit_profile(section, key, value, path);
-            DWORD error = GetLastError();
-            ReleaseMutex(mutex);
-            KbSetError(error);
+    PROFILE profile = {};
+    BOOL loaded = path && load_profile(path, &profile, FALSE);
+    DWORD error = loaded ? ERROR_SUCCESS : GetLastError();
+    /* the list is built as far as it fits in all but the last two characters, which end it. */
+    DWORD room = size > 1 ? size - 2 : 0, used = 0;
+    BOOL truncated = FALSE, active = FALSE, found = FALSE;
+    for (SIZE_T at = 0; loaded && at < profile.Length && !truncated;) {
+        PROFILE_LINE line = next_line(&profile, at);
+        at = line.Next;
+        if (line.Section) {
+            if (found)
+                break;
+            active = matches(profile.Text, line.Name, line.NameEnd, section);
+            found |= active;
+        } else if (line.Key && active) {
+            SIZE_T key = line.NameEnd - line.Name, value = line.ValueEnd - line.Value;
+            SIZE_T entry = key + 1 + value + 1;
+            SIZE_T copy = entry <= room - used ? entry : room - used;
+            /* the entry piece by piece: the key, the equals sign, the value and the null. */
+            for (SIZE_T i = 0; i < copy; i++) {
+                WCHAR c = i < key ? profile.Text[line.Name + i] : i == key ? L'=' : i < key + 1 + value ? profile.Text[line.Value + i - key - 1] : 0;
+                out[used + i] = c;
+            }
+            used += (DWORD)copy;
+            truncated = copy < entry;
         }
     }
-    DWORD error = GetLastError();
-    if (mutex)
-        CloseHandle(mutex);
+    KbFree(profile.Text);
     KbFree(path);
+    if (truncated) {
+        /* the last error is left as it was, and the caller is told the buffer was too small by this result. */
+        if (size < 2)
+            return 0;
+        out[size - 2] = out[size - 1] = 0;
+        return size - 2;
+    }
+    out[used] = 0;
+    if (used + 1 < size)
+        out[used + 1] = 0;
     KbSetError(error);
+    return used;
+}
+
+DWORD WINAPI GetPrivateProfileSectionNamesW(LPWSTR out, DWORD size, LPCWSTR filename)
+{
+    return GetPrivateProfileStringW(nullptr, nullptr, nullptr, out, size, filename);
+}
+
+typedef struct {
+    PCWSTR Section, Lines;
+    SIZE_T Length;
+} SECTION_EDIT;
+
+static BOOL edit_section(const void *arguments, PCWSTR path)
+{
+    const SECTION_EDIT *edit = arguments;
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_DIRECTORY))) {
+        KbSetError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    PROFILE profile;
+    if (!load_profile(path, &profile, TRUE))
+        return FALSE;
+    SIZE_T header = profile.Length, body = profile.Length, end = profile.Length;
+    BOOL found = FALSE;
+    for (SIZE_T at = 0; at < profile.Length;) {
+        PROFILE_LINE line = next_line(&profile, at);
+        at = line.Next;
+        if (!line.Section)
+            continue;
+        if (found) {
+            end = line.Start;
+            break;
+        }
+        if (matches(profile.Text, line.Name, line.NameEnd, edit->Section)) {
+            found = TRUE;
+            header = line.Start;
+            body = line.Next;
+        }
+    }
+    /* deleting what is not there changes nothing, not even the existence of the file. */
+    if (!edit->Lines && !found) {
+        KbFree(profile.Text);
+        KbSetError(ERROR_SUCCESS);
+        return TRUE;
+    }
+    SIZE_T section_length = wcslen(edit->Section);
+    SIZE_T capacity = profile.Length + section_length + edit->Length + 16;
+    PWSTR output = capacity <= PROFILE_LIMIT ? KbAlloc(capacity * sizeof(WCHAR)) : nullptr;
+    if (!output) {
+        KbFree(profile.Text);
+        KbSetError(capacity > PROFILE_LIMIT ? ERROR_FILE_TOO_LARGE : ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    SIZE_T used = 0;
+    if (!edit->Lines) {
+        memcpy(output, profile.Text, header * sizeof(WCHAR));
+        used = header;
+    } else {
+        SIZE_T keep = found ? body : profile.Length;
+        memcpy(output, profile.Text, keep * sizeof(WCHAR));
+        used = keep;
+        if (used && output[used - 1] != L'\n' && output[used - 1] != L'\r') {
+            output[used++] = L'\r';
+            output[used++] = L'\n';
+        }
+        if (!found) {
+            output[used++] = L'[';
+            memcpy(output + used, edit->Section, section_length * sizeof(WCHAR));
+            used += section_length;
+            output[used++] = L']';
+            output[used++] = L'\r';
+            output[used++] = L'\n';
+        }
+        for (PCWSTR line = edit->Lines; *line;) {
+            SIZE_T length = wcslen(line);
+            memcpy(output + used, line, length * sizeof(WCHAR));
+            used += length;
+            output[used++] = L'\r';
+            output[used++] = L'\n';
+            line += length + 1;
+        }
+    }
+    if (found) {
+        memcpy(output + used, profile.Text + end, (profile.Length - end) * sizeof(WCHAR));
+        used += profile.Length - end;
+    }
+    BOOL result = save_profile(path, output, used, profile.Unicode);
+    KbFree(output);
+    KbFree(profile.Text);
+    return result;
+}
+
+/* replaces the keys of a section by the list, which is ended by an empty string, or removes the section. */
+BOOL WINAPI WritePrivateProfileSectionW(LPCWSTR section, LPCWSTR lines, LPCWSTR filename)
+{
+    if (!section || !*section || contains(section, L"\r\n]")) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SIZE_T length = 0;
+    if (lines) {
+        while (lines[length]) {
+            if (length > PROFILE_LIMIT) {
+                KbSetError(ERROR_FILE_TOO_LARGE);
+                return FALSE;
+            }
+            length += wcslen(lines + length) + 1;
+        }
+        length++;
+    }
+    SECTION_EDIT edit = {section, lines, length};
+    return write_locked(filename, edit_section, &edit);
+}
+
+DWORD WINAPI GetProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size)
+{
+    return GetPrivateProfileSectionW(section, out, size, nullptr);
+}
+
+BOOL WINAPI WriteProfileSectionW(LPCWSTR section, LPCWSTR lines)
+{
+    return WritePrivateProfileSectionW(section, lines, nullptr);
+}
+
+/* ------------------------------------------------------------------ structures */
+
+/* a structure is kept as hexadecimal digits, two per byte, followed by the sum of its bytes in one more. */
+BOOL WINAPI GetPrivateProfileStructW(LPCWSTR section, LPCWSTR key, LPVOID structure, UINT size, LPCWSTR filename)
+{
+    UINT digits = 2 * size;
+    if (digits + 10 < size) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR text = KbAlloc((SIZE_T)(digits + 10) * sizeof(WCHAR));
+    if (!text)
+        return FALSE;
+    BOOL ok = FALSE;
+    if (GetPrivateProfileStringW(section, key, nullptr, text, digits + 10, filename) != digits + 2) {
+        KbSetError(ERROR_BAD_LENGTH);
+    } else {
+        BYTE sum = 0, *bytes = structure;
+        for (UINT i = 0; i <= size; i++) {
+            BYTE high = (BYTE)((text[2 * i] < L'0' || text[2 * i] > L'9' ? text[2 * i] - 7 : text[2 * i]) & 0xf);
+            BYTE low = (BYTE)((text[2 * i + 1] < L'0' || text[2 * i + 1] > L'9' ? text[2 * i + 1] - 7 : text[2 * i + 1]) & 0xf);
+            BYTE value = (BYTE)(high << 4 | low);
+            if (i == size) {
+                ok = value == sum;
+                if (!ok)
+                    KbSetError(ERROR_INVALID_DATA);
+                break;
+            }
+            bytes[i] = value;
+            sum += value;
+        }
+    }
+    KbFree(text);
+    return ok;
+}
+
+BOOL WINAPI WritePrivateProfileStructW(LPCWSTR section, LPCWSTR key, LPVOID structure, UINT size, LPCWSTR filename)
+{
+    if (!structure)
+        return WritePrivateProfileStringW(section, key, nullptr, filename);
+    if (2 * size + 3 < size) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR text = KbAlloc((SIZE_T)(2 * size + 3) * sizeof(WCHAR));
+    if (!text)
+        return FALSE;
+    static const WCHAR hex[] = L"0123456789ABCDEF";
+    const BYTE *bytes = structure;
+    BYTE sum = 0;
+    UINT at = 0;
+    for (UINT i = 0; i < size; i++) {
+        sum += bytes[i];
+        text[at++] = hex[bytes[i] >> 4];
+        text[at++] = hex[bytes[i] & 15];
+    }
+    text[at++] = hex[sum >> 4];
+    text[at++] = hex[sum & 15];
+    text[at] = 0;
+    BOOL result = WritePrivateProfileStringW(section, key, text, filename);
+    KbFree(text);
     return result;
 }
 
