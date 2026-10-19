@@ -94,10 +94,16 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     if (signal)
         signals[1] = *signal;
     /* pictures decoded since the last submission are what this one may read. */
-    VkSemaphoreSubmitInfo waits[2];
+    VkSemaphoreSubmitInfo waits[2 + D3D_MAX_FENCE_WAITS];
     UINT wait_count = 0;
     if (wait)
         waits[wait_count++] = *wait;
+    /* fences the program waited for since the last submission, which this one comes after. */
+    for (UINT i = 0; i < device->fence_wait_count; i++)
+        waits[wait_count++] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr,
+                                                      device->fence_waits[i].semaphore, device->fence_waits[i].value,
+                                                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
+    device->fence_wait_count = 0;
     if (device->video_value > device->video_waited) {
         waits[wait_count++] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr,
                                                       device->video_timeline, device->video_value,
@@ -119,6 +125,21 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     if (init)
         D3dInitDone(device);
     return serial;
+}
+
+/* the next submission waits for the fence to reach the value; a full list is submitted first. */
+void D3dQueueWait(D3dDevice *device, VkSemaphore semaphore, UINT64 value)
+{
+    for (;;) {
+        AcquireSRWLockExclusive(device->queue_lock);
+        if (device->fence_wait_count < D3D_MAX_FENCE_WAITS) {
+            device->fence_waits[device->fence_wait_count++] = (typeof(device->fence_waits[0])){semaphore, value};
+            ReleaseSRWLockExclusive(device->queue_lock);
+            return;
+        }
+        ReleaseSRWLockExclusive(device->queue_lock);
+        D3dSubmit(device, VK_NULL_HANDLE, nullptr, nullptr);
+    }
 }
 
 /* the commands of the device's own work, recorded under the init lock until D3dInitDone. */
@@ -202,6 +223,12 @@ static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, c
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
+    vk->vkMimeShareExportMemory = (PFN_vkMimeShareExportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportMemory");
+    vk->vkMimeShareImportMemory = (PFN_vkMimeShareImportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportMemory");
+    vk->vkMimeShareExportSemaphore =
+        (PFN_vkMimeShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportSemaphore");
+    vk->vkMimeShareImportSemaphore =
+        (PFN_vkMimeShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportSemaphore");
     /* direct3d 11 submits on the first queue of the device, whose lock the other devices of the process take. */
     device->queue = (VkQueue)shared.vk->Queues[0];
     device->queue_lock = &shared.vk->QueueLocks[0];
@@ -811,13 +838,17 @@ static HRESULT STDMETHODCALLTYPE device_create_deferred_context(ID3D11Device5 *i
     return hr;
 }
 
+/* OpenSharedResource takes the legacy handle GetSharedHandle gives, OpenSharedResource1 the nt handle. */
 static HRESULT STDMETHODCALLTYPE device_open_shared_resource(ID3D11Device5 *iface, HANDLE handle, REFIID riid,
                                                              void **resource)
 {
-    if (resource)
-        *resource = nullptr;
-    D3dLog("d3d11: shared resources are not implemented");
-    return E_INVALIDARG;
+    return D3dShareOpen(impl(iface), handle, FALSE, riid, resource);
+}
+
+static HRESULT STDMETHODCALLTYPE device_open_shared_resource1(ID3D11Device5 *iface, HANDLE handle, REFIID riid,
+                                                              void **resource)
+{
+    return D3dShareOpen(impl(iface), handle, TRUE, riid, resource);
 }
 
 /* the formats of video depend on what the host's gpu decodes, which is asked once. */
@@ -1131,7 +1162,15 @@ static HRESULT STDMETHODCALLTYPE device_create_device_context_state(ID3D11Device
 static HRESULT STDMETHODCALLTYPE device_open_shared_resource_by_name(ID3D11Device5 *iface, LPCWSTR name,
                                                                      DWORD access, REFIID riid, void **resource)
 {
-    return device_open_shared_resource(iface, nullptr, riid, resource);
+    if (resource)
+        *resource = nullptr;
+    HANDLE handle;
+    HRESULT hr = MimeShareOpenName(name, MIME_GFXSHARE_RESOURCE, &handle);
+    if (FAILED(hr))
+        return hr;
+    hr = D3dShareOpen(impl(iface), handle, TRUE, riid, resource);
+    CloseHandle(handle);
+    return hr;
 }
 
 static void STDMETHODCALLTYPE device_get_resource_tiling(ID3D11Device5 *iface, ID3D11Resource *resource,
@@ -1178,18 +1217,13 @@ static void STDMETHODCALLTYPE device_unregister_device_removed(ID3D11Device5 *if
 static HRESULT STDMETHODCALLTYPE device_open_shared_fence(ID3D11Device5 *iface, HANDLE handle, REFIID riid,
                                                           void **fence)
 {
-    if (fence)
-        *fence = nullptr;
-    return E_NOTIMPL;
+    return D3dOpenSharedFence(impl(iface), handle, riid, fence);
 }
 
 static HRESULT STDMETHODCALLTYPE device_create_fence(ID3D11Device5 *iface, UINT64 value, D3D11_FENCE_FLAG flags,
                                                      REFIID riid, void **fence)
 {
-    if (fence)
-        *fence = nullptr;
-    D3dLog("d3d11: fences are not implemented");
-    return E_NOTIMPL;
+    return D3dCreateFence(impl(iface), value, flags, riid, fence);
 }
 
 static const ID3D11Device5Vtbl device_vtbl = {
@@ -1241,7 +1275,7 @@ static const ID3D11Device5Vtbl device_vtbl = {
     device_create_blend_state1,
     device_create_rasterizer_state1,
     device_create_device_context_state,
-    device_open_shared_resource,
+    device_open_shared_resource1,
     device_open_shared_resource_by_name,
     device_get_immediate_context2,
     device_create_deferred_context2,

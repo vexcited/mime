@@ -1245,6 +1245,22 @@ static HRESULT STDMETHODCALLTYPE device_create_shared_handle(ID3D12Device14 *ifa
         }
         return D12FenceShare(f, attributes, name, handle);
     }
+    ID3D12Resource *resource = nullptr;
+    if (SUCCEEDED(object->lpVtbl->QueryInterface(object, &IID_ID3D12Resource, (void **)&resource))) {
+        D12Resource *r = D12ResourceFrom(resource);
+        resource->lpVtbl->Release(resource);
+        if (!r->committed || r->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ||
+            !(r->heap_flags & D3D12_HEAP_FLAG_SHARED)) {
+            validation_error(device, !r->committed ? "pObject points to a resource that is not a committed resource. Only committed resources can have a shared handle."
+                                                   : "pObject points to a committed resource or a heap that was not created with the D3D12_HEAP_FLAG_SHARED flag.");
+            return E_INVALIDARG;
+        }
+        if (access != GENERIC_ALL) {
+            validation_error(device, "Access parameter must be GENERIC_ALL.");
+            return E_INVALIDARG;
+        }
+        return D12ResourceShare(r, attributes, name, handle);
+    }
     validation_error(device,
                      "Only Committed Resources, Heaps, Fences, or Protected Sessions can have a shared handle. pObject "
                      "points to none of these DeviceChild types.");
@@ -1268,7 +1284,7 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface
         fence->iface.lpVtbl->Release(&fence->iface);
         return hr;
     }
-    return E_NOTIMPL;
+    return D12OpenSharedResource(device, handle, riid, out);
 }
 
 /* only the access GENERIC_ALL opens more than a fence, as in D3D12Core.dll. */

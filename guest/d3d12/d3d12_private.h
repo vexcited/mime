@@ -349,6 +349,16 @@ struct D12Resource {
     UINT tile_count;
     struct D12Tile *tiles;
     SRWLOCK tiles_lock;
+    /*
+     * sharing: a texture made to be shared owns its memory, which other devices import; what it was described
+     * with, its kernel object once it has a handle, and the description of the object being opened while it is.
+     */
+    VkDeviceMemory own_memory;
+    MimeShareBlob *share_blob;
+    MimeShare share;
+    SRWLOCK share_lock;
+    const MimeShareBlob *import_blob;
+    MimeShare import_share;
 };
 
 /* where a tile of a reserved resource maps: a heap and its tile, no heap when it maps nothing. */
@@ -378,6 +388,15 @@ UINT D12RegionTiles(const D12Resource *resource, const D3D12_TILED_RESOURCE_COOR
 void D12FreeTiles(D12Resource *resource);
 
 D12Resource *D12ResourceFrom(ID3D12Resource *iface);
+/* share.c: committed textures made to be shared and the handles that open them. */
+HRESULT D12ResourceShare(D12Resource *resource, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out);
+HRESULT D12OpenSharedResource(D12Device *device, HANDLE handle, REFIID riid, void **out);
+void D12ShareDescribe(D12Resource *resource, const VkImageCreateInfo *info, UINT type_index, UINT64 memory_size);
+void D12ShareDestroy(D12Resource *resource);
+/* a texture over the memory of a shared object; the description is the one the object was made with. */
+HRESULT D12CreateResourceImported(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
+                                  const D3D12_RESOURCE_DESC1 *desc, const MimeShareBlob *blob, const MimeShare *share,
+                                  D12Resource **out);
 HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
                           const D3D12_RESOURCE_DESC1 *desc, D12Heap *heap, UINT64 offset,
                           D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear, D12Resource **out);

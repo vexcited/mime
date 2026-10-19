@@ -385,7 +385,7 @@ void D3dDefer(D3dDevice *device, UINT64 serial, D3dGarbageType type, UINT64 hand
 
 void D3dDeferFree(D3dDevice *device, UINT64 serial, D3dAllocation *alloc)
 {
-    if (!alloc->block)
+    if (!alloc->block && !alloc->memory)
         return;
     D3dGarbage g = {serial, D3D_GARBAGE_MEMORY};
     g.alloc = *alloc;

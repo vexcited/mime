@@ -19,6 +19,8 @@
 #include "../lib/dxbc/dxbc.h"
 #include <mime/mvk_video.h>
 #include "vkprofile.h"
+#include "gfxshare.h"
+#include <mime/mvk_share.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR 1
 #include <vulkan/vulkan_core.h>
@@ -195,6 +197,11 @@ typedef struct D3dVk {
     PFN_vkMimeVideoCreateSession vkMimeVideoCreateSession;
     PFN_vkMimeVideoDestroySession vkMimeVideoDestroySession;
     PFN_vkMimeVideoDecode vkMimeVideoDecode;
+    /* memory and semaphores crossing to other devices, see mime/mvk_share.h. */
+    PFN_vkMimeShareExportMemory vkMimeShareExportMemory;
+    PFN_vkMimeShareImportMemory vkMimeShareImportMemory;
+    PFN_vkMimeShareExportSemaphore vkMimeShareExportSemaphore;
+    PFN_vkMimeShareImportSemaphore vkMimeShareImportSemaphore;
 } D3dVk;
 
 /* ------------------------------------------------------------------ formats */
@@ -360,6 +367,15 @@ struct D3dResource {
     } u;
     BOOL swapchain;
     D3d10Iface d3d10;
+    /*
+     * sharing: what a texture made to be shared was described with, the kernel object once it has a handle or was
+     * opened from one, and the keyed mutex, whose acquire is noted by the device that made it.
+     */
+    MimeShareBlob *share_blob;
+    MimeShare share;
+    SRWLOCK share_lock;
+    IDXGIKeyedMutex keyed;
+    BOOL keyed_acquired;
 };
 
 D3dResource *D3dResourceFrom(ID3D11Resource *iface);
@@ -367,6 +383,26 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
                         D3dResource **out);
 HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, const void *desc,
                          const D3D11_SUBRESOURCE_DATA *data, D3dResource **out);
+/* share.c: textures made to be shared and the handles that open them, keyed mutexes and fences. */
+#define D3D_SHARE_MISC (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX | D3D11_RESOURCE_MISC_SHARED_NTHANDLE)
+HRESULT D3dShareCheck(D3D11_RESOURCE_DIMENSION dimension, UINT usage, UINT misc, UINT mips, UINT samples);
+/* the description a shared texture is made with: the blob of its kernel object. */
+void D3dShareDescribe(D3dResource *r, const VkImageCreateInfo *info, UINT type_index, UINT64 memory_size);
+HRESULT D3dShareHandle(D3dResource *r, BOOL nt, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out);
+HRESULT D3dShareOpen(D3dDevice *device, HANDLE handle, BOOL nt, REFIID riid, void **out);
+void D3dShareDestroy(D3dResource *r);
+void *D3dShareKeyedMutex(D3dResource *r);
+/* the texture a description makes, memory imported from the object that is opened: the creation of resource.c. */
+typedef struct D3dImport {
+    const MimeShareBlob *blob;
+    MimeShare share;
+} D3dImport;
+HRESULT D3dCreateTextureImported(D3dDevice *device, const D3D11_TEXTURE2D_DESC1 *desc, const D3dImport *import,
+                                 D3dResource **out);
+HRESULT D3dCreateFence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG flags, REFIID riid, void **out);
+HRESULT D3dOpenSharedFence(D3dDevice *device, HANDLE handle, REFIID riid, void **out);
+HRESULT D3dFenceSignal(D3dContext *context, ID3D11Fence *fence, UINT64 value);
+HRESULT D3dFenceWait(D3dContext *context, ID3D11Fence *fence, UINT64 value);
 void D3dResourceAddRef(D3dResource *resource);
 void D3dResourceRelease(D3dResource *resource);
 UINT D3dSubresourceCount(const D3dResource *resource);
@@ -626,6 +662,13 @@ struct D3dDevice {
     SRWLOCK *queue_lock;
     MimeVkShared shared;
     VkSemaphore timeline;
+    /* fences the program has the next submission wait for, under the queue's lock. */
+#define D3D_MAX_FENCE_WAITS 8
+    struct {
+        VkSemaphore semaphore;
+        UINT64 value;
+    } fence_waits[D3D_MAX_FENCE_WAITS];
+    UINT fence_wait_count;
     UINT64 next_serial;
     volatile UINT64 completed;
     /* ranges dynamic buffers took new since the last submission. */
@@ -719,6 +762,7 @@ void D3dChildRelease(D3dChild *child);
 UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmitInfo *wait,
                  const VkSemaphoreSubmitInfo *signal);
 UINT64 D3dCompleted(D3dDevice *device);
+void D3dQueueWait(D3dDevice *device, VkSemaphore semaphore, UINT64 value);
 void D3dWaitSerial(D3dDevice *device, UINT64 serial);
 VkCommandBuffer D3dInitCommands(D3dDevice *device);
 void D3dInitDone(D3dDevice *device);
@@ -728,6 +772,9 @@ VkCommandBuffer D3dTakeInitCommands(D3dDevice *device);
 HRESULT D3dAllocBuffer(D3dDevice *device, D3dMemoryKind kind, VkDeviceSize size, VkDeviceSize align,
                        D3dAllocation *out);
 HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out);
+/* an image of memory of its own that other devices can import, or memory imported from one: the shared id of the object. */
+HRESULT D3dAllocImageShared(D3dDevice *device, VkImage image, UINT64 import_id, const MimeShareBlob *blob,
+                            D3dAllocation *out, UINT *type_index);
 void D3dFree(D3dDevice *device, D3dAllocation *alloc);
 BOOL D3dRingAlloc(D3dDevice *device, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
 /* chunks owned by command lists: made like the ring's, returned to it when the list is done. */

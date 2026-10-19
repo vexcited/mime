@@ -872,6 +872,9 @@ static void resource_destroy(D12Resource *resource)
         D12FreeTiles(resource);
     if (resource->committed)
         D12Free(device, &resource->alloc);
+    if (resource->own_memory)
+        D12Defer(device, VK_OBJECT_TYPE_DEVICE_MEMORY, (UINT64)resource->own_memory);
+    D12ShareDestroy(resource);
     if (resource->heap && !resource->committed)
         resource->heap->iface.lpVtbl->Release(&resource->heap->iface);
 }
@@ -1097,11 +1100,63 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
     /* a feedback map keeps its texture's mips in its description. */
     if (!feedback)
         resource->desc.MipLevels = (UINT16)info.mipLevels;
+    /* a committed texture made to be shared, or opened from one that was, has memory of its own. */
+    BOOL shared = !heap && ((resource->heap_flags & D3D12_HEAP_FLAG_SHARED) || resource->import_blob);
+    VkExternalMemoryImageCreateInfo external = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO, nullptr,
+                                                VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
+    if (shared) {
+        if (resource->import_blob) {
+            info.format = (VkFormat)resource->import_blob->vk_format;
+            info.usage = resource->import_blob->vk_usage;
+            info.flags = resource->import_blob->vk_flags;
+            info.arrayLayers = resource->import_blob->vk_layers;
+        }
+        info.flags |= VK_IMAGE_CREATE_ALIAS_BIT;
+        info.pNext = &external;
+    }
     resource->aspect = format_aspect(info.format);
     if (vk->vkCreateImage(vk->device, &info, nullptr, &resource->image) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
     vk->vkGetImageMemoryRequirements(vk->device, resource->image, &req);
+    if (shared) {
+        UINT type = 0;
+        VkDeviceSize size = req.size;
+        if (resource->import_blob) {
+            type = resource->import_blob->type_index;
+            size = resource->import_blob->memory_size;
+            if (vk->vkMimeShareImportMemory(vk->device, resource->import_share.id, resource->image, size, type,
+                                            &resource->own_memory) != VK_SUCCESS)
+                return E_FAIL;
+        } else {
+            int picked = pick_type(device, D12HeapKind(device, &resource->heap_props), req.memoryTypeBits);
+            if (picked < 0)
+                return E_OUTOFMEMORY;
+            type = (UINT)picked;
+            VkMemoryDedicatedAllocateInfo dedicated = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO, nullptr,
+                                                       resource->image};
+            VkExportMemoryAllocateInfo export = {VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO, &dedicated,
+                                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
+            VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &export, size, type};
+            if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, &resource->own_memory) != VK_SUCCESS)
+                return E_OUTOFMEMORY;
+        }
+        resource->committed = TRUE;
+        if (vk->vkBindImageMemory(vk->device, resource->image, resource->own_memory, 0) != VK_SUCCESS)
+            return E_OUTOFMEMORY;
+        if (resource->import_blob) {
+            resource->share = resource->import_share;
+            resource->share_blob = HeapAlloc(GetProcessHeap(), 0, sizeof(*resource->share_blob));
+            if (!resource->share_blob)
+                return E_OUTOFMEMORY;
+            *resource->share_blob = *resource->import_blob;
+        } else {
+            info.pNext = nullptr;
+            D12ShareDescribe(resource, &info, type, size);
+        }
+        init_image(device, resource, !resource->import_blob && !(resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED));
+        return S_OK;
+    }
     if (heap) {
         if (!(req.memoryTypeBits & (1u << heap->type)) || offset + req.size > heap->desc.SizeInBytes)
             return E_INVALIDARG;
@@ -1173,9 +1228,10 @@ static D12Resource *new_resource(D12Device *device, const D3D12_RESOURCE_DESC1 *
     return resource;
 }
 
-HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
-                          const D3D12_RESOURCE_DESC1 *desc, D12Heap *heap, UINT64 offset,
-                          D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear, D12Resource **out)
+static HRESULT create_resource(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
+                               const D3D12_RESOURCE_DESC1 *desc, D12Heap *heap, UINT64 offset,
+                               D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear,
+                               const MimeShareBlob *import_blob, const MimeShare *import_share, D12Resource **out)
 {
     if (desc->Dimension < D3D12_RESOURCE_DIMENSION_BUFFER || desc->Dimension > D3D12_RESOURCE_DIMENSION_TEXTURE3D)
         return E_INVALIDARG;
@@ -1198,6 +1254,9 @@ HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props,
     resource->initial_state = state;
     resource->heap = heap;
     resource->heap_offset = offset;
+    resource->import_blob = import_blob;
+    if (import_share)
+        resource->import_share = *import_share;
     if (resource->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && !resource->desc.Alignment)
         resource->desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     HRESULT hr = desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? create_buffer(device, resource, heap, offset)
@@ -1208,6 +1267,7 @@ HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props,
         HeapFree(GetProcessHeap(), 0, resource);
         return hr;
     }
+    resource->import_blob = nullptr;
     if (heap)
         heap->iface.lpVtbl->AddRef(&heap->iface);
     /* direct3d makes the memory of acceleration structures resources of their own, in their own state. */
@@ -1218,6 +1278,21 @@ HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props,
     D12ChildInit(&resource->child, device);
     *out = resource;
     return S_OK;
+}
+
+HRESULT D12CreateResource(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
+                          const D3D12_RESOURCE_DESC1 *desc, D12Heap *heap, UINT64 offset,
+                          D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear, D12Resource **out)
+{
+    return create_resource(device, props, flags, desc, heap, offset, state, clear, nullptr, nullptr, out);
+}
+
+HRESULT D12CreateResourceImported(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
+                                  const D3D12_RESOURCE_DESC1 *desc, const MimeShareBlob *blob, const MimeShare *share,
+                                  D12Resource **out)
+{
+    return create_resource(device, props, flags, desc, nullptr, 0, D3D12_RESOURCE_STATE_COMMON, nullptr, blob, share,
+                           out);
 }
 
 /* a swap chain's image: owned by the swap chain, already in the general layout once acquired. */

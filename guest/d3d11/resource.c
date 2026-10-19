@@ -75,6 +75,7 @@ static void destroy(D3dResource *r)
         D3dDefer(device, serial, D3D_GARBAGE_IMAGE, (UINT64)r->tex.image);
         D3dDeferFree(device, serial, &r->tex.alloc);
         D3dDeferFree(device, serial, &r->tex.staging);
+        D3dShareDestroy(r);
         HeapFree(GetProcessHeap(), 0, r->tex.sub_offset);
     }
     D3dChildRelease(&r->child);
@@ -237,6 +238,8 @@ static HRESULT resource_query_common(D3dResource *r, REFIID riid, void **out)
              (IsEqualGUID(riid, &IID_IDXGISurface) || IsEqualGUID(riid, &IID_IDXGISurface1) ||
               IsEqualGUID(riid, &IID_IDXGISurface2)))
         *out = &r->surface;
+    else if (IsEqualGUID(riid, &IID_IDXGIKeyedMutex))
+        *out = D3dShareKeyedMutex(r);
     else
         *out = D3d10ResourceInterface(r, riid);
     if (!*out)
@@ -395,7 +398,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_get_shared_handle(IDXGIResource1 *iface, H
     if (!handle)
         return E_INVALIDARG;
     *handle = nullptr;
-    return dxgi_impl(iface)->misc & D3D11_RESOURCE_MISC_SHARED ? E_NOTIMPL : E_INVALIDARG;
+    return D3dShareHandle(dxgi_impl(iface), FALSE, nullptr, nullptr, handle);
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_get_usage(IDXGIResource1 *iface, DXGI_USAGE *usage)
@@ -436,7 +439,10 @@ static HRESULT STDMETHODCALLTYPE dxgi_create_shared_handle(IDXGIResource1 *iface
                                                            const SECURITY_ATTRIBUTES *attributes, DWORD access,
                                                            LPCWSTR name, HANDLE *handle)
 {
-    return E_NOTIMPL;
+    if (!handle)
+        return DXGI_ERROR_INVALID_CALL;
+    *handle = nullptr;
+    return D3dShareHandle(dxgi_impl(iface), TRUE, attributes, name, handle);
 }
 
 static const IDXGIResource1Vtbl dxgi_vtbl = {
@@ -829,8 +835,8 @@ static UINT full_mips(UINT width, UINT height, UINT depth)
     return mips;
 }
 
-HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, const void *desc,
-                         const D3D11_SUBRESOURCE_DATA *data, D3dResource **out)
+static HRESULT create_texture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, const void *desc,
+                              const D3D11_SUBRESOURCE_DATA *data, const D3dImport *import, D3dResource **out)
 {
     UINT width, height = 1, depth = 1, mips, layers = 1, samples = 1, bind, cpu, misc;
     D3D11_USAGE usage;
@@ -869,8 +875,14 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
         return E_INVALIDARG;
     if (usage == D3D11_USAGE_STAGING && bind)
         return E_INVALIDARG;
+    if (!import) {
+        HRESULT checked = D3dShareCheck(dimension, usage, misc, mips, samples);
+        if (FAILED(checked))
+            return checked;
+    }
     if (!out)
         return S_FALSE;
+    BOOL shared = import || (misc & D3D_SHARE_MISC);
 
     D3dResource *r = new_resource(device, dimension);
     if (!r)
@@ -960,13 +972,44 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D && (bind & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS)))
             info.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+        /* a shared image is made as the first device made it, so the memory means the same to every device. */
+        VkExternalMemoryImageCreateInfo external = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO, nullptr,
+                                                    VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
+        if (shared) {
+            if (import) {
+                info.format = (VkFormat)import->blob->vk_format;
+                info.usage = import->blob->vk_usage;
+                info.flags = import->blob->vk_flags;
+                info.arrayLayers = import->blob->vk_layers;
+            }
+            info.flags |= VK_IMAGE_CREATE_ALIAS_BIT;
+            info.pNext = &external;
+        }
         if (device->vk.vkCreateImage(device->vk.device, &info, nullptr, &r->tex.image) != VK_SUCCESS) {
             destroy(r);
             return E_INVALIDARG;
         }
-        if (FAILED(hr = D3dAllocImage(device, r->tex.image, &r->tex.alloc))) {
+        UINT type_index = 0;
+        hr = shared ? D3dAllocImageShared(device, r->tex.image, import ? import->share.id : 0,
+                                          import ? import->blob : nullptr, &r->tex.alloc, &type_index)
+                    : D3dAllocImage(device, r->tex.image, &r->tex.alloc);
+        if (FAILED(hr)) {
             destroy(r);
             return hr;
+        }
+        if (shared) {
+            if (import) {
+                r->share = import->share;
+                r->share_blob = HeapAlloc(GetProcessHeap(), 0, sizeof(*r->share_blob));
+                if (!r->share_blob) {
+                    destroy(r);
+                    return E_OUTOFMEMORY;
+                }
+                *r->share_blob = *import->blob;
+            } else {
+                info.pNext = nullptr;
+                D3dShareDescribe(r, &info, type_index, r->tex.alloc.size);
+            }
         }
         /* the general layout for good, and zeroed, as direct3d hands out textures. */
         VkCommandBuffer cmd = D3dInitCommands(device);
@@ -983,7 +1026,7 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
         dep.imageMemoryBarrierCount = 1;
         dep.pImageMemoryBarriers = &barrier;
         device->vk.vkCmdPipelineBarrier2(cmd, &dep);
-        if (!data) {
+        if (!data && !import) {
             VkImageSubresourceRange range = barrier.subresourceRange;
             if (r->tex.aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
                 VkClearColorValue zero = {{0}};
@@ -1004,4 +1047,17 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
     }
     *out = r;
     return S_OK;
+}
+
+HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, const void *desc,
+                         const D3D11_SUBRESOURCE_DATA *data, D3dResource **out)
+{
+    return create_texture(device, dimension, desc, data, nullptr, out);
+}
+
+/* a texture over the memory of a shared object: its description is the one the object was made with. */
+HRESULT D3dCreateTextureImported(D3dDevice *device, const D3D11_TEXTURE2D_DESC1 *desc, const D3dImport *import,
+                                 D3dResource **out)
+{
+    return create_texture(device, D3D11_RESOURCE_DIMENSION_TEXTURE2D, desc, nullptr, import, out);
 }

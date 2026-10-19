@@ -2325,12 +2325,12 @@ static void STDMETHODCALLTYPE get_hardware_protection_state(ID3D11DeviceContext4
 
 static HRESULT STDMETHODCALLTYPE signal_fence(ID3D11DeviceContext4 *iface, ID3D11Fence *fence, UINT64 value)
 {
-    return E_NOTIMPL;
+    return D3dFenceSignal(impl(iface), fence, value);
 }
 
 static HRESULT STDMETHODCALLTYPE wait_fence(ID3D11DeviceContext4 *iface, ID3D11Fence *fence, UINT64 value)
 {
-    return E_NOTIMPL;
+    return D3dFenceWait(impl(iface), fence, value);
 }
 
 /* ------------------------------------------------------------------ IUnknown and ID3D11DeviceChild */

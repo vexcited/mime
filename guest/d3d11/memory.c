@@ -246,10 +246,57 @@ HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out)
     return S_OK;
 }
 
+/*
+ * An image that is shared has memory of its own, which other devices import under the id of the object that
+ * names it: the first device exports it, the others import what it exported, with the type and size it had.
+ */
+HRESULT D3dAllocImageShared(D3dDevice *device, VkImage image, UINT64 import_id, const MimeShareBlob *blob,
+                            D3dAllocation *out, UINT *type_index)
+{
+    D3dVk *vk = &device->vk;
+    VkMemoryRequirements req;
+    vk->vkGetImageMemoryRequirements(vk->device, image, &req);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    UINT type = 0;
+    VkDeviceSize size = req.size;
+    if (import_id) {
+        type = blob->type_index;
+        size = blob->memory_size;
+        if (vk->vkMimeShareImportMemory(vk->device, import_id, image, size, type, &memory) != VK_SUCCESS)
+            return E_FAIL;
+    } else {
+        int picked = pick_type(device, D3D_MEMORY_DEVICE, req.memoryTypeBits);
+        if (picked < 0)
+            return E_OUTOFMEMORY;
+        type = (UINT)picked;
+        VkMemoryDedicatedAllocateInfo dedicated = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO, nullptr, image};
+        VkExportMemoryAllocateInfo export = {VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO, &dedicated,
+                                             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
+        VkMemoryAllocateInfo info = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &export, size, type};
+        if (vk->vkAllocateMemory(vk->device, &info, nullptr, &memory) != VK_SUCCESS)
+            return E_OUTOFMEMORY;
+    }
+    if (vk->vkBindImageMemory(vk->device, image, memory, 0) != VK_SUCCESS) {
+        vk->vkFreeMemory(vk->device, memory, nullptr);
+        return E_OUTOFMEMORY;
+    }
+    memset(out, 0, sizeof(*out));
+    out->memory = memory;
+    out->size = size;
+    *type_index = type;
+    return S_OK;
+}
+
 void D3dFree(D3dDevice *device, D3dAllocation *alloc)
 {
-    if (!alloc->block)
+    if (!alloc->block) {
+        /* memory of its own, made for an image that is shared. */
+        if (alloc->memory) {
+            device->vk.vkFreeMemory(device->vk.device, alloc->memory, nullptr);
+            memset(alloc, 0, sizeof(*alloc));
+        }
         return;
+    }
     AcquireSRWLockExclusive(&device->memory_lock);
     add_free(alloc->block, alloc->offset, alloc->size);
     ReleaseSRWLockExclusive(&device->memory_lock);
