@@ -2385,8 +2385,11 @@ void mime_vk_close(uint64_t index)
     free(c);
 }
 
+static void warm_wait(void);
+
 void mime_vk_close_all(void)
 {
+    warm_wait();
     for (uint64_t i = 0; i < MAX_CONNECTIONS; i++)
         mime_vk_close(i);
 }
@@ -2416,9 +2419,22 @@ static void *warm_main(void *arg)
     return nullptr;
 }
 
+static pthread_t g_warm_thread;
+static bool g_warm_started;
+
 void mime_vk_warm_up(void)
 {
-    pthread_t thread;
-    if (pthread_create(&thread, nullptr, warm_main, nullptr) == 0)
-        pthread_detach(thread);
+    g_warm_started = pthread_create(&g_warm_thread, nullptr, warm_main, nullptr) == 0;
+}
+
+/*
+ * the machine can be asked to stop while the warm up still makes its device, and a process that exits under a thread
+ * inside the driver crashes in the driver's destructors. the thread is waited for before anything else is closed.
+ */
+static void warm_wait(void)
+{
+    if (!g_warm_started)
+        return;
+    g_warm_started = false;
+    pthread_join(g_warm_thread, nullptr);
 }

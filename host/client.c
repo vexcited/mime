@@ -292,6 +292,20 @@ static uint32_t terminal_size(void)
     return 0;
 }
 
+/*
+ * the exit code of a windows program has 32 bits, the status of a shell 8. the shell gets the low byte, or 1 for a
+ * code whose low byte is zero, so that a failure never looks like a success. a code the status cannot show is printed.
+ */
+static int shell_status(uint32_t code)
+{
+    int status = (int)(code & 0xFF);
+    if (code && !status)
+        status = 1;
+    if (code > 0xFF)
+        dprintf(STDERR_FILENO, "mime: the program exited with code %u (0x%08X)\n", code, code);
+    return status;
+}
+
 static void write_all(int fd, const void *data, size_t size)
 {
     const char *p = data;
@@ -377,6 +391,8 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
 
     int exit_code = 1;
+    bool exited = false;
+    uint32_t program_code = 0;
     bool done = false, console = false, input_open = false;
     while (!done) {
         struct pollfd fds[3] = {{fd, POLLIN, 0}, {g_signal_pipe[0], POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
@@ -472,8 +488,10 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
             done = true;
             break;
         case MIME_IPC_EXIT:
-            if (h.size >= 4)
-                memcpy(&exit_code, msg, 4);
+            if (h.size >= 4) {
+                memcpy(&program_code, msg, 4);
+                exited = true;
+            }
             done = true;
             break;
         default:
@@ -483,5 +501,5 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     }
     restore_terminal();
     close(fd);
-    return exit_code;
+    return exited ? shell_status(program_code) : exit_code;
 }
