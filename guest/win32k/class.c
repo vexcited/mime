@@ -133,7 +133,8 @@ static BOOLEAN class_matches(WND_CLASS *c, PCWSTR name, ATOM atom)
 {
     if (atom)
         return c->Atom == atom;
-    return c->Name && !_wcsicmp(c->Name, name);
+    /* an atom of 0 and no name is not a class. */
+    return c->Name && name && !_wcsicmp(c->Name, name);
 }
 
 /* search order of windows: local classes, global classes of the process, then system classes. */
