@@ -49,3 +49,27 @@ EXPORTS
     DeriveCapabilitySidsFromName=kernelbase.DeriveCapabilitySidsFromName
     CreateProcessAsUserA=kernelbase.CreateProcessAsUserA
     CreateProcessAsUserW=kernelbase.CreateProcessAsUserW
+; event tracing lives in ntdll.
+    CreateTraceInstanceId=ntdll.EtwCreateTraceInstanceId
+    EventActivityIdControl=ntdll.EtwEventActivityIdControl
+    EventEnabled=ntdll.EtwEventEnabled
+    EventProviderEnabled=ntdll.EtwEventProviderEnabled
+    EventRegister=ntdll.EtwEventRegister
+    EventSetInformation=ntdll.EtwEventSetInformation
+    EventUnregister=ntdll.EtwEventUnregister
+    EventWrite=ntdll.EtwEventWrite
+    EventWriteEndScenario=ntdll.EtwEventWriteEndScenario
+    EventWriteEx=ntdll.EtwEventWriteEx
+    EventWriteStartScenario=ntdll.EtwEventWriteStartScenario
+    EventWriteString=ntdll.EtwEventWriteString
+    EventWriteTransfer=ntdll.EtwEventWriteTransfer
+    GetTraceEnableFlags=ntdll.EtwGetTraceEnableFlags
+    GetTraceEnableLevel=ntdll.EtwGetTraceEnableLevel
+    GetTraceLoggerHandle=ntdll.EtwGetTraceLoggerHandle
+    RegisterTraceGuidsA=ntdll.EtwRegisterTraceGuidsA
+    RegisterTraceGuidsW=ntdll.EtwRegisterTraceGuidsW
+    TraceEvent=ntdll.EtwLogTraceEvent
+    TraceEventInstance=ntdll.EtwTraceEventInstance
+    TraceMessage=ntdll.EtwTraceMessage
+    TraceMessageVa=ntdll.EtwTraceMessageVa
+    UnregisterTraceGuids=ntdll.EtwUnregisterTraceGuids

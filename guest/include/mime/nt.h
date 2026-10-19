@@ -1734,7 +1734,9 @@ typedef struct _TEB {
     LIST_ENTRY TlsLinks;
     UCHAR Reserved2[0xF28 - 0xF18];
     ULONG HardErrorMode;
-    UCHAR Reserved3[0xF70 - 0xF2C];
+    UCHAR Reserved3[0xF50 - 0xF2C];
+    GUID ActivityId;
+    UCHAR Reserved3b[0xF70 - 0xF60];
     ULONG GdiBatchCount;
     ULONG CurrentIdealProcessor;
     ULONG GuaranteedStackBytes;
@@ -1758,6 +1760,7 @@ MIME_FIELD_AT(TEB, ActivationContextStackPointer, 0x1A8);
 MIME_FIELD_AT(TEB, GdiTebBatch, 0x1D4);
 MIME_FIELD_AT(TEB, Win32ClientInfo, 0x6CC);
 MIME_FIELD_AT(TEB, LastStatusValue, 0xBF4);
+MIME_FIELD_AT(TEB, ActivityId, 0xF50);
 MIME_FIELD_AT(TEB, TlsSlots, 0xE10);
 MIME_FIELD_AT(TEB, FlsData, 0xFB4);
 MIME_FIELD_AT(TEB, SameTebFlags, 0xFCA);
