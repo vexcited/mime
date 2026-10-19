@@ -51,7 +51,7 @@ mime_dll(user32 x86 BASE 0x72000000 SOURCES ${sources} OBJECTS x86-chkstk x86-li
 set(all_five ntdll kernel32 user32 gdi32 win32u)
 set(MIME_X86_DLLS
     shlwapi:0x71000000:all_five shell32:0x70000000:all_five winmm:0x6f000000:all_five version:0x6e000000:all_five
-    advapi32:0x6d000000:all_five ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
+    advapi32:0x6d000000:all_five sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
     netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:all_five oleaut32:0x64000000:all_five
     rpcrt4:0x63000000:all_five imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
