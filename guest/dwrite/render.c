@@ -115,6 +115,7 @@ typedef struct DwAnalysis {
     float xx, xy, yx, yy;
     DWRITE_RENDERING_MODE mode;
     BOOL bold;
+    BOOL grayscale; /* the aliased texture holds coverage instead of on and off. */
 } DwAnalysis;
 
 static HRESULT WINAPI analysis_query(IDWriteGlyphRunAnalysis *This, REFIID riid, void **out)
@@ -279,7 +280,11 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
             if (type == DWRITE_TEXTURE_ALIASED_1x1) {
                 for (int col = 0; col < gw; col++) {
                     int x = x0 + col;
-                    if (x >= 0 && x < width && src[col] >= 128)
+                    if (x < 0 || x >= width || !src[col])
+                        continue;
+                    if (a->grayscale)
+                        dst[x] = combine(dst[x], src[col]);
+                    else if (src[col] >= 128)
                         dst[x] = 255;
                 }
                 continue;
@@ -324,8 +329,9 @@ static const IDWriteGlyphRunAnalysisVtbl g_analysis_vtbl = {
 };
 
 HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_dip, const DWRITE_MATRIX *transform,
-                                 DWRITE_RENDERING_MODE mode, DWRITE_MEASURING_MODE measuring, FLOAT origin_x,
-                                 FLOAT origin_y, IDWriteGlyphRunAnalysis **out)
+                                 DWRITE_RENDERING_MODE mode, DWRITE_MEASURING_MODE measuring,
+                                 DWRITE_TEXT_ANTIALIAS_MODE antialias, FLOAT origin_x, FLOAT origin_y,
+                                 IDWriteGlyphRunAnalysis **out)
 {
     if (!out)
         return E_POINTER;
@@ -346,6 +352,7 @@ HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_d
     ((IDWriteFontFace *)face)->lpVtbl->AddRef((IDWriteFontFace *)face);
     a->count = run->glyphCount;
     a->mode = mode;
+    a->grayscale = antialias == DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE && mode != DWRITE_RENDERING_MODE_ALIASED;
     a->bold = (face->simulations & DWRITE_FONT_SIMULATIONS_BOLD) != 0;
     a->glyphs = DwAlloc(run->glyphCount * sizeof(UINT16));
     a->x = DwAlloc(run->glyphCount * 2 * sizeof(float));

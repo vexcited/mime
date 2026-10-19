@@ -215,8 +215,9 @@ HRESULT DwRenderingParamsCreate(FLOAT gamma, FLOAT contrast, FLOAT grayscale_con
                                 DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE mode,
                                 DWRITE_GRID_FIT_MODE grid_fit, DwRenderingParams **params);
 HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_dip, const DWRITE_MATRIX *transform,
-                                 DWRITE_RENDERING_MODE mode, DWRITE_MEASURING_MODE measuring, FLOAT origin_x,
-                                 FLOAT origin_y, IDWriteGlyphRunAnalysis **analysis);
+                                 DWRITE_RENDERING_MODE mode, DWRITE_MEASURING_MODE measuring,
+                                 DWRITE_TEXT_ANTIALIAS_MODE antialias, FLOAT origin_x, FLOAT origin_y,
+                                 IDWriteGlyphRunAnalysis **analysis);
 HRESULT DwGlyphRunOutline(DwFace *face, FLOAT em_size, const UINT16 *glyphs, const FLOAT *advances,
                           const DWRITE_GLYPH_OFFSET *offsets, UINT32 count, BOOL sideways, BOOL rtl,
                           IDWriteGeometrySink *sink);

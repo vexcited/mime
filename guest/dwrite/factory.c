@@ -298,7 +298,8 @@ static HRESULT WINAPI factory_analysis(IDWriteFactory2 *This, const DWRITE_GLYPH
                                        DWRITE_MEASURING_MODE measuring, FLOAT origin_x, FLOAT origin_y,
                                        IDWriteGlyphRunAnalysis **analysis)
 {
-    return DwGlyphRunAnalysisCreate(run, pixels_per_dip, transform, mode, measuring, origin_x, origin_y, analysis);
+    return DwGlyphRunAnalysisCreate(run, pixels_per_dip, transform, mode, measuring,
+                                    DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE, origin_x, origin_y, analysis);
 }
 
 static HRESULT WINAPI factory_interop(IDWriteFactory2 *This, IDWriteGdiInterop **interop)
@@ -458,7 +459,7 @@ static HRESULT WINAPI factory_analysis2(IDWriteFactory2 *This, const DWRITE_GLYP
                                         DWRITE_TEXT_ANTIALIAS_MODE antialias, FLOAT origin_x, FLOAT origin_y,
                                         IDWriteGlyphRunAnalysis **analysis)
 {
-    return DwGlyphRunAnalysisCreate(run, 1.0f, transform, mode, measuring, origin_x, origin_y, analysis);
+    return DwGlyphRunAnalysisCreate(run, 1.0f, transform, mode, measuring, antialias, origin_x, origin_y, analysis);
 }
 
 static HRESULT WINAPI factory3_missing(const char *name)
