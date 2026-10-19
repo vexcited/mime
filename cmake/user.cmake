@@ -260,7 +260,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 ws2_32:0x7FF6D
     dhcpcsvc:0x7FF160000000 esent:0x7FF150000000 uiautomationcore:0x7FF140000000
     msctf:0x7FF0D0000000 riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000
-    mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000)
+    mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
@@ -336,6 +336,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     # the capture devices of mf make attributes, events and samples with mfplat, find cameras with cfgmgr32 and hand
     # out task memory.
     set(libs_mf ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/ole32.lib)
+    # the capture engine drives a capture source made by mf, with mfplat's events and samples.
+    set(libs_mfcaptureengine ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/mf.lib ${MIME_LIB_${arch}}/ole32.lib)
     # comctl32 draws through uxtheme, as windows' imports it.
     set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
     # msctf hands out task memory and bstrs and keeps values in variants.

@@ -69,6 +69,7 @@ set(MIME_X86_DLLS
     winusb:0x20000000:all_five dhcpcsvc:0x1E000000:all_five esent:0x1D000000:all_five
     uiautomationcore:0x1C000000:all_five iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
+    mfcaptureengine:0x12100000:mfce_imports
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports)
 set(base ntdll kernel32)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
@@ -79,6 +80,7 @@ set(comctl ntdll kernel32 user32 gdi32 win32u uxtheme)
 set(mfplat_imports ntdll kernel32 ole32)
 set(mfreadwrite_imports ntdll kernel32 mfplat ole32)
 set(mf_imports ntdll kernel32 mfplat cfgmgr32 ole32)
+set(mfce_imports ntdll kernel32 mfplat mf ole32)
 set(user ntdll kernel32 user32)
 set(oleacc_imports ntdll kernel32 user32 ole32 oleaut32)
 set(ctf_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
