@@ -389,12 +389,18 @@ NTSTATUS PsStartServiceController(void)
 }
 
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
-                             MIME_CONSOLE *console, PEPROCESS *out)
+                             MIME_CONSOLE *console, BOOLEAN elevated, PEPROCESS *out)
 {
     UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
     PSP_PARAMS p = {.Image = *image, .CommandLine = *cmdline, .CurrentDirectory = cwd ? *cwd : default_cwd,
                     .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
-    return create_process(&p, nullptr, request_id, console, FALSE, PsCurrentProcess(), out, nullptr);
+    struct _TOKEN *token = elevated ? SepCreateElevatedUserToken() : nullptr;
+    if (elevated && !token)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    NTSTATUS status = create_process(&p, token, request_id, console, FALSE, PsCurrentProcess(), out, nullptr);
+    if (token)
+        ObDereferenceObject(token);
+    return status;
 }
 
 static void free_params(PSP_PARAMS *p)

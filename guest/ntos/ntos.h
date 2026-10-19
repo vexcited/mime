@@ -994,7 +994,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
 typedef struct _MIME_CONSOLE MIME_CONSOLE;
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING command_line,
                              PCUNICODE_STRING current_directory, ULONG64 request_id, MIME_CONSOLE *console,
-                             PEPROCESS *out);
+                             BOOLEAN elevated, PEPROCESS *out);
 /* the service control manager, a process of the system that nobody asked the host for. */
 NTSTATUS PsStartServiceController(void);
 DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
@@ -1035,6 +1035,7 @@ void SepInitialize(void);
 NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent);
 void SepSetProcessToken(PEPROCESS process, struct _TOKEN *token);
 struct _TOKEN *SepCreateServiceControllerToken(void);
+struct _TOKEN *SepCreateElevatedUserToken(void);
 ULONG SepTokenSessionId(PEPROCESS process);
 void SepFreeProcessToken(PEPROCESS process);
 void SepFreeThreadToken(PETHREAD thread);

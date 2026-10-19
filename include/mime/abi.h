@@ -600,6 +600,10 @@ enum {
     MIME_RUN_TTY_ERROR = 1u << 2,  /* and the standard error */
 };
 
+/* the level of the manifest of the program, in bits 4 and 5 of the flags: 0 none, 1 asInvoker, 2 highestAvailable, 3 requireAdministrator. */
+#define MIME_RUN_LEVEL_SHIFT 4
+#define MIME_RUN_LEVEL_MASK (3u << MIME_RUN_LEVEL_SHIFT)
+
 /* subsystems MIME_EVT_PROCESS_STARTED reports, as in the image header. */
 #define MIME_SUBSYSTEM_GUI 2
 #define MIME_SUBSYSTEM_CUI 3

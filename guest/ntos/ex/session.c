@@ -119,6 +119,31 @@ void MimeSessionInterrupt(ULONG bits)
         KeInsertQueueDpc(&g_irq_dpc, nullptr, nullptr);
 }
 
+/*
+ * whether a program the host starts gets the whole token of the user. one that asks for it by its manifest is given it,
+ * as the broker of the services does for the shell, unless the machine was told to decline; the host's user is the one
+ * who typed the command, so nobody is asked.
+ */
+static NTSTATUS choose_token(PCUNICODE_STRING image, ULONG level, BOOLEAN *elevated)
+{
+    static const WCHAR key[] = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Mime\\Elevation";
+    *elevated = FALSE;
+    if (level < 2)
+        return STATUS_SUCCESS;
+    ULONG type = 0, length = sizeof(ULONG), declined = 0;
+    if (!NT_SUCCESS(CmQueryValue(key, L"Decline", &type, &declined, &length)) || type != 4 /* REG_DWORD */ ||
+        length < sizeof(ULONG))
+        declined = 0;
+    if (declined) {
+        KiLogPrintf("elevation declined for %wZ by the policy", image);
+        /* a program that can do without the rights goes on without them. */
+        return level == 3 ? STATUS_CANCELLED : STATUS_SUCCESS;
+    }
+    KiLogPrintf("elevation approved for %wZ", image);
+    *elevated = TRUE;
+    return STATUS_SUCCESS;
+}
+
 static void handle_run(const MimeCtrlRun *run, ULONG size)
 {
     ULONG64 chars = (ULONG64)run->image_chars + run->cmdline_chars + run->cwd_chars;
@@ -140,9 +165,12 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)STATUS_INSUFFICIENT_RESOURCES, 0);
         return;
     }
-    PEPROCESS process;
-    NTSTATUS status =
-        PsCreateUserProcess(&image, &cmdline, run->cwd_chars ? &cwd : nullptr, run->request_id, console, &process);
+    PEPROCESS process = nullptr;
+    BOOLEAN elevated;
+    NTSTATUS status = choose_token(&image, (run->flags & MIME_RUN_LEVEL_MASK) >> MIME_RUN_LEVEL_SHIFT, &elevated);
+    if (NT_SUCCESS(status))
+        status = PsCreateUserProcess(&image, &cmdline, run->cwd_chars ? &cwd : nullptr, run->request_id, console,
+                                     elevated, &process);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("cannot start %wZ: %08x", &image, status);
         ConsoleDereference(console);

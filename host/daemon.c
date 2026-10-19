@@ -291,6 +291,10 @@ static uint64_t handle_run(int fd, char *payload, uint32_t size)
     run->cmdline_chars = n_cmd;
     run->cwd_chars = n_cwd;
     run->flags = header.flags & (MIME_RUN_TTY_INPUT | MIME_RUN_TTY_OUTPUT | MIME_RUN_TTY_ERROR);
+    /* a program that asks for the rights of an administrator is started with them when the machine's policy lets it. */
+    char file[MIME_PATH_MAX];
+    if (mime_paths_to_host(g_paths, image, file, sizeof(file)))
+        run->flags |= mime_pe_run_level(file) << MIME_RUN_LEVEL_SHIFT;
     run->console_size = header.console_size;
     uint16_t *strings = (uint16_t *)(run + 1);
     memcpy(strings, w_image, n_image * 2);

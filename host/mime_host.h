@@ -67,6 +67,8 @@ bool mime_paths_ensure(const MimePaths *paths);
 void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, size_t size);
 /* the reverse, for C: and Z: paths with either separator; the result never leaves the drive. */
 bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, size_t size);
+/* pe_level.c: 0 when the manifest of a program names no level, else 1 asInvoker, 2 highestAvailable, 3 requireAdministrator. */
+uint32_t mime_pe_run_level(const char *path);
 /* the paths of the running machine process. */
 const MimePaths *mime_daemon_paths(void);
 

@@ -691,6 +691,15 @@ PTOKEN SepCreateServiceControllerToken(void)
     return t;
 }
 
+/* the whole token of the user the machine runs for, for a program that asked for the rights of an administrator. */
+PTOKEN SepCreateElevatedUserToken(void)
+{
+    ExAcquireFastMutex(&SeLock);
+    PTOKEN t = SepDuplicate(g_elevated_token, TokenPrimary, 0, FALSE, nullptr);
+    ExReleaseFastMutex(&SeLock);
+    return t;
+}
+
 /* the session a process runs in, which is its token's. */
 ULONG SepTokenSessionId(PEPROCESS process)
 {
