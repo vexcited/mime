@@ -27,6 +27,19 @@ SURFACE *CursorIconImage(HICON icon)
     return cursor && cursor->IsIcon && cursor->Ready ? cursor->Image : nullptr;
 }
 
+SURFACE *CursorImage(HICON cursor)
+{
+    CURICON *c = lookup(cursor);
+    return c && c->Ready ? c->Image : nullptr;
+}
+
+void CursorHotspot(HICON cursor, LONG *x, LONG *y)
+{
+    CURICON *c = lookup(cursor);
+    *x = c ? c->Hotspot.x : 0;
+    *y = c ? c->Hotspot.y : 0;
+}
+
 void CursorInitialize(void)
 {
 }
@@ -283,6 +296,7 @@ void CursorSet(HCURSOR cursor)
         return;
     CURICON *c = lookup(cursor);
     HostSetCursor(c && c->System ? c->System - 1 : MIME_CURSOR_ARROW);
+    CaptureCursorShown(c && !c->System && c->Image ? cursor : nullptr);
 }
 
 HCURSOR NTAPI NtUserSetCursor(HCURSOR cursor)

@@ -424,9 +424,9 @@ static HRESULT STDMETHODCALLTYPE output_get_display_surface_data1(IDXGIOutput6 *
 static HRESULT STDMETHODCALLTYPE output_duplicate_output(IDXGIOutput6 *iface, IUnknown *device,
                                                          IDXGIOutputDuplication **duplication)
 {
-    if (duplication)
-        *duplication = nullptr;
-    return DXGI_ERROR_UNSUPPORTED;
+    DxgiOutput *output = impl(iface);
+    return DxgiDuplicateOutput((IDXGIOutput *)&output->iface, output->adapter, output->monitor, device, FALSE, 0, 0,
+                               nullptr, duplication);
 }
 
 static BOOL STDMETHODCALLTYPE output_supports_overlays(IDXGIOutput6 *iface) { return FALSE; }
@@ -454,7 +454,9 @@ static HRESULT STDMETHODCALLTYPE output_duplicate_output1(IDXGIOutput6 *iface, I
                                                           UINT count, const DXGI_FORMAT *formats,
                                                           IDXGIOutputDuplication **duplication)
 {
-    return output_duplicate_output(iface, device, duplication);
+    DxgiOutput *output = impl(iface);
+    return DxgiDuplicateOutput((IDXGIOutput *)&output->iface, output->adapter, output->monitor, device, TRUE, flags,
+                               count, formats, duplication);
 }
 
 /* an sdr panel with srgb primaries. */

@@ -158,6 +158,9 @@ struct Presenter {
     VkFormat last_format;
     bool last_valid;
     MimeRect last_client;
+    /* counts the images kept, and the one the readback buffer holds. */
+    uint64_t last_serial;
+    uint64_t readback_serial;
     VkQueue last_queue;
     VkBuffer readback;
     VkDeviceMemory readback_memory;
@@ -829,6 +832,7 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
     p->last = VK_NULL_HANDLE;
     p->last_memory = VK_NULL_HANDLE;
     p->last_valid = false;
+    p->readback_serial = 0;
     VkImageCreateInfo ii = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -1384,6 +1388,7 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
                 VK_PIPELINE_STAGE_TRANSFER_BIT);
         p->last_valid = true;
         p->last_client = client;
+        p->last_serial++;
     }
     barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -1933,7 +1938,7 @@ void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s)
  * relative to the window. false when the window presents nothing.
  */
 bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
-                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client)
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial)
 {
     pthread_mutex_lock(&g_presenters_lock);
     Presenter *p = nullptr;
@@ -1954,12 +1959,22 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
     *width = p->last_extent.width;
     *height = p->last_extent.height;
     *client = p->last_client;
+    *serial = p->last_serial;
     if (!pixels || p->last_extent.width > capacity_width || p->last_extent.height > capacity_height) {
         ok = true;
         goto out;
     }
     VkDeviceSize size = (VkDeviceSize)p->last_extent.width * p->last_extent.height * 4;
+    /* the buffer still holds this image: a capture of an idle window copies from it without the gpu. */
+    if (p->readback_serial == p->last_serial && p->readback_size >= size) {
+        for (uint32_t y = 0; y < p->last_extent.height; y++)
+            memcpy((uint8_t *)pixels + (size_t)y * stride, p->readback_map + (size_t)y * p->last_extent.width * 4,
+                   (size_t)p->last_extent.width * 4);
+        ok = true;
+        goto out;
+    }
     if (p->readback_size < size) {
+        p->readback_serial = 0;
         if (p->readback)
             c->fn.vkDestroyBuffer(c->device, p->readback, nullptr);
         if (p->readback_memory)
@@ -2013,6 +2028,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
         for (uint32_t y = 0; y < p->last_extent.height; y++)
             memcpy((uint8_t *)pixels + (size_t)y * stride, p->readback_map + (size_t)y * p->last_extent.width * 4,
                    (size_t)p->last_extent.width * 4);
+        p->readback_serial = p->last_serial;
         ok = true;
     }
     c->fn.vkDestroyFence(c->device, fence, nullptr);

@@ -461,6 +461,47 @@ typedef struct DXGI_OUTDUPL_FRAME_INFO DXGI_OUTDUPL_FRAME_INFO;
 typedef struct DXGI_OUTDUPL_MOVE_RECT DXGI_OUTDUPL_MOVE_RECT;
 typedef struct DXGI_OUTDUPL_POINTER_SHAPE_INFO DXGI_OUTDUPL_POINTER_SHAPE_INFO;
 
+typedef enum DXGI_OUTDUPL_POINTER_SHAPE_TYPE {
+    DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME = 1,
+    DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR = 2,
+    DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR = 4
+} DXGI_OUTDUPL_POINTER_SHAPE_TYPE;
+
+struct DXGI_OUTDUPL_DESC {
+    DXGI_MODE_DESC ModeDesc;
+    DXGI_MODE_ROTATION Rotation;
+    BOOL DesktopImageInSystemMemory;
+};
+
+typedef struct DXGI_OUTDUPL_POINTER_POSITION {
+    POINT Position;
+    BOOL Visible;
+} DXGI_OUTDUPL_POINTER_POSITION;
+
+struct DXGI_OUTDUPL_FRAME_INFO {
+    LARGE_INTEGER LastPresentTime;
+    LARGE_INTEGER LastMouseUpdateTime;
+    UINT AccumulatedFrames;
+    BOOL RectsCoalesced;
+    BOOL ProtectedContentMaskedOut;
+    DXGI_OUTDUPL_POINTER_POSITION PointerPosition;
+    UINT TotalMetadataBufferSize;
+    UINT PointerShapeBufferSize;
+};
+
+struct DXGI_OUTDUPL_MOVE_RECT {
+    POINT SourcePoint;
+    RECT DestinationRect;
+};
+
+struct DXGI_OUTDUPL_POINTER_SHAPE_INFO {
+    UINT Type;
+    UINT Width;
+    UINT Height;
+    UINT Pitch;
+    POINT HotSpot;
+};
+
 typedef struct IDXGIObject IDXGIObject;
 typedef struct IDXGIDeviceSubObject IDXGIDeviceSubObject;
 typedef struct IDXGIResource IDXGIResource;
@@ -510,6 +551,20 @@ typedef struct IDXGIDevice4 IDXGIDevice4;
     HRESULT(STDMETHODCALLTYPE *SetPrivateDataInterface)(T * This, REFGUID name, const IUnknown *unknown);             \
     HRESULT(STDMETHODCALLTYPE *GetPrivateData)(T * This, REFGUID name, UINT *size, void *data);                       \
     HRESULT(STDMETHODCALLTYPE *GetParent)(T * This, REFIID riid, void **parent);
+
+#define IDXGIOutputDuplication_METHODS(T)                                                                              \
+    IDXGIObject_METHODS(T)                                                                                             \
+    void(STDMETHODCALLTYPE *GetDesc)(T * This, DXGI_OUTDUPL_DESC * desc);                                              \
+    HRESULT(STDMETHODCALLTYPE *AcquireNextFrame)(T * This, UINT timeout, DXGI_OUTDUPL_FRAME_INFO * info,               \
+                                                 IDXGIResource * *resource);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetFrameDirtyRects)(T * This, UINT size, RECT * rects, UINT * required);                \
+    HRESULT(STDMETHODCALLTYPE *GetFrameMoveRects)(T * This, UINT size, DXGI_OUTDUPL_MOVE_RECT * rects,                 \
+                                                  UINT * required);                                                    \
+    HRESULT(STDMETHODCALLTYPE *GetFramePointerShape)(T * This, UINT size, void *buffer, UINT *required,                \
+                                                     DXGI_OUTDUPL_POINTER_SHAPE_INFO *info);                           \
+    HRESULT(STDMETHODCALLTYPE *MapDesktopSurface)(T * This, DXGI_MAPPED_RECT * rect);                                  \
+    HRESULT(STDMETHODCALLTYPE *UnMapDesktopSurface)(T * This);                                                         \
+    HRESULT(STDMETHODCALLTYPE *ReleaseFrame)(T * This);
 
 #define IDXGIDeviceSubObject_METHODS(T)                                                                                \
     IDXGIObject_METHODS(T)                                                                                             \
@@ -805,6 +860,7 @@ MIME_COM_INTERFACE(IDXGIDeviceSubObject)
 MIME_COM_INTERFACE(IDXGIResource)
 MIME_COM_INTERFACE(IDXGIResource1)
 MIME_COM_INTERFACE(IDXGIKeyedMutex)
+MIME_COM_INTERFACE(IDXGIOutputDuplication)
 MIME_COM_INTERFACE(IDXGISurface)
 MIME_COM_INTERFACE(IDXGISurface1)
 MIME_COM_INTERFACE(IDXGISurface2)

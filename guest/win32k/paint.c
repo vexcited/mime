@@ -38,11 +38,13 @@ static ULONG64 hypercall(ULONG64 nr, ULONG64 a1)
 
 void HostWindowCreate(WND *w)
 {
+    ScreenSerial++;
     hypercall(MIME_HC_WIN_CREATE, window_id(w));
 }
 
 void HostWindowDestroy(WND *w)
 {
+    ScreenSerial++;
     hypercall(MIME_HC_WIN_DESTROY, window_id(w));
 }
 
@@ -144,6 +146,7 @@ void HostPart(WND *w, RECT *part)
 
 void HostConfigure(WND *w, BOOLEAN activate)
 {
+    ScreenSerial++;
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
         return;
     if (activate)
@@ -257,6 +260,7 @@ BOOLEAN HostMoveSize(WND *w, ULONG edge)
 
 void HostPresent(WND *w, const RECT *dirty)
 {
+    ScreenSerial++;
     /* a window without a redirection bitmap shows what the program composes in it, never its gdi surface. */
     if (w->ExStyle & WS_EX_NOREDIRECTIONBITMAP)
         return;
@@ -281,6 +285,7 @@ void HostSetCursor(ULONG cursor)
     if (cursor == current)
         return;
     current = cursor;
+    CaptureCursorKind(cursor);
     hypercall(MIME_HC_WIN_CURSOR, cursor);
     BOOLEAN hidden = cursor == MIME_CURSOR_HIDDEN;
     if (hidden != InputCursorHidden) {

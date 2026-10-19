@@ -514,6 +514,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
 {
     if (!w || w == g_desktop)
         return;
+    ScreenSerial++;
     UserReference(&w->Header);
     HWND after = (HWND)after_wnd;
     WINDOWPOS pos = {WndHandle(w), after, x, y, cx, cy, flags};
@@ -2374,6 +2375,14 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     case MIME_HWNDPARAM_SETTOUCH:
         w->TouchFlags = (ULONG)param;
         r = 1;
+        break;
+    case MIME_HWNDPARAM_SETAFFINITY:
+        w->DisplayAffinity = (ULONG)param;
+        ScreenSerial++;
+        r = 1;
+        break;
+    case MIME_HWNDPARAM_GETAFFINITY:
+        r = w->DisplayAffinity;
         break;
     case MIME_HWNDPARAM_SYSTIMER: {
         MIME_SYS_TIMER st;

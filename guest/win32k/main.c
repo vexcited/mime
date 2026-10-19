@@ -387,6 +387,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
     if (p) {
         GpuFreeProcess(p);
         VkFreeProcess(p);
+        CaptureFreeProcess(p);
         AudioFreeProcess(p);
         RawFreeProcess(p);
         MenuFreeProcess(p);

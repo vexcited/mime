@@ -131,9 +131,10 @@ WINUSERAPI LONG WINAPI DisplayConfigGetDeviceInfo(void *info)
 #define WDA_EXCLUDEFROMCAPTURE 0x11
 
 /*
- * the affinity is kept on the window; nothing captures the screen inside
- * the guest, so every affinity is honored trivially. only a window of the
- * calling process may be changed.
+ * the affinity is kept on the window and honored by every capture of the
+ * screen: windows 11 shows a window of WDA_MONITOR as black and leaves a
+ * window of WDA_EXCLUDEFROMCAPTURE out. only a window of the calling process
+ * may be changed.
  */
 WINUSERAPI BOOL WINAPI SetWindowDisplayAffinity(HWND window, DWORD affinity)
 {
@@ -151,10 +152,7 @@ WINUSERAPI BOOL WINAPI SetWindowDisplayAffinity(HWND window, DWORD affinity)
         SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
-    if (affinity)
-        SetPropW(window, L"MimeDisplayAffinity", (HANDLE)(ULONG_PTR)affinity);
-    else
-        RemovePropW(window, L"MimeDisplayAffinity");
+    NtUserCallHwndParam(window, affinity, MIME_HWNDPARAM_SETAFFINITY);
     return TRUE;
 }
 
@@ -168,7 +166,7 @@ WINUSERAPI BOOL WINAPI GetWindowDisplayAffinity(HWND window, DWORD *affinity)
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *affinity = (DWORD)(ULONG_PTR)GetPropW(window, L"MimeDisplayAffinity");
+    *affinity = (DWORD)NtUserCallHwndParam(window, 0, MIME_HWNDPARAM_GETAFFINITY);
     return TRUE;
 }
 

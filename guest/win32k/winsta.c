@@ -286,6 +286,14 @@ static W32DESKTOP *thread_desktop(W32THREAD *t)
     return t->Desktop;
 }
 
+/* whether the calling thread works on the desktop that has the input: the default one of WinSta0. */
+BOOLEAN WinStaOnInputDesktop(void)
+{
+    W32THREAD *t = W32GetThread();
+    W32DESKTOP *d = t ? thread_desktop(t) : nullptr;
+    return !d || !g_default || d == g_default;
+}
+
 void WinStaFreeProcess(W32PROCESS *p)
 {
     if (p->WinSta)

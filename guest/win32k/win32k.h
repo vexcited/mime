@@ -689,6 +689,7 @@ typedef struct WND {
     BYTE LayerAlpha;
     SURFACE *Present;  /* composed copy shown to the host when the surface needs alpha or a shape */
     ULONG TouchFlags;
+    ULONG DisplayAffinity; /* WDA_*, how captures show the window */
     int PixelFormat;
     WND_PROP *Props;
     ULONG PropCount;
@@ -980,6 +981,9 @@ BOOLEAN ScreenMonitorRect(ULONG index, RECT *out);
 void ScreenVisibleRegion(REGION *out);
 BOOLEAN ScreenIsSurface(const SURFACE *s);
 void ScreenCompose(const RECT *area);
+BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, PUCHAR bits, LONG stride, LONG width, LONG height);
+ULONG64 ScreenHostSerial(void);
+extern ULONG ScreenSerial;
 HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
@@ -991,6 +995,13 @@ void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);
 SURFACE *CursorIconImage(HICON icon);
+SURFACE *CursorImage(HICON cursor);
+void CursorHotspot(HICON cursor, LONG *x, LONG *y);
+/* capture.c */
+void CaptureFreeProcess(W32PROCESS *p);
+void CaptureCursorKind(ULONG kind);
+void CaptureCursorShown(HCURSOR cursor);
+BOOLEAN WinStaOnInputDesktop(void);
 
 /* callbacks into user32 for the system classes. */
 WNDPROC W32ClientProc(W32PROCESS *p, ULONG fnid);

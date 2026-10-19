@@ -810,8 +810,8 @@ typedef struct MimeWinPresent {
 /*
  * a window's last vulkan present, read back as bgra rows into pixels_phys
  * when it fits capacity; the host fills width, height and the client
- * rectangle it showed in, relative to the window. MIME_HC_STATUS_NOT_FOUND
- * when the window presents nothing.
+ * rectangle it showed in, relative to the window, and the serial of the
+ * image. MIME_HC_STATUS_NOT_FOUND when the window presents nothing.
  */
 typedef struct MimeWinReadback {
     uint32_t window_id;
@@ -820,6 +820,7 @@ typedef struct MimeWinReadback {
     uint64_t pixels_phys;
     uint32_t width, height;
     MimeRect client;
+    uint64_t serial; /* counts the images the window presented, so a capture can tell whether it changed */
 } MimeWinReadback;
 
 typedef struct MimeWinIcon {

@@ -239,6 +239,8 @@ enum {
     MIME_HWNDPARAM_ENABLECLOSE,         /* nonzero enables SC_CLOSE, zero greys the close button */
     MIME_HWNDPARAM_SETTOUCH,            /* MIME_TOUCH_REGISTERED and TWF_* flags, 0 unregisters */
     MIME_HWNDPARAM_SYSTIMER,            /* MIME_SYS_TIMER pointer, an elapse of 0 kills the timer */
+    MIME_HWNDPARAM_SETAFFINITY,         /* WDA_*: how captures of the screen show the window */
+    MIME_HWNDPARAM_GETAFFINITY,
 };
 
 typedef struct MIME_SYS_TIMER {
@@ -695,6 +697,60 @@ typedef struct MIME_TRAY_REQUEST {
 } MIME_TRAY_REQUEST;
 W32KAPI ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR request, ULONG size);
 W32KAPI ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total);
+
+/*
+ * screen capture (win32k capture.c), the kernel end of dxgi.dll's output duplication and of the window and
+ * monitor capture of Windows.Graphics.Capture. a duplication is made for a monitor and gives its frames: the
+ * screen as Mime composes it, bgra rows, with the rectangles that changed since the frame before and the pointer
+ * apart. every structure is made of 32 bit numbers so 32 bit programs share the layout. the calls answer the
+ * statuses the kernel gives dxgi.dll: STATUS_TIMEOUT for no new frame, STATUS_NOT_FOUND when the monitors changed,
+ * STATUS_INSTANCE_NOT_AVAILABLE past the limit of duplications, STATUS_ACCESS_DENIED off the input desktop and
+ * STATUS_BUFFER_TOO_SMALL with the size needed in the structure.
+ */
+enum {
+    MIME_CAPOP_OPEN = 1, /* info: MIME_CAPTURE_OPEN */
+    MIME_CAPOP_CLOSE,    /* id: the duplication */
+    MIME_CAPOP_FRAME,    /* id, info: MIME_CAPTURE_FRAME, data: the monitor's rows, size their bytes */
+    MIME_CAPOP_DIRTY,    /* id, data: RECTs of the last frame, size their bytes, info: ULONG bytes needed */
+    MIME_CAPOP_MOVES,    /* the same for the move rectangles, DXGI_OUTDUPL_MOVE_RECT */
+    MIME_CAPOP_SHAPE,    /* id, info: MIME_CAPTURE_SHAPE, data: the pointer's image, size its bytes */
+    MIME_CAPOP_WINDOW,   /* id: the window, info: MIME_CAPTURE_WINDOW, data: bgra rows, size their bytes */
+};
+
+typedef struct MIME_CAPTURE_OPEN {
+    ULONG Monitor;
+    ULONG Flags;
+    ULONG Handle;
+    ULONG Width, Height;
+    LONG X, Y;
+    ULONG RefreshNumerator, RefreshDenominator;
+} MIME_CAPTURE_OPEN;
+
+typedef struct MIME_CAPTURE_FRAME {
+    ULONG Accumulated;
+    ULONG LastPresentLow, LastPresentHigh;
+    ULONG LastMouseLow, LastMouseHigh;
+    ULONG RectsCoalesced;
+    ULONG PointerVisible;
+    LONG PointerX, PointerY;
+    ULONG DirtyBytes, MoveBytes;
+    ULONG ShapeBytes;
+} MIME_CAPTURE_FRAME;
+
+typedef struct MIME_CAPTURE_SHAPE {
+    ULONG Type; /* DXGI_OUTDUPL_POINTER_SHAPE_TYPE_* */
+    ULONG Width, Height, Pitch;
+    LONG HotspotX, HotspotY;
+    ULONG Size;
+} MIME_CAPTURE_SHAPE;
+
+#define MIME_CAPTURE_CLIENT_ONLY 0x1
+typedef struct MIME_CAPTURE_WINDOW {
+    ULONG Flags;
+    ULONG Width, Height;
+    LONG ClientX, ClientY; /* where the client area starts in the window's pixels */
+} MIME_CAPTURE_WINDOW;
+W32KAPI LONG NTAPI NtUserMimeCapture(ULONG op, ULONG id, PUCHAR info, PUCHAR data, ULONG size);
 
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
 W32KAPI BOOL NTAPI NtUserCloseClipboard(void);

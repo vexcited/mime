@@ -31,6 +31,7 @@ static void prop_changed(WND *w, ATOM atom)
 {
     if (atom == AtomFind(L"MimeDwmCorner") && WndIsTopLevel(w))
         WndUpdateHostConfig(w, FALSE);
+
 }
 
 BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
