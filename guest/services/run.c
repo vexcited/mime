@@ -141,6 +141,7 @@ static void image_free(IMAGE *img)
         CloseHandle(img->Process);
     DeleteCriticalSection(&img->ControlLock);
     SvcFree(img->Key);
+    SvcFree(img->Account);
     SvcFree(img);
 }
 
@@ -550,6 +551,28 @@ static BOOL file_exists(const WCHAR *command)
     return FALSE;
 }
 
+/* the account of a service as it compares: the names of the three built in ones are one each, the rest in lower case. */
+static WCHAR *account_of(SERVICE *s)
+{
+    HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
+    WCHAR *account = key ? DbReadString(key, L"ObjectName", nullptr) : nullptr;
+    if (key)
+        RegCloseKey(key);
+    const WCHAR *form = account;
+    if (!account || !*account || !_wcsicmp(account, L"LocalSystem") || !_wcsicmp(account, L"NT AUTHORITY\\SYSTEM") ||
+        !_wcsicmp(account, L"NT AUTHORITY\\LocalSystem"))
+        form = L"localsystem";
+    else if (!_wcsicmp(account, L"LocalService") || !_wcsicmp(account, L"NT AUTHORITY\\LocalService"))
+        form = L"localservice";
+    else if (!_wcsicmp(account, L"NetworkService") || !_wcsicmp(account, L"NT AUTHORITY\\NetworkService"))
+        form = L"networkservice";
+    WCHAR *copy = SvcDup(form);
+    for (WCHAR *c = copy; c && *c; c++)
+        *c = towlower(*c);
+    SvcFree(account);
+    return copy;
+}
+
 static WCHAR *image_key(const WCHAR *command)
 {
     WCHAR *key = SvcDup(command);
@@ -568,6 +591,7 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
         return ERROR_NOT_ENOUGH_MEMORY;
     InitializeCriticalSection(&img->ControlLock);
     img->Key = image_key(command);
+    img->Account = account_of(s);
     img->Type = s->Type;
     img->Refs = 1;
     img->Next = g_images;
@@ -758,6 +782,16 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
     BOOL own = (s->Type & SERVICE_WIN32_OWN_PROCESS) != 0;
     IMAGE *img = own ? nullptr : find_image(key);
     SvcFree(key);
+    /* the services of one process run as one account: a service that wants another does not join it. */
+    if (img) {
+        WCHAR *account = account_of(s);
+        BOOL same = account && img->Account && !wcscmp(account, img->Account);
+        SvcFree(account);
+        if (!same) {
+            SvcFree(command);
+            return ERROR_DIFFERENT_SERVICE_ACCOUNT;
+        }
+    }
 
     DWORD old = s->Status.dwCurrentState;
     s->Status.dwCurrentState = SERVICE_START_PENDING;

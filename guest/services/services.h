@@ -177,6 +177,7 @@ struct SERVICE {
 struct IMAGE {
     IMAGE *Next;
     WCHAR *Key;       /* the command line, which share process services match by */
+    WCHAR *Account;   /* the account the process runs as, in a form that compares: the services of one process share it */
     HANDLE Process;
     DWORD Pid;
     HANDLE Pipe;      /* the channel the dispatcher opened, NULL until it does */
