@@ -1370,7 +1370,8 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
         Affine map = affine_multiply(to_source, affine_multiply(turn, affine_multiply(mirror, to_unit)));
         params.u[0] = map.m[0][0], params.u[1] = map.m[0][1], params.u[2] = map.m[0][2];
         params.v[0] = map.m[1][0], params.v[1] = map.m[1][1], params.v[2] = map.m[1][2];
-        params.slice = (FLOAT)in->input_desc.Texture2D.ArraySlice;
+        /* the plane views are of the one layer already. */
+        params.slice = 0.0f;
 
         VpSpace in_space, out_space;
         DXGI_COLOR_SPACE_TYPE legacy = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;

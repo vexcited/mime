@@ -489,7 +489,8 @@ static HRESULT STDMETHODCALLTYPE vis_add_visual(void *This, IDCompositionVisual 
                 remove_child(child->parent, old);
         }
         DcVisualState *s = &v->pending;
-        UINT at = above ? s->child_count : 0;
+        /* without a reference the visual goes past an end of the list: above nothing is the bottom, below nothing the top. */
+        UINT at = above ? 0 : s->child_count;
         if (ref)
             at = child_index(v, ref) + (above ? 1 : 0);
         if (s->child_count == s->child_capacity) {
