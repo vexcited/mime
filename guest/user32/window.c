@@ -166,15 +166,14 @@ WINUSERAPI ULONG_PTR WINAPI GetClassLongPtrA(HWND hwnd, int index)
     return GetClassLongPtrW(hwnd, index);
 }
 
-/* win32k has no class setter yet. */
+/* the 32 bit form: on a 32 bit program it is also the one for pointer sized values. */
 WINUSERAPI DWORD WINAPI SetClassLongW(HWND hwnd, int index, LONG value)
 {
-    MIME_STUB("user32");
-    (void)hwnd;
-    (void)index;
-    (void)value;
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+#ifdef __i386__
+    return (DWORD)SetClassLongPtrW(hwnd, index, (LONG_PTR)(ULONG)value);
+#else
+    return NtUserSetClassLong(hwnd, index, (ULONG)value, FALSE);
+#endif
 }
 
 /* ------------------------------------------------------------------ creation and destruction */

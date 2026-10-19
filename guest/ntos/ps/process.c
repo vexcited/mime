@@ -153,7 +153,7 @@ PVOID NTAPI PsGetProcessPeb(PEPROCESS process)
 
 NTSTATUS NTAPI PsGetProcessExitStatus(PEPROCESS process)
 {
-    return process->ExitStatus;
+    return process->Exited ? process->ExitStatus : STATUS_PENDING;
 }
 
 void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table)

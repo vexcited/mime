@@ -21,6 +21,12 @@ static CURICON *lookup(HICON icon)
     return (CURICON *)UserLookup(icon, USER_TYPE_CURSOR);
 }
 
+/* whether a handle is a cursor or an icon, whatever the image. */
+BOOLEAN CursorValid(HICON icon)
+{
+    return lookup(icon) != nullptr;
+}
+
 SURFACE *CursorIconImage(HICON icon)
 {
     CURICON *cursor = lookup(icon);

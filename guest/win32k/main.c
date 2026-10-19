@@ -431,7 +431,8 @@ WNDPROC W32ClientProc(W32PROCESS *p, ULONG fnid)
 ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
 {
     UserEnter();
-    W32THREAD *t = W32GetThread();
+    /* routine 15 asks whether the thread has a queue yet, without giving it one. */
+    W32THREAD *t = routine == 15 ? PsGetCurrentThreadWin32Thread() : W32GetThread();
     ULONG_PTR v = 0;
     if (t) {
         switch (routine) {
@@ -445,12 +446,116 @@ ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
             v = (ULONG_PTR)t->Capture;
             break;
         case 14: /* thread has a queue */
+        case 15:
             v = 1;
             break;
         }
     }
     UserLeave();
     return v;
+}
+
+/* ------------------------------------------------------------------ waiting for a process to be idle */
+
+#define WIDLE_TIMEOUT 0x102u
+#define WIDLE_FAILED 0xFFFFFFFFu
+#define WIDLE_POLL_MS 10
+
+/* a thread that sleeps in a message wait with nothing to read has nothing to do. */
+static BOOLEAN thread_idle(W32THREAD *t)
+{
+    return t->InWait && IsListEmpty(&t->Input) && IsListEmpty(&t->Posted) && !t->QuitPosted;
+}
+
+/* the subsystem a process asked for in its image, 0 when it cannot be read. */
+static ULONG image_subsystem(HANDLE pid)
+{
+    PEPROCESS process;
+    if (!NT_SUCCESS(PsLookupProcessByProcessId(pid, &process)))
+        return 0;
+    ULONG subsystem = 0;
+    PPEB peb = PsGetProcessPeb(process);
+    if (peb) {
+        PKPROCESS state;
+        KeStackAttachProcess((PRKPROCESS)process, &state);
+        MimeCopyFromUser(&subsystem, &peb->ImageSubsystem, sizeof(subsystem));
+        KeUnstackDetachProcess(&state);
+    }
+    ObDereferenceObject(process);
+    return subsystem;
+}
+
+/*
+ * WaitForInputIdle: until a thread of the process waits for input with nothing to read, which happens once. A
+ * process that is not a program of the graphical subsystem, or has no message queue, has nothing to wait for. One
+ * that is, and has not made its queue yet, is waited for as well; it ends the wait with failure if it ends.
+ */
+ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL remote_handle)
+{
+    HANDLE pid = (HANDLE)process_id;
+    LONG64 deadline = timeout == 0xFFFFFFFFu ? -1 : (LONG64)W32TickCount() + timeout;
+    PEPROCESS target = nullptr;
+    if (!NT_SUCCESS(PsLookupProcessByProcessId(pid, &target))) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return WIDLE_FAILED;
+    }
+    BOOLEAN graphical = FALSE;
+    ULONG result = 0;
+    for (;;) {
+        if (PsGetProcessExitStatus(target) != STATUS_PENDING) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            result = WIDLE_FAILED;
+            break;
+        }
+        UserEnter();
+        W32PROCESS *wp = nullptr;
+        for (PLIST_ENTRY e = W32Processes.Flink; e != &W32Processes; e = e->Flink) {
+            W32PROCESS *candidate = CONTAINING_RECORD(e, W32PROCESS, Links);
+            if (candidate->Pid == pid) {
+                wp = candidate;
+                break;
+            }
+        }
+        BOOLEAN idle = FALSE, has_queue = FALSE;
+        if (wp) {
+            has_queue = TRUE;
+            idle = wp->InputIdle;
+            for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads && !idle; e = e->Flink) {
+                W32THREAD *t = CONTAINING_RECORD(e, W32THREAD, Links);
+                if (t->Process == wp && !t->Destroying && thread_idle(t))
+                    idle = TRUE;
+            }
+            if (idle)
+                wp->InputIdle = TRUE;
+        }
+        UserLeave();
+        if (idle) {
+            result = 0;
+            break;
+        }
+        if (!has_queue && !graphical) {
+            ULONG subsystem = image_subsystem(pid);
+            graphical = subsystem == 2; /* IMAGE_SUBSYSTEM_WINDOWS_GUI */
+            if (!graphical) {
+                result = 0;
+                break;
+            }
+        }
+        LARGE_INTEGER step;
+        step.QuadPart = -(LONGLONG)WIDLE_POLL_MS * 10000;
+        if (deadline >= 0) {
+            LONG64 left = deadline - (LONG64)W32TickCount();
+            if (left <= 0) {
+                result = WIDLE_TIMEOUT;
+                break;
+            }
+            if (left < WIDLE_POLL_MS)
+                step.QuadPart = -left * 10000;
+        }
+        KeDelayExecutionThread(UserMode, FALSE, &step);
+    }
+    ObDereferenceObject(target);
+    return result;
 }
 
 /* ------------------------------------------------------------------ driver entry */

@@ -464,6 +464,7 @@ typedef struct W32PROCESS {
     struct W32WINSTA *WinSta;    /* referenced */
     HANDLE WinStaHandle;
     ULONG_PTR DndHandler;        /* the process's code for drops, dnd.c */
+    BOOLEAN InputIdle;           /* a thread has waited for input once: WaitForInputIdle answers at once from then on */
 } W32PROCESS;
 
 typedef struct QUEUED_MESSAGE {
@@ -999,6 +1000,7 @@ void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);
 SURFACE *CursorIconImage(HICON icon);
+BOOLEAN CursorValid(HICON icon);
 SURFACE *CursorImage(HICON cursor);
 void CursorHotspot(HICON cursor, LONG *x, LONG *y);
 /* capture.c */

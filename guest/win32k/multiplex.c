@@ -119,6 +119,12 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
     case MIME_ONEPARAM_REPLYMESSAGE:
         r = MsgReply(t, (LRESULT)param);
         break;
+    case MIME_ONEPARAM_SETMESSAGEEXTRAINFO:
+        if (t) {
+            r = t->ExtraInfo;
+            t->ExtraInfo = param;
+        }
+        break;
     }
     UserLeave();
     return r;

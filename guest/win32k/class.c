@@ -351,3 +351,194 @@ int NTAPI NtUserGetClassName(HWND hwnd, BOOL real, PUNICODE_STRING user_name)
         return 0;
     return (int)n;
 }
+
+/* ------------------------------------------------------------------ changing a class */
+
+/* the windows of a process that use a class, from the tree under the desktop. */
+static void move_windows(WND *w, WND_CLASS *from, WND_CLASS *to, W32PROCESS *p)
+{
+    for (; w; w = w->Next) {
+        if (w->Class == from && w->Thread && w->Thread->Process == p) {
+            w->Class = to;
+            from->Windows--;
+            to->Windows++;
+        }
+        move_windows(w->FirstChild, from, to, p);
+    }
+}
+
+/*
+ * the class of a window, as the process may change it: a class of the process is its own; a system class, or a
+ * global class of another process, is copied first and the windows of the process move to the copy, as windows
+ * keeps a version of every class for each process.
+ */
+static WND_CLASS *private_class(WND *w, W32PROCESS *p)
+{
+    WND_CLASS *c = w->Class;
+    /* a class the process registered itself, or a copy it made of another, is its own. */
+    if (c->Process == p && !c->System)
+        return c;
+    for (PLIST_ENTRY e = p->Classes.Flink; e != &p->Classes; e = e->Flink)
+        if (CONTAINING_RECORD(e, WND_CLASS, Links) == c)
+            return c;
+    WND_CLASS *copy = W32Alloc(sizeof(WND_CLASS));
+    if (!copy)
+        return nullptr;
+    *copy = *c;
+    copy->Name = c->Name ? W32StrDup(c->Name, wcslen(c->Name)) : nullptr;
+    copy->MenuName = c->MenuName && !IS_INTRESOURCE(c->MenuName) ? W32StrDup(c->MenuName, wcslen(c->MenuName)) : c->MenuName;
+    copy->Extra = c->ClassExtra ? W32Alloc((SIZE_T)c->ClassExtra) : nullptr;
+    if (copy->Extra && c->Extra)
+        memcpy(copy->Extra, c->Extra, (SIZE_T)c->ClassExtra);
+    copy->Process = p;
+    copy->Windows = 0;
+    InsertTailList(&p->Classes, &copy->Links);
+    move_windows(WndDesktop(), c, copy, p);
+    return copy;
+}
+
+/* the values of a class that are as wide as a pointer, which the 32 bit and the 16 bit forms cannot reach. */
+static BOOLEAN pointer_index(int index)
+{
+    return index == GCL_MENUNAME || index == GCLP_HBRBACKGROUND || index == GCLP_HCURSOR || index == GCLP_HICON ||
+           index == GCLP_HMODULE || index == GCLP_WNDPROC || index == GCLP_HICONSM;
+}
+
+static BOOLEAN class_index_known(int index)
+{
+    return pointer_index(index) || index == GCL_CBWNDEXTRA || index == GCL_CBCLSEXTRA || index == GCL_STYLE ||
+           index == GCW_ATOM;
+}
+
+/*
+ * SetClassLongPtr, the 32 bit SetClassLong and SetClassWord. The window has to belong to the process
+ * (ERROR_ACCESS_DENIED otherwise); the old value comes back. An index past the class's extra bytes is
+ * ERROR_INVALID_INDEX, as is a pointer sized value through the 32 bit form; the size of the extra bytes and the
+ * atom cannot be set. Icons and cursors have to be handles of that kind (ERROR_INVALID_ICON_HANDLE or
+ * ERROR_INVALID_CURSOR_HANDLE). The values are changed in the class copy of the process.
+ */
+static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ansi, SIZE_T width)
+{
+    UserEnter();
+    W32PROCESS *p = W32GetProcess();
+    WND *w = WndLookup(hwnd);
+    ULONG_PTR old = 0;
+    if (!w || !w->Class || w == WndDesktop() || !p) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        UserLeave();
+        return 0;
+    }
+    if (!w->Thread || w->Thread->Process != p) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        UserLeave();
+        return 0;
+    }
+    if (index >= 0 ? (SIZE_T)index + width > (SIZE_T)w->Class->ClassExtra
+                   : !class_index_known(index) || (width < sizeof(ULONG_PTR) && pointer_index(index))) {
+        W32SetLastError(ERROR_INVALID_INDEX);
+        UserLeave();
+        return 0;
+    }
+    if (index == GCW_ATOM || index == GCL_CBCLSEXTRA) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        UserLeave();
+        return 0;
+    }
+    if (index == GCL_STYLE && (value & 0x10000)) {
+        W32SetLastError(ERROR_INVALID_DATA);
+        UserLeave();
+        return 0;
+    }
+    if ((index == GCLP_HCURSOR || index == GCLP_HICON || index == GCLP_HICONSM) && value && !CursorValid((HICON)value)) {
+        W32SetLastError(index == GCLP_HCURSOR ? ERROR_INVALID_CURSOR_HANDLE : ERROR_INVALID_ICON_HANDLE);
+        UserLeave();
+        return 0;
+    }
+    WND_CLASS *c = private_class(w, p);
+    if (!c) {
+        W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        UserLeave();
+        return 0;
+    }
+    PWSTR menu = nullptr;
+    switch (index) {
+    case GCLP_WNDPROC:
+        old = (ULONG_PTR)c->Proc;
+        c->Proc = (WNDPROC)value;
+        c->Ansi = ansi != 0;
+        break;
+    case GCLP_HBRBACKGROUND:
+        old = (ULONG_PTR)c->Background;
+        c->Background = (HBRUSH)value;
+        break;
+    case GCLP_HCURSOR:
+        old = (ULONG_PTR)c->Cursor;
+        c->Cursor = (HCURSOR)value;
+        break;
+    case GCLP_HICON:
+    case GCLP_HICONSM:
+        old = (ULONG_PTR)(index == GCLP_HICON ? c->Icon : c->IconSmall);
+        if (index == GCLP_HICON)
+            c->Icon = (HICON)value;
+        else
+            c->IconSmall = (HICON)value;
+        break;
+    case GCLP_HMODULE:
+        old = (ULONG_PTR)c->Instance;
+        c->Instance = (HINSTANCE)value;
+        break;
+    case GCL_STYLE:
+        old = c->Style;
+        c->Style = (UINT)value;
+        break;
+    case GCL_CBWNDEXTRA:
+        old = (ULONG_PTR)c->WindowExtra;
+        c->WindowExtra = (int)value;
+        break;
+    case GCL_MENUNAME: {
+        /* a name or a resource number; the string is copied from the caller's memory. */
+        old = (ULONG_PTR)c->MenuName;
+        if (!value || IS_INTRESOURCE(value)) {
+            menu = (PWSTR)value;
+        } else {
+            WCHAR text[256];
+            SIZE_T n = 0;
+            while (n < RTL_NUMBER_OF(text) - 1 && NT_SUCCESS(MimeCopyFromUser(&text[n], (PWSTR)value + n, sizeof(WCHAR))) && text[n])
+                n++;
+            text[n] = 0;
+            menu = W32StrDup(text, n);
+        }
+        c->MenuName = menu;
+        break;
+    }
+    default:
+        memcpy(&old, c->Extra + index, width);
+        memcpy(c->Extra + index, &value, width);
+        if (width == sizeof(WORD))
+            old &= 0xFFFF;
+        break;
+    }
+    if (index == GCLP_HICON || index == GCLP_HICONSM) {
+        WND *desktop = WndDesktop();
+        for (WND *top = desktop ? desktop->FirstChild : nullptr; top; top = top->Next)
+            if (top->Class == c)
+                top->Flags |= WNDF_FRAME_DIRTY;
+    }
+    UserLeave();
+    return old;
+}
+
+ULONG_PTR NTAPI NtUserSetClassLongPtr(HWND hwnd, int index, ULONG_PTR value, BOOL ansi)
+{
+    return set_class_value(hwnd, index, value, ansi, sizeof(ULONG_PTR));
+}
+
+ULONG NTAPI NtUserSetClassLong(HWND hwnd, int index, ULONG value, BOOL ansi)
+{
+    return (ULONG)set_class_value(hwnd, index, (ULONG_PTR)value, ansi, sizeof(ULONG));
+}
+
+USHORT NTAPI NtUserSetClassWord(HWND hwnd, int index, USHORT value)
+{
+    return (USHORT)set_class_value(hwnd, index, (ULONG_PTR)value, FALSE, sizeof(USHORT));
+}
