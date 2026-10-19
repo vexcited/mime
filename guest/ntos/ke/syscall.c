@@ -229,6 +229,16 @@ void KiSystemService(PKTRAP_FRAME frame)
                                                              stack * sizeof(ULONG64)));
         if (timeline) {
             const char *name = service_name(table, index);
+            /* the object a wait or a signal is on, to tell who woke whom. */
+            if (!strcmp(name, "NtWaitForSingleObject") || !strcmp(name, "NtSetEvent") || !strcmp(name, "NtResetEvent") ||
+                !strcmp(name, "NtReleaseSemaphore") || !strcmp(name, "NtReleaseMutant") || !strcmp(name, "NtClearEvent") ||
+                !strcmp(name, "NtPulseEvent") || !strcmp(name, "NtSetTimer") || !strcmp(name, "NtSetTimer2")) {
+                PVOID object;
+                if (NT_SUCCESS(ObReferenceHandle((HANDLE)args[0], nullptr, UserMode, &object, nullptr))) {
+                    mime_format(tpath, sizeof(tpath), "obj%llx", (ULONG64)(ULONG_PTR)object & 0xFFFFFFFFFFFull);
+                    ObDereferenceObject(object);
+                }
+            }
             if (!strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
                 !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey"))
                 timeline_path(args[2], tpath);
