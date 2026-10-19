@@ -1238,7 +1238,7 @@ static ID3D11ShaderResourceView *plane_view(D3dDevice *device, VpView *v, UINT p
     d.Texture2DArray.FirstArraySlice = v->input_desc.Texture2D.ArraySlice;
     d.Texture2DArray.ArraySize = 1;
     D3dView *view;
-    if (FAILED(D3dCreateView(device, D3D_VIEW_SRV, r->iface, &d, 0, &view)))
+    if (FAILED(D3dCreateView(device, D3D_VIEW_PLANE, r->iface, &d, 0, &view)))
         return nullptr;
     v->planes[plane] = (ID3D11ShaderResourceView *)&view->iface.srv;
     return v->planes[plane];

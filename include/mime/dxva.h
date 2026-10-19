@@ -100,9 +100,9 @@ typedef struct DxvaSliceShort {
     uint32_t bitstream_location;
     uint32_t bytes_in_buffer;
     uint16_t bad_slice_chopping;
-} DxvaSliceShort;
+} __attribute__((packed)) DxvaSliceShort;
 
-_Static_assert(sizeof(DxvaSliceShort) == 12, "DXVA_Slice_Short is 12 bytes, its two bytes of padding included");
+_Static_assert(sizeof(DxvaSliceShort) == 10, "DXVA_Slice_Short is 10 bytes, dxva.h packs its structures by one");
 
 /* ------------------------------------------------------------------ vp9 */
 

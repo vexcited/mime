@@ -734,8 +734,13 @@ HRESULT D3dCreateView(D3dDevice *device, D3dViewKind kind, ID3D11Resource *resou
         return E_INVALIDARG;
     static const UINT BIND[] = {D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_RENDER_TARGET, D3D11_BIND_DEPTH_STENCIL,
                                 D3D11_BIND_UNORDERED_ACCESS};
-    if (!(r->bind & BIND[kind]))
+    if (kind == D3D_VIEW_PLANE) {
+        if (!r->video_sampled && !(r->bind & D3D11_BIND_SHADER_RESOURCE))
+            return E_INVALIDARG;
+        kind = D3D_VIEW_SRV;
+    } else if (!(r->bind & BIND[kind])) {
         return E_INVALIDARG;
+    }
     union {
         D3D11_SHADER_RESOURCE_VIEW_DESC1 srv;
         D3D11_RENDER_TARGET_VIEW_DESC1 rtv;

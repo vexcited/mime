@@ -301,6 +301,8 @@ struct D3dResource {
     D3D11_RESOURCE_DIMENSION dimension;
     D3D11_USAGE usage;
     UINT bind, cpu_access, misc;
+    /* the image is sampled for the video processor though the program did not bind it for shaders. */
+    BOOL video_sampled;
     UINT eviction_priority;
     /* the submission after which the gpu no longer reads or writes it. */
     UINT64 last_use;
@@ -376,6 +378,8 @@ void D3dImageCopyRegions(const D3dResource *resource, UINT index, VkDeviceSize b
 
 /* views: a descriptor in the heap and what it covers. */
 typedef enum D3dViewKind { D3D_VIEW_SRV, D3D_VIEW_RTV, D3D_VIEW_DSV, D3D_VIEW_UAV } D3dViewKind;
+/* a shader view the video processor makes, which needs no bind flag, only taken by D3dCreateView. */
+#define D3D_VIEW_PLANE ((D3dViewKind)4)
 
 struct D3dView {
     union {

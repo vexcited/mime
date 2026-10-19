@@ -942,6 +942,16 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
         info.samples = samples;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.usage = D3dImageUsage(bind, misc, usage);
+        /* the video processor reads these through shader views whatever the program bound. */
+        if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D && !(info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) &&
+            ((f->flags & D3D_FORMAT_PLANAR) || (bind & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DECODER)))) {
+            VkFormatProperties fp;
+            device->vk.vkGetPhysicalDeviceFormatProperties(device->vk.physical, vk_format, &fp);
+            if ((f->flags & D3D_FORMAT_PLANAR) || (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+                info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+                r->video_sampled = TRUE;
+            }
+        }
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         if ((f->flags & (D3D_FORMAT_TYPELESS | D3D_FORMAT_SRGB | D3D_FORMAT_PLANAR)) || (bind & D3D11_BIND_RENDER_TARGET))

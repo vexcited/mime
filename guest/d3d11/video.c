@@ -103,12 +103,12 @@ typedef struct VideoView {
     VkImageView view;
 } VideoView;
 
-/* one entry of the slice control buffer: Windows' structure, its two bytes of padding included. */
+/* one entry of the slice control buffer: Windows' structure, 10 bytes as dxva.h packs its structures by one. */
 typedef struct SliceEntry {
     UINT location;
     UINT bytes;
     USHORT chopping;
-} SliceEntry;
+} __attribute__((packed)) SliceEntry;
 
 typedef struct VideoDecoder {
     ID3D11VideoDecoder iface;
