@@ -2,7 +2,7 @@
  * directory change notifications of the host backed volumes: a request on the handle of a directory waits for a file
  * of it, or of the tree below it, to be made, removed, renamed or changed, and is answered with the names and what
  * happened to them. the changes the guest makes through mimefs are reported as they happen. what the host's own programs
- * do to the files is told by the host (MIME_HC_FS_WATCH, on Linux through inotify): a directory is watched there while a
+ * do to the files is told by the host, with MIME_HC_FS_WATCH and on Linux through inotify: a directory is watched there while a
  * handle of it has made a request, and the changes come as records the host has queued, fetched when it raises
  * MIME_IRQ_FS by a thread of the kernel, and added to the watch like the guest's own.
  *

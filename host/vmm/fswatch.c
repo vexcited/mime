@@ -5,11 +5,11 @@
  * and goes with the handle. A tree is watched directory by directory, the ones below it made later as they appear.
  *
  * The guest's own changes make events here too, and are not told twice: before the host does what a hypercall asks
- * (make, remove or move an entry, write a file, set its size) it notes the entry in mime_fswatch_self, and an event for
+ * make, remove or move an entry, write a file or set its size, it notes the entry in mime_fswatch_self, and an event for
  * that entry that follows in the next moments is the guest's own. A creation, a removal or a move is one event and
  * its note is used up by it; writes make events in bursts that the kernel merges, so a note of a write lasts a few
  * milliseconds from the last one. A change of the host in the very milliseconds after a write of the guest to the
- * same file is therefore not told (a guess at how rare that is, not a measured one).
+ * same file is therefore not told. That this is rare is a guess, not a measurement.
  *
  * Events are queued here as records, coalesced when one repeats the last, and the guest is interrupted when the queue
  * goes from empty to not empty. It fetches the queue with MIME_HC_FS_CHANGES until that answers nothing.

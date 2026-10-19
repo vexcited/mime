@@ -1,10 +1,10 @@
 /*
  * the offset of the clock from utc, which follows the rules of the machine's zone. Windows keeps the rules the kernel
  * reads in the key TimeZoneInformation and works out from them which period it is, standard or daylight time, and
- * the instant of the next change; it writes the offset into the shared data page (TimeZoneBias, with TimeZoneId and the
- * period the offset is good for), sets a timer for the change and, when it comes, does it all again and tells the
- * windows of the desktop the clock changed. Here the same: the rules come from the key (cm/boot.c writes the ones of the
- * machine's zone for the year), the timer is a kernel timer, and the windows hear WM_TIMECHANGE through win32k.
+ * the instant of the next change. It writes the offset into the shared data page, with TimeZoneId and the period
+ * the offset is good for, sets a timer for the change and, when it comes, does it all again and tells the
+ * windows of the desktop the clock changed. Here the same: the rules come from the key, which cm/boot.c fills with the
+ * machine's zone for the year, the timer is a kernel timer, and the windows hear WM_TIMECHANGE through win32k.
  * See docs/ntoskrnl.md.
  */
 #include "../ntos.h"
@@ -111,7 +111,7 @@ static BOOLEAN load_rules(TZ_RULES *rules)
 }
 
 /*
- * which period the instant is in, its offset in minutes, and the instant of the next change (0 for none). A zone
+ * which period the instant is in, its offset in minutes, and the instant of the next change, 0 for none. A zone
  * whose rules lack a month for either change has no daylight time, and the offset is its bias.
  */
 static void evaluate(const TZ_RULES *r, LONG64 now, LONG *bias, ULONG *id, LONG64 *since, LONG64 *next)

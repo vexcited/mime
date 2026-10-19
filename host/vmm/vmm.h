@@ -202,7 +202,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
-/* fswatch.c: changes of the host's programs to the directories the guest watches (linux), see there. */
+/* fswatch.c: changes of the host's programs to the directories the guest watches, on Linux, see there. */
 enum {
     MIME_FSWATCH_CREATE,
     MIME_FSWATCH_REMOVE,

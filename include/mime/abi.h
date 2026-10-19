@@ -310,9 +310,9 @@ enum {
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
     MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
-    MIME_HC_FS_WATCH = 0x63,    /* (directory handle, id, filter, tree) watches the changes the host makes below a directory, UNSUPPORTED where it cannot */
-    MIME_HC_FS_UNWATCH = 0x64,  /* (id) */
-    MIME_HC_FS_CHANGES = 0x65,  /* (pa, capacity) -> bytes of MimeFsChange records, 0 once the queue is empty */
+    MIME_HC_FS_WATCH = 0x63,    /* directory handle, id, filter and tree: watches the changes the host makes below a directory, UNSUPPORTED where it cannot */
+    MIME_HC_FS_UNWATCH = 0x64,  /* the watch to end */
+    MIME_HC_FS_CHANGES = 0x65,  /* pa and capacity: the bytes of MimeFsChange records written, 0 once the queue is empty */
     MIME_HC_FS_SYNC = 0x62,     /* () writes the host files of the drive out to the disk, for a shutdown */
     MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
     MIME_HC_FS_GET_SD = 0x1E,   /* (handle, pa, capacity, up) -> distance << 32 | length of the nearest stored descriptor */

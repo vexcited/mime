@@ -1356,8 +1356,8 @@ BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 }
 
 /*
- * copies into the memory of another process without attaching to it, which loads its page tables (and, with no tagged
- * translations, drops this processor's) twice for each completed request: the pages that are present and writable are
+ * copies into the memory of another process without attaching to it, which loads its page tables twice for each
+ * completed request and with no tagged translations drops this processor's each time: the pages that are present and writable are
  * written through their physical addresses. Returns how much it copied, which is all unless a page is absent, shared
  * copy on write, guarded or read only; the caller copies the rest the slow way. The kernel lock is held, which keeps
  * the process from changing its map and the page from going away, and the faults other processors resolve without it

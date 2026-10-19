@@ -3,7 +3,7 @@
  * three writes of a few bytes would cost a trip to the host for each, 7 microseconds and the host's own
  * write, so a handle keeps the writes that continue one another in a buffer of its own and the host gets
  * them together: when the buffer is full, when the handle is flushed, closed or reads, when anything asks
- * about the file (another handle reading it, its size, a listing that holds it, an open by its name), when
+ * about the file, which is another handle reading it, its size, a listing that holds it or an open by its name, when
  * a write does not continue the buffer, at shutdown and, for what is left, ten milliseconds after it was
  * written. A handle that asked for write through or unbuffered i/o never gets one.
  *

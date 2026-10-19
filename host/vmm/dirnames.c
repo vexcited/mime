@@ -8,8 +8,8 @@
  * On Linux an inotify watch on the directory keeps the names exact: the host's kernel queues the event of a
  * change before the call that made it returns, so reading what is queued before each look finds every change
  * made before it, the machine's own, other programs' and the guest's, and a directory that changes all the time
- * is as good as one that does not. Where there is no watch (another host, a file system that refuses one, no
- * room for another) the names are used while the directory has the inode and the times it had when they were
+ * is as good as one that does not. Where there is no watch, on another host, on a file system that refuses one or with no
+ * room for another, the names are used while the directory has the inode and the times it had when they were
  * read, were read when it had not changed for 100 milliseconds, and are read again if it changed while they
  * were being read: the times of the host's file system advance in steps of milliseconds.
  */
