@@ -188,6 +188,12 @@ static Fit window_fit(const UiWindow *w)
     return fit;
 }
 
+/* whether a point is outside the host window, as a held button lets the pointer be. */
+static bool point_outside(const UiWindow *w, float x, float y)
+{
+    return w->logical_width > 0 && (x < 0 || y < 0 || x >= (float)w->logical_width || y >= (float)w->logical_height);
+}
+
 /* a point of the host window, in sdl window coordinates, as guest screen pixels. */
 static void window_point_to_guest(UiWindow *w, float x, float y, int32_t *gx, int32_t *gy)
 {
@@ -211,6 +217,43 @@ static uint32_t modifiers_of(SDL_Keymod mod)
     if (mod & SDL_KMOD_CAPS)
         m |= MIME_MOD_CAPS;
     return m;
+}
+
+uint32_t mime_ui_modifiers(void)
+{
+    return modifiers_of(SDL_GetModState());
+}
+
+/* the host surface of a window, null while it has none. */
+void *mime_ui_window_surface(uint32_t id)
+{
+    UiWindow *w = find_window(id);
+    if (!w || !w->window)
+        return nullptr;
+    return SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+}
+
+bool mime_ui_surface_point(void *surface, double x, double y, uint32_t *window, int32_t *gx, int32_t *gy)
+{
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        UiWindow *w = &g_windows[i];
+        if (!w->used || !w->window || !w->shown)
+            continue;
+        void *main_surface = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
+                                                    SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+        double ox = 0, oy = 0;
+        if (surface == main_surface) {
+        } else if (w->vk_surface && surface == (void *)w->vk_surface) {
+            ox = w->vk_place.left;
+            oy = w->vk_place.top;
+        } else {
+            continue;
+        }
+        *window = w->id;
+        window_point_to_guest(w, (float)(x + ox), (float)(y + oy), gx, gy);
+        return true;
+    }
+    return false;
 }
 
 /* ------------------------------------------------------------------ display */
@@ -356,6 +399,8 @@ static void emit_mouse(SDL_WindowID id, float x, float y, uint32_t type, uint32_
     ev.modifiers = modifiers_of(SDL_GetModState());
     if (w->window && SDL_GetWindowRelativeMouseMode(w->window))
         ev.flags |= 4;
+    if (point_outside(w, x, y))
+        ev.flags |= 8;
     emit(&ev);
 }
 
@@ -375,6 +420,8 @@ static void emit_motion(const SDL_MouseMotionEvent *m)
     else {
         window_point_to_guest(w, m->x, m->y, &ev.x, &ev.y);
         scale = window_fit(w).scale;
+        if (point_outside(w, m->x, m->y))
+            ev.flags |= 8;
     }
     w->motion_x += m->xrel / scale;
     w->motion_y += m->yrel / scale;
@@ -1342,8 +1389,10 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
         mime_info("no game controllers (%s)", SDL_GetError());
-    if (g_video)
+    if (g_video) {
         update_display();
+        mime_dnd_init();
+    }
 }
 
 /* ------------------------------------------------------------------ game controllers */

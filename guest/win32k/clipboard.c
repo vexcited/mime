@@ -165,6 +165,37 @@ static void register_formats(void)
     }
 }
 
+/* the clipboard format a kind is carried in, and the other way round; with the user lock. */
+UINT ClipboardFormatOfKind(ULONG kind)
+{
+    register_formats();
+    switch (kind) {
+    case MIME_CLIP_TEXT:
+        return CF_UNICODETEXT;
+    case MIME_CLIP_DIB:
+        return CF_DIB;
+    case MIME_CLIP_DIBV5:
+        return CF_DIBV5;
+    case MIME_CLIP_PNG:
+        return g_format_png;
+    case MIME_CLIP_HTML:
+        return g_format_html;
+    case MIME_CLIP_HDROP:
+        return CF_HDROP;
+    case MIME_CLIP_URL:
+        return g_format_url;
+    }
+    return 0;
+}
+
+ULONG ClipboardKindOfFormat(UINT format)
+{
+    for (ULONG kind = 1; kind <= MIME_CLIP_URL; kind <<= 1)
+        if (format && ClipboardFormatOfKind(kind) == format)
+            return kind;
+    return 0;
+}
+
 /* a format a program stored, as opposed to one the system derives or the host owns. */
 static CLIP_FORMAT *own_format(UINT format)
 {

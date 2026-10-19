@@ -2068,6 +2068,35 @@ uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t l
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
+/* drags go no further than the guest's own windows here. */
+uint64_t mime_ui_dnd_effect(uint32_t session, uint32_t effect)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_dnd_finish(uint32_t session, uint32_t effect)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_dnd_fetch(uint32_t session, uint32_t kind, void *dst, uint64_t capacity, uint64_t offset,
+                           uint64_t *total)
+{
+    *total = 0;
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, uint64_t *session)
+{
+    *session = 0;
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+uint64_t mime_ui_dnd_stop(uint32_t session)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
 /* ---------------------------------------------------------------- metal layers */
 
 /*

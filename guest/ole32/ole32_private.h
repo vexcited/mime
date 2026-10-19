@@ -65,8 +65,22 @@ LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key
 
 /* clipboard.c */
 void OleClipboardUninitialize(void);
+/* an enumerator over a copy of the formats. */
+IEnumFORMATETC *OleFormatEnumCreate(const FORMATETC *formats, ULONG count);
 
 /* dragdrop.c */
 IDropTarget *OleFindDropTarget(HWND hwnd);
+
+/* hostdnd.c: drag and drop with the host's programs. user32 calls the handler for WM_MIME_HOSTDND. */
+void WINAPI OleHostDndHandler(HWND hwnd, LPARAM lparam);
+void OleHostDndRegister(HWND hwnd);
+void OleHostDndRevoke(HWND hwnd);
+/* a drag of DoDragDrop moves to the host; false when it cannot. */
+bool OleHostDragBegin(IDataObject *data, DWORD allowed);
+bool OleHostDragActive(void);
+bool OleHostDragEnded(bool *dropped, DWORD *effect);
+void OleHostDragFinish(void);
+/* whether the pointer is outside the host window it began in, which a held button allows. */
+bool OleHostPointerOutside(void);
 
 #endif

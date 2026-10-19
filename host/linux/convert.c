@@ -828,3 +828,179 @@ char *mime_conv_url_to_uris(const void *text, size_t size, bool wide, size_t *ou
     out[*out_len] = 0;
     return out;
 }
+
+/* ------------------------------------------------------------------ kinds and types */
+
+static const char *const k_text[] = {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "TEXT", "STRING"};
+static const char *const k_png[] = {"image/png"};
+static const char *const k_bmp[] = {"image/bmp", "image/x-bmp", "image/x-ms-bmp"};
+#define MIME_HTML "text/html"
+#define MIME_URIS "text/uri-list"
+#define MIME_GNOME_FILES "x-special/gnome-copied-files"
+#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
+
+static bool has_type(char *const *mimes, size_t count, const char *type)
+{
+    for (size_t i = 0; i < count; i++)
+        if (!strcmp(mimes[i], type))
+            return true;
+    return false;
+}
+
+static const char *find_type(char *const *mimes, size_t count, const char *const *list, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+        if (has_type(mimes, count, list[i]))
+            return list[i];
+    return nullptr;
+}
+
+uint32_t mime_conv_kinds(char *const *mimes, size_t count)
+{
+    uint32_t mask = 0;
+    if (find_type(mimes, count, k_text, COUNT(k_text)))
+        mask |= MIME_CLIP_TEXT;
+    if (find_type(mimes, count, k_png, COUNT(k_png)) || find_type(mimes, count, k_bmp, COUNT(k_bmp)))
+        mask |= MIME_CLIP_DIB | MIME_CLIP_DIBV5 | MIME_CLIP_PNG;
+    if (has_type(mimes, count, MIME_HTML))
+        mask |= MIME_CLIP_HTML;
+    /* a list of uris holds files, urls or both: only reading it tells. */
+    if (has_type(mimes, count, MIME_URIS))
+        mask |= MIME_CLIP_HDROP | MIME_CLIP_URL;
+    return mask;
+}
+
+const char *mime_conv_read_type(uint32_t kind, char *const *mimes, size_t count)
+{
+    switch (kind) {
+    case MIME_CLIP_TEXT:
+        return find_type(mimes, count, k_text, COUNT(k_text));
+    case MIME_CLIP_DIB:
+    case MIME_CLIP_DIBV5:
+    case MIME_CLIP_PNG: {
+        const char *image = find_type(mimes, count, k_png, COUNT(k_png));
+        return image ? image : find_type(mimes, count, k_bmp, COUNT(k_bmp));
+    }
+    case MIME_CLIP_HTML:
+        return has_type(mimes, count, MIME_HTML) ? MIME_HTML : nullptr;
+    case MIME_CLIP_HDROP:
+    case MIME_CLIP_URL:
+        return has_type(mimes, count, MIME_URIS) ? MIME_URIS : nullptr;
+    }
+    return nullptr;
+}
+
+uint8_t *mime_conv_to_guest(uint32_t kind, const void *raw, size_t size, size_t *out_size)
+{
+    switch (kind) {
+    case MIME_CLIP_TEXT:
+        return mime_conv_text_to_guest(raw, size, out_size);
+    case MIME_CLIP_DIB:
+    case MIME_CLIP_DIBV5:
+        return mime_conv_image_to_dib(raw, size, kind == MIME_CLIP_DIBV5, out_size);
+    case MIME_CLIP_PNG:
+        return mime_conv_image_to_png(raw, size, out_size);
+    case MIME_CLIP_HTML:
+        return mime_conv_html_to_guest(raw, size, out_size);
+    case MIME_CLIP_HDROP:
+        return mime_conv_uris_to_hdrop(mime_daemon_paths(), raw, size, out_size);
+    case MIME_CLIP_URL:
+        return mime_conv_uris_to_url(raw, size, out_size);
+    }
+    return nullptr;
+}
+
+size_t mime_conv_offer_types(uint32_t kinds, const char **types)
+{
+    size_t n = 0;
+    if (kinds & MIME_CLIP_TEXT) {
+        types[n++] = k_text[0];
+        types[n++] = k_text[1];
+    }
+    if (kinds & (MIME_CLIP_PNG | MIME_CLIP_DIB | MIME_CLIP_DIBV5)) {
+        types[n++] = "image/png";
+        types[n++] = "image/bmp";
+    }
+    if (kinds & MIME_CLIP_HTML)
+        types[n++] = MIME_HTML;
+    if (kinds & (MIME_CLIP_HDROP | MIME_CLIP_URL))
+        types[n++] = MIME_URIS;
+    if (kinds & MIME_CLIP_HDROP)
+        types[n++] = MIME_GNOME_FILES;
+    return n;
+}
+
+uint32_t mime_conv_pick_kind(const char *mime, uint32_t offered)
+{
+    for (size_t i = 0; i < COUNT(k_text); i++)
+        if (!strcmp(mime, k_text[i]))
+            return offered & MIME_CLIP_TEXT;
+    if (!strcmp(mime, "image/png"))
+        return offered & MIME_CLIP_PNG ? MIME_CLIP_PNG : offered & MIME_CLIP_DIBV5 ? MIME_CLIP_DIBV5 : offered & MIME_CLIP_DIB;
+    if (!strcmp(mime, "image/bmp"))
+        return offered & MIME_CLIP_DIBV5 ? MIME_CLIP_DIBV5 : offered & MIME_CLIP_DIB ? MIME_CLIP_DIB : offered & MIME_CLIP_PNG;
+    if (!strcmp(mime, MIME_HTML))
+        return offered & MIME_CLIP_HTML;
+    if (!strcmp(mime, MIME_URIS))
+        return offered & MIME_CLIP_HDROP ? MIME_CLIP_HDROP : offered & MIME_CLIP_URL;
+    if (!strcmp(mime, MIME_GNOME_FILES))
+        return offered & MIME_CLIP_HDROP;
+    return 0;
+}
+
+uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, size_t size, size_t *out_size)
+{
+    bool png = !strcmp(mime, "image/png"), bmp = !strcmp(mime, "image/bmp");
+    uint8_t *out = nullptr;
+    switch (kind) {
+    case MIME_CLIP_TEXT:
+        return (uint8_t *)mime_conv_text_from_guest(raw, size / 2, out_size);
+    case MIME_CLIP_PNG:
+        if (png) {
+            out = malloc(size);
+            if (out) {
+                memcpy(out, raw, size);
+                *out_size = size;
+            }
+            return out;
+        }
+        if (bmp) {
+            /* a bmp file from a png: through the pixels. */
+            size_t dib_size;
+            uint8_t *dib = mime_conv_image_to_dib(raw, size, true, &dib_size);
+            if (dib) {
+                out = mime_conv_dib_to_bmp(dib, dib_size, out_size);
+                free(dib);
+            }
+        }
+        return out;
+    case MIME_CLIP_DIB:
+    case MIME_CLIP_DIBV5:
+        return png ? mime_conv_dib_to_png(raw, size, out_size) : bmp ? mime_conv_dib_to_bmp(raw, size, out_size) : nullptr;
+    case MIME_CLIP_HTML:
+        return mime_conv_html_from_guest(raw, size, out_size);
+    case MIME_CLIP_HDROP: {
+        char *uris = mime_conv_hdrop_to_uris(mime_daemon_paths(), raw, size, out_size);
+        if (uris && !strcmp(mime, MIME_GNOME_FILES)) {
+            /* "copy", then one uri on each line without a line end after the last. */
+            uint8_t *gnome = malloc(*out_size + 8);
+            if (gnome) {
+                memcpy(gnome, "copy\n", 5);
+                size_t n = 5;
+                for (size_t i = 0; i < *out_size; i++)
+                    if (uris[i] != '\r')
+                        gnome[n++] = (uint8_t)uris[i];
+                while (n && gnome[n - 1] == '\n')
+                    n--;
+                free(uris);
+                *out_size = n;
+                return gnome;
+            }
+        }
+        return (uint8_t *)uris;
+    }
+    case MIME_CLIP_URL:
+        return (uint8_t *)mime_conv_url_to_uris(raw, size, true, out_size);
+    }
+    return nullptr;
+}

@@ -565,6 +565,39 @@ W32KAPI NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms);
 #define MIME_GAMMA_DEVICE 2 /* the calling process's fullscreen ramp over gdi's, null to drop it */
 W32KAPI NTSTATUS NTAPI NtGdiMimeGamma(ULONG op, PUSHORT ramp);
 
+/*
+ * drag and drop with the host's programs (win32k dnd.c). a target registers a window and the handler of its
+ * process; a drag over the window then posts WM_MIME_HOSTDND to its thread, wparam the handler (zero for a window
+ * that only takes files, which user32 handles itself) and lparam the phase and the session. MIME_DND_STATE and
+ * NtUserMimeDndData give the target what the drag holds, MIME_DND_REPLY its answers. a source starts a host drag
+ * and gets the host's requests for data and its end as the same message, to its thread.
+ */
+#define MIME_DND_PHASE_ENTER 1
+#define MIME_DND_PHASE_OVER 2
+#define MIME_DND_PHASE_LEAVE 3
+#define MIME_DND_PHASE_DROP 4
+#define MIME_DND_PHASE_REQUEST 5 /* lparam >> 4 is the slot of the request, see MIME_DND_REQUEST */
+#define MIME_DND_PHASE_END 6
+#define MIME_DND_GOING 0xFFFFFFFFu /* MIME_DND_RESULT while the host drag goes on; else dropped << 8 | effect */
+#define MIME_DND_STATE_SIZE 16     /* kinds, allowed effects, keys, x, y, number of formats, then the formats */
+enum {
+    MIME_DND_REGISTER = 1, /* hwnd, handler: the window takes drops */
+    MIME_DND_REVOKE,       /* hwnd */
+    MIME_DND_REPLY,        /* session, phase << 8 | effect: the target's answer */
+    MIME_DND_STATE,        /* session, 0, out: ULONG[MIME_DND_STATE_SIZE]; returns 1 while the session is current */
+    MIME_DND_START,        /* kinds, allowed effects, handler: this thread begins a host drag; returns its session */
+    MIME_DND_STOP,         /* session */
+    MIME_DND_REQUEST,      /* slot, 0, out: ULONG[2] kind and request of a data request for the source */
+    MIME_DND_RESULT,       /* session: how the source's host drag ended */
+    MIME_DND_OUTSIDE,      /* whether the host says the pointer is outside the window of its last event */
+};
+W32KAPI ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out);
+/* a chunk of what a drag over the guest holds in a clipboard format, from offset; total gets its size. */
+W32KAPI ULONG NTAPI NtUserMimeDndData(ULONG session, ULONG format, PUCHAR buffer, ULONG capacity, ULONG offset,
+                                      PULONG total);
+/* a chunk of the data the host asked the source for; total is 0xFFFFFFFF for none. */
+W32KAPI ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total);
+
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
 W32KAPI BOOL NTAPI NtUserCloseClipboard(void);
 W32KAPI BOOL NTAPI NtUserEmptyClipboard(void);

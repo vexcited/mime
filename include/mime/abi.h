@@ -282,6 +282,13 @@ enum {
     MIME_HC_CLIP_OFFER = 0x48,   /* (MIME_CLIP_* mask) the guest owns the clipboard and can render these, none to withdraw */
     MIME_HC_CLIP_FETCH = 0x49,   /* (MIME_CLIP_* kind, pa, capacity, offset, generation) -> total size of the host's data */
     MIME_HC_CLIP_PROVIDE = 0x4A, /* (request, pa, length, offset, total) answers MIME_INPUT_CLIP_REQUEST in chunks */
+
+    /* drag and drop between the host's programs and the guest's, see MIME_INPUT_DND_*. */
+    MIME_HC_DND_EFFECT = 0x4B,   /* (session, DROPEFFECT_*) what the target under a host drag does with it */
+    MIME_HC_DND_FETCH = 0x4C,    /* (session, MIME_CLIP_* kind, pa, capacity, offset) -> total size of a host drag's data */
+    MIME_HC_DND_FINISH = 0x4D,   /* (session, DROPEFFECT_*) the drop has been handled, with its effect */
+    MIME_HC_DND_START = 0x4E,    /* (MIME_CLIP_* kinds, DROPEFFECT_* allowed, window) -> session: a drag of the guest leaves its windows */
+    MIME_HC_DND_STOP = 0x4F,     /* (session) the guest ends the drag it started */
 };
 
 /* what the host pointer does over a window: as usual, kept in a rectangle, or locked to report motion alone. */
@@ -703,6 +710,17 @@ enum {
     MIME_INPUT_PAD_REMOVED = 17,   /* pad */
     MIME_INPUT_PAD_STATE = 18,     /* pad, pad_buttons, pad_axes */
     MIME_INPUT_CLIP_REQUEST = 19,  /* another host program pastes: x is the MIME_CLIP_* kind, button the request id */
+    /*
+     * a host program drags over a window: x and y are the position in guest pixels, flags the MIME_CLIP_* kinds the
+     * drag holds, wheel the DROPEFFECT_* the source allows, modifiers the keys, pad the session. the target answers
+     * enter and over with MIME_HC_DND_EFFECT, and the drop with MIME_HC_DND_FINISH.
+     */
+    MIME_INPUT_DND_ENTER = 20,
+    MIME_INPUT_DND_OVER = 21,
+    MIME_INPUT_DND_LEAVE = 22,
+    MIME_INPUT_DND_DROP = 23,
+    MIME_INPUT_DND_REQUEST = 24,   /* a host program reads the data of the guest's drag: x is the kind, button the request id */
+    MIME_INPUT_DND_END = 25,       /* the guest's drag ended: pad is the session, flags the DROPEFFECT_*, x is 1 for a drop */
 };
 
 /*
@@ -760,7 +778,7 @@ typedef struct MimeInputEvent {
     uint32_t scancode; /* set 1 scancode, 0x100 marks extended keys */
     uint32_t ch;       /* utf-32 code point for MIME_INPUT_CHAR */
     int32_t wheel;     /* WHEEL_DELTA units, positive away from the user */
-    uint32_t flags;    /* 1 = horizontal wheel, 2 = key repeat, 4 = relative motion, x and y unknown */
+    uint32_t flags;    /* 1 = horizontal wheel, 2 = key repeat, 4 = relative motion, x and y unknown, 8 = the pointer is outside its window, as a held button lets it be */
     uint32_t state_request; /* native window-state request id. */
     uint64_t time_ms;
     int32_t width, height; /* fullscreen frame dimensions in guest pixels. */

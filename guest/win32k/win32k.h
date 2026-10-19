@@ -461,6 +461,7 @@ typedef struct W32PROCESS {
     WCHAR DesktopInfo[128];      /* the winsta\desktop it was started on, winsta.c */
     struct W32WINSTA *WinSta;    /* referenced */
     HANDLE WinStaHandle;
+    ULONG_PTR DndHandler;        /* the process's code for drops, dnd.c */
 } W32PROCESS;
 
 typedef struct QUEUED_MESSAGE {
@@ -604,6 +605,7 @@ typedef struct WND_CLASS {
 #define WNDF_ACTIVATE_PENDING 0x8000
 #define WNDF_NOCLOSE 0x10000       /* SC_CLOSE removed from the system menu */
 #define WNDF_FULLSCREEN 0x20000
+#define WNDF_DROPTARGET 0x80000    /* takes drops through a handler of its process, dnd.c */
 #define WNDF_APP_FULLSCREEN 0x40000 /* the program made it cover the screen before the host made it fullscreen */
 
 /* caption buttons for hot and pressed tracking. */
@@ -841,6 +843,7 @@ void InputInitialize(void);
 BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max, BOOLEAN remove,
                        BOOLEAN *consumed);
 extern POINT InputCursorPos;
+extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was outside its window */
 /* the raw input thread, which owns the desktop window as csrss's threads do in windows. */
 extern HANDLE InputThreadId, InputProcessId;
 extern UCHAR InputAsyncKeys[256];
@@ -885,7 +888,16 @@ void ClipboardWindowDestroyed(WND *w);
 void ClipboardDisown(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
 void ClipboardHostChanged(ULONG mask, ULONG generation); /* the MIME_CLIP_* kinds the host clipboard holds */
-void ClipboardHostRequest(ULONG kind, ULONG id);         /* another host program pastes a kind of the session's */
+void ClipboardHostRequest(ULONG kind, ULONG id);
+UINT ClipboardFormatOfKind(ULONG kind);
+ULONG ClipboardKindOfFormat(UINT format);
+
+/* dnd.c */
+void DndHostEvent(const MimeInputEvent *ev);
+void DndThreadDestroyed(W32THREAD *t);
+void DndWindowDestroyed(WND *w);
+/* input.c: lets go of the left button the host swallowed the release of. */
+void InputReleaseLeftButton(void);         /* another host program pastes a kind of the session's */
 void GpuFreeProcess(W32PROCESS *p);
 void VkFreeProcess(W32PROCESS *p);
 void AudioFreeProcess(W32PROCESS *p);

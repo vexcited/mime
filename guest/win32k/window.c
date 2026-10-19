@@ -985,6 +985,7 @@ static void free_window(WND *w)
         InputSetForeground(nullptr);
     MenuWindowDestroyed(w);
     ClipboardWindowDestroyed(w);
+    DndWindowDestroyed(w);
     PropFreeWindow(w);
     if (w->Flags & WNDF_HOST_WINDOW) {
         HostWindowDestroy(w);

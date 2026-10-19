@@ -8,6 +8,7 @@
 #define MIME_LINUX_CONVERT_H
 
 #include "../mime_host.h"
+#include "../../include/mime/abi.h"
 
 /* utf-8 text as utf-16le with windows line ends and no terminator. */
 uint8_t *mime_conv_text_to_guest(const char *utf8, size_t len, size_t *out_size);
@@ -35,6 +36,24 @@ char *mime_conv_hdrop_to_uris(const MimePaths *paths, const void *data, size_t s
 uint8_t *mime_conv_uris_to_url(const char *list, size_t len, size_t *out_size);
 /* the text of "UniformResourceLocatorW" or "UniformResourceLocator" as a uri list. */
 char *mime_conv_url_to_uris(const void *text, size_t size, bool wide, size_t *out_len);
+
+/*
+ * what the types of a clipboard or a drag give the guest, and what its kinds give the host. mime_conv_kinds is the
+ * MIME_CLIP_* mask of the types; mime_conv_read_type the type to read for a kind, null when there is none;
+ * mime_conv_to_guest makes the layout of a kind from the bytes of that type.
+ */
+uint32_t mime_conv_kinds(char *const *mimes, size_t count);
+const char *mime_conv_read_type(uint32_t kind, char *const *mimes, size_t count);
+uint8_t *mime_conv_to_guest(uint32_t kind, const void *raw, size_t size, size_t *out_size);
+
+/*
+ * the types a guest offers for kinds, at most 16 and in the order to show them: the number put into types.
+ * mime_conv_pick_kind is the kind to ask the guest for when a host program wants a type, 0 when it is none of the
+ * offered ones, and mime_conv_from_guest turns the bytes of that kind into the type.
+ */
+size_t mime_conv_offer_types(uint32_t kinds, const char **types);
+uint32_t mime_conv_pick_kind(const char *mime, uint32_t offered);
+uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, size_t size, size_t *out_size);
 
 /* the percent decoded path of a file: uri on this machine, false for any other uri. */
 bool mime_conv_uri_to_path(const char *uri, size_t len, char *out, size_t size);

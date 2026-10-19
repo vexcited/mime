@@ -273,6 +273,7 @@ static BOOLEAN g_chars_follow_key;
 static BOOLEAN g_key_dropped;
 
 DWORD InputLastTime;
+BOOLEAN InputPointerOutside;
 
 static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR extra)
 {
@@ -285,6 +286,7 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     case MIME_INPUT_MOUSE_DOWN:
     case MIME_INPUT_MOUSE_UP:
     case MIME_INPUT_MOUSE_WHEEL: {
+        InputPointerOutside = (copy.flags & 8) != 0;
         /* a locked pointer reports motion alone, which moves the cursor from where it is. */
         POINT pt = (copy.flags & 4) ? (POINT){InputCursorPos.x + copy.dx, InputCursorPos.y + copy.dy}
                                     : (POINT){copy.x, copy.y};
@@ -296,6 +298,10 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     }
     if (ev->type == MIME_INPUT_CLIPBOARD) {
         ClipboardHostChanged((ULONG)ev->x, (ULONG)ev->y);
+        return;
+    }
+    if (ev->type >= MIME_INPUT_DND_ENTER && ev->type <= MIME_INPUT_DND_END) {
+        DndHostEvent(ev);
         return;
     }
     if (ev->type == MIME_INPUT_CLIP_REQUEST) {
@@ -470,6 +476,19 @@ static BOOLEAN injected_event(const INPUT *in, MimeInputEvent *ev)
     WND *top = WndChildFromPoint(WndDesktop(), pt, FALSE);
     ev->window_id = top ? (uint32_t)(ULONG_PTR)WndHandle(top) : 0;
     return TRUE;
+}
+
+/* a drag the host took over ends without the guest seeing the button go up. */
+void InputReleaseLeftButton(void)
+{
+    if (!(InputAsyncKeys[VK_LBUTTON] & 0x80))
+        return;
+    MimeInputEvent ev = {.type = MIME_INPUT_MOUSE_UP, .button = MIME_MOUSE_LEFT, .x = InputCursorPos.x,
+                         .y = InputCursorPos.y};
+    WND *top = WndChildFromPoint(WndDesktop(), InputCursorPos, FALSE);
+    ev.window_id = top ? (uint32_t)(ULONG_PTR)WndHandle(top) : 0;
+    ev.time_ms = (uint64_t)(KeQueryInterruptTime() / 10000);
+    dispatch_event(&ev, FALSE, 0);
 }
 
 /* the inputs are queued in order, like the hardware events of the same desktop. */

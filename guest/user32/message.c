@@ -224,6 +224,11 @@ WINUSERAPI BOOL WINAPI TranslateMessage(const MSG *msg)
 
 static LRESULT dispatch(const MSG *msg)
 {
+    /* a drag from or to the host's programs, run by the code of the process that takes it. */
+    if (msg->message == WM_MIME_HOSTDND) {
+        UserHostDnd(msg);
+        return 0;
+    }
     /* timer procedures run directly in the receiving thread. */
     if ((msg->message == WM_TIMER || msg->message == WM_SYSTIMER) && msg->lParam) {
         ((TIMERPROC)msg->lParam)(msg->hwnd, msg->message, msg->wParam, GetTickCount());

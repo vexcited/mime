@@ -41,6 +41,7 @@ typedef struct Request {
     uint64_t total, received;
     bool done, failed;
     struct timespec deadline;
+    int timeout_ms;
     pthread_cond_t cond;
 } Request;
 
@@ -59,44 +60,9 @@ static struct {
     char *legacy;             /* the text set through the text only calls */
 } g = {.lock = PTHREAD_MUTEX_INITIALIZER};
 
-static const char *const k_text[] = {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "TEXT", "STRING"};
-static const char *const k_png[] = {"image/png"};
-static const char *const k_bmp[] = {"image/bmp", "image/x-bmp", "image/x-ms-bmp"};
-#define MIME_HTML "text/html"
-#define MIME_URIS "text/uri-list"
-#define MIME_GNOME_FILES "x-special/gnome-copied-files"
-
-#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
-
-static bool has_mime_locked(const char *mime)
-{
-    for (size_t i = 0; i < g.mime_count; i++)
-        if (!strcmp(g.mimes[i], mime))
-            return true;
-    return false;
-}
-
-static const char *find_mime_locked(const char *const *list, size_t count)
-{
-    for (size_t i = 0; i < count; i++)
-        if (has_mime_locked(list[i]))
-            return list[i];
-    return nullptr;
-}
-
 static uint32_t mask_of_locked(void)
 {
-    uint32_t mask = 0;
-    if (find_mime_locked(k_text, COUNT(k_text)))
-        mask |= MIME_CLIP_TEXT;
-    if (find_mime_locked(k_png, COUNT(k_png)) || find_mime_locked(k_bmp, COUNT(k_bmp)))
-        mask |= MIME_CLIP_DIB | MIME_CLIP_DIBV5 | MIME_CLIP_PNG;
-    if (has_mime_locked(MIME_HTML))
-        mask |= MIME_CLIP_HTML;
-    /* a list of uris holds files, urls or both: only reading it tells. */
-    if (has_mime_locked(MIME_URIS))
-        mask |= MIME_CLIP_HDROP | MIME_CLIP_URL;
-    return mask;
+    return mime_conv_kinds(g.mimes, g.mime_count);
 }
 
 static void free_cache_locked(void)
@@ -173,59 +139,15 @@ static uint8_t *read_mime(const char *mime, size_t *size)
 static uint8_t *read_host(uint32_t kind, size_t *out_size)
 {
     pthread_mutex_lock(&g.lock);
-    const char *text = find_mime_locked(k_text, COUNT(k_text));
-    const char *image = find_mime_locked(k_png, COUNT(k_png));
-    if (!image)
-        image = find_mime_locked(k_bmp, COUNT(k_bmp));
-    bool html = has_mime_locked(MIME_HTML), uris = has_mime_locked(MIME_URIS);
+    const char *type = mime_conv_read_type(kind, g.mimes, g.mime_count);
     pthread_mutex_unlock(&g.lock);
-
-    const char *mime = nullptr;
-    switch (kind) {
-    case MIME_CLIP_TEXT:
-        mime = text;
-        break;
-    case MIME_CLIP_DIB:
-    case MIME_CLIP_DIBV5:
-    case MIME_CLIP_PNG:
-        mime = image;
-        break;
-    case MIME_CLIP_HTML:
-        mime = html ? MIME_HTML : nullptr;
-        break;
-    case MIME_CLIP_HDROP:
-    case MIME_CLIP_URL:
-        mime = uris ? MIME_URIS : nullptr;
-        break;
-    }
-    if (!mime)
+    if (!type)
         return nullptr;
     size_t size = 0;
-    uint8_t *raw = read_mime(mime, &size);
+    uint8_t *raw = read_mime(type, &size);
     if (!raw)
         return nullptr;
-    uint8_t *out = nullptr;
-    switch (kind) {
-    case MIME_CLIP_TEXT:
-        out = mime_conv_text_to_guest((const char *)raw, size, out_size);
-        break;
-    case MIME_CLIP_DIB:
-    case MIME_CLIP_DIBV5:
-        out = mime_conv_image_to_dib(raw, size, kind == MIME_CLIP_DIBV5, out_size);
-        break;
-    case MIME_CLIP_PNG:
-        out = mime_conv_image_to_png(raw, size, out_size);
-        break;
-    case MIME_CLIP_HTML:
-        out = mime_conv_html_to_guest(raw, size, out_size);
-        break;
-    case MIME_CLIP_HDROP:
-        out = mime_conv_uris_to_hdrop(mime_daemon_paths(), (const char *)raw, size, out_size);
-        break;
-    case MIME_CLIP_URL:
-        out = mime_conv_uris_to_url((const char *)raw, size, out_size);
-        break;
-    }
+    uint8_t *out = mime_conv_to_guest(kind, raw, size, out_size);
     free(raw);
     return out;
 }
@@ -295,13 +217,13 @@ uint64_t mime_ui_clipboard_fetch(uint32_t kind, uint32_t generation, void *dst, 
 
 /* ------------------------------------------------------------------ the guest's clipboard */
 
-/* asks the guest for a kind and waits for the chunks; main thread. */
-static uint8_t *request_guest(uint32_t kind, size_t *size)
+uint8_t *mime_ui_request_guest(uint32_t event, uint32_t kind, int timeout_ms, size_t *size)
 {
     Request *r = calloc(1, sizeof(*r));
     if (!r)
         return nullptr;
     pthread_cond_init(&r->cond, nullptr);
+    r->timeout_ms = timeout_ms;
     pthread_mutex_lock(&g.lock);
     do
         r->id = ++g.next_request;
@@ -309,9 +231,9 @@ static uint8_t *request_guest(uint32_t kind, size_t *size)
     r->next = g.requests;
     g.requests = r;
     clock_gettime(CLOCK_REALTIME, &r->deadline);
-    r->deadline.tv_sec += REQUEST_TIMEOUT_MS / 1000;
+    r->deadline.tv_sec += timeout_ms / 1000;
     pthread_mutex_unlock(&g.lock);
-    MimeInputEvent ev = {.type = MIME_INPUT_CLIP_REQUEST, .x = (int32_t)kind, .button = r->id};
+    MimeInputEvent ev = {.type = event, .x = (int32_t)kind, .button = r->id};
     mime_ui_emit(&ev);
     pthread_mutex_lock(&g.lock);
     int rc = 0;
@@ -365,7 +287,7 @@ uint64_t mime_ui_clipboard_provide(uint32_t id, const void *src, uint64_t length
             if (r->received == total)
                 r->done = true;
             clock_gettime(CLOCK_REALTIME, &r->deadline);
-            r->deadline.tv_sec += REQUEST_TIMEOUT_MS / 1000;
+            r->deadline.tv_sec += r->timeout_ms / 1000;
         }
     }
     if (r->done)
@@ -374,120 +296,21 @@ uint64_t mime_ui_clipboard_provide(uint32_t id, const void *src, uint64_t length
     return status;
 }
 
-/* the kind to ask the guest for a host mime type, and how to turn its answer into that type. */
-typedef enum Target { T_TEXT, T_PNG, T_BMP, T_HTML, T_URIS, T_GNOME } Target;
-
-static bool target_of(const char *mime, Target *target)
-{
-    for (size_t i = 0; i < COUNT(k_text); i++)
-        if (!strcmp(mime, k_text[i])) {
-            *target = T_TEXT;
-            return true;
-        }
-    if (!strcmp(mime, "image/png"))
-        *target = T_PNG;
-    else if (!strcmp(mime, "image/bmp"))
-        *target = T_BMP;
-    else if (!strcmp(mime, MIME_HTML))
-        *target = T_HTML;
-    else if (!strcmp(mime, MIME_URIS))
-        *target = T_URIS;
-    else if (!strcmp(mime, MIME_GNOME_FILES))
-        *target = T_GNOME;
-    else
-        return false;
-    return true;
-}
-
 /* the answer for a host program that pastes, from the guest's kinds; main thread. */
 static const void *serve(void *userdata, const char *mime, size_t *size)
 {
-    Target target;
     *size = 0;
-    if (!target_of(mime, &target))
-        return nullptr;
     pthread_mutex_lock(&g.lock);
     uint32_t offered = g.offered;
     pthread_mutex_unlock(&g.lock);
-
-    uint8_t *raw = nullptr, *out = nullptr;
-    size_t raw_size = 0, out_size = 0;
-    uint32_t kind = 0;
-    switch (target) {
-    case T_TEXT:
-        kind = MIME_CLIP_TEXT;
-        break;
-    case T_PNG:
-        kind = offered & MIME_CLIP_PNG ? MIME_CLIP_PNG : offered & MIME_CLIP_DIBV5 ? MIME_CLIP_DIBV5 : MIME_CLIP_DIB;
-        break;
-    case T_BMP:
-        kind = offered & MIME_CLIP_DIBV5 ? MIME_CLIP_DIBV5 : offered & MIME_CLIP_DIB ? MIME_CLIP_DIB : MIME_CLIP_PNG;
-        break;
-    case T_HTML:
-        kind = MIME_CLIP_HTML;
-        break;
-    case T_URIS:
-        kind = offered & MIME_CLIP_HDROP ? MIME_CLIP_HDROP : MIME_CLIP_URL;
-        break;
-    case T_GNOME:
-        kind = MIME_CLIP_HDROP;
-        break;
-    }
-    if (!(offered & kind))
+    uint32_t kind = mime_conv_pick_kind(mime, offered);
+    if (!kind)
         return nullptr;
-    raw = request_guest(kind, &raw_size);
+    size_t raw_size = 0, out_size = 0;
+    uint8_t *raw = mime_ui_request_guest(MIME_INPUT_CLIP_REQUEST, kind, REQUEST_TIMEOUT_MS, &raw_size);
     if (!raw)
         return nullptr;
-    switch (kind) {
-    case MIME_CLIP_TEXT:
-        out = (uint8_t *)mime_conv_text_from_guest((const uint16_t *)raw, raw_size / 2, &out_size);
-        break;
-    case MIME_CLIP_PNG:
-        if (target == T_PNG) {
-            out = raw;
-            out_size = raw_size;
-            raw = nullptr;
-        } else {
-            /* a bmp file from a png: through the pixels. */
-            size_t dib_size;
-            uint8_t *dib = mime_conv_image_to_dib(raw, raw_size, true, &dib_size);
-            if (dib) {
-                out = mime_conv_dib_to_bmp(dib, dib_size, &out_size);
-                free(dib);
-            }
-        }
-        break;
-    case MIME_CLIP_DIB:
-    case MIME_CLIP_DIBV5:
-        out = target == T_PNG ? mime_conv_dib_to_png(raw, raw_size, &out_size)
-                              : mime_conv_dib_to_bmp(raw, raw_size, &out_size);
-        break;
-    case MIME_CLIP_HTML:
-        out = mime_conv_html_from_guest(raw, raw_size, &out_size);
-        break;
-    case MIME_CLIP_HDROP:
-        out = (uint8_t *)mime_conv_hdrop_to_uris(mime_daemon_paths(), raw, raw_size, &out_size);
-        if (out && target == T_GNOME) {
-            /* "copy", then one uri on each line without a line end after the last. */
-            uint8_t *gnome = malloc(out_size + 8);
-            if (gnome) {
-                memcpy(gnome, "copy\n", 5);
-                size_t n = 5;
-                for (size_t i = 0; i < out_size; i++)
-                    if (out[i] != '\r')
-                        gnome[n++] = out[i];
-                while (n && gnome[n - 1] == '\n')
-                    n--;
-                free(out);
-                out = gnome;
-                out_size = n;
-            }
-        }
-        break;
-    case MIME_CLIP_URL:
-        out = (uint8_t *)mime_conv_url_to_uris(raw, raw_size, true, &out_size);
-        break;
-    }
+    uint8_t *out = mime_conv_from_guest(mime, kind, raw, raw_size, &out_size);
     free(raw);
     pthread_mutex_lock(&g.lock);
     free(g.served);
@@ -509,21 +332,7 @@ static void offer_main(void *arg)
 {
     uint32_t mask = (uint32_t)(uintptr_t)arg;
     const char *mimes[16];
-    size_t n = 0;
-    if (mask & MIME_CLIP_TEXT) {
-        mimes[n++] = k_text[0];
-        mimes[n++] = k_text[1];
-    }
-    if (mask & (MIME_CLIP_PNG | MIME_CLIP_DIB | MIME_CLIP_DIBV5)) {
-        mimes[n++] = "image/png";
-        mimes[n++] = "image/bmp";
-    }
-    if (mask & MIME_CLIP_HTML)
-        mimes[n++] = MIME_HTML;
-    if (mask & (MIME_CLIP_HDROP | MIME_CLIP_URL))
-        mimes[n++] = MIME_URIS;
-    if (mask & MIME_CLIP_HDROP)
-        mimes[n++] = MIME_GNOME_FILES;
+    size_t n = mime_conv_offer_types(mask, mimes);
     pthread_mutex_lock(&g.lock);
     g.offered = mask;
     bool owned = g.owned;

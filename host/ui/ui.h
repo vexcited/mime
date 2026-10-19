@@ -62,4 +62,18 @@ uint64_t mime_ui_clipboard_fetch(uint32_t kind, uint32_t generation, void *dst, 
 uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t length, uint64_t offset,
                                    uint64_t total);
 
+/*
+ * drag and drop with the host's programs, see MIME_INPUT_DND_*; each returns a MIME_HC_STATUS_*, unsupported on
+ * the macos display. effect and finish answer a host drag over a guest window; fetch reads its data in a kind
+ * (the answer to MIME_HC_DND_FETCH is like the clipboard's). start begins a host drag of the guest's own, with the
+ * kinds the guest can render; the data is asked for with MIME_INPUT_DND_REQUEST and given to
+ * mime_ui_clipboard_provide, and the end comes as MIME_INPUT_DND_END. stop ends it early.
+ */
+uint64_t mime_ui_dnd_effect(uint32_t session, uint32_t effect);
+uint64_t mime_ui_dnd_finish(uint32_t session, uint32_t effect);
+uint64_t mime_ui_dnd_fetch(uint32_t session, uint32_t kind, void *dst, uint64_t capacity, uint64_t offset,
+                           uint64_t *total);
+uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, uint64_t *session);
+uint64_t mime_ui_dnd_stop(uint32_t session);
+
 #endif

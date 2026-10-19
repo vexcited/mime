@@ -314,6 +314,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     t->Destroying = TRUE;
     WndDestroyThreadWindows(t);
     ClipboardThreadDestroyed(t);
+    DndThreadDestroyed(t);
     TimerRemoveThread(t);
     HookRemoveThread(t);
     free_message_list(&t->Posted);

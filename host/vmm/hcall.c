@@ -370,6 +370,28 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_CLIP_PROVIDE:
         status = clip_provide(vm, regs[1], regs[2], regs[3], regs[4], regs[5]);
         break;
+    case MIME_HC_DND_EFFECT:
+        status = mime_ui_dnd_effect((uint32_t)regs[1], (uint32_t)regs[2]);
+        break;
+    case MIME_HC_DND_FETCH: {
+        uint64_t capacity = regs[4];
+        void *dst = capacity && capacity <= CLIP_CHUNK_MAX ? mime_vm_phys(vm, regs[3], capacity) : nullptr;
+        if (capacity > CLIP_CHUNK_MAX || (capacity && !dst)) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        status = mime_ui_dnd_fetch((uint32_t)regs[1], (uint32_t)regs[2], dst, capacity, regs[5], &value);
+        break;
+    }
+    case MIME_HC_DND_FINISH:
+        status = mime_ui_dnd_finish((uint32_t)regs[1], (uint32_t)regs[2]);
+        break;
+    case MIME_HC_DND_START:
+        status = mime_ui_dnd_start((uint32_t)regs[1], (uint32_t)regs[2], &value);
+        break;
+    case MIME_HC_DND_STOP:
+        status = mime_ui_dnd_stop((uint32_t)regs[1]);
+        break;
     case MIME_HC_GPU_OPEN:
         status = mime_gpu_open(vm, regs[1], regs[2], &value);
         break;

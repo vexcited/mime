@@ -46,6 +46,9 @@ static inline int UserMulDiv(int a, int b, int c)
 
 extern HINSTANCE User32Instance;
 
+/* dnd.c: runs WM_MIME_HOSTDND, drag and drop with the host's programs. */
+void UserHostDnd(const MSG *msg);
+
 /* the process dpi awareness: 0 unaware, 1 system, 2 per monitor, 3 per monitor v2. */
 extern ULONG UserDpiAwareness;
 extern BOOL UserDpiAwarenessLocked;

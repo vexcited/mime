@@ -2011,6 +2011,8 @@ typedef struct tagMONITORINFOEXW {
 #define STN_DISABLE 3
 
 #define WM_SYSTIMER 0x0118
+/* posted to a window or a thread for drag and drop with the host and between processes; user32 handles it. */
+#define WM_MIME_HOSTDND 0x03F7
 
 #define ES_LEFT 0x0000L
 #define ES_CENTER 0x0001L

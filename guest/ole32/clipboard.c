@@ -157,6 +157,12 @@ static FORMAT_ENUM *format_enum_create(const FORMATETC *formats, ULONG count)
     return e;
 }
 
+IEnumFORMATETC *OleFormatEnumCreate(const FORMATETC *formats, ULONG count)
+{
+    FORMAT_ENUM *e = format_enum_create(formats, count);
+    return e ? &e->Interface : nullptr;
+}
+
 static HRESULT STDMETHODCALLTYPE format_enum_query_interface(IEnumFORMATETC *This, REFIID riid, void **object)
 {
     if (!object)
