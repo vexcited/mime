@@ -4,6 +4,7 @@
  * the list of providers and the catalog queries of WSC.
  */
 #include "ws2_32_private.h"
+#include <mime/win32/iphlpapi.h>
 
 int WSAAPI WSAEnumProtocolsW(LPINT protocols, LPWSAPROTOCOL_INFOW buffer, LPDWORD length);
 
@@ -393,15 +394,118 @@ INT WSAAPI WSAEnumNameSpaceProvidersA(LPDWORD length, WSANAMESPACE_INFOA *buffer
 }
 
 /*
- * lookups of services: a query is accepted and then has nothing to return,
- * as the network location provider answers for a machine on no network
- * it knows and no service is registered.
+ * lookups of services. only the network location awareness provider has anything to return: the networks the machine is
+ * connected to, one per adapter that is up and holds an address. any other query is accepted and has nothing to return.
  */
+typedef struct WSAQUERYSETW_ {
+    DWORD dwSize;
+    LPWSTR lpszServiceInstanceName;
+    GUID *lpServiceClassId;
+    DWORD dwVersion;
+    DWORD ecHow;
+    LPWSTR lpszComment;
+    DWORD dwNameSpace;
+    GUID *lpNSProviderId;
+    LPWSTR lpszContext;
+    DWORD dwNumberOfProtocols;
+    struct {
+        INT iAddressFamily;
+        INT iProtocol;
+    } *lpafpProtocols;
+    LPWSTR lpszQueryString;
+    DWORD dwNumberOfCsAddrs;
+    void *lpcsaBuffer;
+    DWORD dwOutputFlags;
+    struct {
+        ULONG cbSize;
+        BYTE *pBlobData;
+    } *lpBlob;
+} WSAQUERYSETW_;
+
+#define LUP_RETURN_NAME 0x0010
+#define LUP_RETURN_COMMENT 0x0080
+#define LUP_RETURN_BLOB 0x0200
+#define LUP_RETURN_ALL 0x0FF0
+#define LUP_FLUSHPREVIOUS 0x2000
+#define LUP_CONTAINERS 0x0002
+
+/* the output flags of a network that was not there before the query. */
+#define RESULT_IS_ADDED 0x0010
+
+/* what a network's blob holds: records of 1048 bytes, a header of three words then the data. */
+#define NLA_RECORD 1048
+#define NLA_CONNECTIVITY 3
+#define NLA_INTERFACE 1
+#define NLA_NETWORK_UNMANAGED 2
+#define NLA_INTERNET_UNKNOWN 0
+#define NLA_INTERNET_YES 2
+
+static GUID g_nla_class = {0x37e515, 0xb5c9, 0x4a43, {0xba, 0xda, 0x8b, 0x48, 0xa8, 0x7a, 0xd2, 0x39}};
+
+typedef struct NLA_NETWORK {
+    WCHAR Name[256];
+    WCHAR Comment[256];
+    DWORD Internet;
+    DWORD InterfaceType;
+    DWORD Speed;
+    char Adapter[64];
+} NLA_NETWORK;
+
 typedef struct WS_LOOKUP {
     DWORD Magic;
+    DWORD Flags;
+    WCHAR Filter[256];
+    BOOL Filtered;
+    BOOL Nla;
+    BOOL Ended;
+    NLA_NETWORK *Networks;
+    DWORD Count;
+    DWORD Next;
 } WS_LOOKUP;
 
 #define LOOKUP_MAGIC 0x4B4F4F4C
+
+typedef ULONG(WINAPI *GET_ADAPTERS_ADDRESSES)(ULONG family, ULONG flags, PVOID reserved, PIP_ADAPTER_ADDRESSES addresses,
+                                              PULONG size);
+
+/* the adapters that connect the machine: up, not the loopback, with an address. */
+static void nla_networks(WS_LOOKUP *l)
+{
+    HMODULE ip = LoadLibraryW(L"iphlpapi.dll");
+    GET_ADAPTERS_ADDRESSES get = ip ? (GET_ADAPTERS_ADDRESSES)GetProcAddress(ip, "GetAdaptersAddresses") : nullptr;
+    if (!get)
+        return;
+    ULONG size = 16384;
+    PIP_ADAPTER_ADDRESSES list = nullptr;
+    ULONG error = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 4 && error == ERROR_BUFFER_OVERFLOW; tries++) {
+        WsFree(list);
+        list = WsAlloc(size);
+        if (!list)
+            return;
+        error = get(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS,
+                    nullptr, list, &size);
+    }
+    DWORD count = 0;
+    if (!error) {
+        for (PIP_ADAPTER_ADDRESSES a = list; a; a = a->Next)
+            count += a->OperStatus == IfOperStatusUp && a->IfType != IF_TYPE_SOFTWARE_LOOPBACK && a->FirstUnicastAddress;
+        l->Networks = count ? WsAllocZero(count * sizeof(NLA_NETWORK)) : nullptr;
+    }
+    for (PIP_ADAPTER_ADDRESSES a = list; l->Networks && a && l->Count < count; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK || !a->FirstUnicastAddress)
+            continue;
+        NLA_NETWORK *n = &l->Networks[l->Count++];
+        lstrcpynW(n->Name, a->FriendlyName ? a->FriendlyName : L"Network", RTL_NUMBER_OF(n->Name));
+        lstrcpynW(n->Comment, a->Description ? a->Description : L"", RTL_NUMBER_OF(n->Comment));
+        n->Internet = a->FirstGatewayAddress ? NLA_INTERNET_YES : NLA_INTERNET_UNKNOWN;
+        n->InterfaceType = a->IfType;
+        n->Speed = a->TransmitLinkSpeed > 0xFFFFFFFFull ? 0xFFFFFFFF : (DWORD)a->TransmitLinkSpeed;
+        if (a->AdapterName)
+            lstrcpynA(n->Adapter, a->AdapterName, sizeof(n->Adapter));
+    }
+    WsFree(list);
+}
 
 INT WSAAPI WSALookupServiceBeginW(void *restrictions, DWORD flags, LPHANDLE lookup)
 {
@@ -412,17 +516,66 @@ INT WSAAPI WSALookupServiceBeginW(void *restrictions, DWORD flags, LPHANDLE look
         return WsFail(WSAEFAULT);
     if (*(DWORD *)restrictions < 0x3C)
         return WsFail(WSAEFAULT);
+    WSAQUERYSETW_ *q = restrictions;
+    /* a query for the network name space needs no class, the one for all of them must name it. */
+    BOOL nla = q->dwNameSpace == NS_NLA ? (!q->lpServiceClassId || !memcmp(q->lpServiceClassId, &g_nla_class, sizeof(GUID)))
+                                        : (q->dwNameSpace == NS_ALL && q->lpServiceClassId &&
+                                           !memcmp(q->lpServiceClassId, &g_nla_class, sizeof(GUID)));
+    DWORD f = flags & 0xFFFFEFF3;
+    if (q->dwNameSpace == NS_NLA && !nla)
+        return WsFail(WSASERVICE_NOT_FOUND);
+    if (nla) {
+        /* the checks of the provider, in its order. */
+        if (f & LUP_CONTAINERS)
+            return WsFail(WSANO_DATA);
+        if (f & 0xA000)
+            return WsFail(WSAEINVAL);
+        if ((f & 0xFF0) == 0xFF0 || (f & 0xFF0) == 0)
+            f = (f & 0xFFFFF00F) | (LUP_RETURN_NAME | LUP_RETURN_COMMENT | LUP_RETURN_BLOB);
+        else if (f & 0xD60)
+            return WsFail(WSAEINVAL);
+        if (!(f & (LUP_RETURN_NAME | LUP_RETURN_COMMENT | LUP_RETURN_BLOB)))
+            return WsFail(WSAEINVAL);
+        if (q->lpszServiceInstanceName && !(f & LUP_RETURN_NAME))
+            return WsFail(WSAEINVAL);
+        for (DWORD i = 0; q->lpafpProtocols && i < q->dwNumberOfProtocols; i++) {
+            if ((q->lpafpProtocols[i].iAddressFamily != AF_INET && q->lpafpProtocols[i].iAddressFamily != AF_UNSPEC) ||
+                (q->lpafpProtocols[i].iProtocol != IPPROTO_TCP && q->lpafpProtocols[i].iProtocol != IPPROTO_UDP))
+                return WsFail(WSAEINVAL);
+        }
+        if (q->lpafpProtocols && !q->dwNumberOfProtocols)
+            return WsFail(WSAEINVAL);
+    }
     WS_LOOKUP *l = WsAllocZero(sizeof(*l));
     if (!l)
         return WsFail(WSA_NOT_ENOUGH_MEMORY);
     l->Magic = LOOKUP_MAGIC;
+    l->Flags = f;
+    if (nla) {
+        l->Nla = TRUE;
+        if (q->lpszServiceInstanceName) {
+            lstrcpynW(l->Filter, q->lpszServiceInstanceName, RTL_NUMBER_OF(l->Filter));
+            l->Filtered = TRUE;
+        }
+        nla_networks(l);
+    }
     *lookup = l;
     return 0;
 }
 
 INT WSAAPI WSALookupServiceBeginA(void *restrictions, DWORD flags, LPHANDLE lookup)
 {
-    return WSALookupServiceBeginW(restrictions, flags, lookup);
+    if (!restrictions || !lookup || *(DWORD *)restrictions < 0x3C)
+        return WSALookupServiceBeginW(restrictions, flags, lookup);
+    /* the same query with its name converted. */
+    WSAQUERYSETW_ copy = *(WSAQUERYSETW_ *)restrictions;
+    WCHAR name[256];
+    if (copy.lpszServiceInstanceName) {
+        if (!MultiByteToWideChar(CP_ACP, 0, (const char *)copy.lpszServiceInstanceName, -1, name, RTL_NUMBER_OF(name)))
+            return WsFail(WSAEINVAL);
+        copy.lpszServiceInstanceName = name;
+    }
+    return WSALookupServiceBeginW(&copy, flags, lookup);
 }
 
 static BOOL valid_lookup(HANDLE lookup)
@@ -430,26 +583,115 @@ static BOOL valid_lookup(HANDLE lookup)
     return lookup && ((WS_LOOKUP *)lookup)->Magic == LOOKUP_MAGIC;
 }
 
-INT WSAAPI WSALookupServiceNextW(HANDLE lookup, DWORD flags, LPDWORD length, void *results)
+static SIZE_T round8(SIZE_T n)
+{
+    return (n + 7) & ~(SIZE_T)7;
+}
+
+static INT lookup_next(HANDLE lookup, DWORD flags, LPDWORD length, void *results, BOOL ansi)
 {
     if (!valid_lookup(lookup))
         return WsFail(WSA_INVALID_HANDLE);
     if (!length)
         return WsFail(WSAEFAULT);
-    return WsFail(WSA_E_NO_MORE);
+    WS_LOOKUP *l = lookup;
+    if (!l->Nla)
+        return WsFail(WSA_E_NO_MORE);
+    if (results)
+        memset(results, 0, *length);
+    BOOL flush = (flags & LUP_FLUSHPREVIOUS) != 0;
+    DWORD f = flags & ~LUP_FLUSHPREVIOUS;
+    if ((f & 0xFF0) == 0xFF0)
+        f = (f & 0xFFFFF00F) | (LUP_RETURN_NAME | LUP_RETURN_COMMENT | LUP_RETURN_BLOB);
+    if (f & 0xFFFFFD6F)
+        return WsFail(WSAEINVAL);
+    if (!f)
+        f = l->Flags;
+    /* the networks are read when the lookup begins; one flushed away is skipped, and a filter on the name keeps the matches. */
+    NLA_NETWORK *n = nullptr;
+    while (!l->Ended && l->Next < l->Count) {
+        NLA_NETWORK *c = &l->Networks[l->Next];
+        if (flush) {
+            flush = FALSE;
+        } else if (!l->Filtered || !_wcsicmp(l->Filter, c->Name)) {
+            n = c;
+            break;
+        }
+        l->Next++;
+    }
+    if (!n) {
+        l->Ended = TRUE;
+        return WsFail(WSA_E_NO_MORE);
+    }
+    SIZE_T unit = ansi ? 1 : sizeof(WCHAR);
+    SIZE_T name = (f & LUP_RETURN_NAME) ? round8((wcslen(n->Name) * (ansi ? 2 : 1) + 1) * unit) : 0;
+    SIZE_T comment = (f & LUP_RETURN_COMMENT) ? round8((wcslen(n->Comment) * (ansi ? 2 : 1) + 1) * unit) : 0;
+    SIZE_T blob = (f & LUP_RETURN_BLOB) ? round8(sizeof(*((WSAQUERYSETW_ *)0)->lpBlob)) + 2 * NLA_RECORD : 0;
+    SIZE_T need = sizeof(WSAQUERYSETW_) + name + comment + blob;
+    BOOL fits = results && *length >= need;
+    *length = (DWORD)need;
+    if (!fits)
+        return WsFail(WSAEFAULT);
+    WSAQUERYSETW_ *q = results;
+    q->dwSize = (DWORD)need;
+    BYTE *at = (BYTE *)(q + 1);
+    if (name) {
+        q->lpszServiceInstanceName = (LPWSTR)at;
+        if (ansi)
+            WideCharToMultiByte(CP_ACP, 0, n->Name, -1, (char *)at, (int)name, nullptr, nullptr);
+        else
+            wcscpy(q->lpszServiceInstanceName, n->Name);
+        at += name;
+    }
+    if (comment) {
+        q->lpszComment = (LPWSTR)at;
+        if (ansi)
+            WideCharToMultiByte(CP_ACP, 0, n->Comment, -1, (char *)at, (int)comment, nullptr, nullptr);
+        else
+            wcscpy(q->lpszComment, n->Comment);
+        at += comment;
+    }
+    if (blob) {
+        q->lpBlob = (void *)at;
+        q->lpBlob->cbSize = 2 * NLA_RECORD;
+        BYTE *data = at + round8(sizeof(*q->lpBlob));
+        q->lpBlob->pBlobData = data;
+        DWORD *connectivity = (DWORD *)data;
+        connectivity[0] = NLA_CONNECTIVITY;
+        connectivity[1] = NLA_RECORD;
+        connectivity[2] = NLA_RECORD;
+        connectivity[3] = NLA_NETWORK_UNMANAGED;
+        connectivity[4] = n->Internet;
+        DWORD *iface = (DWORD *)(data + NLA_RECORD);
+        iface[0] = NLA_INTERFACE;
+        iface[1] = NLA_RECORD;
+        iface[3] = n->InterfaceType;
+        iface[4] = n->Speed;
+        strcpy((char *)&iface[5], n->Adapter);
+    }
+    q->dwOutputFlags = RESULT_IS_ADDED;
+    l->Next++;
+    return 0;
+}
+
+INT WSAAPI WSALookupServiceNextW(HANDLE lookup, DWORD flags, LPDWORD length, void *results)
+{
+    return lookup_next(lookup, flags, length, results, FALSE);
 }
 
 INT WSAAPI WSALookupServiceNextA(HANDLE lookup, DWORD flags, LPDWORD length, void *results)
 {
-    return WSALookupServiceNextW(lookup, flags, length, results);
+    return lookup_next(lookup, flags, length, results, TRUE);
 }
 
 INT WSAAPI WSALookupServiceEnd(HANDLE lookup)
 {
     if (!valid_lookup(lookup))
         return WsFail(WSA_INVALID_HANDLE);
-    ((WS_LOOKUP *)lookup)->Magic = 0;
-    WsFree(lookup);
+    WS_LOOKUP *l = lookup;
+    l->Magic = 0;
+    WsFree(l->Networks);
+    WsFree(l);
     return 0;
 }
 
