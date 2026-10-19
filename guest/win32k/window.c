@@ -1105,6 +1105,7 @@ static void free_window(WND *w)
     MenuWindowDestroyed(w);
     ClipboardWindowDestroyed(w);
     DndWindowDestroyed(w);
+    TrayWindowDestroyed(w);
     ImeWindowDestroyed(w);
     PropFreeWindow(w);
     if (w->Flags & WNDF_HOST_WINDOW) {

@@ -942,6 +942,12 @@ void WndHostDisplay(WND *w, ULONG monitor);
 void WndHostSize(WND *w, LONG width, LONG height);
 BOOLEAN HostMoveSize(WND *w, ULONG edge);
 void HostPart(WND *w, RECT *part);
+
+/* tray.c: the notification area. */
+void TrayHostEvent(const MimeInputEvent *ev);
+void TrayWindowDestroyed(WND *w);
+/* menu.c: the items of a menu and its submenus listed for the host, with each one's id. */
+ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG max);
 void WndCheckMonitorDpi(WND *w);
 UINT WndHostDpi(WND *w);
 int MetricsGet(int index, UINT dpi);

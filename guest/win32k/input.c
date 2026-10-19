@@ -316,6 +316,10 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         MetricsDisplayChanged();
         return;
     }
+    if (ev->type == MIME_INPUT_TRAY) {
+        TrayHostEvent(ev);
+        return;
+    }
     if (ev->type >= MIME_INPUT_PAD_ADDED && ev->type <= MIME_INPUT_PAD_STATE) {
         /* game controllers are devices of the kernel, which raw input reads too. */
         MimePadEvent(ev);

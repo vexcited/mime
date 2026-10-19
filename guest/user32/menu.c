@@ -973,6 +973,38 @@ static void place_popup(POPUP_STATE *ps, int *x, int *y, const RECT *exclude)
         *y = area.top;
 }
 
+/*
+ * a menu a program pops up for its notification icon, when the desktop asked the icon for it, is the desktop's to show:
+ * win32k hands it over, and the choice comes back as the result. the thread keeps handling its messages meanwhile.
+ */
+static BOOL host_menu(HMENU menu, HWND hwnd, POPUP_STATE *ps)
+{
+    MIME_TRAY_REQUEST request;
+    memset(&request, 0, sizeof(request));
+    request.Window = (ULONG)(ULONG_PTR)hwnd;
+    request.Menu = (ULONG)(ULONG_PTR)menu;
+    if (!NtUserMimeTray(MIME_TRAYOP_MENU, (PUCHAR)&request, sizeof(request)))
+        return FALSE;
+    for (;;) {
+        ULONG answer = NtUserMimeTray(MIME_TRAYOP_MENU_RESULT, (PUCHAR)&request, sizeof(request));
+        if (answer) {
+            ps->Selected = (answer & 0x80000000u) != 0;
+            ps->Result = answer & 0x7FFFFFFF;
+            return TRUE;
+        }
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                PostQuitMessage((int)msg.wParam);
+                return TRUE;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 100, QS_ALLINPUT);
+    }
+}
+
 WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HWND hwnd, LPTPMPARAMS params)
 {
     if (!IsMenu(menu)) {
@@ -1006,7 +1038,9 @@ WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HW
     ps.Dpi = UserWindowDpi(hwnd);
     ps.Font = UserGetMessageFont(ps.Dpi);
     BOOL result = FALSE;
-    if (load_items(&ps)) {
+    if (!system && host_menu(menu, hwnd, &ps)) {
+        result = TRUE;
+    } else if (load_items(&ps)) {
         place_popup(&ps, &x, &y, params ? &params->rcExclude : nullptr);
         ps.Window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, L"#32768", nullptr, WS_POPUP, x,
                                     y, ps.Width, ps.Height, hwnd, nullptr, User32Instance, nullptr);

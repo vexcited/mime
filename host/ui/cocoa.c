@@ -1249,6 +1249,12 @@ uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge)
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
+/* the menu bar has no place for the icons of programs here, and notifications are not sent. */
+uint64_t mime_ui_tray(const MimeTrayCommand *command)
+{
+    return MIME_HC_STATUS_UNSUPPORTED;
+}
+
 /* the screen the display describes is the only monitor here. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
 {

@@ -1,22 +1,16 @@
 /*
  * the notification area and app bars.
  *
- * mime has no taskbar yet. notification icons are accepted so programs
- * keep running, but nothing shows them and they have no position. app bar
- * queries describe the edge the host reserves outside the work area, which
- * is where the taskbar would be.
+ * mime has no taskbar. notification icons are checked here and kept by win32k, which shows them in the host
+ * desktop's notification area when it has one, with their balloons as the desktop's notifications, and sends the clicks
+ * back to the window. app bar queries describe the edge the host reserves outside the work area, which is where the
+ * taskbar would be.
  */
 #include "shell32_private.h"
+#include <mime/ntuser.h>
 
 /* the icons of the process, which stay until deleted or until their window is gone. */
 #define MAX_ICONS 256
-#define NIF_MESSAGE 0x01
-#define NIF_ICON 0x02
-#define NIF_TIP 0x04
-#define NIF_STATE 0x08
-#define NIF_GUID 0x20
-#define NIS_HIDDEN 0x01
-#define NOTIFYICON_VERSION_4 4
 
 typedef struct _TRAY_ICON {
     BOOL Used;
@@ -36,6 +30,9 @@ static TRAY_ICON g_icons[MAX_ICONS];
 
 /* the oldest size of the structure, whose tip is 64 characters. */
 #define V1_SIZE (offsetof(NOTIFYICONDATAW, szTip) + 64 * sizeof(WCHAR))
+/* the size that has the balloon's text and title, and the one with its icon. */
+#define V2_SIZE offsetof(NOTIFYICONDATAW, guidItem)
+#define V4_SIZE sizeof(NOTIFYICONDATAW)
 
 static TRAY_ICON *find_icon(HWND window, UINT id, const GUID *guid)
 {
@@ -73,9 +70,45 @@ static void apply_icon(TRAY_ICON *icon, const NOTIFYICONDATAW *data, SIZE_T size
         icon->State = (icon->State & ~data->dwStateMask) | (data->dwState & data->dwStateMask);
 }
 
+#define H32(h) ((ULONG)(ULONG_PTR)(h))
+
+/* win32k keeps the icon and tells the desktop, with the fields the program's structure had. */
+static void mirror(UINT op, const TRAY_ICON *icon, const NOTIFYICONDATAW *data, SIZE_T size)
+{
+    MIME_TRAY_REQUEST r;
+    memset(&r, 0, sizeof(r));
+    r.Window = H32(icon->Window);
+    r.Key = (ULONG)(icon - g_icons) + 1;
+    r.Id = icon->Id;
+    r.Callback = icon->Callback;
+    r.Icon = H32(icon->Icon);
+    r.State = icon->State;
+    r.Version = icon->Version;
+    if (data) {
+        r.Flags = data->uFlags;
+        if (data->uFlags & NIF_TIP) {
+            SIZE_T chars = size >= V2_SIZE ? 128 : 64;
+            for (SIZE_T n = 0; n < chars && n + 1 < RTL_NUMBER_OF(r.Tip) && data->szTip[n]; n++)
+                r.Tip[n] = data->szTip[n];
+        }
+        if ((data->uFlags & NIF_INFO) && size >= V2_SIZE) {
+            for (SIZE_T n = 0; n + 1 < RTL_NUMBER_OF(r.Info) && data->szInfo[n]; n++)
+                r.Info[n] = data->szInfo[n];
+            for (SIZE_T n = 0; n + 1 < RTL_NUMBER_OF(r.InfoTitle) && data->szInfoTitle[n]; n++)
+                r.InfoTitle[n] = data->szInfoTitle[n];
+            r.InfoFlags = data->dwInfoFlags;
+            r.Timeout = data->uTimeout;
+            if (size >= V4_SIZE)
+                r.BalloonIcon = H32(data->hBalloonIcon);
+        }
+    }
+    NtUserMimeTray(op, (PUCHAR)&r, sizeof(r));
+}
+
 /*
- * the notification area is not shown: a program that adds an icon finds it, can modify and delete it, but
- * nothing draws it and no click reaches the program. windows answers FALSE when the taskbar is not running.
+ * the notification area: a program that adds an icon finds it, can modify and delete it, and the host's desktop
+ * shows it when it has a notification area. Windows answers FALSE when the taskbar is not running, which this
+ * never is.
  */
 SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
 {
@@ -115,6 +148,7 @@ SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
             icon->HasGuid = TRUE;
         }
         apply_icon(icon, data, data->cbSize);
+        mirror(MIME_TRAYOP_ADD, icon, data, data->cbSize);
         ok = TRUE;
         break;
     }
@@ -124,6 +158,7 @@ SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
             break;
         }
         apply_icon(icon, data, data->cbSize);
+        mirror(MIME_TRAYOP_MODIFY, icon, data, data->cbSize);
         ok = TRUE;
         break;
     case NIM_DELETE:
@@ -131,6 +166,7 @@ SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
             error = ERROR_NOT_FOUND;
             break;
         }
+        mirror(MIME_TRAYOP_DELETE, icon, nullptr, 0);
         memset(icon, 0, sizeof(*icon));
         ok = TRUE;
         break;
@@ -146,6 +182,7 @@ SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
             error = ERROR_INVALID_PARAMETER;
         } else {
             icon->Version = data->uVersion;
+            mirror(MIME_TRAYOP_MODIFY, icon, nullptr, 0);
             ok = TRUE;
         }
         break;

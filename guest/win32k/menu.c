@@ -807,3 +807,39 @@ BOOL NTAPI NtUserEndMenu(void)
     /* menu tracking runs in user32, which ends its own loop. */
     return TRUE;
 }
+
+/* ------------------------------------------------------------------ menus for the host */
+
+static void flatten_menu(MENU *menu, ULONG parent, MimeTrayItem *items, ULONG *ids, ULONG *count, ULONG max, ULONG depth)
+{
+    for (ULONG i = 0; menu && i < menu->Count && *count < max; i++) {
+        const MENU_ITEM *it = &menu->Items[i];
+        ULONG index = (*count)++;
+        MimeTrayItem *out = &items[index];
+        memset(out, 0, sizeof(*out));
+        out->parent = parent;
+        if (it->Type & MFT_SEPARATOR)
+            out->flags |= MIME_TRAY_ITEM_SEPARATOR;
+        if (it->State & (MFS_GRAYED | MFS_DISABLED))
+            out->flags |= MIME_TRAY_ITEM_DISABLED;
+        if (it->State & MFS_CHECKED)
+            out->flags |= MIME_TRAY_ITEM_CHECKED;
+        if (it->Type & MFT_RADIOCHECK)
+            out->flags |= MIME_TRAY_ITEM_RADIO;
+        if (it->State & MFS_DEFAULT)
+            out->flags |= MIME_TRAY_ITEM_DEFAULT;
+        for (ULONG c = 0; it->Text && c < it->TextLength && c < RTL_NUMBER_OF(out->label) - 1; c++)
+            out->label[c] = it->Text[c];
+        ids[index] = it->Id;
+        if (it->SubMenu && depth < 8)
+            flatten_menu(menu_lookup(it->SubMenu), index + 1, items, ids, count, max, depth + 1);
+    }
+}
+
+/* the items of a menu and of its submenus in the order a host lists them, each with the id the program gave it. */
+ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG max)
+{
+    ULONG count = 0;
+    flatten_menu(menu_lookup(handle), 0, items, ids, &count, max, 0);
+    return count;
+}

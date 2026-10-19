@@ -19,6 +19,11 @@ void mime_ui_get_display(MimeDisplayInfo *info);
  * still held: MIME_HC_STATUS_OK when it took over, unsupported where windows are moved by the guest.
  */
 uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge);
+/*
+ * the notification area and notifications of the desktop, see MimeTrayCommand: MIME_HC_STATUS_OK once it is
+ * queued, unsupported where the desktop has no bus to tell it to. what the desktop says back is MIME_INPUT_TRAY.
+ */
+uint64_t mime_ui_tray(const MimeTrayCommand *command);
 /* the monitors, the primary first, at most capacity of them: how many there are. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity);
 

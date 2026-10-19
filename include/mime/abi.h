@@ -86,6 +86,78 @@ typedef struct MimeDisplayInfo {
     uint32_t refresh_hz;
 } MimeDisplayInfo;
 
+/*
+ * MIME_HC_TRAY: an icon of the guest in the desktop's notification area, a notification (the balloon of an icon), or
+ * the menu an icon opens. the command is read at the address given, which holds up to MIME_TRAY_COMMAND_SIZE
+ * bytes. MIME_HC_STATUS_UNSUPPORTED when the host has no desktop bus to tell.
+ */
+enum {
+    MIME_TRAY_SET = 1,     /* the icon is there with this tip, picture and state: created on the first one */
+    MIME_TRAY_REMOVE = 2,  /* the icon goes */
+    MIME_TRAY_BALLOON = 3, /* a notification for the icon: title, text and picture */
+    MIME_TRAY_MENU = 4,    /* the menu the icon shows, the answer to MIME_TRAY_EVENT_MENU_REQUEST, items in menu[] */
+};
+
+enum {
+    MIME_TRAY_HIDDEN = 1u << 0,      /* the icon is kept out of sight: passive */
+    MIME_TRAY_HAS_PICTURE = 1u << 1, /* pixels holds the picture */
+    MIME_TRAY_HAS_TIP = 1u << 2,
+    MIME_TRAY_ERROR = 1u << 3,       /* a balloon of an error: critical */
+    MIME_TRAY_WARNING = 1u << 4,
+    MIME_TRAY_SILENT = 1u << 5,      /* a balloon without a sound */
+};
+
+#define MIME_TRAY_PICTURE_MAX 64   /* a picture is at most this many pixels on a side */
+#define MIME_TRAY_MENU_MAX 256
+
+enum {
+    MIME_TRAY_ITEM_SEPARATOR = 1u << 0,
+    MIME_TRAY_ITEM_DISABLED = 1u << 1,
+    MIME_TRAY_ITEM_CHECKED = 1u << 2,
+    MIME_TRAY_ITEM_RADIO = 1u << 3,   /* a mark that is a dot */
+    MIME_TRAY_ITEM_DEFAULT = 1u << 4, /* in bold */
+};
+
+typedef struct MimeTrayItem {
+    uint32_t parent; /* 0 for the menu itself, else 1 + the index of the item whose submenu this is */
+    uint32_t flags;  /* MIME_TRAY_ITEM_* */
+    uint16_t label[64];
+} MimeTrayItem;
+
+typedef struct MimeTrayCommand {
+    uint32_t op;    /* MIME_TRAY_* */
+    uint32_t id;    /* the icon, as the guest numbers it */
+    uint32_t flags; /* MIME_TRAY_* */
+    uint32_t process_id;
+    uint32_t width, height;                 /* of the picture of the icon */
+    uint32_t balloon_width, balloon_height; /* and of the balloon's */
+    uint32_t menu_count;
+    uint16_t app[64];            /* the name of the program */
+    uint16_t tip[128];
+    uint16_t balloon_title[64];
+    uint16_t balloon_text[256];
+    uint8_t pixels[MIME_TRAY_PICTURE_MAX * MIME_TRAY_PICTURE_MAX * 4];         /* argb, a, r, g, b in this order, rows of width * 4 */
+    uint8_t balloon_pixels[MIME_TRAY_PICTURE_MAX * MIME_TRAY_PICTURE_MAX * 4];
+    MimeTrayItem menu[MIME_TRAY_MENU_MAX];
+} MimeTrayCommand;
+
+#define MIME_TRAY_COMMAND_SIZE sizeof(MimeTrayCommand)
+
+/* MIME_INPUT_TRAY: what happened to an icon. */
+enum {
+    MIME_TRAY_EVENT_ACTIVATE = 1,     /* clicked: x, y where */
+    MIME_TRAY_EVENT_CONTEXT = 2,      /* its context menu asked for with the pointer: x, y where */
+    MIME_TRAY_EVENT_SECONDARY = 3,    /* a click of another button */
+    MIME_TRAY_EVENT_SCROLL = 4,       /* the wheel over it: ch is the step, positive up */
+    MIME_TRAY_EVENT_MENU_REQUEST = 5, /* the desktop is about to show its menu: answer with MIME_TRAY_MENU */
+    MIME_TRAY_EVENT_MENU_CHOSEN = 6,  /* an item of the menu was chosen: ch is its index */
+    MIME_TRAY_EVENT_MENU_CLOSED = 7,  /* the menu went away with no choice */
+    MIME_TRAY_EVENT_BALLOON_SHOWN = 8,
+    MIME_TRAY_EVENT_BALLOON_CLICKED = 9,
+    MIME_TRAY_EVENT_BALLOON_TIMEOUT = 10, /* gone by itself or dismissed with its close button */
+    MIME_TRAY_EVENT_BALLOON_HIDDEN = 11,  /* taken away by the program */
+};
+
 /* passed to the kernel entry point in x0, as a physmap virtual address. */
 typedef struct MimeBootInfo {
     uint64_t magic;
@@ -300,6 +372,9 @@ enum {
 
     /* the compositor moves or sizes a window with the pointer, the button of a press still held. */
     MIME_HC_WIN_MOVESIZE = 0x54, /* (window_id, edge) edge 0 moves, 1 to 8 are the WMSZ_* sizing edges; OK when the compositor took over */
+
+    /* the notification area and notifications of the desktop. */
+    MIME_HC_TRAY = 0x55,         /* (pa, size) a MimeTrayCommand */
 };
 
 /* MIME_HC_IME_CONTROL: whether the host has an input method protocol at all (1 or 0), and ending a composition. */
@@ -771,6 +846,12 @@ enum {
     MIME_INPUT_WINDOW_DISPLAY = 27,
     /* the compositor gave the window another size: width and height are those of the host window, the part of the window it covers, in guest pixels. */
     MIME_INPUT_WINDOW_SIZE = 28,
+    /*
+     * the desktop's notification area or notification server says something about an icon of the guest: pad is the icon
+     * as the command named it, flags the MIME_TRAY_EVENT_*, x and y where on the screen, ch the number of a menu item
+     * or the wheel step, whichever the kind has.
+     */
+    MIME_INPUT_TRAY = 29,
 };
 
 enum {

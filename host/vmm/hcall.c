@@ -409,6 +409,11 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_IME_CONTROL:
         status = mime_ui_ime_control((uint32_t)regs[1], (uint32_t)regs[2], &value);
         break;
+    case MIME_HC_TRAY: {
+        const MimeTrayCommand *command = regs[2] >= sizeof(MimeTrayCommand) ? mime_vm_phys(vm, regs[1], sizeof(*command)) : nullptr;
+        status = command ? mime_ui_tray(command) : MIME_HC_STATUS_INVALID;
+        break;
+    }
     case MIME_HC_WIN_MOVESIZE:
         status = mime_ui_window_movesize((uint32_t)regs[1], (uint32_t)regs[2]);
         break;

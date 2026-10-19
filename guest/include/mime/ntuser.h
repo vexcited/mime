@@ -624,6 +624,40 @@ enum {
     MIME_IME_AVAILABLE,
 };
 W32KAPI ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULONG size);
+
+/*
+ * the notification area (win32k tray.c). shell32 keeps the icons of Shell_NotifyIcon in win32k, which tells the
+ * host's desktop and sends the clicks back to the window as the icon's callback message. MIME_TRAYOP_MENU is
+ * TrackPopupMenu's: when the desktop asked an icon for its context menu, the menu is the desktop's to show and
+ * the call returns 1, and MIME_TRAYOP_MENU_RESULT then gives 0 while the choice is awaited, 1 for none, else
+ * 0x80000000 and the item's id. the handles are 32 bits, as they are in windows.
+ */
+enum {
+    MIME_TRAYOP_ADD = 1,
+    MIME_TRAYOP_MODIFY,
+    MIME_TRAYOP_DELETE,
+    MIME_TRAYOP_MENU,
+    MIME_TRAYOP_MENU_RESULT,
+};
+
+typedef struct MIME_TRAY_REQUEST {
+    ULONG Window;
+    ULONG Key; /* shell32's number for the icon, what the window and uID or GUID name */
+    ULONG Id;  /* uID, the icon's number in its callback */
+    ULONG Flags; /* NIF_* */
+    ULONG Callback;
+    ULONG Icon;
+    ULONG State, StateMask;
+    ULONG Version;
+    ULONG BalloonIcon;
+    ULONG InfoFlags; /* NIIF_* */
+    ULONG Timeout;
+    ULONG Menu; /* HMENU, for MIME_TRAYOP_MENU */
+    WCHAR Tip[128];
+    WCHAR InfoTitle[64];
+    WCHAR Info[256];
+} MIME_TRAY_REQUEST;
+W32KAPI ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR request, ULONG size);
 W32KAPI ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total);
 
 W32KAPI BOOL NTAPI NtUserOpenClipboard(HWND owner, ULONG reserved);
