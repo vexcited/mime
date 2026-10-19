@@ -151,6 +151,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     pthread_mutex_init(&vm->lock, nullptr);
     pthread_cond_init(&vm->vcpu_cond, nullptr);
     pthread_mutex_init(&vm->fs_lock, nullptr);
+    pthread_mutex_init(&vm->window_lock, nullptr);
 
     hv_vm_config_t config = hv_vm_config_create();
     hv_vm_config_set_ipa_size(config, 36);

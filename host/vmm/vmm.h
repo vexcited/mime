@@ -96,12 +96,10 @@ typedef struct MimeLazyRegion {
 #define MIME_VMM_INPUT_QUEUE 1024
 
 #ifdef __linux__
-/* a host file mapped read only into the guest from the page cache, its own memslot. */
+/* a host file mapped read only into the guest from the page cache, inside the memory slots over the window range. */
 typedef struct MimeFileWindow {
     uint64_t ipa;
     uint64_t size;
-    void *host;
-    uint32_t slot;
 } MimeFileWindow;
 #endif
 
@@ -142,12 +140,17 @@ struct MimeVm {
     uint32_t input_head, input_tail;
 
     pthread_mutex_t fs_lock;
+    pthread_mutex_t window_lock; /* the windows below on linux, where placing one is a slow change of the memory map */
     MimeFsHandle *fs_handles[MIME_VMM_MAX_FS_HANDLES];
 #ifdef __linux__
     MimeFileWindow windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa */
 #else
     MimeLazyRegion rom;
     MimeLazyRegion windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa */
+#endif
+#ifdef __linux__
+    uint8_t *window_host;        /* the host addresses behind the window range, files are mapped over them */
+    uint64_t window_registered;  /* bytes of the range from its start that have memory slots */
 #endif
     uint32_t window_count;
     uint64_t window_bytes; /* filled bytes of every window */

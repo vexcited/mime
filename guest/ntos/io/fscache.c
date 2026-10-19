@@ -68,7 +68,7 @@ static void unhash(MIMEFS_CACHE *c)
 static void release(MIMEFS_CACHE *c)
 {
     if (c->Window)
-        HalHypercall(MIME_HC_FS_UNMAP, c->Window, 0, 0, 0, 0, 0, nullptr);
+        HalHypercallUnlocked(MIME_HC_FS_UNMAP, c->Window, 0, 0, 0, 0, 0, nullptr);
     RemoveEntryList(&c->Lru);
     g_entries--;
     ExFreePool(c);

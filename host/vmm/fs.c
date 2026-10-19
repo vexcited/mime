@@ -227,6 +227,17 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
 static void sd_memory_forget(const struct stat *st);
 
 /*
+ * the windows are changed under their own lock on linux: taking a window away or placing one is a change of the
+ * memory map that waits for every processor to leave the guest, a millisecond during which the other file calls
+ * must not wait. macos fills windows when the guest touches them, with the file lock.
+ */
+#ifdef __linux__
+#define WINDOW_LOCK(vm) (&(vm)->window_lock)
+#else
+#define WINDOW_LOCK(vm) (&(vm)->fs_lock)
+#endif
+
+/*
  * vm->fs_lock guards the table of handles, the windows and the stored descriptors, and is held for a lookup or
  * an update. Calls that can take the host long, such as opens, reads and flushes, run without it, as each one is a
  * guest thread waiting, and a flush that lasts 13 ms must not hold up every other file call of the machine.
@@ -720,15 +731,15 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
-        pthread_mutex_lock(&vm->fs_lock);
+        pthread_mutex_lock(WINDOW_LOCK(vm));
         status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, &regs[1]) : MIME_HC_STATUS_INVALID;
-        pthread_mutex_unlock(&vm->fs_lock);
+        pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
     }
     case MIME_HC_FS_UNMAP:
-        pthread_mutex_lock(&vm->fs_lock);
+        pthread_mutex_lock(WINDOW_LOCK(vm));
         status = mime_window_unmap(vm, a[1]);
-        pthread_mutex_unlock(&vm->fs_lock);
+        pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
     default:
         status = MIME_HC_STATUS_UNSUPPORTED;
@@ -746,7 +757,7 @@ void mime_fs_close_all(MimeVm *vm)
             free_handle(vm, i + 1);
         }
     }
-    pthread_mutex_lock(&vm->fs_lock);
+    pthread_mutex_lock(WINDOW_LOCK(vm));
     mime_window_unmap_all(vm);
-    pthread_mutex_unlock(&vm->fs_lock);
+    pthread_mutex_unlock(WINDOW_LOCK(vm));
 }
