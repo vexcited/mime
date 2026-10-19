@@ -720,6 +720,32 @@ typedef struct _CREATEFILE2_EXTENDED_PARAMETERS {
 } CREATEFILE2_EXTENDED_PARAMETERS, *PCREATEFILE2_EXTENDED_PARAMETERS, *LPCREATEFILE2_EXTENDED_PARAMETERS;
 WINBASEAPI HANDLE WINAPI CreateFile2(LPCWSTR name, DWORD access, DWORD share, DWORD disposition,
                                      LPCREATEFILE2_EXTENDED_PARAMETERS params);
+/* OpenFile and its record of the file. */
+typedef struct _OFSTRUCT {
+    BYTE cBytes;
+    BYTE fFixedDisk;
+    WORD nErrCode;
+    WORD Reserved1;
+    WORD Reserved2;
+    CHAR szPathName[128];
+} OFSTRUCT, *LPOFSTRUCT, *POFSTRUCT;
+#define OF_READ 0x0000
+#define OF_WRITE 0x0001
+#define OF_READWRITE 0x0002
+#define OF_SHARE_COMPAT 0x0000
+#define OF_SHARE_EXCLUSIVE 0x0010
+#define OF_SHARE_DENY_WRITE 0x0020
+#define OF_SHARE_DENY_READ 0x0030
+#define OF_SHARE_DENY_NONE 0x0040
+#define OF_PARSE 0x0100
+#define OF_DELETE 0x0200
+#define OF_VERIFY 0x0400
+#define OF_CANCEL 0x0800
+#define OF_CREATE 0x1000
+#define OF_PROMPT 0x2000
+#define OF_EXIST 0x4000
+#define OF_REOPEN 0x8000
+WINBASEAPI HFILE WINAPI OpenFile(LPCSTR name, LPOFSTRUCT buffer, UINT style);
 WINBASEAPI HFILE WINAPI _lopen(LPCSTR path, int mode);
 WINBASEAPI HFILE WINAPI _lcreat(LPCSTR path, int attributes);
 WINBASEAPI HFILE WINAPI _lclose(HFILE file);

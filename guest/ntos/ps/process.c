@@ -642,6 +642,10 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     case ProcessPriorityBoost:
         process->DisableBoost = (ULONG)value != 0;
         break;
+    case ProcessWorkingSetWatch:
+        /* the pages a process faults in are not recorded, so there is nothing to start. */
+        status = STATUS_INVALID_INFO_CLASS;
+        break;
     case MX_PROCESS_SHUTDOWN_PARAMETERS:
         /* the level is taken as it is; of the flags only SHUTDOWN_NORETRY exists. */
         if ((ULONG)(value >> 32) & ~(ULONG)MX_SHUTDOWN_NORETRY) {

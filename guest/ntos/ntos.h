@@ -694,6 +694,8 @@ void MiSwapVad(PMMADDRESS_SPACE as, PMMVAD old, PMMVAD fresh);
 NTSTATUS MiZeroBitsHighest(ULONG_PTR zero_bits, ULONG_PTR *highest);
 NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *info);
 NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base, SIZE_T *size, PVOID *entry);
+typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PVOID base, SIZE_T size, const WCHAR *name);
+ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context);
 PVOID MiFindKernelExport(PVOID image_base, const char *name);
 NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read);
 

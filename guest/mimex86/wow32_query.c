@@ -573,6 +573,45 @@ static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
     return status;
 }
 
+/*
+ * the modules of the kernel in the 32-bit layout: a count, then records of 284 bytes whose pointers are 32 bits, the
+ * base addresses cut to the low half. Which layout Windows hands a 32-bit program is a guess.
+ */
+static NTSTATUS query_modules32(ULONG address, ULONG length, ULONG returned_address)
+{
+    typedef struct {
+        ULONG Section, MappedBase, ImageBase, ImageSize, Flags;
+        USHORT LoadOrderIndex, InitOrderIndex, LoadCount, OffsetToFileName;
+        UCHAR FullPathName[256];
+    } MODULE32;
+    UCHAR native[8 + 32 * 296];
+    ULONG needed = 0;
+    NTSTATUS status = NtQuerySystemInformation(SystemModuleInformation, native, sizeof(native), &needed);
+    if (!NT_SUCCESS(status) && status != STATUS_INFO_LENGTH_MISMATCH)
+        return status;
+    ULONG count = *(PULONG)native, fit = count < 32 ? count : 32;
+    ULONG size = 4 + count * sizeof(MODULE32);
+    store32(returned_address, size);
+    if (length < 4)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    ULONG room = (length - 4) / sizeof(MODULE32);
+    if (room > fit)
+        room = fit;
+    PUCHAR out = pointer32(address);
+    *(PULONG)out = count;
+    for (ULONG i = 0; i < room; i++) {
+        PUCHAR from = native + 8 + i * 296;
+        MODULE32 m = {};
+        m.ImageBase = (ULONG)*(PULONG64)(from + 16);
+        m.ImageSize = *(PULONG)(from + 24);
+        m.Flags = *(PULONG)(from + 28);
+        memcpy(&m.LoadOrderIndex, from + 32, 8);
+        memcpy(m.FullPathName, from + 40, sizeof(m.FullPathName));
+        memcpy(out + 4 + i * sizeof(MODULE32), &m, sizeof(m));
+    }
+    return room < count ? STATUS_INFO_LENGTH_MISMATCH : STATUS_SUCCESS;
+}
+
 NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
 {
     ULONG klass = a[0], length = a[2];
@@ -624,7 +663,10 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
             return STATUS_INFO_LENGTH_MISMATCH;
         *(PULONG)out = 0x80000000u;
         return STATUS_SUCCESS;
+    case SystemModuleInformation:
+        return query_modules32(a[1], length, a[3]);
     case SystemProcessorInformation:
+    case SystemPageFileInformation:
     case SystemTimeOfDayInformation:
     case SystemProcessorPerformanceInformation:
     case SystemKernelDebuggerInformation:

@@ -1,0 +1,29 @@
+LIBRARY psapi.dll
+EXPORTS
+    EmptyWorkingSet=kernelbase.K32EmptyWorkingSet @1
+    EnumDeviceDrivers=kernelbase.K32EnumDeviceDrivers @2
+    EnumPageFilesA=kernelbase.K32EnumPageFilesA @3
+    EnumPageFilesW=kernelbase.K32EnumPageFilesW @4
+    EnumProcessModules=kernelbase.K32EnumProcessModules @5
+    EnumProcessModulesEx=kernelbase.K32EnumProcessModulesEx @6
+    EnumProcesses=kernelbase.K32EnumProcesses @7
+    GetDeviceDriverBaseNameA=kernelbase.K32GetDeviceDriverBaseNameA @8
+    GetDeviceDriverBaseNameW=kernelbase.K32GetDeviceDriverBaseNameW @9
+    GetDeviceDriverFileNameA=kernelbase.K32GetDeviceDriverFileNameA @10
+    GetDeviceDriverFileNameW=kernelbase.K32GetDeviceDriverFileNameW @11
+    GetMappedFileNameA=kernelbase.K32GetMappedFileNameA @12
+    GetMappedFileNameW=kernelbase.K32GetMappedFileNameW @13
+    GetModuleBaseNameA=kernelbase.K32GetModuleBaseNameA @14
+    GetModuleBaseNameW=kernelbase.K32GetModuleBaseNameW @15
+    GetModuleFileNameExA=kernelbase.K32GetModuleFileNameExA @16
+    GetModuleFileNameExW=kernelbase.K32GetModuleFileNameExW @17
+    GetModuleInformation=kernelbase.K32GetModuleInformation @18
+    GetPerformanceInfo=kernelbase.K32GetPerformanceInfo @19
+    GetProcessImageFileNameA=kernelbase.K32GetProcessImageFileNameA @20
+    GetProcessImageFileNameW=kernelbase.K32GetProcessImageFileNameW @21
+    GetProcessMemoryInfo=kernelbase.K32GetProcessMemoryInfo @22
+    GetWsChanges=kernelbase.K32GetWsChanges @23
+    GetWsChangesEx=kernelbase.K32GetWsChangesEx @24
+    InitializeProcessForWsWatch=kernelbase.K32InitializeProcessForWsWatch @25
+    QueryWorkingSet=kernelbase.K32QueryWorkingSet @26
+    QueryWorkingSetEx=kernelbase.K32QueryWorkingSetEx @27

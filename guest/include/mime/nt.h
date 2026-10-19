@@ -171,6 +171,7 @@ typedef struct _GUID {
 #define STATUS_ILLEGAL_INSTRUCTION ((NTSTATUS)0xC000001DL)
 #define STATUS_INVALID_SYSTEM_SERVICE ((NTSTATUS)0xC000001CL)
 #define STATUS_INVALID_VIEW_SIZE ((NTSTATUS)0xC000001FL)
+#define STATUS_PORT_ALREADY_SET ((NTSTATUS)0xC0000048L)
 #define STATUS_ALREADY_COMMITTED ((NTSTATUS)0xC0000021L)
 #define STATUS_ACCESS_DENIED ((NTSTATUS)0xC0000022L)
 #define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023L)
@@ -2110,6 +2111,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemProcessInformation = 5,
     SystemProcessorPerformanceInformation = 8,
     SystemModuleInformation = 11,
+    SystemPageFileInformation = 18,
     SystemHandleInformation = 16,
     SystemKernelDebuggerInformation = 35,
     SystemRangeStartInformation = 50,
@@ -2233,6 +2235,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessDefaultHardErrorMode = 12,
     ProcessPriorityClass = 18,
     ProcessHandleCount = 20,
+    ProcessWorkingSetWatch = 15,
     ProcessAffinityMask = 21,
     ProcessPriorityBoost = 22,
     ProcessSessionInformation = 24,
@@ -2241,6 +2244,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessDebugFlags = 31,
     ProcessExecuteFlags = 34,
     ProcessCookie = 36,
+    ProcessWorkingSetWatchEx = 42,
     ProcessImageInformation = 37,
     ProcessImageFileNameWin32 = 43,
     ProcessMitigationPolicy = 52,

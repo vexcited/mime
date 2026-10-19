@@ -220,14 +220,6 @@ HANDLE WINAPI CreateFile2(LPCWSTR name, DWORD access, DWORD share, DWORD disposi
 
 /* ------------------------------------------------------------------ 16 bit style file functions */
 
-#define OF_READ 0x0000
-#define OF_WRITE 0x0001
-#define OF_READWRITE 0x0002
-#define OF_SHARE_EXCLUSIVE 0x0010
-#define OF_SHARE_DENY_WRITE 0x0020
-#define OF_SHARE_DENY_READ 0x0030
-#define OF_SHARE_DENY_NONE 0x0040
-
 HFILE WINAPI _lopen(LPCSTR path, int mode)
 {
     static const DWORD access_map[] = {GENERIC_READ, GENERIC_WRITE, GENERIC_READ | GENERIC_WRITE};
@@ -277,6 +269,131 @@ UINT WINAPI _lwrite(HFILE file, LPCCH buffer, UINT count)
 LONG WINAPI _llseek(HFILE file, LONG offset, int origin)
 {
     return (LONG)SetFilePointer((HANDLE)(LONG_PTR)file, offset, nullptr, (DWORD)origin);
+}
+
+#define FILE_REMOVABLE_MEDIA 0x00000001
+
+/* the sharing a style asks for. */
+static DWORD style_share(UINT style)
+{
+    switch (style & 0x70) {
+    case OF_SHARE_EXCLUSIVE:
+        return 0;
+    case OF_SHARE_DENY_WRITE:
+        return FILE_SHARE_READ;
+    case OF_SHARE_DENY_READ:
+        return FILE_SHARE_WRITE;
+    }
+    return FILE_SHARE_READ | FILE_SHARE_WRITE;
+}
+
+/*
+ * the 16 bit way to open a file. The name is looked for along the search path unless the style says to reopen the file
+ * of the record; the record keeps the full path, the time of the last write for OF_VERIFY and the error. Styles that
+ * parse, test for or delete the file give 1 for a success, the others the handle. OF_PROMPT does not ask the user to
+ * put the disk back, as the hard error that asks is not shown here.
+ */
+HFILE WINAPI OpenFile(LPCSTR name, LPOFSTRUCT record, UINT style)
+{
+    OFSTRUCT saved = *record;
+    HFILE result = HFILE_ERROR;
+    BOOL not_found = FALSE;
+    LPSTR part = nullptr;
+    SetLastError(0);
+    if (style & OF_PARSE) {
+        if (GetFullPathNameA(name, sizeof(record->szPathName) - 1, record->szPathName, &part) > sizeof(record->szPathName) - 1) {
+            SetLastError(ERROR_INVALID_DATA);
+            result = HFILE_ERROR;
+        } else {
+            record->cBytes = sizeof(OFSTRUCT);
+            record->fFixedDisk = 1;
+            result = 0;
+        }
+        goto done;
+    }
+    DWORD access = (style & OF_WRITE) ? GENERIC_WRITE : GENERIC_READ;
+    if (style & OF_READWRITE)
+        access |= GENERIC_READ | GENERIC_WRITE;
+    DWORD share = style_share(style), disposition = OPEN_EXISTING;
+    if (style & OF_CREATE) {
+        access = GENERIC_READ | GENERIC_WRITE;
+        disposition = CREATE_ALWAYS;
+    }
+    if (!(style & OF_REOPEN)) {
+        DWORD n = SearchPathA(nullptr, name, nullptr, sizeof(record->szPathName) - 1, record->szPathName, &part);
+        if (n > sizeof(record->szPathName) - 1) {
+            SetLastError(ERROR_INVALID_DATA);
+            goto done;
+        }
+        if (!n) {
+            /* not on the path: the name in the current directory, which may be about to be created. */
+            not_found = TRUE;
+            n = GetFullPathNameA(name, sizeof(record->szPathName) - 1, record->szPathName, &part);
+            if (!n || n > sizeof(record->szPathName) - 1) {
+                SetLastError(ERROR_INVALID_DATA);
+                goto done;
+            }
+        }
+    }
+    if ((style & OF_EXIST) && !(style & OF_CREATE)) {
+        if (not_found) {
+            SetLastError(ERROR_FILE_NOT_FOUND);
+            goto done;
+        }
+        DWORD attributes = GetFileAttributesA(record->szPathName);
+        if (attributes == INVALID_FILE_ATTRIBUTES) {
+            SetLastError(ERROR_FILE_NOT_FOUND);
+            goto done;
+        }
+        if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+            SetLastError(ERROR_ACCESS_DENIED);
+            goto done;
+        }
+        record->cBytes = sizeof(OFSTRUCT);
+        result = 1;
+        goto done;
+    }
+    if (style & OF_DELETE) {
+        if (DeleteFileA(record->szPathName)) {
+            record->cBytes = sizeof(OFSTRUCT);
+            result = 1;
+        }
+        goto done;
+    }
+    HANDLE file = CreateFileA(record->szPathName, access, share, nullptr, disposition, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        goto done;
+    if (style & OF_EXIST) {
+        CloseHandle(file);
+        record->cBytes = sizeof(OFSTRUCT);
+        result = 1;
+        goto done;
+    }
+    IO_STATUS_BLOCK iosb;
+    FILE_FS_DEVICE_INFORMATION device;
+    NTSTATUS status = NtQueryVolumeInformationFile(file, &iosb, &device, sizeof(device), FileFsDeviceInformation);
+    if (!NT_SUCCESS(status)) {
+        CloseHandle(file);
+        KbSetStatus(status);
+        goto done;
+    }
+    record->fFixedDisk = (device.DeviceType == FILE_DEVICE_DISK || device.DeviceType == FILE_DEVICE_DISK_FILE_SYSTEM) &&
+                         !(device.Characteristics & FILE_REMOVABLE_MEDIA);
+    FILETIME written;
+    if (!GetFileTime(file, nullptr, nullptr, &written) ||
+        !FileTimeToDosDateTime(&written, &record->Reserved1, &record->Reserved2))
+        record->Reserved1 = record->Reserved2 = 0;
+    record->cBytes = sizeof(OFSTRUCT);
+    if ((style & OF_VERIFY) && (saved.Reserved1 != record->Reserved1 || saved.Reserved2 != record->Reserved2 ||
+                                strcmp(saved.szPathName, record->szPathName) != 0)) {
+        *record = saved;
+        CloseHandle(file);
+        goto done;
+    }
+    result = (HFILE)(LONG_PTR)file;
+done:
+    record->nErrCode = (WORD)GetLastError();
+    return result;
 }
 
 /* ------------------------------------------------------------------ reading and writing */

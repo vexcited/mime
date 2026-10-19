@@ -532,6 +532,85 @@ static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG
     return status;
 }
 
+/* ------------------------------------------------------------------ modules */
+
+typedef struct {
+    HANDLE Section;
+    PVOID MappedBase;
+    PVOID ImageBase;
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT LoadOrderIndex, InitOrderIndex, LoadCount, OffsetToFileName;
+    UCHAR FullPathName[256];
+} RTL_PROCESS_MODULE_INFORMATION;
+
+typedef struct {
+    RTL_PROCESS_MODULE_INFORMATION *Entries;
+    ULONG Capacity;
+    ULONG Count;
+} MODULE_LIST;
+
+static void add_module(MODULE_LIST *list, PVOID base, SIZE_T size, const WCHAR *name)
+{
+    if (list->Count < list->Capacity) {
+        RTL_PROCESS_MODULE_INFORMATION *m = &list->Entries[list->Count];
+        memset(m, 0, sizeof(*m));
+        m->ImageBase = base;
+        m->ImageSize = (ULONG)size;
+        m->Flags = 0x08804000;
+        m->LoadOrderIndex = m->InitOrderIndex = (USHORT)list->Count;
+        m->LoadCount = 1;
+        static const char directory[] = "\\SystemRoot\\System32\\";
+        ULONG at = sizeof(directory) - 1;
+        memcpy(m->FullPathName, directory, at);
+        m->OffsetToFileName = (USHORT)at;
+        for (ULONG i = 0; name[i] && at < sizeof(m->FullPathName) - 1; i++)
+            m->FullPathName[at++] = (UCHAR)name[i];
+    }
+    list->Count++;
+}
+
+static void module_callback(PVOID context, ULONG index, PVOID base, SIZE_T size, const WCHAR *name)
+{
+    add_module(context, base, size, name);
+}
+
+/* the kernel and the images it loaded: the modules a program asks for to learn the drivers. */
+static NTSTATUS query_modules(PVOID info, ULONG length, PULONG returned)
+{
+    MODULE_LIST list = {};
+    list.Capacity = 32;
+    list.Entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, list.Capacity * sizeof(*list.Entries), KI_TAG('S', 'y', 'M', 'o'));
+    if (!list.Entries)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)HalBootInfo->kernel_virt;
+    PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)dos + dos->e_lfanew);
+    add_module(&list, dos, nt->OptionalHeader.SizeOfImage, L"ntoskrnl.exe");
+    MiEnumerateSystemImages(module_callback, &list);
+    ULONG count = list.Count < list.Capacity ? list.Count : list.Capacity;
+    ULONG size = 8 + count * (ULONG)sizeof(RTL_PROCESS_MODULE_INFORMATION);
+    UCHAR header[8] = {};
+    *(PULONG)header = count;
+    NTSTATUS status;
+    if (returned)
+        KiCopyToUser(returned, &size, sizeof(size));
+    if (length < 8) {
+        status = STATUS_INFO_LENGTH_MISMATCH;
+    } else {
+        /* a buffer that is too small gets the modules that fit and the status that says so. */
+        ULONG fit = (length - 8) / (ULONG)sizeof(RTL_PROCESS_MODULE_INFORMATION);
+        if (fit > count)
+            fit = count;
+        status = KiCopyToUser(info, header, sizeof(header));
+        if (NT_SUCCESS(status) && fit)
+            status = KiCopyToUser((PUCHAR)info + 8, list.Entries, fit * (ULONG)sizeof(*list.Entries));
+        if (NT_SUCCESS(status) && fit < count)
+            status = STATUS_INFO_LENGTH_MISMATCH;
+    }
+    ExFreePool(list.Entries);
+    return status;
+}
+
 NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
     switch ((ULONG)klass) {
@@ -541,6 +620,11 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return query_handles(TRUE, info, length, returned);
     case SystemProcessInformation:
         return query_processes(info, length, returned);
+    case SystemModuleInformation:
+        return query_modules(info, length, returned);
+    case SystemPageFileInformation:
+        /* there is no paging file, the host swaps guest memory, so the list is empty. */
+        return copy_info(info, nullptr, 0, length, returned);
     case SystemBasicInformation:
     case SystemEmulationBasicInformation: {
         SYSTEM_BASIC_INFORMATION b = {};

@@ -42,6 +42,18 @@ static PVOID find_export(PVOID base, const char *name, USHORT ordinal_hint, BOOL
     return nullptr;
 }
 
+/* the images loaded into the kernel after it, oldest first. */
+ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
+{
+    ULONG count = 0;
+    for (LOADED_MODULE *m = g_modules; m; m = m->Next)
+        count++;
+    ULONG index = count;
+    for (LOADED_MODULE *m = g_modules; m && index; m = m->Next)
+        callback(context, --index, m->Base, m->Size, m->Name);
+    return count;
+}
+
 PVOID MiFindKernelExport(PVOID image_base, const char *name)
 {
     return find_export(image_base, name, 0, FALSE);
