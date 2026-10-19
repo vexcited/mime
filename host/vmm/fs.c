@@ -228,7 +228,7 @@ static void sd_memory_forget(const struct stat *st);
 
 /*
  * vm->fs_lock guards the table of handles, the windows and the stored descriptors, and is held for a lookup or
- * an update. Calls that can take the host long (opens, reads, flushes) run without it, as each one is a
+ * an update. Calls that can take the host long, such as opens, reads and flushes, run without it, as each one is a
  * guest thread waiting, and a flush that lasts 13 ms must not hold up every other file call of the machine.
  * A handle is used by one guest request at a time and closed after the last one ends.
  */
