@@ -1,7 +1,7 @@
 /*
  * the scaling api. user32 keeps the process awareness on windows and shcore
- * asks it; mime's win32k keeps the value, and the system dpi is the dpi of
- * every monitor.
+ * asks it; mime's win32k keeps the value. a monitor has the dpi of its display,
+ * a program aware of that sees it and the others see the system's.
  */
 #include "shcore_private.h"
 
@@ -29,22 +29,34 @@ HRESULT WINAPI GetProcessDpiAwareness(HANDLE process, PROCESS_DPI_AWARENESS *val
         return E_INVALIDARG;
     }
     ULONG_PTR awareness = NtUserCallOneParam(0, MIME_ONEPARAM_GETPROCESSDPIAWARENESS);
-    *value = awareness <= PROCESS_PER_MONITOR_DPI_AWARE ? (PROCESS_DPI_AWARENESS)awareness : PROCESS_SYSTEM_DPI_AWARE;
+    /* the per monitor v2 awareness is the per monitor one to this api. */
+    *value = awareness <= PROCESS_PER_MONITOR_DPI_AWARE ? (PROCESS_DPI_AWARENESS)awareness
+             : awareness == 3                           ? PROCESS_PER_MONITOR_DPI_AWARE
+                                                        : PROCESS_SYSTEM_DPI_AWARE;
     return S_OK;
 }
 
-static BOOL valid_monitor(HMONITOR monitor)
+/* the dpi of the display of a monitor, 0 for a handle that is none. */
+static UINT monitor_dpi(HMONITOR monitor)
 {
-    MONITORINFO info = {.cbSize = sizeof(info)};
-    return monitor && GetMonitorInfoW(monitor, &info);
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    ULONG_PTR index = (ULONG_PTR)monitor - 0x00010001;
+    if (!monitor || count > MIME_USER_MAX_MONITORS || (ULONG_PTR)monitor < 0x00010001 || index >= count)
+        return 0;
+    return list[index].Dpi ? list[index].Dpi : 96;
 }
 
-/* an unaware process sees 96 everywhere. */
-static UINT process_dpi(void)
+/* an unaware process sees 96 everywhere, a system aware one the system's, one aware of monitors the monitor's. */
+static UINT process_dpi(UINT display)
 {
     PROCESS_DPI_AWARENESS awareness;
-    if (SUCCEEDED(GetProcessDpiAwareness(nullptr, &awareness)) && awareness == PROCESS_DPI_UNAWARE)
-        return 96;
+    if (SUCCEEDED(GetProcessDpiAwareness(nullptr, &awareness))) {
+        if (awareness == PROCESS_DPI_UNAWARE)
+            return 96;
+        if (awareness == PROCESS_PER_MONITOR_DPI_AWARE)
+            return display;
+    }
     return GetDpiForSystem();
 }
 
@@ -52,9 +64,10 @@ HRESULT WINAPI GetDpiForMonitor(HMONITOR monitor, MONITOR_DPI_TYPE type, UINT *x
 {
     if (type != MDT_EFFECTIVE_DPI && type != MDT_ANGULAR_DPI && type != MDT_RAW_DPI)
         return HRESULT_FROM_WIN32(ERROR_BAD_ARGUMENTS);
-    if (!x || !y || !valid_monitor(monitor))
+    UINT dpi = x && y ? monitor_dpi(monitor) : 0;
+    if (!dpi)
         return E_INVALIDARG;
-    *x = *y = type == MDT_EFFECTIVE_DPI ? process_dpi() : GetDpiForSystem();
+    *x = *y = type == MDT_EFFECTIVE_DPI ? process_dpi(dpi) : dpi;
     return S_OK;
 }
 
@@ -78,9 +91,10 @@ static DEVICE_SCALE_FACTOR scale_for_dpi(UINT dpi)
 HRESULT WINAPI GetScaleFactorForMonitor(HMONITOR monitor, DEVICE_SCALE_FACTOR *scale)
 {
     *scale = SCALE_100_PERCENT;
-    if (!valid_monitor(monitor))
+    UINT dpi = monitor_dpi(monitor);
+    if (!dpi)
         return E_INVALIDARG;
-    *scale = scale_for_dpi(GetDpiForSystem());
+    *scale = scale_for_dpi(dpi);
     return S_OK;
 }
 

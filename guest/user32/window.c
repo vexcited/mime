@@ -1049,26 +1049,64 @@ WINUSERAPI BOOL WINAPI AdjustWindowRectExForDpi(LPRECT rect, DWORD style, BOOL m
     return adjust(rect, style, menu, ex_style, dpi);
 }
 
-#define PRIMARY_MONITOR ((HMONITOR)(ULONG_PTR)0x00010001)
+#define FIRST_MONITOR 0x00010001
 
-/* the only monitor is the answer when the rectangle touches it, else what the flags ask for. */
+static HMONITOR monitor_handle(ULONG index)
+{
+    return (HMONITOR)(ULONG_PTR)(FIRST_MONITOR + index);
+}
+
+/* the monitors, the primary first: how many of them. */
+static ULONG get_monitors(MIME_MONITOR_INFO *list)
+{
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    return count > MIME_USER_MAX_MONITORS ? 0 : count;
+}
+
+/* the monitor most of the rectangle is on; else what the flags ask for, the nearest or the primary or none. */
 static HMONITOR monitor_for(const RECT *rect, DWORD flags)
 {
     if (flags > MONITOR_DEFAULTTONEAREST) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    MONITORINFO mi = {sizeof(mi)};
-    if (rect && GetMonitorInfoW(PRIMARY_MONITOR, &mi)) {
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = rect ? get_monitors(list) : 0;
+    LONG best = -1;
+    LONG64 best_area = 0;
+    for (ULONG i = 0; i < count; i++) {
         RECT overlap;
+        LONG64 area = 0;
+        if (IntersectRect(&overlap, rect, &list[i].Rect))
+            area = (LONG64)(overlap.right - overlap.left) * (overlap.bottom - overlap.top);
         /* a point is an empty rectangle that still counts inside. */
-        BOOL inside = IntersectRect(&overlap, rect, &mi.rcMonitor) ||
-                      (rect->left == rect->right && rect->top == rect->bottom && rect->left >= mi.rcMonitor.left &&
-                       rect->left < mi.rcMonitor.right && rect->top >= mi.rcMonitor.top && rect->top < mi.rcMonitor.bottom);
-        if (inside)
-            return PRIMARY_MONITOR;
+        else if (rect->left == rect->right && rect->top == rect->bottom && rect->left >= list[i].Rect.left &&
+                 rect->left < list[i].Rect.right && rect->top >= list[i].Rect.top && rect->top < list[i].Rect.bottom)
+            area = 1;
+        if (area > best_area) {
+            best_area = area;
+            best = (LONG)i;
+        }
     }
-    return flags == MONITOR_DEFAULTTONULL ? nullptr : PRIMARY_MONITOR;
+    if (best >= 0)
+        return monitor_handle((ULONG)best);
+    if (flags == MONITOR_DEFAULTTONULL)
+        return nullptr;
+    if (flags == MONITOR_DEFAULTTONEAREST && rect) {
+        LONG64 best_distance = -1;
+        for (ULONG i = 0; i < count; i++) {
+            const RECT *m = &list[i].Rect;
+            LONG64 dx = rect->right <= m->left ? m->left - rect->right : rect->left >= m->right ? rect->left - m->right + 1 : 0;
+            LONG64 dy = rect->bottom <= m->top ? m->top - rect->bottom : rect->top >= m->bottom ? rect->top - m->bottom + 1 : 0;
+            if (best_distance < 0 || dx * dx + dy * dy < best_distance) {
+                best_distance = dx * dx + dy * dy;
+                best = (LONG)i;
+            }
+        }
+        if (best >= 0)
+            return monitor_handle((ULONG)best);
+    }
+    return monitor_handle(0);
 }
 
 WINUSERAPI HMONITOR WINAPI MonitorFromWindow(HWND hwnd, DWORD flags)
@@ -1079,7 +1117,7 @@ WINUSERAPI HMONITOR WINAPI MonitorFromWindow(HWND hwnd, DWORD flags)
     }
     RECT rect;
     if (!IsWindow(hwnd) || !GetWindowRect(hwnd, &rect))
-        return flags == MONITOR_DEFAULTTONULL ? nullptr : PRIMARY_MONITOR;
+        return flags == MONITOR_DEFAULTTONULL ? nullptr : monitor_handle(0);
     if (IsIconic(hwnd)) {
         WINDOWPLACEMENT wp = {sizeof(wp)};
         if (GetWindowPlacement(hwnd, &wp))
@@ -1120,8 +1158,19 @@ WINUSERAPI BOOL WINAPI GetMonitorInfoA(HMONITOR monitor, LPMONITORINFO info)
 
 WINUSERAPI BOOL WINAPI EnumDisplayMonitors(HDC dc, LPCRECT clip, MONITORENUMPROC proc, LPARAM param)
 {
-    MONITORINFO mi = {sizeof(mi)};
-    if (!GetMonitorInfoW(PRIMARY_MONITOR, &mi))
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = get_monitors(list);
+    if (!proc) {
+        SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
-    return proc(PRIMARY_MONITOR, dc, &mi.rcMonitor, param);
+    }
+    /* the handles are the ones of this moment: a monitor gone while the callbacks run is not asked about. */
+    for (ULONG i = 0; i < count; i++) {
+        RECT rect = list[i].Rect;
+        if (clip && !IntersectRect(&rect, &rect, clip))
+            continue;
+        if (!proc(monitor_handle(i), dc, &rect, param))
+            return FALSE;
+    }
+    return TRUE;
 }

@@ -14,6 +14,8 @@ typedef void (*MimeUiInputSink)(void *ctx, const MimeInputEvent *ev);
 void mime_ui_init(MimeUiInputSink sink, void *ctx);
 void mime_ui_run(void);
 void mime_ui_get_display(MimeDisplayInfo *info);
+/* the monitors, the primary first, at most capacity of them: how many there are. */
+uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity);
 
 /* any thread. */
 void mime_ui_stop(void);

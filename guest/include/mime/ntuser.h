@@ -185,10 +185,23 @@ enum {
 enum {
     MIME_TWOPARAM_GETSYSTEMMETRICS = 1, /* index, dpi */
     MIME_TWOPARAM_SETCURSORPOS,
-    MIME_TWOPARAM_MONITORFROMPOINT,     /* packed point, flags */
+    MIME_TWOPARAM_MONITORFROMPOINT,     /* unused */
     MIME_TWOPARAM_GETMONITORINFO,       /* monitor, MONITORINFO pointer */
     MIME_TWOPARAM_WINDOWFROMPOINT,      /* x, y */
+    MIME_TWOPARAM_GETMONITORS,          /* MIME_MONITOR_INFO array, its capacity -> how many monitors there are */
 };
+
+/* a monitor as NtUserCallTwoParam's MIME_TWOPARAM_GETMONITORS hands it out. */
+#define MIME_USER_MAX_MONITORS 8
+typedef struct MIME_MONITOR_INFO {
+    ULONG Flags; /* MONITORINFOF_PRIMARY */
+    ULONG Dpi;   /* of the display, whatever the process is aware of */
+    ULONG RefreshHz;
+    RECT Rect;
+    RECT Work;
+    WCHAR Device[32]; /* \\.\DISPLAYn */
+    WCHAR Name[32];   /* the host's name for the monitor */
+} MIME_MONITOR_INFO;
 
 enum {
     MIME_HWND_GETPARENT = 1,

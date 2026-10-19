@@ -11,8 +11,6 @@
 #include <mime/win32/winspool.h>
 #include <mime/display_modes.h>
 
-static const WCHAR DISPLAY_NAME[] = L"\\\\.\\DISPLAY1";
-
 static struct {
     BOOLEAN active;
     DWORD width, height, bits;
@@ -101,21 +99,28 @@ void DisplayProcessExited(HANDLE pid)
     gamma_process_exited(pid);
 }
 
-static BOOLEAN our_device(PUNICODE_STRING user_device)
+/* the monitor a device name is of, the primary one for none; -1 for a name that is no monitor's. */
+static LONG device_monitor(PUNICODE_STRING user_device)
 {
     PWSTR device;
     SIZE_T chars;
     if (!NT_SUCCESS(W32CaptureString(user_device, &device, &chars)))
-        return FALSE;
-    BOOLEAN ok = !device || !chars || (chars == RTL_NUMBER_OF(DISPLAY_NAME) - 1 && !_wcsicmp(device, DISPLAY_NAME));
+        return -1;
+    LONG index = -1;
+    if (!device || !chars)
+        index = 0;
+    else if (chars < 32)
+        index = MonitorFromDeviceName(device);
     W32Free(device);
-    return ok;
+    return index;
 }
 
-static void fill(DEVMODEW *m, DWORD width, DWORD height, DWORD bits)
+static void fill(DEVMODEW *m, LONG monitor, DWORD width, DWORD height, DWORD bits)
 {
+    MIME_MONITOR_INFO info;
     memset(m, 0, sizeof(*m));
-    memcpy(m->dmDeviceName, DISPLAY_NAME, sizeof(DISPLAY_NAME));
+    if (MonitorGet((ULONG)monitor, &info))
+        memcpy(m->dmDeviceName, info.Device, sizeof(m->dmDeviceName) < sizeof(info.Device) ? sizeof(m->dmDeviceName) : sizeof(info.Device));
     m->dmSpecVersion = DM_SPECVERSION;
     m->dmSize = sizeof(*m);
     m->dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY | DM_POSITION |
@@ -123,7 +128,8 @@ static void fill(DEVMODEW *m, DWORD width, DWORD height, DWORD bits)
     m->dmBitsPerPel = bits;
     m->dmPelsWidth = width;
     m->dmPelsHeight = height;
-    m->dmDisplayFrequency = W32Display.RefreshHz;
+    m->dmDisplayFrequency = info.RefreshHz ? info.RefreshHz : W32Display.RefreshHz;
+    m->dmPosition = (POINTL){info.Rect.left, info.Rect.top};
 }
 
 /*
@@ -136,18 +142,28 @@ NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DE
     WORD size;
     if (!user_mode || !NT_SUCCESS(MimeCopyFromUser(&size, &user_mode->dmSize, sizeof(size))))
         return STATUS_INVALID_PARAMETER;
-    if (size < offsetof(DEVMODEW, dmICMMethod) || !our_device(device))
+    LONG monitor = device_monitor(device);
+    if (size < offsetof(DEVMODEW, dmICMMethod) || monitor < 0)
         return STATUS_INVALID_PARAMETER;
     UserEnter();
     DEVMODEW m;
     NTSTATUS status = STATUS_SUCCESS;
     DWORD width, height, bits;
-    if (index == ENUM_CURRENT_SETTINGS)
-        fill(&m, (DWORD)W32Display.Width, (DWORD)W32Display.Height, W32Display.Bits);
+    MIME_MONITOR_INFO info;
+    if (!MonitorGet((ULONG)monitor, &info)) {
+        status = STATUS_INVALID_PARAMETER;
+    } else if (monitor > 0) {
+        /* the other monitors have the mode they have, their own size at 32 bits. */
+        if (index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS || index == 0)
+            fill(&m, monitor, (DWORD)(info.Rect.right - info.Rect.left), (DWORD)(info.Rect.bottom - info.Rect.top), 32);
+        else
+            status = STATUS_INVALID_PARAMETER;
+    } else if (index == ENUM_CURRENT_SETTINGS)
+        fill(&m, 0, (DWORD)W32Display.Width, (DWORD)W32Display.Height, W32Display.Bits);
     else if (index == ENUM_REGISTRY_SETTINGS)
-        fill(&m, (DWORD)g_native_width, (DWORD)g_native_height, 32);
+        fill(&m, 0, (DWORD)g_native_width, (DWORD)g_native_height, 32);
     else if (mode_at(index, &width, &height, &bits))
-        fill(&m, width, height, bits);
+        fill(&m, 0, width, height, bits);
     else
         status = STATUS_INVALID_PARAMETER;
     UserLeave();
@@ -169,7 +185,8 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
         return DISP_CHANGE_BADFLAGS;
     if ((flags & CDS_GLOBAL) && !(flags & CDS_UPDATEREGISTRY))
         return DISP_CHANGE_BADFLAGS;
-    if (!our_device(device))
+    LONG monitor = device_monitor(device);
+    if (monitor < 0)
         return DISP_CHANGE_BADPARAM;
     DEVMODEW m = {};
     BOOLEAN reset = !user_mode;
@@ -184,6 +201,17 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
     }
     UserEnter();
     LONG result = DISP_CHANGE_SUCCESSFUL;
+    if (monitor > 0) {
+        /* the other monitors keep their mode: it is only the one they have that is accepted. */
+        MIME_MONITOR_INFO info;
+        if (!reset && MonitorGet((ULONG)monitor, &info) &&
+            (((m.dmFields & DM_PELSWIDTH) && m.dmPelsWidth != (DWORD)(info.Rect.right - info.Rect.left)) ||
+             ((m.dmFields & DM_PELSHEIGHT) && m.dmPelsHeight != (DWORD)(info.Rect.bottom - info.Rect.top)) ||
+             ((m.dmFields & DM_BITSPERPEL) && m.dmBitsPerPel != 32)))
+            result = DISP_CHANGE_BADMODE;
+        UserLeave();
+        return result;
+    }
     DWORD width = (DWORD)W32Display.Width, height = (DWORD)W32Display.Height, bits = W32Display.Bits;
     if (reset) {
         width = (DWORD)g_native_width;

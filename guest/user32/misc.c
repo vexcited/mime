@@ -838,36 +838,54 @@ WINUSERAPI BOOL WINAPI UnregisterPowerSettingNotification(HPOWERNOTIFY handle)
 
 /* ------------------------------------------------------------------ display devices */
 
-/* one adapter with one monitor, named like the first display of windows. */
+/* an adapter for each monitor of the host, with one monitor on it, named like the displays of windows. */
 WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY_DEVICEW info, DWORD flags)
 {
     if (!info || info->cb < offsetof(DISPLAY_DEVICEW, DeviceID)) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (index != 0)
-        return FALSE;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    if (count > MIME_USER_MAX_MONITORS)
+        count = 0;
     DWORD cb = info->cb > sizeof(*info) ? sizeof(*info) : info->cb;
     DISPLAY_DEVICEW d;
     memset(&d, 0, sizeof(d));
     d.cb = cb;
+    WCHAR number[12];
     if (!device) {
-        wcscpy(d.DeviceName, L"\\\\.\\DISPLAY1");
+        if (index >= count)
+            return FALSE;
+        wcscpy(d.DeviceName, list[index].Device);
         wcscpy(d.DeviceString, L"Mime Display Adapter");
-        d.StateFlags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE;
-        wcscpy(d.DeviceID, L"ROOT\\MIME\\0000");
-        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000000-0000-0000-0000-000000000000}\\0000");
-    } else if (!_wcsicmp(device, L"\\\\.\\DISPLAY1")) {
-        wcscpy(d.DeviceName, L"\\\\.\\DISPLAY1\\Monitor0");
+        d.StateFlags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | (index == 0 ? DISPLAY_DEVICE_PRIMARY_DEVICE : 0);
+        wsprintfW(number, L"%04u", index);
+        wcscpy(d.DeviceID, L"ROOT\\MIME\\");
+        wcscat(d.DeviceID, number);
+        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000000-0000-0000-0000-000000000000}\\");
+        wcscat(d.DeviceKey, number);
+    } else {
+        ULONG which = 0;
+        while (which < count && _wcsicmp(device, list[which].Device))
+            which++;
+        if (which >= count || index != 0)
+            return FALSE;
+        wcscpy(d.DeviceName, list[which].Device);
+        wcscat(d.DeviceName, L"\\Monitor0");
         wcscpy(d.DeviceString, L"Generic PnP Monitor");
         d.StateFlags = DISPLAY_DEVICE_ACTIVE | DISPLAY_DEVICE_ATTACHED;
-        if (flags & EDD_GET_DEVICE_INTERFACE_NAME)
-            wcscpy(d.DeviceID, L"\\\\?\\DISPLAY#MIME0000#1&00000000&0&UID0#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
-        else
-            wcscpy(d.DeviceID, L"MONITOR\\MIME0000\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0000");
-        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0000");
-    } else {
-        return FALSE;
+        wsprintfW(number, L"%04u", which);
+        if (flags & EDD_GET_DEVICE_INTERFACE_NAME) {
+            wcscpy(d.DeviceID, L"\\\\?\\DISPLAY#MIME0000#1&00000000&0&UID");
+            wcscat(d.DeviceID, number + 3);
+            wcscat(d.DeviceID, L"#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
+        } else {
+            wcscpy(d.DeviceID, L"MONITOR\\MIME0000\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\");
+            wcscat(d.DeviceID, number);
+        }
+        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\");
+        wcscat(d.DeviceKey, number);
     }
     memcpy(info, &d, cb);
     return TRUE;

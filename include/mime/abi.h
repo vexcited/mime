@@ -294,6 +294,9 @@ enum {
     MIME_HC_IME_TEXT = 0x50,     /* (pa, capacity) -> utf-16 units of the oldest queued preedit or commit text, copied to pa and dropped */
     MIME_HC_IME_AREA = 0x51,     /* (window, left, top, right, bottom, cursor x) where text is entered, window relative, for the input method's popups */
     MIME_HC_IME_CONTROL = 0x52,  /* (MIME_IME_*, window) */
+
+    /* the host's monitors. */
+    MIME_HC_MONITORS = 0x53,     /* (pa, capacity) -> count: fills up to capacity MimeMonitor, the primary first */
 };
 
 /* MIME_HC_IME_CONTROL: whether the host has an input method protocol at all (1 or 0), and ending a composition. */
@@ -619,6 +622,25 @@ typedef struct MimeRect {
     int32_t left, top, right, bottom;
 } MimeRect;
 
+/*
+ * a monitor of the host, as the guest's virtual screen has it: the monitors are placed next to each other in
+ * guest pixels the way the host's compositor places them, the primary at 0, 0. a monitor is as many guest pixels
+ * as it has device pixels, so its dpi is 96 times its scale.
+ */
+#define MIME_MAX_MONITORS 8
+#define MIME_MONITOR_PRIMARY 1
+
+typedef struct MimeMonitor {
+    uint32_t flags; /* MIME_MONITOR_* */
+    uint32_t dpi;
+    uint32_t refresh_hz;
+    uint32_t width_mm; /* 0 when unknown */
+    uint32_t height_mm;
+    MimeRect rect; /* in the virtual screen */
+    MimeRect work; /* without panels and docks, in the virtual screen too */
+    uint16_t name[32]; /* the host's name for it, such as eDP-1 */
+} MimeMonitor;
+
 enum {
     MIME_WIN_VISIBLE = 1u << 0,
     MIME_WIN_TOPMOST = 1u << 1,
@@ -649,6 +671,7 @@ typedef struct MimeWinConfig {
     MimeRect drag[MIME_WIN_MAX_DRAG_RECTS]; /* window relative caption areas */
     uint32_t owner_id; /* keeps owned windows above their owner, 0 if none */
     uint32_t process_id;
+    uint32_t dpi; /* of the pixels the window is drawn in: the host window is that many guest pixels per 96 of its size, 0 for the display's */
     uint32_t image_chars;
     uint16_t image_path[512];
     uint32_t title_chars;
@@ -716,7 +739,7 @@ enum {
     MIME_INPUT_CLIPBOARD = 12,     /* another host application changed the clipboard: x is the MIME_CLIP_* kinds it holds, y its generation */
     MIME_INPUT_WINDOW_STATE = 13,  /* x is a windows show command. */
     MIME_INPUT_WINDOW_FULLSCREEN = 14, /* flags is 1 on entry, 0 on exit. */
-    MIME_INPUT_DISPLAY = 15,       /* the boot information display changed: width and height. */
+    MIME_INPUT_DISPLAY = 15,       /* the boot information display or the monitors changed: width and height of the primary. */
     MIME_INPUT_PAD_ADDED = 16,     /* a game controller: pad, pad_vid, pad_pid */
     MIME_INPUT_PAD_REMOVED = 17,   /* pad */
     MIME_INPUT_PAD_STATE = 18,     /* pad, pad_buttons, pad_axes */
@@ -739,6 +762,8 @@ enum {
      * MIME_INPUT_CHAR.
      */
     MIME_INPUT_IME = 26,
+    /* the compositor shows a window on another monitor: x is its index in MIME_HC_MONITORS' list. */
+    MIME_INPUT_WINDOW_DISPLAY = 27,
 };
 
 enum {

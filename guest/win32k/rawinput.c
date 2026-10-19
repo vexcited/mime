@@ -69,9 +69,10 @@ static RECT g_pointer_rect;
 
 /* ------------------------------------------------------------------ the cursor */
 
+/* all of the monitors. */
 static RECT screen(void)
 {
-    return (RECT){0, 0, W32Display.Width, W32Display.Height};
+    return MonitorVirtualScreen();
 }
 
 /* where the cursor may go: the clip rectangle, else the screen; its right and bottom edges excluded. */

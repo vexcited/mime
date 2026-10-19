@@ -148,8 +148,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     /* a thin border, which godot keeps on its fullscreen window, is no title bar. */
     BOOLEAN fullscreen = (w->Flags & WNDF_FULLSCREEN) ||
                          ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & (WS_THICKFRAME | WS_MINIMIZE)) &&
-                          w->WindowRect.left <= 0 && w->WindowRect.top <= 0 &&
-                          w->WindowRect.right >= W32Display.Width && w->WindowRect.bottom >= W32Display.Height);
+                          MonitorCoveredBy(&w->WindowRect));
     if (fullscreen)
         c->flags |= MIME_WIN_FULLSCREEN;
     if (visible && (w->Flags & WNDF_ACTIVATE_PENDING)) {
@@ -190,6 +189,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     for (ULONG i = 0; i < c->drag_count; i++)
         c->drag[i] = mime_rect(&drag[i]);
     c->owner_id = w->Owner ? window_id(w->Owner) : 0;
+    c->dpi = WndHostDpi(w);
     if (w->Thread && w->Thread->Process) {
         W32PROCESS *process = w->Thread->Process;
         c->process_id = (ULONG)(ULONG_PTR)process->Pid;

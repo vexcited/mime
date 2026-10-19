@@ -1243,6 +1243,23 @@ void mime_ui_get_display(MimeDisplayInfo *info)
     g_display = *info;
 }
 
+/* the screen the display describes is the only monitor here. */
+uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
+{
+    MimeDisplayInfo info;
+    mime_ui_get_display(&info);
+    if (!capacity)
+        return 0;
+    memset(monitors, 0, sizeof(*monitors));
+    monitors->flags = MIME_MONITOR_PRIMARY;
+    monitors->dpi = info.dpi;
+    monitors->refresh_hz = info.refresh_hz;
+    monitors->rect = (MimeRect){0, 0, (int32_t)info.width, (int32_t)info.height};
+    monitors->work = (MimeRect){(int32_t)info.work_x, (int32_t)info.work_y, (int32_t)(info.work_x + info.work_width),
+                                (int32_t)(info.work_y + info.work_height)};
+    return 1;
+}
+
 
 typedef struct MainCall {
     void (*fn)(void *);

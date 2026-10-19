@@ -440,8 +440,11 @@ static BOOLEAN injected_event(const INPUT *in, MimeInputEvent *ev)
     POINT pt = InputCursorPos;
     if (mi->dwFlags & MOUSEEVENTF_MOVE) {
         if (mi->dwFlags & MOUSEEVENTF_ABSOLUTE) {
-            pt.x = (LONG)(((LONG64)mi->dx * W32Display.Width + 32767) / 65536);
-            pt.y = (LONG)(((LONG64)mi->dy * W32Display.Height + 32767) / 65536);
+            /* the primary monitor, or all of them. */
+            RECT area = (mi->dwFlags & MOUSEEVENTF_VIRTUALDESK) ? MonitorVirtualScreen()
+                                                                : (RECT){0, 0, W32Display.Width, W32Display.Height};
+            pt.x = area.left + (LONG)(((LONG64)mi->dx * (area.right - area.left) + 32767) / 65536);
+            pt.y = area.top + (LONG)(((LONG64)mi->dy * (area.bottom - area.top) + 32767) / 65536);
         } else {
             pt.x += mi->dx;
             pt.y += mi->dy;
@@ -941,6 +944,9 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         WndSetPos(w, nullptr, ev->x, ev->y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (!w->Header.Destroyed)
             w->Flags &= ~WNDF_HOST_MOVING;
+        break;
+    case MIME_INPUT_WINDOW_DISPLAY:
+        WndHostDisplay(w, (ULONG)ev->x);
         break;
     case MIME_INPUT_WINDOW_FOCUS:
         if (ev->x) {

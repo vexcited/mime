@@ -61,12 +61,14 @@ static void read_display(void)
         W32Display.Work = (RECT){0, 0, W32Display.Width, W32Display.Height};
     W32Display.RefreshHz = boot->display.refresh_hz ? boot->display.refresh_hz : 60;
     DisplayApplyMode();
+    MonitorsRefresh();
 }
 
 void MetricsInitialize(void)
 {
     const MimeBootInfo *boot = HalMimeGetBootInfo();
     read_display();
+    MonitorsTakeChanged();
     W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;
     for (int i = 0; i < NUM_SYSCOLORS; i++) {
         g_colors[i] = g_default_colors[i];
@@ -82,8 +84,8 @@ void MetricsDisplayChanged(void)
     RECT work = W32Display.Work;
     DWORD bits = W32Display.Bits;
     read_display();
-    if (width != W32Display.Width || height != W32Display.Height || bits != W32Display.Bits ||
-        memcmp(&work, &W32Display.Work, sizeof(work)))
+    if (MonitorsTakeChanged() || width != W32Display.Width || height != W32Display.Height ||
+        bits != W32Display.Bits || memcmp(&work, &W32Display.Work, sizeof(work)))
         WndDisplayChanged();
 }
 
@@ -115,14 +117,23 @@ int MetricsGet(int index, UINT dpi)
     int frame = 3 + scale(1, dpi), padded = scale(4, dpi);
     switch (index) {
     case SM_CXSCREEN:
-    case SM_CXVIRTUALSCREEN:
         return W32Display.Width;
     case SM_CYSCREEN:
-    case SM_CYVIRTUALSCREEN:
         return W32Display.Height;
+    case SM_CXVIRTUALSCREEN: {
+        RECT all = MonitorVirtualScreen();
+        return all.right - all.left;
+    }
+    case SM_CYVIRTUALSCREEN: {
+        RECT all = MonitorVirtualScreen();
+        return all.bottom - all.top;
+    }
     case SM_XVIRTUALSCREEN:
+        return MonitorVirtualScreen().left;
     case SM_YVIRTUALSCREEN:
-        return 0;
+        return MonitorVirtualScreen().top;
+    case SM_CMONITORS:
+        return (int)MonitorCount();
     case SM_CXVSCROLL:
     case SM_CYHSCROLL:
     case SM_CYVTHUMB:
@@ -155,7 +166,6 @@ int MetricsGet(int index, UINT dpi)
     case SM_MOUSEPRESENT:
     case SM_MOUSEWHEELPRESENT:
     case SM_SAMEDISPLAYFORMAT:
-    case SM_CMONITORS:
         return 1;
     case SM_CMOUSEBUTTONS:
         return 5;

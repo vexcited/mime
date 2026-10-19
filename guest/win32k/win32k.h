@@ -922,6 +922,24 @@ typedef struct W32_DISPLAY {
 
 extern W32_DISPLAY W32Display;
 UINT W32SystemDpi(void);
+
+/* monitor.c: the host's monitors in the virtual screen, the primary at 0, 0. */
+void MonitorsRefresh(void);
+BOOLEAN MonitorsTakeChanged(void);
+ULONG MonitorCount(void);
+BOOLEAN MonitorGet(ULONG index, MIME_MONITOR_INFO *out);
+LONG MonitorFromRectIndex(const RECT *rect, BOOLEAN nearest);
+RECT MonitorWorkOfRect(const RECT *rect);
+UINT MonitorDpiOfRect(const RECT *rect);
+RECT MonitorVirtualScreen(void);
+BOOLEAN MonitorCoveredBy(const RECT *rect);
+LONG MonitorFromDeviceName(PCWSTR name);
+HMONITOR MonitorHandle(ULONG index);
+LONG MonitorIndexOfHandle(HMONITOR monitor);
+ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine);
+void WndHostDisplay(WND *w, ULONG monitor);
+void WndCheckMonitorDpi(WND *w);
+UINT WndHostDpi(WND *w);
 int MetricsGet(int index, UINT dpi);
 COLORREF MetricsSysColor(int index);
 

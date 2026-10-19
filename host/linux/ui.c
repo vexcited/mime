@@ -44,6 +44,7 @@ typedef struct UiWindow {
     bool state_pending;
     uint32_t state_request;
     int state_command;
+    SDL_DisplayID display; /* the display last reported to the guest */
     double wheel_x, wheel_y;
     double motion_x, motion_y; /* fractions of guest pixels moved, kept for the next motion */
 
@@ -66,8 +67,19 @@ static void *g_sink_ctx;
 static bool g_video;          /* sdl runs; without it the display is headless */
 static Uint32 g_call_event;   /* the event type of calls posted to the main thread */
 static pthread_t g_main_thread;
-static double g_scale = 1.0;  /* guest pixels per sdl window coordinate */
+static double g_scale = 1.0;  /* guest pixels per sdl window coordinate of the primary display, the system's */
 static MimeDisplayInfo g_display;
+
+/* the displays of the host, the primary first, in the guest's virtual screen. */
+typedef struct HostMonitor {
+    SDL_DisplayID id;
+    double scale;
+    MimeMonitor info;
+} HostMonitor;
+
+static HostMonitor g_monitors[MIME_MAX_MONITORS];
+static uint32_t g_monitor_count;
+static pthread_mutex_t g_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
 static SDL_Cursor *g_cursors[MIME_CURSOR_HIDDEN];
 static uint32_t g_cursor;
 static bool g_stop;
@@ -173,9 +185,15 @@ typedef struct Fit {
     double x, y;
 } Fit;
 
+/* guest pixels per sdl window coordinate for a configuration: a window draws in the dpi its program has. */
+static double config_scale(const MimeWinConfig *c)
+{
+    return c->dpi ? c->dpi / 96.0 : g_scale;
+}
+
 static Fit window_fit(const UiWindow *w)
 {
-    Fit fit = {1.0 / g_scale, 0, 0};
+    Fit fit = {1.0 / config_scale(&w->config), 0, 0};
     if (!w->fullscreen || w->logical_width <= 0 || w->logical_height <= 0)
         return fit;
     MimeRect host = host_part(&w->config);
@@ -279,25 +297,152 @@ bool mime_ui_surface_point(void *surface, double x, double y, uint32_t *window, 
 
 /* ------------------------------------------------------------------ display */
 
+typedef struct Placed {
+    SDL_DisplayID id;
+    SDL_Rect bounds, usable; /* in the compositor's coordinates */
+    double scale;
+    int32_t width, height; /* guest pixels */
+    int32_t x, y;
+    bool placed;
+    float refresh;
+    char name[32];
+} Placed;
+
+static int compare_position(const void *a, const void *b)
+{
+    const Placed *l = a, *r = b;
+    if (l->bounds.x != r->bounds.x)
+        return l->bounds.x < r->bounds.x ? -1 : 1;
+    return l->bounds.y == r->bounds.y ? 0 : l->bounds.y < r->bounds.y ? -1 : 1;
+}
+
+/*
+ * the displays side by side in guest pixels. the compositor's coordinates are logical, each display is its logical
+ * size times its scale in guest pixels, so a display touching another one keeps touching it, the offset along the
+ * shared edge in the pixels of the display that was there first. displays touching none are put where their own
+ * scale says.
+ */
+static void layout_monitors(Placed *d, uint32_t count)
+{
+    d[0].x = d[0].y = 0;
+    d[0].placed = true;
+    for (bool progress = true; progress;) {
+        progress = false;
+        for (uint32_t i = 1; i < count; i++) {
+            if (d[i].placed)
+                continue;
+            for (uint32_t j = 0; j < count && !d[i].placed; j++) {
+                const Placed *p = &d[j];
+                if (!p->placed)
+                    continue;
+                SDL_Rect *m = &d[i].bounds;
+                const SDL_Rect *r = &p->bounds;
+                bool vertical = m->y < r->y + r->h && r->y < m->y + m->h;
+                bool horizontal = m->x < r->x + r->w && r->x < m->x + m->w;
+                if (m->x == r->x + r->w && vertical) {
+                    d[i].x = p->x + p->width;
+                    d[i].y = p->y + (int32_t)lround((m->y - r->y) * p->scale);
+                } else if (m->x + m->w == r->x && vertical) {
+                    d[i].x = p->x - d[i].width;
+                    d[i].y = p->y + (int32_t)lround((m->y - r->y) * p->scale);
+                } else if (m->y == r->y + r->h && horizontal) {
+                    d[i].y = p->y + p->height;
+                    d[i].x = p->x + (int32_t)lround((m->x - r->x) * p->scale);
+                } else if (m->y + m->h == r->y && horizontal) {
+                    d[i].y = p->y - d[i].height;
+                    d[i].x = p->x + (int32_t)lround((m->x - r->x) * p->scale);
+                } else {
+                    continue;
+                }
+                d[i].placed = true;
+                progress = true;
+            }
+        }
+    }
+    for (uint32_t i = 1; i < count; i++) {
+        if (!d[i].placed) {
+            d[i].x = (int32_t)lround(d[i].bounds.x * d[i].scale);
+            d[i].y = (int32_t)lround(d[i].bounds.y * d[i].scale);
+        }
+    }
+}
+
 static void update_display(void)
 {
-    SDL_DisplayID display = SDL_GetPrimaryDisplay();
-    SDL_Rect bounds, usable;
-    if (!display || !SDL_GetDisplayBounds(display, &bounds))
+    SDL_DisplayID primary = SDL_GetPrimaryDisplay();
+    int n = 0;
+    SDL_DisplayID *ids = SDL_GetDisplays(&n);
+    Placed d[MIME_MAX_MONITORS];
+    uint32_t count = 0;
+    for (int i = 0; ids && i < n && count < MIME_MAX_MONITORS; i++) {
+        Placed *m = &d[count];
+        memset(m, 0, sizeof(*m));
+        m->id = ids[i];
+        if (!SDL_GetDisplayBounds(ids[i], &m->bounds))
+            continue;
+        if (!SDL_GetDisplayUsableBounds(ids[i], &m->usable))
+            m->usable = m->bounds;
+        /* wayland tells a display's scale as the pixel density of its mode, other systems as a content scale. */
+        float scale = SDL_GetDisplayContentScale(ids[i]);
+        const SDL_DisplayMode *desktop = SDL_GetDesktopDisplayMode(ids[i]);
+        if (desktop && desktop->pixel_density >= 1.0f)
+            scale *= desktop->pixel_density;
+        m->scale = scale >= 1.0f ? scale : 1.0;
+        m->width = (int32_t)lround(m->bounds.w * m->scale);
+        m->height = (int32_t)lround(m->bounds.h * m->scale);
+        const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(ids[i]);
+        m->refresh = mode ? mode->refresh_rate : 0;
+        const char *name = SDL_GetDisplayName(ids[i]);
+        strncpy(m->name, name ? name : "", sizeof(m->name) - 1);
+        count++;
+    }
+    SDL_free(ids);
+    if (!count)
         return;
-    if (!SDL_GetDisplayUsableBounds(display, &usable))
-        usable = bounds;
-    float scale = SDL_GetDisplayContentScale(display);
-    g_scale = scale >= 1.0f ? scale : 1.0;
-    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
-    g_display.width = (uint32_t)lround(bounds.w * g_scale);
-    g_display.height = (uint32_t)lround(bounds.h * g_scale);
-    g_display.work_x = (uint32_t)lround((usable.x - bounds.x) * g_scale);
-    g_display.work_y = (uint32_t)lround((usable.y - bounds.y) * g_scale);
-    g_display.work_width = (uint32_t)lround(usable.w * g_scale);
-    g_display.work_height = (uint32_t)lround(usable.h * g_scale);
-    g_display.dpi = (uint32_t)lround(96.0 * g_scale);
-    g_display.refresh_hz = mode && mode->refresh_rate > 0 ? (uint32_t)lround(mode->refresh_rate) : 60;
+    /* the primary first, then left to right. */
+    uint32_t first = 0;
+    for (uint32_t i = 0; i < count; i++)
+        if (d[i].id == primary)
+            first = i;
+    Placed tmp = d[0];
+    d[0] = d[first];
+    d[first] = tmp;
+    qsort(d + 1, count - 1, sizeof(Placed), compare_position);
+    layout_monitors(d, count);
+
+    HostMonitor monitors[MIME_MAX_MONITORS];
+    memset(monitors, 0, sizeof(monitors));
+    for (uint32_t i = 0; i < count; i++) {
+        HostMonitor *h = &monitors[i];
+        const Placed *m = &d[i];
+        h->id = m->id;
+        h->scale = m->scale;
+        MimeMonitor *o = &h->info;
+        o->flags = i == 0 ? MIME_MONITOR_PRIMARY : 0;
+        o->dpi = (uint32_t)lround(96.0 * m->scale);
+        o->refresh_hz = m->refresh > 0 ? (uint32_t)lround(m->refresh) : 60;
+        o->rect = (MimeRect){m->x, m->y, m->x + m->width, m->y + m->height};
+        o->work = (MimeRect){m->x + (int32_t)lround((m->usable.x - m->bounds.x) * m->scale),
+                             m->y + (int32_t)lround((m->usable.y - m->bounds.y) * m->scale),
+                             m->x + (int32_t)lround((m->usable.x + m->usable.w - m->bounds.x) * m->scale),
+                             m->y + (int32_t)lround((m->usable.y + m->usable.h - m->bounds.y) * m->scale)};
+        mime_utf8_to_utf16(o->name, 31, m->name);
+    }
+    pthread_mutex_lock(&g_monitor_lock);
+    memcpy(g_monitors, monitors, sizeof(monitors));
+    g_monitor_count = count;
+    pthread_mutex_unlock(&g_monitor_lock);
+
+    const MimeMonitor *p = &monitors[0].info;
+    g_scale = monitors[0].scale;
+    g_display.width = (uint32_t)(p->rect.right - p->rect.left);
+    g_display.height = (uint32_t)(p->rect.bottom - p->rect.top);
+    g_display.work_x = (uint32_t)(p->work.left - p->rect.left);
+    g_display.work_y = (uint32_t)(p->work.top - p->rect.top);
+    g_display.work_width = (uint32_t)(p->work.right - p->work.left);
+    g_display.work_height = (uint32_t)(p->work.bottom - p->work.top);
+    g_display.dpi = p->dpi;
+    g_display.refresh_hz = p->refresh_hz;
 }
 
 void mime_ui_get_display(MimeDisplayInfo *info)
@@ -309,6 +454,62 @@ void mime_ui_get_display(MimeDisplayInfo *info)
             update_display();
     }
     *info = g_display;
+}
+
+uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
+{
+    MimeDisplayInfo ignored;
+    mime_ui_get_display(&ignored);
+    pthread_mutex_lock(&g_monitor_lock);
+    uint32_t count = g_monitor_count;
+    for (uint32_t i = 0; i < count && i < capacity; i++)
+        monitors[i] = g_monitors[i].info;
+    if (!count && capacity) {
+        /* no video: the one display the boot information describes. */
+        memset(monitors, 0, sizeof(*monitors));
+        monitors->flags = MIME_MONITOR_PRIMARY;
+        monitors->dpi = g_display.dpi;
+        monitors->refresh_hz = g_display.refresh_hz;
+        monitors->rect = (MimeRect){0, 0, (int32_t)g_display.width, (int32_t)g_display.height};
+        monitors->work = (MimeRect){(int32_t)g_display.work_x, (int32_t)g_display.work_y,
+                                    (int32_t)(g_display.work_x + g_display.work_width),
+                                    (int32_t)(g_display.work_y + g_display.work_height)};
+        count = 1;
+    }
+    pthread_mutex_unlock(&g_monitor_lock);
+    return count < capacity ? count : capacity;
+}
+
+/* the display a rectangle of the virtual screen is mostly on. */
+static SDL_DisplayID display_of_rect(const MimeRect *r)
+{
+    SDL_DisplayID best = 0;
+    int64_t best_area = -1;
+    pthread_mutex_lock(&g_monitor_lock);
+    for (uint32_t i = 0; i < g_monitor_count; i++) {
+        const MimeRect *m = &g_monitors[i].info.rect;
+        int64_t w = (int64_t)MIME_MIN(r->right, m->right) - MIME_MAX(r->left, m->left);
+        int64_t h = (int64_t)MIME_MIN(r->bottom, m->bottom) - MIME_MAX(r->top, m->top);
+        int64_t area = w > 0 && h > 0 ? w * h : 0;
+        if (area > best_area) {
+            best_area = area;
+            best = g_monitors[i].id;
+        }
+    }
+    pthread_mutex_unlock(&g_monitor_lock);
+    return best;
+}
+
+/* the index of a display in the guest's list, -1 when it is none of them. */
+static int monitor_index(SDL_DisplayID id)
+{
+    int index = -1;
+    pthread_mutex_lock(&g_monitor_lock);
+    for (uint32_t i = 0; i < g_monitor_count; i++)
+        if (g_monitors[i].id == id)
+            index = (int)i;
+    pthread_mutex_unlock(&g_monitor_lock);
+    return index;
 }
 
 /* ------------------------------------------------------------------ keyboard */
@@ -509,8 +710,9 @@ static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, vo
     if (!w || (w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)))
         return SDL_HITTEST_NORMAL;
     MimeRect host = host_part(&w->config);
-    int32_t x = (int32_t)lround(point->x * g_scale) + host.left;
-    int32_t y = (int32_t)lround(point->y * g_scale) + host.top;
+    double scale = config_scale(&w->config);
+    int32_t x = (int32_t)lround(point->x * scale) + host.left;
+    int32_t y = (int32_t)lround(point->y * scale) + host.top;
     for (uint32_t i = 0; i < w->config.drag_count && i < MIME_WIN_MAX_DRAG_RECTS; i++) {
         MimeRect r = w->config.drag[i];
         if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
@@ -563,6 +765,7 @@ static void destroy_host_window(UiWindow *w)
     w->texture = nullptr;
     w->renderer = nullptr;
     w->window = nullptr;
+    w->display = 0;
     w->texture_width = w->texture_height = 0;
 }
 
@@ -574,15 +777,16 @@ static void destroy_host_window(UiWindow *w)
 static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
 {
     MimeRect host = host_part(cfg);
-    int width = MIME_MAX(1, (int)lround((host.right - host.left) / g_scale));
-    int height = MIME_MAX(1, (int)lround((host.bottom - host.top) / g_scale));
+    double scale = config_scale(cfg);
+    int width = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
+    int height = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     bool popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
     SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_TRANSPARENT;
     if (popup) {
         MimeRect oh = host_part(&owner->config);
-        int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / g_scale);
-        int y = (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / g_scale);
+        int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale);
+        int y = (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / scale);
         /* a tooltip does not grab the keyboard and the pointer, and takes no input; a menu does. */
         SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
         w->window = SDL_CreatePopupWindow(owner->window, x, y, width, height, flags | kind);
@@ -590,8 +794,8 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
         SDL_PropertiesID props = SDL_CreateProperties();
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, (int)lround((cfg->rect.left + host.left) / g_scale));
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, (int)lround((cfg->rect.top + host.top) / g_scale));
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, (int)lround((cfg->rect.left + host.left) / scale));
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, (int)lround((cfg->rect.top + host.top) / scale));
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, flags | SDL_WINDOW_BORDERLESS);
         if (cfg->flags & MIME_WIN_TOOL)
             SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_UTILITY_BOOLEAN, true);
@@ -733,7 +937,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         w->shown = false;
         w->fullscreen = false;
     }
-    bool size_changed = !w->configured || host_part(&w->config).right - host_part(&w->config).left !=
+    bool size_changed = !w->configured || w->config.dpi != cfg->dpi || host_part(&w->config).right - host_part(&w->config).left !=
                                                   host_part(cfg).right - host_part(cfg).left ||
                         host_part(&w->config).bottom - host_part(&w->config).top !=
                             host_part(cfg).bottom - host_part(cfg).top;
@@ -750,18 +954,19 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     mime_utf16_to_utf8(title, sizeof(title), cfg->title, MIME_MIN(cfg->title_chars, 256u));
     SDL_SetWindowTitle(w->window, title);
     MimeRect host = host_part(cfg);
+    double scale = config_scale(cfg);
     if (size_changed)
-        SDL_SetWindowSize(w->window, MIME_MAX(1, (int)lround((host.right - host.left) / g_scale)),
-                          MIME_MAX(1, (int)lround((host.bottom - host.top) / g_scale)));
+        SDL_SetWindowSize(w->window, MIME_MAX(1, (int)lround((host.right - host.left) / scale)),
+                          MIME_MAX(1, (int)lround((host.bottom - host.top) / scale)));
     if (w->popup) {
         MimeRect oh = host_part(&owner->config);
         SDL_SetWindowPosition(w->window,
-                              (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / g_scale),
-                              (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / g_scale));
+                              (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale),
+                              (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / scale));
     } else if (!w->fullscreen) {
         /* wayland leaves top level placement to the compositor; x11 honors it. */
-        SDL_SetWindowPosition(w->window, (int)lround((cfg->rect.left + host.left) / g_scale),
-                              (int)lround((cfg->rect.top + host.top) / g_scale));
+        SDL_SetWindowPosition(w->window, (int)lround((cfg->rect.left + host.left) / scale),
+                              (int)lround((cfg->rect.top + host.top) / scale));
     }
     SDL_SetWindowAlwaysOnTop(w->window, (cfg->flags & MIME_WIN_TOPMOST) != 0);
 
@@ -789,6 +994,13 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     bool fullscreen = (cfg->flags & (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE)) == (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE);
     if (fullscreen != w->fullscreen && !w->popup) {
         w->fullscreen = fullscreen;
+        if (fullscreen) {
+            /* a window that covers a monitor goes fullscreen on that one. */
+            SDL_DisplayID display = display_of_rect(&cfg->rect);
+            const SDL_DisplayMode *mode =
+                display && display != SDL_GetDisplayForWindow(w->window) ? SDL_GetDesktopDisplayMode(display) : nullptr;
+            SDL_SetWindowFullscreenMode(w->window, mode);
+        }
         SDL_SetWindowFullscreen(w->window, fullscreen);
     }
     if (w->shown)
@@ -1523,6 +1735,19 @@ void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
     on_main(rumble_main, c);
 }
 
+/* tells the guest which monitor a window is on, as the compositor shows it. */
+static void report_window_display(UiWindow *w, SDL_DisplayID display)
+{
+    if (w->popup || !display || w->display == display)
+        return;
+    int index = monitor_index(display);
+    if (index < 0)
+        return;
+    w->display = display;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_DISPLAY, .window_id = w->id, .x = index};
+    emit(&ev);
+}
+
 static void handle_event(const SDL_Event *e)
 {
     if (e->type == g_call_event) {
@@ -1610,8 +1835,9 @@ static void handle_event(const SDL_Event *e)
         const char *driver = SDL_GetCurrentVideoDriver();
         if (w && !w->popup && !w->fullscreen && w->configured && !(driver && !strcmp(driver, "wayland"))) {
             MimeRect host = host_part(&w->config);
-            int32_t x = (int32_t)lround(e->window.data1 * g_scale) - host.left;
-            int32_t y = (int32_t)lround(e->window.data2 * g_scale) - host.top;
+            double scale = config_scale(&w->config);
+            int32_t x = (int32_t)lround(e->window.data1 * scale) - host.left;
+            int32_t y = (int32_t)lround(e->window.data2 * scale) - host.top;
             if (x != w->config.rect.left || y != w->config.rect.top) {
                 w->config.rect.right += x - w->config.rect.left;
                 w->config.rect.bottom += y - w->config.rect.top;
@@ -1648,6 +1874,12 @@ static void handle_event(const SDL_Event *e)
     case SDL_EVENT_CLIPBOARD_UPDATE:
         mime_clipboard_event(&e->clipboard);
         break;
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED: {
+        UiWindow *w = find_by_sdl(e->window.windowID);
+        if (w)
+            report_window_display(w, (SDL_DisplayID)e->window.data1);
+        break;
+    }
     case SDL_EVENT_DISPLAY_ORIENTATION:
     case SDL_EVENT_DISPLAY_ADDED:
     case SDL_EVENT_DISPLAY_REMOVED:
@@ -1655,11 +1887,27 @@ static void handle_event(const SDL_Event *e)
     case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
     case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED: {
         MimeDisplayInfo before = g_display;
+        HostMonitor old[MIME_MAX_MONITORS];
+        pthread_mutex_lock(&g_monitor_lock);
+        uint32_t old_count = g_monitor_count;
+        memcpy(old, g_monitors, sizeof(old));
+        pthread_mutex_unlock(&g_monitor_lock);
         update_display();
-        if (memcmp(&before, &g_display, sizeof(before))) {
+        bool changed = memcmp(&before, &g_display, sizeof(before)) != 0 || old_count != g_monitor_count;
+        for (uint32_t i = 0; !changed && i < old_count; i++)
+            changed = old[i].id != g_monitors[i].id || memcmp(&old[i].info, &g_monitors[i].info, sizeof(MimeMonitor));
+        if (changed) {
             MimeInputEvent ev = {.type = MIME_INPUT_DISPLAY, .x = (int32_t)g_display.width,
                                  .y = (int32_t)g_display.height};
             emit(&ev);
+            /* the indices of the windows' displays moved with the list. */
+            for (int i = 0; i < MAX_WINDOWS; i++) {
+                UiWindow *w = &g_windows[i];
+                if (w->used && w->window && w->shown && !w->popup) {
+                    w->display = 0;
+                    report_window_display(w, SDL_GetDisplayForWindow(w->window));
+                }
+            }
         }
         break;
     }

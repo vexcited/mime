@@ -124,8 +124,6 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
     return r;
 }
 
-#define PRIMARY_MONITOR ((HMONITOR)(ULONG_PTR)0x00010001)
-
 ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG routine)
 {
     ULONG_PTR r = 0;
@@ -139,24 +137,10 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         InputCursorMoved();
         r = 1;
         break;
-    case MIME_TWOPARAM_MONITORFROMPOINT:
-        r = (ULONG_PTR)PRIMARY_MONITOR;
+    case MIME_TWOPARAM_GETMONITORINFO:
+    case MIME_TWOPARAM_GETMONITORS:
+        r = MonitorCall(param1, param2, routine);
         break;
-    case MIME_TWOPARAM_GETMONITORINFO: {
-        if ((HMONITOR)param1 != PRIMARY_MONITOR)
-            break;
-        MONITORINFOEXW mi;
-        if (!NT_SUCCESS(MimeCopyFromUser(&mi.cbSize, (PVOID)param2, sizeof(DWORD))))
-            break;
-        if (mi.cbSize != sizeof(MONITORINFO) && mi.cbSize != sizeof(MONITORINFOEXW))
-            break;
-        mi.rcMonitor = (RECT){0, 0, W32Display.Width, W32Display.Height};
-        mi.rcWork = W32Display.Work;
-        mi.dwFlags = MONITORINFOF_PRIMARY;
-        memcpy(mi.szDevice, L"\\\\.\\DISPLAY1", sizeof(L"\\\\.\\DISPLAY1"));
-        r = NT_SUCCESS(MimeCopyToUser((PVOID)param2, &mi, mi.cbSize));
-        break;
-    }
     case MIME_TWOPARAM_WINDOWFROMPOINT: {
         POINT pt = {(LONG)param1, (LONG)param2};
         WND *desktop = WndDesktop();

@@ -431,14 +431,22 @@ static LRESULT send_kernel(WND *w, UINT msg, WPARAM wparam, PVOID data, ULONG ki
     return MsgSendKernel(w, msg, wparam, (LPARAM)data, kind, size);
 }
 
+/* where a window counts as being for its monitor: a minimized one is where it will come back to. */
+static RECT monitor_rect(const WND *w)
+{
+    return (w->Style & WS_MINIMIZE) && WndIsTopLevel((WND *)w) ? w->NormalRect : w->WindowRect;
+}
+
 void WndGetMinMaxInfo(WND *w, MINMAXINFO *mmi)
 {
     UINT dpi = WndGetDpi(w);
     memset(mmi, 0, sizeof(*mmi));
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, dpi, &m);
-    LONG work_w = W32Display.Work.right - W32Display.Work.left;
-    LONG work_h = W32Display.Work.bottom - W32Display.Work.top;
+    RECT mrect = monitor_rect(w);
+    RECT work = MonitorWorkOfRect(&mrect);
+    LONG work_w = work.right - work.left;
+    LONG work_h = work.bottom - work.top;
     if (!WndIsTopLevel(w) && w->Parent) {
         work_w = w->Parent->ClientRect.right - w->Parent->ClientRect.left;
         work_h = w->Parent->ClientRect.bottom - w->Parent->ClientRect.top;
@@ -634,6 +642,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     pos.cy = final.bottom - final.top;
     if (!(pos.flags & SWP_NOSENDCHANGING) || moved || sized || (pos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW)))
         send_kernel(w, WM_WINDOWPOSCHANGED, 0, &pos, MIME_LPARAM_IN, sizeof(pos));
+    if ((moved || sized) && alive(w))
+        WndCheckMonitorDpi(w);
 done:
     UserDereference(&w->Header);
 }
@@ -642,8 +652,10 @@ static void maximized_rect(WND *w, RECT *r)
 {
     MINMAXINFO mmi;
     WndGetMinMaxInfo(w, &mmi);
-    r->left = (WndIsTopLevel(w) ? W32Display.Work.left : 0) + mmi.ptMaxPosition.x;
-    r->top = (WndIsTopLevel(w) ? W32Display.Work.top : 0) + mmi.ptMaxPosition.y;
+    RECT mrect = monitor_rect(w);
+    RECT work = MonitorWorkOfRect(&mrect);
+    r->left = (WndIsTopLevel(w) ? work.left : 0) + mmi.ptMaxPosition.x;
+    r->top = (WndIsTopLevel(w) ? work.top : 0) + mmi.ptMaxPosition.y;
     r->right = r->left + mmi.ptMaxSize.x;
     r->bottom = r->top + mmi.ptMaxSize.y;
 }
@@ -666,6 +678,90 @@ void WndDisplayChanged(void)
         if (c->Thread)
             QueuePost(c->Thread, WndHandle(c), WM_DISPLAYCHANGE, W32Display.Bits,
                       MAKELPARAM((WORD)W32Display.Width, (WORD)W32Display.Height));
+    }
+    /* a monitor with another dpi than a window was drawn for: the windows are looked up again, a program may
+       destroy some while it answers. */
+    HWND top[64];
+    ULONG count = 0;
+    for (WND *c = g_desktop->FirstChild; c && count < RTL_NUMBER_OF(top); c = c->Next)
+        if (!(c->Flags & WNDF_DESTROYING))
+            top[count++] = WndHandle(c);
+    for (ULONG i = 0; i < count; i++) {
+        WND *c = WndLookup(top[i]);
+        if (c)
+            WndCheckMonitorDpi(c);
+    }
+}
+
+/* the dpi a window's pixels are drawn in: its own for a program aware of each monitor's dpi, the system's else. */
+UINT WndHostDpi(WND *w)
+{
+    WND *top = WndTopLevel(w);
+    if (top && top->Thread && top->Thread->Process && top->Thread->Process->DpiAwareness >= 2 && top->Dpi)
+        return top->Dpi;
+    return W32SystemDpi();
+}
+
+static void set_tree_dpi(WND *w, UINT dpi)
+{
+    w->Dpi = dpi;
+    for (WND *c = w->FirstChild; c; c = c->Next)
+        set_tree_dpi(c, dpi);
+}
+
+/*
+ * a program aware of each monitor's dpi hears WM_DPICHANGED when its window is mostly on a monitor with another
+ * dpi than it was drawn for, with the rectangle the window would have there: the same corner at the new dpi's size.
+ */
+void WndCheckMonitorDpi(WND *w)
+{
+    if (!WndIsTopLevel(w) || !w->Thread || !w->Thread->Process || w->Thread->Process->DpiAwareness < 2 ||
+        (w->Flags & WNDF_DESTROYING) || (w->Style & WS_MINIMIZE) || (w->ExStyle & 0x80000000u))
+        return;
+    UINT dpi = MonitorDpiOfRect(&w->WindowRect), old = w->Dpi ? w->Dpi : W32SystemDpi();
+    if (!dpi || dpi == old)
+        return;
+    set_tree_dpi(w, dpi);
+    RECT suggested = {w->WindowRect.left, w->WindowRect.top,
+                      w->WindowRect.left + W32MulDiv(w->WindowRect.right - w->WindowRect.left, (LONG)dpi, (LONG)old),
+                      w->WindowRect.top + W32MulDiv(w->WindowRect.bottom - w->WindowRect.top, (LONG)dpi, (LONG)old)};
+    UserReference(&w->Header);
+    send_kernel(w, WM_DPICHANGED, MAKEWPARAM(dpi, dpi), &suggested, MIME_LPARAM_IN, sizeof(suggested));
+    if (alive(w))
+        WndUpdateHostConfig(w, FALSE);
+    UserDereference(&w->Header);
+}
+
+/*
+ * the compositor shows a window on a monitor: its rectangle goes there, at the same distance from the monitor's
+ * corner as it was from the corner of the monitor it had, kept inside the work area, and a maximized one
+ * fills the new monitor's work area.
+ */
+void WndHostDisplay(WND *w, ULONG monitor)
+{
+    MIME_MONITOR_INFO to, from;
+    if (!w || !WndIsTopLevel(w) || (w->Style & WS_MINIMIZE) || (w->Flags & WNDF_DESTROYING) ||
+        !MonitorGet(monitor, &to))
+        return;
+    RECT rect = w->WindowRect;
+    LONG now = MonitorFromRectIndex(&rect, FALSE);
+    if (now == (LONG)monitor)
+        return;
+    LONG width = rect.right - rect.left, height = rect.bottom - rect.top;
+    LONG dx = 0, dy = 0;
+    if (MonitorGet(now < 0 ? 0 : (ULONG)now, &from)) {
+        dx = W32Max(rect.left - from.Rect.left, 0);
+        dy = W32Max(rect.top - from.Rect.top, 0);
+    }
+    LONG x = to.Rect.left + dx, y = to.Rect.top + dy;
+    x = W32Max(to.Work.left, W32Min(x, to.Work.right - width));
+    y = W32Max(to.Work.top, W32Min(y, to.Work.bottom - height));
+    WndSetPos(w, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if (alive(w) && (w->Style & WS_MAXIMIZE) && !(w->Flags & WNDF_FULLSCREEN)) {
+        RECT max;
+        maximized_rect(w, &max);
+        WndSetPos(w, nullptr, max.left, max.top, max.right - max.left, max.bottom - max.top,
+                  SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
 
@@ -816,8 +912,7 @@ void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect)
          */
         if ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & WS_THICKFRAME)) {
             w->Flags |= WNDF_APP_FULLSCREEN;
-            if (w->WindowRect.left <= 0 && w->WindowRect.top <= 0 && w->WindowRect.right >= W32Display.Width &&
-                w->WindowRect.bottom >= W32Display.Height) {
+            if (MonitorCoveredBy(&w->WindowRect)) {
                 MenuRefreshWindowState(w);
                 goto done;
             }
@@ -842,15 +937,19 @@ done:
 
 void WndCenterOnOwner(WND *w)
 {
-    RECT ref = W32Display.Work;
-    if (w->Owner && (w->Owner->Style & WS_VISIBLE) && !(w->Owner->Style & WS_MINIMIZE))
+    RECT screen = W32Display.Work;
+    RECT ref = screen;
+    if (w->Owner && (w->Owner->Style & WS_VISIBLE) && !(w->Owner->Style & WS_MINIMIZE)) {
         ref = w->Owner->WindowRect;
+        /* the monitor the owner is on. */
+        screen = MonitorWorkOfRect(&ref);
+    }
     LONG width = w->WindowRect.right - w->WindowRect.left;
     LONG height = w->WindowRect.bottom - w->WindowRect.top;
     LONG x = ref.left + (ref.right - ref.left - width) / 2;
     LONG y = ref.top + (ref.bottom - ref.top - height) / 2;
-    x = W32Max(W32Display.Work.left, W32Min(x, W32Display.Work.right - width));
-    y = W32Max(W32Display.Work.top, W32Min(y, W32Display.Work.bottom - height));
+    x = W32Max(screen.left, W32Min(x, screen.right - width));
+    y = W32Max(screen.top, W32Min(y, screen.bottom - height));
     WndSetPos(w, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
@@ -1297,6 +1396,9 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     parent_to_screen(parent, &rect);
     w->WindowRect = rect;
     w->ClientRect = rect;
+    /* a program aware of the dpi of each monitor starts in the dpi of the one its window is on. */
+    if (parent == desktop && t && t->Process && t->Process->DpiAwareness >= 2 && !message_only)
+        w->Dpi = MonitorDpiOfRect(&rect);
     UserReference(&w->Header);
 
     if ((style & WS_THICKFRAME) || !(style & (WS_POPUP | WS_CHILD))) {
@@ -1998,9 +2100,11 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
         case MIME_HWND_ISZOOMED:
             r = (w->Style & WS_MAXIMIZE) != 0;
             break;
-        case MIME_HWND_MONITOR:
-            r = 0x00010001;
+        case MIME_HWND_MONITOR: {
+            LONG index = MonitorFromRectIndex(&w->WindowRect, TRUE);
+            r = (ULONG_PTR)MonitorHandle(index < 0 ? 0 : (ULONG)index);
             break;
+        }
         case MIME_HWND_ISUNICODE:
             r = !w->Ansi;
             break;

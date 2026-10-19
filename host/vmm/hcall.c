@@ -409,6 +409,16 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_IME_CONTROL:
         status = mime_ui_ime_control((uint32_t)regs[1], (uint32_t)regs[2], &value);
         break;
+    case MIME_HC_MONITORS: {
+        uint64_t capacity = regs[2] < MIME_MAX_MONITORS ? regs[2] : MIME_MAX_MONITORS;
+        MimeMonitor *dst = capacity ? mime_vm_phys(vm, regs[1], capacity * sizeof(MimeMonitor)) : nullptr;
+        if (!dst) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        value = mime_ui_get_monitors(dst, (uint32_t)capacity);
+        break;
+    }
     case MIME_HC_GPU_OPEN:
         status = mime_gpu_open(vm, regs[1], regs[2], &value);
         break;
