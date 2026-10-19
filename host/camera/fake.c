@@ -12,7 +12,6 @@
 #include "convert.h"
 #include "jpeg.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -201,9 +200,13 @@ static void *produce(void *arg)
     uint64_t interval = 1000000000ull * fs->format.fps_den / fs->format.fps_num;
     uint64_t next = camera_now_ns() + interval;
     for (uint32_t n = 0;; n++) {
-        struct timespec at = {.tv_sec = (time_t)(next / 1000000000ull), .tv_nsec = (long)(next % 1000000000ull)};
-        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &at, nullptr) == EINTR)
-            ;
+        /* sleeps to the frame's time in slices, so that stopping is heard within a few milliseconds. */
+        for (uint64_t now = camera_now_ns(); now < next && !__atomic_load_n(&fs->stop, __ATOMIC_ACQUIRE);
+             now = camera_now_ns()) {
+            uint64_t left = next - now;
+            struct timespec nap = {0, (long)(left < 5000000ull ? left : 5000000ull)};
+            nanosleep(&nap, nullptr);
+        }
         if (__atomic_load_n(&fs->stop, __ATOMIC_ACQUIRE))
             break;
         draw(y, u, v, w, h, n, __atomic_load_n(&g_brightness[fs->index], __ATOMIC_RELAXED));

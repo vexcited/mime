@@ -6,9 +6,10 @@
  */
 #include "camera.h"
 
-#define SLOTS 6
-/* the samples a program may hold at once: the host keeps the rest of the slots to write the next frames in. */
-#define MAX_OUTSTANDING 3
+#define MAX_SLOTS 6
+#define MIN_SLOTS 3
+/* a stream's memory is one run of contiguous pages: large frames get fewer slots to keep it under this. */
+#define STREAM_BUDGET (64u << 20)
 #define MAX_TOKENS 16
 
 enum { STATE_STOPPED, STATE_STARTED, STATE_SHUTDOWN };
@@ -24,6 +25,7 @@ typedef struct CamContext {
     BYTE *base;
     DWORD size;
     LONG outstanding;
+    DWORD max_outstanding; /* the samples a program may hold at once, the host keeps the other slots to write in */
     UINT64 mf_open;     /* MFGetSystemTime when the stream opened, the clock the samples' reference times are on */
     BOOL open;
     DWORD format_index;  /* of the device's formats, the mode it runs */
@@ -210,7 +212,13 @@ static HRESULT open_context(CamSource *s, DWORD format_index, DWORD output, CamC
     MimeCameraOpen request = {};
     request.format = s->device->formats[format_index];
     request.output_fourcc = output;
-    request.slots = SLOTS;
+    /* the room of a frame, as the kernel sizes a slot, decides how many fit the budget. */
+    DWORD frame = mime_camera_frame_bytes(output ? output : request.format.fourcc, request.format.width,
+                                          request.format.height);
+    DWORD slot = frame ? frame : request.format.width * request.format.height + 65536;
+    DWORD slots = STREAM_BUDGET / (((slot + 4095) & ~4095u) ? ((slot + 4095) & ~4095u) : 4096);
+    request.slots = slots > MAX_SLOTS ? MAX_SLOTS : slots < MIN_SLOTS ? MIN_SLOTS : slots;
+    c->max_outstanding = request.slots / 2;
     request.event = (UINT64)(ULONG_PTR)c->event;
     MimeCameraOpened opened = {};
     BYTE buffer[sizeof(MimeCameraOpen) > sizeof(MimeCameraOpened) ? sizeof(MimeCameraOpen) : sizeof(MimeCameraOpened)];
@@ -306,7 +314,7 @@ static void deliver_frames(CamSource *s, CamContext *c)
 {
     CamStream *stream = &s->stream;
     MimeCameraHeader *h = c->hdr;
-    while ((DWORD)c->outstanding < MAX_OUTSTANDING) {
+    while ((DWORD)c->outstanding < c->max_outstanding) {
         int best = -1;
         UINT64 best_sequence = 0;
         for (DWORD i = 0; i < h->slots; i++)

@@ -11,7 +11,7 @@
 #include <mime/camera.h>
 #include <mime/pnp.h>
 
-#define MAX_STREAM_BYTES (96u << 20)
+#define MAX_STREAM_BYTES (160u << 20)
 #define DEFAULT_SLOTS 4
 #define MJPEG_BYTES_PER_PIXEL 1
 
