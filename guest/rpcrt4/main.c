@@ -3,8 +3,19 @@
  */
 #include "rpcrt4_private.h"
 
+int _fltused = 0x9875;
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
+    switch (reason) {
+    case DLL_THREAD_DETACH:
+        RpcpThreadDetach();
+        break;
+    case DLL_PROCESS_DETACH:
+        if (!reserved)
+            RpcpEpPurge(GetCurrentProcessId());
+        break;
+    }
     return TRUE;
 }
 
@@ -119,24 +130,9 @@ RPCRTAPI void RPC_ENTRY NdrOleFree(void *memory)
 
 /* ------------------------------------------------------------------ asynchronous calls */
 
-/* the state of an asynchronous call: 112 bytes that begin with their size and a signature. */
-typedef struct {
-    ULONG Size;
-    ULONG Signature;
-    LONG Lock;
-    ULONG Flags;
-    void *StubInfo;
-    void *UserInfo;
-    void *RuntimeInfo;
-    ULONG Event;
-    ULONG NotificationType;
-    ULONG_PTR Notification[4];
-    LONG_PTR Reserved[4];
-} RPC_ASYNC_STATE;
-
 #define RPC_ASYNC_SIGNATURE 0x43594E41u
 
-RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncInitializeHandle(RPC_ASYNC_STATE *state, ULONG size)
+RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncInitializeHandle(PRPC_ASYNC_STATE state, unsigned int size)
 {
     if (!state || size != sizeof(*state))
         return ERROR_INVALID_PARAMETER;

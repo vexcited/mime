@@ -54,7 +54,7 @@ set(MIME_X86_DLLS
     advapi32:0x6d000000:all_five sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
     netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:all_five oleaut32:0x64000000:all_five
-    rpcrt4:0x63000000:all_five imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
+    rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:user mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:user_gdi wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:oleacc_imports oledlg:0x56000000:user combase:0x54000000:all_five usp10:0x51000000:gdi
@@ -72,6 +72,8 @@ set(MIME_X86_DLLS
     mfcaptureengine:0x12100000:mfce_imports
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports)
 set(base ntdll kernel32)
+# rpcrt4 catches exceptions with frame handlers of the c runtime.
+set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
