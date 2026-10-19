@@ -369,6 +369,12 @@ int MsvcrtFormatW(FILE *stream, const wchar_t *fmt, va_list ap);
 int MsvcrtVsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
 int MsvcrtVsnwprintf(wchar_t *buf, size_t size, const wchar_t *fmt, va_list ap);
 int MsvcrtScanA(FILE *stream, const char *str, size_t len, const char *fmt, va_list ap);
+int MsvcrtScanExA(FILE *stream, const char *str, size_t len, const char *fmt, va_list ap, int secure);
+int MsvcrtScanExW(FILE *stream, const wchar_t *str, size_t len, const wchar_t *fmt, va_list ap, int secure);
+int MsvcrtFormatPositionalA(FILE *f, const char *fmt, va_list ap);
+int MsvcrtFormatPositionalW(FILE *f, const wchar_t *fmt, va_list ap);
+int MsvcrtVsprintfPositionalA(char *buf, size_t size, const char *fmt, va_list ap);
+int MsvcrtVsprintfPositionalW(wchar_t *buf, size_t size, const wchar_t *fmt, va_list ap);
 int MsvcrtScanW(FILE *stream, const wchar_t *str, size_t len, const wchar_t *fmt, va_list ap);
 
 extern unsigned int MsvcrtOutputFormat;

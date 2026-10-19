@@ -53,7 +53,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             continue;
         case ST_WIDTH:
             if (c == '*') {
-                width = va_arg(ap, int);
+                width = ARG_INT();
                 if (width < 0) {
                     flags |= FL_LEFT;
                     width = -width;
@@ -67,7 +67,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             continue;
         case ST_PRECIS:
             if (c == '*') {
-                prec = va_arg(ap, int);
+                prec = ARG_INT();
                 if (prec < 0)
                     prec = -1;
             } else {
@@ -145,7 +145,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
 #endif
             [[fallthrough]];
         case 'c': {
-            int arg = va_arg(ap, int);
+            int arg = ARG_INT();
 #if FORMAT_WIDE
             one[0] = (flags & FL_SHORT) ? (FCHAR)(unsigned char)arg : (FCHAR)arg;
             text = one;
@@ -174,7 +174,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
 #endif
             [[fallthrough]];
         case 's': {
-            const void *s = va_arg(ap, const void *);
+            const void *s = ARG_PTR();
             int max = prec == -1 ? INT_MAX : prec;
 #if FORMAT_WIDE
             int wide_arg = !(flags & FL_SHORT);
@@ -196,7 +196,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             break;
         }
         case 'Z': {
-            const ANSI_STRING *str = va_arg(ap, const ANSI_STRING *);
+            const ANSI_STRING *str = ARG_PTR();
             if (!str || !str->Buffer) {
                 text = "(null)";
                 len = 6;
@@ -211,7 +211,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             break;
         }
         case 'n': {
-            void *p = va_arg(ap, void *);
+            void *p = ARG_PTR();
             if (!g_count_output) {
                 MSVCRT_INVALID(EINVAL);
                 return -1;
@@ -233,7 +233,7 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
         case 'f':
         case 'g':
         case 'a': {
-            double v = va_arg(ap, double);
+            double v = ARG_DOUBLE();
             char *buf = nbuf;
             if (prec < 0)
                 prec = 6;
@@ -296,12 +296,12 @@ static int FORMAT_NAME(SINK *out, const FCHAR *fmt, va_list ap)
             }
             uint64_t v;
             if (flags & (FL_I64 | FL_LONGLONG)) {
-                v = va_arg(ap, uint64_t);
+                v = ARG_U64();
             } else if (flags & FL_SHORT) {
-                int a = va_arg(ap, int);
+                int a = ARG_INT();
                 v = (flags & FL_SIGNED) ? (uint64_t)(int64_t)(short)a : (uint64_t)(unsigned short)a;
             } else {
-                unsigned a = va_arg(ap, unsigned);
+                unsigned a = (unsigned)ARG_INT();
                 v = (flags & FL_SIGNED) ? (uint64_t)(int64_t)(int)a : (uint64_t)a;
             }
             if ((flags & FL_SIGNED) && (int64_t)v < 0) {

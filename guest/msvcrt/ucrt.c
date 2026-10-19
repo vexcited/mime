@@ -11,6 +11,24 @@ int __cdecl _vsnwprintf_s(wchar_t *buffer, size_t size, size_t count, const wcha
 int __cdecl vsprintf_s(char *buffer, size_t size, const char *format, va_list args);
 int __cdecl vswprintf_s(wchar_t *buffer, size_t size, const wchar_t *format, va_list args);
 
+int __cdecl _vcprintf(const char *fmt, va_list ap);
+int __cdecl _vcwprintf(const wchar_t *fmt, va_list ap);
+int __cdecl _fgetc_nolock(FILE *f);
+int __cdecl _fputc_nolock(int c, FILE *f);
+wint_t __cdecl _fgetwc_nolock(FILE *f);
+wint_t __cdecl _fputwc_nolock(wchar_t c, FILE *f);
+wint_t __cdecl ungetwc(wint_t c, FILE *f);
+size_t __cdecl _fread_nolock(void *buf, size_t size, size_t count, FILE *f);
+int __cdecl _getche_nolock(void);
+wint_t __cdecl _getwche_nolock(void);
+int __cdecl _cputs(const char *s);
+int __cdecl _putch(int c);
+int __cdecl _cputws(const wchar_t *s);
+int __cdecl _getch_nolock(void);
+wint_t __cdecl _getwch_nolock(void);
+int __cdecl _putch_nolock(int c);
+wint_t __cdecl _putwch_nolock(wchar_t c);
+
 typedef struct { _onexit_t *first, *last, *end; } MIME_ONEXIT_TABLE;
 
 DECLSPEC_EXPORT int __cdecl _initialize_onexit_table(MIME_ONEXIT_TABLE *table)
@@ -216,6 +234,317 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vsscanf(ULONGLONG options, const char
         MSVCRT_INVALID(EINVAL);
         return EOF;
     }
-    return MsvcrtScanA(nullptr, buffer, size, format, args);
+    return MsvcrtScanExA(nullptr, buffer, size, format, args, (int)(options & 1));
 }
 
+DECLSPEC_EXPORT int __cdecl __stdio_common_vswscanf(ULONGLONG options, const wchar_t *buffer, size_t size,
+                                                    const wchar_t *format, void *locale, va_list args)
+{
+    if (!buffer || !format) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    return MsvcrtScanExW(nullptr, buffer, size, format, args, (int)(options & 1));
+}
+
+/* the scan of a stream: the secure form takes the sizes of the strings it fills. */
+DECLSPEC_EXPORT int __cdecl __stdio_common_vfscanf(ULONGLONG options, FILE *stream, const char *format, void *locale,
+                                                   va_list args)
+{
+    if (!stream || !format) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    MsvcrtLockFile(stream);
+    int r = MsvcrtScanExA(stream, nullptr, 0, format, args, (int)(options & 1));
+    MsvcrtUnlockFile(stream);
+    return r;
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vfwscanf(ULONGLONG options, FILE *stream, const wchar_t *format,
+                                                    void *locale, va_list args)
+{
+    if (!stream || !format) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    MsvcrtLockFile(stream);
+    int r = MsvcrtScanExW(stream, nullptr, 0, format, args, (int)(options & 1));
+    MsvcrtUnlockFile(stream);
+    return r;
+}
+
+/* the printf family with numbered arguments, and the checked forms of the stream and string ones. */
+DECLSPEC_EXPORT int __cdecl __stdio_common_vfprintf_p(ULONGLONG options, FILE *stream, const char *format, void *locale,
+                                                      va_list args)
+{
+    return MsvcrtFormatPositionalA(stream, format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vfwprintf_p(ULONGLONG options, FILE *stream, const wchar_t *format,
+                                                       void *locale, va_list args)
+{
+    return MsvcrtFormatPositionalW(stream, format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vsprintf_p(ULONGLONG options, char *buffer, size_t size, const char *format,
+                                                      void *locale, va_list args)
+{
+    return MsvcrtVsprintfPositionalA(buffer, size, format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf_p(ULONGLONG options, wchar_t *buffer, size_t size,
+                                                       const wchar_t *format, void *locale, va_list args)
+{
+    return MsvcrtVsprintfPositionalW(buffer, size, format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vfprintf_s(ULONGLONG options, FILE *stream, const char *format, void *locale,
+                                                      va_list args)
+{
+    return vfprintf(stream, format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __stdio_common_vfwprintf_s(ULONGLONG options, FILE *stream, const wchar_t *format,
+                                                       void *locale, va_list args)
+{
+    return vfwprintf(stream, format, args);
+}
+
+/* ------------------------------------------------------------------ streams without their lock */
+
+DECLSPEC_EXPORT int __cdecl _fclose_nolock(FILE *f)
+{
+    if (!f) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    return MsvcrtFcloseNolock(f);
+}
+
+DECLSPEC_EXPORT int __cdecl _getc_nolock(FILE *f)
+{
+    return _fgetc_nolock(f);
+}
+
+DECLSPEC_EXPORT int __cdecl _putc_nolock(int c, FILE *f)
+{
+    return _fputc_nolock(c, f);
+}
+
+DECLSPEC_EXPORT wint_t __cdecl _getwc_nolock(FILE *f)
+{
+    return _fgetwc_nolock(f);
+}
+
+DECLSPEC_EXPORT wint_t __cdecl _putwc_nolock(wchar_t c, FILE *f)
+{
+    return _fputwc_nolock(c, f);
+}
+
+/* the file's lock is recursive here, so the locked form serves. */
+DECLSPEC_EXPORT wint_t __cdecl _ungetwc_nolock(wint_t c, FILE *f)
+{
+    return ungetwc(c, f);
+}
+
+/* fread_s without the lock: a buffer too small is a range error and nothing is read. */
+DECLSPEC_EXPORT size_t __cdecl _fread_nolock_s(void *buf, size_t bufsize, size_t size, size_t count, FILE *f)
+{
+    if (!size || !count)
+        return 0;
+    if (!buf) {
+        MSVCRT_INVALID(EINVAL);
+        return 0;
+    }
+    if (count > bufsize / size) {
+        memset(buf, 0, bufsize);
+        MSVCRT_INVALID(ERANGE);
+        return 0;
+    }
+    return _fread_nolock(buf, size, count, f);
+}
+
+/* a line from the standard input, at most size - 1 characters; a longer one is a range error and is dropped. */
+DECLSPEC_EXPORT char *__cdecl gets_s(char *buf, size_t size)
+{
+    if (!buf || !size) {
+        MSVCRT_INVALID(EINVAL);
+        return nullptr;
+    }
+    FILE *f = msvcrt_stdin;
+    MsvcrtLockFile(f);
+    size_t n = 0;
+    int c;
+    BOOL overflow = FALSE;
+    while ((c = _fgetc_nolock(f)) != '\n') {
+        if (c == EOF) {
+            if (!n && !overflow) {
+                *buf = 0;
+                MsvcrtUnlockFile(f);
+                return nullptr;
+            }
+            break;
+        }
+        if (n + 1 >= size)
+            overflow = TRUE;
+        else
+            buf[n++] = (char)c;
+    }
+    MsvcrtUnlockFile(f);
+    if (overflow) {
+        *buf = 0;
+        MSVCRT_INVALID(ERANGE);
+        return nullptr;
+    }
+    buf[n] = 0;
+    return buf;
+}
+
+DECLSPEC_EXPORT wchar_t *__cdecl _getws_s(wchar_t *buf, size_t size)
+{
+    if (!buf || !size) {
+        MSVCRT_INVALID(EINVAL);
+        return nullptr;
+    }
+    FILE *f = msvcrt_stdin;
+    MsvcrtLockFile(f);
+    size_t n = 0;
+    wint_t c;
+    BOOL overflow = FALSE;
+    while ((c = _fgetwc_nolock(f)) != '\n') {
+        if (c == WEOF) {
+            if (!n && !overflow) {
+                *buf = 0;
+                MsvcrtUnlockFile(f);
+                return nullptr;
+            }
+            break;
+        }
+        if (n + 1 >= size)
+            overflow = TRUE;
+        else
+            buf[n++] = c;
+    }
+    MsvcrtUnlockFile(f);
+    if (overflow) {
+        *buf = 0;
+        MSVCRT_INVALID(ERANGE);
+        return nullptr;
+    }
+    buf[n] = 0;
+    return buf;
+}
+
+/* ------------------------------------------------------------------ the console */
+
+DECLSPEC_EXPORT int __cdecl __conio_common_vcprintf(ULONGLONG options, const char *format, void *locale, va_list args)
+{
+    return _vcprintf(format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __conio_common_vcprintf_s(ULONGLONG options, const char *format, void *locale,
+                                                      va_list args)
+{
+    return _vcprintf(format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __conio_common_vcwprintf(ULONGLONG options, const wchar_t *format, void *locale,
+                                                     va_list args)
+{
+    return _vcwprintf(format, args);
+}
+
+DECLSPEC_EXPORT int __cdecl __conio_common_vcwprintf_s(ULONGLONG options, const wchar_t *format, void *locale,
+                                                       va_list args)
+{
+    return _vcwprintf(format, args);
+}
+
+/* with numbered arguments: the text is formed first, then written. */
+DECLSPEC_EXPORT int __cdecl __conio_common_vcprintf_p(ULONGLONG options, const char *format, void *locale,
+                                                      va_list args)
+{
+    char text[1024];
+    int n = MsvcrtVsprintfPositionalA(text, sizeof(text), format, args);
+    if (n < 0)
+        return -1;
+    return _cputs(text) ? -1 : n;
+}
+
+DECLSPEC_EXPORT int __cdecl __conio_common_vcwprintf_p(ULONGLONG options, const wchar_t *format, void *locale,
+                                                       va_list args)
+{
+    wchar_t text[1024];
+    int n = MsvcrtVsprintfPositionalW(text, RTL_NUMBER_OF(text), format, args);
+    if (n < 0)
+        return -1;
+    return _cputws(text) ? -1 : n;
+}
+
+/*
+ * scanning the keyboard: a line is read with echo, as _cgets does, and scanned. What the format does not use of the
+ * line is gone, where Windows would leave it for the next call. This is a guess at an edge nobody relies on.
+ */
+DECLSPEC_EXPORT int __cdecl __conio_common_vcscanf(ULONGLONG options, const char *format, void *locale, va_list args)
+{
+    char line[512];
+    size_t n = 0;
+    if (!format) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    _lock(_CONIO_LOCK);
+    for (;;) {
+        int c = _getche_nolock();
+        if (c == EOF || c == '\r')
+            break;
+        if (c == '\b') {
+            if (n) {
+                n--;
+                _cputs(" \b");
+            }
+            continue;
+        }
+        if (n + 1 < sizeof(line))
+            line[n++] = (char)c;
+    }
+    _unlock(_CONIO_LOCK);
+    line[n] = 0;
+    _putch('\n');
+    if (!n)
+        return EOF;
+    return MsvcrtScanExA(nullptr, line, n, format, args, (int)(options & 1));
+}
+
+DECLSPEC_EXPORT int __cdecl __conio_common_vcwscanf(ULONGLONG options, const wchar_t *format, void *locale,
+                                                    va_list args)
+{
+    wchar_t line[512];
+    size_t n = 0;
+    if (!format) {
+        MSVCRT_INVALID(EINVAL);
+        return EOF;
+    }
+    _lock(_CONIO_LOCK);
+    for (;;) {
+        wint_t c = _getwche_nolock();
+        if (c == WEOF || c == '\r')
+            break;
+        if (c == '\b') {
+            if (n) {
+                n--;
+                _cputs(" \b");
+            }
+            continue;
+        }
+        if (n + 1 < RTL_NUMBER_OF(line))
+            line[n++] = (wchar_t)c;
+    }
+    _unlock(_CONIO_LOCK);
+    line[n] = 0;
+    _putwch_nolock(L'\n');
+    if (!n)
+        return EOF;
+    return MsvcrtScanExW(nullptr, line, n, format, args, (int)(options & 1));
+}

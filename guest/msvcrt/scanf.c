@@ -127,7 +127,7 @@ static void store_char(void **dst, int c, int wide_out)
 #undef SCAN_WIDE
 #undef SCAN_ISSPACE
 
-static int scan_any_a(FILE *stream, const char *str, size_t len, const char *fmt, va_list ap, int secure)
+int MsvcrtScanExA(FILE *stream, const char *str, size_t len, const char *fmt, va_list ap, int secure)
 {
     SOURCE s = {stream, str, len, 0, 0, 0, EOF, secure};
     int r = scan_a(&s, fmt, ap);
@@ -135,7 +135,7 @@ static int scan_any_a(FILE *stream, const char *str, size_t len, const char *fmt
     return r;
 }
 
-static int scan_any_w(FILE *stream, const wchar_t *str, size_t len, const wchar_t *fmt, va_list ap, int secure)
+int MsvcrtScanExW(FILE *stream, const wchar_t *str, size_t len, const wchar_t *fmt, va_list ap, int secure)
 {
     SOURCE s = {stream, str, len, 0, 1, 0, EOF, secure};
     int r = scan_w(&s, fmt, ap);
@@ -145,12 +145,12 @@ static int scan_any_w(FILE *stream, const wchar_t *str, size_t len, const wchar_
 
 int MsvcrtScanA(FILE *stream, const char *str, size_t len, const char *fmt, va_list ap)
 {
-    return scan_any_a(stream, str, len, fmt, ap, 0);
+    return MsvcrtScanExA(stream, str, len, fmt, ap, 0);
 }
 
 int MsvcrtScanW(FILE *stream, const wchar_t *str, size_t len, const wchar_t *fmt, va_list ap)
 {
-    return scan_any_w(stream, str, len, fmt, ap, 0);
+    return MsvcrtScanExW(stream, str, len, fmt, ap, 0);
 }
 
 /* ------------------------------------------------------------------ strings */
@@ -199,7 +199,7 @@ int __cdecl sscanf_s(const char *str, const char *fmt, ...)
     }
     va_list ap;
     va_start(ap, fmt);
-    int r = scan_any_a(nullptr, str, (size_t)-1, fmt, ap, 1);
+    int r = MsvcrtScanExA(nullptr, str, (size_t)-1, fmt, ap, 1);
     va_end(ap);
     return r;
 }
@@ -212,7 +212,7 @@ int __cdecl swscanf_s(const wchar_t *str, const wchar_t *fmt, ...)
     }
     va_list ap;
     va_start(ap, fmt);
-    int r = scan_any_w(nullptr, str, (size_t)-1, fmt, ap, 1);
+    int r = MsvcrtScanExW(nullptr, str, (size_t)-1, fmt, ap, 1);
     va_end(ap);
     return r;
 }
@@ -303,7 +303,7 @@ static int vfscanf_s(FILE *f, const char *fmt, va_list ap)
         return EOF;
     }
     MsvcrtLockFile(f);
-    int r = scan_any_a(f, nullptr, 0, fmt, ap, 1);
+    int r = MsvcrtScanExA(f, nullptr, 0, fmt, ap, 1);
     MsvcrtUnlockFile(f);
     return r;
 }
@@ -315,7 +315,7 @@ static int vfwscanf_s(FILE *f, const wchar_t *fmt, va_list ap)
         return EOF;
     }
     MsvcrtLockFile(f);
-    int r = scan_any_w(f, nullptr, 0, fmt, ap, 1);
+    int r = MsvcrtScanExW(f, nullptr, 0, fmt, ap, 1);
     MsvcrtUnlockFile(f);
     return r;
 }

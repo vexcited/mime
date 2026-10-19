@@ -737,6 +737,73 @@ wint_t __cdecl _ungetwch(wint_t c)
     return c;
 }
 
+/* the forms that leave the console lock to the caller. */
+int __cdecl _putch_nolock(int c)
+{
+    char ch = (char)c;
+    DWORD written;
+    return WriteConsoleA(conout(), &ch, 1, &written, nullptr) ? (unsigned char)ch : EOF;
+}
+
+wint_t __cdecl _putwch_nolock(wchar_t c)
+{
+    DWORD written;
+    return WriteConsoleW(conout(), &c, 1, &written, nullptr) ? c : WEOF;
+}
+
+int __cdecl _getch_nolock(void)
+{
+    if (g_ungetch != EOF) {
+        int c = g_ungetch;
+        g_ungetch = EOF;
+        return c;
+    }
+    return read_key();
+}
+
+int __cdecl _getche_nolock(void)
+{
+    int c = _getch_nolock();
+    if (c != EOF && c)
+        _putch_nolock(c);
+    return c;
+}
+
+wint_t __cdecl _getwch_nolock(void)
+{
+    if (g_ungetwch != WEOF) {
+        wint_t c = g_ungetwch;
+        g_ungetwch = WEOF;
+        return c;
+    }
+    int a = read_key();
+    return a == EOF ? WEOF : (wint_t)a;
+}
+
+wint_t __cdecl _getwche_nolock(void)
+{
+    wint_t c = _getwch_nolock();
+    if (c != WEOF && c)
+        _putwch_nolock(c);
+    return c;
+}
+
+int __cdecl _ungetch_nolock(int c)
+{
+    if (c == EOF || g_ungetch != EOF)
+        return EOF;
+    g_ungetch = c & 0xff;
+    return g_ungetch;
+}
+
+wint_t __cdecl _ungetwch_nolock(wint_t c)
+{
+    if (c == WEOF || g_ungetwch != WEOF)
+        return WEOF;
+    g_ungetwch = c;
+    return c;
+}
+
 int __cdecl _kbhit(void)
 {
     if (g_ungetch != EOF || g_extended != EOF)
@@ -790,6 +857,108 @@ char *__cdecl _cgets(char *buf)
     buf[1] = (char)n;
     _unlock(_CONIO_LOCK);
     return text;
+}
+
+/*
+ * a line from the keyboard with the editing of backspace, echoed: at most size - 1 characters are kept and the count
+ * is stored. A line that does not fit is a range error, with the buffer made empty.
+ */
+errno_t __cdecl _cgets_s(char *buf, size_t size, size_t *count)
+{
+    if (count)
+        *count = 0;
+    if (!buf || !count || !size) {
+        MSVCRT_INVALID(EINVAL);
+        return EINVAL;
+    }
+    size_t n = 0;
+    BOOL overflow = FALSE;
+    _lock(_CONIO_LOCK);
+    for (;;) {
+        int c = _getch_nolock();
+        if (c == EOF || c == '\r')
+            break;
+        if (c == '\b') {
+            if (n) {
+                n--;
+                _cputs("\b \b");
+            }
+            continue;
+        }
+        if (n + 1 >= size) {
+            overflow = TRUE;
+            continue;
+        }
+        buf[n++] = (char)c;
+        _putch_nolock(c);
+    }
+    _unlock(_CONIO_LOCK);
+    buf[overflow ? 0 : n] = 0;
+    if (overflow) {
+        MSVCRT_INVALID(ERANGE);
+        return ERANGE;
+    }
+    *count = n;
+    return 0;
+}
+
+errno_t __cdecl _cgetws_s(wchar_t *buf, size_t size, size_t *count)
+{
+    if (count)
+        *count = 0;
+    if (!buf || !count || !size) {
+        MSVCRT_INVALID(EINVAL);
+        return EINVAL;
+    }
+    size_t n = 0;
+    BOOL overflow = FALSE;
+    _lock(_CONIO_LOCK);
+    for (;;) {
+        wint_t c = _getwch_nolock();
+        if (c == WEOF || c == '\r')
+            break;
+        if (c == '\b') {
+            if (n) {
+                n--;
+                _cputws(L"\b \b");
+            }
+            continue;
+        }
+        if (n + 1 >= size) {
+            overflow = TRUE;
+            continue;
+        }
+        buf[n++] = (wchar_t)c;
+        _putwch_nolock((wchar_t)c);
+    }
+    _unlock(_CONIO_LOCK);
+    buf[overflow ? 0 : n] = 0;
+    if (overflow) {
+        MSVCRT_INVALID(ERANGE);
+        return ERANGE;
+    }
+    *count = n;
+    return 0;
+}
+
+/* the older form: the first element is the room, the second gets the count, the text follows. */
+wchar_t *__cdecl _cgetws(wchar_t *buf)
+{
+    if (!buf) {
+        MSVCRT_INVALID(EINVAL);
+        return nullptr;
+    }
+    size_t max = (size_t)buf[0], n = 0;
+    if (max < 2) {
+        MSVCRT_INVALID(EINVAL);
+        return nullptr;
+    }
+    if (_cgetws_s(buf + 2, max, &n)) {
+        buf[1] = 0;
+        return nullptr;
+    }
+    buf[1] = (wchar_t)n;
+    return buf + 2;
 }
 
 int __cdecl _vcprintf(const char *fmt, va_list ap)

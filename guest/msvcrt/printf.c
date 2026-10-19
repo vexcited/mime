@@ -48,13 +48,28 @@ static constexpr unsigned char g_next[9][8] = {
 };
 
 /* where formatted characters go: a stream, a string, or nowhere but counted. */
+typedef union {
+    uint64_t u;
+    double d;
+    void *p;
+} PARG;
+
 typedef struct {
     FILE *stream;
     void *buf;
     size_t cnt;
     int count_only;
     int count;
+    /* the arguments in the order the format takes them, when positional parameters were put in order. */
+    const PARG *seq;
+    int seq_at;
 } SINK;
+
+/* the next argument of the engine: from the va_list, or from the ordered table of a positional format. */
+#define ARG_INT() (out->seq ? (int)(unsigned)out->seq[out->seq_at++].u : va_arg(ap, int))
+#define ARG_U64() (out->seq ? out->seq[out->seq_at++].u : va_arg(ap, uint64_t))
+#define ARG_PTR() (out->seq ? out->seq[out->seq_at++].p : va_arg(ap, void *))
+#define ARG_DOUBLE() (out->seq ? out->seq[out->seq_at++].d : va_arg(ap, double))
 
 static void sink_put_a(SINK *s, char c)
 {
@@ -136,6 +151,27 @@ static void sink_repeat_w(SINK *s, wchar_t c, int n)
 #undef FORMAT_WIDE
 #undef sink_put
 #undef sink_repeat
+
+#define ARGMAX 99
+
+enum { PK_NONE, PK_INT, PK_I64, PK_PTR, PK_DOUBLE };
+
+typedef struct {
+    int kind[ARGMAX + 1];
+    int highest;
+} POSITIONS;
+
+#define POSITIONAL_NAME positional_a
+#define FCHAR char
+#include "positional.h"
+#undef POSITIONAL_NAME
+#undef FCHAR
+
+#define POSITIONAL_NAME positional_w
+#define FCHAR wchar_t
+#include "positional.h"
+#undef POSITIONAL_NAME
+#undef FCHAR
 
 /* ------------------------------------------------------------------ engine entry points */
 
@@ -628,4 +664,103 @@ int __cdecl _set_printf_count_output(int enable)
 int __cdecl _get_printf_count_output(void)
 {
     return g_count_output;
+}
+
+/* ------------------------------------------------------------------ positional parameters */
+
+/*
+ * the _p functions: the format may number its arguments with n$, also the ones of a width or precision written *n$. A
+ * format that cannot be put in order is an invalid parameter. The output goes where the plain function's would, the
+ * string forms with the checks of the _s forms.
+ */
+int MsvcrtFormatPositionalA(FILE *f, const char *fmt, va_list ap)
+{
+    char *rewritten = nullptr;
+    PARG *seq = nullptr;
+    if (!f || !fmt || positional_a(fmt, ap, &rewritten, &seq) < 0) {
+        free(rewritten);
+        free(seq);
+        MSVCRT_INVALID(EINVAL);
+        return -1;
+    }
+    MsvcrtLockFile(f);
+    int buffing = MsvcrtStbuf(f);
+    SINK s = {f, nullptr, 0, 0, 0, seq, 0};
+    int r = format_a(&s, rewritten, ap);
+    MsvcrtFtbuf(buffing, f);
+    MsvcrtUnlockFile(f);
+    free(rewritten);
+    free(seq);
+    return r;
+}
+
+int MsvcrtFormatPositionalW(FILE *f, const wchar_t *fmt, va_list ap)
+{
+    wchar_t *rewritten = nullptr;
+    PARG *seq = nullptr;
+    if (!f || !fmt || positional_w(fmt, ap, &rewritten, &seq) < 0) {
+        free(rewritten);
+        free(seq);
+        MSVCRT_INVALID(EINVAL);
+        return -1;
+    }
+    MsvcrtLockFile(f);
+    int buffing = MsvcrtStbuf(f);
+    SINK s = {f, nullptr, 0, 0, 0, seq, 0};
+    int r = format_w(&s, rewritten, ap);
+    MsvcrtFtbuf(buffing, f);
+    MsvcrtUnlockFile(f);
+    free(rewritten);
+    free(seq);
+    return r;
+}
+
+int MsvcrtVsprintfPositionalA(char *buf, size_t size, const char *fmt, va_list ap)
+{
+    char *rewritten = nullptr;
+    PARG *seq = nullptr;
+    if (!fmt || !buf || !size || positional_a(fmt, ap, &rewritten, &seq) < 0) {
+        if (buf && size)
+            *buf = 0;
+        free(rewritten);
+        free(seq);
+        MSVCRT_INVALID(EINVAL);
+        return -1;
+    }
+    SINK s = {nullptr, buf, size - 1, 0, 0, seq, 0};
+    int r = format_a(&s, rewritten, ap);
+    free(rewritten);
+    free(seq);
+    if (r < 0) {
+        *buf = 0;
+        MSVCRT_INVALID(ERANGE);
+        return -1;
+    }
+    *(char *)s.buf = 0;
+    return r;
+}
+
+int MsvcrtVsprintfPositionalW(wchar_t *buf, size_t size, const wchar_t *fmt, va_list ap)
+{
+    wchar_t *rewritten = nullptr;
+    PARG *seq = nullptr;
+    if (!fmt || !buf || !size || positional_w(fmt, ap, &rewritten, &seq) < 0) {
+        if (buf && size)
+            *buf = 0;
+        free(rewritten);
+        free(seq);
+        MSVCRT_INVALID(EINVAL);
+        return -1;
+    }
+    SINK s = {nullptr, buf, size - 1, 0, 0, seq, 0};
+    int r = format_w(&s, rewritten, ap);
+    free(rewritten);
+    free(seq);
+    if (r < 0) {
+        *buf = 0;
+        MSVCRT_INVALID(ERANGE);
+        return -1;
+    }
+    *(wchar_t *)s.buf = 0;
+    return r;
 }
