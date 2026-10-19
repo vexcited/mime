@@ -116,8 +116,11 @@ HPALETTE PalCurrent(HDC dc)
     return result;
 }
 
+void GdiForgetBrushOrigin(HDC dc);
+
 void PalForgetDC(HDC dc)
 {
+    GdiForgetBrushOrigin(dc);
     RtlAcquireSRWLockExclusive(&g_lock);
     for (UINT i = 0; i < PAL_DC_MAX; i++)
         if (g_selected[i].Dc == dc)
@@ -298,10 +301,107 @@ WINGDIAPI COLORREF WINAPI GetNearestColor(HDC dc, COLORREF color)
     return color & 0x00FFFFFF;
 }
 
-/* dib color tables live in win32k, which offers no call to change them. */
-WINGDIAPI UINT WINAPI SetDIBColorTable(HDC dc, UINT start, UINT count, const RGBQUAD *colors)
+/* ------------------------------------------------------------------ animating, resizing, system use */
+
+/*
+ * replaces the entries of a logical palette that carry PC_RESERVED, from the entries given. The stock palette
+ * cannot be animated.
+ */
+WINGDIAPI BOOL WINAPI AnimatePalette(HPALETTE palette, UINT start, UINT count, const PALETTEENTRY *entries)
 {
-    MIME_STUB("gdi32");
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+    start &= 0xFFFF;
+    count &= 0xFFFF;
+    if (palette == PalDefault() || !entries)
+        return FALSE;
+    BOOL found = FALSE;
+    RtlAcquireSRWLockExclusive(&g_lock);
+    PALETTE *p = lookup(palette);
+    if (p) {
+        found = TRUE;
+        for (UINT i = 0; i < count && start + i < p->Count; i++)
+            if (p->Entries[start + i].peFlags & PC_RESERVED)
+                p->Entries[start + i] = entries[i];
+    }
+    RtlReleaseSRWLockExclusive(&g_lock);
+    if (!found)
+        SetLastError(ERROR_INVALID_HANDLE);
+    return found;
+}
+
+/* a palette of 1 to 65535 entries; the entries that are added are black and not flagged. */
+WINGDIAPI BOOL WINAPI ResizePalette(HPALETTE palette, UINT count)
+{
+    if (palette == PalDefault() || !count || count > 0xFFFF)
+        return FALSE;
+    BOOL ok = FALSE;
+    RtlAcquireSRWLockExclusive(&g_lock);
+    PALETTE *p = lookup(palette);
+    if (p) {
+        PALETTE *resized = RtlReAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, p,
+                                             offsetof(PALETTE, Entries) + (SIZE_T)count * sizeof(PALETTEENTRY));
+        if (resized) {
+            if (count > resized->Count)
+                memset(resized->Entries + resized->Count, 0, (count - resized->Count) * sizeof(PALETTEENTRY));
+            resized->Count = count;
+            g_palettes[(ULONG_PTR)palette & 0xFFFF] = resized;
+            ok = TRUE;
+        }
+    }
+    RtlReleaseSRWLockExclusive(&g_lock);
+    if (!p)
+        SetLastError(ERROR_INVALID_HANDLE);
+    return ok;
+}
+
+/* the share of the system palette programs may take: the static colors are kept, as on windows' default. */
+static volatile LONG g_system_palette_use = SYSPAL_STATIC;
+
+WINGDIAPI UINT WINAPI GetSystemPaletteUse(HDC dc)
+{
+    if (!dc_valid(dc)) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return SYSPAL_ERROR;
+    }
+    return (UINT)g_system_palette_use;
+}
+
+/* returns the use before; a device without a palette keeps the static colors whatever is asked (guessed). */
+WINGDIAPI UINT WINAPI SetSystemPaletteUse(HDC dc, UINT use)
+{
+    if (!dc_valid(dc) || use < SYSPAL_STATIC || use > SYSPAL_NOSTATIC256) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return SYSPAL_ERROR;
+    }
+    return (UINT)InterlockedExchange(&g_system_palette_use, (LONG)use);
+}
+
+/*
+ * the halftone palette: the 20 static colors at both ends, a 6 by 6 by 6 cube of colors between them and a ramp
+ * of grays. The arrangement is a guess; the cube and the static colors are what a halftone palette is known to
+ * hold.
+ */
+WINGDIAPI HPALETTE WINAPI CreateHalftonePalette(HDC dc)
+{
+    if (!dc_valid(dc)) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return nullptr;
+    }
+    struct {
+        WORD Version, Count;
+        PALETTEENTRY Entries[256];
+    } logical = {0x300, 256};
+    for (UINT i = 0; i < 10; i++) {
+        logical.Entries[i] = g_default.Entries[i];
+        logical.Entries[246 + i] = g_default.Entries[10 + i];
+    }
+    UINT at = 10;
+    for (UINT r = 0; r < 6; r++)
+        for (UINT g = 0; g < 6; g++)
+            for (UINT b = 0; b < 6; b++)
+                logical.Entries[at++] = (PALETTEENTRY){(BYTE)(r * 51), (BYTE)(g * 51), (BYTE)(b * 51), 0};
+    for (UINT i = 0; i < 20; i++) {
+        BYTE level = (BYTE)((i + 1) * 255 / 21);
+        logical.Entries[at++] = (PALETTEENTRY){level, level, level, 0};
+    }
+    return CreatePalette((const LOGPALETTE *)&logical);
 }

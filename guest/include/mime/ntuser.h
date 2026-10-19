@@ -180,6 +180,7 @@ enum {
     MIME_ONEPARAM_SETPROCESSDPIAWARENESS,
     MIME_ONEPARAM_GETPROCESSDPIAWARENESS,
     MIME_ONEPARAM_REPLYMESSAGE,
+    MIME_ONEPARAM_SETMESSAGEEXTRAINFO,  /* the new value -> the old one */
 };
 
 enum {
@@ -319,6 +320,10 @@ enum {
     MIME_DCDW_WINDOW,
 };
 
+/* NtGdiDoPalette functions, with the numbers of windows: the color table of a dib section. */
+#define MIME_PAL_GETDIBCOLORTABLE 4
+#define MIME_PAL_SETDIBCOLORTABLE 5
+
 /* NtGdiGetCharWidthW and NtGdiGetCharABCWidthsW flags. */
 #define MIME_GCW_INDICES 0x0008      /* chars are glyph indices */
 #define MIME_GCABCW_INDICES 0x0002   /* chars are glyph indices */
@@ -425,6 +430,9 @@ W32KAPI ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *wc, PUNICODE_STRI
 W32KAPI BOOL NTAPI NtUserUnregisterClass(PUNICODE_STRING name, HINSTANCE instance);
 W32KAPI BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING name, LPWNDCLASSEXW wc, LPWSTR *menu,
                                         BOOL ansi);
+W32KAPI ULONG_PTR NTAPI NtUserSetClassLongPtr(HWND hwnd, int index, ULONG_PTR value, BOOL ansi);
+W32KAPI ULONG NTAPI NtUserSetClassLong(HWND hwnd, int index, ULONG value, BOOL ansi);
+W32KAPI USHORT NTAPI NtUserSetClassWord(HWND hwnd, int index, USHORT value);
 W32KAPI int NTAPI NtUserGetClassName(HWND hwnd, BOOL real, PUNICODE_STRING name);
 W32KAPI HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING class_name, PUNICODE_STRING window_name,
                                         DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu,
@@ -852,6 +860,8 @@ W32KAPI NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const struct _D3DKMT_DESTRO
 W32KAPI HBITMAP NTAPI NtGdiCreateDIBSection(HDC dc, HANDLE section, DWORD offset, const BITMAPINFO *info,
                                             UINT usage, UINT header_size, ULONG flags, ULONG_PTR color_space,
                                             PVOID *bits);
+W32KAPI ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL remote_handle);
+W32KAPI ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID entries, DWORD function, BOOL inbound);
 W32KAPI int NTAPI NtGdiGetDIBitsInternal(HDC dc, HBITMAP bitmap, UINT start, UINT lines, PVOID bits,
                                          BITMAPINFO *info, UINT usage, UINT max_bits, UINT max_info);
 W32KAPI int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC dc, int x, int y, DWORD width, DWORD height, int src_x,

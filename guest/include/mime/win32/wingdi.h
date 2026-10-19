@@ -1216,6 +1216,72 @@ WINGDIAPI UINT WINAPI SetPaletteEntries(HPALETTE palette, UINT start, UINT count
 WINGDIAPI UINT WINAPI GetNearestPaletteIndex(HPALETTE palette, COLORREF color);
 WINGDIAPI UINT WINAPI GetSystemPaletteEntries(HDC dc, UINT start, UINT count, LPPALETTEENTRY entries);
 WINGDIAPI UINT WINAPI SetDIBColorTable(HDC dc, UINT start, UINT count, const RGBQUAD *colors);
+
+/* the functions the api sweep added; see docs/gdi32.md. */
+typedef struct tagRASTERIZER_STATUS {
+    short nSize;
+    short wFlags;
+    short nLanguageID;
+} RASTERIZER_STATUS, *LPRASTERIZER_STATUS;
+#define TT_AVAILABLE 0x0001
+#define TT_ENABLED 0x0002
+#define SYSPAL_ERROR 0
+#define SYSPAL_STATIC 1
+#define SYSPAL_NOSTATIC 2
+#define SYSPAL_NOSTATIC256 3
+typedef struct tagPOLYTEXTA {
+    int x, y;
+    UINT n;
+    LPCSTR lpstr;
+    UINT uiFlags;
+    RECT rcl;
+    int *pdx;
+} POLYTEXTA, *PPOLYTEXTA, *LPPOLYTEXTA;
+typedef struct tagPOLYTEXTW {
+    int x, y;
+    UINT n;
+    LPCWSTR lpstr;
+    UINT uiFlags;
+    RECT rcl;
+    int *pdx;
+} POLYTEXTW, *PPOLYTEXTW, *LPPOLYTEXTW;
+typedef void(CALLBACK *LINEDDAPROC)(int x, int y, LPARAM param);
+WINGDIAPI BOOL WINAPI GetCharWidthA(HDC dc, UINT first, UINT last, LPINT widths);
+WINGDIAPI BOOL WINAPI GetCharABCWidthsA(HDC dc, UINT first, UINT last, LPABC abc);
+WINGDIAPI BOOL WINAPI GetCharWidthFloatA(HDC dc, UINT first, UINT last, PFLOAT widths);
+WINGDIAPI BOOL WINAPI GetCharWidthFloatW(HDC dc, UINT first, UINT last, PFLOAT widths);
+WINGDIAPI BOOL WINAPI GetCharABCWidthsFloatA(HDC dc, UINT first, UINT last, LPABCFLOAT abc);
+WINGDIAPI BOOL WINAPI GetCharABCWidthsFloatI(HDC dc, UINT first, UINT count, LPWORD glyphs, LPABCFLOAT abc);
+WINGDIAPI BOOL WINAPI GetTextExtentExPointA(HDC dc, LPCSTR text, int count, int max_extent, LPINT fit, LPINT dx, LPSIZE size);
+WINGDIAPI BOOL WINAPI GetTextExtentExPointI(HDC dc, LPWORD glyphs, int count, int max_extent, LPINT fit, LPINT dx, LPSIZE size);
+WINGDIAPI DWORD WINAPI GetGlyphIndicesA(HDC dc, LPCSTR text, int count, LPWORD indices, DWORD flags);
+WINGDIAPI int WINAPI EnumFontFamiliesA(HDC dc, LPCSTR family, FONTENUMPROCA proc, LPARAM param);
+WINGDIAPI int WINAPI EnumFontsA(HDC dc, LPCSTR face, FONTENUMPROCA proc, LPARAM param);
+WINGDIAPI int WINAPI EnumFontsW(HDC dc, LPCWSTR face, FONTENUMPROCW proc, LPARAM param);
+WINGDIAPI int WINAPI AddFontResourceA(LPCSTR name);
+WINGDIAPI int WINAPI AddFontResourceExA(LPCSTR name, DWORD flags, PVOID reserved);
+WINGDIAPI BOOL WINAPI RemoveFontResourceA(LPCSTR name);
+WINGDIAPI BOOL WINAPI RemoveFontResourceExA(LPCSTR name, DWORD flags, PVOID reserved);
+WINGDIAPI BOOL WINAPI GetRasterizerCaps(LPRASTERIZER_STATUS status, UINT bytes);
+WINGDIAPI BOOL WINAPI PolyTextOutA(HDC dc, const POLYTEXTA *texts, int count);
+WINGDIAPI BOOL WINAPI PolyTextOutW(HDC dc, const POLYTEXTW *texts, int count);
+WINGDIAPI HBITMAP WINAPI CreateDiscardableBitmap(HDC dc, int width, int height);
+WINGDIAPI HRGN WINAPI CreateEllipticRgnIndirect(const RECT *r);
+WINGDIAPI HRGN WINAPI CreatePolyPolygonRgn(const POINT *points, const INT *counts, int polygons, int mode);
+WINGDIAPI HBRUSH WINAPI CreateDIBPatternBrush(HGLOBAL packed, UINT usage);
+WINGDIAPI BOOL WINAPI FloodFill(HDC dc, int x, int y, COLORREF color);
+WINGDIAPI BOOL WINAPI LineDDA(int x0, int y0, int x1, int y1, LINEDDAPROC proc, LPARAM param);
+WINGDIAPI BOOL WINAPI CombineTransform(LPXFORM out, const XFORM *first, const XFORM *second);
+WINGDIAPI BOOL WINAPI GetAspectRatioFilterEx(HDC dc, LPSIZE size);
+WINGDIAPI BOOL WINAPI UpdateColors(HDC dc);
+WINGDIAPI BOOL WINAPI UnrealizeObject(HGDIOBJ object);
+WINGDIAPI BOOL WINAPI GetBrushOrgEx(HDC dc, LPPOINT point);
+WINGDIAPI UINT WINAPI GetDIBColorTable(HDC dc, UINT start, UINT count, RGBQUAD *colors);
+WINGDIAPI BOOL WINAPI AnimatePalette(HPALETTE palette, UINT start, UINT count, const PALETTEENTRY *entries);
+WINGDIAPI BOOL WINAPI ResizePalette(HPALETTE palette, UINT count);
+WINGDIAPI UINT WINAPI GetSystemPaletteUse(HDC dc);
+WINGDIAPI UINT WINAPI SetSystemPaletteUse(HDC dc, UINT use);
+WINGDIAPI HPALETTE WINAPI CreateHalftonePalette(HDC dc);
 WINGDIAPI COLORREF WINAPI GetNearestColor(HDC dc, COLORREF color);
 
 

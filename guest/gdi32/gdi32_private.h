@@ -13,6 +13,7 @@ BOOL PalDelete(HPALETTE palette);
 int PalGetObject(HPALETTE palette, int size, LPVOID buffer);
 HPALETTE PalCurrent(HDC dc);
 void PalForgetDC(HDC dc);
+BOOL GdiSwapBrushOrigin(HDC dc, int x, int y, LPPOINT old);
 
 /* the size of a dib's color table and of its bits, shared with the metafile code. */
 DWORD GdiDibTableSize(const BITMAPINFOHEADER *header, UINT usage);
@@ -89,6 +90,7 @@ BOOL MfPolyPoly(HDC dc, UINT emr, UINT meta, const POINT *points, const DWORD *c
 BOOL MfPolyDraw(HDC dc, const POINT *points, const BYTE *types, DWORD count);
 BOOL MfSetPixel(HDC dc, int x, int y, COLORREF color);
 BOOL MfExtFloodFill(HDC dc, int x, int y, COLORREF color, UINT type);
+BOOL FloodFillDc(HDC dc, int x, int y, COLORREF color, UINT type);
 BOOL MfTextOut(HDC dc, int x, int y, UINT options, const RECT *rect, LPCWSTR text, UINT count, const INT *dx);
 BOOL MfTextOutA(HDC dc, int x, int y, UINT options, const RECT *rect, LPCSTR text, UINT count, const INT *dx);
 BOOL MfPath(HDC dc, UINT emr);

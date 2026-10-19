@@ -443,6 +443,38 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
     return h;
 }
 
+/*
+ * the color table of the dib section in a dc, as GetDIBColorTable and SetDIBColorTable ask for it. Only a dib
+ * section of 8 bits a pixel or fewer has one; the result is the number of entries read or written, 0 for
+ * anything else or entries past the table.
+ */
+ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID user_entries, DWORD function, BOOL inbound)
+{
+    if ((function != MIME_PAL_GETDIBCOLORTABLE && function != MIME_PAL_SETDIBCOLORTABLE) || !user_entries || !count)
+        return 0;
+    RGBQUAD entries[256];
+    ULONG n = 0;
+    UserEnter();
+    DC *dc = DcLookup((HDC)object);
+    SURFACE *s = dc ? dc->Surface : nullptr;
+    if (s && (s->Flags & SURF_USER_BITS) && s->Bpp <= 8 && start < s->ColorCount) {
+        n = s->ColorCount - start < count ? s->ColorCount - start : count;
+        if (function == MIME_PAL_GETDIBCOLORTABLE) {
+            memcpy(entries, s->Colors + start, n * sizeof(RGBQUAD));
+        } else if (NT_SUCCESS(MimeCopyFromUser(entries, user_entries, n * sizeof(RGBQUAD)))) {
+            memcpy(s->Colors + start, entries, n * sizeof(RGBQUAD));
+            RECT all = {0, 0, s->Width, s->Height};
+            SurfaceMarkDirty(s, &all);
+        } else {
+            n = 0;
+        }
+    }
+    UserLeave();
+    if (n && function == MIME_PAL_GETDIBCOLORTABLE && !NT_SUCCESS(MimeCopyToUser(user_entries, entries, n * sizeof(RGBQUAD))))
+        n = 0;
+    return n;
+}
+
 /* ------------------------------------------------------------------ dcs over caller memory */
 
 /*

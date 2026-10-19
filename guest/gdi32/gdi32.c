@@ -394,9 +394,7 @@ WINGDIAPI BOOL WINAPI SetBrushOrgEx(HDC dc, int x, int y, LPPOINT old)
 {
     if (MfActive(dc) && !MfIsWmfDc(dc) && !MfSetPoint(dc, EMR_SETBRUSHORGEX, 0, x, y))
         return FALSE;
-    if (old)
-        *old = (POINT){0, 0};
-    return TRUE;
+    return GdiSwapBrushOrigin(dc, x, y, old);
 }
 
 WINGDIAPI BOOL WINAPI GdiFlush(void)
@@ -1370,14 +1368,12 @@ WINGDIAPI COLORREF WINAPI GetPixel(HDC dc, int x, int y)
     return NtGdiGetPixel(dc, x, y);
 }
 
-/* win32k offers no flood fill; metafiles record it. */
+/* metafiles record the fill; any other device context is filled by FloodFillDc. */
 WINGDIAPI BOOL WINAPI ExtFloodFill(HDC dc, int x, int y, COLORREF color, UINT type)
 {
     if (MfActive(dc))
         return MfExtFloodFill(dc, x, y, color, type);
-    MIME_STUB("gdi32");
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    return FloodFillDc(dc, x, y, color, type);
 }
 
 /* ------------------------------------------------------------------ regions and clipping */
