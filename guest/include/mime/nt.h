@@ -2258,6 +2258,73 @@ typedef struct _PROCESS_PRIORITY_CLASS {
     UCHAR PriorityClass;
 } PROCESS_PRIORITY_CLASS, *PPROCESS_PRIORITY_CLASS;
 
+/*
+ * what SetProcessShutdownParameters and GetProcessShutdownParameters keep: windows asks csrss, which has no
+ * class for it, so this one is mime's. the level orders the process in a shutdown, the highest first.
+ */
+#define MX_PROCESS_SHUTDOWN_PARAMETERS 109
+#define MX_SHUTDOWN_LEVEL_DEFAULT 0x280
+#define MX_SHUTDOWN_NORETRY 1
+/* what csrss answers to flags other than SHUTDOWN_NORETRY, which the status table maps to error 641. */
+#define MX_STATUS_BAD_SHUTDOWN_FLAGS ((NTSTATUS)0xC00002EBL)
+typedef struct _MX_SHUTDOWN_PARAMETERS {
+    ULONG Level;
+    ULONG Flags;
+} MX_SHUTDOWN_PARAMETERS;
+
+typedef enum _SHUTDOWN_ACTION {
+    ShutdownNoReboot = 0,
+    ShutdownReboot = 1,
+    ShutdownPowerOff = 2,
+} SHUTDOWN_ACTION;
+
+/* ExitWindowsEx flags, which the kernel needs for its own shutdown. */
+#ifndef EWX_LOGOFF
+#define EWX_LOGOFF 0x00000000
+#define EWX_SHUTDOWN 0x00000001
+#define EWX_REBOOT 0x00000002
+#define EWX_FORCE 0x00000004
+#define EWX_POWEROFF 0x00000008
+#define EWX_FORCEIFHUNG 0x00000010
+#define EWX_QUICKRESOLVE 0x00000020
+#define EWX_RESTARTAPPS 0x00000040
+#define EWX_HYBRID_SHUTDOWN 0x00400000
+#define EWX_BOOTOPTIONS 0x01000000
+#endif
+/* the flags that start a shutdown of the machine rather than a logoff, and the ones a request may carry. */
+#define MX_EWX_MACHINE (EWX_SHUTDOWN | EWX_REBOOT | EWX_POWEROFF | EWX_HYBRID_SHUTDOWN)
+#define MX_EWX_VALID (MX_EWX_MACHINE | EWX_FORCE | EWX_FORCEIFHUNG | EWX_QUICKRESOLVE | EWX_RESTARTAPPS | EWX_BOOTOPTIONS)
+
+#ifndef STATUS_CANT_WAIT
+#define STATUS_CANT_WAIT ((NTSTATUS)0xC00000D8L)
+#endif
+#ifndef STATUS_DEVICE_BUSY
+#define STATUS_DEVICE_BUSY ((NTSTATUS)0x80000011L)
+#endif
+#ifndef STATUS_SHUTDOWN_IN_PROGRESS
+#define STATUS_SHUTDOWN_IN_PROGRESS ((NTSTATUS)0xC00002FEL)
+#endif
+#ifndef STATUS_RETRY
+#define STATUS_RETRY ((NTSTATUS)0xC000022DL)
+#endif
+
+/*
+ * a shutdown the kernel runs, the part csrss and winlogon play on windows. the information class of
+ * NtSetSystemInformation that starts one stands for the call to winlogon that InitiateSystemShutdownEx makes,
+ * and 0 for the one that stops it.
+ */
+#define MX_SYSTEM_SHUTDOWN_REQUEST 0x7F000001u
+#define MX_SHUTDOWN_ABORT 1u      /* AbortSystemShutdown */
+#define MX_SHUTDOWN_IMMEDIATE 2u  /* no notification, every process ends at once */
+#define MX_SHUTDOWN_RETRY_FORCED 4u /* a window that refuses does not stop it: the programs are asked again, forced */
+#define MX_SHUTDOWN_REASON_HOST 0x80000000u /* planned, other: what `mime down` gives */
+typedef struct _MX_SHUTDOWN_REQUEST {
+    ULONG Flags;      /* EWX_* */
+    ULONG Reason;     /* SHTDN_REASON_* */
+    ULONG Delay;      /* seconds before it starts, which AbortSystemShutdown can use */
+    ULONG Control;    /* MX_SHUTDOWN_* */
+} MX_SHUTDOWN_REQUEST;
+
 typedef struct _PROCESS_BASIC_INFORMATION {
     NTSTATUS ExitStatus;
     PPEB PebBaseAddress;

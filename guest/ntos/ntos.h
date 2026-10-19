@@ -396,6 +396,10 @@ NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, UL
 void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);
 NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize);
 NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize);
+ULONG PsWin32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
+/* ps/shutdown.c */
+void PsShutdownInitialize(void);
+DECLSPEC_NORETURN void PsShutdownSystem(ULONG action);
 
 /* arch/<processor>/cpu.c, the identification of the boot processor. */
 void KiReadProcessorIds(void);
@@ -950,6 +954,10 @@ typedef struct _EPROCESS {
     ULONG ChildProcessPolicy;                     /* PROCESS_CREATION_CHILD_PROCESS_* */
     ULONG Win32kFilter[2];
     ULONG AllApplicationPackagesPolicy, DesktopAppPolicy, ComponentFilter;
+    /* ps/shutdown.c */
+    ULONG ShutdownLevel; /* SetProcessShutdownParameters, 0x280 until it is called */
+    ULONG ShutdownFlags; /* SHUTDOWN_NORETRY */
+    LONG ShutdownState;  /* PS_SHUTDOWN_* of the shutdown in progress */
 } EPROCESS;
 
 extern LIST_ENTRY PsActiveProcessHead;

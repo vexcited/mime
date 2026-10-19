@@ -525,11 +525,6 @@ WINUSERAPI UINT WINAPI GetDoubleClickTime(void)
     return 500;
 }
 
-WINUSERAPI BOOL WINAPI ExitWindowsEx(UINT flags, DWORD reason)
-{
-    return FALSE;
-}
-
 WINUSERAPI BOOL WINAPI IsHungAppWindow(HWND hwnd)
 {
     return FALSE;

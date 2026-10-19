@@ -552,6 +552,19 @@ W32PROCESS *W32GetProcess(void);
 void WinStaFreeProcess(W32PROCESS *p);
 void WinStaFreeThread(W32THREAD *t);
 BOOL WndThreadHasWindows(W32THREAD *t);
+/* shutdown.c */
+ULONG NTAPI W32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
+ULONG W32ProcessThreads(W32PROCESS *p, HANDLE *tids, ULONG max);
+BOOLEAN MsgThreadHung(W32THREAD *t);
+/* what MsgSendSystem answers. */
+enum {
+    MSGSYS_OK = 1,
+    MSGSYS_GONE,    /* the window or its thread ended */
+    MSGSYS_TIMEOUT,
+    MSGSYS_EVENT0,  /* the first event of the caller was set, the second MSGSYS_EVENT0 + 1 */
+};
+ULONG MsgSendSystem(HANDLE tid, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG64 timeout_ms,
+                    PKEVENT *events, ULONG event_count, LRESULT *result);
 extern LIST_ENTRY W32Processes;
 W32THREAD *W32LookupThread(HANDLE tid);
 void QueueWake(W32THREAD *t, ULONG bits);
@@ -678,12 +691,14 @@ typedef struct WND {
     WND_PROP *Props;
     ULONG PropCount;
     ULONG PropCapacity;
+    PWSTR ShutdownReason; /* ShutdownBlockReasonCreate */
 } WND;
 
 #define MIME_LAYER_UPDATE 0x80000000u /* contents come from UpdateLayeredWindow, premultiplied */
 
 WND *WndLookup(HWND hwnd);
 WND *WndDesktop(void);
+LRESULT ClientShutdown(WND *w, ULONG flags); /* shutdown.c */
 static inline HWND WndHandle(WND *w)
 {
     return w ? (HWND)w->Header.Handle : nullptr;

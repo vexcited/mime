@@ -1108,6 +1108,7 @@ static void free_window(WND *w)
     TrayWindowDestroyed(w);
     ImeWindowDestroyed(w);
     PropFreeWindow(w);
+    W32Free(w->ShutdownReason);
     if (w->Flags & WNDF_HOST_WINDOW) {
         HostWindowDestroy(w);
         w->Flags &= ~WNDF_HOST_WINDOW;

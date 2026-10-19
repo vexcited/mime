@@ -217,6 +217,7 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
     InitializeListHead(&process->ThreadListHead);
     process->Pcb.BasePriority = 8;
     process->PriorityClass = PROCESS_PRIORITY_CLASS_NORMAL;
+    process->ShutdownLevel = MX_SHUTDOWN_LEVEL_DEFAULT;
     KeInitializeEvent(&process->ExitEvent, NotificationEvent, FALSE);
 
     status = ObInitializeHandleTable(&process->HandleTable);
@@ -433,6 +434,11 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     case ProcessIoCounters:
         size = 48;
         break;
+    case MX_PROCESS_SHUTDOWN_PARAMETERS:
+        out.u32[0] = process->ShutdownLevel;
+        out.u32[1] = process->ShutdownFlags & MX_SHUTDOWN_NORETRY;
+        size = sizeof(MX_SHUTDOWN_PARAMETERS);
+        break;
     case ProcessPriorityClass:
         out.bytes[0] = process->Foreground;
         out.bytes[1] = process->PriorityClass;
@@ -583,6 +589,9 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     case ProcessAffinityMask:
         expected = sizeof(ULONG64);
         break;
+    case MX_PROCESS_SHUTDOWN_PARAMETERS:
+        expected = sizeof(MX_SHUTDOWN_PARAMETERS);
+        break;
     default:
         break;
     }
@@ -632,6 +641,15 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     }
     case ProcessPriorityBoost:
         process->DisableBoost = (ULONG)value != 0;
+        break;
+    case MX_PROCESS_SHUTDOWN_PARAMETERS:
+        /* the level is taken as it is; of the flags only SHUTDOWN_NORETRY exists. */
+        if ((ULONG)(value >> 32) & ~(ULONG)MX_SHUTDOWN_NORETRY) {
+            status = MX_STATUS_BAD_SHUTDOWN_FLAGS;
+        } else {
+            process->ShutdownLevel = (ULONG)value;
+            process->ShutdownFlags = (ULONG)(value >> 32);
+        }
         break;
     default:
         break;

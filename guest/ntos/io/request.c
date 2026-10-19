@@ -109,7 +109,12 @@ NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r)
 {
     if (!r->Waiter)
         return STATUS_PENDING;
-    KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
+    if (KeWaitForSingleObject(&r->Done, UserRequest, UserMode, FALSE, nullptr) != STATUS_WAIT_0) {
+        /* the thread is ending: its requests on the file are cancelled, which completes this one. */
+        if (IopIsPad(r->File))
+            PadCancel(r->File, r->Thread, nullptr);
+        KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
+    }
     NTSTATUS status = r->Status;
     free_request(r);
     return status;

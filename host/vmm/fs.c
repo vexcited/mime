@@ -879,6 +879,21 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         status = mime_window_unmap(vm, a[1]);
         pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
+    case MIME_HC_FS_SYNC: {
+        /* the machine is going down: whatever the programs wrote reaches the disk of the drive, not just the host's cache. */
+        int fd = open(vm->paths->drive_c, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (fd < 0) {
+            status = errno_status(errno);
+            break;
+        }
+#ifdef __linux__
+        status = syncfs(fd) == 0 ? MIME_HC_STATUS_OK : errno_status(errno);
+#else
+        sync();
+#endif
+        close(fd);
+        break;
+    }
     default:
         status = MIME_HC_STATUS_UNSUPPORTED;
         break;

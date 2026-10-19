@@ -154,25 +154,32 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
     ObDereferenceObject(process);
 }
 
-[[noreturn]] static void shutdown_machine(void)
+/*
+ * the host asks for a shutdown as a logon session does: the programs are told and given their time, the rest
+ * ends, the files are written. a second request that forces it takes the time away from the first.
+ */
+static void handle_shutdown(const MimeCtrlShutdown *request, ULONG size)
 {
-    KiLogPrintf("shutting down");
-    PLIST_ENTRY e;
-    for (e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
-        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
-        if (!p->SystemProcess && !p->Terminating)
-            PspTerminateProcess(p, STATUS_SYSTEM_SHUTDOWN);
+    ULONG flags = 0, timeout = MIME_SHUTDOWN_DEFAULT_MS;
+    if (size >= sizeof(*request)) {
+        flags = request->flags;
+        if (request->timeout_ms)
+            timeout = request->timeout_ms;
     }
-    CmpJournalShutdown();
-    HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, nullptr);
-    for (;;)
-        KiPause();
+    /* a forced one does not wait for the programs, and cuts the one that does. */
+    if (flags & MIME_SHUTDOWN_FORCE)
+        PsShutdownSystem(ShutdownPowerOff);
+    NTSTATUS status = MimeShutdownStart(EWX_SHUTDOWN | EWX_POWEROFF | EWX_FORCEIFHUNG, MX_SHUTDOWN_REASON_HOST, 0,
+                                        MX_SHUTDOWN_RETRY_FORCED, timeout, FALSE, FALSE);
+    if (!NT_SUCCESS(status))
+        KiLogPrintf("shutdown request: %08x", status);
 }
 
 /* runs on the phase 1 system thread and never returns. */
 void MiSessionInitialize(void)
 {
     KeInitializeEvent(&g_ctrl_event, SynchronizationEvent, FALSE);
+    PsShutdownInitialize();
     ExInitializeFastMutex(&g_console_lock);
     KeInitializeDpc(&g_irq_dpc, irq_dpc, nullptr);
     g_ready = TRUE;
@@ -214,7 +221,8 @@ void MiSessionInitialize(void)
                 break;
             }
             case MIME_CTRL_SHUTDOWN:
-                shutdown_machine();
+                handle_shutdown((MimeCtrlShutdown *)message, (ULONG)length);
+                break;
             default:
                 KiLogPrintf("unknown control message %u", header->type);
                 break;

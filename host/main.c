@@ -13,7 +13,8 @@ static void usage(void)
     printf("  mime up                                start the machine\n");
     printf("  mime run [--wait] <program.exe> [args] run a program, host or C:\\ paths; --wait waits for\n");
     printf("                                         a gui program instead of returning like cmd.exe\n");
-    printf("  mime down                              stop the machine\n");
+    printf("  mime down [--force] [--timeout secs]   shut the machine down, programs get to close first; --force\n");
+    printf("                                         ends them all at once\n");
     printf("  mime status                            show machine state\n");
 }
 

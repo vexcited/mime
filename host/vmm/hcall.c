@@ -251,6 +251,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_UNMAP:
     case MIME_HC_FS_VOLUME_QUERY:
     case MIME_HC_FS_FLUSH:
+    case MIME_HC_FS_SYNC:
     case MIME_HC_FS_GET_SD:
     case MIME_HC_FS_SET_SD:
     case MIME_HC_FS_RENAME:

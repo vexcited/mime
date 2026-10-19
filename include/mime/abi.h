@@ -300,6 +300,7 @@ enum {
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest ram whose contents the host may drop */
     MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
+    MIME_HC_FS_SYNC = 0x62,     /* () writes the host files of the drive out to the disk, for a shutdown */
     MIME_HC_MEM_ADVISE = 0x1D,  /* (pa, size, MIME_MEM_*) how the guest uses a range of ram */
     MIME_HC_FS_GET_SD = 0x1E,   /* (handle, pa, capacity, up) -> distance << 32 | length of the nearest stored descriptor */
     MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
@@ -590,6 +591,20 @@ typedef struct MimeCtrlHeader {
     uint32_t type;
     uint32_t size; /* total size including this header */
 } MimeCtrlHeader;
+
+/*
+ * MIME_CTRL_SHUTDOWN. a header alone, as older hosts send it, is a shutdown with the defaults. the guest
+ * lets the programs end first, within timeout_ms for the whole of it, and every program left then ends at once.
+ */
+enum {
+    MIME_SHUTDOWN_FORCE = 1u << 0, /* nothing is asked: every program ends at once */
+};
+#define MIME_SHUTDOWN_DEFAULT_MS 30000
+typedef struct MimeCtrlShutdown {
+    MimeCtrlHeader header;
+    uint32_t flags;      /* MIME_SHUTDOWN_... */
+    uint32_t timeout_ms; /* 0 for the default */
+} MimeCtrlShutdown;
 
 typedef struct MimeCtrlRun {
     MimeCtrlHeader header;

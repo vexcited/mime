@@ -118,6 +118,7 @@ typedef struct NP_REQUEST {
     ULONG Length;
     BOOLEAN Waiter; /* a synchronous caller sleeps on Done and frees the request */
     BOOLEAN Immediate; /* completed before its call returned */
+    BOOLEAN Completed; /* set with the lock, once it left the lists */
     KEVENT Done;
     NTSTATUS Status;
     ULONG_PTR Information;
@@ -267,6 +268,7 @@ static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information
 /* completes a request that went pending: the waiter frees it, otherwise it ends here. */
 static void complete_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
+    r->Completed = TRUE;
     finish_request(r, status, information);
     if (r->Waiter)
         KeSetEvent(&r->Done, IO_NO_INCREMENT, FALSE);
@@ -291,7 +293,16 @@ static NTSTATUS pending(NP_REQUEST *r)
     unlock();
     if (!waiter)
         return STATUS_PENDING;
-    KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
+    if (KeWaitForSingleObject(&r->Done, UserRequest, UserMode, FALSE, nullptr) != STATUS_WAIT_0) {
+        /* the thread is ending, which a request waiting for a pipe must not keep from happening: it leaves. */
+        lock();
+        if (!r->Completed) {
+            RemoveEntryList(&r->Links);
+            complete_request(r, STATUS_CANCELLED, 0);
+        }
+        unlock();
+        KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
+    }
     NTSTATUS status = r->Status;
     free_request(r);
     return status;

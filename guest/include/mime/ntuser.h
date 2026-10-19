@@ -542,6 +542,29 @@ W32KAPI BOOL NTAPI NtUserEndMenu(void);
 W32KAPI BOOL NTAPI NtUserMimeGetMenuItemInfo(HMENU menu, UINT item, BOOL by_position, LPMENUITEMINFOW info);
 W32KAPI ULONG_PTR NTAPI NtUserMimeCallMenu(HMENU menu, ULONG_PTR param, ULONG routine);
 
+/* ------------------------------------------------------------------ shutdown */
+
+/* the message the shutdown sends a thread, whose default processing asks its windows. */
+#define MX_WM_CLIENTSHUTDOWN 0x3B
+/* its flags: how the shutdown goes and what the windows are told in the lparam of WM_QUERYENDSESSION. */
+#define MX_WMCS_CLOSEAPP 0x00000001    /* ENDSESSION_CLOSEAPP */
+#define MX_WMCS_QUERY 0x00000002       /* ask WM_QUERYENDSESSION, else send WM_ENDSESSION */
+#define MX_WMCS_SHUTDOWN 0x00000004
+#define MX_WMCS_USERPROCESS 0x00000008 /* the process is the user's and ends once its windows were told */
+#define MX_WMCS_FORCEIFHUNG 0x00000040
+#define MX_WMCS_NORETRY 0x00000080
+#define MX_WMCS_ENDING 0x00000100      /* wparam of WM_ENDSESSION */
+#define MX_WMCS_QUICK 0x00000200
+#define MX_WMCS_REBOOT 0x00000400
+#define MX_WMCS_CRITICAL 0x40000000    /* ENDSESSION_CRITICAL */
+#define MX_WMCS_LOGOFF 0x80000000u     /* ENDSESSION_LOGOFF */
+
+W32KAPI ULONG NTAPI NtUserShutdownBlockReasonCreate(HWND hwnd, LPCWSTR reason, ULONG length);
+W32KAPI ULONG NTAPI NtUserShutdownReasonDestroy(HWND hwnd);
+W32KAPI ULONG NTAPI NtUserShutdownBlockReasonQuery(HWND hwnd, LPWSTR buffer, PULONG count);
+W32KAPI ULONG NTAPI NtUserPrepareForLogoff(void);
+W32KAPI LONG NTAPI NtUserMimeExitWindows(ULONG flags, ULONG reason);
+
 /* ------------------------------------------------------------------ gpu */
 
 /* the host window region a window dc renders to, see mime/gpu.h. */

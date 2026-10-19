@@ -191,6 +191,11 @@ static BOOLEAN thread_hung(W32THREAD *t)
     return !t->InWait && (DWORD)(W32TickCount() - t->LastRead) > HUNG_MS;
 }
 
+BOOLEAN MsgThreadHung(W32THREAD *t)
+{
+    return thread_hung(t);
+}
+
 static void free_sent(SENT_MESSAGE *sm)
 {
     if (sm->Owned)
@@ -426,6 +431,56 @@ static LRESULT send_to_window(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, UL
     if (target->Destroying)
         return 0;
     return send_to_thread(target, w, msg, wparam, lparam, kind, size, FALSE, opts);
+}
+
+/*
+ * a message from a thread of the kernel that has no queue, which the shutdown sends: it waits for the answer
+ * for the time given, or until one of the events is set, and without the lock, so that the thread of the window
+ * is free to answer. a message that was not answered is left to its thread, which frees it.
+ */
+ULONG MsgSendSystem(HANDLE tid, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG64 timeout_ms,
+                    PKEVENT *events, ULONG event_count, LRESULT *result)
+{
+    UserEnter();
+    W32THREAD *t = W32LookupThread(tid);
+    WND *w = WndLookup(hwnd);
+    if (!t || !w || w->Thread != t) {
+        UserLeave();
+        return MSGSYS_GONE;
+    }
+    SENT_MESSAGE *sm = W32Alloc(sizeof(SENT_MESSAGE));
+    if (!sm) {
+        UserLeave();
+        return MSGSYS_GONE;
+    }
+    sm->Hwnd = hwnd;
+    sm->Msg = msg;
+    sm->Wparam = wparam;
+    sm->Lparam = lparam;
+    sm->LparamKind = MIME_LPARAM_VALUE;
+    KeInitializeEvent(&sm->Done, NotificationEvent, FALSE);
+    InsertTailList(&t->Sent, &sm->Links);
+    QueueWake(t, QS_SENDMESSAGE);
+    UserLeave();
+
+    PVOID objects[5] = {&sm->Done};
+    ULONG n = 1;
+    for (ULONG i = 0; i < event_count && i < 4; i++)
+        objects[n++] = events[i];
+    LARGE_INTEGER timeout = {.QuadPart = -(LONGLONG)(timeout_ms * 10000)};
+    NTSTATUS status = KeWaitForMultipleObjects(n, objects, WaitAny, Executive, KernelMode, FALSE, &timeout, nullptr);
+    UserEnter();
+    ULONG answer;
+    if (sm->Completed) {
+        *result = sm->Result;
+        answer = sm->Aborted ? MSGSYS_GONE : MSGSYS_OK;
+        W32Free(sm);
+    } else {
+        sm->Notify = TRUE;
+        answer = status == STATUS_TIMEOUT ? MSGSYS_TIMEOUT : MSGSYS_EVENT0 + (ULONG)(status - STATUS_WAIT_1);
+    }
+    UserLeave();
+    return answer;
 }
 
 LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lparam_kind, ULONG lparam_size)
@@ -1832,6 +1887,9 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_QUERYENDSESSION:
     case WM_QUERYOPEN:
         return TRUE;
+
+    case MX_WM_CLIENTSHUTDOWN:
+        return ClientShutdown(w, (ULONG)wparam);
 
     case WM_CANCELMODE:
         if (w->Thread && w->Thread->Capture == WndHandle(w))

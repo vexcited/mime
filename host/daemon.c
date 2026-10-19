@@ -429,7 +429,12 @@ static void *client_thread(void *arg)
             close(fd);
         pthread_mutex_unlock(&g_runs_lock);
         if (g_vm.guest_ready) {
-            MimeCtrlHeader msg = {MIME_CTRL_SHUTDOWN, sizeof(MimeCtrlHeader)};
+            MimeCtrlShutdown msg = {{MIME_CTRL_SHUTDOWN, sizeof(MimeCtrlShutdown)}, 0, 0};
+            if (payload && h.size >= sizeof(MimeIpcStop)) {
+                const MimeIpcStop *stop = (const MimeIpcStop *)payload;
+                msg.flags = stop->flags;
+                msg.timeout_ms = stop->timeout_ms;
+            }
             mime_vm_queue_ctrl(&g_vm, &msg, sizeof(msg));
         } else {
             mime_daemon_guest_halted(&g_vm, 0);

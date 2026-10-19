@@ -99,6 +99,18 @@ static void post(EJOB *job, ULONG message, PEPROCESS process)
         IopQueueCompletion(job->Port, job->Key, process ? process->UniqueProcessId : nullptr, STATUS_SUCCESS, message);
 }
 
+/* the interface limits of the job of a process and the jobs above it, as JOB_OBJECT_UILIMIT_*. */
+ULONG NTAPI MimeProcessUiLimits(PEPROCESS process)
+{
+    ULONG limits = 0;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (EJOB *job = process->Job; job; job = job->Parent)
+        limits |= job->UiRestrictions;
+    KeReleaseSpinLock(&g_lock, irql);
+    return limits;
+}
+
 /* a job by handle, which must grant the rights asked of a caller in user mode. */
 static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
 {

@@ -213,7 +213,10 @@ static BOOL check_input(HANDLE console)
 /*
  * the console driver starts this on a new thread for each ctrl event, as
  * csrss starts kernel32's CtrlRoutine. handlers run newest first; when none
- * handles the event, and always after a close, the process exits.
+ * handles the event, and always after a close, the process exits. a handler
+ * that took a logoff or a shutdown ends the thread with the event as its
+ * exit code, and the system ends the process once the handler is back, as
+ * csrss does: that is how it knows the handler took it.
  */
 static DWORD WINAPI ctrl_routine(LPVOID parameter)
 {
@@ -228,6 +231,8 @@ static DWORD WINAPI ctrl_routine(LPVOID parameter)
     BOOL handled = FALSE;
     for (ULONG i = count; i-- > 0 && !handled;)
         handled = handlers[i](event);
+    if (handled && (event == CTRL_LOGOFF_EVENT || event == CTRL_SHUTDOWN_EVENT))
+        return event;
     if (!handled || event >= CTRL_CLOSE_EVENT)
         ExitProcess(STATUS_CONTROL_C_EXIT);
     return 0;

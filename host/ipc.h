@@ -26,6 +26,12 @@ enum {
     MIME_IPC_DEBUG = 108,        /* debug output of the program, utf-8 */
 };
 
+/* the payload of MIME_IPC_STOP, which older clients leave out: what `mime down` was asked. */
+typedef struct MimeIpcStop {
+    uint32_t flags;      /* MIME_SHUTDOWN_FORCE */
+    uint32_t timeout_ms; /* the guest's limit for the whole shutdown, 0 for its default */
+} MimeIpcStop;
+
 typedef struct MimeIpcRun {
     uint32_t flags;        /* MIME_RUN_TTY_... */
     uint32_t console_size; /* columns | rows << 16 */

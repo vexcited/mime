@@ -42,11 +42,6 @@ void KiNoteLongHold(ULONG64 held)
         g_long_max[reason] = held;
 }
 
-typedef struct _WIN32_CALLOUTS {
-    NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
-    NTSTATUS(NTAPI *ThreadCallout)(PETHREAD thread, BOOLEAN initialize);
-} WIN32_CALLOUTS;
-
 static WIN32_CALLOUTS g_win32;
 
 void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts)
@@ -57,6 +52,11 @@ void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts)
 NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize)
 {
     return g_win32.ProcessCallout ? g_win32.ProcessCallout(process, initialize) : STATUS_SUCCESS;
+}
+
+ULONG PsWin32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context)
+{
+    return g_win32.ShutdownProcess ? g_win32.ShutdownProcess(process, context) : MX_SHUTDOWN_PROCESS_PASS;
 }
 
 NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize)

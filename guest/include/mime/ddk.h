@@ -986,4 +986,39 @@ NTKERNELAPI void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table)
 /* a section over physical pages the caller owns and frees once the section is gone. */
 NTKERNELAPI NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section);
 
+
+/* the window manager's part of a shutdown: what it is told and what it answers for a process. */
+typedef struct _MX_SHUTDOWN_CONTEXT {
+    ULONG Flags;         /* EWX_* of the request */
+    ULONG HungTimeout;   /* milliseconds a thread has to answer, HungAppTimeout */
+    ULONG KillTimeout;   /* WaitToKillAppTimeout */
+    ULONG QuickTimeout;  /* the shortened wait of EWX_QUICKRESOLVE */
+    BOOLEAN AutoEndTasks;
+    BOOLEAN AllowBlocking; /* a window that blocks the shutdown with a reason is waited for */
+    PKEVENT Cancel;      /* set when the shutdown is aborted */
+    PKEVENT Expire;      /* set when the time of the whole shutdown is over */
+    ULONG64 Deadline;    /* milliseconds of interrupt time, 0 for none */
+} MX_SHUTDOWN_CONTEXT;
+
+enum {
+    MX_SHUTDOWN_PROCESS_DONE = 1,   /* its windows were told, the process is to be ended */
+    MX_SHUTDOWN_PROCESS_PASS = 2,   /* nothing for the window manager, the console routine is next */
+    MX_SHUTDOWN_PROCESS_CANCEL = 3, /* a window refused, the shutdown stops */
+};
+
+typedef struct _WIN32_CALLOUTS {
+    NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
+    NTSTATUS(NTAPI *ThreadCallout)(PETHREAD thread, BOOLEAN initialize);
+    ULONG(NTAPI *ShutdownProcess)(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
+} WIN32_CALLOUTS;
+NTKERNELAPI void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts);
+
+/* the shutdown machinery of ps/shutdown.c, started by win32k for ExitWindowsEx. */
+NTKERNELAPI NTSTATUS NTAPI MimeShutdownStart(ULONG flags, ULONG reason, ULONG delay_seconds, ULONG control,
+                                             ULONG limit_ms, BOOLEAN strict, BOOLEAN wait);
+NTKERNELAPI NTSTATUS NTAPI MimeShutdownAbort(void);
+NTKERNELAPI BOOLEAN NTAPI MimeCurrentHasPrivilege(ULONG privilege);
+NTKERNELAPI ULONG NTAPI MimeProcessShutdownFlags(PEPROCESS process);
+NTKERNELAPI ULONG NTAPI MimeProcessUiLimits(PEPROCESS process);
+
 #endif

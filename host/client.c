@@ -171,8 +171,30 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
     return 0;
 }
 
+/*
+ * `mime down` shuts the machine down as windows does: the programs are told and given their time, the ones
+ * left end, the files are written. --force ends them all at once, --timeout seconds changes the limit of the
+ * whole shutdown. the machine process is ended after the guest's limit and a margin, whatever the guest does.
+ */
 int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
 {
+    MimeIpcStop stop = {};
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--force") == 0 || strcmp(argv[i], "-f") == 0) {
+            stop.flags |= MIME_SHUTDOWN_FORCE;
+        } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+            char *end;
+            unsigned long seconds = strtoul(argv[++i], &end, 10);
+            if (*end || !argv[i][0] || seconds == 0 || seconds > 3600) {
+                fprintf(stderr, "mime down: --timeout takes a number of seconds from 1 to 3600\n");
+                return 2;
+            }
+            stop.timeout_ms = (uint32_t)(seconds * 1000);
+        } else {
+            fprintf(stderr, "usage: mime down [--force] [--timeout seconds]\n");
+            return 2;
+        }
+    }
     int fd = mime_ipc_connect(paths->socket);
     pid_t pid = read_pid(paths);
     if (fd < 0) {
@@ -184,12 +206,21 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
         printf("Mime machine is not running.\n");
         return 0;
     }
-    mime_ipc_send(fd, MIME_IPC_STOP, nullptr, 0);
+    mime_ipc_send(fd, MIME_IPC_STOP, &stop, sizeof(stop));
     MimeIpcHeader h;
     void *payload;
     /* the daemon closes the connection once the guest has powered off. */
-    while (mime_ipc_recv(fd, &h, &payload))
+    uint64_t guest_ms = stop.timeout_ms ? stop.timeout_ms : MIME_SHUTDOWN_DEFAULT_MS;
+    uint64_t give_up = mime_now_ns() + (guest_ms + 20000) * 1000000ull;
+    for (;;) {
+        struct pollfd p = {.fd = fd, .events = POLLIN};
+        int64_t left = (int64_t)(give_up - mime_now_ns()) / 1000000;
+        if (left <= 0 || poll(&p, 1, (int)left) == 0)
+            break;
+        if (!mime_ipc_recv(fd, &h, &payload))
+            break;
         free(payload);
+    }
     close(fd);
     uint64_t deadline = mime_now_ns() + 10ull * 1000000000ull;
     while (pid > 0 && kill(pid, 0) == 0 && mime_now_ns() < deadline)

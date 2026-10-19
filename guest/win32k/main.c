@@ -293,6 +293,18 @@ W32THREAD *W32LookupThread(HANDLE tid)
     return nullptr;
 }
 
+/* the threads of a process that are alive, in the order they were made. */
+ULONG W32ProcessThreads(W32PROCESS *p, HANDLE *tids, ULONG max)
+{
+    ULONG n = 0;
+    for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads && n < max; e = e->Flink) {
+        W32THREAD *t = CONTAINING_RECORD(e, W32THREAD, Links);
+        if (t->Process == p && !t->Destroying)
+            tids[n++] = t->Tid;
+    }
+    return n;
+}
+
 static void free_message_list(PLIST_ENTRY list)
 {
     while (!IsListEmpty(list))
@@ -388,12 +400,6 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
     return STATUS_SUCCESS;
 }
 
-typedef struct _WIN32_CALLOUTS {
-    NTSTATUS(NTAPI *ProcessCallout)(PEPROCESS process, BOOLEAN initialize);
-    NTSTATUS(NTAPI *ThreadCallout)(PETHREAD thread, BOOLEAN initialize);
-} WIN32_CALLOUTS;
-
-DECLSPEC_IMPORT void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts);
 
 /* ------------------------------------------------------------------ client registration */
 
@@ -457,7 +463,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
         DbgPrint("win32k: cannot register the system service table\n");
         return STATUS_UNSUCCESSFUL;
     }
-    static WIN32_CALLOUTS callouts = {process_callout, thread_callout};
+    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess};
     PsEstablishWin32Callouts(&callouts);
 
     UserEnter();

@@ -1400,19 +1400,28 @@ DWORD WINAPI WTSGetActiveConsoleSessionId(void)
     return USER_SHARED_DATA->ActiveConsoleId;
 }
 
-static DWORD g_shutdown_level = 0x280, g_shutdown_flags;
-
+/*
+ * the level orders the process in a shutdown, the highest first, and the one flag, SHUTDOWN_NORETRY, spares it
+ * the dialog of a program that does not answer. the kernel keeps both, as csrss does on windows, and answers
+ * any other flag with the status csrss does, which the status table turns into error 641.
+ */
 BOOL WINAPI SetProcessShutdownParameters(DWORD level, DWORD flags)
 {
-    g_shutdown_level = level;
-    g_shutdown_flags = flags;
-    return TRUE;
+    MX_SHUTDOWN_PARAMETERS parameters = {level, flags};
+    NTSTATUS status = NtSetInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)MX_PROCESS_SHUTDOWN_PARAMETERS,
+                                              &parameters, sizeof(parameters));
+    return NT_SUCCESS(status) || KbSetStatus(status);
 }
 
 BOOL WINAPI GetProcessShutdownParameters(LPDWORD level, LPDWORD flags)
 {
-    *level = g_shutdown_level;
-    *flags = g_shutdown_flags;
+    MX_SHUTDOWN_PARAMETERS parameters;
+    NTSTATUS status = NtQueryInformationProcess(NtCurrentProcess(), (PROCESSINFOCLASS)MX_PROCESS_SHUTDOWN_PARAMETERS,
+                                                &parameters, sizeof(parameters), nullptr);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *level = parameters.Level;
+    *flags = parameters.Flags;
     return TRUE;
 }
 
