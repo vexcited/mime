@@ -32,6 +32,8 @@ typedef struct _OLE_THREAD {
     DWORD ProcessId;
     /* the filter of CoRegisterMessageFilter, referenced. */
     IMessageFilter *MessageFilter;
+    /* the hidden window that owns the clipboard for the thread's ole clipboard, see clipboard.c. */
+    HWND ClipWindow;
 } OLE_THREAD;
 
 OLE_THREAD *OleThreadState(BOOL create);

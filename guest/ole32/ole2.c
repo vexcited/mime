@@ -511,13 +511,93 @@ WINOLEAPI HRESULT WINAPI OleSaveToStream(IPersistStream *object, IStream *stream
     return hr;
 }
 
+static FARPROC gdi_proc(const char *name)
+{
+    HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
+    return gdi32 ? GetProcAddress(gdi32, name) : nullptr;
+}
+
+/* a copy of a bitmap, through memory dcs of the screen's format. */
+static HANDLE duplicate_bitmap(HANDLE source)
+{
+    typedef int(WINAPI * GET_OBJECT)(HANDLE, int, void *);
+    typedef HDC(WINAPI * CREATE_DC)(HDC);
+    typedef HBITMAP(WINAPI * CREATE_BITMAP)(HDC, int, int);
+    typedef HGDIOBJ(WINAPI * SELECT)(HDC, HGDIOBJ);
+    typedef BOOL(WINAPI * BLT)(HDC, int, int, int, int, HDC, int, int, DWORD);
+    typedef BOOL(WINAPI * DELETE_DC)(HDC);
+    typedef BOOL(WINAPI * DELETE_OBJECT)(HGDIOBJ);
+    GET_OBJECT get = (GET_OBJECT)(void *)gdi_proc("GetObjectW");
+    CREATE_DC create_dc = (CREATE_DC)(void *)gdi_proc("CreateCompatibleDC");
+    CREATE_BITMAP create_bitmap = (CREATE_BITMAP)(void *)gdi_proc("CreateCompatibleBitmap");
+    SELECT select = (SELECT)(void *)gdi_proc("SelectObject");
+    BLT blt = (BLT)(void *)gdi_proc("BitBlt");
+    DELETE_DC delete_dc = (DELETE_DC)(void *)gdi_proc("DeleteDC");
+    DELETE_OBJECT delete_object = (DELETE_OBJECT)(void *)gdi_proc("DeleteObject");
+    BITMAP info;
+    if (!get || !create_dc || !create_bitmap || !select || !blt || !delete_dc || !delete_object ||
+        !get(source, sizeof(info), &info) || info.bmWidth <= 0 || info.bmHeight <= 0)
+        return nullptr;
+    HDC from = create_dc(nullptr), to = create_dc(nullptr);
+    HBITMAP copy = nullptr;
+    if (from && to) {
+        HDC screen = GetDC(nullptr);
+        copy = create_bitmap(screen, info.bmWidth, info.bmHeight);
+        ReleaseDC(nullptr, screen);
+        if (copy) {
+            HGDIOBJ old_from = select(from, source), old_to = select(to, copy);
+            if (!blt(to, 0, 0, info.bmWidth, info.bmHeight, from, 0, 0, SRCCOPY)) {
+                select(to, old_to);
+                delete_object(copy);
+                copy = nullptr;
+            } else {
+                select(to, old_to);
+            }
+            select(from, old_from);
+        }
+    }
+    if (from)
+        delete_dc(from);
+    if (to)
+        delete_dc(to);
+    return copy;
+}
+
+static HANDLE duplicate_palette(HANDLE source)
+{
+    typedef UINT(WINAPI * GET_ENTRIES)(HANDLE, UINT, UINT, PALETTEENTRY *);
+    typedef HPALETTE(WINAPI * CREATE)(const LOGPALETTE *);
+    GET_ENTRIES get = (GET_ENTRIES)(void *)gdi_proc("GetPaletteEntries");
+    CREATE create = (CREATE)(void *)gdi_proc("CreatePalette");
+    UINT count = get && create ? get(source, 0, 0, nullptr) : 0;
+    if (!count)
+        return nullptr;
+    LOGPALETTE *logical = HeapAlloc(GetProcessHeap(), 0, sizeof(LOGPALETTE) + count * sizeof(PALETTEENTRY));
+    HANDLE copy = nullptr;
+    if (logical) {
+        logical->palVersion = 0x300;
+        logical->palNumEntries = (WORD)count;
+        if (get(source, 0, count, logical->palPalEntry))
+            copy = create(logical);
+        HeapFree(GetProcessHeap(), 0, logical);
+    }
+    return copy;
+}
+
 WINOLEAPI HANDLE WINAPI OleDuplicateData(HANDLE source, CLIPFORMAT format, UINT flags)
 {
     if (!source)
         return nullptr;
-    /* gdi handles and metafiles are not duplicated, only global memory formats. */
-    if (format == CF_BITMAP || format == CF_PALETTE || format == CF_ENHMETAFILE || format == CF_METAFILEPICT)
-        return nullptr;
+    /* gdi objects and metafiles are copied by their own functions, everything else is global memory. */
+    if (format == CF_BITMAP)
+        return duplicate_bitmap(source);
+    if (format == CF_PALETTE)
+        return duplicate_palette(source);
+    if (format == CF_ENHMETAFILE) {
+        typedef HANDLE(WINAPI * COPY)(HANDLE, LPCWSTR);
+        COPY copy = (COPY)(void *)gdi_proc("CopyEnhMetaFileW");
+        return copy ? copy(source, nullptr) : nullptr;
+    }
     SIZE_T size = GlobalSize(source);
     const void *data = GlobalLock(source);
     if (!data)
@@ -527,6 +607,16 @@ WINOLEAPI HANDLE WINAPI OleDuplicateData(HANDLE source, CLIPFORMAT format, UINT 
     if (dest) {
         memcpy(dest, data, size);
         GlobalUnlock(copy);
+        if (format == CF_METAFILEPICT && size >= sizeof(METAFILEPICT)) {
+            /* the picture points to a metafile of its own. */
+            typedef HANDLE(WINAPI * COPY)(HANDLE, LPCWSTR);
+            COPY copy_meta = (COPY)(void *)gdi_proc("CopyMetaFileW");
+            METAFILEPICT *pict = GlobalLock(copy);
+            if (pict && copy_meta)
+                pict->hMF = copy_meta(pict->hMF, nullptr);
+            if (pict)
+                GlobalUnlock(copy);
+        }
     } else if (copy) {
         GlobalFree(copy);
         copy = nullptr;

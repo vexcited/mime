@@ -688,8 +688,9 @@ BOOL NTAPI NtUserEmptyClipboard(void)
     W32THREAD *t = W32GetThread();
     BOOL ok = caller_has_open(t);
     if (ok) {
+        /* the owner hears that its contents go, even when it is the window emptying them (read: xxxEmptyClipboard). */
         WND *old = g_owner ? WndLookup(g_owner) : nullptr;
-        if (old && g_owner != g_open_window)
+        if (old)
             MsgSendKernel(old, WM_DESTROYCLIPBOARD, 0, 0, MIME_LPARAM_VALUE, 0);
         empty_formats();
         g_owner = g_open_window;
