@@ -696,6 +696,10 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 
     if (!mime_paths_ensure(paths) || !listen_socket(paths))
         return 1;
+#ifdef __linux__
+    /* the driver takes 200 ms to load and make a device, which the boot and the first program's start overlap. */
+    mime_vk_warm_up();
+#endif
     char pid[32];
     int n = snprintf(pid, sizeof(pid), "%d\n", (int)getpid());
     mime_write_file(paths->pidfile, pid, (size_t)n);
@@ -723,9 +727,6 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_info("startup: display %llu us, machine %llu us, kernel and processors %llu us",
               (unsigned long long)((ui_ns - g_start_ns) / 1000), (unsigned long long)((created_ns - ui_ns) / 1000),
               (unsigned long long)((mime_now_ns() - created_ns) / 1000));
-#ifdef __linux__
-    mime_vk_warm_up();
-#endif
 
     pthread_t t;
     pthread_create(&t, nullptr, accept_thread, nullptr);

@@ -147,6 +147,17 @@ static uint16_t upcase(uint16_t c)
 
 static bool same_name(const char *a, const char *b)
 {
+    /* names of ascii are compared as they are: converting both to utf-16 for every entry of a directory scanned costs more. */
+    const unsigned char *x = (const unsigned char *)a, *y = (const unsigned char *)b;
+    for (;; x++, y++) {
+        if (*x >= 0x80 || *y >= 0x80)
+            break;
+        unsigned cx = *x >= 'a' && *x <= 'z' ? *x - 32u : *x, cy = *y >= 'a' && *y <= 'z' ? *y - 32u : *y;
+        if (cx != cy)
+            return false;
+        if (!cx)
+            return true;
+    }
     uint16_t wa[256], wb[256];
     size_t na = mime_utf8_to_utf16(wa, MIME_ARRAY_COUNT(wa), a), nb = mime_utf8_to_utf16(wb, MIME_ARRAY_COUNT(wb), b);
     if (na != nb)

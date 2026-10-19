@@ -2192,6 +2192,9 @@ void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice d
     c->queue_count = 1;
 }
 
+/* when the warm up of the driver began and ended, in the host's nanoseconds. */
+static uint64_t g_warm_began, g_warm_done;
+
 uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
 {
     if (size != MVK_CONNECTION_SIZE)
@@ -2224,6 +2227,8 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
         free(c);
         return MIME_HC_STATUS_NO_MEMORY;
     }
+    mime_info("vulkan: a connection opens %llu ms after the warm up began, which is %s",
+              (unsigned long long)((mime_now_ns() - __atomic_load_n(&g_warm_began, __ATOMIC_ACQUIRE)) / 1000000), __atomic_load_n(&g_warm_done, __ATOMIC_ACQUIRE) ? "done" : "not done");
     pthread_mutex_lock(&g_lock);
     uint32_t i = 1;
     while (i < MAX_CONNECTIONS && g_connections[i])
@@ -2312,6 +2317,7 @@ static void *warm_main(void *arg)
 {
     mime_set_thread_name("mime-vk-warm");
     uint64_t began = mime_now_ns();
+    __atomic_store_n(&g_warm_began, began, __ATOMIC_RELEASE);
     MvkConnection warm = {};
     if (!mvk_internal_instance(&warm, VK_API_VERSION_1_1))
         return nullptr;
@@ -2321,7 +2327,9 @@ static void *warm_main(void *arg)
         for (uint32_t i = 0; i < count; i++)
             importable_types(&warm, devices[i]);
     /* the instance stays: the loader unloads the driver when the last one goes, and loads it again. */
-    mime_debug("vulkan: the driver is warm after %llu ms", (unsigned long long)((mime_now_ns() - began) / 1000000));
+    uint64_t done = mime_now_ns();
+    __atomic_store_n(&g_warm_done, done, __ATOMIC_RELEASE);
+    mime_info("vulkan: the driver is warm after %llu ms", (unsigned long long)((done - began) / 1000000));
     return nullptr;
 }
 
