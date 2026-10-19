@@ -26,4 +26,11 @@ HSTRING CbStaticString(HSTRING_HEADER *header, LPCWSTR text);
 extern const WCHAR CbUISettingsClass[];
 HRESULT CbUISettingsFactory(REFIID riid, void **factory);
 
+
+/* capture.c: Windows.Graphics.Capture. */
+extern const WCHAR CbCaptureItemClass[], CbCaptureSessionClass[], CbCapturePoolClass[];
+HRESULT CbCaptureItemFactory(REFIID riid, void **factory);
+HRESULT CbCaptureSessionFactory(REFIID riid, void **factory);
+HRESULT CbCapturePoolFactory(REFIID riid, void **factory);
+
 #endif

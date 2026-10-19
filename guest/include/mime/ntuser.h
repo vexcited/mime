@@ -717,8 +717,14 @@ enum {
     MIME_CAPOP_WINDOW,   /* id: the window, info: MIME_CAPTURE_WINDOW, data: bgra rows, size their bytes */
 };
 
+/*
+ * a duplication of a window instead of a monitor: Monitor holds the window, and a frame is the window's own pixels,
+ * whole window or client area, the images its process presented through the host included.
+ */
+#define MIME_CAPTURE_WINDOW_TARGET 0x80000000u
+#define MIME_CAPTURE_TARGET_CLIENT 0x40000000u
 typedef struct MIME_CAPTURE_OPEN {
-    ULONG Monitor;
+    ULONG Monitor; /* the monitor's index, or the window */
     ULONG Flags;
     ULONG Handle;
     ULONG Width, Height;
@@ -735,6 +741,8 @@ typedef struct MIME_CAPTURE_FRAME {
     LONG PointerX, PointerY;
     ULONG DirtyBytes, MoveBytes;
     ULONG ShapeBytes;
+    /* the size of the frame: a window's changes, and a buffer too small is told it. */
+    ULONG Width, Height;
 } MIME_CAPTURE_FRAME;
 
 typedef struct MIME_CAPTURE_SHAPE {

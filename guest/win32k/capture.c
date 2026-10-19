@@ -26,7 +26,10 @@ typedef struct CAPTURE {
     ULONG Handle;
     ULONG Monitor;
     RECT Rect; /* the monitor when the duplication was made, a change of it loses the duplication */
+    HWND Window; /* a window's duplication, and then the pixels are the window's own */
+    BOOLEAN ClientOnly;
     SURFACE *Prev;
+    SURFACE *Now; /* a window's pixels as composed, to compare with the copy */
     BOOLEAN Delivered;
     ULONG GuestSerial;
     ULONG64 HostSerial;
@@ -54,6 +57,8 @@ static void release(CAPTURE *c)
 {
     if (c->Prev)
         SurfaceDestroy(c->Prev);
+    if (c->Now)
+        SurfaceDestroy(c->Now);
     memset(c, 0, sizeof(*c));
 }
 
@@ -257,25 +262,22 @@ static void add_rect(CAPTURE *c, const RECT *r)
 }
 
 /*
- * the rectangles of the monitor's area of the screen surface that differ from the copy, the copy brought up to
- * date. area is in surface pixels.
+ * the rectangles of the rows given that differ from the copy, the copy brought up to date.
  */
-static void diff_frame(CAPTURE *c, SURFACE *screen, const RECT *area)
+static void diff_frame(CAPTURE *c, const UCHAR *bits, LONG stride)
 {
     LONG width = c->Prev->Width, height = c->Prev->Height;
     c->DirtyCount = 0;
     if (!c->Delivered) {
         c->Dirty[c->DirtyCount++] = (RECT){0, 0, width, height};
         for (LONG y = 0; y < height; y++)
-            memcpy(c->Prev->Bits + (LONG_PTR)y * c->Prev->Stride,
-                   screen->Bits + (LONG_PTR)(area->top + y) * screen->Stride + (LONG_PTR)area->left * 4,
-                   (SIZE_T)width * 4);
+            memcpy(c->Prev->Bits + (LONG_PTR)y * c->Prev->Stride, bits + (LONG_PTR)y * stride, (SIZE_T)width * 4);
         return;
     }
     for (LONG top = 0; top < height; top += CAPTURE_BAND) {
         LONG bottom = W32Min(top + CAPTURE_BAND, height), x0 = width, x1 = -1, y0 = -1, y1 = -1;
         for (LONG y = top; y < bottom; y++) {
-            const ULONG *now = (const ULONG *)(screen->Bits + (LONG_PTR)(area->top + y) * screen->Stride) + area->left;
+            const ULONG *now = (const ULONG *)(bits + (LONG_PTR)y * stride);
             ULONG *was = (ULONG *)(c->Prev->Bits + (LONG_PTR)y * c->Prev->Stride);
             LONG first, last;
             if (!row_diff(now, was, width, &first, &last))
@@ -316,14 +318,73 @@ static BOOLEAN monitor_is(CAPTURE *c)
     return MonitorGet(c->Monitor, &m) && !memcmp(&m.Rect, &c->Rect, sizeof(RECT));
 }
 
+/* the window of a window's duplication as it is now, none when it is gone. */
+static WND *capture_window(CAPTURE *c)
+{
+    WND *w = WndLookup(c->Window);
+    return w && !w->Header.Destroyed ? w : nullptr;
+}
+
 /* the desktops are one window tree: the threads of the default desktop see the screen and the others are refused. */
 static BOOLEAN on_input_desktop(void)
 {
     return WinStaOnInputDesktop();
 }
 
+static ULONG refresh_hz(void)
+{
+    MIME_MONITOR_INFO m;
+    return MonitorGet(0, &m) && m.RefreshHz ? m.RefreshHz : 60;
+}
+
+static LONG op_open_window(MIME_CAPTURE_OPEN *o)
+{
+    WND *w = WndLookup((HWND)(ULONG_PTR)o->Monitor);
+    if (!w || w->Header.Destroyed || !WndIsTopLevel(w) || w == WndDesktop())
+        return STATUS_INVALID_HANDLE;
+    if (!on_input_desktop())
+        return STATUS_ACCESS_DENIED;
+    CAPTURE *slot = nullptr;
+    for (ULONG i = 0; i < CAPTURE_MAX && !slot; i++)
+        if (!g_captures[i].Used)
+            slot = &g_captures[i];
+    if (!slot)
+        return STATUS_INSTANCE_NOT_AVAILABLE;
+    BOOLEAN client = (o->Flags & MIME_CAPTURE_TARGET_CLIENT) != 0;
+    const RECT *r = client ? &w->ClientRect : &w->WindowRect;
+    LONG width = r->right - r->left, height = r->bottom - r->top;
+    if (width <= 0 || height <= 0)
+        return STATUS_INVALID_PARAMETER;
+    SURFACE *prev = SurfaceCreate(width, height, 32, SURF_TOPDOWN), *now = SurfaceCreate(width, height, 32, SURF_TOPDOWN);
+    if (!prev || !now) {
+        if (prev)
+            SurfaceDestroy(prev);
+        if (now)
+            SurfaceDestroy(now);
+        return STATUS_NO_MEMORY;
+    }
+    memset(slot, 0, sizeof(*slot));
+    slot->Used = TRUE;
+    slot->Process = W32GetProcess();
+    slot->Handle = ++g_next_handle;
+    slot->Window = WndHandle(w);
+    slot->ClientOnly = client;
+    slot->Prev = prev;
+    slot->Now = now;
+    o->Handle = slot->Handle;
+    o->Width = (ULONG)width;
+    o->Height = (ULONG)height;
+    o->X = r->left;
+    o->Y = r->top;
+    o->RefreshNumerator = refresh_hz();
+    o->RefreshDenominator = 1;
+    return STATUS_SUCCESS;
+}
+
 static LONG op_open(MIME_CAPTURE_OPEN *o)
 {
+    if (o->Flags & MIME_CAPTURE_WINDOW_TARGET)
+        return op_open_window(o);
     MIME_MONITOR_INFO m;
     if (!MonitorGet(o->Monitor, &m))
         return STATUS_NOT_FOUND;
@@ -362,13 +423,83 @@ static LONG op_open(MIME_CAPTURE_OPEN *o)
     return STATUS_SUCCESS;
 }
 
+/*
+ * a window's frame: its own pixels composed again when anything on the screen may have changed, and given when they
+ * differ from the last ones. the window going away is its capture ending, and a window that changes size starts the
+ * frames again whole at the new size, once the buffer is big enough.
+ */
+static LONG op_frame_window(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
+{
+    WND *w = capture_window(c);
+    if (!w)
+        return STATUS_INVALID_HANDLE;
+    if (!on_input_desktop())
+        return STATUS_ACCESS_DENIED;
+    const RECT *r = c->ClientOnly ? &w->ClientRect : &w->WindowRect;
+    LONG width = r->right - r->left, height = r->bottom - r->top;
+    if (width <= 0 || height <= 0)
+        return STATUS_TIMEOUT;
+    memset(f, 0, sizeof(*f));
+    f->Width = (ULONG)width;
+    f->Height = (ULONG)height;
+    if (width != c->Prev->Width || height != c->Prev->Height) {
+        SURFACE *prev = SurfaceCreate(width, height, 32, SURF_TOPDOWN), *now = SurfaceCreate(width, height, 32, SURF_TOPDOWN);
+        if (!prev || !now) {
+            if (prev)
+                SurfaceDestroy(prev);
+            if (now)
+                SurfaceDestroy(now);
+            return STATUS_NO_MEMORY;
+        }
+        SurfaceDestroy(c->Prev);
+        SurfaceDestroy(c->Now);
+        c->Prev = prev;
+        c->Now = now;
+        c->Delivered = FALSE;
+    }
+    BOOLEAN changed = !c->Delivered || c->GuestSerial != ScreenSerial;
+    ULONG64 host = c->HostSerial;
+    if (!changed) {
+        host = ScreenHostSerial();
+        changed = host != c->HostSerial;
+    }
+    if (!changed)
+        return STATUS_TIMEOUT;
+    if ((ULONG64)size < (ULONG64)width * height * 4)
+        return STATUS_BUFFER_TOO_SMALL;
+    ULONG serial = ScreenSerial;
+    if (!ScreenWindowPixels(w, c->ClientOnly, TRUE, c->Now->Bits, c->Now->Stride, width, height))
+        return STATUS_INVALID_HANDLE;
+    diff_frame(c, c->Now->Bits, c->Now->Stride);
+    c->GuestSerial = serial;
+    c->HostSerial = host;
+    c->Delivered = TRUE;
+    if (!c->DirtyCount)
+        return STATUS_TIMEOUT;
+    NTSTATUS status = write_frame(c, user, size);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG64 now = counter();
+    f->Accumulated = 1;
+    f->LastPresentLow = (ULONG)now;
+    f->LastPresentHigh = (ULONG)(now >> 32);
+    f->RectsCoalesced = c->DirtyCount == CAPTURE_MAX_RECTS;
+    f->DirtyBytes = c->DirtyCount * (ULONG)sizeof(RECT);
+    return STATUS_SUCCESS;
+}
+
 static LONG op_frame(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
 {
+    if (c->Window)
+        return op_frame_window(c, f, user, size);
     if (!monitor_is(c))
         return STATUS_NOT_FOUND;
     if (!on_input_desktop())
         return STATUS_ACCESS_DENIED;
     LONG width = c->Prev->Width, height = c->Prev->Height;
+    memset(f, 0, sizeof(*f));
+    f->Width = (ULONG)width;
+    f->Height = (ULONG)height;
     if ((ULONG64)size < (ULONG64)width * height * 4)
         return STATUS_BUFFER_TOO_SMALL;
 
@@ -394,7 +525,6 @@ static LONG op_frame(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
     if (!screen_changed && !pointer_moved && !shape_changed)
         return STATUS_TIMEOUT;
 
-    memset(f, 0, sizeof(*f));
     ULONG64 now = counter();
     if (screen_changed) {
         ULONG serial = ScreenSerial;
@@ -406,7 +536,7 @@ static LONG op_frame(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
         RectOffset(&area, -origin.x, -origin.y);
         ScreenCompose(&area);
         BOOLEAN first = !c->Delivered;
-        diff_frame(c, screen, &area);
+        diff_frame(c, screen->Bits + (LONG_PTR)area.top * screen->Stride + (LONG_PTR)area.left * 4, screen->Stride);
         if (c->DirtyCount || first) {
             LONG sent = (LONG)(serial - c->GuestSerial);
             f->Accumulated = first ? 1 : (ULONG)W32Min(W32Max(sent, 1), 0xFFFF);
@@ -476,7 +606,8 @@ LONG NTAPI NtUserMimeCapture(ULONG op, ULONG id, PUCHAR info, PUCHAR data, ULONG
             break;
         }
         status = op_frame(c, &f, data, size);
-        if (NT_SUCCESS(status) && !NT_SUCCESS(MimeCopyToUser(info, &f, sizeof(f))))
+        if ((NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL) && status != STATUS_TIMEOUT &&
+            !NT_SUCCESS(MimeCopyToUser(info, &f, sizeof(f))))
             status = STATUS_ACCESS_VIOLATION;
         break;
     }

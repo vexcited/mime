@@ -53,6 +53,9 @@ static const struct {
     HRESULT (*Factory)(REFIID riid, void **factory);
 } g_classes[] = {
     {CbUISettingsClass, CbUISettingsFactory},
+    {CbCaptureItemClass, CbCaptureItemFactory},
+    {CbCaptureSessionClass, CbCaptureSessionFactory},
+    {CbCapturePoolClass, CbCapturePoolFactory},
 };
 
 ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory)
