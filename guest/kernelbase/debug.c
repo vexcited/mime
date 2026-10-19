@@ -4,6 +4,7 @@
 #include "kernelbase_private.h"
 
 #define STATUS_FAIL_FAST_EXCEPTION ((NTSTATUS)0xC0000602L)
+#define EXCEPTION_NESTED_CALL 0x10
 
 static PVOID g_top_filter; /* encoded. */
 static LONG g_in_filter;
@@ -74,6 +75,9 @@ static void describe_address(PVOID address, char *out, SIZE_T size)
 
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
+    /* an exception raised while another was dispatched is not reported or filtered again: the first one's turn ends the process. */
+    if (info && info->ExceptionRecord && (info->ExceptionRecord->ExceptionFlags & EXCEPTION_NESTED_CALL))
+        return EXCEPTION_CONTINUE_SEARCH;
     /* no filter was ever set while the slot is still zero, not an encoded null. */
     LPTOP_LEVEL_EXCEPTION_FILTER filter = g_top_filter ? RtlDecodePointer(g_top_filter) : nullptr;
     if (filter && __atomic_add_fetch(&g_in_filter, 1, __ATOMIC_ACQ_REL) == 1) {

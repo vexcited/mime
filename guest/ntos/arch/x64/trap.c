@@ -168,7 +168,7 @@ static void user_exception(PKTRAP_FRAME frame)
 
     EXCEPTION_RECORD record;
     build_record(frame, &record);
-    KiMakeInPageError(&record);
+    KiApplyFaultStatus(&record);
     if (KiTraceUserExceptions) {
         KiLogPrintf("first chance exception %08x at %p in %s", record.ExceptionCode, (PVOID)frame->Rip,
                     PsCurrentProcess()->ImageFileName);

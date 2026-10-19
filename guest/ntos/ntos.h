@@ -164,7 +164,7 @@ typedef struct _KTHREAD {
     PVOID CallbackResult;
     PVOID Win32Thread;
     KJUMP_BUFFER *FaultRecovery;
-    NTSTATUS InPageStatus; /* set when the fault that was not resolved is an in page error: the status of the read that failed */
+    NTSTATUS FaultStatus; /* what an unresolved fault is, when it is not an access violation, see KiApplyFaultStatus */
     ULONG64 ContextSwitches;
     ULONG64 BlockedTicks; /* counter ticks spent switched out, to tell a service's work from its waiting */
     ULONG64 KernelTime;
@@ -423,9 +423,9 @@ ULONG64 KiProcessorSmbiosId(void);
 #define KI_TRY_USER(buf) (KiCurrentThread()->FaultRecovery = &(buf), KiSetJump(&(buf)) == 0)
 #define KI_END_TRY_USER() (KiCurrentThread()->FaultRecovery = NULL)
 NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length);
-/* what a copy that took a fault returns: the in page error when the page was one a file lost, an access violation if not. */
+/* what a copy that took a fault returns: the status of the fault, an access violation when it was just that. */
 NTSTATUS KiFaultResult(void);
-void KiMakeInPageError(PEXCEPTION_RECORD record);
+void KiApplyFaultStatus(PEXCEPTION_RECORD record);
 NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length);
 BOOLEAN KiIsUserRange(const void *address, SIZE_T length);
 NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING kernel_copy, PCUNICODE_STRING user_string);
@@ -891,6 +891,7 @@ typedef struct _ETHREAD {
     LIST_ENTRY ThreadListEntry; /* in EPROCESS */
     PVOID UserStackAllocation;
     SIZE_T UserStackSize;
+    ULONG_PTR UserStackGuard; /* the guard page of the stack, the first touch of which is a stack overflow */
     PVOID NativeStackAllocation; /* the translator's own stack in x86 and x64 processes */
     SIZE_T NativeStackSize;
     ULONG64 CreateTime;

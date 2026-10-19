@@ -1385,6 +1385,18 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
     return done;
 }
 
+/*
+ * the touch of a guard page is not an access violation: windows says STATUS_GUARD_PAGE_VIOLATION, and
+ * STATUS_STACK_OVERFLOW for the guard page of the thread's own stack, the last one it has. the guard is gone from the
+ * page, so the access runs again if the exception is handled.
+ */
+static void guard_fault(ULONG_PTR page)
+{
+    PETHREAD thread = PsCurrentThread();
+    BOOLEAN own = page == thread->UserStackGuard && thread->Tcb.ApcStateProcess == thread->Tcb.Process;
+    thread->Tcb.FaultStatus = own ? STATUS_STACK_OVERFLOW : STATUS_GUARD_PAGE_VIOLATION;
+}
+
 /* resolves demand zero, section and copy on write faults. returns FALSE for real access violations. */
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {
@@ -1399,7 +1411,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     if (MmFastFault(va, write, execute))
         return TRUE;
     MmFaultStats[KeGetCurrentPrcb()->Number].Slow++;
-    KiCurrentThread()->InPageStatus = 0;
+    KiCurrentThread()->FaultStatus = 0;
     MiLockAddressSpace(as);
     BOOLEAN handled = FALSE;
     as->PageFaults++;
@@ -1417,6 +1429,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                 handled = demand_zero(as, vad, page, pte, v, write);
             } else if (protect & PAGE_GUARD) {
                 *pte = sw_pte(protect & ~PAGE_GUARD) | (v & MM_SWPTE_SECTION);
+                guard_fault(page);
                 handled = FALSE;
             }
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_COW)) {
@@ -1435,6 +1448,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
         } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && MI_PTE_IS_GUARD(v)) {
             /* a guard page: the first touch faults and takes the guard away, like windows. */
             MiWritePte(as->Root, page, MI_PTE_CLEAR_GUARD(v), as->Asid);
+            guard_fault(page);
             handled = FALSE;
         } else if ((v & MM_PTE_VALID) && (mode == KernelMode || MI_PTE_IS_USER(v)) &&
                    (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v))) {

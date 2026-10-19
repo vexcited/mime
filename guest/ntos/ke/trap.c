@@ -63,19 +63,25 @@ void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size)
 }
 
 /*
- * a fault that could not be resolved because the page is one a file lost is not an access violation: windows raises
- * STATUS_IN_PAGE_ERROR with the kind of access and the address as for an access violation, and the status of the read
- * that failed, as the third parameter. the record is changed in place.
+ * an access that cannot be resolved is an access violation unless the memory manager says more, and windows turns its
+ * status into the exception the same way for every fault: a guard page or the end of a stack keeps its own code with the
+ * parameters of an access violation, and any other failure, the status of a read that failed, is STATUS_IN_PAGE_ERROR with
+ * the status as the third parameter. the record is changed in place.
  */
-void KiMakeInPageError(PEXCEPTION_RECORD record)
+void KiApplyFaultStatus(PEXCEPTION_RECORD record)
 {
     PKTHREAD thread = KiCurrentThread();
-    if (!thread->InPageStatus || record->ExceptionCode != STATUS_ACCESS_VIOLATION || record->NumberParameters < 2)
+    NTSTATUS status = thread->FaultStatus;
+    if (!status || record->ExceptionCode != STATUS_ACCESS_VIOLATION || record->NumberParameters < 2)
         return;
+    thread->FaultStatus = 0;
+    if (status == STATUS_GUARD_PAGE_VIOLATION || status == STATUS_STACK_OVERFLOW) {
+        record->ExceptionCode = status;
+        return;
+    }
     record->ExceptionCode = STATUS_IN_PAGE_ERROR;
     record->NumberParameters = 3;
-    record->ExceptionInformation[2] = (ULONG)thread->InPageStatus;
-    thread->InPageStatus = 0;
+    record->ExceptionInformation[2] = (ULONG)status;
 }
 
 /* the images of the instruction pointer and of the words on top of the stack that point into one. */

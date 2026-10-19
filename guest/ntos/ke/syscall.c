@@ -418,10 +418,12 @@ BOOLEAN KiIsUserRange(const void *address, SIZE_T length)
 NTSTATUS KiFaultResult(void)
 {
     PKTHREAD thread = KiCurrentThread();
-    if (!thread->InPageStatus)
+    if (!thread->FaultStatus)
         return STATUS_ACCESS_VIOLATION;
-    thread->InPageStatus = 0;
-    return STATUS_IN_PAGE_ERROR;
+    NTSTATUS status = thread->FaultStatus;
+    thread->FaultStatus = 0;
+    /* the guard page and the end of the stack are what the probe raises, any other failure is an in page error. */
+    return status == STATUS_GUARD_PAGE_VIOLATION || status == STATUS_STACK_OVERFLOW ? status : STATUS_IN_PAGE_ERROR;
 }
 
 /* copies from caller memory; kernel mode callers (Zw* services) pass kernel buffers. */

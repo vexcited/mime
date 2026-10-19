@@ -8,6 +8,8 @@
 
 #define KERNEL_STACK_SIZE (64 * 1024)
 #define MIME_DEFAULT_STACK_RESERVE (1024 * 1024)
+/* the bytes below the guard page of a stack that the handlers of a stack overflow run on, a quarter of a small stack. */
+#define MIME_STACK_OVERFLOW_ZONE (32 * 1024)
 
 static LIST_ENTRY g_dead_threads;
 static ETHREAD g_idle_thread;
@@ -169,7 +171,7 @@ static void user_thread_startup(PVOID context)
  * and the 32-bit teb's the program's, and the cpu area at the top of the
  * 64-bit stack.
  */
-static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID stack, SIZE_T stack_size,
+static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID stack, PVOID stack_limit, SIZE_T stack_size,
                             ULONG_PTR native_top, ULONG_PTR *native_base)
 {
     PUCHAR teb32 = (PUCHAR)teb + MIME_TEB_SIZE;
@@ -185,7 +187,7 @@ static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID 
 
     t[MIME_TEB32_EXCEPTION_LIST / 4] = 0xFFFFFFFFu;
     t[MIME_TEB32_STACK_BASE / 4] = (ULONG)((ULONG_PTR)stack + stack_size);
-    t[MIME_TEB32_STACK_LIMIT / 4] = (ULONG)(ULONG_PTR)stack;
+    t[MIME_TEB32_STACK_LIMIT / 4] = (ULONG)(ULONG_PTR)stack_limit;
     t[MIME_TEB32_SELF / 4] = (ULONG)(ULONG_PTR)teb32;
     t[MIME_TEB32_CLIENT_ID / 4] = (ULONG)(ULONG_PTR)thread->Cid.UniqueProcess;
     t[MIME_TEB32_CLIENT_ID / 4 + 1] = (ULONG)(ULONG_PTR)thread->Cid.UniqueThread;
@@ -248,6 +250,20 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     }
     thread->UserStackAllocation = stack;
     thread->UserStackSize = stack_reserve;
+    /*
+     * the stack is committed whole, and a page with the guard on it sits above the last bytes of it: whatever reaches the
+     * guard has overflowed, and the bytes below are what the exception for it is dispatched on, as windows keeps a few
+     * pages for it. the stack limit of the thread is the page above the guard.
+     */
+    SIZE_T zone = stack_reserve >= 4 * MIME_STACK_OVERFLOW_ZONE ? MIME_STACK_OVERFLOW_ZONE : ROUND_TO_PAGES(stack_reserve / 4);
+    PVOID guard = (PUCHAR)stack + zone;
+    SIZE_T guard_size = PAGE_SIZE;
+    ULONG old_protect;
+    PVOID stack_limit = stack;
+    if (NT_SUCCESS(MiProtectVirtual(process, &guard, &guard_size, PAGE_READWRITE | PAGE_GUARD, &old_protect))) {
+        thread->UserStackGuard = (ULONG_PTR)guard;
+        stack_limit = (PUCHAR)guard + PAGE_SIZE;
+    }
     thread->NativeStackAllocation = native_stack;
     thread->NativeStackSize = native_stack ? native_size : 0;
     thread->Win32StartAddress = start;
@@ -256,7 +272,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     PTEB teb = teb_va;
     ULONG_PTR stack_base = (ULONG_PTR)stack + stack_reserve;
     teb->NtTib.StackBase = (PVOID)stack_base;
-    teb->NtTib.StackLimit = stack;
+    teb->NtTib.StackLimit = stack_limit;
     teb->NtTib.Self = &teb->NtTib;
     teb->DeallocationStack = stack;
     teb->ClientId = thread->Cid;
@@ -273,7 +289,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     if (wow64) {
         /* the 64-bit teb describes the 64-bit stack, which holds the cpu area and the 64-bit start context. */
         ULONG_PTR native_base;
-        setup_wow64_teb(process, thread, teb, stack, stack_reserve, (ULONG_PTR)native_stack + native_size,
+        setup_wow64_teb(process, thread, teb, stack, stack_limit, stack_reserve, (ULONG_PTR)native_stack + native_size,
                         &native_base);
         teb->NtTib.StackBase = (PVOID)native_base;
         teb->NtTib.StackLimit = native_stack;

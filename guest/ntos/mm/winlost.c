@@ -196,5 +196,5 @@ void MmWindowLostInterrupt(void)
 /* what a fault on a page the section lost leaves for the exception that follows. */
 void MmWindowLostFault(void)
 {
-    KiCurrentThread()->InPageStatus = STATUS_FILE_INVALID_VALUE;
+    KiCurrentThread()->FaultStatus = STATUS_FILE_INVALID_VALUE;
 }
