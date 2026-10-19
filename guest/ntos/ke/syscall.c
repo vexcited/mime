@@ -170,6 +170,53 @@ void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page)
     e->Path[0] = 0;
 }
 
+/* appends the timeout of a wait to the timeline's text, in milliseconds, or inf for none. */
+static void timeline_timeout(const char *name, const ULONG64 *args, char out[32])
+{
+    int slot = -1;
+    if (!strcmp(name, "NtWaitForSingleObject") || !strcmp(name, "NtDelayExecution"))
+        slot = !strcmp(name, "NtDelayExecution") ? 1 : 2;
+    else if (!strcmp(name, "NtWaitForMultipleObjects") || !strcmp(name, "NtRemoveIoCompletion") ||
+             !strcmp(name, "NtRemoveIoCompletionEx"))
+        slot = 4;
+    else if (!strcmp(name, "NtWaitForAlertByThreadId"))
+        slot = 1;
+    else if (!strcmp(name, "NtSignalAndWaitForSingleObject"))
+        slot = 3;
+    size_t used = strlen(out);
+    if (!strcmp(name, "NtUserMsgWaitForMultipleObjectsEx")) {
+        mime_format(out + used, 32 - used, "/t%u", (ULONG)args[2]);
+        return;
+    }
+    if (slot < 0)
+        return;
+    LONG64 value;
+    if (!args[slot])
+        mime_format(out + used, 32 - used, "/tinf");
+    else if (NT_SUCCESS(KiCopyFromUser(&value, (PVOID)args[slot], sizeof(value))))
+        mime_format(out + used, 32 - used, value < 0 ? "/t%lld" : "/ta%lld", value < 0 ? -value / 10000 : value / 10000);
+}
+
+/* the name a thread is given with NtSetInformationThread, as ascii. */
+static void timeline_thread_name(ULONG64 string, char out[32])
+{
+    struct {
+        USHORT Length, Maximum;
+        ULONG Pad;
+        ULONG64 Buffer;
+    } name;
+    out[0] = 0;
+    if (!string || !NT_SUCCESS(KiCopyFromUser(&name, (PVOID)string, sizeof(name))) || !name.Length || !name.Buffer)
+        return;
+    ULONG n = name.Length / 2 > 31 ? 31 : name.Length / 2;
+    WCHAR wide[32];
+    if (!NT_SUCCESS(KiCopyFromUser(wide, (PVOID)name.Buffer, n * 2)))
+        return;
+    for (ULONG i = 0; i < n; i++)
+        out[i] = wide[i] < 0x80 && wide[i] >= 0x20 && wide[i] != ' ' ? (char)wide[i] : '?';
+    out[n] = 0;
+}
+
 static const char *service_name(ULONG table, ULONG index)
 {
     if (table == 2)
@@ -239,6 +286,9 @@ void KiSystemService(PKTRAP_FRAME frame)
                     ObDereferenceObject(object);
                 }
             }
+            timeline_timeout(name, args, tpath);
+            if (!strcmp(name, "NtSetInformationThread") && args[1] == 38)
+                timeline_thread_name(args[2], tpath);
             if (!strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
                 !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey"))
                 timeline_path(args[2], tpath);

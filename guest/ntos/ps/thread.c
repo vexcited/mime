@@ -1042,12 +1042,14 @@ void PsDumpThreads(void)
     static const char *const states[] = {"initialized", "ready", "running", "standby", "terminated", "waiting"};
     enum { MAX = 512 };
     static PETHREAD threads[MAX];
+    static PVOID satisfied[MAX];
     ULONG n = 0;
     ULONG64 s = KiAcquireDispatcherLock();
     for (PLIST_ENTRY p = PsActiveProcessHead.Flink; p != &PsActiveProcessHead; p = p->Flink) {
         PEPROCESS process = CONTAINING_RECORD(p, EPROCESS, ActiveProcessLinks);
         for (PLIST_ENTRY t = process->ThreadListHead.Flink; t != &process->ThreadListHead && n < MAX; t = t->Flink) {
             threads[n] = CONTAINING_RECORD(t, ETHREAD, ThreadListEntry);
+            satisfied[n] = KiSatisfiedWaitObject(&threads[n]->Tcb);
             ObReferenceObject(threads[n++]);
         }
     }
@@ -1083,6 +1085,10 @@ void PsDumpThreads(void)
                     (PVOID)top, due);
         if (chain[0])
             KiLogPrintf("  calls%s", chain);
+        if (satisfied[i])
+            KiLogPrintf("  lost wake: thread %u sleeps although object %p is signaled", (ULONG)(ULONG_PTR)threads[i]->Cid.UniqueThread,
+                        satisfied[i]);
         ObDereferenceObject(threads[i]);
     }
+    NpfsDumpState();
 }

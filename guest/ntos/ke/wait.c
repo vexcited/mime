@@ -182,6 +182,25 @@ static BOOLEAN acquire_object(PDISPATCHER_HEADER h, PKTHREAD thread)
     return FALSE;
 }
 
+/* dispatcher lock held. the object of a wait that could end now, which no wake should have left sleeping, or null. */
+PVOID KiSatisfiedWaitObject(PKTHREAD thread)
+{
+    if (thread->State != Waiting || !thread->WaitBlockList)
+        return nullptr;
+    BOOLEAN all = thread->WaitBlockList->WaitType == WaitAll;
+    PVOID first = nullptr;
+    for (PKWAIT_BLOCK b = thread->WaitBlockList; b; b = b->NextWaitBlock) {
+        if (b->WaitKey == STATUS_TIMEOUT)
+            continue;
+        BOOLEAN signaled = is_signaled(b->Object, thread);
+        if (all && !signaled)
+            return nullptr;
+        if (signaled && !first)
+            first = b->Object;
+    }
+    return first;
+}
+
 static BOOLEAN thread_all_signaled(PKTHREAD thread)
 {
     for (PKWAIT_BLOCK b = thread->WaitBlockList; b; b = b->NextWaitBlock) {

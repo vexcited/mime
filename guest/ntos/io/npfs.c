@@ -314,6 +314,32 @@ static void fail_all(LIST_ENTRY *list, NTSTATUS status)
         complete_request(CONTAINING_RECORD(RemoveHeadList(list), NP_REQUEST, Links), status, 0);
 }
 
+/* for the thread dump: a queue with data and a reader that waits for it was left by a lost wake. */
+void NpfsDumpState(void)
+{
+    ULONG instances = 0, waiting = 0;
+    lock();
+    for (PLIST_ENTRY l = g_pipes.Flink; l != &g_pipes; l = l->Flink) {
+        NP_PIPE *p = CONTAINING_RECORD(l, NP_PIPE, Links);
+        for (PLIST_ENTRY i = p->InstanceList.Flink; i != &p->InstanceList; i = i->Flink) {
+            NP_INSTANCE *in = CONTAINING_RECORD(i, NP_INSTANCE, Links);
+            NP_QUEUE *queues[2] = {&in->ToServer, &in->ToClient};
+            instances++;
+            for (ULONG k = 0; k < 2; k++) {
+                /* a queue is read by the end it is named for: ToServer by the server's. */
+                BOOLEAN reader = !IsListEmpty(&queues[k]->Readers);
+                waiting += reader;
+                if (!IsListEmpty(&queues[k]->Data))
+                    KiLogPrintf("npfs: %s end of %.*ws (process %u) has %u bytes in %u messages unread%s",
+                                k ? "client" : "server", p->Name.Length / 2, p->Name.Buffer, in->ProcessId[k ? 1 : 0],
+                                queues[k]->Bytes, queues[k]->Messages, reader ? ", and a read waiting for them" : ", no read is waiting");
+            }
+        }
+    }
+    unlock();
+    KiLogPrintf("npfs: %u instances, %u queues with a reader waiting", instances, waiting);
+}
+
 /* ------------------------------------------------------------ data */
 
 /* moves data of q into a reader's buffer; returns the status of the read and the bytes moved. */

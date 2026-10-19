@@ -1013,6 +1013,8 @@ NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB
 NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process);
 void PspJobProcessExit(PEPROCESS process);
 void PsDumpThreads(void);
+void NpfsDumpState(void);
+PVOID KiSatisfiedWaitObject(PKTHREAD thread);
 void KiDumpServiceCalls(void);
 extern POBJECT_TYPE IoCompletionObjectType;
 PEPROCESS PspLookupProcess(HANDLE pid);
