@@ -333,6 +333,7 @@ enum {
     MIME_HC_VK_OPEN = 0x2D,     /* (pa, size) -> connection, see mime/mvk_wire.h */
     MIME_HC_VK_KICK = 0x2E,     /* (connection) new calls while the host is idle */
     MIME_HC_VK_CLOSE = 0x2F,    /* (connection) returns once the host and the gpu no longer use its memory */
+    MIME_HC_GFX_SHARE_FREE = 0x70, /* (id) the last handle of a shared direct3d resource or fence went: the host drops what it kept of it for other processes */
 
     /* host sockets, failing with MIME_HC_STATUS_NET_ERROR and a winsock error as the value. */
     MIME_HC_NET_SOCKET = 0x30,     /* (family, type, protocol) -> socket */

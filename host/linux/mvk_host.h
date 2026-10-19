@@ -173,4 +173,11 @@ void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, ui
 VkSemaphore mvk_wsi_chain_acquire(MvkConnection *c, MvkImageChain *s);
 void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s);
 
+
+/* vkshare.c: memory and semaphores crossing between the processes' devices, see there. */
+void mvk_share_export_memory(MvkCall *call);
+void mvk_share_import_memory(MvkCall *call);
+void mvk_share_export_semaphore(MvkCall *call);
+void mvk_share_import_semaphore(MvkCall *call);
+
 #endif

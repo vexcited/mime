@@ -264,6 +264,17 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device, const VkMemoryA
     return VK_SUCCESS;
 }
 
+/* memory the host imported from another process's device: the guest cannot map it. */
+VkResult mvk_memory_imported(VkDeviceMemory memory, VkDeviceSize size)
+{
+    Memory *m = zalloc(sizeof(*m));
+    if (!m)
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    m->size = size;
+    map_put(&g_memory, (uint64_t)memory, m);
+    return VK_SUCCESS;
+}
+
 VKAPI_ATTR void VKAPI_CALL vkFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks *allocator)
 {
     if (!memory)

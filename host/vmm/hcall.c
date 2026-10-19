@@ -466,6 +466,9 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_VK_CLOSE:
         mime_vk_close(regs[1]);
         break;
+    case MIME_HC_GFX_SHARE_FREE:
+        mime_vk_share_free(regs[1]);
+        break;
     case MIME_HC_AUDIO_OPEN:
         status = mime_audio_open(vm, regs[1], regs[2], &value);
         break;

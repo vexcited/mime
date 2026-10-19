@@ -198,6 +198,7 @@ static ULONG STDMETHODCALLTYPE fence_release(ID3D12Fence1 *iface)
     if (!refs) {
         D12Device *device = fence->child.device;
         device->vk.vkDestroySemaphore(device->vk.device, fence->semaphore, nullptr);
+        MimeShareClose(&fence->share);
         HeapFree(GetProcessHeap(), 0, fence->waits);
         D12ChildRelease(&fence->child);
         HeapFree(GetProcessHeap(), 0, fence);
@@ -295,9 +296,14 @@ HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags,
     fence->flags = flags;
     fence->completed = fence->queued = value;
     InitializeSRWLock(&fence->lock);
+    /* a shared fence's payload is meant to cross to other devices, as a descriptor. */
+    VkExportSemaphoreCreateInfo export = {VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO, nullptr,
+                                          VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT};
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     type.initialValue = value;
+    if (flags & D3D12_FENCE_FLAG_SHARED)
+        type.pNext = &export;
     VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
     if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &fence->semaphore) != VK_SUCCESS) {
         HeapFree(GetProcessHeap(), 0, fence);
@@ -695,5 +701,70 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
     queue->child.refs = 1;
     D12ChildInit(&queue->child, device);
     *out = queue;
+    return S_OK;
+}
+
+/* ------------------------------------------------------------------ shared fences */
+
+/*
+ * The first handle makes the kernel object and keeps the semaphore's payload for other devices. The fence's
+ * description is its flags and the adapter.
+ */
+HRESULT D12FenceShare(D12Fence *fence, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out)
+{
+    D12Device *device = fence->child.device;
+    HRESULT hr = S_OK;
+    AcquireSRWLockExclusive(&fence->lock);
+    if (!fence->share.handle) {
+        MimeShareBlob blob = {};
+        blob.magic = MIME_SHARE_MAGIC;
+        blob.kind = MIME_SHARE_FENCE;
+        blob.fence_flags = fence->flags;
+        blob.adapter = device->adapter_luid;
+        hr = MimeShareCreate(&fence->share, MIME_GFXSHARE_SYNC, &blob, sizeof(blob), 0, name, attributes);
+        if (SUCCEEDED(hr) &&
+            device->vk.vkMimeShareExportSemaphore(device->vk.device, fence->semaphore, fence->share.id) != VK_SUCCESS) {
+            MimeShareClose(&fence->share);
+            hr = E_FAIL;
+        }
+    } else if (name) {
+        /* a second name is not another object. */
+        hr = DXGI_ERROR_NAME_ALREADY_EXISTS;
+    }
+    ReleaseSRWLockExclusive(&fence->lock);
+    if (SUCCEEDED(hr))
+        hr = MimeShareHandle(&fence->share, 0, attributes, out);
+    return hr;
+}
+
+HRESULT D12FenceOpen(D12Device *device, HANDLE handle, D12Fence **out)
+{
+    MimeShareBlob blob = {};
+    MimeShare own;
+    UINT size = 0;
+    HRESULT hr = MimeShareOpen(handle, MIME_GFXSHARE_SYNC, &own, &blob, sizeof(blob), &size);
+    if (FAILED(hr))
+        return hr;
+    if (size != sizeof(blob) || blob.magic != MIME_SHARE_MAGIC || blob.kind != MIME_SHARE_FENCE) {
+        MimeShareClose(&own);
+        return E_INVALIDARG;
+    }
+    D12Fence *fence;
+    hr = D12CreateFence(device, 0, (D3D12_FENCE_FLAGS)(blob.fence_flags | D3D12_FENCE_FLAG_SHARED), &fence);
+    if (FAILED(hr)) {
+        MimeShareClose(&own);
+        return hr;
+    }
+    if (device->vk.vkMimeShareImportSemaphore(device->vk.device, fence->semaphore, own.id) != VK_SUCCESS) {
+        MimeShareClose(&own);
+        fence->iface.lpVtbl->Release(&fence->iface);
+        return E_FAIL;
+    }
+    fence->share = own;
+    /* the payload has a value already, which the fence reports and its waits start from. */
+    UINT64 value = 0;
+    device->vk.vkGetSemaphoreCounterValue(device->vk.device, fence->semaphore, &value);
+    fence->completed = fence->queued = value;
+    *out = fence;
     return S_OK;
 }

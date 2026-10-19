@@ -751,6 +751,12 @@ static void create_device(MvkCall *call)
         c->host_import = host_has(list, count, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
         if (c->host_import)
             names[n++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+        /* memory and semaphores that cross to other processes' devices, whether the guest asked or not. */
+        if (host_has(list, count, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
+            host_has(list, count, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) {
+            names[n++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+            names[n++] = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+        }
         /* the presenter's swapchains, whether the guest presents or not. */
         bool swapchain = false;
         for (uint32_t i = 0; i < n; i++)
@@ -2029,6 +2035,10 @@ static void run_hand(MvkCall *call)
     case MVK_OP_VIDEO_CREATE: mvk_video_create(call); break;
     case MVK_OP_VIDEO_DESTROY: mvk_video_destroy(call); break;
     case MVK_OP_VIDEO_DECODE: mvk_video_decode(call); break;
+    case MVK_OP_SHARE_EXPORT_MEMORY: mvk_share_export_memory(call); break;
+    case MVK_OP_SHARE_IMPORT_MEMORY: mvk_share_import_memory(call); break;
+    case MVK_OP_SHARE_EXPORT_SEMAPHORE: mvk_share_export_semaphore(call); break;
+    case MVK_OP_SHARE_IMPORT_SEMAPHORE: mvk_share_import_semaphore(call); break;
     default:
         mime_warn("vulkan: unknown call %#x", call->header.op);
         break;

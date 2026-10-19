@@ -130,7 +130,7 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
     set(objects_d3d10 x86-lib-dxbc:guest/lib/dxbc/container.c)
     set(objects_d3d10_1 x86-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core x86-d3d10core:guest/d3d10core/kmt.c)
-    set(objects_d3d12 x86-lib-privdata x86-lib-dxbc x86-lib-dxil x86-d3d11:guest/d3d11/format.c x86-d3d11:guest/d3d11/vkprofile.c)
+    set(objects_d3d12 x86-lib-privdata x86-lib-dxbc x86-lib-dxil x86-d3d11:guest/d3d11/format.c x86-d3d11:guest/d3d11/vkprofile.c x86-d3d11:guest/d3d11/gfxshare.c)
     set(objects_d3d9 x86-lib-privdata x86-lib-dxbc:guest/lib/dxbc/container.c)
     set(includes_dxgi third_party/khronos)
     # the video processor's compute shader is assembled at build time.

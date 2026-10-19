@@ -16,6 +16,8 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *connecti
 void mime_vk_kick(uint64_t connection);
 void mime_vk_close(uint64_t connection);
 void mime_vk_close_all(void);
+/* the last handle of a shared direct3d resource or fence is gone: what the host kept of it for other processes goes. */
+void mime_vk_share_free(uint64_t id);
 /* loads the host's vulkan driver in the background, so the first connection of the guest does not wait for it. */
 void mime_vk_warm_up(void);
 /* what the host spent on the guest's calls since the last time, to the log. */

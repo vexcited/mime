@@ -598,6 +598,9 @@ W32KAPI NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkKick(void);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms);
 
+/* shared direct3d resources and fences: the services of mime/gfxshare.h. */
+W32KAPI NTSTATUS NTAPI NtGdiMimeGfxShare(ULONG op, PVOID arguments);
+
 /* the display's gamma ramps, three channels of 256 values, red first. */
 #define MIME_GAMMA_GET 0    /* the ramp gdi set for the session, the identity before any */
 #define MIME_GAMMA_SET 1    /* gdi's ramp */

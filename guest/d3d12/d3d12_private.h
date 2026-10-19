@@ -22,6 +22,8 @@
 #include <vulkan/vulkan_win32.h>
 #include "../d3d11/format.h"
 #include "../d3d11/vkprofile.h"
+#include "../d3d11/gfxshare.h"
+#include <mime/mvk_share.h>
 
 #define D12_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define D12_MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -219,6 +221,11 @@ typedef struct D12Vk {
     D12_VK_INSTANCE_FUNCS(X)
     D12_VK_DEVICE_FUNCS(X)
 #undef X
+    /* memory and semaphores crossing to the devices of other processes, mime's vulkan-1.dll. */
+    PFN_vkMimeShareExportMemory vkMimeShareExportMemory;
+    PFN_vkMimeShareImportMemory vkMimeShareImportMemory;
+    PFN_vkMimeShareExportSemaphore vkMimeShareExportSemaphore;
+    PFN_vkMimeShareImportSemaphore vkMimeShareImportSemaphore;
 } D12Vk;
 
 /* ------------------------------------------------------------------ objects */
@@ -616,9 +623,15 @@ typedef struct D12Fence {
     D12FenceWait *waits;
     UINT wait_count, wait_capacity;
     struct D12Fence *next_waiting;
+    /* the kernel object of a shared fence, once it has a handle or was opened from one. */
+    MimeShare share;
 } D12Fence;
 
 HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags, D12Fence **out);
+/* a handle to a shared fence, which becomes shared with the first. */
+HRESULT D12FenceShare(D12Fence *fence, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out);
+/* the fence a handle names, as a fence of this device. */
+HRESULT D12FenceOpen(D12Device *device, HANDLE handle, D12Fence **out);
 D12Fence *D12FenceFrom(ID3D12Fence *iface);
 UINT64 D12FenceValue(D12Fence *fence);
 void D12FenceWake(D12Device *device);

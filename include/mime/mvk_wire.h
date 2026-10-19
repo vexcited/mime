@@ -136,6 +136,10 @@ enum {
     MVK_OP_VIDEO_CREATE,            /* a decoder session */
     MVK_OP_VIDEO_DESTROY,
     MVK_OP_VIDEO_DECODE,            /* a picture, from dxva buffers */
+    MVK_OP_SHARE_EXPORT_MEMORY,     /* memory of the device, kept for other processes under the id of a shared object */
+    MVK_OP_SHARE_IMPORT_MEMORY,     /* memory of a shared object, imported as a new memory of this device */
+    MVK_OP_SHARE_EXPORT_SEMAPHORE,  /* a timeline semaphore, kept for other processes */
+    MVK_OP_SHARE_IMPORT_SEMAPHORE,  /* a shared timeline semaphore's payload, becoming a semaphore's of this device */
     MVK_OP_HAND_END,
 };
 

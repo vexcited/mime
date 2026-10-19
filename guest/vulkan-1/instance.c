@@ -323,6 +323,9 @@ static PFN_vkVoidFunction find_proc(const char *name)
     for (const MvkProc *p = mvk_video_procs; p->name; p++)
         if (!strcmp(p->name, name))
             return p->fn;
+    for (const MvkProc *p = mvk_share_procs; p->name; p++)
+        if (!strcmp(p->name, name))
+            return p->fn;
     return nullptr;
 }
 

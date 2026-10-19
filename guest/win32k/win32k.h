@@ -928,6 +928,7 @@ void InputReleaseLeftButton(void);         /* another host program pastes a kind
 void GpuFreeProcess(W32PROCESS *p);
 void VkFreeProcess(W32PROCESS *p);
 void AudioFreeProcess(W32PROCESS *p);
+void GfxShareFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
 

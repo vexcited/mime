@@ -171,6 +171,12 @@ static HRESULT create_vulkan_device(D12Device *device, IDXGIAdapter *adapter, co
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D12_VK_DEVICE_FUNCS(X)
 #undef X
+    vk->vkMimeShareExportMemory = (PFN_vkMimeShareExportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportMemory");
+    vk->vkMimeShareImportMemory = (PFN_vkMimeShareImportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportMemory");
+    vk->vkMimeShareExportSemaphore =
+        (PFN_vkMimeShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportSemaphore");
+    vk->vkMimeShareImportSemaphore =
+        (PFN_vkMimeShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportSemaphore");
 #define COPY(field) device->field = p->field
     COPY(has_depth_clip);
     COPY(has_custom_border);
@@ -1206,25 +1212,80 @@ static HRESULT STDMETHODCALLTYPE device_create_reserved_resource2(ID3D12Device14
     return device_create_reserved_resource(iface, desc, 0, clear, riid, out);
 }
 
+static void validation_error(D12Device *device, const char *message)
+{
+    D12Log("d3d12: %s", message);
+}
+
+/*
+ * A handle for a fence, committed resource or heap that was made to be shared. The checks and their order are
+ * those of D3D12Core.dll: the object and the handle are required, the object must have been made shareable, and
+ * the access of a fence and of a heap's handle must be GENERIC_ALL.
+ */
 static HRESULT STDMETHODCALLTYPE device_create_shared_handle(ID3D12Device14 *iface, ID3D12DeviceChild *object,
                                                              const SECURITY_ATTRIBUTES *attributes, DWORD access,
                                                              LPCWSTR name, HANDLE *handle)
 {
-    return E_NOTIMPL;
+    D12Device *device = impl(iface);
+    if (!object || !handle) {
+        validation_error(device, object ? "pHandle cannot be NULL." : "pObject cannot be NULL.");
+        return E_INVALIDARG;
+    }
+    ID3D12Fence *fence = nullptr;
+    if (SUCCEEDED(object->lpVtbl->QueryInterface(object, &IID_ID3D12Fence, (void **)&fence))) {
+        D12Fence *f = D12FenceFrom(fence);
+        fence->lpVtbl->Release(fence);
+        if (!(f->flags & D3D12_FENCE_FLAG_SHARED)) {
+            validation_error(device, "pObject points to a fence that was not created with the D3D12_FENCE_FLAG_SHARED flag.");
+            return E_INVALIDARG;
+        }
+        if (access != GENERIC_ALL) {
+            validation_error(device, "Access parameter must be GENERIC_ALL.");
+            return E_INVALIDARG;
+        }
+        return D12FenceShare(f, attributes, name, handle);
+    }
+    validation_error(device,
+                     "Only Committed Resources, Heaps, Fences, or Protected Sessions can have a shared handle. pObject "
+                     "points to none of these DeviceChild types.");
+    return E_INVALIDARG;
 }
 
 static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface, HANDLE handle, REFIID riid,
                                                            void **out)
 {
-    if (out)
-        *out = nullptr;
+    D12Device *device = impl(iface);
+    UINT kind = 0;
+    HRESULT hr = MimeShareKind(handle, &kind);
+    if (FAILED(hr))
+        return hr;
+    if (kind == MIME_GFXSHARE_SYNC) {
+        D12Fence *fence;
+        hr = D12FenceOpen(device, handle, &fence);
+        if (FAILED(hr))
+            return hr;
+        hr = fence->iface.lpVtbl->QueryInterface(&fence->iface, riid, out);
+        fence->iface.lpVtbl->Release(&fence->iface);
+        return hr;
+    }
     return E_NOTIMPL;
 }
 
+/* only the access GENERIC_ALL opens more than a fence, as in D3D12Core.dll. */
 static HRESULT STDMETHODCALLTYPE device_open_shared_handle_by_name(ID3D12Device14 *iface, LPCWSTR name, DWORD access,
                                                                    HANDLE *handle)
 {
-    return E_NOTIMPL;
+    if (!handle)
+        return E_INVALIDARG;
+    *handle = nullptr;
+    HRESULT hr = E_INVALIDARG;
+    if (name && access == GENERIC_ALL)
+        hr = MimeShareOpenName(name, MIME_GFXSHARE_RESOURCE, handle);
+    if (name && FAILED(hr))
+        hr = MimeShareOpenName(name, MIME_GFXSHARE_SYNC, handle);
+    if (FAILED(hr))
+        *handle = nullptr;
+    return hr;
 }
 
 /* residency is the host driver's: everything stays resident. */

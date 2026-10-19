@@ -115,6 +115,8 @@ typedef struct MvkProc {
 extern const MvkProc mvk_procs[];
 /* video.c: private commands. */
 extern const MvkProc mvk_video_procs[];
+/* share.c: memory and semaphores crossing to other processes' devices. */
+extern const MvkProc mvk_share_procs[];
 
 /* the generated entry points the hand written ones extend. */
 VKAPI_ATTR void VKAPI_CALL mvk_raw_vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physical,
