@@ -51,18 +51,26 @@ static void free_request(IO_USER_REQUEST *r)
     ExFreePool(r);
 }
 
-/* copies into the requesting process, from whatever thread the answer comes on. */
-NTSTATUS IopCopyToRequester(IO_USER_REQUEST *r, PVOID dst, const void *src, SIZE_T length)
+NTSTATUS IopCopyToProcess(PEPROCESS process, PVOID dst, const void *src, SIZE_T length)
 {
     if (!length)
         return STATUS_SUCCESS;
-    if (r->Process == PsCurrentProcess())
+    if (process == PsCurrentProcess())
         return MimeCopyToUser(dst, src, length);
+    SIZE_T done = MmCopyToProcessFast(process, dst, src, length);
+    if (done == length)
+        return STATUS_SUCCESS;
     PKPROCESS state;
-    KeStackAttachProcess(&r->Process->Pcb, &state);
-    NTSTATUS status = MimeCopyToUser(dst, src, length);
+    KeStackAttachProcess(&process->Pcb, &state);
+    NTSTATUS status = MimeCopyToUser((PUCHAR)dst + done, (const UCHAR *)src + done, length - done);
     KeUnstackDetachProcess(&state);
     return status;
+}
+
+/* copies into the requesting process, from whatever thread the answer comes on. */
+NTSTATUS IopCopyToRequester(IO_USER_REQUEST *r, PVOID dst, const void *src, SIZE_T length)
+{
+    return IopCopyToProcess(r->Process, dst, src, length);
 }
 
 /* the status block, the event, then the apc or the completion port, which an error before pending skips. */

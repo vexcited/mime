@@ -196,6 +196,8 @@ static NTSTATUS attach_copy(PEPROCESS process, PVOID dst, const void *src, SIZE_
         return STATUS_SUCCESS;
     if (process == PsCurrentProcess())
         return to_user ? MimeCopyToUser(dst, src, length) : MimeCopyFromUser(dst, src, length);
+    if (to_user)
+        return IopCopyToProcess(process, dst, src, length);
     PKPROCESS state;
     KeStackAttachProcess(&process->Pcb, &state);
     NTSTATUS status = to_user ? MimeCopyToUser(dst, src, length) : MimeCopyFromUser(dst, src, length);

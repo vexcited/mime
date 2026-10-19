@@ -137,7 +137,7 @@ typedef struct NP_CREATE {
 } NP_CREATE;
 
 static PDEVICE_OBJECT g_device;
-static KMUTEX g_lock;
+static FAST_MUTEX g_lock; /* a plain atomic when no one else holds it, which is nearly always: the kernel lock is held */
 static KMUTEX g_create_lock;
 static LIST_ENTRY g_pipes;
 static NP_CREATE *volatile g_create_owner_params;
@@ -145,12 +145,12 @@ static PKTHREAD volatile g_create_owner;
 
 static void lock(void)
 {
-    KeWaitForSingleObject(&g_lock, Executive, KernelMode, FALSE, nullptr);
+    ExAcquireFastMutex(&g_lock);
 }
 
 static void unlock(void)
 {
-    KeReleaseMutex(&g_lock, FALSE);
+    ExReleaseFastMutex(&g_lock);
 }
 
 static void init_queue(NP_QUEUE *q)
@@ -187,15 +187,7 @@ static NP_QUEUE *write_queue(NP_INSTANCE *in, PFILE_OBJECT file)
 
 static NTSTATUS copy_to_process(PEPROCESS process, PVOID dst, const void *src, SIZE_T length)
 {
-    if (!length)
-        return STATUS_SUCCESS;
-    if (process == PsCurrentProcess())
-        return MimeCopyToUser(dst, src, length);
-    PKPROCESS state;
-    KeStackAttachProcess(&process->Pcb, &state);
-    NTSTATUS status = MimeCopyToUser(dst, src, length);
-    KeUnstackDetachProcess(&state);
-    return status;
+    return IopCopyToProcess(process, dst, src, length);
 }
 
 static NP_REQUEST *new_request(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context,
@@ -240,6 +232,60 @@ static void free_request(NP_REQUEST *r)
     ObDereferenceObject(r->Thread);
     ObDereferenceObject(r->Process);
     ExFreePool(r);
+}
+
+/*
+ * a read or a write is a request on the stack of the call until it has to wait: most complete before they return,
+ * and then nothing is allocated or referenced but the event the caller named. A request that goes pending is
+ * copied to the pool with the references that keep what it names alive.
+ */
+static BOOLEAN init_call(NP_REQUEST *r, PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context,
+                         PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, NTSTATUS *status)
+{
+    memset(r, 0, offsetof(NP_REQUEST, Done));
+    if (event) {
+        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
+        if (!NT_SUCCESS(*status))
+            return FALSE;
+        KeClearEvent(r->Event);
+    }
+    r->Process = PsCurrentProcess();
+    r->Thread = PsCurrentThread();
+    r->ApcRoutine = apc_routine;
+    r->File = file;
+    r->ApcContext = apc_context;
+    r->Iosb = iosb;
+    r->Buffer = buffer;
+    r->Length = length;
+    r->Waiter = (file->Flags & FO_SYNCHRONOUS_IO) != 0;
+    return TRUE;
+}
+
+static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information);
+
+/* ends a call on the stack: its status comes back from the system call too. */
+static NTSTATUS call_done(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
+{
+    r->Immediate = TRUE;
+    finish_request(r, status, information);
+    if (r->Event)
+        ObDereferenceObject(r->Event);
+    return status;
+}
+
+/* the pooled copy of a call that has to wait, which owns the event now. */
+static NP_REQUEST *call_to_pool(NP_REQUEST *call)
+{
+    NP_REQUEST *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('N', 'p', 'R', 'q'));
+    if (!r)
+        return nullptr;
+    memcpy(r, call, offsetof(NP_REQUEST, Done));
+    call->Event = nullptr;
+    ObReferenceObject(r->Process);
+    ObReferenceObject(r->Thread);
+    ObReferenceObject(r->File);
+    KeInitializeEvent(&r->Done, NotificationEvent, FALSE);
+    return r;
 }
 
 /* reports the result to the caller: status block, event and completion port, which an error that
@@ -797,7 +843,7 @@ static NTSTATUS NTAPI NpfsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING reg
 
 void IopInitializeNamedPipes(void)
 {
-    KeInitializeMutex(&g_lock, 0);
+    ExInitializeFastMutex(&g_lock);
     KeInitializeMutex(&g_create_lock, 0);
     InitializeListHead(&g_pipes);
     NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Npfs", NpfsDriverEntry, nullptr);
@@ -869,19 +915,19 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length)
 {
     NTSTATUS status;
-    NP_REQUEST *r = new_request(file, event, apc_routine, apc_context, iosb, buffer, length, &status);
-    if (!r)
+    NP_REQUEST call;
+    if (!init_call(&call, file, event, apc_routine, apc_context, iosb, buffer, length, &status))
         return status;
     PUCHAR copy = nullptr;
     if (write && length) {
         /* the data is taken now, in the writer's address space. */
         copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NP_DATA) + length, KI_TAG('N', 'p', 'D', 't'));
         if (!copy)
-            return immediate(r, STATUS_INSUFFICIENT_RESOURCES, 0);
+            return call_done(&call, STATUS_INSUFFICIENT_RESOURCES, 0);
         status = KiCopyFromUser(copy + sizeof(NP_DATA), buffer, length);
         if (!NT_SUCCESS(status)) {
             ExFreePool(copy);
-            return immediate(r, status, 0);
+            return call_done(&call, status, 0);
         }
     }
     lock();
@@ -890,7 +936,7 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
         unlock();
         if (copy)
             ExFreePool(copy);
-        return immediate(r, in ? STATUS_INVALID_PARAMETER : STATUS_PIPE_DISCONNECTED, 0);
+        return call_done(&call, in ? STATUS_INVALID_PARAMETER : STATUS_PIPE_DISCONNECTED, 0);
     }
     BOOLEAN server = file->FsContext2 == END_SERVER;
     if (write) {
@@ -905,7 +951,7 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
             unlock();
             if (copy)
                 ExFreePool(copy);
-            return immediate(r, st, 0);
+            return call_done(&call, st, 0);
         }
         /* a client that impersonates, or stopped, is the identity its next data carries. */
         if (!server && (PsCurrentThread()->ImpersonationToken || in->ClientImpersonating)) {
@@ -922,7 +968,7 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
                               : ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NP_DATA), KI_TAG('N', 'p', 'D', 't'));
             if (!d) {
                 unlock();
-                return immediate(r, STATUS_INSUFFICIENT_RESOURCES, 0);
+                return call_done(&call, STATUS_INSUFFICIENT_RESOURCES, 0);
             }
             d->Length = length;
             d->Offset = 0;
@@ -932,16 +978,16 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
             serve_readers(in, q, reader_mode(in, q));
         }
         unlock();
-        return immediate(r, STATUS_SUCCESS, length);
+        return call_done(&call, STATUS_SUCCESS, length);
     }
 
     NP_QUEUE *q = read_queue(in, file);
     ULONG mode = in->ReadMode[end_index(file)];
     if (!IsListEmpty(&q->Data)) {
         ULONG moved;
-        status = take_data(q, mode, r->Process, buffer, length, &moved);
+        status = take_data(q, mode, call.Process, buffer, length, &moved);
         unlock();
-        return immediate(r, status, moved);
+        return call_done(&call, status, moved);
     }
     NTSTATUS st = STATUS_SUCCESS;
     if (in->State == FILE_PIPE_LISTENING_STATE)
@@ -954,7 +1000,12 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
         st = STATUS_PIPE_EMPTY;
     if (!NT_SUCCESS(st)) {
         unlock();
-        return immediate(r, st, 0);
+        return call_done(&call, st, 0);
+    }
+    NP_REQUEST *r = call_to_pool(&call);
+    if (!r) {
+        unlock();
+        return call_done(&call, STATUS_INSUFFICIENT_RESOURCES, 0);
     }
     InsertTailList(&q->Readers, &r->Links);
     return pending(r);

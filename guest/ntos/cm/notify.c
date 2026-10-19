@@ -126,14 +126,7 @@ static void release_post(CM_POST *post)
 
 static void copy_to_process(PEPROCESS process, PVOID address, const void *source, ULONG length)
 {
-    if (process == PsCurrentProcess()) {
-        MimeCopyToUser(address, source, length);
-        return;
-    }
-    PKPROCESS state;
-    KeStackAttachProcess(&process->Pcb, &state);
-    MimeCopyToUser(address, source, length);
-    KeUnstackDetachProcess(&state);
+    IopCopyToProcess(process, address, source, length);
 }
 
 /* the status block, then the event, then the apc routine, for a post answered while the lock was held. */

@@ -1355,6 +1355,34 @@ BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
     return handled;
 }
 
+/*
+ * copies into the memory of another process without attaching to it, which loads its page tables (and, with no tagged
+ * translations, drops this processor's) twice for each completed request: the pages that are present and writable are
+ * written through their physical addresses. Returns how much it copied, which is all unless a page is absent, shared
+ * copy on write, guarded or read only; the caller copies the rest the slow way. The kernel lock is held, which keeps
+ * the process from changing its map and the page from going away, and the faults other processors resolve without it
+ * only make pages present.
+ */
+SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T length)
+{
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG_PTR va = (ULONG_PTR)dst;
+    if (!as->Root || va > MM_HIGHEST_USER_ADDRESS || length > MM_HIGHEST_USER_ADDRESS - va + 1)
+        return 0;
+    SIZE_T done = 0;
+    while (done < length) {
+        ULONG64 pte = MiReadPte(as->Root, (va + done) & ~(ULONG_PTR)(PAGE_SIZE - 1));
+        if (!(pte & MM_PTE_VALID) || !MI_PTE_IS_USER(pte) || MI_PTE_IS_RO(pte) || (pte & (MM_PTE_SW_COW | MM_PTE_SW_WATCH)))
+            break;
+        SIZE_T offset = (va + done) & (PAGE_SIZE - 1), n = PAGE_SIZE - offset;
+        if (n > length - done)
+            n = length - done;
+        memcpy((PUCHAR)HalPhysmap(pte & MM_PTE_ADDR_MASK) + offset, (const UCHAR *)src + done, n);
+        done += n;
+    }
+    return done;
+}
+
 /* resolves demand zero, section and copy on write faults. returns FALSE for real access violations. */
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {

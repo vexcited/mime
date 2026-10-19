@@ -1095,6 +1095,11 @@ void FsCacheClose(MIMEFS_CACHE *cache);
 void FsCacheInvalidate(ULONG volume, ULONG64 file_id);
 BOOLEAN FsCacheRead(MIMEFS_CACHE *cache, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done);
 BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *cache, ULONG64 host_handle, PULONG64 pa, PULONG64 size);
+/* mm/virtual.c: how much of a copy into another process's memory was done through its present pages, see there. */
+SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T length);
+/* copies into the memory of a process, the current one or another, from any thread. */
+NTSTATUS IopCopyToProcess(PEPROCESS process, PVOID dst, const void *src, SIZE_T length);
+
 /* io/fswrite.c, the small writes of a host backed file kept in the guest and written to the host together. */
 typedef struct _FS_WB {
     LIST_ENTRY Links;    /* of the kept buffers, while this one holds one */
