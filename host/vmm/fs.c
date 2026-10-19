@@ -226,6 +226,14 @@ static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_
 
 static void sd_memory_forget(const struct stat *st);
 
+/* the registry journal, and the file a new one is written to before it takes the journal's place. */
+static bool is_private_registry(MimeVm *vm, const char *path)
+{
+    const char *name = path + strlen(vm->paths->drive_c);
+    return !strcasecmp(name, "/Windows/System32/config/mime-registry.log") ||
+           !strcasecmp(name, "/Windows/System32/config/mime-registry.log.new");
+}
+
 /*
  * the windows are changed under their own lock on linux: taking a window away or placing one is a change of the
  * memory map that waits for every processor to leave the guest, a millisecond during which the other file calls
@@ -310,9 +318,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
     bool want_dir = req->flags & MIME_FS_OPEN_DIRECTORY;
     bool want_file = req->flags & MIME_FS_OPEN_NON_DIRECTORY;
     bool write = req->flags & MIME_FS_OPEN_WRITE;
-    bool private_registry = req->volume == MIME_FS_VOLUME_SYSTEM &&
-                            !strcasecmp(path + strlen(vm->paths->drive_c),
-                                        "/Windows/System32/config/mime-registry.log");
+    bool private_registry = req->volume == MIME_FS_VOLUME_SYSTEM && is_private_registry(vm, path);
     int private_flags = private_registry ? O_NOFOLLOW : 0;
     uint32_t action = FILE_OPENED;
     int fd;
@@ -364,8 +370,8 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         close(fd);
         return status;
     }
-    if (private_registry && S_ISREG(st.st_mode)) {
-        /* retry directory sync even when an earlier open already created the journal. */
+    if (private_registry && S_ISREG(st.st_mode) && (action == FILE_CREATED || st.st_size == 0)) {
+        /* retry the directory sync until a record is in the journal, when the entry is known to be there. */
         uint64_t status = flush_parent(path);
         if (status != MIME_HC_STATUS_OK) {
             close(fd);
@@ -653,6 +659,9 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
         return MIME_HC_STATUS_INVALID;
     if (rename(src->host_path, target) != 0)
         return errno_status(errno);
+    /* the journal takes its place for good only when the directory says so. */
+    if (src->volume == MIME_FS_VOLUME_SYSTEM && is_private_registry(vm, target))
+        flush_parent(target);
 
     char *old = mime_xstrdup(src->host_path);
     pthread_mutex_lock(&vm->fs_lock);

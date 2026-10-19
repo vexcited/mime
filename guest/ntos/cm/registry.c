@@ -1011,7 +1011,10 @@ static NTSTATUS delete_key(CM_NODE *node)
 
 NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
 {
-    PWCHAR path = ExAllocatePool2(POOL_FLAG_NON_PAGED, MAX_PATH_CHARS * sizeof(WCHAR), KI_TAG('C', 'm', 'J', 'p'));
+    /* the path is worked on by the walk, which wants room to follow a link. replay is one thread at boot. */
+    static PWCHAR path;
+    if (!path)
+        path = ExAllocatePool2(POOL_FLAG_NON_PAGED, MAX_PATH_CHARS * sizeof(WCHAR), KI_TAG('C', 'm', 'J', 'p'));
     if (!path)
         return STATUS_INSUFFICIENT_RESOURCES;
     ULONG prefix = 9;
@@ -1024,7 +1027,6 @@ NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
                        record->operation == CM_JOURNAL_SET_SECURITY;
     CM_NODE *node;
     NTSTATUS status = walk(CmpRoot, path, chars, OBJ_OPENLINK, deleting ? nullptr : &create, &node);
-    ExFreePool(path);
     if (deleting && status == STATUS_OBJECT_NAME_NOT_FOUND)
         return STATUS_SUCCESS;
     if (!NT_SUCCESS(status))

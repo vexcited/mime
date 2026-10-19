@@ -61,20 +61,56 @@ static inline uint32_t cm_journal_size(const CmJournalRecord *r)
     return CM_JOURNAL_HEADER + r->path_bytes + r->name_bytes + r->data_bytes;
 }
 
+/* the tables of the crc, eight bytes at a time: the log is checked record by record at every boot. */
+static inline const uint32_t (*cm_journal_crc_tables(void))[256]
+{
+    static uint32_t table[8][256];
+    static uint32_t ready;
+    if (!__atomic_load_n(&ready, __ATOMIC_ACQUIRE)) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++)
+                c = c & 1 ? (c >> 1) ^ 0xedb88320u : c >> 1;
+            table[0][i] = c;
+        }
+        for (uint32_t i = 0; i < 256; i++)
+            for (int k = 1; k < 8; k++)
+                table[k][i] = table[0][table[k - 1][i] & 255] ^ (table[k - 1][i] >> 8);
+        __atomic_store_n(&ready, 1, __ATOMIC_RELEASE);
+    }
+    return table;
+}
+
+static inline uint32_t cm_journal_crc_update(const uint32_t (*t)[256], uint32_t crc, const uint8_t *p, size_t size)
+{
+    while (size >= 8) {
+        uint32_t a = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+        uint32_t b = (uint32_t)p[4] | (uint32_t)p[5] << 8 | (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
+        a ^= crc;
+        crc = t[7][a & 255] ^ t[6][(a >> 8) & 255] ^ t[5][(a >> 16) & 255] ^ t[4][a >> 24] ^ t[3][b & 255] ^
+              t[2][(b >> 8) & 255] ^ t[1][(b >> 16) & 255] ^ t[0][b >> 24];
+        p += 8;
+        size -= 8;
+    }
+    while (size--)
+        crc = t[0][(crc ^ *p++) & 255] ^ (crc >> 8);
+    return crc;
+}
+
+/* the crc of the record with the four bytes of the crc field itself taken as zeros. */
 static inline uint32_t cm_journal_crc(const uint8_t *p, size_t size)
 {
-    static const uint32_t table[16] = {
-        0x00000000u, 0x1db71064u, 0x3b6e20c8u, 0x26d930acu,
-        0x76dc4190u, 0x6b6b51f4u, 0x4db26158u, 0x5005713cu,
-        0xedb88320u, 0xf00f9344u, 0xd6d6a3e8u, 0xcb61b38cu,
-        0x9b64c2b0u, 0x86d3d2d4u, 0xa00ae278u, 0xbdbdf21cu,
-    };
+    const uint32_t (*t)[256] = cm_journal_crc_tables();
+    static const uint8_t zeros[4] = {0, 0, 0, 0};
     uint32_t crc = UINT32_MAX;
-    for (size_t i = 0; i < size; i++) {
-        crc ^= i >= 48 && i < 52 ? 0 : p[i];
-        crc = (crc >> 4) ^ table[crc & 15];
-        crc = (crc >> 4) ^ table[crc & 15];
+    size_t head = size < 48 ? size : 48;
+    crc = cm_journal_crc_update(t, crc, p, head);
+    if (size > 48) {
+        size_t field = size - 48 < 4 ? size - 48 : 4;
+        crc = cm_journal_crc_update(t, crc, zeros, field);
     }
+    if (size > 52)
+        crc = cm_journal_crc_update(t, crc, p + 52, size - 52);
     return ~crc;
 }
 
@@ -146,16 +182,15 @@ static inline bool cm_journal_validate(const uint8_t *p, size_t size, uint64_t s
     for (size_t i = 0; i < sizeof(prefix) - 1; i++)
         if (path[i * 2] != (uint8_t)prefix[i] || path[i * 2 + 1])
             return false;
+    /* the units of the name: none zero, no empty part between backslashes, no part past 255 units. */
     unsigned segment = 0;
-    for (size_t i = (sizeof(prefix) - 1) * 2; i < r.path_bytes; i += 2) {
-        uint16_t c = (uint16_t)path[i] | (uint16_t)path[i + 1] << 8;
-        if (!c)
-            return false;
-        if (c == '\\') {
+    for (const uint8_t *c = path + (sizeof(prefix) - 1) * 2, *end = path + r.path_bytes; c < end; c += 2) {
+        unsigned unit = c[0] | (unsigned)c[1] << 8;
+        if (unit == '\\') {
             if (!segment)
                 return false;
             segment = 0;
-        } else if (++segment > 255) {
+        } else if (!unit || ++segment > 255) {
             return false;
         }
     }

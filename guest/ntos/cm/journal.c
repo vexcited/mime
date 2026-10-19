@@ -58,13 +58,13 @@ static NTSTATUS truncate_tail(void)
  * the log is read in pieces of a record, tens of thousands of them, each of which is a call to the host:
  * replaying reads it a block at a time instead and takes the records out of that.
  */
-#define CM_REPLAY_BLOCK (16 * 1024)
+#define CM_REPLAY_BLOCK (64 * 1024)
 static PUCHAR CmpReplayBlock;
 static ULONG64 CmpReplayBlockOffset;
 static ULONG CmpReplayBlockLength;
 static ULONG64 CmpReplayFileLength;
 
-static NTSTATUS read_bytes(void *data, ULONG bytes, ULONG64 offset)
+NTSTATUS CmpJournalReadBytes(void *data, ULONG bytes, ULONG64 offset)
 {
     ULONG got = 0;
     if (CmpReplayBlock && bytes <= CM_REPLAY_BLOCK && offset + bytes <= CmpReplayFileLength) {
@@ -103,7 +103,7 @@ static BOOLEAN tail_is_zero(ULONG64 offset, ULONG64 length)
     BOOLEAN zero = TRUE;
     while (zero && offset < length) {
         ULONG bytes = length - offset < 4096 ? (ULONG)(length - offset) : 4096;
-        if (!NT_SUCCESS(read_bytes(chunk, bytes, offset)))
+        if (!NT_SUCCESS(CmpJournalReadBytes(chunk, bytes, offset)))
             zero = FALSE;
         for (ULONG i = 0; zero && i < bytes; i++)
             zero = chunk[i] == 0;
@@ -124,8 +124,12 @@ static NTSTATUS drop_torn_tail(const char *why)
     return truncate_tail();
 }
 
-static NTSTATUS replay(void)
+/* a journal this long is read for what in it no longer counts, see compact.c. */
+#define CM_COMPACT_MIN_BYTES (8u << 20)
+
+static NTSTATUS replay(PVOID *compact)
 {
+    static UCHAR small[4096];
     ULONG64 length;
     NTSTATUS status = IoQueryFileSize(CmpJournalFile, &length);
     if (!NT_SUCCESS(status))
@@ -133,11 +137,12 @@ static NTSTATUS replay(void)
     if (length > CM_JOURNAL_MAX_FILE)
         return STATUS_REGISTRY_CORRUPT;
     CmpReplayFileLength = length;
+    *compact = length >= CM_COMPACT_MIN_BYTES ? CmpCompactBegin() : nullptr;
     while (CmpJournalOffset < length) {
         if (length - CmpJournalOffset < CM_JOURNAL_HEADER)
             return truncate_tail();
         UCHAR header[CM_JOURNAL_HEADER];
-        status = read_bytes(header, sizeof(header), CmpJournalOffset);
+        status = CmpJournalReadBytes(header, sizeof(header), CmpJournalOffset);
         if (!NT_SUCCESS(status))
             return status;
         CmJournalRecord record;
@@ -146,11 +151,12 @@ static NTSTATUS replay(void)
         ULONG size = cm_journal_size(&record);
         if (size > length - CmpJournalOffset)
             return truncate_tail();
-        PUCHAR bytes = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('C', 'm', 'J', 'r'));
+        /* most records are small, and replay reuses one buffer for them. */
+        PUCHAR bytes = size <= sizeof(small) ? small : ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('C', 'm', 'J', 'r'));
         if (!bytes)
             return STATUS_INSUFFICIENT_RESOURCES;
         memcpy(bytes, header, sizeof(header));
-        status = read_bytes(bytes + sizeof(header), size - sizeof(header), CmpJournalOffset + sizeof(header));
+        status = CmpJournalReadBytes(bytes + sizeof(header), size - sizeof(header), CmpJournalOffset + sizeof(header));
         BOOLEAN torn = FALSE;
         if (NT_SUCCESS(status)) {
             if (!cm_journal_validate(bytes, size, CmpJournalSequence)) {
@@ -160,8 +166,11 @@ static NTSTATUS replay(void)
                 note_unknown(record.operation, CmpJournalOffset);
             else
                 status = CmpRestoreJournal(&record, bytes + sizeof(header));
+            if (NT_SUCCESS(status) && *compact)
+                CmpCompactNote(*compact, CmpJournalOffset, &record, bytes + sizeof(header));
         }
-        ExFreePool(bytes);
+        if (bytes != small)
+            ExFreePool(bytes);
         if (torn)
             return drop_torn_tail("record");
         if (!NT_SUCCESS(status))
@@ -191,7 +200,12 @@ void CmpJournalInitialize(void)
     if (NT_SUCCESS(CmpJournalStatus)) {
         CmpReplayBlock = ExAllocatePool2(POOL_FLAG_NON_PAGED, CM_REPLAY_BLOCK, KI_TAG('C', 'm', 'J', 'b'));
         CmpReplayBlockLength = 0;
-        CmpJournalStatus = replay();
+        PVOID compact = nullptr;
+        CmpJournalStatus = replay(&compact);
+        if (compact && NT_SUCCESS(CmpJournalStatus))
+            CmpCompactFinish(compact, &CmpJournalFile, &CmpJournalOffset, &CmpJournalSequence);
+        else if (compact)
+            CmpCompactAbandon(compact);
         if (CmpReplayBlock)
             ExFreePool(CmpReplayBlock);
         CmpReplayBlock = nullptr;

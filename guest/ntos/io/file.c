@@ -423,6 +423,22 @@ static NTSTATUS rename_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_IN
     return status;
 }
 
+/* the kernel's own rename of an open file to a full path, replacing a file of that name when asked. */
+NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace)
+{
+    ULONG name_length = (ULONG)wcslen(new_name) * sizeof(WCHAR), size = 20 + name_length;
+    PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('I', 'o', 'R', 'n'));
+    if (!buf)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(buf, 0, 20);
+    buf[0] = replace;
+    *(PULONG)(buf + 16) = name_length;
+    memcpy(buf + 20, new_name, name_length);
+    NTSTATUS status = rename_file(file, buf, size, FileRenameInformation);
+    ExFreePool(buf);
+    return status;
+}
+
 NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length,
                                     FILE_INFORMATION_CLASS klass)
 {

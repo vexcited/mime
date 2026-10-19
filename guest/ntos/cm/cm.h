@@ -156,6 +156,12 @@ void CmpJournalInitialize(void);
 void CmpJournalEnable(void);
 NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHAR *name, ULONG chars,
                          const void *data, ULONG length, LARGE_INTEGER last_write);
+/* compact.c: the records of a long journal that still count are written again, as the journal. */
+PVOID CmpCompactBegin(void);
+void CmpCompactNote(PVOID context, ULONG64 offset, const CmJournalRecord *record, const UCHAR *payload);
+void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULONG64 *sequence);
+void CmpCompactAbandon(PVOID context);
+NTSTATUS CmpJournalReadBytes(void *data, ULONG bytes, ULONG64 offset);
 /* starts the worker making appended records durable, once the system can run threads. */
 void CmpJournalStart(void);
 /* what RegFlushKey asks for: every record appended before the call is on the host disk when it succeeds. */

@@ -1045,6 +1045,7 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
 NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG options, PFILE_OBJECT *out);
 NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOID buffer, ULONG length,
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
+NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
 BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
 void IoReleaseFileWindow(PVOID ref);
