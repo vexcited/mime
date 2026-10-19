@@ -1391,7 +1391,20 @@ BOOL WINAPI ProcessIdToSessionId(DWORD process, DWORD *session)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *session = KbPeb()->SessionId;
+    if (process == (DWORD)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueProcess) {
+        *session = KbPeb()->SessionId;
+        return TRUE;
+    }
+    /* another process says which session it is in, when it may be asked. */
+    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process);
+    if (!handle)
+        return FALSE;
+    ULONG value = 0;
+    NTSTATUS status = NtQueryInformationProcess(handle, ProcessSessionInformation, &value, sizeof(value), nullptr);
+    CloseHandle(handle);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *session = value;
     return TRUE;
 }
 

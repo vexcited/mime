@@ -392,6 +392,7 @@ static void NTAPI process_wait(PVOID context, BOOLEAN timed_out)
     IMAGE *img = context;
     EnterCriticalSection(&g_lock);
     RunProcessExited(img);
+    MainCollect();
     LeaveCriticalSection(&g_lock);
 }
 

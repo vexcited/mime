@@ -343,6 +343,7 @@ void TimerInit(void);
 
 /* main.c */
 void MainWake(void);
+void MainCollect(void);
 void entry(void);
 
 /* the failure actions as the service keeps them in the registry. */

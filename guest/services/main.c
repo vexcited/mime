@@ -117,6 +117,15 @@ static void remove_if_done(SERVICE *s)
     WakeAllConditionVariable(&g_changed);
 }
 
+/* the services that were deleted go once nothing holds them and they have stopped. */
+void MainCollect(void)
+{
+    for (SERVICE *s = g_services, *next; s; s = next) {
+        next = s->Next;
+        remove_if_done(s);
+    }
+}
+
 static void handle_close_locked(CLIENT *cl, SCHANDLE *h)
 {
     for (SCHANDLE **link = &cl->Handles; *link; link = &(*link)->Next) {
@@ -1313,6 +1322,7 @@ static DWORD handle_request(CONN *c, DWORD op, SCM_READER *r, SCM_WRITER *w, KEE
         if (!--cl->Refs && cl->Dead)
             client_rundown(cl);
     }
+    MainCollect();
     LeaveCriticalSection(&g_lock);
     return error;
 }
