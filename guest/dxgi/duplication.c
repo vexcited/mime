@@ -407,8 +407,8 @@ static BOOL pick_format(UINT count, const DXGI_FORMAT *formats, DXGI_FORMAT *pic
     return FALSE;
 }
 
-/* a monitor's index, from the number its device name ends with. */
-static BOOL monitor_index(HMONITOR monitor, ULONG *index)
+/* a monitor's number, the one its device name ends with. */
+BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number)
 {
     MONITORINFOEXW info = {sizeof(info)};
     if (!GetMonitorInfoW(monitor, (MONITORINFO *)&info))
@@ -422,7 +422,7 @@ static BOOL monitor_index(HMONITOR monitor, ULONG *index)
     }
     if (!value)
         return FALSE;
-    *index = value - 1;
+    *number = value;
     return TRUE;
 }
 
@@ -470,15 +470,17 @@ HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR 
         return hr;
     }
 
-    ULONG index;
+    UINT index;
     MIME_CAPTURE_OPEN open = {};
-    if (!monitor_index(monitor, &index)) {
+    /* an output that is not attached any more (dxgi.dll's own check, read from DuplicateOutputInternal). */
+    if (!DxgiMonitorNumber(monitor, &index)) {
         d3d->lpVtbl->Release(d3d);
-        return DXGI_ERROR_UNSUPPORTED;
+        return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
     }
-    open.Monitor = index;
+    open.Monitor = index - 1;
     open.Flags = flags;
-    hr = status_to_hresult(NtUserMimeCapture(MIME_CAPOP_OPEN, 0, (PUCHAR)&open, nullptr, 0));
+    LONG status = NtUserMimeCapture(MIME_CAPOP_OPEN, 0, (PUCHAR)&open, nullptr, 0);
+    hr = status == (LONG)0xC0000225 ? DXGI_ERROR_NOT_CURRENTLY_AVAILABLE : status_to_hresult(status);
     if (FAILED(hr)) {
         d3d->lpVtbl->Release(d3d);
         return hr;

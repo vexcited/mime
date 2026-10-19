@@ -72,19 +72,37 @@ static HRESULT STDMETHODCALLTYPE adapter_get_parent(IDXGIAdapter4 *iface, REFIID
     return factory->lpVtbl->QueryInterface(factory, riid, parent);
 }
 
+/* the monitor whose device is \\.\DISPLAYn for the index n - 1. */
+typedef struct FIND_MONITOR {
+    UINT index;
+    HMONITOR monitor;
+} FIND_MONITOR;
+
+static BOOL CALLBACK find_monitor(HMONITOR monitor, HDC dc, LPRECT rect, LPARAM param)
+{
+    FIND_MONITOR *find = (FIND_MONITOR *)param;
+    UINT number;
+    if (DxgiMonitorNumber(monitor, &number) && number == find->index + 1) {
+        find->monitor = monitor;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* the first adapter drives every monitor, in the order of their devices. */
 static HRESULT STDMETHODCALLTYPE adapter_enum_outputs(IDXGIAdapter4 *iface, UINT index, IDXGIOutput **output)
 {
     if (!output)
         return DXGI_ERROR_INVALID_CALL;
     *output = nullptr;
     DxgiAdapter *adapter = impl(iface);
-    if (index || adapter->gpu != &DxgiGetVulkan()->gpus[0])
+    if (adapter->gpu != &DxgiGetVulkan()->gpus[0])
         return DXGI_ERROR_NOT_FOUND;
-    POINT origin = {0, 0};
-    HMONITOR monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
-    if (!monitor)
+    FIND_MONITOR find = {index, nullptr};
+    EnumDisplayMonitors(nullptr, nullptr, find_monitor, (LPARAM)&find);
+    if (!find.monitor)
         return DXGI_ERROR_NOT_FOUND;
-    return DxgiCreateOutput(adapter, monitor, output);
+    return DxgiCreateOutput(adapter, find.monitor, output);
 }
 
 static HRESULT STDMETHODCALLTYPE adapter_get_desc3(IDXGIAdapter4 *iface, DXGI_ADAPTER_DESC3 *desc)

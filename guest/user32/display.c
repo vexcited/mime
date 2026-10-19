@@ -177,32 +177,44 @@ WINUSERAPI BOOL WINAPI IsWindowArranged(HWND window)
 }
 
 #define PW_CLIENTONLY 0x1
+#define PW_RENDERFULLCONTENT 0x2
 
 /*
- * windows has the window render into a redirection surface; mime keeps
- * the pixels of every window in its top level surface, so the copy is
- * what the window last drew, the frame included unless asked otherwise.
+ * win32k's capture gives the window's own pixels, whatever covers it: its redirection surface and, for
+ * PW_RENDERFULLCONTENT, the image its process presented through the host, which is how windows draws the windows
+ * that a Direct3D or DirectComposition swap chain fills (read from win32kfull's xxxPrintWindow, which asks the
+ * desktop window manager for the composed surface in that case). a window is painted first, as UpdateWindow does,
+ * so that what comes out is what the window would show. a missing device context is not a failure, nor is a
+ * capture of nothing; the desktop is the one window that cannot be printed, and it fails without an error.
  */
 WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags)
 {
-    if (!IsWindow(window) || !dc) {
+    if (!IsWindow(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (window == GetDesktopWindow())
+        return FALSE;
+    if (flags & ~(PW_CLIENTONLY | PW_RENDERFULLCONTENT)) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    RECT r;
-    HDC source;
-    if (flags & PW_CLIENTONLY) {
-        GetClientRect(window, &r);
-        source = GetDC(window);
-    } else {
-        GetWindowRect(window, &r);
-        OffsetRect(&r, -r.left, -r.top);
-        source = GetWindowDC(window);
-    }
-    if (!source)
+    RedrawWindow(window, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
+    MIME_CAPTURE_WINDOW info = {.Flags = flags};
+    if (NtUserMimeCapture(MIME_CAPOP_WINDOW, (ULONG)(ULONG_PTR)window, (PUCHAR)&info, nullptr, 0) < 0)
         return FALSE;
-    BOOL ok = BitBlt(dc, 0, 0, r.right - r.left, r.bottom - r.top, source, 0, 0, SRCCOPY);
-    ReleaseDC(window, source);
+    if (!dc || !info.Width || !info.Height)
+        return TRUE;
+    SIZE_T size = (SIZE_T)info.Width * info.Height * 4;
+    void *bits = HeapAlloc(GetProcessHeap(), 0, size);
+    if (!bits)
+        return FALSE;
+    BOOL ok = NtUserMimeCapture(MIME_CAPOP_WINDOW, (ULONG)(ULONG_PTR)window, (PUCHAR)&info, bits, (ULONG)size) >= 0;
+    if (ok) {
+        BITMAPINFO bmi = {.bmiHeader = {sizeof(BITMAPINFOHEADER), (LONG)info.Width, -(LONG)info.Height, 1, 32, BI_RGB}};
+        SetDIBitsToDevice(dc, 0, 0, info.Width, info.Height, 0, 0, 0, info.Height, bits, &bmi, DIB_RGB_COLORS);
+    }
+    HeapFree(GetProcessHeap(), 0, bits);
     return ok;
 }
 

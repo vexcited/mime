@@ -239,7 +239,7 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const RECT *ar
  * the top level windows over a canvas, bottom of the z order first. the canvas holds the pixels of the rectangle
  * area, in screen coordinates, with its first pixel at shift.
  */
-static void compose_windows(PUCHAR bits, LONG stride, POINT shift, const RECT *area, WND *only)
+static void compose_windows(PUCHAR bits, LONG stride, POINT shift, const RECT *area, WND *only, BOOLEAN host_pixels)
 {
     WND *list[1024];
     ULONG count = 0;
@@ -251,7 +251,7 @@ static void compose_windows(PUCHAR bits, LONG stride, POINT shift, const RECT *a
             continue;
         if (only && w != only)
             continue;
-        compose_window(bits, stride, shift, area, w, TRUE);
+        compose_window(bits, stride, shift, area, w, host_pixels);
     }
 }
 
@@ -283,7 +283,7 @@ void ScreenCompose(const RECT *area)
     }
     RECT screen_area = r;
     RectOffset(&screen_area, g_screen_origin.x, g_screen_origin.y);
-    compose_windows(screen->Bits, screen->Stride, g_screen_origin, &screen_area, nullptr);
+    compose_windows(screen->Bits, screen->Stride, g_screen_origin, &screen_area, nullptr, TRUE);
 }
 
 /*
@@ -291,7 +291,8 @@ void ScreenCompose(const RECT *area)
  * the client area. window is the whole window or its client area, in a canvas of bgra rows that starts at the
  * window's corner or at the client area's. the pixels are opaque, as the layered ones blended over black.
  */
-BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, PUCHAR bits, LONG stride, LONG width, LONG height)
+BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUCHAR bits, LONG stride, LONG width,
+                           LONG height)
 {
     WND *top = WndTopLevel(w);
     if (!top || top == WndDesktop())
@@ -303,7 +304,7 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, PUCHAR bits, LONG stride
         memset(bits + (LONG_PTR)y * stride, 0, (SIZE_T)width * 4);
     /* a child has no surface of its own: it is cut out of its top level window's. */
     POINT shift = {area.left, area.top};
-    compose_windows(bits, stride, shift, &area, top);
+    compose_windows(bits, stride, shift, &area, top, host_pixels);
     for (LONG y = 0; y < height; y++) {
         ULONG *row = (ULONG *)(bits + (LONG_PTR)y * stride);
         for (LONG x = 0; x < width; x++)

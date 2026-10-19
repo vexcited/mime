@@ -545,7 +545,8 @@ LONG NTAPI NtUserMimeCapture(ULONG op, ULONG id, PUCHAR info, PUCHAR data, ULONG
                 status = STATUS_BUFFER_TOO_SMALL;
             else if (need && !pixels)
                 status = STATUS_NO_MEMORY;
-            else if (need && !ScreenWindowPixels(window, client, pixels, (LONG)w.Width * 4, (LONG)w.Width, (LONG)w.Height))
+            else if (need && !ScreenWindowPixels(window, client, (w.Flags & MIME_CAPTURE_FULL_CONTENT) != 0, pixels,
+                                                 (LONG)w.Width * 4, (LONG)w.Width, (LONG)w.Height))
                 status = STATUS_INVALID_HANDLE;
             else if (need && !NT_SUCCESS(MimeCopyToUser(data, pixels, (SIZE_T)need)))
                 status = STATUS_ACCESS_VIOLATION;

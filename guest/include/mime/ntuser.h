@@ -744,7 +744,9 @@ typedef struct MIME_CAPTURE_SHAPE {
     ULONG Size;
 } MIME_CAPTURE_SHAPE;
 
+/* PW_CLIENTONLY, and PW_RENDERFULLCONTENT: the image the window's process presented through the host too. */
 #define MIME_CAPTURE_CLIENT_ONLY 0x1
+#define MIME_CAPTURE_FULL_CONTENT 0x2
 typedef struct MIME_CAPTURE_WINDOW {
     ULONG Flags;
     ULONG Width, Height;

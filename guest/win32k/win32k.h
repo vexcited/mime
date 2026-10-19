@@ -981,7 +981,8 @@ BOOLEAN ScreenMonitorRect(ULONG index, RECT *out);
 void ScreenVisibleRegion(REGION *out);
 BOOLEAN ScreenIsSurface(const SURFACE *s);
 void ScreenCompose(const RECT *area);
-BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, PUCHAR bits, LONG stride, LONG width, LONG height);
+BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUCHAR bits, LONG stride, LONG width,
+                           LONG height);
 ULONG64 ScreenHostSerial(void);
 extern ULONG ScreenSerial;
 HBRUSH MetricsSysColorBrush(int index);

@@ -64,6 +64,7 @@ HRESULT DxgiCreateFactory(UINT flags, REFIID riid, void **out);
 HRESULT DxgiCreateAdapter(DxgiFactory *factory, const DxgiGpu *gpu, REFIID riid, void **out);
 HRESULT DxgiCreateOutput(DxgiAdapter *adapter, HMONITOR monitor, IDXGIOutput **out);
 DxgiAdapter *DxgiAdapterFrom(IUnknown *unknown);
+BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number);
 /* duplication.c: v1 is DuplicateOutput1, whose arguments are checked and whose process needs per monitor dpi. */
 HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR monitor, IUnknown *device, BOOL v1,
                             UINT flags, UINT count, const DXGI_FORMAT *formats, IDXGIOutputDuplication **out);
