@@ -1768,24 +1768,86 @@ static BOOL valid_name(LPCWSTR text)
     return TRUE;
 }
 
-/* the extension to put on a file saved with none. */
-static BOOL extension_to_add(FILEDLG *dialog, WCHAR *extension, UINT chars)
+/* whether a list of patterns such as "*.txt;*.log" has one for the extension, which comes with its dot. */
+static BOOL patterns_have_extension(LPCWSTR patterns, LPCWSTR extension)
 {
-    if (dialog->DefaultExt && dialog->DefaultExt[0]) {
-        lstrcpynW(extension, dialog->DefaultExt, chars);
-        return TRUE;
+    if (!patterns || !extension[0] || !extension[1])
+        return FALSE;
+    SIZE_T length = wcslen(extension + 1);
+    for (LPCWSTR p = patterns; *p;) {
+        LPCWSTR end = wcschr(p, L';');
+        SIZE_T n = end ? (SIZE_T)(end - p) : wcslen(p);
+        if (n == length + 2 && p[0] == L'*' && p[1] == L'.' && !_wcsnicmp(p + 2, extension + 1, length))
+            return TRUE;
+        p = end ? end + 1 : p + n;
     }
-    if (dialog->TypeCount && dialog->TypeIndex >= 1 && dialog->TypeIndex <= dialog->TypeCount)
-        return spec_extension(dialog->TypeSpecs[dialog->TypeIndex - 1], extension, chars);
     return FALSE;
 }
 
-static void add_extension(FILEDLG *dialog, WCHAR *path)
+/* the extension put on a name typed with none: the default one, which a file type that does not list it replaces. */
+static BOOL extension_to_add(FILEDLG *dialog, WCHAR *extension, UINT chars)
+{
+    if (!dialog->DefaultExt || !dialog->DefaultExt[0])
+        return FALSE;
+    lstrcpynW(extension, dialog->DefaultExt, chars);
+    if (!dialog->TypeCount || dialog->TypeIndex < 1 || dialog->TypeIndex > dialog->TypeCount)
+        return TRUE;
+    LPCWSTR spec = dialog->TypeSpecs[dialog->TypeIndex - 1];
+    WCHAR dotted[40] = L".";
+    lstrcpynW(dotted + 1, dialog->DefaultExt, RTL_NUMBER_OF(dotted) - 1);
+    if (patterns_have_extension(spec, dotted))
+        return TRUE;
+    WCHAR first[32];
+    LPCWSTR dot = wcschr(spec, L'.');
+    if (dot) {
+        UINT n = 0;
+        for (LPCWSTR p = dot + 1; *p && *p != L';' && n + 1 < RTL_NUMBER_OF(first); p++)
+            first[n++] = *p;
+        first[n] = 0;
+        if (n && !wcschr(first, L'*') && !wcschr(first, L'?'))
+            lstrcpynW(extension, first, chars);
+    }
+    return TRUE;
+}
+
+/* the extension of a name is one the dialog knows, so that it is not the user's slip to leave the default off. */
+static BOOL known_extension(const FILEDLG *dialog, LPCWSTR extension, LPCWSTR default_extension)
+{
+    if (!extension[0])
+        return FALSE;
+    if (default_extension && !_wcsicmp(extension + 1, default_extension))
+        return TRUE;
+    if (dialog->Options & FOS_STRICTFILETYPES)
+        return dialog->TypeCount && patterns_have_extension(current_spec(dialog), extension);
+    if (!wcscmp(current_spec(dialog), L"*.*"))
+        return TRUE;
+    /* an extension that has a key in the registry is a known type of file. */
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, extension, 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        RegCloseKey(key);
+        return TRUE;
+    }
+    for (UINT i = 0; i < dialog->TypeCount; i++)
+        if (patterns_have_extension(dialog->TypeSpecs[i], extension))
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * a name typed for saving gets the default extension when its own is none the dialog knows. a name that exists as
+ * typed or is in quotes is left alone, unless the file types are strict, which also puts the extension on a name
+ * of another type.
+ */
+static void add_extension(FILEDLG *dialog, WCHAR *path, BOOL exists, BOOL quoted)
 {
     WCHAR extension[32];
-    LPCWSTR name = PathFindFileNameW(path);
-    LPCWSTR dot = PathFindExtensionW(name);
-    if ((dot[0] && dot[1]) || !extension_to_add(dialog, extension, 32))
+    if (!extension_to_add(dialog, extension, 32))
+        return;
+    BOOL strict = (dialog->Options & FOS_STRICTFILETYPES) != 0;
+    if (!strict && (exists || quoted))
+        return;
+    LPCWSTR dot = PathFindExtensionW(PathFindFileNameW(path));
+    if (known_extension(dialog, dot, extension))
         return;
     SIZE_T length = wcslen(path);
     if (length + wcslen(extension) + 2 >= MAX_PATH)
@@ -1923,7 +1985,7 @@ static BOOL accept(FILEDLG *dialog)
                 return FALSE;
             }
             if (dialog->Save) {
-                add_extension(dialog, full);
+                add_extension(dialog, full, exists, text[0] == L'"');
                 exists = fd_path_exists(full, &folder);
                 if (exists && folder) {
                     if (navigate(dialog, full, TRUE, TRUE))

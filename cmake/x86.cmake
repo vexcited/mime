@@ -73,7 +73,7 @@ set(MIME_X86_DLLS
 set(base ntdll kernel32)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
-set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32)
+set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
 set(storage_imports ntdll kernel32 user32 gdi32 win32u ole32 shell32 shlwapi propsys)
 set(comctl ntdll kernel32 user32 gdi32 win32u uxtheme)
 set(mfplat_imports ntdll kernel32 ole32)
