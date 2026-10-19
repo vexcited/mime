@@ -391,6 +391,8 @@ WINOLEAPI HRESULT WINAPI ReadClassStg(IStorage *storage, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI WriteClassStg(IStorage *storage, REFCLSID clsid);
 WINOLEAPI HRESULT WINAPI WriteClassStm(IStream *stream, REFCLSID clsid);
 WINOLEAPI HRESULT WINAPI ReadClassStm(IStream *stream, CLSID *clsid);
+WINOLEAPI HRESULT WINAPI CoMarshalHresult(IStream *stream, HRESULT value);
+WINOLEAPI HRESULT WINAPI CoUnmarshalHresult(IStream *stream, HRESULT *value);
 WINOLEAPI HRESULT WINAPI GetClassFile(LPCOLESTR name, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *bytes);
 WINOLEAPI HRESULT WINAPI StgSetTimes(LPCOLESTR name, const FILETIME *created, const FILETIME *accessed,

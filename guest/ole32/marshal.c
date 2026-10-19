@@ -17,7 +17,7 @@
 #define MSHLFLAGS_TABLEWEAK 2
 #define MSHCTX_INPROC 3
 #define CO_E_OBJNOTCONNECTED ((HRESULT)0x800401FDL)
-#define RPC_E_CALL_COMPLETE ((HRESULT)0x8001010EL)
+#define RPC_E_CALL_COMPLETE ((HRESULT)0x80010117L)
 #define RPC_E_INVALID_OBJREF ((HRESULT)0x8001011DL)
 
 typedef struct IMarshal IMarshal;
@@ -584,13 +584,16 @@ WINOLEAPI HRESULT WINAPI CoSuspendClassObjects(void)
     return S_OK;
 }
 
-/* no call from another process ever arrives, so there is never a call context. */
+/* the context of the call being served: the object that CoSwitchCallContext put there, or RPC_E_CALL_COMPLETE. */
 WINOLEAPI HRESULT WINAPI CoGetCallContext(REFIID iid, void **context)
 {
     if (!context)
         return E_INVALIDARG;
     *context = nullptr;
-    return RPC_E_CALL_COMPLETE;
+    OLE_THREAD *t = OleThreadState(FALSE);
+    if (!t || !t->CallContext)
+        return RPC_E_CALL_COMPLETE;
+    return t->CallContext->lpVtbl->QueryInterface(t->CallContext, iid, context);
 }
 
 /* only a proxy has a server process to let forward; a direct pointer has none. */

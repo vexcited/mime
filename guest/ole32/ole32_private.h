@@ -34,11 +34,25 @@ typedef struct _OLE_THREAD {
     IMessageFilter *MessageFilter;
     /* the hidden window that owns the clipboard for the thread's ole clipboard, see clipboard.c. */
     HWND ClipWindow;
+    /* the object CoSwitchCallContext put as the context of the call being served, see callctx.c. */
+    IUnknown *CallContext;
+    /* the thread that made the call being served, 0 when there is none. */
+    DWORD CallerThread;
+    /* the number of CoEnableCallCancellation without its CoDisableCallCancellation. */
+    LONG CancelEnabled;
+    /* the object of CoSetCancelObject, referenced. */
+    IUnknown *CancelObject;
+    /* the logical thread, a guid made when first asked for. */
+    GUID LogicalThread;
+    BOOL HasLogicalThread;
 } OLE_THREAD;
 
 OLE_THREAD *OleThreadState(BOOL create);
 void OleThreadDetach(void);
 void OleProcessAttach(void);
+
+/* com.c: a user of the multithreaded apartment comes and goes. */
+void OleMtaUsage(LONG delta);
 
 /* the apartment of the calling thread, or CO_E_NOTINITIALIZED. */
 HRESULT OleCheckApartment(void);

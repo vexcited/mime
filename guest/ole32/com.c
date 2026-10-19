@@ -11,6 +11,8 @@ static DWORD g_tls = TLS_OUT_OF_INDEXES;
 static SRWLOCK g_lock = SRWLOCK_INIT;
 /* the threads in the multithreaded apartment, which other threads join implicitly. */
 static LONG g_mta_threads;
+/* the users of the multithreaded apartment that hold it open without a thread of theirs in it, CoIncrementMTAUsage. */
+static LONG g_mta_usage;
 /* the first single threaded apartment of the process. */
 static DWORD g_main_sta;
 
@@ -32,6 +34,14 @@ OLE_THREAD *OleThreadState(BOOL create)
     return t;
 }
 
+static void release_call_state(OLE_THREAD *t)
+{
+    IUnknown *cancel = t->CancelObject;
+    t->CancelObject = nullptr;
+    if (cancel)
+        cancel->lpVtbl->Release(cancel);
+}
+
 static void leave_apartment(OLE_THREAD *t)
 {
     IMessageFilter *filter = t->MessageFilter;
@@ -51,6 +61,7 @@ void OleThreadDetach(void)
         return;
     if (t->ComInits)
         leave_apartment(t);
+    release_call_state(t);
     TlsSetValue(g_tls, nullptr);
     OleFree(t);
 }
@@ -60,7 +71,7 @@ HRESULT OleCheckApartment(void)
     OLE_THREAD *t = OleThreadState(FALSE);
     if (t && t->ComInits)
         return S_OK;
-    return g_mta_threads > 0 ? S_OK : CO_E_NOTINITIALIZED;
+    return g_mta_threads > 0 || g_mta_usage > 0 ? S_OK : CO_E_NOTINITIALIZED;
 }
 
 /* ------------------------------------------------------------------ apartments */
@@ -115,13 +126,19 @@ WINOLEAPI HRESULT WINAPI CoGetApartmentType(APTTYPE *type, APTTYPEQUALIFIER *qua
             *type = g_main_sta == GetCurrentThreadId() ? APTTYPE_MAINSTA : APTTYPE_STA;
         return S_OK;
     }
-    if (g_mta_threads > 0) {
+    if (g_mta_threads > 0 || g_mta_usage > 0) {
         *type = APTTYPE_MTA;
         *qualifier = APTTYPEQUALIFIER_IMPLICIT_MTA;
         return S_OK;
     }
     *type = APTTYPE_CURRENT;
     return CO_E_NOTINITIALIZED;
+}
+
+/* the usage count of the multithreaded apartment, for code that needs it to exist and has no thread to put in it. */
+void OleMtaUsage(LONG delta)
+{
+    InterlockedExchangeAdd(&g_mta_usage, delta);
 }
 
 WINOLEAPI DWORD WINAPI CoGetCurrentProcess(void)
@@ -648,6 +665,20 @@ static BOOL get_treat_as(REFCLSID clsid, CLSID *treat)
     wcscat(subkey, L"\\TreatAs");
     return read_class_string(subkey, nullptr, value, RTL_NUMBER_OF(value)) && OleParseGuid(value, treat) &&
            !IsEqualCLSID(treat, &CLSID_NULL);
+}
+
+/* the class that stands for another one, or the class itself with S_FALSE. */
+WINOLEAPI HRESULT WINAPI CoGetTreatAsClass(REFCLSID clsid, CLSID *treat)
+{
+    if (!clsid || !treat)
+        return E_INVALIDARG;
+    CLSID found;
+    if (get_treat_as(clsid, &found)) {
+        *treat = found;
+        return S_OK;
+    }
+    *treat = *clsid;
+    return S_FALSE;
 }
 
 WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid)

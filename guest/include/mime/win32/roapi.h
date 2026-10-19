@@ -31,6 +31,18 @@ ROAPI LPCWSTR WINAPI WindowsGetStringRawBuffer(HSTRING string, UINT32 *length);
 ROAPI UINT32 WINAPI WindowsGetStringLen(HSTRING string);
 ROAPI BOOL WINAPI WindowsIsStringEmpty(HSTRING string);
 ROAPI HRESULT WINAPI WindowsCompareStringOrdinal(HSTRING a, HSTRING b, INT32 *result);
+ROAPI HRESULT WINAPI WindowsConcatString(HSTRING a, HSTRING b, HSTRING *result);
+ROAPI HRESULT WINAPI WindowsStringHasEmbeddedNull(HSTRING string, BOOL *has_null);
+ROAPI HRESULT WINAPI WindowsSubstring(HSTRING string, UINT32 start, HSTRING *result);
+ROAPI HRESULT WINAPI WindowsSubstringWithSpecifiedLength(HSTRING string, UINT32 start, UINT32 length,
+                                                         HSTRING *result);
+ROAPI HRESULT WINAPI WindowsTrimStringStart(HSTRING string, HSTRING trim, HSTRING *result);
+ROAPI HRESULT WINAPI WindowsTrimStringEnd(HSTRING string, HSTRING trim, HSTRING *result);
+ROAPI HRESULT WINAPI WindowsReplaceString(HSTRING string, HSTRING from, HSTRING to, HSTRING *result);
+typedef struct HSTRING_BUFFER__ *HSTRING_BUFFER;
+ROAPI HRESULT WINAPI WindowsPreallocateStringBuffer(UINT32 length, WCHAR **buffer, HSTRING_BUFFER *handle);
+ROAPI HRESULT WINAPI WindowsPromoteStringBuffer(HSTRING_BUFFER handle, HSTRING *string);
+ROAPI HRESULT WINAPI WindowsDeleteStringBuffer(HSTRING_BUFFER handle);
 
 /* ------------------------------------------------------------------ IInspectable */
 
