@@ -543,6 +543,7 @@ typedef struct W32THREAD {
     LONG CursorShowCount;
     struct W32DESKTOP *Desktop;  /* referenced, winsta.c */
     HANDLE DesktopHandle;
+    HWND TsfSink;          /* the window the text services framework takes the host's input method through, ime.c */
 } W32THREAD;
 
 W32THREAD *W32GetThread(void);  /* current thread, created on demand */

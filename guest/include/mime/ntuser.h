@@ -616,13 +616,25 @@ W32KAPI ULONG NTAPI NtUserMimeDndData(ULONG session, ULONG format, PUCHAR buffer
  * the host where text is entered in a window (buffer: left, top, right, bottom and the caret's x, client
  * coordinates of the window a), MIME_IME_NOTIFY ends the composition (a: CPS_COMPLETE or CPS_CANCEL),
  * MIME_IME_AVAILABLE says whether the host has an input method at all.
+ *
+ * a program that composes through the text services framework (msctf.dll) takes the host's input method from
+ * there. MIME_IME_TSF registers a window of the calling thread, a: the window or NULL, which then gets
+ * MIME_TSF_MESSAGE instead of the input method messages: wparam is MIME_IME_PREEDIT, MIME_IME_COMMIT or
+ * MIME_IME_CANCELLED of the host's events, lparam the selected part of a preedit text as two words, each the
+ * position plus one or 0 for none. the window answers 1 when the text service took the event, else the input
+ * method messages follow as usual. MIME_IME_PENDING gives the text of the event being sent, MIME_IME_RESET
+ * drops what the host's input method holds of a composition, without any message.
  */
 enum {
     MIME_IME_GET = 1,
     MIME_IME_AREA,
     MIME_IME_NOTIFY,
     MIME_IME_AVAILABLE,
+    MIME_IME_TSF,
+    MIME_IME_PENDING,
+    MIME_IME_RESET,
 };
+#define MIME_TSF_MESSAGE 0x0401
 W32KAPI ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULONG size);
 
 /*

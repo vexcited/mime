@@ -7,6 +7,10 @@
  * into WM_IME_CHAR and WM_CHAR, as windows does.
  *
  * the strings stay here for ImmGetCompositionString, one composition at a time, as there is one keyboard.
+ *
+ * a thread that uses the text services framework has a sink window, MIME_IME_TSF. the events go to it as one
+ * message, and it either takes them, composing in the program's own document, or declines, and the messages above
+ * follow.
  */
 #include "win32k.h"
 
@@ -43,6 +47,8 @@ static struct {
     ULONG DeltaStart;
     ULONG ResultLength;
     WCHAR Result[IME_MAX];
+    WCHAR Pending[IME_MAX];    /* the text of the event the sink window is being sent */
+    ULONG PendingLength;
     PWCHAR Page;               /* the hypercall buffer */
     BOOLEAN Queried, Available;
     HWND AreaWindow;
@@ -146,6 +152,24 @@ static BOOLEAN ime_disabled(WND *w)
     return atom && PropGetData(w, atom) == (HANDLE)1;
 }
 
+/* offers the event to the text services framework of the window's thread: whether it took it. */
+static BOOLEAN offer_to_text_services(WND *target, const MimeInputEvent *ev, const WCHAR *text, ULONG n)
+{
+    W32THREAD *t = target->Thread;
+    WND *sink = t && t->TsfSink ? WndLookup(t->TsfSink) : nullptr;
+    if (!sink)
+        return FALSE;
+    memcpy(g_ime.Pending, text, n * sizeof(WCHAR));
+    g_ime.PendingLength = n;
+    /* the selected part as two words, each the position plus one, 0 for none. */
+    LPARAM selection = 0;
+    if (ev->flags == MIME_IME_PREEDIT)
+        selection = (LPARAM)(((ev->x >= 0 ? ev->x + 1 : 0) & 0xFFFF) | ((ev->y >= 0 ? ev->y + 1 : 0) & 0xFFFF) << 16);
+    LRESULT taken = MsgSend(sink, MIME_TSF_MESSAGE, ev->flags, selection);
+    g_ime.PendingLength = 0;
+    return taken != 0;
+}
+
 void ImeHostEvent(const MimeInputEvent *ev)
 {
     WCHAR text[IME_MAX];
@@ -156,6 +180,9 @@ void ImeHostEvent(const MimeInputEvent *ev)
         return;
     }
     HWND window = WndHandle(target);
+    /* a composition the input method manager has begun goes on through it, whatever the framework would have done. */
+    if (!g_ime.Composing && offer_to_text_services(target, ev, text, n))
+        return;
     if (ime_disabled(target)) {
         /* what is committed is typed, and a composition is nobody's. */
         if (ev->flags == MIME_IME_COMMIT)
@@ -197,6 +224,8 @@ void ImeHostEvent(const MimeInputEvent *ev)
 
 void ImeWindowDestroyed(WND *w)
 {
+    if (w->Thread && w->Thread->TsfSink == WndHandle(w))
+        w->Thread->TsfSink = nullptr;
     if (g_ime.Window == WndHandle(w)) {
         g_ime.Composing = FALSE;
         g_ime.CompLength = 0;
@@ -262,6 +291,34 @@ ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULO
             set_area((HWND)a, area);
             result = 1;
         }
+        break;
+    }
+    case MIME_IME_TSF: {
+        WND *sink = a ? WndLookup((HWND)a) : nullptr;
+        if (a && (!sink || sink->Thread != t))
+            break;
+        t->TsfSink = sink ? (HWND)a : nullptr;
+        result = 1;
+        break;
+    }
+    case MIME_IME_PENDING: {
+        ULONG bytes = g_ime.PendingLength * sizeof(WCHAR);
+        if (buffer && size) {
+            ULONG n = bytes < size ? bytes : size;
+            if (n && !NT_SUCCESS(MimeCopyToUser(buffer, g_ime.Pending, n)))
+                break;
+            result = n;
+        } else {
+            result = bytes;
+        }
+        break;
+    }
+    case MIME_IME_RESET: {
+        WND *target = target_window();
+        if (target && target->Thread == t && available())
+            HalMimeHypercall(MIME_HC_IME_CONTROL, MIME_IME_CANCEL, (ULONG64)(ULONG_PTR)WndHandle(target), 0, 0, 0, 0,
+                             nullptr);
+        result = 1;
         break;
     }
     case MIME_IME_NOTIFY:
