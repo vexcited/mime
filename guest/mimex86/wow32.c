@@ -1284,6 +1284,11 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     /* the system. */
     case MIME_SVC_NtQuerySystemInformation:
         return Mx32QuerySystemInformation(a);
+    case MIME_SVC_NtSetSystemInformation:
+        /* a shutdown request is four 32-bit numbers, the same in both word sizes. */
+        return NtSetSystemInformation((SYSTEM_INFORMATION_CLASS)a[0], pointer32(a[1]), a[2]);
+    case MIME_SVC_NtShutdownSystem:
+        return NtShutdownSystem((SHUTDOWN_ACTION)a[0]);
     case MIME_SVC_NtQueryPerformanceCounter:
         return NtQueryPerformanceCounter(pointer32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtQuerySystemTime:
