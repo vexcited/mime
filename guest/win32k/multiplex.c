@@ -77,6 +77,7 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
         break;
     case MIME_ONEPARAM_GETQUEUESTATUS:
         if (t) {
+            t->LastRead = W32TickCount();
             MsgProcessSent(t);
             ULONG flags = (ULONG)param;
             ULONG pending = 0;
