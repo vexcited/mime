@@ -1020,6 +1020,34 @@ static unsigned char g_mblead[256];
 static int g_mbcp_init;
 static int g_mbcp;
 
+extern unsigned char _mbctype[257];
+extern unsigned char _mbcasemap[256];
+
+/*
+ * the tables the _ismbb macros read: for each byte the kinds of the _mbctype.h flags (symbol, punctuation, lead, trail,
+ * single byte upper and lower case), and the byte with its case swapped.
+ */
+static void mbtables(void)
+{
+    memset(_mbctype, 0, sizeof(_mbctype));
+    for (int c = 0; c < 256; c++) {
+        unsigned char flags = 0;
+        if (g_mblead[c])
+            flags |= 0x04;
+        if (g_mbcp != 1252 && c >= 0x40 && c != 0x7f && g_mbcp != 65001)
+            flags |= 0x08;
+        if (MsvcrtCtype[c + 1] & _UPPER)
+            flags |= 0x10;
+        if (MsvcrtCtype[c + 1] & _LOWER)
+            flags |= 0x20;
+        if (g_mbcp == 932 && c >= 0xa1 && c <= 0xdf)
+            flags |= 0x01 | (c <= 0xa5 || c == 0xb0 || c >= 0xde ? 0x02 : 0);
+        _mbctype[c + 1] = flags;
+        _mbcasemap[c] = (unsigned char)((MsvcrtCtype[c + 1] & _UPPER) ? MsvcrtToLower(c)
+                                                                      : (MsvcrtCtype[c + 1] & _LOWER) ? MsvcrtToUpper(c) : c);
+    }
+}
+
 static void mbcp_init(void)
 {
     if (g_mbcp_init)
@@ -1032,6 +1060,7 @@ static void mbcp_init(void)
                 g_mblead[b] = 1;
     }
     g_mbcp_init = 1;
+    mbtables();
 }
 
 int __cdecl _ismbblead(unsigned int c)
@@ -1073,6 +1102,7 @@ int __cdecl _setmbcp(int cp)
     }
     g_mbcp = cp;
     g_mbcp_init = 1;
+    mbtables();
     return 0;
 }
 
@@ -1080,6 +1110,11 @@ static inline int lead(unsigned char c)
 {
     mbcp_init();
     return g_mblead[c];
+}
+
+int MsvcrtMbLead(unsigned c)
+{
+    return lead((unsigned char)c);
 }
 
 unsigned char *__cdecl _mbschr(const unsigned char *s, unsigned int c)

@@ -382,6 +382,8 @@ typedef struct {
 } MSVCRT_DECIMAL;
 
 void MsvcrtDoubleToDecimal(double value, int max_digits, MSVCRT_DECIMAL *out);
+/* whether a byte starts a double byte character in the current multibyte code page. */
+int MsvcrtMbLead(unsigned c);
 double MsvcrtStrtod(const char *s, char **end, int *range_error);
 double MsvcrtWcstod(const wchar_t *s, wchar_t **end, int *range_error);
 
