@@ -520,9 +520,14 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
         profile_log("d3d: the gpu has no queue family for graphics and compute");
         return DXGI_ERROR_UNSUPPORTED;
     }
-    p->queue_count = qprops[p->queue_family].queueCount;
-    if (p->queue_count > MIME_VK_MAX_QUEUES)
-        p->queue_count = MIME_VK_MAX_QUEUES;
+    /*
+     * Each queue costs the host's driver some 20 ms to make and 6 to destroy, so a process gets one, and a few more
+     * once direct3d 12 is loaded: Direct3D 11 submits on the first, and direct3d 12's queues take the others in turn,
+     * sharing the first when it is the only one.
+     */
+    p->queue_count = GetModuleHandleW(L"d3d12.dll") ? MIME_VK_D3D12_QUEUES : 1;
+    if (p->queue_count > qprops[p->queue_family].queueCount)
+        p->queue_count = qprops[p->queue_family].queueCount;
 
     /*
      * tiled resources: tier 1 binds buffers and 2D images of standard shapes, aliased; tier 2 also reads zero where

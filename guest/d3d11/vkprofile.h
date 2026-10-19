@@ -14,6 +14,8 @@
 
 /* direct3d 12's root arguments are push constants of this many bytes. */
 #define MIME_VK_D3D12_PUSH_SIZE 256
+/* the queues of a device made when direct3d 12 is loaded: one for direct3d 11 and three to spread queues over. */
+#define MIME_VK_D3D12_QUEUES 4
 
 /*
  * what the device was made with and what the gpu behind it can do, derived once from the gpu's features and limits.
