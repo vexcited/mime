@@ -17,9 +17,10 @@
 /* ------------------------------------------------------------------ creation rules */
 
 /*
- * What sharing allows, as the documentation of the flags gives it: shared textures are two dimensional and not
- * mipmapped; keyed mutexes and nt handles go with a shared texture, and a texture is not shared both ways. The usage
- * and the sampling are guesses of what the runtime refuses: shared textures are the gpu's alone, and not multisampled.
+ * What sharing allows. A texture made to be shared by nt handle is default usage and not multisampled, with the shared
+ * or keyed mutex flag, and not a cube or clamped (all of those from the validator of d3d11.dll); the documentation of
+ * the flags adds that the texture is two dimensional. A shared texture of the legacy kind has the same, with
+ * multisampling refused as a guess. Mip levels and array sizes pass, as at feature level 11 they do in d3d11.dll.
  */
 HRESULT D3dShareCheck(D3D11_RESOURCE_DIMENSION dimension, UINT usage, UINT misc, UINT mips, UINT samples)
 {
@@ -28,9 +29,10 @@ HRESULT D3dShareCheck(D3D11_RESOURCE_DIMENSION dimension, UINT usage, UINT misc,
     if ((misc & D3D11_RESOURCE_MISC_SHARED) && (misc & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX))
         return E_INVALIDARG;
     if ((misc & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) &&
-        !(misc & (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX)))
+        (!(misc & (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX)) ||
+         (misc & (D3D11_RESOURCE_MISC_TEXTURECUBE | D3D11_RESOURCE_MISC_RESOURCE_CLAMP))))
         return E_INVALIDARG;
-    if (dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D || mips > 1 || samples > 1 || usage != D3D11_USAGE_DEFAULT)
+    if (dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D || samples > 1 || usage != D3D11_USAGE_DEFAULT)
         return E_INVALIDARG;
     return S_OK;
 }
