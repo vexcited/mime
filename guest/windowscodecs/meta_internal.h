@@ -19,8 +19,6 @@ typedef struct WicMetaItem {
 HRESULT WicMetadataInfoFind(const GUID *clsid, IWICComponentInfo **info);
 HRESULT WicMetadataInfoList(DWORD types, IUnknown ***list, UINT *count);
 
-MIME_DEFINE_GUID(IID_IEnumString, 0x00000101, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
-
 /* property variants. */
 void WicPvInit(PROPVARIANT *pv);
 BOOL WicPvIsEmpty(const PROPVARIANT *pv);
