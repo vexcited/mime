@@ -730,6 +730,8 @@ BOOLAPI InternetReadFileExA(HINTERNET file, LPINTERNET_BUFFERSA buffers, DWORD f
 BOOLAPI InternetReadFileExW(HINTERNET file, LPINTERNET_BUFFERSW buffers, DWORD flags, DWORD_PTR context);
 BOOLAPI InternetGetLastResponseInfoA(LPDWORD error, LPSTR buffer, LPDWORD length);
 
+INTERNETAPI_(HINTERNET) FtpFindFirstFileA(HINTERNET connect, LPCSTR search, LPWIN32_FIND_DATAA data, DWORD flags,
+                                                  DWORD_PTR context);
 INTERNETAPI_(HINTERNET) FtpFindFirstFileW(HINTERNET connect, LPCWSTR search, LPWIN32_FIND_DATAW data, DWORD flags,
                                           DWORD_PTR context);
 BOOLAPI FtpGetFileW(HINTERNET connect, LPCWSTR remote, LPCWSTR local, BOOL fail_if_exists, DWORD attributes,

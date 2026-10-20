@@ -842,6 +842,22 @@ WINOLEAPI HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, IUnknown *outer, DWO
     return found == count ? S_OK : CO_S_NOTALLINTERFACES;
 }
 
+/* loads a library by its path, with the search of the loader for its dependents; the second argument asks that it is
+   freed with CoFreeUnusedLibraries, which a library loaded here is not (a guess that nothing relies on it). */
+WINOLEAPI HINSTANCE WINAPI CoLoadLibrary(LPOLESTR file, BOOL auto_free)
+{
+    if (!file) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return LoadLibraryExW(file, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+WINOLEAPI void WINAPI CoFreeLibrary(HINSTANCE library)
+{
+    FreeLibrary(library);
+}
+
 WINOLEAPI void WINAPI CoFreeUnusedLibrariesEx(DWORD delay, DWORD reserved)
 {
     HMODULE idle[MAX_SERVERS];

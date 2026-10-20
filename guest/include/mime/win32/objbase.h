@@ -227,6 +227,8 @@ WINOLEAPI HRESULT WINAPI CoCreateInstance(REFCLSID clsid, IUnknown *outer, DWORD
 WINOLEAPI HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, IUnknown *outer, DWORD context, COSERVERINFO *server,
                                             DWORD count, MULTI_QI *results);
 WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *server, REFIID riid, void **object);
+WINOLEAPI HINSTANCE WINAPI CoLoadLibrary(LPOLESTR file, BOOL auto_free);
+WINOLEAPI void WINAPI CoFreeLibrary(HINSTANCE library);
 WINOLEAPI void WINAPI CoFreeUnusedLibraries(void);
 WINOLEAPI void WINAPI CoFreeUnusedLibrariesEx(DWORD delay, DWORD reserved);
 WINOLEAPI HRESULT WINAPI CoLockObjectExternal(IUnknown *object, BOOL lock, BOOL last_unlock_releases);

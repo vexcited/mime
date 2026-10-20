@@ -151,7 +151,8 @@ set(objects_bcrypt x86-lib-crypto)
 set(objects_crypt32 x86-lib-crypto x86-lib-compound)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
-        x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c)
+        x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c
+        x86-lib-crypto:guest/lib/crypto/aes.c x86-lib-crypto:guest/lib/crypto/des.c x86-lib-crypto:guest/lib/crypto/modes.c x86-lib-crypto:guest/lib/crypto/kdf.c x86-lib-crypto:guest/lib/crypto/hmac.c)
 foreach(crypto bcrypt crypt32 secur32 advapi32)
     set(includes_${crypto} guest/lib)
 endforeach()

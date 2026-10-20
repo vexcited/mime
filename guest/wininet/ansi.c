@@ -194,3 +194,16 @@ DECLSPEC_EXPORT BOOL WINAPI HttpEndRequestA(HINTERNET request, LPINTERNET_BUFFER
 {
     return HttpEndRequestW(request, (LPINTERNET_BUFFERSW)buffers_out, flags, context);
 }
+
+/* ftp connections fail in InternetConnect, so this finds nothing but says why. */
+DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileA(HINTERNET connect, LPCSTR search, LPWIN32_FIND_DATAA data, DWORD flags,
+                                                  DWORD_PTR context)
+{
+    PWSTR wsearch = Widen(search, -1);
+    WIN32_FIND_DATAW found;
+    HINTERNET handle = FtpFindFirstFileW(connect, wsearch, data ? &found : nullptr, flags, context);
+    DWORD error = GetLastError();
+    HeapFree(GetProcessHeap(), 0, wsearch);
+    SetLastError(error);
+    return handle;
+}
