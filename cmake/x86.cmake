@@ -35,12 +35,15 @@ foreach(name CopyFileTransacted:28 CreateDirectoryTransacted:16 CreateFileTransa
 endforeach()
 list(APPEND kernel32_own FindFirstFileNameTransactedW@20 FindFirstStreamTransactedW@20 GetBinaryTypeA@8 GetBinaryTypeW@8
     GetBinaryType@8 SetSystemPowerState@8)
-add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
+add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def ${gen86}/kernel32_thunks.S
     COMMAND Python3::Interpreter tools/gendef.py forward32 ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
-        ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def ${kernel32_own}
-    DEPENDS tools/gendef.py ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
+        ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def --thunks ${gen86}/kernel32_thunks.S
+        guest/kernel32/forwarded.txt ${kernel32_own}
+    DEPENDS tools/gendef.py guest/kernel32/forwarded.txt ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} VERBATIM)
+mime_objects(x86-kernel32-thunks x86 SOURCES ${gen86}/kernel32_thunks.S)
 mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/transacted.c guest/kernel32/binary.c
+    OBJECTS x86-kernel32-thunks
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def DEPENDS ${gen86}/kernel32.imports.def)
 
@@ -82,7 +85,9 @@ set(MIME_X86_DLLS
     uiautomationcore:0x1C000000:all_five iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
-    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports windowscodecs:0x4B000000:wic_imports)
+    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
+    cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
+    dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports)
 set(base ntdll kernel32)
 # rpcrt4 catches exceptions with frame handlers of the c runtime.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
@@ -107,6 +112,15 @@ set(user ntdll kernel32 user32)
 set(ads_imports ntdll kernel32)
 set(advpack_imports ntdll kernel32 advapi32 version)
 set(objects_advpack x86-lib-cabinet)
+set(objects_cabinet x86-lib-cabinet)
+set(objects_wintrust x86-lib-compound)
+# msxml3 and msxml6 are two faces of one dom engine.
+set(msxml_imports ntdll kernel32 ole32 oleaut32 advapi32)
+foreach(msxml msxml3 msxml6)
+    set(objects_${msxml} x86-lib-xmldom)
+    set(includes_${msxml} guest/lib)
+endforeach()
+set(sfc_os_imports ntdll kernel32 advapi32 version)
 # the installer makes shortcuts and users, reads versions and loads the custom actions of its packages.
 set(msi_imports ntdll kernel32 user32 gdi32 win32u advapi32 shell32 ole32 version)
 set(oleacc_imports ntdll kernel32 user32 ole32 oleaut32)
@@ -140,10 +154,11 @@ set(includes_gdiplus guest/lib)
 set(objects_windowscodecs x86-lib-png:guest/lib/png/inflate.c x86-lib-png:guest/lib/png/deflate.c x86-lib-pngio x86-lib-jpeg x86-lib-tiff x86-lib-gif x86-lib-bcn x86-div)
 set(includes_windowscodecs guest/lib)
 set(objects_bcrypt x86-lib-crypto)
-set(objects_crypt32 x86-lib-crypto)
+set(objects_crypt32 x86-lib-crypto x86-lib-compound)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
-        x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c)
+        x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c
+        x86-lib-crypto:guest/lib/crypto/aes.c x86-lib-crypto:guest/lib/crypto/des.c x86-lib-crypto:guest/lib/crypto/modes.c x86-lib-crypto:guest/lib/crypto/kdf.c x86-lib-crypto:guest/lib/crypto/hmac.c)
 foreach(crypto bcrypt crypt32 secur32 advapi32)
     set(includes_${crypto} guest/lib)
 endforeach()

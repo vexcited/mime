@@ -1137,6 +1137,11 @@ WINBASEAPI BOOLEAN WINAPI Wow64EnableWow64FsRedirection(BOOLEAN enable);
 #define BACKGROUND_RED 0x0040
 #define BACKGROUND_INTENSITY 0x0080
 
+#ifndef SHRT_MAX
+#define SHRT_MAX 32767
+#define SHRT_MIN (-32768)
+#endif
+
 #define CTRL_C_EVENT 0
 #define CTRL_BREAK_EVENT 1
 #define CTRL_CLOSE_EVENT 2
@@ -1269,6 +1274,32 @@ typedef struct _INPUT_RECORD {
 #define CONSOLE_READ_NOREMOVE 0x0001
 #define CONSOLE_READ_NOWAIT 0x0002
 
+#define CONSOLE_TEXTMODE_BUFFER 1
+#define CONSOLE_GRAPHICS_BUFFER 2
+#define COMMON_LVB_LEADING_BYTE 0x0100
+#define COMMON_LVB_TRAILING_BYTE 0x0200
+#define COMMON_LVB_GRID_HORIZONTAL 0x0400
+#define COMMON_LVB_GRID_LVERTICAL 0x0800
+#define COMMON_LVB_GRID_RVERTICAL 0x1000
+#define COMMON_LVB_REVERSE_VIDEO 0x4000
+#define COMMON_LVB_UNDERSCORE 0x8000
+#define CONSOLE_FULLSCREEN_MODE 1
+#define CONSOLE_WINDOWED_MODE 2
+#define HISTORY_NO_DUP_FLAG 1
+
+typedef struct _CONSOLE_SELECTION_INFO {
+    DWORD dwFlags;
+    COORD dwSelectionAnchor;
+    SMALL_RECT srSelection;
+} CONSOLE_SELECTION_INFO, *PCONSOLE_SELECTION_INFO;
+
+typedef struct _CONSOLE_HISTORY_INFO {
+    UINT cbSize;
+    UINT HistoryBufferSize;
+    UINT NumberOfHistoryBuffers;
+    DWORD dwFlags;
+} CONSOLE_HISTORY_INFO, *PCONSOLE_HISTORY_INFO;
+
 typedef struct _CONSOLE_READCONSOLE_CONTROL {
     ULONG nLength;
     ULONG nInitialChars;
@@ -1340,6 +1371,64 @@ WINBASEAPI DWORD WINAPI GetConsoleProcessList(LPDWORD list, DWORD count);
 WINBASEAPI HANDLE WINAPI CreateConsoleScreenBuffer(DWORD access, DWORD share, const SECURITY_ATTRIBUTES *sa,
                                                    DWORD flags, LPVOID data);
 WINBASEAPI BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputW(HANDLE console, PCHAR_INFO buffer, COORD size, COORD origin, PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputA(HANDLE console, PCHAR_INFO buffer, COORD size, COORD origin, PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputW(HANDLE console, const CHAR_INFO *buffer, COORD size, COORD origin,
+                                           PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputA(HANDLE console, const CHAR_INFO *buffer, COORD size, COORD origin,
+                                           PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputAttribute(HANDLE console, LPWORD attributes, DWORD length, COORD start,
+                                                  LPDWORD read);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputCharacterW(HANDLE console, LPWSTR chars, DWORD length, COORD start, LPDWORD read);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputCharacterA(HANDLE console, LPSTR chars, DWORD length, COORD start, LPDWORD read);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputCharacterA(HANDLE console, LPCSTR text, DWORD length, COORD start,
+                                                    LPDWORD written);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputAttribute(HANDLE console, const WORD *attributes, DWORD length, COORD start,
+                                                   LPDWORD written);
+WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferW(HANDLE console, const SMALL_RECT *source, const SMALL_RECT *clip,
+                                                  COORD destination, const CHAR_INFO *fill);
+WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferA(HANDLE console, const SMALL_RECT *source, const SMALL_RECT *clip,
+                                                  COORD destination, const CHAR_INFO *fill);
+WINBASEAPI BOOL WINAPI SetConsoleScreenBufferInfoEx(HANDLE console, PCONSOLE_SCREEN_BUFFER_INFOEX info);
+WINBASEAPI HRESULT WINAPI CreatePseudoConsole(COORD size, HANDLE input, HANDLE output, DWORD flags, HPCON *console);
+WINBASEAPI HRESULT WINAPI ResizePseudoConsole(HPCON console, COORD size);
+WINBASEAPI VOID WINAPI ClosePseudoConsole(HPCON console);
+WINBASEAPI HRESULT WINAPI ReleasePseudoConsole(HPCON console);
+WINBASEAPI BOOL WINAPI SetCurrentConsoleFontEx(HANDLE console, BOOL maximum, PCONSOLE_FONT_INFOEX info);
+WINBASEAPI COORD WINAPI GetConsoleFontSize(HANDLE console, DWORD font);
+WINBASEAPI BOOL WINAPI GetConsoleSelectionInfo(PCONSOLE_SELECTION_INFO info);
+WINBASEAPI BOOL WINAPI GetConsoleDisplayMode(LPDWORD flags);
+WINBASEAPI BOOL WINAPI SetConsoleDisplayMode(HANDLE console, DWORD flags, PCOORD dimensions);
+WINBASEAPI BOOL WINAPI GetNumberOfConsoleMouseButtons(LPDWORD buttons);
+WINBASEAPI DWORD WINAPI GetConsoleOriginalTitleW(LPWSTR title, DWORD size);
+WINBASEAPI DWORD WINAPI GetConsoleOriginalTitleA(LPSTR title, DWORD size);
+WINBASEAPI BOOL WINAPI GetConsoleHistoryInfo(PCONSOLE_HISTORY_INFO info);
+WINBASEAPI BOOL WINAPI SetConsoleHistoryInfo(PCONSOLE_HISTORY_INFO info);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryW(LPWSTR commands, DWORD length, LPCWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryA(LPSTR commands, DWORD length, LPCSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryLengthW(LPCWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryLengthA(LPCSTR exe);
+WINBASEAPI VOID WINAPI ExpungeConsoleCommandHistoryW(LPCWSTR exe);
+WINBASEAPI VOID WINAPI ExpungeConsoleCommandHistoryA(LPCSTR exe);
+WINBASEAPI BOOL WINAPI SetConsoleNumberOfCommandsW(DWORD number, LPCWSTR exe);
+WINBASEAPI BOOL WINAPI SetConsoleNumberOfCommandsA(DWORD number, LPCSTR exe);
+WINBASEAPI BOOL WINAPI AddConsoleAliasW(LPWSTR source, LPWSTR target, LPWSTR exe);
+WINBASEAPI BOOL WINAPI AddConsoleAliasA(LPSTR source, LPSTR target, LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasW(LPWSTR source, LPWSTR buffer, DWORD length, LPWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasA(LPSTR source, LPSTR buffer, DWORD length, LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesW(LPWSTR buffer, DWORD length, LPWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesA(LPSTR buffer, DWORD length, LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesLengthW(LPWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesLengthA(LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesW(LPWSTR buffer, DWORD length);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesA(LPSTR buffer, DWORD length);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesLengthW(void);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesLengthA(void);
+WINBASEAPI BOOL WINAPI SetConsoleInputExeNameW(LPCWSTR name);
+WINBASEAPI BOOL WINAPI SetConsoleInputExeNameA(LPCSTR name);
+WINBASEAPI DWORD WINAPI GetConsoleInputExeNameW(DWORD size, LPWSTR buffer);
+WINBASEAPI DWORD WINAPI GetConsoleInputExeNameA(DWORD size, LPSTR buffer);
+
 
 /* ------------------------------------------------------------------ processes and threads */
 
@@ -1790,6 +1879,16 @@ WINBASEAPI HANDLE WINAPI CreateMutexA(LPSECURITY_ATTRIBUTES sa, BOOL owner, LPCS
 WINBASEAPI HANDLE WINAPI CreateMutexExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWORD flags, DWORD access);
 WINBASEAPI HANDLE WINAPI CreateMutexExA(LPSECURITY_ATTRIBUTES sa, LPCSTR name, DWORD flags, DWORD access);
 WINBASEAPI HANDLE WINAPI OpenMutexW(DWORD access, BOOL inherit, LPCWSTR name);
+WINBASEAPI HANDLE WINAPI CreateBoundaryDescriptorW(LPCWSTR name, ULONG flags);
+WINBASEAPI HANDLE WINAPI CreateBoundaryDescriptorA(LPCSTR name, ULONG flags);
+WINBASEAPI BOOL WINAPI AddSIDToBoundaryDescriptor(HANDLE *descriptor, PSID sid);
+WINBASEAPI BOOL WINAPI AddIntegrityLabelToBoundaryDescriptor(HANDLE *descriptor, PSID label);
+WINBASEAPI VOID WINAPI DeleteBoundaryDescriptor(HANDLE descriptor);
+WINBASEAPI HANDLE WINAPI CreatePrivateNamespaceW(LPSECURITY_ATTRIBUTES sa, LPVOID descriptor, LPCWSTR alias);
+WINBASEAPI HANDLE WINAPI CreatePrivateNamespaceA(LPSECURITY_ATTRIBUTES sa, LPVOID descriptor, LPCSTR alias);
+WINBASEAPI HANDLE WINAPI OpenPrivateNamespaceW(LPVOID descriptor, LPCWSTR alias);
+WINBASEAPI HANDLE WINAPI OpenPrivateNamespaceA(LPVOID descriptor, LPCSTR alias);
+WINBASEAPI BOOLEAN WINAPI ClosePrivateNamespace(HANDLE handle, ULONG flags);
 WINBASEAPI HANDLE WINAPI OpenMutexA(DWORD access, BOOL inherit, LPCSTR name);
 WINBASEAPI BOOL WINAPI ReleaseMutex(HANDLE mutex);
 WINBASEAPI HANDLE WINAPI CreateSemaphoreW(LPSECURITY_ATTRIBUTES sa, LONG initial, LONG maximum, LPCWSTR name);

@@ -181,6 +181,12 @@ TRACE_STUB(ControlTraceA, 5)
 TRACE_STUB(ControlTraceW, 5)
 TRACE_STUB(StopTraceW, 4)
 TRACE_STUB(StopTraceA, 4)
+TRACE_STUB(QueryTraceA, 4)
+TRACE_STUB(QueryTraceW, 4)
+TRACE_STUB(UpdateTraceA, 4)
+TRACE_STUB(UpdateTraceW, 4)
+TRACE_STUB(FlushTraceA, 4)
+TRACE_STUB(FlushTraceW, 4)
 TRACE_STUB(EnableTrace, 6)
 TRACE_STUB(EnableTraceEx2, 11)
 TRACE_STUB(EnumerateTraceGuidsEx, 6)
@@ -204,6 +210,17 @@ MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromBufferStream, 5, ~0ull)
 MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromFile, 3, ~0ull)
 MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromRealTimeLogger, 3, ~0ull)
 MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromRealTimeLoggerWithAllocationOptions, 7, ~0ull)
+
+/* no provider registers itself with a session, so the list of the guids is empty. */
+ADVAPI ULONG WINAPI EnumerateTraceGuids(PVOID *properties, ULONG count, PULONG guids)
+{
+    (void)properties;
+    (void)count;
+    if (!guids)
+        return ERROR_INVALID_PARAMETER;
+    *guids = 0;
+    return ERROR_SUCCESS;
+}
 
 /* no session runs: the list of them is empty. */
 ADVAPI ULONG WINAPI QueryAllTracesW(PVOID *properties, ULONG count, PULONG loggers)

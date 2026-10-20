@@ -68,38 +68,22 @@ PSTR KbWideToAnsi(LPCWSTR s);
 DWORD KbWideResultToAnsi(LPCWSTR wide, LPSTR buffer, DWORD size);
 
 /* named objects: builds attributes rooted in the session namespace. */
+HANDLE KbNamedObjectRoot(void);
+HANDLE KbPrivateNamespaceLookup(LPCWSTR *name);
 BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR name, BOOL inherit,
                              const SECURITY_ATTRIBUTES *sa);
 
-/* console pseudo handles. */
-#define KB_CONSOLE_INPUT ((HANDLE)(ULONG_PTR)0x3)
-#define KB_CONSOLE_OUTPUT ((HANDLE)(ULONG_PTR)0x7)
-#define KB_CONSOLE_ERROR ((HANDLE)(ULONG_PTR)0xB)
+/* the NUL device is a value the kernel never hands out. */
 #define KB_NULL_DEVICE ((HANDLE)(ULONG_PTR)0xF)
 
-FORCEINLINE BOOL KbIsConsoleHandle(HANDLE h)
-{
-    return h == KB_CONSOLE_INPUT || h == KB_CONSOLE_OUTPUT || h == KB_CONSOLE_ERROR;
-}
-
-/* console handles and the NUL device: values the kernel never hands out. */
 FORCEINLINE BOOL KbIsPseudoHandle(HANDLE h)
 {
-    return KbIsConsoleHandle(h) || h == KB_NULL_DEVICE;
+    return h == KB_NULL_DEVICE;
 }
 
-FORCEINLINE BOOL KbIsConsoleInput(HANDLE h)
-{
-    return h == KB_CONSOLE_INPUT;
-}
-
-BOOL KbConsoleWrite(HANDLE console, LPCWSTR text, DWORD chars);
-BOOL KbConsoleWriteBytes(HANDLE console, const void *bytes, DWORD length);
-BOOL KbConsoleRead(HANDLE console, LPVOID buffer, DWORD length, LPDWORD read);
-HANDLE KbConsoleWaitHandle(HANDLE console);
-BOOL KbConsoleIsRedirected(HANDLE console);
 void KbInitializeConsole(void);
-HANDLE KbStdHandleOrPseudo(DWORD which);
+HANDLE KbPseudoConsoleHandle(HPCON console);
+HANDLE KbOpenConsoleDevice(LPCWSTR name, DWORD access, DWORD share, const SECURITY_ATTRIBUTES *sa, DWORD disposition);
 
 /* debug output through NtDisplayString, chunked for its limits. */
 void KbDisplayText(LPCWSTR text, SIZE_T chars);

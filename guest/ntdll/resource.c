@@ -23,11 +23,12 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!nt)
         return nullptr;
-    /* resource only images such as mui files are often pe32, whose data directories sit 16 bytes earlier. */
+    /* resource only images such as mui files are often pe32, whose data directories sit 16 bytes earlier, and a 32-bit
+       process looks at 64-bit images too, so the layout is the one the magic tells and not that of this build. */
     PUCHAR optional = (PUCHAR)&nt->OptionalHeader;
-    BOOLEAN pe32 = nt->OptionalHeader.Magic == 0x10B;
-    ULONG count = pe32 ? *(PULONG)(optional + 92) : nt->OptionalHeader.NumberOfRvaAndSizes;
-    IMAGE_DATA_DIRECTORY *dirs = pe32 ? (IMAGE_DATA_DIRECTORY *)(optional + 96) : nt->OptionalHeader.DataDirectory;
+    BOOLEAN pe32 = *(PUSHORT)optional == 0x10B;
+    ULONG count = *(PULONG)(optional + (pe32 ? 92 : 108));
+    IMAGE_DATA_DIRECTORY *dirs = (IMAGE_DATA_DIRECTORY *)(optional + (pe32 ? 96 : 112));
     if (count <= IMAGE_DIRECTORY_ENTRY_RESOURCE)
         return nullptr;
     IMAGE_DATA_DIRECTORY *dir = &dirs[IMAGE_DIRECTORY_ENTRY_RESOURCE];

@@ -25,6 +25,7 @@ typedef UINT MSIHANDLE;
 #define ERROR_PATCH_PACKAGE_OPEN_FAILED 1635L
 #define ERROR_PATCH_PACKAGE_INVALID 1636L
 #define ERROR_PATCH_PACKAGE_UNSUPPORTED 1637L
+#define ERROR_PATCH_TARGET_NOT_FOUND 1642L
 
 typedef enum {
     INSTALLTYPE_DEFAULT, INSTALLTYPE_NETWORK_IMAGE, INSTALLTYPE_SINGLE_INSTANCE
@@ -186,6 +187,12 @@ MSIAPI UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out);
 MSIAPI UINT WINAPI MsiEnumComponentsW(DWORD index, LPWSTR component);
 MSIAPI UINT WINAPI MsiEnumClientsW(LPCWSTR component, DWORD index, LPWSTR product);
 MSIAPI INSTALLSTATE WINAPI MsiGetComponentPathW(LPCWSTR product, LPCWSTR component, LPWSTR out, LPDWORD size);
+MSIAPI INSTALLSTATE WINAPI MsiLocateComponentW(LPCWSTR component, LPWSTR out, LPDWORD size);
+MSIAPI INSTALLSTATE WINAPI MsiLocateComponentA(LPCSTR component, LPSTR out, LPDWORD size);
+MSIAPI UINT WINAPI MsiEnumProductsW(DWORD index, LPWSTR product);
+MSIAPI UINT WINAPI MsiEnumProductsA(DWORD index, LPSTR product);
+MSIAPI UINT WINAPI MsiRemovePatchesW(LPCWSTR patches, LPCWSTR product, INSTALLTYPE type, LPCWSTR command);
+MSIAPI UINT WINAPI MsiRemovePatchesA(LPCSTR patches, LPCSTR product, INSTALLTYPE type, LPCSTR command);
 MSIAPI UINT WINAPI MsiGetComponentStateW(MSIHANDLE install, LPCWSTR component, INSTALLSTATE *installed, INSTALLSTATE *action);
 MSIAPI UINT WINAPI MsiGetFeatureStateW(MSIHANDLE install, LPCWSTR feature, INSTALLSTATE *installed, INSTALLSTATE *action);
 MSIAPI UINT WINAPI MsiSetFeatureStateW(MSIHANDLE install, LPCWSTR feature, INSTALLSTATE state);
@@ -206,11 +213,42 @@ typedef enum {
 #define ERROR_UNKNOWN_PATCH 1647L
 #define ERROR_BAD_USERNAME 2202L
 MSIAPI UINT WINAPI MsiSourceListAddSourceW(LPCWSTR product, LPCWSTR user, DWORD reserved, LPCWSTR source);
+MSIAPI UINT WINAPI MsiSourceListAddSourceExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
+                                           DWORD options, LPCWSTR source, DWORD index);
+MSIAPI UINT WINAPI MsiSourceListAddSourceExA(LPCSTR product, LPCSTR sid, MSIINSTALLCONTEXT context,
+                                           DWORD options, LPCSTR source, DWORD index);
 MSIAPI UINT WINAPI MsiSourceListSetInfoW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
                                        DWORD options, LPCWSTR property, LPCWSTR value);
 MSIAPI UINT WINAPI MsiSourceListGetInfoW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
                                        DWORD options, LPCWSTR property, LPWSTR out, LPDWORD size);
 MSIAPI UINT WINAPI MsiSourceListEnumSourcesW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
                                            DWORD options, DWORD index, LPWSTR out, LPDWORD size);
+
+
+#define MSIPATCHSTATE_APPLIED 1
+#define MSIPATCHSTATE_SUPERSEDED 2
+#define MSIPATCHSTATE_OBSOLETED 4
+#define MSIPATCHSTATE_REGISTERED 8
+#define MSIPATCHSTATE_ALL 15
+typedef enum { MSIPATCH_DATATYPE_PATCHFILE = 0, MSIPATCH_DATATYPE_XMLPATH, MSIPATCH_DATATYPE_XMLBLOB } MSIPATCHDATATYPE;
+typedef struct {
+    LPCWSTR szPatchData;
+    MSIPATCHDATATYPE ePatchDataType;
+    DWORD dwOrder;
+    UINT uStatus;
+} MSIPATCHSEQUENCEINFOW;
+MSIAPI UINT WINAPI MsiEnumProductsExW(LPCWSTR product, LPCWSTR sid, DWORD contexts, DWORD index, WCHAR installed[39],
+                                      MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size);
+MSIAPI UINT WINAPI MsiGetFileVersionW(LPCWSTR path, LPWSTR version, LPDWORD version_size, LPWSTR language,
+                                      LPDWORD language_size);
+MSIAPI UINT WINAPI MsiIsProductElevatedW(LPCWSTR product, BOOL *elevated);
+MSIAPI UINT WINAPI MsiDeterminePatchSequenceW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context, DWORD count,
+                                              MSIPATCHSEQUENCEINFOW *patches);
+MSIAPI UINT WINAPI MsiEnumPatchesExW(LPCWSTR product, LPCWSTR sid, DWORD contexts, DWORD filter, DWORD index,
+                                     WCHAR patch[39], WCHAR target[39], MSIINSTALLCONTEXT *context, LPWSTR user_sid,
+                                     LPDWORD sid_size);
+MSIAPI UINT WINAPI MsiGetPatchInfoExW(LPCWSTR patch, LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
+                                      LPCWSTR property, LPWSTR value, LPDWORD size);
+MSIAPI UINT WINAPI MsiExtractPatchXMLDataW(LPCWSTR patch, DWORD reserved, LPWSTR xml, LPDWORD size);
 
 #endif

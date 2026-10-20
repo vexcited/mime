@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf)
+    foreach(lib privdata dxbc dxil png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf xmldom)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -85,10 +85,8 @@ function(mime_dll name arch)
     endforeach()
     # a module's own resources, as the command tables of mci drivers, sit beside its sources.
     set(script)
-    set(resource)
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
-        set(resource RESOURCE ${arg_FILE})
     endif()
     if(arch STREQUAL "x86")
         set(def ${arg_DEF})
@@ -118,11 +116,11 @@ function(mime_dll name arch)
         endif()
         if(arg_NOIMPLIB)
             mime_link(${output} x86 OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /def:${def} /noimplib
-                DEPENDS ${def} ${depends} ${resource} ${script} GROUPS guest)
+                DEPENDS ${def} ${depends} RESOURCE ${arg_FILE} ${script} GROUPS guest)
         else()
             mime_link(${output} x86 OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /def:${def}
-                DEPENDS ${def} ${imports_def} ${depends} IMPLIB ${implib} IMPORTS ${imports_def} ${resource} ${script}
-                GROUPS guest)
+                DEPENDS ${def} ${imports_def} ${depends} IMPLIB ${implib} IMPORTS ${imports_def}
+                RESOURCE ${arg_FILE} ${script} GROUPS guest)
         endif()
     else()
         if(NOT arg_DEF AND EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.def)
@@ -208,12 +206,17 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             RtlZeroMemory RtlRaiseException RtlIsEcCode)
     endif()
     list(TRANSFORM kernel32_ntdll REPLACE "^(.+)$" "\\1=ntdll.\\1")
-    add_custom_command(OUTPUT ${MIME_GEN}/${arch}/kernel32.def
+    # the exports of windows' kernel32 are functions but for those of guest/kernel32/forwarded.txt: a program that reads
+    # the export table itself finds the code of a function there, and a name that stands for another library's is
+    # a string it cannot call.
+    add_custom_command(OUTPUT ${MIME_GEN}/${arch}/kernel32.def ${MIME_GEN}/${arch}/kernel32_thunks.S
         COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gendef.py forward kernel32.dll ${MIME_GEN}/${arch}/kernel32.def
-            ${MIME_OUT_${arch}}/kernelbase.dll kernelbase ${kernel32_ntdll}
-        DEPENDS tools/gendef.py ${MIME_OUT_${arch}}/kernelbase.dll VERBATIM)
+            ${MIME_OUT_${arch}}/kernelbase.dll kernelbase --thunks ${MIME_GEN}/${arch}/kernel32_thunks.S ${arch}
+            ${CMAKE_SOURCE_DIR}/guest/kernel32/forwarded.txt ${kernel32_ntdll}
+        DEPENDS tools/gendef.py guest/kernel32/forwarded.txt ${MIME_OUT_${arch}}/kernelbase.dll VERBATIM)
+    mime_objects(${arch}-kernel32-thunks ${arch} SOURCES ${MIME_GEN}/${arch}/kernel32_thunks.S)
     mime_sources(sources kernel32 ${arch})
-    mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
+    mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk ${arch}-kernel32-thunks
         OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS ntdll kernelbase DEF ${MIME_GEN}/${arch}/kernel32.def)
 
     mime_sources(sources gdi32 ${arch})
@@ -262,11 +265,22 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     msctf:0x7FF0D0000000 riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000 psapi:0x7FF0E0000000 lz32:0x7FF0F0000000
     activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000
-    windowscodecs:0x7FF740000000)
+    cabinet:0x7FF740000000 sfc:0x7FF750000000 sfc_os:0x7FF760000000 msxml3:0x7FF780000000 msxml6:0x7FF790000000
+    windowscodecs:0x7FF7A0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet)
+    # sfc_os reads the version resources of files and the security of keys.
+    set(libs_sfc_os ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
+    # cabinet.dll reads cabinets with the same reader.
+    set(objects_cabinet ${arch}-lib-cabinet)
+    # msxml3 and msxml6 are two faces of one dom engine.
+    foreach(msxml msxml3 msxml6)
+        set(objects_${msxml} ${arch}-lib-xmldom)
+        set(includes_${msxml} guest/lib)
+        set(libs_${msxml} ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib)
+    endforeach()
     # advpack takes files out of cabinets and reads the versions of files.
     set(objects_advpack ${arch}-lib-cabinet)
     set(libs_advpack ${MIME_LIB_${arch}}/version.lib ${MIME_LIB_${arch}}/advapi32.lib)
@@ -297,10 +311,12 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_dwrite guest/lib)
     # the cryptographic primitives: whole in bcrypt, crypt32 and secur32's tls, the hashes and chacha20 in advapi32.
     set(objects_bcrypt ${arch}-lib-crypto)
-    set(objects_crypt32 ${arch}-lib-crypto)
+    set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound)
     set(objects_secur32 ${arch}-lib-crypto)
     set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c
-        ${arch}-lib-crypto:guest/lib/crypto/bignum.c ${arch}-lib-crypto:guest/lib/crypto/rsa.c)
+        ${arch}-lib-crypto:guest/lib/crypto/bignum.c ${arch}-lib-crypto:guest/lib/crypto/rsa.c
+        ${arch}-lib-crypto:guest/lib/crypto/aes.c ${arch}-lib-crypto:guest/lib/crypto/des.c
+        ${arch}-lib-crypto:guest/lib/crypto/modes.c ${arch}-lib-crypto:guest/lib/crypto/kdf.c ${arch}-lib-crypto:guest/lib/crypto/hmac.c)
     foreach(crypto bcrypt crypt32 secur32 advapi32)
         set(includes_${crypto} guest/lib)
     endforeach()
@@ -345,6 +361,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10_1 ${arch}-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
+    # wintrust reads the streams of installer packages with the compound file reader.
+    set(objects_wintrust ${arch}-lib-compound)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     # setupapi unpacks cabinets with the reader of guest/lib/cabinet.

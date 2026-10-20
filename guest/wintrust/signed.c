@@ -5,6 +5,7 @@ static constexpr BYTE oid_indirect[] = {0x2b,6,1,4,1,0x82,0x37,2,1,4};
 static constexpr BYTE oid_pe[] = {0x2b,6,1,4,1,0x82,0x37,2,1,15};
 static constexpr BYTE oid_cab[] = {0x2b,6,1,4,1,0x82,0x37,2,1,25};
 static constexpr BYTE oid_cab_enhanced[] = {0x2b,6,1,4,1,0x82,0x37,2,1,28};
+static constexpr BYTE oid_sip_info[] = {0x2b,6,1,4,1,0x82,0x37,2,1,30};
 static constexpr BYTE oid_counter[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,6};
 static constexpr BYTE oid_time[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,5};
 static constexpr BYTE oid_rsa_sha1[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,5};
@@ -81,7 +82,8 @@ static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
     /* the cabinet's data comes in two kinds, the second with the digests of more parts of the file in its link,
        which are not checked. */
     WT_BYTES probe = data.value;
-    if (cabinet ? !take_oid(&probe, oid_cab, sizeof(oid_cab)) &&
+    if (subject->installer ? !take_oid(&probe, oid_sip_info, sizeof(oid_sip_info))
+        : cabinet ? !take_oid(&probe, oid_cab, sizeof(oid_cab)) &&
                       !(probe = data.value, take_oid(&probe, oid_cab_enhanced, sizeof(oid_cab_enhanced)))
                 : !take_oid(&data.value, oid_pe, sizeof(oid_pe)))
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
@@ -313,6 +315,25 @@ static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILE
     return FALSE;
 }
 
+#define CRYPT_E_NO_REVOCATION_CHECK_ ((LONG)0x80092012)
+#define CRYPT_E_REVOCATION_OFFLINE_ ((LONG)0x80092013)
+#define WTPF_OFFLINEOK_IND 0x00000400
+#define WTPF_OFFLINEOK_COM 0x00000800
+#define WTPF_DEFAULT_STATE 0x00023c00
+
+/*
+ * the policy flags of the software publishing trust provider: a revocation check that cannot reach its server is
+ * no failure for a publisher unless the state asks for one. A machine without the value has the default of a fresh
+ * installation, which allows it for both kinds of publisher.
+ */
+static BOOL offline_revocation_allowed(void)
+{
+    DWORD state = WTPF_DEFAULT_STATE, size = sizeof(state);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\WinTrust\\Trust Providers\\Software Publishing",
+                 L"State", RRF_RT_REG_DWORD, nullptr, &state, &size);
+    return (state & (WTPF_OFFLINEOK_IND | WTPF_OFFLINEOK_COM)) != 0;
+}
+
 static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE store, const WINTRUST_DATA *options,
                    PCCERT_CHAIN_CONTEXT *kept)
 {
@@ -359,14 +380,19 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
         para.cbSize = sizeof(para);
         para.RequestedUsage.Usage.cUsageIdentifier = 1;
         para.RequestedUsage.Usage.rgpszUsageIdentifier = usages;
+        /* the flags of the provider only narrow a check that fdwRevocationChecks asks for: none asked means none done,
+           whatever the flags say, and the whole chain is the check when they say nothing. */
         DWORD flags = 0;
-        if (options->fdwRevocationChecks == WTD_REVOKE_WHOLECHAIN ||
-            (options->dwProvFlags & WTD_REVOCATION_CHECK_CHAIN))
-            flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN;
-        else if (options->dwProvFlags & WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT)
-            flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
-        else if (options->dwProvFlags & WTD_REVOCATION_CHECK_END_CERT)
-            flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT;
+        if (options->fdwRevocationChecks == WTD_REVOKE_WHOLECHAIN) {
+            if (options->dwProvFlags & WTD_REVOCATION_CHECK_NONE)
+                flags = 0;
+            else if (options->dwProvFlags & WTD_REVOCATION_CHECK_END_CERT)
+                flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT;
+            else if (options->dwProvFlags & WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT)
+                flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
+            else
+                flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN;
+        }
         /* a signature with a valid time stamp is judged as of that time, else as of now. */
         FILETIME stamp;
         BOOL stamped = unsigned_attributes.value.size && stamp_time(unsigned_attributes, encrypted, store, &stamp);
@@ -380,6 +406,10 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
                 result = TRUST_E_SUBJECT_NOT_TRUSTED;
             else
                 result = status.dwError;
+            /* a server that could not be asked about revocation does not make the signature untrustworthy. */
+            if ((result == CRYPT_E_REVOCATION_OFFLINE_ || result == CRYPT_E_NO_REVOCATION_CHECK_) &&
+                offline_revocation_allowed())
+                result = 0;
             /* the state of a verification keeps the chain, whatever the policy said. */
             if (kept)
                 *kept = chain;

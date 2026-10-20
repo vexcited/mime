@@ -675,6 +675,20 @@ SHSTDAPI HRESULT WINAPI SHCreateItemFromIDList(PCIDLIST_ABSOLUTE pidl, REFIID ri
     return copy ? create_item(copy, riid, object) : E_OUTOFMEMORY;
 }
 
+SHSTDAPI HRESULT WINAPI SHGetNameFromIDList(PCIDLIST_ABSOLUTE pidl, SIGDN form, PWSTR *name)
+{
+    if (!name)
+        return E_INVALIDARG;
+    *name = nullptr;
+    IShellItem *item = nullptr;
+    HRESULT hr = SHCreateItemFromIDList(pidl, &IID_IShellItem, (void **)&item);
+    if (SUCCEEDED(hr)) {
+        hr = item->lpVtbl->GetDisplayName(item, form, name);
+        item->lpVtbl->Release(item);
+    }
+    return hr;
+}
+
 /* an item of a list the caller gives up. */
 HRESULT ShItemFromList(PIDLIST_ABSOLUTE pidl, REFIID riid, void **object)
 {
@@ -1109,6 +1123,13 @@ SHSTDAPI HRESULT WINAPI SHAssocEnumHandlers(PCWSTR extension, ASSOC_FILTER filte
 
 /* there is no folder browser dialog yet; the result is the one of a cancelled dialog. */
 SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderW(LPBROWSEINFOW info)
+{
+    if (info && info->pszDisplayName)
+        info->pszDisplayName[0] = 0;
+    return nullptr;
+}
+
+SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderA(LPBROWSEINFOA info)
 {
     if (info && info->pszDisplayName)
         info->pszDisplayName[0] = 0;

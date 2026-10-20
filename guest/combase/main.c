@@ -62,6 +62,7 @@ static const struct {
     {CbPropertyValueClass, CbPropertyValueFactory},
     {CbToastManagerClass, CbToastManagerFactory},
     {CbToastClass, CbToastFactory},
+    {CbRegionPolicyClass, CbRegionPolicyFactory},
 };
 
 ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory)
@@ -76,6 +77,9 @@ ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void 
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_classes); i++)
         if (wcslen(g_classes[i].Name) == length && !memcmp(g_classes[i].Name, name, length * sizeof(WCHAR)))
             return g_classes[i].Factory(riid, factory);
+    HRESULT registered = CbRegisteredFactory(class_id, riid, factory);
+    if (registered != REGDB_E_CLASSNOTREG)
+        return registered;
     /* a program that asks for a class that is not here is told so in the log, for finding what it wants next. */
     char text[200];
     int n = _snprintf(text, sizeof(text), "combase: no runtime class %.*ls\n", (int)(length < 120 ? length : 120), name);

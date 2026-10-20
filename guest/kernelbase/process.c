@@ -673,6 +673,8 @@ static SIZE_T environment_bytes(PCWSTR env)
 }
 
 #define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1)
+#define CONSOLE_NEW ((HANDLE)(LONG_PTR)-2)
+#define CONSOLE_NO_WINDOW ((HANDLE)(LONG_PTR)-3)
 #define PROCESS_CREATE_FLAGS_BREAKAWAY 0x00000001
 #define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
 
@@ -982,7 +984,15 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
     pp.CountCharsX = startup->dwXCountChars;
     pp.CountCharsY = startup->dwYCountChars;
     pp.FillAttribute = startup->dwFillAttribute;
-    if (startup->dwFlags & STARTF_USESTDHANDLES) {
+    /* handles named without inheriting them, or a parent to take them from, are not the child's: it gets none. */
+    BOOL named_parent = FALSE;
+    if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
+        ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
+        LPPROC_THREAD_ATTRIBUTE_LIST given = ((LPSTARTUPINFOEXW)startup)->lpAttributeList;
+        for (DWORD i = 0; i < given->Used; i++)
+            named_parent |= given->Attributes[i].Attribute == PROC_THREAD_ATTRIBUTE_PARENT_PROCESS;
+    }
+    if ((startup->dwFlags & STARTF_USESTDHANDLES) && (inherit || named_parent)) {
         pp.StandardInput = startup->hStdInput;
         pp.StandardOutput = startup->hStdOutput;
         pp.StandardError = startup->hStdError;
@@ -997,6 +1007,26 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
     }
     if (flags & DETACHED_PROCESS)
         pp.ConsoleHandle = CONSOLE_DETACHED;
+    else if (flags & CREATE_NEW_CONSOLE)
+        pp.ConsoleHandle = CONSOLE_NEW;
+    else if (flags & CREATE_NO_WINDOW)
+        pp.ConsoleHandle = CONSOLE_NO_WINDOW;
+    /* a pseudo console is the console of the new process: the handle of its device is named for the kernel. */
+    if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
+        ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
+        LPPROC_THREAD_ATTRIBUTE_LIST list = ((LPSTARTUPINFOEXW)startup)->lpAttributeList;
+        for (DWORD i = 0; i < list->Used; i++) {
+            if (list->Attributes[i].Attribute == PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE) {
+                HANDLE console = KbPseudoConsoleHandle((HPCON)list->Attributes[i].Value);
+                if (!console) {
+                    KbFree(converted);
+                    KbSetError(ERROR_INVALID_PARAMETER);
+                    return FALSE;
+                }
+                pp.ConsoleHandle = console;
+            }
+        }
+    }
     /* a new process group starts with ctrl+c ignored, as on windows. */
     if (flags & CREATE_NEW_PROCESS_GROUP)
         pp.ConsoleFlags = 1;

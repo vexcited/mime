@@ -1741,7 +1741,9 @@ typedef struct _TEB {
     ULONG GdiBatchCount;
     ULONG CurrentIdealProcessor;
     ULONG GuaranteedStackBytes;
-    UCHAR Reserved4[0xF94 - 0xF7C];
+    PVOID ReservedForPerf;
+    PVOID ReservedForOle;
+    UCHAR Reserved4[0xF94 - 0xF84];
     PVOID *TlsExpansionSlots;
     UCHAR Reserved5[0xFAC - 0xF98];
     PVOID CurrentTransactionHandle;
@@ -1766,6 +1768,7 @@ MIME_FIELD_AT(TEB, LastStatusValue, 0xBF4);
 MIME_FIELD_AT(TEB, ActivityId, 0xF50);
 MIME_FIELD_AT(TEB, TlsSlots, 0xE10);
 MIME_FIELD_AT(TEB, CurrentTransactionHandle, 0xFAC);
+MIME_FIELD_AT(TEB, ReservedForOle, 0xF80);
 MIME_FIELD_AT(TEB, FlsData, 0xFB4);
 MIME_FIELD_AT(TEB, SameTebFlags, 0xFCA);
 #else

@@ -52,7 +52,7 @@ static BOOL same_key(const MIME_MSI_TABLE *table, PWSTR *strings, const ULONG *a
     return TRUE;
 }
 
-static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, PWSTR *strings,
+static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, PWSTR *strings, ULONG base,
                              MIME_MSI_TABLE *table, const BYTE *data, SIZE_T size, UINT flags, MSI_TABLE_EDIT **out)
 {
     if (!table->Count || table->Count > 16)
@@ -108,8 +108,10 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
                 break;
             }
             if (text && values[column])
-                values[column] += database->StringCount - 1;
-            if ((!values[column] && !(type & 0x1000)) ||
+                values[column] += base - 1;
+            /* the columns a transform adds to _Columns are numbered by their order, and carry no number of their own. */
+            BOOL numbered = insert && column == 1 && !wcscmp(table->Name, L"_Columns");
+            if ((!values[column] && !(type & 0x1000) && !numbered) ||
                 (text && values[column] && !strings[values[column]])) {
                 error = ERROR_INSTALL_PACKAGE_INVALID;
                 break;
@@ -117,6 +119,15 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
         }
         if (error)
             break;
+        if (insert && !wcscmp(table->Name, L"_Columns") && !values[1]) {
+            ULONG before = 0;
+            for (ULONG existing = 0; existing < count; existing++) {
+                PCWSTR left = strings[rows[(SIZE_T)existing * table->Count]], right = strings[values[0]];
+                if (left && right && !wcscmp(left, right))
+                    before++;
+            }
+            values[1] = 0x8000 + before + 1;
+        }
         ULONG row;
         for (row = 0; row < count; row++)
             if (same_key(table, strings, rows + (SIZE_T)row * table->Count, values))
@@ -192,7 +203,102 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
     return error;
 }
 
-static UINT apply_transform(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, UINT flags)
+/* the rows of _Columns the transform adds must be those of tables the database does not have yet: a column added to a table
+ * that has rows would change how they are stored. */
+static UINT check_schema(MIME_MSI_DATABASE *database, MIME_MSI_TABLE *original, const MIME_MSI_TABLE *edited, PWSTR *strings)
+{
+    if (edited->Rows < original->Rows)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    for (ULONG row = 0; row < edited->Rows; row++) {
+        ULONG table = MimeMsiCell(edited, row, 0);
+        BOOL known = FALSE;
+        for (ULONG old = 0; old < original->Rows && !known; old++)
+            known = strings[MimeMsiCell(original, old, 0)] && strings[table] &&
+                    !wcscmp(strings[MimeMsiCell(original, old, 0)], strings[table]);
+        if (known)
+            continue;
+        /* a table that is not in the original rows may still have a stream of its own, which the schema must not change. */
+        BYTE *data = nullptr;
+        SIZE_T size;
+        UINT error = strings[table] ? MimeMsiTableStream(database, strings[table], &data, &size) : ERROR_INVALID_DATA;
+        MimeMsiFree(data);
+        if (error != ERROR_FILE_NOT_FOUND)
+            return ERROR_CALL_NOT_IMPLEMENTED;
+    }
+    return ERROR_SUCCESS;
+}
+
+static void commit_edits(MSI_TABLE_EDIT *edits, BOOL keep)
+{
+    while (edits) {
+        MSI_TABLE_EDIT *edit = edits;
+        edits = edit->Next;
+        if (!keep)
+            MimeMsiFree(edit->Table.Data);
+        else {
+            MimeMsiFree(edit->Original->Data);
+            MIME_MSI_TABLE *next = edit->Original->Next;
+            *edit->Original = edit->Table;
+            edit->Original->Next = next;
+        }
+        MimeMsiFree(edit);
+    }
+}
+
+/* the tables of the transform, the ones about the schema (_Tables and _Columns) in the first pass and the others in the second. */
+static UINT transform_pass(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, PWSTR *strings, ULONG base, UINT flags,
+                           const ULONG *children, ULONG count, BOOL schema, MSI_TABLE_EDIT **out)
+{
+    UINT error = ERROR_SUCCESS;
+    MSI_TABLE_EDIT *edits = nullptr;
+    for (ULONG at = 0; !error && at < count; at++) {
+        MIME_CFB_ENTRY entry;
+        if (!MimeCfbEntry(&transform->File, children[at], &entry)) {
+            error = ERROR_INSTALL_PACKAGE_INVALID;
+            break;
+        }
+        if (!entry.Type)
+            continue;
+        WCHAR name[64];
+        if (entry.Type == 2 && !wcscmp((PCWSTR)entry.Name, L"\x0005SummaryInformation"))
+            continue;
+        if (entry.Type != 2 || !transform_table_name(entry.Name, name)) {
+            error = ERROR_CALL_NOT_IMPLEMENTED;
+            break;
+        }
+        if (!wcscmp(name, L"_StringPool") || !wcscmp(name, L"_StringData"))
+            continue;
+        BOOL is_schema = !wcscmp(name, L"_Tables") || !wcscmp(name, L"_Columns");
+        if (is_schema != schema)
+            continue;
+        MIME_MSI_TABLE *table;
+        error = MimeMsiLoadTable(database, name, &table);
+        for (MSI_TABLE_EDIT *prior = edits; !error && prior; prior = prior->Next)
+            if (prior->Original == table)
+                error = ERROR_INSTALL_PACKAGE_INVALID;
+        BYTE *data = nullptr;
+        SIZE_T size;
+        if (!error)
+            error = MimeMsiReadStream(transform, (PCWSTR)entry.Name, &data, &size);
+        MSI_TABLE_EDIT *edit = nullptr;
+        if (!error)
+            error = transform_table(database, transform, strings, base, table, data, size, flags, &edit);
+        MimeMsiFree(data);
+        if (!error && !wcscmp(name, L"_Columns"))
+            error = check_schema(database, table, &edit->Table, strings);
+        if (!error) {
+            edit->Next = edits;
+            edits = edit;
+        }
+    }
+    if (error)
+        commit_edits(edits, FALSE);
+    else
+        *out = edits;
+    return error;
+}
+
+UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, UINT flags)
 {
     if (database->CodePage && transform->CodePage && database->CodePage != transform->CodePage &&
         !(flags & MSITRANSFORM_ERROR_CHANGECODEPAGE))
@@ -215,59 +321,30 @@ static UINT apply_transform(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
             break;
         }
     }
+    ULONG *children = nullptr, count = 0;
+    if (!error)
+        error = MimeMsiChildren(transform, &children, &count);
     MSI_TABLE_EDIT *edits = nullptr;
-    for (SIZE_T i = 1; !error && i < transform->File.DirectorySize / 128; i++) {
-        MIME_CFB_ENTRY entry;
-        if (!MimeCfbEntry(&transform->File, (ULONG)i, &entry)) {
-            error = ERROR_INSTALL_PACKAGE_INVALID;
-            break;
-        }
-        if (!entry.Type)
-            continue;
-        WCHAR name[64];
-        if (entry.Type == 2 && !wcscmp((PCWSTR)entry.Name, L"\x0005SummaryInformation"))
-            continue;
-        if (entry.Type != 2 || !transform_table_name(entry.Name, name)) {
-            error = ERROR_CALL_NOT_IMPLEMENTED;
-            break;
-        }
-        if (!wcscmp(name, L"_StringPool") || !wcscmp(name, L"_StringData"))
-            continue;
-        if (!wcscmp(name, L"_Tables") || !wcscmp(name, L"_Columns")) {
-            error = ERROR_CALL_NOT_IMPLEMENTED;
-            break;
-        }
-        MIME_MSI_TABLE *table;
-        error = MimeMsiLoadTable(database, name, &table);
-        for (MSI_TABLE_EDIT *prior = edits; !error && prior; prior = prior->Next)
-            if (prior->Original == table)
-                error = ERROR_INSTALL_PACKAGE_INVALID;
-        BYTE *data = nullptr;
-        SIZE_T size;
-        if (!error)
-            error = MimeMsiReadStream(transform, (PCWSTR)entry.Name, &data, &size);
-        MSI_TABLE_EDIT *edit = nullptr;
-        if (!error)
-            error = transform_table(database, transform, strings, table, data, size, flags, &edit);
-        MimeMsiFree(data);
-        if (!error) {
-            edit->Next = edits;
-            edits = edit;
-        }
+    BOOL swapped = FALSE;
+    ULONG base = database->StringCount;
+    if (!error)
+        error = transform_pass(database, transform, strings, base, flags, children, count, TRUE, &edits);
+    if (!error && edits) {
+        /* a table the transform makes is read with the schema it adds, so the schema and the strings go in first. */
+        commit_edits(edits, TRUE);
+        edits = nullptr;
+        MimeMsiFree(database->Strings);
+        database->Strings = strings;
+        database->StringCount = total;
+        database->Revision++;
+        swapped = TRUE;
     }
-    while (edits) {
-        MSI_TABLE_EDIT *edit = edits;
-        edits = edit->Next;
-        if (error)
-            MimeMsiFree(edit->Table.Data);
-        else {
-            MimeMsiFree(edit->Original->Data);
-            MIME_MSI_TABLE *next = edit->Original->Next;
-            *edit->Original = edit->Table;
-            edit->Original->Next = next;
-        }
-        MimeMsiFree(edit);
-    }
+    if (!error)
+        error = transform_pass(database, transform, strings, base, flags, children, count, FALSE, &edits);
+    MimeMsiFree(children);
+    commit_edits(edits, !error);
+    if (swapped)
+        return error;
     if (error) {
         for (ULONG i = database->StringCount; i < total; i++)
             MimeMsiFree(strings[i]);
@@ -297,7 +374,7 @@ UINT WINAPI MsiDatabaseApplyTransformW(MSIHANDLE handle, LPCWSTR path, int flags
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
     error = !database ? ERROR_INVALID_HANDLE : database->Revision >= 256 ? ERROR_CALL_NOT_IMPLEMENTED :
-            apply_transform(database, transform, (UINT)flags);
+            MimeMsiApplyTransformStorage(database, transform, (UINT)flags);
     if (!error) {
         applied->Database = transform;
         applied->Flags = (UINT)flags;

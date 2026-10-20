@@ -15,9 +15,12 @@ typedef struct {
     DWORD size, checksum, directory, certificate;
     const BYTE *digest_input;
     DWORD digest_size;
+    /* the bytes are those of a windows installer package, whose signature names its format with a sip identifier. */
+    BOOL installer;
 } WT_SUBJECT;
 LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
+LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTRUST_DATA *options,
                         PCCERT_CHAIN_CONTEXT *chain);
 #endif

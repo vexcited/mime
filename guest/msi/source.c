@@ -266,6 +266,84 @@ UINT WINAPI MsiSourceListAddSourceW(LPCWSTR product, LPCWSTR user, DWORD reserve
     return error;
 }
 
+/* the source goes to the place the index names, one based, or to the end for zero. A source already in the list moves. */
+UINT WINAPI MsiSourceListAddSourceExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
+                                      DWORD options, LPCWSTR source, DWORD index)
+{
+    DWORD type = options & ~MSICODE_PATCH;
+    if (!source || !*source || (type != MSISOURCETYPE_NETWORK && type != MSISOURCETYPE_URL))
+        return ERROR_INVALID_PARAMETER;
+    HKEY root;
+    WCHAR path[160], list[176], name[16];
+    AcquireSRWLockExclusive(&source_lock);
+    UINT error = source_product(product, sid, context, options, &root, path);
+    PWSTR *entries = nullptr;
+    DWORD count = 0;
+    PWSTR normalized = nullptr;
+    if (!error) {
+        normalized = normalize_source(source, type);
+        entries = MimeMsiAllocate(sizeof(*entries) * 65537);
+        if (!normalized || !entries)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (!error) {
+        _snwprintf(list, RTL_NUMBER_OF(list), L"%s\\%s", path, type == MSISOURCETYPE_URL ? L"URL" : L"Net");
+        while (count < 65536) {
+            _snwprintf(name, RTL_NUMBER_OF(name), L"%u", count + 1);
+            error = read_text(root, list, name, &entries[count]);
+            if (missing(error)) {
+                error = ERROR_SUCCESS;
+                break;
+            }
+            if (error)
+                break;
+            count++;
+        }
+    }
+    if (!error) {
+        DWORD found = count;
+        for (DWORD i = 0; i < count; i++)
+            if (type == MSISOURCETYPE_URL ? !wcscmp(entries[i], normalized) : !_wcsicmp(entries[i], normalized))
+                found = i;
+        DWORD place = index && index - 1 < count ? index - 1 : count;
+        if (found < count && !index)
+            place = found;
+        /* the order after the change, written back from the first place that differs. */
+        PWSTR *order = MimeMsiAllocate(sizeof(*order) * 65538);
+        if (!order)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        else {
+            DWORD total = 0;
+            for (DWORD i = 0; i < count; i++)
+                if (i != found)
+                    order[total++] = entries[i];
+            if (place > total)
+                place = total;
+            for (DWORD i = total; i > place; i--)
+                order[i] = order[i - 1];
+            order[place] = normalized;
+            total++;
+            if (total > 65536)
+                error = ERROR_BAD_CONFIGURATION;
+            MIME_MSI_PACKAGE journal = {.TransactionActive = TRUE};
+            for (DWORD i = 0; !error && i < total; i++) {
+                if (i < count && !wcscmp(order[i], entries[i]))
+                    continue;
+                _snwprintf(name, RTL_NUMBER_OF(name), L"%u", i + 1);
+                error = write_text(&journal, root, list, name, order[i]);
+            }
+            error = finish(&journal, error);
+            MimeMsiFree(order);
+        }
+    }
+    for (DWORD i = 0; i < count; i++)
+        MimeMsiFree(entries[i]);
+    MimeMsiFree(entries);
+    MimeMsiFree(normalized);
+    ReleaseSRWLockExclusive(&source_lock);
+    return error;
+}
+
 UINT MimeMsiRegisterSource(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path)
 {
     WCHAR path[160];

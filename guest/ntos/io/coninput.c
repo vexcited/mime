@@ -39,7 +39,6 @@
 #define VK_F11 0x7A
 #define VK_F12 0x7B
 #define VK_OEM_2 0xBF
-#define VK_PACKET 0xE7
 
 /* the virtual key of the key that types NUL with ctrl, 2 on the us layout. */
 #define VK_NUL_KEY 0x32
@@ -61,8 +60,43 @@ static void key_record(MIME_CONDRV_RECORD *r, BOOLEAN down, USHORT vk, USHORT sc
     r->Key.ControlKeyState = state;
 }
 
-/* a key press and release, as the console reports a typed key. */
+/*
+ * a key press and release, as the console reports a typed key. when the key is typed with shift, alt or
+ * ctrl the presses of those keys go around it, in that order, and their releases after it in the other.
+ */
 static ULONG key_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT scan, WCHAR ch, ULONG state)
+{
+    static const struct {
+        ULONG bit;
+        USHORT vk, scan;
+    } modifiers[] = {{CON_SHIFT, 0x10, 0x2A}, {CON_LEFT_ALT, 0x12, 0x38}, {CON_LEFT_CTRL, 0x11, 0x1D}};
+    ULONG held = state & (CON_SHIFT | CON_LEFT_ALT | CON_LEFT_CTRL);
+    ULONG count = 0;
+    for (ULONG i = 0; i < 3; i++)
+        if (held & modifiers[i].bit)
+            count++;
+    if (room < 2 + 2 * count)
+        return 0;
+    ULONG n = 0, accumulated = 0;
+    for (ULONG i = 0; i < 3; i++) {
+        if (!(held & modifiers[i].bit))
+            continue;
+        accumulated |= modifiers[i].bit;
+        key_record(&out[n++], TRUE, modifiers[i].vk, modifiers[i].scan, 0, accumulated);
+    }
+    key_record(&out[n++], TRUE, vk, scan, ch, state);
+    key_record(&out[n++], FALSE, vk, scan, ch, state);
+    for (ULONG i = 3; i-- > 0;) {
+        if (!(held & modifiers[i].bit))
+            continue;
+        accumulated &= ~modifiers[i].bit;
+        key_record(&out[n++], FALSE, modifiers[i].vk, modifiers[i].scan, 0, accumulated);
+    }
+    return n;
+}
+
+/* a key press and release with no keys around it, as the console reports ctrl+c. */
+static ULONG plain_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT scan, WCHAR ch, ULONG state)
 {
     if (room < 2)
         return 0;
@@ -128,7 +162,7 @@ static const struct {
     {"OC", VK_RIGHT, 0x4D},    {"OD", VK_LEFT, 0x4B},    {"OH", VK_HOME, 0x47},    {"OF", VK_END, 0x4F},
     {"OP", VK_F1, 0x3B},       {"OQ", VK_F2, 0x3C},      {"OR", VK_F3, 0x3D},      {"OS", VK_F4, 0x3E},
     {"[1~", VK_HOME, 0x47},    {"[2~", VK_INSERT, 0x52}, {"[3~", VK_DELETE, 0x53}, {"[4~", VK_END, 0x4F},
-    {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},   {"[7~", VK_HOME, 0x47},   {"[8~", VK_END, 0x4F},
+    {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},
     {"[15~", VK_F5, 0x3F},     {"[17~", VK_F6, 0x40},    {"[18~", VK_F7, 0x41},    {"[19~", VK_F8, 0x42},
     {"[20~", VK_F9, 0x43},     {"[21~", VK_F10, 0x44},   {"[23~", VK_F11, 0x57},   {"[24~", VK_F12, 0x58},
     {"[Z", VK_TAB, 0x0F},
@@ -175,7 +209,10 @@ static BOOLEAN escape_key(const UCHAR *p, ULONG length, ULONG *used, USHORT *vk,
             continue;
         *vk = g_escape_keys[k].vk;
         *scan = g_escape_keys[k].scan;
-        *state = g_escape_keys[k].vk == VK_TAB ? CON_SHIFT : CON_ENHANCED_KEY;
+        /* the keys of the cursor pad are enhanced when a csi sequence sends them, the function keys never. */
+        BOOLEAN pad = (g_escape_keys[k].vk >= VK_PRIOR && g_escape_keys[k].vk <= VK_DOWN) ||
+                      g_escape_keys[k].vk == VK_INSERT || g_escape_keys[k].vk == VK_DELETE;
+        *state = g_escape_keys[k].vk == VK_TAB ? CON_SHIFT : pad && seq[0] == '[' ? CON_ENHANCED_KEY : 0;
         if (modifier > 1) {
             ULONG m = modifier - 1;
             if (m & 1)
@@ -211,10 +248,169 @@ static ULONG utf8_char(const UCHAR *p, ULONG length, BOOLEAN more, WCHAR w[2], U
     return written / sizeof(WCHAR);
 }
 
-ULONG ConDecodeInput(const UCHAR *p, ULONG length, BOOLEAN vt, BOOLEAN more, MIME_CONDRV_RECORD *out, ULONG room,
+/* ---- mouse, focus, paste and win32 input reports */
+
+#define BUTTON_LEFT 0x1
+#define BUTTON_RIGHT 0x2
+#define BUTTON_MIDDLE 0x4
+#define BUTTON_FOURTH 0x8
+#define BUTTON_FIFTH 0x10
+#define WHEEL_DELTA 128
+
+/*
+ * the sequence that starts at p, ESC [ then parameters then a final byte.
+ * returns 1 and the length when it is whole, 0 when the input ends inside
+ * it, -1 when it is no sequence.
+ */
+static int csi_scan(const UCHAR *p, ULONG length, ULONG *used, LONG params[8], ULONG *count, UCHAR *prefix, UCHAR *final)
+{
+    ULONG i = 2;
+    *count = 0;
+    *prefix = 0;
+    BOOLEAN have = FALSE;
+    LONG value = 0;
+    if (i < length && p[i] >= 0x3C && p[i] <= 0x3F)
+        *prefix = p[i++];
+    for (; i < length; i++) {
+        UCHAR c = p[i];
+        if (c >= '0' && c <= '9') {
+            value = value > 100000000 ? value : value * 10 + (c - '0');
+            have = TRUE;
+        } else if (c == ';' || c == ':') {
+            if (*count < 8)
+                params[(*count)++] = have ? value : -1;
+            value = 0;
+            have = FALSE;
+        } else if (c >= 0x40 && c <= 0x7E) {
+            if (*count < 8 && (have || *count))
+                params[(*count)++] = have ? value : -1;
+            *final = c;
+            *used = i + 1;
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static ULONG mouse_modifiers(LONG b)
+{
+    ULONG state = 0;
+    if (b & 4)
+        state |= CON_SHIFT;
+    if (b & 8)
+        state |= CON_LEFT_ALT;
+    if (b & 16)
+        state |= CON_LEFT_CTRL;
+    return state;
+}
+
+/* a mouse report: b is the button code of the report, x and y the 1 based cell, release when it is a release. */
+static ULONG mouse_records(CON_DECODE *st, LONG b, LONG x, LONG y, BOOLEAN release, MIME_CONDRV_RECORD *out, ULONG room)
+{
+    if (!st->Mouse || room < 1)
+        return 0;
+    MIME_CONDRV_RECORD *r = &out[0];
+    memset(r, 0, sizeof(*r));
+    r->EventType = CON_MOUSE_EVENT;
+    r->Mouse.X = (SHORT)(x - 1 + st->OriginX);
+    r->Mouse.Y = (SHORT)(y - 1 + st->OriginY);
+    r->Mouse.ControlKeyState = mouse_modifiers(b);
+    if (b & 64) {
+        /* the wheel: the sign of the high word says which way, and the flag whether it is the horizontal wheel. */
+        /* the console of windows ignores the horizontal wheel. */
+        if ((b & 3) >= 2)
+            return 0;
+        LONG delta = (b & 1) ? -WHEEL_DELTA : WHEEL_DELTA;
+        r->Mouse.ButtonState = st->Buttons | ((ULONG)(delta & 0xFFFF) << 16);
+        r->Mouse.EventFlags = CON_MOUSE_WHEELED;
+        return 1;
+    }
+    ULONG button = 0;
+    LONG code = b & 3;
+    if (b & 128)
+        button = code == 0 ? BUTTON_FOURTH : BUTTON_FIFTH;
+    else
+        button = code == 0 ? BUTTON_LEFT : code == 1 ? BUTTON_MIDDLE : code == 2 ? BUTTON_RIGHT : 0;
+    if (b & 32) {
+        /* a move, with the buttons that are down. */
+        r->Mouse.ButtonState = st->Buttons;
+        r->Mouse.EventFlags = CON_MOUSE_MOVED;
+        return 1;
+    }
+    if (release) {
+        if (button)
+            st->Buttons &= ~button;
+        else
+            st->Buttons = 0;
+        r->Mouse.ButtonState = st->Buttons;
+        return 1;
+    }
+    st->Buttons |= button;
+    r->Mouse.ButtonState = st->Buttons;
+    /* a second press of the same button in the same cell soon after the first is a double click. */
+    if (st->LastClickButton == button && st->LastClickX == r->Mouse.X && st->LastClickY == r->Mouse.Y &&
+        st->Now - st->LastClick <= 500) {
+        r->Mouse.EventFlags = CON_DOUBLE_CLICK;
+        st->LastClickButton = 0;
+    } else {
+        st->LastClickButton = button;
+        st->LastClick = st->Now;
+        st->LastClickX = r->Mouse.X;
+        st->LastClickY = r->Mouse.Y;
+    }
+    return 1;
+}
+
+/* the sequences that are no keys. returns the records made, or -1 when the sequence is not one of them. */
+static int special_csi(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more, ULONG *used, MIME_CONDRV_RECORD *out,
+                       ULONG room, BOOLEAN *partial)
+{
+    LONG params[8];
+    ULONG count, n;
+    UCHAR prefix, final;
+    *partial = FALSE;
+    int scan = csi_scan(p, length, used, params, &count, &prefix, &final);
+    if (scan == 0) {
+        *partial = more;
+        return -1;
+    }
+    if (scan < 0)
+        return -1;
+    if (prefix == '<' && (final == 'M' || final == 'm') && count == 3) {
+        n = mouse_records(st, params[0], params[1], params[2], final == 'm', out, room);
+        return (int)n;
+    }
+    if (!prefix && !count && (final == 'I' || final == 'O')) {
+        if (room < 1)
+            return -1;
+        memset(&out[0], 0, sizeof(out[0]));
+        out[0].EventType = CON_FOCUS_EVENT;
+        out[0].Value = final == 'I';
+        return 1;
+    }
+    if (!prefix && count == 1 && final == '~' && (params[0] == 200 || params[0] == 201)) {
+        st->Paste = params[0] == 200;
+        return 0;
+    }
+    /* the win32 input mode: virtual key, scan code, character, down, control keys and repeat count */
+    if (!prefix && final == '_' && count >= 4 && room >= 1) {
+        MIME_CONDRV_RECORD *r = &out[0];
+        key_record(r, params[3] > 0, params[0] > 0 ? (USHORT)params[0] : 0, params[1] > 0 ? (USHORT)params[1] : 0,
+                   params[2] > 0 ? (WCHAR)params[2] : 0, count > 4 && params[4] > 0 ? (ULONG)params[4] : 0);
+        r->Key.RepeatCount = count > 5 && params[5] > 0 ? (USHORT)params[5] : 1;
+        return 1;
+    }
+    /* the old report: ESC [ M and three bytes */
+    return -1;
+}
+
+ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more, MIME_CONDRV_RECORD *out, ULONG room,
                      ULONG *count)
 {
     ULONG i = 0;
+    BOOLEAN vt = st->Vt;
     *count = 0;
     while (i < length) {
         UCHAR c = p[i];
@@ -222,37 +418,60 @@ ULONG ConDecodeInput(const UCHAR *p, ULONG length, BOOLEAN vt, BOOLEAN more, MIM
         USHORT vk, scan;
         ULONG state = 0;
         BOOLEAN shift;
-        if (vt && c >= 0x80) {
-            WCHAR w[2];
-            ULONG units = utf8_char(p + i, length - i, more, w, &used);
-            if (!units || room - *count < units * 2)
+        if (st->Paste && !vt) {
+            /* inside a bracketed paste the text is typed as it is, until the end mark. */
+            if (c == 0x1B && length - i >= 6 && !memcmp(p + i, "\x1b[201~", 6)) {
+                st->Paste = FALSE;
+                i += 6;
+                continue;
+            }
+            if (c == 0x1B && length - i < 6 && more)
+                break;
+        }
+        if (vt) {
+            /* the characters as they came: a press of no key for each unit, the program reads the sequences itself. */
+            WCHAR w[2] = {c, 0};
+            ULONG units = 1;
+            if (c >= 0x80) {
+                units = utf8_char(p + i, length - i, more, w, &used);
+                if (!units)
+                    break;
+            }
+            if (room - *count < units)
                 break;
             for (ULONG u = 0; u < units; u++)
-                made += key_pair(out + *count + made, room - *count - made, VK_PACKET, 0, w[u], 0);
-        } else if (vt) {
-            /* the character as it came: the program reads the sequences itself. */
-            if (c == 0x1B) {
-                vk = VK_ESCAPE;
-                scan = 0x01;
-            } else if (c == '\r' || c == '\n') {
-                vk = VK_RETURN;
-                scan = 0x1C;
-            } else if (c == 0x7F || c == 0x08) {
-                vk = VK_BACK;
-                scan = 0x0E;
-            } else if (c == '\t') {
-                vk = VK_TAB;
-                scan = 0x0F;
-            } else if (c < 0x20) {
-                ascii_key(c ? (UCHAR)(c + 'a' - 1) : ' ', &vk, &scan, &shift);
-                state = CON_LEFT_CTRL;
-            } else {
-                ascii_key(c, &vk, &scan, &shift);
-                state = shift ? CON_SHIFT : 0;
-            }
-            made = key_pair(out + *count, room - *count, vk, scan, c == '\n' ? '\r' : c, state);
-        } else if (c == 0x1B) {
+                key_record(&out[*count + made++], TRUE, 0, 0, w[u], 0);
+        } else if (c == 0x1B && !st->Paste) {
             BOOLEAN partial = FALSE;
+            int special = -1;
+            if (i + 1 < length && p[i + 1] == '[') {
+                special = special_csi(st, p + i, length - i, more, &used, out + *count, room - *count, &partial);
+                if (partial)
+                    break;
+                /* the old mouse report has the position in bytes after the final. */
+                if (special < 0 && length - i >= 3 && p[i + 2] == 'M') {
+                    if (length - i < 6) {
+                        if (more)
+                            break;
+                    } else if (st->Mouse && room - *count >= 1) {
+                        LONG b = p[i + 3] - 32;
+                        BOOLEAN release = (b & 3) == 3 && !(b & 64);
+                        special = (int)mouse_records(st, release ? (b & ~3) : b, p[i + 4] - 32, p[i + 5] - 32, release,
+                                                     out + *count, room - *count);
+                        used = 6;
+                    } else {
+                        special = 0;
+                        used = 6;
+                    }
+                }
+            }
+            if (special >= 0) {
+                made = (ULONG)special;
+                *count += made;
+                i += used;
+                continue;
+            }
+            used = 1;
             if (i + 1 < length && (p[i + 1] == '[' || p[i + 1] == 'O') &&
                 escape_key(p + i, length - i, &used, &vk, &scan, &state, &partial)) {
                 made = key_pair(out + *count, room - *count, vk, scan, 0, state);
@@ -267,6 +486,8 @@ ULONG ConDecodeInput(const UCHAR *p, ULONG length, BOOLEAN vt, BOOLEAN more, MIM
             } else {
                 made = key_pair(out + *count, room - *count, VK_ESCAPE, 0x01, 0x1B, 0);
             }
+        } else if (c == 0x1B) {
+            made = key_pair(out + *count, room - *count, VK_ESCAPE, 0x01, 0x1B, 0);
         } else if (c == '\r' || c == '\n') {
             made = key_pair(out + *count, room - *count, VK_RETURN, 0x1C, '\r', 0);
             if (c == '\r' && i + 1 < length && p[i + 1] == '\n')
@@ -280,7 +501,8 @@ ULONG ConDecodeInput(const UCHAR *p, ULONG length, BOOLEAN vt, BOOLEAN more, MIM
         } else if (c < 0x20) {
             /* ctrl+letter. */
             ascii_key((UCHAR)(c + 'a' - 1), &vk, &scan, &shift);
-            made = key_pair(out + *count, room - *count, vk, scan, c, CON_LEFT_CTRL);
+            made = c == 3 ? plain_pair(out + *count, room - *count, vk, scan, c, CON_LEFT_CTRL)
+                          : key_pair(out + *count, room - *count, vk, scan, c, CON_LEFT_CTRL);
         } else if (c < 0x80) {
             ascii_key(c, &vk, &scan, &shift);
             made = key_pair(out + *count, room - *count, vk, scan, c, shift ? CON_SHIFT : 0);
@@ -291,7 +513,7 @@ ULONG ConDecodeInput(const UCHAR *p, ULONG length, BOOLEAN vt, BOOLEAN more, MIM
             if (!units || room - *count < units * 2)
                 break;
             for (ULONG u = 0; u < units; u++)
-                made += key_pair(out + *count + made, room - *count - made, VK_PACKET, 0, w[u], 0);
+                made += key_pair(out + *count + made, room - *count - made, 0, 0, w[u], 0);
         }
         if (!made)
             break;

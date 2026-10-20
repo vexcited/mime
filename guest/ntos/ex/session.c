@@ -164,7 +164,7 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
                           (PWSTR)(text + run->image_chars + run->cmdline_chars)};
     KiLogPrintf("run request %llu: %wZ", run->request_id, &image);
     /* the terminal of the run is a console, which a console program is attached to from the start. */
-    MIME_CONSOLE *console = ConsoleCreate(run->request_id, run->flags, run->console_size);
+    MIME_CONSOLE *console = ConsoleCreate(run->request_id, run->flags, run->console_size, run->console_cursor);
     if (!console) {
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)STATUS_INSUFFICIENT_RESOURCES, 0);
         return;

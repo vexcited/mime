@@ -1340,6 +1340,8 @@ WINCRYPT32API BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object
     HCERTSTORE *store, HCRYPTMSG *message, const void **context);
 WINCRYPT32API BOOL WINAPI CryptMsgGetParam(HCRYPTMSG message, DWORD type, DWORD index, void *data, DWORD *size);
 WINCRYPT32API BOOL WINAPI CryptMsgClose(HCRYPTMSG message);
+WINCRYPT32API BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG message, DWORD store_count, HCERTSTORE *stores, DWORD flags,
+                                                     PCCERT_CONTEXT *signer, DWORD *signer_index);
 
 /* CryptAcquireCertificatePrivateKey. */
 #define CRYPT_ACQUIRE_CACHE_FLAG 0x00000001

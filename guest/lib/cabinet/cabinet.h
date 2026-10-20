@@ -43,6 +43,11 @@ void MimeCabClose(MIME_CAB *cab);
 /* the set the cabinet belongs to and its place in it, for the callers that look at spanned cabinets. */
 void MimeCabSet(const MIME_CAB *cab, uint16_t *id, uint16_t *index, uint16_t *flags);
 
+/* MimeCabExtract leaves out the files that begin or go on in another cabinet instead of refusing the cabinet. */
+void MimeCabSkipContinued(MIME_CAB *cab);
+/* MimeCabExtract finishes a file before it begins the next, where it can: it holds the data of one file at a time. */
+void MimeCabSequential(MIME_CAB *cab);
+
 unsigned MimeCabFolderCount(const MIME_CAB *cab);
 unsigned MimeCabFileCount(const MIME_CAB *cab);
 int MimeCabFile(const MIME_CAB *cab, unsigned index, MIME_CAB_FILE *file);

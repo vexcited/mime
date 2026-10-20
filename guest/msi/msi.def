@@ -56,6 +56,8 @@ EXPORTS
     MsiSetInstallLevel @140
     MsiGetFeatureCostW @54
     MsiSourceListAddSourceW @211
+    MsiSourceListAddSourceExA @255
+    MsiSourceListAddSourceExW @256
     MsiSourceListEnumSourcesW @264
     MsiSourceListGetInfoW @266
     MsiSourceListSetInfoW @268
@@ -98,3 +100,16 @@ EXPORTS
     MsiGetComponentStateA @50
     MsiViewModify @163
     MsiCustomActionServer
+    MsiEnumProductsW @45
+    MsiEnumProductsA @44
+    MsiLocateComponentW @90
+    MsiLocateComponentA @89
+    MsiRemovePatchesW @238
+    MsiRemovePatchesA @237
+    MsiEnumProductsExW @246
+    MsiGetFileVersionW @195
+    MsiIsProductElevatedW @215
+    MsiExtractPatchXMLDataW @242
+    MsiGetPatchInfoExW @244
+    MsiDeterminePatchSequenceW @254
+    MsiEnumPatchesExW @270

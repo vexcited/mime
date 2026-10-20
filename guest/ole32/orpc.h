@@ -154,6 +154,14 @@ HRESULT OrpcBuiltinFactory(REFIID iid, IPSFactoryBuffer **factory);
 
 /* ------------------------------------------------------------------ classes of local servers */
 
+/* the running object table across processes, see orpc_rot.c. */
+HRESULT OrpcRotPublish(const WCHAR *key, IUnknown *object, DWORD flags, DWORD cookie, const FILETIME *time);
+void OrpcRotRevoke(DWORD cookie);
+void OrpcRotNoteChange(DWORD cookie, const FILETIME *time);
+BOOL OrpcRotLookup(const WCHAR *key, BYTE *objref, ULONG *size, FILETIME *time);
+HRESULT OrpcRotUnmarshal(const BYTE *objref, ULONG size, REFIID iid, void **object);
+#define ROT_OBJREF_BYTES 320
+
 HRESULT OrpcClassPublish(REFCLSID clsid, IUnknown *factory, DWORD flags, DWORD cookie);
 void OrpcClassRevoke(DWORD cookie);
 HRESULT OrpcClassGet(REFCLSID clsid, REFIID iid, void **object);

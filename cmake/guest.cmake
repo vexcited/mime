@@ -86,19 +86,22 @@ function(mime_only_targets out)
     set(${out} ${list} PARENT_SCOPE)
 endfunction()
 
-# the version resource of system file <name>, from tools/genversion.sh, followed by the resources of the
-# script <extra> when given.
-function(mime_resource name)
-    get_property(done GLOBAL PROPERTY MIME_RESOURCE_${name})
+# the version resource of system file <name> for a processor, from tools/genversion.py and the table of
+# tools/fileversions.json, followed by the resources of the script <extra> when given.
+function(mime_resource name arch)
+    get_property(done GLOBAL PROPERTY MIME_RESOURCE_${arch}_${name})
     if(done)
         return()
     endif()
-    set_property(GLOBAL PROPERTY MIME_RESOURCE_${name} TRUE)
+    set_property(GLOBAL PROPERTY MIME_RESOURCE_${arch}_${name} TRUE)
     set(extra ${ARGN})
-    add_custom_command(OUTPUT ${MIME_GEN}/res/${name}.res
-        COMMAND sh ${CMAKE_SOURCE_DIR}/tools/genversion.sh ${name} ${MIME_GEN}/res/${name}.rc ${extra}
-        COMMAND ${MIME_LLVM_RC} -no-preprocess -c 1252 -fo ${MIME_GEN}/res/${name}.res ${MIME_GEN}/res/${name}.rc
-        DEPENDS tools/genversion.sh ${extra} VERBATIM)
+    set(base ${MIME_GEN}/res/${MIME_MACHINE_${arch}}/${name})
+    add_custom_command(OUTPUT ${base}.res
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${MIME_GEN}/res/${MIME_MACHINE_${arch}}
+        COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/tools/genversion.py ${CMAKE_SOURCE_DIR}/tools/fileversions.json
+            ${name} ${arch} ${base}.rc ${extra}
+        COMMAND ${MIME_LLVM_RC} -no-preprocess -c 1252 -fo ${base}.res ${base}.rc
+        DEPENDS tools/genversion.py tools/fileversions.json ${extra} VERBATIM)
 endfunction()
 
 set(MIME_LINK_FLAGS /nologo /debug:dwarf /nodefaultlib /opt:ref /incremental:no /filealign:0x1000 /version:10.0
@@ -129,8 +132,8 @@ function(mime_link output arch)
     endif()
     set(resource)
     if(arg_RESOURCE)
-        mime_resource(${arg_RESOURCE} ${arg_RESOURCE_SCRIPT})
-        set(resource ${MIME_GEN}/res/${arg_RESOURCE}.res)
+        mime_resource(${arg_RESOURCE} ${arch} ${arg_RESOURCE_SCRIPT})
+        set(resource ${MIME_GEN}/res/${MIME_MACHINE_${arch}}/${arg_RESOURCE}.res)
     endif()
     get_filename_component(directory ${output} DIRECTORY)
     file(RELATIVE_PATH comment ${CMAKE_BINARY_DIR} ${output})

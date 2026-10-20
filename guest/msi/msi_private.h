@@ -80,6 +80,12 @@ typedef struct MIME_MSI_DATABASE {
     MIME_MSI_TABLE *Tables;
     struct MIME_MSI_TRANSFORM *Transforms;
     BOOL OwnedData;
+    /* a storage inside a patch serves as a database of its own: its directory entry, and the file that holds it. */
+    ULONG Root;
+    struct MIME_MSI_DATABASE *Parent;
+    /* the patches applied to this database, whose cabinets the media of the patched rows name. */
+    struct MIME_MSI_DATABASE **Patches;
+    ULONG PatchCount, PatchTransforms;
 } MIME_MSI_DATABASE;
 
 typedef struct MIME_MSI_TRANSFORM {
@@ -91,6 +97,11 @@ typedef struct MIME_MSI_TRANSFORM {
 UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database);
 UINT MimeMsiOpenDatabaseFile(PCWSTR path, BOOL transform, MIME_MSI_DATABASE **out);
 UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out);
+UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATABASE **out);
+UINT MimeMsiChildren(MIME_MSI_DATABASE *database, ULONG **list, ULONG *count);
+UINT MimeMsiTableStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size);
+UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, UINT flags);
+UINT MimeMsiApplyPatches(MSIHANDLE database, PCWSTR product, PCWSTR list);
 UINT MimeMsiCreateSummary(MIME_MSI_DATABASE *database, MSIHANDLE *out);
 
 typedef struct MIME_MSI_SUMMARY_VALUE {
@@ -249,6 +260,8 @@ UINT MimeMsiRegisterSource(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_
 UINT MimeMsiWriteInstalledFile(MIME_MSI_PACKAGE *package, const void *data, SIZE_T size, PCWSTR target);
 UINT MimeMsiCacheTransforms(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache);
 UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product);
+UINT MimeMsiCachePatches(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache);
+UINT MimeMsiRestorePatches(MSIHANDLE database, HKEY product);
 UINT MimeMsiSaveDirectories(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path);
 UINT MimeMsiLoadMaintenance(MIME_MSI_PACKAGE *package, HKEY key, PCWSTR product, BOOL machine);
 UINT MimeMsiValidateMaintenance(MIME_MSI_PACKAGE *package);

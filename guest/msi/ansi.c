@@ -271,6 +271,61 @@ UINT WINAPI MsiEnumRelatedProductsA(LPCSTR upgrade, DWORD reserved, DWORD index,
     return error;
 }
 
+UINT WINAPI MsiEnumProductsA(DWORD index, LPSTR product)
+{
+    WCHAR code[39];
+    UINT error = product ? MsiEnumProductsW(index, code) : ERROR_INVALID_PARAMETER;
+    if (!error)
+        WideCharToMultiByte(CP_ACP, 0, code, -1, product, 39, nullptr, nullptr);
+    return error;
+}
+
+UINT WINAPI MsiRemovePatchesA(LPCSTR patches, LPCSTR product, INSTALLTYPE type, LPCSTR command)
+{
+    PWSTR wide_patches = to_wide(patches), wide_product = to_wide(product), wide_command = to_wide(command);
+    UINT error = (patches && !wide_patches) || (product && !wide_product) || (command && !wide_command) ?
+                 ERROR_NOT_ENOUGH_MEMORY : MsiRemovePatchesW(wide_patches, wide_product, type, wide_command);
+    MimeMsiFree(wide_patches);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_command);
+    return error;
+}
+
+INSTALLSTATE WINAPI MsiLocateComponentA(LPCSTR component, LPSTR out, LPDWORD size)
+{
+    PWSTR wide = to_wide(component);
+    WCHAR path[MAX_PATH];
+    DWORD length = MAX_PATH;
+    INSTALLSTATE state = component && !wide ? INSTALLSTATE_INVALIDARG : MsiLocateComponentW(wide, out ? path : nullptr, &length);
+    if (out && size && (state == INSTALLSTATE_LOCAL || state == INSTALLSTATE_SOURCE || state == INSTALLSTATE_ABSENT)) {
+        int needed = WideCharToMultiByte(CP_ACP, 0, path, -1, nullptr, 0, nullptr, nullptr);
+        if (needed > 0 && (DWORD)needed <= *size) {
+            WideCharToMultiByte(CP_ACP, 0, path, -1, out, needed, nullptr, nullptr);
+            *size = (DWORD)needed - 1;
+        } else {
+            *size = needed > 0 ? (DWORD)needed - 1 : 0;
+            state = INSTALLSTATE_MOREDATA;
+        }
+    } else if (!out && size && state != INSTALLSTATE_INVALIDARG) {
+        *size = length;
+    }
+    MimeMsiFree(wide);
+    return state;
+}
+
+UINT WINAPI MsiSourceListAddSourceExA(LPCSTR product, LPCSTR sid, MSIINSTALLCONTEXT context, DWORD options,
+                                      LPCSTR source, DWORD index)
+{
+    PWSTR wide_product = to_wide(product), wide_sid = to_wide(sid), wide_source = to_wide(source);
+    UINT error = (product && !wide_product) || (sid && !wide_sid) || (source && !wide_source) ?
+                 ERROR_NOT_ENOUGH_MEMORY :
+                 MsiSourceListAddSourceExW(wide_product, wide_sid, context, options, wide_source, index);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_sid);
+    MimeMsiFree(wide_source);
+    return error;
+}
+
 UINT WINAPI MsiConfigureProductExA(LPCSTR product, int level, INSTALLSTATE state, LPCSTR command)
 {
     PWSTR wide_product = to_wide(product), wide_command = to_wide(command);

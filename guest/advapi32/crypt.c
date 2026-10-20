@@ -68,6 +68,11 @@ typedef struct KEY {
     PROVIDER *Provider;
     DWORD Algorithm;
     DWORD Size;
+    /* the state of a symmetric key between the calls that encrypt with it: the mode, the chaining value, the stream. */
+    DWORD Mode;
+    BOOL Started;
+    BYTE Iv[16];
+    MimeRc4 Rc4;
     BYTE Blob[];
 } KEY;
 
@@ -694,22 +699,283 @@ ADVAPI BOOL WINAPI CryptExportKey(HCRYPTKEY handle, HCRYPTKEY wrap, DWORD type, 
     return FALSE;
 }
 
-/* the provider has no cipher: keys import and export but do not encrypt. */
+#define CALG_DES 0x6601
+#define CALG_RC2 0x6602
+#define CALG_3DES 0x6603
+#define CALG_3DES_112 0x6609
+#define CALG_AES_128 0x660e
+#define CALG_AES_192 0x660f
+#define CALG_AES_256 0x6610
+#define CALG_RC4 0x6801
+
+#define CRYPT_MODE_CBC 1
+#define CRYPT_MODE_ECB 2
+#define CRYPT_NO_SALT 0x10
+
+/* the key bytes of a plaintext symmetric key, or null when the key is not one. */
+static const BYTE *symmetric_bytes(const KEY *k, DWORD *size)
+{
+    const BLOBHEADER *h = (const BLOBHEADER *)k->Blob;
+    if (k->Size < sizeof(*h) + 4 || h->bType != PLAINTEXTKEYBLOB)
+        return nullptr;
+    *size = *(const DWORD *)(k->Blob + sizeof(*h));
+    return *size <= k->Size - sizeof(*h) - 4 ? k->Blob + sizeof(*h) + 4 : nullptr;
+}
+
+/* the cipher and the context of a block cipher key on the stack, or the size of the block (0 for a stream cipher). */
+typedef union {
+    MimeAes Aes;
+    MimeDes Des;
+    MimeDes3 Des3;
+} BLOCK_KEY;
+
+static BOOL block_cipher(const KEY *k, const MimeCipher **cipher, BLOCK_KEY *context, DWORD *block)
+{
+    DWORD size;
+    const BYTE *bytes = symmetric_bytes(k, &size);
+    if (!bytes)
+        return FALSE;
+    switch (k->Algorithm) {
+    case CALG_AES_128:
+    case CALG_AES_192:
+    case CALG_AES_256:
+        if (mime_aes_init(&context->Aes, bytes, size))
+            return FALSE;
+        *cipher = &mime_cipher_aes;
+        break;
+    case CALG_DES:
+        if (size != 8)
+            return FALSE;
+        mime_des_init(&context->Des, bytes);
+        *cipher = &mime_cipher_des;
+        break;
+    case CALG_3DES:
+    case CALG_3DES_112:
+        if (mime_des3_init(&context->Des3, bytes, size))
+            return FALSE;
+        *cipher = &mime_cipher_des3;
+        break;
+    default:
+        return FALSE;
+    }
+    *block = (*cipher)->block_size;
+    return TRUE;
+}
+
+/*
+ * encrypts or decrypts in place, as the symmetric keys of the providers do: a block cipher in the mode of the key (chained
+ * blocks from a zero value by default) with the padding of the last block, a stream cipher byte by byte with its state kept
+ * for the next call. A final call that gives less than a block pads it, and a decryption removes the padding, so the length
+ * of the data changes by up to a block.
+ */
+static BOOL symmetric(HCRYPTKEY handle, BOOL final, BYTE *data, DWORD *length, DWORD capacity, BOOL encrypt)
+{
+    KEY *k = key_object(handle);
+    if (!k)
+        return FALSE;
+    if (!length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD size;
+    const BYTE *bytes = symmetric_bytes(k, &size);
+    if (!bytes) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    if (k->Algorithm == CALG_RC4) {
+        if (!k->Started) {
+            mime_rc4_init(&k->Rc4, bytes, size);
+            k->Started = TRUE;
+        }
+        mime_rc4_crypt(&k->Rc4, data, data, *length);
+        if (final)
+            k->Started = FALSE;
+        return TRUE;
+    }
+    const MimeCipher *cipher;
+    BLOCK_KEY context;
+    DWORD block;
+    if (!block_cipher(k, &cipher, &context, &block)) {
+        AdvSetError(k->Algorithm == CALG_RC2 ? NTE_BAD_ALGID : NTE_BAD_KEY);
+        return FALSE;
+    }
+    if (!k->Started) {
+        k->Started = TRUE;
+        if (!k->Mode)
+            k->Mode = CRYPT_MODE_CBC;
+    }
+    DWORD used = *length;
+    if (encrypt) {
+        DWORD padded = final ? (used / block + 1) * block : used;
+        if (!final && used % block) {
+            AdvSetError(NTE_BAD_DATA);
+            return FALSE;
+        }
+        if (padded > capacity) {
+            *length = padded;
+            AdvSetError(ERROR_MORE_DATA);
+            return FALSE;
+        }
+        if (final)
+            memset(data + used, (int)(padded - used), padded - used);
+        if (k->Mode == CRYPT_MODE_ECB)
+            mime_ecb_encrypt(cipher, &context, data, data, padded);
+        else
+            mime_cbc_encrypt(cipher, &context, k->Iv, data, data, padded);
+        *length = padded;
+    } else {
+        if (used % block || (final && !used)) {
+            AdvSetError(NTE_BAD_DATA);
+            return FALSE;
+        }
+        if (k->Mode == CRYPT_MODE_ECB)
+            mime_ecb_decrypt(cipher, &context, data, data, used);
+        else
+            mime_cbc_decrypt(cipher, &context, k->Iv, data, data, used);
+        if (final) {
+            DWORD pad = data[used - 1];
+            if (!pad || pad > block || pad > used) {
+                AdvSetError(NTE_BAD_DATA);
+                return FALSE;
+            }
+            for (DWORD i = used - pad; i < used; i++)
+                if (data[i] != pad) {
+                    AdvSetError(NTE_BAD_DATA);
+                    return FALSE;
+                }
+            *length = used - pad;
+        }
+    }
+    if (final) {
+        k->Started = FALSE;
+        memset(k->Iv, 0, sizeof(k->Iv));
+    }
+    return TRUE;
+}
+
 ADVAPI BOOL WINAPI CryptDecrypt(HCRYPTKEY handle, HCRYPTHASH hash, BOOL final, DWORD flags, BYTE *data, DWORD *length)
 {
-    if (!key_object(handle))
+    if (hash || flags) {
+        AdvSetError(hash ? NTE_BAD_HASH : NTE_BAD_FLAGS);
         return FALSE;
-    AdvSetError(NTE_BAD_ALGID);
-    return FALSE;
+    }
+    if (!data && length && key_object(handle)) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return symmetric(handle, final, data, length, length ? *length : 0, FALSE);
 }
 
 ADVAPI BOOL WINAPI CryptEncrypt(HCRYPTKEY handle, HCRYPTHASH hash, BOOL final, DWORD flags, BYTE *data, DWORD *length,
                                 DWORD size)
 {
-    if (!key_object(handle))
+    if (hash || flags) {
+        AdvSetError(hash ? NTE_BAD_HASH : NTE_BAD_FLAGS);
         return FALSE;
-    AdvSetError(NTE_BAD_ALGID);
-    return FALSE;
+    }
+    if (!length) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KEY *k = key_object(handle);
+    if (!k)
+        return FALSE;
+    /* a query for the size of the result: no data, and the size of what would come out. */
+    if (!data) {
+        DWORD block = 0;
+        if (k->Algorithm != CALG_RC4) {
+            const MimeCipher *cipher;
+            BLOCK_KEY context;
+            if (block_cipher(k, &cipher, &context, &block) && final)
+                *length = (*length / block + 1) * block;
+        }
+        return TRUE;
+    }
+    return symmetric(handle, final, data, length, size, TRUE);
+}
+
+/*
+ * the key a hash value makes: the value itself when it is long enough and the stretched one when it is not (see
+ * mime_capi_expand), the length being the one the caller asks for in the upper word of the flags or the one of the
+ * algorithm, with the parity of the des keys set. The hash is finished by it.
+ */
+ADVAPI BOOL WINAPI CryptDeriveKey(HCRYPTPROV handle, DWORD algorithm, HCRYPTHASH base, DWORD flags, HCRYPTKEY *result)
+{
+    PROVIDER *p = provider(handle);
+    if (!p)
+        return FALSE;
+    HASH *h = hash_object(base);
+    if (!h)
+        return FALSE;
+    if (!result) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD bits = flags >> 16, bytes;
+    switch (algorithm) {
+    case CALG_DES:
+        bytes = 8;
+        break;
+    case CALG_3DES:
+        bytes = 24;
+        break;
+    case CALG_3DES_112:
+        bytes = 16;
+        break;
+    case CALG_AES_128:
+        bytes = 16;
+        break;
+    case CALG_AES_192:
+        bytes = 24;
+        break;
+    case CALG_AES_256:
+        bytes = 32;
+        break;
+    case CALG_RC4:
+    case CALG_RC2:
+        bytes = bits ? (bits + 7) / 8 : 16;
+        if (bytes > 56) {
+            AdvSetError(NTE_BAD_FLAGS);
+            return FALSE;
+        }
+        break;
+    default:
+        AdvSetError(NTE_BAD_ALGID);
+        return FALSE;
+    }
+    if (bits && algorithm != CALG_RC4 && algorithm != CALG_RC2 && bits != bytes * 8 && algorithm != CALG_DES) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    finish_hash(h);
+    DWORD size = sizeof(BLOBHEADER) + 4 + bytes;
+    KEY *k = AdvAlloc(sizeof(*k) + size);
+    if (!k) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memset(k, 0, sizeof(*k));
+    BLOBHEADER *blob = (BLOBHEADER *)k->Blob;
+    blob->bType = PLAINTEXTKEYBLOB;
+    blob->bVersion = 2;
+    blob->aiKeyAlg = algorithm;
+    *(DWORD *)(k->Blob + sizeof(*blob)) = bytes;
+    BYTE *material = k->Blob + sizeof(*blob) + 4;
+    mime_capi_expand(h->Hash, h->Value, material, bytes);
+    if (algorithm == CALG_DES || algorithm == CALG_3DES || algorithm == CALG_3DES_112) {
+        for (DWORD i = 0; i < bytes; i++) {
+            BYTE v = material[i] & 0xFE;
+            v |= (BYTE)(1 ^ (__builtin_popcount(v) & 1));
+            material[i] = v;
+        }
+    }
+    k->Magic = KEY_MAGIC;
+    k->Provider = p;
+    k->Algorithm = algorithm;
+    k->Size = size;
+    *result = (HCRYPTKEY)k;
+    return TRUE;
 }
 
 /* only the value can be set: a signature over a hash computed elsewhere. */

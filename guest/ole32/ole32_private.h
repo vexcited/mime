@@ -23,8 +23,16 @@ WINUSERAPI HANDLE WINAPI RemovePropW(HWND hwnd, LPCWSTR name);
 WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjects(DWORD count, const HANDLE *handles, BOOL wait_all,
                                                   DWORD milliseconds, DWORD wake_mask);
 
+#define OLE_TLS_LOCALTID 0x01
+#define OLE_TLS_APARTMENTTHREADED 0x80
+#define OLE_TLS_MULTITHREADED 0x100
+
 /* the per thread com and ole state. */
 typedef struct _OLE_THREAD {
+    /* the first fields of the block windows keeps in the OLE slot of the TEB, as programs read them to tell the kind of
+       apartment of a thread: Chromium takes the apartment flags (0x80 single threaded, 0x100 multithreaded). */
+    PVOID ThreadBase, SmAllocator;
+    DWORD ApartmentId, ApartmentFlags;
     LONG ComInits;
     BOOL Sta;
     LONG OleInits;

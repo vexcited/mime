@@ -262,6 +262,8 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     if (!error)
         error = MimeMsiCacheTransforms(package, root, path, cache);
     if (!error)
+        error = MimeMsiCachePatches(package, root, path, cache);
+    if (!error)
         error = MimeMsiSaveDirectories(package, root, path);
     if (!error)
         error = MimeMsiRegisterSource(package, root, path);

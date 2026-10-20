@@ -752,6 +752,91 @@ static DWORD d_utc_time(cr_arena *a, const der_item *item, DWORD flags)
     return d_time(a, item, flags);
 }
 
+/* the attributes of a signer: a set of sequences of an object identifier and a set of values. */
+static DWORD dec_attributes(cr_arena *a, const der_item *item, CRYPT_ATTRIBUTES *out)
+{
+    DWORD n = DerCount(item);
+    CRYPT_ATTRIBUTE *array = n ? ArenaAlloc(a, n * sizeof(*array)) : nullptr;
+    der_reader r;
+    DerOpen(&r, item);
+    for (DWORD i = 0; i < n; i++) {
+        der_item attribute, oid, values;
+        der_reader inner;
+        DWORD error = DerExpect(&r, ASN_SEQUENCE, &attribute);
+        if (error)
+            return error;
+        DerOpen(&inner, &attribute);
+        LPSTR name = nullptr;
+        if ((error = DerExpect(&inner, ASN_OID, &oid)) || (error = dec_oid(a, &oid, &name)) ||
+            (error = DerExpect(&inner, ASN_SET, &values)) || inner.n)
+            return error ? error : CRYPT_E_ASN1_CORRUPT;
+        DWORD count = DerCount(&values);
+        CRYPT_ATTR_BLOB *blobs = count ? ArenaAlloc(a, count * sizeof(*blobs)) : nullptr;
+        der_reader list;
+        DerOpen(&list, &values);
+        for (DWORD j = 0; j < count; j++) {
+            der_item value;
+            CRYPT_ATTR_BLOB blob;
+            if ((error = DerRead(&list, &value)))
+                return error;
+            dec_blob(a, value.start, value.total, &blob);
+            if (blobs)
+                blobs[j] = blob;
+        }
+        if (array) {
+            array[i].pszObjId = name;
+            array[i].cValue = count;
+            array[i].rgValue = blobs;
+        }
+    }
+    out->cAttr = n;
+    out->rgAttr = array;
+    return 0;
+}
+
+/* the information of a signer of a signed message, as the structure of CMSG_SIGNER_INFO. */
+static DWORD d_signer_info(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(CMSG_SIGNER_INFO);
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    der_item version, sid, issuer, serial, hash, encryption, encrypted, auth = {}, unauth = {};
+    DerOpen(&r, item);
+    int number;
+    DWORD error = DerExpect(&r, ASN_INTEGER, &version);
+    if (error || DerParseInt(&version, &number) || (error = DerExpect(&r, ASN_SEQUENCE, &sid)) ||
+        (error = DerExpect(&r, ASN_SEQUENCE, &hash)))
+        return error ? error : CRYPT_E_ASN1_CORRUPT;
+    BOOL have_auth = DerPeek(&r, 0xa0);
+    if (have_auth && (error = DerExpect(&r, 0xa0, &auth)))
+        return error;
+    if ((error = DerExpect(&r, ASN_SEQUENCE, &encryption)) || (error = DerExpect(&r, ASN_OCTETSTRING, &encrypted)))
+        return error;
+    BOOL have_unauth = r.n && DerPeek(&r, 0xa1);
+    if (have_unauth && (error = DerExpect(&r, 0xa1, &unauth)))
+        return error;
+    if (r.n)
+        return CRYPT_E_ASN1_CORRUPT;
+    der_reader identity;
+    DerOpen(&identity, &sid);
+    if ((error = DerExpect(&identity, ASN_SEQUENCE, &issuer)) || (error = DerExpect(&identity, ASN_INTEGER, &serial)) ||
+        identity.n)
+        return error ? error : CRYPT_E_ASN1_CORRUPT;
+    tmp.dwVersion = (DWORD)number;
+    dec_blob(a, issuer.start, issuer.total, &tmp.Issuer);
+    dec_reversed(a, serial.content, serial.length, &tmp.SerialNumber);
+    if ((error = dec_algid(a, &hash, &tmp.HashAlgorithm)) || (error = dec_algid(a, &encryption, &tmp.HashEncryptionAlgorithm)))
+        return error;
+    dec_blob(a, encrypted.content, encrypted.length, &tmp.EncryptedHash);
+    if (have_auth && (error = dec_attributes(a, &auth, &tmp.AuthAttrs)))
+        return error;
+    if (have_unauth && (error = dec_attributes(a, &unauth, &tmp.UnauthAttrs)))
+        return error;
+    STORE();
+    return 0;
+}
+
 static DWORD d_oid(cr_arena *a, const der_item *item, DWORD flags)
 {
     LPSTR *top = ArenaAlloc(a, sizeof(LPSTR)), oid = nullptr;
@@ -946,6 +1031,8 @@ static decode_fn decoder_for(LPCSTR type)
             return d_multi_uint;
         case 73:
             return d_oid;
+        case 500:
+            return d_signer_info;
         }
         return nullptr;
     }
@@ -966,6 +1053,7 @@ static decode_fn decoder_for(LPCSTR type)
         {szOID_AUTHORITY_KEY_IDENTIFIER2, d_authority_key_id2},
         {szOID_CRL_NUMBER, d_multi_int},
         {szOID_CRL_REASON_CODE, d_enumerated},
+        {"1.2.840.113549.1.9.5", d_time},
     };
     for (DWORD i = 0; i < RTL_NUMBER_OF(map); i++)
         if (!strcmp(map[i].oid, type))

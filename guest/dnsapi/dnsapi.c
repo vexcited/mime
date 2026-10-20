@@ -39,8 +39,13 @@ typedef struct _DNS_RECORD {
         PVOID pNameHost;
     } Data;
 } DNS_RECORD, *PDNS_RECORD;
+#ifdef _WIN64
 MIME_FIELD_AT(DNS_RECORD, Flags, 20);
 MIME_FIELD_AT(DNS_RECORD, Data, 32);
+#else
+MIME_FIELD_AT(DNS_RECORD, Flags, 12);
+MIME_FIELD_AT(DNS_RECORD, Data, 24);
+#endif
 
 typedef enum {
     DnsFreeFlat = 0,

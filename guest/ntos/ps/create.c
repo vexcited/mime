@@ -8,7 +8,9 @@
 #include "../ntos.h"
 #include <mime/wow32.h>
 
-#define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1) /* DETACHED_PROCESS, as kernelbase marks it */
+#define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1)  /* DETACHED_PROCESS, as kernelbase marks it */
+#define CONSOLE_NEW ((HANDLE)(LONG_PTR)-2)       /* CREATE_NEW_CONSOLE */
+#define CONSOLE_NO_WINDOW ((HANDLE)(LONG_PTR)-3) /* CREATE_NO_WINDOW */
 #define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
 #define MAX_ENVIRONMENT (32u << 20)
 
@@ -23,6 +25,8 @@ typedef struct PSP_PARAMS {
     ULONG WindowFlags, ShowWindowFlags, ConsoleFlags;
     ULONG StartingX, StartingY, CountX, CountY, CountCharsX, CountCharsY, FillAttribute;
     BOOLEAN Detached;
+    BOOLEAN NewConsole; /* the process gets a console of its own */
+    HANDLE PtyHandle;   /* the pseudo console the process is attached to, a handle of the creator */
 } PSP_PARAMS;
 
 NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out);
@@ -153,7 +157,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     pp->ShowWindowFlags = p->ShowWindowFlags;
     pp->WindowFlags = p->WindowFlags;
     pp->ConsoleFlags = p->ConsoleFlags;
-    pp->ConsoleHandle = p->Detached ? CONSOLE_DETACHED : nullptr;
+    pp->ConsoleHandle = p->Detached ? CONSOLE_DETACHED : p->NewConsole ? CONSOLE_NEW : nullptr;
     pp->StandardInput = p->StandardInput;
     pp->StandardOutput = p->StandardOutput;
     pp->StandardError = p->StandardError;
@@ -292,8 +296,28 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         process->AddressSpace.AllocationLimit = 0x7FFF0000;
     process->MimeRequestId = request_id;
     /* a gui program has no console, a console program shares the one it is given. */
-    if (console && !p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
-        ConsoleAttach(process, console);
+    if (!p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
+        MIME_CONSOLE *pty = p->PtyHandle ? ConsoleOfPtyHandle(p->PtyHandle) : nullptr;
+        if (pty) {
+            ConsoleAttach(process, pty);
+            ConsoleInitialTitle(pty, p->WindowTitle.Length ? &p->WindowTitle : image);
+            ConsoleDereference(pty);
+        } else if (p->NewConsole) {
+            MIME_CONSOLE *own = ConsoleCreateNew();
+            if (own) {
+                ConsoleAttach(process, own);
+                ConsoleInitialTitle(own, p->WindowTitle.Length ? &p->WindowTitle : image);
+                ConsoleDereference(own);
+            }
+        } else if (console) {
+            ConsoleAttach(process, console);
+            ConsoleInitialTitle(console, p->WindowTitle.Length ? &p->WindowTitle : image);
+        }
+    }
+    /* the terminal of the run it descends from stays within reach of AllocConsole. */
+    MIME_CONSOLE *hint = parent && parent->ConsoleHint ? parent->ConsoleHint : console;
+    if (hint)
+        ConsoleSetHint(process, hint);
     SIZE_T n = image->Length / sizeof(WCHAR);
     if (n >= MIME_IMAGE_NAME_CHARS)
         n = MIME_IMAGE_NAME_CHARS - 1;
@@ -496,6 +520,9 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
     p->CountCharsY = pp.CountCharsY;
     p->FillAttribute = pp.FillAttribute;
     p->Detached = pp.ConsoleHandle == CONSOLE_DETACHED;
+    p->NewConsole = pp.ConsoleHandle == CONSOLE_NEW || pp.ConsoleHandle == CONSOLE_NO_WINDOW;
+    if (pp.ConsoleHandle && pp.ConsoleHandle != CONSOLE_DETACHED && !p->NewConsole)
+        p->PtyHandle = pp.ConsoleHandle;
     return status;
 }
 

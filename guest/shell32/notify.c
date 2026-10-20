@@ -53,6 +53,27 @@ SHSTDAPI BOOL WINAPI SHChangeNotifyDeregister(ULONG id)
     return found;
 }
 
+/*
+ * the message of a registration carries a handle to the event, which these two functions open and close: with no shell that
+ * relays events no message with such a handle ever arrives, so none can be locked. They are exported by number, as
+ * programs that take part in the notifications of the shell call them.
+ */
+SHSTDAPI HANDLE WINAPI SHChangeNotification_Lock(HANDLE change, DWORD process, PIDLIST_ABSOLUTE **pidls, LONG *event)
+{
+    if (pidls)
+        *pidls = nullptr;
+    if (event)
+        *event = 0;
+    SetLastError(ERROR_INVALID_HANDLE);
+    return nullptr;
+}
+
+SHSTDAPI BOOL WINAPI SHChangeNotification_Unlock(HANDLE lock)
+{
+    SetLastError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ notification state */
 
 #define QUNS_BUSY 1

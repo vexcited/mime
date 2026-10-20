@@ -190,8 +190,16 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
             }
         }
     }
+#ifndef _WIN64
+    BOOL is64 = package->Is64Bit;
+#endif
     ReleaseSRWLockExclusive(&MimeMsiLock);
     BOOL ended = FALSE;
+#ifndef _WIN64
+    /* a 64-bit package puts its files in the folders of the 64-bit machine, which a 32-bit caller sees redirected. */
+    PVOID redirection = nullptr;
+    BOOL redirected = is64 && Wow64DisableWow64FsRedirection(&redirection);
+#endif
     if (!error) {
         for (ULONG sequence = 1; sequence < 32768 && !error && !ended; sequence++)
             for (ULONG row = heads[sequence]; row != UINT32_MAX && !error && !ended; row = next[row]) {
@@ -224,6 +232,10 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
         if (rollback)
             DbgPrint("msi: sequence rollback failed with error %u\n", rollback);
     }
+#ifndef _WIN64
+    if (redirected)
+        Wow64RevertWow64FsRedirection(redirection);
+#endif
     package->SequenceRunning = FALSE;
     MimeMsiRelease(&package->Object);
     ReleaseSRWLockExclusive(&MimeMsiLock);

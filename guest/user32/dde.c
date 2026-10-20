@@ -150,6 +150,16 @@ WINUSERAPI BOOL WINAPI DdeUninitialize(DWORD id)
     return i != nullptr;
 }
 
+/* the transactions of a conversation here are done when a call returns, so none is left to abandon: the call is valid for
+   an instance that is there and does nothing. */
+WINUSERAPI BOOL WINAPI DdeAbandonTransaction(DWORD id, HCONV conversation, DWORD transaction)
+{
+    AcquireSRWLockShared(&g_lock);
+    DDE_INSTANCE *i = instance_of(id);
+    ReleaseSRWLockShared(&g_lock);
+    return i != nullptr;
+}
+
 WINUSERAPI UINT WINAPI DdeGetLastError(DWORD id)
 {
     DDE_INSTANCE *i = instance_of(id);

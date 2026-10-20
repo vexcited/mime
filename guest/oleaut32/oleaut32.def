@@ -1,5 +1,8 @@
 LIBRARY oleaut32.dll
 EXPORTS
+    GetActiveObject @35
+    RegisterActiveObject @33
+    RevokeActiveObject @34
     SafeArrayAccessData @23
     SafeArrayAllocData @37
     SafeArrayAllocDescriptor @36

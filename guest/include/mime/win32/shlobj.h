@@ -261,6 +261,17 @@ typedef struct _browseinfoW {
     int iImage;
 } BROWSEINFOW, *LPBROWSEINFOW;
 
+typedef struct _browseinfoA {
+    HWND hwndOwner;
+    PCIDLIST_ABSOLUTE pidlRoot;
+    LPSTR pszDisplayName;
+    LPCSTR lpszTitle;
+    UINT ulFlags;
+    BFFCALLBACK lpfn;
+    LPARAM lParam;
+    int iImage;
+} BROWSEINFOA, *LPBROWSEINFOA;
+
 /* ------------------------------------------------------------------ shell32 functions */
 
 SHSTDAPI HRESULT WINAPI SHGetFolderPathW(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPWSTR path);
@@ -304,6 +315,7 @@ SHSTDAPI HRESULT WINAPI SHCreateItemFromIDList(PCIDLIST_ABSOLUTE pidl, REFIID ri
 SHSTDAPI HRESULT WINAPI SHAssocEnumHandlers(PCWSTR extension, ASSOC_FILTER filter,
                                             IEnumAssocHandlers **enumerator);
 SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderW(LPBROWSEINFOW info);
+SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderA(LPBROWSEINFOA info);
 #define SHCNE_CREATE 0x00000002
 #define SHCNE_UPDATEITEM 0x00002000
 #define SHCNF_PATHW 0x0005

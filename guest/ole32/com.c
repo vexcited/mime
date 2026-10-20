@@ -28,8 +28,10 @@ OLE_THREAD *OleThreadState(BOOL create)
     OLE_THREAD *t = TlsGetValue(g_tls);
     if (!t && create) {
         t = OleAllocZero(sizeof(*t));
-        if (t)
+        if (t) {
             TlsSetValue(g_tls, t);
+            NtCurrentTeb()->ReservedForOle = t;
+        }
     }
     return t;
 }
@@ -54,6 +56,8 @@ static void leave_apartment(OLE_THREAD *t)
         InterlockedDecrement(&g_mta_threads);
     else
         InterlockedCompareExchange((LONG volatile *)&g_main_sta, 0, (LONG)GetCurrentThreadId());
+    t->ApartmentFlags &= ~(OLE_TLS_LOCALTID | OLE_TLS_APARTMENTTHREADED | OLE_TLS_MULTITHREADED);
+    t->ApartmentId = 0;
 }
 
 void OleThreadDetach(void)
@@ -67,6 +71,7 @@ void OleThreadDetach(void)
     if (t->OrpcEvent)
         CloseHandle(t->OrpcEvent);
     TlsSetValue(g_tls, nullptr);
+    NtCurrentTeb()->ReservedForOle = nullptr;
     OleFree(t);
 }
 
@@ -96,6 +101,8 @@ WINOLEAPI HRESULT WINAPI CoInitializeEx(void *reserved, DWORD flags)
     }
     t->Sta = sta;
     t->ComInits = 1;
+    t->ApartmentFlags |= OLE_TLS_LOCALTID | (sta ? OLE_TLS_APARTMENTTHREADED : OLE_TLS_MULTITHREADED);
+    t->ApartmentId = GetCurrentThreadId();
     if (sta)
         InterlockedCompareExchange((LONG volatile *)&g_main_sta, (LONG)GetCurrentThreadId(), 0);
     else
@@ -833,6 +840,22 @@ WINOLEAPI HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, IUnknown *outer, DWO
     if (!found)
         return E_NOINTERFACE;
     return found == count ? S_OK : CO_S_NOTALLINTERFACES;
+}
+
+/* loads a library by its path, with the search of the loader for its dependents; the second argument asks that it is
+   freed with CoFreeUnusedLibraries, which a library loaded here is not (a guess that nothing relies on it). */
+WINOLEAPI HINSTANCE WINAPI CoLoadLibrary(LPOLESTR file, BOOL auto_free)
+{
+    if (!file) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return LoadLibraryExW(file, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+WINOLEAPI void WINAPI CoFreeLibrary(HINSTANCE library)
+{
+    FreeLibrary(library);
 }
 
 WINOLEAPI void WINAPI CoFreeUnusedLibrariesEx(DWORD delay, DWORD reserved)

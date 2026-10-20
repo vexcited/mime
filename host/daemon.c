@@ -296,6 +296,7 @@ static uint64_t handle_run(int fd, char *payload, uint32_t size)
     if (mime_paths_to_host(g_paths, image, file, sizeof(file)))
         run->flags |= mime_pe_run_level(file) << MIME_RUN_LEVEL_SHIFT;
     run->console_size = header.console_size;
+    run->console_cursor = header.console_cursor;
     uint16_t *strings = (uint16_t *)(run + 1);
     memcpy(strings, w_image, n_image * 2);
     memcpy(strings + n_image, w_cmdline, n_cmd * 2);

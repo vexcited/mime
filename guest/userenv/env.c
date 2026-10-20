@@ -233,6 +233,51 @@ USERENV BOOL WINAPI CreateEnvironmentBlock(LPVOID *environment, HANDLE token, BO
     return TRUE;
 }
 
+/* the variables of the user's block replace the %names% of the text, the ones it lacks stay as written. */
+USERENV BOOL WINAPI ExpandEnvironmentStringsForUserW(HANDLE token, LPCWSTR source, LPWSTR destination, DWORD chars)
+{
+    if (!source || !destination || !chars) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    LPVOID block;
+    if (!CreateEnvironmentBlock(&block, token, FALSE))
+        return FALSE;
+    UNICODE_STRING from, to = {0, (USHORT)((chars < 0x7FFFu ? chars : 0x7FFFu) * sizeof(WCHAR)), destination};
+    RtlInitUnicodeString(&from, source);
+    ULONG needed = 0;
+    NTSTATUS status = RtlExpandEnvironmentStrings_U(block, &from, &to, &needed);
+    RtlDestroyEnvironment(block);
+    if (!NT_SUCCESS(status) && status != STATUS_BUFFER_TOO_SMALL) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    if (status == STATUS_BUFFER_TOO_SMALL || needed > chars * sizeof(WCHAR) || to.Length >= chars * sizeof(WCHAR)) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    destination[to.Length / sizeof(WCHAR)] = 0;
+    return TRUE;
+}
+
+USERENV BOOL WINAPI ExpandEnvironmentStringsForUserA(HANDLE token, LPCSTR source, LPSTR destination, DWORD chars)
+{
+    if (!source || !destination || !chars) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR wide_source[2048], wide_destination[2048];
+    if (!MultiByteToWideChar(CP_ACP, 0, source, -1, wide_source, RTL_NUMBER_OF(wide_source)))
+        return FALSE;
+    if (!ExpandEnvironmentStringsForUserW(token, wide_source, wide_destination, RTL_NUMBER_OF(wide_destination)))
+        return FALSE;
+    if (!WideCharToMultiByte(CP_ACP, 0, wide_destination, -1, destination, (int)chars, nullptr, nullptr)) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
 USERENV BOOL WINAPI DestroyEnvironmentBlock(LPVOID environment)
 {
     if (!environment) {
