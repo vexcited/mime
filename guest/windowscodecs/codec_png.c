@@ -170,7 +170,7 @@ static HRESULT png_profile(void *state, UINT index, UINT n, WicProfile *out)
 static HRESULT png_metadata(void *state, UINT index, IWICMetadataReader ***readers, UINT *count)
 {
     PngState *s = state;
-    return WicPngReaders(s->dec, readers, count);
+    return WicPngReaders(s->dec, s->data, s->size, readers, count);
 }
 
 const WicDecoderOps wic_dec_png = {

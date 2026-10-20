@@ -35,7 +35,8 @@ const MimeJpegAppSegment *WicJpegSegmentsData(const JpegSegmentList *list, UINT 
 
 /* png. */
 typedef struct PngMeta PngMeta;
-HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***readers, UINT *count);
+HRESULT WicPngReaders(MimePngioDecoder *dec, const BYTE *file, SIZE_T file_size, IWICMetadataReader ***readers,
+                      UINT *count);
 void WicPngApplyMetadata(PngMeta **meta, MimePngioEncode *params, IWICMetadataBlockReader *blocks);
 void WicPngMetadataFree(PngMeta *meta);
 

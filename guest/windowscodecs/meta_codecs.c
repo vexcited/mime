@@ -115,6 +115,30 @@ static HRESULT add_bytes(IWICMetadataReader *r, const WCHAR *name, const void *d
     return hr;
 }
 
+/* an item whose id is a string of the file, as the text chunks of png have. */
+static HRESULT add_keyed(IWICMetadataReader *r, const char *keyword, const char *text, SIZE_T length)
+{
+    PROPVARIANT id, value;
+    WicPvInit(&id);
+    WicPvInit(&value);
+    id.vt = value.vt = VT_LPSTR;
+    SIZE_T key_length = strlen(keyword);
+    id.pszVal = CoTaskMemAlloc(key_length + 1);
+    value.pszVal = CoTaskMemAlloc(length + 1);
+    if (!id.pszVal || !value.pszVal) {
+        PropVariantClear(&id);
+        PropVariantClear(&value);
+        return E_OUTOFMEMORY;
+    }
+    memcpy(id.pszVal, keyword, key_length + 1);
+    memcpy(value.pszVal, text, length);
+    value.pszVal[length] = 0;
+    HRESULT hr = WicMetaAdd(r, nullptr, &id, &value);
+    PropVariantClear(&id);
+    PropVariantClear(&value);
+    return hr;
+}
+
 /* a block whose only item is another block. */
 static HRESULT add_child(IWICMetadataReader *parent, IWICMetadataReader *child)
 {
@@ -127,11 +151,12 @@ static HRESULT add_child(IWICMetadataReader *parent, IWICMetadataReader *child)
 
 typedef struct ReaderList {
     IWICMetadataReader **items;
+    UINT *keys;
     UINT count;
     UINT capacity;
 } ReaderList;
 
-static HRESULT list_add(ReaderList *l, IWICMetadataReader *r)
+static HRESULT list_add_keyed(ReaderList *l, IWICMetadataReader *r, UINT key)
 {
     if (l->count == l->capacity) {
         UINT capacity = l->capacity ? l->capacity * 2 : 8;
@@ -139,10 +164,33 @@ static HRESULT list_add(ReaderList *l, IWICMetadataReader *r)
         if (!bigger)
             return E_OUTOFMEMORY;
         l->items = bigger;
+        UINT *keys = WicRealloc(l->keys, (SIZE_T)capacity * sizeof(*keys));
+        if (!keys)
+            return E_OUTOFMEMORY;
+        l->keys = keys;
         l->capacity = capacity;
     }
+    l->keys[l->count] = key;
     l->items[l->count++] = r;
     return S_OK;
+}
+
+static HRESULT list_add(ReaderList *l, IWICMetadataReader *r) { return list_add_keyed(l, r, 0); }
+
+/* puts the readers in the order of their keys, those with the same key stay as they are. */
+static void list_sort(ReaderList *l)
+{
+    for (UINT i = 1; i < l->count; i++) {
+        IWICMetadataReader *r = l->items[i];
+        UINT key = l->keys[i], j = i;
+        while (j > 0 && l->keys[j - 1] > key) {
+            l->items[j] = l->items[j - 1];
+            l->keys[j] = l->keys[j - 1];
+            j--;
+        }
+        l->items[j] = r;
+        l->keys[j] = key;
+    }
 }
 
 static void list_free(ReaderList *l)
@@ -150,6 +198,7 @@ static void list_free(ReaderList *l)
     for (UINT i = 0; i < l->count; i++)
         l->items[i]->lpVtbl->Release(l->items[i]);
     WicFree(l->items);
+    WicFree(l->keys);
     memset(l, 0, sizeof(*l));
 }
 
@@ -374,10 +423,56 @@ const MimeJpegAppSegment *WicJpegSegmentsData(const JpegSegmentList *l, UINT *co
 
 /* ------------------------------------------------------------------ png */
 
-HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *count)
+/* where the chunks that become readers sit in the file, so the readers come in the order of the file. */
+typedef struct PngOrder {
+    UINT gama, chrm, srgb, iccp, bkgd, time, exif;
+    UINT *texts;
+    UINT text_count;
+} PngOrder;
+
+#define PNG_NOT_FOUND 0x7fffffffu
+
+static UINT be32(const BYTE *p) { return (UINT)p[0] << 24 | (UINT)p[1] << 16 | (UINT)p[2] << 8 | p[3]; }
+
+static void png_scan_order(const BYTE *data, SIZE_T size, PngOrder *order, UINT max_texts)
+{
+    order->gama = order->chrm = order->srgb = order->iccp = order->bkgd = order->time = order->exif = PNG_NOT_FOUND;
+    order->texts = max_texts ? WicAlloc((SIZE_T)max_texts * sizeof(UINT)) : nullptr;
+    order->text_count = 0;
+    SIZE_T pos = 8;
+    while (pos + 12 <= size) {
+        UINT length = be32(data + pos);
+        const BYTE *type = data + pos + 4;
+        if (length > size - pos - 12)
+            break;
+        UINT at = pos > 0x7ffffff0u ? 0x7ffffff0u : (UINT)pos;
+#define TAKE(field, name)                                                                                              \
+    if (!memcmp(type, name, 4) && order->field == PNG_NOT_FOUND)                                                       \
+        order->field = at;
+        TAKE(gama, "gAMA")
+        TAKE(chrm, "cHRM")
+        TAKE(srgb, "sRGB")
+        TAKE(iccp, "iCCP")
+        TAKE(bkgd, "bKGD")
+        TAKE(time, "tIME")
+        TAKE(exif, "eXIf")
+#undef TAKE
+        if ((!memcmp(type, "tEXt", 4) || !memcmp(type, "zTXt", 4) || !memcmp(type, "iTXt", 4)) && order->texts &&
+            order->text_count < max_texts)
+            order->texts[order->text_count++] = at;
+        if (!memcmp(type, "IEND", 4))
+            break;
+        pos += 12 + (SIZE_T)length;
+    }
+}
+
+HRESULT WicPngReaders(MimePngioDecoder *dec, const BYTE *file, SIZE_T file_size, IWICMetadataReader ***out,
+                      UINT *count)
 {
     const MimePngioInfo *info = mime_pngio_info(dec);
     ReaderList list = {0};
+    PngOrder order;
+    png_scan_order(file, file_size, &order, info->text_count);
     HRESULT hr = S_OK;
     *out = nullptr;
     *count = 0;
@@ -386,8 +481,8 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
     hr = WicMetaReaderCreate(&format, &var);                                                                           \
     if (FAILED(hr))                                                                                                    \
         goto fail;
-#define PUSH(var)                                                                                                      \
-    hr = list_add(&list, var);                                                                                         \
+#define PUSH(var, key)                                                                                                 \
+    hr = list_add_keyed(&list, var, key);                                                                              \
     if (FAILED(hr)) {                                                                                                  \
         var->lpVtbl->Release(var);                                                                                     \
         goto fail;                                                                                                     \
@@ -395,7 +490,7 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
     if (info->has_gama) {
         NEW(GUID_MetadataFormatChunkgAMA, r);
         hr = add_u32(r, L"ImageGamma", info->gama);
-        PUSH(r);
+        PUSH(r, order.gama);
     }
     if (info->has_chrm) {
         NEW(GUID_MetadataFormatChunkcHRM, r);
@@ -403,12 +498,12 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
                                               L"GreenX",      L"GreenY",      L"BlueX", L"BlueY"};
         for (int i = 0; i < 8 && SUCCEEDED(hr); i++)
             hr = add_u32(r, names[i], info->chrm[i]);
-        PUSH(r);
+        PUSH(r, order.chrm);
     }
     if (info->has_srgb) {
         NEW(GUID_MetadataFormatChunksRGB, r);
         hr = add_u8(r, L"RenderingIntent", info->srgb_intent);
-        PUSH(r);
+        PUSH(r, order.srgb);
     }
     if (info->has_iccp) {
         NEW(GUID_MetadataFormatChunkiCCP, r);
@@ -419,7 +514,7 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
             hr = add_bytes(r, L"ProfileData", profile, (UINT)length);
             mime_pngio_free(dec, profile);
         }
-        PUSH(r);
+        PUSH(r, order.iccp);
     }
     if (info->has_bkgd) {
         NEW(GUID_MetadataFormatChunkbKGD, r);
@@ -430,7 +525,7 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
             hr = add_bytes(r, L"BackgroundColor", rgb, info->color_type == MIME_PNGIO_COLOR_GRAY ||
                                                        info->color_type == MIME_PNGIO_COLOR_GRAY_ALPHA ? 1 : 3);
         }
-        PUSH(r);
+        PUSH(r, order.bkgd);
     }
     if (info->has_time) {
         NEW(GUID_MetadataFormatChunktIME, r);
@@ -445,12 +540,12 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
             hr = add_u8(r, L"Minute", info->time.minute);
         if (SUCCEEDED(hr))
             hr = add_u8(r, L"Second", info->time.second);
-        PUSH(r);
+        PUSH(r, order.time);
     }
     if (info->has_exif) {
         IWICMetadataReader *ifd;
         if (SUCCEEDED(WicIfdFromTiff(&GUID_MetadataFormatIfd, info->exif, info->exif_size, &ifd))) {
-            if (FAILED(list_add(&list, ifd))) {
+            if (FAILED(list_add_keyed(&list, ifd, order.exif))) {
                 ifd->lpVtbl->Release(ifd);
                 hr = E_OUTOFMEMORY;
                 goto fail;
@@ -479,7 +574,7 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
                 if (SUCCEEDED(hr))
                     hr = add_utf8_as_wide(r, L"TextEntry", data, length);
                 if (SUCCEEDED(hr))
-                    hr = list_add(&list, r);
+                    hr = list_add_keyed(&list, r, i < order.text_count ? order.texts[i] : PNG_NOT_FOUND);
                 if (FAILED(hr))
                     r->lpVtbl->Release(r);
             }
@@ -487,11 +582,9 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
             IWICMetadataReader *r = nullptr;
             hr = WicMetaReaderCreate(&GUID_MetadataFormatChunktEXt, &r);
             if (SUCCEEDED(hr)) {
-                hr = add_ansi(r, L"Keyword", t.keyword, strlen(t.keyword));
+                hr = add_keyed(r, t.keyword, data, length);
                 if (SUCCEEDED(hr))
-                    hr = add_ansi(r, L"TextEntry", data, length);
-                if (SUCCEEDED(hr))
-                    hr = list_add(&list, r);
+                    hr = list_add_keyed(&list, r, i < order.text_count ? order.texts[i] : PNG_NOT_FOUND);
                 if (FAILED(hr))
                     r->lpVtbl->Release(r);
             }
@@ -502,11 +595,15 @@ HRESULT WicPngReaders(MimePngioDecoder *dec, IWICMetadataReader ***out, UINT *co
     }
 #undef NEW
 #undef PUSH
+    list_sort(&list);
+    WicFree(list.keys);
+    WicFree(order.texts);
     *out = list.items ? list.items : WicAlloc(8);
     *count = list.count;
     return *out ? S_OK : E_OUTOFMEMORY;
 fail:
     list_free(&list);
+    WicFree(order.texts);
     return hr;
 }
 
@@ -536,6 +633,15 @@ static char *pm_own(PngMeta *m, char *p)
     }
     m->owned[m->owned_count++] = p;
     return p;
+}
+
+static char *copy_string(const char *text)
+{
+    SIZE_T n = strlen(text);
+    char *out = WicAlloc(n + 1);
+    if (out)
+        memcpy(out, text, n + 1);
+    return out;
 }
 
 static char *wide_to_utf8(const WCHAR *w, SIZE_T *length)
@@ -637,13 +743,13 @@ void WicPngApplyMetadata(PngMeta **out, MimePngioEncode *p, IWICMetadataBlockRea
                 p->time.second = (uint8_t)s;
             }
         } else if (IsEqualGUID(&f, &GUID_MetadataFormatChunktEXt)) {
-            char *keyword, *text;
-            if (WicMetaGetAnsi(r, L"Keyword", &keyword) && WicMetaGetAnsi(r, L"TextEntry", &text)) {
+            const WicMetaItem *item = WicMetaCount(r) ? WicMetaItemAt(r, 0) : nullptr;
+            if (item && item->id.vt == VT_LPSTR && item->id.pszVal && item->value.vt == VT_LPSTR && item->value.pszVal) {
                 MimePngioTextItem *t = &m->texts[m->text_count++];
                 t->kind = MIME_PNGIO_TEXT_LATIN1;
-                t->keyword = pm_own(m, keyword);
-                t->text = pm_own(m, text);
-                t->text_size = text ? strlen(text) : 0;
+                t->keyword = pm_own(m, copy_string(item->id.pszVal));
+                t->text = pm_own(m, copy_string(item->value.pszVal));
+                t->text_size = t->text ? strlen(t->text) : 0;
                 t->compress = false;
             }
         } else if (IsEqualGUID(&f, &GUID_MetadataFormatChunkiTXt)) {

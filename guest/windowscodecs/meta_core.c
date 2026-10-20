@@ -15,6 +15,19 @@ BOOL WicPvIsEmpty(const PROPVARIANT *pv) { return !pv || pv->vt == VT_EMPTY; }
 /* two ids are the same when their types and values are. strings are compared as they are. */
 BOOL WicPvSame(const PROPVARIANT *a, const PROPVARIANT *b)
 {
+    /* a name given as ansi is the wide one with the same characters. */
+    if ((a->vt == VT_LPSTR && b->vt == VT_LPWSTR) || (a->vt == VT_LPWSTR && b->vt == VT_LPSTR)) {
+        const PROPVARIANT *n = a->vt == VT_LPSTR ? a : b, *w = a->vt == VT_LPSTR ? b : a;
+        if (!n->pszVal || !w->pwszVal)
+            return FALSE;
+        const char *c = n->pszVal;
+        const WCHAR *d = w->pwszVal;
+        while (*c && (BYTE)*c == *d) {
+            c++;
+            d++;
+        }
+        return (BYTE)*c == *d;
+    }
     if (a->vt != b->vt)
         return FALSE;
     switch (a->vt) {
