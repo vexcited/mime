@@ -513,7 +513,22 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
     PULONG last_error = (PULONG)(Wow64CurrentTeb32() + MIME_TEB32_LAST_ERROR);
     PTEB teb = NtCurrentTeb();
     teb->LastErrorValue = *last_error;
-    NTSTATUS status = Mx32SystemCall(number, a);
+    /*
+     * the kernel answers a pointer of the program that points at nothing with STATUS_ACCESS_VIOLATION, a guard page with
+     * STATUS_GUARD_PAGE_VIOLATION, and the thunks that translate the arguments read those pointers in this process: a fault
+     * there is the same answer. It ended the process
+     * instead, with an exception no 32-bit handler could take, for a program that hands a system call a bad pointer to
+     * learn that it is one.
+     */
+    NTSTATUS status;
+    __try {
+        status = Mx32SystemCall(number, a);
+    } __except (_exception_code() == STATUS_ACCESS_VIOLATION || _exception_code() == STATUS_IN_PAGE_ERROR ||
+                        _exception_code() == STATUS_GUARD_PAGE_VIOLATION
+                    ? 1 /* EXCEPTION_EXECUTE_HANDLER */
+                    : 0 /* EXCEPTION_CONTINUE_SEARCH */) {
+        status = (NTSTATUS)_exception_code();
+    }
     *last_error = teb->LastErrorValue;
     if (status == STATUS_NOT_IMPLEMENTED)
         Mx32Unsupported(number);
