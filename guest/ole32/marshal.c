@@ -271,15 +271,13 @@ static HRESULT marshal_standard(IStream *stream, REFIID iid, IUnknown *object, D
     if (FAILED(hr))
         return hr;
     /*
-     * outside the process the object is served over rpc, through the stub of the interface. An interface that has none
-     * can still be handed to the process itself, as a pointer; that is a difference from windows, which fails.
+     * outside the process the object is served over rpc, through the stub of the interface, and one that has none cannot
+     * be marshaled: a pointer to it would mean nothing to the process it is sent to, and holds the object forever.
      */
     if (destination != MSHCTX_INPROC) {
         hr = OrpcMarshal(stream, iid, unknown, destination, flags);
-        if (hr != E_NOINTERFACE) {
-            unknown->lpVtbl->Release(unknown);
-            return hr;
-        }
+        unknown->lpVtbl->Release(unknown);
+        return hr == E_NOINTERFACE ? REGDB_E_IIDNOTREG : hr;
     }
     OBJREF_HEAD head = {OBJREF_SIGNATURE, OBJREF_MIME_DIRECT, *iid};
     OBJREF_DIRECT direct = {flags, GetCurrentProcessId(), (ULONG64)(ULONG_PTR)unknown, {}};

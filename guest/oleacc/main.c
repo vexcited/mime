@@ -69,7 +69,10 @@ OLEACCAPI LRESULT WINAPI LresultFromObject(REFIID riid, WPARAM wparam, IUnknown 
     HRESULT hr = CreateStreamOnHGlobal(nullptr, TRUE, &stream);
     if (FAILED(hr))
         return hr;
-    hr = CoMarshalInterface(stream, riid, object, 0, nullptr, 0);
+    /* a client of another process needs the object served over rpc; any other, which includes a caller that names none, is us. */
+    DWORD me_now = GetCurrentProcessId(), asked = (DWORD)wparam;
+    BOOL elsewhere = asked && asked != 0xFFFFFFFFu && asked != me_now;
+    hr = CoMarshalInterface(stream, riid, object, elsewhere ? 0 : 3, nullptr, 0);
     if (FAILED(hr)) {
         stream->lpVtbl->Release(stream);
         return hr;
