@@ -31,6 +31,9 @@ HRESULT CbUISettingsFactory(REFIID riid, void **factory);
 extern const WCHAR CbApiInformationClass[];
 HRESULT CbApiInformationFactory(REFIID riid, void **factory);
 
+/* apartment.c: the factories a program registers for itself. */
+HRESULT CbRegisteredFactory(HSTRING class_id, REFIID riid, void **factory);
+
 /* regionpolicy.c */
 extern const WCHAR CbRegionPolicyClass[];
 HRESULT CbRegionPolicyFactory(REFIID riid, void **factory);

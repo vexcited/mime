@@ -95,4 +95,28 @@ ROAPI void WINAPI RoUninitialize(void);
 ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory);
 ROAPI HRESULT WINAPI RoActivateInstance(HSTRING class_id, IInspectable **instance);
 
+/* factories a program serves from its own code, and the apartment it asks about. */
+typedef HRESULT(WINAPI *PFNGETACTIVATIONFACTORY)(HSTRING class_id, IActivationFactory **factory);
+typedef void *RO_REGISTRATION_COOKIE;
+typedef struct IApartmentShutdown IApartmentShutdown;
+typedef struct IApartmentShutdownVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IApartmentShutdown *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IApartmentShutdown *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IApartmentShutdown *This);
+    void(STDMETHODCALLTYPE *OnUncontrolledShutdown)(IApartmentShutdown *This, UINT64 apartment);
+} IApartmentShutdownVtbl;
+struct IApartmentShutdown {
+    const IApartmentShutdownVtbl *lpVtbl;
+};
+typedef void *APARTMENT_SHUTDOWN_REGISTRATION_COOKIE;
+
+ROAPI HRESULT WINAPI RoRegisterActivationFactories(HSTRING *class_ids, PFNGETACTIVATIONFACTORY *factories, UINT32 count,
+                                                   RO_REGISTRATION_COOKIE *cookie);
+ROAPI void WINAPI RoRevokeActivationFactories(RO_REGISTRATION_COOKIE cookie);
+ROAPI HRESULT WINAPI RoGetApartmentIdentifier(UINT64 *identifier);
+ROAPI HRESULT WINAPI RoRegisterForApartmentShutdown(IApartmentShutdown *callback, UINT64 *identifier,
+                                                    APARTMENT_SHUTDOWN_REGISTRATION_COOKIE *cookie);
+ROAPI HRESULT WINAPI RoUnregisterForApartmentShutdown(APARTMENT_SHUTDOWN_REGISTRATION_COOKIE cookie);
+ROAPI BOOL WINAPI RoTransformError(HRESULT old_error, HRESULT new_error, HSTRING message);
+
 #endif
