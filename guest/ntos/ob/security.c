@@ -5,8 +5,10 @@
  * The descriptor is a shared blob behind the reserved word of the object header; a type without generic
  * rights has none, and an object nobody gave one to answers with the system's.
  *
- * Access is never checked against a descriptor. The handle's rights are, as are the privileges and the owner
- * and label rules of setting one (se/sd.c).
+ * A program in user mode that opens an object that already exists is checked against its descriptor with the
+ * token it acts with (ObCheckOpenAccess), and one that makes a named object against the descriptor of the
+ * directory it goes into. What a handle then holds is checked at each use, and the privileges and the owner and
+ * label rules of setting a descriptor are in se/sd.c.
  */
 #include "../ntos.h"
 #include "../se/se.h"
@@ -150,6 +152,61 @@ void ObAttachSecurity(PVOID object, SD_BLOB *sd)
         h->Reserved = (ULONG_PTR)sd;
 }
 
+/* the directories programs make named objects in. */
+static BOOLEAN creatable_directory(PVOID object)
+{
+    WCHAR buffer[128];
+    UNICODE_STRING name;
+    if (!NT_SUCCESS(ObQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))))
+        return FALSE;
+    static const PCWSTR creatable[] = {L"\\BaseNamedObjects", L"\\RPC Control", L"\\Windows\\WindowStations"};
+    static const WCHAR sessions[] = L"\\Sessions\\";
+    for (ULONG i = 0; i < RTL_NUMBER_OF(creatable); i++)
+        if (!_wcsicmp(buffer, creatable[i]))
+            return TRUE;
+    /* the same inside a session, \Sessions\n\BaseNamedObjects and \Sessions\n\Windows\WindowStations. */
+    if (!_wcsnicmp(buffer, sessions, RTL_NUMBER_OF(sessions) - 1)) {
+        const WCHAR *rest = buffer + RTL_NUMBER_OF(sessions) - 1;
+        while (*rest >= '0' && *rest <= '9')
+            rest++;
+        return !_wcsicmp(rest, L"\\BaseNamedObjects") || !_wcsicmp(rest, L"\\Windows\\WindowStations");
+    }
+    return FALSE;
+}
+
+/* the descriptor of an object the kernel put in the namespace: see SeSdBootDefault. */
+NTSTATUS ObAssignBootSecurity(PVOID object)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    h->Flags &= ~(ULONG)OB_SD_PENDING;
+    const OBJECT_TYPE *type = h->Type;
+    if (!securable(type))
+        return STATUS_SUCCESS;
+    SD_BLOB *sd;
+    NTSTATUS status = SeSdBootDefault(mapping_of(type), type == ObDirectoryType,
+                                      type == ObDirectoryType && creatable_directory(object) ? SE_BOOT_CREATABLE
+                                                                                              : SE_BOOT_PLAIN,
+                                      &sd);
+    if (NT_SUCCESS(status))
+        h->Reserved = (ULONG_PTR)sd;
+    return status;
+}
+
+/* a window station or a desktop everyone at the console works at: everything but changing its descriptor. */
+NTSTATUS ObSetInteractiveSecurity(PVOID object, BOOLEAN everyone)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    const OBJECT_TYPE *type = h->Type;
+    SD_BLOB *sd;
+    NTSTATUS status = SeSdBootDefault(mapping_of(type), FALSE, everyone ? SE_BOOT_INTERACTIVE : SE_BOOT_PLAIN_SYSTEM, &sd);
+    if (!NT_SUCCESS(status))
+        return status;
+    h->Flags &= ~(ULONG)OB_SD_PENDING;
+    status = ObStoreSecurity(object, sd);
+    SeSdDereference(sd);
+    return status;
+}
+
 NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -163,6 +220,70 @@ NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVO
     }
     ObAttachSecurity(object, sd);
     return STATUS_SUCCESS;
+}
+
+/* ---------------------------------------------------------------- checks on open */
+
+static void trace_open_denial(PVOID object, ACCESS_MASK desired, NTSTATUS status)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    char what[24];
+    ULONG n = 0;
+    if (h->Type == SeTokenObjectType)
+        KiLogPrintf("  the token is %llx", ((PTOKEN)object)->TokenId);
+    for (; n < sizeof(what) - 1 && n < h->Type->Name.Length / sizeof(WCHAR); n++)
+        what[n] = (char)h->Type->Name.Buffer[n];
+    what[n] = 0;
+    SeTraceDenial(what, &h->Name, desired, status);
+}
+
+/*
+ * the open of an object that exists by a caller in user mode: the rights it is given, or the refusal. A caller in
+ * kernel mode, a type whose objects keep no descriptor and an object without one are not checked, *granted is then
+ * the access asked for. The file system and the registry check their own, with the open itself.
+ */
+NTSTATUS ObCheckOpenAccessEx(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ULONG flags, ACCESS_MASK *granted)
+{
+    const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
+    *granted = desired;
+    if (mode != UserMode || !SeAccessEnforced || !type->Init.GenericMapping[3] || type->Init.GetSecurity)
+        return STATUS_SUCCESS;
+    SD_BLOB *sd;
+    ObReferenceSecurity(object, &sd);
+    if (!sd)
+        return STATUS_SUCCESS;
+    NTSTATUS status = SeCheckAccess(sd, type->Init.GenericMapping, desired, 0, flags, granted);
+    if (!NT_SUCCESS(status)) {
+        *granted = 0;
+        trace_open_denial(object, desired, status);
+        SeTraceDescriptor(sd);
+    }
+    SeSdDereference(sd);
+    return status;
+}
+
+NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ACCESS_MASK *granted)
+{
+    return ObCheckOpenAccessEx(object, desired, mode, 0, granted);
+}
+
+/* whether a caller in user mode may make a named object in a directory: it needs the right to create objects in it. */
+#define DIRECTORY_CREATE_OBJECT_ 0x4
+
+NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
+{
+    ACCESS_MASK granted;
+    if (mode != UserMode || !SeAccessEnforced)
+        return STATUS_SUCCESS;
+    SD_BLOB *sd;
+    ObReferenceSecurity(directory, &sd);
+    if (!sd)
+        return STATUS_SUCCESS;
+    NTSTATUS status = SeCheckAccess(sd, ObDirectoryType->Init.GenericMapping, DIRECTORY_CREATE_OBJECT_, 0, 0, &granted);
+    SeSdDereference(sd);
+    if (!NT_SUCCESS(status))
+        trace_open_denial(directory, DIRECTORY_CREATE_OBJECT_, status);
+    return status;
 }
 
 /* ---------------------------------------------------------------- the services */
@@ -219,6 +340,11 @@ NTSTATUS NTAPI NtSetSecurityObject(HANDLE handle, ULONG info, PVOID descriptor)
             SeSdDereference(old);
         if (NT_SUCCESS(status)) {
             status = ObStoreSecurity(object, next);
+            if (SeTraceAccess) {
+                KiLogPrintf("security set on a %ws %llx, status %08x", type->Name.Buffer,
+                            type == SeTokenObjectType ? ((PTOKEN)object)->TokenId : 0, status);
+                SeTraceDescriptor(next);
+            }
             SeSdDereference(next);
         }
         ExReleaseFastMutex(&set_lock);

@@ -192,7 +192,8 @@ NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHAN
         access = mapped;
     }
     if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_SD_PENDING) {
-        NTSTATUS status = ObAssignSecurity(object, nullptr, nullptr, KernelMode);
+        NTSTATUS status = (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_BOOT) ? ObAssignBootSecurity(object)
+                                                                            : ObAssignSecurity(object, nullptr, nullptr, KernelMode);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(object);
             return status;
@@ -271,9 +272,15 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         leaf.Length = leaf.MaximumLength = (USHORT)((len - slash) * 2);
     }
 
+    /* a name that is free is made only where the caller may make objects, one that is taken is found as it is. */
+    NTSTATUS may_create = ObCheckCreateAccess(parent, mode);
     status = ObAssignSecurity(object, attributes, parent, mode);
-    if (NT_SUCCESS(status))
-        status = ObInsertIntoDirectory(parent, object, &leaf);
+    if (NT_SUCCESS(status)) {
+        if (NT_SUCCESS(may_create))
+            status = ObInsertIntoDirectory(parent, object, &leaf);
+        else
+            status = ObDirectoryHasName(parent, &leaf) ? STATUS_OBJECT_NAME_COLLISION : may_create;
+    }
     if (status == STATUS_OBJECT_NAME_COLLISION && (attrs & OBJ_OPENIF)) {
         PVOID existing;
         UNICODE_STRING full = name;
@@ -283,7 +290,14 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         ObDereferenceObject(object);
         if (!NT_SUCCESS(st))
             return st == STATUS_OBJECT_TYPE_MISMATCH ? st : STATUS_OBJECT_NAME_COLLISION;
-        st = ObInsertObject(existing, access, attrs, handle);
+        /* the one that exists is opened like any other, with the check of what is asked of it. */
+        ACCESS_MASK granted;
+        st = ObCheckOpenAccess(existing, access, mode, &granted);
+        if (!NT_SUCCESS(st)) {
+            ObDereferenceObject(existing);
+            return st;
+        }
+        st = ObInsertObject(existing, granted, attrs, handle);
         return NT_SUCCESS(st) ? STATUS_OBJECT_NAME_EXISTS : st;
     }
     ObDereferenceObject(parent);
@@ -467,7 +481,13 @@ NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KP
     ULONG attrs = attributes->Attributes;
     if (mode == UserMode)
         attrs &= ~OBJ_KERNEL_HANDLE;
-    return ObInsertObject(object, access, attrs, handle);
+    ACCESS_MASK granted;
+    status = ObCheckOpenAccess(object, access, mode, &granted);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(object);
+        return status;
+    }
+    return ObInsertObject(object, granted, attrs, handle);
 }
 
 NTSTATUS NTAPI ObOpenObjectByPointer(PVOID object, ULONG attributes, PVOID access_state, ACCESS_MASK access,

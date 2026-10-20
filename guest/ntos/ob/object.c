@@ -240,6 +240,14 @@ static PVOID directory_lookup(POBJECT_DIRECTORY dir, PCUNICODE_STRING name)
     return nullptr;
 }
 
+BOOLEAN ObDirectoryHasName(POBJECT_DIRECTORY dir, PCUNICODE_STRING name)
+{
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespace_lock);
+    BOOLEAN found = directory_lookup(dir, name) != nullptr;
+    KeReleaseSpinLock(&g_namespace_lock, irql);
+    return found;
+}
+
 NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_STRING name)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -268,6 +276,9 @@ NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_ST
     e->Next = dir->Buckets[bucket];
     dir->Buckets[bucket] = e;
     h->Directory = dir;
+    /* an object that comes without a descriptor was put here by the kernel, not made by a program. */
+    if (h->Flags & OB_FLAG_SD_PENDING)
+        h->Flags |= OB_FLAG_BOOT;
     KeReleaseSpinLock(&g_namespace_lock, irql);
     return STATUS_SUCCESS;
 }
@@ -311,11 +322,20 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
     ULONG len = 0;
     PVOID current = nullptr;
 
+    PETHREAD thread = PsCurrentThread();
+    if (thread)
+        thread->ParseRootObject = nullptr;
     if (root) {
-        NTSTATUS status = ObReferenceHandle(root, nullptr, mode, &current, nullptr);
+        ACCESS_MASK root_access;
+        NTSTATUS status = ObReferenceHandle(root, nullptr, mode, &current, &root_access);
         if (!NT_SUCCESS(status)) {
             ExFreePool(path);
             return status;
+        }
+        /* what the handle was opened for is what a parse procedure may rely on, as the registry does to make a key in it. */
+        if (thread) {
+            thread->ParseRootObject = current;
+            thread->ParseRootAccess = root_access;
         }
         if (OBJECT_TO_HEADER(current)->Type != ObDirectoryType) {
             /* relative opens below a non directory object go straight to its parse procedure. */
@@ -348,7 +368,7 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
     path[len] = 0;
     ULONG pos = 0;
     NTSTATUS status = STATUS_SUCCESS;
-    int reparse = 0;
+    int reparse = 0, bypass = -1;
 
     for (;;) {
         OBJECT_HEADER *ch = OBJECT_TO_HEADER(current);
@@ -378,6 +398,16 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
         ULONG start = pos;
         while (pos < len && path[pos] != '\\')
             pos++;
+        /* a program without the privilege to bypass traverse checking needs the right to pass through each directory. */
+        if (mode == UserMode && SeAccessEnforced) {
+            if (bypass < 0)
+                bypass = SeThreadBypassesTraverse();
+            ACCESS_MASK passed;
+            if (!bypass && !NT_SUCCESS(status = ObCheckOpenAccess(current, 0x2 /* DIRECTORY_TRAVERSE */, mode, &passed))) {
+                ObDereferenceObject(current);
+                break;
+            }
+        }
         UNICODE_STRING component = {(USHORT)((pos - start) * 2), (USHORT)((pos - start) * 2), path + start};
         KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespace_lock);
         PVOID next = directory_lookup((POBJECT_DIRECTORY)current, &component);

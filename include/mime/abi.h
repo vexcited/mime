@@ -810,6 +810,7 @@ enum {
     MIME_FS_OPEN_DIRECTORY = 1u << 2,     /* must be a directory */
     MIME_FS_OPEN_NON_DIRECTORY = 1u << 3, /* must not be a directory */
     MIME_FS_OPEN_STAT_ONLY = 1u << 4,     /* only info_out is wanted, no handle is made (and none needs to be closed) */
+    MIME_FS_OPEN_WANT_SD = 1u << 5,       /* also the nearest stored security descriptor, see sd_length: for a guest that checks the open */
 };
 
 enum {
@@ -889,8 +890,17 @@ typedef struct MimeFsOpen {
     uint32_t path_chars;
     uint64_t handle_out;
     uint32_t action_out; /* FILE_OPENED, FILE_CREATED... */
-    uint32_t pad;
+    /*
+     * with MIME_FS_OPEN_WANT_SD and an open that succeeded: the descriptor stored for the file or the nearest directory
+     * above it, as MIME_HC_FS_GET_SD answers. sd_length is its length, 0 when none is stored, and the bytes are in sd_data
+     * when they fit; sd_distance is how many levels above the file it was found. sd_status is not MIME_HC_STATUS_OK
+     * when it could not be read, and then the guest asks again with MIME_HC_FS_GET_SD.
+     */
+    uint32_t sd_length;
     MimeFsInfo info_out; /* what MIME_HC_FS_QUERY gives for the file just opened, so that an open is one exit */
+    uint32_t sd_distance;
+    uint32_t sd_status;
+    uint8_t sd_data[512];
     uint16_t path[520];
 } MimeFsOpen;
 

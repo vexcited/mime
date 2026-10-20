@@ -128,13 +128,24 @@ static BOOLEAN shadowed_by_rom(PCUNICODE_STRING dir, const WCHAR *name, ULONG ch
 }
 
 static NTSTATUS create_rom(PIRP irp, PFILE_OBJECT file, const MimeRomEntry *rom, ACCESS_MASK access, ULONG options,
-                           ULONG disposition)
+                           ULONG disposition, PIO_SECURITY_CONTEXT security, BOOLEAN check)
 {
     if (options & FILE_DIRECTORY_FILE)
         return complete(irp, STATUS_NOT_A_DIRECTORY, 0);
     if ((disposition != FILE_OPEN && disposition != FILE_OPEN_IF) || (file->Flags & FO_DELETE_ON_CLOSE) ||
         (access & (FILE_WRITE_DATA | FILE_APPEND_DATA | GENERIC_WRITE | GENERIC_ALL | DELETE)))
         return complete(irp, STATUS_ACCESS_DENIED, 0);
+    if (check) {
+        ACCESS_MASK granted;
+        NTSTATUS status = MimeFsCheckRomOpen(access, options, &granted);
+        if (!NT_SUCCESS(status)) {
+            SeTraceDenial("rom file", &file->FileName, access, status);
+            return complete(irp, status, 0);
+        }
+        security->GrantedAccess = granted;
+        security->Checked = TRUE;
+        file->ReadAccess = (granted & (FILE_READ_DATA | FILE_EXECUTE)) != 0;
+    }
     MIMEFS_FCB *fcb = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MIMEFS_FCB), KI_TAG('M', 'f', 'F', 'c'));
     if (!fcb)
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
@@ -294,7 +305,10 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     PFILE_OBJECT file = stack->FileObject;
     ULONG options = stack->Parameters.Create.Options & 0x00FFFFFF;
     ULONG disposition = stack->Parameters.Create.Options >> 24;
-    ACCESS_MASK access = stack->Parameters.Create.SecurityContext ? stack->Parameters.Create.SecurityContext->DesiredAccess : 0;
+    PIO_SECURITY_CONTEXT security = stack->Parameters.Create.SecurityContext;
+    ACCESS_MASK access = security ? security->DesiredAccess : 0;
+    /* a program in user mode is held to the descriptors of the files it opens, the kernel and the drivers are not. */
+    BOOLEAN check = (stack->Flags & SL_FORCE_ACCESS_CHECK) && security && SeAccessCheckRequired();
 
     MimeFsOpen *req = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MimeFsOpen), KI_TAG('M', 'f', 'O', 'p'));
     if (!req)
@@ -316,7 +330,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         const MimeRomEntry *rom = HalRomFind(file->FileName.Buffer, chars);
         if (rom) {
             ExFreePool(req);
-            return create_rom(irp, file, rom, access, options, disposition);
+            return create_rom(irp, file, rom, access, options, disposition, security, check);
         }
     }
     memcpy(req->path, file->FileName.Buffer, chars * sizeof(WCHAR));
@@ -331,38 +345,64 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         req->flags |= MIME_FS_OPEN_DIRECTORY;
     if (options & FILE_NON_DIRECTORY_FILE)
         req->flags |= MIME_FS_OPEN_NON_DIRECTORY;
+    if (check)
+        req->flags |= MIME_FS_OPEN_WANT_SD;
     /* a query by name needs the attributes and nothing else: the host answers them without making a handle. */
     BOOLEAN stat_only = (stack->Flags & SL_OPEN_STAT_ONLY) != 0 && disposition == FILE_OPEN &&
                         !(req->flags & MIME_FS_OPEN_WRITE) && !(file->Flags & FO_DELETE_ON_CLOSE);
     if (stat_only)
         req->flags |= MIME_FS_OPEN_STAT_ONLY;
+    ULONG host_disposition;
     switch (disposition) {
-    case FILE_SUPERSEDE: req->disposition = MIME_FS_DISP_SUPERSEDE; break;
-    case FILE_CREATE: req->disposition = MIME_FS_DISP_CREATE; break;
-    case FILE_OPEN_IF: req->disposition = MIME_FS_DISP_OPEN_IF; break;
-    case FILE_OVERWRITE: req->disposition = MIME_FS_DISP_OVERWRITE; break;
-    case FILE_OVERWRITE_IF: req->disposition = MIME_FS_DISP_OVERWRITE_IF; break;
-    default: req->disposition = MIME_FS_DISP_OPEN; break;
+    case FILE_SUPERSEDE: host_disposition = MIME_FS_DISP_SUPERSEDE; break;
+    case FILE_CREATE: host_disposition = MIME_FS_DISP_CREATE; break;
+    case FILE_OPEN_IF: host_disposition = MIME_FS_DISP_OPEN_IF; break;
+    case FILE_OVERWRITE: host_disposition = MIME_FS_DISP_OVERWRITE; break;
+    case FILE_OVERWRITE_IF: host_disposition = MIME_FS_DISP_OVERWRITE_IF; break;
+    default: host_disposition = MIME_FS_DISP_OPEN; break;
     }
+    req->disposition = host_disposition;
     /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
     FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
+    ACCESS_MASK granted = access;
+    BOOLEAN checked = FALSE;
     /*
      * a file with a section in use is not made shorter by an open that truncates it, as it is not by a change of its
      * size: a view would read what is no longer there, and where the pages are the host's that is a fault the host
      * cannot take. The file is looked up by name first, without a handle, to know which one it is, and what the cache
      * of its pages holds is dropped before the host truncates it, not after: a read that comes between would take
-     * pages that are gone from the window of the host's file.
+     * pages that are gone from the window of the host's file. An open that empties a file that exists is also
+     * checked before it is made, as it cannot be taken back, so the host opens the name as it is with a handle, which
+     * tells the descriptor too, and the real open comes when the descriptor allows it.
      */
     if (disposition == FILE_SUPERSEDE || disposition == FILE_OVERWRITE || disposition == FILE_OVERWRITE_IF) {
         ULONG saved_flags = req->flags, saved_disposition = req->disposition;
-        req->flags = MIME_FS_OPEN_STAT_ONLY;
+        if (check)
+            req->flags &= ~(ULONG)MIME_FS_OPEN_STAT_ONLY;
+        else
+            req->flags = MIME_FS_OPEN_STAT_ONLY;
         req->disposition = MIME_FS_DISP_OPEN;
         ULONG64 probe = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
         ULONG64 id = req->info_out.file_id;
-        if (probe == MIME_HC_STATUS_OK && req->handle_out)
+        if (probe == MIME_HC_STATUS_OK && check) {
+            MIMEFS_STORED known = {req->sd_status, req->sd_length, req->sd_distance, req->sd_data};
+            NTSTATUS allowed = MimeFsCheckOpen(vol->HostVolume, req->handle_out, &file->FileName,
+                                               (req->info_out.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0, access, options,
+                                               disposition, FALSE, &known, &granted);
+            if (req->handle_out)
+                HalHypercallUnlocked(MIME_HC_FS_CLOSE, req->handle_out, 0, 0, 0, 0, 0, nullptr);
+            if (!NT_SUCCESS(allowed)) {
+                SeTraceDenial("file", &file->FileName, access, allowed);
+                ExFreePool(req);
+                return complete(irp, allowed, 0);
+            }
+            checked = TRUE;
+        } else if (probe == MIME_HC_STATUS_OK && req->handle_out) {
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, req->handle_out, 0, 0, 0, 0, 0, nullptr);
+        }
         req->flags = saved_flags;
         req->disposition = saved_disposition;
+        req->handle_out = 0;
         if (probe == MIME_HC_STATUS_OK) {
             if (FsWbIsMapped(vol->HostVolume, id)) {
                 ExFreePool(req);
@@ -371,7 +411,9 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
             FsCacheInvalidate(vol->HostVolume, id);
         }
     }
-    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
+    ULONG64 hs;
+reopen:
+    hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
         ExFreePool(req);
@@ -381,6 +423,29 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     ULONG action = req->action_out;
     ULONG req_flags = req->flags;
     MimeFsInfo opened = req->info_out;
+    BOOLEAN directory = (opened.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+    if (check && (!checked || action == FILE_CREATED)) {
+        MIMEFS_STORED known = {req->sd_status, req->sd_length, req->sd_distance, req->sd_data};
+        NTSTATUS allowed = MimeFsCheckOpen(vol->HostVolume, host, &file->FileName, directory, access, options, disposition,
+                                           action == FILE_CREATED, &known, &granted);
+        if (allowed == STATUS_MORE_PROCESSING_REQUIRED && !host) {
+            /* a query by name that needs the directory above: opened with a handle, the host can be asked more. */
+            req->flags &= ~(ULONG)MIME_FS_OPEN_STAT_ONLY;
+            goto reopen;
+        }
+        if (!NT_SUCCESS(allowed)) {
+            SeTraceDenial("file", &file->FileName, access, allowed);
+            /* a file made for an open that is refused is not left behind. */
+            if (host && action == FILE_CREATED)
+                HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
+            if (host)
+                HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+            ExFreePool(req);
+            return complete(irp, allowed, 0);
+        }
+        checked = TRUE;
+    }
     ExFreePool(req);
 
     MIMEFS_FCB *fcb = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MIMEFS_FCB), KI_TAG('M', 'f', 'F', 'c'));
@@ -394,7 +459,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     fcb->OpenInfo = opened;
     fcb->Volume = vol->HostVolume;
     fcb->FileId = opened.file_id;
-    fcb->Directory = (opened.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    fcb->Directory = directory;
     fcb->Buffered = (req_flags & MIME_FS_OPEN_WRITE) && !(options & (FILE_WRITE_THROUGH | FILE_NO_INTERMEDIATE_BUFFERING));
     if (!fcb->Directory && !fcb->StatOnly)
         FsWbOpen(&fcb->Wb, vol->HostVolume, opened.file_id, host, &file->FileName);
@@ -407,9 +472,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     fcb->IsRoot = chars == 0 || (chars == 1 && file->FileName.Buffer[0] == '\\');
     fcb->DeleteOnClose = (file->Flags & FO_DELETE_ON_CLOSE) != 0;
     if (action == FILE_CREATED) {
-        PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
         NTSTATUS status = MimeFsAssignNewFile(vol->HostVolume, host, &file->FileName, fcb->Directory,
-                                              context ? context->SecurityDescriptor : nullptr, KeGetPreviousMode());
+                                              security ? security->SecurityDescriptor : nullptr, KeGetPreviousMode());
         if (!NT_SUCCESS(status)) {
             /* a file the creator may not make that way is not left behind. */
             HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
@@ -424,6 +488,14 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (fcb->Directory)
         file->Flags |= FO_DIRECTORY_FILE;
     file->FsContext = fcb;
+    if (checked) {
+        /* the handle has what the descriptor gave, and the file object says the same. */
+        security->GrantedAccess = granted;
+        security->Checked = TRUE;
+        file->ReadAccess = (granted & (FILE_READ_DATA | FILE_EXECUTE)) != 0;
+        file->WriteAccess = (granted & (FILE_WRITE_DATA | FILE_APPEND_DATA)) != 0;
+        file->DeleteAccess = (granted & DELETE) != 0;
+    }
     if (action == FILE_CREATED)
         FsNotifyReport(vol->HostVolume, &file->FileName, FILE_ACTION_ADDED,
                        fcb->Directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);

@@ -597,6 +597,90 @@ ACCESS_MASK SepMapTokenAccess(ACCESS_MASK access)
     return access & ~0xF0000000u;
 }
 
+/* adds an entry for a sid to the list of the token's descriptor, which it has by now. */
+static void append_ace(PTOKEN token, ACCESS_MASK mask, const UCHAR *sid)
+{
+    SD_BLOB *sd, *made;
+    if (!NT_SUCCESS(ObReferenceSecurity(token, &sd)) || !sd)
+        return;
+    if (NT_SUCCESS(SeSdAppendAllowAce(sd, sid, mask, &made))) {
+        if (made != sd)
+            ObStoreSecurity(token, made);
+        SeSdDereference(made);
+    }
+    SeSdDereference(sd);
+}
+
+/* the entry the default list gets for a package, so what the app container makes is its own to use. */
+static void append_default_ace(PTOKEN token, const UCHAR *sid)
+{
+    ULONG sid_size = SepSidLength(sid), ace_size = 8 + sid_size;
+    ULONG size = token->DefaultDaclSize ? token->DefaultDaclSize : 8;
+    PUCHAR acl = ExAllocatePool2(POOL_FLAG_NON_PAGED, (size + ace_size + 3) & ~3u, TAG_ACL);
+    if (!acl)
+        return;
+    if (token->DefaultDaclSize) {
+        memcpy(acl, token->DefaultDacl, token->DefaultDaclSize);
+    } else {
+        acl[0] = 2;
+        *(PUSHORT)(acl + 2) = 8;
+    }
+    PUCHAR ace = acl + size;
+    ace[0] = 0;
+    *(PUSHORT)(ace + 2) = (USHORT)ace_size;
+    *(PULONG)(ace + 4) = 0x10000000; /* GENERIC_ALL */
+    memcpy(ace + 8, sid, sid_size);
+    *(PUSHORT)(acl + 2) = (USHORT)((size + ace_size + 3) & ~3u);
+    (*(PUSHORT)(acl + 4))++;
+    if (token->DefaultDacl)
+        ExFreePool(token->DefaultDacl);
+    token->DefaultDacl = acl;
+    token->DefaultDaclSize = (size + ace_size + 3) & ~3u;
+}
+
+/*
+ * what the descriptor of a token gets once it exists, as the kernel of windows gives it: the administrators may query
+ * every one, and an app container's token is open to the package, whose default list also names it.
+ */
+void SepFinalizeTokenSecurity(PTOKEN token)
+{
+    if (token->Flags & TOKEN_LOWBOX) {
+        append_ace(token, TOKEN_ALL_ACCESS, token->AppContainerSid);
+    }
+    append_ace(token, TOKEN_QUERY, SeSidAdministrators);
+}
+
+void SepAddPackageToDefaultList(PTOKEN token)
+{
+    if (token->Flags & TOKEN_LOWBOX)
+        append_default_ace(token, token->AppContainerSid);
+}
+
+/*
+ * the descriptor of a token: the one its maker offered, else with its own subject the token's own default list and level,
+ * as a token made for a process has, or the maker's default.
+ */
+NTSTATUS SepAssignTokenSecurity(PTOKEN token, const OBJECT_ATTRIBUTES *attributes, BOOLEAN own_subject)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(token);
+    if (!(h->Flags & OB_FLAG_SD_PENDING))
+        return STATUS_SUCCESS;
+    NTSTATUS status;
+    if (!own_subject || (attributes && attributes->SecurityDescriptor)) {
+        status = ObAssignSecurity(token, attributes, nullptr, KeGetPreviousMode());
+    } else {
+        SD_BLOB *sd;
+        status = SeSdForToken(token, SeTokenObjectType->Init.GenericMapping, &sd);
+        if (NT_SUCCESS(status))
+            ObAttachSecurity(token, sd);
+        else if (status == STATUS_NO_TOKEN)
+            status = STATUS_SUCCESS;
+    }
+    if (NT_SUCCESS(status))
+        SepFinalizeTokenSecurity(token);
+    return status;
+}
+
 /* consumes the pointer reference. */
 NTSTATUS SepInsertToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
@@ -605,6 +689,18 @@ NTSTATUS SepInsertToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, PHAN
     HANDLE h;
     NTSTATUS status = ObInsertObject(token, SepMapTokenAccess(access), attributes, &h);
     return NT_SUCCESS(status) ? ObStoreHandle(handle, h) : status;
+}
+
+/* a handle to a token that exists, which the caller is asked for: its descriptor decides, against the process's own token with as_self. */
+NTSTATUS SepOpenToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, BOOLEAN as_self, PHANDLE handle)
+{
+    ACCESS_MASK granted = access;
+    NTSTATUS status = ObCheckOpenAccessEx(token, access, KeGetPreviousMode(), as_self ? SE_ACCESS_AS_SELF : 0, &granted);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(token);
+        return status;
+    }
+    return SepInsertToken(token, granted, attributes, handle);
 }
 
 /* the token behind a handle that grants the rights; the pseudo handles stand for the current ones. */
@@ -674,6 +770,9 @@ NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent)
         child->Token = t;
     }
     ExReleaseFastMutex(&SeLock);
+    /* the token a process runs with is open to the process by its own default list and level. */
+    if (t)
+        SepAssignTokenSecurity(t, nullptr, TRUE);
     return status;
 }
 
@@ -710,15 +809,23 @@ ULONG SepTokenSessionId(PEPROCESS process)
     return session;
 }
 
-/* an explicit token for a new process, which shares it with whoever else holds it. */
+/*
+ * an explicit token for a new process. The process runs with a copy of it, as in windows, so the descriptor of the token
+ * it runs with is its own and the token it was made from stays free for the next process. (ProcessAccessToken is
+ * the way to give a process the token itself, see SepSetProcessAccessToken.)
+ */
 void SepSetProcessToken(PEPROCESS process, PTOKEN token)
 {
     ExAcquireFastMutex(&SeLock);
     PTOKEN old = process->Token;
-    ObReferenceObject(token);
-    token->InUse = TRUE;
-    process->Token = token;
+    PTOKEN copy = SepDuplicate(token, TokenPrimary, 0, FALSE, nullptr);
+    if (copy) {
+        copy->InUse = TRUE;
+        process->Token = copy;
+    }
     ExReleaseFastMutex(&SeLock);
+    if (copy)
+        SepAssignTokenSecurity(copy, nullptr, TRUE);
     if (old)
         ObDereferenceObject(old);
 }
@@ -918,6 +1025,11 @@ void SepInitialize(void)
     g_elevated_token->Linked = g_session_token;
     g_elevated_token->ParentTokenId = g_session_token->ParentTokenId;
 
+    /* the tokens of the machine are open to the users they are of. */
+    SepAssignTokenSecurity(g_system_token, nullptr, TRUE);
+    SepAssignTokenSecurity(g_session_token, nullptr, TRUE);
+    SepAssignTokenSecurity(g_elevated_token, nullptr, TRUE);
+    SepAssignTokenSecurity(g_anonymous_token, nullptr, TRUE);
     /* the system process, which was made before tokens could be. */
     g_system_token->InUse = TRUE;
     ObReferenceObject(g_system_token);

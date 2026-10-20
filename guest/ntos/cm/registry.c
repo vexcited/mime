@@ -22,7 +22,16 @@ typedef struct CM_PARSE_CONTEXT {
     BOOLEAN Replay;
     KPROCESSOR_MODE Mode; /* of the program creating a key */
     SD_BLOB *Creator;     /* the descriptor it offered for the new key */
+    BOOLEAN Check;        /* the program is held to the descriptors of the keys */
+    ACCESS_MASK Access;   /* what it asks for, and what its handle is given once checked */
+    ACCESS_MASK Granted;
+    BOOLEAN Checked;
+    BOOLEAN ByHandle;        /* the walk starts at the key of a handle, which was opened for HandleAccess */
+    ACCESS_MASK HandleAccess;
 } CM_PARSE_CONTEXT;
+
+#define KEY_CREATE_SUB_KEY_ 0x0004
+#define REG_OPTION_BACKUP_RESTORE_ 0x00000004
 
 static WCHAR upcase(WCHAR c)
 {
@@ -338,6 +347,25 @@ static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
 
 /* ------------------------------------------------------------------ security */
 
+/* a refusal for the log: the key's path, the last of it that fits. */
+static void trace_key(CM_NODE *node, ACCESS_MASK access, NTSTATUS status)
+{
+    if (!SeTraceAccess)
+        return;
+    WCHAR path[96];
+    ULONG at = RTL_NUMBER_OF(path) - 1;
+    path[at] = 0;
+    for (CM_NODE *n = node; n && at > 1; n = n->Parent) {
+        ULONG take = n->NameLength < at - 1 ? n->NameLength : at - 1;
+        at -= take;
+        memcpy(path + at, n->Name, take * sizeof(WCHAR));
+        path[--at] = '\\';
+    }
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, path + at);
+    SeTraceDenial("key", &name, access, status);
+}
+
 static SD_MAPPING key_mapping(void)
 {
     return CmKeyType->Init.GenericMapping;
@@ -347,6 +375,8 @@ static SD_MAPPING key_mapping(void)
  * the descriptor of a key, a reference: the one set on it, or what the hive keeps for it, else what its parent
  * hands down to a key of the user's. lock held.
  */
+static CM_HIVE *g_user_hive;
+
 static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
 {
     if (node->Sd) {
@@ -356,6 +386,16 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
     if (node->Hive && !(node->Flags & CM_NODE_SD_UNREADABLE)) {
         SD_BLOB *sd;
         if (NT_SUCCESS(CmpReadSecurity(node->Hive, node->Cell, &sd))) {
+            /* the hive of the user was made for no one in particular: the profile gives its user all of it, as windows does. */
+            if (node->Hive == g_user_hive) {
+                UCHAR user[28];
+                SD_BLOB *owned;
+                MimeUserSid(user);
+                if (NT_SUCCESS(SeSdAppendAllowAce(sd, user, 0xF003F, &owned))) {
+                    SeSdDereference(sd);
+                    sd = owned;
+                }
+            }
             node->Sd = sd;
             *out = SeSdReference(sd);
             return STATUS_SUCCESS;
@@ -395,6 +435,9 @@ static NTSTATUS store_sd(CM_NODE *node, SD_BLOB *sd)
 static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, CM_PARSE_CONTEXT *create,
                      CM_NODE **out)
 {
+    /* a key made straight in the one a handle names is allowed by what the handle was opened for. */
+    BOOLEAN by_handle = create && create->ByHandle;
+    ACCESS_MASK handle_access = create ? create->HandleAccess : 0;
     CM_NODE *node = start;
     ULONG pos = 0;
     int reparse = 0;
@@ -433,6 +476,29 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                 return STATUS_CHILD_MUST_BE_VOLATILE;
             if (last && (create->Options & REG_OPTION_CREATE_LINK))
                 flags |= CM_NODE_LINK;
+            /* a program makes a key only in one it may create keys in. */
+            if (create->Check && by_handle && node == start && !(handle_access & KEY_CREATE_SUB_KEY_)) {
+                if (SeTraceAccess)
+                    KiLogPrintf("  the key of a handle opened for %08x", handle_access);
+                trace_key(node, KEY_CREATE_SUB_KEY_, STATUS_ACCESS_DENIED);
+                return STATUS_ACCESS_DENIED;
+            } else if (create->Check && !(by_handle && node == start)) {
+                SD_BLOB *parent_sd;
+                status = effective_sd(node, &parent_sd);
+                if (NT_SUCCESS(status)) {
+                    ACCESS_MASK unused;
+                    status = SeCheckAccess(parent_sd, key_mapping(), KEY_CREATE_SUB_KEY_, 0,
+                                           (create->Options & REG_OPTION_BACKUP_RESTORE_) ? SE_ACCESS_BACKUP_INTENT : 0,
+                                           &unused);
+                    if (!NT_SUCCESS(status))
+                        SeTraceDescriptor(parent_sd);
+                    SeSdDereference(parent_sd);
+                }
+                if (!NT_SUCCESS(status)) {
+                    trace_key(node, KEY_CREATE_SUB_KEY_, status);
+                    return status;
+                }
+            }
             /* the descriptor of a key a program makes, worked out first so a refused one makes nothing. */
             SD_BLOB *sd = nullptr;
             if (last && !create->Replay && !create->Kernel && (create->Creator || !SeSdSubjectIsDefault())) {
@@ -528,8 +594,34 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         return STATUS_INSUFFICIENT_RESOURCES;
     memcpy(path, remaining->Buffer, len * sizeof(WCHAR));
     CM_NODE *node;
+    CM_PARSE_CONTEXT *ctx = context;
+    if (ctx && ctx->Check && PsCurrentThread() && PsCurrentThread()->ParseRootObject == object) {
+        ctx->ByHandle = TRUE;
+        ctx->HandleAccess = PsCurrentThread()->ParseRootAccess;
+    }
     ExAcquireFastMutex(&CmpLock);
     NTSTATUS status = walk(((CM_KEY_BODY *)object)->Node, path, len, attributes, context, &node);
+    /* a key that exists is opened with what its descriptor gives the program; one it just made is its own. */
+    if (NT_SUCCESS(status) && ctx && ctx->Check && ctx->Disposition != REG_CREATED_NEW_KEY) {
+        SD_BLOB *sd;
+        status = effective_sd(node, &sd);
+        if (NT_SUCCESS(status)) {
+            status = SeCheckAccess(sd, key_mapping(), ctx->Access, 0,
+                                   (ctx->Options & REG_OPTION_BACKUP_RESTORE_) ? SE_ACCESS_BACKUP_INTENT : 0, &ctx->Granted);
+            SeSdDereference(sd);
+        }
+        if (NT_SUCCESS(status))
+            ctx->Checked = TRUE;
+        else
+            trace_key(node, ctx->Access, status);
+        if (!NT_SUCCESS(status) && SeTraceAccess) {
+            SD_BLOB *shown;
+            if (NT_SUCCESS(effective_sd(node, &shown))) {
+                SeTraceDescriptor(shown);
+                SeSdDereference(shown);
+            }
+        }
+    }
     CmpUnlock();
     ExFreePool(path);
     if (NT_SUCCESS(status))
@@ -814,6 +906,25 @@ static NTSTATUS value_info(CM_VALUE *v, ULONG klass, OUT_BUFFER *o, ULONG *fixed
 
 /* ------------------------------------------------------------------ system services */
 
+/* ObOpenObjectByName for a key, whose handle gets what the descriptor of the key gave when it was checked. */
+static NTSTATUS open_key(POBJECT_ATTRIBUTES oa, ACCESS_MASK access, CM_PARSE_CONTEXT *ctx, PHANDLE handle)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    if (!oa->ObjectName)
+        return STATUS_OBJECT_NAME_INVALID;
+    ctx->Mode = mode;
+    ctx->Check = mode == UserMode && SeAccessCheckRequired();
+    ctx->Access = access;
+    PVOID object;
+    NTSTATUS status = ObLookupObjectName(oa->ObjectName, oa->RootDirectory, oa->Attributes, CmKeyType, mode, ctx, &object);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG attrs = oa->Attributes;
+    if (mode == UserMode)
+        attrs &= ~OBJ_KERNEL_HANDLE;
+    return ObInsertObject(object, ctx->Checked ? ctx->Granted : access, attrs, handle);
+}
+
 NTSTATUS NTAPI NtCreateKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG index,
                            PUNICODE_STRING klass, ULONG options, PULONG disposition)
 {
@@ -832,7 +943,7 @@ NTSTATUS NTAPI NtCreateKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
         }
     }
     HANDLE h;
-    status = ObOpenObjectByName(&oa, CmKeyType, KeGetPreviousMode(), access, &ctx, &h);
+    status = open_key(&oa, access, &ctx, &h);
     if (ctx.Creator)
         SeSdDereference(ctx.Creator);
     KiFreeCapturedString(&name);
@@ -851,9 +962,9 @@ NTSTATUS NTAPI NtOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     NTSTATUS status = ObCaptureObjectAttributes(attributes, &oa, &name);
     if (!NT_SUCCESS(status))
         return status;
-    CM_PARSE_CONTEXT ctx = {FALSE, FALSE, 0, 0};
+    CM_PARSE_CONTEXT ctx = {FALSE, FALSE, options, 0};
     HANDLE h;
-    status = ObOpenObjectByName(&oa, CmKeyType, KeGetPreviousMode(), access, &ctx, &h);
+    status = open_key(&oa, access, &ctx, &h);
     KiFreeCapturedString(&name);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
@@ -1210,12 +1321,15 @@ NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, U
 
 /* ------------------------------------------------------------------ boot */
 
-static void mount(CM_NODE *parent, PCWSTR name, PCWSTR file)
+static CM_HIVE *mount(CM_NODE *parent, PCWSTR name, PCWSTR file)
 {
     CM_HIVE *hive;
     NTSTATUS status = CmpOpenHive(file, &hive);
-    if (!NT_SUCCESS(status) || !CmpMount(parent, name, hive))
+    if (!NT_SUCCESS(status) || !CmpMount(parent, name, hive)) {
         KiLogPrintf("registry: cannot load the hive %ls: %08x", file, status);
+        return nullptr;
+    }
+    return hive;
 }
 
 static void link_key(PCWSTR path, PCWSTR target)
@@ -1269,7 +1383,7 @@ void CmInitSystem1(void)
     _snwprintf(sid, RTL_NUMBER_OF(sid) - 1, L"S-1-5-21-%u-%u-%u-1001", HalBootInfo->user_sid[0], HalBootInfo->user_sid[1],
              HalBootInfo->user_sid[2]);
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:\\Users\\%hs\\NTUSER.DAT", HalBootInfo->user_name);
-    mount(user, sid, path);
+    g_user_hive = mount(user, sid, path);
     KiBootStamp("hives");
     CmpJournalInitialize();
     KiBootStamp("journal");

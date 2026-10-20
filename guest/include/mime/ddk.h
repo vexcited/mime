@@ -299,6 +299,8 @@ typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
 #define SL_RETURN_SINGLE_ENTRY 0x02
 #define SL_INDEX_SPECIFIED 0x04
 #define SL_CASE_SENSITIVE 0x80
+/* the create of a program in user mode, which the file system holds to the descriptor of the file. */
+#define SL_FORCE_ACCESS_CHECK 0x01
 /* of mime: a create that only wants the attributes of the name, which the file system may answer without a handle. */
 #define SL_OPEN_STAT_ONLY 0x10
 
@@ -348,6 +350,9 @@ typedef struct _IO_SECURITY_CONTEXT {
     ACCESS_MASK DesiredAccess;
     ULONG FullCreateOptions;
     PVOID SecurityDescriptor; /* Mime: the descriptor the creator offered, a self relative copy in pool, or NULL */
+    /* Mime: the rights a file system that checked the open gives the handle, in place of the access asked for */
+    ACCESS_MASK GrantedAccess;
+    BOOLEAN Checked;
 } IO_SECURITY_CONTEXT, *PIO_SECURITY_CONTEXT;
 
 typedef struct _IO_STACK_LOCATION {
@@ -876,6 +881,10 @@ NTKERNELAPI NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCES
                            ACCESS_MASK *granted);
 NTKERNELAPI NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                             ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
+/* of mime: the descriptor of a window station or a desktop everyone at the console works at. */
+NTKERNELAPI NTSTATUS ObSetInteractiveSecurity(PVOID object, BOOLEAN everyone);
+NTKERNELAPI NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ACCESS_MASK *granted);
+NTKERNELAPI NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode);
 NTKERNELAPI NTSTATUS ObCaptureObjectAttributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name);
 NTKERNELAPI NTSTATUS ObStoreHandle(PHANDLE user_handle, HANDLE handle);
 NTKERNELAPI POBJECT_TYPE ObGetObjectType(PVOID object);

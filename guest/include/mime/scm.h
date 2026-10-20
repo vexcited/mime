@@ -17,6 +17,8 @@
 #define SCM_PIPE_NAME L"\\\\.\\pipe\\svcctl"
 #define SCM_START_EVENT L"Global\\SvcctrlStartEvent_A3752DX"
 #define SCM_AUTOSTART_EVENT L"Global\\SC_AutoStartComplete"
+/* who may wait on them: everyone and the app containers, and the system and the administrators do all. */
+#define SCM_EVENT_SDDL L"D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x100000;;;WD)(A;;0x100000;;;AC)"
 #define SCM_MAGIC 0x314D4353 /* "SCM1" */
 #define SCM_MAX_MESSAGE (4u << 20)
 #define SCM_NULL_STRING 0xFFFFFFFFu

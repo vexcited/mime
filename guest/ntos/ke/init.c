@@ -205,6 +205,9 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiNoLockFlush = strstr(boot->cmdline, "nolockflush") != nullptr;
     extern BOOLEAN KiTraceUserExceptions;
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
+    /* the kernel options no-access-checks, which opens every object to every program, and trace-access. */
+    SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
+    SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
     extern char KiTraceSyscallImage[16];
     const char *trace = strstr(boot->cmdline, "trace-syscalls=");
     extern char KiTraceStackService[40];
