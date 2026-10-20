@@ -9,46 +9,512 @@
 
 /* ------------------------------------------------------------------ the hash of names */
 
-/* the weights of the characters of english, which sort letters by their upper case and a few together. */
-static const BYTE g_hash_weight[256] = {
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x00,
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
-    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
-    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x56, 0x58, 0x55, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
-    0x60, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
-    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x56, 0x58, 0x55, 0x5a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
-    0x7f, 0x7f, 0x82, 0x46, 0x84, 0x85, 0x86, 0x87, 0x7f, 0x89, 0x53, 0x8b, 0x8c, 0x7f, 0x7f, 0x7f,
-    0x7f, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x96, 0x98, 0x99, 0x53, 0x9b, 0x8c, 0x7f, 0x7f, 0x55,
-    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0x41, 0xab, 0xac, 0x96, 0xae, 0xaf,
-    0xb0, 0xb1, 0x32, 0x33, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0x31, 0x4f, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x43, 0x45, 0x45, 0x45, 0x45, 0x49, 0x49, 0x49, 0x49,
-    0x44, 0x4e, 0x4f, 0x4f, 0x4f, 0x4f, 0x4f, 0xd7, 0x4f, 0x55, 0x55, 0x55, 0x55, 0x55, 0xde, 0xdf,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x43, 0x45, 0x45, 0x45, 0x45, 0x49, 0x49, 0x49, 0x49,
-    0x44, 0x4e, 0x4f, 0x4f, 0x4f, 0x4f, 0x4f, 0xf7, 0x4f, 0x55, 0x55, 0x55, 0x55, 0x55, 0xde, 0x55};
+/*
+ * The hash of a name, as a type library stores it. The running value starts at a fixed seed, and each byte of the name
+ * turns it into the weight of the byte plus 37 times the old value, in 32 bits. The hash is the remainder of that
+ * modulo 65599 in its low 16 bits, with the number of the class of the locale above them and one more bit for the
+ * Macintosh. The weight of a byte depends on the class and on whether the library is for the Macintosh.
+ *
+ * The weights, the classes and the double byte characters below were read off the library of windows with names of one
+ * byte and short ones of two, see docs/oleaut32.md for how.
+ */
+#define HASH_SEED 233495534u
+#define HASH_MODULUS 65599u
+#define HASH_MAC_BIT 0x10000u
 
-/* a guess for every language but english: its table is used, with the language bits of english. */
+/* the weight of each byte for the neutral class: letters weigh as their capital, accents as the letter, and a few more */
+static const BYTE g_weight_neutral[256] = {
+    /* 0x00 */ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    /* 0x10 */ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    /* 0x20 */ 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 0,
+    /* 0x30 */ 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    /* 0x40 */ 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    /* 0x50 */ 80, 81, 82, 83, 84, 85, 86, 86, 88, 85, 90, 91, 92, 93, 94, 95,
+    /* 0x60 */ 96, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    /* 0x70 */ 80, 81, 82, 83, 84, 85, 86, 86, 88, 85, 90, 123, 124, 125, 126, 127,
+    /* 0x80 */ 127, 127, 130, 70, 132, 133, 134, 135, 127, 137, 83, 139, 140, 127, 127, 127,
+    /* 0x90 */ 127, 145, 146, 147, 148, 149, 150, 150, 152, 153, 83, 155, 140, 127, 127, 85,
+    /* 0xa0 */ 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 65, 171, 172, 150, 174, 175,
+    /* 0xb0 */ 176, 177, 50, 51, 180, 181, 182, 183, 184, 49, 79, 187, 188, 189, 190, 191,
+    /* 0xc0 */ 65, 65, 65, 65, 65, 65, 65, 67, 69, 69, 69, 69, 73, 73, 73, 73,
+    /* 0xd0 */ 68, 78, 79, 79, 79, 79, 79, 215, 79, 85, 85, 85, 85, 85, 222, 223,
+    /* 0xe0 */ 65, 65, 65, 65, 65, 65, 65, 67, 69, 69, 69, 69, 73, 73, 73, 73,
+    /* 0xf0 */ 68, 78, 79, 79, 79, 79, 79, 247, 79, 85, 85, 85, 85, 85, 222, 85,
+};
+
+/* the same for the Macintosh, whose upper half of the bytes is another set of characters */
+static const BYTE g_weight_neutral_mac[256] = {
+    /* 0x00 */ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    /* 0x10 */ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    /* 0x20 */ 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 0,
+    /* 0x30 */ 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    /* 0x40 */ 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    /* 0x50 */ 80, 81, 82, 83, 84, 85, 86, 86, 88, 85, 90, 91, 92, 93, 94, 95,
+    /* 0x60 */ 96, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    /* 0x70 */ 80, 81, 82, 83, 84, 85, 86, 86, 88, 85, 90, 123, 124, 125, 126, 127,
+    /* 0x80 */ 65, 65, 67, 69, 78, 79, 85, 65, 65, 65, 65, 65, 65, 67, 69, 69,
+    /* 0x90 */ 69, 69, 73, 73, 73, 73, 78, 79, 79, 79, 79, 79, 85, 85, 85, 85,
+    /* 0xa0 */ 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 65, 79,
+    /* 0xb0 */ 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 65, 79, 189, 65, 79,
+    /* 0xc0 */ 192, 193, 194, 195, 70, 197, 198, 199, 200, 201, 202, 65, 65, 79, 206, 206,
+    /* 0xd0 */ 208, 208, 210, 211, 212, 213, 214, 215, 85, 85, 218, 219, 220, 221, 63, 63,
+    /* 0xe0 */ 224, 225, 226, 227, 228, 65, 69, 65, 69, 69, 73, 73, 73, 73, 79, 79,
+    /* 0xf0 */ 63, 79, 85, 85, 85, 73, 127, 247, 127, 249, 250, 251, 63, 253, 254, 127,
+};
+
+/* a byte whose weight is another one in a class. */
+typedef struct {
+    BYTE Byte, Weight;
+} WEIGHT_CHANGE;
+
+/* a double byte character that weighs as one or two single bytes of its own, the second weight being 0 for none. */
+typedef struct {
+    BYTE Lead, Trail, First, Second;
+} DBCS_WEIGHT;
+
+static const WEIGHT_CHANGE g_changes_central_european[] = {
+    {87, 87}, {89, 89}, {119, 87}, {121, 89}, {131, 127}, {140, 83},
+    {141, 84}, {142, 90}, {143, 90}, {152, 127}, {156, 83}, {157, 84},
+    {158, 90}, {159, 90}, {161, 127}, {163, 76}, {165, 65}, {170, 83},
+    {175, 90}, {178, 178}, {179, 76}, {185, 65}, {186, 83}, {188, 76},
+    {190, 76}, {191, 90}, {192, 82}, {197, 76}, {198, 67}, {200, 67},
+    {204, 69}, {207, 68}, {208, 208}, {210, 78}, {216, 82}, {221, 89},
+    {222, 84}, {224, 82}, {229, 76}, {230, 67}, {232, 67}, {236, 69},
+    {239, 68}, {240, 208}, {242, 78}, {248, 82}, {253, 89}, {254, 84},
+    {255, 255},
+};
+
+static const WEIGHT_CHANGE g_changes_russian[] = {
+    {87, 87}, {89, 89}, {119, 87}, {121, 89}, {159, 89}, {198, 198},
+    {208, 208}, {221, 89}, {230, 198}, {240, 208}, {253, 89}, {255, 89},
+};
+
+static const WEIGHT_CHANGE g_changes_greek[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {128, 0}, {129, 0}, {136, 0}, {138, 0}, {140, 0}, {141, 0},
+    {142, 0}, {143, 0}, {144, 0}, {150, 45}, {151, 45}, {152, 0},
+    {154, 0}, {156, 0}, {157, 0}, {158, 0}, {159, 0}, {160, 9},
+    {170, 0}, {173, 45}, {175, 45}, {185, 185}, {186, 186}, {192, 186},
+    {193, 162}, {194, 194}, {195, 195}, {196, 196}, {197, 184}, {198, 198},
+    {199, 185}, {200, 200}, {201, 186}, {202, 202}, {203, 203}, {204, 204},
+    {205, 205}, {206, 206}, {207, 188}, {208, 208}, {209, 209}, {210, 0},
+    {211, 211}, {212, 212}, {213, 190}, {214, 214}, {216, 216}, {217, 191},
+    {218, 186}, {219, 190}, {220, 162}, {221, 184}, {222, 185}, {223, 186},
+    {224, 190}, {225, 162}, {226, 194}, {227, 195}, {228, 196}, {229, 184},
+    {230, 198}, {231, 185}, {232, 200}, {233, 186}, {234, 202}, {235, 203},
+    {236, 204}, {237, 205}, {238, 206}, {239, 188}, {240, 208}, {241, 209},
+    {242, 211}, {243, 211}, {244, 212}, {245, 190}, {246, 214}, {247, 215},
+    {248, 216}, {249, 191}, {250, 186}, {251, 190}, {252, 188}, {253, 190},
+    {254, 191}, {255, 0},
+};
+
+static const WEIGHT_CHANGE g_changes_icelandic[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {128, 0}, {129, 0}, {136, 0}, {141, 0}, {142, 0}, {143, 0},
+    {144, 0}, {150, 45}, {151, 45}, {157, 0}, {158, 0}, {159, 89},
+    {160, 9}, {173, 45}, {193, 193}, {198, 198}, {201, 201}, {205, 205},
+    {208, 208}, {211, 211}, {214, 214}, {216, 214}, {218, 218}, {221, 221},
+    {225, 193}, {230, 198}, {233, 201}, {237, 205}, {240, 208}, {243, 211},
+    {246, 214}, {248, 214}, {250, 218}, {253, 221}, {255, 89},
+};
+
+static const WEIGHT_CHANGE g_changes_turkish[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {128, 0}, {129, 0}, {136, 0}, {141, 0}, {142, 0}, {143, 0},
+    {144, 0}, {150, 45}, {151, 45}, {157, 0}, {158, 0}, {159, 89},
+    {160, 9}, {173, 45}, {198, 198}, {199, 199}, {208, 208}, {214, 214},
+    {220, 220}, {221, 221}, {230, 198}, {231, 199}, {240, 208}, {246, 214},
+    {252, 220}, {253, 221}, {255, 89},
+};
+
+static const WEIGHT_CHANGE g_changes_nynorsk[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {128, 0}, {129, 0}, {136, 0}, {141, 0}, {142, 0}, {143, 0},
+    {144, 0}, {150, 45}, {151, 45}, {157, 0}, {158, 0}, {159, 89},
+    {160, 9}, {173, 45}, {196, 196}, {197, 197}, {198, 196}, {214, 214},
+    {216, 214}, {220, 89}, {221, 89}, {228, 196}, {229, 197}, {230, 196},
+    {246, 214}, {248, 214}, {252, 89}, {253, 89}, {255, 89},
+};
+
+static const WEIGHT_CHANGE g_changes_irish_english[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {128, 0}, {129, 0}, {136, 0}, {141, 0}, {142, 0}, {143, 0},
+    {144, 0}, {150, 45}, {151, 45}, {157, 0}, {158, 0}, {159, 89},
+    {160, 9}, {173, 45}, {198, 198}, {208, 208}, {221, 89}, {230, 198},
+    {240, 208}, {253, 89}, {255, 89},
+};
+
+static const WEIGHT_CHANGE g_changes_arabic[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {128, 128},
+    {129, 129}, {136, 94}, {138, 138}, {141, 141}, {142, 142}, {143, 143},
+    {144, 144}, {151, 151}, {154, 154}, {157, 157}, {158, 0}, {159, 159},
+    {170, 170}, {173, 173}, {186, 186}, {192, 192}, {193, 193}, {194, 194},
+    {195, 193}, {196, 193}, {197, 193}, {198, 193}, {199, 199}, {200, 200},
+    {201, 201}, {202, 201}, {203, 203}, {204, 204}, {205, 205}, {206, 206},
+    {207, 207}, {208, 208}, {209, 209}, {210, 210}, {211, 211}, {212, 212},
+    {213, 213}, {214, 214}, {216, 216}, {217, 217}, {218, 218}, {219, 219},
+    {220, 0}, {221, 221}, {225, 225}, {227, 227}, {228, 228}, {229, 229},
+    {230, 230}, {236, 236}, {237, 236}, {240, 240}, {241, 241}, {242, 242},
+    {243, 243}, {245, 245}, {246, 246}, {248, 248}, {250, 250}, {253, 0},
+    {254, 0}, {255, 255},
+};
+
+static const WEIGHT_CHANGE g_changes_hebrew[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {128, 128},
+    {129, 129}, {136, 94}, {138, 138}, {141, 141}, {142, 142}, {143, 143},
+    {144, 144}, {151, 151}, {154, 154}, {156, 156}, {157, 157}, {158, 158},
+    {159, 159}, {170, 170}, {173, 173}, {186, 186}, {192, 192}, {193, 193},
+    {194, 194}, {195, 195}, {196, 196}, {197, 197}, {198, 198}, {199, 199},
+    {200, 200}, {201, 201}, {202, 202}, {203, 203}, {204, 204}, {205, 205},
+    {206, 206}, {207, 207}, {208, 208}, {209, 209}, {210, 210}, {211, 211},
+    {212, 212}, {213, 213}, {214, 214}, {216, 216}, {217, 217}, {218, 218},
+    {219, 219}, {220, 220}, {221, 221}, {224, 224}, {225, 225}, {226, 226},
+    {227, 227}, {228, 228}, {229, 229}, {230, 230}, {231, 231}, {232, 232},
+    {233, 233}, {234, 234}, {235, 234}, {236, 236}, {237, 237}, {238, 237},
+    {239, 239}, {240, 239}, {241, 241}, {242, 242}, {243, 243}, {244, 243},
+    {245, 245}, {246, 245}, {248, 248}, {249, 249}, {250, 250}, {251, 251},
+    {252, 252}, {253, 0}, {254, 0}, {255, 255},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_central_european[] = {
+    {87, 87}, {89, 89}, {119, 87}, {121, 89}, {130, 65}, {132, 65},
+    {137, 67}, {139, 67}, {140, 67}, {143, 90}, {144, 90}, {145, 68},
+    {147, 68}, {148, 69}, {149, 69}, {150, 69}, {152, 69}, {157, 69},
+    {158, 69}, {162, 69}, {171, 69}, {174, 71}, {175, 73}, {176, 73},
+    {177, 73}, {180, 73}, {181, 75}, {184, 76}, {185, 76}, {186, 76},
+    {187, 76}, {188, 76}, {189, 76}, {190, 76}, {191, 78}, {192, 78},
+    {193, 78}, {196, 78}, {197, 78}, {203, 78}, {204, 79}, {206, 79},
+    {207, 79}, {216, 79}, {217, 82}, {218, 82}, {219, 82}, {222, 82},
+    {223, 82}, {224, 82}, {225, 83}, {228, 83}, {229, 83}, {230, 83},
+    {232, 84}, {233, 84}, {235, 90}, {236, 90}, {237, 85}, {240, 85},
+    {241, 85}, {245, 85}, {246, 85}, {247, 85}, {248, 89}, {249, 89},
+    {250, 75}, {251, 90}, {252, 76}, {253, 76}, {254, 71}, {255, 255},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_russian[] = {
+    {87, 87}, {89, 89}, {119, 87}, {121, 89}, {128, 128}, {129, 129},
+    {130, 130}, {131, 131}, {132, 132}, {133, 133}, {134, 134}, {135, 135},
+    {136, 136}, {137, 137}, {138, 138}, {139, 139}, {140, 140}, {141, 141},
+    {142, 142}, {143, 143}, {144, 144}, {145, 145}, {146, 146}, {147, 147},
+    {148, 148}, {149, 149}, {150, 150}, {151, 151}, {152, 152}, {153, 153},
+    {154, 154}, {155, 155}, {156, 156}, {157, 157}, {158, 158}, {159, 159},
+    {172, 171}, {174, 174}, {175, 174}, {180, 167}, {185, 184}, {187, 186},
+    {188, 188}, {189, 188}, {190, 190}, {191, 190}, {192, 183}, {203, 203},
+    {204, 203}, {205, 205}, {206, 205}, {207, 193}, {216, 216}, {217, 216},
+    {219, 218}, {222, 221}, {223, 159}, {224, 128}, {225, 129}, {226, 130},
+    {227, 131}, {228, 132}, {229, 133}, {230, 134}, {231, 135}, {232, 136},
+    {233, 137}, {234, 138}, {235, 139}, {236, 140}, {237, 141}, {238, 142},
+    {239, 143}, {240, 144}, {241, 145}, {242, 146}, {243, 147}, {244, 148},
+    {245, 149}, {246, 150}, {247, 151}, {248, 152}, {249, 153}, {250, 154},
+    {251, 155}, {252, 156}, {253, 157}, {254, 158}, {255, 159},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_greek[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {129, 49}, {130, 50}, {132, 51}, {135, 135}, {139, 0}, {140, 140},
+    {146, 146}, {147, 147}, {150, 150}, {151, 151}, {152, 152}, {155, 155},
+    {156, 63}, {174, 174}, {175, 175}, {185, 171}, {187, 187}, {188, 188},
+    {190, 190}, {191, 191}, {192, 176}, {196, 196}, {202, 9}, {203, 189},
+    {204, 204}, {205, 176}, {206, 182}, {207, 207}, {208, 45}, {209, 45},
+    {215, 184}, {216, 171}, {217, 195}, {218, 189}, {219, 182}, {220, 184},
+    {221, 171}, {222, 195}, {223, 191}, {224, 189}, {225, 176}, {226, 181},
+    {227, 190}, {228, 162}, {229, 182}, {230, 188}, {231, 161}, {232, 184},
+    {233, 171}, {234, 165}, {235, 186}, {236, 164}, {237, 187}, {238, 193},
+    {239, 195}, {240, 166}, {241, 191}, {242, 196}, {243, 170}, {244, 198},
+    {245, 163}, {246, 191}, {247, 170}, {248, 204}, {249, 189}, {250, 183},
+    {251, 171}, {252, 189}, {253, 171}, {254, 189}, {255, 63},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_nynorsk[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {128, 128}, {129, 129}, {133, 133}, {134, 89}, {138, 128}, {140, 129},
+    {154, 133}, {159, 89}, {174, 128}, {175, 133}, {190, 128}, {191, 133},
+    {202, 9}, {208, 45}, {209, 45}, {216, 89}, {217, 89}, {246, 0},
+    {248, 0}, {255, 0},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_irish_english[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {127, 0},
+    {174, 174}, {190, 174}, {202, 9}, {208, 45}, {209, 45}, {216, 89},
+    {217, 89}, {246, 0}, {248, 0}, {255, 0},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_arabic[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {129, 129},
+    {139, 139}, {140, 140}, {147, 147}, {152, 152}, {155, 155}, {174, 174},
+    {175, 175}, {187, 187}, {188, 188}, {190, 190}, {191, 191}, {195, 193},
+    {196, 193}, {197, 193}, {198, 193}, {202, 201}, {203, 203}, {204, 204},
+    {205, 205}, {207, 207}, {209, 209}, {216, 216}, {217, 217}, {222, 222},
+    {223, 223}, {224, 0}, {229, 229}, {230, 230}, {231, 231}, {232, 232},
+    {233, 233}, {234, 233}, {235, 235}, {236, 236}, {237, 237}, {238, 238},
+    {239, 239}, {240, 240}, {241, 241}, {242, 242}, {243, 243}, {244, 244},
+    {245, 245}, {246, 246}, {248, 248}, {252, 252}, {255, 255},
+};
+
+static const WEIGHT_CHANGE g_mac_changes_hebrew[] = {
+    {47, 47}, {87, 87}, {89, 89}, {119, 87}, {121, 89}, {174, 174},
+    {175, 175}, {187, 187}, {188, 188}, {190, 190}, {191, 191}, {196, 196},
+    {203, 203}, {204, 204}, {205, 205}, {207, 207}, {209, 209}, {216, 216},
+    {217, 217}, {222, 222}, {223, 223}, {229, 229}, {230, 230}, {231, 231},
+    {232, 232}, {233, 233}, {234, 234}, {235, 234}, {236, 236}, {237, 237},
+    {238, 237}, {239, 239}, {240, 239}, {241, 241}, {242, 242}, {243, 243},
+    {244, 243}, {245, 245}, {246, 245}, {248, 248}, {252, 252}, {255, 255},
+};
+
+static const DBCS_WEIGHT g_pairs_japanese[] = {
+    {0x81, 0x51, 95, 0}, {0x82, 0x4f, 48, 0}, {0x82, 0x50, 49, 0}, {0x82, 0x51, 50, 0},
+    {0x82, 0x52, 51, 0}, {0x82, 0x53, 52, 0}, {0x82, 0x54, 53, 0}, {0x82, 0x55, 54, 0},
+    {0x82, 0x56, 55, 0}, {0x82, 0x57, 56, 0}, {0x82, 0x58, 57, 0}, {0x82, 0x60, 65, 0},
+    {0x82, 0x61, 66, 0}, {0x82, 0x62, 67, 0}, {0x82, 0x63, 68, 0}, {0x82, 0x64, 69, 0},
+    {0x82, 0x65, 70, 0}, {0x82, 0x66, 71, 0}, {0x82, 0x67, 72, 0}, {0x82, 0x68, 73, 0},
+    {0x82, 0x69, 74, 0}, {0x82, 0x6a, 75, 0}, {0x82, 0x6b, 76, 0}, {0x82, 0x6c, 77, 0},
+    {0x82, 0x6d, 78, 0}, {0x82, 0x6e, 79, 0}, {0x82, 0x6f, 80, 0}, {0x82, 0x70, 81, 0},
+    {0x82, 0x71, 82, 0}, {0x82, 0x72, 83, 0}, {0x82, 0x73, 84, 0}, {0x82, 0x74, 85, 0},
+    {0x82, 0x75, 86, 0}, {0x82, 0x76, 86, 0}, {0x82, 0x77, 88, 0}, {0x82, 0x78, 85, 0},
+    {0x82, 0x79, 90, 0}, {0x82, 0x81, 65, 0}, {0x82, 0x82, 66, 0}, {0x82, 0x83, 67, 0},
+    {0x82, 0x84, 68, 0}, {0x82, 0x85, 69, 0}, {0x82, 0x86, 70, 0}, {0x82, 0x87, 71, 0},
+    {0x82, 0x88, 72, 0}, {0x82, 0x89, 73, 0}, {0x82, 0x8a, 74, 0}, {0x82, 0x8b, 75, 0},
+    {0x82, 0x8c, 76, 0}, {0x82, 0x8d, 77, 0}, {0x82, 0x8e, 78, 0}, {0x82, 0x8f, 79, 0},
+    {0x82, 0x90, 80, 0}, {0x82, 0x91, 81, 0}, {0x82, 0x92, 82, 0}, {0x82, 0x93, 83, 0},
+    {0x82, 0x94, 84, 0}, {0x82, 0x95, 85, 0}, {0x82, 0x96, 86, 0}, {0x82, 0x97, 86, 0},
+    {0x82, 0x98, 88, 0}, {0x82, 0x99, 85, 0}, {0x82, 0x9a, 90, 0}, {0x82, 0x9f, 167, 0},
+    {0x82, 0xa0, 177, 0}, {0x82, 0xa1, 168, 0}, {0x82, 0xa2, 50, 0}, {0x82, 0xa3, 169, 0},
+    {0x82, 0xa4, 51, 0}, {0x82, 0xa5, 65, 0}, {0x82, 0xa6, 180, 0}, {0x82, 0xa7, 171, 0},
+    {0x82, 0xa8, 181, 0}, {0x82, 0xa9, 182, 0}, {0x82, 0xaa, 182, 222}, {0x82, 0xab, 183, 0},
+    {0x82, 0xac, 183, 222}, {0x82, 0xad, 184, 0}, {0x82, 0xae, 184, 222}, {0x82, 0xaf, 49, 0},
+    {0x82, 0xb0, 49, 222}, {0x82, 0xb1, 79, 0}, {0x82, 0xb2, 79, 222}, {0x82, 0xb3, 187, 0},
+    {0x82, 0xb4, 187, 222}, {0x82, 0xb5, 188, 0}, {0x82, 0xb6, 188, 222}, {0x82, 0xb7, 189, 0},
+    {0x82, 0xb8, 189, 222}, {0x82, 0xb9, 190, 0}, {0x82, 0xba, 190, 222}, {0x82, 0xbb, 191, 0},
+    {0x82, 0xbc, 191, 222}, {0x82, 0xbd, 65, 0}, {0x82, 0xbe, 65, 222}, {0x82, 0xbf, 65, 0},
+    {0x82, 0xc0, 65, 222}, {0x82, 0xc1, 175, 0}, {0x82, 0xc2, 65, 0}, {0x82, 0xc3, 65, 222},
+    {0x82, 0xc4, 65, 0}, {0x82, 0xc5, 65, 222}, {0x82, 0xc6, 65, 0}, {0x82, 0xc7, 65, 222},
+    {0x82, 0xc8, 65, 0}, {0x82, 0xc9, 65, 0}, {0x82, 0xca, 67, 0}, {0x82, 0xcb, 69, 0},
+    {0x82, 0xcc, 69, 0}, {0x82, 0xcd, 69, 0}, {0x82, 0xce, 69, 222}, {0x82, 0xcf, 69, 223},
+    {0x82, 0xd0, 69, 0}, {0x82, 0xd1, 69, 222}, {0x82, 0xd2, 69, 223}, {0x82, 0xd3, 73, 0},
+    {0x82, 0xd4, 73, 222}, {0x82, 0xd5, 73, 223}, {0x82, 0xd6, 73, 0}, {0x82, 0xd7, 73, 222},
+    {0x82, 0xd8, 73, 223}, {0x82, 0xd9, 73, 0}, {0x82, 0xda, 73, 222}, {0x82, 0xdb, 73, 223},
+    {0x82, 0xdc, 73, 0}, {0x82, 0xdd, 68, 0}, {0x82, 0xde, 78, 0}, {0x82, 0xdf, 79, 0},
+    {0x82, 0xe0, 79, 0}, {0x82, 0xe1, 172, 0}, {0x82, 0xe2, 79, 0}, {0x82, 0xe3, 150, 0},
+    {0x82, 0xe4, 79, 0}, {0x82, 0xe5, 174, 0}, {0x82, 0xe6, 79, 0}, {0x82, 0xe7, 215, 0},
+    {0x82, 0xe8, 79, 0}, {0x82, 0xe9, 85, 0}, {0x82, 0xea, 85, 0}, {0x82, 0xeb, 85, 0},
+    {0x82, 0xec, 67, 238}, {0x82, 0xed, 85, 0}, {0x82, 0xee, 67, 238}, {0x82, 0xef, 68, 219},
+    {0x82, 0xf0, 166, 0}, {0x82, 0xf1, 85, 0}, {0x83, 0x40, 167, 0}, {0x83, 0x41, 177, 0},
+    {0x83, 0x42, 168, 0}, {0x83, 0x43, 50, 0}, {0x83, 0x44, 169, 0}, {0x83, 0x45, 51, 0},
+    {0x83, 0x46, 65, 0}, {0x83, 0x47, 180, 0}, {0x83, 0x48, 171, 0}, {0x83, 0x49, 181, 0},
+    {0x83, 0x4a, 182, 0}, {0x83, 0x4b, 182, 222}, {0x83, 0x4c, 183, 0}, {0x83, 0x4d, 183, 222},
+    {0x83, 0x4e, 184, 0}, {0x83, 0x4f, 184, 222}, {0x83, 0x50, 49, 0}, {0x83, 0x51, 49, 222},
+    {0x83, 0x52, 79, 0}, {0x83, 0x53, 79, 222}, {0x83, 0x54, 187, 0}, {0x83, 0x55, 187, 222},
+    {0x83, 0x56, 188, 0}, {0x83, 0x57, 188, 222}, {0x83, 0x58, 189, 0}, {0x83, 0x59, 189, 222},
+    {0x83, 0x5a, 190, 0}, {0x83, 0x5b, 190, 222}, {0x83, 0x5c, 191, 0}, {0x83, 0x5d, 191, 222},
+    {0x83, 0x5e, 65, 0}, {0x83, 0x5f, 65, 222}, {0x83, 0x60, 65, 0}, {0x83, 0x61, 65, 222},
+    {0x83, 0x62, 175, 0}, {0x83, 0x63, 65, 0}, {0x83, 0x64, 65, 222}, {0x83, 0x65, 65, 0},
+    {0x83, 0x66, 65, 222}, {0x83, 0x67, 65, 0}, {0x83, 0x68, 65, 222}, {0x83, 0x69, 65, 0},
+    {0x83, 0x6a, 65, 0}, {0x83, 0x6b, 67, 0}, {0x83, 0x6c, 69, 0}, {0x83, 0x6d, 69, 0},
+    {0x83, 0x6e, 69, 0}, {0x83, 0x6f, 69, 222}, {0x83, 0x70, 69, 223}, {0x83, 0x71, 69, 0},
+    {0x83, 0x72, 69, 222}, {0x83, 0x73, 69, 223}, {0x83, 0x74, 73, 0}, {0x83, 0x75, 73, 222},
+    {0x83, 0x76, 73, 223}, {0x83, 0x77, 73, 0}, {0x83, 0x78, 73, 222}, {0x83, 0x79, 73, 223},
+    {0x83, 0x7a, 73, 0}, {0x83, 0x7b, 73, 222}, {0x83, 0x7c, 73, 223}, {0x83, 0x7d, 73, 0},
+    {0x83, 0x7e, 68, 0}, {0x83, 0x80, 78, 0}, {0x83, 0x81, 79, 0}, {0x83, 0x82, 79, 0},
+    {0x83, 0x83, 172, 0}, {0x83, 0x84, 79, 0}, {0x83, 0x85, 150, 0}, {0x83, 0x86, 79, 0},
+    {0x83, 0x87, 174, 0}, {0x83, 0x88, 79, 0}, {0x83, 0x89, 215, 0}, {0x83, 0x8a, 79, 0},
+    {0x83, 0x8b, 85, 0}, {0x83, 0x8c, 85, 0}, {0x83, 0x8d, 85, 0}, {0x83, 0x8f, 85, 0},
+    {0x83, 0x92, 166, 0}, {0x83, 0x93, 85, 0}, {0x83, 0x94, 51, 222},
+};
+
+static const DBCS_WEIGHT g_pairs_fullwidth[] = {
+    {0xa3, 0xb0, 48, 0}, {0xa3, 0xb1, 49, 0}, {0xa3, 0xb2, 50, 0}, {0xa3, 0xb3, 51, 0},
+    {0xa3, 0xb4, 52, 0}, {0xa3, 0xb5, 53, 0}, {0xa3, 0xb6, 54, 0}, {0xa3, 0xb7, 55, 0},
+    {0xa3, 0xb8, 56, 0}, {0xa3, 0xb9, 57, 0}, {0xa3, 0xc1, 65, 0}, {0xa3, 0xc2, 66, 0},
+    {0xa3, 0xc3, 67, 0}, {0xa3, 0xc4, 68, 0}, {0xa3, 0xc5, 69, 0}, {0xa3, 0xc6, 70, 0},
+    {0xa3, 0xc7, 71, 0}, {0xa3, 0xc8, 72, 0}, {0xa3, 0xc9, 73, 0}, {0xa3, 0xca, 74, 0},
+    {0xa3, 0xcb, 75, 0}, {0xa3, 0xcc, 76, 0}, {0xa3, 0xcd, 77, 0}, {0xa3, 0xce, 78, 0},
+    {0xa3, 0xcf, 79, 0}, {0xa3, 0xd0, 80, 0}, {0xa3, 0xd1, 81, 0}, {0xa3, 0xd2, 82, 0},
+    {0xa3, 0xd3, 83, 0}, {0xa3, 0xd4, 84, 0}, {0xa3, 0xd5, 85, 0}, {0xa3, 0xd6, 86, 0},
+    {0xa3, 0xd7, 86, 0}, {0xa3, 0xd8, 88, 0}, {0xa3, 0xd9, 85, 0}, {0xa3, 0xda, 90, 0},
+    {0xa3, 0xdf, 95, 0}, {0xa3, 0xe1, 65, 0}, {0xa3, 0xe2, 66, 0}, {0xa3, 0xe3, 67, 0},
+    {0xa3, 0xe4, 68, 0}, {0xa3, 0xe5, 69, 0}, {0xa3, 0xe6, 70, 0}, {0xa3, 0xe7, 71, 0},
+    {0xa3, 0xe8, 72, 0}, {0xa3, 0xe9, 73, 0}, {0xa3, 0xea, 74, 0}, {0xa3, 0xeb, 75, 0},
+    {0xa3, 0xec, 76, 0}, {0xa3, 0xed, 77, 0}, {0xa3, 0xee, 78, 0}, {0xa3, 0xef, 79, 0},
+    {0xa3, 0xf0, 80, 0}, {0xa3, 0xf1, 81, 0}, {0xa3, 0xf2, 82, 0}, {0xa3, 0xf3, 83, 0},
+    {0xa3, 0xf4, 84, 0}, {0xa3, 0xf5, 85, 0}, {0xa3, 0xf6, 86, 0}, {0xa3, 0xf7, 86, 0},
+    {0xa3, 0xf8, 88, 0}, {0xa3, 0xf9, 85, 0}, {0xa3, 0xfa, 90, 0},
+};
+
+static const DBCS_WEIGHT g_pairs_big5[] = {
+    {0xa1, 0xc5, 95, 0}, {0xa2, 0xaf, 48, 0}, {0xa2, 0xb0, 49, 0}, {0xa2, 0xb1, 50, 0},
+    {0xa2, 0xb2, 51, 0}, {0xa2, 0xb3, 52, 0}, {0xa2, 0xb4, 53, 0}, {0xa2, 0xb5, 54, 0},
+    {0xa2, 0xb6, 55, 0}, {0xa2, 0xb7, 56, 0}, {0xa2, 0xb8, 57, 0}, {0xa2, 0xcf, 65, 0},
+    {0xa2, 0xd0, 66, 0}, {0xa2, 0xd1, 67, 0}, {0xa2, 0xd2, 68, 0}, {0xa2, 0xd3, 69, 0},
+    {0xa2, 0xd4, 70, 0}, {0xa2, 0xd5, 71, 0}, {0xa2, 0xd6, 72, 0}, {0xa2, 0xd7, 73, 0},
+    {0xa2, 0xd8, 74, 0}, {0xa2, 0xd9, 75, 0}, {0xa2, 0xda, 76, 0}, {0xa2, 0xdb, 77, 0},
+    {0xa2, 0xdc, 78, 0}, {0xa2, 0xdd, 79, 0}, {0xa2, 0xde, 80, 0}, {0xa2, 0xdf, 81, 0},
+    {0xa2, 0xe0, 82, 0}, {0xa2, 0xe1, 83, 0}, {0xa2, 0xe2, 84, 0}, {0xa2, 0xe3, 85, 0},
+    {0xa2, 0xe4, 86, 0}, {0xa2, 0xe5, 86, 0}, {0xa2, 0xe6, 88, 0}, {0xa2, 0xe7, 85, 0},
+    {0xa2, 0xe8, 90, 0}, {0xa2, 0xe9, 65, 0}, {0xa2, 0xea, 66, 0}, {0xa2, 0xeb, 67, 0},
+    {0xa2, 0xec, 68, 0}, {0xa2, 0xed, 69, 0}, {0xa2, 0xee, 70, 0}, {0xa2, 0xef, 71, 0},
+    {0xa2, 0xf0, 72, 0}, {0xa2, 0xf1, 73, 0}, {0xa2, 0xf2, 74, 0}, {0xa2, 0xf3, 75, 0},
+    {0xa2, 0xf4, 76, 0}, {0xa2, 0xf5, 77, 0}, {0xa2, 0xf6, 78, 0}, {0xa2, 0xf7, 79, 0},
+    {0xa2, 0xf8, 80, 0}, {0xa2, 0xf9, 81, 0}, {0xa2, 0xfa, 82, 0}, {0xa2, 0xfb, 83, 0},
+    {0xa2, 0xfc, 84, 0}, {0xa2, 0xfd, 85, 0}, {0xa2, 0xfe, 86, 0}, {0xa3, 0x40, 86, 0},
+    {0xa3, 0x41, 88, 0}, {0xa3, 0x42, 85, 0}, {0xa3, 0x43, 90, 0},
+};
+
+/* what is a lead byte of a double byte character in a class. */
+typedef enum { LEADS_NONE, LEADS_JAPANESE, LEADS_GB, LEADS_WIDE } LEAD_RANGE;
+
+/* a class of locales: the number the hash carries and how its names weigh. */
+typedef struct {
+    BYTE Number;
+    BYTE Leads;
+    /* the Macintosh weighs as windows does, with the same changes on the neutral table of windows. */
+    BOOL MacLikeWindows;
+    USHORT ChangeCount, MacChangeCount, PairCount;
+    const WEIGHT_CHANGE *Changes, *MacChanges;
+    const DBCS_WEIGHT *Pairs;
+} NAME_CLASS;
+
+#define COUNT_OF(a) ((USHORT)(sizeof(a) / sizeof((a)[0])))
+#define NEUTRAL_CLASS(number) {number, LEADS_NONE, FALSE, 0, 0, 0, nullptr, nullptr, nullptr}
+#define CHANGED_CLASS(number, name) \
+    {number, LEADS_NONE, FALSE, COUNT_OF(g_changes_##name), COUNT_OF(g_mac_changes_##name), 0, g_changes_##name, \
+     g_mac_changes_##name, nullptr}
+#define SAME_ON_MAC_CLASS(number, name) \
+    {number, LEADS_NONE, TRUE, COUNT_OF(g_changes_##name), 0, 0, g_changes_##name, nullptr, nullptr}
+#define DOUBLE_BYTE_CLASS(number, leads, pairs) {number, leads, TRUE, 0, 0, COUNT_OF(pairs), nullptr, nullptr, pairs}
+
+static const NAME_CLASS g_class_neutral = NEUTRAL_CLASS(1);
+static const NAME_CLASS g_class_central_european = CHANGED_CLASS(2, central_european);
+static const NAME_CLASS g_class_russian = CHANGED_CLASS(3, russian);
+static const NAME_CLASS g_class_japanese = DOUBLE_BYTE_CLASS(4, LEADS_JAPANESE, g_pairs_japanese);
+static const NAME_CLASS g_class_korean = DOUBLE_BYTE_CLASS(5, LEADS_WIDE, g_pairs_fullwidth);
+static const NAME_CLASS g_class_chinese = DOUBLE_BYTE_CLASS(6, LEADS_GB, g_pairs_fullwidth);
+static const NAME_CLASS g_class_big5 = DOUBLE_BYTE_CLASS(7, LEADS_WIDE, g_pairs_big5);
+static const NAME_CLASS g_class_greek = CHANGED_CLASS(8, greek);
+static const NAME_CLASS g_class_icelandic = SAME_ON_MAC_CLASS(9, icelandic);
+static const NAME_CLASS g_class_turkish = SAME_ON_MAC_CLASS(10, turkish);
+static const NAME_CLASS g_class_nynorsk = CHANGED_CLASS(11, nynorsk);
+static const NAME_CLASS g_class_irish_english = CHANGED_CLASS(12, irish_english);
+static const NAME_CLASS g_class_arabic = CHANGED_CLASS(13, arabic);
+static const NAME_CLASS g_class_hebrew = CHANGED_CLASS(14, hebrew);
+
+/* the class of a locale: by the language, with a few locales of their own, which only the exact locale id has. */
+static const NAME_CLASS *class_of_locale(LCID lcid)
+{
+    switch (lcid) {
+    case 0x0405:
+    case 0x040E:
+    case 0x0415:
+    case 0x041B: return &g_class_central_european;
+    case 0x0408: return &g_class_greek;
+    case 0x040D: return &g_class_hebrew;
+    case 0x040F: return &g_class_icelandic;
+    case 0x0419: return &g_class_russian;
+    case 0x041F: return &g_class_turkish;
+    case 0x0429: return &g_class_arabic;
+    case 0x0814: return &g_class_nynorsk;
+    case 0x1809: return &g_class_irish_english;
+    default: break;
+    }
+    if ((lcid & 0xFFFF) == 0x0404 || (lcid & 0xFFFF) == 0x0C04)
+        return &g_class_big5;
+    if ((lcid & 0xFF) == LANG_ARABIC)
+        return &g_class_arabic;
+    switch (lcid & 0x3FF) {
+    case LANG_CHINESE: return &g_class_chinese;
+    case LANG_JAPANESE: return &g_class_japanese;
+    case LANG_KOREAN: return &g_class_korean;
+    default: return &g_class_neutral;
+    }
+}
+
+static BOOL is_lead_byte(const NAME_CLASS *cls, BYTE b)
+{
+    switch (cls->Leads) {
+    case LEADS_JAPANESE: return (b >= 0x80 && b <= 0xA0) || b >= 0xE0;
+    case LEADS_GB: return b >= 0xA1 && b <= 0xFE;
+    case LEADS_WIDE: return b >= 0x81 && b <= 0xFE;
+    default: return FALSE;
+    }
+}
+
+/* how the bytes of a name weigh for a class: the table, and the bytes of the class that weigh differently. */
+typedef struct {
+    const BYTE *Table;
+    const WEIGHT_CHANGE *Changes;
+    USHORT ChangeCount;
+    const NAME_CLASS *Class;
+} WEIGHTS;
+
+static WEIGHTS weights_of(const NAME_CLASS *cls, BOOL mac)
+{
+    WEIGHTS w = {g_weight_neutral, cls->Changes, cls->ChangeCount, cls};
+    if (mac && !cls->MacLikeWindows) {
+        w.Table = g_weight_neutral_mac;
+        w.Changes = cls->MacChanges;
+        w.ChangeCount = cls->MacChangeCount;
+    }
+    return w;
+}
+
+static BYTE byte_weight(const WEIGHTS *weights, BYTE b)
+{
+    for (USHORT i = 0; i < weights->ChangeCount && weights->Changes[i].Byte <= b; i++)
+        if (weights->Changes[i].Byte == b)
+            return weights->Changes[i].Weight;
+    return weights->Table[b];
+}
+
+static ULONG hash_step(ULONG hash, BYTE weight)
+{
+    return weight + 37 * hash;
+}
+
+/* a double byte character: its own weights when the class has them, else the weights of its two bytes. */
+static ULONG hash_double_byte(const WEIGHTS *weights, ULONG hash, BYTE lead, BYTE trail)
+{
+    const NAME_CLASS *cls = weights->Class;
+    for (USHORT i = 0; i < cls->PairCount; i++) {
+        const DBCS_WEIGHT *pair = &cls->Pairs[i];
+        if (pair->Lead == lead && pair->Trail == trail) {
+            hash = hash_step(hash, pair->First);
+            return pair->Second ? hash_step(hash, pair->Second) : hash;
+        }
+    }
+    return hash_step(hash_step(hash, byte_weight(weights, lead)), byte_weight(weights, trail));
+}
+
 WINOLEAUTAPI ULONG WINAPI LHashValOfNameSysA(SYSKIND syskind, LCID lcid, LPCSTR name)
 {
     if (!name)
         return 0;
-    ULONG hash = 233495534;
-    for (const BYTE *p = (const BYTE *)name; *p; p++)
-        hash = g_hash_weight[*p] + 37 * hash;
-    ULONG bits = 0x100000 | (syskind == SYS_MAC ? 0x10000 : 0);
-    return bits | (hash % 0x1003F & 0xFFFF);
+    const NAME_CLASS *cls = class_of_locale(lcid);
+    WEIGHTS weights = weights_of(cls, syskind == SYS_MAC);
+    ULONG hash = HASH_SEED;
+    for (const BYTE *p = (const BYTE *)name; *p; p++) {
+        if (is_lead_byte(cls, *p)) {
+            /* a lead byte with nothing after it is dropped. */
+            if (!p[1])
+                break;
+            hash = hash_double_byte(&weights, hash, p[0], p[1]);
+            p++;
+        } else {
+            hash = hash_step(hash, byte_weight(&weights, *p));
+        }
+    }
+    return (ULONG)cls->Number << 20 | (syskind == SYS_MAC ? HASH_MAC_BIT : 0) | (hash % HASH_MODULUS & 0xFFFF);
 }
 
 WINOLEAUTAPI ULONG WINAPI LHashValOfNameSys(SYSKIND syskind, LCID lcid, const OLECHAR *name)
 {
-    char narrow[256];
+    char ansi[256];
     if (!name)
         return 0;
-    WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, sizeof(narrow), nullptr, nullptr);
-    narrow[255] = 0;
-    return LHashValOfNameSysA(syskind, lcid, narrow);
+    memset(ansi, 0, sizeof(ansi));
+    WideCharToMultiByte(CP_ACP, 0, name, -1, ansi, sizeof(ansi), nullptr, nullptr);
+    ansi[sizeof(ansi) - 1] = 0;
+    return LHashValOfNameSysA(syskind, lcid, ansi);
 }
+
 
 /* ------------------------------------------------------------------ the library being made */
 
