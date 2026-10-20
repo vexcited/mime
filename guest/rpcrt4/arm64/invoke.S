@@ -1,17 +1,21 @@
 /*
  * calls a function with arguments held in slots: the first eight go to the integer registers and to the floating point
- * ones, the rest on the stack. x0 is the function, x1 the slots, x2 their number; the result is in x0.
+ * ones, the rest on the stack. x0 is the function, x1 the slots, x2 their number, x4 where to keep d0, which holds the result
+ * of a function that returns a float, or null; the result is in x0.
  */
     .text
-    .globl  NdrpInvoke
+    .globl  NdrpInvokeEx
     .p2align 2
-    .seh_proc NdrpInvoke
-NdrpInvoke:
-    stp     x29, x30, [sp, #-16]!
-    .seh_save_fplr_x 16
+    .seh_proc NdrpInvokeEx
+NdrpInvokeEx:
+    stp     x29, x30, [sp, #-32]!
+    .seh_save_fplr_x 32
+    str     x19, [sp, #16]
+    .seh_save_reg x19, 16
     mov     x29, sp
     .seh_set_fp
     .seh_endprologue
+    mov     x19, x4
     mov     x9, x0
     mov     x10, x1
     mov     x11, x2
@@ -54,7 +58,11 @@ NdrpInvoke:
     ldr     d6, [x10, #48]
     ldr     d7, [x10, #56]
     blr     x9
+    cbz     x19, 6f
+    str     d0, [x19]
+6:
     mov     sp, x29
-    ldp     x29, x30, [sp], #16
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
     .seh_endproc

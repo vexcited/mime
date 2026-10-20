@@ -3,6 +3,7 @@
  * correlation, and the dispatch by format character. The aggregates are in ndr_type.c.
  */
 #include "ndr.h"
+#include "ndr_proc.h"
 
 /* ------------------------------------------------------------------ the wire cursor */
 
@@ -154,8 +155,28 @@ static void queue_init(NDR_QUEUE *q, NDR_PASS pass)
     q->Chunks = &q->First;
 }
 
+typedef struct NDR_SCRATCH {
+    struct NDR_SCRATCH *Next;
+} NDR_SCRATCH;
+
+/* memory for the walk that goes away with it, also when an exception leaves. */
+void *NdrpScratch(NDRC *c, SIZE_T size)
+{
+    NDR_SCRATCH *block = HeapAlloc(GetProcessHeap(), 0, sizeof(*block) + size + 16);
+    if (!block)
+        NDR_RAISE(RPC_S_OUT_OF_MEMORY);
+    block->Next = c->Q->Scratch;
+    c->Q->Scratch = block;
+    return (uchar *)block + 16;
+}
+
 static void queue_free(NDR_QUEUE *q)
 {
+    while (q->Scratch) {
+        NDR_SCRATCH *next = q->Scratch->Next;
+        HeapFree(GetProcessHeap(), 0, q->Scratch);
+        q->Scratch = next;
+    }
     NDR_QCHUNK *chunk = q->First.Next;
     while (chunk) {
         NDR_QCHUNK *next = chunk->Next;
@@ -189,6 +210,7 @@ static void queue_push(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING for
     it->Pointer = pointer;
     it->Format = format;
     it->RefId = refid;
+    it->Memory = c->M->Memory;
     if (q->Tail)
         q->Tail->Next = it;
     else
@@ -202,13 +224,21 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
 static void queue_run(NDRC *c)
 {
     NDR_QUEUE *q = c->Q;
+    /* what a pointee queues goes behind the pointees queued before it: one loop does them all. */
+    if (q->Draining)
+        return;
+    q->Draining = TRUE;
     while (q->Head) {
         NDR_QITEM item = *q->Head;
         q->Head = item.Next;
         if (!q->Head)
             q->Tail = nullptr;
+        uchar *saved = c->M->Memory;
+        c->M->Memory = item.Memory;
         pointee_walk(c, item.Slot, item.Pointer, item.Format, item.RefId);
+        c->M->Memory = saved;
     }
+    q->Draining = FALSE;
 }
 
 /* ------------------------------------------------------------------ allocation during unmarshaling */
@@ -232,6 +262,9 @@ uchar *NdrpAllocObject(NDRC *c, uchar **memory, SIZE_T size, ULONG flags)
     if (c->Pass != NDR_UNMARSHAL)
         return *memory;
     if (!*memory || (flags & NDRF_MUSTALLOC)) {
+        /* what a count on the wire can make the stub allocate has a limit, so that a lie is an error and not an outage. */
+        if (size > NDR_MAX_ALLOC)
+            NDR_RAISE(RPC_X_BAD_STUB_DATA);
         SIZE_T n = size ? size : 1;
         *memory = NdrpAlloc(m, n);
         memset(*memory, 0, n);
@@ -250,11 +283,7 @@ static BOOL may_free(PMIDL_STUB_MESSAGE m, uchar type, uchar attrs, uchar *point
 {
     if (attrs & (FC_DONT_FREE | FC_ALLOCED_ON_STACK))
         return FALSE;
-    if (NdrpInBuffer(m, pointer))
-        return FALSE;
-    if (type == FC_FP && m->FullPtrXlatTables)
-        return NdrFullPointerFree(m->FullPtrXlatTables, pointer) != 0;
-    return TRUE;
+    return !NdrpInBuffer(m, pointer);
 }
 
 /*
@@ -293,6 +322,16 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
 
     if (++c->Q->Depth > 4096)
         NDR_RAISE(RPC_X_BAD_STUB_DATA);
+    if (NDR_WIRE_READ(c->Pass) && type == FC_FP) {
+        /* the number was met before when an object it names was read already, which the pointer then points to. */
+        void *existing = nullptr;
+        if (NdrFullPointerQueryRefId(m->FullPtrXlatTables, refid, c->Pass == NDR_MEMSIZE ? 8 : 2, &existing)) {
+            if (c->Pass == NDR_UNMARSHAL)
+                *slot = existing;
+            c->Q->Depth--;
+            return;
+        }
+    }
     if (c->Pass == NDR_UNMARSHAL)
         c->Q->PendingRefId = type == FC_FP ? refid : 0;
 
@@ -359,12 +398,16 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
             if (!pointer)
                 NDR_RAISE(RPC_X_NULL_REF_POINTER);
             present = TRUE;
+            /* only one inside another object has a number, which is never zero; a parameter has none. */
+            if (flags & NDRF_EMBEDDED)
+                referent_io(c, wire, 0x20000 + 4 * (c->Pass == NDR_MARSHAL ? m->UniquePtrCount++ : m->UniquePtrCount));
             break;
         case FC_UP:
         case FC_OP:
         case FC_IP:
             present = pointer != nullptr;
-            referent_io(c, wire, present ? 0x20000 + 4 * m->UniquePtrCount++ : 0);
+            /* only the data written takes a number, the sizing before it leaves the count to it. */
+            referent_io(c, wire, present ? 0x20000 + 4 * (c->Pass == NDR_MARSHAL ? m->UniquePtrCount++ : m->UniquePtrCount) : 0);
             break;
         case FC_FP:
             present = !NdrFullPointerQueryPointer(m->FullPtrXlatTables, pointer, c->Pass == NDR_SIZE ? 4 : 1, &refid);
@@ -379,23 +422,26 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
     case NDR_MEMSIZE:
         if (type == FC_RP) {
             present = TRUE;
+            if (flags & NDRF_EMBEDDED)
+                referent_io(c, wire, 0);
+            if (c->Q->HasPreset && slot)
+                *slot = c->Q->Preset;
+            c->Q->HasPreset = FALSE;
         } else {
             refid = referent_io(c, wire, 0);
-            if (type == FC_FP) {
-                void *existing = nullptr;
-                present = !NdrFullPointerQueryRefId(m->FullPtrXlatTables, refid, c->Pass == NDR_MEMSIZE ? 8 : 2,
-                                                    &existing);
-                if (!present && c->Pass == NDR_UNMARSHAL)
-                    *slot = existing;
-            } else {
-                present = refid != 0;
-                if (!present && c->Pass == NDR_UNMARSHAL)
-                    *slot = nullptr;
-            }
+            if (c->Q->HasPreset && slot)
+                *slot = c->Q->Preset;
+            c->Q->HasPreset = FALSE;
+            present = refid != 0;
+            if (!present && c->Pass == NDR_UNMARSHAL)
+                *slot = nullptr;
         }
         break;
     case NDR_FREE:
         present = pointer != nullptr;
+        /* an object that several full pointers reach is walked and freed once, by the first of them; a cycle ends there. */
+        if (present && type == FC_FP && m->FullPtrXlatTables && !NdrpInBuffer(m, pointer))
+            present = NdrFullPointerFree(m->FullPtrXlatTables, pointer) != 0;
         break;
     default:
         return;
@@ -405,10 +451,22 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
 
     if ((flags & NDRF_EMBEDDED) && m->IgnoreEmbeddedPointers)
         return;
-    if (flags & NDRF_EMBEDDED)
+    /* a long chain of pointers is queued whatever it is in, so that it does not take the stack. */
+    if ((flags & NDRF_EMBEDDED) && (c->Q->Regions || c->Q->Draining || c->Q->Depth > 64))
         queue_push(c, slot, pointer, pf, refid);
     else
         pointee_walk(c, slot, pointer, pf, refid);
+}
+
+void NdrpRegionEnter(NDRC *c)
+{
+    c->Q->Regions++;
+}
+
+void NdrpRegionLeave(NDRC *c)
+{
+    if (--c->Q->Regions == 0)
+        queue_run(c);
 }
 
 /* ------------------------------------------------------------------ correlation */
@@ -517,11 +575,126 @@ ULONG_PTR NdrpComputeConformance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_ST
 ULONG_PTR NdrpComputeVariance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_STRING d)
 {
     ULONG_PTR max = m->MaxCount;
+    /* a routine of the stub that computes the length can set the offset too, which first_is asks for. */
+    m->Offset = 0;
     ULONG_PTR value = NdrpComputeConformance(m, memory, d);
     m->MaxCount = max;
     m->ActualCount = (ULONG)value;
-    m->Offset = 0;
     return value;
+}
+
+/* ------------------------------------------------------------------ checks of counts */
+
+typedef struct NDR_CHECK {
+    struct NDR_CHECK *Next;
+    PFORMAT_STRING Desc;
+    ULONG_PTR Wire;
+    ULONG Offset;
+    ULONG Actual;
+    int Kind;
+} NDR_CHECK;
+
+enum { CHECK_COUNT, CHECK_VARIANCE, CHECK_SWITCH };
+
+/* true when everything a descriptor reads is read already: a parameter is when it comes before the one being read. */
+static BOOL ready(PMIDL_STUB_MESSAGE m, PFORMAT_STRING d)
+{
+    if ((d[0] & 0xF0) != FC_TOP_LEVEL_CONFORMANCE)
+        return TRUE;
+    const NDR_PROC *p = (const NDR_PROC *)m->pContext;
+    if (!p || d[1] == FC_CALLBACK)
+        return !p;
+    ULONG offset = *(const USHORT *)(d + 2);
+    for (ULONG i = 0; i < p->NumParams; i++) {
+        const uchar *pd = p->Params + 6 * i;
+        if (*(const USHORT *)(pd + 2) == offset && !(*(const USHORT *)pd & PA_IS_RETURN))
+            return (LONG)i < m->ParamNumber;
+    }
+    return TRUE;
+}
+
+static BOOL no_descriptor(PFORMAT_STRING d)
+{
+    return *(const ULONG *)d == 0xFFFFFFFFu;
+}
+
+static BOOL wrong(PMIDL_STUB_MESSAGE m, uchar *memory, int kind, PFORMAT_STRING d, ULONG_PTR wire, ULONG offset, ULONG actual)
+{
+    ULONG_PTR max = m->MaxCount;
+    ULONG o = m->Offset, a = m->ActualCount;
+    BOOL result;
+    if (kind == CHECK_COUNT) {
+        result = (ULONG)NdrpComputeConformance(m, memory, d) != (ULONG)wire;
+    } else if (kind == CHECK_VARIANCE) {
+        NdrpComputeVariance(m, memory, d);
+        result = m->Offset != offset || m->ActualCount != actual;
+    } else {
+        result = (LONG)NdrpComputeConformance(m, memory, d) != (LONG)wire;
+    }
+    m->MaxCount = max;
+    m->Offset = o;
+    m->ActualCount = a;
+    return result;
+}
+
+static void check(NDRC *c, uchar *memory, int kind, PFORMAT_STRING d, ULONG_PTR wire, ULONG offset, ULONG actual)
+{
+    PMIDL_STUB_MESSAGE m = c->M;
+    if (c->Pass != NDR_UNMARSHAL || no_descriptor(d))
+        return;
+    uchar fc = d[0] & 0xF0;
+    if (fc == FC_TOP_LEVEL_MULTID_CONFORMANCE)
+        return;
+    if (ready(m, d)) {
+        if (wrong(m, memory, kind, d, wire, offset, actual))
+            NDR_RAISE(RPC_S_INVALID_BOUND);
+        return;
+    }
+    NDR_CHECK *later = HeapAlloc(GetProcessHeap(), 0, sizeof(*later));
+    if (!later)
+        NDR_RAISE(RPC_S_OUT_OF_MEMORY);
+    later->Desc = d;
+    later->Wire = wire;
+    later->Offset = offset;
+    later->Actual = actual;
+    later->Kind = kind;
+    later->Next = (NDR_CHECK *)m->pCorrInfo;
+    m->pCorrInfo = (PNDR_CORRELATION_INFO)later;
+}
+
+void NdrpCheckCount(NDRC *c, uchar *memory, PFORMAT_STRING desc, ULONG_PTR wire)
+{
+    check(c, memory, CHECK_COUNT, desc, wire, 0, 0);
+}
+
+void NdrpCheckVariance(NDRC *c, uchar *memory, PFORMAT_STRING desc, ULONG offset, ULONG actual)
+{
+    check(c, memory, CHECK_VARIANCE, desc, 0, offset, actual);
+}
+
+void NdrpCheckSwitch(NDRC *c, uchar *memory, PFORMAT_STRING desc, LONG_PTR wire)
+{
+    check(c, memory, CHECK_SWITCH, desc, (ULONG_PTR)wire, 0, 0);
+}
+
+/* all the parameters are read: what waited for one is checked. */
+void NdrpCheckDeferred(PMIDL_STUB_MESSAGE m)
+{
+    m->ParamNumber = 0x7FFFFFFF;
+    for (NDR_CHECK *later = (NDR_CHECK *)m->pCorrInfo; later; later = later->Next)
+        if (wrong(m, nullptr, later->Kind, later->Desc, later->Wire, later->Offset, later->Actual))
+            NDR_RAISE(RPC_S_INVALID_BOUND);
+}
+
+void NdrpCheckRelease(PMIDL_STUB_MESSAGE m)
+{
+    NDR_CHECK *later = (NDR_CHECK *)m->pCorrInfo;
+    m->pCorrInfo = nullptr;
+    while (later) {
+        NDR_CHECK *next = later->Next;
+        HeapFree(GetProcessHeap(), 0, later);
+        later = next;
+    }
 }
 
 /* ------------------------------------------------------------------ dispatch */

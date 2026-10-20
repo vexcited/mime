@@ -41,7 +41,12 @@ void NdrpParseProc(PFORMAT_STRING f, NDR_PROC *p);
 void NdrpInitStubMessage(PMIDL_STUB_MESSAGE m, PRPC_MESSAGE msg, PMIDL_STUB_DESC desc, BOOL client, const NDR_PROC *p);
 
 /* the stack frame calls: the manager routine of a server and the stub of an object. */
-ULONG_PTR NdrpInvoke(void *function, const ULONG_PTR *slots, ULONG count);
+ULONGLONG NdrpInvokeEx(void *function, const ULONG_PTR *slots, ULONG count, ULONG fp_kind, ULONGLONG *fp_value);
+
+static inline ULONG_PTR NdrpInvoke(void *function, const ULONG_PTR *slots, ULONG count)
+{
+    return (ULONG_PTR)NdrpInvokeEx(function, slots, count, 0, nullptr);
+}
 
 /* the call of a client, shared by the stubs of the rpc runtime and the thunks of stubless proxies. */
 CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, uchar *args, BOOL promoted_floats);

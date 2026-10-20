@@ -162,6 +162,22 @@ static void user_marshal(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
  * a type that goes over the wire as another: the stub's routines make the transmitted form of the presented one on the way
  * out and the presented form of the transmitted one on the way in.
  */
+/*
+ * walks the transmitted object by itself: its pointers and their pointees are done before the walk returns, since the object
+ * is gone as soon as the stub's routines have freed it.
+ */
+static void walk_isolated(PMIDL_STUB_MESSAGE m, NDR_PASS pass, uchar **memory, PFORMAT_STRING f, ULONG flags)
+{
+    NDR_QUEUE *saved = m->pPointerQueueState;
+    m->pPointerQueueState = nullptr;
+    __try {
+        NdrpWalkTop(m, pass, memory, f, flags);
+    }
+    __finally {
+        m->pPointerQueueState = saved;
+    }
+}
+
 static void transmit_as(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 {
     PMIDL_STUB_MESSAGE m = c->M;
@@ -179,24 +195,27 @@ static void transmit_as(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
         m->pTransmitType = nullptr;
         q->pfnTranslateToXmit(m);
         uchar *object = m->pTransmitType;
-        NdrpWalk(c, &object, xmit, 0);
+        walk_isolated(m, c->Pass, &object, xmit, 0);
         m->pTransmitType = object;
         q->pfnFreeXmit(m);
         break;
     }
     case NDR_UNMARSHAL: {
         uchar *object = nullptr;
-        NdrpWalk(c, &object, xmit, NDRF_MUSTALLOC);
+        walk_isolated(m, NDR_UNMARSHAL, &object, xmit, NDRF_MUSTALLOC);
         uchar *presented = NdrpAllocObject(c, pm, presented_size, flags);
         m->pPresentedType = presented;
         m->pTransmitType = object;
         q->pfnTranslateFromXmit(m);
-        q->pfnFreeXmit(m);
+        /* what the transmitted object holds is the stub's to free, not the routines'. */
+        walk_isolated(m, NDR_FREE, &object, xmit, 0);
+        if (!NdrpInBuffer(m, object))
+            NdrpFree(m, object);
         break;
     }
     case NDR_MEMSIZE: {
         uchar *object = nullptr;
-        NdrpWalk(c, &object, xmit, NDRF_MUSTALLOC);
+        walk_isolated(m, NDR_MEMSIZE, &object, xmit, NDRF_MUSTALLOC);
         NdrpAllocObject(c, pm, presented_size, flags);
         break;
     }

@@ -42,10 +42,14 @@ ULONG NdrpMemorySize(NDRC *c, uchar *memory, PFORMAT_STRING f)
     case FC_SMVARRAY:
     case FC_CSTRING:
     case FC_BSTRING:
-    case FC_SSTRING:
-    case FC_WSTRING:
-    case FC_ENCAPSULATED_UNION:
         return *(const USHORT *)(f + 2);
+    case FC_WSTRING:
+        return 2 * (ULONG)*(const USHORT *)(f + 2);
+    case FC_SSTRING:
+        return f[1] * (ULONG)*(const USHORT *)(f + 3);
+    case FC_ENCAPSULATED_UNION:
+        /* the switch comes first, so the size in the format is the one of the arms. */
+        return *(const USHORT *)(f + 2) + (f[1] >> 4);
     case FC_LGFARRAY:
     case FC_LGVARRAY:
         return *(const ULONG *)(f + 2);
@@ -75,6 +79,42 @@ ULONG NdrpMemorySize(NDRC *c, uchar *memory, PFORMAT_STRING f)
     default:
         NDR_RAISE(RPC_S_INTERNAL_ERROR);
         return 0;
+    }
+}
+
+/*
+ * the memory the stub gives an [out] object before the call: its size in memory, with the counts of a conformant array or string
+ * computed from the parameters that are already unmarshaled.
+ */
+SIZE_T NdrpOutMemory(PMIDL_STUB_MESSAGE m, PFORMAT_STRING f)
+{
+    NDRC c = {m, NDR_SIZE, nullptr};
+    ULONG incr = NDR_DESC_SIZE(m);
+    switch (f[0]) {
+    case FC_CARRAY:
+    case FC_CVARRAY:
+        return NdrpCheckedProduct(NdrpComputeConformance(m, nullptr, f + 4), *(const USHORT *)(f + 2));
+    case FC_C_CSTRING:
+    case FC_C_BSTRING:
+    case FC_C_WSTRING:
+        if (f[1] != FC_STRING_SIZED)
+            NDR_RAISE(RPC_X_BAD_STUB_DATA);
+        return NdrpCheckedProduct(NdrpComputeConformance(m, nullptr, f + 2), f[0] == FC_C_WSTRING ? 2 : 1);
+    case FC_BOGUS_ARRAY: {
+        PFORMAT_STRING e = f + 4 + 2 * incr;
+        ULONG elem;
+        if (e[0] == FC_EMBEDDED_COMPLEX)
+            elem = NdrpMemorySize(&c, nullptr, e + 2 + *(const short *)(e + 2));
+        else if (e[0] >= FC_RP && e[0] <= FC_FP)
+            elem = sizeof(void *);
+        else
+            elem = NdrpMemorySize(&c, nullptr, e);
+        if (*(const ULONG *)(f + 4) == 0xFFFFFFFFu)
+            return NdrpCheckedProduct(*(const USHORT *)(f + 2), elem);
+        return NdrpCheckedProduct(NdrpComputeConformance(m, nullptr, f + 4), elem);
+    }
+    default:
+        return NdrpMemorySize(&c, nullptr, f);
     }
 }
 
@@ -281,13 +321,18 @@ static void conf_release(NDRC *c, CONF_SAVE *save)
 /* ------------------------------------------------------------------ pointer layouts */
 
 static PFORMAT_STRING layout_pointer(NDRC *c, uchar *memory, uchar *wire, PFORMAT_STRING e, LONG_PTR memory_extra,
-                                     LONG_PTR wire_extra)
+                                     LONG_PTR wire_extra, const uchar *old)
 {
     short mem_off = *(const short *)e;
     short wire_off = *(const short *)(e + 2);
     PFORMAT_STRING pf = e + 4;
     uchar **slot = memory ? (uchar **)(memory + memory_extra + mem_off) : nullptr;
     uchar *wslot = wire ? wire + wire_extra + wire_off : nullptr;
+    if (c->Pass == NDR_UNMARSHAL && slot) {
+        /* the copy of the structure put the referent in the slot: the pointer it had before stays, or none. */
+        c->Q->Preset = old ? *(uchar *const *)(old + memory_extra + mem_off) : nullptr;
+        c->Q->HasPreset = TRUE;
+    }
     NdrpPointerAt(c, slot, pf, NDRF_EMBEDDED, wslot);
     return pf + 4;
 }
@@ -302,9 +347,14 @@ static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMA
     PMIDL_STUB_MESSAGE m = c->M;
     PFORMAT_STRING e = layout + 2;
     ULONG_PTR max_count = m->MaxCount;
+    const uchar *old = c->Q->Old;
+    c->Q->Old = nullptr;
+    uchar *saved_memory = m->Memory;
+    /* the counts of what the pointers point to may be fields of the structure that holds them. */
+    m->Memory = memory;
     while (*e != FC_END) {
         if (*e == FC_NO_REPEAT) {
-            e = layout_pointer(c, memory, wire, e + 2, 0, 0);
+            e = layout_pointer(c, memory, wire, e + 2, 0, 0, old);
         } else if (*e == FC_FIXED_REPEAT || *e == FC_VARIABLE_REPEAT) {
             BOOL variable = *e == FC_VARIABLE_REPEAT;
             ULONG iterations, increment, array_offset, count;
@@ -326,7 +376,7 @@ static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMA
                 PFORMAT_STRING p = first;
                 for (ULONG k = 0; k < count; k++)
                     p = layout_pointer(c, memory, wire, p, (LONG_PTR)array_offset + (LONG_PTR)i * increment,
-                                       (LONG_PTR)array_offset + (LONG_PTR)i * increment);
+                                       (LONG_PTR)array_offset + (LONG_PTR)i * increment, old);
             }
             e = first + (SIZE_T)count * 8;
         } else {
@@ -334,6 +384,7 @@ static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMA
         }
     }
     m->MaxCount = max_count;
+    m->Memory = saved_memory;
     return e + 1;
 }
 
@@ -343,18 +394,34 @@ static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMA
  * the wire bytes of an object copied whole, and the memory it goes to: for a pass that writes, the buffer is filled from the
  * object; for the one that reads, the object (allocated when it has no memory yet) is filled from the buffer.
  */
+static void snapshot_pointers(NDRC *c, uchar **pm, SIZE_T bytes, ULONG flags, PFORMAT_STRING layout)
+{
+    c->Q->Old = nullptr;
+    if (c->Pass == NDR_UNMARSHAL && layout && layout[0] == FC_PP && *pm && !(flags & NDRF_MUSTALLOC) && c->M->IsClient) {
+        uchar *copy = NdrpScratch(c, bytes);
+        memcpy(copy, *pm, bytes);
+        c->Q->Old = copy;
+    }
+}
+
 static uchar *copy_whole(NDRC *c, uchar **pm, ULONG wire_bytes, SIZE_T memory_bytes, ULONG flags, BOOL may_reuse,
-                         uchar **wire_out)
+                         PFORMAT_STRING layout, uchar **wire_out)
 {
     PMIDL_STUB_MESSAGE m = c->M;
     uchar *wire = NdrpTake(c, wire_bytes);
     uchar *mem = nullptr;
     switch (c->Pass) {
-    case NDR_MARSHAL:
+    case NDR_MARSHAL: {
         mem = *pm;
+        /* the last word of the copy is cleared first, so that padding at the end of the object is not the stack's. */
+        uchar *end = (uchar *)(((ULONG_PTR)wire + wire_bytes + 3) & ~(ULONG_PTR)3);
+        if (end - 4 >= wire && (!m->BufferEnd || end <= m->BufferEnd))
+            *(ULONG *)(end - 4) = 0;
         memcpy(wire, mem, wire_bytes);
         break;
+    }
     case NDR_UNMARSHAL:
+        snapshot_pointers(c, pm, wire_bytes, flags, layout);
         if (may_reuse && m->ReuseBuffer && !*pm && !(flags & NDRF_MUSTALLOC)) {
             *pm = wire;
             mem = wire;
@@ -382,7 +449,7 @@ static void struct_simple(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     ULONG size = *(const USHORT *)(f + 2);
     uchar *wire;
     NdrpAlign(c, f[1]);
-    uchar *mem = copy_whole(c, pm, size, size, flags, f[0] == FC_STRUCT, &wire);
+    uchar *mem = copy_whole(c, pm, size, size, flags, f[0] == FC_STRUCT, f[0] == FC_PSTRUCT ? f + 4 : nullptr, &wire);
     if (f[0] == FC_PSTRUCT && f[4] == FC_PP)
         pointer_layout(c, mem, wire, f + 4);
 }
@@ -416,7 +483,8 @@ static void struct_conformant(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
     uchar *mem;
     if (f[0] == FC_CVSTRUCT) {
         uchar *fixed_wire;
-        mem = copy_whole(c, pm, fixed, fixed + (NDR_WIRE_READ(c->Pass) ? count * elem : 0), flags, FALSE, &fixed_wire);
+        mem = copy_whole(c, pm, fixed, fixed + (NDR_WIRE_READ(c->Pass) ? count * elem : 0), flags, FALSE, nullptr,
+                         &fixed_wire);
         uchar *saved = m->Memory;
         m->Memory = mem;
         uchar *am = mem ? mem + fixed : nullptr;
@@ -432,7 +500,8 @@ static void struct_conformant(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
         ULONG total = fixed + (ULONG)body;
         if (total < fixed)
             NDR_RAISE(RPC_S_INVALID_BOUND);
-        mem = copy_whole(c, pm, total, total, flags, f[0] == FC_CSTRUCT, &wire);
+        mem = copy_whole(c, pm, total, total, flags, f[0] == FC_CSTRUCT, layout, &wire);
+        NdrpCheckCount(c, mem + fixed, array + 4, count);
         q->Next = my_dim + 1;
     }
     if (layout[0] == FC_PP) {
@@ -442,7 +511,7 @@ static void struct_conformant(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
     conf_release(c, &save);
 }
 
-static void struct_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
+static void struct_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 {
     PMIDL_STUB_MESSAGE m = c->M;
     NDR_QUEUE *q = c->Q;
@@ -523,17 +592,14 @@ static void struct_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
         } else if (fc == FC_EMBEDDED_COMPLEX) {
             uchar *object = real ? at + member[1] : NDR_DUMMY;
             PFORMAT_STRING type = member + 2 + *(const short *)(member + 2);
-            BOOL last = tail && type == tail;
             if (type[0] == FC_IP || (type[0] >= FC_RP && type[0] <= FC_FP)) {
                 NdrpPointerAt(c, (uchar **)object, type, NDRF_EMBEDDED, NDR_WIRE_CURSOR);
                 if (real)
                     at = object + sizeof(void *);
             } else {
                 uchar *obj = object;
-                if (last)
-                    q->Next = my_dim;
-                NdrpWalk(c, &obj, type, last ? NDRF_CONF_DONE : 0);
-                if (real && !last)
+                NdrpWalk(c, &obj, type, 0);
+                if (real)
                     at = object + NdrpMemorySize(c, object, type);
             }
             member += 4;
@@ -541,8 +607,21 @@ static void struct_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
             NDR_RAISE(RPC_S_INTERNAL_ERROR);
         }
     }
+    if (tail) {
+        /* the conformant array at the end is not one of the members: it follows them, at the end of the fixed part. */
+        uchar *object = real ? base + size : NDR_DUMMY;
+        q->Next = my_dim;
+        NdrpWalk(c, &object, tail, NDRF_CONF_DONE);
+    }
     m->Memory = saved_memory;
     conf_release(c, &save);
+}
+
+static void struct_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
+{
+    NdrpRegionEnter(c);
+    struct_bogus_body(c, pm, f, flags);
+    NdrpRegionLeave(c);
 }
 
 void NdrpStruct(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
@@ -580,7 +659,7 @@ static void array_fixed(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     }
     uchar *wire;
     NdrpAlign(c, f[1]);
-    uchar *mem = copy_whole(c, pm, total, total, flags, TRUE, &wire);
+    uchar *mem = copy_whole(c, pm, total, total, flags, TRUE, layout, &wire);
     if (layout[0] == FC_PP)
         pointer_layout(c, mem, wire, layout);
 }
@@ -590,13 +669,14 @@ static void array_conformant(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     PMIDL_STUB_MESSAGE m = c->M;
     ULONG incr = NDR_DESC_SIZE(m);
     ULONG elem = *(const USHORT *)(f + 2);
-    PFORMAT_STRING layout = f + 4 + incr + 2;
+    PFORMAT_STRING layout = f + 4 + incr;
     uchar *memory = NDR_WIRE_READ(c->Pass) ? nullptr : *pm;
     ULONG_PTR count = conf_count(c, memory, f + 4, flags, 0);
     ULONG bytes = NdrpCheckedProduct(count, elem);
     uchar *wire;
     NdrpAlign(c, f[1]);
-    uchar *mem = copy_whole(c, pm, bytes, bytes, flags, TRUE, &wire);
+    uchar *mem = copy_whole(c, pm, bytes, bytes, flags, TRUE, layout, &wire);
+    NdrpCheckCount(c, mem, f + 4, count);
     if (layout[0] == FC_PP) {
         m->MaxCount = count;
         pointer_layout(c, mem, wire, layout);
@@ -642,6 +722,7 @@ static void array_conformant_varying(NDRC *c, uchar **pm, PFORMAT_STRING f, ULON
             memcpy(wire, mem + skip, bytes);
         break;
     case NDR_UNMARSHAL:
+        snapshot_pointers(c, pm, NdrpCheckedProduct(max, elem), flags, layout);
         mem = NdrpAllocObject(c, pm, NdrpCheckedProduct(max, elem), flags);
         if (actual)
             memcpy(mem + skip, wire, bytes);
@@ -653,6 +734,8 @@ static void array_conformant_varying(NDRC *c, uchar **pm, PFORMAT_STRING f, ULON
     default:
         mem = *pm;
     }
+    NdrpCheckCount(c, mem, f + 4, max);
+    NdrpCheckVariance(c, mem, variance, offset, actual);
     if (layout[0] == FC_PP && actual) {
         m->MaxCount = actual;
         pointer_layout(c, mem, wire, layout);
@@ -708,6 +791,7 @@ static void array_fixed_varying(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG fla
             memcpy(wire, mem + skip, bytes);
         break;
     case NDR_UNMARSHAL:
+        snapshot_pointers(c, pm, total, flags, layout);
         mem = NdrpAllocObject(c, pm, total, flags);
         if (actual)
             memcpy(mem + skip, wire, bytes);
@@ -719,6 +803,7 @@ static void array_fixed_varying(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG fla
     default:
         mem = *pm;
     }
+    NdrpCheckVariance(c, mem, variance, offset, actual);
     if (layout[0] == FC_PP && actual) {
         m->MaxCount = actual;
         pointer_layout(c, mem, wire, layout);
@@ -729,7 +814,7 @@ static void array_fixed_varying(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG fla
  * an array whose elements are walked one by one. Its counts come first as for any conformant thing, then the offsets and
  * lengths of the dimensions that vary, then the elements.
  */
-static void array_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
+static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 {
     PMIDL_STUB_MESSAGE m = c->M;
     NDR_QUEUE *q = c->Q;
@@ -789,8 +874,15 @@ static void array_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 
     uchar *base;
     if (NDR_WIRE_READ(c->Pass)) {
+        /* every element takes a byte at least, so a count beyond what is left is a lie that would cost a lot of memory. */
+        if (m->BufferEnd && actual > (ULONG)(m->BufferEnd - m->Buffer) + 0u && conformant)
+            NDR_RAISE(RPC_X_BAD_STUB_DATA);
         NdrpAllocObject(c, pm, NdrpCheckedProduct(count, elem_size), flags);
         base = c->Pass == NDR_UNMARSHAL ? *pm : NDR_DUMMY;
+        if (conformant)
+            NdrpCheckCount(c, base, conf, count);
+        if (varying)
+            NdrpCheckVariance(c, base, var, offset, actual);
     } else {
         base = *pm;
     }
@@ -831,6 +923,13 @@ static void array_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     }
     q->Next = my_dim + 1;
     conf_release(c, &save);
+}
+
+static void array_bogus(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
+{
+    NdrpRegionEnter(c);
+    array_bogus_body(c, pm, f, flags);
+    NdrpRegionLeave(c);
 }
 
 void NdrpArray(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
@@ -953,6 +1052,8 @@ void NdrpString(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
             uchar *mem = NdrpAllocObject(c, pm, memory_bytes, flags);
             memcpy(mem, wire, bytes);
         }
+        if (sized)
+            NdrpCheckCount(c, *pm, sizedesc, max);
         break;
     }
     case NDR_MEMSIZE:
@@ -1005,6 +1106,7 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     uchar *mem = nullptr;
     LONG_PTR sw = 0;
 
+    PFORMAT_STRING desc_switch = f + 2;
     if (encapsulated) {
         sw_type = f[1] & 0x0F;
         arm_offset = f[1] >> 4;
@@ -1024,7 +1126,8 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     ULONG arms = info & 0xFFF;
 
     if (NDR_WIRE_READ(c->Pass)) {
-        mem = NdrpAllocObject(c, pm, memory_size, flags);
+        /* the size in the format is the one of the arms; an encapsulated union has its switch before them. */
+        mem = NdrpAllocObject(c, pm, memory_size + arm_offset, flags);
     } else {
         mem = *pm;
     }
@@ -1043,6 +1146,8 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
         sw = switch_value(wire_value, sw_type);
         if (encapsulated)
             memcpy(mem, wire_value, NdrSimpleWire[sw_type]);
+        else
+            NdrpCheckSwitch(c, mem, desc_switch, sw);
     } else if (c->Pass == NDR_MEMSIZE) {
         sw = switch_value(wire_value, sw_type);
     }

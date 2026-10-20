@@ -1,13 +1,14 @@
 /*
  * calls a function with arguments held in slots: the first four go to the integer registers and, the same bits, to the
  * floating point ones, since the engine does not know which are which, and the rest on the stack. The function is given at
- * least the four slots of home space. rcx is the function, rdx the slots, r8 their number; the result is in rax.
+ * least the four slots of home space. rcx is the function, rdx the slots, r8 their number, the fifth argument where to keep xmm0,
+ * which holds the result of a function that returns a float, or null; the result is in rax.
  */
     .text
-    .globl  NdrpInvoke
+    .globl  NdrpInvokeEx
     .p2align 4
-    .seh_proc NdrpInvoke
-NdrpInvoke:
+    .seh_proc NdrpInvokeEx
+NdrpInvokeEx:
     pushq   %rbp
     .seh_pushreg %rbp
     movq    %rsp, %rbp
@@ -15,6 +16,8 @@ NdrpInvoke:
     .seh_endprologue
     pushq   %rcx
     pushq   %rdx
+    pushq   0x30(%rbp)
+    pushq   0x30(%rbp)
     movl    %r8d, %r8d
     movq    %r8, %rcx
     cmpq    $4, %rcx
@@ -46,6 +49,11 @@ NdrpInvoke:
     movq    24(%rsp), %r9
     movq    %r9, %xmm3
     call    *-8(%rbp)
+    movq    -24(%rbp), %rcx
+    testq   %rcx, %rcx
+    jz      4f
+    movq    %xmm0, (%rcx)
+4:
     movq    %rbp, %rsp
     popq    %rbp
     ret

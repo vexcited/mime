@@ -82,6 +82,7 @@ static void unmarshal_in(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ARENA *arena)
 {
     for (ULONG i = 0; i < p->NumParams; i++) {
         NDR_PARAM prm = param_of(p, i);
+        m->ParamNumber = (LONG)i;
         if ((prm.Attrs & (PA_IS_IN | PA_IS_PIPE)) != PA_IS_IN)
             continue;
         uchar *slot = p->Args + prm.Offset;
@@ -109,6 +110,8 @@ static void unmarshal_in(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ARENA *arena)
             *(uchar **)slot = arena_alloc(arena, sizeof(void *));
         param_walk(m, NDR_UNMARSHAL, p, &prm, slot);
     }
+    /* the counts that depended on a parameter that came later. */
+    NdrpCheckDeferred(m);
 }
 
 /* ------------------------------------------------------------------ out parameters */
@@ -119,7 +122,6 @@ static void unmarshal_in(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ARENA *arena)
  */
 static void out_init(PMIDL_STUB_MESSAGE m, PFORMAT_STRING type, uchar **slot, ARENA *arena)
 {
-    NDRC c = {m, NDR_SIZE, nullptr};
     while (type[0] == FC_RP) {
         if (type[1] & FC_SIMPLE_POINTER) {
             *slot = arena_alloc(arena, NdrSimpleMem[type[2]]);
@@ -145,7 +147,9 @@ static void out_init(PMIDL_STUB_MESSAGE m, PFORMAT_STRING type, uchar **slot, AR
         *slot = (type[1] & HANDLE_PARAM_IS_VIA_PTR) ? arena_alloc(arena, sizeof(void *)) : nullptr;
         return;
     }
-    SIZE_T size = NdrpMemorySize(&c, nullptr, type);
+    SIZE_T size = NdrpOutMemory(m, type);
+    if (size > NDR_MAX_ALLOC)
+        NDR_RAISE(RPC_S_OUT_OF_MEMORY);
     *slot = arena_alloc(arena, size ? size : 8);
 }
 
@@ -225,8 +229,6 @@ static void free_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
         uchar *object = (prm.Attrs & PA_IS_BY_VALUE) ? slot : *(uchar **)slot;
         if (!is_pointer_type(type[0]) && !object)
             continue;
-        if (prm.Attrs >= 0x2000)
-            continue;
         m->fInFree = 1;
         if (is_pointer_type(type[0])) {
             NdrpWalkTop(m, NDR_FREE, (uchar **)slot, type, 0);
@@ -234,7 +236,8 @@ static void free_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
             uchar *walk = object;
             NdrpWalkTop(m, NDR_FREE, &walk, type, 0);
             /* the memory of a simple reference pointer's pointee is the stub's to free, if it allocated it. */
-            if ((prm.Attrs & PA_IS_SIMPLE_REF) && !(prm.Attrs & PA_IS_BY_VALUE) && object && !NdrpInBuffer(m, object))
+            if ((prm.Attrs & PA_IS_SIMPLE_REF) && !(prm.Attrs & PA_IS_BY_VALUE) && prm.Attrs < 0x2000 && object &&
+                !NdrpInBuffer(m, object))
                 NdrpFree(m, object);
         }
         m->fInFree = 0;
@@ -337,11 +340,23 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
             thunks[msg->ProcNum](&m);
         } else {
             ULONG nargs = p.StackSize / slot_size;
-            if ((p.Oi2Flags & OIF_HAS_RETURN) && nargs)
-                nargs--;
-            ULONG_PTR value = NdrpInvoke(epv[msg->ProcNum], (const ULONG_PTR *)frame, nargs);
-            if (p.Oi2Flags & OIF_HAS_RETURN)
-                *(ULONG_PTR *)(frame + (ULONG_PTR)nargs * slot_size) = value;
+            ULONG ret_offset = 0, ret_kind = 0;
+            if ((p.Oi2Flags & OIF_HAS_RETURN) && p.NumParams) {
+                /* the return value has the slot after the arguments, and a float is not in the integer register. */
+                NDR_PARAM rp = param_of(&p, p.NumParams - 1);
+                ret_offset = rp.Offset;
+                nargs = ret_offset / slot_size;
+                if (rp.Attrs & PA_IS_BASETYPE)
+                    ret_kind = rp.BaseType;
+            }
+            ULONGLONG fp = 0;
+            ULONGLONG value = NdrpInvokeEx(epv[msg->ProcNum], (const ULONG_PTR *)frame, nargs,
+                                           ret_kind == FC_FLOAT ? 1 : ret_kind == FC_DOUBLE ? 2 : 0, &fp);
+            if (p.Oi2Flags & OIF_HAS_RETURN) {
+                if (ret_kind == FC_FLOAT || ret_kind == FC_DOUBLE)
+                    value = fp;
+                memcpy(frame + ret_offset, &value, ret_kind == FC_HYPER || ret_kind == FC_DOUBLE ? 8 : sizeof(ULONG_PTR));
+            }
         }
         *phase = 2;
         size_out(&m, &p);
@@ -370,6 +385,7 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
         faulted = TRUE;
     }
     NdrpContextRecordsFree(&m);
+    NdrpCheckRelease(&m);
     if (m.FullPtrXlatTables)
         NdrFullPointerXlatFree(m.FullPtrXlatTables);
     if (p.OiFlags & Oi_RPCSS_ALLOC_USED)

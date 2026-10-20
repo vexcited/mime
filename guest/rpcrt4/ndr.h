@@ -35,6 +35,9 @@ typedef enum {
 /* the bytes added to the size of a buffer, for the alignment that the sizes in a format may not count. */
 #define NDR_BUFFER_SLACK 8
 
+/* the most one object of the wire can ask the stub to allocate. */
+#define NDR_MAX_ALLOC 0x10000000u
+
 /* the memory of an object that the pass measuring does not have. */
 #define NDR_DUMMY ((uchar *)16)
 
@@ -47,6 +50,8 @@ typedef struct NDR_QITEM {
     uchar *Pointer;
     PFORMAT_STRING Format;
     ULONG RefId;
+    /* the structure the pointer was in, which a count of the pointee may be a field of. */
+    uchar *Memory;
 } NDR_QITEM;
 
 typedef struct NDR_QCHUNK {
@@ -70,6 +75,19 @@ struct NDR_POINTER_QUEUE_STATE {
     ULONG Dims;
     ULONG Next;
     ULONG Depth;
+    /* the value the next pointer unmarshaled takes in its slot, instead of the referent a structure copy left there. */
+    uchar *Preset;
+    BOOL HasPreset;
+    /* the pointers a structure had in memory before a copy from the buffer overwrote them, for its pointer layout. */
+    uchar *Old;
+    /* memory that lives as long as the walk. */
+    struct NDR_SCRATCH *Scratch;
+    /*
+     * how many complex structures and arrays the walk is inside. The pointees of embedded pointers wait for the end of the
+     * outermost of those, in order; inside the other constructs they follow the construct they are in at once.
+     */
+    ULONG Regions;
+    BOOL Draining;
 };
 
 typedef struct NDR_POINTER_QUEUE_STATE NDR_QUEUE;
@@ -121,9 +139,24 @@ void NdrpWalkTop(PMIDL_STUB_MESSAGE m, NDR_PASS pass, uchar **memory, PFORMAT_ST
 void NdrpWalk(NDRC *c, uchar **memory, PFORMAT_STRING format, ULONG flags);
 uchar *NdrpAllocObject(NDRC *c, uchar **memory, SIZE_T size, ULONG flags);
 ULONG NdrpMemorySize(NDRC *c, uchar *memory, PFORMAT_STRING format);
+SIZE_T NdrpOutMemory(PMIDL_STUB_MESSAGE m, PFORMAT_STRING format);
 ULONG_PTR NdrpComputeConformance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_STRING descriptor);
 ULONG_PTR NdrpComputeVariance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_STRING descriptor);
 void NdrpAlign(NDRC *c, ULONG mask);
+void *NdrpScratch(NDRC *c, SIZE_T size);
+void NdrpRegionEnter(NDRC *c);
+
+/*
+ * counts read from the wire must be the ones the parameters or fields they are correlated with say, or the stub would
+ * allocate for one number and walk, free and marshal for another. A count that depends on a parameter that is not read yet is
+ * checked when all of them are.
+ */
+void NdrpCheckCount(NDRC *c, uchar *memory, PFORMAT_STRING desc, ULONG_PTR wire);
+void NdrpCheckVariance(NDRC *c, uchar *memory, PFORMAT_STRING desc, ULONG offset, ULONG actual);
+void NdrpCheckSwitch(NDRC *c, uchar *memory, PFORMAT_STRING desc, LONG_PTR wire);
+void NdrpCheckDeferred(PMIDL_STUB_MESSAGE m);
+void NdrpCheckRelease(PMIDL_STUB_MESSAGE m);
+void NdrpRegionLeave(NDRC *c);
 uchar *NdrpTake(NDRC *c, ULONG count);
 ULONG NdrpU32(NDRC *c, ULONG value);
 void NdrpSimple(NDRC *c, uchar *memory, uchar fc);

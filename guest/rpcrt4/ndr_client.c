@@ -94,6 +94,7 @@ static void marshal_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, BOOL promote
 static void unmarshal_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ULONG_PTR *ret)
 {
     for (ULONG i = 0; i < p->NumParams; i++) {
+        m->ParamNumber = (LONG)i;
         const uchar *d = p->Params + 6 * i;
         NDR_PARAM prm = {*(const USHORT *)d, *(const USHORT *)(d + 2), *(const USHORT *)(d + 4), d[4]};
         if (prm.Attrs & PA_IS_PIPE)
@@ -287,6 +288,17 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
             handle = call_handle(&m, &p, &generic_bound, &generic_pair);
             msg.Handle = handle;
         }
+        /* a reference pointer that is not there cannot be sent or filled in. */
+        for (ULONG i = 0; i < p.NumParams; i++) {
+            const uchar *d = p.Params + 6 * i;
+            ULONG attrs = *(const USHORT *)d;
+            if (attrs & PA_IS_RETURN)
+                continue;
+            if (((attrs & PA_IS_SIMPLE_REF) ||
+                 ((attrs & (PA_IS_OUT | PA_IS_BASETYPE)) == PA_IS_OUT && desc->pFormatTypes[*(const USHORT *)(d + 4)] == FC_RP)) &&
+                !*(void **)(args + *(const USHORT *)(d + 2)))
+                NDR_RAISE(RPC_X_NULL_REF_POINTER);
+        }
         size_params(&m, &p);
         /* a format that undercounts the padding between its parts must not overrun the buffer. */
         m.BufferLength += NDR_BUFFER_SLACK;
@@ -305,6 +317,7 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
         }
         m.fIsIn = 0;
         unmarshal_params(&m, &p, ret);
+        NdrpCheckDeferred(&m);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         exception = GetExceptionCode();
@@ -321,6 +334,7 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
         } else {
             NdrFreeBuffer(&m);
         }
+        NdrpCheckRelease(&m);
         if (m.FullPtrXlatTables)
             NdrFullPointerXlatFree(m.FullPtrXlatTables);
         if (generic_pair) {
