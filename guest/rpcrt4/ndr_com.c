@@ -772,7 +772,9 @@ RPCRTAPI HRESULT RPC_ENTRY NdrDllGetClassObject(REFCLSID clsid, REFIID iid, void
     if (!object)
         return E_POINTER;
     *object = nullptr;
-    if (!IsEqualGUID(clsid, proxy_clsid))
+    /* the class of the file, or an interface of its list, which proxy files register themselves under. */
+    PS_ENTRY e;
+    if ((!proxy_clsid || !IsEqualGUID(clsid, proxy_clsid)) && !find_entry(proxy_file_list, clsid, &e))
         return CLASS_E_CLASSNOTAVAILABLE;
     if (!factory->lpVtbl) {
         factory->lpVtbl = &g_factory_vtbl;
