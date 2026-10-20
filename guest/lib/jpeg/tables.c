@@ -51,7 +51,7 @@ const JpegHuffSpec jpeg_std_ac[2] = {
 
 /*
  * the quality sets how many times coarser than the tables of annex K the steps are. a quality of 50 keeps them,
- * and the factor follows a power of 1.25 of the distance to 100 above that and of the ratio to 50 below it, so it
+ * and the factor follows a power of 9 / 8 of the distance to 100 above that and of the ratio to 50 below it, so it
  * falls smoothly to nothing at the top and grows quickly at the bottom.
  */
 static float square_root(float x)
@@ -75,7 +75,7 @@ static float quality_factor(int quality)
     if (quality > 100)
         quality = 100;
     float u = quality >= 50 ? (float)(100 - quality) / 50.0f : 50.0f / (float)quality;
-    return u * square_root(square_root(u));
+    return u * square_root(square_root(square_root(u)));
 }
 
 void mime_jpeg_quality_table(int quality, bool chroma, uint16_t table[64])

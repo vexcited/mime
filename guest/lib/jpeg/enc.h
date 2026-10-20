@@ -21,7 +21,7 @@ typedef struct EncComp {
     int cls; /* the huffman tables of the standard it uses when not optimized, 0 or 1. */
     uint32_t bw, bh;   /* blocks across and down, padded to whole MCUs. */
     uint32_t cbw, cbh; /* the blocks that cover the component, which is what a scan of one component codes. */
-    int16_t *blocks;   /* quantized, natural order. */
+    int16_t *blocks;   /* quantized, in zigzag order. */
     int pred;
 } EncComp;
 
@@ -40,7 +40,7 @@ typedef struct Enc {
     EncComp comp[4];
     int hmax, vmax;
     uint32_t mcux, mcuy;
-    bool progressive, optimize, buffered, wide_tables, baseline;
+    bool progressive, optimize, buffered, wide_tables, baseline, separate;
     uint32_t restart;
     int nq; /* quantization tables in use. */
     uint16_t qt[2][64];

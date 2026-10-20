@@ -311,31 +311,100 @@ static void code_dc(Enc *e, HuffSlot *dc, int *pred, int value)
         put_bits(e, (uint32_t)(diff < 0 ? diff - 1 : diff), n);
 }
 
-static void code_block_sequential(Enc *e, HuffSlot *dc, HuffSlot *ac, int *pred, const int16_t *blk)
+/* the bits of the coefficients that are not zero, bit k for the coefficient k in zigzag order. */
+static inline uint64_t nonzero_mask(const int16_t *zz)
 {
-    code_dc(e, dc, pred, blk[0]);
-    int run = 0;
-    int last = 63;
-    while (last > 0 && !blk[jpeg_zigzag[last]])
-        last--;
-    for (int k = 1; k <= last; k++) {
-        int v = blk[jpeg_zigzag[k]];
-        if (!v) {
-            run++;
-            continue;
-        }
+#ifdef MIME_JPEG_SSE2
+    const __m128i zero = _mm_setzero_si128();
+    uint64_t zeros = 0;
+    for (int i = 0; i < 4; i++) {
+        __m128i a = _mm_cmpeq_epi16(_mm_loadu_si128((const __m128i *)(zz + 16 * i)), zero);
+        __m128i b = _mm_cmpeq_epi16(_mm_loadu_si128((const __m128i *)(zz + 16 * i + 8)), zero);
+        zeros |= (uint64_t)(unsigned)_mm_movemask_epi8(_mm_packs_epi16(a, b)) << (16 * i);
+    }
+    return ~zeros;
+#else
+    uint64_t m = 0;
+    for (int k = 0; k < 64; k++)
+        m |= (uint64_t)(zz[k] != 0) << k;
+    return m;
+#endif
+}
+
+/* the symbols of a block that is only being counted for the tables. */
+static void count_block_sequential(HuffSlot *dc, HuffSlot *ac, int *pred, const int16_t *blk)
+{
+    int diff = blk[0] - *pred;
+    *pred = blk[0];
+    dc->freq[bit_length((unsigned)(diff < 0 ? -diff : diff))]++;
+    uint64_t m = nonzero_mask(blk) & ~1ull;
+    int prev = 0;
+    while (m) {
+        int k = __builtin_ctzll(m);
+        int run = k - prev - 1;
+        int v = blk[k];
+        for (; run > 15; run -= 16)
+            ac->freq[0xF0]++;
+        ac->freq[run << 4 | bit_length((unsigned)(v < 0 ? -v : v))]++;
+        prev = k;
+        m &= m - 1;
+    }
+    if (prev < 63)
+        ac->freq[0x00]++;
+}
+
+/*
+ * a block to the file. the bits wait in a register of this function and the bytes go straight to the buffer, which
+ * has room for the worst case of a block: 64 codes of up to 27 bits, every byte stuffed.
+ */
+static void write_block_sequential(Enc *e, HuffSlot *dc, HuffSlot *ac, int *pred, const int16_t *blk)
+{
+    if (!ensure(e, 1024))
+        return;
+    uint8_t *out = e->buf + e->pos;
+    uint64_t acc = e->acc;
+    int cnt = e->cnt;
+#define PUT(bits, n)                                      \
+    do {                                                  \
+        acc = (acc << (n)) | (uint64_t)(bits);            \
+        cnt += (n);                                       \
+        if (cnt >= 32) {                                  \
+            while (cnt >= 8) {                            \
+                uint8_t byte = (uint8_t)(acc >> (cnt - 8)); \
+                cnt -= 8;                                 \
+                *out++ = byte;                            \
+                if (byte == 0xFF)                         \
+                    *out++ = 0;                           \
+            }                                             \
+        }                                                 \
+    } while (0)
+    int diff = blk[0] - *pred;
+    *pred = blk[0];
+    unsigned a = (unsigned)(diff < 0 ? -diff : diff);
+    int n = bit_length(a);
+    PUT(((uint64_t)dc->code[n] << n) | ((uint32_t)(diff < 0 ? diff - 1 : diff) & ((1u << n) - 1)), dc->size[n] + n);
+    uint64_t m = nonzero_mask(blk) & ~1ull;
+    int prev = 0;
+    while (m) {
+        int k = __builtin_ctzll(m);
+        int run = k - prev - 1;
+        int v = blk[k];
         while (run > 15) {
-            emit(e, ac, 0xF0);
+            PUT(ac->code[0xF0], ac->size[0xF0]);
             run -= 16;
         }
-        unsigned a = (unsigned)(v < 0 ? -v : v);
-        int n = bit_length(a);
-        emit(e, ac, run << 4 | n);
-        put_bits(e, (uint32_t)(v < 0 ? v - 1 : v), n);
-        run = 0;
+        n = bit_length((unsigned)(v < 0 ? -v : v));
+        int sym = run << 4 | n;
+        PUT(((uint64_t)ac->code[sym] << n) | ((uint32_t)(v < 0 ? v - 1 : v) & ((1u << n) - 1)), ac->size[sym] + n);
+        prev = k;
+        m &= m - 1;
     }
-    if (last < 63)
-        emit(e, ac, 0x00);
+    if (prev < 63)
+        PUT(ac->code[0x00], ac->size[0x00]);
+#undef PUT
+    e->pos = (size_t)(out - e->buf);
+    e->acc = acc;
+    e->cnt = cnt;
 }
 
 /* ------------------------------------------------------------------ sequential */
@@ -349,71 +418,109 @@ static int slots_needed(const Enc *e)
     return n;
 }
 
-static void sequential_pass(Enc *e)
+/* one scan of the blocks of the components ci, which is all of them in the order of the MCUs or only one. */
+static void sequential_pass(Enc *e, const int *ci, int ns)
 {
-    uint32_t mcu = 0;
+    uint32_t count = 0;
     e->rst_next = 0;
     for (int i = 0; i < e->ncomp; i++)
         e->comp[i].pred = 0;
+    if (ns == 1 && e->ncomp > 1) {
+        EncComp *c = &e->comp[ci[0]];
+        for (uint32_t by = 0; by < c->cbh; by++) {
+            for (uint32_t bx = 0; bx < c->cbw; bx++, count++) {
+                if (e->restart && count && count % e->restart == 0) {
+                    restart_marker(e);
+                    c->pred = 0;
+                }
+                const int16_t *blk = block_of(e, c, 0, bx, by);
+                if (e->counting)
+                    count_block_sequential(&e->dc[c->cls], &e->ac[c->cls], &c->pred, blk);
+                else
+                    write_block_sequential(e, &e->dc[c->cls], &e->ac[c->cls], &c->pred, blk);
+            }
+        }
+        return;
+    }
     for (uint32_t mrow = 0; mrow < e->mcuy; mrow++) {
         if (!e->buffered)
             enc_quantize_row(e, mrow);
-        for (uint32_t mx = 0; mx < e->mcux; mx++, mcu++) {
-            if (e->restart && mcu && mcu % e->restart == 0) {
+        for (uint32_t mx = 0; mx < e->mcux; mx++, count++) {
+            if (e->restart && count && count % e->restart == 0) {
                 restart_marker(e);
                 for (int i = 0; i < e->ncomp; i++)
                     e->comp[i].pred = 0;
             }
-            for (int i = 0; i < e->ncomp; i++) {
-                EncComp *c = &e->comp[i];
-                for (int v = 0; v < c->v; v++)
-                    for (int h = 0; h < c->h; h++)
-                        code_block_sequential(e, &e->dc[c->cls], &e->ac[c->cls], &c->pred,
-                                              block_of(e, c, mrow, mx * (uint32_t)c->h + (uint32_t)h,
-                                                       mrow * (uint32_t)c->v + (uint32_t)v));
+            for (int i = 0; i < ns; i++) {
+                EncComp *c = &e->comp[ci[i]];
+                for (int v = 0; v < c->v; v++) {
+                    for (int h = 0; h < c->h; h++) {
+                        const int16_t *blk = block_of(e, c, mrow, mx * (uint32_t)c->h + (uint32_t)h,
+                                                      mrow * (uint32_t)c->v + (uint32_t)v);
+                        if (e->counting)
+                            count_block_sequential(&e->dc[c->cls], &e->ac[c->cls], &c->pred, blk);
+                        else
+                            write_block_sequential(e, &e->dc[c->cls], &e->ac[c->cls], &c->pred, blk);
+                    }
+                }
             }
         }
     }
 }
 
-int enc_entropy_sequential(Enc *e)
+static int sequential_scan(Enc *e, const int *ci, int ns)
 {
-    int classes = slots_needed(e);
-    int all[4] = {0, 1, 2, 3};
+    bool used[2] = {false, false};
+    for (int i = 0; i < ns; i++)
+        used[e->comp[ci[i]].cls] = true;
     if (e->optimize) {
-        for (int k = 0; k < classes; k++) {
-            huff_slot_clear(&e->dc[k]);
-            huff_slot_clear(&e->ac[k]);
+        for (int k = 0; k < 2; k++) {
+            if (used[k]) {
+                huff_slot_clear(&e->dc[k]);
+                huff_slot_clear(&e->ac[k]);
+            }
         }
         e->counting = true;
-        sequential_pass(e);
+        sequential_pass(e, ci, ns);
         e->counting = false;
-        for (int k = 0; k < classes; k++) {
+    }
+    for (int k = 0; k < 2; k++) {
+        if (!used[k])
+            continue;
+        if (e->optimize) {
             huff_slot_optimal(&e->dc[k]);
             huff_slot_optimal(&e->ac[k]);
-        }
-    } else {
-        for (int k = 0; k < classes; k++) {
+        } else {
             huff_slot_standard(&e->dc[k], &jpeg_std_dc[k]);
             huff_slot_standard(&e->ac[k], &jpeg_std_ac[k]);
         }
-    }
-    for (int k = 0; k < classes; k++) {
         enc_write_dht(e, 0, k, &e->dc[k]);
         enc_write_dht(e, 1, k, &e->ac[k]);
     }
+    write_sos(e, ci, ns, 0, 63, 0, 0, true);
+    e->acc = 0;
+    e->cnt = 0;
+    sequential_pass(e, ci, ns);
+    flush_bits(e);
+    return e->oom ? MIME_JPEG_ERR_NOMEM : 0;
+}
+
+int enc_entropy_sequential(Enc *e)
+{
+    int all[4] = {0, 1, 2, 3};
+    int rc;
     if (e->restart) {
         enc_put_u8(e, 0xFF);
         enc_put_u8(e, M_DRI);
         enc_put_u16(e, 4);
         enc_put_u16(e, e->restart);
     }
-    write_sos(e, all, e->ncomp, 0, 63, 0, 0, true);
-    e->acc = 0;
-    e->cnt = 0;
-    sequential_pass(e);
-    flush_bits(e);
-    return e->oom ? MIME_JPEG_ERR_NOMEM : 0;
+    if (!e->separate)
+        return sequential_scan(e, all, e->ncomp);
+    for (int i = 0; i < e->ncomp; i++)
+        if ((rc = sequential_scan(e, &all[i], 1)))
+            return rc;
+    return 0;
 }
 
 /* ------------------------------------------------------------------ progressive */
@@ -442,7 +549,7 @@ static void ac_first_block(Enc *e, Progress *pg, const int16_t *blk, int ss, int
 {
     int run = 0;
     for (int k = ss; k <= se; k++) {
-        int v = blk[jpeg_zigzag[k]];
+        int v = blk[k];
         unsigned t = (unsigned)(v < 0 ? -v : v) >> al;
         if (!t) {
             run++;
@@ -470,7 +577,7 @@ static void ac_refine_block(Enc *e, Progress *pg, const int16_t *blk, int ss, in
     unsigned mag[64];
     int last_new = -1;
     for (int k = ss; k <= se; k++) {
-        int v = blk[jpeg_zigzag[k]];
+        int v = blk[k];
         mag[k] = (unsigned)(v < 0 ? -v : v) >> al;
         if (mag[k] == 1)
             last_new = k;
@@ -494,7 +601,7 @@ static void ac_refine_block(Enc *e, Progress *pg, const int16_t *blk, int ss, in
         } else {
             flush_eobrun(e, pg);
             emit(e, &e->ac[0], run << 4 | 1);
-            put_bits(e, blk[jpeg_zigzag[k]] < 0 ? 0 : 1, 1);
+            put_bits(e, blk[k] < 0 ? 0 : 1, 1);
             for (unsigned i = 0; i < nb; i++)
                 put_bits(e, bits[i], 1);
             nb = 0;

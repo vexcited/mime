@@ -149,6 +149,7 @@ enum {
 #define MIME_JPEG_ENC_NO_JFIF 0x20u     /* no JFIF segment. */
 #define MIME_JPEG_ENC_GRAYSCALE 0x40u   /* a color source is written as gray. */
 #define MIME_JPEG_ENC_ZIGZAG_QTABLE 0x80u /* the custom tables are in zigzag order. */
+#define MIME_JPEG_ENC_SEPARATE_SCANS 0x100u /* sequential, one scan for each component. */
 
 typedef struct MimeJpegAppSegment {
     int marker; /* 0xe0 to 0xef or 0xfe. */

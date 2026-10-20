@@ -31,42 +31,116 @@ static void *enc_alloc_array(Enc *e, uint64_t count, uint64_t item)
 
 /* ------------------------------------------------------------------ color */
 
-#define Y_R 19595
-#define Y_G 38470
-#define Y_B 7471
-#define CB_R (-11058)
-#define CB_G (-21710)
-#define CR_G (-27439)
-#define CR_B (-5329)
-#define HALF 32768
-#define BIAS_128 ((128 << 16) + 32767)
+/*
+ * the transform of JFIF with 15 bit fractions: Y = 0.299 R + 0.587 G + 0.114 B and the differences of blue and red
+ * from it, halved and centered on 128, so 0.5 (B - Y) / 0.886 and 0.5 (R - Y) / 0.701. the weights of each sum to
+ * the unit, which keeps gray at the same level and 128 for the chroma.
+ */
+#define Y_R 9798
+#define Y_G 19235
+#define Y_B 3735
+#define CB_R (-5529)
+#define CB_G (-10855)
+#define CB_B 16384
+#define CR_R 16384
+#define CR_G (-13720)
+#define CR_B (-2664)
+#define Y_ROUND 16384
+#define C_BIAS ((128 << 15) + 16383)
+
+static inline uint8_t luma_of(int r, int g, int b)
+{
+    return (uint8_t)((Y_R * r + Y_G * g + Y_B * b + Y_ROUND) >> 15);
+}
 
 static inline void rgb_to_ycc(int r, int g, int b, uint8_t *y, uint8_t *cb, uint8_t *cr)
 {
-    *y = (uint8_t)((Y_R * r + Y_G * g + Y_B * b + HALF) >> 16);
-    *cb = (uint8_t)((CB_R * r + CB_G * g + HALF * b + BIAS_128) >> 16);
-    *cr = (uint8_t)((HALF * r + CR_G * g + CR_B * b + BIAS_128) >> 16);
+    *y = luma_of(r, g, b);
+    *cb = (uint8_t)((CB_R * r + CB_G * g + CB_B * b + C_BIAS) >> 15);
+    *cr = (uint8_t)((CR_R * r + CR_G * g + CR_B * b + C_BIAS) >> 15);
 }
+
+#ifdef MIME_JPEG_SSE2
+/* eight samples as 16 bit values. */
+static inline __m128i load8(const uint8_t *p)
+{
+    return _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i *)p), _mm_setzero_si128());
+}
+
+/* four pixels of b, g, r or of b, g, r and another byte, as the channels in 32 bit lanes. */
+static inline void split4(const uint8_t *src, int bpp, __m128i *b, __m128i *g, __m128i *r)
+{
+    __m128i v = _mm_loadu_si128((const __m128i *)src);
+    if (bpp == 3) {
+        const __m128i m0 = _mm_set_epi32(0, 0, 0, 0x00FFFFFF), m1 = _mm_set_epi32(0, 0, 0x00FFFFFF, 0);
+        const __m128i m2 = _mm_set_epi32(0, 0x00FFFFFF, 0, 0), m3 = _mm_set_epi32(0x00FFFFFF, 0, 0, 0);
+        v = _mm_or_si128(_mm_or_si128(_mm_and_si128(v, m0), _mm_and_si128(_mm_slli_si128(v, 1), m1)),
+                         _mm_or_si128(_mm_and_si128(_mm_slli_si128(v, 2), m2), _mm_and_si128(_mm_slli_si128(v, 3), m3)));
+    }
+    const __m128i ff = _mm_set1_epi32(0xFF);
+    *b = _mm_and_si128(v, ff);
+    *g = _mm_and_si128(_mm_srli_epi32(v, 8), ff);
+    *r = _mm_and_si128(_mm_srli_epi32(v, 16), ff);
+}
+
+/* eight pixels to the three planes. the weights of two channels are applied in one multiplication of pairs. */
+static inline void ycc8(const uint8_t *src, int bpp, uint8_t *y, uint8_t *cb, uint8_t *cr)
+{
+    __m128i b0, g0, r0, b1, g1, r1;
+    split4(src, bpp, &b0, &g0, &r0);
+    split4(src + 4 * bpp, bpp, &b1, &g1, &r1);
+    __m128i b = _mm_packs_epi32(b0, b1), g = _mm_packs_epi32(g0, g1), r = _mm_packs_epi32(r0, r1);
+    __m128i rg_lo = _mm_unpacklo_epi16(r, g), rg_hi = _mm_unpackhi_epi16(r, g);
+    __m128i bz_lo = _mm_unpacklo_epi16(b, _mm_set1_epi16(1)), bz_hi = _mm_unpackhi_epi16(b, _mm_set1_epi16(1));
+    const __m128i bias = _mm_set1_epi32(C_BIAS);
+    /* pairs of (r, g) against two weights, and (b, 1) against the weight of blue and the rounding. */
+#define WEIGHTS(wr, wg) _mm_set1_epi32((int)(((uint32_t)(uint16_t)(wg) << 16) | (uint16_t)(wr)))
+    const __m128i krg_y = WEIGHTS(Y_R, Y_G), kb_y = WEIGHTS(Y_B, Y_ROUND);
+    const __m128i krg_cb = WEIGHTS(CB_R, CB_G), kb_cb = WEIGHTS(CB_B, 0);
+    const __m128i krg_cr = WEIGHTS(CR_R, CR_G), kb_cr = WEIGHTS(CR_B, 0);
+#undef WEIGHTS
+    __m128i yl = _mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(rg_lo, krg_y), _mm_madd_epi16(bz_lo, kb_y)), 15);
+    __m128i yh = _mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(rg_hi, krg_y), _mm_madd_epi16(bz_hi, kb_y)), 15);
+    __m128i cbl = _mm_srai_epi32(
+        _mm_add_epi32(_mm_add_epi32(_mm_madd_epi16(rg_lo, krg_cb), _mm_madd_epi16(bz_lo, kb_cb)), bias), 15);
+    __m128i cbh = _mm_srai_epi32(
+        _mm_add_epi32(_mm_add_epi32(_mm_madd_epi16(rg_hi, krg_cb), _mm_madd_epi16(bz_hi, kb_cb)), bias), 15);
+    __m128i crl = _mm_srai_epi32(
+        _mm_add_epi32(_mm_add_epi32(_mm_madd_epi16(rg_lo, krg_cr), _mm_madd_epi16(bz_lo, kb_cr)), bias), 15);
+    __m128i crh = _mm_srai_epi32(
+        _mm_add_epi32(_mm_add_epi32(_mm_madd_epi16(rg_hi, krg_cr), _mm_madd_epi16(bz_hi, kb_cr)), bias), 15);
+    __m128i yy = _mm_packs_epi32(yl, yh), cbv = _mm_packs_epi32(cbl, cbh), crv = _mm_packs_epi32(crl, crh);
+    _mm_storel_epi64((__m128i *)y, _mm_packus_epi16(yy, yy));
+    _mm_storel_epi64((__m128i *)cb, _mm_packus_epi16(cbv, cbv));
+    _mm_storel_epi64((__m128i *)cr, _mm_packus_epi16(crv, crv));
+}
+#endif
 
 /* one row of pixels to the planes of the components. */
 static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, uint32_t w)
 {
     int bpp = e->format == MIME_JPEG_PIXEL_BGR24 ? 3 : 4;
+    uint32_t x = 0;
     switch (e->mode) {
     case MODE_GRAY:
         if (e->format == MIME_JPEG_PIXEL_GRAY8) {
             __builtin_memcpy(dst[0], src, w);
         } else {
-            for (uint32_t x = 0; x < w; x++, src += bpp)
-                dst[0][x] = (uint8_t)((Y_R * src[2] + Y_G * src[1] + Y_B * src[0] + HALF) >> 16);
+            for (; x < w; x++, src += bpp)
+                dst[0][x] = luma_of(src[2], src[1], src[0]);
         }
         break;
     case MODE_YCC:
-        for (uint32_t x = 0; x < w; x++, src += bpp)
+#ifdef MIME_JPEG_SSE2
+        /* three byte pixels are read four bytes at a time, so a few pixels are left to the code below. */
+        for (; x + 10 <= w; x += 8, src += 8 * bpp)
+            ycc8(src, bpp, &dst[0][x], &dst[1][x], &dst[2][x]);
+#endif
+        for (; x < w; x++, src += bpp)
             rgb_to_ycc(src[2], src[1], src[0], &dst[0][x], &dst[1][x], &dst[2][x]);
         break;
     case MODE_RGB:
-        for (uint32_t x = 0; x < w; x++, src += bpp) {
+        for (; x < w; x++, src += bpp) {
             dst[0][x] = src[2];
             dst[1][x] = src[1];
             dst[2][x] = src[0];
@@ -74,7 +148,7 @@ static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, u
         break;
     case MODE_CMYK:
         /* the files hold the inverted values, 255 is no ink. */
-        for (uint32_t x = 0; x < w; x++, src += 4) {
+        for (; x < w; x++, src += 4) {
             dst[0][x] = (uint8_t)(255 - src[0]);
             dst[1][x] = (uint8_t)(255 - src[1]);
             dst[2][x] = (uint8_t)(255 - src[2]);
@@ -82,7 +156,7 @@ static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, u
         }
         break;
     default:
-        for (uint32_t x = 0; x < w; x++, src += 4) {
+        for (; x < w; x++, src += 4) {
             rgb_to_ycc(src[0], src[1], src[2], &dst[0][x], &dst[1][x], &dst[2][x]);
             dst[3][x] = (uint8_t)(255 - src[3]);
         }
@@ -99,7 +173,31 @@ static void downsample(const uint8_t *src, size_t src_stride, uint8_t *dst, size
         shift++;
     int round = (fx * fy) >> 1;
     for (uint32_t y = 0; y < out_h; y++) {
-        for (uint32_t x = 0; x < out_w; x++) {
+        uint32_t x = 0;
+#ifdef MIME_JPEG_SSE2
+        /* the usual halvings, eight samples at a time; the widths are multiples of eight. */
+        if (fx <= 2 && fy <= 2) {
+            const uint8_t *r0 = src + (size_t)(y * (uint32_t)fy) * src_stride;
+            const uint8_t *r1 = fy == 2 ? r0 + src_stride : r0;
+            const __m128i low = _mm_set1_epi16(0x00FF), rnd = _mm_set1_epi16((short)round);
+            for (; x + 8 <= out_w; x += 8) {
+                __m128i sum;
+                if (fx == 2) {
+                    __m128i a = _mm_loadu_si128((const __m128i *)(r0 + 2 * x));
+                    sum = _mm_add_epi16(_mm_and_si128(a, low), _mm_srli_epi16(a, 8));
+                    if (fy == 2) {
+                        __m128i b = _mm_loadu_si128((const __m128i *)(r1 + 2 * x));
+                        sum = _mm_add_epi16(sum, _mm_add_epi16(_mm_and_si128(b, low), _mm_srli_epi16(b, 8)));
+                    }
+                } else {
+                    sum = _mm_add_epi16(load8(r0 + x), load8(r1 + x));
+                }
+                sum = _mm_srli_epi16(_mm_add_epi16(sum, rnd), shift);
+                _mm_storel_epi64((__m128i *)(dst + y * dst_stride + x), _mm_packus_epi16(sum, sum));
+            }
+        }
+#endif
+        for (; x < out_w; x++) {
             int sum = 0;
             for (int dy = 0; dy < fy; dy++) {
                 const uint8_t *p = src + (size_t)(y * (uint32_t)fy + (uint32_t)dy) * src_stride + x * (uint32_t)fx;
@@ -138,9 +236,14 @@ void enc_quantize_row(Enc *e, uint32_t mrow)
         }
         for (int by = 0; by < c->v; by++) {
             uint32_t row = e->buffered ? mrow * (uint32_t)c->v + (uint32_t)by : (uint32_t)by;
-            for (uint32_t bx = 0; bx < c->bw; bx++)
+            for (uint32_t bx = 0; bx < c->bw; bx++) {
+                int16_t natural[64], *zz = c->blocks + ((size_t)row * c->bw + bx) * 64;
                 jpeg_fdct_quant(e->sub[i] + (size_t)by * 8 * e->sub_stride[i] + bx * 8, e->sub_stride[i],
-                                e->invq[c->tq], c->blocks + ((size_t)row * c->bw + bx) * 64);
+                                e->invq[c->tq], natural);
+                /* the blocks are kept in the order they are coded in. */
+                for (int k = 0; k < 64; k++)
+                    zz[k] = natural[jpeg_zigzag[k]];
+            }
         }
     }
 }
@@ -265,7 +368,8 @@ static int setup(Enc *e, const MimeJpegEncodeParams *p)
     e->mcuy = jpeg_ceil_div(e->height, 8u * (uint32_t)e->vmax);
     e->progressive = (p->flags & MIME_JPEG_ENC_PROGRESSIVE) != 0;
     e->optimize = e->progressive || (p->flags & MIME_JPEG_ENC_OPTIMIZE);
-    e->buffered = e->optimize;
+    e->separate = !e->progressive && (p->flags & MIME_JPEG_ENC_SEPARATE_SCANS);
+    e->buffered = e->optimize || e->separate;
     e->baseline = (p->flags & MIME_JPEG_ENC_BASELINE) != 0;
     e->restart = p->restart_interval;
 

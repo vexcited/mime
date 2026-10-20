@@ -44,26 +44,85 @@ static void plan_axis(uint32_t x, uint32_t num, uint32_t den, uint32_t limit, bo
     *frac = (uint8_t)((pos >> 8) & 255);
 }
 
-/* each sample of the row gives two pixels: three quarters of itself and a quarter of the neighbor on that side. */
-static void line_h2v1(const uint8_t *in, uint32_t cw, uint8_t *out, uint32_t w)
+#ifdef MIME_JPEG_SSE2
+/* eight samples as 16 bit values. */
+static inline __m128i load8(const uint8_t *p)
 {
-    for (uint32_t i = 0; i < cw && 2 * i < w; i++) {
-        int c = in[i], p = in[i ? i - 1 : 0], n = in[i + 1 < cw ? i + 1 : cw - 1];
-        out[2 * i] = (uint8_t)((3 * c + p + 1) >> 2);
-        if (2 * i + 1 < w)
-            out[2 * i + 1] = (uint8_t)((3 * c + n + 2) >> 2);
-    }
+    return _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i *)p), _mm_setzero_si128());
+}
+#endif
+
+/* each sample of the row gives two pixels: three quarters of itself and a quarter of the neighbor on that side. */
+static inline void h2v1_pair(const uint8_t *in, uint32_t cw, uint8_t *out, uint32_t w, uint32_t i)
+{
+    int c = in[i], p = in[i ? i - 1 : 0], n = in[i + 1 < cw ? i + 1 : cw - 1];
+    out[2 * i] = (uint8_t)((3 * c + p + 1) >> 2);
+    if (2 * i + 1 < w)
+        out[2 * i + 1] = (uint8_t)((3 * c + n + 2) >> 2);
 }
 
-/* the vertical sums 3 * near + far of two rows, then the same triangle over them: sixteenths in all. */
+static void line_h2v1(const uint8_t *in, uint32_t cw, uint8_t *out, uint32_t w)
+{
+    uint32_t i = 0;
+#ifdef MIME_JPEG_SSE2
+    if (cw >= 10 && w >= 18) {
+        const __m128i three = _mm_set1_epi16(3), one = _mm_set1_epi16(1), two = _mm_set1_epi16(2);
+        h2v1_pair(in, cw, out, w, 0);
+        for (i = 1; i + 9 <= cw && 2 * i + 16 <= w; i += 8) {
+            __m128i c3 = _mm_mullo_epi16(load8(in + i), three);
+            __m128i even = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(c3, load8(in + i - 1)), one), 2);
+            __m128i odd = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(c3, load8(in + i + 1)), two), 2);
+            _mm_storeu_si128((__m128i *)(out + 2 * i),
+                             _mm_unpacklo_epi8(_mm_packus_epi16(even, even), _mm_packus_epi16(odd, odd)));
+        }
+    }
+#endif
+    for (; i < cw && 2 * i < w; i++)
+        h2v1_pair(in, cw, out, w, i);
+}
+
+/* the vertical sums 3 * near + far of two rows. */
+static void vertical_sums(const uint8_t *near, const uint8_t *far, uint16_t *sum, uint32_t n)
+{
+    uint32_t i = 0;
+#ifdef MIME_JPEG_SSE2
+    for (; i + 8 <= n; i += 8)
+        _mm_storeu_si128((__m128i *)(sum + i),
+                         _mm_add_epi16(_mm_mullo_epi16(load8(near + i), _mm_set1_epi16(3)), load8(far + i)));
+#endif
+    for (; i < n; i++)
+        sum[i] = (uint16_t)(3 * near[i] + far[i]);
+}
+
+static inline void h2v2_pair(const uint16_t *sum, uint32_t cw, uint8_t *out, uint32_t w, uint32_t i)
+{
+    int c = sum[i], p = sum[i ? i - 1 : 0], n = sum[i + 1 < cw ? i + 1 : cw - 1];
+    out[2 * i] = (uint8_t)((3 * c + p + 8) >> 4);
+    if (2 * i + 1 < w)
+        out[2 * i + 1] = (uint8_t)((3 * c + n + 7) >> 4);
+}
+
+/* the same triangle over the sums: sixteenths in all. */
 static void line_h2v2(const uint16_t *sum, uint32_t cw, uint8_t *out, uint32_t w)
 {
-    for (uint32_t i = 0; i < cw && 2 * i < w; i++) {
-        int c = sum[i], p = sum[i ? i - 1 : 0], n = sum[i + 1 < cw ? i + 1 : cw - 1];
-        out[2 * i] = (uint8_t)((3 * c + p + 8) >> 4);
-        if (2 * i + 1 < w)
-            out[2 * i + 1] = (uint8_t)((3 * c + n + 7) >> 4);
+    uint32_t i = 0;
+#ifdef MIME_JPEG_SSE2
+    if (cw >= 10 && w >= 18) {
+        const __m128i three = _mm_set1_epi16(3), eight = _mm_set1_epi16(8), seven = _mm_set1_epi16(7);
+        h2v2_pair(sum, cw, out, w, 0);
+        for (i = 1; i + 9 <= cw && 2 * i + 16 <= w; i += 8) {
+            __m128i c3 = _mm_mullo_epi16(_mm_loadu_si128((const __m128i *)(sum + i)), three);
+            __m128i even = _mm_srli_epi16(
+                _mm_add_epi16(_mm_add_epi16(c3, _mm_loadu_si128((const __m128i *)(sum + i - 1))), eight), 4);
+            __m128i odd = _mm_srli_epi16(
+                _mm_add_epi16(_mm_add_epi16(c3, _mm_loadu_si128((const __m128i *)(sum + i + 1))), seven), 4);
+            _mm_storeu_si128((__m128i *)(out + 2 * i),
+                             _mm_unpacklo_epi8(_mm_packus_epi16(even, even), _mm_packus_epi16(odd, odd)));
+        }
     }
+#endif
+    for (; i < cw && 2 * i < w; i++)
+        h2v2_pair(sum, cw, out, w, i);
 }
 
 static const uint8_t *plane_row(const JpegComp *c, uint32_t r)
@@ -93,8 +152,7 @@ static void make_line(Jpeg *j, Line *ln, uint32_t y, uint16_t *sum, bool fancy)
             for (uint32_t x = 0; x < w; x++)
                 ln->buf[x] = (uint8_t)((3 * a[x] + b[x] + 2) >> 2);
         } else {
-            for (uint32_t i = 0; i < c->cw; i++)
-                sum[i] = (uint16_t)(3 * a[i] + b[i]);
+            vertical_sums(a, b, sum, c->cw);
             line_h2v2(sum, c->cw, ln->buf, w);
         }
         break;
@@ -124,18 +182,69 @@ static inline uint8_t clamp_u8(int v)
     return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
 }
 
-#define K_CR_R 91881  /* 1.402 */
-#define K_CB_B 116130 /* 1.772 */
-#define K_CR_G 46802  /* 0.714136 */
-#define K_CB_G 22554  /* 0.344136 */
+/*
+ * the transform of JFIF with 14 bit fractions: R = Y + 1.402 (Cr - 128), B = Y + 1.772 (Cb - 128) and
+ * G = Y - 0.344136 (Cb - 128) - 0.714136 (Cr - 128), rounded to the nearest. each product fits in 16 bits by 16 bits,
+ * so the vector code adds the pairs of products in one step.
+ */
+#define K_CR_R 22970
+#define K_CB_B 29032
+#define K_CB_G 5638
+#define K_CR_G 11700
+#define K_ROUND (1 << 13)
+
+static inline int red_offset(int v) { return (K_CR_R * v + K_ROUND) >> 14; }
+static inline int blue_offset(int u) { return (K_CB_B * u + K_ROUND) >> 14; }
+static inline int green_offset(int u, int v) { return (K_ROUND - K_CB_G * u - K_CR_G * v) >> 14; }
+
+#ifdef MIME_JPEG_SSE2
+/* four pixels of b, g, r and a spare byte to twelve bytes of b, g, r. */
+static inline void store_bgr4(uint8_t *out, __m128i p)
+{
+    const __m128i m0 = _mm_set_epi32(0, 0, 0, 0x00FFFFFF);
+    const __m128i m1 = _mm_set_epi32(0, 0, 0x0000FFFF, (int)0xFF000000u);
+    const __m128i m2 = _mm_set_epi32(0, 0x000000FF, (int)0xFFFF0000u, 0);
+    const __m128i m3 = _mm_set_epi32(0, (int)0xFFFFFF00u, 0, 0);
+    __m128i t = _mm_or_si128(_mm_or_si128(_mm_and_si128(p, m0), _mm_and_si128(_mm_srli_si128(p, 1), m1)),
+                             _mm_or_si128(_mm_and_si128(_mm_srli_si128(p, 2), m2), _mm_and_si128(_mm_srli_si128(p, 3), m3)));
+    _mm_storel_epi64((__m128i *)out, t);
+    int tail = _mm_cvtsi128_si32(_mm_srli_si128(t, 8));
+    __builtin_memcpy(out + 8, &tail, 4);
+}
+#endif
 
 static void ycc_to_bgr(const uint8_t *y, const uint8_t *cb, const uint8_t *cr, uint8_t *out, uint32_t w)
 {
-    for (uint32_t x = 0; x < w; x++) {
+    uint32_t x = 0;
+#ifdef MIME_JPEG_SSE2
+    const __m128i zero = _mm_setzero_si128(), c128 = _mm_set1_epi16(128), round = _mm_set1_epi32(K_ROUND);
+    /* a pair of (Cb - 128, Cr - 128) against a pair of weights, summed. */
+    const __m128i kr = _mm_set1_epi32((int)((uint32_t)K_CR_R << 16));
+    const __m128i kb = _mm_set1_epi32(K_CB_B);
+    const __m128i kg = _mm_set1_epi32((int)(((uint32_t)(uint16_t)-K_CR_G << 16) | (uint16_t)-K_CB_G));
+    for (; x + 8 <= w; x += 8) {
+        __m128i luma = load8(y + x);
+        __m128i u = _mm_sub_epi16(load8(cb + x), c128), v = _mm_sub_epi16(load8(cr + x), c128);
+        __m128i uv0 = _mm_unpacklo_epi16(u, v), uv1 = _mm_unpackhi_epi16(u, v);
+        __m128i ro = _mm_packs_epi32(_mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(uv0, kr), round), 14),
+                                     _mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(uv1, kr), round), 14));
+        __m128i bo = _mm_packs_epi32(_mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(uv0, kb), round), 14),
+                                     _mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(uv1, kb), round), 14));
+        __m128i go = _mm_packs_epi32(_mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(uv0, kg), round), 14),
+                                     _mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(uv1, kg), round), 14));
+        __m128i r = _mm_packus_epi16(_mm_add_epi16(luma, ro), zero);
+        __m128i g = _mm_packus_epi16(_mm_add_epi16(luma, go), zero);
+        __m128i b = _mm_packus_epi16(_mm_add_epi16(luma, bo), zero);
+        __m128i bg = _mm_unpacklo_epi8(b, g), rr = _mm_unpacklo_epi8(r, r);
+        store_bgr4(out + 3 * x, _mm_unpacklo_epi16(bg, rr));
+        store_bgr4(out + 3 * x + 12, _mm_unpackhi_epi16(bg, rr));
+    }
+#endif
+    for (; x < w; x++) {
         int yy = y[x], u = cb[x] - 128, v = cr[x] - 128;
-        out[3 * x] = clamp_u8(yy + ((K_CB_B * u + 32768) >> 16));
-        out[3 * x + 1] = clamp_u8(yy - ((K_CB_G * u + K_CR_G * v + 32768) >> 16));
-        out[3 * x + 2] = clamp_u8(yy + ((K_CR_R * v + 32768) >> 16));
+        out[3 * x] = clamp_u8(yy + blue_offset(u));
+        out[3 * x + 1] = clamp_u8(yy + green_offset(u, v));
+        out[3 * x + 2] = clamp_u8(yy + red_offset(v));
     }
 }
 
@@ -175,9 +284,9 @@ static void convert_row(Jpeg *j, int cs, Line *ln, uint8_t *out)
         } else if (cs == MIME_JPEG_CS_YCCK) {
             for (uint32_t x = 0; x < w; x++) {
                 int yy = l0[x], u = l1[x] - 128, v = l2[x] - 128;
-                out[4 * x] = clamp_u8(yy + ((K_CR_R * v + 32768) >> 16));
-                out[4 * x + 1] = clamp_u8(yy - ((K_CB_G * u + K_CR_G * v + 32768) >> 16));
-                out[4 * x + 2] = clamp_u8(yy + ((K_CB_B * u + 32768) >> 16));
+                out[4 * x] = clamp_u8(yy + red_offset(v));
+                out[4 * x + 1] = clamp_u8(yy + green_offset(u, v));
+                out[4 * x + 2] = clamp_u8(yy + blue_offset(u));
                 out[4 * x + 3] = (uint8_t)(255 - l3[x]);
             }
         } else {

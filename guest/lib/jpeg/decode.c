@@ -517,10 +517,11 @@ int jpeg_color_space(const Jpeg *j)
     if (j->ncomp == 1)
         return MIME_JPEG_CS_GRAY;
     if (j->ncomp == 3) {
-        if (j->adobe)
-            return j->adobe_transform == 0 ? MIME_JPEG_CS_RGB : MIME_JPEG_CS_YCBCR;
+        /* a JFIF segment means YCbCr, whatever else the file says, which is how the files in use are read. */
         if (j->jfif)
             return MIME_JPEG_CS_YCBCR;
+        if (j->adobe)
+            return j->adobe_transform == 0 ? MIME_JPEG_CS_RGB : MIME_JPEG_CS_YCBCR;
         if (j->comp[0].id == 'R' && j->comp[1].id == 'G' && j->comp[2].id == 'B')
             return MIME_JPEG_CS_RGB;
         return MIME_JPEG_CS_YCBCR;
