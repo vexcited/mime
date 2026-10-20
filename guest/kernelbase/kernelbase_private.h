@@ -68,6 +68,8 @@ PSTR KbWideToAnsi(LPCWSTR s);
 DWORD KbWideResultToAnsi(LPCWSTR wide, LPSTR buffer, DWORD size);
 
 /* named objects: builds attributes rooted in the session namespace. */
+HANDLE KbNamedObjectRoot(void);
+HANDLE KbPrivateNamespaceLookup(LPCWSTR *name);
 BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR name, BOOL inherit,
                              const SECURITY_ATTRIBUTES *sa);
 

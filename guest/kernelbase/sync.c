@@ -3,6 +3,7 @@
  * implemented by ntdll.
  */
 #include "kernelbase_private.h"
+#include <mime/ntrtlsec.h>
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -786,4 +787,268 @@ LONG64 WINAPI KbInterlockedCompareExchange64(LONG64 volatile *p, LONG64 exchange
 {
     __atomic_compare_exchange_n(p, &comparand, exchange, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     return comparand;
+}
+
+/* ------------------------------------------------------------------ private namespaces */
+
+/*
+ * a boundary descriptor is a name and the sids a token must hold, and a private namespace is the directory of the
+ * kernel that the descriptor names, with an alias that the creator gives it: a name of an object that begins with the
+ * alias and a backslash is looked up in that directory. The directory lies in the base named objects of the session and
+ * lives as long as a handle of it does. The sids make part of what the directory is called, so that other sids are another
+ * namespace, but whether the token holds them is not asked (a guess: a program that names a group it is not in would get
+ * ERROR_ACCESS_DENIED on windows).
+ */
+#define KB_BOUNDARY_MAGIC 0x444E4F42u /* BOND */
+#define KB_NAMESPACE_ALIASES 32
+
+typedef struct KB_BOUNDARY {
+    ULONG Magic, Flags, SidCount, Capacity;
+    PSID *Sids;
+    WCHAR Name[1];
+} KB_BOUNDARY;
+
+typedef struct KB_NAMESPACE_ALIAS {
+    WCHAR Alias[64];
+    HANDLE Directory;
+} KB_NAMESPACE_ALIAS;
+
+static SRWLOCK g_namespace_lock = SRWLOCK_INIT;
+static KB_NAMESPACE_ALIAS g_namespaces[KB_NAMESPACE_ALIASES];
+
+HANDLE KbPrivateNamespaceLookup(LPCWSTR *name)
+{
+    LPCWSTR slash = wcschr(*name, L'\\');
+    if (!slash || slash == *name)
+        return nullptr;
+    SIZE_T length = (SIZE_T)(slash - *name);
+    HANDLE found = nullptr;
+    AcquireSRWLockShared(&g_namespace_lock);
+    for (ULONG i = 0; i < KB_NAMESPACE_ALIASES && !found; i++) {
+        if (g_namespaces[i].Directory && wcslen(g_namespaces[i].Alias) == length &&
+            !_wcsnicmp(g_namespaces[i].Alias, *name, length))
+            found = g_namespaces[i].Directory;
+    }
+    ReleaseSRWLockShared(&g_namespace_lock);
+    if (found)
+        *name = slash + 1;
+    return found;
+}
+
+HANDLE WINAPI CreateBoundaryDescriptorW(LPCWSTR name, ULONG flags)
+{
+    if (!name || !*name || flags) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    SIZE_T length = wcslen(name);
+    KB_BOUNDARY *boundary = KbAllocZero(sizeof(*boundary) + length * sizeof(WCHAR));
+    if (!boundary) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return nullptr;
+    }
+    boundary->Magic = KB_BOUNDARY_MAGIC;
+    boundary->Flags = flags;
+    wcscpy(boundary->Name, name);
+    return boundary;
+}
+
+HANDLE WINAPI CreateBoundaryDescriptorA(LPCSTR name, ULONG flags)
+{
+    PWSTR wide = name ? KbAnsiToWide(name) : nullptr;
+    if (!wide) {
+        KbSetError(name ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    HANDLE boundary = CreateBoundaryDescriptorW(wide, flags);
+    KbFree(wide);
+    return boundary;
+}
+
+static KB_BOUNDARY *boundary_of(HANDLE handle)
+{
+    KB_BOUNDARY *boundary = handle;
+    return boundary && boundary->Magic == KB_BOUNDARY_MAGIC ? boundary : nullptr;
+}
+
+BOOL WINAPI AddSIDToBoundaryDescriptor(HANDLE *descriptor, PSID sid)
+{
+    KB_BOUNDARY *boundary = descriptor ? boundary_of(*descriptor) : nullptr;
+    if (!boundary || !sid || !RtlValidSid(sid)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ULONG length = RtlLengthSid(sid);
+    PSID copy = KbAlloc(length);
+    if (!copy) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memcpy(copy, sid, length);
+    if (boundary->SidCount == boundary->Capacity) {
+        ULONG capacity = boundary->Capacity ? boundary->Capacity * 2 : 4;
+        PSID *grown = KbAlloc(capacity * sizeof(PSID));
+        if (!grown) {
+            KbFree(copy);
+            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        if (boundary->SidCount)
+            memcpy(grown, boundary->Sids, boundary->SidCount * sizeof(PSID));
+        KbFree(boundary->Sids);
+        boundary->Sids = grown;
+        boundary->Capacity = capacity;
+    }
+    boundary->Sids[boundary->SidCount++] = copy;
+    return TRUE;
+}
+
+BOOL WINAPI AddIntegrityLabelToBoundaryDescriptor(HANDLE *descriptor, PSID label)
+{
+    return AddSIDToBoundaryDescriptor(descriptor, label);
+}
+
+VOID WINAPI DeleteBoundaryDescriptor(HANDLE descriptor)
+{
+    KB_BOUNDARY *boundary = boundary_of(descriptor);
+    if (!boundary)
+        return;
+    for (ULONG i = 0; i < boundary->SidCount; i++)
+        KbFree(boundary->Sids[i]);
+    KbFree(boundary->Sids);
+    boundary->Magic = 0;
+    KbFree(boundary);
+}
+
+/* the name of the directory: the name of the descriptor with the bytes of its sids, in characters a name allows. */
+static BOOL namespace_directory_name(KB_BOUNDARY *boundary, WCHAR *out, SIZE_T capacity)
+{
+    SIZE_T length = 0;
+    static const WCHAR prefix[] = L"PrivateNamespace.";
+    static const WCHAR digits[] = L"0123456789ABCDEF";
+    SIZE_T need = wcslen(prefix) + wcslen(boundary->Name) + 1;
+    for (ULONG i = 0; i < boundary->SidCount; i++)
+        need += 1 + 2 * (SIZE_T)RtlLengthSid(boundary->Sids[i]);
+    if (need > capacity)
+        return FALSE;
+    wcscpy(out, prefix);
+    length = wcslen(out);
+    for (const WCHAR *c = boundary->Name; *c; c++)
+        out[length++] = *c == L'\\' ? L'/' : *c;
+    for (ULONG i = 0; i < boundary->SidCount; i++) {
+        out[length++] = L'.';
+        const UCHAR *bytes = boundary->Sids[i];
+        for (ULONG j = 0, n = RtlLengthSid(boundary->Sids[i]); j < n; j++) {
+            out[length++] = digits[bytes[j] >> 4];
+            out[length++] = digits[bytes[j] & 15];
+        }
+    }
+    out[length] = 0;
+    return TRUE;
+}
+
+static HANDLE open_namespace(HANDLE descriptor, LPCWSTR alias, BOOL create, const SECURITY_ATTRIBUTES *sa)
+{
+    KB_BOUNDARY *boundary = boundary_of(descriptor);
+    if (!boundary || !alias || !*alias || wcslen(alias) >= RTL_NUMBER_OF(g_namespaces[0].Alias) || wcschr(alias, L'\\')) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    WCHAR directory[512];
+    if (!namespace_directory_name(boundary, directory, RTL_NUMBER_OF(directory))) {
+        KbSetError(ERROR_FILENAME_EXCED_RANGE);
+        return nullptr;
+    }
+    UNICODE_STRING us;
+    OBJECT_ATTRIBUTES oa;
+    RtlInitUnicodeString(&us, directory);
+    InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE, KbNamedObjectRoot(), sa ? sa->lpSecurityDescriptor : nullptr);
+    if (!oa.RootDirectory) {
+        KbSetError(ERROR_PATH_NOT_FOUND);
+        return nullptr;
+    }
+    HANDLE handle = nullptr;
+    ACCESS_MASK access = DIRECTORY_QUERY | DIRECTORY_TRAVERSE | DIRECTORY_CREATE_OBJECT | DIRECTORY_CREATE_SUBDIRECTORY |
+                         DELETE;
+    NTSTATUS status = create ? NtCreateDirectoryObject(&handle, access, &oa) : NtOpenDirectoryObject(&handle, access, &oa);
+    if (create && status == STATUS_OBJECT_NAME_COLLISION) {
+        KbSetError(ERROR_ALREADY_EXISTS);
+        return nullptr;
+    }
+    if (!NT_SUCCESS(status)) {
+        if (!create && (status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND))
+            KbSetError(ERROR_FILE_NOT_FOUND);
+        else
+            KbSetStatus(status);
+        return nullptr;
+    }
+    BOOL placed = FALSE, duplicate = FALSE;
+    AcquireSRWLockExclusive(&g_namespace_lock);
+    for (ULONG i = 0; i < KB_NAMESPACE_ALIASES; i++)
+        duplicate |= g_namespaces[i].Directory && !_wcsicmp(g_namespaces[i].Alias, alias);
+    for (ULONG i = 0; i < KB_NAMESPACE_ALIASES && !duplicate && !placed; i++) {
+        if (g_namespaces[i].Directory)
+            continue;
+        wcscpy(g_namespaces[i].Alias, alias);
+        g_namespaces[i].Directory = handle;
+        placed = TRUE;
+    }
+    ReleaseSRWLockExclusive(&g_namespace_lock);
+    if (!placed) {
+        NtClose(handle);
+        KbSetError(duplicate ? ERROR_ALREADY_EXISTS : ERROR_NOT_ENOUGH_MEMORY);
+        return nullptr;
+    }
+    return handle;
+}
+
+HANDLE WINAPI CreatePrivateNamespaceW(LPSECURITY_ATTRIBUTES sa, LPVOID descriptor, LPCWSTR alias)
+{
+    return open_namespace(descriptor, alias, TRUE, sa);
+}
+
+HANDLE WINAPI OpenPrivateNamespaceW(LPVOID descriptor, LPCWSTR alias)
+{
+    return open_namespace(descriptor, alias, FALSE, nullptr);
+}
+
+HANDLE WINAPI CreatePrivateNamespaceA(LPSECURITY_ATTRIBUTES sa, LPVOID descriptor, LPCSTR alias)
+{
+    PWSTR wide = alias ? KbAnsiToWide(alias) : nullptr;
+    if (!wide) {
+        KbSetError(alias ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    HANDLE handle = CreatePrivateNamespaceW(sa, descriptor, wide);
+    KbFree(wide);
+    return handle;
+}
+
+HANDLE WINAPI OpenPrivateNamespaceA(LPVOID descriptor, LPCSTR alias)
+{
+    PWSTR wide = alias ? KbAnsiToWide(alias) : nullptr;
+    if (!wide) {
+        KbSetError(alias ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    HANDLE handle = OpenPrivateNamespaceW(descriptor, wide);
+    KbFree(wide);
+    return handle;
+}
+
+BOOLEAN WINAPI ClosePrivateNamespace(HANDLE handle, ULONG flags)
+{
+    if (flags & ~1u) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    AcquireSRWLockExclusive(&g_namespace_lock);
+    for (ULONG i = 0; i < KB_NAMESPACE_ALIASES; i++)
+        if (g_namespaces[i].Directory == handle)
+            g_namespaces[i].Directory = nullptr;
+    ReleaseSRWLockExclusive(&g_namespace_lock);
+    NTSTATUS status = NtClose(handle);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    return TRUE;
 }

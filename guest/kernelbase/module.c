@@ -693,10 +693,11 @@ DWORD WINAPI K32GetModuleFileNameExA(HANDLE process, HMODULE module, LPSTR name,
     return (DWORD)got - 1;
 }
 
-static BOOL process_image_name(HANDLE process, PWSTR out, DWORD *chars)
+static BOOL process_image_name(HANDLE process, PWSTR out, DWORD *chars, BOOL native)
 {
     UCHAR buf[sizeof(UNICODE_STRING) + MAX_PATH * 4 * sizeof(WCHAR)];
-    NTSTATUS status = NtQueryInformationProcess(process, ProcessImageFileNameWin32, buf, sizeof(buf), nullptr);
+    NTSTATUS status = NtQueryInformationProcess(process, native ? ProcessImageFileName : ProcessImageFileNameWin32, buf,
+                                                sizeof(buf), nullptr);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     UNICODE_STRING *us = (UNICODE_STRING *)buf;
@@ -714,7 +715,7 @@ static BOOL process_image_name(HANDLE process, PWSTR out, DWORD *chars)
 DWORD WINAPI K32GetProcessImageFileNameW(HANDLE process, LPWSTR name, DWORD size)
 {
     DWORD chars = size;
-    if (!process_image_name(process, name, &chars))
+    if (!process_image_name(process, name, &chars, TRUE))
         return 0;
     return chars;
 }
@@ -724,7 +725,7 @@ DWORD WINAPI K32GetProcessImageFileNameA(HANDLE process, LPSTR name, DWORD size)
 {
     WCHAR wide[MAX_PATH * 4];
     DWORD chars = RTL_NUMBER_OF(wide);
-    if (!process_image_name(process, wide, &chars))
+    if (!process_image_name(process, wide, &chars, TRUE))
         return 0;
     DWORD got = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, wide, (int)chars, name, (int)size, nullptr, nullptr);
     if (got && got < size)
@@ -738,7 +739,7 @@ BOOL WINAPI QueryFullProcessImageNameW(HANDLE process, DWORD flags, LPWSTR name,
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return process_image_name(process, name, size);
+    return process_image_name(process, name, size, (flags & 1) != 0);
 }
 
 BOOL WINAPI QueryFullProcessImageNameA(HANDLE process, DWORD flags, LPSTR name, PDWORD size)
@@ -749,7 +750,7 @@ BOOL WINAPI QueryFullProcessImageNameA(HANDLE process, DWORD flags, LPSTR name, 
     }
     WCHAR w[MAX_PATH * 4];
     DWORD chars = RTL_NUMBER_OF(w);
-    if (!process_image_name(process, w, &chars))
+    if (!process_image_name(process, w, &chars, (flags & 1) != 0))
         return FALSE;
     int need = WideCharToMultiByte(CP_ACP, 0, w, -1, nullptr, 0, nullptr, nullptr);
     if ((DWORD)need > *size) {

@@ -514,12 +514,24 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     case ProcessImageFileName:
     case ProcessImageFileNameWin32: {
         UNICODE_STRING *us = (UNICODE_STRING *)out.bytes;
+        PUCHAR text = out.bytes + sizeof(UNICODE_STRING);
+        const WCHAR *path = process->ImagePath.Buffer;
         ULONG n = process->ImagePath.Length;
-        us->Length = (USHORT)n;
-        us->MaximumLength = (USHORT)(n + 2);
+        ULONG prefix = 0;
+        /* the plain class names the image by the device that holds it, where the other one has the path of the drive. */
+        if ((ULONG)klass == ProcessImageFileName && n >= 2 * sizeof(WCHAR) && path[1] == L':') {
+            static const WCHAR system_volume[] = L"\\Device\\HarddiskVolume1", host_volume[] = L"\\Device\\HarddiskVolume2";
+            const WCHAR *volume = (path[0] | 0x20) == L'c' ? system_volume : host_volume;
+            prefix = (ULONG)wcslen(volume) * sizeof(WCHAR);
+            memcpy(text, volume, prefix);
+            path += 2;
+            n -= 2 * sizeof(WCHAR);
+        }
+        us->Length = (USHORT)(prefix + n);
+        us->MaximumLength = (USHORT)(prefix + n + 2);
         us->Buffer = (PWSTR)((PUCHAR)info + sizeof(UNICODE_STRING));
-        memcpy(out.bytes + sizeof(UNICODE_STRING), process->ImagePath.Buffer, n);
-        size = sizeof(UNICODE_STRING) + n + 2;
+        memcpy(text + prefix, path, n);
+        size = sizeof(UNICODE_STRING) + prefix + n + 2;
         break;
     }
     default:

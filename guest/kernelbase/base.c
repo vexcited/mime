@@ -166,6 +166,11 @@ static HANDLE named_object_root(void)
     return root;
 }
 
+HANDLE KbNamedObjectRoot(void)
+{
+    return named_object_root();
+}
+
 BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR name, BOOL inherit,
                              const SECURITY_ATTRIBUTES *sa)
 {
@@ -175,11 +180,13 @@ BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR 
     InitializeObjectAttributes(oa, nullptr, attributes, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
     if (!name)
         return TRUE;
-    if (!_wcsnicmp(name, L"Local\\", 6))
+    /* the alias of a private namespace stands for a directory of its own. */
+    HANDLE private_root = KbPrivateNamespaceLookup(&name);
+    if (!private_root && !_wcsnicmp(name, L"Local\\", 6))
         name += 6;
     RtlInitUnicodeString(us, name);
     oa->ObjectName = us;
-    oa->RootDirectory = named_object_root();
+    oa->RootDirectory = private_root ? private_root : named_object_root();
     if (!oa->RootDirectory) {
         KbSetError(ERROR_PATH_NOT_FOUND);
         return FALSE;
