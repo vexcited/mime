@@ -1039,6 +1039,37 @@ BOOL WINAPI DefineDosDeviceA(DWORD flags, LPCSTR device, LPCSTR target)
     return r;
 }
 
+/*
+ * a 32-bit program asks for the files of System32 to be left alone by setting a word of its teb, which the translator
+ * reads, see wow32.c. Nothing else is redirected in a program of the machine.
+ */
+#ifdef __i386__
+#include <mime/wow32.h>
+#define FILESYSREDIR (*(PVOID *)((PUCHAR)NtCurrentTeb() + MIME_TEB32_FSREDIR_OFFSET))
+
+BOOL WINAPI Wow64DisableWow64FsRedirection(PVOID *old)
+{
+    if (!old) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *old = FILESYSREDIR;
+    FILESYSREDIR = (PVOID)1;
+    return TRUE;
+}
+
+BOOL WINAPI Wow64RevertWow64FsRedirection(PVOID old)
+{
+    FILESYSREDIR = old;
+    return TRUE;
+}
+
+BOOLEAN WINAPI Wow64EnableWow64FsRedirection(BOOLEAN enable)
+{
+    FILESYSREDIR = enable ? nullptr : (PVOID)1;
+    return TRUE;
+}
+#else
 BOOL WINAPI Wow64DisableWow64FsRedirection(PVOID *old)
 {
     if (old)
@@ -1055,3 +1086,4 @@ BOOLEAN WINAPI Wow64EnableWow64FsRedirection(BOOLEAN enable)
 {
     return TRUE;
 }
+#endif

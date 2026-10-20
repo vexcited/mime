@@ -442,6 +442,25 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
+# regsvr32.exe, which registers the libraries that ask for it: the processor of the machine in System32, and the 32-bit
+# one in SysWOW64.
+mime_glob(regsvr32_sources guest/regsvr32/*.c)
+foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
+    if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
+        mime_objects(${arch}-regsvr32 ${arch} SOURCES ${regsvr32_sources} INCLUDES guest/regsvr32)
+        set(regsvr32_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
+            ${MIME_LIB_${arch}}/ole32.lib)
+        set(regsvr32_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6AB000000 /highentropyva /dynamicbase
+            /stack:0x100000,0x4000)
+        if(arch STREQUAL "x86")
+            set(regsvr32_flags /subsystem:windows,6.0 /entry:entry /base:0x00400000 /dynamicbase /stack:0x100000,0x4000)
+        endif()
+        mime_link(${MIME_OUT_${arch}}/regsvr32.exe ${arch} OBJECTS ${arch}-regsvr32 ${arch}-chkstk LIBS ${regsvr32_libs}
+            FLAGS ${regsvr32_flags} RESOURCE regsvr32.exe GROUPS guest)
+        mime_rom_file(${MIME_OUT_${arch}}/regsvr32.exe ${MIME_ROM_${arch}}/regsvr32.exe)
+    endif()
+endforeach()
+
 # the acm codecs windows registers in Drivers32, drivers in files of their own.
 set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000 msgsm32:0x7FF330000000
     l3codeca:0x7FF3F0000000)

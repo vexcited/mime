@@ -4,6 +4,13 @@
 
 #include <mime/nt.h>
 
+/*
+ * where a 32-bit thread says it wants the files of System32 left alone, a word of its teb that only transactions of the
+ * file system use in Windows. Windows keeps this in a slot of the 64-bit teb, which a translator has no need of, and a
+ * slot of the 32-bit teb would be one the program's own local storage can have.
+ */
+#define MIME_TEB32_FSREDIR_OFFSET 0xFD4
+
 typedef struct MIME_EXCEPTION32 {
     NTSTATUS Code;
     ULONG Flags, Record, Address, Count, Information[EXCEPTION_MAXIMUM_PARAMETERS];
