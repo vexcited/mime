@@ -27,7 +27,7 @@ static SD_MAPPING file_mapping(void)
     return IoFileObjectTypeObject->Init.GenericMapping;
 }
 
-static SD_BLOB *g_root, *g_system_directory, *g_profile, *g_locallow, *g_rom_file;
+static SD_BLOB *g_root, *g_system_directory, *g_installer_cache, *g_profile, *g_locallow, *g_rom_file;
 
 /* the sid of the user, S-1-5-21-a-b-c-1001, and his primary group, None. */
 static void user_sids(UCHAR user[28], UCHAR none[28])
@@ -74,6 +74,22 @@ static void build_seeds(void)
                        {ACE_INHERIT_ONLY, GENERIC_RX, SeSidRestrictedPackages}};
     SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, system, 12,
               &g_system_directory);
+
+    /*
+     * the packages the installer of Mime keeps for repair: anyone may put one there, as a program installed for a user
+     * keeps its own, and no one changes what another put there. This is Mime's folder, not one windows has for users.
+     */
+    SD_ACE cache[] = {{0, FILE_ALL, SeSidTrustedInstaller},
+                      {CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE, GENERIC_ALL_, SeSidTrustedInstaller},
+                      {0, FILE_MODIFY, SeSidSystem},
+                      {ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidSystem},
+                      {0, FILE_MODIFY, SeSidAdministrators},
+                      {ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidAdministrators},
+                      {0, FILE_READ_EXECUTE | 0x2 /* add file */, SeSidAuthenticatedUsers},
+                      {ACE_INHERIT_ONLY, GENERIC_RX, SeSidUsers},
+                      {ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidCreatorOwner}};
+    SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, cache, 9,
+              &g_installer_cache);
 
     SD_ACE profile[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem},
                         {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
@@ -152,6 +168,8 @@ static SD_BLOB *seed_at(const PATH *p, ULONG depth)
     if (depth == 1 && (component_is(p, 0, L"Windows") || component_is(p, 0, L"Program Files") ||
                        component_is(p, 0, L"Program Files (x86)")))
         return g_system_directory;
+    if (depth == 2 && component_is(p, 0, L"Windows") && component_is(p, 1, L"Installer"))
+        return g_installer_cache;
     if (depth == 2 && component_is(p, 0, L"Users")) {
         WCHAR name[24];
         ULONG n = 0;
@@ -205,7 +223,10 @@ static NTSTATUS read_stored(ULONG64 host, ULONG up, SD_BLOB **stored, ULONG *dis
             room = length;
             continue;
         }
-        NTSTATUS status = hs == MIME_HC_STATUS_OK ? STATUS_SUCCESS : host_status(hs);
+        /* a volume that keeps descriptors only for the files themselves has none to show above one: the answer is none. */
+        NTSTATUS status = hs == MIME_HC_STATUS_OK || hs == MIME_HC_STATUS_NOT_FOUND ? STATUS_SUCCESS : host_status(hs);
+        if (hs == MIME_HC_STATUS_NOT_FOUND)
+            length = 0;
         if (NT_SUCCESS(status) && length) {
             /* something the host holds that is no descriptor is as good as nothing. */
             if (!NT_SUCCESS(SeSdFromBytes(buffer, length, stored)))

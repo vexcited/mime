@@ -416,6 +416,8 @@ reopen:
     hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
+        if (SeTraceAccess)
+            KiLogPrintf("the host refused the open of '%wZ': status %llu, parent missing %u", &file->FileName, hs, req->action_out);
         ExFreePool(req);
         return complete(irp, status, 0);
     }
@@ -475,6 +477,8 @@ reopen:
         NTSTATUS status = MimeFsAssignNewFile(vol->HostVolume, host, &file->FileName, fcb->Directory,
                                               security ? security->SecurityDescriptor : nullptr, KeGetPreviousMode());
         if (!NT_SUCCESS(status)) {
+            if (SeTraceAccess)
+                KiLogPrintf("the descriptor of '%wZ' cannot be kept: %08x", &file->FileName, status);
             /* a file the creator may not make that way is not left behind. */
             HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);

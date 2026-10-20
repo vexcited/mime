@@ -376,12 +376,27 @@ static SD_MAPPING key_mapping(void)
  * hands down to a key of the user's. lock held.
  */
 static CM_HIVE *g_user_hive;
-static CM_NODE *g_user_key;
+static CM_NODE *g_user_key, *g_machine_key;
 
 static BOOLEAN node_is(const CM_NODE *node, PCWSTR name)
 {
     ULONG chars = (ULONG)wcslen(name);
     return node && node->NameLength == chars && compare_names(node->Name, chars, name, chars) == 0;
+}
+
+/*
+ * HKLM\Software\Mime\Installer and what is below it, where the installer of Mime records the products it puts in:
+ * Mime's own catalog, which the user of the machine may write whatever the rights of his token, unlike the keys of the
+ * machine that tell who may be elevated.
+ */
+static BOOLEAN in_installer_catalog(const CM_NODE *node)
+{
+    for (; node; node = node->Parent) {
+        if (node_is(node, L"Installer") && node->Parent && node_is(node->Parent, L"Mime") && node->Parent->Parent &&
+            node_is(node->Parent->Parent, L"SOFTWARE") && g_machine_key && node->Parent->Parent->Parent == g_machine_key)
+            return TRUE;
+    }
+    return FALSE;
 }
 
 /* HKCU\Software\AppDataLow, where low integrity programs may write, as the folder LocalLow is for files. */
@@ -424,6 +439,13 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
         return status;
     status = SeSdDerive(parent, key_mapping(), TRUE, out);
     SeSdDereference(parent);
+    if (NT_SUCCESS(status) && in_installer_catalog(node)) {
+        SD_BLOB *open_to_users;
+        if (NT_SUCCESS(SeSdAppendAllowAce(*out, SeSidAuthenticatedUsers, 0x3003F, &open_to_users))) {
+            SeSdDereference(*out);
+            *out = open_to_users;
+        }
+    }
     if (NT_SUCCESS(status) && is_low_integrity_key(node)) {
         SD_BLOB *labelled;
         if (NT_SUCCESS(SeSdAddInheritedLabel(*out, 0x1000, &labelled))) {
@@ -1423,6 +1445,9 @@ void CmInitSystem1(void)
     _snwprintf(target, RTL_NUMBER_OF(target) - 1, L"\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet%03u", current);
     link_key(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet", target);
     link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");
+    /* the catalog of the installer exists from the start, for the rule of who may write in it. */
+    CmpOpenPath(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Mime\\Installer", TRUE);
+    g_machine_key = machine;
 
     CmpUnlock();
 
