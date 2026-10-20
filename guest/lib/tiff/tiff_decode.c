@@ -14,6 +14,9 @@ typedef struct Dec {
     bool planar;       /* planar data merged into chunky pixels. */
     bool be;
     unsigned yh, yv;
+    /* YCbCr to RGB: the codes mapped to the nominal ranges and the four chroma weights, all 16.16. */
+    int32_t ymap[256], cbmap[256], crmap[256];
+    int32_t k_cr_r, k_cb_b, k_cb_g, k_cr_g;
     uint8_t *buf;
     size_t buf_size;
     uint8_t *rev;
@@ -24,7 +27,6 @@ typedef struct Dec {
     MimeInflate *inf;
     TiffCcitt *ccitt;
     uint32_t ccitt_width;
-    int32_t *ycc_tab; /* y, cr to r, cb to b, cr to g, cb to g. */
     bool data_error;
 } Dec;
 
@@ -165,7 +167,6 @@ static void dec_free(Dec *d)
     mime_free(d->a, d->lzw);
     mime_free(d->a, d->inf);
     mime_free(d->a, d->ccitt);
-    mime_free(d->a, d->ycc_tab);
 }
 
 /* 1 when the compressed data was bad, a negative value for an allocation failure. */
@@ -297,36 +298,92 @@ static inline uint8_t clamp8(int32_t v)
     return v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v;
 }
 
-static bool ycc_tables(Dec *d)
+
+/* a product of two 16.16 numbers. */
+static inline int32_t fixed_mul(int32_t a, int32_t b)
+{
+    return (int32_t)(((int64_t)a * b + 0x8000) >> 16);
+}
+
+/*
+ * the conversion of section 21 of the specification. a code is first stretched from its reference black and white
+ * to the nominal range, 0 to 255 for the luma and minus 127 to 127 for the chroma, and then red is the luma plus Cr
+ * times twice the weight left by LumaRed, blue the same with Cb and LumaBlue, and green is the luma less LumaBlue
+ * times blue and LumaRed times red, over LumaGreen. putting the first two into the third leaves green as the luma
+ * less Cb times gb and Cr times gr, gb being LumaBlue times the weight of blue over LumaGreen and gr the same for
+ * red. an empty reference range falls back to the default one.
+ */
+static void ycc_prepare(Dec *d)
 {
     const MimeTiffFrame *f = d->f;
-    d->ycc_tab = dec_alloc(d, 5 * 256 * sizeof(int32_t));
-    if (!d->ycc_tab)
-        return false;
-    int32_t *y_tab = d->ycc_tab, *cr_r = y_tab + 256, *cb_b = cr_r + 256, *cr_g = cb_b + 256, *cb_g = cr_g + 256;
-    int64_t lr = f->ycbcr_coefficients[0], lg = f->ycbcr_coefficients[1], lb = f->ycbcr_coefficients[2];
-    const int32_t *rb = f->reference_black_white;
-    int64_t ys = 255 << 16, cs = 127 << 16;
-    int64_t yr = (int64_t)rb[1] - rb[0], cbr = (int64_t)rb[3] - rb[2], crr = (int64_t)rb[5] - rb[4];
-    int64_t y_scale = yr > 0 ? tiff_fixed_div(ys, yr) : 1 << 16;
-    int64_t cb_scale = cbr > 0 ? tiff_fixed_div(cs, cbr) : 1 << 16;
-    int64_t cr_scale = crr > 0 ? tiff_fixed_div(cs, crr) : 1 << 16;
-    /* the weights of the chroma samples in green follow from the luma weights. */
-    int64_t two = 2 << 16;
-    int64_t fr = two - 2 * lr, fb = two - 2 * lb;
-    int64_t kr = tiff_fixed_div((lr * fr) >> 16, lg);
-    int64_t kb = tiff_fixed_div((lb * fb) >> 16, lg);
-    for (int v = 0; v < 256; v++) {
-        int64_t yv = (((int64_t)v << 16) - rb[0]) * y_scale >> 16;
-        int64_t cbv = (((int64_t)v << 16) - rb[2]) * cb_scale >> 16;
-        int64_t crv = (((int64_t)v << 16) - rb[4]) * cr_scale >> 16;
-        y_tab[v] = (int32_t)yv;
-        cr_r[v] = (int32_t)(crv * fr >> 16);
-        cb_b[v] = (int32_t)(cbv * fb >> 16);
-        cr_g[v] = (int32_t)(-(crv * kr >> 16));
-        cb_g[v] = (int32_t)(-(cbv * kb >> 16));
+    static const int32_t default_bw[6] = {0, 255 << 16, 128 << 16, 255 << 16, 128 << 16, 255 << 16};
+    static const int32_t nominal[3] = {255 << 16, 127 << 16, 127 << 16};
+    int32_t *maps[3] = {d->ymap, d->cbmap, d->crmap};
+    for (int ch = 0; ch < 3; ch++) {
+        int32_t black = f->reference_black_white[2 * ch], white = f->reference_black_white[2 * ch + 1];
+        if (white <= black) {
+            black = default_bw[2 * ch];
+            white = default_bw[2 * ch + 1];
+        }
+        for (int code = 0; code < 256; code++) {
+            int64_t m = (((int64_t)code << 16) - black) * nominal[ch] / (white - black);
+            /* a reference range of next to nothing would overflow the products. */
+            maps[ch][code] = (int32_t)(m < -(256 << 16) ? -(256 << 16) : m > (256 << 16) ? (256 << 16) : m);
+        }
     }
-    return true;
+    int64_t lr = f->ycbcr_coefficients[0], lg = f->ycbcr_coefficients[1], lb = f->ycbcr_coefficients[2];
+    if (lg <= 0) {
+        lr = 19595;
+        lg = 38470;
+        lb = 7471;
+    }
+    d->k_cr_r = (int32_t)((2 << 16) - 2 * lr);
+    d->k_cb_b = (int32_t)((2 << 16) - 2 * lb);
+    d->k_cb_g = (int32_t)(lb * d->k_cb_b / lg);
+    d->k_cr_g = (int32_t)(lr * d->k_cr_r / lg);
+}
+
+static inline uint8_t round_sample(int32_t v)
+{
+    return clamp8((v + 0x8000) >> 16);
+}
+
+/*
+ * the rows r0 to r1 of a chunk made of units. a unit is the samples of the luma of a cell of yh by yv pixels, row
+ * by row, followed by the one Cb and the one Cr of the cell, which every pixel of the cell shares.
+ */
+static void emit_ycc(const Dec *d, const MimeTiffChunk *c, const Geo *g, const uint8_t *buf, uint32_t r0, uint32_t r1,
+                     uint32_t y0, uint8_t *out, size_t stride)
+{
+    unsigned cw = d->yh, ch = d->yv, cell = cw * ch;
+    bool raw = (d->flags & MIME_TIFF_DECODE_RAW_YCBCR) != 0;
+    for (uint32_t y = r0; y < r1; y++) {
+        const uint8_t *unit = buf + (size_t)(y / ch) * g->row_bytes;
+        const uint8_t *luma_row = unit + (size_t)(y % ch) * cw;
+        uint8_t *o = out + (size_t)(c->y + y - y0) * stride + (size_t)c->x * 3;
+        for (uint32_t x = 0; x < c->width; unit += cell + 2, luma_row += cell + 2) {
+            uint8_t cb = unit[cell], cr = unit[cell + 1];
+            int32_t red = 0, green = 0, blue = 0;
+            if (!raw) {
+                int32_t u = d->cbmap[cb], v = d->crmap[cr];
+                red = fixed_mul(d->k_cr_r, v);
+                blue = fixed_mul(d->k_cb_b, u);
+                green = -fixed_mul(d->k_cb_g, u) - fixed_mul(d->k_cr_g, v);
+            }
+            for (unsigned i = 0; i < cw && x < c->width; i++, x++, o += 3) {
+                if (raw) {
+                    o[0] = luma_row[i];
+                    o[1] = cb;
+                    o[2] = cr;
+                } else {
+                    int32_t luma = d->ymap[luma_row[i]];
+                    o[0] = round_sample(luma + red);
+                    o[1] = round_sample(luma + green);
+                    o[2] = round_sample(luma + blue);
+                }
+            }
+        }
+    }
 }
 
 /* copies the rows r0 to r1 of chunk c, which is in buf, to out whose first row is image row y0. */
@@ -335,34 +392,6 @@ static void emit(Dec *d, const MimeTiffChunk *c, const Geo *g, const uint8_t *bu
 {
     const MimeTiffFrame *f = d->f;
     uint32_t vis_w = c->width;
-    if (d->ycc) {
-        unsigned yh = d->yh, yv = d->yv, ub = yh * yv + 2;
-        const int32_t *yt = d->ycc_tab, *crr = yt + 256, *cbb = crr + 256, *crg = cbb + 256, *cbg = crg + 256;
-        bool raw = (d->flags & MIME_TIFF_DECODE_RAW_YCBCR) != 0;
-        for (uint32_t y = r0; y < r1; y++) {
-            const uint8_t *brow = buf + (size_t)(y / yv) * g->row_bytes;
-            unsigned iy = y % yv;
-            uint8_t *o = out + (size_t)(c->y + y - y0) * stride + (size_t)c->x * 3;
-            uint32_t x = 0;
-            for (const uint8_t *u = brow; x < vis_w; u += ub) {
-                unsigned cb = u[yh * yv], cr = u[yh * yv + 1];
-                for (unsigned ix = 0; ix < yh && x < vis_w; ix++, x++, o += 3) {
-                    unsigned yy = u[iy * yh + ix];
-                    if (raw) {
-                        o[0] = (uint8_t)yy;
-                        o[1] = (uint8_t)cb;
-                        o[2] = (uint8_t)cr;
-                    } else {
-                        int32_t Y = yt[yy];
-                        o[0] = clamp8((Y + crr[cr] + 0x8000) >> 16);
-                        o[1] = clamp8((Y + crg[cr] + cbg[cb] + 0x8000) >> 16);
-                        o[2] = clamp8((Y + cbb[cb] + 0x8000) >> 16);
-                    }
-                }
-            }
-        }
-        return;
-    }
     if (d->planar) {
         unsigned bs = d->unit, spp = d->spp;
         unsigned plane = c->plane;
@@ -383,6 +412,10 @@ static void emit(Dec *d, const MimeTiffChunk *c, const Geo *g, const uint8_t *bu
                 for (uint32_t i = 0; i < vis_w; i++)
                     memcpy(o + i * step, s + i * 8, 8);
         }
+        return;
+    }
+    if (d->ycc) {
+        emit_ycc(d, c, g, buf, r0, r1, y0, out, stride);
         return;
     }
     if (d->odd) {
@@ -448,14 +481,8 @@ int mime_tiff_frame_decode_rows(const MimeTiffFrame *f, const MimeAllocator *all
             goto done;
         }
     }
-    if (d.ycc && !(flags & MIME_TIFF_DECODE_RAW_YCBCR) && !ycc_tables(&d)) {
-        rc = MIME_TIFF_ERR_NOMEM;
-        goto done;
-    }
-    if (d.ycc && (flags & MIME_TIFF_DECODE_RAW_YCBCR) && !(d.ycc_tab = dec_alloc(&d, 5 * 256 * sizeof(int32_t)))) {
-        rc = MIME_TIFF_ERR_NOMEM;
-        goto done;
-    }
+    if (d.ycc && !(flags & MIME_TIFF_DECODE_RAW_YCBCR))
+        ycc_prepare(&d);
     if (d.planar)
         for (uint32_t r = 0; r < count; r++)
             memset(out + (size_t)r * stride, 0, f->out_row_bytes);

@@ -1,146 +1,138 @@
+/*
+ * the marker segments before the image: walking them, and the exif block, xmp packet and icc profile they carry.
+ */
 #include "internal.h"
 
-/* marker segment walking and the metadata that lives in application segments. */
-
-int mime_jpeg_segments_init(MimeJpegSegments *it, const void *data, size_t size)
+bool mime_jpeg_is_jpeg(const uint8_t *data, size_t size)
 {
-    __builtin_memset(it, 0, sizeof *it);
-    if (!data || size < 4)
+    return data && size >= 3 && data[0] == 0xFF && data[1] == M_SOI && data[2] == 0xFF;
+}
+
+int mime_jpeg_segments_init(MimeJpegSegments *it, const uint8_t *data, size_t size)
+{
+    if (!data || size < 4 || data[0] != 0xFF || data[1] != M_SOI)
         return MIME_JPEG_ERR_FORMAT;
-    const uint8_t *p = data;
-    if (p[0] != 0xFF || p[1] != 0xD8)
-        return MIME_JPEG_ERR_FORMAT;
-    it->base = p;
+    it->data = data;
     it->size = size;
     it->pos = 2;
-    it->started = true;
-    return MIME_JPEG_OK;
+    it->done = false;
+    return 0;
 }
 
 int mime_jpeg_next_segment(MimeJpegSegments *it, MimeJpegSegment *seg)
 {
-    if (!it->started || it->done)
+    const uint8_t *d = it->data;
+    size_t n = it->size;
+    size_t p = it->pos;
+    if (it->done)
         return 0;
-    const uint8_t *p = it->base;
-    size_t pos = it->pos;
     for (;;) {
-        /* skip anything up to the next marker, fill bytes included. */
-        while (pos < it->size && p[pos] != 0xFF)
-            pos++;
-        while (pos < it->size && p[pos] == 0xFF)
-            pos++;
-        if (pos >= it->size) {
+        /* bytes that are not a marker are skipped, and so are the fill bytes of a marker. */
+        while (p < n && d[p] != 0xFF)
+            p++;
+        while (p < n && d[p] == 0xFF)
+            p++;
+        if (p >= n) {
             it->done = true;
             return 0;
         }
-        unsigned m = p[pos++];
-        if (m == 0) {
-            continue;
-        }
-        if (m == 0xD9) {
+        int m = d[p++];
+        if (m == M_EOI) {
             it->done = true;
             return 0;
         }
-        if (m == 0xD8 || m == 0x01 || (m >= 0xD0 && m <= 0xD7))
+        /* markers without a length. */
+        if (m == 0 || m == 0x01 || (m >= M_RST0 && m <= M_SOI))
             continue;
-        if (pos + 2 > it->size) {
+        if (p + 2 > n) {
             it->done = true;
             return MIME_JPEG_ERR_FORMAT;
         }
-        size_t len = (size_t)p[pos] << 8 | p[pos + 1];
-        if (len < 2 || pos + len > it->size) {
+        size_t len = ((size_t)d[p] << 8) | d[p + 1];
+        if (len < 2 || p + len > n) {
             it->done = true;
             return MIME_JPEG_ERR_FORMAT;
         }
-        seg->marker = (uint8_t)m;
-        seg->data = p + pos + 2;
+        seg->marker = m;
+        seg->data = d + p + 2;
         seg->size = (uint32_t)(len - 2);
-        seg->offset = pos - 2;
-        it->pos = pos + len;
-        if (m == 0xDA)
+        seg->offset = p - 2; /* the 0xff byte the marker code follows. */
+        it->pos = p + len;
+        if (m == M_SOS)
             it->done = true;
         return 1;
     }
 }
 
-static int find_app1(const void *data, size_t size, const uint8_t *sig, size_t sig_len, const uint8_t **payload,
-                     size_t *payload_size)
+static int find_prefixed(const uint8_t *data, size_t size, int marker, const void *prefix, size_t prefix_size,
+                         const uint8_t **payload, size_t *length)
 {
     MimeJpegSegments it;
     MimeJpegSegment seg;
     int rc = mime_jpeg_segments_init(&it, data, size);
-    if (rc < 0)
+    if (rc)
         return rc;
     while ((rc = mime_jpeg_next_segment(&it, &seg)) > 0) {
-        if (seg.marker == 0xE1 && seg.size >= sig_len && !__builtin_memcmp(seg.data, sig, sig_len)) {
-            *payload = seg.data + sig_len;
-            *payload_size = seg.size - sig_len;
-            return MIME_JPEG_OK;
+        if (seg.marker == marker && seg.size >= prefix_size && !__builtin_memcmp(seg.data, prefix, prefix_size)) {
+            *payload = seg.data + prefix_size;
+            *length = seg.size - prefix_size;
+            return 0;
         }
     }
     return rc < 0 ? rc : MIME_JPEG_ERR_NOT_FOUND;
 }
 
-int mime_jpeg_find_exif(const void *data, size_t size, const uint8_t **payload, size_t *payload_size)
+int mime_jpeg_find_exif(const uint8_t *data, size_t size, const uint8_t **payload, size_t *length)
 {
-    static const uint8_t sig[6] = {'E', 'x', 'i', 'f', 0, 0};
-    return find_app1(data, size, sig, sizeof sig, payload, payload_size);
+    return find_prefixed(data, size, M_APP1, "Exif\0\0", 6, payload, length);
 }
 
-int mime_jpeg_find_xmp(const void *data, size_t size, const uint8_t **payload, size_t *payload_size)
+int mime_jpeg_find_xmp(const uint8_t *data, size_t size, const uint8_t **payload, size_t *length)
 {
-    static const uint8_t sig[29] = "http://ns.adobe.com/xap/1.0/";
-    return find_app1(data, size, sig, sizeof sig, payload, payload_size);
+    return find_prefixed(data, size, M_APP1, "http://ns.adobe.com/xap/1.0/", 29, payload, length);
 }
 
-int mime_jpeg_get_icc(const void *data, size_t size, const MimeAllocator *alloc, uint8_t **profile,
-                      size_t *profile_size)
+/* a profile that does not fit one segment comes in numbered chunks, in any order. */
+int mime_jpeg_get_icc(const uint8_t *data, size_t size, const MimeAllocator *alloc, uint8_t **profile, size_t *length)
 {
-    static const uint8_t sig[12] = {'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0};
     MimeJpegSegments it;
     MimeJpegSegment seg;
-    uint32_t chunk_size[256] = {0};
-    const uint8_t *chunk_data[256] = {nullptr};
-    unsigned count = 0, found = 0;
-    uint64_t total = 0;
+    const uint8_t *chunk[256];
+    uint32_t chunk_size[256];
+    unsigned count = 0;
     int rc = mime_jpeg_segments_init(&it, data, size);
-
+    if (rc)
+        return rc;
+    __builtin_memset(chunk, 0, sizeof chunk);
+    while ((rc = mime_jpeg_next_segment(&it, &seg)) > 0) {
+        if (seg.marker != M_APP2 || seg.size < 14 || __builtin_memcmp(seg.data, "ICC_PROFILE\0", 12))
+            continue;
+        unsigned number = seg.data[12], total = seg.data[13];
+        if (number == 0 || number > total || (count && total != count) || chunk[number])
+            return MIME_JPEG_ERR_FORMAT;
+        count = total;
+        chunk[number] = seg.data + 14;
+        chunk_size[number] = seg.size - 14;
+    }
     if (rc < 0)
         return rc;
-    if (!alloc || !profile || !profile_size)
-        return MIME_JPEG_ERR_PARAM;
-    *profile = nullptr;
-    while ((rc = mime_jpeg_next_segment(&it, &seg)) > 0) {
-        if (seg.marker != 0xE2 || seg.size < 14 || __builtin_memcmp(seg.data, sig, sizeof sig))
-            continue;
-        unsigned seq = seg.data[12], n = seg.data[13];
-        if (seq == 0 || n == 0 || seq > n || (count && n != count))
-            return MIME_JPEG_ERR_FORMAT;
-        count = n;
-        if (chunk_data[seq])
-            return MIME_JPEG_ERR_FORMAT;
-        chunk_data[seq] = seg.data + 14;
-        chunk_size[seq] = seg.size - 14;
-        total += chunk_size[seq];
-        found++;
-    }
-    if (rc < 0 && !found)
-        return rc;
-    if (!found)
+    if (!count)
         return MIME_JPEG_ERR_NOT_FOUND;
-    if (found != count)
-        return MIME_JPEG_ERR_FORMAT;
-    if (total == 0 || total > SIZE_MAX / 2)
-        return MIME_JPEG_ERR_FORMAT;
-    uint8_t *buf = mime_alloc(alloc, (size_t)total);
-    if (!buf)
-        return MIME_JPEG_ERR_NOMEM;
-    size_t off = 0;
+    size_t total_size = 0;
     for (unsigned i = 1; i <= count; i++) {
-        __builtin_memcpy(buf + off, chunk_data[i], chunk_size[i]);
-        off += chunk_size[i];
+        if (!chunk[i])
+            return MIME_JPEG_ERR_FORMAT;
+        total_size += chunk_size[i];
     }
-    *profile = buf;
-    *profile_size = (size_t)total;
-    return MIME_JPEG_OK;
+    uint8_t *out = mime_alloc(alloc, total_size ? total_size : 1);
+    if (!out)
+        return MIME_JPEG_ERR_NOMEM;
+    size_t at = 0;
+    for (unsigned i = 1; i <= count; i++) {
+        __builtin_memcpy(out + at, chunk[i], chunk_size[i]);
+        at += chunk_size[i];
+    }
+    *profile = out;
+    *length = total_size;
+    return 0;
 }

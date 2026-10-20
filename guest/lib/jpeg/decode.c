@@ -1,1507 +1,1061 @@
-#include "internal.h"
-
 /*
- * the decoder reads the markers, then decodes the entropy coded scans. sequential files with
- * one interleaved scan stream: each row of MCUs is decoded into a small buffer of coefficients,
- * transformed into bands of samples and converted to pixels right away. progressive files and
- * sequential files with several scans keep the coefficients of the whole image and run the same
- * second half afterwards.
+ * the decoder: the markers, the entropy decoding of the sequential and progressive scans of annexes F and G, the
+ * restart intervals and the driver that turns the blocks into planes and the planes into pixels.
+ *
+ * a sequential image whose one scan holds every component is transformed block by block as it is decoded. any
+ * other image, which means a progressive one or one with a scan for each component, keeps the coefficients of the
+ * whole picture until its last scan.
  */
+#include "dec.h"
 
-#define FAST_BITS 10
-#define COEF_LIMIT ((uint64_t)1 << 30)
-#define MAX_SCANS 1000
+#define SCAN_LIMIT 1024
 
-/* fast table entry layout, see build_huff. */
-#define E_BITS(e) ((e) & 31u)
-#define E_VALUE 0x20u /* the value is in the upper half, or the symbol has no extra bits. */
-#define E_RUN(e) (((e) >> 8) & 15u)
-#define E_SIZE(e) (((e) >> 12) & 15u)
+/* ------------------------------------------------------------------ memory */
 
-typedef struct Huff {
-    uint32_t fast[1 << FAST_BITS];
-    int32_t maxcode[18];
-    int32_t valoff[17];
-    uint8_t vals[256];
-} Huff;
-
-typedef struct Bits {
-    const uint8_t *p;   /* next byte. */
-    const uint8_t *lim; /* end of the entropy coded data, or just past the marker that ended it. */
-    const uint8_t *end;
-    uint64_t buf; /* valid bits at the top. */
-    int cnt;
-    int fake;   /* zero bits supplied at the end of the data, they are the last bits of buf. */
-    int marker; /* marker that ended the data, 0 when none. */
-    int bad;    /* a code that is in no table was met. */
-} Bits;
-
-typedef struct Comp {
-    uint8_t id, h, v, tq;
-    uint8_t dct; /* idct size of this component. */
-    uint8_t hin, vin; /* sampling factors in units of the smallest idct size. */
-    uint8_t mode; /* UP_* */
-    uint8_t hexp, vexp;
-    uint32_t wib, hib; /* blocks that carry image data. */
-    uint32_t pitch;    /* blocks per row of the coefficient storage, a multiple of h. */
-    uint32_t dw, dh;   /* size in samples after scaling. */
-    uint32_t pstride;
-    uint32_t bandrows;
-    uint8_t *plane;
-    uint8_t *tmp;
-    int16_t *coef;   /* whole image, array mode. */
-    int16_t *rowbuf; /* one row of MCUs, streaming. */
-    int32_t cache_row;
-    uint32_t last_dc;
-    bool latched;
-    uint16_t qt[64];
-} Comp;
-
-enum { UP_NONE, UP_H2V1_FANCY, UP_H2V1, UP_H1V2_FANCY, UP_H2V2_FANCY, UP_REPL, UP_NEAREST };
-enum { K_SEQ, K_DC_FIRST, K_DC_REFINE, K_AC_FIRST, K_AC_REFINE };
-
-typedef struct Dec {
-    const MimeAllocator *alloc;
-    const uint8_t *data;
-    size_t size;
-    size_t pos;
-    int unread; /* marker found by the entropy decoder but not handled. */
-    unsigned flags;
-    bool tolerant;
-    bool damaged;
-
-    MimeJpegInfo info;
-    bool have_sof;
-    bool saw_scan;
-    uint16_t restart_interval;
-    uint16_t qt[4][64];
-    bool qt_defined[4];
-    Huff *huff; /* dc 0 to 3, then ac 0 to 3. NULL when only reading headers. */
-
-    uint32_t mcus_x, mcus_y;
-    uint8_t maxh, maxv;
-    int dct;
-    bool fancy;
-    bool streaming;
-    bool needs_ctx;
-    Comp comp[JPEG_MAX_COMPS];
-
-    /* current scan. */
-    int ns;
-    int sc[JPEG_MAX_COMPS];
-    int tdc[JPEG_MAX_COMPS], tac[JPEG_MAX_COMPS];
-    uint8_t sh[JPEG_MAX_COMPS], sv[JPEG_MAX_COMPS];
-    int ss, se, ah, al;
-    int kind;
-    uint32_t scan_cols, scan_rows;
-    uint32_t eobrun;
-    bool insufficient;
-    uint32_t restarts_left;
-    int next_rst;
-    Bits br;
-
-    /* output. */
-    uint8_t *out;
-    size_t out_stride;
-    size_t out_size;
-    uint32_t out_w, out_h;
-    int cs; /* MIME_JPEG_CS_ */
-    bool adobe_invert;
-    bool raw;
-
-    void *allocs[24];
-    int nallocs;
-} Dec;
-
-/* ---- allocation ---- */
-
-static void *dec_alloc(Dec *d, uint64_t size, bool zero)
+void *jpeg_alloc(Jpeg *j, size_t size)
 {
-    if (size == 0)
-        size = 1;
-    if (size > (uint64_t)SIZE_MAX / 2 || d->nallocs >= 24)
-        return nullptr;
-    void *p = mime_alloc(d->alloc, (size_t)size);
-    if (!p)
-        return nullptr;
-    d->allocs[d->nallocs++] = p;
-    if (zero)
-        __builtin_memset(p, 0, (size_t)size);
+    if (j->mem_count >= (int)(sizeof j->mem / sizeof j->mem[0]))
+        return NULL;
+    void *p = mime_alloc(j->alloc, size ? size : 1);
+    if (p)
+        j->mem[j->mem_count++] = p;
     return p;
 }
 
-static void dec_release(Dec *d)
+static void *alloc_array(Jpeg *j, uint64_t count, uint64_t item)
 {
-    for (int i = d->nallocs - 1; i >= 0; i--)
-        mime_free(d->alloc, d->allocs[i]);
-    d->nallocs = 0;
+    uint64_t total = count * item;
+    if (item && total / item != count)
+        return NULL;
+    if (total > (uint64_t)(SIZE_MAX / 2))
+        return NULL;
+    return jpeg_alloc(j, (size_t)total);
 }
 
-/* ---- huffman tables ---- */
-
-static bool build_huff(Huff *h, const uint8_t bits[16], const uint8_t *vals, unsigned nvals, bool dc)
+static void release(Jpeg *j)
 {
-    uint32_t code = 0;
-    unsigned k = 0;
+    for (int i = 0; i < j->mem_count; i++)
+        mime_free(j->alloc, j->mem[i]);
+    j->mem_count = 0;
+}
 
-    __builtin_memset(h->fast, 0, sizeof h->fast);
-    __builtin_memset(h->vals, 0, sizeof h->vals);
-    __builtin_memcpy(h->vals, vals, nvals);
-    h->maxcode[0] = -1;
-    h->maxcode[17] = 0x7fffffff;
-    h->valoff[0] = 0;
-    for (unsigned l = 1; l <= 16; l++) {
-        unsigned n = bits[l - 1];
-        h->valoff[l] = (int32_t)k - (int32_t)code;
-        for (unsigned i = 0; i < n; i++, k++, code++) {
-            unsigned sym = h->vals[k];
-            if (code >= (1u << l))
-                return false;
-            if (dc && sym > 15)
-                return false;
-            if (l > FAST_BITS)
-                continue;
-            unsigned run = sym >> 4, size = sym & 15;
-            uint32_t base = code << (FAST_BITS - l);
-            if (size == 0) {
-                uint32_t e = E_VALUE | (run << 8) | l;
-                for (uint32_t j = 0; j < (1u << (FAST_BITS - l)); j++)
-                    h->fast[base + j] = e;
-            } else if (l + size <= FAST_BITS) {
-                unsigned spare = FAST_BITS - l - size;
-                for (uint32_t ext = 0; ext < (1u << size); ext++) {
-                    int32_t v = (ext >= (1u << (size - 1))) ? (int32_t)ext : (int32_t)ext - (int32_t)((1u << size) - 1);
-                    uint32_t e = ((uint32_t)v << 16) | (size << 12) | (run << 8) | E_VALUE | (l + size);
-                    uint32_t b2 = base | (ext << spare);
-                    for (uint32_t j = 0; j < (1u << spare); j++)
-                        h->fast[b2 + j] = e;
-                }
-            } else {
-                uint32_t e = (size << 12) | (run << 8) | l;
-                for (uint32_t j = 0; j < (1u << (FAST_BITS - l)); j++)
-                    h->fast[base + j] = e;
+/* ------------------------------------------------------------------ huffman tables */
+
+static int huff_build(JpegHuff *h, const uint8_t *bits, const uint8_t *vals, int count)
+{
+    int code = 0, k = 0;
+    __builtin_memset(h, 0, sizeof *h);
+    for (int len = 1; len <= 16; len++) {
+        int n = bits[len];
+        h->delta[len] = k - code;
+        if (code + n > (1 << len))
+            return -1; /* more codes than the length has room for. */
+        for (int i = 0; i < n; i++, code++, k++) {
+            if (len <= FAST_BITS) {
+                int first = code << (FAST_BITS - len);
+                int span = 1 << (FAST_BITS - len);
+                for (int f = 0; f < span; f++)
+                    h->fast[first + f] = (uint16_t)((len << 8) | vals[k]);
             }
         }
-        h->maxcode[l] = n ? (int32_t)code - 1 : -1;
+        h->limit[len] = n ? code << (16 - len) : 0;
         code <<= 1;
     }
-    return true;
+    __builtin_memcpy(h->vals, vals, (size_t)count);
+    h->defined = true;
+    return 0;
 }
 
-/* ---- bit reader ---- */
+/* ------------------------------------------------------------------ the bits of the entropy coded data */
 
-static inline uint64_t load_be64(const uint8_t *p)
+typedef struct Bits {
+    const uint8_t *p, *end;
+    uint64_t acc; /* the next bits, first one on top. */
+    int cnt;      /* how many bits of acc are valid. */
+    int pad;      /* how many of those are zeros made up past the end of the data. */
+    bool marker;  /* p is at a marker or the end, nothing more comes. */
+} Bits;
+
+static void bits_init(Bits *b, const uint8_t *p, const uint8_t *end)
 {
-    uint64_t v;
-    __builtin_memcpy(&v, p, 8);
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap64(v);
-#else
-    return v;
-#endif
+    b->p = p;
+    b->end = end;
+    b->acc = 0;
+    b->cnt = 0;
+    b->pad = 0;
+    b->marker = false;
 }
 
+/* one byte at a time, undoing the stuffing and stopping at a marker. */
 static void bits_fill_slow(Bits *b)
 {
-    b->buf = b->cnt ? b->buf & (~(uint64_t)0 << (64 - b->cnt)) : 0;
     while (b->cnt <= 56) {
-        if (b->p >= b->lim) {
-            b->fake += 8;
-            b->cnt += 8;
-            continue;
-        }
-        unsigned c = *b->p++;
-        if (c == 0xFF) {
-            while (b->p < b->lim && *b->p == 0xFF)
+        if (!b->marker && b->p < b->end) {
+            unsigned byte = *b->p;
+            if (byte == 0xFF) {
+                if (b->p + 1 < b->end && b->p[1] == 0) {
+                    b->p += 2;
+                } else {
+                    b->marker = true;
+                    continue;
+                }
+            } else {
                 b->p++;
-            if (b->p >= b->lim) {
-                /* the file ends in the middle of a marker. */
-                b->lim = b->p;
-                continue;
             }
-            c = *b->p++;
-            if (c != 0) {
-                b->marker = (int)c;
-                b->lim = b->p;
-                continue;
-            }
-            c = 0xFF;
+            b->acc |= (uint64_t)byte << (56 - b->cnt);
+            b->cnt += 8;
+        } else {
+            b->marker = true;
+            b->cnt += 8;
+            b->pad += 8;
         }
-        b->buf |= (uint64_t)c << (56 - b->cnt);
-        b->cnt += 8;
     }
 }
 
 static inline void bits_fill(Bits *b)
 {
-    if (__builtin_expect(b->lim - b->p >= 8, 1)) {
-        uint64_t v = load_be64(b->p);
-        if (!(((~v) - 0x0101010101010101ull) & v & 0x8080808080808080ull)) {
-            b->buf |= v >> b->cnt;
-            int nb = (63 - b->cnt) >> 3;
-            b->p += nb;
-            b->cnt += nb * 8;
+    if (b->end - b->p >= 8) {
+        uint64_t w;
+        __builtin_memcpy(&w, b->p, 8);
+        w = __builtin_bswap64(w);
+        uint64_t v = ~w;
+        if (!(((v - 0x0101010101010101ull) & ~v) & 0x8080808080808080ull)) {
+            /* no 0xff among the eight bytes: take as many as fit. */
+            int take = (64 - b->cnt) >> 3;
+            uint64_t mask = take == 8 ? ~0ull : ~(~0ull >> (8 * take));
+            b->acc |= (w & mask) >> b->cnt;
+            b->cnt += 8 * take;
+            b->p += take;
             return;
         }
     }
     bits_fill_slow(b);
 }
 
-#define NEED(b, n)            \
-    do {                      \
-        if ((b)->cnt < (n))   \
-            bits_fill(b);     \
-    } while (0)
-
-static inline uint32_t bits_get(Bits *b, int n)
+static inline int bits_symbol(Bits *b, const JpegHuff *h)
 {
-    uint32_t v = (uint32_t)(b->buf >> (64 - n));
-    b->buf <<= n;
+    unsigned e = h->fast[(unsigned)(b->acc >> (64 - FAST_BITS))];
+    if (e) {
+        b->acc <<= e >> 8;
+        b->cnt -= (int)(e >> 8);
+        return (int)(e & 255);
+    }
+    int32_t code = (int32_t)(b->acc >> 48);
+    for (int len = FAST_BITS + 1; len <= 16; len++) {
+        if (code < h->limit[len]) {
+            b->acc <<= len;
+            b->cnt -= len;
+            return h->vals[((code >> (16 - len)) + h->delta[len]) & 255];
+        }
+    }
+    return -1;
+}
+
+/* n bits, 1 to 16, as a number. */
+static inline int bits_take(Bits *b, int n)
+{
+    int v = (int)(b->acc >> (64 - n));
+    b->acc <<= n;
     b->cnt -= n;
     return v;
 }
 
-static inline int32_t extend(uint32_t v, int s)
+static inline int extend(int v, int s)
 {
-    int32_t t = (int32_t)(v >> (s - 1)) - 1;
-    return (int32_t)v - (t & (int32_t)((1u << s) - 1));
+    return v < (1 << (s - 1)) ? v - (1 << s) + 1 : v;
 }
 
-/* receives s bits, 1 to 15, as a signed value. */
-static inline int32_t bits_receive(Bits *b, int s)
+/* ------------------------------------------------------------------ blocks */
+
+/* a sequential block: the coefficients are put in the zeroed block, the result is the last one that is not zero. */
+static int block_sequential(Bits *bp, const JpegHuff *dc, const JpegHuff *ac, int *pred, int16_t *blk)
 {
-    return extend(bits_get(b, s), s);
-}
-
-/* decodes a code longer than the fast table covers. */
-static int huff_slow(Bits *b, const Huff *h)
-{
-    uint32_t v = (uint32_t)(b->buf >> 48);
-    for (int l = FAST_BITS + 1; l <= 16; l++) {
-        int32_t code = (int32_t)(v >> (16 - l));
-        if (code <= h->maxcode[l]) {
-            b->buf <<= l;
-            b->cnt -= l;
-            return h->vals[(code + h->valoff[l]) & 255];
-        }
-    }
-    /* a code that is in the table nowhere decodes as symbol 0, like libjpeg does. */
-    b->buf <<= 17;
-    b->cnt -= 17;
-    b->bad = 1;
-    return 0;
-}
-
-/* decodes a symbol and consumes it, with at least 16 bits available. */
-static inline int huff_symbol(Bits *b, const Huff *h)
-{
-    uint32_t e = h->fast[b->buf >> (64 - FAST_BITS)];
-    unsigned n = E_BITS(e);
-    if (__builtin_expect(n != 0, 1)) {
-        /* the entry may include extra bits, take only the code here. the caller does not use those. */
-        unsigned sym_bits = n;
-        if (e & E_VALUE) {
-            unsigned size = E_SIZE(e);
-            sym_bits = n - size;
-        }
-        b->buf <<= sym_bits;
-        b->cnt -= (int)sym_bits;
-        return (int)((E_RUN(e) << 4) | E_SIZE(e));
-    }
-    return huff_slow(b, h);
-}
-
-/* ---- block decoding ---- */
-
-/* sequential block: dc difference and run length coded ac values, coefficients in natural order. */
-static inline void decode_block_seq(Bits *b, const Huff *dc, const Huff *ac, uint32_t *last_dc, int16_t *blk)
-{
-    NEED(b, 32);
-    uint32_t e = dc->fast[b->buf >> (64 - FAST_BITS)];
-    int32_t diff;
-    unsigned n = E_BITS(e);
-    if (__builtin_expect(n != 0, 1)) {
-        b->buf <<= n;
-        b->cnt -= (int)n;
-        if (e & E_VALUE) {
-            diff = (int32_t)e >> 16;
-        } else {
-            int s = (int)E_SIZE(e);
-            diff = bits_receive(b, s);
-        }
-    } else {
-        int s = huff_slow(b, dc);
-        diff = s ? bits_receive(b, s) : 0;
-    }
-    *last_dc += (uint32_t)diff;
-    blk[0] = (int16_t)*last_dc;
-
-    int k = 1;
-    while (k < 64) {
-        NEED(b, 32);
-        e = ac->fast[b->buf >> (64 - FAST_BITS)];
-        n = E_BITS(e);
-        if (__builtin_expect(n != 0, 1)) {
-            b->buf <<= n;
-            b->cnt -= (int)n;
-            unsigned run = E_RUN(e);
-            unsigned size = E_SIZE(e);
-            if (e & E_VALUE) {
-                if (__builtin_expect(size != 0, 1)) {
-                    k += (int)run;
-                    blk[mime_jpeg_natural_order[k]] = (int16_t)((int32_t)e >> 16);
-                    k++;
-                    continue;
-                }
-                if (run != 15)
-                    break;
-                k += 16;
-                continue;
-            }
-            k += (int)run;
-            blk[mime_jpeg_natural_order[k]] = (int16_t)bits_receive(b, (int)size);
-            k++;
-        } else {
-            int sym = huff_slow(b, ac);
-            int run = sym >> 4, size = sym & 15;
-            if (size) {
-                k += run;
-                blk[mime_jpeg_natural_order[k]] = (int16_t)bits_receive(b, size);
-                k++;
-            } else {
-                if (run != 15)
-                    break;
-                k += 16;
-            }
-        }
-    }
-}
-
-static inline void decode_block_dc_first(Bits *b, const Huff *dc, uint32_t *last_dc, int al, int16_t *blk)
-{
-    NEED(b, 32);
-    int s = huff_symbol(b, dc);
-    int32_t diff = s ? bits_receive(b, s) : 0;
-    *last_dc += (uint32_t)diff;
-    blk[0] = (int16_t)(*last_dc << al);
-}
-
-static inline void decode_block_ac_first(Dec *d, Bits *b, const Huff *ac, int16_t *blk)
-{
-    if (d->eobrun > 0) {
-        d->eobrun--;
-        return;
-    }
-    int al = d->al;
-    for (int k = d->ss; k <= d->se; k++) {
-        NEED(b, 32);
-        int sym = huff_symbol(b, ac);
-        int r = sym >> 4, s = sym & 15;
+    Bits b = *bp;
+    int last = 0;
+    if (b.cnt < 32)
+        bits_fill(&b);
+    int s = bits_symbol(&b, dc);
+    if (s < 0 || s > 15)
+        goto bad;
+    int diff = 0;
+    if (s)
+        diff = extend(bits_take(&b, s), s);
+    *pred = (int16_t)(*pred + diff);
+    blk[0] = (int16_t)*pred;
+    for (int k = 1; k < 64;) {
+        if (b.cnt < 32)
+            bits_fill(&b);
+        int rs = bits_symbol(&b, ac);
+        if (rs < 0)
+            goto bad;
+        int r = rs >> 4;
+        s = rs & 15;
         if (s) {
             k += r;
-            int32_t v = bits_receive(b, s);
-            blk[mime_jpeg_natural_order[k]] = (int16_t)((uint32_t)v << al);
+            if (k > 63)
+                goto bad;
+            blk[jpeg_zigzag[k]] = (int16_t)extend(bits_take(&b, s), s);
+            last = k++;
         } else if (r == 15) {
-            k += 15;
+            k += 16;
         } else {
-            d->eobrun = 1u << r;
-            if (r)
-                d->eobrun += bits_get(b, r);
-            d->eobrun--;
             break;
         }
     }
+    *bp = b;
+    return last;
+bad:
+    *bp = b;
+    return -1;
 }
 
-static inline void refine_coef(Bits *b, int16_t *c, int p1, int m1)
+static int block_dc_first(Bits *bp, const JpegHuff *dc, int *pred, int al, int16_t *blk)
 {
-    NEED(b, 1);
-    if (bits_get(b, 1) && !(*c & p1))
-        *c = (int16_t)(*c + (*c >= 0 ? p1 : m1));
+    Bits b = *bp;
+    if (b.cnt < 32)
+        bits_fill(&b);
+    int s = bits_symbol(&b, dc);
+    if (s < 0 || s > 15) {
+        *bp = b;
+        return -1;
+    }
+    int diff = s ? extend(bits_take(&b, s), s) : 0;
+    *pred = (int16_t)(*pred + diff);
+    blk[0] = (int16_t)(*pred * (1 << al));
+    *bp = b;
+    return 0;
 }
 
-static inline void decode_block_ac_refine(Dec *d, Bits *b, const Huff *ac, int16_t *blk)
+static int block_dc_refine(Bits *bp, int al, int16_t *blk)
 {
-    int p1 = 1 << d->al, m1 = -p1;
-    int k = d->ss, se = d->se;
-    if (d->eobrun == 0) {
+    if (bp->cnt < 32)
+        bits_fill(bp);
+    if (bits_take(bp, 1))
+        blk[0] = (int16_t)(blk[0] | (1 << al));
+    return 0;
+}
+
+static int block_ac_first(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
+{
+    if (*eobrun) {
+        (*eobrun)--;
+        return 0;
+    }
+    Bits b = *bp;
+    for (int k = ss; k <= se;) {
+        if (b.cnt < 32)
+            bits_fill(&b);
+        int rs = bits_symbol(&b, ac);
+        if (rs < 0)
+            goto bad;
+        int r = rs >> 4, s = rs & 15;
+        if (s) {
+            k += r;
+            if (k > se)
+                goto bad;
+            blk[jpeg_zigzag[k]] = (int16_t)(extend(bits_take(&b, s), s) * (1 << al));
+            k++;
+        } else if (r == 15) {
+            k += 16;
+        } else {
+            /* a run of 2^r blocks plus r more bits without anything left in the band, this one first. */
+            uint32_t run = 1u << r;
+            if (r)
+                run += (uint32_t)bits_take(&b, r);
+            *eobrun = run - 1;
+            break;
+        }
+    }
+    *bp = b;
+    return 0;
+bad:
+    *bp = b;
+    return -1;
+}
+
+/* a correction bit for a coefficient that already is not zero. */
+static inline void refine_coef(Bits *b, int16_t *c, int bit)
+{
+    if (bits_take(b, 1)) {
+        int mag = *c < 0 ? -*c : *c;
+        if (!(mag & bit))
+            *c = (int16_t)(*c < 0 ? *c - bit : *c + bit);
+    }
+}
+
+static int block_ac_refine(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
+{
+    Bits b = *bp;
+    int bit = 1 << al;
+    int k = ss;
+    if (!*eobrun) {
         for (; k <= se; k++) {
-            NEED(b, 32);
-            int sym = huff_symbol(b, ac);
-            int r = sym >> 4, s = sym & 15;
-            int newval = 0;
+            if (b.cnt < 32)
+                bits_fill(&b);
+            int rs = bits_symbol(&b, ac);
+            if (rs < 0)
+                goto bad;
+            int r = rs >> 4, s = rs & 15;
+            int value = 0;
             if (s) {
                 if (s != 1)
-                    b->bad = 1;
-                newval = bits_get(b, 1) ? p1 : m1;
+                    goto bad;
+                value = bits_take(&b, 1) ? bit : -bit;
             } else if (r != 15) {
-                d->eobrun = 1u << r;
+                uint32_t run = 1u << r;
                 if (r)
-                    d->eobrun += bits_get(b, r);
+                    run += (uint32_t)bits_take(&b, r);
+                *eobrun = run;
                 break;
             }
+            /* r coefficients that are zero so far are passed, and the nonzero ones on the way get their bit. */
             for (; k <= se; k++) {
-                int16_t *c = &blk[mime_jpeg_natural_order[k]];
+                int16_t *c = &blk[jpeg_zigzag[k]];
+                if (b.cnt < 16)
+                    bits_fill(&b);
                 if (*c) {
-                    NEED(b, 1);
-                    refine_coef(b, c, p1, m1);
+                    refine_coef(&b, c, bit);
                 } else if (--r < 0) {
                     break;
                 }
             }
-            if (newval && k <= se)
-                blk[mime_jpeg_natural_order[k]] = (int16_t)newval;
+            if (value && k <= se)
+                blk[jpeg_zigzag[k]] = (int16_t)value;
         }
     }
-    if (d->eobrun > 0) {
+    if (*eobrun) {
         for (; k <= se; k++) {
-            int16_t *c = &blk[mime_jpeg_natural_order[k]];
+            int16_t *c = &blk[jpeg_zigzag[k]];
+            if (b.cnt < 16)
+                bits_fill(&b);
             if (*c)
-                refine_coef(b, c, p1, m1);
+                refine_coef(&b, c, bit);
         }
-        d->eobrun--;
+        (*eobrun)--;
     }
-}
-
-/* ---- markers ---- */
-
-/* finds the next marker at or after p, returns it or -1 and moves p behind it. */
-static int find_marker(const uint8_t **pp, const uint8_t *end)
-{
-    const uint8_t *p = *pp;
-    while (p + 1 < end) {
-        if (p[0] == 0xFF) {
-            unsigned c = p[1];
-            if (c == 0xFF) {
-                p++;
-                continue;
-            }
-            if (c == 0) {
-                p += 2;
-                continue;
-            }
-            *pp = p + 2;
-            return (int)c;
-        }
-        p++;
-    }
-    *pp = end;
+    *bp = b;
+    return 0;
+bad:
+    *bp = b;
     return -1;
 }
 
-static int next_marker(Dec *d)
+/* ------------------------------------------------------------------ the markers before and between the scans */
+
+static int be16(const uint8_t *p)
 {
-    if (d->unread) {
-        int m = d->unread;
-        d->unread = 0;
+    return (p[0] << 8) | p[1];
+}
+
+/* the next marker, or -1 when the data ends. */
+static int next_marker(Jpeg *j)
+{
+    const uint8_t *d = j->data;
+    size_t n = j->size, p = j->pos;
+    for (;;) {
+        while (p < n && d[p] != 0xFF)
+            p++;
+        while (p < n && d[p] == 0xFF)
+            p++;
+        if (p >= n) {
+            j->pos = n;
+            return -1;
+        }
+        int m = d[p++];
+        if (m == 0 || m == 1 || (m >= M_RST0 && m <= M_SOI))
+            continue;
+        j->pos = p;
         return m;
     }
-    const uint8_t *p = d->data + d->pos;
-    int m = find_marker(&p, d->data + d->size);
-    d->pos = (size_t)(p - d->data);
-    return m;
 }
 
-static inline unsigned be16(const uint8_t *p)
+static int parse_sof(Jpeg *j, int marker, const uint8_t *p, size_t len)
 {
-    return (unsigned)p[0] << 8 | p[1];
-}
-
-enum { R_SOS = 1, R_EOI = 2 };
-
-static int parse_sof(Dec *d, int marker, const uint8_t *p, size_t len)
-{
-    MimeJpegInfo *info = &d->info;
-    if (d->have_sof)
+    if (j->have_frame)
         return MIME_JPEG_ERR_FORMAT;
+    if (marker != M_SOF0 && marker != M_SOF1 && marker != M_SOF2)
+        return MIME_JPEG_ERR_UNSUPPORTED;
     if (len < 6)
         return MIME_JPEG_ERR_FORMAT;
-    unsigned prec = p[0];
-    unsigned height = be16(p + 1);
-    unsigned width = be16(p + 3);
-    unsigned n = p[5];
-    if (n == 0 || n > 4 || len < 6 + 3 * (size_t)n)
+    if (p[0] != 8)
+        return MIME_JPEG_ERR_UNSUPPORTED;
+    uint32_t height = (uint32_t)be16(p + 1), width = (uint32_t)be16(p + 3);
+    int nf = p[5];
+    if (nf == 0)
         return MIME_JPEG_ERR_FORMAT;
-    if (prec != 8)
-        return prec == 12 || prec == 16 ? MIME_JPEG_ERR_UNSUPPORTED : MIME_JPEG_ERR_FORMAT;
-    if (width == 0)
+    if (nf == 2 || nf > 4)
+        return MIME_JPEG_ERR_UNSUPPORTED;
+    if (len != 6 + 3 * (size_t)nf)
         return MIME_JPEG_ERR_FORMAT;
     if (height == 0)
-        return MIME_JPEG_ERR_UNSUPPORTED; /* the height would come in a DNL segment. */
-    if (width > MIME_JPEG_MAX_DIMENSION || height > MIME_JPEG_MAX_DIMENSION ||
-        (uint64_t)width * height > MIME_JPEG_MAX_PIXELS)
-        return MIME_JPEG_ERR_TOO_LARGE;
-    if (n == 2)
         return MIME_JPEG_ERR_UNSUPPORTED;
-    info->width = width;
-    info->height = height;
-    info->precision = (uint8_t)prec;
-    info->components = (uint8_t)n;
-    info->progressive = marker == 0xC2;
-    info->extended = marker == 0xC1;
-    for (unsigned i = 0; i < n; i++) {
-        const uint8_t *c = p + 6 + 3 * i;
-        unsigned h = c[1] >> 4, v = c[1] & 15;
-        if (h < 1 || h > 4 || v < 1 || v > 4 || c[2] > 3)
+    if (width == 0)
+        return MIME_JPEG_ERR_FORMAT;
+    if (width > MIME_JPEG_MAX_DIM || height > MIME_JPEG_MAX_DIM || (uint64_t)width * height > MIME_JPEG_MAX_PIXELS)
+        return MIME_JPEG_ERR_TOO_LARGE;
+    for (int i = 0; i < nf; i++) {
+        JpegComp *c = &j->comp[i];
+        c->id = p[6 + 3 * i];
+        c->h = p[7 + 3 * i] >> 4;
+        c->v = p[7 + 3 * i] & 15;
+        c->tq = p[8 + 3 * i];
+        if (c->h < 1 || c->h > 4 || c->v < 1 || c->v > 4 || c->tq > 3)
             return MIME_JPEG_ERR_FORMAT;
-        info->comp[i].id = c[0];
-        info->comp[i].h = (uint8_t)h;
-        info->comp[i].v = (uint8_t)v;
-        info->comp[i].tq = c[2];
+        for (int k = 0; k < i; k++)
+            if (j->comp[k].id == c->id)
+                return MIME_JPEG_ERR_FORMAT;
     }
-    d->have_sof = true;
+    j->have_frame = true;
+    j->progressive = marker == M_SOF2;
+    j->extended = marker == M_SOF1;
+    j->width = width;
+    j->height = height;
+    j->ncomp = nf;
     return 0;
 }
 
-static int parse_dqt(Dec *d, const uint8_t *p, size_t len)
+static int parse_dqt(Jpeg *j, const uint8_t *p, size_t len)
 {
-    while (len > 0) {
-        unsigned pq = p[0] >> 4, tq = p[0] & 15;
-        size_t need = 1 + (pq ? 128 : 64);
-        if (pq > 1 || tq > 3 || len < need)
+    while (len) {
+        int precision = p[0] >> 4, id = p[0] & 15;
+        size_t need = 1 + 64 * (precision ? 2u : 1u);
+        if (precision > 1 || id > 3 || len < need)
             return MIME_JPEG_ERR_FORMAT;
-        for (int i = 0; i < 64; i++) {
-            unsigned v = pq ? be16(p + 1 + 2 * i) : p[1 + i];
-            d->qt[tq][mime_jpeg_natural_order[i]] = (uint16_t)v;
-        }
-        d->qt_defined[tq] = true;
+        for (int k = 0; k < 64; k++)
+            j->qt[id][jpeg_zigzag[k]] = precision ? (uint16_t)be16(p + 1 + 2 * k) : p[1 + k];
+        j->qt_defined[id] = true;
         p += need;
         len -= need;
     }
     return 0;
 }
 
-static int parse_dht(Dec *d, const uint8_t *p, size_t len)
+static int parse_dht(Jpeg *j, const uint8_t *p, size_t len)
 {
-    while (len > 0) {
-        if (len < 17)
+    while (len) {
+        int cls = p[0] >> 4, id = p[0] & 15;
+        if (cls > 1 || id > 3 || len < 17)
             return MIME_JPEG_ERR_FORMAT;
-        unsigned tc = p[0] >> 4, th = p[0] & 15;
-        unsigned total = 0;
-        for (int i = 0; i < 16; i++)
-            total += p[1 + i];
-        if (tc > 1 || th > 3 || total > 256 || len < 17 + (size_t)total)
+        int total = 0;
+        uint8_t bits[17];
+        bits[0] = 0;
+        for (int i = 1; i <= 16; i++) {
+            bits[i] = p[i];
+            total += p[i];
+        }
+        if (total > 256 || len < 17 + (size_t)total)
             return MIME_JPEG_ERR_FORMAT;
-        if (!build_huff(&d->huff[tc * 4 + th], p + 1, p + 17, total, tc == 0))
+        if (huff_build(cls ? &j->ac[id] : &j->dc[id], bits, p + 17, total))
             return MIME_JPEG_ERR_FORMAT;
         p += 17 + total;
-        len -= 17 + total;
+        len -= 17 + (size_t)total;
     }
     return 0;
 }
 
-static void parse_app(Dec *d, int marker, const uint8_t *p, size_t len)
+static void parse_app(Jpeg *j, int marker, const uint8_t *p, size_t len)
 {
-    MimeJpegInfo *info = &d->info;
-    if (marker == 0xE0 && len >= 14 && !__builtin_memcmp(p, "JFIF\0", 5)) {
-        info->jfif = true;
-        info->jfif_major = p[5];
-        info->jfif_minor = p[6];
-        info->density_unit = p[7];
-        info->x_density = (uint16_t)be16(p + 8);
-        info->y_density = (uint16_t)be16(p + 10);
-        info->thumb_width = p[12];
-        info->thumb_height = p[13];
-    } else if (marker == 0xEE && len >= 12 && !__builtin_memcmp(p, "Adobe", 5)) {
-        info->adobe = true;
-        info->adobe_transform = p[11];
+    if (marker == M_APP0 && len >= 14 && !__builtin_memcmp(p, "JFIF\0", 5) && !j->jfif) {
+        j->jfif = true;
+        j->jfif_major = p[5];
+        j->jfif_minor = p[6];
+        j->density_unit = p[7];
+        j->x_density = (uint16_t)be16(p + 8);
+        j->y_density = (uint16_t)be16(p + 10);
+        j->thumb_width = p[12];
+        j->thumb_height = p[13];
+    } else if (marker == M_APP14 && len >= 12 && !__builtin_memcmp(p, "Adobe", 5) && !j->adobe) {
+        j->adobe = true;
+        j->adobe_transform = p[11];
     }
 }
 
-static int parse_sos(Dec *d, const uint8_t *p, size_t len)
+/* the segment at the position, handled when it is one of the headers. */
+static int header_segment(Jpeg *j, int marker)
 {
-    if (!d->have_sof)
+    if (j->pos + 2 > j->size)
         return MIME_JPEG_ERR_FORMAT;
-    if (len < 1)
+    size_t len = (size_t)be16(j->data + j->pos);
+    if (len < 2 || j->pos + len > j->size)
         return MIME_JPEG_ERR_FORMAT;
-    int ns = p[0];
-    if (ns < 1 || ns > 4 || ns > d->info.components || len < 4 + 2 * (size_t)ns)
-        return MIME_JPEG_ERR_FORMAT;
-    uint32_t used = 0;
-    int blocks = 0;
-    for (int i = 0; i < ns; i++) {
-        int found = -1;
-        for (int c = 0; c < d->info.components; c++) {
-            if (d->info.comp[c].id == p[1 + 2 * i] && !(used & (1u << c))) {
-                found = c;
-                break;
-            }
-        }
-        unsigned t = p[2 + 2 * i];
-        if (found < 0 || (t >> 4) > 3 || (t & 15) > 3)
-            return MIME_JPEG_ERR_FORMAT;
-        used |= 1u << found;
-        d->sc[i] = found;
-        d->tdc[i] = (int)(t >> 4);
-        d->tac[i] = (int)(t & 15);
-        blocks += d->info.comp[found].h * d->info.comp[found].v;
-    }
-    if (ns > 1 && blocks > 10)
-        return MIME_JPEG_ERR_FORMAT;
-    const uint8_t *q = p + 1 + 2 * ns;
-    d->ns = ns;
-    d->ss = q[0];
-    d->se = q[1];
-    d->ah = q[2] >> 4;
-    d->al = q[2] & 15;
-    if (d->info.progressive) {
-        if (d->ss > 63 || d->se > 63 || d->ss > d->se || d->al > 13 || d->ah > 13)
-            return MIME_JPEG_ERR_FORMAT;
-        if (d->ss == 0) {
-            if (d->se != 0)
-                return MIME_JPEG_ERR_FORMAT;
-            d->kind = d->ah ? K_DC_REFINE : K_DC_FIRST;
-        } else {
-            if (ns != 1)
-                return MIME_JPEG_ERR_FORMAT;
-            d->kind = d->ah ? K_AC_REFINE : K_AC_FIRST;
-        }
-    } else {
-        d->ss = 0;
-        d->se = 63;
-        d->ah = d->al = 0;
-        d->kind = K_SEQ;
-    }
-    return 0;
-}
-
-/*
- * reads markers until the next scan header or the end of the image. segments the decoder has
- * no use for are skipped. returns R_SOS, R_EOI or an error.
- */
-static int parse_markers(Dec *d)
-{
-    for (;;) {
-        int m = next_marker(d);
-        if (m < 0)
-            return d->have_sof ? R_EOI : MIME_JPEG_ERR_FORMAT;
-        if (m == 0xD9)
-            return R_EOI;
-        if (m == 0xD8 || m == 0x01 || (m >= 0xD0 && m <= 0xD7))
-            continue;
-        if (d->pos + 2 > d->size)
-            return d->have_sof ? R_EOI : MIME_JPEG_ERR_FORMAT;
-        size_t len = be16(d->data + d->pos);
-        if (len < 2 || d->pos + len > d->size) {
-            /* a segment that runs past the end of the file. */
-            if (!d->tolerant && (m == 0xDA || m == 0xC0 || m == 0xC1 || m == 0xC2 || m == 0xC4 || m == 0xDB))
-                return MIME_JPEG_ERR_FORMAT;
-            return d->have_sof ? R_EOI : MIME_JPEG_ERR_FORMAT;
-        }
-        const uint8_t *p = d->data + d->pos + 2;
-        size_t plen = len - 2;
-        d->pos += len;
-        int rc = 0;
-        switch (m) {
-        case 0xC0:
-        case 0xC1:
-        case 0xC2:
-            rc = parse_sof(d, m, p, plen);
-            break;
-        case 0xC3:
-        case 0xC5:
-        case 0xC6:
-        case 0xC7:
-        case 0xC9:
-        case 0xCA:
-        case 0xCB:
-        case 0xCD:
-        case 0xCE:
-        case 0xCF:
-            return MIME_JPEG_ERR_UNSUPPORTED;
-        case 0xC4:
-            if (d->huff)
-                rc = parse_dht(d, p, plen);
-            break;
-        case 0xDB:
-            if (d->huff)
-                rc = parse_dqt(d, p, plen);
-            break;
-        case 0xDD:
-            if (plen >= 2)
-                d->restart_interval = (uint16_t)be16(p);
-            else
-                rc = MIME_JPEG_ERR_FORMAT;
-            break;
-        case 0xDA:
-            rc = parse_sos(d, p, plen);
-            if (rc == 0) {
-                d->pos = (size_t)(p + plen - d->data);
-                return R_SOS;
-            }
-            break;
-        default:
-            if (m >= 0xE0 && m <= 0xEF)
-                parse_app(d, m, p, plen);
-            break;
-        }
-        if (rc < 0)
-            return rc;
-    }
-}
-
-/* ---- frame geometry ---- */
-
-static void decide_color(Dec *d)
-{
-    MimeJpegInfo *info = &d->info;
-    d->adobe_invert = false;
-    switch (info->components) {
-    case 1:
-        d->cs = MIME_JPEG_CS_GRAY;
-        break;
-    case 3:
-        if (info->jfif)
-            d->cs = MIME_JPEG_CS_YCBCR;
-        else if (info->adobe)
-            d->cs = info->adobe_transform == 0 ? MIME_JPEG_CS_RGB : MIME_JPEG_CS_YCBCR;
-        else if (info->comp[0].id == 'R' && info->comp[1].id == 'G' && info->comp[2].id == 'B')
-            d->cs = MIME_JPEG_CS_RGB;
-        else
-            d->cs = MIME_JPEG_CS_YCBCR;
-        break;
-    default:
-        if (info->adobe) {
-            d->cs = info->adobe_transform == 0 ? MIME_JPEG_CS_CMYK : MIME_JPEG_CS_YCCK;
-            d->adobe_invert = true;
-        } else {
-            d->cs = MIME_JPEG_CS_CMYK;
-        }
-        break;
-    }
-    info->color_space = (uint8_t)d->cs;
-}
-
-static inline uint32_t ceil_div(uint32_t a, uint32_t b)
-{
-    return (a + b - 1) / b;
-}
-
-static int scale_dct(unsigned flags)
-{
-    switch (flags & MIME_JPEG_SCALE_MASK) {
-    case MIME_JPEG_SCALE_HALF:
-        return 4;
-    case MIME_JPEG_SCALE_QUARTER:
-        return 2;
-    case MIME_JPEG_SCALE_EIGHTH:
-        return 1;
-    default:
-        return 8;
-    }
-}
-
-/* fills the output fields of the info and the geometry the decoder needs. */
-static void setup_geometry(Dec *d)
-{
-    MimeJpegInfo *info = &d->info;
-    d->dct = scale_dct(d->flags);
-    d->maxh = d->maxv = 1;
-    /* a single component is always coded in blocks of its own, whatever its factors say. */
-    for (int i = 0; i < info->components && info->components > 1; i++) {
-        if (info->comp[i].h > d->maxh)
-            d->maxh = info->comp[i].h;
-        if (info->comp[i].v > d->maxv)
-            d->maxv = info->comp[i].v;
-    }
-    d->mcus_x = ceil_div(info->width, 8u * d->maxh);
-    d->mcus_y = ceil_div(info->height, 8u * d->maxv);
-    d->out_w = ceil_div(info->width * d->dct, 8);
-    d->out_h = ceil_div(info->height * d->dct, 8);
-    d->raw = (d->flags & MIME_JPEG_RAW_COLOR) != 0;
-    info->out_width = d->out_w;
-    info->out_height = d->out_h;
-    info->out_format = (uint8_t)(info->components == 1 ? MIME_JPEG_FORMAT_GRAY8
-                                 : info->components == 3 ? MIME_JPEG_FORMAT_BGR24
-                                                         : MIME_JPEG_FORMAT_CMYK32);
-    info->scale_denom = (uint8_t)(8 / d->dct);
-    d->fancy = !(d->flags & MIME_JPEG_NO_FANCY) && d->dct > 1;
-    for (int i = 0; i < info->components; i++) {
-        Comp *c = &d->comp[i];
-        c->id = info->comp[i].id;
-        c->h = info->components > 1 ? info->comp[i].h : 1;
-        c->v = info->components > 1 ? info->comp[i].v : 1;
-        c->tq = info->comp[i].tq;
-        /* chroma is transformed at a larger size where that avoids upsampling it afterwards. */
-        unsigned ssize = (unsigned)d->dct;
-        while (ssize < 8 && (d->maxh * d->dct) % (c->h * ssize * 2u) == 0 &&
-               (d->maxv * d->dct) % (c->v * ssize * 2u) == 0)
-            ssize *= 2;
-        c->dct = (uint8_t)ssize;
-        c->hin = (uint8_t)(c->h * ssize / (unsigned)d->dct);
-        c->vin = (uint8_t)(c->v * ssize / (unsigned)d->dct);
-        c->wib = ceil_div(info->width * c->h, 8u * d->maxh);
-        c->hib = ceil_div(info->height * c->v, 8u * d->maxv);
-        c->pitch = d->mcus_x * c->h;
-        c->dw = ceil_div(info->width * c->h * ssize, 8u * d->maxh);
-        c->dh = ceil_div(info->height * c->v * ssize, 8u * d->maxv);
-        c->bandrows = (uint32_t)c->v * ssize;
-        bool integral = (d->maxh % c->hin) == 0 && (d->maxv % c->vin) == 0;
-        c->hexp = (uint8_t)(d->maxh / c->hin);
-        c->vexp = (uint8_t)(d->maxv / c->vin);
-        if (c->hexp == 1 && c->vexp == 1 && integral)
-            c->mode = UP_NONE;
-        else if (!integral)
-            c->mode = UP_NEAREST;
-        else if (c->hexp == 2 && c->vexp == 1)
-            c->mode = d->fancy && c->dw > 2 ? UP_H2V1_FANCY : UP_H2V1;
-        else if (c->hexp == 1 && c->vexp == 2 && d->fancy)
-            c->mode = UP_H1V2_FANCY;
-        else if (c->hexp == 2 && c->vexp == 2 && d->fancy && c->dw > 2)
-            c->mode = UP_H2V2_FANCY;
-        else
-            c->mode = UP_REPL;
-    }
-}
-
-static int check_output(const Dec *d, size_t out_stride, size_t out_size)
-{
-    size_t bpp = d->info.out_format;
-    uint64_t row = (uint64_t)d->out_w * bpp;
-    if (out_stride < row || (uint64_t)out_stride > SIZE_MAX / 4)
-        return MIME_JPEG_ERR_PARAM;
-    if ((uint64_t)(d->out_h - 1) * out_stride + row > out_size)
-        return MIME_JPEG_ERR_PARAM;
-    return 0;
-}
-
-/* ---- output stages ---- */
-
-static inline uint8_t *comp_row(Comp *c, int64_t r)
-{
-    if (r < 0)
-        r = 0;
-    if (r >= (int64_t)c->dh)
-        r = (int64_t)c->dh - 1;
-    uint32_t band = (uint32_t)r / c->bandrows;
-    uint32_t in_band = (uint32_t)r - band * c->bandrows;
-    return c->plane + ((size_t)(band % 3) * c->bandrows + in_band) * c->pstride;
-}
-
-/* the row of component c that lines up with output row y, upsampled to the output width. */
-static const uint8_t *up_row(Dec *d, Comp *c, uint32_t y)
-{
-    switch (c->mode) {
-    case UP_NONE:
-        return comp_row(c, y);
-    case UP_H2V1_FANCY:
-        mime_jpeg_up_h2v1_fancy(comp_row(c, y), c->tmp, c->dw);
-        return c->tmp;
-    case UP_H2V1:
-        if ((int32_t)y == c->cache_row)
-            return c->tmp;
-        c->cache_row = (int32_t)y;
-        mime_jpeg_up_replicate(comp_row(c, y), c->tmp, c->dw, 2);
-        return c->tmp;
-    case UP_H1V2_FANCY: {
-        uint32_t r = y >> 1;
-        mime_jpeg_up_h1v2_fancy(comp_row(c, r), comp_row(c, (y & 1) ? (int64_t)r + 1 : (int64_t)r - 1), c->tmp,
-                                c->dw, (int)(y & 1));
-        return c->tmp;
-    }
-    case UP_H2V2_FANCY: {
-        uint32_t r = y >> 1;
-        mime_jpeg_up_h2v2_fancy(comp_row(c, r), comp_row(c, (y & 1) ? (int64_t)r + 1 : (int64_t)r - 1), c->tmp,
-                                c->dw);
-        return c->tmp;
-    }
-    case UP_REPL: {
-        uint32_t r = y / c->vexp;
-        if (c->hexp == 1)
-            return comp_row(c, r);
-        if ((int32_t)r == c->cache_row)
-            return c->tmp;
-        c->cache_row = (int32_t)r;
-        mime_jpeg_up_replicate(comp_row(c, r), c->tmp, c->dw, c->hexp);
-        return c->tmp;
-    }
-    default: {
-        uint32_t r = (y * c->vin) / d->maxv;
-        mime_jpeg_up_nearest(comp_row(c, r), c->tmp, d->out_w, c->hin, d->maxh);
-        return c->tmp;
-    }
-    }
-}
-
-/* converts and writes the output rows of the band of MCU row b. */
-static void emit_band(Dec *d, uint32_t b)
-{
-    uint32_t vrows = (uint32_t)d->maxv * d->dct;
-    uint32_t y0 = b * vrows;
-    uint32_t y1 = y0 + vrows;
-    if (y1 > d->out_h)
-        y1 = d->out_h;
-    const int ncomp = d->info.components;
-    for (int i = 0; i < ncomp; i++)
-        d->comp[i].cache_row = -1;
-    for (uint32_t y = y0; y < y1; y++) {
-        uint8_t *dst = d->out + (size_t)y * d->out_stride;
-        const uint8_t *r[JPEG_MAX_COMPS];
-        for (int i = 0; i < ncomp; i++)
-            r[i] = up_row(d, &d->comp[i], y);
-        switch (ncomp) {
-        case 1:
-            __builtin_memcpy(dst, r[0], d->out_w);
-            break;
-        case 3:
-            if (d->cs == MIME_JPEG_CS_YCBCR && !d->raw)
-                mime_jpeg_row_ycc_bgr(r[0], r[1], r[2], dst, d->out_w);
-            else if (d->cs == MIME_JPEG_CS_RGB && !d->raw)
-                mime_jpeg_row_rgb_bgr(r[0], r[1], r[2], dst, d->out_w);
-            else
-                mime_jpeg_row_rgb_bgr(r[2], r[1], r[0], dst, d->out_w);
-            break;
-        default:
-            mime_jpeg_row_cmyk(r[0], r[1], r[2], r[3], dst, d->out_w, d->cs == MIME_JPEG_CS_YCCK && !d->raw,
-                               d->adobe_invert && !d->raw);
-            break;
-        }
-    }
-}
-
-/* transforms the blocks of MCU row j into the band planes. */
-static void idct_mcu_row(Dec *d, uint32_t j)
-{
-    for (int i = 0; i < d->info.components; i++) {
-        Comp *c = &d->comp[i];
-        for (uint32_t by = 0; by < c->v; by++) {
-            uint32_t gb = j * c->v + by;
-            if (gb >= c->hib)
-                break;
-            const int16_t *blocks = d->streaming ? c->rowbuf + (size_t)by * c->pitch * 64
-                                                 : c->coef + (size_t)gb * c->pitch * 64;
-            uint8_t *dst = c->plane + ((size_t)(j % 3) * c->bandrows + (size_t)by * c->dct) * c->pstride;
-            mime_jpeg_idct_blocks(c->dct, blocks, c->wib, c->qt, dst, c->pstride);
-        }
-    }
-}
-
-static void finish_mcu_row(Dec *d, uint32_t j)
-{
-    idct_mcu_row(d, j);
-    if (!d->needs_ctx)
-        emit_band(d, j);
-    else if (j > 0)
-        emit_band(d, j - 1);
-}
-
-static void finish_image(Dec *d)
-{
-    if (d->needs_ctx && d->mcus_y > 0)
-        emit_band(d, d->mcus_y - 1);
-}
-
-/* ---- scans ---- */
-
-static int latch_tables(Dec *d)
-{
-    for (int i = 0; i < d->ns; i++) {
-        Comp *c = &d->comp[d->sc[i]];
-        if (c->latched)
-            continue;
-        if (!d->qt_defined[c->tq])
-            return MIME_JPEG_ERR_FORMAT;
-        __builtin_memcpy(c->qt, d->qt[c->tq], sizeof c->qt);
-        c->latched = true;
-    }
-    return 0;
-}
-
-static void reset_scan_state(Dec *d)
-{
-    for (int i = 0; i < d->ns; i++)
-        d->comp[d->sc[i]].last_dc = 0;
-    d->eobrun = 0;
-}
-
-static int process_restart(Dec *d)
-{
-    Bits *b = &d->br;
-    b->buf = 0;
-    b->cnt = 0;
-    b->fake = 0;
-    reset_scan_state(d);
-    int m = b->marker;
-    if (!m) {
-        const uint8_t *p = b->p;
-        m = find_marker(&p, b->end);
-        b->p = p;
-        b->lim = b->end;
-    }
-    int desired = d->next_rst;
-    d->restarts_left = d->restart_interval;
-    for (;;) {
-        if (m == 0xD0 + desired) {
-            b->marker = 0;
-            b->lim = b->end;
-            d->insufficient = false;
-            d->next_rst = (desired + 1) & 7;
-            return 0;
-        }
-        if (!d->tolerant)
-            return MIME_JPEG_ERR_DATA;
-        d->damaged = true;
-        int action;
-        if (m < 0) {
-            /* the file is over, which reads as the end of the image from now on. */
-            m = 0xD9;
-            b->p = b->end;
-            action = 3;
-        } else if (m < 0xC0) {
-            action = 2;
-        } else if (m < 0xD0 || m > 0xD7) {
-            action = 3;
-        } else if (m == 0xD0 + ((desired + 1) & 7) || m == 0xD0 + ((desired + 2) & 7)) {
-            action = 3;
-        } else if (m == 0xD0 + ((desired - 1) & 7) || m == 0xD0 + ((desired - 2) & 7)) {
-            action = 2;
-        } else {
-            action = 1;
-        }
-        if (action == 1) {
-            b->marker = 0;
-            b->lim = b->end;
-            d->insufficient = false;
-            d->next_rst = (desired + 1) & 7;
-            return 0;
-        }
-        if (action == 3) {
-            /* the marker stays unread, so the next bits come out as zeros. */
-            b->marker = m;
-            b->lim = b->p;
-            return 0;
-        }
-        const uint8_t *p = b->p;
-        m = find_marker(&p, b->end);
-        b->p = p;
-        b->marker = 0;
-        b->lim = b->end;
-    }
-}
-
-/* decodes one MCU. */
-static inline void decode_mcu(Dec *d, Bits *b, uint32_t mx, int16_t *const rows[], const Huff *dcs[],
-                              const Huff *acs[], int kind)
-{
-    for (int i = 0; i < d->ns; i++) {
-        Comp *c = &d->comp[d->sc[i]];
-        unsigned sh = d->sh[i], sv = d->sv[i];
-        for (unsigned vy = 0; vy < sv; vy++) {
-            for (unsigned hx = 0; hx < sh; hx++) {
-                int16_t *blk = rows[i] + ((size_t)vy * c->pitch + (size_t)mx * sh + hx) * 64;
-                switch (kind) {
-                case K_SEQ:
-                    __builtin_memset(blk, 0, 128);
-                    decode_block_seq(b, dcs[i], acs[i], &c->last_dc, blk);
-                    break;
-                case K_DC_FIRST:
-                    decode_block_dc_first(b, dcs[i], &c->last_dc, d->al, blk);
-                    break;
-                case K_DC_REFINE:
-                    NEED(b, 1);
-                    if (bits_get(b, 1))
-                        blk[0] = (int16_t)(blk[0] | (1 << d->al));
-                    break;
-                case K_AC_FIRST:
-                    decode_block_ac_first(d, b, acs[i], blk);
-                    break;
-                default:
-                    decode_block_ac_refine(d, b, acs[i], blk);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-static inline void zero_mcu(Dec *d, uint32_t mx, int16_t *const rows[], int kind)
-{
-    if (kind != K_SEQ)
-        return;
-    for (int i = 0; i < d->ns; i++) {
-        Comp *c = &d->comp[d->sc[i]];
-        unsigned sh = d->sh[i], sv = d->sv[i];
-        for (unsigned vy = 0; vy < sv; vy++)
-            for (unsigned hx = 0; hx < sh; hx++)
-                __builtin_memset(rows[i] + ((size_t)vy * c->pitch + (size_t)mx * sh + hx) * 64, 0, 128);
-    }
-}
-
-/* decodes the MCUs of one row of the scan. */
-static inline int decode_mcu_row_k(Dec *d, uint32_t my, int kind)
-{
-    Bits b = d->br;
-    int16_t *rows[JPEG_MAX_COMPS];
-    const Huff *dcs[JPEG_MAX_COMPS], *acs[JPEG_MAX_COMPS];
+    const uint8_t *p = j->data + j->pos + 2;
+    size_t plen = len - 2;
     int rc = 0;
-
-    /* stored blocks keep what they have once the data is gone, so the rest of the scan costs nothing. */
-    if (d->insufficient && !d->restart_interval && !d->streaming)
-        return 0;
-
-    for (int i = 0; i < d->ns; i++) {
-        Comp *c = &d->comp[d->sc[i]];
-        if (d->streaming)
-            rows[i] = c->rowbuf;
-        else if (d->ns == 1)
-            rows[i] = c->coef + (size_t)my * c->pitch * 64;
-        else
-            rows[i] = c->coef + (size_t)my * c->v * c->pitch * 64;
-        dcs[i] = &d->huff[d->tdc[i]];
-        acs[i] = &d->huff[4 + d->tac[i]];
-    }
-    for (uint32_t mx = 0; mx < d->scan_cols; mx++) {
-        if (d->restart_interval) {
-            if (d->restarts_left == 0) {
-                d->br = b;
-                rc = process_restart(d);
-                b = d->br;
-                if (rc < 0)
-                    break;
-            }
-            d->restarts_left--;
-        }
-        if (d->insufficient) {
-            zero_mcu(d, mx, rows, kind);
-            continue;
-        }
-        decode_mcu(d, &b, mx, rows, dcs, acs, kind);
-        if (b.cnt < b.fake || b.bad) {
-            d->damaged = true;
-            if (!d->tolerant) {
-                rc = MIME_JPEG_ERR_DATA;
-                break;
-            }
-            /* running out of data neutralizes the rest of the interval, a bad code does not. */
-            if (b.cnt < b.fake)
-                d->insufficient = true;
-            b.bad = 0;
-        }
-    }
-    d->br = b;
+    if (marker >= M_SOF0 && marker <= 0xCF && marker != M_DHT && marker != M_JPG && marker != M_DAC)
+        rc = parse_sof(j, marker, p, plen);
+    else if (marker == M_DQT)
+        rc = parse_dqt(j, p, plen);
+    else if (marker == M_DHT)
+        rc = parse_dht(j, p, plen);
+    else if (marker == M_DRI)
+        j->restart = plen >= 2 ? (uint32_t)be16(p) : 0;
+    else if (marker == M_APP0 || marker == M_APP14)
+        parse_app(j, marker, p, plen);
+    j->pos += len;
     return rc;
 }
 
-static int decode_mcu_row(Dec *d, uint32_t my)
+/* reads the markers up to the first scan. */
+static int parse_headers(Jpeg *j)
 {
-    switch (d->kind) {
-    case K_SEQ:
-        return decode_mcu_row_k(d, my, K_SEQ);
-    case K_DC_FIRST:
-        return decode_mcu_row_k(d, my, K_DC_FIRST);
-    case K_DC_REFINE:
-        return decode_mcu_row_k(d, my, K_DC_REFINE);
-    case K_AC_FIRST:
-        return decode_mcu_row_k(d, my, K_AC_FIRST);
-    default:
-        return decode_mcu_row_k(d, my, K_AC_REFINE);
-    }
-}
-
-/* prepares the scan that parse_sos described: tables, geometry and the bit reader. */
-static int begin_scan(Dec *d)
-{
-    int rc = latch_tables(d);
-    if (rc < 0)
-        return rc;
-    for (int i = 0; i < d->ns; i++) {
-        Comp *c = &d->comp[d->sc[i]];
-        if (d->ns == 1) {
-            d->sh[i] = d->sv[i] = 1;
-        } else {
-            d->sh[i] = c->h;
-            d->sv[i] = c->v;
+    for (;;) {
+        int m = next_marker(j);
+        if (m < 0 || m == M_EOI)
+            return 0;
+        if (m == M_SOS) {
+            j->pos -= 2; /* back to the marker, for the scan. */
+            return 0;
         }
-    }
-    if (d->ns == 1) {
-        Comp *c = &d->comp[d->sc[0]];
-        d->scan_cols = c->wib;
-        d->scan_rows = c->hib;
-    } else {
-        d->scan_cols = d->mcus_x;
-        d->scan_rows = d->mcus_y;
-    }
-    reset_scan_state(d);
-    d->insufficient = false;
-    d->restarts_left = d->restart_interval;
-    d->next_rst = 0;
-    Bits *b = &d->br;
-    b->p = d->data + d->pos;
-    b->end = d->data + d->size;
-    b->lim = b->end;
-    b->buf = 0;
-    b->cnt = 0;
-    b->fake = 0;
-    b->marker = 0;
-    b->bad = 0;
-    return 0;
-}
-
-/* leaves the entropy data: the next markers are looked for behind what the reader consumed. */
-static void end_scan(Dec *d)
-{
-    d->pos = (size_t)(d->br.p - d->data);
-    d->unread = d->br.marker;
-    if (!d->unread && d->br.p >= d->br.end)
-        d->pos = d->size;
-}
-
-/* ---- the driver ---- */
-
-static int alloc_buffers(Dec *d, bool streaming)
-{
-    const MimeJpegInfo *info = &d->info;
-    uint64_t coef_bytes = 0;
-    d->streaming = streaming;
-    d->needs_ctx = false;
-    for (int i = 0; i < info->components; i++) {
-        Comp *c = &d->comp[i];
-        uint32_t rows_padded = d->mcus_y * c->v;
-        if (!streaming)
-            coef_bytes += (uint64_t)c->pitch * rows_padded * 128;
-        if (c->mode == UP_H1V2_FANCY || c->mode == UP_H2V2_FANCY)
-            d->needs_ctx = true;
-    }
-    if (coef_bytes > COEF_LIMIT)
-        return MIME_JPEG_ERR_TOO_LARGE;
-    for (int i = 0; i < info->components; i++) {
-        Comp *c = &d->comp[i];
-        uint32_t rows_padded = d->mcus_y * c->v;
-        if (streaming) {
-            c->rowbuf = dec_alloc(d, (uint64_t)c->pitch * c->v * 128, true);
-            if (!c->rowbuf)
-                return MIME_JPEG_ERR_NOMEM;
-        } else {
-            c->coef = dec_alloc(d, (uint64_t)c->pitch * rows_padded * 128, true);
-            if (!c->coef)
-                return MIME_JPEG_ERR_NOMEM;
-        }
-        c->pstride = ((c->wib * c->dct + 15) & ~15u) + 32;
-        c->plane = dec_alloc(d, (uint64_t)c->pstride * c->bandrows * 3, true);
-        uint32_t tw = d->out_w > c->dw * c->hexp ? d->out_w : c->dw * c->hexp;
-        c->tmp = c->mode == UP_NONE ? nullptr : dec_alloc(d, (uint64_t)((tw + 15) & ~15u) + 64, true);
-        if (!c->plane || (c->mode != UP_NONE && !c->tmp))
-            return MIME_JPEG_ERR_NOMEM;
-        c->cache_row = -1;
-    }
-    return 0;
-}
-
-static int run_decode(Dec *d)
-{
-    int rc = parse_markers(d);
-    bool no_scan = false;
-    if (rc < 0)
-        return rc;
-    if (rc == R_EOI) {
-        /* tolerant decoding of a file that ends before its first scan gives a neutral picture. */
-        if (!d->tolerant || !d->have_sof)
-            return MIME_JPEG_ERR_FORMAT;
-        no_scan = true;
-        d->damaged = true;
-        d->ns = d->info.components;
-        for (int i = 0; i < d->ns; i++) {
-            d->sc[i] = i;
-            d->tdc[i] = d->tac[i] = d->ns == 3 && i > 0 ? 1 : 0;
-            if (!d->qt_defined[d->info.comp[i].tq]) {
-                for (int k = 0; k < 64; k++)
-                    d->qt[d->info.comp[i].tq][k] = 1;
-                d->qt_defined[d->info.comp[i].tq] = true;
-            }
-        }
-        d->ss = 0;
-        d->se = d->info.progressive ? 0 : 63;
-        d->ah = d->al = 0;
-        d->kind = d->info.progressive ? K_DC_FIRST : K_SEQ;
-        d->pos = d->size;
-    }
-    decide_color(d);
-    d->info.restart_interval = d->restart_interval;
-    setup_geometry(d);
-    rc = check_output(d, d->out_stride, d->out_size);
-    if (rc < 0)
-        return rc;
-
-    /* a file this short cannot hold the picture it claims, which also bounds the work and memory. */
-    uint64_t total_blocks = 0;
-    for (int i = 0; i < d->info.components; i++)
-        total_blocks += (uint64_t)d->comp[i].pitch * d->mcus_y * d->comp[i].v;
-    if (total_blocks > 32ull * d->size + 65536)
-        return MIME_JPEG_ERR_DATA;
-
-    /* the scan header was read, decide how to run it. */
-    bool streaming = !d->info.progressive && d->ns == d->info.components;
-    rc = alloc_buffers(d, streaming);
-    if (rc < 0)
-        return rc;
-
-    if (streaming) {
-        rc = begin_scan(d);
-        if (rc < 0)
+        int rc = header_segment(j, m);
+        if (rc)
             return rc;
-        for (uint32_t my = 0; my < d->mcus_y; my++) {
-            rc = decode_mcu_row(d, my);
-            if (rc < 0)
-                return rc;
-            finish_mcu_row(d, my);
+    }
+}
+
+int jpeg_color_space(const Jpeg *j)
+{
+    if (j->ncomp == 1)
+        return MIME_JPEG_CS_GRAY;
+    if (j->ncomp == 3) {
+        /* a JFIF segment means YCbCr, whatever else the file says, which is how the files in use are read. */
+        if (j->jfif)
+            return MIME_JPEG_CS_YCBCR;
+        if (j->adobe)
+            return j->adobe_transform == 0 ? MIME_JPEG_CS_RGB : MIME_JPEG_CS_YCBCR;
+        if (j->comp[0].id == 'R' && j->comp[1].id == 'G' && j->comp[2].id == 'B')
+            return MIME_JPEG_CS_RGB;
+        return MIME_JPEG_CS_YCBCR;
+    }
+    return j->adobe && j->adobe_transform == 2 ? MIME_JPEG_CS_YCCK : MIME_JPEG_CS_CMYK;
+}
+
+/* ------------------------------------------------------------------ the geometry */
+
+static int set_geometry(Jpeg *j)
+{
+    unsigned scales = j->flags & (MIME_JPEG_SCALE_HALF | MIME_JPEG_SCALE_QUARTER | MIME_JPEG_SCALE_EIGHTH);
+    if (scales & (scales - 1))
+        return MIME_JPEG_ERR_PARAM;
+    j->scale = scales == MIME_JPEG_SCALE_HALF ? 4 : scales == MIME_JPEG_SCALE_QUARTER ? 2 : scales ? 1 : 8;
+    int hmax = 1, vmax = 1;
+    for (int i = 0; i < j->ncomp; i++) {
+        hmax = jpeg_max(hmax, j->comp[i].h);
+        vmax = jpeg_max(vmax, j->comp[i].v);
+    }
+    j->hmax = hmax;
+    j->vmax = vmax;
+    j->mcux = jpeg_ceil_div(j->width, 8u * (uint32_t)hmax);
+    j->mcuy = jpeg_ceil_div(j->height, 8u * (uint32_t)vmax);
+    uint32_t n = (uint32_t)j->scale;
+    j->out_width = (j->width * n + 7) / 8;
+    j->out_height = (j->height * n + 7) / 8;
+    for (int i = 0; i < j->ncomp; i++) {
+        JpegComp *c = &j->comp[i];
+        uint32_t cw = jpeg_ceil_div(j->width * c->h, (uint32_t)hmax);
+        uint32_t chh = jpeg_ceil_div(j->height * c->v, (uint32_t)vmax);
+        c->bw = j->mcux * c->h;
+        c->bh = j->mcuy * c->v;
+        c->cbw = jpeg_ceil_div(cw, 8);
+        c->cbh = jpeg_ceil_div(chh, 8);
+        /*
+         * a component with fewer samples than the picture is decoded at a larger size when the picture is
+         * scaled down, so that it needs no upsampling when its samples are a multiple of the output's.
+         */
+        int cn = (int)n;
+        while (cn < 8 && ((uint32_t)hmax * n) % ((uint32_t)c->h * (uint32_t)cn * 2) == 0 &&
+               ((uint32_t)vmax * n) % ((uint32_t)c->v * (uint32_t)cn * 2) == 0)
+            cn *= 2;
+        c->n = cn;
+        c->pw = c->bw * (uint32_t)cn;
+        c->ph = c->bh * (uint32_t)cn;
+        c->cw = (cw * (uint32_t)cn + 7) / 8;
+        c->ch = (chh * (uint32_t)cn + 7) / 8;
+    }
+    return 0;
+}
+
+static void fill_info(const Jpeg *j, MimeJpegInfo *info)
+{
+    __builtin_memset(info, 0, sizeof *info);
+    info->width = j->width;
+    info->height = j->height;
+    info->components = j->ncomp;
+    info->precision = 8;
+    info->progressive = j->progressive;
+    info->extended = j->extended;
+    info->restart_interval = j->restart;
+    info->jfif = j->jfif;
+    info->jfif_major = j->jfif_major;
+    info->jfif_minor = j->jfif_minor;
+    info->density_unit = j->density_unit;
+    info->x_density = j->x_density;
+    info->y_density = j->y_density;
+    info->thumb_width = j->thumb_width;
+    info->thumb_height = j->thumb_height;
+    info->adobe = j->adobe;
+    info->adobe_transform = j->adobe_transform;
+    info->color_space = jpeg_color_space(j);
+    for (int i = 0; i < j->ncomp; i++) {
+        info->comp[i].id = j->comp[i].id;
+        info->comp[i].h = j->comp[i].h;
+        info->comp[i].v = j->comp[i].v;
+        info->comp[i].tq = j->comp[i].tq;
+    }
+    info->out_width = j->out_width;
+    info->out_height = j->out_height;
+    info->out_format = j->ncomp == 1 ? MIME_JPEG_FORMAT_GRAY8 : j->ncomp == 3 ? MIME_JPEG_FORMAT_BGR24
+                                                                               : MIME_JPEG_FORMAT_CMYK32;
+    info->scale_denom = 8 / j->scale;
+}
+
+static int open_headers(Jpeg *j, const uint8_t *data, size_t size, unsigned flags)
+{
+    __builtin_memset(j, 0, sizeof *j);
+    j->data = data;
+    j->size = size;
+    j->flags = flags;
+    j->tolerant = (flags & MIME_JPEG_TOLERANT) != 0;
+    if (!data || size < 4 || data[0] != 0xFF || data[1] != M_SOI)
+        return MIME_JPEG_ERR_FORMAT;
+    j->pos = 2;
+    int rc = parse_headers(j);
+    if (rc)
+        return rc;
+    if (!j->have_frame)
+        return MIME_JPEG_ERR_FORMAT;
+    return set_geometry(j);
+}
+
+int mime_jpeg_info(const uint8_t *data, size_t size, unsigned flags, MimeJpegInfo *info)
+{
+    Jpeg j;
+    int rc = open_headers(&j, data, size, flags);
+    if (rc)
+        return rc;
+    fill_info(&j, info);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ scans */
+
+enum { SCAN_SEQ, SCAN_DC_FIRST, SCAN_DC_REFINE, SCAN_AC_FIRST, SCAN_AC_REFINE };
+
+typedef struct Scan {
+    int ns;
+    int ci[4];
+    int ss, se, ah, al;
+    int kind;
+} Scan;
+
+static int parse_sos(Jpeg *j, Scan *sc)
+{
+    const uint8_t *p = j->data + j->pos;
+    size_t avail = j->size - j->pos;
+    if (avail < 2)
+        return MIME_JPEG_ERR_FORMAT;
+    size_t len = (size_t)be16(p);
+    if (len < 6 || len > avail)
+        return MIME_JPEG_ERR_FORMAT;
+    int ns = p[2];
+    if (ns < 1 || ns > j->ncomp || len != 6 + 2 * (size_t)ns)
+        return MIME_JPEG_ERR_FORMAT;
+    sc->ns = ns;
+    for (int i = 0; i < ns; i++) {
+        int id = p[3 + 2 * i], found = -1;
+        for (int k = 0; k < j->ncomp; k++)
+            if (j->comp[k].id == id)
+                found = k;
+        if (found < 0)
+            return MIME_JPEG_ERR_FORMAT;
+        for (int k = 0; k < i; k++)
+            if (sc->ci[k] == found)
+                return MIME_JPEG_ERR_FORMAT;
+        sc->ci[i] = found;
+        j->comp[found].td = p[4 + 2 * i] >> 4;
+        j->comp[found].ta = p[4 + 2 * i] & 15;
+        if (j->comp[found].td > 3 || j->comp[found].ta > 3)
+            return MIME_JPEG_ERR_FORMAT;
+    }
+    sc->ss = p[3 + 2 * ns];
+    sc->se = p[4 + 2 * ns];
+    sc->ah = p[5 + 2 * ns] >> 4;
+    sc->al = p[5 + 2 * ns] & 15;
+    if (j->progressive) {
+        if (sc->ss == 0) {
+            sc->se = 0;
+            sc->kind = sc->ah ? SCAN_DC_REFINE : SCAN_DC_FIRST;
+        } else {
+            if (ns != 1 || sc->se < sc->ss || sc->se > 63)
+                return MIME_JPEG_ERR_FORMAT;
+            sc->kind = sc->ah ? SCAN_AC_REFINE : SCAN_AC_FIRST;
         }
-        finish_image(d);
-        end_scan(d);
+        if (sc->al > 13 || sc->ah > 13)
+            return MIME_JPEG_ERR_FORMAT;
+    } else {
+        sc->ss = 0;
+        sc->se = 63;
+        sc->ah = sc->al = 0;
+        sc->kind = SCAN_SEQ;
+    }
+    j->pos += len;
+    return 0;
+}
+
+static JpegHuff *table_for(Jpeg *j, bool ac, int id)
+{
+    JpegHuff *h = ac ? &j->ac[id] : &j->dc[id];
+    if (!h->defined && id < 2) {
+        /* a stream without tables of its own, as motion jpeg often is, uses the ones of annex K. */
+        const JpegHuffSpec *s = ac ? &jpeg_std_ac[id] : &jpeg_std_dc[id];
+        huff_build(h, s->bits, s->vals, s->count);
+    }
+    return h->defined ? h : NULL;
+}
+
+static int latch_quant(Jpeg *j, JpegComp *c)
+{
+    if (!c->dq_ready) {
+        if (!j->qt_defined[c->tq])
+            return MIME_JPEG_ERR_FORMAT;
+        jpeg_idct_prepare(j->qt[c->tq], c->dq);
+        c->dq_ready = true;
+    }
+    return 0;
+}
+
+static int alloc_planes(Jpeg *j)
+{
+    for (int i = 0; i < j->ncomp; i++) {
+        JpegComp *c = &j->comp[i];
+        c->plane = alloc_array(j, (uint64_t)c->pw * c->ph, 1);
+        if (!c->plane)
+            return MIME_JPEG_ERR_NOMEM;
+    }
+    return 0;
+}
+
+static int alloc_coefficients(Jpeg *j)
+{
+    for (int i = 0; i < j->ncomp; i++) {
+        JpegComp *c = &j->comp[i];
+        uint64_t blocks = (uint64_t)c->bw * c->bh;
+        c->coef = alloc_array(j, blocks * 64, 2);
+        if (!c->coef)
+            return MIME_JPEG_ERR_NOMEM;
+        __builtin_memset(c->coef, 0, (size_t)(blocks * 128));
+    }
+    return 0;
+}
+
+/* a block of the plane without any content: the mean gray. */
+static void plane_neutral(JpegComp *c, uint32_t bx, uint32_t by)
+{
+    if (bx >= c->cbw || by >= c->cbh)
+        return;
+    size_t n = (size_t)c->n;
+    uint8_t *dst = c->plane + (size_t)by * n * c->pw + (size_t)bx * n;
+    for (size_t y = 0; y < n; y++)
+        __builtin_memset(dst + y * c->pw, 128, n);
+}
+
+static void neutral_mcu(Jpeg *j, const Scan *sc, uint32_t mcu)
+{
+    if (j->buffered)
+        return;
+    if (sc->ns == 1) {
+        JpegComp *c = &j->comp[sc->ci[0]];
+        plane_neutral(c, mcu % c->cbw, mcu / c->cbw);
+        return;
+    }
+    uint32_t mx = mcu % j->mcux, my = mcu / j->mcux;
+    for (int k = 0; k < sc->ns; k++) {
+        JpegComp *c = &j->comp[sc->ci[k]];
+        for (int v = 0; v < c->v; v++)
+            for (int h = 0; h < c->h; h++)
+                plane_neutral(c, mx * c->h + (uint32_t)h, my * c->v + (uint32_t)v);
+    }
+}
+
+/*
+ * at the end of a restart interval: finds the marker, which has to be the next restart marker. returns 1 to go on,
+ * with *lost the intervals that were lost between the previous marker and this one, and 0 when the scan ends here,
+ * leaving the position at the marker that ended it.
+ */
+static int restart_sync(Jpeg *j, Bits *b, unsigned *next, unsigned *lost)
+{
+    const uint8_t *q = b->p, *end = b->end;
+    *lost = 0;
+    for (;;) {
+        while (q + 1 < end && !(q[0] == 0xFF && q[1] != 0 && q[1] != 0xFF))
+            q++;
+        if (q + 1 >= end) {
+            j->pos = j->size;
+            return 0;
+        }
+        int m = q[1];
+        if (m >= M_RST0 && m < M_RST0 + 8) {
+            unsigned d = ((unsigned)(m - M_RST0) - *next) & 7;
+            if (d == 0 || (j->tolerant && d <= 3)) {
+                *lost = d;
+                *next = (*next + d + 1) & 7;
+                b->p = q + 2;
+                return 1;
+            }
+            if (!j->tolerant) {
+                j->pos = (size_t)(q - j->data);
+                return -1;
+            }
+            q += 2; /* an old marker out of its turn. */
+            continue;
+        }
+        j->pos = (size_t)(q - j->data);
         return 0;
     }
+}
 
-    for (int scans = 0; !no_scan; scans++) {
-        if (scans == MAX_SCANS) {
-            if (!d->tolerant)
-                return MIME_JPEG_ERR_DATA;
-            d->damaged = true;
-            break;
+/* decodes one scan. returns 0, MIME_JPEG_TRUNCATED when it was damaged and tolerated, or an error. */
+static int decode_scan(Jpeg *j, const Scan *sc)
+{
+    const uint8_t *start = j->data + j->pos, *end = j->data + j->size;
+    Bits b;
+    int16_t scratch[64] __attribute__((aligned(16)));
+    uint32_t eobrun = 0;
+    unsigned next_rst = 0;
+    int status = 0;
+    const JpegHuff *dc[4] = {0}, *ac[4] = {0};
+    for (int k = 0; k < sc->ns; k++) {
+        JpegComp *c = &j->comp[sc->ci[k]];
+        c->pred = 0;
+        if (sc->kind == SCAN_SEQ || sc->kind == SCAN_DC_FIRST) {
+            dc[k] = table_for(j, false, c->td);
+            if (!dc[k])
+                return MIME_JPEG_ERR_FORMAT;
         }
-        rc = begin_scan(d);
-        if (rc < 0)
+        if (sc->kind == SCAN_SEQ || sc->kind == SCAN_AC_FIRST || sc->kind == SCAN_AC_REFINE) {
+            ac[k] = table_for(j, true, c->ta);
+            if (!ac[k])
+                return MIME_JPEG_ERR_FORMAT;
+        }
+        int rc = latch_quant(j, c);
+        if (rc)
             return rc;
-        for (uint32_t my = 0; my < d->scan_rows; my++) {
-            rc = decode_mcu_row(d, my);
+    }
+    bits_init(&b, start, end);
+
+    uint32_t nmcu;
+    uint32_t wmcu;
+    if (sc->ns == 1) {
+        wmcu = j->comp[sc->ci[0]].cbw;
+        nmcu = wmcu * j->comp[sc->ci[0]].cbh;
+    } else {
+        wmcu = j->mcux;
+        nmcu = j->mcux * j->mcuy;
+    }
+    uint32_t restart = j->restart;
+    uint32_t mcu = 0;
+    while (mcu < nmcu) {
+        if (restart && mcu && mcu % restart == 0) {
+            unsigned lost;
+            int r = restart_sync(j, &b, &next_rst, &lost);
+            if (r < 0)
+                return MIME_JPEG_ERR_DATA;
+            if (r == 0) {
+                /* the scan ends before its last blocks. */
+                if (!j->tolerant)
+                    return MIME_JPEG_ERR_DATA;
+                status = MIME_JPEG_TRUNCATED;
+                for (; mcu < nmcu; mcu++)
+                    neutral_mcu(j, sc, mcu);
+                return status;
+            }
+            bits_init(&b, b.p, end);
+            eobrun = 0;
+            for (int k = 0; k < sc->ns; k++)
+                j->comp[sc->ci[k]].pred = 0;
+            if (lost) {
+                status = MIME_JPEG_TRUNCATED;
+                uint32_t stop = mcu + lost * restart < nmcu ? mcu + lost * restart : nmcu;
+                for (; mcu < stop; mcu++)
+                    neutral_mcu(j, sc, mcu);
+            }
+        }
+        uint32_t interval_end = restart ? (mcu / restart + 1) * restart : nmcu;
+        if (interval_end > nmcu)
+            interval_end = nmcu;
+        for (; mcu < interval_end; mcu++) {
+            int bad = 0;
+            uint32_t mx = mcu % wmcu, my = mcu / wmcu;
+            for (int k = 0; k < sc->ns && !bad; k++) {
+                JpegComp *c = &j->comp[sc->ci[k]];
+                int hn = sc->ns == 1 ? 1 : c->h, vn = sc->ns == 1 ? 1 : c->v;
+                for (int v = 0; v < vn && !bad; v++) {
+                    for (int h = 0; h < hn; h++) {
+                        uint32_t bx = sc->ns == 1 ? mx : mx * c->h + (uint32_t)h;
+                        uint32_t by = sc->ns == 1 ? my : my * c->v + (uint32_t)v;
+                        int16_t *blk;
+                        if (j->buffered) {
+                            blk = c->coef + ((size_t)by * c->bw + bx) * 64;
+                        } else {
+                            blk = scratch;
+                            __builtin_memset(scratch, 0, sizeof scratch);
+                        }
+                        int rc;
+                        switch (sc->kind) {
+                        case SCAN_SEQ:
+                            rc = block_sequential(&b, dc[k], ac[k], &c->pred, blk);
+                            break;
+                        case SCAN_DC_FIRST:
+                            rc = block_dc_first(&b, dc[k], &c->pred, sc->al, blk);
+                            break;
+                        case SCAN_DC_REFINE:
+                            rc = block_dc_refine(&b, sc->al, blk);
+                            break;
+                        case SCAN_AC_FIRST:
+                            rc = block_ac_first(&b, ac[k], sc->ss, sc->se, sc->al, &eobrun, blk);
+                            break;
+                        default:
+                            rc = block_ac_refine(&b, ac[k], sc->ss, sc->se, sc->al, &eobrun, blk);
+                            break;
+                        }
+                        if (rc < 0) {
+                            bad = 1;
+                            break;
+                        }
+                        if (!j->buffered && bx < c->cbw && by < c->cbh)
+                            jpeg_idct(blk, c->dq, rc, c->n,
+                                      c->plane + (size_t)by * (size_t)c->n * c->pw + (size_t)bx * (size_t)c->n, c->pw);
+                    }
+                }
+            }
+            if (!bad && b.cnt < b.pad)
+                bad = 1; /* the data ended inside the block. */
+            if (bad) {
+                if (!j->tolerant)
+                    return MIME_JPEG_ERR_DATA;
+                status = MIME_JPEG_TRUNCATED;
+                /* the rest of the interval is lost, with restarts the next interval can still be read. */
+                for (; mcu < interval_end; mcu++)
+                    neutral_mcu(j, sc, mcu);
+                if (!restart) {
+                    j->pos = (size_t)(b.p - j->data);
+                    return status;
+                }
+                break;
+            }
+        }
+    }
+    j->pos = (size_t)(b.p - j->data);
+    return status;
+}
+
+/* ------------------------------------------------------------------ the driver */
+
+/* the transform of every block of a picture put together from several scans. */
+static void transform_buffered(Jpeg *j)
+{
+    for (int i = 0; i < j->ncomp; i++) {
+        JpegComp *c = &j->comp[i];
+        size_t n = (size_t)c->n;
+        if (!c->dq_ready) {
+            for (uint32_t by = 0; by < c->cbh; by++)
+                for (uint32_t bx = 0; bx < c->cbw; bx++)
+                    plane_neutral(c, bx, by);
+            continue;
+        }
+        for (uint32_t by = 0; by < c->cbh; by++) {
+            for (uint32_t bx = 0; bx < c->cbw; bx++) {
+                const int16_t *blk = c->coef + ((size_t)by * c->bw + bx) * 64;
+                int last = 0;
+                for (int k = 63; k > 0; k--)
+                    if (blk[jpeg_zigzag[k]]) {
+                        last = k;
+                        break;
+                    }
+                jpeg_idct(blk, c->dq, last, c->n, c->plane + (size_t)by * n * c->pw + (size_t)bx * n, c->pw);
+            }
+        }
+    }
+}
+
+static int decode_image(Jpeg *j, uint8_t *dest, size_t stride)
+{
+    int rc = alloc_planes(j);
+    if (rc)
+        return rc;
+    int status = 0;
+    bool scanned = false;
+    for (;;) {
+        int m = next_marker(j);
+        if (m < 0 || m == M_EOI)
+            break;
+        if (m == M_SOS) {
+            if (j->scans >= SCAN_LIMIT)
+                break;
+            Scan sc;
+            rc = parse_sos(j, &sc);
+            if (rc) {
+                /* once a scan was read, a broken header ends the picture where it is. */
+                if (!scanned)
+                    return rc;
+                if (!j->tolerant)
+                    return MIME_JPEG_ERR_DATA;
+                status = MIME_JPEG_TRUNCATED;
+                break;
+            }
+            if (!scanned) {
+                j->buffered = j->progressive || sc.ns < j->ncomp;
+                if (j->buffered) {
+                    rc = alloc_coefficients(j);
+                    if (rc)
+                        return rc;
+                }
+            }
+            scanned = true;
+            j->scans++;
+            rc = decode_scan(j, &sc);
             if (rc < 0)
                 return rc;
+            if (rc > 0)
+                status = rc;
+            if (!j->buffered)
+                break;
+            continue;
         }
-        end_scan(d);
-        rc = parse_markers(d);
-        if (rc < 0) {
-            if (!d->tolerant)
+        rc = header_segment(j, m);
+        if (rc) {
+            if (!scanned)
                 return rc;
-            d->damaged = true;
+            if (!j->tolerant)
+                return MIME_JPEG_ERR_DATA;
+            status = MIME_JPEG_TRUNCATED;
             break;
         }
-        if (rc == R_EOI)
-            break;
     }
-    for (int i = 0; i < d->info.components; i++) {
-        Comp *c = &d->comp[i];
-        if (!c->latched) {
-            if (d->qt_defined[c->tq])
-                __builtin_memcpy(c->qt, d->qt[c->tq], sizeof c->qt);
-            else
-                for (int k = 0; k < 64; k++)
-                    c->qt[k] = 1;
-            c->latched = true;
-        }
-    }
-    for (uint32_t j = 0; j < d->mcus_y; j++)
-        finish_mcu_row(d, j);
-    finish_image(d);
-    return 0;
-}
-
-static void dec_init(Dec *d, const MimeAllocator *alloc, const void *data, size_t size, unsigned flags)
-{
-    __builtin_memset(d, 0, sizeof *d);
-    d->alloc = alloc;
-    d->data = data;
-    d->size = size;
-    d->flags = flags;
-    d->tolerant = (flags & MIME_JPEG_TOLERANT) != 0;
-}
-
-static int check_soi(const void *data, size_t size)
-{
-    const uint8_t *p = data;
-    if (!p || size < 4 || p[0] != 0xFF || p[1] != 0xD8)
+    if (!scanned)
         return MIME_JPEG_ERR_FORMAT;
-    return 0;
+    if (j->buffered)
+        transform_buffered(j);
+    rc = jpeg_output(j, dest, stride);
+    return rc ? rc : status;
 }
 
-bool mime_jpeg_is_jpeg(const void *data, size_t size)
+int mime_jpeg_decode(const uint8_t *data, size_t size, const MimeAllocator *alloc, unsigned flags, uint8_t *dest,
+                     size_t stride, size_t dest_size, MimeJpegInfo *info)
 {
-    const uint8_t *p = data;
-    return p && size >= 4 && p[0] == 0xFF && p[1] == 0xD8 && p[2] == 0xFF;
-}
-
-int mime_jpeg_info(const void *data, size_t size, unsigned flags, MimeJpegInfo *info)
-{
-    int rc = check_soi(data, size);
-    if (rc < 0)
+    Jpeg j;
+    int rc = open_headers(&j, data, size, flags);
+    if (rc)
         return rc;
-    if (!info)
+    if (!alloc || !dest)
         return MIME_JPEG_ERR_PARAM;
-    Dec d;
-    dec_init(&d, nullptr, data, size, flags);
-    d.pos = 2;
-    rc = parse_markers(&d);
-    if (rc < 0)
-        return rc;
-    if (rc == R_EOI && !(d.tolerant && d.have_sof))
-        return MIME_JPEG_ERR_FORMAT;
-    decide_color(&d);
-    d.info.restart_interval = d.restart_interval;
-    setup_geometry(&d);
-    *info = d.info;
-    return 0;
-}
-
-int mime_jpeg_decode(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags, uint8_t *out,
-                     size_t out_stride, size_t out_size, MimeJpegInfo *info)
-{
-    int rc = check_soi(data, size);
-    if (rc < 0)
-        return rc;
-    if (!alloc || !out)
+    int bpp = j.ncomp == 1 ? 1 : j.ncomp == 3 ? 3 : 4;
+    size_t row = (size_t)j.out_width * (size_t)bpp;
+    if (stride < row || dest_size < (size_t)(j.out_height - 1) * stride + row)
         return MIME_JPEG_ERR_PARAM;
-    Dec *d = mime_alloc(alloc, sizeof *d);
-    if (!d)
-        return MIME_JPEG_ERR_NOMEM;
-    dec_init(d, alloc, data, size, flags);
-    d->pos = 2;
-    d->out = out;
-    d->out_stride = out_stride;
-    d->out_size = out_size;
-    d->huff = dec_alloc(d, 8 * sizeof(Huff), false);
-    if (!d->huff) {
-        mime_free(alloc, d);
-        return MIME_JPEG_ERR_NOMEM;
-    }
-    /* the standard tables stand in for tables a file does not define. */
-    build_huff(&d->huff[0], mime_jpeg_std_dc_luma_bits, mime_jpeg_std_dc_luma_vals, 12, true);
-    build_huff(&d->huff[1], mime_jpeg_std_dc_chroma_bits, mime_jpeg_std_dc_chroma_vals, 12, true);
-    build_huff(&d->huff[4], mime_jpeg_std_ac_luma_bits, mime_jpeg_std_ac_luma_vals, 162, false);
-    build_huff(&d->huff[5], mime_jpeg_std_ac_chroma_bits, mime_jpeg_std_ac_chroma_vals, 162, false);
-    for (int i = 2; i < 4; i++) {
-        build_huff(&d->huff[i], mime_jpeg_std_dc_luma_bits, mime_jpeg_std_dc_luma_vals, 12, true);
-        build_huff(&d->huff[4 + i], mime_jpeg_std_ac_luma_bits, mime_jpeg_std_ac_luma_vals, 162, false);
-    }
-    rc = run_decode(d);
-    if (info && d->info.out_width)
-        *info = d->info;
-    int result = rc < 0 ? rc : (d->damaged ? MIME_JPEG_TRUNCATED : MIME_JPEG_OK);
-    dec_release(d);
-    mime_free(alloc, d);
-    return result;
-}
-
-int mime_jpeg_decode_alloc(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags, uint8_t **out,
-                           size_t *out_stride, MimeJpegInfo *info)
-{
-    MimeJpegInfo local;
-    if (!out || !alloc)
-        return MIME_JPEG_ERR_PARAM;
-    *out = nullptr;
-    int rc = mime_jpeg_info(data, size, flags, &local);
-    if (rc < 0)
-        return rc;
-    uint64_t stride = (uint64_t)local.out_width * local.out_format;
-    uint64_t total = stride * local.out_height;
-    if (total > SIZE_MAX / 2)
-        return MIME_JPEG_ERR_TOO_LARGE;
-    uint8_t *buf = mime_alloc(alloc, (size_t)total);
-    if (!buf)
-        return MIME_JPEG_ERR_NOMEM;
-    rc = mime_jpeg_decode(data, size, alloc, flags, buf, (size_t)stride, (size_t)total, info);
-    if (rc < 0) {
-        mime_free(alloc, buf);
-        return rc;
-    }
-    *out = buf;
-    if (out_stride)
-        *out_stride = (size_t)stride;
+    if (info)
+        fill_info(&j, info);
+    j.alloc = alloc;
+    rc = decode_image(&j, dest, stride);
+    release(&j);
     return rc;
 }
