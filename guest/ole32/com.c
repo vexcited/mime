@@ -64,6 +64,8 @@ void OleThreadDetach(void)
     if (t->ComInits)
         leave_apartment(t);
     release_call_state(t);
+    if (t->OrpcEvent)
+        CloseHandle(t->OrpcEvent);
     TlsSetValue(g_tls, nullptr);
     OleFree(t);
 }
