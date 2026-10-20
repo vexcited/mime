@@ -260,11 +260,12 @@ static ULONG nls_flags(USHORT flags)
     return f;
 }
 
+/* the locale the conversions read: the user's for 0 and LOCALE_USER_DEFAULT, then the system's for LOCALE_SYSTEM_DEFAULT. */
 static LCID effective_lcid(LCID lcid)
 {
-    if (!(lcid & 0xFFFFFBFF))
+    if (!(lcid & ~(LCID)LOCALE_USER_DEFAULT))
         lcid = GetUserDefaultLCID();
-    if (lcid == 0x800)
+    if (lcid == LOCALE_SYSTEM_DEFAULT)
         lcid = GetSystemDefaultLCID();
     return lcid;
 }
@@ -372,6 +373,12 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
     }
     if (svt & VT_ARRAY) {
         if (svt == (VT_ARRAY | VT_UI1) && dvt == VT_BSTR) {
+            /* no array is no string. */
+            if (!s->parray) {
+                d->bstrVal = nullptr;
+                d->vt = VT_BSTR;
+                return S_OK;
+            }
             HRESULT hr = BstrFromVector(s->parray, &d->bstrVal);
             if (SUCCEEDED(hr))
                 d->vt = VT_BSTR;
@@ -452,85 +459,86 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
     return AutNumStore(&n, dvt, d, lcid, nls_flags(flags));
 }
 
+/* S_OK for a target a change of type can be asked for, and S_FALSE for the type of the source when it is a by reference array. */
+static HRESULT check_target_type(const VARIANT *src, VARTYPE vt)
+{
+    if (vt < VT_VARIANT)
+        return S_OK;
+    VARTYPE base = vt & (VT_ARRAY | VT_BYREF) ? vt & 0x9FFF : vt;
+    static const ULONGLONG allowed = 0x1000FF7FFCull;
+    if (base > 36 || !(allowed >> base & 1))
+        return DISP_E_BADVARTYPE;
+    if (vt & (VT_VECTOR | VT_ARRAY | VT_BYREF)) {
+        if (vt == src->vt && (vt & VT_ARRAY) && (vt & VT_BYREF))
+            return S_FALSE;
+        if (vt != (VT_ARRAY | VT_UI1))
+            return DISP_E_TYPEMISMATCH;
+    }
+    return S_OK;
+}
+
+/* the value to convert, borrowed from a variant or from what it points to. */
+static HRESULT borrow_value(const VARIANT *src, VARIANT *value)
+{
+    VARTYPE base = src->vt & VT_TYPEMASK;
+    if (base == VT_INT_PTR || base == VT_UINT_PTR)
+        return DISP_E_BADVARTYPE;
+    if (src->vt & VT_BYREF) {
+        VARTYPE pointee = src->vt & ~VT_BYREF;
+        if ((base <= VT_NULL && !(src->vt & VT_ARRAY)) || (pointee != VT_VARIANT && !valid_type(pointee)))
+            return DISP_E_BADVARTYPE;
+        return deref_variant(src, value);
+    }
+    if (src->vt == VT_VARIANT)
+        return DISP_E_TYPEMISMATCH;
+    if (!valid_type(src->vt))
+        return DISP_E_BADVARTYPE;
+    *value = *src;
+    return S_OK;
+}
+
 WINOLEAUTAPI HRESULT WINAPI VariantChangeTypeEx(VARIANTARG *dest, const VARIANTARG *src, LCID lcid, USHORT flags,
                                                 VARTYPE vt)
 {
     if (!dest || !src)
         return E_INVALIDARG;
-    VARTYPE svt = src->vt;
-    if (vt >= VT_VARIANT) {
-        VARTYPE base = (vt & 0x6000) ? vt & 0x9FFF : vt;
-        if (base > VT_RECORD || !((1ull << base) & 0x1000FF7FFCull))
-            return DISP_E_BADVARTYPE;
-        if (vt & 0xE000) {
-            if (vt == svt && (vt & 0x6000) == 0x6000)
-                return VariantCopy(dest, src);
-            if (vt != (VT_ARRAY | VT_UI1))
-                return DISP_E_TYPEMISMATCH;
-        }
-    }
-    lcid = effective_lcid(lcid);
+    HRESULT hr = check_target_type(src, vt);
+    if (FAILED(hr))
+        return hr;
+    if (hr == S_FALSE)
+        return VariantCopy(dest, src);
+    LCID conversion_lcid = effective_lcid(lcid);
 
-    VARIANT borrowed, extracted, result;
-    const VARIANT *s = src;
-    extracted.vt = VT_EMPTY;
-    if (svt == VT_VARIANT)
-        return DISP_E_TYPEMISMATCH;
-    if (!valid_type(svt))
-        return DISP_E_BADVARTYPE;
-    if (svt & VT_BYREF) {
-        HRESULT hr = deref_variant(src, &borrowed);
-        if (FAILED(hr))
-            return hr == DISP_E_TYPEMISMATCH ? DISP_E_TYPEMISMATCH : hr;
-        s = &borrowed;
-        if (!valid_type(s->vt))
-            return DISP_E_BADVARTYPE;
-    }
-    HRESULT hr;
-    for (;;) {
-        if (s->vt == VT_DISPATCH && s->vt != vt && vt != VT_UNKNOWN && vt != VT_EMPTY && vt != VT_NULL) {
-            /* a dispatch object stands for its default property. */
-            if (flags & VARIANT_NOVALUEPROP)
-                return DISP_E_TYPEMISMATCH;
-            VARIANT value;
-            hr = AutExtractValueProperty(s->pdispVal, lcid, &value);
-            if (FAILED(hr))
-                return hr;
-            VariantClear(&extracted);
-            extracted = value;
-            s = &extracted;
-            if (!valid_type(s->vt)) {
-                VariantClear(&extracted);
-                return DISP_E_BADVARTYPE;
-            }
-            if (s->vt & VT_BYREF) {
-                hr = deref_variant(&extracted, &borrowed);
-                if (FAILED(hr)) {
-                    VariantClear(&extracted);
-                    return hr;
-                }
-                s = &borrowed;
-            }
-            continue;
+    VARIANT value;
+    hr = borrow_value(src, &value);
+    if (FAILED(hr))
+        return hr;
+
+    VARIANT result, inner;
+    VariantInit(&inner);
+    /* an object stands for its default value, unless the object itself is asked for. */
+    if (value.vt == VT_DISPATCH && (is_number_vt(vt) || vt == VT_BSTR) && !(flags & VARIANT_NOVALUEPROP)) {
+        hr = AutExtractValueProperty(value.pdispVal, lcid, &inner);
+        if (hr != S_OK) {
+            VariantClear(&inner);
+            return DISP_E_TYPEMISMATCH;
         }
-        break;
+        hr = borrow_value(&inner, &value);
+        if (FAILED(hr)) {
+            VariantClear(&inner);
+            return hr;
+        }
     }
-    hr = change_value(s, vt, &result, lcid, flags);
+    hr = change_value(&value, vt, &result, conversion_lcid, flags);
+    VariantClear(&inner);
+    if (FAILED(hr))
+        return hr;
+    hr = VariantClear(dest);
     if (FAILED(hr)) {
-        VariantClear(&extracted);
+        VariantClear(&result);
         return hr;
     }
-    /* the result is ready: the old value goes, and the source may be the destination itself. */
-    if (dest->vt >= VT_BSTR || dest == src) {
-        HRESULT clear = VariantClear(dest);
-        if (FAILED(clear)) {
-            VariantClear(&result);
-            VariantClear(&extracted);
-            return clear;
-        }
-    }
     *dest = result;
-    VariantClear(&extracted);
     return S_OK;
 }
 
