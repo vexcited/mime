@@ -1370,6 +1370,16 @@ SETUPAPI BOOL WINAPI SetupGetLineTextW(PINFCONTEXT context, HINF inf, PCWSTR sec
         return FALSE;
     for (DWORD i = 1; i <= count; i++) {
         parts[i - 1] = SetupContextField(at, i);
+        /* a number between percent signs is a directory id, a guess that dxupdate needs for its %11% lines. */
+        if (parts[i - 1] && wcschr(parts[i - 1], '%')) {
+            SIZE_T room = wcslen(parts[i - 1]) + MAX_PATH * 4;
+            PWSTR wide = SetupAlloc(room * sizeof(WCHAR));
+            if (wide) {
+                SetupExpandDirectories((INF_FILE *)at->CurrentInf, parts[i - 1], wide, room);
+                SetupFree(parts[i - 1]);
+                parts[i - 1] = wide;
+            }
+        }
         need += (parts[i - 1] ? (DWORD)wcslen(parts[i - 1]) : 0) + (i > 1 ? 1 : 0);
     }
     if (required)
