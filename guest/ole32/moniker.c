@@ -1,9 +1,10 @@
 /*
- * bind contexts, the running object table of the process and the moniker
- * constructors. the table is process local: no other process sees it.
+ * bind contexts and the running object table. The table holds the objects of the process with the monikers that name
+ * them, and publishes each to the table across processes (orpc_rot.c) where the other processes of the machine find it.
+ * The monikers are in monikers.c.
  */
 #include "ole32_private.h"
-#include <mime/stub.h>
+#include "orpc.h"
 
 /* ------------------------------------------------------------------ moniker enumerator */
 
@@ -115,6 +116,9 @@ static const IEnumMonikerVtbl moniker_enum_vtable = {
 
 /* ------------------------------------------------------------------ the running object table */
 
+#define ROT_KEY_CHARS 256
+BOOL MonikerRotKey(IMoniker *moniker, WCHAR *out, ULONG chars);
+
 typedef struct {
     IUnknown *Object;
     IMoniker *Name;
@@ -180,7 +184,17 @@ static BOOL rot_find(IMoniker *name, IUnknown **object, FILETIME *time)
         ReleaseSRWLockShared(&g_rot_lock);
     }
     release_names(names, count);
-    return found;
+    if (found)
+        return TRUE;
+    /* another process of the machine may run it. */
+    WCHAR key[ROT_KEY_CHARS];
+    BYTE objref[ROT_OBJREF_BYTES];
+    ULONG size = 0;
+    if (!MonikerRotKey(name, key, RTL_NUMBER_OF(key)) || !OrpcRotLookup(key, object ? objref : nullptr, &size, time))
+        return FALSE;
+    if (object && FAILED(OrpcRotUnmarshal(objref, size, &IID_IUnknown, (void **)object)))
+        return FALSE;
+    return TRUE;
 }
 
 static HRESULT WINAPI rot_query(IRunningObjectTable *self, REFIID iid, void **result)
@@ -235,7 +249,13 @@ static HRESULT WINAPI rot_register(IRunningObjectTable *self, DWORD flags, IUnkn
     object->lpVtbl->AddRef(object);
     name->lpVtbl->AddRef(name);
     *cookie = entry->Cookie;
+    FILETIME time = entry->Time;
     ReleaseSRWLockExclusive(&g_rot_lock);
+    /* and for the other processes of the machine, which find the entry by the key of the moniker. A cookie is of one
+       process only, so the table across them keeps the process with it. */
+    WCHAR key[ROT_KEY_CHARS];
+    if (MonikerRotKey(name, key, RTL_NUMBER_OF(key)))
+        OrpcRotPublish(key, object, flags, *cookie, &time);
     return hr;
 }
 
@@ -253,6 +273,7 @@ static HRESULT WINAPI rot_revoke(IRunningObjectTable *self, DWORD cookie)
     ReleaseSRWLockExclusive(&g_rot_lock);
     if (!removed.Object)
         return E_INVALIDARG;
+    OrpcRotRevoke(cookie);
     removed.Object->lpVtbl->Release(removed.Object);
     removed.Name->lpVtbl->Release(removed.Name);
     return S_OK;
@@ -284,6 +305,7 @@ static HRESULT WINAPI rot_note_change_time(IRunningObjectTable *self, DWORD cook
     for (ULONG i = 0; i < g_rot_count; i++) {
         if (g_rot[i].Cookie == cookie) {
             g_rot[i].Time = *time;
+            OrpcRotNoteChange(cookie, time);
             hr = S_OK;
             break;
         }
@@ -593,39 +615,5 @@ WINOLEAPI HRESULT WINAPI CreateBindCtx(DWORD reserved, IBindCtx **context)
     bc->Options.dwClassContext = CLSCTX_SERVER;
     bc->Options.locale = GetThreadLocale();
     *context = &bc->Interface;
-    return S_OK;
-}
-
-/* ------------------------------------------------------------------ monikers */
-
-WINOLEAPI HRESULT WINAPI CreateFileMoniker(LPCOLESTR path, IMoniker **moniker)
-{
-    MIME_STUB("ole32");
-    if (!moniker)
-        return E_INVALIDARG;
-    *moniker = nullptr;
-    return E_NOTIMPL;
-}
-
-WINOLEAPI HRESULT WINAPI CreateItemMoniker(LPCOLESTR delimiter, LPCOLESTR item, IMoniker **moniker)
-{
-    MIME_STUB("ole32");
-    if (!moniker)
-        return E_INVALIDARG;
-    *moniker = nullptr;
-    return E_NOTIMPL;
-}
-
-WINOLEAPI HRESULT WINAPI CreateGenericComposite(IMoniker *first, IMoniker *rest, IMoniker **composite)
-{
-    if (!composite)
-        return E_POINTER;
-    *composite = nullptr;
-    /* a composite of one moniker is that moniker; true composites are not implemented. */
-    if (first && rest)
-        return E_NOTIMPL;
-    *composite = first ? first : rest;
-    if (*composite)
-        (*composite)->lpVtbl->AddRef(*composite);
     return S_OK;
 }
