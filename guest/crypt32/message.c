@@ -392,10 +392,125 @@ BOOL WINAPI CryptMsgGetParam(HCRYPTMSG handle, DWORD type, DWORD index, void *ou
 #define CMSG_SIGNER_ONLY_FLAG 0x2
 #define CMSG_USE_SIGNER_INDEX_FLAG 0x4
 
+/* the algorithm a digest object identifier names, 0 for one that is not known. */
+static ALG_ID digest_algorithm(const char *oid)
+{
+    static const struct {
+        const char *Oid;
+        ALG_ID Alg;
+    } known[] = {{"1.3.14.3.2.26", CALG_SHA1}, {"2.16.840.1.101.3.4.2.1", CALG_SHA_256},
+                 {"2.16.840.1.101.3.4.2.2", CALG_SHA_384}, {"2.16.840.1.101.3.4.2.3", CALG_SHA_512},
+                 {"1.2.840.113549.2.5", CALG_MD5}};
+    for (DWORD i = 0; i < RTL_NUMBER_OF(known); i++)
+        if (!strcmp(oid, known[i].Oid))
+            return known[i].Alg;
+    return 0;
+}
+
+static DWORD der_header(BYTE *out, BYTE tag, DWORD length)
+{
+    out[0] = tag;
+    if (length < 128) {
+        out[1] = (BYTE)length;
+        return 2;
+    }
+    DWORD n = 1;
+    while (n < 4 && (length >> (n * 8)))
+        n++;
+    out[1] = (BYTE)(0x80 | n);
+    for (DWORD i = 0; i < n; i++)
+        out[2 + i] = (BYTE)(length >> (8 * (n - 1 - i)));
+    return 2 + n;
+}
+
 /*
- * the certificate of a signer of the message, found by issuer and serial number in the stores given. The signature is
- * not checked: only a caller that asks for the signer alone (or trusts it) gets an answer, any other fails because the
- * check is not made here.
+ * whether the signer of the message signed its content with the key of the certificate: the digest of the content
+ * has to be the message digest the signer attests to, and the rsa signature has to hold over the attributes. Only
+ * a signer with signed attributes is judged.
+ */
+static DWORD verify_signature(const MESSAGE *message, der_item signer, PCCERT_CONTEXT cert)
+{
+    der_reader input = {signer.content, signer.length};
+    der_item version, sid, hash, auth, encryption, encrypted;
+    if (DerExpect(&input, ASN_INTEGER, &version) || DerExpect(&input, ASN_SEQUENCE, &sid) ||
+        DerExpect(&input, ASN_SEQUENCE, &hash) || !DerPeek(&input, 0xa0) || DerExpect(&input, 0xa0, &auth) ||
+        DerExpect(&input, ASN_SEQUENCE, &encryption) || DerExpect(&input, ASN_OCTETSTRING, &encrypted))
+        return ERROR_NOT_SUPPORTED;
+    der_reader fields = {hash.content, hash.length};
+    der_item oid;
+    char name[128];
+    if (DerExpect(&fields, ASN_OID, &oid) || DerParseOid(&oid, name, sizeof(name)))
+        return CRYPT_E_ASN1_CORRUPT;
+    ALG_ID alg = digest_algorithm(name);
+    if (!alg)
+        return NTE_BAD_ALGID;
+    /* the digest the signer attests to, among the attributes. */
+    der_reader attrs = {auth.content, auth.length};
+    const BYTE *attested = nullptr;
+    DWORD attested_size = 0;
+    while (attrs.n) {
+        der_item attribute, id, values, value;
+        if (DerExpect(&attrs, ASN_SEQUENCE, &attribute))
+            return CRYPT_E_ASN1_CORRUPT;
+        der_reader one = {attribute.content, attribute.length};
+        if (DerExpect(&one, ASN_OID, &id) || DerExpect(&one, ASN_SET, &values) || DerParseOid(&id, name, sizeof(name)))
+            return CRYPT_E_ASN1_CORRUPT;
+        if (!strcmp(name, "1.2.840.113549.1.9.4")) {
+            der_reader list = {values.content, values.length};
+            if (DerExpect(&list, ASN_OCTETSTRING, &value))
+                return CRYPT_E_ASN1_CORRUPT;
+            attested = value.content;
+            attested_size = value.length;
+        }
+    }
+    if (!attested)
+        return CRYPT_E_NOT_FOUND;
+    BYTE digest[64];
+    DWORD digest_size = sizeof(digest);
+    if (message->content.start == nullptr)
+        return CRYPT_E_NOT_FOUND;
+    if (!CryptHashCertificate(0, alg, 0, message->content.content, message->content.length, digest, &digest_size))
+        return GetLastError();
+    if (digest_size != attested_size || memcmp(digest, attested, digest_size))
+        return NTE_BAD_SIGNATURE;
+    /* the signed attributes are made again as a set, the signature around them as crypt32's verifier takes it. */
+    BYTE identifier[] = {0x30, 0x0d, 6, 9, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 1, 1, 11, 5, 0};
+    if (alg == CALG_SHA1)
+        identifier[12] = 5;
+    else if (alg == CALG_SHA_384)
+        identifier[12] = 12;
+    else if (alg == CALG_SHA_512)
+        identifier[12] = 13;
+    else if (alg == CALG_MD5)
+        identifier[12] = 4;
+    if (encrypted.length > 8192 || auth.total > 262144)
+        return CRYPT_E_ASN1_LARGE;
+    BYTE *blob = CrAlloc(auth.total + encrypted.length + 64);
+    if (!blob)
+        return ERROR_OUTOFMEMORY;
+    BYTE bits[6];
+    DWORD bits_header = der_header(bits, ASN_BITSTRING, encrypted.length + 1);
+    DWORD content = auth.total + sizeof(identifier) + bits_header + 1 + encrypted.length;
+    DWORD at = der_header(blob, ASN_SEQUENCE, content);
+    memcpy(blob + at, auth.start, auth.total);
+    blob[at] = ASN_SET;
+    at += auth.total;
+    memcpy(blob + at, identifier, sizeof(identifier));
+    at += sizeof(identifier);
+    memcpy(blob + at, bits, bits_header);
+    at += bits_header;
+    blob[at++] = 0;
+    memcpy(blob + at, encrypted.content, encrypted.length);
+    at += encrypted.length;
+    BOOL ok = CryptVerifyCertificateSignature(0, X509_ASN_ENCODING, blob, at, &cert->pCertInfo->SubjectPublicKeyInfo);
+    CrFree(blob);
+    return ok ? 0 : (DWORD)NTE_BAD_SIGNATURE;
+}
+
+/*
+ * the certificate of a signer of the message, found by issuer and serial number among the certificates of the message
+ * and the stores given. Unless the flags ask for the signer alone, or trust it, the signature of the signer is checked
+ * with the key of that certificate, which says nothing of whether anyone trusts the certificate.
  */
 BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCERTSTORE *stores, DWORD flags,
                                        PCCERT_CONTEXT *signer, DWORD *signer_index)
@@ -405,11 +520,12 @@ BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCER
     if ((flags & ~(DWORD)(CMSG_TRUSTED_SIGNER_FLAG | CMSG_SIGNER_ONLY_FLAG | CMSG_USE_SIGNER_INDEX_FLAG)) ||
         (store_count && !stores))
         return CrFail(E_INVALIDARG);
-    if (!(flags & (CMSG_TRUSTED_SIGNER_FLAG | CMSG_SIGNER_ONLY_FLAG)))
-        return CrFail(ERROR_NOT_SUPPORTED);
-    DWORD count = 0, size = sizeof(count);
-    if (!CryptMsgGetParam(handle, CMSG_SIGNER_COUNT_PARAM, 0, &count, &size))
-        return FALSE;
+    AcquireSRWLockShared(&message_lock);
+    MESSAGE *message = lookup(handle);
+    DWORD count = message ? message->signer_count : 0;
+    ReleaseSRWLockShared(&message_lock);
+    if (!message)
+        return CrFail(ERROR_INVALID_HANDLE);
     DWORD first = 0, last = count;
     if (flags & CMSG_USE_SIGNER_INDEX_FLAG) {
         if (!signer_index || *signer_index >= count)
@@ -417,33 +533,63 @@ BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCER
         first = *signer_index;
         last = first + 1;
     }
+    /* the certificates the message brings, besides those of the stores. */
+    HCERTSTORE own = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
+    if (!own)
+        return FALSE;
+    DWORD error = CRYPT_E_NOT_FOUND;
+    for (DWORD k = 0; k < message->certificate_count; k++) {
+        der_item cert;
+        if (!item_at(message->certificates, k, &cert))
+            CertAddEncodedCertificateToStore(own, X509_ASN_ENCODING, cert.start, cert.total, CERT_STORE_ADD_ALWAYS,
+                                             nullptr);
+    }
     for (DWORD index = first; index < last; index++) {
         DWORD bytes = 0;
-        if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, nullptr, &bytes))
-            return FALSE;
-        CERT_INFO *info = CrAlloc(bytes);
-        if (!info)
-            return CrFail(ERROR_OUTOFMEMORY);
-        if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, info, &bytes)) {
-            CrFree(info);
-            return FALSE;
+        if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, nullptr, &bytes)) {
+            error = GetLastError();
+            continue;
         }
-        for (DWORD at = 0; at < store_count; at++) {
-            PCCERT_CONTEXT found = CertGetSubjectCertificateFromStore(stores[at], X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, info);
-            if (found) {
-                CrFree(info);
-                if (signer)
-                    *signer = found;
-                else
-                    CertFreeCertificateContext(found);
-                if (signer_index)
-                    *signer_index = index;
-                return TRUE;
+        CERT_INFO *info = CrAlloc(bytes);
+        if (!info) {
+            error = ERROR_OUTOFMEMORY;
+            break;
+        }
+        if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, info, &bytes)) {
+            error = GetLastError();
+            CrFree(info);
+            continue;
+        }
+        PCCERT_CONTEXT found = CertGetSubjectCertificateFromStore(own, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, info);
+        for (DWORD at = 0; !found && at < store_count; at++)
+            found = CertGetSubjectCertificateFromStore(stores[at], X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, info);
+        CrFree(info);
+        if (!found) {
+            error = CRYPT_E_NOT_FOUND;
+            continue;
+        }
+        if (!(flags & (CMSG_TRUSTED_SIGNER_FLAG | CMSG_SIGNER_ONLY_FLAG))) {
+            der_item item;
+            DWORD checked = item_at(message->signers, index, &item);
+            if (!checked)
+                checked = verify_signature(message, item, found);
+            if (checked) {
+                error = checked;
+                CertFreeCertificateContext(found);
+                continue;
             }
         }
-        CrFree(info);
+        CertCloseStore(own, 0);
+        if (signer)
+            *signer = found;
+        else
+            CertFreeCertificateContext(found);
+        if (signer_index)
+            *signer_index = index;
+        return TRUE;
     }
-    return CrFail(CRYPT_E_NOT_FOUND);
+    CertCloseStore(own, 0);
+    return CrFail(error);
 }
 
 static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *size)
