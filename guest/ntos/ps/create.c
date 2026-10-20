@@ -26,6 +26,7 @@ typedef struct PSP_PARAMS {
     ULONG StartingX, StartingY, CountX, CountY, CountCharsX, CountCharsY, FillAttribute;
     BOOLEAN Detached;
     BOOLEAN NewConsole; /* the process gets a console of its own */
+    HANDLE PtyHandle;   /* the pseudo console the process is attached to, a handle of the creator */
 } PSP_PARAMS;
 
 NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out);
@@ -296,7 +297,12 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     process->MimeRequestId = request_id;
     /* a gui program has no console, a console program shares the one it is given. */
     if (!p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
-        if (p->NewConsole) {
+        MIME_CONSOLE *pty = p->PtyHandle ? ConsoleOfPtyHandle(p->PtyHandle) : nullptr;
+        if (pty) {
+            ConsoleAttach(process, pty);
+            ConsoleInitialTitle(pty, p->WindowTitle.Length ? &p->WindowTitle : image);
+            ConsoleDereference(pty);
+        } else if (p->NewConsole) {
             MIME_CONSOLE *own = ConsoleCreateNew();
             if (own) {
                 ConsoleAttach(process, own);
@@ -515,6 +521,8 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
     p->FillAttribute = pp.FillAttribute;
     p->Detached = pp.ConsoleHandle == CONSOLE_DETACHED;
     p->NewConsole = pp.ConsoleHandle == CONSOLE_NEW || pp.ConsoleHandle == CONSOLE_NO_WINDOW;
+    if (pp.ConsoleHandle && pp.ConsoleHandle != CONSOLE_DETACHED && !p->NewConsole)
+        p->PtyHandle = pp.ConsoleHandle;
     return status;
 }
 

@@ -114,8 +114,8 @@ MIME_CONSOLE *ConCreateConsole(CON_BACKEND backend, ULONG64 request, ULONG tty_f
     KeInitializeEvent(&c->OutputResumed, NotificationEvent, TRUE);
     KeInitializeEvent(&c->PtyReady, NotificationEvent, FALSE);
     KeInitializeEvent(&c->PtySpace, NotificationEvent, TRUE);
-    int cols = size & 0xFFFF ? (int)(size & 0xFFFF) : backend == CON_BACKEND_RUN ? 80 : 120;
-    int rows = size >> 16 ? (int)(size >> 16) : backend == CON_BACKEND_RUN ? 25 : 30;
+    int cols = size & 0xFFFF ? (int)(size & 0xFFFF) : 80;
+    int rows = size >> 16 ? (int)(size >> 16) : 25;
     c->Lines = ConLineStateCreate();
     if (!c->Lines || !CsTerminalInit(&c->Term, cols, rows)) {
         ConLineStateDestroy(c->Lines);
@@ -187,6 +187,9 @@ void ConsoleDetach(PEPROCESS p)
     ExAcquireFastMutex(&g_con_lock);
     MIME_CONSOLE *c = p->Console;
     p->Console = nullptr;
+    /* a pseudo console that is hung up waits for the last process to leave. */
+    if (c && c->Backend == CON_BACKEND_PTY)
+        KeSetEvent(&c->PtyReady, 0, FALSE);
     ExReleaseFastMutex(&g_con_lock);
     if (c)
         ConRelease(c);
@@ -572,6 +575,49 @@ static BOOLEAN host_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length, BOOL
         ConQueueChunk(c, k, FALSE);
         return TRUE;
     }
+    /* a pseudo console that waits for the cursor of its terminal takes the report before anything else. */
+    if (c->AwaitCursor) {
+        UCHAR joined[sizeof(c->Carry)];
+        ULONG had = c->CarryLength;
+        ULONG add = length < sizeof(joined) - had ? length : (ULONG)sizeof(joined) - had;
+        memcpy(joined, c->Carry, had);
+        memcpy(joined + had, data, add);
+        ULONG have = had + add;
+        ULONG row = 0, col = 0, i = 2;
+        BOOLEAN prefix = have >= 1 && joined[0] == 0x1B && (have < 2 || joined[1] == '[');
+        BOOLEAN complete = FALSE;
+        if (prefix && have >= 2) {
+            while (i < have && joined[i] >= '0' && joined[i] <= '9')
+                row = row * 10 + (joined[i++] - '0');
+            if (i < have && joined[i] == ';') {
+                i++;
+                while (i < have && joined[i] >= '0' && joined[i] <= '9')
+                    col = col * 10 + (joined[i++] - '0');
+                if (i < have && joined[i] == 'R')
+                    complete = TRUE;
+                else if (i < have)
+                    prefix = FALSE;
+            } else if (i < have) {
+                prefix = FALSE;
+            }
+        }
+        if (complete && row && col) {
+            ULONG used = i + 1 - had;
+            c->AwaitCursor = FALSE;
+            CsSetHostCursor(&c->Term, (int)col - 1, (int)row - 1);
+            c->CarryLength = 0;
+            c->PendingAck += used;
+            data += used;
+            length -= used;
+            if (!length)
+                return TRUE;
+        } else if (prefix && !complete && have < sizeof(joined)) {
+            memcpy(c->Carry, joined, have);
+            c->CarryLength = have;
+            c->PendingAck += length;
+            return TRUE;
+        }
+    }
     ULONG total = c->CarryLength + length;
     PUCHAR bytes = ExAllocatePool2(POOL_FLAG_NON_PAGED, total, KI_TAG('C', 'o', 'n', 'i'));
     CON_CHUNK *k = bytes ? ConNewChunk(TRUE, 2 * total + 8) : nullptr;
@@ -676,6 +722,34 @@ void ConResize(MIME_CONSOLE *c, ULONG size)
             ConQueueChunk(c, k, FALSE);
         }
     }
+    ExReleaseFastMutex(&g_con_lock);
+}
+
+/*
+ * a pseudo console starts as conhost's does: the terminal is asked for the keys that carry win32 input and
+ * the focus, and the screen is cleared, unless the program that made it asked to keep what the terminal
+ * shows, and then the terminal is asked where its cursor is.
+ */
+void ConPtyStart(MIME_CONSOLE *c, ULONG size, ULONG flags)
+{
+    ExAcquireFastMutex(&g_con_lock);
+    c->PtyFlags = flags;
+    ExReleaseFastMutex(&g_con_lock);
+    ConResize(c, size);
+    ExAcquireFastMutex(&g_con_lock);
+    c->Term.Modes |= CS_MODE_WIN32_INPUT | CS_MODE_FOCUS;
+    CsRender(&c->Term);
+    if (flags & 1) {
+        /* PSEUDOCONSOLE_INHERIT_CURSOR: the screen is the terminal's own until its cursor is known. */
+        c->AwaitCursor = TRUE;
+        CsEmit(&c->Term, "\x1b[6n");
+    } else {
+        CsEmit(&c->Term, "\x1b[?25l\x1b[2J\x1b[m\x1b[H\x1b[?25h");
+    }
+    CsShadowBlank(&c->Term);
+    c->Term.HostKnown = TRUE;
+    c->Term.HostX = c->Term.HostY = 0;
+    ConFlush(c);
     ExReleaseFastMutex(&g_con_lock);
 }
 
@@ -979,7 +1053,7 @@ NTSTATUS ConAllocFor(PEPROCESS self, ULONG flags)
     }
     ExReleaseFastMutex(&g_con_lock);
     if (!c)
-        c = ConCreateConsole(CON_BACKEND_NONE, 0, 0, 0);
+        c = ConCreateConsole(CON_BACKEND_NONE, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
     if (!c)
         return STATUS_INSUFFICIENT_RESOURCES;
     NTSTATUS status = ConsoleAttach(self, c);
@@ -990,7 +1064,7 @@ NTSTATUS ConAllocFor(PEPROCESS self, ULONG flags)
 /* a console for a process that asks for a new one at creation. */
 MIME_CONSOLE *ConsoleCreateNew(void)
 {
-    return ConCreateConsole(CON_BACKEND_NONE, 0, 0, 0);
+    return ConCreateConsole(CON_BACKEND_NONE, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
 }
 
 void IopInitializeConsole(void)

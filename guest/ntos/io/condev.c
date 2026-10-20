@@ -498,6 +498,29 @@ static NTSTATUS read_bytes(MIME_CONSOLE *c, ULONG room, PUCHAR out, PWCHAR initi
 
 /* ------------------------------------------------------------ the handles */
 
+/* the console of a file of the driver that is a pseudo console, with a reference, or nothing. */
+MIME_CONSOLE *ConPtyFromFile(PFILE_OBJECT file)
+{
+    if (file->DeviceObject != g_device)
+        return nullptr;
+    CON_HANDLE *h = file->FsContext2;
+    if (!h || h->Kind != CH_PTY)
+        return nullptr;
+    ConReference(h->Console);
+    return h->Console;
+}
+
+/* the pseudo console a handle of the current process is, with a reference. */
+MIME_CONSOLE *ConsoleOfPtyHandle(HANDLE handle)
+{
+    PFILE_OBJECT file;
+    if (!NT_SUCCESS(ObReferenceHandle(handle, IoFileObjectTypeObject, UserMode, (PVOID *)&file, nullptr)))
+        return nullptr;
+    MIME_CONSOLE *c = ConPtyFromFile(file);
+    ObDereferenceObject(file);
+    return c;
+}
+
 static CON_HANDLE *handle_of(PIRP irp)
 {
     return (CON_HANDLE *)IoGetCurrentIrpStackLocation(irp)->FileObject->FsContext2;
@@ -587,7 +610,7 @@ static NTSTATUS NTAPI con_create(PDEVICE_OBJECT device, PIRP irp)
                 ConRelease(c);
         }
     } else if (name_is(&file->FileName, MIME_CONDRV_PTY)) {
-        MIME_CONSOLE *c = ConCreateConsole(CON_BACKEND_PTY, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT, 0);
+        MIME_CONSOLE *c = ConCreateConsole(CON_BACKEND_PTY, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
         if (!c) {
             status = STATUS_INSUFFICIENT_RESOURCES;
         } else {
@@ -1556,14 +1579,12 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
-            ExAcquireFastMutex(&g_con_lock);
-            c->PtyFlags = rq.Flags;
-            ExReleaseFastMutex(&g_con_lock);
-            ConResize(c, (ULONG)(USHORT)rq.Size.X | ((ULONG)(USHORT)rq.Size.Y << 16));
+            ConPtyStart(c, (ULONG)(USHORT)rq.Size.X | ((ULONG)(USHORT)rq.Size.Y << 16), rq.Flags);
             break;
         }
         case IOCTL_CONDRV_PTY_OUTPUT:
             for (;;) {
+                BOOLEAN empty = ConListProcesses(c, nullptr, 0) == 0;
                 ExAcquireFastMutex(&g_con_lock);
                 ULONG done = 0;
                 while (!IsListEmpty(&c->PtyOut) && done < out_len) {
@@ -1584,7 +1605,8 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                     KeClearEvent(&c->PtyReady);
                 if (c->PtyQueued <= 256 * 1024)
                     KeSetEvent(&c->PtySpace, 0, FALSE);
-                BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0;
+                /* a closed console goes on talking while a process is left in it. */
+                BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0 && empty;
                 ExReleaseFastMutex(&g_con_lock);
                 if (done || closed || !out_len) {
                     information = done;

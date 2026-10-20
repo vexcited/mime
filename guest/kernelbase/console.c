@@ -1026,11 +1026,14 @@ BOOL WINAPI SetConsoleScreenBufferInfoEx(HANDLE console, PCONSOLE_SCREEN_BUFFER_
     i->Cursor.Y = info->dwCursorPosition.Y;
     i->Attributes = info->wAttributes;
     i->PopupAttributes = info->wPopupAttributes;
-    /* the server takes the right and bottom of the window as the edges outside it. */
+    /*
+     * the size of the window the server is given is right minus left, where the call on windows reads the
+     * rectangle it returns as inclusive: setting what was got makes the window a column and a row smaller.
+     */
     i->Window.Left = info->srWindow.Left;
     i->Window.Top = info->srWindow.Top;
-    i->Window.Right = info->srWindow.Right;
-    i->Window.Bottom = info->srWindow.Bottom;
+    i->Window.Right = (SHORT)(info->srWindow.Right - 1);
+    i->Window.Bottom = (SHORT)(info->srWindow.Bottom - 1);
     i->MaxWindow.X = info->dwMaximumWindowSize.X;
     i->MaxWindow.Y = info->dwMaximumWindowSize.Y;
     memcpy(i->ColorTable, info->ColorTable, sizeof(i->ColorTable));

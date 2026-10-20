@@ -1390,6 +1390,10 @@ WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferW(HANDLE console, const SMALL_RE
 WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferA(HANDLE console, const SMALL_RECT *source, const SMALL_RECT *clip,
                                                   COORD destination, const CHAR_INFO *fill);
 WINBASEAPI BOOL WINAPI SetConsoleScreenBufferInfoEx(HANDLE console, PCONSOLE_SCREEN_BUFFER_INFOEX info);
+WINBASEAPI HRESULT WINAPI CreatePseudoConsole(COORD size, HANDLE input, HANDLE output, DWORD flags, HPCON *console);
+WINBASEAPI HRESULT WINAPI ResizePseudoConsole(HPCON console, COORD size);
+WINBASEAPI VOID WINAPI ClosePseudoConsole(HPCON console);
+WINBASEAPI HRESULT WINAPI ReleasePseudoConsole(HPCON console);
 WINBASEAPI BOOL WINAPI SetCurrentConsoleFontEx(HANDLE console, BOOL maximum, PCONSOLE_FONT_INFOEX info);
 WINBASEAPI COORD WINAPI GetConsoleFontSize(HANDLE console, DWORD font);
 WINBASEAPI BOOL WINAPI GetConsoleSelectionInfo(PCONSOLE_SELECTION_INFO info);

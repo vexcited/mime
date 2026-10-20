@@ -291,6 +291,11 @@ void CsOutString(CsTerminal *term, const char *text)
     CsOutBytes(term, text, strlen(text));
 }
 
+void CsEmit(CsTerminal *term, const char *text)
+{
+    CsOutString(term, text);
+}
+
 void CsOutNumber(CsTerminal *term, unsigned value)
 {
     char digits[12];
@@ -628,6 +633,7 @@ static void sync_modes(CsTerminal *t)
         uint32_t bit;
         const char *set, *reset;
     } modes[] = {
+        {CS_MODE_WIN32_INPUT, "\x1b[?9001h", "\x1b[?9001l"},
         {CS_MODE_MOUSE_X10, "\x1b[?9h", "\x1b[?9l"},
         {CS_MODE_MOUSE_BUTTON, "\x1b[?1000h", "\x1b[?1000l"},
         {CS_MODE_MOUSE_DRAG, "\x1b[?1002h", "\x1b[?1002l"},

@@ -80,6 +80,7 @@ FORCEINLINE BOOL KbIsPseudoHandle(HANDLE h)
 }
 
 void KbInitializeConsole(void);
+HANDLE KbPseudoConsoleHandle(HPCON console);
 HANDLE KbOpenConsoleDevice(LPCWSTR name, DWORD access, DWORD share, const SECURITY_ATTRIBUTES *sa, DWORD disposition);
 
 /* debug output through NtDisplayString, chunked for its limits. */

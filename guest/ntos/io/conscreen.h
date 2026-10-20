@@ -259,6 +259,12 @@ void CsTerminalResize(CsTerminal *term, int cols, int rows);
 const uint8_t *CsTakeOut(CsTerminal *term, size_t *length);
 const uint8_t *CsTakeReply(CsTerminal *term, size_t *length);
 
+/* bytes sent to the host terminal as they are, which the module cannot know the effect of. */
+void CsEmit(CsTerminal *term, const char *text);
+
+/* the host terminal shows a blank screen. */
+void CsShadowBlank(CsTerminal *term);
+
 /* brings the host terminal up to date with the cells; called after every call that changed them. */
 void CsRender(CsTerminal *term);
 

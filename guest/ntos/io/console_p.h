@@ -114,6 +114,7 @@ struct _MIME_CONSOLE {
     KEVENT PtySpace;
     PKPROCESS PtyOwner;
     ULONG PtyFlags;
+    BOOLEAN AwaitCursor; /* the console waits for the report of the cursor of the terminal */
 };
 
 typedef enum {
@@ -145,7 +146,8 @@ NTSTATUS ConSetInputMode(MIME_CONSOLE *c, ULONG mode);
 ULONG ConGetInputMode(MIME_CONSOLE *c);
 void ConAbortReads(MIME_CONSOLE *c, BOOLEAN flush);
 ULONG ConDispatchEvent(MIME_CONSOLE *c, ULONG event, ULONG group);
-void ConPtyHostInput(MIME_CONSOLE *c, const UCHAR *data, ULONG length);
+void ConPtyStart(MIME_CONSOLE *c, ULONG size, ULONG flags);
+MIME_CONSOLE *ConPtyFromFile(PFILE_OBJECT file);
 void ConHostInputLocked(MIME_CONSOLE *c, const UCHAR *data, ULONG length, BOOLEAN *ctrl_c);
 void ConResize(MIME_CONSOLE *c, ULONG size);
 void ConClose(MIME_CONSOLE *c);

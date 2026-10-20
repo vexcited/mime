@@ -1393,6 +1393,7 @@ MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size, ULONG 
 MIME_CONSOLE *ConsoleCreateNew(void);
 void ConsoleSetHint(PEPROCESS process, MIME_CONSOLE *console);
 void ConsoleInitialTitle(MIME_CONSOLE *console, PCUNICODE_STRING title);
+MIME_CONSOLE *ConsoleOfPtyHandle(HANDLE handle);
 void ConsoleDereference(MIME_CONSOLE *console);
 NTSTATUS ConsoleAttach(PEPROCESS process, MIME_CONSOLE *console);
 void ConsoleDetach(PEPROCESS process);
