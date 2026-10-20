@@ -204,7 +204,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     if(arch STREQUAL "x64")
         list(PREPEND kernel32_ntdll RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind
             RtlAddFunctionTable RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind
-            __C_specific_handler RtlCaptureStackBackTrace)
+            __C_specific_handler RtlCaptureStackBackTrace RtlCompareMemory RtlCopyMemory RtlFillMemory RtlMoveMemory
+            RtlZeroMemory RtlRaiseException RtlIsEcCode)
     endif()
     list(TRANSFORM kernel32_ntdll REPLACE "^(.+)$" "\\1=ntdll.\\1")
     add_custom_command(OUTPUT ${MIME_GEN}/${arch}/kernel32.def

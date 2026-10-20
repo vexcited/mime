@@ -31,10 +31,10 @@ typedef struct HOOKPROC32 {
     UCHAR Data[];
 } HOOKPROC32;
 
+/* the x86 MSG has no private word, so it is 28 bytes. */
 typedef struct MSG32 {
     ULONG Hwnd, Message, Wparam, Lparam, Time;
     POINT Pt;
-    ULONG Private;
 } MSG32;
 
 static ULONG low(ULONG_PTR v)
@@ -82,7 +82,7 @@ static ULONG hook_data32(int id, const UCHAR *in, ULONG size, UCHAR *out)
         const MSG *m = (const void *)in;
         if (size < sizeof(*m))
             return 0;
-        MSG32 v = {low((ULONG_PTR)m->hwnd), m->message, low(m->wParam), low(m->lParam), m->time, m->pt, m->lPrivate};
+        MSG32 v = {low((ULONG_PTR)m->hwnd), m->message, low(m->wParam), low(m->lParam), m->time, m->pt};
         memcpy(out, &v, sizeof(v));
         return sizeof(v);
     }
@@ -107,7 +107,7 @@ static void hook_data64(int id, const UCHAR *in, ULONG size, UCHAR *out, ULONG o
         return;
     const MSG32 *m = (const void *)in;
     *(MSG *)out = (MSG){(HWND)(ULONG_PTR)m->Hwnd, m->Message, m->Wparam, (LPARAM)(LONG)m->Lparam, m->Time, m->Pt,
-                        m->Private};
+                        0};
 }
 
 static BOOLEAN marshal_timer(ULONG *stack, PVOID arguments, ULONG length, MX_CALLBACK32 *callback)

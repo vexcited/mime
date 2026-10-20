@@ -23,12 +23,23 @@ mime_dll(kernelbase x86 BASE 0x76000000 SOURCES ${sources} OBJECTS x86-chkstk OP
 # kernel32 forwards to kernelbase, but for what only x86's kernel32 exports itself, stdcall decorated.
 set(kernel32_own timeGetTime@0 timeGetSystemTime@8
     timeGetDevCaps@8 timeBeginPeriod@4 timeEndPeriod@4 DnsHostnameToComputerNameW@12)
+# the transacted file functions, with the bytes of arguments each takes.
+foreach(name CopyFileTransacted:28 CreateDirectoryTransacted:16 CreateFileTransacted:40 CreateHardLinkTransacted:16
+    CreateSymbolicLinkTransacted:16 DeleteFileTransacted:8 FindFirstFileTransacted:28 GetCompressedFileSizeTransacted:12
+    GetFileAttributesTransacted:16 GetFullPathNameTransacted:20 GetLongPathNameTransacted:16 MoveFileTransacted:24
+    RemoveDirectoryTransacted:8 SetFileAttributesTransacted:12)
+    string(REPLACE ":" ";" name ${name})
+    list(GET name 0 base)
+    list(GET name 1 bytes)
+    list(APPEND kernel32_own ${base}A@${bytes} ${base}W@${bytes})
+endforeach()
+list(APPEND kernel32_own FindFirstFileNameTransactedW@20 FindFirstStreamTransactedW@20)
 add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
     COMMAND Python3::Interpreter tools/gendef.py forward32 ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
         ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def ${kernel32_own}
     DEPENDS tools/gendef.py ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} VERBATIM)
-mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c
+mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/transacted.c
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def DEPENDS ${gen86}/kernel32.imports.def)
 

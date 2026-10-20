@@ -47,7 +47,6 @@ typedef struct HELPINFO32 {
 typedef struct MSG32_LAYOUT {
     ULONG hwnd, message, wParam, lParam, time;
     POINT pt;
-    ULONG lPrivate;
 } MSG32_LAYOUT;
 typedef struct COMBOBOXINFO32 {
     DWORD cbSize;
@@ -257,7 +256,7 @@ static inline void lay_to64(UINT msg, const void *in, void *out)
     case WM_GETDLGCODE: {
         const MSG32_LAYOUT *a = in;
         *(MSG64_LAYOUT *)out = (MSG64_LAYOUT){lay_handle(a->hwnd), a->message, a->wParam, (LONG_PTR)(LONG)a->lParam,
-                                              a->time, a->pt, a->lPrivate};
+                                              a->time, a->pt, 0};
         break;
     }
     case CB_GETCOMBOBOXINFO: {
@@ -329,7 +328,7 @@ static inline void lay_to32(UINT msg, const void *in, void *out)
     case WM_GETDLGCODE: {
         const MSG64_LAYOUT *a = in;
         *(MSG32_LAYOUT *)out = (MSG32_LAYOUT){lay_narrow(a->hwnd), a->message, (ULONG)a->wParam, (ULONG)a->lParam, a->time,
-                                              a->pt, a->lPrivate};
+                                              a->pt};
         break;
     }
     case CB_GETCOMBOBOXINFO: {
