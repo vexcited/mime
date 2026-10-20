@@ -143,7 +143,55 @@ static const uint32_t g_default_table[16] = {
     0x00767676, 0x00FF783B, 0x000CC616, 0x00D6D661, 0x005648E7, 0x009E00B4, 0x00A5F1F9, 0x00F2F2F2,
 };
 
-#include "conscreen_tables.h"
+/*
+ * The attribute word of a cell has 16 colors only, so a color made with the 256 color or true color sequences is
+ * reduced to the nearest of them. Nearness is the squared distance in sRGB against the 16 colors below, written in the
+ * order of the attribute word, and the lowest index wins a tie. The palette of the console is not consulted, so changing
+ * it does not change what reads of the cells report.
+ */
+static const uint32_t g_reference_colors[16] = {
+    0x000000, 0x000080, 0x008000, 0x008080, 0x800000, 0x800080, 0x808000, 0xC0C0C0,
+    0x808080, 0x0000FF, 0x00FF00, 0x00FFFF, 0xFF0000, 0xFF00FF, 0xFFFF00, 0xFFFFFF,
+};
+
+unsigned CsReduceRgb(unsigned r, unsigned g, unsigned b)
+{
+    unsigned best = 0;
+    uint32_t best_distance = UINT32_MAX;
+    for (unsigned i = 0; i < 16; i++) {
+        int dr = (int)r - (int)(g_reference_colors[i] >> 16);
+        int dg = (int)g - (int)((g_reference_colors[i] >> 8) & 0xFF);
+        int db = (int)b - (int)(g_reference_colors[i] & 0xFF);
+        uint32_t distance = (uint32_t)(dr * dr + dg * dg + db * db);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* Only the top 3 bits of red and green and the top 2 of blue count, each spread back over the whole range. */
+unsigned CsReduceTrueColor(uint32_t rgb)
+{
+    unsigned r = (rgb & 0xFF) >> 5, g = ((rgb >> 8) & 0xFF) >> 5, b = ((rgb >> 16) & 0xFF) >> 6;
+    return CsReduceRgb(r * 255 / 7, g * 255 / 7, b * 255 / 3);
+}
+
+/* The cube of the 256 colors has the levels below on each axis, then comes a ramp of 24 grays. */
+unsigned CsReduceIndex(unsigned n)
+{
+    static const unsigned levels[6] = {0, 95, 135, 175, 215, 255};
+    n &= 0xFF;
+    if (n < 16)
+        return CsAnsiToLegacy(n);
+    if (n < 232) {
+        n -= 16;
+        return CsReduceRgb(levels[n / 36], levels[n / 6 % 6], levels[n % 6]);
+    }
+    unsigned gray = 8 + 10 * (n - 232);
+    return CsReduceRgb(gray, gray, gray);
+}
 
 #define LEGACY_DEFAULT_FG 7
 #define LEGACY_DEFAULT_BG 0
@@ -254,9 +302,9 @@ static unsigned legacy_color(uint8_t kind, uint32_t v, unsigned fallback)
         return fallback;
     case CS_COLOR_16:
     case CS_COLOR_256:
-        return g_index_to_legacy[v & 0xFF];
+        return CsReduceIndex(v);
     default:
-        return g_rgb332_to_legacy[((v & 0xE0)) | ((v >> 11) & 0x1C) | ((v >> 22) & 0x03)];
+        return CsReduceTrueColor(v);
     }
 }
 

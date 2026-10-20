@@ -35,6 +35,9 @@ CsAttr CsAttrFromLegacy(CsTerminal *term, uint16_t attributes);
 CsAttr CsEraseAttr(CsTerminal *term, CsAttr attr);
 uint32_t CsLegacyToAnsi(uint32_t index);
 uint32_t CsAnsiToLegacy(uint32_t index);
+unsigned CsReduceRgb(unsigned r, unsigned g, unsigned b);
+unsigned CsReduceTrueColor(uint32_t rgb);
+unsigned CsReduceIndex(unsigned n);
 
 /* ---- the terminal */
 
