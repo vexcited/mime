@@ -491,6 +491,9 @@ static void remember_server(HMODULE module)
 
 static HRESULT get_inproc_class_object(REFCLSID clsid, REFIID riid, void **object)
 {
+    HRESULT own;
+    if (OrpcBuiltinClassObject(clsid, riid, object, &own))
+        return own;
     WCHAR subkey[64], path[MAX_PATH];
     wcscpy(subkey, L"CLSID\\");
     OleFormatGuid(clsid, subkey + 6);

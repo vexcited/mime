@@ -6,11 +6,152 @@
  */
 #include "orpc.h"
 #include <mime/win32/notificationactivationcallback.h>
+
+/* the routines the generated proxy file names: those that stand in on the wire for the methods they are the local form of. */
+HRESULT STDMETHODCALLTYPE ISequentialStream_Read_Proxy(ISequentialStream *This, void *pv, ULONG cb, ULONG *read);
+HRESULT STDMETHODCALLTYPE ISequentialStream_Write_Proxy(ISequentialStream *This, const void *pv, ULONG cb, ULONG *written);
+HRESULT STDMETHODCALLTYPE IStream_Seek_Proxy(IStream *This, LARGE_INTEGER move, DWORD origin, ULARGE_INTEGER *position);
+HRESULT STDMETHODCALLTYPE IStream_CopyTo_Proxy(IStream *This, IStream *to, ULARGE_INTEGER cb, ULARGE_INTEGER *read,
+                                               ULARGE_INTEGER *written);
+HRESULT STDMETHODCALLTYPE IEnumString_Next_Proxy(IEnumString *This, ULONG celt, LPOLESTR *items, ULONG *fetched);
+HRESULT STDMETHODCALLTYPE IEnumUnknown_Next_Proxy(IEnumUnknown *This, ULONG celt, IUnknown **items, ULONG *fetched);
+HRESULT STDMETHODCALLTYPE IEnumSTATSTG_Next_Proxy(IEnumSTATSTG *This, ULONG celt, STATSTG *items, ULONG *fetched);
+HRESULT STDMETHODCALLTYPE ILockBytes_ReadAt_Proxy(ILockBytes *This, ULARGE_INTEGER offset, void *pv, ULONG cb, ULONG *read);
+HRESULT STDMETHODCALLTYPE ILockBytes_WriteAt_Proxy(ILockBytes *This, ULARGE_INTEGER offset, const void *pv, ULONG cb,
+                                                   ULONG *written);
+HRESULT STDMETHODCALLTYPE IStorage_OpenStream_Proxy(IStorage *This, const OLECHAR *name, void *reserved1, DWORD mode,
+                                                    DWORD reserved2, IStream **stream);
+HRESULT STDMETHODCALLTYPE IStorage_OpenStream_Stub(IStorage *This, const OLECHAR *name, unsigned long cb, byte *reserved1,
+                                                   unsigned long mode, unsigned long reserved2, IStream **stream);
+HRESULT STDMETHODCALLTYPE IStorage_EnumElements_Proxy(IStorage *This, DWORD reserved1, void *reserved2, DWORD reserved3,
+                                                      IEnumSTATSTG **enumerator);
+HRESULT STDMETHODCALLTYPE IStorage_EnumElements_Stub(IStorage *This, unsigned long reserved1, unsigned long cb,
+                                                     byte *reserved2, unsigned long reserved3, IEnumSTATSTG **enumerator);
+
 #include "ole32/builtin_ps.h"
 
 static BOOL builtin(REFIID iid)
 {
-    return IsEqualGUID(iid, &IID_IClassFactory) || IsEqualGUID(iid, &IID_INotificationActivationCallback);
+    int index;
+    return orpcbuiltin_IID_Lookup(iid, &index) != 0;
+}
+
+/* ------------------------------------------------------------------ the methods that have a wire form of their own */
+
+HRESULT STDMETHODCALLTYPE ISequentialStream_Read_Proxy(ISequentialStream *This, void *pv, ULONG cb, ULONG *read)
+{
+    ULONG count = 0;
+    HRESULT hr = ISequentialStream_RemoteRead_Proxy(This, pv, cb, &count);
+    if (read)
+        *read = count;
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE ISequentialStream_Write_Proxy(ISequentialStream *This, const void *pv, ULONG cb, ULONG *written)
+{
+    ULONG count = 0;
+    HRESULT hr = ISequentialStream_RemoteWrite_Proxy(This, (byte *)pv, cb, &count);
+    if (written)
+        *written = count;
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE IStream_Seek_Proxy(IStream *This, LARGE_INTEGER move, DWORD origin, ULARGE_INTEGER *position)
+{
+    ULARGE_INTEGER where;
+    where.QuadPart = 0;
+    HRESULT hr = IStream_RemoteSeek_Proxy(This, move, origin, &where);
+    if (position)
+        *position = where;
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE IStream_CopyTo_Proxy(IStream *This, IStream *to, ULARGE_INTEGER cb, ULARGE_INTEGER *read,
+                                               ULARGE_INTEGER *written)
+{
+    ULARGE_INTEGER r, w;
+    r.QuadPart = w.QuadPart = 0;
+    HRESULT hr = IStream_RemoteCopyTo_Proxy(This, to, cb, &r, &w);
+    if (read)
+        *read = r;
+    if (written)
+        *written = w;
+    return hr;
+}
+
+/* An enumerator may be asked for one item with no place to say how many came. */
+#define ENUM_NEXT(iface, type)                                                                                         \
+    HRESULT STDMETHODCALLTYPE iface##_Next_Proxy(iface *This, ULONG celt, type *items, ULONG *fetched)                  \
+    {                                                                                                                  \
+        ULONG count = 0;                                                                                               \
+        if (!fetched && celt != 1)                                                                                     \
+            return E_INVALIDARG;                                                                                       \
+        HRESULT hr = iface##_RemoteNext_Proxy(This, celt, items, &count);                                              \
+        if (fetched)                                                                                                   \
+            *fetched = count;                                                                                          \
+        return hr;                                                                                                     \
+    }
+
+ENUM_NEXT(IEnumString, LPOLESTR)
+ENUM_NEXT(IEnumUnknown, IUnknown *)
+ENUM_NEXT(IEnumSTATSTG, STATSTG)
+
+HRESULT STDMETHODCALLTYPE ILockBytes_ReadAt_Proxy(ILockBytes *This, ULARGE_INTEGER offset, void *pv, ULONG cb, ULONG *read)
+{
+    ULONG count = 0;
+    HRESULT hr = ILockBytes_RemoteReadAt_Proxy(This, offset, pv, cb, &count);
+    if (read)
+        *read = count;
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE ILockBytes_WriteAt_Proxy(ILockBytes *This, ULARGE_INTEGER offset, const void *pv, ULONG cb,
+                                                   ULONG *written)
+{
+    ULONG count = 0;
+    HRESULT hr = ILockBytes_RemoteWriteAt_Proxy(This, offset, (byte *)pv, cb, &count);
+    if (written)
+        *written = count;
+    return hr;
+}
+
+/* The two reserved arguments of a storage are for the future: anything in them is refused, and none is sent. */
+HRESULT STDMETHODCALLTYPE IStorage_OpenStream_Proxy(IStorage *This, const OLECHAR *name, void *reserved1, DWORD mode,
+                                                    DWORD reserved2, IStream **stream)
+{
+    if (stream)
+        *stream = nullptr;
+    if (reserved1)
+        return STG_E_INVALIDPARAMETER;
+    return IStorage_RemoteOpenStream_Proxy(This, (unsigned short *)name, 0, nullptr, mode, reserved2, stream);
+}
+
+HRESULT STDMETHODCALLTYPE IStorage_OpenStream_Stub(IStorage *This, const OLECHAR *name, unsigned long cb, byte *reserved1,
+                                                   unsigned long mode, unsigned long reserved2, IStream **stream)
+{
+    *stream = nullptr;
+    if (cb || reserved1)
+        return STG_E_INVALIDPARAMETER;
+    return This->lpVtbl->OpenStream(This, name, nullptr, mode, reserved2, stream);
+}
+
+HRESULT STDMETHODCALLTYPE IStorage_EnumElements_Proxy(IStorage *This, DWORD reserved1, void *reserved2, DWORD reserved3,
+                                                      IEnumSTATSTG **enumerator)
+{
+    if (enumerator)
+        *enumerator = nullptr;
+    if (reserved2)
+        return STG_E_INVALIDPARAMETER;
+    return IStorage_RemoteEnumElements_Proxy(This, reserved1, 0, nullptr, reserved3, enumerator);
+}
+
+HRESULT STDMETHODCALLTYPE IStorage_EnumElements_Stub(IStorage *This, unsigned long reserved1, unsigned long cb,
+                                                     byte *reserved2, unsigned long reserved3, IEnumSTATSTG **enumerator)
+{
+    *enumerator = nullptr;
+    if (cb || reserved2)
+        return STG_E_INVALIDPARAMETER;
+    return This->lpVtbl->EnumElements(This, reserved1, nullptr, reserved3, enumerator);
 }
 
 HRESULT OrpcBuiltinFactory(REFIID iid, IPSFactoryBuffer **factory)
@@ -67,6 +208,15 @@ BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll)
         return TRUE;
     }
     return FALSE;
+}
+
+/* the class object of the class that marshals them: the factory of this file. */
+BOOL OrpcBuiltinClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *hr)
+{
+    if (!IsEqualGUID(clsid, &orpcbuiltin_ProxyClsid))
+        return FALSE;
+    *hr = orpcbuiltin_DllGetClassObject(clsid, iid, object);
+    return TRUE;
 }
 
 /* the class that marshals an interface of this file, for CoGetPSClsid. */

@@ -632,6 +632,116 @@ WINOLEAPI void WINAPI HGLOBAL_UserFree64(ULONG *flags, HGLOBAL *global)
     HGLOBAL_UserFree(flags, global);
 }
 
+/* ------------------------------------------------------------------ names of storage elements */
+
+/*
+ * A block of names, which a storage is asked to leave out of a copy, is an array of pointers to strings that ends with a
+ * null one. It is sent as a pointer to a structure that the sizes lead: the number of characters the counts say, then the
+ * number of strings and of characters, then the strings one after the other with their terminators.
+ */
+#define SNB_REFERENT 0x00020000
+
+static ULONG snb_chars(const SNB *snb, ULONG *strings)
+{
+    ULONG chars = 0;
+    *strings = 0;
+    for (OLECHAR **p = *snb; *p; p++) {
+        chars = add_size(chars, (ULONG)lstrlenW(*p) + 1);
+        (*strings)++;
+    }
+    return chars;
+}
+
+WINOLEAPI ULONG WINAPI SNB_UserSize(ULONG *flags, ULONG start, SNB *snb)
+{
+    ULONG offset = add_size(align_size(start, 3), 4);
+    if (!*snb)
+        return offset;
+    ULONG strings;
+    ULONG chars = snb_chars(snb, &strings);
+    if (chars > 0x7FFFFFFF / sizeof(WCHAR))
+        RpcRaiseException(ARITH_OVERFLOW);
+    return add_size(add_size(offset, 12), chars * (ULONG)sizeof(WCHAR));
+}
+
+WINOLEAPI BYTE *WINAPI SNB_UserMarshal(ULONG *flags, BYTE *buffer, SNB *snb)
+{
+    BYTE *p = align_zero(buffer, 3);
+    if (!*snb) {
+        *(ULONG *)p = 0;
+        return p + 4;
+    }
+    ULONG strings;
+    ULONG chars = snb_chars(snb, &strings);
+    *(ULONG *)p = SNB_REFERENT;
+    ((ULONG *)p)[1] = chars;
+    ((ULONG *)p)[2] = strings;
+    ((ULONG *)p)[3] = chars;
+    p += 16;
+    for (OLECHAR **name = *snb; *name; name++) {
+        ULONG n = ((ULONG)lstrlenW(*name) + 1) * (ULONG)sizeof(WCHAR);
+        memcpy(p, *name, n);
+        p += n;
+    }
+    return p;
+}
+
+WINOLEAPI BYTE *WINAPI SNB_UserUnmarshal(ULONG *flags, BYTE *buffer, SNB *snb)
+{
+    READER r;
+    reader_open(&r, flags, buffer);
+    const BYTE *p = align_read(buffer, 3);
+    reader_need(&r, p, 4);
+    ULONG referent = *(const ULONG *)p;
+    p += 4;
+    if (*snb) {
+        CoTaskMemFree(*snb);
+        *snb = nullptr;
+    }
+    if (!referent)
+        return (BYTE *)p;
+    reader_need(&r, p, 12);
+    ULONG max = ((const ULONG *)p)[0];
+    ULONG strings = ((const ULONG *)p)[1];
+    ULONG chars = ((const ULONG *)p)[2];
+    p += 12;
+    if (max != chars || chars > 0x7FFFFFFF / sizeof(WCHAR) || strings > chars)
+        RpcRaiseException(RPC_BAD_STUB_DATA);
+    reader_need(&r, p, (SIZE_T)chars * sizeof(WCHAR));
+    const WCHAR *text = (const WCHAR *)p;
+    /* every string must end where the counts say, or the pointers would point past the characters. */
+    ULONG ends = 0;
+    for (ULONG i = 0; i < chars; i++)
+        if (!text[i])
+            ends++;
+    if (ends != strings || (chars && text[chars - 1]))
+        RpcRaiseException(RPC_BAD_STUB_DATA);
+    SIZE_T table = ((SIZE_T)strings + 1) * sizeof(OLECHAR *);
+    OLECHAR **names = CoTaskMemAlloc(table + (SIZE_T)chars * sizeof(WCHAR));
+    if (!names)
+        RpcRaiseException(E_OUTOFMEMORY);
+    WCHAR *copy = (WCHAR *)((BYTE *)names + table);
+    memcpy(copy, text, (SIZE_T)chars * sizeof(WCHAR));
+    ULONG n = 0;
+    for (ULONG i = 0; i < chars;) {
+        names[n++] = copy + i;
+        while (copy[i])
+            i++;
+        i++;
+    }
+    names[n] = nullptr;
+    *snb = names;
+    return (BYTE *)p + (SIZE_T)chars * sizeof(WCHAR);
+}
+
+WINOLEAPI void WINAPI SNB_UserFree(ULONG *flags, SNB *snb)
+{
+    if (snb && *snb) {
+        CoTaskMemFree(*snb);
+        *snb = nullptr;
+    }
+}
+
 /* ------------------------------------------------------------------ bitmaps */
 
 /*

@@ -12,6 +12,17 @@ typedef struct tagSTATSTG {
     CLSID clsid;
     DWORD grfStateBits, reserved;
 } STATSTG;
+typedef struct ISequentialStream ISequentialStream;
+typedef struct ISequentialStreamVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(ISequentialStream *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *AddRef)(ISequentialStream *);
+    ULONG(STDMETHODCALLTYPE *Release)(ISequentialStream *);
+    HRESULT(STDMETHODCALLTYPE *Read)(ISequentialStream *, void *, ULONG, ULONG *);
+    HRESULT(STDMETHODCALLTYPE *Write)(ISequentialStream *, const void *, ULONG, ULONG *);
+} ISequentialStreamVtbl;
+struct ISequentialStream {
+    const ISequentialStreamVtbl *lpVtbl;
+};
 typedef struct IStreamVtbl {
     HRESULT (STDMETHODCALLTYPE *QueryInterface)(IStream *, REFIID, void **);
     ULONG (STDMETHODCALLTYPE *AddRef)(IStream *);
@@ -51,6 +62,15 @@ MIME_DEFINE_GUID(IID_ISequentialStream, 0x0c733a30, 0x2a1c, 0x11ce, 0xad, 0xe5, 
 #endif
 #ifndef STG_E_INVALIDNAME
 #define STG_E_INVALIDNAME ((HRESULT)0x800300FCL)
+#endif
+#ifndef STG_E_FILEALREADYEXISTS
+#define STG_E_FILEALREADYEXISTS ((HRESULT)0x80030050L)
+#endif
+#ifndef STG_E_INSUFFICIENTMEMORY
+#define STG_E_INSUFFICIENTMEMORY ((HRESULT)0x80030008L)
+#endif
+#ifndef STG_E_INVALIDFLAG
+#define STG_E_INVALIDFLAG ((HRESULT)0x800300FFL)
 #endif
 #ifndef STG_E_INVALIDPARAMETER
 #define STG_E_INVALIDPARAMETER ((HRESULT)0x80030057L)
@@ -97,6 +117,28 @@ MIME_DEFINE_GUID(IID_ISequentialStream, 0x0c733a30, 0x2a1c, 0x11ce, 0xad, 0xe5, 
 typedef LPOLESTR *SNB;
 typedef struct IEnumSTATSTG IEnumSTATSTG;
 typedef struct IEnumString IEnumString;
+typedef struct IEnumUnknown IEnumUnknown;
+
+/* the enumerators of strings, of objects and of the elements of a storage. */
+#define MIME_ENUM_INTERFACE(name, type)                                                                                \
+    typedef struct name##Vtbl {                                                                                        \
+        HRESULT(STDMETHODCALLTYPE *QueryInterface)(name * This, REFIID riid, void **object);                           \
+        ULONG(STDMETHODCALLTYPE *AddRef)(name * This);                                                                 \
+        ULONG(STDMETHODCALLTYPE *Release)(name * This);                                                                \
+        HRESULT(STDMETHODCALLTYPE *Next)(name * This, ULONG count, type *items, ULONG *fetched);                       \
+        HRESULT(STDMETHODCALLTYPE *Skip)(name * This, ULONG count);                                                    \
+        HRESULT(STDMETHODCALLTYPE *Reset)(name * This);                                                                \
+        HRESULT(STDMETHODCALLTYPE *Clone)(name * This, name * *enumerator);                                            \
+    } name##Vtbl;                                                                                                      \
+    struct name {                                                                                                      \
+        const name##Vtbl *lpVtbl;                                                                                      \
+    };
+MIME_ENUM_INTERFACE(IEnumSTATSTG, STATSTG)
+MIME_ENUM_INTERFACE(IEnumString, LPOLESTR)
+MIME_ENUM_INTERFACE(IEnumUnknown, IUnknown *)
+MIME_DEFINE_GUID(IID_IEnumSTATSTG, 0x0000000d, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
+MIME_DEFINE_GUID(IID_IEnumString, 0x00000101, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
+MIME_DEFINE_GUID(IID_IEnumUnknown, 0x00000100, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 
 /* ------------------------------------------------------------------ IStorage */
 

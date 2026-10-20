@@ -105,10 +105,9 @@ HRESULT OrpcReleaseMarshalData(IStream *stream);
 IPSFactoryBuffer *OrpcFactoryFor(REFIID iid);
 BOOL OrpcAutomationClass(REFIID iid, CLSID *clsid);
 BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll);
-/* the class that marshals an interface ole32 carries itself. */
+/* the class that marshals an interface ole32 carries itself, and its class object, which is not in a dll. */
 BOOL OrpcBuiltinClass(REFIID iid, CLSID *clsid);
-BOOL OrpcAutomationClass(REFIID iid, CLSID *clsid);
-BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll);
+BOOL OrpcBuiltinClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *hr);
 /* CoDisconnectObject: the object is no longer served. */
 HRESULT OrpcDisconnectObject(IUnknown *object);
 /* the proxy manager an interface pointer belongs to, referenced, or null for any other pointer. */
