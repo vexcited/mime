@@ -9,8 +9,6 @@
 #define SA_PREFIX 16
 #define FADF_NOT_OWNED (FADF_AUTO | FADF_STATIC | FADF_EMBEDDED)
 
-MIME_DEFINE_GUID(IID_IDispatch, 0x00020400, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
-
 static ULONG element_size(VARTYPE vt)
 {
     switch (vt) {

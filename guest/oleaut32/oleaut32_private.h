@@ -5,7 +5,7 @@
 #define MIME_OLEAUT32_PRIVATE_H
 
 #define WINOLEAUTAPI DECLSPEC_EXPORT
-#include <mime/win32/oleauto.h>
+#include <mime/win32/olectl.h>
 #include <rtl.h>
 
 /*
@@ -39,6 +39,14 @@ FORCEINLINE void AutAddRef(void *object)
     if (object)
         ((IUnknown *)object)->lpVtbl->AddRef((IUnknown *)object);
 }
+
+WINOLEAUTAPI HRESULT WINAPI LoadRegTypeLib(REFGUID id, WORD major, WORD minor, LCID locale, void **result);
+
+/* olefont.c and olepic.c */
+LONGLONG AutRoundDiv64(LONGLONG numerator, LONGLONG denominator);
+HRESULT AutStdOleTypeInfo(UINT index, REFGUID id, ITypeInfo **info);
+HRESULT AutNamesToIds(const WCHAR *const *table, const DISPID *ids, int count, REFIID riid, LPOLESTR *names, UINT cnames,
+                      DISPID *result);
 
 void AutErrorAttach(void);
 void AutErrorDetach(void);
