@@ -778,3 +778,131 @@ WINSETUPAPI BOOL WINAPI SetupDiOpenDeviceInterfaceA(HDEVINFO set, PCSTR path, DW
         MultiByteToWideChar(CP_ACP, 0, path, -1, w, MAX_PATH_CHARS);
     return SetupDiOpenDeviceInterfaceW(set, path ? w : nullptr, flags, data);
 }
+
+/* ---------------------------------------------------------------- device setup classes */
+
+#define CLASS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Class"
+
+static BOOL hex_digits(const WCHAR *s, int count, DWORD *value)
+{
+    DWORD v = 0;
+    for (int i = 0; i < count; i++) {
+        WCHAR c = s[i];
+        DWORD d = c >= L'0' && c <= L'9' ? (DWORD)(c - L'0') : c >= L'a' && c <= L'f' ? (DWORD)(c - L'a' + 10)
+                  : c >= L'A' && c <= L'F' ? (DWORD)(c - L'A' + 10) : 0xFFFFFFFFu;
+        if (d == 0xFFFFFFFFu)
+            return FALSE;
+        v = v << 4 | d;
+    }
+    *value = v;
+    return TRUE;
+}
+
+/* a name of the form {00000000-0000-0000-0000-000000000000}, which is how the class keys are named. */
+static BOOL guid_from_key_name(const WCHAR *s, GUID *guid)
+{
+    if (wcslen(s) != 38 || s[0] != L'{' || s[9] != L'-' || s[14] != L'-' || s[19] != L'-' || s[24] != L'-' || s[37] != L'}')
+        return FALSE;
+    DWORD a, b, c, d[8];
+    if (!hex_digits(s + 1, 8, &a) || !hex_digits(s + 10, 4, &b) || !hex_digits(s + 15, 4, &c) ||
+        !hex_digits(s + 20, 2, &d[0]) || !hex_digits(s + 22, 2, &d[1]))
+        return FALSE;
+    for (int i = 0; i < 6; i++)
+        if (!hex_digits(s + 25 + i * 2, 2, &d[2 + i]))
+            return FALSE;
+    guid->Data1 = a;
+    guid->Data2 = (WORD)b;
+    guid->Data3 = (WORD)c;
+    for (int i = 0; i < 8; i++)
+        guid->Data4[i] = (BYTE)d[i];
+    return TRUE;
+}
+
+/*
+ * the setup classes of this machine that have a name, from the class keys of the registry: those whose Class value
+ * is the name, without regard to case. The number found is always given; when the list has no room for them all that
+ * is ERROR_INSUFFICIENT_BUFFER with the list filled as far as it goes. A name that no class has is no error and finds
+ * none, which is a guess. Another machine's classes cannot be reached.
+ */
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameExW(PCWSTR name, GUID *list, DWORD size, PDWORD required, PCWSTR machine,
+                                                    PVOID reserved)
+{
+    if (!name || (size && !list) || !required || reserved || (!list && size)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (machine && *machine) {
+        SetLastError(ERROR_INVALID_MACHINENAME);
+        return FALSE;
+    }
+    *required = 0;
+    HKEY classes;
+    LSTATUS status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, CLASS_KEY, 0, KEY_READ, &classes);
+    if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND)
+        return TRUE;
+    if (status != ERROR_SUCCESS) {
+        SetLastError((DWORD)status);
+        return FALSE;
+    }
+    BOOL room = TRUE;
+    for (DWORD i = 0;; i++) {
+        WCHAR key[64];
+        DWORD key_chars = RTL_NUMBER_OF(key);
+        status = RegEnumKeyExW(classes, i, key, &key_chars, nullptr, nullptr, nullptr, nullptr);
+        if (status == ERROR_NO_MORE_ITEMS)
+            break;
+        if (status != ERROR_SUCCESS)
+            continue;
+        GUID guid;
+        if (!guid_from_key_name(key, &guid))
+            continue;
+        HKEY class_key;
+        if (RegOpenKeyExW(classes, key, 0, KEY_QUERY_VALUE, &class_key) != ERROR_SUCCESS)
+            continue;
+        WCHAR value[128];
+        DWORD bytes = sizeof(value) - sizeof(WCHAR), type = 0;
+        if (RegQueryValueExW(class_key, L"Class", nullptr, &type, (LPBYTE)value, &bytes) == ERROR_SUCCESS &&
+            type == REG_SZ) {
+            value[bytes / sizeof(WCHAR)] = 0;
+            if (!_wcsicmp(value, name)) {
+                if (*required < size)
+                    list[*required] = guid;
+                else
+                    room = FALSE;
+                (*required)++;
+            }
+        }
+        RegCloseKey(class_key);
+    }
+    RegCloseKey(classes);
+    if (!room) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameW(PCWSTR name, GUID *list, DWORD size, PDWORD required)
+{
+    return SetupDiClassGuidsFromNameExW(name, list, size, required, nullptr, nullptr);
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameExA(PCSTR name, GUID *list, DWORD size, PDWORD required, PCSTR machine,
+                                                    PVOID reserved)
+{
+    WCHAR wide[128], wide_machine[MAX_PATH];
+    if (!name) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!MultiByteToWideChar(CP_ACP, 0, name, -1, wide, RTL_NUMBER_OF(wide)))
+        return FALSE;
+    if (machine && !MultiByteToWideChar(CP_ACP, 0, machine, -1, wide_machine, RTL_NUMBER_OF(wide_machine)))
+        return FALSE;
+    return SetupDiClassGuidsFromNameExW(wide, list, size, required, machine ? wide_machine : nullptr, reserved);
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameA(PCSTR name, GUID *list, DWORD size, PDWORD required)
+{
+    return SetupDiClassGuidsFromNameExA(name, list, size, required, nullptr, nullptr);
+}

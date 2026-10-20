@@ -2401,6 +2401,23 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     case MIME_HWNDPARAM_GETAFFINITY:
         r = w->DisplayAffinity;
         break;
+    case MIME_HWNDPARAM_GETCLASSWORD: {
+        /* the atom, or a word of the extra bytes that lies inside them whole. */
+        WND_CLASS *c = w->Class;
+        int index = (int)param;
+        if (!c)
+            break;
+        if (index == GCW_ATOM) {
+            r = c->Atom;
+        } else if (index >= 0 && c->Extra && (SIZE_T)index + 2 <= (SIZE_T)c->ClassExtra) {
+            USHORT word;
+            memcpy(&word, c->Extra + index, sizeof(word));
+            r = word;
+        } else {
+            W32SetLastError(ERROR_INVALID_INDEX);
+        }
+        break;
+    }
     case MIME_HWNDPARAM_SYSTIMER: {
         MIME_SYS_TIMER st;
         if (!NT_SUCCESS(MimeCopyFromUser(&st, (PVOID)param, sizeof(st))))

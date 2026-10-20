@@ -91,6 +91,12 @@ typedef struct _SP_DEVICE_INTERFACE_DETAIL_DATA_A {
 
 WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsW(const GUID *guid, PCWSTR enumerator, HWND parent, DWORD flags);
 WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsA(const GUID *guid, PCSTR enumerator, HWND parent, DWORD flags);
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameA(PCSTR name, GUID *list, DWORD size, PDWORD required);
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameW(PCWSTR name, GUID *list, DWORD size, PDWORD required);
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameExA(PCSTR name, GUID *list, DWORD size, PDWORD required, PCSTR machine,
+                                                    PVOID reserved);
+WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameExW(PCWSTR name, GUID *list, DWORD size, PDWORD required, PCWSTR machine,
+                                                    PVOID reserved);
 WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsExW(const GUID *guid, PCWSTR enumerator, HWND parent, DWORD flags,
                                                    HDEVINFO set, PCWSTR machine, PVOID reserved);
 WINSETUPAPI HDEVINFO WINAPI SetupDiCreateDeviceInfoList(const GUID *guid, HWND parent);

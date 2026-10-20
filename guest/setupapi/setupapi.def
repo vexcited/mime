@@ -2,6 +2,10 @@
 LIBRARY setupapi.dll
 EXPORTS
     SetupDiCallClassInstaller
+    SetupDiClassGuidsFromNameA
+    SetupDiClassGuidsFromNameExA
+    SetupDiClassGuidsFromNameExW
+    SetupDiClassGuidsFromNameW
     SetupDiCreateDevRegKeyW
     SetupDiCreateDeviceInfoList
     SetupDiCreateDeviceInterfaceRegKeyW

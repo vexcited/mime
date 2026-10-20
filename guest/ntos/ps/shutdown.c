@@ -559,6 +559,20 @@ NTSTATUS NTAPI NtShutdownSystem(SHUTDOWN_ACTION action)
     PsShutdownSystem((ULONG)action);
 }
 
+/*
+ * a power action of the system: sleep, hibernate or shutdown. It needs the shutdown privilege; Mime has no sleep or
+ * hibernate state to enter, so a request that is allowed is refused as not supported, a guess for the answer of a
+ * machine without those states.
+ */
+NTSTATUS NTAPI NtInitiatePowerAction(ULONG action, ULONG lightest_state, ULONG flags, BOOLEAN asynchronous)
+{
+    if (action > 8 || lightest_state > 7)
+        return STATUS_INVALID_PARAMETER;
+    if (!SepSinglePrivilegeCheck(SHUTDOWN_PRIVILEGE, KeGetPreviousMode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    return STATUS_NOT_SUPPORTED;
+}
+
 NTSTATUS NTAPI NtSetSystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length)
 {
     if ((ULONG)klass != MX_SYSTEM_SHUTDOWN_REQUEST)

@@ -242,6 +242,7 @@ enum {
     MIME_HWNDPARAM_SYSTIMER,            /* MIME_SYS_TIMER pointer, an elapse of 0 kills the timer */
     MIME_HWNDPARAM_SETAFFINITY,         /* WDA_*: how captures of the screen show the window */
     MIME_HWNDPARAM_GETAFFINITY,
+    MIME_HWNDPARAM_GETCLASSWORD,        /* byte offset into the extra bytes of the class: the word there, or ERROR_INVALID_INDEX */
 };
 
 typedef struct MIME_SYS_TIMER {

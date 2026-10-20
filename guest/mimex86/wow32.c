@@ -1299,6 +1299,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtSetSystemInformation((SYSTEM_INFORMATION_CLASS)a[0], pointer32(a[1]), a[2]);
     case MIME_SVC_NtShutdownSystem:
         return NtShutdownSystem((SHUTDOWN_ACTION)a[0]);
+    case MIME_SVC_NtInitiatePowerAction:
+        return NtInitiatePowerAction(a[0], a[1], a[2], (BOOLEAN)a[3]);
     case MIME_SVC_NtQueryPerformanceCounter:
         return NtQueryPerformanceCounter(pointer32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtQuerySystemTime:

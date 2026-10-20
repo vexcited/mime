@@ -64,6 +64,27 @@ typedef struct _SHELLEXECUTEINFOW {
     HANDLE hProcess;
 } SHELLEXECUTEINFOW, *LPSHELLEXECUTEINFOW;
 
+typedef struct _SHELLEXECUTEINFOA {
+    DWORD cbSize;
+    ULONG fMask;
+    HWND hwnd;
+    LPCSTR lpVerb;
+    LPCSTR lpFile;
+    LPCSTR lpParameters;
+    LPCSTR lpDirectory;
+    int nShow;
+    HINSTANCE hInstApp;
+    void *lpIDList;
+    LPCSTR lpClass;
+    HKEY hkeyClass;
+    DWORD dwHotKey;
+    union {
+        HANDLE hIcon;
+        HANDLE hMonitor;
+    };
+    HANDLE hProcess;
+} SHELLEXECUTEINFOA, *LPSHELLEXECUTEINFOA;
+
 /* ------------------------------------------------------------------ dropped files */
 
 typedef struct _DROPFILES {
@@ -254,6 +275,27 @@ typedef struct _NOTIFYICONDATAW {
     HICON hBalloonIcon;
 } NOTIFYICONDATAW, *PNOTIFYICONDATAW;
 
+typedef struct _NOTIFYICONDATAA {
+    DWORD cbSize;
+    HWND hWnd;
+    UINT uID;
+    UINT uFlags;
+    UINT uCallbackMessage;
+    HICON hIcon;
+    CHAR szTip[128];
+    DWORD dwState;
+    DWORD dwStateMask;
+    CHAR szInfo[256];
+    union {
+        UINT uTimeout;
+        UINT uVersion;
+    };
+    CHAR szInfoTitle[64];
+    DWORD dwInfoFlags;
+    GUID guidItem;
+    HICON hBalloonIcon;
+} NOTIFYICONDATAA, *PNOTIFYICONDATAA;
+
 typedef struct _NOTIFYICONIDENTIFIER {
     DWORD cbSize;
     HWND hWnd;
@@ -301,6 +343,10 @@ SHSTDAPI HINSTANCE WINAPI ShellExecuteW(HWND hwnd, LPCWSTR verb, LPCWSTR file, L
 SHSTDAPI HINSTANCE WINAPI ShellExecuteA(HWND hwnd, LPCSTR verb, LPCSTR file, LPCSTR parameters, LPCSTR directory,
                                         INT show);
 SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info);
+SHSTDAPI BOOL WINAPI ShellExecuteExA(SHELLEXECUTEINFOA *info);
+SHSTDAPI BOOL WINAPI Shell_NotifyIconA(DWORD message, PNOTIFYICONDATAA data);
+SHSTDAPI UINT WINAPI ExtractIconExW(LPCWSTR file, int index, HICON *large, HICON *small, UINT count);
+SHSTDAPI UINT WINAPI ExtractIconExA(LPCSTR file, int index, HICON *large, HICON *small, UINT count);
 SHSTDAPI LPWSTR *WINAPI CommandLineToArgvW(LPCWSTR command_line, int *count);
 SHSTDAPI UINT WINAPI DragQueryFileW(HDROP drop, UINT index, LPWSTR file, UINT chars);
 SHSTDAPI UINT WINAPI DragQueryFileA(HDROP drop, UINT index, LPSTR file, UINT chars);

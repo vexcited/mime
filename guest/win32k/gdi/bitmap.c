@@ -261,7 +261,11 @@ typedef struct DIB_DESC {
     ULONG HeaderSize; /* bytes of header plus color table or masks */
 } DIB_DESC;
 
-static BOOLEAN describe_dib(const BITMAPINFO *info, UINT usage, DIB_DESC *d)
+/*
+ * allow_rle accepts the run length formats, which only a source can be: 8 or 4 bits, bottom up, whose size is in
+ * biSizeImage.
+ */
+static BOOLEAN describe_dib_rle(const BITMAPINFO *info, UINT usage, DIB_DESC *d, BOOLEAN allow_rle)
 {
     const BITMAPINFOHEADER *h = &info->bmiHeader;
     if (h->biSize < sizeof(BITMAPINFOHEADER) && h->biSize != 12)
@@ -277,8 +281,13 @@ static BOOLEAN describe_dib(const BITMAPINFO *info, UINT usage, DIB_DESC *d)
     d->Compression = h->biCompression;
     if (d->Bpp != 1 && d->Bpp != 4 && d->Bpp != 8 && d->Bpp != 16 && d->Bpp != 24 && d->Bpp != 32)
         return FALSE;
-    if (d->Compression != BI_RGB && d->Compression != BI_BITFIELDS)
+    if (allow_rle && d->Compression == BI_RLE8 && d->Bpp == 8 && !d->TopDown && h->biSizeImage) {
+        /* decoded as an 8 bit bitmap. */
+    } else if (allow_rle && d->Compression == BI_RLE4 && d->Bpp == 4 && !d->TopDown && h->biSizeImage) {
+        /* decoded as a 4 bit bitmap. */
+    } else if (d->Compression != BI_RGB && d->Compression != BI_BITFIELDS) {
         return FALSE;
+    }
     d->Stride = dib_stride(d->Width, d->Bpp);
     d->Colors = d->Bpp <= 8 ? (h->biClrUsed ? h->biClrUsed : 1u << d->Bpp) : 0;
     if (d->Colors > 256)
@@ -288,8 +297,13 @@ static BOOLEAN describe_dib(const BITMAPINFO *info, UINT usage, DIB_DESC *d)
     return TRUE;
 }
 
+static BOOLEAN describe_dib(const BITMAPINFO *info, UINT usage, DIB_DESC *d)
+{
+    return describe_dib_rle(info, usage, d, FALSE);
+}
+
 /* captures a BITMAPINFO with its color table from user mode. */
-static BITMAPINFO *capture_info(const BITMAPINFO *user, UINT usage, DIB_DESC *d)
+static BITMAPINFO *capture_info(const BITMAPINFO *user, UINT usage, DIB_DESC *d, BOOLEAN allow_rle)
 {
     BITMAPINFOHEADER h;
     if (!NT_SUCCESS(MimeCopyFromUser(&h, user, sizeof(h))))
@@ -298,7 +312,7 @@ static BITMAPINFO *capture_info(const BITMAPINFO *user, UINT usage, DIB_DESC *d)
     if (!info)
         return nullptr;
     info->bmiHeader = h;
-    if (h.biSize > 4096 || !describe_dib(info, usage, d)) {
+    if (h.biSize > 4096 || !describe_dib_rle(info, usage, d, allow_rle)) {
         W32Free(info);
         return nullptr;
     }
@@ -387,7 +401,7 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
                                      UINT header_size, ULONG flags, ULONG_PTR color_space, PVOID *bits_out)
 {
     DIB_DESC d;
-    BITMAPINFO *info = capture_info(user_info, usage, &d);
+    BITMAPINFO *info = capture_info(user_info, usage, &d, FALSE);
     if (!info)
         return nullptr;
     if (section) {
@@ -647,14 +661,112 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
     return result;
 }
 
-/* captures caller dib bits and returns a temporary surface in kernel memory. */
+/*
+ * decodes run length coded rows into a 32 bit bottom up buffer: the pixels a code covers get alpha 255, the others
+ * stay 0 so that blending the result leaves what a skip or an early end of line did not cover as it was, which is
+ * what drawing a coded bitmap does to the device. Rows are counted from the bottom, as the codes are. Truncated or
+ * out of range codes end the decoding, with what was drawn kept.
+ */
+static void decode_rle(const UCHAR *code, SIZE_T size, BOOLEAN four, LONG width, LONG height, const RGBQUAD *colors,
+                       ULONG color_count, PULONG out)
+{
+    LONG x = 0, y = 0;
+    SIZE_T i = 0;
+    ULONG stride = (ULONG)width;
+    while (i + 1 < size) {
+        UCHAR count = code[i], value = code[i + 1];
+        i += 2;
+        if (count) {
+            /* a run of one color, or in the 4 bit form of two colors in turn. */
+            for (UCHAR n = 0; n < count; n++) {
+                UCHAR index = four ? ((n & 1) ? (value & 15) : (value >> 4)) : value;
+                if (x < width && y < height) {
+                    RGBQUAD c = index < color_count ? colors[index] : (RGBQUAD){0, 0, 0, 0};
+                    out[(ULONG)y * stride + (ULONG)x] = 0xFF000000u | (ULONG)c.rgbRed << 16 | (ULONG)c.rgbGreen << 8 |
+                                                         c.rgbBlue;
+                }
+                x++;
+            }
+            continue;
+        }
+        if (value == 0) {
+            x = 0;
+            y++;
+        } else if (value == 1) {
+            return;
+        } else if (value == 2) {
+            if (i + 1 >= size)
+                return;
+            x += code[i];
+            y += code[i + 1];
+            i += 2;
+        } else {
+            /* absolute mode: value pixels follow, the bytes padded to a word. */
+            SIZE_T bytes = four ? ((SIZE_T)value + 1) / 2 : value;
+            if (i + bytes > size)
+                bytes = size - i;
+            for (UCHAR n = 0; n < value; n++) {
+                SIZE_T at = four ? (SIZE_T)(n >> 1) : (SIZE_T)n;
+                if (at >= bytes)
+                    break;
+                UCHAR index = four ? ((n & 1) ? (code[i + at] & 15) : (code[i + at] >> 4)) : code[i + at];
+                if (x < width && y < height) {
+                    RGBQUAD c = index < color_count ? colors[index] : (RGBQUAD){0, 0, 0, 0};
+                    out[(ULONG)y * stride + (ULONG)x] = 0xFF000000u | (ULONG)c.rgbRed << 16 | (ULONG)c.rgbGreen << 8 |
+                                                         c.rgbBlue;
+                }
+                x++;
+            }
+            i += bytes;
+            if (bytes & 1)
+                i++;
+        }
+        if (y >= height)
+            return;
+    }
+}
+
+/*
+ * captures caller dib bits and returns a temporary surface in kernel memory. A run length coded source comes back
+ * as a 32 bit surface with alpha, and *rle is set: it has to be blended, not copied.
+ */
 static SURFACE *capture_dib(const void *bits, const BITMAPINFO *user_info, UINT usage, ULONG lines, PVOID *buffer,
-                            BITMAPINFO **info_out)
+                            BITMAPINFO **info_out, BOOLEAN *rle)
 {
     DIB_DESC d;
-    BITMAPINFO *info = capture_info(user_info, usage, &d);
+    *rle = FALSE;
+    BITMAPINFO *info = capture_info(user_info, usage, &d, TRUE);
     if (!info)
         return nullptr;
+    if (d.Compression == BI_RLE8 || d.Compression == BI_RLE4) {
+        SIZE_T size = info->bmiHeader.biSizeImage;
+        SIZE_T pixels = (SIZE_T)d.Width * (SIZE_T)d.Height * sizeof(ULONG);
+        PUCHAR code = size <= 0x4000000 ? W32Alloc(size) : nullptr;
+        PULONG decoded = pixels <= 0x20000000 ? W32Alloc(pixels) : nullptr;
+        if (!code || !decoded || !NT_SUCCESS(MimeCopyFromUser(code, bits, size))) {
+            W32Free(code);
+            W32Free(decoded);
+            W32Free(info);
+            return nullptr;
+        }
+        decode_rle(code, size, d.Compression == BI_RLE4, d.Width, d.Height, info->bmiColors, d.Colors, decoded);
+        W32Free(code);
+        DIB_DESC wide = d;
+        wide.Bpp = 32;
+        wide.Stride = d.Width * 4;
+        wide.TopDown = FALSE;
+        wide.Compression = BI_RGB;
+        SURFACE *s = wrap_dib_bits(&wide, nullptr, decoded, (ULONG)d.Height, 0);
+        if (!s) {
+            W32Free(decoded);
+            W32Free(info);
+            return nullptr;
+        }
+        *buffer = decoded;
+        *info_out = info;
+        *rle = TRUE;
+        return s;
+    }
     if (lines == 0 || lines > (ULONG)d.Height)
         lines = (ULONG)d.Height;
     SIZE_T size = (SIZE_T)d.Stride * lines;
@@ -681,7 +793,8 @@ int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC hdc, int x, int y, DWORD width, DWO
 {
     PVOID buffer;
     BITMAPINFO *captured;
-    SURFACE *src = capture_dib(bits, info, usage, lines, &buffer, &captured);
+    BOOLEAN coded;
+    SURFACE *src = capture_dib(bits, info, usage, lines, &buffer, &captured, &coded);
     if (!src)
         return 0;
     UserEnter();
@@ -695,7 +808,16 @@ int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC hdc, int x, int y, DWORD width, DWO
         REGION clip;
         RgnInit(&clip);
         if (DcGetClip(dc, &clip)) {
-            BltSurface(dc->Surface, &clip, dx, dy, (LONG)width, (LONG)height, src, src_x, band_top, SRCCOPY, dc);
+            if (coded) {
+                RECT to = {dx, dy, dx + (LONG)width, dy + (LONG)height};
+                RECT from = {src_x, band_top, src_x + (LONG)width, band_top + (LONG)height};
+                RECT bounds = {0, 0, src->Width, src->Height}, inside;
+                if (RectIntersect(&inside, &from, &bounds) && inside.left == from.left && inside.right == from.right &&
+                    inside.top == from.top && inside.bottom == from.bottom)
+                    AlphaBlendSurface(dc->Surface, &clip, &to, src, &from, (BLENDFUNCTION){AC_SRC_OVER, 0, 255, AC_SRC_ALPHA});
+            } else {
+                BltSurface(dc->Surface, &clip, dx, dy, (LONG)width, (LONG)height, src, src_x, band_top, SRCCOPY, dc);
+            }
             RECT r = {dx, dy, dx + (LONG)width, dy + (LONG)height};
             SurfaceMarkDirty(dc->Surface, &r);
         }
@@ -715,7 +837,8 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
 {
     PVOID buffer;
     BITMAPINFO *captured;
-    SURFACE *src = capture_dib(bits, info, usage, 0, &buffer, &captured);
+    BOOLEAN coded;
+    SURFACE *src = capture_dib(bits, info, usage, 0, &buffer, &captured, &coded);
     if (!src)
         return 0;
     UserEnter();
@@ -731,7 +854,15 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
         REGION clip;
         RgnInit(&clip);
         if (DcGetClip(dc, &clip)) {
-            StretchSurface(dc->Surface, &clip, &dst_rect, src, &src_rect, rop, dc->State.StretchMode);
+            if (coded) {
+                /* what the codes skip stays as it was whatever the raster operation is, a guess for the others. */
+                if (src_rect.left >= 0 && src_rect.top >= 0 && src_rect.right <= src->Width &&
+                    src_rect.bottom <= src->Height)
+                    AlphaBlendSurface(dc->Surface, &clip, &dst_rect, src, &src_rect,
+                                      (BLENDFUNCTION){AC_SRC_OVER, 0, 255, AC_SRC_ALPHA});
+            } else {
+                StretchSurface(dc->Surface, &clip, &dst_rect, src, &src_rect, rop, dc->State.StretchMode);
+            }
             RECT dirty = {W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
             SurfaceMarkDirty(dc->Surface, &dirty);
         }

@@ -166,6 +166,21 @@ WINUSERAPI ULONG_PTR WINAPI GetClassLongPtrA(HWND hwnd, int index)
     return GetClassLongPtrW(hwnd, index);
 }
 
+WINUSERAPI DWORD WINAPI GetClassLongA(HWND hwnd, int index)
+{
+    return (DWORD)GetClassLongPtrA(hwnd, index);
+}
+
+/* the atom of the class or a word of its extra bytes, 0 with the last error set for a window or an index it has not. */
+WINUSERAPI WORD WINAPI GetClassWord(HWND hwnd, int index)
+{
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return 0;
+    }
+    return (WORD)NtUserCallHwndParam(hwnd, (ULONG_PTR)(LONG_PTR)index, MIME_HWNDPARAM_GETCLASSWORD);
+}
+
 /* the 32 bit form: on a 32 bit program it is also the one for pointer sized values. */
 WINUSERAPI DWORD WINAPI SetClassLongW(HWND hwnd, int index, LONG value)
 {
@@ -755,6 +770,19 @@ static BOOL enum_list(HWND parent, BOOL children, DWORD thread, WNDENUMPROC proc
 
 WINUSERAPI BOOL WINAPI EnumWindows(WNDENUMPROC proc, LPARAM param)
 {
+    return enum_list(nullptr, FALSE, 0, proc, param);
+}
+
+/*
+ * the top level windows of a desktop. Mime keeps one tree of windows for every desktop of a window station, so the
+ * windows of the desktop a handle names are those of the one tree, a guess; a handle that is no desktop is refused.
+ */
+WINUSERAPI BOOL WINAPI EnumDesktopWindows(HDESK desktop, WNDENUMPROC proc, LPARAM param)
+{
+    WCHAR name[64];
+    DWORD needed;
+    if (desktop && !GetUserObjectInformationW(desktop, UOI_NAME, name, sizeof(name), &needed))
+        return FALSE;
     return enum_list(nullptr, FALSE, 0, proc, param);
 }
 

@@ -493,6 +493,22 @@ IMMAPI UINT WINAPI ImmGetIMEFileNameW(HKL hkl, LPWSTR buffer, UINT size)
     return 0;
 }
 
+/* the ansi form, which turns the name to the ansi code page; no layout has an editor here, so the name is empty. */
+IMMAPI UINT WINAPI ImmGetIMEFileNameA(HKL hkl, LPSTR buffer, UINT size)
+{
+    WCHAR wide[MAX_PATH];
+    UINT length = ImmGetIMEFileNameW(hkl, wide, MAX_PATH);
+    if (!length || !size) {
+        if (buffer && size)
+            buffer[0] = 0;
+        return 0;
+    }
+    int bytes = WideCharToMultiByte(CP_ACP, 0, wide, (int)length, buffer, size > 1 ? (int)size - 1 : 0, nullptr, nullptr);
+    if (buffer)
+        buffer[bytes] = 0;
+    return (UINT)bytes;
+}
+
 IMMAPI LRESULT WINAPI ImmEscapeW(HKL hkl, HIMC himc, UINT escape, LPVOID data)
 {
     return 0;

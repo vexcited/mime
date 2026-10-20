@@ -58,6 +58,7 @@ EXPORTS
     WSARecvFrom @93
     WSAResetEvent @95
     WSASend @96
+    WSASendMsg @98
     WSASendTo @99
     WSASetEvent @100
     WSAAsyncSelect @101

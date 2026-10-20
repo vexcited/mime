@@ -1904,6 +1904,7 @@ MIME_FIELD_AT(TEB, TlsLinks, 0x1680);
 MIME_FIELD_AT(TEB, HardErrorMode, 0x16B0);
 MIME_FIELD_AT(TEB, GdiBatchCount, 0x1740);
 MIME_FIELD_AT(TEB, TlsExpansionSlots, 0x1780);
+MIME_FIELD_AT(TEB, CurrentTransactionHandle, 0x17B8);
 MIME_FIELD_AT(TEB, FlsData, 0x17C8);
 MIME_FIELD_AT(TEB, SameTebFlags, 0x17EE);
 MIME_FIELD_AT(TEB, WowTebOffset, 0x180C);
