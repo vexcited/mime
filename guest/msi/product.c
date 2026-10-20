@@ -126,6 +126,23 @@ UINT WINAPI MsiEnumRelatedProductsW(LPCWSTR upgrade, DWORD reserved, DWORD index
     return enumerate_catalog(L"UpgradeCodes", packed, index, product);
 }
 
+/* the products installed for the user or for the machine, in the order the catalogs list them. */
+UINT WINAPI MsiEnumProductsW(DWORD index, LPWSTR product)
+{
+    if (!product)
+        return ERROR_INVALID_PARAMETER;
+    return enumerate_catalog(L"Products", nullptr, index, product);
+}
+
+/* removing the patches of a product is not done: nothing is applied in a way that can be taken apart. */
+UINT WINAPI MsiRemovePatchesW(LPCWSTR patches, LPCWSTR product, INSTALLTYPE type, LPCWSTR command)
+{
+    WCHAR packed[33];
+    if (!patches || !*patches || !product || !MimeMsiPackGuid(product, packed) || type != INSTALLTYPE_SINGLE_INSTANCE)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
 static UINT registry_text(HKEY key, PCWSTR name, PWSTR *out, DWORD expected)
 {
     DWORD bytes = 0, type;

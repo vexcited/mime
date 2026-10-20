@@ -299,3 +299,17 @@ INSTALLSTATE WINAPI MsiGetComponentPathW(LPCWSTR product, LPCWSTR component, LPW
     MimeMsiFree(path);
     return state;
 }
+
+/* the state and path of a component as the first of its client products has it. */
+INSTALLSTATE WINAPI MsiLocateComponentW(LPCWSTR component, LPWSTR out, LPDWORD size)
+{
+    if ((out && !size))
+        return INSTALLSTATE_INVALIDARG;
+    WCHAR product[39];
+    for (DWORD index = 0; MsiEnumClientsW(component, index, product) == ERROR_SUCCESS; index++) {
+        INSTALLSTATE state = MsiGetComponentPathW(product, component, out, size);
+        if (state != INSTALLSTATE_UNKNOWN && state != INSTALLSTATE_BADCONFIG)
+            return state;
+    }
+    return INSTALLSTATE_UNKNOWN;
+}

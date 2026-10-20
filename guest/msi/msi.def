@@ -98,3 +98,9 @@ EXPORTS
     MsiGetComponentStateA @50
     MsiViewModify @163
     MsiCustomActionServer
+    MsiEnumProductsW @45
+    MsiEnumProductsA @44
+    MsiLocateComponentW @90
+    MsiLocateComponentA @89
+    MsiRemovePatchesW @238
+    MsiRemovePatchesA @237
