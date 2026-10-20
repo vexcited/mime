@@ -159,8 +159,8 @@ BOOLEAN RgnEqual(const REGION *a, const REGION *b)
 /*
  * x spans of one region within the band [y0, y1); returns the number of spans. the bands come in ascending order, so the
  * rectangles that end above this one can never be in a later one: *first skips them for good, which makes a combination
- * linear in the rectangles instead of the square of them (two regions of 9000 rectangles took more than a minute, with
- * the kernel lock held).
+ * linear in the rectangles instead of the square of them. two regions of 9000 rectangles took more than a minute, with
+ * the kernel lock held.
  */
 static ULONG band_spans(const REGION *r, ULONG *first, LONG y0, LONG y1, LONG *spans, ULONG max_pairs)
 {

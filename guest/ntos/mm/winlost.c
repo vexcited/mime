@@ -4,7 +4,7 @@
  * cannot be read any more. windows answers the access with an in page error in the thread that made it, with the kind of
  * access, the address and the status of the failed read as parameters, and keeps the rest of the program going.
  *
- * the host tells the guest before it gives the pages up (MIME_HC_FS_WINDOW_LOST, after MIME_IRQ_WINDOW). a thread of the
+ * the host tells the guest before it gives the pages up, by MIME_HC_FS_WINDOW_LOST after MIME_IRQ_WINDOW. a thread of the
  * kernel marks every section on the window with the range that is gone, drops the cache entries of the window, and takes
  * the pages out of the page tables of every process that maps them, leaving the entries a view leaves for the first touch.
  * the touch goes to the section, which refuses a page in its range, and the fault becomes the in page error:
