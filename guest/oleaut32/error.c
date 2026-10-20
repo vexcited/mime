@@ -107,7 +107,7 @@ static const struct {
     HRESULT (WINAPI *HelpFile)(ERROR_INTERFACE *, LPCOLESTR);
     HRESULT (WINAPI *Context)(ERROR_INTERFACE *, DWORD);
 } create_vtable = {error_query, error_addref, error_release, set_guid, set_source, set_description, set_helpfile, set_context};
-WINOLEAUTAPI HRESULT WINAPI CreateErrorInfo(void **result)
+WINOLEAUTAPI HRESULT WINAPI CreateErrorInfo(ICreateErrorInfo **result)
 {
     if (!result) return E_POINTER;
     *result = nullptr;
@@ -116,10 +116,10 @@ WINOLEAUTAPI HRESULT WINAPI CreateErrorInfo(void **result)
     object->Info.Vtbl = &info_vtable; object->Info.Object = object;
     object->Create.Vtbl = &create_vtable; object->Create.Object = object;
     object->Refs = 1;
-    *result = &object->Create;
+    *result = (ICreateErrorInfo *)&object->Create;
     return S_OK;
 }
-WINOLEAUTAPI HRESULT WINAPI SetErrorInfo(ULONG reserved, IUnknown *info)
+WINOLEAUTAPI HRESULT WINAPI SetErrorInfo(ULONG reserved, IErrorInfo *info)
 {
     if (reserved) return E_INVALIDARG;
     if (error_slot == TLS_OUT_OF_INDEXES) return E_OUTOFMEMORY;
@@ -129,13 +129,13 @@ WINOLEAUTAPI HRESULT WINAPI SetErrorInfo(ULONG reserved, IUnknown *info)
     AutRelease(old);
     return S_OK;
 }
-WINOLEAUTAPI HRESULT WINAPI GetErrorInfo(ULONG reserved, IUnknown **result)
+WINOLEAUTAPI HRESULT WINAPI GetErrorInfo(ULONG reserved, IErrorInfo **result)
 {
     if (!result) return E_POINTER;
     *result = nullptr;
     if (reserved) return E_INVALIDARG;
     if (error_slot != TLS_OUT_OF_INDEXES) {
-        *result = TlsGetValue(error_slot);
+        *result = (IErrorInfo *)TlsGetValue(error_slot);
         TlsSetValue(error_slot, nullptr);
     }
     return *result ? S_OK : S_FALSE;

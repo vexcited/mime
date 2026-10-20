@@ -53,7 +53,7 @@ set(MIME_X86_DLLS
     shlwapi:0x71000000:all_five shell32:0x70000000:all_five winmm:0x6f000000:all_five version:0x6e000000:all_five
     advapi32:0x6d000000:all_five sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
     netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
-    crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:all_five
+    crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:oleaut32_imports
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:user mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:user_gdi wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
@@ -77,6 +77,8 @@ set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 # ole32 reaches other processes with rpc, and catches the faults of stubs with the frame handlers of the c runtime.
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
 set(depends_ole32 mime-gen-ole32)
+# oleaut32 makes objects with ole32 and asks it for guid strings.
+set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
@@ -101,6 +103,8 @@ set(http ntdll kernel32 user32 ws2_32)
 # wininet combines urls with the engine of kernelbase.
 set(wininet_imports ntdll kernel32 user32 ws2_32 kernelbase)
 set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
+# oleaut32 divides 64 bit numbers by one another in its conversions.
+set(objects_oleaut32 x86-div)
 set(objects_msi x86-lib-compound)
 set(objects_winmm x86-lib-audio)
 set(objects_dsound x86-lib-audio)

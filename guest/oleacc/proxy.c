@@ -12,18 +12,6 @@
 
 #define E_DISCONNECTED ((HRESULT)0x80010108L)
 
-/* what automation passes to Invoke, which oleauto.h leaves out. */
-typedef LONG DISPID;
-#define DISPID_UNKNOWN ((DISPID)-1)
-#define DISPATCH_PROPERTYPUT 0x4
-typedef struct {
-    VARIANT *rgvarg;
-    DISPID *rgdispidNamedArgs;
-    UINT cArgs;
-    UINT cNamedArgs;
-} DISPPARAMS;
-typedef struct EXCEPINFO EXCEPINFO;
-
 static const IID IID_IAccessible_ = {0x618736e0, 0x3c3d, 0x11cf, {0x81, 0x0c, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 static const IID IID_IDispatch_ = {0x00020400, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
 static const IID IID_IEnumVARIANT_ = {0x00020404, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
@@ -70,7 +58,7 @@ typedef struct IOleWindowVtbl {
     HRESULT(STDMETHODCALLTYPE *ContextSensitiveHelp)(void *, BOOL);
 } IOleWindowVtbl;
 
-typedef struct IEnumVARIANTVtbl {
+typedef struct OaEnumeratorVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(void *, REFIID, void **);
     ULONG(STDMETHODCALLTYPE *AddRef)(void *);
     ULONG(STDMETHODCALLTYPE *Release)(void *);
@@ -78,12 +66,12 @@ typedef struct IEnumVARIANTVtbl {
     HRESULT(STDMETHODCALLTYPE *Skip)(void *, ULONG);
     HRESULT(STDMETHODCALLTYPE *Reset)(void *);
     HRESULT(STDMETHODCALLTYPE *Clone)(void *, void **);
-} IEnumVARIANTVtbl;
+} OaEnumeratorVtbl;
 
 typedef struct PROXY {
     const IAccessibleVtbl *accessible;
     const IOleWindowVtbl *window;
-    const IEnumVARIANTVtbl *enumerator;
+    const OaEnumeratorVtbl *enumerator;
     LONG refs;
     HWND hwnd;
     LONG object;
@@ -1813,7 +1801,7 @@ static HRESULT STDMETHODCALLTYPE enum_clone(void *self, void **out)
     return hr;
 }
 
-static const IEnumVARIANTVtbl enumerator_vtbl = {enum_query_interface, enum_add_ref, enum_release, enum_next,
+static const OaEnumeratorVtbl enumerator_vtbl = {enum_query_interface, enum_add_ref, enum_release, enum_next,
                                                  enum_skip,            enum_reset,   enum_clone};
 
 /* ------------------------------------------------------------------ making one */

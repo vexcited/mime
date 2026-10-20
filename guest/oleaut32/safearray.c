@@ -9,7 +9,6 @@
 #define SA_PREFIX 16
 #define FADF_NOT_OWNED (FADF_AUTO | FADF_STATIC | FADF_EMBEDDED)
 
-MIME_DEFINE_GUID(IID_IDispatch, 0x00020400, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 
 static ULONG element_size(VARTYPE vt)
 {
@@ -488,5 +487,34 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayRedim(SAFEARRAY *array, SAFEARRAYBOUND *bou
         array->pvData = data;
     }
     array->rgsabound[0] = *bound;
+    return S_OK;
+}
+
+/* a one dimensional array of bytes holds the bytes of a string, and the other way around. */
+WINOLEAUTAPI HRESULT WINAPI BstrFromVector(SAFEARRAY *array, BSTR *out)
+{
+    if (!out)
+        return E_INVALIDARG;
+    *out = nullptr;
+    if (!array)
+        return E_INVALIDARG;
+    if (array->cDims != 1 || array->cbElements != 1)
+        return E_INVALIDARG;
+    *out = SysAllocStringByteLen(array->pvData, array->rgsabound[0].cElements);
+    return *out || !array->rgsabound[0].cElements ? S_OK : E_OUTOFMEMORY;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VectorFromBstr(BSTR bstr, SAFEARRAY **out)
+{
+    if (!out)
+        return E_INVALIDARG;
+    *out = nullptr;
+    ULONG length = SysStringByteLen(bstr);
+    SAFEARRAY *array = SafeArrayCreateVector(VT_UI1, 0, length);
+    if (!array)
+        return E_OUTOFMEMORY;
+    if (length)
+        memcpy(array->pvData, bstr, length);
+    *out = array;
     return S_OK;
 }

@@ -1,18 +1,12 @@
 /*
- * variant conversions between strings, dates, currency and decimals.
+ * dates: the conversions between variant times, system times and strings.
  *
  * dates are days since 1899-12-30 with the time of day as the fraction,
  * whose sign never changes the time: -1.25 is 1899-12-29 06:00. numbers
  * parse into decimal digits first, then round half to even like windows.
  */
 #include "oleaut32_private.h"
-#include <mime/stub.h>
 #include <mime/win32/winnls.h>
-
-/* the compiler references this symbol from code that uses floating point. */
-int _fltused = 0x9875;
-
-#define TYPE_E_CANTLOADLIBRARY ((HRESULT)0x80029C4AL)
 
 /* ------------------------------------------------------------------ dates */
 
@@ -295,254 +289,72 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* ------------------------------------------------------------------ numbers */
-
-/* a parsed number: digits without leading zeros, worth digits times ten to the exponent. */
-typedef struct {
-    BOOL Negative;
-    int Count;
-    int Exponent;
-    BYTE Digits[64];
-} NUMBER;
-
-static WCHAR locale_char(LCID lcid, LCTYPE type, WCHAR fallback)
+WINOLEAUTAPI HRESULT WINAPI VarUdateFromDate(DATE date, ULONG flags, UDATE *udate)
 {
-    WCHAR text[8];
-    if (GetLocaleInfoW(lcid ? lcid : LOCALE_USER_DEFAULT, type, text, RTL_NUMBER_OF(text)) && text[0])
-        return text[0];
-    return fallback;
-}
-
-static HRESULT parse_number(LPCOLESTR string, LCID lcid, ULONG flags, NUMBER *n)
-{
-    if (!string)
+    SYSTEMTIME time;
+    if (!udate)
         return E_INVALIDARG;
-    WCHAR point = locale_char(lcid, LOCALE_SDECIMAL, L'.'), group = locale_char(lcid, LOCALE_STHOUSAND, L',');
-    const WCHAR *p = string;
-    memset(n, 0, sizeof(*n));
-    while (*p == L' ' || *p == L'\t')
-        p++;
-    if (*p == L'-' || *p == L'+')
-        n->Negative = *p++ == L'-';
-    BOOL any = FALSE, fraction = FALSE;
-    for (;; p++) {
-        if (*p >= L'0' && *p <= L'9') {
-            any = TRUE;
-            if (!n->Count && *p == L'0') {
-                if (fraction)
-                    n->Exponent--;
-                continue;
-            }
-            if (n->Count < (int)sizeof(n->Digits)) {
-                n->Digits[n->Count++] = (BYTE)(*p - L'0');
-                if (fraction)
-                    n->Exponent--;
-            } else if (!fraction) {
-                /* digits past what any type holds still scale the value. */
-                n->Exponent++;
-            }
-        } else if (*p == point && !fraction) {
-            fraction = TRUE;
-        } else if (*p == group && !fraction && any) {
-            continue;
-        } else {
-            break;
-        }
-    }
-    if (!any)
-        return DISP_E_TYPEMISMATCH;
-    if ((*p | 0x20) == L'e') {
-        const WCHAR *q = p + 1;
-        BOOL negative = FALSE;
-        if (*q == L'-' || *q == L'+')
-            negative = *q++ == L'-';
-        if (*q < L'0' || *q > L'9')
-            return DISP_E_TYPEMISMATCH;
-        int e = 0;
-        for (; *q >= L'0' && *q <= L'9'; q++)
-            if (e < 10000)
-                e = e * 10 + (*q - L'0');
-        n->Exponent += negative ? -e : e;
-        p = q;
-    }
-    while (*p == L' ' || *p == L'\t')
-        p++;
-    if (*p)
-        return DISP_E_TYPEMISMATCH;
-    /* trailing zeros of the digits move into the exponent. */
-    while (n->Count && !n->Digits[n->Count - 1]) {
-        n->Count--;
-        n->Exponent++;
-    }
+    if (!VariantTimeToSystemTime(date, &time))
+        return E_INVALIDARG;
+    udate->st = time;
+    udate->wDayOfYear = (USHORT)(days_from_civil(time.wYear, time.wMonth, time.wDay) -
+                                 days_from_civil(time.wYear, 1, 1) + 1);
     return S_OK;
 }
 
-/*
- * the value scaled by ten to the given power and rounded half to even, as
- * an unsigned 96-bit integer. FALSE when it does not fit.
- */
-static BOOL number_to_integer(const NUMBER *n, int scale, ULONG *high, ULONGLONG *low)
+/* a field of a UDATE past its range rolls into the next one unless the date is to be checked. */
+static HRESULT date_from_fields(const SYSTEMTIME *st, ULONG flags, DATE *out)
 {
-    int keep = n->Count + n->Exponent + scale; /* digits before the rounding point */
-    ULONGLONG lo = 0;
-    ULONG hi = 0;
-    for (int i = 0; i < keep; i++) {
-        BYTE digit = i < n->Count ? n->Digits[i] : 0;
-        /* times ten in 96 bits, then plus the digit. */
-        ULONGLONG lo_lo = (lo & 0xFFFFFFFF) * 10, lo_hi = (lo >> 32) * 10 + (lo_lo >> 32);
-        ULONGLONG top = (ULONGLONG)hi * 10 + (lo_hi >> 32);
-        if (top > 0xFFFFFFFF)
-            return FALSE;
-        lo = (lo_hi << 32) | (lo_lo & 0xFFFFFFFF);
-        hi = (ULONG)top;
-        lo += digit;
-        if (lo < digit && ++hi == 0)
-            return FALSE;
+    LONG y = st->wYear, m = st->wMonth, d = st->wDay, h = st->wHour, mi = st->wMinute, s = st->wSecond;
+    if (flags & VAR_VALIDDATE) {
+        if (m < 1 || m > 12 || d < 1 || y < 100 || y > 9999 || d > days_in_month(y, m) || h > 23 || mi > 59 || s > 59)
+            return E_INVALIDARG;
     }
-    /* the first dropped digit decides, ties go to the even neighbour; nothing to the left of the digits rounds. */
-    BOOL round_up = FALSE;
-    if (keep >= 0 && keep < n->Count) {
-        BYTE first = n->Digits[keep];
-        BOOL rest = keep + 1 < n->Count;
-        round_up = first > 5 || (first == 5 && (rest || (lo & 1)));
-    }
-    if (round_up) {
-        if (++lo == 0 && ++hi == 0)
-            return FALSE;
-    }
-    *high = hi;
-    *low = lo;
+    if (!(flags & VAR_VALIDDATE) && y < 100)
+        y = full_year(y);
+    /* months into years. */
+    LONG month0 = m - 1;
+    y += month0 >= 0 ? month0 / 12 : -((11 - month0) / 12);
+    month0 = ((month0 % 12) + 12) % 12;
+    if (y < 100 || y > 9999)
+        return E_INVALIDARG;
+    LONGLONG seconds = (LONGLONG)h * 3600 + mi * 60 + s;
+    LONGLONG days = (LONGLONG)days_from_civil(y, month0 + 1, 1) - OLE_EPOCH_DAYS + (d - 1);
+    days += seconds >= 0 ? seconds / 86400 : -((86399 - seconds) / 86400);
+    seconds = ((seconds % 86400) + 86400) % 86400;
+    if (days < -657434 || days > 2958465)
+        return E_INVALIDARG;
+    double time = seconds / 86400.0;
+    *out = days >= 0 ? (double)days + time : (double)days - time;
+    return S_OK;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUdateEx(UDATE *udate, LCID lcid, ULONG flags, DATE *date)
+{
+    if (!udate || !date)
+        return E_INVALIDARG;
+    return date_from_fields(&udate->st, flags, date);
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUdate(UDATE *udate, ULONG flags, DATE *date)
+{
+    return VarDateFromUdateEx(udate, 0x409, flags, date);
+}
+
+WINOLEAUTAPI INT WINAPI DosDateTimeToVariantTime(USHORT dos_date, USHORT dos_time, DATE *date)
+{
+    if (!date)
+        return FALSE;
+    return make_date(1980 + (dos_date >> 9), (dos_date >> 5) & 15, dos_date & 31, dos_time >> 11, (dos_time >> 5) & 63,
+                     (dos_time & 31) * 2, date);
+}
+
+WINOLEAUTAPI INT WINAPI VariantTimeToDosDateTime(DATE date, USHORT *dos_date, USHORT *dos_time)
+{
+    SYSTEMTIME time;
+    if (!dos_date || !dos_time || !VariantTimeToSystemTime(date, &time) || time.wYear < 1980 || time.wYear > 2107)
+        return FALSE;
+    *dos_date = (USHORT)(((time.wYear - 1980) << 9) | (time.wMonth << 5) | time.wDay);
+    *dos_time = (USHORT)((time.wHour << 11) | (time.wMinute << 5) | (time.wSecond / 2));
     return TRUE;
-}
-
-WINOLEAUTAPI HRESULT WINAPI VarUI4FromStr(LPCOLESTR string, LCID lcid, ULONG flags, ULONG *out)
-{
-    if (!out)
-        return E_INVALIDARG;
-    NUMBER n;
-    HRESULT hr = parse_number(string, lcid, flags, &n);
-    if (FAILED(hr))
-        return hr;
-    ULONG high;
-    ULONGLONG low;
-    if (!number_to_integer(&n, 0, &high, &low) || high || low > 0xFFFFFFFF || (n.Negative && low))
-        return DISP_E_OVERFLOW;
-    *out = (ULONG)low;
-    return S_OK;
-}
-
-WINOLEAUTAPI HRESULT WINAPI VarCyFromStr(LPCOLESTR string, LCID lcid, ULONG flags, CY *out)
-{
-    if (!out)
-        return E_INVALIDARG;
-    NUMBER n;
-    HRESULT hr = parse_number(string, lcid, flags, &n);
-    if (FAILED(hr))
-        return hr;
-    ULONG high;
-    ULONGLONG low;
-    if (!number_to_integer(&n, 4, &high, &low) || high || low > (n.Negative ? 0x8000000000000000ull : 0x7FFFFFFFFFFFFFFFull))
-        return DISP_E_OVERFLOW;
-    out->int64 = n.Negative ? (LONGLONG)(0 - low) : (LONGLONG)low;
-    return S_OK;
-}
-
-WINOLEAUTAPI HRESULT WINAPI VarDecFromStr(LPCOLESTR string, LCID lcid, ULONG flags, DECIMAL *out)
-{
-    if (!out)
-        return E_INVALIDARG;
-    NUMBER n;
-    HRESULT hr = parse_number(string, lcid, flags, &n);
-    if (FAILED(hr))
-        return hr;
-    /* the largest scale up to 28 whose value still fits in 96 bits. */
-    int scale = n.Exponent < 0 ? -n.Exponent : 0;
-    if (scale > 28)
-        scale = 28;
-    ULONG high;
-    ULONGLONG low;
-    while (!number_to_integer(&n, scale, &high, &low)) {
-        if (!scale)
-            return DISP_E_OVERFLOW;
-        scale--;
-    }
-    out->wReserved = 0;
-    out->scale = (BYTE)scale;
-    out->sign = n.Negative && (high || low) ? 0x80 : 0;
-    out->Hi32 = high;
-    out->Lo64 = low;
-    return S_OK;
-}
-
-/* writes the digits of a 96-bit value and a decimal point before the last scale digits, without trailing zeros. */
-static HRESULT format_decimal(BOOL negative, ULONG high, ULONGLONG low, int scale, LCID lcid, BSTR *out)
-{
-    WCHAR digits[40];
-    int count = 0;
-    ULONG parts[3] = {(ULONG)low, (ULONG)(low >> 32), high};
-    do {
-        ULONGLONG remainder = 0;
-        for (int i = 2; i >= 0; i--) {
-            ULONGLONG value = (remainder << 32) | parts[i];
-            parts[i] = (ULONG)(value / 10);
-            remainder = value % 10;
-        }
-        digits[count++] = (WCHAR)(L'0' + remainder);
-    } while (parts[0] || parts[1] || parts[2]);
-    while (count <= scale)
-        digits[count++] = L'0';
-    int drop = 0;
-    while (drop < scale && digits[drop] == L'0')
-        drop++;
-    WCHAR text[48];
-    int n = 0;
-    BOOL zero = count - drop == 1 && digits[count - 1] == L'0' && drop == scale;
-    if (negative && !zero)
-        text[n++] = L'-';
-    for (int i = count - 1; i >= scale; i--)
-        text[n++] = digits[i];
-    if (drop < scale) {
-        text[n++] = locale_char(lcid, LOCALE_SDECIMAL, L'.');
-        for (int i = scale - 1; i >= drop; i--)
-            text[n++] = digits[i];
-    }
-    text[n] = 0;
-    *out = SysAllocString(text);
-    return *out ? S_OK : E_OUTOFMEMORY;
-}
-
-WINOLEAUTAPI HRESULT WINAPI VarBstrFromCy(CY value, LCID lcid, ULONG flags, BSTR *out)
-{
-    if (!out)
-        return E_INVALIDARG;
-    BOOL negative = value.int64 < 0;
-    ULONGLONG magnitude = negative ? 0 - (ULONGLONG)value.int64 : (ULONGLONG)value.int64;
-    return format_decimal(negative, 0, magnitude, 4, lcid, out);
-}
-
-WINOLEAUTAPI HRESULT WINAPI VarBstrFromDec(const DECIMAL *value, LCID lcid, ULONG flags, BSTR *out)
-{
-    if (!out || !value)
-        return E_INVALIDARG;
-    if (value->scale > 28 || (value->sign & 0x7F))
-        return E_INVALIDARG;
-    return format_decimal(value->sign != 0, value->Hi32, value->Lo64, value->scale, lcid, out);
-}
-
-/* ------------------------------------------------------------------ type libraries */
-
-/* type library loading needs a parser of the msft and sltg formats, which is not written. */
-WINOLEAUTAPI HRESULT WINAPI LoadTypeLib(LPCOLESTR file, void **library)
-{
-    MIME_STUB("oleaut32");
-    if (!library)
-        return E_INVALIDARG;
-    *library = nullptr;
-    return TYPE_E_CANTLOADLIBRARY;
-}
-
-WINOLEAUTAPI HRESULT WINAPI RegisterTypeLib(void *library, LPCOLESTR path, LPCOLESTR help_directory)
-{
-    MIME_STUB("oleaut32");
-    return library ? E_NOTIMPL : E_INVALIDARG;
 }

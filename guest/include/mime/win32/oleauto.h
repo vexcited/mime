@@ -183,6 +183,28 @@ MIME_STATIC_ASSERT(sizeof(VARIANT) == (sizeof(void *) == 4 ? 16 : 24), "VARIANT 
 #define V_UNKNOWN(v) ((v)->punkVal)
 #define V_DISPATCH(v) ((v)->pdispVal)
 #define V_ARRAY(v) ((v)->parray)
+
+#define V_ISBYREF(v) ((v)->vt & VT_BYREF)
+#define V_ISARRAY(v) ((v)->vt & VT_ARRAY)
+#define V_I1(v) ((v)->cVal)
+#define V_UI1(v) ((v)->bVal)
+#define V_I2(v) ((v)->iVal)
+#define V_UI2(v) ((v)->uiVal)
+#define V_UI4(v) ((v)->ulVal)
+#define V_I8(v) ((v)->llVal)
+#define V_UI8(v) ((v)->ullVal)
+#define V_INT(v) ((v)->intVal)
+#define V_UINT(v) ((v)->uintVal)
+#define V_R4(v) ((v)->fltVal)
+#define V_R8(v) ((v)->dblVal)
+#define V_CY(v) ((v)->cyVal)
+#define V_DATE(v) ((v)->date)
+#define V_ERROR(v) ((v)->scode)
+#define V_DECIMAL(v) ((v)->decVal)
+#define V_BYREF(v) ((v)->byref)
+#define V_VARIANTREF(v) ((v)->pvarVal)
+#define V_RECORD(v) ((v)->pvRecord)
+#define V_RECORDINFO(v) ((v)->pRecInfo)
 #define V_BOOL(v) ((v)->boolVal)
 
 /* ------------------------------------------------------------------ oleaut32 functions */
@@ -229,12 +251,1097 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayRedim(SAFEARRAY *array, SAFEARRAYBOUND *bou
 #define VAR_DATEVALUEONLY 0x00000002
 WINOLEAUTAPI INT WINAPI SystemTimeToVariantTime(LPSYSTEMTIME time, double *date);
 WINOLEAUTAPI INT WINAPI VariantTimeToSystemTime(DATE date, LPSYSTEMTIME time);
-WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR string, LCID lcid, ULONG flags, DATE *out);
-WINOLEAUTAPI HRESULT WINAPI VarCyFromStr(LPCOLESTR string, LCID lcid, ULONG flags, CY *out);
-WINOLEAUTAPI HRESULT WINAPI VarDecFromStr(LPCOLESTR string, LCID lcid, ULONG flags, DECIMAL *out);
-WINOLEAUTAPI HRESULT WINAPI VarUI4FromStr(LPCOLESTR string, LCID lcid, ULONG flags, ULONG *out);
-WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, BSTR *out);
-WINOLEAUTAPI HRESULT WINAPI VarBstrFromCy(CY value, LCID lcid, ULONG flags, BSTR *out);
-WINOLEAUTAPI HRESULT WINAPI VarBstrFromDec(const DECIMAL *value, LCID lcid, ULONG flags, BSTR *out);
+
+/* ------------------------------------------------------------------ more errors */
+
+#ifndef DISP_E_UNKNOWNINTERFACE
+#define DISP_E_UNKNOWNINTERFACE ((HRESULT)0x80020001L)
+#endif
+#ifndef DISP_E_MEMBERNOTFOUND
+#define DISP_E_MEMBERNOTFOUND ((HRESULT)0x80020003L)
+#endif
+#ifndef DISP_E_PARAMNOTFOUND
+#define DISP_E_PARAMNOTFOUND ((HRESULT)0x80020004L)
+#endif
+#ifndef DISP_E_TYPEMISMATCH
+#define DISP_E_TYPEMISMATCH ((HRESULT)0x80020005L)
+#endif
+#ifndef DISP_E_UNKNOWNNAME
+#define DISP_E_UNKNOWNNAME ((HRESULT)0x80020006L)
+#endif
+#ifndef DISP_E_NONAMEDARGS
+#define DISP_E_NONAMEDARGS ((HRESULT)0x80020007L)
+#endif
+#ifndef DISP_E_EXCEPTION
+#define DISP_E_EXCEPTION ((HRESULT)0x80020009L)
+#endif
+#ifndef DISP_E_UNKNOWNLCID
+#define DISP_E_UNKNOWNLCID ((HRESULT)0x8002000CL)
+#endif
+#ifndef DISP_E_PARAMNOTOPTIONAL
+#define DISP_E_PARAMNOTOPTIONAL ((HRESULT)0x8002000FL)
+#endif
+#ifndef DISP_E_BADPARAMCOUNT
+#define DISP_E_BADPARAMCOUNT ((HRESULT)0x8002000EL)
+#endif
+#ifndef DISP_E_BADCALLEE
+#define DISP_E_BADCALLEE ((HRESULT)0x80020010L)
+#endif
+#ifndef DISP_E_NOTACOLLECTION
+#define DISP_E_NOTACOLLECTION ((HRESULT)0x80020011L)
+#endif
+#ifndef DISP_E_DIVBYZERO
+#define DISP_E_DIVBYZERO ((HRESULT)0x80020012L)
+#endif
+#ifndef DISP_E_BUFFERTOOSMALL
+#define DISP_E_BUFFERTOOSMALL ((HRESULT)0x80020013L)
+#endif
+#ifndef TYPE_E_BUFFERTOOSMALL
+#define TYPE_E_BUFFERTOOSMALL ((HRESULT)0x80028016L)
+#endif
+#ifndef TYPE_E_FIELDNOTFOUND
+#define TYPE_E_FIELDNOTFOUND ((HRESULT)0x80028017L)
+#endif
+#ifndef TYPE_E_INVDATAREAD
+#define TYPE_E_INVDATAREAD ((HRESULT)0x80028018L)
+#endif
+#ifndef TYPE_E_UNSUPFORMAT
+#define TYPE_E_UNSUPFORMAT ((HRESULT)0x80028019L)
+#endif
+#ifndef TYPE_E_REGISTRYACCESS
+#define TYPE_E_REGISTRYACCESS ((HRESULT)0x8002801CL)
+#endif
+#ifndef TYPE_E_LIBNOTREGISTERED
+#define TYPE_E_LIBNOTREGISTERED ((HRESULT)0x8002801DL)
+#endif
+#ifndef TYPE_E_UNDEFINEDTYPE
+#define TYPE_E_UNDEFINEDTYPE ((HRESULT)0x80028027L)
+#endif
+#ifndef TYPE_E_QUALIFIEDNAMEDISALLOWED
+#define TYPE_E_QUALIFIEDNAMEDISALLOWED ((HRESULT)0x80028028L)
+#endif
+#ifndef TYPE_E_INVALIDSTATE
+#define TYPE_E_INVALIDSTATE ((HRESULT)0x80028029L)
+#endif
+#ifndef TYPE_E_WRONGTYPEKIND
+#define TYPE_E_WRONGTYPEKIND ((HRESULT)0x8002802AL)
+#endif
+#ifndef TYPE_E_ELEMENTNOTFOUND
+#define TYPE_E_ELEMENTNOTFOUND ((HRESULT)0x8002802BL)
+#endif
+#ifndef TYPE_E_AMBIGUOUSNAME
+#define TYPE_E_AMBIGUOUSNAME ((HRESULT)0x8002802CL)
+#endif
+#ifndef TYPE_E_NAMECONFLICT
+#define TYPE_E_NAMECONFLICT ((HRESULT)0x8002802DL)
+#endif
+#ifndef TYPE_E_UNKNOWNLCID
+#define TYPE_E_UNKNOWNLCID ((HRESULT)0x8002802EL)
+#endif
+#ifndef TYPE_E_DLLFUNCTIONNOTFOUND
+#define TYPE_E_DLLFUNCTIONNOTFOUND ((HRESULT)0x8002802FL)
+#endif
+#ifndef TYPE_E_BADMODULEKIND
+#define TYPE_E_BADMODULEKIND ((HRESULT)0x800288BDL)
+#endif
+#ifndef TYPE_E_SIZETOOBIG
+#define TYPE_E_SIZETOOBIG ((HRESULT)0x800288C5L)
+#endif
+#ifndef TYPE_E_DUPLICATEID
+#define TYPE_E_DUPLICATEID ((HRESULT)0x800288C6L)
+#endif
+#ifndef TYPE_E_INVALIDID
+#define TYPE_E_INVALIDID ((HRESULT)0x800288CFL)
+#endif
+#ifndef TYPE_E_TYPEMISMATCH
+#define TYPE_E_TYPEMISMATCH ((HRESULT)0x80028CA0L)
+#endif
+#ifndef TYPE_E_OUTOFBOUNDS
+#define TYPE_E_OUTOFBOUNDS ((HRESULT)0x80028CA1L)
+#endif
+#ifndef TYPE_E_IOERROR
+#define TYPE_E_IOERROR ((HRESULT)0x80028CA2L)
+#endif
+#ifndef TYPE_E_CANTCREATETMPFILE
+#define TYPE_E_CANTCREATETMPFILE ((HRESULT)0x80028CA3L)
+#endif
+#ifndef TYPE_E_CANTLOADLIBRARY
+#define TYPE_E_CANTLOADLIBRARY ((HRESULT)0x80029C4AL)
+#endif
+#ifndef TYPE_E_INCONSISTENTPROPFUNCS
+#define TYPE_E_INCONSISTENTPROPFUNCS ((HRESULT)0x80029C83L)
+#endif
+#ifndef TYPE_E_CIRCULARTYPE
+#define TYPE_E_CIRCULARTYPE ((HRESULT)0x80029C84L)
+#endif
+
+
+/* ------------------------------------------------------------------ variant conversions */
+
+#define VARIANT_NOVALUEPROP 0x01
+#define VARIANT_ALPHABOOL 0x02
+#define VARIANT_NOUSEROVERRIDE 0x04
+#define VARIANT_CALENDAR_HIJRI 0x08
+#define VARIANT_LOCALBOOL 0x10
+#define VARIANT_CALENDAR_THAI 0x20
+#define VARIANT_CALENDAR_GREGORIAN 0x40
+#define VARIANT_USE_NLS 0x80
+
+#define VTBIT_I1 (1 << VT_I1)
+#define VTBIT_UI1 (1 << VT_UI1)
+#define VTBIT_I2 (1 << VT_I2)
+#define VTBIT_UI2 (1 << VT_UI2)
+#define VTBIT_I4 (1 << VT_I4)
+#define VTBIT_UI4 (1 << VT_UI4)
+#define VTBIT_I8 (1 << VT_I8)
+#define VTBIT_UI8 (1 << VT_UI8)
+#define VTBIT_R4 (1 << VT_R4)
+#define VTBIT_R8 (1 << VT_R8)
+#define VTBIT_CY (1 << VT_CY)
+#define VTBIT_DECIMAL (1 << VT_DECIMAL)
+
+#define NUMPRS_LEADING_WHITE 0x0001
+#define NUMPRS_TRAILING_WHITE 0x0002
+#define NUMPRS_LEADING_PLUS 0x0004
+#define NUMPRS_TRAILING_PLUS 0x0008
+#define NUMPRS_LEADING_MINUS 0x0010
+#define NUMPRS_TRAILING_MINUS 0x0020
+#define NUMPRS_HEX_OCT 0x0040
+#define NUMPRS_PARENS 0x0080
+#define NUMPRS_DECIMAL 0x0100
+#define NUMPRS_THOUSANDS 0x0200
+#define NUMPRS_CURRENCY 0x0400
+#define NUMPRS_EXPONENT 0x0800
+#define NUMPRS_USE_ALL 0x1000
+#define NUMPRS_STD 0x1FFF
+#define NUMPRS_NEG 0x10000
+#define NUMPRS_INEXACT 0x20000
+
+typedef struct tagNUMPARSE {
+    INT cDig;
+    ULONG dwInFlags;
+    ULONG dwOutFlags;
+    INT cchUsed;
+    INT nBaseShift;
+    INT nPwr10;
+} NUMPARSE;
+
+#define VAR_VALIDDATE 0x04
+#define VAR_CALENDAR_HIJRI 0x08
+#define VAR_LOCALBOOL 0x10
+#define VAR_FORMAT_NOSUBSTITUTE 0x20
+#define VAR_FOURDIGITYEARS 0x40
+#define LOCALE_USE_NLS 0x10000000
+
+typedef struct tagUDATE {
+    SYSTEMTIME st;
+    USHORT wDayOfYear;
+} UDATE;
+
+WINOLEAUTAPI HRESULT WINAPI VariantChangeType(VARIANTARG *dst, const VARIANTARG *src, USHORT flags, VARTYPE vt);
+WINOLEAUTAPI HRESULT WINAPI VariantChangeTypeEx(VARIANTARG *dst, const VARIANTARG *src, LCID lcid, USHORT flags,
+                                                VARTYPE vt);
+WINOLEAUTAPI HRESULT WINAPI VarParseNumFromStr(LPCOLESTR string, LCID lcid, ULONG flags, NUMPARSE *parse, BYTE *digits);
+WINOLEAUTAPI HRESULT WINAPI VarNumFromParseNum(NUMPARSE *parse, BYTE *digits, ULONG vtbits, VARIANT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUdateFromDate(DATE date, ULONG flags, UDATE *udate);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUdate(UDATE *udate, ULONG flags, DATE *date);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUdateEx(UDATE *udate, LCID lcid, ULONG flags, DATE *date);
+WINOLEAUTAPI INT WINAPI VariantTimeToDosDateTime(DATE date, USHORT *dos_date, USHORT *dos_time);
+WINOLEAUTAPI INT WINAPI DosDateTimeToVariantTime(USHORT dos_date, USHORT dos_time, DATE *date);
+WINOLEAUTAPI HRESULT WINAPI VectorFromBstr(BSTR bstr, SAFEARRAY **array);
+WINOLEAUTAPI HRESULT WINAPI BstrFromVector(SAFEARRAY *array, BSTR *bstr);
+
+/* ------------------------------------------------------------------ the conversions between types */
+
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromI2(SHORT in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromI4(LONG in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromI8(LONGLONG in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromUI2(USHORT in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromUI4(ULONG in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromUI8(ULONGLONG in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromI1(CHAR in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromR4(FLOAT in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromR8(DOUBLE in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromDate(DATE in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromCy(CY in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromBool(VARIANT_BOOL in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromDec(const DECIMAL *in, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromStr(LPCOLESTR in, LCID lcid, ULONG flags, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromDisp(IDispatch *in, LCID lcid, BYTE *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromUI1(BYTE in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromI4(LONG in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromI8(LONGLONG in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromUI2(USHORT in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromUI4(ULONG in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromUI8(ULONGLONG in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromI1(CHAR in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromR4(FLOAT in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromR8(DOUBLE in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromDate(DATE in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromCy(CY in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromBool(VARIANT_BOOL in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromDec(const DECIMAL *in, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromStr(LPCOLESTR in, LCID lcid, ULONG flags, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI2FromDisp(IDispatch *in, LCID lcid, SHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromUI1(BYTE in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromI2(SHORT in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromI8(LONGLONG in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromUI2(USHORT in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromUI4(ULONG in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromUI8(ULONGLONG in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromI1(CHAR in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromR4(FLOAT in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromR8(DOUBLE in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromDate(DATE in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromCy(CY in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromBool(VARIANT_BOOL in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromDec(const DECIMAL *in, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromStr(LPCOLESTR in, LCID lcid, ULONG flags, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI4FromDisp(IDispatch *in, LCID lcid, LONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromUI1(BYTE in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromI2(SHORT in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromUI2(USHORT in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromUI4(ULONG in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromUI8(ULONGLONG in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromI1(CHAR in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromR4(FLOAT in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromR8(DOUBLE in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromDate(DATE in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromCy(CY in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromBool(VARIANT_BOOL in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromDec(const DECIMAL *in, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI8FromDisp(IDispatch *in, LCID lcid, LONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromUI1(BYTE in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromI2(SHORT in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromI4(LONG in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromI8(LONGLONG in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromUI4(ULONG in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromUI8(ULONGLONG in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromI1(CHAR in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromR4(FLOAT in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromR8(DOUBLE in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromDate(DATE in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromCy(CY in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromBool(VARIANT_BOOL in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromDec(const DECIMAL *in, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromStr(LPCOLESTR in, LCID lcid, ULONG flags, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromDisp(IDispatch *in, LCID lcid, USHORT *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromUI1(BYTE in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromI2(SHORT in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromI4(LONG in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromI8(LONGLONG in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromUI2(USHORT in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromUI8(ULONGLONG in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromI1(CHAR in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromR4(FLOAT in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromR8(DOUBLE in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromDate(DATE in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromCy(CY in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromBool(VARIANT_BOOL in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromDec(const DECIMAL *in, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromStr(LPCOLESTR in, LCID lcid, ULONG flags, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromDisp(IDispatch *in, LCID lcid, ULONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromUI1(BYTE in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromI2(SHORT in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromI8(LONGLONG in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromUI2(USHORT in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromUI4(ULONG in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromI1(CHAR in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromR4(FLOAT in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromR8(DOUBLE in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromDate(DATE in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromCy(CY in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromBool(VARIANT_BOOL in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromDec(const DECIMAL *in, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromDisp(IDispatch *in, LCID lcid, ULONGLONG *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromUI1(BYTE in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromI2(SHORT in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromI4(LONG in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromI8(LONGLONG in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromUI2(USHORT in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromUI4(ULONG in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromUI8(ULONGLONG in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromR4(FLOAT in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromR8(DOUBLE in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromDate(DATE in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromCy(CY in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromBool(VARIANT_BOOL in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromDec(const DECIMAL *in, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromStr(LPCOLESTR in, LCID lcid, ULONG flags, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarI1FromDisp(IDispatch *in, LCID lcid, CHAR *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromUI1(BYTE in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromI2(SHORT in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromI4(LONG in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromI8(LONGLONG in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromUI2(USHORT in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromUI4(ULONG in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromUI8(ULONGLONG in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromI1(CHAR in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromR8(DOUBLE in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromDate(DATE in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromCy(CY in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromBool(VARIANT_BOOL in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromDec(const DECIMAL *in, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromStr(LPCOLESTR in, LCID lcid, ULONG flags, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR4FromDisp(IDispatch *in, LCID lcid, FLOAT *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromUI1(BYTE in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromI2(SHORT in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromI4(LONG in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromI8(LONGLONG in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromUI2(USHORT in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromUI4(ULONG in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromUI8(ULONGLONG in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromI1(CHAR in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromR4(FLOAT in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromDate(DATE in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromCy(CY in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromBool(VARIANT_BOOL in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromDec(const DECIMAL *in, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarR8FromDisp(IDispatch *in, LCID lcid, DOUBLE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUI1(BYTE in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromI2(SHORT in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromI4(LONG in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromI8(LONGLONG in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUI2(USHORT in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUI4(ULONG in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromUI8(ULONGLONG in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromI1(CHAR in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromR4(FLOAT in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromR8(DOUBLE in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromCy(CY in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromBool(VARIANT_BOOL in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromDec(const DECIMAL *in, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR in, LCID lcid, ULONG flags, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarDateFromDisp(IDispatch *in, LCID lcid, DATE *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromUI1(BYTE in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromI2(SHORT in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromI4(LONG in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromI8(LONGLONG in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromUI2(USHORT in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromUI4(ULONG in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromUI8(ULONGLONG in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromI1(CHAR in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromR4(FLOAT in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromR8(DOUBLE in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromDate(DATE in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromBool(VARIANT_BOOL in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromDec(const DECIMAL *in, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromStr(LPCOLESTR in, LCID lcid, ULONG flags, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarCyFromDisp(IDispatch *in, LCID lcid, CY *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromUI1(BYTE in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromI2(SHORT in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromI4(LONG in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromI8(LONGLONG in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromUI2(USHORT in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromUI4(ULONG in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromUI8(ULONGLONG in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromI1(CHAR in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromR4(FLOAT in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromR8(DOUBLE in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromCy(CY in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromBool(VARIANT_BOOL in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromDec(const DECIMAL *in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBstrFromDisp(IDispatch *in, LCID lcid, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromUI1(BYTE in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromI2(SHORT in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromI4(LONG in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromI8(LONGLONG in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromUI2(USHORT in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromUI4(ULONG in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromUI8(ULONGLONG in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromI1(CHAR in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromR4(FLOAT in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromR8(DOUBLE in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromDate(DATE in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromCy(CY in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromDec(const DECIMAL *in, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromStr(LPCOLESTR in, LCID lcid, ULONG flags, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarBoolFromDisp(IDispatch *in, LCID lcid, VARIANT_BOOL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromUI1(BYTE in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromI2(SHORT in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromI4(LONG in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromI8(LONGLONG in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromUI2(USHORT in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromUI4(ULONG in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromUI8(ULONGLONG in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromI1(CHAR in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromR4(FLOAT in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromR8(DOUBLE in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromDate(DATE in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromCy(CY in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromBool(VARIANT_BOOL in, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromStr(LPCOLESTR in, LCID lcid, ULONG flags, DECIMAL *out);
+WINOLEAUTAPI HRESULT WINAPI VarDecFromDisp(IDispatch *in, LCID lcid, DECIMAL *out);
+
+/* ------------------------------------------------------------------ dispatch and type information */
+
+typedef LONG DISPID;
+typedef DISPID MEMBERID;
+typedef DWORD HREFTYPE;
+typedef struct ITypeInfo ITypeInfo;
+typedef struct ITypeLib ITypeLib;
+typedef struct ITypeComp ITypeComp;
+typedef struct ICreateTypeInfo ICreateTypeInfo;
+typedef struct ICreateTypeLib ICreateTypeLib;
+
+#define DISPID_UNKNOWN (-1)
+#define MEMBERID_NIL DISPID_UNKNOWN
+#define DISPID_VALUE 0
+#define DISPID_PROPERTYPUT (-3)
+#define DISPID_NEWENUM (-4)
+#define DISPID_EVALUATE (-5)
+#define DISPID_CONSTRUCTOR (-6)
+#define DISPID_DESTRUCTOR (-7)
+#define DISPID_COLLECT (-8)
+
+#define DISPATCH_METHOD 0x1
+#define DISPATCH_PROPERTYGET 0x2
+#define DISPATCH_PROPERTYPUT 0x4
+#define DISPATCH_PROPERTYPUTREF 0x8
+
+typedef struct tagDISPPARAMS {
+    VARIANTARG *rgvarg;
+    DISPID *rgdispidNamedArgs;
+    UINT cArgs;
+    UINT cNamedArgs;
+} DISPPARAMS;
+
+typedef struct tagEXCEPINFO {
+    WORD wCode;
+    WORD wReserved;
+    BSTR bstrSource;
+    BSTR bstrDescription;
+    BSTR bstrHelpFile;
+    DWORD dwHelpContext;
+    PVOID pvReserved;
+    HRESULT(STDAPICALLTYPE *pfnDeferredFillIn)(struct tagEXCEPINFO *);
+    SCODE scode;
+} EXCEPINFO, *LPEXCEPINFO;
+
+typedef enum tagTYPEKIND {
+    TKIND_ENUM = 0,
+    TKIND_RECORD,
+    TKIND_MODULE,
+    TKIND_INTERFACE,
+    TKIND_DISPATCH,
+    TKIND_COCLASS,
+    TKIND_ALIAS,
+    TKIND_UNION,
+    TKIND_MAX
+} TYPEKIND;
+
+typedef struct tagTYPEDESC {
+    union {
+        struct tagTYPEDESC *lptdesc;
+        struct tagARRAYDESC *lpadesc;
+        HREFTYPE hreftype;
+    };
+    VARTYPE vt;
+} TYPEDESC;
+
+typedef struct tagIDLDESC {
+    ULONG_PTR dwReserved;
+    USHORT wIDLFlags;
+} IDLDESC, *LPIDLDESC;
+
+typedef struct tagPARAMDESCEX {
+    ULONG cBytes;
+    VARIANTARG varDefaultValue;
+} PARAMDESCEX, *LPPARAMDESCEX;
+
+typedef struct tagPARAMDESC {
+    LPPARAMDESCEX pparamdescex;
+    USHORT wParamFlags;
+} PARAMDESC, *LPPARAMDESC;
+
+#define PARAMFLAG_NONE 0x00
+#define PARAMFLAG_FIN 0x01
+#define PARAMFLAG_FOUT 0x02
+#define PARAMFLAG_FLCID 0x04
+#define PARAMFLAG_FRETVAL 0x08
+#define PARAMFLAG_FOPT 0x10
+#define PARAMFLAG_FHASDEFAULT 0x20
+#define PARAMFLAG_FHASCUSTDATA 0x40
+
+#define IDLFLAG_NONE PARAMFLAG_NONE
+#define IDLFLAG_FIN PARAMFLAG_FIN
+#define IDLFLAG_FOUT PARAMFLAG_FOUT
+#define IDLFLAG_FLCID PARAMFLAG_FLCID
+#define IDLFLAG_FRETVAL PARAMFLAG_FRETVAL
+
+typedef struct tagELEMDESC {
+    TYPEDESC tdesc;
+    union {
+        IDLDESC idldesc;
+        PARAMDESC paramdesc;
+    };
+} ELEMDESC, *LPELEMDESC;
+
+typedef struct tagTYPEATTR {
+    GUID guid;
+    LCID lcid;
+    DWORD dwReserved;
+    MEMBERID memidConstructor;
+    MEMBERID memidDestructor;
+    LPOLESTR lpstrSchema;
+    ULONG cbSizeInstance;
+    TYPEKIND typekind;
+    WORD cFuncs;
+    WORD cVars;
+    WORD cImplTypes;
+    WORD cbSizeVft;
+    WORD cbAlignment;
+    WORD wTypeFlags;
+    WORD wMajorVerNum;
+    WORD wMinorVerNum;
+    TYPEDESC tdescAlias;
+    IDLDESC idldescType;
+} TYPEATTR, *LPTYPEATTR;
+
+typedef struct tagARRAYDESC {
+    TYPEDESC tdescElem;
+    USHORT cDims;
+    SAFEARRAYBOUND rgbounds[1];
+} ARRAYDESC;
+
+typedef enum tagFUNCKIND {
+    FUNC_VIRTUAL,
+    FUNC_PUREVIRTUAL,
+    FUNC_NONVIRTUAL,
+    FUNC_STATIC,
+    FUNC_DISPATCH
+} FUNCKIND;
+
+typedef enum tagINVOKEKIND {
+    INVOKE_FUNC = DISPATCH_METHOD,
+    INVOKE_PROPERTYGET = DISPATCH_PROPERTYGET,
+    INVOKE_PROPERTYPUT = DISPATCH_PROPERTYPUT,
+    INVOKE_PROPERTYPUTREF = DISPATCH_PROPERTYPUTREF
+} INVOKEKIND;
+
+typedef enum tagCALLCONV {
+    CC_FASTCALL = 0,
+    CC_CDECL = 1,
+    CC_MSCPASCAL,
+    CC_PASCAL = CC_MSCPASCAL,
+    CC_MACPASCAL,
+    CC_STDCALL,
+    CC_FPFASTCALL,
+    CC_SYSCALL,
+    CC_MPWCDECL,
+    CC_MPWPASCAL,
+    CC_MAX
+} CALLCONV;
+
+typedef struct tagFUNCDESC {
+    MEMBERID memid;
+    SCODE *lprgscode;
+    ELEMDESC *lprgelemdescParam;
+    FUNCKIND funckind;
+    INVOKEKIND invkind;
+    CALLCONV callconv;
+    SHORT cParams;
+    SHORT cParamsOpt;
+    SHORT oVft;
+    SHORT cScodes;
+    ELEMDESC elemdescFunc;
+    WORD wFuncFlags;
+} FUNCDESC, *LPFUNCDESC;
+
+typedef enum tagVARKIND {
+    VAR_PERINSTANCE,
+    VAR_STATIC,
+    VAR_CONST,
+    VAR_DISPATCH
+} VARKIND;
+
+typedef struct tagVARDESC {
+    MEMBERID memid;
+    LPOLESTR lpstrSchema;
+    union {
+        ULONG oInst;
+        VARIANT *lpvarValue;
+    };
+    ELEMDESC elemdescVar;
+    WORD wVarFlags;
+    VARKIND varkind;
+} VARDESC, *LPVARDESC;
+
+#define IMPLTYPEFLAG_FDEFAULT 0x1
+#define IMPLTYPEFLAG_FSOURCE 0x2
+#define IMPLTYPEFLAG_FRESTRICTED 0x4
+#define IMPLTYPEFLAG_FDEFAULTVTABLE 0x8
+
+#define TYPEFLAG_FAPPOBJECT 0x1
+#define TYPEFLAG_FCANCREATE 0x2
+#define TYPEFLAG_FLICENSED 0x4
+#define TYPEFLAG_FPREDECLID 0x8
+#define TYPEFLAG_FHIDDEN 0x10
+#define TYPEFLAG_FCONTROL 0x20
+#define TYPEFLAG_FDUAL 0x40
+#define TYPEFLAG_FNONEXTENSIBLE 0x80
+#define TYPEFLAG_FOLEAUTOMATION 0x100
+#define TYPEFLAG_FRESTRICTED 0x200
+#define TYPEFLAG_FAGGREGATABLE 0x400
+#define TYPEFLAG_FREPLACEABLE 0x800
+#define TYPEFLAG_FDISPATCHABLE 0x1000
+#define TYPEFLAG_FREVERSEBIND 0x2000
+#define TYPEFLAG_FPROXY 0x4000
+
+#define FUNCFLAG_FRESTRICTED 0x1
+#define FUNCFLAG_FSOURCE 0x2
+#define FUNCFLAG_FBINDABLE 0x4
+#define FUNCFLAG_FREQUESTEDIT 0x8
+#define FUNCFLAG_FDISPLAYBIND 0x10
+#define FUNCFLAG_FDEFAULTBIND 0x20
+#define FUNCFLAG_FHIDDEN 0x40
+#define FUNCFLAG_FUSESGETLASTERROR 0x80
+#define FUNCFLAG_FDEFAULTCOLLELEM 0x100
+#define FUNCFLAG_FUIDEFAULT 0x200
+#define FUNCFLAG_FNONBROWSABLE 0x400
+#define FUNCFLAG_FREPLACEABLE 0x800
+#define FUNCFLAG_FIMMEDIATEBIND 0x1000
+
+#define VARFLAG_FREADONLY 0x1
+#define VARFLAG_FSOURCE 0x2
+#define VARFLAG_FBINDABLE 0x4
+#define VARFLAG_FREQUESTEDIT 0x8
+#define VARFLAG_FDISPLAYBIND 0x10
+#define VARFLAG_FDEFAULTBIND 0x20
+#define VARFLAG_FHIDDEN 0x40
+#define VARFLAG_FRESTRICTED 0x80
+#define VARFLAG_FDEFAULTCOLLELEM 0x100
+#define VARFLAG_FUIDEFAULT 0x200
+#define VARFLAG_FNONBROWSABLE 0x400
+#define VARFLAG_FREPLACEABLE 0x800
+#define VARFLAG_FIMMEDIATEBIND 0x1000
+
+typedef enum tagSYSKIND {
+    SYS_WIN16 = 0,
+    SYS_WIN32,
+    SYS_MAC,
+    SYS_WIN64
+} SYSKIND;
+
+#define LIBFLAG_FRESTRICTED 0x1
+#define LIBFLAG_FCONTROL 0x2
+#define LIBFLAG_FHIDDEN 0x4
+#define LIBFLAG_FHASDISKIMAGE 0x8
+
+typedef struct tagTLIBATTR {
+    GUID guid;
+    LCID lcid;
+    SYSKIND syskind;
+    WORD wMajorVerNum;
+    WORD wMinorVerNum;
+    WORD wLibFlags;
+} TLIBATTR, *LPTLIBATTR;
+
+typedef enum tagDESCKIND {
+    DESCKIND_NONE = 0,
+    DESCKIND_FUNCDESC,
+    DESCKIND_VARDESC,
+    DESCKIND_TYPECOMP,
+    DESCKIND_IMPLICITAPPOBJ,
+    DESCKIND_MAX
+} DESCKIND;
+
+typedef union tagBINDPTR {
+    FUNCDESC *lpfuncdesc;
+    VARDESC *lpvardesc;
+    ITypeComp *lptcomp;
+} BINDPTR, *LPBINDPTR;
+
+typedef enum tagREGKIND {
+    REGKIND_DEFAULT,
+    REGKIND_REGISTER,
+    REGKIND_NONE
+} REGKIND;
+
+typedef struct tagCUSTDATAITEM {
+    GUID guid;
+    VARIANTARG varValue;
+} CUSTDATAITEM, *LPCUSTDATAITEM;
+
+typedef struct tagCUSTDATA {
+    DWORD cCustData;
+    LPCUSTDATAITEM prgCustData;
+} CUSTDATA, *LPCUSTDATA;
+
+
+/* IDispatch. */
+#define IDispatch_METHODS(T)                                                                                           \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetTypeInfoCount)(T * This, UINT * count);                                              \
+    HRESULT(STDMETHODCALLTYPE *GetTypeInfo)(T * This, UINT index, LCID lcid, ITypeInfo * *info);                       \
+    HRESULT(STDMETHODCALLTYPE *GetIDsOfNames)(T * This, REFIID riid, LPOLESTR * names, UINT count, LCID lcid,          \
+                                              DISPID * ids);                                                           \
+    HRESULT(STDMETHODCALLTYPE *Invoke)(T * This, DISPID id, REFIID riid, LCID lcid, WORD flags, DISPPARAMS * params,   \
+                                       VARIANT * result, EXCEPINFO * excep, UINT * arg_err);
+MIME_COM_INTERFACE(IDispatch)
+
+/* IEnumVARIANT. */
+typedef struct IEnumVARIANT IEnumVARIANT;
+#define IEnumVARIANT_METHODS(T)                                                                                        \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Next)(T * This, ULONG count, VARIANT * values, ULONG * fetched);                        \
+    HRESULT(STDMETHODCALLTYPE *Skip)(T * This, ULONG count);                                                           \
+    HRESULT(STDMETHODCALLTYPE *Reset)(T * This);                                                                       \
+    HRESULT(STDMETHODCALLTYPE *Clone)(T * This, IEnumVARIANT * *enumerator);
+MIME_COM_INTERFACE(IEnumVARIANT)
+
+/* ITypeComp. */
+#define ITypeComp_METHODS(T)                                                                                           \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Bind)(T * This, LPOLESTR name, ULONG hash, WORD flags, ITypeInfo * *info,               \
+                                     DESCKIND * kind, BINDPTR * bind);                                                 \
+    HRESULT(STDMETHODCALLTYPE *BindType)(T * This, LPOLESTR name, ULONG hash, ITypeInfo * *info, ITypeComp * *comp);
+MIME_COM_INTERFACE(ITypeComp)
+
+/* ITypeInfo. */
+#define ITypeInfo_METHODS(T)                                                                                           \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetTypeAttr)(T * This, TYPEATTR * *attr);                                               \
+    HRESULT(STDMETHODCALLTYPE *GetTypeComp)(T * This, ITypeComp * *comp);                                              \
+    HRESULT(STDMETHODCALLTYPE *GetFuncDesc)(T * This, UINT index, FUNCDESC * *desc);                                   \
+    HRESULT(STDMETHODCALLTYPE *GetVarDesc)(T * This, UINT index, VARDESC * *desc);                                     \
+    HRESULT(STDMETHODCALLTYPE *GetNames)(T * This, MEMBERID id, BSTR * names, UINT max, UINT * count);                 \
+    HRESULT(STDMETHODCALLTYPE *GetRefTypeOfImplType)(T * This, UINT index, HREFTYPE * ref);                            \
+    HRESULT(STDMETHODCALLTYPE *GetImplTypeFlags)(T * This, UINT index, INT * flags);                                   \
+    HRESULT(STDMETHODCALLTYPE *GetIDsOfNames)(T * This, LPOLESTR * names, UINT count, MEMBERID * ids);                 \
+    HRESULT(STDMETHODCALLTYPE *Invoke)(T * This, PVOID instance, MEMBERID id, WORD flags, DISPPARAMS * params,         \
+                                       VARIANT * result, EXCEPINFO * excep, UINT * arg_err);                           \
+    HRESULT(STDMETHODCALLTYPE *GetDocumentation)(T * This, MEMBERID id, BSTR * name, BSTR * doc, DWORD * help_context, \
+                                                 BSTR * help_file);                                                    \
+    HRESULT(STDMETHODCALLTYPE *GetDllEntry)(T * This, MEMBERID id, INVOKEKIND kind, BSTR * dll, BSTR * name,           \
+                                            WORD * ordinal);                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetRefTypeInfo)(T * This, HREFTYPE ref, ITypeInfo * *info);                             \
+    HRESULT(STDMETHODCALLTYPE *AddressOfMember)(T * This, MEMBERID id, INVOKEKIND kind, PVOID * address);              \
+    HRESULT(STDMETHODCALLTYPE *CreateInstance)(T * This, IUnknown * outer, REFIID riid, PVOID * object);               \
+    HRESULT(STDMETHODCALLTYPE *GetMops)(T * This, MEMBERID id, BSTR * mops);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetContainingTypeLib)(T * This, ITypeLib * *lib, UINT * index);                         \
+    void(STDMETHODCALLTYPE *ReleaseTypeAttr)(T * This, TYPEATTR * attr);                                               \
+    void(STDMETHODCALLTYPE *ReleaseFuncDesc)(T * This, FUNCDESC * desc);                                               \
+    void(STDMETHODCALLTYPE *ReleaseVarDesc)(T * This, VARDESC * desc);
+MIME_COM_INTERFACE(ITypeInfo)
+
+/* ITypeInfo2. */
+typedef struct ITypeInfo2 ITypeInfo2;
+#define ITypeInfo2_METHODS(T)                                                                                          \
+    ITypeInfo_METHODS(T)                                                                                               \
+    HRESULT(STDMETHODCALLTYPE *GetTypeKind)(T * This, TYPEKIND * kind);                                                \
+    HRESULT(STDMETHODCALLTYPE *GetTypeFlags)(T * This, ULONG * flags);                                                 \
+    HRESULT(STDMETHODCALLTYPE *GetFuncIndexOfMemId)(T * This, MEMBERID id, INVOKEKIND kind, UINT * index);             \
+    HRESULT(STDMETHODCALLTYPE *GetVarIndexOfMemId)(T * This, MEMBERID id, UINT * index);                               \
+    HRESULT(STDMETHODCALLTYPE *GetCustData)(T * This, REFGUID guid, VARIANT * value);                                  \
+    HRESULT(STDMETHODCALLTYPE *GetFuncCustData)(T * This, UINT index, REFGUID guid, VARIANT * value);                  \
+    HRESULT(STDMETHODCALLTYPE *GetParamCustData)(T * This, UINT func, UINT param, REFGUID guid, VARIANT * value);      \
+    HRESULT(STDMETHODCALLTYPE *GetVarCustData)(T * This, UINT index, REFGUID guid, VARIANT * value);                   \
+    HRESULT(STDMETHODCALLTYPE *GetImplTypeCustData)(T * This, UINT index, REFGUID guid, VARIANT * value);              \
+    HRESULT(STDMETHODCALLTYPE *GetDocumentation2)(T * This, MEMBERID id, LCID lcid, BSTR * help_string,                \
+                                                  DWORD * help_string_context, BSTR * help_string_dll);                \
+    HRESULT(STDMETHODCALLTYPE *GetAllCustData)(T * This, CUSTDATA * data);                                             \
+    HRESULT(STDMETHODCALLTYPE *GetAllFuncCustData)(T * This, UINT index, CUSTDATA * data);                             \
+    HRESULT(STDMETHODCALLTYPE *GetAllParamCustData)(T * This, UINT func, UINT param, CUSTDATA * data);                 \
+    HRESULT(STDMETHODCALLTYPE *GetAllVarCustData)(T * This, UINT index, CUSTDATA * data);                              \
+    HRESULT(STDMETHODCALLTYPE *GetAllImplTypeCustData)(T * This, UINT index, CUSTDATA * data);
+MIME_COM_INTERFACE(ITypeInfo2)
+
+/* ITypeLib. */
+#define ITypeLib_METHODS(T)                                                                                            \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    UINT(STDMETHODCALLTYPE *GetTypeInfoCount)(T * This);                                                               \
+    HRESULT(STDMETHODCALLTYPE *GetTypeInfo)(T * This, UINT index, ITypeInfo * *info);                                  \
+    HRESULT(STDMETHODCALLTYPE *GetTypeInfoType)(T * This, UINT index, TYPEKIND * kind);                                \
+    HRESULT(STDMETHODCALLTYPE *GetTypeInfoOfGuid)(T * This, REFGUID guid, ITypeInfo * *info);                          \
+    HRESULT(STDMETHODCALLTYPE *GetLibAttr)(T * This, TLIBATTR * *attr);                                                \
+    HRESULT(STDMETHODCALLTYPE *GetTypeComp)(T * This, ITypeComp * *comp);                                              \
+    HRESULT(STDMETHODCALLTYPE *GetDocumentation)(T * This, INT index, BSTR * name, BSTR * doc, DWORD * help_context,   \
+                                                 BSTR * help_file);                                                    \
+    HRESULT(STDMETHODCALLTYPE *IsName)(T * This, LPOLESTR name, ULONG hash, BOOL * found);                             \
+    HRESULT(STDMETHODCALLTYPE *FindName)(T * This, LPOLESTR name, ULONG hash, ITypeInfo * *infos, MEMBERID * ids,      \
+                                         USHORT * count);                                                              \
+    void(STDMETHODCALLTYPE *ReleaseTLibAttr)(T * This, TLIBATTR * attr);
+MIME_COM_INTERFACE(ITypeLib)
+
+/* ITypeLib2. */
+typedef struct ITypeLib2 ITypeLib2;
+#define ITypeLib2_METHODS(T)                                                                                           \
+    ITypeLib_METHODS(T)                                                                                                \
+    HRESULT(STDMETHODCALLTYPE *GetCustData)(T * This, REFGUID guid, VARIANT * value);                                  \
+    HRESULT(STDMETHODCALLTYPE *GetLibStatistics)(T * This, ULONG * unique_names, ULONG * changed_names);               \
+    HRESULT(STDMETHODCALLTYPE *GetDocumentation2)(T * This, INT index, LCID lcid, BSTR * help_string,                  \
+                                                  DWORD * help_string_context, BSTR * help_string_dll);                \
+    HRESULT(STDMETHODCALLTYPE *GetAllCustData)(T * This, CUSTDATA * data);
+MIME_COM_INTERFACE(ITypeLib2)
+
+/* ICreateTypeInfo. */
+#define ICreateTypeInfo_METHODS(T)                                                                                     \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *SetGuid)(T * This, REFGUID guid);                                                       \
+    HRESULT(STDMETHODCALLTYPE *SetTypeFlags)(T * This, UINT flags);                                                    \
+    HRESULT(STDMETHODCALLTYPE *SetDocString)(T * This, LPOLESTR doc);                                                  \
+    HRESULT(STDMETHODCALLTYPE *SetHelpContext)(T * This, DWORD context);                                               \
+    HRESULT(STDMETHODCALLTYPE *SetVersion)(T * This, WORD major, WORD minor);                                          \
+    HRESULT(STDMETHODCALLTYPE *AddRefTypeInfo)(T * This, ITypeInfo * info, HREFTYPE * ref);                            \
+    HRESULT(STDMETHODCALLTYPE *AddFuncDesc)(T * This, UINT index, FUNCDESC * desc);                                    \
+    HRESULT(STDMETHODCALLTYPE *AddImplType)(T * This, UINT index, HREFTYPE ref);                                       \
+    HRESULT(STDMETHODCALLTYPE *SetImplTypeFlags)(T * This, UINT index, INT flags);                                     \
+    HRESULT(STDMETHODCALLTYPE *SetAlignment)(T * This, WORD alignment);                                                \
+    HRESULT(STDMETHODCALLTYPE *SetSchema)(T * This, LPOLESTR schema);                                                  \
+    HRESULT(STDMETHODCALLTYPE *AddVarDesc)(T * This, UINT index, VARDESC * desc);                                      \
+    HRESULT(STDMETHODCALLTYPE *SetFuncAndParamNames)(T * This, UINT index, LPOLESTR * names, UINT count);              \
+    HRESULT(STDMETHODCALLTYPE *SetVarName)(T * This, UINT index, LPOLESTR name);                                       \
+    HRESULT(STDMETHODCALLTYPE *SetTypeDescAlias)(T * This, TYPEDESC * desc);                                           \
+    HRESULT(STDMETHODCALLTYPE *DefineFuncAsDllEntry)(T * This, UINT index, LPOLESTR dll, LPOLESTR proc);               \
+    HRESULT(STDMETHODCALLTYPE *SetFuncDocString)(T * This, UINT index, LPOLESTR doc);                                  \
+    HRESULT(STDMETHODCALLTYPE *SetVarDocString)(T * This, UINT index, LPOLESTR doc);                                   \
+    HRESULT(STDMETHODCALLTYPE *SetFuncHelpContext)(T * This, UINT index, DWORD context);                               \
+    HRESULT(STDMETHODCALLTYPE *SetVarHelpContext)(T * This, UINT index, DWORD context);                                \
+    HRESULT(STDMETHODCALLTYPE *SetMops)(T * This, UINT index, BSTR mops);                                              \
+    HRESULT(STDMETHODCALLTYPE *SetTypeIdldesc)(T * This, IDLDESC * desc);                                              \
+    HRESULT(STDMETHODCALLTYPE *LayOut)(T * This);
+MIME_COM_INTERFACE(ICreateTypeInfo)
+
+/* ICreateTypeInfo2. */
+typedef struct ICreateTypeInfo2 ICreateTypeInfo2;
+#define ICreateTypeInfo2_METHODS(T)                                                                                    \
+    ICreateTypeInfo_METHODS(T)                                                                                         \
+    HRESULT(STDMETHODCALLTYPE *DeleteFuncDesc)(T * This, UINT index);                                                  \
+    HRESULT(STDMETHODCALLTYPE *DeleteFuncDescByMemId)(T * This, MEMBERID id, INVOKEKIND kind);                         \
+    HRESULT(STDMETHODCALLTYPE *DeleteVarDesc)(T * This, UINT index);                                                   \
+    HRESULT(STDMETHODCALLTYPE *DeleteVarDescByMemId)(T * This, MEMBERID id);                                           \
+    HRESULT(STDMETHODCALLTYPE *DeleteImplType)(T * This, UINT index);                                                  \
+    HRESULT(STDMETHODCALLTYPE *SetCustData)(T * This, REFGUID guid, VARIANT * value);                                  \
+    HRESULT(STDMETHODCALLTYPE *SetFuncCustData)(T * This, UINT index, REFGUID guid, VARIANT * value);                  \
+    HRESULT(STDMETHODCALLTYPE *SetParamCustData)(T * This, UINT func, UINT param, REFGUID guid, VARIANT * value);      \
+    HRESULT(STDMETHODCALLTYPE *SetVarCustData)(T * This, UINT index, REFGUID guid, VARIANT * value);                   \
+    HRESULT(STDMETHODCALLTYPE *SetImplTypeCustData)(T * This, UINT index, REFGUID guid, VARIANT * value);              \
+    HRESULT(STDMETHODCALLTYPE *SetHelpStringContext)(T * This, ULONG context);                                         \
+    HRESULT(STDMETHODCALLTYPE *SetFuncHelpStringContext)(T * This, UINT index, ULONG context);                         \
+    HRESULT(STDMETHODCALLTYPE *SetVarHelpStringContext)(T * This, UINT index, ULONG context);                          \
+    HRESULT(STDMETHODCALLTYPE *Invalidate)(T * This);                                                                  \
+    HRESULT(STDMETHODCALLTYPE *SetName)(T * This, LPOLESTR name);
+MIME_COM_INTERFACE(ICreateTypeInfo2)
+
+/* ICreateTypeLib and ICreateTypeLib2. */
+#define ICreateTypeLib_METHODS(T)                                                                                      \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *CreateTypeInfo)(T * This, LPOLESTR name, TYPEKIND kind, ICreateTypeInfo * *info);       \
+    HRESULT(STDMETHODCALLTYPE *SetName)(T * This, LPOLESTR name);                                                      \
+    HRESULT(STDMETHODCALLTYPE *SetVersion)(T * This, WORD major, WORD minor);                                          \
+    HRESULT(STDMETHODCALLTYPE *SetGuid)(T * This, REFGUID guid);                                                       \
+    HRESULT(STDMETHODCALLTYPE *SetDocString)(T * This, LPOLESTR doc);                                                  \
+    HRESULT(STDMETHODCALLTYPE *SetHelpFileName)(T * This, LPOLESTR file);                                              \
+    HRESULT(STDMETHODCALLTYPE *SetHelpContext)(T * This, DWORD context);                                               \
+    HRESULT(STDMETHODCALLTYPE *SetLcid)(T * This, LCID lcid);                                                          \
+    HRESULT(STDMETHODCALLTYPE *SetLibFlags)(T * This, UINT flags);                                                     \
+    HRESULT(STDMETHODCALLTYPE *SaveAllChanges)(T * This);
+MIME_COM_INTERFACE(ICreateTypeLib)
+typedef struct ICreateTypeLib2 ICreateTypeLib2;
+#define ICreateTypeLib2_METHODS(T)                                                                                     \
+    ICreateTypeLib_METHODS(T)                                                                                          \
+    HRESULT(STDMETHODCALLTYPE *DeleteTypeInfo)(T * This, LPOLESTR name);                                               \
+    HRESULT(STDMETHODCALLTYPE *SetCustData)(T * This, REFGUID guid, VARIANT * value);                                  \
+    HRESULT(STDMETHODCALLTYPE *SetHelpStringContext)(T * This, ULONG context);                                         \
+    HRESULT(STDMETHODCALLTYPE *SetHelpStringDll)(T * This, LPOLESTR dll);
+MIME_COM_INTERFACE(ICreateTypeLib2)
+
+/* IRecordInfo. */
+#define IRecordInfo_METHODS(T)                                                                                         \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *RecordInit)(T * This, PVOID record);                                                    \
+    HRESULT(STDMETHODCALLTYPE *RecordClear)(T * This, PVOID record);                                                   \
+    HRESULT(STDMETHODCALLTYPE *RecordCopy)(T * This, PVOID source, PVOID dest);                                        \
+    HRESULT(STDMETHODCALLTYPE *GetGuid)(T * This, GUID * guid);                                                        \
+    HRESULT(STDMETHODCALLTYPE *GetName)(T * This, BSTR * name);                                                        \
+    HRESULT(STDMETHODCALLTYPE *GetSize)(T * This, ULONG * size);                                                       \
+    HRESULT(STDMETHODCALLTYPE *GetTypeInfo)(T * This, ITypeInfo * *info);                                              \
+    HRESULT(STDMETHODCALLTYPE *GetField)(T * This, PVOID record, LPCOLESTR name, VARIANT * value);                     \
+    HRESULT(STDMETHODCALLTYPE *GetFieldNoCopy)(T * This, PVOID record, LPCOLESTR name, VARIANT * value,                \
+                                               PVOID * field);                                                         \
+    HRESULT(STDMETHODCALLTYPE *PutField)(T * This, ULONG flags, PVOID record, LPCOLESTR name, VARIANT * value);        \
+    HRESULT(STDMETHODCALLTYPE *PutFieldNoCopy)(T * This, ULONG flags, PVOID record, LPCOLESTR name, VARIANT * value);  \
+    HRESULT(STDMETHODCALLTYPE *GetFieldNames)(T * This, ULONG * count, BSTR * names);                                  \
+    BOOL(STDMETHODCALLTYPE *IsMatchingType)(T * This, IRecordInfo * other);                                            \
+    PVOID(STDMETHODCALLTYPE *RecordCreate)(T * This);                                                                  \
+    HRESULT(STDMETHODCALLTYPE *RecordCreateCopy)(T * This, PVOID source, PVOID * dest);                                \
+    HRESULT(STDMETHODCALLTYPE *RecordDestroy)(T * This, PVOID record);
+struct IRecordInfoVtbl;
+MIME_COM_INTERFACE(IRecordInfo)
+
+/* error objects. */
+typedef struct IErrorInfo IErrorInfo;
+#define IErrorInfo_METHODS(T)                                                                                          \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetGUID)(T * This, GUID * guid);                                                        \
+    HRESULT(STDMETHODCALLTYPE *GetSource)(T * This, BSTR * source);                                                    \
+    HRESULT(STDMETHODCALLTYPE *GetDescription)(T * This, BSTR * description);                                          \
+    HRESULT(STDMETHODCALLTYPE *GetHelpFile)(T * This, BSTR * file);                                                    \
+    HRESULT(STDMETHODCALLTYPE *GetHelpContext)(T * This, DWORD * context);
+MIME_COM_INTERFACE(IErrorInfo)
+typedef struct ICreateErrorInfo ICreateErrorInfo;
+#define ICreateErrorInfo_METHODS(T)                                                                                    \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *SetGUID)(T * This, REFGUID guid);                                                       \
+    HRESULT(STDMETHODCALLTYPE *SetSource)(T * This, LPOLESTR source);                                                  \
+    HRESULT(STDMETHODCALLTYPE *SetDescription)(T * This, LPOLESTR description);                                        \
+    HRESULT(STDMETHODCALLTYPE *SetHelpFile)(T * This, LPOLESTR file);                                                  \
+    HRESULT(STDMETHODCALLTYPE *SetHelpContext)(T * This, DWORD context);
+MIME_COM_INTERFACE(ICreateErrorInfo)
+typedef struct ISupportErrorInfo ISupportErrorInfo;
+#define ISupportErrorInfo_METHODS(T)                                                                                   \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *InterfaceSupportsErrorInfo)(T * This, REFIID riid);
+MIME_COM_INTERFACE(ISupportErrorInfo)
+
+/* connection points. */
+typedef struct IConnectionPoint IConnectionPoint;
+typedef struct IConnectionPointContainer IConnectionPointContainer;
+typedef struct IEnumConnectionPoints IEnumConnectionPoints;
+typedef struct IEnumConnections IEnumConnections;
+typedef struct tagCONNECTDATA {
+    IUnknown *pUnk;
+    DWORD dwCookie;
+} CONNECTDATA;
+#define IEnumConnections_METHODS(T)                                                                                    \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Next)(T * This, ULONG count, CONNECTDATA * data, ULONG * fetched);                      \
+    HRESULT(STDMETHODCALLTYPE *Skip)(T * This, ULONG count);                                                           \
+    HRESULT(STDMETHODCALLTYPE *Reset)(T * This);                                                                       \
+    HRESULT(STDMETHODCALLTYPE *Clone)(T * This, IEnumConnections * *enumerator);
+MIME_COM_INTERFACE(IEnumConnections)
+#define IConnectionPoint_METHODS(T)                                                                                    \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetConnectionInterface)(T * This, IID * iid);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetConnectionPointContainer)(T * This, IConnectionPointContainer * *container);         \
+    HRESULT(STDMETHODCALLTYPE *Advise)(T * This, IUnknown * sink, DWORD * cookie);                                     \
+    HRESULT(STDMETHODCALLTYPE *Unadvise)(T * This, DWORD cookie);                                                      \
+    HRESULT(STDMETHODCALLTYPE *EnumConnections)(T * This, IEnumConnections * *enumerator);
+MIME_COM_INTERFACE(IConnectionPoint)
+#define IEnumConnectionPoints_METHODS(T)                                                                               \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Next)(T * This, ULONG count, IConnectionPoint * *points, ULONG * fetched);              \
+    HRESULT(STDMETHODCALLTYPE *Skip)(T * This, ULONG count);                                                           \
+    HRESULT(STDMETHODCALLTYPE *Reset)(T * This);                                                                       \
+    HRESULT(STDMETHODCALLTYPE *Clone)(T * This, IEnumConnectionPoints * *enumerator);
+MIME_COM_INTERFACE(IEnumConnectionPoints)
+#define IConnectionPointContainer_METHODS(T)                                                                           \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *EnumConnectionPoints)(T * This, IEnumConnectionPoints * *enumerator);                   \
+    HRESULT(STDMETHODCALLTYPE *FindConnectionPoint)(T * This, REFIID iid, IConnectionPoint * *point);
+MIME_COM_INTERFACE(IConnectionPointContainer)
+
+MIME_DEFINE_GUID(IID_IDispatch, 0x00020400, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ITypeInfo, 0x00020401, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ITypeLib, 0x00020402, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ITypeComp, 0x00020403, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IEnumVARIANT, 0x00020404, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ICreateTypeInfo, 0x00020405, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ICreateTypeLib, 0x00020406, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ICreateTypeInfo2, 0x0002040E, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ICreateTypeLib2, 0x0002040F, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ITypeLib2, 0x00020411, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_ITypeInfo2, 0x00020412, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IRecordInfo, 0x0000002F, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IErrorInfo, 0x1CF2B120, 0x547D, 0x101B, 0x8E, 0x65, 0x08, 0x00, 0x2B, 0x2B, 0xD1, 0x19);
+MIME_DEFINE_GUID(IID_ICreateErrorInfo, 0x22F03340, 0x547D, 0x101B, 0x8E, 0x65, 0x08, 0x00, 0x2B, 0x2B, 0xD1, 0x19);
+MIME_DEFINE_GUID(IID_ISupportErrorInfo, 0xDF0B3D60, 0x548F, 0x101B, 0x8E, 0x65, 0x08, 0x00, 0x2B, 0x2B, 0xD1, 0x19);
+MIME_DEFINE_GUID(IID_IConnectionPointContainer, 0xB196B284, 0xBAB4, 0x101A, 0xB6, 0x9C, 0x00, 0xAA, 0x00, 0x34, 0x1D, 0x07);
+MIME_DEFINE_GUID(IID_IConnectionPoint, 0xB196B286, 0xBAB4, 0x101A, 0xB6, 0x9C, 0x00, 0xAA, 0x00, 0x34, 0x1D, 0x07);
+MIME_DEFINE_GUID(IID_IEnumConnections, 0xB196B287, 0xBAB4, 0x101A, 0xB6, 0x9C, 0x00, 0xAA, 0x00, 0x34, 0x1D, 0x07);
+MIME_DEFINE_GUID(IID_IEnumConnectionPoints, 0xB196B285, 0xBAB4, 0x101A, 0xB6, 0x9C, 0x00, 0xAA, 0x00, 0x34, 0x1D, 0x07);
+MIME_DEFINE_GUID(LIBID_StdOle, 0x00020430, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+
+/* ------------------------------------------------------------------ oleaut32 functions, part two */
+
+WINOLEAUTAPI HRESULT WINAPI SafeArraySetRecordInfo(SAFEARRAY *array, IRecordInfo *record);
+WINOLEAUTAPI HRESULT WINAPI SafeArrayGetRecordInfo(SAFEARRAY *array, IRecordInfo **record);
+WINOLEAUTAPI HRESULT WINAPI SafeArraySetIID(SAFEARRAY *array, REFGUID iid);
+WINOLEAUTAPI HRESULT WINAPI SafeArrayGetIID(SAFEARRAY *array, GUID *iid);
+WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreateEx(VARTYPE vt, UINT dims, SAFEARRAYBOUND *bounds, PVOID extra);
+WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreateVectorEx(VARTYPE vt, LONG lower, ULONG count, PVOID extra);
+WINOLEAUTAPI ULONG WINAPI SafeArrayAddRef(SAFEARRAY *array, PVOID *data);
+WINOLEAUTAPI HRESULT WINAPI SafeArrayReleaseData(PVOID data);
+WINOLEAUTAPI HRESULT WINAPI SafeArrayReleaseDescriptor(SAFEARRAY *array);
+
+WINOLEAUTAPI HRESULT WINAPI DispGetParam(DISPPARAMS *params, UINT position, VARTYPE vt, VARIANT *value, UINT *arg_err);
+WINOLEAUTAPI HRESULT WINAPI DispGetIDsOfNames(ITypeInfo *info, LPOLESTR *names, UINT count, DISPID *ids);
+WINOLEAUTAPI HRESULT WINAPI DispInvoke(PVOID this_, ITypeInfo *info, DISPID id, WORD flags, DISPPARAMS *params,
+                                       VARIANT *result, EXCEPINFO *excep, UINT *arg_err);
+WINOLEAUTAPI HRESULT WINAPI DispCallFunc(PVOID instance, ULONG_PTR vtable_offset, CALLCONV callconv, VARTYPE return_vt,
+                                         UINT count, VARTYPE *vts, VARIANTARG **args, VARIANT *result);
+WINOLEAUTAPI HRESULT WINAPI CreateStdDispatch(IUnknown *outer, PVOID object, ITypeInfo *info, IUnknown **unknown);
+WINOLEAUTAPI HRESULT WINAPI CreateDispTypeInfo(void *interface_data, LCID lcid, ITypeInfo **info);
+WINOLEAUTAPI HRESULT WINAPI RegisterActiveObject(IUnknown *unknown, REFCLSID clsid, DWORD flags, DWORD *cookie);
+WINOLEAUTAPI HRESULT WINAPI RevokeActiveObject(DWORD cookie, PVOID reserved);
+WINOLEAUTAPI HRESULT WINAPI GetActiveObject(REFCLSID clsid, PVOID reserved, IUnknown **unknown);
+
+WINOLEAUTAPI HRESULT WINAPI LoadTypeLib(LPCOLESTR file, ITypeLib **lib);
+WINOLEAUTAPI HRESULT WINAPI LoadTypeLibEx(LPCOLESTR file, REGKIND kind, ITypeLib **lib);
+WINOLEAUTAPI HRESULT WINAPI LoadRegTypeLib(REFGUID guid, WORD major, WORD minor, LCID lcid, ITypeLib **lib);
+WINOLEAUTAPI HRESULT WINAPI QueryPathOfRegTypeLib(REFGUID guid, USHORT major, USHORT minor, LCID lcid, BSTR *path);
+WINOLEAUTAPI HRESULT WINAPI RegisterTypeLib(ITypeLib *lib, LPCOLESTR path, LPCOLESTR help_dir);
+WINOLEAUTAPI HRESULT WINAPI RegisterTypeLibForUser(ITypeLib *lib, LPCOLESTR path, LPCOLESTR help_dir);
+WINOLEAUTAPI HRESULT WINAPI UnRegisterTypeLib(REFGUID guid, WORD major, WORD minor, LCID lcid, SYSKIND syskind);
+WINOLEAUTAPI HRESULT WINAPI UnRegisterTypeLibForUser(REFGUID guid, WORD major, WORD minor, LCID lcid, SYSKIND syskind);
+WINOLEAUTAPI HRESULT WINAPI CreateTypeLib(SYSKIND syskind, LPCOLESTR file, ICreateTypeLib **lib);
+WINOLEAUTAPI HRESULT WINAPI CreateTypeLib2(SYSKIND syskind, LPCOLESTR file, ICreateTypeLib2 **lib);
+WINOLEAUTAPI ULONG WINAPI LHashValOfNameSysA(SYSKIND syskind, LCID lcid, LPCSTR name);
+WINOLEAUTAPI ULONG WINAPI LHashValOfNameSys(SYSKIND syskind, LCID lcid, const OLECHAR *name);
+#define LHashValOfName(lcid, name) LHashValOfNameSys(SYS_WIN32, lcid, name)
+WINOLEAUTAPI HRESULT WINAPI GetRecordInfoFromTypeInfo(ITypeInfo *info, IRecordInfo **record);
+WINOLEAUTAPI HRESULT WINAPI GetRecordInfoFromGuids(REFGUID typelib, ULONG major, ULONG minor, LCID lcid,
+                                                   REFGUID type, IRecordInfo **record);
+WINOLEAUTAPI HRESULT WINAPI ClearCustData(CUSTDATA *data);
+
+WINOLEAUTAPI HRESULT WINAPI SetErrorInfo(ULONG reserved, IErrorInfo *info);
+WINOLEAUTAPI HRESULT WINAPI GetErrorInfo(ULONG reserved, IErrorInfo **info);
+WINOLEAUTAPI HRESULT WINAPI CreateErrorInfo(ICreateErrorInfo **info);
+WINOLEAUTAPI ULONG WINAPI OaBuildVersion(void);
+WINOLEAUTAPI void WINAPI SetOaNoCache(void);
+
+/* the wire forms of the types that oleaut32 marshals: sizes, marshals, unmarshals and frees. */
+typedef struct _USER_MARSHAL_CB USER_MARSHAL_CB;
+WINOLEAUTAPI ULONG WINAPI BSTR_UserSize(ULONG *flags, ULONG offset, BSTR *value);
+WINOLEAUTAPI BYTE *WINAPI BSTR_UserMarshal(ULONG *flags, BYTE *buffer, BSTR *value);
+WINOLEAUTAPI BYTE *WINAPI BSTR_UserUnmarshal(ULONG *flags, BYTE *buffer, BSTR *value);
+WINOLEAUTAPI void WINAPI BSTR_UserFree(ULONG *flags, BSTR *value);
+WINOLEAUTAPI ULONG WINAPI VARIANT_UserSize(ULONG *flags, ULONG offset, VARIANT *value);
+WINOLEAUTAPI BYTE *WINAPI VARIANT_UserMarshal(ULONG *flags, BYTE *buffer, VARIANT *value);
+WINOLEAUTAPI BYTE *WINAPI VARIANT_UserUnmarshal(ULONG *flags, BYTE *buffer, VARIANT *value);
+WINOLEAUTAPI void WINAPI VARIANT_UserFree(ULONG *flags, VARIANT *value);
+WINOLEAUTAPI ULONG WINAPI LPSAFEARRAY_UserSize(ULONG *flags, ULONG offset, LPSAFEARRAY *value);
+WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserMarshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
+WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserUnmarshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
+WINOLEAUTAPI void WINAPI LPSAFEARRAY_UserFree(ULONG *flags, LPSAFEARRAY *value);
+
+/* the layouts the mingw headers and windows' own libraries have. */
+#define MIME_OA_SIZE(T, x86, x64) MIME_STATIC_ASSERT(sizeof(T) == (sizeof(void *) == 4 ? (x86) : (x64)), #T " size")
+MIME_OA_SIZE(TYPEDESC, 8, 16);
+MIME_OA_SIZE(ARRAYDESC, 20, 32);
+MIME_OA_SIZE(IDLDESC, 8, 16);
+MIME_OA_SIZE(PARAMDESC, 8, 16);
+MIME_OA_SIZE(PARAMDESCEX, 24, 32);
+MIME_OA_SIZE(ELEMDESC, 16, 32);
+MIME_OA_SIZE(TYPEATTR, 76, 96);
+MIME_OA_SIZE(FUNCDESC, 52, 88);
+MIME_OA_SIZE(VARDESC, 36, 64);
+MIME_OA_SIZE(TLIBATTR, 32, 32);
+MIME_OA_SIZE(EXCEPINFO, 32, 64);
+MIME_OA_SIZE(DISPPARAMS, 16, 24);
+MIME_OA_SIZE(CUSTDATAITEM, 32, 40);
+MIME_OA_SIZE(CUSTDATA, 8, 16);
+MIME_OA_SIZE(SAFEARRAY, 24, 32);
+MIME_OA_SIZE(CONNECTDATA, 8, 16);
+MIME_FIELD_AT(FUNCDESC, oVft, sizeof(void *) == 4 ? 28 : 40);
+MIME_FIELD_AT(FUNCDESC, wFuncFlags, sizeof(void *) == 4 ? 48 : 80);
+MIME_FIELD_AT(VARDESC, varkind, sizeof(void *) == 4 ? 32 : 60);
+MIME_FIELD_AT(TYPEATTR, tdescAlias, sizeof(void *) == 4 ? 60 : 64);
+MIME_FIELD_AT(ARRAYDESC, rgbounds, sizeof(void *) == 4 ? 12 : 20);
 
 #endif

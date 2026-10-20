@@ -152,24 +152,6 @@ struct IOleInPlaceActiveObjectVtbl {
     HRESULT(STDMETHODCALLTYPE *EnableModeless)(IOleInPlaceActiveObject *This, BOOL enable);
 };
 
-SHL_INTERFACE(IConnectionPoint);
-SHL_INTERFACE(IConnectionPointContainer);
-struct IConnectionPointVtbl {
-    SHL_UNKNOWN(IConnectionPoint);
-    HRESULT(STDMETHODCALLTYPE *GetConnectionInterface)(IConnectionPoint *This, IID *iid);
-    HRESULT(STDMETHODCALLTYPE *GetConnectionPointContainer)(IConnectionPoint *This,
-                                                            IConnectionPointContainer **container);
-    HRESULT(STDMETHODCALLTYPE *Advise)(IConnectionPoint *This, IUnknown *sink, DWORD *cookie);
-    HRESULT(STDMETHODCALLTYPE *Unadvise)(IConnectionPoint *This, DWORD cookie);
-    HRESULT(STDMETHODCALLTYPE *EnumConnections)(IConnectionPoint *This, void **connections);
-};
-struct IConnectionPointContainerVtbl {
-    SHL_UNKNOWN(IConnectionPointContainer);
-    HRESULT(STDMETHODCALLTYPE *EnumConnectionPoints)(IConnectionPointContainer *This, void **points);
-    HRESULT(STDMETHODCALLTYPE *FindConnectionPoint)(IConnectionPointContainer *This, REFIID riid,
-                                                    IConnectionPoint **point);
-};
-
 SHL_INTERFACE(IPropertyBag);
 struct IPropertyBagVtbl {
     SHL_UNKNOWN(IPropertyBag);
@@ -186,8 +168,6 @@ MIME_DEFINE_GUID(IID_IInputObjectSite, 0xf1db8392, 0x7331, 0x11d0, 0x8c, 0x99, 0
 MIME_DEFINE_GUID(IID_IProfferService, 0xcb728b20, 0xf786, 0x11ce, 0x92, 0xad, 0x00, 0xaa, 0x00, 0xa7, 0x4c, 0xd0);
 MIME_DEFINE_GUID(IID_IOleInPlaceActiveObject, 0x00000117, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                  0x46);
-MIME_DEFINE_GUID(IID_IConnectionPointContainer, 0xb196b284, 0xbab4, 0x101a, 0xb6, 0x9c, 0x00, 0xaa, 0x00, 0x34, 0x1d,
-                 0x07);
 MIME_DEFINE_GUID(IID_IPropertyBag, 0x55272a00, 0x42cb, 0x11ce, 0x81, 0x35, 0x00, 0xaa, 0x00, 0x4b, 0xb8, 0x51);
 MIME_DEFINE_GUID(IID_IInternetSecurityMgrSite, 0x79eac9ed, 0xbaf9, 0x11ce, 0x8c, 0x82, 0x00, 0xaa, 0x00, 0x4b, 0xa9,
                  0x0b);
