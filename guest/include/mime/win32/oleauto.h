@@ -1278,7 +1278,25 @@ WINOLEAUTAPI HRESULT WINAPI DispInvoke(PVOID this_, ITypeInfo *info, DISPID id, 
 WINOLEAUTAPI HRESULT WINAPI DispCallFunc(PVOID instance, ULONG_PTR vtable_offset, CALLCONV callconv, VARTYPE return_vt,
                                          UINT count, VARTYPE *vts, VARIANTARG **args, VARIANT *result);
 WINOLEAUTAPI HRESULT WINAPI CreateStdDispatch(IUnknown *outer, PVOID object, ITypeInfo *info, IUnknown **unknown);
-WINOLEAUTAPI HRESULT WINAPI CreateDispTypeInfo(void *interface_data, LCID lcid, ITypeInfo **info);
+typedef struct tagPARAMDATA {
+    OLECHAR *szName;
+    VARTYPE vt;
+} PARAMDATA, *LPPARAMDATA;
+typedef struct tagMETHODDATA {
+    OLECHAR *szName;
+    PARAMDATA *ppdata;
+    DISPID dispid;
+    UINT iMeth;
+    CALLCONV cc;
+    UINT cArgs;
+    WORD wFlags;
+    VARTYPE vtReturn;
+} METHODDATA, *LPMETHODDATA;
+typedef struct tagINTERFACEDATA {
+    METHODDATA *pmethdata;
+    UINT cMembers;
+} INTERFACEDATA, *LPINTERFACEDATA;
+WINOLEAUTAPI HRESULT WINAPI CreateDispTypeInfo(INTERFACEDATA *data, LCID lcid, ITypeInfo **info);
 WINOLEAUTAPI HRESULT WINAPI RegisterActiveObject(IUnknown *unknown, REFCLSID clsid, DWORD flags, DWORD *cookie);
 WINOLEAUTAPI HRESULT WINAPI RevokeActiveObject(DWORD cookie, PVOID reserved);
 WINOLEAUTAPI HRESULT WINAPI GetActiveObject(REFCLSID clsid, PVOID reserved, IUnknown **unknown);
@@ -1305,6 +1323,11 @@ WINOLEAUTAPI HRESULT WINAPI SetErrorInfo(ULONG reserved, IErrorInfo *info);
 WINOLEAUTAPI HRESULT WINAPI GetErrorInfo(ULONG reserved, IErrorInfo **info);
 WINOLEAUTAPI HRESULT WINAPI CreateErrorInfo(ICreateErrorInfo **info);
 WINOLEAUTAPI ULONG WINAPI OaBuildVersion(void);
+WINOLEAUTAPI void WINAPI OaEnablePerUserTLibRegistration(void);
+WINOLEAUTAPI HRESULT WINAPI OACleanup(void);
+WINOLEAUTAPI HRESULT WINAPI SetVarConversionLocaleSetting(DWORD setting);
+WINOLEAUTAPI HRESULT WINAPI GetVarConversionLocaleSetting(DWORD *setting);
+WINOLEAUTAPI HRESULT WINAPI GetAltMonthNames(LCID lcid, LPOLESTR **names);
 WINOLEAUTAPI void WINAPI SetOaNoCache(void);
 
 /* the wire forms of the types that oleaut32 marshals: sizes, marshals, unmarshals and frees. */

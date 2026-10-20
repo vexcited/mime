@@ -49,7 +49,7 @@ static WCHAR locale_char(LCID lcid, ULONG info_flags, LCTYPE type, WCHAR fallbac
 
 static void number_locale(LCID lcid, ULONG flags, NUM_LOCALE *l)
 {
-    ULONG info_flags = flags & (LOCALE_NOUSEROVERRIDE | LOCALE_USE_NLS);
+    ULONG info_flags = (flags | g_process_nls_flags) & (LOCALE_NOUSEROVERRIDE | LOCALE_USE_NLS);
     if (lcid == 0 || lcid == LOCALE_USER_DEFAULT)
         lcid = GetUserDefaultLCID();
     else if (lcid == LOCALE_SYSTEM_DEFAULT)

@@ -95,6 +95,9 @@ HRESULT AutStdOleTypeInfo(UINT index, REFGUID id, ITypeInfo **info);
 HRESULT AutNamesToIds(const WCHAR *const *table, const DISPID *ids, int count, REFIID riid, LPOLESTR *names, UINT cnames,
                       DISPID *result);
 
+/* LOCALE_NOUSEROVERRIDE when SetVarConversionLocaleSetting asked for the locale without the user's changes. */
+extern ULONG g_process_nls_flags;
+
 void AutErrorAttach(void);
 void AutErrorDetach(void);
 

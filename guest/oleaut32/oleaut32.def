@@ -31,6 +31,12 @@ EXPORTS
     SysReAllocStringLen @5
     SysReleaseString @357
     SetOaNoCache @327
+    OaBuildVersion @170
+    OaEnablePerUserTLibRegistration @444
+    OACleanup @500
+    SetVarConversionLocaleSetting @325
+    GetVarConversionLocaleSetting @326
+    GetAltMonthNames @332
     SysStringByteLen @149
     SysStringLen @7
     VariantClear @9
@@ -291,6 +297,7 @@ EXPORTS
     UnRegisterTypeLibForUser @443
     ClearCustData @171
     DispCallFunc @146
+    CreateDispTypeInfo @31
     DispGetIDsOfNames @29
     DispInvoke @30
     DispGetParam @28
