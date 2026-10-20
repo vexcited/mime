@@ -145,7 +145,7 @@ foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
 endforeach()
 set(objects_gdiplus x86-lib-png)
 set(objects_bcrypt x86-lib-crypto)
-set(objects_crypt32 x86-lib-crypto)
+set(objects_crypt32 x86-lib-crypto x86-lib-compound)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
         x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c)

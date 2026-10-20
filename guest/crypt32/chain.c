@@ -390,9 +390,14 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
 {
     if (ppChainContext)
         *ppChainContext = nullptr;
-    if (!pCertContext || !ppChainContext || !pChainPara || pChainPara->cbSize < FIELD_OFFSET(CERT_CHAIN_PARA,
-                                                                                               RequestedIssuancePolicy))
+    if (!pCertContext || !ppChainContext || !pChainPara || pvReserved)
         return CrFail(E_INVALIDARG);
+    /* the parameters are read as far as their size says, as the structure grew with the versions: a program that gives
+       a size of 0 asks for nothing in particular. */
+    CERT_CHAIN_PARA normalized = {};
+    memcpy(&normalized, pChainPara, pChainPara->cbSize < sizeof(normalized) ? pChainPara->cbSize : sizeof(normalized));
+    normalized.cbSize = sizeof(normalized);
+    pChainPara = &normalized;
     cr_engine *engine = engine_of(hChainEngine);
     if (!engine && !is_default(hChainEngine))
         return CrFail(E_INVALIDARG);
@@ -599,6 +604,35 @@ static BOOL server_name_matches(PCCERT_CONTEXT cert, LPCWSTR host)
     return found;
 }
 
+/*
+ * whether the chain ends in one of the roots of the Microsoft program: the certificates the system trusts for its own
+ * code. They are known by the SHA-1 hash of the certificate; the five here are the ones the root store of Windows
+ * keeps (Microsoft Root Authority, Microsoft Authenticode(tm) Root Authority, Microsoft Root Certificate Authority and
+ * its 2010 and 2011 successors). The test roots and the key lists of the program are not looked at.
+ */
+static BOOL microsoft_root(PCCERT_CHAIN_CONTEXT chain)
+{
+    static const BYTE roots[][20] = {
+        {0xA4, 0x34, 0x89, 0x15, 0x9A, 0x52, 0x0F, 0x0D, 0x93, 0xD0, 0x32, 0xCC, 0xAF, 0x37, 0xE7, 0xFE, 0x20, 0xA8, 0xB4, 0x19},
+        {0x7F, 0x88, 0xCD, 0x72, 0x23, 0xF3, 0xC8, 0x13, 0x81, 0x8C, 0x99, 0x46, 0x14, 0xA8, 0x9C, 0x99, 0xFA, 0x3B, 0x52, 0x47},
+        {0xCD, 0xD4, 0xEE, 0xAE, 0x60, 0x00, 0xAC, 0x7F, 0x40, 0xC3, 0x80, 0x2C, 0x17, 0x1E, 0x30, 0x14, 0x80, 0x30, 0xC0, 0x72},
+        {0x3B, 0x1E, 0xFD, 0x3A, 0x66, 0xEA, 0x28, 0xB1, 0x66, 0x97, 0x39, 0x47, 0x03, 0xA7, 0x2C, 0xA3, 0x40, 0xA0, 0x5B, 0xD5},
+        {0x8F, 0x43, 0x28, 0x8A, 0xD2, 0x72, 0xF3, 0x10, 0x3B, 0x6F, 0xB1, 0x42, 0x84, 0x85, 0xEA, 0x30, 0x14, 0xC0, 0xBC, 0xFE},
+    };
+    if (!chain->cChain || !chain->rgpChain[0]->cElement)
+        return FALSE;
+    const CERT_SIMPLE_CHAIN *simple = chain->rgpChain[0];
+    PCCERT_CONTEXT root = simple->rgpElement[simple->cElement - 1]->pCertContext;
+    BYTE hash[20];
+    DWORD size = sizeof(hash);
+    if (!CryptHashCertificate(0, CALG_SHA1, 0, root->pbCertEncoded, root->cbCertEncoded, hash, &size))
+        return FALSE;
+    for (DWORD i = 0; i < RTL_NUMBER_OF(roots); i++)
+        if (!memcmp(hash, roots[i], sizeof(hash)))
+            return TRUE;
+    return FALSE;
+}
+
 BOOL WINAPI CertVerifyCertificateChainPolicy(LPCSTR pszPolicyOID, PCCERT_CHAIN_CONTEXT pChainContext,
                                              PCERT_CHAIN_POLICY_PARA pPolicyPara,
                                              PCERT_CHAIN_POLICY_STATUS pPolicyStatus)
@@ -637,8 +671,7 @@ BOOL WINAPI CertVerifyCertificateChainPolicy(LPCSTR pszPolicyOID, PCCERT_CHAIN_C
             error = TRUST_E_BASIC_CONSTRAINTS;
     } else {
         error = base_policy(pChainContext, flags, &chain_index, &element_index);
-        if (!error && policy == 7) {
-            /* the microsoft root keys are not known, so no root passes as one. */
+        if (!error && policy == 7 && !microsoft_root(pChainContext)) {
             error = CERT_E_UNTRUSTEDROOT;
             chain_index = 0;
             element_index = pChainContext->cChain ? (LONG)pChainContext->rgpChain[0]->cElement - 1 : 0;

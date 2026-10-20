@@ -315,6 +315,25 @@ static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILE
     return FALSE;
 }
 
+#define CRYPT_E_NO_REVOCATION_CHECK_ ((LONG)0x80092012)
+#define CRYPT_E_REVOCATION_OFFLINE_ ((LONG)0x80092013)
+#define WTPF_OFFLINEOK_IND 0x00000400
+#define WTPF_OFFLINEOK_COM 0x00000800
+#define WTPF_DEFAULT_STATE 0x00023c00
+
+/*
+ * the policy flags of the software publishing trust provider: a revocation check that cannot reach its server is
+ * no failure for a publisher unless the state asks for one. A machine without the value has the default of a fresh
+ * installation, which allows it for both kinds of publisher.
+ */
+static BOOL offline_revocation_allowed(void)
+{
+    DWORD state = WTPF_DEFAULT_STATE, size = sizeof(state);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\WinTrust\\Trust Providers\\Software Publishing",
+                 L"State", RRF_RT_REG_DWORD, nullptr, &state, &size);
+    return (state & (WTPF_OFFLINEOK_IND | WTPF_OFFLINEOK_COM)) != 0;
+}
+
 static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE store, const WINTRUST_DATA *options,
                    PCCERT_CHAIN_CONTEXT *kept)
 {
@@ -382,6 +401,10 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
                 result = TRUST_E_SUBJECT_NOT_TRUSTED;
             else
                 result = status.dwError;
+            /* a server that could not be asked about revocation does not make the signature untrustworthy. */
+            if ((result == CRYPT_E_REVOCATION_OFFLINE_ || result == CRYPT_E_NO_REVOCATION_CHECK_) &&
+                offline_revocation_allowed())
+                result = 0;
             /* the state of a verification keeps the chain, whatever the policy said. */
             if (kept)
                 *kept = chain;

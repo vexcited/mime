@@ -1,4 +1,5 @@
 #include "crypt32_private.h"
+#include "../lib/compound/compound.h"
 
 #define MESSAGE_LIMIT (16 * 1024 * 1024)
 #define MESSAGE_ITEMS 256
@@ -665,6 +666,72 @@ static DWORD embedded(const BYTE *bytes, DWORD size, DWORD *offset, DWORD *lengt
     return 0;
 }
 
+/* a cabinet keeps its signature after its data, found through the description in the reserved space of its header. */
+static DWORD embedded_cabinet(const BYTE *bytes, DWORD size, DWORD *offset, DWORD *length)
+{
+    if (size < 44 || dword(bytes) != 0x4643534d || !(word(bytes + 30) & 4))
+        return CRYPT_E_NO_MATCH;
+    DWORD reserve = word(bytes + 36), cabinet = dword(bytes + 8);
+    if (reserve < 4 || reserve > size - 40)
+        return CRYPT_E_NO_MATCH;
+    const BYTE *area = bytes + 40;
+    DWORD before = word(area), description = word(area + 2);
+    if (description != 16 || before + 4 + description > reserve)
+        return CRYPT_E_NO_MATCH;
+    DWORD at = dword(area + 4 + before), n = dword(area + 8 + before);
+    if (!n || at != cabinet || at >= size || n != size - at)
+        return CRYPT_E_NO_MATCH;
+    *offset = at;
+    *length = n;
+    return 0;
+}
+
+static void *compound_allocate(size_t size)
+{
+    return CrAlloc(size);
+}
+
+static void compound_release(void *memory)
+{
+    CrFree(memory);
+}
+
+/* a package of the installer keeps its signature in the stream named with the character 5 and DigitalSignature. */
+static DWORD embedded_package(const BYTE *bytes, DWORD size, BYTE **signature, DWORD *length)
+{
+    static const BYTE magic[8] = {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1};
+    static const WCHAR name[] = L"\x05" L"DigitalSignature";
+    if (size < 512 || memcmp(bytes, magic, sizeof(magic)))
+        return CRYPT_E_NO_MATCH;
+    MIME_CFB file;
+    if (!MimeCfbOpen(&file, bytes, size, compound_allocate, compound_release))
+        return CRYPT_E_NO_MATCH;
+    DWORD error = CRYPT_E_NO_MATCH;
+    for (uint32_t index = 0; index < file.DirectorySize / 128; index++) {
+        MIME_CFB_ENTRY entry;
+        if (!MimeCfbEntry(&file, index, &entry) || entry.Type != 2 ||
+            memcmp(entry.Name, name, sizeof(name) - sizeof(WCHAR)) || entry.Name[RTL_NUMBER_OF(name) - 1])
+            continue;
+        if (!entry.Size || entry.Size > MESSAGE_LIMIT)
+            break;
+        BYTE *copy = CrAlloc((SIZE_T)entry.Size);
+        if (!copy) {
+            error = ERROR_OUTOFMEMORY;
+            break;
+        }
+        if (!MimeCfbRead(&file, &entry, copy, (size_t)entry.Size)) {
+            CrFree(copy);
+            break;
+        }
+        *signature = copy;
+        *length = (DWORD)entry.Size;
+        error = 0;
+        break;
+    }
+    MimeCfbClose(&file);
+    return error;
+}
+
 BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD content_flags, DWORD format_flags,
                               DWORD flags, DWORD *encoding, DWORD *content_type, DWORD *format_type,
                               HCERTSTORE *store_out, HCRYPTMSG *message_out, const void **context)
@@ -686,6 +753,18 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
     if (!error && size >= 2 && word(bytes) == 0x5a4d) {
         type = CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED;
         error = embedded(bytes, size, &offset, &length);
+    } else if (!error && size >= 4 && dword(bytes) == 0x4643534d) {
+        type = CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED;
+        error = embedded_cabinet(bytes, size, &offset, &length);
+    } else if (!error && size >= 8 && (content_flags & (1u << CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED))) {
+        BYTE *signature = nullptr;
+        if (!embedded_package(bytes, size, &signature, &length)) {
+            type = CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED;
+            CrFree(bytes);
+            bytes = signature;
+            size = length;
+            offset = 0;
+        }
     }
     if (!error && (!(content_flags & (1u << type)) || length > MESSAGE_LIMIT))
         error = CRYPT_E_NO_MATCH;

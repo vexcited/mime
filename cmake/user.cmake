@@ -297,7 +297,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_dwrite guest/lib)
     # the cryptographic primitives: whole in bcrypt, crypt32 and secur32's tls, the hashes and chacha20 in advapi32.
     set(objects_bcrypt ${arch}-lib-crypto)
-    set(objects_crypt32 ${arch}-lib-crypto)
+    set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound)
     set(objects_secur32 ${arch}-lib-crypto)
     set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c
         ${arch}-lib-crypto:guest/lib/crypto/bignum.c ${arch}-lib-crypto:guest/lib/crypto/rsa.c)
