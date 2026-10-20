@@ -20,13 +20,41 @@ typedef struct ATOM_ENTRY {
     WCHAR Name[MAX_NAME];
 } ATOM_ENTRY;
 
-static ATOM_ENTRY *g_atoms[MAX_ATOMS];
-static ULONG g_used;
+typedef struct ATOM_TABLE {
+    ATOM_ENTRY *Atoms[MAX_ATOMS];
+    ULONG Used;
+} ATOM_TABLE;
+
+/* the table of the session, and the private ones of the jobs that restrict global atoms, made when first used. */
+static ATOM_TABLE g_global;
 static KGUARDED_MUTEX g_lock;
 
 void ExpInitializeAtoms(void)
 {
     KeInitializeGuardedMutex(&g_lock);
+}
+
+void ExpFreeAtomTable(PVOID table)
+{
+    ATOM_TABLE *t = table;
+    for (ULONG i = 0; i < MAX_ATOMS; i++)
+        if (t->Atoms[i])
+            ExFreePool(t->Atoms[i]);
+    ExFreePool(t);
+}
+
+/* the table the calling process uses: the private one of its job when the job holds global atoms to itself. */
+static ATOM_TABLE *table_of_caller(void)
+{
+    PVOID *slot = PspJobAtomTableSlot(PsCurrentProcess());
+    if (!slot)
+        return &g_global;
+    KeAcquireGuardedMutex(&g_lock);
+    if (!*slot)
+        *slot = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATOM_TABLE), KI_TAG('A', 't', 'o', 'T'));
+    ATOM_TABLE *t = *slot;
+    KeReleaseGuardedMutex(&g_lock);
+    return t ? t : &g_global;
 }
 
 static void lock(void)
@@ -69,19 +97,19 @@ static BOOLEAN same(const ATOM_ENTRY *e, const WCHAR *name, ULONG chars)
     return TRUE;
 }
 
-static int lookup(const WCHAR *name, ULONG chars)
+static int lookup(ATOM_TABLE *t, const WCHAR *name, ULONG chars)
 {
     for (ULONG i = 0; i < MAX_ATOMS; i++)
-        if (g_atoms[i] && g_atoms[i]->Count && same(g_atoms[i], name, chars))
+        if (t->Atoms[i] && t->Atoms[i]->Count && same(t->Atoms[i], name, chars))
             return (int)i;
     return -1;
 }
 
-static ATOM_ENTRY *entry_of(USHORT atom)
+static ATOM_ENTRY *entry_of(ATOM_TABLE *t, USHORT atom)
 {
     if (atom < FIRST_STRING_ATOM || atom - FIRST_STRING_ATOM >= MAX_ATOMS)
         return nullptr;
-    ATOM_ENTRY *e = g_atoms[atom - FIRST_STRING_ATOM];
+    ATOM_ENTRY *e = t->Atoms[atom - FIRST_STRING_ATOM];
     return e && e->Count ? e : nullptr;
 }
 
@@ -121,31 +149,32 @@ static NTSTATUS add_atom(PWSTR user_name, ULONG length, PUSHORT user_atom)
         return NT_SUCCESS(status) ? store_atom(user_atom, atom) : status;
     if (!chars)
         return STATUS_INVALID_PARAMETER;
+    ATOM_TABLE *t = table_of_caller();
     lock();
-    int index = lookup(name, chars);
+    int index = lookup(t, name, chars);
     if (index >= 0) {
-        ATOM_ENTRY *e = g_atoms[index];
+        ATOM_ENTRY *e = t->Atoms[index];
         if (!(e->Flags & ATOM_PINNED) && e->Count < 0xFFFF)
             e->Count++;
     } else {
         for (ULONG i = 0; i < MAX_ATOMS && index < 0; i++)
-            if (!g_atoms[i] || !g_atoms[i]->Count)
+            if (!t->Atoms[i] || !t->Atoms[i]->Count)
                 index = (int)i;
         if (index < 0) {
             unlock();
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        if (!g_atoms[index] &&
-            !(g_atoms[index] = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATOM_ENTRY), KI_TAG('A', 't', 'o', 'm')))) {
+        if (!t->Atoms[index] &&
+            !(t->Atoms[index] = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATOM_ENTRY), KI_TAG('A', 't', 'o', 'm')))) {
             unlock();
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        ATOM_ENTRY *e = g_atoms[index];
+        ATOM_ENTRY *e = t->Atoms[index];
         e->Count = 1;
         e->Flags = 0;
         e->Length = (USHORT)chars;
         memcpy(e->Name, name, chars * sizeof(WCHAR));
-        g_used++;
+        t->Used++;
     }
     unlock();
     return store_atom(user_atom, (USHORT)(FIRST_STRING_ATOM + index));
@@ -156,7 +185,7 @@ NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom)
     return add_atom(name, length, atom);
 }
 
-/* the flags say which table; the session's global one is the only one here. */
+/* the flags say which table; the one of the caller is used, the session's unless its job keeps its own. */
 NTSTATUS NTAPI NtAddAtomEx(PWSTR name, ULONG length, PUSHORT atom, ULONG flags)
 {
     return add_atom(name, length, atom);
@@ -174,8 +203,9 @@ NTSTATUS NTAPI NtFindAtom(PWSTR user_name, ULONG length, PUSHORT user_atom)
         return NT_SUCCESS(status) ? store_atom(user_atom, atom) : status;
     if (!chars)
         return STATUS_OBJECT_NAME_NOT_FOUND;
+    ATOM_TABLE *t = table_of_caller();
     lock();
-    int index = lookup(name, chars);
+    int index = lookup(t, name, chars);
     unlock();
     if (index < 0)
         return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -187,13 +217,14 @@ NTSTATUS NTAPI NtDeleteAtom(USHORT atom)
 {
     if (atom && atom < FIRST_STRING_ATOM)
         return STATUS_SUCCESS;
+    ATOM_TABLE *t = table_of_caller();
     lock();
-    ATOM_ENTRY *e = entry_of(atom);
+    ATOM_ENTRY *e = entry_of(t, atom);
     NTSTATUS status = STATUS_INVALID_HANDLE;
     if (e) {
         status = STATUS_SUCCESS;
         if (!(e->Flags & ATOM_PINNED) && !--e->Count)
-            g_used--;
+            t->Used--;
     }
     unlock();
     return status;
@@ -222,8 +253,9 @@ NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULON
             count = 1;
             flags = ATOM_PINNED;
         } else {
+            ATOM_TABLE *t = table_of_caller();
             lock();
-            ATOM_ENTRY *e = entry_of(atom);
+            ATOM_ENTRY *e = entry_of(t, atom);
             if (e) {
                 count = e->Count;
                 flags = e->Flags;
@@ -254,8 +286,9 @@ NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULON
         if (length < sizeof(ULONG))
             return STATUS_INFO_LENGTH_MISMATCH;
         ULONG fits = (length - sizeof(ULONG)) / sizeof(USHORT), n = 0;
+        ATOM_TABLE *t = table_of_caller();
         lock();
-        ULONG total = g_used;
+        ULONG total = t->Used;
         if (total > fits) {
             unlock();
             return STATUS_INFO_LENGTH_MISMATCH;
@@ -267,7 +300,7 @@ NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULON
             return STATUS_INSUFFICIENT_RESOURCES;
         }
         for (ULONG i = 0; i < MAX_ATOMS && n < total; i++)
-            if (g_atoms[i] && g_atoms[i]->Count) {
+            if (t->Atoms[i] && t->Atoms[i]->Count) {
                 USHORT value = (USHORT)(FIRST_STRING_ATOM + i);
                 memcpy(table + sizeof(ULONG) + n++ * sizeof(USHORT), &value, sizeof(value));
             }

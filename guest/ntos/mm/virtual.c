@@ -104,9 +104,16 @@ static BOOLEAN charge_commit(PMMADDRESS_SPACE as, SIZE_T pages)
 {
     if (!pages)
         return TRUE;
+    /* a process in a job may be held to a limit of the memory it or the job commits. */
+    PEPROCESS process = CONTAINING_RECORD(as, EPROCESS, AddressSpace);
+    BOOLEAN in_job = process->Job != nullptr;
+    if (in_job && !PspJobChargeCommit(process, as->CommitCharge, pages))
+        return FALSE;
     LONG64 total = __atomic_add_fetch(&g_commit_pages, (LONG64)pages, __ATOMIC_SEQ_CST);
     if (total > commit_limit()) {
         __atomic_sub_fetch(&g_commit_pages, (LONG64)pages, __ATOMIC_SEQ_CST);
+        if (in_job)
+            PspJobReturnCommit(process, pages);
         return FALSE;
     }
     LONG64 peak = __atomic_load_n(&g_commit_peak, __ATOMIC_RELAXED);
@@ -125,6 +132,9 @@ static void return_commit(PMMADDRESS_SPACE as, SIZE_T pages)
         pages = as->CommitCharge;
     as->CommitCharge -= pages;
     __atomic_sub_fetch(&g_commit_pages, (LONG64)pages, __ATOMIC_SEQ_CST);
+    PEPROCESS process = CONTAINING_RECORD(as, EPROCESS, AddressSpace);
+    if (process->Job)
+        PspJobReturnCommit(process, pages);
 }
 
 /* ----------------------------------------------------------------- the vad arrays */

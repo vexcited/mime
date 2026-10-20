@@ -482,6 +482,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG);
         break;
     case ProcessDefaultHardErrorMode:
+        out.u32[0] = process->DefaultHardErrorMode;
         size = sizeof(ULONG);
         break;
     case ProcessExecuteFlags:
@@ -580,6 +581,7 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     switch ((ULONG)klass) {
     case ProcessBasePriority:
     case ProcessPriorityBoost:
+    case ProcessDefaultHardErrorMode:
     case MX_PROCESS_PRIORITY_CLASS_EX:
         expected = sizeof(ULONG);
         break;
@@ -641,6 +643,10 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     }
     case ProcessPriorityBoost:
         process->DisableBoost = (ULONG)value != 0;
+        break;
+    case ProcessDefaultHardErrorMode:
+        /* the bits a job forces on its processes cannot be cleared. */
+        process->DefaultHardErrorMode = (ULONG)value | PspJobForcedErrorMode(process);
         break;
     case ProcessWorkingSetWatch:
         /* the pages a process faults in are not recorded, so there is nothing to start. */
@@ -735,8 +741,16 @@ NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
         }
         ObDereferenceObject(thread);
     }
+    /* the right to debug opens every process to whoever holds it, the others are asked of the process's descriptor. */
+    ACCESS_MASK granted = access;
+    if (!SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        status = ObCheckOpenAccess(process, access, UserMode, &granted);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(process);
+        return status;
+    }
     HANDLE h;
-    status = ObInsertObject(process, map_process_access(access), handle_attributes, &h);
+    status = ObInsertObject(process, map_process_access(granted), handle_attributes, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     return status;
@@ -758,8 +772,15 @@ NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
         ObDereferenceObject(thread);
         return STATUS_INVALID_CID;
     }
+    ACCESS_MASK granted = access;
+    if (!SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        status = ObCheckOpenAccess(thread, access, UserMode, &granted);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(thread);
+        return status;
+    }
     HANDLE h;
-    status = ObInsertObject(thread, map_thread_access(access), handle_attributes, &h);
+    status = ObInsertObject(thread, map_thread_access(granted), handle_attributes, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     return status;
