@@ -192,6 +192,9 @@ typedef struct RPC_THREAD {
 } RPC_THREAD;
 
 RPC_THREAD *RpcpThread(void);
+/* the key under which the connections for a binding are pooled, and the pool's release of those of a key. */
+void RpcpBindingKey(const BINDING *b, WCHAR *key, SIZE_T count);
+void RpcpPoolDrop(const WCHAR *key);
 void RpcpThreadDetach(void);
 RPC_STATUS RpcpThreadCancel(DWORD thread_id);
 

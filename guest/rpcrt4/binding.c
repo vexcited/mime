@@ -555,8 +555,26 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingFree(RPC_BINDING_HANDLE *handle)
         return RPC_S_INVALID_BINDING;
     if (b->Kind != BINDING_CLIENT)
         return RPC_S_WRONG_KIND_OF_BINDING;
+    /* when no other handle goes to the server, the connections kept for it are of no use. */
+    WCHAR key[400];
+    RpcpBindingKey(b, key, ARRAYSIZE(key));
     RpcpBindingRelease(b);
     *handle = nullptr;
+    BOOL in_use = FALSE;
+    WCHAR other[400];
+    AcquireSRWLockShared(&g_lock);
+    for (ULONG i = 0; i < BINDING_BUCKETS && !in_use; i++)
+        for (BINDING *c = g_bindings[i]; c; c = c->Next)
+            if (c->Kind == BINDING_CLIENT) {
+                RpcpBindingKey(c, other, ARRAYSIZE(other));
+                if (!wcscmp(key, other)) {
+                    in_use = TRUE;
+                    break;
+                }
+            }
+    ReleaseSRWLockShared(&g_lock);
+    if (!in_use)
+        RpcpPoolDrop(key);
     return RPC_S_OK;
 }
 

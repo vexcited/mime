@@ -302,6 +302,14 @@ static const IRpcChannelBuffer2Vtbl g_server_channel_vtbl = {ch_query,         s
                                                              sch_get_buffer,   sch_send_receive, sch_free_buffer,
                                                              ch_get_dest_ctx,  ch_is_connected, ch_get_protocol_version};
 
+HRESULT OrpcImpersonate(void *served, BOOL impersonate)
+{
+    SERVED *s = served;
+    RPC_BINDING_HANDLE handle = s->Message.reserved1;
+    RPC_STATUS status = impersonate ? RpcImpersonateClient(handle) : RpcRevertToSelfEx(handle);
+    return status ? HRESULT_FROM_WIN32((ULONG)status) : S_OK;
+}
+
 static void run_call(void *context)
 {
     SERVED *s = context;

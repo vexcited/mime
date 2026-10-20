@@ -113,6 +113,9 @@ struct PROXYMGR *OrpcProxyManagerOf(IUnknown *object);
 HRESULT OrpcMarshalProxy(struct PROXYMGR *manager, IStream *stream, REFIID iid, DWORD flags);
 void OrpcProxyManagerRelease(struct PROXYMGR *manager);
 
+/* the thread takes on the identity of the caller of the call it serves, or goes back to its own. */
+HRESULT OrpcImpersonate(void *served, BOOL impersonate);
+
 /* the ipid entry for a call: the stub to run, the object's apartment and the interface. */
 typedef struct IPID_TARGET {
     IRpcStubBuffer *Stub;

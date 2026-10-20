@@ -141,7 +141,7 @@ RPC_STATUS RpcpThreadCancel(DWORD thread_id)
 
 /* ------------------------------------------------------------------ connections */
 
-static void make_key(const BINDING *b, WCHAR *key, SIZE_T count)
+void RpcpBindingKey(const BINDING *b, WCHAR *key, SIZE_T count)
 {
     key[0] = 0;
     RpcpAppend(key, count, b->Protseq ? b->Protseq : L"");
@@ -220,6 +220,26 @@ static void pool_give(RPC_CONN *c)
     ReleaseSRWLockExclusive(&g_pool_lock);
     if (c)
         conn_destroy(c);
+}
+
+/*
+ * the last binding handle to a server is freed: the connections kept for it are closed, and a server that holds contexts for
+ * the client rundowns them, as the end of the association does on windows.
+ */
+void RpcpPoolDrop(const WCHAR *key)
+{
+    AcquireSRWLockExclusive(&g_pool_lock);
+    RPC_CONN **at = &g_idle;
+    while (*at) {
+        RPC_CONN *c = *at;
+        if (!wcscmp(c->Key, key)) {
+            *at = c->Next;
+            conn_destroy(c);
+        } else {
+            at = &c->Next;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_pool_lock);
 }
 
 /* ------------------------------------------------------------------ bind */
@@ -386,7 +406,7 @@ static RPC_STATUS call_connect(BINDING *b, const RPC_CLIENT_INTERFACE *iface, RP
             return status;
     }
     WCHAR key[300];
-    make_key(b, key, ARRAYSIZE(key));
+    RpcpBindingKey(b, key, ARRAYSIZE(key));
     RPC_SYNTAX_IDENTIFIER offered[2];
     ULONG offered_count = 0;
     offered[offered_count++] = iface->TransferSyntax.SyntaxGUID.Data1 || iface->TransferSyntax.SyntaxVersion.MajorVersion

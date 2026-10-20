@@ -1,9 +1,9 @@
 /*
  * the state of the calls of a thread: the context of the call being served, the cancellation of calls, the logical thread
- * and the use of the multithreaded apartment by code that has no thread in it. No call from another process is ever
- * served here, so the context of a call is only what CoSwitchCallContext put there.
+ * and the use of the multithreaded apartment by code that has no thread in it. The context of a call is what
+ * CoSwitchCallContext put there, and the security of a call from another process is that call's.
  */
-#include "ole32_private.h"
+#include "orpc.h"
 
 #define RPC_E_CALL_COMPLETE_HR ((HRESULT)0x80010117L)
 #define RPC_E_NO_CONTEXT_HR ((HRESULT)0x8001011EL)
@@ -55,15 +55,21 @@ WINOLEAPI HRESULT WINAPI CoDecrementMTAUsage(void *cookie)
 
 /* ------------------------------------------------------------------ the call being served */
 
-/* the security of a call is only there for a call from another process, and none is served here. */
+/* the security of a call is only there for a call from another process: the thread takes on the caller's identity. */
 WINOLEAPI HRESULT WINAPI CoImpersonateClient(void)
 {
-    return RPC_E_CALL_COMPLETE_HR;
+    OLE_THREAD *t = OleThreadState(FALSE);
+    if (!t || !t->OrpcCall)
+        return RPC_E_CALL_COMPLETE_HR;
+    return OrpcImpersonate(t->OrpcCall, TRUE);
 }
 
 WINOLEAPI HRESULT WINAPI CoRevertToSelf(void)
 {
-    return RPC_E_CALL_COMPLETE_HR;
+    OLE_THREAD *t = OleThreadState(FALSE);
+    if (!t || !t->OrpcCall)
+        return RPC_E_CALL_COMPLETE_HR;
+    return OrpcImpersonate(t->OrpcCall, FALSE);
 }
 
 /* S_FALSE and a thread of 0 when no call is being served. */
