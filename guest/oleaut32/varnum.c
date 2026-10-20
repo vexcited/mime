@@ -1,110 +1,277 @@
 /*
- * numbers and text: the parser behind VarParseNumFromStr and the conversions from strings, and the formatting of
- * numbers into strings. Digits are kept as they are typed, and every rounding is done on them, so a string never goes
- * through a double on its way to an integer, a currency or a decimal.
+ * VarParseNumFromStr and VarNumFromParseNum: reading a number out of text, and choosing the variant type that holds it.
+ * Written from the documented behaviour and from what the oleaut32 of windows answers, see docs/oleaut32.md.
  */
 #include "oleaut32_private.h"
 #include "dtoa.h"
-#include <mime/win32/winnls.h>
 
-/* the compiler references this symbol from code that uses floating point. */
 int _fltused = 0x9875;
 
-/* ------------------------------------------------------------------ locale */
+/* the sign byte of a decimal that is negative. */
+#define DECIMAL_NEG 0x80
+
+/* ------------------------------------------------------------------ the symbols of a locale */
+
+#define MAX_CURRENCY 24
+
+typedef struct {
+    /* zero where the locale has no such separator. */
+    WCHAR Decimal;
+    WCHAR Thousand;
+    WCHAR MoneyDecimal;
+    WCHAR MoneyThousand;
+    /* a thousands separator that is a space also accepts a plain space. */
+    BOOL ThousandIsSpace;
+    int CurrencyLength;
+    WCHAR Currency[MAX_CURRENCY];
+} SYMBOLS;
+
+static BOOL is_white(WCHAR c)
+{
+    if (c == L' ' || (c >= 9 && c <= 13) || c == 0xA0)
+        return TRUE;
+    return c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F ||
+           c == 0x3000;
+}
+
+/* the first character of a piece of locale information, or the fallback when the locale does not answer. */
+static WCHAR locale_char(LCID lcid, LCTYPE type, WCHAR fallback)
+{
+    WCHAR text[8];
+    if (!GetLocaleInfoW(lcid, type, text, RTL_NUMBER_OF(text)))
+        return fallback;
+    return text[0];
+}
+
+static void load_symbols(LCID lcid, ULONG locale_flags, SYMBOLS *s)
+{
+    ULONG nls = (locale_flags | g_process_nls_flags) & LOCALE_NOUSEROVERRIDE;
+    s->Decimal = locale_char(lcid, LOCALE_SDECIMAL | nls, L'.');
+    s->Thousand = locale_char(lcid, LOCALE_STHOUSAND | nls, 0);
+    s->MoneyDecimal = locale_char(lcid, LOCALE_SMONDECIMALSEP | nls, 0);
+    s->MoneyThousand = locale_char(lcid, LOCALE_SMONTHOUSANDSEP | nls, L',');
+    s->ThousandIsSpace = s->Thousand && is_white(s->Thousand);
+    int length = GetLocaleInfoW(lcid, LOCALE_SCURRENCY | nls, s->Currency, MAX_CURRENCY);
+    if (length > 1) {
+        s->CurrencyLength = length - 1;
+    } else {
+        s->Currency[0] = L'$';
+        s->CurrencyLength = 1;
+    }
+}
+
+/* ------------------------------------------------------------------ the parser */
+
+/* the largest exponent written after the e that is taken; a bigger one is an overflow. */
+#define MAX_EXPONENT 1073741819
+
+typedef struct {
+    const WCHAR *Text;
+    const WCHAR *At;
+    ULONG In;
+    ULONG Out;
+    SYMBOLS Symbols;
+    BYTE *Digits;
+    int Capacity;
+    int Count;
+    int Power;
+    int Shift;
+    /* a sign or an opening parenthesis was read, which a second one cannot follow. */
+    BOOL Signed;
+    BOOL ParenOpen;
+    /* a separator that was not asked for ended the number. */
+    BOOL Closed;
+} PARSE;
+
+static void skip_white(PARSE *p, ULONG flag)
+{
+    if (!(p->In & flag))
+        return;
+    while (is_white(*p->At)) {
+        p->At++;
+        p->Out |= flag;
+    }
+}
+
+static BOOL take_sign(PARSE *p)
+{
+    WCHAR c = *p->At;
+    if (c == L'+' && (p->In & NUMPRS_LEADING_PLUS)) {
+        p->Out |= NUMPRS_LEADING_PLUS;
+    } else if (c == L'-' && (p->In & NUMPRS_LEADING_MINUS)) {
+        p->Out |= NUMPRS_LEADING_MINUS | NUMPRS_NEG;
+    } else if (c == L'(' && (p->In & NUMPRS_PARENS)) {
+        p->Out |= NUMPRS_PARENS | NUMPRS_NEG;
+        p->ParenOpen = TRUE;
+    } else {
+        return FALSE;
+    }
+    p->At++;
+    p->Signed = TRUE;
+    return TRUE;
+}
+
+/* the symbol of the currency, in any case. */
+static BOOL take_currency(PARSE *p)
+{
+    const SYMBOLS *s = &p->Symbols;
+    if (!(p->In & NUMPRS_CURRENCY))
+        return FALSE;
+    for (int i = 0; i < s->CurrencyLength; i++) {
+        WCHAR a = p->At[i], b = s->Currency[i];
+        if (!a)
+            return FALSE;
+        if (a != b && RtlUpcaseUnicodeChar(a) != RtlUpcaseUnicodeChar(b))
+            return FALSE;
+    }
+    p->At += s->CurrencyLength;
+    p->Out |= NUMPRS_CURRENCY;
+    return TRUE;
+}
+
+static BOOL is_digit(WCHAR c)
+{
+    return c >= L'0' && c <= L'9';
+}
+
+/* the separator of thousands of the locale, which also is a plain space when it is some kind of space. */
+static BOOL is_thousand(const SYMBOLS *s, WCHAR c)
+{
+    return c && ((s->Thousand && c == s->Thousand) || (s->ThousandIsSpace && c == L' '));
+}
 
 /*
- * what a locale says about numbers, the way oleaut32 reads it: the separators, the symbol of the currency, and the
- * pieces of a number format. Where the locale has nothing, the defaults are the ones windows has: a dot, no thousands
- * separator (a comma for money), a dollar sign. A space is a thousands separator as well when the locale's one is a
- * space of some kind.
+ * The digits, thousands separators and decimal point. Digits that do not fit are dropped and counted in the power of
+ * ten, and trailing zeros move into it as well. Returns false when there is not a digit to be read.
  */
-typedef struct {
-    WCHAR Decimal, Thousand, ThousandAlt, NegativeSign, MonDecimal, MonThousand;
-    WCHAR Currency[10];
-    int CurrencyLen;
-    /* a symbol of one character that has no other case or width is compared as it is. */
-    BOOL CurrencySimple;
-    BOOL LeadingZero;
-    int Grouping, NegativeOrder, Digits, MonGrouping, CurrencyDigits;
-} NUM_LOCALE;
-
-static BOOL is_space(WCHAR c);
-
-static int locale_int(LCID lcid, ULONG info_flags, LCTYPE type, int fallback)
+static BOOL take_digits(PARSE *p)
 {
-    WCHAR text[8];
-    if (!GetLocaleInfoW(lcid, type | info_flags, text, 8) || !text[0])
-        return fallback;
-    int v = 0;
-    for (const WCHAR *p = text; *p >= L'0' && *p <= L'9'; p++)
-        v = v * 10 + (*p - L'0');
-    return v;
-}
+    const SYMBOLS *s = &p->Symbols;
+    ULONG flags = 0;
+    BOOL seen = FALSE, started = FALSE, fraction = FALSE, inexact = FALSE, ended = FALSE, cut_fraction = FALSE;
+    int count = 0, power = 0;
+    const WCHAR *at = p->At;
 
-static WCHAR locale_char(LCID lcid, ULONG info_flags, LCTYPE type, WCHAR fallback)
-{
-    WCHAR text[8];
-    return GetLocaleInfoW(lcid, type | info_flags, text, 8) > 1 ? text[0] : fallback;
-}
-
-static void number_locale(LCID lcid, ULONG flags, NUM_LOCALE *l)
-{
-    ULONG info_flags = (flags | g_process_nls_flags) & (LOCALE_NOUSEROVERRIDE | LOCALE_USE_NLS);
-    if (lcid == 0 || lcid == LOCALE_USER_DEFAULT)
-        lcid = GetUserDefaultLCID();
-    else if (lcid == LOCALE_SYSTEM_DEFAULT)
-        lcid = GetSystemDefaultLCID();
-    WCHAR text[16];
-    int len = GetLocaleInfoW(lcid, LOCALE_SCURRENCY | info_flags, text, 10) - 1;
-    if (len <= 0) {
-        l->Currency[0] = L'$';
-        l->Currency[1] = 0;
-        l->CurrencyLen = 1;
-        l->CurrencySimple = TRUE;
-    } else {
-        memcpy(l->Currency, text, (len + 1) * sizeof(WCHAR));
-        l->CurrencyLen = len;
-        l->CurrencySimple = FALSE;
-        if (len == 1) {
-            WCHAR narrow, wide;
-            LCMapStringW(lcid, LCMAP_HALFWIDTH | LCMAP_LOWERCASE, l->Currency, 1, &narrow, 1);
-            LCMapStringW(lcid, LCMAP_FULLWIDTH | LCMAP_UPPERCASE, l->Currency, 1, &wide, 1);
-            l->CurrencySimple = narrow == wide;
+    for (;; at++) {
+        WCHAR c = *at;
+        if (is_digit(c)) {
+            seen = TRUE;
+            BYTE d = (BYTE)(c - L'0');
+            if (d == 0 && !count) {
+                /* a zero with no digit kept before it is a place after the point, and a power of ten before it. */
+                if (fraction && !cut_fraction)
+                    power--;
+                else if (!fraction && started)
+                    power++;
+            } else if (count < p->Capacity) {
+                started = TRUE;
+                p->Digits[count++] = d;
+                if (fraction)
+                    power--;
+            } else {
+                started = TRUE;
+                if (!fraction)
+                    power++;
+                else if (d)
+                    cut_fraction = TRUE;
+                if (d)
+                    inexact = TRUE;
+            }
+        } else if (seen && is_thousand(s, c) && (p->In & NUMPRS_THOUSANDS)) {
+            flags |= NUMPRS_THOUSANDS;
+        } else if (seen && c && c == s->MoneyThousand && (p->In & NUMPRS_THOUSANDS) && (p->In & NUMPRS_CURRENCY)) {
+            flags |= NUMPRS_THOUSANDS | NUMPRS_CURRENCY;
+        } else if (seen && is_thousand(s, c) && is_white(c)) {
+            /* a separator that is a space and was not asked for ends the number, and nothing after it is looked at. */
+            ended = TRUE;
+            break;
+        } else if (!fraction && c && c == s->Decimal) {
+            if (!(p->In & NUMPRS_DECIMAL) || (!seen && !is_digit(at[1])))
+                break;
+            fraction = TRUE;
+            flags |= NUMPRS_DECIMAL;
+        } else if (!fraction && c && c == s->MoneyDecimal && (p->In & (NUMPRS_DECIMAL | NUMPRS_CURRENCY))) {
+            if (!seen && !is_digit(at[1]))
+                break;
+            fraction = TRUE;
+            flags |= NUMPRS_DECIMAL | NUMPRS_CURRENCY;
+        } else {
+            break;
         }
     }
-    l->Decimal = locale_char(lcid, info_flags, LOCALE_SDECIMAL, L'.');
-    l->NegativeSign = locale_char(lcid, info_flags, LOCALE_SNEGATIVESIGN, L'-');
-    l->MonDecimal = locale_char(lcid, info_flags, LOCALE_SMONDECIMALSEP, l->Decimal);
-    l->MonThousand = locale_char(lcid, info_flags, LOCALE_SMONTHOUSANDSEP, L',');
-    l->Thousand = locale_char(lcid, info_flags, LOCALE_STHOUSAND, 0);
-    if (l->Thousand == l->Decimal)
-        l->Thousand = 0;
-    l->ThousandAlt = l->Thousand && is_space(l->Thousand) ? L' ' : l->Thousand;
-    WCHAR zero[4] = {L'1', 0};
-    GetLocaleInfoW(lcid, LOCALE_ILZERO | info_flags, zero, 4);
-    l->LeadingZero = zero[0] != L'0';
-    l->Grouping = locale_int(lcid, info_flags, LOCALE_SGROUPING, 3);
-    l->NegativeOrder = locale_int(lcid, info_flags, LOCALE_INEGNUMBER, 0);
-    l->Digits = locale_int(lcid, info_flags, LOCALE_IDIGITS, 0);
-    l->MonGrouping = locale_int(lcid, info_flags, LOCALE_SMONGROUPING, 3);
-    l->CurrencyDigits = locale_int(lcid, info_flags, LOCALE_ICURRDIGITS, 0);
+    if (!seen)
+        return FALSE;
+    if (count == 0) {
+        p->Digits[0] = 0;
+        count = 1;
+    }
+    while (count > 1 && p->Digits[count - 1] == 0) {
+        count--;
+        power++;
+    }
+    p->At = at;
+    p->Out |= flags | (inexact ? NUMPRS_INEXACT : 0);
+    p->Closed = ended;
+    p->Count = count;
+    p->Power = power;
+    return TRUE;
 }
 
-static BOOL is_space(WCHAR c)
+/*
+ * An exponent after the digits: e or d, a sign if there is one, and at least one digit. Without them nothing is taken.
+ * Returns false for one too large to keep.
+ */
+static BOOL take_exponent(PARSE *p)
 {
-    return c == L' ' || (c >= 9 && c <= 13) || c == 0xA0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 ||
-           c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000;
+    if (!(p->In & NUMPRS_EXPONENT))
+        return TRUE;
+    WCHAR c = p->At[0] | 0x20;
+    if (c != L'e' && c != L'd')
+        return TRUE;
+    const WCHAR *at = p->At + 1;
+    BOOL negative = FALSE;
+    if (*at == L'+' || *at == L'-') {
+        negative = *at == L'-';
+        at++;
+    }
+    if (!is_digit(*at))
+        return TRUE;
+    LONGLONG value = 0;
+    for (; is_digit(*at); at++) {
+        if (value <= MAX_EXPONENT)
+            value = value * 10 + (*at - L'0');
+    }
+    if (value > MAX_EXPONENT)
+        return FALSE;
+    p->At = at;
+    p->Out |= NUMPRS_EXPONENT;
+    p->Power += negative ? -(int)value : (int)value;
+    return TRUE;
 }
 
-static BOOL currency_here(const WCHAR *p, const NUM_LOCALE *loc, LCID lcid)
+/* whatever may follow the digits: white space, a sign, the closing parenthesis and the symbol of the currency. */
+static void take_trailing(PARSE *p)
 {
-    if (loc->CurrencySimple)
-        return *p == loc->Currency[0];
-    for (int i = 0; i < loc->CurrencyLen; i++)
-        if (!p[i])
-            return FALSE;
-    return CompareStringW(lcid ? lcid : LOCALE_USER_DEFAULT, NORM_IGNORECASE | NORM_IGNOREWIDTH, p, loc->CurrencyLen, loc->Currency,
-                          loc->CurrencyLen) == CSTR_EQUAL;
+    for (;;) {
+        const WCHAR *before = p->At;
+        skip_white(p, NUMPRS_TRAILING_WHITE);
+        if (p->At != before)
+            continue;
+        WCHAR c = *p->At;
+        if (take_currency(p)) {
+            continue;
+        } else if (!p->Signed && c == L'+' && (p->In & NUMPRS_TRAILING_PLUS)) {
+            p->Out |= NUMPRS_TRAILING_PLUS;
+        } else if (!p->Signed && c == L'-' && (p->In & NUMPRS_TRAILING_MINUS)) {
+            p->Out |= NUMPRS_TRAILING_MINUS | NUMPRS_NEG;
+        } else if (p->ParenOpen && c == L')') {
+            p->ParenOpen = FALSE;
+        } else {
+            return;
+        }
+        p->Signed = TRUE;
+        p->At++;
+    }
 }
 
 static int digit_value(WCHAR c, int shift)
@@ -112,1066 +279,660 @@ static int digit_value(WCHAR c, int shift)
     int v;
     if (c >= L'0' && c <= L'9')
         v = c - L'0';
-    else if (c >= L'a' && c <= L'f')
-        v = c - L'a' + 10;
-    else if (c >= L'A' && c <= L'F')
-        v = c - L'A' + 10;
+    else if ((c | 0x20) >= L'a' && (c | 0x20) <= L'f')
+        v = (c | 0x20) - L'a' + 10;
     else
         return -1;
-    int base = shift ? 1 << shift : 10;
-    return v < base ? v : -1;
+    return v < (1 << shift) ? v : -1;
 }
 
-/* ------------------------------------------------------------------ parsing */
-
-HRESULT AutNumberFromString(LPCOLESTR text, LCID lcid, ULONG locale_flags, ULONG in_flags, AUT_NUMBER *n,
-                            ULONG *out_flags, int *used)
+/*
+ * &H and &O numbers: the digits are kept as they are, in the base of the shift, without leading zeros. Too many of
+ * them for the buffer is an overflow, reported at the last digit that was kept.
+ */
+static HRESULT parse_based(PARSE *p)
 {
-    NUM_LOCALE loc;
-    const WCHAR *p = text;
-    ULONG out = 0;
-    memset(n, 0, sizeof(*n));
-    if (used)
-        *used = 0;
-    if (out_flags)
-        *out_flags = 0;
-    if (!text)
-        return DISP_E_TYPEMISMATCH;
-    number_locale(lcid, locale_flags, &loc);
-
-    /* a prefix of white space, signs, parentheses and the currency symbol, in any order but with one sign. */
-    BOOL sign = FALSE, currency = FALSE, expect_paren = FALSE, hex = FALSE, stopped = FALSE;
-    if (is_space(*p) && (in_flags & NUMPRS_LEADING_WHITE)) {
-        out |= NUMPRS_LEADING_WHITE;
-        while (is_space(*p))
-            p++;
+    p->At++;
+    p->Shift = 3;
+    if ((*p->At | 0x20) == L'h') {
+        p->Shift = 4;
+        p->At++;
+    } else if ((*p->At | 0x20) == L'o') {
+        p->At++;
     }
-    if (*p == L'&' && (in_flags & NUMPRS_HEX_OCT)) {
-        int shift = 3;
-        const WCHAR *q = p + 1;
-        if (*q == L'h' || *q == L'H') {
-            shift = 4;
-            q++;
-        } else if (*q == L'o' || *q == L'O') {
-            q++;
+    const WCHAR *last = nullptr;
+    BOOL overflow = FALSE;
+    int count = 0;
+    for (const WCHAR *at = p->At;; at++) {
+        int v = digit_value(*at, p->Shift);
+        if (v < 0)
+            break;
+        if (count == 0 && v == 0) {
+            last = at + 1;
+            continue;
         }
-        int count = 0;
-        while (digit_value(*q, shift) >= 0) {
-            int v = digit_value(*q, shift);
-            if (count || v) {
-                if (count < (int)sizeof(n->Digits))
-                    n->Digits[count++] = (BYTE)v;
-                else
-                    n->Inexact = TRUE;
-            }
-            q++;
-            hex = TRUE;
-        }
-        if (!hex) {
-            n->Shift = shift;
-            if (out_flags)
-                *out_flags = out;
-            return DISP_E_TYPEMISMATCH;
-        }
-        n->Shift = shift;
-        n->Count = count;
-        n->Seen = TRUE;
-        out |= NUMPRS_HEX_OCT;
-        p = q;
-        goto trailing;
-    }
-    for (;;) {
-        WCHAR c = *p;
-        if (is_space(c) && (in_flags & NUMPRS_LEADING_WHITE)) {
-            out |= NUMPRS_LEADING_WHITE;
-            p++;
-        } else if (c == L'+' && !sign && (in_flags & NUMPRS_LEADING_PLUS)) {
-            sign = TRUE;
-            out |= NUMPRS_LEADING_PLUS;
-            p++;
-        } else if (c == L'-' && !sign && (in_flags & NUMPRS_LEADING_MINUS)) {
-            sign = TRUE;
-            out |= NUMPRS_LEADING_MINUS | NUMPRS_NEG;
-            n->Negative = TRUE;
-            p++;
-        } else if (c == L'(' && !sign && (in_flags & NUMPRS_PARENS)) {
-            sign = TRUE;
-            expect_paren = TRUE;
-            out |= NUMPRS_PARENS | NUMPRS_NEG;
-            n->Negative = TRUE;
-            p++;
-        } else if (!currency && (in_flags & NUMPRS_CURRENCY) && currency_here(p, &loc, lcid) && c != loc.Decimal &&
-                   c != loc.Thousand && c != loc.ThousandAlt) {
-            currency = TRUE;
-            out |= NUMPRS_CURRENCY;
-            p += loc.CurrencyLen;
-        } else {
+        if (count == p->Capacity) {
+            overflow = TRUE;
             break;
         }
+        p->Digits[count++] = (BYTE)v;
+        last = at + 1;
     }
-
-    /* the digits: integer part, thousands separators, a decimal point, a fraction. */
-    {
-        BOOL any = FALSE, point = FALSE;
-        int count = 0, exponent = 0;
-        for (;; p++) {
-            WCHAR c = *p;
-            if (c >= L'0' && c <= L'9') {
-                any = TRUE;
-                int v = c - L'0';
-                if (!count && !v) {
-                    if (point)
-                        exponent--;
-                    continue;
-                }
-                if (count < (int)sizeof(n->Digits)) {
-                    n->Digits[count++] = (BYTE)v;
-                    if (point)
-                        exponent--;
-                } else {
-                    if (v)
-                        n->Inexact = TRUE;
-                    if (!point)
-                        exponent++;
-                }
-            } else if (c == loc.Decimal && !point && (in_flags & NUMPRS_DECIMAL)) {
-                point = TRUE;
-                out |= NUMPRS_DECIMAL;
-            } else if (loc.Thousand && (c == loc.Thousand || c == loc.ThousandAlt) && any) {
-                /* a separator that is not asked for ends the number, and nothing after it is looked at. */
-                if (!(in_flags & NUMPRS_THOUSANDS)) {
-                    stopped = TRUE;
-                    break;
-                }
-                out |= NUMPRS_THOUSANDS;
-            } else if (c == loc.MonThousand && c != loc.Decimal && any && (in_flags & NUMPRS_CURRENCY) &&
-                       (in_flags & NUMPRS_THOUSANDS)) {
-                out |= NUMPRS_THOUSANDS | NUMPRS_CURRENCY;
-            } else if (c == loc.MonDecimal && c != loc.Decimal && c != loc.Thousand && c != loc.ThousandAlt && !point &&
-                       (in_flags & NUMPRS_CURRENCY) && (in_flags & NUMPRS_DECIMAL)) {
-                point = TRUE;
-                out |= NUMPRS_DECIMAL | NUMPRS_CURRENCY;
-            } else {
-                break;
-            }
-        }
-        if (!any) {
-            /* a point or a separator with no digit around it was not taken. */
-            if (out_flags)
-                *out_flags = out & ~(ULONG)(NUMPRS_DECIMAL | NUMPRS_THOUSANDS);
-            return DISP_E_TYPEMISMATCH;
-        }
-        if ((*p == L'e' || *p == L'E' || *p == L'd' || *p == L'D') && (in_flags & NUMPRS_EXPONENT)) {
-            const WCHAR *q = p + 1;
-            BOOL negative = FALSE;
-            if (*q == L'-' || *q == L'+')
-                negative = *q++ == L'-';
-            if (*q >= L'0' && *q <= L'9') {
-                int e = 0;
-                for (; *q >= L'0' && *q <= L'9'; q++)
-                    if (e < 100000)
-                        e = e * 10 + (*q - L'0');
-                exponent += negative ? -e : e;
-                out |= NUMPRS_EXPONENT;
-                p = q;
-            }
-        }
-        /* zeros at the end of the digits move into the exponent. */
-        while (count && !n->Digits[count - 1]) {
-            count--;
-            exponent++;
-        }
-        n->Count = count;
-        n->Exponent = exponent;
-        n->Seen = TRUE;
-    }
-
-trailing:
-    for (; !stopped;) {
-        WCHAR c = *p;
-        if (is_space(c) && (in_flags & NUMPRS_TRAILING_WHITE)) {
-            out |= NUMPRS_TRAILING_WHITE;
-            p++;
-        } else if (c == L'+' && !sign && (in_flags & NUMPRS_TRAILING_PLUS)) {
-            sign = TRUE;
-            out |= NUMPRS_TRAILING_PLUS;
-            p++;
-        } else if (c == L'-' && !sign && (in_flags & NUMPRS_TRAILING_MINUS)) {
-            sign = TRUE;
-            out |= NUMPRS_TRAILING_MINUS | NUMPRS_NEG;
-            n->Negative = TRUE;
-            p++;
-        } else if (c == L')' && expect_paren) {
-            expect_paren = FALSE;
-            p++;
-        } else if (!currency && (in_flags & NUMPRS_CURRENCY) && currency_here(p, &loc, lcid)) {
-            currency = TRUE;
-            out |= NUMPRS_CURRENCY;
-            p += loc.CurrencyLen;
-        } else {
-            break;
-        }
-    }
-    if (n->Inexact)
-        out |= NUMPRS_INEXACT;
-    if (out_flags)
-        *out_flags = out;
-    if (used)
-        *used = (int)(p - text);
-    if (expect_paren || ((in_flags & NUMPRS_USE_ALL) && *p))
+    if (!last)
         return DISP_E_TYPEMISMATCH;
+    if (count == 0) {
+        p->Digits[0] = 0;
+        count = 1;
+    }
+    p->Count = count;
+    p->Out |= NUMPRS_HEX_OCT;
+    p->At = last;
+    if (overflow)
+        return DISP_E_OVERFLOW;
+    skip_white(p, NUMPRS_TRAILING_WHITE);
     return S_OK;
 }
 
-WINOLEAUTAPI HRESULT WINAPI VarParseNumFromStr(LPCOLESTR text, LCID lcid, ULONG flags, NUMPARSE *parse, BYTE *digits)
+static HRESULT parse_decimal(PARSE *p)
 {
-    if (!parse || !digits)
+    skip_white(p, NUMPRS_LEADING_WHITE);
+    if (take_sign(p))
+        skip_white(p, NUMPRS_LEADING_WHITE);
+    if (take_currency(p)) {
+        skip_white(p, NUMPRS_LEADING_WHITE);
+        if (!p->Signed && take_sign(p))
+            skip_white(p, NUMPRS_LEADING_WHITE);
+    }
+    ULONG prefix = p->Out;
+    if (!take_digits(p)) {
+        p->Out = prefix;
+        return DISP_E_TYPEMISMATCH;
+    }
+    if (p->Closed)
+        return S_OK;
+    const WCHAR *before_exponent = p->At;
+    if (!take_exponent(p)) {
+        p->At = before_exponent;
+        return DISP_E_OVERFLOW;
+    }
+    take_trailing(p);
+    return p->ParenOpen ? DISP_E_TYPEMISMATCH : S_OK;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarParseNumFromStr(LPCOLESTR text, LCID lcid, ULONG locale_flags, NUMPARSE *np, BYTE *digits)
+{
+    if (!np || !digits)
         return E_INVALIDARG;
-    AUT_NUMBER n;
-    ULONG out;
-    int used;
-    HRESULT hr = AutNumberFromString(text, lcid, flags, parse->dwInFlags, &n, &out, &used);
-    /* what was read stays in the answer when the text is refused as well. */
-    parse->dwOutFlags = out;
-    parse->cchUsed = used;
-    int capacity = parse->cDig, count = n.Count;
-    /* the digits of a hexadecimal or octal number cannot be cut short. */
-    if (SUCCEEDED(hr) && n.Shift && count > capacity)
-        hr = DISP_E_TYPEMISMATCH;
-    parse->nBaseShift = n.Shift;
-    parse->nPwr10 = n.Shift ? 0 : n.Exponent;
-    if (count > capacity) {
-        for (int i = capacity; i < count; i++)
-            if (n.Digits[i])
-                parse->dwOutFlags |= NUMPRS_INEXACT;
-        if (!n.Shift)
-            parse->nPwr10 += count - capacity;
-        count = capacity;
-        while (count && !n.Digits[count - 1] && !n.Shift) {
-            count--;
-            parse->nPwr10++;
-        }
+    PARSE p;
+    memset(&p, 0, sizeof(p));
+    p.Text = p.At = text;
+    p.In = np->dwInFlags;
+    p.Digits = digits;
+    p.Capacity = np->cDig > 0 ? np->cDig : 0;
+    np->cDig = np->cchUsed = np->nBaseShift = np->nPwr10 = 0;
+    np->dwOutFlags = 0;
+    if (!text)
+        return DISP_E_TYPEMISMATCH;
+    load_symbols(lcid, locale_flags, &p.Symbols);
+
+    skip_white(&p, NUMPRS_LEADING_WHITE);
+    HRESULT hr;
+    if ((p.In & NUMPRS_HEX_OCT) && *p.At == L'&')
+        hr = parse_based(&p);
+    else
+        hr = parse_decimal(&p);
+
+    /* an overflow stops where it was found, and with the whole text asked for that is a mismatch. */
+    if (hr == S_OK || hr == DISP_E_OVERFLOW) {
+        if ((p.In & NUMPRS_USE_ALL) && *p.At)
+            hr = DISP_E_TYPEMISMATCH;
     }
-    if (count > 0)
-        memcpy(digits, n.Digits, count);
-    /* a number with no digit but zeros is one zero digit. */
-    if (!count && n.Seen && capacity > 0) {
-        digits[0] = 0;
-        count = 1;
-    }
-    parse->cDig = count;
+    np->cDig = p.Count;
+    np->dwOutFlags = p.Out;
+    np->nBaseShift = p.Shift;
+    np->nPwr10 = p.Power;
+    np->cchUsed = FAILED(hr) && !p.Count ? 0 : (int)(p.At - p.Text);
     return hr;
 }
 
-/* ------------------------------------------------------------------ exact values of digits */
+/* ------------------------------------------------------------------ wide integers */
 
-/* a 96 bit integer is three words, least significant first. */
-static BOOL u96_mul_small(ULONG v[3], ULONG m, ULONG add)
+/* an unsigned integer of 160 bits, which holds any decimal that has a chance to fit a currency or a decimal. */
+#define WIDE_LIMBS 5
+
+typedef struct {
+    ULONG L[WIDE_LIMBS];
+    BOOL Over;
+} WIDE;
+
+static void wide_mul_add(WIDE *w, ULONG m, ULONG a)
 {
-    ULONGLONG carry = add;
-    for (int i = 0; i < 3; i++) {
-        ULONGLONG t = (ULONGLONG)v[i] * m + carry;
-        v[i] = (ULONG)t;
+    ULONGLONG carry = a;
+    for (int i = 0; i < WIDE_LIMBS; i++) {
+        ULONGLONG t = (ULONGLONG)w->L[i] * m + carry;
+        w->L[i] = (ULONG)t;
         carry = t >> 32;
     }
-    return carry == 0;
+    if (carry)
+        w->Over = TRUE;
 }
 
-static ULONG u96_div_small(ULONG v[3], ULONG d)
+static void wide_add_one(WIDE *w)
 {
-    ULONGLONG rem = 0;
-    for (int i = 2; i >= 0; i--) {
-        ULONGLONG t = (rem << 32) | v[i];
-        v[i] = (ULONG)(t / d);
-        rem = t % d;
-    }
-    return (ULONG)rem;
+    for (int i = 0; i < WIDE_LIMBS; i++)
+        if (++w->L[i])
+            return;
+    w->Over = TRUE;
 }
 
-/*
- * the digits times ten to the exponent plus extra, rounded half to even to a 96 bit integer. FALSE when it does not
- * fit. A digit string with a base other than ten is an integer already.
- */
-BOOL AutNumberToU96(const AUT_NUMBER *n, int extra, ULONG *high, ULONGLONG *low)
+/* the value as 64 bits, false when it does not fit. */
+static BOOL wide_u64(const WIDE *w, ULONGLONG *v)
 {
-    ULONG v[3] = {0, 0, 0};
-    if (n->Shift) {
-        for (int i = 0; i < n->Count; i++)
-            if (!u96_mul_small(v, 1u << n->Shift, n->Digits[i]))
-                return FALSE;
-        for (int i = 0; i < extra; i++)
-            if (!u96_mul_small(v, 10, 0))
-                return FALSE;
-        *low = ((ULONGLONG)v[1] << 32) | v[0];
-        *high = v[2];
-        return TRUE;
-    }
-    int exponent = n->Exponent + extra;
-    int keep = n->Count + (exponent < 0 ? exponent : 0);
-    BOOL round_up = FALSE;
-    if (!n->Count) {
-        keep = 0;
-    } else if (keep < 0) {
-        keep = 0;
-        /* everything is below one half of a unit. */
-    } else if (exponent < 0) {
-        /* the first digit that is dropped decides, ties go to the even neighbour. */
-        BYTE first = n->Digits[keep];
-        BOOL rest = n->Inexact;
-        for (int i = keep + 1; i < n->Count && !rest; i++)
-            rest = n->Digits[i] != 0;
-        BOOL odd = keep ? (n->Digits[keep - 1] & 1) : FALSE;
-        round_up = first > 5 || (first == 5 && (rest || odd));
-    }
-    for (int i = 0; i < keep; i++)
-        if (!u96_mul_small(v, 10, n->Digits[i]))
-            return FALSE;
-    if (exponent > 0 && n->Count) {
-        if (exponent > 30)
-            return FALSE;
-        for (int i = 0; i < exponent; i++)
-            if (!u96_mul_small(v, 10, 0))
-                return FALSE;
-    }
-    if (round_up && !u96_mul_small(v, 1, 1))
+    if (w->Over)
         return FALSE;
-    *low = ((ULONGLONG)v[1] << 32) | v[0];
-    *high = v[2];
+    for (int i = 2; i < WIDE_LIMBS; i++)
+        if (w->L[i])
+            return FALSE;
+    *v = ((ULONGLONG)w->L[1] << 32) | w->L[0];
     return TRUE;
 }
 
-double AutNumberToDouble(const AUT_NUMBER *n)
+/* the value fits in 96 bits. */
+static BOOL wide_fits96(const WIDE *w)
 {
-    double d;
-    if (n->Shift) {
-        ULONG hi;
-        ULONGLONG lo;
-        if (!AutNumberToU96(n, 0, &hi, &lo))
-            return n->Negative ? -1e308 * 10.0 : 1e308 * 10.0;
-        d = (double)(LONGLONG)(lo >> 1) * 2.0 + (double)(LONGLONG)(lo & 1);
-        d += (double)hi * 18446744073709551616.0;
-    } else {
-        d = AutDigitsToDouble(n->Digits, n->Count, n->Count + n->Exponent);
-    }
-    return n->Negative ? -d : d;
+    return !w->Over && !w->L[3] && !w->L[4];
 }
 
-/* ------------------------------------------------------------------ VarNumFromParseNum */
+/* ------------------------------------------------------------------ the number as the digits left it */
+
+typedef struct {
+    BOOL Negative;
+    BOOL Inexact;
+    BOOL Zero;
+    /* the digits, as they are. */
+    const BYTE *Digits;
+    int Count;
+    /* ten to this multiplies the digits as an integer; far larger than the digits can make it. */
+    LONGLONG Power;
+    /* the number was a bit pattern, whose value a double takes by arithmetic and not from the digits. */
+    BOOL FromBits;
+    ULONGLONG Bits;
+} NUM;
+
+/* the number as the caller wrote it: windows does not take zeros off either end of the digits. */
+static void num_from_parse(const NUMPARSE *np, const BYTE *digits, NUM *n)
+{
+    n->Negative = (np->dwOutFlags & NUMPRS_NEG) != 0;
+    n->Inexact = (np->dwOutFlags & NUMPRS_INEXACT) != 0;
+    n->Digits = digits;
+    n->Count = np->cDig > 0 ? np->cDig : 0;
+    n->Power = np->nPwr10;
+    n->FromBits = FALSE;
+    n->Zero = TRUE;
+    for (int i = 0; i < n->Count; i++)
+        if (digits[i]) {
+            n->Zero = FALSE;
+            break;
+        }
+}
+
+/* the digits and the power for an unsigned integer, with zeros in front of them up to the length asked for. */
+static void num_from_integer(ULONGLONG v, BOOL negative, int length, LONGLONG power, BYTE *buffer, NUM *n)
+{
+    ULONGLONG value = v;
+    int count = 0;
+    BYTE reversed[20];
+    while (v) {
+        reversed[count++] = (BYTE)(v % 10);
+        v /= 10;
+    }
+    n->Negative = negative;
+    n->Inexact = FALSE;
+    n->Zero = count == 0;
+    n->Digits = buffer;
+    n->Count = count > length ? count : length;
+    n->Power = power;
+    n->FromBits = TRUE;
+    n->Bits = value;
+    int padding = n->Count - count;
+    for (int i = 0; i < padding; i++)
+        buffer[i] = 0;
+    for (int i = 0; i < count; i++)
+        buffer[padding + i] = reversed[count - 1 - i];
+}
+
+/* the digits times ten to the power, as long as that is below 2^160. */
+static void num_wide(const NUM *n, LONGLONG power, WIDE *w)
+{
+    memset(w, 0, sizeof(*w));
+    for (int i = 0; i < n->Count; i++)
+        wide_mul_add(w, 10, n->Digits[i]);
+    for (LONGLONG i = 0; i < power && !w->Over; i++)
+        wide_mul_add(w, 10, 0);
+}
 
 /*
- * What a parsed number becomes. The types asked for are bits, and the answer is the first that holds the number in this
- * order: the integers from the smallest, then a float when the number is whole and small, a currency, a decimal, and at
- * last a float of any size. The way windows chooses is kept, not what would be tidy: a fraction is only rounded off when
- * no type that can hold it was asked for, a float is taken for any number when no currency or decimal was asked for, and
- * a hexadecimal number that has the top bit of its width set is a negative one.
+ * The digits as an integer of the scale asked for: ten to the power of the number divided by ten to minus scale, so
+ * the number is rounded to a multiple of ten to minus scale when it has more places. Ties go to the even, or up when the
+ * number was cut short of digits already.
  */
-
-#define NB_I1 0x10000u
-#define NB_UI1 0x20000u
-#define NB_UI2 0x40000u
-#define NB_UI4 0x80000u
-#define NB_I8 0x100000u
-#define NB_UI8 0x200000u
-#define NB_FRACTIONAL 0x4070u
-#define NB_INTEGERS 0x3F000Cu
-
-static const ULONGLONG g_pow10_u64[20] = {1ull, 10ull, 100ull, 1000ull, 10000ull, 100000ull, 1000000ull, 10000000ull, 100000000ull,
-                                          1000000000ull, 10000000000ull, 100000000000ull, 1000000000000ull, 10000000000000ull,
-                                          100000000000000ull, 1000000000000000ull, 10000000000000000ull, 100000000000000000ull,
-                                          1000000000000000000ull, 10000000000000000000ull};
-
-static HRESULT set_integer_result(VARIANT *out, VARTYPE vt, LONGLONG value)
+static void num_scaled(const NUM *n, int scale, WIDE *w)
 {
-    VariantClear(out);
-    out->vt = vt;
-    out->llVal = 0;
-    switch (vt) {
-    case VT_I1:
-    case VT_UI1: out->bVal = (BYTE)value; break;
-    case VT_I2:
-    case VT_UI2: out->iVal = (SHORT)value; break;
-    case VT_I4:
-    case VT_UI4: out->lVal = (LONG)value; break;
-    default: out->llVal = value; break;
+    LONGLONG shift = n->Power + scale;
+    if (shift >= 0 || n->Zero) {
+        memset(w, 0, sizeof(*w));
+        if (n->Zero)
+            return;
+        /* a power beyond sixty is out of reach of 160 bits for any digit that is not zero. */
+        if (shift > 60)
+            w->Over = TRUE;
+        else
+            num_wide(n, shift, w);
+        return;
     }
-    return S_OK;
+    LONGLONG drop = -shift;
+    int keep = drop >= n->Count ? 0 : n->Count - (int)drop;
+    memset(w, 0, sizeof(*w));
+    for (int i = 0; i < keep; i++)
+        wide_mul_add(w, 10, n->Digits[i]);
+    /* the first digit that goes decides, the ones after it say whether it is exactly half. */
+    int cut = 0;
+    BOOL rest = FALSE;
+    if (drop > n->Count) {
+        cut = 0;
+    } else {
+        cut = n->Digits[keep];
+        for (int i = keep + 1; i < n->Count; i++)
+            if (n->Digits[i])
+                rest = TRUE;
+    }
+    BOOL up;
+    if (cut > 5 || (cut == 5 && rest))
+        up = TRUE;
+    else if (cut < 5)
+        up = FALSE;
+    else
+        up = n->Inexact || (w->L[0] & 1);
+    if (up)
+        wide_add_one(w);
 }
 
-/* the integer types in order, for a magnitude and the value it has with its sign. */
-static BOOL pick_integer(ULONG bits, ULONGLONG magnitude, LONGLONG signed_value, VARTYPE *vt)
+/* ------------------------------------------------------------------ the types */
+
+typedef struct {
+    VARTYPE Vt;
+    int Bits;
+    BOOL Signed;
+} INT_TYPE;
+
+/* the order in which a whole number looks for a home. */
+static const INT_TYPE g_int_types[] = {{VT_I1, 8, TRUE},   {VT_UI1, 8, FALSE},  {VT_I2, 16, TRUE},  {VT_UI2, 16, FALSE},
+                                       {VT_I4, 32, TRUE},  {VT_UI4, 32, FALSE}, {VT_I8, 64, TRUE},   {VT_UI8, 64, FALSE}};
+
+static void put_integer(VARIANT *out, VARTYPE vt, ULONGLONG bits)
 {
-    if ((bits & (NB_I1 | NB_UI1 | VTBIT_I2)) && magnitude <= 0x8000) {
-        if ((bits & (NB_I1 | NB_UI1)) && magnitude <= 0xFF) {
-            if ((bits & NB_I1) && magnitude <= 0x80 && signed_value < 128) {
-                *vt = VT_I1;
-                return TRUE;
-            }
-            if (bits & NB_UI1) {
-                *vt = VT_UI1;
-                return TRUE;
-            }
-        }
-        if ((bits & VTBIT_I2) && signed_value <= 0x7FFF) {
-            *vt = VT_I2;
-            return TRUE;
-        }
+    out->vt = vt;
+    switch (vt) {
+    case VT_I1:
+    case VT_UI1: out->bVal = (BYTE)bits; break;
+    case VT_I2:
+    case VT_UI2: out->uiVal = (USHORT)bits; break;
+    case VT_I4:
+    case VT_UI4: out->ulVal = (ULONG)bits; break;
+    default: out->ullVal = bits; break;
     }
-    if ((bits & (NB_UI2 | NB_UI4 | VTBIT_I4)) && magnitude <= 0xFFFFFFFFull) {
-        if ((bits & NB_UI2) && magnitude <= 0xFFFF) {
-            *vt = VT_UI2;
-            return TRUE;
-        }
-        if ((bits & VTBIT_I4) && signed_value <= 0x7FFFFFFF && magnitude <= 0x80000000ull) {
-            *vt = VT_I4;
-            return TRUE;
-        }
-        if (bits & NB_UI4) {
-            *vt = VT_UI4;
+}
+
+/* a magnitude and a sign into the first of the integer types asked for that holds it. */
+static BOOL store_integer(ULONG vtbits, BOOL negative, ULONGLONG magnitude, VARIANT *out)
+{
+    if (!magnitude)
+        negative = FALSE;
+    for (size_t i = 0; i < RTL_NUMBER_OF(g_int_types); i++) {
+        const INT_TYPE *t = &g_int_types[i];
+        if (!(vtbits & (1u << t->Vt)))
+            continue;
+        ULONGLONG limit;
+        if (t->Signed)
+            /* windows lets any negative number through to the 64 bit type, wrapped, as long as it has 64 bits. */
+            limit = t->Bits == 64 && negative ? 0xFFFFFFFFFFFFFFFFull
+                                              : (1ull << (t->Bits - 1)) - 1 + (negative ? 1 : 0);
+        else if (negative)
+            continue;
+        else
+            limit = t->Bits == 64 ? 0xFFFFFFFFFFFFFFFFull : (1ull << t->Bits) - 1;
+        if (magnitude > limit)
+            continue;
+        put_integer(out, t->Vt, negative ? 0 - magnitude : magnitude);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* the whole part of the number as a magnitude, rounded when asked to: false when it is beyond 64 bits. */
+static BOOL num_round_u64(const NUM *n, ULONGLONG *v)
+{
+    WIDE w;
+    /* a number of more than twenty digits is out of reach, though it be zero. */
+    if (n->Count + n->Power > 20)
+        return FALSE;
+    num_scaled(n, 0, &w);
+    return wide_u64(&w, v);
+}
+
+static void put_real(VARIANT *out, double v, BOOL r4)
+{
+    if (r4) {
+        out->vt = VT_R4;
+        out->fltVal = (float)v;
+    } else {
+        out->vt = VT_R8;
+        out->dblVal = v;
+    }
+}
+
+static double infinity(void)
+{
+    static const ULONGLONG bits = 0x7FF0000000000000ull;
+    double v;
+    memcpy(&v, &bits, sizeof(v));
+    return v;
+}
+
+static double u64_to_double(ULONGLONG v)
+{
+    if ((LONGLONG)v >= 0)
+        return (double)(LONGLONG)v;
+    return (double)(LONGLONG)((v >> 1) | (v & 1)) * 2.0;
+}
+
+/* the value of the digits, signed, in a double. */
+static double num_double(const NUM *n)
+{
+    if (n->Zero)
+        return n->Negative ? -0.0 : 0.0;
+    double v;
+    if (n->FromBits && n->Power) {
+        /* windows scales a double of the integer by a double of the power, and its last bit shows it. */
+        LONGLONG power = n->Power < 0 ? -n->Power : n->Power;
+        BYTE one = 1;
+        if (power > 400)
+            v = n->Power > 0 ? infinity() : 0.0;
+        else if (n->Power > 0)
+            v = u64_to_double(n->Bits) * AutDigitsToDouble(&one, 1, (int)power + 1);
+        else
+            v = u64_to_double(n->Bits) / AutDigitsToDouble(&one, 1, (int)power + 1);
+        return n->Negative ? -v : v;
+    }
+    LONGLONG point = n->Count + n->Power;
+    if (point > 400)
+        v = infinity();
+    else if (point < -400)
+        v = 0.0;
+    else
+        v = AutDigitsToDouble(n->Digits, n->Count, (int)point);
+    return n->Negative ? -v : v;
+}
+
+static BOOL is_infinite(double v)
+{
+    return v - v != 0;
+}
+
+/* a currency of the number: exact when it has no more than four places, otherwise rounded to four. */
+static BOOL currency_fits(const NUM *n, BOOL exact, WIDE *w)
+{
+    if (exact && n->Power < -4)
+        return FALSE;
+    /* more than fifteen digits before the point are out of reach, though they be zeros. */
+    if (n->Count + n->Power > 15)
+        return FALSE;
+    ULONGLONG v;
+    num_scaled(n, 4, w);
+    if (!wide_u64(w, &v))
+        return FALSE;
+    return v <= 0x7FFFFFFFFFFFFFFFull + (n->Negative ? 1 : 0);
+}
+
+static void put_currency(VARIANT *out, const WIDE *w, BOOL negative)
+{
+    ULONGLONG v = ((ULONGLONG)w->L[1] << 32) | w->L[0];
+    out->vt = VT_CY;
+    out->cyVal.int64 = negative ? (LONGLONG)(0 - v) : (LONGLONG)v;
+}
+
+static void put_decimal(VARIANT *out, const WIDE *w, int scale, BOOL negative)
+{
+    out->decVal.wReserved = VT_DECIMAL;
+    out->decVal.scale = (BYTE)scale;
+    out->decVal.sign = negative ? DECIMAL_NEG : 0;
+    out->decVal.Hi32 = w->L[2];
+    out->decVal.Lo64 = ((ULONGLONG)w->L[1] << 32) | w->L[0];
+}
+
+/*
+ * The decimal of the number: the digits as they are when they fit 96 bits and a scale of 28. Otherwise the places are cut
+ * off one at a time, rounded, until they do; the number of digits that are left is returned in *kept, and a number whose
+ * every digit is lost gives zero. False when nothing can be done, as for a whole number of 30 digits.
+ */
+static BOOL decimal_fits(const NUM *n, WIDE *w, int *scale, int *kept)
+{
+    *kept = n->Count;
+    /* more than 29 digits before the point are out of reach, though they be zeros. */
+    if (n->Power >= 0 && n->Count + n->Power > 29)
+        return FALSE;
+    if (n->Power >= 0) {
+        num_wide(n, n->Power, w);
+        *scale = 0;
+        return wide_fits96(w);
+    }
+    LONGLONG places = -n->Power;
+    if (n->Count - places < -28) {
+        /* the first digit is already beyond the last place that a decimal has. */
+        memset(w, 0, sizeof(*w));
+        *scale = 0;
+        *kept = 0;
+        return TRUE;
+    }
+    for (int s = places > 28 ? 28 : (int)places; s >= 0; s--) {
+        /* the digits left count as the digits there are, whatever their value, and are at most 29. */
+        if (n->Count - (places - s) > 29)
+            continue;
+        num_scaled(n, s, w);
+        if (wide_fits96(w)) {
+            *scale = s;
+            *kept = n->Count - (int)(places - s);
             return TRUE;
         }
     }
     return FALSE;
 }
 
-/* the digits and the power of ten as a number that can be written in the types of float, currency and decimal. */
-static void raw_number(const NUMPARSE *np, const BYTE *digits, AUT_NUMBER *n)
+/* the first of the real, currency and decimal types asked for that holds the number, after the integers. */
+static HRESULT store_other(const NUM *n, ULONG vtbits, BOOL whole, LONGLONG places4, LONGLONG places8, VARIANT *out)
 {
-    memset(n, 0, sizeof(*n));
-    int count = np->cDig;
-    if (count > (int)sizeof(n->Digits))
-        count = sizeof(n->Digits);
-    memcpy(n->Digits, digits, count);
-    n->Count = count;
-    n->Exponent = np->nPwr10;
-    n->Negative = (np->dwOutFlags & NUMPRS_NEG) != 0;
-    n->Inexact = (np->dwOutFlags & NUMPRS_INEXACT) != 0;
-}
+    BOOL r4 = (vtbits & VTBIT_R4) != 0, r8 = (vtbits & VTBIT_R8) != 0;
+    BOOL cy = (vtbits & VTBIT_CY) != 0, dec = (vtbits & VTBIT_DECIMAL) != 0;
 
-WINOLEAUTAPI HRESULT WINAPI VarNumFromParseNum(NUMPARSE *np, BYTE *rgbDig, ULONG dwVtBits, VARIANT *pvar)
-{
-    if (!np || !rgbDig || !pvar)
-        return E_INVALIDARG;
-    ULONG bits = dwVtBits;
-    int cDig = np->cDig, pw = np->nPwr10, base = np->nBaseShift;
-    ULONG flags = np->dwOutFlags;
-    int mag = pw + cDig;
-    int frac = 0;
-    ULONGLONG acc = 0;
-    BOOL slow = FALSE;
-    /* the digits in the form the float, currency and decimal builders take, a hexadecimal number being a whole one. */
-    AUT_NUMBER n;
-    BYTE hex_digits[24];
-
-    if (base) {
-        if (base * cDig > 66 || (base * cDig == 66 && rgbDig[0] > 1))
-            return DISP_E_OVERFLOW;
-        for (int i = 0; i < cDig; i++)
-            acc = rgbDig[i] + (acc << base);
-        if (bits & NB_INTEGERS) {
-            if (bits & (NB_I1 | NB_UI1)) {
-                if ((bits & NB_I1) && (acc - 256 > 0xFFFFFE7Full))
-                    return set_integer_result(pvar, VT_I1, (LONGLONG)acc);
-                if ((bits & NB_UI1) && acc <= 0xFF)
-                    return set_integer_result(pvar, VT_UI1, (LONGLONG)acc);
-            }
-            if (bits & (NB_UI2 | VTBIT_I2)) {
-                if ((bits & VTBIT_I2) && (acc - 0x10000 > 0xFFFE7FFFull))
-                    return set_integer_result(pvar, VT_I2, (LONGLONG)acc);
-                if ((bits & NB_UI2) && acc <= 0xFFFF)
-                    return set_integer_result(pvar, VT_UI2, (LONGLONG)acc);
-            }
-            if (bits & (NB_UI4 | VTBIT_I4)) {
-                if (bits & VTBIT_I4)
-                    return set_integer_result(pvar, VT_I4, (LONGLONG)acc);
-                if ((bits & NB_UI4) && acc <= 0xFFFFFFFFull)
-                    return set_integer_result(pvar, VT_UI4, (LONGLONG)acc);
-            }
-            if (bits & NB_I8)
-                return set_integer_result(pvar, VT_I8, (LONGLONG)acc);
-            if (bits & NB_UI8)
-                return set_integer_result(pvar, VT_UI8, (LONGLONG)acc);
-        }
-        /* the sign of a number of 32 or 64 bits that has its top bit set is part of the number. */
-        BOOL resolved = FALSE;
-        if (acc >> 63) {
-            flags |= NUMPRS_NEG;
-            acc = 0 - acc;
-            np->dwOutFlags = flags;
-        } else if (acc >= 0x80000000ull && acc < 0x100000000ull) {
-            flags |= NUMPRS_NEG;
-            np->dwOutFlags = flags;
-            if (acc != 0x80000000ull)
-                acc = 0x100000000ull - acc;
-            else
-                resolved = TRUE;
-        }
-        if (!resolved && acc < 10000000ull) {
-            /* a small number goes on with every type asked for. */
-        } else if (bits & 0x4060) {
-            bits &= ~0x10u;
-        }
-        /* the number as digits, whole. */
-        int len = 0;
-        BYTE reversed[24];
-        for (ULONGLONG t = acc; t; t /= 10)
-            reversed[len++] = (BYTE)(t % 10);
-        for (int i = 0; i < len; i++)
-            hex_digits[i] = reversed[len - 1 - i];
-        memset(&n, 0, sizeof(n));
-        memcpy(n.Digits, hex_digits, len);
-        n.Count = len;
-        n.Exponent = 0;
-        n.Negative = (flags & NUMPRS_NEG) != 0;
-        n.Inexact = FALSE;
-        pw = 0;
-        cDig = len;
-        frac = 0;
-        /* the number of digits the choices below look at is that of the text, not of the value. */
-    } else {
-        BOOL fractional = (bits & NB_FRACTIONAL) != 0;
-        int whole_digits = cDig;
-        int power = pw;
-        frac = pw < 0 ? -pw : 0;
-        if (!fractional) {
-            whole_digits = cDig - frac;
-            power = pw + frac;
-        }
-        BOOL integer_phase = FALSE, rounds = TRUE;
-        int left = cDig;
-        if ((whole_digits < 20 && !fractional) || (whole_digits <= 15 && whole_digits >= 0 && fractional) ||
-            (whole_digits < 0 && fractional && whole_digits <= 15)) {
-            /* the digits above the point, and a fraction that rounds them if nothing asked for can hold it. */
-            int take = whole_digits;
-            if (take == 10 && rgbDig[0] == 4) {
-                rounds = FALSE;
-                left -= 10;
-            } else {
-                left -= take;
-            }
-            const BYTE *p = rgbDig;
-            for (int i = 0; i < take; i++)
-                acc = *p++ + 10 * acc;
-            if (left > 0 && take >= 0 && rounds) {
-                BYTE d = *p;
-                BOOL up = FALSE;
-                if (d > 5) {
-                    up = TRUE;
-                } else if (d == 5) {
-                    if (flags & NUMPRS_INEXACT) {
-                        up = TRUE;
-                    } else {
-                        for (int i = 1; i < left && !up; i++)
-                            up = p[i] != 0;
-                        if (!up && (acc & 1))
-                            up = TRUE;
-                    }
-                }
-                if (up)
-                    acc++;
-            }
-            integer_phase = TRUE;
-        } else if (whole_digits > 15 && whole_digits == 20 && !fractional && rgbDig[0] == 1) {
-            const BYTE *p = rgbDig;
-            for (int i = 0; i < 20; i++)
-                acc = *p++ + 10 * acc;
-            if (acc >= 10000000000000000000ull) {
-                left = cDig - 20;
-                integer_phase = TRUE;
-            } else {
-                bits &= NB_FRACTIONAL;
-                slow = TRUE;
-            }
-        } else {
-            bits &= NB_FRACTIONAL;
-            slow = TRUE;
-        }
-        if (integer_phase && (bits & NB_INTEGERS) && mag <= 20 && !(frac && fractional)) {
-            BOOL ok = TRUE;
-            if (power > 0) {
-                if (power >= 20)
-                    ok = FALSE;
-                else if (mag == 20 && (rgbDig[0] > 1 || (rgbDig[0] != 0 && g_pow10_u64[power] * acc < 10000000000000000000ull)))
-                    ok = FALSE;
-                else
-                    acc *= g_pow10_u64[power];
-            }
-            if (ok) {
-                LONGLONG v21 = (LONGLONG)acc;
-                if ((flags & NUMPRS_NEG) && acc) {
-                    bits &= 0xFFD1FFFFu;
-                    v21 = -(LONGLONG)acc;
-                }
-                VARTYPE vt;
-                if (pick_integer(bits, acc, v21, &vt))
-                    return set_integer_result(pvar, vt, v21);
-                if (bits & NB_I8) {
-                    if (!(v21 < 0 && !(flags & NUMPRS_NEG)))
-                        return set_integer_result(pvar, VT_I8, v21);
-                }
-                if (bits & NB_UI8)
-                    return set_integer_result(pvar, VT_UI8, (LONGLONG)acc);
-            }
-        }
-        raw_number(np, rgbDig, &n);
-        if (slow)
-            bits &= NB_FRACTIONAL;
-    }
-
-    /* the types for a number that is not whole or does not fit an integer. */
-    BOOL negative = (flags & NUMPRS_NEG) != 0;
-    n.Negative = FALSE;
-    double value = AutNumberToDouble(&n);
-    n.Negative = negative;
-
-    if (!slow) {
-        BOOL go_float = (bits & 0x30) &&
-                        (!(bits & 0x4040) || (frac == 0 && (mag <= 7 || (mag <= 15 && (bits & 0x20)))));
-        /* the walk of windows does not end when the same choice is made again and again, which this one does. */
-        for (int round = 0;; round++) {
-            if (round == 4)
-                return DISP_E_OVERFLOW;
-            BOOL try_float = go_float;
-            go_float = FALSE;
-            if (!try_float) {
-                BOOL cy_applies = (bits & 0x40) && mag <= 15 && !((bits & 0x4030) && frac > 4 && ((bits & 0x4020) || mag <= 3));
-                if (cy_applies)
-                    break;
-                if ((bits & 0x4000) && mag <= 29) {
-                    if ((bits & 0x30) && frac > 28 && ((bits & 0x20) || np->cDig - frac + 28 <= 7)) {
-                        try_float = TRUE;
-                    } else {
-                        DECIMAL dec;
-                        if (SUCCEEDED(AutDecimalFromNumber(&n, &dec))) {
-                            VariantClear(pvar);
-                            pvar->decVal = dec;
-                            pvar->vt = VT_DECIMAL;
-                            return S_OK;
-                        }
-                    }
-                }
-                if (!try_float && !(bits & 0x30))
-                    return DISP_E_OVERFLOW;
-            }
-            if (value > 3.402823567797336e38)
-                bits &= ~0x10u;
-            if (!(value <= 1.7976931348623157e308))
-                return DISP_E_OVERFLOW;
-            double signed_value = negative ? -value : value;
-            if ((bits & 0x10) && (!(bits & 0x4060) || (mag <= 7 && frac == 0))) {
-                VariantClear(pvar);
-                pvar->vt = VT_R4;
-                pvar->fltVal = (float)signed_value;
-                return S_OK;
-            }
-            if (bits & 0x20) {
-                VariantClear(pvar);
-                pvar->vt = VT_R8;
-                pvar->dblVal = signed_value;
-                return S_OK;
-            }
-        }
-        /* a currency; when it does not fit, the rest is looked at again without it. */
-        ULONG hi;
-        ULONGLONG lo;
-        if (AutNumberToU96(&n, 4, &hi, &lo) && !hi && lo <= (negative ? 0x8000000000000000ull : 0x7FFFFFFFFFFFFFFFull)) {
-            VariantClear(pvar);
-            pvar->vt = VT_CY;
-            pvar->cyVal.int64 = negative ? (LONGLONG)(0 - lo) : (LONGLONG)lo;
+    /* a whole number that a float keeps whole has no use for the other types. */
+    if (whole) {
+        if (r4 && places4 <= 7 && places8 <= 15) {
+            put_real(out, num_double(n), TRUE);
             return S_OK;
         }
-        bits &= ~0x40u;
+        if (r8 && places8 <= 15) {
+            put_real(out, num_double(n), FALSE);
+            return S_OK;
+        }
     }
+    /* what the currency would keep of the number, in digits. */
+    LONGLONG currency_digits = n->Count + n->Power + 4;
+    WIDE cw, dw;
+    int dscale = 0, dkept = 0;
+    BOOL decimal_ok = dec && decimal_fits(n, &dw, &dscale, &dkept);
+    BOOL decimal_exact = decimal_ok && dkept == n->Count && n->Power >= -28;
 
-    for (;;) {
-        if (!bits)
-            return DISP_E_OVERFLOW;
-        if (!(bits & 0x4040) || ((bits & 0x20) && frac == 0 && np->cDig <= 15))
-            break;
-        if ((bits & 0x40) && mag <= 15 &&
-            (!(bits & 0x4030) || frac <= 4 || (!(bits & 0x4000) && mag > 11) || (!(bits & 0x20) && mag > 3))) {
-            ULONG hi;
-            ULONGLONG lo;
-            if (AutNumberToU96(&n, 4, &hi, &lo) && !hi && lo <= (negative ? 0x8000000000000000ull : 0x7FFFFFFFFFFFFFFFull)) {
-                VariantClear(pvar);
-                pvar->vt = VT_CY;
-                pvar->cyVal.int64 = negative ? (LONGLONG)(0 - lo) : (LONGLONG)lo;
-                return S_OK;
-            }
-            bits &= ~0x40u;
-            continue;
-        }
-        if ((bits & 0x4000) && mag <= 29) {
-            BOOL build = TRUE;
-            if ((bits & 0x30) && frac > 28) {
-                int left_digits = np->cDig - frac + 28;
-                build = left_digits > 15 || (!(bits & 0x20) && left_digits > 7);
-            }
-            if (build) {
-                DECIMAL dec;
-                if (SUCCEEDED(AutDecimalFromNumber(&n, &dec))) {
-                    VariantClear(pvar);
-                    pvar->decVal = dec;
-                    pvar->vt = VT_DECIMAL;
-                    return S_OK;
-                }
-                bits &= ~0x4000u;
-                continue;
-            }
-        }
-        bits &= ~0x4040u;
-    }
-    if (value > 3.402823567797336e38)
-        bits &= ~0x10u;
-    if (!(value <= 1.7976931348623157e308))
-        return DISP_E_OVERFLOW;
-    double signed_value = negative ? -value : value;
-    if (bits & 0x20) {
-        VariantClear(pvar);
-        pvar->vt = VT_R8;
-        pvar->dblVal = signed_value;
+    if (cy && currency_fits(n, TRUE, &cw)) {
+        put_currency(out, &cw, n->Negative);
         return S_OK;
     }
-    if (bits & 0x10) {
-        VariantClear(pvar);
-        pvar->vt = VT_R4;
-        pvar->fltVal = (float)signed_value;
+    /* with many digits, a decimal and a currency are chosen by what the currency would keep, not by what is exact. */
+    if (cy && dec && !r8 && !r4 && n->Count >= 16 && currency_digits >= 8 && currency_fits(n, FALSE, &cw)) {
+        put_currency(out, &cw, n->Negative);
+        return S_OK;
+    }
+    if (decimal_exact) {
+        put_decimal(out, &dw, dscale, n->Negative);
+        return S_OK;
+    }
+    if (r8 || r4) {
+        /* a float is kept for the numbers that the types asked for cannot hold as many digits of as it does. */
+        if (decimal_ok && dkept >= 16) {
+            put_decimal(out, &dw, dscale, n->Negative);
+            return S_OK;
+        }
+        if (cy && currency_digits >= 16 && currency_fits(n, FALSE, &cw)) {
+            put_currency(out, &cw, n->Negative);
+            return S_OK;
+        }
+        double v = num_double(n);
+        if (is_infinite(v))
+            return DISP_E_OVERFLOW;
+        put_real(out, v, !r8);
+        if (!r8 && is_infinite(out->fltVal))
+            return DISP_E_OVERFLOW;
+        return S_OK;
+    }
+    if (decimal_ok) {
+        put_decimal(out, &dw, dscale, n->Negative);
+        return S_OK;
+    }
+    if (cy && currency_fits(n, FALSE, &cw)) {
+        put_currency(out, &cw, n->Negative);
         return S_OK;
     }
     return DISP_E_OVERFLOW;
 }
 
-/* ------------------------------------------------------------------ decimals */
-
-/* the largest scale up to 28 whose digits still fit in 96 bits. */
-HRESULT AutDecimalFromNumber(const AUT_NUMBER *n, DECIMAL *out)
+static HRESULT choose_decimal(const NUM *n, ULONG vtbits, VARIANT *out)
 {
-    out->wReserved = 0;
-    out->sign = n->Negative ? 0x80 : 0;
-    /* digits all below the last place a decimal has are nothing, whatever the scale they were typed with. */
-    if (!n->Shift && n->Count + n->Exponent < -28) {
-        out->scale = 0;
-        out->Hi32 = 0;
-        out->Lo64 = 0;
-        return S_OK;
-    }
-    int scale = n->Shift || n->Exponent >= 0 ? 0 : -n->Exponent;
-    if (scale > 28)
-        scale = 28;
-    ULONG high;
-    ULONGLONG low;
-    while (!AutNumberToU96(n, scale, &high, &low)) {
-        if (!scale)
+    BOOL whole = n->Power >= 0;
+    BOOL has_fraction_type = (vtbits & (VTBIT_R4 | VTBIT_R8 | VTBIT_CY | VTBIT_DECIMAL)) != 0;
+    ULONGLONG magnitude;
+    /* with more than fifteen digits, an integer is the choice only when nothing else could hold the number. */
+    if ((whole || !has_fraction_type) && (n->Count <= 15 || !has_fraction_type)) {
+        if (num_round_u64(n, &magnitude) && store_integer(vtbits, n->Negative, magnitude, out))
+            return S_OK;
+        if (!has_fraction_type)
             return DISP_E_OVERFLOW;
-        scale--;
     }
-    out->scale = (BYTE)scale;
-    out->Hi32 = high;
-    out->Lo64 = low;
-    return S_OK;
+    return store_other(n, vtbits, whole, n->Count + n->Power, n->Count + n->Power, out);
 }
 
-BOOL AutDecimalValid(const DECIMAL *d)
-{
-    return d->scale <= 28 && !(d->sign & 0x7F);
-}
+/* ------------------------------------------------------------------ hexadecimal and octal */
 
-/* a decimal as a double. */
-double AutDecimalToDouble(const DECIMAL *d)
+/* the integer the digits make, whose length in bits is returned; false when it takes more than 64. */
+static BOOL based_value(const NUMPARSE *np, const BYTE *digits, ULONGLONG *v, int *bits)
 {
-    static const double pow10[29] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,
-                                     1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
-                                     1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28};
-    ULONGLONG lo = d->Lo64;
-    double v = (double)(LONGLONG)(lo >> 1) * 2.0 + (double)(LONGLONG)(lo & 1);
-    v += (double)d->Hi32 * 18446744073709551616.0;
-    v /= pow10[d->scale > 28 ? 28 : d->scale];
-    return d->sign ? -v : v;
-}
-
-/*
- * the value of a decimal rounded to an integer, half to even: its magnitude, which is 64 bits at most unless
- * overflow comes back TRUE, and its sign.
- */
-BOOL AutDecimalToInteger(const DECIMAL *d, BOOL *negative, ULONGLONG *magnitude)
-{
-    ULONG v[3] = {(ULONG)d->Lo64, (ULONG)(d->Lo64 >> 32), d->Hi32};
-    ULONG last = 0;
-    BOOL sticky = FALSE;
-    for (int i = 0; i < d->scale; i++) {
-        sticky = sticky || last != 0;
-        last = u96_div_small(v, 10);
-    }
-    if (d->scale) {
-        BOOL odd = v[0] & 1;
-        if (last > 5 || (last == 5 && (sticky || odd))) {
-            u96_mul_small(v, 1, 1);
+    ULONGLONG value = 0;
+    int length = 0;
+    for (int i = 0; i < np->cDig; i++) {
+        BYTE d = digits[i] & 15;
+        if (!length) {
+            int b = 0;
+            for (int t = d; t; t >>= 1)
+                b++;
+            if (!b)
+                continue;
+            length = b;
+        } else {
+            length += np->nBaseShift;
         }
+        if (length > 64)
+            return FALSE;
+        value = (value << np->nBaseShift) | d;
     }
-    *negative = d->sign != 0;
-    if (v[2])
-        return FALSE;
-    *magnitude = ((ULONGLONG)v[1] << 32) | v[0];
+    *v = value;
+    *bits = length;
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ formatting */
-
-static BSTR make_bstr(const WCHAR *text, HRESULT *hr)
-{
-    BSTR b = SysAllocString(text);
-    *hr = b ? S_OK : E_OUTOFMEMORY;
-    return b;
-}
-
-/* the digits of v with a minus sign, most significant first. */
-int AutFormatInteger(LONGLONG v, BOOL is_unsigned, WCHAR *out)
-{
-    WCHAR rev[24];
-    int count = 0, n = 0;
-    ULONGLONG u;
-    if (!is_unsigned && v < 0) {
-        out[n++] = L'-';
-        u = 0 - (ULONGLONG)v;
-    } else {
-        u = (ULONGLONG)v;
-    }
-    ULONG hi = (ULONG)(u >> 32), lo = (ULONG)u;
-    do {
-        /* divide the 64 bit value by ten with 32 bit steps. */
-        ULONG q_hi = hi / 10, r = hi % 10;
-        ULONGLONG t = ((ULONGLONG)r << 32) | lo;
-        ULONG q_lo = (ULONG)(t / 10);
-        r = (ULONG)(t % 10);
-        rev[count++] = (WCHAR)(L'0' + r);
-        hi = q_hi;
-        lo = q_lo;
-    } while (hi || lo);
-    while (count)
-        out[n++] = rev[--count];
-    out[n] = 0;
-    return n;
-}
-
 /*
- * the text goes through the number format of the locale, built from the pieces that oleaut32 reads of it rather than
- * the locale's own: the first group of the grouping only, the digits of fractions given, none for an integer.
+ * The signed types take what fits in them as the bits of the number say, a number of 32 bits with its top bit set being
+ * negative; one of more bits than that is cut to the width of the type. The unsigned ones need the value to fit.
  */
-static HRESULT format_with_locale(LCID lcid, ULONG flags, const WCHAR *text, BOOL integer, BSTR *out)
+static BOOL based_fits(const INT_TYPE *t, ULONGLONG v, int bits)
 {
-    NUM_LOCALE loc;
-    number_locale(lcid, flags, &loc);
-    WCHAR decimal[2] = {loc.Decimal, 0}, thousand[2] = {loc.Thousand, 0};
-    NUMBERFMTW format;
-    memset(&format, 0, sizeof(format));
-    format.NumDigits = integer ? 0 : loc.Digits;
-    format.LeadingZero = loc.LeadingZero;
-    format.Grouping = loc.Grouping;
-    format.lpDecimalSep = decimal;
-    format.lpThousandSep = thousand;
-    format.NegativeOrder = loc.NegativeOrder;
-    WCHAR buffer[400];
-    if (!GetNumberFormatW(lcid ? lcid : LOCALE_USER_DEFAULT, 0, text, &format, buffer, 400))
-        return E_INVALIDARG;
-    HRESULT hr;
-    *out = make_bstr(buffer, &hr);
-    return hr;
+    if (!t->Signed)
+        return t->Bits == 64 || v < (1ull << t->Bits);
+    if (t->Bits >= 32 || bits > 32)
+        return TRUE;
+    if (bits < 32)
+        return v < (1ull << t->Bits);
+    return v < (1ull << t->Bits) || v >= 0x100000000ull - (1ull << (t->Bits - 1));
 }
 
-HRESULT AutBstrFromInteger(LONGLONG v, BOOL is_unsigned, LCID lcid, ULONG flags, BSTR *out)
+static HRESULT choose_based(const NUMPARSE *np, const BYTE *digits, ULONG vtbits, VARIANT *out)
 {
-    if (!out)
-        return E_INVALIDARG;
-    WCHAR text[24];
-    AutFormatInteger(v, is_unsigned, text);
-    if (flags & LOCALE_USE_NLS)
-        return format_with_locale(lcid, flags, text, TRUE, out);
-    HRESULT hr;
-    *out = make_bstr(text, &hr);
-    return hr;
+    ULONGLONG v;
+    int bits;
+    if (np->cDig > (np->nBaseShift == 3 ? 22 : 16) || !based_value(np, digits, &v, &bits))
+        return DISP_E_OVERFLOW;
+    for (size_t i = 0; i < RTL_NUMBER_OF(g_int_types); i++) {
+        const INT_TYPE *t = &g_int_types[i];
+        if ((vtbits & (1u << t->Vt)) && based_fits(t, v, bits)) {
+            put_integer(out, t->Vt, v);
+            return S_OK;
+        }
+    }
+    /* the others are negative when the number says so or its top bit does, and are weighed by the unsigned digits. */
+    BOOL top = (bits == 32 || bits == 64) && ((v >> (bits - 1)) & 1);
+    ULONGLONG magnitude = v;
+    if (top)
+        magnitude = bits == 32 ? (0 - (ULONGLONG)(ULONG)v) & 0xFFFFFFFFull : 0 - v;
+    BYTE buffer[24];
+    NUM n;
+    num_from_integer(magnitude, top || (np->dwOutFlags & NUMPRS_NEG) != 0, np->cDig, np->nPwr10, buffer, &n);
+    if (bits == 64)
+        vtbits &= ~(ULONG)VTBIT_CY;
+    /*
+     * A hexadecimal number of 13 to 15 digits that a currency refuses, asked for with a decimal and no real, comes out as
+     * a decimal made of its digits read as decimal ones, 0xFFFFFFFFFFFFF being 16666666666665. That is windows' answer.
+     */
+    WIDE cw;
+    if ((vtbits & VTBIT_CY) && (vtbits & VTBIT_DECIMAL) && !(vtbits & (VTBIT_R4 | VTBIT_R8)) && np->cDig >= 13 &&
+        np->cDig <= 15 && !currency_fits(&n, TRUE, &cw)) {
+        WIDE w;
+        memset(&w, 0, sizeof(w));
+        for (int i = 0; i < np->cDig; i++)
+            wide_mul_add(&w, 10, digits[i] & 15);
+        put_decimal(out, &w, 0, n.Negative);
+        return S_OK;
+    }
+    /*
+     * A double keeps whole as many digits as were written. A float keeps as many as the value has and, when the power of
+     * ten is not below zero, as were written.
+     */
+    LONGLONG places = 0;
+    for (ULONGLONG t = magnitude; t; t /= 10)
+        places++;
+    LONGLONG written = np->cDig;
+    if (np->nPwr10 >= 0 && written > places)
+        places = written;
+    if (np->nPwr10 > 0) {
+        places += np->nPwr10;
+        written += np->nPwr10;
+    }
+    return store_other(&n, vtbits, TRUE, places, written, out);
 }
 
-/* a double in the shortest form of ndigits digits at most: 1E+15, 0.0001, 123.456. */
-HRESULT AutBstrFromDouble(double v, int ndigits, LCID lcid, ULONG flags, BSTR *out)
+WINOLEAUTAPI HRESULT WINAPI VarNumFromParseNum(NUMPARSE *np, BYTE *digits, ULONG vtbits, VARIANT *out)
 {
-    if (!out)
+    if (!np || !digits || !out)
         return E_INVALIDARG;
-    char digits[48];
-    int point;
-    int count = AutDoubleDigits(v, ndigits, digits, &point);
-    WCHAR text[96];
-    int n = 0;
-    ULONGLONG bits;
-    memcpy(&bits, &v, 8);
-    BOOL sign = (bits >> 63) != 0;
-    if (((bits >> 52) & 0x7FF) == 0x7FF) {
-        /* what the runtime of C writes: 1.#INF, 1.#QNAN for a quiet one, 1.#SNAN for a signaling one and 1.#IND for the
-         * indefinite one, which is a quiet not a number with a sign and nothing else set. */
-        ULONGLONG fraction = bits & 0xFFFFFFFFFFFFFull;
-        const WCHAR *name = !fraction ? L"INF"
-                            : !(fraction & 0x8000000000000ull) ? L"SNAN"
-                            : sign && fraction == 0x8000000000000ull ? L"IND"
-                                                                     : L"QNAN";
-        if (flags & LOCALE_USE_NLS)
-            return E_INVALIDARG;
-        NUM_LOCALE loc;
-        number_locale(lcid, flags, &loc);
-        if (sign)
-            text[n++] = L'-';
-        text[n++] = L'1';
-        text[n++] = loc.Decimal;
-        text[n++] = L'#';
-        while (*name)
-            text[n++] = *name++;
-        text[n] = 0;
-        HRESULT hr;
-        *out = make_bstr(text, &hr);
-        return hr;
-    }
-    if (flags & LOCALE_USE_NLS) {
-        /* fixed notation with as many fraction digits as the locale has, from the seventeen digits of the value, which
-         * is what the runtime of C writes: the digits after those are zeros. Then the locale's grouping. */
-        NUM_LOCALE nl;
-        number_locale(lcid, flags, &nl);
-        char all[48];
-        int all_point;
-        int all_count = AutDoubleDigits(v, 17, all, &all_point);
-        WCHAR fixed[400];
-        int k = 0;
-        if (sign)
-            fixed[k++] = L'-';
-        /* the digits to keep: the whole part and the fraction the locale writes, rounded half away from zero. */
-        int keep = all_point + nl.Digits;
-        char d[48];
-        int d_point = all_point;
-        int d_count = 0;
-        if (all_count) {
-            if (keep < 0) {
-                d_count = 0;
-            } else if (keep >= all_count) {
-                memcpy(d, all, all_count);
-                d_count = all_count;
-            } else {
-                memcpy(d, all, keep);
-                d_count = keep;
-                if (all[keep] >= '5') {
-                    int i = keep - 1;
-                    for (; i >= 0; i--) {
-                        if (d[i] == '9') {
-                            d[i] = '0';
-                        } else {
-                            d[i]++;
-                            break;
-                        }
-                    }
-                    if (i < 0) {
-                        memmove(d + 1, d, d_count);
-                        d[0] = '1';
-                        d_count++;
-                        d_point++;
-                    }
-                }
-            }
-        }
-        if (d_count == 0 || d_point <= 0) {
-            fixed[k++] = L'0';
-        } else {
-            for (int i = 0; i < d_point && k < 340; i++)
-                fixed[k++] = i < d_count ? (WCHAR)d[i] : L'0';
-        }
-        if (nl.Digits > 0) {
-            fixed[k++] = L'.';
-            for (int i = 0; i < nl.Digits && k < 380; i++) {
-                int idx = d_point + i;
-                fixed[k++] = idx >= 0 && idx < d_count ? (WCHAR)d[idx] : L'0';
-            }
-        }
-        fixed[k] = 0;
-        return format_with_locale(lcid, flags, fixed, FALSE, out);
-    }
-    NUM_LOCALE loc;
-    number_locale(lcid, flags, &loc);
-    if (!count) {
-        if (sign)
-            text[n++] = L'-';
-        text[n++] = L'0';
-    } else {
-        if (v < 0)
-            text[n++] = L'-';
-        int exponent = point - 1;
-        /* fixed notation while the digits that it writes, the zeros after the point and the digits of the number, do not
-         * outnumber what the type holds; a float has seven and a double fifteen. */
-        if (point <= 0 ? count - point > ndigits : point > ndigits) {
-            text[n++] = (WCHAR)digits[0];
-            if (count > 1) {
-                text[n++] = loc.Decimal;
-                for (int i = 1; i < count; i++)
-                    text[n++] = (WCHAR)digits[i];
-            }
-            text[n++] = L'E';
-            text[n++] = exponent < 0 ? L'-' : L'+';
-            int e = exponent < 0 ? -exponent : exponent;
-            if (e >= 100)
-                text[n++] = (WCHAR)(L'0' + e / 100);
-            text[n++] = (WCHAR)(L'0' + e / 10 % 10);
-            text[n++] = (WCHAR)(L'0' + e % 10);
-        } else if (point <= 0) {
-            text[n++] = L'0';
-            text[n++] = loc.Decimal;
-            for (int i = 0; i < -point; i++)
-                text[n++] = L'0';
-            for (int i = 0; i < count; i++)
-                text[n++] = (WCHAR)digits[i];
-        } else {
-            for (int i = 0; i < point; i++)
-                text[n++] = i < count ? (WCHAR)digits[i] : L'0';
-            if (count > point) {
-                text[n++] = loc.Decimal;
-                for (int i = point; i < count; i++)
-                    text[n++] = (WCHAR)digits[i];
-            }
-        }
-    }
-    text[n] = 0;
-    HRESULT hr;
-    *out = make_bstr(text, &hr);
-    return hr;
-}
-
-/* writes the digits of a 96-bit value and a decimal point before the last scale digits, without trailing zeros. */
-HRESULT AutFormatDecimal(BOOL negative, ULONG high, ULONGLONG low, int scale, LCID lcid, ULONG flags, BSTR *out)
-{
-    WCHAR digits[40];
-    int count = 0;
-    ULONG parts[3] = {(ULONG)low, (ULONG)(low >> 32), high};
-    do {
-        digits[count++] = (WCHAR)(L'0' + u96_div_small(parts, 10));
-    } while (parts[0] || parts[1] || parts[2]);
-    int raw = count;
-    while (count < scale)
-        digits[count++] = L'0';
-    int whole = raw > scale ? raw - scale : 0;
-    int drop = 0;
-    while (drop < scale && digits[drop] == L'0')
-        drop++;
-    NUM_LOCALE loc;
-    number_locale(lcid, flags, &loc);
-    WCHAR text[64];
-    int n = 0;
-    /* a decimal is not formatted by the locale's number format, whatever is asked: only its separator is used. A zero
-     * keeps its sign, and a value that is only a fraction has a zero before the point if the locale wants one. */
-    if (negative)
-        text[n++] = L'-';
-    if (!whole && (loc.LeadingZero || drop >= scale))
-        text[n++] = L'0';
-    for (int i = raw - 1; i >= scale; i--)
-        text[n++] = digits[i];
-    if (drop < scale) {
-        text[n++] = loc.Decimal;
-        for (int i = scale - 1; i >= drop; i--)
-            text[n++] = digits[i];
-    }
-    text[n] = 0;
-    HRESULT hr;
-    *out = make_bstr(text, &hr);
-    return hr;
+    if (np->nBaseShift)
+        return choose_based(np, digits, vtbits, out);
+    NUM n;
+    num_from_parse(np, digits, &n);
+    return choose_decimal(&n, vtbits, out);
 }

@@ -40,24 +40,7 @@ FORCEINLINE void AutAddRef(void *object)
         ((IUnknown *)object)->lpVtbl->AddRef((IUnknown *)object);
 }
 
-/* a number as it was typed: digits (values 0 to 9), with the exponent that puts the point right. */
-typedef struct {
-    BOOL Negative;
-    BOOL Inexact;
-    /* digits, if only zeros, were read. */
-    BOOL Seen;
-    /* 0 for a decimal number, 3 for octal and 4 for hexadecimal digits, which have no exponent. */
-    int Shift;
-    int Count;
-    int Exponent;
-    BYTE Digits[80];
-} AUT_NUMBER;
-
-HRESULT AutNumberFromString(LPCOLESTR text, LCID lcid, ULONG locale_flags, ULONG in_flags, AUT_NUMBER *n,
-                            ULONG *out_flags, int *used);
-BOOL AutNumberToU96(const AUT_NUMBER *n, int extra, ULONG *high, ULONGLONG *low);
-double AutNumberToDouble(const AUT_NUMBER *n);
-HRESULT AutDecimalFromNumber(const AUT_NUMBER *n, DECIMAL *out);
+/* decimals and the text of numbers, numtext.c. */
 BOOL AutDecimalValid(const DECIMAL *d);
 double AutDecimalToDouble(const DECIMAL *d);
 BOOL AutDecimalToInteger(const DECIMAL *d, BOOL *negative, ULONGLONG *magnitude);
