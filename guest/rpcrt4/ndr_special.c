@@ -117,43 +117,47 @@ static void user_object(NDRC *c, uchar *memory, PFORMAT_STRING f, ULONG flags)
     }
 }
 
+/*
+ * What the routines of a type put on the wire when that is a pointer to something: the stub puts the reference of the pointer
+ * at the place of the object and the routines put what it points to, which for an object inside another one comes after
+ * that object, as the pointees of the pointers in it do. The object in memory is the same either way.
+ */
+void NdrpUserPointee(NDRC *c, uchar *object, PFORMAT_STRING f)
+{
+    user_object(c, object, f, 0);
+}
+
 static void user_marshal(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 {
     ULONG kind = f[1] & USER_MARSHAL_POINTER;
     ULONG memory_size = *(const USHORT *)(f + 4);
+    PMIDL_STUB_MESSAGE m = c->M;
+    /* the object itself is the user type; unmarshaling needs its memory. */
+    NdrpAllocObject(c, pm, memory_size, flags);
     if (!kind) {
-        /* the object itself is the user type; unmarshaling needs its memory. */
-        NdrpAllocObject(c, pm, memory_size, flags);
         user_object(c, *pm, f, flags);
         return;
     }
-    /* a pointer to the user type: a unique one says if it is there, and the object follows. */
-    uchar *pointer = *pm;
-    BOOL present = TRUE;
     NdrpAlign(c, 3);
-    if (kind == USER_MARSHAL_UNIQUE || (kind == USER_MARSHAL_REF && (flags & NDRF_EMBEDDED))) {
-        ULONG marker = 0x72657355;
-        if (NDR_WIRE_READ(c->Pass)) {
-            ULONG v = NdrpU32(c, 0);
-            present = v != 0;
-        } else {
-            present = pointer != nullptr || kind == USER_MARSHAL_REF;
-            NdrpU32(c, present ? marker : 0);
-        }
+    switch (c->Pass) {
+    case NDR_SIZE:
+        NdrpTake(c, 4);
+        break;
+    case NDR_MARSHAL:
+        NdrpU32(c, 0x20000 + 4 * m->UniquePtrCount++);
+        break;
+    case NDR_UNMARSHAL:
+    case NDR_MEMSIZE:
+        /* the reference says nothing: the object is there whatever it is. */
+        NdrpU32(c, 0);
+        break;
+    default:
+        break;
     }
-    if (!present) {
-        if (c->Pass == NDR_UNMARSHAL)
-            *pm = nullptr;
-        return;
-    }
-    uchar *object = NDR_WIRE_READ(c->Pass) ? (c->Pass == NDR_UNMARSHAL ? *pm : nullptr) : pointer;
-    if (NDR_WIRE_READ(c->Pass))
-        NdrpAllocObject(c, &object, memory_size, 0);
-    user_object(c, object, f, flags);
-    if (c->Pass == NDR_UNMARSHAL)
-        *pm = object;
-    if (c->Pass == NDR_FREE && object)
-        NdrpFree(c->M, object);
+    if ((flags & NDRF_EMBEDDED) && c->Pass != NDR_FREE && (c->Q->Regions || c->Q->Draining || c->Q->Depth > 64))
+        NdrpQueueUser(c, *pm, f);
+    else
+        user_object(c, *pm, f, flags);
 }
 
 /* ------------------------------------------------------------------ transmitted types */

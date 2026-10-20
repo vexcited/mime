@@ -170,6 +170,8 @@ void NdrpArray(NDRC *c, uchar **memory, PFORMAT_STRING format, ULONG flags);
 void NdrpString(NDRC *c, uchar **memory, PFORMAT_STRING format, ULONG flags);
 void NdrpUnion(NDRC *c, uchar **memory, PFORMAT_STRING format, ULONG flags);
 void NdrpSpecial(NDRC *c, uchar **memory, PFORMAT_STRING format, ULONG flags);
+void NdrpUserPointee(NDRC *c, uchar *object, PFORMAT_STRING format);
+void NdrpQueueUser(NDRC *c, uchar *object, PFORMAT_STRING format);
 void NdrpContextHandle(NDRC *c, uchar **memory, PFORMAT_STRING format);
 void NdrpContextRecordsFree(PMIDL_STUB_MESSAGE m);
 

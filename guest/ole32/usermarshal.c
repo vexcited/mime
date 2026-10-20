@@ -632,19 +632,37 @@ WINOLEAPI void WINAPI HGLOBAL_UserFree64(ULONG *flags, HGLOBAL *global)
     HGLOBAL_UserFree(flags, global);
 }
 
+/*
+ * The oleaut32 of windows tells ole32 where it is loaded, so that ole32 can reach what only that dll holds. Nothing here
+ * needs it: the module is kept for a program that asks.
+ */
+static HMODULE g_oleaut_module;
+
+WINOLEAPI void WINAPI SetOleautModule(HMODULE module)
+{
+    g_oleaut_module = module;
+}
+
+HMODULE OleOleautModule(void)
+{
+    return g_oleaut_module;
+}
+
 /* ------------------------------------------------------------------ names of storage elements */
 
 /*
  * A block of names, which a storage is asked to leave out of a copy, is an array of pointers to strings that ends with a
- * null one. It is sent as a pointer to a structure that the sizes lead: the number of characters the counts say, then the
- * number of strings and of characters, then the strings one after the other with their terminators.
+ * null one. Its wire type is a pointer to a structure that the sizes lead, and the stub puts the reference of the pointer, so
+ * the routines put the structure: the number of characters the counts say, then the number of strings and of characters, then
+ * the strings one after the other with their terminators. No names at all is a structure of nothing, which is a null block when
+ * it comes back (guess).
  */
-#define SNB_REFERENT 0x00020000
-
 static ULONG snb_chars(const SNB *snb, ULONG *strings)
 {
     ULONG chars = 0;
     *strings = 0;
+    if (!*snb)
+        return 0;
     for (OLECHAR **p = *snb; *p; p++) {
         chars = add_size(chars, (ULONG)lstrlenW(*p) + 1);
         (*strings)++;
@@ -654,31 +672,23 @@ static ULONG snb_chars(const SNB *snb, ULONG *strings)
 
 WINOLEAPI ULONG WINAPI SNB_UserSize(ULONG *flags, ULONG start, SNB *snb)
 {
-    ULONG offset = add_size(align_size(start, 3), 4);
-    if (!*snb)
-        return offset;
     ULONG strings;
     ULONG chars = snb_chars(snb, &strings);
     if (chars > 0x7FFFFFFF / sizeof(WCHAR))
         RpcRaiseException(ARITH_OVERFLOW);
-    return add_size(add_size(offset, 12), chars * (ULONG)sizeof(WCHAR));
+    return add_size(add_size(align_size(start, 3), 12), chars * (ULONG)sizeof(WCHAR));
 }
 
 WINOLEAPI BYTE *WINAPI SNB_UserMarshal(ULONG *flags, BYTE *buffer, SNB *snb)
 {
     BYTE *p = align_zero(buffer, 3);
-    if (!*snb) {
-        *(ULONG *)p = 0;
-        return p + 4;
-    }
     ULONG strings;
     ULONG chars = snb_chars(snb, &strings);
-    *(ULONG *)p = SNB_REFERENT;
-    ((ULONG *)p)[1] = chars;
-    ((ULONG *)p)[2] = strings;
-    ((ULONG *)p)[3] = chars;
-    p += 16;
-    for (OLECHAR **name = *snb; *name; name++) {
+    ((ULONG *)p)[0] = chars;
+    ((ULONG *)p)[1] = strings;
+    ((ULONG *)p)[2] = chars;
+    p += 12;
+    for (OLECHAR **name = *snb; name && *name; name++) {
         ULONG n = ((ULONG)lstrlenW(*name) + 1) * (ULONG)sizeof(WCHAR);
         memcpy(p, *name, n);
         p += n;
@@ -691,22 +701,19 @@ WINOLEAPI BYTE *WINAPI SNB_UserUnmarshal(ULONG *flags, BYTE *buffer, SNB *snb)
     READER r;
     reader_open(&r, flags, buffer);
     const BYTE *p = align_read(buffer, 3);
-    reader_need(&r, p, 4);
-    ULONG referent = *(const ULONG *)p;
-    p += 4;
-    if (*snb) {
-        CoTaskMemFree(*snb);
-        *snb = nullptr;
-    }
-    if (!referent)
-        return (BYTE *)p;
     reader_need(&r, p, 12);
     ULONG max = ((const ULONG *)p)[0];
     ULONG strings = ((const ULONG *)p)[1];
     ULONG chars = ((const ULONG *)p)[2];
     p += 12;
+    if (*snb) {
+        CoTaskMemFree(*snb);
+        *snb = nullptr;
+    }
     if (max != chars || chars > 0x7FFFFFFF / sizeof(WCHAR) || strings > chars)
         RpcRaiseException(RPC_BAD_STUB_DATA);
+    if (!strings && !chars)
+        return (BYTE *)p;
     reader_need(&r, p, (SIZE_T)chars * sizeof(WCHAR));
     const WCHAR *text = (const WCHAR *)p;
     /* every string must end where the counts say, or the pointers would point past the characters. */

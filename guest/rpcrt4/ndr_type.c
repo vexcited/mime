@@ -598,7 +598,7 @@ static void struct_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
                     at = object + sizeof(void *);
             } else {
                 uchar *obj = object;
-                NdrpWalk(c, &obj, type, 0);
+                NdrpWalk(c, &obj, type, type[0] == FC_USER_MARSHAL && (type[1] & USER_MARSHAL_POINTER) ? NDRF_EMBEDDED : 0);
                 if (real)
                     at = object + NdrpMemorySize(c, object, type);
             }
@@ -917,7 +917,8 @@ static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
             for (ULONG i = 0; i < actual; i++, at += elem_size) {
                 uchar *item = at;
                 q->Next = my_dim + 1;
-                NdrpWalk(c, &item, type, NDRF_CONF_DONE);
+                NdrpWalk(c, &item, type,
+                         NDRF_CONF_DONE | (type[0] == FC_USER_MARSHAL && (type[1] & USER_MARSHAL_POINTER) ? NDRF_EMBEDDED : 0));
             }
         }
     }

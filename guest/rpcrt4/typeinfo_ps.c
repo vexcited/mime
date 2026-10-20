@@ -499,7 +499,8 @@ static ULONG off_user(CTX *c, TY *t)
     BUF *b = &c->Types;
     t->Off = b->Size;
     buf_put(b, FCx_USER_MARSHAL);
-    buf_put(b, amask(t->WAlign));
+    /* the wire types of all three are unique pointers, so the stub puts the reference in front, and the routines align. */
+    buf_put(b, amask(4) | 0x80);
     buf_put16(b, (unsigned)t->User);
     buf_put16(b, t->Size);
     buf_put16(b, 0);

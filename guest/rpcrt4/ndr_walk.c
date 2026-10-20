@@ -220,6 +220,12 @@ static void queue_push(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING for
 
 static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING pf, ULONG refid);
 
+/* what a user type with a pointer on the wire puts is queued behind the object it is in: the object is the pointer. */
+void NdrpQueueUser(NDRC *c, uchar *object, PFORMAT_STRING f)
+{
+    queue_push(c, nullptr, object, f, 0);
+}
+
 /* the pointees run first in, first out, and the ones they queue run after them. */
 static void queue_run(NDRC *c)
 {
@@ -296,6 +302,10 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
     uchar attrs = pf[1];
     PMIDL_STUB_MESSAGE m = c->M;
 
+    if (type == FC_USER_MARSHAL) {
+        NdrpUserPointee(c, pointer, pf);
+        return;
+    }
     if (type == FC_IP) {
         const NDR_OLE_HOOKS *hooks = NdrpOleHooks();
         if (!hooks)
