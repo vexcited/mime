@@ -176,20 +176,20 @@ void gp_surface_write(const GSurface *s, INT x, INT y, INT count, const UINT32 *
     }
 }
 
-/* the source pixel over the destination pixel, both premultiplied, with the rounding of gdiplus.dll. */
+/* the source over the destination, both premultiplied. */
 static UINT32 over(UINT32 s, UINT32 d)
 {
-    UINT32 sa = s >> 24;
-    if (sa == 255)
+    UINT32 keep = 255 - (s >> 24);
+    if (keep == 0)
         return s;
-    if (sa == 0)
+    if (keep == 255)
         return d;
-    UINT32 ia = 255 - sa;
-    UINT32 t = ia * ((d >> 8) & 0x00ff00ffu) + 0x00800080u;
-    t = (t + ((t >> 8) & 0x00ff00ffu)) & 0xff00ff00u;
-    UINT32 u = ia * (d & 0x00ff00ffu) + 0x00800080u;
-    u = ((u + ((u >> 8) & 0x00ff00ffu)) >> 8) & 0x00ff00ffu;
-    return s + (t | u);
+    UINT32 out = 0;
+    for (INT shift = 0; shift < 32; shift += 8) {
+        UINT32 t = ((d >> shift) & 255) * keep + 128;
+        out |= (((t + (t >> 8)) >> 8) + ((s >> shift) & 255)) << shift;
+    }
+    return out;
 }
 
 void gp_compose_over(const GSurface *s, INT x, INT y, INT count, const UINT32 *pargb)

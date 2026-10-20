@@ -3,6 +3,7 @@
  */
 #include "gp_private.h"
 
+
 GBrush *gp_brush_cast(const void *p)
 {
     return GP_CAST(GBrush, GP_TAG_BRUSH, p);
@@ -567,66 +568,48 @@ static GpStatus preset_set(GBrush *b, const ARGB *colors, const float *positions
     return Ok;
 }
 
+/* the rise of the bell at step k of 255, in 1/65536 of the full height. */
+static float sigma_rise(INT k)
+{
+    const float *table = gp_sigma_table();
+    return k < 128 ? table[k] : 65536.0f - table[255 - k];
+}
+
+/*
+ * a bell shaped blend peaking at the focus. Without a focus inside the brush the bell is one rise in 256 steps, or
+ * one fall when the focus is at the start. With a focus the blend rises to it and falls from it.
+ */
 static GpStatus blend_sigma(GBrush *b, float focus, float scale)
 {
     if (focus < 0.0f || focus > 1.0f || scale < 0.0f || scale > 1.0f)
         return InvalidParameter;
-    float *fac = gp_alloc(sizeof(float) * 512), *pos = gp_alloc(sizeof(float) * 512);
-    if (!fac || !pos) {
-        gp_free(fac);
-        gp_free(pos);
+    BOOL inside = focus > 0.0f && focus < 1.0f;
+    INT n = inside ? 511 : 256;
+    float *fac = gp_alloc(sizeof(float) * 2 * n);
+    if (!fac)
         return OutOfMemory;
-    }
-    INT n;
-    float k = scale / 65536.0f;
-    const float *sigma_table = gp_sigma_table();
-    if (focus <= 0.0f || focus >= 1.0f) {
-        INT i;
-        if (focus == 1.0f) {
-            for (i = 0; i < 128; i++) {
-                fac[i] = sigma_table[i];
-                pos[i] = (float)i / 255.0f;
-            }
-            for (i = 128; i < 256; i++) {
-                fac[i] = 65536.0f - sigma_table[127 - (i - 128)];
-                pos[i] = (float)i / 255.0f;
-            }
-        } else {
-            for (i = 0; i < 128; i++) {
-                fac[i] = 65536.0f - sigma_table[i];
-                pos[i] = (float)i / 255.0f;
-            }
-            for (i = 128; i < 256; i++) {
-                fac[i] = sigma_table[127 - (i - 128)];
-                pos[i] = (float)i / 255.0f;
-            }
+    float *pos = fac + n;
+    if (!inside) {
+        for (INT k = 0; k < 256; k++) {
+            float rise = sigma_rise(k);
+            fac[k] = focus >= 1.0f ? rise : 65536.0f - rise;
+            pos[k] = (float)k / 255.0f;
         }
-        n = 256;
     } else {
-        INT i;
-        for (i = 0; i < 128; i++) {
-            fac[i] = sigma_table[i];
-            pos[i] = (float)i * focus / 255.0f;
+        for (INT k = 0; k < 256; k++) {
+            fac[k] = sigma_rise(k);
+            pos[k] = (float)k * focus / 255.0f;
         }
-        for (i = 128; i < 256; i++) {
-            fac[i] = 65536.0f - sigma_table[127 - (i - 128)];
-            pos[i] = (float)i * focus / 255.0f;
+        for (INT k = 1; k < 256; k++) {
+            fac[255 + k] = 65536.0f - sigma_rise(k);
+            pos[255 + k] = (float)k * (1.0f - focus) / 255.0f + focus;
         }
-        for (i = 0; i < 127; i++) {
-            fac[256 + i] = 65536.0f - sigma_table[1 + i];
-            pos[256 + i] = (float)(i + 1) * (1.0f - focus) / 255.0f + focus;
-        }
-        for (i = 0; i < 128; i++) {
-            fac[383 + i] = sigma_table[127 - i];
-            pos[383 + i] = (float)(128 + i) * (1.0f - focus) / 255.0f + focus;
-        }
-        n = 511;
+        pos[n - 1] = 1.0f;
     }
     for (INT i = 0; i < n; i++)
-        fac[i] *= k;
+        fac[i] = fac[i] * scale / 65536.0f;
     GpStatus st = blend_set(b, fac, pos, n);
     gp_free(fac);
-    gp_free(pos);
     return st;
 }
 
@@ -676,15 +659,11 @@ static GpStatus line_new(INT mode, ARGB c1, ARGB c2, WrapMode wrap, GBrush **out
     return Ok;
 }
 
+/* two coordinates that differ by less than a part in a million of the second. */
 static BOOL close_float(float a, float b)
 {
-    float d = a - b;
-    if (d < 0)
-        d = -d;
-    float m = a < 0 ? -a : a;
-    if (m < 1.0f)
-        m = 1.0f;
-    return d / m < 0.0000011920929f;
+    float diff = (a - b) / (b == 0.0f ? 1.0f : b);
+    return (diff < 0.0f ? -diff : diff) < 1.1920929e-6f;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrush(const GpPointF *p1, const GpPointF *p2, ARGB c1, ARGB c2, GpWrapMode wrap,
@@ -703,20 +682,21 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrush(const GpPointF *p1, const GpPoint
         return st;
     b->p1 = *p1;
     b->p2 = *p2;
-    /* the rectangle of the points: a vertical or horizontal line gets the other side as long as itself */
-    float dx = p2->X - p1->X, dy = p2->Y - p1->Y;
+    /* the rectangle that holds the points, a line along an axis gets the other side as long as itself. */
+    float width = p2->X > p1->X ? p2->X - p1->X : p1->X - p2->X;
+    float height = p2->Y > p1->Y ? p2->Y - p1->Y : p1->Y - p2->Y;
     b->rect.X = p1->X < p2->X ? p1->X : p2->X;
     b->rect.Y = p1->Y < p2->Y ? p1->Y : p2->Y;
-    b->rect.Width = dx < 0 ? -dx : dx;
-    b->rect.Height = dy < 0 ? -dy : dy;
     if (close_float(p1->X, p2->X)) {
-        b->rect.Width = b->rect.Height;
-        b->rect.X -= b->rect.Width * 0.5f;
+        width = height;
+        b->rect.X -= width / 2.0f;
     }
     if (close_float(p1->Y, p2->Y)) {
-        b->rect.Height = b->rect.Width;
-        b->rect.Y -= b->rect.Height * 0.5f;
+        height = width;
+        b->rect.Y -= height / 2.0f;
     }
+    b->rect.Width = width;
+    b->rect.Height = height;
     *brush = b;
     return Ok;
 }

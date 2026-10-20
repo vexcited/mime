@@ -230,21 +230,27 @@ static inline UINT16 div65535(unsigned long long t)
     return (UINT16)((t + (t >> 16)) >> 16);
 }
 
-/* the weights of the gray of a color in linear light. */
+/* the light a color gives in linear space, the Rec. 709 weights summed green first. */
 #define GRAY_R 0.2126f
 #define GRAY_G 0.7152f
 #define GRAY_B 0.0722f
 
+static float luminance(float red, float green, float blue)
+{
+    float sum = green * GRAY_G;
+    sum += red * GRAY_R;
+    sum += blue * GRAY_B;
+    return sum;
+}
+
 static BYTE gray8_of(BYTE r, BYTE g, BYTE b)
 {
-    float lin = to_linear8(g) * GRAY_G + to_linear8(r) * GRAY_R + to_linear8(b) * GRAY_B;
-    return linear_to_srgb8(lin);
+    return linear_to_srgb8(luminance(to_linear8(r), to_linear8(g), to_linear8(b)));
 }
 
 static UINT gray16_of(UINT r, UINT g, UINT b)
 {
-    float lin = to_linear16(g) * GRAY_G + to_linear16(r) * GRAY_R + to_linear16(b) * GRAY_B;
-    return linear_to_srgb16(lin);
+    return linear_to_srgb16(luminance(to_linear16(r), to_linear16(g), to_linear16(b)));
 }
 
 /* ------------------------------------------------------------------ canonical forms */
@@ -372,13 +378,9 @@ static void read8(const FormatDesc *d, const BYTE *src, UINT x0, BYTE *out, UINT
             if (!a) {
                 r = g = b = 0;
             } else {
-                UINT m = 0;
-                /* the multiplier of 255 over alpha in 16.16, as a table would hold it. */
-                m = (UINT)(((unsigned long long)255 << 16) / a);
-                UINT rr = (r * m) >> 16, gg = (g * m) >> 16, bb = (b * m) >> 16;
-                r = rr > 255 ? 255 : (BYTE)rr;
-                g = gg > 255 ? 255 : (BYTE)gg;
-                b = bb > 255 ? 255 : (BYTE)bb;
+                r = WicStraightChannel(r, a);
+                g = WicStraightChannel(g, a);
+                b = WicStraightChannel(b, a);
             }
         }
         out[i * 4] = b;
@@ -1031,11 +1033,12 @@ WicIndexer *WicIndexerNew(const WICColor *palette, UINT count, WICBitmapDitherTy
             break;
         }
     }
-    double t = threshold_percent * 2.55;
-    int v = (int)t;
-    if ((double)v - t == -0.5)
-        v++;
-    ix->threshold = (float)(v < 0 ? 0 : v > 255 ? 255 : v);
+    /* percent of 255 cut to a whole number, but a pixel half way rounds up. */
+    double level = threshold_percent * 2.55;
+    double whole = level < 0.0 ? 0.0 : level > 255.0 ? 255.0 : (double)(int)level;
+    if (level >= 0.0 && level < 255.0 && level - whole == 0.5)
+        whole += 1.0;
+    ix->threshold = (float)whole;
     ix->dither = dither;
     ix->width = width;
     /* the step between the levels of a palette of a cube is a rough 255 over its side; use the count to estimate. */
