@@ -82,7 +82,8 @@ set(MIME_X86_DLLS
     uiautomationcore:0x1C000000:all_five iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
-    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports)
+    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
+    cabinet:0x09000000:base)
 set(base ntdll kernel32)
 # rpcrt4 catches exceptions with frame handlers of the c runtime.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
@@ -105,6 +106,7 @@ set(user ntdll kernel32 user32)
 set(ads_imports ntdll kernel32)
 set(advpack_imports ntdll kernel32 advapi32 version)
 set(objects_advpack x86-lib-cabinet)
+set(objects_cabinet x86-lib-cabinet)
 # the installer makes shortcuts and users, reads versions and loads the custom actions of its packages.
 set(msi_imports ntdll kernel32 user32 gdi32 win32u advapi32 shell32 ole32 version)
 set(oleacc_imports ntdll kernel32 user32 ole32 oleaut32)

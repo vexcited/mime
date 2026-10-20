@@ -40,6 +40,7 @@ struct MIME_CAB {
     size_t Size;
     uint16_t Folders, Files, Flags, SetId, Index;
     uint8_t FolderReserve, DataReserve;
+    bool SkipContinued, Sequential;
     FOLDER *Folder;
     /* the file entries, as offsets into the file, in the order they are stored. */
     uint32_t *FileAt;
@@ -187,6 +188,16 @@ void MimeCabSet(const MIME_CAB *cab, uint16_t *id, uint16_t *index, uint16_t *fl
         *index = cab->Index;
     if (flags)
         *flags = cab->Flags;
+}
+
+void MimeCabSkipContinued(MIME_CAB *cab)
+{
+    cab->SkipContinued = true;
+}
+
+void MimeCabSequential(MIME_CAB *cab)
+{
+    cab->Sequential = true;
 }
 
 unsigned MimeCabFolderCount(const MIME_CAB *cab)
@@ -1046,55 +1057,76 @@ static int extract_finish(EXTRACT *e, unsigned position_in_order)
     return 0;
 }
 
+/* whether the file waits for the ones being written: in sequential mode it does unless it starts inside one of them. */
+static int extract_waits(const EXTRACT *e, const MIME_CAB_FILE *file)
+{
+    if (!e->Cab->Sequential)
+        return 0;
+    for (unsigned i = 0; i < e->ActiveCount; i++) {
+        MIME_CAB_FILE active;
+        MimeCabFile(e->Cab, e->Order[e->Active[i]], &active);
+        if (file->Offset < (uint64_t)active.Offset + active.Size)
+            return 0;
+    }
+    return e->ActiveCount != 0;
+}
+
 static int extract_piece(void *context, uint32_t offset, const uint8_t *data, size_t length)
 {
     EXTRACT *e = context;
     uint64_t end = (uint64_t)offset + length;
     MIME_CAB_FILE file;
-    /* the files that start before the end of this piece. */
-    while (e->Next < e->Count) {
-        MimeCabFile(e->Cab, e->Order[e->Next], &file);
-        if (file.Offset >= end && file.Size)
-            break;
-        e->Contexts[e->Next] = e->Sink->Begin(e->Context, &file);
-        e->Written[e->Next] = 0;
-        if (file.Size == 0) {
-            if (extract_finish(e, e->Next))
-                return 1;
-        } else {
-            e->Active[e->ActiveCount++] = (uint16_t)e->Next;
+    for (;;) {
+        /* the files that start before the end of this piece, one at a time when the caller wants each finished first. */
+        while (e->Next < e->Count) {
+            MimeCabFile(e->Cab, e->Order[e->Next], &file);
+            if ((file.Offset >= end && file.Size) || extract_waits(e, &file))
+                break;
+            e->Contexts[e->Next] = e->Sink->Begin(e->Context, &file);
+            e->Written[e->Next] = 0;
+            if (file.Size == 0) {
+                if (extract_finish(e, e->Next))
+                    return 1;
+            } else {
+                e->Active[e->ActiveCount++] = (uint16_t)e->Next;
+            }
+            e->Next++;
         }
-        e->Next++;
-    }
-    for (unsigned i = 0; i < e->ActiveCount;) {
-        unsigned at = e->Active[i];
-        MimeCabFile(e->Cab, e->Order[at], &file);
-        uint64_t next = (uint64_t)file.Offset + e->Written[at], file_end = (uint64_t)file.Offset + file.Size;
-        if (next < offset)
-            next = offset;
-        /* a file whose data went by before it was begun cannot be written whole. */
-        if (next > file_end) {
-            e->Corrupt = 1;
-            return 1;
-        }
-        if (next < end) {
-            uint64_t take = file_end - next < end - next ? file_end - next : end - next;
-            if (e->Contexts[at] && take &&
-                e->Sink->Write(e->Context, e->Contexts[at], data + (next - offset), (size_t)take)) {
-                e->Failed = 1;
+        for (unsigned i = 0; i < e->ActiveCount;) {
+            unsigned at = e->Active[i];
+            MimeCabFile(e->Cab, e->Order[at], &file);
+            uint64_t next = (uint64_t)file.Offset + e->Written[at], file_end = (uint64_t)file.Offset + file.Size;
+            if (next < offset)
+                next = offset;
+            /* a file whose data went by before it was begun cannot be written whole. */
+            if (next > file_end) {
+                e->Corrupt = 1;
                 return 1;
             }
-            e->Written[at] = (uint32_t)(next + take - file.Offset);
+            if (next < end) {
+                uint64_t take = file_end - next < end - next ? file_end - next : end - next;
+                if (e->Contexts[at] && take &&
+                    e->Sink->Write(e->Context, e->Contexts[at], data + (next - offset), (size_t)take)) {
+                    e->Failed = 1;
+                    return 1;
+                }
+                e->Written[at] = (uint32_t)(next + take - file.Offset);
+            }
+            if (e->Written[at] >= file.Size) {
+                e->Active[i] = e->Active[--e->ActiveCount];
+                if (extract_finish(e, at))
+                    return 1;
+                continue;
+            }
+            i++;
         }
-        if (e->Written[at] >= file.Size) {
-            e->Active[i] = e->Active[--e->ActiveCount];
-            if (extract_finish(e, at))
-                return 1;
-            continue;
-        }
-        i++;
+        /* a file that was waiting for the one before it may begin in this piece. */
+        if (!e->Cab->Sequential || e->Next >= e->Count)
+            return 0;
+        MimeCabFile(e->Cab, e->Order[e->Next], &file);
+        if ((file.Offset >= end && file.Size) || extract_waits(e, &file))
+            return 0;
     }
-    return 0;
 }
 
 int MimeCabExtract(MIME_CAB *cab, const MIME_CAB_FILE_SINK *sink, void *context)
@@ -1102,8 +1134,11 @@ int MimeCabExtract(MIME_CAB *cab, const MIME_CAB_FILE_SINK *sink, void *context)
     for (unsigned i = 0; i < cab->Files; i++) {
         MIME_CAB_FILE file;
         MimeCabFile(cab, i, &file);
-        if (file.Folder >= FOLDER_CONTINUED_FROM_PREV)
+        if (file.Folder >= FOLDER_CONTINUED_FROM_PREV) {
+            if (cab->SkipContinued)
+                continue;
             return MIME_CAB_UNSUPPORTED;
+        }
         if (file.Folder >= cab->Folders)
             return MIME_CAB_BAD;
     }
