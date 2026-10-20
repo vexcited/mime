@@ -296,6 +296,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_riched32 ${MIME_LIB_${arch}}/riched20.lib)
     # ole32 carries objects between processes over the rpc runtime.
     set(libs_ole32 ${MIME_LIB_${arch}}/rpcrt4.lib)
+    # and has the proxies and stubs of the interfaces it knows by itself written at build time.
+    set(depends_ole32 mime-gen-ole32)
     # winhttp inflates gzip and deflate bodies with the png decoder's inflate.
     set(objects_winhttp ${arch}-lib-png:guest/lib/png/inflate.c)
     # winspool writes the pages of a PDF flate coded.

@@ -76,6 +76,7 @@ set(base ntdll kernel32)
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 # ole32 reaches other processes with rpc, and catches the faults of stubs with the frame handlers of the c runtime.
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
+set(depends_ole32 mime-gen-ole32)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
