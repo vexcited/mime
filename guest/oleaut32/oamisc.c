@@ -6,15 +6,10 @@
 
 /* the user's overrides of the locale are not read by the conversions when this holds LOCALE_NOUSEROVERRIDE. */
 ULONG g_process_nls_flags;
-static BOOL g_per_user_cache;
 
 WINOLEAUTAPI ULONG WINAPI OaBuildVersion(void)
 {
-    /* windows works it out from a constant; the answer is the same one. */
-    int i = 10;
-    while (i < 15014)
-        i *= 10;
-    return (USHORT)(15014 - i / 10) | 0x320000;
+    return 0x00321396;
 }
 
 /* the registry of type libraries is the machine's here, so there is nothing for the setting to change. */
@@ -31,34 +26,23 @@ WINOLEAUTAPI HRESULT WINAPI OACleanup(void)
     return S_OK;
 }
 
-/*
- * 0 reads the locale as the user has set it, 1 does and keeps what it read for the user, 2 reads the locale as it comes
- * with the system. A number is kept for the process.
- */
+/* 0 and 1 read the locale with the user's changes, 2 without them, and 1 also keeps the user's locale in a cache. */
+static volatile LONG g_conversion_setting;
+
 WINOLEAUTAPI HRESULT WINAPI SetVarConversionLocaleSetting(DWORD setting)
 {
-    switch (setting) {
-    case 0:
-        g_process_nls_flags = 0;
-        g_per_user_cache = FALSE;
-        return S_OK;
-    case 1:
-        g_process_nls_flags = 0;
-        g_per_user_cache = TRUE;
-        return S_OK;
-    case 2:
-        g_process_nls_flags = LOCALE_NOUSEROVERRIDE;
-        g_per_user_cache = FALSE;
-        return S_OK;
-    }
-    return E_INVALIDARG;
+    if (setting > 2)
+        return E_INVALIDARG;
+    g_process_nls_flags = setting == 2 ? LOCALE_NOUSEROVERRIDE : 0;
+    InterlockedExchange(&g_conversion_setting, (LONG)setting);
+    return S_OK;
 }
 
 WINOLEAUTAPI HRESULT WINAPI GetVarConversionLocaleSetting(DWORD *setting)
 {
     if (!setting)
         return E_INVALIDARG;
-    *setting = g_per_user_cache ? 1 : (g_process_nls_flags >> 30) & 2;
+    *setting = (DWORD)g_conversion_setting;
     return S_OK;
 }
 

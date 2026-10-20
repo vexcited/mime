@@ -5,11 +5,9 @@
  * taking the upper half, so the string stays 8 byte aligned.
  */
 #include "oleaut32_private.h"
+#include <mime/win32/winnls.h>
 
 #define BSTR_HEADER 8
-#define VARCMP_LT 0
-#define VARCMP_EQ 1
-#define VARCMP_GT 2
 /* lengths above this cannot be represented with the header and terminator. */
 #define BSTR_MAX_BYTES 0x7FFFFFF0u
 
@@ -188,44 +186,55 @@ WINOLEAUTAPI INT WINAPI SysReAllocString(BSTR *bstr, const OLECHAR *string)
     return SysReAllocStringLen(bstr, string, (UINT)wcslen(string));
 }
 
-/* byte lengths are joined, so an odd byte of either string is kept. */
 WINOLEAUTAPI HRESULT WINAPI VarBstrCat(BSTR left, BSTR right, BSTR *result)
 {
     if (!result)
         return E_INVALIDARG;
-    UINT a = left ? SysStringByteLen(left) : 0, b = right ? SysStringByteLen(right) : 0;
-    if (~b < a)
+    UINT left_bytes = SysStringByteLen(left), right_bytes = SysStringByteLen(right);
+    ULONGLONG total = (ULONGLONG)left_bytes + right_bytes;
+    if (total > 0xFFFFFFFFull)
         return DISP_E_OVERFLOW;
-    BSTR joined = SysAllocStringByteLen(nullptr, a + b);
+    /* byte lengths are joined, so an odd byte of either string is kept. */
+    BSTR joined = SysAllocStringByteLen(nullptr, (UINT)total);
     *result = joined;
     if (!joined)
         return E_OUTOFMEMORY;
-    memcpy(joined, left, a);
-    memcpy((BYTE *)joined + a, right, b);
+    if (left_bytes)
+        memcpy(joined, left, left_bytes);
+    if (right_bytes)
+        memcpy((BYTE *)joined + left_bytes, right, right_bytes);
     return S_OK;
 }
 
-/*
- * locale 0 compares the bytes; any other locale compares characters with
- * CompareStringW, locale 1 meaning the user's. an empty side compares by
- * length alone.
- */
+/* locale 0 orders by the 16 bit units, as numbers, and then by a last odd byte. */
+static int compare_units(const BYTE *a, const BYTE *b, UINT common)
+{
+    for (UINT i = 0; i + 1 < common; i += 2) {
+        USHORT x = (USHORT)(a[i] | a[i + 1] << 8), y = (USHORT)(b[i] | b[i + 1] << 8);
+        if (x != y)
+            return x < y ? -1 : 1;
+    }
+    if (common & 1) {
+        BYTE x = a[common - 1], y = b[common - 1];
+        if (x != y)
+            return x < y ? -1 : 1;
+    }
+    return 0;
+}
+
 WINOLEAUTAPI HRESULT WINAPI VarBstrCmp(BSTR left, BSTR right, LCID lcid, ULONG flags)
 {
-    UINT a = left ? SysStringByteLen(left) : 0, b = right ? SysStringByteLen(right) : 0;
-    UINT shortest = a < b ? a : b;
+    UINT left_bytes = SysStringByteLen(left), right_bytes = SysStringByteLen(right);
+    UINT common = left_bytes < right_bytes ? left_bytes : right_bytes;
     if (!lcid) {
-        if (shortest) {
-            int c = memcmp(left, right, shortest);
-            if (c)
-                return c < 0 ? VARCMP_LT : VARCMP_GT;
-        }
-        return a < b ? VARCMP_LT : a == b ? VARCMP_EQ : VARCMP_GT;
+        int order = common ? compare_units((const BYTE *)left, (const BYTE *)right, common) : 0;
+        if (!order && left_bytes != right_bytes)
+            order = left_bytes < right_bytes ? -1 : 1;
+        return order < 0 ? VARCMP_LT : order > 0 ? VARCMP_GT : VARCMP_EQ;
     }
-    a /= sizeof(WCHAR);
-    b /= sizeof(WCHAR);
-    if (!shortest)
-        return a < b ? VARCMP_LT : a == b ? VARCMP_EQ : VARCMP_GT;
-    int c = CompareStringW(lcid == 1 ? LOCALE_USER_DEFAULT : lcid, flags, left, (int)a, right, (int)b);
-    return c ? c - 1 : E_INVALIDARG;
+    int left_chars = (int)(left_bytes / sizeof(WCHAR)), right_chars = (int)(right_bytes / sizeof(WCHAR));
+    if (!common)
+        return left_chars < right_chars ? VARCMP_LT : left_chars > right_chars ? VARCMP_GT : VARCMP_EQ;
+    int order = CompareStringW(lcid == 1 ? LOCALE_USER_DEFAULT : lcid, flags, left, left_chars, right, right_chars);
+    return order ? (HRESULT)(order - 1) : E_INVALIDARG;
 }

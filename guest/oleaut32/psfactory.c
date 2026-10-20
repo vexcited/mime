@@ -35,73 +35,72 @@ HRESULT STDMETHODCALLTYPE IEnumConnections_Next_Proxy(IEnumConnections *This, UL
 #define NO_RESULT 0x20000
 #define NO_EXCEPTION 0x40000
 #define NO_ARG_ERROR 0x80000
-#define INVALID_ARG ((HRESULT)0x80070057)
 #define BAD_CALLEE ((HRESULT)0x80020010)
 /* the arguments that are kept on the stack, as many as a call to a method of automation mostly has. */
 #define STACK_ARGS 16
 
+/* A by reference argument is lifted out of the arguments into the array of values, leaving an empty variant behind. */
 HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Proxy(IDispatch *This, DISPID id, REFIID riid, LCID lcid, WORD flags,
                                                  DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
 {
     if (!IsEqualGUID(riid, &IID_NULL))
         return DISP_E_UNKNOWNINTERFACE;
-    DWORD call = flags & 0xF;
     if (!params || params->cNamedArgs > params->cArgs)
-        return INVALID_ARG;
+        return E_INVALIDARG;
+    UINT call = flags & 0xF;
     UINT count = params->cArgs;
     if (!count) {
-        /* a property that is set has the value to set. */
-        if (call & 0xC)
-            return INVALID_ARG;
+        if (call & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF))
+            return E_INVALIDARG;
     } else if (!params->rgvarg || (params->cNamedArgs && !params->rgdispidNamedArgs)) {
-        return INVALID_ARG;
+        return E_INVALIDARG;
     }
-    if (call & 0xC)
+    if (call & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF))
         result = nullptr;
-    VARIANT *original = params->rgvarg;
+
     UINT refs = 0;
     for (UINT i = 0; i < count; i++)
-        if (original[i].vt & VT_BYREF)
+        if (params->rgvarg[i].vt & VT_BYREF)
             refs++;
-    /* the wire form has arrays of the references, which are of nothing when there are none and still are there. */
-    UINT dummy_index = 0;
-    VARIANT dummy_value;
-    VariantInit(&dummy_value);
-    UINT *indices = &dummy_index;
-    VARIANT *values = &dummy_value;
-    VARIANT *args = original;
-    VARIANT stack_args[STACK_ARGS];
+
+    VARIANT stack_args[STACK_ARGS], stack_values[STACK_ARGS];
     UINT stack_indices[STACK_ARGS];
-    VARIANT stack_values[STACK_ARGS];
-    BYTE *block = nullptr;
+    VARIANT dummy_value;
+    UINT dummy_index = 0;
+    VARIANT *args = params->rgvarg, *values = &dummy_value;
+    UINT *indices = &dummy_index;
+    void *block = nullptr;
     if (refs) {
         if (count <= STACK_ARGS) {
             args = stack_args;
-            indices = stack_indices;
             values = stack_values;
+            indices = stack_indices;
         } else {
-            block = AutAlloc((SIZE_T)count * sizeof(VARIANT) + (SIZE_T)refs * (sizeof(VARIANT) + sizeof(UINT)));
+            block = AutAlloc((SIZE_T)(count + refs) * sizeof(VARIANT) + (SIZE_T)refs * sizeof(UINT));
             if (!block)
                 return E_OUTOFMEMORY;
-            args = (VARIANT *)block;
+            args = block;
             values = args + count;
             indices = (UINT *)(values + refs);
         }
         UINT k = 0;
         for (UINT i = 0; i < count; i++) {
-            if (original[i].vt & VT_BYREF) {
-                values[k] = original[i];
+            if (params->rgvarg[i].vt & VT_BYREF) {
+                values[k] = params->rgvarg[i];
                 indices[k++] = i;
-                memset(&args[i], 0, sizeof(VARIANT));
+                VariantInit(&args[i]);
             } else {
-                args[i] = original[i];
+                args[i] = params->rgvarg[i];
             }
         }
     }
+
     DWORD wire_flags = call;
     VARIANT local_result;
     EXCEPINFO local_excep;
-    UINT local_err = 0;
+    UINT local_arg_err;
+    VariantInit(&local_result);
+    memset(&local_excep, 0, sizeof(local_excep));
     if (!result) {
         wire_flags |= NO_RESULT;
         result = &local_result;
@@ -109,85 +108,77 @@ HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Proxy(IDispatch *This, DISPID id, REF
     if (!excep) {
         wire_flags |= NO_EXCEPTION;
         excep = &local_excep;
-        memset(excep, 0, sizeof(*excep));
     }
     if (!arg_err) {
         wire_flags |= NO_ARG_ERROR;
-        arg_err = &local_err;
+        arg_err = &local_arg_err;
     }
-    params->rgvarg = args;
-    HRESULT hr = IDispatch_RemoteInvoke_Proxy(This, id, riid, lcid, wire_flags, params, result, excep, arg_err, refs, indices,
-                                              values);
-    params->rgvarg = original;
-    if (!(wire_flags & NO_EXCEPTION))
+
+    DISPPARAMS sent = *params;
+    sent.rgvarg = args;
+    HRESULT hr = IDispatch_RemoteInvoke_Proxy(This, id, riid, lcid, wire_flags, &sent, result, excep, arg_err, refs,
+                                              indices, values);
+    if (excep != &local_excep)
         excep->pfnDeferredFillIn = nullptr;
-    else if (hr == DISP_E_EXCEPTION) {
-        SysFreeString(local_excep.bstrSource);
-        SysFreeString(local_excep.bstrDescription);
-        SysFreeString(local_excep.bstrHelpFile);
-    }
-    if (wire_flags & NO_RESULT)
-        VariantClear(&local_result);
     AutFree(block);
     return hr;
 }
 
+/* The values of the by reference arguments belong to the marshaller, so their slots are emptied before the arguments go. */
 HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Stub(IDispatch *This, long id, REFIID riid, unsigned long lcid,
                                                 unsigned long flags, DISPPARAMS *params, VARIANT *result,
                                                 EXCEPINFO *excep, unsigned int *arg_err, unsigned int refs,
                                                 unsigned int *indices, VARIANT *values)
 {
     UINT count = params->cArgs;
-    WORD *types = nullptr;
-    if (count) {
+    VARTYPE stack_types[STACK_ARGS];
+    VARTYPE *types = stack_types;
+    if (!count) {
+        params->cNamedArgs = 0;
+    } else {
         if (!params->rgvarg || (params->cNamedArgs && !params->rgdispidNamedArgs))
-            return INVALID_ARG;
-        types = AutAlloc((SIZE_T)count * sizeof(WORD));
-        if (!types)
-            return E_OUTOFMEMORY;
-        /* the references take the places they had. */
+            return E_INVALIDARG;
+        if (count > STACK_ARGS) {
+            types = AutAlloc((SIZE_T)count * sizeof(VARTYPE));
+            if (!types)
+                return E_OUTOFMEMORY;
+        }
         for (UINT k = 0; k < refs; k++) {
             if (indices[k] >= count) {
-                AutFree(types);
-                return INVALID_ARG;
+                if (types != stack_types)
+                    AutFree(types);
+                return E_INVALIDARG;
             }
             params->rgvarg[indices[k]] = values[k];
         }
         for (UINT i = 0; i < count; i++)
             types[i] = params->rgvarg[i].vt;
-    } else {
-        params->cNamedArgs = 0;
     }
-    VARIANT *out_result = result;
-    EXCEPINFO *out_excep = excep;
-    UINT *out_err = arg_err;
-    if (flags & NO_RESULT)
-        out_result = nullptr;
+
+    EXCEPINFO *object_excep = excep;
     if (flags & NO_EXCEPTION)
-        out_excep = nullptr;
-    else
+        object_excep = nullptr;
+    else if (excep)
         excep->pfnDeferredFillIn = nullptr;
-    if (flags & NO_ARG_ERROR)
-        out_err = nullptr;
-    HRESULT hr = This->lpVtbl->Invoke(This, id, riid, lcid, (WORD)flags, params, out_result, out_excep, out_err);
-    if (hr < 0) {
-        /* a fill in routine is of the process of the object, so the exception is completed here. */
-        if (hr == DISP_E_EXCEPTION && out_excep && out_excep->pfnDeferredFillIn) {
-            out_excep->pfnDeferredFillIn(out_excep);
-            out_excep->pfnDeferredFillIn = nullptr;
+    HRESULT hr = This->lpVtbl->Invoke(This, id, riid, lcid, (WORD)flags, params, (flags & NO_RESULT) ? nullptr : result,
+                                      object_excep, (flags & NO_ARG_ERROR) ? nullptr : arg_err);
+    if (FAILED(hr)) {
+        if (hr == DISP_E_EXCEPTION && object_excep && object_excep->pfnDeferredFillIn) {
+            object_excep->pfnDeferredFillIn(object_excep);
+            object_excep->pfnDeferredFillIn = nullptr;
         }
     } else if (count && refs) {
-        /* an argument that the object changed to another type is a call that did not do what it was asked. */
-        for (UINT i = 0; i < count; i++)
+        for (UINT i = 0; i < count; i++) {
             if (params->rgvarg[i].vt != types[i]) {
                 hr = BAD_CALLEE;
                 break;
             }
+        }
     }
-    /* the variants of the references are the engine's to free, not the arguments'. */
-    for (UINT k = 0; k < refs; k++)
+    for (UINT k = 0; k < refs && count; k++)
         params->rgvarg[indices[k]].vt = VT_EMPTY;
-    AutFree(types);
+    if (types != stack_types)
+        AutFree(types);
     DcomChannelSetHResult(nullptr, nullptr, hr);
     return hr;
 }
