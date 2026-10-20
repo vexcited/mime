@@ -13,6 +13,20 @@ typedef struct TL_LIB TL_LIB;
 typedef struct TL_TYPE TL_TYPE;
 typedef struct TYPEINFO TYPEINFO;
 
+struct TYPEINFO {
+    const ITypeInfo2Vtbl *lpVtbl;
+    const ITypeCompVtbl *lpCompVtbl;
+    const ICreateTypeInfo2Vtbl *lpCreateVtbl;
+    LONG Refs;
+    TL_TYPE *Type;
+    BOOL VtableView;
+    TYPEINFO *Twin;
+};
+
+extern const ITypeInfo2Vtbl g_typeinfo_vtbl;
+extern const ITypeCompVtbl g_typecomp_vtbl;
+extern const ICreateTypeInfo2Vtbl g_createinfo_vtbl;
+
 /* custom data: a guid and a value. */
 typedef struct TL_CUST {
     struct TL_CUST *Next;
@@ -115,6 +129,9 @@ struct TL_TYPE {
     USHORT InheritedFuncs, InheritedImpls;
     BOOL Loaded;
     BOOL Layouted;
+    /* the alignment members of a structure obey, when it was set. */
+    BOOL PackSet;
+    USHORT Pack;
     /* the position of its record in the file, for a type that was read. */
     ULONG FileOffset;
     /* the names, strings and guids of the record as the file has them, until they are decoded. */
@@ -201,6 +218,7 @@ BOOL TlNativeSyskind(SYSKIND kind);
 HRESULT TlReadImage(const BYTE *image, SIZE_T size, SYSKIND target, void (*release)(void *, const BYTE *),
                     void *context, TL_LIB **lib);
 HRESULT TlLoadMembers(TL_TYPE *type);
+HRESULT TlEnsureLayout(TL_TYPE *type);
 /* the string of a library as the file has it. */
 WCHAR *TlNameAt(TL_LIB *lib, ULONG offset);
 WCHAR *TlStringAt(TL_LIB *lib, ULONG offset);

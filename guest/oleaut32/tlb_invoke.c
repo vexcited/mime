@@ -392,12 +392,48 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
         hr = DISP_E_BADPARAMCOUNT;
         goto done;
     }
-    BOOL put = (flags & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)) != 0;
+    /* a function that takes any number of arguments takes no named ones, but the value of a property. */
+    if (f->OptCount == -1 && cnamed && !(cnamed == 1 && dp->rgdispidNamedArgs[0] == DISPID_PROPERTYPUT)) {
+        hr = DISP_E_NONAMEDARGS;
+        goto done;
+    }
+    BOOL varargs = f->OptCount == -1 && nvisible > 0;
+    if (f->OptCount != -1 && cargs > nvisible) {
+        hr = DISP_E_BADPARAMCOUNT;
+        /* arguments to a property that takes none: its value is what they index. */
+        if (flags & DISPATCH_PROPERTYGET) {
+            if (!nvisible)
+                hr = DISP_E_NOTACOLLECTION;
+        } else if (flags & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)) {
+            for (UINT k = 0; k < type->FuncCount; k++) {
+                const TL_FUNC *g = &type->Funcs[k];
+                if (g->Id != f->Id || g->Invoke != INVOKE_PROPERTYGET)
+                    continue;
+                UINT gv = 0;
+                for (UINT j = 0; j < g->ParamCount; j++)
+                    if (!is_lcid(&g->Params[j]) && !is_retval(&g->Params[j]))
+                        gv++;
+                if (gv == 0 || gv == cargs - 1)
+                    hr = DISP_E_NOTACOLLECTION;
+                break;
+            }
+        }
+        goto done;
+    }
+    if (f->Id >= 0 && (f->Flags & FUNCFLAG_FRESTRICTED)) {
+        hr = DISP_E_MEMBERNOTFOUND;
+        goto done;
+    }
+    BOOL put = f->Invoke == INVOKE_PROPERTYPUT || f->Invoke == INVOKE_PROPERTYPUTREF;
     VARIANT *put_value_arg = nullptr;
     UINT first_named = 0;
     if (put) {
-        if (!cnamed || dp->rgdispidNamedArgs[0] != DISPID_PROPERTYPUT) {
+        if (!nvisible) {
             hr = DISP_E_PARAMNOTOPTIONAL;
+            goto done;
+        }
+        if (!cnamed || dp->rgdispidNamedArgs[0] != DISPID_PROPERTYPUT) {
+            hr = DISP_E_PARAMNOTFOUND;
             goto done;
         }
         put_value_arg = &rg[0];
@@ -412,7 +448,6 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
         actual_index[i] = 0;
     }
     UINT vararg_count = 0;
-    BOOL varargs = f->OptCount == -1 && nvisible > 0;
     UINT fixed_visible = varargs ? nvisible - 1 : nvisible;
     UINT value_slots = nvisible - (put && nvisible ? 1 : 0);
     for (UINT p = 0; p < positional; p++) {
@@ -470,7 +505,9 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
             memset(&v, 0, sizeof(v));
             v.byref = rv == VT_DECIMAL ? (PVOID)&retstore->decVal : rv == VT_VARIANT ? (PVOID)retstore : (PVOID)&retstore->llVal;
             put_slot(call, (ULONG_PTR)v.byref);
-            retstore->vt = rv;
+            /* a variant is filled in by the function, the others get the type it is declared with. */
+            if (rv != VT_VARIANT)
+                retstore->vt = rv;
             continue;
         }
         const VARIANT *a = actual[vi];
@@ -512,30 +549,31 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
             break;
         }
         /* an argument left out: the default, a variant that says it is missing, or nothing. */
-        if (!a || ((value->vt == VT_ERROR && value->scode == DISP_E_PARAMNOTFOUND) && (prm->Flags & PARAMFLAG_FOPT))) {
-            if (prm->Flags & PARAMFLAG_FHASDEFAULT) {
+        BOOL missing = !a;
+        BOOL says_missing = a && value->vt == VT_ERROR && value->scode == DISP_E_PARAMNOTFOUND &&
+                            (prm->Flags & PARAMFLAG_FOPT) &&
+                            !(value_vt == VT_VARIANT && !(prm->Flags & PARAMFLAG_FHASDEFAULT));
+        if (missing || says_missing) {
+            BOOL by_count = f->OptCount > 0 && i >= n - (UINT)f->OptCount;
+            if (missing && !by_count && !(prm->Flags & PARAMFLAG_FOPT)) {
+                hr = DISP_E_BADPARAMCOUNT;
+                break;
+            }
+            if (missing && by_count && value_vt == VT_VARIANT) {
+                tmp->vt = VT_ERROR;
+                tmp->scode = DISP_E_PARAMNOTFOUND;
+            } else if (prm->Flags & PARAMFLAG_FHASDEFAULT) {
                 hr = VariantCopy(tmp, &prm->Default);
                 arg->Owned = TRUE;
-                value = tmp;
-            } else if (prm->Flags & PARAMFLAG_FOPT) {
-                if (value_vt == VT_VARIANT) {
-                    tmp->vt = VT_ERROR;
-                    tmp->scode = DISP_E_PARAMNOTFOUND;
-                    value = tmp;
-                } else {
-                    hr = DISP_E_PARAMNOTOPTIONAL;
-                    if (arg_err)
-                        *arg_err = index;
-                    break;
-                }
+            } else if (value_vt == VT_VARIANT) {
+                tmp->vt = VT_ERROR;
+                tmp->scode = DISP_E_PARAMNOTFOUND;
             } else {
-                hr = DISP_E_PARAMNOTOPTIONAL;
-                if (arg_err)
-                    *arg_err = i;
-                break;
+                tmp->vt = VT_EMPTY;
             }
             if (FAILED(hr))
                 break;
+            value = tmp;
         }
         if (value_vt == VT_VARIANT) {
             VARIANT *target;
@@ -603,9 +641,9 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
         }
         if (value_vt & VT_ARRAY) {
             if (byref) {
-                if (a && (a->vt & VT_BYREF) && (a->vt & VT_ARRAY)) {
+                if (a && (a->vt & VT_BYREF) && (a->vt & ~VT_BYREF) == value_vt) {
                     put_slot(call, (ULONG_PTR)a->byref);
-                } else if (value->vt & VT_ARRAY) {
+                } else if (value->vt == value_vt) {
                     tmp->vt = value->vt;
                     tmp->parray = value->parray;
                     put_slot(call, (ULONG_PTR)&tmp->parray);
@@ -622,7 +660,7 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
                     in.parray = src->pparray ? *src->pparray : nullptr;
                     src = &in;
                 }
-                if (!(src->vt & VT_ARRAY)) {
+                if (src->vt != value_vt) {
                     hr = DISP_E_TYPEMISMATCH;
                     if (arg_err)
                         *arg_err = index;
@@ -748,13 +786,9 @@ static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD f
         if (result) {
             VariantInit(result);
             if (retval_index >= 0) {
-                if (retstore->vt == VT_VARIANT) {
-                    *result = *retstore;
-                } else {
-                    *result = *retstore;
-                    if (retstore->vt == VT_DECIMAL)
-                        result->vt = VT_DECIMAL;
-                }
+                *result = *retstore;
+                if (retstore->vt == VT_DECIMAL)
+                    result->vt = VT_DECIMAL;
                 retstore->vt = VT_EMPTY;
             } else if (rv_vt != VT_EMPTY && rv_vt != VT_VOID) {
                 take_result(rv_vt & ~VT_BYREF, raw, fp, result);

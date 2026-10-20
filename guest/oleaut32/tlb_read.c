@@ -581,6 +581,7 @@ HRESULT TlLoadMembers(TL_TYPE *type)
         ULONG memoff = rd32(b + 4);
         ULONG d1 = rd32(b + 84);
         USHORT cf = type->FuncCount, cv = type->VarCount;
+        type->Cust = read_custom(lib, type->CustOff);
         /* the references the type holds, whatever it is. */
         if (type->ImplCount) {
             type->Impls = TlAlloc(lib, (SIZE_T)type->ImplCount * sizeof(TL_IMPL));
@@ -685,9 +686,7 @@ HRESULT TlLoadMembers(TL_TYPE *type)
                     f->HasOrdinal = TRUE;
                     f->Ordinal = slots > 8 ? rd16(r + 32) : 0;
                 } else {
-                    f->EntryName = TlNameAt(lib, SLOT(32));
-                    if (!f->EntryName)
-                        f->EntryName = TlStringAt(lib, SLOT(32));
+                    f->EntryName = TlStringAt(lib, SLOT(32));
                 }
                 f->HelpFile = TlStringAt(lib, SLOT(36));
                 f->DllName = TlStringAt(lib, SLOT(40));

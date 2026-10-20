@@ -292,3 +292,8 @@ EXPORTS
     DispInvoke @30
     DispGetParam @28
     CreateStdDispatch @32
+    LHashValOfNameSys @165
+    LHashValOfNameSysA @166
+    CreateTypeLib @160
+    CreateTypeLib2 @180
+    OACreateTypeLib2 @352

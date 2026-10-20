@@ -7,19 +7,6 @@
 
 MIME_DEFINE_GUID(IID_MimeTypeInfo, 0x6d696d65, 0x7479, 0x7065, 0x69, 0x6e, 0x66, 0x6f, 0x00, 0x00, 0x00, 0x01);
 
-struct TYPEINFO {
-    const ITypeInfo2Vtbl *lpVtbl;
-    const ITypeCompVtbl *lpCompVtbl;
-    const ICreateTypeInfo2Vtbl *lpCreateVtbl;
-    LONG Refs;
-    TL_TYPE *Type;
-    BOOL VtableView;
-    TYPEINFO *Twin;
-};
-
-extern const ITypeInfo2Vtbl g_typeinfo_vtbl;
-extern const ITypeCompVtbl g_typecomp_vtbl;
-extern const ICreateTypeInfo2Vtbl g_createinfo_vtbl;
 
 #define E_ELEMENTNOTFOUND TYPE_E_ELEMENTNOTFOUND
 
