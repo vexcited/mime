@@ -199,6 +199,7 @@ static GpStatus brush_rotate(GBrush *b, float angle, MatrixOrder order)
 
 WINGDIPAPI GpStatus WINAPI GdipCreateSolidFill(ARGB color, GpSolidFill **brush)
 {
+    GP_REQUIRE_INIT();
     if (!brush)
         return InvalidParameter;
     GBrush *b = gp_brush_solid(color);
@@ -232,6 +233,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetSolidFillColor(GpSolidFill *brush, ARGB *color
 
 WINGDIPAPI GpStatus WINAPI GdipCreateHatchBrush(GpHatchStyle style, ARGB fore, ARGB back, GpHatch **brush)
 {
+    GP_REQUIRE_INIT();
     if (!brush || style < HatchStyleMin || style > HatchStyleMax)
         return InvalidParameter;
     GBrush *b = gp_brush_new(BrushTypeHatchFill);
@@ -324,24 +326,28 @@ static GpStatus texture_create(GImage *image, WrapMode wrap, struct GAttrs *attr
 
 WINGDIPAPI GpStatus WINAPI GdipCreateTexture(GpImage *image, GpWrapMode wrap, GpTexture **texture)
 {
+    GP_REQUIRE_INIT();
     return texture_create(image, wrap, nullptr, 0, 0, 0, 0, TRUE, texture);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateTexture2(GpImage *image, GpWrapMode wrap, REAL x, REAL y, REAL w, REAL h,
                                               GpTexture **texture)
 {
+    GP_REQUIRE_INIT();
     return texture_create(image, wrap, nullptr, x, y, w, h, FALSE, texture);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateTexture2I(GpImage *image, GpWrapMode wrap, INT x, INT y, INT w, INT h,
                                                GpTexture **texture)
 {
+    GP_REQUIRE_INIT();
     return texture_create(image, wrap, nullptr, (float)x, (float)y, (float)w, (float)h, FALSE, texture);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateTextureIA(GpImage *image, const GpImageAttributes *attributes, REAL x, REAL y,
                                                REAL w, REAL h, GpTexture **texture)
 {
+    GP_REQUIRE_INIT();
     struct GAttrs *a = nullptr;
     if (attributes) {
         a = gp_attrs_cast(attributes);
@@ -435,6 +441,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetTextureWrapMode(GpTexture *t, GpWrapMode *wrap
 
 WINGDIPAPI GpStatus WINAPI GdipGetTextureImage(GpTexture *t, GpImage **image)
 {
+    GP_REQUIRE_INIT();
     GpStatus st;
     GBrush *b = brush_of(t, BrushTypeTextureFill, &st);
     if (!b)
@@ -684,6 +691,7 @@ static BOOL close_float(float a, float b)
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrush(const GpPointF *p1, const GpPointF *p2, ARGB c1, ARGB c2, GpWrapMode wrap,
                                                GpLineGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!p1 || !p2 || !brush)
         return InvalidParameter;
     if (!wrap_valid(wrap))
@@ -717,6 +725,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrush(const GpPointF *p1, const GpPoint
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushI(const GpPoint *p1, const GpPoint *p2, ARGB c1, ARGB c2, GpWrapMode wrap,
                                                 GpLineGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!p1 || !p2)
         return InvalidParameter;
     GpPointF a = {(float)p1->X, (float)p1->Y}, b = {(float)p2->X, (float)p2->Y};
@@ -726,6 +735,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushI(const GpPoint *p1, const GpPoint
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRect(const GpRectF *rect, ARGB c1, ARGB c2, LinearGradientMode mode,
                                                        GpWrapMode wrap, GpLineGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!rect || !brush)
         return InvalidParameter;
     if (mode < LinearGradientModeHorizontal || mode > LinearGradientModeBackwardDiagonal || !wrap_valid(wrap))
@@ -744,6 +754,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRect(const GpRectF *rect, ARGB
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRectI(const GpRect *rect, ARGB c1, ARGB c2, LinearGradientMode mode,
                                                         GpWrapMode wrap, GpLineGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!rect)
         return InvalidParameter;
     GpRectF r = {(float)rect->X, (float)rect->Y, (float)rect->Width, (float)rect->Height};
@@ -753,6 +764,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRectI(const GpRect *rect, ARGB
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRectWithAngle(const GpRectF *rect, ARGB c1, ARGB c2, REAL angle,
                                                                 BOOL scalable, GpWrapMode wrap, GpLineGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!rect || !brush || !wrap_valid(wrap))
         return InvalidParameter;
     if (rect->Width == 0.0f || rect->Height == 0.0f)
@@ -771,6 +783,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRectWithAngle(const GpRectF *r
 WINGDIPAPI GpStatus WINAPI GdipCreateLineBrushFromRectWithAngleI(const GpRect *rect, ARGB c1, ARGB c2, REAL angle,
                                                                  BOOL scalable, GpWrapMode wrap, GpLineGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!rect)
         return InvalidParameter;
     GpRectF r = {(float)rect->X, (float)rect->Y, (float)rect->Width, (float)rect->Height};
@@ -1044,6 +1057,7 @@ static GpStatus pathgrad_from_path(const GPath *src, WrapMode wrap, GBrush **out
 WINGDIPAPI GpStatus WINAPI GdipCreatePathGradient(const GpPointF *points, INT count, GpWrapMode wrap,
                                                   GpPathGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!points || !brush || count < 2 || wrap < WrapModeTile || wrap > WrapModeClamp)
         return InvalidParameter;
     GPath *p = gp_path_new(FillModeAlternate);
@@ -1064,6 +1078,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreatePathGradient(const GpPointF *points, INT co
 WINGDIPAPI GpStatus WINAPI GdipCreatePathGradientI(const GpPoint *points, INT count, GpWrapMode wrap,
                                                    GpPathGradient **brush)
 {
+    GP_REQUIRE_INIT();
     if (!points || !brush || count < 2)
         return InvalidParameter;
     GpPointF *f = gp_alloc(sizeof(GpPointF) * count);
@@ -1080,6 +1095,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreatePathGradientI(const GpPoint *points, INT co
 
 WINGDIPAPI GpStatus WINAPI GdipCreatePathGradientFromPath(const GpPath *path, GpPathGradient **brush)
 {
+    GP_REQUIRE_INIT();
     GPath *p = gp_path_cast(path);
     if (!p || !brush)
         return InvalidParameter;
@@ -1134,6 +1150,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetPathGradientSurroundColorsWithCount(GpPathGrad
 WINGDIPAPI GpStatus WINAPI GdipSetPathGradientSurroundColorsWithCount(GpPathGradient *brush, const ARGB *colors,
                                                                       INT *count)
 {
+    GP_REQUIRE_INIT();
     GpStatus st;
     PG_BRUSH(b, st);
     if (!b)

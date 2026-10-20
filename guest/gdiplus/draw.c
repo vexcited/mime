@@ -19,6 +19,8 @@ GpStatus gp_stroke_path(GGraphics *g, const MimeVecPath *path, const GPen *pen)
 {
     if (!path->count)
         return Ok;
+    if (g->meta)
+        return gp_rec_stroke_path(g, path, pen);
     MimeVecPolys polys;
     mime_vec_polys_init(&polys, &gp_allocator);
     GpStatus st = gp_pen_widen_ex(pen, path, gp_graphics_w2d(g), MIME_VEC_DEFAULT_FLATNESS, g->dpi_x, &polys);
@@ -30,6 +32,8 @@ GpStatus gp_stroke_path(GGraphics *g, const MimeVecPath *path, const GPen *pen)
 
 GpStatus gp_fill_rect_world(GGraphics *g, const GBrush *brush, float x, float y, float w, float h)
 {
+    if (g->meta)
+        return gp_rec_fill_rect(g, brush, x, y, w, h);
     MimeVecPath p;
     mime_vec_path_init(&p, &gp_allocator);
     GpStatus st = vec_status(mime_vec_path_add_rect(&p, x, y, w, h));
@@ -595,6 +599,8 @@ WINGDIPAPI GpStatus WINAPI GdipFillRegion(GpGraphics *graphics, GpBrush *brush, 
     GRegion *r = gp_region_cast(region);
     if (!r)
         return InvalidParameter;
+    if (g->meta)
+        return gp_rec_fill_region(g, br, r);
     MimeVecRect clip;
     RECT b;
     gp_graphics_bounds(g, &b);
@@ -616,6 +622,8 @@ WINGDIPAPI GpStatus WINAPI GdipFillRegion(GpGraphics *graphics, GpBrush *brush, 
 WINGDIPAPI GpStatus WINAPI GdipGraphicsClear(GpGraphics *graphics, ARGB color)
 {
     GFX(g, graphics);
+    if (g->meta)
+        return gp_rec_clear(g, color);
     RECT area;
     gp_graphics_bounds(g, &area);
     const MimeVecMask *mask;

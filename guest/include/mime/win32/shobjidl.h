@@ -280,6 +280,84 @@ struct IShellLinkDataList {
     const IShellLinkDataListVtbl *lpVtbl;
 };
 
+/* ------------------------------------------------------------------ icons and thumbnails */
+
+MIME_DEFINE_GUID(IID_IShellItemImageFactory, 0xBCC18B79, 0xBA16, 0x442F, 0x80, 0xC4, 0x8A, 0x59, 0xC3, 0x0C, 0x46, 0x3B);
+MIME_DEFINE_GUID(IID_IExtractIconA, 0x000214EB, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IExtractIconW, 0x000214FA, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+
+typedef int SIIGBF;
+#define SIIGBF_RESIZETOFIT 0x00000000
+#define SIIGBF_BIGGERSIZEOK 0x00000001
+#define SIIGBF_MEMORYONLY 0x00000002
+#define SIIGBF_ICONONLY 0x00000004
+#define SIIGBF_THUMBNAILONLY 0x00000008
+#define SIIGBF_INCACHEONLY 0x00000010
+#define SIIGBF_CROPTOSQUARE 0x00000020
+#define SIIGBF_WIDETHUMBNAILS 0x00000040
+#define SIIGBF_ICONBACKGROUND 0x00000080
+#define SIIGBF_SCALEUP 0x00000100
+
+/* the failures of thumbnail extraction, from thumbcache.h. */
+#define WTS_E_FAILEDEXTRACTION ((HRESULT)0x8004B200L)
+#define WTS_E_EXTRACTIONTIMEDOUT ((HRESULT)0x8004B201L)
+#define WTS_E_SURROGATEUNAVAILABLE ((HRESULT)0x8004B202L)
+#define WTS_E_FASTEXTRACTIONNOTSUPPORTED ((HRESULT)0x8004B203L)
+#define WTS_E_DATAFILEUNAVAILABLE ((HRESULT)0x8004B204L)
+
+typedef struct IShellItemImageFactory IShellItemImageFactory;
+typedef struct IShellItemImageFactoryVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IShellItemImageFactory *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IShellItemImageFactory *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IShellItemImageFactory *This);
+    HRESULT(STDMETHODCALLTYPE *GetImage)(IShellItemImageFactory *This, SIZE size, SIIGBF flags, HBITMAP *bitmap);
+} IShellItemImageFactoryVtbl;
+struct IShellItemImageFactory {
+    const IShellItemImageFactoryVtbl *lpVtbl;
+};
+
+#define GIL_OPENICON 0x0001
+#define GIL_FORSHELL 0x0002
+#define GIL_ASYNC 0x0020
+#define GIL_DEFAULTICON 0x0040
+#define GIL_FORSHORTCUT 0x0080
+#define GIL_CHECKSHIELD 0x0200
+#define GIL_SIMULATEDOC 0x0001
+#define GIL_PERINSTANCE 0x0002
+#define GIL_PERCLASS 0x0004
+#define GIL_NOTFILENAME 0x0008
+#define GIL_DONTCACHE 0x0010
+#define GIL_SHIELD 0x0200
+#define GIL_FORCENOSHIELD 0x0400
+
+typedef struct IExtractIconW IExtractIconW;
+typedef struct IExtractIconWVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IExtractIconW *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IExtractIconW *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IExtractIconW *This);
+    HRESULT(STDMETHODCALLTYPE *GetIconLocation)(IExtractIconW *This, UINT flags, PWSTR file, UINT chars, int *index,
+                                                UINT *out_flags);
+    HRESULT(STDMETHODCALLTYPE *Extract)(IExtractIconW *This, PCWSTR file, UINT index, HICON *large, HICON *small,
+                                        UINT size);
+} IExtractIconWVtbl;
+struct IExtractIconW {
+    const IExtractIconWVtbl *lpVtbl;
+};
+
+typedef struct IExtractIconA IExtractIconA;
+typedef struct IExtractIconAVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IExtractIconA *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IExtractIconA *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IExtractIconA *This);
+    HRESULT(STDMETHODCALLTYPE *GetIconLocation)(IExtractIconA *This, UINT flags, PSTR file, UINT chars, int *index,
+                                                UINT *out_flags);
+    HRESULT(STDMETHODCALLTYPE *Extract)(IExtractIconA *This, PCSTR file, UINT index, HICON *large, HICON *small,
+                                        UINT size);
+} IExtractIconAVtbl;
+struct IExtractIconA {
+    const IExtractIconAVtbl *lpVtbl;
+};
+
 /* ------------------------------------------------------------------ shell item arrays and enumerators */
 
 typedef struct IEnumShellItems IEnumShellItems;

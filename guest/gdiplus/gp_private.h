@@ -48,6 +48,14 @@ typedef struct GObject {
 #define GP_MAX_DIMENSION 32767
 #define GP_MAX_BYTES 0x40000000u
 
+/* the library is usable between GdiplusStartup and the matching GdiplusShutdown, the functions that make objects say so. */
+BOOL gp_started(void);
+#define GP_REQUIRE_INIT()                  \
+    do {                                   \
+        if (!gp_started())                 \
+            return GdiplusNotInitialized;  \
+    } while (0)
+
 /* memory, from the process heap. gp_alloc_zero clears. */
 void *gp_alloc(SIZE_T size);
 void *gp_alloc_zero(SIZE_T size);
@@ -214,6 +222,14 @@ GpStatus gp_metafile_bounds(GpImage *image, GpRectF *bounds, GpUnit *unit);
 GpStatus gp_metafile_raw_format(GpImage *image, GUID *format);
 /* either resolution may be NULL. */
 GpStatus gp_metafile_resolution(GpImage *image, float *dpi_x, float *dpi_y);
+/* the width and height a metafile reports in pixels, either may be NULL, and its image flags. */
+GpStatus gp_metafile_pixel_size(GpImage *image, UINT *width, UINT *height);
+GpStatus gp_metafile_flags(GpImage *image, UINT *flags);
+GpStatus gp_metafile_thumbnail(GpImage *image, UINT width, UINT height, GpImage **thumbnail);
+/* the size a metafile has on a page of the graphics, in the units of its world. */
+struct GGraphics;
+GpStatus gp_metafile_page_size(struct GGraphics *g, GpImage *image, float width, float height, GpUnit unit,
+                               float *out_w, float *out_h);
 
 /* ------------------------------------------------------------------ brushes and pens */
 
@@ -324,6 +340,14 @@ GpStatus gp_pen_widen(const GPen *pen, const MimeVecPath *path, const MimeVecMat
                       MimeVecPolys *out);
 GpStatus gp_pen_widen_ex(const GPen *pen, const MimeVecPath *path, const MimeVecMatrix *world_to_out, float flatness,
                          float dpi, MimeVecPolys *out);
+
+/* custom line caps: the ends of the flattened line are shortened and the shapes of the caps made. */
+BOOL gp_pen_has_custom_caps(const GPen *pen);
+GpStatus gp_pen_custom_caps(const GPen *pen, MimeVecPolys *flat, float width, float min_width,
+                            const MimeVecMatrix *to_out, float flatness, MimeVecPolys *fills, MimeVecPolys *strokes);
+/* 1 for polygons that wind one way and -1 for the other, from the first one with an area. */
+float gp_polys_orientation(const MimeVecPolys *p);
+float gp_polys_orientation_of(const MimeVecPoint *pts, UINT n);
 
 /* ------------------------------------------------------------------ regions */
 
@@ -531,5 +555,36 @@ void gp_attrs_free(struct GAttrs *a);
 void gp_attrs_apply(const struct GAttrs *attrs, ColorAdjustType type, UINT32 *argb, INT count);
 BOOL gp_attrs_active(const struct GAttrs *attrs, ColorAdjustType type);
 WrapMode gp_attrs_wrap(const struct GAttrs *attrs, ARGB *clamp_color);
+
+/* ------------------------------------------------------------------ recording graphics (emfrecord.c) */
+
+/*
+ * a graphics with a metafile in its meta field records: the drawing core and the graphics calls hand it what they
+ * were asked to do and it writes emf+ records. these calls are made before the real work, which a recording
+ * graphics does not do for what it draws.
+ */
+GGraphics *gp_graphics_new_recording(struct GMetafile *meta, float dpi_x, float dpi_y, INT width, INT height);
+GpStatus gp_rec_fill_path(GGraphics *g, const MimeVecPath *path, FillMode mode, const GBrush *brush);
+GpStatus gp_rec_stroke_path(GGraphics *g, const MimeVecPath *path, const GPen *pen);
+GpStatus gp_rec_fill_rect(GGraphics *g, const GBrush *brush, float x, float y, float w, float h);
+GpStatus gp_rec_fill_region(GGraphics *g, const GBrush *brush, const GRegion *region);
+GpStatus gp_rec_clear(GGraphics *g, ARGB color);
+GpStatus gp_rec_draw_image(GGraphics *g, GImage *image, const GpPointF *dst, float sx, float sy, float sw, float sh,
+                           GpUnit unit, struct GAttrs *attrs);
+void gp_rec_sync(GGraphics *g);
+void gp_rec_save(GGraphics *g, UINT id);
+/* kind 0 is a save and 1 a container. */
+void gp_rec_restore(GGraphics *g, UINT id, INT kind);
+void gp_rec_begin_container(GGraphics *g, UINT id, const GpRectF *dst, const GpRectF *src, GpUnit unit);
+GpStatus gp_rec_set_clip(GGraphics *g, const GRegion *region, CombineMode mode);
+void gp_rec_reset_clip(GGraphics *g);
+void gp_rec_offset_clip(GGraphics *g, float dx, float dy);
+void gp_rec_comment(GGraphics *g, UINT size, const BYTE *data);
+GpStatus gp_rec_get_dc(GGraphics *g, HDC *dc);
+void gp_rec_release_dc(GGraphics *g);
+/* a recording graphics that is deleted ends the recording. */
+void gp_meta_graphics_deleted(GGraphics *g);
+/* the graphics of a recording metafile, for GdipGetImageGraphicsContext. */
+GpStatus gp_meta_graphics_context(GpImage *image, GpGraphics **graphics);
 
 #endif

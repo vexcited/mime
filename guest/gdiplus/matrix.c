@@ -61,6 +61,7 @@ static float determinant(const float *m)
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix(GpMatrix **matrix)
 {
+    GP_REQUIRE_INIT();
     if (!matrix)
         return InvalidParameter;
     return matrix_new(1, 0, 0, 1, 0, 0, matrix);
@@ -69,6 +70,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix(GpMatrix **matrix)
 DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix2(float m11, float m12, float m21, float m22, float dx, float dy,
                                                   GpMatrix **matrix)
 {
+    GP_REQUIRE_INIT();
     if (!matrix)
         return InvalidParameter;
     return matrix_new(m11, m12, m21, m22, dx, dy, matrix);
@@ -77,6 +79,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix2(float m11, float m12, float m2
 /* the transform that maps the rectangle to the parallelogram of three points: top left, top right, bottom left. */
 DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix3(const GpRectF *rect, const GpPointF *points, GpMatrix **matrix)
 {
+    GP_REQUIRE_INIT();
     if (!rect || !points || !matrix || rect->Width == 0 || rect->Height == 0)
         return InvalidParameter;
     float m11 = (points[1].X - points[0].X) / rect->Width, m12 = (points[1].Y - points[0].Y) / rect->Width;
@@ -87,6 +90,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix3(const GpRectF *rect, const GpP
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix3I(const GpRect *rect, const GpPoint *points, GpMatrix **matrix)
 {
+    GP_REQUIRE_INIT();
     if (!rect || !points)
         return InvalidParameter;
     GpRectF r = {(float)rect->X, (float)rect->Y, (float)rect->Width, (float)rect->Height};

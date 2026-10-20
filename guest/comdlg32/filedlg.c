@@ -112,6 +112,8 @@ struct _FILEDLG {
     HWND Hwnd, Owner, Back, Up, NewFolder, Address, Tree, List, NameLabelWindow, NameEdit, TypeLabel, TypeCombo,
         OkButton, CancelButton, ReadOnlyBox;
     HIMAGELIST Images;
+    /* the icons the shell gave, as the index in its list and the place in Images each was added at. */
+    int ShellKeys[96], ShellSlots[96], ShellCount;
     HICON BackIcon, UpIcon, NewFolderIcon;
     HFONT Font;
     int UnitX, UnitY;
@@ -722,6 +724,8 @@ static BOOL entry_path(const FILEDLG *dialog, const FD_ENTRY *entry, WCHAR *path
     return TRUE;
 }
 
+static int shell_icon(FILEDLG *dialog, LPCWSTR path, DWORD attributes, BOOL by_attributes, int fallback);
+
 static int drive_icon(UINT type)
 {
     return type == DRIVE_REMOTE ? ICON_DRIVE : ICON_DRIVE;
@@ -758,7 +762,7 @@ static void read_entries(FILEDLG *dialog)
             wcscpy(entry.Name, root);
             entry.Folder = entry.Drive = TRUE;
             UINT type = GetDriveTypeW(root);
-            entry.Icon = drive_icon(type);
+            entry.Icon = shell_icon(dialog, root, FILE_ATTRIBUTE_DIRECTORY, FALSE, drive_icon(type));
             WCHAR label[40] = L"";
             if (type != DRIVE_REMOVABLE && type != DRIVE_CDROM)
                 GetVolumeInformationW(root, label, 32, nullptr, nullptr, nullptr, nullptr, 0);
@@ -812,6 +816,13 @@ static void read_entries(FILEDLG *dialog)
         entry.Size = ((ULONGLONG)find.nFileSizeHigh << 32) | find.nFileSizeLow;
         entry.Time = find.ftLastWriteTime;
         entry.Icon = folder ? ICON_FOLDER : ICON_FILE;
+        WCHAR full[MAX_PATH];
+        if (wcslen(dialog->Folder) + wcslen(find.cFileName) + 2 < MAX_PATH) {
+            wcscpy(full, dialog->Folder);
+            PathAddBackslashW(full);
+            wcscat(full, find.cFileName);
+            entry.Icon = shell_icon(dialog, full, find.dwFileAttributes, TRUE, entry.Icon);
+        }
         if (add_entry(dialog, &capacity, &entry) == (UINT)-1)
             break;
     } while (FindNextFileW(handle, &find));
@@ -1258,6 +1269,38 @@ static HICON icon_from_art(const char rows[16][17], int size)
     return icon;
 }
 
+/*
+ * the place in the dialog's images of the icon the shell has for a path, which is added the first time. A path by
+ * attributes needs no file; a drive's type is asked of the drive. The art drawn here stands in when the shell
+ * has none.
+ */
+static int shell_icon(FILEDLG *dialog, LPCWSTR path, DWORD attributes, BOOL by_attributes, int fallback)
+{
+    if (!dialog->Images)
+        return fallback;
+    UINT flags = SHGFI_SMALLICON | (by_attributes ? SHGFI_USEFILEATTRIBUTES : 0);
+    SHFILEINFOW info;
+    memset(&info, 0, sizeof(info));
+    if (!SHGetFileInfoW(path, attributes, &info, sizeof(info), flags | SHGFI_SYSICONINDEX))
+        return fallback;
+    int key = info.iIcon;
+    for (int i = 0; i < dialog->ShellCount; i++)
+        if (dialog->ShellKeys[i] == key)
+            return dialog->ShellSlots[i];
+    if (dialog->ShellCount == (int)(sizeof(dialog->ShellKeys) / sizeof(dialog->ShellKeys[0])))
+        return fallback;
+    memset(&info, 0, sizeof(info));
+    if (!SHGetFileInfoW(path, attributes, &info, sizeof(info), flags | SHGFI_ICON) || !info.hIcon)
+        return fallback;
+    int slot = ImageList_ReplaceIcon(dialog->Images, -1, info.hIcon);
+    DestroyIcon(info.hIcon);
+    if (slot < 0)
+        return fallback;
+    dialog->ShellKeys[dialog->ShellCount] = key;
+    dialog->ShellSlots[dialog->ShellCount++] = slot;
+    return slot;
+}
+
 static void load_images(FILEDLG *dialog)
 {
     int size = GetSystemMetrics(SM_CXSMICON);
@@ -1408,7 +1451,8 @@ static void tree_fill(FILEDLG *dialog, HTREEITEM item)
                 GetVolumeInformationW(root, label, 32, nullptr, nullptr, nullptr, nullptr, 0);
             wsprintfW(text, L"%s (%c:)", label[0] ? label : (type == DRIVE_CDROM ? L"CD Drive" : L"Local Disk"),
                       (WCHAR)(L'A' + i));
-            tree_add(dialog, item, text, ICON_DRIVE, 2, root, TRUE);
+            tree_add(dialog, item, text, shell_icon(dialog, root, FILE_ATTRIBUTE_DIRECTORY, FALSE, ICON_DRIVE), 2, root,
+                     TRUE);
         }
         return;
     }
@@ -1421,7 +1465,8 @@ static void tree_fill(FILEDLG *dialog, HTREEITEM item)
             if (wcslen(path) + wcslen(names.Names[i]) >= MAX_PATH)
                 continue;
             wcscat(path, names.Names[i]);
-            tree_add(dialog, item, names.Names[i], ICON_FOLDER, 2, path, TRUE);
+            tree_add(dialog, item, names.Names[i], shell_icon(dialog, path, FILE_ATTRIBUTE_DIRECTORY, TRUE, ICON_FOLDER), 2,
+                     path, TRUE);
         }
         fd_free(names.Names);
     }

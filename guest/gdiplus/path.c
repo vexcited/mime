@@ -63,6 +63,7 @@ GpStatus gp_path_flatten(const MimeVecPath *path, const MimeVecMatrix *m, float 
 
 WINGDIPAPI GpStatus WINAPI GdipCreatePath(GpFillMode mode, GpPath **path)
 {
+    GP_REQUIRE_INIT();
     if (!path)
         return InvalidParameter;
     GPath *p = gp_path_new(mode);
@@ -93,6 +94,7 @@ BOOL gp_path_types_valid(const BYTE *types, INT count)
 WINGDIPAPI GpStatus WINAPI GdipCreatePath2(const GpPointF *points, const BYTE *types, INT count, GpFillMode mode,
                                            GpPath **path)
 {
+    GP_REQUIRE_INIT();
     if (!path || !points || !types || count < 0)
         return InvalidParameter;
     if (!gp_path_types_valid(types, count))
@@ -111,6 +113,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreatePath2(const GpPointF *points, const BYTE *t
 WINGDIPAPI GpStatus WINAPI GdipCreatePath2I(const GpPoint *points, const BYTE *types, INT count, GpFillMode mode,
                                             GpPath **path)
 {
+    GP_REQUIRE_INIT();
     if (!points || count < 0)
         return InvalidParameter;
     GpPointF *f = count ? gp_alloc(sizeof(GpPointF) * count) : nullptr;
@@ -941,6 +944,7 @@ static GPathIter *iter_cast(const void *p)
 
 WINGDIPAPI GpStatus WINAPI GdipCreatePathIter(GpPathIterator **iterator, GpPath *path)
 {
+    GP_REQUIRE_INIT();
     GPath *p = gp_path_cast(path);
     if (!iterator || !p)
         return InvalidParameter;

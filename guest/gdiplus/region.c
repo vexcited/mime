@@ -403,6 +403,7 @@ static GpStatus region_mask_own(const GRegion *r, const MimeVecMatrix *m, MimeVe
 
 WINGDIPAPI GpStatus WINAPI GdipCreateRegion(GpRegion **region)
 {
+    GP_REQUIRE_INIT();
     if (!region)
         return InvalidParameter;
     GRegion *r = gp_region_new_infinite();
@@ -412,6 +413,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateRegion(GpRegion **region)
 
 WINGDIPAPI GpStatus WINAPI GdipCreateRegionRect(const GpRectF *rect, GpRegion **region)
 {
+    GP_REQUIRE_INIT();
     if (!rect || !region)
         return InvalidParameter;
     GRegionNode *n = rect_node(rect->X, rect->Y, rect->Width, rect->Height);
@@ -424,6 +426,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateRegionRect(const GpRectF *rect, GpRegion **
 
 WINGDIPAPI GpStatus WINAPI GdipCreateRegionRectI(const GpRect *rect, GpRegion **region)
 {
+    GP_REQUIRE_INIT();
     if (!rect)
         return InvalidParameter;
     GpRectF r = {(float)rect->X, (float)rect->Y, (float)rect->Width, (float)rect->Height};
@@ -432,6 +435,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateRegionRectI(const GpRect *rect, GpRegion **
 
 WINGDIPAPI GpStatus WINAPI GdipCreateRegionPath(GpPath *path, GpRegion **region)
 {
+    GP_REQUIRE_INIT();
     GPath *p = gp_path_cast(path);
     if (!p || !region)
         return InvalidParameter;
@@ -446,6 +450,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateRegionPath(GpPath *path, GpRegion **region)
 /* the rectangles of a gdi region, as a union of rectangle nodes. */
 WINGDIPAPI GpStatus WINAPI GdipCreateRegionHrgn(HRGN hrgn, GpRegion **region)
 {
+    GP_REQUIRE_INIT();
     if (!hrgn || !region)
         return InvalidParameter;
     DWORD size = GetRegionData(hrgn, 0, nullptr);
@@ -498,6 +503,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateRegionHrgn(HRGN hrgn, GpRegion **region)
 
 WINGDIPAPI GpStatus WINAPI GdipCloneRegion(GpRegion *region, GpRegion **clone)
 {
+    GP_REQUIRE_INIT();
     GRegion *r = gp_region_cast(region);
     if (!r || !clone)
         return InvalidParameter;
@@ -1030,7 +1036,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetRegionScans(GpRegion *region, GpRectF *rects, 
     if (st != Ok)
         return st;
     if (rects) {
-        for (INT i = 0; i < n && i < *count; i++)
+        for (INT i = 0; i < n; i++)
             rects[i] = list[i];
     }
     *count = n;
@@ -1050,7 +1056,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetRegionScansI(GpRegion *region, GpRect *rects, 
     if (st != Ok)
         return st;
     if (rects) {
-        for (INT i = 0; i < n && i < *count; i++) {
+        for (INT i = 0; i < n; i++) {
             rects[i].X = (INT)list[i].X;
             rects[i].Y = (INT)list[i].Y;
             rects[i].Width = (INT)list[i].Width;
@@ -1296,6 +1302,7 @@ static GRegionNode *read_node(Reader *r, INT depth)
 
 WINGDIPAPI GpStatus WINAPI GdipCreateRegionRgnData(const BYTE *data, INT size, GpRegion **region)
 {
+    GP_REQUIRE_INIT();
     if (!data || !region || size < 0)
         return InvalidParameter;
     if (size < 12)

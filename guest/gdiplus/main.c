@@ -109,7 +109,11 @@ UINT32 gp_scale_pargb(UINT32 pargb, UINT32 v255)
 /* ------------------------------------------------------------------ startup */
 
 static LONG volatile g_token;
-static LONG volatile g_started;
+/* the number of GdiplusStartup calls that GdiplusShutdown has not matched yet. */
+static LONG volatile g_init_count;
+static ULONG_PTR g_init_token;
+
+BOOL gp_started(void) { return g_init_count > 0; }
 
 static GpStatus WINAPI notification_hook(ULONG_PTR *token)
 {
@@ -123,29 +127,36 @@ static void WINAPI notification_unhook(ULONG_PTR token)
 {
 }
 
+/* the first startup makes the token and the later ones count up from it. */
 WINGDIPAPI GpStatus WINAPI GdiplusStartup(ULONG_PTR *token, const GdiplusStartupInput *input,
                                           GdiplusStartupOutput *output)
 {
-    if (!token || !input)
+    if (!token || !input || (input->SuppressBackgroundThread && !output))
         return InvalidParameter;
     /* version 1 is gdi+ 1.0, 2 and 3 are the GdiplusStartupInputEx of gdi+ 1.1. */
     if (input->GdiplusVersion < 1 || input->GdiplusVersion > 3)
         return UnsupportedGdiplusVersion;
+    LONG count = InterlockedIncrement(&g_init_count);
+    if (count == 1)
+        g_init_token = (ULONG_PTR)(GetTickCount() & 0x7fffff) << 8 | 0x10;
+    *token = g_init_token + (ULONG_PTR)(count - 1);
     if (input->SuppressBackgroundThread) {
-        if (!output)
-            return InvalidParameter;
         output->NotificationHook = notification_hook;
         output->NotificationUnhook = notification_unhook;
     }
-    InterlockedIncrement(&g_started);
-    *token = (ULONG_PTR)InterlockedIncrement(&g_token);
     return Ok;
 }
 
+/* the token is not looked at: every call counts down one startup. */
 WINGDIPAPI VOID WINAPI GdiplusShutdown(ULONG_PTR token)
 {
-    if (g_started > 0)
-        InterlockedDecrement(&g_started);
+    LONG count = g_init_count;
+    while (count > 0) {
+        LONG seen = InterlockedCompareExchange(&g_init_count, count - 1, count);
+        if (seen == count)
+            break;
+        count = seen;
+    }
 }
 
 WINGDIPAPI GpStatus WINAPI GdiplusNotificationHook(ULONG_PTR *token)
@@ -157,9 +168,10 @@ WINGDIPAPI VOID WINAPI GdiplusNotificationUnhook(ULONG_PTR token)
 {
 }
 
+/* memory is handed out only while the library is started. */
 WINGDIPAPI void *WINAPI GdipAlloc(SIZE_T size)
 {
-    return HeapAlloc(GetProcessHeap(), 0, size);
+    return gp_started() ? HeapAlloc(GetProcessHeap(), 0, size) : nullptr;
 }
 
 WINGDIPAPI void WINAPI GdipFree(void *p)

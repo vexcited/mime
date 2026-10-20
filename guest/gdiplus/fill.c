@@ -236,6 +236,20 @@ GpStatus gp_fill_path_xform(GGraphics *g, const MimeVecPath *path, const MimeVec
 {
     if (!path->count)
         return Ok;
+    if (g->meta) {
+        /* a recording graphics keeps the shape, the extra matrix is part of it */
+        if (!extra)
+            return gp_rec_fill_path(g, path, mode, brush);
+        MimeVecPath moved;
+        mime_vec_path_init(&moved, &gp_allocator);
+        GpStatus rs = mime_vec_path_copy(&moved, path) == MIME_VEC_OK ? Ok : OutOfMemory;
+        if (rs == Ok) {
+            mime_vec_path_transform(&moved, extra);
+            rs = gp_rec_fill_path(g, &moved, mode, brush);
+        }
+        mime_vec_path_free(&moved);
+        return rs;
+    }
     MimeVecMatrix m = *gp_graphics_w2d(g);
     if (extra)
         mime_vec_matrix_multiply(&m, extra, &m);

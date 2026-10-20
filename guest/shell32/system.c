@@ -112,64 +112,25 @@ SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(void **folder)
     return E_NOTIMPL;
 }
 
-typedef struct {
-    UINT Wanted;
-    UINT Seen;
-    LPWSTR Name;
-} ICON_SEARCH;
-
-static BOOL CALLBACK find_icon_group(HMODULE module, LPCWSTR type, LPWSTR name, LONG_PTR param)
-{
-    ICON_SEARCH *search = (ICON_SEARCH *)param;
-    if (search->Seen++ != search->Wanted)
-        return TRUE;
-    search->Name = IS_INTRESOURCE(name) ? name : ShDuplicate(name);
-    return FALSE;
-}
-
 /*
- * an icon of an executable, a library or an icon file. a negative index
- * names a resource id, -1 asks for the number of icons. returns 1 for a
- * file without icon resources, as windows does.
+ * an icon of an executable, a library or an icon file at the size of the system's large icon. A negative index names
+ * a resource id, -1 asks for the number of icons. returns 1 for a file without icon resources, as windows does.
  */
 SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
 {
     if (!file)
         return nullptr;
     WCHAR path[MAX_PATH];
-    DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
-    if (!n || n >= MAX_PATH)
+    if (!ShIconFindFile(file, path))
         return nullptr;
-    int cx = GetSystemMetrics(SM_CXICON), cy = GetSystemMetrics(SM_CYICON);
-    LPCWSTR dot = wcsrchr(path, L'.');
-    if (dot && !_wcsicmp(dot, L".ico")) {
-        if (index == (UINT)-1)
-            return (HICON)1;
-        return index ? nullptr : (HICON)LoadImageW(nullptr, path, IMAGE_ICON, cx, cy, LR_LOADFROMFILE);
-    }
-    HMODULE module = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
-    if (!module)
+    UINT count = ShIconCount(path);
+    if (index == (UINT)-1)
+        return (HICON)(UINT_PTR)count;
+    if (!count)
         return (HICON)1;
-    HICON icon = nullptr;
-    if (index == (UINT)-1) {
-        ICON_SEARCH search = {(UINT)-1, 0, nullptr};
-        EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&search);
-        icon = (HICON)(UINT_PTR)search.Seen;
-    } else if ((int)index < 0) {
-        icon = (HICON)LoadImageW(module, MAKEINTRESOURCEW(-(int)index), IMAGE_ICON, cx, cy, 0);
-    } else {
-        ICON_SEARCH search = {index, 0, nullptr};
-        EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&search);
-        if (search.Name) {
-            icon = (HICON)LoadImageW(module, search.Name, IMAGE_ICON, cx, cy, 0);
-            if (!IS_INTRESOURCE(search.Name))
-                ShFree(search.Name);
-        } else if (!search.Seen) {
-            icon = (HICON)1;
-        }
-    }
-    FreeLibrary(module);
-    return icon;
+    if ((int)index >= 0 && index >= count)
+        return nullptr;
+    return ShIconLoad(path, (int)index, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
 }
 
 /*
@@ -189,27 +150,14 @@ SHSTDAPI UINT WINAPI ExtractIconExW(LPCWSTR file, int index, HICON *large, HICON
     if (!file)
         return 0;
     WCHAR path[MAX_PATH];
-    DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
-    if (!n || n >= MAX_PATH)
+    if (!ShIconFindFile(file, path))
         return 0;
     int lx = GetSystemMetrics(SM_CXICON), ly = GetSystemMetrics(SM_CYICON);
     int sx = GetSystemMetrics(SM_CXSMICON), sy = GetSystemMetrics(SM_CYSMICON);
-    LPCWSTR dot = wcsrchr(path, L'.');
-    BOOL icon_file = dot && !_wcsicmp(dot, L".ico");
-    HMODULE module = icon_file ? nullptr : LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
-    if (!icon_file && !module)
-        return 0;
-    /* the groups of icons of the file, counted. */
-    ICON_SEARCH total = {(UINT)-1, 0, nullptr};
-    if (module)
-        EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&total);
-    UINT groups = icon_file ? 1 : total.Seen;
-    UINT made = 0;
-    if (!large && !small) {
-        if (module)
-            FreeLibrary(module);
+    UINT groups = ShIconCount(path);
+    if (!large && !small)
         return groups;
-    }
+    UINT made = 0;
     if (index < 0) {
         count = 1;
     } else if ((UINT)index >= groups) {
@@ -218,41 +166,18 @@ SHSTDAPI UINT WINAPI ExtractIconExW(LPCWSTR file, int index, HICON *large, HICON
         count = groups - (UINT)index;
     }
     for (UINT i = 0; i < count; i++) {
-        HANDLE big = nullptr, little = nullptr;
-        if (icon_file) {
-            if (large)
-                big = LoadImageW(nullptr, path, IMAGE_ICON, lx, ly, LR_LOADFROMFILE);
-            if (small)
-                little = LoadImageW(nullptr, path, IMAGE_ICON, sx, sy, LR_LOADFROMFILE);
-        } else {
-            LPWSTR name = nullptr;
-            ICON_SEARCH search = {(UINT)index + i, 0, nullptr};
-            if (index < 0) {
-                name = MAKEINTRESOURCEW(-index);
-            } else {
-                EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&search);
-                name = search.Name;
-            }
-            if (name) {
-                if (large)
-                    big = LoadImageW(module, name, IMAGE_ICON, lx, ly, 0);
-                if (small)
-                    little = LoadImageW(module, name, IMAGE_ICON, sx, sy, 0);
-            }
-            if (index >= 0 && search.Name && !IS_INTRESOURCE(search.Name))
-                ShFree(search.Name);
-        }
+        int which = index < 0 ? index : index + (int)i;
+        HICON big = large ? ShIconLoad(path, which, lx, ly) : nullptr;
+        HICON little = small ? ShIconLoad(path, which, sx, sy) : nullptr;
         if (large && big) {
-            large[i] = (HICON)big;
+            large[i] = big;
             made++;
         }
         if (small && little) {
-            small[i] = (HICON)little;
+            small[i] = little;
             made++;
         }
     }
-    if (module)
-        FreeLibrary(module);
     return made;
 }
 

@@ -1,9 +1,6 @@
 /*
- * file information, dropped file lists and stock icons.
- *
- * there are no shell icons or system image list yet: requests for an
- * icon, an icon index or an icon location fail, so callers fall back to
- * their own icons, while names, types and attributes still come back.
+ * file information and dropped file lists. The icons of SHGetFileInfo come from icons.c and the system image
+ * lists from sysimagelist.c.
  */
 #include "shell32_private.h"
 
@@ -121,6 +118,12 @@ SHSTDAPI void WINAPI DragAcceptFiles(HWND hwnd, BOOL accept)
 
 /* ------------------------------------------------------------------ SHGetFileInfo */
 
+/* a name with no drive and no leading separator. */
+static BOOL is_relative(LPCWSTR path)
+{
+    return path[0] != L'\\' && !(path[0] && path[1] == L':');
+}
+
 static BOOL is_root(LPCWSTR path)
 {
     return path[0] && path[1] == L':' && (!path[2] || (path[2] == L'\\' && !path[3]));
@@ -195,33 +198,105 @@ static DWORD_PTR exe_type(LPCWSTR path)
     return result;
 }
 
+/* the icon, icon index and icon location parts of a request; kind is 1 for the desktop and 2 for "This PC". */
+static DWORD_PTR icon_sections(LPCWSTR path, DWORD attributes, UINT flags, int kind, SHFILEINFOW *info)
+{
+    SH_ICON_SOURCE source;
+    UINT small = flags & SHGFI_SMALLICON;
+    if (kind)
+        ShIconSourceStock(kind == 1 ? SH_STOCK_DESKTOP : SH_STOCK_COMPUTER, &source);
+    else
+        ShIconSourceForPath(path, attributes, !(flags & SHGFI_USEFILEATTRIBUTES), (flags & SHGFI_OPENICON) != 0,
+                            &source);
+    DWORD_PTR result = 1;
+    if (flags & SHGFI_ICONLOCATION) {
+        WCHAR location[MAX_PATH];
+        int index;
+        if (ShIconSourceLocation(&source, location, &index)) {
+            wcscpy(info->szDisplayName, location);
+            info->iIcon = index;
+        } else {
+            /* a picture that is no file is named by its place in the system list. */
+            info->szDisplayName[0] = 0;
+            info->iIcon = ShSystemIconIndex(&source, small);
+        }
+    }
+    if (flags & SHGFI_SYSICONINDEX) {
+        int index = ShSystemIconIndex(&source, small);
+        if (index < 0)
+            return 0;
+        if ((flags & SHGFI_OVERLAYINDEX) && (flags & SHGFI_LINKOVERLAY))
+            index |= 1 << 24;
+        info->iIcon = index;
+        result = (DWORD_PTR)ShSystemList(small ? ((flags & SHGFI_SHELLICONSIZE) ? SHIL_SMALL : SHIL_SYSSMALL)
+                                               : SHIL_LARGE);
+        if (!result)
+            return 0;
+    }
+    if (flags & SHGFI_ICON) {
+        info->hIcon = ShIconForRequest(&source, flags);
+        if (!info->hIcon)
+            return 0;
+    }
+    return result;
+}
+
 SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEINFOW *info, UINT size, UINT flags)
 {
     WCHAR full[MAX_PATH];
+    int kind = 0;
     if (!path)
         return 0;
     if (flags & SHGFI_PIDL) {
-        if (!ShPathFromIdList((PCIDLIST_ABSOLUTE)path, full, MAX_PATH))
+        PCIDLIST_ABSOLUTE pidl = (PCIDLIST_ABSOLUTE)path;
+        if (!ShPathFromIdList(pidl, full, MAX_PATH)) {
+            /* the desktop and "This PC" have no path, and a picture. */
+            if (flags & ~(SHGFI_PIDL | SHGFI_ICON | SHGFI_SYSICONINDEX | SHGFI_ICONLOCATION | SHGFI_SMALLICON |
+                          SHGFI_OPENICON | SHGFI_SHELLICONSIZE | SHGFI_LINKOVERLAY | SHGFI_SELECTED))
+                return 0;
+            kind = !pidl->mkid.cb ? 1 : ShIsComputerItem((const BYTE *)pidl) ? 2 : 0;
+            if (!kind || !info || size < sizeof(*info))
+                return 0;
+            full[0] = 0;
+        }
+    } else if ((flags & SHGFI_USEFILEATTRIBUTES) && is_relative(path)) {
+        /* a name that is not a place is taken from the root of the system drive. */
+        WCHAR root[MAX_PATH];
+        if (!GetWindowsDirectoryW(root, MAX_PATH) || wcslen(root) < 3 || wcslen(root) + wcslen(path) + 2 >= MAX_PATH)
+            return 0;
+        root[3] = 0;
+        wcscat(root, path);
+        DWORD n = GetFullPathNameW(root, MAX_PATH, full, nullptr);
+        if (!n || n >= MAX_PATH)
             return 0;
     } else {
         DWORD n = GetFullPathNameW(path, MAX_PATH, full, nullptr);
         if (!n || n >= MAX_PATH)
             return 0;
     }
-    if (!(flags & SHGFI_USEFILEATTRIBUTES)) {
-        attributes = GetFileAttributesW(full);
-        if (attributes == INVALID_FILE_ATTRIBUTES)
-            return 0;
+    if (!kind) {
+        /* a root or a folder that is hidden is looked at, even when attributes were given. */
+        if ((flags & SHGFI_ATTRIBUTES) && (flags & SHGFI_USEFILEATTRIBUTES) &&
+            (((attributes & 5) && (attributes & FILE_ATTRIBUTE_DIRECTORY)) || is_root(full)))
+            flags &= ~SHGFI_USEFILEATTRIBUTES;
+        if (!(flags & SHGFI_USEFILEATTRIBUTES)) {
+            attributes = GetFileAttributesW(full);
+            if (attributes == INVALID_FILE_ATTRIBUTES)
+                return 0;
+        }
+        if (flags & SHGFI_EXETYPE)
+            return (attributes & FILE_ATTRIBUTE_DIRECTORY) ? 0 : exe_type(full);
     }
-    if (flags & SHGFI_EXETYPE)
-        return (attributes & FILE_ATTRIBUTE_DIRECTORY) ? 0 : exe_type(full);
     if (!info || size < sizeof(*info))
         return 0;
+    info->hIcon = nullptr;
+    info->szDisplayName[0] = 0;
+    info->szTypeName[0] = 0;
     DWORD_PTR result = 1;
     if (flags & (SHGFI_ICON | SHGFI_SYSICONINDEX | SHGFI_ICONLOCATION)) {
-        info->hIcon = nullptr;
-        info->iIcon = 0;
-        result = 0;
+        result = icon_sections(full, attributes, flags, kind, info);
+        if (kind || !result)
+            return result;
     }
     if (flags & SHGFI_DISPLAYNAME) {
         if (is_root(full)) {
@@ -264,48 +339,4 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoA(LPCSTR path, DWORD attributes, SHFILEIN
         WideCharToMultiByte(CP_ACP, 0, wide.szTypeName, -1, info->szTypeName, 80, nullptr, nullptr);
     }
     return result;
-}
-
-/* ------------------------------------------------------------------ stock icons */
-
-/* only the stock icons user32 has a system icon for can be given, as a copy the caller destroys. */
-SHSTDAPI HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCKICONINFO *info)
-{
-    if (!info || info->cbSize != sizeof(*info) || (UINT)id >= SIID_MAX_ICONS)
-        return E_INVALIDARG;
-    LPCWSTR system = nullptr;
-    switch (id) {
-    case SIID_APPLICATION:
-        system = IDI_APPLICATION;
-        break;
-    case SIID_HELP:
-        system = IDI_QUESTION;
-        break;
-    case SIID_SHIELD:
-        system = IDI_SHIELD;
-        break;
-    case SIID_WARNING:
-        system = IDI_WARNING;
-        break;
-    case SIID_INFO:
-        system = IDI_INFORMATION;
-        break;
-    case SIID_ERROR:
-        system = IDI_ERROR;
-        break;
-    default:
-        break;
-    }
-    info->hIcon = nullptr;
-    info->iSysImageIndex = -1;
-    info->iIcon = 0;
-    info->szPath[0] = 0;
-    /* there is no icon file to name, so only requests for the icon itself succeed. */
-    if (!system || !(flags & SHGSI_ICON) || (flags & SHGSI_SYSICONINDEX))
-        return HRESULT_FROM_WIN32(ERROR_RESOURCE_NAME_NOT_FOUND);
-    HICON shared = LoadIconW(nullptr, system);
-    info->hIcon = shared ? CopyIcon(shared) : nullptr;
-    if (!info->hIcon)
-        return HRESULT_FROM_WIN32(ERROR_RESOURCE_NAME_NOT_FOUND);
-    return S_OK;
 }

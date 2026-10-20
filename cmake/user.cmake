@@ -283,8 +283,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         set(objects_${xinput} ${arch}-lib-xinput)
         set(libs_${xinput} ${MIME_LIB_${arch}}/setupapi.lib)
     endforeach()
-    # gdiplus rasterizes with the vector library and reads and writes images through the imaging component.
-    set(objects_gdiplus ${arch}-lib-vector)
+    # gdiplus rasterizes with the vector library, reads fonts with the truetype library, and reads and writes images through the imaging component.
+    set(objects_gdiplus ${arch}-lib-vector ${arch}-lib-ttf)
     set(includes_gdiplus guest/lib)
     set(libs_gdiplus ${MIME_LIB_${arch}}/ole32.lib)
     # the imaging component reads and writes images with the codec libraries.

@@ -151,18 +151,37 @@ static GpStatus graphics_from_hdc(HDC hdc, HWND hwnd, BOOL owns, GpGraphics **gr
     return Ok;
 }
 
+/* a graphics that records into a metafile has no surface, only the size of the page it draws on. */
+GGraphics *gp_graphics_new_recording(struct GMetafile *meta, float dpi_x, float dpi_y, INT width, INT height)
+{
+    GGraphics *g = gp_alloc_zero(sizeof(*g));
+    if (!g)
+        return nullptr;
+    g->tag = GP_TAG_GRAPHICS;
+    g->meta = meta;
+    graphics_defaults(g);
+    g->dpi_x = dpi_x;
+    g->dpi_y = dpi_y;
+    g->width = width;
+    g->height = height;
+    return g;
+}
+
 WINGDIPAPI GpStatus WINAPI GdipCreateFromHDC(HDC hdc, GpGraphics **graphics)
 {
+    GP_REQUIRE_INIT();
     return graphics_from_hdc(hdc, nullptr, FALSE, graphics);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateFromHDC2(HDC hdc, HANDLE device, GpGraphics **graphics)
 {
+    GP_REQUIRE_INIT();
     return graphics_from_hdc(hdc, nullptr, FALSE, graphics);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateFromHWND(HWND hwnd, GpGraphics **graphics)
 {
+    GP_REQUIRE_INIT();
     if (!graphics)
         return InvalidParameter;
     HDC hdc = GetDC(hwnd);
@@ -176,6 +195,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateFromHWND(HWND hwnd, GpGraphics **graphics)
 
 WINGDIPAPI GpStatus WINAPI GdipCreateFromHWNDICM(HWND hwnd, GpGraphics **graphics)
 {
+    GP_REQUIRE_INIT();
     return GdipCreateFromHWND(hwnd, graphics);
 }
 
@@ -186,7 +206,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image, GpGraphic
         return InvalidParameter;
     if (!b) {
         GImage *im = gp_image_cast(image);
-        return im ? NotImplemented : InvalidParameter;
+        return im ? gp_meta_graphics_context(image, graphics) : InvalidParameter;
     }
     if (b->locked)
         return ObjectBusy;
@@ -224,9 +244,8 @@ static void state_free(GState *s)
 WINGDIPAPI GpStatus WINAPI GdipDeleteGraphics(GpGraphics *graphics)
 {
     GFX(g, graphics);
-    if (g->got_dc && g->hdc && !g->target && g->meta == nullptr) {
-        /* a dc taken from a bitmap is dropped with it */
-    }
+    if (g->meta)
+        gp_meta_graphics_deleted(g);
     if (g->bitmap_dc)
         gp_graphics_release_bitmap_dc(g, g->bitmap_dc, FALSE);
     while (g->states) {
@@ -261,6 +280,12 @@ WINGDIPAPI GpStatus WINAPI GdipGetDC(GpGraphics *graphics, HDC *hdc)
         return InvalidParameter;
     if (g->got_dc)
         return ObjectBusy;
+    if (g->meta) {
+        GpStatus rs = gp_rec_get_dc(g, hdc);
+        if (rs == Ok)
+            g->got_dc = TRUE;
+        return rs;
+    }
     if (g->hdc && !g->target) {
         g->got_dc = TRUE;
         /* the clip of the graphics follows the context while it is out */
@@ -283,6 +308,11 @@ WINGDIPAPI GpStatus WINAPI GdipReleaseDC(GpGraphics *graphics, HDC hdc)
     GFX(g, graphics);
     if (!g->got_dc)
         return InvalidParameter;
+    if (g->meta) {
+        gp_rec_release_dc(g);
+        g->got_dc = FALSE;
+        return Ok;
+    }
     if (g->bitmap_dc) {
         if (hdc != g->bitmap_dc)
             return InvalidParameter;
@@ -705,6 +735,8 @@ WINGDIPAPI HPALETTE WINAPI GdipCreateHalftonePalette(void)
 WINGDIPAPI GpStatus WINAPI GdipComment(GpGraphics *graphics, UINT size, const BYTE *data)
 {
     GFX(g, graphics);
+    if (g->meta)
+        gp_rec_comment(g, size, data);
     return Ok;
 }
 
@@ -800,6 +832,8 @@ WINGDIPAPI GpStatus WINAPI GdipSetClipRegion(GpGraphics *graphics, GpRegion *reg
     GRegion *r = gp_region_cast(region);
     if (!r || mode < CombineModeReplace || mode > CombineModeComplement)
         return InvalidParameter;
+    if (g->meta)
+        gp_rec_set_clip(g, r, mode);
     MimeVecMask mask;
     mime_vec_mask_init(&mask, &gp_allocator);
     MimeVecRect clip = target_rect(g);
@@ -872,6 +906,8 @@ WINGDIPAPI GpStatus WINAPI GdipSetClipGraphics(GpGraphics *graphics, GpGraphics 
 WINGDIPAPI GpStatus WINAPI GdipResetClip(GpGraphics *graphics)
 {
     GFX_FREE(g, graphics);
+    if (g->meta)
+        gp_rec_reset_clip(g);
     g->clip_set = FALSE;
     mime_vec_mask_clear(&g->clip);
     return Ok;
@@ -880,6 +916,8 @@ WINGDIPAPI GpStatus WINAPI GdipResetClip(GpGraphics *graphics)
 WINGDIPAPI GpStatus WINAPI GdipTranslateClip(GpGraphics *graphics, REAL dx, REAL dy)
 {
     GFX_FREE(g, graphics);
+    if (g->meta)
+        gp_rec_offset_clip(g, dx, dy);
     if (!g->clip_set)
         return Ok;
     const MimeVecMatrix *m = gp_graphics_w2d(g);
@@ -1186,14 +1224,19 @@ WINGDIPAPI GpStatus WINAPI GdipSaveGraphics(GpGraphics *graphics, GraphicsState 
         return InvalidParameter;
     UINT id;
     GpStatus st = push_state(g, 0, &id);
-    if (st == Ok)
+    if (st == Ok) {
         *state = id;
+        if (g->meta)
+            gp_rec_save(g, id);
+    }
     return st;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipRestoreGraphics(GpGraphics *graphics, GraphicsState state)
 {
     GFX_FREE(g, graphics);
+    if (g->meta)
+        gp_rec_restore(g, state, 0);
     return pop_to(g, state, 0);
 }
 
@@ -1203,6 +1246,8 @@ WINGDIPAPI GpStatus WINAPI GdipBeginContainer2(GpGraphics *graphics, GraphicsCon
     if (!container)
         return InvalidParameter;
     UINT id;
+    if (g->meta)
+        gp_rec_sync(g);
     GpStatus st = push_state(g, 1, &id);
     if (st != Ok)
         return st;
@@ -1214,6 +1259,8 @@ WINGDIPAPI GpStatus WINAPI GdipBeginContainer2(GpGraphics *graphics, GraphicsCon
     g->page_scale = 1.0f;
     g->w2d_valid = FALSE;
     *container = id;
+    if (g->meta)
+        gp_rec_begin_container(g, id, nullptr, nullptr, UnitPixel);
     return Ok;
 }
 
@@ -1224,9 +1271,16 @@ WINGDIPAPI GpStatus WINAPI GdipBeginContainer(GpGraphics *graphics, const GpRect
     if (!dst || !src || !container || unit < UnitPixel || unit > UnitMillimeter || src->Width == 0.0f ||
         src->Height == 0.0f)
         return InvalidParameter;
+    struct GMetafile *recording = g->meta;
+    if (recording)
+        gp_rec_sync(g);
+    g->meta = nullptr;
     GpStatus st = GdipBeginContainer2(graphics, container);
+    g->meta = recording;
     if (st != Ok)
         return st;
+    if (recording)
+        gp_rec_begin_container(g, *container, dst, src, unit);
     /* the source rectangle is in the unit, the destination in the world of the parent */
     float k = unit == UnitPixel ? 1.0f : gp_unit_to_pixels(unit, g->dpi_x);
     MimeVecMatrix map;
@@ -1255,6 +1309,8 @@ WINGDIPAPI GpStatus WINAPI GdipBeginContainerI(GpGraphics *graphics, const GpRec
 WINGDIPAPI GpStatus WINAPI GdipEndContainer(GpGraphics *graphics, GraphicsContainer container)
 {
     GFX_FREE(g, graphics);
+    if (g->meta)
+        gp_rec_restore(g, container, 1);
     return pop_to(g, container, 1);
 }
 

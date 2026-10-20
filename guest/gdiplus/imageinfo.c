@@ -21,13 +21,9 @@ WINGDIPAPI GpStatus WINAPI GdipGetImageWidth(GpImage *image, UINT *width)
 {
     GBitmap *b = gp_bitmap_cast(image);
     if (!b) {
-        float w, h;
         if (!width || !gp_image_cast(image))
             return InvalidParameter;
-        GpStatus st = gp_metafile_dimension(image, &w, &h);
-        if (st == Ok)
-            *width = (UINT)w;
-        return st;
+        return gp_metafile_pixel_size(image, width, nullptr);
     }
     if (!width)
         return InvalidParameter;
@@ -39,13 +35,9 @@ WINGDIPAPI GpStatus WINAPI GdipGetImageHeight(GpImage *image, UINT *height)
 {
     GBitmap *b = gp_bitmap_cast(image);
     if (!b) {
-        float w, h;
         if (!height || !gp_image_cast(image))
             return InvalidParameter;
-        GpStatus st = gp_metafile_dimension(image, &w, &h);
-        if (st == Ok)
-            *height = (UINT)h;
-        return st;
+        return gp_metafile_pixel_size(image, nullptr, height);
     }
     if (!height)
         return InvalidParameter;
@@ -61,7 +53,9 @@ WINGDIPAPI GpStatus WINAPI GdipGetImagePixelFormat(GpImage *image, PixelFormat *
     if (!b) {
         if (!gp_image_cast(image))
             return InvalidParameter;
-        *format = PixelFormat32bppARGB;
+        if (gp_metafile_pixel_size(image, nullptr, nullptr) != Ok)
+            return InvalidParameter;
+        *format = PixelFormat32bppRGB;
         return Ok;
     }
     *format = b->format;
@@ -109,9 +103,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetImageFlags(GpImage *image, UINT *flags)
     if (!b) {
         if (!gp_image_cast(image))
             return InvalidParameter;
-        *flags = ImageFlagsScalable | ImageFlagsHasRealPixelSize | ImageFlagsHasRealDPI | ImageFlagsColorSpaceRGB |
-                 ImageFlagsReadOnly;
-        return Ok;
+        return gp_metafile_flags(image, flags);
     }
     *flags = b->flags;
     return Ok;
@@ -225,9 +217,16 @@ static GProperty *find_property(GBitmap *b, ULONG id)
     return nullptr;
 }
 
+/* a metafile has no properties, and the calls that look for one say so. */
+static BOOL is_metafile(GpImage *image) { return !gp_bitmap_cast(image) && gp_image_cast(image); }
+
 WINGDIPAPI GpStatus WINAPI GdipGetPropertyCount(GpImage *image, UINT *count)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (is_metafile(image) && count) {
+        *count = 0;
+        return Ok;
+    }
     if (!b || !count)
         return InvalidParameter;
     *count = b->prop_count;
@@ -237,6 +236,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetPropertyCount(GpImage *image, UINT *count)
 WINGDIPAPI GpStatus WINAPI GdipGetPropertyIdList(GpImage *image, UINT count, PROPID *ids)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (is_metafile(image) && ids)
+        return count ? InvalidParameter : Ok;
     if (!b || !ids || count != b->prop_count)
         return InvalidParameter;
     for (UINT i = 0; i < count; i++)
@@ -247,6 +248,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetPropertyIdList(GpImage *image, UINT count, PRO
 WINGDIPAPI GpStatus WINAPI GdipGetPropertyItemSize(GpImage *image, PROPID id, UINT *size)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (is_metafile(image) && size)
+        return PropertyNotFound;
     if (!b || !size)
         return InvalidParameter;
     GProperty *p = find_property(b, id);
@@ -260,6 +263,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetPropertyItemSize(GpImage *image, PROPID id, UI
 WINGDIPAPI GpStatus WINAPI GdipGetPropertyItem(GpImage *image, PROPID id, UINT size, PropertyItem *item)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (is_metafile(image) && item)
+        return PropertyNotFound;
     if (!b || !item)
         return InvalidParameter;
     GProperty *p = find_property(b, id);
@@ -278,6 +283,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetPropertyItem(GpImage *image, PROPID id, UINT s
 WINGDIPAPI GpStatus WINAPI GdipGetPropertySize(GpImage *image, UINT *total, UINT *count)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (is_metafile(image) && total && count)
+        return PropertyNotFound;
     if (!b || !total || !count)
         return InvalidParameter;
     UINT sum = 0;
@@ -291,6 +298,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetPropertySize(GpImage *image, UINT *total, UINT
 WINGDIPAPI GpStatus WINAPI GdipGetAllPropertyItems(GpImage *image, UINT total, UINT count, PropertyItem *items)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (is_metafile(image) && items)
+        return PropertyNotFound;
     if (!b || !items)
         return InvalidParameter;
     UINT sum = 0;
@@ -452,6 +461,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetImageThumbnail(GpImage *image, UINT width, UIN
                                                  GetThumbnailImageAbort callback, VOID *data)
 {
     GBitmap *b = gp_bitmap_cast(image);
+    if (!b && gp_image_cast(image))
+        return gp_metafile_thumbnail(image, width, height, thumbnail);
     if (!b || !thumbnail)
         return InvalidParameter;
     if (!width && !height) {

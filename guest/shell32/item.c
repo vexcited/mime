@@ -57,6 +57,7 @@ static LPCWSTR file_name(LPCWSTR path)
 typedef struct _SH_ITEM {
     IShellItem Interface;
     IPersistIDList Persist;
+    IShellItemImageFactory Factory;
     LONG Refs;
     PIDLIST_ABSOLUTE Pidl;
     /* the list is the desktop, "This PC" or a file system object. */
@@ -66,10 +67,16 @@ typedef struct _SH_ITEM {
 
 static const IShellItemVtbl g_item_vtbl;
 static const IPersistIDListVtbl g_persist_vtbl;
+static const IShellItemImageFactoryVtbl g_factory_vtbl;
 
 static SH_ITEM *item_from_persist(IPersistIDList *This)
 {
     return (SH_ITEM *)((BYTE *)This - offsetof(SH_ITEM, Persist));
+}
+
+static SH_ITEM *item_from_factory(IShellItemImageFactory *This)
+{
+    return (SH_ITEM *)((BYTE *)This - offsetof(SH_ITEM, Factory));
 }
 
 /* the item of a list, which the item takes over. */
@@ -82,6 +89,7 @@ static HRESULT create_item(PIDLIST_ABSOLUTE pidl, REFIID riid, void **object)
     }
     item->Interface.lpVtbl = &g_item_vtbl;
     item->Persist.lpVtbl = &g_persist_vtbl;
+    item->Factory.lpVtbl = &g_factory_vtbl;
     item->Refs = 1;
     item->Pidl = pidl;
     if (!pidl->mkid.cb) {
@@ -105,6 +113,8 @@ static HRESULT STDMETHODCALLTYPE item_query_interface(IShellItem *This, REFIID r
         *object = &item->Interface;
     } else if (IsEqualIID(riid, &IID_IPersistIDList) || IsEqualIID(riid, &IID_IPersist)) {
         *object = &item->Persist;
+    } else if (IsEqualIID(riid, &IID_IShellItemImageFactory)) {
+        *object = &item->Factory;
     } else {
         *object = nullptr;
         return E_NOINTERFACE;
@@ -553,6 +563,37 @@ static HRESULT STDMETHODCALLTYPE persist_get_id_list(IPersistIDList *This, PIDLI
 static const IPersistIDListVtbl g_persist_vtbl = {
     persist_query_interface, persist_add_ref,       persist_release,
     persist_get_class_id,    persist_set_id_list, persist_get_id_list,
+};
+
+/* ------------------------------------------------------------------ IShellItemImageFactory */
+
+static HRESULT STDMETHODCALLTYPE factory_query_interface(IShellItemImageFactory *This, REFIID riid, void **object)
+{
+    return item_query_interface(&item_from_factory(This)->Interface, riid, object);
+}
+
+static ULONG STDMETHODCALLTYPE factory_add_ref(IShellItemImageFactory *This)
+{
+    return item_add_ref(&item_from_factory(This)->Interface);
+}
+
+static ULONG STDMETHODCALLTYPE factory_release(IShellItemImageFactory *This)
+{
+    return item_release(&item_from_factory(This)->Interface);
+}
+
+/* the thumbnail or the icon of the item, see ShItemImage in thumbnail.c. */
+static HRESULT STDMETHODCALLTYPE factory_get_image(IShellItemImageFactory *This, SIZE size, SIIGBF flags,
+                                                   HBITMAP *bitmap)
+{
+    SH_ITEM *item = item_from_factory(This);
+    /* the desktop and "This PC" have their own pictures, the other folders of the shell show a plain folder. */
+    int kind = item->Desktop ? 1 : item->Computer ? 2 : item->FileSystem ? 0 : 3;
+    return ShItemImage(kind ? nullptr : item->Path, kind, size, flags, bitmap);
+}
+
+static const IShellItemImageFactoryVtbl g_factory_vtbl = {
+    factory_query_interface, factory_add_ref, factory_release, factory_get_image,
 };
 
 /* ------------------------------------------------------------------ making items */

@@ -54,6 +54,7 @@ static void pen_free(GPen *p)
 
 WINGDIPAPI GpStatus WINAPI GdipCreatePen1(ARGB color, REAL width, GpUnit unit, GpPen **pen)
 {
+    GP_REQUIRE_INIT();
     if (!pen || !unit_valid(unit) || width < 0.0f)
         return InvalidParameter;
     GBrush *b = gp_brush_solid(color);
@@ -70,6 +71,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreatePen1(ARGB color, REAL width, GpUnit unit, G
 
 WINGDIPAPI GpStatus WINAPI GdipCreatePen2(GpBrush *brush, REAL width, GpUnit unit, GpPen **pen)
 {
+    GP_REQUIRE_INIT();
     GBrush *src = gp_brush_cast(brush);
     if (!src || !pen || !unit_valid(unit) || width < 0.0f)
         return InvalidParameter;
@@ -620,8 +622,11 @@ float gp_unit_to_pixels(GpUnit unit, float dpi) { return unit_pixels(unit, dpi);
 static void stroke_setup(const GPen *pen, float width, MimeVecStroke *s, const MimeVecMatrix *out, float flatness)
 {
     mime_vec_stroke_defaults(s, width);
-    s->start_cap = pen->start_cap == LineCapCustom ? MIME_VEC_CAP_FLAT : pen->start_cap;
-    s->end_cap = pen->end_cap == LineCapCustom ? MIME_VEC_CAP_FLAT : pen->end_cap;
+    /* the end of a custom cap is drawn with the base cap of the custom cap */
+    s->start_cap = pen->start_cap == LineCapCustom ? (pen->custom_start ? pen->custom_start->base_cap : MIME_VEC_CAP_FLAT)
+                                                   : pen->start_cap;
+    s->end_cap = pen->end_cap == LineCapCustom ? (pen->custom_end ? pen->custom_end->base_cap : MIME_VEC_CAP_FLAT)
+                                               : pen->end_cap;
     s->dash_cap = pen->dash_cap;
     s->join = pen->join;
     s->miter_limit = pen->miter_limit;
@@ -678,12 +683,42 @@ GpStatus gp_pen_widen_ex(const GPen *pen, const MimeVecPath *path, const MimeVec
         mime_vec_polys_free(&flat);
         return gp_path_status(e);
     }
-    MimeVecStroke s;
-    stroke_setup(pen, width, &s, &outm, stroke_flat);
-    s.min_width = min_width;
-    e = mime_vec_stroke(out, &flat, &s);
+    MimeVecPolys cap_fills, cap_strokes;
+    mime_vec_polys_init(&cap_fills, &gp_allocator);
+    mime_vec_polys_init(&cap_strokes, &gp_allocator);
+    GpStatus st = Ok;
+    if (gp_pen_has_custom_caps(pen))
+        st = gp_pen_custom_caps(pen, &flat, width, min_width, &outm, stroke_flat, &cap_fills, &cap_strokes);
+    if (st == Ok) {
+        MimeVecStroke s;
+        stroke_setup(pen, width, &s, &outm, stroke_flat);
+        s.min_width = min_width;
+        e = mime_vec_stroke(out, &flat, &s);
+        st = gp_path_status(e);
+    }
+    if (st == Ok && (cap_fills.nsubs || cap_strokes.nsubs)) {
+        /* the caps join the polygons of the line, with the same winding as them so nothing cancels */
+        float sign = gp_polys_orientation(out);
+        for (UINT i = 0; i < cap_strokes.nsubs && st == Ok; i++)
+            st = gp_path_status(mime_vec_polys_add_sub(out, cap_strokes.pts + cap_strokes.subs[i].first,
+                                                       cap_strokes.subs[i].count, cap_strokes.subs[i].closed != 0));
+        for (UINT i = 0; i < cap_fills.nsubs && st == Ok; i++) {
+            MimeVecPoint *pts = cap_fills.pts + cap_fills.subs[i].first;
+            UINT n = cap_fills.subs[i].count;
+            if (gp_polys_orientation_of(pts, n) * sign < 0.0f) {
+                for (UINT k = 0; k < n / 2; k++) {
+                    MimeVecPoint t = pts[k];
+                    pts[k] = pts[n - 1 - k];
+                    pts[n - 1 - k] = t;
+                }
+            }
+            st = gp_path_status(mime_vec_polys_add_sub(out, pts, n, true));
+        }
+    }
+    mime_vec_polys_free(&cap_fills);
+    mime_vec_polys_free(&cap_strokes);
     mime_vec_polys_free(&flat);
-    return gp_path_status(e);
+    return st;
 }
 
 GpStatus gp_pen_widen(const GPen *pen, const MimeVecPath *path, const MimeVecMatrix *matrix, float flatness,
@@ -735,6 +770,7 @@ static GCap *cap_new(void)
 WINGDIPAPI GpStatus WINAPI GdipCreateCustomLineCap(GpPath *fill, GpPath *stroke, GpLineCap base, REAL inset,
                                                    GpCustomLineCap **cap)
 {
+    GP_REQUIRE_INIT();
     if (!cap || (!fill && !stroke))
         return InvalidParameter;
     GPath *f = fill ? gp_path_cast(fill) : nullptr, *s = stroke ? gp_path_cast(stroke) : nullptr;
@@ -899,12 +935,15 @@ static GpStatus arrow_update(GCap *c)
         c->fill = p;
     else
         c->stroke = p;
-    c->width_scale = w != 0.0f ? h / w : 0.0f;
+    /* the line stops where the arrow is as wide as the line */
+    c->width_scale = 1.0f;
+    c->base_inset = w != 0.0f ? h / w : 0.0f;
     return Ok;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateAdjustableArrowCap(REAL height, REAL width, BOOL fill, GpAdjustableArrowCap **cap)
 {
+    GP_REQUIRE_INIT();
     if (!cap)
         return InvalidParameter;
     GCap *c = cap_new();

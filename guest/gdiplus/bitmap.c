@@ -194,6 +194,7 @@ void gp_bitmap_write_argb(GBitmap *b, INT x, INT y, INT count, const UINT32 *arg
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromScan0(INT width, INT height, INT stride, PixelFormat format, BYTE *scan0,
                                                      GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!bitmap || width <= 0 || height <= 0)
         return InvalidParameter;
     if (scan0 && (!stride || stride % 4))
@@ -215,6 +216,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromScan0(INT width, INT height, INT 
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromGraphics(INT width, INT height, GpGraphics *graphics, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     GGraphics *g = gp_graphics_cast(graphics);
     if (!g || !bitmap || width <= 0 || height <= 0)
         return InvalidParameter;
@@ -230,11 +232,13 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromGraphics(INT width, INT height, G
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromDirectDrawSurface(IDirectDrawSurface7 *surface, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     return NotImplemented;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromGdiDib(const BITMAPINFO *info, VOID *bits, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!info || !bits || !bitmap || info->bmiHeader.biSize < sizeof(BITMAPINFOHEADER))
         return InvalidParameter;
     const BITMAPINFOHEADER *h = &info->bmiHeader;
@@ -328,6 +332,7 @@ static BYTE *read_hbitmap(HBITMAP hbm, HPALETTE palette, INT *width, INT *height
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromHBITMAP(HBITMAP hbm, HPALETTE palette, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!hbm || !bitmap)
         return InvalidParameter;
     INT width, height, bpp;
@@ -356,6 +361,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromHBITMAP(HBITMAP hbm, HPALETTE pal
 
 WINGDIPAPI GpStatus WINAPI GdipCreateHBITMAPFromBitmap(GpBitmap *bitmap, HBITMAP *hbitmap, ARGB background)
 {
+    GP_REQUIRE_INIT();
     GBitmap *b = gp_bitmap_cast(bitmap);
     if (!b || !hbitmap)
         return InvalidParameter;
@@ -405,6 +411,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateHBITMAPFromBitmap(GpBitmap *bitmap, HBITMAP
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromResource(HINSTANCE instance, const WCHAR *name, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!bitmap)
         return InvalidParameter;
     HANDLE image = LoadImageW(instance, name, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
@@ -417,6 +424,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromResource(HINSTANCE instance, cons
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromHICON(HICON icon, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!icon || !bitmap)
         return InvalidParameter;
     ICONINFO info;
@@ -488,6 +496,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromHICON(HICON icon, GpBitmap **bitm
 
 WINGDIPAPI GpStatus WINAPI GdipCreateHICONFromBitmap(GpBitmap *bitmap, HICON *icon)
 {
+    GP_REQUIRE_INIT();
     GBitmap *b = gp_bitmap_cast(bitmap);
     if (!b || !icon)
         return InvalidParameter;

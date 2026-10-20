@@ -337,6 +337,110 @@ WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const I
                                                          void **object);
 WINCOMMCTRLAPI HRESULT WINAPI HIMAGELIST_QueryInterface(HIMAGELIST himl, REFIID riid, void **object);
 
+/*
+ * the com side of image lists, as commoncontrols.h declares it. an
+ * HIMAGELIST points at the IImageList2 interface of its list, so programs
+ * cast one to the other.
+ */
+MIME_DEFINE_GUID(IID_IImageList, 0x46EB5926, 0x582E, 0x4017, 0x9F, 0xDF, 0xE8, 0x99, 0x8D, 0xAA, 0x09, 0x50);
+MIME_DEFINE_GUID(IID_IImageList2, 0x192B9D83, 0x50FC, 0x457B, 0x90, 0xA0, 0x2B, 0x82, 0xA8, 0xB5, 0xDA, 0xE1);
+MIME_DEFINE_GUID(CLSID_ImageList, 0x7C476BA2, 0x02B1, 0x48F4, 0x80, 0x48, 0xB2, 0x46, 0x19, 0xDD, 0xC0, 0x58);
+
+#define ILIF_ALPHA 0x00000001
+#define ILIF_LOWQUALITY 0x00000002
+#define ILDRF_IMAGELOWQUALITY 0x00000001
+#define ILDRF_OVERLAYLOWQUALITY 0x00000010
+#define ILR_DEFAULT 0x0000
+#define ILR_HORIZONTAL_LEFT 0x0000
+#define ILR_HORIZONTAL_CENTER 0x0001
+#define ILR_HORIZONTAL_RIGHT 0x0002
+#define ILR_VERTICAL_TOP 0x0000
+#define ILR_VERTICAL_CENTER 0x0010
+#define ILR_VERTICAL_BOTTOM 0x0020
+#define ILR_SCALE_CLIP 0x0000
+#define ILR_SCALE_ASPECTRATIO 0x0100
+#define ILGOS_ALWAYS 0x00000000
+#define ILGOS_FROMSTANDBY 0x00000001
+#define ILFIP_ALWAYS 0x00000000
+#define ILFIP_FROMSTANDBY 0x00000001
+#define ILDI_PURGE 0x00000001
+#define ILDI_STANDBY 0x00000002
+#define ILDI_RESETACCESS 0x00000004
+#define ILDI_QUERYACCESS 0x00000008
+
+typedef struct tagIMAGELISTSTATS {
+    DWORD cbSize;
+    int cAlloc;
+    int cUsed;
+    int cStandby;
+} IMAGELISTSTATS;
+
+typedef struct IImageList IImageList;
+typedef struct IImageList2 IImageList2;
+
+#define MIME_IIMAGELIST_METHODS(T)                                                                                    \
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(T *This, REFIID riid, void **object);                                  \
+    ULONG(STDMETHODCALLTYPE *AddRef)(T *This);                                                                        \
+    ULONG(STDMETHODCALLTYPE *Release)(T *This);                                                                       \
+    HRESULT(STDMETHODCALLTYPE *Add)(T *This, HBITMAP image, HBITMAP mask, int *index);                                \
+    HRESULT(STDMETHODCALLTYPE *ReplaceIcon)(T *This, int i, HICON icon, int *index);                                  \
+    HRESULT(STDMETHODCALLTYPE *SetOverlayImage)(T *This, int image, int overlay);                                     \
+    HRESULT(STDMETHODCALLTYPE *Replace)(T *This, int i, HBITMAP image, HBITMAP mask);                                 \
+    HRESULT(STDMETHODCALLTYPE *AddMasked)(T *This, HBITMAP image, COLORREF key, int *index);                          \
+    HRESULT(STDMETHODCALLTYPE *Draw)(T *This, IMAGELISTDRAWPARAMS *params);                                           \
+    HRESULT(STDMETHODCALLTYPE *Remove)(T *This, int i);                                                               \
+    HRESULT(STDMETHODCALLTYPE *GetIcon)(T *This, int i, UINT flags, HICON *icon);                                     \
+    HRESULT(STDMETHODCALLTYPE *GetImageInfo)(T *This, int i, IMAGEINFO *info);                                        \
+    HRESULT(STDMETHODCALLTYPE *Copy)(T *This, int dst, IUnknown *source, int src, UINT flags);                        \
+    HRESULT(STDMETHODCALLTYPE *Merge)(T *This, int i1, IUnknown *list2, int i2, int dx, int dy, REFIID riid,          \
+                                      void **object);                                                                 \
+    HRESULT(STDMETHODCALLTYPE *Clone)(T *This, REFIID riid, void **object);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetImageRect)(T *This, int i, RECT *rect);                                             \
+    HRESULT(STDMETHODCALLTYPE *GetIconSize)(T *This, int *cx, int *cy);                                               \
+    HRESULT(STDMETHODCALLTYPE *SetIconSize)(T *This, int cx, int cy);                                                 \
+    HRESULT(STDMETHODCALLTYPE *GetImageCount)(T *This, int *count);                                                   \
+    HRESULT(STDMETHODCALLTYPE *SetImageCount)(T *This, UINT count);                                                   \
+    HRESULT(STDMETHODCALLTYPE *SetBkColor)(T *This, COLORREF color, COLORREF *old);                                   \
+    HRESULT(STDMETHODCALLTYPE *GetBkColor)(T *This, COLORREF *color);                                                 \
+    HRESULT(STDMETHODCALLTYPE *BeginDrag)(T *This, int track, int hot_x, int hot_y);                                  \
+    HRESULT(STDMETHODCALLTYPE *EndDrag)(T *This);                                                                     \
+    HRESULT(STDMETHODCALLTYPE *DragEnter)(T *This, HWND lock, int x, int y);                                          \
+    HRESULT(STDMETHODCALLTYPE *DragLeave)(T *This, HWND lock);                                                        \
+    HRESULT(STDMETHODCALLTYPE *DragMove)(T *This, int x, int y);                                                      \
+    HRESULT(STDMETHODCALLTYPE *SetDragCursorImage)(T *This, IUnknown *drag, int i, int hot_x, int hot_y);             \
+    HRESULT(STDMETHODCALLTYPE *DragShowNolock)(T *This, BOOL show);                                                   \
+    HRESULT(STDMETHODCALLTYPE *GetDragImage)(T *This, POINT *pt, POINT *hot, REFIID riid, void **object);             \
+    HRESULT(STDMETHODCALLTYPE *GetItemFlags)(T *This, int i, DWORD *flags);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetOverlayImage)(T *This, int overlay, int *index);
+
+typedef struct IImageListVtbl {
+    MIME_IIMAGELIST_METHODS(IImageList)
+} IImageListVtbl;
+struct IImageList {
+    const IImageListVtbl *lpVtbl;
+};
+
+typedef struct IImageList2Vtbl {
+    MIME_IIMAGELIST_METHODS(IImageList2)
+    HRESULT(STDMETHODCALLTYPE *Resize)(IImageList2 *This, int cx, int cy);
+    HRESULT(STDMETHODCALLTYPE *GetOriginalSize)(IImageList2 *This, int i, DWORD flags, int *cx, int *cy);
+    HRESULT(STDMETHODCALLTYPE *SetOriginalSize)(IImageList2 *This, int i, int cx, int cy);
+    HRESULT(STDMETHODCALLTYPE *SetCallback)(IImageList2 *This, IUnknown *callback);
+    HRESULT(STDMETHODCALLTYPE *GetCallback)(IImageList2 *This, REFIID riid, void **object);
+    HRESULT(STDMETHODCALLTYPE *ForceImagePresent)(IImageList2 *This, int i, DWORD flags);
+    HRESULT(STDMETHODCALLTYPE *DiscardImages)(IImageList2 *This, int first, int last, DWORD flags);
+    HRESULT(STDMETHODCALLTYPE *PreloadImages)(IImageList2 *This, IMAGELISTDRAWPARAMS *params);
+    HRESULT(STDMETHODCALLTYPE *GetStatistics)(IImageList2 *This, IMAGELISTSTATS *stats);
+    HRESULT(STDMETHODCALLTYPE *Initialize)(IImageList2 *This, int cx, int cy, UINT flags, int initial, int grow);
+    HRESULT(STDMETHODCALLTYPE *Replace2)(IImageList2 *This, int i, HBITMAP image, HBITMAP mask, IUnknown *decorator,
+                                         DWORD flags);
+    HRESULT(STDMETHODCALLTYPE *ReplaceFromImageList)(IImageList2 *This, int i, IImageList *source, int src,
+                                                     IUnknown *decorator, DWORD flags);
+} IImageList2Vtbl;
+struct IImageList2 {
+    const IImageList2Vtbl *lpVtbl;
+};
+
 #define ImageList_AddIcon(himl, icon) ImageList_ReplaceIcon(himl, -1, icon)
 #define ImageList_RemoveAll(himl) ImageList_Remove(himl, -1)
 #define ImageList_ExtractIcon(inst, himl, i) ImageList_GetIcon(himl, i, 0)

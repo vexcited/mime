@@ -1522,6 +1522,8 @@ typedef struct GdiplusStartupOutput {
 
 
 WINGDIPAPI GpStatus WINAPI GdiplusStartup(ULONG_PTR*,const GdiplusStartupInput*,GdiplusStartupOutput*);
+WINGDIPAPI void* WINAPI GdipAlloc(SIZE_T);
+WINGDIPAPI void WINAPI GdipFree(void*);
 WINGDIPAPI VOID WINAPI GdiplusShutdown(ULONG_PTR);
 WINGDIPAPI GpStatus WINAPI GdiplusNotificationHook(ULONG_PTR*);
 WINGDIPAPI VOID WINAPI GdiplusNotificationUnhook(ULONG_PTR);
@@ -1732,8 +1734,6 @@ WINGDIPAPI GpStatus WINAPI GdipGetGenericFontFamilySerif(GpFontFamily**);
 WINGDIPAPI GpStatus WINAPI GdipGetGenericFontFamilyMonospace(GpFontFamily**);
 WINGDIPAPI GpStatus WINAPI GdipGetFamilyName(const GpFontFamily*,WCHAR[LF_FACESIZE],LANGID);
 WINGDIPAPI GpStatus WINAPI GdipIsStyleAvailable(const GpFontFamily*,INT,BOOL*);
-WINGDIPAPI GpStatus WINAPI GdipFontCollectionEnumerable(GpFontCollection*,GpGraphics*,INT*);
-WINGDIPAPI GpStatus WINAPI GdipFontCollectionEnumerate(GpFontCollection*,INT,GpFontFamily**,INT*,GpGraphics*);
 WINGDIPAPI GpStatus WINAPI GdipGetEmHeight(const GpFontFamily*,INT,UINT16*);
 WINGDIPAPI GpStatus WINAPI GdipGetCellAscent(const GpFontFamily*,INT,UINT16*);
 WINGDIPAPI GpStatus WINAPI GdipGetCellDescent(const GpFontFamily*,INT,UINT16*);
@@ -2026,7 +2026,6 @@ WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesOutputChannel(GpImageAttributes
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesOutputChannelColorProfile(GpImageAttributes*,ColorAdjustType,BOOL,const WCHAR*);
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesRemapTable(GpImageAttributes*,ColorAdjustType,BOOL,UINT,const ColorMap*);
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesWrapMode(GpImageAttributes*,WrapMode,ARGB,BOOL);
-WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesICMMode(GpImageAttributes*,BOOL);
 WINGDIPAPI GpStatus WINAPI GdipGetImageAttributesAdjustedPalette(GpImageAttributes*,ColorPalette*,ColorAdjustType);
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesCachedBackground(GpImageAttributes*,BOOL);
 
@@ -2089,6 +2088,8 @@ WINGDIPAPI GpStatus WINAPI GdipGetMetafileHeaderFromEmf(HENHMETAFILE,MetafileHea
 WINGDIPAPI GpStatus WINAPI GdipGetMetafileHeaderFromFile(const WCHAR*,MetafileHeader*);
 WINGDIPAPI GpStatus WINAPI GdipGetMetafileHeaderFromStream(IStream*,MetafileHeader*);
 WINGDIPAPI GpStatus WINAPI GdipGetMetafileHeaderFromMetafile(GpMetafile*,MetafileHeader*);
+WINGDIPAPI GpStatus WINAPI GdipGetMetafileHeaderFromWmf(HMETAFILE,const WmfPlaceableFileHeader*,MetafileHeader*);
+WINGDIPAPI GpStatus WINAPI GdipPlayTSClientRecord(HDC,INT,const BYTE*,UINT,void*);
 WINGDIPAPI GpStatus WINAPI GdipGetHemfFromMetafile(GpMetafile*,HENHMETAFILE*);
 WINGDIPAPI GpStatus WINAPI GdipCreateStreamOnFile(const WCHAR*,UINT,IStream**);
 WINGDIPAPI GpStatus WINAPI GdipCreateMetafileFromWmf(HMETAFILE,BOOL,const WmfPlaceableFileHeader*,GpMetafile**);

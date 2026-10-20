@@ -618,8 +618,12 @@ static GpStatus encode_frame(IWICImagingFactory *factory, SaveState *s, GBitmap 
                 palette = nullptr;
             }
         }
-        if (palette)
+        if (palette) {
             frame->lpVtbl->SetPalette(frame, palette);
+            /* the first frame of a gif gives the global color table */
+            if (s->frames == 0 && same_guid(s->format, &ImageFormatGIF))
+                s->encoder->lpVtbl->SetPalette(s->encoder, palette);
+        }
     }
     write_properties(frame, s->format, b);
     if (same_guid(s->format, &ImageFormatGIF))

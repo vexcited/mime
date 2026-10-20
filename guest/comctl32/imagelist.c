@@ -15,7 +15,9 @@
 #define ITEM_ALPHA 0x01
 #define ITEM_RESIZED 0x02
 
+/* the first field is the IImageList2 interface, so an HIMAGELIST is an IImageList2 pointer. */
 typedef struct _IMAGELIST {
+    const IImageList2Vtbl *Vtbl;
     DWORD Magic;
     struct _IMAGELIST *Next;
     LONG Refs;
@@ -32,10 +34,13 @@ typedef struct _IMAGELIST {
     RECT OverlayBox[15];
     BOOL OverlayOpaque[15];
     BYTE *Items;
+    /* the original size of each image, cx in the low word and cy in the high one, 0 when none was set. */
+    DWORD *Original;
 } IMAGELIST;
 
 static SRWLOCK g_lists_lock = SRWLOCK_INIT;
 static IMAGELIST *g_lists;
+static const IImageList2Vtbl list_vtbl;
 
 static IMAGELIST *get_list(HIMAGELIST himl)
 {
@@ -123,7 +128,10 @@ static BOOL set_capacity(IMAGELIST *il, int capacity)
         }
     }
     BYTE *items = CcAlloc((SIZE_T)capacity);
-    if (!items) {
+    DWORD *original = CcAlloc((SIZE_T)capacity * sizeof(DWORD));
+    if (!items || !original) {
+        CcFree(items);
+        CcFree(original);
         DeleteObject(image);
         DeleteObject(mask);
         return FALSE;
@@ -138,6 +146,8 @@ static BOOL set_capacity(IMAGELIST *il, int capacity)
             memcpy((BYTE *)mask_bits + (SIZE_T)(height - 1 - y) * (SIZE_T)stride, mask_row(il, y), (SIZE_T)stride);
     if (il->Items)
         memcpy(items, il->Items, (SIZE_T)keep);
+    if (il->Original)
+        memcpy(original, il->Original, (SIZE_T)keep * sizeof(DWORD));
     if (il->Image) {
         SelectObject(il->Dc, il->OldImage);
         DeleteObject(il->Image);
@@ -147,6 +157,8 @@ static BOOL set_capacity(IMAGELIST *il, int capacity)
         DeleteObject(il->Mask);
     }
     CcFree(il->Items);
+    CcFree(il->Original);
+    il->Original = original;
     il->Image = image;
     il->Mask = mask;
     il->Bits = bits;
@@ -180,15 +192,33 @@ static int grow_step(int grow)
     return g < 4 ? 4 : g;
 }
 
-static IMAGELIST *create_list(int cx, int cy, UINT flags, int initial, int grow)
+/* frees the strips, dcs and item tables, leaving an empty list without storage. */
+static void release_storage(IMAGELIST *il)
 {
-    if (cx < 0 || cy < 0 || ((flags & ~ILC_MIRROR) & ILC_INVALID))
-        return nullptr;
-    IMAGELIST *il = CcAlloc(sizeof(*il));
-    if (!il)
-        return nullptr;
-    il->Magic = IMAGELIST_MAGIC;
-    il->Refs = 1;
+    if (il->Image) {
+        SelectObject(il->Dc, il->OldImage);
+        DeleteObject(il->Image);
+    }
+    if (il->Mask) {
+        SelectObject(il->MaskDc, il->OldMask);
+        DeleteObject(il->Mask);
+    }
+    if (il->Dc)
+        DeleteDC(il->Dc);
+    if (il->MaskDc)
+        DeleteDC(il->MaskDc);
+    CcFree(il->Items);
+    CcFree(il->Original);
+    il->Image = il->Mask = nullptr;
+    il->Dc = il->MaskDc = nullptr;
+    il->Bits = il->MaskBits = nullptr;
+    il->Items = nullptr;
+    il->Original = nullptr;
+    il->Count = il->Capacity = 0;
+}
+
+static BOOL init_list(IMAGELIST *il, int cx, int cy, UINT flags, int initial, int grow)
+{
     if (!(flags & 0xFE))
         flags |= ILC_COLOR4;
     il->Flags = flags & ~ILC_MIRROR;
@@ -196,25 +226,51 @@ static IMAGELIST *create_list(int cx, int cy, UINT flags, int initial, int grow)
     il->Cy = cy;
     il->Grow = grow_step(grow);
     il->Bk = CLR_NONE;
-    for (int i = 0; i < 15; i++)
+    il->Count = 0;
+    for (int i = 0; i < 15; i++) {
         il->Overlay[i] = -1;
+        SetRectEmpty(&il->OverlayBox[i]);
+    }
     il->Dc = CreateCompatibleDC(nullptr);
     il->MaskDc = CreateCompatibleDC(nullptr);
     if (initial < 0)
         initial = 0;
     if (!il->Dc || !il->MaskDc ||
         (!set_capacity(il, round_up(initial + 1, il->Grow)) && !set_capacity(il, 2))) {
-        if (il->Dc)
-            DeleteDC(il->Dc);
-        if (il->MaskDc)
-            DeleteDC(il->MaskDc);
-        CcFree(il);
-        return nullptr;
+        release_storage(il);
+        return FALSE;
     }
+    return TRUE;
+}
+
+/* a list object that Initialize has not set up yet: no storage, no images. */
+static IMAGELIST *new_object(void)
+{
+    IMAGELIST *il = CcAlloc(sizeof(*il));
+    if (!il)
+        return nullptr;
+    il->Vtbl = &list_vtbl;
+    il->Magic = IMAGELIST_MAGIC;
+    il->Refs = 1;
+    il->Grow = 4;
     AcquireSRWLockExclusive(&g_lists_lock);
     il->Next = g_lists;
     g_lists = il;
     ReleaseSRWLockExclusive(&g_lists_lock);
+    return il;
+}
+
+static void free_list(IMAGELIST *il);
+
+static IMAGELIST *create_list(int cx, int cy, UINT flags, int initial, int grow)
+{
+    if (cx < 0 || cy < 0 || ((flags & ~ILC_MIRROR) & ILC_INVALID))
+        return nullptr;
+    IMAGELIST *il = new_object();
+    if (il && !init_list(il, cx, cy, flags, initial, grow)) {
+        free_list(il);
+        return nullptr;
+    }
     return il;
 }
 
@@ -228,17 +284,7 @@ static void free_list(IMAGELIST *il)
         }
     ReleaseSRWLockExclusive(&g_lists_lock);
     il->Magic = 0;
-    if (il->Image) {
-        SelectObject(il->Dc, il->OldImage);
-        DeleteObject(il->Image);
-    }
-    if (il->Mask) {
-        SelectObject(il->MaskDc, il->OldMask);
-        DeleteObject(il->Mask);
-    }
-    DeleteDC(il->Dc);
-    DeleteDC(il->MaskDc);
-    CcFree(il->Items);
+    release_storage(il);
     CcFree(il);
 }
 
@@ -285,6 +331,8 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_SetImageCount(HIMAGELIST himl, UINT count)
         return FALSE;
     for (int i = il->Count; i < (int)count; i++)
         il->Items[i] = 0;
+    for (int i = (int)count; i < il->Capacity; i++)
+        il->Original[i] = 0;
     il->Count = (int)count;
     return TRUE;
 }
@@ -662,6 +710,7 @@ static void copy_slot(IMAGELIST *il, int dst, int src)
         for (int y = 0; y < il->Cy; y++)
             memcpy(mask_row(il, dst * il->Cy + y), mask_row(il, src * il->Cy + y), (SIZE_T)il->MaskStride);
     il->Items[dst] = il->Items[src];
+    il->Original[dst] = il->Original[src];
 }
 
 WINCOMMCTRLAPI BOOL WINAPI ImageList_Remove(HIMAGELIST himl, int i)
@@ -676,6 +725,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Remove(HIMAGELIST himl, int i)
     for (int j = i; j < il->Count - 1; j++)
         copy_slot(il, j, j + 1);
     il->Count--;
+    il->Original[il->Count] = 0;
     if (il->Capacity - il->Count > il->Grow)
         set_capacity(il, il->Capacity - il->Grow);
     return TRUE;
@@ -1125,6 +1175,7 @@ WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_Duplicate(HIMAGELIST himl)
         for (int y = 0; y < il->Count * il->Cy; y++)
             memcpy(mask_row(copy, y), mask_row(il, y), (SIZE_T)il->MaskStride);
     memcpy(copy->Items, il->Items, (SIZE_T)il->Count);
+    memcpy(copy->Original, il->Original, (SIZE_T)il->Count * sizeof(DWORD));
     copy->Count = il->Count;
     copy->Bk = il->Bk;
     memcpy(copy->Overlay, il->Overlay, sizeof(il->Overlay));
@@ -1146,6 +1197,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Copy(HIMAGELIST dst, int i_dst, HIMAGELIST 
         copy_slot(il, il->Count, i_dst);
         copy_slot(il, i_dst, i_src);
         copy_slot(il, i_src, il->Count);
+        il->Original[il->Count] = 0;
     } else {
         copy_slot(il, i_dst, i_src);
     }
@@ -1236,6 +1288,9 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Resize(HIMAGELIST himl, int cx, int cy)
         if (il->Mask && n->Mask)
             StretchBlt(n->MaskDc, 0, i * cy, cx, cy, il->MaskDc, 0, i * il->Cy, il->Cx, il->Cy, SRCCOPY);
         n->Items[i] = il->Items[i] | ITEM_RESIZED;
+        DWORD o = il->Original[i];
+        if (o)
+            n->Original[i] = (DWORD)MulDiv(LOWORD(o), cx, il->Cx) | (DWORD)MulDiv(HIWORD(o), cy, il->Cy) << 16;
     }
     for (int k = 0; k < 15; k++) {
         RECT *b = &il->OverlayBox[k];
@@ -1252,6 +1307,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Resize(HIMAGELIST himl, int cx, int cy)
     il->MaskBits = n->MaskBits;
     il->MaskStride = n->MaskStride;
     il->Items = n->Items;
+    il->Original = n->Original;
     il->Capacity = n->Capacity;
     HDC dc = il->Dc, mdc = il->MaskDc;
     il->Dc = n->Dc;
@@ -1261,6 +1317,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Resize(HIMAGELIST himl, int cx, int cy)
     n->Image = tmp.Image;
     n->Mask = tmp.Mask;
     n->Items = tmp.Items;
+    n->Original = tmp.Original;
     n->Dc = dc;
     n->MaskDc = mdc;
     n->OldImage = tmp.OldImage;
@@ -1349,27 +1406,6 @@ WINCOMMCTRLAPI HRESULT WINAPI ImageList_ReadEx(DWORD flags, struct IStream *stre
 WINCOMMCTRLAPI HRESULT WINAPI ImageList_WriteEx(HIMAGELIST himl, DWORD flags, struct IStream *stream)
 {
     return get_list(himl) ? E_NOTIMPL : E_INVALIDARG;
-}
-
-WINCOMMCTRLAPI HRESULT WINAPI HIMAGELIST_QueryInterface(HIMAGELIST himl, REFIID riid, void **object)
-{
-    if (!object)
-        return E_POINTER;
-    *object = nullptr;
-    if (!get_list(himl))
-        return E_POINTER;
-    return E_NOINTERFACE;
-}
-
-WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const IUnknown *outer, REFIID riid,
-                                                         void **object)
-{
-    if (!object)
-        return E_POINTER;
-    *object = nullptr;
-    if (outer)
-        return CLASS_E_NOAGGREGATION;
-    return E_NOINTERFACE;
 }
 
 /* ------------------------------------------------------------------ dragging */
@@ -1540,4 +1576,586 @@ WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_GetDragImage(POINT *pt, POINT *hot)
     if (hot)
         *hot = g_drag.Hot;
     return g_drag.List;
+}
+
+/* ------------------------------------------------------------------ IImageList2 */
+
+/* the private decorator interface Replace2 and ReplaceFromImageList query their IUnknown for. */
+MIME_DEFINE_GUID(IID_IImageListImageDecorator_, 0xDEF20F93, 0x74E9, 0x4BEB, 0x9B, 0x81, 0x11, 0x00, 0x2E, 0x93, 0xA2,
+                 0xD3);
+
+static inline IMAGELIST *impl(IImageList2 *iface)
+{
+    return (IMAGELIST *)iface;
+}
+
+/* a list made by ImageList_CoCreateInstance has no storage until Initialize. */
+static inline BOOL ready(const IMAGELIST *il)
+{
+    return il->Dc != nullptr;
+}
+
+static inline BOOL valid_index(const IMAGELIST *il, int i)
+{
+    return i >= 0 && i < il->Count;
+}
+
+/* the list behind an interface pointer of the caller, which keeps its own reference. */
+static HRESULT list_from_unknown(IUnknown *unk, IMAGELIST **out)
+{
+    *out = nullptr;
+    if (!unk)
+        return E_INVALIDARG;
+    IUnknown *list;
+    HRESULT hr = unk->lpVtbl->QueryInterface(unk, &IID_IImageList, (void **)&list);
+    if (FAILED(hr))
+        return hr;
+    *out = get_list((HIMAGELIST)list);
+    list->lpVtbl->Release(list);
+    return *out ? S_OK : E_INVALIDARG;
+}
+
+/* the decorators are a private interface of windows; one that answers is accepted and not used. */
+static HRESULT check_decorator(IUnknown *decorator)
+{
+    if (!decorator)
+        return S_OK;
+    IUnknown *d;
+    HRESULT hr = decorator->lpVtbl->QueryInterface(decorator, &IID_IImageListImageDecorator_, (void **)&d);
+    if (SUCCEEDED(hr))
+        d->lpVtbl->Release(d);
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE il_QueryInterface(IImageList2 *iface, REFIID riid, void **object)
+{
+    if (!object)
+        return E_POINTER;
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IImageList) || IsEqualIID(riid, &IID_IImageList2)) {
+        InterlockedIncrement(&impl(iface)->Refs);
+        *object = iface;
+        return S_OK;
+    }
+    *object = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE il_AddRef(IImageList2 *iface)
+{
+    return (ULONG)InterlockedIncrement(&impl(iface)->Refs);
+}
+
+static ULONG STDMETHODCALLTYPE il_Release(IImageList2 *iface)
+{
+    IMAGELIST *il = impl(iface);
+    LONG refs = InterlockedDecrement(&il->Refs);
+    if (!refs)
+        free_list(il);
+    return (ULONG)refs;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Add(IImageList2 *iface, HBITMAP image, HBITMAP mask, int *index)
+{
+    IMAGELIST *il = impl(iface);
+    BITMAP bm;
+    if (index)
+        *index = -1;
+    if (!image || GetObjectW(image, sizeof(bm), &bm) != sizeof(bm) || bm.bmWidth < il->Cx)
+        return E_INVALIDARG;
+    if (!ready(il))
+        return E_FAIL;
+    int i = ImageList_Add((HIMAGELIST)il, image, mask);
+    if (index)
+        *index = i;
+    return i >= 0 ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE il_ReplaceIcon(IImageList2 *iface, int i, HICON icon, int *index)
+{
+    int r = ImageList_ReplaceIcon((HIMAGELIST)impl(iface), i, icon);
+    if (index)
+        *index = r;
+    return r >= 0 ? S_OK : E_FAIL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_SetOverlayImage(IImageList2 *iface, int image, int overlay)
+{
+    return ImageList_SetOverlayImage((HIMAGELIST)impl(iface), image, overlay) ? S_OK : E_INVALIDARG;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Replace(IImageList2 *iface, int i, HBITMAP image, HBITMAP mask)
+{
+    IMAGELIST *il = impl(iface);
+    if (!valid_index(il, i))
+        return E_INVALIDARG;
+    return ImageList_Replace((HIMAGELIST)il, i, image, mask) ? S_OK : E_FAIL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_AddMasked(IImageList2 *iface, HBITMAP image, COLORREF key, int *index)
+{
+    IMAGELIST *il = impl(iface);
+    BITMAP bm;
+    if (index)
+        *index = -1;
+    if (!image || GetObjectW(image, sizeof(bm), &bm) != sizeof(bm))
+        return E_INVALIDARG;
+    if (!ready(il))
+        return E_FAIL;
+    int i = ImageList_AddMasked((HIMAGELIST)il, image, key);
+    if (index)
+        *index = i;
+    return i >= 0 ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Draw(IImageList2 *iface, IMAGELISTDRAWPARAMS *params)
+{
+    IMAGELIST *il = impl(iface);
+    if (!params || !valid_index(il, params->i))
+        return E_INVALIDARG;
+    if (params->cbSize != sizeof(IMAGELISTDRAWPARAMS) && params->cbSize != IMAGELISTDRAWPARAMS_V3_SIZE)
+        return E_INVALIDARG;
+    /* the list drawn is this one, whatever params->himl says. */
+    draw_image(il, params, params->cbSize == sizeof(IMAGELISTDRAWPARAMS), nullptr);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Remove(IImageList2 *iface, int i)
+{
+    return ImageList_Remove((HIMAGELIST)impl(iface), i) ? S_OK : E_INVALIDARG;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetIcon(IImageList2 *iface, int i, UINT flags, HICON *icon)
+{
+    IMAGELIST *il = impl(iface);
+    if (!icon)
+        return E_INVALIDARG;
+    *icon = nullptr;
+    if (!valid_index(il, i))
+        return E_INVALIDARG;
+    *icon = ImageList_GetIcon((HIMAGELIST)il, i, flags);
+    return *icon ? S_OK : E_FAIL;
+}
+
+/* windows answers E_POINTER for a bad index too. */
+static HRESULT STDMETHODCALLTYPE il_GetImageInfo(IImageList2 *iface, int i, IMAGEINFO *info)
+{
+    return ImageList_GetImageInfo((HIMAGELIST)impl(iface), i, info) ? S_OK : E_POINTER;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Copy(IImageList2 *iface, int dst, IUnknown *source, int src, UINT flags)
+{
+    IMAGELIST *il = impl(iface), *from;
+    if (flags & ~ILCF_SWAP)
+        return E_INVALIDARG;
+    if (FAILED(list_from_unknown(source, &from)) || from != il)
+        return E_INVALIDARG;
+    return ImageList_Copy((HIMAGELIST)il, dst, (HIMAGELIST)il, src, flags) ? S_OK : E_FAIL;
+}
+
+/* hands out a new list through riid, dropping the creation reference. */
+static HRESULT give_list(IMAGELIST *il, REFIID riid, void **object)
+{
+    HRESULT hr = il_QueryInterface((IImageList2 *)il, riid, object);
+    il_Release((IImageList2 *)il);
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Merge(IImageList2 *iface, int i1, IUnknown *list2, int i2, int dx, int dy,
+                                          REFIID riid, void **object)
+{
+    IMAGELIST *il = impl(iface), *other;
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    HRESULT hr = list_from_unknown(list2, &other);
+    if (FAILED(hr))
+        return hr;
+    if (!ready(il) || !ready(other))
+        return E_FAIL;
+    IMAGELIST *m = merge(il, i1, other, i2, dx, dy, nullptr);
+    return m ? give_list(m, riid, object) : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Clone(IImageList2 *iface, REFIID riid, void **object)
+{
+    IMAGELIST *il = impl(iface);
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    if (!ready(il))
+        return E_FAIL;
+    IMAGELIST *copy = (IMAGELIST *)ImageList_Duplicate((HIMAGELIST)il);
+    return copy ? give_list(copy, riid, object) : E_OUTOFMEMORY;
+}
+
+/* windows answers E_FAIL, not E_INVALIDARG, for a bad index or rectangle. */
+static HRESULT STDMETHODCALLTYPE il_GetImageRect(IImageList2 *iface, int i, RECT *rect)
+{
+    return ImageList_GetImageRect((HIMAGELIST)impl(iface), i, rect) ? S_OK : E_FAIL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetIconSize(IImageList2 *iface, int *cx, int *cy)
+{
+    if (!cx || !cy)
+        return E_INVALIDARG;
+    *cx = impl(iface)->Cx;
+    *cy = impl(iface)->Cy;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_SetIconSize(IImageList2 *iface, int cx, int cy)
+{
+    IMAGELIST *il = impl(iface);
+    if (cx == il->Cx && cy == il->Cy)
+        return S_FALSE;
+    if (cx < 0 || cy < 0)
+        return E_INVALIDARG;
+    if (!ready(il))
+        return E_FAIL;
+    return ImageList_SetIconSize((HIMAGELIST)il, cx, cy) ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetImageCount(IImageList2 *iface, int *count)
+{
+    if (!count)
+        return E_INVALIDARG;
+    *count = impl(iface)->Count;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_SetImageCount(IImageList2 *iface, UINT count)
+{
+    IMAGELIST *il = impl(iface);
+    if (count > 0x7FFFFFFD)
+        return E_OUTOFMEMORY;
+    if (!ready(il))
+        return E_FAIL;
+    return ImageList_SetImageCount((HIMAGELIST)il, count) ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE il_SetBkColor(IImageList2 *iface, COLORREF color, COLORREF *old)
+{
+    COLORREF previous = ImageList_SetBkColor((HIMAGELIST)impl(iface), color);
+    if (old)
+        *old = previous;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetBkColor(IImageList2 *iface, COLORREF *color)
+{
+    if (!color)
+        return E_INVALIDARG;
+    *color = impl(iface)->Bk;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_BeginDrag(IImageList2 *iface, int track, int hot_x, int hot_y)
+{
+    return ImageList_BeginDrag((HIMAGELIST)impl(iface), track, hot_x, hot_y) ? S_OK : E_FAIL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_EndDrag(IImageList2 *iface)
+{
+    if (!g_drag.List)
+        return S_FALSE;
+    ImageList_EndDrag();
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_DragEnter(IImageList2 *iface, HWND lock, int x, int y)
+{
+    return ImageList_DragEnter(lock, x, y) ? S_OK : S_FALSE;
+}
+
+static HRESULT STDMETHODCALLTYPE il_DragLeave(IImageList2 *iface, HWND lock)
+{
+    return ImageList_DragLeave(lock) ? S_OK : S_FALSE;
+}
+
+static HRESULT STDMETHODCALLTYPE il_DragMove(IImageList2 *iface, int x, int y)
+{
+    if (!g_drag.Entered)
+        return E_FAIL;
+    return ImageList_DragMove(x, y) ? S_OK : S_FALSE;
+}
+
+static HRESULT STDMETHODCALLTYPE il_SetDragCursorImage(IImageList2 *iface, IUnknown *drag, int i, int hot_x,
+                                                       int hot_y)
+{
+    IMAGELIST *from;
+    HRESULT hr = list_from_unknown(drag, &from);
+    if (FAILED(hr))
+        return hr;
+    return ImageList_SetDragCursorImage((HIMAGELIST)from, i, hot_x, hot_y) ? S_OK : E_FAIL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_DragShowNolock(IImageList2 *iface, BOOL show)
+{
+    return ImageList_DragShowNolock(show) ? S_OK : E_FAIL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetDragImage(IImageList2 *iface, POINT *pt, POINT *hot, REFIID riid,
+                                                 void **object)
+{
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    HIMAGELIST drag = ImageList_GetDragImage(pt, hot);
+    if (!drag)
+        return E_FAIL;
+    return il_QueryInterface((IImageList2 *)drag, riid, object);
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetItemFlags(IImageList2 *iface, int i, DWORD *flags)
+{
+    IMAGELIST *il = impl(iface);
+    if (!flags || !valid_index(il, i))
+        return E_INVALIDARG;
+    *flags = il->Items[i] & (ITEM_ALPHA | ITEM_RESIZED);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetOverlayImage(IImageList2 *iface, int overlay, int *index)
+{
+    if (overlay < 1 || overlay > 15 || !index)
+        return E_INVALIDARG;
+    *index = impl(iface)->Overlay[overlay - 1];
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE il_Resize(IImageList2 *iface, int cx, int cy)
+{
+    IMAGELIST *il = impl(iface);
+    if (cx <= 0 || cy <= 0)
+        return E_INVALIDARG;
+    if (cx == il->Cx && cy == il->Cy)
+        return S_FALSE;
+    if (!ready(il))
+        return E_FAIL;
+    return ImageList_Resize((HIMAGELIST)il, cx, cy) ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetOriginalSize(IImageList2 *iface, int i, DWORD flags, int *cx, int *cy)
+{
+    IMAGELIST *il = impl(iface);
+    if (!cx || !cy || !valid_index(il, i))
+        return E_INVALIDARG;
+    DWORD o = il->Original[i];
+    if (!o)
+        return E_FAIL;
+    *cx = LOWORD(o);
+    *cy = HIWORD(o);
+    return S_OK;
+}
+
+/* both sizes 0 forget the original size; one of them 0 is invalid. */
+static HRESULT STDMETHODCALLTYPE il_SetOriginalSize(IImageList2 *iface, int i, int cx, int cy)
+{
+    IMAGELIST *il = impl(iface);
+    if (!valid_index(il, i) || (UINT)cx > 0x7FFF || (UINT)cy > 0x7FFF || !cx != !cy)
+        return E_INVALIDARG;
+    il->Original[i] = (DWORD)cx | (DWORD)cy << 16;
+    return S_OK;
+}
+
+/* a plain list has no callback: windows does not implement these for it. */
+static HRESULT STDMETHODCALLTYPE il_SetCallback(IImageList2 *iface, IUnknown *callback)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetCallback(IImageList2 *iface, REFIID riid, void **object)
+{
+    if (object)
+        *object = nullptr;
+    return E_FAIL;
+}
+
+/* every image of a plain list is always present. */
+static HRESULT STDMETHODCALLTYPE il_ForceImagePresent(IImageList2 *iface, int i, DWORD flags)
+{
+    return valid_index(impl(iface), i) ? S_OK : E_INVALIDARG;
+}
+
+static HRESULT STDMETHODCALLTYPE il_DiscardImages(IImageList2 *iface, int first, int last, DWORD flags)
+{
+    return E_NOTIMPL;
+}
+
+/* makes the image and its overlay present, which they always are; nothing is drawn. */
+static HRESULT STDMETHODCALLTYPE il_PreloadImages(IImageList2 *iface, IMAGELISTDRAWPARAMS *params)
+{
+    if (!params ||
+        (params->cbSize != sizeof(IMAGELISTDRAWPARAMS) && params->cbSize != IMAGELISTDRAWPARAMS_V3_SIZE))
+        return E_INVALIDARG;
+    DWORD flags = (params->fStyle & ILD_ASYNC) ? ILFIP_FROMSTANDBY : ILFIP_ALWAYS;
+    HRESULT hr = il_ForceImagePresent(iface, params->i, flags);
+    int overlay = (int)((params->fStyle & ILD_OVERLAYMASK) >> 8), image;
+    if (FAILED(hr) || !overlay)
+        return hr;
+    hr = il_GetOverlayImage(iface, overlay, &image);
+    return FAILED(hr) ? hr : il_ForceImagePresent(iface, image, flags);
+}
+
+static HRESULT STDMETHODCALLTYPE il_GetStatistics(IImageList2 *iface, IMAGELISTSTATS *stats)
+{
+    if (!stats || stats->cbSize != sizeof(*stats))
+        return E_INVALIDARG;
+    stats->cAlloc = impl(iface)->Capacity;
+    stats->cUsed = impl(iface)->Count;
+    stats->cStandby = 0;
+    return S_OK;
+}
+
+/* drops whatever the list held first, so a failing call leaves it empty. */
+static HRESULT STDMETHODCALLTYPE il_Initialize(IImageList2 *iface, int cx, int cy, UINT flags, int initial, int grow)
+{
+    IMAGELIST *il = impl(iface);
+    release_storage(il);
+    if (cx <= 0 || cy <= 0 || (flags & ILC_INVALID))
+        return E_INVALIDARG;
+    return init_list(il, cx, cy, flags, initial, grow) ? S_OK : E_OUTOFMEMORY;
+}
+
+/* a 32 bpp bitmap without alpha replaces the image as an opaque one with alpha. */
+static HRESULT STDMETHODCALLTYPE il_Replace2(IImageList2 *iface, int i, HBITMAP image, HBITMAP mask,
+                                             IUnknown *decorator, DWORD flags)
+{
+    IMAGELIST *il = impl(iface);
+    HRESULT hr = check_decorator(decorator);
+    if (FAILED(hr))
+        return hr;
+    if (!valid_index(il, i))
+        return E_INVALIDARG;
+    PIXELS pixels, mask_pixels = {};
+    if (!read_bitmap(image, &pixels))
+        return E_FAIL;
+    if (pixels.Bpp == 32) {
+        SIZE_T n = (SIZE_T)pixels.Width * (SIZE_T)pixels.Height, k = 0;
+        while (k < n && !(pixels.Data[k] >> 24))
+            k++;
+        if (k == n)
+            for (k = 0; k < n; k++)
+                pixels.Data[k] |= 0xFF000000;
+    }
+    if (mask)
+        read_bitmap(mask, &mask_pixels);
+    store_image(il, i, &pixels, 0, mask_pixels.Data ? &mask_pixels : nullptr);
+    CcFree(pixels.Data);
+    CcFree(mask_pixels.Data);
+    return S_OK;
+}
+
+/* copies image src of another list over image i, stretched when the sizes differ. */
+static HRESULT STDMETHODCALLTYPE il_ReplaceFromImageList(IImageList2 *iface, int i, IImageList *source, int src,
+                                                         IUnknown *decorator, DWORD flags)
+{
+    IMAGELIST *il = impl(iface), *from;
+    if (!valid_index(il, i))
+        return E_INVALIDARG;
+    HRESULT hr = check_decorator(decorator);
+    if (FAILED(hr))
+        return hr;
+    hr = list_from_unknown((IUnknown *)source, &from);
+    if (FAILED(hr))
+        return hr;
+    if (!valid_index(from, src) || !from->Bits || !il->Bits)
+        return E_INVALIDARG;
+    if (from->Cx == il->Cx && from->Cy == il->Cy) {
+        for (int y = 0; y < il->Cy; y++) {
+            memcpy(image_row(il, i * il->Cy + y), image_row(from, src * from->Cy + y), (SIZE_T)il->Cx * 4);
+            if (!il->MaskBits)
+                continue;
+            if (from->MaskBits)
+                memcpy(mask_row(il, i * il->Cy + y), mask_row(from, src * from->Cy + y), (SIZE_T)il->MaskStride);
+            else
+                memset(mask_row(il, i * il->Cy + y), 0, (SIZE_T)il->MaskStride);
+        }
+    } else {
+        SetStretchBltMode(il->Dc, COLORONCOLOR);
+        StretchBlt(il->Dc, 0, i * il->Cy, il->Cx, il->Cy, from->Dc, 0, src * from->Cy, from->Cx, from->Cy, SRCCOPY);
+        if (il->MaskBits && from->MaskBits) {
+            SetStretchBltMode(il->MaskDc, COLORONCOLOR);
+            StretchBlt(il->MaskDc, 0, i * il->Cy, il->Cx, il->Cy, from->MaskDc, 0, src * from->Cy, from->Cx, from->Cy,
+                       SRCCOPY);
+        } else if (il->MaskBits) {
+            PatBlt(il->MaskDc, 0, i * il->Cy, il->Cx, il->Cy, BLACKNESS);
+        }
+    }
+    il->Items[i] = from->Items[src] & ITEM_ALPHA;
+    apply_background(il, i);
+    return S_OK;
+}
+
+static const IImageList2Vtbl list_vtbl = {
+    il_QueryInterface,
+    il_AddRef,
+    il_Release,
+    il_Add,
+    il_ReplaceIcon,
+    il_SetOverlayImage,
+    il_Replace,
+    il_AddMasked,
+    il_Draw,
+    il_Remove,
+    il_GetIcon,
+    il_GetImageInfo,
+    il_Copy,
+    il_Merge,
+    il_Clone,
+    il_GetImageRect,
+    il_GetIconSize,
+    il_SetIconSize,
+    il_GetImageCount,
+    il_SetImageCount,
+    il_SetBkColor,
+    il_GetBkColor,
+    il_BeginDrag,
+    il_EndDrag,
+    il_DragEnter,
+    il_DragLeave,
+    il_DragMove,
+    il_SetDragCursorImage,
+    il_DragShowNolock,
+    il_GetDragImage,
+    il_GetItemFlags,
+    il_GetOverlayImage,
+    il_Resize,
+    il_GetOriginalSize,
+    il_SetOriginalSize,
+    il_SetCallback,
+    il_GetCallback,
+    il_ForceImagePresent,
+    il_DiscardImages,
+    il_PreloadImages,
+    il_GetStatistics,
+    il_Initialize,
+    il_Replace2,
+    il_ReplaceFromImageList,
+};
+
+WINCOMMCTRLAPI HRESULT WINAPI HIMAGELIST_QueryInterface(HIMAGELIST himl, REFIID riid, void **object)
+{
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    IMAGELIST *il = get_list(himl);
+    if (!il)
+        return E_POINTER;
+    return il_QueryInterface((IImageList2 *)il, riid, object);
+}
+
+/* the list it makes is empty and without storage until IImageList2::Initialize. */
+WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const IUnknown *outer, REFIID riid,
+                                                         void **object)
+{
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+    if (!IsEqualCLSID(clsid, &CLSID_ImageList))
+        return REGDB_E_CLASSNOTREG;
+    IMAGELIST *il = new_object();
+    return il ? give_list(il, riid, object) : E_OUTOFMEMORY;
 }

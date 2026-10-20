@@ -501,6 +501,25 @@ static GpStatus gif_setup(WicSession *w, GFrameSource *s)
         }
         pal->lpVtbl->Release(pal);
     }
+    /* a file with no global color table has the colors of its first frame */
+    if (!s->palette_count && s->count) {
+        IWICBitmapFrameDecode *first = nullptr;
+        if (SUCCEEDED(s->decoder->lpVtbl->GetFrame(s->decoder, 0, &first))) {
+            IWICPalette *fp = nullptr;
+            if (SUCCEEDED(w->factory->lpVtbl->CreatePalette(w->factory, &fp))) {
+                UINT n = 0;
+                if (SUCCEEDED(first->lpVtbl->CopyPalette(first, fp)) && SUCCEEDED(fp->lpVtbl->GetColorCount(fp, &n))) {
+                    if (n > 256)
+                        n = 256;
+                    UINT got = 0;
+                    fp->lpVtbl->GetColors(fp, n, s->palette, &got);
+                    s->palette_count = got;
+                }
+                fp->lpVtbl->Release(fp);
+            }
+            first->lpVtbl->Release(first);
+        }
+    }
     for (UINT i = 0; i < s->count; i++) {
         IWICBitmapFrameDecode *frame = nullptr;
         if (FAILED(s->decoder->lpVtbl->GetFrame(s->decoder, i, &frame)))
@@ -1059,6 +1078,7 @@ static GpStatus bitmap_only(GImage *image, GpBitmap **bitmap)
 
 WINGDIPAPI GpStatus WINAPI GdipLoadImageFromFile(const WCHAR *file, GpImage **image)
 {
+    GP_REQUIRE_INIT();
     if (!file || !image)
         return InvalidParameter;
     GImage *i;
@@ -1070,11 +1090,13 @@ WINGDIPAPI GpStatus WINAPI GdipLoadImageFromFile(const WCHAR *file, GpImage **im
 
 WINGDIPAPI GpStatus WINAPI GdipLoadImageFromFileICM(const WCHAR *file, GpImage **image)
 {
+    GP_REQUIRE_INIT();
     return GdipLoadImageFromFile(file, image);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipLoadImageFromStream(IStream *stream, GpImage **image)
 {
+    GP_REQUIRE_INIT();
     if (!stream || !image)
         return InvalidParameter;
     GImage *i;
@@ -1086,11 +1108,13 @@ WINGDIPAPI GpStatus WINAPI GdipLoadImageFromStream(IStream *stream, GpImage **im
 
 WINGDIPAPI GpStatus WINAPI GdipLoadImageFromStreamICM(IStream *stream, GpImage **image)
 {
+    GP_REQUIRE_INIT();
     return GdipLoadImageFromStream(stream, image);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromFile(const WCHAR *file, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!file || !bitmap)
         return InvalidParameter;
     GImage *i;
@@ -1102,11 +1126,13 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromFile(const WCHAR *file, GpBitmap 
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromFileICM(const WCHAR *file, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     return GdipCreateBitmapFromFile(file, bitmap);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromStream(IStream *stream, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     if (!stream || !bitmap)
         return InvalidParameter;
     GImage *i;
@@ -1118,6 +1144,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromStream(IStream *stream, GpBitmap 
 
 WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromStreamICM(IStream *stream, GpBitmap **bitmap)
 {
+    GP_REQUIRE_INIT();
     return GdipCreateBitmapFromStream(stream, bitmap);
 }
 
