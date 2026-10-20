@@ -42,6 +42,22 @@ static MIME_STRING32 copy_string32(PUCHAR *cursor, const UNICODE_STRING *source)
     return (MIME_STRING32){source->Length, (USHORT)(source->Length + sizeof(WCHAR)), (ULONG)(ULONG_PTR)text};
 }
 
+/* the current directory with room for a path of the longest length, so SetCurrentDirectory can change it in place. */
+#define CURRENT_DIRECTORY_CHARS 261
+
+static MIME_STRING32 copy_directory32(PUCHAR *cursor, const UNICODE_STRING *source)
+{
+    PWSTR text = (PWSTR)*cursor;
+    SIZE_T room = CURRENT_DIRECTORY_CHARS * sizeof(WCHAR);
+    ULONG length = source->Length;
+    if (length > room - sizeof(WCHAR))
+        length = (ULONG)(room - sizeof(WCHAR));
+    memcpy(text, source->Buffer, length);
+    text[length / sizeof(WCHAR)] = 0;
+    *cursor += room;
+    return (MIME_STRING32){(USHORT)length, (USHORT)room, (ULONG)(ULONG_PTR)text};
+}
+
 /* fills a 32-bit peb from the native one, its process parameters and environment in memory below 2 GiB. */
 BOOLEAN MxFillPeb32(PVOID memory)
 {
@@ -49,7 +65,7 @@ BOOLEAN MxFillPeb32(PVOID memory)
     PRTL_USER_PROCESS_PARAMETERS pp = native->ProcessParameters;
     SIZE_T strings = pp->ImagePathName.Length + pp->CommandLine.Length + pp->CurrentDirectory.DosPath.Length +
                      pp->DllPath.Length + pp->WindowTitle.Length + pp->DesktopInfo.Length + pp->ShellInfo.Length +
-                     pp->RuntimeData.Length + 32;
+                     pp->RuntimeData.Length + CURRENT_DIRECTORY_CHARS * sizeof(WCHAR) + 32;
     SIZE_T size = sizeof(MIME_PARAMETERS32) + strings + pp->EnvironmentSize;
     MIME_PARAMETERS32 *out = allocate32(size);
     if (!out)
@@ -83,7 +99,7 @@ BOOLEAN MxFillPeb32(PVOID memory)
     out->ShowWindowFlags = pp->ShowWindowFlags;
     out->ImagePathName = copy_string32(&cursor, &pp->ImagePathName);
     out->CommandLine = copy_string32(&cursor, &pp->CommandLine);
-    out->CurrentDirectory = copy_string32(&cursor, &pp->CurrentDirectory.DosPath);
+    out->CurrentDirectory = copy_directory32(&cursor, &pp->CurrentDirectory.DosPath);
     out->DllPath = copy_string32(&cursor, &pp->DllPath);
     out->WindowTitle = copy_string32(&cursor, &pp->WindowTitle);
     out->DesktopInfo = copy_string32(&cursor, &pp->DesktopInfo);
